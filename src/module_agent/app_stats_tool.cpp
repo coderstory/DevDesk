@@ -1,9 +1,6 @@
 // src/module_agent/app_stats_tool.cpp
-// AppStatsTool 实现（agent M1 Task 10）：三表 COUNT(*) 直查。
-// 表名与 migrations.h kAgentTables（v12）/ kCreateInitialTables（v1）对齐：
-//   todos      ← todo_tasks
-//   notes      ← markdown_index
-//   agentTasks ← agent_tasks
+// AppStatsTool 实现：三表 COUNT(*) 直查。表名与 migrations.h 对齐：
+// todos←todo_tasks / notes←markdown_index / agentTasks←agent_tasks
 #include "app_stats_tool.h"
 
 #include "platform/json.h"
@@ -74,8 +71,7 @@ public:
     }
 
 private:
-    // SELECT COUNT(*) AS n 单行单列；按 batch 裁定取 values[0]（SqlRow 的
-    // 按名取值 getInt64 同效，但 COUNT 恒整数，直接取首列更直白）
+    // SELECT COUNT(*) 单行单列，取 values[0]（COUNT 恒整数，直接取首列）
     Result<int64_t> countRows(const char* table) {
         auto prep = db_.prepare(std::string("SELECT COUNT(*) AS n FROM ") +
                                 table);

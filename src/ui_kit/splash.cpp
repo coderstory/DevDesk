@@ -1,10 +1,6 @@
 // src/ui_kit/splash.cpp
-// 启动 splash 绘制：全屏极光波 shadertoy（assets/shaders/splash.frag，
-// HTML demo 蓝配色——与 splash.frag 头注释自述一致）+ logo + 副标题 + 假进度条。
-//
-// shader 方言 = EUI-NEO shadertoy 图元（mainImage(iTime/iResolution)），
-// OpenGL 后端只用 fragment source（spirv 路径传空串）；同一份 .frag 在
-// macOS / Windows 11 通用，零平台宏。
+// 启动 splash 绘制：全屏极光波 shadertoy（assets/shaders/splash.frag）+ logo + 副标题 + 假进度条。
+// shader 方言 = EUI-NEO shadertoy 图元；同一份 .frag 在 macOS / Windows 通用，零平台宏。
 #include <ui_kit/splash.h>
 
 #include <core/logging.h>
@@ -43,8 +39,7 @@ SplashState& splashState() {
 } // namespace
 
 bool drawSplashIfNeeded(eui::Ui& ui, const eui::Screen& screen) {
-    // 测试缝（splash.h）：置位时最短路返回，不触碰 SplashState（不启动
-    // 计时/日志/shader）。标志本体是 splash.h 的 inline 函数局部 static
+    // 测试缝：置位时最短路返回，不触碰 SplashState（标志本体在 splash.h）。
     if (splashDisabledForTestsFlag()) return false;
     SplashState& state = splashState();
     if (!state.active) return false;
@@ -69,8 +64,7 @@ bool drawSplashIfNeeded(eui::Ui& ui, const eui::Screen& screen) {
         opacity = 1.0f - (elapsed - kDurationSec) / kFadeOutSec;
     }
 
-    // shader graph 首次加载。路径经 resolveResourcePath 解析（exe 旁或 cwd 的
-    // assets/ 下），解析不到时回退相对路径——从 build 目录启动即可命中。
+    // shader graph 首次加载；resolveResourcePath 解析不到时回退相对路径（从 build 目录启动即命中）。
     if (!state.graphLoaded) {
         state.graphLoaded = true;
         std::string fragPath =
@@ -79,12 +73,8 @@ bool drawSplashIfNeeded(eui::Ui& ui, const eui::Screen& screen) {
         state.graph.addPass("image", fragPath, "");
     }
 
-    // shader 编译失败兜底：EUI-NEO shadertoy 图元编译失败时不画任何东西
-    //（shadertoy_primitive render() 在 handle 为空时提前返回），窗口 clearColor
-    //（浅色主题近白）直接露出，下方白字 logo / 进度条不可读。错误在首帧 render
-    // 才暴露（onCompileError 由渲染路径触发），置位后从下一帧 compose 起垫一层
-    // 不透明深色底（取 splash.frag 的 deep 基色 vec3(0.02,0.10,0.20)）。画在
-    // shadertoy **之前**——shader 正常时被不透明极光波完全盖住，视觉不变。
+    // shader 编译失败兜底：EUI-NEO 图元编译失败时不画任何东西，浅色主题近白底会露出、
+    // 白字 logo 不可读。故置位后从下一帧起垫一层不透明深色底（画在 shadertoy 之前，正常时被盖住）。
     if (state.shaderFailed) {
         ui.rect("splash.fallback.bg")
             .position(0.0f, 0.0f)
@@ -94,7 +84,7 @@ bool drawSplashIfNeeded(eui::Ui& ui, const eui::Screen& screen) {
             .build();
     }
 
-    // 全屏极光波（HTML demo 蓝配色，与 splash.frag 自述一致），淡出期随整体 opacity 一起透明
+    // 全屏极光波，淡出期随整体 opacity 一起透明。
     ui.shadertoy("splash.shader")
         .position(0.0f, 0.0f)
         .size(screen.width, screen.height)
@@ -154,7 +144,7 @@ bool drawSplashIfNeeded(eui::Ui& ui, const eui::Screen& screen) {
         .opacity(opacity)
         .build();
 
-    // 假进度条：0→100% 对齐 2.0s（模块加载在 compose 前已完成，真进度无意义）
+    // 假进度条：0→100% 对齐 2.0s（模块加载在 compose 前已完成，真进度无意义）。
     const float barX = cx - kBarW * 0.5f;
     ui.rect("splash.progress.bg")
         .position(barX, barY)
@@ -173,8 +163,7 @@ bool drawSplashIfNeeded(eui::Ui& ui, const eui::Screen& screen) {
         .opacity(opacity)
         .build();
 
-    // 每帧请求重绘（驱动动画 / 进度 / 淡出；对应 app_assembly 的 requestUpdate
-    // 用法），结束后最后一次返回 false 前不再请求
+    // 每帧请求重绘（驱动动画 / 进度 / 淡出）；结束后不再请求。
     app::requestUpdate();
     return true;
 }

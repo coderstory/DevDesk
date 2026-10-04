@@ -1,6 +1,4 @@
-// src/core/time.h
-// 平台无关的本地时间转换接口
-// Windows 实现见 time_win.cpp（localtime_s），POSIX（macOS/Linux）见 time_posix.cpp（localtime_r）
+// 平台无关的本地时间转换接口（Windows = localtime_s，POSIX = localtime_r）
 #pragma once
 
 #include <cstdint>
@@ -8,20 +6,15 @@
 
 namespace core::time {
 
-// 当前 UNIX 时刻。存在的理由不是「省一次 std::time 调用」，而是收敛散落的
-// 「现在几点」口径：2026-10-03 轻量化前有 4 份逐字相同的本地 `nowUnix()`
-// （core/app_config.cpp / module_claude_proxy 的 claude_service、
-// call_log_store、profile_repository），合并为这一处。
+// 当前 UNIX 时刻；统一全仓「现在」口径的唯一入口
 inline std::time_t nowUnix() { return std::time(nullptr); }
 
-// 线程安全版 localtime：把 time_t 转换为本地时间的 std::tm（写入 *out）
-// 替代业务代码里散布的平台分支（localtime_s / localtime_r / localtime）
+// 线程安全 localtime：time_t → 本地 std::tm（写入 *out），替代散落的平台分支
 void localTime(std::time_t t, std::tm* out);
 
-// 公历日期 → 日历日序号（Howard Hinnant 的 days_from_civil；1970-01-01 → 0，
-// 更早为负）。纯算术，与时区 / DST 无关；供"两个本地时刻相差几天"类判断使用
-// （免 tm_yday 的跨年 / 闰年坑，也免"两个本地零点相减"在 DST 切换日 23h / 25h
-// 的一天上产生 ±1 天偏差）。
+// 公历日期 → 日历日序号（1970-01-01 → 0，更早为负），纯算术、与时区/DST 无关。
+// 用于「两个本地时刻相差几天」：免 tm_yday 跨年/闰年坑，也免本地零点相减在
+// DST 切换日 23h/25h 上产生 ±1 天偏差。
 inline int64_t daysFromCivil(int y, unsigned m, unsigned d) {
     const long long yy = static_cast<long long>(y) - (m <= 2 ? 1 : 0);
     const long long era = (yy >= 0 ? yy : yy - 399) / 400;
@@ -32,8 +25,7 @@ inline int64_t daysFromCivil(int y, unsigned m, unsigned d) {
     return era * 146097 + static_cast<int64_t>(doe) - 719468;
 }
 
-// 本地时区的日历日序号：把 t 转成本地 tm 后取 daysFromCivil。
-// 两个本地时刻"相差几天"一律用其返回值相减（跨月 / 跨年 / 闰年安全）。
+// 本地时区的日历日序号；两个本地时刻相差几天一律用其返回值相减
 inline int64_t localDayNumber(std::time_t t) {
     std::tm local{};
     localTime(t, &local);

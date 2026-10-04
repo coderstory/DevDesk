@@ -1,5 +1,4 @@
-// src/ui_kit/dialog_form.cpp
-// 对话框外框 / 文本行 / 按钮对的唯一实现（原因与边界见 dialog_form.h）。
+// src/ui_kit/dialog_form.cpp — 对话框外框 / 文本行 / 按钮对的唯一实现（边界见 .h）。
 #include <ui_kit/dialog_form.h>
 
 #include <components/button.h>
@@ -15,8 +14,7 @@ void drawDialogFrame(eui::Ui& ui, const eui::Screen& screen, const DialogFrame& 
         .screen(screen.width, screen.height)
         .size(frame.widthPx(), frame.height)
         .theme(themeTokens);
-    // 现状：claude / markdown 不调 .zIndex()（用组件默认 1000），todo 按 popupZ()
-    // 显式给值。哨兵分支保留这一差异（R6：不统一取值）。
+    // claude / markdown 不调 .zIndex()（用组件默认 1000），todo 按 popupZ() 显式给值。
     if (frame.zIndex != kDialogZIndexUnset) {
         builder.zIndex(frame.zIndex);
     }
@@ -63,13 +61,12 @@ void drawDialogTitle(eui::Ui& ui, const std::string& id, float dialogWidth,
 
 namespace {
 
-// 标准按钮对的公共几何：取消在左、确定在右，各占 (w - 2×内缩 - gap)/2，行底
-// 距弹窗底 60；左内缩与标题 / 正文同源（metrics.h 的 kDialogInsetX）。
+// 按钮对公共几何：取消在左、确定在右，各 (w − 2×内缩 − gap)/2，行底距弹窗底 60。
 constexpr float kDialogButtonGap = 12.0f;
 constexpr float kDialogButtonRowOffsetY = 60.0f;
 constexpr float kDialogButtonHeight = 40.0f;
 
-// 现状取值为 (w-68)/2 —— 68 = 28×2 + 12，这里还原它的构成，不留裸 68
+// (w-68)/2 —— 68 = 28×2 + 12，还原构成，不留裸 68。
 float buttonWidth(float dialogWidth) {
     return (dialogWidth - kDialogInsetX * 2.0f - kDialogButtonGap) * 0.5f;
 }

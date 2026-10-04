@@ -13,16 +13,12 @@ namespace fs = std::filesystem;
 
 namespace core::paths {
 
-// appDataDir() 的平台默认实现在 paths_macos.cpp / paths_win.cpp / paths_posix.cpp，
-// 由 CMake 按平台选择编译（接口隔离，业务代码零平台宏）
+// appDataDir() 平台默认实现在 paths_*.cpp，CMake 按平台选编（零平台宏）
 
 namespace {
 
-// DEVDESK_DATA_ROOT 覆盖（审计 CP-04 的**单一数据根入口**）：已设且非空 →
-// 该目录；未设 / 空串 → 空 path（调用方回落平台默认）。空串与「没设」同义，
-// 照 claudeConfigDirOverride 的既有约定（Windows _putenv_s 传空串即删除变量）。
-// 只此一处读数据根，其它路径一律经 appDataDir() 派生——不再有「各自读各自的
-// 环境变量」的散落隔离缝。
+// DEVDESK_DATA_ROOT 覆盖（单一数据根入口）：已设且非空 → 该目录；未设/空串 → 空 path（调用方
+// 回落平台默认）。只此一处读数据根，其它路径一律经 appDataDir() 派生
 fs::path dataRootOverride() {
     const char* env = std::getenv("DEVDESK_DATA_ROOT");
     if (env != nullptr && *env != '\0') {
@@ -46,8 +42,7 @@ fs::path sqliteDbFile() {
 }
 
 fs::path dataRootGitignoreFile() {
-    // 覆盖优先级：DEVDESK_GITIGNORE_PATH（整文件路径，测试隔离用）>
-    // DEVDESK_DATA_ROOT（<根>/.gitignore）> 平台默认根
+    // 覆盖优先级：DEVDESK_GITIGNORE_PATH > DEVDESK_DATA_ROOT（<根>/.gitignore）> 平台默认根
     if (const char* env = std::getenv("DEVDESK_GITIGNORE_PATH")) {
         if (*env != '\0') return fs::path(env);
     }
@@ -56,14 +51,11 @@ fs::path dataRootGitignoreFile() {
 
 namespace {
 
-// 数据根 .gitignore 必须包含的屏蔽项（2026-10-02 存储统一 §6.3 硬约束 1；
-// 2026-10-03 安全审计 F2 补 claude_settings_snapshot.json——它就在数据根里、
-// 0644、可能含用户真实 token，漏了它等于打穿这个文件存在的理由）。
+// 数据根 .gitignore 必须包含的屏蔽项
 constexpr const char* kRequiredGitignoreLines[] = {
     "*.db",                           // 主库（凭据进库后凭据页就在里面）
     "*.db-*",                         // WAL 伴生（-wal / -shm，会复制凭据页）
-    "config.json*",                   // 旧配置文件的磁盘残骸（E2 后应用不再读写，
-                                      // 但用户盘上可能还有，仍须防误提交）
+    "config.json*",                   // 旧配置文件残骸（应用不再读写，但用户盘上可能还有）
     "run-settings/",                  // 每会话临时 settings（含明文 API key）
     "claude_settings_snapshot.json",  // 接管前 settings.json 原 env 快照（可能含真 token）
     "logs/",                          // 日志（含 profile 名与路径）
@@ -71,8 +63,7 @@ constexpr const char* kRequiredGitignoreLines[] = {
     "!/.gitignore",                   // 放行自身（数据根本身要能进 git）
 };
 
-// trimAscii 已下沉 core::str（2026-10-03 轻量化：与
-// module_markdown/markdown_service.cpp 那份逐字等价，合并到 core/str_util.h）。
+// trimAscii 已下沉 core::str（与 markdown_service.cpp 那份合并到 core/str_util.h）
 using core::str::trimAscii;
 
 std::string readWholeFile(const fs::path& file) {
@@ -86,10 +77,8 @@ std::string readWholeFile(const fs::path& file) {
 } // namespace
 
 core::Result<void> ensureDataRootGitignore() {
-    // 幂等**追加**语义（2026-10-03 安全审计 F4）：原实现每次启动整体重写，
-    // 用户自己加的规则会被静默清掉——而文件正文还写着「可自行追加」，自相矛盾。
-    // 现在的口径：读现有内容 → 只补缺失的必需行 → 写回；内容已齐全则**一个字节
-    // 都不动**（连 mtime 都不变）。
+    // 幂等追加语义：读现有内容 → 只补缺失的必需行 → 写回；已齐全则一个字节都不动（连 mtime 都不变）。
+    // 不整体重写，用户自己加的规则不会被清掉
     const fs::path file = dataRootGitignoreFile();
     std::error_code ec;
     if (!file.parent_path().empty()) {
@@ -104,7 +93,7 @@ core::Result<void> ensureDataRootGitignore() {
 
     const std::string existing = readWholeFile(file);
 
-    // 已有的**规则行**（跳过空行与注释行——`# *.db` 是用户注释掉的规则，不算已有）
+    // 已有的规则行（跳过空行与注释行）
     std::set<std::string> present;
     {
         std::istringstream iss(existing);
@@ -147,7 +136,6 @@ core::Result<void> ensureDataRootGitignore() {
 
 fs::path markdownDir() {
     // 覆盖优先级：DEVDESK_NOTES_DIR > DEVDESK_DATA_ROOT > 平台默认根
-    // （用户也可借单项覆盖把笔记目录挪到任意位置）
     if (const char* env = std::getenv("DEVDESK_NOTES_DIR")) {
         return fs::path(env);
     }
@@ -155,9 +143,8 @@ fs::path markdownDir() {
 }
 
 fs::path petsDir() {
-    // 覆盖优先级：DEVDESK_PETS_DIR > DEVDESK_DATA_ROOT > 平台默认根
-    // 注：本函数只决定皮肤**写在哪**；「能从哪儿发现皮肤」见 module_pet 的
-    // skinRootCandidates()——那里已不再读环境变量（审计 CP-04 去产品行为分支）
+    // 覆盖优先级：DEVDESK_PETS_DIR > DEVDESK_DATA_ROOT > 平台默认根。本函数只决定皮肤写在哪；
+    // 能从哪儿发现皮肤见 module_pet 的 skinRootCandidates()（不读环境变量）
     if (const char* env = std::getenv("DEVDESK_PETS_DIR")) {
         return fs::path(env);
     }

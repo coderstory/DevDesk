@@ -1,19 +1,10 @@
-// src/module_markdown/markdown_tools.cpp
-// MarkdownTools 实现（agent M1 Task 9 起，M2 Task 7 扩三工具）。每个工具一个小类，
-// 同文件存放：
-//   md.search    FTS5 全文搜索 → {"notes":[{path,title,sizeBytes,modifiedAt},...]}（只读）
-//   md.read      读取笔记全文 → {"path":...,"content":"<正文>"}（只读）
-//   md.create    新建笔记（已存在拒绝覆盖）→ {"path":...,"created":true}（写但可逆）
-//   md.list_tags 全部标签 + 笔记数 → {"tags":[{name,noteCount},...]}（只读）
-//   md.delete    删除笔记 → {"path":...,"deleted":true}（**破坏性**，isDestructive）
-//
-// 出参形状约定：结构化数据组对象再 stringify；数组用「逐元素 stringify + 文本
-// 拼接 + parse 校验」组装（platform::json 没有数组追加 API——agent_loop.cpp
-// joinBlockArray 同款先例）。
-//
-// 路径安全：笔记相对路径由 MarkdownService::resolve() 收口做 containment 校验
-// （相对上跳 / 绝对路径一律 ValidationError）——本文件不重复实现，但也不得绕过
-// service 直碰文件系统（md.create 的存在性探测同样走 svc_.read）。
+// MarkdownTools 实现：每个工具一个小类，同文件存放。
+//   md.search / md.read / md.list_tags（只读）；md.create（写但可逆）；
+//   md.delete（破坏性，isDestructive）。
+// 出参：结构化数据组对象再 stringify；数组用逐元素 stringify + 拼接 + parse 校验
+//（platform::json 无数组追加 API）。
+// 路径安全由 MarkdownService::resolve() 收口（containment 校验），本文件不绕过
+// service 直碰文件系统（md.create 存在性探测同样走 svc_.read）。
 #include "markdown_tools.h"
 
 #include "core/logging.h"
@@ -33,15 +24,14 @@ using core::ToolArgs;
 using core::ToolResult;
 namespace pj = platform::json;
 
-// ---- 结果组装辅助（本文件工具共用）----
 
-// 工具级错误：Result ok + isError + {"error":"<中文>"}（错误回喂 LLM）
+// 工具级错误：Result ok + isError + {"error":"<中文>"}（回喂 LLM）
 Result<ToolResult> toolError(const std::string& message) {
     pj::JsonObject err;
     err.set("error", pj::makeString(message));
     auto text = pj::stringify(pj::JsonValue(std::move(err)));
     if (text.isFail()) {
-        // 自有字面量 + 一个字符串字段的序列化失败 = 编程不变量破坏
+// 自有字面量 + 一个字符串字段的序列化失败 = 编程不变量破坏
         return Result<ToolResult>::fail(core::ErrorCode::Internal,
                                         "工具错误消息序列化失败: " +
                                             text.errorMessage());
@@ -53,7 +43,7 @@ Result<ToolResult> toolOk(const std::string& contentJson) {
     return Result<ToolResult>::ok(ToolResult{false, contentJson});
 }
 
-// 参数解析：空串视为 {}；其余必须解析成 object。失败 = 参数非法（工具级错误）。
+// 参数解析：空串视为 {}；其余必须解析成 object。失败 = 参数非法。
 Result<pj::JsonObject> parseArgs(const ToolArgs& args) {
     if (args.json.empty()) {
         return Result<pj::JsonObject>::ok(pj::JsonObject());
@@ -72,7 +62,7 @@ std::string strField(const pj::JsonObject& obj, const char* key) {
     return v.isString() ? v.asString() : std::string();
 }
 
-// NoteMeta → JSON 对象文本（path 恒 POSIX 风格，与 MarkdownService 约定一致）
+// NoteMeta → JSON 对象文本（path 恒 POSIX 风格）
 Result<std::string> noteToJsonText(const NoteMeta& n) {
     pj::JsonObject o;
     o.set("path", pj::makeString(n.relativePath.generic_string()));
@@ -88,7 +78,6 @@ Result<std::string> noteToJsonText(const NoteMeta& n) {
     return Result<std::string>::ok(text.value());
 }
 
-// ============ md.search ============
 
 class MdSearchTool : public core::ITool {
 public:
@@ -114,7 +103,7 @@ public:
             return toolError("搜索失败: " + hits.errorMessage());
         }
 
-        // 数组组装：逐命中 stringify 后文本拼接
+// 数组组装：逐命中 stringify 后文本拼接
         std::string joined;
         for (const auto& n : hits.value()) {
             auto one = noteToJsonText(n);
@@ -123,7 +112,7 @@ public:
             joined += one.value();
         }
         const std::string content = "{\"notes\":[" + joined + "]}";
-        // 自有拼接必须可解析；失败 = 不变量破坏
+// 自有拼接必须可解析；失败 = 不变量破坏
         if (pj::parse(content).isFail()) {
             return Result<ToolResult>::fail(
                 core::ErrorCode::Internal, "工具结果 JSON 拼接失败（编程错误）");
@@ -135,7 +124,6 @@ private:
     MarkdownService& svc_;
 };
 
-// ============ md.read ============
 
 class MdReadTool : public core::ITool {
 public:
@@ -161,14 +149,10 @@ public:
             return toolError("读取笔记失败: " + content.errorMessage());
         }
 
-        // M2 静态审计 F1（high）：本工具是唯一回「文件原文」的工具，而
-        // platform::json 的 stringify 放行非法字节、parse 严格拒绝 → 非 UTF-8
-        // 笔记（GBK/Latin-1/二进制）走到 AgentLoop 的 parseArrayOrDie 自检会
-        // LOG_FATAL + std::abort（**整应用死**，M2 起还会发生在无人值守的
-        // cron run 里）。在工具边界拦下：非法 → 既有 toolError 通道回喂 LLM。
-        // 选择「显式失败」而非「替换字符后照常回喂」的理由：回喂乱码有被
-        // md.update 原样写回、把用户笔记彻底毁掉的风险；而失败是可行动的
-        // （模型可以告知用户另存为 UTF-8），且磁盘上的原笔记一字不动。
+        // 本工具是唯一回「文件原文」的工具，而 json stringify 放行非法字节、parse 严格
+        // 拒绝 → 非 UTF-8 笔记走到 AgentLoop 自检会 LOG_FATAL + abort（整应用死）。
+        // 故在边界拦下：非法 → toolError 回喂 LLM（回喂乱码有被原样写回毁笔记的风险；
+        // 显式失败可行动，且磁盘原笔记一字不动）。
         if (!platform::utf8::isValid(content.value())) {
             LOG_WARN("md.read: 笔记不是合法 UTF-8，拒绝回喂（path=" + path + "）");
             return toolError(
@@ -190,7 +174,6 @@ private:
     MarkdownService& svc_;
 };
 
-// ============ md.create（写但可逆）============
 
 class MdCreateTool : public core::ITool {
 public:
@@ -212,13 +195,11 @@ public:
         }
         const std::string content = strField(argsObj.value(), "content");
         if (content.empty()) {
-            // 空正文多半是漏传 key 的静默错误（agent 没有 md.write，建错了只能
-            // md.delete 重来）——显式报错回喂比静默建空笔记安全
+            // 空正文多半是漏传 key 的静默错误（agent 无 md.write，建错只能 md.delete 重来）。
             return toolError("笔记正文不能为空（必填字段 content）");
         }
 
-        // 存在性探测：读得到 = 已有这篇笔记 → 拒绝覆盖（用户笔记不静默改写）。
-        // 读失败有两种：不存在（正常新建）/ 路径越界（write 会再拒一次并回喂）
+        // 存在性探测：读得到 = 已存在 → 拒绝覆盖。读失败 = 不存在或路径越界（write 会再拒）。
         if (svc_.read(std::filesystem::path(path)).isOk()) {
             return toolError("笔记已存在，拒绝覆盖（如需重建先 md.delete）");
         }
@@ -242,7 +223,6 @@ private:
     MarkdownService& svc_;
 };
 
-// ============ md.list_tags（只读）============
 
 class MdListTagsTool : public core::ITool {
 public:
@@ -290,16 +270,15 @@ private:
     MarkdownService& svc_;
 };
 
-// ============ md.delete（破坏性）============
 
-// 类名避开 delete 关键字（C++ 关键字不能作标识符），工具名仍是 "md.delete"
+// 类名避开 delete 关键字；工具名仍是 "md.delete"
 class MdDeleteTool : public core::ITool {
 public:
     explicit MdDeleteTool(MarkdownService& svc) : svc_(svc) {}
 
     std::string name() const override { return "md.delete"; }
 
-    // 删除不可恢复 → AgentLoop 在 task.allowDestructive=0 时直接终止 run（spec §5.3）
+    // 删除不可恢复 → allowDestructive=0 时 AgentLoop 直接终止 run
     bool isDestructive() const override { return true; }
 
     std::string schemaJson() const override {
@@ -315,8 +294,7 @@ public:
             return toolError("缺少必填参数 path（笔记相对路径）");
         }
 
-        // 越界路径（相对上跳 / 绝对路径）由 service resolve() containment 拒绝
-        // ——删外部文件的口子不能开在工具层
+        // 越界路径（相对上跳 / 绝对路径）由 service resolve() 拒绝，删外部文件的口子不开在工具层。
         auto rm = svc_.remove(std::filesystem::path(path));
         if (rm.isFail()) {
             return toolError(rm.errorMessage());  // 原始错误消息（含越界说明）回喂
@@ -338,7 +316,6 @@ private:
 
 } // namespace
 
-// ============ MarkdownTools ============
 
 MarkdownTools::MarkdownTools(MarkdownService& svc) {
     tools_.push_back(std::make_shared<MdSearchTool>(svc));

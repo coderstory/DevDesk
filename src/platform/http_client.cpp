@@ -40,9 +40,8 @@ size_t headerCallback(char* buffer, size_t size, size_t nitems, void* userp) {
     return total;
 }
 
-// curl_global_init 非线程安全：代理 worker 线程（httplib 线程池）与 Claude
-// 连通性测试后台线程可能并发首发请求，普通 bool check-then-set 是数据竞争
-//（审计 2026-09-23 [4][27]）。std::call_once 一行解决。
+// curl_global_init 非线程安全：代理 worker 与连通性测试线程可能并发首发请求，check-then-set 是
+// 数据竞争；std::call_once 一行解决。
 void globalInit() {
     static std::once_flag once;
     std::call_once(once, [] { curl_global_init(CURL_GLOBAL_DEFAULT); });
@@ -50,7 +49,7 @@ void globalInit() {
 
 } // anonymous namespace
 
-// ============ 同步 send ============
+// 同步 send
 
 core::Result<Response> send(const Request& req) {
     globalInit();
@@ -67,9 +66,8 @@ core::Result<Response> send(const Request& req) {
     curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, req.method.c_str());
     curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, req.timeoutMs);
     curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
-    // 回环地址永远不走代理（NOPROXY）：libcurl 默认读 http_proxy / ALL_PROXY /
-    // no_proxy 环境变量，公司代理在场时对 127.0.0.1 的请求会被劫持。字面量是
-    // 静态存储期，libcurl 只存指针不拷贝，安全。
+    // 回环地址永远不走代理（NOPROXY）：libcurl 默认读 http_proxy/ALL_PROXY/no_proxy，公司代理
+    // 在场时会劫持 127.0.0.1 请求。字面量静态存储期，libcurl 只存指针不拷贝，安全。
     curl_easy_setopt(curl, CURLOPT_NOPROXY, "localhost,127.0.0.1,::1");
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writeCallback);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &resp);
@@ -86,8 +84,7 @@ core::Result<Response> send(const Request& req) {
 
     struct curl_slist* headers = nullptr;
     for (const auto& [k, v] : req.headers) {
-        if (v.empty()) continue;  // 空值头不发送（`X: ` 是畸形请求头，实测 CF 回
-                                  // 400 Bad Request）
+        if (v.empty()) continue;  // 空值头不发（`X: ` 是畸形请求头，实测 CF 回 400）
         std::string h = k + ": " + v;
         headers = curl_slist_append(headers, h.c_str());
     }
@@ -116,32 +113,15 @@ core::Result<Response> send(const Request& req) {
     return core::Result<Response>::ok(std::move(resp));
 }
 
-// ============ 流式响应（三线程 + 队列 + backpressure，spec §10.4）============
-//
-// 线程模型：
-//   - Thread A (cpp-httplib worker): 调用 readChunk 阻塞拉数据（消费者）
-//   - Thread B (libcurl thread):      在独立 std::thread 上跑 curl_easy_perform
-//   - libcurl write callback 把每个 chunk 推入内部 queue（生产者）
-//
-// Backpressure（队列 >= 100 / <= 50 滞回）：
-//   生产者在 write callback 内部阻塞等待消费者腾出队列空间。
-//   这是 libcurl 唯一线程安全的背压方式——回调阻塞期间 libcurl 自然停止
-//   从 socket 读取，TCP 接收窗口收敛，压力传回上游。
-//   （旧实现从消费者线程调 curl_easy_pause(CURLPAUSE_RECV)：暂停后 write
-//   callback 永远不会再被调用，既无法 resume 也无法中止，传输会一直挂死
-//   到 CURLOPT_TIMEOUT_MS——Windows 首跑 300s 卡死的根因。）
-//
-// 取消：
-//   cancel() 只置标志 + notify_all：
-//     - 消费者立即解除阻塞（Error/"cancelled"）
-//     - 被背压阻塞的生产者醒来返回 0 → libcurl 以 CURLE_WRITE_ERROR 中止
-//       并关闭上游连接（上游随即观察到断开）
-//     - 上游静默（连着不发数据）时上述两条都不在：由进度回调
-//       streamXferInfoCb 兜底，返回非零 → CURLE_ABORTED_BY_CALLBACK 中止
-//       （H1，2026-09-27；修复前这里要等低速空闲超时 60~70s）
-//
-// 上游截断（CURLE_PARTIAL_FILE，如 chunked 流未写终止 chunk 即断开）：
-//   已到达的数据保留，流按正常结束（End）处理，不算 Error。
+// 流式响应（三线程 + 队列 + backpressure）
+// 线程：A(cpp-httplib worker) 调 readChunk 拉数据（消费者）；B(独立 std::thread) 跑 curl_easy_perform；
+// libcurl write callback 把 chunk 推入内部 queue（生产者）。
+// Backpressure（>=100 停 / <=50 恢复）：生产者阻塞在 write callback 内，libcurl 停读 socket、TCP 窗口
+// 收敛，压力传回上游——libcurl 唯一线程安全的背压方式。（旧实现从消费者线程 curl_easy_pause(RECV)：
+// 暂停后 callback 不再被调，既不能 resume 也不能中止，挂死到 CURLOPT_TIMEOUT_MS——Windows 首跑 300s 卡死根因。）
+// 取消：cancel() 置标志 + notify_all——消费者立即解除阻塞；背压生产者醒来返回 0 → CURLE_WRITE_ERROR 中止；
+// 上游静默时由进度回调 streamXferInfoCb 兜底 → CURLE_ABORTED_BY_CALLBACK（H1）。
+// 上游截断（CURLE_PARTIAL_FILE）：已到数据保留，按正常结束处理，不算 Error。
 
 struct StreamingResponse::Impl {
     // queue 与 producer/consumer 通信
@@ -154,7 +134,6 @@ struct StreamingResponse::Impl {
     std::atomic<bool> cancelled{false};      // 用户主动 cancel() 触发
     std::atomic<bool> producerThrottled{false};  // 生产者当前被背压阻塞
 
-    // 错误信息
     std::string errorMessage;
     // cancel 原因（"cancelled" / "proxy stopping"...）；queueMutex 保护
     std::string cancelReason = "cancelled";
@@ -168,12 +147,9 @@ struct StreamingResponse::Impl {
     // 上游 Content-Type（如 text/event-stream）
     std::string contentType;
 
-    // 请求体副本：CURLOPT_POSTFIELDS 只存指针、不拷贝数据（libcurl 语义），
-    // 而 sendStreaming() 是**异步**的——发起后立刻返回，真正读 body 的是
-    // libcurl 线程。调用方传进来的 Request 常常是临时对象（streaming_proxy
-    // 里的局部 upstream，函数出栈即析构），指针随即悬垂，发出去的 body 变成
-    // 堆里的垃圾字节（实测上游收到乱码 → 400/401 "Model is not supported"）。
-    // 拷一份挂在自己身上，与 StreamingResponse 同生命周期（析构先 join 线程）。
+    // 请求体副本：CURLOPT_POSTFIELDS 只存指针不拷贝，而 sendStreaming() **异步**——发起后立刻返回，
+    // 真正读 body 的是 libcurl 线程；调用方传的 Request 常是临时对象，指针随即悬垂（实测上游收乱码 →
+    // 400/401）。拷一份挂在自己身上，与 StreamingResponse 同生命周期（析构先 join 线程）。
     std::string requestBody;
 
     // CURL handle + 执行线程
@@ -181,13 +157,12 @@ struct StreamingResponse::Impl {
     std::thread thread;
     std::mutex curlMutex;                    // 保护 curl handle（getinfo/cleanup）
 
-    // 整个传输的截止时刻（来自 Request::timeoutMs）。
-    // 背压阻塞发生在 write callback 内部时 CURLOPT_TIMEOUT_MS 无法生效，
-    // 生产者用它兜底，避免无限期阻塞。
+    // 整个传输的截止时刻（来自 Request::timeoutMs）。背压阻塞在 write callback 内时 CURLOPT_TIMEOUT_MS
+    // 不生效，生产者用它兜底避免无限期阻塞。
     std::chrono::steady_clock::time_point deadline =
         std::chrono::steady_clock::time_point::max();
 
-    // backpressure 阈值（spec §10.4）
+    // backpressure 阈值
     static constexpr size_t kPauseThreshold = 100;
     static constexpr size_t kResumeThreshold = 50;
 };
@@ -199,8 +174,7 @@ size_t streamWriteCb(char* ptr, size_t size, size_t nmemb, void* userp) {
 
     std::unique_lock<std::mutex> lock(impl->queueMutex);
 
-    // ---- backpressure：队列满时阻塞在本回调内 ----
-    // libcurl 会停在那里不继续收数据（TCP 窗口收敛），等消费者腾出空间。
+    // backpressure：队列满时阻塞在本回调内，libcurl 停收数据（TCP 窗口收敛）等消费者腾空间
     if (impl->queue.size() >= StreamingResponse::Impl::kPauseThreshold) {
         impl->producerThrottled.store(true, std::memory_order_release);
         const bool woke = impl->queueCv.wait_until(lock, impl->deadline, [&impl] {
@@ -283,35 +257,20 @@ size_t streamHeaderCb(char* buffer, size_t size, size_t nitems, void* userp) {
     return total;
 }
 
-// libcurl 进度回调（CURLOPT_XFERINFOFUNCTION + CURLOPT_NOPROGRESS=0）
-//
-// 【为什么需要它（H1 修复，2026-09-27）】
-// 取消只有两条既有唤醒路径，二者都要求「有人正好堵在队列上」：
-//   (a) 被背压阻塞在 write callback 里的生产者（醒来返回 0）
-//   (b) 阻塞在 readChunk 的消费者（它醒了只是不再读，libcurl 线程照旧）
-// 若上游**连着但一个字节都不发**（请求已送出、响应头未到），write callback
-// 从未进入、(b) 也叫不动 libcurl 线程 → 它一直等到低速空闲超时
-// （生产 lowSpeedTimeSec=60s，libcurl 按 ~5s 滑窗采样，实测 60~70s）才退。
-// 「停止代理 / 退出应用」在 cancelActiveStreams() 之后要等 worker join，
-// 于是被拖着一起挂 60~70s。
-//
-// 进度回调是 libcurl 在传输期间**周期性（约每秒）调用**的钩子，上游静默时
-// 同样照调（低速超时判定本身就跑在这个进度节拍上）。回调返回非零 → libcurl
-// 立即以 CURLE_ABORTED_BY_CALLBACK 中止传输，取消延迟从 60s 降到秒级。
-//
-// 【约束】回调跑在 libcurl 线程：只读一个 atomic 标志，不加锁、不做重活。
-// 【与既有路径的关系】只新增一条唤醒通道，(a)/(b) 全部保留不动——上游在
-// 产出时生产者路径更快（无需等进度节拍）。
-// 【状态机】收尾分类里 cancelled 判定排在 rc 判空之前，所以
-// CURLE_ABORTED_BY_CALLBACK 仍走「主动取消」分支，cancelReason 语义
-//（"cancelled" / "proxy stopping"）与下游 streaming_proxy 的键控不变。
+// libcurl 进度回调（CURLOPT_XFERINFOFUNCTION + NOPROGRESS=0）。
+// 为什么需要它（H1 修复）：取消的既有两条唤醒路径都要求「有人正好堵在队列上」——(a) 被背压阻塞的
+// 写回调、(b) 阻塞在 readChunk 的消费者；若上游连着但不发一个字节（请求已送出、响应头未到），两条
+// 都叫不动 libcurl 线程，它要等到低速空闲超时才退（实测 60~70s），「停止代理/退出应用」跟着挂。
+// 进度回调在传输期约每秒被调、上游静默时同样，返回非零 → CURLE_ABORTED_BY_CALLBACK 立即中止，取消
+// 延迟降到秒级。
+// 约束：回调跑在 libcurl 线程，只读一个 atomic 标志，不加锁、不重活；只新增一条唤醒通道，(a)/(b) 全保留。
 int streamXferInfoCb(void* clientp, curl_off_t /*dltotal*/, curl_off_t /*dlnow*/,
                      curl_off_t /*ultotal*/, curl_off_t /*ulnow*/) {
     auto* cancelled = static_cast<std::atomic<bool>*>(clientp);
     return cancelled->load(std::memory_order_acquire) ? 1 : 0;
 }
 
-// ============ StreamingResponse 公开接口 ============
+// StreamingResponse 公开接口
 
 StreamingResponse::StreamingResponse() : impl_(new Impl()) {}
 StreamingResponse::~StreamingResponse() {
@@ -356,7 +315,7 @@ ChunkResult StreamingResponse::readChunk(std::string& chunk,
                impl_->cancelled.load(std::memory_order_acquire);
     });
 
-    // ---- 取数据 ----
+    // 取数据
     if (!impl_->queue.empty()) {
         chunk = std::move(impl_->queue.front());
         impl_->queue.pop_front();
@@ -365,7 +324,7 @@ ChunkResult StreamingResponse::readChunk(std::string& chunk,
         return ChunkResult::More;
     }
 
-    // ---- 队列空，done 或 cancelled ----
+    // 队列空，done 或 cancelled
     if (impl_->cancelled.load(std::memory_order_acquire)) {
         errorMessage = impl_->cancelReason;
         return ChunkResult::Error;
@@ -384,24 +343,18 @@ void StreamingResponse::cancel() {
 void StreamingResponse::cancelWithReason(const std::string& reason) {
     if (!impl_) return;
     {
-        // 置标志必须在 queueMutex 内（审计 2026-09-23 [9] 的 stop 路径依赖
-        // cancel 能立即叫醒阻塞在 readChunk 的消费者）：旧实现 exchange 不带
-        // 锁，存在「消费者判完谓词（false）还没睡下 → notify 落空 → 睡到
-        // 生产者/空闲超时才被叫醒」的丢唤醒窗口。持锁 store 保证谓词评估与
-        // 置标志对 queueMutex 串行，wait(lock, pred) 不可能带着过期谓词睡着。
+        // 置标志必须在 queueMutex 内（stop 路径依赖 cancel 立即叫醒阻塞的消费者）：旧实现 exchange
+        // 不带锁，存在「消费者判完谓词(false)还没睡下 → notify 落空 → 睡到超时」的丢唤醒窗口。持锁
+        // store 保证谓词评估与置标志对 mutex 串行，wait(lock,pred) 不可能带着过期谓词睡着。
         std::lock_guard<std::mutex> lock(impl_->queueMutex);
         if (impl_->cancelled.load(std::memory_order_relaxed)) {
-            return;  // 已经取消
+            return;
         }
         impl_->cancelReason = reason;
         impl_->cancelled.store(true, std::memory_order_release);
     }
-    // 唤醒所有等待者：
-    //   - readChunk 的消费者（立即返回 Error/cancelReason）
-    //   - 被背压阻塞的生产者（返回 0 → libcurl 以 CURLE_WRITE_ERROR 中止
-    //     并关闭上游连接）
-    // 注意：不要在这里调 curl_easy_pause——从其它线程暂停会阻止 write
-    // callback 再次被调用，传输将挂死到 CURLOPT_TIMEOUT_MS。
+    // 唤醒所有等待者：readChunk 的消费者（返回 Error/cancelReason）与背压中的生产者（返回 0 →
+    // CURLE_WRITE_ERROR）。不要在这里调 curl_easy_pause——跨线程暂停会阻止 callback 再被调，挂死到超时。
     impl_->queueCv.notify_all();
 }
 
@@ -416,18 +369,15 @@ bool StreamingResponse::isPaused() const {
     return impl_->producerThrottled.load(std::memory_order_acquire);
 }
 
-// ============ 流式 sendStreaming ============
-//
-// 启动 libcurl 线程；线程退出时 curl_easy_cleanup 并标记 done。
-// 消费者通过 readChunk 拉数据；statusCode() 读上游状态码。
+// 流式 sendStreaming：启动 libcurl 线程；线程退出时 curl_easy_cleanup 并标记 done。
+// 消费者通过 readChunk 拉数据，statusCode() 读上游状态码。
 
 core::Result<std::unique_ptr<StreamingResponse>> sendStreaming(const Request& req) {
     globalInit();
 
     auto sr = std::unique_ptr<StreamingResponse>(new StreamingResponse());
 
-    // 背压阻塞发生在 write callback 内部时 CURLOPT_TIMEOUT_MS 不生效，
-    // 生产者用 deadline 兜底（timeoutMs <= 0 视为不限时）
+    // 背压阻塞在 write callback 内时 CURLOPT_TIMEOUT_MS 不生效，生产者用 deadline 兜底（<=0 视为不限时）
     if (req.timeoutMs > 0) {
         sr->impl_->deadline = std::chrono::steady_clock::now() +
                               std::chrono::milliseconds(req.timeoutMs);
@@ -447,9 +397,8 @@ core::Result<std::unique_ptr<StreamingResponse>> sendStreaming(const Request& re
     curl_easy_setopt(curl, CURLOPT_URL, req.url.c_str());
     curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, req.method.c_str());
     curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, req.timeoutMs);
-    // 流式空闲超时（W7 P0-3）：timeoutMs=0（无总墙钟上限）时由它兜底
-    // "无新 chunk 才 close" 的语义——速率低于 lowSpeedBytesPerSec 持续
-    // lowSpeedTimeSec 秒即中止
+    // 流式空闲超时：timeoutMs=0（无总墙钟上限）时由它兜底「无新 chunk 才 close」——速率低于
+    // lowSpeedBytesPerSec 持续 lowSpeedTimeSec 秒即中止
     if (req.lowSpeedBytesPerSec > 0 && req.lowSpeedTimeSec > 0) {
         curl_easy_setopt(curl, CURLOPT_LOW_SPEED_LIMIT, req.lowSpeedBytesPerSec);
         curl_easy_setopt(curl, CURLOPT_LOW_SPEED_TIME, req.lowSpeedTimeSec);
@@ -461,10 +410,8 @@ core::Result<std::unique_ptr<StreamingResponse>> sendStreaming(const Request& re
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, sr->impl_);
     curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, streamHeaderCb);
     curl_easy_setopt(curl, CURLOPT_HEADERDATA, sr->impl_);
-    // 取消唤醒通道（H1）：进度回调周期被调（含上游静默期），读 cancelled
-    // 原子量决定是否中止。NOPROGRESS=0 是启用该回调的开关；数据指针指向
-    // Impl 内的原子标志（Impl 生命周期覆盖 libcurl 线程：线程 join 在
-    // ~StreamingResponse 里，早于 delete impl_）。
+    // 取消唤醒通道（H1）：进度回调周期被调（含上游静默期），读 cancelled 原子量决定是否中止。
+    // NOPROGRESS=0 是开关；数据指针指向 Impl 内原子标志（Impl 生命周期覆盖 libcurl 线程）
     curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
     curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, streamXferInfoCb);
     curl_easy_setopt(curl, CURLOPT_XFERINFODATA, &sr->impl_->cancelled);
@@ -482,14 +429,13 @@ core::Result<std::unique_ptr<StreamingResponse>> sendStreaming(const Request& re
 
     struct curl_slist* headers = nullptr;
     for (const auto& [k, v] : req.headers) {
-        if (v.empty()) continue;  // 空值头不发送（`X: ` 是畸形请求头，实测 CF 回
-                                  // 400 Bad Request）
+        if (v.empty()) continue;  // 空值头不发（`X: ` 是畸形请求头，实测 CF 回 400）
         std::string h = k + ": " + v;
         headers = curl_slist_append(headers, h.c_str());
     }
     if (headers) curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
 
-    // ---- 启动 libcurl 线程 ----
+    // 启动 libcurl 线程
     StreamingResponse::Impl* implPtr = sr->impl_;
     sr->impl_->thread = std::thread([implPtr, headers,
                                      url = req.url, method = req.method]() {
@@ -519,13 +465,9 @@ core::Result<std::unique_ptr<StreamingResponse>> sendStreaming(const Request& re
         }
         implPtr->statusCv.notify_all();
 
-        // 分类错误
-        //   CURLE_OK             → 正常结束
-        //   CURLE_PARTIAL_FILE   → 上游提前断开（chunked 流未写终止 chunk）：
-        //                          已收到的数据保留，按正常结束处理（spec §10.4
-        //                          截断语义：流干净结束，不算 Error）
-        //   主动取消（CURLE_ABORTED_BY_CALLBACK / CURLE_WRITE_ERROR）→ 算 cancelled
-        //   其他 → 网络/超时错误
+        // 分类错误：CURLE_OK → 正常结束；CURLE_PARTIAL_FILE → 上游提前断开（chunked 流未写终止
+        // chunk），已收数据保留、按正常结束（End）处理，不算 Error；主动取消（CURLE_ABORTED_BY_CALLBACK/
+        // CURLE_WRITE_ERROR）→ 算 cancelled；其他 → 网络/超时错误。
         if (implPtr->cancelled.load(std::memory_order_acquire)) {
             // 主动取消：不算 error，由 cancelled 状态表示
         } else if (rc == CURLE_PARTIAL_FILE) {

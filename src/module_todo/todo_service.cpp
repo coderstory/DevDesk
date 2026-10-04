@@ -21,24 +21,18 @@ namespace module::todo {
 namespace {
 
 Priority intToPriority(int v) {
-    // 值域检查 + 转换（枚举连续：None=0, Low=1, Medium=2, High=3）。
-    // 越界（旧库脏数据 / 未来枚举值）→ None，与旧 switch 的 default 同语义。
+    // 值域检查 + 转换（枚举连续 None=0..High=3）。越界 → None。
     if (v < 0 || v > static_cast<int>(Priority::High)) return Priority::None;
     return static_cast<Priority>(v);
 }
 
-// LIKE 模式转义 % _ \（配合 SQL 的 ESCAPE '\'），防止用户查询串里的通配符被当作
-// SQL LIKE 元字符导致误命中。
-// 2026-10-03 轻量化：原先这里靠「module_* 互不依赖铁律」本地复制了一份，注释
-// 本身也承认了（「此处本地复制一份而非跨模块 include」）。正确解法不是跨模块
-// include，而是下沉 core——三份逐字相同的实现已合并到 core/str_util.h。
+// LIKE 模式转义 % _ \（配合 SQL 的 ESCAPE '\'），防用户查询串里的通配符被当作
+// LIKE 元字符导致误命中
 using core::str::escapeLikePattern;
 
 } // namespace
 
 TodoService::TodoService(core::data::SqliteDb& db) : db_(db) {}
-
-// ============ 内部辅助 ============
 
 int64_t TodoService::nowEpochSeconds() {
     return static_cast<int64_t>(std::time(nullptr));
@@ -102,7 +96,7 @@ core::Result<Column> TodoService::parseColumnRow(const core::data::SqlRow& row) 
             c.color = colorResult.value();
         }
     }
-    // kind 可能为 NULL（migration v4 之前的行 / 用户新建列）→ 留空 = 普通列
+    // kind 可能为 NULL（migration v4 之前的行）→ 留空 = 普通列
     if (!row.isNull("kind")) {
         auto kindResult = row.getString("kind");
         if (kindResult.isOk()) {
@@ -172,14 +166,11 @@ core::Result<Task> TodoService::parseTaskRow(const core::data::SqlRow& row) {
 }
 
 std::string TodoService::serializeTags(const std::vector<std::string>& tags) {
-    // 走 platform::json 封装（审计 2026-09-23 [26]）：此前此处因
-    // 「yyjson_mut_write_opts 被禁用」手写了一份 JSON 数组序列化器，
-    // 与 platform/json.cpp 的 stringify 形成两份易漂移的实现。该限制已由
-    // platform::json 自实现 stringify 解决，故迁移为 makeStringArray + stringify。
+    // 走 platform::json 封装（makeStringArray + stringify），不留第二份序列化实现
     auto arr = platform::json::makeStringArray(tags);
     auto out = platform::json::stringify(arr);
     if (out.isFail()) {
-        // stringify 当前实现不会失败；防御式退化为空数组（与旧行为一致）
+        // stringify 当前实现不会失败；防御式退化为空数组
         return "[]";
     }
     return out.value();
@@ -206,8 +197,6 @@ core::Result<std::vector<std::string>> TodoService::deserializeTags(const std::s
     }
     return core::Result<std::vector<std::string>>::ok(std::move(out));
 }
-
-// ============ 列操作 ============
 
 core::Result<std::vector<Column>> TodoService::listColumns() {
     auto prep = db_.prepare(
@@ -240,12 +229,9 @@ core::Result<Column> TodoService::createColumn(const std::string& title) {
     int pos = nextPosResult.value();
     const int64_t now = nowEpochSeconds();
 
-    // INSERT ... RETURNING id（SQLite ≥3.35）单语句原子取回新 rowid
-    // （审计 2026-09-23 [7] 残留）：旧实现是事务内 INSERT + COMMIT 后再
-    // SELECT last_insert_rowid()——两步之间不持锁，其他线程（代理 worker 的
-    // logCall INSERT 等）穿插写同一连接会改写连接级 last_insert_rowid，
-    // 取回错误 id。RETURNING 让 id 随本条 INSERT 的结果行返回，无竞态；
-    // 单语句自带原子性，原事务包装一并去掉（与 claude_service createProfile 同款）。
+    // INSERT ... RETURNING id（SQLite ≥3.35）单语句原子取回新 rowid：旧实现
+    // 「INSERT+COMMIT 后 SELECT last_insert_rowid()」两步间不持锁，并发写者会
+    // 改写连接级 last_insert_rowid，取回错误 id
     auto prep = db_.prepare(
         "INSERT INTO todo_columns (title, position, color, created_at) "
         "VALUES (?, ?, NULL, ?) RETURNING id");
@@ -280,14 +266,10 @@ core::Result<Column> TodoService::createColumn(const std::string& title) {
         return core::Result<Column>::fail(idVal.errorCode(), idVal.errorMessage());
     }
 
-    // 步进到 DONE，释放连接上的 in-progress 语句（RETURNING-drain 复查 B，
-    // 与 settings 簇修 claude createProfile 同款）：RETURNING 取行后不 drain，
-    // 同连接上的事务 COMMIT 会撞 "cannot commit transaction - SQL statements
-    // in progress"。本函数取 id 后虽无 in-scope 事务、~Statement finalize 也
-    // 不影响本行提交（todo_svc_returning_id_consistency 锁定该行为），但取行
-    // 到函数返回之间仍有危险窗口（recursive_mutex 只逐调用持锁，其他线程在
-    // 此窗口对本连接开事务同样会撞上）。显式 drain 把窗口关到函数内部。
-    // 失败极罕见且行已写入，只 WARN（claude createProfile 同款处理）。
+    // 步进到 DONE 释放连接上的 in-progress 语句：RETURNING 取行后不 drain，
+    // 同连接上的事务 COMMIT 会撞 "cannot commit transaction - SQL statements in
+    // progress"（recursive_mutex 只逐调用持锁，取行到返回间其他线程开事务仍会撞）。
+    // 失败极罕见且行已写入，只 WARN。
     auto drain = stmt.step();
     if (drain.isFail()) {
         LOG_WARN("Todo: INSERT ... RETURNING 收尾 step 失败（行已写入，继续）: " +
@@ -299,13 +281,13 @@ core::Result<Column> TodoService::createColumn(const std::string& title) {
     c.title = title;
     c.position = pos;
     c.color = std::nullopt;
-    c.kind = "";  // 用户新建列默认普通列（迁移 v4 只回填种子列）
+    c.kind = "";  // 用户新建列默认普通列
     return core::Result<Column>::ok(std::move(c));
 }
 
 core::Result<void> TodoService::renameColumn(int64_t id, const std::string& title) {
     // 持锁覆盖 UPDATE + changes() 取数，避免并发语句插队导致计数失真
-    //（照先例 core::pruneCallLogs；recursive_mutex，Statement 内部加锁可重入）
+    //（recursive_mutex，Statement 内部加锁可重入）
     std::lock_guard<std::recursive_mutex> lock(db_.mutex());
 
     auto prep = db_.prepare("UPDATE todo_columns SET title = ? WHERE id = ?");
@@ -320,7 +302,6 @@ core::Result<void> TodoService::renameColumn(int64_t id, const std::string& titl
         return core::Result<void>::fail(stepResult.errorCode(), stepResult.errorMessage());
     }
     // 头文件承诺「id 不存在 → NotFound」：UPDATE 影响 0 行即目标行不存在
-    //（旧实现只发 UPDATE 就 return ok()，注释提到的 changes() 从未调用）。
     if (sqlite3_changes(db_.handle()) == 0) {
         return core::Result<void>::fail(core::ErrorCode::NotFound, "column not found");
     }
@@ -363,12 +344,9 @@ core::Result<void> TodoService::deleteColumn(int64_t id) {
 
 core::Result<void> TodoService::reorderColumns(const std::vector<int64_t>& ids) {
     auto txResult = db_.transaction([&]() -> core::Result<void> {
-        // 按 ids 顺序重新设置 position = 0, 1, 2, ...
-        // 建表时 position 无唯一约束（schema 里 todo_columns 既无 UNIQUE
-        // 列也无 (position) 唯一索引），逐行覆盖即可，无需负位段过渡。
-        // 边界：ids 必须是全部列的一次排列——同列内出现重复 id 时后写者胜；
-        // 唯一调用点 doShiftColumn 按 columns_ 顺序传全集，非全集不可达。
-        // 每次重新 prepare（sqlite3 不允许同一 stmt 多次 step）
+        // 按 ids 顺序重设 position = 0,1,2...。position 无唯一约束，逐行覆盖即可，
+        // 无需负位段过渡。边界：ids 必须是全部列的一次排列（唯一调用点 doShiftColumn
+        // 传全集）。每次重新 prepare（sqlite3 不允许同一 stmt 多次 step）
         for (size_t i = 0; i < ids.size(); ++i) {
             auto onePrep = db_.prepare("UPDATE todo_columns SET position = ? WHERE id = ?");
             if (onePrep.isFail()) {
@@ -386,8 +364,6 @@ core::Result<void> TodoService::reorderColumns(const std::vector<int64_t>& ids) 
     });
     return txResult;
 }
-
-// ============ 任务操作 ============
 
 core::Result<std::vector<Task>> TodoService::listTasks(int64_t columnId) {
     auto prep = db_.prepare(
@@ -449,9 +425,8 @@ core::Result<Task> TodoService::createTask(int64_t columnId, const std::string& 
     int pos = nextPosResult.value();
     const int64_t now = nowEpochSeconds();
 
-    // 同 createColumn：INSERT ... RETURNING id 取代「事务内 INSERT +
-    // COMMIT 后 SELECT last_insert_rowid()」（审计 2026-09-23 [7] 残留），
-    // 消除并发写者穿插改写连接级 rowid 的竞态。
+    // 同 createColumn：INSERT ... RETURNING id 取代「事务内 INSERT + COMMIT 后
+    // SELECT last_insert_rowid()」，消除并发写者改写连接级 rowid 的竞态。
     auto prep = db_.prepare(
         "INSERT INTO todo_tasks "
         "(column_id, title, description, priority, due_at, tags, position, completed_at, created_at, updated_at) "
@@ -493,7 +468,7 @@ core::Result<Task> TodoService::createTask(int64_t columnId, const std::string& 
         return core::Result<Task>::fail(idVal.errorCode(), idVal.errorMessage());
     }
 
-    // 同 createColumn：drain 到 DONE 关闭 in-progress 窗口（RETURNING-drain 复查 B）
+    // 同 createColumn：drain 到 DONE 关闭 in-progress 窗口
     auto drain = stmt.step();
     if (drain.isFail()) {
         LOG_WARN("Todo: INSERT ... RETURNING 收尾 step 失败（行已写入，继续）: " +
@@ -515,8 +490,8 @@ core::Result<void> TodoService::updateTask(const Task& task) {
 
     std::string tagsJson = serializeTags(task.tags);
 
-    // 只更新内容字段：column_id / position 不在此处——改列 / 改序一律走
-    // moveTask（避免 updateTask 被误用时静默把任务挪列或顶到列首）。
+    // 只更新内容字段：column_id / position 不在此处——改列/改序一律走 moveTask
+    //（避免 updateTask 被误用时静默挪列或顶到列首）。
     auto prep = db_.prepare(
         "UPDATE todo_tasks SET "
         "title = ?, description = ?, priority = ?, "
@@ -569,7 +544,6 @@ core::Result<void> TodoService::deleteTask(int64_t id) {
 
 core::Result<void> TodoService::moveTask(int64_t taskId, int64_t toColumnId, int newPosition) {
     auto txResult = db_.transaction([&]() -> core::Result<void> {
-        // 1. 取 task 当前的 column_id 和 position
         auto prep1 = db_.prepare("SELECT column_id, position FROM todo_tasks WHERE id = ?");
         if (prep1.isFail()) {
             return core::Result<void>::fail(prep1.errorCode(), prep1.errorMessage());
@@ -586,7 +560,7 @@ core::Result<void> TodoService::moveTask(int64_t taskId, int64_t toColumnId, int
         int64_t fromColumnId = rows1.value()[0].getInt64("column_id").valueOr(0);
         int oldPos = static_cast<int>(rows1.value()[0].getInt64("position").valueOr(0));
 
-        // 2. 把 task 暂时挪到目标列 + position = -1（避免后续 update 冲突）
+        // 暂挪到目标列 + position = -1（避免后续 update 冲突）
         auto prep2 = db_.prepare(
             "UPDATE todo_tasks SET column_id = ?, position = -1 WHERE id = ?");
         if (prep2.isFail()) {
@@ -600,7 +574,7 @@ core::Result<void> TodoService::moveTask(int64_t taskId, int64_t toColumnId, int
             return core::Result<void>::fail(step2.errorCode(), step2.errorMessage());
         }
 
-        // 3. 老列里 position > oldPos 的任务下移 1 位（T 已在新列，不影响）
+        // 老列 position > oldPos 的下移 1 位（T 已在新列，不影响）
         if (fromColumnId != toColumnId) {
             auto prep3 = db_.prepare(
                 "UPDATE todo_tasks SET position = position - 1 "
@@ -617,7 +591,7 @@ core::Result<void> TodoService::moveTask(int64_t taskId, int64_t toColumnId, int
             }
         }
 
-        // 4. 新列里 position >= newPos 的任务上移 1 位（排除 T at -1）
+        // 新列 position >= newPos 的上移 1 位（排除 T at -1）
         auto prep4 = db_.prepare(
             "UPDATE todo_tasks SET position = position + 1 "
             "WHERE column_id = ? AND position >= ? AND id != ?");
@@ -633,7 +607,6 @@ core::Result<void> TodoService::moveTask(int64_t taskId, int64_t toColumnId, int
             return core::Result<void>::fail(step4.errorCode(), step4.errorMessage());
         }
 
-        // 5. 把 T 设为 newPosition
         auto prep5 = db_.prepare("UPDATE todo_tasks SET position = ? WHERE id = ?");
         if (prep5.isFail()) {
             return core::Result<void>::fail(prep5.errorCode(), prep5.errorMessage());
@@ -646,7 +619,6 @@ core::Result<void> TodoService::moveTask(int64_t taskId, int64_t toColumnId, int
             return core::Result<void>::fail(step5.errorCode(), step5.errorMessage());
         }
 
-        // 6. updated_at 刷新
         const int64_t now = nowEpochSeconds();
         auto prep6 = db_.prepare("UPDATE todo_tasks SET updated_at = ? WHERE id = ?");
         if (prep6.isFail()) {
@@ -744,7 +716,7 @@ core::Result<std::vector<Task>> TodoService::listOverdue() {
     const int64_t now = nowEpochSeconds();
 
     // 逾期谓词单源：core/overdue.h 的 kWhereSql（与首页 HomeService::getStats
-    // 共用同一份片段，THS-04——列名/口径改一处两边同步生效）
+    // 共用同一份片段，列名/口径改一处两边同步生效）
     const std::string sql =
         std::string(
             "SELECT id, column_id, title, description, priority, due_at, tags, position, completed_at "

@@ -1,5 +1,5 @@
 // src/platform/utf8.cpp
-// UTF-8 良构校验与清洗实现（判定口径与用途见 utf8.h 头注）。
+// UTF-8 良构校验与清洗实现（口径与用途见 utf8.h 头注）。
 #include "utf8.h"
 
 #include <cstdint>
@@ -9,12 +9,9 @@ namespace {
 
 constexpr char kReplacement[] = "\xEF\xBF\xBD";   // U+FFFD 的 UTF-8 编码
 
-// 位置 i 处一个良构 UTF-8 序列的字节长度（1..4）；非法 / 截断 → 0。
-// 逐条判据（RFC 3629）：
-//   前导字节  ASCII 0x00-0x7F / C2-DF（2 字节）/ E0-EF（3 字节）/ F0-F4（4 字节）
-//             其余（80-BF 孤立续字节、C0/C1 overlong 前导、F5-FF）一律非法
-//   续字节    必须 10xxxxxx
-//   码点       ≥ 该长度的最小编码值（拒 overlong）、≤ U+10FFFF、且不在代理区
+// 位置 i 处一个良构 UTF-8 序列的字节长度（1..4）；非法/截断 → 0。逐条判据（RFC 3629）：前导字节
+// ASCII / C2-DF / E0-EF / F0-F4，其余（孤立续字节、C0/C1 overlong 前导、F5-FF）非法；续字节必须
+// 10xxxxxx；码点 ≥ 该长度最小编码值、≤ U+10FFFF、不在代理区。
 size_t seqLenAt(std::string_view s, size_t i) {
     const size_t n = s.size();
     const unsigned char b0 = static_cast<unsigned char>(s[i]);
@@ -66,8 +63,8 @@ std::string sanitize(std::string_view text) {
     while (i < n) {
         const size_t len = seqLenAt(text, i);
         if (len == 0) {
-            // 非法序列逐字节换成 U+FFFD（不做「最大子部分」合并——替换字符的
-            // 个数不承载语义，重要的是输出恒良构且可读部分逐字保真）
+            // 非法序列逐字节换成 U+FFFD（不做「最大子部分」合并——替换字符的个数不承载语义，
+            // 重要的是输出恒良构且可读部分逐字保真）
             out += kReplacement;
             ++i;
         } else {

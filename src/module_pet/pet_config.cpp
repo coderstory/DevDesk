@@ -1,9 +1,5 @@
 // src/module_pet/pet_config.cpp
-// pet_config 的 app_config 表存取（接口见 pet_config.h）
-//
-// 迁移前这里读写 petsDir()/pet_config.json；2026-10-03（批次 E2）起整份存
-// app_config 表的一行（键 pet_config），**不读旧文件、不迁移**（项目口径：
-// 无兼容包袱，core/schema.h 抬高「不升级旧库」）。
+// pet_config 的 app_config 表存取；整份存一行（键 pet_config），不读旧文件、不迁移。
 #include "module_pet/pet_config.h"
 
 #include <utility>
@@ -25,10 +21,8 @@ PetConfigStore::PetConfigStore(core::data::SqliteDb* db) : db_(db) {}
 
 PetConfig PetConfigStore::sanitized(const PetConfig& cfg) {
     PetConfig out = cfg;
-    // 皮肤名只许 [A-Za-z0-9_-]（要拼进文件系统路径，防穿越）；
-    // -1「未设置」哨兵单边独立生效；M2 多显示器：其他负值是左/上副屏的合法
-    // 坐标原样保留（旧 x<-1→-1 收敛把副屏位置吞成未设置，重启跳回主屏）；
-    // 正负都钳进 int16 量级防脏值
+    // 皮肤名只许 [A-Za-z0-9_-]（要拼进文件系统路径，防穿越）；-1 哨兵单边独立生效，
+    // 其他负值是左/上副屏的合法坐标原样保留；正负都钳进 int16 量级防脏值。
     if (out.skinName.empty() ||
         out.skinName.find_first_not_of(
             "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_") !=
@@ -53,8 +47,7 @@ core::Result<PetConfig> PetConfigStore::loadChecked() const {
     }
     auto raw = core::appconfig::get(*db_, kPetConfigKey);
     if (raw.isFail()) {
-        // 键不存在 = 首次启动（正常路径，静默用默认）；表不存在 / SQL 失败 =
-        // 真故障，必须报出来而不是与「没配过」混同
+        // 键不存在 = 首次启动（静默用默认）；表不存在/SQL 失败 = 真故障，必须报出来。
         if (raw.errorCode() == core::ErrorCode::NotFound) {
             return core::Result<PetConfig>::ok(cfg);
         }
@@ -82,18 +75,15 @@ core::Result<PetConfig> PetConfigStore::loadChecked() const {
         cfg.y = static_cast<int>(obj.get(kKeyY).asInt());
     }
     if (obj.has(kKeyScale) && obj.get(kKeyScale).isNumber()) {
-        // 数字双分支读取（与 todo_view_state.cpp 同款先例）：两种落盘形态都要
-        // 认——序列化器可能把整值写成 "2.0" 走 Double 分支，也可能存成 "2" 走
-        // Int 分支，只读 asDouble() 恒返 0，会先读成 0 再被 sanitize 收敛默认
-        // 档。故 asDouble 为 0 时回退 asInt
+        // 数字双分支读取：序列化器可能把整值写成 "2.0"（Double）或 "2"（Int），只读 asDouble()
+        // 恒返 0，会先读成 0 再被 sanitize 收敛默认档，故 asDouble 为 0 时回退 asInt。
         const platform::json::JsonValue v = obj.get(kKeyScale);
         cfg.scale = v.asDouble() != 0.0 ? v.asDouble()
                                         : static_cast<double>(v.asInt());
     } else if (obj.has(kKeyScale)) {
         LOG_WARN("Pet: 配置 scale 键非法（非数字），回落默认 1.0");
     }
-    // 白名单外值（0.9 / 2.0）回落默认档前出声（审计 F6）：scale 直接决定用户
-    // 可见档位，与 x/y 的静默钳制不同口径，收敛必须留日志可查
+    // 白名单外值回落默认档前出声（scale 直接决定用户可见档位，收敛必须留日志）。
     if (sanitizePetScale(cfg.scale) != cfg.scale) {
         LOG_WARN("Pet: 配置 scale=" + std::to_string(cfg.scale) +
                  " 不在三档白名单（0.75/1.0/1.5），回落默认 1.0");

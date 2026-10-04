@@ -1,5 +1,5 @@
 // src/platform/http_server.h
-// 基于 cpp-httplib 的本地 HTTP 服务器（详见 spec §7.2）
+// 基于 cpp-httplib 的本地 HTTP 服务器。
 #pragma once
 
 #include <cstddef>
@@ -10,8 +10,7 @@
 
 namespace platform::http {
 
-// 请求体大小上限（spec §10.4：>10MB 拒绝，防 OOM/DoS）。
-// 在 Server 层单点收口（cpp-httplib payload_max_length），超出直接回 413。
+// 请求体大小上限：>10MB 拒绝（防 OOM/DoS），Server 层单点收口（cpp-httplib payload_max_length），超出回 413。
 inline constexpr size_t kMaxBodyBytes = 10u * 1024u * 1024u;
 
 struct RequestCtx {
@@ -29,20 +28,13 @@ public:
     void setStatus(int code);
     void setHeader(const std::string& key, const std::string& value);
     void write(const std::string& data);
-    // 空操作（CP-10）：响应在 handler 返回时统一提交，end() 无状态可置。
-    // 保留签名是为 20+ 既有调用点（属调用协议的一部分）。
+    // 空操作：响应在 handler 返回时统一提交，end() 无状态可置；保留签名是既有调用协议。
     void end();
 
-    // ---- 流式 API（spec §10.4）----
-    // 与 write()/end() 互斥：调用 setChunkProvider 后走 chunked 传输编码。
-    //
-    // provider 会被 cpp-httplib 反复调用（每轮写一块）：
-    //   - writeChunk(data, len) 写一块；返回 false 表示客户端已断开
-    //   - isWritable()          查询客户端连接是否仍然可写
-    //   - 返回 true  → 继续调用（还有数据）
-    //   - 返回 false → 结束响应
-    //
-    // releaser 在响应彻底结束时调用一次（含客户端断开），用于 cancel 上游。
+    // 流式 API：与 write()/end() 互斥，调用后走 chunked 传输编码。
+    // provider 被 cpp-httplib 反复调用（每轮写一块）：writeChunk(data,len) 写一块、返回 false = 客户端
+    // 已断；isWritable() 查询连接是否可写；provider 返回 true 继续、false 结束响应。releaser 在响应彻底
+    // 结束时（含客户端断开）调用一次，用于 cancel 上游。
     using ChunkWriter = std::function<bool(const char* data, size_t len)>;
     using IsWritableFn = std::function<bool()>;
     using ChunkProvider = std::function<bool(ChunkWriter writeChunk, IsWritableFn isWritable)>;

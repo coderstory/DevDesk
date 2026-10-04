@@ -1,48 +1,11 @@
 // src/module_agent/agent_module.cpp
-// 智能体页模块实现（agent M1 Task 12）。Task 11 装配面（图标码点 / 工厂
-// 签名）保持不变；本文件填实生命周期与最小 UI。
-//
-// 图标码点 U+F544（fa-robot）：已核对存在于 EUI-NEO 内置
-// assets/Font Awesome 7 Free-Solid-900.otf 的 cmap（Task 11 离线解析）；
-// eui::utf8(0xF544) 的 UTF-8 字节为 \xEF\x95\x84，与 app_registry.h
-// 图标列同值（assembly_registry_matches_module_getters 锁一致性）。
-//
-// 元素 id 契约表（plan task-12/10/11-brief + 2026-10-02 批次 A 骨架重做，UI 测试逐字钉）：
-//   页面    agent.page / agent.page.header / agent.title / agent.page.newTask
-//           （「+ 新建任务」按钮，唯一新建入口）/ agent.page.error（页级失败：
-//           编辑读库失败 / 启停失败，有错才渲染，下一次成功动作清）/
-//   agent.tools（可用工具区块容器）/ agent.tools.header（点开/收起）/
-//     agent.tools.header.label / agent.tools.header.hint /
-//     agent.tools.scroll / agent.tools.card.<k>（.bg / .name / .desc / .params）
-//   agent.tasklist（任务列表 scrollView；.content 是它的内容列，卡多出
-//     .scroll 滚动条）/ agent.task.<taskId>（行 44 高）/
-//     .title / .status / .detail（开详情弹窗）/ .edit（开任务弹窗的编辑态）/
-//     .toggle（text=="禁用"/"启用"，按 enabled）/ .enqueue（仅 trigger_type==
-//     "resident"）/ .run（text=="启动"；点它 = 起 run + 立即开详情弹窗）
-//   任务弹窗 agent.dialog.task（DialogFrame + drawDialogFrame；编辑 / 新建共用，
-//     taskDialogOpen_ 控开合，editingTaskId_ 非空 = 编辑态）：
-//     .title / .close（✕）/ .goal.caption / .goal（多行输入）/ .trigger.caption /
-//     .trigger（下拉：手动/定时/常驻）/ .cron.caption / .cron（仅定时才渲染）/
-//     .slot.caption / .slot（下拉）/ .iter.caption / .iter / .destructive（开关）/
-//     .error（有错才渲染）/ .cancel / .save
-//   详情弹窗 agent.dialog.detail（detailTaskId_ 非空才渲染内容）：
-//     .title / .close（✕）/ .info（配置摘要，与编辑弹窗同源 getTask）/
-//     .runlist（最近 5 次，倒序，选中/最近一次高亮）/.runlist.<i>[.err] /
-//     .msgs.title / .msgscroll（scrollView）/ .empty（选中 run 无消息）/
-//     .msg.<i>（消息容器，列）/.msg.<i>.head / .msg.<i>.badge（角色徽章：
-//     用户/助手/工具）/ .msg.<i>.toggle（展开/收起 chip）/ .msg.<i>.copy
-//     （复制 chip，展开才在）/ .msg.<i>.preview（收起态 120 字节预览）/
-//     .msg.<i>.blk.<j>（内容块，tool_use=🔧 chip 行 / tool_result=标签行）/
-//     .msg.<i>.blk.<j>.out（tool_result 输出全文，wrap 多行）
-//   弹窗关闭态不建内容节点（存在性即开关状态，测试据此判开合）。
-//
-// 可点元素（task 弹窗的按钮 / 行内动作 chip / ✕）用 actionChip 或 components::
-// button：契约要求 id 元素本身同时带 text 与 onClick，而 components::button 的
-// onClick 落在 <id>.bg 上，故行动作 chip 手搓「<id> 文本元素 + <id>.bg 底」两层
-//（观感取自同一组 button token）。
-// 弹窗内的字段标签一律 .caption 后缀——components::dropdown 内部占用 <id>.label
-//（字段显示名），宿主标签若同 id 会串位（2026-10-02 实测的 UI 缺陷）。
-// 注意 agent.tools.header.label 不受此约束：header 不是 dropdown，无内部 .label。
+// 智能体页模块：生命周期 + UI（工具区 / 任务列表 / 任务弹窗 / 详情弹窗）。
+// 弹窗关闭态不建内容节点（存在性即开关状态，测试据此判开合）。
+// 可点元素契约：id 元素本身须同时带 text 与 onClick；components::button 的 onClick
+// 落在 <id>.bg 上 → 行动作 chip 手搓「文本元素 + .bg 底」两层。
+// 弹窗字段标签一律 .caption：components::dropdown 内部占用 <id>.label，同 id 会串位
+//（agent.tools.header.label 例外，header 非 dropdown）。
+
 #include "agent_module.h"
 
 #include <algorithm>
@@ -81,11 +44,8 @@ bool hasLiveRun(const std::map<int64_t, AgentRunRow>& latestRuns,
     for (const auto& [taskId, run] : latestRuns) {
         (void)taskId;
         if (run.status != "running") continue;
-        // 孤儿 = 收尾写库失败，那行永远停在 running 却没有任何活线程在跑；
-        // 算进去 uiPolling_ 就永不复位（见 agent_module.h 本函数的说明）。
-        // ⚠️ 比对的是 **run.id（runId）**而不是 map 的键——键是 taskId
-        //（latestRuns_ 是「taskId → 最近一次 run」），而 FinishFailureFn 回报的是
-        // runId。写成用键比对会永远查不中，等于没排除。
+        // 孤儿 = 收尾写库失败，DB 行永停 running 但无活线程；算进去 uiPolling_ 永不复位。
+        // 比对 run.id（非 map 键 taskId）——FinishFailureFn 回报的是 runId
         if (orphanedRunIds.count(run.id) != 0) continue;
         return true;
     }
@@ -94,9 +54,7 @@ bool hasLiveRun(const std::map<int64_t, AgentRunRow>& latestRuns,
 
 namespace {
 
-// run 状态 → 中文展示（契约：完成态含「成功/失败/已取消」；无 run / 未知态
-// 显示「—」）。状态字串来自 AgentStore.listRuns（running/completed/failed/
-// limited/cancelled），此处不做兜底映射以外的解读
+// run 状态 → 中文展示；未知态显示「—」（字串源：AgentStore.listRuns）
 std::string runStatusText(const std::string& status) {
     if (status == "completed") return "成功";
     if (status == "failed") return "失败";
@@ -106,9 +64,7 @@ std::string runStatusText(const std::string& status) {
     return "—";
 }
 
-// run 列表行文案（Task 11 契约）：状态中文化 / 耗时（endedAt-startedAt 秒）/
-// 迭代 N / token 合计（input+output；两者皆空显示「—」）。
-// 分隔符用「 · 」——测试按数值子串钉（如 "205000"），不加千分位
+// run 行文案：耗时秒 / 迭代 / token 合计（皆空显示「—」）；token 不加千分位
 std::string runRowText(const AgentRunRow& run) {
     std::string s = runStatusText(run.status);
     if (run.endedAt) {
@@ -126,13 +82,8 @@ std::string runRowText(const AgentRunRow& run) {
     return s;
 }
 
-// 行内动作 chip（2026-10-02 用户反馈「编辑/禁用是纯文本、启动却是按钮」）：观感与
-// components::button 同源（同一组 token：底色/悬停/按下/描边/圆角/高度），但
-// **契约 id 必须落在可见文本元素上**（契约要求 id 元素同时带 text 与 onClick），
-// 而 components::button 把 onClick 挂在 <id>.bg 上。故手搓成与 button 同构的两层：
-//   <id>.bg   —— 底 + 悬停/按下态 + onClick（真实命中面）
-//   <id>      —— 文本元素，带 id/text/onClick；hitTestMode=None 让指针穿透到 bg
-//                （悬停态才一致），测试直调其 onClick 亦有效
+// 行内动作 chip：契约要求 id 落在可见文本元素上，故手搓两层——<id>.bg（底+态+
+// onClick 真实命中面）与 <id>（文本元素 hitTestMode=None 穿透到 bg，测试直调 onClick）
 void actionChip(::eui::Ui& ui, const std::string& id, const std::string& label,
                 float width, bool primary, bool enabled,
                 const components::theme::ThemeColorTokens& tokens,
@@ -168,10 +119,7 @@ void actionChip(::eui::Ui& ui, const std::string& id, const std::string& label,
         .build();
 }
 
-// 弹窗字段标签：统一 12px + 显式垂直居中（2026-10-02 用户反馈「文本没垂直居中」
-// ——光靠 lineHeight 撑高不会居中）+ 显式定位（弹窗内容在 stack 里，不定位的
-// 子元素会堆在 (0,0)）。id 一律用 .caption：components::dropdown 内部有
-// <id>.label（字段显示名），宿主标签若同 id 会与之撞车串位
+// 弹窗字段标签：显式垂直居中（光靠 lineHeight 不居中）+ 显式定位；id 用 .caption 避开 dropdown 的 .label
 void fieldCaption(::eui::Ui& ui, const std::string& id, const std::string& text,
                   float x, float y, float width, float height,
                   const ::core::Color& color) {
@@ -186,18 +134,12 @@ void fieldCaption(::eui::Ui& ui, const std::string& id, const std::string& text,
         .build();
 }
 
-// 消息收起态预览：解码后纯文本前 120 字节（UTF-8 边界回退 + 省略号）。
-// 2026-10-02 改造：role 前缀挪进独立徽章（.badge），预览只承担文本；
-// 解码/截断统一走 message_blocks（单一解码点，兼容旧纯文本行）
+// 消息收起态预览：解码纯文本前 120 字节（解码/截断统一走 message_blocks）
 std::string messagePreview(const AgentMessageRow& m) {
     return messagePreviewFromJson(m.contentJson, 120);
 }
 
-// 任务名派生：M1 表单只有 goal 一个输入，任务名取 goal 前 24 字节
-//（UTF-8 边界回退）。goal 非空（调用方保证）故派生结果恒非空
-// 任务名派生：M1 表单只有 goal 一个输入，任务名取 goal 前 24 字节
-//（UTF-8 边界边界回退）。goal 非空（调用方保证）故派生结果恒非空。
-// 2026-10-02 goal 改多行输入：换行压成空格，任务名恒单行
+// 任务名派生：goal 前 24 字节（UTF-8 边界回退）、换行压空格恒单行；goal 非空故结果非空
 std::string deriveTaskName(const std::string& goal) {
     constexpr size_t kMaxNameBytes = 24;
     std::string flat;
@@ -213,10 +155,8 @@ std::string deriveTaskName(const std::string& goal) {
     return flat.substr(0, cut) + "…";
 }
 
-// 模型槽位下拉的键集与显示名（Task 10：真源 = src/model_slots.h 的 X 宏表）。
-// 「一份真源、零漂移」：新增槽位只改 model_slots.h，本模块与 provider_config
-// 各自展开同一张表。键集进库（agent_tasks.model_slot），显示名只上屏
-//（末参 supportsOneM 本模块不消费，形参占位——表行契约见 model_slots.h）
+// 模型槽位键集与显示名：真源 = src/model_slots.h 的 X 宏表，新增槽位只改那里；
+// 键集进库（agent_tasks.model_slot），显示名只上屏
 #define DEVDESK_MODEL_SLOT_KEY(name, jsonKey, label, formLabel, envKey, nameKey, oneM) jsonKey,
 constexpr const char* kModelSlotKeys[] = {DEVDESK_MODEL_SLOT_LIST(DEVDESK_MODEL_SLOT_KEY)};
 #undef DEVDESK_MODEL_SLOT_KEY
@@ -227,44 +167,35 @@ constexpr const char* kModelSlotLabels[] = {
 constexpr int kModelSlotCount = static_cast<int>(
     sizeof(kModelSlotKeys) / sizeof(kModelSlotKeys[0]));
 
-// 触发类型（agent_tasks.trigger_type）三档：下拉顺序 = 下标即本表下标
+// 触发类型三档（agent_tasks.trigger_type）；下拉下标 = 本表下标
 constexpr const char* kTriggerKeys[] = {"manual", "schedule", "resident"};
 constexpr const char* kTriggerLabels[] = {"手动", "定时", "常驻"};
 constexpr int kTriggerCount = 3;
 constexpr int kTriggerScheduleIdx = 1;
 
-// 页面骨架几何（2026-10-02 批次 A1）：标题行高 / 「+ 新建任务」按钮宽 /
-// 任务行固定高（scrollView 的 step 与它同源）
 constexpr float kPageHeaderH = 40.0f;
 constexpr float kNewTaskBtnW = 140.0f;
 constexpr float kTaskRowH = 44.0f;
-// 页内错误行高（agent.page.error；进页面 column 的子项预算）
+// 页内错误行高（agent.page.error，进页面 column 子项预算）
 constexpr float kPageErrorH = 16.0f;
 
-// 任务弹窗（A2）几何：目标输入高（多行 96 ≈ 4 行视口）+ 行高 / 标签宽 /
-// 字段间距 / 弹窗高。纵向排布（h = kTaskDialogH = 400）：
-//   标题 24..52 → 目标行 64..160 → 触发行 172..212 → 元信息行 224..264
-//   → 错误行 276..294 → 按钮行 h-60..h-20 = 340..380（底边距 20）
-// 触发 / cron 同行：cron 只在 触发方式==定时 时渲染，弹窗高度不变
+// 任务弹窗几何（cron 与触发同行、仅「定时」渲染、弹窗高度不变）
 constexpr float kDialogRowH = 40.0f;
 constexpr float kDialogLabelW = 72.0f;
 constexpr float kDialogGap = 12.0f;
 constexpr float kTaskDialogH = 400.0f;
 constexpr float kGoalInputH = 96.0f;
 
-// 详情弹窗（A3）几何：内容高 660（窄屏由 dialog 组件按视口钳制）
+// 详情弹窗内容高 660（窄屏由 dialog 组件按视口钳制）
 constexpr float kDetailDialogH = 660.0f;
 
-// run 列表长度上限（契约表：最近 5 次）
+// run 列表长度上限（契约：最近 5 次）
 constexpr int kRunListLimit = 5;
 
-// ---- run 日志消息区（2026-10-02 改造）----
-// 消息滚动区外高钳制：min ~5 行，max 520（≈26 行）——超出的真实内容高由
-// scrollView 内滚（EUI-NEO 内部滚动容器），外高不再往上加
+// run 日志消息区外高钳制在 [kMsgAreaMinH, kMsgAreaMaxH]，超出由 scrollView 内滚
 constexpr float kMsgAreaMinH = 96.0f;
 constexpr float kMsgAreaMaxH = 520.0f;
 
-// 可用工具区块：头部行高 / 工具卡高 / 滚动区最大高（卡多了内滚）
 constexpr float kToolsHeaderH = 28.0f;
 constexpr float kToolCardH = 44.0f;
 constexpr float kToolsListMaxH = 240.0f;
@@ -283,8 +214,7 @@ int slotIndexOf(const std::string& slotKey) {
     return 0;
 }
 
-// 迭代上限输入框的容错解析：非数字字符忽略（正在输入的中间态），>1000 截断防溢出；
-// 无数字 → 0（保存时再 clamp 进 [1,50]，与 AgentLoop 的硬上限一致）
+// 迭代上限容错解析：非数字忽略（输入中间态）、>1000 截断防溢出、无数字 → 0（保存时 clamp）
 int parseIterInput(const std::string& text) {
     int value = 0;
     bool any = false;
@@ -297,10 +227,7 @@ int parseIterInput(const std::string& text) {
     return any ? value : 0;
 }
 
-// trigger_config 里的 cron 原文（只读展示用）。解析走 trigger_config.h 的唯一
-// 解码点（ARCH-02）；失败 → 表单显示空串（用户可重填），但**必须留痕**：
-// manual 任务的空 trigger_config 是正常态（不刷警告），schedule 任务的坏配置
-// 若无声吞掉，UI 上就是「任务存在、永不触发、没有任何提示」
+// trigger_config 的 cron 原文（只读展示）；解析失败显示空串，但非空配置必须留痕
 std::string cronTextOf(const AgentTaskRow& task) {
     auto cfg = decodeTriggerConfig(task.triggerConfig);
     if (cfg.isOk()) return cfg.value().cron;
@@ -312,7 +239,6 @@ std::string cronTextOf(const AgentTaskRow& task) {
     return {};
 }
 
-// 简易 trim（空格 / \t \r \n）
 std::string trimCopy(const std::string& s) {
     const auto isSpace = [](unsigned char c) {
         return c == ' ' || c == '\t' || c == '\r' || c == '\n';
@@ -328,10 +254,8 @@ std::string trimCopy(const std::string& s) {
 AgentModule::AgentModule(Deps d) : deps_(d) {}
 
 AgentModule::~AgentModule() {
-    // 兜底：正常路径 onStop 已清空 runs_，此处遍历为空集 no-op。
-    // 只收线程，不注销工具（注册表生命周期独立于本模块；unregisterTool
-    // 按名幂等，但工具对象可能正被 run 线程的 shared_ptr keep-alive 持有，
-    // 析构期不碰它）
+    // 兜底：正常路径 onStop 已清空 runs_，此处多为 no-op。只收线程不注销工具
+    //（工具对象可能仍被 run 线程的 shared_ptr 持有）
     for (auto& r : runs_) {
         r->cancel = true;
     }
@@ -341,12 +265,10 @@ AgentModule::~AgentModule() {
 }
 
 void AgentModule::onStart() {
-    // 重入幂等（活门控 Task 4）：已启动的 onStart = no-op。双 onStart 会重建
-    // store_/llm_/loop_/statsTool_ 并重跑 sweepStaleRuns——statsTool_ 重复注册
-    // 撞同名旧指针 fail 被日志吞，清扫还会误伤重入期间新出现的 running run
+    // 重入幂等：已启动则 no-op。双 onStart 会重建服务、重复注册工具，
+    // 清扫还会误伤重入期间新出现的 running run
     if (started_) return;
     started_ = true;
-    // deps 优先，缺省回退既有装配渠道（照 todo 的 appDatabase 模式）
     core::data::SqliteDb* db = deps_.db ? deps_.db : ::core::appDatabase();
     if (db == nullptr) {
         LOG_WARN("Agent: 数据库尚未注册，跳过服务装配");
@@ -354,19 +276,17 @@ void AgentModule::onStart() {
     }
     store_ = std::make_unique<AgentStore>(*db);
 
-    // 上次会话悬挂的 running run 清成 failed（应用异常退出恢复口径，spec §5.2）
+    // 上次会话悬挂的 running run 清成 failed（异常退出恢复口径）
     auto swept = store_->sweepStaleRuns();
     if (swept.isFail()) {
         LOG_WARN("Agent: 悬挂 run 清扫失败: " + swept.errorMessage());
     }
 
-    // LLM 通道装配（惰性单入口的预热调用，Task 6 Step 1b）：有服务 → 建
-    // llm_/loop_/scheduler_；无服务 → 只 WARN，store/工具照常装配，手动启动禁用。
-    // 同一个入口在首次使用时再被调用，故「启动时 claude 关、会话内拨开」无须
-    // off→on 本模块（claude-lazy-assembly 终审 finding，2026-10-01）
+    // LLM 通道装配预热：有服务 → 建 llm_/loop_/scheduler_；无服务 → 只 WARN，
+    // store/工具照常装配、手动启动禁用。首次使用时会再调本入口（见 ensureLlm）
     ensureLlm();
 
-    // 注册自带工具（name 冲突属装配 bug，无错误回传通道，日志留痕不中断）
+    // 注册自带工具（name 冲突属装配 bug，日志留痕不中断）
     statsTool_ = makeAppStatsTool(*db);
     auto reg = ::core::ToolRegistry::instance().registerTool(statsTool_);
     if (reg.isFail()) {
@@ -378,10 +298,8 @@ void AgentModule::onStart() {
 }
 
 void AgentModule::onStop() {
-    // 重入幂等（活门控 Task 4）：未启动的 off = no-op（设置页对未启用模块拨
-    // off 时 dispatchModuleToggle 仍会调 onStop）。teardown 顺序契约不动：
-    // 1) 全部置取消 → 2) 全部 join → 3) 清容器 → 4) 注销工具 → 5) 放服务。
-    // run 是同步循环，cancel 在下轮迭代检查点前退出（agent_loop.cpp while 顶）
+    // 重入幂等：未启动则 no-op。teardown 顺序：置取消 → join → 清容器 →
+    // 注销工具 → 放服务（工具注销须晚于所有 run 线程退出）
     if (!started_) return;
     {
         std::lock_guard<std::mutex> lock(runsMu_);
@@ -389,7 +307,7 @@ void AgentModule::onStop() {
             r->cancel = true;
         }
     }
-    // join 不持锁：run 线程不碰 runsMu_，持锁无死锁风险但会白堵并发访问者
+    // join 不持锁：run 线程不碰 runsMu_，持锁会白堵并发访问者
     for (auto& r : runs_) {
         if (r->thread.joinable()) r->thread.join();
     }
@@ -397,15 +315,11 @@ void AgentModule::onStop() {
         std::lock_guard<std::mutex> lock(runsMu_);
         runs_.clear();
     }
-    // Scheduler 收口（spec §3 步骤 3「停常驻 worker 线程」）：onStart 早退时
-    // scheduler_ 从未创建，必须判空；位置在「cancel 全部 + join 全部 + 清容器」
-    // 之后、unregisterTool 之前——工具注销必须晚于所有 run 线程退出（否则 run
-    // 线程里的工具执行摸到已注销的注册表）。stopAll 内部顺序：先停 tick/常驻
-    // 派发线程，再 cancel+join 在跑 run（先灭派发源，收尾窗口不再起新 run）。
+    // Scheduler 收口：onStart 早退时 scheduler_ 未创建，须判空。stopAll 先停
+    // tick/常驻派发线程，再 cancel+join 在跑 run（先灭派发源，收尾窗口不再起新 run）
     if (scheduler_) scheduler_->stopAll();
     ::core::ToolRegistry::instance().unregisterTool("app.stats");
-    // 释放序：loop_/llm_/store_ 先走也安全——stopAll 已 join 其全部线程，析构期
-    // 的兜底 stopAll（幂等）只 join + 摘表，不触 loop_/store_（brief Task 6）
+    // 释放序：loop_/llm_/store_ 先走也安全——stopAll 已 join 全部线程
     loop_.reset();
     llm_.reset();
     store_.reset();
@@ -431,11 +345,10 @@ void AgentModule::onStop() {
 }
 
 void AgentModule::onPageEnter() {
-    tasksDirty_ = true;   // 进页重查（照 Home 仪表盘进页刷新模式）
+    tasksDirty_ = true;
 }
 
-// 收割已结束的 run（线程收尾但未 join 的）：join 后摘除。保证「同 task 不
-// 并发」判定（spec §10）不被已完成的 run 误伤。仅主线程调用
+// 收割已结束的 run：join 后摘除，避免「同 task 不并发」判定被已完成 run 误伤。仅主线程调用
 void AgentModule::reapFinishedRuns() {
     std::lock_guard<std::mutex> lock(runsMu_);
     for (auto it = runs_.begin(); it != runs_.end();) {
@@ -448,12 +361,8 @@ void AgentModule::reapFinishedRuns() {
     }
 }
 
-// 惰性装配单入口（Task 6 Step 1b / 2026-10-01 claude-lazy-assembly 终审 finding）：
-// 代理服务从「onStart 一次性解析」改为「首次使用时解析」——启动 claude 关、
-// 会话内拨开 claude 后，已在运行的 agent 模块无须 off→on 即可用。
-// 幂等且单例：loop_ 非空即返回，故一个模块实例最多一个 LlmClient / AgentLoop /
-// Scheduler（不会起第二个 tick 线程）。scheduler_ 必须在本入口内与 loop_ 同建：
-// 早退路径下 onStart 从未创建它，不补建则惰性路径下 cron 永不触发。
+// 惰性装配单入口：代理服务首次使用时解析——启动时 claude 关、会话内拨开无须
+// off→on 本模块。幂等：loop_ 非空即返回；scheduler_ 须在此与 loop_ 同建（否则惰性路径下 cron 永不触发）
 void AgentModule::ensureLlm() {
     if (loop_ != nullptr) return;       // 已就绪（llm_/loop_/scheduler_ 三者同生共死）
     if (store_ == nullptr) return;      // 装配未完成（db 缺失的早退路径）
@@ -464,8 +373,7 @@ void AgentModule::ensureLlm() {
         if (located.isOk()) proxy = located.value();
     }
     if (proxy == nullptr) {
-        // 无服务：WARN 保留并补可操作提示；每段「无服务」只提示一次——本函数会
-        // 被页面帧调用，不节流会刷屏
+        // 每段「无服务」只提示一次——本函数被页面帧调用，不节流会刷屏
         if (!llmMissingWarned_) {
             llmMissingWarned_ = true;
             LOG_WARN("Agent: 代理服务未装配，LLM 通道不可用"
@@ -477,10 +385,8 @@ void AgentModule::ensureLlm() {
     loop_ = std::make_unique<AgentLoop>(*llm_, ::core::ToolRegistry::instance(),
                                         *store_, AgentLoop::NowMsFn{},
                                         [this](int64_t runId, std::string reason) {
-                                            // 收尾写库失败 → 那个 runId 的 DB 行永远停在
-                                            // running。记下来，refreshData 的 dbRunning
-                                            // 判定把它排除，否则 uiPolling_ 永不复位
-                                            // （每帧一次 refreshData 直到重启）。
+                                            // 收尾写库失败 → DB 行永停 running，
+                                            // 记为孤儿供判停排除（否则 uiPolling_ 永不复位）
                                             std::lock_guard<std::mutex> lock(runsMu_);
                                             orphanedRunIds_.insert(runId);
                                             LOG_ERROR("Agent: run " + std::to_string(runId) +
@@ -496,7 +402,7 @@ void AgentModule::ensureLlm() {
 }
 
 void AgentModule::startTask(int64_t taskId) {
-    ensureLlm();   // 首次使用路径：会话内拨开的代理服务在这里被解析
+    ensureLlm();   // 首次使用路径：会话内拨开的代理服务在此解析
     if (store_ == nullptr || loop_ == nullptr) {
         LOG_WARN("Agent: 服务未就绪（数据库 / LLM 通道），无法启动任务");
         return;
@@ -519,7 +425,6 @@ void AgentModule::startTask(int64_t taskId) {
         std::lock_guard<std::mutex> lock(runsMu_);
         for (const auto& r : runs_) {
             if (r->taskId == taskId) {
-                // 同 task 不并发（spec §10）：已在跑 → 忽略
                 LOG_INFO("Agent: 任务 " + std::to_string(taskId) +
                          " 已在运行，忽略本次启动");
                 return;
@@ -533,13 +438,10 @@ void AgentModule::startTask(int64_t taskId) {
     const AgentTaskRow taskRecord = *row;   // 值拷贝，线程不摸 tasks_
     try {
         raw->thread = std::thread([this, raw, task = taskRecord] {
-            // AgentLoop / store 的生命周期由 onStop 的 join 先于 reset 保证；
-            // Result 落库在 run 内完成（agent_loop.cpp 收尾段）
-            // store 行 → AgentTask 的唯一映射（taskFromRow）：run 线程里不留
-            // 第二份会漂移的手抄副本（scheduler / tests 同用它）
+            // 生命周期由 onStop 的 join 先于 reset 保证；落库在 run 内完成。
+            // taskFromRow = store 行 → AgentTask 的唯一映射，不留手抄副本
             const AgentTask t = taskFromRow(task);
-            // Result 落库在 run 内完成（agent_loop.cpp 收尾段）；run 的
-            // 返回值 = 起库失败（无处落状态）这类不可恢复错误——不能静默
+            // 返回值 = 起库失败这类不可恢复错误——不能静默
             auto started = loop_->run(t, raw->cancel);
             if (started.isFail()) {
                 LOG_ERROR("Agent: run 启动失败（task " +
@@ -549,8 +451,7 @@ void AgentModule::startTask(int64_t taskId) {
             raw->done.store(true);
         });
     } catch (const std::system_error& e) {
-        // 线程创建失败（资源耗尽）：摘除占位（线程未启动，无需 join），
-        // 状态列不打「运行中」
+        // 线程创建失败：摘除占位（线程未启动，无需 join），状态列不打「运行中」
         std::lock_guard<std::mutex> lock(runsMu_);
         for (auto it = runs_.begin(); it != runs_.end(); ++it) {
             if (it->get() == raw) {
@@ -561,29 +462,27 @@ void AgentModule::startTask(int64_t taskId) {
         LOG_ERROR(std::string("Agent: run 线程创建失败: ") + e.what());
         return;
     }
-    uiPolling_ = true;    // 状态列每帧跟进，直到全部 run 终止（refreshData 判停）
+    uiPolling_ = true;    // 状态列每帧跟进，直到全部 run 终止
     tasksDirty_ = true;
 }
 
-// 打开任务弹窗的新建态：editingTaskId_ 清空即「新建」语义，字段回默认值
-//（manual / default / 10 / false / 空 goal）——与编辑态共用同一张表单
+// 新建态：editingTaskId_ 清空即「新建」，字段回默认值；与编辑态共用同一张表单
 void AgentModule::openNewTaskDialog() {
     taskDialogOpen_ = true;
     pageError_.clear();   // 成功动作清掉上一次的页内错误
     editingTaskId_.reset();
     editGoal_.clear();
     editCron_.clear();
-    editSlot_ = kModelSlotKeys[0];   // "default"
+    editSlot_ = kModelSlotKeys[0];
     editIter_ = 10;
     editDestructive_ = false;
-    editTriggerIdx_ = 0;             // 手动
+    editTriggerIdx_ = 0;
     editError_.clear();
     editTriggerOpen_ = false;
     editSlotOpen_ = false;
 }
 
-// 关闭任务弹窗（取消 / ✕ / 遮罩 / Esc / 保存成功四条路径共用）：不落库、
-// 不碰任务列表，只退弹窗态与草稿
+// 关闭任务弹窗（多条路径共用）：不落库、不碰任务列表，只退弹窗态与草稿
 void AgentModule::closeTaskDialog() {
     taskDialogOpen_ = false;
     editingTaskId_.reset();
@@ -600,10 +499,7 @@ void AgentModule::setDialogIterDraft(int iter) {
     editIter_ = iter;
 }
 
-// 打开任务弹窗的编辑态：字段以库为准回填（tasks_ 缓存可能滞后于库，编辑入口
-// 直接 getTask——与详情弹窗的配置摘要同源同一份 AgentTaskRow）。
-// 读库失败（陈旧缓存：行已被外部删除）→ 页内错误行（agent.page.error）——
-// 2026-10-02 复审点名的静默路径：只 LOG 的话用户点「编辑」什么都不会发生
+// 编辑态：字段以库为准回填（tasks_ 可能滞后，故直接 getTask）；读库失败 → 页内错误行
 void AgentModule::openTaskEditor(int64_t taskId) {
     if (store_ == nullptr) return;
     auto row = store_->getTask(taskId);
@@ -627,10 +523,7 @@ void AgentModule::openTaskEditor(int64_t taskId) {
     editSlotOpen_ = false;
 }
 
-// 保存任务弹窗（新建 / 编辑同一路径）：trigger==定时 时先经 parseCron 校验，
-// 非法 → 弹窗内错误文案 + **不落库 + 弹窗不关**（用户就地改）；合法 → 编辑态
-// 走 updateTask（七列覆盖）、新建态走 createTask（含 trigger_config），成功
-// 即关弹窗 + 置脏重查。enabled 不在此路径（归行内启停）
+// 保存任务弹窗（新建/编辑同一路径）：定时先 parseCron 校验，非法 → 弹窗内报错不关窗
 void AgentModule::saveTaskDialog() {
     if (store_ == nullptr) {
         editError_ = "数据库未就绪";
@@ -650,10 +543,7 @@ void AgentModule::saveTaskDialog() {
             editError_ = "cron 表达式非法：" + expr.errorMessage();
             return;
         }
-        // ARCH-02（M2 静态审计）：编码唯一落点 = trigger_config.h。此前在这里
-        // 手拼 `{"cron":"<expr>"}`，靠「校验通过的表达式只含 [0-9 * , - / 空格]」
-        // 这条推理免转义——表达式字符集一变、或 trigger_config 加第二个键，
-        // 手拼点就得逐个想起来
+        // 编码唯一落点 = trigger_config.h；不手拼 JSON（字符集一变就得逐个改）
         auto encoded = encodeTriggerConfig(TriggerConfig{cron});
         if (encoded.isFail()) {
             editError_ = "保存失败：" + encoded.errorMessage();
@@ -673,7 +563,6 @@ void AgentModule::saveTaskDialog() {
             return;
         }
     } else {
-        // createTask 七参：尾参 triggerConfig 默认空串（manual/resident 不写载荷）
         auto created = store_->createTask(deriveTaskName(goal), goal, triggerType,
                                           editSlot_, iter, editDestructive_,
                                           triggerConfig);
@@ -687,8 +576,7 @@ void AgentModule::saveTaskDialog() {
     tasksDirty_ = true;
 }
 
-// 启用/禁用取反（与任务弹窗是两个独立动作：本路径不碰其它七列）。
-// 失败（陈旧缓存的行已被删）→ 页内错误行，不静默
+// 启用/禁用取反（独立于任务弹窗，不碰其它列）。失败 → 页内错误行，不静默
 void AgentModule::toggleTaskEnabled(const AgentTaskRow& task) {
     if (store_ == nullptr) return;
     auto r = store_->setTaskEnabled(task.id, !task.enabled);
@@ -702,8 +590,7 @@ void AgentModule::toggleTaskEnabled(const AgentTaskRow& task) {
     tasksDirty_ = true;
 }
 
-// 打开详情弹窗（取代页内展开区）：每开一次都回到「最近一次 run」——
-// selectedRunId_ 清空后由 refreshData 回落 taskRuns_[task][0]
+// 打开详情弹窗：每开一次回到「最近一次 run」（selectedRunId_ 清空，refreshData 回落首条）
 void AgentModule::openTaskDetail(int64_t taskId) {
     detailTaskId_ = taskId;
     selectedRunId_.reset();
@@ -712,10 +599,10 @@ void AgentModule::openTaskDetail(int64_t taskId) {
     expandedMsgSeqs_.clear();
     autoExpandedSeq_.reset();
     ++msgScrollVersion_;
-    tasksDirty_ = true;   // 触发一次刷新装载 run 列表与详情消息
+    tasksDirty_ = true;
 }
 
-// 关详情弹窗：只退弹窗态（不回写任务列表、不触发重查——列表数据本就是同一份）
+// 关详情弹窗：只退弹窗态（不触发重查，列表数据同一份）
 void AgentModule::closeTaskDetail() {
     detailTaskId_.reset();
     detailTaskRow_.reset();
@@ -726,10 +613,8 @@ void AgentModule::closeTaskDetail() {
     ++msgScrollVersion_;
 }
 
-// 默认展开态（2026-10-02 用户反馈②的正面修复）：最近一条带 text 块的
-// assistant 消息默认展开——详情弹窗一打开就能看到最终回复，不必再点。
-// 只在该目标 seq 变化时改展开集：用户手动收起后，同一条不会被每帧刷新顶回来；
-// 目标变了（新回复落库）则收起上一条自动展开的、展开新的
+// 默认展开态：最近一条带 text 的 assistant 消息；只在目标 seq 变化时改展开集，
+// 用户手动收起后不被每帧顶回来
 void AgentModule::applyDefaultMessageExpansion() {
     std::optional<int64_t> target;
     for (auto it = detailMessages_.rbegin(); it != detailMessages_.rend(); ++it) {
@@ -752,7 +637,6 @@ void AgentModule::applyDefaultMessageExpansion() {
     }
 }
 
-// 单条消息展开/收起（run 日志改造 2026-10-02）
 void AgentModule::toggleMessageExpanded(int64_t seq) {
     if (expandedMsgSeqs_.count(seq) > 0) {
         expandedMsgSeqs_.erase(seq);
@@ -769,12 +653,8 @@ void AgentModule::ensureToolsCache(bool forceReload) {
     toolsCacheLoaded_ = true;
 }
 
-// 重查任务 / 各任务最近 run / 展开详情的消息。触发条件（compose 内判定）：
-// tasksDirty_（onStart / onPageEnter / 写操作 / 展开切换）或 uiPolling_
-//（有 run 期间每帧跟进状态与消息）。
-// 判停口径：run 线程全 done 且库内无 running 态 → uiPolling_ = false。
-// done 先查再查库：observe done==true ⟹ run 线程的 finishRun 先行发生
-//（atomic release/acquire），随后这次库读必然读到终态，不会漏掉最后一帧
+// 重查任务 / 最近 run / 详情消息。触发：tasksDirty_ 或 uiPolling_。判停：run 线程全
+// done 且库内无 running；先查 done 再查库——done==true 时 finishRun 已先行发生
 void AgentModule::refreshData() {
     tasksDirty_ = false;
     tasks_.clear();
@@ -793,9 +673,8 @@ void AgentModule::refreshData() {
             continue;
         }
         auto list = std::move(runs).value();
-        // 最近一次在前（契约）：store 侧已按 (started_at DESC, id DESC) 并列兜底，
-        // 这里再按 (startedAt, id) 逆序排一次是纵深防御——runlist[0] 与状态列的
-        // 「最近一次」语义不依赖调用方对 store 排序契约的记忆
+        // 最近一次在前：store 已按 (started_at DESC, id DESC) 排序，此处再排一次
+        // 是纵深防御，让 runlist[0] 语义不依赖 store 排序契约
         std::stable_sort(list.begin(), list.end(),
                          [](const AgentRunRow& a, const AgentRunRow& b) {
                              if (a.startedAt != b.startedAt) {
@@ -810,8 +689,7 @@ void AgentModule::refreshData() {
     }
     if (detailTaskId_) {
         detailMessages_.clear();
-        // 配置摘要快照（与任务弹窗的编辑态同源读法：getTask，不拿 tasks_
-        // 列表里的那份——列表可能滞后于库）
+        // 配置摘要快照：走 getTask（tasks_ 列表可能滞后于库）
         auto row = store_->getTask(*detailTaskId_);
         if (row.isOk()) {
             detailTaskRow_ = std::move(row).value();
@@ -821,8 +699,7 @@ void AgentModule::refreshData() {
         }
         auto it = taskRuns_.find(*detailTaskId_);
         if (it != taskRuns_.end() && !it->second.empty()) {
-            // 选中 run：显式选中（点过 runlist 行）优先；不在本任务列表里
-            //（换了任务 / 被 5 条上限挤出）→ 回落最近一次
+            // 显式选中优先；不在本任务列表（换了任务 / 被上限挤出）→ 回落最近一次
             bool stillListed = false;
             if (selectedRunId_) {
                 for (const auto& r : it->second) {
@@ -844,8 +721,7 @@ void AgentModule::refreshData() {
         } else {
             selectedRunId_.reset();   // 该任务还没有 run
         }
-        // 消息装载后套默认展开态（进行中的 run 新落一条 assistant 文本会
-        // 自动成为新的展开目标——「完成即出现最终回复」）
+        // 装载后套默认展开态（进行中的 run 新落 assistant 文本会成为新展开目标）
         applyDefaultMessageExpansion();
     } else {
         detailTaskRow_.reset();
@@ -870,15 +746,8 @@ void AgentModule::refreshData() {
     }
 }
 
-// 单条消息行渲染（run 日志改造 2026-10-02）。结构：
-//   msg.<i>（列，定高 = 估算高，宁高勿低）
-//     .head    —— 角色徽章 + 展开/收起 chip +（展开时）复制 chip
-//     收起：.preview（解码文本前 120 字节单行，点击也可展开）
-//     展开：逐块 .blk.<j>
-//       text/plain   → wrap 多行全文（maxWidth 必须显式给：measureTextSize
-//                      只认 element.maxWidth，.size() 不带它）
-//       tool_use     → 「🔧 名称 + 参数摘要」单行 chip 文本
-//       tool_result  → 「工具输出」标签行 + 输出全文 wrap 多行（错误标红）
+// 单条消息行渲染：.head（徽章 + 展开/收起 chip + 展开时复制 chip）；收起态 .preview；
+// 展开态逐块 .blk.<j>（text 的 maxWidth 必须显式给——measureTextSize 只认 element.maxWidth）
 void AgentModule::renderMessageRow(
     ::eui::Ui& inner, float cw, const std::string& prefix, size_t index,
     const AgentMessageRow& msg, const ::core::theme::Tokens& t,
@@ -919,9 +788,7 @@ void AgentModule::renderMessageRow(
                         actionChip(inner, mid + ".copy", "复制", 48.0f,
                                    /*primary=*/false, /*enabled=*/true, tokens,
                                    [text = messagePlainText(blocks)] {
-                                       // setClipboardText 返回 void（模块层无
-                                       // 窗口句柄无法回读校验）→ LOG 留痕，
-                                       // claude_module doCopyConfig 同款口径
+                                       // setClipboardText 返回 void 无法校验 → LOG 留痕
                                        core::window::setClipboardText(text);
                                        LOG_INFO("Agent: 已复制消息全文 " +
                                                 std::to_string(text.size()) +
@@ -938,7 +805,7 @@ void AgentModule::renderMessageRow(
                     .lineHeight(18.0f)
 .wrap(false)
                     .color(t.colors.textSecondary)
-                    // 点消息行也能展开（需求 B：click message 或专用 chip）
+                    // 点消息行也能展开
                     .onClick([this, seq = msg.seq] {
                         toggleMessageExpanded(seq);
                     })
@@ -1021,15 +888,13 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
     const float pad = t.sizes.spacingXXLarge;              // 40，照 claude 页
     const float contentW = screen.width - pad * 2.0f;
 
-    // 首次使用路径之二：页面帧。会话内拨开 claude 后回到本页（onPageEnter 置
-    // tasksDirty_）即解析服务——否则 loop_ 恒空、「启动」按钮永久禁用，惰性解析
-    // 在真实 UI 上不可达。已就绪时只做一次空指针判断，无每帧开销
+    // 首次使用路径之二：页面帧。会话内拨开 claude 后回本页即解析服务，否则
+    // loop_ 恒空、「启动」永久禁用，惰性解析在真实 UI 上不可达
     if (store_ != nullptr && loop_ == nullptr && tasksDirty_) {
         ensureLlm();
     }
 
-    // 数据刷新：脏标记或有 run 在身（每帧跟进状态/消息）；查询在主线程，
-    // 量级 = 任务数 + 弹窗选中 run 的消息数，可接受
+    // 数据刷新：脏标记或有 run 在身（每帧跟进）；查询在主线程，量级可控
     if (store_ != nullptr && (tasksDirty_ || uiPolling_)) {
         refreshData();
     }
@@ -1040,9 +905,8 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                               kToolsListMaxH)
                    : 0.0f;
     const float toolsH = kToolsHeaderH + (toolsOpen_ ? kMsgGap + toolsListH : 0.0f);
-    // 页 column 子项：标题行 / [页内错误行] / tools / tasklist（批次 A1 起页内
-    // 表单与页内详情区都已删除），gap = spacingLarge。子项数或行高一变，
-    // gapCount 与减项必须同步（否则列表高度算错 → 末尾行溢出页底）
+    // 页 column 子项：标题行 / [错误行] / tools / tasklist，gap = spacingLarge。
+    // 子项数或行高一变，kPageGapCount 与减项必须同步（否则列表高度算错、末尾行溢出）
     const bool hasPageError = !pageError_.empty();
     const int kPageGapCount = 2 + (hasPageError ? 1 : 0);
     const float listH = screen.height - pad * 2.0f - kPageHeaderH - toolsH -
@@ -1054,7 +918,7 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
         .padding(pad)
         .gap(t.sizes.spacingLarge)
         .content([&] {
-            // ---- 标题行：标题 + 「+ 新建任务」（唯一新建入口 → A2 弹窗）----
+            // 标题行：标题 + 「+ 新建任务」（唯一新建入口）
             ui.row("agent.page.header")
                 .size(contentW, kPageHeaderH)
                 .gap(kDialogGap)
@@ -1078,7 +942,7 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                 })
                 .build();
 
-            // ---- 页内错误行（有错才渲染）：弹窗之外的失败的唯一可见出口 ----
+            // 页内错误行（有错才渲染）：弹窗之外失败的唯一可见出口
             if (hasPageError) {
                 ui.text("agent.page.error")
                     .size(contentW, kPageErrorH)
@@ -1090,9 +954,8 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                     .build();
             }
 
-            // ---- 可用工具区块（2026-10-02 用户反馈④）：收起默认，头部点击
-            // 展开。列 ToolRegistry 全部已注册工具（name + 描述 + 参数名），
-            // 卡多了内滚（kToolsListMaxH）----
+            // 可用工具区块：收起默认，头部点击展开。列 ToolRegistry 全部已注册工具，
+            // 卡多了内滚（kToolsListMaxH）
             ui.column("agent.tools")
                 .size(contentW, toolsH)
                 .gap(kMsgGap)
@@ -1149,7 +1012,6 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                                                 .color(t.colors.surface)
                                                 .radius(t.sizes.radiusSmall)
                                                 .build();
-                                            // 工具名（左上）+ 参数名（同行右侧）
                                             inner.text(cid + ".name")
                                                 .position(12.0f, 5.0f)
                                                 .size(cw - 24.0f, 18.0f)
@@ -1217,9 +1079,8 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                 })
                 .build();
 
-            // ---- 任务列表（批次 A1）：scrollView 承载，viewport 高 = 页面剩余
-            // 高；行高固定 kTaskRowH（step 同源），内容超高自然出滚动条。
-            // 行内四个动作：启动 / 详情 / 编辑 / 禁用（常驻任务多一个入队）----
+            // 任务列表：scrollView 承载，viewport = 页面剩余高；行高 kTaskRowH（step
+            // 同源）。行内动作：启动 / 详情 / 编辑 / 禁用（常驻多一个入队）
             components::scrollView(ui, "agent.tasklist")
                 .size(contentW, std::max(0.0f, listH))
                 .gap(8.0f)
@@ -1255,9 +1116,8 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                         if (it != latestRuns_.end()) {
                             status = runStatusText(it->second.status);
                         }
-                        // 行内控件宽度分配：状态 80 / 详情 48 / 编辑 48 / 启停 48 /
-                        // [入队 56（仅常驻）] / 启动 72，间距 12；标题吃剩余宽度。
-                        // childCount 必须与实际子元素个数一致（间距数 = 子元素数-1）
+                        // 宽度分配：状态 80 / 详情·编辑·启停 各 48 / [入队 56] / 启动 72，
+                        // 间距 12，标题吃剩余。childCount 必须与实际子元素数一致
                         const bool resident = task.triggerType == "resident";
                         const float rowGap = 12.0f;
                         const int childCount = 6 + (resident ? 1 : 0);
@@ -1265,8 +1125,7 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                                              (resident ? 56.0f : 0.0f);
                         const float titleW =
                             cw - fixedW - rowGap * static_cast<float>(childCount - 1);
-                        // 点行本体也开详情弹窗（行内控件各自独立消费点击——
-                        // 子元素先于父行命中，runtime 逆向命中序）
+                        // 点行本体开详情弹窗（子元素先于父行命中，各自独立消费点击）
                         inner.row(id)
                             .size(cw, kTaskRowH)
                             .alignItems(eui::Align::CENTER)
@@ -1290,8 +1149,7 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                                     .lineHeight(20.0f)
                                     .color(t.colors.textSecondary)
                                     .build();
-                                // 详情 / 编辑 / 启停 / 入队：契约要求 id 元素本身
-                                // 带 text 与 onClick（text 元素挂 onClick 即 interactive）
+                                // 契约要求 id 元素本身带 text 与 onClick（见 actionChip）
                                 actionChip(inner, id + ".detail", "详情", 48.0f,
                                            /*primary=*/false, /*enabled=*/true,
                                            themeTokens, [this, taskId = task.id] {
@@ -1309,8 +1167,7 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                                                toggleTaskEnabled(taskCopy);
                                            });
                                 if (resident) {
-                                    // 常驻入队（spec §5.1：常驻本阶段只跑手动
-                                    // 入队子任务）；Scheduler 未装配时置灰不可点
+                                    // 常驻入队（本期只跑手动入队子任务）；Scheduler 未装配时置灰
                                     actionChip(inner, id + ".enqueue", "入队", 56.0f,
                                                /*primary=*/false,
                                                /*enabled=*/scheduler_ != nullptr,
@@ -1327,11 +1184,10 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                                     .size(72.0f, 32.0f)
                                     .text("启动")
                                     .theme(themeTokens)
-                                    .disabled(loop_ == nullptr)  // 无 LLM 通道禁用
+                                    .disabled(loop_ == nullptr)
                                     .onClick([this, taskId = task.id] {
                                         startTask(taskId);
-                                        // A3 契约：启动 run 后立即打开详情弹窗，
-                                        // 随页面既有刷新周期（uiPolling_）实时更新
+                                        // 启动 run 后立即开详情弹窗，随 uiPolling_ 实时更新
                                         openTaskDetail(taskId);
                                     })
                                     .build();
@@ -1343,7 +1199,7 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
         })
         .build();
 
-    // ---- 弹窗层（模态，画在页面之后）：关闭态不建内容节点，存在性即开关 ----
+    // 弹窗层（模态，画在页面之后）：关闭态不建内容节点，存在性即开关
     if (taskDialogOpen_) {
         composeTaskDialog(ui, screen, t, themeTokens);
     }
@@ -1352,10 +1208,7 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
     }
 }
 
-// 任务弹窗（批次 A2）：新建 / 编辑共用同一张表单，外框走 ui_kit::DialogFrame +
-// drawDialogFrame（既有 13 处站点的共用范式）。关闭态在内容回调内直接 return：
-// 内容节点即开合状态（测试按存在性判），panel / backdrop 仍由组件照常构建
-//（保留 0.16s 淡入淡出与遮罩点击关闭）
+// 任务弹窗：新建/编辑共用同一张表单；关闭态在内容回调内 return——内容节点即开合状态
 void AgentModule::composeTaskDialog(
     ::eui::Ui& ui, const ::eui::Screen& screen, const ::core::theme::Tokens& t,
     const components::theme::ThemeColorTokens& themeTokens) {
@@ -1382,7 +1235,7 @@ void AgentModule::composeTaskDialog(
                                 isEdit ? "编辑任务" : "新建任务",
                                 t.sizes.fontSizeLarge + 2.0f, t.colors.textPrimary);
 
-        // ✕ 关闭（与取消 / 遮罩 / Esc 同一条路径：不落库）
+        // ✕ 关闭（与取消 / 遮罩 / Esc 同一路径）
         ui.text("agent.dialog.task.close")
             .position(w - 56.0f, 22.0f)
             .size(28.0f, 28.0f)
@@ -1395,7 +1248,7 @@ void AgentModule::composeTaskDialog(
             .onClick([this] { closeTaskDialog(); })
             .build();
 
-        // ---- 任务目标：多行（4 行视口）+ 引导 placeholder ----
+        // 任务目标（多行）
         ui.text("agent.dialog.task.goal.caption")
             .position(x0, 64.0f)
             .size(kDialogLabelW, 20.0f)
@@ -1418,8 +1271,8 @@ void AgentModule::composeTaskDialog(
             .onCancel([this] { closeTaskDialog(); })   // 输入框内 Esc = 关弹窗
             .build();
 
-        // ---- 触发方式（定时才在同一行尾随 cron 输入：弹窗高度不随之变化）----
-        const float fieldX = x0 + kDialogLabelW + kDialogGap;   // 112
+        // 触发方式（定时才在同一行尾随 cron 输入，弹窗高度不变）
+        const float fieldX = x0 + kDialogLabelW + kDialogGap;
         const float ddW = 140.0f;
         const float triggerY = 172.0f;
         fieldCaption(ui, "agent.dialog.task.trigger.caption", "触发方式", x0,
@@ -1441,8 +1294,8 @@ void AgentModule::composeTaskDialog(
             })
             .build();
         if (isSchedule) {
-            const float cronLabelX = fieldX + ddW + kDialogGap;          // 264
-            const float cronX = cronLabelX + kDialogLabelW + kDialogGap;  // 348
+            const float cronLabelX = fieldX + ddW + kDialogGap;
+            const float cronX = cronLabelX + kDialogLabelW + kDialogGap;
             fieldCaption(ui, "agent.dialog.task.cron.caption", "cron 表达式",
                          cronLabelX, triggerY, kDialogLabelW, kDialogRowH,
                          t.colors.textSecondary);
@@ -1458,10 +1311,10 @@ void AgentModule::composeTaskDialog(
                 .build();
         }
 
-        // ---- 模型槽位 + 迭代上限 + 破坏性授权（同一行）----
+        // 模型槽位 + 迭代上限 + 破坏性授权（同一行）
         const float metaY = 224.0f;
-        const float iterLabelX = fieldX + ddW + kDialogGap;              // 264
-        const float iterX = iterLabelX + kDialogLabelW + kDialogGap;     // 348
+        const float iterLabelX = fieldX + ddW + kDialogGap;
+        const float iterX = iterLabelX + kDialogLabelW + kDialogGap;
         fieldCaption(ui, "agent.dialog.task.slot.caption", "模型槽位", x0, metaY,
                      kDialogLabelW, kDialogRowH, t.colors.textSecondary);
         ui.stack("agent.dialog.task.slot.wrap")
@@ -1495,10 +1348,8 @@ void AgentModule::composeTaskDialog(
             .onChange([this](const std::string& v) { editIter_ = parseIterInput(v); })
             .onCancel([this] { closeTaskDialog(); })
             .build();
-        // 破坏性授权开关：用 switch（settings 页同款，已在 DevDesk 编译面内）
-        // ——components::checkbox 头在 -Wall -Wextra -Werror 下有未使用变量告警
-        //（EUI-NEO 侧既有问题，不属本次改动范围）。SwitchBuilder 无 position，
-        // 包一层同尺寸 stack 定位（dropdown 同款）
+        // 用 switch 而非 checkbox（后者在 -Werror 下有未使用变量告警）；
+        // SwitchBuilder 无 position，包一层同尺寸 stack 定位
         const float switchX = iterX + 100.0f + kDialogGap;
         const float switchW = innerW - (switchX - x0);
         ui.stack("agent.dialog.task.destructive.wrap")
@@ -1516,14 +1367,13 @@ void AgentModule::composeTaskDialog(
             })
             .build();
 
-        // ---- 校验 / 保存错误（有错才渲染，弹窗不关）----
+        // 校验 / 保存错误（有错才渲染，弹窗不关）
         ui_kit::drawDialogText(ui, "agent.dialog.task.error", w, editError_,
                                t.sizes.fontSizeSmall, t.colors.error,
                                {.x = x0, .y = 276.0f, .height = 18.0f,
                                 .lineHeight = 18.0f, .skipIfEmpty = true});
 
-        // ---- 底部按钮对：取消 / 保存。几何与 ui_kit 标准按钮对同源
-        //（(28, h-60) 与 (28+(w-68)/2+12, h-60)，各 (w-68)/2 × 40）----
+        // 底部按钮对：取消 / 保存（几何与 ui_kit 标准按钮对同源）
         const float btnW =
             (w - ui_kit::kDialogInsetX * 2.0f - kDialogGap) * 0.5f;
         const float btnY = h - 60.0f;
@@ -1551,14 +1401,11 @@ void AgentModule::composeTaskDialog(
     });
 }
 
-// 详情弹窗（批次 A3）：配置摘要 / run 列表 / 消息流三段。数据全部来自模块缓存
-//（detailTaskRow_ = getTask 快照、taskRuns_、detailMessages_），由页面既有刷新
-// 周期（tasksDirty_ / uiPolling_）驱动——run 进行中也能实时看到状态与新消息
+// 详情弹窗：配置摘要 / run 列表 / 消息流三段，数据来自模块缓存（run 进行中实时更新）
 void AgentModule::composeTaskDetailDialog(
     ::eui::Ui& ui, const ::eui::Screen& screen, const ::core::theme::Tokens& t,
     const components::theme::ThemeColorTokens& themeTokens) {
     const float w = ui_kit::dialogWidthPx(ui_kit::DialogWidth::Form);
-    // 固定内容高 660，窄屏由 dialog 组件按视口钳制（probe 有「不超出视口」断言）
     const float h = std::min(kDetailDialogH, screen.height - 40.0f);
     const float innerW = w - ui_kit::kDialogBodyInsetX;
     const float x0 = ui_kit::kDialogInsetX;
@@ -1588,7 +1435,7 @@ void AgentModule::composeTaskDetailDialog(
             .onClick([this] { closeTaskDetail(); })
             .build();
 
-        // ---- ① 任务配置摘要（与任务弹窗同源读法：getTask 快照）----
+        // ① 任务配置摘要（getTask 快照）
         std::string info;
         if (detailTaskRow_) {
             const AgentTaskRow& task = *detailTaskRow_;
@@ -1615,7 +1462,7 @@ void AgentModule::composeTaskDetailDialog(
             .color(t.colors.textSecondary)
             .build();
 
-        // ---- ② run 列表（最近 5 次，倒序：最近一次在前；选中/最近一次高亮）----
+        // ② run 列表（最近 5 次，最近在前；选中/最近一次高亮）
         const auto runsIt = taskRuns_.find(*detailTaskId_);
         const std::vector<AgentRunRow>* runs =
             runsIt != taskRuns_.end() ? &runsIt->second : nullptr;
@@ -1632,9 +1479,8 @@ void AgentModule::composeTaskDetailDialog(
             .build();
         float runsH = 18.0f;
         if (runs != nullptr && !runs->empty()) {
-            // 列内 gap 数 = **子元素数** - 1：error 行也是子元素，漏算它会让
-            // 列表底比真实占用矮一截 → 消息标题压到 error 行上（2026-10-02
-            // 批次 A 复审发现的真 bug，≥3 条 error 时可见）
+            // gap 数 = 子元素数 - 1：error 行也是子元素，漏算会让列表底偏矮
+            // → 消息标题压到 error 行上
             float childrenH = 0.0f;
             int childCount = 0;
             for (const auto& run : *runs) {
@@ -1698,9 +1544,7 @@ void AgentModule::composeTaskDetailDialog(
                 .build();
         }
 
-        // ---- ③ 消息流：scrollView 内滚。最终 assistant 文本块默认展开
-        //（applyDefaultMessageExpansion），thinking / tool_use / tool_result
-        // 所在消息默认折叠，点开才展开（保留块级渲染与实测高度）----
+        // ③ 消息流：scrollView 内滚。最终 assistant 文本块默认展开，其余默认折叠
         const float msgsTitleY = 134.0f + runsH;
         ui.text("agent.dialog.detail.msgs.title")
             .position(x0, msgsTitleY)
@@ -1712,9 +1556,7 @@ void AgentModule::composeTaskDetailDialog(
             .color(t.colors.textPrimary)
             .build();
         const float scrollY = msgsTitleY + 22.0f;
-        // 消息区外高：内容估算（1.7.7 的 measureTextSize 实测高）夹在
-        // [kMsgAreaMinH, kMsgAreaMaxH] 内，再按弹窗剩余空间封顶——超出的真实
-        // 内容高由 scrollView 内滚（与页内详情区时代同一套估算与内滚机制）
+        // 消息区外高：估算高夹在 [kMsgAreaMinH, kMsgAreaMaxH] 内，超出内滚
         const float availH = std::max(kMsgAreaMinH, h - scrollY - 24.0f);
         const float scrollH = std::min(
             estimateMessagesAreaHeight(detailMessages_, expandedMsgSeqs_, innerW,
@@ -1727,8 +1569,7 @@ void AgentModule::composeTaskDetailDialog(
                 .text("（选中的 run 还没有消息）")
                 .fontSize(12.0f)
                 .lineHeight(18.0f)
-                // 盒高 = 消息区高，文本垂直居中（B1 评审复查出的一处漏扫：
-                // 盒高 ≠ 行高时不给 verticalAlign 会顶在上缘）
+                // 盒高 ≠ 行高，不给 verticalAlign 会顶在上缘
                 .verticalAlign(eui::VerticalAlign::Center)
                 .color(t.colors.textTertiary)
                 .build();
@@ -1753,9 +1594,7 @@ void AgentModule::composeTaskDetailDialog(
     });
 }
 
-// 弹窗打开时 Esc = 关最上层弹窗（详情弹窗后开，优先于任务弹窗）。键走得到
-// 本通道 = 焦点元素没消费——弹窗输入框聚焦时 Esc 已被 input 的 onCancel 收走
-//（与 todo 模块 closeTopmostPopup 同一约定），天然让位不重复
+// Esc 关最上层弹窗（详情优先）。键走得到本通道 = 焦点元素没消费（输入框聚焦时已被 onCancel 收走）
 bool AgentModule::onKeyEvent(const ::eui::KeyEvent& event) {
     if (!event.isDown()) return false;
     if (event.key != eui::InputKey::Escape) return false;
@@ -1776,6 +1615,6 @@ std::string AgentModule::iconGlyph() const {
 } // namespace module::agent
 
 extern "C" ::core::Module* create_agent_module() {
-    // 生产装配：Deps 全空，onStart 内回退 appDatabase / ServiceLocator 解析
+    // 生产装配：Deps 全空，onStart 内回退 appDatabase / ServiceLocator
     return new module::agent::AgentModule(module::agent::AgentModule::Deps{});
 }

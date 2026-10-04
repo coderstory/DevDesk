@@ -60,23 +60,20 @@ namespace {
         c.background = eui::Color("#FAF9F5");
         c.surface = eui::Color("#F5F2EC");
         c.surfaceElevated = eui::Color("#F8F5EF");
-        // 2026-09-28 根因修：旧 #F5F2EC 与 surface 同色——Home 卡 hover 反馈
-        // 完全不可见（.press 层 hover 态颜色 == 卡底色）。降一步色（与 active
-        // #EBE7DF 成三级梯度），任意底色上都产生可辨色移
+        // 浅色 hover 比 surface 降一步色（与 active #EBE7DF 成三级梯度）：
+        // 旧值与 surface 同色会致卡 hover 反馈完全不可见
         c.hover = eui::Color("#EDE8DF");
         c.active = eui::Color("#EBE7DF");
         c.primary = eui::Color("#D97757");
         c.primaryHover = eui::Color("#E0896B");
         c.primaryPressed = eui::Color("#B85F3F");
         c.primarySoftBg = eui::Color("#F5E6DE");
-        // 审计 [27]：主色 #D97757 直接当文字在浅底 2.96:1 / primarySoftBg
-        // 2.57:1 全不达标，文字档加深到深一档 clay（5.27 / 4.57，WCAG AA）
+        // 主色 #D97757 直接当文字在浅底不达标，文字档加深到深一档 clay
+        //（5.27 / 4.57，WCAG AA）
         c.primaryText = eui::Color("#A64F2E");
         c.onPrimary = eui::Color("#FFFFFF");
         c.textPrimary = eui::Color("#1F1D1A");
-        // 审计 [27]：旧值 #6B6660 与新 textTertiary（原 #9A948A 在浅底
-        // 仅 2.86:1，已加深到 #6B665E=5.41:1）几乎同色、层级坍塌；secondary
-        // 相应再深一档保住两级辅助灰（7.49:1）
+        // secondary 再深一档保住两级辅助灰（旧值与 textTertiary 几乎同色会层级坍塌）
         c.textSecondary = eui::Color("#55514A");
         c.textTertiary = eui::Color("#6B665E");
         c.textDisabled = eui::Color("#B5B0A8");
@@ -164,7 +161,7 @@ void setFontScale(float scale) {
 float fontScale() { return g_fontScale; }
 
 namespace {
-    // 编辑器字号全局通道（spec 缩水 B）；默认 15 = fontSizeBody token 基准
+    // 编辑器字号全局通道；默认 15 = fontSizeBody token 基准
     float g_editorFontSize = 15.0f;
 }
 

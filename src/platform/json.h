@@ -1,5 +1,5 @@
 // src/platform/json.h
-// yyjson 薄封装（详见 spec §7.4）
+// yyjson 薄封装。
 #pragma once
 
 #include <cstddef>
@@ -16,12 +16,9 @@ namespace json {
 class JsonObject;
 class JsonValue;
 
-// 拷贝语义（审计 2026-09-27 L6）：本类是 yyjson 子树的**深拷贝值类型**——
-// 无引用计数 / 无 COW，拷贝构造与赋值都复制整棵子树（json.cpp:186-206）。
-// 代价：大 JSON 上按值传参/返回 = 整树复制；在循环里对同一棵大树反复按值取值
-//（get() / asObject()）每次都是一次子树深拷贝 → 容易累积成 O(n²) 拷贝链。
-// 当前调用点规模小（SSE 事件、配置）；用户可粘贴导入的路径已加输入长度上限
-//（module_claude_proxy/provider_config.h 的 kMaxImportTextBytes）。
+// 深拷贝值类型：无引用计数/无 COW，拷贝构造与赋值复制整棵子树。代价：大 JSON 上按值传参/返回 =
+// 整树复制，循环里对大树反复取值（get()/asObject()）易累积成 O(n²)。当前调用点规模小；可粘贴导入
+// 路径已加输入长度上限（provider_config.h 的 kMaxImportTextBytes）。
 class JsonObject {
 public:
     JsonObject();
@@ -62,11 +59,8 @@ public:
     JsonValue& operator=(JsonValue&& other) noexcept;
     ~JsonValue();
 
-    // 类型与取值一律从堆上的 JsonImpl 派生（唯一真值源，见 json.cpp 顶部）
-    // CP-02（2026-09-27 全量审计，high）：此前 JsonValue 另存一份 public 镜像字段
-    // （type_/boolVal_/intVal_/dblVal_/strVal_），但 4 个特殊成员只搬 data_ → 左值
-    // 拷贝/移动后 asString()/asInt() 静默返回默认值。删掉镜像后不存在两份真值，
-    // 也就不存在"漏同步"这一种漏法。
+    // 类型与取值一律从堆上的 JsonImpl 派生（唯一真值源）。此前另存一份 public 镜像字段，而特殊成员
+    // 只搬 data_ → 左值拷贝/移动后 asString()/asInt() 静默返回默认值；删镜像后不存在「漏同步」。
     Type type() const;
     bool isNull() const { return type() == T_Null; }
     bool isBool() const { return type() == T_Bool; }
@@ -81,8 +75,7 @@ public:
     std::string asString() const;
     JsonObject asObject() const;  // 按值 = 整对象子树深拷贝（同 JsonObject）
 
-    // 数组访问（模块插拔 enabledModules 首个消费者；仅支持读，元素按值返回 =
-    // 该元素子树深拷贝——大数组上避免在循环里反复取）
+    // 数组访问（仅支持读，元素按值返回 = 该元素子树深拷贝；大数组避免循环里反复取）
     int size() const;
     JsonValue operator[](int index) const;
 
@@ -106,7 +99,7 @@ JsonValue makeDouble(double d);
 JsonValue makeString(const std::string& s);
 JsonValue makeObject();
 JsonValue makeArray();
-// 字符串数组工厂（应用配置的 enabledModules；此前 makeArray 是空桩）
+// 字符串数组工厂（应用配置 enabledModules）
 JsonValue makeStringArray(const std::vector<std::string>& items);
 
 } // namespace json

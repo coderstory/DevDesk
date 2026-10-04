@@ -1,10 +1,9 @@
 // src/module_todo/todo_tools.h
-// Todo 模块的智能体工具集（agent M1 Task 8）：把 TodoService 的任务操作暴露成
-// 6 个 ITool，供 module_agent 经 core::ToolRegistry 按名调用。
+// Todo 模块的智能体工具集：把 TodoService 的任务操作暴露成 6 个 ITool，供
+// module_agent 经 core::ToolRegistry 按名调用。
 // 模块隔离：本文件只依赖 core/tool.h 与自身模块头，不依赖 module_agent——
 // 双方都只依赖 core（依赖反转，见 src/core/tool.h 头注释）。
-//
-// 错误语义（spec §10 M1 统一）：工具参数非法 / 目标不存在 → execute 返回
+// 错误语义（spec §10 统一）：工具参数非法 / 目标不存在 → execute 返回
 // Result ok + ToolResult.isError=true + 中文错误说明（错误回喂 LLM 自我纠正）；
 // Result::fail 只留给编程不变量破坏（如自有拼接 JSON 校验失败）。
 #pragma once

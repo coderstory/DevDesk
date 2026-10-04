@@ -1,6 +1,5 @@
 // src/module_settings/window_effect_hint_macos.cpp
-// macOS：磨砂要求 macOS 11+ **系统磨砂**（不是窗口模糊 API——后者对无边框
-// 透明窗不可靠，macos-three-features 设计 §5.3 记录了实测结论）。
+// macOS 磨砂要求 11+ 系统磨砂（窗口模糊 API 对无边框透明窗不可靠）。
 #include "window_effect_hint.h"
 
 namespace module::settings {

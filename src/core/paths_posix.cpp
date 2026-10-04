@@ -1,7 +1,5 @@
-// src/core/paths_posix.cpp
-// 其他平台（Linux 等）实现：platformDefaultAppDataDir = ~/DevDesk（不再是 XDG 的
-// ~/.local/share/DevDesk，理由见 paths.h）；
-// executableDir = /proc/self/exe 所在目录（无 /proc 的平台返回空 path）
+// 其他平台（Linux 等）实现：默认数据根 = ~/DevDesk（非 XDG 的
+// ~/.local/share/DevDesk，理由见 paths.h）；executableDir 取 /proc/self/exe 所在目录
 #include "paths.h"
 
 #include <unistd.h>
@@ -15,9 +13,9 @@ namespace fs = std::filesystem;
 namespace core::paths {
 
 fs::path executableDir() {
-    // /proc/self/exe 是指向可执行文件的符号链接，readlink 跟随后拿到的就是真实
-    // 路径。readlink 截断时返回值 == 缓冲区长度，此时翻倍重试；上界 64 KiB 封顶
-    // 防病态循环。平台无 /proc（如 BSD）或无权限时返回空，不回退 cwd
+    // /proc/self/exe 是指向可执行文件的符号链接，readlink 得到真实路径。
+    // 截断时返回值 == 缓冲长度，此时翻倍重试（上界 64 KiB 防病态循环）。
+    // 平台无 /proc 或无权限时返回空，不回退 cwd
     std::vector<char> buf(1024);
     for (;;) {
         const ssize_t n = ::readlink("/proc/self/exe", buf.data(), buf.size());
@@ -32,18 +30,16 @@ fs::path executableDir() {
     }
 }
 
-// 平台**默认**数据根（DEVDESK_DATA_ROOT 覆盖与优先级见 paths.h / paths.cpp；
-// 业务代码不要直接调用本函数）
+// 平台默认数据根（DEVDESK_DATA_ROOT 覆盖与优先级见 paths.h / paths.cpp；
+// 业务代码不要直接调用）
 fs::path platformDefaultAppDataDir() {
-    // <用户主目录>/DevDesk —— 主目录取 POSIX 惯例的 HOME（与同文件
-    // claudeSettingsFile 同源）
+    // <主目录>/DevDesk —— 用 POSIX 惯例的 HOME
     const char* home = std::getenv("HOME");
     fs::path base(home ? home : "");
     return base / "DevDesk";
 }
 
 fs::path claudeSettingsFile() {
-    // 审计 CP-09：覆盖分支下沉到 paths.cpp::claudeConfigDirOverride()（三平台共用）
     const fs::path overridePath = claudeConfigDirOverride();
     if (!overridePath.empty()) {
         return overridePath;

@@ -1,6 +1,4 @@
-// src/core/file_perms_posix.cpp
-// POSIX（macOS / Linux）：chmod 0600（口径同 keychain_posix.cpp:34-50「写完 chmod 0600，失败即
-// 回滚」——这里是「设权限，失败即报错」，因为数据库文件不能删）
+// POSIX（macOS / Linux）：chmod 0600；设权限失败即报错（数据库文件不能删回滚）
 #include "file_perms.h"
 
 #include <system_error>
@@ -11,10 +9,10 @@ core::Result<void> restrictToOwnerOnly(const std::filesystem::path& file) {
     std::error_code ec;
     if (!std::filesystem::exists(file, ec) || ec) {
         ec.clear();
-        return core::Result<void>::ok();   // 没有落点 → 无可保护
+        return core::Result<void>::ok();   // 文件不存在 → 无可保护
     }
     ec.clear();
-    // perm_options::replace 把权限整体覆盖为 rw-------（不受 umask 影响）
+    // perm_options::replace 整体覆盖为 rw-------（不受 umask 影响）
     std::filesystem::permissions(
         file,
         std::filesystem::perms::owner_read | std::filesystem::perms::owner_write,

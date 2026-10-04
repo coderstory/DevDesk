@@ -1,7 +1,6 @@
-// src/core/tray_menu_spec.h
-// 托盘菜单唯一数据源（菜单美化 2026-09-23）：styled 独立菜单窗（主路径）与原生
-// 托盘菜单（降级路径）都从本 spec 生成，杜绝文案/顺序漂移；纯 std 数据结构
-//（core 不依赖 EUI-NEO 运行时，iconCodepoint 为裸 int），headless 断言菜单结构走本文件。
+// 托盘菜单的唯一数据源：styled 独立菜单窗（主路径）与原生托盘菜单（降级路径）
+// 都从本 spec 生成，杜绝文案/顺序漂移。纯 std 数据结构（core 不依赖 EUI-NEO
+// 运行时，iconCodepoint 为裸 int），headless 断言菜单结构走本文件。
 #pragma once
 
 #include <functional>
@@ -26,9 +25,7 @@ struct TrayMenuSpecItem {
     TrayMenuAction action = TrayMenuAction::None;
 };
 
-// 顺序语义 = styled 菜单 path {i} 的映射基础：
-// {0}显示主窗口 / {1}退出（2026-09-24 精简：去掉模块导航项与分隔线，
-// 只留打开主窗口 + 退出两项——用户反馈导航走侧边栏即可，托盘只管开/关）
+// 顺序语义 = styled 菜单 path {i} 的映射基础：{0}显示主窗口 / {1}退出
 inline std::vector<TrayMenuSpecItem> trayMenuSpec() {
     return {
         {"显示主窗口", 0xF2D2, TrayMenuAction::ShowMainWindow},  // fa-window-restore

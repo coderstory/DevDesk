@@ -1,8 +1,5 @@
-// src/module_claude_proxy/profile_repository.cpp
-// ProfileRepository 实现：claude_profiles 行 + SharedConfig 片段 + Keychain
-// 条目的唯一持久化入口（R10-A2 自 claude_service.cpp 抽出，方法体逐字搬移
-// 不改语义；含编排尾巴的 5 方法按 R10 spec §2.3 段级拆分执行——策略尾
-// 停代理 / 接管时机 / 激活时机判断留在门面 claude_service.cpp）
+// ProfileRepository 实现（策略尾——停代理 / 接管时机 / 激活时机判断——留在
+// 门面 claude_service.cpp，本类只做 DB 段）
 #include "profile_repository.h"
 
 #include "core/logging.h"
@@ -25,11 +22,9 @@ namespace module::claude {
 
 namespace {
 
-// 取当前 unix 秒 —— 2026-10-03 轻量化：4 份逐字相同的本地 nowUnix() 合并到
-// core::time::nowUnix。
+// 取当前 unix 秒（原 4 份逐字相同的本地 nowUnix 合并到 core）
 using core::time::nowUnix;
 
-// 去除前导/尾随空白
 std::string trim(const std::string& s) {
     size_t b = 0;
     size_t e = s.size();
@@ -38,23 +33,21 @@ std::string trim(const std::string& s) {
     return s.substr(b, e - b);
 }
 
-// 去除 baseUrl 末尾的 '/'
 std::string stripTrailingSlash(const std::string& s) {
     if (!s.empty() && s.back() == '/') return s.substr(0, s.size() - 1);
     return s;
 }
 
-// 方言覆盖文本规范化（审计 CPX-13，同 authField 的写侧口径）：命中值域 → 规范
-// 文本；空串 / 未知 / 拼写错误 → 空串（未覆盖 = 回落 base_url 的 host 推断）。
-// 写侧与读侧各调一次，保证库里与内存里都只有两个规范值之一或空串
+// 方言覆盖文本规范化：命中值域 → 规范文本；空串 / 未知 → 空串（未覆盖 =
+// 回落 base_url 的 host 推断）。写侧与读侧各调一次，保证库里与内存里
+// 只有两个规范值之一或空串
 std::string normalizeDialectOverride(const std::string& text) {
     const auto kind = dialectKindFromText(text);
     return kind ? std::string(dialectKindToText(*kind)) : std::string();
 }
 
-// 全量 SHA256 hex（64 字符）。2026-10-02 存储统一：api_key_check 的旧语义是
-// 「前 8 hex，与 Keychain 明文比对」，前提（Keychain 里另存一份明文）已消失，
-// 改为全量摘要作「密钥是否变更」判据——碰撞面从 32 bit 收到 256 bit。
+// 全量 SHA256 hex：api_key_check 旧语义是「前 8 hex 与 Keychain 明文比对」，
+// 该前提已消失，改为全量摘要作「密钥是否变更」判据（碰撞面 32→256 bit）
 std::string sha256Hex(const std::string& s) {
     unsigned char digest[SHA256_DIGEST_LENGTH];
     SHA256(reinterpret_cast<const unsigned char*>(s.data()), s.size(), digest);
@@ -68,10 +61,9 @@ std::string sha256Hex(const std::string& s) {
 }
 
 // UI / 导出用的脱敏形态：前 6 + "***" + 尾 4（太短则全 *）。
-// 导出链（claude_module.cpp doCopyConfig）只允许拿它当占位值，绝不用明文。
+// 导出链只允许拿它当占位值，绝不用明文
 std::string makeApiKeyHint(const std::string& apiKey) {
     if (apiKey.size() <= 10) {
-        // 太短就全部用 *
         return std::string(apiKey.size(), '*');
     }
     std::string hint;
@@ -83,7 +75,7 @@ std::string makeApiKeyHint(const std::string& apiKey) {
 }
 
 // 凭据三列的唯一写口（段一 / 补偿共用；空 stored = 清空三列 = 「该行没有密钥」）。
-// hint / check 由调用方算好一并传入，保证三列永远同批更新、不会漂移。
+// hint / check 由调用方算好一并传入，保证三列永远同批更新、不会漂移
 core::Result<void> writeCredentialColumns(core::data::SqliteDb& db,
                                           int64_t profileId,
                                           const std::string& stored,
@@ -123,21 +115,15 @@ std::string readStoredCredential(core::data::SqliteDb& db, int64_t profileId) {
     return v.isOk() ? v.value() : std::string();
 }
 
-// 「凭据真的已经迁进库了吗」探测（旧 Keychain 残留清理的护栏③，2026-10-03
-// 安全审计 F1 blocker）：
-// 只看「当前数据根有没有 profile」是不够的——**旧形态的库**（本设计之前建的）
-// 同样有 claude_profiles 行，而 listProfiles 的 SELECT 不引用新列，在旧库上
-// 照样成功返回行 → 护栏放行 → keep 传空 → 把用户 Keychain 里**真实可用**的
-// API Key 全清空。审计已用 /tmp 的老库实测复现（老表 SELECT 成功 / 查新列报
-// no such column）。
-// 判据 = 新列**可读**：旧库缺列 → prepare 直接失败，读都不用读就能否掉。
-// 两种「空」的区别就在这一步：
-//   · 列不可读  = 未知形态的库（旧库 / 半成品库）→ 凭据可能还在 Keychain
-//     → **必须整体跳过**
-//   · 列可读但值为空 = 本形态的库，只是这些 profile 没有密钥（从没配过 / 反向
-//     同步清空过）→ 下面按「至少一行有密钥」再判一次（fail-safe，见调用处）
+// 「凭据真的已经迁进库了吗」探测（旧 Keychain 残留清理的护栏）：旧形态的库
+// 同样有 claude_profiles 行，只看行数会把用户 Keychain 里真实可用的 key 全清空
+//（旧库 SELECT 不引用新列照样成功）。判据 = 新列**可读**（旧库缺列 → prepare
+// 直接失败）。两种「空」的区别就在这一步：
+//   · 列不可读  = 未知形态的库 → 凭据可能还在 Keychain → 必须整体跳过
+//   · 列可读但值为空 = 本形态的库，只是没有密钥 → 由调用处再判「至少一行
+//     有密钥」（fail-safe）
 struct CredentialColumnProbe {
-    bool readable = false;     // 新列可读 = 库是本形态建的（凭据体系已是库列）
+    bool readable = false;     // 新列可读 = 库是本形态建的
     int64_t rows = 0;          // claude_profiles 行数
     int64_t rowsWithKey = 0;   // 凭据列非空的行数
 };
@@ -160,7 +146,7 @@ CredentialColumnProbe probeCredentialColumn(core::data::SqliteDb& db) {
 
 } // namespace
 
-// ---------- 两段写助手（CPX-07）----------
+// 两段写助手
 
 TwoPhaseKeyWrite::TwoPhaseKeyWrite(core::data::SqliteDb& db, int64_t profileId,
                                    std::string oldStored, std::string oldPlain)
@@ -189,8 +175,7 @@ core::Result<void> TwoPhaseKeyWrite::writeKey(const std::string& newKey) {
     if (!newKey.empty()) {
         auto prot = platform::credential::protect(newKey);
         if (prot.isFail()) {
-            // 段一在**落任何字节之前**就失败：旧值完好，无需补偿（比旧的
-            // 「先写坏再回写」更强——回写照做的理由因此只对下面的落库失败成立）
+            // 段一在落任何字节之前就失败：旧值完好，无需补偿
             return core::Result<void>::fail(prot.errorCode(),
                                             prot.errorMessage());
         }
@@ -201,10 +186,9 @@ core::Result<void> TwoPhaseKeyWrite::writeKey(const std::string& newKey) {
 
     auto r = writeCredentialColumns(db_, profileId_, stored, hint, check);
     if (r.isFail()) {
-        // 段一落库失败也可能已动过旧值（语句级失败通常在提交前回滚，但 SQLite
-        // 的错误窗口不承诺旧值完好）→ 尽力回写。旧值以**存储形态原样字节**回写
-        // （不经 protect 重编码），DPAPI 那种「同一明文两次加密结果不同」的平台
-        // 也能回到逐字节的旧状态
+        // 段一落库失败也可能已动过旧值（SQLite 的错误窗口不承诺旧值完好）→
+        // 尽力按存储形态原样字节回写（不经 protect 重编码），DPAPI 那种
+        // 「同一明文两次加密结果不同」的平台也能回到逐字节旧状态
         keyTouched_ = true;
         compensate();
         return r;
@@ -237,8 +221,6 @@ void TwoPhaseKeyWrite::compensate() {
     }
     keyTouched_ = false;
 }
-
-// ---------- 构造 / 行解析 ----------
 
 ProfileRepository::ProfileRepository(core::data::SqliteDb& db,
                                      std::string keychainService)
@@ -278,11 +260,11 @@ core::Result<Profile> ProfileRepository::rowToProfile(
     if (extraEnv.isOk()) p.extraEnvJson = extraEnv.value();
     if (extraSettings.isOk()) p.extraSettingsJson = extraSettings.value();
     if (sharedCfg.isOk()) p.sharedConfigId = sharedCfg.value();
-    // 读侧规范化：未知/空值一律兜底 both（设计 D-8 双保险之一）
+    // 读侧规范化：未知/空值一律兜底 both
     if (authField.isOk()) {
         p.authField = authFieldToText(authFieldFromText(authField.value()));
     }
-    // 读侧规范化：未知/空值一律按「未覆盖」读回空串（同 authField 口径，CPX-13）
+    // 读侧规范化：未知/空值一律按「未覆盖」读回空串（同 authField 口径）
     if (dialectOverride.isOk()) {
         p.dialectOverride = normalizeDialectOverride(dialectOverride.value());
     }
@@ -291,11 +273,11 @@ core::Result<Profile> ProfileRepository::rowToProfile(
     if (created.isOk()) p.createdAt = static_cast<std::time_t>(created.value());
     if (updated.isOk()) p.updatedAt = static_cast<std::time_t>(updated.value());
 
-    p.apiKeyPlain.clear();   // 默认永远为空
+    p.apiKeyPlain.clear();
     return core::Result<Profile>::ok(std::move(p));
 }
 
-// ---------- Profile CRUD（R10-A2：策略尾在门面）----------
+// Profile CRUD
 
 core::Result<std::vector<Profile>> ProfileRepository::listProfiles() {
     auto prep = db_.prepare(
@@ -367,7 +349,6 @@ core::Result<Profile> ProfileRepository::createProfile(const std::string& name,
                                                        const std::string& dialectOverride,
                                                        int64_t fallbackProfileId,
                                                        const std::string& extraSettingsJson) {
-    // 校验
     if (trim(name).empty()) {
         return core::Result<Profile>::fail(core::ErrorCode::ValidationError,
             "name 不能为空");
@@ -386,29 +367,24 @@ core::Result<Profile> ProfileRepository::createProfile(const std::string& name,
     const std::string cleanedName = trim(name);
     const std::string cleanedModel = trim(model);
     const std::string cleanedAuthField =
-        authFieldToText(authFieldFromText(authField));   // 写侧规范化（D-8）
-    // 写侧规范化（CPX-13）：非法值 → 空串（未覆盖）
+        authFieldToText(authFieldFromText(authField));   // 写侧规范化
     const std::string cleanedDialectOverride =
         normalizeDialectOverride(dialectOverride);
     const std::string hint = makeApiKeyHint(apiKey);
     const std::string check = sha256Hex(apiKey);
 
-    // 凭据先过平台保护（Windows = DPAPI 加密；macOS/POSIX = 原样）。
-    // 放在 INSERT 之前：保护失败就一字节都不落，不留「行了但密钥坏」的中间态
+    // 凭据先过平台保护（Windows = DPAPI；macOS/POSIX = 原样）。放在 INSERT
+    // 之前：保护失败就一字节不落，不留「行了但密钥坏」的中间态
     auto protectedKey = platform::credential::protect(apiKey);
     if (protectedKey.isFail()) {
         return core::Result<Profile>::fail(protectedKey.errorCode(),
             "API Key 保护失败（未建行）: " + protectedKey.errorMessage());
     }
 
-    // 单条 INSERT 并直接取回 rowid（审计 2026-09-23 [7]）：旧实现是
-    // INSERT 与 SELECT last_insert_rowid() 两条语句，中间不持锁——代理
-    // worker 线程的 logCall INSERT 穿插其间会改写连接级 last_insert_rowid，
-    // 导致 newId 取错。INSERT ... RETURNING id（SQLite ≥3.35）单语句原子取回，
-    // rowid 随本条 INSERT 的结果行返回，不再依赖连接级状态。
-    // 2026-10-02 存储统一：凭据与元数据在同一行 → 旧的两段写（段一 Keychain、
-    // 段二回填 keychain_account、任一失败回滚 INSERT）在单条语句里天然原子，
-    // 回滚路径随之删除（行为等价且更强：不存在「行了但密钥没落」的窗口）。
+    // 单条 INSERT ... RETURNING id 原子取回 rowid：旧实现 INSERT 与 SELECT
+    // last_insert_rowid() 两条语句间不持锁，代理 worker 线程的 logCall INSERT
+    // 穿插其间会改写连接级 last_insert_rowid 导致 newId 取错。凭据与元数据
+    // 在同一行也使旧两段写天然原子，回滚路径随之删除
     auto prep = db_.prepare(
         "INSERT INTO claude_profiles "
         "(name, base_url, api_key_hint, api_key_check, api_key_encrypted, "
@@ -436,7 +412,6 @@ core::Result<Profile> ProfileRepository::createProfile(const std::string& name,
 
     auto stepR = stmt.step();
     if (stepR.isFail()) {
-        // UNIQUE 约束冲突 → ProfileAlreadyExists
         std::string msg = stepR.errorMessage();
         if (msg.find("UNIQUE") != std::string::npos) {
             return core::Result<Profile>::fail(
@@ -446,12 +421,11 @@ core::Result<Profile> ProfileRepository::createProfile(const std::string& name,
         return core::Result<Profile>::fail(stepR.errorCode(), msg);
     }
     if (!stepR.value()) {
-        // RETURNING 理论上必返回一行；防御式处理（DONE 意味着异常路径）
+        // RETURNING 理论上必返回一行；防御式处理
         return core::Result<Profile>::fail(core::ErrorCode::Internal,
             "INSERT ... RETURNING id 未返回行");
     }
 
-    // 取新分配的 rowid（本语句结果行，无跨语句竞态）
     auto idRow = stmt.currentRow();
     if (idRow.isFail()) {
         return core::Result<Profile>::fail(idRow.errorCode(), idRow.errorMessage());
@@ -462,11 +436,10 @@ core::Result<Profile> ProfileRepository::createProfile(const std::string& name,
     }
     const int64_t newId = idVal.value();
 
-    // 把 INSERT ... RETURNING 步进到 DONE 释放连接上的 in-progress 状态：
-    // 语句停在结果行时 COMMIT 会被 SQLite 拒绝（"cannot commit transaction -
-    // SQL statements in progress"）——门面首建自动激活路径里 setActiveProfile
-    // 的事务在本连接上会直接撞上它（产品审计 2026-09-23 [6] 实测触发）。
-    // DONE 后语句自动 reset，不再阻塞任何事务；失败极罕见且行已写入，只 WARN
+    // 把 RETURNING 步进到 DONE 释放连接上的 in-progress 状态：语句停在结果行
+    // 时 COMMIT 会被 SQLite 拒绝（"cannot commit transaction - SQL statements
+    // in progress"）——门面首建自动激活路径实测触发。失败极罕见且行已写入，
+    // 只 WARN
     auto drain = stmt.step();
     if (drain.isFail()) {
         LOG_WARN("INSERT RETURNING 收尾 step 失败（行已写入，继续）: " +
@@ -476,8 +449,6 @@ core::Result<Profile> ProfileRepository::createProfile(const std::string& name,
     LOG_INFO("已创建 Claude profile id=" + std::to_string(newId) +
              " name=" + cleanedName);
 
-    // 返回完整 Profile（R10-A2：首建自动激活策略在门面，本类 is_active 恒
-    // false——INSERT 字面 0；激活与否由门面按 activateIfNoneActive 回填）
     Profile out;
     out.id = newId;
     out.name = cleanedName;
@@ -487,9 +458,9 @@ core::Result<Profile> ProfileRepository::createProfile(const std::string& name,
     out.model = cleanedModel;
     out.sharedConfigId = sharedConfigId;
     out.authField = cleanedAuthField;   // 必须带上：二段补写以本返回值为基
-    out.dialectOverride = cleanedDialectOverride;   // 同上（CPX-13）
+    out.dialectOverride = cleanedDialectOverride;   // 同上
     out.fallbackProfileId = fallbackProfileId;
-    out.extraSettingsJson = extraSettingsJson;      // 同上（复制即配置口径）
+    out.extraSettingsJson = extraSettingsJson;      // 同上
     out.isActive = false;
     out.createdAt = now;
     out.updatedAt = now;
@@ -507,15 +478,13 @@ core::Result<void> ProfileRepository::updateProfile(const Profile& profile,
         return core::Result<void>::fail(core::ErrorCode::ValidationError,
             "name 不能为空");
     }
-    // 设计 §3.7 校验：拒自引用（fallback_profile_id == 自身 = 纯浪费一跳）。
-    // 与「A→B / B→A 的一跳环」是两回事——环无害（备用各指对方），不拦
+    // 拒自引用（== 自身 = 纯浪费一跳）；A→B / B→A 的一跳环无害，不拦
     if (profile.fallbackProfileId == profile.id) {
         return core::Result<void>::fail(core::ErrorCode::ValidationError,
             "备用 Profile 不能是自身");
     }
 
-    // 查旧 profile（用于回滚 Keychain；oldProfile 出参供门面的 re-takeover
-    // 策略尾判断「片段绑定是否变化 / 旧行是否激活」）
+    // 查旧 profile；oldProfile 出参供门面的 re-takeover 策略尾判断
     auto old = getProfile(profile.id);
     if (old.isFail()) {
         return core::Result<void>::fail(old.errorCode(), old.errorMessage());
@@ -526,8 +495,7 @@ core::Result<void> ProfileRepository::updateProfile(const Profile& profile,
     const std::string cleanedName = trim(profile.name);
     const std::time_t now = nowUnix();
     const std::string cleanedAuthField =
-        authFieldToText(authFieldFromText(profile.authField));   // 写侧规范化（D-8）
-    // 写侧规范化（CPX-13）：非法值 → 空串（未覆盖）
+        authFieldToText(authFieldFromText(profile.authField));   // 写侧规范化
     const std::string cleanedDialectOverride =
         normalizeDialectOverride(profile.dialectOverride);
 
@@ -556,11 +524,9 @@ core::Result<void> ProfileRepository::updateProfile(const Profile& profile,
         }
     }
 
-    // 1. 如果 apiKeyPlain 非空，覆盖凭据三列
     if (!profile.apiKeyPlain.empty()) {
-        // 两段写（CPX-07）：段一凭据三列（旧值 = 当前凭据，先捕获）→ 段二其余
-        // 元数据。段二失败时按旧值回写三列——原实现没有补偿，留下「密钥已换、
-        // api_key_hint / api_key_check 没换」的不一致态，事后无从判断。
+        // 两段写：段一凭据三列 → 段二其余元数据。段二失败时按旧值回写三列
+        //——原实现没有补偿，留下「密钥已换、hint/check 没换」的不一致态
         TwoPhaseKeyWrite keyTx = TwoPhaseKeyWrite::capture(db_, profile.id);
         auto keyWrite = keyTx.writeKey(profile.apiKeyPlain);
         if (keyWrite.isFail()) {
@@ -611,7 +577,6 @@ core::Result<void> ProfileRepository::updateProfile(const Profile& profile,
                                             stepR.errorMessage());
         }
     } else {
-        // 只更新 name / url / model / 片段绑定 / 备用
         auto prep = db_.prepare(
             "UPDATE claude_profiles SET "
             "name = ?, base_url = ?, model = ?, models_config = ?, "
@@ -649,9 +614,8 @@ core::Result<void> ProfileRepository::updateProfile(const Profile& profile,
 
     LOG_INFO("已更新 Claude profile id=" + std::to_string(profile.id));
 
-    // R10-A2 段级拆分：re-takeover 策略尾
-    //（片段绑定变化 && 旧行激活 && 代理运行 → 立即重写 live）留门面——
-    // 此刻旧行经 oldProfile 出参回填给门面判断，本类不编排接管
+    // re-takeover 策略尾（片段绑定变化 && 旧行激活 && 代理运行 → 立即重写
+    // live）留门面（经 oldProfile 出参判断），本类不编排接管
     return core::Result<void>::ok();
 }
 
@@ -669,9 +633,8 @@ core::Result<void> ProfileRepository::deleteProfile(int64_t id,
     const bool wasActiveVal = p.value().isActive;
     if (wasActive) *wasActive = wasActiveVal;
 
-    // 两段写（CPX-07）：段一清凭据三列（旧值先捕获）→ 段二删 SQLite 行。
-    // 顺序不能反：先删行会让「凭据还在」的失败路径无从补偿。段二失败时按
-    // 旧值回写三列（原实现无补偿：密钥已删、行还在，用户重试时密钥已丢）。
+    // 两段写：段一清凭据三列（旧值先捕获）→ 段二删 SQLite 行。顺序不能反：
+    // 先删行会让「凭据还在」的失败路径无从补偿；段二失败按旧值回写三列
     TwoPhaseKeyWrite keyTx = TwoPhaseKeyWrite::capture(db_, id);
     auto keyClear = keyTx.writeKey(std::string());   // 空串 = 清空三列
     if (keyClear.isFail()) {
@@ -682,10 +645,9 @@ core::Result<void> ProfileRepository::deleteProfile(int64_t id,
             "清理保存的 API Key 失败，profile 未删除: " + keyClear.errorMessage());
     }
 
-    // 段二：删 SQLite 行（FK CASCADE 会级联清空该 profile 的调用日志）。
-    // 同事务先解绑「备用指向它」的 profile（设计 §3.7：不留悬空 fallback id，
-    // 否则其它 profile 的 failover 静默落到已删 profile → resolveFallbackProfile
-    // 容错 nullopt 也是「不换家」，但库里留着悬空 id 难看且删除可重试时重复）
+    // 段二：同事务先解绑「备用指向它」的 profile（不留悬空 fallback id，否则
+    // 其它 profile 的 failover 会静默落到已删 profile），再删行（FK CASCADE
+    // 级联清空调用日志）
     auto delRow = keyTx.writeDb([&]() -> core::Result<void> {
         auto ub = db_.prepare(
             "UPDATE claude_profiles SET fallback_profile_id = 0, "
@@ -721,43 +683,35 @@ core::Result<void> ProfileRepository::deleteProfile(int64_t id,
 
     LOG_INFO("已删除 Claude profile id=" + std::to_string(id));
 
-    // R10-A2 段级拆分：停代理策略尾
-    //（删的是激活 profile 且代理运行中 → stopProxy，其内部 syncRestore 还原
-    // ~/.claude/settings.json，settings.json 不能继续指向无激活 profile 的代理）
-    // 留门面——wasActive 经出参回填给门面判断，本类不编排代理生命周期
+    // 停代理策略尾（删的是激活 profile 且代理运行中 → stopProxy 还原
+    // settings.json）留门面——wasActive 经出参回填，本类不编排代理生命周期
     return core::Result<void>::ok();
 }
 
 core::Result<int> ProfileRepository::cleanupOrphanKeychainEntries() {
-    // 2026-10-02 存储统一：凭据已迁进 claude_profiles.api_key_encrypted，
-    // platform::keychain 不再是凭据来源。本方法因此从「孤儿密钥清理」变成
-    // **旧 Keychain 残留的一次性清理**（设计 §6.3 硬约束 3）：本 service 命名
-    // 空间下剩下的 claude:* 条目全是没人管的旧钥匙（旧 account 约定
-    // claude:<id>，见 keychain.h 白名单前缀），迁库后一律清掉；白名单前缀之外
-    // 的 account 保留不删、不计数（三平台一致，keychain.h shouldDeleteOrphan）。
+    // 凭据已迁进 api_key_encrypted，platform::keychain 不再是凭据来源；本
+    // 方法是一次性的旧 Keychain 残留清理：本命名空间下剩余 claude:* 条目
+    // 一律清掉，白名单前缀之外的 account 保留不删、不计数
     auto profilesR = listProfiles();
     if (profilesR.isFail()) {
         return core::Result<int>::fail(profilesR.errorCode(),
                                        profilesR.errorMessage());
     }
 
-    // P0 误删护栏（2026-09-30 事故，**这条优先于一切**）：当前数据根零 profile
-    // 说明这个实例还没在这个根上建过任何东西——而 Keychain 的 service 命名空间
-    // 隔离级别弱于 DEVDESK_DATA_ROOT（可以是共享名 / 裸前缀 / 别的根），
-    // 「空根也要清残留」会把该命名空间下**全部**条目（包括用户真实密钥）清光。
-    // 空根只可能是「新根还没建 profile」或「测试/误设环境变量」两种情形，两种
-    // 情形下唯一安全的动作都是整个跳过、一个条目不碰。
+    // P0 误删护栏（**优先于一切**）：当前数据根零 profile 说明这个实例还没
+    // 在这个根上建过任何东西——而 Keychain 的 service 命名空间隔离级别弱于
+    // DEVDESK_DATA_ROOT，「空根也清残留」会把该命名空间下全部条目（含用户
+    // 真实密钥）清光。空根只可能是「新根还没建 profile」或「测试/误设环境
+    // 变量」两种情形，唯一安全的动作都是整体跳过、一个条目不碰
     if (profilesR.value().empty()) {
         LOG_WARN("跳过清理：当前数据根无 profile，防误删（keychain service=" +
                  keychainService_ + " 的条目一律保留）");
         return core::Result<int>::ok(0);
     }
 
-    // 护栏③（2026-10-03 安全审计 F1 blocker）：光有 profile 不代表凭据已迁进
-    // 库——**旧形态的库**同样有行，只看行数会把用户 Keychain 里的真实 key 全清光。
-    // 判据 = api_key_encrypted 列可读（旧库缺列 → prepare 直接失败）；逐行读不到
-    // 也按未迁移处理。列可读但**没有任何一行存有密钥**时同样整体跳过：那种状态下
-    // 「Keychain 里只剩残留」是个赌注，而护栏的一贯口径是「宁可不清理，也不能误删」。
+    // 护栏③：光有 profile 不代表凭据已迁进库（旧形态的库同样有行）。列可读
+    // 但没有任何一行存有密钥时同样整体跳过——那种状态下「Keychain 里只剩
+    // 残留」是个赌注，护栏的一贯口径是宁可不清理也不能误删
     const CredentialColumnProbe probe = probeCredentialColumn(db_);
     if (!probe.readable) {
         LOG_WARN("跳过清理：库中没有 api_key_encrypted 列（旧形态库，凭据未迁入库），"
@@ -772,9 +726,8 @@ core::Result<int> ProfileRepository::cleanupOrphanKeychainEntries() {
         return core::Result<int>::ok(0);
     }
 
-    // keep 传空：残留清理的目标就是「本命名空间下所有 claude:* 条目」——
-    // 保留名单为空是**本设计的有意选择**，不是漏传。走到这里已经证明「库是
-    // 本形态的、且至少一行真的存着凭据」，Keychain 里的 claude:* 只可能是旧副本。
+    // keep 传空是有意选择：走到这里已证明库是本形态且至少一行存着凭据，
+    // Keychain 里的 claude:* 只可能是旧副本
     auto delR = platform::keychain::deleteSecretsNotIn(keychainService_, {});
     if (delR.isFail()) {
         return core::Result<int>::fail(delR.errorCode(), delR.errorMessage());
@@ -787,8 +740,6 @@ core::Result<int> ProfileRepository::cleanupOrphanKeychainEntries() {
     return core::Result<int>::ok(removed);
 }
 
-// ---------- API key ----------
-
 core::Result<std::string> ProfileRepository::loadApiKey(int64_t profileId) {
     auto p = getProfile(profileId);
     if (p.isFail()) {
@@ -796,16 +747,14 @@ core::Result<std::string> ProfileRepository::loadApiKey(int64_t profileId) {
     }
     const std::string stored = readStoredCredential(db_, profileId);
     if (stored.empty()) {
-        // 「没有密钥」与「有但解不开」必须可分辨（设计 §7 教训③：不静默回落
-        // 空串——那会把不可用伪装成没配过，用户无从诊断）
+        // 「没有密钥」与「有但解不开」必须可分辨（不静默回落空串——那会把
+        // 不可用伪装成没配过，用户无从诊断）
         return core::Result<std::string>::fail(
             core::ErrorCode::NotFound,
             "该 Profile 没有保存 API Key（列空）");
     }
     return platform::credential::unprotect(stored);
 }
-
-// ---------- 激活 ----------
 
 core::Result<Profile> ProfileRepository::getActiveProfile() {
     auto prep = db_.prepare(
@@ -822,10 +771,8 @@ core::Result<Profile> ProfileRepository::getActiveProfile() {
         return core::Result<Profile>::fail(stepR.errorCode(), stepR.errorMessage());
     }
     if (!stepR.value()) {
-        // 产品审计 2026-09-23 [6]：错误 message 补可操作指引——503 的 JSON
-        // body 原样透传此文案（proxy_router 的 writeNoProfileError 是唯一出口，
-        // CPX-10 后缓冲 / 流式两条路径共用它、不再内联副本），用户在 Claude Code
-        // 侧即可看到去 DevDesk 启用的路径，不用再猜原因
+        // 错误 message 带可操作指引——503 的 JSON body 原样透传此文案
+        //（proxy_router 唯一出口），用户在 Claude Code 侧即可看到启用路径
         return core::Result<Profile>::fail(core::ErrorCode::NoActiveProfile,
             "没有激活的 Claude profile，请在 DevDesk 的 Claude 页选中 Profile "
             "并点击「启用」");
@@ -838,10 +785,9 @@ core::Result<Profile> ProfileRepository::getActiveProfile() {
 }
 
 core::Result<void> ProfileRepository::activateProfile(int64_t id) {
-    // R10-A2：setActiveProfile 的 DB 段（is_active 全局唯一）。调用方（门面
-    // setActiveProfile）负责前置校验（id / 存在性）与捕获编排
-    //（syncCaptureActiveProfile 必须先于本事务发生，否则会把自己刚写进去的
-    // 托管值当用户值捕获）。本方法只做「清零 → 置位」
+    // setActiveProfile 的 DB 段（is_active 全局唯一）：前置校验与捕获编排在
+    // 门面；syncCaptureActiveProfile 必须先于本事务，否则会把刚写进去的
+    // 托管值当用户值捕获
     return db_.transaction([this, id]() -> core::Result<void> {
         auto c = db_.prepare("UPDATE claude_profiles SET is_active = 0 "
                             "WHERE is_active = 1");
@@ -869,7 +815,7 @@ core::Result<void> ProfileRepository::activateProfile(int64_t id) {
     });
 }
 
-// ---------- Profile 复制（设计 §4.2/§4.3）----------
+// Profile 复制
 
 core::Result<Profile> ProfileRepository::duplicateProfile(int64_t srcId) {
     auto srcR = getProfile(srcId);
@@ -879,8 +825,8 @@ core::Result<Profile> ProfileRepository::duplicateProfile(int64_t srcId) {
     }
     const Profile src = std::move(srcR).value();
 
-    // 副本命名（§4.2）：name + " 副本"，重名递增避让既有 UNIQUE 约束；
-    // 100 次仍冲突 → 返回 fail 且不建行（不空转死循环）
+    // 副本命名：name + " 副本"，重名递增避让既有 UNIQUE 约束；100 次仍冲突
+    // → 返回 fail 且不建行（不空转死循环）
     auto listR = listProfiles();
     if (listR.isFail()) {
         return core::Result<Profile>::fail(listR.errorCode(),
@@ -896,13 +842,10 @@ core::Result<Profile> ProfileRepository::duplicateProfile(int64_t srcId) {
             "副本命名连续 100 次冲突，请先重命名或删除部分 Profile");
     }
 
-    // 源 key 缺失 → fail：不建无 key 的副本
-    //（与 createProfile 的「apiKey 必填」约束一致）。2026-10-02 存储统一后
-    // 只剩**两态**（旧的三态里「条目在但值是空串」与「条目不存在」在单列模型
-    // 下是同一种形态——列空）：
+    // 源 key 缺失 → fail：不建无 key 的副本。两态：
     //   列空（NotFound）→「密钥缺失」+ 恢复提示
-    //   读失败（非 NotFound 的真实错误，如 Windows 换机后 DPAPI 解不开）→
-    //   原样透传错误码与信息（读不了 ≠ 没有，不误导用户去重填）
+    //   读失败（如 Windows 换机后 DPAPI 解不开）→ 原样透传错误码与信息
+    //（读不了 ≠ 没有，不误导用户去重填）
     auto keyR = loadApiKey(srcId);
     if (keyR.isFail()) {
         if (keyR.errorCode() == core::ErrorCode::NotFound) {
@@ -916,21 +859,16 @@ core::Result<Profile> ProfileRepository::duplicateProfile(int64_t srcId) {
             "读取源 Profile 密钥失败：" + keyR.errorMessage());
     }
     if (keyR.value().empty()) {
-        // 保护层理论上不会把空串存成非空（protect 对空串直接返回空串），
-        // 但真发生了要如实报，不能拿空 key 去建副本
+        // protect 理论上不会把空串存成非空，但真发生了要如实报
         return core::Result<Profile>::fail(
             core::ErrorCode::InvalidApiKey,
             "源 Profile 的密钥为空串，无法建副本；"
             "编辑该 Profile 重新填一次 API Key 即可");
     }
 
-    // 一行 SQLite（凭据三列随 createProfile 一并写入，不再有第二个存储）；
-    // 副本不激活（S-4）→ 不触发 setActiveProfile、也不触发反向同步。
-    // 片段绑定在 createProfile 处一并带上（设计 §2.6：它属于配置）——若留到
-    // 二段补写才设，二段条件（models/extra_env 非空）不成立时就会丢掉绑定；
-    // fallback_profile_id 同样（设计 §3.7：备用属于配置，复制 = 拿到同一套）；
-    // extra_settings_json 同样经 createProfile 尾参携带（advanced-json-editor
-    // 设计 §3.3：与 dialect_override「复制即配置」同款口径）
+    // 凭据三列随 createProfile 一并写入；副本不激活。片段绑定 / fallback /
+    // extra_settings 经 createProfile 尾参一并带上（属于配置）——若留到二段
+    // 补写才设，二段门槛不成立时就会丢掉
     const std::string defModel =
         effectiveModelsConfig(src.modelsConfigJson).def.model;
     auto createdR = createProfile(copyName, src.baseUrl, keyR.value(), defModel,
@@ -944,10 +882,9 @@ core::Result<Profile> ProfileRepository::duplicateProfile(int64_t srcId) {
     const int64_t newId = createdR.value().id;
     Profile out = createdR.value();
 
-    // 二段补写 models_config / extra_env / extra_settings_json（同 UI 新建流程：
-    // createProfile 只带得走 default 模型名）。门槛条件（审计 F-3 必修）：仅
-    // JSON profile（两个 env 字段均空、仅 extraSettingsJson 非空）复制不得因
-    // 门槛不成立而静默丢字段
+    // 二段补写 models_config / extra_env / extra_settings_json（createProfile
+    // 只带得走 default 模型名）；仅 JSON profile（两个 env 字段均空、仅
+    // extraSettingsJson 非空）复制不得因门槛不成立而静默丢字段
     if (!src.modelsConfigJson.empty() || !src.extraEnvJson.empty() ||
         !src.extraSettingsJson.empty()) {
         Profile upd = out;
@@ -957,7 +894,7 @@ core::Result<Profile> ProfileRepository::duplicateProfile(int64_t srcId) {
         upd.model = defModel;
         auto u = updateProfile(upd);
         if (u.isFail()) {
-            // 回滚（§4.3）：deleteProfile 先清 Keychain 再删行
+            // 回滚：deleteProfile 先清凭据再删行
             auto rb = deleteProfile(newId);
             if (rb.isOk()) {
                 return core::Result<Profile>::fail(
@@ -978,7 +915,7 @@ core::Result<Profile> ProfileRepository::duplicateProfile(int64_t srcId) {
     return core::Result<Profile>::ok(std::move(out));
 }
 
-// ---------- 共享配置片段（设计 §2.1/§2.4/§2.6）----------
+// 共享配置片段
 
 core::Result<SharedConfig> ProfileRepository::rowToSharedConfig(
     const core::data::SqlRow& row) const {
@@ -1032,9 +969,7 @@ core::Result<SharedConfig> ProfileRepository::createSharedConfig(
         return core::Result<SharedConfig>::fail(core::ErrorCode::ValidationError,
             "共享配置片段名不能为空");
     }
-    // 信任边界：不把坏 JSON 落库（读侧另有容错）。片段内容 = 高级属性 JSON
-    //（advanced-json-editor §8.1：与表单保存同一套 validateExtraSettingsJson
-    // 规则，含 env 键拒绝——片段是 settings.json 属性预设，不是 env 装饰层）
+    // 信任边界：不把坏 JSON 落库（读侧另有容错）
     if (!extraSettingsJson.empty()) {
         auto v = validateExtraSettingsJson(extraSettingsJson);
         if (v.isFail()) {
@@ -1081,8 +1016,8 @@ core::Result<SharedConfig> ProfileRepository::createSharedConfig(
     }
     const int64_t newId = idVal.value();
 
-    // 步进到 DONE 释放连接上的 in-progress 状态（同 createProfile 的 [7]：
-    // 语句停在结果行时，随后在同一连接上开事务会被 SQLite 拒绝）
+    // 步进到 DONE 释放连接上的 in-progress 状态（同 createProfile：语句停在
+    // 结果行时，随后在同一连接上开事务会被 SQLite 拒绝）
     auto drain = stmt.step();
     if (drain.isFail()) {
         LOG_WARN("共享片段 INSERT RETURNING 收尾 step 失败（行已写入，继续）: " +
@@ -1163,9 +1098,8 @@ core::Result<void> ProfileRepository::updateSharedConfig(
     }
     LOG_INFO("已更新共享配置片段 id=" + std::to_string(config.id));
 
-    // R10-A2 段级拆分：re-takeover 策略尾（改了就生效——代理在跑且激活 profile
-    // 绑定了它 → 立即重写 settings.json，否则 live 会留旧片段值到下次切换）留
-    // 门面，本类不编排接管
+    // re-takeover 策略尾（改了就生效——代理在跑且激活 profile 绑定了它 →
+    // 立即重写 settings.json，否则 live 会留旧片段值到下次切换）留门面
     return core::Result<void>::ok();
 }
 
@@ -1180,15 +1114,14 @@ core::Result<void> ProfileRepository::deleteSharedConfig(int64_t id,
         return exists;
     }
 
-    // 删除前先看激活 profile 是否绑定它：只有它的键在 live 里（片段值由绑定它
-    // 的那个 profile 的接管写入），故只有这种情况删完需要重写 settings.json
-    //（activeBound 出参供门面 re-takeover 策略尾判断）
+    // 删除前先看激活 profile 是否绑定它：只有它的键在 live 里，删完才需要
+    // 重写 settings.json（activeBound 出参供门面 re-takeover 策略尾判断）
     auto active = getActiveProfile();
     const bool activeBoundVal = active.isOk() && active.value().sharedConfigId == id;
     if (activeBound) *activeBound = activeBoundVal;
 
-    // 同事务解绑 + 删行（设计 §2.6）：不留悬空 shared_config_id；不做级联删
-    // profile（删片段 = 交回控制权，不是丢配置）
+    // 同事务解绑 + 删行：不留悬空 shared_config_id；不级联删 profile
+    //（删片段 = 交回控制权，不是丢配置）
     auto tx = db_.transaction([this, id]() -> core::Result<void> {
         auto u = db_.prepare(
             "UPDATE claude_profiles SET shared_config_id = 0, updated_at = ? "
@@ -1223,9 +1156,7 @@ core::Result<void> ProfileRepository::deleteSharedConfig(int64_t id,
     LOG_INFO("已删除共享配置片段 id=" + std::to_string(id) +
              (activeBoundVal ? "（激活 profile 已解绑）" : ""));
 
-    // R10-A2 段级拆分：re-takeover 策略尾（解绑当场生效——代理在跑且激活
-    // profile 绑定了它 → 重写 live（片段键撤走、与片段同名的 profile 自身值
-    // 恢复生效））留门面，本类不编排接管
+    // re-takeover 策略尾（解绑当场生效）留门面
     return core::Result<void>::ok();
 }
 

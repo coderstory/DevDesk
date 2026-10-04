@@ -1,9 +1,7 @@
 // src/module_agent/agent_store.cpp
 // AgentStore 落库层实现：统一模式 = db_.mutex() 锁内 prepare → bind → step。
-// 约束（agent M1 plan task-3-brief）：
-//   - 每条 SQL 与列序按 brief 固定表，bind 顺序 = 问号顺序
-//   - 不抛不吞：prepare/bind/step/fetchAll/行取值的失败一律逐个检查并透传
-//   - optional 入参/列 → nullptr 绑定 / isNull 判空映射 std::nullopt
+// 列序按 brief 固定表、bind 顺序 = 问号顺序；不抛不吞，各步失败逐个透传；
+// optional 入参/列 → nullptr 绑定 / isNull 判空映射 std::nullopt
 #include "module_agent/agent_store.h"
 
 #include <ctime>
@@ -18,9 +16,7 @@ using core::ErrorCode;
 
 namespace {
 
-// Result<void> 没有 operator&&（core/result.h 的 void 特化无该运算符）：
-// 全参数非 optional 的语句用这个小 helper 收拢 bind 链——按序绑定，
-// 第一个失败即停并透传其 code + msg，不静默跳过。
+// Result<void> 无 operator&&，故用 helper 收拢 bind 链——按序绑定、失败即停透传
 template <typename... Args>
 core::Result<void> bindAll(core::data::Statement& s, Args&&... args) {
     int index = 1;
@@ -34,8 +30,7 @@ core::Result<void> bindAll(core::data::Statement& s, Args&&... args) {
     return r;
 }
 
-// 行取值 helper：getInt64/getString 失败转 (code, msg) 返回，成功填 out 返
-// nullopt。列名与 SELECT 拼写漂移是编译期查不出的错，不容 valueOr 静默默认值。
+// 行取值 helper：失败转 (code,msg)，成功填 out 返 nullopt（列名漂移不容静默默认值）
 using RowError = std::pair<ErrorCode, std::string>;
 
 std::optional<RowError> rowInt(const core::data::SqlRow& row, const char* col,
@@ -54,13 +49,12 @@ std::optional<RowError> rowStr(const core::data::SqlRow& row, const char* col,
     return std::nullopt;
 }
 
-// agent_tasks 的九列列序：listTasks / getTask 共用同一份 SELECT 列清单 +
-// 同一份行映射——列名与取值散成两份就是下一次「改一处漏一处」。
+// agent_tasks 九列列序：listTasks / getTask 共用同一份列清单与行映射
 constexpr const char* kTaskColumns =
     "id,name,goal,trigger_type,trigger_config,model_slot,"
     "max_iterations,allow_destructive,enabled";
 
-// 一行 agent_tasks → AgentTaskRow（列缺失/类型不符一律 fail，不静默默认值）
+// 一行 → AgentTaskRow（列缺失/类型不符一律 fail）
 Result<AgentTaskRow> taskRowFrom(const core::data::SqlRow& row) {
     AgentTaskRow t;
     int64_t maxIter = 0, allowDestr = 0, enabled = 0;
@@ -114,8 +108,6 @@ Result<int64_t> AgentStore::createTask(const std::string& name, const std::strin
     if (st.isFail()) return Result<int64_t>::fail(st.errorCode(), st.errorMessage());
     const int64_t now = static_cast<int64_t>(std::time(nullptr));
     auto& s = st.value();
-    // brief 原示例的 && 串联不可编译（Result<void> 无 operator&&），改 bindAll
-    // helper：逐个绑定、失败即透传，语义与逐个 if 检查一致
     auto ok = bindAll(s, name, goal, triggerType, triggerConfig, modelSlot,
                       static_cast<int64_t>(maxIterations),
                       static_cast<int64_t>(allowDestructive ? 1 : 0), now, now);
@@ -184,9 +176,8 @@ Result<int64_t> AgentStore::startRun(int64_t taskId) {
 }
 
 Result<int64_t> AgentStore::startRunExclusive(int64_t taskId) {
-    // 查存在性 → 插行必须在**同一把锁**内（db_.mutex() 是 recursive_mutex，
-    // 下面的 startRun 会再锁一次、同一线程可重入），中间不放锁 = 跨线程原子。
-    // 手动「启动」与 Scheduler/cron 派发都走 AgentLoop::run → 这里（唯一闸点）。
+    // 查存在性 → 插行在同一把锁内（recursive_mutex，startRun 可重入），中间不放锁 =
+    // 跨线程原子。手动启动与 Scheduler/cron 派发都经 AgentLoop::run → 这里
     std::lock_guard<std::recursive_mutex> lock(db_.mutex());
     auto st = db_.prepare(
         "SELECT 1 FROM agent_runs WHERE task_id=? AND status='running' LIMIT 1");
@@ -224,9 +215,8 @@ Result<void> AgentStore::updateTask(int64_t id, const std::string& name,
     if (ok.isFail()) return Result<void>::fail(ok.errorCode(), ok.errorMessage());
     auto step = s.step();
     if (step.isFail()) return Result<void>::fail(step.errorCode(), step.errorMessage());
-    // 一类一规则（与 getTask 同口径）：id 不存在 → fail(NotFound)，不静默 no-op。
-    // UPDATE 影响 0 行即目标行不存在（同 todo_service.cpp:329 既有口径）；持锁
-    // 覆盖 step + sqlite3_changes，计数不会被并发语句插队（recursive_mutex）。
+    // id 不存在 → fail(NotFound)，不静默 no-op。持锁覆盖 step + sqlite3_changes，
+    // 计数不会被并发语句插队
     if (sqlite3_changes(db_.handle()) == 0) {
         return Result<void>::fail(ErrorCode::NotFound,
                                   "任务不存在：id=" + std::to_string(id));
@@ -245,7 +235,7 @@ Result<void> AgentStore::setTaskEnabled(int64_t id, bool enabled) {
     if (ok.isFail()) return Result<void>::fail(ok.errorCode(), ok.errorMessage());
     auto step = s.step();
     if (step.isFail()) return Result<void>::fail(step.errorCode(), step.errorMessage());
-    // 同 updateTask：id 不存在 → fail(NotFound)，不静默 no-op
+    // 同 updateTask：id 不存在 → fail(NotFound)
     if (sqlite3_changes(db_.handle()) == 0) {
         return Result<void>::fail(ErrorCode::NotFound,
                                   "任务不存在：id=" + std::to_string(id));
@@ -265,7 +255,7 @@ Result<void> AgentStore::finishRun(int64_t runId, const std::string& status,
     if (st.isFail()) return Result<void>::fail(st.errorCode(), st.errorMessage());
     auto& s = st.value();
     const int64_t now = static_cast<int64_t>(std::time(nullptr));
-    // 含 optional 参数：逐个绑定，nullopt → bind(i, nullptr) 表 NULL
+    // optional 逐个绑定，nullopt → bind nullptr 表 NULL
     if (auto r = s.bind(1, status); r.isFail()) {
         return Result<void>::fail(r.errorCode(), r.errorMessage());
     }
@@ -378,10 +368,8 @@ Result<std::vector<AgentMessageRow>> AgentStore::listMessages(int64_t runId) {
 Result<std::vector<AgentRunRow>> AgentStore::listRuns(int64_t taskId, int limit) {
     std::lock_guard<std::recursive_mutex> lock(db_.mutex());
     auto st = db_.prepare(
-        // id DESC 兜底（评审微修）：started_at 是秒精度，同一秒内连起两次 run 会
-        // 并列——只按 started_at DESC 时并列段顺序未定义，**LIMIT 窗口本身**可能把
-        // 较旧那条当「最近一次」返回（消费方：状态列 / runlist[0] / 默认选中 run）。
-        // id 单调递增，与插入序一致，故 (started_at, id) 双键 = 确定的最近优先。
+        // id DESC 兜底：started_at 是秒精度，同秒两 run 会并列，只按 started_at DESC
+        // 时 LIMIT 窗口可能把较旧那条当「最近一次」返回；id 单调，(started_at, id) = 确定
         "SELECT id,task_id,status,started_at,ended_at,iterations,input_tokens,"
         "output_tokens,error FROM agent_runs WHERE task_id=?"
         " ORDER BY started_at DESC, id DESC LIMIT ?");

@@ -1,4 +1,3 @@
-// src/core/database.cpp
 #include "database.h"
 #include "logging.h"
 #include "schema.h"
@@ -28,7 +27,7 @@ core::Result<Database> Database::open(const std::filesystem::path& path) {
         return core::Result<Database>::fail(dbResult.errorCode(), dbResult.errorMessage());
     }
 
-    // Result::value() 返回 T&（lvalue ref），用 std::move 转成 xvalue 触发 move ctor
+    // Result::value() 返回 T&（lvalue ref），std::move 转 xvalue 触发 move ctor
     core::data::SqliteDb db(std::move(dbResult.value()));
     Database inst(std::move(db));
     return core::Result<Database>::ok(std::move(inst));
@@ -72,7 +71,7 @@ core::Result<int64_t> pruneCallLogs(core::data::SqliteDb& db, int retentionDays)
         static_cast<int64_t>(sqlite3_changes(db.handle())));
 }
 
-// ============ 进程级数据库共享访问器 ============
+// 进程级数据库共享访问器
 
 namespace {
 std::atomic<core::data::SqliteDb*> g_appDatabase{nullptr};

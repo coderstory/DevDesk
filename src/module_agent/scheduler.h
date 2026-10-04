@@ -1,15 +1,10 @@
 // src/module_agent/scheduler.h
-// Scheduler：agent 任务的触发侧（agent M2）。定时（cron）触发 + 常驻 worker 队列；
-// 自己的 run 线程表 + 分钟防重表。**「同 task 不并发」的闸不在本类**——
-// 单闸单点在 AgentLoop::run（内调 AgentStore::startRunExclusive），本类只做
-// 「起线程 + 等它自己收尾」的薄 spawn 包装（spec §5.1 / §10，M2 审计修订）。
-//
-// 契约（T6 接线依赖，勿回退）：
-//   ① **成员声明顺序**：Scheduler 实例必须声明在它引用的 loop_ / llm_ / store_ **之后**
-//      （C++ 逆序析构：Scheduler 先亡，其 run 线程 join 期间 loop/store 必须仍存活）。
-//   ② stopAll 可重复调用（幂等，每次收干当前 runs_），但**不支持并发调用**——它不做
-//      tickThread_/residentThread_ 的 join 与 runs_ 摘取的跨线程互斥（单线程收尾口径，
-//      与 AgentModule::onStop 一致）。
+// Scheduler：agent 任务的触发侧。定时（cron）触发 + 常驻 worker 队列；自己的 run
+// 线程表 + 分钟防重表。「同 task 不并发」的闸不在本类——单闸在 AgentLoop::run，
+// 本类只做「起线程 + 等收尾」的薄 spawn。
+// 契约：① 成员声明顺序——Scheduler 必须声明在 loop_/llm_/store_ 之后（逆序析构下
+// Scheduler 先亡，其 run 线程 join 期间依赖的 loop/store 仍存活）；② stopAll 可重复
+// （每次收干当前 runs_），但不支持并发调用（单线程收尾口径）。
 #pragma once
 #include <atomic>
 #include <condition_variable>
@@ -30,25 +25,20 @@ class AgentLoop;
 
 class Scheduler {
 public:
-    // now：unix 秒时钟缝（spec §5.1「时钟注入：构造注入 std::function<int64_t()>，
-    // 测试零等待」）。nullptr = 真实系统时间。
+    // unix 秒时钟缝（测试构造注入，零等待）；nullptr = 真实系统时间
     using NowFn = std::function<int64_t()>;
     Scheduler(AgentStore& store, AgentLoop& loop, NowFn now = {});
     ~Scheduler();                       // 兜底 stopAll（幂等）
     void start();                       // 起 tick 轮询线程 + 常驻 worker 线程（各自幂等守卫）
     void stopAll();                     // 停派发线程（tick/常驻）→ cancel 全部在跑 run → join（幂等）
-    // 对每个 enabled 且 trigger_type='schedule' 的任务：解析 trigger_config 的
-    // cron → matches(本地 tm) → 命中且 lastFiredMinute_[id] != 本分钟 → 派发。
-    // 公开供测试直调（零等待）；tick 线程每 200ms 实时醒来探一次分钟翻转。
+    // 每次扫 enabled 且 schedule 的任务：cron 匹配 + 同分钟防重 → 派发。公开供测试直调
     core::Result<void> tickNow();
     size_t activeRunCount();            // 测试观察面：runs_ 容器条目数（含已收尾未 reap 的）
-    // 常驻 worker 手动入队（spec §5.1：常驻本阶段只跑手动入队子任务——事件触发
-    // 降级 Phase 2）。pop 即 spawn、不等上一跑结束；同 task 连发两单由 AgentLoop
-    // 内的单闸拒绝（不阻塞队列）。停止后不再入队（避免留永远不被消费的幽灵单）。
+    // 常驻 worker 手动入队。pop 即 spawn、不等上一跑结束；同 task 连发两单由
+    // AgentLoop 单闸拒绝。停止后不再入队（避免幽灵单）
     void enqueueResident(int64_t taskId);
-    // 测试观察面（同 activeRunCount 口径）：常驻待跑队列长度。停止后入队必须不落地，
-    // 否则队列里会留一条永不被消费的幽灵单——这条不变式只能由队列长度断言钉住
-    // （去掉入队守卫时，run 数观察面看不见差别）。
+    // 测试观察面：常驻待跑队列长度。停止后入队必须不落地，否则留幽灵单——
+    // 这条不变式只能由队列长度断言钉住
     size_t residentQueueSize();
 
 private:

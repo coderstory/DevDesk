@@ -1,19 +1,10 @@
 // src/module_settings/settings_ui_cards.cpp
-// R6（spec 2026-09-27-refactor-incremental-design §5.2）：settings 模块 9 张卡 ——
-// 逐字自 settings_module.cpp 搬出（原 9 个私有 draw*Card + 其调用的私有
-// cardFrame/fs/nearestIndex/下拉持有者取值）。
+// settings 模块 8 张卡：每个可见区域一个自由函数，吃 CardDrawArgs（只读入参 +
+// 回调 + 几何）。元素 event 回调一律按值捕获用到的 std::function——元素树比一帧
+// 活得久，捕引用会悬垂。
 //
-// 每个可见区域一个自由函数，吃 CardDrawArgs（只读入参 + 回调 + 几何）。
-// 元素 event 回调一律按值捕获用到的 std::function（见头文件说明）——元素树比
-// 一帧活得久，捕引用会悬垂。
-//
-// 2026-09-28 变更：用户反馈「设置页面最外层的卡片没删除……底色是白色？不需要
-// 啊」→ 删全部 9 张卡的 ui_kit::cardFrame 调用（含其 <id>.bg 矩形/1px 边框/
-// panelShadow/圆角）；其余节点 id、文案、字号、颜色、几何、控制流逐字保留。
-// 同日第二轮（用户真机反馈「设置页面最外层的卡片还没删除啊」）：连页面主体
-// 的 M3-4 渐变底板（settings_module.cpp 的 settings.body.gradient/bg）一起删，
-// 故卡内容现在直接铺**页面底**——关档由主窗 clearColor 当底、半透/磨砂档露出
-// 窗口背景（frost spec 2026-09-22 §53 口径）。
+// 卡内容直接铺页面底（9 张卡的 cardFrame 与主体渐变底板均已删）：关档靠主窗
+// clearColor 当底，半透/磨砂档露出窗口背景。
 #include "settings_ui_cards.h"
 
 #include <core/component_theme.h>
@@ -61,14 +52,8 @@ int logLevelIndex(const std::string& level) {
     return 1;  // INFO 默认档
 }
 
-// ---- 卡内文本行（2026-10-03 轻量化）-------------------------------------
-// 8 张卡的标题行、4 张卡的描述行各写过一条 8~9 行的 builder 链，逐字重复
-//（只有 y / 宽 / 高 / 行高 / 文案不同）。这里收成两个 helper。
-//
-// **零行为变化**：position-x(28) / 字重(600) / 颜色(textPrimary·textTertiary) /
-// fontSize(fontSizeLarge·fs(12)) 在所有调用点完全相同，已逐处核对；属性设置顺序
-// 也与原链一致。收进来的收益不是行数，而是「改一次生效」——比如日后调卡内左缩进
-// 或标题字重，不必再去 8 处各改一遍（漏一处就是一处视觉不一致）。
+// 卡内标题 / 描述行 helper：左缩进 28（对齐 kDialogInsetX 语系）、字体与颜色在
+// 所有调用点一致；标题字重 600。
 
 // 卡标题：y = 标题顶，w = 标题盒宽，h = 盒高，lineHeight 通常 = h。
 void cardTitle(eui::Ui& ui, const std::string& id, const core::theme::Tokens& t,
@@ -101,13 +86,9 @@ void cardDesc(eui::Ui& ui, const std::string& id, const core::theme::Tokens& t,
 } // namespace
 
 // ---------- 卡片 1：外观（主题 + 字号 + 窗口效果） ----------
-// zIndex(40)：字号下拉的弹出层要盖过下方卡片（zIndex 只在兄弟间排序，
-// 弹层在卡片子树内，需整卡抬层）。**抬层规则**：同一 tab 内带下拉的卡，
-// 靠前者必须 z 高于其后**所有**卡 —— 外观卡之后紧邻的编辑器字号卡同为
-// 带下拉卡（z30），等值 z 时稳定排序保持 DOM 序 → 后绘的编辑器字号卡会
-// 盖住外观卡向下铺开的弹层（回归 1379cc1；EUI-NEO subtreeMaxZIndex 逃逸
-// 只解决「高 z 盖低 z」，救不了等值碰撞）。40 = 最前卡档位，后续带下拉卡
-// 一律 ≤30。
+// zIndex(40)：下拉弹层在卡片子树内，需整卡抬层才能盖过下方卡片（zIndex 只在兄弟间
+// 排序）。同一 tab 内带下拉的卡，靠前者必须 z 高于其后所有卡——等值 z 时后绘者
+//（同 tab 的编辑器字号卡 z30）会盖住前者的弹层。40 = 最前卡档位，后续带下拉卡 ≤30。
 void drawAppearanceCard(const CardDrawArgs& args) {
     eui::Ui& ui = args.ui;
     const std::string& id = args.id;
@@ -118,12 +99,8 @@ void drawAppearanceCard(const CardDrawArgs& args) {
     const SettingsCardActions& a = args.a;
 
     const auto compTheme = core::theme::componentTokens(t);
-    // 行几何随生效字号派生（2026-09-30 spec 2026-09-30-batch-fix-design §2.3
-    // 本期修；roundFs 口径见 settings_ui_logic.h）：标题盒/描述行/标签行/降级
-    // 提示行的盒高与 lineHeight 从 100% 字面改为派生，后续行的 y 沿派生盒底
-    // 累加（spec §2.7「优先把链改派生而非钳制」）。100% 档 roundFs(x)==x，全部
-    // 值回到旧字面（零回归锚）。字面锚：18 = 标题顶（卡顶 padding，不缩放）；
-    // 40 = 下拉控件高（组件字面 chrome，字段文案不走 token，不随缩放）
+    // 行几何随生效字号派生（roundFs 口径见 settings_ui_logic.h）：盒高与后续行 y 沿
+    // 派生盒底累加。字面锚不缩放：18 = 标题顶（卡顶 padding），40 = 下拉控件高（组件 chrome）。
     const float titleH = roundFs(24.0f);
     const float descY = 18.0f + titleH + roundFs(2.0f);
     const float descH = roundFs(18.0f);
@@ -140,7 +117,7 @@ void drawAppearanceCard(const CardDrawArgs& args) {
             cardDesc(ui, id, t, descY, w - 56.0f, descH,
                      "主题与窗口底色即时生效；字号缩放全局生效");
 
-            // 左：主题切换
+            // 主题模式下拉：跟随系统 / 浅色 / 深色三档（替代只能表达显式档的双按钮）。
             ui.text(id + ".theme.label")
                 .position(28.0f, labelY)
                 .size(200.0f, labelH)
@@ -149,10 +126,6 @@ void drawAppearanceCard(const CardDrawArgs& args) {
                 .lineHeight(labelH)
                 .color(t.colors.textSecondary)
                 .build();
-            // 主题模式下拉（spec 缩水 A）：跟随系统/浅色/深色三档，替代
-            // 原「深色/浅色」双按钮（原按钮只能表达显式档，无法表达 auto）。
-            // 右缘 28+240=268，窄窗自适应后 fontX≥324，不碰撞（见
-            // settings_effect_dropdown_fits_min_window）
             ui.stack(id + ".theme.ddwrap")
                 .position(28.0f, ddY)
                 .size(240.0f, 40.0f)
@@ -173,10 +146,8 @@ void drawAppearanceCard(const CardDrawArgs& args) {
                 })
                 .build();
 
-            // 右：字号缩放 + 右二：窗口效果三档（磨砂 Phase D），即时生效。
-            // 终验复审：固定 x=380/680 在 1200 最小窗（页面宽 940、卡内宽
-            // 860）下效果下拉右缘到 920，超出卡片 60px——右缘自适应：
-            // 宽窗保持原位，窄窗右对齐收进卡内（列宽 240、列距 28、右缘留 28）
+            // 字号缩放 + 窗口效果两列，右缘自适应：宽窗保持原位，窄窗右对齐收进卡内
+            //（列宽 240、列距 28、右缘留 28），避免最小窗（1200）下溢出卡片。
             const float effectX = std::min(680.0f, w - 28.0f - 240.0f);
             const float fontX = std::min(380.0f, effectX - 240.0f - 28.0f);
             ui.text(id + ".font.label")
@@ -208,7 +179,7 @@ void drawAppearanceCard(const CardDrawArgs& args) {
                 })
                 .build();
 
-            // 右二：窗口效果三档（磨砂 Phase D），即时生效（effectX 见上）
+            // 窗口效果三档，即时生效（effectX 见上）。
             ui.text(id + ".effect.label")
                 .position(effectX, labelY)
                 .size(240.0f, labelH)
@@ -241,9 +212,9 @@ void drawAppearanceCard(const CardDrawArgs& args) {
             const std::string degraded = windowEffectDegradedHint(
                 in.cfg.windowEffect, app::activeWindowEffect());
             if (!degraded.empty()) {
-                // 可用宽（与 .size 同口径）：28 = 右内缩，16 = 图标让位
+                // 可用宽：28 = 右内缩，16 = 图标让位
                 const float hintW = w - effectX - 16.0f - 28.0f;
-                // ⚠ 字符换 FA：图标/文字拆两个元素（icon 字体通道）
+                // 图标 / 文字拆两个元素（FA 图标字体通道）
                 ui.text(id + ".effect.hint.icon")
                     .position(effectX, hintY)
                     .size(14.0f, hintH)
@@ -259,15 +230,10 @@ void drawAppearanceCard(const CardDrawArgs& args) {
                     .fontSize(fs(11.0f))
                     .lineHeight(hintH)
                     .color(t.colors.warning)
-                    // 类 6(d)（probes 证伪门禁落点）：窄窗可用宽不足时截断
-                    // 而非溢出（完整文案在宽窗可见）。2026-10-03 起硬裁升级为
-                    // 单行省略号：固定宽单行文本被截要有「…」提示，用户才知
-                    // 道后面还有字（EUI-NEO dsl.h:150-152 三件套 =
-                    // overflow==Ellipsis && maxWidth>0 && !wrap，wrap 本就
-                    // 默认 false；显式 maxWidth 是生效前提——runtime 在
-                    // element.maxWidth==0 时回退 frame.width，DSL 布局却按
-                    // element.maxWidth 走，两条路会分叉）。clip 保留作几何兜底
-                    //（ellipsis 管排版宽，clip 管绘制范围，两层不冲突）。
+                    // 窄窗可用宽不足时截断而非溢出（完整文案在宽窗可见）：单行省略号需
+                    // overflow==Ellipsis && maxWidth>0 && !wrap 三件套，显式 maxWidth 是
+                    // 生效前提（runtime 在 maxWidth==0 时回退 frame.width，与 DSL 分叉）；
+                    // clip 作几何兜底（ellipsis 管排版宽，clip 管绘制范围）。
                     .maxWidth(hintW)
                     .overflow(core::TextOverflow::Ellipsis)
                     .clip()
@@ -277,10 +243,9 @@ void drawAppearanceCard(const CardDrawArgs& args) {
         .build();
 }
 
-// ---------- 编辑器字号卡（Task B：自日志卡行 2 迁入「通用」tab） ----------
-// spec §8.5「编辑器字体大小」（spec 缩水 B）：档位写 core::theme::
-// editorFontSize 通道，markdown 下一帧生效；默认 15px = fontSizeBody
-// token 基准。pageY/screenH：下拉弹层 openUp 几何估算（同款日志卡）
+// ---------- 编辑器字号卡（自日志卡迁入「通用」tab） ----------
+// 档位写 core::theme::editorFontSize 通道，markdown 下一帧生效；默认 15px = fontSizeBody。
+// pageY/screenH：下拉弹层 openUp 几何估算。
 void drawEditorFontCard(const CardDrawArgs& args) {
     eui::Ui& ui = args.ui;
     const std::string& id = args.id;
@@ -298,9 +263,7 @@ void drawEditorFontCard(const CardDrawArgs& args) {
         .zIndex(30)
         .content([&] {
             cardTitle(ui, id, t, 16.0f, w - 56.0f, 22.0f, 22.0f, "编辑器字号");
-            // 下拉 y/高随生效字号派生（2026-09-30 merge-review R1 本期修，
-            // 单一来源 logFieldHeight / editorFontDdOffsetY，见
-            // settings_ui_logic.h）；100% 档与旧字面 42/36 逐值相等
+            // 下拉 y/高随生效字号派生（单一来源 editorFontDdOffsetY / logFieldHeight）。
             ui.stack(id + ".ddwrap")
                 .position(28.0f, editorFontDdOffsetY())
                 .size(150.0f, logFieldHeight())
@@ -329,8 +292,7 @@ void drawEditorFontCard(const CardDrawArgs& args) {
                         .build();
                 })
                 .build();
-            // 描述行盒随生效字号派生（2026-09-30 spec §2.3 本期修）；y=48 与
-            // 左侧下拉（字面控件）并排、下方无行，链上无后续行需挪
+            // 描述行与左侧下拉并排（y=48，字面控件），下方无行。
             ui.text(id + ".hint")
                 .position(190.0f, 48.0f)
                 .size(w - 218.0f, roundFs(18.0f))
@@ -343,10 +305,9 @@ void drawEditorFontCard(const CardDrawArgs& args) {
         .build();
 }
 
-// ---------- 卡片 2：模块管理（插拔方案 A §5.4） ----------
-// 四个工具模块（markdown/todo/claude_proxy/agent）+ 桌宠各一行开关；关闭 =
-// 下次启动不注册进 Router（不执行代码、
-// 不显示侧边栏入口）。home/settings 恒启用，不提供开关
+// ---------- 卡片 2：模块管理 ----------
+// 四个工具模块（markdown/todo/claude_proxy/agent）+ 桌宠各一行开关；关闭 = 下次启动
+// 不注册进 Router（不执行代码、不显示侧边栏入口）。home/settings 恒启用，不提供开关。
 void drawModulesCard(const CardDrawArgs& args) {
     eui::Ui& ui = args.ui;
     const std::string& id = args.id;
@@ -382,11 +343,8 @@ void drawModulesCard(const CardDrawArgs& args) {
                      "开关即时生效：关闭后该模块代码不再执行，侧边栏入口与"
                      "页面当帧更新");
 
-            // 开关行行几何随生效字号派生（2026-09-30 spec §2.3 本期修）：
-            // 名称/描述行盒、行内 y 偏移与行距（100% 档 = 56，零回归锚）；
-            // 行 1 顶 y=68 锚在字面说明行下方（说明行 y40 字面、盒派生后
-            // 130% 档底 61 仍 < 68，链上无碰撞）。开关控件（32 高字面组件）
-            // 随行顶走，相对偏移 -2 保持字面
+            // 开关行行几何随生效字号派生：名称/描述行盒、行距（100% 档 = 56）；行 1 顶
+            // y=68 锚在字面说明行下方。开关控件（32 高字面组件）随行顶走，相对偏移 -2。
             const float nameH = roundFs(18.0f);
             const float rowDescDy = nameH + roundFs(2.0f);
             const float rowDescH = roundFs(16.0f);
@@ -433,9 +391,8 @@ void drawModulesCard(const CardDrawArgs& args) {
         .build();
 }
 
-// ---------- 卡片 3：桌宠（M2 多皮肤 UI，设计 §4.5/§4.6） ----------
-// 皮肤下拉（discoverSkins 发现列表）+ 位置重置按钮；两者即时生效
-//（换肤热切换/位置直接挪窗）；模块开关自活门控起也即时生效（app::toggle 桥）
+// ---------- 卡片 3：桌宠 ----------
+// 皮肤下拉 + 位置重置按钮，两者即时生效；模块开关也即时生效（app::toggle 桥）。
 void drawPetCard(const CardDrawArgs& args) {
     eui::Ui& ui = args.ui;
     const std::string& id = args.id;
@@ -447,13 +404,10 @@ void drawPetCard(const CardDrawArgs& args) {
     const float pageY = args.pageY;    // 卡顶页面绝对 y（皮肤下拉 openUp 几何）
     const float screenH = args.screenH;
 
-    // 审计 THS-01：皮肤清单（discoverSkins = 目录遍历 + 每皮肤 pet.json
-    // stat）与当前皮肤名（读 app_config 的 pet_config 键）已移出渲染路径——快照由
-    // refreshExternalState 装载（原为「首帧惰性加载」，仍在渲染路径上），
-    // 这里只读入参；审计 [5][36] 的 pet 侧只读桥调用点随之收在模块文件
+    // 皮肤清单（discoverSkins）与当前皮肤名已移出渲染路径——快照由 refreshExternalState
+    // 装载，这里只读入参。
     const auto compTheme = core::theme::componentTokens(t);
-    // 跨模块剩余审计修（2026-09-28）：本卡抬到 z40（仿外观卡）——皮肤下拉
-    // 弹层向下铺开时越出卡底沿盖住后续目录卡，z 逃逸语义与外观/日志卡一致
+    // 本卡抬到 z40（仿外观卡）：皮肤下拉弹层向下铺开时越出卡底沿盖住后续目录卡。
     ui.stack(id)
         .size(w, h)
         .zIndex(40)
@@ -473,21 +427,10 @@ void drawPetCard(const CardDrawArgs& args) {
                     break;
                 }
             }
-            // ③ 2026-09-29 真机反馈「桌宠设置的下拉框不应该换行」。EUI-NEO 的
-            // text 默认 wrap=false（core/dsl.h:149）：皮肤名超宽时**不折行**，
-            // 而是画到控件右边缘之外（真机复现：25 字符的皮肤名在 240 宽下拉里
-            // 文本压过 chevron 跑出控件），读起来就是「换行/串行」。两条一起上：
-            //   1) 控件宽度按最长皮肤名放大（240 起、上限 420）——常见长名直接
-            //      放得下，字段与弹层同步变宽（components/dropdown.h 里弹层宽 =
-            //      字段宽），选项也一并能读全；
-            //   2) 仍放不下的名字由 fitControlLabel 截断显示（末尾 '…'），
-            //      **只改显示串，不改取值**（回传的仍是原始下标）。
-            // 字号口径 = EUI-NEO 默认 metrics（components/theme.h）：
-            // 字段文案 typography.body=16、弹层项 typography.option=15。这两个
-            // 值不受 DevDesk 全局字号缩放影响（core::theme::fontScale 只缩放
-            // 自家 token，见 core/theme.cpp:115-120）。截断按**字段**口径
-            //（16px + kDropdownFieldChrome=62）：字段文案框比弹层项框窄，
-            // 按窄的那个截，两边都放得下。
+            // 皮肤名超宽时 EUI-NEO 的 text 不折行、直接画出控件右缘：① 控件宽按最长皮肤名
+            // 放大（240 起、上限 420，字段与弹层同步）；② 仍放不下的由 fitControlLabel 截断
+            // 显示（末尾 '…'，只改显示串，取值仍是原下标）。字号口径 = EUI-NEO 默认 metrics
+            //（字段 16px + kDropdownFieldChrome=62），不受 DevDesk 全局字号缩放影响。
             constexpr float kDdFieldFont = 16.0f;
             const float ddW = petSkinFieldWidth(items, kDdFieldFont);
             // 每项显示串（截断到字段可用宽；实际取值仍是原下标）
@@ -498,26 +441,15 @@ void drawPetCard(const CardDrawArgs& args) {
                     fitControlLabel(name, ddW - kDropdownFieldChrome,
                                     kDdFieldFont));
             }
-            // 行几何随生效字号派生（2026-09-30 merge-review R1 本期修）：皮肤/
-            // 显示大小两行的行 y 与控件高原为字面（64/74/112/122/40），不在
-            // roundFs 派生池 —— 85% 字号档（fontScale=0.85）卡高
-            // roundFs(168)=143 < 字面内容底沿 152，「显示大小」行溢出卡外 9px
-            // 与目录卡叠印。派生口径与外观卡同款：行顶沿说明行**派生盒底**
-            // 累加（说明行 y=40 字面锚、盒 roundFs(16)），控件高随字号派生，
-            // 标签在行内垂直居中；100% 档 roundFs(x)==x，全部回到旧字面
-            // 64/74/112/122/40（零回归锚）
+            // 行几何随生效字号派生：这两行的行 y 与控件高必须在派生池内——85% 档时
+            // 卡高会小于字面内容底沿，「显示大小」行会溢出卡外与目录卡叠印。
             const float ddH = roundFs(40.0f);        // 下拉/按钮控件高（100% = 40）
             const float rowLabelH = roundFs(20.0f);  // 行标签盒高（100% = 20）
             const float skinTop =
                 40.0f + roundFs(16.0f) + roundFs(8.0f);  // 100% = 64
             const float scaleTop = skinTop + ddH + roundFs(8.0f);  // 100% = 112
-            // 皮肤行（PET-ROW，2026-09-29 真机反馈「设置-模块-桌宠 下拉框
-            // 不应该另起一行」）：标签左、控件右、**同一基线**——标签列
-            // 28/72，控件列 104/40（与代理卡「代理端口 [输入]」同款列口径，
-            // 卡内左边缘 28 对齐）。改前只有控件、无标签，控件独占一行，读起来
-            // 就是「下拉另起一行」。行顶 skinTop（100% 档 = 64，控件高 40）——
-            // 标签 20 高需在行内垂直居中 → y=74（中心 84 == 控件中心），皮肤
-            // 下拉的 openUp 几何（dropdownPopupOverflows 的字段偏移）随行顶走
+            // 皮肤行：标签左、控件右同一基线——标签列 28/72，控件列 104/40（与代理卡同列
+            // 口径，卡内左边缘 28）；标签在行内垂直居中（100% 档 y=64，标签中心对齐控件中心）。
             ui.text(id + ".skin.label")
                 .position(28.0f, skinTop + (ddH - rowLabelH) * 0.5f)
                 .size(72.0f, rowLabelH)
@@ -530,10 +462,8 @@ void drawPetCard(const CardDrawArgs& args) {
                 .position(104.0f, skinTop)
                 .size(ddW, ddH)
                 .content([&] {
-                    // 跨模块剩余审计修：皮肤下拉是六处下拉里唯一无 openUp
-                    // 防护的——≥3 皮肤时弹层（3×34+12=114）向下铺开越出
-                    // scrollView 视口底被 clip 裁掉；与编辑器字号/日志卡同款
-                    // 几何判定（卡顶 + 字段偏移 + 弹层高 vs 屏高）
+                    // 皮肤下拉是六处下拉里唯一需补 openUp 防护的：≥3 皮肤时弹层向下铺开
+                    // 越出 scrollView 视口底被 clip（几何判定同编辑器字号/日志卡）。
                     const bool skinOpenUp = dropdownPopupOverflows(
                         pageY, skinTop, ddH,
                         static_cast<int>(items.size()), screenH);
@@ -547,21 +477,13 @@ void drawPetCard(const CardDrawArgs& args) {
                         .onOpenChange([f = a.setDropdownOpen](bool v) {
                             f(Dropdown::PetSkin, v);
                         })
-                        // 换肤按下标回模块（越界守卫在模块侧，读的是同一份
-                        // 皮肤清单快照）——下标与 items 一一对应，截断只影响
-                        // 显示串
+                        // 换肤按下标回模块：下标与 items 一一对应，截断只影响显示串。
                         .onChange([f = a.changePetSkinAt](int idx) { f(idx); })
                         .build();
                 })
                 .build();
-            // 显示大小行（2026-09-30 用户需求「桌宠显示大小」）：三档下拉
-            //（小 0.75× / 中 1.0× / 大 1.5×，默认中）。排法照皮肤行同款
-            // 「标签列 28/72 + 控件列 104」同基线口径，行顶 scaleTop =
-            // skinTop + ddH + roundFs(8)（100% 档：皮肤行控件底 104 + 8 = 本行
-            // 顶 112；卡高 168 见 settings_ui_logic.h）。行几何随字号派生，
-            // 2026-09-30 merge-review R1 本期修（见上 ddH/skinTop 注）。
-            // 文案/档位单源在 pet 侧（petScalePresetLabels 桥快照），选择
-            // 经桥切档：写盘 + 热切换（窗口关旧开新，尺寸同步缩放，点单位）
+            // 显示大小行：三档下拉（小 0.75× / 中 1.0× / 大 1.5×，默认中），排法照皮肤行同款。
+            // 档位文案单源在 pet 侧（petScalePresetLabels 桥快照），选择经桥切档（写盘 + 热切换）。
             ui.text(id + ".scale.label")
                 .position(28.0f, scaleTop + (ddH - rowLabelH) * 0.5f)
                 .size(72.0f, rowLabelH)
@@ -574,8 +496,7 @@ void drawPetCard(const CardDrawArgs& args) {
                 .position(104.0f, scaleTop)
                 .size(240.0f, ddH)
                 .content([&] {
-                    // openUp 防护与皮肤下拉同款几何判定（卡顶 + 字段偏移 +
-                    // 弹层高 vs 屏高；项数 = petScaleLabels.size()，当前 3×34+12）
+                    // openUp 防护与皮肤下拉同款几何判定（项数 = petScaleLabels.size()）。
                     const bool scaleOpenUp = dropdownPopupOverflows(
                         pageY, scaleTop, ddH,
                         static_cast<int>(in.petScaleLabels.size()), screenH);
@@ -593,8 +514,7 @@ void drawPetCard(const CardDrawArgs& args) {
                         .build();
                 })
                 .build();
-            // 位置重置按钮（回主屏右下角，持久化坐标清回未设置）——随皮肤行
-            // 顶/控件高派生走（100% 档 = 64/40，与皮肤下拉同一行）
+            // 位置重置按钮：回主屏右下角，持久化坐标清回未设置；与皮肤下拉同一行。
             components::button(ui, id + ".reset")
                 .position(w - 28.0f - 160.0f, skinTop)
                 .size(160.0f, ddH)
@@ -605,10 +525,8 @@ void drawPetCard(const CardDrawArgs& args) {
                 .border(1.0f, t.colors.borderDefault)
                 .onClick([f = a.resetPetPosition] { f(); })
                 .build();
-            // 显示桌宠（PAB-13）：隐藏后的恢复入口（隐藏走右键「隐藏桌宠」
-            // 菜单项，之后本按钮即可重新开窗）。同排、居「位置重置」
-            // 左侧 8px；100% 档卡高保持 168（内容底沿 152 不变，故 contentKey
-            // 不变；行几何 2026-09-30 R1 起随字号派生，见上 ddH/skinTop 注）
+            // 显示桌宠：隐藏后的恢复入口（隐藏走右键「隐藏桌宠」菜单项）；同排、居
+            //「位置重置」左侧 8px。100% 档卡高保持 168，contentKey 不变。
             components::button(ui, id + ".show")
                 .position(w - 28.0f - 160.0f - 168.0f, skinTop)
                 .size(160.0f, ddH)
@@ -633,9 +551,8 @@ void drawDirectoryCard(const CardDrawArgs& args) {
     const SettingsCardsIn& in = args.in;
     const SettingsCardActions& a = args.a;
 
-    // 跨模块剩余审计修（2026-09-28）：.colors() 单独用 = ButtonStyle 落到
-    // 默认深色主题（浅色模式蓝描边 + 重阴影）——补 .theme(compTheme) 后
-    // 边框/阴影/文字/半径随主题，.colors() 仍覆盖三态底色
+    // .colors() 单独用会让 ButtonStyle 落到默认深色主题；补 .theme(compTheme) 后边框 /
+    // 阴影 / 文字 / 半径随主题，.colors() 仍覆盖三态底色。
     const auto compTheme = core::theme::componentTokens(t);
     ui.stack(id)
         .size(w, h)
@@ -643,8 +560,7 @@ void drawDirectoryCard(const CardDrawArgs& args) {
             cardTitle(ui, id, t, 16.0f, w - 56.0f, 22.0f, 22.0f,
                       "Markdown 笔记目录（只读）");
 
-            // 审计 THS-01：存在性读快照（原每帧 fs::exists(mdDir)），
-            // 刷新点见 refreshExternalState
+            // 存在性读快照（原每帧 fs::exists(mdDir)），刷新点见 refreshExternalState。
             const std::filesystem::path mdDir =
                 ::core::paths::markdownDir();
             const bool exists = in.notesDirExists;
@@ -664,8 +580,7 @@ void drawDirectoryCard(const CardDrawArgs& args) {
                 .verticalAlign(eui::VerticalAlign::Center)
                 .color(t.colors.textSecondary)
                 .build();
-            // 「打开目录」按钮（审计 [15]：路径在 APPDATA 深处，此前用户
-            // 只能手拼路径；改目录本身仍属后续功能，登记 KNOWN_LIMITATIONS）
+            // 「打开目录」按钮：路径在 APPDATA 深处，此前用户只能手拼路径。
             components::button(ui, id + ".open")
                 .position(w - 28.0f - dirBtnW, 46.0f)
                 .size(dirBtnW, 34.0f)
@@ -680,9 +595,7 @@ void drawDirectoryCard(const CardDrawArgs& args) {
                 .border(1.0f, t.colors.borderDefault)
                 .onClick([f = a.openNotesDirectory] { f(); })
                 .build();
-            // 提示行盒随生效字号派生（2026-09-30 spec §2.3 本期修）——本行
-            // 14px 盒 + fs(11) 文本是 130% 档实测越盒点（14.3px 墨迹 > 14 盒）；
-            // y=86 字面（上方路径行是字面控件行），下方无行
+            // 提示行：14px 盒 + fs(11) 文本的墨迹在 130% 档会越盒，故盒高派生。
             ui.text(id + ".hint")
                 .position(28.0f, 86.0f)
                 .size(w - 56.0f, roundFs(14.0f))
@@ -693,11 +606,8 @@ void drawDirectoryCard(const CardDrawArgs& args) {
                 .color(t.colors.textTertiary)
                 .build();
 
-            // 数据根忽略规则路径（2026-10-02 存储统一 §6.3 硬约束 1 的 UI 面）：
-            // 凭据现在存在 devdesk.db 里（WAL 伴生件会把凭据页复制进去），数据根
-            // 又要进 git 仓库——必须让用户看得见「哪一份规则在挡 `git add .`」。
-            // 与应用启动时写入的同一个路径（core::paths::dataRootGitignoreFile）；
-            // 本行只展示，不提供编辑（内容由应用维护，用户要加规则直接编辑该文件）
+            // 数据根忽略规则路径：凭据存在 devdesk.db（WAL 伴生件会复制凭据页），数据根又
+            // 要进 git 仓库——必须让用户看得见「哪一份规则在挡 git add .」。本行只展示。
             ui.text(id + ".gitignore.label")
                 .position(28.0f, 108.0f)
                 .size(w - 56.0f, roundFs(14.0f))
@@ -725,7 +635,7 @@ void drawDirectoryCard(const CardDrawArgs& args) {
         .build();
 }
 
-// ---------- 卡片 5：Claude 代理 token（claude 模块关闭时整卡隐藏） ----------
+// ---------- 卡片 5：Claude 代理（claude 模块关闭时整卡隐藏） ----------
 void drawProxyCard(const CardDrawArgs& args) {
     eui::Ui& ui = args.ui;
     const std::string& id = args.id;
@@ -735,12 +645,9 @@ void drawProxyCard(const CardDrawArgs& args) {
     const SettingsCardsIn& in = args.in;
     const SettingsCardActions& a = args.a;
 
-    // 行几何随生效字号派生（2026-09-30 spec §2.3 本期修；roundFs 与接管/警告
-    // 行的单一来源 helper 见 settings_ui_logic.h，compose 的卡高公式
-    // proxyCardHeightFor 与这里同源）。字面锚：y40/62/98 —— 上方标题与端口
-    // 控件行（input 28 字面组件）不缩放，锚在其下；警告行 y 从接管行派生盒底
-    // 起算（100% 档 = 118 与旧字面一致）。端口标签 lineHeight 保持 28 字面：
-    // 它是与 28 高输入控件的垂直居中对齐口径，不是行盒
+    // 行几何随生效字号派生（单一来源 helper 见 settings_ui_logic.h，compose 的卡高公式
+    // proxyCardHeightFor 与这里同源）。字面锚 y40/62/98 在其上（标题与端口 input 28 不缩放）；
+    // 端口标签 lineHeight 保持 28 = 与 28 高输入控件的垂直居中口径，不是行盒。
     const float descH = roundFs(16.0f);
     const float portRowH = roundFs(18.0f);
     const float takeoverH = proxyTakeoverRowHeight();
@@ -831,9 +738,8 @@ void drawProxyCard(const CardDrawArgs& args) {
                 .color(t.colors.textTertiary)
                 .build();
 
-            // Claude Code 接管状态（Phase D，§6.3）：sidecar 是否存在推导，
-            // 让还原机制对用户可见；上层覆盖警告（§5.3 检测命中时）逐行展示
-            const bool managed = in.takeoverManaged;  // 审计 THS-01：读快照
+            // Claude Code 接管状态：sidecar 是否存在推导，让还原机制对用户可见；上层覆盖警告逐行展示。
+            const bool managed = in.takeoverManaged;
             ui.text(id + ".takeover.label")
                 .position(28.0f, 98.0f)
                 .size(150.0f, takeoverH)
@@ -842,9 +748,8 @@ void drawProxyCard(const CardDrawArgs& args) {
                 .lineHeight(takeoverH)
                 .color(t.colors.textSecondary)
                 .build();
-            // 审计 THS-01：路径读 Claude 运行面内存态（main 启动期注入的
-            // defaultPaths()，正是接管实际使用的路径）——不再每帧调
-            // defaultPaths()（内含 fs::current_path / getcwd）
+            // 路径读 Claude 运行面内存态（main 启动期注入，即接管实际使用的路径），
+            // 不再每帧调 defaultPaths()（内含 fs::current_path / getcwd）。
             const std::string ccPath =
                 svc ? svc->settingsFilePath() : std::string();
             ui.text(id + ".takeover.value")
@@ -857,13 +762,12 @@ void drawProxyCard(const CardDrawArgs& args) {
                 .lineHeight(takeoverH)
                 .color(managed ? t.colors.success : t.colors.textTertiary)
                 .build();
-            // 审计 CPX-02：渲染门与卡高计算同源（svc 而非 managed）——
-            // 未接管但警告非空（接管失败）时行必须画出来，否则卡高留了位
+            // 渲染门与卡高计算同源（svc 而非 managed）：未接管但警告非空（接管失败）时
+            // 行必须画出来，否则卡高留了位。
             if (svc) {
-                // F2：按值快照（写者可能是 agent 线程），不是活引用
+                // 按值快照（写者可能是 agent 线程），不是活引用
                 const std::vector<std::string> warns = svc->lastSyncWarnings();
-                // ponytail: 最多展示 2 条（卡片高度约束），更多警告在
-                // 日志（LOG_WARN 全量）可查；⚠ 换 FA（图标/文字拆两个元素）
+                // 最多展示 2 条（卡片高度约束），更多警告在日志可查；图标 / 文字拆两个元素。
                 const size_t shown =
                     std::min<size_t>(warns.size(), 2);
                 for (size_t i = 0; i < shown; ++i) {
@@ -891,21 +795,10 @@ void drawProxyCard(const CardDrawArgs& args) {
         .build();
 }
 
-// ---------- 卡片 6：日志（保留天数 + 级别，日志 tab） ----------
-// 行内下拉的弹层用 pageY/screenH 几何估算判断向下展开是否出界，出界则
-// openUp 向上（修复菜单被窗体裁剪）。spec 缩水 B 的编辑器字号 Task B 起
-// 迁到「通用」tab 独立卡（不同 tab 的卡不同屏，原「末卡 z 逃逸宿主」
-// 理由失效）。pageY/screenH：弹层几何用 settings_ui_logic.h 的 kDropdown* /
-// kLogDropdown* 常量估算（与 dropdown 内部 metrics 一致）
-//
-// 2026-09-29 用户真机反馈「日志和日志级别这 2 个条件 错位了啊 日志显示 2 行」：
-// 改前行 1（保留天数）只有控件、**没有标签**，控件左边缘 = 卡内 padding 28；
-// 行 2（日志级别）有 84 宽标签 + 控件，控件左边缘 = 124 —— 两行控件左边缘差
-// 96px、行 1 还缺一列，视觉上就是「错位 + 像多出来一行」。现在两行统一
-// 「标签列 28/84、控件列 124/240、说明列 388」同列口径（常量见
-// settings_ui_logic.h 的 kLogLabel* / kLogField* / kLogRow*LabelY），行 1 补上
-// 缺失的「日志保留」标签；标签行高恒 = 单行高度（20），叠加 fitControlLabel
-// 兜底（长档位文案也只画一行）。
+// ---------- 卡片 6：日志（保留天数 + 级别） ----------
+// 行内下拉的弹层用 pageY/screenH 几何估算判断向下展开是否出界，出界则 openUp 向上
+//（常量与 dropdown 内部 metrics 一致）。两行统一「标签列 28/84、控件列 124/240、
+// 说明列 388」同列口径（常量见 settings_ui_logic.h），行高恒 = 单行 20 + fitControlLabel 兜底。
 void drawLogCard(const CardDrawArgs& args) {
     eui::Ui& ui = args.ui;
     const std::string& id = args.id;
@@ -927,7 +820,7 @@ void drawLogCard(const CardDrawArgs& args) {
         .content([&] {
             cardTitle(ui, id, t, 16.0f, w - 56.0f, 22.0f, 22.0f, "日志");
 
-            // 档位说明（0 = 永久）；存的是原始天数 int，T10 清理任务按值读取
+            // 档位标签（0 = 永久）；存的是原始天数 int，清理任务按值读取
             static const char* kRetentionLabels[] = {
                 "永久保留", "7 天", "30 天", "90 天", "180 天", "365 天"};
             // ---- 行 1：日志保留（标签列 + 控件列 + 说明列）----
@@ -943,7 +836,6 @@ void drawLogCard(const CardDrawArgs& args) {
                 .position(kLogFieldX, logDropdownOffsetY())
                 .size(kLogFieldWidth, logFieldHeight())
                 .content([&] {
-                    // 字段绝对底边 = 卡顶 + 卡内 y 偏移 + 字段高
                     const bool openUp = dropdownPopupOverflows(
                         pageY, logDropdownOffsetY(), logFieldHeight(),
                         kRetentionPresetCount, screenH);
@@ -977,9 +869,7 @@ void drawLogCard(const CardDrawArgs& args) {
                 .color(t.colors.textTertiary)
                 .build();
 
-            // ---- 行 2：日志级别（spec §8.5「日志级别」，spec 缩水 D；
-            // Task B：原行 2 编辑器字号迁至「通用」tab 独立卡后上移）：
-            // 切档即时 core::log::setLevel（DEBUG 起打 LOG_DEBUG 详录），
+            // ---- 行 2：日志级别：切档即时 core::log::setLevel（DEBUG 起打详录），
             // 重启由 onStart 恢复持久化档 ----
             ui.text(id + ".level.label")
                 .position(kLogLabelX, logRow2LabelY())
@@ -1027,10 +917,9 @@ void drawLogCard(const CardDrawArgs& args) {
         .build();
 }
 
-// ---------- 卡片 8：日志查看（Task B，日志 tab）：日志文件 tail + 刷新 ----------
-// logTail 是内存快照（读盘见 readLogTailLines，跑在后台线程，见审计 H2），
-// 本方法只渲染字符串。逐行一个 text（固定行高，超宽行由 scrollView clip
-// 右侧裁切）；刷新按钮只置 dirty 标记，实际重读由 refreshLogTailCache 发意图
+// ---------- 卡片 8：日志查看：日志文件 tail + 刷新 ----------
+// logTail 是内存快照（读盘在后台线程），本方法只渲染；逐行一个 text，超宽行由
+// scrollView clip；刷新按钮只置 dirty 标记，实际重读由 refreshLogTailCache 发意图。
 void drawLogViewCard(const CardDrawArgs& args) {
     eui::Ui& ui = args.ui;
     const std::string& id = args.id;

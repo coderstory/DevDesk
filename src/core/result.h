@@ -12,7 +12,7 @@
 
 namespace core {
 
-// 错误码枚举（**唯一权威定义**，见 spec §11.2）
+// 错误码枚举（唯一权威定义）
 enum class ErrorCode {
     Ok = 0,
     FileNotFound,
@@ -71,14 +71,12 @@ inline const char* errorCodeToString(ErrorCode code) {
 template<typename T>
 class Result {
 public:
-    // 构造成功
     static Result ok(T value) {
         Result r;
         r.data_.template emplace<1>(std::move(value));
         return r;
     }
 
-    // 构造错误
     static Result fail(ErrorCode code, std::string message) {
         Result r;
         r.code_ = code;
@@ -89,20 +87,15 @@ public:
     bool isOk() const { return data_.index() == 1; }
     bool isFail() const { return !isOk(); }
 
-    // 安全取值：**可能失败**时的唯一取值口
+    // 安全取值：可能失败时的唯一取值口
     T valueOr(T defaultValue) const {
         if (isOk()) return std::get<1>(data_);
         return defaultValue;
     }
 
-    // 显式取值：只在「按不变量不可能失败」处调用；失败即**明确终止**——
-    // 先落一条带 errorMessage() 的 FATAL 日志，再 std::abort()。
-    // 失败路径只有这一条，且与 TU 的编译选项无关（CP-08 取值口收敛）：
-    // 不用异常——抛在 -fno-exceptions 的 TU 里编译不过、在带异常的 TU 里
-    // 又能被捕获，行为就随编译选项漂移了（spec §11.2 承诺的 LOG_FATAL
-    // 先于终止落盘，审计 2026-09-23 [23]）。原「不检查错误的直接取值」
-    // 口（std::get<1> 错索引 = 无上下文 terminate）与 Rust 风格 expect
-    // 口已随之删除：可能失败的取值一律走 valueOr()。
+    // 显式取值：只在「按不变量不可能失败」处调用；失败即 LOG_FATAL + std::abort()，不抛异常
+    //（抛在 -fno-exceptions 的 TU 编译不过、带异常又能被捕获，行为随编译选项漂移）。可能失败的
+    // 取值一律走 valueOr()
     const T& value() const {
         if (!isOk()) {
             LOG_FATAL("Result::value() called on error: " + errorMessage());
@@ -111,7 +104,7 @@ public:
         return std::get<1>(data_);
     }
 
-    // 非 const 版本（需要修改 result 中的对象，如 sqlite3_stmt）
+    // 非 const 版本（需修改 result 中的对象，如 sqlite3_stmt）
     T& value() {
         if (!isOk()) {
             LOG_FATAL("Result::value() called on error: " + errorMessage());
@@ -122,11 +115,8 @@ public:
 
     ErrorCode errorCode() const { return code_; }
 
-    // 默认构造态（variant 索引 0 = monostate）没有错误信息：返回占位串，
-    // 而不是走 std::get<2> 抛 std::bad_variant_access——app 以
-    // -fno-exceptions 编译，抛即 terminate。静态存储保证返回的引用有效
-    //（M8，2026-09-27：默认态 isOk()==false 是"伪失败态"，调用方据此取
-    // 错误信息必须安全）。
+    // 默认构造态（索引 0）无错误信息：返回占位串而非 get<2> 抛 bad_variant_access（-fno-exceptions
+    // 下抛即 terminate）。静态存储保证引用有效
     const std::string& errorMessage() const {
         static const std::string kUninitialized = "（未初始化）";
         if (data_.index() == 0) return kUninitialized;

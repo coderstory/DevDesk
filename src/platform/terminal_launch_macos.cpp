@@ -1,8 +1,6 @@
 // src/platform/terminal_launch_macos.cpp
-// macOS 实现（2026-09-28 profile-run 设计 §4、D-7）：
-//   写 .command 脚本 → chmod 0755 → /usr/bin/open（LaunchServices 决定**用户
-//   默认终端 app**，不强绑 Terminal.app）。脚本只含 cd + 程序名，**不含密钥**（D-8）。
-// ⚠️ 本机（Windows）无法编译/运行验证：按静态评审交付，实机验证见计划「未验证项」。
+// macOS：写 .command 脚本 → chmod 0755 → /usr/bin/open（LaunchServices 决定**用户默认终端 app**，
+// 不强绑 Terminal.app）。脚本只含 cd + 程序名，**不含密钥**。⚠️ 本机（Windows）无法编译/运行验证。
 #include "terminal_launch.h"
 #include "terminal_launch_common.h"
 
@@ -22,8 +20,7 @@ namespace {
 
 namespace fs = std::filesystem;
 
-// 陈旧清扫（spec §4：启动时清扫该目录陈旧文件）：删 run-*.command 里
-// last_write_time 早于 24h 的；单条失败忽略（best-effort，不阻断本次启动）
+// 陈旧清扫：删 run-*.command 里 last_write_time 早于 24h 的；best-effort，单条失败忽略
 void sweepStaleScripts(const fs::path& dir) {
     const auto now = fs::file_time_type::clock::now();
     std::error_code ec;
@@ -84,8 +81,8 @@ core::Result<void> launch(const LaunchSpec& spec) {
         return core::Result<void>::fail(core::ErrorCode::Internal,
             "chmod 0755 失败: " + script.string());
     }
-    // open <脚本> = 交给 LaunchServices 用**用户默认终端 app** 打开（D-7）；
-    // 单引号转义照 file_open_macos.cpp 既有做法（shellSingleQuote 在 common 里）
+    // open <脚本> = 交给 LaunchServices 用**用户默认终端 app** 打开；单引号转义用 common 里的
+    // shellSingleQuote。
     const int ret = std::system(
         ("/usr/bin/open " + shellSingleQuote(script.string())).c_str());
     if (ret != 0) {

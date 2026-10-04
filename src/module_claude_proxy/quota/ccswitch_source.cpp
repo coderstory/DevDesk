@@ -1,26 +1,13 @@
 // src/module_claude_proxy/quota/ccswitch_source.cpp
-// H：从 cc-switch **只读**读取供应商配置（不复制密钥）
-//
-// 字段语义逐条抄自 cc-switch（rev bfaaba16），本文件是那份抄写的落点：
-//   src-tauri/src/provider.rs:145  resolve_usage_credentials() 的
-//                                `AppType::Claude` 分支（settings_config.env）
-//   src-tauri/src/provider.rs:268  UsageScript（usage_script 里的 JSON 键名）
-//   src-tauri/src/provider.rs:444  ProviderMeta（meta 里 usage_script 的键名）
-//   src-tauri/src/database/        providers 表（id/app_type/name/settings_config/meta）
-//
-// 两条与 cc-switch 的**刻意分歧**（都是往「更安全」方向改，理由见头文件）：
-//   1. 打开用 SQLITE_OPEN_READONLY（cc-switch 自己是读写库）；DevDesk 只借不还。
-//   2. base_url 匹配用 host **完全相等** + path 相等（cc-switch 是裸 `contains`），
-//      `api.deepseek.com.evil.com` 不命中。假阳性的代价（把别家的余量挂到当前
-//      profile 上）远大于假阴性的代价（G6 里让用户手选一下）。
-//
-// 平台适配：用户主目录靠探测 HOME / USERPROFILE / HOMEDRIVE+HOMEPATH 拿到，
-// **不写 #ifdef _WIN32**（DevDesk CLAUDE.md 硬约束 2：业务代码零平台宏）。
-// 要按平台拆就得往 core::paths 加 userHomeDir()，那是共享层改动、超出 H 范围；
-// 探测这三个名字本来就是可移植写法，见 userHomeDir() 处的注释。
+// 从 cc-switch 只读读取 Claude 供应商配置（不复制密钥）。
+// 字段语义对齐 cc-switch rev bfaaba16 的 resolve_usage_credentials() Claude 分支
+//   （settings_config.env）与 UsageScript / ProviderMeta；库恒以 SQLITE_OPEN_READONLY 打开。
+// 刻意收紧：base_url 匹配用 host 完全相等 + path 相等（非裸 contains），
+//   故 api.deepseek.com.evil.com 不命中。
+// 主目录靠探测 HOME / USERPROFILE / HOMEDRIVE+HOMEPATH，不写平台宏。
 #include "ccswitch_source.h"
 
-#include "ccswitch_sqlite.h"  // 与 ccswitch_import.cpp 共用的只读读取脚手架
+#include "ccswitch_sqlite.h"  // 只读读取脚手架（与 ccswitch_import.cpp 共用）
 
 #include <sqlite3.h>
 
@@ -43,16 +30,13 @@ namespace {
 constexpr char kDbPathEnv[] = "CCSWITCH_DB_PATH";
 constexpr char kCcSwitchDir[] = ".cc-switch";
 constexpr char kDbFileName[] = "cc-switch.db";
-// cc-switch 的 app_type 取值（provider.rs 的 AppType 枚举序列化成小写 snake）。
-// 只取 claude 一类：DevDesk 管的是 Claude Code 的 settings.json；同库里的
-// claude-desktop / codex / gemini / grokbuild 是别的产品，凭据形态也不同。
+// 只取 app_type = "claude"：同库的 claude-desktop / codex / gemini 是别的产品。
 constexpr char kClaudeAppType[] = "claude";
 
-// 只读连接撞上写锁时的等待时长见 ccswitch_sqlite.h（kBusyTimeoutMs，两条读路径共用）。
+// 写锁等待时长见 ccswitch_sqlite.h（kBusyTimeoutMs）。
 
-// env 里取推理 key 的顺序 —— 逐条对齐 resolve_usage_credentials 的 Claude 分支
-// 里 first_non_empty(env, [...])。**顺序有语义**：OpenCode Go 实测把 key 存在
-// ANTHROPIC_API_KEY（不是 AUTH_TOKEN），而预设会把 AUTH_TOKEN 种成空串占位。
+// 取 key 的顺序有语义（对齐 first_non_empty）：空串要跳过——OpenCode Go 实测
+// key 存在 ANTHROPIC_API_KEY，而 AUTH_TOKEN 被种成空串占位。
 constexpr const char* const kApiKeyEnvOrder[] = {
     "ANTHROPIC_AUTH_TOKEN",
     "ANTHROPIC_API_KEY",
@@ -67,13 +51,12 @@ std::string toLower(std::string text) {
     return text;
 }
 
-// 用户主目录：探测三个环境变量而不是写平台宏（头文件注释已说明理由）。
 std::string userHomeDir() {
     for (const char* name : {"HOME", "USERPROFILE"}) {
         const char* value = std::getenv(name);
         if (value != nullptr && *value != '\0') return value;
     }
-    // Windows 上 profile 落在别处时（漫游配置重定向）只剩这一对
+    // Windows 漫游配置重定向时只剩 HOMEDRIVE+HOMEPATH
     const char* drive = std::getenv("HOMEDRIVE");
     const char* rest = std::getenv("HOMEPATH");
     if (drive != nullptr && *drive != '\0' && rest != nullptr && *rest != '\0') {
@@ -82,9 +65,7 @@ std::string userHomeDir() {
     return {};
 }
 
-// URL → (host, path)，小写化 + 去 userinfo / 端口 / query / 尾部 '/'。
-// 与 opencode_go_provider.cpp:126 的 splitUrl 同款（两处各自持有，将来要共用时
-// 再提到一个头里——G0 头文件没有 URL 工具，不宜为两份抄本就动它）。
+// URL → (host, path)：小写化，去 userinfo / 端口 / query / 尾斜杠（与 opencode_go 的 splitUrl 同款）。
 struct UrlParts {
     std::string host;
     std::string path;
@@ -114,10 +95,7 @@ UrlParts splitUrl(const std::string& rawUrl) {
     return parts;
 }
 
-// ---- sqlite 骨架来自 ccswitch_sqlite.h（与 ccswitch_import.cpp 共用一份）----
-// 2026-10-03 轻量化：这 6 个函数（RAII 收口 / columnText / providerColumns /
-// hasColumn / columnOrNull / sqliteError）原先在本文件与 ccswitch_import.cpp
-// 各有一份逐字相同的副本，已提到共享头。行为逐字未变。
+// sqlite 骨架来自 ccswitch_sqlite.h（与 ccswitch_import.cpp 共用）。
 using ccswitch_sqlite::columnOrNull;
 using ccswitch_sqlite::columnText;
 using ccswitch_sqlite::DbHandle;
@@ -129,7 +107,7 @@ using ccswitch_sqlite::providerColumns;
 using ccswitch_sqlite::sqliteError;
 using ccswitch_sqlite::StmtHandle;
 
-// 结果体装配的一行 wrapper（模板的 ListT 只在返回类型里，无法推导）。
+// 结果体装配 wrapper（ListT 只在返回类型里，无法推导）。
 CcSwitchProviderList unavailable(CcSwitchSourceStatus status, std::string reason) {
     return ccswitch_sqlite::makeUnavailable<CcSwitchProviderList>(
         status, std::move(reason));
@@ -154,9 +132,8 @@ std::string trimTrailingSlashes(std::string text) {
     return text;
 }
 
-// settings_config.env → (baseUrl, apiKey)，逐条对齐 resolve_usage_credentials 的
-// Claude 分支：base_url 取 ANTHROPIC_BASE_URL 并 trim 尾斜杠；api_key 取四个键里
-// **第一个非空串**（JS `||` 的语义：空串要跳过，不只是「键不存在」才换下一个）。
+// settings_config.env → (baseUrl, apiKey)：base_url 取 ANTHROPIC_BASE_URL 并 trim 尾斜杠；
+// api_key 取四键里第一个非空串（空串也跳过，非仅键缺失）。
 std::pair<std::string, std::string> resolveEnvCredentials(
     const std::string& settingsConfig) {
     const platform::json::JsonValue env = parseObject(settingsConfig).get("env");
@@ -171,15 +148,13 @@ std::pair<std::string, std::string> resolveEnvCredentials(
             break;
         }
     }
-    // base_url 与 api_key **各自**解析：某些供应商有 base_url 但没 key（地址配好了
-    // 但还没填 token），连坐清空会让「配了地址」退化成「什么都没配」。
+    // base_url 与 api_key 各自解析：有地址没 key 时不连坐清空，否则「配了地址」退化成「什么都没配」。
     const platform::json::JsonValue base = envObject.get("ANTHROPIC_BASE_URL");
     if (base.isString()) baseUrl = trimTrailingSlashes(base.asString());
     return {baseUrl, apiKey};
 }
 
-// meta.usage_script → usage 相关字段。meta 是 NULL / 非法 JSON / 没有
-// usage_script / usage_script 不是对象，四种都当「没配」——逐字段退化，不是整行丢。
+// meta.usage_script → usage 字段；NULL / 非法 JSON / 缺键都当「没配」，逐字段退化而非整行丢。
 void fillUsageScript(CcSwitchProviderInfo* info, const std::string& meta) {
     const platform::json::JsonValue script = parseObject(meta).get("usage_script");
     if (!script.isObject()) return;
@@ -206,8 +181,7 @@ CcSwitchProviderList readAll() {
         return unavailable(CcSwitchSourceStatus::Schema,
                            "cc-switch 配置库里没有 providers 表（库结构可能已变）");
     }
-    // id = 身份（没有它没法当引用用）；app_type = 分不出 Claude 侧。
-    // name / settings_config / meta 缺了只影响各自的字段，退化即可。
+    // id / app_type 缺了不可用；name / settings_config / meta 缺了只退化各自字段。
     if (!hasColumn(columns, "id") || !hasColumn(columns, "app_type")) {
         return unavailable(CcSwitchSourceStatus::Schema,
                            "cc-switch 的 providers 表缺少 id / app_type 列");
@@ -231,7 +205,7 @@ CcSwitchProviderList readAll() {
     while ((step = sqlite3_step(stmt.get())) == SQLITE_ROW) {
         CcSwitchProviderInfo info;
         info.id = columnText(stmt.get(), 0);
-        if (info.id.empty()) continue;  // 没有身份 = 用不了，直接跳过
+        if (info.id.empty()) continue;  // 没有身份 = 用不了
         info.name = columnText(stmt.get(), 1);
         const std::pair<std::string, std::string> credentials =
             resolveEnvCredentials(columnText(stmt.get(), 2));
@@ -246,7 +220,7 @@ CcSwitchProviderList readAll() {
                                sqliteError(db.get(), step));
     }
 
-    // 日志只记条数与库路径 —— **绝不**记 apiKey / accessKeyId / secretAccessKey。
+    // 只记条数与路径，绝不记密钥。
     LOG_DEBUG("cc-switch 只读源：读到 " + std::to_string(out.providers.size()) +
               " 个 Claude 供应商（" + path + "）");
     return out;
@@ -263,10 +237,8 @@ std::string ccSwitchDbPath() {
     }
     const std::string home = userHomeDir();
     if (home.empty()) return {};
-    // generic_string()：路径对外口径（日志 / 错误文案 / 测试断言）一律正斜杠，
-    // 跨平台一致。Windows 上 string() 返回反斜杠（\.cc-switch\），测试断言
-    // path.find("/.cc-switch/") 与日志可读性都依赖 POSIX 形态；sqlite3_open_v2
-    // 在 Windows 上同样接受正斜杠（CreateFile 规范化路径分隔符）。
+    // generic_string()：对外口径（日志/错误文案/测试断言）一律正斜杠；Windows 上
+    // string() 是反斜杠，而 sqlite3_open_v2 同样接受正斜杠。
     return (std::filesystem::path(home) / kCcSwitchDir / kDbFileName)
         .generic_string();
 }

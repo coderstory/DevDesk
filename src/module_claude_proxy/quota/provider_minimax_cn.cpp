@@ -1,24 +1,9 @@
 // src/module_claude_proxy/quota/provider_minimax_cn.cpp
-// MiniMax 中国站余量 provider（G2）
-// （实施计划 docs/superpowers/plans/2026-10-02-quota-implementation-plan.md §G2；
-//   spec docs/superpowers/specs/2026-10-02-provider-quota-and-storage-design.md §3.3）
-//
-// 业务逻辑逐条移植自 cc-switch `src-tauri/src/services/coding_plan.rs`：
-//   detect_provider:38-44        host 标签边界探测（api.minimaxi.com / api.minimax.cn）
-//   query_minimax:426-509        旧域端点 + Bearer + base_resp 业务错误（HTTP 200 也可能是失败）
-//   parse_minimax_tiers:657-712  general 桶 / 剩余百分比反转 / 周桶 status 门控
-//   millis_to_iso8601:69-73      epoch 毫秒 → ISO8601
-//   codex_config.rs:103-132      codex_url_host / codex_url_host_matches_any
-//
-// 刻意**不重新设计**的地方（照抄上游语义，包括看起来奇怪的那几条）：
-//   - 端点写死旧域：profile 的 base_url 是 api.minimax.cn 也照样打 api.minimaxi.com
-//     （上游注释 :429-435，commit e06ff90f：同一账号体系与 Key）
-//   - base_resp **存在**但 status_code 缺失/非整数 → 上游 `unwrap_or(-1)` + `!= 0`
-//     → 算业务错误，而不是「当成功继续解析」
-//   - 百分比裁剪：上游记的是「渲染层负责显示策略」，但渲染层 G7 尚不存在——
-//     那句约定在本仓库当前形态下无人兑现，故裁剪在本 provider 落地
-//     （clampUsedPercent，见 quota_percent.h）。本 provider 上游给的是**剩余**%，
-//     故先反转成「已用」再裁剪
+// MiniMax 中国站余量 provider，移植 cc-switch coding_plan.rs。
+// 端点写死旧域 api.minimaxi.com（profile 的 base_url 是 api.minimax.cn 也照样打它，同一账号体系与 Key）。
+// base_resp 存在但 status_code 缺失/非整数 → 算业务错误（上游 unwrap_or(-1) + != 0）。
+// 上游给的是剩余百分比 → 先反转成「已用」再裁剪（clampUsedPercent，见 quota_percent.h）。
+// 周桶按 current_weekly_status == 1 门控（无周限额套餐该字段为 3，画出来是假周条）。
 #include "provider_minimax_cn.h"
 
 #include "quota_percent.h"
@@ -36,22 +21,15 @@
 namespace module::claude::quota {
 namespace {
 
-// ── 上游常量（逐条对应 cc-switch）────────────────────────────────
-// 额度接口只在 api.minimaxi.com / api.minimax.io 有公开出处；国内新推理域名
-// api.minimax.cn 未见该接口文档，沿用旧域名（同一账号体系与 Key）。
-// 依据：coding_plan.rs:429-436。这里**写死**，不读 cfg.baseUrl。
+// 额度接口只在 api.minimaxi.com / api.minimax.io 有公开出处，国内新域 api.minimax.cn 无文档，故写死旧域、不读 cfg.baseUrl。
 constexpr const char* kRemainsUrl =
     "https://api.minimaxi.com/v1/api/openplatform/coding_plan/remains";
-constexpr long kTimeoutMs = 15000;  // 同上游 15s（coding_plan.rs:442）
+constexpr long kTimeoutMs = 15000;  // 同上游 15s
 
-// base_url 探测命中的 host（标签边界匹配，防 api.minimax.cn.example.com 伪造）。
-// 依据：coding_plan.rs:38-44 —— codex_url_host_matches_any(base_url,
-// ["api.minimaxi.com", "api.minimax.cn"])。国际站 api.minimax.io 是另一个 provider。
+// 探测命中的 host（标签边界匹配，防 api.minimax.cn.example.com 伪造）；国际站 api.minimax.io 是另一个 provider。
 constexpr const char* kMatchHosts[] = {"api.minimaxi.com", "api.minimax.cn"};
 
-// ── base_url → host（照 cc-switch codex_config.rs:103-116 codex_url_host）──
-// 去 scheme / userinfo / port / path / query，去尾点，转小写；容忍用户手填的
-// 松散形态（example.com / https://user@Example.com:8443/v1）。
+// base_url → host：去 scheme / userinfo / port / path / query，去尾点，转小写；容忍用户手填的松散形态。
 std::string urlHost(const std::string& urlOrHost) {
     std::string s = urlOrHost;
     const auto notSpace = [](unsigned char c) { return !std::isspace(c); };
@@ -78,8 +56,7 @@ std::string urlHost(const std::string& urlOrHost) {
     return s;
 }
 
-// host **是**候选之一或候选的子域（标签边界），照 codex_url_host_matches_any:123-132。
-// 不是裸子串包含：evilapi.minimax.cn / api.minimax.cn.example.com 都不命中。
+// host 是候选之一或候选的子域（标签边界），非裸子串：evilapi.minimax.cn / api.minimax.cn.example.com 不命中。
 bool hostMatchesAny(const std::string& urlOrHost) {
     const std::string host = urlHost(urlOrHost);
     if (host.empty()) return false;
@@ -95,10 +72,7 @@ bool hostMatchesAny(const std::string& urlOrHost) {
     return false;
 }
 
-// epoch 毫秒 → ISO8601 UTC "YYYY-MM-DDTHH:MM:SSZ"。
-// 依据 cc-switch millis_to_iso8601（coding_plan.rs:69-73，chrono from_timestamp
-// → to_rfc3339）。两处刻意差异：① 秒精度（上游 rfc3339 会带小数秒；resetsAt 只
-// 服务倒计时展示）；② 超出 0000-9999 年（= 上游 from_timestamp 返回 None）→ 空串。
+// epoch 毫秒 → ISO8601 UTC。两处刻意差异：① 秒精度（上游 rfc3339 带小数秒，resetsAt 只服务倒计时）；② 超出 0000-9999 年 → 空串。
 std::string millisToIso8601(int64_t ms) {
     constexpr int64_t kMinMs = -62135596800000LL;  // 0000-01-01T00:00:00.000Z
     constexpr int64_t kMaxMs = 253402300799999LL;  // 9999-12-31T23:59:59.999Z
@@ -136,11 +110,7 @@ std::string millisToIso8601(int64_t ms) {
     return std::string(buf);
 }
 
-// JSON 数值 → double。JsonValue 把 JSON 整数（Int）与小数（Double）都归为
-// T_Number，但内部只填一处（Int 分支只填 intVal → asDouble() 为 0；Double 分支
-// 只填 dblVal → asInt() 为 0），故按仓库既有惯用法回退：src/module_todo/
-// todo_view_state.cpp:94-98、src/module_pet/pet_config.cpp:92-96。
-// 语义对应上游 `as_f64()`（整数 / 小数都收，字符串不收）——coding_plan.rs:675-678。
+// JSON 数值 → double。JsonValue 把 Int / Double 都归 T_Number 但内部只填一处（Int 分支 asDouble() 为 0），故按仓库惯用法回退。语义对应上游 as_f64()（整数/小数都收，字符串不收）。
 bool jsonNumber(const platform::json::JsonValue& v, double& out) {
     if (!v.isNumber()) return false;
     const double d = v.asDouble();
@@ -148,9 +118,7 @@ bool jsonNumber(const platform::json::JsonValue& v, double& out) {
     return true;
 }
 
-// JSON 数值 → int64（要求整数值）。语义对应上游 `as_i64()`（coding_plan.rs:693：
-// `current_weekly_status` 只认整数）。唯一放宽：JSON 写成 `1.0` 的整数值也认
-//（上游 as_i64 会返 None），带小数部分的一律不认——放宽方向不会把「未激活」误判成激活。
+// JSON 数值 → int64（要求整数值，对应上游 as_i64()）。唯一放宽：写成 1.0 的整数值也认，带小数部一律不认（放宽方向不会把「未激活」误判成激活）。
 bool jsonInteger(const platform::json::JsonValue& v, int64_t& out) {
     if (!v.isNumber()) return false;
     const double d = v.asDouble();
@@ -171,17 +139,14 @@ QuotaResult makeError(QuotaError error, std::string message) {
     return r;
 }
 
-// 响应体 → QuotaResult（纯函数，无网络，便于单测；上游同款拆分见
-// `parse_minimax_tiers`，coding_plan.rs:657）。
+// 响应体 → QuotaResult（纯函数，无网络，便于单测）。
 QuotaResult parseRemainsBody(const platform::json::JsonValue& body) {
     if (!body.isObject()) {
         return makeError(QuotaError::Shape, "响应不是 JSON 对象");
     }
     const platform::json::JsonObject root = body.asObject();
 
-    // ① 业务错误在 base_resp.{status_code,status_msg}——**HTTP 200 也可能是失败**
-    //    （coding_plan.rs:481-494）。上游的 status_code 是 `unwrap_or(-1)` 后判
-    //    `!= 0`：base_resp 存在但 status_code 缺失 / 非整数 → -1 → 同样算失败。
+    // ① 业务错误在 base_resp.{status_code,status_msg}——HTTP 200 也可能是失败。status_code 缺失/非整数按 -1 处理（同上游 unwrap_or(-1)），非 0 即失败。
     if (root.has("base_resp")) {
         const platform::json::JsonValue baseResp = root.get("base_resp");
         const platform::json::JsonObject baseObj =
@@ -190,17 +155,13 @@ QuotaResult parseRemainsBody(const platform::json::JsonValue& body) {
         int64_t parsedCode = -1;
         if (jsonInteger(baseObj.get("status_code"), parsedCode)) code = parsedCode;
         if (code != 0) {
-            std::string msg = "Unknown error";  // 上游同款兜底文案（:491）
+            std::string msg = "Unknown error";  // 上游同款兜底文案
             const platform::json::JsonValue statusMsg = baseObj.get("status_msg");
             if (statusMsg.isString() && !statusMsg.asString().empty()) {
                 msg = statusMsg.asString();
             }
-            // 错误码与上游文案原样透出：这是用户 / 日志定位问题的唯一线索。
-            // 分类依据：上游对非零 status_code 只给「通用失败」（make_error），
-            // **不细分**是鉴权 / 配额 / 限流，因此也**不编造**「码值 → 语义」表；
-            // 但这一类的现实主因是「套餐过期 / 额度用尽」（改密钥没用、得续费），
-            // 正是 QuotaError::Entitlement 的处置语义（quota_provider.h:44-46）。
-            // 不判 Transient：那会引导用户当网络抖动去重试（G8 只挂「可能过期」角标）。
+            // 错误码与上游文案原样透出。上游对非零 status_code 不细分鉴权/配额/限流，
+            // 但现实主因是套餐过期/额度用尽（改密钥没用、得续费）→ 归 Entitlement（不判 Transient，避免引导成网络重试）。
             return makeError(QuotaError::Entitlement,
                              "MiniMax 接口业务错误（code " + std::to_string(code) +
                                  "）：" + msg +
@@ -208,7 +169,7 @@ QuotaResult parseRemainsBody(const platform::json::JsonValue& body) {
         }
     }
 
-    // ② model_remains[] 取 model_name == "general"（跳过 video 等非编程模型）
+    // ② model_remains[] 取 model_name == "general"
     const platform::json::JsonValue remains = root.get("model_remains");
     if (!remains.isArray()) {
         return makeError(QuotaError::Shape, "响应缺少 model_remains 数组");
@@ -217,7 +178,7 @@ QuotaResult parseRemainsBody(const platform::json::JsonValue& body) {
     platform::json::JsonObject general;
     for (int i = 0; i < remains.size(); ++i) {
         const platform::json::JsonValue item = remains[i];
-        if (!item.isObject()) continue;  // 上游对非对象元素静默跳过（get 返 None）
+        if (!item.isObject()) continue;  // 上游对非对象元素静默跳过
         const platform::json::JsonObject obj = item.asObject();
         const platform::json::JsonValue name = obj.get("model_name");
         if (name.isString() && name.asString() == "general") {
@@ -232,20 +193,18 @@ QuotaResult parseRemainsBody(const platform::json::JsonValue& body) {
 
     std::vector<QuotaWindow> windows;
 
-    // ③ 五小时窗口：上游给的是**剩余**百分比，统一模型要的是**已用** → 反转。
-    //    窗口 key 用全项目规范名 "five_hour"（上游叫 current_interval_*）。
+    // ③ 五小时窗口：上游给剩余百分比，统一模型要已用 → 反转。key 用规范名 "five_hour"。
     double remain = 0.0;
     if (jsonNumber(general.get("current_interval_remaining_percent"), remain)) {
         QuotaWindow w;
         w.key = "five_hour";
-        w.usedPercent = clampUsedPercent(100.0 - remain);  // **反转**：本 provider 唯一的符号级错误源
+        w.usedPercent = clampUsedPercent(100.0 - remain);  // 反转：本 provider 唯一的符号级错误源
         int64_t endMs = 0;
         if (jsonInteger(general.get("end_time"), endMs)) w.resetsAt = millisToIso8601(endMs);
         windows.push_back(std::move(w));
     }
 
-    // ④ 周窗口：current_weekly_status == 1 才算激活（上游 :692-693 注释：无周限额
-    //    套餐该字段为 3、remaining_percent 恒 100 → 画出来就是「已用 0%」的假周条）。
+    // ④ 周窗口：current_weekly_status == 1 才算激活（无周限额套餐该字段为 3、remaining 恒 100 → 会画出假周条）。
     int64_t weeklyStatus = 0;
     if (jsonInteger(general.get("current_weekly_status"), weeklyStatus) && weeklyStatus == 1) {
         if (jsonNumber(general.get("current_weekly_remaining_percent"), remain)) {
@@ -260,9 +219,7 @@ QuotaResult parseRemainsBody(const platform::json::JsonValue& body) {
         }
     }
 
-    // ⑤ 无月窗口——上游不提供月配额，不画月条（spec §3.3）。
-    //    字段全缺 → Shape 而不是「成功的空卡」：G0 契约 2 禁止把「没拿到数据」
-    //    渲染成 0%/100% 的假象（G7 五态里「从未成功过」只渲染错误行）。
+    // ⑤ 无月窗口（上游不提供月配额）。字段全缺 → Shape 而非「成功的空卡」，禁止把「没拿到数据」渲染成 0%/100% 假象。
     if (windows.empty()) {
         return makeError(QuotaError::Shape, "general 条目里没有可用的余量字段");
     }
@@ -277,7 +234,7 @@ class MinimaxCnProvider final : public QuotaProvider {
 public:
     std::string id() const override { return "minimax_cn"; }
     std::string displayName() const override { return "MiniMax 中国站"; }
-    // 空 fields = 沿用 profile 的 api key（G0 契约：fields() 为空即不做额外字段收集）
+    // 空 fields = 沿用 profile 的 api key。
     std::vector<ProviderField> fields() const override { return {}; }
 
     // 探测：host 标签边界匹配两个官方 host（含子域），伪造后缀不命中
@@ -292,14 +249,13 @@ public:
                              "未配置 API 密钥：请在该 profile 里填入 MiniMax 的 API Key");
         }
         if (!http) {
-            // G0 契约（quota_provider.h:114-116）：空缝必须返回 Transient，
-            // 不许直接调用导致 std::bad_function_call（项目铁律：不抛 C++ 异常）
+            // 空缝必须返回 Transient，不许直接调用导致 std::bad_function_call。
             return makeError(QuotaError::Transient, "HTTP 发送器未注入（内部错误，可重试）");
         }
 
         platform::http::Request req;
         req.method = "GET";
-        req.url = kRemainsUrl;  // 旧域写死，不读 cfg.baseUrl（见文件头依据）
+        req.url = kRemainsUrl;  // 旧域写死，不读 cfg.baseUrl
         req.headers["Authorization"] = "Bearer " + cfg.apiKey;
         req.headers["Content-Type"] = "application/json";
         req.timeoutMs = kTimeoutMs;
@@ -309,24 +265,19 @@ public:
             return makeError(QuotaError::Transient, "网络错误：" + resp.errorMessage());
         }
         const platform::http::Response& response = resp.value();
-        // 与 G3 / G4 同款：传输层失败的第二种形态（ok(Response{statusCode=0,
-        // networkError=true}）——超时 / 连接失败 / 读体中断。第一种形态
-        // （Result::fail）已在上面拦下。不查这条的话 statusCode 0 会落进下面的
-        // <200 分支，用户看到「接口返回 HTTP 0」——一个不存在的状态码，
-        // 把排查方向指向上游 HTTP，而真因在网络层。
+        // 传输层失败的第二形态（第一种 Result::fail 已拦下）：ok(Response{statusCode=0, networkError=true})。
+        // 不查这条 statusCode 0 会落进下面的 <200 分支，用户看到不存在的「HTTP 0」，真因（网络层）被掩盖。
         if (response.networkError) {
             return makeError(QuotaError::Transient,
                              "网络请求失败：" + response.errorMessage);
         }
 
-        // 401 / 403 → Auth：上游把两者一起当「密钥无效」（coding_plan.rs:452-463），
-        // 不做 403 = 无权限的细分。
+        // 401 / 403 → Auth：上游把两者一起当「密钥无效」，不做 403 = 无权限的细分。
         if (response.statusCode == 401 || response.statusCode == 403) {
             return makeError(QuotaError::Auth, "API 密钥无效或已过期（HTTP " +
                                                    std::to_string(response.statusCode) + "）");
         }
-        // 其它非 2xx（含 429/5xx）→ Transient：可重试口径，与计划 §G1 段
-        // 「其它 4xx/5xx → Transient」保持四个 provider 一致。
+        // 其它非 2xx（含 429/5xx）→ Transient：可重试，四个 provider 口径一致。
         if (response.statusCode < 200 || response.statusCode >= 300) {
             return makeError(QuotaError::Transient,
                              "接口返回 HTTP " + std::to_string(response.statusCode));
@@ -335,7 +286,7 @@ public:
         const core::Result<platform::json::JsonValue> parsed =
             platform::json::parse(response.body);
         if (parsed.isFail()) {
-            // 拿到完整响应体后解析失败 = 确定性错误（上游同款注释 :470-479）
+            // 拿到完整响应体后解析失败 = 确定性错误
             return makeError(QuotaError::Shape, "响应不是合法 JSON：" + parsed.errorMessage());
         }
         return parseRemainsBody(parsed.value());

@@ -1,8 +1,6 @@
 // src/module_claude_proxy/quota/quota_store.cpp
 // 余量配置 / 结果两表的 CRUD + windows_json 单点编解码（契约见 quota_store.h）。
-//
-// 统一模式与 module_agent/agent_store.cpp 一致：db_.mutex() 锁内
-// prepare → bind → step → fetchAll，逐个检查并透传失败，不静默跳过。
+// 模式同 agent_store.cpp：db_.mutex() 锁内 prepare → bind → step → fetchAll，逐个检查并透传失败。
 #include "quota_store.h"
 
 #include <mutex>
@@ -24,8 +22,7 @@ namespace {
 
 namespace pj = platform::json;
 
-// 全参数非 optional 的语句用这个小 helper 收拢 bind 链（agent_store.cpp 同款：
-// Result<void> 没有 operator&&，链式写法编译不过）。
+// 收拢 bind 链的小 helper（Result<void> 没有 operator&&，链式写法编译不过）。
 template <typename... Args>
 core::Result<void> bindAll(core::data::Statement& s, Args&&... args) {
     int index = 1;
@@ -66,8 +63,7 @@ constexpr const char* kResultColumns =
     "profile_id, kind, windows_json, balance_remaining, currency, plan_name, "
     "fetched_at, last_success_at, last_error, last_error_kind";
 
-// 行 → 结构。任一列取不出值即 fail（不用 valueOr 兜默认值：那会把「列名拼错」
-// 伪装成「值就是默认值」，SQL 改动时无声退化）。
+// 行 → 结构。任一列取不出值即 fail（不用 valueOr 兜默认值：会把「列名拼错」伪装成「值就是默认值」）。
 core::Result<QuotaConfigRow> configRowFrom(const core::data::SqlRow& row) {
     QuotaConfigRow out;
     int64_t enabled = 0, autoRefresh = 0, interval = 0;
@@ -109,8 +105,7 @@ core::Result<QuotaResultRow> resultRowFrom(const core::data::SqlRow& row) {
     out.lastError = std::move(lastError);
     out.lastErrorKind = quotaErrorFromName(lastErrorKindText);
 
-    // kind 列空串 = 从未成功过（不变量 4）。不回落成 Tiered：那会让 G7 把
-    // 「没查成」当成「查到了、五个窗口全是 0」。
+    // kind 列空串 = 从未成功过（不变量 4）。不回落成 Tiered：会把「没查成」当成「查到了、窗口全 0」。
     if (!kindText.empty()) {
         out.hasEverSucceeded = true;
         out.kind = (kindText == "balance") ? QuotaKind::Balance : QuotaKind::Tiered;
@@ -126,13 +121,8 @@ core::Result<QuotaResultRow> resultRowFrom(const core::data::SqlRow& row) {
 
 }  // namespace
 
-// ============ windows_json 编解码（单点）============
-
 std::string encodeQuotaWindows(const std::vector<QuotaWindow>& windows) {
-    // platform::json **没有对象数组的 push 口径**（json.h:107-109 的 makeArray
-    // 是空桩），故按 agent_loop.cpp joinBlockArray / llm_client.cpp
-    // parseJoinedArray 同款路数组装：逐元素 stringify → 逗号拼接 → parse 一次
-    // 自检。拼装层出错当场返回 "[]"，绝不把坏串写进库。
+    // platform::json 没有对象数组 push 口径，故逐元素 stringify → 逗号拼接 → parse 一次自检；拼装出错当场返回 "[]"，绝不把坏串写进库。
     std::string text = "[";
     for (size_t i = 0; i < windows.size(); ++i) {
         pj::JsonObject obj;
@@ -173,20 +163,11 @@ core::Result<std::vector<QuotaWindow>> decodeQuotaWindows(const std::string& jso
         w.key = keyVal.isString() ? keyVal.asString() : std::string();
         if (w.key.empty()) continue;      // 无规范键的窗口无法呈现 → 跳过
         pj::JsonValue pct = obj.get("usedPercent");
-        // 畸形 usedPercent → **丢该元素**，不是采纳默认值（评审 B1）。
-        // 曾经的写法是「不是 number 就留着 QuotaWindow 默认的 0.0」，
-        // 那正好制造本模块第一条不变量要杜绝的东西：G7 会把 0 画成一条绿的
-        // 「几乎没用满」条，而用户实际拿到的是一份坏数据。写侧守住了
-        // 「不写假 0%」，读侧不能留一条绕过去的路。
-        // 越界同理：spec §9 明写越界输入「被拒或记 error」，不是 clamp 后
-        // 断言落在 [0,100]（那是恒真断言）。拒 = 这里丢该元素。
+        // 畸形 usedPercent → 丢该元素，不是采纳默认值：留默认 0.0 会被画成「几乎没用满」，正是本模块要杜绝的假 0%。
+        // 越界同理（拒而非 clamp 后断言落在 [0,100]，那是恒真断言）。
         if (!pct.isNumber()) continue;              // 缺字段 / 类型错（含字符串 "62.5"）
-        // ⚠ 数字双分支读取（照抄 opencode_go_provider.cpp:62-71 /
-        // provider_minimax_cn.cpp:135-152 / todo_view_state.cpp:94-97 同款
-        // 先例）：type() 把 Int 与 Double **都**映射成 T_Number（json.cpp:33-34），
-        // 而 parse 的 Int 分支只填 intVal、dblVal 留 0（json.cpp:59-61）——
-        // 只读 asDouble() 会把整数百分比全读成 0%，又一条假 0% 的路。
-        // asDouble 为 0 时回退 asInt；Double 分支（62.5 一类）原样，小数不截断。
+        // 数字双分支读取：Int 与 Double 都映射成 T_Number，但 parse 的 Int 分支只填 intVal、dblVal 留 0，
+        // 只读 asDouble() 会把整数百分比读成 0%（又一条假 0% 的路）。为 0 时回退 asInt；小数原样不截断。
         const double dbl = pct.asDouble();
         const double v = dbl != 0.0 ? dbl : static_cast<double>(pct.asInt());
         if (!(v >= 0.0 && v <= 100.0)) continue;   // 越界（250 / -5）→ 丢，不 clamp
@@ -200,8 +181,6 @@ core::Result<std::vector<QuotaWindow>> decodeQuotaWindows(const std::string& jso
     return core::Result<std::vector<QuotaWindow>>::ok(std::move(out));
 }
 
-// ============ 枚举 ↔ 列文本 ============
-
 const char* quotaErrorName(QuotaError error) {
     switch (error) {
         case QuotaError::None: return "none";
@@ -210,9 +189,7 @@ const char* quotaErrorName(QuotaError error) {
         case QuotaError::Shape: return "shape";
         case QuotaError::Transient: return "transient";
         case QuotaError::NotConfigured: return "not_configured";
-        // 哨兵（取值个数，不是错误）。**它不该被调用** —— 调用方手里是真实错误。
-        // 真被调用说明上游造了个越界的值，按与下方 return 同一套保守兜底处理：
-        // 认不出的错误不静默变成「无错」。
+        // 哨兵（取值个数，不是错误），不该被调用；真被调用说明上游造了越界值，按与下方 return 同一套保守兜底处理。
         case QuotaError::Count: break;
     }
     return "transient";   // 枚举外的值不静默变成「无错」
@@ -232,8 +209,6 @@ QuotaError quotaErrorFromName(const std::string& name) {
 const char* quotaKindName(QuotaKind kind) {
     return kind == QuotaKind::Balance ? "balance" : "tiered";
 }
-
-// ============ profile_quota_config ============
 
 core::Result<QuotaConfigRow> QuotaStore::loadConfig(int64_t profileId) {
     std::lock_guard<std::recursive_mutex> lock(db_.mutex());
@@ -257,12 +232,8 @@ core::Result<QuotaConfigRow> QuotaStore::loadConfig(int64_t profileId) {
     }
     auto row = configRowFrom(rows.value()[0]);
     if (row.isFail()) return row;
-    // secrets_json 读侧解保护（评审 M3）：与 api_key_encrypted **复用同一对**
-    // platform::credential 函数 —— POSIX 是恒等（保护靠 sqlite_db.cpp 每次
-    // open 收紧 db/-wal/-shm 到 0600），Windows 是 DPAPI 密文 hex。
-    // 解不开（换机器 / 换用户 / 列被篡改）→ fail(原错误码)，**不**静默回落
-    // 空串：静默会把「secret 解不开」伪装成「用户没配 secret」，G7 于是显示
-    // 「配置不完整，去补全」——用户去反复检查一个其实没问题的配置。
+    // secrets_json 读侧解保护：与 api_key_encrypted 复用同一对 platform::credential 函数（POSIX 恒等，Windows = DPAPI 密文 hex）。
+    // 解不开（换机器 / 换用户 / 列被篡改）→ fail(原错误码)，不静默回落空串——否则会伪装成「用户没配 secret」误导排查。
     auto secrets = platform::credential::unprotect(row.value().secretsJson);
     if (secrets.isFail()) {
         return core::Result<QuotaConfigRow>::fail(secrets.errorCode(),
@@ -274,11 +245,8 @@ core::Result<QuotaConfigRow> QuotaStore::loadConfig(int64_t profileId) {
 
 core::Result<void> QuotaStore::saveConfig(const QuotaConfigRow& row) {
     std::lock_guard<std::recursive_mutex> lock(db_.mutex());
-    // secrets_json **写侧**加保护（评审 M3）：与 api_key_encrypted 复用同一对
-    // platform::credential 函数。Windows 上这一步是 DPAPI 加密——同一张表里
-    // secrets 与兄弟列保护级别一致，不给「按字面实现 DDL 就落成明文」留缝
-    //（spec §6.2 的原话警告）。失败（DPAPI 出错）→ **在建/改行之前**失败，
-    // 不留「行写好了但 secret 没加密」的中间态。
+    // secrets_json 写侧加保护：与 api_key_encrypted 复用同一对 platform::credential 函数（Windows = DPAPI 加密），与兄弟列保护级别一致。
+    // 失败（DPAPI 出错）在建/改行之前失败，不留「行写好了但 secret 没加密」的中间态。
     auto stored = platform::credential::protect(row.secretsJson);
     if (stored.isFail()) {
         return core::Result<void>::fail(stored.errorCode(), stored.errorMessage());
@@ -314,10 +282,7 @@ core::Result<void> QuotaStore::deleteConfig(int64_t profileId) {
     if (stepped.isFail()) {
         return core::Result<void>::fail(stepped.errorCode(), stepped.errorMessage());
     }
-    // 「删到了没有」用 sqlite3_changes，**不是** step() 的返回值——后者只是
-    // 「这一步有没有取到一行」（SQLITE_ROW），对 DELETE 恒为 false，跟删没删
-    // 到无关（agent_store.cpp:229-235 同款口径：持锁覆盖 step + changes，
-    // 计数不会被并发语句插队）。
+    // 「删到了没有」用 sqlite3_changes，不是 step() 的返回值（后者对 DELETE 恒为 false，与删没删到无关）；持锁覆盖 step + changes，计数不被并发插队。
     if (sqlite3_changes(db_.handle()) == 0) {
         return core::Result<void>::fail(ErrorCode::NotFound,
                                         "该 profile 未配置余量查询");
@@ -350,8 +315,6 @@ core::Result<std::vector<QuotaConfigRow>> QuotaStore::listConfigs() {
     }
     return core::Result<std::vector<QuotaConfigRow>>::ok(std::move(out));
 }
-
-// ============ profile_quota_result ============
 
 core::Result<QuotaResultRow> QuotaStore::loadResult(int64_t profileId) {
     std::lock_guard<std::recursive_mutex> lock(db_.mutex());
@@ -422,17 +385,11 @@ core::Result<std::vector<QuotaResultRow>> QuotaStore::listResults() {
 core::Result<void> QuotaStore::applyFetchResult(int64_t profileId,
                                                 const QuotaResult& result,
                                                 int64_t fetchedAt) {
-    // ⚠ 锁必须**从函数第一行**就持（评审 M2）：韧性依赖的「读回上次成功值 →
-    // 搬进新行 → 写回」是一个**复合操作**，锁只覆盖写的话就是非原子：
-    // 线程 A（后台 ticker）判定 Transient、读到 T0 旧值 → 线程 B（G6 卡片
-    // [刷新]）写进 T1 真数据 → A 恢复执行、把 B 的新数据整体覆盖回 T0 旧值
-    // + 错误文案。用户刚手动刷出来的数据被一次网络抖动无声回滚 = 静默丢数据。
-    // db_.mutex() 是 recursive_mutex，下面 loadResult 内部再取一次是安全重入。
+    // 锁必须从第一行就持：「读回上次成功值 → 搬进新行 → 写回」是复合操作，锁只覆盖写就是非原子——
+    // 手动刷出的新数据会被一次网络抖动无声覆盖回旧值 = 静默丢数据。db_.mutex() 是 recursive_mutex，重入安全。
     std::lock_guard<std::recursive_mutex> lock(db_.mutex());
 
-    // 韧性决策（不变量 3）：成功才写数据列；失败保留上次成功的值，只写错误两列。
-    // 从未成功过时数据列保持初始值（windows 空 / balance 0 / kind 空），
-    // 于是「失败且从未成功」在库里就是**可分辨**的一行，G7 不画 0% 条。
+    // 韧性决策（不变量 3）：成功才写数据列；失败保留上次成功的值，只写错误两列。从未成功过时数据列保持初始值（windows 空 / kind 空）。
     QuotaResultRow row;
     row.profileId = profileId;
     row.fetchedAt = fetchedAt;
@@ -445,14 +402,10 @@ core::Result<void> QuotaStore::applyFetchResult(int64_t profileId,
         row.planName = result.planName;
         row.lastError.clear();
         row.lastErrorKind = QuotaError::None;
-        // 数据时间只在**成功**时推进（评审 m1）：Transient 失败后数据仍是
-        // interval 之前的，若此刻也推进，G7 会把 15 分钟前的数字配上
-        // 「刚刚查询过」——自相矛盾。定时器用 fetched_at，数据时间用本列。
+        // 数据时间只在成功时推进：Transient 失败后数据仍是 interval 之前的，推进会得到「15 分钟前的数字 + 刚刚查询过」的矛盾。定时器用 fetched_at。
         row.lastSuccessAt = fetchedAt;
     } else {
-        // 失败：先读回上次成功的那一行，把数据列**原样**搬过来。
-        // 读不到行（真·从未成功过）或读失败都按「无旧值」处理 —— 读失败时
-        // **不**阻断错误落库：错误信息比旧值更重要，不能因为读失败就丢掉。
+        // 失败：读回上次成功的行原样搬运。读不到 / 读失败都按「无旧值」处理，且不阻断错误落库（错误信息比旧值更重要）。
         auto prev = loadResult(profileId);
         if (prev.isOk()) {
             const QuotaResultRow& p = prev.value();
@@ -466,12 +419,8 @@ core::Result<void> QuotaStore::applyFetchResult(int64_t profileId,
         }
         row.lastError = result.errorMessage;
         row.lastErrorKind = result.error;
-        // **代码保证：last_error 列在「有错」时恒非空**（G7）。
-        // 落库前 provider 若给了空 errorMessage，这里补成 headline 文案；
-        // 不补的话首页错误行会画出空白 —— 空文案在 UI 上等于「什么都没发生」，
-        // 是本项目审计里点名的静默失败面。这条是**兜底而不是唯一防线**：
-        // 读侧（quota_home_view.cpp）还会在 last_error 为空时再兜一次，
-        // 好让本改动之前落下的旧行（无迁移纪律：老行不迁）也显示得出话。
+        // 代码保证 last_error 有错时恒非空：provider 给了空 errorMessage 就补 headline 文案（空文案 = UI 上什么都没发生）。
+        // 这是兜底，读侧（quota_home_view.cpp）还会再兜一次，让旧行也显示得出话。
         if (row.lastError.empty()) {
             row.lastError = quotaErrorHeadline(result.error, std::string());
         }
@@ -484,8 +433,7 @@ core::Result<void> QuotaStore::applyFetchResult(int64_t profileId,
         "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
     if (st.isFail()) return core::Result<void>::fail(st.errorCode(), st.errorMessage());
     auto& stmt = st.value();
-    // kind 只在成功时落非空值；从未成功过就写空串（这正是「不写假 0%」的形态：
-    // 没有一条「查到了、窗口全 0」的假行混进库里）。
+    // kind 只在成功时落非空值；从未成功过写空串（没有「查到了、窗口全 0」的假行混进库里）。
     const std::string kindText =
         row.hasEverSucceeded ? std::string(quotaKindName(row.kind)) : std::string();
     const std::string windowsText =

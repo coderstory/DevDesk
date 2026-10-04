@@ -1,13 +1,7 @@
 // src/module_markdown/md_view_state.cpp
-// markdown 视图状态的 app_config 表存取（接口见 md_view_state.h）
-//
-// 迁移前读写 appDataDir()/markdown_view_state.json；2026-10-03（批次 E2，用户
-// 第 17 条「所有 app 配置全部进 SQLite，不要 JSON 文件了」）起整份存 app_config
-// 表的一行（键 markdown_view_state），**不读旧文件、不迁移**。
-//
-// 整份一行而非按顶层键拆分：与 pet_config / todo_view_state 同款裁决——本状态
-// **只有一个写者**（markdown 模块页），且每次都是「load 整个结构 → 改 → 整个
-// 存回」，拆行的「多写者互不覆盖」收益不存在。
+// markdown 视图状态的 app_config 表存取（接口见 md_view_state.h）。
+// 整份状态存为 app_config 一行（键 markdown_view_state），原 JSON 文件已退役、不迁移；
+// 单写者（markdown 模块页）且整存整取，故不按顶层键拆行。
 #include "module_markdown/md_view_state.h"
 
 #include <utility>
@@ -60,8 +54,7 @@ core::Result<MarkdownViewState> MarkdownViewStateStore::loadChecked() const {
     }
     auto raw = core::appconfig::get(*db_, kMarkdownViewStateKey);
     if (raw.isFail()) {
-        // 键不存在 = 首次启动（正常路径，静默用默认）；表不存在 / SQL 失败 =
-        // 真故障，报出来而不是与「没配过」混同
+        // 键不存在 = 首次启动（正常路径，静默用默认）；表不存在 / SQL 失败 = 真故障，报出来。
         if (raw.errorCode() == core::ErrorCode::NotFound) {
             return core::Result<MarkdownViewState>::ok(st);
         }
@@ -131,8 +124,7 @@ core::Result<void> MarkdownViewStateStore::save(
         return core::Result<void>::fail(core::ErrorCode::Internal,
                                         "视图状态序列化失败: " + text.errorMessage());
     }
-    // 一次 UPSERT 即一次提交——与旧的「原子写文件」等价（且顺带拿到事务的
-    // 原子性：要么这行是新值，要么还是旧值，不会出现半截）
+    // 一次 UPSERT 即一次提交——与旧的「原子写文件」等价，且自带事务原子性（不会半截）。
     return core::appconfig::set(*db_, kMarkdownViewStateKey, text.value());
 }
 

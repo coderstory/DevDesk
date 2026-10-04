@@ -258,3 +258,38 @@ EUI_ENABLE_MODULES=OFF   EUI_RENDER_BACKEND=opengl   EUI_WINDOW_BACKEND=glfw
 - `Testing/`（ctest 在源码根跑时生成的临时目录）此前未被忽略，已加入 `.gitignore` 并从暂存区剔除。
 - `scripts/check-probe-skip-gate.sh` 自检夹具里引用的 probe 名（`about_probe`）随删除同步改为 `home_probes`。
 - `CLAUDE.md` / `TODO.md` / `scripts/build-test-run.sh` / `tests/CMakeLists.txt` / `probe_harness.h` 里写死的「12 个 probe 可执行 / 14 个 probe 测试 / 13 个探针源文件」全部同步为 4 / 6 / 5。
+
+## 7. 第三批：注释精简（2026-10-04）
+
+用户诉求：「乱七八糟的代码注释都删了，或者精简，注释写的比代码还多」。
+
+### 7.1 规模与做法
+
+- 改前全 `src/`：**15,091 注释行 / 42,465 代码行（26.2%）**；≥6 行的注释块 652 个共 6,826 行（占 45%）。
+- 机械噪声实测≈0（分隔线 1 处、被注释掉的代码 0 处）——冗余主体是**说明性散文块**（文件头小作文 + 函数级长篇旁白），需内容级精简。
+- 做法：先建**注释剥离安全网**（剥掉注释 + 归一化空白后逐文件与 HEAD 比对，证明 code-changed=0），再按目录切 8 组并行精简。
+
+### 7.2 结果
+
+| 指标 | 前 | 后 | 变化 |
+|---|---:|---:|---|
+| src 注释行 | 15,091 | **7,233** | **−7,858（−52.1%）** |
+| 注释占比 | 26.2% | **14.6%** | −11.6pp |
+| 改动文件 | — | 253 个 | 全部经剥离比对确认零代码改动 |
+
+精简原则：**删**复述行为、任务编号/日期流水账、spec 路径细节、"注释保证"、逐步旁白、装饰横幅、>2 行的用法示例；**留**（压 1-2 行）契约/不变量、线程模型、错误码语义、非显然的坑与"为什么"、魔数来源、平台差异原因。文件头统一压到 ≤8 行。
+
+### 7.3 刻意保留的高价值注释（抽样）
+
+- 火山 SigV4 逐字节签名契约（无金标准向量，是正确性唯一锚点）
+- keychain 空 service/account 的通配语义坑（可静默误删他人条目）
+- CreateProcessW 不查 PATH（err=2 实测）→ 必须绝对路径
+- `kTokenHardCap` 等 agent 限额魔数的单位说明；cron step 溢出 UB 坑
+- quota「先落库后唤醒」时序约束；settings 窗口效果 alpha 标定根因
+
+### 7.4 验证
+
+- 注释剥离比对：253 个改动文件 `code-changed=0`。
+- 构建：`bash scripts/build-test-run.sh --no-run` 全绿；6 道静态守卫自检全过。
+- 单测：`Total: 1282 / Passed: 1276 / Failed: 0 / Skipped: 6`（与上批一致，纯注释改动无行为变化）。
+- probe：`ctest -L probe` **6/6 Passed**。

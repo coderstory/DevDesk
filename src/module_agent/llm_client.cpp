@@ -1,12 +1,7 @@
 // src/module_agent/llm_client.cpp
-// LlmClient 实现（agent M1 Task 7）。逻辑序 = spec §1 步骤 3：
-//   1. 预检代理运行状态   2. 槽位 → model id   3. 组请求体   4. 发送（可注入缝）
-//   5. 非 200 → HttpError   6. 解析响应 → LlmResponse
-// 不抛异常，全程 Result。platform::json 没有对象数组 push 口径（json.h:107-109，
-// makeArray 是空桩），messages 数组按 AgentLoop joinBlockArray 同款路数组装：
-// 逐元素 stringify → 逗号拼接 → parse 一次自检（与 agent_loop.cpp:32-57 同源，
-// 区别只在解析失败这里降级成 send 失败——文本含外部来源，坏请求当场拦下、
-// 不发上游、不 abort）。
+// LlmClient 实现：预检代理 → 解析槽位 → 组 Anthropic 请求体 → 发送 → 检查状态码
+// → 解析响应。不抛异常全程 Result。platform::json 无对象数组 push 口径，messages
+// 数组逐元素 stringify 拼接后 parse 自检；拼装出错这里降级成 send 失败，不 abort
 #include "module_agent/llm_client.h"
 
 #include <string>
@@ -18,13 +13,11 @@
 namespace module::agent {
 namespace {
 
-// 单次请求 max_tokens（spec §1 留白 → 计划定值 4096；M1 不做每任务配置）
+// 单次请求 max_tokens（计划定值 4096）
 constexpr int64_t kLlmMaxTokens = 4096;
 
-// 把已各自 stringify 的元素文本拼成 JSON 数组原文并 parse 自检。
-// 每个元素是 stringify(合法 JsonValue) 的产物（构造保证），拼接本身只加
-// 逗号与方括号；parse 这一道是「拼装层出错当场拦下」的自检，失败返回
-// JsonParseError，绝不把坏 body 发给上游。
+// 把已 stringify 的元素文本拼成 JSON 数组原文并 parse 自检；拼装层出错当场
+// 返回 JsonParseError，绝不把坏 body 发给上游
 core::Result<platform::json::JsonValue> parseJoinedArray(
     const std::vector<std::string>& elementTexts, const char* what) {
     std::string text = "[";
@@ -43,10 +36,8 @@ core::Result<platform::json::JsonValue> parseJoinedArray(
     return core::Result<platform::json::JsonValue>::ok(std::move(v.value()));
 }
 
-// 响应 usage 里的整数字段；缺 / 非数字 → -1（LlmResponse「未采集」口径）。
-// 注：yyjson 读侧 Int 与 Double 同映 T_Number、asInt 只认 Int 形——Anthropic
-// 的 token 计数恒为整数，网关若回小数会取成 0（agent_loop 对 <=0 不累计，
-// 只丢统计不丢数据，可接受）。
+// usage 整数字段；缺/非数字 → -1（「未采集」口径）。asInt 只认 Int 形，网关若回
+// 小数会取成 0（agent_loop 对 <=0 不累计，只丢统计不丢数据）
 int64_t usageInt(const platform::json::JsonObject& usage, const char* key) {
     platform::json::JsonValue v = usage.get(key);
     return v.isNumber() ? v.asInt() : -1;
@@ -62,15 +53,13 @@ core::Result<core::LlmResponse> LlmClient::send(
     const std::string& toolsJson,
     const std::string& systemPrompt,
     const std::string& model) {
-    // 1. 预检：代理没起就没有可打的本地端口（UI 先启代理是前置条件；
-    //    这里再拦一道，错误信息给用户可操作的指引）
+    // 1. 预检：代理没起就没有本地端口可用；再拦一道并给可操作指引
     if (!proxy_.isProxyRunning()) {
         return core::Result<core::LlmResponse>::fail(
             core::ErrorCode::ValidationError,
             "代理未启，请先在 Claude 页启动代理");
     }
-    // 2. 槽位 → 实际 model id（H1 定案：解析在 LlmClient 内做，model 形参
-    //    是槽位键名；AgentLoop 原样传 task.modelSlot）
+    // 2. 槽位 → 实际 model id（model 形参是槽位键名，AgentLoop 原样传 modelSlot）
     auto id = proxy_.resolveModelSlot(model);
     if (!id.has_value()) {
         return core::Result<core::LlmResponse>::fail(
@@ -78,8 +67,7 @@ core::Result<core::LlmResponse> LlmClient::send(
             "无法解析模型槽位「" + model + "」（无激活 profile 或槽位未配置）");
     }
 
-    // 3. 组请求体。messages：每条 contentJson 先 parse 成数组再套上 role，
-    //    逐条 stringify 拼成数组文本（无对象数组 push 口径，见文件头注）
+    // 3. 组请求体：每条 contentJson parse 成数组再套 role，逐条 stringify 拼数组
     std::vector<std::string> messageTexts;
     messageTexts.reserve(messages.size());
     for (const core::LlmMessage& m : messages) {
@@ -111,8 +99,7 @@ core::Result<core::LlmResponse> LlmClient::send(
     body.set("model", platform::json::makeString(id.value()));
     body.set("max_tokens", platform::json::makeInt(kLlmMaxTokens));
     body.set("messages", std::move(messagesArr.value()));
-    // tools 定义为空数组 / 空串时不带 tools 键（上游对空数组同样接受，
-    // 但省一个键省一次解析；非空才 parse——坏定义当场拦下）
+    // tools 为空数组/空串时不带 tools 键；非空才 parse，坏定义当场拦下
     if (!toolsJson.empty() && toolsJson != "[]") {
         auto tools = platform::json::parse(toolsJson);
         if (tools.isFail() || !tools.value().isArray()) {
@@ -141,16 +128,14 @@ core::Result<core::LlmResponse> LlmClient::send(
     req.body = bodyText.value();
     req.timeoutMs = 60000;
 
-    // 4. 发送：测试经 HttpFn 注入假发送，生产走 platform::http::send；
-    //    失败原样透传（错误码与消息都是调用方可读的）
+    // 4. 发送：测试经 HttpFn 注入，生产走 platform::http::send
     auto resp = http_ ? http_(req) : platform::http::send(req);
     if (resp.isFail()) {
         return core::Result<core::LlmResponse>::fail(resp.errorCode(),
                                                      resp.errorMessage());
     }
 
-    // 5. 非 200 → HttpError，带状态码 + body 前 200 字节（够定位 4xx 报错；
-    //    诊断文本按字节截，不保证 UTF-8 边界，可接受）
+    // 5. 非 200 → HttpError，带状态码 + body 前 200 字节（按字节截，不保证 UTF-8 边界）
     const platform::http::Response& res = resp.value();
     if (res.statusCode != 200) {
         return core::Result<core::LlmResponse>::fail(
@@ -159,7 +144,7 @@ core::Result<core::LlmResponse> LlmClient::send(
                 res.body.substr(0, 200));
     }
 
-    // 6. 解析响应 → LlmResponse
+    // 解析响应 → LlmResponse
     auto parsed = platform::json::parse(res.body);
     if (parsed.isFail() || !parsed.value().isObject()) {
         return core::Result<core::LlmResponse>::fail(
@@ -175,8 +160,7 @@ core::Result<core::LlmResponse> LlmClient::send(
 
     platform::json::JsonValue content = root.get("content");
     if (!content.isArray()) {
-        // 200 却没有 content blocks 数组 = 上游自相矛盾；不造 "null"/"[]"
-        // 硬凑，把矛盾原样报给 run 落库
+        // 200 却无 content blocks 数组 = 上游自相矛盾；不硬凑 "null"/"[]"，原样报错
         return core::Result<core::LlmResponse>::fail(
             core::ErrorCode::JsonParseError,
             "响应缺 content blocks 数组（stop_reason=" + out.stopReason + "）");

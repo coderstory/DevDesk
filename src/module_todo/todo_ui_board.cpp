@@ -1,7 +1,6 @@
 // src/module_todo/todo_ui_board.cpp
-// Todo 看板区绘制（R5）：drawHeader / drawBoard / drawColumn / drawColumnContent /
-// drawCard 逐字搬运自 todo_module.cpp（几何、文案、元素 id、控制流不变），
-// 只把「模块成员访问」换成显式入参（BoardView 只读 + BoardActions 回写）。
+// Todo 看板区绘制：drawHeader/drawBoard/drawColumn/drawColumnContent/drawCard。
+// 由模块成员访问改为显式入参（BoardView 只读 + BoardActions 回写）。
 #include "todo_ui_board.h"
 
 #include "todo_ui_common.h"
@@ -20,7 +19,7 @@
 
 namespace module::todo::ui {
 
-// 列 / 列内容 / 卡片的绘制只在文件内部互相调用（对外只有 drawHeader / drawBoard）
+// 列/列内容/卡片绘制仅文件内互调（对外只有 drawHeader/drawBoard）
 void drawColumn(eui::Ui& ui, const std::string& id, const Column& col,
                 float width, float height, const core::theme::Tokens& t,
                 size_t colIndex, const BoardView& v, BoardPlate& plate);
@@ -32,8 +31,7 @@ void drawCard(eui::Ui& ui, const std::string& id, float x, float y, float width,
               int colIndex, int colCount, int cardIndex,
               const BoardView& v, BoardPlate& plate);
 
-// ---------- 顶部 Header ----------
-// 右侧动作区 560px：搜索框(240) + 逾期入口(104) + 「+ 列」(72) + 「+ 新建任务」(120) + 间距
+// 右侧动作区 560px = 搜索框(240)+逾期(104)+「+ 列」(72)+「+ 新建任务」(120)+间距
 void drawHeader(eui::Ui& ui, float contentW, float headerH, float bodyH,
                 const core::theme::Tokens& t, const BoardView& v) {
     (void)bodyH;
@@ -54,11 +52,8 @@ void drawHeader(eui::Ui& ui, float contentW, float headerH, float bodyH,
                         .fontWeight(700)
                         .color(t.colors.textPrimary)
                         .build();
-                    // subtitle 保持静态操作说明（动态反馈走 toast）；
-                    // 包 clip 栈：41 字文案实宽 ≈545px，窄窗（≲1400）会压到
-                    // 右侧搜索框/按钮（同 md.subtitle.clip 写法）。2026-10-03
-                    // 起内层文本接单行省略号（截断有「…」提示），栈 .clip()
-                    // 保留作几何兜底（ellipsis 管排版宽，clip 管绘制范围）。
+                    // subtitle 保持静态操作说明（动态反馈走 toast）；clip 栈作几何兜底：
+                    // ellipsis 管排版宽，clip 管绘制范围（窄窗文案会压到右侧动作区）
                     ui.stack("todo.subtitle.clip")
                         .size(contentW - 560.0f, 18.0f)
                         .clip()
@@ -83,11 +78,7 @@ void drawHeader(eui::Ui& ui, float contentW, float headerH, float bodyH,
                 .alignItems(eui::Align::CENTER)
                 .gap(t.sizes.spacingSmall)
                 .content([&] {
-                    // 搜索框（真实调用 service_->search；仿 markdown 模块 md.search）
-                    // 审计 [10]：Enter 改无副作用（不绑 onEnter，与 md.search 一致——
-                    // 搜索已即时生效，回车不该清空）；Esc 清除走 onCancel（[21] 路径，
-                    // 不再依赖 Escape→onEnter 旧映射）。
-                    // 🔍 emoji 换 FA：包一层 stack 才能在流式 row 里叠 icon 浮层
+// 搜索框：Enter 无副作用（不绑 onEnter）；包 stack 才能在流式 row 里叠 FA 图标浮层
                     ui.stack("todo.search.wrap")
                         .size(240.0f, 40.0f)
                         .content([&] {
@@ -115,8 +106,7 @@ void drawHeader(eui::Ui& ui, float contentW, float headerH, float bodyH,
                         })
                         .build();
 
-                    // 逾期入口（badge = listOverdue().size()，0 时置灰不可点；
-                    // ⚠ emoji 换 fa-triangle-exclamation，0 时随 disabled 自动置灰）
+                    // 逾期入口：badge = listOverdue().size()，0 时置灰不可点
                     const bool hasOverdue = v.overdueCount > 0;
                     components::button(ui, "todo.btn.overdue")
                         .size(104.0f, 40.0f)
@@ -135,7 +125,6 @@ void drawHeader(eui::Ui& ui, float contentW, float headerH, float bodyH,
                         .onClick([cb = v.act.overdueClicked] { cb(); })
                         .build();
 
-                    // + 列
                     components::button(ui, "todo.btn.addcol")
                         .size(72.0f, 40.0f)
                         .text("+ 列")
@@ -147,7 +136,6 @@ void drawHeader(eui::Ui& ui, float contentW, float headerH, float bodyH,
                         .onClick([cb = v.act.addColumnClicked] { cb(); })
                         .build();
 
-                    // + 新建任务
                     components::button(ui, "todo.btn.add")
                         .size(120.0f, 40.0f)
                         .text("+ 新建任务")
@@ -164,11 +152,9 @@ void drawHeader(eui::Ui& ui, float contentW, float headerH, float bodyH,
         .build();
 }
 
-// ---------- 看板列 ----------
 void drawBoard(eui::Ui& ui, float contentW, float bodyH,
                const core::theme::Tokens& t, const BoardView& v, BoardPlate& plate) {
-    // 错误态（服务未就绪 / 读取失败）：与空态区分，给文案 + 重试按钮
-    // （仿 Home statsError_ 三态：空 / 错误+重试 / 数据）
+    // 错误态（服务未就绪/读取失败）：与空态区分，给文案 + 重试按钮
     if (!v.hasService || !v.loadError.empty()) {
         const std::string msg = !v.hasService
             ? "数据库尚未就绪，数据未加载"
@@ -224,7 +210,7 @@ void drawBoard(eui::Ui& ui, float contentW, float bodyH,
     const float colW = (contentW - colGap * static_cast<float>(n - 1)) /
                        static_cast<float>(n);
 
-    // 板面几何快照（W8 拖拽命中换算用；compose 每帧刷新）
+    // 板面几何快照（拖拽命中换算用；compose 每帧刷新）
     plate.colW = colW;
     plate.colGap = colGap;
     plate.height = bodyH;
@@ -244,8 +230,7 @@ void drawBoard(eui::Ui& ui, float contentW, float bodyH,
 void drawColumn(eui::Ui& ui, const std::string& id, const Column& col,
                 float width, float height, const core::theme::Tokens& t,
                 size_t colIndex, const BoardView& v, BoardPlate& plate) {
-    // 列内容整体包一层 stack：EUI-NEO 的 position() 只在 stack 内生效，
-    // 直接作为 row("todo.body") 的子元素会被流式布局横向排开（列头/卡片错位）
+    // 包一层 stack：position() 只在 stack 内生效，作为 row 子元素会被流式横排（列头/卡片错位）
     ui.stack(id)
         .size(width, height)
         .content([&] {
@@ -262,23 +247,15 @@ void drawColumnContent(eui::Ui& ui, const std::string& id, const Column& col,
     const bool dropHover = v.dragActive &&
         v.dragHoverColumn == static_cast<int>(colIndex);
 
-    // UI 整改 13：拖拽插入位占位条（虚框高亮用半透主色条代替——EUI-NEO
-    // 无虚线边框原语）。barY 在滚动内容坐标系（与卡片同帧，滚动跟手）；
-    // 行号跨列/同列都有（模块侧按命中置位），条落在「row-1 与 row 张卡之间」
-    // 的缝里，row=0 顶格贴内容顶、row=列卡数 = 列尾追加。
-    // 条的 x / 宽与卡片同源（kColumnContentInset + contentCardWidth，传参
-    // barW 由调用点用同一算式得出）——2026-09-28 真机缺陷 2：条宽原写
-    // 「内容宽 - 16」且 x=0，比它覆盖的卡槽短一截、右边留空。
+    // 拖拽插入位占位条（半透主色条代替虚线边框）。barY 在滚动内容坐标系
+    //（与卡片同帧）；row=0 顶格、row=列卡数=列尾追加。条 x/宽与卡片同源
     const bool showDropBar = v.dragActive &&
         v.dragHoverColumn == static_cast<int>(colIndex) && v.dragHoverRow >= 0;
     auto drawDropBar = [&](eui::Ui& inner, float barY, float barW) {
         eui::Color barColor = t.colors.primary;
-        barColor.a = 0.55f;  // 高亮占位（半透主色，非硬编码白）
-        // ignoreLayout 跳流式（假修根因修）：scrollView 内容列是 Column，
-        // 非 ignoreLayout 子元素按流式排布、position 完全无效——条永远贴
-        // 内容顶 + 整列卡片被下推（bar 高 + gap 共 16px）、松手弹回。置位
-        // 后走 overlay 绝对定位（x/y 生效，layout.h layoutOverlayChildren），
-        // 空列路径的 Stack 同样走 overlay，两路径行为一致
+        barColor.a = 0.55f;  // 高亮占位（半透主色）
+        // ignoreLayout：scrollView 内容列是 Column，非 ignoreLayout 子元素按流式
+        // 排布、position 无效；置位后走 overlay 绝对定位，与空列 Stack 路径一致
         inner.rect(id + ".dropbar")
             .position(kColumnContentInset, barY)
             .ignoreLayout()
@@ -291,8 +268,7 @@ void drawColumnContent(eui::Ui& ui, const std::string& id, const Column& col,
     ui.rect(id + ".bg")
         .position(0.0f, 0.0f)
         .size(width, height)
-        // 看板列容器是页面结构 → background（米色/暖墨），卡片白只给
-        // 列内浮动卡片与按钮（主题层级修正，同侧边栏根因）
+        // 列容器是页面结构 → background；卡片白只给列内浮动卡片与按钮
         .color(t.colors.background)
         .radius(t.sizes.radiusLarge)
         .border(dropHover ? 2.0f : 1.0f,
@@ -300,15 +276,12 @@ void drawColumnContent(eui::Ui& ui, const std::string& id, const Column& col,
         .build();
 
     auto colTasks = tasksInColumn(v.tasks, col.id);
-    // 搜索激活时只显示命中卡（命中列照常渲染；命中集来自 service_->search）
+    // 搜索激活时只显示命中卡（命中集来自 service_->search）
     colTasks = filterBySearch(colTasks, v.searchMatchIds, !v.searchQuery.empty());
-    // 归档列语义走 kind（migration v8 起回填 'archive'）：按标题判会在
-    // 用户重命名后静默失效
+    // 归档列语义走 kind（v8 起回填 'archive'）；按标题判会在重命名后失效
     const bool isArchive = (col.kind == "archive");
 
-    // 列头右键热区（重命名/左移/右移/删除列）。纯命中区：Rect 不设
-    // color 时默认不透明白色（Element::color 默认 {1,1,1,1}），深色主题
-    // 下会把列头整条刷白——必须显式给全透明
+    // 列头右键热区。纯命中区必须显式给全透明：Rect 默认不透明白色，深色主题会刷白
     ui.rect(id + ".head")
         .position(0.0f, 0.0f)
         .size(width, kColumnHeaderHeight)
@@ -320,7 +293,7 @@ void drawColumnContent(eui::Ui& ui, const std::string& id, const Column& col,
         })
         .build();
 
-    // 列颜色点（Column::color 入库后首次渲染；10px 圆点，token→hex 见 ui::columnDotColor）
+    // 列颜色点（10px 圆点，token→hex 见 ui::columnDotColor）
     const auto colDot = columnDotColor(col.color);
     if (colDot.has_value()) {
         ui.rect(id + ".dot")
@@ -342,12 +315,11 @@ void drawColumnContent(eui::Ui& ui, const std::string& id, const Column& col,
         .color(t.colors.textPrimary)
         .build();
 
-    // 列重命名入口显性化（审计 [24]）：列头可见 ✎ 按钮直达改名弹窗，
-    // 右键菜单「重命名列」入口保留
+    // 列头 ✎ 按钮直达改名弹窗；右键菜单「重命名列」入口保留
     components::button(ui, id + ".rename")
         .position(width - 70.0f, 14.0f)
         .size(28.0f, 28.0f)
-        .icon(0xF303)  // fa-pencil-alt（对称铅笔；原 fa-edit 0xf044 字形右重偏右，换之）
+        .icon(0xF303)  // fa-pencil-alt（原 fa-edit 字形右重偏右）
         .iconSize(t.sizes.fontSizeSmall)
         .colors(t.colors.surfaceElevated, t.colors.hover, t.colors.active)
         .iconColor(t.colors.textSecondary)
@@ -355,7 +327,6 @@ void drawColumnContent(eui::Ui& ui, const std::string& id, const Column& col,
         .onClick([cb = v.act.renameColumn, col] { cb(col); })
         .build();
 
-    // 列头 + 按钮
     components::button(ui, id + ".add")
         .position(width - 36.0f, 14.0f)
         .size(28.0f, 28.0f)
@@ -368,13 +339,10 @@ void drawColumnContent(eui::Ui& ui, const std::string& id, const Column& col,
         .build();
 
     if (colTasks.empty()) {
-        // 空列：无滚动容器，占位条直接画在列内容层首卡位（空列滚动必为 0
-        // ——内容高 0，scrollView maxOffset 被钳制为 0）
+        // 空列无滚动容器，占位条直接画在列内容层首卡位（内容高 0，滚动恒 0）
         if (v.dragActive && v.dragHoverColumn == static_cast<int>(colIndex) &&
             v.dragHoverRow >= 0) {
-            // 空列 hoverRow 恒 0（dragDropRowIndex 按 taskCount=0 钳制）：
-            // 条落卡区首卡位 = 非空列 row 0 同槽位（列头下方），不贴列顶；
-            // 宽度与非空列卡槽同源（contentCardWidth，见 kColumnContentInset）
+            // 空列 hoverRow 恒 0：条落卡区首卡位（列头下方），宽与非空列卡槽同源
             drawDropBar(ui, kColumnHeaderHeight, contentCardWidth(width));
         }
         ui.text(id + ".empty")
@@ -391,15 +359,10 @@ void drawColumnContent(eui::Ui& ui, const std::string& id, const Column& col,
         return;
     }
 
-    // 列内滚动（scrollView）：此前直接裁掉超出列高的卡片（第 12 张起消失）。
-    // 滚动位置按列索引记忆（reloadAll 时 vector resize 保留旧值）。
+    // 列内滚动（scrollView）；滚动位置按列索引记忆（vector resize 保留旧值）
     const auto componentTheme = core::theme::componentTokens(t);
-    // M2-3（2026-09-28，UI 现代化）：列内容容器 = 卡片落位淡入载体。
-    // 跨模块剩余审计修：opacity 直接门控 dragActive——跟手中整列 0.6 调暗
-    //（反馈 + 为淡回建立 0.6 起点），松手目标回 1.0 → 平滑 0.6→1.0 淡回
-    //（0.12s OutQuad）。修复前靠模块侧标志 + 复位计时器：松手瞬间先暗到
-    // 0.6 再淡回（1.0→0.6→1.0 闪暗）且有 0.12s 延迟。原 scrollView 的绝对
-    // 定位整体下移进本容器（位置/尺寸逐值等价，列头按钮等其余元素不受影响）
+    // 列内容容器 = 卡片落位淡入载体：opacity 门控 dragActive（跟手中整列 0.6
+    // 调暗，松手平滑 0.6→1.0 淡回）。scrollView 绝对定位整体下移进本容器
     ui.stack(id + ".cards")
         .position(0.0f, kColumnHeaderHeight)
         .size(width, height - kColumnHeaderHeight)
@@ -421,12 +384,9 @@ void drawColumnContent(eui::Ui& ui, const std::string& id, const Column& col,
                 .content([&](eui::Ui& inner, float contentWidth,
                              float viewportHeight) {
                     (void)viewportHeight;
-                    // 卡槽几何（卡与占位条的唯一来源）：宽 = 内容宽 - 双侧
-                    // inset，x = inset（见 kColumnContentInset）——2026-09-28
-                    // 真机缺陷 1/2：旧算式只减一次 16 且 x=0，卡贴列左缘、
-                    // 条右边空余；现在卡/条同宽同位
+                    // 卡槽几何（卡与占位条唯一来源）：宽 = 内容宽 - 双侧 inset，x = inset
                     const float cardW = contentCardWidth(contentWidth);
-                    // 占位条与卡片同帧布局（滚动内容坐标系，随列滚动跟手）
+                    // 占位条与卡片同帧布局（随列滚动跟手）
                     if (showDropBar) {
                         const float barY = std::max(
                             0.0f, static_cast<float>(v.dragHoverRow) *
@@ -436,8 +396,7 @@ void drawColumnContent(eui::Ui& ui, const std::string& id, const Column& col,
                     for (size_t i = 0; i < colTasks.size(); ++i) {
                         const std::string cardId =
                             id + ".card." + std::to_string(i);
-                        // wrap 仍占满内容宽（流式子元素，position 无效），
-                        // 卡在 wrap 内按 inset 落位；子元素几何不变
+                        // wrap 占满内容宽（流式子元素，position 无效），卡在 wrap 内按 inset 落位
                         inner.stack(cardId + ".wrap")
                             .size(contentWidth, kCardHeight)
                             .content([&] {
@@ -456,14 +415,8 @@ void drawColumnContent(eui::Ui& ui, const std::string& id, const Column& col,
         .build();
 }
 
-// x = 卡左缘在「列内容坐标系」里的位置（调用点传 kColumnContentInset：列内容
-// 左内边距，见 todo_ui_logic.h）。**x 只作用于卡片容器**（card 组件的
-// .position）——卡内元素（.bg / .title / chips / .done）坐标一律相对**卡内容
-// 原点**（= 卡原点，padding(0)），不得再加 x：卡内容 origin 本来就在卡内，
-// 重复平移 = 双倍偏移（第一版修法踩过：卡内元素全多加了一次 x，断言
-// card.bg.x - col.x 得到 32 而非 16，被 todo_ui_card_inset_and_dropbar_width
-// 抓住）。y 现恒 0（纵向由 scrollView 流式排布），保留形参让卡内装饰层与旧
-// 实现同构。
+// x = 卡左缘在「列内容坐标系」里的位置。**x 只作用于卡片容器**——卡内元素坐标
+// 一律相对卡内容原点，不得再加 x（重复平移 = 双倍偏移）。y 现恒 0（纵向流式排布）
 void drawCard(eui::Ui& ui, const std::string& id, float x, float y, float width,
               const core::theme::Tokens& t, const Task& task,
               int colIndex, int colCount, int cardIndex,
@@ -471,47 +424,33 @@ void drawCard(eui::Ui& ui, const std::string& id, float x, float y, float width,
     (void)colCount;
     const bool done = task.completedAt.has_value();
     const bool selected = (task.id == v.selectedTaskId);
-    // W8 拖拽中间态：被拖卡片半透明（拖动只是记录 + 视觉反馈，松手才落库）
+    // 拖拽中间态：被拖卡片半透明（拖动只记录，松手才落库）
     const bool dragging = v.dragActive && v.dragTaskId == task.id;
     const float cardOpacity = dragging ? 0.45f : 1.0f;
     plate.cardW = width;  // compose 空间卡宽（拖拽命中 dpi 探针）
 
-    // M3-3（2026-09-28，UI 现代化）：卡片容器换 card 组件——骨架由 card
-    // 画（surface 底 + radius + panelShadow 阴影随 CardStyle）；UI 整改 16：
-    // 选中/未选中边框从 card 的 .border 移到卡内交互层（原挂在 card 上会被
-    // 卡内不透明 .bg 整块盖住、选中态边框不可见——用户把左侧优先级竖条
-    // 误认成选中指示）。原 .bg 作为卡内交互层原样保留（states 三态 + 0.1s
-    // OutQuad 过渡 + onPress/onDrag/onRelease/onClick/onContextMenu 全部
-    // 事件挂点随行；边框条件换算到 .bg 的 .border：未选中 1px 默认边框 /
-    // 选中 2px 主色加粗）。卡内容坐标以 .padding(0) 的 content 原点为
-    // 基准（与旧 wrap content 原点一致，装饰层位置不变）
+    // 卡片容器用 card 组件画骨架（surface 底 + radius + panelShadow）；选中/未选中
+    // 边框挂在卡内交互层 .bg（挂 card 上会被不透明 .bg 盖住）；卡内容以 content 原点为基准
     components::card(ui, id + ".card")
         .position(x, y)
         .size(width, kCardHeight)
         .radius(t.sizes.radius)
         .theme(core::theme::componentTokens(t))
-        .padding(0.0f)  // 卡内坐标以 content 原点为基准（同旧 wrap content）
+        .padding(0.0f)  // 卡内坐标以 content 原点为基准
         .border(0.0f, t.colors.borderDefault)  // 边框职责已移到内部交互层
         .content([&] {
 
     ui.rect(id + ".bg")
         .position(0.0f, y)
         .size(width, kCardHeight)
-        // 交互层（卡内首层）：基色 = priorityCardBg(surface)——UI 整改 17
-        // 起**优先级直接改卡底色**（原卡右上角/标题旁的优先级色块 pill 已删，
-        // 见下面 chip 段注释）；None 档 color 恰为 surface（与 card 骨架同
-        // token、视觉零变化），低/中/高各按强度表混。hover/active 同走这条
-        // 算式（priorityCardBg 吃「基色」入参），优先级色相与状态反馈叠加，
-        // hover 不再把优先级指示整块吃掉。边框条件在 .bg 上：
-        // 未选中 1px borderDefault / 选中 2px primary 加粗（UI 整改 16）——
-        // 边框与底色两个通道独立，选中态不被优先级底色盖掉
+    // 交互层（卡内首层）：优先级直接改卡底色（priorityCardBg）；hover/active 同走
+    // 该算式。边框与底色两通道独立，选中态不被优先级底色盖掉
         .states(priorityCardBg(task.priority, t, t.colors.surface),
                 priorityCardBg(task.priority, t, t.colors.hover),
                 priorityCardBg(task.priority, t, t.colors.active))
         .border(selected ? 2.0f : 1.0f,
                 selected ? t.colors.primary : t.colors.borderDefault)
-        // M2（2026-09-28，UI 现代化）：hover/按下颜色过渡（列表项基调
-        // 0.1s OutQuad；拖拽半透明 opacity 不含在掩码里，跟手不打架）
+        // hover/按下颜色过渡（0.1s OutQuad；拖拽半透明 opacity 不在掩码里）
         .transition(core::Transition::make(0.1f, core::Ease::OutQuad))
         .animate(core::AnimProperty::Color | core::AnimProperty::Opacity)
         .radius(t.sizes.radius)
@@ -521,14 +460,13 @@ void drawCard(eui::Ui& ui, const std::string& id, float x, float y, float width,
                            const eui::PointerEvent&, const eui::Rect&) {
             cb(task, colIndex, cardIndex);
         })
-        // ---- 真 drop 语义（W8）：拖动中无落库，松手按指针落点决定 ----
+        // drop 语义：拖动中无落库，松手按指针落点决定
         .onPress([cb = v.act.cardPressed, task, colIndex, cardIndex](
                      const eui::PointerEvent&, const eui::Rect& bounds) {
             cb(task, colIndex, cardIndex, bounds);
         })
         .onDrag([cb = v.act.cardDragged](const core::dsl::DragEvent& ev) {
-            // totalX/totalY（按下点起累计位移）随行转交：跟手副本锚点要吃它，
-            // 换算在模块侧（ui::dragGhostAnchor），本单元不做像素→compose
+            // totalX/totalY（按下点起累计位移）转交模块侧换算（ui::dragGhostAnchor）
             cb(ev.x, ev.y, ev.totalX, ev.totalY);
         })
         .onRelease([cb = v.act.cardReleased](
@@ -537,14 +475,8 @@ void drawCard(eui::Ui& ui, const std::string& id, float x, float y, float width,
         })
         .build();
 
-    // ---- 卡内文本居中（2026-09-30 用户需求）：内容组垂直居中 + 主文本水平居中 ----
-    // chip 行**先算后画**：自适应宽度 / 放不放得下的判定只保留这一份清单
-    // （同时供「内容组高度」与「实际绘制」消费），存在性判定与绘制永不分叉。
-    // UI 整改 17 历史：优先级色块 pill（旧 .prio）已删——优先级改由整张卡底
-    // 表达（见上面 .bg 的 priorityCardBg），chip 从左往右顺序排（due → tags）。
-    // chip 行**水平不参与居中**（不把 chip/角标拽歪），只随内容组垂直居中整体
-    // 平移；chipX 保持**卡内相对**坐标（16 = 卡内左内边距），宽度自适应算式
-    // 比较的是「相对卡右缘的剩余空间」，同坐标系
+    // 卡内文本居中：内容组垂直居中 + 主文本水平居中。chip 行先算后画（自适应
+    // 宽与绘制共用同一清单）；chipX 保持卡内相对坐标（16 = 卡内左内边距）
     struct PendingChip {
         std::string id;
         float w;
@@ -554,11 +486,8 @@ void drawCard(eui::Ui& ui, const std::string& id, float x, float y, float width,
     std::vector<PendingChip> pendingChips;
     float chipX = 16.0f;
 
-    // 截止 chip（⏰ emoji 已去掉：逾期时 chip 前景直接用 error 色示意）。
-    // 跨模块剩余审计修（2026-09-28）：列宽无下限（≥6-7 列时 colW 跌破 130），
-    // 固定 66px 的截止 chip 会越出卡右缘——chip 宽自适应剩余空间，放不下
-    // 最小宽度就跳过（完整信息在详情弹窗）；标签 chip 的原有自适应保留
-    // （chipX + tw > width-12 即 break）
+    // 截止 chip：列宽无下限（≥6-7 列时 colW 跌破 130），固定 66px 会越出卡右缘——
+    // chip 宽自适应剩余空间，放不下最小宽度就跳过（完整信息在详情弹窗）
     if (task.dueAt.has_value()) {
         const std::string dueText = formatDue(task.dueAt.value());
         const float dueMaxW = std::max(0.0f, width - 12.0f - chipX);
@@ -585,7 +514,7 @@ void drawCard(eui::Ui& ui, const std::string& id, float x, float y, float width,
         if (task.tags.size() > shown) {
             const std::string more = "+" + std::to_string(task.tags.size() - shown);
             const float moreW = chipWidth(more);
-            // 放不下就不画（旧代码无条件画，chip 右缘可越出卡片 ~19px）
+            // 放不下就不画（旧代码无条件画，右缘可越出卡片 ~19px）
             if (chipX + moreW <= width - 12.0f) {
                 pendingChips.push_back({id + ".tag.more", moreW, more,
                                         t.colors.textTertiary});
@@ -593,18 +522,13 @@ void drawCard(eui::Ui& ui, const std::string& id, float x, float y, float width,
         }
     }
 
-    // 内容组垂直居中：组 = 标题行 +（有 chip 行时）chip 行，块内排版原样
-    // （组顶/行距/chip 高全走 todo_ui_logic.h 同源常量）；无 chip 卡 = 标题
-    // 独占整卡垂直居中
+    // 内容组垂直居中：组 = 标题行 +（有 chip 时）chip 行（常量全走 todo_ui_logic.h）
     const bool chipRow = !pendingChips.empty();
     const float groupTop = cardContentGroupTop(chipRow);
     const float chipY = y + groupTop + kCardTitleLineH + kCardTitleToChipGap;
 
-    // 标题（主文本）：水平居中 = 框对称化（x = kCardTitleBoxInset = 40 =
-    // 80/2，总留白 80；右缘 = width-40，让开完成角标区间 [width-36,
-    // width-12] 并留 4px——改前 22 的右缘 width-22 落在角标区间内）+
-    // horizontalAlign Center（home 统计卡同款先例，渲染实现在 EUI
-    // core/render/text.cpp）→ 字形中心 = 卡中心；垂直 = 内容组首行
+    // 标题水平居中 = 框对称化（x = kCardTitleBoxInset，总留白 80、右缘让开完成角标区）
+    // + horizontalAlign Center；垂直 = 内容组首行
     ui.text(id + ".title")
         .position(kCardTitleBoxInset, y + groupTop)
         .size(width - 2.0f * kCardTitleBoxInset, kCardTitleLineH)
@@ -617,15 +541,15 @@ void drawCard(eui::Ui& ui, const std::string& id, float x, float y, float width,
         .opacity(done ? 0.6f : cardOpacity)
         .build();
 
-    // chip 行按清单绘制（x = 卡内左内边距起、从左往右；y 随内容组）
+    // chip 行按清单绘制（x 从左往右，y 随内容组）
     float drawX = 16.0f;
     for (const auto& chip : pendingChips) {
         drawChip(ui, chip.id, drawX, chipY, chip.w, t, chip.text, chip.fg,
                  t.colors.surface, cardOpacity);
-        drawX += chip.w + 6.0f;  // 自适应宽 + 6 间距（同原推进算式）
+        drawX += chip.w + 6.0f;  // 自适应宽 + 6 间距
     }
 
-    // 完成打勾（标题行行尾角标：x 不动不拽歪，y 随标题行走内容组顶）
+    // 完成打勾（标题行尾角标：y 随标题行走内容组顶）
     if (done) {
         ui.text(id + ".done")
             .position(width - 36.0f, y + groupTop)
@@ -644,30 +568,18 @@ void drawCard(eui::Ui& ui, const std::string& id, float x, float y, float width,
         .build();
 }
 
-// ---------- 拖拽跟手副本 ----------
-
-// 副本整体透明度：**不是为了好看，是为了坑二**——插入位占位条（目标列内的
-// .dropbar，0.55 alpha 主色条）与跟手副本在几何上必然重叠（条的位置由指针
-// 行号决定，副本跟着指针）。副本是页面顶层 root（见下），列内元素越不过它，
-// 全不透明会把条整块吃掉。0.85 让条从卡片底下透出可辨的暖色带，同时保住
-// 卡片"实体被拎起来"的观感。不另画第二根条（会与列内条重复指示）。
+// 副本整体透明度 0.85：插入位占位条与跟手副本几何必然重叠，全不透明会把条整块
+// 吃掉；0.85 让条从卡片底下透出，同时保住「实体被拎起来」观感，不另画第二根条
 constexpr float kDragGhostAlpha = 0.85f;
-// 副本 z：必须 > 看板子树内最大 z（列滚动条的 zIndex+1，见 components/
-// scrollview.h:121），< 弹窗栈底（PopupStack::kBaseZ = 1000）——否则要么被
-// 列盖住（跨列拖的主用例直接失效），要么压住弹窗。取中间值 100。
+// 副本 z = 100：> 看板子树内最大 z（列滚动条 zIndex+1）、< 弹窗栈底
+//（PopupStack::kBaseZ = 1000）——否则要么被列盖住，要么压住弹窗
 constexpr int kDragGhostZIndex = 100;
 
-// 为什么是"页面级副本"而不是给列内卡片加 translate（两种方案都验证过）：
-//   · 列内容在 components::scrollView 的根 stack 里，该 stack 无条件 .clip()
-//     （components/scrollview.h:88）；clip 在渲染侧对整个子树做 scissor 求交
-//     （core/runtime/runtime_render.h:223-230）→ 列内任何 translate 都被裁到
-//     列内容框，跨列拖时卡片在列边界被切掉，而跨列正是主用例；
-//   · 副本画在页面顶层 root（Doc 序在 todo.root 之后 + 显式 zIndex），一步
-//     解决"被目标列卡片盖住"（坑一）与"被源列 0.6 调暗吃掉"（坑四）——副本
-//     不在源列 .cards 容器内，天然全亮。
-// 只画底 + 标题（不复制 drawCard 的 chips）：副本要的是"一眼认出是哪张卡"，
-// 复制 chips 会把 drawCard 的窄列自适应布局逻辑养成双份；且副本不可交互
-// （不挂任何事件），避免拖拽中多一个命中目标。
+// 为什么是「页面级副本」而非列内卡片 translate（两方案都验证过）：列内容在
+// scrollView 根 stack 里无条件 .clip()，列内任何 translate 都被裁到列内容框，
+// 跨列拖（主用例）时卡片在列边界被切；页面顶层 root 一步解决「被目标列盖住」
+// 与「被源列 0.6 调暗吃掉」。只画底 + 标题（不复制 chips，避免养成双份布局
+// 逻辑）；副本不可交互
 void drawDragGhost(eui::Ui& ui, const core::theme::Tokens& t,
                    const BoardView& v, const BoardPlate& plate) {
     if (!v.dragGhostOn) return;
@@ -682,8 +594,7 @@ void drawDragGhost(eui::Ui& ui, const core::theme::Tokens& t,
         .zIndex(kDragGhostZIndex)
         .opacity(kDragGhostAlpha)
         .content([&] {
-            // 骨架复用 card 组件（与真卡同一份 radius/panelShadow/token），
-            // 视觉上是"同一张卡被拎起来"而不是另一种控件
+            // 骨架复用 card 组件（与真卡同一份 radius/panelShadow/token）
             components::card(ui, "todo.dragghost.card")
                 .position(0.0f, 0.0f)
                 .size(w, kCardHeight)
@@ -692,10 +603,8 @@ void drawDragGhost(eui::Ui& ui, const core::theme::Tokens& t,
                 .padding(0.0f)
                 .border(0.0f, t.colors.borderDefault)
                 .content([&] {
-                    // 底 + 主色描边：与真卡的"选中态"同款视觉（2px primary），
-                    // 一眼区分"这是被拎着的那张"；底色同走 priorityCardBg
-                    // （UI 整改 17）：副本是"同一张卡被拎起来"，卡底的优先级色
-                    // 必须跟手，否则拖到一半优先级指示消失
+                    // 底 + 2px primary 描边（同真卡选中态）；底色同走 priorityCardBg，
+                    // 否则拖到一半优先级指示消失
                     ui.rect("todo.dragghost.bg")
                         .position(0.0f, 0.0f)
                         .size(w, kCardHeight)
@@ -703,8 +612,7 @@ void drawDragGhost(eui::Ui& ui, const core::theme::Tokens& t,
                         .border(2.0f, t.colors.primary)
                         .radius(t.sizes.radius)
                         .build();
-                    // 标题与真卡同款居中形态（副本不画 chips = 无 chip 卡：
-                    // 标题独占整卡垂直居中 + 水平居中），「同一张卡被拎起来」
+                    // 标题同真卡居中形态（副本不画 chips = 无 chip 卡：独占整卡居中）
                     ui.text("todo.dragghost.title")
                         .position(kCardTitleBoxInset, cardContentGroupTop(false))
                         .size(w - 2.0f * kCardTitleBoxInset, kCardTitleLineH)

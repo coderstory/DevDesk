@@ -1,7 +1,6 @@
 // src/module_claude_proxy/proxy_router.cpp
 // ProxyRouter 实现：本地 HTTP 代理 → Claude 上游 API
-//   - stream:true + /v1/messages → SSE 流式转发（spec §10.4 / P10a）
-//   - 其余 → 缓冲转发（P9）
+//（stream:true + /v1/messages → SSE 流式转发；其余 → 缓冲转发）
 #include "proxy_router.h"
 
 #include "core/database.h"
@@ -50,9 +49,8 @@ std::map<std::string, std::string> copyHeaders(
             k == "connection" || k == "transfer-encoding") {
             continue;
         }
-        // cpp-httplib 0.18.x 解析请求时注入的本地连接伪头（0.58.0 起上游侧改为
-        // is_prohibited_header_name 主动禁止、不再注入）；剥离保留为纵深防御——
-        // 转发到上游毫无意义，还会泄漏本机地址/端口、干扰网关的头校验
+        // cpp-httplib 0.18.x 注入的本地连接伪头（0.58.0 起上游侧主动禁止）；剥离是
+        // 纵深防御——转发无意义且泄漏本机地址/端口、干扰网关头校验
         if (k == "remote_addr" || k == "remote_port" ||
             k == "local_addr" || k == "local_port") {
             continue;
@@ -100,15 +98,9 @@ void writeErrorJson(platform::http::ResponseWriter& out, int status,
     out.end();
 }
 
-// 取 profile 失败（无激活 profile / 凭据列读不到 key）的统一出口：
-// 两条转发路径（缓冲 handleRequest / 流式 handleStreamingRequest）共用同一
-// 状态码与文案，保证同一个失败在 stream:false 与 stream:true 下响应逐字一致
-// ——审计 CPX-10：此前缓冲路径内联另一套取 profile 逻辑，同一个凭据读
-// 失败在 stream:false 报 500/keychain_read_failed、stream:true 报
-// 503/no_active_profile，排障要在两条路径间分叉。
-// （注：`keychain_read_failed` 是已消失的旧口径——CPX-10 合并后本函数是唯一
-// 出口，恒 503/no_active_profile，全项目只剩这句历史记录，勿照抄。）
-// logTag 只进日志（保留「缓冲 / 流式」路径标签），不进响应体。
+// 取 profile 失败的统一出口：两条转发路径共用同一状态码与文案，保证同一失败在
+// stream:false / stream:true 下响应逐字一致（审计 CPX-10 合并后恒
+// 503/no_active_profile）。logTag 只进日志，不进响应体。
 void writeNoProfileError(platform::http::ResponseWriter& out,
                          ClaudeService& service,
                          const std::string& logTag,
@@ -129,8 +121,7 @@ int64_t lastInsertRowId(core::data::SqliteDb& db) {
     return id.isOk() ? id.value() : 0;
 }
 
-// 流末回填 claude_call_logs 的用量列（migration v5）：
-// 四个 token 列 + 首事件毫秒，-1（没拿到）一律写 NULL——
+// 流末回填 claude_call_logs 的用量列：-1（没拿到）一律写 NULL——
 // 与真实的 0 区分（"没采集到" ≠ "0 个 token"）
 void writeCallLogUsage(core::data::SqliteDb& db, int64_t callLogId,
                        const StreamUsage& u) {
@@ -165,10 +156,8 @@ ProxyRouter::ProxyRouter(ClaudeService& service, platform::http::Server& server)
     : service_(service), server_(server) {}
 
 void ProxyRouter::registerRoutes() {
-    // 注册常见 method（POST 必选，GET/PUT/DELETE 也常见）
-    // 注意：必须用 const char*（而非 const std::string&）——
-    // initializer_list<const char*> 绑 std::string 引用会创建临时，
-    // GCC 16 -Werror(dangling-reference) 直接挂
+    // 注册常见 method。必须用 const char*——initializer_list<const char*> 绑
+    // std::string 引用会创建临时，GCC 16 -Werror(dangling-reference) 直接挂
     for (const char* const m : {"POST", "GET", "PUT", "DELETE", "PATCH"}) {
         // regex "/(.*)" 匹配所有路径
         server_.route(m, R"(/(.*))",
@@ -197,10 +186,8 @@ void ProxyRouter::handleRequest(
     const std::time_t startedAt = std::time(nullptr);
 
     // ---- 1. 取 profile（含明文 API key）----
-    // 唯一入口 resolveProfile：注入路径（测试 / UI 的 profileProvider_，直接
-    // 给出完整 profile、绕过 DB——否则测试的内存库里没有 profile，
-    // 缓冲转发永远 503）与生产路径（SQLite 取 active profile → 凭据列取明文
-    // key）都在它内部收口，与流式路径共用同一失败语义（见 writeNoProfileError）。
+    // 唯一入口 resolveProfile：注入路径与生产路径都在它内部收口，与流式路径共用
+    // 同一失败语义（见 writeNoProfileError）。
     auto profileR = resolveProfile();
     if (profileR.isFail()) {
         writeNoProfileError(out, service_, "代理：", profileR.errorMessage());
@@ -209,18 +196,11 @@ void ProxyRouter::handleRequest(
     Profile profile = std::move(profileR).value();
     Profile servingProfile = profile;   // 实际服务的那家（failover 换家后 = 备用）
 
-    // ---- 2/3. 构造上游 + 转发（failover 单跳，设计 §3.8）----
-    // 换家判据 = shouldFailoverTo(statusCode, errorKind)：send 失败（无响应头 /
-    // DNS / TLS / 连接 / 超时 = statusCode==0 / 502 upstream_unreachable）或
-    // 状态码命中换家表（401/403/429 / 5xx 排除 no_active_profile / 其余 4xx）→
-    // 主 profile 有可用备用（resolveFallbackProfile：fallback_profile_id →
-    // getProfile + loadApiKey，任一失败 / id==0 → nullopt）则换家重试一次；
-    // 两次都失败 → 返回**第二次**的结果（错误更相关）。
-    // 注入模式守卫（profileProvider_ 已设，测试/UI 直给完整 profile、绕过
-    // DB）：跳过 resolveFallbackProfile、不换家（设计 §3.8 显式
-    // 声明，不依赖「内存库无 profile → 恒 nullopt」的巧合）。
-    // 单次上游请求（头复制 + 方言归一），换家后按备用重算 forBaseUrl 与
-    // upstream.url（§3.2）
+    // ---- 2/3. 构造上游 + 转发（failover 单跳）----
+    // 换家判据 = shouldFailoverTo(statusCode, errorKind)（send 失败或状态码命中
+    // 换家表）；有可用备用则换家重试一次，两次都失败 → 返回第二次的结果（错误
+    // 更相关）。注入模式（profileProvider_ 已设）显式跳过换家。单次上游请求 =
+    // 头复制 + 方言归一，换家后按备用重算 forBaseUrl 与 upstream.url。
     const auto buildUpstream = [&](const Profile& p) {
         platform::http::Request up;
         up.method = method;
@@ -331,17 +311,14 @@ void ProxyRouter::handleRequest(
              (servingProfile.id != profile.id ? " [failover]" : "") + ")");
 }
 
-// ==================== 流式转发（spec §10.4 / P10a）====================
-
 bool ProxyRouter::shouldUseStreaming(const std::string& path,
                                      const std::string& body) {
     return isStreamablePath(path) && wantsStream(body);
 }
 
 core::Result<Profile> ProxyRouter::resolveProfile() {
-    // 两条转发路径（缓冲 / 流式）唯一的取 profile 入口：调用方失败一律经
-    // writeNoProfileError 出同一份响应，不要在任何一条路径里再内联一套取
-    // profile 逻辑（CPX-10）。
+    // 两条转发路径唯一的取 profile 入口：失败一律经 writeNoProfileError 出同一份
+    // 响应，不要在任何一条路径里再内联一套取 profile 逻辑（CPX-10）。
     //
     // 测试 / UI 注入路径：直接返回（已含 apiKeyPlain）
     if (profileProvider_) {
@@ -385,15 +362,11 @@ void ProxyRouter::handleStreamingRequest(
     Profile profile = std::move(profileR).value();
     Profile servingProfile = profile;   // 实际服务的那家（failover 换家后 = 备用）
 
-    // ---- 2/3/4. 启动流式转发 + 等响应头（failover 单跳，设计 §3.8）----
-    // 判定点 = waitForStatus(30000) 之后、写响应头之前：
-    //   upstreamStatus==0（无响应头/传输失败）或状态码命中换家表
-    //   （shouldFailoverTo，同缓冲路径）→ 试图换家一次：先 resolveFallbackProfile
-    //   确认备用可用（nullopt / 注入模式 → 原样回第一次结果，流未取消完整收尾），
-    //   再 cancelWithReason("failover") 丢弃本次流（队列里的半截 error body 随
-    //   对象销毁），用备用起一条新流（sendStreamingClaude 按备用重算 baseUrl 与
-    //   方言）。第二次尝试无论结果就是最终结果（只换一跳）。
-    // 注入模式守卫同缓冲路径：profileProvider_ 已设 → 不换家（设计 §3.8）
+    // ---- 2/3/4. 启动流式转发 + 等响应头（failover 单跳）----
+    // 判定点 = waitForStatus 之后、写响应头之前：upstreamStatus==0 或命中换家表
+    //（shouldFailoverTo，同缓冲路径）→ 确认备用可用后 cancelWithReason("failover")
+    // 丢弃本次流（半截 error body 随对象销毁），用备用起一条新流（sendStreamingClaude
+    // 按备用重算 baseUrl 与方言）。只换一跳；注入模式守卫同缓冲路径。
     core::Result<std::unique_ptr<platform::http::StreamingResponse>> streamR;
     std::shared_ptr<platform::http::StreamingResponse> upstreamStream;
     int upstreamStatus = 0;
@@ -414,16 +387,14 @@ void ProxyRouter::handleStreamingRequest(
         upstream.method = method;
         upstream.url = path;              // 相对路径，sendStreamingClaude 会拼 baseUrl
         upstream.body = body;
-        // W7 P0-3：SSE 长连接不用总墙钟超时（原 300s 会把长生成整个砍断），
-        // 改空闲超时——速率 <1 B/s 持续 60s（即无新 chunk 60s）才判死。
-        // 注：libcurl 低速检测按 ~5s 滑动窗口采样，实际中止在 60-70s 间
+        // SSE 长连接不用总墙钟超时（会砍断长生成），改空闲超时：无新 chunk 60s 判死。
+        // libcurl 低速检测按 ~5s 滑动窗口采样，实际中止在 60-70s 间
         upstream.timeoutMs = 0;             // 0 = 无总上限（sendStreaming 语义）
         upstream.lowSpeedBytesPerSec = 1;   // 1 B/s
         upstream.lowSpeedTimeSec = 60;      // 持续 60s → CURLE_OPERATION_TIMEDOUT
         upstream.verifyTls = true;
         upstream.headers = copyHeaders(headers);
-        // 头与 body 的上游方言化（鉴权 / UA / 会话头 / 模型名标记）由
-        // sendStreamingClaude 内的 UpstreamDialect 统一处理
+        // 头与 body 的上游方言化（鉴权 / UA / 模型名标记）由 sendStreamingClaude 统一处理
 
         // 启动三线程流式转发（libcurl 线程 + 队列 + backpressure）
         streamR = sendStreamingClaude(upstream, servingProfile);
@@ -437,11 +408,9 @@ void ProxyRouter::handleStreamingRequest(
         upstreamStream = std::shared_ptr<platform::http::StreamingResponse>(
             std::move(streamR.value()));
 
-        // 审计 2026-09-23 [9]：登记到 ClaudeService 在途流表。stopProxy()/应用
-        // 退出会 cancelActiveStreams()，立即解锁之后阻塞在 readChunk 的
-        // provider（否则 Server::stop() 的 join 挂到流自然结束）。若停止已
-        // 发起，这里会被立即 cancel，后续 waitForStatus 快速返回、走 502 或
-        // provider Error 路径退出。
+        // 登记到 ClaudeService 在途流表：stopProxy()/应用退出会 cancelActiveStreams()，
+        // 立即解锁阻塞在 readChunk 的 provider（否则 Server::stop() 的 join 挂到流
+        // 自然结束）。若停止已发起，这里被立即 cancel、waitForStatus 快速返回。
         service_.registerActiveStream(upstreamStream);
 
         // 等上游响应头（拿到状态码，最多 30s）
@@ -497,8 +466,7 @@ void ProxyRouter::handleStreamingRequest(
         return;
     }
 
-    // ---- 5. 写响应头 + 交给 chunked provider 流式回写 ----
-    // SSE 场景 Content-Type 必须是 text/event-stream（spec §10.4）
+    // ---- 5. 写响应头 + 交给 chunked provider 流式回写（SSE 必须是 text/event-stream）----
     std::string contentType = upstreamStream->contentType();
     if (contentType.empty()) contentType = sse::kContentType;
 
@@ -520,12 +488,9 @@ void ProxyRouter::handleStreamingRequest(
     entry.requestBytes = static_cast<int64_t>(body.size());
     entry.startedAt = startedAt;
 
-    // 用量回填（migration v5）：token 只有流末才知道，故先插行（status/latency
-    // 此刻已知，与旧时序一致），把 rowid 交给流末的回调。
-    // 持 db 锁跨「插行 + 取 rowid」：并发请求的 rowid 不会被串认到本次上
-    // （core/database.cpp 的 pruneCallLogs 同款用法；锁可重入，logCall 内部
-    // 自己也会加同一把）。未注册 app 连接时（单测直连内存库）跳过取号 →
-    // 行照写，用量列留 NULL。
+    // 用量回填：token 只有流末才知道，先插行（status/latency 已知），把 rowid
+    // 交给流末回调。持 db 锁跨「插行 + 取 rowid」，并发 rowid 不会被串认（锁
+    // 可重入，logCall 内部同把）。未注册 app 连接（单测）跳过取号 → 用量列留 NULL。
     int64_t callLogId = 0;
     core::data::SqliteDb* appDb = core::appDatabase();
     {
@@ -539,8 +504,7 @@ void ProxyRouter::handleStreamingRequest(
         }
     }
 
-    // 流末回执（releaser，恰好一次）：把本次流的 token 四类 + 首事件毫秒写进
-    // 刚插的那一行。token 只有流末才知道，故这里是 UPDATE 而不是插行时写。
+    // 流末回执（恰好一次）：token 四类 + 首事件毫秒 UPDATE 进刚插的行。
     forwardStream(out, upstreamStream, contentType,
                   [appDb, callLogId](const StreamUsage& u) {
                       if (!appDb || callLogId == 0) return;  // 降级：不写用量

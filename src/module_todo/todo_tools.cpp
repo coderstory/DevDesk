@@ -1,21 +1,14 @@
 // src/module_todo/todo_tools.cpp
-// TodoTools 6 工具实现（agent M1 Task 8）。每个工具一个小类，同文件存放：
-//   todo.list     列出任务（可选 completed 过滤）      只读
-//   todo.create   新建任务（缺省建到第一列）
-//   todo.update   更新内容字段（title/description/priority/dueAt）
-//   todo.move     移动任务到指定列（缺省追加列尾）
-//   todo.complete 标记完成
-//   todo.delete   删除任务（不可恢复 → isDestructive=true）
+// TodoTools 6 工具实现：todo.list / create / update / move / complete / delete
+//（delete 不可恢复 → isDestructive=true）。每个工具一个小类，同文件存放。
 //
-// 出参形状约定：结构化数据组对象再 stringify（{"tasks":[...]} / 任务对象）；
-// 数组用「逐元素 stringify + 文本拼接 + parse 校验」组装（platform::json 没有
-// 数组追加 API，makeArray 是空壳桩——agent_loop.cpp joinBlockArray 同款先例）。
+// 出参形状：结构化数据组对象再 stringify；数组用「逐元素 stringify + 文本拼接 +
+// parse 校验」组装（platform::json 无数组追加 API，joinBlockArray 同款先例）。
 //
-// updateTask 是整字段 UPDATE（title/description/priority/due_at/tags/
-// completed_at 全列覆写，见 todo_service.cpp）→ todo.update 必须先取旧任务
-// 叠加新值再回写，否则未提供的字段会被清空。同理 createTask/moveTask/
-// completeTask/deleteTask 对不存在的 id 是静默 no-op 或悬空写入 → 工具先查
-// 存在性，把「目标不存在」作为 isError 回喂，不给 LLM 假成功。
+// updateTask 是整字段 UPDATE（全列覆写，见 todo_service.cpp）→ todo.update 必须
+// 先取旧任务叠加新值再回写，否则未提供的字段被清空。同理 createTask/moveTask/
+// completeTask/deleteTask 对不存在的 id 是静默 no-op 或悬空写入 → 工具先查存在性，
+// 把「目标不存在」作为 isError 回喂，不给 LLM 假成功。
 #include "todo_tools.h"
 
 #include "core/logging.h"
@@ -33,8 +26,6 @@ using core::Result;
 using core::ToolArgs;
 using core::ToolResult;
 namespace pj = platform::json;
-
-// ---- 结果组装辅助（各字段仅本文件工具共用）----
 
 // 工具级错误：Result ok + isError + {"error":"<中文>"}（错误回喂 LLM）
 Result<ToolResult> toolError(const std::string& message) {
@@ -134,8 +125,6 @@ bool columnExists(TodoService& svc, int64_t columnId, std::string* err) {
     return false;
 }
 
-// ============ todo.list ============
-
 class TodoListTool : public core::ITool {
 public:
     explicit TodoListTool(TodoService& svc) : svc_(svc) {}
@@ -150,7 +139,6 @@ public:
         auto argsObj = parseArgs(args);
         if (argsObj.isFail()) return toolError(argsObj.errorMessage());
 
-        // completed 过滤（可选）：nullopt = 全部
         std::optional<bool> completed;
         if (argsObj.value().has("completed")) {
             pj::JsonValue c = argsObj.value().get("completed");
@@ -187,8 +175,6 @@ public:
 private:
     TodoService& svc_;
 };
-
-// ============ todo.create ============
 
 class TodoCreateTool : public core::ITool {
 public:
@@ -240,8 +226,6 @@ public:
 private:
     TodoService& svc_;
 };
-
-// ============ todo.update ============
 
 class TodoUpdateTool : public core::ITool {
 public:
@@ -313,8 +297,6 @@ private:
     TodoService& svc_;
 };
 
-// ============ todo.move ============
-
 class TodoMoveTool : public core::ITool {
 public:
     explicit TodoMoveTool(TodoService& svc) : svc_(svc) {}
@@ -361,8 +343,6 @@ private:
     TodoService& svc_;
 };
 
-// ============ todo.complete ============
-
 class TodoCompleteTool : public core::ITool {
 public:
     explicit TodoCompleteTool(TodoService& svc) : svc_(svc) {}
@@ -392,8 +372,7 @@ private:
     TodoService& svc_;
 };
 
-// ============ todo.delete（破坏性）============
-
+// todo.delete（破坏性）
 // 类名避开 delete 关键字（C++ 关键字不能作标识符），工具名仍是 "todo.delete"
 class TodoDeleteTool : public core::ITool {
 public:
@@ -428,8 +407,6 @@ private:
 };
 
 } // namespace
-
-// ============ TodoTools ============
 
 TodoTools::TodoTools(TodoService& svc) {
     tools_.push_back(std::make_shared<TodoListTool>(svc));

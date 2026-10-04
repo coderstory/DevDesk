@@ -1,12 +1,6 @@
-// src/module_markdown/md_line_scanner.h
-// Markdown 行分类扫描器（Phase 1 底座）——纯函数、无副作用、可单测：
-//   - 标题行扫描（大纲面板 + 同步滚动的锚点）
-//   - 行号 ↔ 字节偏移换算（状态栏 行:列、大纲跳转写 InputState.cursor）
-//   - UTF-8 码点计数（状态栏「N 字」按字符数而非字节数）
-//
-// 设计依据 docs/superpowers/specs/2026-09-22-markdown-editor-ux-design.md §5.4：
+// Markdown 行分类扫描器 —— 纯函数、无副作用、可单测：标题行扫描、行号 ↔ 字节
+// 偏移换算、UTF-8 码点计数、围栏块扫描。
 // 标题识别用行扫描 ^#{1,6}\s，不依赖 md4c（md4c Block 无源码 offset）。
-// Phase 2 的语法高亮 / Phase 3 的分块器可在本文件上扩展（一鱼三吃）。
 #pragma once
 
 #include <cstddef>
@@ -15,8 +9,7 @@
 
 namespace module::markdown {
 
-// 一条 ATX 标题（# 开头）。lineNo 为 0 起行号，byteOffset 为该行行首在全文的
-// 字节偏移（可直接用作 InputState.cursor 跳转目标 / estimateHeight 前缀切点）。
+// 一条 ATX 标题。byteOffset 为该行行首字节偏移（可作光标跳转目标 / 前缀切点）。
 struct MdHeading {
     int level = 1;        // 1-6
     int lineNo = 0;       // 0 起
@@ -24,24 +17,19 @@ struct MdHeading {
     std::string title;    // 去掉 # 前缀和首尾空白后的标题文本
 };
 
-// 一个围栏代码块（``` / ~~~）。行首字节偏移集合 {openLineStart, contentEnd}
-// 即围栏行（开/闭栏行）行首——高亮器据此区分围栏行与内容行（一鱼三吃）。
+// 一个围栏代码块。{openLineStart, contentEnd} 即围栏行行首，高亮器据此区分围栏/内容行。
 struct MdFenceBlock {
     size_t openLineStart = 0;   // 开栏行（如 ```cpp）行首
     size_t contentStart = 0;    // 首个内容行行首（开栏行换行之后）
     size_t contentEnd = 0;      // 闭栏行行首；未闭合围栏 = text.size()
 };
 
-// 扫描围栏代码块区间。语义对齐 md4c/CommonMark：缩进 ≤3 空格、≥3 同字符、
-// 闭栏需长度 ≥ 开栏且行尾仅空白（```closer 类尾随文本不闭栏）、` 围栏开栏
-// info 不得含 `。区间按出现顺序升序、互不重叠。与预览分块（md_block_model）
-// / 大纲 / 编辑器高亮共用这一套状态机（一鱼三吃），必须与上游 md4c 解析
-// 保持一致——等价性回归锚 = md_block_model_render_equivalence。
+// 扫描围栏代码块区间，语义对齐 md4c/CommonMark（缩进 ≤3 空格、≥3 同字符、闭栏
+// 长度 ≥ 开栏且行尾仅空白）。与预览分块 / 大纲 / 高亮共用这套状态机，等价性回归
+// 锚 = md_block_model_render_equivalence。
 std::vector<MdFenceBlock> scanFences(const std::string& text);
 
-// 扫描全文标题。围栏代码块（``` / ~~~）内的 # 行不算标题（围栏语义与
-// scanFences 同源，两处共用一套状态机语义）。
-// 近似（ponytail）：同 scanFences。
+// 扫描全文标题。围栏块内的 # 行不算标题（与 scanFences 同源）。
 std::vector<MdHeading> scanHeadings(const std::string& text);
 
 // 总行数（0 行文本算 1 行；行尾无换行的最后一行也计一行）

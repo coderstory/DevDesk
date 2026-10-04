@@ -1,31 +1,9 @@
 // src/core/call_rate.h
-// 「单次调用速率」的唯一口径（2026-09-29 真机反馈 ①②）
-//
-// 背景：这条口径被两处消费 —— 首页「Token 速率」卡（最近一次成功调用的速率，
-// module_home::HomeService）与 Claude 详情页「最近调用」明细列的逐行速率
-//（module_claude_proxy::claude_ui_detail）。两处读的是同一张 claude_call_logs
-// 表的同几列，却分属两个 module_*，而 module_* 之间不可互相依赖（架构红线），
-// 故口径收进 core 单源：core 只能提供纯函数（先例 core/overdue.h，THS-04）。
-// 任一处改了「成功」的判定或除法口径，首页卡与明细列就会给出互相矛盾的数字，
-// 且无从判断谁对。
-//
-// 口径（用户原话：「最近一次调用输出 token 数量 / 接口耗时」）：
-//   速率 = output_tokens / (latency_ms / 1000)      单位 tok/s
-//   仅「成功调用」有速率：status_code 在 200..299 且 output_tokens > 0；
-//   latency_ms <= 0（未采集 / 异常行）同样无速率。
-//   无速率 → UI 显示空态 / 「—」，**不显示 0 或负数**——0 是合法的速率值，
-//   「0 tok/s」与「没有速率」必须可区分（同 migration v5 里 NULL ≠ 0 的口径）。
-//
-// 为什么分母用 latency_ms 而不是 latency_ms − first_event_ms
-//（首字之后才算生成，理论上更纯）：
-//   ① 用户口径原话是「接口耗时」，未要求扣掉首字等待；
-//   ② first_event_ms 只在**流式转发流末回填**时写入
-//      （proxy_router.cpp writeCallLogUsage），非流式行 / 老行 / 上游没给
-//      usage 的行一律 NULL —— 拿它做分母会让这批行整批「无速率」（明细列
-//      一片「—」），而 latency_ms 每行都有（logCall 必写）；
-//   ③ 一旦两处改成一处用 latency_ms、一处用减法，①② 的判定条件就不再同源。
-//   若日后要改扣首字的算法，改本文件一处即可（这正是单源的目的）——注意
-//   改口径会让旧落库行与新行口径不一致，需同时想清楚怎么标注。
+// 「单次调用速率」的唯一口径：首页 Token 速率卡与 Claude 详情页明细列读同一张 claude_call_logs
+// 的同几列却分属两个 module_*，口径收进 core 单源（纯函数）。速率 = output_tokens / (latency_ms/1000)
+// 单位 tok/s；仅成功调用有速率（status_code 200..299 且 output_tokens > 0，latency_ms > 0），
+// 否则无速率 → UI 空态/「—」，不显示 0（0 是合法速率值，与没有速率必须可区分）。
+// 分母用 latency_ms 不用扣首字：first_event_ms 只在流式末回填，非流式/老行是 NULL。
 #pragma once
 
 #include <cstdint>
@@ -34,7 +12,7 @@
 
 namespace core::call_rate {
 
-// 「成功调用」判定（口径见文件头）
+// 「成功调用」判定
 inline bool isSuccessful(int statusCode, int64_t outputTokens) {
     return statusCode >= 200 && statusCode <= 299 && outputTokens > 0;
 }
@@ -49,16 +27,15 @@ inline bool tps(int statusCode, int64_t outputTokens, int64_t latencyMs,
     return true;
 }
 
-// 速率文案：恒 1 位小数（44.96 → "45.0"，0.04 → "0.0"）。
-// 与实时卡的 module::home::formatRateTps 不同（后者 >=100 取整）——本口径是
-// 单次调用的值，规格要求保留 1 位小数，不随量级切换格式。
+// 速率文案：恒 1 位小数（44.96→"45.0"）。与实时卡 formatRateTps 不同（后者 >=100 取整）——
+// 本口径是单次调用值，规格要求保留 1 位小数
 inline std::string formatTps(double value) {
     char buf[32];
     std::snprintf(buf, sizeof(buf), "%.1f", value);
     return buf;
 }
 
-// 「无速率」的占位文案（明细列用；首页卡走空态，另有自己的文案）
+// 「无速率」占位文案（明细列用；首页卡走空态另有一套）
 inline constexpr const char* kNoRate = "—";
 
 } // namespace core::call_rate

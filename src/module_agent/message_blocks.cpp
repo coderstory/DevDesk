@@ -1,5 +1,5 @@
 // src/module_agent/message_blocks.cpp
-// contentJson 块级解码与渲染辅助的实现（契约见 message_blocks.h 头注释）。
+// contentJson 块级解码与渲染辅助实现（契约见 message_blocks.h）
 #include "module_agent/message_blocks.h"
 
 #include <algorithm>
@@ -22,14 +22,13 @@ std::string strField(const pj::JsonObject& obj, const char* key) {
     return v.isString() ? v.asString() : std::string();
 }
 
-// 未知/异常块：stringify 保留原文（失败再退 JSON 原始片段，不静默丢）
+// 未知/异常块：stringify 保留原文，失败再退空串
 std::string rawOf(const pj::JsonValue& blockValue) {
     auto text = pj::stringify(blockValue);
     return text.isOk() ? text.value() : std::string();
 }
 
-// tool_result.content 摊平：字符串 → 原值；blocks 数组 → 拼接各 text 块；
-// 其他 → stringify 原文（容错，不丢内容）。
+// tool_result.content 摊平：字符串 → 原值；blocks 数组 → 拼各 text 块；其他 → stringify
 std::string flattenToolResultContent(const pj::JsonValue& content) {
     if (content.isString()) return content.asString();
     if (content.isArray()) {
@@ -41,8 +40,7 @@ std::string flattenToolResultContent(const pj::JsonValue& content) {
                 strField(item.asObject(), "type") == "text") {
                 piece = strField(item.asObject(), "text");
             } else {
-                // 非 text 块（image 等）/ 非对象项：stringify 原文保留，
-                // 与头注释「不丢内容」对齐（评审 F2：此前 continue 静默丢）
+                // 非 text 块 / 非对象项：stringify 原文保留，不丢内容
                 piece = rawOf(item);
             }
             if (!out.empty()) out += "\n";
@@ -55,8 +53,7 @@ std::string flattenToolResultContent(const pj::JsonValue& content) {
     return text.isOk() ? text.value() : std::string();
 }
 
-// 单行化：换行/制表 → 空格。收起态预览与工具 chip 是 wrap(false) 的单行元素，
-// text 里的 \n 仍会画出多行、压到下一行元素上（真机截图实证），故进预览前先摊平
+// 单行化：换行/制表 → 空格。预览与工具 chip 是 wrap(false) 单行元素，\n 会画出框外
 std::string flattenToSingleLine(const std::string& s) {
     std::string out;
     out.reserve(s.size());
@@ -169,7 +166,7 @@ std::string messagePreviewFromJson(const std::string& contentJson,
         messagePlainText(decodeMessageBlocks(contentJson)));
     std::string preview = utf8Truncate(plain, maxBytes);
     if (preview.size() < plain.size()) {
-        // 省略号补在被截断的（已边界回退的）文本后
+        // 省略号补在已边界回退的文本后
         preview += "…";
     }
     return preview;
@@ -188,9 +185,8 @@ float estimateTextBlockHeight(const std::string& text, float contentW,
     if (text.empty() || contentW <= 0.0f || fontSize <= 0.0f) {
         return lh;   // 至少一行
     }
-    // 真实测量（评审 F1）：与渲染同一台引擎——TextPrimitive::measureTextSize
-    // 按 style.maxWidth 做同样的换行判定，返回 {maxLineWidth, 行数×lineHeight}。
-    // 不再用「0.55em/ASCII」启发式（宽字形 m/w/W/@ 与窄字形 i/l/1 差异大）。
+    // 与渲染同一台引擎测量：measureTextSize 按 style.maxWidth 做相同换行判定，
+    // 返回 {maxLineWidth, 行数×lineHeight}（不再用 0.55em/ASCII 启发式，宽窄字形差异大）
     core::TextStyle style;
     style.text = text;
     style.fontSize = fontSize;
@@ -198,7 +194,7 @@ float estimateTextBlockHeight(const std::string& text, float contentW,
     style.wrap = true;
     style.lineHeight = lh;
     const core::Vec2 size = core::TextPrimitive::measureTextSize(style);
-    // 字体不可用（测量返回零宽零高）时退「按行数 1」——不崩不谎报
+    // 字体不可用（测量全零）时退「按 1 行」
     const float lines = size.y > 0.0f ? std::round(size.y / lh) : 1.0f;
     return std::max(1.0f, lines) * lh;
 }

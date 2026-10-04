@@ -1,7 +1,5 @@
-// src/core/paths_win.cpp
-// Windows 平台实现：platformDefaultAppDataDir = %USERPROFILE%/DevDesk（不再是
-// %APPDATA%/DevDesk，理由见 paths.h）；
-// executableDir = GetModuleFileNameW（宽字符）取 exe 所在目录
+// Windows 平台实现：默认数据根 = %USERPROFILE%/DevDesk（非 %APPDATA%，理由见
+// paths.h）；executableDir 用 GetModuleFileNameW（宽字符）取 exe 所在目录
 #include "paths.h"
 
 #include <windows.h>
@@ -15,7 +13,7 @@ namespace core::paths {
 
 namespace {
 
-// UTF-16 → UTF-8（Windows API，无 locale 依赖）；失败返回空串
+// UTF-16 → UTF-8（无 locale 依赖的 Windows API）；失败返回空串
 std::string wideToUtf8(const std::wstring& w) {
     if (w.empty()) return {};
     const int needed = WideCharToMultiByte(CP_UTF8, 0, w.data(),
@@ -32,8 +30,7 @@ std::string wideToUtf8(const std::wstring& w) {
 
 fs::path executableDir() {
     // GetModuleFileNameW 取宽字符路径（不经 ANSI 代码页，非 ASCII 安装路径不乱码），
-    // 再转 UTF-8 交给 fs::path。缓冲不足时 API 返回 nSize（= 缓冲区长度）而非截断
-    // 后的长度，故以 n == size 判定截断并翻倍重试
+    // 再转 UTF-8。缓冲不足时 API 返回 nSize（= 缓冲长度），故以 n == size 判定截断
     std::wstring buf(MAX_PATH, L'\0');
     for (;;) {
         const DWORD n =
@@ -52,20 +49,17 @@ fs::path executableDir() {
     return exe.parent_path();
 }
 
-// 平台**默认**数据根（DEVDESK_DATA_ROOT 覆盖与优先级见 paths.h / paths.cpp；
-// 业务代码不要直接调用本函数）
+// 平台默认数据根（DEVDESK_DATA_ROOT 覆盖与优先级见 paths.h / paths.cpp；
+// 业务代码不要直接调用）
 fs::path platformDefaultAppDataDir() {
-    // <用户主目录>/DevDesk —— Windows 的用户主目录取 USERPROFILE（与同文件
-    // claudeSettingsFile 同源）。刻意不用 %APPDATA%：那正是本次要搬离的系统
-    // 惯例位置（隐藏目录）；也不用 HOME——Windows 上它未必存在（MSYS 之外不保证）
+    // <主目录>/DevDesk —— 主目录取 USERPROFILE。刻意不用 %APPDATA%（正是要搬离的
+    // 隐藏惯例位置），也不用 HOME（Windows 上未必存在）
     const char* profile = std::getenv("USERPROFILE");
     fs::path base(profile ? profile : "");
     return base / "DevDesk";
 }
 
 fs::path claudeSettingsFile() {
-    // 覆盖入口（测试隔离 / 自定义 .claude 目录，见 paths.h 注释）；审计 CP-09
-    // 起与 macOS/POSIX 共用 paths.cpp 的 claudeConfigDirOverride()
     const fs::path overridePath = claudeConfigDirOverride();
     if (!overridePath.empty()) {
         return overridePath;

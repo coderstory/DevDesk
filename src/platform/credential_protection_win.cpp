@@ -1,12 +1,8 @@
 // src/platform/credential_protection_win.cpp
-// Windows：DPAPI 加密后的 blob **hex 编码**进列，不是明文
-//（设计 §6.2：「不用 Keychain」≠「明文落盘」）
-//
-// DPAPI 调用形态与 keychain_win.cpp:90-178 一字同款（CryptProtectData /
-// CryptUnprotectData + CRYPTPROTECT_UI_FORBIDDEN，用户级、禁止弹 UI）；区别只在
-// 落点：那里是 %APPDATA%/DevDesk/keychain/**/*.key 文件，这里是
-// claude_profiles.api_key_encrypted 文本列，故选 hex 编码（列类型 TEXT，
-// 二进制直接入库会被截断 / 编码歧义）。列里存的一律是密文。
+// Windows：DPAPI 加密后的 blob **hex 编码**进文本列（「不用 Keychain」≠「明文落盘」）。
+// 调用形态同 keychain_win.cpp（CryptProtectData/CryptUnprotectData + CRYPTPROTECT_UI_FORBIDDEN，
+// 用户级、禁弹 UI）；区别只在落点——那里是 %APPDATA% 下的 .key 文件，这里是 DB 文本列，
+// 故选 hex（TEXT 列直接存二进制会被截断/编码歧义）。列里一律是密文。
 #include "credential_protection.h"
 
 #include <cstddef>
@@ -26,8 +22,8 @@
 namespace platform::credential {
 namespace {
 
-// hex 编解码（小写输出；解码大小写都收）。自实现而非引 base64：DPAPI blob 全字节
-// 随机，hex 体积 2 倍对几百字节无感，换来零依赖与肉眼可核。
+// hex 编解码（小写输出，解码大小写都收）。不用 base64：DPAPI blob 全字节随机，
+// hex 2 倍体积对几百字节无感，换来零依赖与肉眼可核。
 std::string hexEncode(const std::string& raw) {
     static constexpr char kHex[] = "0123456789abcdef";
     std::string out;
@@ -71,13 +67,8 @@ std::string dpapiError(const char* what) {
 } // namespace
 
 core::Result<std::string> realProtect(const std::string& plaintext) {
-    // DATA_BLOB::cbData 是 DWORD（32 位），std::string::size() 是 size_t
-    //（Win64 上 64 位）——窄化会**静默截断**，把「输入超长」变成「一条被截短的
-    // 密钥」而不是一次失败，且 DPAPI 照样加密成功、用的时候才解不出原值。
-    // API 密钥只有几十字节，这条分支理论不可达；但按本批纪律（凡是需要保证的
-    // 东西用代码保证，不许用注释保证），显式判一次，别写一句「反正不会发生」。
-    // 用 numeric_limits 而不是 MAXDWORD 宏：后者是 windows.h 里的宏，本文件
-    // 未在本机编译验证过（无 MinGW 交叉链），少一个外部符号依赖少一分风险。
+    // DATA_BLOB::cbData 是 DWORD，size() 是 size_t（Win64 为 64 位），窄化会**静默截断**
+    // 成「一条被截短的密钥」而非一次失败；这里显式判一次。用 numeric_limits 而非 MAXDWORD 宏（少一外部符号依赖）。
     if (plaintext.size() >
         static_cast<std::size_t>(std::numeric_limits<DWORD>::max())) {
         return core::Result<std::string>::fail(
@@ -103,16 +94,13 @@ core::Result<std::string> realProtect(const std::string& plaintext) {
 core::Result<std::string> realUnprotect(const std::string& stored) {
     std::string blob;
     if (!hexDecode(stored, blob) || blob.empty()) {
-        // 形态不认识就说出来（设计 §7 教训③：不静默回落空串——那会把
-        // 「密钥不可用」伪装成「没配过密钥」）
+        // 形态不认识就明说：不静默回落空串（否则「密钥不可用」被伪装成「没配过密钥」）
         return core::Result<std::string>::fail(
             core::ErrorCode::Internal,
             "凭据列形态损坏（DPAPI blob 的 hex 形态不成立）");
     }
 
-    // 同 protect 侧：cbData 是 DWORD，blob.size() 是 size_t —— 窄化前显式判一次。
-    // 正常路径下 blob 是库里 hex 列解出来的（远小于 4 GB），但「形态损坏」这条
-    // 分支正是要防的东西，不该在这里留一个静默截断的口子。
+    // 同 protect 侧：blob.size() 是 size_t，窄化前显式判一次（「形态损坏」分支正是不该留截断口）
     if (blob.size() > static_cast<std::size_t>(std::numeric_limits<DWORD>::max())) {
         return core::Result<std::string>::fail(
             core::ErrorCode::Internal,
@@ -136,7 +124,6 @@ core::Result<std::string> realUnprotect(const std::string& stored) {
 bool realStoresPlaintext() { return false; }
 
 const char* realProtectionDescription() {
-    // 与实现一致：列里是 DPAPI 密文（同机同用户可解），不是明文
     return "本机数据库存储（DPAPI 加密，仅本机本用户可解）";
 }
 

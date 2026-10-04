@@ -3,7 +3,7 @@
 // 纯函数、无 IO 无时钟：parse 在任务保存时校验，matches 在 tick 时判定。
 #pragma once
 #include <array>
-#include <ctime>      // std::tm（cronMatches 形参；brief 片段漏 include，卫生补齐）
+#include <ctime>      // std::tm（cronMatches 形参）
 #include <string>
 #include "core/result.h"
 
@@ -21,8 +21,7 @@ struct CronExpr {
 // 非法（字段数≠5 / 越界 / 空字段 / 逆序区间 / 步长 0 / 非数字 / L W # / 英文）→ fail(ValidationError)
 core::Result<CronExpr> parseCron(const std::string& expr);
 
-// 纯匹配：只读 tm 的 tm_min/tm_hour/tm_mday/tm_mon/tm_wday（tm_wday 由调用方
-// 经 core::time::localTime 填充，不从日期推导）。日/周同时受限时按 vixie-cron
-// 标准取「或」：命中任一即当日命中；仅一方受限则该方必须命中。
+// 纯匹配：只读 tm 的 min/hour/mday/mon/wday（wday 由调用方填，不从日期推导）。
+// 日/周同时受限 → vixie「或」；仅一方受限 → 该方必须命中
 bool cronMatches(const CronExpr& c, const std::tm& local);
 } // namespace module::agent

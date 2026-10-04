@@ -1,5 +1,5 @@
 // src/module_agent/tool_info.cpp
-// ToolRegistry 枚举 + schema 解码实现（契约见 tool_info.h 头注释）。
+// ToolRegistry 枚举 + schema 解码实现（契约见 tool_info.h）
 #include "module_agent/tool_info.h"
 
 #include <map>
@@ -27,7 +27,7 @@ ToolInfo decodeToolInfo(const std::string& schemaJson) {
     if (name.isString()) info.name = name.asString();
     pj::JsonValue desc = obj.get("description");
     if (desc.isString()) {
-        // 描述进工具卡是 wrap(false) 单行元素：换行摊平（预览同款口径）
+        // 描述进工具卡是 wrap(false) 单行元素：换行摊平
         std::string d = desc.asString();
         for (char& c : d) {
             if (c == '\n' || c == '\r' || c == '\t') c = ' ';
@@ -38,7 +38,7 @@ ToolInfo decodeToolInfo(const std::string& schemaJson) {
     if (!schema.isObject()) return info;
     pj::JsonValue props = schema.asObject().get("properties");
     if (!props.isObject()) return info;
-    // JsonObject 键序：底层 map（字母序）——稳定性够展示用
+    // 键序 = 底层 map（字母序），稳定性够展示用
     for (const auto& key : props.asObject().keys()) {
         info.params.push_back(key);
     }
@@ -47,8 +47,7 @@ ToolInfo decodeToolInfo(const std::string& schemaJson) {
 
 std::vector<ToolInfo> listRegisteredTools() {
     std::vector<ToolInfo> out;
-    // listTools() 返回 shared_ptr 快照（keep-alive，与 find 同口径）：
-    // 解码期间模块开关不会把工具从脚下滑走
+    // listTools() 返回 shared_ptr 快照：解码期间模块开关不会把工具从脚下滑走
     for (const auto& tool : core::ToolRegistry::instance().listTools()) {
         ToolInfo info = decodeToolInfo(tool->schemaJson());
         if (info.name.empty()) info.name = tool->name();   // schema 坏但 name() 活着

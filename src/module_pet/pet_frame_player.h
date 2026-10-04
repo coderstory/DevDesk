@@ -1,11 +1,6 @@
-// 帧序列播放器 + 四态状态机（桌宠设计 §4.4，M2，纯逻辑无 EUI 依赖，供单测）：
-//   Idle   --点击-->        Poked（poked 帧播一遍）--> Idle
-//   Idle   --代理流式中-->  Typing（typing 帧循环）--流结束--> Idle
-//   Idle   --kSleepAfterSeconds 无交互--> Sleep（sleep 帧循环）
-//   Sleep  --任意交互-->    Idle（唤醒）
-//   Dragged 不是独立动画态：拖拽只是抑制"拖完误触 poke"（UI 层 wasDragged 标志）
-// ponytail: 一个 enum + 几个纯函数就是状态机的全部；转移全在 UI 层 onTimer
-// 里按序调用（setStreaming → considerSleep → tick），顺序即优先级
+// 帧序列播放器 + 四态状态机（纯逻辑无 EUI 依赖，供单测）：Idle→点击→Poked（播一遍）
+// →Idle；Idle→代理流式→Typing（循环）→流结束→Idle；Idle→无交互 5min→Sleep。
+// Dragged 不是独立动画态：拖拽只是抑制「拖完误触 poke」（UI 层 wasDragged 标志）。
 #pragma once
 
 #include "module_pet/pet_skin.h"
@@ -14,10 +9,10 @@ namespace module::pet {
 
 enum class PetAnimState { Idle, Poked, Sleep, Typing };
 
-// 入睡阈值：无交互 5 分钟（设计 §4.4；皮肤无 sleep 帧时不入睡）
+// 入睡阈值：无交互 5 分钟（皮肤无 sleep 帧时不入睡）。
 inline constexpr double kSleepAfterSeconds = 5.0 * 60.0;
 
-// 状态 → 帧列表（缺帧状态回落 idle；皮肤可以只有一套帧）
+// 状态 → 帧列表（缺帧状态回落 idle）。
 inline const std::vector<std::string>& stateFrames(const PetSkin& skin,
                                                    PetAnimState state) {
     switch (state) {
@@ -54,8 +49,7 @@ struct PetAnimation {
         }
     }
 
-    // 用户交互（点击/拖拽）：Sleep 唤醒回 Idle；Idle 且皮肤有 poked 帧才戳；
-    // Poked/Typing 中忽略（不重置正在播的反应）
+    // 用户交互：Sleep 唤醒回 Idle；Idle 且皮肤有 poked 帧才戳；Poked/Typing 中忽略。
     void poke(const PetSkin& skin) {
         if (state == PetAnimState::Sleep) {
             state = PetAnimState::Idle;
@@ -69,9 +63,7 @@ struct PetAnimation {
         ticks = 0;
     }
 
-    // 代理流式联动（设计 §4.5 内容源③，M2）：有活动流 → Typing（打断
-    // Sleep——AI 干活时宠物不睡）；流结束 → Idle。皮肤无 typing 帧时
-    // stateFrames 回落 idle 帧照常循环（状态语义仍在，视觉退化为 idle）
+    // 代理流式联动：有活动流 → Typing（打断 Sleep）；流结束 → Idle。
     void setStreaming(bool active, const PetSkin& skin) {
         (void)skin;
         if (active && state != PetAnimState::Typing) {
@@ -85,8 +77,7 @@ struct PetAnimation {
         }
     }
 
-    // 入睡判定（纯函数，UI 层每帧喂无交互秒数）：仅 Idle 可入睡，且皮肤
-    // 要有 sleep 帧（否则睡了看不出，不如不睡）
+    // 入睡判定：仅 Idle 可入睡，且皮肤要有 sleep 帧。
     void considerSleep(double idleSeconds, const PetSkin& skin) {
         if (state != PetAnimState::Idle || skin.sleepFrames.empty()) return;
         if (idleSeconds < kSleepAfterSeconds) return;

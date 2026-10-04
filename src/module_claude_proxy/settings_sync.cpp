@@ -30,9 +30,7 @@ bool fileExists(const fs::path& p) {
     return fs::exists(p, ec) && !ec;
 }
 
-// 读文本文件（不存在 → 空串；失败 → 空串 + *readFailed=true）。
-// 打开失败与 0 字节曾同为「空串」，调用方无法区分「空文件」与「读不出」
-//（审计 G8/G9）——出口带上失败信号，由 parseJsonObjectFile 分开处置
+// 读文本文件（不存在 → 空串；失败 → 空串 + *readFailed=true，与空文件区分）
 std::string readTextFile(const fs::path& p, bool* readFailed = nullptr) {
     std::ifstream f(p, std::ios::binary);
     if (!f) {
@@ -45,9 +43,8 @@ std::string readTextFile(const fs::path& p, bool* readFailed = nullptr) {
     return ss.str();
 }
 
-// 原子写：同目录 tmp → rename。MinGW 的 std::filesystem::rename 不覆盖已存在
-// 目标（底层 _wrename 语义），所以先 remove 再 rename（设计 §5.3 开放问题 6：
-// 最后写者胜，窗口期可接受）
+// 原子写：同目录 tmp → rename。MinGW rename 不覆盖已存在目标，先 remove 再
+// rename（最后写者胜，窗口期可接受）
 core::Result<void> atomicWrite(const fs::path& target,
                                const std::string& content) {
     std::error_code ec;
@@ -108,8 +105,7 @@ ParsedDoc parseJsonObjectFile(const fs::path& p) {
     bool readFailed = false;
     const std::string text = readTextFile(p, &readFailed);
     if (readFailed) {
-        // G8（审计）：存在但读不出（IO/权限）≠ 0 字节空文件——不静默当空。
-        // 旧行为下 takeOver/restore 会把读不出的文件按空对象整体重写为空
+        // G8：存在但读不出（IO/权限）≠ 空文件，不静默当空对象重写
         out.error = "读取失败（IO/权限）: " + p.string();
         return out;
     }
@@ -131,12 +127,8 @@ ParsedDoc parseJsonObjectFile(const fs::path& p) {
     return out;
 }
 
-// ---- sidecar 的 app_config 存取（2026-10-03 批次 E2：文件 → 表行）------------
-// 语义与迁移前的文件版逐条对齐，调用方无需改判读逻辑：
-//   · 键不存在 → exists=false / ok=true（= 没接管过，正常路径）
-//   · 值不是合法 JSON 对象 → ok=false + error（损坏，必须报出来）
-//   · db 为 nullptr → exists=false / ok=true，且调用点各自 WARN
-//     （统一由 sidecarDbMissing() 提示，不静默）
+// sidecar 的 app_config 存取：语义与迁移前文件版逐条对齐——键不存在 →
+// exists=false/ok=true；非合法 JSON 对象 → ok=false；db 缺失 → ok=true + WARN
 bool sidecarDbMissing(const Paths& paths) {
     if (paths.db != nullptr) return false;
     LOG_WARN("settings_sync: 应用数据库未就绪，sidecar 快照不可用（"
@@ -154,8 +146,7 @@ bool sidecarExists(const Paths& paths) {
     return has.value();
 }
 
-// 读 sidecar。返回结构与 parseJsonObjectFile 同款（exists / ok / error / obj），
-// 故上面的分支判读逻辑一行都不用改。
+// 读 sidecar。返回结构与 parseJsonObjectFile 同款（exists / ok / error / obj）
 ParsedDoc parseSidecar(const Paths& paths) {
     ParsedDoc out;
     if (sidecarDbMissing(paths)) {
@@ -210,9 +201,7 @@ void removeSidecar(const Paths& paths) {
 }
 
 // sidecar 结构：{"managedKeys": {<键名>: "", ...}, "envSnapshot": {...}}。
-// managedKeys 以对象存键名集合（读侧统一走 keys()）是有意保留的形态，不必改成数组。
-// 原注"platform::json 不支持读数组元素（size() 恒 0）"已过时：size()/operator[] 早已实装
-//（见 "platform/json.h"，模块插拔 enabledModules 是首个消费者）。
+// managedKeys 以对象存键名集合（读侧统一走 keys()）是有意保留的形态
 JsonObject managedKeysObject(const std::vector<std::string>& keys) {
     JsonObject obj;
     for (const auto& k : keys) {
@@ -229,24 +218,17 @@ std::vector<std::string> managedKeysFromSidecar(const JsonObject& sidecar) {
     return out;
 }
 
-// 本机代理形态的凭据键（条目 2）：值 == kProxyAuthPlaceholder 即「托管值」。
-//
-// 形态要求（审计 SYS-01）：**命名空间作用域 + constexpr**（常量初始化 = 静态
-// 初始化期完成，零动态初始化、零析构、零分配）——本表位于退出链上：无 sidecar
-// 时 exit hook → stopProxy → syncRestore → clearResidualProxyKeys →
-// findProxyFormKeys 会读它。原「函数局部 static vector」在惰性装配路径下首次
-// 构造必然晚于 armExitHook（启动期 claude 关 → 会话内拨开才触达），atexit LIFO
-// 使其析构先于 exit hook 跑 → 退出期遍历已析构 vector（UAF）。constexpr 表不
-// 注册任何退出期动作，与构造/退出次序无关。
-// 通用检查口径：exit hook 调用链上的表一律禁止「函数局部 + 动态初始化 static」。
+// 本机代理形态的凭据键：值 == kProxyAuthPlaceholder 即「托管值」。必须命名空间
+// 作用域 + constexpr——本表在退出链上（exit hook → … → findProxyFormKeys 读），
+// 函数局部 static 惰性构造会因 atexit LIFO 先于 exit hook 析构（UAF）。
+// 通用口径：exit hook 调用链上的表禁止「函数局部 + 动态初始化 static」。
 constexpr std::string_view kProxyCredentialKeys[] = {
     "ANTHROPIC_AUTH_TOKEN",
     "ANTHROPIC_API_KEY",
 };
 
-// 找出 env 里属于「本机代理形态」的键（条目 2）：BASE_URL 指向回环地址，或
-// 凭据键等于占位符。命中说明这些值是上次接管残留 / 别的工具（cc-switch 等）
-// 写进去的托管值，**不是用户原值**——既不该进首份快照，也该在无快照时清除
+// 找出 env 里「本机代理形态」的键（回环 BASE_URL / 占位凭据）：是上次接管残留
+// 或别的工具写入的托管值，不是用户原值——不进首份快照，无快照时清除
 std::vector<std::string> findProxyFormKeys(const JsonObject& env) {
     std::vector<std::string> out;
     if (env.has("ANTHROPIC_BASE_URL") &&
@@ -255,8 +237,7 @@ std::vector<std::string> findProxyFormKeys(const JsonObject& env) {
         out.push_back("ANTHROPIC_BASE_URL");
     }
     for (const std::string_view key : kProxyCredentialKeys) {
-        // JsonObject::has/get 只收 const std::string&（platform/json.h:34-35），
-        // 显式构造一次；本循环本就在做 JsonValue 深拷贝，这点分配可忽略
+        // JsonObject::has/get 只收 const std::string&，显式构造一次
         const std::string name(key);
         if (env.has(name) && env.get(name).isString() &&
             env.get(name).asString() == kProxyAuthPlaceholder) {
@@ -275,9 +256,8 @@ std::string joinKeys(const std::vector<std::string>& keys) {
     return out;
 }
 
-// 无 sidecar 兜底（条目 2②）：无接管快照、settings.json 却仍是本机代理形态
-// （loopback BASE_URL / 占位凭据）→ 做**最小清除**：只删这些键，不按 active
-// profile 重建 env（那会引入新的写路径）。env 无这些特征 → 真 no-op（一字不改）
+// 无 sidecar 兜底：settings.json 仍留本机代理形态键 → 最小清除（只删这些键，
+// 不按 active profile 重建 env）；env 无这些特征 → 真 no-op
 SyncResult clearResidualProxyKeys(const Paths& paths) {
     SyncResult out;
     out.ok = true;
@@ -328,12 +308,8 @@ SyncResult clearResidualProxyKeys(const Paths& paths) {
     return out;
 }
 
-// 上层覆盖检测（§5.3）：只提示不代改。检测集 = 托管键全集
-//（managedEnvKeyNames()：BASE_URL / 占位 token / 6 槽位键 / 4 个 _NAME——与槽位
-// 是否有值无关）∪ extraManaged（本轮实际写入的托管键 = buildProxyEnv 产出 ∪
-// sidecar managedKeys 并集；advanced-json-editor §8.4 起片段不再进 env 域）。
-// 旧实现只查硬编码 8 键，且槽位为空时 buildProxyEnv 不生成这些键 →
-// 检测集随之缩水、上层同名键压过接管也不报警（审计 CPX-12）
+// 上层覆盖检测（只提示不代改）。检测集 = 托管键全集（managedEnvKeyNames()，
+// 与槽位是否有值无关）∪ extraManaged（本轮实际写入的托管键并集）
 std::vector<std::string> detectOverlayConflicts(
     const Paths& paths, const std::vector<std::string>& extraManaged) {
     std::vector<std::string> managed = managedEnvKeyNames();
@@ -365,16 +341,9 @@ std::vector<std::string> detectOverlayConflicts(
     return warnings;
 }
 
-// 非 env 顶层键移除冲突检测（detectOverlayConflicts 的非 env 同构版，审计
-// CPX-12 同类问题的非 env 形态）：返回 3.5 步**即将从 live root 移除**的键名
-// ——判据 = 该键在 nonEnvKeys 并集里（曾被 DevDesk 接管写入）+ 本轮
-// pendingNonEnvKeys 不含它（这轮不再写）+ live root 里确有该键。
-// 第三条正是 ①真冲突：live 值可能是用户手写的，也可能只是上一轮 DevDesk 写的
-// 托管值（用户随后手改后两者在 live 形态上不可区分）——两种都意味着「移除会
-// 动到用户能看见的键」，故一律告警，用户自己判断要不要保留。
-// ②键在并集里但 root 里根本没有 → 本函数遍历不到（无可删之物）= 陈旧清理的
-// 正常路径，静默零噪音（防噪音回归有用例钉住）
-// 返回值已去重 + 排序（稳定输出，同批只报一次）
+// 非 env 顶层键移除冲突检测：返回即将从 root 移除的键名——在 nonEnvKeys 并集
+// 里（曾被接管写入）但本轮不写的键。live 值可能是用户手写的，移除会动到用户
+// 可见键，故一律告警；键在并集但 root 没有 → 遍历不到，静默。已去重 + 排序
 std::vector<std::string> detectNonEnvRemovalConflicts(
     const JsonObject& root, const std::vector<std::string>& nonEnvKeys,
     const std::vector<std::string>& pendingNonEnvKeys) {
@@ -416,17 +385,15 @@ Paths defaultPaths() {
 SyncResult takeOver(const Profile& profile, int proxyPort, const Paths& paths) {
     SyncResult out;
 
-    // 托管 env（纯函数，规则见 provider_config.h）：托管键（BASE_URL / 占位
-    // token / 槽位）在最上层。片段 env 叠加随 advanced-json-editor §8.4 拆除
-    //（片段走 JSON 域，经 profile.extraSettingsJson 在下方 apply 步并入）
+    // 托管 env（纯函数，规则见 provider_config.h）；片段走 JSON 域，
+    // 经 profile.extraSettingsJson 在下方 apply 步并入
     const auto managed = buildProxyEnv(profile.modelsConfigJson,
                                        profile.extraEnvJson, proxyPort);
     std::vector<std::string> managedKeys;
     managedKeys.reserve(managed.size());
     for (const auto& [k, v] : managed) managedKeys.push_back(k);
 
-    // 生效高级设置 JSON 本轮将写入的顶层键（§5.2③⑤ 输入；best-effort 枚举，
-    // 非法/超限 → 空集 = 本轮照常只写 env，用户可见的解析失败警告由下方
+    // 本轮将写入的顶层键（best-effort 枚举，非法 → 空集；解析失败警告由
     // applyExtraSettingsToSettingsDoc 统一发，防双报）
     const std::vector<std::string> pendingNonEnvKeys =
         extraSettingsTopLevelKeys(profile.extraSettingsJson);
@@ -446,9 +413,8 @@ SyncResult takeOver(const Profile& profile, int proxyPort, const Paths& paths) {
         env = root.get("env").asObject();
     }
 
-    // 2. 首份快照（sidecar 已存在 → 保留原 envSnapshot 不覆盖——当前 env 里
-    //    已混入上次托管值，重拍会把托管值误当用户原值；仅并入新托管键。
-    //    sidecar 存在但损坏 → 中止，同理）
+    // 2. 首份快照（sidecar 已存在 → 保留原 envSnapshot 不覆盖，重拍会把已混入
+    //    的托管值误当用户原值；sidecar 损坏 → 中止）
     JsonObject snapshotEnv = env;  // 首次接管：接管前的原 env
     std::vector<std::string> snapshotWarnings;  // 快照污染守卫命中（条目 2①）
     JsonObject priorNonEnvSnapshot;             // sidecar 已有 nonEnvSnapshot
@@ -480,9 +446,8 @@ SyncResult takeOver(const Profile& profile, int proxyPort, const Paths& paths) {
             priorNonEnvKeys = sidecar.obj.get("nonEnvKeys").asObject().keys();
         }
     } else {
-        // 首份快照污染守卫（条目 2①）：现有 env 里的本机代理形态键是上次残留
-        // 或别的工具（cc-switch 等）的托管值，不是用户原值——不进快照，否则
-        // 还原会把死代理地址固化成「用户配置」（用户清 AppData / 两边互抢时）
+        // 首份快照污染守卫：本机代理形态键是残留/托管值不是用户原值，不进快照
+        //（否则还原会把死代理地址固化成「用户配置」）
         const std::vector<std::string> polluted = findProxyFormKeys(snapshotEnv);
         if (!polluted.empty()) {
             JsonObject cleaned;
@@ -503,18 +468,10 @@ SyncResult takeOver(const Profile& profile, int proxyPort, const Paths& paths) {
     managedKeys.erase(std::unique(managedKeys.begin(), managedKeys.end()),
                       managedKeys.end());
 
-    // nonEnv 域记账（§5.2③④，审计 F-1 merge-only 补拍）：快照政策与
-    // envSnapshot **刻意不同构**——envSnapshot 首拍兜的是整个 env 对象，后续
-    // 任何新托管键的原值都已在快照里，「不重拍」成立；nonEnv 域只拍本轮写入
-    // 键，照抄「不重拍」会在多轮接管下丢用户原值（反例见 §10 往返④）。因此：
-    //   sidecar 不存在（首拍）→ 对本轮将写入的每个非 env 键 K，live root 有 K
-    //     则记入 nonEnvSnapshot；
-    //   sidecar 已存在 → 只对「本轮将写入、且此前不在 nonEnvKeys 并集里」的
-    //     新增键 K 补拍（live 有 K 且快照无 K → 补入）。已在并集里的键维持原
-    //     快照条目不重拍——其 live 值必是 DevDesk 写的托管值，重拍会把托管值
-    //     当用户原值（保留原意图）。
-    // "env" 自身防御性跳过（extraSettings 写入路径永不托管 "env"，病态输入下
-    // 也不能把整个 env 块记成「非 env 键」）
+    // nonEnv 域记账：快照政策刻意与 envSnapshot 不同构——envSnapshot 首拍兜
+    // 整个对象，「不重拍」成立；nonEnv 只拍本轮写入键，已在并集里的键不重拍
+    //（其 live 值必是托管值），新增键 live 有且快照无 → 补拍。"env" 自身
+    // 防御性跳过（extraSettings 路径永不托管 "env"）
     {
         std::vector<std::string> prior = priorNonEnvKeys;
         std::sort(prior.begin(), prior.end());
@@ -535,8 +492,8 @@ SyncResult takeOver(const Profile& profile, int proxyPort, const Paths& paths) {
     nonEnvKeys.erase(std::unique(nonEnvKeys.begin(), nonEnvKeys.end()),
                      nonEnvKeys.end());
     {
-        // sidecar v2（§5.1）：既有 managedKeys / envSnapshot 不动，增
-        // nonEnvKeys + nonEnvSnapshot（旧 sidecar 无新字段 = 读侧按空集，D-9）
+        // sidecar v2：增 nonEnvKeys + nonEnvSnapshot（旧 sidecar 无新字段 =
+        // 读侧按空集）
         JsonObject sidecar;
         sidecar.set("managedKeys",
                     JsonValue(managedKeysObject(managedKeys)));
@@ -557,9 +514,8 @@ SyncResult takeOver(const Profile& profile, int proxyPort, const Paths& paths) {
     }
     // 快照先落地、settings.json 后改：中间崩溃 → 补还原恢复的是相同内容，安全
 
-    // 3. 先删「上一轮托管、本轮不再生成」的键（条目 1）：槽位被清空后旧模型名
-    //    不能继续留在 env 里被客户端拿去请求新供应商；这些键仍在 managedKeys
-    //    并集内，还原语义不变（重建对象实现删除，JsonObject 无 erase）
+    // 3. 先删「上一轮托管、本轮不再生成」的键：槽位清空后旧模型名不能留在 env
+    //    里（仍在 managedKeys 并集内，还原语义不变）
     {
         JsonObject kept;
         for (const auto& key : env.keys()) {
@@ -574,14 +530,9 @@ SyncResult takeOver(const Profile& profile, int proxyPort, const Paths& paths) {
         env = std::move(kept);
     }
 
-    // 3.5 陈旧非 env 键删除（§5.2⑤，同 env 陈旧托管键同构）：在 nonEnvKeys
-    // 并集里、但本轮不写的键从 root 移除（如上一轮 JSON 有 statusLine、本轮
-    // 删掉了——留着会把上一轮的托管值固化成用户配置）。本轮写的键由下方
-    // apply 步写入，不在此列
-    // 移除**前**先取冲突清单（审计 CPX-12 的非 env 形态：此处原为静默删除，
-    // 用户手写的同名键被无声抹掉而毫不知情）。清单并入 out.warnings——与
-    // detectOverlayConflicts 同一个出口（→ SettingsTakeOver::warnings_ →
-    // lastSyncWarnings → UI 详情页 / 设置页告警行，用户可见）
+    // 3.5 陈旧非 env 键删除：在 nonEnvKeys 并集里但本轮不写的键从 root 移除
+    //（留着会把上一轮托管值固化成用户配置）。移除前先取冲突清单并入
+    // out.warnings（用户手写的同名键被移除前必须可见）
     std::vector<std::string> nonEnvRemovalWarnings;
     {
         const std::vector<std::string> removed =
@@ -619,10 +570,8 @@ SyncResult takeOver(const Profile& profile, int proxyPort, const Paths& paths) {
     }
     root.set("env", JsonValue(env));
 
-    // 4.5 生效 JSON 并入顶层（§4.2 步骤 2-3，设计 D-3/D-4）：非 env 属性赢过
-    // live 既有同名键；"model" 非空字符串触发 ANTHROPIC_MODEL 抑制（抑制发生
-    // 在合并写入之后的 apply 步，F-5 时序）。至此「非 env 顶层字段不动」的旧
-    // 边界（provider-config 时代）由本行取代
+    // 4.5 生效 JSON 并入顶层：非 env 属性赢过 live 既有同名键；"model" 非空
+    // 触发 ANTHROPIC_MODEL 抑制（在 apply 步）
     {
         auto apply = applyExtraSettingsToSettingsDoc(root,
                                                      profile.extraSettingsJson);
@@ -645,8 +594,7 @@ SyncResult takeOver(const Profile& profile, int proxyPort, const Paths& paths) {
         return out;
     }
 
-    // 6. 上层覆盖检测（只警告不代改）+ 快照污染守卫命中 + 非 env 托管键
-    //    移除冲突（3.5 步收集）。三源同出口，UI 可见
+    // 6. 上层覆盖检测 + 快照污染 + 非 env 移除冲突，三源同出口
     out.warnings = detectOverlayConflicts(paths, managedKeys);
     out.warnings.insert(out.warnings.end(), snapshotWarnings.begin(),
                         snapshotWarnings.end());
@@ -663,8 +611,8 @@ SyncResult takeOver(const Profile& profile, int proxyPort, const Paths& paths) {
 SyncResult restore(const Paths& paths) {
     SyncResult out;
     if (!sidecarExists(paths)) {
-        // 无快照 = 没接管过 → 通常 no-op；但 settings.json 仍留本机代理形态键
-        //（sidecar 被清掉 / 与其它工具互抢）时做最小清除（条目 2②）
+        // 无快照 = 没接管过 → 通常 no-op；settings.json 仍留本机代理形态键时
+        // 做最小清除
         return clearResidualProxyKeys(paths);
     }
 
@@ -683,8 +631,7 @@ SyncResult restore(const Paths& paths) {
         sidecar.obj.get("envSnapshot").isObject()) {
         snapshotEnv = sidecar.obj.get("envSnapshot").asObject();
     }
-    // nonEnv 域记账读取（§5.3）：旧 sidecar 无新字段 → 空集（.has() 守卫，
-    // 无兼容分支——旧接管从未写过非 env 属性，空集 = root 层全透传，D-9）
+    // nonEnv 域记账读取：旧 sidecar 无新字段 → 空集 = root 层全透传
     std::vector<std::string> nonEnvKeys;
     if (sidecar.obj.has("nonEnvKeys") &&
         sidecar.obj.get("nonEnvKeys").isObject()) {
@@ -711,10 +658,8 @@ SyncResult restore(const Paths& paths) {
     }
     JsonObject root = std::move(doc.obj);
 
-    // root 层重建（§5.3，managedKeys 的 env 重建循环同构外推到顶层）：在
-    // nonEnvKeys 里的键一律不透传当前值——nonEnvSnapshot 有该键 → 恢复原值，
-    // 没有 → 删除（键在接管前不存在 = 不在快照里）。"env" 自身防御性跳过
-    //（extraSettings 写入路径永不托管 "env"；防病态 sidecar 把整个 env 块删掉）
+    // root 层重建：nonEnvKeys 里的键不透传当前值——快照有 → 恢复原值，无 →
+    // 删除。"env" 自身防御性跳过（防病态 sidecar 把整个 env 块删掉）
     {
         JsonObject rebuiltRoot;
         for (const auto& key : root.keys()) {
@@ -740,8 +685,7 @@ SyncResult restore(const Paths& paths) {
     JsonObject env = root.has("env") && root.get("env").isObject()
         ? root.get("env").asObject() : JsonObject();
 
-    // 按键级还原：快照有值 → 恢复；原本不存在 → 删除；其余（用户 env 键 +
-    // 非 env 字段）不动。JsonObject 无 erase，重建 env 对象实现删除
+    // 按键级还原：快照有值 → 恢复；原本不存在 → 删除；其余不动
     JsonObject rebuilt;
     for (const auto& key : env.keys()) {
         if (std::find(managedKeys.begin(), managedKeys.end(), key) !=
@@ -756,7 +700,6 @@ SyncResult restore(const Paths& paths) {
         }  // 快照里没有 → 原本不存在 → 不进 rebuilt（即删除）
     }
     // env 全空且接管前没有 env 块 → 不留空 env 键；否则写回
-    //（重建对象已天然剔除应删除的托管键）
     root.set("env", JsonValue(rebuilt));
 
     auto text = platform::json::stringify(JsonValue(root), /*pretty=*/true);
@@ -790,8 +733,7 @@ SyncResult recoverPendingSnapshot(const Paths& paths) {
     return restore(paths);
 }
 
-// 反向同步读侧（协议见 settings_sync.h 的 SettingsEnvRead 注释）。
-// 复用本文件既有 readTextFile / parseJsonObjectFile / managedKeysFromSidecar。
+// 反向同步读侧（协议见 settings_sync.h 的 SettingsEnvRead 注释）
 SettingsEnvRead readSettingsEnvForSync(const Paths& paths) {
     SettingsEnvRead out;
     if (paths.settingsFile.empty()) {
@@ -805,9 +747,7 @@ SettingsEnvRead readSettingsEnvForSync(const Paths& paths) {
                     paths.settingsFile.string() + "）: " + doc.error;
         return out;
     }
-    // G7/G9：不存在（doc.exists=false）/ 0 字节空文件（视同不存在）/ 无 env 键
-    // → 无真相源，no-op 成功。「存在但读不出」（IO/权限）已在 parseJsonObjectFile
-    // 里单独判失败（G8 中止），不走本分支
+    // G7/G9：不存在 / 空文件 / 无 env 键 → 无真相源，no-op 成功
     if (!doc.exists || !doc.obj.has("env")) {
         return out;
     }

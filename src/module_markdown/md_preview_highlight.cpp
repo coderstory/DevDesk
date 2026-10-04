@@ -1,5 +1,4 @@
-// src/module_markdown/md_preview_highlight.cpp
-// 预览代码块高亮纯函数 + 脏块缓存（Phase 3 ③，接口语义见头文件）。
+// src/module_markdown/md_preview_highlight.cpp —— 预览代码块高亮 + 脏块缓存（接口见头文件）。
 #include "md_preview_highlight.h"
 
 #include "md_keyword_highlight.h"
@@ -26,8 +25,7 @@ bool colorsEqual(const MdHighlightColors& a, const MdHighlightColors& b) {
            same(a.codeNumber, b.codeNumber);
 }
 
-// 行尾 \r 剔除，返回剔除后的视图（CRLF 文档：显示与 md4c 的换行语义一致，
-// \r 不进 glyph；参数按值传视图，调用方接收返回值才生效）
+// 行尾 \r 剔除，返回剔除后的视图（CRLF：\r 不进 glyph；参数按值传视图，须用返回值）。
 std::string_view trimTrailingCr(std::string_view line) {
     while (!line.empty() && line.back() == '\r') line.remove_suffix(1);
     return line;
@@ -40,8 +38,7 @@ MdPreviewCodeHighlight mdPreviewCodeHighlight(std::string_view blockSource,
     MdPreviewCodeHighlight out;
     const std::string src(blockSource);
     const std::vector<MdFenceBlock> fences = scanFences(src);
-    // CodeFence 块 = 恰好一个围栏（块切分器与 scanFences 同源保证）；解析不出
-    // 单围栏 → 交给调用方回退整块 components::markdown，绝不错画
+    // CodeFence 块 = 恰好一个围栏（与 scanFences 同源）；解析不出单围栏 → 调用方回退整块上游渲染。
     if (fences.size() != 1) return out;
     const MdFenceBlock& f = fences[0];
     if (f.openLineStart > f.contentStart || f.contentStart > f.contentEnd ||
@@ -49,9 +46,8 @@ MdPreviewCodeHighlight mdPreviewCodeHighlight(std::string_view blockSource,
         return out;  // 防御：区间不自洽（理论不可达）
     }
 
-    // 开栏行 → lang：跳过 ≤3 前导空格与 ≥3 围栏字符，info 取首词
-    //（md4c MD_LANG 语义；lang 只供词法器选语言，不进显示串——2026-09-24
-    //  用户要求代码块渲染不显示语言名标签）
+    // 开栏行 → lang：跳过 ≤3 前导空格与 ≥3 围栏字符，info 取首词（md4c MD_LANG 语义）。
+    // lang 只供词法器选语言，不进显示串（代码块不显示语言名标签）。
     const size_t openLineEnd = src.find('\n', f.openLineStart);
     std::string_view openLine(src.data() + f.openLineStart,
                               (openLineEnd == std::string::npos
@@ -74,9 +70,8 @@ MdPreviewCodeHighlight mdPreviewCodeHighlight(std::string_view blockSource,
     while (e < info.size() && !isFenceSpace(info[e])) ++e;
     out.lang.assign(info.substr(s, e - s));
 
-    // 显示串：内容行以 \n 连接（无尾换行；lang 标签不显示，见开栏行注释）
-    // 内容行先入显示串（不产 run）：受支持语言交给关键字词法器，
-    // 未覆盖/空 lang 保持 ③ 的逐行整行 code 单色（与编辑器 token 等价）
+    // 显示串：内容行以 \n 连接（无尾换行）；受支持语言交关键字词法器，未覆盖/空 lang
+    // 保持逐行整行 code 单色（与编辑器 token 等价）。
     struct LineSpan {
         int start;
         int len;
@@ -103,8 +98,7 @@ MdPreviewCodeHighlight mdPreviewCodeHighlight(std::string_view blockSource,
         const MdKeywordHighlight kw =
             mdKeywordHighlight(content, out.lang, colors);
         if (kw.supported) {
-            // 词法器 runs 坐标 = content 内偏移 → 平移进 displayText 坐标系；
-            // 升序不重叠由词法器保证
+            // 词法器 runs 坐标 = content 内偏移 → 平移进 displayText 坐标系（升序不重叠由词法器保证）。
             out.runs.reserve(out.runs.size() + kw.runs.size());
             for (const eui::TextRun& r : kw.runs) {
                 out.runs.push_back({r.byteStart + contentDispStart,
@@ -113,8 +107,7 @@ MdPreviewCodeHighlight mdPreviewCodeHighlight(std::string_view blockSource,
             }
         } else {
             for (const LineSpan& ls : lineSpans) {
-                // 内容行整行 code 色（编辑器围栏分支同源语义：整行单色、
-                // 无行内识别）
+                // 内容行整行 code 色（与编辑器围栏分支同源：整行单色、无行内识别）。
                 out.runs.push_back(
                     {ls.start, ls.start + ls.len, colors.code});
             }

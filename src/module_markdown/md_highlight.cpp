@@ -1,9 +1,7 @@
 // src/module_markdown/md_highlight.cpp
 // 行级 Markdown 词法高亮（styled-runs Phase C）。
-//
-// 边界诚实声明（设计 §6）：行级扫描器不是 CommonMark 完整实现——跨行强调、
-// 软换行段边界上的 token、懒惰续行等边角会漏标（漏标回默认色，优于错标）；
-// 预览侧继续走 md4c 保证渲染正确，两套各司其职。
+// 边界：行级扫描器非完整 CommonMark——跨行强调、软换行段边界 token 等边角会漏标
+//（漏标回默认色，优于错标）；预览侧仍走 md4c 保证渲染正确。
 #include "md_highlight.h"
 
 #include "core/theme.h"
@@ -19,11 +17,9 @@ MdHighlightColors mdHighlightColors(const core::theme::Tokens& tokens) {
         tokens.colors.textTertiary,   // marker
         tokens.colors.success,        // code
         tokens.colors.info,           // link / italic
-        tokens.colors.primaryText,    // listMarker（审计 [27]：文字色走
-                                      // primaryText，浅色下达标深一档）
+        tokens.colors.primaryText,    // listMarker（文字色走 primaryText，浅色下达标深一档）
         tokens.colors.textSecondary,  // quote
-        // 预览代码块关键字多色（Phase 3 ⑤）：全部取既有语义 token，
-        // 浅/深两档自动适配且均按文字对比度校准过（审计 [27] 同源）
+        // 预览代码块关键字多色（Phase 3 ⑤）：取既有语义 token，浅/深两档自动适配。
         tokens.colors.info,           // codeKeyword
         tokens.colors.warning,        // codeString
         tokens.colors.textTertiary,   // codeComment
@@ -62,8 +58,7 @@ size_t findSingleStar(std::string_view line, size_t from) {
     return std::string_view::npos;
 }
 
-// 行内 token 扫描：`code` / **bold** / *italic* / [text](url) / 表格管道。
-// from = 块级标记之后的扫描起点（列表/引用行的标记不参与行内识别）。
+// 行内 token 扫描：`code` / **bold** / *italic* / [text](url) / 表格管道；from = 块级标记之后的扫描起点。
 void scanInline(std::string_view line, size_t from,
                 const MdHighlightColors& colors,
                 const std::function<void(size_t, size_t, const eui::Color&)>& push,
@@ -136,9 +131,8 @@ void scanInline(std::string_view line, size_t from,
 } // namespace
 
 void MdHighlighter::ensureFences(const std::string& fullText) {
-    // ponytail: 每次回调全文本等值比较（memcmp 级）——10k 行文档 × 可视行数
-    // 实测 ~1ms 级（见 md_highlight_perf 探针）；超预算再换 (revision,指纹)
-    // 键控。正确性依赖：与回调同源的 display 文本，IME 组合期坐标也一致。
+    // 每次回调全文本等值比较（memcmp 级）——10k 行文档 × 可视行数实测 ~1ms 级
+    //（见 md_highlight_perf 探针）；超预算再换 (revision, 指纹) 键控。
     if (fullText == fenceText_) return;
     fenceText_ = fullText;
     fences_ = scanFences(fullText);
@@ -176,8 +170,7 @@ std::vector<eui::TextRun> MdHighlighter::runsForLine(const std::string& fullText
         }
     }
 
-    // 2) 块级前缀：仅硬行首触发（软换行段不识别，避免段中恰以 "# " 开头的
-    //    段被误判为标题）
+    // 块级前缀仅硬行首触发（软换行段不识别，避免段中恰以 "# " 开头的段被误判为标题）。
     const bool hardStart =
         lineStartByte == 0 || fullText[lineStartByte - 1] == '\n' ||
         (lineStartByte >= 2 && fullText[lineStartByte - 1] == '\r' &&
@@ -223,8 +216,7 @@ std::vector<eui::TextRun> MdHighlighter::runsForLine(const std::string& fullText
         }
     }
 
-    // 3) 行内 token（表格行 = 硬行首以 | 开头；无前导管道的 GFM 表头不识别，
-    //    需要分隔行 lookahead——ponytail：只认 | 开头的表格行）
+    // 行内 token（表格行 = 硬行首以 | 开头；无前导管道的 GFM 表头不识别，只认 | 开头）。
     const bool tableLine = hardStart && n > 0 && lineText[0] == '|';
     scanInline(lineText, scanFrom, colors_, push, tableLine);
     return runs;

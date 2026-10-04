@@ -1,15 +1,9 @@
 // src/module_todo/todo_module.cpp
-// Todo 看板模块 - 真实数据 + CRUD（TodoService）
-//
-// R5（god-class 拆分，spec 2026-09-27 §4.2）后的职责边界：
-//   本文件    = Module 接口 + compose 骨架 + **拖拽状态机** + 数据 reload + 写操作
-//               + 右键菜单分发 + 视图状态 + 键盘移动（Esc 关栈顶）
-//   看板绘制  → todo_ui_board.{h,cpp}（表头/看板/列/列内容/卡片）
-//   弹窗状态  → todo_dialogs.h（6 弹窗 + 右键菜单 + 打开栈 + 表单提交）
-//   弹窗绘制  → todo_ui_dialogs.cpp
-//   纯函数    → todo_ui_logic.h（几何/命中换算/标签配色/查找）
-// 两条通道（BoardActions / DialogHost）在本类构造期绑定一次：回调体读的是模块
-// 当下状态，与拆分前 `[this] { ... }` 同款语义；UI 单元不持有、也不捕获本类。
+// Todo 看板模块：Module 接口 + compose 骨架 + 拖拽状态机 + 数据 reload + 写操作
+// + 右键菜单分发 + 视图状态 + 键盘移动。
+// 看板绘制在 todo_ui_board.{h,cpp}，弹窗状态在 todo_dialogs.h，弹窗绘制在
+// todo_ui_dialogs.cpp，纯函数在 todo_ui_logic.h。两条通道（BoardActions /
+// DialogHost）构造期绑定一次，回调体读模块当下状态，UI 单元不持有本类
 #include "core/database.h"
 #include "core/logging.h"
 #include "core/module_interface.h"
@@ -45,12 +39,8 @@ public:
     std::string shortName() const override { return "待办"; }
     std::string iconGlyph() const override { return eui::utf8(0xF058); }  // fa-circle-check
 
-    // ============ 生命周期 ============
-
     void onStart() override {
-        // 重入幂等守卫（活门控 Task 4）：double-onStart = no-op——不重跑
-        // attachTools/reloadAll/视图恢复。此守卫无自动化防回归（find 循环对
-        // 守卫回退不敏感），靠 agent 同型用例（sweep 可观察面）+ 评审把关
+        // 重入幂等：double-onStart = no-op（不重跑 attachTools/reloadAll/视图恢复）
         if (started_) return;
         started_ = true;
         auto* db = ::core::appDatabase();
@@ -58,17 +48,14 @@ public:
             LOG_WARN("Todo: 数据库尚未注册，跳过数据加载");
             return;
         }
-        // 服务复用而非重建（UAF 收口，评审裁定）：service 进程级存活——agent
-        // run 线程可能正持 ToolRegistry keep-alive 的 todo.* 工具引用旧
-        // service（onStop 有意不 reset service_，final-review Fix 1），off→on
-        // 窗口里重建 = 先析构旧对象 → UAF。复用前提：db 为进程级单例、运行期
-        // 不换；未来若改为运行期可配，需重审本前提
+        // 服务复用而非重建（UAF 收口）：agent run 线程可能正持 keep-alive 的 todo.*
+        // 工具引用旧 service，off→on 窗口里重建 = 先析构旧对象 → UAF。前提：db 进程级单例、运行期不换
         if (!service_) {
             service_ = std::make_unique<TodoService>(*db);
         }
         attachTools();   // off 后 todoTools_ 已被 detachTools 置空，此处正常重挂
         reloadAll();
-        // 审计 [23]：恢复列滚动（按列 id）+ 选中任务（reloadAll 之后，列/任务已就位）
+        // 恢复列滚动 + 选中任务（须在 reloadAll 之后）
         viewStore_ = std::make_unique<TodoViewStateStore>(::core::appDatabase());
         restoreViewState();
         LOG_INFO("Todo 模块启动（" + std::to_string(columns_.size()) + " 列 / " +
@@ -76,24 +63,16 @@ public:
     }
 
     void onStop() override {
-        // 重入幂等（活门控 Task 4）：未启动的 off = no-op（设置页对未启用模块
-        // 拨 off 时 dispatchModuleToggle 仍会调 onStop，此路径不该落盘/注销）
+        // 重入幂等：未启动的 off = no-op（此路径不该落盘/注销）
         if (!started_) return;
-        if (viewDirty_) saveViewState();  // 审计 [23]：退出前落盘视图状态
-        // 只注销工具（工具引用 service）——**不 reset service_**（final-review
-        // Fix 1，2026-10-01）：Router::stopAll 按注册顺序停模块，todo/markdown
-        // 先于 agent；agent 的 run 线程可能正持 ToolRegistry::find() 的
-        // keep-alive shared_ptr 执行 todo.* 工具（工具内部持 TodoService&），
-        // 此刻 reset = 在 AgentModule::onStop join 之前释放对象 → UAF 窗口。
-        // 成员析构天然覆盖释放点：module 对象在 stopAll 全部返回后才析构，
-        // 且声明序 service_ 在 todoTools_ 之前 → 析构序 todoTools_ 先死、
-        // service_ 后死，工具内的引用不悬垂。
+        if (viewDirty_) saveViewState();
+        // 只注销工具，不 reset service_：agent 的 run 线程可能正持 keep-alive 的
+        // todo.* 工具执行（工具内持 TodoService&），此刻 reset = UAF 窗口。
+        // service_ 交给成员析构（声明序 todoTools_ 在 service_ 之后 → 先析构，工具引用不悬垂）
         detachTools();
         started_ = false;
         LOG_INFO("Todo 模块停止");
     }
-
-    // ============ 数据加载 ============
 
     void reloadAll() {
         if (!service_) return;
@@ -112,26 +91,22 @@ public:
             loadError_ = "读取任务失败: " + all.errorMessage();
             LOG_ERROR("Todo: " + loadError_);
         }
-        // 审计 [23]：滚动按列 id 记忆（旧按列索引 vector，重排/删列后串列）；
-        // 剪掉已不存在列的记录，防文件膨胀。prune 有删除 → 状态待落盘
+        // 滚动按列 id 记忆；剪掉已不存在列的记录防膨胀（prune 有删除 → 状态待落盘）
         std::vector<int64_t> liveIds;
         liveIds.reserve(columns_.size());
         for (const auto& c : columns_) liveIds.push_back(c.id);
         if (TodoViewStateStore::pruneScrolls(columnScrolls_, liveIds) > 0) {
             viewDirty_ = true;
         }
-        // 拖拽中任务被外部操作删除（如确认弹窗回调）→ 拖拽锚点失效，复位防悬垂
+        // 拖拽中任务被外部删除 → 锚点失效，复位防悬垂
         if (drag_.active && ui::findTask(tasks_, drag_.taskId) == nullptr) {
             drag_ = DragState{};
         }
-        // 逾期 badge 数量 + 搜索命中集跟随数据刷新（写操作后 reloadAll 统一收口）
+        // 逾期 badge + 搜索命中集跟随数据刷新（写操作后 reloadAll 统一收口）
         refreshOverdueCount();
         if (!searchQuery_.empty()) refreshSearch();
     }
 
-    // ============ 搜索 / 逾期（W 计划 P2 三件套）============
-
-    // 搜索词变化 → 重新调用 service_->search（title/description LIKE）刷新命中集
     void refreshSearch() {
         searchMatchIds_.clear();
         if (searchQuery_.empty() || !service_) return;
@@ -140,7 +115,7 @@ public:
             setStatus("搜索失败：" + r.errorMessage(), true);
             return;
         }
-        // 审计 perf [40]：unordered_set 命中表（filterBySearch O(1) 查）
+        // 命中表用 unordered_set（filterBySearch O(1) 查）
         for (const auto& t : r.value()) {
             searchMatchIds_.insert(t.id);
         }
@@ -150,9 +125,7 @@ public:
         if (!service_) return;
         auto r = service_->listOverdue();
         if (r.isFail()) {
-            // 审计 THS-06：读取失败不得降级成「0 条」——badge 保留上次已知
-            // 计数（不假装为空），并把失败报出去。此前无 else、无日志，
-            // badge 恒 0 且用户无从察觉。
+            // 读取失败不降级成「0 条」：badge 保留上次值并把失败报出去
             LOG_ERROR("Todo: 逾期计数查询失败（badge 保留上次值）: " + r.errorMessage());
             setStatus("逾期任务查询失败：" + r.errorMessage(), true);
             return;
@@ -167,9 +140,7 @@ public:
         }
         auto r = service_->listOverdue();
         if (r.isFail()) {
-            // 审计 THS-06：查询失败不得当成空结果开弹窗——入口刚显示 N 条，
-            // 弹「逾期任务（0）」会让用户以为数据丢了。改为报错 + 不开弹窗
-            //（弹窗数据保持上次内容，不写入伪空）。
+            // 查询失败不当空结果开弹窗（会让人以为数据丢了）：报错 + 不开，弹窗保持上次内容
             LOG_ERROR("Todo: 逾期弹窗查询失败: " + r.errorMessage());
             setStatus("逾期任务加载失败：" + r.errorMessage(), true);
             return;
@@ -179,7 +150,7 @@ public:
         dialogs_.popups.open(ui::Popup::Overdue);
     }
 
-    // 错误态重试：数据库晚注册（onStart 时为 null）或读取失败后手动恢复
+    // 错误态重试：数据库晚注册或读取失败后手动恢复
     void retryLoad() {
         auto* db = ::core::appDatabase();
         if (db == nullptr) {
@@ -198,11 +169,8 @@ public:
         }
     }
 
-    // ============ 写操作（都落到 SQLite） ============
-    // 审计 [19]：doCreate*/doRename* 返回错误信息（空 = 成功），校验/创建
-    // 失败由弹窗调用方写进内嵌红字 formError（照抄 claude formError_ 模式：
-    // 弹窗不关、就地可见、下一次输入清除），不再走「关弹窗 + toast」。
-    // 成功路径的确认反馈仍走 toast（操作结果 = toast 的全局分工）。
+    // doCreate*/doRename* 返回错误信息（空 = 成功）：校验/创建失败由弹窗调用方写进
+    // 内嵌红字 formError（弹窗不关、就地可见、下次输入清除）；成功反馈走 toast
 
     std::string doCreateTask(int64_t columnId, const std::string& title) {
         if (!service_) return "服务未就绪（TodoService 未注册）";
@@ -228,7 +196,7 @@ public:
         return "";
     }
 
-    // 返回是否成功（拖拽收尾要区分成败给提示；其余调用方忽略返回值）
+    // 返回是否成功（拖拽收尾据此给提示；其余调用方忽略）
     bool doMoveTask(int64_t taskId, int64_t toColumnId, int newPosition) {
         if (!service_) return false;
         auto r = service_->moveTask(taskId, toColumnId, newPosition);
@@ -247,7 +215,7 @@ public:
             setStatus("标记完成失败：" + r.errorMessage(), true);
             return;
         }
-        // 看板行为：完成后移到已完成列（kind='done'），追加到列尾
+        // 完成后移到已完成列（kind='done'），追加列尾
         finishCompletionMove(taskId, "done");
     }
 
@@ -261,18 +229,14 @@ public:
         finishCompletionMove(taskId, "todo");
     }
 
-    // 状态迁移成功后的列迁移收尾——「状态迁移 + 列迁移」合起来才算一次操作
-    //（审计 THS-06）：列迁移失败时不得再提示成功，改报错并按真实状态刷新。
-    // 此前只 LOG_WARN 就接着 setStatus("任务已完成")，用户看到成功提示而卡片
-    // 留在原列，再点一次也看不出原因。
-    // 目标列按语义标记 kind（'done' / 'todo'）定位，不按标题也不按
-    // columns_.front()：用户重命名/重排列后标题与下标都不可靠。
+    // 状态迁移 + 列迁移合起来才算一次操作：列迁移失败不得再提示成功，改报错并刷新。
+    // 目标列按 kind 定位，不按标题/下标（重命名/重排后不可靠）
     void finishCompletionMove(int64_t taskId, const std::string& kind) {
         const bool toDone = (kind == "done");
         const std::string successMsg = toDone ? "任务已完成" : "已取消完成";
         const int64_t targetCol = ui::findColumnByKind(columns_, kind);
         if (targetCol == 0) {
-            // 明示而非静默：没有语义列时任务留在原列，用户需要知道为什么
+            // 明示而非静默：没有语义列时任务留在原列
             setStatus(successMsg + "（未找到 kind='" + kind + "' 的列，任务留在原列）");
             reloadAll();
             return;
@@ -289,7 +253,7 @@ public:
             reloadAll();
             return;
         }
-        // toast 图标通道已带 fa-check（drawToast），正文不再混排 ✓ 字符
+        // toast 图标已带 fa-check，正文不再混排 ✓
         setStatus(successMsg);
         reloadAll();
     }
@@ -305,8 +269,7 @@ public:
         reloadAll();
     }
 
-    // 返回是否保存成功（详情弹窗动作按钮先落表单再执行动作，保存失败要中止
-    // 动作并保留弹窗——产品审计 2026-09-23 [2]；其余调用方忽略返回值）
+    // 返回是否保存成功（详情弹窗先落表单再执行动作，失败要中止动作并保留弹窗）
     bool doUpdateTask(const Task& task) {
         if (!service_) return false;
         auto r = service_->updateTask(task);
@@ -318,8 +281,6 @@ public:
         reloadAll();
         return true;
     }
-
-    // ============ 列管理（service 四 API 中的 rename/delete/reorder 接线） ============
 
     std::string doRenameColumn(int64_t id, const std::string& title) {
         if (!service_) return "服务未就绪（TodoService 未注册）";
@@ -356,7 +317,7 @@ public:
         reloadAll();
     }
 
-    // dir = -1 左移一位 / +1 右移一位（交换相邻列后整体重排 position）
+    // dir = -1 左移 / +1 右移（交换相邻列后整体重排 position）
     void doShiftColumn(int64_t id, int dir) {
         if (!service_) return;
         std::vector<int64_t> ids;
@@ -381,13 +342,8 @@ public:
         reloadAll();
     }
 
-    // ============ 查找辅助 ============
-
-    // ---- 智能体工具（agent M1 Task 8）----
-    // TodoService 构造处旁挂工具集：service 与 tools 生命周期成对
-    //（service_ 存在 ⇒ todoTools_ 存在且已注册；onStop 只注销工具，service_
-    // 留给成员析构——退出时 agent run 线程可能仍持工具，见 onStop 注释）。
-    // retryLoad 晚建 service 时同样要补注册，故收成两个小口。
+    // 智能体工具集：service 与 tools 生命周期成对（service_ 存在 ⇒ todoTools_ 存在
+    // 且已注册）。retryLoad 晚建 service 时同样要补注册，故收成两个小口
     void attachTools() {
         if (!service_ || todoTools_) return;
         todoTools_ = std::make_unique<TodoTools>(*service_);
@@ -406,10 +362,7 @@ public:
         viewDirty_ = true;
     }
 
-    // ---- 视图状态持久化（审计 [23]）----
-
-    // onStart 的 reloadAll 之后调用：恢复列滚动（列已不存在则丢弃该条）
-    // 与选中任务（任务已删/移动走则不恢复，findTask 校验）
+    // reloadAll 之后调用：恢复列滚动（列已不存在则丢弃）与选中任务（findTask 校验）
     void restoreViewState() {
         if (!viewStore_) return;
         const TodoViewState st = viewStore_->load();
@@ -437,11 +390,7 @@ public:
         viewDirty_ = false;
     }
 
-    // ---- W8 拖拽（真 drop 语义）----
-
-    // 指针落点 → 目标列索引（列外/板外 → -1）。换算细节见 ui::dragDropTarget。
-    // UI 整改 13：命中输入统一走 makeDragHitInput（hitDropColumn / hitDropRow
-    // 同源同帧），行命中只喂占位条预览。
+    // 指针落点 → 目标列索引（列外/板外 → -1）。换算见 ui::dragDropTarget；命中输入统一走 makeDragHitInput
     ui::DragHitInput makeDragHitInput() const {
         ui::DragHitInput in;
         in.fromColIndex = drag_.fromColIndex;
@@ -453,16 +402,11 @@ public:
         in.colWidth = boardPlate_.colW;
         in.colGap = boardPlate_.colGap;
         in.boardHeight = boardPlate_.height;
-        // tech-debt B：必须用按下时刻的快照（与 pressY 同帧）。读"当下"的
-        // colScrollOffset 会在拖拽途中列被滚动时两帧混值，板面顶边整体错位
+        // 必须用按下时刻快照（与 pressY 同帧）：读"当下"值会在拖拽途中列被滚动时混帧错位
         in.scrollOffset = drag_.pressScrollOffset;
         in.cardIndex = drag_.cardIndex;
-        // U1 尺度契约：指针 → compose 的换算吃**框架显式**尺度，不再由锚点
-        // 反推。onPress / onDrag / onRelease 通道的指针是**原始**值（runtime
-        // 只对 onContextMenu / onMove 做 /dpiScale），故尺度 = 主窗口内容缩放
-        // ::app::contentScale()（物理 = 逻辑 * scale，与 compose 收到的
-        // Screen::scale 同源同值）。todo 是 Router 页面模块、渲染在主窗口，
-        // 故取主窗口值（子窗才用自己 compose 的 Screen::scale）。
+        // 尺度吃框架显式值 ::app::contentScale()（onPress/onDrag/onRelease 的指针是原始
+        // 值，未被 runtime 除 dpi）。todo 渲染在主窗口，故取主窗口值
         const ::core::Router* router = ::core::appRouter();
         in.pageOriginX = router ? router->pageOriginX() : 0.0f;
         in.dpiScale = ::app::contentScale();
@@ -471,9 +415,7 @@ public:
 
     int hitDropColumn(double x, double y) const {
         const ui::DragHitInput in = makeDragHitInput();
-        // 探针降级为**断言**：几何实测尺度（按下卡片 bounds 宽 / compose 卡宽）
-        // 只在"自称 ≠1 却对不上框架值"时告警一次（拖动中不刷屏），留痕供
-        // 100%/125%/150% 三档点验比对（审计 V2）。换算本体不吃探针值。
+        // 探针仅作断言：几何实测尺度与框架值不一致时告警一次（不刷屏）；换算本体不吃探针值
         const float probe = ui::dragAnchorScale(in);
         if (!dpiProbeWarned_ && ui::dragScaleMismatch(in.dpiScale, probe)) {
             dpiProbeWarned_ = true;
@@ -484,8 +426,7 @@ public:
         return ui::dragDropTarget(in, x, y);
     }
 
-    // 指针在目标列的悬停行（0 = 首卡前 / >= 列卡数 = 列尾追加；越界 -1）。
-    // 列内任务数取**全量**（搜索态由调用方置 -1 走追加兜底，行号语义不变）。
+    // 目标列悬停行（0 = 首卡前 / >= 列卡数 = 列尾追加；越界 -1）。任务数取全量
     int hitDropRow(int targetCol, double x, double y) const {
         if (targetCol < 0 || targetCol >= static_cast<int>(columns_.size())) {
             return -1;
@@ -499,15 +440,8 @@ public:
             static_cast<int>(colTasks.size()));
     }
 
-    // 松手收尾（2026-09-28 真机缺陷 3 后语义）：
-    //   · 目标列外（target < 0，含指针拖出板面/落列间隙）→ 取消，卡片回原位；
-    //   · 跨列（target != from）→ 按稳定 taskId 落库：有悬停行按行插入
-    //     （computeInsertPosition），无（搜索态等）追加列尾（UI 整改 13 原语义）；
-    //   · 同列（target == from）→ 列内上下重排：悬停行经 computeReorderRow
-    //     换算成「摘出自身后」的行序，computeReorderInsertPosition 取落库位；
-    //     插回原位（顺序不变）→ no-op 不落库；无悬停行（搜索态）→ 取消
-    //     （保持"搜索态不重排"的旧行为）。真·原地松手/微小位移在框架侧已被
-    //     dragThreshold 门控（不派发 onDrag → drag_.active 未置位），到不了这里。
+    // 松手收尾：目标列外 → 取消回原位；跨列 → 有悬停行按行插入，否则追加列尾；
+    // 同列 → 上下重排（经 computeReorderRow 换算摘出自身后的行序），插回原位 no-op
     void finishDrag(int target) {
         const int64_t taskId = drag_.taskId;
         const int from = drag_.fromColIndex;
@@ -517,8 +451,7 @@ public:
         const auto& dst = columns_[static_cast<size_t>(target)];
         if (target == from) {
             if (hoverRow < 0) return;  // 搜索态同列拖 = 取消（旧语义）
-            // ownIdx 现算（不吃按下时的 cardIndex：拖拽途中列数据可能被
-            // 外部操作改动，悬停行的坐标系须与当下 tasks_ 一致）
+            // ownIdx 现算（列数据可能被外部改动，须与当下 tasks_ 一致）
             const auto colTasks = ui::tasksInColumn(tasks_, dst.id);
             int ownIdx = -1;
             for (size_t i = 0; i < colTasks.size(); ++i) {
@@ -546,7 +479,7 @@ public:
         }
     }
 
-    // 键盘/菜单共用的上移下移（moveTask 的 position 语义见 todo_ui_logic.h）
+    // 键盘/菜单共用的上移下移（position 语义见 todo_ui_logic.h）
     void moveTaskByKeyboard(bool up) {
         const auto mv = ui::computeKeyboardMove(tasks_, selectedTaskId_, up);
         if (!mv) {
@@ -559,28 +492,19 @@ public:
         setStatus((up ? "已上移「" : "已下移「") + title + "」");
     }
 
-    // ============ 状态提示 ============
-
-    // 状态反馈走 toast（3.5s 超时自动消失，仿 markdown/claude 模块）。
-    // 此前写进 header subtitle 永久驻留，静态操作说明被最后一条
-    // 操作结果永久顶掉；现在 subtitle 始终保持静态说明。
+    // 状态反馈走 toast（3.5s 超时自动消失）；subtitle 保持静态说明
     void setStatus(const std::string& msg, bool isError = false) {
-        // 正文留空 = 不设正文（本模块 toast 现状即只有标题：组件自带默认正文
-        // 文案随之保留，R1 零行为变化）
+        // 正文留空 = 不设正文（组件自带默认正文文案随之保留）
         toast_.show(msg, "", isError);
     }
 
-    // ---------- Toast（画在弹窗之上，超时消失；状态位 + 绘制接线走 ui_kit） ----------
     void drawToast(eui::Ui& ui, const eui::Screen& screen,
                    const components::theme::ThemeColorTokens& themeTokens) {
         ui_kit::drawToast(ui, screen, "todo.toast", toast_, themeTokens);
     }
 
-    // ============ 弹窗编排（状态与绘制在 todo_dialogs.h / todo_ui_dialogs.cpp） ============
-
-    // 消费挂在 Todo 页上的跳转负载（每帧调用；consumePendingPayload
-    // 取出即清空，compose 逐帧重复调用不会重复触发）：
-    //   "action:new_task" → 打开新建任务弹窗（等价页内「+ 新建任务」）
+    // 消费挂在 Todo 页的跳转负载（consumePendingPayload 取出即清空，逐帧调用不重复）。
+    // "action:new_task" → 新建任务弹窗
     void consumeNavPayload() {
         auto* router = ::core::appRouter();
         if (router == nullptr) return;
@@ -600,34 +524,33 @@ public:
     }
 
     void openNewTaskDialog(int64_t columnId) {
-        dialogs_.newTask.reset(columnId);   // 审计 [19]：打开清（含内嵌红字）
+        dialogs_.newTask.reset(columnId);   // 打开清（含内嵌红字）
         dialogs_.popups.open(ui::Popup::NewTask);
     }
 
-    // 审计 [24]：「+ 列」不再即时落库，先走命名弹窗
+    // 「+ 列」不即时落库，先走命名弹窗
     void openNewColumnDialog() {
-        dialogs_.newColumn.reset();        // 审计 [19]：打开清（含内嵌红字）
+        dialogs_.newColumn.reset();        // 打开清（含内嵌红字）
         dialogs_.popups.open(ui::Popup::NewColumn);
     }
 
-    // 打开列重命名弹窗（右键菜单「重命名列」与列头 ✎ 按钮共用，审计 [24]）
+    // 打开列重命名弹窗（右键菜单与列头 ✎ 共用）
     void openRenameDialog(const Column& col) {
-        dialogs_.rename.reset(col);        // 审计 [19]：打开清（含内嵌红字）
+        dialogs_.rename.reset(col);        // 打开清（含内嵌红字）
         dialogs_.popups.open(ui::Popup::Rename);
     }
 
-    // 打开任务详情（选中态与视图状态落盘留在模块；表单装载走 DetailDialog）
     void openDetailDialog(const Task& task) {
         selectedTaskId_ = task.id;  // 选中态：详情弹窗关闭后保留，供 Ctrl+↑/↓
-        saveViewState();            // 审计 [23]：同上，即时落盘
+        saveViewState();
         dialogs_.detail.reset(task);
         dialogs_.popups.open(ui::Popup::Detail);
     }
 
-    // 菜单定位走模块自身布局空间（ui::boardGeom），不用窗口坐标（见 BoardGeom 注释）
+    // 菜单定位走模块布局空间（ui::boardGeom），不用窗口坐标
     void openTaskContextMenu(const Task& task, int columnIndex, int cardIndex) {
         selectedTaskId_ = task.id;
-        saveViewState();  // 审计 [23]：选中任务离散变更，即时落盘
+        saveViewState();
         dialogs_.ctx.openTask(task, columnIndex, cardIndex);
         dialogs_.popups.open(ui::Popup::Ctx);
     }
@@ -637,8 +560,7 @@ public:
         dialogs_.popups.open(ui::Popup::Ctx);
     }
 
-    // 审计 M5：Esc 关「最上层」弹窗（= 栈顶，与绘制 z 序同源）。
-    // 返回 true = 本键已消费；无弹窗返回 false（按键继续走既有路径）
+    // Esc 关栈顶弹窗（与绘制 z 序同源）。返回 true = 键已消费；无弹窗返回 false
     bool closeTopmostPopup() {
         if (dialogs_.popups.empty()) return false;
         const ui::Popup top = dialogs_.popups.top();
@@ -651,9 +573,7 @@ public:
         return true;
     }
 
-    // 菜单项点击分发（路径版，兼容「改色」子菜单）。
-    // 任务菜单无子级，path[0] 即原索引；列菜单：0=重命名 1=左移 2=右移
-    //   3=改色（path[1] = 预设索引）4=删除
+    // 菜单项点击分发（路径版，兼容「改色」子菜单）。列菜单 3=改色（path[1]=预设索引）
     void onContextSelectPath(const std::vector<int>& path) {
         if (dialogs_.ctx.taskId != 0) {
             if (!path.empty()) onContextSelect(path[0]);
@@ -666,13 +586,12 @@ public:
             }
             return;
         }
-        // 删除列从原索引 3 挪到 4（改色插在前面）
+        // 改色插在前面，删除列索引 3→4
         onContextSelect(!path.empty() && path[0] == 4 ? 3 : (path.empty() ? -1 : path[0]));
     }
 
-    // 菜单项点击分发。索引含义与 drawContextMenu 构建的 items 一一对应：
-    //   任务菜单：0=编辑 1=上移 2=下移 3+i=移动到第 i 个其他列 末项=删除（带确认）
-    //   列菜单：  0=重命名 1=左移 2=右移 3=删除（改色走 onContextSelectPath，不进这里）
+    // 菜单项分发，索引与 drawContextMenu 构建的 items 对应。任务菜单：0=编辑
+    // 1=上移 2=下移 3+i=移到第 i 个其他列 末项=删除；列菜单改色走 onContextSelectPath
     void onContextSelect(int index) {
         if (dialogs_.ctx.taskId != 0) {
             const Task* self = ui::findTask(tasks_, dialogs_.ctx.taskId);
@@ -723,10 +642,8 @@ public:
         }
     }
 
-    // ============ UI ============
-
     void compose(eui::Ui& page, const eui::Screen& screen) override {
-        // 消费跨模块跳转负载（Router payload，一次性语义）
+        // 消费跨模块跳转负载（一次性语义）
         consumeNavPayload();
 
         const auto& t = core::theme::current();
@@ -736,19 +653,16 @@ public:
         const float headerH = ui_kit::kHeaderH;
         const float bodyH = contentH - headerH - t.sizes.spacingLarge;
 
-        // 页面底色 = 主窗口 clearColor（随主题/窗口效果档运行时跟随，
-        // 磨砂 Phase B/D）——不自铺不透明底，半透/磨砂档主体才生效
+        // 页面底色 = 主窗口 clearColor（运行时跟随主题/效果档）——不自铺不透明底，半透/磨砂档才生效
 
-        // 拖拽跟手副本锚点（页面 compose 空间）：按下时卡片位置 + 指针累计
-        // 位移。换算因子复用 makeDragHitInput 的同一份（pressX/pressY 的指针
-        // 空间 + pageOriginX + app::contentScale()）——与 hitDropColumn 同源，
-        // 不另造一套尺度（U1 尺度契约）
+        // 拖拽跟手副本锚点（页面 compose 空间）：按下卡片位置 + 指针累计位移。
+        // 换算因子复用 makeDragHitInput，与 hitDropColumn 同源，不另造尺度
         const ui::DragHitInput dragHit = makeDragHitInput();
         const ui::GhostAnchor ghostAnchor = ui::dragGhostAnchor(
             dragHit.pressX, dragHit.pressY, drag_.totalX, drag_.totalY,
             dragHit.pageOriginX, dragHit.dpiScale);
 
-        // 看板绘制入参（R5：状态显式入参；容器是成员引用，不每帧拷贝）
+        // 看板绘制入参（容器是成员引用，不每帧拷贝）
         const ui::BoardView boardView{
             columns_, tasks_, searchMatchIds_, searchQuery_, columnScrolls_,
             selectedTaskId_, drag_.active, drag_.taskId, drag_.hoverColIndex,
@@ -766,11 +680,9 @@ public:
             })
             .build();
 
-        // 拖拽跟手副本：页面级顶层 root（在 todo.root 之后 = 压在所有列之上，
-        // zIndex 压住看板子树、低于弹窗），plate 取本帧 drawBoard 刚写入的卡宽
+        // 拖拽跟手副本：顶层 root（压在列之上、低于弹窗），plate 取本帧 drawBoard 刚写入的卡宽
         ui::drawDragGhost(page, t, boardView, boardPlate_);
 
-        // 弹窗（画在最上层）
         ui::drawNewTaskDialog(page, screen, t, dialogs_, dialogHost_);
         ui::drawNewColumnDialog(page, screen, t, dialogs_, dialogHost_);
         ui::drawDetailDialog(page, screen, t, dialogs_, dialogHost_);
@@ -782,17 +694,13 @@ public:
         drawToast(page, screen, core::theme::componentTokens(t));
     }
 
-    // P7a 键盘移动：Ctrl/Cmd+↑↓ 上移/下移当前选中任务（选中 = 最近
-    // 点击过的卡片，点击详情弹窗关闭后选中态保留）。
-    // 事件来源：EUI-NEO 无聚焦元素消费时经 main.cpp → Router 转发到本页。
+    // Ctrl/Cmd+↑↓ 上移/下移选中任务（选中 = 最近点击的卡片）。无聚焦元素消费时经 Router 转发到本页
     bool onKeyEvent(const eui::KeyEvent& event) override {
         if (event.action != eui::KeyAction::Press &&
             event.action != eui::KeyAction::Repeat) {
             return false;
         }
-        // 审计 M5：Esc 关最上层弹窗。键走得到本通道 = 焦点元素没消费（弹窗
-        // 输入框聚焦时 Esc 已被 input 的 onCancel 收走 → 天然让位不重复）。
-        // 审计 [24] 的新建列专用兜底并入 closeTopmostPopup。
+        // Esc 关最上层弹窗。键走得到本通道 = 焦点元素没消费（输入框聚焦时已被 onCancel 收走）
         if (event.key == eui::InputKey::Escape) {
             return closeTopmostPopup();
         }
@@ -810,13 +718,8 @@ public:
     }
 
 private:
-    // ============ 拖拽状态机 ============
-    // W8 拖拽（真 drop 语义）：onPress 记锚点 → onDrag 更新悬停列（视觉反馈）
-    // → onRelease 按指针落点落库。dragging 半透明 + 目标列高亮见看板绘制单元。
-    // 状态机留在本类（tech-debt B：pressX/pressY/pressScrollOffset 同帧快照，
-    // 拖动途中不重算），绘制单元只读 active/taskId/hoverColIndex 三个快照值。
-    // 声明位置在通道绑定之前：下面 cardPressed/cardReleased 的绑定体里要
-    // `DragState{}` 复位，成员初始化器按声明顺序解析，早声明才能被看到。
+    // 拖拽状态机：onPress 记锚点 → onDrag 更新悬停列 → onRelease 按落点落库。
+    // pressX/pressY/pressScrollOffset 同帧快照，拖动途中不重算；绘制单元只读快照值
     struct DragState {
         bool active = false;       // 超过 dragThreshold 才置位
         int64_t taskId = 0;        // 稳定任务 id（不用会过期的列/卡索引做落库依据）
@@ -825,28 +728,18 @@ private:
         float pressX = 0.0f;       // 按下时卡片 bounds（指针像素空间）
         float pressY = 0.0f;
         float pressWidth = 0.0f;
-        // 与 pressX/pressY 同帧的源列滚动偏移快照（compose 空间）。
-        // dragDropTarget 靠它把含滚动的 bounds.y 还原成板面顶边，
-        // 取"当下"值会跨帧混用（tech-debt B，见 cardPressed 处注释）
+        // 与 pressX/pressY 同帧的源列滚动快照；dragDropTarget 靠它还原板面顶边
         float pressScrollOffset = 0.0f;
         int hoverColIndex = -1;    // 拖动中指针所在列（-1 = 列外，松手取消）
-        // 拖动中指针所在目标列行（-1 = 不预览；跨列与同列都置位，仅搜索态
-        // 不置位——渲染行号与全量行号不同源）。驱动占位条视觉 + 落库插入位
-        //（finishDrag 快照后复位；同列经 computeReorderRow 换算成摘出自身
-        // 后的行序）
+        // 目标列行（-1 = 不预览；仅搜索态不置位）。驱动占位条 + 落库插入位
         int hoverRow = -1;
-        // 跟手副本（2026-09-28）：按下点起的指针**累计**位移（指针像素空间，
-        // DragEvent::totalX/totalY——框架按下时记锚点、每次移动给累计值）。
-        // 只喂跟手副本锚点（ui::dragGhostAnchor），不参与命中换算（命中仍吃
-        // onDrag 的"当下"指针坐标）。drag_ = DragState{} 复位即随之为 0 →
-        // 松手/取消后副本偏移天然归零。
+        // 按下点起的指针累计位移（DragEvent::totalX/Y）。只喂副本锚点，不参与命中换算；
+        // 复位 DragState{} 即归零
         double totalX = 0.0;
         double totalY = 0.0;
     };
 
-    // ============ 通道绑定（构造期绑定一次） ============
-    // 回调体读模块**当下**状态（与拆分前 `[this] { ... }` 同款语义）；
-    // 拆出的 UI 单元只拿到这些通道与只读数据，不持有本类。
+    // 通道绑定（构造期绑定一次）：回调体读模块当下状态；UI 单元只拿通道与只读数据，不持有本类
 
     ui::BoardActions boardActions_{
         .searchChanged = [this](const std::string& value) {
@@ -854,7 +747,7 @@ private:
             refreshSearch();
         },
         .searchCancelled = [this] {
-            // 审计 [10]：清除只挂 Esc（onCancel），Enter 无副作用
+            // 清除只挂 Esc（onCancel），Enter 无副作用
             if (!searchQuery_.empty()) {
                 searchQuery_.clear();
                 refreshSearch();
@@ -864,8 +757,6 @@ private:
             if (overdueCount_ > 0) openOverdueDialog();
         },
         .addColumnClicked = [this] {
-            // 审计 [24]：不再即时 doCreateColumn("新列 N") 落库，
-            // 先走命名弹窗，与全应用创建范式统一
             openNewColumnDialog();
         },
         .addTaskClicked = [this] {
@@ -890,7 +781,7 @@ private:
         },
         .cardPressed = [this](const Task& task, int colIndex, int cardIndex,
                               const eui::Rect& bounds) {
-            // 记录拖拽锚点（卡片 bounds 为指针像素空间，含列内滚动偏移）
+            // 记录拖拽锚点（bounds 为指针像素空间，含列内滚动）
             drag_ = DragState{};
             drag_.taskId = task.id;
             drag_.fromColIndex = colIndex;
@@ -898,29 +789,23 @@ private:
             drag_.pressX = bounds.x;
             drag_.pressY = bounds.y;
             drag_.pressWidth = bounds.width;
-            // tech-debt B：bounds.y 里含的是"按下这一帧"的列滚动偏移，
-            // 命中换算必须减同一个值才能还原出正确的板面顶边。拖拽途中
-            // 源列被滚轮滚动时，若 onDrag 时刻再读 colScrollOffset（新值），
-            // pressY（旧帧）× scrollOffset（新帧）混帧 → 命中框整体上偏/下偏。
-            // 在按下回调内快照，保证两值同帧。
+            // bounds.y 含"按下这一帧"的列滚动；在此快照，与 pressY 同帧（onDrag 时
+            // 再读新值会混帧 → 命中框上下偏）
             drag_.pressScrollOffset =
                 ui::columnScrollOffset(columns_, columnScrolls_,
                                        static_cast<size_t>(colIndex));
         },
         .cardDragged = [this](double x, double y, double totalX, double totalY) {
-            // 运行时只在超过 dragThreshold 后派发 → 到这里即视为拖拽激活
+            // 超过 dragThreshold 才派发 → 到这里即视为拖拽激活
             if (drag_.taskId == 0) return;
             drag_.active = true;
-            // 跟手副本锚点 = 按下时卡片位置 + 这份累计位移（换算与命中同源，
-            // 见 ui::dragGhostAnchor；此处只快照原始位移，换算在 compose）
+            // 只快照原始位移，换算在 compose（与命中同源）
             drag_.totalX = totalX;
             drag_.totalY = totalY;
             const int target = hitDropColumn(x, y);
             drag_.hoverColIndex = target;
-            // 插入行预览：跨列与同列都置位（2026-09-28 真机缺陷 3——同列 =
-            // 上下重排，旧「同列拖拽 = 取消」约定已废，条画在悬停缝上）；
-            // 搜索态不置位（渲染行 ≠ 全量列行，行号不可用 → 跨列回落
-            // 「追加列尾」、同列回落「取消」，与旧语义一致）
+            // 跨列与同列都置位（同列 = 上下重排）；搜索态不置位（渲染行 ≠ 全量行号，
+            // 跨列回落「追加列尾」、同列回落「取消」）
             drag_.hoverRow = (target >= 0 && searchQuery_.empty())
                 ? hitDropRow(target, x, y)
                 : -1;
@@ -930,11 +815,8 @@ private:
                 drag_ = DragState{};  // 普通点击：只清锚点（onClick 已处理）
                 return;
             }
-            // 跨模块剩余审计修（2026-09-28）：落位淡入不再设标志——列内容容器
-            // opacity 直接门控 drag_.active（看板单元内），跟手结束（落库或
-            // 取消）active 归 false 的那一帧起 0.6→1.0 平滑淡回
-            // 取消分支：drag_ = DragState{} 天然清 active；同列重排（2026-09-28
-            // 真机缺陷 3 起为受支持操作）也走 finishDrag 统一收口
+            // 落位淡入不设标志：列内容容器 opacity 直接门控 drag_.active，active 归
+            // false 那一帧起 0.6→1.0 淡回；取消分支靠 DragState{} 清 active
             const int target = released ? hitDropColumn(x, y) : -1;
             finishDrag(target);
         },
@@ -967,48 +849,39 @@ private:
         .warn = [this](const std::string& msg) { setStatus(msg, true); },
     };
 
-    // ============ 状态 ============
     std::unique_ptr<TodoService> service_;
-    // 智能体工具集（引用 service_；onStop 只注销注册，对象随成员析构销毁——
-    // 声明序在 service_ 之后 = 先于 service_ 析构，工具内引用不悬垂）
+    // 工具集（引用 service_；声明在 service_ 之后 = 先于 service_ 析构，引用不悬垂）
     std::unique_ptr<TodoTools> todoTools_;
-    // 重入幂等守卫（活门控 Task 4）：double-onStart / double-onStop / 未启动
-    // 的 off = no-op
+    // 重入幂等守卫：double-onStart/onStop / 未启动的 off = no-op
     bool started_ = false;
     std::vector<Column> columns_;
     std::vector<Task> tasks_;
-    // 审计 [23]：列内滚动偏移按列 id 记忆（旧按列索引，重排/删列串列）+
-    // 跨会话持久化（viewStore_；viewDirty_ = 有未落盘变更，onStop 收口）
+    // 列内滚动偏移按列 id 记忆 + 跨会话持久化（viewDirty_ = 有未落盘变更，onStop 收口）
     std::map<int64_t, float> columnScrolls_;
     std::unique_ptr<TodoViewStateStore> viewStore_;
     bool viewDirty_ = false;
 
     DragState drag_;
 
-    // 板面几何快照（看板绘制单元每帧刷新，拖拽命中换算用）
+    // 板面几何快照（每帧刷新，拖拽命中换算用）
     ui::BoardPlate boardPlate_;
 
-    // 拖拽 dpi 探针告警只出一次（审计 M4：探针降级为断言；hitDropColumn 是
-    // const 且每帧调用，故 mutable + 一次性）
+    // dpi 探针告警只出一次（hitDropColumn 是 const 且每帧调用，故 mutable）
     mutable bool dpiProbeWarned_ = false;
 
-    // 弹窗层状态（打开栈 + 6 弹窗 + 右键菜单 + 逾期数据）
     ui::DialogSet dialogs_;
 
-    // 键盘移动选中态（最近点击的卡片；详情弹窗关闭后保留）
+    // 选中态（最近点击的卡片，详情弹窗关闭后保留）
     int64_t selectedTaskId_ = 0;
 
-    // 状态反馈 toast（超时消失；subtitle 保持静态说明；状态位 + 绘制走 ui_kit）
     ui_kit::ToastState toast_;
 
-    // 搜索（三件套 1）：query + service_->search 的命中任务 id 集
     std::string searchQuery_;
     std::unordered_set<int64_t> searchMatchIds_;
 
-    // 逾期视图（三件套 2）：badge 数量（弹窗数据在 dialogs_.overdue）
     size_t overdueCount_ = 0;
 
-    // 数据加载错误（空 = 正常；与空态区分，见看板错误态绘制）
+    // 数据加载错误（空 = 正常；与空态区分）
     std::string loadError_;
 };
 

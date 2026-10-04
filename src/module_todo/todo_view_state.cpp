@@ -1,13 +1,8 @@
 // src/module_todo/todo_view_state.cpp
-// todo 视图状态的 app_config 表存取（接口见 todo_view_state.h）
-//
-// 迁移前读写 appDataDir()/todo_view_state.json；2026-10-03（批次 E2，用户第 17
-// 条「所有 app 配置全部进 SQLite，不要 JSON 文件了」）起整份存 app_config 表的
-// 一行（键 todo_view_state），**不读旧文件、不迁移**。
-//
-// 整份一行而非按顶层键拆分：与 pet_config 同款裁决——本状态**只有一个写者**
-// （TodoService / 模块页），且每次都是「load 整个结构 → 改 → 整个存回」，
-// 拆行的「多写者互不覆盖」收益不存在，成本却是每次 save 多次 UPSERT。
+// todo 视图状态的 app_config 表存取（接口见 todo_view_state.h）。不读旧 JSON
+// 文件、不迁移。
+// 整份一行而非按顶层键拆分：本状态只有一个写者，且每次都是「load 整个结构 →
+// 改 → 整个存回」，拆行的「多写者互不覆盖」收益不存在，成本却是多次 UPSERT。
 #include "module_todo/todo_view_state.h"
 
 #include <algorithm>

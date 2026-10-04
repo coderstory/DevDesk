@@ -1,27 +1,13 @@
 // src/platform/file_watcher_win.cpp
-// Windows 实现：ReadDirectoryChangesW + OVERLAPPED + 专用后台线程。
-//
-// 线程模型：
-//   start()  在调用线程打开目录句柄（失败即刻 Result 返回，无线程残留）
-//   worker   常驻循环：保持一个未决 ReadDirectoryChangesW →
-//            WaitForMultipleObjects(事件 | 停止) → 解析 → 去抖 → 回调
-//   stop()   置 running=false + SetEvent 唤醒 worker，worker 自行
-//            CancelIoEx 作废未决读并退出。句柄的关闭责任归 worker 退出路径
-//            （回调线程内 stop 不 join、不关句柄，见 joinWorker 注释）——
-//            不会再有「句柄已关、worker 仍在用」的失效 HANDLE 场景。
-//
-// 去抖策略：pending 为空时无限期等待（零空转）；收到事件后解析、立刻重发
-// 读请求（事件捕获无间隙），再按 debounceMs 静默窗口等待——窗口内再来事件
-// 则重置窗口，窗口到点整批交付回调。
-//
-// 启动武装窗口（arming window）：start() 在调用线程开目录句柄，而首个读请求由
-// worker 线程异步发出（线程创建 + 循环首轮），二者之间存在长度取决于调度的
-// 窗口；Windows 只上报「首读发出之后」发生的改动——窗口内发生的改动不会被
-// 上报、事后也不补发（平台语义，非本实现缺陷）。需要零丢失的调用方应在
-// start() 之后先确认监听已产生过事件，或依赖上层轮询兜底（见头文件「已知边界」）。
-//
-// 读请求「完成→重发」之间存在微秒级空窗，此间发生的改动不会被捕获——
-// 消费方轮询兜底覆盖（见头文件「已知边界」）。
+// Windows：ReadDirectoryChangesW + OVERLAPPED + 专用后台线程。
+// 线程模型：start() 在调用线程开目录句柄（失败即刻返回，无线程残留）；worker 常驻循环（未决读 →
+// WaitForMultipleObjects(事件|停止) → 解析 → 去抖 → 回调）；stop() 置 running=false + SetEvent，
+// worker 自行 CancelIoEx 作废未决读并退出。句柄关闭责任归 worker 退出路径（回调线程内 stop 不 join、
+// 不关句柄），不存在「句柄已关、worker 仍在用」的失效 HANDLE。
+// 去抖：pending 空时无限期等待（零空转）；收到事件后解析、立刻重发读请求（捕获无间隙），再按
+// debounceMs 静默窗口等待，窗口内来事件则重置，到点整批交付。
+// 坑：①启动武装窗口——start() 开句柄与 worker 首读之间发生的改动不上报也不补发（平台语义），需
+// 零丢失者应确认已产生过事件或依赖上层轮询；②读请求「完成→重发」间有微秒级空窗，同靠轮询兜底。
 #include "platform/file_watcher.h"
 
 #include "core/logging.h"
@@ -84,7 +70,7 @@ std::string notifyPathToUtf8(const FILE_NOTIFY_INFORMATION& info,
     return out;
 }
 
-// 解析一次交付的整条 FILE_NOTIFY_INFORMATION 链追加到 out
+// 解析一次交付的整条 FILE_NOTIFY_INFORMATION 链，追加到 out
 void parseNotificationChain(char* buffer, DWORD bytes,
                             std::vector<FileWatchEvent>& out) {
     DWORD offset = 0;
@@ -126,10 +112,8 @@ std::string lastWinError(unsigned long code) {
 struct FileWatcher::Impl {
     std::atomic<bool> running{false};
     std::thread worker;
-    // 句柄归属（review-A 修复）：start() 写入；关闭责任在 worker 退出路径
-    // （runWorker 收尾 / 启动失败分支）或 join 之后的 closeHandles()。
-    // atomic：stop() 可能与 worker 退出并发读写这两项（回调线程内 stop 不
-    // join——见 joinWorker），用原子避免数据竞争。
+    // 句柄归属：start() 写入，关闭责任在 worker 退出路径或 join 后的 closeHandles()。
+    // atomic：stop() 可能与 worker 退出并发读写（回调线程内 stop 不 join），故用原子。
     std::atomic<HANDLE> dirHandle{nullptr};   // 被监听目录（OVERLAPPED 打开）
     std::atomic<HANDLE> stopEvent{nullptr};   // 手动重置，stop() SetEvent 唤醒 worker
     FileWatchCallback callback;
@@ -141,8 +125,8 @@ struct FileWatcher::Impl {
         if (HANDLE e = stopEvent.exchange(nullptr)) CloseHandle(e);
     }
 
-    // worker 退出路径：先把仍指向自己副本的 Impl 字段置空，再关副本（判空
-    // 幂等）。字段可能已被 start() 换成新句柄——只在相等时清，不动新句柄。
+    // worker 退出路径：先把仍指向自己副本的 Impl 字段置空再关副本（判空幂等）；字段可能
+    // 已被 start() 换成新句柄——只在相等时清，不动新句柄。
     void releaseOwnHandles(HANDLE dh, HANDLE se) {
         if (dirHandle.load() == dh) dirHandle.store(nullptr);
         if (stopEvent.load() == se) stopEvent.store(nullptr);
@@ -154,10 +138,8 @@ struct FileWatcher::Impl {
         running.store(false);
         if (HANDLE e = stopEvent.load()) SetEvent(e);
         if (worker.joinable()) {
-            // 回调线程内自 stop（review-A 实锤 UAF 源）：只请求停止——不
-            // detach（否则 worker 继续在 Impl 成员函数里跑，对象析构即 UAF）、
-            // 不 join、不关句柄（worker 自己会退出并收句柄）。join 由之后
-            // 非回调线程的 stop()/析构完成；对象必须活到回调返回（头文件契约）。
+            // 回调线程内自 stop：只请求停止——不 detach（worker 仍在 Impl 成员里跑，析构即 UAF）、
+            // 不 join、不关句柄（worker 自己会退出并收句柄）。join 由之后非回调线程的 stop()/析构完成。
             if (worker.get_id() == std::this_thread::get_id()) return;
             worker.join();
         }
@@ -166,8 +148,7 @@ struct FileWatcher::Impl {
 
     // 后台线程主体（Impl 成员：匿名 ns 自由函数无权命名私有嵌套类型）
     void runWorker() {
-        // 局部句柄副本（review-A 修复）：循环内只用副本，stop() 并发置空
-        // Impl 字段也不影响本线程；副本的关闭由本线程收尾负责
+        // 局部句柄副本：循环内只用副本，stop() 并发置空 Impl 字段也不影响本线程；副本关闭由本线程负责
         const HANDLE dh = dirHandle.load();
         const HANDLE se = stopEvent.load();
         std::vector<char> buffer(kBufBytes);
@@ -264,9 +245,8 @@ core::Result<void> FileWatcher::start(const std::filesystem::path& dir,
                                       FileWatchCallback onChange,
                                       std::chrono::milliseconds debounceMs) {
     if (impl_->worker.get_id() == std::this_thread::get_id()) {
-        // 回调线程内重启是误用（消费方线程模型不允许），显式拒绝：旧 worker
-        // 尚未 join 就给它赋新 std::thread = 对 joinable thread 赋值 →
-        // std::terminate；且旧线程仍持旧句柄
+        // 回调线程内重启是误用：旧 worker 未 join 就赋新 std::thread = 对 joinable thread 赋值 →
+        // std::terminate，且旧线程仍持旧句柄
         return core::Result<void>::fail(core::ErrorCode::ValidationError,
                                         "FileWatcher: 不能在回调线程内重启监听");
     }
@@ -286,8 +266,8 @@ core::Result<void> FileWatcher::start(const std::filesystem::path& dir,
                                         "FileWatcher: 目录不存在: " + dir.string());
     }
 
-    // fs::path ←UTF-8 std::string 的窄→宽转换走 ACP，中文路径会乱码；
-    // 显式 UTF-8 → UTF-16（审计 CP-09：与 file_open_win.cpp 共用编码链）
+    // fs::path ← UTF-8 std::string 的窄→宽转换走 ACP、中文路径乱码；显式 UTF-8 → UTF-16
+    //（与 file_open_win.cpp 共用编码链）
     const std::u8string u8 = dir.u8string();
     const std::string utf8Path(reinterpret_cast<const char*>(u8.data()), u8.size());
     const std::wstring wpath = detail::utf8ToWide(utf8Path);

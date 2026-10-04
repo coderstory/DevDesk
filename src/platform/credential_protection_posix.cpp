@@ -1,14 +1,12 @@
 // src/platform/credential_protection_posix.cpp
-// macOS / Linux / 其它 POSIX：明文进列，保护级别 = 文件权限 0600
-//（core/file_perms.h 收紧 devdesk.db + -wal + -shm）
+// macOS / Linux：明文进列，保密靠文件权限 0600（core/file_perms.h 收紧 db + wal + shm）
 #include "credential_protection.h"
 
 namespace platform::credential {
 
 core::Result<std::string> realProtect(const std::string& plaintext) {
-    // 本平台不做内容级加密：列的保密性由承载它的文件权限保证。
-    // 这条不是「先留后补」——设计 §6.2 的表格明确本平台就是文件权限级；
-    // 谁若把这里改成明文之外的形态，必须同步改 realStoresPlaintext()。
+    // 本平台不做内容级加密，保密性由文件权限保证；若改成明文之外的形态，
+    // 必须同步改 realStoresPlaintext()。
     return core::Result<std::string>::ok(plaintext);
 }
 

@@ -16,12 +16,9 @@
 
 namespace module::claude {
 
-// 代理对外 User-Agent（所有上游统一使用，不透传客户端 UA）
-//
-// 为什么不透传：opencode.ai（Cloudflare 前置）按 UA 指纹拦请求，实测
-// `Python-urllib/3.14` → 403 error 1010 browser_signature_banned，而
-// `claude-cli/...` → 200。客户端是什么工具不影响上游正确性（鉴权是 key），
-// 统一用 Claude Code 自己的签名即可，顺带把本地代理伪装成官方客户端。
+// 代理对外 User-Agent（所有上游统一使用，不透传客户端 UA）：opencode.ai
+//（Cloudflare）按 UA 指纹拦请求（Python-urllib 实测 403，claude-cli 200）；
+// 客户端是什么工具不影响上游正确性（鉴权是 key），统一用 Claude Code 签名。
 inline constexpr const char* kProxyUserAgent = "claude-cli/2.1.0 (external, cli)";
 
 struct UpstreamDialect {
@@ -37,26 +34,20 @@ struct UpstreamDialect {
     static UpstreamDialect anthropicDefault();
     // opencode.ai zen：额外要求 x-opencode-session，且不认 [1M] 模型标记
     static UpstreamDialect opencodeZen();
-    // 按 baseUrl 的 host 选择（opencode.ai 及其子域 → opencodeZen，其余默认）。
-    // overrideText 非空 = 显式覆盖（审计 CPX-13）：自建网关 / 内网镜像的 host
-    // 后缀推断不出正确方言，Profile::dialectOverride 用它钉住；空串 / 未知值
-    // = 未覆盖 → 回落 host 推断（既有调用点不传该参，行为零变化）
+    // 按 baseUrl 的 host 选择（opencode.ai 及子域 → opencodeZen）；overrideText
+    // 非空 = 显式覆盖（自建网关 host 推断不出正确方言）；空串/未知 → 回落 host 推断
     static UpstreamDialect forBaseUrl(
         const std::string& baseUrl,
         const std::string& overrideText = std::string());
 
-    // 该方言是否要求剥掉模型名尾部的 [1M]（Claude Code 的本地 1M 上下文标记，
-    // 上游通常不认识这个后缀，模型名带它会被判 "Model is unavailable"）
+    // 是否剥掉模型名尾部 [1M]（本地 1M 标记，上游通常不认识，带着会被判不可用）
     bool stripModelSuffix() const;
 
     // 就地把请求头调整成该方言期望的形态：
-    //   - 鉴权：清掉客户端送来的**所有大小写变体**凭据，再按 authField 注入：
-    //     both → x-api-key + Authorization: Bearer；bearer → 只 Authorization；
-    //     api_key → 只 x-api-key；空 key 一律不注入
-    //   - User-Agent：无条件覆盖为 kProxyUserAgent（见其注释）
-    //   - anthropic-version：客户端没带时补默认值
-    //   - x-opencode-session（仅 OpencodeZen）：客户端没带时注入代理实例级 id；
-    //     客户端已带则不覆盖（尊重其会话亲和意图）
+    //   - 鉴权：清掉客户端所有大小写变体凭据再按 authField 注入（both → 双发；
+    //     bearer/api_key 单发；空 key 一律不注入）
+    //   - UA 无条件覆盖为 kProxyUserAgent；anthropic-version 缺省补默认值
+    //   - x-opencode-session（仅 OpencodeZen）：没带注入代理实例级 id，已带不覆盖
     void applyHeaders(std::map<std::string, std::string>& headers,
                       const std::string& apiKey, AuthField authField) const;
 
@@ -65,30 +56,24 @@ struct UpstreamDialect {
     bool normalizeBody(std::string& body) const;
 };
 
-// ---- 方言覆盖文本 ↔ Kind（Profile::dialectOverride 的值域，审计 CPX-13）----
-// 值域：'anthropic_default' / 'opencode_zen'（空串 = 未覆盖）。UI 本线不暴露，
-// 经 DB / 配置文件设置。
-// 文本 → Kind：精确命中值域 → 有值；空串 / 未知 / 拼写错误 → nullopt（未覆盖，
-// 调用方回落 forBaseUrl 的 host 推断——读侧兜底，与 authFieldFromText 同口径）
+// ---- 方言覆盖文本 ↔ Kind（Profile::dialectOverride 值域）----
+// 值域：'anthropic_default' / 'opencode_zen'（空串 = 未覆盖；UI 本线不暴露）。
+// 文本 → Kind：空串/未知 → nullopt（调用方回落 host 推断）。
 std::optional<UpstreamDialect::Kind> dialectKindFromText(const std::string& text);
 
 // Kind → 规范文本（写侧规范化：库里只存两个规范值之一或空串）
 const char* dialectKindToText(UpstreamDialect::Kind kind);
 
-// Kind → 展示名（2026-09-30 batch-fix B）：表单「高级配置」页下拉 items 与
-// 详情 pane 生效方言文案共用的**单一来源**（不手抄字符串——同一概念两个名字
-// 必然漂移）。产出 "anthropic" / "opencode zen"；dialectKindToText 产内部值
-//（'anthropic_default' 等）不上 UI。
+// Kind → 展示名：表单下拉与详情 pane 生效方言文案共用的单一来源；
+// 产出 "anthropic" / "opencode zen"（dialectKindToText 产内部值不上 UI）。
 const char* dialectKindDisplayName(UpstreamDialect::Kind kind);
 
-// 模型名剥尾部 [1M]：大小写不敏感（[1m] 同样命中），容忍标记前后空白
-// （形如 "deepseek-v4-pro [1M] "，上游侧配置里带空格很常见）。
-// 命中 → 返回剥掉标记再 trim 尾部空白后的名字；未命中 → 原样返回入参。
+// 模型名剥尾部 [1M]：大小写不敏感、容忍标记前后空白（上游侧配置带空格常见）；
+// 命中 → 剥掉后 trim 尾部；未命中 → 原样返回。
 std::string stripOneMSuffix(const std::string& model);
 
-// 把请求体顶层 "model" 字符串按 stripOneMSuffix 归一，就地把该值替换掉。
-// 解析失败 / 没有 model / model 不是字符串 / 没有可剥的标记 → 返回 false
-// 且 body 不变（字节级零扰动，不做无谓的重序列化）。
+// 请求体顶层 "model" 按 stripOneMSuffix 归一。解析失败/无 model/无标记 → false
+// 且 body 不变（字节级零扰动）。
 bool normalizeModelInBody(std::string& body);
 
 } // namespace module::claude

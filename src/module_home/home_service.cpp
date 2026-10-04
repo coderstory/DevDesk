@@ -1,5 +1,4 @@
-// src/module_home/home_service.cpp
-// Home 仪表盘数据服务实现（spec §8.4）
+// src/module_home/home_service.cpp — Home 仪表盘数据服务实现
 #include "home_service.h"
 
 #include "core/call_rate.h"
@@ -11,8 +10,6 @@
 #include <utility>
 
 namespace module::home {
-
-// ===== 纯函数 =====
 
 int64_t startOfDayEpoch(std::time_t t) {
     std::tm local{};
@@ -27,9 +24,7 @@ std::string formatRelativeTime(int64_t modifiedAt, std::time_t now) {
     const int64_t diff = static_cast<int64_t>(now) - modifiedAt;
     if (diff < 60) return "刚刚";  // 含未来时间（时钟偏差）兜底
 
-    // 先按本地日历日分桶（同一天内才显示 "N 小时前"）
-    // THS-16：直接比较日历日序号（core::time::localDayNumber），不再用两个
-    // 本地零点相减 —— 后者在 DST 切换日（23h / 25h 的一天）会 ±1 天偏差。
+    // 按本地日历日序号分桶（DST 切换日不会像「两个本地零点相减」那样偏差一天）。
     const int64_t dayGap =
         core::time::localDayNumber(now) -
         core::time::localDayNumber(static_cast<std::time_t>(modifiedAt));
@@ -43,14 +38,10 @@ std::string formatRelativeTime(int64_t modifiedAt, std::time_t now) {
     if (dayGap == 1) return "昨天";
     if (dayGap < 7) return std::to_string(dayGap) + " 天前";
 
-    // 7 天以上 → 具体日期
     std::tm local{};
     core::time::localTime(static_cast<std::time_t>(modifiedAt), &local);
-    // 缓冲区按「GCC 能证明的最坏情况」定尺，不按「实际日期有多长」定尺：
-    // 三个 int 型字段每个最多吐 11 字节（"-2147483648"），加两个分隔符与结尾
-    // '\0' = 11*3 + 2 + 1 = 36。写 16 会被 GCC -Wformat-truncation 判红
-    // （2026-10-03 用 GCC 16.2.0 + Release 档全仓扫出来的硬错；本文件是跨平台
-    // 编译单元，MinGW 侧同版本 GCC 同理会红，但**未在 Windows CI 上实测**）。
+    // buf 按 GCC 能证明的最坏情况定尺：3 个 int 字段各最多 11 字节 + 2 分隔符 + '\0'
+    // = 36；写 16 会被 -Wformat-truncation 判红。
     char buf[36];
     std::snprintf(buf, sizeof(buf), "%04d-%02d-%02d",
                   local.tm_year + 1900, local.tm_mon + 1, local.tm_mday);
@@ -90,8 +81,6 @@ std::string formatRateTps(double tps) {
     }
     return buf;
 }
-
-// ===== HomeService =====
 
 HomeService::HomeService(core::data::SqliteDb& db) : db_(db) {}
 
@@ -174,8 +163,7 @@ core::Result<DashboardStats> HomeService::getStats(int recentNoteLimit) {
     const int64_t todayStart = startOfDayEpoch(now);
     const int64_t nowSecs = static_cast<int64_t>(now);
 
-    // 逾期口径单源：core/overdue.h 的 kWhereSql（与 TodoService::listOverdue
-    // 共用同一份片段，THS-04——不再各写一遍）
+    // 逾期口径单源 core/overdue.h 的 kWhereSql（与 TodoService::listOverdue 共用）。
     auto todayNotes = countBySql(
         "SELECT COUNT(*) AS n FROM markdown_index WHERE modified_at >= ?",
         todayStart);
@@ -189,7 +177,6 @@ core::Result<DashboardStats> HomeService::getStats(int recentNoteLimit) {
         return core::Result<DashboardStats>::fail(pendingTodos.errorCode(),
                                                   pendingTodos.errorMessage());
     }
-    // countBySql 收 const char*，故在此拼出完整 SQL（拼串成本相对 4 次查询可忽略）
     const std::string overdueCountSql =
         std::string("SELECT COUNT(*) AS n FROM todo_tasks WHERE ") +
         core::overdue::kWhereSql;
@@ -226,11 +213,8 @@ core::Result<std::vector<int64_t>> HomeService::getTodayHourlyTokenTotals(
     const std::time_t now = std::time(nullptr);
     const int64_t dayStart = startOfDayEpoch(now);
     const int64_t dayEnd = dayStart + 86400;
-    // 小时下标 = (started_at - 本地零点) / 3600：当日区间内得 0..23（本地
-    // 时区语义，与 todayApiCalls 同口径）；DST 日边缘可能越界（23/25h），
-    // 落点按 [0, hours) 过滤不进图
-    // SUM 的 COALESCE：一小时内全是未采集行（output_tokens IS NULL）时
-    // SUM 返回 NULL —— NULL 与「0 个 token」在本图同义（都不画），按 0 收
+    // 小时下标 = (started_at - 本地零点) / 3600；DST 日边缘越界的落点按 [0, hours) 过滤。
+    // COALESCE：全未采集行 SUM 返回 NULL，与「0 token」同义，按 0 收。
     auto prep = db_.prepare(
         "SELECT (started_at - ?) / 3600 AS h, "
         "COALESCE(SUM(output_tokens), 0) AS n "
@@ -258,8 +242,7 @@ core::Result<std::vector<int64_t>> HomeService::getTodayHourlyTokenTotals(
         return core::Result<std::vector<int64_t>>::fail(rows.errorCode(),
                                                         rows.errorMessage());
     }
-    // 恒返回恰 hours 个点（无调用的小时补 0）——序列恒非空，调用方不必再判
-    // 「查询有没有返回行」
+    // 恒返回恰 hours 个点（无调用的小时补 0），序列恒非空。
     std::vector<int64_t> series(static_cast<size_t>(hours), 0);
     for (const auto& row : rows.value()) {
         auto hRaw = row.getInt64("h");
@@ -278,10 +261,8 @@ core::Result<std::vector<int64_t>> HomeService::getTodayHourlyTokenTotals(
 }
 
 core::Result<LastCallRate> HomeService::getLastCallRate() {
-    // 「成功」谓词与 core/call_rate.h 的 isSuccessful 同口径（2xx 且
-    // output_tokens > 0）——SQL 侧写出同一条件，两处必须一起改。
-    // 排序与 recentCalls 一致（started_at DESC, id DESC）：同一秒内的多行按
-    // 落库顺序取最后一条，不会因 id 抖动挑错行
+    // 「成功」谓词与 core/call_rate.h 的 isSuccessful 同口径（2xx 且 output_tokens > 0），
+    // SQL 侧写出同一条件，两处必须一起改；排序 started_at DESC, id DESC 与 recentCalls 一致。
     auto prep = db_.prepare(
         "SELECT status_code, output_tokens, latency_ms, started_at "
         "FROM claude_call_logs "

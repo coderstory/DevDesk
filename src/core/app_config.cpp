@@ -1,9 +1,6 @@
-// src/core/app_config.cpp
 // 通用「键 → JSON 值」配置存储（接口见 app_config.h）
-//
-// 一律经 SqliteDb 的公共入口落语句，**本文件不出现任何裸 sqlite3_* 调用**：
-// 这样「每个句柄操作入锁」由 SqliteDb / Statement 一处兜住（含 finalize ——
-// 那是 2026-10-02 真机 SIGSEGV 的头号漏点，见 sqlite_db.h 抬头）。
+// 一律经 SqliteDb 公共入口，不出现裸 sqlite3_*：句柄入锁与 finalize 由
+// SqliteDb / Statement 一处兜住（finalize 漏点是 SIGSEGV 头号来源）。
 #include "app_config.h"
 #include "time.h"
 
@@ -14,9 +11,6 @@ namespace core::appconfig {
 
 namespace {
 
-// 写入时刻（unix 秒）。2026-10-03 轻量化：「core 没有『现在』的统一入口，各存储
-// 层各自取系统时钟」这句话当时是事实、现在不是了 —— 入口补在 core/time.h，
-// 4 份逐字相同的本地 nowUnix() 已收敛到那里。
 using core::time::nowUnix;
 
 constexpr const char* kSetSql =
@@ -47,8 +41,7 @@ Result<void> set(core::data::SqliteDb& db, const std::string& key,
 Result<void> setMany(core::data::SqliteDb& db,
                      const std::vector<Entry>& entries) {
     if (entries.empty()) return Result<void>::ok();
-    // 整批一个事务：要么全成要么全不成，且别的线程在这段期间被 transaction()
-    // 持有的锁整段挡住（读不到「只写了一半的键」这种中间态）。
+    // 整批一个事务：要么全成要么全不成，别的线程读不到「只写了一半」的中间态
     return db.transaction([&]() -> Result<void> {
         const auto now = static_cast<int64_t>(nowUnix());
         auto prep = db.prepare(kSetSql);
@@ -87,7 +80,7 @@ Result<std::string> get(core::data::SqliteDb& db, const std::string& key) {
         return Result<std::string>::fail(stepped.errorCode(), stepped.errorMessage());
     }
     if (!stepped.value()) {
-        // 键不存在 ≠ 值为空串：前者是「没配过」，后者是合法的配置值
+        // 键不存在 ≠ 值为空串：前者是「没配过」，后者是合法配置值
         return Result<std::string>::fail(ErrorCode::NotFound,
                                          "app_config 无此键: " + key);
     }
@@ -135,8 +128,7 @@ Result<std::vector<Entry>> listWithPrefix(core::data::SqliteDb& db,
         return Result<std::vector<Entry>>::fail(prep.errorCode(),
                                                 prep.errorMessage());
     }
-    // LIKE 的元字符（% / _ / \）在键名里没有语义，但配置键一旦含它们就会
-    // 变成通配符匹配到别人的行——显式转义，前缀按字面比。
+    // LIKE 元字符（% / _ / \）在键名里无语义，不转义会变成通配符匹配到别人的行
     std::string pattern;
     pattern.reserve(prefix.size() * 2);
     for (char c : prefix) {

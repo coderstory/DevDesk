@@ -1,15 +1,10 @@
 // src/module_settings/settings_ui_cards.h
-// R6（spec 2026-09-27-refactor-incremental-design §5.2）：settings 模块 8 张卡的
-// 绘制单元 —— 逐字自 settings_module.cpp 搬出（原 compose 内的 9 个私有
-// draw*Card；2026-09-28 about 页设计删去 drawAboutCard，关于信息迁往独立
-// module_about）。全部是自由函数：吃只读入参（SettingsCardsIn）与回调
-//（SettingsCardActions），不捕获 this、不写模块成员。
+// settings 模块 8 张卡的绘制单元，全部是自由函数：吃只读入参（SettingsCardsIn）与
+// 回调（SettingsCardActions），不捕获 this、不写模块成员。
 //
-// 回调约定（R4 同款，spec §4.2.3）：卡片在元素回调里**按值捕获**用到的
-// std::function（`[f = a.xxx]`），不捕获本文件内的临时对象——元素树比一帧活得
-// 久，捕引用会悬垂。需要写回模块状态的一律经 SettingsCardActions。
-//
-// 零行为变化：节点 id、文案、字号、颜色、几何、控制流逐字保留。
+// 回调约定：卡片在元素回调里按值捕获用到的 std::function（`[f = a.xxx]`），不捕获
+// 本文件内的临时对象——元素树比一帧活得久，捕引用会悬垂；写回模块状态一律经
+// SettingsCardActions。
 #pragma once
 
 #include "settings_config.h"

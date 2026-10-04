@@ -1,26 +1,12 @@
-// src/core/schema.h
-// DevDesk 数据库**当前**完整 schema（单份、无版本、无历史包袱）
-//
-// 口径（2026-09-30 用户决策）：项目不写迁移 / 不兼容旧数据——程序尚未开发完毕，
-// 不存在需要升级的真实旧库。因此这里**没有** schema_version 表、没有 ALTER
-// 序列、没有「数据库比二进制新」守卫：只有一份「程序现在期望的最终形态」。
-//
-// 语义：
-//   - SqliteDb::applySchema(kSql) 把整份脚本在**一个事务**里幂等执行一遍
-//     （全部 CREATE ... IF NOT EXISTS + 一条带 NOT EXISTS 守卫的种子 INSERT）。
-//   - 已存在的表/索引不报错、不改动；空库与半成品库都被补成同一形态。
-//   - **不升级旧库**：旧 DB 文件缺列就是缺列，本程序不检测、不迁移、不兜底。
-//     想要当前 schema 就删掉旧 db 文件重来。
-//
-// 改动 schema 时的唯一动作：**直接改这份脚本**（改列 / 改默认值 / 改索引），
-// 不追加新版本、不写兼容分支。改完跑 tests/test_core/test_schema.cpp 的
-// 「逐表逐列」用例核对最终形态。
+// DevDesk 数据库当前完整 schema（单份、无版本、无历史包袱）
+// 口径：不写迁移、不兼容旧数据——没有 schema_version 表 / ALTER 序列 / 新库守卫。
+// applySchema 在一个事务里幂等执行全脚本；旧 DB 缺列不检测、不迁移、不兜底。
+// 改 schema 的唯一动作：直接改这份脚本，不追加版本、不写兼容分支。
 #pragma once
 
 namespace core::schema {
 
-// 完整 schema 脚本：可重复执行（幂等）。
-// 顺序：先全部 DDL（表 → 虚拟表 → 索引），末尾一条种子 INSERT。
+// 完整 schema 脚本：可重复执行（幂等）；先全部 DDL，末尾一条种子 INSERT。
 inline constexpr const char* kSql = R"(
     -- ==================== Markdown 笔记本 ====================
     CREATE TABLE IF NOT EXISTS markdown_index (

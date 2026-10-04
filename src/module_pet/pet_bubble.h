@@ -1,6 +1,5 @@
-// 气泡对话状态（桌宠设计 §4.5 M2，纯逻辑无 EUI 依赖，供单测）：
-//   show(短语, 时长) → 每帧 tick(dt) 递减 → 归零自动隐藏
-// 短语表在 pet_skin.h（皮肤可换语料）；触发与绘制在 pet_window.cpp
+// 气泡对话状态（纯逻辑无 EUI 依赖，供单测）：show(短语, 时长) → 每帧 tick(dt)
+// 递减 → 归零自动隐藏。短语表在 pet_skin.h；触发与绘制在 pet_window.cpp。
 #pragma once
 
 #include <cstdint>
@@ -33,14 +32,8 @@ struct PetBubble {
     }
 };
 
-// ---- 气泡内容源②（§4.5，审计 [18]）：Home 逾期任务数文案（纯函数供单测）----
-// getOverdueCount 为 main 注入的跨模块只读桥（契约见 pet_window.h
-// OverdueCountGetter，pet 不 include module_home）：
-//   - 桥未注入（空 std::function）/ 返回 nullopt（todo 模块关闭、查询失败）
-//     → 空串 = 数据不可用，调用方回退内容源①静态语料
-//     （M2 验收降级条款：不显示死数据）
-//   - N > 0  → 「你有 N 条逾期任务」（设计原话款式）
-//   - N <= 0 → 正面文案「全部搞定，真棒！」——无逾期不弹「0 条」死数字
+// 内容源②Home 逾期任务数文案（纯函数供单测）。桥未注入 / 返回 nullopt（todo 关闭、
+// 查询失败）→ 返回空串，调用方回退内容源①；N <= 0 → 正面文案，不弹「0 条」死数字。
 inline std::string overdueBubbleText(
     const std::function<std::optional<int64_t>()>& getOverdueCount) {
     if (!getOverdueCount) {
@@ -56,16 +49,9 @@ inline std::string overdueBubbleText(
     return "你有 " + std::to_string(*n) + " 条逾期任务";
 }
 
-// ---- 气泡内容源③（M2 §4.5，产品审计 [18]）：代理请求事件文案（纯函数供单测）----
-// getProxyEvent 为 main 注入的 app 级只读桥（契约见 pet_window.h
-// ProxyEventGetter，pet 不 include module_claude_proxy；读取即消费，一个事件
-// 最多弹一次）：
-//   - 桥未注入（空 std::function）/ 返回 nullopt（无事件 / claude_proxy 关闭 /
-//     事件过期）→ 空串 = 无数据，调用方按 ②→① 回退（不显示死数据条款）
-//   - 0（上游不可达，网络层失败无响应码）→「代理出错：网络失败」
-//     （原始 curl 报错文本不入气泡——太长且对用户无意义，日志面板已有）
-//   - >=400 →「代理出错：{status}」（429 限流 / 500 / 503 带码直读）
-//   - 其余（2xx/3xx）→「代理转发完成」
+// 内容源③代理请求事件文案（纯函数供单测）。桥返回 HTTP 状态码：0 = 上游不可达 →
+// 「网络失败」，>=400 →「代理出错：{status}」，其余 →「转发完成」；nullopt/未注入 → 空串。
+// 读取即消费（take 语义），一个事件最多弹一次。
 inline std::string proxyEventBubbleText(
     const std::function<std::optional<int>()>& getProxyEvent) {
     if (!getProxyEvent) {
@@ -84,10 +70,7 @@ inline std::string proxyEventBubbleText(
     return std::string("代理转发完成");
 }
 
-// 三级内容源选词（M2 §4.5 ③>②>① 优先级，纯函数供单测断言回退序）：
-// 返回 {文案, 停留秒}；空文案 = ③② 桥都无数据，调用方回退内容源①静态语料。
-// 停留时长沿用既定口径：代理事件是短句 3s；逾期文案含数字 4s 才读完。
-// 注意：getProxyEvent 为 take 语义——有事件必出非空文案即弹，不误吞
+// 三级内容源选词（③>②>①，纯函数）：返回 {文案, 停留秒}；空文案 = 桥都无数据，调用方回退①。
 inline std::pair<std::string, double> petDataBubbleText(
     const std::function<std::optional<int>()>& getProxyEvent,
     const std::function<std::optional<int64_t>()>& getOverdueCount) {
@@ -102,22 +85,9 @@ inline std::pair<std::string, double> petDataBubbleText(
     return {};
 }
 
-// ---- 气泡调度（PAB-05）：本轮「弹哪一级内容源 / 停多久」的纯函数 ----
-// 抽取自 pet_window.cpp 的 onTimer 闭包（内联在闭包里时不可单测）：输入 dt +
-// 当前状态（气泡在场 / 是否 Idle）+ 一个 roll 值 → 计划；不依赖 EUI、不读全局、
-// 不碰随机源（roll 由调用方给，固定输入必得同一结果）。
-// 命中口径（与抽取前逐字一致）：
-//   - 气泡在场 或 非 Idle → 不弹（上一泡没走不让位；Poked/Sleep/Typing 不刷屏）
-//   - dt <= 0（首帧 / 时钟未推进）→ 不弹
-//   - roll < dt/150 → 数据槽位：③代理事件 > ②逾期（取词见 petDataBubbleText；
-//     其桥为 take 语义，调用方只能在命中本槽位时才读，未命中不得消费事件）
-//   - roll < dt/60  → ①静态语料（dt/150 ⊂ dt/60：一个 roll 即表达两级优先）
-//   - 其余 → 不弹
-// 平均间隔（每 tick 命中概率 = dt/节拍 → 期望等待 = 节拍）：
-//   数据槽位 150s（2.5min）；任意一泡 60s（两级合计）；静态语料单独 ~100s——
-//   两级共享一个 roll，静态的净概率是 dt/60 − dt/150 = dt/100。
-// 旧注释写「①静态语料——平均 ~60s 一句」，把"任意一泡"的节拍安在了静态单列头
-// 上，与代码行为不符：PAB-05 数字对齐以代码行为为准，只改注释、不改行为。
+// 气泡调度（纯函数）：输入 dt + 当前状态（气泡在场/是否 Idle）+ roll → 本轮弹哪一级。
+// 命中口径：气泡在场或非 Idle 不弹；dt <= 0 不弹；roll < dt/150 → 数据槽位（③>②）；
+// roll < dt/60 → ①静态语料；其余不弹。平均间隔：数据槽位 150s、任意一泡 60s。
 enum class PetBubbleSource {
     None,    // 本轮不弹
     Data,    // 数据槽位：③代理事件 > ②逾期（文案/秒数由 petDataBubbleText 定）
@@ -126,13 +96,11 @@ enum class PetBubbleSource {
 
 struct PetBubblePlan {
     PetBubbleSource source = PetBubbleSource::None;
-    // 计划停留秒数。Static = 静态语料停留；Data = 桥无数据时降级静态语料的
-    // 兜底停留（桥有数据时被 petDataBubbleText 的秒数覆盖）；None = 0
+    // 计划停留秒数；Data 无数据时降级静态语料的兜底停留，None = 0。
     double holdSec = 0.0;
 };
 
-// 调度节拍（秒）——命名常量 = 注释与代码的单源真相（PAB-05 数字对齐：
-// 上一版注释的 60s/100s 口径差就出在裸字面量上）
+// 调度节拍（秒）——命名常量 = 注释与代码的单源真相。
 inline constexpr double kPetDataSlotSec = 150.0;      // ③②数据槽位
 inline constexpr double kPetAnyBubbleSlotSec = 60.0;  // 两级共享槽位上界
 inline constexpr double kPetBubbleHoldSec = 3.0;      // 静态语料 / 数据降级停留
@@ -154,25 +122,11 @@ inline PetBubblePlan petBubbleSchedule(double dtSec, bool bubbleVisible, bool id
     return {};
 }
 
-// ---- 气泡布局（2026-09-30 用户反馈「展示文本的框框需要上移，不要盖在
-// 桌宠上面」；纯函数 + 命名常量供单测，PAB-05 口径：注释数字与代码同源）----
-// 改前窗口 = 精灵帧紧包围盒、气泡画在窗口 y=0..28——气泡矩形与精灵帧矩形
-// 重叠，盖住宠物头顶。改法：整窗加高一条「气泡让位条」，精灵帧整体下移，
-// 气泡画在条内、与帧留 6px 间距（4-8px 口径中值）：
-//
-//   ┌──────────────────────┐ ← 窗口顶 y=0
-//   │     ┌────────┐       │ 气泡条 0..28（bg + tail + text，可见时才画）
-//   │     └────────┘        │
-//   │            ▾ 6px 间距 │
-//   ├──────────────────────┤ ← y=34（kBubbleStripH）
-//   │        精灵帧         │
-//   └──────────────────────┘ ← 窗口底 = frameH + 34
-//
-// 单位口径：全部是**窗口单位 = 点**（GLFW windowSize 同一口径），不乘
-// Retina contentScale。「气泡不超出屏幕工作区（越界回贴边）」由启动/落盘
-// 共用的 clampPetPosToMonitors 保证——调用方传**整窗高**（petWindowHeight），
-// 钳制后窗口顶（气泡条上沿）不会越过工作区上缘（getMonitorWorkAreas 既有
-// API，M2 按位置选屏语义不变）。
+// 气泡布局：整窗加高一条「气泡让位条」，精灵帧整体下移，气泡画在条内、与帧留
+// 6px 间距（不再盖在宠物头顶）。窗口顶 y=0 起是气泡条 0..28，y=34（kBubbleStripH）
+// 以下是精灵帧。
+// 单位口径：全部是窗口单位 = 点，不乘 Retina contentScale。「气泡不越出屏幕工作区」
+// 由 clampPetPosToMonitors 保证（调用方传整窗高，钳制后气泡条上沿不越工作区上缘）。
 struct PetRect {
     float x = 0.0f;
     float y = 0.0f;
@@ -184,20 +138,17 @@ inline constexpr float kBubbleHeight = 28.0f;  // 气泡条高（bg 矩形；tex
 inline constexpr float kBubbleGap = 6.0f;      // 气泡底沿 ↔ 精灵帧顶间距（4-8px 口径）
 inline constexpr float kBubbleStripH = kBubbleHeight + kBubbleGap;  // 34 = 让位条总高
 
-// 气泡矩形（窗口坐标）：气泡条内水平居中（bubbleW 可超窗宽 → x 为负被窗口
-// 裁剪，与改前同口径；窄皮肤气泡两侧被裁属既有限制，不在本次范围）
+// 气泡矩形（窗口坐标）：气泡条内水平居中（bubbleW 可超窗宽 → x 为负被裁剪）。
 inline PetRect petBubbleRect(float windowW, float bubbleW) {
     return {(windowW - bubbleW) * 0.5f, 0.0f, bubbleW, kBubbleHeight};
 }
 
-// 精灵帧矩形（窗口坐标）：整帧让位到气泡条下方（垂直分离 ⇒ 与气泡矩形恒
-// 不相交——单测断言「气泡矩形与精灵帧矩形不相交」的几何基础）
+// 精灵帧矩形：整帧让位到气泡条下方（与气泡矩形恒不相交）。
 inline PetRect petSpriteRect(float windowW, float windowH) {
     return {0.0f, kBubbleStripH, windowW, windowH - kBubbleStripH};
 }
 
-// 桌宠窗口高 = 精灵帧高 + 气泡让位条（点；frameH 传皮肤帧高或缩放后的帧高）。
-// 宽不变 = 帧宽：气泡条只占竖向一条
+// 桌宠窗口高 = 精灵帧高 + 气泡让位条（点）。
 inline int petWindowHeight(int frameH) {
     return frameH + static_cast<int>(kBubbleStripH);
 }

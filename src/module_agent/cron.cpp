@@ -1,7 +1,6 @@
 // src/module_agent/cron.cpp
-// cron 5 字段解析 + 匹配（agent M2 Task 3，spec §5.1 R4）：纯函数，无 IO 无时钟。
-// 语法域：`*` / 单值 / `a-b` / `a-b/c` / `*/c` / `a/c` / 逗号列表（逐段同构解析）。
-// 拒绝域：字段数≠5、空字段、越界、逆序区间（a>b）、步长 0、非数字（含 L/W/#/英文名）。
+// cron 5 字段解析 + 匹配：纯函数，无 IO 无时钟。支持 * / 单值 / a-b / a-b/c /
+// */c / a/c / 逗号列表；拒绝字段数≠5、空字段、越界、逆序区间、步长 0、非数字
 #include "module_agent/cron.h"
 
 #include <charconv>
@@ -13,8 +12,7 @@
 namespace module::agent {
 namespace {
 
-// 严格整数解析：空串 / 尾随字符 / 溢出 / 非数字（含 L W # 与英文名）一律拒。
-// 前导 '-' 由 from_chars 接受、随后在越界检查（lo ≥ 0）被拦，无需特判。
+// 严格整数解析：空串 / 尾随字符 / 溢出 / 非数字一律拒。前导 '-' 由越界检查兜住
 bool parseNumber(const std::string& text, int& out) {
     if (text.empty()) return false;
     int value = 0;
@@ -24,8 +22,7 @@ bool parseNumber(const std::string& text, int& out) {
     return true;
 }
 
-// 按空格切分（连续空格视为一个分隔；首尾空白 trim 掉）。
-// 制表符等其它空白不做分隔——它们留在字段里，随后被 parseNumber 拒掉。
+// 按空格切分（连续空格合一，首尾 trim）；制表符等其他空白留字段里由 parseNumber 拒
 std::vector<std::string> splitFields(const std::string& expr) {
     size_t begin = 0, end = expr.size();
     while (begin < end && expr[begin] == ' ') ++begin;
@@ -46,8 +43,7 @@ std::vector<std::string> splitFields(const std::string& expr) {
     return fields;
 }
 
-// 逗号列表的一段：`*` / 单值 / `a-b`，三种形态各自可带 `/c` 步长。
-// `a/c` 按「a 起、步长 c、到上界 hi 止」解释（a=lo 时与 `*/c` 等价）。
+// 逗号列表的一段：`*` / 单值 / `a-b`，可带 `/c` 步长；`a/c` = a 起、步长 c、到 hi 止
 bool parseItem(const std::string& item, int lo, int hi, bool* out) {
     if (item.empty()) return false;
     std::string base = item;
@@ -72,9 +68,8 @@ bool parseItem(const std::string& item, int lo, int hi, bool* out) {
         }
     }
     if (start < lo || end > hi) return false;           // 越界
-    // 步长上界 = 字段跨度（hi-lo+1）：步长大于跨度只可能在起点命中一次，等价写法
-    // 是单值——拒绝它同时堵死「巨大 step 让步进 `v += step` 有符号溢出 → 数组越界写」
-    // 这条 UB（评审实测：`5/2147483647 * * * *` / `0 0 */2147483647 * *` SEGV）。
+    // 步长上界 = 字段跨度（hi-lo+1）：超过则只命中一次、等价单值；拒绝它同时堵死
+    // 「巨大 step 让 v += step 有符号溢出 → 数组越界写」的 UB
     if (step > hi - lo + 1) return false;
     for (int v = start; v <= end;) {
         out[v] = true;
@@ -147,8 +142,7 @@ bool cronMatches(const CronExpr& c, const std::tm& local) {
     const int wday = local.tm_wday;    // 0=周日（由 core::time::localTime 填充）
     const bool domHit = mday >= 1 && mday <= 31 && c.doms[mday];
     const bool dowHit = wday >= 0 && wday <= 6 && c.dows[wday];
-    // 日/周双受限 → vixie「或」（命中任一即命中）；仅一方受限 → 该方必须命中；
-    // 两方皆 `*` → 恒真
+    // 日/周双受限 → vixie「或」（命中任一）；仅一方受限 → 该方必须命中；皆 `*` → 恒真
     if (c.domRestricted && c.dowRestricted) return domHit || dowHit;
     if (c.domRestricted) return domHit;
     if (c.dowRestricted) return dowHit;

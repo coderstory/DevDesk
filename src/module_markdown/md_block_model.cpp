@@ -1,16 +1,9 @@
 // src/module_markdown/md_block_model.cpp
 // 块级切分器 + 增量对齐（设计说明见 md_block_model.h 头注释）。
-//
-// 「宁可多并，不可错切」总原则：逐块渲染与整篇渲染的等价性只会被【错切】
-// 破坏（切在 md4c 不分块的地方 → 两段各自解析结果 ≠ 整体解析）；【多并】
-// 永远安全（md4c 对同一字节区间自己分块，结果与整篇一致）。因此：
-//   - 切点白名单 = md4c（GitHub 方言）必然开新块的位置：列 0 围栏起点、
-//     空行后（同型/缩进延续的松散列表除外）、ATX 标题行、列 < 内容缩进的
-//     bullet / "1." 列表标记、"> " 引用行、空行后的分隔线、空行后的表格段
-//   - 歧义位置全部并入当前块：setext 下划线、段落内表格行（各家对表格能否
-//     打断段落有分歧）、非 "1." 有序标记的 lazy 延续、列表内容缩进 ≥ 的
-//     任何行（嵌套列表/代码块都在列表块内，交给 md4c）
-// 围栏配对完全复用 scanFences（与大纲/编辑器高亮同一状态机，一鱼三吃）。
+// 「宁可多并，不可错切」：错切破坏逐块渲染与整篇渲染的等价性，多并永远安全。切点白名单 =
+//   md4c 必然开新块处（列 0 围栏、空行后、ATX 标题、列 < 内容缩进的列表标记、"> " 引用、
+//   空行后分隔线/表格）；歧义位置（setext、段落内表格、lazy 延续、列表内容缩进内）全并入。
+// 围栏配对复用 scanFences（与大纲/编辑器高亮同一状态机）。
 #include "md_block_model.h"
 
 #include "md_line_scanner.h"
@@ -64,9 +57,8 @@ bool isQuoteLine(std::string_view body) {
     return i <= 3 && i < body.size() && body[i] == '>';
 }
 
-// 列表标记行：^ {0,3}([-*+]|\d{1,9}[.)])(\s|$)。
-// ordered = 数字项；marker = bullet 字符（有序记 '.'）；
-// markerEnd = 标记结束偏移（用于内容缩进 = leading + marker + 空格数）
+// 列表标记行：^ {0,3}([-*+]|\d{1,9}[.)])(\s|$)。ordered = 数字项；marker = bullet 字符
+//（有序记 '.'）；markerEnd = 标记结束偏移（内容缩进 = leading + marker + 空格数）。
 bool isListMarker(std::string_view body, bool* ordered, char* marker,
                   size_t* markerEnd) {
     const size_t indent = leadingSpaces(body);
@@ -132,7 +124,7 @@ bool isTableDelimiterLine(std::string_view body) {
     return hasDash && hasPipe;
 }
 
-// 表体行（保守口径：列 0 硬起 |，与审计[12] 生成语法 / md_highlight 一致）
+// 表体行（保守口径：列 0 硬起 |，与生成语法 / md_highlight 一致）
 bool isTableRowLine(std::string_view body) {
     return !body.empty() && body[0] == '|';
 }
@@ -143,11 +135,8 @@ size_t lineStartAfter(const std::string& text, size_t le, size_t n) {
     return le + 1;
 }
 
-// 链接引用定义行：^ {0,3}\[label\]:\s （label 非空；保守口径：结构像即算）。
-// refdef 是 md4c 的【全文档上下文】——定义段本身不产出可见块，且跨块引用
-// （[foo] 链接在别的块）只有整篇一起解析才能解析。逐块解析会让未定义块
-// 把 [foo] 渲染成字面文本 → 与整篇不等价。含 refdef 的文档整篇退化为单块
-// （单块 = 原样整篇，恒等价），增量收益归零但渲染正确。宁可漏增量不可错切。
+// 链接引用定义行：^ {0,3}\[label\]:\s。refdef 是 md4c 的全文档上下文——含 refdef 的文档
+// 整篇退化为单块（增量收益归零但渲染正确）；宁可漏增量不可错切。
 bool isRefdefLine(std::string_view body) {
     const size_t indent = leadingSpaces(body);
     if (indent > 3 || indent >= body.size() || body[indent] != '[') return false;
@@ -168,7 +157,6 @@ bool startsTable(const std::string& text, size_t ls, size_t le, size_t n) {
 }
 
 // 围栏块末字节：闭栏行行尾（含换行）；未闭合 = 文末。
-// （scanFences：contentEnd = 闭栏行行首 或 size()）
 size_t fenceBlockEnd(const std::string& text, const MdFenceBlock& f) {
     if (f.contentEnd >= text.size()) return text.size();
     const size_t le = text.find('\n', f.contentEnd);
@@ -250,9 +238,8 @@ std::vector<MdBlock> segmentMarkdownBlocks(const std::string& text) {
     };
 
     Run run;
-    // 前导空行归属：未终结 run 时挂 firstBlank（仅 List 延迟裁决），
-    // run 已闭合时空行段记在 leadBlank（并入下一块头部，md4c 忽略块前
-    // 空行 → 渲染无差）。leadBlank==0 用 leadValid 区分。
+    // 前导空行归属：未终结 run 时挂 firstBlank（仅 List 延迟裁决），run 已闭合时空行段记在
+    // leadBlank（并入下一块头部）；leadBlank==0 用 leadValid 区分。
     size_t firstBlank = 0;
     bool sawBlank = false;      // List 挂起态
     size_t leadBlank = 0;
@@ -282,8 +269,7 @@ std::vector<MdBlock> segmentMarkdownBlocks(const std::string& text) {
         const size_t next = le == n ? n : le + 1;                   // 下一行首
         const std::string_view body = lineBody(text, i, le);
 
-        // 1) 列 0 围栏起点：无条件开块（fence 必打断段落/列表/引用；内部
-        //    行不参与分类，i 直接跳过闭栏）
+        // 1) 列 0 围栏起点：无条件开块（fence 必打断段落/列表/引用；内部行不参与分类）。
         if (const size_t fe = fenceEndAt(i)) {
             const size_t start = sawBlank ? firstBlank : takeLead(i);
             closeRun(start);
@@ -354,9 +340,8 @@ std::vector<MdBlock> segmentMarkdownBlocks(const std::string& text) {
                                                   orderedCanInterrupt(body)));
                         break;
                     case MdBlockKind::List:
-                        // 列表项内容缩进以上的任何行属于本列表（嵌套列表/
-                        // 代码块，交给 md4c）；以下才看打断：异型且可打断
-                        // 标记、标题、引用。同型标记 = 下一项，吸收。
+                        // 列表项内容缩进以上的任何行属于本列表（嵌套列表/代码块，交给 md4c）；
+                        // 以下才看打断：异型且可打断标记、标题、引用。同型标记 = 下一项，吸收。
                         absorb = indent >= run.listContentIndent ||
                                  (!heading && !quote &&
                                   !(listMarker && orderedFlag != run.listOrdered &&
@@ -389,8 +374,7 @@ std::vector<MdBlock> segmentMarkdownBlocks(const std::string& text) {
             continue;
         }
         if (isDividerLine(body)) {
-            // 能走到这里说明前一行是空行或自足块（setext 情形已被上游
-            // run 吸收）
+            // 能走到这里说明前一行是空行或自足块（setext 情形已被上游 run 吸收）。
             emit(MdBlockKind::Divider, start, next);
             i = next;
             continue;
@@ -405,8 +389,7 @@ std::vector<MdBlock> segmentMarkdownBlocks(const std::string& text) {
         } else if (quote) {
             run.kind = MdBlockKind::Quote;
         } else if (startsTable(text, i, le, n)) {
-            // 表格仅在独立起点（空行后/文首/自足块后）识别——段落内 | 行
-            // 是否开表各实现有分歧，一律按 lazy 文本并入段落保等价
+            // 表格仅在独立起点识别——段落内 | 行是否开表各实现有分歧，一律按 lazy 文本并入段落保等价。
             run.kind = MdBlockKind::Table;
         } else {
             run.kind = MdBlockKind::Paragraph;
@@ -438,9 +421,8 @@ MdBlockUpdate MdBlockModel::update(const std::string& text) {
 
     std::vector<MdBlock> next = segmentMarkdownBlocks(text);
 
-    // (kind, hash) 双端对齐：未跨越变化窗口的块字节相同 → hash 相同 →
-    // 前/后缀命中即继承 stableId（块身份跨编辑稳定，供渲染缓存键控；
-    // 上游 cachedMarkdownDocument 按 source 串键 LRU，未变块解析零成本）。
+    // (kind, hash) 双端对齐：未跨越变化窗口的块字节相同 → hash 相同 → 前/后缀命中即继承
+    // stableId（块身份跨编辑稳定，供渲染缓存键控；未变块命中上游 source 键 LRU 零成本）。
     const size_t m = blocks_.size();
     const size_t k = next.size();
     size_t p = 0;
@@ -470,10 +452,8 @@ MdBlockUpdate MdBlockModel::update(const std::string& text) {
         r.dirtyFirst = p;
         r.dirtyLast = k - 1 - s;
     }
-    // 增量口径：切块本身恒为 O(n) 行扫描（与既有 scanFences 同量级，
-    // 万行 ms 级——md_highlight 性能探针先例）；「编辑只重算受影响块」
-    // 的收益在【解析/布局层】：逐块渲染时脏区间外块命中上游缓存、
-    // 不重析。连切块也 O(dirty) 的区段重扫留给实测超预算再做。
+    // 增量口径：切块本身恒为 O(n) 行扫描（万行 ms 级）；「编辑只重算受影响块」的收益在解析/
+    // 布局层——脏区间外块命中上游缓存不重析。连切块也 O(dirty) 的重扫留待实测超预算再做。
     r.incremental = false;
 
     blocks_ = std::move(next);
@@ -494,8 +474,7 @@ size_t MdBlockModel::blockIndexAt(size_t offset) const {
 
 size_t mdFindBlockByContent(const std::vector<MdBlock>& blocks, MdBlockKind kind,
                             uint64_t hash, int stableId, size_t nearByte) {
-    // ① 三元组 (kind, hash, stableId) 全等 → 唯一命中（stableId 由 update 单调
-    //    递增分配不重复，重复块也能据此区分实例）。先在全部块里找三元命中：
+    // ① (kind, hash, stableId) 全等 → 唯一命中（stableId 单调分配不重复，重复块也能区分实例）。
     size_t tripleHit = std::string::npos;
     for (size_t i = 0; i < blocks.size(); ++i) {
         if (blocks[i].kind == kind && blocks[i].hash == hash &&
@@ -505,8 +484,7 @@ size_t mdFindBlockByContent(const std::vector<MdBlock>& blocks, MdBlockKind kind
         }
     }
     if (tripleHit != std::string::npos) return tripleHit;
-    // ② 三元组无命中 → 回退 (kind, hash) 内容等价类：取 |start - nearByte| 最小
-    //    者；等距取下标小者（i 递增遍历，只在严格更近时换，天然保下标小者优先）。
+    // ② 无三元命中 → 回退 (kind, hash) 等价类：取 |start - nearByte| 最小者；等距取下标小者。
     size_t best = std::string::npos;
     for (size_t i = 0; i < blocks.size(); ++i) {
         if (blocks[i].kind != kind || blocks[i].hash != hash) continue;

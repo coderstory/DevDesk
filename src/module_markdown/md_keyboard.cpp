@@ -1,6 +1,5 @@
 // src/module_markdown/md_keyboard.cpp
-// 编辑器键盘流纯函数实现（接口见 md_keyboard.h）。
-// 行号/行首换算复用 md_line_scanner，保证与状态栏「行:列」同一套语义。
+// 编辑器键盘流纯函数实现（接口见 md_keyboard.h）；行号/行首换算复用 md_line_scanner。
 #include "md_keyboard.h"
 
 #include "md_line_scanner.h"
@@ -20,7 +19,7 @@ size_t lineStartOfCursor(const std::string& text, int cursor) {
     return p == std::string::npos ? 0 : p + 1;
 }
 
-// ---- 审计 [12] 表格跳格 helpers ----
+// 表格跳格 helpers
 
 // 块内一行：[start,end) 不含换行符；pipes = 行内 '|' 绝对偏移（≥2 才成立）；
 // separator = 表头分隔行（单元格仅 -/:/空白且至少一个 '-'）
@@ -157,7 +156,6 @@ void applyTab(EditBuffer& buf, bool shift) {
     const int e = std::max(buf.selStart, buf.selEnd);
 
     if (!shift && s == e) {
-        // 无选区 Tab：插入 4 空格（同打字）
         buf.text.insert(static_cast<size_t>(s), "    ");
         buf.cursor = s + kIndentUnit;
         buf.selStart = buf.selEnd = buf.cursor;
@@ -202,11 +200,8 @@ void applyTab(EditBuffer& buf, bool shift) {
         }
     }
 
-    // 偏移修正：off 始终按原始坐标比较，shift 累计位移最后一次性应用
-    //（终验复审：原实现边比边移，删减钳回行首时会拿已位移的 off 与原始
-    // pos 比较，多行反缩进选区端点偏 1）
-    //   插入 pos/len：off >= pos → shift+len；删除 pos/n：off >= pos+n →
-    //   shift-n，落进被删区间（pos < off < pos+n）→ 钳回行首 pos
+    // 偏移修正：off 始终按原始坐标比较，shift 累计位移最后一次性应用（原实现边比边移，
+    // 删减钳回行首时拿已位移的 off 比原始 pos，多行反缩进选区端点偏 1）。
     const auto adjust = [&edits](int& offRef) {
         int off = offRef;
         int shift = 0;
@@ -295,7 +290,6 @@ void applyLinkSkeleton(EditBuffer& buf) {
     buf.cursor = buf.selEnd;
 }
 
-// ==================== 审计 [12]：表格 MVP ====================
 
 std::string buildMarkdownTable(int rows, int cols) {
     if (rows < 1) rows = 1;
@@ -348,8 +342,7 @@ bool applyTabTable(EditBuffer& buf, bool shift) {
     }
     const TableLine& cur = block[ri];
     const int cellCount = static_cast<int>(cur.pipes.size()) - 1;
-    // 光标单元格 = 「最后一根严格在其左侧的竖线」右邻格（压在竖线上算左格；
-    // 跳格落点 ce 在格内，Shift+Tab 才能反向走回去）；第一格前钳 0、末格后钳末
+    // 光标单元格 = 「最后一根严格在其左侧的竖线」右邻格（压线算左格；第一格前钳 0、末格后钳末）。
     int k = -1;
     for (size_t i = 0; i < cur.pipes.size() &&
                       static_cast<size_t>(buf.cursor) > cur.pipes[i]; ++i) {

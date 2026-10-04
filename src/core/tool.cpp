@@ -1,4 +1,3 @@
-// src/core/tool.cpp
 #include "core/tool.h"
 
 #include <utility>
@@ -6,13 +5,10 @@
 namespace core {
 
 ToolRegistry& ToolRegistry::instance() {
-    // 永不析构持有（审计 SYS-02）：注册表是进程级登记表，没有「必须释放」的
-    // 语义（同 main.cpp getClaudeService 的堆持有惯用法）。原「函数局部 static」
-    // 形态在默认配置下于启动期构造（markdown/todo 默认开），但活门控可在
-    // armExitHook 之后才首次构造它（启动期 app_config 的 enabledModules 同时
-    // 不含 markdown/todo/agent → 会话内从设置页打开其一）：atexit LIFO 使析构
-    // 先于 exit hook，而 exit hook 的 stopAll → 该模块 onStop → unregisterTool
-    // 读到的就是已析构的 map + mutex（退出/关模块路径 UB）。
+    // 永不析构持有：注册表是进程级登记表，没有「必须释放」的语义。若用函数局部
+    // static，活门控可能在 armExitHook 之后才首次构造它，atexit LIFO 使析构先于
+    // exit hook，而 exit hook 的 stopAll → onStop → unregisterTool 会读到已析构的
+    // map + mutex（退出/关模块路径 UB）
     static auto& g = *new ToolRegistry();
     return g;
 }

@@ -1,5 +1,5 @@
 // src/module_settings/settings_ui_logic.cpp
-// R6：settings 模块纯函数实现（原 settings_module.cpp 的匿名 ns / 私有纯成员）。
+// settings 模块纯函数实现。
 #include "settings_ui_logic.h"
 
 #include <core/theme.h>
@@ -26,7 +26,6 @@ float fs(float base) { return base * ::core::theme::fontScale(); }
 
 bool dropdownPopupOverflows(float cardTopY, float fieldOffsetY,
                             float fieldHeight, int itemCount, float screenH) {
-    // 字段绝对底边 = 卡顶 + 卡内 y 偏移 + 字段高
     const float fieldBottomY = cardTopY + fieldOffsetY + fieldHeight;
     const float popupH =
         static_cast<float>(itemCount) * kDropdownItemHeight +
@@ -40,8 +39,7 @@ std::string retentionLabel(int days) {
 }
 
 float estimatedTextWidth(const std::string& text, float fontSize) {
-    // 逐字节扫 UTF-8：>= 0x80 的字节只计一次（多字节序列的首字节在 0xC0-0xFF，
-    // 续字节 0x80-0xBF 跳过）→ 每个非 ASCII **字符**计一个全角宽度
+    // 逐字节扫 UTF-8：>= 0x80 的多字节序列首字节（0xC0-0xFF）各计一次全角宽度。
     float em = 0.0f;
     for (const unsigned char c : text) {
         if (c < 0x80u) {
@@ -61,8 +59,7 @@ std::string fitControlLabel(const std::string& text, float availableWidth,
     if (estimatedTextWidth(text, fontSize) <= availableWidth) {
         return text;
     }
-    // 预算换算成 em 单位（与 estimatedTextWidth 的累加口径一致）；
-    // 省略号本身也要占位（全角 1em），否则截断串仍然超宽
+    // 预算换算成 em（省略号本身也占 1em，否则截断串仍超宽）。
     const float budgetEm = availableWidth / fontSize - kFullWidthEm;
     std::string out;
     float usedEm = 0.0f;

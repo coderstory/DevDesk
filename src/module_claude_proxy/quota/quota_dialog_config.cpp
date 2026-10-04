@@ -13,18 +13,11 @@ namespace {
 
 namespace pj = platform::json;
 
-// 「不配置」选项的固定 id（空串）。**不是**某个真实 provider 的 id ——
-// 注册表里没有空串行（quota_registry.cpp 的哨兵 id == nullptr 是另一回事），
-// 所以空 id 天然「配了也不可能命中 findProvider」。
+// 「不配置」选项 id（空串）：注册表里没有空串行，空 id 天然不可能命中 findProvider。
 const QuotaProviderOption kNoneOption{"", "不配置（关闭余量查询）"};
 
-// cc-switch 候选 → 字段值的映射。**只认 ProviderField::key 逐字相等**，
-// 不做大小写折叠 / 下划线-连字符归一 —— 那是「猜」，而 AK/SK 猜错的后果是
-// 拿错误的凭据发签名请求（403 且用户看不懂）。
-//
-// 火山两字段（accessKeyId / secretAccessKey）在 cc-switch 的
-// CcSwitchProviderInfo 里同名同义（ccswitch_source.h:56）；其余三家
-// fields() 为空，本函数一次都不会被调到。
+// cc-switch 候选 → 字段值：只认 ProviderField::key 逐字相等，不做大小写折叠 / 归一（那是「猜」，
+// AK/SK 猜错会拿错凭据发签名请求）。火山两字段与 CcSwitchProviderInfo 同名同义；其余三家 fields() 为空，本函数不会被调到。
 bool ccSwitchValueFor(const CcSwitchProviderInfo& info, const std::string& key,
                       std::string* out) {
     if (key == "accessKeyId") {
@@ -38,9 +31,7 @@ bool ccSwitchValueFor(const CcSwitchProviderInfo& info, const std::string& key,
     return false;
 }
 
-// extra/secrets 的 JSON 编码（**单点**，两侧都经它）。
-// 空 map → 空串（不是 "{}"）：空串在库里读回来是「该供应商不吃额外字段」的
-// 既有语义（quota_store.h 与 schema 注释都按空串表达）。
+// extra/secrets 的 JSON 编码（单点）。空 map → 空串（不是 "{}"）：空串是「不吃额外字段」的既有语义。
 core::Result<std::string> encodeFieldMap(const std::map<std::string, std::string>& m) {
     if (m.empty()) return core::Result<std::string>::ok(std::string());
     pj::JsonObject obj;
@@ -58,11 +49,9 @@ std::string maskMiddle(const std::string& s, std::size_t head, std::size_t tail,
 
 }  // namespace
 
-// ============ 供应商下拉选项 ============
-
 std::vector<QuotaProviderOption> quotaProviderOptions() {
     std::vector<QuotaProviderOption> out;
-    out.push_back(kNoneOption);   // 索引 0 恒为「不配置」（不变量 1）
+    out.push_back(kNoneOption);   // 索引 0 恒为「不配置」
     const std::size_t tableLen = quotaProviderTableLength();
     for (std::size_t i = 0; i < tableLen; ++i) {
         const QuotaProviderEntry& entry = kQuotaProviders[i];
@@ -81,7 +70,7 @@ int quotaProviderOptionIndex(const std::string& providerId) {
     for (std::size_t i = 1; i < opts.size(); ++i) {
         if (opts[i].id == providerId) return static_cast<int>(i);
     }
-    return 0;   // 未命中（含写错的 id）→ 落到「不配置」，不静默留一个假选中
+    return 0;   // 未命中 → 落到「不配置」，不静默留假选中
 }
 
 void syncQuotaDialogFields(QuotaDialogState& st) {
@@ -132,8 +121,7 @@ void openQuotaDialog(QuotaDialogState& st, int64_t profileId,
     if (existing != nullptr) {
         providerId = existing->providerId;
         ccswitchId = existing->ccswitchProviderId;
-        // 读回的手填值（键名按 provider 的 fields() 过滤，未知键丢弃：
-        // 换了供应商后旧键名不再有意义，留着只会被 provider 自己忽略）
+        // 读回手填值（按 fields() 过滤，未知键丢弃：换供应商后旧键名没意义）
         const QuotaProvider* provider = findProvider(providerId);
         if (provider != nullptr) {
             const auto read = [](const std::string& json,
@@ -174,7 +162,7 @@ void openQuotaDialog(QuotaDialogState& st, int64_t profileId,
         st.ccSwitchLoaded = true;
         auto list = listCcSwitchProviders();
         st.ccSwitch = list;
-        // 定位候选下标（库已删/条目已消失 → -1 = 未选，文案层负责解释）
+        // 定位候选下标（已消失 → -1 = 未选，文案层解释）
         st.ccSwitchIdx = -1;
         for (std::size_t i = 0; i < list.providers.size(); ++i) {
             if (list.providers[i].id == ccswitchId) {
@@ -186,14 +174,11 @@ void openQuotaDialog(QuotaDialogState& st, int64_t profileId,
     }
 }
 
-// ============ cc-switch ============
-
 void loadQuotaCcSwitch(QuotaDialogState& st) {
     if (st.ccSwitchLoaded) return;   // 每帧 compose 都可能调到，只读一次
     st.ccSwitchLoaded = true;
     st.ccSwitch = listCcSwitchProviders();
-    // 默认按 base_url 自动匹配（matchCcSwitchProviderByBaseUrl 是 host+path
-    // 标签边界匹配，伪造后缀不命中）；未命中 = -1，用户可改选。
+    // 默认按 base_url 自动匹配（host+path 标签边界，伪造后缀不命中）；未命中 = -1，用户可改选。
     st.ccSwitchIdx = -1;
     if (st.ccSwitch.status != CcSwitchSourceStatus::Ok) return;
     const std::string matchedId =
@@ -229,8 +214,6 @@ void selectQuotaCcSwitch(QuotaDialogState& st, int idx) {
         }
     }
 }
-
-// ============ 保存 ============
 
 core::Result<QuotaConfigRow> buildQuotaConfigRow(const QuotaDialogState& st,
                                                  std::string* error) {
@@ -276,16 +259,10 @@ core::Result<QuotaConfigRow> buildQuotaConfigRow(const QuotaDialogState& st,
     auto encSecrets = encodeFieldMap(secrets);
     if (encSecrets.isFail()) return fail("密钥编码失败：" + encSecrets.errorMessage());
     row.extraJson = encExtra.value();
-    row.secretsJson = encSecrets.value();   // **明文**；protect 由 QuotaStore::saveConfig 做
+    row.secretsJson = encSecrets.value();   // 明文；protect 由 QuotaStore::saveConfig 做
 
-    // ---- 不变量 2：**代码保证** cc-switch 优先 ----
-    // 引用非空 → 上面算出来的 extra / secrets 一律丢弃（不是「绘制层不该
-    // 同时填」的自觉）。放在**编码之后**而不是早返回，是刻意的：
-    //   · 早返回版本里这两行 `clear()` 是**死代码**（此刻本来就是空串）——
-    //     实测过：只删这两行、保留早返回，全量 1220 例照绿不变（变异 4 的
-    //     教训：等价变异不等于被守住）。早返回本身也确实是「安全」的，但
-    //     它靠的是「结构上空」，不是「这里显式清空」。
-    //   · 现在 clear 作用在**真的可能被填过的值**上：删掉它，红。
+    // 不变量 2（代码保证）：引用非空 → extra / secrets 一律丢弃。放在编码之后而非早返回是刻意的——
+    // 早返回版本里 clear() 是死代码（此刻本就空），删掉它全量用例照绿；这里 clear 作用在真可能被填过的值上，删掉即红。
     if (hasCcSwitchRef) {
         row.extraJson.clear();
         row.secretsJson.clear();
@@ -318,8 +295,6 @@ ProviderConfig buildQuotaTestConfig(const QuotaDialogState& st) {
     return cfg;
 }
 
-// ============ 展示 ============
-
 std::string maskSecret(const std::string& plaintext) {
     return maskMiddle(plaintext, 4, 2, "••••");
 }
@@ -337,8 +312,7 @@ std::string quotaTestMessage(const QuotaResult& result) {
         return oss.str();
     }
     const std::string head = quotaErrorHeadline(result.error, result.errorMessage);
-    // 兜底：headline 表覆盖了全部枚举值，但**万一**将来加了枚举而忘了加文案，
-    // 这里仍要给用户看得到的东西 —— 空文案会被画成「什么都没发生」。
+    // 兜底：万一将来加了枚举忘加文案，这里仍给用户看得到的东西（空文案 = 什么都没发生）。
     return head.empty() ? ("查询失败（错误码 " +
                           std::to_string(static_cast<int>(result.error)) + "）")
                         : head;

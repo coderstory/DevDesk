@@ -11,8 +11,7 @@ namespace {
 
 bool isSpace(char c) { return c == ' ' || c == '\t'; }
 
-// 围栏候选行：≤3 前导空格 + ≥3 个同 ` / ~ 字符。返回围栏字符、连串长度与
-// 连串后的剩余文本（ch=0 = 不是候选行；≥4 空格缩进属缩进代码，非围栏）。
+// 围栏候选行：≤3 前导空格 + ≥3 个同 ` / ~ 字符；ch=0 = 非候选行（≥4 空格属缩进代码）。
 struct FenceInfo {
     char ch = 0;
     size_t run = 0;
@@ -35,10 +34,8 @@ FenceInfo fenceLine(std::string_view line) {
     return f;
 }
 
-// 闭栏判定（CommonMark/md4c 口径）：同字符、长度 ≥ 开栏、行尾仅空格/制表符。
-// 尾随信息串（```closer / ~~~~ x）不是闭栏——md4c 会把整段视作围栏内容，
-// 本扫描器与它不一致会让大纲/高亮/分块三处同时漂移（等价测试
-// md_block_model_render_equivalence 的回归锚）。
+// 闭栏判定（CommonMark/md4c 口径）：同字符、长度 ≥ 开栏、行尾仅空白。尾随信息串
+//（```closer）不是闭栏——与 md4c 不一致会让大纲/高亮/分块三处同时漂移（回归锚）。
 bool closesFence(const FenceInfo& f, char openChar, size_t openRun) {
     if (f.ch != openChar || f.run < openRun) return false;
     for (const char c : f.rest) {
@@ -65,8 +62,7 @@ std::vector<MdFenceBlock> scanFences(const std::string& text) {
 
         const FenceInfo f = fenceLine(line);
         if (!inFence) {
-            // 开栏合法性（md4c 口径）：` 围栏的 info 串不得含 `（```a`b` 整行
-            // 是段落文本）；~ 围栏 info 可含 ~。缩进 ≤3 已在 fenceLine 校验。
+            // 开栏合法性（md4c 口径）：` 围栏的 info 串不得含 `；~ 围栏 info 可含 ~。
             const bool validOpen = f.ch != 0 &&
                                    !(f.ch == '`' && f.rest.find('`') != std::string_view::npos);
             if (validOpen) {

@@ -1,50 +1,26 @@
 // src/module_claude_proxy/ccswitch_import.h
-// 从 cc-switch 导入 Profile：**只读读侧** + **纯映射函数**（2026-10-03）
+// 从 cc-switch 导入 Profile：只读读侧 + 纯映射函数。
 //
-// 用户需求原话：「profile 新增从 cc-switch 导入功能」「需要导入全部的配置内容」。
+// 读侧（listCcSwitchImportRows）恒只读（SQLITE_OPEN_READONLY，不含 CREATE）；
+// 路径与打开 flags 复用 quota/ccswitch_source 的 ccSwitchDbPath /
+// kCcSwitchOpenFlags（唯一真相源一处）。映射（mapCcSwitchProviderToProfile）是
+// 纯函数（无 IO / 无 DB / 无日志），单测直接断言，无需起库。
 //
-// ── 为什么分成这两层 ───────────────────────────────────────────────────────
-//   - 读侧（listCcSwitchImportRows）：碰 cc-switch 的 SQLite 库，**恒只读**
-//     （SQLITE_OPEN_READONLY，不含 READWRITE / CREATE —— 打开不存在的路径
-//     不许把它创建出来）。路径与打开 flags 直接复用 quota/ccswitch_source 的
-//     已交付能力（ccSwitchDbPath / kCcSwitchOpenFlags 均为 public），**唯一
-//     真相源只有一处**；新增的只有「多取 app_type=claude-desktop + 取回
-//     settings_config 原文」两点。
-//   - 映射（mapCcSwitchProviderToProfile）：**纯函数**（无 IO / 无 DB / 无
-//     日志 / 不看全局状态），cc-switch 一行 → DevDesk Profile 字段，逐项对应
-//     见下表。单测直接对它断言，无需起库。
+// 字段映射：
+//   name        ← cc-switch name（同名冲突 → 跳过）
+//   baseUrl     ← env.ANTHROPIC_BASE_URL（缺 → 跳过）
+//   apiKey      ← ANTHROPIC_AUTH_TOKEN 优先，缺则 ANTHROPIC_API_KEY（都缺 → 跳过）
+//   model       ← env.ANTHROPIC_MODEL（缺 → 空串）
+//   authField   ← 两键都有 'both' / 只 TOKEN 'bearer' / 只 API_KEY 'api_key'
+//   extraEnvJson      ← env 里除上述四键外的全部键值（键排序、只收字符串值、
+//                       空串丢弃 —— 非逐字节原文）；双 key 并存时未用作 apiKey 的
+//                       API_KEY 例外保留，不丢值
+//   extraSettingsJson ← settings_config 去掉 env 块后的全部顶层属性
+//   dialectOverride 留空；sharedConfigId / fallbackProfileId 置 0；modelsConfigJson 空串
 //
-// ── 字段映射表（主会话 2026-10-03 裁决，不自行改；同日审计批 ①② 修订两处，
-//    见各行「审计批」标注）────────────────────────────────────────────────
-//   | DevDesk                | 来源                                                     |
-//   |------------------------|----------------------------------------------------------|
-//   | name                   | cc-switch `name`（**同名冲突 → 跳过**，见 existingNames）    |
-//   | baseUrl                | `env.ANTHROPIC_BASE_URL`（缺 → 跳过，原因「缺 base_url」）  |
-//   | apiKey                 | `env.ANTHROPIC_AUTH_TOKEN` 优先，缺则 `env.ANTHROPIC_API_KEY` |
-//   |                        | （都缺 → 跳过「缺密钥」，审计批 ①）                        |
-//   | model                  | `env.ANTHROPIC_MODEL`（缺 → 空串）                         |
-//   | authField              | 两键都有 → 'both' / 只有 TOKEN → 'bearer' /                |
-//   |                        | 只有 API_KEY → 'api_key'（都无 → 整条跳过「缺密钥」，      |
-//   |                        | 审计批 ①；值域同既有）                                    |
-//   | extraEnvJson           | `env` 里**除** BASE_URL / AUTH_TOKEN / API_KEY / MODEL 外   |
-//   |                        | 全部键值，经 serializeExtraEnv **规范化重序列化**（键排序、 |
-//   |                        | 只收字符串值、空串值丢弃——非逐字节原文）；双 key 并存时     |
-//   |                        | 未用作 apiKey 的 API_KEY 例外保留进表（审计批 ②，不丢值）  |
-//   | extraSettingsJson      | settings_config **去掉 env 块后**的全部顶层属性（值保全，  |
-//   |                        | 经 pretty 重排——非逐字节原文）                             |
-//   | dialectOverride        | 留空（既有 host 推断自动处理）                             |
-//   | sharedConfigId /        | 0                                                            |
-//   | fallbackProfileId      |                                                              |
-//   | modelsConfigJson       | 空串                                                        |
-// 「导入全部的配置内容」= 上面两个 JSON 字段**键值保全，不丢键**（形态经
-// 规范化，见 extraEnvJson / extraSettingsJson 两行——原文逐字节保真不是契约）。
-//
-// ── 密钥去向 ─────────────────────────────────────────────────────────────
-// apiKey 只在这里作为**内存局部变量**存在；写库一律走既有
-// ClaudeService::createProfile（凭据经 platform::credential 分平台保护后入
-// claude_profiles.api_key_encrypted，见 profile_repository.cpp:398）。本文件
-// **不写日志、不产出错误文案、不进任何返回值文案** —— 返回结构里的 apiKey 是
-// 导入流程的必要中间量，与 Profile.apiKeyPlain 同一性质（「用完即丢弃」）。
+// 密钥：apiKey 只作内存局部变量，写库一律走 ClaudeService::createProfile
+// （分平台保护后入 api_key_encrypted）。本文件不写日志、不进错误文案。
+
 #pragma once
 
 #include <string>

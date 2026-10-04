@@ -1,5 +1,4 @@
-// src/module_markdown/md_live_edit.cpp
-// Markdown Phase 3 · M2 纯函数层实现（说明见 md_live_edit.h 头注释）。
+// src/module_markdown/md_live_edit.cpp —— M2 纯函数层实现（说明见 md_live_edit.h 头注释）。
 #include "md_live_edit.h"
 
 #include <algorithm>
@@ -35,7 +34,7 @@ float mdLiveInputHeight(const std::string& blockText, float textWidth,
                               kInputLineHeightFactor + 1.0f;
 }
 
-// ---- M4：块边界键（说明见头注释）----
+// M4：块边界键
 
 namespace {
 
@@ -46,8 +45,7 @@ size_t lineStartAt(const std::string& text, size_t pos) {
     return nl == std::string::npos ? 0 : nl + 1;
 }
 
-// 块下标（与 MdBlockModel::blockIndexAt 同口径：块边界字节归后一块）。
-// 本层不持模型实例，故本地复刻同一二分；blocks 非空由调用侧保证。
+// 块下标（与 MdBlockModel::blockIndexAt 同口径：块边界字节归后一块）；本地复刻同一二分。
 size_t blockIndexIn(const std::vector<MdBlock>& blocks, size_t offset) {
     size_t lo = 0, hi = blocks.size() - 1;
     while (lo < hi) {
@@ -81,8 +79,7 @@ size_t mdLiveVerticalBlockTarget(const std::string& text,
     if (direction < 0) {
         if (k == 0) return kMdLiveNoConsume;          // 首块 ↑：交回内置
         if (ls != b.start) return kMdLiveNoConsume;   // 不在块首行 → 块内移动
-        // 上一行 = 光标前那个行终结符所属行。块首恒为行首（分块器按行切），
-        // 故 text[b.start-1] 必是 '\n'（或 '\r\n' 的 '\n'）。
+        // 上一行 = 光标前那个行终结符所属行；块首恒为行首，故 text[b.start-1] 必是 '\n'（或 CRLF 的 '\n'）。
         size_t prevEnd = b.start - 1;                 // 内容末（含 '\r' 时再退一）
         if (prevEnd > 0 && text[prevEnd - 1] == '\r') --prevEnd;
         const size_t prevStart = lineStartAt(text, prevEnd > 0 ? prevEnd - 1 : 0);
@@ -132,7 +129,7 @@ bool mdLiveBoundaryEdit(const std::string& text,
     return false;   // 后面不是行终结符：普通块内字符删除，交回内置
 }
 
-// ---- M5：块级 undo / redo（语义见头注释）----
+// M5：块级 undo / redo
 
 void MdLiveUndoStack::reset(std::string text, size_t cursorByte) {
     undo_.clear();
@@ -146,9 +143,8 @@ void MdLiveUndoStack::reset(std::string text, size_t cursorByte) {
 
 void MdLiveUndoStack::push(std::string text, size_t cursorByte, bool sameBlock,
                            int64_t nowMs) {
-    // 合并：同块 + 距上次推栈 < 600ms = 同一次编辑（逐键不堆快照）。
-    // lastPushMs_ 取「上一次真的记了条目的时刻」而不随合并滑动：这样一组最多
-    // 覆盖 600ms 的连续输入，长时间连打仍会定期留下撤销点（不会整段只剩一栈）。
+    // 合并：同块 + 距上次推栈 < 600ms = 同一次编辑（逐键不堆快照）。lastPushMs_ 取「上一次
+    // 真的记了条目的时刻」不随合并滑动，故一组最多覆盖 600ms，长连打仍定期留撤销点。
     if (groupOpen_ && sameBlock && nowMs - lastPushMs_ < kMdLiveUndoMergeMs) return;
     // 走到这里 = 新的一次编辑：旧的重做链作废（同任何编辑器的语义）
     redo_.clear();
@@ -173,8 +169,7 @@ bool MdLiveUndoStack::undo(std::string& text, size_t& cursorByte) {
     undo_.pop_back();
     text = std::move(prev.text);
     cursorByte = prev.cursorByte;
-    // 撤销后必须新开一组：否则紧接着的同块输入会被并进「已被撤销的那一次编辑」，
-    // 下一次 Ctrl+Z 会连它一起撤销
+    // 撤销后必须新开一组，否则紧接着的同块输入会并进已撤销的那次编辑，下次 Ctrl+Z 连带撤销。
     groupOpen_ = false;
     return true;
 }
@@ -192,7 +187,7 @@ bool MdLiveUndoStack::redo(std::string& text, size_t& cursorByte) {
     return true;
 }
 
-// ---- M6：滚动锚定与光标跟随（说明见头注释）----
+// M6：滚动锚定与光标跟随
 
 MdLiveFollowDecision mdLiveFollowOffset(float caretDocY, float viewportH,
                                         float currentOffset, float maxOffset) {
@@ -211,7 +206,7 @@ MdLiveFollowDecision mdLiveFollowOffset(float caretDocY, float viewportH,
     return d;
 }
 
-// ---- M9：单块高度上限（spec §5 #5（封顶 0.7 × 视口高）/ R4（块内滚动））----
+// M9：单块高度上限（封顶 0.7 × 视口高，块内滚动；spec §5 #5 / R4）
 
 float mdLiveCappedInputHeight(float fitHeight, float viewportH) {
     if (viewportH <= 0.0f) return fitHeight;  // 无视口信息：防御性不封顶

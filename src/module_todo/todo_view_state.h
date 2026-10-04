@@ -1,11 +1,7 @@
 // src/module_todo/todo_view_state.h
-// 审计 [23]：todo 视图状态跨会话持久化 —— **SQLite app_config 表**（键
-// `todo_view_state`）。原 appDataDir()/todo_view_state.json 已于 2026-10-03
-// （批次 E2，用户第 17 条「所有 app 配置全部进 SQLite，不要 JSON 文件了」）
-// 退役：不读、不写、不迁移。
-// 模块隔离：module_* 互不依赖，视图状态不进 module_settings 的 SettingsConfig
-//（方案 B），也不进别的模块 —— 它落在**中立层** app_config 表里，谁都不依赖谁。
-// 滚动按列 id 记忆（审计 [23]：旧 columnScrolls_ 按列索引，重排/删列后串列）。
+// todo 视图状态跨会话持久化，落在中立的 app_config 表（键 todo_view_state），
+// 不进任何其他模块（module_* 互不依赖）。
+// 滚动按列 id 记忆（旧实现按列索引，重排/删列后串列）。
 #pragma once
 
 #include <cstdint>
