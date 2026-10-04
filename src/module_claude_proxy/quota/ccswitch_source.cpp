@@ -2,6 +2,7 @@
 // 从 cc-switch 只读读取 Claude 供应商配置（不复制密钥）。
 // base_url 匹配用 host 完全相等 + path 相等（非裸 contains）。
 // 主目录探测 HOME / USERPROFILE / HOMEDRIVE+HOMEPATH，不写平台宏。
+#include "core/str_util.h"
 #include "ccswitch_source.h"
 
 #include "ccswitch_sqlite.h"
@@ -38,13 +39,6 @@ constexpr const char* const kApiKeyEnvOrder[] = {
     "GOOGLE_API_KEY",
 };
 
-std::string toLower(std::string text) {
-    std::transform(text.begin(), text.end(), text.begin(), [](unsigned char c) {
-        return static_cast<char>(std::tolower(c));
-    });
-    return text;
-}
-
 std::string userHomeDir() {
     for (const char* name : {"HOME", "USERPROFILE"}) {
         const char* value = std::getenv(name);
@@ -67,7 +61,7 @@ struct UrlParts {
 
 UrlParts splitUrl(const std::string& rawUrl) {
     UrlParts parts;
-    std::string rest = toLower(rawUrl);
+    std::string rest = core::str::toLowerAscii(rawUrl);
     const std::size_t scheme = rest.find("://");
     if (scheme != std::string::npos) rest.erase(0, scheme + 3);
 

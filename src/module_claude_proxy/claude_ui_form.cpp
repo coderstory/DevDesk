@@ -1,4 +1,5 @@
 // 表单弹窗（tabs 四页）+ 删除/片段确认弹窗 + 表单状态机；状态经 FormState/ImportState 引用显式入参。
+#include "core/fs_text.h"
 #include "claude_ui_form.h"
 
 #include "claude_ui_logic.h"
@@ -215,10 +216,7 @@ void startImportCurrentConfig(FormState& f, ImportState& imp,
                     true);
         return;
     }
-    std::ifstream in(paths.settingsFile, std::ios::binary);
-    std::ostringstream ss;
-    ss << in.rdbuf();
-    const std::string content = ss.str();
+    const std::string content = core::readTextFile(paths.settingsFile);
     // 无 env 键 = 无可导入配置（给明确提示，避免误报「键名非法」）
     if (auto doc = platform::json::parse(content);
         doc.isOk() && doc.value().isObject() &&

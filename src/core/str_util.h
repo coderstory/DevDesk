@@ -1,12 +1,19 @@
 // 跨模块共用的纯字符串工具（core 层，不依赖 platform / EUI-NEO）
-// 只收逐字等价的实现：写法有语义差异的不合并（如 toLowerAscii 的 ASCII-only
-// 版与 std::tolower 版在非 ASCII 字节上行为不同，合并会静默改变行为）
+// 只收逐字等价的实现；带 locale 语义的（std::tolower 等）不收，用确定性手写版
 #pragma once
 
 #include <cstddef>
 #include <string>
 
 namespace core::str {
+
+// ASCII 大小写折叠（仅 A-Z，locale 无关；非 ASCII 字节原样保留）
+inline std::string toLowerAscii(std::string s) {
+    for (char& c : s) {
+        if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
+    }
+    return s;
+}
 
 // SQL LIKE 模式转义（\ % _ → 字面量）。调用方拼 "%" + x + "%" 并配 ESCAPE '\'。
 inline std::string escapeLikePattern(const std::string& raw) {

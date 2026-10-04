@@ -1,5 +1,6 @@
 // src/module_claude_proxy/provider_config.cpp
 // 供应商完整配置纯函数实现（platform::json）
+#include "core/str_util.h"
 #include "provider_config.h"
 
 #include <algorithm>
@@ -8,6 +9,8 @@
 
 #include "env_var_hints.h"
 #include "platform/json.h"
+
+using core::str::toLowerAscii;
 
 namespace module::claude {
 
@@ -705,13 +708,6 @@ std::vector<std::string> managedEnvKeyNames() {
 // ---- 反向同步（settings.json env → profile）----
 
 namespace {
-
-std::string toLowerAscii(std::string s) {
-    for (char& c : s) {
-        if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
-    }
-    return s;
-}
 
 // 严格点分四段十进制（每段 ≤ 255）且首段为 127 —— "127.0.0.1.evil.com" /
 // "127.0.0.1evil" / 短写 "127.1" 都不算（不做前缀匹配）

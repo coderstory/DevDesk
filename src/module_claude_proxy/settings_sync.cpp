@@ -3,14 +3,14 @@
 #include "settings_sync.h"
 
 #include <algorithm>
-#include <fstream>
-#include <sstream>
 #include <string_view>
 #include <system_error>
 
 #include "claude_service.h"
 #include "core/app_config.h"
+#include "core/atomic_write.h"
 #include "core/database.h"   // core::appDatabase()
+#include "core/fs_text.h"
 #include "core/logging.h"
 #include "core/paths.h"
 #include "platform/json.h"
@@ -30,63 +30,6 @@ bool fileExists(const fs::path& p) {
     return fs::exists(p, ec) && !ec;
 }
 
-// 读文本文件（不存在 → 空串；失败 → 空串 + *readFailed=true，与空文件区分）
-std::string readTextFile(const fs::path& p, bool* readFailed = nullptr) {
-    std::ifstream f(p, std::ios::binary);
-    if (!f) {
-        if (readFailed) *readFailed = true;
-        return {};
-    }
-    std::ostringstream ss;
-    ss << f.rdbuf();
-    if (readFailed && f.bad()) *readFailed = true;  // 读中断（IO 错）同款上报
-    return ss.str();
-}
-
-// 原子写：同目录 tmp → rename。MinGW rename 不覆盖已存在目标，先 remove 再
-// rename（最后写者胜，窗口期可接受）
-core::Result<void> atomicWrite(const fs::path& target,
-                               const std::string& content) {
-    std::error_code ec;
-    const fs::path dir = target.parent_path();
-    if (!dir.empty()) {
-        fs::create_directories(dir, ec);
-        if (ec) {
-            return core::Result<void>::fail(
-                core::ErrorCode::Internal,
-                "目录创建失败 " + dir.string() + ": " + ec.message());
-        }
-    }
-    fs::path tmp = target;
-    tmp += ".devdesk-tmp";
-    {
-        std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
-        if (!f) {
-            return core::Result<void>::fail(core::ErrorCode::Internal,
-                                            "临时文件写入失败: " + tmp.string());
-        }
-        f << content;
-        f.close();
-        if (!f) {
-            std::error_code rmEc;
-            fs::remove(tmp, rmEc);
-            return core::Result<void>::fail(
-                core::ErrorCode::Internal,
-                "临时文件写入未完成: " + tmp.string());
-        }
-    }
-    fs::remove(target, ec);  // 目标存在则先删（MinGW rename 不覆盖）
-    fs::rename(tmp, target, ec);
-    if (ec) {
-        std::error_code rmEc;
-        fs::remove(tmp, rmEc);
-        return core::Result<void>::fail(
-            core::ErrorCode::Internal,
-            "原子替换失败 " + target.string() + ": " + ec.message());
-    }
-    return core::Result<void>::ok();
-}
-
 // 解析 JSON 文件为对象（不存在 → ok 空对象标记 exists=false；解析失败/非对象 → fail）
 struct ParsedDoc {
     bool exists = false;
@@ -103,7 +46,7 @@ ParsedDoc parseJsonObjectFile(const fs::path& p) {
     }
     out.exists = true;
     bool readFailed = false;
-    const std::string text = readTextFile(p, &readFailed);
+    const std::string text = core::readTextFile(p, &readFailed);
     if (readFailed) {
         // 存在但读不出（IO/权限）≠ 空文件，不静默当空对象重写
         out.error = "读取失败（IO/权限）: " + p.string();
@@ -291,7 +234,7 @@ SyncResult clearResidualProxyKeys(const Paths& paths) {
         LOG_WARN("settings_sync: " + out.error);
         return out;
     }
-    auto w = atomicWrite(paths.settingsFile, text.value() + "\n");
+    auto w = core::atomicWriteFile(paths.settingsFile, text.value() + "\n", "settings.json");
     if (w.isFail()) {
         out.ok = false;
         out.error = "settings.json 写入失败: " + w.errorMessage();
@@ -567,7 +510,7 @@ SyncResult takeOver(const Profile& profile, int proxyPort, const Paths& paths) {
         LOG_WARN("settings_sync: " + out.error);
         return out;
     }
-    auto w = atomicWrite(paths.settingsFile, text.value() + "\n");
+    auto w = core::atomicWriteFile(paths.settingsFile, text.value() + "\n", "settings.json");
     if (w.isFail()) {
         out.error = "settings.json 写入失败: " + w.errorMessage();
         LOG_WARN("settings_sync: " + out.error);
@@ -685,7 +628,7 @@ SyncResult restore(const Paths& paths) {
         out.error = "settings.json 序列化失败: " + text.errorMessage();
         return out;
     }
-    auto w = atomicWrite(paths.settingsFile, text.value() + "\n");
+    auto w = core::atomicWriteFile(paths.settingsFile, text.value() + "\n", "settings.json");
     if (w.isFail()) {
         out.error = "settings.json 写入失败: " + w.errorMessage();
         LOG_WARN("settings_sync: " + out.error);

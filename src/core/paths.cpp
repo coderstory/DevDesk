@@ -1,3 +1,4 @@
+#include "core/fs_text.h"
 #include "paths.h"
 #include "atomic_write.h"
 #include "logging.h"
@@ -65,14 +66,6 @@ constexpr const char* kRequiredGitignoreLines[] = {
 
 using core::str::trimAscii;
 
-std::string readWholeFile(const fs::path& file) {
-    std::ifstream in(file, std::ios::binary);
-    if (!in) return std::string();
-    std::ostringstream oss;
-    oss << in.rdbuf();
-    return oss.str();
-}
-
 } // namespace
 
 core::Result<void> ensureDataRootGitignore() {
@@ -90,7 +83,7 @@ core::Result<void> ensureDataRootGitignore() {
         }
     }
 
-    const std::string existing = readWholeFile(file);
+    const std::string existing = core::readTextFile(file);
 
     // 已有的规则行（跳过空行与注释行）
     std::set<std::string> present;

@@ -3,6 +3,7 @@
 // GET https://opencode.ai/zen/go/v1/usage，Authorization: Bearer <workspace key>（与推理侧只认 x-api-key 相反，不可互换）；
 // 200 → usage.{rolling,weekly,monthly}.percent；窗口只按上游 key 名映射，绝不按 resetsAt 排序猜周期。
 // 坑：percent==0 时 resetsAt 是占位值（丢弃重置时间但保留窗口）；403（key 有效但无 Go 订阅）与 401 分开；三窗口全解析不出 = Shape。
+#include "core/str_util.h"
 #include "opencode_go_provider.h"
 
 #include "quota_percent.h"
@@ -86,20 +87,13 @@ std::vector<QuotaWindow> parseWindows(const platform::json::JsonObject& usage) {
     return windows;
 }
 
-std::string toLower(std::string text) {
-    std::transform(text.begin(), text.end(), text.begin(), [](unsigned char c) {
-        return static_cast<char>(std::tolower(c));
-    });
-    return text;
-}
-
 struct UrlParts {
     std::string host;
     std::string path;  // 已去 query / fragment 与尾部 '/'
 };
 
 UrlParts splitUrl(const std::string& rawUrl) {
-    std::string rest = toLower(rawUrl);
+    std::string rest = core::str::toLowerAscii(rawUrl);
     const std::size_t scheme = rest.find("://");
     if (scheme != std::string::npos) rest.erase(0, scheme + 3);
 

@@ -1,5 +1,6 @@
 // src/module_claude_proxy/upstream_dialect.cpp
 // 上游方言实现：鉴权头 / 必需会话头 / UA 策略 / 模型名归一
+#include "core/str_util.h"
 #include "upstream_dialect.h"
 
 #include "claude_service.h"  // claudeUpstreamSessionId()
@@ -11,6 +12,8 @@
 #include <cctype>
 #include <cstddef>
 
+using core::str::toLowerAscii;
+
 namespace module::claude {
 
 namespace {
@@ -18,12 +21,6 @@ namespace {
 // ==================== 头部键大小写不敏感操作 ====================
 // HTTP 头名大小写不敏感，而 headers 是 std::map<std::string,...>（大小写敏感）：
 // 同名不同大小写会并存 → 上游收到重复头。一律先清干净。
-
-std::string toLowerAscii(std::string s) {
-    std::transform(s.begin(), s.end(), s.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    return s;
-}
 
 void eraseHeaderCI(std::map<std::string, std::string>& headers,
                    const std::string& keyLower) {
