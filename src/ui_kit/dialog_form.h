@@ -40,7 +40,7 @@ void drawDialogFrame(eui::Ui& ui, const eui::Screen& screen, const DialogFrame& 
                      const components::theme::ThemeColorTokens& themeTokens,
                      const std::function<void()>& content);
 
-// ---- 一行文本（说明 / 正文 / 标签 / 校验错误行的共用接线）----
+// 一行文本（说明 / 正文 / 标签 / 校验错误行的共用接线）
 // 现状排版：position + size + text + fontSize + lineHeight [+ fontWeight(700)] [+ wrap] + color。
 struct DialogTextOptions {
     float x = kDialogInsetX;
@@ -58,7 +58,7 @@ void drawDialogText(eui::Ui& ui, const std::string& id, float dialogWidth,
                     const std::string& text, float fontSize, const eui::Color& color,
                     const DialogTextOptions& options = {});
 
-// ---- 标题行（宽 w-56、高 28、行高 28、700 字重）----
+// 标题行（宽 w-56、高 28、行高 28、700 字重）
 struct DialogTitleOptions {
     float x = kDialogInsetX;
     float y = 24.0f;
@@ -71,7 +71,7 @@ void drawDialogTitle(eui::Ui& ui, const std::string& id, float dialogWidth,
                      const std::string& text, float fontSize, const eui::Color& color,
                      const DialogTitleOptions& options = {});
 
-// ---- 标准按钮对 ----
+// 标准按钮对
 // 7 种样式组合逐字复刻（不合并、不近似）；Themed = 走 .theme(themeTokens, primary)。
 enum class DialogButtonStyle {
     Secondary,        // .colors(surfaceElevated/hover/active) + textPrimary + border

@@ -212,7 +212,7 @@ core::Result<std::map<std::string, std::string>> parseExtraEnv(
     return core::Result<std::map<std::string, std::string>>::ok(std::move(out));
 }
 
-// ---- 高级设置 JSON：生效合并 / 键枚举 / 文档并入 / 校验 ----
+// 高级设置 JSON：生效合并 / 键枚举 / 文档并入 / 校验
 
 namespace {
 
@@ -705,7 +705,7 @@ std::vector<std::string> managedEnvKeyNames() {
     return out;
 }
 
-// ---- 反向同步（settings.json env → profile）----
+// 反向同步（settings.json env → profile）
 
 namespace {
 
@@ -921,7 +921,7 @@ ReverseSyncMerge mergeReverseSyncEnv(const ImportedConfig& cfg,
         return containsKey(cfg.skippedKeys, key);
     };
 
-    // ---- models_config：以 effectiveModelsConfig(现值) 为基底 ----
+    // models_config：以 effectiveModelsConfig(现值) 为基底
     const ModelsConfig cur =
         effectiveModelsConfig(curModelsConfigJson);
     ModelsConfig merged = cur;
@@ -947,7 +947,7 @@ ReverseSyncMerge mergeReverseSyncEnv(const ImportedConfig& cfg,
         // 序列化失败（理论不可达）→ 保持现值不写，避免半写
     }
 
-    // ---- extra_env：键集合完全由 settings.json 决定（出现覆盖 / 缺席删除）----
+    // extra_env：键集合完全由 settings.json 决定（出现覆盖 / 缺席删除）
     std::map<std::string, std::string> curExtra;
     auto parsedCur = parseExtraEnv(curExtraEnvJson);
     if (parsedCur.isOk()) curExtra = parsedCur.value();  // 非法 JSON → 容错为空表

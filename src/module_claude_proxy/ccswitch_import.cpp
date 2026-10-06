@@ -55,7 +55,7 @@ bool isReservedEnvKey(const std::string& key) {
            key == kEnvModel;
 }
 
-// ---- 读侧（sqlite 骨架来自 quota/ccswitch_sqlite.h）----
+// 读侧（sqlite 骨架来自 quota/ccswitch_sqlite.h）
 
 CcSwitchImportRows readAll() {
     const std::string path = ccSwitchDbPath();
@@ -119,7 +119,7 @@ CcSwitchImportRows readAll() {
     return out;
 }
 
-// ---- 映射 ----
+// 映射
 
 CcSwitchImportMapping skipped(std::string reason) {
     CcSwitchImportMapping out;

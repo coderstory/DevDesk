@@ -1,15 +1,10 @@
 // tests/test_modules/test_settings.cpp
-// P13 设置页单测：SettingsStore（config.json 读写）纯逻辑 + 模块 compose 无头冒烟
-// 覆盖：默认值 / 保存-加载往返 / 损坏 JSON 回退 / 数值钳制 / 主题字段映射 /
-//       设置页可渲染（DSL 元素树构建）/ 主题切换对下一次 compose 即时生效 /
-//       日志保留下拉弹层不出窗体（openUp）/ 切换档位立即清理 / 文本垂直居中 /
-//       窗口效果三档（磨砂 Phase D）：默认值/往返/非法值收敛、档位→alpha/
-//       backdrop 映射、降级提示矩阵、applyWindowVisuals 接线（无头）
-//       R6（spec §5.2）：settings_ui_logic 纯件等价（openUp 几何/档位表/最近邻/
-//       字号缩放/保留档文案/下拉持有者语义）+ 卡片注册表（tab 归属/顺序/门控）
+// 设置模块单测：SettingsStore / app_config 表读写纯逻辑 + 模块 compose 无头冒烟。
+// 配置落点是 app_config 表（不是文件）：顶层键 = 行键，pet 配置整份存一行。
+// 无头 compose 用 dsl_app_impl.h 注入 app 运行时 API；app::compose 用 src/app_sidebar.cpp 真实现。
 #include "doctest.h"
 #include "test_support.h"
-#include "app_tools.h"          // M2 Task 9：app.read_settings 工厂
+#include "app_tools.h"          // app.read_settings 工厂
 #include "settings_config.h"
 #include "settings_ui_logic.h"
 
@@ -20,10 +15,10 @@
 #include "core/paths.h"
 #include "core/service_locator.h"
 #include "core/theme.h"
-#include "core/tool.h"          // M2 Task 9：ITool / ToolArgs
-#include "module_pet/pet_config.h"   // pet_config 键名常量（E2）
-#include "module_pet/pet_window.h"  // PET-CLOSE：桌宠开关即时性断言读窗口可见意图
-#include "platform/json.h"      // M2 Task 9：读 app.read_settings 的 JSON 出参
+#include "core/tool.h"          // ITool / ToolArgs
+#include "module_pet/pet_config.h"   // pet_config 行键常量
+#include "module_pet/pet_window.h"  // 桌宠开关即时性断言读窗口可见意图
+#include "platform/json.h"      // 读 app.read_settings 的 JSON 出参
 #include "platform/keychain.h"
 #include "platform/system_theme.h"
 
@@ -45,11 +40,9 @@
 
 extern "C" ::core::Module* create_settings_module();
 
-// 窗口效果（磨砂 Phase D）让 module_settings 引用 app:: 运行时 API；app API
-// 的实现 TU（glfw_app_main）只编进 DevDesk 主程序，测试侧包含 dsl_app_impl.h
-// 自带实现（与 EUI-NEO 自身单测相同的注入方式），并提供它要求的
-// app::dslAppConfig。app::compose 不再需要桩——src/app_sidebar.cpp 的真实现
-// 已直接编进测试二进制（tests/CMakeLists.txt，侧边栏折叠单测驱动同一份）
+// app API 的实现 TU（glfw_app_main）只编进 DevDesk 主程序，测试侧靠包含
+// dsl_app_impl.h 自带实现（与 EUI-NEO 自身单测相同的注入方式）。app::compose 用
+// src/app_sidebar.cpp 的真实现，该 TU 已直接编进测试二进制。
 namespace app {
 const app::DslAppConfig& dslAppConfig() {
     static const DslAppConfig config = DslAppConfig{}.title("devdesk_test_settings");
@@ -59,9 +52,7 @@ const app::DslAppConfig& dslAppConfig() {
 
 namespace {
 
-// 每个用例独立的临时配置文件（避免用例间串扰）—— 共享工厂（TIN-06b，
-// 原三份 tempConfigFile 合流），调用点统一 test_support::tempConfigFile(
-// kCfgPrefix, name)
+// 每个用例独立的临时配置（避免用例间串扰）；调用点统一 test_support::tempConfigFile()
 constexpr const char* kCfgPrefix = "devdesk_test_settings_";
 
 void removeQuietly(const std::filesystem::path& p) {
@@ -69,13 +60,11 @@ void removeQuietly(const std::filesystem::path& p) {
     std::filesystem::remove(p, ec);
 }
 
-// 原样读回文件（二进制，不做换行转换）——用于比对落盘字节内容。
-// 2026-10-03（批次 E2）：配置不再落文件，读配置字节改走
-// test_support::readRawConfigRow；本 helper 仍在用（宠物皮肤 pet.json 夹具、
-// settings.json 接管用例都要按字节读文件），故保留。
+    // 读配置字节走 test_support::readRawConfigRow；本 helper 供宠物皮肤 pet.json 夹具、
+    // settings.json 接管用例按字节读文件用。
 
-// 数据根（APPDATA / HOME）隔离已收进共享头 test_support::AppDataEnv；
-// 以下两个是「模块 tail 读的就是这个文件」的写/追加助手，只读 ::core::paths::logFile()
+    // 数据根（APPDATA / HOME）隔离已收进共享头 test_support::AppDataEnv；
+    // 以下两个是「模块 tail 读的就是这个文件」的写/追加助手，只读 ::core::paths::logFile()
 void writeLogFile(const std::string& content) {
     const auto p = ::core::paths::logFile();
     std::error_code ec;
@@ -88,11 +77,9 @@ void appendLogFile(const std::string& content) {
         << content;
 }
 
-// ---- Task B tab 化：tab 点击助手 ----
-// 在一次性元素树上点 tabs 命中矩形（无头等价真实点击：onClick 把 tab 索引
-// 写进模块成员），此后 compose 渲染对应 tab 的卡。tab 选择是模块实例状态，
-// 与调用方自己的 eui::Ui 互不干扰。找不到 tab 栏返回 false（调用方用
-// DOCTEST_REQUIRE 包，失败时用例早退、错误原因明确）
+// tab 点击助手：在一次性元素树上点 tabs 命中矩形（无头等价真实点击——onClick 把 tab
+// 索引写进模块成员），此后 compose 渲染对应 tab 的卡。找不到 tab 栏返回 false，调用方用
+// DOCTEST_REQUIRE 包。tab 选择是模块实例状态，与调用方自己的 eui::Ui 互不干扰。
 bool clickSettingsTab(::core::Module& mod, const eui::Screen& screen,
                       int tab) {
     eui::Ui ui;
@@ -105,26 +92,23 @@ bool clickSettingsTab(::core::Module& mod, const eui::Screen& screen,
     return true;
 }
 
-// ---- R0/D6：设置页的代理运行面经 core 只读服务定位器取 ----
-// 设置页不再直呼 ClaudeService::global()（见源码护栏用例）；用例把自己 setGlobal
-// 的 service 用**生产同一个适配器**（core::GlobalClaudeProxyService，转发到
-// global()）暴露给定位器，生产 / 测试走同一条取用路径。RAII：作用域结束自动
-// 注销（用例体内 fail-fast 提前 return 也不留悬垂注册）。
+// 设置页的代理运行面经 core 只读服务定位器取。用例把自己 setGlobal 的 service 用
+// **生产同一个适配器**（core::GlobalClaudeProxyService，转发到 global()）暴露给定位器，
+// 生产 / 测试走同一条取用路径。RAII：作用域结束自动注销，fail-fast 提前 return 也不留
+// 悬垂注册。
 struct ScopedClaudeProxy {
     ::core::GlobalClaudeProxyService<module::claude::ClaudeService> adapter;
     ::core::ScopedService<::core::IClaudeProxyService> registration{&adapter};
 };
 
-// ==================== R0 护栏（源码级） ====================
-// 需求（重构 spec R0 / 审计 D6/D7）两条：
-//   D6 —— settings_module.cpp 不得再直连 ClaudeService 单例：零
-//        `claude_service.h`、零 `module::claude`、**代码里**零 `ClaudeService`
-//        （注释里的历史说明允许 → 逐行剥掉 `//` 之后的部分再查）；同时必须
-//        真的经 core 只读服务定位器取（防「解耦 = 把功能删了」）。
-//   D7 —— 代理端口常量单一来源 = core/proxy_port.h：字面量只在该头定义，
-//        两个消费方（settings_config.h / claude_service.h）只从 core 取。
-// 仓库根靠 cwd 上溯（**不用** __FILE__：ccache 会把绝对路径相对化，TIN-01
-// 教训）；定位失败返回明确报告，不静默绿。
+// 源码级护栏两条：
+//   - settings_module.cpp 不得直连 ClaudeService 单例：零 claude_service.h、零
+//     module::claude、**代码里**零 ClaudeService（剥掉 `//` 之后再查）；同时必须真的
+//     经 core 只读服务定位器取——防「解耦 = 把功能删了」。
+//   - 代理端口常量单一来源 = core/proxy_port.h：字面量只在该头定义，两个消费方
+//     （settings_config.h / claude_service.h）只从 core 取。
+// 仓库根靠 cwd 上溯，**不用** __FILE__（ccache 会把绝对路径相对化）。定位失败返回
+// 明确报告，不静默绿。
 
 std::filesystem::path findRepoRoot() {
     std::error_code ec;
@@ -149,8 +133,8 @@ std::string readWholeFile(const std::filesystem::path& path) {
                        std::istreambuf_iterator<char>());
 }
 
-// 逐行扫针，命中拼成「相对路径:行号: 行内容」；stripLineComment=true 时先剥掉
-// 行内 `//` 之后的部分（注释豁免——注释里点名历史机制是有意保留的说明）
+// 逐行扫针，命中拼成「相对路径:行号: 行内容」；stripLineComment=true 时先剥掉行内
+// `//` 之后的部分
 std::vector<std::string> scanFileForTokens(
     const std::filesystem::path& root, const std::string& relPath,
     const std::vector<std::string>& needles, bool stripLineComment) {
@@ -188,22 +172,22 @@ std::string r0CouplingGuardReport() {
         return "护栏无法定位仓库根（cwd=" +
                std::filesystem::current_path(ec).string() +
                "）：请从仓库根或 build/ 下运行 devdesk_tests —— 护栏靠 cwd 上溯"
-               "定位（不能用 __FILE__：ccache 会把绝对路径相对化，TIN-01 教训）";
+               "定位（不能用 __FILE__：ccache 会把绝对路径相对化）";
     }
     const std::string rel = "src/module_settings/settings_module.cpp";
 
     std::string report;
-    // 1) 硬针：跨模块 include 与限定名，注释里也不许出现（历史说明不点名它们）
+    // 1) 硬针：跨模块 include 与限定名，注释里也不许出现
     for (const std::string& hit : scanFileForTokens(
              root, rel, {"claude_service.h", "module::claude"}, false)) {
         report += "设置页又直接引用了兄弟模块 claude：" + hit + "\n";
     }
-    // 2) 软针：类型名本身——按行剥注释后再查（代码里出现即违规）
+    // 2) 软针：类型名本身——按行剥注释后再查
     for (const std::string& hit :
          scanFileForTokens(root, rel, {"ClaudeService"}, true)) {
         report += "设置页代码里又直呼了 ClaudeService：" + hit + "\n";
     }
-    // 3) 正向：必须真的经 core 只读服务定位器取（解耦不是删功能）
+    // 3) 正向：必须真的经 core 只读服务定位器取
     const std::string src = readWholeFile(root / rel);
     if (src.find("core/service_locator.h") == std::string::npos) {
         report += "设置页没有 include core/service_locator.h —— 代理运行面应由"
@@ -213,8 +197,8 @@ std::string r0CouplingGuardReport() {
         report += "设置页没有用 core::IClaudeProxyService —— 定位器通道被摘掉了？"
                   "（解耦不是删功能）\n";
     }
-    // 4) 提供方：装配段必须真的注册（否则设置页会永久静默降级成「无服务」，
-    //    而用例侧各自注册、覆盖不到这条生产接线）
+    // 4) 提供方：装配段必须真的注册（否则设置页永久静默降级成「无服务」，而用例侧
+    //    各自注册、覆盖不到这条生产接线）
     const std::string mainSrc = readWholeFile(root / "src/main.cpp");
     if (mainSrc.find("ServiceLocator::set<::core::IClaudeProxyService>") ==
         std::string::npos) {
@@ -276,9 +260,7 @@ std::string proxyPortSingleSourceReport() {
 } // namespace
 
 REGISTER_TEST(settings_defaults_on_missing_file, "settings: missing file -> defaults", {
-    // 2026-10-03（批次 E2）：配置落点是 app_config 表，本用例需要一份
-    // 已 migrate 且注册为进程级 appDatabase 的临时库（生产代码正是经
-    // core::appDatabase() 取连接；不注册则 save 一律失败）
+    // 配置落 app_config 表，生产代码经 core::appDatabase() 取连接；未注册则 save 一律失败。
     test_support::TestEnv cfgDbEnv(kCfgPrefix, "cfg1", true);
     const auto path = test_support::tempConfigFile(kCfgPrefix, "missing");
     removeQuietly(path);
@@ -291,16 +273,13 @@ REGISTER_TEST(settings_defaults_on_missing_file, "settings: missing file -> defa
 })
 
 REGISTER_TEST(settings_proxy_autostart_default_off, "settings: claudeProxyAutoStart 默认 false + 读写往返", {
-    // 2026-10-03（批次 E2）：配置落点是 app_config 表，本用例需要一份
-    // 已 migrate 且注册为进程级 appDatabase 的临时库（生产代码正是经
-    // core::appDatabase() 取连接；不注册则 save 一律失败）
+    // 配置落 app_config 表，生产代码经 core::appDatabase() 取连接；未注册则 save 一律失败。
     test_support::TestEnv cfgDbEnv(kCfgPrefix, "cfg2", true);
-    // 硬性需求 1（provider-config Phase B）：默认不启动代理
+    // 默认不启动代理
     const auto path = test_support::tempConfigFile(kCfgPrefix, "autostart");
     removeQuietly(path);
     module::settings::SettingsStore store(::core::appDatabase());
 
-    // 默认 false
     DOCTEST_CHECK_FALSE(store.load().claudeProxyAutoStart);
 
     // 打开后持久化 + 读回 true
@@ -309,9 +288,9 @@ REGISTER_TEST(settings_proxy_autostart_default_off, "settings: claudeProxyAutoSt
     DOCTEST_REQUIRE(store.save(cfg).isOk());
     DOCTEST_CHECK(store.load().claudeProxyAutoStart);
 
-    // 存量 config.json（无该键）→ 保持默认 false
+    // 存量配置无该键 → 保持默认 false
     {
-        // 2026-10-03（批次 E2）：配置不再是文件，改按顶层键写进 app_config 表各行
+        // 按顶层键写进 app_config 表各行
         DOCTEST_REQUIRE(test_support::seedConfigJsonRows(
             ::core::appDatabase(), module::settings::SettingsStore::keyNamespace(), R"({"theme": "light", "logRetentionDays": 30})"));
     }
@@ -321,9 +300,7 @@ REGISTER_TEST(settings_proxy_autostart_default_off, "settings: claudeProxyAutoSt
 })
 
 REGISTER_TEST(settings_proxy_port_roundtrip_clamp, "settings: proxyPort 默认/读写往返/非法回落/输入解析", {
-    // 2026-10-03（批次 E2）：配置落点是 app_config 表，本用例需要一份
-    // 已 migrate 且注册为进程级 appDatabase 的临时库（生产代码正是经
-    // core::appDatabase() 取连接；不注册则 save 一律失败）
+    // 配置落 app_config 表，生产代码经 core::appDatabase() 取连接；未注册则 save 一律失败。
     test_support::TestEnv cfgDbEnv(kCfgPrefix, "cfg3", true);
     using namespace module::settings;
     const auto path = test_support::tempConfigFile(kCfgPrefix, "proxyport");
@@ -336,7 +313,7 @@ REGISTER_TEST(settings_proxy_port_roundtrip_clamp, "settings: proxyPort 默认/�
         return c;
     };
 
-    // 默认 8888（spec §8.5 承诺默认端口，审计 2026-09-23 [14]）
+    // 默认 8888
     DOCTEST_CHECK_EQ(store.load().proxyPort, 8888);
 
     // 读写往返
@@ -351,9 +328,9 @@ REGISTER_TEST(settings_proxy_port_roundtrip_clamp, "settings: proxyPort 默认/�
     DOCTEST_CHECK_EQ(SettingsStore::sanitized(withPort(1)).proxyPort, 1);
     DOCTEST_CHECK_EQ(SettingsStore::sanitized(withPort(65535)).proxyPort, 65535);
 
-    // 存量 config.json 无 claudeProxyPort 键 → 默认 8888
+    // 存量配置无 claudeProxyPort 键 → 默认 8888
     {
-        // 2026-10-03（批次 E2）：配置不再是文件，改按顶层键写进 app_config 表各行
+        // 按顶层键写进 app_config 表各行
         DOCTEST_REQUIRE(test_support::seedConfigJsonRows(
             ::core::appDatabase(), module::settings::SettingsStore::keyNamespace(), R"({"theme": "dark", "claudeProxyAutoStart": true})"));
     }
@@ -377,9 +354,7 @@ REGISTER_TEST(settings_proxy_port_roundtrip_clamp, "settings: proxyPort 默认/�
 })
 
 REGISTER_TEST(settings_save_load_roundtrip, "settings: save/load roundtrip", {
-    // 2026-10-03（批次 E2）：配置落点是 app_config 表，本用例需要一份
-    // 已 migrate 且注册为进程级 appDatabase 的临时库（生产代码正是经
-    // core::appDatabase() 取连接；不注册则 save 一律失败）
+    // 配置落 app_config 表，生产代码经 core::appDatabase() 取连接；未注册则 save 一律失败。
     test_support::TestEnv cfgDbEnv(kCfgPrefix, "cfg4", true);
     const auto path = test_support::tempConfigFile(kCfgPrefix, "roundtrip");
     removeQuietly(path);
@@ -401,9 +376,7 @@ REGISTER_TEST(settings_save_load_roundtrip, "settings: save/load roundtrip", {
 })
 
 REGISTER_TEST(settings_zero_days_permanent, "settings: 0 days = permanent retention", {
-    // 2026-10-03（批次 E2）：配置落点是 app_config 表，本用例需要一份
-    // 已 migrate 且注册为进程级 appDatabase 的临时库（生产代码正是经
-    // core::appDatabase() 取连接；不注册则 save 一律失败）
+    // 配置落 app_config 表，生产代码经 core::appDatabase() 取连接；未注册则 save 一律失败。
     test_support::TestEnv cfgDbEnv(kCfgPrefix, "cfg5", true);
     const auto path = test_support::tempConfigFile(kCfgPrefix, "zero");
     removeQuietly(path);
@@ -421,9 +394,7 @@ REGISTER_TEST(settings_zero_days_permanent, "settings: 0 days = permanent retent
 })
 
 REGISTER_TEST(settings_corrupted_json_fallback, "settings: corrupted json -> defaults", {
-    // 2026-10-03（批次 E2）：配置落点是 app_config 表，本用例需要一份
-    // 已 migrate 且注册为进程级 appDatabase 的临时库（生产代码正是经
-    // core::appDatabase() 取连接；不注册则 save 一律失败）
+    // 配置落 app_config 表，生产代码经 core::appDatabase() 取连接；未注册则 save 一律失败。
     test_support::TestEnv cfgDbEnv(kCfgPrefix, "cfg6", true);
     const auto path = test_support::tempConfigFile(kCfgPrefix, "corrupt");
     auto bak = path;
@@ -431,8 +402,7 @@ REGISTER_TEST(settings_corrupted_json_fallback, "settings: corrupted json -> def
     removeQuietly(path);
     removeQuietly(bak);
     const std::string broken = "{ this is not valid json !!!";
-    // 坏内容塞进一个**已知的顶层键**（config.json:theme）——只有这样 load 才会
-    // 真的去解析它，走「解析失败」那一支。
+    // 坏内容塞进一个**已知的顶层键**——只有这样 load 才会真的去解析它
     DOCTEST_REQUIRE(test_support::writeRawConfigRow(
         ::core::appDatabase(), "config.json:theme", broken));
     module::settings::SettingsStore store(::core::appDatabase());
@@ -440,10 +410,8 @@ REGISTER_TEST(settings_corrupted_json_fallback, "settings: corrupted json -> def
     DOCTEST_CHECK(cfg.darkTheme);
     DOCTEST_CHECK_EQ(cfg.fontScalePercent, 100);  // 解析失败 → 默认
     DOCTEST_CHECK_EQ(cfg.logRetentionDays, 30);
-    // 2026-10-03（批次 E2）：旧的 .bak 机制随 config.json 一起退役 —— 脏内容
-    // 不再有任何**文件**载体。「原始内容可查」改由两件事兑现：
-    // ① 坏行原样留在 app_config 里（查得出来，不会被静默改写成默认值）；
-    // ② loadChecked 对「读到的值不是合法 JSON」如实报错，而不是假装读到了。
+        // 脏内容没有任何**文件**载体。「原始内容可查」由两件事兑现：① 坏行原样留在
+        // app_config 里；② loadChecked 对「读到的值不是合法 JSON」如实报错。
     DOCTEST_CHECK_EQ(
         test_support::readRawConfigRow(::core::appDatabase(), "config.json:theme"),
         broken);
@@ -457,15 +425,14 @@ REGISTER_TEST(settings_corrupted_json_fallback, "settings: corrupted json -> def
 })
 
 REGISTER_TEST(settings_partial_file_uses_defaults, "settings: partial file -> per-field defaults", {
-    // 2026-10-03（批次 E2）：配置落点是 app_config 表，本用例需要一份
-    // 已 migrate 且注册为进程级 appDatabase 的临时库（生产代码正是经
-    // core::appDatabase() 取连接；不注册则 save 一律失败）
+    // 配置落 app_config 表，生产代码经 core::appDatabase() 取连接；未注册则 save 一律失败。
     test_support::TestEnv cfgDbEnv(kCfgPrefix, "cfg7", true);
     const auto path = test_support::tempConfigFile(kCfgPrefix, "partial");
     removeQuietly(path);
     {
         // 只有 theme 字段；fontScale / logRetention 缺失 → 各自默认值
-        // 2026-10-03（批次 E2）：配置不再是文件，改按顶层键写进 app_config 表各行
+        // 按顶层键写进 app_config 表各行
+        // 按顶层键写进 app_config 表各行
         DOCTEST_REQUIRE(test_support::seedConfigJsonRows(
             ::core::appDatabase(), module::settings::SettingsStore::keyNamespace(), "{\"theme\": \"light\"}"));
     }
@@ -478,18 +445,15 @@ REGISTER_TEST(settings_partial_file_uses_defaults, "settings: partial file -> pe
     return true;
 })
 
-// W9 一次性重置：EUI-NEO 0.7.0 修字号 em 语义后文字放大约 33%，
-// 旧键 fontScalePercent / fontScalePercentV2 的存量值（85/115/130）都是
-// 缩水语义下选的 → 一律忽略、回落默认 100；V3 键下的值按字面生效
+    // fontScalePercent / fontScalePercentV2 的存量值（85/115/130）一律忽略、回落
+    // 默认 100；V3 键下的值按字面生效
 REGISTER_TEST(settings_legacy_fontscale_migration, "settings: legacy font scale keys reset to 100", {
-    // 2026-10-03（批次 E2）：配置落点是 app_config 表，本用例需要一份
-    // 已 migrate 且注册为进程级 appDatabase 的临时库（生产代码正是经
-    // core::appDatabase() 取连接；不注册则 save 一律失败）
+    // 配置落 app_config 表，生产代码经 core::appDatabase() 取连接；未注册则 save 一律失败。
     test_support::TestEnv cfgDbEnv(kCfgPrefix, "cfg8", true);
     const auto path = test_support::tempConfigFile(kCfgPrefix, "legacy");
     removeQuietly(path);
     {
-        // 2026-10-03（批次 E2）：配置不再是文件，改按顶层键写进 app_config 表各行
+        // 按顶层键写进 app_config 表各行
         DOCTEST_REQUIRE(test_support::seedConfigJsonRows(
             ::core::appDatabase(), module::settings::SettingsStore::keyNamespace(), "{\"theme\": \"dark\", \"fontScalePercent\": 85}"));
     }
@@ -497,15 +461,15 @@ REGISTER_TEST(settings_legacy_fontscale_migration, "settings: legacy font scale 
     DOCTEST_CHECK_EQ(store.load().fontScalePercent, 100);  // 最老键 → 重置
 
     {
-        // 2026-10-03（批次 E2）：配置不再是文件，改按顶层键写进 app_config 表各行
+        // 按顶层键写进 app_config 表各行
         DOCTEST_REQUIRE(test_support::seedConfigJsonRows(
             ::core::appDatabase(), module::settings::SettingsStore::keyNamespace(), "{\"fontScalePercentV2\": 130}"));
     }
     DOCTEST_CHECK_EQ(store.load().fontScalePercent, 100);  // V2 键 → 重置
 
     {
-        // V3 键按字面生效（旧键同时存在也被忽略）
-        // 2026-10-03（批次 E2）：配置不再是文件，改按顶层键写进 app_config 表各行
+        // V3 键按字面生效（V2 同时存在也被忽略）
+        // 按顶层键写进 app_config 表各行
         DOCTEST_REQUIRE(test_support::seedConfigJsonRows(
             ::core::appDatabase(), module::settings::SettingsStore::keyNamespace(), "{\"fontScalePercent\": 85, \"fontScalePercentV2\": 130, \"fontScalePercentV3\": 115}"));
     }
@@ -515,14 +479,12 @@ REGISTER_TEST(settings_legacy_fontscale_migration, "settings: legacy font scale 
 })
 
 REGISTER_TEST(settings_theme_value_mapping, "settings: theme string mapping", {
-    // 2026-10-03（批次 E2）：配置落点是 app_config 表，本用例需要一份
-    // 已 migrate 且注册为进程级 appDatabase 的临时库（生产代码正是经
-    // core::appDatabase() 取连接；不注册则 save 一律失败）
+    // 配置落 app_config 表，生产代码经 core::appDatabase() 取连接；未注册则 save 一律失败。
     test_support::TestEnv cfgDbEnv(kCfgPrefix, "cfg9", true);
     const auto path = test_support::tempConfigFile(kCfgPrefix, "theme");
     removeQuietly(path);
     {
-        // 2026-10-03（批次 E2）：配置不再是文件，改按顶层键写进 app_config 表各行
+        // 按顶层键写进 app_config 表各行
         DOCTEST_REQUIRE(test_support::seedConfigJsonRows(
             ::core::appDatabase(), module::settings::SettingsStore::keyNamespace(), "{\"theme\": \"dark\"}"));
     }
@@ -530,7 +492,7 @@ REGISTER_TEST(settings_theme_value_mapping, "settings: theme string mapping", {
     DOCTEST_CHECK(store.load().darkTheme);
 
     {
-        // 2026-10-03（批次 E2）：配置不再是文件，改按顶层键写进 app_config 表各行
+        // 按顶层键写进 app_config 表各行
         DOCTEST_REQUIRE(test_support::seedConfigJsonRows(
             ::core::appDatabase(), module::settings::SettingsStore::keyNamespace(), "{\"theme\": \"light\"}"));
     }
@@ -538,7 +500,7 @@ REGISTER_TEST(settings_theme_value_mapping, "settings: theme string mapping", {
 
     {
         // 未知字符串 → 安全回退深色（默认值）
-        // 2026-10-03（批次 E2）：配置不再是文件，改按顶层键写进 app_config 表各行
+        // 按顶层键写进 app_config 表各行
         DOCTEST_REQUIRE(test_support::seedConfigJsonRows(
             ::core::appDatabase(), module::settings::SettingsStore::keyNamespace(), "{\"theme\": \"whatever\"}"));
     }
@@ -566,9 +528,7 @@ REGISTER_TEST(settings_clamp_out_of_range, "settings: out-of-range values clampe
 })
 
 REGISTER_TEST(settings_save_clamps_before_write, "settings: save clamps, load returns clamped", {
-    // 2026-10-03（批次 E2）：配置落点是 app_config 表，本用例需要一份
-    // 已 migrate 且注册为进程级 appDatabase 的临时库（生产代码正是经
-    // core::appDatabase() 取连接；不注册则 save 一律失败）
+    // 配置落 app_config 表，生产代码经 core::appDatabase() 取连接；未注册则 save 一律失败。
     test_support::TestEnv cfgDbEnv(kCfgPrefix, "cfg10", true);
     const auto path = test_support::tempConfigFile(kCfgPrefix, "clampwrite");
     removeQuietly(path);
@@ -585,7 +545,7 @@ REGISTER_TEST(settings_save_clamps_before_write, "settings: save clamps, load re
     return true;
 })
 
-// ---- 模块 compose 无头冒烟（DSL 元素树构建，无需窗口/GL） ----
+// 模块 compose 无头冒烟（DSL 元素树构建，无需窗口 / GL）
 
 REGISTER_TEST(settings_module_compose_renders, "settings: module compose builds page (headless, tab 化)", {
     // 隔离真机 config（本机可能开了 pet 等）：临时 config 无文件 → 默认档
@@ -602,23 +562,20 @@ REGISTER_TEST(settings_module_compose_renders, "settings: module compose builds 
         ui.end();
     };
 
-    // tab 栏（3 个命中矩形）+ 卡区 scrollView 存在；默认 tab=通用
     frame("smoke");
     DOCTEST_CHECK(ui.find("settings.tabs.hit.0") != nullptr);
     DOCTEST_CHECK(ui.find("settings.tabs.hit.1") != nullptr);
     DOCTEST_CHECK(ui.find("settings.tabs.hit.2") != nullptr);
     DOCTEST_CHECK(ui.find("settings.cards.scroll") != nullptr);
-    // 通用 tab：外观卡 + 编辑器字号卡（Task B 自日志卡迁出）
+    // 通用 tab：外观卡 + 编辑器字号卡
     DOCTEST_CHECK(ui.find("settings.card.appearance") != nullptr);
     DOCTEST_CHECK(ui.find("settings.card.appearance.effect.ddwrap") != nullptr);
     DOCTEST_CHECK(ui.find("settings.card.editor.dd") != nullptr);
-    // tab 划分 = 互斥：其余 tab 的卡不渲染
     DOCTEST_CHECK(ui.find("settings.card.modules") == nullptr);
     DOCTEST_CHECK(ui.find("settings.card.log") == nullptr);
     DOCTEST_CHECK(ui.find("settings.card.about") == nullptr);
 
-    // 模块 tab：插拔开关 + 目录 + 代理（ClaudeService::global() 为 null 时
-    // 代理卡仍渲染）。W10 复审项在此 tab 依旧有效（多卡超小窗可滚）
+    // 模块 tab：插拔开关 + 目录 + 代理（服务为空时代理卡仍渲染）
     DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 1));
     frame("modtab");
     DOCTEST_CHECK(ui.find("settings.card.modules") != nullptr);
@@ -641,8 +598,8 @@ REGISTER_TEST(settings_module_compose_renders, "settings: module compose builds 
     return true;
 })
 
-// ---- Task B：日志查看卡 —— 刷新按钮点击 → 重读 tail（读盘在 compose 顶部，
-// 不在 scrollView content lambda 内）；日志文件缺失时渲染空态不崩 ----
+// 日志查看卡：刷新按钮 → 重读 tail
+// 读盘在 compose 顶部，不在 scrollView content lambda 内；日志文件缺失时渲染空态不崩
 
 REGISTER_TEST(settings_log_viewer_refresh_button,
               "settings: 日志查看 tail 渲染 + 刷新按钮重读（Task B headless）", {
@@ -673,13 +630,12 @@ REGISTER_TEST(settings_log_viewer_refresh_button,
     return true;
 })
 
-// ---- 审计 [19]：代理端口校验失败反馈（红字状态行 + 下一次输入清除）----
-// 设置页无创建弹窗，端口 draft 就地提交；反馈通道对齐 claude formError 语义：
-// 校验错误以红字呈现（settings.subtitle 走 colors.error，非 toast），
-// 且随下一次输入自动清除（修复前红字挂到下一次操作才走）。
+// 代理端口校验失败反馈（红字状态行 + 下一次输入清除）：设置页无创建弹窗，端口 draft
+// 就地提交；反馈通道对齐 claude formError 语义——校验错误以红字呈现
+//（settings.subtitle 走 colors.error，非 toast），且随下一次输入自动清除。
 
 REGISTER_TEST(settings_port_error_clear_on_input,
-              "settings: 端口校验失败 → 红字状态行 + 下一次输入清除（headless，审计 [19]）", {
+              "settings: 端口校验失败 → 红字状态行 + 下一次输入清除（headless）", {
     test_support::TestEnv env(kCfgPrefix, "portformerr", true);
     test_support::ScopedConfigPath cfgEnv(test_support::tempConfigFile(kCfgPrefix, "portformerr_cfg"));   // 临时 config，不碰真机配置
     std::unique_ptr<::core::Module> mod(create_settings_module());
@@ -713,11 +669,11 @@ REGISTER_TEST(settings_port_error_clear_on_input,
     const auto* sub = ui.find("settings.subtitle");
     DOCTEST_REQUIRE(sub != nullptr);
     DOCTEST_CHECK(sub->text.find("端口无效") != std::string::npos);  // 红字校验错误行
-    // 非法端口未落盘：临时 config 文件里的 proxyPort 仍是默认 8888
+    // 非法端口未落盘：proxyPort 仍是默认 8888
     module::settings::SettingsStore store(::core::appDatabase());
     DOCTEST_CHECK_EQ(store.load().proxyPort, 8888);
 
-    // 下一次输入 → 校验错误清除，subtitle 回静态说明（formError「输入即清」语义）
+    // 下一次输入 → 校验错误清除，subtitle 回静态说明
     auto* input2 = ui.find("settings.card.proxy.port.input.hit");
     DOCTEST_REQUIRE(input2 != nullptr);
     eui::TextInputEvent fix;
@@ -738,20 +694,19 @@ REGISTER_TEST(settings_theme_switch_reflects, "settings: theme switch reflects o
     screen.height = 1000.0f;
     eui::Ui ui;
 
-    // 页面底色载体从 settings.pagebg（已删——自铺不透明全屏底会把帧缓冲
-    // alpha 恒置 1，半透/磨砂档下主体看不见效果，用户实测根因）改为主窗口
-    // clearColor：applyWindowVisuals 随主题重设，无头验证颜色跟随
+    // 页面底色载体是主窗口 clearColor（随 applyWindowVisuals 按主题重设），不是
+    // compose 自铺的 settings.pagebg——自铺不透明底会把帧缓冲 alpha 恒置 1，半透 /
+    // 磨砂档下主体看不见效果。
     ::core::theme::setDark();
     module::settings::applyWindowVisuals(module::settings::kWindowEffectOff);
     const float darkClearR = app::currentClearColor().r;
 
-    // 切浅色再应用：底色应随之变化（运行时切主题走 theme 回调同一函数）
     ::core::theme::setLight();
     module::settings::applyWindowVisuals(module::settings::kWindowEffectOff);
     const float lightClearR = app::currentClearColor().r;
     DOCTEST_CHECK(darkClearR != lightClearR);
 
-    // 回归守卫：compose 不得再出现全屏自铺底（加回 = 主体效果全灭）
+    // 反断言：compose 不得出现全屏自铺底（加回即主体效果全灭）
     ui.begin("light");
     mod->compose(ui, screen);
     ui.end();
@@ -762,24 +717,18 @@ REGISTER_TEST(settings_theme_switch_reflects, "settings: theme switch reflects o
     return true;
 })
 
-// ---- 日志保留下拉弹层不被窗体裁剪（W8：小窗口下自动向上展开） ----
 
 REGISTER_TEST(settings_log_dropdown_popup_stays_in_window, "settings: log dropdown popup stays in window (openUp)", {
-    // 隔离：不隔离会读到真机 config.json（如本机启用了 pet 卡），卡片变多
-    // 把日志卡推到更低位，openUp 也装不下——测试必须与机器本地配置无关
+    // 必须隔离配置：不隔离会读到本机配置，卡片数变多、几何随机器漂移
     test_support::TestEnv env(kCfgPrefix, "openup", true);
     test_support::ScopedConfigPath cfgEnv(test_support::tempConfigFile(kCfgPrefix, "openup_cfg"));
     std::unique_ptr<::core::Module> mod(create_settings_module());
     mod->onStart();
 
-    // Task B tab 化后日志卡位于「日志」tab 顶部（cardsTopY = 40 pad + 64
-    // header + 16 gap + 40 tab + 16 gap = 176）。1600×1300 向下展开空间充足
-    // （保留字段底 = 176 + 48 + 36 = 260，+ 8 gap + 弹层 216 = 484 ≤ 1284）
-    // → 默认 openDown；短窗下同一弹层越出窗底（484 > 高 − 16）→ 应改 openUp
-    // 向上展开（弹层整体留在窗体内且位于字段上方）。卡顶游标只累计本 tab 的卡，
-    // 全量累加会把这里算错——即审计裁决「日志卡 openUp 游标」的回归位）
-    // 2026-09-29：日志卡两行改同列口径后字段高 40→36（底边 88→84），越界阈值
-    // 随之右移——短窗高度 500 → 470 才复现同一场景（484 > 454）
+    // 日志卡位于「日志」tab 顶部（cardsTopY = 40 pad + 64 header + 16 gap + 40 tab
+    // + 16 gap = 176；保留字段底 = 176 + 48 + 36 = 260，+ 8 gap + 弹层 216 = 484）。
+    // 1600×1300 下方空间充足 → 默认 openDown；短窗下 484 > 高 − 16 → 改 openUp。
+    // 卡顶游标只累计本 tab 的卡——全量累加会把这里算错。
     eui::Screen screen;
     screen.width = 1200.0f;
     screen.height = 470.0f;
@@ -821,7 +770,6 @@ REGISTER_TEST(settings_log_dropdown_popup_stays_in_window, "settings: log dropdo
     return true;
 })
 
-// ---- 目录路径文本框文字垂直居中（W8；原同测的代理 token 框已于 2026-09-27 随鉴权移除） ----
 
 REGISTER_TEST(settings_path_text_vertically_centered, "settings: path text vertically centered", {
     std::unique_ptr<::core::Module> mod(create_settings_module());
@@ -836,8 +784,7 @@ REGISTER_TEST(settings_path_text_vertically_centered, "settings: path text verti
     mod->compose(ui, screen);
     ui.end();
 
-    // 目录路径是"可见圆角框内的单行文本"，必须显式 Center
-    //（缺省 Top 会贴框顶，W7 侧边栏同款问题）
+    // 目录路径是可见圆角框内的单行文本，必须显式 Center（缺省 Top 会贴框顶）
     const auto* path = ui.find("settings.card.directory.path.value");
     DOCTEST_REQUIRE(path != nullptr);
     DOCTEST_CHECK(path->verticalAlign == eui::VerticalAlign::Center);
@@ -847,13 +794,11 @@ REGISTER_TEST(settings_path_text_vertically_centered, "settings: path text verti
     return true;
 })
 
-// ---- 切换保留档位立即执行一次清理（W8：此前仅启动时清理） ----
+// 切换保留档位立即执行一次清理
 
 REGISTER_TEST(settings_retention_change_prunes_immediately, "settings: retention change prunes immediately", {
-    // 隔离：一份已 migrate 且注册为 appDatabase 的临时库。
-    // 2026-10-03（批次 E2）：配置与调用日志现在**同一个库**，所以这里只留
-    // 一个夹具 —— 此前还挂着 ScopedConfigPath（它也注册了一份库），页面清理
-    // 的是那一份、而本用例造日志用的是 env 这一份，两库不同，断言必红。
+    // 配置与调用日志同属 app_config 库，这里只留一个夹具——两个库会各自注册一份，
+    // 页面清理的那份与本用例造日志用的那份不同，断言必红。
     test_support::TestEnv env(kCfgPrefix, "prune", true);
     DOCTEST_REQUIRE(env.db != nullptr);
 
@@ -913,9 +858,9 @@ REGISTER_TEST(settings_retention_change_prunes_immediately, "settings: retention
     return true;
 })
 
-// ---- Claude Code 接管状态行（provider-config Phase D，§6.3）----
-// 数据源 ClaudeService（临时接管路径注入，绝不碰真实 ~/.claude）：
-// 启动代理 → takeOver →「已接管 <路径>」+ 上层覆盖警告行；停止 →「未接管」
+// Claude Code 接管状态行
+// 数据源 ClaudeService（临时接管路径注入，不碰真实 ~/.claude）：启动代理 → takeOver →
+// 「已接管 <路径>」+ 上层覆盖警告行；停止 →「未接管」
 REGISTER_TEST(settings_takeover_status_row,
               "settings: Claude Code 接管状态行 + 覆盖警告（headless）", {
     namespace fs = std::filesystem;
@@ -957,7 +902,7 @@ REGISTER_TEST(settings_takeover_status_row,
     screen.height = 1000.0f;
     // Task B tab 化：接管状态行随代理卡在「模块」tab
     DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 1));
-    // CHECK 宏内含 return false，不能进返回 string 的 lambda —— out 参数收敛
+    // DOCTEST_CHECK 宏内含 return false，不能进返回 string 的 lambda——故用 out 参数收敛
     auto composeTakeoverText = [&](std::string* out) -> bool {
         eui::Ui ui;
         ui.begin("takeover_status");
@@ -979,9 +924,8 @@ REGISTER_TEST(settings_takeover_status_row,
     // 启动代理 → takeOver → 已接管 + 路径 + 覆盖警告行
     auto start = svc.startProxy("127.0.0.1", 0);
     DOCTEST_REQUIRE(start.isOk());
-    // 审计 THS-01：接管状态改为只读快照（compose 不再每帧 stat sidecar），
-    // 刷新点 = onStart / 进页面 / 切模块 tab / 本页改端口后。代理是页外
-    // 启动的，故这里显式走一次「进页面」取新值（真实流程同款）
+    // 接管状态是只读快照（compose 不每帧 stat sidecar）。刷新点 = onStart / 进页面 /
+    // 切模块 tab / 本页改端口后；代理是页外启动的，故这里显式走一次「进页面」。
     mod->onPageEnter();
     {
         std::string text;
@@ -1015,14 +959,12 @@ REGISTER_TEST(settings_takeover_status_row,
     return true;
 })
 
-// ---- 审计 CPX-02 残（波 1 L7）：未接管 + 警告非空时警告行仍要渲染 ----
-// 接管失败（settings.json 坏 JSON → takeOver 在写 sidecar 之前中止）⇒
-// isClaudeCodeManaged()=false（sidecar 不存在），但失败原因已进
-// lastSyncWarnings。旧渲染门是 managed && svc → 该行永不显示，而卡高仍按
-// 警告行数预留（渲染门与高度算源不一致）。本用例锁「行画出来 + 状态行仍
-// 如实写未接管」
+// 未接管 + 警告非空时警告行仍要渲染：接管失败（settings.json 坏 JSON → takeOver 在
+// 写 sidecar 之前中止）⇒ isClaudeCodeManaged()=false，但失败原因已进 lastSyncWarnings。
+// 渲染门与卡高算源若不一致，这行永不显示而卡高仍预留——本用例锁「行画出来 + 状态行
+// 仍如实写未接管」。
 REGISTER_TEST(settings_takeover_warn_unmanaged,
-              "settings: 未接管 + 警告非空 → 警告行仍渲染（CPX-02）", {
+              "settings: 未接管 + 警告非空 → 警告行仍渲染", {
     namespace fs = std::filesystem;
     const fs::path dir =
         test_temp::tempPath("devdesk_test_settings_warn_unmanaged");
@@ -1055,7 +997,7 @@ REGISTER_TEST(settings_takeover_warn_unmanaged,
     screen.height = 1000.0f;
     DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 1));  // 模块 tab
 
-    // 起代理：settings.json 是坏 JSON → 接管失败（写 sidecar 之前中止）
+        // 起代理：settings.json 是坏 JSON → 接管失败（写 sidecar 之前中止）
     {
         std::ofstream out(paths.settingsFile);
         out << "{ not valid json !!!";
@@ -1066,7 +1008,7 @@ REGISTER_TEST(settings_takeover_warn_unmanaged,
     DOCTEST_CHECK(!svc.isClaudeCodeManaged());   // 未接管
     DOCTEST_CHECK_FALSE(test_support::configRowExists(&db->db(), module::claude::settings_sync::kSidecarConfigKey));  // 失败在写盘之前
 
-    mod->onPageEnter();  // 刷新接管状态快照（真实流程同款刷新点）
+    mod->onPageEnter();  // 刷新接管状态快照
     eui::Ui ui;
     ui.begin("warn_unmanaged");
     mod->compose(ui, screen);
@@ -1074,7 +1016,7 @@ REGISTER_TEST(settings_takeover_warn_unmanaged,
     const auto* warn = ui.find("settings.card.proxy.takeover.warn.0");
     DOCTEST_REQUIRE(warn != nullptr);
     DOCTEST_CHECK(warn->text.find("接管失败") != std::string::npos);
-    // 状态行不受影响：仍如实写「未接管」（managed 只留给文案/色）
+        // 状态行仍如实写「未接管」（managed 只决定文案与色）
     const auto* value = ui.find("settings.card.proxy.takeover.value");
     DOCTEST_REQUIRE(value != nullptr);
     DOCTEST_CHECK(value->text.find("未接管") != std::string::npos);
@@ -1088,21 +1030,19 @@ REGISTER_TEST(settings_takeover_warn_unmanaged,
     return true;
 })
 
-// ---- 窗口效果三档（磨砂 Phase D）----
+// 窗口效果三档
 
 REGISTER_TEST(settings_window_effect_defaults_and_roundtrip, "settings: windowEffect 默认 off + 三档读写往返", {
-    // 2026-10-03（批次 E2）：配置落点是 app_config 表，本用例需要一份
-    // 已 migrate 且注册为进程级 appDatabase 的临时库（生产代码正是经
-    // core::appDatabase() 取连接；不注册则 save 一律失败）
+    // 配置落 app_config 表，生产代码经 core::appDatabase() 取连接；未注册则 save 一律失败。
     test_support::TestEnv cfgDbEnv(kCfgPrefix, "cfg11", true);
     const auto path = test_support::tempConfigFile(kCfgPrefix, "wineffect");
     removeQuietly(path);
     module::settings::SettingsStore store(::core::appDatabase());
 
-    // 默认 off；存量 config.json（无该键）同样回落 off
+    // 默认 off；存量配置无该键同样回落 off
     DOCTEST_CHECK_EQ(store.load().windowEffect, std::string(module::settings::kWindowEffectOff));
     {
-        // 2026-10-03（批次 E2）：配置不再是文件，改按顶层键写进 app_config 表各行
+        // 按顶层键写进 app_config 表各行
         DOCTEST_REQUIRE(test_support::seedConfigJsonRows(
             ::core::appDatabase(), module::settings::SettingsStore::keyNamespace(), R"({"theme": "dark", "logRetentionDays": 30})"));
     }
@@ -1118,13 +1058,13 @@ REGISTER_TEST(settings_window_effect_defaults_and_roundtrip, "settings: windowEf
                       store.load().windowEffect == std::string(mode));
     }
 
-    // 非法值：save 前 sanitized 收敛为 off；手写进文件同样收敛
+    // 非法值：save 前 sanitized 收敛为 off；手写进表同样收敛
     module::settings::SettingsConfig bad;
     bad.windowEffect = "glass";
     DOCTEST_CHECK_EQ(module::settings::SettingsStore::sanitized(bad).windowEffect,
                      std::string(module::settings::kWindowEffectOff));
     {
-        // 2026-10-03（批次 E2）：配置不再是文件，改按顶层键写进 app_config 表各行
+        // 按顶层键写进 app_config 表各行
         DOCTEST_REQUIRE(test_support::seedConfigJsonRows(
             ::core::appDatabase(), module::settings::SettingsStore::keyNamespace(), R"({"theme": "dark", "windowEffect": "vibrancy"})"));
     }
@@ -1137,11 +1077,9 @@ REGISTER_TEST(settings_window_effect_param_mapping, "settings: 档位→alpha/ba
     namespace ms = module::settings;
     using WE = core::platform::WindowEffect;
 
-    // 两处 alpha 各自独立（2026-09-29 二轮黑壁纸标定）：
-    //   clearColor（内容区纱）：off=1.0 / translucent=0.60 / frosted=0.15 / 未知→1.0
-    //   窗口背景色（标题栏底）：off=1.0 / translucent=0.90 / frosted=0.65 / 未知→1.0
-    // 回退任一常量本用例即红（旧值：两处同为 0.94 / 同为 0.30，即 EUI-NEO 按 clearColor
-    // 推导标题栏底的年代——那正是 P1「半透等同关闭」与 P2「标题栏与内容区差 105」的成因）
+    // 两处 alpha 各自独立：clearColor（内容区纱）off=1.0 / translucent=0.60 /
+    // frosted=0.15 / 未知→1.0；窗口背景色（标题栏底）1.0 / 0.90 / 0.65 / 未知→1.0。
+    // 两处不可取同一个值。
     DOCTEST_CHECK(ms::windowEffectAlpha(ms::kWindowEffectOff) == 1.0f);
     DOCTEST_CHECK(ms::windowEffectAlpha(ms::kWindowEffectTranslucent) == 0.60f);
     DOCTEST_CHECK(ms::windowEffectAlpha(ms::kWindowEffectFrosted) == 0.15f);
@@ -1151,13 +1089,9 @@ REGISTER_TEST(settings_window_effect_param_mapping, "settings: 档位→alpha/ba
     DOCTEST_CHECK(ms::windowEffectTitleBarAlpha(ms::kWindowEffectFrosted) == 0.65f);
     DOCTEST_CHECK(ms::windowEffectTitleBarAlpha("bogus") == 1.0f);
 
-    // 半透档目标带（用户第三轮反馈「半透的透明度几乎没了」后重标）：**240 上下一档**。
-    // 带的两端都有来历，不是随手取的：
-    //   下界 236 —— 用户第 4 次反馈「看不清内容」时实测 236.3，低于此即重蹈覆辙；
-    //   上界 244 —— 第 5 次反馈「几乎没了」时实测 246.25，高于此即与关闭档无差。
-    // 故 0.60/0.90 → 250×(1−0.10×0.40) = 240.0，落在带中央。
-    // **这条同时锁常量与目标**：回退任一 alpha（如 0.60/0.90 → 0.70/0.95）→ 246.25 出上界变红；
-    // 回退到首轮 0.45/0.90 → 236.25 出下界变红；回退到「两层同 0.94」→ 249.1 变红。
+    // 半透档目标带 **236–244**（黑壁纸），两端是实机标定值不是随手取的。
+    // 0.60/0.90 → 250×(1−0.10×0.40) = 240.0 落在带中央。这条同时锁常量与目标：
+    // 任一 alpha 往 0.70/0.95 走 → 246.25 出上界；回到 0.45/0.90 → 236.25 出下界。
     const float translucentOverBlack =
         250.0f * ms::windowEffectThemeOpacity(ms::kWindowEffectTranslucent);
     DOCTEST_CHECK(translucentOverBlack >= 236.0f);
@@ -1169,15 +1103,14 @@ REGISTER_TEST(settings_window_effect_param_mapping, "settings: 档位→alpha/ba
     const float translucentBar = 250.0f * ms::windowEffectTitleBarAlpha(ms::kWindowEffectTranslucent);
     DOCTEST_CHECK(std::abs(translucentOverBlack - translucentBar) <= 20.0f);
 
-    // 磨砂档判据（同一判据链，材质输出 M 用实机标定值 192@titleAlpha=0.65）：
-    //   内容区 = M + contentAlpha×(250−M)，标题栏 = M → 差值 = contentAlpha×(250−M) ≤ 20
-    // 旧值 0.30 与「标题栏没有材质」两件事都会被这两条拆开判：差值式在 M 恒定时只惩罚
-    // 内容区纱，故另加「标题栏 alpha 必须落在能把材质抬到浅灰的区间」一条。
+    // 磨砂档判据（材质输出 M = 192 @ titleAlpha 0.65）：内容区 = M + contentAlpha×(250−M)，
+    // 标题栏 = M → 差值 ≤ 20。差值式在 M 恒定时只惩罚内容区纱，故另加「标题栏 alpha 必须
+    // 落在能把材质抬到浅灰的区间」一条。
     constexpr float kFrostedMaterialOut = 192.0f;  // 实机实测（黑壁纸，titleAlpha=0.65）
     const float frostedVeil = ms::windowEffectAlpha(ms::kWindowEffectFrosted);
     DOCTEST_CHECK(frostedVeil * (250.0f - kFrostedMaterialOut) <= 20.0f);
     DOCTEST_CHECK(ms::windowEffectTitleBarAlpha(ms::kWindowEffectFrosted) >= 0.6f);
-    // 磨砂必须比半透更透（用户原话「半透……明显比磨砂档实」）：两处 alpha 都要更小
+    // 磨砂必须比半透更透：两处 alpha 都要更小
     DOCTEST_CHECK(ms::windowEffectAlpha(ms::kWindowEffectFrosted) <
                   ms::windowEffectAlpha(ms::kWindowEffectTranslucent));
     DOCTEST_CHECK(ms::windowEffectTitleBarAlpha(ms::kWindowEffectFrosted) <
@@ -1222,7 +1155,7 @@ REGISTER_TEST(settings_window_effect_apply_visuals, "settings: applyWindowVisual
     ms::applyWindowVisuals(ms::kWindowEffectTranslucent);
     DOCTEST_CHECK(app::currentClearColor().a == 0.60f);
     DOCTEST_CHECK(app::currentWindowEffect() == WE::None);
-    // 标题栏底**独立** alpha（显式 customColor 覆盖 EUI-NEO 的按 clearColor 推导）
+    // 标题栏底**独立** alpha（显式 customColor，覆盖 EUI-NEO 按 clearColor 推导的做法）
     {
         const auto tb = app::currentTitleBarAppearance();
         DOCTEST_CHECK(tb.customColor);
@@ -1251,7 +1184,6 @@ REGISTER_TEST(settings_window_effect_apply_visuals, "settings: applyWindowVisual
     return true;
 })
 
-// ============ 模块插拔（方案 A）：模块管理卡 + 卡片门控 ============
 
 REGISTER_TEST(settings_modules_card_renders, "settings: 模块管理卡渲染（5 行模块开关）", {
     test_support::TestEnv env(kCfgPrefix, "modcard", true);
@@ -1272,14 +1204,13 @@ REGISTER_TEST(settings_modules_card_renders, "settings: 模块管理卡渲染（
     DOCTEST_CHECK(ui.find("settings.card.modules.sw.0") != nullptr);
     DOCTEST_CHECK(ui.find("settings.card.modules.sw.1") != nullptr);
     DOCTEST_CHECK(ui.find("settings.card.modules.sw.2") != nullptr);
-    // 桌宠（sw.3）与智能体（sw.4，agent M1 Task 12 加行）两行开关在
+    // 桌宠（sw.3）与智能体（sw.4）两行开关
     DOCTEST_CHECK(ui.find("settings.card.modules.sw.3") != nullptr);
     DOCTEST_CHECK(ui.find("settings.card.modules.sw.4") != nullptr);
     const auto* agentName = ui.find("settings.card.modules.name.4");
     DOCTEST_REQUIRE(agentName != nullptr);
     DOCTEST_CHECK(agentName->text == "智能体");
-    // agent 行开关默认**不**勾选（spec §8 L4：agent 默认关，用户主动启用；
-    // final-review Fix 2 起默认清单不含 kModuleIdAgent）。track 色 =
+    // agent 行开关默认**不**勾选（默认清单不含 kModuleIdAgent）。track 色 =
     // checked ? on : off——默认开的 markdown 行（sw.0）与 agent 行（sw.4）
     // 同主题下色必不同，抓「回退成默认勾选」的回归（Color 无 operator==，
     // 逐分量比）
@@ -1290,8 +1221,7 @@ REGISTER_TEST(settings_modules_card_renders, "settings: 模块管理卡渲染（
     DOCTEST_CHECK(agentTrack->color.r != mdTrack->color.r ||
                   agentTrack->color.g != mdTrack->color.g ||
                   agentTrack->color.b != mdTrack->color.b);
-    // 描述文案 = 即时生效口径（活门控）：断言「即时生效」在文、「重启」不在——
-    // 任一回退到旧的「需重启应用生效」文案都必红
+    // 描述文案 = 即时生效口径（活门控）：断言「即时生效」在文、「重启」不在
     const auto* desc = ui.find("settings.card.modules.desc");
     DOCTEST_REQUIRE(desc != nullptr);
     DOCTEST_CHECK(desc->text.find("即时生效") != std::string::npos);
@@ -1368,14 +1298,13 @@ REGISTER_TEST(settings_gated_directory_card_hidden, "settings: markdown 模块�
     return true;
 })
 
-// ---- 效果下拉不超外观卡（终验复审：固定 x=680 在 1200 最小窗超卡 60px） ----
+// 效果下拉不超外观卡
 
 REGISTER_TEST(settings_effect_dropdown_fits_min_window,
               "settings: 效果下拉 1200 最小窗收进外观卡内", {
     std::unique_ptr<::core::Module> mod(create_settings_module());
     mod->onStart();
-    // 1200 最小窗 = 页面宽 940（去掉 260 侧边栏）→ 外观卡内宽 940-80=860，
-    // 旧布局效果下拉 680+240=920 超出卡右缘 60px
+    // 1200 最小窗 = 页面宽 940（去掉 260 侧边栏）→ 外观卡内宽 860；效果下拉右缘须收在卡内
     eui::Screen screen;
     screen.width = 940.0f;
     screen.height = 1000.0f;
@@ -1397,11 +1326,10 @@ REGISTER_TEST(settings_effect_dropdown_fits_min_window,
     DOCTEST_CHECK(effect->frame.x + effect->frame.width <=
                   card->frame.x + card->frame.width - 20.0f);
     // 字号下拉不与主题模式下拉重叠、效果下拉不与字号下拉重叠
-    //（主题控件 = spec 缩水 A 的三档下拉，替代原深色/浅色双按钮）
     DOCTEST_CHECK(font->frame.x >= themeDd->frame.x + themeDd->frame.width);
     DOCTEST_CHECK(effect->frame.x >= font->frame.x + font->frame.width);
 
-    // 宽窗 1600（页面 1340）：保持既有位置（字号 380 / 效果 680 相对卡原点）
+    // 宽窗 1600：保持既有位置（字号 380 / 效果 680 相对卡原点）
     eui::Screen wide;
     wide.width = 1340.0f;
     wide.height = 1000.0f;
@@ -1423,9 +1351,9 @@ REGISTER_TEST(settings_effect_dropdown_fits_min_window,
     return true;
 })
 
-// ---- 桌宠皮肤下拉弹层 z 逃逸：scrollView 内的下拉弹层不得被后续兄弟卡片遮挡 ----
-// 依赖 EUI-NEO 子树 zIndex 上界逃逸（core/dsl.h subtreeMaxZIndex）：下拉组件
-// 自带 zIndex(20)，需把所在卡片整个抬到后绘兄弟之上。色值/层级无头断言。
+// 桌宠皮肤下拉弹层 z 逃逸：scrollView 内的下拉不得被后续兄弟卡遮挡
+// 依赖 EUI-NEO 子树 zIndex 上界逃逸（core/dsl.h subtreeMaxZIndex）：下拉自带
+// zIndex(20)，需把所在卡片整个抬到后绘兄弟之上。色值 / 层级无头断言。
 
 namespace {
 // 在 root 子树中找同时包含 a、b 两个直接子节点的元素（共同父）
@@ -1460,7 +1388,7 @@ REGISTER_TEST(settings_pet_dropdown_z_escape, "settings: pet skin dropdown popup
     test_support::TestEnv env(kCfgPrefix, "petz", true);
     test_support::ScopedConfigPath cfgEnv(test_support::tempConfigFile(kCfgPrefix, "petz_cfg"));
     {
-        // 2026-10-03（批次 E2）：配置不再是文件，改按顶层键写进 app_config 表各行
+        // 按顶层键写进 app_config 表各行
         DOCTEST_REQUIRE(test_support::seedConfigJsonRows(
             ::core::appDatabase(), module::settings::SettingsStore::keyNamespace(), "{\"theme\":\"dark\",\"enabledModules\":[" "\"home\",\"markdown\",\"todo\",\"claude_proxy\",\"settings\",\"pet\"]}"));
     }
@@ -1470,7 +1398,7 @@ REGISTER_TEST(settings_pet_dropdown_z_escape, "settings: pet skin dropdown popup
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
-    // Task B tab 化：pet/目录卡同在「模块」tab（弹层 z 逃逸断言的兄弟关系不变）
+        // pet / 目录卡同在「模块」tab
     DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 1));
     eui::Ui ui;
     ui.begin("petz");
@@ -1485,14 +1413,13 @@ REGISTER_TEST(settings_pet_dropdown_z_escape, "settings: pet skin dropdown popup
     DOCTEST_REQUIRE(petCard != nullptr);
     DOCTEST_REQUIRE(dirCard != nullptr);
 
-    // 下拉自带 zIndex(20) 沿祖先链传播：pet 卡子树上界 > 目录卡（z 0）。
-    // spec 缩水 B 的编辑器字号 Task B 起在「通用」tab 独立卡（不同 tab 不同
-    // 屏，无 z 竞争）；目录卡维持 z0，本断言不变
+    // 下拉自带 zIndex(20) 沿祖先链传播：pet 卡子树上界 > 目录卡（z 0）。编辑器字号卡
+    // 在「通用」tab，不同 tab 不同屏，无 z 竞争；目录卡维持 z0，本断言不变
     DOCTEST_CHECK(dd->subtreeMaxZIndex >= 20);
     DOCTEST_CHECK(petCard->subtreeMaxZIndex >= 20);
     DOCTEST_CHECK_EQ(dirCard->subtreeMaxZIndex, 0);
 
-    // 两卡是 scrollView 内容栈里的兄弟：pet 卡（含弹层）排序必须在目录卡之后
+    // 两卡是 scrollView 内容栈里的兄弟：pet 卡（含弹层）必须排在目录卡之后绘制
     const core::dsl::Element* parent = nullptr;
     for (const auto& root : ui.roots()) {
         parent = commonParentOf(root.get(), petCard, dirCard);
@@ -1506,14 +1433,11 @@ REGISTER_TEST(settings_pet_dropdown_z_escape, "settings: pet skin dropdown popup
     return true;
 })
 
-// ---- 2026-09-29 用户真机反馈「设置-日志：日志和日志级别这 2 个条件 错位了啊
-//      日志显示 2 行」----
-// 判据全部数值化（改前逐条必红）：
-//   ① 两个下拉同列：field.frame.x 相等（改前 28 vs 124，差 96px）、同宽同高；
-//   ② 标签同列 + 标签→下拉间距一致（改前行 1 根本没有标签列，本用例
-//      REQUIRE("settings.card.log.label") 即回归位）；
-//   ③ 标签单行：标签框高 ≤ 单行行高、文本无换行符、估算文本宽 ≤ 标签框宽
-//      （「日志保留」4 字 × 12px = 48 ≤ 84，折行根本装不下 → 恒单行）。
+// 日志卡两行同列
+//   ① 两个下拉同列：field.frame.x 相等、同宽同高；
+//   ② 标签同列 + 标签→下拉间距一致；
+//   ③ 标签单行：框高 ≤ 单行行高、文本无换行符、估算文本宽 ≤ 标签框宽
+//     （「日志保留」4 字 × 12px = 48 ≤ 84，恒单行）。
 REGISTER_TEST(settings_log_rows_same_column,
               "settings: 日志 tab 两下拉同列 + 标签单行（错位修复）", {
     test_support::TestEnv env(kCfgPrefix, "logcols", true);
@@ -1539,7 +1463,7 @@ REGISTER_TEST(settings_log_rows_same_column,
     const auto* card = ui.find("settings.card.log");
     DOCTEST_REQUIRE(field1 != nullptr);
     DOCTEST_REQUIRE(field2 != nullptr);
-    DOCTEST_REQUIRE(label1 != nullptr);  // 改前缺失 → 本行即回归位
+    DOCTEST_REQUIRE(label1 != nullptr);  
     DOCTEST_REQUIRE(label2 != nullptr);
     DOCTEST_REQUIRE(card != nullptr);
 
@@ -1581,8 +1505,7 @@ REGISTER_TEST(settings_log_rows_same_column,
     DOCTEST_CHECK(std::string(label1->text) == "日志保留");
     DOCTEST_CHECK(std::string(label2->text) == "日志级别");
 
-    // 卡内不与标题重叠、两行自上而下不叠，说明列在控件列右侧，
-    // 且内容底沿仍留 ≥16 下边距（卡高 148 不变的前提）
+    // 不与标题重叠、两行自上而下不叠，说明列在控件列右侧，且内容底沿仍留 ≥16 下边距
     DOCTEST_CHECK(field1->frame.y > card->frame.y + 38.0f);
     DOCTEST_CHECK(field2->frame.y >= field1->frame.y + field1->frame.height);
     const auto* hint = ui.find("settings.card.log.hint");
@@ -1596,15 +1519,14 @@ REGISTER_TEST(settings_log_rows_same_column,
     return true;
 })
 
-// ---- 2026-09-30 缩放派生审查（spec 2026-09-30-batch-fix-design.md §2.3 本期修）----
-// settings 卡片行盒/行距/卡高随生效字号派生（roundFs 口径见 settings_ui_logic.h，
-// 与 env pane 修复 1ca87b0 同款）。两例分工：
-//   纯件例 = proxyCardHeightFor 两分支 100% 档与旧字面公式逐值相等（零回归锚）+
-//   130% 档等于派生式字面期望；无头 compose 例 = 三 tab 每卡行盒矩形两两不重叠
-//   （跨卡叠印同池判定；x 相离的同行「标签|控件|说明」列不算重叠）+ 行盒 ⊆ 卡
-//   frame（卡高没跟派生即红）+ 派生钉值（把派生改回字面 16 即红，非恒真）。
-// 缩放守卫：fontScale 是进程级全局状态，RAII 还原（fail-fast REQUIRE 提前
-// return 时靠析构还原，尾部手动还原会漏）。
+// 行盒 / 行距 / 卡高随生效字号派生（roundFs 口径见 settings_ui_logic.h）
+// 纯件例与 compose 例分工：
+//   - 纯件例 = proxyCardHeightFor 在 100% 档与旧字面公式逐值相等（零回归锚）+
+//     130% 档等于派生式字面期望；
+//   - compose 例 = 三 tab 每卡行盒矩形两两不重叠（跨卡叠印同池判定；x 相离的同行
+//     「标签|控件|说明」列不算重叠）+ 行盒 ⊆ 卡 frame + 派生钉值。
+// 缩放守卫：fontScale 是进程级全局状态，用 RAII 还原（fail-fast REQUIRE 提前 return
+// 时靠析构，尾部手动还原会漏）。
 REGISTER_TEST(settings_fs_derive_pure,
               "settings: 行盒派生纯件 proxyCardHeightFor（100% 锚 + 130% 档）", {
     namespace ms = module::settings;
@@ -1618,7 +1540,7 @@ REGISTER_TEST(settings_fs_derive_pure,
     };
     {
         FontScaleGuard g{1.0f};
-        // 零回归锚：与 compose 旧字面公式（118+16n / 116，+16 下边距）逐值相等
+    // 零回归锚：与字面公式（118+16n / 116，+16 下边距）逐值相等
         DOCTEST_CHECK_EQ(ms::proxyCardHeightFor(0), 132.0f);
         DOCTEST_CHECK_EQ(ms::proxyCardHeightFor(2), 166.0f);
         DOCTEST_CHECK_EQ(ms::roundFs(16.0f), 16.0f);
@@ -1641,7 +1563,7 @@ REGISTER_TEST(settings_card_rows_scale_derived,
     test_support::TestEnv env(kCfgPrefix, "fsderive", true);
     test_support::ScopedConfigPath cfgEnv(
         test_support::tempConfigFile(kCfgPrefix, "fsderive_cfg"));
-    // 桌宠默认关闭 → pet 卡整卡隐藏；写显式全启用配置，全部卡参与几何判定
+    // pet 默认关闭 → 卡整卡隐藏；写显式全启用配置，全部卡参与几何判定
     module::settings::SettingsConfig cfg;
     cfg.enabledModules = {module::settings::kModuleIdHome,
                           module::settings::kModuleIdMarkdown,
@@ -1658,9 +1580,8 @@ REGISTER_TEST(settings_card_rows_scale_derived,
     screen.width = 1600.0f;
     screen.height = 1000.0f;
 
-    // 每卡参与判定的行元素（条件行——降级提示 / 警告行——headless 默认档不
-    // 渲染，不列入）。下拉字段包装（.ddwrap）自 2026-09-30 merge-review R1
-    // 起随字号派生并入池——85% 档字面行溢出卡外正是本判定要抓的形状
+    // 每卡参与判定的行元素（条件行——降级提示 / 警告行在 headless 默认档不渲染，
+    // 不列入）。下拉字段包装（.ddwrap）随字号派生并入池。
     struct CardRows {
         int tab;
         const char* card;
@@ -1709,11 +1630,10 @@ REGISTER_TEST(settings_card_rows_scale_derived,
         ~FontScaleGuard() { ::core::theme::setFontScale(prev); }
     };
 
-    // 判定 helper（返回空串 = 通过；框架断言宏展开含 return false，只能
-    // 写在用例体里，与 claude_env_tab_no_overlap 同款手法）：
+    // 判定 helper（返回空串 = 通过；框架断言宏展开含 return false，只能写在用例体里）：
     //   ① 行盒矩形两两不重叠（同 tab 全行池化，跨卡叠印也在此被抓）
     //   ② 卡 frame 两两不重叠 + 行盒 ⊆ 所属卡 frame（卡高没跟派生即红）
-    //   ③ 派生钉值：行盒高/y 偏移 == 字面期望（at 按 scale 三档选值）
+    //   ③ 派生钉值：行盒高 / y 偏移 == 字面期望（at 按 scale 三档选值）
     const auto tabProblem = [&](eui::Ui& ui, int tab, float scale) {
         struct Rect {
             const char* id;
@@ -1770,8 +1690,7 @@ REGISTER_TEST(settings_card_rows_scale_derived,
                 }
             }
         }
-        // 派生钉值（字面期望；改回写死/改系数必红）。f(id) = frame 高，
-        // yOff = 两行 frame.y 差
+    // 派生钉值（字面期望）。f(id) = frame 高，yOff = 两行 frame.y 差
         const auto heightOf = [&](const char* id) -> float {
             const auto* e = ui.find(id);
             return e != nullptr ? e->frame.height : -1.0f;
@@ -1788,9 +1707,7 @@ REGISTER_TEST(settings_card_rows_scale_derived,
             return std::string();
         };
         std::string err;
-        // 三档期望值选取：at(a85, a100, a130) 按 scale 取——期望值全部按生产
-        // 公式 roundFs(基准) = round(基准 × scale) 手算（85% 档 / 100% 档 /
-        // 130% 档），改派生系数或改回字面必红
+    // 三档期望值按生产公式 roundFs(基准) = round(基准 × scale) 手算
         const auto at = [&](float a85, float a100, float a130) {
             return scale < 0.9f ? a85 : (scale > 1.1f ? a130 : a100);
         };
@@ -1867,9 +1784,8 @@ REGISTER_TEST(settings_card_rows_scale_derived,
                           heightOf("settings.card.proxy"),
                           at(127.0f, 132.0f, 142.0f));
         } else {
-            // 日志卡 2026-09-30 merge-review R1 起入派生池（85% 档字面字段行
-            // 底沿 96+36=132 > 卡高 roundFs(148)=126 溢出）：标签盒/字段高/
-            // 行 y 随生效字号派生
+    // 日志卡入派生池：85% 档字面字段行底沿 96+36=132 > 卡高 roundFs(148)=126 溢出——
+    // 标签盒 / 字段高 / 行 y 随生效字号派生
             err = pin("log.label 高（logLabelHeight=roundFs(20)）",
                       heightOf("settings.card.log.label"),
                       at(17.0f, 20.0f, 26.0f));
@@ -1894,8 +1810,7 @@ REGISTER_TEST(settings_card_rows_scale_derived,
         return err;
     };
 
-    // 断言宏展开含 return，只能留在用例体——helper 只收集问题串（空串 = 该
-    // tab 通过），逐 tab 一条
+    // 断言宏展开含 return，只能留在用例体——helper 只收集问题串，逐 tab 一条
     const auto runAllTabs = [&](float scale) -> std::vector<std::string> {
         std::vector<std::string> problems;
         for (int tab : {0, 1, 2}) {
@@ -1915,24 +1830,22 @@ REGISTER_TEST(settings_card_rows_scale_derived,
         return problems;
     };
 
-    // 100% 档（零回归锚：几何与改前逐值相等）
+    // 100% 档（零回归锚）
     {
         FontScaleGuard g{1.0f};
         for (const std::string& problem : runAllTabs(1.0f)) {
             DOCTEST_CHECK_MESSAGE(problem.empty(), problem);
         }
     }
-    // 130% 档（用户机档位，真机根因复现）：行盒随字号派生 → 两两不重叠
+    // 130% 档：行盒随字号派生 → 两两不重叠
     {
         FontScaleGuard g{1.3f};
         for (const std::string& problem : runAllTabs(1.3f)) {
             DOCTEST_CHECK_MESSAGE(problem.empty(), problem);
         }
     }
-    // 85% 档（kFontPresets[0]，2026-09-30 merge-review R1 溢出档）：此前
-    // pet/log 卡控件行字面几何在本档溢出卡外（pet 显示大小行字面底沿 152 >
-    // 卡高 roundFs(168)=143、日志卡字段行 132 > 126）——行盒 ⊆ 卡 frame 的
-    // containment 与三档钉值在本档把关
+    // 85% 档（kFontPresets[0]，溢出档）：字面几何在本档溢出卡外（pet 显示大小行底沿 152 >
+    // 卡高 roundFs(168)=143、日志卡字段行 132 > 126）——行盒 ⊆ 卡 frame 与三档钉值在此把关
     {
         FontScaleGuard g{0.85f};
         for (const std::string& problem : runAllTabs(0.85f)) {
@@ -1944,7 +1857,7 @@ REGISTER_TEST(settings_card_rows_scale_derived,
     return true;
 })
 
-// ---- 文案宽度纯件（③ 判据的来源）：估算 / 单行适配 / 皮肤下拉宽度 ----
+// 文案宽度纯件（③ 判据的来源）
 REGISTER_TEST(settings_label_fit_pure,
               "settings: 文案宽度估算/单行适配/皮肤下拉宽度（不溢出判据）", {
     namespace ms = module::settings;
@@ -1980,20 +1893,19 @@ REGISTER_TEST(settings_label_fit_pure,
     return true;
 })
 
-// ---- 2026-09-29 用户真机反馈「桌宠设置的下拉框不应该换行」----
-// EUI-NEO 的 text 默认 wrap=false（core/dsl.h:149）：超宽皮肤名**不折行**，
-// 而是画出控件右边缘（真机复现：25 字符名在 240 宽下拉里文本压过 chevron）。
-// 判据（改回固定 240 宽 / 去掉截断都会红）：
-//   ① 字段宽度 ≥ 最长皮肤名估算宽 + 字段 chrome（且 ≤ 420 上限）；
-//   ② 字段文案与每个选项的估算宽 ≤ 各自可用宽（放不下 = 溢出）；
-//   ③ 文案无换行符；短名原样显示、清单项数不减（截断只碰显示串，不改取值）。
+        // 皮肤下拉单行不换行
+        // EUI-NEO 的 text 默认 wrap=false（core/dsl.h）：超宽皮肤名**不折行**，而是画出控件
+        // 右边缘。判据：
+    //   ① 字段宽度 ≥ 最长皮肤名估算宽 + 字段 chrome（且 ≤ 420 上限）；
+    //   ② 字段文案与每个选项的估算宽 ≤ 各自可用宽；
+    //   ③ 文案无换行符；短名原样显示、清单项数不减（截断只碰显示串，不改取值）。
 REGISTER_TEST(settings_pet_skin_dropdown_label_fits,
               "settings: 桌宠皮肤下拉单行不溢出（按最长名放宽 + 超长截断）", {
     test_support::TestEnv env(kCfgPrefix, "petskinfit", true);
     test_support::ScopedConfigPath cfgEnv(
         test_support::tempConfigFile(kCfgPrefix, "petskinfit_cfg"));
     {
-        // 2026-10-03（批次 E2）：配置不再是文件，改按顶层键写进 app_config 表各行
+        // 按顶层键写进 app_config 表各行
         DOCTEST_REQUIRE(test_support::seedConfigJsonRows(
             ::core::appDatabase(), module::settings::SettingsStore::keyNamespace(), "{\"theme\":\"dark\",\"enabledModules\":[" "\"home\",\"markdown\",\"todo\",\"claude_proxy\",\"settings\"," "\"pet\"]}"));
     }
@@ -2050,7 +1962,7 @@ REGISTER_TEST(settings_pet_skin_dropdown_label_fits,
     const float kChrome = 62.0f;      // content(12) + micro(2) + overlay(48)
     const float kItemChrome = 36.0f;  // small(6)×2 + panel(24)
 
-    // ① 按最长皮肤名放宽（固定 240 = 改前状态 → 本行红）
+    // ① 按最长皮肤名放宽（写死 240 即红）
     const float longEst = ms::estimatedTextWidth(kLong, kFieldFont);
     DOCTEST_CHECK(std::abs(longEst - 248.0f) < 0.5f);  // 25 × 0.62 × 16
     const Snapshot wide = snapshot();
@@ -2060,7 +1972,7 @@ REGISTER_TEST(settings_pet_skin_dropdown_label_fits,
                               std::to_string(longEst + kChrome) + "）");
     DOCTEST_CHECK(wide.width <= 420.5f);
 
-    // ② 字段文案 + 每个选项都放得进各自可用宽（溢出 = 压 chevron 的根因）
+    // ② 字段文案 + 每个选项都放得进各自可用宽
     DOCTEST_CHECK(wide.label.find('\n') == std::string::npos);
     DOCTEST_CHECK_MESSAGE(
         ms::estimatedTextWidth(wide.label, wide.labelFont) <=
@@ -2082,19 +1994,17 @@ REGISTER_TEST(settings_pet_skin_dropdown_label_fits,
     DOCTEST_CHECK_EQ(wide.items.size(), 2u);
     DOCTEST_CHECK(wide.label == "robot");  // 选中项 = 默认皮肤
 
-    // ④ 超长名（估算宽破上限）→ 控件封顶 420、文案截断（'…'）且仍放得下
+    // ④ 超长名（估算宽破上限）→ 封顶 420、文案截断且仍放得下
     const std::string kHuge =
         "skin-with-a-very-long-name-that-exceeds-the-cap-limit-for-sure";
     std::filesystem::create_directories(petsDir.path / kHuge);
     std::ofstream(petsDir.path / kHuge / "pet.json") << "{}";
     {
-        // 当前皮肤 = 超长名（pet_config.json 是 currentSkinName 的真值来源）
+    // 当前皮肤 = 超长名（配置行是 currentSkinName 的真值来源）
         const std::string cfgSeedJson =
             std::string("{\"skinName\":\"") + kHuge + "\",\"x\":-1,\"y\":-1}";
-        // 2026-10-03（批次 E2）：桌宠配置整份存 app_config 的**一行**（键
-        // module::pet::kPetConfigKey），不像 config.json 那样按顶层键分行 ——
-        // 故这里写原文整行，不能用 seedConfigJsonRows（那会把 JSON 拆成
-        // pet_config:skinName / :x / :y 三行，读侧反而一行都取不到）。
+        // 桌宠配置整份存 app_config 的**一行**（键 module::pet::kPetConfigKey），不按
+        // 顶层键分行——故这里写原文整行，用 seedConfigJsonRows 会被拆成多行反而读不到。
         DOCTEST_REQUIRE(test_support::writeRawConfigRow(
             ::core::appDatabase(), module::pet::kPetConfigKey, cfgSeedJson));
     }
@@ -2112,7 +2022,7 @@ REGISTER_TEST(settings_pet_skin_dropdown_label_fits,
             huge.width - kChrome + 0.5f,
         "截断后仍溢出：" +
             std::to_string(ms::estimatedTextWidth(huge.label, huge.labelFont)));
-    // 截断串 = 原名前缀（只改显示，取值仍是原下标 → onChange 语义不变）
+        // 截断串 = 原名前缀（只改显示，取值仍是原下标 → onChange 语义不变）
     DOCTEST_CHECK(kHuge.compare(0, huge.label.size() - 3u,
                                 huge.label.substr(0, huge.label.size() - 3u)) ==
                   0);
@@ -2122,22 +2032,20 @@ REGISTER_TEST(settings_pet_skin_dropdown_label_fits,
     return true;
 })
 
-// ---- 2026-09-29 用户真机反馈（第二次，上一轮只改了宽度）
-//      「设置-模块-桌宠 下拉框不应该另起一行 这个没修」----
-// 模块 tab 的桌宠卡（drawPetCard）此前**没有标签列**：皮肤下拉在卡内 (28,64)
-// 独占一行，读起来就是「下拉另起一行」。修复 = 补「皮肤」标签列（28/72）+
-// 控件列（104/40），标签左、控件右、同一基线。判据全数值化，改前逐条必红：
-//   ① 标签 settings.card.pet.skin.label 存在（改前无此元素 → REQUIRE 即红）；
+    // 桌宠皮肤下拉与标签同排
+    // 桌宠卡必须有标签列：皮肤下拉在卡内独占一行读起来就是「下拉另起一行」。
+    // 判据：
+    //   ① 标签 settings.card.pet.skin.label 存在；
 //   ② 标签框中心 y == 下拉字段框中心 y（±0.5，同一基线）；
-//   ③ 下拉字段框顶 y ≤ 标签框底（证明控件没被折到标签下面 = 没另起一行）；
-//   ④ 标签在控件左侧、水平不重叠（标签右缘 ≤ 控件左缘）。
+//   ③ 下拉字段框顶 y ≤ 标签框底（控件没被折到标签下面）；
+//   ④ 标签在控件左侧、水平不重叠。
 REGISTER_TEST(settings_pet_skin_row_inline,
               "settings: 桌宠卡皮肤下拉与标签同行（不另起一行）", {
     test_support::TestEnv env(kCfgPrefix, "petrow", true);
     test_support::ScopedConfigPath cfgEnv(
         test_support::tempConfigFile(kCfgPrefix, "petrow_cfg"));
     {
-        // 2026-10-03（批次 E2）：配置不再是文件，改按顶层键写进 app_config 表各行
+        // 按顶层键写进 app_config 表各行
         DOCTEST_REQUIRE(test_support::seedConfigJsonRows(
             ::core::appDatabase(), module::settings::SettingsStore::keyNamespace(), "{\"theme\":\"dark\",\"enabledModules\":[\"home\",\"markdown\"," "\"todo\",\"claude_proxy\",\"settings\",\"pet\"]}"));
     }
@@ -2158,61 +2066,55 @@ REGISTER_TEST(settings_pet_skin_row_inline,
     const auto* label = ui.find("settings.card.pet.skin.label");
     const auto* field = ui.find("settings.card.pet.skin.dd.field");
     DOCTEST_REQUIRE(card != nullptr);
-    DOCTEST_REQUIRE(label != nullptr);  // 改前无标签列 → 本行即回归位
+    DOCTEST_REQUIRE(label != nullptr);  
     DOCTEST_REQUIRE(field != nullptr);
     DOCTEST_CHECK(std::string(label->text) == "皮肤");
 
-    // ② 同一基线：两框中心 y 相等（标签框高 20、控件高 40，靠 y 偏置对齐）
+        // ② 同一基线：两框中心 y 相等（标签框高 20、控件高 40，靠 y 偏置对齐）
     const float labelCy = label->frame.y + label->frame.height * 0.5f;
     const float fieldCy = field->frame.y + field->frame.height * 0.5f;
     DOCTEST_CHECK_MESSAGE(std::abs(labelCy - fieldCy) < 0.5f,
                           "标签中心 y " + std::to_string(labelCy) +
                               " vs 下拉中心 y " + std::to_string(fieldCy));
 
-    // ③ 没另起一行：控件顶不超过标签底（改回「标签在上、控件在下一行」→ 红）
+        // ③ 控件顶不超过标签底
     DOCTEST_CHECK_MESSAGE(field->frame.y <= label->frame.y + label->frame.height,
                           "下拉 frame.y " + std::to_string(field->frame.y) +
                               " > 标签底 " +
                               std::to_string(label->frame.y + label->frame.height) +
                               "（折到下一行了）");
 
-    // ④ 标签左、控件右，水平不重叠
+        // ④ 标签左、控件右，水平不重叠
     DOCTEST_CHECK(label->frame.x < field->frame.x);
     DOCTEST_CHECK(label->frame.x + label->frame.width <= field->frame.x);
-    // 同排且行仍在卡内（卡高 168、内容底沿 152——2026-09-30 加显示大小行
-    // 后由 120/104 抬高，审计 F4 注释对齐）
+        // 同排且行仍在卡内（卡高 168、内容底沿 152）
     DOCTEST_CHECK(field->frame.y + field->frame.height <=
                   card->frame.y + card->frame.height + 0.5f);
-    DOCTEST_CHECK(label->frame.y > card->frame.y + 38.0f);  // 不与标题/说明重叠
+    DOCTEST_CHECK(label->frame.y > card->frame.y + 38.0f);  // 不与标题 / 说明重叠
 
     mod->onStop();
     ::core::theme::setDark();
     return true;
 })
 
-// ---- 2026-09-29 用户真机反馈「设置-模块-桌宠取消勾选，桌宠没消失」----
-// 口径：模块开关即时生效（live-toggle 2026-10-01）；pet 窗口同步走 PET-CLOSE
-// 桥 → 取消勾选立即关窗、重新勾选立即重开。判据（去掉 settings 侧的桥调用
-// 逐条必红）：
-//   ① 点开关命中矩形（settings.card.modules.sw.3.hit，勾选态）→ pet 侧
-//      「窗口可见意图」由 true 翻 false（= 取消勾选即关窗，不是等重启）；
-//   ② enabledModules 持久化不受影响：app_config 表的 config.json:enabledModules
-//      行去掉 pet（插拔语义不变）；
+// 桌宠开关即时生效
+// 模块开关即时生效：pet 窗口同步走即时桥 → 取消勾选立即关窗、重新勾选立即重开。判据：
+//   ① 点开关命中矩形 → pet 侧「窗口可见意图」由 true 翻 false；
+//   ② enabledModules 持久化不受影响：app_config 行的该数组去掉 pet；
 //   ③ 卡片门控即时预览不变：pet 卡随开关消失；
-//   ④ 重新勾选 → 意图回 true **且真的重新入队一条 pet 开窗请求**（窗口能再出现）。
+//   ④ 重新勾选 → 意图回 true **且真的重新入队一条 pet 开窗请求**。
 REGISTER_TEST(settings_pet_module_toggle_closes_window,
               "settings: 取消勾选桌宠立即关窗 / 重新勾选立即重现（PET-CLOSE）", {
     test_support::TestEnv env(kCfgPrefix, "petclose", true);
     test_support::ScopedConfigPath cfgEnv(
         test_support::tempConfigFile(kCfgPrefix, "petclose_cfg"));
     {
-        // 2026-10-03（批次 E2）：配置不再是文件，改按顶层键写进 app_config 表各行
+        // 按顶层键写进 app_config 表各行
         DOCTEST_REQUIRE(test_support::seedConfigJsonRows(
             ::core::appDatabase(), module::settings::SettingsStore::keyNamespace(), "{\"theme\":\"dark\",\"enabledModules\":[\"home\",\"markdown\"," "\"todo\",\"claude_proxy\",\"settings\",\"pet\"]}"));
     }
-    // 皮肤夹具：DEVDESK_PETS_DIR 指临时目录并写入 shipped 形态皮肤（帧只需
-    // PNG 头合法，无头不解码）。不造夹具时测试环境 exeDir/build/tests 没有
-    // 随包资产 → ensureDefaultSkin 失败 → startPetWindow 根本不开窗
+    // 皮肤夹具：DEVDESK_PETS_DIR 指临时目录并写入 shipped 形态皮肤（帧只需 PNG 头合法）。
+    // 不造夹具时 exeDir/build/tests 没有随包资产 → ensureDefaultSkin 失败 → 根本不开窗
     test_support::TempDir petsDir("pet_close_pets");
     test_support::ScopedEnv petsEnv("DEVDESK_PETS_DIR", petsDir.path.string());
     static const char* kSkinJson =
@@ -2251,22 +2153,21 @@ REGISTER_TEST(settings_pet_module_toggle_closes_window,
         ui.layout(screen.width, screen.height);
     };
     composeModules("petclose1");
-    // 模块卡第 4 行 = 桌宠（kToggleable 序：markdown/todo/claude/pet）；
-    // 命中矩形 onClick 按 compose 期勾选态取反 → 本次点击 = 取消勾选
+    // 模块卡第 4 行 = 桌宠（kToggleable 序：markdown/todo/claude/pet）；命中矩形 onClick
+    // 按 compose 期勾选态取反 → 本次点击 = 取消勾选
     const auto* offHit = ui.find("settings.card.modules.sw.3.hit");
     DOCTEST_REQUIRE(offHit != nullptr);
     DOCTEST_REQUIRE(offHit->onClick != nullptr);
     DOCTEST_REQUIRE(ui.find("settings.card.pet") != nullptr);  // 取消前卡在
     offHit->onClick();
 
-    // ① 取消勾选 → 立即关窗（改前这里恒 true：真机现象「桌宠没消失」）
+    // ① 取消勾选 → 立即关窗
     DOCTEST_CHECK_MESSAGE(
         !module::pet::petWindowRequested(),
         "取消勾选后桌宠仍处于「应显示」状态（窗口没被关）");
-    // ② 持久化：enabledModules 去掉 pet。E2 后配置在 app_config 表——原实现读
-    // 「盘上 config.json 文件」，而该文件已无人写（ifstream 恒打开失败 ⇒
-    // buf 恒空 ⇒ 断言恒真，属假绿），随本批改成与 ④ 同款的行解析断言
-    //（applyModuleEnabled → persist() 同步写库，取消勾选后立即能读回）
+    // ② 持久化：enabledModules 去掉 pet。配置在 app_config 表，applyModuleEnabled →
+    //    persist() 同步写库，取消勾选后立即能读回。必须按行解析断言——若实现去读一个
+    //    无人写的文件，buf 恒空会使断言恒真。
     {
         const std::string row = test_support::readRawConfigRow(
             ::core::appDatabase(), "config.json:enabledModules");
@@ -2304,9 +2205,8 @@ REGISTER_TEST(settings_pet_module_toggle_closes_window,
             DOCTEST_CHECK_EQ(reqs[0].pageId, "pet");
         }
     }
-    // 2026-10-03（批次 E2）：enabledModules 从 config.json 文件迁到 app_config 的
-    // config.json:enabledModules 行。这里把该行**当 JSON 解析**再查元素，而不是
-    // 在文本里 find —— 解析后才敢说「pet 确实在这个数组里」。
+        // 把该行**当 JSON 解析**再查元素，而不是在文本里 find——解析后才敢说
+        // 「pet 确实在这个数组里」。
     {
         const std::string row = test_support::readRawConfigRow(
             ::core::appDatabase(), "config.json:enabledModules");
@@ -2325,7 +2225,6 @@ REGISTER_TEST(settings_pet_module_toggle_closes_window,
                               "重新勾选后 enabledModules 里应含 pet，实际: " + row);
     }
 
-    // 收尾：不留残留可见意图 / 待消费开窗请求（进程级 pet 运行时是共享状态）
     module::pet::closePetWindow();
     (void)app::consumeWindowRequests();
     mod->onStop();
@@ -2333,26 +2232,22 @@ REGISTER_TEST(settings_pet_module_toggle_closes_window,
     return true;
 })
 
-// ---- Bug B 2026-09-30：运行中开桌宠模块后点「显示桌宠」必须有可见反馈 ----
-// 真机现象：本会话未装配（启动时开关关）时，点按钮/开开关只有 setStatus
-//（页头副标题小字，用户视线在卡片上根本看不到）+ 一行日志——用户日志
-// 00:32:32「本会话未装配，重启后生效」后感知「点了没效果」。断言口径：桥
-// NotAssembled 分支 → settings.toast 出现、文案 =「已启用，重启 DevDesk 后
-// 生效」（中性提示非错误），且不凭空入队开窗请求。变异自检：把 settings
-// 侧 switch 换回旧 setStatus 形态，toast 节点不存在 → 本用例必红（见
-// docs/superpowers/plans/2026-09-30-pet-enable-feedback-verify.md）
+// 未装配时点「显示桌宠」必须有可见反馈
+// 本会话未装配（启动时开关关）时，点按钮只有 setStatus（页头副标题小字，用户视线在
+// 卡片上根本看不到）+ 一行日志 → 用户感知「点了没效果」。断言口径：桥 NotAssembled
+// 分支 → settings.toast 出现、文案 =「已启用，重启 DevDesk 后生效」（中性提示非错误），
+// 且不凭空入队开窗请求。
 REGISTER_TEST(settings_pet_show_button_toast_when_not_assembled,
               "settings: 未装配态点「显示桌宠」出「重启生效」toast（Bug B）", {
     test_support::TestEnv env(kCfgPrefix, "pettoast", true);
     test_support::ScopedConfigPath cfgEnv(
         test_support::tempConfigFile(kCfgPrefix, "pettoast_cfg"));
     {
-        // 2026-10-03（批次 E2）：配置不再是文件，改按顶层键写进 app_config 表各行
+        // 按顶层键写进 app_config 表各行
         DOCTEST_REQUIRE(test_support::seedConfigJsonRows(
             ::core::appDatabase(), module::settings::SettingsStore::keyNamespace(), "{\"theme\":\"dark\",\"enabledModules\":[\"home\",\"markdown\"," "\"todo\",\"claude_proxy\",\"settings\",\"pet\"]}"));
     }
-    // 皮肤根隔离到临时夹具（不读真机 appData 皮肤清单，pet 卡下拉非空）；
-    // NotAssembled 分支本身不触皮肤发现
+    // 皮肤根隔离到临时夹具；NotAssembled 分支本身不触皮肤发现
     test_support::TempDir petsDir("pet_toast_na");
     test_support::ScopedEnv petsEnv("DEVDESK_PETS_DIR", petsDir.path.string());
     static const char* kToastSkinJson =
@@ -2360,8 +2255,8 @@ REGISTER_TEST(settings_pet_show_button_toast_when_not_assembled,
         "\"states\":{\"idle\":[\"f0.png\",\"f1.png\"],\"poked\":[\"p0.png\"]}}";
     test_support::writeShippedSkinFixture(petsDir.path, "robot",
                                           kToastSkinJson);
-    // 回厂 = 本会话从未装配（装配标志只置不清，见 pet_window.cpp PetRuntime；
-    // 前序用例可能装配过，进程级单例必须先清）
+    // 回厂 = 本会话从未装配（装配标志只置不清，见 pet_window.cpp PetRuntime）；前序用例
+    // 可能装配过，进程级单例必须先清
     module::pet::resetPetRuntimeForTests();
     (void)app::consumeWindowRequests();
 
@@ -2386,7 +2281,6 @@ REGISTER_TEST(settings_pet_show_button_toast_when_not_assembled,
     DOCTEST_REQUIRE(showBtn->onClick != nullptr);
     showBtn->onClick();
 
-    // 反馈在下一帧 compose 可见（toast 状态位 → drawToast 绘制）
     composeModules("pettoast2");
     const auto* toast = ui.find("settings.toast");
     DOCTEST_CHECK_MESSAGE(toast != nullptr,
@@ -2394,12 +2288,11 @@ REGISTER_TEST(settings_pet_show_button_toast_when_not_assembled,
     const auto* title = ui.find("settings.toast.title");
     DOCTEST_REQUIRE(title != nullptr);
     DOCTEST_CHECK_EQ(title->text, std::string("已启用，重启 DevDesk 后生效"));
-    // 中性提示非错误：正文为空（错误样式的补充说明只在失败分支给）
+    // 中性提示非错误：正文为空（补充说明只在失败分支给）
     const auto* msg = ui.find("settings.toast.message");
     DOCTEST_REQUIRE(msg != nullptr);
     DOCTEST_CHECK(msg->text.empty());
 
-    // 未装配态拒绝凭空开窗：点按钮不得入队任何开窗请求
     DOCTEST_CHECK(app::consumeWindowRequests().empty());
 
     mod->onStop();
@@ -2408,24 +2301,21 @@ REGISTER_TEST(settings_pet_show_button_toast_when_not_assembled,
     return true;
 })
 
-// ---- Bug B 2026-09-30 第二分支：已装配但启动失败 → 错误样式 toast ----
-// 改前这种情况桥谎报 true（「已请求显示桌宠」但窗口永远不会出现）。皮肤根
-// 空且测试环境无随包资产 → 回退默认皮肤也失败 → StartFailed。断言：toast
-// 出现、标题 =「桌宠启动失败」、正文带原因（错误样式走 isError，与中性分支
-// 文案互异即钉死分类）
+// 已装配但启动失败 → 错误样式 toast
+// 皮肤根空且测试环境无随包资产 → 回退默认皮肤也失败 → StartFailed。断言：toast 出现、
+// 标题 =「桌宠启动失败」、正文带原因，且与中性分支文案互异（钉死分类）。
 REGISTER_TEST(settings_pet_show_button_toast_when_start_failed,
               "settings: 桌宠启动失败点「显示桌宠」出错误 toast（Bug B）", {
     test_support::TestEnv env(kCfgPrefix, "pettoastfail", true);
     test_support::ScopedConfigPath cfgEnv(
         test_support::tempConfigFile(kCfgPrefix, "pettoastfail_cfg"));
     {
-        // 2026-10-03（批次 E2）：配置不再是文件，改按顶层键写进 app_config 表各行
+        // 按顶层键写进 app_config 表各行
         DOCTEST_REQUIRE(test_support::seedConfigJsonRows(
             ::core::appDatabase(), module::settings::SettingsStore::keyNamespace(), "{\"theme\":\"dark\",\"enabledModules\":[\"home\",\"markdown\"," "\"todo\",\"claude_proxy\",\"settings\",\"pet\"]}"));
     }
-    // 皮肤根 = 「可发现但不可加载」的 robot：discoverSkins 只验 pet.json
-    // 存在（pet_skin.cpp:231），loadSkin 要解析 JSON——写非法 JSON 使下拉
-    // 清单非空而加载必败 → 回退默认皮肤也败 → StartFailed 确定可达
+    // 皮肤根 = 「可发现但不可加载」的 robot：discoverSkins 只验 pet.json 存在，
+    // loadSkin 要解析 JSON——写非法 JSON 使下拉清单非空而加载必败
     test_support::TempDir petsDir("pet_toast_fail");
     test_support::ScopedEnv petsEnv("DEVDESK_PETS_DIR", petsDir.path.string());
     {
@@ -2435,8 +2325,7 @@ REGISTER_TEST(settings_pet_show_button_toast_when_start_failed,
     module::pet::resetPetRuntimeForTests();
     (void)app::consumeWindowRequests();
 
-    // 先装配（= 启动时开关开、本会话装配过的会话形态）：皮肤不可用 →
-    // 装配本身就没开成窗（startPetWindow 现在返回 false），但 assembled 已置位
+    // 先装配：皮肤不可用 → 装配本身就没开成窗，但 assembled 已置位
     DOCTEST_CHECK_MESSAGE(
         !module::pet::startPetWindow(module::pet::PetWindowConfig{}),
         "前置失效：pet.json 非法的夹具下装配居然成功（loadSkin 没验 JSON？）");
@@ -2486,12 +2375,12 @@ REGISTER_TEST(settings_pet_skin_dropdown_openup,
     test_support::ScopedConfigPath cfgEnv(
         test_support::tempConfigFile(kCfgPrefix, "petopenup_cfg"));
     {
-        // 2026-10-03（批次 E2）：配置不再是文件，改按顶层键写进 app_config 表各行
+        // 按顶层键写进 app_config 表各行
         DOCTEST_REQUIRE(test_support::seedConfigJsonRows(
             ::core::appDatabase(), module::settings::SettingsStore::keyNamespace(), "{\"theme\":\"dark\",\"enabledModules\":[" "\"home\",\"markdown\",\"todo\",\"claude_proxy\",\"settings\",\"pet\"]}"));
     }
-    // 隔离皮肤清单：DEVDESK_PETS_DIR 指向临时目录，造 3 个皮肤（discoverSkins
-    // 只验 pet.json 存在；TestEnv 已隔离 APPDATA，默认 0 皮肤 → 占位单项）
+    // 隔离皮肤清单：DEVDESK_PETS_DIR 指向临时目录，造 3 个皮肤（discoverSkins 只验
+    // pet.json 存在；TestEnv 已隔离 APPDATA，默认 0 皮肤 → 占位单项）
     test_support::TempDir petsDir("pet_skins");
     const char* skins[] = {"robot", "cat", "tatsu"};
     for (const char* s : skins) {
@@ -2504,9 +2393,8 @@ REGISTER_TEST(settings_pet_skin_dropdown_openup,
     std::unique_ptr<::core::Module> mod(create_settings_module());
     mod->onStart();
 
-    // 小窗 1200×720（最小窗）：pet 卡为模块 tab 第 2 卡（卡顶 ≈ 480），
-    // 字段底 584 + 8 gap + 弹层 114 = 706 > 704（屏高-16）→ openUp 向上，
-    // 弹层整体留在窗体内且位于字段上方（修复前被 scrollView clip 裁掉）
+    // 小窗 1200×720：pet 卡为模块 tab 第 2 卡（卡顶 ≈ 480），字段底 584 + 8 gap +
+    // 弹层 114 = 706 > 704（屏高−16）→ openUp，弹层整体留在窗体内且位于字段上方
     eui::Screen screen;
     screen.width = 1200.0f;
     screen.height = 720.0f;
@@ -2525,7 +2413,7 @@ REGISTER_TEST(settings_pet_skin_dropdown_openup,
     DOCTEST_CHECK(popup->frame.y + popup->frame.height <= screen.height);
     DOCTEST_CHECK(popup->frame.y + popup->frame.height <= field->frame.y);
 
-    // 高窗 1600×1000：字段底 584 + 8 + 114 = 706 ≤ 984 → 保持默认向下展开
+    // 高窗 1600×1000：706 ≤ 984 → 保持默认向下展开
     eui::Screen tall;
     tall.width = 1600.0f;
     tall.height = 1000.0f;
@@ -2547,11 +2435,10 @@ REGISTER_TEST(settings_pet_skin_dropdown_openup,
     return true;
 })
 
-// ---- 外观卡下拉弹层 vs 后续兄弟卡（回归 1379cc1）：外观卡(z30) 与紧随其下的
-// 编辑器字号卡(z30) 同为 z30 → 稳定排序保持 DOM 序 → 后绘的编辑器字号卡盖住
-// 外观卡向下铺开的弹层（「展开被下方内容截断」）。EUI-NEO 子树 zIndex 上界
-// 逃逸（0485b47）只解决「高 z 盖低 z」，等值 z 兄弟按 DOM 后绘是框架语义——
-// 修复 = 外观卡抬到 40（表内最前带下拉卡拿最高 z，见 drawAppearanceCard）。----
+// 外观卡下拉弹层 vs 后续兄弟卡
+// 外观卡(z30) 与紧随其下的编辑器字号卡(z30) 等值 z → 稳定排序保持 DOM 序 → 后绘的
+// 编辑器字号卡盖住外观卡向下铺开的弹层。EUI-NEO 子树 zIndex 上界逃逸只解决「高 z 盖
+// 低 z」，等值 z 按 DOM 后绘是框架语义——故外观卡必须整卡抬到 40（见 drawAppearanceCard）。
 REGISTER_TEST(settings_appearance_dropdown_popup_above_following_cards,
               "settings: appearance 卡下拉弹层盖过后续兄弟卡（不被编辑器字号卡截断）", {
     std::unique_ptr<::core::Module> mod(create_settings_module());
@@ -2573,15 +2460,12 @@ REGISTER_TEST(settings_appearance_dropdown_popup_above_following_cards,
     DOCTEST_REQUIRE(appearanceCard != nullptr);
     DOCTEST_REQUIRE(editorCard != nullptr);
 
-    // 弹层底边越出外观卡下沿 → 视觉上落入紧随其后的编辑器字号卡区域
     DOCTEST_CHECK(popup->frame.y + popup->frame.height >
                   appearanceCard->frame.y + appearanceCard->frame.height);
 
-    // 绘制序 = orderedChildren 顺序（后者 = 上层）。弹层深嵌外观卡子树、
-    // 与编辑器字号卡没有共同直接父——按「整卡抬层」语义（subtreeMaxZIndex
-    // 让含弹层卡片整卡作为一个绘制单元与兄弟卡竞争），断言两卡在滚动内容列
-    // 里的兄弟序：外观卡必须排在编辑器字号卡之后绘制，否则弹层下半被该卡
-    // 盖住（等值 z 时稳定排序保持 DOM 序 → 1379cc1 起后者盖前者）
+    // 绘制序 = orderedChildren 顺序（后者在上）。弹层深嵌外观卡子树、与字号卡没有
+    // 共同直接父——按「整卡抬层」语义（subtreeMaxZIndex 让含弹层的卡片整卡作为一个
+    // 绘制单元与兄弟卡竞争），断言两卡在滚动内容列里的兄弟序：外观卡必须排在字号卡之后
     const core::dsl::Element* parent = nullptr;
     for (const auto& root : ui.roots()) {
         parent = commonParentOf(root.get(), appearanceCard, editorCard);
@@ -2596,15 +2480,15 @@ REGISTER_TEST(settings_appearance_dropdown_popup_above_following_cards,
     return true;
 })
 
-// ---- PAB-13（波 1 L7）：桌宠卡「显示桌宠」按钮 ----
-// 无头渲染断言：按钮在「位置重置」左侧同排（间距 8）、文案/点击回调齐备。
+// 桌宠卡「显示桌宠」按钮
+// 按钮在「位置重置」左侧同排（间距 8）、文案 / 点击回调齐备。
 // 卡高保持 120（内容底沿 104 不变 → contentKey 不变，不触发滚动高度重测）
 REGISTER_TEST(settings_pet_show_button_renders,
               "settings: 桌宠卡「显示桌宠」按钮渲染（PAB-13）", {
     test_support::TestEnv env(kCfgPrefix, "petshow", true);
     test_support::ScopedConfigPath cfgEnv(test_support::tempConfigFile(kCfgPrefix, "petshow_cfg"));
     {
-        // 2026-10-03（批次 E2）：配置不再是文件，改按顶层键写进 app_config 表各行
+        // 按顶层键写进 app_config 表各行
         DOCTEST_REQUIRE(test_support::seedConfigJsonRows(
             ::core::appDatabase(), module::settings::SettingsStore::keyNamespace(), "{\"theme\":\"dark\",\"enabledModules\":[" "\"home\",\"markdown\",\"todo\",\"claude_proxy\",\"settings\",\"pet\"]}"));
     }
@@ -2642,10 +2526,9 @@ REGISTER_TEST(settings_pet_show_button_renders,
     return true;
 })
 
-// ---- 审计 [21]：代理端口输入 Esc=丢弃草稿（旧映射 Esc→onEnter 会应用端口并重启代理）----
 
 REGISTER_TEST(settings_port_esc_discards_draft,
-              "settings: 端口草稿 Esc=丢弃回落已应用端口，不触发应用（headless，审计 [21]）", {
+              "settings: 端口草稿 Esc=丢弃回落已应用端口，不触发应用（headless）", {
     test_support::TestEnv env(kCfgPrefix, "portesc", true);
     test_support::ScopedConfigPath cfgEnv(test_support::tempConfigFile(kCfgPrefix, "portesc_cfg"));
     std::unique_ptr<::core::Module> mod(create_settings_module());
@@ -2653,7 +2536,7 @@ REGISTER_TEST(settings_port_esc_discards_draft,
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
-    // Task B tab 化：端口输入在代理卡（「模块」tab）
+    // 端口输入在代理卡（「模块」tab）
     DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 1));
     eui::Ui ui;
     auto frame = [&](const char* page) {
@@ -2668,8 +2551,8 @@ REGISTER_TEST(settings_port_esc_discards_draft,
     DOCTEST_REQUIRE(shown1 != nullptr);
     DOCTEST_CHECK_EQ(shown1->text, std::string("8888"));
 
-    // Ctrl+A 全选后输入 → 替换成合法草稿 9999（不替换会追加成 88889999 非法值，
-    // apply 校验失败即早退，失去「Esc 是否触发 apply」的判别力）
+    // Ctrl+A 全选后输入 → 替换成合法草稿 9999（不替换会追加成非法值，apply 校验
+    // 失败即早退，失去「Esc 是否触发 apply」的判别力）
     auto* input = ui.find("settings.card.proxy.port.input.hit");
     DOCTEST_REQUIRE(input != nullptr);
     DOCTEST_REQUIRE(input->onTextInput != nullptr);
@@ -2699,7 +2582,7 @@ REGISTER_TEST(settings_port_esc_discards_draft,
     DOCTEST_REQUIRE(shown3 != nullptr);
     DOCTEST_CHECK_EQ(shown3->text, std::string("8888"));   // 草稿清空回落
 
-    // 未落盘：配置仍是默认 8888（旧行为 Esc=applyProxyPort 会写 9999 并重启代理）
+    // 未落盘：配置仍是默认 8888
     module::settings::SettingsStore store(::core::appDatabase());
     DOCTEST_CHECK_EQ(store.load().proxyPort, 8888);
 
@@ -2708,23 +2591,23 @@ REGISTER_TEST(settings_port_esc_discards_draft,
     return true;
 })
 
-// ---- 产品审计 [22]：设置页 Ctrl+S 保存快捷键（headless）----
-// 设置页除端口草稿外全部即时落盘，Ctrl+S 语义 = 提交待决草稿（=「应用」按钮
-// 全链路，含 ClaudeService 端口同步），无待决时显式重写落盘 + 状态行回显。
+// 设置页 Ctrl+S 保存快捷键（headless）
+// 设置页除端口草稿外全部即时落盘，Ctrl+S 语义 = 提交待决草稿（=「应用」按钮全链路，
+// 含 ClaudeService 端口同步），无待决时显式重写落盘 + 状态行回显。
 // 服务注册 + 代理启动用于验证代理运行中的 Ctrl+S 分支。
 REGISTER_TEST(settings_ctrl_s_save_shortcut,
-              "settings: Ctrl+S 提交端口草稿 / 显式落盘（审计 [22]）", {
+              "settings: Ctrl+S 提交端口草稿 / 显式落盘", {
     test_support::TestEnv env(kCfgPrefix, "ctrls", true);
     test_support::ScopedConfigPath cfgEnv(test_support::tempConfigFile(kCfgPrefix, "ctrls_cfg"));
     module::claude::ClaudeService svc(env.db->db(), "DevDeskTestCtrlS");
     module::claude::ClaudeService::setGlobal(&svc);
-    ScopedClaudeProxy proxyForSettings;  // R0/D6：设置页经定位器取代理运行面
+    ScopedClaudeProxy proxyForSettings;  // 设置页经定位器取代理运行面
     std::unique_ptr<::core::Module> mod(create_settings_module());
     mod->onStart();
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
-    // Task B tab 化：端口输入 / 重新生成按钮在「模块」tab
+        // 端口输入 / 重新生成按钮在「模块」tab
     DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 1));
     eui::Ui ui;
     auto frame = [&](const char* page) {
@@ -2732,7 +2615,7 @@ REGISTER_TEST(settings_ctrl_s_save_shortcut,
         mod->compose(ui, screen);
         ui.end();
     };
-    // Ctrl+S（修饰位按平台取：macOS = Cmd，其余 = Ctrl；见 setShortcutModifier）
+        // Ctrl+S（修饰位按平台取，见 setShortcutModifier）
     auto ctrlS = [](eui::KeyAction action) {
         eui::KeyEvent e;
         e.key = eui::InputKey::S;
@@ -2743,8 +2626,7 @@ REGISTER_TEST(settings_ctrl_s_save_shortcut,
 
     // 1) 无草稿：Ctrl+S → 配置落库（onStart 只读不写，此处才出现行）
     //    + 状态行回显「设置已保存」
-    // 2026-10-03（批次 E2）：落点从 config.json 文件改成 app_config 表的一行，
-    // 「落盘了没有」改看这一行在不在 —— 断言的是同一个可观测事实，只换了载体。
+        // 「落盘了没有」看 app_config 的那一行在不在
     DOCTEST_CHECK(test_support::readRawConfigRow(
                       ::core::appDatabase(), "config.json:claudeProxyPort").empty());
     DOCTEST_CHECK(mod->onKeyEvent(ctrlS(eui::KeyAction::Press)));
@@ -2774,10 +2656,8 @@ REGISTER_TEST(settings_ctrl_s_save_shortcut,
         ctrlAltS.modifiers.alt = true;
         DOCTEST_CHECK(!mod->onKeyEvent(ctrlAltS));
     }
-    // 3) 端口草稿 ≠ 已应用端口 → Ctrl+S 提交草稿（等价点「应用」，
-    //    ClaudeService::configuredProxyPort 同步；代理未运行 → 状态文案
-    //    「手动启动代理，或启用 claude 模块时生效」——口径见 settings_module.cpp
-    //    的 applyProxyPort / 审计 ARCH-09）
+    // 3) 端口草稿 ≠ 已应用端口 → Ctrl+S 提交草稿（ClaudeService::configuredProxyPort
+    //    同步；代理未运行 → 状态文案见 settings_module.cpp 的 applyProxyPort）
     frame("css2");
     {
         auto* input = ui.find("settings.card.proxy.port.input.hit");
@@ -2806,8 +2686,7 @@ REGISTER_TEST(settings_ctrl_s_save_shortcut,
         DOCTEST_REQUIRE(sub != nullptr);
         DOCTEST_CHECK(sub->text.find("代理端口已保存") != std::string::npos);
     }
-    // 4) 代理运行中再按 Ctrl+S：draft 已应用（"9001" == cfg），走显式落盘分支
-    //（原「重新生成 Token 确认弹窗门控」一项随鉴权移除，2026-09-27）
+    // 4) 代理运行中再按 Ctrl+S：draft 已应用，走显式落盘分支
     auto started = svc.startProxy("127.0.0.1", 0);
     DOCTEST_REQUIRE(started.isOk());
     frame("css4");
@@ -2820,20 +2699,18 @@ REGISTER_TEST(settings_ctrl_s_save_shortcut,
     return true;
 })
 
-// ---- spec 缩水 A：跟随系统主题（themeMode 三档 + platform::prefersDarkTheme）----
+// 跟随系统主题（themeMode 三档 + platform::prefersDarkTheme）
 
 REGISTER_TEST(settings_theme_mode_roundtrip_and_legacy,
               "settings: themeMode 默认 auto/读写往返/非法值回落（spec缩水 A）", {
-    // 2026-10-03（批次 E2）：配置落点是 app_config 表，本用例需要一份
-    // 已 migrate 且注册为进程级 appDatabase 的临时库（生产代码正是经
-    // core::appDatabase() 取连接；不注册则 save 一律失败）
+    // 配置落 app_config 表，生产代码经 core::appDatabase() 取连接；未注册则 save 一律失败。
     test_support::TestEnv cfgDbEnv(kCfgPrefix, "cfg12", true);
     using namespace module::settings;
     const auto path = test_support::tempConfigFile(kCfgPrefix, "thememode");
     removeQuietly(path);
     SettingsStore store(::core::appDatabase());
 
-    // 无文件 → 默认 auto（新人跟随系统）
+    // 无配置 → 默认 auto
     DOCTEST_CHECK_EQ(store.load().themeMode, std::string(kThemeModeAuto));
 
     // 三档读写往返；theme 键随 darkTheme 同步写（main.cpp 启动通道）
@@ -2858,21 +2735,21 @@ REGISTER_TEST(settings_theme_mode_roundtrip_and_legacy,
 
     // themeMode 键缺失 → auto（只认 themeMode 键，不从 theme 键派生）
     {
-        // 2026-10-03（批次 E2）：配置不再是文件，改按顶层键写进 app_config 表各行
+        // 按顶层键写进 app_config 表各行
         DOCTEST_REQUIRE(test_support::seedConfigJsonRows(
             ::core::appDatabase(), module::settings::SettingsStore::keyNamespace(), R"({"theme": "light"})"));
     }
     DOCTEST_CHECK_EQ(store.load().themeMode, std::string(kThemeModeAuto));
 
-    // themeMode 非法值 → auto（不按 theme 键派生）
+        // themeMode 非法值 → auto
     {
-        // 2026-10-03（批次 E2）：配置不再是文件，改按顶层键写进 app_config 表各行
+        // 按顶层键写进 app_config 表各行
         DOCTEST_REQUIRE(test_support::seedConfigJsonRows(
             ::core::appDatabase(), module::settings::SettingsStore::keyNamespace(), R"({"themeMode": "neon", "theme": "light"})"));
     }
     DOCTEST_CHECK_EQ(store.load().themeMode, std::string(kThemeModeAuto));
     {
-        // 2026-10-03（批次 E2）：配置不再是文件，改按顶层键写进 app_config 表各行
+        // 按顶层键写进 app_config 表各行
         DOCTEST_REQUIRE(test_support::seedConfigJsonRows(
             ::core::appDatabase(), module::settings::SettingsStore::keyNamespace(), R"({"themeMode": "neon"})"));
     }
@@ -2906,14 +2783,13 @@ REGISTER_TEST(settings_theme_auto_follows_platform,
     test_support::TestEnv env(kCfgPrefix, "thauto", true);
     test_support::ScopedConfigPath cfgEnv(test_support::tempConfigFile(kCfgPrefix, "thauto_cfg"));
     {
-        // 2026-10-03（批次 E2）：配置不再是文件，改按顶层键写进 app_config 表各行
+        // 按顶层键写进 app_config 表各行
         DOCTEST_REQUIRE(test_support::seedConfigJsonRows(
             ::core::appDatabase(), module::settings::SettingsStore::keyNamespace(), R"({"themeMode": "auto", "theme": "dark"})"));
     }
     std::unique_ptr<::core::Module> mod(create_settings_module());
     mod->onStart();
-    // 落盘的 theme=dark 是陈旧值；auto 解析后实际档必须等于本机系统检测
-    // 结果（无论本机浅/深，断言机器无关）
+    // 落盘的 theme=dark 是陈旧值；auto 解析后实际档必须等于本机系统检测结果（机器无关）
     const bool systemDark = platform::prefersDarkTheme();
     DOCTEST_CHECK_EQ(::core::theme::current().isDark, systemDark);
     mod->onStop();
@@ -2936,11 +2812,11 @@ REGISTER_TEST(settings_theme_mode_dropdown_click_persists,
     ui.end();
 
     DOCTEST_CHECK(ui.find("settings.card.appearance.theme.dd") != nullptr);
-    // 旧的深色/浅色按钮已删（下拉三档取代，fa-moon/fa-sun 图标随之退场）
+        // 点第 3 项（深色，索引 2）
     DOCTEST_CHECK(ui.find("settings.card.appearance.theme.dark") == nullptr);
     DOCTEST_CHECK(ui.find("settings.card.appearance.theme.light") == nullptr);
 
-    // 点第 3 项（深色，索引 2）→ 即时持久化 themeMode=dark + theme 同步
+        // → 即时持久化 themeMode=dark + theme 同步
     const auto* itemDark = ui.find("settings.card.appearance.theme.dd.item.2");
     DOCTEST_REQUIRE(itemDark != nullptr);
     DOCTEST_REQUIRE(itemDark->onClick != nullptr);
@@ -2950,13 +2826,11 @@ REGISTER_TEST(settings_theme_mode_dropdown_click_persists,
     return true;
 })
 
-// ---- spec 缩水 B：编辑器字号可配（SettingsConfig + settings UI + 通道写入）----
+// 编辑器字号可配（SettingsConfig + settings UI + 通道写入）
 
 REGISTER_TEST(settings_editor_font_size_roundtrip_clamp,
               "settings: editorFontSize 默认 15/读写往返/越界钳制（spec缩水 B）", {
-    // 2026-10-03（批次 E2）：配置落点是 app_config 表，本用例需要一份
-    // 已 migrate 且注册为进程级 appDatabase 的临时库（生产代码正是经
-    // core::appDatabase() 取连接；不注册则 save 一律失败）
+    // 配置落 app_config 表，生产代码经 core::appDatabase() 取连接；未注册则 save 一律失败。
     test_support::TestEnv cfgDbEnv(kCfgPrefix, "cfg13", true);
     using namespace module::settings;
     const auto path = test_support::tempConfigFile(kCfgPrefix, "edfont");
@@ -2984,7 +2858,7 @@ REGISTER_TEST(settings_editor_font_size_roundtrip_clamp,
 
     // 存量文件无该键 → 默认 15
     {
-        // 2026-10-03（批次 E2）：配置不再是文件，改按顶层键写进 app_config 表各行
+        // 按顶层键写进 app_config 表各行
         DOCTEST_REQUIRE(test_support::seedConfigJsonRows(
             ::core::appDatabase(), module::settings::SettingsStore::keyNamespace(), R"({"theme": "dark", "logRetentionDays": 30})"));
     }
@@ -3007,7 +2881,7 @@ REGISTER_TEST(settings_editor_font_dropdown_applies_channel,
     mod->compose(ui, screen);
     ui.end();
 
-    // Task B tab 化：编辑器字号自日志卡迁到「通用」tab 独立卡（默认 tab，无需切）
+    // 编辑器字号自日志卡迁到「通用」tab 独立卡（默认 tab，无需切）
     DOCTEST_CHECK(ui.find("settings.card.editor.dd") != nullptr);
     // 点第 3 档「大 17px」→ 通道即时生效 + 持久化
     const auto* item = ui.find("settings.card.editor.dd.item.2");
@@ -3020,30 +2894,25 @@ REGISTER_TEST(settings_editor_font_dropdown_applies_channel,
 
     mod->onStop();
     ::core::theme::setEditorFontSize(15.0f);  // 恢复通道默认
-    ::core::theme::setDark();  // onStart 的 auto 解析在本机可能 setLight，防串扰
+    ::core::theme::setDark();  // onStart 的 auto 解析可能 setLight，防串扰
     return true;
 })
 
-// ---- spec 缩水 C：关于文案纯函数（版本 / EUI-NEO rev / 构建信息，CMake 注入
-// 宏）。设置页关于卡已于 2026-09-28 拆成独立模块 module_about（关于 tab 删
-// 除，卡渲染测试随之删除）；settings_config.cpp 的 about* 函数暂留死代码
-//（D-02 明确不属该需求范围），以下纯函数测试保留防宏注入回归 ----
+// 关于文案纯函数（版本 / EUI-NEO rev / 构建信息，CMake 注入宏）
+// 设置页关于卡已拆成独立模块 module_about，settings_config.cpp 的 about* 函数为死代码。
+// 纯函数测试保留，防宏注入回归。
 
 // 版本断言与真值同源的前提：本 TU 必须拿到与 devdesk_module_settings **同一**
 // PROJECT_VERSION 注入的 DEVDESK_VERSION 宏（tests/CMakeLists.txt 的
-// target_compile_definitions）。缺了就是编译期硬失败，不让下方断言悄悄退化成
-// 「只查应用名」的假绿。
+// target_compile_definitions）。缺了就是编译期硬失败，不让断言退化成假绿。
 #ifndef DEVDESK_VERSION
 #error "devdesk_tests 缺 DEVDESK_VERSION 宏注入（见 tests/CMakeLists.txt）"
 #endif
 
 REGISTER_TEST(settings_about_text_helpers,
               "settings: aboutVersionLine/aboutEuiNeoLine 纯函数（spec缩水 C）", {
-    // 2026-09-29 修硬编码版本断言：原写法 DOCTEST_CHECK(v.find("DevDesk 0.1.")
-    // != npos) 把版本号写死成写用例当时的 VERSION，真值涨到 0.7.x 后恒红
-    // （且无法再反映真值）。现在期望版本段取自 DEVDESK_VERSION 宏——与
-    // settings_config.cpp 构造 aboutVersionLine() 用的是同一个宏、同一个
-    // PROJECT_VERSION 来源，VERSION 文件变则两边同步变。
+    // 期望版本段取自 DEVDESK_VERSION 宏——写死版本号会在真值涨版后恒红，
+    // 且与 settings_config.cpp 构造 aboutVersionLine() 的宏不同源。
     const std::string expectPrefix = std::string("DevDesk ") + DEVDESK_VERSION;
     const std::string v = module::settings::aboutVersionLine();
     DOCTEST_CHECK_MESSAGE(v.rfind(expectPrefix, 0) == 0,
@@ -3052,9 +2921,7 @@ REGISTER_TEST(settings_about_text_helpers,
     // "DevDesk <版本> · <构建类型> · 构建 <日期> <时刻>"
     DOCTEST_CHECK(v.rfind(expectPrefix + " · ", 0) == 0);
     DOCTEST_CHECK(v.find(" · 构建 ") != std::string::npos);
-    // 原 v.find("dev") == npos 只是「宏注入生效」的启发式，且会被 "0.8.0-dev"
-    // 这类合法版本误伤；前缀比对已直接证明注入生效（回退分支产出
-    // "DevDesk dev · …" 即红），故删。
+        // 前缀比对已直接证明注入生效
     const std::string e = module::settings::aboutEuiNeoLine();
     DOCTEST_CHECK(e.find("EUI-NEO rev") != std::string::npos);
     // 最低依赖 rev 恒打印（顶层 CMake 变量）
@@ -3062,13 +2929,11 @@ REGISTER_TEST(settings_about_text_helpers,
     return true;
 })
 
-// ---- spec 缩水 D：日志级别可配（SettingsConfig + core::log::setLevel 应用）----
+// 日志级别可配（SettingsConfig + core::log::setLevel 应用）
 
 REGISTER_TEST(settings_log_level_roundtrip_matrix,
               "settings: logLevel 默认 INFO/读写往返/未知收敛/parseLogLevel 矩阵（spec缩水 D）", {
-    // 2026-10-03（批次 E2）：配置落点是 app_config 表，本用例需要一份
-    // 已 migrate 且注册为进程级 appDatabase 的临时库（生产代码正是经
-    // core::appDatabase() 取连接；不注册则 save 一律失败）
+    // 配置落 app_config 表，生产代码经 core::appDatabase() 取连接；未注册则 save 一律失败。
     test_support::TestEnv cfgDbEnv(kCfgPrefix, "cfg14", true);
     using namespace module::settings;
     const auto path = test_support::tempConfigFile(kCfgPrefix, "loglevel");
@@ -3116,7 +2981,7 @@ REGISTER_TEST(settings_log_level_applied_on_start_and_click,
     test_support::TestEnv env(kCfgPrefix, "loglvl", true);
     test_support::ScopedConfigPath cfgEnv(test_support::tempConfigFile(kCfgPrefix, "loglvl_cfg"));
     {
-        // 2026-10-03（批次 E2）：配置不再是文件，改按顶层键写进 app_config 表各行
+        // 按顶层键写进 app_config 表各行
         DOCTEST_REQUIRE(test_support::seedConfigJsonRows(
             ::core::appDatabase(), module::settings::SettingsStore::keyNamespace(), R"({"logLevel": "WARN"})"));
     }
@@ -3129,7 +2994,7 @@ REGISTER_TEST(settings_log_level_applied_on_start_and_click,
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
-    // Task B tab 化：日志级别下拉在「日志」tab
+    // 日志级别下拉在「日志」tab
     DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 2));
     eui::Ui ui;
     ui.begin("loglvl");
@@ -3153,15 +3018,13 @@ REGISTER_TEST(settings_log_level_applied_on_start_and_click,
     return true;
 })
 
-// ---- batch-C C-5：日志级别「切档 → 立即生效 → 重启后仍生效」三段可观察 ----
-// 诊断（详见 report-C.md）：机制层 ①（即时 setLevel + persist）②（onStart 恢复）
-// ④（四档 ↔ core::log::Level 映射）**都是对的**（上一条用例钉着）；用户「看不到
-// 任何效果」的缺口在可见面——日志级别下拉与「运行日志」卡同在日志 tab，而 tail
-// 快照只在「切 tab / 点刷新」时置脏重读，切档后同屏日志内容一动不动。
-// 本用例把三段钉死：
+// 日志级别「切档 → 立即生效 → 重启后仍生效」三段可观察
+// 机制层（setLevel + persist / onStart 恢复 / 四档 ↔ core::log::Level 映射）由上一条
+// 用例钉着。缺口在可见面：级别下拉与「运行日志」卡同屏，而 tail 快照只在「切 tab /
+// 点刷新」时置脏重读，切档后同屏日志内容一动不动。本用例把三段钉死：
 //   (a) 切档后后续 LOG_DEBUG **真进日志文件**（过滤对写入生效，非仅内存字段）；
-//   (b) 不切 tab、不点刷新，「运行日志」卡自己重读到新行（可见面）；
-//   (c) 新实例 onStart 恢复持久化档（重启后仍生效）。
+//   (b) 不切 tab、不点刷新，「运行日志」卡自己重读到新行；
+//   (c) 新实例 onStart 恢复持久化档。
 REGISTER_TEST(settings_log_level_effective_visible_and_persistent,
               "settings: 日志级别切档→文件真过滤 + 运行日志卡自动重读 + 重启恢复（batch-C C-5）", {
     test_support::TestEnv env(kCfgPrefix, "lvlvis", true);
@@ -3169,7 +3032,7 @@ REGISTER_TEST(settings_log_level_effective_visible_and_persistent,
         test_support::tempConfigFile(kCfgPrefix, "lvlvis_cfg"));
     test_support::AppDataEnv appdata("lvlvis");   // 日志文件隔离到临时 HOME
     {
-        // 2026-10-03（批次 E2）：配置不再是文件，改按顶层键写进 app_config 表各行
+        // 按顶层键写进 app_config 表各行
         DOCTEST_REQUIRE(test_support::seedConfigJsonRows(
             ::core::appDatabase(), module::settings::SettingsStore::keyNamespace(), R"({"logLevel": "INFO"})"));
     }
@@ -3258,9 +3121,8 @@ REGISTER_TEST(settings_log_level_effective_visible_and_persistent,
     }
     DOCTEST_CHECK(visible);
 
-    // 门禁补测（批次 C 评审 [2]）：切档后的可见回显两处——
-    //   ① 下拉选中态：field 上的 label 文本换成新档文案（不是只改了 cfg_ 字段）
-    //   ② 页头状态行：setStatus 那句「日志级别：DEBUG（即时生效）」
+    // 切档后的可见回显两处：① 下拉选中态（field.label 换成新档文案）；
+    // ② 页头状态行「日志级别：DEBUG（即时生效）」
     {
         eui::Ui ui;
         ui.begin("settings_c5_selected");
@@ -3293,10 +3155,10 @@ REGISTER_TEST(settings_log_level_effective_visible_and_persistent,
     return true;
 })
 
-// ---- 审计 H2：日志 tail 读盘在后台线程，compose 只读快照 ----
-// 回归：此前 compose 顶部同步读 256KB 日志文件（在渲染帧里与代理 worker 的
-// DB 写抢同一把锁）。现在切 tab / 点刷新只置脏标记 → 发一次读意图
-// （std::async 后台线程），结果下一帧收割；快照恒非空沿用上次值（不闪空、不丢行）。
+// 日志 tail 读盘在后台线程，compose 只读快照
+// compose 顶部同步读 256KB 日志文件会与代理 worker 的 DB 写抢同一把锁。切 tab /
+// 点刷新只置脏标记 → 发一次读意图（std::async 后台线程），结果下一帧收割；
+// 快照恒非空沿用上次值（不闪空、不丢行）。
 REGISTER_TEST(settings_h2_log_tail_snapshot,
               "settings: 日志 tail 后台重读快照（H2 tick 前旧值/后新值）", {
     test_support::TestEnv env(kCfgPrefix, "h2tail", true);
@@ -3359,11 +3221,9 @@ REGISTER_TEST(settings_h2_log_tail_snapshot,
     ::core::theme::setDark();
     return true;
 })
-// ---- 审计 THS-01：外部状态只读快照（compose 不做文件系统查询）----
-// 回归：接管状态（isClaudeCodeManaged → sidecar stat，compose 顶部 + 代理卡
-// 每帧）、笔记目录存在性（fs::exists(markdownDir)，目录卡每帧）、桌宠皮肤清单
-// （discoverSkins 目录遍历 + 每皮肤 pet.json stat，桌宠卡首帧）原先都直接落在
-// 渲染路径上。改后与 H2（logTail）同款——读一次存成员，compose 只读快照，
+// 外部状态只读快照（compose 不做文件系统查询）
+// 接管状态（sidecar stat）、笔记目录存在性（fs::exists）、桌宠皮肤清单
+// （discoverSkins 遍历 + 每皮肤 pet.json stat）读一次存成员，compose 只读快照，
 // 刷新点 = onStart / onPageEnter / 切模块 tab / 打开目录后。本用例验：
 // ① 刷新前快照非空且等于上次值（不闪空、不闪变）；② 刷新入口后取新值；
 // ③ 目录消失 / 出现的边界下不崩、不闪空。
@@ -3461,8 +3321,8 @@ REGISTER_TEST(settings_ths01_fs_snapshot,
     return true;
 })
 
-// ---- 审计 THS-05：下拉「谁打开着」的唯一持有者（7 个 bool → 1 个索引）----
-// 断言：① 打开第二个下拉会自动关掉先前那个（同时最多一个展开）；
+// 下拉「谁打开着」的唯一持有者（7 个 bool → 1 个索引）
+// ① 打开第二个下拉会自动关掉先前那个（同时最多一个展开）；
 // ② Esc 关当前打开的下拉，全关时 Esc 不消费（不越权吃键）。
 
 REGISTER_TEST(settings_dropdown_single_holder,
@@ -3502,7 +3362,6 @@ REGISTER_TEST(settings_dropdown_single_holder,
         return e;
     };
 
-    // 0) 初始全关；无下拉时 Esc 不消费
     frame("dd0");
     DOCTEST_CHECK_EQ(popupOpacity(themeDd), 0.0f);
     DOCTEST_CHECK_EQ(popupOpacity(fontDd), 0.0f);
@@ -3531,7 +3390,7 @@ REGISTER_TEST(settings_dropdown_single_holder,
     return true;
 })
 
-// ==================== R0 / 审计 D6・D7 护栏用例 ====================
+// 代理端口 / 解耦护栏用例
 
 REGISTER_TEST(settings_no_direct_claude_service_coupling,
               "settings: R0/D6 —— 设置页零 ClaudeService 直连（改经 core 只读服务定位器）", {
@@ -3542,11 +3401,11 @@ REGISTER_TEST(settings_no_direct_claude_service_coupling,
 
 REGISTER_TEST(settings_proxy_port_single_source,
               "settings: R0/D7 —— 代理端口常量单一来源 core/proxy_port.h", {
-                  // 1) 取值钉死（R0 是唯一改链接期契约的重构：两侧仍须 8888/1/65535）
+    // 1) 取值钉死（两侧仍须 8888 / 1 / 65535）
                   DOCTEST_CHECK_EQ(::core::kDefaultProxyPort, 8888);
                   DOCTEST_CHECK_EQ(::core::kMinProxyPort, 1);
                   DOCTEST_CHECK_EQ(::core::kMaxProxyPort, 65535);
-                  // 2) 两个消费方都跟随 core（改值只有一个落点，不会单边漂移）
+    // 2) 两个消费方都跟随 core（改值只有一个落点）
                   DOCTEST_CHECK_EQ(module::settings::kDefaultProxyPort,
                                    ::core::kDefaultProxyPort);
                   DOCTEST_CHECK_EQ(module::settings::kMinProxyPort,
@@ -3559,7 +3418,7 @@ REGISTER_TEST(settings_proxy_port_single_source,
                                    ::core::kMinProxyPort);
                   DOCTEST_CHECK_EQ(module::claude::ClaudeService::kMaxProxyPort,
                                    ::core::kMaxProxyPort);
-                  // 3) 源码级：字面量只许在 core/proxy_port.h 定义（防再次各自硬编码）
+    // 3) 源码级：字面量只许在 core/proxy_port.h 定义
                   const std::string report = proxyPortSingleSourceReport();
                   DOCTEST_CHECK_MESSAGE(report.empty(), report);
                   return true;
@@ -3586,8 +3445,7 @@ REGISTER_TEST(settings_service_locator_contract,
                   DOCTEST_CHECK(
                       ServiceLocator::requireService<IClaudeProxyService>().isFail());
 
-                  // 适配器「空单例」语义（未 setGlobal / claude 模块关闭）：与解耦前
-                  // `auto* svc = ClaudeService::global(); if (svc) {...}` 的降级逐字一致
+    // 适配器「空单例」语义（未 setGlobal / claude 模块关闭）
                   DOCTEST_CHECK_FALSE(adapter.isProxyRunning());
                   DOCTEST_CHECK_EQ(adapter.proxyPort(), 0);
                   DOCTEST_CHECK_EQ(adapter.lastSyncWarnings().size(),
@@ -3600,11 +3458,10 @@ REGISTER_TEST(settings_service_locator_contract,
                   return true;
               })
 
-// ==================== R6：settings_module 拆分 + 卡片表驱动 ====================
-// spec 2026-09-27-refactor-incremental-design §5.2 要求 R6 零行为变化。以下两
-// 条用例是「拆出的纯件 / 注册表」与拆分前逐字等价的护栏（N9 允许新增纯函数
-// 等价断言）：纯件断言逐点复刻拆分前的内联式；注册表断言 tab 归属、绘制顺序
-// 与模块门控（拆分前是 compose 内 switch 的 9 个分支）。
+// settings_module 拆分 + 卡片表驱动
+// 拆分要求零行为变化。以下两条用例是「拆出的纯件 / 注册表」与拆分前逐字等价的护栏：
+// 纯件断言逐点复刻拆分前的内联式；注册表断言 tab 归属、绘制顺序与模块门控
+//（拆分前是 compose 内 switch 的分支）。
 
 REGISTER_TEST(settings_ui_logic_equivalence,
               "settings: R6 纯件等价——openUp 几何/档位表/最近邻/字号缩放/保留档/下拉持有者", {
@@ -3621,9 +3478,7 @@ REGISTER_TEST(settings_ui_logic_equivalence,
     for (float top : {0.0f, 100.0f, 176.0f, 400.0f, 984.0f}) {
         for (float off : {ms::logDropdownOffsetY(), ms::editorFontDdOffsetY(),
                           ms::logLevelOffsetY()}) {
-            // 三处下拉高 2026-09-30 merge-review R1 起单一来源
-            // logFieldHeight()（此前 kLogDropdownHeight / kLogEditorFontHeight /
-            // kLogLevelHeight 三常量同值 36），fh 轴随之收敛为 1 档
+    // 三处下拉高单一来源 logFieldHeight()，fh 轴收敛为 1 档
             for (float fh : {ms::logFieldHeight()}) {
                 for (int n : {ms::kRetentionPresetCount,
                               ms::kEditorFontPresetCount,
@@ -3650,8 +3505,7 @@ REGISTER_TEST(settings_ui_logic_equivalence,
     DOCTEST_CHECK_EQ(ms::kEditorFontCardHeight, 108.0f);
     DOCTEST_CHECK_EQ(ms::kModulesCardHeight, 344.0f);  // 5 行开关（agent 加入）
     DOCTEST_CHECK_EQ(ms::kPetCardHeight, 168.0f);  // 两行控件（皮肤+显示大小）
-    // 2026-10-02 存储统一 §6.3：目录卡加「数据根忽略规则（.gitignore）」路径行
-    // （新行 y=126 高 34，盒底 160 + 16 下边距）→ 116 抬到 176。
+    // 目录卡加「数据根忽略规则（.gitignore）」路径行（新行 y=126 高 34，盒底 160 + 16 下边距）
     DOCTEST_CHECK_EQ(ms::kDirectoryCardHeight, 176.0f);
     DOCTEST_CHECK_EQ(ms::kLogSettingsCardHeight, 148.0f);
 
@@ -3676,7 +3530,7 @@ REGISTER_TEST(settings_ui_logic_equivalence,
     DOCTEST_CHECK(std::string(ms::kLogLevelPresets[0]) == ms::kLogLevelDebug);
     DOCTEST_CHECK(std::string(ms::kLogLevelPresetLabels[1]) == "INFO（默认）");
 
-    // 4) nearestIndex：命中 / 最近 / 越界回落（拆分前同实现）
+    // 4) nearestIndex：命中 / 最近 / 越界回落
     DOCTEST_CHECK_EQ(ms::nearestIndex(100, ms::kFontPresets, ms::kFontPresetCount), 1);
     DOCTEST_CHECK_EQ(ms::nearestIndex(86, ms::kFontPresets, ms::kFontPresetCount), 0);
     DOCTEST_CHECK_EQ(ms::nearestIndex(0, ms::kFontPresets, ms::kFontPresetCount), 0);
@@ -3699,7 +3553,7 @@ REGISTER_TEST(settings_ui_logic_equivalence,
     DOCTEST_CHECK(ms::retentionLabel(30) == "30 天");
     DOCTEST_CHECK(ms::retentionLabel(365) == "365 天");
 
-    // 7) 下拉唯一持有者（THS-05）：开 = 独占；关 = 只关自己（迟到回调不误关）
+    // 7) 下拉唯一持有者：开 = 独占；关 = 只关自己（迟到回调不误关）
     DOCTEST_CHECK(ms::isDropdownOpen(1, ms::Dropdown::Font));
     DOCTEST_CHECK_FALSE(ms::isDropdownOpen(-1, ms::Dropdown::Font));
     DOCTEST_CHECK_EQ(ms::applyDropdownOpen(-1, ms::Dropdown::Theme, true),
@@ -3747,7 +3601,7 @@ REGISTER_TEST(settings_card_registry_order,
         test_support::TestEnv env(kCfgPrefix, "registryall", true);
         test_support::ScopedConfigPath cfgEnv(test_support::tempConfigFile(kCfgPrefix, "registryall_cfg"));
         {
-            // 2026-10-03（批次 E2）：配置不再是文件，改按顶层键写进 app_config 表各行
+                // 按顶层键写进 app_config 表各行
             DOCTEST_REQUIRE(test_support::seedConfigJsonRows(
                 ::core::appDatabase(), module::settings::SettingsStore::keyNamespace(), "{\"theme\":\"dark\",\"enabledModules\":[\"home\"," "\"markdown\",\"todo\",\"claude_proxy\",\"settings\",\"pet\"]}"));
         }
@@ -3779,7 +3633,7 @@ REGISTER_TEST(settings_card_registry_order,
         test_support::TestEnv env(kCfgPrefix, "registrygated", true);
         test_support::ScopedConfigPath cfgEnv(test_support::tempConfigFile(kCfgPrefix, "registrygated_cfg"));
         {
-            // 2026-10-03（批次 E2）：配置不再是文件，改按顶层键写进 app_config 表各行
+                // 按顶层键写进 app_config 表各行
             DOCTEST_REQUIRE(test_support::seedConfigJsonRows(
                 ::core::appDatabase(), module::settings::SettingsStore::keyNamespace(), "{\"theme\":\"dark\",\"enabledModules\":[\"home\"," "\"settings\"]}"));
         }
@@ -3802,19 +3656,11 @@ REGISTER_TEST(settings_card_registry_order,
     return true;
 })
 
-// ---- 综合审查（2026-09-28）→ 2026-09-28 删 9 卡外层 cardFrame ----
-// 用户原话：「设置页面最外层的卡片没删除」+「目前所有的菜单详情页面都在外层
-// 加了卡片？底色是白色？不需要啊」。根因：settings 9 张卡每张调 ui_kit::cardFrame
-//（surface 填充 + 1px 边框 + panelShadow 阴影 + radiusLarge 圆角），白色卡框叠在
-// M3-4 主体渐变底（settings.body.bg）之上 = 用户看到的「最外层卡片」。
-// 修复 = 删全部 9 处 cardFrame 调用（settings_ui_cards.cpp），不再有 <id>.bg 矩形 /
-// 边框 / 阴影 / 圆角。旧「阴影分层」回归断言随卡框废弃，改反断言：bg 矩形必须不存在
-//（cardFrame 若被加回会重新出现）、卡 stack 必须仍在。
-// 回归断言（两档主题 × 9 张可见卡）：<stack>.bg 不存在、卡 stack 存在（内容未丢）。
-//
-// 同日第二轮（用户真机反馈「设置页面最外层的卡片还没删除啊，让你删除好多次了」）：
-// 上面说的「页面渐变底」本身也是用户眼中的「最外层卡片」→ 已删。本用例只看卡级
-// <id>.bg，不受影响；页面级底板的反断言在 test_ui_modern.cpp
+// 反断言：设置页不得出现 cardFrame 的 bg 矩形
+// cardFrame = surface 填充 + 1px 边框 + panelShadow 阴影 + radiusLarge 圆角；白色卡框叠在
+// 主体渐变底上就是用户说的「最外层卡片」。反断言：<stack>.bg 不存在（cardFrame 若加回会
+// 重新出现）、卡 stack 仍在（内容未丢）。
+// 页面渐变底本身也已删，页面级反断言在 test_ui_modern.cpp
 // uiModernSettingsBodyGradientRemoved（settings.body.gradient / .bg 必须都不存在）。
 REGISTER_TEST(settings_cards_no_outer_cardframe,
               "settings: 8 卡无外层 cardFrame——内容直接铺页面底（两档主题）", {
@@ -3822,7 +3668,7 @@ REGISTER_TEST(settings_cards_no_outer_cardframe,
     test_support::ScopedConfigPath cfgEnv(
         test_support::tempConfigFile(kCfgPrefix, "noframe_cfg"));
     {
-        // 2026-10-03（批次 E2）：配置不再是文件，改按顶层键写进 app_config 表各行
+            // 按顶层键写进 app_config 表各行
         DOCTEST_REQUIRE(test_support::seedConfigJsonRows(
             ::core::appDatabase(), module::settings::SettingsStore::keyNamespace(), "{\"theme\":\"dark\",\"enabledModules\":[" "\"home\",\"markdown\",\"todo\",\"claude_proxy\",\"settings\",\"pet\"]}"));
     }
@@ -3832,8 +3678,8 @@ REGISTER_TEST(settings_cards_no_outer_cardframe,
     screen.width = 1600.0f;
     screen.height = 1000.0f;
 
-    // 卡 root stack id（内容锚：证卡内容仍在渲染）+ cardFrame 若加回会出现的 bg id
-    //（bg 是 cardFrame 在 (0,0) 铺的矩形，id = <stack>.bg）。顺序 = 注册表序
+    // 卡 root stack id（内容锚）+ cardFrame 若加回会出现的 bg id（cardFrame 在 (0,0)
+    // 铺的矩形，id = <stack>.bg）。顺序 = 注册表序
     const int kTabOf[] = {0, 0, 1, 1, 1, 1, 2, 2};
     const char* const kStackIds[] = {
         "settings.card.appearance",
@@ -3887,16 +3733,14 @@ REGISTER_TEST(settings_cards_no_outer_cardframe,
 })
 
 
-// ===== M2 Task 9：AppTools（app.read_settings）=====
-// 工具的取数面 = SettingsStore(configPath).load()（自持实例，不摸模块成员 ——
-// agent 工作线程调用天然安全）。以下用例钉三件事：读回持久化值、输出经
-// sanitized 钳制且只暴露字段白名单（不泄配置里的敏感键）、磁盘异常不静默。
+// AppTools（app.read_settings）
+// 取数面 = SettingsStore.load()（自持实例，不摸模块成员——agent 工作线程调用天然
+// 安全）。钉三件事：读回持久化值、输出经 sanitized 钳制且只暴露字段白名单（不泄配置里的
+// 敏感键）、磁盘异常不静默。
 
 REGISTER_TEST(app_read_settings_tool_roundtrip,
               "app_tools: app.read_settings 读回持久化配置（只读非破坏）", {
-    // 2026-10-03（批次 E2）：配置落点是 app_config 表，本用例需要一份
-    // 已 migrate 且注册为进程级 appDatabase 的临时库（生产代码正是经
-    // core::appDatabase() 取连接；不注册则 save 一律失败）
+    // 配置落 app_config 表，生产代码经 core::appDatabase() 取连接；未注册则 save 一律失败。
     test_support::TestEnv cfgDbEnv(kCfgPrefix, "cfg15", true);
     const auto path = test_support::tempConfigFile(kCfgPrefix, "appread");
     module::settings::SettingsStore store(::core::appDatabase());
@@ -3919,23 +3763,18 @@ REGISTER_TEST(app_read_settings_tool_roundtrip,
     return true;
 })
 
-// 安全面（Task 9 约束）：输出只含白名单字段——不 dump 整份 config，配置里
-// 将来若混入敏感键（此处以 apiToken 模拟）也不得外泄；越界值以 sanitized 后的
-// 「能生效的值」返回（agent 看到的必须与真正生效的一致，不是盘上原文）。
-// 盘上文件直写 raw JSON = 绕开 save 的 sanitized（模拟手改 / 旧版本写坏）。
+    // 安全面：输出只含白名单字段——不 dump 整份配置，配置里将来若混入敏感键（此处以
+    // apiToken 模拟）也不得外泄；越界值以 sanitized 后的「能生效的值」返回。
+    // 盘上直写 raw JSON = 绕开 save 的 sanitized（模拟手改）
 REGISTER_TEST(app_read_settings_tool_sanitizes_and_whitelists_fields,
               "app_tools: app.read_settings 输出钳制 + 字段白名单（不泄敏感键）", {
-    // 2026-10-03（批次 E2）：配置落点是 app_config 表，本用例需要一份
-    // 已 migrate 且注册为进程级 appDatabase 的临时库（生产代码正是经
-    // core::appDatabase() 取连接；不注册则 save 一律失败）
+    // 配置落 app_config 表，生产代码经 core::appDatabase() 取连接；未注册则 save 一律失败。
     test_support::TestEnv cfgDbEnv(kCfgPrefix, "cfg16", true);
     const auto path =
         test_support::tempConfigFile(kCfgPrefix, "appread_sanitize");
     removeQuietly(path);
-    // 盘上键名（不是工具出参键名）：fontScalePercentV3 是 W9 换键后的名字，
-    // 端口盘上叫 claudeProxyPort —— 直写必须按盘上契约，否则测的是「键没读到」
-    // 2026-10-03（批次 E2）：配置不再是文件，改按顶层键写进 app_config 各行。
-    // 未知键（apiToken）照样写进去 —— 那正是白名单要挡的东西。
+        // 盘上键名（不是工具出参键名）：直写必须按盘上契约，否则测的是「键没读到」。
+        // 未知键（apiToken）照样写进去——那正是白名单要挡的东西。
     DOCTEST_REQUIRE(test_support::seedConfigJsonRows(
         ::core::appDatabase(), module::settings::SettingsStore::keyNamespace(),
         std::string("{\n") +
@@ -3954,7 +3793,6 @@ REGISTER_TEST(app_read_settings_tool_sanitizes_and_whitelists_fields,
     DOCTEST_REQUIRE(parsed.isOk());
     auto obj = parsed.value().asObject();
 
-    // 钳制：越界收敛（proxyPort 越界回落默认，不是钳边界——与 sanitized 同语义）
     DOCTEST_CHECK_EQ(obj.get("fontScalePercent").asInt(),
                      static_cast<int64_t>(
                          module::settings::kMaxFontScalePercent));
@@ -3982,18 +3820,15 @@ REGISTER_TEST(app_read_settings_tool_sanitizes_and_whitelists_fields,
     return true;
 })
 
-// 磁盘异常（Task 9 约束）：配置路径存在但不可读 → isError 回喂。
-// load() 对同类异常静默回落默认值（settings_config.cpp:336 只 WARN）——
-// 工具若照抄，agent 会把「读不到」当成「用户就是这么配的」= 静默假答案。
+    // 磁盘异常：配置存在但不可读 → isError 回喂。load() 对同类异常静默回落默认值
+    //（settings_config.cpp 只 WARN）——工具若照抄，agent 会把「读不到」当成「用户就是
+    // 这么配的」= 静默假答案。
 REGISTER_TEST(app_read_settings_tool_reports_unreadable_config,
               "app_tools: app.read_settings 配置不可读 → isError（不静默回落）", {
-    // 2026-10-03（批次 E2）：配置落点是 app_config 表，本用例需要一份
-    // 已 migrate 且注册为进程级 appDatabase 的临时库（生产代码正是经
-    // core::appDatabase() 取连接；不注册则 save 一律失败）
+    // 配置落 app_config 表，生产代码经 core::appDatabase() 取连接；未注册则 save 一律失败。
     test_support::TestEnv cfgDbEnv(kCfgPrefix, "cfg17", true);
-    // 2026-10-03（批次 E2）：「读不到配置」的形态变了 —— 不再是「配置文件打不开」，
-    // 而是「app_config 表不存在」。用一个**只 open、没 migrate** 的连接造出这个
-    // 形态（表真的不存在，不是模拟），并另外钉住 db 为 nullptr 的那一支。
+        // 「读不到配置」= app_config 表不存在。用一个**只 open、没 migrate** 的连接造出
+        // 这个形态（表真的不存在，不是模拟），并另外钉住 db 为 nullptr 的那一支。
     test_support::InMemoryDb noSchema;
     auto noSchemaTool = module::settings::makeAppReadSettingsTool(&noSchema.handle());
     auto noSchemaResult = noSchemaTool->execute(core::ToolArgs{"{}"});
@@ -4020,13 +3855,10 @@ REGISTER_TEST(app_read_settings_tool_reports_unreadable_config,
     return true;
 })
 
-// 非破坏性：无配置文件（首次启动路径）→ 默认值 + isError=false，且**不落盘**
-//（只读工具不得创建 / 改写配置文件——写入口只有设置页与 SettingsStore::save）。
+    // 非破坏性：无配置（首次启动路径）→ 默认值 + isError=false，且**不落盘**
 REGISTER_TEST(app_read_settings_tool_missing_file_is_defaults_without_write,
               "app_tools: app.read_settings 无配置文件 → 默认值且不落盘", {
-    // 2026-10-03（批次 E2）：配置落点是 app_config 表，本用例需要一份
-    // 已 migrate 且注册为进程级 appDatabase 的临时库（生产代码正是经
-    // core::appDatabase() 取连接；不注册则 save 一律失败）
+    // 配置落 app_config 表，生产代码经 core::appDatabase() 取连接；未注册则 save 一律失败。
     test_support::TestEnv cfgDbEnv(kCfgPrefix, "cfg18", true);
     const auto path =
         test_support::tempConfigFile(kCfgPrefix, "appread_missing");

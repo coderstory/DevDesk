@@ -1,10 +1,11 @@
 // tests/test_modules/test_agent_loop.cpp
-// AgentLoop 主循环用例（agent M1 Task 4/5）：tool_use → 工具执行 → tool_result
-// 回喂 → end_turn，断言消息累积（第二轮 messages 3 条）+ 三表落库（4 条消息）
-// + run 状态/迭代数/token 累计；Task 5 追加状态机各分支（迭代上限 /
-// stop_reason 受限 / LLM 失败 / 破坏性授权 0 与 1 / 工具失败回喂 / 32KB
-// 截断 / cancel）+ tool_result 文本形状与 goal 转义两个契约钉子。
-// LlmEndpoint 抽象使本用例零网络。
+// AgentLoop 主循环用例：tool_use → 工具执行 → tool_result 回喂 → end_turn 的消息累积与三表落库，
+// 外加状态机各分支（迭代上限 / stop_reason 受限 / LLM 失败 / 破坏性授权 / 工具失败回喂 /
+// tool_result 32KB 截断 / cancel / token 与墙钟上限）与 tool_result 文本形状、goal 转义契约。
+// 跨文件前提：
+//   - LlmEndpoint 是可注入的纯虚接口，本文件用脚本化 MockLlm 顶替，零网络。
+//   - core::ToolRegistry 是进程级单例，栈上 FakeTool 必须经 ToolReg 成对注册/注销。
+//   - AgentStore 走 test_support::TestDb 临时库，不碰用户真实库。
 #include "doctest.h"
 #include "test_support.h"
 #include "module_agent/agent_loop.h"
@@ -23,10 +24,10 @@ class MockLlm : public core::LlmEndpoint {
 public:
     std::vector<core::LlmResponse> script;
     std::vector<std::vector<core::LlmMessage>> sentMessages;
-    std::vector<std::string> sentModels;   // 每次 send 收到的 model（原样，不解析）
-    // 分支 3：置上则 send 直接返回该失败（模拟网络超时），不消耗 script
+    std::vector<std::string> sentModels;   // 每次 send 收到的 model，原样不解析
+    // 置上则每次 send 直接返回该失败（模拟网络超时），不消耗 script
     std::optional<core::Result<core::LlmResponse>> failResponse;
-    // 分支 7：每次 send 入口触发（用来在首轮把 cancel 置位）
+    // 每次 send 入口触发（在首轮把 cancel 置位）
     std::function<void()> onSendHook;
     core::Result<core::LlmResponse> send(
         const std::vector<core::LlmMessage>& messages,
@@ -52,13 +53,14 @@ public:
     bool isDestructive() const override { return destructive_; }
     core::Result<core::ToolResult> execute(const core::ToolArgs& a) override {
         lastArgs = a.json; ++calls;
-        // 分支 5：failMessage 非空 → 返回 Result::fail（工具异常语义）
+        // failMessage 非空 → 返回 Result::fail（工具异常语义）
         if (!failMessage.empty())
             return core::Result<core::ToolResult>::fail(failCode, failMessage);
         return core::Result<core::ToolResult>::ok(core::ToolResult{isError, resultJson});
     }
     std::string lastArgs; int calls = 0;
-    // 可注入的返回体（默认 JSON 字符串字面量 "done"）
+    // 可注入的返回体。默认值是 JSON 字符串字面量 "done" 而非裸文本——
+    // 裸文本会走 makeTextContent 的非法字节清洗分支，测不到编码路径
     std::string resultJson = R"("done")";
     bool isError = false;
     std::string failMessage;
@@ -75,15 +77,14 @@ core::LlmResponse resp(const char* contentJson, const char* stop) {
     return r;
 }
 
-// 单 tool_use block 的响应（分支 1/4/5/6/7 共用）
 core::LlmResponse toolUseResp(const char* id, const char* toolName) {
     return resp((std::string(R"([{"type":"tool_use","id":")") + id + R"(","name":")" +
                  toolName + R"(","input":{}}])").c_str(),
                 "tool_use");
 }
 
-// 从一条 user 消息的 contentJson 里取第 idx 个 tool_result 的 text 字段
-// （解析失败一律返回空串，断言侧再判——本 helper 只做取值不做断言）
+// 从一条 user 消息的 contentJson 里取第 idx 个 tool_result 的 text 字段。
+// 块缺失 / 形状不符一律返回空串而非抛错，断言侧须能区分「空串」与「块不存在」。
 std::string toolResultText(const std::string& contentJson, int idx) {
     auto arr = platform::json::parse(contentJson);
     if (arr.isFail() || !arr.value().isArray() || idx >= arr.value().size())
@@ -98,7 +99,8 @@ std::string toolResultText(const std::string& contentJson, int idx) {
     return t.isString() ? t.asString() : std::string();
 }
 
-// 第 idx 个 tool_result 的 is_error 标志（缺块/非布尔 → false）
+// 第 idx 个 tool_result 的 is_error 标志。缺块 / 非布尔一律返回 false，
+// 所以断言 !isError(...) 在块根本不存在时同样为真——判 is_error 必须配合块存在性断言
 bool toolResultIsError(const std::string& contentJson, int idx) {
     auto arr = platform::json::parse(contentJson);
     if (arr.isFail() || !arr.value().isArray() || idx >= arr.value().size())
@@ -109,8 +111,8 @@ bool toolResultIsError(const std::string& contentJson, int idx) {
     return e.isBool() ? e.asBool() : false;
 }
 
-// 第 idx 个 **text** block 的 text 字段（goal 消息是裸 text block，
-// 没有 content 包裹层，故与 toolResultText 分开取）
+// 第 idx 个裸 text block 的 text 字段：goal 消息是裸 text block、没有 content 包裹层，
+// 故与 toolResultText 分开取
 std::string textBlockText(const std::string& contentJson, int idx) {
     auto arr = platform::json::parse(contentJson);
     if (arr.isFail() || !arr.value().isArray() || idx >= arr.value().size())
@@ -122,10 +124,9 @@ std::string textBlockText(const std::string& contentJson, int idx) {
 }
 
 // 进程级 ToolRegistry 单例 + 借用栈对象：注册与注销必须成对。本仓库的
-// DOCTEST_CHECK 失败即 `return false`（doctest.h 头注释），手动写在用例
-// 末尾的 unregisterTool 会被跳过——栈上 FakeTool 随之析构，注册表里就留下
-// 悬垂裸指针，下一个用例的 allSchemasJson()/find() 一碰就 SIGBUS（RED 期
-// 实测整个 exe 崩在 exit 138）。改用 RAII，注销由析构保证一定发生。
+// DOCTEST_CHECK 失败即 `return false`，写在用例末尾的手工 unregisterTool 会被跳过——
+// 栈上 FakeTool 随之析构，注册表里就留下悬垂裸指针，后续用例碰一次即 SIGBUS。
+// 改用 RAII，注销由析构保证一定发生。
 class ToolReg {
 public:
     ToolReg(core::ToolRegistry& reg, core::ITool* tool)
@@ -145,14 +146,13 @@ private:
 
 struct Fixture {
     test_support::TestDb tdb{test_support::TestDb("agentloop", "fx")};
-    // 注意：TestDb 构造失败即抛（TIN-06b 口径），用例内直接用
+    // TestDb 构造失败即抛，用例内不再判返回值
     AgentStore store{tdb.handle()};
     MockLlm llm;
     core::ToolRegistry& tools = core::ToolRegistry::instance();
     AgentLoop loop{llm, tools, store};
 };
 
-// 建 task 行 + 填好 AgentTask（分支用例共用；createTask 失败即 return false）
 bool setupTask(Fixture& fx, AgentTask& task, const std::string& goal,
                int maxIterations, bool allowDestructive) {
     auto taskId = fx.store.createTask("t", goal, "manual", "default",
@@ -197,15 +197,15 @@ REGISTER_TEST(agent_loop_happy_path_tool_then_end, "agent_loop: tool_use→工�
     DOCTEST_CHECK_EQ(tool.lastArgs, std::string(R"({"x":1})"));
     // 累积：首条 user goal → assistant1 → user(tool_result) → assistant2
     DOCTEST_REQUIRE(fx.llm.sentMessages.size() == 2);
-    DOCTEST_CHECK_EQ(fx.llm.sentMessages[0].size(), 1u);           // goal
-    DOCTEST_CHECK_EQ(fx.llm.sentMessages[1].size(), 3u);           // goal+asst1+tool_result
+    DOCTEST_CHECK_EQ(fx.llm.sentMessages[0].size(), 1u);
+    DOCTEST_CHECK_EQ(fx.llm.sentMessages[1].size(), 3u);
     DOCTEST_CHECK(fx.llm.sentMessages[1][2].contentJson.find("tool_result") != std::string::npos);
     DOCTEST_CHECK(fx.llm.sentMessages[1][2].contentJson.find("tu1") != std::string::npos);
     // 落库：4 条消息
     auto msgs = fx.store.listMessages(runId.value());
     DOCTEST_REQUIRE(msgs.isOk());
     DOCTEST_REQUIRE_EQ(msgs.value().size(), 4u);
-    // 落库的 seq/role 顺序 = 累积顺序（审计契约，spec §6 agent_messages.seq）
+    // 落库的 seq/role 顺序 = 累积顺序（审计契约：agent_messages.seq 单调递增）
     DOCTEST_CHECK_EQ(msgs.value()[0].seq, 0);
     DOCTEST_CHECK_EQ(msgs.value()[0].role, std::string("user"));
     DOCTEST_CHECK(msgs.value()[0].contentJson.find("打招呼") != std::string::npos);
@@ -232,9 +232,8 @@ REGISTER_TEST(agent_loop_happy_path_tool_then_end, "agent_loop: tool_use→工�
     return true;
 })
 
-// I1：completed 的唯一定义是 end_turn。refusal（Anthropic 拒答）等非 end_turn 的
-// stop_reason 不能默认记成功——否则「模型没给出终局回复」的 run 在 UI 上看着
-// 跟正常跑完一样。
+// completed 的唯一定义是 end_turn。refusal（Anthropic 拒答）等非 end_turn 的 stop_reason
+// 不能默认记成功——否则「模型没给出终局回复」的 run 在 UI 上看着跟正常跑完一样。
 REGISTER_TEST(agent_loop_refusal_is_failed, "agent_loop: stop_reason=refusal → run failed（不记 completed）", {
     Fixture fx;
     auto taskId = fx.store.createTask("t", "打招呼", "manual", "default", 10, false);
@@ -254,10 +253,8 @@ REGISTER_TEST(agent_loop_refusal_is_failed, "agent_loop: stop_reason=refusal →
     return true;
 })
 
-// ===== Task 5：状态机各分支 =====
-
-// 分支 1 迭代上限：模型永远要调工具 → 循环必须被 maxIterations 收口，
-// 记 limited 而不是无限跑（后台自动化无人盯着，卡死就是永久占着 worker）。
+// 迭代上限：模型永远要调工具 → 循环必须被 maxIterations 收口，记 limited 而不是无限跑
+// （后台自动化无人盯着，卡死就是永久占着 worker）。
 REGISTER_TEST(agent_loop_iteration_cap_limited, "agent_loop: 迭代到 maxIterations → run limited（收口不失控）", {
     Fixture fx;
     FakeTool tool("t.cap");
@@ -265,7 +262,7 @@ REGISTER_TEST(agent_loop_iteration_cap_limited, "agent_loop: 迭代到 maxIterat
     DOCTEST_REQUIRE(reg1.ok());
     AgentTask task;
     DOCTEST_REQUIRE(setupTask(fx, task, "一直调工具", 3, false));
-    // 永远 tool_use：只有迭代上限能收口（script 给 8 条防万一）
+    // 永远 tool_use：唯一收口机制就是迭代上限，脚本多给一条防万一
     fx.llm.script = { toolUseResp("c1", "t.cap"), toolUseResp("c2", "t.cap"),
                       toolUseResp("c3", "t.cap"), toolUseResp("c4", "t.cap") };
     std::atomic<bool> cancel{false};
@@ -282,8 +279,8 @@ REGISTER_TEST(agent_loop_iteration_cap_limited, "agent_loop: 迭代到 maxIterat
     return true;
 })
 
-// 分支 2 stop_reason 受限：max_tokens 是「被截断」而非「模型答完了」，
-// 记 limited 让 UI 能提示续跑（与 refusal→failed 互不重叠）。
+// stop_reason 受限：max_tokens 是「被截断」而非「模型答完了」，记 limited 让 UI 能提示续跑
+// （与 refusal→failed 互不重叠）。
 REGISTER_TEST(agent_loop_max_tokens_limited, "agent_loop: stop_reason=max_tokens → run limited", {
     Fixture fx;
     AgentTask task;
@@ -301,8 +298,8 @@ REGISTER_TEST(agent_loop_max_tokens_limited, "agent_loop: stop_reason=max_tokens
     return true;
 })
 
-// 分支 3 LLM 失败：网络异常 → run failed + 错误原文入库，且**只留 goal
-// 一条**消息（assistant 响应根本没拿到，不能凭空补一条）。
+// LLM 失败：网络异常 → run failed + 错误原文入库，且只留 goal 一条消息
+// （assistant 响应根本没拿到，不能凭空补一条）。
 REGISTER_TEST(agent_loop_llm_failure_is_failed, "agent_loop: LLM 请求失败 → run failed 且只落 goal 一条", {
     Fixture fx;
     AgentTask task;
@@ -324,8 +321,8 @@ REGISTER_TEST(agent_loop_llm_failure_is_failed, "agent_loop: LLM 请求失败 �
     return true;
 })
 
-// 分支 4a 破坏性未授权：先拒后不调——工具**一次都不能执行**（spec §5.3：
-// allow_destructive=0 时不挂起、不弹窗，直接 fail run）。
+// 破坏性未授权：先拒后不调——工具一次都不能执行。
+// allow_destructive=0 时不挂起、不弹窗，直接 fail run。
 REGISTER_TEST(agent_loop_destructive_denied, "agent_loop: 破坏性工具未授权 → run failed 且工具零调用", {
     Fixture fx;
     FakeTool tool("t.del", /*destructive=*/true);
@@ -337,7 +334,7 @@ REGISTER_TEST(agent_loop_destructive_denied, "agent_loop: 破坏性工具未授�
     std::atomic<bool> cancel{false};
     auto runId = fx.loop.run(task, cancel);
     DOCTEST_REQUIRE(runId.isOk());
-    DOCTEST_CHECK_EQ(tool.calls, 0);              // 先拒后不调
+    DOCTEST_CHECK_EQ(tool.calls, 0);
     DOCTEST_REQUIRE_EQ(fx.llm.sentMessages.size(), 1u);   // 不回喂、不进第二轮
     AgentRunRow row;
     DOCTEST_REQUIRE(onlyRun(fx, task, row));
@@ -347,8 +344,8 @@ REGISTER_TEST(agent_loop_destructive_denied, "agent_loop: 破坏性工具未授�
     return true;
 })
 
-// 分支 4b 破坏性已授权：同一个工具在 allow_destructive=1 下必须真被执行，
-// 且 run 正常走到 end_turn completed（授权开关不能把工具永久禁掉）。
+// 破坏性已授权：同一个工具在 allow_destructive=1 下必须真被执行，且 run 正常走到
+// end_turn completed（授权开关不能把工具永久禁掉）。
 REGISTER_TEST(agent_loop_destructive_allowed, "agent_loop: allow_destructive=1 → 破坏性工具执行且 run completed", {
     Fixture fx;
     FakeTool tool("t.del2", /*destructive=*/true);
@@ -369,8 +366,8 @@ REGISTER_TEST(agent_loop_destructive_allowed, "agent_loop: allow_destructive=1 �
     return true;
 })
 
-// 分支 5 工具失败回喂：工具 execute 失败**不中止 run**，把原因以
-// is_error=true 的 tool_result 回喂让 LLM 自纠（spec §10 工具异常语义）。
+// 工具失败回喂：工具 execute 失败不中止 run，把原因以 is_error=true 的 tool_result
+// 回喂让 LLM 自纠（工具异常语义）。
 REGISTER_TEST(agent_loop_tool_failure_refeeds, "agent_loop: 工具 execute 失败 → is_error 回喂且不中止 run", {
     Fixture fx;
     FakeTool tool("t.bad");
@@ -397,8 +394,8 @@ REGISTER_TEST(agent_loop_tool_failure_refeeds, "agent_loop: 工具 execute 失�
     return true;
 })
 
-// 分支 6 tool_result 32KB 硬上限（spec §10 L3c）：单 result 超 32KB 截断
-// + 末尾 [truncated] 标记。防 md.read 长笔记 + 多迭代烧爆上下文致上游 400。
+// tool_result 32KB 硬上限：单 result 超 32KB 截断 + 末尾 [truncated] 标记。
+// 防 md.read 长笔记 + 多迭代烧爆上下文致上游 400。
 REGISTER_TEST(agent_loop_tool_result_truncated, "agent_loop: tool_result 超 32KB → 截断 + [truncated] 标记", {
     Fixture fx;
     FakeTool tool("t.big");
@@ -424,8 +421,8 @@ REGISTER_TEST(agent_loop_tool_result_truncated, "agent_loop: tool_result 超 32K
     return true;
 })
 
-// 分支 7 cancel：首轮请求发出后用户置位 cancel → 第二轮前中止，记
-// cancelled（不是 failed——用户主动停的，UI 不该报成出错）。
+// cancel：首轮请求发出后用户置位 cancel → 第二轮前中止，记 cancelled
+// （不是 failed——用户主动停的，UI 不该报成出错）。
 REGISTER_TEST(agent_loop_cancel_stops_second_round, "agent_loop: cancel 置位 → 第二轮前中止且 run cancelled", {
     Fixture fx;
     FakeTool tool("t.cancel");
@@ -447,16 +444,11 @@ REGISTER_TEST(agent_loop_cancel_stops_second_round, "agent_loop: cancel 置位 �
     return true;
 })
 
-// M2 静态审计 F1（high）第二道闸：工具回喂文本是**任意字节**来源——文件原文
-// （md.read 修复前的形状）与拼进错误消息的文件路径都可能带非法 UTF-8。
-// platform::json 的 stringify 放行非法字节、parse 拒绝 ⇒ 修复前
-// makeTextContent 的 parseArrayOrDie 自检判 fail → LOG_FATAL + std::abort
-// ⇒ **整个进程死亡**（不再是单 run 失败）。本用例从 AgentLoop 入口钉死这条
-// 路径：非法字节 → 清洗成 U+FFFD 后照常回喂，run 正常收尾。
-// 注意自检**不降级**：parseArrayOrDie 原样保留（它守的是「拼装层自身的
-// 结构错误」，与本条无关）；这里动的是「进入拼装层之前的文本归一化」。
-// 红（修复前）：本用例直接 std::abort（进程 SIGABRT，后续用例不再执行）；
-// 绿（修复后）：run completed，回喂文本良构且含替换字符 U+FFFD。
+// 工具回喂文本是任意字节来源——文件原文与拼进错误消息的文件路径都可能带非法 UTF-8。
+// platform::json 的 stringify 放行非法字节、parse 拒绝 ⇒ makeTextContent 的
+// parseArrayOrDie 自检会判 fail → LOG_FATAL + std::abort ⇒ 整个进程死亡（不再是单 run 失败）。
+// 契约：非法字节在进入拼装层之前归一化成 U+FFFD，回喂与落库都必须是良构 JSON。
+// 注意自检不降级：parseArrayOrDie 原样保留（它守的是「拼装层自身的结构错误」，与本条无关）。
 REGISTER_TEST(agent_loop_tool_result_invalid_utf8_sanitized,
               "agent_loop: 工具回非 UTF-8 文本 → U+FFFD 清洗回喂（不 abort 整进程）", {
     Fixture fx;
@@ -466,15 +458,14 @@ REGISTER_TEST(agent_loop_tool_result_invalid_utf8_sanitized,
     AgentTask task;
     DOCTEST_REQUIRE(setupTask(fx, task, "读二进制", 10, false));
 
-    // 工具回**裸文本**（非 JSON 原文，toolResultText 的第三条分支）且带 GBK
-    // 字节：D6 D0 CE C4 —— 修复前原样进 makeTextContent → 自检 abort
+    // 工具回裸文本（非 JSON 原文）且带 GBK 字节 D6 D0 CE C4
     tool.resultJson = std::string("\xD6\xD0\xCE\xC4 binary");
     fx.llm.script = {
         toolUseResp("tu1", "t.binary"),
         resp(R"([{"type":"text","text":"收到"}])", "end_turn"),
     };
     std::atomic<bool> cancel{false};
-    auto runId = fx.loop.run(task, cancel);      // 修复前：std::abort 在此
+    auto runId = fx.loop.run(task, cancel);      // 未清洗时 std::abort 在此
     DOCTEST_REQUIRE(runId.isOk());
     DOCTEST_REQUIRE_EQ(fx.llm.sentMessages.size(), 2u);
 
@@ -497,12 +488,9 @@ REGISTER_TEST(agent_loop_tool_result_invalid_utf8_sanitized,
     return true;
 })
 
-// ===== Task 5 携带裁定 =====
-
-// 裁定 1：contentJson 解析成 JSON **字符串**时，text 块用该字符串的值原样
-// （工具回 "done" → 模型看到 done，不是带引号的 "done"；回 "" → 真空串，
-// 不是 "\"\""）。非字符串（对象/数组/数字/布尔）保持 stringify(值)。
-// 同一条 response 三个 tool_use 块，一次跑完三种形状。
+// contentJson 解析成 JSON 字符串时，text 块用该字符串的值原样（工具回 "done" → 模型看到
+// done，不是带引号的 "done"；回 "" → 真空串，不是 "\"\""）。非字符串（对象/数组/数字/布尔）
+// 保持 stringify(值)。同一条 response 三个 tool_use 块，一次跑完三种形状。
 REGISTER_TEST(agent_loop_tool_result_text_shape, "agent_loop: tool_result text 形状（字符串原样/空串/对象 stringify）", {
     Fixture fx;
     FakeTool tStr("t.shape.str"), tEmpty("t.shape.empty"), tObj("t.shape.obj");
@@ -526,14 +514,14 @@ REGISTER_TEST(agent_loop_tool_result_text_shape, "agent_loop: tool_result text �
     auto runId = fx.loop.run(task, cancel);
     DOCTEST_REQUIRE(runId.isOk());
     DOCTEST_REQUIRE_EQ(fx.llm.sentMessages.size(), 2u);
-    const std::string& fed = fx.llm.sentMessages[1][2].contentJson;   // goal+asst1+3×tool_result
+    const std::string& fed = fx.llm.sentMessages[1][2].contentJson;
     // JSON 字符串 → 值原样，不二次 stringify
     DOCTEST_CHECK_EQ(toolResultText(fed, 0), std::string("done"));
     // JSON 空字符串 → 真空串
     DOCTEST_CHECK_EQ(toolResultText(fed, 1), std::string());
     // 对象 → stringify(值)
     DOCTEST_CHECK_EQ(toolResultText(fed, 2), std::string(R"({"k":1})"));
-    // 多块 → tool_call_id 留 NULL（见 Task 4 决策）
+    // 多块 → tool_call_id 留 NULL
     auto msgs = fx.store.listMessages(runId.value());
     DOCTEST_REQUIRE(msgs.isOk());
     DOCTEST_REQUIRE_EQ(msgs.value().size(), 4u);   // goal+asst1+3×tool_result(一条)+asst2
@@ -544,10 +532,9 @@ REGISTER_TEST(agent_loop_tool_result_text_shape, "agent_loop: tool_result text �
     return true;
 })
 
-// 裁定 1 的另一半：工具查不到（模块被拔）那条 is_error 回喂也必须是同一
-// 形状（text block 数组）。模型收到的 content 形状必须统一——一处是裸
-// 字符串、一处是 blocks 数组，上游 schema 校验与 LLM 解析都得多担一份心。
-// 同一条 response 里混一个正常工具 + 一个不存在的工具，一次钉两种形状。
+// 工具查不到（模块被拔）那条 is_error 回喂也必须是同一形状（text block 数组）。模型收到的
+// content 形状必须统一——一处是裸字符串、一处是 blocks 数组，上游 schema 校验与 LLM 解析
+// 都得多担一份心。同一条 response 里混一个正常工具 + 一个不存在的工具，一次钉两种形状。
 REGISTER_TEST(agent_loop_tool_notfound_same_shape, "agent_loop: 工具未找到的 is_error 回喂与正常回喂同形状（text block 数组）", {
     Fixture fx;
     FakeTool tool("t.found");
@@ -563,7 +550,7 @@ REGISTER_TEST(agent_loop_tool_notfound_same_shape, "agent_loop: 工具未找到�
     std::atomic<bool> cancel{false};
     auto runId = fx.loop.run(task, cancel);
     DOCTEST_REQUIRE(runId.isOk());
-    // 工具查不到**不中止** run（spec §1 L3a：让 LLM 自纠或换工具）
+    // 工具查不到不中止 run（让 LLM 自纠或换工具）
     DOCTEST_CHECK_EQ(tool.calls, 1);
     DOCTEST_REQUIRE_EQ(fx.llm.sentMessages.size(), 2u);
     const std::string& fed = fx.llm.sentMessages[1][2].contentJson;
@@ -577,11 +564,9 @@ REGISTER_TEST(agent_loop_tool_notfound_same_shape, "agent_loop: 工具未找到�
     DOCTEST_CHECK_EQ(row.status, std::string("completed"));
     return true;
 })
-// ===== M2 Task 1：资源上限 =====
-
-// spec §5.2：token 累计（input+output）硬上限 200K。单轮响应即破限也必须停
-//（检查点在 keepAssistant 落库之后、下一轮工具执行之前——破限轮的 assistant
-// 消息与用量照实落库（spec §10 审计），落库完立即判停，不再发第二轮）。
+// token 累计（input+output）硬上限 200K。单轮响应即破限也必须停。
+// 顺序不可换：检查点在 keepAssistant 落库之后、下一轮工具执行之前——破限轮的 assistant
+// 消息与用量照实落库（审计要求），落库完立即判停，不再发第二轮。
 REGISTER_TEST(agent_loop_token_cap_limits_run,
               "agent_loop: token 累计超 200K → limited + error 说明", {
     Fixture fx;
@@ -604,8 +589,7 @@ REGISTER_TEST(agent_loop_token_cap_limits_run,
     DOCTEST_CHECK(run.error->find("200K") != std::string::npos);
     DOCTEST_CHECK_EQ(run.inputTokens.value_or(0), 150000); // 用量照实落库
     DOCTEST_CHECK_EQ(run.outputTokens.value_or(0), 60000);
-    // spec §10 审计：检查点在 keepAssistant **之后**——破限轮的 assistant 消息
-    // 必须已落库（若判定挪到落库之前，这里只剩 goal 一条）
+    // 破限轮的 assistant 消息必须已落库：若判定挪到 keepAssistant 之前，这里只剩 goal 一条
     auto msgs = fx.store.listMessages(runId.value());
     DOCTEST_REQUIRE(msgs.isOk());
     DOCTEST_REQUIRE_EQ(msgs.value().size(), 2u);           // goal + 破限轮 assistant
@@ -613,13 +597,11 @@ REGISTER_TEST(agent_loop_token_cap_limits_run,
     return true;
 })
 
-// spec §5.2：单 run 墙钟 = max_iterations × 请求超时(60s)，硬上限 30 分钟。
-// 注入假时钟：每次 send 前推进 10 分钟 → 第二轮顶部即破 min(10×60s, 30min)
-// = 600s 预算（预算取 min，迭代上限 10 轮远未到）。
-// 与 brief 的唯一偏差：脚本响应用**真 tool_use 轮**（toolUseResp）而非 text 块 +
-// stop_reason=tool_use——后者命中「stop_reason=tool_use 但响应里没有 tool_use
-// block」分支，第一轮就 run failed 收尾，永远回不到循环顶部的墙钟检查点，
-// 用例恒红且测不到目标行为（agent_loop.cpp 该分支已有独立用例覆盖）。
+// 单 run 墙钟预算 = min(maxIterations × 请求超时 60s, 30 分钟硬上限)。注入假时钟：
+// 每次 send 前推进 10 分钟 → 第二轮顶部即破 min(10×60s, 30min) = 600s 预算。
+// 脚本响应必须是真 tool_use 轮（toolUseResp），不能用 text 块 + stop_reason=tool_use——
+// 后者命中「stop_reason=tool_use 但响应里没有 tool_use block」分支，第一轮就 failed 收尾，
+// 永远回不到循环顶部的墙钟检查点，用例恒红且测不到目标行为。
 REGISTER_TEST(agent_loop_wall_clock_cap_limits_run,
               "agent_loop: 墙钟超预算 → limited（时钟注入零等待）", {
     Fixture fx;
@@ -628,7 +610,7 @@ REGISTER_TEST(agent_loop_wall_clock_cap_limits_run,
     AgentTask task; task.id = taskId.value(); task.goal = "磨洋工"; task.modelSlot = "default";
     int64_t fakeNowMs = 0;
     AgentLoop loop{fx.llm, fx.tools, fx.store,
-                   [&fakeNowMs] { return fakeNowMs; }};   // 注入时钟（新形参）
+                   [&fakeNowMs] { return fakeNowMs; }};   // 注入时钟
     fx.llm.onSendHook = [&fakeNowMs] { fakeNowMs += 10 * 60 * 1000; };  // 每轮 +10min
     // 工具名不存在 → is_error 回喂、run 继续（不引入注册表依赖，只烧轮次）
     core::LlmResponse tu = toolUseResp("w1", "t.ghost");
@@ -642,18 +624,18 @@ REGISTER_TEST(agent_loop_wall_clock_cap_limits_run,
     DOCTEST_CHECK_EQ(run.status, std::string("limited"));
     DOCTEST_REQUIRE(run.error.has_value());
     DOCTEST_CHECK(run.error->find("墙钟") != std::string::npos);
-    // 钉死「预算取 min」这一支（评审补）：maxIterations=10 → 预算 600s 紧于
-    // 30 分钟硬上限，第 2 轮循环顶即停 = 恰好 1 次 send。若 min 退化成取 max
-    // （1800s），要 3 轮才停且报 1800s —— 下面两条断言会红（原断言集对它假绿）。
+    // 钉死「预算取 min」这一支：maxIterations=10 → 预算 600s 紧于 30 分钟硬上限，
+    // 第 2 轮循环顶即停 = 恰好 1 次 send。若 min 退化成取 max（1800s），要 3 轮才停且报
+    // 1800s —— 下面两条断言会红（只看「墙钟」二字的断言集对它恒绿）。
     DOCTEST_CHECK(run.error->find("600s") != std::string::npos);
     DOCTEST_CHECK_EQ(fx.llm.sentMessages.size(), 1u);
     return true;
 })
 
-// spec §5.2 的另一支：30 分钟**硬上限**本身。maxIterations=50（loop 内 clamp
-// 上界）→ 预算 = min(50×60s, 30min) = 1800s，由硬上限决定而非迭代数。
-// 同样注入假时钟：每次 send 前 +10 分钟，3 轮后（第 4 次循环顶）累计 1800s 破限；
-// 脚本给 4 条、迭代上限 50 远未到 —— 只有硬上限能让它停。
+// 墙钟的另一半：30 分钟硬上限本身。maxIterations=50（loop 内 clamp 上界）→ 预算 =
+// min(50×60s, 30min) = 1800s，由硬上限决定而非迭代数。同样注入假时钟：每次 send 前
+// +10 分钟，3 轮后（第 4 次循环顶）累计 1800s 破限；脚本给 4 条、迭代上限 50 远未到
+// —— 只有硬上限能让它停。
 REGISTER_TEST(agent_loop_wall_clock_hard_cap_30min_limits_run,
               "agent_loop: 墙钟 30 分钟硬上限 → limited 1800s（时钟注入）", {
     Fixture fx;
@@ -680,8 +662,8 @@ REGISTER_TEST(agent_loop_wall_clock_hard_cap_30min_limits_run,
     return true;
 })
 
-// 裁定 2：goal 含引号 / 反斜杠 / 换行时，首条 user 消息仍必须是合法 JSON
-// 且 text 块与原文逐字节相同（每个 run 都走这条路径，转义坏了全盘皆输）。
+// goal 含引号 / 反斜杠 / 换行时，首条 user 消息仍必须是合法 JSON 且 text 块与原文
+// 逐字节相同（每个 run 都走这条路径，转义坏了全盘皆输）。
 REGISTER_TEST(agent_loop_goal_escaping, "agent_loop: goal 含引号/反斜杠/换行 → 首条消息仍合法且原文逐字保真", {
     Fixture fx;
     const std::string goal = "他说\"做完了\"\\路径\n第二行";

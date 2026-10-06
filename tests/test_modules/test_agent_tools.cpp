@@ -1,9 +1,14 @@
 // tests/test_modules/test_agent_tools.cpp
-// agent 工具用例（agent M1 Task 10：app.stats 只读统计；Task 12 的
-// AgentModule 生命周期用例共用本文件）。
-//
-// 错误回喂约定（spec §10 M1 统一）：工具级失败 → Result ok + isError=true +
-// 中文说明；Result::fail 只留给编程不变量破坏。
+// app.stats 只读统计 + ToolRegistry 行为 + AgentModule 生命周期（onStart/onStop、teardown
+// 顺序、UI 元素 id 契约、惰性装配、Scheduler 收口）。
+// 跨文件前提：
+//   - 工具级失败一律 Result ok + isError=true + 中文说明；Result::fail 只留给编程不变量破坏。
+//   - ToolRegistry 是进程级单例，不在 test_main 的 resetCaseGlobals 清单里，只能靠用例内
+//     ToolGuard 兜底摘除（显式清理会漏 fail-fast 提前 return 的路径）。
+//   - AgentModule::onStop 的收口顺序固定：全取消 → 全 join → 停 Scheduler → 清容器 →
+//     unregisterTool。把 unregister 提到 join 之前会被 teardown 顺序探针记成 false。
+//   - tests/doctest.h 是极简框架：DOCTEST_CHECK 失败展开为 `return false`，进 lambda 只会
+//     退出 lambda（用例照样绿），断言必须平铺。
 #include "doctest.h"
 #include "test_support.h"
 
@@ -25,17 +30,12 @@
 #include <thread>
 #include <vector>
 
-// ============ app.stats ============
-
-// 直查三表 COUNT(*) 的只读工具：种子数据经原生 SQL 插入（不绕业务服务层，
-// 断言的是工具对表行数的真实读数）。注意断言宏不能进 lambda（展开含
-// return false，在 lambda 里会只退出 lambda 假装绿），故逐条平铺。
 REGISTER_TEST(app_stats_counts_seeded_rows,
               "app.stats: 统计 todo_tasks/markdown_index/agent_tasks 三表行数", {
     test_support::TestDb tdb("agenttools", "stats");
 
-    // 种数据：todo_tasks 2 行 / markdown_index 1 行 / agent_tasks 1 行
-    //（todo_columns v2 种子保证 column_id=1 存在；created_at 等必填列给占位值）
+    // todo_tasks 的 column_id=1 靠 todo_columns v2 迁移种子存在，不是本用例建的行；
+    // 其余必填列（created_at 等）给占位值。
     DOCTEST_REQUIRE(
         tdb.handle()
             .exec("INSERT INTO todo_tasks (column_id, title, position, "
@@ -88,7 +88,6 @@ REGISTER_TEST(app_stats_zero_state_and_schema,
     DOCTEST_CHECK_EQ(obj.get("notes").asInt(), 0);
     DOCTEST_CHECK_EQ(obj.get("agentTasks").asInt(), 0);
 
-    // schema 抽查 + 只读
     const std::string schema = tool->schemaJson();
     DOCTEST_CHECK(schema.find("\"name\":\"app.stats\"") != std::string::npos);
     DOCTEST_CHECK(schema.find("input_schema") != std::string::npos);
@@ -96,13 +95,10 @@ REGISTER_TEST(app_stats_zero_state_and_schema,
     return true;
 })
 
-// ============ AgentModule 生命周期（Task 12）============
-
 namespace {
 
-// 测试用 fake 代理服务：实现 IClaudeProxyService 全部虚方法（与
-// test_llm_client.cpp 的 FakeProxy 同款；本组用例走 isProxyRunning /
-// proxyPort / resolveModelSlot 三条链路）。
+// fake 代理：本组用例只经 isProxyRunning / proxyPort / resolveModelSlot 三条链路，
+// 其余虚方法为 no-op 桩。
 class FakeProxy : public core::IClaudeProxyService {
 public:
     bool running = true;
@@ -116,7 +112,6 @@ public:
         return core::Result<int>::fail(core::ErrorCode::Internal, "unused");
     }
     bool isClaudeCodeManaged() const override { return false; }
-    // F2：接口改按值返回快照（M2 静态审计），桩同口径
     std::vector<std::string> lastSyncWarnings() const override { return {}; }
     std::string settingsFilePath() const override { return {}; }
     std::optional<std::string> resolveModelSlot(const std::string&) override {
@@ -124,9 +119,8 @@ public:
     }
 };
 
-// RAII：用例退出（含 fail-fast 提前 return 的路径）时把注册的工具从进程级
-// 注册表摘除——ToolRegistry 不在 test_main 的 resetCaseGlobals 清单里，
-// 靠用例内显式清理会漏 fail-fast 路径。
+// ToolGuard 不可省：ToolRegistry 是进程级单例、不在 test_main 的 resetCaseGlobals
+// 清单里，用例内显式 unregister 会漏掉 fail-fast 提前 return 的路径。
 struct ToolGuard {
     std::string name;
     ~ToolGuard() { core::ToolRegistry::instance().unregisterTool(name); }
@@ -198,7 +192,7 @@ REGISTER_TEST(tool_registry_list_tools_snapshot,
     DOCTEST_CHECK_MESSAGE(alphaIdx < zetaIdx,
                           "listTools 应按 map 序（name 字典序）alpha 在 zeta 前");
 
-    // keep-alive：摘除注册表条目后快照仍可用（shared_ptr 持活）
+    // listTools 返回 shared_ptr 快照：摘除注册表条目后快照里的工具仍可用
     reg.unregisterTool("test.alpha");
     bool stillUsable = false;
     for (const auto& t : tools) {
@@ -220,7 +214,6 @@ REGISTER_TEST(agent_module_registers_own_tool,
     deps.proxy = &proxy;
     std::unique_ptr<::core::Module> mod(new module::agent::AgentModule(deps));
 
-    // 未启动：未注册；onStart 后：注册且可按名找到
     DOCTEST_CHECK(core::ToolRegistry::instance().find("app.stats").isFail());
     mod->onStart();
     auto found = core::ToolRegistry::instance().find("app.stats");
@@ -228,7 +221,6 @@ REGISTER_TEST(agent_module_registers_own_tool,
     DOCTEST_CHECK_EQ(found.value()->name(), std::string("app.stats"));
     DOCTEST_CHECK_FALSE(found.value()->isDestructive());
 
-    // onStop 后：注销（find 恢复 NotFound）
     mod->onStop();
     DOCTEST_CHECK(core::ToolRegistry::instance().find("app.stats").isFail());
     return true;
@@ -247,15 +239,14 @@ REGISTER_TEST(agent_module_onstop_cancels_and_joins,
     DOCTEST_REQUIRE(core::ToolRegistry::instance().registerTool(slow).isOk());
     ToolGuard slowGuard{"test.slow"};
 
-    // 种任务（直接经 store，与 UI 无关）
     module::agent::AgentStore store(tdb.handle());
     auto created = store.createTask("慢工具任务", "调用 test.slow 一次",
                                     "manual", "default", 10, false);
     DOCTEST_REQUIRE(created.isOk());
     const int64_t taskId = created.value();
 
-    // Deps 注入：fake 代理 + 脚本化 HTTP（首轮吐 tool_use(test.slow)，次轮
-    // end_turn——teardown 正常时次轮到不了：cancel 在首轮工具执行期间已置位）
+    // Deps 注入：fake 代理 + 脚本化 HTTP。首轮吐 tool_use(test.slow)，次轮 end_turn；
+    // teardown 正常时次轮到不了——cancel 在首轮工具执行期间已置位。别当死代码删。
     module::agent::AgentModule::Deps deps;
     deps.db = &tdb.handle();
     deps.proxy = &proxy;
@@ -277,7 +268,7 @@ REGISTER_TEST(agent_module_onstop_cancels_and_joins,
     mod->onStart();
     DOCTEST_REQUIRE(core::ToolRegistry::instance().find("app.stats").isOk());
 
-    // compose → 任务行出现 → 点「启动」（手动触发路径 = compose onClick 回调）
+    // compose 出任务行后点「启动」——手动触发路径就是 compose 的 onClick 回调
     {
         eui::Screen screen;
         screen.width = 1600.0f;
@@ -294,7 +285,8 @@ REGISTER_TEST(agent_module_onstop_cancels_and_joins,
         runBtn->onClick();
     }
 
-    // 有界等待（10ms 步进 ≤5s）工具被调一次；此刻它正在睡 300ms
+    // 有界等待（10ms 步进 ≤5s）工具被调一次；此刻它正在睡 300ms——
+    // onStop 必须跨过这段睡眠才算真 join
     bool called = false;
     for (int i = 0; i < 500; ++i) {
         if (tool->calls.load() >= 1) {
@@ -306,19 +298,17 @@ REGISTER_TEST(agent_module_onstop_cancels_and_joins,
     DOCTEST_REQUIRE_MESSAGE(called, "run 线程 5s 内未调到慢工具");
     DOCTEST_CHECK_EQ(tool->calls.load(), 1);
 
-    // 立即 onStop：应阻塞 join 到 run 收尾（跨过工具剩余睡眠）
     mod->onStop();
     const long long stopEndMs =
         std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now().time_since_epoch()).count();
 
-    // join 完成：onStop 返回后工具不再被调用（100ms 观察窗计数不变）
+    // 100ms 观察窗内工具不再被调用
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
     DOCTEST_CHECK_EQ(tool->calls.load(), 1);
-    // join 真等了 run 收尾的确定性判据：onStop 返回时刻不早于工具 execute
-    // 返回时刻。旧判据 stopMs>=250 对负载敏感（观察到 calls=1 → 进入 onStop
-    // 之间耗掉大半睡眠是正常调度，CI 慢机上假红）；本判据在任意负载下都成立
-    //——未 join 则 onStop 近 0ms 返回，必然早于 endMs。
+    // join 真等了 run 收尾的判据：onStop 返回时刻不早于工具 execute 返回时刻。
+    // 不用耗时阈值判定——calls==1 到进入 onStop 之间耗掉大半睡眠是正常调度，慢机上会假红；
+    // 未 join 则 onStop 近 0ms 返回，必然早于 endMs。
     DOCTEST_CHECK_MESSAGE(stopEndMs >= tool->endMs.load(),
                           "onStop 在工具 execute 返回前就返回了（未 join run 线程？stopEnd=" +
                               std::to_string(stopEndMs) + " toolEnd=" +
@@ -328,8 +318,7 @@ REGISTER_TEST(agent_module_onstop_cancels_and_joins,
     DOCTEST_REQUIRE(runs.isOk());
     DOCTEST_REQUIRE_EQ(runs.value().size(), static_cast<size_t>(1));
     DOCTEST_CHECK_EQ(runs.value()[0].status, std::string("cancelled"));
-    // teardown 顺序探针：工具执行期间 app.stats 还在注册表
-    //（= unregister 发生在 join 之后；提前注销则此处记 false）
+    // teardown 顺序：unregister 发生在 join 之后，提前注销则此处记 false
     DOCTEST_CHECK_MESSAGE(tool->sawAppStatsRegistered.load(),
                           "工具执行期间 app.stats 已被注销（unregister 未等 join）");
     return true;
@@ -342,7 +331,6 @@ REGISTER_TEST(agent_module_ui_id_contract,
     ToolGuard statsGuard{"app.stats"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
 
-    // 种任务 + 一次已完成 run + 两条消息（状态列与详情展开的断言数据）
     module::agent::AgentStore store(tdb.handle());
     auto created = store.createTask("整理逾期", "把逾期待办全部完成",
                                     "manual", "default", 10, false);
@@ -378,10 +366,9 @@ REGISTER_TEST(agent_module_ui_id_contract,
     mod->compose(ui, screen);
     ui.end();
 
-    // 契约表逐项（2026-10-02 批次 A 骨架重做后的元素 id 契约）
     DOCTEST_CHECK(ui.find("agent.page") != nullptr);
     DOCTEST_CHECK(ui.find("agent.title") != nullptr);
-    // 页内新建表单已删：新建入口 = 标题行「+ 新建任务」按钮（开任务弹窗）
+    // 新建入口是标题行「+ 新建任务」按钮（开弹窗），页内不再有 form.* 节点
     DOCTEST_CHECK(ui.find("agent.form.goal") == nullptr);
     DOCTEST_CHECK(ui.find("agent.form.create") == nullptr);
     DOCTEST_CHECK(ui.find("agent.page.newTask") != nullptr);
@@ -389,7 +376,7 @@ REGISTER_TEST(agent_module_ui_id_contract,
     DOCTEST_CHECK(ui.find("agent.tasklist.content") != nullptr);   // scrollView 内容列
     DOCTEST_CHECK(ui.find("agent.task." + tid) != nullptr);
     DOCTEST_CHECK(ui.find("agent.task." + tid + ".title") != nullptr);
-    // 启动按钮：text == "启动"（button 结构：<id>.text 子元素载文本）
+    // button 的文本挂在 <id>.text 子元素上
     const auto* runText = ui.find("agent.task." + tid + ".run.text");
     DOCTEST_REQUIRE(runText != nullptr);
     DOCTEST_CHECK_EQ(runText->text, std::string("启动"));
@@ -397,10 +384,8 @@ REGISTER_TEST(agent_module_ui_id_contract,
     const auto* status = ui.find("agent.task." + tid + ".status");
     DOCTEST_REQUIRE(status != nullptr);
     DOCTEST_CHECK(status->text.find("成功") != std::string::npos);
-    // 详情改弹窗：未打开时弹窗内容节点不存在
     DOCTEST_CHECK(ui.find("agent.dialog.detail.msgscroll") == nullptr);
 
-    // 点行内「详情」→ 弹窗打开（配置摘要 + 消息流），再点 ✕ 关闭
     {
         const auto* detailBtn = ui.find("agent.task." + tid + ".detail");
         DOCTEST_REQUIRE(detailBtn != nullptr);
@@ -413,14 +398,13 @@ REGISTER_TEST(agent_module_ui_id_contract,
         DOCTEST_CHECK(ui2.find("agent.dialog.detail") != nullptr);
         DOCTEST_CHECK(ui2.find("agent.dialog.detail.info") != nullptr);
         DOCTEST_CHECK(ui2.find("agent.dialog.detail.msgscroll") != nullptr);
-        // 2026-10-02 run 日志改造：msg.<i> 是容器，role 在 .badge、预览在 .preview
+        // msg.<i> 是容器元素：role 在 .badge、预览文本在 .preview
         const auto* badge0 = ui2.find("agent.dialog.detail.msg.0.badge");
         DOCTEST_REQUIRE(badge0 != nullptr);
         DOCTEST_CHECK(badge0->text == std::string("用户"));
         const auto* preview0 = ui2.find("agent.dialog.detail.msg.0.preview");
         DOCTEST_REQUIRE(preview0 != nullptr);
         DOCTEST_CHECK(preview0->text.find("把逾期待办全部完成") != std::string::npos);
-        // 关弹窗（✕）→ 弹窗内容消失，任务列表原样还在
         const auto* closeBtn = ui2.find("agent.dialog.detail.close");
         DOCTEST_REQUIRE(closeBtn != nullptr);
         DOCTEST_REQUIRE(closeBtn->onClick != nullptr);
@@ -463,8 +447,8 @@ REGISTER_TEST(agent_module_onstart_reentry_idempotent,
         return n;
     };
 
-    // 先种一条悬挂 running run（首 onStart 前）：下面的 count==0 才是真断言
-    //（onStart#1 的 sweepStaleRuns 把它清成 failed），不是空集恒真检查
+    // 先种一条悬挂 running run，否则下面的 count==0 是空集恒真——真正把它清成 failed
+    // 的是首 onStart 的 sweepStaleRuns
     DOCTEST_REQUIRE(store.startRun(taskId).isOk());
 
     mod.onStart();
@@ -486,13 +470,10 @@ REGISTER_TEST(agent_module_onstart_reentry_idempotent,
     return true;
 })
 
-// ============ AgentModule 装配 Scheduler（M2 Task 6）============
-
-// spec §3 teardown 契约 + plan Task 6：onStart 建 scheduler_ 并 start()；onStop 在
-// 「全取消 → 全 join → 清容器」之后、`unregisterTool("app.stats")` 之前判空调
-// stopAll()。断言三件：cron 真被 tick 线程派发（装配缺失即红）、在跑 run 收尾落
-// cancelled、onStop 之后工具与上游请求都不再发生（收尾不外溢）。
-// 时钟经 Deps::schedulerNow 注入假时钟，零墙钟等待（tick 轮询粒度 200ms 除外）。
+// onStart 建 scheduler_ 并 start()；onStop 的 stopAll() 排在「全取消 → 全 join → 清容器」
+// 之后、unregisterTool("app.stats") 之前。断言三件：cron 真被 tick 线程派发（装配缺失即红）、
+// 在跑 run 收尾落 cancelled、onStop 之后工具与上游请求都不再发生（收尾不外溢）。
+// 时钟经 Deps::schedulerNow 注入假时钟；tick 轮询粒度 200ms 是唯一的墙钟等待。
 REGISTER_TEST(agent_module_onstop_stops_scheduler_runs,
               "agent_module: onStop 收口 Scheduler 在跑 run（cancel→join→停线程→注销工具）", {
     test_support::TestDb tdb("agenttools", "schedstop");
@@ -545,10 +526,10 @@ REGISTER_TEST(agent_module_onstop_stops_scheduler_runs,
     return true;
 })
 
-// Task 6 Step 1b（2026-10-01 终审 finding：claude-lazy-assembly）：onStart 时代理
-// 未装配 → 早退（llm_/loop_/scheduler_ 均不建，工具照常注册）→ 会话内后置注册
-// 服务 → **首次使用路径**（页面帧 / 手动启动）拿到服务；同一入口必须补建
-// scheduler_，否则惰性路径下 cron 永不触发（本用例第二条 REQUIRE 钉这个面）。
+// 惰性装配契约：onStart 时代理未装配 → 早退（llm_ / loop_ / scheduler_ 均不建，
+// 工具照常注册）；会话内后置注册服务后由**首次使用路径**（页面帧 / 手动启动）补建。
+// 补建入口必须同时建 scheduler_，否则惰性路径下 cron 永不触发——本用例第二条 REQUIRE
+// 钉的就是这个面。
 REGISTER_TEST(agent_module_lazy_assembly_first_use,
               "agent_module: 代理后置注册 → 首次使用解析（手动起 run + 惰性补建 Scheduler 跑 cron）", {
     test_support::TestDb tdb("agenttools", "lazyassembly");
@@ -586,7 +567,6 @@ REGISTER_TEST(agent_module_lazy_assembly_first_use,
     // 后置注册：模拟会话内用户拨开 claude 模块（不 off→on 本模块）
     core::ScopedService<core::IClaudeProxyService> late(&proxy);
 
-    // 首次使用路径 = 页面帧（compose）→ 手动「启动」
     const eui::Screen screen{1600.0f, 1000.0f};
     eui::Ui ui;
     ui.begin("agent_lazy_assembly");
@@ -611,7 +591,6 @@ REGISTER_TEST(agent_module_lazy_assembly_first_use,
     };
     DOCTEST_REQUIRE_MESSAGE(waitCompleted(manual.value()),
                             "首次使用路径未起 run（惰性解析缺失？）");
-    // 惰性补建的 Scheduler 真在跑：cron 任务被 tick 线程派发（不补建即红）
     DOCTEST_REQUIRE_MESSAGE(waitCompleted(scheduled.value()),
                             "惰性路径下 cron 未被派发（scheduler_ 未在同一入口补建？）");
     mod->onStop();

@@ -198,7 +198,7 @@ void drawCallsDialog(eui::Ui& ui, const eui::Screen& screen,
             ui_kit::drawDialogTitle(ui, "claude.dialog.calls.title", w, "调用记录",
                                     20.0f, t.colors.textPrimary, {.y = 20.0f});
 
-            // ---- 工具行：搜索框 + 状态码过滤 + 匹配总数 ----
+            // 工具行：搜索框 + 状态码过滤 + 匹配总数
             components::input(ui, "claude.dialog.calls.search")
                 .position(28.0f, 58.0f)
                 .size(260.0f, 32.0f)
@@ -257,7 +257,7 @@ void drawCallsDialog(eui::Ui& ui, const eui::Screen& screen,
                 .color(t.colors.textTertiary)
                 .build();
 
-            // ---- 列表区：当页行 + scrollView（440 > 视口时出滚动条） ----
+            // 列表区：当页行 + scrollView（440 > 视口时出滚动条）
             if (!st.callsPageLoaded_) {
                 // 弹窗首帧：读意图已发出、查询在途 → 显示加载态（不闪假空态）
                 ui.text("claude.dialog.calls.loading")
@@ -338,7 +338,7 @@ void drawCallsDialog(eui::Ui& ui, const eui::Screen& screen,
                     .build();
             }
 
-            // ---- 底部：翻页 + 页码 + 关闭 ----
+            // 底部：翻页 + 页码 + 关闭
             const int pages = std::max(
                 1, (st.callsTotalMatches_ + kCallsPageSize - 1) / kCallsPageSize);
             const bool hasNext =

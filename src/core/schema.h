@@ -8,7 +8,7 @@ namespace core::schema {
 
 // 完整 schema 脚本：可重复执行（幂等）；先全部 DDL，末尾一条种子 INSERT。
 inline constexpr const char* kSql = R"(
-    -- ==================== Markdown 笔记本 ====================
+    -- Markdown 笔记本
     CREATE TABLE IF NOT EXISTS markdown_index (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         path TEXT UNIQUE NOT NULL,
@@ -40,13 +40,12 @@ inline constexpr const char* kSql = R"(
         tokenize = 'unicode61 remove_diacritics 2'
     );
 
-    -- ==================== Todo 看板 ====================
-    -- kind 是列的**语义标记**（UI 行为靠它，不靠标题字符串）：
+    -- kind 是列的语义标记（UI 行为靠它，不靠标题字符串）：
     --   'todo'    = 默认待办列
     --   'done'    = 已完成列（完成任务 → 流转目标）
     --   'archive' = 已归档列（空态文案 / 归档动作的目标列）
     --   NULL      = 普通列
-    -- 加这列的原因：完成态流转此前硬编码标题「已完成」，用户一改名就静默失效。
+    -- 不许退回按标题字符串匹配：用户一改名就静默失效。
     CREATE TABLE IF NOT EXISTS todo_columns (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         title TEXT NOT NULL,
@@ -71,12 +70,12 @@ inline constexpr const char* kSql = R"(
         FOREIGN KEY (column_id) REFERENCES todo_columns(id) ON DELETE CASCADE
     );
 
-    -- ==================== Claude 配置切换器 ====================
+    -- Claude 配置切换器
     -- models_config / extra_env / extra_settings_json 均为 JSON 文本列，空串 = 未配置：
     --   - models_config      模型列表（多槽位），读侧空串时回落 default 槽位 = model
     --   - extra_env          env 装饰层（键值对，如 ANTHROPIC_SMALL_FAST_MODEL）
     --   - extra_settings_json settings.json **除 env 外全部顶层属性**的原始 JSON
-    --                        （model / permissions / statusLine / hooks / …，设计 D-1 只存原文）
+    --                        （model / permissions / statusLine / hooks / …，只存原文）
     -- auth_field 三态：'both'（默认，双发 x-api-key + Authorization: Bearer）/ 'bearer' /
     --   'api_key'——代理转发据此决定注入哪个鉴权头；未知值 / 空串读侧兜底 'both'。
     -- dialect_override 上游方言覆盖：空串 = 未覆盖 = 按 base_url 的 host 推断
@@ -85,19 +84,17 @@ inline constexpr const char* kSql = R"(
     -- shared_config_id 绑定的共享片段 id：0 = 未绑定（0..1 绑定，不嵌套）。
     -- fallback_profile_id failover 备用供应商 id：0 = 无备用（0..1 单跳，不换第三家）。
     --
-    -- 凭据三列（2026-10-02 存储统一设计 §4.2/§6.2——**正面推翻**旧不变式
-    -- 「API key 明文永不入 SQLite」）：
-    --   api_key_encrypted 凭据本体，存储形态分平台（platform/credential_protection.h）：
+    -- 凭据三列（存储形态见 platform/credential_protection.h）：
+    --   api_key_encrypted 凭据本体，存储形态分平台：
     --        macOS / POSIX = 明文，保护级别 = 文件权限 0600（core/file_perms.h 收紧
     --                        devdesk.db + -wal + -shm，每次打开校正）
     --        Windows       = DPAPI 密文的 hex 文本，保护级别 = 加密级
     --     空串 = 该 profile 没有密钥（「没有」与「有但解不开」由读侧错误码区分，
-    --     不靠列内容区分）。旧的 keychain_account 列已随之删除——Keychain 不再是
-    --     凭据来源，只剩启动时的一次性残留清理（claude:<id> 前缀之外的条目保留）。
+    --     不靠列内容区分）。Keychain 不是凭据来源，只剩启动时的一次性残留清理
+    --     （claude:<id> 前缀之外的条目保留）。
     --   api_key_hint      UI 显示用（前 6 + "***" + 尾 4），脱敏形态，导出/复制链
     --                     径只允许用它，绝不用 api_key_encrypted。
     --   api_key_check     全量 SHA256 hex（64 字符）——作「密钥是否变更」判据。
-    --                     旧语义（前 8 hex，与 Keychain 明文比对）前提已消失。
     CREATE TABLE IF NOT EXISTS claude_profiles (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT UNIQUE NOT NULL,
@@ -154,12 +151,10 @@ inline constexpr const char* kSql = R"(
         extra_settings_json TEXT NOT NULL DEFAULT ''
     );
 
-    -- ==================== 供应商余量（G5，2026-10-03）====================
-    -- 逐 profile 一行配置 + 逐 profile 一行最近结果。与 spec
-    -- 2026-10-02-provider-quota-and-storage-design §4.1 的 DDL 逐列一致。
+    -- 逐 profile 一行配置 + 逐 profile 一行最近结果。
     --
     -- profile_quota_config：**provider_id 空串 = 未配置**（不是「配了但没选
-    -- 供应商」）——G7 的「未配置」态判据就是这一列为空，别改成 NULL 表达。
+    -- 供应商」）——「未配置」态判据就是这一列为空，别改成 NULL 表达。
     -- extra_json 存 fields() 里 **非 secret** 键的 JSON 对象原文；secrets_json
     -- 存 secret 键的同名结构（**明文入库前必过 platform::credential::protect**，
     -- 与 api_key_encrypted 复用同一对函数；POSIX 恒等 + 文件 0600，Windows
@@ -167,7 +162,7 @@ inline constexpr const char* kSql = R"(
     -- auto_refresh / interval_minutes 只在 enabled=1 时被定时器读；interval 0 或
     -- 负 = 「到点即刷」（每次 tick 都算到期），便于测试与「手动刷新档」表达。
     --
-    -- **ccswitch_provider_id（G6，2026-10-03）**：用户选了 cc-switch 里某条
+    -- **ccswitch_provider_id**：用户选了 cc-switch 里某条
     -- Claude 供应商时**只存这个引用**，绝不把它那份 AK/SK 复制进本表
     -- （ccswitch_source.h 的「引用而非复制」纪律在此落库侧兑现）。查询时由
     -- CcSwitchQuotaCredentialSource 现读现取——用户在 cc-switch 改 key /
@@ -190,17 +185,17 @@ inline constexpr const char* kSql = R"(
     --                      quota_store 的 encodeQuotaWindows / decodeQuotaWindows）
     --   last_error_kind   QuotaError 名（UI 据此选文案）；"none" = 当前无错
     --
-    -- **fetched_at 与 last_success_at 是两列，不是一列**（评审 m1）：
+    -- **fetched_at 与 last_success_at 是两列，不是一列**：
     --   fetched_at      = 最近一次**尝试**（成败都推进）。定时器用它判到期——
     --                     若用「上次成功」，一次持续失败会每个 tick 重打供应商
     --                     = 重试风暴。
-    --   last_success_at = 最近一次**成功**（失败不推进）。G7 用它显示「数据时间」。
-    -- 合成一列会让 G7 在一次 Transient 失败后显示自相矛盾的话：15 分钟前的
+    --   last_success_at = 最近一次**成功**（失败不推进）。UI 用它显示「数据时间」。
+    -- 合成一列会让 UI 在一次 Transient 失败后显示自相矛盾的话：15 分钟前的
     -- 数字 + 「刚刚查询过」。
     --
     -- **「从未成功过」的可分辨性（本表最重要的一条不变量）**：失败落库时
     -- kind 保持空串、windows_json 保持空、balance_remaining 保持 0，绝不写
-    -- 假的 0% ——G7 靠「kind 空 + last_error_kind 非 none」区分「失败且从未
+    -- 假的 0% ——UI 靠「kind 空 + last_error_kind 非 none」区分「失败且从未
     -- 成功」（只渲染错误行）与「有旧值 + 可能过期」。Transient 走另一条路：
     -- 保留上次成功值、只更新 last_error / last_error_kind。
     CREATE TABLE IF NOT EXISTS profile_quota_result (
@@ -216,7 +211,6 @@ inline constexpr const char* kSql = R"(
         last_error_kind TEXT NOT NULL DEFAULT ''
     );
 
-    -- ==================== 智能体（agent M1，2026-09-30）====================
     -- 手动触发的 agent run 三表：任务定义 / 运行实例 / 消息审计。
     -- FK ON DELETE CASCADE：删任务清 runs，删 run 清 messages（审计链随宿主走，
     -- 不留孤儿运行）。content_json 存 Anthropic content blocks 数组原文。
@@ -256,11 +250,9 @@ inline constexpr const char* kSql = R"(
         FOREIGN KEY (run_id) REFERENCES agent_runs(id) ON DELETE CASCADE
     );
 
-    -- ==================== 应用配置（E2：JSON 配置文件的唯一落点）================
-    -- 2026-10-03 用户第 17 条需求「所有 app 配置全部进 SQLite，不要 JSON 文件了」。
-    -- 取代原先六个 JSON 落点：config.json / pet_config.json / markdown_view_state.json
-    -- / todo_view_state.json / claude_settings_snapshot.json（这五个走本表）与
-    -- run-settings/*.json（走下面的 claude_run_settings）。
+    -- JSON 配置文件的唯一落点。config.json / pet_config.json / markdown_view_state.json
+    -- / todo_view_state.json / claude_settings_snapshot.json 走本表；run-settings/*.json
+    -- 走下面的 claude_run_settings。
     --
     -- **一张通用表，不按配置各建一张**：每份配置一个命名空间前缀（如
     -- `config.json:` / `pet_config`），前缀之下是它的键。六张表 = 六个真相源，
@@ -268,8 +260,8 @@ inline constexpr const char* kSql = R"(
     --   value 恒为 TEXT 且**存得住任意字节**：中文 / 空串 / `{}` / `[]` / 含换行 /
     --   超长串都按原样进出（每份配置用自己的结构编码成字符串，见 core/app_config.h）。
     --   空串是合法配置值，与「键不存在」严格区分（读侧 NotFound vs 命中空串）。
-    -- 本表**不含密钥**：凭据走 claude_profiles.api_key_encrypted（E1 的分平台
-    -- 保护）；run-settings 的临时 settings 含明文 key，由 claude_run_settings
+    -- 本表**不含密钥**：凭据走 claude_profiles.api_key_encrypted（分平台保护）；
+    -- run-settings 的临时 settings 含明文 key，由 claude_run_settings
     -- 自己那道保护兜（见该表注释）。
     CREATE TABLE IF NOT EXISTS app_config (
         key TEXT PRIMARY KEY,
@@ -277,13 +269,12 @@ inline constexpr const char* kSql = R"(
         updated_at INTEGER NOT NULL
     );
 
-    -- ==================== Claude 直连会话的临时 settings 记录 ====================
+    -- Claude 直连会话的临时 settings 记录
     -- run-settings/*.json **不是配置文档**，是「每次运行落一份、之后要读回来对比/
     -- 追踪」的记录：单键会被后一次覆盖，所以单独建表，一行一次运行。
     --
     -- 为什么还留着一个文件：`claude --settings <path>` 是**外部进程契约**，
-    -- 被启动的 claude CLI 只会按路径读文件，DevDesk 无法改成从库里读
-    -- （本次 E2 未验证、也不臆测 claude CLI 有无 stdin 形态的 --settings）。
+    -- 被启动的 claude CLI 只会按路径读文件，DevDesk 无法改成从库里读。
     -- 因此口径是：**DB 行是记录与追踪的真值，文件是喂给外部进程的临时载体**。
     -- 写入顺序 = 先落库（记录先成立）→ 再落文件 → 再 chmod 0600 → 再启动会话；
     -- 中途失败按 runProfile 的既有补偿删文件并按失败返回。
@@ -304,7 +295,7 @@ inline constexpr const char* kSql = R"(
         settings_json TEXT NOT NULL DEFAULT ''
     );
 
-    -- ==================== 索引 ====================
+    -- 索引
     CREATE INDEX IF NOT EXISTS idx_tasks_column
         ON todo_tasks(column_id, position);
     CREATE INDEX IF NOT EXISTS idx_tasks_due
@@ -329,8 +320,8 @@ inline constexpr const char* kSql = R"(
     CREATE INDEX IF NOT EXISTS idx_run_settings_written
         ON claude_run_settings(written_at DESC);
 
-    -- ==================== 种子数据 ====================
-    -- 首次建库插入 4 个默认 Todo 列，kind 直接带最终值（不再「插完再按标题回填」）。
+    -- 种子数据
+    -- 首次建库插入 4 个默认 Todo 列，kind 直接带最终值。
     -- 守卫 `WHERE NOT EXISTS (SELECT 1 FROM todo_columns)`：**表非空就不插**——这是
     -- 本脚本唯一的幂等守卫（DDL 靠 IF NOT EXISTS，种子靠这一句），连跑两次
     -- applySchema 仍是这 4 行。todo_columns.title 无 UNIQUE 约束，写不了

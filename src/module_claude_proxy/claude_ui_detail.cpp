@@ -55,7 +55,7 @@ float drawDetailBasic(eui::Ui& ui, float x0, float y0, float w,
                       float contentBottom) {
     (void)contentBottom;  // 固定 6 行字段，高度与容器无关
     const Profile* shown = v.shown;
-    // ---- 基础信息 pane：名称 + 未激活徽章 + Base URL + API Key + 接管 ----
+    // 基础信息 pane：名称 + 未激活徽章 + Base URL + API Key + 接管
     // 文本必须带 verticalAlign=Center，否则 runtime 从行框顶沿起排不居中；只加对齐，行距/行宽不变。
     ui.text("claude.field.name.label")
         .position(x0, y0).size(w * 0.5f - 8.0f, 14.0f)
@@ -180,7 +180,7 @@ float drawDetailModels(eui::Ui& ui, float x0, float y0, float w,
                        const DetailActions& a, float contentBottom) {
     (void)contentBottom;  // 槽位表行数固定，与容器高无关
     const Profile* shown = v.shown;
-    // ---- 模型映射 pane：槽位逐行（widget id 序号 = 表序）----
+    // 模型映射 pane：槽位逐行（widget id 序号 = 表序）
     // 每行右端「1M」开关：勾态 = 槽位支持 && 串尾有标记；可用 = 支持且 base 非空，
     // 不可用行置灰但不隐藏、不挂 onChange。存储是「基础名 + 可选 [1M]」单字符串。
     ModelsConfig mc{};
@@ -262,7 +262,7 @@ float drawDetailEnv(eui::Ui& ui, float x0, float y0, float w,
                     const core::theme::Tokens& t, const DetailView& v,
                     float contentBottom, PaneRows* rows) {
     const Profile* shown = v.shown;
-    // ---- 环境变量 pane：生效 env（模型映射键除外）+ 每键来源 ----
+    // 环境变量 pane：生效 env（模型映射键除外）+ 每键来源
     // 这是**将写入的托管 env**，不是 settings.json 的 ground truth；来源由
     // buildProxyEnv 出参给出（合并规则只能一处，复刻必漂移）
     std::map<std::string, std::string> envMap;
@@ -282,7 +282,7 @@ float drawDetailEnv(eui::Ui& ui, float x0, float y0, float w,
             }
         }
     }
-    // ---- 行几何：全部从 fontScale 派生，禁写死像素 ----
+    // 行几何：全部从 fontScale 派生，禁写死像素
     // 行带 1 = round(键字号×1.7)，行带 2 = round(说明字号×1.6)，行卡 = 4+带1+2+带2+4，
     // 行距 = 行卡+6；键/值同带、来源/说明同带，两带 y 区间不相交。
     const float fs = core::theme::fontScale();
@@ -660,7 +660,7 @@ float drawDetailCallsPane(eui::Ui& ui, float x0, float y0, float w,
 float drawDetailAdvanced(eui::Ui& ui, float x0, float y0, float w,
                          const core::theme::Tokens& t, const DetailView& v,
                          float contentBottom) {
-    // ---- 行几何：全部从 fontScale 派生；横向列宽不缩放 ----
+    // 行几何：全部从 fontScale 派生；横向列宽不缩放
     const float fs = core::theme::fontScale();
     const auto rfs = [fs](float base) { return std::round(base * fs); };
     const float labelFs = 11.0f * fs;                // 标签 / 来源 / 说明小字
@@ -931,7 +931,7 @@ void drawDetailPanel(eui::Ui& ui, float rightW, float bodyH, float xOffset,
                      const components::theme::ThemeColorTokens& themeTokens,
                      DetailState& st, const DetailView& v,
                      const DetailActions& a) {
-    // ---- 右栏：详情面板（5 页签 + 操作区）----
+    // 右栏：详情面板（5 页签 + 操作区）
     ui.column("claude.detail")
         .size(rightW, bodyH)
         .gap(0.0f)
@@ -987,7 +987,7 @@ void drawDetailPanel(eui::Ui& ui, float rightW, float bodyH, float xOffset,
 
             const float paneY = tabY + tabH + 12.0f;
 
-            // ---- 动作区钉面板底 + 内容框显式边界 ----
+            // 动作区钉面板底 + 内容框显式边界
             // 全部锚定式（相对 bodyH），不写绝对 y（Windows 与 macOS bodyH 差 15~45px）。
             const float actYFloor = bodyH - kActReserve;   // 贴底动作区的 actY
             const float contentBottom = actYFloor - kActTopGap;  // 内容框可用底

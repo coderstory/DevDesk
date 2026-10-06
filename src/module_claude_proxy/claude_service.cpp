@@ -737,13 +737,14 @@ core::Result<void> ClaudeService::syncCaptureActiveProfile() {
     const ReverseSyncMerge merged = mergeReverseSyncEnv(
         parsed.cfg, prof.modelsConfigJson, prof.extraEnvJson);
 
-    // 逐字段比较：无变化 → 零写入；base_url G2 命中（loopback）→ 保持原值不清
+    // 逐字段比较：无变化 → 零写入；base_url 命中 loopback 守卫 → 保持原值不清
     const std::string newBaseUrl = isSkipped("ANTHROPIC_BASE_URL")
         ? prof.baseUrl
         : stripTrailingSlash(trim(parsed.cfg.baseUrl));
     const bool baseUrlChanged = (newBaseUrl != prof.baseUrl);
 
-    // token：命中跳过族（G1/G2 联动/G3 占位/G4 空值/G6 非法）→ 不写也不清（保持原密钥）
+    // token：命中跳过族（托管键 / loopback 联动 / 占位 / 空值 / 非字符串或超长）
+    // → 不写也不清（保持原密钥）
     const bool tokenSkipped = isSkipped("ANTHROPIC_AUTH_TOKEN") ||
                               isSkipped("ANTHROPIC_API_KEY");
     auto curKeyR = profileRepository_.loadApiKey(prof.id);

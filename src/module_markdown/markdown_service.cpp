@@ -885,7 +885,7 @@ core::Result<std::vector<NoteMeta>> MarkdownService::search(
         }
     };
 
-    // ---- 路径 A：FTS5 MATCH（拉丁词，按 rank 排序）----
+    // 路径 A：FTS5 MATCH（拉丁词，按 rank 排序）
     const FtsQueryPlan plan = buildFtsQuery(query);
     if (!plan.match.empty() && !plan.allLossy) {
         auto prep = db_.prepare(
@@ -914,7 +914,7 @@ core::Result<std::vector<NoteMeta>> MarkdownService::search(
         }
     }
 
-    // ---- 路径 B：LIKE 字面子串兜底（CJK / 失真词元）----
+    // 路径 B：LIKE 字面子串兜底（CJK / 失真词元）
     // unicode61 把连续 CJK 视为单个 token；失真词元 FTS 语义亦错，故走 LIKE。
     const bool hasNonAscii = std::any_of(
         query.begin(), query.end(),
@@ -1198,7 +1198,7 @@ core::Result<bool> MarkdownService::pollChanged() {
         return core::Result<bool>::ok(true);
     }
 
-    // ---- mtime/size 比对：stub 平台 / watcher 掉线的兜底主路径 ----
+    // mtime/size 比对：stub 平台 / watcher 掉线的兜底主路径
     std::map<std::string, std::pair<int64_t, int64_t>> disk;
     std::error_code ec;
     if (fs::exists(notesDir_, ec)) {

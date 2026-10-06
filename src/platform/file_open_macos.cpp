@@ -1,6 +1,6 @@
 // src/platform/file_open_macos.cpp
 // macOS：_NSGetArgc/_NSGetArgv 读取进程命令行（EUI-NEO 的 main 不接 argc/argv）。
-// ⚠️ 二者返回的是 argc/argv 的**地址**，必须解引用一次。
+// _NSGetArgc/_NSGetArgv 返回的是 argc/argv 的**地址**，必须解引用一次。
 #include "file_open.h"
 
 #include <cerrno>

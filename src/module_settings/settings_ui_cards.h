@@ -72,7 +72,7 @@ struct CardDrawArgs {
     const SettingsCardActions& a;
 };
 
-// ---- 8 张卡（签名统一，注册表按 tab 分派；绘制顺序 = 注册表顺序）----
+// 8 张卡（签名统一，注册表按 tab 分派；绘制顺序 = 注册表顺序）
 void drawAppearanceCard(const CardDrawArgs& args);   // 通用：外观（主题/字号/窗口效果）
 void drawEditorFontCard(const CardDrawArgs& args);   // 通用：编辑器字号
 void drawModulesCard(const CardDrawArgs& args);      // 模块：插拔开关

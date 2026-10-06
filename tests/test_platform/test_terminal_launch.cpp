@@ -1,12 +1,12 @@
 // tests/test_platform/test_terminal_launch.cpp
-// platform::terminal 覆盖（2026-09-28 profile-run 设计 §8）：
+// platform::terminal 覆盖：
 //   ① 跨平台纯函数（terminal_launch_common.cpp）：wt/powershell 参数向量、
 //      PowerShell 正文、UTF-16LE→base64 载荷（**解码后**与期望正文逐字比对）、
 //      macOS .command 正文与脚本路径、Windows 参数引号（空格/中文/反斜杠）。
 //   ② Windows 侧额外做 CommandLineToArgvW 回读：拼出的命令行必须能被系统还原
 //      成原参数向量——引号规则的黄金判据（UTF-16 转换用 Win32 作参照实现）。
-//   ③ 平台失败路径：posix 返回 NotImplemented（非 Windows/非 Apple 才编译，
-//      本机不验证，见计划「未验证项」）。
+//   ③ 平台失败路径：posix 返回 NotImplemented（仅非 Windows/非 Apple 平台编译，
+//      本机不验证）。
 #include "doctest.h"
 
 #include "platform/terminal_launch.h"
@@ -32,7 +32,7 @@ LaunchSpec makeSpec(const std::string& title, const std::string& dir) {
     return s;
 }
 
-// base64 解码（**仅测试用**：生产侧只有编码器；解码器放测试里避免为测试增生产代码）
+// base64 解码（**仅测试用**：生产侧只有编码器，解码器放测试里避免为测试增生产代码）
 // 返回解码后的原始字节（本用例里 = UTF-16LE 字节流）
 std::string base64DecodeForTest(const std::string& text) {
     const auto val = [](const char c) -> int {
@@ -82,8 +82,6 @@ std::string utf16LEToUtf8ForTest(const std::string& le) {
 
 } // namespace
 
-// ---- ① Windows：wt 分支参数向量 + -EncodedCommand 载荷 ----
-
 REGISTER_TEST(terminal_launch_windows_wt_argv,
               "terminal_launch: wt 分支参数向量 + EncodedCommand 正文解码后逐字相等", {
     const LaunchSpec spec = makeSpec("官方 · Claude Code", "C:/Users/demo");
@@ -130,9 +128,9 @@ REGISTER_TEST(terminal_launch_windows_fallback_argv,
                      platform::terminal::encodePowerShellCommand(
                          platform::terminal::buildPowerShellBody(spec)));
 
-    // 回归闸：派发给 CreateProcessW 的 exe 必须是**绝对路径**。
-    // 裸名 "powershell.exe" 走 lpApplicationName 时不查 PATH（只按当前驱动器 +
-    // 当前目录补全）→ 实测 GetLastError=2，退化分支窗口根本起不来。
+    // 回归闸：派发给 CreateProcessW 的 exe 必须是**绝对路径**。裸名
+    // "powershell.exe" 走 lpApplicationName 时不查 PATH（只按当前驱动器 + 当前目录
+    // 补全），退化分支窗口根本起不来（GetLastError=2）。
     const std::string exe = platform::terminal::fallbackPowerShellExe("");
     DOCTEST_CHECK(exe.find(':') != std::string::npos);             // 含盘符
     DOCTEST_CHECK(exe.find("System32") != std::string::npos);      // 在系统目录下
@@ -146,8 +144,8 @@ REGISTER_TEST(terminal_launch_windows_fallback_argv,
     return true;
 })
 
-// ---- ① wt 标题里的 `;` 必须转义（否则被当命令分隔符，标题后半被吞）----
-// 本机实测：`wt -w new --title 'A;B' …` 窗口标题只剩 "B"；`--title 'A\;B'` 才是 "A;B"。
+// wt 的命令行把 `;` 当命令分隔符：`wt -w new --title 'A;B' …` 的窗口标题只剩
+// "B"，必须写成 `A\;B` 才是 "A;B"。
 
 REGISTER_TEST(terminal_launch_wt_title_semicolon_escape,
               "terminal_launch: wt --title 里的 `;` 转义为 `\\;`（其余字符原样）", {
@@ -167,8 +165,6 @@ REGISTER_TEST(terminal_launch_wt_title_semicolon_escape,
     return true;
 })
 
-// ---- ① 正文与引号：含空格 / 单引号 / 中文 ----
-
 REGISTER_TEST(terminal_launch_bodies_with_tricky_paths,
               "terminal_launch: 正文拼装（路径含空格/单引号/中文不破坏）", {
     // PowerShell：单引号转义 ' → ''
@@ -180,8 +176,9 @@ REGISTER_TEST(terminal_launch_bodies_with_tricky_paths,
     DOCTEST_CHECK_EQ(platform::terminal::buildPowerShellBody(cn),
                      std::string("Set-Location -LiteralPath 'D:/笔记 目录'\nclaude"));
 
-    // macOS .command 正文：cd 单引号包裹；路径含单引号 → '\''
-    // （2026-09-28 V3：去 exec——自删靠 EXIT 陷阱，exec 会替换 shell 让 trap 失效）
+    // macOS .command 正文：cd 单引号包裹；路径含单引号 → '\''。
+    // 正文里**不能有 exec**：自删靠 EXIT 陷阱，exec 替换掉 shell 就再没有 EXIT、
+    // run-settings 的临时文件永久残留。别把 exec「优化」回来。
     DOCTEST_CHECK_EQ(platform::terminal::buildMacCommandBody(makeSpec("t", "/Users/demo")),
                      std::string("cd '/Users/demo' && claude\n"));
     DOCTEST_CHECK_EQ(platform::terminal::buildMacCommandBody(makeSpec("t", "/Users/my dir")),
@@ -190,8 +187,6 @@ REGISTER_TEST(terminal_launch_bodies_with_tricky_paths,
                      std::string("cd '/Users/o'\\''brien' && claude\n"));
     return true;
 })
-
-// ---- ① 正文带启动参数（D-1 直连：claude --settings <路径> + 退出后自删）----
 
 REGISTER_TEST(terminal_launch_bodies_with_settings_args,
               "terminal_launch: 正文带 --settings 参数 + 退出后自删段（PS Remove-Item / macOS trap）", {
@@ -230,8 +225,6 @@ REGISTER_TEST(terminal_launch_bodies_with_settings_args,
     return true;
 })
 
-// ---- ④ run-settings/ 的 24h 启动清扫（profile-run §5，镜像 macOS run-scripts 模式）----
-
 REGISTER_TEST(terminal_launch_sweep_run_settings_24h,
               "terminal_launch: sweepStaleRunSettingsFiles 只删 24h 前的 run-* 文件", {
     const std::filesystem::path dir =
@@ -249,7 +242,8 @@ REGISTER_TEST(terminal_launch_sweep_run_settings_24h,
             std::ofstream out(f, std::ios::binary | std::ios::trunc);
             out << "{}";
         }
-        // MinGW 支持用 file_time_type 写过去时间（SetFileTime）
+        // 写过去的 mtime 只能靠 file_time_type（MinGW 下映射到 SetFileTime），
+        // 直接设置系统时间会污染整台机器。
         std::filesystem::last_write_time(
             f, std::filesystem::file_time_type::clock::now() - age, ec);
         return f;
@@ -261,10 +255,11 @@ REGISTER_TEST(terminal_launch_sweep_run_settings_24h,
 
     platform::terminal::sweepStaleRunSettingsFiles(dir);
 
-    DOCTEST_CHECK(!std::filesystem::exists(oldFile, ec));          // 24h 前的 run-* 删
-    DOCTEST_CHECK(!std::filesystem::exists(oldTmp, ec));           // 原子写残留（run- 前缀）也删
-    DOCTEST_CHECK(std::filesystem::exists(freshFile, ec));         // 24h 内保留
-    DOCTEST_CHECK(std::filesystem::exists(foreign, ec));           // 非 run- 前缀不碰
+    DOCTEST_CHECK(!std::filesystem::exists(oldFile, ec));
+    // 原子写的 .devdesk-tmp 残留也带 run- 前缀，同属 24h 清扫对象
+    DOCTEST_CHECK(!std::filesystem::exists(oldTmp, ec));
+    DOCTEST_CHECK(std::filesystem::exists(freshFile, ec));   // 24h 内保留
+    DOCTEST_CHECK(std::filesystem::exists(foreign, ec));     // 非 run- 前缀不碰
 
     std::filesystem::remove_all(dir, ec);
     return true;
@@ -277,7 +272,7 @@ REGISTER_TEST(terminal_launch_windows_arg_quoting,
     DOCTEST_CHECK_EQ(quoteWindowsArg(""), std::string("\"\""));
     DOCTEST_CHECK_EQ(quoteWindowsArg("C:/Program Files/x"),
                      std::string("\"C:/Program Files/x\""));
-    // 尾随反斜杠在带引号时翻倍（否则闭合引号被吃掉）
+    // 尾随反斜杠在带引号时翻倍——不翻倍的话它会转义掉闭合引号，参数边界整个丢失
     DOCTEST_CHECK_EQ(quoteWindowsArg("C:\\Program Files\\"),
                      std::string("\"C:\\Program Files\\\\\""));
     // 内嵌双引号 → \"
@@ -287,8 +282,6 @@ REGISTER_TEST(terminal_launch_windows_arg_quoting,
     DOCTEST_CHECK_EQ(quoteWindowsArg("D:/笔记/目录"), std::string("D:/笔记/目录"));
     return true;
 })
-
-// ---- ① macOS 脚本路径形状 ----
 
 REGISTER_TEST(terminal_launch_mac_script_path,
               "terminal_launch: .command 路径 = run-<8位hex>-<ts>.command（稳定且不撞）", {
@@ -314,16 +307,12 @@ REGISTER_TEST(terminal_launch_mac_script_path,
     return true;
 })
 
-// ---- ① 平台查询（homeDir 非空；wt 探测可调用不崩）----
-
 REGISTER_TEST(terminal_launch_home_dir_and_wt_probe,
               "terminal_launch: homeDir 非空 + windowsTerminalMissing 可调用", {
     DOCTEST_CHECK(!platform::terminal::homeDir().empty());
     (void)platform::terminal::windowsTerminalMissing();   // 不崩即过（值随机器而异）
     return true;
 })
-
-// ---- ② Windows：命令行回读（引号规则黄金判据）----
 
 #if defined(_WIN32)
 #include <windows.h>
@@ -362,8 +351,6 @@ REGISTER_TEST(terminal_launch_windows_commandline_roundtrip,
 })
 
 #endif  // _WIN32
-
-// ---- ③ 平台失败路径（非 Windows / 非 Apple 才编译；本机不验证）----
 
 #if !defined(_WIN32) && !defined(__APPLE__)
 

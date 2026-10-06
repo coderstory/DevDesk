@@ -98,7 +98,7 @@ core::log::Level parseLogLevel(const std::string& mode);
 std::string aboutVersionLine();
 std::string aboutEuiNeoLine();
 
-// ---- 窗口效果档位 → 参数映射（纯函数，供单测）----
+// 窗口效果档位 → 参数映射（纯函数，供单测）
 
 // 档位 → clearColor alpha（内容区「主题色纱」）：off=1.0 实色；取值依据见 .cpp。
 float windowEffectAlpha(const std::string& mode);

@@ -48,19 +48,19 @@ struct QuotaDialogState {
     bool providerDdOpen = false;  ///< 供应商下拉展开态
     std::vector<QuotaDialogField> fields;  ///< 按选中 provider 的 fields() 动态生成
 
-    // ---- cc-switch ----
+    // cc-switch
     bool ccSwitchLoaded = false;      ///< 已尝试读取（避免每帧重读真库）
     CcSwitchProviderList ccSwitch;    ///< 读取结果（含 status / unavailableReason）
     int ccSwitchIdx = -1;             ///< 选中的候选下标（-1 = 未选）
     bool ccSwitchDdOpen = false;      ///< 候选下拉展开态
 
-    // ---- 测试连接 ----
+    // 测试连接
     bool testing = false;             ///< 后台查询在途
     std::string testMessage;         ///< 结果文案（成功/失败都写，空 = 还没测过）
     bool testIsError = false;         ///< testMessage 是否按错误色渲染
     QuotaError testErrorKind = QuotaError::None;
 
-    // ---- 保存 ----
+    // 保存
     std::string error;               ///< 校验失败红字
     bool savedWithProvider = false;  ///< 上次保存是否带了 providerId
 };

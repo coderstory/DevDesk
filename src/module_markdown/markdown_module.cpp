@@ -942,7 +942,7 @@ private:
         }).build();
     }
 
-    // ---- 中栏：编辑器（真实读 / 写文件）----
+    // 中栏：编辑器（真实读 / 写文件）
     void drawEditorColumn(eui::Ui& ui,
                           float bodyH,
                           float midW,
@@ -996,7 +996,7 @@ private:
             });
     }
 
-    // ---- 键盘流接线（纯函数在 md_keyboard）----
+    // 键盘流接线（纯函数在 md_keyboard）
     // 键位：Tab/Shift+Tab 缩进、Enter 列表续行、Ctrl+B/I 包裹、Ctrl+K 链接。
     // 只做 IME 防御 → 纯函数 → 写回 InputState；无变化的拦截只消费不动状态。
     bool handleEditorKey(eui::Ui& ui, const eui::KeyEvent& event) {
@@ -1272,7 +1272,7 @@ private:
             .build();
     }
 
-    // ---- 右栏：预览（components::markdown 渲染成 eui 节点树）----
+    // 右栏：预览（components::markdown 渲染成 eui 节点树）
     // 双栏态：编辑器单向驱动预览滚动；仅预览态：手动滚动，进入时对齐编辑器位置。
     void drawPreviewColumn(eui::Ui& ui,
                            float bodyH,
@@ -1358,7 +1358,7 @@ private:
         }).build();
     }
 
-    // ---- 块流注入点 ----
+    // 块流注入点
     // 视图态对单块的特判经本注入点传入，新增视图态只传自己的 hooks。
     // 三个回调均可空（空 = 走默认）；k = 块下标、b = 块、wrapId = 包裹 stack id。
     struct BlockFlowHooks {
@@ -1379,7 +1379,7 @@ private:
         const components::theme::ThemeColorTokens* theme = nullptr;  // input 主题
     };
 
-    // ---- 逐块渲染（预览 / 实时共用同一条通路）----
+    // 逐块渲染（预览 / 实时共用同一条通路）
     // 切分器保证块区间连续覆盖文档，与整篇渲染等价；prefix 决定键控 id。
     // ⚠ ui 必须是 scrollView content 回调传入的 Ui：测量 pass 也走同一回调，
     // 建到外层 Ui 会让测量量到空内容（可滚高度恒 0）。
@@ -1413,7 +1413,7 @@ private:
                     const float wrapH =
                         hooks.wrapHeight ? hooks.wrapHeight(k, b, hk, contentWidth)
                                          : hk;
-                    // ---- 逐块交互包裹 ----
+                    // 逐块交互包裹
                     // 上游无逐块命中/指针事件，这里给每块包固定高 stack：hover 底衬最下、
                     // 内容居中、透明 MouseArea 覆盖层最上；透明 mouseArea 不劫持滚动。
                     const std::string wrapId =
@@ -1502,7 +1502,7 @@ private:
         previewCodeCache_.pruneActive(activeCodeIds);
     }
 
-    // ---- 滚动锚定与光标跟随 ----
+    // 滚动锚定与光标跟随
     // 外层 scrollView 是唯一滚动权威。用户滚轮 → liveFollow_ = false；
     // 光标事件 → true；跟随只在 caret 越出安全带时拉一次，目标 == 记账值则 no-op。
 
@@ -1563,7 +1563,7 @@ private:
                   std::to_string(liveMaxOffset_));
     }
 
-    // ---- 第四态：实时（块级实时渲染 + 活动块输入）----
+    // 第四态：实时（块级实时渲染 + 活动块输入）
     // 单栏，块级渲染走 drawBlockFlow（与预览同一通路、同一张几何表）。
     void drawLiveColumn(eui::Ui& ui,
                         float bodyH,
@@ -1579,7 +1579,7 @@ private:
             ui, "md.live", bodyH, midW, t, componentTheme,
             [&](const TextColumnGeometry& g) {
                 const components::MarkdownStyle style(componentTheme);
-                // ---- 输入框状态换代（释放点）----
+                // 输入框状态换代（释放点）
                 // enterLiveState 置位，本帧先释放再建 input；释放会清焦点，
                 // 必须与 liveFocusPending_ 同帧补发配对。id 落在被释放前缀下
                 // 会每次切块清焦点 + 清 InputState。
@@ -1588,7 +1588,7 @@ private:
                     ui.releaseStateScope(kLiveInputId);
                     LOG_DEBUG("[live] release scope=md.live.input");
                 }
-                // ---- 活动块锚（文档字节偏移）----
+                // 活动块锚（文档字节偏移）
                 // 进实时态以编辑器文档光标为初始锚；此后每帧跟着活动 input 真实光标推进。
                 LiveBlockCtx live;
                 live.theme = &componentTheme;
@@ -1634,7 +1634,7 @@ private:
                     live.activeBlock = liveActiveBlock_;
                     hasActive = true;
                 }
-                // ---- 实时态块级特判经注入点传入 ----
+                // 实时态块级特判经注入点传入
                 // 活动块 = 源码态 input：wrapHeight 改贴合高、drawContent 改由 input
                 // 呈现、afterHitOverlay 关掉覆盖层命中；非活动块走默认路。
                 BlockFlowHooks hooks;
@@ -1794,7 +1794,7 @@ private:
             .build();
     }
 
-    // ---- 实时态活动块输入 ----
+    // 实时态活动块输入
 
     // 块源码文本（块区间连续覆盖文档）
     std::string liveBlockText(const MdBlock& b) const {
@@ -1946,7 +1946,7 @@ private:
         }
     }
 
-    // ---- 光标写点 / 块点击定位 / 失焦提交 ----
+    // 光标写点 / 块点击定位 / 失焦提交
 
     // 实时态唯一光标写点：文档字节偏移 = 活动块身份锚。一次做完：锚重算、
     // 记账 liveCaretPending_ 与 liveFocusPending_（文本未变须显式写光标 /
@@ -2016,7 +2016,7 @@ private:
         syncDocumentFromLiveInput(pending);
     }
 
-    // ---- 块边界键 ----
+    // 块边界键
     // 块边界不做块结构操作，只做普通文本编辑，块身份始终跟随光标：
     // 块内按键 → md_keyboard 纯函数写回活动 input；块边界键 → md_live_edit
     // 纯函数改文档 + setLiveCursor。组字在飞一律不拦截（会撕裂预编辑）。
@@ -2159,7 +2159,7 @@ private:
                  std::to_string(edit.cursor));
     }
 
-    // ---- 块级 undo / redo ----
+    // 块级 undo / redo
 
     // 推栈：快照 = 编辑前的整篇文本 + 文档光标偏移，在写文档之前推。
     void pushLiveUndoSnapshot() {
@@ -2270,7 +2270,7 @@ private:
                  " → 编辑器行 " + std::to_string(jump.targetLine + 1));
     }
 
-    // ---- 新建笔记弹窗 ----
+    // 新建笔记弹窗
     void drawNewNoteDialog(eui::Ui& ui,
                            const eui::Screen& screen,
                            const core::theme::Tokens& t,
@@ -2338,7 +2338,7 @@ private:
         });
     }
 
-    // ---- 新建文件夹弹窗（含父目录下拉）----
+    // 新建文件夹弹窗（含父目录下拉）
     void drawNewFolderDialog(eui::Ui& ui,
                              const eui::Screen& screen,
                              const core::theme::Tokens& t,
@@ -2451,7 +2451,7 @@ private:
     // duration(0) 不自动超时（二选一须显式决定）。
 
 
-    // ---- Toast 反馈 ----
+    // Toast 反馈
     // 普通提示走 ui_kit；外部冲突就地绘制；二者共用 md.toast 单实例且互斥。
     void drawToast(eui::Ui& ui, const eui::Screen& screen,
                    const components::theme::ThemeColorTokens& themeTokens) {
@@ -2491,7 +2491,7 @@ private:
         toast_.show(title, msg, isError);
     }
 
-    // ---- 四态切换 / 大纲 ----
+    // 四态切换 / 大纲
 
     // 实时态状态位群（文档锚 / 首帧聚焦 / 滚动位置）的单一复位点，
     // 进实时态三条路径（setMode / openNote / loadViewState）统一调用。
@@ -2710,7 +2710,7 @@ private:
         }
     }
 
-    // ---- 标签动作（数据全在 DB）----
+    // 标签动作（数据全在 DB）
 
     void toggleTagFilter(const std::string& name) {
         tagFilter_ = (tagFilter_ == name) ? std::string() : name;
@@ -2813,7 +2813,7 @@ private:
         LOG_INFO("打开笔记: " + relPath);
     }
 
-    // ---- 视图状态持久化 ----
+    // 视图状态持久化
 
     // 恢复上次选中笔记 / 四态视图 / 收起目录；笔记已被外部删除时静默跳过。
     void loadViewState() {
@@ -2902,7 +2902,7 @@ private:
         syncCurrentMtime();  // 自己写盘后推进 mtime 基准（避免误报外部修改）
     }
 
-    // ---- 文件变化自动感知（5 秒轮询）----
+    // 文件变化自动感知（5 秒轮询）
 
     // 每 5 秒一次（compose 每帧调用，steady_clock 节流）
     void pollDiskChangesIfDue() {
@@ -3134,7 +3134,7 @@ private:
         LOG_INFO("新建笔记: " + relPath);
     }
 
-    // ---- 新建文件夹（左栏「+ 文件夹」入口）----
+    // 新建文件夹（左栏「+ 文件夹」入口）
 
     // 相对路径的父目录（POSIX；无 '/' → "" 即根目录）
     static std::string parentDirOf(const std::string& relPath) {
@@ -3238,7 +3238,7 @@ private:
         LOG_INFO("新建文件夹: " + relPath);
     }
 
-// ---- 生命周期：右键菜单 / 删除 / 重命名 ----
+// 生命周期：右键菜单 / 删除 / 重命名
 
 // 右键文件行：指针逻辑坐标经 menuAnchorForPointerInPage 换算成页面坐标
 //（runtime 已做 /dpiScale；scrollOffsetY=0 = 指针即视觉位）。
@@ -3567,7 +3567,7 @@ private:
     // 新建笔记/文件夹的父目录都从它派生（newItemParentDir）。
     std::string selectedDir_;
 
-    // ---- 生命周期：树行右键菜单 + 删除确认 + 重命名 ----
+    // 生命周期：树行右键菜单 + 删除确认 + 重命名
     bool ctxMenuOpen_ = false;
     float ctxMenuX_ = 0.0f;
     float ctxMenuY_ = 0.0f;
@@ -3583,17 +3583,17 @@ private:
     std::string renameInput_;        // 重命名输入框内容
     std::string renameError_;        // 弹窗内嵌红字错误行
 
-    // ---- Toast（单实例）----
+    // Toast（单实例）
     ui_kit::ToastState toast_;
 
-    // ---- 视图状态 ----
+    // 视图状态
     ViewMode mode_ = ViewMode::Edit;
     std::vector<MdHeading> outline_;   // 大纲（标题扫描结果）
     bool outlineDirty_ = true;
     int activeOutlineIdx_ = -1;        // 仅预览态用（无编辑器光标可读）
     float previewOffset_ = 0.0f;       // 仅预览态的手动滚动位置
     float liveScrollY_ = 0.0f;         // 实时态滚动偏移（记账值，每帧按声明值回读钳位）
-    // ---- 滚动锚定与光标跟随 ----
+    // 滚动锚定与光标跟随
     bool liveFollow_ = false;          // 跟随开关：滚轮 → false，光标事件 → true
     bool liveProgrammaticScroll_ = false;  // 程序化滚动来源标记（同帧消费）
     float liveMaxOffset_ = 0.0f;       // 上帧 scrollView 声明的 maxOffset
@@ -3609,17 +3609,17 @@ private:
         int line = 0;
     };
     LiveCaretMemo liveCaret_;
-    // ---- 实时态活动块（单输入跟随 + 内容贴合高度）----
+    // 实时态活动块（单输入跟随 + 内容贴合高度）
     size_t liveCursorByte_ = 0;        // 文档字节偏移 = 活动块身份锚
     size_t liveActiveBlock_ = 0;       // 本帧活动块下标（每帧由锚重算）
     size_t liveInputStart_ = 0;        // 活动 input 文本在文档中的起点（锚推导基准）
     bool liveCursorValid_ = false;     // 锚是否已按当前文档初始化
     bool liveFocusPending_ = false;    // 进实时态首帧同帧补发 requestFocus
-    // ---- 焦点/切块状态机 ----
+    // 焦点/切块状态机
     bool liveInputStateFresh_ = false; // 输入框状态待换代（enterLiveState 置位）
     bool liveCaretPending_ = false;    // 待写块局部光标（文本未变须显式写）
     uint64_t liveSyncedRev_ = 0;       // 输入框与文档对齐的修订号（失焦提交安全判据）
-    // ---- 块级 undo/redo（模块层快照栈）----
+    // 块级 undo/redo（模块层快照栈）
     MdLiveUndoStack liveUndo_;         // 快照 = (整篇文本, 文档光标偏移)
     size_t liveUndoBlock_ = 0;         // 上次推栈时的活动块（合并判据基准）
     bool liveUndoSeeded_ = false;      // 本会话基线是否已就位
@@ -3645,23 +3645,23 @@ private:
     bool conflictOpen_ = false;                       // 外部修改冲突 toast（action 二选一）
     std::chrono::steady_clock::time_point lastPollAt_{};  // 轮询节流基准
 
-    // ---- 标签状态 ----
+    // 标签状态
     std::vector<std::string> currentTags_;  // 当前打开笔记的标签
     std::vector<TagCount> allTags_;         // 左栏筛选区的全部标签（含笔记数）
     std::string tagFilter_;                 // 生效中的标签筛选（空 = 无）
     std::string tagInput_;                  // 添加标签输入框内容
 
-    // ---- 语法高亮状态 ----
+    // 语法高亮状态
     MdHighlighter highlighter_;        // 行级高亮器（围栏状态随 display 文本重建）
     // 实时态高亮独立实例：编辑态喂整篇（全文档坐标）、实时态喂块文本
     //（块局部坐标）；两套坐标系交替喂同一实例会抖动围栏缓存。
     MdHighlighter liveHighlighter_;
     std::string highlightThemeName_;   // 上次注入色表的主题名（变化 = 重高亮）
 
-    // ---- 块级元素模型（预览逐块增量渲染的键控源）----
+    // 块级元素模型（预览逐块增量渲染的键控源）
     MdBlockModel blockModel_;
 
-    // ---- 预览代码块高亮（CodeFence 块自绘的脏块缓存）----
+    // 预览代码块高亮（CodeFence 块自绘的脏块缓存）
     MdPreviewCodeCache previewCodeCache_;
 };
 

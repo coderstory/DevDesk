@@ -1,14 +1,12 @@
 // tests/test_platform/test_file_open.cpp
 // platform::file_open 覆盖：
-//   ① openDirectory（产品审计 2026-09-23 [15]）：只测失败路径——成功路径会
-//      真的拉起资源管理器/Finder 窗口，属人工点验项；失败路径无 UI 副作用
-//      （Win 侧 SEE_MASK_FLAG_NO_UI）。
-//   ② openFileFromArgv（审计 [17]，此前 tests/ 零覆盖）：进程自身命令行不可
-//      注入，故测其抽出的两段纯逻辑——「argv → 选文件参数」selectOpenFileArg
-//      （ASCII/非 ASCII/无参/多参/flag）与 Windows UTF-16→UTF-8 编码链
-//      wideToUtf8ForTest（W5 非 ASCII 路径乱码修复 90d5792 的回归锁）。
-//   ③ openFileFromArgv 本尊 smoke：不崩、不抛、返回类型正确（测试跑时 argv
-//      含过滤子串，内容不断言，只锁「任何输入都安全返回」）。
+//   ① openDirectory：只测失败路径——成功路径会真的拉起资源管理器/Finder 窗口，
+//      属人工点验项；失败路径无 UI 副作用（Win 侧 SEE_MASK_FLAG_NO_UI）。
+//   ② openFileFromArgv：进程自身命令行不可注入，故测其抽出的两段纯逻辑——
+//      「argv → 选文件参数」selectOpenFileArg（ASCII/非 ASCII/无参/多参/flag）与
+//      Windows UTF-16→UTF-8 编码链 wideToUtf8ForTest（非 ASCII 路径乱码回归锁）。
+//   ③ openFileFromArgv 本尊 smoke：不崩、不抛、返回类型正确（测试跑时 argv 含过滤
+//      子串，内容不断言，只锁「任何输入都安全返回」）。
 #include "doctest.h"
 
 #include "platform/file_open.h"
@@ -31,16 +29,16 @@ REGISTER_TEST(file_open_directory_missing_fails,
     namespace fs = std::filesystem;
     const auto p = test_temp::tempPath("devdesk_file_open_no_such_dir_9e31");
     std::error_code ec;
-    fs::remove_all(p, ec);  // 确保不存在（幂等，防上次残留）
+    fs::remove_all(p, ec);  // 确保不存在（幂等，防上次残留；error_code 重载不抛）
     auto r = platform::file_open::openDirectory(p.string());
     DOCTEST_CHECK(r.isFail());
     return true;
 })
 
-// ============ ② argv → 文件路径纯选择（openFileFromArgv 的选参数段） ============
+// argv → 文件路径纯选择（openFileFromArgv 的选参数段）
 
 REGISTER_TEST(file_open_select_arg_paths,
-              "file_open: selectOpenFileArg ASCII/空/无参/多参/flag（审计 [17]）", {
+              "file_open: selectOpenFileArg ASCII/空/无参/多参/flag", {
     using platform::file_open::selectOpenFileArg;
     std::vector<std::string> args;
 
@@ -55,7 +53,7 @@ REGISTER_TEST(file_open_select_arg_paths,
     args.push_back("D:/notes/hello.md");
     DOCTEST_CHECK_EQ(selectOpenFileArg(args), std::string("D:/notes/hello.md"));
 
-    // 多参：只看 argv[1]，argv[2] 及以后忽略
+    // 多参：只看 argv[1]，argv[2] 及以后忽略——判据固定在位置，不做"最后一个非 flag"。
     args.push_back("D:/notes/second.md");
     DOCTEST_CHECK_EQ(selectOpenFileArg(args), std::string("D:/notes/hello.md"));
 
@@ -78,7 +76,7 @@ REGISTER_TEST(file_open_select_arg_paths,
 })
 
 REGISTER_TEST(file_open_select_arg_non_ascii,
-              "file_open: selectOpenFileArg 非 ASCII（中文/日文/emoji）原样往返（审计 [17]）", {
+              "file_open: selectOpenFileArg 非 ASCII（中文/日文/emoji）原样往返", {
     using platform::file_open::selectOpenFileArg;
     std::vector<std::string> args;
     args.push_back("devdesk.exe");
@@ -101,15 +99,15 @@ REGISTER_TEST(file_open_select_arg_non_ascii,
     return true;
 })
 
-// ============ ② Windows UTF-16 → UTF-8 编码链（W5 乱码修复 90d5792 回归锁） ============
+// Windows UTF-16 → UTF-8 编码链（非 ASCII 路径乱码回归锁）
 // wideToUtf8ForTest 仅 file_open_win.cpp 定义，其声明在 win 专用头
-// platform/file_open_win.h（平台无关头不放 win-only 符号），用例整体 _WIN32 守卫，
-// macOS/Linux 既不包含该头也不引用该符号（避免未定义符号）。
+// platform/file_open_win.h（平台无关头不放 win-only 符号）。整段用例必须 _WIN32
+// 守卫：macOS/Linux 既不包含该头也不引用该符号，否则未定义符号直接编译失败。
 #if defined(_WIN32)
 #include "platform/file_open_win.h"
 
 REGISTER_TEST(file_open_win_wide_to_utf8,
-              "file_open: Windows wideToUtf8 编码链 ASCII/非 ASCII/空（审计 [17]）", {
+              "file_open: Windows wideToUtf8 编码链 ASCII/非 ASCII/空", {
     using platform::file_open::wideToUtf8ForTest;
 
     // 空串 → 空
@@ -119,8 +117,8 @@ REGISTER_TEST(file_open_win_wide_to_utf8,
     DOCTEST_CHECK_EQ(wideToUtf8ForTest(L"D:/notes/hello.md"),
                      std::string("D:/notes/hello.md"));
 
-    // 「中文」= U+4E2D U+6587 → UTF-8 E4 B8 AD E6 96 87（关键回归：旧实现
-    // 经 ANSI 代码页会得到 mojibake 或 '?'，这里锁 UTF-8 精确字节）
+    // 「中文」= U+4E2D U+6587 → UTF-8 E4 B8 AD E6 96 87：这里锁精确字节，
+    // 经 ANSI 代码页转换会得到 mojibake 或 '?'。
     const std::wstring cn = L"\x4E2D\x6587";
     DOCTEST_CHECK_EQ(wideToUtf8ForTest(cn),
                      std::string("\xE4\xB8\xAD\xE6\x96\x87"));
@@ -145,8 +143,7 @@ REGISTER_TEST(file_open_win_wide_to_utf8,
 
 #endif  // _WIN32
 
-// ============ ③ openFileFromArgv 本尊 smoke ============
-// 原 file_open_from_argv_smoke 已删（2026-10-03 轻量化）：它唯一断言是
-// `r.empty() || !r.empty()` —— 排中律恒真，无论实现怎么写都绿。「不崩不抛」由
-// 本文件其余用例（含本函数的调用路径）顺带覆盖，不需要一条恒真用例来虚增计数。
+// openFileFromArgv 本尊 smoke 已删：它唯一断言是 `r.empty() || !r.empty()` ——
+// 排中律恒真，无论实现怎么写都绿。「不崩不抛」由本文件其余用例（含本函数的调用
+// 路径）顺带覆盖，不需要一条恒真用例来虚增计数。
 

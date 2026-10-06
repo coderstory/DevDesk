@@ -39,7 +39,7 @@ std::string modelsSummary(const Profile& p);
 // 「导入当前配置」名称建议：BASE_URL host；提取不到 →「导入 <日期>」；用户可改
 std::string suggestImportName(const std::string& baseUrl);
 
-// ---- 共享配置片段 ----
+// 共享配置片段
 
 // 片段按 id 查找（快照定位；未绑定/不存在 → nullptr）
 const SharedConfig* findSharedById(const std::vector<SharedConfig>& configs,
@@ -56,7 +56,7 @@ inline constexpr const char* kCopyConfigToastSubtitle =
     "已把该 Profile 的完整 settings.json 配置（env + 高级属性）导出到剪贴板"
     "（API Key 为占位符，不含明文）";
 
-// ---- 调用记录弹窗常量 ----
+// 调用记录弹窗常量
 // 状态码过滤：下拉索引 → ClaudeService::CallLogQuery::statusClass 映射
 inline constexpr int kCallsStatusClasses[] = {0, 2, 3, 4, 5, 9};
 inline constexpr const char* kCallsStatusLabels[] = {

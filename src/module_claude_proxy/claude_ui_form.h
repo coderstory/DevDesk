@@ -32,7 +32,7 @@ struct SharedConfigSubmitHooks {
     std::function<void()> markDataDirty;
 };
 
-// ---- 表单状态机 ----
+// 表单状态机
 void openCreateForm(FormState& f, ImportState& imp);
 void openEditForm(FormState& f, ImportState& imp, const Profile& p,
                   const std::vector<SharedConfig>& sharedConfigs);
@@ -54,13 +54,13 @@ void submitForm(FormState& f, const FormSubmitHooks& hooks,
 // 底部按钮 / Esc / 点遮罩；当前文本 == 落库值时等价于关闭。
 void discardJsonFullscreenEdits(FormState& f);
 
-// ---- 共享配置片段弹窗状态机 ----
+// 共享配置片段弹窗状态机
 void openSharedCreate(SharedConfigDialogState& s);
 void openSharedEdit(SharedConfigDialogState& s, const SharedConfig& c);
 void submitSharedForm(SharedConfigDialogState& s,
                       const SharedConfigSubmitHooks& hooks);
 
-// ---- 绘制 ----
+// 绘制
 // 新建/编辑表单弹窗。sharedConfigs：片段快照（绑定下拉 + 片段赢预览数据源）；
 // profiles：profile 快照（备用 Profile 下拉数据源，编辑态排除自身）
 void drawProfileFormDialog(eui::Ui& ui, const eui::Screen& screen,

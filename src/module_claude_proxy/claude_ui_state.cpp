@@ -157,7 +157,7 @@ void refreshDataCache(ProfileListState& st, ClaudeService* svc) {
 
 } // namespace module::claude
 
-// ============ 次序缝导出（生产零调用点）============
+// 次序缝导出（生产零调用点）
 extern "C" bool claude_data_refresh_wake_saw_ready_for_test() {
     return module::claude::g_dataRefreshWakeSawReady.load();
 }

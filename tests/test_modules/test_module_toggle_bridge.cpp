@@ -1,9 +1,11 @@
 // tests/test_modules/test_module_toggle_bridge.cpp
-// 模块开关即时生效桥（module_toggle_bridge.h）单测：函数指针缝的注入 /
-// 路由 / 复位语义。handler 为纯函数指针（无捕获），用例间无悬垂风险——
-// 复位三层：① 用例体内显式复位；② 断言在复位前失败时由作用域守卫兜底
-//（BridgeHandlerGuard，两条桥都回厂，审计 SYS-04）；③ test_main clean-room
-// 清单第 14 项每用例前无条件清两条槽（进程级函数指针的最终防线）。
+// 模块开关两条函数指针缝的注入 / 路由 / 复位语义。
+// 跨文件前提：
+//   - 两条 handler 槽是进程级全局，跨用例、跨 TU 存活。test_main 的 clean-room 清单
+//     每用例前无条件清槽，那只是最后一道防线；用例内仍须各自复位，否则前一个用例
+//     残留的桩会污染后一个用例的调用计数断言。
+//   - 复位必须走 RAII，不能写在用例尾部：doctest 断言失败即 `return false`（fail-fast），
+//     尾部语句被跳过，桩就留在那儿给同进程后续用例。
 #include "doctest.h"
 #include "module_toggle_bridge.h"
 #include <string>
@@ -17,11 +19,8 @@ void record(const std::string& id, bool on) {
     g_rec.calls++; g_rec.lastId = id; g_rec.lastOn = on;
 }
 
-// 复位守卫（审计 SYS-04）：doctest 断言失败即 `return false`（fail-fast），
-// 写在用例尾部的复位会被跳过 → 桩残留到后续用例 / 后续 TU。守卫放析构，
-// 任何退出路径都把**两条桥**的槽一并回厂（形态照 test_app_assembly 的
-// LazyAssemblyGuard）。test_main 的 clean-room 清单第 14 项是另一层兜底
-//（每用例前无条件清槽）。
+// 复位守卫：任何退出路径都把**两条桥**的槽一并回厂。不能改成「用例尾部显式复位」——
+// 断言在复位前 fail-fast 早退时尾部被跳过，桩残留给后续用例 / 后续 TU。
 struct BridgeHandlerGuard {
     BridgeHandlerGuard() = default;   // 声明 deleted 拷贝会抑制隐式默认构造，显式补回
     ~BridgeHandlerGuard() {
@@ -43,13 +42,11 @@ REGISTER_TEST(toggle_bridge_handler_roundtrip,
     DOCTEST_CHECK(g_rec.lastOn);
     app::toggle::setToggleHandler(nullptr);   // 复位默认 no-op：不崩即通过
     app::toggle::onModuleToggled("agent", false);
-    DOCTEST_CHECK_EQ(g_rec.calls, 1);         // no-op 不再进 record
+    DOCTEST_CHECK_EQ(g_rec.calls, 1);
     return true;
 })
 
-// ---- 第二桥（2026-10-01 惰性装配计划 T1）：claude 惰性装配缝 ----
-// 同函数指针缝形态；复位纪律见文件头三层（本文件两条用例共用
-// BridgeHandlerGuard——任一条 fail-fast 都不会把桩留给后续用例 / 后续 TU）。
+// 第二桥：claude 惰性装配缝
 namespace {
 int g_asmCalls = 0;
 bool g_asmLastAutoStart = false;
@@ -68,9 +65,10 @@ REGISTER_TEST(toggle_bridge_claude_assembly_seam,
     app::toggle::ensureClaudeServiceAssembled(true);
     DOCTEST_CHECK_EQ(g_asmCalls, 1);
     DOCTEST_CHECK(g_asmLastAutoStart);
-    // 中途复位 = 被断言的一部分（验 no-op 语义），保留；守卫仍兜 fail-fast 早退
+    // 中途复位本身就是被断言的一部分（验 no-op 语义），不是冗余：删了就不再覆盖
+    // 「装好后可安全回厂」这条契约
     app::toggle::setClaudeAssemblyHandler(nullptr);   // 复位默认 no-op：不崩即通过
     app::toggle::ensureClaudeServiceAssembled(false);
-    DOCTEST_CHECK_EQ(g_asmCalls, 1);          // no-op 不再进 record
+    DOCTEST_CHECK_EQ(g_asmCalls, 1);
     return true;
 })

@@ -1,4 +1,4 @@
-// src/module_markdown/md_live_edit.cpp —— M2 纯函数层实现（说明见 md_live_edit.h 头注释）。
+// src/module_markdown/md_live_edit.cpp —— 纯函数层实现（说明见 md_live_edit.h 头注释）。
 #include "md_live_edit.h"
 
 #include <algorithm>
@@ -33,8 +33,6 @@ float mdLiveInputHeight(const std::string& blockText, float textWidth,
     return inset * 2.0f + static_cast<float>(lines) * fontSize *
                               kInputLineHeightFactor + 1.0f;
 }
-
-// M4：块边界键
 
 namespace {
 
@@ -129,8 +127,6 @@ bool mdLiveBoundaryEdit(const std::string& text,
     return false;   // 后面不是行终结符：普通块内字符删除，交回内置
 }
 
-// M5：块级 undo / redo
-
 void MdLiveUndoStack::reset(std::string text, size_t cursorByte) {
     undo_.clear();
     redo_.clear();
@@ -187,8 +183,6 @@ bool MdLiveUndoStack::redo(std::string& text, size_t& cursorByte) {
     return true;
 }
 
-// M6：滚动锚定与光标跟随
-
 MdLiveFollowDecision mdLiveFollowOffset(float caretDocY, float viewportH,
                                         float currentOffset, float maxOffset) {
     MdLiveFollowDecision d;
@@ -206,7 +200,7 @@ MdLiveFollowDecision mdLiveFollowOffset(float caretDocY, float viewportH,
     return d;
 }
 
-// M9：单块高度上限（封顶 0.7 × 视口高，块内滚动；spec §5 #5 / R4）
+// 单块高度封顶 0.7 × 视口高，块内滚动
 
 float mdLiveCappedInputHeight(float fitHeight, float viewportH) {
     if (viewportH <= 0.0f) return fitHeight;  // 无视口信息：防御性不封顶

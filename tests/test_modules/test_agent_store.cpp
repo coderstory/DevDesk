@@ -1,8 +1,10 @@
 // tests/test_modules/test_agent_store.cpp
-// AgentStore 落库层用例（agent M1 Task 3）：任务→run→消息 回写读出一致 +
-// sweep 把遗留 running 标 failed。TestDb 已 migrate 到 v12（含 agent 三表）。
-// M2 Task 2 追加：原子互斥起跑（startRunExclusive）+ 任务编辑/启停/单查 +
-// taskFromRow 唯一映射。
+// AgentStore 落库层用例：任务 → run → 消息 的回写读出、sweep 收悬挂 run、listTasks 列映射、
+// startRunExclusive 原子互斥起跑、updateTask/setTaskEnabled/getTask 往返、taskFromRow 行映射、
+// listRuns 同秒并列的 tie-break，以及 trigger_config 编解码唯一真源。
+// 跨文件前提：
+//   - 每个用例经 test_support::TestDb 拿独立临时库（已 migrate 到含 agent 三表的版本），不碰用户真实库。
+//   - trigger_config 的编解码只认 module::agent 的 encode/decodeTriggerConfig，UI 与调度器都不得手拼。
 #include "doctest.h"
 #include "test_support.h"
 #include "module_agent/agent_loop.h"
@@ -16,9 +18,7 @@
 
 namespace {
 
-// 只会数调用次数的 LlmEndpoint：单闸用例断言它**一次都没被调用**（撞闸不发请求）。
-// 放在本文件是因为 Task 2 的提交面 = store 两文件 + loop 两文件 + 本用例文件
-// （plan task-2-brief Step 5 pathspec），loop 的单闸契约不能在别处钉。
+// 只会数调用次数的 LlmEndpoint：单闸用例断言它一次都没被调用（撞闸不发请求）。
 class NeverSendLlm : public core::LlmEndpoint {
 public:
     int calls = 0;
@@ -72,7 +72,7 @@ REGISTER_TEST(agent_store_sweep_stale_runs, "agent_store: sweep 把遗留 runnin
 })
 
 // listTasks 的 9 列逐列还原：列名与 SELECT 拼写漂移是编译期看不见的错
-//（只在运行期表现为 Result::fail(NotFound)），Task 12 的任务列表 UI 直接吃它。
+// （只在运行期表现为 Result::fail(NotFound)），任务列表 UI 直接吃它。
 // 入参取有区分度的值（modelSlot=sonnet / maxIterations=7 / allowDestructive=true），
 // 与默认列（enabled=1、trigger_config='' 由 createTask 固定写空）各占一条。
 REGISTER_TEST(agent_store_list_tasks_maps_columns, "agent_store: listTasks 列映射与值还原", {
@@ -96,11 +96,9 @@ REGISTER_TEST(agent_store_list_tasks_maps_columns, "agent_store: listTasks 列�
     return true;
 })
 
-// ===== M2 Task 2：原子互斥起跑 / 任务编辑 / 单查 / 行映射 =====
-
-// Review Focus 1：同 task 并发起跑的唯一闸。手动「启动」与 Scheduler/cron
-// 派发都经 AgentLoop::run → 此处；查+插在同一把 db_.mutex() 内 = 原子。
-// 终态（非 running）后必须能再次起跑——闸是「同 task 不并发」，不是「只跑一次」。
+// 同 task 并发起跑的唯一闸。手动「启动」与 Scheduler/cron 派发都经 AgentLoop::run → 此处；
+// 查+插在同一把 db_.mutex() 内 = 原子。终态（非 running）后必须能再次起跑——
+// 闸是「同 task 不并发」，不是「只跑一次」。
 REGISTER_TEST(agent_store_start_run_exclusive_rejects_concurrent,
               "agent_store: startRunExclusive 已有 running run → fail(AlreadyExists)", {
     test_support::TestDb tdb("agentstore", "exclusive");
@@ -112,7 +110,7 @@ REGISTER_TEST(agent_store_start_run_exclusive_rejects_concurrent,
     auto second = store.startRunExclusive(taskId.value());   // 并发第二次
     DOCTEST_REQUIRE(second.isFail());
     DOCTEST_CHECK(second.errorCode() == core::ErrorCode::AlreadyExists);
-    // 拒的那次**没有落行**（第二路从未起跑，无悬挂 running 要收尾）
+    // 拒的那次没有落行：第二路从未起跑，无悬挂 running 要收尾
     auto runs = store.listRuns(taskId.value(), 10);
     DOCTEST_REQUIRE(runs.isOk());
     DOCTEST_REQUIRE_EQ(runs.value().size(), 1u);
@@ -131,7 +129,6 @@ REGISTER_TEST(agent_store_update_enable_get_roundtrip,
     module::agent::AgentStore store(tdb.handle());
     auto taskId = store.createTask("旧名", "旧目标", "manual", "default", 10, false);
     DOCTEST_REQUIRE(taskId.isOk());
-    // updateTask 全列覆盖 + triggerConfig 落库
     DOCTEST_REQUIRE(store.updateTask(taskId.value(), "整理逾期", "新目标", "schedule",
                                      R"({"cron":"0 9 * * 1-5"})", "sonnet", 20, true)
                         .isOk());
@@ -143,23 +140,22 @@ REGISTER_TEST(agent_store_update_enable_get_roundtrip,
     DOCTEST_CHECK_EQ(got.value().modelSlot, std::string("sonnet"));
     DOCTEST_CHECK_EQ(got.value().maxIterations, 20);
     DOCTEST_CHECK(got.value().allowDestructive);
-    DOCTEST_CHECK(got.value().enabled);          // updateTask 不碰 enabled
-    // setTaskEnabled 翻转 + getTask 回读；不存在 id → NotFound
+    DOCTEST_CHECK(got.value().enabled);   // updateTask 不碰 enabled，见块首
     DOCTEST_REQUIRE(store.setTaskEnabled(taskId.value(), false).isOk());
     auto off = store.getTask(taskId.value());
     DOCTEST_REQUIRE(off.isOk());
     DOCTEST_CHECK_FALSE(off.value().enabled);
     DOCTEST_CHECK(store.getTask(99999).errorCode() == core::ErrorCode::NotFound);
-    // 一类一规则（评审裁定 a）：UPDATE 目标行不存在 → fail(NotFound)，
-    // 不静默 no-op（0 行变更判定，与 getTask 同口径）
+    // 一类一规则：UPDATE 目标行不存在 → fail(NotFound)，不静默 no-op
+    //（0 行变更判定，与 getTask 同口径）
     DOCTEST_CHECK(store.updateTask(99999, "n", "g", "manual", "", "default", 1, false)
                       .errorCode() == core::ErrorCode::NotFound);
     DOCTEST_CHECK(store.setTaskEnabled(99999, false).errorCode() == core::ErrorCode::NotFound);
     return true;
 })
 
-// createTask 的新尾参 triggerConfig 必须真落库（只加形参不绑库 = 静默丢配置，
-// cron 任务会拿到空表达式)；6 参调用点仍绑空串（由既有 listTasks 用例钉住）。
+// createTask 的新尾参 triggerConfig 必须真落库：只加形参不绑库 = 静默丢配置，
+// cron 任务会拿到空表达式。6 参调用点仍绑空串（由 listTasks 用例钉住）。
 // taskFromRow 是 store 行 → AgentTask 的唯一映射（module / scheduler 共用），
 // 逐字段搬运 id/name/goal/modelSlot/maxIterations/allowDestructive。
 REGISTER_TEST(agent_store_create_task_trigger_config_and_task_from_row,
@@ -182,10 +178,9 @@ REGISTER_TEST(agent_store_create_task_trigger_config_and_task_from_row,
     return true;
 })
 
-// 单闸的 loop 层钉子（Review Focus 1）：task 已有 running 行时，AgentLoop::run
-// 必须走 startRunExclusive 撞闸——原样上抛 fail(AlreadyExists)、**不落行、
-// 不发请求**（第二路从未起跑，库里不留第二行 running）。
-// 这条用例也是 Task 2「起跑换单闸」那行改动的唯一红灯面：改回 startRun 即红。
+// 单闸的 loop 层钉子：task 已有 running 行时，AgentLoop::run 必须走 startRunExclusive
+// 撞闸——原样上抛 fail(AlreadyExists)、不落行、不发请求（第二路从未起跑，库里不留
+// 第二行 running）。若改回非互斥的 startRun，本用例三条断言全红。
 REGISTER_TEST(agent_loop_gate_rejects_when_task_already_running,
               "agent_loop: 已有 running run → run() 撞闸 fail(AlreadyExists) 且不落行不发请求", {
     test_support::TestDb tdb("agentstore", "gate");
@@ -211,10 +206,10 @@ REGISTER_TEST(agent_loop_gate_rejects_when_task_already_running,
     return true;
 })
 
-// 并列排序根治（评审微修）：agent_runs.started_at 是**秒精度**，同一秒内连起两次
-// run 会并列——只按 started_at DESC 时并列段顺序未定义，LIMIT 窗口本身就可能把较旧
-// 那条当「最近一次」返回（消费方：状态列 / runlist[0] / 默认选中 run）。用例用
-// 原生 SQL 把两条 run 的 started_at 钉成同值，直接钉住 tie-break。
+// 并列 tie-break：agent_runs.started_at 是秒精度，同一秒内连起两次 run 会并列——
+// 只按 started_at DESC 时并列段顺序未定义，LIMIT 窗口本身就可能把较旧那条当「最近一次」
+// 返回（消费方：状态列 / runlist[0] / 默认选中 run）。用例用原生 SQL 把两条 run 的
+// started_at 钉成同值，直接钉住 tie-break。
 REGISTER_TEST(agent_store_list_runs_tie_breaks_by_id,
               "agent_store: 同秒两次 run → listRuns 取最新（含 LIMIT 1 窗口）", {
     test_support::TestDb tdb("agentstore", "runorder");
@@ -239,7 +234,7 @@ REGISTER_TEST(agent_store_list_runs_tie_breaks_by_id,
     DOCTEST_CHECK_EQ(all.value()[0].startedAt, all.value()[1].startedAt);  // 并列前提
     DOCTEST_CHECK_EQ(all.value()[0].id, newer.value());   // 并列时最新在前
     DOCTEST_CHECK_EQ(all.value()[1].id, older.value());
-    // LIMIT 1：微修前并列 + 未定义序，这里可能返回旧 run
+    // LIMIT 1 窗口也必须返回较新那条：并列 + 无 tie-break 时这里会拿到旧 run
     auto latest = store.listRuns(taskId.value(), 1);
     DOCTEST_REQUIRE(latest.isOk());
     DOCTEST_REQUIRE_EQ(latest.value().size(), static_cast<size_t>(1));
@@ -248,25 +243,22 @@ REGISTER_TEST(agent_store_list_runs_tie_breaks_by_id,
     return true;
 })
 
-// ===== ARCH-02（M2 静态审计）：trigger_config 编解码唯一真源 =====
-//
-// 本组钉住「store 行 ↔ TriggerConfig 结构」的往返与坏配置的**可判定性**：
-// 修复前编解码散在三处（UI 手拼 / cronTextOf 裸 parse / 调度器裸 parse），
-// 谁都不能保证自己那份和后一份同口径——这里以「encode 出来的字符串经 createTask
-// 落库、getTask 读出、decode 回来的结构必须逐字段相等」把两端钉在一起。
+// 本组钉住「store 行 ↔ TriggerConfig 结构」的往返与坏配置的可判定性：
+// 编解码散在多处时谁都不能保证自己那份和别处同口径——这里以「encode 出来的字符串经
+// createTask 落库、getTask 读出、decode 回来的结构必须逐字段相等」把两端钉在一起。
 REGISTER_TEST(agent_store_trigger_config_roundtrip,
               "agent_store: trigger_config 往返（encode → createTask → getTask → decode 逐字段一致）", {
     test_support::TestDb tdb("agentstore", "trigcfg");
     module::agent::AgentStore store(tdb.handle());
 
-    // 常规表达式 + **转义敏感**表达式（引号 / 反斜杠 / 制表符——手拼 JSON 时
-    // 必炸的字符；json 层转义才对）。decode 回来的结构必须逐字相等
+    // 常规表达式 + 转义敏感表达式（引号 / 反斜杠 / 制表符——手拼 JSON 时必炸的字符；
+    // json 层转义才对）。decode 回来的结构必须逐字相等
     for (const char* expr : {"0 9 * * 1-5", "* * * * *",
                              R"(a"b\c	d)"}) {
         const module::agent::TriggerConfig cfg{expr};
         auto encoded = module::agent::encodeTriggerConfig(cfg);
         DOCTEST_REQUIRE(encoded.isOk());
-        // 编码产物必须是**合法 JSON 对象**（不是手拼的近似物）
+        // 编码产物必须是合法 JSON 对象（不是手拼的近似物）
         auto parsed = platform::json::parse(encoded.value());
         DOCTEST_REQUIRE(parsed.isOk());
         DOCTEST_CHECK(parsed.value().isObject());

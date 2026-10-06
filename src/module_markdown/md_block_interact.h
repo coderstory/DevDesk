@@ -1,5 +1,5 @@
 // src/module_markdown/md_block_interact.h
-// 块级交互（Phase 3 ⑤）纯函数底座：预览块点击 → 编辑器光标定位、hover 状态机。
+// 块级交互纯函数底座：预览块点击 → 编辑器光标定位、hover 状态机。
 // 上游 components::markdown 无逐块命中/指针事件 API，故每个块外包「固定高 stack +
 //   透明 MouseArea」，hit 几何 = MdSyncMap 块高度表（与同步滚动同表，边界误差 0）。
 // 点击 x → 行内列不映射：预览折行宽度与编辑器布局不同源，行首是唯一无歧义落点。

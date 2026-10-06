@@ -18,7 +18,7 @@
 
 namespace module::claude {
 
-// ---------- 构造 / 析构 ----------
+// 构造 / 析构
 
 ProxyRuntime::ProxyRuntime(ClaudeService& service) : service_(service) {}
 
@@ -28,7 +28,7 @@ ProxyRuntime::~ProxyRuntime() {
     stop();
 }
 
-// ---------- 代理 server 生命周期 ----------
+// 代理 server 生命周期
 
 const std::string& claudeUpstreamSessionId() {
     // 32 hex（同 auth token 的生成方式）；magic static 保证线程安全与进程内唯一
@@ -113,7 +113,7 @@ void ProxyRuntime::setConfiguredProxyPort(int port) {
     configuredProxyPort_ = port;
 }
 
-// ---------- 在途流式上游登记 ----------
+// 在途流式上游登记
 
 void ProxyRuntime::registerActiveStream(
     const std::shared_ptr<platform::http::StreamingResponse>& stream) {
@@ -151,7 +151,7 @@ void ProxyRuntime::cancelActiveStreams() {
     }
 }
 
-// ---------- 最近代理请求事件单槽（mailbox）----------
+// 最近代理请求事件单槽（mailbox）
 
 void ProxyRuntime::recordProxyEvent(int statusCode) {
     std::lock_guard<std::mutex> lock(proxyEventMutex_);

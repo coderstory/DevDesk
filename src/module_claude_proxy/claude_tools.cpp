@@ -19,7 +19,7 @@ using core::ToolArgs;
 using core::ToolResult;
 namespace pj = platform::json;
 
-// ---- 结果组装辅助 ----
+// 结果组装辅助
 
 // 工具级错误：Result ok + isError + {"error":"<中文>"}（错误回喂 LLM）
 Result<ToolResult> toolError(const std::string& message) {
@@ -81,7 +81,7 @@ Result<std::optional<int64_t>> optionalIntField(const pj::JsonObject& obj,
         std::optional<int64_t>(v.asInt()));
 }
 
-// ============ claude.list_profiles（只读）============
+// claude.list_profiles（只读）
 
 class ClaudeListProfilesTool : public core::ITool {
 public:
@@ -137,7 +137,7 @@ private:
     ClaudeService& svc_;
 };
 
-// ============ claude.switch_profile（破坏性）============
+// claude.switch_profile（破坏性）
 
 class ClaudeSwitchProfileTool : public core::ITool {
 public:
@@ -183,7 +183,7 @@ private:
     ClaudeService& svc_;
 };
 
-// ============ claude.test_connection（只读，发测试请求）============
+// claude.test_connection（只读，发测试请求）
 
 class ClaudeTestConnectionTool : public core::ITool {
 public:
@@ -245,7 +245,7 @@ private:
     ClaudeService& svc_;
 };
 
-// ============ claude.recent_logs（只读）============
+// claude.recent_logs（只读）
 
 class ClaudeRecentLogsTool : public core::ITool {
 public:
@@ -301,7 +301,7 @@ private:
 
 } // namespace
 
-// ============ ClaudeTools ============
+// ClaudeTools
 
 ClaudeTools::ClaudeTools(ClaudeService& svc) {
     tools_.push_back(std::make_shared<ClaudeListProfilesTool>(svc));

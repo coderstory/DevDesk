@@ -1,14 +1,14 @@
 // tests/test_modules/test_claude_tools.cpp
-// ClaudeTools 用例（agent M2 Task 8）：claude.list_profiles / claude.switch_profile
-//（**破坏性**）/ claude.test_connection / claude.recent_logs 四工具的注册、出参
-// 形状、参数校验与错误回喂。
-//
-// 错误回喂约定（spec §10 M1 统一，与 MarkdownTools 同款）：参数非法 / 目标不存在
-// → execute 返回 Result ok + ToolResult.isError=true + content 含中文说明（错误
-// 回喂 LLM 自我纠正）；Result::fail 只留给编程不变量破坏。
-//
-// 注册表清理由 ToolEnv 析构做（RAII）：断言 fail-fast 早退也不会把工具残留在
-// 进程级 ToolRegistry 里（test_markdown_tools.cpp 同款约定）。
+// ClaudeTools 用例：claude.list_profiles / claude.switch_profile（破坏性）/
+// claude.test_connection / claude.recent_logs 四工具的注册、出参形状、参数校验与错误回喂，
+// 外加 setActiveProfile 的双线程并发烟测。
+// 跨文件前提：
+//   - 错误回喂约定：参数非法 / 目标不存在 → execute 返回 Result ok + ToolResult.isError=true +
+//     content 含中文说明（错误回喂 LLM 自我纠正）；Result::fail 只留给编程不变量破坏。
+//   - 注册表清理由 ToolEnv 析构做（RAII）：断言 fail-fast 早退也不会把工具残留在进程级
+//     ToolRegistry 里。
+//   - 凭据存在 app_config 库的加密列，删 Keychain 条目造不出空 key，须用
+//     test_support::clearStoredCredential。
 #include "doctest.h"
 #include "test_support.h"
 
@@ -86,8 +86,6 @@ struct ToolEnv {
 
 } // namespace
 
-// ============ 1. 注册 / list_profiles / switch_profile ============
-
 REGISTER_TEST(claude_tools_register_and_list_and_switch,
               "claude_tools: 注册四工具；list_profiles 活跃标记；switch_profile 破坏性 + 生效", {
     ToolEnv env("reglist");
@@ -99,9 +97,8 @@ REGISTER_TEST(claude_tools_register_and_list_and_switch,
                           "claude.test_connection", "claude.recent_logs"}) {
         auto found = core::ToolRegistry::instance().find(n);
         DOCTEST_REQUIRE(found.isOk());
-        // schemaJson 契约（照 test_markdown_tools.cpp:239-246 先例）：schema 要真能
-        // 进 Anthropic tools 数组——非空 + 声明的 name 与注册名一致 + input_schema /
-        // required 两键齐（缺任一项请求侧会被上游拒或 LLM 看不到入参）
+        // schemaJson 契约：schema 要真能进 Anthropic tools 数组——非空 + 声明的 name 与
+        // 注册名一致 + input_schema / required 两键齐（缺任一项请求侧会被上游拒或 LLM 看不到入参）
         const std::string schema = found.value()->schemaJson();
         DOCTEST_CHECK_FALSE(schema.empty());
         DOCTEST_CHECK(schema.find(std::string("\"name\":\"") + n + "\"") !=
@@ -124,7 +121,7 @@ REGISTER_TEST(claude_tools_register_and_list_and_switch,
 
     auto sw = core::ToolRegistry::instance().find("claude.switch_profile");
     DOCTEST_REQUIRE(sw.isOk());
-    DOCTEST_CHECK(sw.value()->isDestructive());   // spec §5.3 授权闸的判据
+    DOCTEST_CHECK(sw.value()->isDestructive());   // allow_destructive 授权闸的判据
     auto switched = runToolName("claude.switch_profile",
                                 R"({"id":)" + std::to_string(p2.id) + "}");
     DOCTEST_REQUIRE(switched.isOk());
@@ -164,8 +161,6 @@ REGISTER_TEST(claude_tools_register_and_list_and_switch,
     return true;
 })
 
-// ============ 2. switch_profile 参数校验 / 错误回喂 ============
-
 REGISTER_TEST(claude_tools_switch_profile_error_paths,
               "claude_tools: switch_profile 非法/缺失/不存在 id → toolError 且激活态不变", {
     ToolEnv env("switchbad");
@@ -183,8 +178,8 @@ REGISTER_TEST(claude_tools_switch_profile_error_paths,
     DOCTEST_REQUIRE(missing.isOk());
     DOCTEST_CHECK(missing.value().isError);
 
-    // id 是字符串 / 浮点 / 布尔：一律参数非法，**且文案指向参数本身**——浮点若
-    // 只靠 asInt() 归零会退化报成「id 不能为 0」，LLM 拿到的纠正方向是错的
+    // id 是字符串 / 浮点 / 布尔：一律参数非法，且文案指向参数本身——浮点若只靠 asInt()
+    // 归零会退化报成「id 不能为 0」，LLM 拿到的纠正方向是错的
     for (const char* args : {R"({"id":"1"})", R"({"id":1.5})", R"({"id":true})"}) {
         auto r = runToolName("claude.switch_profile", args);
         DOCTEST_REQUIRE(r.isOk());
@@ -212,8 +207,6 @@ REGISTER_TEST(claude_tools_switch_profile_error_paths,
     return true;
 })
 
-// ============ 3. recent_logs：默认 20 / clamp [1,100] / 出参形状 ============
-
 REGISTER_TEST(claude_tools_recent_logs_limit_clamp_and_shape,
               "claude_tools: recent_logs 默认 20、clamp [1,100]、字段形状与排序", {
     ToolEnv env("recentlogs");
@@ -221,8 +214,8 @@ REGISTER_TEST(claude_tools_recent_logs_limit_clamp_and_shape,
                         /*activateIfNoneActive=*/true);
     env.tools->registerAll();
 
-    // 105 条：越过 clamp 上界（100），上界才**有得可测**（只 3 条时 999 与 100
-    // 返回值相同，断言恒真）
+    // 105 条：越过 clamp 上界，上界才有得可测（只 3 条时 999 与 100 返回值相同，
+    // 断言恒真）
     const std::time_t base = 1700000000;
     for (int i = 0; i < 105; ++i) {
         module::claude::ClaudeService::CallLogEntry e;
@@ -289,8 +282,6 @@ REGISTER_TEST(claude_tools_recent_logs_limit_clamp_and_shape,
     return true;
 })
 
-// ============ 4. test_connection（本地 mock 上游，端口 0 由 OS 分配）============
-
 REGISTER_TEST(claude_tools_test_connection_ok_and_error_paths,
               "claude_tools: test_connection 打 mock 上游 + 缺密钥/不存在 id → toolError", {
     platform::http::Server upstream("127.0.0.1", 0);
@@ -353,8 +344,7 @@ REGISTER_TEST(claude_tools_test_connection_ok_and_error_paths,
     DOCTEST_CHECK(badId.value().isError);
     DOCTEST_CHECK_EQ(hitCount, 2);
 
-    // 凭据列空 → loadApiKey fail → toolError（计划书：任一步 fail 即错）
-    //（2026-10-02 存储统一：凭据在库列里，不再靠删 Keychain 条目造空 key）
+    // 凭据列空 → loadApiKey fail → toolError（任一步 fail 即错）
     DOCTEST_REQUIRE(test_support::clearStoredCredential(env.tdb.handle(), p.id));
     auto noKey = runToolName("claude.test_connection",
                              R"({"id":)" + std::to_string(p.id) + "}");
@@ -366,17 +356,13 @@ REGISTER_TEST(claude_tools_test_connection_ok_and_error_paths,
     return true;
 })
 
-// ============ 5. setActiveProfile 服务内锁（并发烟测）============
-
-// Review Focus 5：agent 工作线程（claude.switch_profile 工具）与 UI 线程可同时进
-// setActiveProfile（内含 DB 事务 + settings.json 接管文件写 + warnings_ 内存态）。
-// 两条线程经 barrier 对齐后各打 25 次切换，断言：不崩不挂、终态「恰好一个激活」
-// 且是两者之一。
+// agent 工作线程（claude.switch_profile 工具）与 UI 线程可同时进 setActiveProfile
+// （内含 DB 事务 + settings.json 接管文件写 + warnings_ 内存态）。两条线程经 barrier
+// 对齐后各打 25 次切换，断言：不崩不挂、终态「恰好一个激活」且是两者之一。
 //
-// **变异验证（本仓无 TSan/ASan，用变异代替插桩）**：把 claude_service.cpp 里那行
-// lock_guard 整行删掉重编后，本用例 5/5 全部 SIGSEGV（缺锁 = 两线程并发进同一
-// SQLite 事务的真实数据竞争）；带锁版本连跑 20 次 = 20/20 绿。故本用例是「缺锁
-// 会红」的真钉子，而非恒真断言。用例内无任何计时断言（本仓禁用时间敏感 flaky）。
+// 本用例有判别力，不是恒真断言：去掉 setActiveProfile 里的 lock_guard 后本用例 5/5
+// SIGSEGV（两线程并发进同一 SQLite 事务的数据竞争）。
+// 用例内无任何计时断言（时间敏感 flaky）。
 REGISTER_TEST(claude_tools_switch_profile_concurrent_smoke,
               "claude_tools: 双线程并发 setActiveProfile 不崩不挂、终态唯一激活", {
     ToolEnv env("concurrent");
@@ -387,9 +373,9 @@ REGISTER_TEST(claude_tools_switch_profile_concurrent_smoke,
 
     constexpr int kIterations = 25;
     std::barrier<> startLine(2);
-    // 每线程只写自己槽位、join 之后主线程才读（评审微修：原实现的 firstErr 由两
-    // worker 无同步共写 = 用例自身的数据竞争——本用例正是在测锁，测具不该自带
-    // race；ok/err 分槽后全部跨线程可见性都由 join 建立）
+    // 每线程只写自己槽位、join 之后主线程才读。不可换成两 worker 共写一个 firstErr：
+    // 那是用例自身的数据竞争，而本用例正是在测锁，测具不该自带 race。
+    // ok/err 分槽后全部跨线程可见性都由 join 建立
     int okPerSlot[2] = {0, 0};
     std::string errPerSlot[2];
 

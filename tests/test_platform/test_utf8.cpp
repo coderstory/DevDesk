@@ -1,5 +1,5 @@
 // tests/test_platform/test_utf8.cpp
-// platform::utf8 用例（M2 静态审计 F1）。
+// platform::utf8 覆盖。
 //
 // 这个头守的是一条**进程级**不变式：交给 platform::json 组装层的文本必须良构
 // UTF-8，否则 yyjson 读侧的严格校验会让 AgentLoop 的 parseArrayOrDie 自检
@@ -8,8 +8,8 @@
 //      全拒；合法多字节序列全过）——与 yyjson 读侧对齐；
 //   ② 清洗输出的**不变式**：任意字节序列 sanitize 后恒良构，且可读部分逐字保真。
 // 交叉钉子：同批向量走一遍 stringify→parse 往返（等价 makeTextContent 的实际
-// 链路：json 层对非法 UTF-8 是「写得进、读不出」）——避免「本头比 yyjson 宽」
-// 留下仍然可 abort 的缝隙，或「比 yyjson 严」误伤正常笔记。
+// 链路）——避免「本头比 yyjson 宽」留下仍然可 abort 的缝隙，或「比 yyjson 严」
+// 误伤正常笔记。
 #include "doctest.h"
 
 #include "platform/json.h"
@@ -73,7 +73,7 @@ REGISTER_TEST(utf8_valid_rejects_malformed,
 
     for (const auto& s : bad) {
         DOCTEST_CHECK_MESSAGE(platform::utf8::isValid(s) == false, s);
-        // 同批向量走一遍 json 往返：非法 → 往返必失败（= 修复前会 abort 的形状）
+        // 同批向量走一遍 json 往返：非法 → 往返必失败（= 修复前会 abort 的形状）。
         DOCTEST_CHECK_MESSAGE(!survivesJsonRoundTrip(s), s);
     }
     return true;
@@ -85,14 +85,14 @@ REGISTER_TEST(utf8_sanitize_invariants,
     const std::string good = "正常文本 abc\xF0\x9F\x98\x80";
     DOCTEST_CHECK_EQ(platform::utf8::sanitize(good), good);
 
-    // 精确字节断言：每个非法字节各换一个 U+FFFD，前后可读字节保真
+    // 精确字节断言：每个非法字节各换一个 U+FFFD，前后可读字节保真。
     std::string four;
     for (int i = 0; i < 4; ++i) four += "\xEF\xBF\xBD";
     const std::string gbk = "A\xD6\xD0\xCE\xC4" "B";
     DOCTEST_CHECK_EQ(platform::utf8::sanitize(gbk), std::string("A") + four + "B");
     DOCTEST_CHECK(survivesJsonRoundTrip(platform::utf8::sanitize(gbk)));
 
-    // 不变式（全字节扫描）：任意 0x00-0xFF 序列清洗后恒良构，且 json 往返继续成立
+    // 不变式（全字节扫描）：任意 0x00-0xFF 序列清洗后恒良构，且 json 往返继续成立。
     std::string allBytes;
     for (int i = 0; i < 256; ++i) allBytes.push_back(static_cast<char>(i));
     const std::string cleaned = platform::utf8::sanitize(allBytes);

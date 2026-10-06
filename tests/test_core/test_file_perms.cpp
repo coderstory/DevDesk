@@ -1,12 +1,8 @@
-// tests/test_core/test_file_perms.cpp
-// 凭据落点文件权限（2026-10-02 存储统一设计 §6.3 硬约束）：
-// 「落密文的对象不止主库」——WAL 模式会把凭据页复制进 <db>-wal，-shm 同族。
-// 三件套必须一律 0600，且**每次打开都校正**（-wal/-shm 在连接关闭时被 sqlite
-// 删掉，下次打开是全新 0644 文件，只在建库时设等于没设）。
-//
-// 平台口径：macOS / Linux = 文件权限级（本用例的实际断言）；Windows = DPAPI
-// 加密级 + 明确 no-op（本用例只断言「不报错」，真实断言在
-// test_credential_protection.cpp 的 storesPlaintext 分支）。
+// 凭据落点不止主库：WAL 模式会把凭据页复制进 <db>-wal，-shm 同族。三件套必须一律
+// 0600，且每次打开都校正——-wal/-shm 在连接关闭时被 sqlite 删掉，下次打开是全新 0644
+// 文件，只在建库时设等于没设。
+// 本用例只断言 macOS / Linux 的文件权限位；Windows 走 DPAPI 加密级 + no-op，真实断言
+// 在 test_credential_protection.cpp 的 storesPlaintext 分支。
 #include "doctest.h"
 #include "test_support.h"
 
@@ -37,11 +33,9 @@ std::string readAll(const std::filesystem::path& p) {
 }
 
 #if !defined(_WIN32)
-// ⚠ storeFiles 与 modeOf 都只被 checkStoreFilePerms 的 **POSIX 分支**调用。
-//   放在 `#if` 外面时，Windows 编译它们就是无人引用的函数 → clang 下
-//   `-Werror,-Wunused-function` 直接红（2026-10-03 由扩展后的
-//   scripts/check-windows-cross-compile.sh 抓到；MSYS2 GCC 同理）。
-//   判据：只被平台分支用到的辅助函数，必须和那个分支的守卫放在一起。
+// 只被 checkStoreFilePerms 的 POSIX 分支调用。放到 `#if` 外面时，Windows 编译它们就是
+// 无人引用的函数 → clang -Werror,-Wunused-function 直接红，MSYS2 GCC 同理。
+// 只被平台分支用到的辅助函数必须和那个分支的守卫放在一起。
 std::array<std::filesystem::path, 3> storeFiles(
     const std::filesystem::path& dbPath) {
     return {dbPath,
@@ -49,7 +43,7 @@ std::array<std::filesystem::path, 3> storeFiles(
             std::filesystem::path(dbPath.string() + "-shm")};
 }
 
-// 实际权限位（只取低 12 位：suid/sgid/sticky + rwxrwxrwx）
+// 权限位 & 07777（低 12 位：suid/sgid/sticky + rwxrwxrwx）
 bool modeOf(const std::filesystem::path& p, unsigned& outMode) {
     struct stat st{};
     if (::stat(p.string().c_str(), &st) != 0) return false;
@@ -58,11 +52,9 @@ bool modeOf(const std::filesystem::path& p, unsigned& outMode) {
 }
 #endif
 
-// 平台分支放在函数体内（不能进 doctest 宏参数——宏参数里嵌预处理指令是 UB，
-// -Werror,-Wembedded-directive 会直接编译失败）
+// 平台分支只能放在函数体内：doctest 宏参数里嵌预处理指令是 UB，-Werror,-Wembedded-directive 直接编译失败
 bool checkStoreFilePerms(const std::filesystem::path& dbPath) {
 #if defined(_WIN32)
-    // Windows：保护级别是 DPAPI 加密 + 用户目录默认 ACL，权限位口径不适用
     DOCTEST_CHECK(core::fileperms::restrictSqliteStoreFiles(dbPath).isOk());
 #else
     const auto files = storeFiles(dbPath);
@@ -76,11 +68,9 @@ bool checkStoreFilePerms(const std::filesystem::path& dbPath) {
                                                  " mode=" + std::to_string(mode));
         ++checked;
     }
-    // -wal / -shm 必须真的存在（SqliteDb::open 里那次空写事务就是把它们逼出来
-    // 的手段）——否则本用例等于什么都没验
+    // -wal / -shm 必须真的存在（SqliteDb::open 里那次空写事务把它们逼出来），否则本用例什么都没验
     DOCTEST_CHECK(checked >= 3);
 
-    // 「每次打开都校正」：把权限手动放宽成 0644 再重开，必须被改回 0600
     for (const auto& f : files) {
         std::error_code ec;
         if (!std::filesystem::exists(f, ec) || ec) continue;
@@ -94,7 +84,7 @@ bool checkStoreFilePerms(const std::filesystem::path& dbPath) {
         DOCTEST_REQUIRE(!ec);
         unsigned relaxed = 0;
         DOCTEST_REQUIRE(modeOf(f, relaxed));
-        DOCTEST_CHECK_EQ(relaxed, 0644u);   // 先证明「放宽」这一步真的生效
+        DOCTEST_CHECK_EQ(relaxed, 0644u);   // 先证明「放宽」真的生效，否则后面那条 0600 可能只是从没被改过
     }
     {
         auto reopened = core::Database::open(dbPath);
@@ -117,7 +107,7 @@ bool checkStoreFilePerms(const std::filesystem::path& dbPath) {
 REGISTER_TEST(fileperms_sqlite_store_files_are_owner_only,
               "file_perms: 主库 + -wal + -shm 一律 0600（打开时校正）", {
     test_support::TestDb tdb(kPermPrefix, "store");
-    // 建一行 → 确保写事务真的发生过（凭证页会进 -wal 的就是这类写）
+    // 建一行 → 确保写事务真的发生过，凭证页正是靠这类写进 -wal 的
     DOCTEST_REQUIRE(tdb.handle().exec(
         "INSERT INTO claude_profiles (name, base_url, api_key_hint, "
         "api_key_check, api_key_encrypted, model, created_at, updated_at) "
@@ -136,7 +126,7 @@ REGISTER_TEST(fileperms_restrict_is_idempotent_and_tolerates_missing,
     DOCTEST_CHECK(core::fileperms::restrictToOwnerOnly(missing).isOk());
     DOCTEST_CHECK(core::fileperms::restrictSqliteStoreFiles(missing).isOk());
 
-    // 内存库无落点：不得报错、不得误伤路径
+    // 内存库无落点：不得报错
     DOCTEST_CHECK(core::fileperms::restrictSqliteStoreFiles(":memory:").isOk());
     return true;
 })
@@ -152,28 +142,22 @@ REGISTER_TEST(paths_data_root_gitignore_content,
     DOCTEST_REQUIRE(std::filesystem::exists(gi));
 
     const std::string text = readAll(gi);
-    // 硬约束（设计 §6.3 硬约束 1）：至少 `*.db` / `*.db-*` / `config.json*` /
-    // `run-settings/` 四条必须在内——少一条就有一条明文凭据路径会被
-    // `git add .` 带走（-wal 里就有凭据页）
+    // 至少 `*.db` / `*.db-*` / `config.json*` / `run-settings/` 四条必须在内：少一条就有一条明文凭据路径会被 `git add .` 带走（-wal 里就有凭据页）
     DOCTEST_CHECK(text.find("*.db\n") != std::string::npos);
     DOCTEST_CHECK(text.find("*.db-*") != std::string::npos);
     DOCTEST_CHECK(text.find("config.json*") != std::string::npos);
     DOCTEST_CHECK(text.find("run-settings/") != std::string::npos);
-    // 2026-10-03 安全审计 F2：接管前 settings.json 原 env 快照（可能含用户真
-    // token）就在数据根里，漏了它等于打穿这个文件存在的理由
+    // 接管前的 settings.json env 快照（可能含用户真 token）就在数据根里，漏了它等于打穿这个文件存在的理由
     DOCTEST_CHECK(text.find("claude_settings_snapshot.json") != std::string::npos);
-    // 放行 .gitignore 自身（数据根要能进 git）
+    // `!/.gitignore` 放行 .gitignore 自身：数据根要能进 git
     DOCTEST_CHECK(text.find("!/.gitignore") != std::string::npos);
 
-    // 幂等：重复调用结果一致（内容已齐全 → 一个字节都不动）
     DOCTEST_REQUIRE(core::paths::ensureDataRootGitignore().isOk());
     DOCTEST_CHECK_EQ(readAll(gi), text);
     return true;
 })
 
-// 2026-10-03 安全审计 F4：原实现每次启动**整体覆盖** .gitignore——用户自己加的
-// 规则被静默清掉，而正文还写着「可自行追加」，自相矛盾。本用例盯住新口径：
-// 只追加缺失的必需项，用户写的任何一行都不动。
+// ensureDataRootGitignore 的口径是「只追加缺失项」，绝不覆盖用户自己写的行
 REGISTER_TEST(paths_gitignore_appends_only_and_preserves_user_rules,
               "paths: 数据根 .gitignore 只追加缺失项，用户规则逐字保留", {
     test_support::DataRootEnv root(kPermPrefix, "gi_keep");
@@ -195,19 +179,17 @@ REGISTER_TEST(paths_gitignore_appends_only_and_preserves_user_rules,
     DOCTEST_REQUIRE(core::paths::ensureDataRootGitignore().isOk());
     const std::string after = readAll(gi);
 
-    // 用户内容逐字保留（且在文件开头，未被重排 / 未被覆盖）
     DOCTEST_CHECK(after.rfind(userContent, 0) == 0);
     DOCTEST_CHECK(after.find("my-notes/") != std::string::npos);
     DOCTEST_CHECK(after.find("*.tmp") != std::string::npos);
 
-    // 必需项被补齐（含注释掉的那条——注释行不算已有规则）
+    // 必需项被补齐，包括上面那条被注释掉的：注释行不算「已有规则」
     DOCTEST_CHECK(after.find("\n*.db\n") != std::string::npos);
     DOCTEST_CHECK(after.find("*.db-*") != std::string::npos);
     DOCTEST_CHECK(after.find("config.json*") != std::string::npos);
     DOCTEST_CHECK(after.find("run-settings/") != std::string::npos);
     DOCTEST_CHECK(after.find("claude_settings_snapshot.json") != std::string::npos);
 
-    // 幂等：内容已齐全 → 再跑一次一个字节都不变（也不碰用户规则）
     DOCTEST_REQUIRE(core::paths::ensureDataRootGitignore().isOk());
     DOCTEST_CHECK_EQ(readAll(gi), after);
     return true;

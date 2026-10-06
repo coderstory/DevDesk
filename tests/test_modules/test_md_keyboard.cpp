@@ -1,10 +1,9 @@
 // tests/test_modules/test_md_keyboard.cpp
-// 编辑器键盘流（spec §5.2 Phase 2）测试：
-//   1. md_keyboard 纯函数单测（listPrefixOf / applyEnterList / applyTab /
-//      applyWrapAround / applyLinkSkeleton —— 字节偏移语义、undo 无关）
-//   2. 无头接线冒烟：markdown_module 的 input.onKeyEvent passthrough ——
-//      Tab/Enter/Ctrl+B 变换写回 InputState + onChange 副作用（状态栏转「未保存」）
-// 真实 IME / 焦点行为留给人工点验（见批次报告）
+// 编辑器键盘流单测：md_keyboard 纯函数（列表前缀 / Enter 续行 / Tab 缩进 / 包裹标记 /
+// 链接骨架 / 表格模板与跳格）+ markdown_module 的 onKeyEvent 无头接线。
+// 跨文件前提：
+//   - EditBuffer 的 cursor / selStart / selEnd 都是**字节**偏移，UTF-8 非「一字节一字符」。
+//   - 真实 IME 与焦点行为无头环境测不了，属人工点验。
 #include "doctest.h"
 #include "test_support.h"
 #include "core/database.h"
@@ -32,7 +31,6 @@ using module::markdown::EditBuffer;
 
 namespace {
 
-// 便捷构造：默认光标在文本末尾、无选区
 EditBuffer buf(std::string text, int cursor = -1, int selStart = -2, int selEnd = -2) {
     if (cursor < 0) cursor = static_cast<int>(text.size());
     if (selStart == -2) selStart = cursor;
@@ -40,16 +38,13 @@ EditBuffer buf(std::string text, int cursor = -1, int selStart = -2, int selEnd 
     return {std::move(text), cursor, selStart, selEnd};
 }
 
-// 笔记临时目录前缀 + 写文件 / 无头笔记环境：共享实现（TIN-06b，原 MdKbEnv
-// 与本地 writeTextFile 同款合流）
+// 笔记临时目录前缀；写文件与无头笔记环境走 test_support 的共享实现
 constexpr const char* kDirPrefix = "devdesk_mdkb_";
 constexpr const char* kDbName = "kbd_test.db";
 
 using test_support::writeTextFile;
 
 } // namespace
-
-// ---- 纯函数：listPrefixOf / nextListPrefix ----
 
 REGISTER_TEST(md_kbd_list_prefix, "md_keyboard: 列表前缀识别", {
     using module::markdown::listPrefixOf;
@@ -59,7 +54,7 @@ REGISTER_TEST(md_kbd_list_prefix, "md_keyboard: 列表前缀识别", {
     DOCTEST_CHECK_EQ(listPrefixOf("12. a"), std::string("12. "));
     DOCTEST_CHECK_EQ(listPrefixOf("  - 嵌套"), std::string("  - "));
     DOCTEST_CHECK_EQ(listPrefixOf("\t2. tab"), std::string("\t2. "));
-    // 非列表：普通行 / 无空格 / 标题 / 空行
+    // 非列表行：缺分隔空格的 "-a"/"1.a"、标题、空行一律返回空串
     DOCTEST_CHECK_EQ(listPrefixOf("普通行"), std::string(""));
     DOCTEST_CHECK_EQ(listPrefixOf("-a"), std::string(""));
     DOCTEST_CHECK_EQ(listPrefixOf("1.a"), std::string(""));
@@ -74,27 +69,22 @@ REGISTER_TEST(md_kbd_list_prefix, "md_keyboard: 列表前缀识别", {
     return true;
 })
 
-// ---- 纯函数：Enter 列表续行 ----
-
 REGISTER_TEST(md_kbd_enter_list, "md_keyboard: Enter 列表续行/空项退出/普通行放行", {
-    // 无序续行：前缀继承，光标落新行前缀后
     EditBuffer b = buf("- 项目一");
     DOCTEST_CHECK(module::markdown::applyEnterList(b));
     DOCTEST_CHECK_EQ(b.text, std::string("- 项目一\n- "));
     DOCTEST_CHECK_EQ(b.cursor, static_cast<int>(b.text.size()));
 
-    // 有序续行：编号递增
     EditBuffer o = buf("1. 第一");
     DOCTEST_CHECK(module::markdown::applyEnterList(o));
     DOCTEST_CHECK_EQ(o.text, std::string("1. 第一\n2. "));
 
-    // 空列表项：取消前缀退出，不换行
     EditBuffer e = buf("- ");
     DOCTEST_CHECK(module::markdown::applyEnterList(e));
     DOCTEST_CHECK_EQ(e.text, std::string(""));
     DOCTEST_CHECK_EQ(e.cursor, 0);
 
-    // 行中回车（光标在项中间，UTF-8 边界）：换行 + 继承前缀
+    // 光标落在多字节字符中间：按字节切开 + 继承前缀
     EditBuffer m = buf("- 项目");
     m.cursor = m.selStart = m.selEnd = 5;  // 「项」后（2 + 3 字节）
     DOCTEST_CHECK(module::markdown::applyEnterList(m));
@@ -110,17 +100,13 @@ REGISTER_TEST(md_kbd_enter_list, "md_keyboard: Enter 列表续行/空项退出/�
     return true;
 })
 
-// ---- 纯函数：Tab 缩进 ----
-
 REGISTER_TEST(md_kbd_tab_indent, "md_keyboard: Tab 4 空格缩进/反缩进（spec §5.2）", {
-    // 无选区 Tab = 插入 4 空格
     EditBuffer a = buf("ab");
     a.cursor = a.selStart = a.selEnd = 1;
     module::markdown::applyTab(a, false);
     DOCTEST_CHECK_EQ(a.text, std::string("a    b"));
     DOCTEST_CHECK_EQ(a.cursor, 5);
 
-    // 多行选区 Tab：整块行首 +4，选区覆盖原内容
     EditBuffer m = buf("aa\nbb\ncc");
     m.selStart = 0;
     m.selEnd = 6;  // 选中 aa\nbb\n（cc 行不选——选区到行首为止不含该行）
@@ -129,7 +115,7 @@ REGISTER_TEST(md_kbd_tab_indent, "md_keyboard: Tab 4 空格缩进/反缩进（sp
     DOCTEST_CHECK_EQ(m.selStart, 4);
     DOCTEST_CHECK_EQ(m.selEnd, 14);
 
-    // Shift+Tab 反缩进：每行去掉至多 4 个前导空格（不足 4 有几个去几个）
+    // 反缩进每行最多去掉 4 个前导空格，不足 4 个有几个去几个
     EditBuffer r = buf("    aa\n  bb\ncc");
     r.selStart = 0;
     r.selEnd = 12;
@@ -138,14 +124,13 @@ REGISTER_TEST(md_kbd_tab_indent, "md_keyboard: Tab 4 空格缩进/反缩进（sp
     DOCTEST_CHECK_EQ(r.selStart, 0);
     DOCTEST_CHECK_EQ(r.selEnd, 6);
 
-    // Tab 字符行 Shift+Tab：去 1 个 Tab
     EditBuffer t = buf("\taa");
     t.selStart = 0;
     t.selEnd = 3;
     module::markdown::applyTab(t, true);
     DOCTEST_CHECK_EQ(t.text, std::string("aa"));
 
-    // 无前导空格的 Shift+Tab：无变化（接线层据此不动状态）
+    // 无前导空格的 Shift+Tab 文本不变，接线层据此判定「不消费、不打脏标记」
     EditBuffer n = buf("aa\nbb");
     n.selStart = 0;
     n.selEnd = 5;
@@ -154,7 +139,7 @@ REGISTER_TEST(md_kbd_tab_indent, "md_keyboard: Tab 4 空格缩进/反缩进（sp
     DOCTEST_CHECK_EQ(n.selStart, 0);
     DOCTEST_CHECK_EQ(n.selEnd, 5);
 
-    // 无选区 Shift+Tab：反缩进当前行；光标落在被删区间内也钳回行首
+    // 无选区 Shift+Tab 反缩进当前行；光标若落在被删区间内也钳回行首
     EditBuffer c = buf("x\n  yy");
     c.cursor = c.selStart = c.selEnd = 3;  // 第二行行首 +1（被删区间内）
     module::markdown::applyTab(c, true);
@@ -163,17 +148,13 @@ REGISTER_TEST(md_kbd_tab_indent, "md_keyboard: Tab 4 空格缩进/反缩进（sp
     return true;
 })
 
-// ---- 纯函数：Ctrl+B/I 包裹 + Ctrl+K 链接骨架 ----
-
 REGISTER_TEST(md_kbd_wrap_and_link, "md_keyboard: 选区包裹 / 成对标记 / 链接骨架", {
-    // 无选区 Ctrl+I：成对 * 光标放中间
     EditBuffer a = buf("ab");
     a.cursor = a.selStart = a.selEnd = 1;
     module::markdown::applyWrapAround(a, "*");
     DOCTEST_CHECK_EQ(a.text, std::string("a**b"));
     DOCTEST_CHECK_EQ(a.cursor, 2);
 
-    // 选区 Ctrl+B：**bold**，选区仍选中原文
     EditBuffer b = buf("abcdef");
     b.selStart = 2;
     b.selEnd = 5;
@@ -184,7 +165,7 @@ REGISTER_TEST(md_kbd_wrap_and_link, "md_keyboard: 选区包裹 / 成对标记 / 
     DOCTEST_CHECK_EQ(b.selEnd, 7);
     DOCTEST_CHECK_EQ(b.cursor, 7);
 
-    // 再按 = 去包裹（unwrap toggle，spec §5.2）：选区两端恰为 ** → 移除
+    // 再按一次 = 去包裹（toggle）：选区两端恰为 marker 才移除，移除后选区复原
     EditBuffer u = buf("ab**cde**f");
     u.selStart = 4;
     u.selEnd = 7;
@@ -195,14 +176,13 @@ REGISTER_TEST(md_kbd_wrap_and_link, "md_keyboard: 选区包裹 / 成对标记 / 
     DOCTEST_CHECK_EQ(u.selEnd, 5);
     DOCTEST_CHECK_EQ(u.cursor, 5);
 
-    // 两端不恰为 marker（只有一端）→ 正常包裹，不误删
+    // 只有一端是 marker 时不得解包，一律当普通包裹
     EditBuffer h = buf("ab*cde*f");
     h.selStart = 0;
     h.selEnd = 3;  // 选 "ab*"，前端无 *
     module::markdown::applyWrapAround(h, "*");
     DOCTEST_CHECK_EQ(h.text, std::string("*ab**cde*f"));
 
-    // 选区 Ctrl+K：[sel](链接)，选「链接」占位（占位词 2 个 CJK 字 = 6 字节）
     EditBuffer k = buf("abcdef");
     k.selStart = 0;
     k.selEnd = 2;  // ab
@@ -211,7 +191,6 @@ REGISTER_TEST(md_kbd_wrap_and_link, "md_keyboard: 选区包裹 / 成对标记 / 
     DOCTEST_CHECK_EQ(k.selStart, 5);
     DOCTEST_CHECK_EQ(k.selEnd, 11);
 
-    // 无选区 Ctrl+K：[文本](链接)，选「文本」占位
     EditBuffer k2 = buf("xy");
     k2.cursor = k2.selStart = k2.selEnd = 1;
     module::markdown::applyLinkSkeleton(k2);
@@ -221,32 +200,29 @@ REGISTER_TEST(md_kbd_wrap_and_link, "md_keyboard: 选区包裹 / 成对标记 / 
     return true;
 })
 
-// ---- 纯函数：表格模板生成 / 光标处插入（审计 [12]）----
-
-REGISTER_TEST(md_kbd_table_build_insert, "md_keyboard: 表格模板生成 / 光标处插入（审计 [12]）", {
+REGISTER_TEST(md_kbd_table_build_insert, "md_keyboard: 表格模板生成 / 光标处插入", {
     using module::markdown::buildMarkdownTable;
     using module::markdown::applyInsertTable;
 
-    // rows 含表头：3 行 × 2 列 = 表头 + 分隔行 + 2 数据行
+    // rows 含表头行：3 行 × 2 列 = 表头 + 分隔行 + 2 数据行
     DOCTEST_CHECK_EQ(buildMarkdownTable(3, 2),
                      std::string("|   |   |\n|---|---|\n|   |   |\n|   |   |"));
-    // 1 行 = 表头 + 分隔行（GFM 合法）；<1 钳到 1
+    // 1 行仍产出合法 GFM（表头 + 分隔行）；rows/cols < 1 一律钳到 1
     DOCTEST_CHECK_EQ(buildMarkdownTable(1, 1), std::string("|   |\n|---|"));
     DOCTEST_CHECK_EQ(buildMarkdownTable(0, -3), std::string("|   |\n|---|"));
 
-    // 空文档插入：整表落位，光标进表头首格（"| " 后）
     EditBuffer e = buf("");
     applyInsertTable(e, 2, 2);
     DOCTEST_CHECK_EQ(e.text, std::string("|   |   |\n|---|---|\n|   |   |"));
     DOCTEST_CHECK_EQ(e.cursor, 2);
 
-    // 光标行非空：行尾插入 + 前置空行与段落隔开
+    // 光标所在行非空：表格追加在行尾，前面垫一个空行与段落隔开
     EditBuffer p = buf("para");
     applyInsertTable(p, 1, 1);
     DOCTEST_CHECK_EQ(p.text, std::string("para\n\n|   |\n|---|"));
     DOCTEST_CHECK_EQ(p.cursor, 8);  // "para\n\n"(6) + "| "(2)
 
-    // 空白行（纯空格）：整行替换，不残留缩进
+    // 光标行是纯空白：整行被替换，不残留缩进
     EditBuffer b = buf("para\n  \nnext");
     b.cursor = b.selStart = b.selEnd = 7;  // 空格行内
     applyInsertTable(b, 1, 1);
@@ -254,42 +230,38 @@ REGISTER_TEST(md_kbd_table_build_insert, "md_keyboard: 表格模板生成 / 光�
     return true;
 })
 
-// ---- 纯函数：Tab/Shift+Tab 表格跳格（审计 [12]）----
-
-REGISTER_TEST(md_kbd_table_tab_cells, "md_keyboard: Tab/Shift+Tab 表格跳格（审计 [12]）", {
+REGISTER_TEST(md_kbd_table_tab_cells, "md_keyboard: Tab/Shift+Tab 表格跳格", {
     using module::markdown::applyTabTable;
     const std::string t = "| a | b |\n|---|---|\n| c | d |";
-    // 偏移：行0 [0,9) 竖线{0,4,8}；行1 [10,19) 分隔行；行2 [20,29) 竖线{20,24,28}
-    // 格内容选区：a=2..3  b=6..7  c=22..23  d=26..27
+    // 本文件的字节基准（改 t 必须同步重算）：行0 [0,9) 竖线{0,4,8}、行1 [10,19) 分隔行、
+    // 行2 [20,29) 竖线{20,24,28}；各格内容选区 a=2..3  b=6..7  c=22..23  d=26..27
 
-    // a → b（同行下一格，内容成选区）
     EditBuffer b = buf(t, 2);
     DOCTEST_CHECK(applyTabTable(b, false));
     DOCTEST_CHECK_EQ(b.selStart, 6);
     DOCTEST_CHECK_EQ(b.selEnd, 7);
     DOCTEST_CHECK_EQ(b.cursor, 7);
 
-    // 行尾 → 跳过表头分隔行进下一数据行首格
+    // 行尾的 Tab 必须跳过表头分隔行，直接落到下一数据行首格
     DOCTEST_CHECK(applyTabTable(b, false));
     DOCTEST_CHECK_EQ(b.selStart, 22);
     DOCTEST_CHECK_EQ(b.selEnd, 23);
 
-    // c → d → 块尾回绕块首 a
+    // 走到块尾后回绕块首，不返回 false
     DOCTEST_CHECK(applyTabTable(b, false));
     DOCTEST_CHECK_EQ(b.selStart, 26);
     DOCTEST_CHECK(applyTabTable(b, false));
     DOCTEST_CHECK_EQ(b.selStart, 2);
     DOCTEST_CHECK_EQ(b.selEnd, 3);
 
-    // Shift+Tab 镜像：格内容右端也识别为本格（否则回退卡死）→ a 反跳回 d
+    // Shift+Tab 镜像：格内容右端也要算本格内（否则反跳会掉出表格而卡死）
     DOCTEST_CHECK(applyTabTable(b, true));
     DOCTEST_CHECK_EQ(b.selStart, 26);
     DOCTEST_CHECK_EQ(b.selEnd, 27);
-    // d → c
     DOCTEST_CHECK(applyTabTable(b, true));
     DOCTEST_CHECK_EQ(b.selStart, 22);
 
-    // 光标在分隔行：Tab 进下一非分隔行首格；Shift+Tab 回上一非分隔行末格
+    // 光标在分隔行：Tab 进下一个非分隔行首格，Shift+Tab 回上一个非分隔行末格
     EditBuffer s = buf(t, 15);
     DOCTEST_CHECK(applyTabTable(s, false));
     DOCTEST_CHECK_EQ(s.selStart, 22);
@@ -298,25 +270,23 @@ REGISTER_TEST(md_kbd_table_tab_cells, "md_keyboard: Tab/Shift+Tab 表格跳格�
     DOCTEST_CHECK_EQ(s2.selStart, 6);
     DOCTEST_CHECK_EQ(s2.selEnd, 7);
 
-    // 非表格行 → 放行（false，交回缩进语义）
+    // 非表格行：放行 false，交回普通缩进语义
     EditBuffer n = buf("plain\n| a | b |");
     n.cursor = n.selStart = n.selEnd = 2;
     DOCTEST_CHECK(!applyTabTable(n, false));
 
-    // 行尾无竖线（首尾不成对）不接管
+    // 行尾缺竖线（首尾不成对）：不接管
     EditBuffer l = buf("| a | b");
     l.cursor = l.selStart = l.selEnd = 2;
     DOCTEST_CHECK(!applyTabTable(l, false));
 
-    // 缩进表格行（GFM ≤3 空格缩进合法）仍识别
+    // 缩进表格行按 GFM（≤3 空格）仍识别
     EditBuffer i = buf("  | a | b |", 4);  // 竖线{2,6,10}，a 内容 4..5
     DOCTEST_CHECK(applyTabTable(i, false));
     DOCTEST_CHECK_EQ(i.selStart, 8);  // b 内容
     DOCTEST_CHECK_EQ(i.selEnd, 9);
     return true;
 })
-
-// ---- 接线：markdown_module onKeyEvent passthrough（headless）----
 
 REGISTER_TEST(md_kbd_wiring_input_passthrough,
               "md_keyboard: 编辑器 onKeyEvent 接线（Tab/Enter/Ctrl+B 写回 InputState）", {
@@ -337,8 +307,8 @@ REGISTER_TEST(md_kbd_wiring_input_passthrough,
         ui.end();
     };
 
-    // 帧1：打开笔记（注意：ui.begin() 每帧清空元素树，hit 指针跨帧失效，
-    // 每次 frame() 后必须重新 find——W 踩坑同 test_todo_ui 的 composeLayout）
+    // 打开笔记。ui.begin() 每帧清空元素树，find() 拿到的元素指针跨帧失效——
+    // 每次 frame() 之后都必须重新 find，不能把指针存到下一帧再用。
     frame();
     const auto* fileRow = ui.find("md.tree.node.1.row");
     DOCTEST_REQUIRE(fileRow != nullptr);
@@ -354,8 +324,7 @@ REGISTER_TEST(md_kbd_wiring_input_passthrough,
         ev.modifiers.shift = shift;
         return ev;
     };
-    // 当前帧的编辑器命中元素（带 onKeyEvent 回调）；CHECK 宏带 return false，
-    // 不能进 lambda —— 断言留在用例体内
+    // 断言只能留在用例体内：DOCTEST_CHECK 宏展开后自带 return false，不能放进 lambda
     auto editorHit = [&]() { return ui.find("md.editor.input.hit"); };
     auto pressKey = [&](eui::InputKey key, bool ctrl = false, bool shift = false) -> bool {
         const auto* h = editorHit();
@@ -364,25 +333,22 @@ REGISTER_TEST(md_kbd_wiring_input_passthrough,
         return h->onKeyEvent(press(key, ctrl, shift));
     };
 
-    // 光标挪到第一行末（tree 行点击后光标默认文末）
     {
         auto& st = ui.state<InputState>(kEditorInputId);
         st.cursor = st.selectionStart = st.selectionEnd = 11;  // "- 列表项"行末（2+9 字节）
     }
 
-    // Enter：列表续行（拦截 + 写回）
     DOCTEST_CHECK(pressKey(eui::InputKey::Enter));
     frame();
     {
         const auto& st = ui.state<InputState>(kEditorInputId);
         DOCTEST_CHECK_EQ(st.text, std::string("- 列表项\n- \n正文\n"));
     }
-    // 副作用：onChange 链路跑了（状态栏转「未保存」）
+    // onChange 链路必须真的跑过：状态栏转为「未保存」
     const auto* save = ui.find("md.status.save");
     DOCTEST_REQUIRE(save != nullptr);
     DOCTEST_CHECK(save->text.find("未保存") != std::string::npos);
 
-    // Tab：无选区插入 4 空格
     DOCTEST_CHECK(pressKey(eui::InputKey::Tab));
     frame();
     {
@@ -390,7 +356,6 @@ REGISTER_TEST(md_kbd_wiring_input_passthrough,
         DOCTEST_CHECK_EQ(st.text, std::string("- 列表项\n-     \n正文\n"));
     }
 
-    // Ctrl+B：无选区插入成对 **（光标放中间）
     DOCTEST_CHECK(pressKey(eui::InputKey::B, true));
     frame();
     {
@@ -399,7 +364,7 @@ REGISTER_TEST(md_kbd_wiring_input_passthrough,
         DOCTEST_CHECK_EQ(st.cursor, st.selectionStart);
     }
 
-    // Shift+Tab（无前导空格的行）：消费但无变化（不制造脏标记）
+    // 无前导空格的行上 Shift+Tab：事件被消费（返回 true）但文本不动，也不打脏标记
     {
         auto& st = ui.state<InputState>(kEditorInputId);
         st.cursor = st.selectionStart = st.selectionEnd = 2;  // 第一行「列」前
@@ -411,14 +376,12 @@ REGISTER_TEST(md_kbd_wiring_input_passthrough,
         DOCTEST_CHECK_EQ(st.text, std::string("- 列表项\n-     ****\n正文\n"));
     }
 
-    // 普通按键（A）不拦截：内置继续处理，冒泡不受影响
+    // 普通按键不拦截：返回 false 让内置继续处理，冒泡链不受影响
     DOCTEST_CHECK(!pressKey(eui::InputKey::A));
 
     mod->onStop();
     return true;
 })
-
-// ---- 审计 [12] 接线：Tab 表格跳格 + 右键「插入表格」级联（headless）----
 
 REGISTER_TEST(md_kbd_wiring_table_tab, "md_keyboard: 编辑器 Tab 表格跳格接线（headless）", {
     test_support::MdHeadlessEnv env(kDirPrefix, "tabjump", kDbName);
@@ -453,7 +416,7 @@ REGISTER_TEST(md_kbd_wiring_table_tab, "md_keyboard: 编辑器 Tab 表格跳格�
         return ev;
     };
 
-    // 光标进 'a' 格 → Tab 跳 'b'：只动光标，文本不变、不转「未保存」
+    // 纯跳格只动选区：文本不变，状态栏也不得转「未保存」
     {
         auto& st = ui.state<InputState>(kEditorInputId);
         st.cursor = st.selectionStart = st.selectionEnd = 2;
@@ -475,7 +438,7 @@ REGISTER_TEST(md_kbd_wiring_table_tab, "md_keyboard: 编辑器 Tab 表格跳格�
         DOCTEST_CHECK(save->text.find("未保存") == std::string::npos);  // 纯跳格不打脏
     }
 
-    // 表外（文末空行，光标越过末行 '\n'）Tab 仍是 4 空格缩进（[12] 不回归缩进语义）
+    // 光标越过末行 '\n' 落到表外空行时，Tab 必须回退到普通缩进语义而不是继续跳格
     {
         auto& st = ui.state<InputState>(kEditorInputId);
         st.cursor = st.selectionStart = st.selectionEnd = 30;  // 末空行（EOF）
@@ -496,7 +459,7 @@ REGISTER_TEST(md_kbd_wiring_table_tab, "md_keyboard: 编辑器 Tab 表格跳格�
 })
 
 REGISTER_TEST(md_kbd_wiring_table_insert_menu,
-              "md_keyboard: 编辑器右键插入表格级联（headless，审计 [12]）", {
+              "md_keyboard: 编辑器右键插入表格级联（headless）", {
     test_support::MdHeadlessEnv env(kDirPrefix, "tabmenu", kDbName);
     DOCTEST_REQUIRE(env.db != nullptr);
     DOCTEST_REQUIRE(writeTextFile(env.dir / "menu.md", "# t\n"));
@@ -520,13 +483,14 @@ REGISTER_TEST(md_kbd_wiring_table_insert_menu,
     DOCTEST_REQUIRE(fileRow != nullptr);
     fileRow->onClick();
     frame();
-    // input.h 程序赋值未聚焦时光标置 0（d1f55a3）；显式置文末还原本测试"光标在文末空行"场景
+    // input.h 在未聚焦时被程序赋值会把光标压到 0；这里显式置文末，还原本用例的
+    // 「光标在文末空行」场景
     {
         auto& st = ui.state<InputState>(kEditorInputId);
         st.cursor = st.selectionStart = st.selectionEnd = (int)st.text.size();
     }
 
-    // 编辑器右键 → 挂到 .hit 的 onContextMenu 置菜单打开态（审计 [12]）
+    // 编辑器右键走 .hit 的 onContextMenu 置菜单打开态
     const auto* hit = ui.find("md.editor.input.hit");
     DOCTEST_REQUIRE(hit != nullptr);
     DOCTEST_REQUIRE(hit->onContextMenu != nullptr);
@@ -538,7 +502,7 @@ REGISTER_TEST(md_kbd_wiring_table_insert_menu,
     hit->onContextMenu(pe, eui::Rect{});
     frame();
 
-    // 级联三级：插入表格 → 3 行 → 5 列（子级菜单点击后下一帧才渲染）
+    // 级联三级：插入表格 → 3 行 → 5 列。每点开一级子菜单都要等下一帧才渲染出下一级
     auto* root = ui.find("md.editor.ctx.level.0.item.0");
     DOCTEST_REQUIRE(root != nullptr);
     root->onClick();
@@ -554,7 +518,6 @@ REGISTER_TEST(md_kbd_wiring_table_insert_menu,
 
     {
         const auto& st = ui.state<InputState>(kEditorInputId);
-        // 光标在文末空行 → 表格整块落在那里（行首含 5 列分隔行）
         DOCTEST_CHECK_EQ(st.text,
                          std::string("# t\n"
                                      "|   |   |   |   |   |\n"
@@ -566,7 +529,7 @@ REGISTER_TEST(md_kbd_wiring_table_insert_menu,
         DOCTEST_REQUIRE(save != nullptr);
         DOCTEST_CHECK(save->text.find("未保存") != std::string::npos);  // 插入算编辑
     }
-    // 选完即收起（onOpenChange(false) → 下一帧不构建）
+    // 选完即收起：onOpenChange(false) 后下一帧不再构建菜单项
     DOCTEST_CHECK(ui.find("md.editor.ctx.level.0.item.0") == nullptr);
 
     mod->onStop();

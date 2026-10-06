@@ -13,7 +13,7 @@
 
 namespace module::claude {
 
-// ---------- SSE 事件重组 + usage 解析 ----------
+// SSE 事件重组 + usage 解析
 
 namespace {
 
@@ -117,7 +117,7 @@ std::vector<int64_t> SseUsageParser::feed(const std::string& chunk) {
     return out;
 }
 
-// ---------- stream 检测 ----------
+// stream 检测
 
 bool wantsStream(const std::string& body) {
     if (body.empty()) return false;
@@ -170,7 +170,7 @@ std::string buildUpstreamErrorFrame(const std::string& upstreamError) {
            escaped + "\"}}\n\n";
 }
 
-// ---------- 上游流式请求 ----------
+// 上游流式请求
 
 core::Result<std::unique_ptr<platform::http::StreamingResponse>>
 sendStreamingClaude(const platform::http::Request& req,
@@ -204,7 +204,7 @@ sendStreamingClaude(const platform::http::Request& req,
     return platform::http::sendStreaming(upstream);
 }
 
-// ---------- 上游 → 客户端 桥接 ----------
+// 上游 → 客户端 桥接
 
 void forwardStream(platform::http::ResponseWriter& out,
                    std::shared_ptr<platform::http::StreamingResponse> upstream,

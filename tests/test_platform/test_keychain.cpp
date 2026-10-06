@@ -13,7 +13,7 @@
 #include <thread>
 
 // macOS 扫描路径测试缝（仅 __APPLE__ 有实现，见 keychain_macos_scan.h）：
-// 只把枚举/删除两个边界动作换成可注入函数指针，决策循环不动 → 接线可断言
+// 只把枚举/删除两个边界动作换成可注入函数指针，决策循环不动 → 接线可断言。
 #if defined(__APPLE__)
 #include "platform/keychain_macos_scan.h"
 #endif
@@ -22,8 +22,7 @@
 // （keychain_macos.cpp 用 SecKeychainAddGenericPassword + nullptr 默认钥匙串，没有
 // 测试专用钥匙串的注入口）——会写条目 / 全库枚举的用例若照跑，会污染用户钥匙串、
 // 可能弹授权框（deleteSecretsNotIn 还按 kSecMatchLimitAll 枚举整库）。
-// Windows（DPAPI + %APPDATA% 文件）与 Linux（$HOME 文件）实现不碰系统凭据库，
-// 行为与从前一字不差，照常执行。
+// Windows（DPAPI + %APPDATA% 文件）与 Linux（$HOME 文件）实现不碰系统凭据库，照常执行。
 #if defined(__APPLE__)
 #define SKIP_ON_MACOS_KEYCHAIN()                       \
     DOCTEST_SKIP(                                      \
@@ -66,17 +65,16 @@ REGISTER_TEST(keychain_delete_nonexistent, "keychain: delete nonexistent ok", {
 })
 
 // 空 service / 空 account 在 macOS Keychain API 里是**通配**（serviceLength /
-// accountLength 传 0 = 匹配任意值），于是「空 account」会被静默当成「随便给我
-// 一条」——load 返回**别人**的密钥、delete 删掉**别人**的条目。本仓库空 account
-// 有确切含义 =「该 profile 没有密钥」（反向同步「缺席即清空」会清空
-// account），此时必须回答「没有这条」。见 keychain_macos.cpp 的
-// 「空 service / 空 account 守卫」段。
-// 断言顺序是**故意的**：store 放最前。守卫被摘掉时它先红（fail-fast），后面的
-// load / delete 断言就不再执行 —— 否则 load 会真的从用户真实钥匙串里读出一条
-// 任意密钥、delete 更会通配删掉真实条目（实测：摘掉守卫后 loadSecret("","")
-// 返回 Ok，即整库任取一条）。摘守卫的代价只有一条：往
-// DevDeskTestBlankIdentity 这个测试专用 service 写一条空 account 条目（缺陷本身
-// 的行为），可在「钥匙串访问」里手工删除。
+// accountLength 传 0 = 匹配任意值），于是「空 account」会被静默当成「随便给我一条」
+// ——load 返回**别人**的密钥、delete 删掉**别人**的条目。本仓库空 account 有确切含义
+// =「该 profile 没有密钥」（反向同步「缺席即清空」会清空 account），此时必须回答
+// 「没有这条」。见 keychain_macos.cpp 的「空 service / 空 account 守卫」段。
+//
+// 断言顺序是**故意的，不得调换**：store 放最前。守卫被摘掉时它先红（fail-fast），
+// 后面的 load / delete 就不再执行——否则 load 会真的从用户真实钥匙串里读出一条任意
+// 密钥、delete 更会通配删掉真实条目。摘守卫的代价只有一条：往
+// DevDeskTestBlankIdentity 这个测试专用 service 写一条空 account 条目（缺陷本身的
+// 行为），可在「钥匙串访问」里手工删除。
 #if defined(__APPLE__)
 REGISTER_TEST(keychain_blank_identity_no_wildcard,
               "keychain: 空 service/account 不通配（macOS）", {
@@ -110,8 +108,8 @@ REGISTER_TEST(keychain_delete_secrets_not_in,
         service, "claude:2", "sk-keep-2").isOk());
     DOCTEST_REQUIRE(platform::keychain::storeSecret(
         service, "claude:999", "sk-orphan").isOk());
-    // P0 护栏②（2026-09-30）：白名单前缀（claude:）之外的条目——
-    // 「同 service 下未来别的用途」的形态，扫描必须不删、不计数
+    // 白名单前缀（claude:）之外的条目代表「同 service 下未来别的用途」，扫描必须
+    // 既不删、也不计入 deleted。
     DOCTEST_REQUIRE(platform::keychain::storeSecret(
         service, "notes:theme", "dark").isOk());
 
@@ -139,10 +137,9 @@ REGISTER_TEST(keychain_delete_secrets_not_in,
     return true;
 })
 
-// P0 护栏②（2026-09-30）：各平台扫描删除分支共用的白名单决策函数。
-// 平台实现里只是「扫描到 account → 交给它决策」，决策语义在此逐条钉死；
-// macOS 的真实扫描用例不可跑（真实 login keychain 不可隔离，见文件头），
-// 这里是该守卫在 macOS 上唯一可执行的断言面。
+// 各平台扫描删除分支共用的白名单决策函数。平台实现里只是「扫描到 account → 交给它
+// 决策」，决策语义在此逐条钉死；macOS 的真实扫描用例不可跑（真实 login keychain
+// 不可隔离，见文件头），这里是该守卫在 macOS 上唯一可执行的断言面。
 REGISTER_TEST(keychain_orphan_sweep_prefix_whitelist,
               "keychain: 孤儿清理白名单前缀（非 claude: 一律不删）", {
     using platform::keychain::deletableOrphanAccount;
@@ -157,7 +154,8 @@ REGISTER_TEST(keychain_orphan_sweep_prefix_whitelist,
     DOCTEST_CHECK(!deletableOrphanAccount("Claude:1"));  // 大小写敏感
     DOCTEST_CHECK(!deletableOrphanAccount(""));
 
-    // 决策函数：keep 集合内 → 不删（无论前缀）；keep 外只有白名单前缀才删
+    // 决策函数：keep 集合内 → 不删（无论前缀）；keep 外只有白名单前缀才删。
+    // 空 keep 不是「全删」——那会连带清掉同 service 下未来别的用途的条目。
     const std::set<std::string> keep{"claude:1"};
     DOCTEST_CHECK(!shouldDeleteOrphan("claude:1", keep));     // 在 keep 里
     DOCTEST_CHECK(shouldDeleteOrphan("claude:999", keep));    // 白名单孤儿 → 删
@@ -166,22 +164,21 @@ REGISTER_TEST(keychain_orphan_sweep_prefix_whitelist,
     return true;
 })
 
-// ==================== macOS 扫描路径接线断言（merge-review R2，2026-09-30）====================
+// macOS 扫描路径接线断言
 // 上面的纯件用例只钉 shouldDeleteOrphan 这个**决策函数**的语义，钉不住「macOS 的
 // 扫描分支真的调它」——keychain_macos.cpp 的扫描循环里那行
 // `if (!shouldDeleteOrphan(account, keep)) continue;` 一旦被回退成裸
-// `keep.count(account) == 0`，纯件用例照样全绿：白名单前缀护栏（P0 护栏②）在
-// **事故发生的那个平台**上无人覆盖。而走真实存储的扫描用例在 macOS 全部
-// SKIP_ON_MACOS_KEYCHAIN（P0 教训：真 login keychain 不可隔离，照跑会写用户钥匙串、
-// 按 kSecMatchLimitAll 枚举整库）——SKIP 保持不解除。
+// `keep.count(account) == 0`，纯件用例照样全绿：白名单前缀护栏在**事故发生的那个
+// 平台**上无人覆盖。而走真实存储的扫描用例在 macOS 全部 SKIP_ON_MACOS_KEYCHAIN
+// （真 login keychain 不可隔离，照跑会写用户钥匙串、按 kSecMatchLimitAll 枚举整库）
+// ——SKIP 保持不解除。
 //
 // 解法：keychain_macos_scan.h 测试缝只把「枚举」与「删除」两个**边界动作**换成
-// 可注入函数指针（默认 nullptr = 真实 Security.framework 调用），决策循环一行
-// 未动。于是这里用**注入的假 keychain 命名空间**（与 test_claude_service.cpp 的
-// ScopedFakeKeychain 同款 RAII 手法，但作用于 macOS 扫描钩子）端到端钉住接线：
+// 可注入函数指针（默认 nullptr = 真实 Security.framework 调用），决策循环一行未动。
+// 这里用**注入的假 keychain 命名空间**端到端钉住接线：
 //   1) macOS 扫描路径确实走了 shouldDeleteOrphan —— 裸 keep.count 写法必红；
-//   2) 空 keep 短路生效 —— 空 keep ≠ 通配全删，前缀外条目仍必须保留（P0 护栏②
-//      最容易被绕过的一条：keep 空时全清）。
+//   2) 空 keep 短路生效 —— 空 keep ≠ 通配全删，前缀外条目仍必须保留（白名单护栏最
+//      容易被绕过的一条：keep 空时全清）。
 // 全程不碰真钥匙串（枚举与删除都是假的）。
 #if defined(__APPLE__)
 namespace {
@@ -271,7 +268,7 @@ REGISTER_TEST(keychain_macos_scan_wiring,
         if (e.rfind("OtherService/", 0) == 0) touchedOtherService = true;
     }
     DOCTEST_CHECK(!keptNotes);           // 前缀外条目绝不被删
-    DOCTEST_CHECK(!touchedOtherService);  // service 过滤未被回退成「扫到就删」
+    DOCTEST_CHECK(!touchedOtherService); // service 过滤未被回退成「扫到就删」
     return true;
 })
 
@@ -294,7 +291,9 @@ REGISTER_TEST(keychain_macos_scan_enumerate_failure_propagates,
     const Hooks* prev = platform::keychain::macos_scan::setHooksForTest(&failing);
 
     auto r = platform::keychain::realDeleteSecretsNotIn(kScanService, {});
-    platform::keychain::macos_scan::setHooksForTest(prev);   // 复位在断言前
+    // 复位必须排在断言前：DOCTEST_CHECK 失败时不抛，但 REQUIRE 会中断本用例体，
+    // 把失败钩子留给后续用例去枚举/删除
+    platform::keychain::macos_scan::setHooksForTest(prev);
 
     DOCTEST_CHECK(r.isFail());
     DOCTEST_CHECK(scan.fake.erased.empty());   // 失败时不得删任何条目
@@ -302,10 +301,10 @@ REGISTER_TEST(keychain_macos_scan_enumerate_failure_propagates,
 })
 #endif  // __APPLE__
 
-// ==================== CP-11：account → 文件名映射 + 旧命名兼容 ====================
+// account → 文件名映射 + 旧命名兼容（仅 Windows）
 // 下面两个用例断言的是 keychain_win.cpp 的磁盘命名契约（<encode(account)>.key），
 // 只看 Windows 实现（文件存储）；macOS 走 Security.framework、Linux 走 posix 文件
-// 实现，命名规则不同 → 整段用 _WIN32 门控（与 test_claude_service.cpp 同款处理）。
+// 实现，命名规则不同 → 整段用 _WIN32 门控。
 #if defined(_WIN32)
 
 // 旧规则（非白名单字符一律折成 '_'）下 "claude:1" 与 "claude/1" 折叠成同一个
@@ -356,8 +355,8 @@ REGISTER_TEST(keychain_legacy_naming_still_readable,
 
     platform::keychain::deleteSecret(service, account);
 
-    // 用新编码写一份合法密文（DPAPI 只能同机同用户解，密文必须真造），
-    // 再在磁盘上改名成旧规则的名字，模拟升级前留下的文件
+    // 用新编码写一份合法密文（DPAPI 只能同机同用户解，密文必须真造，不能手写假
+    // 密文），再在磁盘上改名成旧规则的名字，模拟升级前留下的文件
     DOCTEST_REQUIRE_MESSAGE(platform::keychain::storeSecret(
                                 service, account, "sk-legacy-value").isOk(),
                             "storeSecret 失败（造不出新编码密文，后续 rename 无从谈起）");
@@ -368,8 +367,10 @@ REGISTER_TEST(keychain_legacy_naming_still_readable,
     std::error_code ec;
     DOCTEST_REQUIRE_MESSAGE(std::filesystem::exists(encoded, ec),
                             "store 后 encoded 不存在: " + encoded.string());
-    // Windows：刚创建的文件可能被 AV/Defender 短暂占位（sharing violation），
-    // 立即 rename 会失败——有界重试（5 × 20ms），超限才红
+    // Windows：刚创建的文件可能被 AV/Defender 短暂占位（sharing violation），立即
+    // rename 会失败——有界重试（5 × 20ms），超限才红。别把重试改成「等一下再试一次」：
+    // 单次重试在实机上仍会随机红。ec.clear() 也必须每轮清，remove 的错误码会污染
+    // 下一轮 rename 的判定。
     for (int attempt = 1; ; ++attempt) {
         std::filesystem::remove(legacy, ec);
         ec.clear();
@@ -404,11 +405,11 @@ REGISTER_TEST(keychain_legacy_naming_still_readable,
 
 #endif  // _WIN32
 
-// ==================== CPX-14：注入缝（函数指针表）契约 ====================
-// 断言缝本身：默认指向真实实现 → 安装后四个入口全部路由到注入表 → 复位后回到
-// 默认。全程只用假实现 + 指针比较，不碰真实存储（不写用户钥匙串），故 macOS
-// 也能跑、无需 SKIP_ON_MACOS_KEYCHAIN——缝的使用规矩见 platform/keychain.h
-// 的「注入缝」段（claude_service 的两段写失败分支用例在 test_claude_service.cpp）
+// 注入缝（函数指针表）契约
+// 断言缝本身：默认指向真实实现 → 安装后四个入口全部路由到注入表 → 复位后回到默认。
+// 全程只用假实现 + 指针比较，不碰真实存储（不写用户钥匙串），故 macOS 也能跑、
+// 无需 SKIP_ON_MACOS_KEYCHAIN——这也是本文件里唯一在 macOS 上真跑的存储类用例。
+// 缝的使用规矩见 platform/keychain.h 的「注入缝」段。
 namespace {
 
 struct CountingKeychain {
@@ -446,11 +447,12 @@ core::Result<std::vector<std::string>> countingSweep(
 } // namespace
 
 REGISTER_TEST(keychain_backend_injection,
-              "keychain: CPX-14 注入缝默认真实实现且可替换复位", {
-    // 默认后端 = 真实实现（生产路径的落点）
+              "keychain: 注入缝默认真实实现且可替换复位", {
     DOCTEST_CHECK(&platform::keychain::backend() ==
                   &platform::keychain::defaultBackend());
 
+    // g_counting 与后端表是一对：两个复位（g_counting = prevFake / setBackendForTest(prev)）
+    // 必须都执行，漏一个就把假指针留给后续用例
     CountingKeychain fake;
     CountingKeychain* prevFake = g_counting;
     g_counting = &fake;
@@ -458,10 +460,9 @@ REGISTER_TEST(keychain_backend_injection,
                                                &countingDelete, &countingSweep};
     const platform::keychain::Backend* prev =
         platform::keychain::setBackendForTest(&table);
-    // 安装返回被替换的旧后端 = 默认（真实）后端
     DOCTEST_CHECK(prev == &platform::keychain::defaultBackend());
 
-    // 四个入口全部路由到注入表（account 是编造的，真实存储一字未碰）
+    // 四个入口全部路由到注入表（service/account 是编造的，真实存储一字未碰）
     DOCTEST_CHECK(platform::keychain::storeSecret("S", "a", "v").isOk());
     auto l = platform::keychain::loadSecret("S", "a");
     DOCTEST_REQUIRE(l.isOk());

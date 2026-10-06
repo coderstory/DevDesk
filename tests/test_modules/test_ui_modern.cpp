@@ -1,24 +1,12 @@
 // tests/test_modules/test_ui_modern.cpp
-// UI 现代化（plan 2026-09-28-ui-modernization）无头断言。
-// M3-1（2026-09-28）：Home 统计卡换 card + Token 速率 sparkline 接线 +
-// 速率采样环护栏。sparkline 数据源细节用例见
-// tests/test_core/test_proxy_stats.cpp（proxy_stats_rate_series_*），本文件
-// 管「空 → {0.0f}」护栏（防 lineChart 对空 values 填演示数据）与 Home
-// compose 接线。
-//
-// M1（2026-09-28，ui/m1-todo）用例并入本文件：
-//   1. 统一锚点换算纯测（含 Y、含滚动偏移、dpi 退化）—— M1-1
-//   2. todo 看板右键锚点 = 板几何经统一换算（含滚动偏移口径保留）—— M1-2
-//   3. claude profile 列表右键菜单四项 + 动作同源 + 隐形卡守卫 —— M1-5
-// 三个用例随各自任务（M1-1/M1-2/M1-5）分批加入本文件。
-// 后续批次（M2/M3）的用例（virtualList / card 布局不变式、charts 数据接线）
-// 随各自任务追加到本文件。
-// M1-3/M1-4（2026-09-28，ui/rest）：md 树/编辑器右键统一换算 + 编辑器
-// input 直挂 onContextMenu（删逐帧 hack）；4523e09 隐形菜单回归锁。
-// M3 剩余（2026-09-28，ui/rest）：profile 列表虚拟化 slot 窗口 + 滚动回退、
-// 调用记录 virtualList、todo 卡容器换 card、Home API barChart + recent 换
-// card、三处背景渐变。
-// 证据链 = 代码路径 + 本无头 compose 测试；真实鼠标点验留给用户人工确认
+// UI 现代化无头断言：Home 统计卡 / sparkline 接线、速率采样环护栏、统一锚点换算、
+// 右键菜单、virtualList / card 布局不变式、barChart 数据接线、md 树与编辑器右键、about 页。
+// 跨文件前提：
+//   - 无头 compose：没有 Router，页面原点 0；没有 GLFW，剪贴板/输入法等系统调用是
+//     安全 no-op，这些只能钉到「派发/可见面」为止。
+//   - 元素 frame 需显式 ui.layout(...) 后才有值，compose 不给几何。
+//   - sparkline 数据源细节用例见 tests/test_core/test_proxy_stats.cpp
+//     （proxy_stats_rate_series_*）；本文件管「空 → {0.0f}」护栏与 Home compose 接线。
 #include "doctest.h"
 #include <eui/types.h>
 #include "test_support.h"
@@ -65,24 +53,21 @@ using module::markdown::kEditorInputHitId;
 
 namespace {
 
-// 假时钟 RAII：测试结束自动 reset（防污染后续用例），与 test_proxy_stats.cpp
-// 同款（确定性速率采样需要假时钟）
+// 假时钟 RAII：析构自动 reset（防污染后续用例）。确定性速率采样需要假时钟。
 struct FakeClock {
     int64_t now = 1000000;
     FakeClock() { core::proxy_stats::setTestClock([this] { return now; }); }
     ~FakeClock() { core::proxy_stats::resetForTest(); }
 };
 
-// ---- M1-2 用：todo 无头环境（照 test_todo_ui.cpp 的 TestEnv 形态）----
+// todo 无头环境
 constexpr const char* kTodoDbPrefix = "devdesk_test_uimodern_todo_";
 
 struct TodoEnv : test_support::TestEnv {
     std::unique_ptr<module::todo::TodoService> svc;
 
-    // 视图状态隔离（审计 [23]）自 2026-10-03（批次 E2）起由基类注册的临时库
-    // 承担：状态是 app_config 表的一行（键 todo_view_state，见
-    // todo_view_state.h）。原 DEVDESK_TODO_VIEW_STATE_PATH 文件缝已无人读
-    //（todo_view_state.cpp 不再 getenv），随清理批删除。
+    // 视图状态由基类注册的临时库承担：状态是 app_config 表的一行（键
+    // todo_view_state，见 todo_view_state.h），没有独立的状态文件
     TodoEnv() : test_support::TestEnv(kTodoDbPrefix, "", true) {
         svc = std::make_unique<module::todo::TodoService>(db->db());
     }
@@ -107,7 +92,7 @@ struct TodoFrame {
     }
 };
 
-// ---- M1-5 用：claude 无头环境（照 test_claude_ui.cpp 的 TestEnv 形态）----
+// claude 无头环境
 constexpr const char* kClaudeDbPrefix = "devdesk_test_uimodern_claude_";
 constexpr const char* kClaudeKeychainService = "DevDeskTestUiModernClaude";
 
@@ -125,15 +110,14 @@ struct ClaudeEnv : test_support::TestDb {
 
 } // namespace
 
-// ---- M3-1 用例（Home 统计卡 / sparkline 护栏）----
-
+// Home 统计卡 / sparkline 护栏
 REGISTER_TEST(uiModernSparkSeriesGuard,
               "uiModern: rateSeries 空 → {0.0f}（lineChart demo 数据护栏）", {
     core::proxy_stats::resetForTest();
     FakeClock clock;
 
     // 无任何 usage 事件：sparkline 数据源必须兜底 {0.0f}，绝不填 lineChart
-    // 内置演示序列（linechart.h build() 对空 values 的行为）
+    // 内置演示序列
     const auto series = core::proxy_stats::rateSeries(24);
     DOCTEST_CHECK_EQ(series.size(), static_cast<size_t>(1));
     DOCTEST_CHECK_EQ(series[0], 0.0f);
@@ -183,10 +167,9 @@ REGISTER_TEST(uiModernHomeCardSpark,
 
         DOCTEST_CHECK(ui.find("home.stat.tokens") != nullptr);
         DOCTEST_CHECK(ui.find("home.stat.tokens.spark") != nullptr);
-        // 2026-09-28 根因修：空闲态不再挂 onTimer（消整页 2Hz 重绘 +
-        // 常驻 animating_ 反复打断 hover 过渡；仅流式活动期挂 1s）
+        // 空闲态不挂 onTimer：常驻会 2Hz 整页重绘并反复打断 hover 过渡；
+        // 仅流式活动期挂 1s
         DOCTEST_CHECK(ui.find("home.stat.tokens.timer") == nullptr);
-
         mod->onStop();
         core::proxy_stats::resetForTest();
     }
@@ -208,10 +191,10 @@ REGISTER_TEST(uiModernHomeCardSpark,
         mod->compose(ui, screen);
         ui.end();
 
-        // 统计卡根节点（card 组件）：根 id 不变，语义未变
+        // 统计卡根节点（card 组件）：根 id 不变
         DOCTEST_CHECK(ui.find("home.stat.notes") != nullptr);
-        // card 组件内部结构：.bg 携带 shadow（panelShadow 随 CardStyle 注入，
-        // M3-4 复查项）；.content 为内容容器（旧手绘 rect 无此子节点）
+        // card 组件内部结构：.bg 携带 shadow（panelShadow 随 CardStyle 注入）；
+        // .content 为内容容器
         DOCTEST_CHECK(ui.find("home.stat.tokens.bg") != nullptr);
         DOCTEST_CHECK(ui.find("home.stat.tokens.content") != nullptr);
         // sparkline 接线：lineChart 根节点在卡内
@@ -227,8 +210,7 @@ REGISTER_TEST(uiModernHomeCardSpark,
     return true;
 })
 
-// ---- 1. 统一锚点换算纯测（M1-1）----
-
+// 统一锚点换算纯测
 REGISTER_TEST(uiModernAnchorPure,
               "uiModern: 统一锚点换算（含 Y、含滚动偏移、dpi 退化）", {
     // 基准：窗口 (100, 200)，页面原点 x=20，dpi=1.0（onContextMenu 通道口径）
@@ -236,7 +218,7 @@ REGISTER_TEST(uiModernAnchorPure,
         ::core::menuAnchorForPointer(100.0f, 200.0f, 20.0f, 0.0f, 1.0f);
     DOCTEST_CHECK_EQ(a0.x, 80.0f);
     DOCTEST_CHECK_EQ(a0.y, 200.0f);
-    // 滚动偏移（基于非滚动几何的锚点，4523e09 口径）：
+    // 滚动偏移（锚点基于非滚动几何）：
     const ::core::MenuAnchor a1 =
         ::core::menuAnchorForPointer(100.0f, 200.0f, 20.0f, 36.0f, 1.0f);
     DOCTEST_CHECK_EQ(a1.y, 164.0f);
@@ -252,8 +234,7 @@ REGISTER_TEST(uiModernAnchorPure,
     return true;
 })
 
-// ---- 2. todo 看板右键锚点 = 板几何经统一换算（M1-2）----
-
+// todo 看板右键锚点 = 板几何经统一换算
 REGISTER_TEST(uiModernTodoMenuAnchor,
               "uiModern todo: 右键菜单锚点 = 板几何经统一换算（卡片 + 列头）", {
     TodoEnv env;
@@ -266,8 +247,8 @@ REGISTER_TEST(uiModernTodoMenuAnchor,
     std::unique_ptr<::core::Module> mod(create_todo_module());
     mod->onStart();
 
-    // 迁移默认 4 列 + 新建 1 列（「右键源列」= col.4，同既有用例口径）：
-    // 板几何按 5 列推算（与 drawContextMenu 内 host.columns->size() 一致）
+    // 迁移默认 4 列 + 新建 1 列（「右键源列」= col.4）：板几何按 5 列推算，
+    // 与 drawContextMenu 内 host.columns->size() 一致
     const auto& tok = ::core::theme::current();
     const ::module::todo::ui::BoardGeom g =
         ::module::todo::ui::boardGeom(1600.0f, 5, tok);
@@ -307,8 +288,7 @@ REGISTER_TEST(uiModernTodoMenuAnchor,
     return true;
 })
 
-// ---- 3. claude profile 列表右键菜单（M1-5）----
-
+// claude profile 列表右键菜单
 REGISTER_TEST(uiModernClaudeProfileCtxMenu,
               "uiModern claude_module: 列表右键菜单五项（编辑/建副本/复制配置/删除/设为当前）", {
     ClaudeEnv env;
@@ -339,9 +319,8 @@ REGISTER_TEST(uiModernClaudeProfileCtxMenu,
         DOCTEST_REQUIRE(wrap->onContextMenu != nullptr);
     }
 
-    // 右键 profile.1（中转）→ 菜单打开，五项 + 锚点 = 指针坐标
-    //（无 Router → 页面原点 0，dpi=1 → (400, 300) 原样；2026-09-30 batch-fix C
-    // 起五项：「复制」改名「建副本」+ 新增「复制配置」，D-C1/D-C2）
+    // 右键 profile.1（中转）→ 菜单打开，五项 + 锚点 = 指针坐标（无 Router →
+    // 页面原点 0，dpi=1 → (400, 300) 原样）
     {
         compose();
         eui::PointerEvent pe;
@@ -375,10 +354,10 @@ REGISTER_TEST(uiModernClaudeProfileCtxMenu,
         DOCTEST_CHECK_EQ(l4->text, std::string("设为当前"));
     }
 
-    // 点「复制配置」→ case 2 派发 requestCopyConfig → doCopyConfig
+    // 点「复制配置」→ 派发 requestCopyConfig → doCopyConfig
     //（headless：GLFW 未 init，setClipboardText 经 _GLFW_REQUIRE_INIT 早退 =
-    // 安全 no-op，见 GLFW input.c glfwSetClipboardString；断言只钉派发可见面
-    // = toast，剪贴板真写以真机验收为准，不写假绿断言——spec §4.5 风险 3）
+    // 安全 no-op；故只钉派发的可见面 = toast，剪贴板真写以真机验收为准，
+    // 不写假绿断言）
     {
         auto* item = ui.find("claude.list.ctx.level.0.item.2");
         DOCTEST_REQUIRE(item != nullptr);
@@ -393,8 +372,7 @@ REGISTER_TEST(uiModernClaudeProfileCtxMenu,
         DOCTEST_CHECK_EQ(menu->opacity, 0.0f);
     }
 
-    // 右键重开 → 点「设为当前」→ 激活位变化（与既有按钮同源：
-    // requestSetActive → doSetActive；2026-09-30 起位于 case 4）
+    // 右键重开 → 点「设为当前」→ 激活位变化（与既有按钮同源：requestSetActive）
     {
         eui::PointerEvent pe;
         eui::Rect rect;
@@ -425,8 +403,7 @@ REGISTER_TEST(uiModernClaudeProfileCtxMenu,
         DOCTEST_CHECK_EQ(bActive, true);  // 「中转」已设为当前
     }
 
-    // 再右键 → 点「删除」→ 弹出删除确认（与既有按钮同源：
-    // requestDelete 委托 → deleteConfirmOpen_；2026-09-30 起位于 case 3）
+    // 再右键 → 点「删除」→ 弹出删除确认（与既有按钮同源：requestDelete 委托）
     {
         eui::PointerEvent pe;
         eui::Rect rect;
@@ -463,8 +440,8 @@ REGISTER_TEST(uiModernClaudeProfileCtxMenu,
         mod->compose(ui, screen);
         ui.end();
 
-        // 稳态：root opacity = 1（默认值）。1cdd36f 已删 md.root 整页 fade
-        // 过渡（bug e42ac9e：整页溶解 0.15s 诡异闪烁），transition 必须保持关闭
+        // 稳态：root opacity = 1（默认值）。md.root 不带整页 fade 过渡——
+        // 整页溶解 0.15s 造成诡异闪烁，transition 必须保持关闭
         const auto* root = ui.find("md.root");
         DOCTEST_REQUIRE(root != nullptr);
         DOCTEST_CHECK_EQ(root->opacity, 1.0f);
@@ -472,7 +449,7 @@ REGISTER_TEST(uiModernClaudeProfileCtxMenu,
     }
 
     // Ctrl+Shift+P 切态 → setMode（与顶栏 segmented onChange 同一收口）；
-    // 过渡已删，切换即硬切
+    // 无过渡，切换即硬切
     eui::KeyEvent key = test_support::pressShortcut(eui::InputKey::P, /*shift=*/true);
     DOCTEST_CHECK(mod->onKeyEvent(key));
 
@@ -485,7 +462,7 @@ REGISTER_TEST(uiModernClaudeProfileCtxMenu,
         mod->compose(ui, screen);
         ui.end();
 
-        // 切换后首帧：root opacity 保持 1.0（过渡已删，无淡出）
+        // 切换后首帧：root opacity 保持 1.0（无淡出）
         const auto* root = ui.find("md.root");
         DOCTEST_REQUIRE(root != nullptr);
         DOCTEST_CHECK_EQ(root->opacity, 1.0f);
@@ -503,11 +480,10 @@ REGISTER_TEST(uiModernDialogClosedKept,
     mod->onStart();
     TodoFrame frame(mod.get());
 
-    // M2-2 盘点结论：全部弹窗走 ui_kit::drawDialogFrame → components::dialog
-    // （EUI 已内建「常驻构建 + opacity 收起」0.16s OutCubic 过渡），toast 同型
-    // ——DevDesk 侧不重复加。本用例是回归护栏：关闭态元素仍构建、opacity 0
-    // 且 disabled（防误触）；若未来重引入懒守卫（if (!open) return），收起
-    // 动画会随元素移除消失，此处立即变红。
+    // 全部弹窗走 ui_kit::drawDialogFrame → components::dialog（EUI 已内建
+    // 「常驻构建 + opacity 收起」0.16s OutCubic 过渡），toast 同型，DevDesk 侧
+    // 不重复加。关闭态元素仍构建、opacity 0 且 disabled（防误触）。
+    // 反重构：不要加回「if (!open) return」懒守卫——元素被移除时收起动画会随之消失。
     const auto* dlg = frame.ui.find("todo.dialog.newtask");
     DOCTEST_REQUIRE(dlg != nullptr);
     const auto* panel = frame.ui.find("todo.dialog.newtask.panel");
@@ -538,13 +514,13 @@ REGISTER_TEST(uiModernTodoDropFadeGuard,
     mod->onStart();
     TodoFrame frame(mod.get());
 
-    // 迁移默认 4 列 + 新建 1 列 = col.4；卡片区容器常驻（M2-3 落位淡入载体）
+    // 迁移默认 4 列 + 新建 1 列 = col.4；卡片区容器常驻（落位淡入载体）
     const auto* cards = frame.ui.find("todo.col.4.cards");
     DOCTEST_REQUIRE(cards != nullptr);
     DOCTEST_CHECK_EQ(cards->opacity, 1.0f);
 
-    // 跟手期间（press → drag）：容器 opacity 由 dragActive 门控 → 0.6 调暗
-    //（审计修复前靠 columnFadeIn_ 标志恒 1，松手时 1.0→0.6→1.0 闪暗）
+    // 跟手期间（press → drag）：容器 opacity 由 dragActive 门控 → 0.6 调暗。
+    // 不可改回「恒 1 的标志位」：松手时 1.0→0.6→1.0 会闪暗。
     {
         auto* card = frame.ui.find("todo.col.4.card.0.bg");
         DOCTEST_REQUIRE(card != nullptr);
@@ -566,7 +542,7 @@ REGISTER_TEST(uiModernTodoDropFadeGuard,
     }
 
     // 拖拽结束（cancel 路径同样走 cardReleased 跟手收口）→ dragActive 归 false，
-    // 容器目标回 1.0：0.6→1.0 平滑淡回（不再先暗到 0.6 再淡回）
+    // 容器目标回 1.0：0.6→1.0 平滑淡回
     {
         auto* card = frame.ui.find("todo.col.4.card.0.bg");
         DOCTEST_REQUIRE(card != nullptr);
@@ -584,18 +560,17 @@ REGISTER_TEST(uiModernTodoDropFadeGuard,
     return true;
 })
 
-// ---- A. M1 md 子项：树/编辑器右键统一换算 + 编辑器直挂（M1-3/M1-4）----
-// M1-3：openFileContextMenu 换 menuAnchorForPointerInPage；x 扣页面区原点
-// 的既有回归在 test_markdown.cpp（md_ctx_menu_page_origin），本文件锁
-// 「无 Router → 原点 0」形态 + 4523e09 隐形菜单回归。M1-4：input 链直挂
-// onContextMenu（删逐帧 find hack）由 .hit 回调非空 + 锚点断言锁。
+// md 子项：树/编辑器右键统一换算 + 编辑器直挂
+// openFileContextMenu 走 menuAnchorForPointerInPage；x 扣页面区原点的既有回归
+// 在 test_markdown.cpp（md_ctx_menu_page_origin），本文件锁「无 Router → 原点 0」
+// 形态 + 隐形菜单回归。编辑器 input 链直挂 onContextMenu（不做逐帧 find hack），
+// 由 .hit 回调非空 + 锚点断言锁。
 
 REGISTER_TEST(uiModernMdTreeNoGhost,
               "uiModern md: 空路径右键早退不留隐形菜单态（4523e09 回归锁）", {
     // 空笔记目录：树无文件行 → ctxMenuPath_ 恒空；drawNoteContextMenu
-    // 每帧强制置关（4523e09 语义：open 标志与「存在右键目标」同生共灭，
-    // 直接赋值、不回 onOpenChange 回调）。连续两帧断言菜单节点绝不构建
-    // （无幽灵菜单、标志不被拨起）
+    // 每帧强制置关（open 标志与「存在右键目标」同生共灭，直接赋值、不回
+    // onOpenChange 回调）。连续两帧断言菜单节点绝不构建（无幽灵菜单）
     test_support::MdHeadlessEnv env("devdesk_test_ui_m1_", "mdghost", "m1.db");
     std::unique_ptr<::core::Module> mod(create_markdown_module());
     mod->onStart();
@@ -612,7 +587,7 @@ REGISTER_TEST(uiModernMdTreeNoGhost,
 })
 
 REGISTER_TEST(uiModernMdCtxAnchor,
-              "uiModern md: 树行/编辑器右键锚点 = 指针坐标统一换算（M1-3/M1-4）", {
+              "uiModern md: 树行/编辑器右键锚点 = 指针坐标统一换算", {
     test_support::MdHeadlessEnv env("devdesk_test_ui_m1_", "mdanchor", "m1.db");
     {
         std::ofstream ofs(env.dir / "锚.md", std::ios::binary);
@@ -645,8 +620,7 @@ REGISTER_TEST(uiModernMdCtxAnchor,
         DOCTEST_CHECK(std::fabs(menu->x - 300.0f) < 0.01f);
         DOCTEST_CHECK(std::fabs(menu->y - 200.0f) < 0.01f);
     }
-    // 编辑器右键：打开笔记进入编辑态 → .hit 节点直挂 onContextMenu（M1-4
-    // 删逐帧 hack 后回调仍在），锚点同口径
+    // 编辑器右键：打开笔记进入编辑态 → .hit 节点直挂 onContextMenu，锚点同口径
     {
         compose();
         const auto* fileRow = ui.find("md.tree.node.1.row");
@@ -672,8 +646,7 @@ REGISTER_TEST(uiModernMdCtxAnchor,
     return true;
 })
 
-// ---- B. M3 剩余：virtualList / todo card / barChart / 渐变 / recent card ----
-
+// virtualList / todo card / barChart / 渐变 / recent card
 REGISTER_TEST(uiModernVirtualProfileRows,
               "uiModern claude: profile 虚拟列表 slot 窗口 + 滚动回退语义", {
     ClaudeEnv env;
@@ -693,8 +666,7 @@ REGISTER_TEST(uiModernVirtualProfileRows,
         ui.end();
     };
 
-    // 列表根 = virtualList 节点（.slot. 行重建语义）；行内容 id 沿用绝对
-    // 下标（旧断言形态）：profile.0 可见
+    // 列表根 = virtualList 节点（.slot. 行重建语义）；行内容 id 用绝对下标
     compose();
     DOCTEST_CHECK(ui.find("claude.profiles.scroll.slot.0") != nullptr);
     DOCTEST_CHECK(ui.find("claude.profile.0.name") != nullptr);
@@ -702,10 +674,8 @@ REGISTER_TEST(uiModernVirtualProfileRows,
     DOCTEST_CHECK(ui.find("claude.profile.15.name") == nullptr);
 
     // 滚动回退语义：onScrollOffsetChanged 写 profilesScrollOffset_ →
-    // 重 compose 视口随偏移前移（原视口外的行进入渲染范围）。
-    // 2026-09-30：共享配置片段列表限高 2 条后区块高 94→204，列表视口少 110px
-    //（slot 窗口语义未变，只是窗口更矮）→ 偏移从 600 提到 1500，让行 17
-    //（内容 y 1836，2 行距）重新落进「偏移 ± 1 视口 overscan」渲染窗
+    // 重 compose 视口随偏移前移。共享配置片段列表限高 2 条后区块高 94→204，
+    // 列表视口少 110px → 偏移取 1500，让行 17 落进「偏移 ± 1 视口 overscan」渲染窗
     const auto* root = ui.find("claude.profiles.scroll");
     DOCTEST_REQUIRE(root != nullptr);
     DOCTEST_REQUIRE(root->onScrollOffsetChanged != nullptr);
@@ -713,9 +683,8 @@ REGISTER_TEST(uiModernVirtualProfileRows,
     compose();
     DOCTEST_CHECK(ui.find("claude.profiles.scroll.slot.0") != nullptr);
     DOCTEST_CHECK(ui.find("claude.profile.17.name") != nullptr);
-    // 行命中节点 .bg 保留（选中/右键挂点行内，点击语义未动）。2026-09-30：
-    // 视口变矮后 offset 1500 下第 0 行已被 slot 窗口裁掉（窗口化更明显，见上
-    // 初始断言），改在已渲染的行 17 上验 .bg
+    // 行命中节点 .bg 保留（选中/右键挂点行内）。offset 1500 下第 0 行已被 slot
+    // 窗口裁掉，故在已渲染的行 17 上验 .bg
     DOCTEST_CHECK(ui.find("claude.profile.17.bg") != nullptr);
 
     mod->onStop();
@@ -725,7 +694,7 @@ REGISTER_TEST(uiModernVirtualProfileRows,
 REGISTER_TEST(uiModernVirtualLogRows,
               "uiModern claude: 调用记录 virtualList 行重建（slot 结构保留）", {
     ClaudeEnv env;
-    // 种子：1 个 profile + 25 条调用（FK profile_id 必须真实存在；当页 20 行）
+    // 种子：1 个 profile + 25 条调用（FK profile_id 必须真实存在；每页 20 行）
     auto prof = env.svc->createProfile("日志源", "https://api.anthropic.com",
                                        "sk-ant-log-1", "claude-sonnet-4-5");
     DOCTEST_REQUIRE(prof.isOk());
@@ -747,9 +716,8 @@ REGISTER_TEST(uiModernVirtualLogRows,
         mod->compose(ui, screen);
         ui.end();
     };
-    // 打开弹窗（CPX-06：后台取数；有界等待当页 20 行到位）。
-    // 2026-09-28：调用记录抽成详情页签（2026-09-30 batch-fix B 起第 5 页签
-    // idx 4）——先切 tab（该帧生效），再点「查看全部 →」开弹窗
+    // 打开弹窗（后台取数；有界等待每页 20 行到位）。调用记录在详情页签的第 5 个
+    //（idx 4）——先切 tab（该帧生效），再点「查看全部 →」开弹窗
     {
         compose();
         const auto* tab = ui.find("claude.detail.tabs.hit.4");
@@ -773,12 +741,11 @@ REGISTER_TEST(uiModernVirtualLogRows,
         }
     }
     DOCTEST_CHECK(rowsReady);
-    // 列表根 = virtualList 节点（slot 重建语义）；绝对行号 id 沿用
+    // 列表根 = virtualList 节点（slot 重建语义）；id 用绝对行号
     DOCTEST_CHECK(ui.find("claude.dialog.calls.scroll.slot.0") != nullptr);
     DOCTEST_CHECK(ui.find("claude.dialog.calls.row.0.wrap") != nullptr);
     DOCTEST_CHECK(ui.find("claude.dialog.calls.row.19.wrap") != nullptr);
     DOCTEST_CHECK(ui.find("claude.dialog.calls.row.20.wrap") == nullptr);
-    // 文本节点 id 沿用（textOf 形态）；当页 20 行整段渲染（overscan）
 
     mod->onStop();
     return true;
@@ -800,10 +767,9 @@ REGISTER_TEST(uiModernTodoCardContainer,
     // card 骨架节点（panelShadow 阴影载体 = card 内部 .bg）
     DOCTEST_CHECK(frame.ui.find("todo.col.4.card.0.card") != nullptr);
     DOCTEST_CHECK(frame.ui.find("todo.col.4.card.0.card.bg") != nullptr);
-    // 交互层保留（原 .bg：命中语义与旧卡根相同）
+    // 命中层是 .bg（不是 .card 骨架）：事件挂点全在它身上，别挪到骨架上
     const auto* bg = frame.ui.find("todo.col.4.card.0.bg");
     DOCTEST_REQUIRE(bg != nullptr);
-    // 事件挂点全部随行（拖拽/右键/点击业务通道未动）
     DOCTEST_CHECK(bg->onClick != nullptr);
     DOCTEST_CHECK(bg->onContextMenu != nullptr);
     DOCTEST_CHECK(bg->onPress != nullptr);
@@ -817,10 +783,10 @@ REGISTER_TEST(uiModernTodoCardContainer,
 REGISTER_TEST(uiModernHomeApiBarChart,
               "uiModern: Home Token 分布（每小时 token 合计 + 去头去尾 + 最近速率卡）", {
     test_support::TestEnv env("devdesk_test_uimodern_home_", "apichart",
-                              true);  // 注册 appDatabase（2026-09-28 起全零走
-                                      // 空态不画假条，需真实数据才能断言柱子）
+                              true);  // 注册 appDatabase：全零走空态不画假条，
+                                      // 需真实数据才能断言柱子
     DOCTEST_REQUIRE(env.ready);
-    // 种子（真机反馈 ③ 口径：纵轴 = 每小时 output_tokens 合计）：
+    // 种子（纵轴 = 每小时 output_tokens 合计）：
     //   1 个 profile（FK 依赖）
     //   · 9 时  output 100 / 2000ms  → 速率 50.0
     //   · 12 时 output 300 / 1000ms  → 速率 300.0
@@ -857,7 +823,7 @@ REGISTER_TEST(uiModernHomeApiBarChart,
         std::to_string(dayStart - 7200) + ")";
     DOCTEST_CHECK(env.db->db().exec(sql).isOk());
 
-    // 服务层 ③：24 点恒非空、逐时 token 合计 == 手算值、日界过滤（昨天不进）
+    // 服务层：24 点恒非空、逐时 token 合计 == 手算值、日界过滤（昨天不进）
     {
         module::home::HomeService svc(env.db->db());
         auto series = svc.getTodayHourlyTokenTotals(24);
@@ -874,7 +840,7 @@ REGISTER_TEST(uiModernHomeApiBarChart,
         DOCTEST_CHECK_EQ(series.value()[13], 0);  // 区间内的空小时
     }
 
-    // 纯函数 ③ 去头去尾：数据落 9 时与 17 时 → 只画 [9, 17]
+    // 纯函数：去头去尾 → 只画 [9, 17]
     {
         std::vector<int64_t> hourly(24, 0);
         hourly[9] = 100;
@@ -895,8 +861,8 @@ REGISTER_TEST(uiModernHomeApiBarChart,
         DOCTEST_CHECK_EQ(r1.last, static_cast<size_t>(3));
     }
 
-    // 服务层 ①：最近一次成功调用 = 17 时那条 → 600 / 4s = 150.0 tok/s
-    // （20 时的 500 行更晚但不是成功调用 → 不参与；6 时 output 0 → 不参与）
+    // 服务层：最近一次成功调用 = 17 时那条 → 600 / 4s = 150.0 tok/s
+    //（20 时的 500 行更晚但不是成功调用 → 不参与；6 时 output 0 → 不参与）
     {
         module::home::HomeService svc(env.db->db());
         auto lr = svc.getLastCallRate();
@@ -970,7 +936,7 @@ REGISTER_TEST(uiModernHomeApiBarChart,
         // 柱高对齐基线：三根柱底沿相等（y + height 同值）
         DOCTEST_CHECK(std::fabs((bar0->frame.y + bar0->frame.height) -
                                 (bar8->frame.y + bar8->frame.height)) < 0.5f);
-        // ① 卡片数字 = 最近一次成功调用的速率（150.0），副标题不再写「累计」
+        // 卡片数字 = 最近一次成功调用的速率（150.0），副标题不再写「累计」
         DOCTEST_CHECK_EQ(textOf(ui, "home.stat.tokens.number"),
                          std::string("150.0"));
         DOCTEST_CHECK_EQ(textOf(ui, "home.stat.tokens.badge"),
@@ -980,15 +946,10 @@ REGISTER_TEST(uiModernHomeApiBarChart,
     return true;
 })
 
-// ---- 设置页主体底板：已删（2026-09-28 用户真机反馈「设置页面最外层的卡片
-// 还没删除啊，让你删除好多次了」）。M3-4（2026-09-28）曾在设置页主体最下层
-// 垫 surface → surfaceElevated 垂直渐变底（settings.body.gradient >
-// settings.body.bg），即用户眼中的「最外层卡片」；本次删除后设置页回到 frost
-// spec 口径（docs/superpowers/specs/2026-09-22-eui-window-frost-design.md:53
-// 「各模块页面要么靠 clearColor 当底、要么自铺不透明 surface 色」）——三档
-// 窗口效果下底色分别由 clearColor（关）/ 磨砂背景（半透、磨砂）承担。
-// 断言方向**取反**（存在即红）：底板被加回时本用例立刻红；「设置页仍在渲染」
-// 由第三条断言反证，避免整页 compose 早退时 find 恒 nullptr 造成的**假绿**。
+// 设置页主体底板：不存在。
+// 设置页按 frost 口径「各模块页面要么靠 clearColor 当底、要么自铺不透明 surface 色」
+// 渲染。断言方向**取反**（存在即红）。另有一条反证断言（默认 tab 的卡仍在 →
+// 页面确实 compose 过），防整页 compose 早退时 find 恒 nullptr 造成的假绿。
 REGISTER_TEST(uiModernSettingsBodyGradientRemoved,
               "uiModern: 设置页无主体底板（settings.body.bg 必须不存在）", {
     const std::filesystem::path dbPath = test_temp::tempPath(
@@ -1046,18 +1007,13 @@ REGISTER_TEST(uiModernMdPreviewGradient,
     return true;
 })
 
-// ---- about 页布局（2026-09-28 用户真机反馈：内容区加宽 / 顶部留白 / 删 hero
-//      重复三行 / 卡片上下堆叠 / footer 贴页面底部）----
-// 只钉**可客观断言**的部分（内容区宽、hero 起点、卡片宽高与堆叠链、footer 底边、
-// 最小窗与大窗都不溢出/不重叠）；观感（呼吸感 / hero 存在感 / 三档窗口效果下的
-// 底色）留人工确认。页面宽 = 窗口宽 − 侧边栏（app_sidebar.cpp pageContentWidth，
-// 展开 208）：最小窗宽 1330 → 页面宽 1122，内容区 900 只余 111px/侧（仍居中、
-// 不溢出，见下）。**最小窗尺寸不再手写**（2026-09-28 组 A：手写的 845 已失义——
-// macOS 工作区 833 点会把最小窗高钳到 805），改由
-// core::window_layout::minWindowSizeForWorkArea 推导；页面宽只依赖最小窗宽，
-// 本文件不硬编码高。
+// about 页布局：内容区加宽 / 顶部留白 / 删 hero 重复三行 / 卡片上下堆叠 /
+// footer 贴页面底部。只钉可客观断言的部分；观感留人工确认。页面宽 = 窗口宽 −
+// 侧边栏（app_sidebar.cpp pageContentWidth，展开 208）。最小窗尺寸不手写：由
+// core::window_layout::minWindowSizeForWorkArea 推导（手写的 845 已失义——
+// macOS 工作区 833 点会把最小窗高钳到 805）。
 namespace {
-// 与 main.cpp 同一条决策链的最小窗尺寸（macOS 实测档：工作区 1470×833 点、
+// 与 main.cpp 同一条决策链的最小窗尺寸（macOS 档：工作区 1470×833 点、
 // windowScaleForPoint 恒 1.0、外框 {0,28}）→ {1330, 805}。显式传参而非取本机
 // 实时工作区：测试要确定性，且这一档正是「用户机器上最小窗能缩到多大」的真实值。
 core::window_layout::WindowSize minWindowForMacWorkArea() {
@@ -1067,8 +1023,7 @@ core::window_layout::WindowSize minWindowForMacWorkArea() {
         core::window_layout::FrameInsets{0, 28});
 }
 
-// 布局帧比较容差：逻辑像素差 ≤0.5 视为相等（布局引擎可能带亚像素误差，与
-// probes 的 0.5f 容差同口径）
+// 布局帧比较容差：逻辑像素差 ≤0.5 视为相等（布局引擎可能带亚像素误差）
 bool nearPx(float a, float b) { return std::abs(a - b) <= 0.5f; }
 }  // namespace
 
@@ -1078,7 +1033,7 @@ REGISTER_TEST(uiAboutLayout,
     DOCTEST_REQUIRE(mod != nullptr);
     mod->onStart();
     const auto& t = ::core::theme::current();
-    constexpr float kContentW = 900.0f;   // 2026-09-29 1040→900（两卡缩一档）
+    constexpr float kContentW = 900.0f;
     constexpr float kCardGap = 8.0f;
     constexpr float kTitleH = 40.0f;
     constexpr float kCardH = 24.0f + 28.0f + 6.0f * 28.0f + 24.0f;  // 244（6 行卡）
@@ -1087,8 +1042,8 @@ REGISTER_TEST(uiAboutLayout,
     const float heroToCards = t.sizes.spacingXLarge;                       // 24
     const float footerH = 20.0f;
     // 内容块总高（hero 图标 + 图标/标题 8 + 标题 40 + 标题到卡一档 XLarge
-    // + 卡1 + 卡距 + 卡2 = 624）与「内容块底边 = 页脚顶 − 一档间距」的贴底口径
-    // （2026-09-29）：起点 = max(topPad, 页脚顶 − heroToCards − contentH)
+    // + 卡1 + 卡距 + 卡2 = 624）与贴底口径：起点 = max(topPad,
+    // 页脚顶 − heroToCards − contentH)
     const float contentH = iconSize + 8.0f + kTitleH + heroToCards +
                            kCardH + kCardGap + kCardH;                    // 624
     eui::Ui ui;
@@ -1122,8 +1077,8 @@ REGISTER_TEST(uiAboutLayout,
             nearPx(hero->frame.x, x + (kContentW - iconSize) / 2.0f),
             px("hero.frame.x", hero));
     }
-    // hero 副标题三行已删（版本行 / 构建时刻 / commit+编译器 与「应用信息」卡
-    // 逐项重复，用户真机反馈"卡片里已经有版本号之类的东西"）：id 不得再存在
+    // hero 副标题三行不存在（版本行 / 构建时刻 / commit+编译器 与「应用信息」卡
+    // 逐项重复）
     DOCTEST_CHECK(ui.find("about.hero.sub") == nullptr);
     DOCTEST_CHECK(ui.find("about.hero.build") == nullptr);
     DOCTEST_CHECK(ui.find("about.hero.commit") == nullptr);
@@ -1137,8 +1092,8 @@ REGISTER_TEST(uiAboutLayout,
     const auto* c2 = ui.find("about.card.deps");
     DOCTEST_REQUIRE(c1 != nullptr);
     DOCTEST_REQUIRE(c2 != nullptr);
-    // 卡片上下堆叠（原左右并排 516 宽）：同宽（占满内容区 900）、同 x、各 244 高；
-    // 卡 1 顶 = 内容块起点 + hero 图标 + 8 + 标题 40 + 一档 XLarge（420），
+    // 卡片上下堆叠（非左右并排）：同宽（占满内容区 900）、同 x、各 244 高；
+    // 卡 1 顶 = 内容块起点 + hero 图标 + 8 + 标题 40 + 一档 XLarge，
     // 卡 2 隔一档 cardGap 在卡 1 正下方
     DOCTEST_CHECK_MESSAGE(nearPx(c1->frame.width, kContentW),
                           px("about.card.app", c1));  // 900
@@ -1149,8 +1104,8 @@ REGISTER_TEST(uiAboutLayout,
     DOCTEST_CHECK_MESSAGE(nearPx(c2->frame.x, x), px("about.card.deps.x", c2));
     DOCTEST_CHECK_MESSAGE(nearPx(c1->frame.y, cardsTop), px("about.card.app", c1));
     DOCTEST_CHECK_MESSAGE(nearPx(c2->frame.y, depsTop), px("about.card.deps", c2));
-    // 贴底对齐核心断言（2026-09-29）：内容块底边 = 页脚顶 − 一档间距
-    //（hero + 两卡整体贴向页脚上方，而非顶部对齐；回退成 topPad 起点即红）
+    // 贴底对齐核心断言：内容块底边 = 页脚顶 − 一档间距（hero + 两卡整体贴向
+    // 页脚上方，而非顶部对齐；回退成 topPad 起点即红）
     DOCTEST_CHECK_MESSAGE(
         nearPx(c2->frame.y + c2->frame.height, footerTop - heroToCards),
         px("about.card.deps 内容块底", c2) + " 期望 " +
@@ -1172,11 +1127,9 @@ REGISTER_TEST(uiAboutLayout,
             px("about.footer", footer) + " 期望底边 " +
                 std::to_string(screen.height - t.sizes.spacingXXLarge));
     }
-    // 最小窗复核（2026-09-28 组 A：字面量 845 已失义，改经同一函数推导）：
-    // minWindowSizeForWorkArea → {1330, 805} → 页面宽 1330 − 208 = 1122 →
-    // 内容区 900 不溢出、仍居中（左右各余 111）；页面高 805 下贴底口径仍成立
-    //（页脚顶 745 → 内容块底 721、起点 97 ≥ topPad 40，不触发 clamp）——本页
-    // 无滚动也放得下
+    // 最小窗复核：minWindowSizeForWorkArea → {1330, 805} → 页面宽
+    // 1330 − 208 = 1122 → 内容区 900 不溢出、仍居中；页面高 805 下贴底口径仍成立
+    //（页脚顶 745 → 内容块底 721、起点 97 ≥ topPad 40，不触发 clamp）
     {
         const core::window_layout::WindowSize minWin = minWindowForMacWorkArea();
         DOCTEST_CHECK_EQ(minWin.width, 1330);
@@ -1215,9 +1168,8 @@ REGISTER_TEST(uiAboutLayout,
             px("about.card.deps.min", c) + " 页脚顶 " +
                 std::to_string(footer->frame.y));
     }
-    // 极矮窗复核（2026-09-29 贴底护栏）：内容块 + 一档间距放不进「页脚上方」
-    // 这块高度时，起点 clamp 回 topPad（退回顶部对齐），且卡与页脚不得重叠
-    //（本页无滚动 → 页脚侧的 max 护栏把页脚压到卡下方）
+    // 极矮窗复核（贴底护栏）：内容块 + 一档间距放不进「页脚上方」这块高度时，
+    // 起点 clamp 回 topPad（退回顶部对齐），且卡与页脚不得重叠
     {
         eui::Ui tiny;
         eui::Screen tinyScreen{1200.0f, 640.0f};  // 页脚顶 580；580−24−624 < 0
@@ -1275,15 +1227,12 @@ REGISTER_TEST(uiAboutLayout,
     return true;
 })
 
-// ---- about 页动态光晕（2026-09-29 用户真机反馈「又简陋又不明显 几乎看不到」，
-//      方案 A：光斑同心圆叠层 + 利萨如漂移 + 呼吸 + 聚光扫过带；同日二次反馈
-//      「光团缩小一点，然后多生成几个」→ 6 光斑 / 直径 240-400 / 每球 3 层）----
+// about 页动态光晕：光斑同心圆叠层 + 利萨如漂移 + 呼吸 + 聚光扫过带。
 // 钉六件事：① 元素闸门（光斑 6×3 层 + 扫带 2 = 20 ≤ 20）；② 直径 240-400；
 // ③ 层 alpha 剖面 0.15 → 0.05；④ 呼吸 ±35%（在时间轴上扫出真实极值）；
 // ⑤ 扫带周期 14s 且真的从左到右；⑥ 漂移真在动 + 空闲 120s 后休眠（不挂
 // onTimer）且指针移动可唤醒。
-// **一律用字面量**（旧版 uiAboutRingAnim 的教训：拿头文件常量断言等于自己，
-// 把常量调淡/调回去断言仍真——实测变异验证过，回归无人守）。
+// **一律用字面量**：拿头文件常量当期望值等于自己——把常量调淡/调回去断言仍真。
 REGISTER_TEST(uiAboutGlow,
               "about: 光晕 6 光斑/直径 240-400/呼吸 ±35%/扫带 14s/元素 ≤20/漂移与休眠", {
     using Anim = module::about::AboutAnimState;
@@ -1300,7 +1249,7 @@ REGISTER_TEST(uiAboutGlow,
     DOCTEST_REQUIRE(anim.initialized);
 
     // ① 元素闸门：每帧新增绘制元素 ≤ 20（光斑 6×3 + 扫带 2 = 20）
-    constexpr int kExpectBlobCount = 6;   // 2026-09-29「多生成几个」3→6
+    constexpr int kExpectBlobCount = 6;   // 3→6
     constexpr int kExpectLayers = 3;      // 数量翻倍靠层数减半守住闸门
     constexpr int kExpectElementCount = 20;
     constexpr int kElementGate = 20;
@@ -1324,10 +1273,10 @@ REGISTER_TEST(uiAboutGlow,
                           "光晕元素数 " + std::to_string(drawn));
     DOCTEST_CHECK_MESSAGE(drawn <= kElementGate,
                           "元素闸门 ≤ 20，实为 " + std::to_string(drawn));
-    // 旧版 7 个 1px 浮环已下线（避免与新光晕叠成双层背景噪声）
+    // 7 个 1px 浮环已下线，避免与光晕叠成双层背景噪声
     DOCTEST_CHECK(ui.find("about.ring.0") == nullptr);
 
-    // ② 直径区间 240-400（字面量；2026-09-29「光团缩小一点」380-620 → 240-400）
+    // ② 直径区间 240-400（字面量，不引用头文件常量）
     constexpr float kExpectDiameterMin = 240.0f;
     constexpr float kExpectDiameterMax = 400.0f;
     bool diameterOk = true;
@@ -1357,7 +1306,7 @@ REGISTER_TEST(uiAboutGlow,
     }
     DOCTEST_CHECK(alphaMonotonic);
 
-    // ④ 呼吸 ±35%：在时间轴上扫两个呼吸周期取真实极值（不是拿常量断言常量）
+    // ④ 呼吸 ±35%：在时间轴上扫两个呼吸周期取真实极值
     constexpr float kExpectBreathDepth = 0.35f;
     Anim probe = anim;  // 副本：位置/呼吸/扫带都是时间的纯函数，改 time 即可取样
     float breathMin = 2.0f;
@@ -1415,7 +1364,7 @@ REGISTER_TEST(uiAboutGlow,
     DOCTEST_CHECK(periodOk);
 
     // ⑥ 扫带：周期 14s / 宽 220 / 倾角 18° / 峰值 alpha 0.05；一个周期回到起点，
-    //    周期内单调右移（左→右扫过），且扫程覆盖整页宽度
+    //    周期内单调右移（左→右扫过）
     constexpr float kExpectSweepPeriod = 14.0f;
     constexpr float kExpectSweepWidth = 220.0f;
     constexpr float kExpectSweepAlpha = 0.05f;
@@ -1446,7 +1395,7 @@ REGISTER_TEST(uiAboutGlow,
     DOCTEST_CHECK_MESSAGE(sweepB - sweepA > 100.0f,
                           "扫带 1.2s 位移 " + std::to_string(sweepB - sweepA));
 
-    // ⑦ 端到端 compose：元素颜色 alpha = 层基准 × 呼吸；驱动是 onTimer(1/30)
+    // 端到端 compose：元素颜色 alpha = 层基准 × 呼吸；驱动是 onTimer(1/30)
     const auto* bg = ui.find("about.bg");
     DOCTEST_REQUIRE(bg != nullptr);
     DOCTEST_REQUIRE(bg->onTimer != nullptr);  // 唤醒期：挂节拍驱动
@@ -1463,8 +1412,8 @@ REGISTER_TEST(uiAboutGlow,
     DOCTEST_CHECK(layerOuter->shadow.enabled);
     DOCTEST_CHECK(std::abs(layerOuter->shadow.blur - 48.0f) < 1e-3f);
     DOCTEST_CHECK(std::abs(layerOuter->shadow.color.a - 0.35f) < 1e-3f);
-    // 内层挂同色柔边 shadow（blur 56）：抹平同心圆台阶的机制，别被静默删掉
-    //（层数 6→3 后台阶更高，blur 40→56 是为守住「单位像素梯度不升」的判据）
+    // 内层挂同色柔边 shadow（blur 56）：抹平同心圆台阶，别被静默删掉——层数少时
+    // 台阶更高，blur 必须守住「单位像素梯度不升」
     const auto* layerMid = ui.find("about.glow.0.1");
     DOCTEST_REQUIRE(layerMid != nullptr);
     DOCTEST_CHECK(layerMid->shadow.enabled);

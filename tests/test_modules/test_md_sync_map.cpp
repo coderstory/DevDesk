@@ -1,16 +1,11 @@
 // tests/test_modules/test_md_sync_map.cpp
-// MdSyncMap（Phase 3 ④ 同步滚动块模型精确锚）纯单测——高度注入纯算术函数，
-// 不依赖 EUI-NEO，误差断言可用「精确」级：
-//   1. block_anchor_exact：每个块首行的正向映射 == Σ_{i<k}(H_i+gap) 精确
-//      （块边界误差 0）；块内按行插值 == 线性分摊（同段落各行等高时精确）。
-//      这是旧「标题锚 + 整节摊分」给不出的性质（旧锚只在标题行精确）。
-//   2. roundtrip_bidirectional：反向映射（预览 y → 编辑器行）是正向的反函数，
-//      逐整数行 round-trip 恒等；块间隙钳到相邻块边界；单调。
-//   3. insert_delete_no_drift：文首插块/删块后，目标块（内容未变、stableId
-//      继承）的首行映射位移 == 插入块的 H+gap 精确，删除回到原值——锚点
-//      跟随块身份，不随「节内摊分」漂移。
-//   4. memo_dirty_only：命中 (rev,width,gap,块数) 守卫零重算；编辑只让新/脏
-//      块付 heightFn（heightComputes 计数精确）；宽度变化全量重测。
+// MdSyncMap（同步滚动块模型）纯单测：块首行锚点精度 / 双向映射互逆 /
+// 块增删后锚点不漂 / memo 只对脏块重测。
+// 跨文件前提：
+//   - 高度由外部 heightFn 注入，本文件不碰 EUI-NEO、不碰真实折行，误差断言按「精确」级。
+//   - buildReference 是测试侧独立实现的参考累计表（与 MdSyncMap 同序、算法不共用），
+//     它才是对照组：拿 map 自己的输出当期望值就是自证式断言。
+//   - 块身份靠 stableId 跨文首插入/删除继承，靠后缀 (kind, hash) 对齐。
 #include "doctest.h"
 #include "module_markdown/md_block_model.h"
 #include "module_markdown/md_line_scanner.h"
@@ -58,7 +53,6 @@ int synthLineCount(const std::string& text, const MdBlock& b) {
 constexpr float kGap = 12.0f;
 constexpr float kWidth = 600.0f;
 
-// 与 MdSyncMap 同序的参考累计表（测试侧独立实现 = 断言的对照组）
 struct Reference {
     std::vector<float> topY;      // 块顶 y
     std::vector<int> firstLine;   // 块首编辑器行
@@ -93,7 +87,7 @@ MdSyncMap buildMap(MdBlockModel& model, const std::string& text, uint64_t rev) {
 }
 
 // 多结构文档：标题 / 4 行段 / 单行段 / 列表 / 围栏 / 段落（块高互不相等，
-// 且含非标题块——旧标题锚机制在中间这些块上没有精确锚）
+// 且含非标题块——非标题块也必须有精确锚）
 const char* kDoc =
     "# Section\n"
     "\n"
@@ -135,7 +129,9 @@ REGISTER_TEST(md_sync_map_block_anchor_exact,
         DOCTEST_CHECK(std::fabs(map.blockTopY(k) - ref.topY[k]) < 1e-3f);
         DOCTEST_CHECK_EQ(map.blockFirstLine(k), ref.firstLine[k]);
     }
-    // 非标题块存在且锚点精确（旧机制只有标题行有锚——这里锁块级锚）
+    // 恒真陷阱：下面这个循环只要文档里没有「非标题且 topY>0」的块就整个跳过断言，
+    // 恒绿。它之所以还绿，靠的是 kDoc 头部那个非零标题块把后续块顶推到 y>0；
+    // 换夹具时必须重看这条。
     bool sawNonHeadingAnchor = false;
     for (size_t k = 0; k < ref.topY.size(); ++k) {
         if (model.blocks()[k].kind != module::markdown::MdBlockKind::Heading &&
@@ -155,7 +151,7 @@ REGISTER_TEST(md_sync_map_block_anchor_exact,
         }
     }
 
-    // ③ 单调：连续行 → y 不减；块内严格增
+    // ③ 单调：连续行 → y 不减
     float prev = -1.0f;
     for (int L = 0; L <= countLines(text); ++L) {
         const float y = map.previewYForEditorLine(L);
@@ -225,8 +221,7 @@ REGISTER_TEST(md_sync_map_insert_delete_no_drift,
     const float yBefore = map0.previewYForEditorLine(ref0.firstLine[tgt]);
 
     // 插入后：目标块内容未变 → 后缀对齐继承 stableId；锚点位移必须
-    // == 插入块的 H + gap（精确跟随块几何；旧标题锚把节高按行摊分，
-    // 深层块的位移与块高无此关系）
+    // 插入块的 H + gap（锚点跟随块几何，不随「节内摊分」漂）
     const std::string snap1 = (model.update(text1), model.text());
     MdSyncMap map1;
     map1.rebuild(snap1, model.blocks(), 1, kWidth, kGap,
@@ -280,10 +275,9 @@ REGISTER_TEST(md_sync_map_memo_dirty_only,
     DOCTEST_CHECK_EQ(map.rebuildCount(), 2u);
     DOCTEST_CHECK_EQ(static_cast<size_t>(calls), blocks0.size() + 1);  // 恰好 +1
 
-    // 宽度变化 → 全量重测（memo 键含宽度），但结果确定
+    // 宽度变化 → 全量重测（memo 键含宽度）
     map.rebuild(snap1, blocks1, 1, 900.0f, kGap, fn1);
     DOCTEST_CHECK_EQ(static_cast<size_t>(calls), 2 * blocks0.size() + 2);
-    // 切回原宽度 → memo 已被换代清空（nextMemo 重建），再全量一次——
-    // 记录语义：memo 只保留存活 id，换代即淘汰死 id（不无界增长）
+    // memo 只保留存活 id，换代即淘汰死 id（不无界增长）
     return true;
 })

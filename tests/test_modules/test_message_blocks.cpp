@@ -1,19 +1,14 @@
 // tests/test_modules/test_message_blocks.cpp
-// agent_messages.contentJson 的块级编解码 + 预览/摘要/高度估算用例
-//（run 日志块级渲染改造，2026-10-02 用户反馈「日志展示太简陋 / 长输出看不全」）。
-//
-// 钉的契约（module_agent/message_blocks.h 头注释逐字）：
-//   - decodeMessageBlocks：blocks 数组 → Text/ToolUse/ToolResult 块；
-//     旧版纯文本行 / 坏 JSON / 非数组 JSON / JSON 字符串字面量 → 单 Plain 块
-//     回落（旧数据不丢，容错降级不是报错）；
-//   - utf8Truncate：UTF-8 边界安全（不切半个多字节字符）；
-//   - toolArgsSummary：单行化 + 截断；
-//   - estimateTextBlockHeight / estimateMessageHeight /
-//     estimateMessagesAreaHeight：长度单调不减、面积高有上下钳制。
-//
-// tool_info（可用工具区块）的 schema 解码用例在本文件尾部：
-//   decodeToolInfo 取 name/description/input_schema.properties 键集，
-//   坏 schema 容错回落 name-only。
+// agent_messages.contentJson 的块级编解码 + 预览/摘要/高度估算用例。
+// 跨文件前提：
+//   - 契约以 module_agent/message_blocks.h 头注释为准：decodeMessageBlocks 把 blocks 数组解成
+//     Text/ToolUse/ToolResult 块；旧版纯文本行 / 坏 JSON / 非数组 JSON / JSON 字符串字面量一律
+//     回落成单块（容错降级不是报错，旧数据不丢）；utf8Truncate UTF-8 边界安全；toolArgsSummary
+//     单行化 + 截断；三个高度估算函数长度单调不减、区域高上下钳制。
+//   - 高度估算的口径是 core::TextPrimitive::measureTextSize 的真测量行数。字体不可用时测量会
+//     退化成 1 行，下面用「宽字形 > 窄字形」挡住这种假绿。
+//   - tool_info（可用工具区块）的 schema 解码用例在本文件尾部：decodeToolInfo 取
+//     name/description/input_schema.properties 键集，坏 schema 容错回落 name-only。
 #include "doctest.h"
 #include "test_support.h"
 
@@ -44,7 +39,7 @@ const MessageBlock* findBlock(const std::vector<MessageBlock>& blocks,
 
 } // namespace
 
-// ============ decodeMessageBlocks：blocks 数组 ============
+// decodeMessageBlocks：blocks 数组
 
 REGISTER_TEST(msg_blocks_text_block,
               "msg_blocks: [{type:text}] → Text 块取 text 字段", {
@@ -93,11 +88,11 @@ REGISTER_TEST(msg_blocks_tool_result_content_variants,
     return true;
 })
 
-// ============ decodeMessageBlocks：容错回落（旧数据/坏数据） ============
+// decodeMessageBlocks：容错回落（旧数据/坏数据）
 
 REGISTER_TEST(msg_blocks_legacy_plain_text_fallback,
               "msg_blocks: 纯文本/坏 JSON/非数组/JSON 字符串 → 单 Plain 块原文", {
-    // 旧版纯文本行（M1 早期可能落过）
+    // 旧版纯文本行
     auto plain = module::agent::decodeMessageBlocks("just plain text");
     DOCTEST_REQUIRE(plain.size() == 1);
     DOCTEST_CHECK(plain[0].type == MessageType::Plain);
@@ -137,7 +132,7 @@ REGISTER_TEST(msg_blocks_unknown_block_type_preserved_as_plain,
     return true;
 })
 
-// ============ utf8Truncate：边界安全 ============
+// utf8Truncate：边界安全
 
 REGISTER_TEST(msg_blocks_utf8_truncate_boundary,
               "msg_blocks: utf8Truncate 不切半个多字节字符", {
@@ -155,7 +150,7 @@ REGISTER_TEST(msg_blocks_utf8_truncate_boundary,
     return true;
 })
 
-// ============ 预览与摘要 ============
+// 预览与摘要
 
 REGISTER_TEST(msg_blocks_preview_120_bytes,
               "msg_blocks: 预览取解码文本前 120 字节（超长加省略号）", {
@@ -182,7 +177,7 @@ REGISTER_TEST(msg_blocks_preview_120_bytes,
 
 REGISTER_TEST(msg_blocks_preview_single_line,
               "msg_blocks: 预览单行化——多行文本摊平成一行（wrap(false) 元素画 \\n 会溢出压行）", {
-    // tool_result 的摊平输出天然带 \n（20 行清单）：预览必须不含任何换行
+    // tool_result 的摊平输出天然带 \n：预览必须不含任何换行
     std::string multiLineJson =
         R"([{"type":"tool_result","tool_use_id":"t1","content":[{"type":"text","text":"第一行\n第二行\n第三行"}],"is_error":false}])";
     std::string preview =
@@ -206,7 +201,7 @@ REGISTER_TEST(msg_blocks_tool_args_summary_single_line,
     return true;
 })
 
-// ============ 高度估算：单调 + 钳制 ============
+// 高度估算：单调 + 钳制
 
 REGISTER_TEST(msg_blocks_height_estimator_monotonic_and_clamped,
               "msg_blocks: 展开高度随内容单调不减；区域高钳在 [min,max]", {
@@ -219,8 +214,8 @@ REGISTER_TEST(msg_blocks_height_estimator_monotonic_and_clamped,
     DOCTEST_CHECK(h2 > h1);
     DOCTEST_CHECK(h1 >= 18.0f);  // 至少一行
 
-    // 消息高：内容超一行的消息展开 > 收起（F1 改真测量后，单行消息展开与
-    // 收起同高是正确语义——没有更多内容可展示，故用会换行的长内容钉）
+    // 消息高：内容超一行的消息展开 > 收起。单行消息展开与收起同高才是正确语义
+    // （没有更多内容可展示），故这里必须用会换行的长内容来钉
     const float narrowW = 200.0f;
     module::agent::AgentMessageRow row;
     row.seq = 0;
@@ -232,7 +227,7 @@ REGISTER_TEST(msg_blocks_height_estimator_monotonic_and_clamped,
     float hExpanded =
         estimateMessageHeight(row, /*expanded=*/true, narrowW, 18.0f);
     DOCTEST_CHECK(hExpanded > hCollapsed);
-    // 单行消息：展开与收起同高（真测量下不再有「+1 保险行」虚高）
+    // 单行消息：展开与收起同高（没有更多内容可展示）
     module::agent::AgentMessageRow oneLiner;
     oneLiner.seq = 1;
     oneLiner.role = "user";
@@ -265,7 +260,7 @@ REGISTER_TEST(msg_blocks_height_estimator_monotonic_and_clamped,
     return true;
 })
 
-// ============ tool_info：schema 解码 ============
+// tool_info：schema 解码
 
 REGISTER_TEST(msg_blocks_tool_info_decode_schema,
               "msg_blocks: decodeToolInfo 取 name/description/参数名集", {
@@ -295,8 +290,6 @@ REGISTER_TEST(msg_blocks_tool_info_malformed_schema,
     DOCTEST_CHECK(noSchema.params.empty());
     return true;
 })
-
-// ============ 评审微修 F1/F2（2026-10-02）============
 
 REGISTER_TEST(msg_blocks_height_matches_text_measurement,
               "msg_blocks: 估算高度 == TextPrimitive::measureTextSize 行数×lineHeight（真测量口径）", {
@@ -348,7 +341,7 @@ REGISTER_TEST(msg_blocks_height_matches_text_measurement,
 
 REGISTER_TEST(msg_blocks_tool_result_nontext_block_preserved,
               "msg_blocks: tool_result 非 text 块回落原文（评审 F2 不丢内容）", {
-    // content 数组含 image 块：此前 continue 静默丢，现在 stringify 保留
+    // content 数组含 image 块时必须 stringify 保留原文，不能 continue 静默跳过
     auto blocks = module::agent::decodeMessageBlocks(
         R"([{"type":"tool_result","tool_use_id":"t1","content":[)"
         R"({"type":"text","text":"文字部分"},)"

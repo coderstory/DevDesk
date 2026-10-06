@@ -1,22 +1,16 @@
 // tests/test_modules/test_claude_quota_store.cpp
-// G5：余量两表存储 + 后台定时刷新契约
-// （计划 docs/superpowers/plans/2026-10-02-quota-implementation-plan.md §G5）
-//
-// 覆盖：
-//   - windows_json 编解码**往返**（空数组 / 多窗口 / 小数不截断 / 坏输入容错）
-//   - 两表 CRUD（配置行 / 结果行；无行 → NotFound 而非默认行）
-//   - 畸形 usedPercent 一律**丢该窗口**（缺/类型错/越界），绝不落成假 0%
-//   - 失败韧性：Transient 保留上次成功值；鉴权类立即透出
-//   - **「从未成功过」不写假 0%**：kind 列空 + 数据列保持初始值
-//   - 定时器到点触发（**注入时钟 + 毫秒级 tick**，绝不等 15 分钟）
-//   - 就绪缝（**由落库事实驱动**：读不回那一行就判红）
-//   - 线程退出不挂死；**在途请求时 stopAll 会等它跑完**（退出延迟的真实口径）
-//   - secrets_json 经 platform::credential 存取 + protect 失败不留半截行
-//   - applyFetchResult 并发不丢更新（读—改—写同锁）
+// 余量两表（配置行 / 结果行）存储契约 + QuotaRefresher 的定时刷新、失败韧性与线程退出。
+// 跨文件前提：
+//   - 整条链路以「绝不落成假 0%」为最高约束：读不出 / 从未成功过 / 保留旧值三种状态
+//     在库与结构体里必须各自可辨，任何一处退化成 0 都会让首页画出「几乎没用满」的绿条。
+//   - fetched_at（尝试时间，成败都推进）与 last_success_at（数据时间，只在成功时推进）
+//     是两列，UI 分别用于重试节流与「数据时间」文案。合成一列会出现
+//     「15 分钟前的数字 + 刚刚查询过」这种自相矛盾的话。
+//   - 时钟一律经 QuotaRefreshOptions 注入，本文件不真等任何刷新间隔。
 #include "doctest.h"
 #include "test_support.h"
 
-#include <core/platform/platform.h>   // consumeUiUpdate（唤醒位读取，同批次 D 用例）
+#include <core/platform/platform.h>   // consumeUiUpdate：读唤醒位
 
 #include "module_claude_proxy/profile_repository.h"
 #include "platform/credential_protection.h"
@@ -54,7 +48,7 @@ using module::claude::quota::HttpSendFn;
 using module::claude::quota::ProviderConfig;
 using module::claude::quota::ProviderField;
 
-// ---- 假 provider：fetch 返回值由构造驱动，可数调用次数 ----
+// 假 provider：fetch 返回值由构造驱动，可数调用次数
 class ScriptedProvider final : public QuotaProvider {
 public:
     explicit ScriptedProvider(QuotaResult result) : result_(std::move(result)) {}
@@ -70,7 +64,7 @@ public:
         return result_;
     }
 
-    // fetch 是 const 成员（评审 m2），所以这两个探针成员必须可写
+    // fetch 是 const 成员，所以这两个探针成员必须可写
     mutable std::atomic<int> calls{0};
     mutable std::string lastBaseUrl;
 
@@ -78,14 +72,8 @@ private:
     QuotaResult result_;
 };
 
-// 假凭据来源之一：**转发**给 provider（定时器用例要的就是「provider 被调了几次」，
-// 且结果由 provider 决定）。
-//
-// ⚠ 评审 M4：曾经有个叫 `ScriptedCredentialSource` 的假件，构造参数收一个
-// QuotaResult 却被**完全忽略**（恒 return provider.fetch(...)）——名字承诺
-// 「可编排结果」、行为是「恒转发」。本批侥幸全绿只因两处恰好都传 okTiered()。
-// G6 一旦拿它验「凭据失败怎么落库」，它会返回 provider 的成功值、用例照样绿。
-// 故拆成两个**各名副其实**的假件：本件转发、另一个（下方）才真的按脚本返回。
+// 假凭据来源之一：转发给 provider，结果由 provider 决定。
+// 定时器用例要的就是「provider 被调了几次」。
 class ForwardingCredentialSource final : public QuotaCredentialSource {
 public:
     QuotaResult resolveAndFetch(int64_t profileId, const QuotaProvider& provider,
@@ -99,7 +87,7 @@ public:
     int64_t lastProfileId = 0;
 };
 
-// 假凭据来源之二：**按构造时给的脚本返回**，绝不碰 provider（连 fetch 都不调）。
+// 假凭据来源之二：按构造时给的脚本返回，绝不碰 provider（连 fetch 都不调）。
 // 「凭据层自己失败」这条路径只有这个假件能测——转发型假件永远拿不到
 // 「凭据解析失败但 provider 是好的」这种结局。
 class ScriptedCredentialSource final : public QuotaCredentialSource {
@@ -111,7 +99,7 @@ public:
                                 const HttpSendFn& http) override {
         ++calls;
         lastProfileId = profileId;
-        return result_;   // 构造参数**真的**被读（评审 M4 的修法）
+        return result_;   // 构造参数在这里被读，不转发 provider
     }
 
     std::atomic<int> calls{0};
@@ -145,11 +133,11 @@ QuotaResult failure(QuotaError kind, const std::string& message) {
 
 }  // namespace
 
-// ============ windows_json 编解码往返（单点纪律的核心）============
+// windows_json 编解码往返（单点纪律的核心）
 
 REGISTER_TEST(claude_quota_windows_json_roundtrip,
               "claude_quota_store: windows_json 往返（空数组 / 多窗口 / 小数不截断）", {
-    // 空数组往返：空 → "[]" → 空。**不是空串**——空串在库里读回会被当成
+    // 空数组往返：空 → "[]" → 空。不能退化成空串——空串在库里读回会被当成
     // 「没查过」，与「查到了、零窗口」混淆。
     DOCTEST_CHECK_EQ(module::claude::quota::encodeQuotaWindows({}),
                      std::string("[]"));
@@ -157,8 +145,7 @@ REGISTER_TEST(claude_quota_windows_json_roundtrip,
     DOCTEST_REQUIRE(emptyBack.isOk());
     DOCTEST_CHECK(emptyBack.value().empty());
 
-    // 多窗口 + 小数百分比不截断（quota_provider.h 不变量 3：量纲由 provider 归一，
-    // 这里只管**存得下、读得回**）
+    // 多窗口 + 小数百分比不截断（量纲由 provider 归一，存储层只管存得下读得回）
     std::vector<QuotaWindow> original{
         QuotaWindow{"five_hour", 62.5, "2026-10-03T12:00:00Z"},
         QuotaWindow{"weekly", 30.25, ""},
@@ -174,7 +161,7 @@ REGISTER_TEST(claude_quota_windows_json_roundtrip,
         DOCTEST_CHECK_EQ(back.value()[i].resetsAt, original[i].resetsAt);
     }
 
-    // 坏输入容错（展示面不因一行坏 JSON 崩）：空串 / 非 JSON / 非数组 → 空列表
+    // 坏输入容错：空串 / 非 JSON / 非数组 → 空列表（展示面不因一行坏 JSON 崩）
     auto bad1 = module::claude::quota::decodeQuotaWindows("");
     DOCTEST_REQUIRE(bad1.isOk());
     DOCTEST_CHECK(bad1.value().empty());
@@ -195,11 +182,9 @@ REGISTER_TEST(claude_quota_windows_json_roundtrip,
 
 REGISTER_TEST(claude_quota_windows_json_rejects_malformed_percent,
               "claude_quota_store: 畸形 usedPercent 丢该窗口（缺/类型错/越界），绝不落成 0%", {
-    // B1：曾经「不是 number 就沿用默认值 0.0 并保留窗口」——那正是本模块
-    // 第一条不变量要杜绝的假 0%（G7 会把 0 画成绿的「几乎没用满」条）。
-    // 口径 = **丢该元素**：spec §9 要求越界输入「被拒或记 error」，
-    // 不是 clamp 后断言落在 [0,100]（那是恒真断言）。
-    // 每例都断言该窗口**不在**输出里。
+    // 口径 = 丢该元素，不是 clamp 成 [0,100] 再断言（那样写成恒真断言）。
+    // clamp 会把「读不出来」落成假 0%，首页会把 0 画成绿的「几乎没用满」条。
+    // 每例都断言该窗口不在输出里。
     const char* bad[] = {
         R"([{"key":"weekly"}])",                              // 缺 usedPercent
         R"([{"key":"weekly","usedPercent":"62.5"}])",        // 字符串而非数字
@@ -212,7 +197,7 @@ REGISTER_TEST(claude_quota_windows_json_rejects_malformed_percent,
         DOCTEST_CHECK_MESSAGE(decoded.value().empty(),
                               std::string("畸形 usedPercent 被静默采纳成 0%：") + json);
     }
-    // 边界值 0 与 100 是**合法**的（已用 0% / 已用 100%），不许被这条规则误杀
+    // 边界值 0 与 100 合法（已用 0% / 已用 100%），不许被这条规则误杀
     for (const char* edge : {R"([{"key":"weekly","usedPercent":0}])",
                              R"([{"key":"weekly","usedPercent":100}])"}) {
         auto decoded = module::claude::quota::decodeQuotaWindows(edge);
@@ -220,7 +205,7 @@ REGISTER_TEST(claude_quota_windows_json_rejects_malformed_percent,
         DOCTEST_REQUIRE_EQ(decoded.value().size(), 1u);
         DOCTEST_CHECK_EQ(decoded.value()[0].key, std::string("weekly"));
     }
-    // 混合：坏窗口被丢，好窗口**仍要留下**（不能整表丢弃）
+    // 混合：坏窗口被丢，好窗口仍要留下（不能整表丢弃）
     auto mixed = module::claude::quota::decodeQuotaWindows(
         R"([{"key":"five_hour","usedPercent":62.5},)"
         R"({"key":"weekly","usedPercent":"坏"},)"
@@ -229,15 +214,15 @@ REGISTER_TEST(claude_quota_windows_json_rejects_malformed_percent,
     DOCTEST_REQUIRE_EQ(mixed.value().size(), 1u);
     DOCTEST_CHECK_EQ(mixed.value()[0].key, std::string("five_hour"));
     DOCTEST_CHECK_EQ(mixed.value()[0].usedPercent, 62.5);
-    // **整数百分比不许变成 0**：platform::json 把整数存成 Int（intVal，
-    // dblVal 留 0），只调 asDouble() 会把 `"usedPercent": 62` 读成 0%——
-    // 又一条假 0% 的路。上游给整数值是很正常的写法，故单钉一例。
+    // 整数百分比不许变成 0：platform::json 把整数存成 Int（intVal，dblVal 留 0），
+    // 只调 asDouble() 会把 `"usedPercent": 62` 读成 0%，又是一条假 0% 的路。
+    // 上游给整数值是正常写法，故单钉一例。
     auto intPct = module::claude::quota::decodeQuotaWindows(
         R"([{"key":"weekly","usedPercent":62}])");
     DOCTEST_REQUIRE(intPct.isOk());
     DOCTEST_REQUIRE_EQ(intPct.value().size(), 1u);
     DOCTEST_CHECK_EQ(intPct.value()[0].usedPercent, 62.0);
-    // 编码侧同样要能写回整数（encode 用 makeDouble，往返不因 62 vs 62.0 走偏）
+    // 编码侧也要能写回整数（往返不因 62 vs 62.0 走偏）
     auto intRoundTrip = module::claude::quota::decodeQuotaWindows(
         module::claude::quota::encodeQuotaWindows({QuotaWindow{"weekly", 62.0, ""}}));
     DOCTEST_REQUIRE(intRoundTrip.isOk());
@@ -259,15 +244,13 @@ REGISTER_TEST(claude_quota_windows_json_special_chars_survive,
     return true;
 })
 
-// ============ 两表 CRUD ============
-
 REGISTER_TEST(claude_quota_store_config_crud,
               "claude_quota_store: 配置行 写→读→改→列→删 全链一致", {
     test_support::TestDb tdb("quotastore", "cfg");
     QuotaStore store(tdb.handle());
 
-    // 无行 → NotFound（**不是**返回一行默认值：「没配过」与「配了但字段全空」
-    // 在 UI 上是两种引导）
+    // 无行 → NotFound，而不是返回一行默认值：「没配过」与「配了但字段全空」
+    // 在 UI 上是两种引导
     auto missing = store.loadConfig(42);
     DOCTEST_CHECK(missing.isFail());
     DOCTEST_CHECK(missing.errorCode() == core::ErrorCode::NotFound);
@@ -291,7 +274,7 @@ REGISTER_TEST(claude_quota_store_config_crud,
     DOCTEST_CHECK(loaded.value().autoRefresh);
     DOCTEST_CHECK_EQ(loaded.value().intervalMinutes, 15);
 
-    // 改：整行覆盖
+    // 改：整行覆盖，不是字段级 merge
     QuotaConfigRow edited = loaded.value();
     edited.providerId = "deepseek";
     edited.intervalMinutes = 30;
@@ -343,7 +326,7 @@ REGISTER_TEST(claude_quota_store_result_crud_roundtrip,
     DOCTEST_CHECK_EQ(row.value().fetchedAt, int64_t(1700000000));
     DOCTEST_CHECK(!row.value().hasError());
 
-    // Balance 型：windows 恒空但**确实成功过**——hasEverSucceeded 必须为 true。
+    // Balance 型：windows 恒空但确实成功过，hasEverSucceeded 必须为 true。
     // 判据若写成「windows 空 = 从未成功」，这里会被误判成未查过（假 0% 的温床）。
     QuotaResult balance;
     balance.kind = QuotaKind::Balance;
@@ -368,8 +351,6 @@ REGISTER_TEST(claude_quota_store_result_crud_roundtrip,
     return true;
 })
 
-// ============ 失败韧性 ============
-
 REGISTER_TEST(claude_quota_store_transient_keeps_last_success,
               "claude_quota_store: Transient 保留上次成功值 + 只写 last_error", {
     test_support::TestDb tdb("quotastore", "transient");
@@ -382,13 +363,13 @@ REGISTER_TEST(claude_quota_store_transient_keeps_last_success,
 
     auto row = store.loadResult(3);
     DOCTEST_REQUIRE(row.isOk());
-    // 数据列**原样保留**（G7 画旧条 + 「可能过期」角标）
+    // 数据列原样保留（首页画旧条 + 「可能过期」角标）
     DOCTEST_CHECK(row.value().hasEverSucceeded);
     DOCTEST_REQUIRE_EQ(row.value().windows.size(), 2u);
     DOCTEST_CHECK_EQ(row.value().windows[0].usedPercent, 62.5);
     DOCTEST_CHECK_EQ(row.value().planName, std::string("Pro"));
-    // 错误两列已写（fetched_at 也推进：到期判定从「上次尝试」起算，
-    // 否则一次持续失败会每片都重试 = 重试风暴）
+    // 错误两列已写；fetched_at 也推进——到期判定从「上次尝试」起算，
+    // 否则一次持续失败会每片都重试 = 重试风暴
     DOCTEST_CHECK(row.value().hasError());
     DOCTEST_CHECK(row.value().lastErrorKind == QuotaError::Transient);
     DOCTEST_CHECK_EQ(row.value().lastError, std::string("网络超时"));
@@ -416,10 +397,10 @@ REGISTER_TEST(claude_quota_store_auth_error_surfaces_immediately,
     DOCTEST_CHECK(row.value().hasError());
     DOCTEST_CHECK(row.value().lastErrorKind == QuotaError::Auth);
     DOCTEST_CHECK_EQ(row.value().lastError, std::string("密钥无效"));
-    // 有旧值 → UI 仍可显示旧条 + 明确错误文案（G7「失败（有过成功值）」）
+    // 有旧值 → UI 仍可显示旧条 + 明确错误文案
     DOCTEST_CHECK(row.value().hasEverSucceeded);
 
-    // 四种错误分类逐个往返（UI 据 last_error_kind 选文案，分类不能串）
+    // 五种错误分类逐个往返（UI 据 last_error_kind 选文案，分类不能串）
     const std::pair<QuotaError, const char*> cases[] = {
         {QuotaError::Auth, "auth"},
         {QuotaError::Entitlement, "entitlement"},
@@ -437,10 +418,10 @@ REGISTER_TEST(claude_quota_store_auth_error_surfaces_immediately,
         DOCTEST_REQUIRE(r.isOk());
         DOCTEST_CHECK(r.value().lastErrorKind == c.first);
     }
-    // 「none」是成功态的落库值，且**不是**空串（空串 = 这行还没写过）
+    // 「none」是成功态的落库值，且不是空串（空串 = 这行还没写过）
     DOCTEST_CHECK(module::claude::quota::quotaErrorFromName("none") == QuotaError::None);
     DOCTEST_CHECK(module::claude::quota::quotaErrorFromName("") == QuotaError::None);
-    // 认不出的文本 → Transient（**不**回落 None：把失败读成成功是假象）
+    // 认不出的文本 → Transient，不回落 None：把失败读成成功是假象
     DOCTEST_CHECK(module::claude::quota::quotaErrorFromName("??") == QuotaError::Transient);
     return true;
 })
@@ -450,7 +431,7 @@ REGISTER_TEST(claude_quota_store_never_succeeded_writes_no_fake_zero,
     test_support::TestDb tdb("quotastore", "never");
     QuotaStore store(tdb.handle());
 
-    // **第一次就失败**（此前无任何成功值）：这一行必须能被 G7 识别成
+    // 第一次就失败（该行没有任何成功值）：这一行必须能被识别成
     // 「失败且从未成功」→ 只渲染错误行，绝不画 0% 条。
     DOCTEST_REQUIRE(store.applyFetchResult(
                         9, failure(QuotaError::Shape, "响应结构不认识"), 1000).isOk());
@@ -460,13 +441,13 @@ REGISTER_TEST(claude_quota_store_never_succeeded_writes_no_fake_zero,
     DOCTEST_CHECK(!row.value().hasEverSucceeded);
     DOCTEST_CHECK(row.value().hasError());
     DOCTEST_CHECK(row.value().lastErrorKind == QuotaError::Shape);
-    // 关键：数据列是**初始值**，不是「查到了 0%」
+    // 关键：数据列是初始值，不是「查到了 0%」
     DOCTEST_CHECK(row.value().windows.empty());
     DOCTEST_CHECK_EQ(row.value().balanceRemaining, 0.0);
     DOCTEST_CHECK(row.value().currency.empty());
     DOCTEST_CHECK(row.value().planName.empty());
 
-    // 库里的原始行：kind 与 windows_json 两列都是空串（G7 若直读库也判得出）
+    // 库里的原始行：kind 与 windows_json 两列都是空串（首页若直读库也判得出）
     auto raw = tdb.handle().prepare(
         "SELECT kind, windows_json FROM profile_quota_result WHERE profile_id = 9");
     DOCTEST_REQUIRE(raw.isOk());
@@ -478,8 +459,6 @@ REGISTER_TEST(claude_quota_store_never_succeeded_writes_no_fake_zero,
                      std::string(""));
     return true;
 })
-
-// ============ 定时器到点触发（注入时钟 + 毫秒级 tick）============
 
 REGISTER_TEST(claude_quota_refresher_fires_when_due,
               "claude_quota_refresher: enabled+auto_refresh 且到点才刷（注入时钟，绝不等 15 分钟）", {
@@ -571,28 +550,12 @@ REGISTER_TEST(claude_quota_refresher_publishes_before_wake,
     auto round = refresher.refreshNow();
     DOCTEST_REQUIRE(round.isOk());
 
-    // ⚠ **这条用例原来断言的那个量已被删除**（静态审计 M1）。
-    // 原文断言 `quotaRefresherWakeSawReadyForTest()`，声称「唤醒那一刻读共享
-    // 状态以证明结果已就绪」。实测它**恒为 true**：`applyFetchResult` 刚写完的
-    // 行，紧接着 `loadResult` 走同一个 SqliteDb、同一把 recursive_mutex、
-    // 中间无别的写者 → **必然**读得回。两次变异：
-    //   · 退回无条件 set_value        → quota 167 例全绿
-    //   · rowReadable 硬编码 false     → **仍然全绿**（缝永远红也抓不到）
-    // 那条注释还写着「于是 DB 写坏了 / 行读不回来会让缝真的变红」，而实测红不了。
-    // → 恒真的假守卫，比原来那条更隐蔽，故整条删除（含 wakeSawReady_ /
-    //   quotaRefresherWakeSawReadyForTest() / 那行断言）。
+    // 不要加「唤醒那一刻顺便读一次库证明已就绪」那种断言：落库与唤醒在同一线程的
+    // 直线代码里，中间无别的写者，必然读得回——恒真，永远红不了。「先落库、后唤醒」
+    // 的次序同样写不出可交错的场景。落库失败路径不得发唤醒，这一半由源码里的
+    // `if (persisted.isFail()) return out;` 与 applyFetchResult 的失败用例覆盖。
     //
-    // 现在本用例守的是**真的会变的量**：
-    //   ① 刷新成功后确实发了唤醒（consumeUiUpdate 为真）——删掉 wakeAfterPublish
-    //      这一行立刻红；
-    //   ② 唤醒次数恰好 1（不是 0、不是 2）——删掉 fetch_add 立刻红；
-    //   ③ 落库确实发生了（round 里的 persisted）——它承载了「先落库」这半边。
-    // 「先落库、后唤醒」的**次序**由同一线程的语句次序保证（直线代码、无分支、
-    // 编译器不得重排有 data dependence 的语句），没有可交错的点，因此**写不出
-    // 让缝变红的场景** —— 硬造一条只会得到第二条恒真的假守卫。
-    // 批次 D 那个 bug 的真正成因是「落库失败路径仍在发唤醒」，由
-    // `if (persisted.isFail()) return out;` 覆盖，那一条**有**测试
-    // （applyFetchResult 失败时推进 lastSuccessAt，静态审计变异 6 实测变红）。
+    // 本用例守的三个真会变的量：刷新成功后确实发了唤醒、恰好 1 次、落库确实发生。
     DOCTEST_CHECK_MESSAGE(
         ::core::platform::consumeUiUpdate(),
         "刷新完成后无人请求重绘：首页余量卡要等用户下一次动鼠标才更新");
@@ -602,8 +565,7 @@ REGISTER_TEST(claude_quota_refresher_publishes_before_wake,
     DOCTEST_CHECK_MESSAGE(round.value()[0].persisted,
                           "本轮结果未落库 —— 「先落库」这半边没了，"
                           "而它正是「后唤醒」成立的前提");
-    // 落库之后行确实可读（这是「就绪」的**结果**判据，不是唤醒那一刻的缝）：
-    // 它会在「落库根本没发生 / 落到了别的 profile」时变红。
+    // 落库之后行确实读得回：「就绪」的结果判据——落库没发生 / 落到别的 profile 时变红
     auto persisted = store.loadResult(1);
     DOCTEST_REQUIRE(persisted.isOk());
     DOCTEST_CHECK_MESSAGE(persisted.value().hasEverSucceeded,
@@ -635,7 +597,7 @@ REGISTER_TEST(claude_quota_refresher_thread_stops_without_hang,
                              HttpSendFn{}, [&clock] { return clock.now; }, opts);
 
     refresher.start();
-    // 线程确实在跑：轮询（有界，不用长 sleep）到第一次刷为止
+    // 线程确实在跑：轮询到第一次刷为止。用有界轮询而非长 sleep，失败时立刻报
     const auto deadline = std::chrono::steady_clock::now() +
                           std::chrono::seconds(3);
     while (provider.calls.load() == 0 &&
@@ -645,8 +607,8 @@ REGISTER_TEST(claude_quota_refresher_thread_stops_without_hang,
     DOCTEST_CHECK_MESSAGE(provider.calls.load() > 0,
                           "start() 后后台线程没有刷任何一轮（定时器没起）");
 
-    // stopAll 必须在**远小于一个扫描周期**内返回：sleep 切片的设计意义就在
-    // 这——「一次睡到底」的话这里要等 60 秒。
+    // stopAll 必须在远小于一个扫描周期内返回：sleep 切片的设计意义就在这——
+    // 「一次睡到底」的话这里要等 60 秒。
     const auto t0 = std::chrono::steady_clock::now();
     refresher.stopAll();
     const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -656,8 +618,8 @@ REGISTER_TEST(claude_quota_refresher_thread_stops_without_hang,
 
     // 幂等：再调一次不崩、不重复 join
     refresher.stopAll();
-    // 析构再兜底一次（~QuotaRefresher 内 stopAll）——析构时还 joinable 即
-    // std::terminate，本用例能活着返回即证明线程已收干
+    // ~QuotaRefresher 内还会兜底 stopAll 一次；析构时线程仍 joinable 即 std::terminate，
+    // 本用例能活着返回即证明线程已收干
     return true;
 })
 
@@ -721,10 +683,8 @@ REGISTER_TEST(claude_quota_is_due_predicate,
     return true;
 })
 
-// ============ 凭据来源缝（G6 的接入点）============
-
 REGISTER_TEST(claude_quota_credential_source_seam_is_swappable,
-              "claude_quota_credential_source: 缝可替换（G6 只需换实现，不改本批代码）", {
+              "claude_quota_credential_source: 缝可替换", {
     test_support::TestDb tdb("quotacred", "seam");
     QuotaStore store(tdb.handle());
     ProfileRepository repo(tdb.handle(), "QuotaSeamTestService");
@@ -743,7 +703,7 @@ REGISTER_TEST(claude_quota_credential_source_seam_is_swappable,
     cfg.secretsJson = R"({"secretAccessKey":"SK-9"})";
     DOCTEST_REQUIRE(store.saveConfig(cfg).isOk());
 
-    // 默认实现：读本 profile 自己的凭据（E1 的 api_key_encrypted）+ 配置表
+    // 默认实现：读本 profile 自己的 api_key_encrypted + 配置表
     module::claude::quota::ProfileCredentialSource source(repo, store);
     ScriptedProvider provider{okTiered()};
     auto result = source.resolveAndFetch(pid, provider, HttpSendFn{});
@@ -752,11 +712,9 @@ REGISTER_TEST(claude_quota_credential_source_seam_is_swappable,
     DOCTEST_CHECK_EQ(provider.lastBaseUrl, std::string("https://api.example.com"));
     const int callsAfterDefault = provider.calls.load();
 
-    // 换成另一个实现（G6 的 cc-switch 源就是这一步）——缝的存在性证据：
-    // 同样的虚接口，用例塞的实现立刻生效，本批代码一行没改。
-    // 这次特意注入一个**与 provider 不同的结局**：provider 是成功的，
-    // 但这个源说「凭据过期」。若假件又偷偷转发 provider（评审 M4 的原缺陷），
-    // 下面这条 Auth 断言会立刻红——这就是「假件不假」的证据。
+    // 缝的存在性证据：同样的虚接口，用例塞的实现立刻生效，被测代码一行没改。
+    // 这次特意注入一个与 provider 不同的结局：provider 成功，但这个源说「凭据过期」。
+    // 若假件偷偷转发 provider，下面这条 Auth 断言会立刻红——这就是假件不假的证据。
     ScriptedCredentialSource replacement{failure(QuotaError::Auth, "凭据过期")};
     auto viaReplacement = replacement.resolveAndFetch(pid, provider, HttpSendFn{});
     DOCTEST_CHECK(viaReplacement.error == QuotaError::Auth);
@@ -769,10 +727,10 @@ REGISTER_TEST(claude_quota_credential_source_seam_is_swappable,
     DOCTEST_CHECK(viaForwarder.error == QuotaError::None);
     DOCTEST_CHECK_EQ(provider.calls.load(), callsAfterDefault + 1);
 
-    // 没选供应商（provider_id 空串，G6 的「不配置」选项）→ NotConfigured
-    //（**不是** fail()）：可预料的失败结局要带中文文案进 last_error，不是异常。
-    // 配置行**存在**但 provider_id 为空，仍属「未配置」——漏这一判就会拿着没选
-    // 供应商的 profile 去 fetch，出来的错误文案答非所问。
+    // 没选供应商（provider_id 空串，即「不配置」选项）→ NotConfigured
+    //（不是 fail()）：可预料的失败结局要带中文文案进 last_error，不是异常。
+    // 配置行存在但 provider_id 为空，仍属「未配置」而不是「有配置但没供应商」：
+    // 漏这一判就会拿着没选供应商的 profile 去 fetch，错误文案答非所问。
     QuotaConfigRow unconfigured;
     unconfigured.profileId = pid;
     unconfigured.providerId.clear();
@@ -829,11 +787,10 @@ REGISTER_TEST(claude_quota_credential_source_reads_extra_and_secrets,
 
 REGISTER_TEST(claude_quota_credential_source_drops_non_string_extra,
               "claude_quota_credential_source: extra_json 里的数字/布尔/对象一律丢（口径钉死）", {
-    // m5：flatMapFromJson 静默丢非字符串值，此前无测试。口径 = **丢，不报错**
-    //（理由见 quota_credential.cpp 该函数注释：fields 的契约是
+    // flatMapFromJson 静默丢非字符串值，口径 = 丢而不报错：fields 的契约是
     // map<string,string>；把数字 stringify 塞进去会让 provider 收到「看着合法、
-    // 实则类型不对」的值，报错指向错误方向。丢 = 少一个必填字段 = provider
-    // 说「这个字段没填」，那是对的）。
+    // 实则类型不对」的值，把报错指向错误方向。丢 = 少一个必填字段 = provider
+    // 说「这个字段没填」，那是对的。
     test_support::TestDb tdb("quotacred", "nonstr");
     QuotaStore store(tdb.handle());
     ProfileRepository repo(tdb.handle(), "QuotaNonStringTestService");
@@ -874,11 +831,9 @@ REGISTER_TEST(claude_quota_credential_source_drops_non_string_extra,
 
 REGISTER_TEST(claude_quota_store_secrets_roundtrip_through_credential_protection,
               "claude_quota_store: secrets_json 经 platform::credential 存取（明文进、明文出）", {
-    // M3：本批把 secrets_json 接上 protect/unprotect（与 api_key_encrypted
-    // 复用同一对函数）——Windows 上写入即 DPAPI 密文，不给「按字面实现 DDL
-    // 就落成明文」留缝。POSIX 上 protect 是恒等（保护靠 sqlite_db.cpp 每次
-    // open 收紧 db/-wal/-shm 到 0600），故本用例在两平台都成立：
-    // 结构体里始终是明文，调用方不感知存储形态。
+    // secrets_json 与 api_key_encrypted 复用同一对 protect/unprotect：Windows 上写入即
+    // DPAPI 密文；POSIX 上 protect 是恒等（保护靠 sqlite_db.cpp 每次 open 收紧
+    // db/-wal/-shm 到 0600）。故两平台都成立：结构体里始终是明文，调用方不感知存储形态。
     test_support::TestDb tdb("quotastore", "secrets");
     QuotaStore store(tdb.handle());
     const std::string secrets = R"({"secretAccessKey":"值-带-引号\"和\\反斜杠"})";
@@ -894,15 +849,14 @@ REGISTER_TEST(claude_quota_store_secrets_roundtrip_through_credential_protection
     DOCTEST_REQUIRE(loaded.isOk());
     // 往返无损：调用方拿到的仍是明文 JSON 原文
     DOCTEST_CHECK_EQ(loaded.value().secretsJson, secrets);
-    DOCTEST_CHECK_EQ(loaded.value().extraJson, row.extraJson);   // 非密文列不被动
+    DOCTEST_CHECK_EQ(loaded.value().extraJson, row.extraJson);   // 非密文列不动
     return true;
 })
 
 REGISTER_TEST(claude_quota_store_secrets_protect_failure_writes_nothing,
               "claude_quota_store: protect 失败时不写行（不留「行在、secret 没加密」中间态）", {
-    // M3 的失败路径：注入一个 protect 失败的假后端（credential_protection.h
-    // 的 Backend 注入缝，CPX-14 同款），断言 saveConfig **失败且库里没有行**。
-    // 「建了行但 secret 没存进去」是比「根本没建」更难诊断的中间态。
+    // 经 credential_protection.h 的 Backend 注入缝塞一个失败的假后端。
+    // 「建了行但 secret 没存进去」比「根本没建」更难诊断，所以断言库里没有行。
     test_support::TestDb tdb("quotastore", "protectfail");
 
     platform::credential::Backend failing{};
@@ -920,7 +874,7 @@ REGISTER_TEST(claude_quota_store_secrets_protect_failure_writes_nothing,
     row.providerId = "volcano";
     row.secretsJson = R"({"secretAccessKey":"SK"})";
     const auto saved = store.saveConfig(row);
-    platform::credential::setBackendForTest(prev);   // 复位后端（RAII 兜底）
+    platform::credential::setBackendForTest(prev);   // 复位后端，勿漏
 
     DOCTEST_CHECK(saved.isFail());
     DOCTEST_CHECK(store.loadConfig(77).isFail());   // 没有留下半截行
@@ -929,32 +883,27 @@ REGISTER_TEST(claude_quota_store_secrets_protect_failure_writes_nothing,
 
 REGISTER_TEST(claude_quota_store_apply_fetch_result_is_atomic_under_concurrency,
               "claude_quota_store: 并发 applyFetchResult 不丢更新（Transient 不覆盖并发成功）", {
-    // M2：韧性依赖的「读回上次成功值 → 搬进新行 → 写回」是复合操作，锁只覆盖
-    // 写的话非原子 —— 后台 ticker（T）读到旧行后，G6 的手动刷新（S）写进新数据，
-    // T 恢复执行就把旧行整体盖回去（静默丢数据，还会挂「可能过期」角标看起来
-    // 像正常行为）。
+    // 韧性依赖的「读回上次成功值 → 搬进新行 → 写回」是复合操作，锁只覆盖写就非原子：
+    // 后台 ticker（T）读到旧行后，手动刷新（S）写进新数据，T 恢复执行就把旧行整体
+    // 盖回去（静默丢数据）。
     //
-    // 判据不能是「两次都成功」这种弱判据（两种锁法都满足 = 恒真）。这里用一个
-    // **只增不减的版本号**把丢更新变成可判定的不变式，且版本号由 **DB 里的行
-    // 自己**给出，不依赖任何线程内的共享变量：
+    // 判据不能是「两次都成功」——那种弱判据两种锁法都满足 = 恒真。用只增不减的
+    // 版本号把丢更新变成可判定的不变式，版本号由 DB 里的行自己给出：
     //   - S（手动刷新）每次成功写，planName = "S<全局递增版本 v>"
     //   - T（ticker）只写 Transient，把读到的 planName 原样搬回
-    // 不变式：DB 里的 planName 版本**永不回退**。T 每次落库后回读，只要发现
-    // 本次落库让版本号比「本次落库前读到的那个」小，就说明它盖掉了别人的新写。
+    // 不变式：DB 里的 planName 版本永不回退。
     //
-    // ⚠ 这里刻意**不用**「跟另一个线程的原子变量比」——那个变量在写成功之后才
-    // 更新，与 DB 写入之间有一个极窄窗口，会让正确实现也偶发误报（实测 6000
-    // 轮就有假阳性）。改成「写前读到的版本 vs 写后落库的版本」——两端都来自
-    // 同一次调用内、同一把锁保护的读，与实现无关，判据稳定。
+    // 刻意不用「跟另一个线程的原子变量比」：那个变量在写成功之后才更新，与 DB 写入
+    // 之间有一个极窄窗口，会让正确实现也偶发误报。两端都取自同一次调用内、同一把
+    // 锁保护的读，与实现无关。
     test_support::TestDb tdb("quotastore", "concurrent");
     QuotaStore store(tdb.handle());
 
-    // ⚠ 迭代数与线程数是**调出来的**：竞态窗口只有「读回返回」到「INSERT 拿锁」
-    // 之间几条指令，采样点不够就撞不上（实测 2 线程 × 400 轮 0 命中；8 ticker
-    // × 2500 迭代 6 次只中 2 次）。8 ticker × 8000 迭代是实测**两个方向都稳定**
-    // 的最小档位：修复在位 6/6 绿、撤掉锁 6/6 红。代价是本用例约 7 秒。
-    // 之所以不降档：一个假绿的并发用例比没有用例更糟——它会让后续批次以为
-    // 「并发安全已被守住」。
+    // 线程数与迭代数是实测调出来的，不要凭直觉降档：竞态窗口只有「读回返回」到
+    // 「INSERT 拿锁」之间几条指令，采样点不够就撞不上（2 线程 × 400 轮 0 命中；
+    // 8 ticker × 2500 迭代 6 次只中 2 次）。8 ticker × 8000 迭代是「修复在位 6/6 绿、
+    // 撤掉锁 6/6 红」两个方向都稳的最小档位，代价是本用例约 7 秒。
+    // 不降档的理由：一个假绿的并发用例比没有用例更糟。
     constexpr int kIters = 8000;
     std::atomic<int> version{0};
     std::atomic<int> lostUpdates{0};
@@ -980,7 +929,7 @@ REGISTER_TEST(claude_quota_store_apply_fetch_result_is_atomic_under_concurrency,
             const int v = versionOf(after.value().planName);
             if (v < 0) continue;   // 还没被 S 写过，无从比较
             const int prev = before.isOk() ? versionOf(before.value().planName) : -1;
-            // 本次落库让版本回退了 = 盖掉了别人的新写（丢更新）
+            // 版本回退 = 盖掉了别人的新写（丢更新）
             if (prev >= 0 && v < prev) {
                 if (lostUpdates.fetch_add(1) == 0) {
                     firstBad.store(v);
@@ -1021,9 +970,9 @@ REGISTER_TEST(claude_quota_store_apply_fetch_result_is_atomic_under_concurrency,
 
 REGISTER_TEST(claude_quota_store_last_success_at_only_advances_on_success,
               "claude_quota_store: last_success_at 只在成功时推进（数据时间 ≠ 尝试时间）", {
-    // m1：fetched_at 成败都推进（定时器用它，防重试风暴），last_success_at
-    // 只在成功时推进（G7 显示「数据时间」用它）。合成一列会让 G7 在一次失败
-    // 后显示「15 分钟前的数字 + 刚刚查询过」这种自相矛盾的话。
+    // fetched_at 成败都推进（定时器用它防重试风暴），last_success_at 只在成功时推进
+    //（首页「数据时间」用它）。合成一列会让 UI 在一次失败后显示「15 分钟前的数字
+    // + 刚刚查询过」这种自相矛盾的话。
     test_support::TestDb tdb("quotastore", "successat");
     QuotaStore store(tdb.handle());
 
@@ -1033,7 +982,7 @@ REGISTER_TEST(claude_quota_store_last_success_at_only_advances_on_success,
     DOCTEST_CHECK_EQ(first.value().fetchedAt, int64_t(1000));
     DOCTEST_CHECK_EQ(first.value().lastSuccessAt, int64_t(1000));
 
-    // Transient 失败：尝试时间推进，**数据时间不动**
+    // Transient 失败：尝试时间推进，数据时间不动
     DOCTEST_REQUIRE(store.applyFetchResult(
                         1, failure(QuotaError::Transient, "抖动"), 2000).isOk());
     auto afterFail = store.loadResult(1);
@@ -1059,8 +1008,8 @@ REGISTER_TEST(claude_quota_store_last_success_at_only_advances_on_success,
 
 REGISTER_TEST(claude_quota_refresher_scan_throttle_branch,
               "claude_quota_refresher: scanIntervalSec=60 的节流分支（生产默认路径）", {
-    // m3：唯一跑线程的用例设 scanIntervalSec=0，生产默认 60 秒那条
-    // `continue` 分支从未被执行过。本用例跑线程 + 拨时钟，覆盖它。
+    // 生产默认 scanIntervalSec=60 的那条 continue 分支只有本用例覆盖（其余跑线程的
+    // 用例都设 0）
     test_support::TestDb tdb("quotarefresh", "throttle");
     QuotaStore store(tdb.handle());
     FakeClock clock;
@@ -1075,7 +1024,7 @@ REGISTER_TEST(claude_quota_refresher_scan_throttle_branch,
     QuotaRefreshOptions opts;
     opts.slicesPerRound = 1;
     opts.sliceMs = 2;
-    opts.scanIntervalSec = 60;    // ← 生产默认：这条节流分支
+    opts.scanIntervalSec = 60;    // 生产默认，命中节流分支
     QuotaRefresher refresher(store, creds,
                              [&provider](const std::string&) -> const QuotaProvider* {
                                  return &provider;
@@ -1092,7 +1041,7 @@ REGISTER_TEST(claude_quota_refresher_scan_throttle_branch,
     DOCTEST_REQUIRE(provider.calls.load() >= 1);
     const int afterFirst = provider.calls.load();
 
-    // 时钟**不动** → 节流分支应持续 continue，一轮都不该多刷
+    // 时钟不动 → 节流分支持续 continue，一轮都不该多刷
     std::this_thread::sleep_for(std::chrono::milliseconds(150));
     DOCTEST_CHECK_MESSAGE(provider.calls.load() == afterFirst,
                           "时钟没前进却仍在扫描：scanIntervalSec 节流失效");
@@ -1112,9 +1061,9 @@ REGISTER_TEST(claude_quota_refresher_scan_throttle_branch,
 
 REGISTER_TEST(claude_quota_refresher_stop_waits_for_inflight_fetch,
               "claude_quota_refresher: stopAll 会等在途请求跑完（退出延迟口径的实测）", {
-    // m4：头注释曾声称「最多等一片」，那只对**睡眠态**成立。线程正在
-    // refreshNow() 里发请求时，join 会等到那一轮跑完。本用例用一个会
-    // sleep 住的假 provider 钉住这个口径——**不是**断言「立刻返回」。
+    // stopAll 的等待上限只对睡眠态成立（最多等一片）：线程正在 refreshNow() 里发请求
+    // 时 join 会等到那一轮跑完。本用例用一个会 sleep 住的假 provider 钉住这个口径，
+    // 不是断言「立刻返回」。
     test_support::TestDb tdb("quotarefresh", "inflight");
     QuotaStore store(tdb.handle());
     FakeClock clock;
@@ -1159,7 +1108,7 @@ REGISTER_TEST(claude_quota_refresher_stop_waits_for_inflight_fetch,
     }
     DOCTEST_REQUIRE(provider.entered.load());
 
-    // 在途时 stopAll：应**等**这一轮跑完（而不是立刻返回把请求腰斩）
+    // 在途时 stopAll：应等这一轮跑完，而不是立刻返回把请求腰斩
     const auto t0 = std::chrono::steady_clock::now();
     refresher.stopAll();
     const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -1168,21 +1117,13 @@ REGISTER_TEST(claude_quota_refresher_stop_waits_for_inflight_fetch,
                           "在途请求被腰斩：stopAll 立刻返回，线程仍在发请求");
     // 但也不能挂死：远小于 provider 的 timeoutMs 量级
     DOCTEST_CHECK_MESSAGE(elapsed.count() < 10000, "stopAll 在在途请求上挂死");
-    // 等完了 = 结果真落库了（没有半截状态）
+    // 等完了 = 结果真落库了，没有半截状态
     DOCTEST_CHECK(store.loadResult(1).isOk());
     return true;
 })
 
-// ==================== G8：失败韧性收口 =================================
-//
-// spec §5.3 的四条收尾，本段逐条钉死。前三条此前**只有纯函数级**的覆盖
-// （claude_quota_is_due_predicate 测 isDue、claude_quota_store_auth_error…
-// 测落库），缺的是**整条链路**上的行为：失败后到底会不会重打供应商、
-// 一个 profile 炸了会不会带倒整轮、四类错误会不会被「保留旧值」吞掉。
-// 这里补的正是那三条「链路级」缺口。
-
-// ---- 假凭据来源之三：**指定 profile 抛异常**，其余照常转发 ----
-// 「单个 profile 失败不许中断整轮」这条只有它能测：另两个假件都不抛。
+// 假凭据来源之三：指定 profile 抛异常，其余照常转发。
+// 「单个 profile 失败不许中断整轮」只有它能测：另两个假件都不抛。
 class SelectivelyThrowingCredentialSource final : public QuotaCredentialSource {
 public:
     explicit SelectivelyThrowingCredentialSource(int64_t throwForProfileId)
@@ -1203,9 +1144,9 @@ private:
     int64_t throwFor_;
 };
 
-// 四类「非 Transient」错误的公共核对：last_error / last_error_kind 都写对，
-// 且**旧数据仍在**（错误不被保留逻辑吞掉）。
-// 返回 false 时由调用方用例判红——用例名带错误分类名，失败时一眼看出是哪类坏了。
+// 四类「非 Transient」错误的公共核对：last_error / last_error_kind 都写对，且旧数据
+// 仍在（错误不被保留逻辑吞掉）。返回 false 由调用方用例判红——用例名带错误分类名，
+// 失败时一眼看出是哪类坏了。
 bool checkErrorClassNotMasked(QuotaStore& store, int64_t profileId, QuotaError kind,
                               const char* label) {
     std::string why;
@@ -1248,7 +1189,7 @@ REGISTER_TEST(claude_quota_refresher_failure_advances_attempt_clock,
     cfg.intervalMinutes = 15;
     DOCTEST_REQUIRE(store.saveConfig(cfg).isOk());
 
-    // provider **一直失败**（网络一直抖 / 上游一直 5xx）
+    // provider 一直失败（网络一直抖 / 上游一直 5xx）
     ScriptedProvider provider{failure(QuotaError::Transient, "网络超时")};
     ForwardingCredentialSource creds;
     QuotaRefreshOptions opts;
@@ -1268,14 +1209,14 @@ REGISTER_TEST(claude_quota_refresher_failure_advances_attempt_clock,
     DOCTEST_CHECK(first.value()[0].persisted);
     DOCTEST_CHECK_EQ(provider.calls.load(), 1);
 
-    // 失败**也**写了 fetched_at（到期判定从「上次尝试」起算，见 quota_store.h）
+    // 失败也写了 fetched_at——到期判定从「上次尝试」起算
     auto row = store.loadResult(1);
     DOCTEST_REQUIRE(row.isOk());
     DOCTEST_CHECK_EQ(row.value().fetchedAt, clock.now);
 
-    // 🔴 关键断言：网络持续失败时，间隔内**不许**再打供应商。
-    // 若 fetched_at 只在成功时推进（拿到的是 0 / 旧值），这里每分钟都会重打一次
-    // → provider.calls 从 1 涨到 6，重试风暴。
+    // 关键断言：网络持续失败时，间隔内不许再打供应商。若 fetched_at 只在成功时推进
+    //（拿到的是 0 / 旧值），这里每分钟都会重打一次 → provider.calls 从 1 涨到 6，
+    // 即重试风暴。
     for (int minute = 1; minute <= 5; ++minute) {
         clock.now += 60;   // 每分钟扫一次，合计 5 分钟 < 15 分钟间隔
         auto again = refresher.refreshNow();
@@ -1324,9 +1265,9 @@ REGISTER_TEST(claude_quota_refresher_one_bad_profile_does_not_break_round,
 
     auto round = refresher.refreshNow();
     DOCTEST_REQUIRE(round.isOk());
-    // 三个 profile 都有产出（一个都没被整轮吞掉）
+    // 三个 profile 都有产出，没被整轮吞掉
     DOCTEST_REQUIRE_EQ(round.value().size(), 3u);
-    // 炸的那个被标成 skipped + 有原因，且**没有**被记成成功
+    // 炸的那个被标成 skipped + 有原因，且没被记成成功
     DOCTEST_CHECK(round.value()[1].skipped);
     DOCTEST_CHECK(!round.value()[1].persisted);
     DOCTEST_CHECK(!round.value()[1].skipReason.empty());
@@ -1385,9 +1326,9 @@ REGISTER_TEST(claude_quota_store_not_configured_not_masked_by_retention,
 
 REGISTER_TEST(claude_quota_store_error_headline_points_at_the_right_fix,
               "claude_quota_store: 四类错误的头条文案各自指向正确处置（不把用户引向错方向）", {
-    // 「文案把用户引向错误方向」是本批明确要找的缺陷类型。四类错误的处置方向
-    // 各不相同，把 Entitlement 说成「换密钥」或把 Transient 说成「套餐过期」
-    // 都会让用户白折腾。这里逐类钉死 headline 的**关键词**。
+    // 文案把用户引向错误方向是一类要杜绝的缺陷：四类错误的处置方向各不相同，把
+    // Entitlement 说成「换密钥」或把 Transient 说成「套餐过期」都会让用户白折腾。
+    // 这里逐类钉死 headline 的关键词。
     const auto headline = [](QuotaError kind) {
         return module::claude::quota::quotaErrorHeadline(kind, std::string());
     };
@@ -1413,16 +1354,16 @@ REGISTER_TEST(claude_quota_store_error_headline_points_at_the_right_fix,
 
 REGISTER_TEST(claude_quota_production_scan_interval_is_single_source,
               "claude_quota_refresh: 扫描间隔只有一个真相源（结构默认值 == 承诺给用户的秒数）", {
-    // G6 裁决 8 的欠账兑现：以前 toast 文案与 QuotaRefreshOptions 各写一个字面量
-    // 60，改一边另一边不动。现在两边都从 kQuotaProductionScanIntervalSec 取。
-    // 本用例把那个常量钉在 60 上：改它是产品决策（用户承诺的自动查询延迟变了），
-    // 必须连本用例一起改，避免无声漂移。
+    // toast 文案与 QuotaRefreshOptions 的扫描间隔都从 kQuotaProductionScanIntervalSec 取，
+    // 不要各写一个字面量 60，否则改一边另一边不动。
+    // 本用例把那个常量钉在 60 上：改它是产品决策（承诺给用户的自动查询延迟变了），
+    // 必须连本用例一起改。
     DOCTEST_CHECK_EQ(module::claude::quota::kQuotaProductionScanIntervalSec, 60);
-    // 结构默认值真的取自那个常量（不是又抄了一遍 60）
+    // 结构默认值真的取自那个常量，不是又抄了一遍 60
     const QuotaRefreshOptions defaults;
     DOCTEST_CHECK_EQ(defaults.scanIntervalSec,
                      module::claude::quota::kQuotaProductionScanIntervalSec);
-    // 用例注入的 0 仍能覆盖（测试专用短间隔这条路没被常量锁死）
+    // 用例注入的 0 仍能覆盖：测试专用短间隔这条路没被常量锁死
     QuotaRefreshOptions injected;
     injected.scanIntervalSec = 0;
     DOCTEST_CHECK_EQ(injected.scanIntervalSec, 0);
@@ -1430,14 +1371,13 @@ REGISTER_TEST(claude_quota_production_scan_interval_is_single_source,
 })
 
 REGISTER_TEST(claude_quota_refresher_manual_path_bypasses_interval_and_auto_refresh,
-              "claude_quota_refresher: 手动刷新绕过 interval 与 auto_refresh（G6 L1 的唤醒通道终点）", {
-    // G6 遗留 L1「保存后不即时刷新」的收口：G7 给首页 [刷新] 按钮加了**唤醒通道**
-    //（进程级 atomic 请求位 + tick 线程每片查），tick 拿到位后走
-    // refreshNow(manual=true)。本用例盯的就是那个终点——**不改**它，不要求它
-    // 同步 refreshNow（后者是 15s×N 的真网络查询，会冻 UI）。
+              "claude_quota_refresher: 手动刷新绕过 interval 与 auto_refresh", {
+    // 首页 [刷新] 按钮走唤醒通道（进程级 atomic 请求位 + tick 线程每片查），tick 拿到
+    // 位后走 refreshNow(manual=true)。本用例盯的就是那个终点——不要把它改成同步
+    // refreshNow（后者是 15s×N 的真网络查询，会冻 UI）。
     //
-    // 这里的配置刻意设成「自动刷新关 + 刚查过」：这两种情况下
-    // refreshNow(false) 一定不刷，于是「手动通道有没有真的开一路」无所遁形。
+    // 配置刻意设成「自动刷新关 + 刚查过」：这两种情况下 refreshNow(false) 一定不刷，
+    // 于是「手动通道有没有真的开一路」无所遁形。
     test_support::TestDb tdb("quotarefresh", "manual");
     QuotaStore store(tdb.handle());
     FakeClock clock;
@@ -1446,7 +1386,7 @@ REGISTER_TEST(claude_quota_refresher_manual_path_bypasses_interval_and_auto_refr
     cfg.profileId = 1;
     cfg.providerId = "scripted";
     cfg.enabled = true;
-    cfg.autoRefresh = false;        // ← 手动通道必须无视它
+    cfg.autoRefresh = false;        // 手动通道必须无视它
     cfg.intervalMinutes = 15;
     DOCTEST_REQUIRE(store.saveConfig(cfg).isOk());
 
@@ -1480,16 +1420,15 @@ REGISTER_TEST(claude_quota_refresher_manual_path_bypasses_interval_and_auto_refr
     DOCTEST_REQUIRE(row.isOk());
     DOCTEST_CHECK(row.value().hasEverSucceeded);
 
-    // 手动刷新**不**把 auto_refresh 打开：再走自动通道依然不刷
+    // 手动刷新不会把 auto_refresh 打开：再走自动通道依然不刷
     auto afterManual = refresher.refreshNow(false);
     DOCTEST_REQUIRE(afterManual.isOk());
     DOCTEST_CHECK(afterManual.value()[0].skipped);
     DOCTEST_CHECK_EQ(provider.calls.load(), 1);
 
-    // 两道闸仍然生效：enabled=false 的档，手动通道也**不**该强行刷。
-    // 注意手动一轮会**同时**重刷所有「enabled 且配了 provider」的档（profile 1
-    // 也算），所以这里断言的是「调用次数只 +1」——如果 enabled=false 那道闸
-    // 失效，次数会 +2（profile 1 与 2 各一次）。
+    // 两道闸仍然生效：enabled=false 的档，手动通道也不该强行刷。
+    // 注意手动一轮会同时重刷所有「enabled 且配了 provider」的档（profile 1 也算），
+    // 所以这里断言的是「调用次数只 +1」——enabled=false 那道闸失效时次数会 +2。
     QuotaConfigRow off = cfg;
     off.profileId = 2;
     off.enabled = false;

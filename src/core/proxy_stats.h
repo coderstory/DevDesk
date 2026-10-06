@@ -29,7 +29,7 @@ Snapshot snapshot();
 // 空序列返回 {0.0f}（防 lineChart 对空 values 填演示数据）
 std::vector<float> rateSeries(int maxPoints = 32);
 
-// ---- 测试专用 ----
+// 测试专用
 // setTestClock：注入假时钟（steady 毫秒），nullptr 恢复真实时钟
 // resetForTest：清空全部状态（含时钟），测试间隔离用
 void setTestClock(std::function<int64_t()> fn);

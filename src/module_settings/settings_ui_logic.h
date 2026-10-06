@@ -62,7 +62,7 @@ inline constexpr float kSettingsTabHeight = 40.0f;  // tab 栏高
 inline constexpr int kLogTailMaxLines = 500;        // 日志查看 tail 行数上限
 inline constexpr long kLogTailReadWindow = 256 * 1024;  // tail 只读末尾 256KB
 
-// ---- 卡片高度（唯一来源：注册表卡高与卡内几何同源）----
+// 卡片高度（唯一来源：注册表卡高与卡内几何同源）
 // 内边距四周 ≥16px，改动须同时满足「内容底沿 + 16」；这些是 100% 档基准，注册表运行期取 roundFs(常量)，卡高与行盒同缩放才不挤出尾行。
 inline constexpr float kAppearanceCardHeight = 172.0f;  // 外观卡（通用；降级提示行底 156 + 16）
 inline constexpr float kEditorFontCardHeight = 108.0f;  // 编辑器字号卡（通用）

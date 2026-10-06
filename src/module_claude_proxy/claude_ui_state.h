@@ -88,7 +88,7 @@ struct DetailState {
     int detailTab_ = 0;
 };
 
-// ============ 新建/编辑表单 + 删除确认弹窗 ============
+// 新建/编辑表单 + 删除确认弹窗
 struct FormState {
     bool formOpen_ = false;
     int64_t formEditId_ = 0;   // 0 = 新建，非 0 = 编辑该 id

@@ -1,34 +1,19 @@
 #!/usr/bin/env bash
 # scripts/check-probe-gate-labels.sh
-# 探针门禁标签守卫（G8 遗留 4 的另一半，2026-10-03 final 批）
 #
-# ── 它在守什么 ─────────────────────────────────────────────────────
-# tools/quota_live_probe.cpp 是**真机出网**探针：真网络 + 需要用户本机
-# ~/.cc-switch/cc-switch.db + 每次实打实打四家供应商接口。它进不了默认门禁
-# （CI / 离线环境必红，别的机器上没有凭据）——这一点 tests/CMakeLists.txt 的注释
-# 写着，但那只是**注释断言**。本会话的病根恰恰是「注释断言」冒充「代码断言」。
+# tools/quota_live_probe.cpp 是真机出网探针：真网络 + 本机 ~/.cc-switch/cc-switch.db，
+# 每次实打四家供应商接口。它必须挂 ctest 标签 live，绝不能进 probe —— 默认门禁跑的是
+# `ctest -L probe`，标签被改成 probe 或 probe;live 就等于一次 CI 真打四家供应商，
+# 而没有任何别的机制会发现。
 #
-# 2026-10-03 给它补了显式入口：ctest 条目 quota_live_probe，LABELS = "live"。
-# 于是「绝不进默认门禁」这条约定第一次**可以被违反而不被任何机制发现**——
-# 只要有人顺手把 "live" 改成 "probe"（或写成 "probe;live"），一次 CI 跑就会
-# 真打四家供应商。本守卫把那条约定钉成会红的断言。
+# 断言（校验对象 = tests/CMakeLists.txt 的 quota_live_probe 条目 + scripts/build-test-run.sh）：
+#   A. add_test(NAME quota_live_probe 恰好 1 条：0 条 = 入口被删；≥2 条 = 有人复制了一份。
+#   B. 该条目有 set_tests_properties(quota_live_probe ... LABELS ...)，且标签集合恰好 {live}。
+#   C. 标签集合不含 probe。
+#   D. build-test-run.sh 里不得出现 run-quota-live-probe.sh（它是常规门禁入口）。
+#   E. --self-test 对构造的坏输入必须逐条报红；一条从不变绿的守卫等于没写。
 #
-# ── 断言（四条）────────────────────────────────────────────────────
-#   A. tests/CMakeLists.txt 里存在一个 `add_test(NAME quota_live_probe`。
-#      **条数必须恰好 1**：0 条 = 入口被删（回到「没人知道怎么跑」）；≥2 条 =
-#      有人复制了一份。
-#   B. 该条目 `set_tests_properties(quota_live_probe PROPERTIES LABELS ...)`
-#      存在，且标签集合**恰好**是 {live}。
-#   C. 标签集合**不含 probe** —— 门禁跑的是 `ctest -L probe`，含 probe 即进
-#      默认门禁 = 真打网络 = CI 必红。
-#   D. **门禁脚本不调用本探针**：scripts/build-test-run.sh 里不得出现
-#      `run-quota-live-probe.sh`（build-test-run.sh 是常规门禁入口；它只应
-#      串跑两个静态守卫 + `ctest -L probe`）。
-#   E. **自证非恒真**（--self-test）：对构造的坏输入（标签改成 probe / 改成
-#      "probe;live" / 条目删掉 / 门禁脚本里加上调用），必须逐条报红。
-#      一条从不变绿的守卫等于没写——这是本项目反复翻车的那类假绿。
-#
-# 退出码：0 = 通过；1 = 违规；2 = 环境错（**不静默绿**）
+# 退出码：0 = 通过；1 = 违规；2 = 环境错（不静默绿）
 #
 # 用法：bash scripts/check-probe-gate-labels.sh [--root DIR] [--self-test]
 set -uo pipefail
@@ -53,10 +38,8 @@ done
 TESTS_CMAKE="${ROOT}/tests/CMakeLists.txt"
 GATE_SCRIPT="${ROOT}/scripts/build-test-run.sh"
 
-# 门禁守卫登记表（断言 E 用）。**新增门禁守卫时必须同步登记到这里**，
-# 否则本守卫的 E1 会立刻报红——那道红是设计意图，不是误报：
-# 「加了一道门禁但没人为它的判据登记」等于没加。
-# 每行注释写明这道守卫在守什么，便于下一个加门禁的人照抄格式。
+# 门禁守卫登记表（断言 E 用）。新增门禁守卫必须同步登记到这里，否则 E1 立刻报红——
+# 那道红是设计意图不是误报：绕过登记，等于加了一道没人知道它存在、没人对它的判据负责的脚本。
 REGISTERED_GUARDS=(
     "scripts/check-module-isolation.sh"        # 模块隔离：settings 不反向依赖 pet
     "scripts/check-quota-write-paths.sh"       # 余量落库唯一入口
@@ -77,15 +60,10 @@ if [ ! -f "$GATE_SCRIPT" ]; then
     exit 2
 fi
 
-# 条目块 = 从 `add_test(NAME quota_live_probe` 起、到**下一个 `add_test(` 或文件尾**。
-#
-# ⚠ **为什么不能用固定行数窗口**（静态审计 M3 亲手构造的反证）：旧版取
-# 「往后 12 行」。把 `set_tests_properties(... LABELS "live")` 挪到第 20 行
-# （完全合法的 CMake 写法——中间插几行注释而已）→ 旧守卫**报绿，EXIT=0**，
-# 断言 B/C 双双失效而它毫无察觉。那不是「窗口不够宽」，是「窗口的宽度本身
-# 就是一条要人同步的隐式不变式」——正是本项目反复翻车的那类：守卫声称覆盖了
-# 某个失败模式，实现只覆盖了其中一个子形态。
-# 现在用 awk 状态机：块在下一个 `add_test(` 之前结束（或到文件尾）。
+# 条目块 = 从 `add_test(NAME quota_live_probe` 起、到下一个 `add_test(` 或文件尾。
+# 下面用 awk 状态机划块，不要改回「往后 12 行」的固定窗口：把 set_tests_properties 挪到
+# 窗口外（中间插几行注释，完全合法的 CMake 写法）会让断言 B/C 双双看不见而守卫报绿
+# EXIT=0 —— 窗口宽度本身成了要人同步的隐式不变式，正是这道门禁存在的理由。
 block_for() {
     awk -v name="quota_live_probe" '
         index($0, "add_test(") {
@@ -180,8 +158,7 @@ if [ "$SELF_TEST" -eq 1 ]; then
     trap 'rm -rf "$TMP"' EXIT
     # 跨平台原地改文件。**不要用 `sed -i ''`**（BSD 专有）：GNU sed（Windows CI
     # 的 MSYS2 就是它）会把 '' 当脚本、把真正的表达式当文件名，结果是**什么都没改**
-    # 还报一行错 —— 自测据此会误判成「假绿守卫」。2026-10-03 把本守卫的 --self-test
-    # 接进门禁链时才发现这处平台不对称，Windows job 会因此常红。
+    # 还报一行错 —— 自测据此会误判成「假绿守卫」。
     sed_i() {
         local f="$1" t; shift
         t="$(mktemp)"
@@ -235,13 +212,13 @@ if [ "$SELF_TEST" -eq 1 ]; then
     cp -R "$TMP/good" "$TMP/probe_probe_tag_mixed"
     sed_i "$TMP/probe_probe_tag_mixed/tests/CMakeLists.txt" 's/LABELS "live"/LABELS "probe;live"/'
 
-    # 坏树 ⑤（静态审计 M3）：标签写到 add_test 之后第 18 行 —— 必须报红。
-    # 这条钉住的是**守卫自身的健壮性**：旧版用「往后 12 行」的固定窗口，
+    # 坏树 ⑤：标签写到 add_test 之后第 18 行 —— 必须报红。
+    # 这条钉住的是**守卫自身的健壮性**：块若改回「往后 12 行」的固定窗口，
     # 一条 probe 标签挪出窗口，断言 B/C 双双看不见而守卫**报绿**——那正是
     # 「真机探针被挂进默认门禁 = 一次 CI 真打四家供应商」的形态。形态完全
     # 合法（add_test 与 set_tests_properties 之间插十几行注释没有任何问题），
     # 恰恰是最容易被「整理一下」制造出来的那种。
-    # ⚠ 标签值必须是 **probe** 而不是 live：标签挪远了但值仍是 live，正确答案
+    # 标签值必须是 **probe** 而不是 live：标签挪远了但值仍是 live，正确答案
     # 本来就是绿 —— 用 live 造这条自测会得到一条「永远红」的自测，等于把守卫
     # 变成恒红（比没有守卫更糟）。本条的判据是「窗口外的违规必须被看见」。
     cp -R "$TMP/good" "$TMP/label_far_below"

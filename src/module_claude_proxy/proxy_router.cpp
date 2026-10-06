@@ -169,7 +169,7 @@ void ProxyRouter::handleRequest(
     const std::string& body,
     platform::http::ResponseWriter& out) {
 
-    // ---- 0. 流式分支：POST /v1/messages + "stream": true ----
+    // 0. 流式分支：POST /v1/messages + "stream": true
     if (shouldUseStreaming(path, body)) {
         handleStreamingRequest(method, path, headers, body, out);
         return;
@@ -178,7 +178,7 @@ void ProxyRouter::handleRequest(
     const auto startTime = std::chrono::steady_clock::now();
     const std::time_t startedAt = std::time(nullptr);
 
-    // ---- 1. 取 profile（含明文 API key）：唯一入口 resolveProfile，与流式路径共用失败语义 ----
+    // 1. 取 profile（含明文 API key）：唯一入口 resolveProfile，与流式路径共用失败语义
     auto profileR = resolveProfile();
     if (profileR.isFail()) {
         writeNoProfileError(out, service_, "代理：", profileR.errorMessage());
@@ -187,7 +187,7 @@ void ProxyRouter::handleRequest(
     Profile profile = std::move(profileR).value();
     Profile servingProfile = profile;   // 实际服务的那家（failover 换家后 = 备用）
 
-    // ---- 2/3. 构造上游 + 转发（failover 单跳）：换家判据 = shouldFailoverTo；有备用则重试一次，两次失败返回第二次结果。注入模式跳过换家 ----
+    // 2/3. 构造上游 + 转发（failover 单跳）：换家判据 = shouldFailoverTo；有备用则重试一次，两次失败返回第二次结果。注入模式跳过换家
     const auto buildUpstream = [&](const Profile& p) {
         platform::http::Request up;
         up.method = method;
@@ -251,7 +251,7 @@ void ProxyRouter::handleRequest(
 
     auto& resp = respR.value();
 
-    // ---- 4. 写回客户端 ----
+    // 4. 写回客户端
     out.setStatus(resp.statusCode);
     bool hasContentType = false;
     for (const auto& kv : resp.headers) {
@@ -274,7 +274,7 @@ void ProxyRouter::handleRequest(
     }
     out.end();
 
-    // ---- 5. 写日志 ----
+    // 5. 写日志
     ClaudeService::CallLogEntry entry;
     entry.profileId = servingProfile.id;
     entry.method = method;
@@ -337,7 +337,7 @@ void ProxyRouter::handleStreamingRequest(
     const auto startTime = std::chrono::steady_clock::now();
     const std::time_t startedAt = std::time(nullptr);
 
-    // ---- 1. 取 profile：与缓冲路径共用同一入口 + 同一失败出口 ----
+    // 1. 取 profile：与缓冲路径共用同一入口 + 同一失败出口
     auto profileR = resolveProfile();
     if (profileR.isFail()) {
         writeNoProfileError(out, service_, "流式代理：", profileR.errorMessage());
@@ -346,7 +346,7 @@ void ProxyRouter::handleStreamingRequest(
     Profile profile = std::move(profileR).value();
     Profile servingProfile = profile;   // 实际服务的那家（failover 换家后 = 备用）
 
-    // ---- 2/3/4. 启动流式转发 + 等响应头（failover 单跳）：判定点 = waitForStatus 后、写响应头前；命中换家表 → cancel 丢弃本次流，用备用起新流；只换一跳 ----
+    // 2/3/4. 启动流式转发 + 等响应头（failover 单跳）：判定点 = waitForStatus 后、写响应头前；命中换家表 → cancel 丢弃本次流，用备用起新流；只换一跳
     core::Result<std::unique_ptr<platform::http::StreamingResponse>> streamR;
     std::shared_ptr<platform::http::StreamingResponse> upstreamStream;
     int upstreamStatus = 0;
@@ -442,7 +442,7 @@ void ProxyRouter::handleStreamingRequest(
         return;
     }
 
-    // ---- 5. 写响应头 + 交给 chunked provider 流式回写（SSE 必须是 text/event-stream）----
+    // 5. 写响应头 + 交给 chunked provider 流式回写（SSE 必须是 text/event-stream）
     std::string contentType = upstreamStream->contentType();
     if (contentType.empty()) contentType = sse::kContentType;
 

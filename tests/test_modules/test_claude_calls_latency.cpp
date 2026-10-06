@@ -1,23 +1,9 @@
 // tests/test_modules/test_claude_calls_latency.cpp
-// 批次 D（2026-10-02）诊断用例：调用记录弹窗「打开后加载特别慢」的分段实测 +
-// 根因修复钉板。独立成文件（不塞进 test_claude_ui.cpp）：同一时刻有别的批次在
-// 改那个 6k 行文件，新增用例集中在这里，冲突面最小。
-//
-// 用户主诉：Claude 页「调用记录」弹窗打开后内容加载特别慢。
-//
-// 实测方法（D-1）：claude_ui_logs.cpp 的四个 steady_clock 计时缝（照 CPX-06 的
-// g_callsQueryDispatches 先例，生产零读取点，extern "C" 导出）把链路切成四段：
-//   派发（渲染线程）→ worker 启动（后台线程）→ worker 查完 → 结果搬进快照
-// 用例读差值即得各段耗时；「结果上屏」一段用**仿真主循环**量：
-// 没有唤醒信号就不 compose（等价 EUI-NEO glfw_app_main.cpp 帧末的 glfwWaitEvents
-// ——无动画时不空转，阻塞等事件）。
-//
-// 根因（实测结论，数字见用例 cout 与 report-D.md）：
-//   后台查询查完**不请求重绘**，主循环停在 glfwWaitEvents 里等不到任何事件 →
-//   数据早在内存里也没人 recompose，「加载中…」要停到用户下一次动鼠标/敲键。
-//   修复 = worker 出口 app::requestUpdate()（仓库既有重绘请求写法）。
-// 回退即红：删掉 claude_ui_logs.cpp 里那一行 app::requestUpdate()，本用例的
-// 「查完→主循环被唤醒」断言在 3s 窗口内拿不到信号 → 红。
+// 调用记录弹窗的分段耗时实测 + 「后台结果就绪必须唤醒主循环」钉板（弹窗路径 + 页面级刷新路径各一条用例）。
+// 跨文件前提：
+//   - 计时缝与次序缝由 claude_ui_logs.cpp / claude_ui_state.cpp 文件末尾 extern "C" 导出，声明见下。
+//   - EUI-NEO 的两个帧唤醒标志是进程全局原子量，只读消费即可断言「请求了重绘」，不需要 GLFW 初始化。
+//   - 无头进程不跑主循环；本文件按「没有唤醒信号就没有下一帧」建模，等价 glfwWaitEvents 阻塞。
 #include "doctest.h"
 #include "test_support.h"
 
@@ -29,8 +15,6 @@
 #include "core/module_interface.h"
 #include "core/sqlite_db.h"
 #include "core/theme.h"
-// EUI-NEO 平台的帧唤醒标志：断言「后台结果就绪会请求重绘」只读消费这两个
-// 原子标志，不需要 GLFW 初始化（无头进程里置位即成立）
 #include "core/platform/platform.h"
 
 #include <eui/dsl.h>
@@ -45,17 +29,15 @@
 #include <vector>
 
 extern "C" ::core::Module* create_claude_module();
-// 审计 CPX-06 测试缝（claude_ui_logs.cpp 文件末尾同名导出）
+// claude_ui_logs.cpp 文件末尾同名导出
 extern "C" int claude_calls_query_dispatches_for_test();
 extern "C" unsigned long long claude_calls_query_last_thread_for_test();
-// 批次 D 计时缝（claude_ui_logs.cpp 文件末尾同名导出）：四个 steady_clock
-// 纳秒时刻（0 = 未发生）——派发点 / worker 启动 / worker 查完 / 结果进快照
+// 同文件导出的四个 steady_clock 纳秒时刻（0 = 未发生）：派发点 / worker 启动 / worker 查完 / 结果进快照
 extern "C" long long claude_calls_query_dispatch_ns_for_test();
 extern "C" long long claude_calls_query_worker_start_ns_for_test();
 extern "C" long long claude_calls_query_worker_done_ns_for_test();
 extern "C" long long claude_calls_query_harvest_ns_for_test();
-// 次序缝（批次 D 评审收尾）：唤醒发出那一刻，结果共享状态是否**已就绪**
-// （true = 先就绪后唤醒；见 claude_ui_logs.cpp / claude_ui_state.cpp 同名导出）
+// 次序缝：唤醒发出那一刻结果共享状态是否已就绪（true = 先就绪后唤醒）。弹窗路径与页面路径各一条同名导出
 extern "C" bool claude_calls_query_wake_saw_ready_for_test();
 extern "C" bool claude_data_refresh_wake_saw_ready_for_test();
 
@@ -64,7 +46,7 @@ namespace {
 constexpr const char* kTestKeychainService = "DevDeskTestClaudeModule";
 constexpr const char* kDbPrefix = "devdesk_test_claude_lat_";
 
-// RAII：临时库 + 注册全局 ClaudeService（test_claude_ui.cpp TestEnv 同款）
+// 临时库 + 注册全局 ClaudeService：析构必须摘掉全局单例，否则同进程后续用例读悬垂指针
 struct TestEnv : test_support::TestDb {
     std::unique_ptr<module::claude::ClaudeService> svc;
 
@@ -96,8 +78,8 @@ REGISTER_TEST(claude_calls_dialog_latency_segments,
     const int64_t pid = p.value().id;
     const std::time_t base = std::time(nullptr);
 
-    // 2000 行（真实量级：代理每条转发调用落一行）。单事务批量插入——逐条提交
-    // 走 WAL + synchronous=FULL，2000 次 fsync 会把用例拖到秒级。
+    // 2000 行（真实量级：代理每条转发调用落一行）。单事务批量插入不可拆成逐条提交——那走
+    // WAL + synchronous=FULL，2000 次 fsync 会把用例拖到秒级。
     constexpr int kRows = 2000;
     {
         auto tr = env.handle().transaction([&]() -> ::core::Result<void> {
@@ -140,16 +122,14 @@ REGISTER_TEST(claude_calls_dialog_latency_segments,
                   << std::endl;
     };
 
-    // 「调用记录」= 详情面板第 5 页签（idx 4，2026-09-30 batch-fix B 起）。
-    // 冷启动首帧含 dataLoaded_ 的同步装载一次，与真机同序。
+    // 「调用记录」= 详情面板第 5 页签（idx 4）；首帧走 dataLoaded_ 同步装载一次，与真机同序
     {
         eui::Ui ui;
         compose(ui);
         DOCTEST_REQUIRE(click(ui, "claude.detail.tabs.hit.4"));
     }
 
-    // 测量前排空唤醒标志：EUI-NEO 的两个标志是进程全局的，上一条用例 / 上一次
-    // 派发的残留必须清掉，否则 ⑤ 的断言恒真（假绿）。
+    // 测量前必须排空唤醒标志：两个标志进程全局，上一例 / 上一次派发的残留会让 ③ 的断言恒真
     auto drainWake = [] {
         ::core::platform::consumeUiUpdate();
         ::core::platform::consumeFrameRequest();
@@ -165,10 +145,9 @@ REGISTER_TEST(claude_calls_dialog_latency_segments,
         compose(ui);
         DOCTEST_REQUIRE(click(ui, "claude.calls.viewall.hit"));
     }
-    // 自检（非竞态版）：开弹窗这一帧本身不产生重绘请求——此刻还没有查询在飞，
-    // 不可能被 worker 的唤醒污染，所以这一条能证「排空的标志位确实干净」。
-    // （不能改成「派发帧之后仍为 false」：2000 行库查询只要 0.25ms，worker 常在
-    // 同一帧的 compose 里就跑完并发出唤醒，那个断言会 flaky。）
+    // 自检：开弹窗这一帧还没有查询在飞，不可能被 worker 的唤醒污染，所以这两条恒绿——它们
+    // 证明的是「排空的标志位确实干净」。不可改成「派发帧之后仍为 false」：2000 行库查询
+    // 只要 0.25ms，worker 常在同一帧的 compose 里就跑完并发出唤醒，那个断言会 flaky。
     DOCTEST_CHECK_MESSAGE(!::core::platform::consumeUiUpdate(),
                           "开弹窗帧不该请求重绘");
     DOCTEST_CHECK_MESSAGE(!::core::platform::consumeFrameRequest(),
@@ -186,7 +165,7 @@ REGISTER_TEST(claude_calls_dialog_latency_segments,
     const long long t_dispatch = claude_calls_query_dispatch_ns_for_test();
     DOCTEST_CHECK(t_dispatch >= t_click);
 
-    // 等后台查询实跑完（**不 compose**：compose 会把结果收进快照，那是第 ⑤ 段）
+    // 等后台查询实跑完（**不 compose**：compose 会把结果收进快照，那是上屏帧那一段）
     long long worker_start = 0;
     long long worker_done = 0;
     for (int i = 0; i < 5000; ++i) {   // 5s 上限（负载机器上留足余量）
@@ -199,8 +178,8 @@ REGISTER_TEST(claude_calls_dialog_latency_segments,
                             "后台查询未在 ~5s 内跑完");
     DOCTEST_CHECK(worker_start >= t_dispatch);
 
-    // ③ 仿真主循环：没有唤醒信号就「不出帧」（等价 glfwWaitEvents 阻塞）。
-    //    这里是修复点的判据——后台结果就绪必须发一次唤醒。
+    // ③ 仿真主循环：没有唤醒信号就「不出帧」（等价 glfwWaitEvents 阻塞）。后台结果就绪必须发
+    //    一次唤醒，否则主循环等不到事件、数据早在内存里也没人 recompose。
     bool woke = false;
     const long long t_wait_start = nowNs();
     while (nowNs() - t_wait_start < 3000000000LL) {
@@ -216,10 +195,9 @@ REGISTER_TEST(claude_calls_dialog_latency_segments,
         woke,
         "后台结果就绪后无人请求重绘：主循环停在 glfwWaitEvents 等不到事件，"
         "结果要等用户下一次动鼠标/敲键才上屏（= 用户主诉的「加载特别慢」）");
-    // 次序断言（批次 D 评审收尾）：唤醒发出那一刻结果必须**已经就绪**。
-    // 「先唤醒、后就绪」是原症状的复发形态——std::async 在 callable 返回之后才
-    // 发布值，UI 抢跑会把唤醒位消费掉、脏标记已清 → 结果没人再上屏；而这个窗口
-    // 只有纳秒级，只测最终结果抓不到（本断言由 worker 在唤醒前真探一次共享状态）。
+    // 次序断言：唤醒发出那一刻结果必须**已经就绪**。「先唤醒、后就绪」是原症状的复发形态
+    // ——std::async 在 callable 返回之后才发布值，UI 抢跑会把唤醒位消费掉、脏标记已清 →
+    // 结果没人再上屏；而这个窗口只有纳秒级，只测最终结果抓不到，故由 worker 在唤醒前真探一次共享状态。
     DOCTEST_CHECK_MESSAGE(
         claude_calls_query_wake_saw_ready_for_test(),
         "唤醒先于结果就绪：UI 可能抢跑消费唤醒位 → 结果不上屏（次序必须是"
@@ -243,7 +221,6 @@ REGISTER_TEST(claude_calls_dialog_latency_segments,
                   static_cast<unsigned long long>(
                       std::hash<std::thread::id>{}(std::this_thread::get_id())));
 
-    // ---- 数字落纸（可复现：同一用例重跑即同口径）----
     report("① 打开动作→弹窗首帧 compose", msOf(t_first_frame_start - t_click),
            "(点击后到首帧 compose 起点)");
     report("② 首帧 compose 墙钟", msOf(t_first_frame_end - t_first_frame_start),
@@ -259,10 +236,9 @@ REGISTER_TEST(claude_calls_dialog_latency_segments,
     report("= 端到端（点击→首帧→派发→上屏）", msOf(t_visible_end - t_click),
            "(仿真主循环：无唤醒信号不出帧；不含真机 GPU 渲染)");
 
-    // ---- ⑤ H2 复核：单连接争用 ----
-    // 负载 = Claude 页 compose 每 200ms 节流派发的同一函数 runDataRefresh
-    // （listProfiles / getActiveProfile / listSharedConfigs / recentCalls(30)），
-    // 在另一线程全速跑，量弹窗那两条 SQL 被拉长多少（= 单连接互斥的贡献上界）。
+    // 单连接争用对照：负载 = Claude 页 compose 每 200ms 节流派发的同一函数 runDataRefresh
+    //（listProfiles / getActiveProfile / listSharedConfigs / recentCalls(30)），在另一线程全速跑，
+    // 量弹窗那两条 SQL 被拉长多少（= 单连接互斥的贡献上界）。
     module::claude::ClaudeService::CallLogQuery q;
     q.limit = module::claude::kCallsPageSize;
     const auto timedQuery = [&]() -> double {
@@ -304,13 +280,11 @@ REGISTER_TEST(claude_calls_dialog_latency_segments,
     return true;
 })
 
-// 批次 D 根因修复的另一半：**页面级**后台刷新（profile 列表 / 最近调用快照）。
-// 与弹窗那条（claude_ui_logs.cpp）同一个病：后台结果就绪不请求重绘 → 主循环停在
-// glfwWaitEvents → 内容要等用户下一次动鼠标才上屏。差别在于这条路径**没有**弹窗
-// 打开时的 0.16s 过渡动画兜底（无头用例量不到帧，只能在真实主循环里显形），
-// 是「页面内容加载很慢」更直接的来源。
-// 回退即红：删掉 claude_ui_state.cpp runDataRefresh 末尾的 requestUiUpdate，
-// 本用例在 3s 窗口内拿不到唤醒信号（派发帧本身不置位，已在本用例内自检）。
+// 页面级后台刷新（profile 列表 / 最近调用快照）的同一条唤醒契约，代码在
+// claude_ui_state.cpp runDataRefresh 末尾。与弹窗路径同一病，且**没有**弹窗打开时的
+// 0.16s 过渡动画兜底，是「页面内容加载很慢」更直接的来源。
+// 回退即红：删掉那句 requestUiUpdate，本用例在 3s 窗口内拿不到唤醒信号（派发帧本身
+// 不置位，已在本用例内自检）。
 REGISTER_TEST(claude_page_refresh_wakes_ui,
               "claude_calls_latency: 页面级后台刷新完成唤醒主循环（headless）", {
     TestEnv env;
@@ -336,11 +310,10 @@ REGISTER_TEST(claude_page_refresh_wakes_ui,
     }
     ::core::platform::consumeUiUpdate();
     ::core::platform::consumeFrameRequest();
-    // 自检（非竞态版）：此刻唤醒标志干净——冷启动那一次是**同步**装载（调用点
-    // 就在 compose 里，早已返回），它请求的重绘已被上面 consume 掉。于是后面
-    // 观察到的唤醒只可能来自「本次后台刷新完成」。
-    // （不能断言「派发帧之后仍未置位」：页刷新只要 ~1ms，worker 常在同一帧的
-    // compose 里就跑完并发出唤醒，那个断言会 flaky。）
+    // 自检：此刻唤醒标志干净——冷启动那一次是**同步**装载（调用点就在 compose 里，早已返回），
+    // 它请求的重绘已被上面 consume 掉，于是后面观察到的唤醒只可能来自「本次后台刷新完成」。
+    // 不可断言「派发帧之后仍未置位」：页刷新只要 ~1ms，worker 常在同一帧的 compose 里就跑完
+    // 并发出唤醒，那个断言会 flaky。
     DOCTEST_CHECK_MESSAGE(!::core::platform::consumeUiUpdate(),
                           "起始唤醒标志应干净");
     DOCTEST_CHECK_MESSAGE(!::core::platform::consumeFrameRequest(),
@@ -352,10 +325,9 @@ REGISTER_TEST(claude_page_refresh_wakes_ui,
         eui::Ui ui;
         compose(ui);
     }
-    // 注意：**不能**在这里再 consume 一次当「清位」——本用例的刷新只要 ~0.2ms，
-    // worker 常在上一帧 compose 期间就跑完并发出唤醒，清位会把那一下唤醒吃掉，
-    // 等待窗必然超时（实测过的假红）。排空放在派发**之前**（见上方 drainWake），
-    // 之后到等待之间没有任何置位来源：compose 路径不置位（实测 0/0）。
+    // 此处**不能**再 consume 一次当「清位」：本页刷新只要 ~0.2ms，worker 常在上一帧
+    // compose 期间就跑完并发出唤醒，清位会把那一下唤醒吃掉，等待窗必然超时（实测过的
+    // 假红）。排空只放在派发**之前**，之后到等待之间没有任何置位来源：compose 路径不置位。
 
     bool woke = false;
     const long long t0 = nowNs();

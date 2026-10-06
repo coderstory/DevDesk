@@ -43,7 +43,7 @@ Result<std::vector<Entry>> listWithPrefix(core::data::SqliteDb& db,
                                           const std::string& prefix);
 
 // 删掉 prefix 之下、不在 keep 集合里的全部键：整份覆盖语义要求不再写出的键显式清掉，
-// 否则废弃键永久留在库里。keep 内的键原样保留
+// 否则旧键永久留在库里。keep 内的键原样保留
 Result<void> eraseWithPrefixExcept(core::data::SqliteDb& db,
                                    const std::string& prefix,
                                    const std::vector<std::string>& keep);

@@ -69,7 +69,7 @@ struct DetailActions {
     std::function<void(int64_t profileId, std::size_t slotIndex, bool on)> setOneM;
 };
 
-// ---- 五个 pane：各自返回内容底沿（见文件头契约）----
+// 五个 pane：各自返回内容底沿（见文件头契约）
 // contentBottom = 内容框可用底（drawDetailPanel 由 bodyH 推出）：pane 画出的
 // 内容不得越过它（行数预算按它推）。rows 非空时回填行数统计（诊断日志用）。
 // id: claude.field.* / claude.slot.* / claude.env.* / claude.calls.*

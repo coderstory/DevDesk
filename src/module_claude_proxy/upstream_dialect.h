@@ -49,7 +49,7 @@ struct UpstreamDialect {
     bool normalizeBody(std::string& body) const;
 };
 
-// ---- 方言覆盖文本 ↔ Kind（Profile::dialectOverride 值域）----
+// 方言覆盖文本 ↔ Kind（Profile::dialectOverride 值域）
 // 值域：'anthropic_default' / 'opencode_zen'（空串 = 未覆盖）；空串/未知 → nullopt（回落 host 推断）。
 std::optional<UpstreamDialect::Kind> dialectKindFromText(const std::string& text);
 

@@ -1,5 +1,10 @@
 // tests/test_modules/test_todo_service.cpp
-// TodoService 单元测试（详见 spec §8.2）
+// TodoService 单元测试：列 / 任务的 CRUD、tags 序列化往返、id 与落库行一致。
+// 跨文件前提：
+//   - 每个用例一份独立临时 db（test_support::TestEnv 负责建库 + migrate + 析构清理），
+//     所以「4 个种子列」「position 从 0 起」这类基线是 migration 定的，不是实现自定的。
+//   - 写 tags / 重排 / 完成态都直接 UPDATE todo_tasks.tags 等列绕过 service，
+//     用来造 service 自己也造不出的行；这种行不反映任何正常调用路径。
 #include "doctest.h"
 #include "test_support.h"
 #include "core/database.h"
@@ -13,12 +18,8 @@
 
 namespace {
 
-// 临时 db 文件名前缀（共享工厂 test_support::TestEnv 的第一实参）
 constexpr const char* kDbPrefix = "devdesk_test_todosvc_";
 
-// 一次性环境：开临时 db → migrate（共享 test_support::TestEnv，RAII 自动清理）
-// → 创建 TodoService
-// 模块 glue，keep-local（TIN-06）：共享 TestEnv 基座 + TodoService 构造。
 struct TestEnv : test_support::TestEnv {
     std::unique_ptr<module::todo::TodoService> svc;
 
@@ -36,7 +37,6 @@ REGISTER_TEST(todo_svc_create_list_columns,
     TestEnv env("create_list_columns");
     DOCTEST_REQUIRE(env.ready);
 
-    // migration 已插入 4 个默认列
     auto list = env.svc->listColumns();
     DOCTEST_REQUIRE(list.isOk());
     DOCTEST_CHECK_EQ(list.value().size(), 4u);
@@ -84,8 +84,8 @@ REGISTER_TEST(todo_svc_rename_column,
     return true;
 })
 
-// THS-11：头文件承诺「id 不存在 → NotFound」——旧实现只发 UPDATE 就 ok()，
-// 重命名不存在的列静默成功
+// renameColumn 对不存在的 id 必须返回 NotFound：只发 UPDATE 后无条件 ok() 会让
+// 重命名静默成功，UI 侧看不到任何反馈。
 REGISTER_TEST(todo_svc_rename_missing_notfound,
               "TodoService: renameColumn id 不存在 → NotFound", {
     TestEnv env("rename_notfound");
@@ -100,7 +100,7 @@ REGISTER_TEST(todo_svc_rename_missing_notfound,
     DOCTEST_REQUIRE(miss.isFail());
     DOCTEST_CHECK(miss.errorCode() == core::ErrorCode::NotFound);
 
-    // 正向对照：存在的列仍能改名并返回 ok（校验不误伤正常路径）
+    // 正向对照：存在的列仍能改名（校验不误伤正常路径）
     DOCTEST_CHECK(env.svc->renameColumn(existing, "仍可改").isOk());
     auto list2 = env.svc->listColumns();
     DOCTEST_REQUIRE(list2.isOk());
@@ -114,7 +114,6 @@ REGISTER_TEST(todo_svc_set_column_color,
     TestEnv env("color");
     DOCTEST_REQUIRE(env.ready);
 
-    // 新建列（color NULL）→ 设为预设 token → 读回
     auto created = env.svc->createColumn("改色列");
     DOCTEST_REQUIRE(created.isOk());
     const int64_t id = created.value().id;
@@ -132,7 +131,7 @@ REGISTER_TEST(todo_svc_set_column_color,
         }
     }
 
-    // 再改一次（覆盖旧值）+ 清除（nullopt → NULL）
+    // 清除：nullopt 写 NULL（不是空串），读回即 nullopt
     DOCTEST_CHECK(env.svc->setColumnColor(
                       id, std::optional<std::string>("rose-red")).isOk());
     DOCTEST_CHECK(env.svc->setColumnColor(id, std::nullopt).isOk());
@@ -146,7 +145,6 @@ REGISTER_TEST(todo_svc_set_column_color,
         }
     }
 
-    // 迁移种子列的 color 原样可读（'claude-clay' 等 token）
     {
         auto list = env.svc->listColumns();
         DOCTEST_REQUIRE(list.isOk());
@@ -167,20 +165,17 @@ REGISTER_TEST(todo_svc_delete_column,
     DOCTEST_REQUIRE(list.isOk());
     int64_t lastId = list.value().back().id;
 
-    // 先在该列下放一个任务
     auto t1 = env.svc->createTask(lastId, "待删除列里的任务");
     DOCTEST_REQUIRE(t1.isOk());
 
-    // 删除列
     auto r = env.svc->deleteColumn(lastId);
     DOCTEST_CHECK(r.isOk());
 
-    // 验证列消失
     auto list2 = env.svc->listColumns();
     DOCTEST_REQUIRE(list2.isOk());
     DOCTEST_CHECK_EQ(list2.value().size(), 3u);
 
-    // 验证任务也被 CASCADE 删了
+    // 列没了，其下任务靠 todo_tasks 的外键 CASCADE 一并消失
     auto allTasks = env.svc->listAllTasks();
     DOCTEST_REQUIRE(allTasks.isOk());
     DOCTEST_CHECK_EQ(allTasks.value().size(), 0u);
@@ -225,10 +220,9 @@ REGISTER_TEST(todo_svc_move_task,
 
     auto list = env.svc->listColumns();
     DOCTEST_REQUIRE(list.isOk());
-    int64_t colA = list.value()[0].id;  // 待办
-    int64_t colB = list.value()[1].id;  // 进行中
+    int64_t colA = list.value()[0].id;
+    int64_t colB = list.value()[1].id;
 
-    // 在 A 列放 3 个任务
     auto ta = env.svc->createTask(colA, "A1");
     DOCTEST_REQUIRE(ta.isOk());
     auto tb = env.svc->createTask(colA, "A2");
@@ -237,24 +231,21 @@ REGISTER_TEST(todo_svc_move_task,
     DOCTEST_REQUIRE(tc.isOk());
     int64_t a2Id = tb.value().id;
 
-    // 在 B 列放 2 个任务
     auto td = env.svc->createTask(colB, "B1");
     DOCTEST_REQUIRE(td.isOk());
     auto te = env.svc->createTask(colB, "B2");
     DOCTEST_REQUIRE(te.isOk());
 
-    // 把 A2 (position=1) 移到 B 列的 position=1
     auto mv = env.svc->moveTask(a2Id, colB, 1);
     DOCTEST_CHECK(mv.isOk());
 
-    // 验证 A 列剩 A1(0), A3(1)
+    // A2 被抽走后 A3 补位到 1，不是留在 2
     auto aTasks = env.svc->listTasks(colA);
     DOCTEST_REQUIRE(aTasks.isOk());
     DOCTEST_CHECK_EQ(aTasks.value().size(), 2u);
     DOCTEST_CHECK_EQ(aTasks.value()[0].title, std::string("A1"));
     DOCTEST_CHECK_EQ(aTasks.value()[1].title, std::string("A3"));
 
-    // 验证 B 列有 B1(0), A2(1), B2(2)
     auto bTasks = env.svc->listTasks(colB);
     DOCTEST_REQUIRE(bTasks.isOk());
     DOCTEST_CHECK_EQ(bTasks.value().size(), 3u);
@@ -278,7 +269,6 @@ REGISTER_TEST(todo_svc_complete_uncomplete,
     DOCTEST_REQUIRE(t.isOk());
     int64_t tid = t.value().id;
 
-    // 完成
     auto c = env.svc->completeTask(tid);
     DOCTEST_CHECK(c.isOk());
 
@@ -293,7 +283,6 @@ REGISTER_TEST(todo_svc_complete_uncomplete,
     }
     DOCTEST_CHECK(foundCompleted);
 
-    // 取消完成
     auto u = env.svc->uncompleteTask(tid);
     DOCTEST_CHECK(u.isOk());
 
@@ -320,7 +309,6 @@ REGISTER_TEST(todo_svc_update_task,
     auto t = env.svc->createTask(colId, "初始标题");
     DOCTEST_REQUIRE(t.isOk());
 
-    // 构造更新后的 Task
     module::todo::Task updated;
     updated.id = t.value().id;
     updated.columnId = colId;
@@ -341,7 +329,7 @@ REGISTER_TEST(todo_svc_update_task,
     DOCTEST_CHECK_EQ(got.title, std::string("更新后标题"));
     DOCTEST_CHECK(got.description.has_value());
     DOCTEST_CHECK_EQ(got.description.value(), std::string("详细描述"));
-    DOCTEST_CHECK_EQ(static_cast<int>(got.priority), 3);  // High
+    DOCTEST_CHECK_EQ(static_cast<int>(got.priority), 3);
     DOCTEST_CHECK(got.dueAt.has_value());
     DOCTEST_CHECK_EQ(got.dueAt.value(), static_cast<int64_t>(1234567890));
     DOCTEST_CHECK_EQ(got.tags.size(), 3u);
@@ -350,8 +338,8 @@ REGISTER_TEST(todo_svc_update_task,
     return true;
 })
 
-// THS-18：updateTask 只改内容字段——调用方误填 columnId/position 时不再
-// 静默挪列 / 改序（改列改序的唯一路径是 moveTask）
+// updateTask 只改内容字段：调用方误填 columnId/position 时不得静默挪列 / 改序，
+// 改列改序的唯一路径是 moveTask。
 REGISTER_TEST(todo_svc_update_task_ignores_column,
               "TodoService: updateTask 不再改 column/position（编辑保存不改序）", {
     TestEnv env("update_ignores_column");
@@ -378,15 +366,15 @@ REGISTER_TEST(todo_svc_update_task_ignores_column,
     DOCTEST_REQUIRE(inA.isOk());
     DOCTEST_REQUIRE(inB.isOk());
     DOCTEST_REQUIRE_EQ(inA.value().size(), 2u);
-    DOCTEST_CHECK_EQ(inB.value().size(), 0u);  // 任务没有被挪到 colB
+    DOCTEST_CHECK_EQ(inB.value().size(), 0u);
 
     bool checked = false;
     for (const auto& task : inA.value()) {
         if (task.id != t1.value().id) continue;
         checked = true;
-        DOCTEST_CHECK_EQ(task.title, std::string("改了标题"));  // 内容字段照改
-        DOCTEST_CHECK_EQ(task.columnId, colA);                  // 列不变
-        DOCTEST_CHECK_EQ(task.position, t1.value().position);   // 序不变
+        DOCTEST_CHECK_EQ(task.title, std::string("改了标题"));
+        DOCTEST_CHECK_EQ(task.columnId, colA);
+        DOCTEST_CHECK_EQ(task.position, t1.value().position);
     }
     DOCTEST_CHECK(checked);
     return true;
@@ -409,7 +397,6 @@ REGISTER_TEST(todo_svc_search,
     auto t3 = env.svc->createTask(colId, "开周会");
     DOCTEST_REQUIRE(t3.isOk());
 
-    // 用 description 匹配
     module::todo::Task upd;
     upd.id = t1.value().id;
     upd.columnId = colId;
@@ -420,27 +407,23 @@ REGISTER_TEST(todo_svc_search,
     upd.position = 0;
     DOCTEST_CHECK(env.svc->updateTask(upd).isOk());
 
-    // 搜 "周报" → 命中 title
     auto r1 = env.svc->search("周报");
     DOCTEST_REQUIRE(r1.isOk());
     DOCTEST_CHECK_EQ(r1.value().size(), 1u);
 
-    // 搜 "周" → 命中 "写周报" + "开周会"（description 里的 "本周工作总结" 属于 t1，不重复计）
+// 搜 "周" 命中「写周报」+「开周会」；t1 的 description 也含「周」但不重复计入
     auto r2 = env.svc->search("周");
     DOCTEST_REQUIRE(r2.isOk());
     DOCTEST_CHECK(r2.value().size() >= 2u);
 
-    // 搜 "bug" → 命中 "修复登录 bug"
     auto r3 = env.svc->search("bug");
     DOCTEST_REQUIRE(r3.isOk());
     DOCTEST_CHECK_EQ(r3.value().size(), 1u);
 
-    // 搜 "不存在" → 空
     auto r4 = env.svc->search("不存在的关键词xyz");
     DOCTEST_REQUIRE(r4.isOk());
     DOCTEST_CHECK_EQ(r4.value().size(), 0u);
 
-    // 空 query → 返回全部
     auto r5 = env.svc->search("");
     DOCTEST_REQUIRE(r5.isOk());
     DOCTEST_CHECK_EQ(r5.value().size(), 3u);
@@ -464,21 +447,20 @@ REGISTER_TEST(todo_svc_list_overdue,
     auto t3 = env.svc->createTask(colId, "未过期");
     DOCTEST_REQUIRE(t3.isOk());
 
-    int64_t past = 1000000000;        // 2001 年
-    int64_t future = 9999999999;      // 2286 年
+    // dueAt 是 unix 秒：past = 2001 年，future = 2286 年
+    int64_t past = 1000000000;
+    int64_t future = 9999999999;
 
-    // t1: due_at 过期 + 未完成 → 应出现在 overdue
     module::todo::Task u1 = t1.value();
     u1.dueAt = past;
     DOCTEST_CHECK(env.svc->updateTask(u1).isOk());
 
-    // t2: due_at 过期 + 已完成 → 不应出现
+    // 过期 + 已完成 → 不算逾期
     module::todo::Task u2 = t2.value();
     u2.dueAt = past;
     DOCTEST_CHECK(env.svc->updateTask(u2).isOk());
     DOCTEST_CHECK(env.svc->completeTask(u2.id).isOk());
 
-    // t3: due_at 未过期 → 不应出现
     module::todo::Task u3 = t3.value();
     u3.dueAt = future;
     DOCTEST_CHECK(env.svc->updateTask(u3).isOk());
@@ -500,7 +482,6 @@ REGISTER_TEST(todo_svc_reorder_columns,
     DOCTEST_REQUIRE(list.isOk());
     DOCTEST_REQUIRE_EQ(list.value().size(), 4u);
 
-    // 反转顺序
     std::vector<int64_t> reversed;
     for (int i = static_cast<int>(list.value().size()) - 1; i >= 0; --i) {
         reversed.push_back(list.value()[i].id);
@@ -538,7 +519,7 @@ REGISTER_TEST(todo_svc_list_all_tasks,
     DOCTEST_REQUIRE(all.isOk());
     DOCTEST_CHECK_EQ(all.value().size(), 3u);
 
-    // 验证跨列按 column_id 排序
+    // listAllTasks 跨列按 column_id 升序，同列内按 position
     int lastCol = -1;
     for (const auto& t : all.value()) {
         DOCTEST_CHECK(static_cast<int>(t.columnId) >= lastCol);
@@ -582,14 +563,12 @@ REGISTER_TEST(todo_svc_acceptance_flow,
     auto list = env.svc->listColumns();
     DOCTEST_REQUIRE(list.isOk());
     DOCTEST_REQUIRE_EQ(list.value().size(), 4u);
-    // migration 里的 4 列标题
     DOCTEST_CHECK_EQ(list.value()[0].title, std::string("待办"));
     DOCTEST_CHECK_EQ(list.value()[2].title, std::string("已完成"));
 
     const int64_t todoCol = list.value()[0].id;
     const int64_t doneCol = list.value()[2].id;
 
-    // 1. 新建任务（落到待办列）
     auto created = env.svc->createTask(todoCol, "验收：写文档");
     DOCTEST_REQUIRE(created.isOk());
     const int64_t taskId = created.value().id;
@@ -598,7 +577,7 @@ REGISTER_TEST(todo_svc_acceptance_flow,
     DOCTEST_REQUIRE(inTodo.isOk());
     DOCTEST_CHECK_EQ(inTodo.value().size(), 1u);
 
-    // 2. 验证真的写进了 db 文件（另开一条连接读）
+    // 另开一条连接读，确认行真的落到了 db 文件（不是 service 连接内的未刷状态）
     {
         auto probe = core::data::SqliteDb::open(env.path);
         DOCTEST_REQUIRE(probe.isOk());
@@ -615,7 +594,6 @@ REGISTER_TEST(todo_svc_acceptance_flow,
         DOCTEST_CHECK(rows.value()[0].isNull("completed_at"));
     }
 
-    // 3. 完成 + 移到「已完成」列
     DOCTEST_CHECK(env.svc->completeTask(taskId).isOk());
     DOCTEST_CHECK(env.svc->moveTask(taskId, doneCol, 0).isOk());
 
@@ -629,7 +607,6 @@ REGISTER_TEST(todo_svc_acceptance_flow,
     DOCTEST_REQUIRE(emptyTodo.isOk());
     DOCTEST_CHECK_EQ(emptyTodo.value().size(), 0u);
 
-    // 4. 再次确认 db 里 completed_at 已写入
     {
         auto probe = core::data::SqliteDb::open(env.path);
         DOCTEST_REQUIRE(probe.isOk());
@@ -647,7 +624,7 @@ REGISTER_TEST(todo_svc_acceptance_flow,
     return true;
 })
 
-// 列 kind 语义标记（migration v3）：完成态流转不依赖标题
+// 列 kind 是语义标记（migration 回填）：完成态流转靠它，不看标题
 REGISTER_TEST(todo_svc_column_kind,
               "TodoService: 列 kind 标记回填 + 重命名后保留", {
     TestEnv env("column_kind");
@@ -656,11 +633,11 @@ REGISTER_TEST(todo_svc_column_kind,
     auto list = env.svc->listColumns();
     DOCTEST_REQUIRE(list.isOk());
     DOCTEST_REQUIRE_EQ(list.value().size(), 4u);
-    // 种子列的 kind 回填：待办=todo 已完成=done 其余=空（普通列）
+    // 种子列 kind：待办=todo / 已完成=done / 归档=archive / 普通列=""
     DOCTEST_CHECK_EQ(list.value()[0].kind, std::string("todo"));
     DOCTEST_CHECK_EQ(list.value()[1].kind, std::string(""));
     DOCTEST_CHECK_EQ(list.value()[2].kind, std::string("done"));
-    DOCTEST_CHECK_EQ(list.value()[3].kind, std::string("archive"));  // v8 回填
+    DOCTEST_CHECK_EQ(list.value()[3].kind, std::string("archive"));
 
     // 重命名后 kind 保留（语义不随标题变）
     DOCTEST_REQUIRE(env.svc->renameColumn(list.value()[2].id, "Finished").isOk());
@@ -669,17 +646,14 @@ REGISTER_TEST(todo_svc_column_kind,
     DOCTEST_CHECK_EQ(list2.value()[2].title, std::string("Finished"));
     DOCTEST_CHECK_EQ(list2.value()[2].kind, std::string("done"));
 
-    // 用户新建列 = 普通列（kind 空）
     auto created = env.svc->createColumn("复核中");
     DOCTEST_REQUIRE(created.isOk());
     DOCTEST_CHECK_EQ(created.value().kind, std::string(""));
     return true;
 })
 
-// ---- 审计 2026-09-23 [26]：tags 序列化迁 platform::json 后的往返回归 ----
-
-// serializeTags/deserializeTags 是私有方法，经 updateTask → listTasks 公开路径
-// 覆盖往返；特殊字符（引号/反斜杠/换行/制表/控制字符/CJK/空串）必须原样恢复。
+// serializeTags / deserializeTags 是私有方法，只能经 updateTask → listTasks 公开路径覆盖；
+// 特殊字符（引号/反斜杠/换行/制表/控制字符/CJK/空串）必须原样恢复。
 REGISTER_TEST(todo_svc_tags_roundtrip_special_chars,
               "TodoService: tags 特殊字符经 updateTask→listTasks 往返无损",
               {
@@ -697,7 +671,7 @@ REGISTER_TEST(todo_svc_tags_roundtrip_special_chars,
         "简单",                           // CJK 原样透传
         "带\"引号\"",                     // 双引号转义
         "反斜杠\\",                       // 反斜杠转义
-        "换行\n制表\t",                   // 命名转义
+        "换行\n制表\t",                   // \n \t 命名转义
         std::string(1, '\x01') + "控制",  // \u00xx 数字转义
         "",                               // 空串元素
         " 前后空格 ",                     // 空格保留
@@ -715,7 +689,7 @@ REGISTER_TEST(todo_svc_tags_roundtrip_special_chars,
         DOCTEST_CHECK_EQ(tasks.value()[0].tags[i], tags[i]);
     }
 
-    // 空 tags → "[]" → 空 vector（往返清零）
+    // 空 tags 存成 "[]"，读回仍是空 vector
     module::todo::Task cleared = tasks.value()[0];
     cleared.tags = {};
     DOCTEST_CHECK(env.svc->updateTask(cleared).isOk());
@@ -725,8 +699,8 @@ REGISTER_TEST(todo_svc_tags_roundtrip_special_chars,
     return true;
 })
 
-// deserializeTags 容错（经 listTasks 公开路径）：非法 JSON / 非数组 /
-// 混合类型数组都不得崩溃或阻断行解析。
+// 容错口径（经 listTasks 公开路径）：非法 JSON / 非数组 / 混合类型数组都不得崩溃，
+// 也不得阻断同批其它行的解析。
 REGISTER_TEST(todo_svc_tags_deserialize_tolerant,
               "TodoService: tags 列内容异常时反序列化容错",
               {
@@ -781,12 +755,9 @@ REGISTER_TEST(todo_svc_tags_deserialize_tolerant,
     return true;
 })
 
-// ---- 审计 2026-09-23 [7] 残留：INSERT ... RETURNING id 取代 last_insert_rowid ----
-
-// 回归守护：createColumn/createTask 返回的 id 必须就是本表落库行的 rowid，
-// 且用该 id 的后续操作精确命中该行（旧实现竞态下 id 可能指错行）。
-// 注：旧 bug 需要并发穿插 INSERT 才触发，单线程测试无法复现竞态本身，
-// 此测试锁定的是「RETURNING 取回的 id 语义正确」这一底线。
+// createColumn/createTask 返回的 id 必须就是本表落库行的 rowid，用该 id 的后续操作要精确
+// 命中该行。本用例锁的是「RETURNING 取回的 id 语义正确」这条底线，不复现并发穿插 INSERT 的
+// 竞态本身——单线程跑不出来，别拿它当竞态测试的依据。
 REGISTER_TEST(todo_svc_returning_id_consistency,
               "TodoService: createColumn/createTask 返回 id 与落库行精确一致",
               {
@@ -798,7 +769,7 @@ REGISTER_TEST(todo_svc_returning_id_consistency,
     const int64_t colA = cols.value()[0].id;
     const int64_t colB = cols.value()[1].id;
 
-    // 交错建列/任务，让两张表的 rowid 序列各自推进
+    // 交错建列/建任务，让两张表的 rowid 序列各自推进
     auto c1 = env.svc->createColumn("列一");
     auto c2 = env.svc->createColumn("列二");
     DOCTEST_REQUIRE(c1.isOk()); DOCTEST_REQUIRE(c2.isOk());
@@ -812,7 +783,7 @@ REGISTER_TEST(todo_svc_returning_id_consistency,
     DOCTEST_CHECK(t1.value().id > 0);
     DOCTEST_CHECK(t1.value().id != t2.value().id);
 
-    // 独立连接验证：返回 id 对应的行就是刚创建的那一行（列/任务各自核对）
+    // 独立连接核对：返回 id 对应的行就是刚建的那一行（列 / 任务各自核对）
     {
         auto probe = core::data::SqliteDb::open(env.path);
         DOCTEST_REQUIRE(probe.isOk());
@@ -830,9 +801,9 @@ REGISTER_TEST(todo_svc_returning_id_consistency,
             DOCTEST_REQUIRE(stmt.bind(1, e.id).isOk());
             auto rows = stmt.fetchAll();
             DOCTEST_REQUIRE(rows.isOk());
-            DOCTEST_REQUIRE_EQ(rows.value().size(), 1u);   // id 必须存在
+            DOCTEST_REQUIRE_EQ(rows.value().size(), 1u);
             DOCTEST_CHECK_EQ(rows.value()[0].getString("title").valueOr(""),
-                             std::string(e.want));         // 且标题吻合
+                             std::string(e.want));
         }
     }
 
@@ -847,16 +818,12 @@ REGISTER_TEST(todo_svc_returning_id_consistency,
     DOCTEST_CHECK(!bTasks.value()[0].completedAt.has_value());
     return true;
 })
-// ---- RETURNING-drain 复查（B）：取行后同连接事务 COMMIT 不被卡 ----
-
-// createColumn/createTask 用 INSERT ... RETURNING 取 id，语句停在结果行时
-// 连接上有 in-progress 状态，同连接的事务 COMMIT 会报
-// "cannot commit transaction - SQL statements in progress"（claude
-// createProfile 曾实测触发，产品审计 2026-09-23 [6]）。本用例构造触发场景：
-// 创建后紧接同连接事务写入 + COMMIT，必须成功。锁定「drain 到 DONE 或
-// ~Statement finalize 释放」两条收口中的对外可见契约；若日后有人把取行后的
-// 代码扩成 in-scope 事务（claude 同款事故），配合源码里的显式 drain 可保持
-// 该契约不破。
+// createColumn/createTask 用 INSERT ... RETURNING 取 id；语句停在结果行时连接上仍有
+// in-progress 状态，同连接的事务 COMMIT 会报
+// "cannot commit transaction - SQL statements in progress"。因此取行后必须 drain 到
+// DONE 或 ~Statement 释放，源码里的显式 drain 就是在守这条。
+// 本用例构造该场景：创建后紧接同连接事务写入 + COMMIT。锁的是这条对外可见契约——
+// 谁把取行后的代码扩成 in-scope 事务，这里立刻破。
 REGISTER_TEST(todo_svc_returning_drain_commit,
               "TodoService: createColumn/createTask 后同连接事务 COMMIT 不卡死",
               {
@@ -867,7 +834,7 @@ REGISTER_TEST(todo_svc_returning_drain_commit,
 
     auto col = env.svc->createColumn("drain列");
     DOCTEST_REQUIRE(col.isOk());
-    // 紧接同连接事务：BEGIN → 写 → COMMIT（COMMIT 正是未 drain 时撞墙的一步）
+    // 紧接同连接事务：BEGIN → 写 → COMMIT。COMMIT 正是未 drain 时撞墙的那一步
     auto tx1 = db.transaction([&]() -> core::Result<void> {
         return db.exec("INSERT INTO todo_columns (title, position, color, created_at) "
                        "VALUES ('事务列', 98, NULL, 0)");
@@ -886,7 +853,7 @@ REGISTER_TEST(todo_svc_returning_drain_commit,
     {
         auto probe = core::data::SqliteDb::open(env.path);
         DOCTEST_REQUIRE(probe.isOk());
-        auto rows = probe.value().exec("SELECT 1");  // 可读性冒烟
+        auto rows = probe.value().exec("SELECT 1");
         DOCTEST_REQUIRE(rows.isOk());
     }
     auto cols = env.svc->listColumns();
@@ -898,6 +865,6 @@ REGISTER_TEST(todo_svc_returning_drain_commit,
         if (c.title == "事务列") sawTxCol = true;
     }
     DOCTEST_CHECK(sawDrain);
-    DOCTEST_CHECK(sawTxCol);   // 事务 COMMIT 真的落了库（而不是被静默拒绝）
+    DOCTEST_CHECK(sawTxCol);
     return true;
 })

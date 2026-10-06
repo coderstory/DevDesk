@@ -1,11 +1,10 @@
 // tests/test_modules/test_view_state.cpp
-// 审计 [23] 视图状态持久化：markdown / todo 两个 view state store 的 save/load
-// 往返、缺失/损坏回退默认、净化钳制（等价「重启恢复」的持久层验证）。
-//
-// 2026-10-03（批次 E2）：落点从 markdown_view_state.json / todo_view_state.json
-// 两个**文件**改成 app_config 表的**两行**（键见 kMarkdownViewStateKey /
-// kTodoViewStateKey）。用例相应改为持一份已 migrate 的临时库，并补上「库未
-// 就绪 → save 失败」这条**文件时代不存在**的分支（见 *_db_not_ready 用例）。
+// 视图状态持久化：markdown / todo 两个 view state store 的存读往返、缺失/损坏回退
+// 默认、净化钳制（等价「重启恢复」的持久层验证）。
+// 跨文件前提：
+//   - 两份状态各存成 app_config 表的一行（键见 kMarkdownViewStateKey / kTodoViewStateKey），
+//     经显式传入的 SqliteDb 连接读写；库未就绪（nullptr）时 save/loadChecked 如实失败。
+//   - core::atomicWriteFile 的用例与配置落点无关，仍走临时文件。
 #include "doctest.h"
 
 #include "core/atomic_write.h"
@@ -23,13 +22,11 @@
 
 namespace {
 
-// 「脏内容」直接写进行里（等价旧的 writeGarbage 往文件塞 "{ this is ]not json["）
+// 往 app_config 行里塞一段非 JSON 文本
 void writeGarbageRow(core::data::SqliteDb& db, const char* key) {
     test_support::writeRawConfigRow(&db, key, "{ this is ]not json[");
 }
 
-// 下面两条只服务 core::atomicWriteFile 的用例（那是对 core 公共实现的直接
-// 验证，与配置落点无关，故仍走临时文件）
 std::filesystem::path tempFile(const std::string& name) {
     return test_temp::tempPath(name);
 }
@@ -41,8 +38,6 @@ void removeFile(const std::filesystem::path& p) {
 
 } // namespace
 
-// ==================== markdown ====================
-
 REGISTER_TEST(markdown_view_state_roundtrip, "markdown: 视图状态存读往返（[23] 重启恢复）", {
     using namespace module::markdown;
     test_support::TestDb env("devdesk_test_md_view_state_", "rt");
@@ -53,7 +48,7 @@ REGISTER_TEST(markdown_view_state_roundtrip, "markdown: 视图状态存读往返
         st.lastPath = "工作/周报.md";
         st.mode = 2;  // Preview
         st.collapsedDirs = {"工作", "草稿"};
-        st.selectedDir = "工作/周会";   // 2026-09-29：目录树选中目录（新建条目的父目录）
+        st.selectedDir = "工作/周会";   // 目录树选中目录（新建条目的父目录）
         DOCTEST_CHECK(store.save(st).isOk());
     }
     // 新 store 读同一行 = 模拟重启
@@ -64,9 +59,8 @@ REGISTER_TEST(markdown_view_state_roundtrip, "markdown: 视图状态存读往返
     DOCTEST_CHECK_EQ(loaded.collapsedDirs.size(), static_cast<size_t>(2));
     DOCTEST_CHECK_EQ(loaded.collapsedDirs[0], std::string("工作"));
     DOCTEST_CHECK_EQ(loaded.collapsedDirs[1], std::string("草稿"));
-    // 选中目录跨会话恢复（丢了它 = 重启后新建笔记又散回根目录）
+    // 选中目录跨会话恢复：丢了它 = 重启后新建笔记又散回根目录
     DOCTEST_CHECK_EQ(loaded.selectedDir, std::string("工作/周会"));
-    // 落点钉死：整份存成 app_config 的一行，且键名就是这个常量（不是文件）
     DOCTEST_CHECK(test_support::configRowExists(&db, kMarkdownViewStateKey));
     return true;
 });
@@ -76,7 +70,7 @@ REGISTER_TEST(markdown_view_state_fallback, "markdown: 视图状态缺失/损坏
     test_support::TestDb env("devdesk_test_md_view_state_", "missing");
     core::data::SqliteDb& db = env.handle();
 
-    // 键不存在：首次启动，默认值（Edit / 无选中 / 无收起目录）
+    // 键不存在 = 首次启动，读出默认值
     MarkdownViewStateStore store(&db);
     const MarkdownViewState fresh = store.load();
     DOCTEST_CHECK(fresh.lastPath.empty());
@@ -114,18 +108,18 @@ REGISTER_TEST(markdown_view_state_sanitized, "markdown: 视图状态 mode 钳制
     st.selectedDir = "../outside";
     const MarkdownViewState out = MarkdownViewStateStore::sanitized(st);
     DOCTEST_CHECK(out.lastPath.empty());   // 含 ".." → 整条丢弃
-    DOCTEST_CHECK_EQ(out.mode, 0);         // 越界 → Edit
+    DOCTEST_CHECK_EQ(out.mode, 0);         // 越界 → 回落 Edit
     DOCTEST_CHECK_EQ(out.collapsedDirs.size(), static_cast<size_t>(1));
     DOCTEST_CHECK_EQ(out.collapsedDirs[0], std::string("好目录"));  // 空串/穿越剔除
     DOCTEST_CHECK(out.selectedDir.empty());  // 含 ".." → 丢回根目录（""）
-    // 合法选中目录原样保留；"" 也保留（根目录是合法值）
+    // selectedDir 合法值原样保留；"" 也保留（根目录是合法值，不是"无选中"）
     MarkdownViewState okSel;
     okSel.selectedDir = "工作/周会";
     DOCTEST_CHECK_EQ(MarkdownViewStateStore::sanitized(okSel).selectedDir,
                      std::string("工作/周会"));
     MarkdownViewState rootSel;
     DOCTEST_CHECK(MarkdownViewStateStore::sanitized(rootSel).selectedDir.empty());
-    // 合法域内的 mode 原样保留（三态持久化的前提）
+    // mode 持久化域是 0..2（0=Edit）；域内值原样保留是三态恢复的前提
     for (int m = 0; m <= 2; ++m) {
         MarkdownViewState ok;
         ok.mode = m;
@@ -152,8 +146,6 @@ REGISTER_TEST(markdown_view_state_db_not_ready, "markdown: 库未就绪 → save
     DOCTEST_CHECK(store.load().lastPath.empty());
     return true;
 });
-
-// ==================== todo ====================
 
 REGISTER_TEST(todo_view_state_roundtrip, "todo: 视图状态存读往返含整值偏移（[23] 重启恢复）", {
     using namespace module::todo;
@@ -214,7 +206,7 @@ REGISTER_TEST(todo_view_state_sanitize_prune, "todo: 负值/乱 id 净化 + prun
     DOCTEST_CHECK_EQ(out.columnScrolls.at(4), 80.0f);
     DOCTEST_CHECK_EQ(out.selectedTaskId, static_cast<int64_t>(0));
 
-    // 审计 [23] 串列 bug 的持久层等价验证：偏移跟 id 走，列重排/删除不串
+    // 串列 bug 的持久层等价验证：偏移跟 id 走，列重排/删除不串
     std::map<int64_t, float> scrolls = {{10, 200.0f}, {11, 50.0f}};
     const size_t removed = TodoViewStateStore::pruneScrolls(scrolls, std::vector<int64_t>{11});  // 列 10 已删
     DOCTEST_CHECK_EQ(removed, static_cast<size_t>(1));
@@ -235,10 +227,8 @@ REGISTER_TEST(todo_view_state_db_not_ready, "todo: 库未就绪 → save 失败 
     return true;
 });
 
-// ==================== 整份覆盖语义（E2 新增的文件时代没有的性质）====================
-// 文件时代重写整份 JSON，本次会话早退（卡片点击/右键）暴露窗口最多；改库后要
-// 证明两件事：① 后一次写是**整份替换**（旧列 id 的滚动记录不会残留）；②
-// 写入本身是原子的（中途失败不会留下半份状态）。
+// 后一次 save 整份替换（旧列 id 的滚动记录不残留），且写入是原子的（中途失败不
+// 留半份状态）
 REGISTER_TEST(todo_view_state_save_replaces_wholesale,
               "todo: 再次 save 整份替换（旧列 id 记录不残留，E2）", {
     using namespace module::todo;
@@ -265,10 +255,9 @@ REGISTER_TEST(todo_view_state_save_replaces_wholesale,
     return true;
 })
 
-// ==================== core 原子写（审计 THS-03）====================
 // 失败注入不靠 sleep/杀进程：把临时文件路径 <target>.devdesk-tmp 用目录占住
 // （打开必失败），或让目标本身是不可替换的非空目录（remove/rename 双失败）——
-// 两种都稳定可重复，且能顺带验证"失败时目标原内容一字未变 + 不留临时文件"。
+// 两种都稳定可重复，且能顺带验证「失败时目标原内容一字未变 + 不留临时文件」。
 
 namespace {
 
@@ -294,7 +283,7 @@ REGISTER_TEST(core_atomic_write_roundtrip, "core: atomicWriteFile 往返逐字�
 
     DOCTEST_REQUIRE(core::atomicWriteFile(file, "{\"a\":1}\n").isOk());
     DOCTEST_CHECK_EQ(readAllBytes(file), std::string("{\"a\":1}\n"));
-    // 目标已存在 → 走 remove + rename 替换分支；新内容完整替换旧内容
+    // 目标已存在 → 走 remove + rename 替换分支
     DOCTEST_REQUIRE(core::atomicWriteFile(file, "second\n").isOk());
     DOCTEST_CHECK_EQ(readAllBytes(file), std::string("second\n"));
     // 替换是可观测的原子形式：tmp 换名进目标，成功后无残留

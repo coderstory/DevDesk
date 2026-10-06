@@ -1,11 +1,10 @@
 // tests/test_modules/test_theme_hierarchy.cpp
-// 主题层级回归（防再漂移）：结构性面板用 background（浅色米色 #FAF9F5 /
-// 深色暖墨 #1A1816），浮动卡片/弹窗用 surface（白 / #232120），浮层用
-// surfaceElevated。曾发生「结构性面板错用卡片白」bug（侧边栏修复后用户
-// 反馈其余面板仍白得刺眼）——本文件对每类代表元素做无头 compose 后的
-// 色值断言：渲染色 == 预期 token，改错 token 即红。
-// 侧边栏（app_sidebar app.sidebar.bg）同样已删自铺底（磨砂/半透要求透出
-// 窗口 clearColor，d923f0f），由 app 层窗口色承担，不在模块断言范围。
+// 主题层级回归：结构性面板=background，浮动卡片/弹窗=surface，浮层=surfaceElevated。
+// 对每类代表元素做无头 compose 后的色值断言（渲染色 == 预期 token），改错 token 即红。
+// 跨文件前提：
+//   - 页面级全屏不铺底已删（磨砂/半透窗口要求主体透出），页面底色由主窗 clearColor
+//     承担 → 各模块 pagebg 必须不存在。
+//   - 侧边栏（app.sidebar.bg）同理不在模块断言范围，由 app 层窗口色承担。
 #include "doctest.h"
 #include "test_support.h"
 
@@ -35,8 +34,8 @@ bool sameRgb(const eui::Color& a, const eui::Color& b) {
     return a.r == b.r && a.g == b.g && a.b == b.b;
 }
 
-// 无头 compose 一帧；theme 每帧从 core::theme::current() 取，
-// 切主题后重新 compose 即得新色
+// 无头 compose 一帧。theme 每帧从 core::theme::current() 取，切主题后必须
+// refresh() 才拿到新色
 struct Frame {
     eui::Ui ui;
     eui::Screen screen;
@@ -57,22 +56,20 @@ struct Frame {
         const auto* el = ui.find(id);
         return el != nullptr && sameRgb(el->color, expected);
     }
-    // 元素必须不存在（页面级全屏不透明底已删，见下）
+    // 元素必须不存在
     bool absent(const std::string& id) { return ui.find(id) == nullptr; }
 };
 
-// 临时 db 文件名前缀（共享工厂 test_support::tempDbPath / TestEnv 的第一实参）
 constexpr const char* kDbPrefix = "devdesk_test_hier_";
 
 } // namespace
 
-// ---- 看板列（结构性容器）/ 卡片 / 弹窗：todo 模块三tier 一次断言 ----
 REGISTER_TEST(theme_hierarchy_todo,
               "theme_hierarchy: 看板列=background 卡片/dialog=surface（light+dark）", {
     test_support::TestEnv env(kDbPrefix, "todo", true);
     DOCTEST_REQUIRE(env.ready);
 
-    // 先建列/任务再 onStart（模块 onStart 快照列集；新列 = 迁移默认 4 列后第 5 列）
+    // 先建列/任务再 onStart：模块 onStart 快照列集，新列 = 迁移默认 4 列后第 5 列
     module::todo::TodoService svc(env.db->db());
     auto col = svc.createColumn("层级列");
     DOCTEST_REQUIRE(col.isOk());
@@ -86,13 +83,10 @@ REGISTER_TEST(theme_hierarchy_todo,
     // 必须显式 -> bool；调用点再 DOCTEST_CHECK 汇总
     const auto checkFrame = [&](Frame& frame,
                                 const core::theme::Tokens& t) -> bool {
-        // 页面级全屏不透明底已删（磨砂/半透窗口效果要求主体透出，d923f0f），
-        // 页面底色由主窗 clearColor 承担——pagebg 必须不存在
         DOCTEST_CHECK(frame.absent("todo.pagebg"));
         DOCTEST_CHECK(frame.colorIs("todo.col.4.bg", t.colors.background));
-        // 卡片 = 浮动卡片 → surface（深色 #232120，曾被抬到 elevated）
+        // 卡片 = 浮动卡片 → surface，不得抬到 elevated
         DOCTEST_CHECK(frame.colorIs("todo.col.4.card.0.bg", t.colors.surface));
-        // dialog 面板 = 浮层 → surface
         DOCTEST_CHECK(frame.colorIs("todo.dialog.newtask.panel.bg",
                                     t.colors.surface));
         return true;
@@ -116,7 +110,7 @@ REGISTER_TEST(theme_hierarchy_todo,
     {
         Frame frame(mod.get());
         DOCTEST_CHECK(checkFrame(frame, core::theme::current()));
-        // 深色层次：暖墨底 < 卡片 #232120（列容器不得等于卡片色）
+        // 深色层次：暖墨底 ≠ 卡片色（列容器不得等于卡片色）
         const auto& t = core::theme::current();
         DOCTEST_CHECK(!sameRgb(t.colors.background, t.colors.surface));
     }
@@ -126,10 +120,9 @@ REGISTER_TEST(theme_hierarchy_todo,
     return true;
 })
 
-// ---- 左栏树 / 编辑区 / 预览区：markdown 结构性面板 ----
 REGISTER_TEST(theme_hierarchy_markdown,
               "theme_hierarchy: md 左栏/编辑/预览面板=background（light+dark）", {
-    // 隔离笔记目录（DEVDESK_NOTES_DIR），写一篇笔记保证三栏都渲染
+    // 隔离笔记目录，写一篇笔记保证三栏都渲染
     const auto dir = test_temp::tempPath("devdesk_hier_md");
     std::error_code ec;
     std::filesystem::remove_all(dir, ec);
@@ -148,18 +141,17 @@ REGISTER_TEST(theme_hierarchy_markdown,
     std::unique_ptr<::core::Module> mod(create_markdown_module());
     mod->onStart();
 
-    // 默认 Edit 态不渲染预览列：Ctrl+Shift+P 切到 Split（编辑+预览双栏全出）
-    // —— M1 加第四态「实时」后态序为 编辑→实时→双栏→预览，故按两次到双栏
+    // 默认 Edit 态不渲染预览列：Ctrl+Shift+P 循环切态，序为 编辑→实时→双栏→预览，
+    // 故按两次才到双栏
     eui::KeyEvent p = test_support::pressShortcut(eui::InputKey::P, /*shift=*/true);
     DOCTEST_CHECK(mod->onKeyEvent(p));  // → 实时（第四态）
     DOCTEST_CHECK(mod->onKeyEvent(p));  // → 双栏
 
     const auto checkFrame = [&](Frame& frame,
                                 const core::theme::Tokens& t) -> bool {
-        DOCTEST_CHECK(frame.absent("md.pagebg"));  // 页面底由 clearColor 承担
+        DOCTEST_CHECK(frame.absent("md.pagebg"));
         DOCTEST_CHECK(frame.colorIs("md.tree.bg", t.colors.background));
-        // 跨模块剩余审计修：编辑列列壳 .bg 已去（input 单层）——锁「不存在」
-        // 防回归双层近白卡（双边框 + 焦点阴影压边）
+        // 编辑列壳 .bg 已去（input 单层）——锁「不存在」防回归双层近白卡
         DOCTEST_CHECK(frame.absent("md.editor.bg"));
         DOCTEST_CHECK(frame.colorIs("md.preview.bg", t.colors.background));
         DOCTEST_CHECK(frame.colorIs("md.status.bg", t.colors.background));
@@ -178,7 +170,6 @@ REGISTER_TEST(theme_hierarchy_markdown,
     return true;
 })
 
-// ---- 左栏 Profile 列表 / 右栏详情面板：claude 结构性面板 ----
 REGISTER_TEST(theme_hierarchy_claude,
               "theme_hierarchy: claude 左栏/详情面板=background（light+dark）", {
     test_support::TestEnv env(kDbPrefix, "claude", true);
@@ -193,7 +184,7 @@ REGISTER_TEST(theme_hierarchy_claude,
 
     const auto checkFrame = [&](Frame& frame,
                                 const core::theme::Tokens& t) -> bool {
-        DOCTEST_CHECK(frame.absent("claude.pagebg"));  // 页面底由 clearColor 承担
+        DOCTEST_CHECK(frame.absent("claude.pagebg"));
         DOCTEST_CHECK(frame.colorIs("claude.profiles.bg", t.colors.background));
         DOCTEST_CHECK(frame.colorIs("claude.detail.bg", t.colors.background));
         return true;
@@ -210,7 +201,6 @@ REGISTER_TEST(theme_hierarchy_claude,
     return true;
 })
 
-// ---- 统计卡：浮动卡片留在 surface（白），页面底 background ----
 REGISTER_TEST(theme_hierarchy_home,
               "theme_hierarchy: home 统计卡=surface 页面底无自铺底（light+dark）", {
     core::proxy_stats::resetForTest();
@@ -219,8 +209,8 @@ REGISTER_TEST(theme_hierarchy_home,
 
     const auto checkFrame = [&](Frame& frame,
                                 const core::theme::Tokens& t) -> bool {
-        DOCTEST_CHECK(frame.absent("home.pagebg"));  // 页面底由 clearColor 承担
-        // 统计卡是浮动卡片 → surface（浅色白），不得跟风变米色
+        DOCTEST_CHECK(frame.absent("home.pagebg"));
+        // 统计卡 = 浮动卡片 → surface，不得跟风改米色
         DOCTEST_CHECK(frame.colorIs("home.stat.tokens.bg", t.colors.surface));
         return true;
     };

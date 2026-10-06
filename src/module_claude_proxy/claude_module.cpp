@@ -55,7 +55,7 @@ public:
         if (testThread_.joinable()) testThread_.join();
     }
 
-    // ---- UI（骨架：分区委派，各区实现见 claude_ui_*.cpp） ----
+    // UI（骨架：分区委派，各区实现见 claude_ui_*.cpp）
 
     void compose(eui::Ui& ui, const eui::Screen& screen) override {
         // 消费跨模块跳转负载（取走即清，放最前保证同帧画出弹窗）
@@ -71,7 +71,7 @@ public:
         const float leftW = 400.0f;
         const float rightW = contentW - leftW - gap;
 
-        // ---- 读真实状态（ClaudeService 全局单例，由 main.cpp 注册）----
+        // 读真实状态（ClaudeService 全局单例，由 main.cpp 注册）
         ClaudeService* svc = ClaudeService::global();
         const bool proxyRunning = svc ? svc->isProxyRunning() : false;
         const int runningPort = svc ? svc->proxyPort() : 0;

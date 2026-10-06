@@ -73,7 +73,7 @@ void scanInline(std::string_view line, size_t from,
             while (i + ticks < n && line[i + ticks] == '`') ++ticks;
             const size_t close = findTickRun(line, i + ticks, ticks);
             if (close != std::string_view::npos) {
-                // 整段（含反引号）代码色（§6.2：`std::string` 整段 #788C5D）
+                // 整段（含反引号）代码色（`std::string` 整段 #788C5D）
                 push(i, close + ticks, colors.code);
                 i = close + ticks;
             } else {
@@ -81,7 +81,7 @@ void scanInline(std::string_view line, size_t from,
             }
         } else if (c == '*') {
             if (i + 1 < n && line[i + 1] == '*') {
-                // **bold**：标记弱化；内容 Phase D weight run 前保持正文色
+                // **bold**：标记弱化；内容在 weight run 前保持正文色
                 const size_t close = line.find("**", i + 2);
                 if (close != std::string_view::npos) {
                     push(i, i + 2, colors.marker);
@@ -91,7 +91,7 @@ void scanInline(std::string_view line, size_t from,
                     i += 2;
                 }
             } else {
-                // *italic*：无 italic 字形，内容用 info 色替代（§6.2）
+                // *italic*：无 italic 字形，内容用 info 色替代
                 const size_t close = findSingleStar(line, i + 1);
                 if (close != std::string_view::npos) {
                     push(i, i + 1, colors.marker);

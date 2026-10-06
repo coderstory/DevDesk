@@ -178,7 +178,7 @@ ExtraSettingsApply applyExtraSettingsToSettingsDoc(
 // 顶层必须是对象且不含 "env"。失败带中文错误（表单 formError_ / 片段弹窗红字直出）。
 core::Result<void> validateExtraSettingsJson(const std::string& text);
 
-// ---- 接管 env 生成：输出写入 settings.json 的 env 块（纯函数）：BASE_URL = 127.0.0.1:<port>、
+// 接管 env 生成：输出写入 settings.json 的 env 块（纯函数）：BASE_URL = 127.0.0.1:<port>、
 // token = 占位符、槽位键（空槽位跳过）、extra_env 归一平铺被压过 ----
 
 // 接管时写入 settings.json 的占位凭据（代理仅监听 127.0.0.1、无鉴权；
@@ -200,7 +200,7 @@ std::map<std::string, std::string> buildProxyEnv(
     // 可选出参：每个键的来源（见 EnvSource）。非空则先清空再填；nullptr = 不记录
     std::map<std::string, EnvSource>* sourcesOut = nullptr);
 
-// ---- 直连 env 生成 ----
+// 直连 env 生成
 // 输入 = profile 字段 + 密钥明文（不碰存储）；输出 = 临时 settings.json 的 env（纯函数）。
 // 与 buildProxyEnv 同款槽位 loop / 别名归一，差异：BASE_URL = baseUrl 去尾斜杠（空串不写）；
 // 密钥按认证字段只写一个（extra_env 带进的另一密钥键清掉，防网关取到过期凭据）。
@@ -213,7 +213,7 @@ std::map<std::string, std::string> buildDirectEnv(
 // 托管键全集：BASE_URL + 占位 token + 槽位派生键（与槽位是否有值无关，检测侧需要全集）。
 std::vector<std::string> managedEnvKeyNames();
 
-// ---- 反向同步（settings.json env → profile）----
+// 反向同步（settings.json env → profile）
 // 全部为纯函数（无 IO / DB / 日志）
 
 // loopback URL 判定（本地代理形态）：剥 scheme → 取 host[:port]（IPv6 去方括号）
@@ -254,7 +254,7 @@ ReverseSyncMerge mergeReverseSyncEnv(const ImportedConfig& cfg,
 std::string makeCopyName(const std::string& baseName,
                          const std::vector<std::string>& existingNames);
 
-// ---- failover 换家判据 ----
+// failover 换家判据
 // 纯函数（缓冲 / 流式两路共用；输入 send 失败无响应 = 0；只判单次，次数调用方管）。
 // 换：statusCode==0、401/403、429、5xx、其余 4xx；不换：400/405/406/413/414/
 // 415/422/501（请求自身非法）；errorKind=="no_active_profile" 不换

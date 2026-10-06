@@ -1,21 +1,12 @@
 // tests/test_modules/test_settings_sync.cpp
-// Claude Code settings.json 接管通道测试（provider-config Phase C，设计 §5.3）
-//
-// 全部通过 Paths 注入临时目录隔离，绝不碰真实 ~/.claude。
-// 覆盖：
-//   - buildProxyEnv：BASE_URL/token/槽位跳过/显示名派生/extra_env 别名与优先级
-//   - takeOver 合并：非 env 字段保留、用户 env 键保留、托管键写入、sidecar 落地
-//   - restore 往返：原值恢复、原本不存在的键删除、sidecar 删除
-//   - 重复 takeOver：首份快照不覆盖、托管键并集（旧托管键不漏还原）
-//   - settings.json 不存在 → 仅含 env 的最小文件
-//   - 解析失败 → 中止不写
-//   - 上层覆盖检测命中 / 未命中
-//   - 崩溃补还原（recoverPendingSnapshot）
-//   - 原子性：无 .devdesk-tmp 残留
-//   - ClaudeService 接线：startProxy 接管 / stopProxy 还原 / 运行中切 profile 跟随
-//   - 接管开关关闭：启动补还原 / startProxy / stopProxy 三条路径都不写文件
-//   - 共享配置片段：合并优先级（片段 > profile，托管键最上）+ 片段键进托管键集
-//     随还原撤走 + 解绑后同名键回落 profile 值
+// Claude Code settings.json 接管通道（takeOver / restore / 反向读）单测。
+// 跨文件前提：
+//   - 全部经 Paths 注入临时目录与临时库，绝不碰真实 ~/.claude；Paths.db 显式传入，
+//     本文件不注册 appDatabase。
+//   - sidecar 是 app_config 表的一行，库未 migrate 或行损坏时 takeOver/restore 一律中止，
+//     不得改用户文件。
+//   - readSettingsEnvForSync 的 ok 与 present 是两个独立维度：ok=false 才中止调用方切换，
+//     present=false 只表示「这份文件里没有可同步的 env」。
 #include "doctest.h"
 #include "test_support.h"
 
@@ -51,17 +42,15 @@ namespace {
 
 constexpr const char* kTestKeychainService = "DevDeskTestSettingsSync";
 
-// 临时 settings.json / sidecar 目录（共享头 test_support::TempDir，前缀沿用原样）
 constexpr const char* kSyncTempDirPrefix = "devdesk_test_sync_";
 
-// 临时 db 文件名前缀（共享工厂 test_support::tempDbPath / TestDb 的第一实参）
+// 临时 db 文件名前缀（tempDbPath / TestDb 的第一实参）
 constexpr const char* kDbPrefix = "devdesk_test_sync_db_";
 
-// sidecar（接管前 settings.json 的 env 快照）自 2026-10-03（批次 E2）起**不是
-// 文件**，而是 app_config 表的一行（键 kSidecarConfigKey）——故每个用例除了
-// 临时 settings.json 目录，还得有一份已 migrate 的库供 sidecar 落行。
-// 命名对应：目录 d → 库 sdb，目录 d2 → 库 sdb2（同一用例内两个目录不能共用
-// 一份库：sidecar 只有一行，共用会让两个 Paths 互相看见对方的快照）。
+// sidecar（接管前 settings.json 的 env 快照）是 app_config 表的一行（键 kSidecarConfigKey）
+// ——故每个用例除了临时 settings.json 目录，还得有一份已 migrate 的库供 sidecar 落行。
+// 命名对应：目录 d → 库 sdb，目录 d2 → 库 sdb2；同一用例内两个目录不能共用一份库
+//（sidecar 只有一行，共用会让两个 Paths 互相看见对方的快照）。
 module::claude::settings_sync::Paths makePaths(const test_support::TempDir& d,
                                                core::data::SqliteDb& db) {
     module::claude::settings_sync::Paths p;
@@ -109,13 +98,11 @@ std::string topLevelString(const std::filesystem::path& f, const char* key) {
 }
 
 
-// ---- 假 Keychain（CPX-14 注入缝，同 test_claude_service.cpp:592 ScopedFakeKeychain
-// 与 tests/test_platform/test_keychain.cpp 的 CountingKeychain 写法）----
-// 存在的理由（merge-review R2）：走真门面的端到端用例里 createProfile 会向
-// **系统钥匙串**写测试密钥，而清理只在函数尾部 deleteSecret——中间任一
-// DOCTEST_REQUIRE 失败就残留一条真实条目（与 P0 钥匙串事故同款形状：测试写
-// 真实用户存储）。装上假后端后该用例对真钥匙串零读写，且「写了几条」本身
-// 变成可断言的（count() 恒 0 = 真的没碰真后端之外的东西）。
+// 假 Keychain 注入缝（tests/test_platform/test_keychain.cpp 的 CountingKeychain 同款）。
+// 走真门面的端到端用例里 createProfile 会向**系统钥匙串**写测试密钥，而清理只在函数尾部
+// deleteSecret——中间任一 DOCTEST_REQUIRE 失败就残留一条真实条目。装上假后端后该用例对
+// 真钥匙串零读写，且「写了几条」本身变成可断言的。
+// 不要因为某个用例「不查 keychain」就省掉它：污染发生在 createProfile 内部。
 struct FakeKeychain {
     std::map<std::string, std::string> data;
 
@@ -206,7 +193,6 @@ struct ScopedFakeKeychain {
 
 } // namespace
 
-// ---- 1. buildProxyEnv：基础 + 槽位 + 派生 + 空槽位跳过 ----
 REGISTER_TEST(sync_build_proxy_env, "settings_sync: buildProxyEnv 槽位/派生/跳过", {
     using module::claude::buildProxyEnv;
 
@@ -225,33 +211,32 @@ REGISTER_TEST(sync_build_proxy_env, "settings_sync: buildProxyEnv 槽位/派生/
     // 代理无鉴权：写占位符（真实上游 key 由代理转发时注入）
     DOCTEST_CHECK_EQ(env.at("ANTHROPIC_AUTH_TOKEN"),
                      std::string("PROXY_MANAGED"));
-    // default：model 写 ANTHROPIC_MODEL；name 空 → 派生剥 [1M]；
-    // ANTHROPIC_MODEL 无官方 _NAME 变体，不生成
+    // default 槽位：model 写 ANTHROPIC_MODEL；name 空 → 派生剥掉 [1M] 标记。
+    // ANTHROPIC_MODEL 没有官方的 _NAME 变体，故不生成
     DOCTEST_CHECK_EQ(env.at("ANTHROPIC_MODEL"), std::string("fangzhou/glm-5.3[1M]"));
     DOCTEST_CHECK(env.find("ANTHROPIC_MODEL_NAME") == env.end());
-    // sonnet：显示名显式配置优先于派生
+    // sonnet：显式配置的显示名优先于派生
     DOCTEST_CHECK_EQ(env.at("ANTHROPIC_DEFAULT_SONNET_MODEL"),
                      std::string("fangzhou/glm-5.3[1M]"));
     DOCTEST_CHECK_EQ(env.at("ANTHROPIC_DEFAULT_SONNET_MODEL_NAME"),
                      std::string("我的 Sonnet"));
-    // haiku：name 空 → 派生（无标记原样）
+    // haiku：name 空 → 派生；无 [1M] 标记则原样保留
     DOCTEST_CHECK_EQ(env.at("ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME"),
                      std::string("claude-3-5-haiku"));
-    // opus/fable 空槽位 → 跳过
+    // opus/fable 槽位为空 → 整个键跳过
     DOCTEST_CHECK(env.find("ANTHROPIC_DEFAULT_OPUS_MODEL") == env.end());
     DOCTEST_CHECK(env.find("ANTHROPIC_DEFAULT_FABLE_MODEL") == env.end());
-    // subagent：无 _NAME 变体
+    // subagent 槽位没有 _NAME 变体
     DOCTEST_CHECK_EQ(env.at("CLAUDE_CODE_SUBAGENT_MODEL"), std::string("glm-5.3[1M]"));
     DOCTEST_CHECK(env.find("CLAUDE_CODE_SUBAGENT_MODEL_NAME") == env.end());
 
-    // 恒定写入占位凭据（无「空 token 跳过」分支了）
+    // 恒定写入占位凭据：buildProxyEnv 没有「空 token 跳过」分支
     const auto noTok = buildProxyEnv("", "", 8888);
     DOCTEST_CHECK_EQ(noTok.at("ANTHROPIC_AUTH_TOKEN"),
                      std::string("PROXY_MANAGED"));
     return true;
 })
 
-// ---- 2. buildProxyEnv：extra_env 别名归一 + 托管键优先 ----
 REGISTER_TEST(sync_build_proxy_env_extra, "settings_sync: extra_env 别名与优先级", {
     using module::claude::buildProxyEnv;
 
@@ -267,7 +252,7 @@ REGISTER_TEST(sync_build_proxy_env_extra, "settings_sync: extra_env 别名与优
     DOCTEST_CHECK_EQ(env.at("DISABLE_AUTO_COMPACT"), std::string("0"));
     DOCTEST_CHECK(env.find("AUTO_COMPACT_ENABLED") == env.end());
     DOCTEST_CHECK_EQ(env.at("DISABLE_AUTOUPDATER"), std::string("1"));
-    // 冲突时托管键（代理 BASE_URL/占位凭据）优先，导入的旧值被覆盖
+    // 冲突时托管键优先：代理 BASE_URL 与占位凭据覆盖导入的旧值
     DOCTEST_CHECK_EQ(env.at("ANTHROPIC_BASE_URL"),
                      std::string("http://127.0.0.1:9999"));
     DOCTEST_CHECK_EQ(env.at("ANTHROPIC_AUTH_TOKEN"),
@@ -275,14 +260,12 @@ REGISTER_TEST(sync_build_proxy_env_extra, "settings_sync: extra_env 别名与优
     return true;
 })
 
-// ---- 3. takeOver 合并 + restore 往返（含原本不存在键的删除）----
 REGISTER_TEST(sync_takeover_restore_roundtrip, "settings_sync: 接管合并与还原往返", {
     using namespace module::claude;
     test_support::TempDir d("roundtrip", kSyncTempDirPrefix);
     SyncDb sdb("sync_roundtrip");
     auto paths = makePaths(d, sdb.handle());
 
-    // 用户已有配置：非 env 字段 + 自有 env 键（有的键与托管键同名但值不同）
     d.write(paths.settingsFile, R"({
         "permissions": {"allow": ["Bash"]},
         "model": "claude-sonnet-4-5",
@@ -302,7 +285,6 @@ REGISTER_TEST(sync_takeover_restore_roundtrip, "settings_sync: 接管合并与�
     DOCTEST_REQUIRE(r.ok);
     DOCTEST_CHECK(r.warnings.empty());
 
-    // 接管后：托管键写入、用户自有键保留、非 env 字段保留、sidecar 存在
     {
         const auto env = readEnv(paths.settingsFile);
         DOCTEST_CHECK_EQ(env.at("ANTHROPIC_BASE_URL"),
@@ -318,7 +300,7 @@ REGISTER_TEST(sync_takeover_restore_roundtrip, "settings_sync: 接管合并与�
         DOCTEST_CHECK(test_support::configRowExists(&sdb.handle(), module::claude::settings_sync::kSidecarConfigKey));
     }
 
-    // 还原：同名托管键恢复用户原值，原本不存在的键删除，其余不动
+    // 还原契约：同名托管键恢复用户原值，接管前不存在的键被删除，其余不动
     auto rr = settings_sync::restore(paths);
     DOCTEST_REQUIRE(rr.ok);
     {
@@ -329,18 +311,16 @@ REGISTER_TEST(sync_takeover_restore_roundtrip, "settings_sync: 接管合并与�
         DOCTEST_CHECK(env.find("ANTHROPIC_MODEL") == env.end());
         DOCTEST_CHECK_EQ(env.at("MY_CUSTOM_KEY"), std::string("keep-me"));
         DOCTEST_CHECK_EQ(env.at("DISABLE_AUTOUPDATER"), std::string("1"));
-        // 非 env 字段仍保留
         DOCTEST_CHECK_EQ(topLevelString(paths.settingsFile, "model"),
                          std::string("claude-sonnet-4-5"));
-        // sidecar 已删除
         DOCTEST_CHECK_FALSE(test_support::configRowExists(&sdb.handle(), module::claude::settings_sync::kSidecarConfigKey));
     }
-    // env 值语义与接管前一致（格式被 pretty 归一，值逐键等价）
+    // original 故意不参与断言：还原后格式被 pretty 归一，只有 env 值逐键等价才成立，
+    // 字节级比较必然不等。这行 (void) 只是消未用告警，不是「忘了断言」
     (void)original;
     return true;
 })
 
-// ---- 4. 重复 takeOver：首份快照保留 + 托管键并集 ----
 REGISTER_TEST(sync_retakeover_keeps_first_snapshot, "settings_sync: 热切换保留首份快照并并入托管键", {
     using namespace module::claude;
     test_support::TempDir d("retake", kSyncTempDirPrefix);
@@ -356,22 +336,20 @@ REGISTER_TEST(sync_retakeover_keeps_first_snapshot, "settings_sync: 热切换保
     a.modelsConfigJson = modelsA;
     DOCTEST_REQUIRE(settings_sync::takeOver(a, 8888, paths).ok);
 
-    // 第二次接管（切 profile）：B 无 sonnet 槽位 → 该键不在 B 的托管集，
-    // 但并集后仍归 DevDesk 管理（restore 时删除，不留陈旧值）
+    // 第二次接管（切 profile）：B 无 sonnet 槽位 → 该键不在 B 的托管集，但并集后
+    // 仍归 DevDesk 管理（restore 时删除，不给客户端留陈旧模型名）
     Profile b;
     const std::string modelsB = R"({"opus": {"model": "m-b"}})";
     b.modelsConfigJson = modelsB;
     DOCTEST_REQUIRE(settings_sync::takeOver(b, 8888, paths).ok);
     {
         const auto env = readEnv(paths.settingsFile);
-        // 条目 1：上一轮托管、本轮不再生成的键从 env 删除（槽位清空后旧模型名
-        // 不得继续被客户端使用）
         DOCTEST_CHECK(env.find("ANTHROPIC_DEFAULT_SONNET_MODEL") == env.end());
         DOCTEST_CHECK_EQ(env.at("ANTHROPIC_DEFAULT_OPUS_MODEL"),
                          std::string("m-b"));
         DOCTEST_CHECK_EQ(env.at("MY_KEY"), std::string("user"));
     }
-    // 但 sidecar 仍记录它（还原语义不回归：旧托管键仍归 DevDesk 管）
+    // 但 sidecar 仍记录它（还原语义：旧托管键仍归 DevDesk 管）
     {
         const auto sidecarText = test_support::readRawConfigRow(&sdb.handle(), module::claude::settings_sync::kSidecarConfigKey);
         DOCTEST_CHECK(sidecarText.find("ANTHROPIC_DEFAULT_SONNET_MODEL") !=
@@ -391,7 +369,6 @@ REGISTER_TEST(sync_retakeover_keeps_first_snapshot, "settings_sync: 热切换保
     return true;
 })
 
-// ---- 5. settings.json 不存在 → 创建仅含 env 的最小文件；还原后干净 ----
 REGISTER_TEST(sync_takeover_missing_file, "settings_sync: 无 settings.json 时创建最小文件", {
     using namespace module::claude;
     test_support::TempDir d("missing", kSyncTempDirPrefix);
@@ -407,7 +384,6 @@ REGISTER_TEST(sync_takeover_missing_file, "settings_sync: 无 settings.json 时�
         const auto env = readEnv(paths.settingsFile);
         DOCTEST_CHECK_EQ(env.at("ANTHROPIC_BASE_URL"),
                          std::string("http://127.0.0.1:8888"));
-        // 最小文件只有 env 一个顶层键
         std::ifstream i(paths.settingsFile);
         std::ostringstream ss;
         ss << i.rdbuf();
@@ -418,7 +394,6 @@ REGISTER_TEST(sync_takeover_missing_file, "settings_sync: 无 settings.json 时�
         DOCTEST_CHECK_EQ(keys[0], std::string("env"));
     }
 
-    // 还原：托管键全部删除（原本就不存在），sidecar 清掉
     DOCTEST_REQUIRE(settings_sync::restore(paths).ok);
     const auto env = readEnv(paths.settingsFile);
     DOCTEST_CHECK(env.find("ANTHROPIC_BASE_URL") == env.end());
@@ -426,7 +401,7 @@ REGISTER_TEST(sync_takeover_missing_file, "settings_sync: 无 settings.json 时�
     return true;
 })
 
-// ---- 6. 解析失败 → 中止不写（宁可不让接入，不能弄坏用户文件）----
+// 解析失败一律中止不写：宁可让用户接不进来，也不能弄坏他的 settings.json
 REGISTER_TEST(sync_parse_failure_aborts, "settings_sync: settings.json 解析失败中止不写", {
     using namespace module::claude;
     test_support::TempDir d("parsefail", kSyncTempDirPrefix);
@@ -440,7 +415,6 @@ REGISTER_TEST(sync_parse_failure_aborts, "settings_sync: settings.json 解析失
     auto r = settings_sync::takeOver(p, 8888, paths);
     DOCTEST_CHECK(!r.ok);
     DOCTEST_CHECK(!r.error.empty());
-    // 文件原样、无 sidecar
     DOCTEST_CHECK_EQ(d.read(paths.settingsFile), broken);
     DOCTEST_CHECK_FALSE(test_support::configRowExists(&sdb.handle(), module::claude::settings_sync::kSidecarConfigKey));
 
@@ -456,7 +430,7 @@ REGISTER_TEST(sync_parse_failure_aborts, "settings_sync: settings.json 解析失
     return true;
 })
 
-// ---- 6b. 首份快照污染守卫（条目 2①）：代理形态键不进快照 ----
+// 首份快照污染守卫：已是本机代理形态的键不进快照——否则还原时会被当用户原值写回去
 REGISTER_TEST(sync_takeover_snapshot_skips_proxy_form,
               "settings_sync: 首份快照跳过本机代理形态键（污染守卫）", {
     using namespace module::claude;
@@ -494,7 +468,7 @@ REGISTER_TEST(sync_takeover_snapshot_skips_proxy_form,
     return true;
 })
 
-// ---- 6c. 无 sidecar 兜底（条目 2②）：仍指向死代理 → 最小清除 ----
+// 无 sidecar 兜底：settings.json 仍是本机代理形态（上次接管残留）→ restore 做最小清除
 REGISTER_TEST(sync_restore_without_sidecar_clears_residual,
               "settings_sync: 无快照但仍是代理形态 → 最小清除（restore）", {
     using namespace module::claude;
@@ -527,7 +501,7 @@ REGISTER_TEST(sync_restore_without_sidecar_clears_residual,
     return true;
 })
 
-// ---- 6d. 无 sidecar 且无代理形态 → 真 no-op（一字不改）----
+// 无 sidecar 且非代理形态 → 真 no-op，文件一字不改
 REGISTER_TEST(sync_restore_without_sidecar_noop,
               "settings_sync: 无快照且非代理形态 → 真 no-op（restore）", {
     using namespace module::claude;
@@ -561,7 +535,6 @@ REGISTER_TEST(sync_restore_without_sidecar_noop,
     return true;
 })
 
-// ---- 7. 上层覆盖检测：命中 / 未命中 ----
 REGISTER_TEST(sync_overlay_detection, "settings_sync: managed/project 层覆盖检测", {
     using namespace module::claude;
     test_support::TempDir d("overlay", kSyncTempDirPrefix);
@@ -597,7 +570,6 @@ REGISTER_TEST(sync_overlay_detection, "settings_sync: managed/project 层覆盖�
     return true;
 })
 
-// ---- 7b. 覆盖检测键集来源（CPX-12）：托管键全集 ∪ 本轮实际托管键 ----
 REGISTER_TEST(sync_overlay_detection_managed_derived,
               "settings_sync: 覆盖检测含托管键全集与 profile 实键", {
     using namespace module::claude;
@@ -629,8 +601,8 @@ REGISTER_TEST(sync_overlay_detection_managed_derived,
                   std::string::npos);
     DOCTEST_CHECK(r.warnings[1].find("MY_KEY") != std::string::npos);
 
-    // ② 空槽位的 *_NAME 键仍在检测集内（旧硬编码 8 键的缺口：haiku 槽位为空 →
-    //    buildProxyEnv 不生成该键，只有托管键全集能识别上位覆盖）
+    // ② 空槽位的 *_NAME 键仍在检测集内（haiku 槽位为空 → buildProxyEnv 不生成
+    //    该键，只有托管键全集能识别上位覆盖）
     d.write(overlayName,
             R"({"env": {"ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME": "x"}})");
     paths.overlayFiles = {overlayName};
@@ -640,7 +612,6 @@ REGISTER_TEST(sync_overlay_detection_managed_derived,
     DOCTEST_CHECK(r2.warnings[0].find("ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME") !=
                   std::string::npos);
 
-    // ③ 只写未托管键 → 0 条
     d.write(overlayName, R"({"env": {"SOME_UNMANAGED_KEY": "x"}})");
     paths.overlayFiles = {overlayName};
     auto r3 = settings_sync::takeOver(p, 8888, paths);
@@ -649,7 +620,6 @@ REGISTER_TEST(sync_overlay_detection_managed_derived,
     return true;
 })
 
-// ---- 8. 崩溃补还原 + 原子性（无 tmp 残留）----
 REGISTER_TEST(sync_crash_recovery_and_atomic, "settings_sync: 崩溃补还原与原子写残留", {
     using namespace module::claude;
     test_support::TempDir d("crash", kSyncTempDirPrefix);
@@ -664,7 +634,6 @@ REGISTER_TEST(sync_crash_recovery_and_atomic, "settings_sync: 崩溃补还原与
     p.model = "m-1";
     DOCTEST_REQUIRE(settings_sync::takeOver(p, 8888, paths).ok);
 
-    // 下次启动：recoverPendingSnapshot 自动补还原
     auto r = settings_sync::recoverPendingSnapshot(paths);
     DOCTEST_REQUIRE(r.ok);
     const auto env = readEnv(paths.settingsFile);
@@ -672,10 +641,8 @@ REGISTER_TEST(sync_crash_recovery_and_atomic, "settings_sync: 崩溃补还原与
     DOCTEST_CHECK(env.find("ANTHROPIC_BASE_URL") == env.end());
     DOCTEST_CHECK_FALSE(test_support::configRowExists(&sdb.handle(), module::claude::settings_sync::kSidecarConfigKey));
 
-    // 无 sidecar 时 recover 是 no-op
     DOCTEST_CHECK(settings_sync::recoverPendingSnapshot(paths).ok);
 
-    // 原子性：接管/还原后目录里没有 .devdesk-tmp 残留
     DOCTEST_REQUIRE(settings_sync::takeOver(p, 8888, paths).ok);
     DOCTEST_REQUIRE(settings_sync::restore(paths).ok);
     for (const auto& entry : std::filesystem::directory_iterator(d.path)) {
@@ -685,7 +652,6 @@ REGISTER_TEST(sync_crash_recovery_and_atomic, "settings_sync: 崩溃补还原与
     return true;
 })
 
-// ---- 9. ClaudeService 接线：start 接管 / stop 还原 / 运行中切 profile 跟随 ----
 REGISTER_TEST(sync_service_wiring, "claude_service: 接管通道三触发点接线", {
     using namespace module::claude;
     test_support::TestDb tdb(kDbPrefix, "wiring");
@@ -706,7 +672,6 @@ REGISTER_TEST(sync_service_wiring, "claude_service: 接管通道三触发点接�
         svc.stopProxy();
     }
 
-    // 注入路径 + 建 profile（带模型槽位 + extra_env）
     svc.setSettingsSyncPaths(paths);
     svc.setSettingsTakeOverEnabled(true);
     auto created = svc.createProfile("官方中转", "https://gw.example.com",
@@ -762,13 +727,11 @@ REGISTER_TEST(sync_service_wiring, "claude_service: 接管通道三触发点接�
         DOCTEST_CHECK(!svc.isClaudeCodeManaged());
     }
 
-    // 清理 keychain 条目
     platform::keychain::deleteSecret(
         kTestKeychainService, "claude:" + std::to_string(created.value().id));
     return true;
 })
 
-// ---- 10. 上层覆盖警告经 ClaudeService 暴露（Phase D UI 数据源）----
 REGISTER_TEST(sync_service_warnings_surface, "claude_service: 接管警告经 lastSyncWarnings 暴露", {
     using namespace module::claude;
     test_support::TestDb tdb(kDbPrefix, "warn");
@@ -792,7 +755,7 @@ REGISTER_TEST(sync_service_warnings_surface, "claude_service: 接管警告经 la
     return true;
 })
 
-// ---- 10b. 接管失败并入 lastSyncWarnings（条目 3）：失败不阻断起代理 / 切 profile ----
+// 接管失败并入 lastSyncWarnings，且失败不阻断起代理 / 切 profile
 REGISTER_TEST(sync_service_takeover_failure_reported,
               "claude_service: 接管失败并入 lastSyncWarnings 且不阻断操作", {
     using namespace module::claude;
@@ -842,9 +805,7 @@ REGISTER_TEST(sync_service_takeover_failure_reported,
     return true;
 })
 
-// ---- 11. 应用退出序列（W2 终验问题 1）：Router::stopAll → onStop → 还原 ----
-// main.cpp 的 atexit handler 走的正是这条链；这里模拟该退出序列，断言
-// 接管状态下退出后 settings.json 还原、sidecar 被消费、代理已停。
+// 应用退出序列 = Router::stopAll → onStop → 还原。生产上 main.cpp 的 atexit handler 走的正是这条链。
 extern "C" ::core::Module* create_claude_module();
 
 REGISTER_TEST(sync_exit_sequence_stop_all,
@@ -866,7 +827,6 @@ REGISTER_TEST(sync_exit_sequence_stop_all,
     svc.setSettingsTakeOverEnabled(true);
     auto r = svc.startProxy("127.0.0.1", 0);
     DOCTEST_REQUIRE(r.isOk());
-    // 接管已发生：托管键写入 + sidecar 落地
     {
         const auto env = readEnv(paths.settingsFile);
         DOCTEST_CHECK(env.find("ANTHROPIC_BASE_URL") != env.end());
@@ -874,17 +834,15 @@ REGISTER_TEST(sync_exit_sequence_stop_all,
         DOCTEST_CHECK(svc.isClaudeCodeManaged());
     }
 
-    // 模拟退出序列（main.cpp atexit → Router::stopAll）。生产序列 = 装配段
-    // registerModule → startAll onStart（模块恒先启动后停止）；onStart 重入
-    // 幂等守卫（活门控 Task 4）后，未启动模块的 onStop = no-op，故这里按真实
-    // 顺序补 onStart——被锁的契约是「启动过的模块退出时触发还原」，不变。
+    // 生产序列 = 装配段 registerModule → startAll onStart（模块恒先启动后停止）；
+    // onStart 重入幂等守卫后，未启动模块的 onStop = no-op，故这里按真实顺序补
+    // onStart。被锁的契约是「启动过的模块退出时触发还原」，不变。
     std::unique_ptr<::core::Module> mod(create_claude_module());
     ::core::Router router;
     router.registerModule(mod.get());
     mod->onStart();
     router.stopAll();
 
-    // 断言：还原完成（用户键保留、托管键消失）、sidecar 已消费、代理已停
     const auto env = readEnv(paths.settingsFile);
     DOCTEST_CHECK_EQ(env.at("MY_KEY"), std::string("user"));
     DOCTEST_CHECK(env.find("ANTHROPIC_BASE_URL") == env.end());
@@ -895,11 +853,10 @@ REGISTER_TEST(sync_exit_sequence_stop_all,
     return true;
 })
 
-// ---- 12. 产品审计 2026-09-23 [1]：删激活 Profile 停代理并还原 settings.json ----
-// provider-config 设计 §7 安全第 5 条：删除激活 profile 且代理运行中 →
-// 停代理（触发还原），settings.json 不能继续指向无 profile 的代理。
+// 删除激活 profile 且代理运行中 → 停代理（触发还原），settings.json 不能继续
+// 指向无 profile 的代理。
 REGISTER_TEST(sync_delete_active_profile_stops_proxy,
-              "claude_service: 删激活 Profile 停代理并还原 settings（审计 [1]）", {
+              "claude_service: 删激活 Profile 停代理并还原 settings", {
     using namespace module::claude;
     test_support::TestDb tdb(kDbPrefix, "delact");
     test_support::TempDir d("delact", kSyncTempDirPrefix);
@@ -957,16 +914,14 @@ REGISTER_TEST(sync_delete_active_profile_stops_proxy,
         DOCTEST_CHECK_EQ(env.at("MY_KEY"), std::string("user"));
     }
 
-    // 清理 keychain 条目
     platform::keychain::deleteSecret(
         kTestKeychainService, "claude:" + std::to_string(created.value().id));
     return true;
 })
 
-// ---- 13. 接管开关关闭（2026-09-27）：完全不写 settings.json ----
 // 接管默认开（见 claude_service.h setSettingsTakeOverEnabled）；关掉开关 =
 // DevDesk 不碰该文件，三条路径一起门控：startProxy 接管 / stopProxy 还原 /
-// 启动补还原。本用例是「开关关闭时零写入」的自动化兜底（此前只有人工指纹比对）。
+// 启动补还原。
 REGISTER_TEST(sync_switch_off_no_write,
               "claude_service: 接管开关关闭时不写 settings.json", {
     using namespace module::claude;
@@ -978,7 +933,7 @@ REGISTER_TEST(sync_switch_off_no_write,
     d.write(paths.settingsFile, original);
 
     ClaudeService svc(tdb.handle(), kTestKeychainService);
-    DOCTEST_CHECK(svc.settingsTakeOverEnabled());  // 默认开（2026-09-27 恢复）
+    DOCTEST_CHECK(svc.settingsTakeOverEnabled());  // 默认开
     svc.setSettingsSyncPaths(paths);
     svc.setSettingsTakeOverEnabled(false);         // 显式关闭
 
@@ -1021,10 +976,9 @@ REGISTER_TEST(sync_switch_off_no_write,
     return true;
 })
 
-// ---- 14. 反向同步读侧（设计 §3.3 G7/G8/G9）----
 // 六种文件形态分别处置：缺失 / 0 字节空文件 / 无 env 键 → no-op 成功
 //（present=false，调用方照常切换）；坏 JSON / 顶层非对象 / env 非对象 →
-// 中止（ok=false + 带路径的 error）。全部走临时目录，不碰真实 ~/.claude。
+// 中止（ok=false + 带路径的 error）。
 
 namespace {
 
@@ -1038,13 +992,13 @@ bool hasKeyEntry(const std::vector<std::string>& keys, const char* key) {
 } // namespace
 
 REGISTER_TEST(sync_reverse_read_missing_empty_noenv,
-              "settings_sync: 反向读——缺失/空文件/无 env 均 no-op 成功（reverse G7/G9）", {
+              "settings_sync: 反向读——缺失/空文件/无 env 均 no-op 成功（reverse）", {
     using module::claude::settings_sync::readSettingsEnvForSync;
     test_support::TempDir d("revnoop", kSyncTempDirPrefix);
     SyncDb sdb("sync_revnoop");
     auto paths = makePaths(d, sdb.handle());
 
-    // G7：文件不存在 → no-op 成功（调用方照常完成本次切换）
+    // 文件不存在 → no-op 成功（调用方照常完成本次切换）
     {
         auto r = readSettingsEnvForSync(paths);
         DOCTEST_CHECK(r.ok);
@@ -1053,7 +1007,7 @@ REGISTER_TEST(sync_reverse_read_missing_empty_noenv,
         DOCTEST_CHECK(r.envJson.empty());
         DOCTEST_CHECK(r.managedKeys.empty());
     }
-    // G9：0 字节空文件（视为不存在——不属于「存在但读不了」的中止侧）
+    // 0 字节空文件（视为不存在——不属于「存在但读不了」的中止侧）
     {
         d.write(paths.settingsFile, "");
         auto r = readSettingsEnvForSync(paths);
@@ -1061,7 +1015,6 @@ REGISTER_TEST(sync_reverse_read_missing_empty_noenv,
         DOCTEST_CHECK(!r.present);
         DOCTEST_CHECK(r.error.empty());
     }
-    // G9：解析成功但无 env 键
     {
         d.write(paths.settingsFile, R"({"permissions": {"allow": ["Bash"]}})");
         auto r = readSettingsEnvForSync(paths);
@@ -1073,13 +1026,13 @@ REGISTER_TEST(sync_reverse_read_missing_empty_noenv,
 })
 
 REGISTER_TEST(sync_reverse_read_aborts_on_broken,
-              "settings_sync: 反向读——坏 JSON/顶层非对象/env 非对象中止（reverse G8）", {
+              "settings_sync: 反向读——坏 JSON/顶层非对象/env 非对象中止（reverse）", {
     using module::claude::settings_sync::readSettingsEnvForSync;
     test_support::TempDir d("revbad", kSyncTempDirPrefix);
     SyncDb sdb("sync_revbad");
     auto paths = makePaths(d, sdb.handle());
 
-    // 非法 JSON → 中止（S-2：调用方据此不切换，profile 一字未改）
+    // 非法 JSON → 中止（调用方据此不切换，profile 一字未改）
     {
         d.write(paths.settingsFile, "{ not valid json !!!");
         auto r = readSettingsEnvForSync(paths);
@@ -1087,7 +1040,6 @@ REGISTER_TEST(sync_reverse_read_aborts_on_broken,
         DOCTEST_CHECK(!r.present);
         DOCTEST_CHECK(r.error.find("settings.json") != std::string::npos);
     }
-    // 顶层非对象
     {
         d.write(paths.settingsFile, "[1, 2, 3]");
         auto r = readSettingsEnvForSync(paths);
@@ -1095,7 +1047,6 @@ REGISTER_TEST(sync_reverse_read_aborts_on_broken,
         DOCTEST_CHECK(!r.present);
         DOCTEST_CHECK(!r.error.empty());
     }
-    // env 非对象
     {
         d.write(paths.settingsFile, R"({"env": "not-an-object"})");
         auto r = readSettingsEnvForSync(paths);
@@ -1106,11 +1057,11 @@ REGISTER_TEST(sync_reverse_read_aborts_on_broken,
     return true;
 })
 
-// G8 读失败（审计）：存在但打不开（IO/权限）≠ 0 字节空文件 → 中止（仅 Windows：
-// 独占句柄是本平台构造「存在但读不出」的唯一可靠形态）
+// 存在但打不开（IO/权限）≠ 0 字节空文件 → 中止（仅 Windows：独占句柄是本平台
+// 构造「存在但读不出」的唯一可靠形态）
 #if defined(_WIN32)
 REGISTER_TEST(sync_reverse_read_unreadable_aborts,
-              "settings_sync: 反向读——存在但打不开中止（reverse G8 读失败）", {
+              "settings_sync: 反向读——存在但打不开中止（reverse 读失败）", {
     using module::claude::settings_sync::readSettingsEnvForSync;
     test_support::TempDir d("revunreadable", kSyncTempDirPrefix);
     SyncDb sdb("sync_revunreadable");
@@ -1124,14 +1075,14 @@ REGISTER_TEST(sync_reverse_read_unreadable_aborts,
     DOCTEST_REQUIRE(h != INVALID_HANDLE_VALUE);
     {
         auto r = readSettingsEnvForSync(paths);
-        DOCTEST_CHECK(!r.ok);  // G8：读失败中止，不静默当空文件
+        DOCTEST_CHECK(!r.ok);  // 读失败中止，不静默当空文件
         DOCTEST_CHECK(!r.present);
         DOCTEST_CHECK(r.error.find(paths.settingsFile.string()) !=
                       std::string::npos);  // 错误含路径
     }
     CloseHandle(h);
 
-    // 对照：0 字节空文件仍 no-op 成功（G9，属「不存在」侧的处置）
+    // 对照：0 字节空文件仍 no-op 成功（属「不存在」侧的处置）
     d.write(paths.settingsFile, "");
     auto r2 = readSettingsEnvForSync(paths);
     DOCTEST_CHECK(r2.ok);
@@ -1183,7 +1134,7 @@ REGISTER_TEST(sync_reverse_read_env_and_sidecar,
         DOCTEST_CHECK(hasKeyEntry(r.managedKeys, "ANTHROPIC_MODEL"));
     }
     // sidecar 损坏 → 空集 + 不失败、不阻断（反向读是只读路径，坏 sidecar 不该
-    // 把用户挡在切换之外；G2/G3 仍挡代理形态值）
+    // 把用户挡在切换之外）
     {
         test_support::writeRawConfigRow(&sdb.handle(), module::claude::settings_sync::kSidecarConfigKey, "{broken");
         auto r = readSettingsEnvForSync(paths);
@@ -1195,9 +1146,8 @@ REGISTER_TEST(sync_reverse_read_env_and_sidecar,
     return true;
 })
 
-// 读 sidecar 的 nonEnvSnapshot / nonEnvKeys（§5.1 v2 形态断言用）
-// sidecar 自 2026-10-03（批次 E2）起是 app_config 表的一行，故这两个读侧
-// helper 的入参从「文件路径」改成「连接」，内容取自那一行的原文。
+// 读 sidecar 的 nonEnvSnapshot / nonEnvKeys。入参是连接（不是路径），内容取自
+// app_config 那一行的原文。
 static std::map<std::string, std::string> readSidecarNonEnvSnapshot(
     core::data::SqliteDb& db) {
     std::map<std::string, std::string> out;
@@ -1229,9 +1179,8 @@ static std::vector<std::string> readSidecarNonEnvKeys(
     return obj.get("nonEnvKeys").asObject().keys();
 }
 
-// ---- 15. 共享配置片段（advanced-json-editor §8 重构后）：env 域片段管线
-// ---- 已拆除——片段不再携带 env 键，叠加走 JSON 域（effectiveExtraSettingsJson
-// ---- + applyExtraSettingsToSettingsDoc）。本组钉住「域搬迁不残留双通道」。
+// 共享配置片段只走 JSON 域：片段不携带 env 键，叠加由 effectiveExtraSettingsJson +
+// applyExtraSettingsToSettingsDoc 完成，不存在 env 域叠加通道。
 
 REGISTER_TEST(sync_build_proxy_env_shared_config,
               "settings_sync: 片段 env 域管线已拆——buildProxyEnv 不再吃片段，JSON 域为唯一叠加通道", {
@@ -1242,8 +1191,7 @@ REGISTER_TEST(sync_build_proxy_env_shared_config,
     const std::string profileEnv =
         R"({"MY_KEY": "from-profile", "PROFILE_ONLY": "1"})";
 
-    // env 域：profile 自身 env + 托管键（原「片段 env 叠加」形参已拆除——
-    // 片段键不再出现在 env 块）
+    // env 域只含 profile 自身 env + 托管键，片段键不得出现在 env 块
     const auto env = buildProxyEnv("", profileEnv, 8888);
     DOCTEST_CHECK_EQ(env.at("MY_KEY"), std::string("from-profile"));
     DOCTEST_CHECK_EQ(env.at("PROFILE_ONLY"), std::string("1"));
@@ -1276,8 +1224,8 @@ REGISTER_TEST(sync_takeover_with_shared_config,
     auto paths = makePaths(d, sdb.handle());
     d.write(paths.settingsFile, R"({"env": {"MY_KEY": "user"}})");
 
-    // p.extraSettingsJson = 门面 §5.2① 装配后的生效 JSON（profile ⊕ 片段、
-    // 片段赢——片段叠加本身在门面完成，直调 takeOver 拿到的是装配结果）
+    // p.extraSettingsJson = 门面装配后的生效 JSON（profile ⊕ 片段、片段赢——
+    // 片段叠加本身在门面完成，直调 takeOver 拿到的是装配结果）
     Profile p;
     p.model = "m-1";
     p.extraEnvJson = R"({"PROFILE_ONLY": "1"})";
@@ -1315,9 +1263,6 @@ REGISTER_TEST(sync_takeover_with_shared_config,
     return true;
 })
 
-// ---- 16. 服务级：删片段 → 同事务解绑 + 代理在跑则立即 re-takeover ----
-//（节头原为「服务级 G10：片段键在 live 被改」——G10 随 advanced-json-editor
-// §8.4 拆除，本组现钉 JSON 域删片段的当场回落，见下方重写版用例）
 
 REGISTER_TEST(sync_service_shared_config_delete_retakeover,
               "claude_service: 删片段当场解绑并重写 live（JSON 域片段键撤走、profile 自身值回落）", {
@@ -1331,7 +1276,7 @@ REGISTER_TEST(sync_service_shared_config_delete_retakeover,
     svc.setSettingsSyncPaths(paths);
     svc.setSettingsTakeOverEnabled(true);
 
-    // 片段 = 高级属性 JSON 预设（v11 起片段不再携带 env 键）
+    // 片段 = 高级属性 JSON 预设（片段不携带 env 键）
     auto frag = svc.createSharedConfig("片段S", R"({"statusLine": "frag-s"})");
     DOCTEST_REQUIRE(frag.isOk());
     auto a = svc.createProfile("绑片段", "https://a.example.com",
@@ -1363,11 +1308,10 @@ REGISTER_TEST(sync_service_shared_config_delete_retakeover,
     return true;
 })
 
-// ===== 接管/还原往返·高级设置 JSON（2026-09-30 advanced-json-editor 设计 §10，
-// ===== sidecar v2：nonEnvKeys/nonEnvSnapshot + merge-only 补拍，F-1）=====
+// sidecar 用 nonEnvKeys / nonEnvSnapshot 两段记账，并支持 merge-only 补拍。
 
 // ① 接管写入 env + JSON 属性；live 已有同名非 env 键时 JSON 值胜，旧值进
-//    nonEnvSnapshot（D-3：被覆盖旧值还原无损）
+//    nonEnvSnapshot（被覆盖旧值还原无损）
 REGISTER_TEST(sync_takeover_extra_settings_written,
               "settings_sync: 接管写入 JSON 属性，同名键 JSON 胜且旧值进 nonEnvSnapshot", {
     using namespace module::claude;
@@ -1383,13 +1327,12 @@ REGISTER_TEST(sync_takeover_extra_settings_written,
 
     auto r = settings_sync::takeOver(p, 8888, paths);
     DOCTEST_REQUIRE(r.ok);
-    // JSON 赢过 live 既有同名键（D-3）
     DOCTEST_CHECK_EQ(topLevelString(paths.settingsFile, "model"),
                      std::string("json-model"));
     DOCTEST_CHECK_EQ(topLevelString(paths.settingsFile, "statusLine"),
                      std::string("json-s"));
     // env 照常写入；且 JSON 的 "model"（非空字符串）触发 ANTHROPIC_MODEL 抑制
-    //（D-4：def 槽位 env 键被顶层 model 对映键压制，不写入）
+    //（def 槽位 env 键被顶层 model 对映键压制，不写入）
     {
         const auto envWritten = readEnv(paths.settingsFile);
         DOCTEST_CHECK(envWritten.find("ANTHROPIC_MODEL") == envWritten.end());
@@ -1409,8 +1352,8 @@ REGISTER_TEST(sync_takeover_extra_settings_written,
     return true;
 })
 
-// ② ANTHROPIC_MODEL 抑制：JSON 含非空 "model" → env 无该键（apply 步移除，
-//    F-5 时序）且该键仍在 managedKeys 并集（restore 语义不变）
+// ② ANTHROPIC_MODEL 抑制：JSON 含非空 "model" → env 无该键（apply 步移除）且
+//    该键仍在 managedKeys 并集（restore 语义不变）
 REGISTER_TEST(sync_takeover_model_suppress,
               "settings_sync: JSON model 键抑制 ANTHROPIC_MODEL，managedKeys 并集仍含该键", {
     using namespace module::claude;
@@ -1425,7 +1368,6 @@ REGISTER_TEST(sync_takeover_model_suppress,
     p.extraSettingsJson = R"({"model": "json-model"})";
     auto r = settings_sync::takeOver(p, 8888, paths);
     DOCTEST_REQUIRE(r.ok);
-    // 抑制：env 无 ANTHROPIC_MODEL；JSON 的 model 在顶层
     {
         const auto envWritten = readEnv(paths.settingsFile);
         DOCTEST_CHECK(envWritten.find("ANTHROPIC_MODEL") == envWritten.end());
@@ -1447,20 +1389,18 @@ REGISTER_TEST(sync_takeover_model_suppress,
     }
 
     // 本轮 JSON 不含 model → 该键回到 buildProxyEnv 生成（m-1，槽位仍在）、
-    // 不再被抑制（F-5 的另一半：抑制只发生在「本轮 JSON 含 model」的 apply
-    // 步，不是持久状态——上一轮的抑制不残留，槽位键随 JSON 撤除自然恢复）
+    // 不再被抑制（抑制只发生在「本轮 JSON 含 model」的 apply 步，不是持久状态
+    //——上一轮的抑制不残留，槽位键随 JSON 撤除自然恢复）
     p.extraSettingsJson = R"({"statusLine": "on"})";
     DOCTEST_REQUIRE(settings_sync::takeOver(p, 8888, paths).ok);
     DOCTEST_CHECK_EQ(readEnv(paths.settingsFile).at("ANTHROPIC_MODEL"),
                      std::string("m-1"));
     DOCTEST_CHECK(topLevelString(paths.settingsFile, "statusLine") ==
                   std::string("on"));
-    // JSON 改回空串 → 无抑制状态残留，键照常生成
     p.extraSettingsJson = "";
     DOCTEST_REQUIRE(settings_sync::takeOver(p, 8888, paths).ok);
     DOCTEST_CHECK_EQ(readEnv(paths.settingsFile).at("ANTHROPIC_MODEL"),
                      std::string("m-1"));
-    // restore：撤走（快照无原值 → 删除）
     DOCTEST_REQUIRE(settings_sync::restore(paths).ok);
     {
         const auto envFinal = readEnv(paths.settingsFile);
@@ -1470,7 +1410,6 @@ REGISTER_TEST(sync_takeover_model_suppress,
     return true;
 })
 
-// ③ restore：JSON 写入且快照无原值的键被删除、快照有原值的键恢复、sidecar 删除
 REGISTER_TEST(sync_restore_extra_settings,
               "settings_sync: restore 按 nonEnvKeys/nonEnvSnapshot 恢复或删除顶层键", {
     using namespace module::claude;
@@ -1500,9 +1439,9 @@ REGISTER_TEST(sync_restore_extra_settings,
     return true;
 })
 
-// ④ merge-only 补拍（F-1 反例）：第 1 轮 JSON 无 statusLine、live 有手写值 →
-//    不进账；第 2 轮 JSON 加 statusLine 热切换 re-takeover → 原值补拍 →
-//    restore 恢复而非删除；且二次接管对已托管键不重拍
+// ④ merge-only 补拍：第 1 轮 JSON 无 statusLine、live 有手写值 → 不进账；
+//    第 2 轮 JSON 加 statusLine 热切换 re-takeover → 原值补拍 → restore 恢复
+//    而非删除；且二次接管对已托管键不重拍
 REGISTER_TEST(sync_takeover_merge_only_snapshot,
               "settings_sync: 二次接管 merge-only 补拍（新增键首拍、已托管键不重拍，F-1）", {
     using namespace module::claude;
@@ -1536,7 +1475,7 @@ REGISTER_TEST(sync_takeover_merge_only_snapshot,
         // "json-model"，重拍会把托管值当用户原值）
         DOCTEST_CHECK_EQ(snap.at("model"), std::string("user-model"));
     }
-    // restore：两个键都恢复用户原值（F-1 反例的验收点）
+    // restore：两个键都恢复用户原值
     DOCTEST_REQUIRE(settings_sync::restore(paths).ok);
     DOCTEST_CHECK_EQ(topLevelString(paths.settingsFile, "model"),
                      std::string("user-model"));
@@ -1545,7 +1484,7 @@ REGISTER_TEST(sync_takeover_merge_only_snapshot,
     return true;
 })
 
-// ⑤ 旧形态 sidecar（无 nonEnv 新字段）→ restore 不误删任何非 env 键（D-9 空集守卫）
+// ⑤ 旧形态 sidecar（无 nonEnv 新字段）→ restore 不误删任何非 env 键（空集守卫）
 REGISTER_TEST(sync_restore_v1_sidecar_no_nonenv,
               "settings_sync: 旧形态 sidecar（无 nonEnv 字段）restore 不动非 env 键", {
     using namespace module::claude;
@@ -1554,7 +1493,7 @@ REGISTER_TEST(sync_restore_v1_sidecar_no_nonenv,
     auto paths = makePaths(d, sdb.handle());
     d.write(paths.settingsFile,
             R"({"env": {"MY_KEY": "user", "ANTHROPIC_BASE_URL": "http://127.0.0.1:8888", "ANTHROPIC_AUTH_TOKEN": "PROXY_MANAGED"}, "statusLine": "user-s"})");
-    // 手工造 v1 形态 sidecar（只有 managedKeys + envSnapshot）
+    // 手工造只有 managedKeys + envSnapshot 的 sidecar（无 nonEnv 字段）
     test_support::writeRawConfigRow(
         &sdb.handle(), module::claude::settings_sync::kSidecarConfigKey,
             R"({"managedKeys": {"ANTHROPIC_BASE_URL": "", "ANTHROPIC_AUTH_TOKEN": ""}, "envSnapshot": {"MY_KEY": "user"}})");
@@ -1569,16 +1508,14 @@ REGISTER_TEST(sync_restore_v1_sidecar_no_nonenv,
     return true;
 })
 
-// ⑥ 片段叠加端到端（F-8）：绑定片段（片段与 profile JSON 各含独有键 + 同键）
-// → 门面 §5.2① 装配生效 JSON（片段赢）→ 接管写入片段键且同键为片段值 →
-// restore 全部撤走。走真门面（startProxy/stopProxy）钉住装配这一跳——装配漏传
-// /传未生效化原文时必红（骨架照既有片段接管用例平移 JSON 域）
+// ⑥ 片段叠加端到端：绑定片段（片段与 profile JSON 各含独有键 + 同键）→ 门面
+// 装配生效 JSON（片段赢）→ 接管写入片段键且同键为片段值 → restore 全部撤走。
+// 走真门面（startProxy/stopProxy）钉住装配这一跳——装配漏传 / 传未生效化原文
+// 时必红。
 //
-// 钥匙串隔离（merge-review R2 + 2026-10-02 存储统一）：本用例仍**装假 Keychain**
-// （ScopedFakeKeychain，CPX-14 注入缝）——凭据已改落 SQLite 列，Keychain 现在
-// 一个字节都不该被写。断言因此分两半：① 假后端**始终为空**（「迁库后 Keychain
-// 不再是凭据源」的回归网）；② 库列里确实落了值（「写链真跑过」的证据从 Keychain
-// 换到库列，否则本用例的其余断言全是恒真）。
+// 钥匙串隔离：本用例**装假 Keychain**（ScopedFakeKeychain）——凭据落 SQLite 列，
+// Keychain 一个字节都不该被写。断言因此分两半：① 假后端**始终为空**；② 库列里
+// 确实落了值（「写链真跑过」的证据，否则本用例的其余断言全是恒真）。
 namespace {
 // 该 profile 的凭据列长度（> 0 = 凭据真的落库了）
 std::size_t storedCredentialLength(core::data::SqliteDb& db, int64_t id) {
@@ -1655,13 +1592,11 @@ REGISTER_TEST(sync_takeover_fragment_json_end_to_end,
     return true;
 })
 
-// ===== 非 env 托管键移除冲突告警（审计 CPX-12 的非 env 形态）=====
-// 3.5 步陈旧非 env 键删除此前**无任何日志**——用户在 live settings.json 手写的
-// 同名键被静默抹掉且毫不知情。本组钉住：①真冲突出警告（键名 + 「曾被接管
-// 写入，本轮会移除 live 同名手写值」+ 如何避免）；②键在并集里但 root 无该键
-// （陈旧清理正常路径）**零告警**（防噪音回归，必须有）。
+// 陈旧非 env 键删除会抹掉用户在 live settings.json 手写的同名键——那条路径必须
+// 有日志。本组钉住：①真冲突出警告（键名 + 「曾被接管写入，本轮会移除 live 同名
+// 手写值」+ 如何避免）；②键在并集里但 root 无该键（陈旧清理正常路径）**零告警**
+// ——不钉住的话，接管反复切几轮就会刷出无意义告警。
 
-// 警告是否提到某键（键名出现在任一条 warnings 文本里）
 static bool warningsMention(const std::vector<std::string>& warns,
                             const char* key) {
     for (const auto& w : warns) {
@@ -1671,7 +1606,7 @@ static bool warningsMention(const std::vector<std::string>& warns,
 }
 
 // ① 真冲突：第 1 轮 JSON 写 statusLine + hooks（两键进 nonEnvKeys 并集）→ 用户
-//    在 live settings.json 手改同名键 → 第 2 轮 JSON 不再写它 → 3.5 步会移除
+//    在 live settings.json 手改同名键 → 第 2 轮 JSON 不再写它 → 陈旧清理会移除
 //    live 值，必须出告警且文案含键名与规避方式
 REGISTER_TEST(sync_nonenv_removal_conflict_warns,
               "settings_sync: 非 env 托管键本轮不写且 live 有同名值 → 出冲突警告", {
@@ -1698,7 +1633,7 @@ REGISTER_TEST(sync_nonenv_removal_conflict_warns,
     d.write(paths.settingsFile,
             R"({"env": {"MY_KEY": "user"}, "statusLine": "user-handwritten", "hooks": {"b": 2}})");
 
-    // 第 2 轮：JSON 不再写这两个键 → 3.5 步将移除 live 值 → 必须告警
+    // 第 2 轮：JSON 不再写这两个键 → 陈旧清理会移除 live 值 → 必须告警
     p.extraSettingsJson = R"({"model": "json-model"})";
     auto r2 = settings_sync::takeOver(p, 8888, paths);
     DOCTEST_REQUIRE(r2.ok);
@@ -1732,7 +1667,6 @@ REGISTER_TEST(sync_nonenv_removal_stale_absent_silent,
     auto paths = makePaths(d, sdb.handle());
     d.write(paths.settingsFile, R"({"env": {"MY_KEY": "user"}})");
 
-    // 第 1 轮：JSON 写 statusLine（进并集）
     Profile p;
     p.extraSettingsJson = R"({"statusLine": "json-s"})";
     DOCTEST_REQUIRE(settings_sync::takeOver(p, 8888, paths).ok);
@@ -1750,22 +1684,23 @@ REGISTER_TEST(sync_nonenv_removal_stale_absent_silent,
     return true;
 })
 
-// ---- 11. F2（M2 静态审计，medium-high）：lastSyncWarnings 必须是值快照 ----
-// 问题：M2 新增了**跨线程写入口**（agent 线程的 claude.switch_profile 工具 →
+// lastSyncWarnings 必须返回**值快照**。
+// 存在跨线程写入口（agent 线程的 claude.switch_profile 工具 →
 // ClaudeService::setActiveProfile → syncTakeOver → SettingsTakeOver::warnings_
-// 整体赋值 = vector 缓冲被释放）。而门面 getter 返回 `const vector&`（活引用），
+// 整体赋值 = vector 缓冲被释放）。门面 getter 一旦返回 `const vector&`（活引用），
 // UI 每帧（claude_ui_detail / settings_module / settings_ui_cards）拿到它就开始
 // 遍历——写者重分配 + 读者遍历 = 数据竞争，缓冲区释放后即 UAF。
-// switchMutex_ 只护 setActiveProfile 的方法体，读者无锁，故必须让读侧拿**副本**。
+// switchMutex_ 只护 setActiveProfile 的方法体，读者无锁，故读侧必须拿**副本**。
+// 别把 getter 简化回 const&：static_assert 会编译失败，但去掉 assert 就静默回归。
 //
 // 钉法（本仓无 TSan/ASan，用「编译期结构钉 + 有界并发烟测」代替插桩）：
 //   ① 结构钉：getter 的返回类型必须**恰是** std::vector<std::string>（按值）。
-//      修复前是 const&，本行**编译失败** = 红（比运行期竞态更早、更确定地钉住）。
+//      const& 版本下本行**编译失败** = 红（比运行期竞态更早、更确定地钉住）。
 //   ② 运行期：barrier 对齐后写者反复切 profile（每次经 syncTakeOver 整体重写
 //      warnings_）、读者反复取快照，断言每份快照自洽（条目恒为本夹具注入的
 //      「接管失败」类）、读者确曾读到写者的内容、且全程不崩不挂。
-//      变异说明：把 SettingsTakeOver 内那把锁去掉，本用例在无 ASan 下**不保证**
-//      必红（数据竞争是概率性的）——所以真正把关的是 ①（类型钉）+ 锁本身；
+//      把 SettingsTakeOver 内那把锁去掉，本用例在无 ASan 下**不保证**必红
+//      （数据竞争是概率性的）——所以真正把关的是 ①（类型钉）+ 锁本身；
 //      ② 只作回归烟测，不冒充竞态证明。
 REGISTER_TEST(claude_service_last_sync_warnings_snapshot,
               "claude_service: lastSyncWarnings 返回快照（非活引用）+ 并发读写不崩", {
@@ -1800,7 +1735,7 @@ REGISTER_TEST(claude_service_last_sync_warnings_snapshot,
     DOCTEST_REQUIRE(b.isOk());
     DOCTEST_REQUIRE(svc.setActiveProfile(a.value().id).isOk());
 
-    // 夹具（与用例 10b 同款）：settings.json 可读（反向同步不中止）+ sidecar
+    // 夹具：settings.json 可读（反向同步不中止）+ sidecar
     // 损坏（每次 syncTakeOver 都失败）→ 每次切 profile 都把 warnings_ **整体
     // 重写**一遍 = 修复前读者拿活引用时的重分配窗口
     d.write(paths.settingsFile, R"({"env": {"MY_KEY": "user"}})");

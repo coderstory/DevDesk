@@ -14,6 +14,8 @@ REGISTER_TEST(http_build_request, "http: build Request", {
     req.url = "https://example.com";
     DOCTEST_CHECK_EQ(req.method, std::string("GET"));
     DOCTEST_CHECK_EQ(req.url, std::string("https://example.com"));
+    // 默认值不可省：timeoutMs / verifyTls 的缺省值就是生产侧的静默契约，
+    // 改了会直接改变所有未显式设置的请求行为（超时、TLS 校验）。
     DOCTEST_CHECK_EQ(req.timeoutMs, 30000);
     DOCTEST_CHECK(req.verifyTls);
     return true;
@@ -30,18 +32,18 @@ REGISTER_TEST(http_build_response, "http: build Response", {
     return true;
 })
 
-// 原 http_chunk_result_enum（三个 ChunkResult 成员互不等）已删：enum class 成员
-// 两两不等是语言保证的恒真式。ChunkResult 的真实行为由下方真实 HTTP 用例覆盖。
+// ChunkResult 的 enum class 成员两两不等是语言保证的恒真式，不另立用例；
+// 真实行为由下方真实 HTTP 用例覆盖。
 
-// ============ 真实 HTTP 行为（审计 TIN-11：原 3 例只回显结构体默认值，从不发送）============
-// 全部打本地 127.0.0.1（Server 随机端口），不依赖外网、不依赖真实代理。
+// 真实 HTTP 行为：全部打本地 127.0.0.1（Server 随机端口），不依赖外网、不依赖
+// 真实代理。上面两个 build_* 用例只回显结构体默认值，从不发送。
 
 namespace {
 
-// 作用域内把 no_proxy/NO_PROXY 指到回环：curl 从环境变量取代理
-//（http_client.cpp 未显式设 CURLOPT_PROXY），公司代理环境下 127.0.0.1 的
-// 请求可能被劫持。大小写两份都设（curl 先查小写；Windows 部分运行时只认
-// 一份），析构还原原值——写法照 test_support.h 的 setEnvVar 作用域还原。
+// 作用域内把 no_proxy/NO_PROXY 指到回环：curl 从环境变量取代理，而
+// http_client.cpp 未显式设 CURLOPT_PROXY，公司代理环境下 127.0.0.1 的请求会被
+// 劫持（测试就会假红）。大小写两份都设（curl 先查小写；Windows 部分运行时只认
+// 一份），析构还原原值——照 test_support.h 的 setEnvVar 作用域还原。
 bool readEnvVar(const char* name, std::string& out) {
     const char* v = std::getenv(name);
     if (!v) return false;
@@ -69,9 +71,9 @@ struct ScopedLoopbackNoProxy {
     ScopedLoopbackNoProxy& operator=(const ScopedLoopbackNoProxy&) = delete;
 };
 
-// 借一个空闲回环端口再立刻释放：之后该端口上「连接被拒」是确定行为
-//（Server("127.0.0.1", 0) 走 bind_to_any_port 由内核分配，start() 返回前
-// 已 wait_until_ready → 端口真实且没被别人占）。
+// 借一个空闲回环端口再立刻释放：之后该端口上「连接被拒」是确定行为。Server
+// 构造传 0 = bind_to_any_port 由内核分配，start() 返回前已 wait_until_ready，
+// 故实际端口真实且当下没被别人占；stop() 之后才可能被抢走。
 int grabClosedLoopbackPort() {
     platform::http::Server srv("127.0.0.1", 0);
     if (!srv.start()) return -1;
@@ -100,7 +102,7 @@ REGISTER_TEST(http_send_refused_local,
 
     DOCTEST_CHECK(res.isFail());
     DOCTEST_CHECK(!res.errorMessage().empty());
-    DOCTEST_CHECK(elapsedMs < 5000);  // 被拒是立刻返回，不该等满超时
+    DOCTEST_CHECK(elapsedMs < 5000);  // 被拒是立刻返回；放宽到 5s 容忍调度抖动，但不等于等满 3s 超时
     return true;
 })
 
@@ -137,7 +139,7 @@ REGISTER_TEST(http_stream_error_terminal,
               "http: 流式 readChunk 终态（连接被拒 Error 粘滞 + cancelWithReason 带原因）", {
     ScopedLoopbackNoProxy noProxy;
 
-    // ---- 1) 打已关闭端口：readChunk 立即 Error 且错误串非空，再读仍 Error ----
+    // 1) 打已关闭端口：readChunk 立即 Error 且错误串非空，再读仍 Error
     const int deadPort = grabClosedLoopbackPort();
     DOCTEST_REQUIRE(deadPort > 0);
     platform::http::Request refused;
@@ -157,7 +159,7 @@ REGISTER_TEST(http_stream_error_terminal,
     DOCTEST_CHECK(refusedStream.value()->readChunk(chunk, err) ==
                   platform::http::ChunkResult::Error);  // 终态粘滞：再读仍 Error
 
-    // ---- 2) 长驻本地流 + cancelWithReason：readChunk 返回 Error + 该 reason ----
+    // 2) 长驻本地流 + cancelWithReason：readChunk 返回 Error + 该 reason
     platform::http::Server srv("127.0.0.1", 0);
     srv.route("GET", "/live",
               [](const platform::http::RequestCtx&, platform::http::ResponseWriter& w) {
@@ -166,7 +168,8 @@ REGISTER_TEST(http_stream_error_terminal,
                       [](platform::http::ResponseWriter::ChunkWriter writeChunk,
                          platform::http::ResponseWriter::IsWritableFn isWritable) -> bool {
                           static const char kChunk[] = "data: x\n\n";
-                          // 长驻：每 50ms 一块、上限 5s（客户端会提前取消）
+                          // 长驻：每 50ms 一块、上限 5s；客户端会提前 cancelWithReason，
+                          // 所以正常路径下循环走不满 100 轮。
                           for (int i = 0; i < 100; ++i) {
                               if (!isWritable()) return false;
                               if (!writeChunk(kChunk, sizeof(kChunk) - 1)) return false;
@@ -190,7 +193,8 @@ REGISTER_TEST(http_stream_error_terminal,
     for (int i = 0; i < 20 && r == platform::http::ChunkResult::More; ++i) {
         chunk.clear();
         err.clear();
-        r = liveStream.value()->readChunk(chunk, err);  // 先排空取消前已入队的 chunk
+        r = liveStream.value()->readChunk(chunk, err);  // 先排空 cancel 前已入队的 chunk，
+                                                      // 否则会在 More 上耗尽 20 轮预算
     }
     DOCTEST_CHECK(r == platform::http::ChunkResult::Error);
     DOCTEST_CHECK_EQ(err, std::string("test"));

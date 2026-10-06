@@ -1,11 +1,11 @@
 // src/module_markdown/md_preview_highlight.h
-// 预览代码块语法高亮（Phase 3 ③）：CodeFence 块源码 → 预览显示串 + 着色 runs。
+// 预览代码块语法高亮：CodeFence 块源码 → 预览显示串 + 着色 runs。
 // 上游 components::markdown 代码块单色且不吃预解析注入，故 CodeFence 预览改为 DevDesk
 //   自绘（drawPreviewCodeBlock，几何同上游 renderCodeBlock）；本文件是其纯函数底座。
 // 复用：围栏语义 scanFences、色表 MdHighlightColors、run 载体 eui::TextRun、
 //   关键字多色 md_keyword_highlight（C++/Python 手写词法器）。
 // 着色：预览不显示围栏线与 lang 标签，显示串 = 内容行以 \n 连接；受支持语言出五色 runs，
-//   未覆盖/空 lang 回退逐行 code 色单 run（回归锁 md_preview_hl_editor_equivalence）。
+//   未覆盖/空 lang 回退逐行 code 色单 run。
 #pragma once
 
 #include "md_highlight.h"

@@ -1,5 +1,5 @@
 // src/module_markdown/md_sync_map.h
-// 同步滚动块模型精确锚（Phase 3 ④）：编辑器行 ↔ 预览 y 双向映射，几何公式与预览逐块
+// 同步滚动块模型精确锚：编辑器行 ↔ 预览 y 双向映射，几何公式与预览逐块
 //   渲染同源（预览块 k 顶部 y = Σ(H_i + blockGap)，H_i = 注入的 heightFn，与上游
 //   renderBlock 共用测量 ⇒ 块边界误差 0）。块内按「行数 × 等高」线性插值，反函数块
 //   边界精确可逆（round-trip 恒等），供块级交互点预览定位使用。
@@ -43,7 +43,7 @@ public:
     int blockFirstLine(size_t k) const;
     // 块 k 的预览高度 H_k（块级 hit/hover 几何来源；越界返回 0）
     float blockHeight(size_t k) const;
-    // 块 k 占编辑器行数（≥1；P3-⑤ 命中行钳制边界；越界返回 0）
+    // 块 k 占编辑器行数（≥1；命中行钳制边界；越界返回 0）
     int blockLineCount(size_t k) const;
 
     // 正向：编辑器行（可小数——滚动像素/行高）→ 预览 y。行 < 首块首行 → 0；

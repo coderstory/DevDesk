@@ -1,24 +1,16 @@
 // tests/test_modules/test_md_block_model.cpp
-// Markdown 块级元素模型（Phase 3 首块）测试：
-//   1. 连续覆盖不变式：块序列无缝无重叠覆盖全文（corpus 性质测试，
-//      substr 拼接 == 原文）——分块器最重要的正确性锚
-//   2. 首批块类型切分：代码块（```/~~~/未闭合/内部行不误切）、表格
-//      （表头+分隔行+表体一段、段落内 | 行保守并入）、标题/列表/引用/
-//      段落/分隔线分类；setext 下划线留在段落块（等价性保守规则）；
-//      前导空行并入块头（md4c 忽略块前空行，渲染无差）
-//   3. 增量：update 相等文本零重算；改一块只脏该块（其余块 stableId
-//      继承、后缀平移）；文中新插入表格块只脏新块
-//   4. 一鱼三吃一致性：模型 CodeFence 块与 scanFences（大纲/高亮共用）
-//      区间一致 → 编辑器行内 runs（A/B/C 高亮）与块模型围栏状态不可能漂移
-//   5. CRLF 覆盖不变式 + 性能冒烟：万行文档分块稳态（记录式打印实测值，
-//      不设墙钟红线；确定性断言 = 二次分段与首次逐块等价）
+// Markdown 块级切分模型单测：连续覆盖不变式 / 块型分类 / 增量只脏受影响块（stableId 继承）/
+// 块模型与 scanFences 区间一致 / 逐块渲染与整篇重算结构等价 / CRLF / 性能冒烟。
+// 跨文件前提：
+//   - 块模型的 CodeFence 区间与 scanFences（大纲/高亮共用）必须同源一致，否则行内高亮与
+//     围栏状态会漂。
+//   - EUI_HAS_MD4C 未定义时上游解析退化为单段落，结构等价比对无意义，函数恒真短路。
 #include "doctest.h"
 #include "module_markdown/md_block_model.h"
 #include "module_markdown/md_line_scanner.h"
 
-// 逐块解析结构等价断言直接消费上游 md4c 解析器（EUI_HAS_MD4C 为 eui_neo
-// PUBLIC 编译定义，随链接传播；未启用 md4c 时上游退化为单段落解析，
-// 本比对无意义 → 守卫掉）。
+// 结构等价比对直接消费上游 md4c 解析器。EUI_HAS_MD4C 是 eui_neo 的 PUBLIC 编译
+// 定义，随链接传播，本 TU 看不到就等于上游没启用。
 #if defined(EUI_HAS_MD4C)
 #include <components/markdown.h>
 #endif
@@ -38,7 +30,6 @@ using module::markdown::scanFences;
 
 namespace {
 
-// 连续覆盖不变式：首块从 0 起、块块相接、末块到文末（substr 拼接还原）
 bool checkPartition(const std::string& text, const std::vector<MdBlock>& blocks) {
     std::string joined;
     size_t expect = 0;
@@ -267,9 +258,8 @@ REGISTER_TEST(md_block_model_fence_parity, "md_block_model: 围栏块与 scanFen
     return true;
 })
 
-// 结构等价比对主体（REGISTER_TEST 宏实参内嵌预处理指令触发
-// -Wpedantic -Werror，故 #if 分支放在宏外）。无 md4c 构建时上游解析
-// 退化为单段落、比对无意义 → 恒真短路。
+// 结构等价比对主体。#if 分支必须留在宏外：REGISTER_TEST 实参内嵌预处理指令会触发
+// -Wpedantic -Werror。无 md4c 构建时上游解析退化为单段落、比对无意义 → 恒真短路。
 static bool mdBlockModelRenderEquivalence() {
 #if !defined(EUI_HAS_MD4C)
     return true;
@@ -300,7 +290,7 @@ static bool mdBlockModelRenderEquivalence() {
         return out;
     };
 
-    // corpus 全覆盖（代码块/表格/标题/列表/引用/分隔线/段落/围栏内噪声行）
+    // corpus 全覆盖（各块型 + 围栏内噪声行）
     for (const char* c : kCorpus) {
         const std::string text = c;
         const auto whole = signatures(text);
@@ -385,8 +375,7 @@ REGISTER_TEST(md_block_model_find_by_content,
                          std::string::npos);
     }
 
-    // 三元组 (kind,hash,stableId) 唯一命中 → 返回该下标（平移场景：内容未变、
-    // stableId 保留，精确实例）
+    // 三元组 (kind,hash,stableId) 唯一命中 → 返回该下标（内容未变、stableId 保留的平移场景）
     {
         const std::string doc = "alpha\n\nbravo\n\ncharlie\n";
         MdBlockModel m;
@@ -397,8 +386,8 @@ REGISTER_TEST(md_block_model_find_by_content,
             mdFindBlockByContent(bs, bs[1].kind, bs[1].hash, bs[1].stableId,
                                  bs[1].start),
             static_cast<size_t>(1));
-        // kind 或 stableId 错配 → 三元不命中；kind 也参与回退匹配：
-        //   stableId 错配 → (kind,hash) 仍唯一命中；kind 错配 → 回退也无命中
+        // 三元失配后的回退规则：kind 参与匹配。stableId 错配 → (kind,hash) 仍唯一命中；
+        // kind 错配 → 回退也无命中
         DOCTEST_CHECK_EQ(
             mdFindBlockByContent(bs, bs[1].kind, bs[1].hash, 9999, bs[1].start),
             static_cast<size_t>(1));
@@ -413,7 +402,7 @@ REGISTER_TEST(md_block_model_find_by_content,
     }
 
     // 三元组无命中、(kind,hash) 唯一命中：模拟「不相邻双改」——头尾都变、中间块
-    // 字节未变但落入变化窗口拿新 stableId（spec §2：尾改/双改使 stableId 失效）
+    // 字节未变，但落入变化窗口而拿到新 stableId（尾改/双改使 stableId 失效）
     {
         MdBlockModel m;
         m.update("alpha\n\nbravo\n\ncharlie\n");
@@ -433,10 +422,9 @@ REGISTER_TEST(md_block_model_find_by_content,
                          static_cast<size_t>(1));
     }
 
-    // 重复块 fixture（spec §5.1：必须用字节全同的非空块，空行并块造不出同 hash
-    // 独立块——切分器把空行并入邻块头部）：「\n```\n\n```\n」围栏连接 3 遍 →
-    // 3 个全同 CodeFence 块（同 kind 同 hash、stableId 各异；围栏内容吞掉块间
-    // 空行，整段字节全同）
+    // 重复块 fixture。必须用字节全同的非空块：空行会被并入邻块头部，造不出同 hash 的
+    // 独立块。「\n```\n\n```\n」围栏连接 3 遍 → 3 个全同 CodeFence 块（同 kind 同 hash、
+    // stableId 各异；围栏内容吞掉块间空行，整段字节全同）
     {
         const std::string unit = "\n```\n\n```\n";
         const std::string doc = unit + unit + unit;
@@ -478,9 +466,8 @@ REGISTER_TEST(md_block_model_find_by_content,
             static_cast<size_t>(2));
     }
 
-    // 等距 tie-break 取下标小者：手工构造全等价类块向量（纯函数只读
-    // kind/hash/start/stableId，不要求与任何文档的切分一致），nearByte 落在两
-    // 块 start 正中 → 两块等距 → 取下标小者
+    // 等距 tie-break 取下标小者。这里手工构造块向量是刻意的：mdFindBlockByContent 是纯函数，
+    // 只读 kind/hash/start/stableId，不要求这些块与任何真实文档的切分结果一致
     {
         std::vector<MdBlock> blocks;
         const uint64_t h = 42;
@@ -542,10 +529,8 @@ REGISTER_TEST(md_block_model_perf, "md_block_model: 万行文档分块稳态（�
     checkPartition(big, blocks);
     DOCTEST_CHECK(blocks.size() > 2200);
     DOCTEST_CHECK(blocks2.size() == blocks.size());
-    // 原 `warmUs < 8000` 墙钟红线改为非时间断言（并发编译负载下墙钟不可作
-    // 失败判据，同 md_preview_highlight 的既有口径）：① 记录式打印实测值；
-    // ② 补确定性等价断言——同一输入二次分段必须逐块等价（kind/start/end/
-    // stableId/hash 全等），"快了但切错了"从此必红。
+    // 不设墙钟红线：并发编译负载下墙钟不能当失败判据。改为记录式打印实测值 + 断言同一
+    // 输入二次分段逐块等价（kind/start/end/stableId/hash 全等）——「快了但切错了」必红。
     std::printf("[perf] md_block_model: cold=%.1fms warm=%.1fms"
                 "（预算 8ms；记录式，不设墙钟红线）\n",
                 coldUs / 1000.0, warmUs / 1000.0);

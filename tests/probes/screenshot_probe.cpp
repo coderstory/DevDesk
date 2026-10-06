@@ -1,33 +1,26 @@
 // tests/probes/screenshot_probe.cpp — probe 帧捕获能力（--screenshot）自测
 //
-// 被测对象：tests/probes/probe_harness.h 的「帧捕获」段（process 内
-// glReadPixels → PNG）。为什么要有这个 probe：screencapture 在 agent 会话里拿不到
-// 「屏幕录制」TCC 授权，视觉证据链曾长期只有几何断言；这条能力一旦接错（PNG 写坏 /
-// 翻轴翻反 / 全黑 / 开关没生效），只有看图的人才会发现，而看图的人恰好不在场。
+// 被测对象：probe_harness.h 的帧捕获段（进程内 glReadPixels → PNG）。这条能力一旦
+// 接错（PNG 写坏 / 翻轴翻反 / 全黑 / 开关没生效），症状只在看图时暴露。
 //
-// 五组断言，逐条对应一个真实失效模式：
+// 六组断言，逐条对应一个真实失效模式：
 //   ① writeRgbaToPng 往返（不起窗口）：合成 6x4 逐像素不同的 RGBA → 写 PNG →
-//      **用 libpng 独立解码**读回 → 尺寸 + 逐像素精确相等。证「写出来的是合法
-//      PNG、像素没串」；同时证明编码路径不依赖 GL 上下文。
-//   ② flipRowsToTopDown：2x3 逐行不同色 → 翻轴后行序反转。证「GL 左下原点 →
-//      PNG 顶行」的翻轴是对的（不翻 = 上下颠倒图）。
-//   ③ 失败必须显式：往不存在的目录写 PNG → 返回 false（不静默假成功）。
+//      **用 libpng 独立解码**读回 → 尺寸 + 逐像素精确相等。证写出来的是合法 PNG、
+//      像素没串，且编码路径不依赖 GL 上下文。
+//   ② flipRowsToTopDown：2x3 逐行不同色 → 翻轴后行序反转（不翻 = 上下颠倒图）。
+//   ③ 失败必须显式：往不存在的目录写 PNG / rgba=nullptr / width=0 → 一律 false。
 //   ④ 零开销：未传 --screenshot 时 captureIfRequested 返 true 且**一个文件都没写**
 //      （哨兵路径必须不存在）——既有 probe 行为不变的保证。
-//   ⑤ 真窗口抓图（live）：铺满底色 A + 上半屏色块 B → capturePng →
-//      魔数 \x89PNG 逐字节核 + 手解 IHDR 宽高 + libpng 解码回像素，
-//      断言 **上半屏是 B、下半屏是 A**（翻轴错立刻红）+ 两种颜色都真实出现
-//      （证不是全黑/全空）+ --screenshot 开关真能落盘。
-//   ⑥ 无显示环境判据表（不起窗口，见下）：把「真代码 bug 形状的错误码」逐个
-//      喂给 classifyDisplayCapability，断言它们**不**判成跳过。门禁会不会被
-//      悄悄关掉，全看这一组。
+//   ⑤ 真窗口抓图（live）：铺满底色 A + 上半屏色块 B → capturePng → 魔数 \x89PNG
+//      逐字节核 + 手解 IHDR 宽高 + libpng 解码回像素，断言**上半屏是 B、下半屏是
+//      A**（翻轴错立刻红）+ 两种颜色都真实出现（证不是全黑/全空）。
+//   ⑥ 无显示环境判据表（不起窗口，见下）：把真代码 bug 形状的错误码逐个喂给
+//      classifyDisplayCapability，断言它们**不**判成跳过。
 //
-// 组 ⑥ 为什么在这条 probe 里（而不是单测）：它守的是**门禁自己的判据**。
-// 放在建窗之前 → 即使本机无显示环境、真探针窗那段被跳过，这组照样跑；
-// 判据的验证不能依赖被判据的东西。
+// 组 ⑥ 守的是**门禁自己的判据**，故必须排在建窗之前：无显示环境时真探针窗那段会被
+// 跳过，判据的验证不能依赖被判据的东西。
 //
-// 产物写 tests 的临时目录（test_support::TempDir，析构整棵删），不污染仓库；
-// ctest 的 --screenshot 变体把图留在构建目录（build/ 已 gitignore）。
+// 产物写 tests 临时目录（test_support::TempDir，析构整棵删），不污染仓库。
 #include "probes/probe_harness.h"  // GL / GLFW 头由 harness 统一给（glad 路线）
 #include "test_support.h"
 
@@ -139,8 +132,8 @@ unsigned char* pixelAt(std::vector<unsigned char>& rgba, int width, int x, int y
                4u;
 }
 
-/// 颜色相等（逐通道 ±tol）：浮点 eui::Color → GL 8bit 有舍入，容 2/255 足够
-/// 判别（断言用的两种颜色通道差 >100），又不至于被舍入打红。
+/// 颜色相等（逐通道 ±tol）：浮点 eui::Color → GL 8bit 有舍入，tol 4 远小于断言
+/// 用的两种颜色的通道差（>100），又不会被舍入打红。
 bool nearColor(const unsigned char* px, int r, int g, int b, int tol = 4) {
     const int dr = static_cast<int>(px[0]) - r;
     const int dg = static_cast<int>(px[1]) - g;
@@ -155,7 +148,7 @@ int main(int argc, char* argv[]) {
     auto args = probe::parseProbeArgs(argc, argv);
     test_support::TempDir tmp("shot");
 
-    // ==================== ① writeRgbaToPng 往返（纯 CPU，不起窗口）============
+    // ① writeRgbaToPng 往返（纯 CPU，不起窗口）
     {
         constexpr int kW = 6;
         constexpr int kH = 4;
@@ -191,7 +184,7 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // ==================== ② flipRowsToTopDown（翻轴）============
+    // ② flipRowsToTopDown（翻轴）
     {
         constexpr int kW = 2;
         constexpr int kH = 3;
@@ -217,7 +210,7 @@ int main(int argc, char* argv[]) {
               "抓出来的图会上下颠倒");
     }
 
-    // ==================== ③ 失败必须显式 ====================
+    // ③ 失败必须显式
     {
         const std::string bad =
             tmp.file("no_such_dir/deeper/x.png").string();
@@ -233,18 +226,16 @@ int main(int argc, char* argv[]) {
               "③ width=0 却返回 true");
     }
 
-    // ==================== ④ 零开销：未传 --screenshot 不写任何文件 ============
-    // 放在建窗之后跑：传真实的 window/runtime，证明零开销路径「连窗口都不碰」
-    // ——只提前 return，不建渲染后端、不渲染、不落盘（既有 probe 行为不变）。
+    // ④ 零开销：未传 --screenshot 不写任何文件。实际断言放在建窗之后跑（见下），
+    // 传真实的 window/runtime，证明零开销路径「连窗口都不碰」。
 
-    // ==================== ⑥ 无显示环境判据表（纯 CPU，不起窗口）============
-    // 钉住 probe_harness.h 的 classifyDisplayCapability —— **门禁会不会被关掉
-    // 全看这几行**。判据的核心承诺是：「无显示」与「代码 bug」不会长得一样。
-    // 分类表把**真代码 bug 形状的错误码**逐个喂进去，断言它们**不**判成
-    // NoDisplay；反过来只有「平台/能力不可用」那一族才判 NoDisplay。
-    //
-    // 放在建窗**之前**：这样即使本机/CI 没有显示环境（真探针窗那段要跳过），
-    // 这组断言也照样跑 —— 判据本身的验证不能依赖被判据的东西。
+    // ⑥ 无显示环境判据表（纯 CPU，不起窗口）
+    // 钉住 probe_harness.h 的 classifyDisplayCapability —— **门禁会不会被关掉全看
+    // 这几行**。核心承诺是「无显示」与「代码 bug」不会长得一样：分类表把真代码 bug
+    // 形状的错误码逐个喂进去，断言它们不判成 NoDisplay；只有「平台/能力不可用」
+    // 那一族才判 NoDisplay。
+    // 放在建窗之前：无显示环境时真探针窗那段要跳过，判据本身的验证不能依赖被判据
+    // 的东西。
     {
         using probe::DisplayCapability;
         using probe::DisplayVerdict;
@@ -299,7 +290,8 @@ int main(int argc, char* argv[]) {
                 break;
             }
         }
-        // 非恒真：两种判定都必须真的出现过，且数量与表一致。
+        // 非恒真守卫：两种判定都必须真出现过，且数量与表一致。realFailureCount
+        // 若为 0，说明判据塌成了「建窗失败就跳过」，门禁等于被关掉。
         check(noDisplayCount == 6,
               "⑥ 判据把 " + std::to_string(noDisplayCount) +
                   " 行判成 NoDisplay（应为 6）");
@@ -309,17 +301,16 @@ int main(int argc, char* argv[]) {
                   "「建窗失败就跳过」，门禁等于被关掉");
     }
 
-    // ⚠ ⑥ 判据表在**建窗之前**跑：无显示环境时即使 ⑥ 断言失败也会继续走到
-    // initializeWindowBackend → 无显示 → **std::exit(77)**，⑥ 的失败会被
-    // 「跳过」整个掩盖掉（CI 上会变成绿+警告）。判据自己是门禁的最后一层，
-    // 它红了绝不能长成「没验到」——先于窗口段把失败落成 Failed（红）。
+    // ⑥ 的失败必须在窗口段**之前**落成 Failed（红）：无显示环境下走到
+    // initializeWindowBackend 会 std::exit(77)，把 ⑥ 的红掩盖成「跳过」（CI 上
+    // 变绿 + 警告）。判据自己是门禁最后一层，它红了绝不能长成「没验到」。
     if (!gPassed) {
         std::cerr << "screenshot_probe: ⑥ 无显示环境判据表有失败（见上方 FAIL），"
                      "不入窗口段——判据失败不得被「跳过」掩盖\n";
         return 1;
     }
 
-    // ==================== ⑤ 真窗口抓图（live）====================
+    // ⑤ 真窗口抓图（live）
     if (!probe::initializeWindowBackend()) {
         std::cerr << "screenshot_probe: 窗口后端初始化失败\n";
         return 1;
@@ -360,7 +351,7 @@ int main(int argc, char* argv[]) {
     composeFrame();
     composeFrame();  // 第二帧让 transition/首帧布局收敛
 
-    // ---- ④ 零开销：screenshotPath 为空 → 立刻返 true、零文件 ----
+    // ④ 零开销：screenshotPath 为空 → 立刻返 true、零文件
     {
         probe::ProbeArgs bare = args;
         bare.screenshotPath.clear();
@@ -377,11 +368,9 @@ int main(int argc, char* argv[]) {
 
     check(ui != nullptr && ui->find("shot.top") != nullptr,
           "⑤ 构图失败：shot.top 未进 DOM");
-    // 注：不套 assertDrawnAbove —— 两个 rect 各自是顶层根元素（无公共祖先），
-    // 该 helper 只对有 LCA 的兄弟对有意义。真正的 z 序判据在下面：**像素**上
-    // 色块 B 必须真盖住底色 A（assertDrawnAbove 那套 DOM 序在这里证不了画出来
-    // 的结果，而我们要验的恰恰是画出来的结果）。
-
+    // 不套 assertDrawnAbove —— 两个 rect 各自是顶层根元素（无公共祖先），该 helper
+    // 只对有 LCA 的兄弟对有意义。真正的 z 序判据在下面：像素上色块 B 必须真盖住
+    // 底色 A（DOM 序在这里证不了画出来的结果，而要验的恰恰是画出来的结果）。
     const std::string livePath = tmp.file("live.png").string();
     {
         probe::FrameCapture capture(window);
@@ -404,7 +393,7 @@ int main(int argc, char* argv[]) {
             return gPassed ? 0 : 1;
         }
 
-        // ---- 魔数 + IHDR（字节级，与库无关）----
+        // 魔数 + IHDR（字节级，与库无关）
         int hdrW = 0;
         int hdrH = 0;
         if (check(inspectPngHeader(livePath, hdrW, hdrH),
@@ -416,7 +405,7 @@ int main(int argc, char* argv[]) {
                       std::to_string(capture.pixelHeight()));
         }
 
-        // ---- libpng 独立解码 + 颜色断言 ----
+        // libpng 独立解码 + 颜色断言
         std::vector<unsigned char> rgba;
         int w = 0;
         int h = 0;
@@ -462,7 +451,7 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // ---- --screenshot 开关本身：传了就必须真落一张并可解 ----
+    // --screenshot 开关本身：传了就必须真落一张并可解
     if (!args.screenshotPath.empty()) {
         std::cout << "screenshot_probe: --screenshot " << args.screenshotPath
                   << "\n";

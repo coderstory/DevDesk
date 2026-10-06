@@ -45,7 +45,7 @@ public:
     ClaudeService(const ClaudeService&) = delete;
     ClaudeService& operator=(const ClaudeService&) = delete;
 
-    // ---- Profile CRUD ----
+    // Profile CRUD
 
     // 列出所有 profile（apiKeyPlain 均为空串）
     core::Result<std::vector<Profile>> listProfiles();
@@ -79,7 +79,7 @@ public:
     // 启动时清理旧 Keychain 残留（只删 claude:*，护栏：数据根零 profile 整体跳过）。
     core::Result<int> cleanupOrphanKeychainEntries();
 
-    // ---- API key ----
+    // API key
 
     // 加载明文 API key（发请求时调用，用完即丢弃）。列空 = NotFound；
     // 解不开 = 原样透传错误，不静默回落空串。
@@ -88,7 +88,7 @@ public:
     // ProfileRepository 只读访问口：必须共用同一实例（两实例会「读 A 库、用 B 命名空间」）。
     ProfileRepository& profiles() { return profileRepository_; }
 
-    // ---- 激活 ----
+    // 激活
 
     core::Result<Profile> getActiveProfile();
     core::Result<void> setActiveProfile(int64_t id);
@@ -97,7 +97,7 @@ public:
     // 副本不激活；二段补写失败 → best-effort 删副本回滚。
     core::Result<Profile> duplicateProfile(int64_t srcId);
 
-    // ---- 共享配置片段（改动当场生效）----
+    // 共享配置片段（改动当场生效）
     // 改/删/解绑后，激活 profile 代理在跑则立即 re-takeover；删除同事务解绑；
     // 解绑后同名键回落 profile 自身值（片段值从不写进 profile 行）。
     core::Result<std::vector<SharedConfig>> listSharedConfigs();
@@ -110,21 +110,21 @@ public:
     // no-op 成功。本入口不做前置校验，调用方必须先过 validateProxyPreconditions。
     core::Result<void> reapplyTakeOver() { return syncTakeOver(); }
 
-    // ---- failover 备用解析 ----
+    // failover 备用解析
     // 读 fallback_profile_id → getProfile + loadApiKey，成功返回含明文 key 的备用；
     // 任一失败 / id==0 → nullopt（proxy_router 原样回错）。只换一跳；纯读不改状态。
     std::optional<Profile> resolveFallbackProfile(const Profile& profile);
 
-    // ---- 模型槽位解析 ----
+    // 模型槽位解析
     // 激活 profile 的 models_config 里 slot → 实际 model id；"def"/"default" 等价；
     // 无激活 / 槽位空 / 未知键 → nullopt，default 槽位额外回落 profile.model。
     std::optional<std::string> resolveModelSlot(const std::string& slot);
 
-    // ---- 连通性测试 ----
+    // 连通性测试
 
     core::Result<platform::http::Response> testConnection(const Profile& profile);
 
-    // ---- 调用日志 ----
+    // 调用日志
 
     // 数据模型与读写在 CallLogStore；别名保持公开类型名，方法转发 callLogStore_。
     using CallLogEntry = CallLogStore::CallLogEntry;
@@ -139,7 +139,7 @@ public:
     // 满足过滤条件的总条数（忽略 limit/offset；UI 算页数、判断有无下一页）
     core::Result<int> countCalls(const CallLogQuery& q);
 
-    // ---- 最近代理请求事件（气泡内容源）----
+    // 最近代理请求事件（气泡内容源）
     // ProxyRouter 在每条请求终态记一次 statusCode 进单槽（后写覆盖先写）：
     // 0 = 上游不可达。takeProxyEvent() 读走即清；滞留超 kProxyEventFreshSec 过期丢弃。
     static constexpr std::time_t kProxyEventFreshSec =
@@ -148,7 +148,7 @@ public:
     // nowSec 默认取当前墙钟（测试可显式传值验证过期分支）
     std::optional<int> takeProxyEvent(std::time_t nowSec = std::time(nullptr));
 
-    // ---- 代理 server 生命周期 ----
+    // 代理 server 生命周期
 
     // 代理启动前置校验（无激活 profile 起代理会全量 503）；任一不过 → fail 且零副作用
     //（不 bind、不接管、不动激活行）：① 有激活且可读的 profile；② GET /v1/models 2xx。
@@ -169,7 +169,7 @@ public:
     // ProxyRuntime::stop()；随后 settings.json 还原经 SettingsTakeOver::syncRestore()。
     void stopProxy();
 
-    // ---- 在途流式请求登记 ----
+    // 在途流式请求登记
     // stopProxy()/析构必须先 cancelActiveStreams() 再停 server——否则 httplib worker
     // 阻塞在读 chunk 里，Server::stop() 的 join 挂成幽灵进程。
     void registerActiveStream(
@@ -179,7 +179,7 @@ public:
     bool isProxyRunning() const;
     int proxyPort() const;            // 0 if not running
 
-    // ---- 用该 Profile 生成临时 settings 直连，打开新的 Claude Code 会话 ----
+    // 用该 Profile 生成临时 settings 直连，打开新的 Claude Code 会话
     // 不启代理、不切激活、不碰 ~/.claude/settings.json（零全局副作用）；密钥临时明文落盘。
     // id 为 0/不存在/读密钥失败/落盘失败 → fail；hint：非致命提示出参。
     core::Result<void> runProfile(int64_t id, std::string* hint = nullptr);
@@ -189,13 +189,13 @@ public:
         std::function<core::Result<void>(const platform::terminal::LaunchSpec&)>
             launcher);
 
-    // ---- 配置端口 ----
+    // 配置端口
     // 设置页「代理端口」的运行时镜像（端口经单例桥接）；setter 钳制到
     // [kMinProxyPort, kMaxProxyPort]。状态在 ProxyRuntime。
     int configuredProxyPort() const { return proxyRuntime_.configuredProxyPort(); }
     void setConfiguredProxyPort(int port);
 
-    // ---- Claude Code settings 接管 ----
+    // Claude Code settings 接管
     // 协议侧（路径/开关/读写/上层覆盖警告）在 SettingsTakeOver；本段方法转发/编排。
 
     // 注入接管通道路径并启用（生产由 main.cpp 注入）。默认不启用：测试直接
@@ -224,7 +224,7 @@ public:
     // 启动崩溃补还原：sidecar 残留（上次没走完还原）→ 先还原；main 在任何 startProxy 前调用。
     void recoverPendingSettingsRestore();
 
-    // ---- 全局单例 ----
+    // 全局单例
     static void setGlobal(ClaudeService* svc);
     static ClaudeService* global();
 
@@ -256,7 +256,7 @@ private:
     // 由 setActiveProfile 在置位事务之前调用；文件不存在/空/无 env → no-op，解析失败 → fail。
     core::Result<void> syncCaptureActiveProfile();
 
-    // ---- 直连会话 settings 的 DB 记录 ----
+    // 直连会话 settings 的 DB 记录
     // 写入顺序：recordRunSettings → 落文件 → chmod 0600 → 启动会话，任一步失败都
     // forgetRunSettings 撤行。settingsJson 含明文 API key，入库前分平台保护。
     core::Result<void> recordRunSettings(const std::string& runKey,

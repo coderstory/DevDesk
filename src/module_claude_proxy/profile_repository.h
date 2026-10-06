@@ -82,7 +82,7 @@ public:
     explicit ProfileRepository(core::data::SqliteDb& db,
                                std::string keychainService);
 
-    // ---- Profile CRUD ----
+    // Profile CRUD
 
     // 列出所有 profile（apiKeyPlain 全部为空字符串）
     core::Result<std::vector<Profile>> listProfiles();
@@ -128,7 +128,7 @@ public:
     // 调用方负责前置校验；反向同步（syncCaptureActiveProfile）必须先于本事务发生。
     core::Result<void> activateProfile(int64_t id);
 
-    // ---- 共享配置片段 ----
+    // 共享配置片段
     // 生命周期语义（策略尾都在门面）：改 → 绑定它的激活 profile 代理在跑则立即 re-takeover；删 → 同事务解绑后再判 re-takeover；解绑后同名键回落 profile 自身值
     core::Result<std::vector<SharedConfig>> listSharedConfigs();
     core::Result<SharedConfig> createSharedConfig(const std::string& name,

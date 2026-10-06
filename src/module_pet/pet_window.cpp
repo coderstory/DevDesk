@@ -116,7 +116,7 @@ void clampPetPosIntoWorkAreaInPlace(int& x, int& y) {
     y = (cy == -1) ? -2 : cy;
 }
 
-// ---- 持久化（读-改-写 app_config 的 pet_config 键，只含 pet 字段；模块隔离）----
+// 持久化（读-改-写 app_config 的 pet_config 键，只含 pet 字段；模块隔离）
 
 void savePetPosition() {
     if (runtime().handle == nullptr) return;
@@ -762,7 +762,7 @@ std::string currentSkinName() {
     return PetConfigStore(::core::appDatabase()).load().skinName;
 }
 
-// ---- 显示大小三档（声明见 pet_window.h；设置页经 module_pet_bridge.h 消费）----
+// 显示大小三档（声明见 pet_window.h；设置页经 module_pet_bridge.h 消费）
 
 int currentPetScaleIndex() {
     return petScaleIndexOf(PetConfigStore(::core::appDatabase()).load().scale);
@@ -811,7 +811,7 @@ void applyPetScaleIndex(int presetIndex) {
 }
 
 
-// ---- 退出二次确认（纯数据层，声明见 pet_window.h）----
+// 退出二次确认（纯数据层，声明见 pet_window.h）
 // 下标语义与 petExitConfirmChosen 耦合：0=说明(disabled) 1=分隔线 2=确认退出 3=取消。
 std::vector<PetExitConfirmItem> petExitConfirmItems() {
     return {
@@ -826,7 +826,7 @@ bool petExitConfirmChosen(const std::vector<int>& path) {
     return path.size() == 1 && path[0] == 2;
 }
 
-// ---- 右键菜单结构（纯数据层，声明见 pet_window.h）----
+// 右键菜单结构（纯数据层，声明见 pet_window.h）
 // 顺序 = path 语义基础：换肤子组 / 位置重置 / 隐藏 / 分隔线 / 退出。
 std::vector<PetMenuItemData> petContextMenuItems(const std::vector<std::string>& skins) {
     std::vector<PetMenuItemData> items;

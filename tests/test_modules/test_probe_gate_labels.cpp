@@ -1,25 +1,13 @@
 // tests/test_modules/test_probe_gate_labels.cpp
-// 「真机出网探针绝不进默认门禁」——**默认门禁里跑的**代码断言。
-//
-// ── 这条用例为什么存在（静态审计 2026-10-03 B2）────────────────────
-// tests/CMakeLists.txt 与 scripts/run-quota-live-probe.sh 都曾写着
-// 「这条由 tests/test_modules/test_probe_gate_labels.cpp 的单测逐条断言
-//（改坏即全量红），不是靠注释保证」。**那个文件当时根本不存在。**
-// 注释说有、实际没有，正是本项目反复翻车的那一类「注释断言冒充代码断言」。
-// 后果比「注释错了」更具体：scripts/check-probe-gate-labels.sh 的 --self-test
-// 是**手动**跑的，build-test-run.sh 只跑它的非 self-test 分支 → **没有任何东西
-// 定期证明这道守卫还活着**。本文件把那句话变成真的。
-//
-// ── 为什么用 C++ 再说一遍（而不是只靠那个 shell 守卫）───────────────
-// 两者的解析路径**完全独立**：那个守卫用 awk 状态机，本用例用 C++ 逐行扫。
-// 一道守卫只有一个实现时，「守卫的解析逻辑被改坏」与「被守的东西被改坏」
-// 会一起发生、互相掩盖，谁也发现不了。双实现下，其中一个被改坏时另一个
-// 仍然是有效信号 —— 这是**有意的重复**，不是「改一处漏一处」。
-//
-// ── 仓库根定位：cwd 上溯，**不用** __FILE__ ──────────────────────────
-// ccache 会把 __FILE__ 相对化，靠它上溯的守卫从别的 cwd 跑必误报
-//（TIN-01 的实测事故，见 test_settings.cpp 的同款 findRepoRoot）。
-// 定位失败时**大声报红**，不静默绿 —— 「找不到仓库根就当通过」是最坏的一种绿。
+// 断言 tests/CMakeLists.txt 里真机出网探针 quota_live_probe 的标签与门禁接线（标签 / 门禁脚本）。
+// 跨文件前提：
+//   - scripts/check-probe-gate-labels.sh 与本文件是**有意的重复实现**，解析路径彼此独立
+//     （那边 awk 状态机、这边 C++ 逐行扫）。单实现时「守卫的解析被改坏」与「被守的东西被改坏」
+//     同时发生、互相掩盖。合并成一处会同时废掉这道双保险，不许合并。
+//   - 默认门禁 scripts/build-test-run.sh 不跑那个 shell 守卫的 --self-test 分支，
+//     本文件是唯一会定期执行到的那一半，因此不能删。
+//   - 仓库根靠 cwd 上溯，不用 __FILE__：ccache 会把 __FILE__ 相对化，靠它定位从别的 cwd 跑必误报。
+//     与 test_settings.cpp 的 findRepoRoot 同款重复实现，同样是刻意的，不要跨文件合并。
 
 #include "doctest.h"
 
@@ -59,10 +47,9 @@ std::vector<std::string> readLines(const std::filesystem::path& path) {
     return lines;
 }
 
-// 条目块 = 从 `add_test(NAME quota_live_probe` 起，到**下一个 `add_test(` 或
-// 文件尾**。⚠ 这里的口径必须与 scripts/check-probe-gate-labels.sh 一致，且
-// **不能用固定行数窗口**：静态审计 M3 亲手构造过「标签挪到第 20 行 → 旧守卫
-// 报绿、断言 B/C 双双失效」的反证。窗口宽度本身就是要人同步的隐式不变式。
+// 条目块 = 从 `add_test(NAME quota_live_probe` 起，到下一个 `add_test(` 或文件尾。
+// 口径必须与 scripts/check-probe-gate-labels.sh 一致。不能用固定行数窗口：标签一旦被挪出
+// 窗口，守卫照报绿而下面两条断言双双失效——窗口宽度是要人同步的隐式不变式。
 std::vector<std::string> quotaLiveProbeBlock(const std::vector<std::string>& lines) {
     std::vector<std::string> block;
     bool inBlock = false;
@@ -80,7 +67,7 @@ std::vector<std::string> quotaLiveProbeBlock(const std::vector<std::string>& lin
 }
 
 // 抽 `set_tests_properties(quota_live_probe ... LABELS "<值>" ...)` 里的标签串。
-// 返回空串 = 该条目没有可解析的 LABELS。
+// 返回空串 = 该条目没有可解析的 LABELS（调用方据此 REQUIRE 失败，而不是当作「无标签」放过）。
 std::string extractLabels(const std::vector<std::string>& block) {
     for (const std::string& line : block) {
         if (line.find("set_tests_properties(quota_live_probe") == std::string::npos) {
@@ -123,7 +110,7 @@ REGISTER_TEST(probe_gate_labels_guard_is_live,
                                  std::filesystem::current_path().string() +
                                  "）：请从仓库根或 build/ 下运行 devdesk_tests");
 
-    // ── 断言 A：恰好一条 add_test(NAME quota_live_probe ──────────────
+    // 断言 A：恰好一条 add_test(NAME quota_live_probe
     const std::vector<std::string> cmakeLines =
         readLines(root / "tests" / "CMakeLists.txt");
     DOCTEST_REQUIRE_MESSAGE(!cmakeLines.empty(),
@@ -138,9 +125,8 @@ REGISTER_TEST(probe_gate_labels_guard_is_live,
                               " 条（0 = 入口被删；≥2 = 有人复制了一份）");
 
     const std::vector<std::string> block = quotaLiveProbeBlock(cmakeLines);
-    // ⚠ **非恒真守卫的第一道闸**：块抽取本身必须真的抽到了东西。
-    // 「过滤器匹配 0 条时 Total: 0 不等于没红」是本项目踩过的坑 ——
-    // 块抽取规则一改（加了缩进、改了拼写），后面几条断言会全部静默通过。
+    // 非恒真守卫的第一道闸：块抽取本身必须真的抽到了东西。「过滤器匹配 0 条时 Total: 0
+    // 不等于没红」同类坑——块抽取规则一改（加了缩进、改了拼写），后面几条断言全部静默通过。
     DOCTEST_REQUIRE_MESSAGE(!block.empty(),
                              "条目块抽取失败：块必须非空（抽取规则已与文件失配）");
     bool blockHasAddTest = false;
@@ -152,7 +138,7 @@ REGISTER_TEST(probe_gate_labels_guard_is_live,
     DOCTEST_REQUIRE_MESSAGE(blockHasAddTest,
                              "抽到的块里没有 add_test 本行 —— 块抽取已错位");
 
-    // ── 断言 B：标签集合恰好 {live} ──────────────────────────────────
+    // 断言 B：标签集合恰好 {live}
     const std::string raw = extractLabels(block);
     DOCTEST_REQUIRE_MESSAGE(!raw.empty(),
                              "quota_live_probe 条目没有可解析的 LABELS —— "
@@ -162,16 +148,15 @@ REGISTER_TEST(probe_gate_labels_guard_is_live,
                           "标签集合期望恰好 {live}，实到 {" + norm + "}（raw=\"" +
                               raw + "\"）");
 
-    // ── 断言 C：不含 probe（否则进默认门禁 = 真打四家供应商 = CI 必红）──
-    // ⚠ 判据写「**整串里找不到 probe**」，不是「找得到 probe 就红」的反面写法。
-    // 上一版误写成 `norm.find("probe") == 0`（想表达「不以 probe 开头」），
-    // 那条判据对**正确**的 {live} 也为假 → 恒红。用例一上线即红，当场拆穿。
-    // 恒红守卫比没有守卫更糟：它会让人习惯性地忽略这条红，最后连真红也一起忽略。
+    // 断言 C：不含 probe（否则进默认门禁 = 真打四家供应商 = CI 必红）
+    // 判据是「整串里找不到 probe」，不可简化成 norm.find("probe") == 0——那表达的是「不以 probe
+    // 开头」，对正确的 {live} 也为假，变成恒红守卫。恒红守卫比没有守卫更糟：人会习惯性地
+    // 忽略这条红，最后连真红也一起忽略。
     DOCTEST_CHECK_MESSAGE(norm.find("probe") == std::string::npos,
                           "标签含 probe：门禁跑的是 ctest -L probe，含它即进默认"
                           "门禁 = 真打网络 = CI 必红（raw=\"" + raw + "\"）");
 
-    // ── 断言 D：门禁脚本不得调用真机探针 ─────────────────────────────
+    // 断言 D：门禁脚本不得调用真机探针
     const std::vector<std::string> gateLines =
         readLines(root / "scripts" / "build-test-run.sh");
     DOCTEST_REQUIRE_MESSAGE(!gateLines.empty(),

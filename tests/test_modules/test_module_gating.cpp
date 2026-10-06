@@ -1,11 +1,10 @@
 // tests/test_modules/test_module_gating.cpp
-// 模块插拔方案 A（设计 2026-09-22）单测：
-//   1. enabledModules 配置：默认全启用 / 往返 / 未知 ID 过滤 / 恒启用项补齐 /
-//      moduleEnabled 谓词（home/settings 恒 true）
-//   2. 注册门控：按 moduleEnabled 注册（main.cpp getRouter 同款逻辑）后，
-//      关闭模块不在 Router::modules()（零执行零菜单项的结构性保证）
-//   3. Home 降级渲染：scoped appRouter 注入注册状态，无头 compose 断言
-//      统计卡 / 快捷按钮 / 最近编辑按目标模块注册状态隐藏，全关出空态文案
+// 模块插拔单测：enabledModules 配置语义（缺省/往返/脏数据/未知 ID）+ 注册门控 + Home 降级渲染。
+// 跨文件前提：
+//   - home 与 settings 恒启用：moduleEnabled 谓词里硬编码，sanitized 也会强制补齐，
+//     两者都不是配置里的普通项，从 enabledModules 里删掉也照样开着。
+//   - agent 默认关（跑 LLM 有成本）。默认清单是 5 项，改动会让本文件的 size()==5 断言红。
+//   - 生产装配在 main.cpp getRouter()，本文件的注册段是它的复制品；改了那边这里不会自动跟。
 #include "doctest.h"
 #include "test_support.h"
 #include "settings_config.h"
@@ -42,14 +41,14 @@ private:
     std::string name_;
 };
 
-// 每个用例独立的临时配置文件 —— 共享工厂（TIN-06b，原三份 tempConfigFile
-// 合流），调用点统一 test_support::tempConfigFile(kCfgPrefix, name)
+// 每个用例独立的临时配置路径 —— 共享工厂，只造路径不落盘。
+// 配置真落在 app_config 表：各用例里那对 tempConfigFile / filesystem::remove 都是空操作，
+// 用例间的隔离靠 TestEnv 换库 + seedConfigJsonRows 的整份替换语义。
 constexpr const char* kCfgPrefix = "devdesk_test_gating_";
 
-// 「手改过的配置」按顶层键分发进 app_config 表各行——等价批次 E2 之前往
-// config.json 写这段文本（顶层键 = 行键）。负例原样保留。
-// 返回 bool（doctest 断言宏含 `return false`，只能在返回 bool 的函数里用；
-// 断言由调用方做）
+// 把「手改过的配置」按顶层键分发进 app_config 表各行（顶层键 = 行键）。
+// 返回 bool 而非直接断言：doctest 宏展开后含 `return false`，只能在返回 bool 的
+// 函数里用，所以断言留给调用方。
 bool writeRawConfig(const std::string& json) {
     return test_support::seedConfigJsonRows(
         ::core::appDatabase(), module::settings::SettingsStore::keyNamespace(),
@@ -58,7 +57,7 @@ bool writeRawConfig(const std::string& json) {
 
 } // namespace
 
-// ============ 1. enabledModules 配置 ============
+// enabledModules 配置
 
 REGISTER_TEST(gating_config_defaults, "gating: enabledModules 缺省默认清单（agent 默认关）+ 恒启用项", {
     using namespace module::settings;
@@ -71,10 +70,7 @@ REGISTER_TEST(gating_config_defaults, "gating: enabledModules 缺省默认清单
                            module::settings::kModuleIdSettings}) {
         DOCTEST_CHECK(moduleEnabled(cfg, id));
     }
-    // agent 默认关（spec §8 L4：跑 LLM 有成本，用户主动启用；final-review
-    // Fix 2 起默认清单不含之，防回归回默认全开）
     DOCTEST_CHECK(!moduleEnabled(cfg, kModuleIdAgent));
-    // home/settings 从列表里删掉也恒启用（sanitized 强制补齐 + 谓词硬编码）
     SettingsConfig stripped = cfg;
     stripped.enabledModules.assign(1, kModuleIdMarkdown);
     const SettingsConfig fixed = SettingsStore::sanitized(stripped);
@@ -89,6 +85,8 @@ REGISTER_TEST(gating_config_defaults, "gating: enabledModules 缺省默认清单
 
 REGISTER_TEST(gating_config_roundtrip, "gating: enabledModules 保存-加载往返", {
     using namespace module::settings;
+    // registerAppDb 不可省：SettingsStore 无参构造经 ::core::appDatabase() 取连接，
+    // 未注册时 load() 直接失败，下面的断言会全部走回退分支而绿。
     test_support::TestEnv env(kCfgPrefix, "gating", /*registerAppDb=*/true);
     (void)0;
     const auto file = test_support::tempConfigFile(kCfgPrefix, "roundtrip");
@@ -155,9 +153,9 @@ REGISTER_TEST(gating_config_corrupt_falls_back, "gating: 字段损坏回退默�
     SettingsConfig loaded = SettingsStore(::core::appDatabase()).load();
     DOCTEST_CHECK(moduleEnabled(loaded, kModuleIdTodo));
     DOCTEST_CHECK(!moduleEnabled(loaded, kModuleIdMarkdown));
-    // 整份内容非 JSON → 全默认（默认清单；agent 默认关，final-review Fix 2）
-    // 2026-10-03（批次 E2）：seedConfigJsonRows 要求顶层是对象，遇到非对象
-    // 会返回 false —— 「值本身是坏的」这条负例改走原始行通道直接写进去。
+    // 整份内容非 JSON → 全默认（默认清单；agent 默认关）
+    // 走原始行通道而非 writeRawConfig：seedConfigJsonRows 要求顶层是对象，
+    // 遇到非对象返回 false，「值本身是坏的」这条负例过不去。
     const std::string kEnabledModulesRow =
         std::string(module::settings::SettingsStore::keyNamespace()) +
         "enabledModules";
@@ -175,7 +173,7 @@ REGISTER_TEST(gating_config_corrupt_falls_back, "gating: 字段损坏回退默�
     return true;
 })
 
-// ============ 2. 注册门控（main.cpp getRouter 同款逻辑） ============
+// 注册门控
 
 REGISTER_TEST(gating_registration_respects_config, "gating: 关闭模块不注册进 Router（modules() 不含它）", {
     using namespace module::settings;
@@ -186,7 +184,7 @@ REGISTER_TEST(gating_registration_respects_config, "gating: 关闭模块不注�
     cfg.enabledModules = {kModuleIdHome, kModuleIdMarkdown, kModuleIdSettings};
     DOCTEST_CHECK(SettingsStore(::core::appDatabase()).save(cfg).isOk());
 
-    // 以下复刻 main.cpp getRouter() 的装配门控
+    // 复制 main.cpp getRouter() 的装配门控；那边改了这里不会自动跟
     const SettingsConfig loaded = SettingsStore(::core::appDatabase()).load();
     ::core::Router router;
     StubModule home(::core::PageId::Home, "home");
@@ -211,7 +209,7 @@ REGISTER_TEST(gating_registration_respects_config, "gating: 关闭模块不注�
     return true;
 })
 
-// ============ 3. Home 降级渲染（注册状态感知） ============
+// Home 降级渲染
 
 REGISTER_TEST(gating_home_all_modules_off, "gating: Home 三模块全关 → 卡片/按钮全隐藏 + 空态文案", {
     ::core::Router router;
@@ -236,11 +234,10 @@ REGISTER_TEST(gating_home_all_modules_off, "gating: Home 三模块全关 → 卡
     DOCTEST_CHECK(ui.find("home.stat.todo") == nullptr);
     DOCTEST_CHECK(ui.find("home.stat.overdue") == nullptr);
     DOCTEST_CHECK(ui.find("home.stat.api") == nullptr);
-    // 3 个快捷按钮全隐
     DOCTEST_CHECK(ui.find("home.act.newnote") == nullptr);
     DOCTEST_CHECK(ui.find("home.act.newtodo") == nullptr);
     DOCTEST_CHECK(ui.find("home.act.claude") == nullptr);
-    // 空态兜底文案（设计 §5.5）
+    // 一个工具模块都没注册时的兜底文案
     const auto* empty = ui.find("home.stats.alloff");
     DOCTEST_REQUIRE(empty != nullptr);
     DOCTEST_CHECK(empty->text.find("所有工具模块已关闭") != std::string::npos);
@@ -267,14 +264,12 @@ REGISTER_TEST(gating_home_partial_modules, "gating: Home 部分模块关闭 → 
     mod->compose(ui, screen);
     ui.end();
 
-    // markdown 的卡保留
+    // 卡片可见性按目标模块是否注册，跨模块不互相牵连
     DOCTEST_CHECK(ui.find("home.stat.notes") != nullptr);
     DOCTEST_CHECK(ui.find("home.act.newnote") != nullptr);
-    // claude 的卡隐藏
     DOCTEST_CHECK(ui.find("home.stat.tokens") == nullptr);
     DOCTEST_CHECK(ui.find("home.stat.api") == nullptr);
     DOCTEST_CHECK(ui.find("home.act.claude") == nullptr);
-    // todo 的卡隐藏
     DOCTEST_CHECK(ui.find("home.stat.todo") == nullptr);
     DOCTEST_CHECK(ui.find("home.stat.overdue") == nullptr);
     DOCTEST_CHECK(ui.find("home.act.newtodo") == nullptr);

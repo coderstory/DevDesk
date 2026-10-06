@@ -1,18 +1,10 @@
 // tests/test_modules/test_claude_quota_dialog.cpp
-// G6：余量查询弹窗的配置逻辑层（quota_dialog_config.{h,cpp}）
-// （实施计划 docs/superpowers/plans/2026-10-02-quota-implementation-plan.md §G6）
-//
-// 覆盖（对应任务书「必测」）：
-//   ① 下拉选项与注册表**一一对应**（不写死字符串；用 findProvider 校验）
-//   ② 动态字段：火山两个（accessKeyId / secretAccessKey，secret 标记生效），
-//      deepseek / minimax_cn / opencode_go **零个**
-//   ③ cc-switch 有匹配 → 字段自动填好 + 标「来自 cc-switch」；无匹配 → 可手填；
-//      读不到 → status != Ok 且不崩
-//   ④ 保存：选了 cc-switch → 只落引用、secrets_json **不含明文 AK**
-//   ⑤ 手填 secret 走 protect（注入假 Backend 断言「落库形态 ≠ 明文」）
-//   ⑥ 「测试连接」的凭据缝：cc-switch 引用覆盖落库副本
-//
-// ⚠ **断言纪律**：字段集合断言钉死**具体 key 字面量**，绝不拿 `fields()` 当期望值
+// 余量查询弹窗的配置逻辑层（quota_dialog_config.{h,cpp}）单测：
+//   ① 下拉选项与注册表一一对应；② 动态字段（火山两个 / 其余零个）；③ cc-switch
+//   匹配与读取失败；④ 保存形态；⑤ 手填 secret 走 protect；⑥⑧ 取用侧凭据装配与覆盖方向。
+// 跨文件前提（不变量 2）：选了 cc-switch 引用 → extra/secrets 一律无条件清空，
+// 手填副本不共存。保存路径与取用路径遵守同一条，方向相反（存时清、取时赢）。
+// **断言纪律**：字段集合断言钉死**具体 key 字面量**，绝不拿 fields() 当期望值
 // （那是自证式断言——实现改了 fields() 用例跟着改，永远绿）。本文件里
 // `{"accessKeyId","secretAccessKey"}` 是**手写字面量**，与被测对象无关。
 #include "doctest.h"
@@ -45,8 +37,7 @@ constexpr const char* kDbPrefix = "devdesk_test_quota_dialog_";
 int g_protectCalls = 0;
 int g_unprotectCalls = 0;
 
-// ---- 假 cc-switch 列表（零磁盘 IO；不碰用户真实的 ~/.cc-switch/cc-switch.db）----
-
+// 假 cc-switch 列表（零磁盘 IO；不碰用户真实的 cc-switch 库）
 CcSwitchProviderList fakeCcSwitch(std::vector<CcSwitchProviderInfo> items) {
     CcSwitchProviderList list;
     list.providers = std::move(items);
@@ -86,7 +77,7 @@ bool hasKey(const std::vector<std::string>& keys, const std::string& k) {
 
 }  // namespace
 
-// ---- ① 下拉选项：索引 0 = 不配置，其后与注册表一一对应 ----
+// 下拉选项：索引 0 = 不配置，其后与注册表一一对应
 // 期望值是**手写字面量**（不是 findProvider/kQuotaProviders 自己）——
 // 用被测对象当期望值就是自证式断言，实现换 id 用例会跟着变，永远绿。
 REGISTER_TEST(quota_dialog_provider_options,
@@ -115,7 +106,7 @@ REGISTER_TEST(quota_dialog_provider_options,
     return true;
 })
 
-// ---- ② 动态字段：火山两字段（含 secret），其余三家零字段 ----
+// 动态字段：火山两字段（含 secret），其余三家零字段
 REGISTER_TEST(quota_dialog_dynamic_fields,
               "quota_dialog: 火山渲染 accessKeyId/secretAccessKey，其余三家零字段", {
     QuotaDialogState st;
@@ -160,7 +151,7 @@ REGISTER_TEST(quota_dialog_dynamic_fields,
     return true;
 })
 
-// ---- ②b secret 脱敏回显：绘制层拿不到明文 ----
+// secret 脱敏回显：绘制层拿不到明文
 REGISTER_TEST(quota_dialog_secret_mask,
               "quota_dialog: secret 字段脱敏形态不含明文，且只有 secretAccessKey 是 secret", {
     QuotaDialogState st;
@@ -188,7 +179,7 @@ REGISTER_TEST(quota_dialog_secret_mask,
     return true;
 })
 
-// ---- ③ cc-switch 有匹配 → 字段自动填好 ----
+// cc-switch 有匹配 → 字段自动填好
 REGISTER_TEST(quota_dialog_ccswitch_match_fills_fields,
               "quota_dialog: cc-switch 按 base_url 匹配后自动填火山字段", {
     // 建真临时 cc-switch 库（不碰用户真实库）
@@ -246,7 +237,7 @@ REGISTER_TEST(quota_dialog_ccswitch_match_fills_fields,
     return true;
 })
 
-// ---- ③b cc-switch 读不到 → 明确文案 + 可手填，不崩 ----
+// cc-switch 读不到 → 明确文案 + 可手填，不崩
 REGISTER_TEST(quota_dialog_ccswitch_unavailable,
               "quota_dialog: cc-switch 库不存在 → status != Ok、候选空、可手填", {
     test_support::TempDir dir("quota_dialog_none_");
@@ -276,8 +267,7 @@ REGISTER_TEST(quota_dialog_ccswitch_unavailable,
     return true;
 })
 
-// ---- ④ 保存：选了 cc-switch → 只落引用，secrets_json 不含明文 AK ----
-// 这是任务书点名的用例：「从 cc-switch 读的 key 不落库」。
+// 保存：选了 cc-switch → 只落引用，secrets_json 不含明文 AK
 REGISTER_TEST(quota_dialog_saves_ccswitch_reference_without_secrets,
               "quota_dialog: 选 cc-switch 后保存只落引用，手填副本被清空", {
     test_support::TempDir dir("quota_dialog_save_");
@@ -303,7 +293,7 @@ REGISTER_TEST(quota_dialog_saves_ccswitch_reference_without_secrets,
     DOCTEST_CHECK_EQ(row.value().providerId, std::string("volcano"));
     DOCTEST_CHECK_EQ(row.value().ccswitchProviderId, std::string("cc-x"));
     DOCTEST_CHECK(row.value().enabled);
-    // **不变量 2 的执行点**：引用非空 → extra/secrets 一律空
+    // 不变量 2 的执行点：引用非空 → extra/secrets 一律空
     DOCTEST_CHECK_EQ(row.value().extraJson, std::string(""));
     DOCTEST_CHECK_EQ(row.value().secretsJson, std::string(""));
     DOCTEST_CHECK(row.value().secretsJson.find("AK-SHOULD-NOT-PERSIST") == std::string::npos);
@@ -314,7 +304,7 @@ REGISTER_TEST(quota_dialog_saves_ccswitch_reference_without_secrets,
     return true;
 })
 
-// ---- ④b 「不配置」→ providerId 空串 + enabled=false ----
+// 「不配置」→ providerId 空串 + enabled=false
 REGISTER_TEST(quota_dialog_save_none_provider,
               "quota_dialog: 选「不配置」保存出空 provider_id 且 enabled=false", {
     QuotaDialogState st;
@@ -329,7 +319,7 @@ REGISTER_TEST(quota_dialog_save_none_provider,
     return true;
 })
 
-// ---- ④c 手填 secret 落库必过 protect（注入假 Backend 断言形态 ≠ 明文）----
+// 手填 secret 落库必过 protect（注入假 Backend 断言形态 ≠ 明文）
 // POSIX 上真实 protect 是恒等函数，所以在 macOS 上「原样返回」——用注入的假
 // Backend 才能证明**调用确实发生了**（而不是碰巧明文落库）。
 REGISTER_TEST(quota_dialog_manual_secret_goes_through_protect,
@@ -341,7 +331,6 @@ REGISTER_TEST(quota_dialog_manual_secret_goes_through_protect,
     // unprotect = hex 解码。选 hex 而不是「加前缀」是有意的：加前缀会把明文
     // 原样留在里面，「落库形态不含明文」这条断言就成了恒真的假守卫 —— 而它正是
     // 本条用例要守的东西。
-    //
     // Backend 是**函数指针表**，所以两个函数必须无捕获（`[hexEncode]{...}`
     // 这种带捕获的 lambda 转换不成函数指针）。
     g_protectCalls = 0;
@@ -423,7 +412,7 @@ REGISTER_TEST(quota_dialog_manual_secret_goes_through_protect,
     return true;
 })
 
-// ---- ⑥ 「测试连接」的凭据装配：cc-switch 引用覆盖落库副本 ----
+// 「测试连接」的凭据装配：cc-switch 引用覆盖落库副本
 REGISTER_TEST(quota_dialog_test_config_uses_ccswitch,
               "quota_dialog: 测试连接的凭据来自 cc-switch 引用（不落库的也生效）", {
     test_support::TempDir dir("quota_dialog_cfg_");
@@ -453,7 +442,7 @@ REGISTER_TEST(quota_dialog_test_config_uses_ccswitch,
     return true;
 })
 
-// ---- ⑦ 错误文案归一：五类 QuotaError 都有中文，且**永不返回空串** ----
+// 错误文案归一：五类 QuotaError 都有中文，且**永不返回空串**
 REGISTER_TEST(quota_dialog_error_headline,
               "quota_dialog: QuotaError 五类都有中文文案且不返回空串", {
     DOCTEST_CHECK(quotaErrorHeadline(QuotaError::Auth, "").find("密钥") != std::string::npos);
@@ -480,7 +469,7 @@ REGISTER_TEST(quota_dialog_error_headline,
     DOCTEST_CHECK(msg.find("套餐已过期") != std::string::npos);
     return true;
 })
-// ---- ⑧ 凭据缝：cc-switch 引用**真的**在 fetch 时生效（零网络）----
+// 凭据缝：cc-switch 引用**真的**在 fetch 时生效（零网络）
 // 假 provider 把收到的 ProviderConfig 原样记下来，供用例断言字段来源。
 namespace {
 
@@ -556,17 +545,16 @@ REGISTER_TEST(quota_dialog_ccswitch_credential_overlay,
     return true;
 })
 
-// ---- ⑥b **取用侧覆盖方向**（静态审计 M6 补）------------------------
+// **取用侧覆盖方向**
 //
-// 上面那条 `quota_dialog_ccswitch_credentials_override_on_fetch` 只钉住了
-// **secretAccessKey** 一个字段，而且它的库行 extra/secrets 是**空的**
-//（不变量 2 的正常形态）—— 于是它证明的是「cc-switch 的值填进了空字段」，
-// **不是**「cc-switch 赢过库里的手填副本」。静态审计实测：把 accessKeyId 的
-// 覆盖改成 `if (false)`（cc-switch 完全不覆盖）→ quota 167 例**全绿**。
+// 同文件里 quota_dialog_ccswitch_credential_overlay 只钉住了 **secretAccessKey**
+// 一个字段，而且它的库行 extra/secrets 是**空的**（不变量 2 的正常形态）——
+// 于是它证明的是「cc-switch 的值填进了空字段」，**不是**「cc-switch 赢过库里的
+// 手填副本」。实测：把 accessKeyId 的覆盖改成 `if (false)`（cc-switch 完全不覆盖）
+// → 整个 quota 套件**全绿**。
 //
-// 本条钉的正是那个方向：**库里手填了同名值**（外部改库 / 历史遗留 / 直接
-// 手改 sqlite 都可能造成这种状态），cc-switch 的值仍然必须赢。
-// 变异靶点：
+// 本条钉的正是那个方向：**库里手填了同名值**（外部改库 / 历史遗留 / 直接手改
+// sqlite 都可能造成这种状态），cc-switch 的值仍然必须赢。变异靶点：
 //   · `if (!matched->accessKeyId.empty())` → `if (false)`     → accessKeyId 红
 //   · `if (!matched->secretAccessKey.empty())` → `if (false)` → secretAccessKey 红
 //   · 整个 if 块删掉                                          → 两个字段都红
@@ -583,10 +571,10 @@ REGISTER_TEST(quota_dialog_ccswitch_wins_over_db_copy_on_fetch,
     DOCTEST_REQUIRE(created.isOk());
     const int64_t pid = created.value().id;
 
-    // ⚠ 库里**故意留着**手填副本：cc-switch 引用与手填值共存。正常保存路径
+    // 库里**故意留着**手填副本：cc-switch 引用与手填值共存。正常保存路径
     //   不会产生这种行（不变量 2 无条件清空），但 quota_credential.cpp 的
     //   注释明确承诺「万一外部改了库留了副本，覆盖方向仍是 cc-switch 赢」——
-    //   **那句承诺此前没有任何测试**。这里让它变成会红的断言。
+    //   这里让那句承诺变成会红的断言。别把这两行"顺手清掉"以求与保存路径自洽。
     QuotaConfigRow row;
     row.profileId = pid;
     row.providerId = "volcano";
@@ -628,7 +616,7 @@ REGISTER_TEST(quota_dialog_ccswitch_wins_over_db_copy_on_fetch,
     return true;
 })
 
-// ---- ⑨ 不变量 2 的反向：选了 cc-switch → 手填副本**无条件**被清空 ----
+// 不变量 2 的反向：选了 cc-switch → 手填副本**无条件**被清空
 // 变异靶点：把 buildQuotaConfigRow 里的「清空 extra/secrets」删掉，本条即红。
 REGISTER_TEST(quota_dialog_ccswitch_wins_over_manual,
               "quota_dialog: 选了 cc-switch 则手填副本无条件丢弃（不共存）", {

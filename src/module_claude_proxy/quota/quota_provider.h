@@ -88,7 +88,7 @@ public:
     virtual std::string displayName() const = 0;    // 需要用户填的字段（顺序 = UI 展示顺序）。空 = 沿用 profile 凭据。
     virtual std::vector<ProviderField> fields() const = 0;
 
-    // base_url 探测（G6 默认选中 / 导入时自动匹配用）。默认不命中：失败方向安全（用户手动挑），
+    // base_url 探测（默认选中 / 导入时自动匹配用）。默认不命中：失败方向安全（用户手动挑），
     // 误命中会把别人的 quota 查到当前 profile 上。覆写时用 host 标签边界匹配，不要裸子串包含。
     virtual bool matchesBaseUrl(const std::string& baseUrl) const {
         (void)baseUrl;

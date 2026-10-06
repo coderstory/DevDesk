@@ -1,13 +1,11 @@
 // tests/test_modules/test_todo_tools.cpp
-// TodoTools 6 工具用例（agent M1 Task 8）：真实 TodoService + ToolRegistry。
-//
-// 错误回喂约定（spec §10 M1 统一）：参数非法 / 目标不存在 → execute 返回
-// Result ok + ToolResult.isError=true + content 含中文说明（LLM 读到后自我
-// 纠正）；Result::fail 只留给编程不变量破坏。
-//
-// 注册表清理由 ToolEnv 析构做（RAII）：断言失败 fail-fast 早退也不会把工具
-// 残留在进程级 ToolRegistry 里（Task 5 ToolReg 的 SIGBUS 教训：不要依赖用例
-// 末尾的手动 unregister）。
+// TodoTools 六个工具：参数 → Result/ToolResult 语义、真实落库副作用、注册表插拔。
+// 跨文件前提：
+//   - 错误回喂约定：参数非法 / 目标不存在 → execute 返回 Result ok +
+//     ToolResult.isError=true + content 含中文说明，让 LLM 读到后自我纠正。
+//     Result::fail 只留给编程不变量被破坏。
+//   - isDestructive 的消费方在 AgentLoop：allowDestructive=0 时它拒绝执行。
+//   - 工具注册在进程级 ToolRegistry（core::ToolRegistry::instance()），不是按模块实例存的。
 #include "doctest.h"
 #include "test_support.h"
 
@@ -25,8 +23,10 @@ namespace {
 constexpr const char* kDbPrefix = "devdesk_test_todotools_";
 
 // 一次性环境：TestEnv(registerAppDb) + 真实 TodoService + TodoTools。
-// 析构顺序：~ToolEnv 体先 unregisterAll（注册表清干净）→ tools 析构 →
-// svc 析构 → 基类 TestEnv 析构（注销 appDatabase + 删库文件）。
+// 注册表清理由 ~ToolEnv 做（RAII）而不是用例末尾手动 unregister：断言 fail-fast
+// 早退也会走析构，否则工具残留在进程级注册表里串到后续用例。
+// 析构顺序不可换：~ToolEnv 体先 unregisterAll → tools 析构 → svc 析构 →
+// 基类 TestEnv 析构（注销 appDatabase + 删库文件）。
 struct ToolEnv : test_support::TestEnv {
     std::unique_ptr<module::todo::TodoService> svc;
     std::unique_ptr<module::todo::TodoTools> tools;
@@ -39,7 +39,7 @@ struct ToolEnv : test_support::TestEnv {
     ~ToolEnv() { tools->unregisterAll(); }
 };
 
-// 从进程级注册表按名取工具并执行（走与 AgentLoop 相同的 find→execute 路径）
+// 从进程级注册表按名取工具并执行（与 AgentLoop 相同的 find → execute 路径）
 core::Result<core::ToolResult> runTool(const std::string& name,
                                        const std::string& argsJson) {
     auto found = core::ToolRegistry::instance().find(name);
@@ -50,7 +50,7 @@ core::Result<core::ToolResult> runTool(const std::string& name,
     return found.value()->execute(core::ToolArgs{argsJson});
 }
 
-// 种 n 个任务到第一列（经 TodoService 真实落库）；失败返回 false 供断言
+// 种 n 个任务到第一列（经真实 TodoService 落库）；失败返回 false 供断言
 bool seedTasks(module::todo::TodoService& svc, int n, const std::string& base) {
     auto cols = svc.listColumns();
     if (cols.isFail() || cols.value().empty()) return false;
@@ -63,37 +63,32 @@ bool seedTasks(module::todo::TodoService& svc, int n, const std::string& base) {
     return true;
 }
 
-// 视图状态隔离（审计 [23]）：原 ViewStatePathGuard 把
-// DEVDESK_TODO_VIEW_STATE_PATH 指到临时文件——2026-10-03（批次 E2）起状态是
-// app_config 表的一行（键 todo_view_state），隔离由用例注册的临时库承担，
-// 该环境变量无人再读，守卫随清理批删除。
 } // namespace
 
-// ============ TodoModule 生命周期重入（活门控 Task 4）============
 
 extern "C" ::core::Module* create_todo_module();
 
 REGISTER_TEST(todo_module_onstart_reentry_idempotent,
               "todo_module: onStart→onStop→onStart 重入 + 双 onStart/双 onStop no-op", {
     test_support::TestEnv env(kDbPrefix, "modreentry", /*registerAppDb=*/true);
-    core::ToolRegistry::instance().unregisterTool("todo.list");   // 起点干净
+    // 起点干净：本进程里可能已有别的用例注册过同名工具
+    core::ToolRegistry::instance().unregisterTool("todo.list");
     std::unique_ptr<::core::Module> mod(create_todo_module());
 
     mod->onStart();
     DOCTEST_CHECK(core::ToolRegistry::instance().find("todo.list").isOk());
-    mod->onStart();   // 双 onStart：no-op（不重建 service_、不重复注册）
+    mod->onStart();   // 双 onStart：no-op，不重建 service_、不重复注册
     DOCTEST_CHECK(core::ToolRegistry::instance().find("todo.list").isOk());
     mod->onStop();
     DOCTEST_CHECK(core::ToolRegistry::instance().find("todo.list").isFail());
     mod->onStop();    // 双 onStop：no-op
-    mod->onStart();   // off→on 循环：工具恢复
+    mod->onStart();   // off→on 循环后工具要恢复
     DOCTEST_CHECK(core::ToolRegistry::instance().find("todo.list").isOk());
     mod->onStop();
     DOCTEST_CHECK(core::ToolRegistry::instance().find("todo.list").isFail());
     return true;
 })
 
-// ============ todo.list ============
 
 REGISTER_TEST(todo_tools_list_empty_then_seeded,
               "todo.list: 空库 {\"tasks\":[]} → 种 3 条返回标题 + completed 过滤", {
@@ -101,7 +96,7 @@ REGISTER_TEST(todo_tools_list_empty_then_seeded,
     DOCTEST_REQUIRE(env.ready);
     env.tools->registerAll();
 
-    // 空库：返回 {"tasks":[]} 形态（不报错）
+    // 空库返回 {"tasks":[]} 而不是报错
     auto empty = runTool("todo.list", "{}");
     DOCTEST_REQUIRE(empty.isOk());
     DOCTEST_CHECK_FALSE(empty.value().isError);
@@ -119,10 +114,10 @@ REGISTER_TEST(todo_tools_list_empty_then_seeded,
     DOCTEST_CHECK(r.value().contentJson.find("任务1") != std::string::npos);
     DOCTEST_CHECK(r.value().contentJson.find("任务3") != std::string::npos);
 
-    // completed 过滤：完成 1 条后 completed=true 只返回那 1 条
     auto all = env.svc->listAllTasks();
     DOCTEST_REQUIRE(all.isOk());
     DOCTEST_REQUIRE(env.svc->completeTask(all.value()[0].id).isOk());
+    // completed=true 只返回已完成的那批
     auto doneOnly = runTool("todo.list", R"({"completed":true})");
     DOCTEST_REQUIRE(doneOnly.isOk());
     auto doneParsed = platform::json::parse(doneOnly.value().contentJson);
@@ -131,7 +126,6 @@ REGISTER_TEST(todo_tools_list_empty_then_seeded,
     return true;
 })
 
-// ============ todo.create ============
 
 REGISTER_TEST(todo_tools_create_default_first_column,
               "todo.create: 缺省列=第一列，service 真实落库 + 返回新 id", {
@@ -152,7 +146,7 @@ REGISTER_TEST(todo_tools_create_default_first_column,
     DOCTEST_CHECK_EQ(all.value()[0].title, std::string("x"));
     DOCTEST_CHECK_EQ(all.value()[0].columnId, cols.value()[0].id);
 
-    // 返回体带新任务 id（LLM 后续操作要靠它）
+    // 返回体带新任务 id，LLM 后续操作要靠它
     auto parsed = platform::json::parse(r.value().contentJson);
     DOCTEST_REQUIRE(parsed.isOk());
     DOCTEST_CHECK_EQ(parsed.value().asObject().get("id").asInt(),
@@ -169,14 +163,13 @@ REGISTER_TEST(todo_tools_create_default_first_column,
     DOCTEST_REQUIRE_EQ(inCol2.value().size(), 1u);
     DOCTEST_CHECK_EQ(inCol2.value()[0].title, std::string("y"));
 
-    // 不存在的列 → isError 回喂（不静默造悬空任务）
+    // 不存在的列 → isError，不静默造悬空任务
     auto bad = runTool("todo.create", R"({"title":"z","columnId":999999})");
     DOCTEST_REQUIRE(bad.isOk());
     DOCTEST_CHECK(bad.value().isError);
     return true;
 })
 
-// ============ todo.update ============
 
 REGISTER_TEST(todo_tools_update_overlays_fields,
               "todo.update: 提供的字段更新、未提供的保持 + 不存在 id 报错", {
@@ -198,11 +191,11 @@ REGISTER_TEST(todo_tools_update_overlays_fields,
     DOCTEST_REQUIRE_EQ(after.value().size(), 1u);
     DOCTEST_CHECK_EQ(after.value()[0].title, std::string("新题"));
     DOCTEST_CHECK(after.value()[0].priority == module::todo::Priority::High);
-    // 未提供的字段保持原状（updateTask 是整字段更新，工具必须先取旧值叠加）
+    // 未提供的字段保持原状：updateTask 是整字段更新，工具必须先取旧值叠加
     DOCTEST_CHECK_FALSE(after.value()[0].description.has_value());
     DOCTEST_CHECK_FALSE(after.value()[0].completedAt.has_value());
 
-    // description 传 null = 清空；不存在的 id → isError 回喂
+    // description 传 null = 清空；不存在的 id → isError
     DOCTEST_REQUIRE(env.svc->listAllTasks().isOk());
     const std::string descArgs =
         "{\"id\":" + std::to_string(id) + ",\"description\":\"说明文字\"}";
@@ -220,7 +213,6 @@ REGISTER_TEST(todo_tools_update_overlays_fields,
     return true;
 })
 
-// ============ todo.move ============
 
 REGISTER_TEST(todo_tools_move_to_column,
               "todo.move: 跨列移动、缺省位置=列尾 + 目标列不存在报错", {
@@ -247,11 +239,11 @@ REGISTER_TEST(todo_tools_move_to_column,
     DOCTEST_REQUIRE(inB.isOk());
     DOCTEST_REQUIRE_EQ(inB.value().size(), 1u);
     DOCTEST_CHECK_EQ(inB.value()[0].id, id);
-    DOCTEST_CHECK_EQ(inB.value()[0].position, 0);  // 缺省 = 列尾追加
+    DOCTEST_CHECK_EQ(inB.value()[0].position, 0);  // 不给 position 时追加到列尾
     auto leftInA = env.svc->listTasks(colA);
     DOCTEST_REQUIRE_EQ(leftInA.value().size(), 1u);
 
-    // 目标列不存在 → isError 回喂
+    // 目标列不存在 → isError
     const std::string badArgs = "{\"id\":" + std::to_string(id) +
                                 ",\"columnId\":999999}";
     auto bad = runTool("todo.move", badArgs);
@@ -260,7 +252,6 @@ REGISTER_TEST(todo_tools_move_to_column,
     return true;
 })
 
-// ============ todo.complete ============
 
 REGISTER_TEST(todo_tools_complete_flips_completed_at,
               "todo.complete: completed 标记翻转（Task 字段断言）+ 不存在 id 报错", {
@@ -288,7 +279,6 @@ REGISTER_TEST(todo_tools_complete_flips_completed_at,
     return true;
 })
 
-// ============ todo.delete ============
 
 REGISTER_TEST(todo_tools_delete_destructive_and_removes,
               "todo.delete: isDestructive()==true + 删除真实生效", {
@@ -300,7 +290,7 @@ REGISTER_TEST(todo_tools_delete_destructive_and_removes,
     DOCTEST_REQUIRE_EQ(tasks.value().size(), 2u);
     const int64_t id = tasks.value()[0].id;
 
-    // 删除属不可逆操作，必须标破坏性（AgentLoop 在 allowDestructive=0 时拒绝执行）
+    // 删除不可逆，必须标破坏性：AgentLoop 在 allowDestructive=0 时会拒绝执行
     auto found = core::ToolRegistry::instance().find("todo.delete");
     DOCTEST_REQUIRE(found.isOk());
     DOCTEST_CHECK(found.value()->isDestructive());
@@ -313,14 +303,13 @@ REGISTER_TEST(todo_tools_delete_destructive_and_removes,
     DOCTEST_REQUIRE_EQ(after.value().size(), 1u);
     DOCTEST_CHECK_NE(after.value()[0].id, id);
 
-    // 删不存在的 id → isError 回喂
+    // 删不存在的 id → isError
     auto miss = runTool("todo.delete", R"({"id":777777})");
     DOCTEST_REQUIRE(miss.isOk());
     DOCTEST_CHECK(miss.value().isError);
     return true;
 })
 
-// ============ 工具级错误（错误回喂 LLM，不 fail Result）============
 
 REGISTER_TEST(todo_tools_invalid_params_feed_error,
               "工具级错误：Result ok + isError=true + 中文说明，且无副作用", {
@@ -361,7 +350,6 @@ REGISTER_TEST(todo_tools_invalid_params_feed_error,
     return true;
 })
 
-// ============ schema 抽查 + 注册/注销 ============
 
 REGISTER_TEST(todo_tools_schema_spot_check_and_registry,
               "schema 抽查：6 工具注册齐全、input_schema 含 required，破坏性只有 delete", {
@@ -378,7 +366,7 @@ REGISTER_TEST(todo_tools_schema_spot_check_and_registry,
         DOCTEST_CHECK(schema.find("input_schema") != std::string::npos);
         DOCTEST_CHECK(schema.find(std::string("\"name\":\"") + n + "\"") !=
                       std::string::npos);
-        // properties 键名抽查（batch 裁定）：每个工具宣传的入参键必须真实出现
+        // 每个工具宣传的入参键必须真实出现在 schema 里
         const std::string nStr(n);
         const char* expectedKey =
             nStr == "todo.list"     ? "completed"
@@ -387,8 +375,7 @@ REGISTER_TEST(todo_tools_schema_spot_check_and_registry,
                                     : "id";  // complete / delete
         DOCTEST_CHECK(schema.find(std::string("\"") + expectedKey + "\"") !=
                       std::string::npos);
-        // 必填键抽查：除 todo.list（全部参数可选、无 required）外，
-        // 每个工具的 input_schema 都要声明 required
+        // todo.list 的参数全可选，不声明 required；其余工具必须声明
         if (nStr == "todo.list") {
             DOCTEST_CHECK(schema.find("\"required\"") == std::string::npos);
         } else {

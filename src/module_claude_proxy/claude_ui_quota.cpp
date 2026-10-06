@@ -21,7 +21,7 @@ namespace {
 
 namespace quotaNs = module::claude::quota;
 
-// ---- 几何常量（全部具名；改一处必须同步 computeQuotaDialogLayout）----
+// 几何常量（全部具名；改一处必须同步 computeQuotaDialogLayout）
 constexpr float kTitleY = 20.0f;
 constexpr float kTitleH = 26.0f;
 constexpr float kDescY = 54.0f;
@@ -96,7 +96,7 @@ void drawQuotaConfigDialog(eui::Ui& ui, const eui::Screen& screen,
             12.0f, t.colors.textSecondary,
             {.y = kDescY, .height = kDescH, .lineHeight = 17.0f, .wrap = true});
 
-        // ---- ① 供应商类型下拉 ----
+        // ① 供应商类型下拉
         ui.text("claude.dialog.quota.provider.label")
             .position(28.0f, g.providerLabelY).size(w - 56.0f, kLabelH)
             .text("供应商类型").fontSize(11.0f).lineHeight(kLabelH)
@@ -122,7 +122,7 @@ void drawQuotaConfigDialog(eui::Ui& ui, const eui::Screen& screen,
             })
             .build();
 
-        // ---- ② 动态字段（按选中 provider 的 fields() 逐行）----
+        // ② 动态字段（按选中 provider 的 fields() 逐行）
         float fy = g.fieldsY;
         for (std::size_t i = 0; i < st.fields.size(); ++i) {
             QuotaDialogField& f = st.fields[i];
@@ -171,7 +171,7 @@ void drawQuotaConfigDialog(eui::Ui& ui, const eui::Screen& screen,
             fy += g.fieldPitch;
         }
 
-        // ---- ③ cc-switch ----
+        // ③ cc-switch
         components::button(ui, "claude.dialog.quota.ccswitch.load")
             .position(28.0f, g.ccSwitchY).size(kCcBtnW, kCcBtnH)
             .text("从 cc-switch 读取").fontSize(t.sizes.fontSizeSmall)
@@ -230,7 +230,7 @@ void drawQuotaConfigDialog(eui::Ui& ui, const eui::Screen& screen,
             })
             .build();
 
-        // ---- ④ 测试连接 ----
+        // ④ 测试连接
         components::button(ui, "claude.dialog.quota.test")
             .position(28.0f, g.testBtnY).size(kTestBtnW, kCcBtnH)
             .text(st.testing ? "测试中…" : "测试连接")
@@ -260,7 +260,7 @@ void drawQuotaConfigDialog(eui::Ui& ui, const eui::Screen& screen,
                 .color(isErr ? t.colors.error : t.colors.success).build();
         }
 
-        // ---- ⑤ 保存 / 取消 ----
+        // ⑤ 保存 / 取消
         ui_kit::DialogButtonSpec cancel;
         cancel.label = "取消";
         cancel.fontSize = 14.0f;

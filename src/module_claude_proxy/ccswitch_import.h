@@ -10,7 +10,7 @@
 
 namespace module::claude {
 
-// ===== 读侧 =====
+// 读侧
 
 // 读不到的分档（文案与排查方向各不相同；Ok 之外 rows 必为空）。
 enum class CcSwitchImportStatus {
@@ -39,7 +39,7 @@ struct CcSwitchImportRows {
 // 恒返回、不抛异常。行序 = providers 表扫描序。
 CcSwitchImportRows listCcSwitchImportRows();
 
-// ===== 纯映射 =====
+// 纯映射
 
 // 映射结果。ok == true 时下面各字段有效；ok == false 时 skipReason 是面向
 // 用户的中文原因（同名冲突 / 缺 base_url / 缺密钥 / JSON 解析失败 / 名称为空）。

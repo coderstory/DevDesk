@@ -1,5 +1,5 @@
-// tests/test_core/test_tool_registry.cpp
-// ToolRegistry：注册/冲突/注销/find keep-alive/schema 拼装（spec §2.1）
+// ToolRegistry 是进程级单例，跨用例共享：每个用例必须注销自己注册的名字，
+// 否则会污染下一个用例（同名注册会被当成冲突拒掉）
 #include "doctest.h"
 #include "core/tool.h"
 
@@ -51,8 +51,8 @@ REGISTER_TEST(tool_registry_shared_ptr_keepalive, "tool: find 持有 shared_ptr 
     DOCTEST_REQUIRE(reg.registerTool(t).isOk());
     auto held = reg.find("t.keep");
     DOCTEST_REQUIRE(held.isOk());
-    reg.unregisterTool("t.keep");   // 模拟模块运行中被拔
-    auto r = held.value()->execute(core::ToolArgs{"{}"});   // 仍安全
+    reg.unregisterTool("t.keep");
+    auto r = held.value()->execute(core::ToolArgs{"{}"});
     DOCTEST_CHECK(r.isOk());
     DOCTEST_CHECK_EQ(t->calls, 1);
     return true;

@@ -29,7 +29,7 @@
         return false; \
     }} while (0)
 
-// _a/_b 为**值拷贝**而非 const auto&（TIN-08 实证：本仓库大量 `Result::value()`
+// _a/_b 为**值拷贝**而非 const auto&（本仓库大量 `Result::value()`
 // 链式调用返回"指向临时量的引用"，绑引用即 GCC 16 -Wdangling-reference 真阳性，
 // 50 处既有用例被 -Werror 拦停；拷贝才是这些表达式的安全形态）。此处只取审计
 // 建议里的 const 部分：加 const 防止断言过程意外改写被比较值。
@@ -106,7 +106,7 @@ inline bool consumeSkipped() {
         return true; \
     } while (0)
 
-// ==================== 临时路径唯一化（审计 TIN-02）====================
+// 临时路径唯一化
 // 仓库按「并发多 worktree」开发：多个会话可能同时跑同一个 devdesk_tests.exe，
 // %TEMP% 下的固定名临时路径会被另一进程 remove_all / 覆写 → 随机红。
 // 统一走 tempPath()：pid（进程间唯一）+ 进程内自增序号（进程内唯一），
@@ -140,7 +140,7 @@ inline std::filesystem::path tempPath(const std::string& name) {
 // body 是返回 bool 的代码块；return true 表示通过
 // 例：REGISTER_TEST(test_addition, "1+1=2", { return 1+1 == 2; })
 //
-// body 走可变参 `...` / `__VA_ARGS__` 承接（审计 TIN-08）：预处理器只在
+// body 走可变参 `...` / `__VA_ARGS__` 承接：预处理器只在
 // 「顶层」逗号处切分实参，body 从第 3 个实参起被整体收进 __VA_ARGS__，
 // 因此用例体里的裸逗号（聚合初始化列表、`std::map<int, float>` 模板逗号、
 // 多声明语句等）**不再**需要写成括号包裹 / 逐条 push_back / 搬出宏外等规避式。

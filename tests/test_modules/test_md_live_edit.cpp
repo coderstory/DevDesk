@@ -1,11 +1,9 @@
 // tests/test_modules/test_md_live_edit.cpp
-// Markdown Phase 3 · M2 纯函数层单测（md_live_edit.h）
-// 依据：docs/superpowers/specs/2026-09-27-markdown-phase3-block-render-design.md
-//       §8.1 纯函数用例表（活动块推导 / 块局部偏移 / 内容贴合高度公式）
-//
-// 只测纯计算：不建 Ui、不碰 EUI-NEO、不起 app。行数测量按签名注入假函数 ——
-// 真实场景注入的是 InputModel::measureLines（消费侧接线在 markdown_module.cpp，
-// 其行为由 test_markdown.cpp 的无头 UI 用例覆盖）。
+// Markdown 编辑期纯函数层单测：活动块推导 / 块局部偏移 / 内容贴合高度 / IME 冻结谓词 /
+// 跨块 ↑↓ / 边界退格删除 / 块级 undo-redo 栈 / 滚动锚定 / 单块高度封顶。
+// 跨文件前提：
+//   - 只测纯计算：不建 Ui、不碰 EUI-NEO、不起 app。行数测量靠签名注入假函数，真实场景
+//     注入的是 InputModel::measureLines，消费侧接线在 markdown_module.cpp。
 
 #include "doctest.h"
 
@@ -25,7 +23,7 @@ using module::markdown::mdLiveActiveBlockIndex;
 using module::markdown::mdLiveBlockLocalOffset;
 using module::markdown::mdLiveInputHeight;
 
-// input 内部行高系数（components/input.h：fontSize × 1.2）——公式期望值同源
+// input 内部行高系数（components/input.h：fontSize × 1.2）
 constexpr float kLineH = 1.2f;
 
 // 浮点近似比较（1.2f 不是二进制精确值：差值断言不能按位相等）
@@ -47,7 +45,7 @@ MdBlockModel modelOf(const std::string& text) {
 
 } // namespace
 
-// ---- 活动块推导：空文档 / 单块 / cursor==size 归末块 ----
+// 活动块推导：空文档 / 单块 / cursor==size 归末块
 
 REGISTER_TEST(md_live_active_block_empty_and_single,
               "md_live_edit: 活动块推导 空文档与单块（含 cursor==size）", {
@@ -71,7 +69,7 @@ REGISTER_TEST(md_live_active_block_empty_and_single,
     return true;
 })
 
-// ---- 活动块推导：块首 / 块尾字节 / 空行归属 / 越界 ----
+// 活动块推导：块首 / 块尾字节 / 空行归属 / 越界
 
 REGISTER_TEST(md_live_active_block_boundaries,
               "md_live_edit: 活动块推导 块首块尾字节与空行归属", {
@@ -86,7 +84,6 @@ REGISTER_TEST(md_live_active_block_boundaries,
     for (size_t k = 0; k < bs.size(); ++k) {
         DOCTEST_CHECK_EQ(bs[k].start, covered);   // 无缝无重叠
         covered = bs[k].end;
-        // 块首字节 → 本块；块内任意字节 → 本块
         DOCTEST_CHECK_EQ(mdLiveActiveBlockIndex(m, bs[k].start), k);
         if (bs[k].end > bs[k].start) {
             DOCTEST_CHECK_EQ(mdLiveActiveBlockIndex(m, bs[k].end - 1), k);
@@ -96,7 +93,7 @@ REGISTER_TEST(md_live_active_block_boundaries,
         DOCTEST_CHECK_EQ(mdLiveActiveBlockIndex(m, bs[k].end), atEnd);
     }
     DOCTEST_CHECK_EQ(covered, doc.size());
-    // cursor == size 归末块（末块 end == size 的同一件事，单列一条锁语义）
+    // cursor == size 归末块
     DOCTEST_CHECK_EQ(mdLiveActiveBlockIndex(m, doc.size()),
                      static_cast<size_t>(bs.size() - 1));
 
@@ -108,7 +105,7 @@ REGISTER_TEST(md_live_active_block_boundaries,
     return true;
 })
 
-// ---- 活动块推导：CRLF 行尾 ----
+// 活动块推导：CRLF 行尾
 
 REGISTER_TEST(md_live_active_block_crlf,
               "md_live_edit: 活动块推导 CRLF 行尾", {
@@ -128,7 +125,7 @@ REGISTER_TEST(md_live_active_block_crlf,
     return true;
 })
 
-// ---- 活动块推导：中文多字节边界（纯字节算术，不校验 UTF-8） ----
+// 活动块推导：中文多字节边界（纯字节算术，不校验 UTF-8）
 
 REGISTER_TEST(md_live_active_block_utf8,
               "md_live_edit: 活动块推导 中文多字节边界", {
@@ -155,7 +152,7 @@ REGISTER_TEST(md_live_active_block_utf8,
     return true;
 })
 
-// ---- 块局部偏移：钳制两端 ----
+// 块局部偏移：钳制两端
 
 REGISTER_TEST(md_live_block_local_offset_clamp,
               "md_live_edit: 块局部偏移 两端钳制", {
@@ -175,7 +172,7 @@ REGISTER_TEST(md_live_block_local_offset_clamp,
     return true;
 })
 
-// ---- 内容贴合高度：注入假测量函数（N 行 → N×lineH + inset×2 + 1） ----
+// 内容贴合高度：注入假测量函数（N 行 → N×lineH + inset×2 + 1）
 
 REGISTER_TEST(md_live_input_height_formula,
               "md_live_edit: 贴合高度公式（N 行/0 行/字号与 inset 变化）", {
@@ -187,7 +184,6 @@ REGISTER_TEST(md_live_input_height_formula,
     const float h3 = mdLiveInputHeight(two, 400.0f, 15.0f, 10.0f, lineCount);
     DOCTEST_CHECK_EQ(h3, 3.0f * 15.0f * kLineH + 20.0f + 1.0f);
 
-    // 1 行（无换行）
     const float h1 = mdLiveInputHeight("x", 400.0f, 15.0f, 10.0f, lineCount);
     DOCTEST_CHECK_EQ(h1, 1.0f * 15.0f * kLineH + 20.0f + 1.0f);
     DOCTEST_CHECK(h3 > h1);
@@ -212,7 +208,7 @@ REGISTER_TEST(md_live_input_height_formula,
     return true;
 })
 
-// ---- 内容贴合高度：超宽折行由注入的测量函数决定（宽度透传） ----
+// 内容贴合高度：超宽折行由注入的测量函数决定（宽度透传）
 
 REGISTER_TEST(md_live_input_height_wrap,
               "md_live_edit: 贴合高度 超宽折行计数 + 文本宽透传", {
@@ -233,9 +229,8 @@ REGISTER_TEST(md_live_input_height_wrap,
     return true;
 })
 
-// ---- M3：IME 冻结谓词（spec §3.4 / 风险 R3）----
-// 语义 = 「组字文本非空即冻结」。两侧都要钉死：空 ≠ 冻结（否则永远不能切块）、
-// 非空 = 冻结（含纯空白组字——IME 预编辑里空格本身也是组字内容）。
+// IME 冻结谓词。语义 = 「组字文本非空即冻结」。两侧都要钉死：空 ≠ 冻结（否则永远不能
+// 切块）、非空 = 冻结（含纯空白组字——IME 预编辑里空格本身也是组字内容）。
 
 REGISTER_TEST(md_live_composition_frozen,
               "md_live_edit: IME 冻结谓词（组字非空即冻结，spec R3）", {
@@ -248,11 +243,7 @@ REGISTER_TEST(md_live_composition_frozen,
     return true;
 })
 
-// ==================== M4：块边界键（spec §3.4）====================
-// 验收（spec §7 M4 行）：mdLiveVerticalBlockTarget 与边界偏移的单测 —— 覆盖
-// 首块 / 末块 / 空文档 / cursor==size / CRLF 五类边界。
-
-// ---- 跨块 ↑↓：目标 = 相邻块边界行行首（列尽量保持，CRLF 的 '\r' 不计内容）----
+// 跨块 ↑↓：目标 = 相邻块边界行行首（列尽量保持，CRLF 的 '\r' 不计内容）
 
 REGISTER_TEST(md_live_vertical_block_updown,
               "md_live_edit: 跨块 ↑↓ 目标（首块/末块/列保持/非边界行不消费）", {
@@ -318,7 +309,7 @@ REGISTER_TEST(md_live_vertical_block_updown,
     DOCTEST_CHECK_EQ(mdLiveVerticalBlockTarget(doc2, bs2, doc2.size(), 1),
                      kMdLiveNoConsume);         // 末块 ↓ 仍不消费
 
-    // 空文档 / 空块序列：
+    // 空文档 / 空块序列
     const MdBlockModel empty = modelOf("");
     DOCTEST_CHECK(empty.blocks().empty());
     DOCTEST_CHECK_EQ(mdLiveVerticalBlockTarget("", empty.blocks(), 0, -1),
@@ -329,7 +320,7 @@ REGISTER_TEST(md_live_vertical_block_updown,
     return true;
 })
 
-// ---- 跨块 ↑↓：CRLF 行尾（'\r' 属行终结符，不计内容宽）----
+// 跨块 ↑↓：CRLF 行尾（'\r' 属行终结符，不计内容宽）
 
 REGISTER_TEST(md_live_vertical_block_crlf,
               "md_live_edit: 跨块 ↑↓ CRLF 行尾（列钳到 '\r' 之前）", {
@@ -364,7 +355,7 @@ REGISTER_TEST(md_live_vertical_block_crlf,
     return true;
 })
 
-// ---- 块边界退格 / 删除：只删接缝换行（CRLF 成对），不做块结构操作 ----
+// 块边界退格 / 删除：只删接缝换行（CRLF 成对），不做块结构操作
 
 REGISTER_TEST(md_live_boundary_edit,
               "md_live_edit: 块边界退格/删除（首块/末块/文末/CRLF 成对）", {
@@ -438,11 +429,9 @@ REGISTER_TEST(md_live_boundary_edit,
     return true;
 })
 
-// ---- M5：块级 undo / redo 快照栈（spec §4.5 / §8.1）----
-
-// 推栈顺序 / 跨块撤销序列 / 撤销后再编辑截断重做链
+// 块级 undo / redo 快照栈
 REGISTER_TEST(md_live_undo_push_order_and_cross_block,
-              "md_live_undo: 推栈顺序 / 跨块撤销序列 / 撤销后编辑截断重做（M5）", {
+              "md_live_undo: 推栈顺序 / 跨块撤销序列 / 撤销后编辑截断重做", {
     using module::markdown::MdLiveUndoStack;
     MdLiveUndoStack s;
     s.reset("A", 1);                    // 进实时态的基线
@@ -472,7 +461,6 @@ REGISTER_TEST(md_live_undo_push_order_and_cross_block,
     DOCTEST_CHECK_FALSE(s.canUndo());
     DOCTEST_CHECK_TRUE(s.canRedo());
 
-    // 重做沿原路回
     DOCTEST_REQUIRE(s.redo(t, c));
     DOCTEST_CHECK_EQ(t, std::string("Ab"));
     DOCTEST_REQUIRE(s.redo(t, c));
@@ -492,9 +480,8 @@ REGISTER_TEST(md_live_undo_push_order_and_cross_block,
     return true;
 })
 
-// 600ms 同块合并 / 换块分栈 / markBoundary 关组
 REGISTER_TEST(md_live_undo_merge_window_and_boundary,
-              "md_live_undo: 600ms 同块合并 / 换块分栈 / markBoundary 关组（M5）", {
+              "md_live_undo: 600ms 同块合并 / 换块分栈 / markBoundary 关组", {
     using module::markdown::MdLiveUndoStack;
     MdLiveUndoStack s;
     s.reset("X", 0);
@@ -526,9 +513,8 @@ REGISTER_TEST(md_live_undo_merge_window_and_boundary,
     return true;
 })
 
-// 容量上限 200 / 大文档降级 50 / 最老条目被挤出窗口
 REGISTER_TEST(md_live_undo_cap_and_large_doc_downgrade,
-              "md_live_undo: 容量上限 200 / 大文档降级 50 / 最老条目挤出（M5）", {
+              "md_live_undo: 容量上限 200 / 大文档降级 50 / 最老条目挤出", {
     using module::markdown::MdLiveUndoStack;
     using module::markdown::kMdLiveUndoCap;
     using module::markdown::kMdLiveUndoCapLargeDoc;
@@ -550,8 +536,7 @@ REGISTER_TEST(md_live_undo_cap_and_large_doc_downgrade,
     DOCTEST_CHECK_EQ(t, std::string("d31"));      // 基线 d0 已被挤出窗口
     DOCTEST_CHECK_EQ(c, static_cast<size_t>(31));
 
-    // 大文档：容量降级为 50（spec §4.5「> 2MB 降为 50，登记日志」；本层只给
-    // 容量，日志由消费侧记）
+    // 大文档（> 2MB）容量降为 50；本层只给容量，登记日志由消费侧记
     MdLiveUndoStack big;
     big.reset("s", 0);
     const std::string huge(kMdLiveUndoLargeDocBytes + 1, 'x');
@@ -566,14 +551,12 @@ REGISTER_TEST(md_live_undo_cap_and_large_doc_downgrade,
     return true;
 })
 
-// ============ M6：滚动锚定「越界才拉」判定 + 目标偏移 ============
-// 判据口径（spec §3.3 / 已定决策 D-B）：caret 在视口里的相对位置落在安全带
-// [0.15H, 0.75H] 内 → 不干预滚动；越出（上方或下方）→ 目标 = caretDocY − 0.4H，
-// 再钳进 [0, maxOffset]。本层只给「判据 + 目标」，落地与否由消费侧比较
-// （目标 == 记账值 → 不落地）——故下面专门有一组「判越界但目标被钳回当前值」
-// 的输入形态（文档尾连续打字），它是 no-op 抑制的前提。
+// 滚动锚定「越界才拉」判定 + 目标偏移。判据口径：caret 在视口里的相对位置落在安全带
+// [0.15H, 0.75H] 内 → 不干预滚动；越出 → 目标 = caretDocY − 0.4H，再钳进 [0, maxOffset]。
+// 本层只给「判据 + 目标」，落地与否由消费侧比较（目标 == 记账值 → 不落地）——故下面专门
+// 有一组「判越界但目标被钳回当前值」的输入形态，它是 no-op 抑制的前提。
 REGISTER_TEST(md_live_follow_band_and_target,
-              "md_live_follow: 越界才拉（安全带判定 + 目标偏移，M6）", {
+              "md_live_follow: 越界才拉（安全带判定 + 目标偏移）", {
     using module::markdown::mdLiveFollowOffset;
     const float H = 100.0f;      // 视口 100 → 安全带 [15, 75]，拉后落点 = caret − 40
     const float maxOff = 1000.0f;
@@ -621,7 +604,7 @@ REGISTER_TEST(md_live_follow_band_and_target,
 })
 
 REGISTER_TEST(md_live_follow_clamp_and_noop_shape,
-              "md_live_follow: maxOffset 钳位 / 记账值越界收敛 / no-op 形态（M6）", {
+              "md_live_follow: maxOffset 钳位 / 记账值越界收敛 / no-op 形态", {
     using module::markdown::mdLiveFollowOffset;
 
     // ① 目标超出最大滚动量 → 钳到 maxOffset（内容已到底，可视性由钳位保证）
@@ -651,14 +634,13 @@ REGISTER_TEST(md_live_follow_clamp_and_noop_shape,
     {
         const auto d = mdLiveFollowOffset(900.0f, 100.0f, 300.0f, 300.0f);
         DOCTEST_CHECK(d.pull);
-        DOCTEST_CHECK(nearEq(d.offset, 300.0f));  // == 记账值 → 消费侧不落地
+        DOCTEST_CHECK(nearEq(d.offset, 300.0f));  // 记账值，消费侧不落地
     }
     return true;
 })
 
-// 基线光标钳位 / 重复快照不占条目 / 无变化步不消耗撤销 / markBoundary 不动 redo
 REGISTER_TEST(md_live_undo_baseline_clamp_and_noop_steps,
-              "md_live_undo: 基线光标钳位 / 重复快照 / 无变化步不消耗撤销（M5）", {
+              "md_live_undo: 基线光标钳位 / 重复快照 / 无变化步不消耗撤销", {
     using module::markdown::MdLiveUndoStack;
     MdLiveUndoStack s;
     s.reset("doc", 999);              // 越界光标钳到文本长
@@ -696,10 +678,10 @@ REGISTER_TEST(md_live_undo_baseline_clamp_and_noop_steps,
     return true;
 })
 
-// ---- M9（spec §5 #5）：单块高度上限（封顶 0.7 × 视口高，超出则该块内部滚动）----
+// 单块高度上限：封顶 0.7 × 视口高，超出则该块内部滚动
 
 REGISTER_TEST(md_live_block_height_cap,
-              "md_live_edit: 单块高度封顶 0.7×视口高（spec §5 #5，M9）", {
+              "md_live_edit: 单块高度封顶 0.7×视口高", {
     using module::markdown::mdLiveCappedInputHeight;
     using module::markdown::kMdLiveBlockCapRatio;
 
@@ -714,7 +696,7 @@ REGISTER_TEST(md_live_block_height_cap,
     // ④ 无视口信息（防御）：不封顶
     DOCTEST_CHECK_EQ(mdLiveCappedInputHeight(90000.0f, 0.0f), 90000.0f);
     DOCTEST_CHECK_EQ(mdLiveCappedInputHeight(90000.0f, -1.0f), 90000.0f);
-    // ⑤ 比例常量 = spec 原文 0.7
+    // ⑤ 比例常量本身 = 0.7
     DOCTEST_CHECK(nearEq(kMdLiveBlockCapRatio, 0.7f));
     return true;
 })

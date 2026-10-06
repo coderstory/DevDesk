@@ -1,5 +1,11 @@
 // tests/test_modules/test_home.cpp
-// Home 模块测试：P12 仪表盘真实数据（HomeService）+ 调用日志清理
+// Home 模块测试：仪表盘真实数据聚合 + 格式化纯函数 + Token 速率卡片口径。
+// 跨文件前提：
+//   - 「逾期」的谓词单源在 core/overdue.h：首页 getStats 走 COUNT 聚合、Todo 页
+//     listOverdue 走列表查询，两条 SQL 用同一份 kWhereSql。口径分叉（改列名 /
+//     改比较符 / 只改其中一处）由本文件的一致性用例钉住。
+//   - Token 数字口径 = 最近一次成功调用的速率（core/call_rate.h 的 tps 单源），
+//     非累计、非实时；无数据时是空态「--」。
 #include "doctest.h"
 #include "test_support.h"
 #include "core/call_rate.h"
@@ -9,7 +15,7 @@
 #include "core/proxy_stats.h"
 #include "core/time.h"
 #include "module_home/home_service.h"
-// 跨模块逾期口径一致性用例（THS-04）需要同时问首页与 Todo 两条读取路径
+// 跨模块逾期口径一致性用例需要同时问首页与 Todo 两条读取路径
 #include "module_todo/todo_service.h"
 
 #include <eui/dsl.h>
@@ -24,13 +30,12 @@
 
 namespace {
 
-// 临时 db 文件名前缀（共享工厂 test_support::tempDbPath / TestEnv 的第一实参）
 constexpr const char* kDbPrefix = "devdesk_test_homesvc_";
 
 } // namespace
 
-// 原 home_pageid_first（`PageId::Home == 0`）已删：与 test_todo.cpp 的
-// todo_pageid 同款顺序不变量，两处各写一份；留 test_todo 那一份即可。
+// PageId 顺序不变量（PageId::Home == 0）只在 test_todo.cpp 的 todo_pageid 钉一份，
+// 本文件刻意不重复。
 
 REGISTER_TEST(home_service_real_stats,
               "HomeService: 仪表盘统计聚合 + 纯函数",
@@ -73,7 +78,6 @@ REGISTER_TEST(home_service_real_stats,
         "(1, 'POST', '/v1/messages', " + std::to_string(now - day) + ")"
     ).isOk());
 
-    // getStats 聚合
     module::home::HomeService svc(sq);
     auto r = svc.getStats(5);
     DOCTEST_REQUIRE_MESSAGE(r.isOk(), "getStats 失败: " + r.errorMessage());
@@ -164,8 +168,6 @@ REGISTER_TEST(home_prune_call_logs,
     return true;
 })
 
-// ==================== Token 速率卡片（设计 2026-09-22-token-rate-card） ====================
-
 extern "C" ::core::Module* create_home_module();
 
 REGISTER_TEST(home_token_format_functions,
@@ -205,27 +207,22 @@ REGISTER_TEST(home_token_rate_card_compose,
         DOCTEST_CHECK(ui.find("home.stat.todo") != nullptr);
         DOCTEST_CHECK(ui.find("home.stat.overdue") != nullptr);
         DOCTEST_CHECK(ui.find("home.stat.api") != nullptr);
-        // 2026-09-28 根因修：空闲态（无采样/无流）不挂周期 timer——旧 0.5s
-        // 常挂 onTimer 会驱动整页 2Hz 重排重绘 + 常驻 animating_，反复打断
-        // 5 卡 hover 0.1s 过渡致闪烁；空闲静默后过渡完整跑完、hover 命中
-        // 缓存恢复有效
+        // 空闲态（无采样/无流）不挂周期 timer：常挂 onTimer 会驱动整页 2Hz 重排
+        // 重绘 + 常驻 animating_，反复打断 5 卡 hover 0.1s 过渡致闪烁；空闲静默后
+        // 过渡完整跑完、hover 命中缓存恢复有效
         DOCTEST_CHECK(ui.find("home.stat.tokens.timer") == nullptr);
-        // 未加载数据（onStart 未跑）→ 错误态 badge 是「加载失败」而非
-        // 「尚未加载」（W7：错误态与加载中区分）
+        // 未 onStart（整页没加载成功）→ 错误态 badge 是「加载失败」，与「加载中」区分
         const auto* notesBadge = ui.find("home.stat.notes.badge");
         DOCTEST_REQUIRE(notesBadge != nullptr);
         DOCTEST_CHECK(notesBadge->text.find("加载失败") != std::string::npos);
         const auto* number = ui.find("home.stat.tokens.number");
         DOCTEST_REQUIRE(number != nullptr);
-        // ①（2026-09-29 改口径）：数字来自最近一次成功调用 → 未加载到数据时
-        // 是空态「--」，不再是实时速率「0」
+        // 数字来自最近一次成功调用；未加载到数据时是空态「--」，不是实时速率「0」
         DOCTEST_CHECK_EQ(number->text, std::string("--"));
         const auto* badge = ui.find("home.stat.tokens.badge");
         DOCTEST_REQUIRE(badge != nullptr);
-        // 未 onStart（整页没加载成功）→ 与 notes 卡同口径「加载失败」，
-        // 不冒充「暂无成功调用」
+        // 同 notes 卡口径「加载失败」，不冒充「暂无成功调用」
         DOCTEST_CHECK(badge->text.find("加载失败") != std::string::npos);
-        // 旧口径作废：副标题不再出现「累计」（用户原话要求）
         DOCTEST_CHECK(badge->text.find("累计") == std::string::npos);
         mod->onStop();
     }
@@ -248,13 +245,11 @@ REGISTER_TEST(home_token_rate_card_compose,
         DOCTEST_REQUIRE(badge != nullptr);
         DOCTEST_CHECK(badge->text.find("1 路") != std::string::npos);
         DOCTEST_CHECK(badge->text.find("生成中") != std::string::npos);
-        // 旧口径作废：流式档也不再出现「累计」
         DOCTEST_CHECK(badge->text.find("累计") == std::string::npos);
         // 本节未 onStart（整页没加载）→ 数字是空态，副标题不承诺「最近一次」
-        //（「最近一次」字样由已加载的档位断言：见 test_ui_modern 的
-        // 「最近一次成功调用」与下方 home_last_rate_and_hourly_tokens）
+        //（该字样由已加载档位断言，见下方 home_last_rate_and_hourly_tokens）
         DOCTEST_CHECK(badge->text.find("最近一次") == std::string::npos);
-        // 流式中：周期重绘挂载（2026-09-28 起 1s、仅活动期）
+        // 流式中：周期重绘挂载（1s、仅活动期）
         DOCTEST_CHECK(ui.find("home.stat.tokens.timer") != nullptr);
         mod->onStop();
 
@@ -265,8 +260,7 @@ REGISTER_TEST(home_token_rate_card_compose,
     return true;
 })
 
-// ==================== ①「最近一次调用速率」/ ③「每小时 token 合计」 ============
-// 2026-09-29 真机反馈：这两条口径都是「手算值与查询值必须相等」的数值断言——
+// 「最近一次调用速率」/「每小时 token 合计」是「手算值与查询值必须相等」的数值断言：
 // 把速率算成累计/实时值、把分布图退回百分比或按绝对小时号取下标，本用例就红。
 REGISTER_TEST(home_last_rate_and_hourly_tokens,
               "HomeService: 最近一次成功调用速率 + 逐时 token 合计（手算对照）",
@@ -338,7 +332,7 @@ REGISTER_TEST(home_last_rate_and_hourly_tokens,
     // 阶段 C：补齐三维（成功 / 非 2xx / 昨天）→ 手算值对照
     //   2 时  200 / 1200ms / out  60  → 速率 50.0
     //   3 时  500 /  100ms / out NULL → 非 2xx + 无用量：速率与合计都不参与
-    //   5 时  200 / 2400ms / out 240  → 速率 100.0（**最近一次成功调用**）
+    //   5 时  200 / 2400ms / out 240  → 速率 100.0（最近一次成功调用）
     //   昨天  200 / 1000ms / out 777  → 日界外：不进逐时合计、也不是「最近」
     DOCTEST_REQUIRE(sq.exec(
         "INSERT INTO claude_call_logs (profile_id, method, path, status_code, "
@@ -353,8 +347,8 @@ REGISTER_TEST(home_last_rate_and_hourly_tokens,
         std::to_string(dayStart - 3600 * 2) + ")").isOk());
     {
         module::home::HomeService svc(sq);
-        // ① 手算：240 / (2400/1000) = 100.0（5 时那条：2xx 且 output>0 中
-        // started_at 最大；3 时的 500 更晚但非成功、昨天的更早）
+        // ① 手算：240 / (2400/1000) = 100.0（5 时那条：2xx 且 output>0 中 started_at
+        // 最大；3 时的 500 更晚但非成功、昨天的更早）
         auto lr = svc.getLastCallRate();
         DOCTEST_REQUIRE(lr.isOk());
         DOCTEST_CHECK(lr.value().hasValue);
@@ -423,15 +417,7 @@ REGISTER_TEST(home_last_rate_and_hourly_tokens,
     }
     return true;
 })
-// 「逾期」的谓词单源在 core/overdue.h：首页 getStats 走 COUNT 聚合、Todo 页
-// listOverdue 走列表查询。两条 SQL 用同一份 kWhereSql，本用例拿同一批种子数据
-// 同时问两边，把它们钉在同一个数字上——口径再分叉（改列名 / 改比较符 / 只改
-// 其中一处）这里就红。
-// ==================== 跨模块逾期口径一致性（THS-04） ====================
-// 「逾期」的谓词单源在 core/overdue.h：首页 getStats 走 COUNT 聚合、Todo 页
-// listOverdue 走列表查询。两条 SQL 用同一份 kWhereSql，本用例拿同一批种子数据
-// 同时问两边，把它们钉在同一个数字上——口径再分叉（改列名 / 改比较符 / 只改
-// 其中一处）这里就红。
+// 同一批种子数据同时问两条读取路径，把它们钉在同一个数字上——口径分叉即红
 REGISTER_TEST(home_todo_overdue_consistency,
               "HomeService/TodoService: 逾期口径单源一致性",
               {
@@ -449,9 +435,9 @@ REGISTER_TEST(home_todo_overdue_consistency,
     const int64_t now = static_cast<int64_t>(std::time(nullptr));
     const int64_t day = 86400;
 
-    // 种子：覆盖「无截止 / 逾期未完成 / 逾期已完成 / 未到期」四种组合
-    // （TIN-08 后 REGISTER_TEST 走 __VA_ARGS__，花括号初始化列表的顶层逗号
-    //  不再被当宏实参分隔符，可直接在用例体内初始化）
+    // 种子：覆盖「无截止 / 逾期未完成 / 逾期已完成 / 未到期」四种组合。
+    // REGISTER_TEST 走 __VA_ARGS__，花括号初始化列表的顶层逗号不会被当宏实参
+    // 分隔符，可直接在用例体内初始化
     struct Seed {
         const char* title;
         std::optional<int64_t> dueAt;

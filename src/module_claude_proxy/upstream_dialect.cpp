@@ -18,7 +18,7 @@ namespace module::claude {
 
 namespace {
 
-// ==================== 头部键大小写不敏感操作 ====================
+// 头部键大小写不敏感操作
 // HTTP 头名大小写不敏感，而 headers 是 std::map<std::string,...>（大小写敏感）：
 // 同名不同大小写会并存 → 上游收到重复头。一律先清干净。
 
@@ -48,7 +48,7 @@ void putHeader(std::map<std::string, std::string>& headers,
     headers[canonicalName] = value;
 }
 
-// ==================== URL host 解析 ====================
+// URL host 解析
 
 // 取 URL 的 host（小写，去 scheme / userinfo / port / path）；解析不出返回空串
 std::string hostOf(const std::string& url) {
@@ -75,7 +75,7 @@ bool isOpencodeHost(const std::string& host) {
                         "." + suffix) == 0;
 }
 
-// ==================== 模型名标记 ====================
+// 模型名标记
 
 constexpr const char* kOneMMarker = "[1M]";
 constexpr size_t kOneMMarkerLen = 4;
@@ -86,7 +86,7 @@ std::string trimTrailingWs(const std::string& s) {
     return s.substr(0, e);
 }
 
-// ==================== 顶层 JSON 字段定位（只读扫描） ====================
+// 顶层 JSON 字段定位（只读扫描）
 // 拿到顶层 "model" 值的原始字节区间，只定点替换这一小段，其余字节原样发上游。
 // 不用「解析整个 body 再重新序列化」：platform::json 序列化按 std::map 键序
 // 输出且浮点走 %.17g——对透明代理是无谓扰动。通用扫描器在 json_scan.h，
@@ -102,7 +102,7 @@ bool findTopLevelStringSpan(const std::string& s, const std::string& key,
 
 } // namespace
 
-// ==================== UpstreamDialect ====================
+// UpstreamDialect
 
 UpstreamDialect UpstreamDialect::anthropicDefault() {
     return UpstreamDialect{Kind::AnthropicDefault};
@@ -166,7 +166,7 @@ bool UpstreamDialect::normalizeBody(std::string& body) const {
     return normalizeModelInBody(body);
 }
 
-// ==================== 方言覆盖文本 ====================
+// 方言覆盖文本
 
 std::optional<UpstreamDialect::Kind> dialectKindFromText(const std::string& text) {
     if (text == "anthropic_default") {
@@ -192,7 +192,7 @@ const char* dialectKindDisplayName(UpstreamDialect::Kind kind) {
     return "anthropic";
 }
 
-// ==================== 模型名归一 ====================
+// 模型名归一
 
 std::string stripOneMSuffix(const std::string& model) {
     const std::string trimmed = trimTrailingWs(model);

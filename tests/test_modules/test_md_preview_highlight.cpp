@@ -1,12 +1,10 @@
 // tests/test_modules/test_md_preview_highlight.cpp
-// Phase 3 ③：预览代码块语法高亮——
-//   1. md_preview_highlight 纯函数：lang / displayText / 逐行 code run / 颜色断言
-//   2. 与编辑器 MdHighlighter 的同源等价：同一围栏块，预览逐行 code run 的
-//      行内偏移 + 色表与编辑器全文档 runsForLine 命中内容行的结果一致
-//   3. 脏块缓存：(stableId, hash) 命中 / 编辑改块重算 / 块删除 prune /
-//      主题切换色表变更整体作废
-//   4. 防御：非单围栏块源码 → ok=false（调用方回退 components::markdown）
-//   5. CRLF：\r 不进显示串与 run 字节区间
+// 预览代码块高亮单测：逐行 code run / 受支持 lang 多色 / 与编辑器 MdHighlighter 在 fallback
+// 路径上同源等价 / 脏块缓存 (stableId, hash) 的命中与作废 / 非单围栏防御 / CRLF /
+// info 取首词 / 耗时记录。
+// 跨文件前提：
+//   - 预览侧对受支持 lang 出多色，编辑器侧 MdHighlighter 仍逐行单色。这是有意分叉不是 bug，
+//     「预览 == 编辑器」只在未覆盖 lang 的 fallback 路径成立，不要拿它当回归去对齐编辑器。
 #include "doctest.h"
 #include "core/theme.h"
 #include "module_markdown/md_block_model.h"
@@ -31,13 +29,13 @@ using module::markdown::segmentMarkdownBlocks;
 
 namespace {
 
-// 与 test_md_highlight 同风格的测试色（值本身任意可辨）
+// 测试色表：值本身任意可辨，只要求两两不同
 const eui::Color kMark{1.0f, 0.0f, 0.0f, 1.0f};
 const eui::Color kCode{0.0f, 1.0f, 0.0f, 1.0f};
 const eui::Color kLink{0.0f, 0.0f, 1.0f, 1.0f};
 const eui::Color kList{1.0f, 1.0f, 0.0f, 1.0f};
 const eui::Color kQuote{1.0f, 0.0f, 1.0f, 1.0f};
-// 关键字多色 4 token（Phase 3 ⑤）
+// 受支持 lang 的多色 token
 const eui::Color kKw{0.2f, 0.2f, 0.9f, 1.0f};
 const eui::Color kStr{0.9f, 0.6f, 0.1f, 1.0f};
 const eui::Color kCmt{0.5f, 0.5f, 0.5f, 1.0f};
@@ -52,7 +50,6 @@ bool colorEq(const eui::Color& a, const eui::Color& b) {
     return a.r == b.r && a.g == b.g && a.b == b.b && a.a == b.a;
 }
 
-// 毫秒计时（与 test_md_highlight.cpp 同款工具函数）
 double msSince(std::chrono::steady_clock::time_point t) {
     return std::chrono::duration<double, std::milli>(
                std::chrono::steady_clock::now() - t)
@@ -102,12 +99,12 @@ REGISTER_TEST(md_preview_hl_basic,
     DOCTEST_CHECK(hl.ok);
     DOCTEST_CHECK_EQ(hl.lang, std::string("text"));
     DOCTEST_CHECK_EQ(hl.displayText, std::string("int a;\nint b;"));
-    // lang 标签不显示：runs[0] 直接是首内容行（不再有 marker 色标签 run）
+    // lang 标签不显示：runs[0] 就是首内容行，没有 lang marker 色 run
     DOCTEST_REQUIRE(hl.runs.size() >= 1);
     DOCTEST_CHECK(colorEq(hl.runs[0].color, kCode));
-    // 内容行整行 code 色，空行无 run（"int a;\nint b;"：line1 [0,6)、line2 [7,13)）
-    DOCTEST_CHECK(colorEq(runAtByte(hl, 0)->color, kCode));   // "int a;" 首字节
-    DOCTEST_CHECK(colorEq(runAtByte(hl, 5)->color, kCode));   // "int a;" 行内
+    // 内容行整行 code 色；换行处无 run，"int a;" 占 [0,6)、"int b;" 占 [7,13)
+    DOCTEST_CHECK(colorEq(runAtByte(hl, 0)->color, kCode));   // 首字节
+    DOCTEST_CHECK(colorEq(runAtByte(hl, 5)->color, kCode));   // 行内
     DOCTEST_CHECK_EQ(runAtByte(hl, 0)->byteStart, 0);
     DOCTEST_CHECK_EQ(runAtByte(hl, 0)->byteEnd, 6);
     DOCTEST_CHECK_EQ(runAtByte(hl, 7)->byteEnd, 13);
@@ -126,19 +123,16 @@ REGISTER_TEST(md_preview_hl_no_lang, "md_preview_highlight: 无 lang 无标签�
 
 REGISTER_TEST(md_preview_hl_editor_equivalence,
               "md_preview_highlight: 未覆盖 lang 与编辑器 MdHighlighter token 同源等价", {
-    // 编辑器：全文档 runsForLine；围栏内容行 → 整行单 run（色 = colors.code）
-    // 预览：块源码 → displayText 坐标逐行 code run
-    // 等价断言：去掉 lang 标签行后，两者逐行 run 的行内字节区间 + 颜色完全一致。
-    // 注意：受支持语言（cpp/python）的预览多色是与编辑器的【有意分叉】
-    //（编辑器本批仍逐行单色，见 md_preview_hl_cpp_multicolor），等价锁
-    // 只对 fallback 路径成立
+    // 编辑器走全文档 runsForLine，围栏内容行给整行单 run（colors.code）；预览走块源码 +
+    // displayText 坐标，两者行内字节区间可直接比。等价只在 fallback 路径成立：受支持 lang
+    // 的预览多色是与编辑器（仍逐行单色）的有意分叉，见 md_preview_hl_cpp_multicolor。
     const std::string doc = "# Title\n\n```text\nx = 1\ny = 2\n```\n\ntail\n";
     const std::string src = fenceSourceOf(doc);
     DOCTEST_REQUIRE(!src.empty());
 
     MdHighlighter h;
     h.setColors(testColors());
-    // 内容行 1 "x = 1"（doc 坐标）：编辑器整行 1 个 code run（全文档坐标系）
+    // "x = 1" 在 doc 里的偏移就是编辑器整行 run 的起点（全文档坐标系）
     const size_t docLineStart = doc.find("x = 1");
     const std::string line = "x = 1";
     const auto editorRuns = h.runsForLine(
@@ -161,7 +155,8 @@ REGISTER_TEST(md_preview_hl_editor_equivalence,
     DOCTEST_CHECK_EQ(static_cast<size_t>(prevRun->byteEnd),
                      dispStart + line.size());
 
-    // 主题 token 路径也同源：编辑器与预览色表来自同一 mdHighlightColors
+    // 色表映射的纯度检查：同一 theme 连续两次取值必须逐通道相同。它并不证明编辑器与预览
+    // 真的同源——那要另去比对 MdHighlighter 内部的色表。
     const auto tokens = core::theme::current();
     const auto c1 = mdHighlightColors(tokens);
     const auto c2 = mdHighlightColors(tokens);
@@ -188,10 +183,10 @@ REGISTER_TEST(md_preview_hl_cpp_multicolor,
     DOCTEST_CHECK(colorEq(exactRun(hl, cmt, cmt + 4)->color, kCmt));
     const size_t seven = disp.find("7;");             // = 31
     DOCTEST_CHECK(colorEq(exactRun(hl, seven, seven + 1)->color, kNum));
-    // 默认段（标识符/运算符）= code 色，与编辑器现状视觉连续
+    // 默认段（标识符 / 运算符）= code 色
     const size_t aeq = disp.find("a =");
     DOCTEST_CHECK(colorEq(runAtByte(hl, aeq)->color, kCode));
-    // 空白间隙（\n）不被覆盖：结构不变式与 fallback 一致
+    // 行末 \n 不进 run，与 fallback 路径同结构
     DOCTEST_CHECK(runAtByte(hl, 3) == nullptr);
     return true;
 })
@@ -213,7 +208,7 @@ REGISTER_TEST(md_preview_hl_python_multicolor,
     DOCTEST_CHECK(colorEq(exactRun(hl, str, str + 3)->color, kStr));
     DOCTEST_CHECK(runAtByte(hl, 14) == nullptr);  // \n 间隙
     DOCTEST_CHECK(runAtByte(hl, 15) == nullptr);  // 缩进空格不入 run
-    // 有意分叉：编辑器同文本仍是整行单 code 色（本批只改预览）
+    // 有意分叉：编辑器同文本仍是整行单 code 色（只改了预览侧）
     const std::string doc = "```python\ndef f():  # go\n```\n";
     MdHighlighter h;
     h.setColors(testColors());
@@ -229,12 +224,12 @@ REGISTER_TEST(md_preview_hl_cache, "md_preview_highlight: 脏块缓存命中/重
     const std::string src = "```cpp\nint a;\n```\n";
     const uint64_t hash = module::markdown::mdBlockHash(src);
 
-    DOCTEST_CHECK(cache.get(7, hash) == nullptr);  // 冷 miss
+    DOCTEST_CHECK(cache.get(7, hash) == nullptr);
     cache.put(7, hash, mdPreviewCodeHighlight(src, testColors()));
     DOCTEST_REQUIRE(cache.get(7, hash) != nullptr);
     DOCTEST_CHECK(cache.get(7, hash)->ok);
-    DOCTEST_CHECK(cache.get(7, hash + 1) == nullptr);  // 脏块重算
-    DOCTEST_CHECK(cache.get(8, hash) == nullptr);      // 别的块
+    DOCTEST_CHECK(cache.get(7, hash + 1) == nullptr);  // hash 变了即脏块，须重算
+    DOCTEST_CHECK(cache.get(8, hash) == nullptr);
 
     DOCTEST_CHECK_EQ(cache.size(), static_cast<size_t>(1));
     cache.put(8, hash + 100, mdPreviewCodeHighlight(src, testColors()));
@@ -242,7 +237,7 @@ REGISTER_TEST(md_preview_hl_cache, "md_preview_highlight: 脏块缓存命中/重
     cache.pruneActive({7});
     DOCTEST_CHECK_EQ(cache.size(), static_cast<size_t>(1));
     DOCTEST_CHECK(cache.get(8, hash + 100) == nullptr);
-    DOCTEST_CHECK(cache.get(7, hash) != nullptr);  // 7 不受 prune 影响
+    DOCTEST_CHECK(cache.get(7, hash) != nullptr);  // prune 只清名单外的块
 
     // 主题切换（色表变）→ 全部旧色条目作废
     MdHighlightColors other = testColors();
@@ -273,7 +268,7 @@ REGISTER_TEST(md_preview_hl_crlf, "md_preview_highlight: CRLF 不进显示串与
     DOCTEST_CHECK(hl.ok);
     DOCTEST_CHECK(hl.displayText.find('\r') == std::string::npos);
     DOCTEST_CHECK_EQ(hl.displayText, std::string("line one\n\nline two"));
-    // 空行无 run（byte 9 为空行位置的换行符，不被任何 run 覆盖）
+    // 空行无 run（byte 9 是空行位置的换行符，不被任何 run 覆盖）
     DOCTEST_CHECK(runAtByte(hl, 9) == nullptr);
     DOCTEST_CHECK(colorEq(runAtByte(hl, 10)->color, kCode));
     DOCTEST_CHECK_EQ(runAtByte(hl, 10)->byteEnd, 18);
@@ -304,13 +299,12 @@ REGISTER_TEST(md_preview_hl_perf,
     MdPreviewCodeCache cache;
     cache.setColors(testColors());
 
-    // 脏块全量重算一次（击键预算 8ms 见设计 §7 / md_highlight_perf：只打印记录，
-    // 不设墙钟红线——并发编译负载下墙钟不可作失败判据）
+    // 脏块全量重算一次。8ms 击键预算只作记录、不设墙钟红线：并发编译负载下墙钟不是可靠
+    // 的失败判据。
     const auto t0 = std::chrono::steady_clock::now();
     MdPreviewCodeHighlight hl = mdPreviewCodeHighlight(src, testColors());
     const double computeMs = msSince(t0);
-    // 原 `computeMs < 8.0` 改为非时间断言：证明脏重算这条路径真的跑到了
-    // （解析成功 + 产出了着色 run，5000 行 cpp 体必然非空）
+    // 这里只断言脏重算这条路径真的跑到了：解析成功 + 产出了着色 run（5000 行 cpp 体必然非空）。
     std::printf(
         "[perf] md_preview_highlight: 5000 行围栏脏重算 %.3f ms"
         "（预算 8ms，设计 §7；记录式，不设墙钟红线）\n",
@@ -327,8 +321,8 @@ REGISTER_TEST(md_preview_hl_perf,
         (void)p;
     }
     const double hitMs = msSince(t1);
-    // 单次命中均摊成本须远低于整块重算（Debug 构建下 10 万次查找总耗时
-    // 本就可能超过一次重算，故比较单位成本而非总量，防 flaky）
+    // 单次命中的均摊成本须远低于整块重算。比较单位成本而非总量：Debug 构建下 10 万次查找
+    // 的总耗时本就可能超过一次重算，用总量判会 flaky。
     DOCTEST_CHECK(hitMs / 100000.0 < computeMs);
     return true;
 })

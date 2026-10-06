@@ -268,7 +268,7 @@ void drawCcSwitchImportDialog(eui::Ui& ui, const eui::Screen& screen,
             12.0f, t.colors.textSecondary,
             {.y = kDescY, .height = kDescH, .lineHeight = 17.0f, .wrap = true});
 
-        // ---- 错误态：读库失败 ----
+        // 错误态：读库失败
         if (!st.loadError_.empty()) {
             ui_kit::drawDialogText(
                 ui, "claude.dialog.ccswitch.err", w, st.loadError_, 13.0f,
@@ -281,7 +281,7 @@ void drawCcSwitchImportDialog(eui::Ui& ui, const eui::Screen& screen,
                 13.0f, t.colors.textTertiary,
                 {.y = kListTopY, .height = 40.0f, .lineHeight = 20.0f});
         } else {
-            // ---- 全选 / 取消全选（button 文本，避 checkbox 头告警）----
+            // 全选 / 取消全选（button 文本，避 checkbox 头告警）
             const int selCount = static_cast<int>(
                 std::count(st.selected_.begin(), st.selected_.end(), true));
             const bool allSelected = (selCount == static_cast<int>(st.rows_.size()));
@@ -305,7 +305,7 @@ void drawCcSwitchImportDialog(eui::Ui& ui, const eui::Screen& screen,
                 })
                 .build();
 
-            // ---- 候选列表（scrollView，装不下时滚）----
+            // 候选列表（scrollView，装不下时滚）
             // 列表视口高 = 弹窗高 - 列表顶 - 底部按钮行 - 结果报告区（若有）
             const float resultAreaH =
                 st.resultLines_.empty() ? 0.0f
@@ -352,7 +352,7 @@ void drawCcSwitchImportDialog(eui::Ui& ui, const eui::Screen& screen,
                 .build();
         }
 
-        // ---- 结果报告区（已跑过一次导入时画）----
+        // 结果报告区（已跑过一次导入时画）
         if (!st.resultLines_.empty()) {
             const float resultAreaH =
                 std::min<float>(
@@ -375,7 +375,7 @@ void drawCcSwitchImportDialog(eui::Ui& ui, const eui::Screen& screen,
             }
         }
 
-        // ---- 底部按钮 ----
+        // 底部按钮
         ui_kit::DialogButtonSpec cancel;
         cancel.label = "关闭";
         cancel.fontSize = 14.0f;

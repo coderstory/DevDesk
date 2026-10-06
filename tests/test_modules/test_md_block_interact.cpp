@@ -1,18 +1,10 @@
 // tests/test_modules/test_md_block_interact.cpp
-// Phase 3 ⑤ 块级交互纯底座单测（md_block_interact + MdSyncMap hit 访问器）。
-// 几何用与 test_md_sync_map 同款的算术注入高度（非空行 × 10px），块高/行数
-// 全整数 → 期望值可精确推导：
-//   1. jump_codefence_exact：CodeFence 块点击——块顶 localY=0 精确落围栏首行
-//      （cursorByte == 块起始字节），块底 localY=H 钳到块末行（不越块），
-//      块中命中区间内；所有 targetLine 满足 lineStartOffset 往返一致。
-//   2. jump_per_line_roundtrip（⑤ 的核心承诺）：对每个编辑器行 L，取 ④ 正向
-//      映射 y=previewYForEditorLine(L) 反推点击（blockIndexAt(行首字节) 定位
-//      块 + 区域局部 y）→ 解析出的 targetLine == L 且 cursorByte == 行首字节
-//      ——预览逐行点击回编辑器逐行恒等（行首列，块边界/块内均精确）。
-//   3. jump_defensive：空表/越界块 → ok=false；localY 越界一律钳进块内。
-//   4. hover_state：enter 覆盖 + 迟到 leave 不误擦新 hover + 匹配 leave 清除
-//      + hovered(-1) 恒 false + reset。
-//   5. mix：rgb 线性混合、amount 钳 [0,1]、alpha 保留 base。
+// 预览点击→编辑器定位纯底座单测：块内命中、逐行往返恒等、越界防御、hover 状态机、混色。
+// 跨文件前提：
+//   - 块高不来自渲染层，而由 MdSyncMap 的高度回调注入：非空行 × 10px，块边界零误差，
+//     块高/行数全整数 → 期望值可精确推导。改 kDoc 结构时行号注释要跟着改。
+//   - 块归属只能按 blockIndexAt(行首字节) 判，不能按 y 反推——y 反推会跨块错位；
+//     正向 previewYForEditorLine 与反向 mdResolvePreviewJump 必须成对使用。
 #include "doctest.h"
 #include "module_markdown/md_block_interact.h"
 #include "module_markdown/md_block_model.h"
@@ -112,7 +104,6 @@ REGISTER_TEST(md_block_interact_jump_codefence_exact,
     DOCTEST_REQUIRE(h > 0.0f);
     DOCTEST_REQUIRE(map.blockLineCount(k) >= 5);  // 开栏 + 3 内容 + 闭栏
 
-    // 块顶点击：落围栏首行（``` 行），cursorByte == 块起始字节
     const MdPreviewJump top = mdResolvePreviewJump(text, blocks, map, k, 0.0f);
     DOCTEST_REQUIRE(top.ok);
     DOCTEST_CHECK_EQ(top.blockIndex, k);
@@ -122,14 +113,13 @@ REGISTER_TEST(md_block_interact_jump_codefence_exact,
     DOCTEST_CHECK_EQ(lineStartOffset(text, top.targetLine), top.cursorByte);
     DOCTEST_CHECK_EQ(byteOffsetToLine(text, top.cursorByte), top.targetLine);
 
-    // 块底点击（localY=H，反函数 frac=1 会落到「下一块首行」）：钳回本块末行
+    // 块顶 localY=H：反函数的 frac=1 会落到「下一块首行」，必须钳回本块末行
     const MdPreviewJump bottom = mdResolvePreviewJump(text, blocks, map, k, h);
     DOCTEST_REQUIRE(bottom.ok);
     DOCTEST_CHECK_EQ(bottom.targetLine,
                      map.blockFirstLine(k) + map.blockLineCount(k) - 1);
     DOCTEST_CHECK(bottom.cursorByte < fence.end);
 
-    // 块中点击：落在本块行区间内且行首字节自洽
     const MdPreviewJump mid = mdResolvePreviewJump(text, blocks, map, k, h * 0.5f);
     DOCTEST_REQUIRE(mid.ok);
     DOCTEST_CHECK(mid.targetLine >= map.blockFirstLine(k));
@@ -145,12 +135,13 @@ REGISTER_TEST(md_block_interact_jump_per_line_roundtrip,
     MdSyncMap map = buildMap(model, text, 0);
     const auto& blocks = model.blocks();
 
-    // 对每行 L：y = ④ 正向映射；块归属 = 行首字节 blockIndexAt；区域局部 y =
-    // y - topY_k → 反查必须回到 L 行行首（⑤ 点击定位的核心正确性承诺）
+    // 点击定位的核心承诺：每个编辑器行 L 正映射出 y，再按「行首字节定位块 + 区域局部 y」
+// 反查，必须精确回到 L 的行首（块边界与块内均如此）
     for (int L = 0; L < countLines(text); ++L) {
         const size_t lineByte = lineStartOffset(text, L);
-        // 文尾换行后的「幻影末空行」：编辑器光标可停留，但预览不渲染该行
-        // （末块可视高度止于最后一个非空行）→ 点击不可达，恒等语义不适用
+        // 文尾换行后的「幻影末空行」：编辑器光标可停留，但预览不渲染该行（末块可视高度
+        // 止于最后一个非空行）→ 点击不可达，恒等语义不适用。这行 continue 不可去掉，
+        // 去掉后 L 会拿一个渲染不出的 y 去反查，断言必红。
         if (lineByte >= text.size() && !text.empty() && text.back() == '\n') continue;
         const size_t k = model.blockIndexAt(lineByte);
         DOCTEST_REQUIRE(k < blocks.size());
@@ -177,15 +168,13 @@ REGISTER_TEST(md_block_interact_jump_defensive,
     const std::string text = kDoc;
     const auto& blocks = model.blocks();
 
-    // 空表（未 rebuild）→ 一律 ok=false
     MdSyncMap emptyMap;
     DOCTEST_CHECK(!mdResolvePreviewJump(text, blocks, emptyMap, 0, 0.0f).ok);
 
     MdSyncMap map = buildMap(model, text, 0);
-    // 块下标越界 → ok=false
     DOCTEST_CHECK(!mdResolvePreviewJump(text, blocks, map, map.blockCount(), 1.0f).ok);
 
-    // localY 越界：负值钳到块首行；超大钳到块末行（均仍 ok 且行在块区间内）
+    // localY 越界一律钳进块内而不报错：负值 → 块首行，超大 → 块末行
     const MdPreviewJump neg = mdResolvePreviewJump(text, blocks, map, 0, -50.0f);
     DOCTEST_REQUIRE(neg.ok);
     DOCTEST_CHECK_EQ(neg.targetLine, map.blockFirstLine(0));
@@ -214,7 +203,7 @@ REGISTER_TEST(md_block_interact_hover_state,
     DOCTEST_CHECK(hs.hovered(4));
     DOCTEST_CHECK(!hs.hovered(3));
 
-    // 匹配的 leave 才清除
+    // leave 按 id 匹配：只有与当前 stableId 相同的那次才清除
     hs.leave(4);
     DOCTEST_CHECK(!hs.hovered(4));
     DOCTEST_CHECK_EQ(hs.stableId, -1);
@@ -236,7 +225,7 @@ REGISTER_TEST(md_block_interact_mix,
     DOCTEST_CHECK(std::fabs(mid.b - 0.5f) < 1e-6f);
     DOCTEST_CHECK(std::fabs(mid.a - 0.8f) < 1e-6f);  // alpha 保留 base
 
-    // amount=0 → base 原色；越界钳到 [0,1] 端点
+    // amount 越界一律钳到 [0,1] 端点，0 → 原封不动取 base
     mid = mdHoverMix(white, black, 0.0f);
     DOCTEST_CHECK(std::fabs(mid.r - 1.0f) < 1e-6f);
     mid = mdHoverMix(white, black, -1.0f);

@@ -55,7 +55,7 @@ public:
     int configuredProxyPort() const { return configuredProxyPort_; }
     void setConfiguredProxyPort(int port);
 
-    // ---- 在途流式上游登记 ----
+    // 在途流式上游登记
     // ProxyRouter 启动上游流后立即 registerActiveStream；stop() / 析构先调
     // cancelActiveStreams() 再停 server——否则 httplib worker 阻塞在
     // readChunk，Server::stop() 的 join 要等流自然结束（Claude 活动生成期
@@ -64,7 +64,7 @@ public:
         const std::shared_ptr<platform::http::StreamingResponse>& stream);
     void cancelActiveStreams();
 
-    // ---- 最近代理请求事件（桌宠气泡内容源）----
+    // 最近代理请求事件（桌宠气泡内容源）
     // 每条请求终态记一次 statusCode 进单槽（后写覆盖先写）：0 = 上游不可达；
     // 其余为回给客户端的状态码。takeProxyEvent() 读走即清（take 语义，一个
     // 事件最多弹一次）；滞留超 kProxyEventFreshSec 作废丢弃（窗口 10min，

@@ -1,39 +1,30 @@
 #!/usr/bin/env bash
-# scripts/check-quota-shutdown-order.sh
-# 余量链停机顺序静态守卫（M5）——「顺序错了就是悬垂」用**代码**保证，不靠注释。
+# 余量链停机顺序静态守卫：把 src/module_claude_proxy/claude_module.cpp 的
+# stopQuotaRefresh() 释放顺序钉成会红的断言。顺序错了就是悬垂。
 #
-# ── 它在守什么 ─────────────────────────────────────────────────────
-# src/module_claude_proxy/claude_module.cpp 的 stopQuotaRefresh() 有一条不可
-# 协商的释放顺序：
+# 它在守的不可协商顺序：
+#   quotaTestThread_.join()                            ← 「测试连接」线程必须先收：留
+#                                                          joinable 即析构 std::terminate，
+#                                                          且工作线程捕获了 this
+#   quotaRefresher_->stopAll(); quotaRefresher_.reset()  ← 引用 credentials/store
+#   quotaCredentials_.reset()
+#   quotaStore_.reset()                                 ← 必须最后：store 先死，刷新器
+#                                                          下一次扫描解引用即 UB
 #
-#     quotaTestThread_.join()   ← 「测试连接」线程必须先收（留 joinable 即析构
-#                                 std::terminate，且工作线程捕获了 this）
-#     quotaRefresher_->stopAll() + quotaRefresher_.reset()   ← 引用 credentials/store
-#     quotaCredentials_.reset()
-#     quotaStore_.reset()       ← **必须最后**：store 先死，刷新器下一次扫描解引用即 UB
+# 「顺序」是纯形态不变式，做成运行时用例要造一条在途的 quotaTestThread_（该路径要真发
+# 一次 provider 查询，见 runQuotaTestConnection），代价是真网络 + 极脆的时序编排，断言到
+# 的还只是「没崩」。形态守卫直接对着源码顺序断言，成本为零。运行时那条另有覆盖：
+# tests/ 的 test_claude_quota_store.cpp::shutdown_lifecycle。
 #
-# 这段顺序此前**只有注释**在说。静态审计（2026-10-03 M5）用两次变异实测过它的
-# 零覆盖：把 quotaStore_.reset() 挪到最前 → 全量 1257 例零新增失败；把
-# `if (quotaTestThread_.joinable()) quotaTestThread_.join();` 整行删掉 → 同样零覆盖。
-# 两条最贵的并发契约，一条测试都没有。
+# 断言：
+#   A. 四个动作各自必须命中，且都落在 stopQuotaRefresh() 函数体内（比对只取函数体内第一
+#      条命中；同一动作在函数体内重复出现，本守卫不报红——「恰好一次」不是机器判据）。
+#   B. 行号严格递增：join < refresher.reset < credentials.reset < store.reset，倒序即悬垂。
+#   C. join 那一行必须带 joinable() 守卫：裸 join() 在线程没起时是 UB。
+#   D. --self-test 喂构造的坏输入（store reset 挪最前 / 删掉整行 join / 去掉 joinable
+#      守卫）必须逐条报红，好树必须报绿——恒红守卫比没有守卫更糟。
 #
-# ── 为什么用源码形态守卫而不是运行时用例 ────────────────────────────
-# 「顺序」是一个**纯形态**不变式：把它做成运行时用例需要构造一条在途的
-# quotaTestThread_（该路径要真发一次 provider 查询，见 runQuotaTestConnection），
-# 代价是真网络 + 极脆的时序编排，而它断言的仍然只是「没崩」。形态守卫直接对着
-# 源码顺序断言，成本为零、确定性为 100%。**两条都用**：形态守卫在本脚本，
-# 生命周期用例在 tests/（见 test_claude_quota_store.cpp 的 shutdown_lifecycle）。
-#
-# ── 断言（四条）────────────────────────────────────────────────────
-#   A. **四个动作各恰好命中一次**，且都在 stopQuotaRefresh() 函数体内。
-#   B. **行号严格递增**：join < refresher.reset < credentials.reset < store.reset。
-#      顺序颠倒就是悬垂，必须报红。
-#   C. join 那行必须带 `joinable()` 守卫（裸 join() 在线程没起时是 UB）。
-#   D. **自证非恒真**（--self-test）：喂构造的坏输入（把 store reset 挪最前 /
-#      删掉整行 join / 去掉 joinable 守卫），必须逐条报红。
-#      一条从不变绿的守卫等于没写——这是本项目反复翻车的那类假绿。
-#
-# 退出码：0 = 通过；1 = 违规；2 = 环境错（**不静默绿**）
+# 退出码：0 = 通过；1 = 违规；2 = 环境错（不静默绿）
 #
 # 用法：bash scripts/check-quota-shutdown-order.sh [--root DIR] [--self-test]
 set -uo pipefail
@@ -68,11 +59,10 @@ if [ ! -f "$ROOT/$TARGET_REL" ]; then
 fi
 
 # 从 stopQuotaRefresh() 的函数签名起，到它**闭合的**那一行 `}` 为止，抽出函数体。
-# ⚠ 必须按**花括号深度**判定结束，不能用「第一行顶格/缩进的 `}`」——真实文件里
-#   stopQuotaRefresh 体内先撞上的是 `if (quotaRefresher_) { ... }` 的收尾 `}`
-#   （claude_module.cpp:920），按「第一个 }」截断会把 quotaCredentials_/quotaStore_
-#   两行切在块外 → 守卫在**好树上就报红**（恒红守卫比没有守卫更糟）。
-# 行内注释与字符串里的花括号先剥掉，否则注释里一个 `}` 就能提前截断。
+# 必须按**花括号深度**判定结束，不能取「第一个 `}`」——真实文件里 stopQuotaRefresh 体内
+# 先撞上的是 `if (quotaRefresher_) { ... }` 的收尾 `}`，按第一个 `}` 截断会把
+# quotaCredentials_/quotaStore_ 两行切在块外 → 守卫在**好树上就报红**。
+# 行内注释与字符串字面量里的花括号必须先剥掉，否则注释里一个 `}` 就能提前截断。
 stop_body() {
     awk '
         # 认**定义**不认调用：`stopQuotaRefresh();`（析构 :69 与 onStop :405 各
@@ -105,13 +95,12 @@ check_order() {
     fi
 
     # 从头一行开始，故行号可与 stop_body 的输出直接对齐比较。
-    # 四个动作各取第一条命中（函数体内不应出现第二次；A 条另查重复）。
+    # 四个动作各取第一条命中——A 条只查「有没有命中」，同一动作在函数体内重复出现不报红。
     local violations=0
     local join_line
     join_line="$(printf '%s\n' "$body" | grep -n 'quotaTestThread_\.join()' | head -1 | cut -d: -f1)"
-    # C 的判据：**join 那一行本身**必须带 joinable() 守卫。不能用「join 行存在」
-    # 顺带推出「守卫存在」—— 那是复制粘贴式的判据错位（本脚本第一版就这么写，
-    # 自测立刻报出「裸 join 仍绿」，当场拆穿）。裸 join() 在线程没起时是 UB。
+    # C 的判据：**join 那一行本身**必须带 joinable() 守卫。不能用「join 行存在」顺带推出
+    # 「守卫存在」——判据必须落在同一行上，否则裸 join() 也算过（线程没起时裸 join() 是 UB）。
     local joinable_guarded=0
     if printf '%s\n' "$body" | grep -q 'joinable().*quotaTestThread_\.join()'; then
         joinable_guarded=1
@@ -121,7 +110,6 @@ check_order() {
     creds_line="$(printf '%s\n' "$body" | grep -n 'quotaCredentials_\.reset()' | head -1 | cut -d: -f1)"
     store_line="$(printf '%s\n' "$body" | grep -n 'quotaStore_\.reset()' | head -1 | cut -d: -f1)"
 
-    # A：四个动作都必须存在
     local missing=0
     [ -n "$join_line" ] || { echo "违规：stopQuotaRefresh() 里没有 quotaTestThread_.join() —— 留 joinable 线程即析构 std::terminate"; missing=1; }
     [ -n "$refresher_line" ] || { echo "违规：stopQuotaRefresh() 里没有 quotaRefresher_.reset() —— 刷新器会活过凭据源与 store"; missing=1; }
@@ -132,13 +120,11 @@ check_order() {
         return $violations
     fi
 
-    # C：join 必须带 joinable() 守卫
     if [ "$joinable_guarded" -eq 0 ]; then
         echo "违规：quotaTestThread_.join() 没有 joinable() 守卫 —— 线程未起时裸 join() 是 UB"
         violations=$((violations + 1))
     fi
 
-    # B：行号严格递增
     local prev_name="quotaTestThread_.join()" prev_line="$join_line"
     local cur
     for cur in "$refresher_line" "$creds_line" "$store_line"; do
@@ -158,13 +144,14 @@ check_order() {
     return $violations
 }
 
-# ── --self-test：喂构造的坏输入，必须逐条报红 ───────────────────────
+# --self-test：好树 + 三份坏输入（store reset 挪最前 / 删掉整行 join / 去掉 joinable 守卫）
+# 喂**同一段** check_order 逻辑——自证若走另一条代码路径，证明不了真守卫。三份坏输入必须
+# 逐条报红，好树必须报绿。
 if [ "$SELF_TEST" = "1" ]; then
     TMP="$(mktemp -d)"
     trap 'rm -rf "$TMP"' EXIT
     mkdir -p "$TMP/$(dirname "$TARGET_REL")"
 
-    # 好树：顺序正确 + join 带 joinable 守卫。
     cat > "$TMP/$TARGET_REL" <<'GOOD'
 void ClaudeModule::stopQuotaRefresh() {
     if (quotaTestThread_.joinable()) quotaTestThread_.join();
@@ -180,7 +167,6 @@ void ClaudeModule::harvestQuotaTestResult() {
     quotaTestThread_.join();
 }
 GOOD
-    # 坏输入 ①：store reset 挪到最前（**正是这条不变式要防的悬垂**）
     cat > "$TMP/$TARGET_REL" <<'BAD_STORE_FIRST'
 void ClaudeModule::stopQuotaRefresh() {
     quotaStore_.reset();
@@ -195,7 +181,6 @@ void ClaudeModule::harvestQuotaTestResult() {
     quotaTestThread_.join();
 }
 BAD_STORE_FIRST
-    # 坏输入 ②：整行删掉 join（留 joinable → 析构 std::terminate）
     cat > "$TMP/$TARGET_REL" <<'BAD_NO_JOIN'
 void ClaudeModule::stopQuotaRefresh() {
     quotaTestDone_.store(false, std::memory_order_release);
@@ -210,7 +195,6 @@ void ClaudeModule::harvestQuotaTestResult() {
     quotaTestThread_.join();
 }
 BAD_NO_JOIN
-    # 坏输入 ③：join 去掉 joinable() 守卫（裸 join）
     cat > "$TMP/$TARGET_REL" <<'BAD_JOIN_UNGUARDED'
 void ClaudeModule::stopQuotaRefresh() {
     quotaTestThread_.join();

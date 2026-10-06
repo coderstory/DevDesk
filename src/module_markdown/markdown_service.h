@@ -72,7 +72,7 @@ public:
 // FTS5 全文搜索（按 rank 排序）
     core::Result<std::vector<NoteMeta>> search(const std::string& query);
 
-// ---- 标签（数据全在 markdown_tags / markdown_note_tags）----
+// 标签（数据全在 markdown_tags / markdown_note_tags）
 
 // 某笔记的全部标签（按名字母序）
     core::Result<std::vector<std::string>> tagsForNote(
@@ -89,7 +89,7 @@ public:
 // 含某标签的全部笔记（按 modified_at DESC）
     core::Result<std::vector<NoteMeta>> notesWithTag(const std::string& tag);
 
-// ---- 文件变化自动感知：watcher 事件 + 磁盘轮询两条腿 ----
+// 文件变化自动感知：watcher 事件 + 磁盘轮询两条腿
 // watcher 事件即刻同步索引并按相关性置 credit；pollChanged 先消费 credit，
 // 否则退回磁盘 mtime/size 比对（stub 平台 / watcher 掉线兜底）。true → rescan()。
 

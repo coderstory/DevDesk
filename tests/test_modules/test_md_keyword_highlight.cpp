@@ -1,12 +1,6 @@
 // tests/test_modules/test_md_keyword_highlight.cpp
-// Phase 3 ⑤：预览代码块关键字多色词法器——
-//   1. C++：关键字/字符串（含转义）/行注释/块注释（跨行）/数字/预处理指令
-//   2. Python：关键字/单双引号串/三引号串（跨行）/前缀串（r/b/f/u）/#注释/数字
-//   3. fallback：未覆盖 lang / 空 lang → supported=false、runs 空
-//   4. 结构不变式：runs 升序不重叠、非空、非空白字节全覆盖（空白 = 间隙）
-//   5. 容错：单行串未闭合漏标（不错标）、别名大小写不敏感
-//   6. 色表派生：mdHighlightColors 新 4 token = 既有语义色（info/warning/
-//      textTertiary/primaryText），浅/深两套同源
+// 预览代码块关键字着色词法器：C++ / Python / JS / JSON / Java / Go / Rust / Shell 的
+// 关键字/字符串/注释/数字取色，未覆盖 lang 的回落，runs 结构不变式，以及色表派生。
 #include "doctest.h"
 #include "core/theme.h"
 #include "module_markdown/md_highlight.h"
@@ -26,7 +20,7 @@ using module::markdown::mdKeywordLangSupported;
 
 namespace {
 
-// 可辨测试色（值任意）
+// 取辨色用的测试色（值本身无意义，只需与彼此可区分）
 const eui::Color kMark{1.0f, 0.0f, 0.0f, 1.0f};
 const eui::Color kCode{0.0f, 1.0f, 0.0f, 1.0f};
 const eui::Color kLink{0.0f, 0.0f, 1.0f, 1.0f};
@@ -68,7 +62,8 @@ bool exactRun(const MdKeywordHighlight& h, size_t from, size_t to,
     return false;
 }
 
-// 结构不变式：升序、不重叠、非空、非空白字节全覆盖
+// 恒真陷阱：runAt 返回 nullptr 时直接解引用会崩，这里调用方必须先判空。
+// 空白字节（空格/tab/换行）是允许的间隙，其余字节必须被某个 run 覆盖。
 bool structInvariants(const std::string& code, const MdKeywordHighlight& h) {
     int prevEnd = 0;
     std::vector<char> covered(code.size(), 0);
@@ -131,7 +126,7 @@ REGISTER_TEST(md_keyword_cpp_block_comment,
     DOCTEST_CHECK(colorEq(runAt(h, open + 1)->color, kCmt));
     DOCTEST_CHECK(colorEq(runAt(h, code.find("lines"))->color, kCmt));
     DOCTEST_CHECK(colorEq(runAt(h, code.find("*/") + 1)->color, kCmt));
-    DOCTEST_CHECK(runAt(h, open - 1) == nullptr);  // \n 间隙不被覆盖
+    DOCTEST_CHECK(runAt(h, open - 1) == nullptr);  // 注释起始的 \n 是间隙
     const size_t secondInt = code.find("int b");
     DOCTEST_CHECK(exactRun(h, secondInt, secondInt + 3, kKw));  // 注释后恢复
     DOCTEST_CHECK(structInvariants(code, h));
@@ -142,7 +137,7 @@ REGISTER_TEST(md_keyword_cpp_preproc_number,
               "md_keyword: C++ #include 指令 + 各形态数字", {
     const std::string code = "#include <vector>\nlong v = 0xFF + 1_000 + 3.14 + 42LL;";
     const auto h = lex(code, "cpp");
-    DOCTEST_CHECK(exactRun(h, 0, 8, kKw));  // #include（meta 按关键字色）
+    DOCTEST_CHECK(exactRun(h, 0, 8, kKw));  // #include 按关键字色（当 meta 处理）
     for (const char* tok : {"0xFF", "1_000", "3.14", "42LL"}) {
         const size_t at = code.find(tok);
         DOCTEST_REQUIRE(at != std::string::npos);
@@ -164,8 +159,8 @@ REGISTER_TEST(md_keyword_python_basic,
     DOCTEST_CHECK(exactRun(h, one, one + 1, kNum));
     const size_t cmt = code.find("# add");
     DOCTEST_CHECK(exactRun(h, cmt, code.size(), kCmt));
-    // 缩进空格不在任何 run 内（「空行无 run」结构同源）
-    DOCTEST_CHECK(runAt(h, ret - 1) == nullptr);  // return 前是空格
+    // 缩进空格不生成 run（与「空行无 run」同一条结构规则）
+    DOCTEST_CHECK(runAt(h, ret - 1) == nullptr);
     DOCTEST_CHECK(structInvariants(code, h));
     return true;
 })
@@ -270,13 +265,13 @@ REGISTER_TEST(md_keyword_color_table,
     d = mdHighlightColors(core::theme::current());
     core::theme::setLight();
     l = mdHighlightColors(core::theme::current());
-    core::theme::setDark();  // 恢复默认深色（与既有测试基线一致）
+    core::theme::setDark();  // 复位：主题是进程级全局态，不还原会污染后续用例
     const auto dark = core::theme::current();
     DOCTEST_CHECK(colorEq(d.codeKeyword, dark.colors.info));
     DOCTEST_CHECK(colorEq(d.codeString, dark.colors.warning));
     DOCTEST_CHECK(colorEq(d.codeComment, dark.colors.textTertiary));
     DOCTEST_CHECK(colorEq(d.codeNumber, dark.colors.primaryText));
-    // 浅色档同样派生且与深色不同（两档自动适配）
+    // 浅色档各自派生的值也必须与深色档不同（否则等于没随主题切换）
     DOCTEST_CHECK(colorEq(l.codeKeyword, l.codeComment) == false);
     DOCTEST_CHECK(colorEq(l.codeKeyword, d.codeKeyword) == false);
     DOCTEST_CHECK(colorEq(l.codeNumber, d.codeNumber) == false);

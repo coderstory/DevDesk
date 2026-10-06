@@ -1,10 +1,14 @@
 // tests/test_modules/test_markdown_service.cpp
-// MarkdownService 单元测试
-//
-// 测试策略：
-//   - 用 temp dir 作为笔记根
-//   - 每个测试独立目录，独立 in-memory DB
-//   - 覆盖：rescan / write+read / delete / search / listInDirectory / 索引同步
+// MarkdownService 服务层单测：rescan / write+read / delete / rename / FTS 搜索 /
+// 目录枚举 / 标签 / 原子写。
+// 跨文件前提：
+//   - 每个用例自带独立 temp 笔记目录 + 独立 :memory: 库；建表只走 core::schema::kSql，
+//     本文件内联的 DDL 副本会与 schema.h 各改各的而漂移。
+//   - rescan 的遍历错误契约：枚举中途出错必须整轮返回 fail，且不得按残缺的 foundPaths 剪枝
+//     （磁盘上仍在的笔记索引行会被成批误删，FTS 行同步删、标签关联 CASCADE 后不可恢复）。
+//   - 原生 watcher（Windows ReadDirectoryChangesW / macOS FSEvents）对监听根下一切文件变化
+//     都上报、不区分扩展名。任何在笔记目录内落库/落临时文件的夹具都会把每次写盘变成事件 →
+//     置 watcher credit → 绕过 5s 轮询节流 → 用例中途 rescan+refreshList 竞态。
 #include "doctest.h"
 #include "test_support.h"
 #include "core/database.h"
@@ -27,33 +31,27 @@
 namespace fs = std::filesystem;
 
 namespace {
-// P3 watcher 接入后的确定性辅助：等待原生文件监听把此前磁盘操作的突发
-// 通知送达（原生平台去抖 200ms + 线程调度余量；Windows 与 macOS 均真实现），
-// 再 rescan 兑现/消费 credit。stub 平台事件永不到达 → credit 恒 false →
-// pollChanged 回到 mtime 比对，断言不受影响。用于「无变化 → false」类断言前置。
+// 等原生文件监听把先前磁盘操作的突发通知送达（去抖 200ms + 线程调度余量），再 rescan
+// 兑现/消费 credit。stub 平台事件永不到达 → credit 恒 false → pollChanged 回到 mtime 比对，
+// 断言结果不变。用于「无变化 → false」类断言的前置。
 void settleWatcher(module::markdown::MarkdownService& svc) {
     std::this_thread::sleep_for(std::chrono::milliseconds(400));
     (void)svc.rescan();  // 消费 credit + 以磁盘为准对齐（幂等）
 }
 
-// watcher 武装等待（flake 归因，2026-09-28）：`FileWatcher::start()` 在调用线程
-// 开目录句柄，但**首次 ReadDirectoryChangesW 由 worker 线程异步发出**，而
-// Windows 只上报「首次读之后」发生的改动——读之前写入的改动不会被补发
-// （独立探针实测：读前写入 4/4 未捕获、读后写入 4/4 捕获；对照组成立）。
-// 用例在构造 service 后立刻制造外部改动，写操作一旦抢在 worker 武装前完成，
-// 事件就永久丢失——等待再久也命中不了（实测失败时 credit=0，手动 rescan 立刻
-// 命中）。真实进程里 watcher 在启动阶段就已武装、用户操作远在其后，所以这里
-// 等武装完成只是还原真实时序，判据本身不变：外部改动仍不被显式 rescan。
+// FileWatcher::start() 在调用线程开目录句柄，但首次 ReadDirectoryChangesW 由 worker 线程
+// 异步发出；Windows 只上报「首次读之后」发生的改动。调用方必须在制造外部改动前等武装完成——
+// 写操作一旦抢在 worker 武装前完成，事件就永久丢失，等多久也命中不了。真实进程里 watcher 在
+// 启动阶段就已武装、用户操作远在其后，这里等武装只是还原真实时序，判据不变：外部改动仍不被
+// 显式 rescan。
 void waitWatcherArmed() {
     std::this_thread::sleep_for(std::chrono::milliseconds(400));
 }
 
-// 有界等待「watcher 把外部改动同步进索引」（不显式 rescan），失败时打印诊断。
-//   预算 15s（原 5s）：事件链路天然异步（原生去抖 200ms + 线程调度 + DB 往返），
-//   5s 在满载机器上会被真实耗时吃满；放宽的是容忍度，不是判据——仍然是「靠
-//   watcher 事件、在有限时间内生效」，失败照样判红。
-//   诊断：credit=0 说明事件没到（武装竞态/事件丢失）；credit=1 而手动 rescan 才
-//   命中，说明事件到了但同步失败——两类故障下次可自证，不必再猜。
+// 有界等待「watcher 把外部改动同步进索引」（不显式 rescan）。预算是纯容忍度：事件链路天然
+// 异步（去抖 200ms + 线程调度 + DB 往返），判据仍是「靠 watcher 事件在有限时间内生效」。
+// 失败诊断区分两类故障：credit=0 → 事件没到（武装竞态）；credit=1 但手动 rescan 才命中 →
+// 事件到了但同步失败。
 bool waitExternalChangeIndexed(module::markdown::MarkdownService& svc,
                                const std::string& token,
                                const fs::path& notePath) {
@@ -88,13 +86,13 @@ bool waitExternalChangeIndexed(module::markdown::MarkdownService& svc,
     return hit;
 }
 
-// 把字符串写入文件（覆盖）—— 共享实现（TIN-06b，原五份 writeTextFile 合流）
+// 共享实现，不要在本文件另写一份
 using test_support::writeTextFile;
 
-// MD-08 注入工具：造一个「悬空 junction」（mklink /J 指向不存在的目标）。
-// 目录枚举器把 junction 当成普通目录递归进入、opendir 报 ENOENT → 遍历当场
-// 失败、且同层其后条目整批不再产出——正是「遍历中途出错」缺口的确定性形态。
-// junction 不需要管理员权限（真 symlink 才需要），mklink 是 cmd 内置命令。
+// 注入「遍历中途出错」：造一个悬空 junction（mklink /J 指向不存在的目标）。
+// 目录枚举器把 junction 当成普通目录递归进入、opendir 报 ENOENT → 遍历当场失败，
+// 且同层其后条目整批不再产出。junction 不需要管理员权限（真 symlink 才需要），
+// mklink 是 cmd 内置命令。
 bool makeDanglingJunction(const fs::path& link, const fs::path& missingTarget) {
     const std::string cmd = "mklink /J \"" + link.string() + "\" \"" +
                             missingTarget.string() + "\" >NUL 2>&1";
@@ -103,7 +101,7 @@ bool makeDanglingJunction(const fs::path& link, const fs::path& missingTarget) {
     return fs::exists(fs::symlink_status(link, ec)) && !ec;
 }
 
-// 在 in-memory DB 上落当前 schema，返回数据库实例（失败则 abort）
+// in-memory 库（打开失败即 abort）
 core::data::SqliteDb makeDb() {
     auto r = core::data::SqliteDb::open(":memory:");
     if (r.isFail()) {
@@ -113,15 +111,12 @@ core::data::SqliteDb makeDb() {
 }
 
 void applySchema(core::data::SqliteDb& db) {
-    // 落 core::schema::kSql（单份当前 schema，幂等）——本文件原先内联复制了一份
-    // markdown 相关的建表 DDL，与 core::schema.h 各改各的会漂移；改为共用同一份。
+    // 落 core::schema::kSql（单份当前 schema，幂等）
     auto r = db.applySchema(core::schema::kSql);
     if (r.isFail()) std::abort();
 }
 
 } // namespace
-
-// ============ 测试 ============
 
 REGISTER_TEST(md_rescan_finds_new_files,
               "MarkdownService: rescan discovers new .md files", {
@@ -130,7 +125,6 @@ REGISTER_TEST(md_rescan_finds_new_files,
     applySchema(db);
     module::markdown::MarkdownService svc(db, dir);
 
-    // 初始：写两个文件
     writeTextFile(dir / "alpha.md", "# Alpha\n\nFirst note.");
     writeTextFile(dir / "inbox" / "beta.md", "# Beta\n\nIn inbox.");
 
@@ -141,7 +135,6 @@ REGISTER_TEST(md_rescan_finds_new_files,
     DOCTEST_REQUIRE(list.isOk());
     DOCTEST_CHECK_EQ(list.value().size(), 2u);
 
-    // 验证 path 是 POSIX 风格
     std::set<std::string> paths;
     for (const auto& n : list.value()) {
         paths.insert(n.relativePath.generic_string());
@@ -165,7 +158,6 @@ REGISTER_TEST(md_rescan_removes_deleted_files,
     DOCTEST_REQUIRE(svc.rescan().isOk());
     DOCTEST_CHECK_EQ(svc.listAll().value().size(), 2u);
 
-    // 物理删除 remove.md
     fs::remove(dir / "remove.md");
     DOCTEST_REQUIRE(svc.rescan().isOk());
 
@@ -193,7 +185,7 @@ REGISTER_TEST(md_rescan_updates_modified_files,
     DOCTEST_REQUIRE_EQ(before.size(), 1u);
     const int64_t oldSize = before[0].sizeBytes;
 
-    // 修改内容（确保 mtime 改变）
+    // 睡 1100ms 越过文件系统 mtime 的 1s 粒度，确保这是「修改」而非「新文件」
     std::this_thread::sleep_for(std::chrono::milliseconds(1100));
     writeTextFile(dir / "doc.md", "# New\n\nUpdated content with new_keyword xyz.");
     DOCTEST_REQUIRE(svc.rescan().isOk());
@@ -207,10 +199,8 @@ REGISTER_TEST(md_rescan_updates_modified_files,
     return true;
 })
 
-// MD-08：遍历中途出错时不得按残缺的 foundPaths 剪枝——否则磁盘上仍然存在的
-// 笔记索引行会被成批误删（FTS 行同步删、标签关联 ON DELETE CASCADE 后不可恢复）。
-// 注入手法见 makeDanglingJunction：junction 名字排在 a_keep.md 与 z_keep.md
-// 之间，出错点之后同层条目 z_keep.md 这轮遍历根本没看见。
+// 注入点见 makeDanglingJunction：junction 名排在 a_keep.md 与 z_keep.md 之间，出错点之后的
+// 同层条目 z_keep.md 这轮遍历根本没被看见。
 REGISTER_TEST(md_rescan_traversal_error_keeps_index,
               "MarkdownService: traversal error must not prune the index", {
     const auto dir = test_support::makeTempDir("devdesk_md_test_", "rescan_err");
@@ -218,7 +208,6 @@ REGISTER_TEST(md_rescan_traversal_error_keeps_index,
     applySchema(db);
     module::markdown::MarkdownService svc(db, dir);
 
-    // 先正常索引两篇（junction 尚未入场，两行都进索引）
     writeTextFile(dir / "a_keep.md", "# A\n\nKeep me.");
     writeTextFile(dir / "z_keep.md", "# Z\n\nKeep me too.");
     DOCTEST_REQUIRE(svc.rescan().isOk());
@@ -231,11 +220,9 @@ REGISTER_TEST(md_rescan_traversal_error_keeps_index,
     }
 
     auto r = svc.rescan();
-    // 遍历中途失败：本轮必须报失败（旧实现会静默继续剪枝）。这条同时挡住
-    // 「注入没生效 → 用例空跑也全绿」的假阳性。
+    // 遍历中途失败必须报 fail；这条同时挡住「注入没生效 → 用例空跑也全绿」的假阳性
     DOCTEST_CHECK(r.isFail());
 
-    // 核心断言：z_keep.md 排在出错点之后、这轮遍历没看见它，但它仍在磁盘上
     auto list = svc.listAll();
     DOCTEST_REQUIRE(list.isOk());
     DOCTEST_CHECK_EQ(list.value().size(), 2u);
@@ -246,7 +233,7 @@ REGISTER_TEST(md_rescan_traversal_error_keeps_index,
     DOCTEST_CHECK(paths.count("a_keep.md") == 1);
     DOCTEST_CHECK(paths.count("z_keep.md") == 1);
 
-    // 摘掉 junction 后恢复正常：剪枝照旧生效（不是永久停摆）
+    // 摘掉 junction 后剪枝必须照旧生效：不能把「出错即整轮放弃」当成修复
     std::error_code ec;
     fs::remove(link, ec);
     DOCTEST_REQUIRE(svc.rescan().isOk());
@@ -271,7 +258,6 @@ REGISTER_TEST(md_write_read_roundtrip,
     DOCTEST_REQUIRE(read.isOk());
     DOCTEST_CHECK_EQ(read.value(), content);
 
-    // 索引里也应可见
     auto list = svc.listAll().value();
     DOCTEST_REQUIRE_EQ(list.size(), 1u);
     DOCTEST_CHECK_EQ(list[0].title, std::string("中文标题"));
@@ -298,7 +284,6 @@ REGISTER_TEST(md_create_new_note,
     DOCTEST_REQUIRE_EQ(list.size(), 1u);
     DOCTEST_CHECK_EQ(list[0].title, std::string("ideas"));
 
-    // 重复创建应报错
     auto dup = svc.create("inbox/ideas.md");
     DOCTEST_CHECK(dup.isFail());
 
@@ -321,15 +306,13 @@ REGISTER_TEST(md_remove_deletes_file_and_index,
     DOCTEST_CHECK_FALSE(fs::exists(dir / "to_del.md"));
     DOCTEST_CHECK_EQ(svc.listAll().value().size(), 0u);
 
-    // 删除不存在的文件不报错
+    // remove 幂等：目标不存在也返回 ok，不是 fail
     auto r = svc.remove("nope.md");
     DOCTEST_CHECK(r.isOk());
 
     fs::remove_all(dir);
     return true;
 })
-
-// ============ rename（审计 [4][20] 配套服务层） ============
 
 REGISTER_TEST(md_rename_moves_file_updates_index_and_keeps_tags,
               "MarkdownService: rename 移动文件+更新索引/FTS，标签（FK 挂 id）保留", {
@@ -345,26 +328,23 @@ REGISTER_TEST(md_rename_moves_file_updates_index_and_keeps_tags,
     DOCTEST_REQUIRE(r.isOk());
     DOCTEST_CHECK_EQ(r.value(), std::string("b.md"));
 
-    // 磁盘：旧文件消失，新文件内容原样
     DOCTEST_CHECK_FALSE(fs::exists(dir / "a.md"));
     DOCTEST_CHECK(fs::exists(dir / "b.md"));
     auto content = svc.read("b.md");
     DOCTEST_REQUIRE(content.isOk());
     DOCTEST_CHECK_EQ(content.value(), std::string("# Alpha\n独特内容XYZ\n"));
 
-    // 索引：只剩 b.md，title 重算仍为 Alpha
     auto notes = svc.listAll();
     DOCTEST_REQUIRE(notes.isOk());
     DOCTEST_CHECK_EQ(notes.value().size(), 1u);
     DOCTEST_CHECK_EQ(notes.value()[0].relativePath.generic_string(), std::string("b.md"));
     DOCTEST_CHECK_EQ(notes.value()[0].title, std::string("Alpha"));
 
-    // 标签随 id 保留（rename 不删索引行，markdown_note_tags FK 不受影响）
+    // 标签随 id 保留：rename 不删索引行，markdown_note_tags 的 FK 不受影响
     auto tags = svc.tagsForNote("b.md");
     DOCTEST_REQUIRE(tags.isOk());
     DOCTEST_CHECK_EQ(tags.value().size(), 2u);
 
-    // FTS 迁移：旧 path 不再命中，新 path 命中内容
     auto hits = svc.search("独特内容XYZ");
     DOCTEST_REQUIRE(hits.isOk());
     DOCTEST_REQUIRE_EQ(hits.value().size(), 1u);
@@ -384,33 +364,29 @@ REGISTER_TEST(md_rename_normalizes_and_rejects,
     DOCTEST_REQUIRE(svc.write("a.md", "# A\n").isOk());
     DOCTEST_REQUIRE(svc.write("taken.md", "# T\n").isOk());
 
-    // 无扩展名自动补 .md
     auto ext = svc.rename("a.md", "c");
     DOCTEST_REQUIRE(ext.isOk());
     DOCTEST_CHECK_EQ(ext.value(), std::string("c.md"));
 
-    // 子目录 = 移动语义（中间目录自动创建）
+    // 带子目录 = 移动语义，中间目录由 rename 自动创建
     auto move = svc.rename("c.md", "work/d");
     DOCTEST_REQUIRE(move.isOk());
     DOCTEST_CHECK_EQ(move.value(), std::string("work/d.md"));
     DOCTEST_CHECK(fs::exists(dir / "work" / "d.md"));
 
-    // 目标已存在 → 拒绝，原文件不动
+    // 目标已存在 → 拒绝，且原文件必须留在原地
     auto clash = svc.rename("work/d.md", "taken.md");
     DOCTEST_CHECK(clash.isFail());
     DOCTEST_CHECK(fs::exists(dir / "work" / "d.md"));
     DOCTEST_CHECK_EQ(svc.listAll().value().size(), 2u);
 
-    // 源不存在 → 拒绝
     DOCTEST_CHECK(svc.rename("ghost.md", "x.md").isFail());
-    // 不安全新名（绝对路径/盘符/../）→ 拒绝
     DOCTEST_CHECK(svc.rename("taken.md", "../escape").isFail());
     DOCTEST_CHECK(svc.rename("taken.md", "C:/evil").isFail());
-    // 原地改名 → 幂等成功
     auto noop = svc.rename("taken.md", "taken.md");
     DOCTEST_REQUIRE(noop.isOk());
     DOCTEST_CHECK_EQ(noop.value(), std::string("taken.md"));
-    // taken → taken.md 显式同路径也算无操作
+    // 补后缀后与自身同路径：同样算无操作
     DOCTEST_CHECK(svc.rename("taken.md", "taken").isOk());
 
     fs::remove_all(dir);
@@ -434,19 +410,17 @@ REGISTER_TEST(md_search_finds_matching_notes,
         "c.md",
         "# Architecture\n\nAnother doc about architecture patterns.").isOk());
 
-    // 搜索 "architecture" 应该命中 a.md 和 c.md
     auto r1 = svc.search("architecture");
     DOCTEST_REQUIRE(r1.isOk());
     DOCTEST_CHECK_EQ(r1.value().size(), 2u);
 
-    // 搜索 "apple" 应该只命中 b.md
     auto r2 = svc.search("apple");
     DOCTEST_REQUIRE(r2.isOk());
     DOCTEST_CHECK_EQ(r2.value().size(), 1u);
     DOCTEST_CHECK_EQ(r2.value()[0].relativePath.generic_string(),
                      std::string("b.md"));
 
-    // 搜索没有匹配 → 空结果（不报错）
+    // 无命中返回空结果，不报错
     auto r3 = svc.search("nonexistent_keyword_xyz");
     DOCTEST_REQUIRE(r3.isOk());
     DOCTEST_CHECK_EQ(r3.value().size(), 0u);
@@ -491,22 +465,19 @@ REGISTER_TEST(md_list_by_directory,
     DOCTEST_REQUIRE(svc.create("inbox/sub/nested.md").isOk());
     DOCTEST_REQUIRE(svc.create("archive/old.md").isOk());
 
-    // 根目录：root1, root2（直接子，不含 inbox/*）
+    // 直接子项，不含 inbox/*
     auto root = svc.listInDirectory(fs::path(""));
     DOCTEST_REQUIRE(root.isOk());
     DOCTEST_CHECK_EQ(root.value().size(), 2u);
 
-    // inbox：idea1, idea2（不含 inbox/sub/*）
     auto inbox = svc.listInDirectory(fs::path("inbox"));
     DOCTEST_REQUIRE(inbox.isOk());
     DOCTEST_CHECK_EQ(inbox.value().size(), 2u);
 
-    // inbox/sub
     auto sub = svc.listInDirectory(fs::path("inbox/sub"));
     DOCTEST_REQUIRE(sub.isOk());
     DOCTEST_CHECK_EQ(sub.value().size(), 1u);
 
-    // archive
     auto arc = svc.listInDirectory(fs::path("archive"));
     DOCTEST_REQUIRE(arc.isOk());
     DOCTEST_CHECK_EQ(arc.value().size(), 1u);
@@ -519,23 +490,19 @@ REGISTER_TEST(md_extract_title,
               "MarkdownService: extractTitle handles heading + filename fallback", {
     using module::markdown::MarkdownService;
 
-    // 从第一行 # 提取
     DOCTEST_CHECK_EQ(MarkdownService::extractTitle("# My Title\n\nbody", "file.md"),
                      std::string("My Title"));
     // 跳过空行/前导空白
     DOCTEST_CHECK_EQ(MarkdownService::extractTitle("\n\n#   Spaced  \nbody", "x.md"),
                      std::string("Spaced"));
-    // 多级标题仍然工作（extract 二级）
+    // 多级标题仍提取（二级也算）
     DOCTEST_CHECK_EQ(MarkdownService::extractTitle("## Sub\nbody", "x.md"),
                      std::string("Sub"));
-    // 没有 # → 用文件名
     DOCTEST_CHECK_EQ(MarkdownService::extractTitle("Just text\n", "fallback.md"),
                      std::string("fallback"));
-    // 中文标题
     DOCTEST_CHECK_EQ(MarkdownService::extractTitle("# 中文标题\n", "x.md"),
                      std::string("中文标题"));
 
-    // 静态方法直接测试
     DOCTEST_CHECK_EQ(MarkdownService::extractTitle("# T", "x.md"),
                      std::string("T"));
     return true;
@@ -548,32 +515,28 @@ REGISTER_TEST(md_index_sync_correct,
     applySchema(db);
     module::markdown::MarkdownService svc(db, dir);
 
-    // 不通过 rescan，直接 write → 索引应该立即更新
+    // 不经 rescan：write 必须同步更新索引
     DOCTEST_REQUIRE(svc.write("foo.md",
         "# Foo\n\nThis contains special_token_123.").isOk());
 
-    // listAll 应该看到
     auto list = svc.listAll().value();
     DOCTEST_REQUIRE_EQ(list.size(), 1u);
     DOCTEST_CHECK_EQ(list[0].title, std::string("Foo"));
 
-    // search 应该命中
     auto sr = svc.search("special_token_123");
     DOCTEST_REQUIRE(sr.isOk());
     DOCTEST_CHECK_EQ(sr.value().size(), 1u);
 
-    // 改写覆盖
     DOCTEST_REQUIRE(svc.write("foo.md", "# Foo2\n\nUpdated.").isOk());
     auto list2 = svc.listAll().value();
     DOCTEST_REQUIRE_EQ(list2.size(), 1u);
     DOCTEST_CHECK_EQ(list2[0].title, std::string("Foo2"));
 
-    // 搜索旧词找不到
     auto sr2 = svc.search("special_token_123");
     DOCTEST_REQUIRE(sr2.isOk());
     DOCTEST_CHECK_EQ(sr2.value().size(), 0u);
 
-    // FTS 行不应随覆盖写而累积（path 必须唯一）
+    // FTS 行不得随覆盖写而累积（path 必须唯一）
     auto ftsPrep = db.prepare(
         "SELECT COUNT(*) AS n FROM markdown_fts WHERE path = 'foo.md'");
     DOCTEST_REQUIRE(ftsPrep.isOk());
@@ -582,7 +545,6 @@ REGISTER_TEST(md_index_sync_correct,
     DOCTEST_REQUIRE_EQ(ftsRows.value().size(), 1u);
     DOCTEST_CHECK_EQ(ftsRows.value()[0].getInt64("n").value(), 1);
 
-    // 连续多写 10 次，索引仍然只有一行
     for (int i = 0; i < 10; ++i) {
         DOCTEST_REQUIRE(svc.write("foo.md",
             "# Foo\n\nrevision " + std::to_string(i)).isOk());
@@ -600,16 +562,16 @@ REGISTER_TEST(md_index_sync_correct,
 
 REGISTER_TEST(md_mtime_epoch_sane,
               "MarkdownService: indexed mtime is real unix epoch (anti-false-negative)", {
-    // W7 P0-5 回归防护：旧代码直接 duration_cast(file_clock)，MinGW 的
-    // file_clock epoch 非 1970，写入的时间戳荒谬（Home「今日笔记」恒 0）。
-    // 旧测试用 SQL 直插合成时间戳绕过了这条链路，本用例走真实 write/rescan。
+    // modifiedAt 必须是真实 unix epoch：MinGW 的 std::file_clock epoch 不是 1970，直接
+    // duration_cast 会写出荒谬时间戳。必须走真实 write/rescan；用 SQL 直插合成时间戳会
+    // 绕过这条链路，测不出这个回归。
     const auto dir = test_support::makeTempDir("devdesk_md_test_", "mtime");
     auto db = makeDb();
     applySchema(db);
     module::markdown::MarkdownService svc(db, dir);
 
     DOCTEST_REQUIRE(svc.write("fresh.md", "# Fresh\n\nJust written.").isOk());
-    // rescan 走磁盘 mtime 读取链路（write 内部也走 syncOneToIndex，双保险）
+    // rescan 走磁盘 mtime 读取链路（write 内部那条是另一条）
     DOCTEST_REQUIRE(svc.rescan().isOk());
 
     auto list = svc.listAll();
@@ -633,21 +595,21 @@ REGISTER_TEST(md_search_in_query_escape,
 
     DOCTEST_REQUIRE(svc.write("x.md", "# Title\n\nHas colon : and quotes \" hi").isOk());
 
-    // 含 FTS5 操作符的查询不应崩溃
-    auto r1 = svc.search("\"");   // 裸引号
+    // 含 FTS5 操作符的查询不得崩
+    auto r1 = svc.search("\"");
     DOCTEST_CHECK(r1.isOk());
-    auto r2 = svc.search("a:b:c"); // 冒号
+    auto r2 = svc.search("a:b:c");
     DOCTEST_CHECK(r2.isOk());
-    auto r3 = svc.search("*");    // 星号
+    auto r3 = svc.search("*");
     DOCTEST_CHECK(r3.isOk());
 
     fs::remove_all(dir);
     return true;
 })
 
-// 含被丢弃符号的词元（c++ / std::vector / #tag 等）：FTS 清洗会把
-// "c++" 变 "c"* 前缀误命中所有 c 开头词（clean/crisp…）。修复后：
-// 全失真查询跳过 FTS 只走 LIKE 字面子串；混合失真查询 LIKE 兜底补命中
+// 含被丢弃符号的词元（c++ / std::vector / #tag 等）：FTS 清洗会把 "c++" 变成 "c"* 前缀，
+// 误命中所有 c 开头词（clean/crisp…）。契约：全失真查询跳过 FTS 只走 LIKE 字面子串；
+// 混合失真查询由 LIKE 兜底补命中。
 REGISTER_TEST(md_search_symbol_tokens,
               "MarkdownService: 符号词元（c++）不前缀误命中且能搜到", {
     const auto dir = test_support::makeTempDir("devdesk_md_test_", "search_symbol");
@@ -660,7 +622,7 @@ REGISTER_TEST(md_search_symbol_tokens,
     DOCTEST_REQUIRE(svc.write("clean.md",
                               "# Clean\n\nclean code and crisp content").isOk());
 
-    // 搜 "c++"：只命中含字面 c++ 的笔记（clean/crisp 不再被 c* 前缀误中）
+    // "c++" 只命中含字面 c++ 的笔记，clean/crisp 不被 c* 前缀误中
     auto r1 = svc.search("c++");
     DOCTEST_REQUIRE(r1.isOk());
     DOCTEST_REQUIRE_EQ(r1.value().size(), 1u);
@@ -674,7 +636,7 @@ REGISTER_TEST(md_search_symbol_tokens,
     DOCTEST_CHECK_EQ(r2.value()[0].relativePath.generic_string(),
                      std::string("cpp.md"));
 
-    // 纯干净词元查询行为不变（FTS 前缀命中）
+    // 纯干净词元仍按 FTS 前缀命中
     auto r3 = svc.search("crisp");
     DOCTEST_REQUIRE(r3.isOk());
     DOCTEST_REQUIRE_EQ(r3.value().size(), 1u);
@@ -703,14 +665,11 @@ REGISTER_TEST(md_path_posix_separator,
     DOCTEST_REQUIRE_EQ(list.size(), 1u);
 
     const std::string p = list[0].relativePath.generic_string();
-    // 必须用 '/'
     DOCTEST_CHECK(p.find('\\') == std::string::npos);
     DOCTEST_CHECK(p.find('/') != std::string::npos);
     DOCTEST_CHECK_EQ(p, std::string("a/b/c/deep.md"));
 
-    // listInDirectory 只返回**直接子项**（非递归）：
-    //   a/b       → 空（deep.md 的直接父目录是 a/b/c）
-    //   a/b/c     → deep.md
+    // listInDirectory 只返回直接子项，不递归：a/b 是空（deep.md 的直接父目录是 a/b/c）
     auto mid = svc.listInDirectory(fs::path("a/b"));
     DOCTEST_REQUIRE(mid.isOk());
     DOCTEST_CHECK_EQ(mid.value().size(), 0u);
@@ -724,8 +683,6 @@ REGISTER_TEST(md_path_posix_separator,
     fs::remove_all(dir);
     return true;
 })
-// ==================== W8：文件变化感知 + 路径安全 ====================
-
 REGISTER_TEST(md_is_safe_new_note_path,
               "MarkdownService: isSafeNewNotePath 拒绝逃逸/盘符/绝对路径", {
     using module::markdown::MarkdownService;
@@ -766,8 +723,7 @@ REGISTER_TEST(md_create_subpath_makes_dirs,
     applySchema(db);
     module::markdown::MarkdownService svc(db, dir);
 
-    // 「工作/周会.md」形式的输入（无 .md 后缀时 create 内部补全）：
-    // 中间目录不存在 → create_directories 建出
+    // 无 .md 后缀由 create 内部补全；中间目录不存在则 create_directories 建出
     DOCTEST_REQUIRE(svc.create("工作/周会").isOk());
     DOCTEST_CHECK(fs::is_regular_file(dir / "工作" / "周会.md"));
     DOCTEST_CHECK(fs::is_directory(dir / "工作"));
@@ -783,12 +739,11 @@ REGISTER_TEST(md_create_folder_and_list_top,
     applySchema(db);
     module::markdown::MarkdownService svc(db, dir);
 
-    // 空目录 → 无一级子目录
     auto empty = svc.listTopFolders();
     DOCTEST_REQUIRE(empty.isOk());
     DOCTEST_CHECK_EQ(empty.value().size(), static_cast<size_t>(0));
 
-    // 新建文件夹（多级也支持）→ listTopFolders 枚举出一级目录名
+    // listTopFolders 只给一级目录名，多级创建被折叠到首层
     DOCTEST_REQUIRE(svc.createFolder("工作").isOk());
     DOCTEST_REQUIRE(svc.createFolder("归档/2026").isOk());
     auto folders = svc.listTopFolders();
@@ -800,14 +755,14 @@ REGISTER_TEST(md_create_folder_and_list_top,
     DOCTEST_CHECK(fs::is_directory(dir / "工作"));
     DOCTEST_CHECK(fs::is_directory(dir / "归档" / "2026"));
 
-    // 幂等：已存在不算错；不安全路径拒绝
+    // 幂等：已存在不算错
     DOCTEST_CHECK(svc.createFolder("工作").isOk());
     DOCTEST_CHECK(svc.createFolder("../escape").isFail());
     DOCTEST_CHECK(svc.createFolder("C:/evil").isFail());
     DOCTEST_CHECK(svc.createFolder("/abs").isFail());
     DOCTEST_CHECK(!fs::exists(dir / ".." / "escape"));
 
-    // 有 .md 文件的目录也在枚举里（与笔记路径推导的目录一致）
+    // 含 .md 的目录同样在枚举里（与笔记路径推导的目录一致）
     DOCTEST_REQUIRE(svc.create("inbox/idea.md").isOk());
     auto mixed = svc.listTopFolders();
     DOCTEST_REQUIRE(mixed.isOk());
@@ -824,12 +779,11 @@ REGISTER_TEST(md_list_all_folders,
     applySchema(db);
     module::markdown::MarkdownService svc(db, dir);
 
-    // 空目录 → 空清单
     auto empty = svc.listAllFolders();
     DOCTEST_REQUIRE(empty.isOk());
     DOCTEST_CHECK_EQ(empty.value().size(), static_cast<size_t>(0));
 
-    // 多级（含空目录）→ 全层 POSIX 相对路径，字母序（短的排前）
+    // 全层 POSIX 相对路径，字母序、同前缀短的排前
     DOCTEST_REQUIRE(svc.createFolder("工作").isOk());
     DOCTEST_REQUIRE(svc.createFolder("工作/周会").isOk());
     DOCTEST_REQUIRE(svc.createFolder("工作/周会/旧").isOk());
@@ -847,7 +801,7 @@ REGISTER_TEST(md_list_all_folders,
         DOCTEST_CHECK(f.back() != '/');    // 无尾部 '/'
     }
 
-    // 只建了笔记的目录同样在清单里（与 listTopFolders 语义一致）
+    // 只建了笔记的目录同样在清单里
     DOCTEST_REQUIRE(svc.create("inbox/idea.md").isOk());
     auto withFile = svc.listAllFolders();
     DOCTEST_REQUIRE(withFile.isOk());
@@ -867,37 +821,34 @@ REGISTER_TEST(md_poll_changed_and_file_mtime,
 
     writeTextFile(dir / "a.md", "# a\n");
     DOCTEST_REQUIRE(svc.rescan().isOk());
-    settleWatcher(svc);  // P3：等 watcher 事件送达并消费 credit，恢复「无变化=false」稳态
+    settleWatcher(svc);  // 等 watcher 事件送达并消费 credit，恢复「无变化=false」稳态
 
-    // 无变化 → false
     auto c1 = svc.pollChanged();
     DOCTEST_REQUIRE(c1.isOk());
     DOCTEST_CHECK(!c1.value());
 
-    // fileMtime：存在的文件返回非负；不存在返回 fail
+    // fileMtime 两态：存在返回非负，不存在返回 fail
     auto m = svc.fileMtime("a.md");
     DOCTEST_REQUIRE(m.isOk());
     DOCTEST_CHECK(m.value() >= 0);
     DOCTEST_CHECK(svc.fileMtime("nope.md").isFail());
 
-    // 新文件 → true；rescan 后恢复 false
     writeTextFile(dir / "inbox" / "b.md", "# b\n");
     auto c2 = svc.pollChanged();
     DOCTEST_REQUIRE(c2.isOk());
     DOCTEST_CHECK(c2.value());
     DOCTEST_REQUIRE(svc.rescan().isOk());
-    settleWatcher(svc);  // P3：同 c1，消费 b.md 的 watcher 事件 credit
+    settleWatcher(svc);  // 同上，消费 b.md 的 watcher 事件 credit
     auto c3 = svc.pollChanged();
     DOCTEST_REQUIRE(c3.isOk());
     DOCTEST_CHECK(!c3.value());
 
-    // 删除 → true
     fs::remove(dir / "a.md");
     auto c4 = svc.pollChanged();
     DOCTEST_REQUIRE(c4.isOk());
     DOCTEST_CHECK(c4.value());
 
-    // 修改（内容变化改变 size）→ true
+    // 内容变化必然改变 size
     DOCTEST_REQUIRE(svc.rescan().isOk());
     writeTextFile(dir / "inbox" / "b.md", "# b changed\n");
     auto c5 = svc.pollChanged();
@@ -908,8 +859,6 @@ REGISTER_TEST(md_poll_changed_and_file_mtime,
     return true;
 })
 
-// ==================== P3：FileWatcher 接线（#5 根治）====================
-
 REGISTER_TEST(md_service_watcher_external_new_file,
               "MarkdownService: 外部新建文件 → watcher 即时入索引（不显式 rescan）+ pollChanged credit", {
     const auto dir = test_support::makeTempDir("devdesk_md_test_", "fwatch_new");
@@ -917,7 +866,6 @@ REGISTER_TEST(md_service_watcher_external_new_file,
     applySchema(db);
     module::markdown::MarkdownService svc(db, dir);
     if (!svc.watcherActive()) {  // 非 Apple 的 POSIX stub：事件链路不存在，跳过
-                                   //（macOS 已是 FSEvents 真实现，git 600081a）
         fs::remove_all(dir);
         DOCTEST_SKIP("FileWatcher 非活跃平台（stub），事件链路用例跳过");
     }
@@ -934,11 +882,9 @@ REGISTER_TEST(md_service_watcher_external_new_file,
     DOCTEST_REQUIRE(c.isOk());
     DOCTEST_CHECK(c.value());
 
-    // 清场用非抛出版 remove_all：watcher 线程可能正持 .md 读句柄
-    // （MinGW ifstream 不带 FILE_SHARE_DELETE），抛出版会以 filesystem_error
-    // （共享冲突）把用例判红在「无断言行可定位」处——实测 114 次跑里触发 3 次
-    // （异常文本已抓到：cannot remove all ... [eq.md]，即共享冲突）。
-    // 非抛出版最坏情况只是残留 temp 残骸，不会误判。
+    // 清场必须用非抛出版 remove_all：watcher 线程可能正持 .md 读句柄（MinGW ifstream
+    // 不带 FILE_SHARE_DELETE），抛出版会以 filesystem_error（共享冲突）把用例判红在
+    // 无断言行可定位处。非抛出版最坏只是残留 temp 残骸，不会误判。
     std::error_code cleanupEc;
     fs::remove_all(dir, cleanupEc);
     return true;
@@ -950,7 +896,7 @@ REGISTER_TEST(md_service_watcher_same_len_external_edit,
     auto db = makeDb();
     applySchema(db);
     module::markdown::MarkdownService svc(db, dir);
-    if (!svc.watcherActive()) {  // 非 Apple 的 POSIX stub（macOS 已是真实现）
+    if (!svc.watcherActive()) {  // 非 Apple 的 POSIX stub：事件链路不存在，跳过
         fs::remove_all(dir);
         DOCTEST_SKIP("FileWatcher 非活跃平台（stub），等长改写用例跳过");
     }
@@ -960,7 +906,7 @@ REGISTER_TEST(md_service_watcher_same_len_external_edit,
     const std::string bodyB = "# eq\n\nzzzxywwvv732 body padding xx";
     DOCTEST_REQUIRE_EQ(bodyA.size(), bodyB.size());
 
-    waitWatcherArmed();  // 同 :886 用例：先武装再让磁盘动起来
+    waitWatcherArmed();
     writeTextFile(dir / "eq.md", bodyA);
     DOCTEST_REQUIRE(svc.rescan().isOk());
 
@@ -970,25 +916,16 @@ REGISTER_TEST(md_service_watcher_same_len_external_edit,
         waitExternalChangeIndexed(svc, "zzzxywwvv732", dir / "eq.md");
     DOCTEST_CHECK(hit);
 
-    // 清场用非抛出版 remove_all（同 :886 用例：避免与 watcher 读句柄竞态抛异常）
-    std::error_code cleanupEc;
+    std::error_code cleanupEc;  // 非抛出版：避免与 watcher 读句柄竞态抛异常
     fs::remove_all(dir, cleanupEc);
     return true;
 })
 
-// ==================== 伴生文件噪声收口（2026-10-03 flaky 潜伏竞态）====================
-// 原生 watcher（Windows ReadDirectoryChangesW / macOS FSEvents）对监听根下一切
-// 文件变化都上报、不区分扩展名——夹具若把库建进笔记目录，每次落库（E2 后还含
-// app_config 视图状态行）都是事件 → onWatchEvent 置 credit → 模块层绕过 5s
-// 轮询节流 → 用例中途 rescan+refreshList 竞态。两个用例分别守住「夹具不制造
-// 噪声」与「产品侧对纯噪声事件不打 credit」。
-
-// 夹具守卫（全平台注册——守卫是纯路径判定，不依赖 watcher 存活）：
-// MdHeadlessEnv 的库必须落在被 FileWatcher 监听的笔记目录之外，且
-// isPathUnder 判定本身非恒真（之下=真 / 相等与兄弟=假）。
+// 夹具侧的硬约束（全平台注册）：MdHeadlessEnv 的库必须落在被 FileWatcher 监听的笔记目录之外，
+// 且 isPathUnder 判定本身非恒真（之下=真 / 相等与兄弟=假）。守卫烂了会一路静默到 flaky。
 REGISTER_TEST(md_headless_env_state_outside_notes_dir,
               "markdown 夹具（MdHeadlessEnv）: 库目录在笔记目录（被监听）外 + isPathUnder 自测", {
-    // isPathUnder 自测：防恒真守卫（守卫烂了这里先红）
+    // 不先自测 isPathUnder，下面的守卫断言就是恒真
     const auto base = test_support::makeTempDir("devdesk_md_test_", "guard_base");
     const auto sib = test_support::makeTempDir("devdesk_md_test_", "guard_sib");
     DOCTEST_CHECK(test_support::isPathUnder(base / "sub" / "x.db", base));
@@ -1009,32 +946,31 @@ REGISTER_TEST(md_headless_env_state_outside_notes_dir,
     return true;
 })
 
-// 产品侧防御（原生 watcher 平台注册，stub 跳过）：监听目录内写**非 .md 普通
-// 文件**（夹具库 / atomicWrite 的 .devdesk-tmp 临时文件形态）不得置 credit；
-// 对照组：.md 写盘必须置 credit——证明过滤没有过度。
+// 产品侧防御（原生 watcher 平台注册，stub 跳过）：监听目录内写非 .md 普通文件（夹具库 /
+// atomicWrite 的 .devdesk-tmp 临时文件形态）不得置 credit；对照组 .md 写盘必须置 credit
+// ——证明过滤没有过度。
 REGISTER_TEST(md_service_watcher_companion_file_no_credit,
               "MarkdownService: 伴生非笔记文件写盘不打 watcher credit（5s 节流不被绕过）", {
     const auto dir = test_support::makeTempDir("devdesk_md_test_", "fwatch_noise");
     auto db = makeDb();  // :memory:——库不在被监听目录里，本用例只制造纯噪声
     applySchema(db);
     module::markdown::MarkdownService svc(db, dir);
-    if (!svc.watcherActive()) {  // 非 Apple 的 POSIX stub（macOS 已是真实现）
+    if (!svc.watcherActive()) {  // 非 Apple 的 POSIX stub：事件链路不存在，跳过
         fs::remove_all(dir);
         DOCTEST_SKIP("FileWatcher 非活跃平台（stub），事件链路用例跳过");
     }
 
     waitWatcherArmed();
-    // 预置噪声文件（创建事件——含可能伴生的目录事件——先出现，由 settle 一并
-    // 消费掉；噪声注入阶段只做「改写已存在的文件」，与真实风暴形态一致：
-    // WAL 库的 -wal/-shm、编辑器临时文件都是**已存在文件被反复改写**）
+    // 先建噪声文件，创建事件由 settle 一并消费；噪声注入阶段只做「改写已存在的文件」，
+    // 与真实风暴形态一致：WAL 库的 -wal/-shm、编辑器临时文件都是已存在文件被反复改写
     DOCTEST_REQUIRE(writeTextFile(dir / "state.db", "noise v1"));
     DOCTEST_REQUIRE(writeTextFile(dir / "note.md.devdesk-tmp", "noise v1"));
-    settleWatcher(svc);  // 武装探针 + 噪声文件创建的 credit 已消费，恢复稳态
+    settleWatcher(svc);  // 噪声文件创建的 credit 已消费，恢复稳态
     DOCTEST_CHECK(!svc.hasWatchCredit());
 
-    // 噪声注入：改写**已存在的**非 .md 普通文件（夹具库 / 编辑器临时文件的
-    // 高频写盘形态——不动目录项，只产生文件级 Modified 事件）。原生 watcher
-    // 会上报事件，但这些事件对索引/目录树零影响 → 不得置 credit。
+    // 噪声注入：改写已存在的非 .md 普通文件（夹具库 / 编辑器临时文件的高频写盘形态），
+    // 不动目录项、只产生文件级 Modified 事件。原生 watcher 会上报，但这些事件对索引
+    // 与目录树零影响 → 不得置 credit
     DOCTEST_REQUIRE(writeTextFile(dir / "state.db", "noise v2"));
     DOCTEST_REQUIRE(writeTextFile(dir / "note.md.devdesk-tmp", "noise v2"));
     bool noiseCredit = false;
@@ -1053,13 +989,10 @@ REGISTER_TEST(md_service_watcher_companion_file_no_credit,
     }
     DOCTEST_CHECK(mdCredit);
 
-    // 清场用非抛出版 remove_all（同 :886 用例：避免与 watcher 读句柄竞态抛异常）
-    std::error_code cleanupEc;
+    std::error_code cleanupEc;  // 非抛出版：避免与 watcher 读句柄竞态抛异常
     fs::remove_all(dir, cleanupEc);
     return true;
 })
-
-// ==================== 标签（spec §8.1：setTags / listAllTags / notesWithTag） ====================
 
 REGISTER_TEST(md_tags_set_roundtrip,
               "MarkdownService: setTags 全量替换往返 + 清洗去重", {
@@ -1076,7 +1009,6 @@ REGISTER_TEST(md_tags_set_roundtrip,
     DOCTEST_CHECK_EQ(t1.value()[0], std::string("idea"));   // 按名字母序
     DOCTEST_CHECK_EQ(t1.value()[1], std::string("工作"));
 
-    // 全量替换：旧标签消失
     DOCTEST_CHECK(svc.setTags("a.md", {"工作"}).isOk());
     auto t2 = svc.tagsForNote("a.md");
     DOCTEST_REQUIRE(t2.isOk());
@@ -1097,7 +1029,6 @@ REGISTER_TEST(md_tags_set_roundtrip,
     DOCTEST_REQUIRE(t4.isOk());
     DOCTEST_CHECK_EQ(t4.value().size(), 0u);
 
-    // 未索引的笔记 → fail（标签挂在 markdown_index.id 上）
     DOCTEST_CHECK(svc.setTags("ghost.md", {"x"}).isFail());
 
     fs::remove_all(dir);
@@ -1127,7 +1058,6 @@ REGISTER_TEST(md_tags_list_all_counts,
     DOCTEST_CHECK_EQ(tags.value()[1].name, std::string("急"));
     DOCTEST_CHECK_EQ(tags.value()[1].noteCount, 1);
 
-    // b 不再用「工作」→ 计数降为 2；「急」升到 2
     DOCTEST_REQUIRE(svc.setTags("b.md", {"急"}).isOk());
     auto tags2 = svc.listAllTags();
     DOCTEST_REQUIRE(tags2.isOk());
@@ -1137,7 +1067,7 @@ REGISTER_TEST(md_tags_list_all_counts,
     DOCTEST_CHECK_EQ(tags2.value()[1].name, std::string("急"));
     DOCTEST_CHECK_EQ(tags2.value()[1].noteCount, 2);
 
-    // 所有笔记移除某标签 → 该标签（孤儿）从 listAllTags 消失
+    // 用光最后一个使用者后，孤儿标签必须从 listAllTags 消失
     DOCTEST_REQUIRE(svc.setTags("a.md", {}).isOk());
     DOCTEST_REQUIRE(svc.setTags("b.md", {}).isOk());
     auto tags3 = svc.listAllTags();
@@ -1194,7 +1124,6 @@ REGISTER_TEST(md_tags_removed_note_cleans_associations,
     DOCTEST_REQUIRE(svc.setTags("a.md", {"独占", "共享"}).isOk());
     DOCTEST_REQUIRE(svc.setTags("b.md", {"共享"}).isOk());
 
-    // 删除 a：独占标签消失，共享标签计数降 1
     DOCTEST_REQUIRE(svc.remove("a.md").isOk());
     auto tags = svc.listAllTags();
     DOCTEST_REQUIRE(tags.isOk());
@@ -1202,7 +1131,7 @@ REGISTER_TEST(md_tags_removed_note_cleans_associations,
     DOCTEST_CHECK_EQ(tags.value()[0].name, std::string("共享"));
     DOCTEST_CHECK_EQ(tags.value()[0].noteCount, 1);
 
-    // note_tags 表里 a 的关联行已清（FK cascade）
+    // note_tags 里 a 的关联行必须随索引行一起清掉（FK cascade）
     {
         auto prep = db.prepare(
             "SELECT COUNT(*) AS n FROM markdown_note_tags nt "
@@ -1214,7 +1143,6 @@ REGISTER_TEST(md_tags_removed_note_cleans_associations,
         DOCTEST_CHECK_EQ(rows.value()[0].getInt64("n").value(), 0);
     }
 
-    // 删除最后一个使用者 → 标签表彻底干净
     DOCTEST_REQUIRE(svc.remove("b.md").isOk());
     auto tags2 = svc.listAllTags();
     DOCTEST_REQUIRE(tags2.isOk());
@@ -1231,13 +1159,8 @@ REGISTER_TEST(md_tags_removed_note_cleans_associations,
     return true;
 })
 
-// ============ 审计 2026-09-23 [2]：笔记保存原子写 ============
-
-// write/create 改 tmp+rename 后验证三件事：
-//   1. 成功路径不留 *.devdesk-tmp 残骸（rename 完成即消失）
-//   2. 覆盖已存在的非空文件正常工作（remove+rename 路径，MinGW rename
-//      不覆盖语义正是先删再替换的原因）
-//   3. create()（旧实现写失败连检查都没有）同样原子化且内容完整
+// 原子写（tmp + rename）验证三件事：成功路径不留 *.devdesk-tmp 残骸；覆盖已存在的非空文件
+// 正常（先 remove 再 rename 是因为 MinGW 的 rename 不覆盖）；create() 同样原子化且内容完整。
 REGISTER_TEST(md_write_atomic_no_tmp_leftover,
               "MarkdownService: write/create 原子写不留 tmp 残骸", {
     const auto dir = test_support::makeTempDir("devdesk_md_test_", "atomic_write");
@@ -1245,7 +1168,7 @@ REGISTER_TEST(md_write_atomic_no_tmp_leftover,
     applySchema(db);
     module::markdown::MarkdownService svc(db, dir);
 
-    // 深一层目录 + 较大内容（走 create_directories + tmp+rename 全路径）
+    // 深一层目录 + 大内容，走满 create_directories + tmp+rename 全路径
     const std::string big = "# Deep\n\n" + std::string(200000, 'x');
     DOCTEST_REQUIRE(svc.write(fs::path("notes") / "deep.md", big).isOk());
 

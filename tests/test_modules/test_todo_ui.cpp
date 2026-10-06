@@ -1,10 +1,9 @@
 // tests/test_modules/test_todo_ui.cpp
-// Todo UI 补完（P7a 键盘移动 / 右键菜单 / 列管理 / datepicker）测试：
-//   1. 纯函数：computeKeyboardMove（上移/下移/边界/带空洞 position）
-//   2. 纯函数：ymdToEpoch / epochToYmd 往返
-//   3. 无头 compose 冒烟 + 回调交互：右键菜单开合、菜单项点击落库、
-//      卡片点击选中 → Ctrl+↑/↓ 键盘移动落库、datepicker 打开渲染
-// 证据链 = 代码路径 + 本无头 compose 测试；真实鼠标点验留给用户人工确认
+// Todo UI 单测：键盘移动与日期换算纯函数 / 无头 compose 冒烟与回调交互 / 拖放条几何 /
+// 优先级色底 / 标签字号 / 列表头重命名与新建的重名与空名校验。
+// 跨文件前提：
+//   - 无头环境下没有真实输入与焦点，键盘移动与菜单点击只能靠直接调回调 + 断言落库结果。
+//   - 拖放条是覆盖层不是流式内容：悬停行下方的占位条必须压在两卡之间的底缝，卡片不得被下推。
 #include "doctest.h"
 #include "test_support.h"
 
@@ -14,11 +13,11 @@
 #include "core/theme.h"
 #include "module_todo/todo_service.h"
 #include "module_todo/todo_ui_logic.h"
-#include "ui_kit/metrics.h"  // kHeaderH（R5 看板几何断言）
+#include "ui_kit/metrics.h"  // kHeaderH：看板几何断言基准高
 
 #include <eui/dsl.h>
 #include <eui/types.h>
-#include <components/input.h>  // InputState（程序赋值光标修复的测试显式置光标）
+#include <components/input.h>  // InputState：程序赋值路径须显式置光标
 #include "core/input/input_types.h"
 
 #include <algorithm>
@@ -37,7 +36,7 @@ namespace {
 // 临时 db 文件名前缀（共享工厂 test_support::TestEnv 的第一实参）
 constexpr const char* kDbPrefix = "devdesk_test_todoui_";
 
-// ---- UI 整改 17/18 断言小件（优先级色底 / 标签字号）----
+// 优先级色底 / 标签字号断言
 
 // 颜色近似相等（eui::Color 无 operator==；tint 断言不比位、比分量差）
 bool colorNear(const eui::Color& a, const eui::Color& b, float eps = 0.02f) {
@@ -71,14 +70,13 @@ float contrastRatio(const eui::Color& a, const eui::Color& b) {
 
 // RAII：临时库（共享 test_support::TestEnv；注册全局 appDatabase，todo 模块
 // onStart 依赖，析构时一定解除注册防悬垂污染后续用例）+ TodoService
-// 模块 glue，keep-local（TIN-06）：共享 TestEnv 基座 + TodoService glue。
+// 模块 glue，keep-local：共享 TestEnv 基座 + TodoService glue。
 struct TestEnv : test_support::TestEnv {
     std::unique_ptr<module::todo::TodoService> svc;
 
-    // 视图状态隔离（审计 [23]）自 2026-10-03（批次 E2）起由基类注册的临时库
-    // 承担——状态是 app_config 表的一行（键 todo_view_state），无头用例
-    // 因此不碰真实数据根。原 DEVDESK_TODO_VIEW_STATE_PATH 文件缝已无人读
-    //（todo_view_state.cpp 不再 getenv），随清理批删除。
+    // 视图状态存在 app_config 表的一行（键 todo_view_state），基类注册的临时库
+    // 让无头用例不碰真实数据根。不要再加回 DEVDESK_TODO_VIEW_STATE_PATH 之类的
+    // 文件缝：视图状态是库不是文件，两处并存必然漂移。
     TestEnv() : test_support::TestEnv(kDbPrefix, "", true) {
         svc = std::make_unique<module::todo::TodoService>(db->db());
     }
@@ -121,7 +119,7 @@ eui::KeyEvent ctrlArrow(eui::InputKey key) {
 
 } // namespace
 
-// ---- 1. computeKeyboardMove 纯函数 ----
+// computeKeyboardMove 纯函数
 
 REGISTER_TEST(todo_ui_move_logic,
               "todo_ui: computeKeyboardMove 上移/下移/边界/空洞", {
@@ -170,7 +168,7 @@ REGISTER_TEST(todo_ui_move_logic,
     return true;
 })
 
-// ---- 2. 日期换算纯函数 ----
+// 日期换算纯函数
 
 REGISTER_TEST(todo_ui_date_roundtrip,
               "todo_ui: ymdToEpoch/epochToYmd 往返", {
@@ -198,7 +196,7 @@ REGISTER_TEST(todo_ui_date_roundtrip,
     return true;
 })
 
-// ---- 3. 无头 compose：卡片渲染 + 右键菜单 + 键盘移动 + datepicker ----
+// 无头 compose：卡片渲染 + 右键菜单 + 键盘移动 + datepicker
 
 REGISTER_TEST(todo_ui_compose_and_context_menu,
               "todo_ui: compose 渲染 + 右键菜单交互（headless）", {
@@ -444,7 +442,7 @@ REGISTER_TEST(todo_ui_column_ops_and_datepicker,
     return true;
 })
 
-// ---- 4. W7 position 缺陷回归 ----
+// computeAppendPosition
 
 REGISTER_TEST(todo_ui_append_position,
               "todo_ui: computeAppendPosition 空列/已有列/空洞", {
@@ -461,7 +459,7 @@ REGISTER_TEST(todo_ui_append_position,
     return true;
 })
 
-// UI 整改 13：computeInsertPosition 拖拽按行插入（rowIndex 越界 = 追加）
+// computeInsertPosition 拖拽按行插入（rowIndex 越界 = 追加）
 REGISTER_TEST(todo_ui_insert_position,
               "todo_ui: computeInsertPosition 行插入/越界追加", {
     using module::todo::ui::computeInsertPosition;
@@ -515,7 +513,7 @@ REGISTER_TEST(todo_ui_edit_keeps_order,
         DOCTEST_REQUIRE(save->onClick != nullptr);
         save->onClick();
     }
-    // 回归断言：丙仍在列尾且 position 保留（旧缺陷：保存硬编码 position=0 → 丙顶到列首）
+    // 丙仍在列尾且 position 保留：保存时硬编码 position=0 会把它顶到列首
     auto ts = env.svc->listTasks(col.value().id);
     DOCTEST_REQUIRE(ts.isOk());
     DOCTEST_REQUIRE_EQ(ts.value().size(), static_cast<size_t>(3));
@@ -585,7 +583,7 @@ REGISTER_TEST(todo_ui_move_appends_to_end,
         DOCTEST_CHECK_EQ(ui.find("todo.col.4.card.0.bg")->opacity, 0.45f);
         DOCTEST_CHECK_EQ(ui.find("todo.col.5.bg")->border.width, 2.0f);
         DOCTEST_CHECK_EQ(ui.find("todo.col.4.bg")->border.width, 1.0f);
-        // UI 整改 13：目标列出现插入位占位条（按悬停行）
+        // 目标列出现插入位占位条（按悬停行）
         DOCTEST_CHECK(ui.find("todo.col.5.dropbar") != nullptr);
 
         // release（PointerAction::Release）→ moveTask 落库
@@ -674,8 +672,8 @@ REGISTER_TEST(todo_ui_move_appends_to_end,
                           true, core::PointerButton::Left);
         DOCTEST_CHECK(clickState.clicked);
 
-        // 模块 drop 路径照旧走真实回调：拖出又拖回松手 → 落回源列 = 取消，
-        // 详情弹窗不因松手打开（回归护栏：模块不得在 onRelease 里自开详情）
+        // 拖出又拖回松手 → 落回源列 = 取消，详情弹窗不因松手打开。
+        // 模块不得在 onRelease 里自开详情。
         eui::PointerEvent pe;
         card->onPress(pe, bounds);
         core::dsl::DragEvent ev;  // 超阈值拖动后又拖回卡上
@@ -730,7 +728,7 @@ REGISTER_TEST(todo_ui_move_appends_to_end,
     return true;
 })
 
-// UI 整改 13：拖拽按悬停行插入（占位条预览 + 落库位置一致，headless）
+// 拖拽按悬停行插入（占位条预览 + 落库位置一致，headless）
 // 列布局：[0..3] 种子列，4=插入源列，5=插入目标列
 REGISTER_TEST(todo_ui_drag_insert_position,
               "todo_ui: 拖拽插入目标行（占位条 + 按行落库）", {
@@ -777,10 +775,10 @@ REGISTER_TEST(todo_ui_drag_insert_position,
         ev.y = dstBg->frame.y + 56.0f + 4.0f;  // 列头下方 → 行 0（首卡前）
         card->onDrag(ev);
         composeLayout();
-        // 假修回归（占位条 ignoreLayout 跳流式；frame 为绝对坐标，板面顶边
-        // 是页面值不写死）：row 0 → 条贴在卡 0 顶（旧缺陷：条贴内容顶、
-        // 整列卡片被流式下推 16px、松手弹回——position 在 column 流式里
-        // 不生效，ignoreLayout 后按 overlay x/y 绝对定位）
+        // 占位条走 ignoreLayout 跳流式，frame 为绝对坐标（板面顶边是页面值，
+        // 不写死）：row 0 → 条贴在卡 0 顶。
+        // 若把占位条改回流式布局，条会贴内容顶、整列卡片被下推 16px、松手弹回：
+        // position 在 column 流式里不生效，必须保持 overlay x/y 绝对定位。
         const auto* dropBar = ui.find("todo.col.5.dropbar");
         DOCTEST_REQUIRE(dropBar != nullptr);  // 占位条在目标列
         const auto* card0Wrap = ui.find("todo.col.5.card.0.wrap");
@@ -823,8 +821,8 @@ REGISTER_TEST(todo_ui_drag_insert_position,
         ev.y = dstBg->frame.y + 56.0f + 272.0f;
         card->onDrag(ev);
         composeLayout();
-        // 假修回归：悬停行 3（列尾追加）→ 条在卡 2 底缝（旧缺陷：流式下被
-        // 压到内容顶=卡 0 顶，与悬停行完全对不上）；卡片未被流式下推
+        // 悬停行 3（列尾追加）→ 条在卡 2 底缝，卡片未被流式下推。
+        // 不可改成流式布局：那样条会被压到内容顶（= 卡 0 顶），与悬停行完全对不上。
         const auto* dropBar = ui.find("todo.col.5.dropbar");
         DOCTEST_REQUIRE(dropBar != nullptr);  // 尾部占位条
         const auto* card1Wrap = ui.find("todo.col.5.card.1.wrap");
@@ -857,10 +855,10 @@ REGISTER_TEST(todo_ui_drag_insert_position,
         DOCTEST_CHECK_EQ(ts.value()[3].title, std::string("再移动任务"));  // 追加列尾
     }
 
-    // 场景 3（2026-09-28 缺陷 3 起语义）：同列拖拽现在**受支持**——悬停行
-    // 照常预览（占位条进源列），落点仍在自身缝位（row 2 = 甲 与 乙 之间的
-    // 缝，含被拖卡自身的行序）→ 换算后插回原位 = no-op：顺序不变、不落库。
-    // 旧约定「同列拖拽 = 取消、不预览」与旧断言（无占位条）已废。
+    // 场景 3：同列拖拽受支持——悬停行照常预览（占位条进源列），落点仍在自身
+    // 缝位（row 2 = 甲 与 乙 之间的缝，含被拖卡自身的行序）→ 换算后插回原位
+    // = no-op：顺序不变、不落库。
+    // 不要退回「同列拖拽 = 取消、不预览」：那会让占位条这条路径失去覆盖。
     {
         composeLayout();
         const auto* card = ui.find("todo.col.5.card.1.bg");  // 甲（同列拖）
@@ -896,7 +894,7 @@ REGISTER_TEST(todo_ui_drag_insert_position,
         DOCTEST_CHECK_EQ(ts.value()[1].title, std::string("甲"));  // 插回原位 = no-op
     }
 
-    // 场景 4（2026-09-28 缺陷 3 主用例）：同列拖到列尾 → 甲 移到最末
+    // 场景 4：同列拖到列尾 → 甲 移到最末
     // 列序此刻 = [被移动任务, 甲, 乙, 再移动任务]；甲 ownIdx=1，悬停行 4
     //（relY ≥ 3*92+84 = 360 → 钳到 taskCount=4）→ 换算行 3（摘出自身后
     // 的列尾）→ 落库后 = [被移动任务, 乙, 再移动任务, 甲]
@@ -972,8 +970,8 @@ REGISTER_TEST(todo_ui_drag_insert_position,
     return true;
 })
 
-// ---- 2026-09-28 真机缺陷 1/2：列内卡片边距（卡左缘 = 列左缘 + 16，两侧同源）
-// + 拖拽占位条与卡槽同宽同位（条不再右边留空）----
+// 列内卡片边距（卡左缘 = 列左缘 + 16，两侧同源）+ 拖拽占位条与卡槽同宽同位
+//（条不再右边留空）
 // 窄列口径：16px inset 两侧各一份 ⇒ 卡宽 = 内容宽 - 32（contentCardWidth），
 // 8 列最小窗（colW 126）时 = 94，仍 > 0 且 chip 自适应不越出卡右缘。
 REGISTER_TEST(todo_ui_card_inset_and_dropbar_width,
@@ -1094,7 +1092,7 @@ REGISTER_TEST(todo_ui_card_inset_and_dropbar_width,
     return true;
 })
 
-// ---- 卡内文本居中（2026-09-30 用户需求「卡内文本水平垂直居中展示」）----
+// 卡内文本居中
 // 三种卡形态全覆盖：纯标题（组 = 标题独占整卡居中）/ 有截止 chip / 有 tags
 // chip（组 = 标题行 + chip 行整块居中）。断言口径：
 //   水平 = 标题框中心与卡中心偏差 ≤1px + horizontalAlign Center 机制位在位
@@ -1150,9 +1148,8 @@ REGISTER_TEST(todo_ui_card_text_centered,
         DOCTEST_CHECK_EQ(title->horizontalAlign, eui::HorizontalAlign::Center);
         DOCTEST_CHECK(std::abs((title->frame.x + title->frame.width / 2.0f) -
                                cardCX) <= 1.0f);
-        // 水平让位（R1 审计修，kCardTitleBoxInset 22→40）：标题框右缘必须
-        // 让开完成角标区间 [w-36, w-12]（drawCard 的 .done 角标 x = width-36），
-        // 否则标题文字压角标——改前 inset=22 时本断言红
+        // 水平让位（kCardTitleBoxInset = 40）：标题框右缘必须让开完成角标区间
+        // [w-36, w-12]（drawCard 的 .done 角标 x = width-36），否则标题文字压角标
         DOCTEST_CHECK(title->frame.x + title->frame.width <=
                       cardBg->frame.x + cardBg->frame.width - 36.0f);
 
@@ -1180,7 +1177,7 @@ REGISTER_TEST(todo_ui_card_text_centered,
     return true;
 })
 
-// ---- 批次 B1（2026-10-02）文本垂直居中根治：卡内 chip 胶囊（drawChip）----
+// 卡内 chip 胶囊（drawChip）文本垂直居中
 // drawChip（todo_ui_common.h，卡片优先级/截止/标签 pill 与详情弹窗标签区共用）
 // 的文本盒与胶囊底同 y 同高（kChipHeight）、lineHeight 也 == kChipHeight，缺
 // VerticalAlign::Center 时 runtime 把 ink 从行框顶沿起排（runtime_render.h:1068
@@ -1232,7 +1229,7 @@ REGISTER_TEST(todo_ui_chip_text_centered,
     return true;
 })
 
-// ---- 2026-09-28 真机缺陷 3 纯函数：同列重排行号换算 + 落库插入位 ----
+// 同列重排行号换算 + 落库插入位（纯函数）
 REGISTER_TEST(todo_ui_reorder_pure_helpers,
               "todo_ui: 同列重排——行号换算与插入位（纯函数）", {
     using module::todo::ui::computeReorderInsertPosition;
@@ -1288,7 +1285,7 @@ REGISTER_TEST(todo_ui_reorder_pure_helpers,
     return true;
 })
 
-// UI 整改 13 补：拖入空列 → 占位条在卡区首卡位（列头下方），不贴列顶
+// 拖入空列 → 占位条在卡区首卡位（列头下方），不贴列顶
 REGISTER_TEST(todo_ui_drag_empty_column_dropbar,
               "todo_ui: 拖入空列占位条位于卡区首卡位（不贴列顶）", {
     TestEnv env;
@@ -1333,7 +1330,7 @@ REGISTER_TEST(todo_ui_drag_empty_column_dropbar,
     DOCTEST_REQUIRE(dropBar != nullptr);  // 空列也预览插入位
     const auto* colBg = ui.find("todo.col.5.bg");
     DOCTEST_REQUIRE(colBg != nullptr);
-    // 假修回归：空列 hoverRow 恒 0 → 条在卡区首卡位 = 列顶 + 列头高
+    // 空列 hoverRow 恒 0 → 条在卡区首卡位 = 列顶 + 列头高
     // （旧缺陷：y=0 画在列顶、叠列头区域；并保证与非空列 row 0 槽位
     // 绝对坐标一致——两路径同语义）
     DOCTEST_CHECK_EQ(dropBar->frame.y, colBg->frame.y + 56.0f);
@@ -1351,10 +1348,10 @@ REGISTER_TEST(todo_ui_drag_hit_pure,
     using module::todo::ui::kColumnContentInset;
     // 锚定卡在列 1 第 0 张：板面（dpi=1）originX=80，列 [80,280][300,500][520,720]，
     // boardTop=144，boardBottom=644。
-    // 2026-09-28 缺陷 1 起：按下锚点 = **卡片**左缘 = 列左缘 + 列内容左内边距
-    //（kColumnContentInset，卡不再贴列左缘）→ pressX = 300 + 16 = 316；
-    // dragDropTarget 内部同源减掉该内边距还原列/板面原点（漏减 → 命中整体
-    // 右移 16px，列左缘 16px 带内落点会误判成左侧列/板外，见下方边界断言）
+    // 按下锚点 = 卡片左缘 = 列左缘 + 列内容左内边距（kColumnContentInset，
+    // 卡不再贴列左缘）→ pressX = 300 + 16 = 316；
+    // dragDropTarget 内部必须同源减掉该内边距还原列/板面原点：漏减会让命中
+    // 整体右移 16px，列左缘 16px 带内的落点被误判成左侧列/板外。
     DragHitInput in;
     in.fromColIndex = 1;
     in.colCount = 3;
@@ -1384,7 +1381,7 @@ REGISTER_TEST(todo_ui_drag_hit_pure,
     DOCTEST_CHECK_EQ(dragDropTarget(in, 299.0, 300.0), -1);  // 列 1 左缘前 1px = 间隙
 
     // HiDPI（dpi=2）：指针空间坐标全翻倍，命中结果不变
-    // （审计 M4 后尺度由调用点显式声明 → dpiScale 字段；探针值同源）
+    // 尺度由调用点显式声明（dpiScale 字段）；探针值同源
     DragHitInput hi = in;
     hi.pressX = (300.0f + kColumnContentInset) * 2.0f;
     hi.pressY = 400.0f;
@@ -1395,7 +1392,7 @@ REGISTER_TEST(todo_ui_drag_hit_pure,
     DOCTEST_CHECK_EQ(dragDropTarget(hi, 1100.0, 600.0), 2);  // 右列
 
     // 页面区原点（侧边栏展开/折叠）在指针与锚点上同减 → 命中结果不变
-    // （审计 M4：拖拽换算改吃 compose 空间，pageOriginX 两侧对消）
+    // 拖拽换算吃 compose 空间，pageOriginX 两侧对消
     DragHitInput orig = in;
     orig.pageOriginX = 208.0f;
     DOCTEST_CHECK_EQ(dragAnchorScale(orig), 1.0f);
@@ -1420,7 +1417,7 @@ REGISTER_TEST(todo_ui_drag_hit_pure,
     bad.cardWidth = 0.0f;
     DOCTEST_CHECK_EQ(dragDropTarget(bad, 400.0, 300.0), -1);
 
-    // UI 整改 13：dragDropRowIndex 悬停行（同几何：boardTop=144，列内容
+    // dragDropRowIndex 悬停行（同几何：boardTop=144，列内容
     // 顶 = 200，卡 i 占 [i*92, i*92+84]，缝中心 = 插入位）
     using module::todo::ui::dragDropRowIndex;
     // 指针不在目标列（x 落列外）→ -1
@@ -1556,7 +1553,7 @@ REGISTER_TEST(todo_ui_drag_hit_scroll_same_frame,
     return true;
 })
 
-// 拖拽跟手（2026-09-28）：锚点换算纯函数。锚点 = 按下时卡片位置（指针空间）
+// 拖拽跟手：锚点换算纯函数。锚点 = 按下时卡片位置（指针空间）
 // + 按下点起累计位移（DragEvent::totalX/totalY，物理像素），换算因子与
 // dragDropTarget 同一份 dpiScale。
 REGISTER_TEST(todo_ui_drag_ghost_anchor_pure,
@@ -1587,8 +1584,7 @@ REGISTER_TEST(todo_ui_drag_ghost_anchor_pure,
     return true;
 })
 
-// 拖拽跟手（2026-09-28）无头回归：跟手副本的锚点、层序（坑一/坑四）、
-// 半透（坑二）、松手归零。
+// 拖拽跟手：跟手副本的锚点、层序、半透、松手归零。
 REGISTER_TEST(todo_ui_drag_follow_ghost,
               "todo_ui: 拖拽跟手副本（页面顶层 + 半透 + 松手消失）", {
     TestEnv env;
@@ -1600,7 +1596,7 @@ REGISTER_TEST(todo_ui_drag_follow_ghost,
     auto mover = env.svc->createTask(src.value().id, "被拖的任务");
     DOCTEST_REQUIRE(mover.isOk());
     {
-        // 带优先级拖：副本底色要跟手优先级（UI 整改 17 的卡底延伸）
+        // 带优先级拖：副本底色要跟手优先级
         module::todo::Task tm = mover.value();
         tm.priority = module::todo::Priority::High;
         DOCTEST_REQUIRE(env.svc->updateTask(tm).isOk());
@@ -1668,7 +1664,7 @@ REGISTER_TEST(todo_ui_drag_follow_ghost,
     DOCTEST_CHECK(ghost->zIndex > 0);       // z 压过看板子树（列滚动条 z+1）
     // 坑二：半透（< 1）——目标列插入位占位条能从副本底下透出，不整块吃掉
     DOCTEST_CHECK(ghost->opacity < 1.0f);
-    // UI 整改 17：副本底色 = 该卡的优先级底（与真卡同一条 priorityCardBg）——
+    // 副本底色 = 该卡的优先级底（与真卡同一条 priorityCardBg）——
     // 拖到一半优先级指示不许消失（回退成 t.colors.surface 即红）
     {
         const auto* ghostBg = ui.find("todo.dragghost.bg");
@@ -1752,7 +1748,7 @@ REGISTER_TEST(todo_ui_column_scroll_geometry,
     // 滚动容器存在
     DOCTEST_CHECK(ui.find("todo.col.4.scroll") != nullptr);
 
-    // 列几何回归（stack 包装修复）：列头与列背景同 x 起点，卡片在列内纵向排列。
+    // 列头与列背景同 x 起点，卡片在列内纵向排列。
     // 旧缺陷：position() 在 row 流式布局里被忽略，列头/卡片横向排开（col 头 x 偏移一整列宽）
     const auto* colBg = ui.find("todo.col.4.bg");
     const auto* colHead = ui.find("todo.col.4.head");
@@ -1769,9 +1765,9 @@ REGISTER_TEST(todo_ui_column_scroll_geometry,
     DOCTEST_REQUIRE(card0 != nullptr);
     DOCTEST_REQUIRE(card1 != nullptr);
     DOCTEST_REQUIRE(card14 != nullptr);
-    // 卡片在列内（不是横向流式排开）。2026-09-28 真机缺陷 1：卡左缘 = 列左缘
-    // + 列内容左内边距 kColumnContentInset（16px）——旧断言锁的是缺陷形态
-    //（卡贴列左缘、左零边距），现在两侧 inset 同源派生（见 contentCardWidth）
+    // 卡片在列内（不是横向流式排开）。卡左缘 = 列左缘 + 列内容左内边距
+    // kColumnContentInset（16px），两侧 inset 同源派生（见 contentCardWidth）：
+    // 钉成 0 会退回「卡贴列左缘、左零边距」的缺陷形态。
     DOCTEST_CHECK_EQ(card0->frame.x,
                      colBg->frame.x + module::todo::ui::kColumnContentInset);
     DOCTEST_CHECK_EQ(card1->frame.x,
@@ -1960,9 +1956,8 @@ REGISTER_TEST(todo_ui_detail_delete_confirms,
     return true;
 })
 
-// 完成态按 kind 落列（不靠「已完成」标题）：重命名已完成列后，
-// 详情弹窗「标记完成」仍应把任务移进该列（回归：此前按标题找列，
-// 重命名后任务静默留在原列）
+// 完成态按 kind 落列（不靠「已完成」标题）：重命名已完成列后，详情弹窗
+// 「标记完成」仍应把任务移进该列——按标题找列会让重命名后任务静默留在原列
 REGISTER_TEST(todo_ui_complete_by_kind,
               "todo_ui: 完成按 kind 落列，列改名后仍命中（headless）", {
     TestEnv env;
@@ -2014,7 +2009,7 @@ REGISTER_TEST(todo_ui_complete_by_kind,
     return true;
 })
 
-// UI 整改 15：详情弹窗「移动到」已删除（改拖拽/右键菜单）——6 列场景下
+// 详情弹窗「移动到」已删除（改拖拽/右键菜单）——6 列场景下
 // 不再渲染任何移动到按钮/标签；切列路径由右键菜单（本用例）与拖拽
 //（todo_ui_drag_insert_position）分别覆盖
 REGISTER_TEST(todo_ui_detail_move_removed,
@@ -2090,8 +2085,8 @@ REGISTER_TEST(todo_ui_detail_move_removed,
     return true;
 })
 
-// 状态反馈 toast：超时消失 + subtitle 保持静态说明
-// （此前 setStatus 写进 subtitle 永久驻留，静态操作说明被顶掉）
+// 状态反馈 toast：超时消失 + subtitle 保持静态说明。
+// setStatus 若写进 subtitle 会永久驻留，把静态操作说明顶掉。
 REGISTER_TEST(todo_ui_status_toast_timeout,
               "todo_ui: 状态提示 toast 超时消失，subtitle 静态（headless）", {
     TestEnv env;
@@ -2108,9 +2103,9 @@ REGISTER_TEST(todo_ui_status_toast_timeout,
     DOCTEST_REQUIRE(title != nullptr);
     DOCTEST_CHECK(title->text.find("先点击卡片选中任务") != std::string::npos);
     // 正文留空（todo 的 setStatus 只有标题）：空串必须原样落到 .message 节点，
-    // 不得回落 EUI-NEO 组件自带的英文占位正文——2026-09-29 真机截图实锤
-    // 「已调整顺序」toast 正文显示 "Short status message for non-blocking
-    // feedback."（回退 toast.cpp 的空判断即红）
+    // 不得回落 EUI-NEO 组件自带的英文占位正文——那会让 toast 显示
+    // "Short status message for non-blocking feedback."。回退 toast.cpp 的
+    // 空判断即红。
     const auto* body = frame.ui.find("todo.toast.message");
     DOCTEST_REQUIRE(body != nullptr);
     DOCTEST_CHECK(body->text.empty());
@@ -2176,7 +2171,7 @@ REGISTER_TEST(todo_ui_fontscale_tokens,
     return true;
 })
 
-// ---- 4. 深色主题列区域白底回归 ----
+// 深色主题列区域白底
 // 根因：列头右键热区 ui.rect(id + ".head") 没设 color，Element::color 默认
 // {1,1,1,1} 不透明白 → 深色主题下每列列头被整条刷白（浅色下白底不可见）。
 // 这里全树扫描：深色主题下 Todo 页任何 Rect 元素都不允许是「不透明近白色」。
@@ -2212,7 +2207,7 @@ REGISTER_TEST(todo_ui_dark_no_white_rects,
     ::core::theme::setDark();   // 默认即深色，显式声明本用例前提
     Frame frame(mod.get());
 
-    // 直接回归点：列头热区必须是全透明（默认白是 bug）
+    // 列头热区必须是全透明（默认白是 bug）
     const auto* head = frame.ui.find("todo.col.4.head");
     DOCTEST_REQUIRE(head != nullptr);
     DOCTEST_CHECK_EQ(head->color.a, 0.0f);
@@ -2230,7 +2225,7 @@ REGISTER_TEST(todo_ui_dark_no_white_rects,
     return true;
 })
 
-// ---- 5. 三件套（W 计划 P2 遗留）：搜索 / 逾期 / tags / 列色点 ----
+// 三件套：搜索 / 逾期 / tags / 列色点
 
 // 搜索框：input 组件真实 onTextInput 链路 → onChange → service_->search → 卡片过滤
 REGISTER_TEST(todo_ui_search_filter,
@@ -2267,7 +2262,7 @@ REGISTER_TEST(todo_ui_search_filter,
         DOCTEST_CHECK(frame.ui.find("todo.col.4.card.1.bg") == nullptr);
         DOCTEST_CHECK(frame.ui.find("todo.col.0.bg") != nullptr);
 
-        // Esc 清空（审计 [10] 后走 onCancel 路径；[21] 的 Escape→onEnter 回退不再依赖）
+        // Esc 清空走 onCancel 路径
         auto* input2 = frame.ui.find("todo.search.hit");
         DOCTEST_REQUIRE(input2 != nullptr);
         core::KeyEvent esc;
@@ -2282,7 +2277,7 @@ REGISTER_TEST(todo_ui_search_filter,
     return true;
 })
 
-// 审计 [10]：搜索框 Enter 改无副作用（与 md.search 一致），清除只留 Esc（onCancel）
+// 搜索框 Enter 无副作用（与 md.search 一致），清除只留 Esc（onCancel）
 REGISTER_TEST(todo_ui_search_enter_noop,
               "todo_ui: 搜索框 Enter 无副作用（[10]）+ Esc 清除保留", {
     TestEnv env;
@@ -2480,8 +2475,8 @@ REGISTER_TEST(todo_ui_overdue_min_one_day,
     return true;
 })
 
-// THS-06：逾期查询失败不得伪装成「逾期 0」——此前 openOverdueDialog 把失败
-// 当空结果开弹窗（「逾期任务（0）」），refreshOverdueCount 静默改写为 0
+// 逾期查询失败不得伪装成「逾期 0」：openOverdueDialog 若把失败当空结果开弹窗
+// （「逾期任务（0）」），refreshOverdueCount 就会静默改写为 0
 REGISTER_TEST(todo_ui_overdue_query_fail,
               "todo_ui: 逾期查询失败 → 报错不开伪空弹窗（THS-06，headless）", {
     TestEnv env;
@@ -2546,8 +2541,8 @@ REGISTER_TEST(todo_ui_overdue_query_fail,
     return true;
 })
 
-// THS-06：完成态流转的「列迁移」失败不得再提示成功——此前只 LOG_WARN 后被吞，
-// 用户看到「任务已完成」而卡片留在原列，再点一次也看不出原因
+// 完成态流转的「列迁移」失败不得提示成功：失败只 LOG_WARN 后被吞的话，用户看到
+// 「任务已完成」而卡片留在原列，再点一次也看不出原因
 REGISTER_TEST(todo_ui_complete_move_fail,
               "todo_ui: 完成后列迁移失败 → 报错不报成功（THS-06，headless）", {
     TestEnv env;
@@ -2805,8 +2800,8 @@ REGISTER_TEST(todo_ui_feature_pure_helpers,
     DOCTEST_CHECK_EQ(overdueDays(localMidnight(0) + 3600, localMidnight(0) + 7200), 0);
 
     // 搜索过滤：命中 id 集内保留且顺序不变；未激活 → 全保留。
-    // 审计 perf [40]：命中表为 unordered_set——过滤只取决于「是否命中」，
-    // 与旧 vector+std::find 版结果集完全一致（下面双序构建锁这一点）
+    // 命中表为 unordered_set——过滤只取决于「是否命中」，结果集与顺序无关
+    //（下面双序构建锁这一点）
     std::vector<module::todo::Task> tasks = {
         makeTask(1, 10, 0),
         makeTask(2, 10, 1),
@@ -2844,7 +2839,7 @@ REGISTER_TEST(todo_ui_feature_pure_helpers,
     return true;
 })
 
-// ---- UI 整改 17 ①：优先级**直接改卡底色**（不再加色块 pill）----
+// 优先级直接改卡底色（不加色块 pill）
 // 回退任一条即红：把 .prio 色块画回来 → 元素存在断言红；把卡底算式换回
 // t.colors.surface → 「无 vs 高 背景色不同」与 tint 取值断言红；把 hover 态
 // 换回中性 token → 三态叠加断言红；调低/调高对比度 → ≥4.5:1 断言红。
@@ -2969,7 +2964,7 @@ REGISTER_TEST(todo_ui_priority_card_tint,
     return true;
 })
 
-// ---- UI 整改 17 ②：详情弹窗优先级按钮**自身带该优先级色底** ----
+// 详情弹窗优先级按钮自身带该优先级色底
 // 同源判据：按钮底 = priorityButtonBg（与卡底同一张 priorityColor 表 + 同一张
 // 强度表），未选中 = 强度表浅 tint / 选中 = 0.55 深 tint（"实色感"）。
 REGISTER_TEST(todo_ui_priority_button_tint,
@@ -3080,7 +3075,7 @@ REGISTER_TEST(todo_ui_priority_button_tint,
     return true;
 })
 
-// ---- UI 整改 18 ③：卡片标签文本调大一档（chip 高随之适配，不裁不溢出）----
+// 卡片标签文本大一档（chip 高随之适配，不裁不溢出）
 // 回退字号（12 → 10）→ fontSize 断言红；回退 chip 高（22 → 18）→ height 断言红；
 // 只调字号不调 chip 高 → 内边距断言红；估宽不跟着放大 → 溢出卡宽断言红。
 REGISTER_TEST(todo_ui_tag_chip_font_bigger,
@@ -3135,11 +3130,11 @@ REGISTER_TEST(todo_ui_tag_chip_font_bigger,
     return true;
 })
 
-// ---- 跨模块剩余审计修：窄列固定 66px 截止 chip 越出卡右缘 → 自适应缩窄 ----
-// 列宽无下限（colW = (contentW - gap*(n-1)) / n）。UI 整改 17 删掉 42px 优先级
-// chip 后 chipX 起点从 58 回到 16，8 列（卡宽 94 → 剩余 66）不再触发缩窄，故
-// 本用例列数 8 → 9（1200 窗：colW = (1120-8*16)/9 ≈ 110.2，卡宽 ≈ 78.2 →
-// 剩余 ≈ 50.2 < 66 仍走缩窄分支）；宽窗不缩（保持 66px 原观感）
+// 窄列固定 66px 截止 chip 越出卡右缘 → 自适应缩窄
+// 列宽无下限（colW = (contentW - gap*(n-1)) / n）。删掉 42px 优先级 chip 后
+// chipX 起点从 58 回到 16，8 列（卡宽 94 → 剩余 66）不再触发缩窄，故本用例取
+// 9 列（1200 窗：colW = (1120-8*16)/9 ≈ 110.2，卡宽 ≈ 78.2 → 剩余 ≈ 50.2 < 66
+// 仍走缩窄分支）；宽窗不缩（保持 66px 原观感）
 REGISTER_TEST(todo_card_due_chip_adapts_narrow_column,
               "todo_ui: 窄列截止 chip 自适应缩窄不越出卡右缘（审计修复）", {
     TestEnv env;
@@ -3169,7 +3164,7 @@ REGISTER_TEST(todo_card_due_chip_adapts_narrow_column,
     const auto* dueBg = frame.ui.find("todo.col.8.card.0.due.bg");
     DOCTEST_REQUIRE(cardBg != nullptr);
     DOCTEST_REQUIRE(dueBg != nullptr);
-    // 优先级 chip 已删（UI 整改 17）：此处不再有 .prio 元素
+    // 优先级 chip 已删：此处不再有 .prio 元素
     DOCTEST_CHECK(frame.ui.find("todo.col.8.card.0.prio.bg") == nullptr);
     // 截止 chip 右缘不越出卡右缘（修复前固定 66px 越界）
     DOCTEST_CHECK(dueBg->frame.x + dueBg->frame.width <=
@@ -3190,10 +3185,10 @@ REGISTER_TEST(todo_card_due_chip_adapts_narrow_column,
     return true;
 })
 
-// ---- 6. 产品审计 2026-09-23 [2]：详情弹窗动作先存表单 / 删除确认保留弹窗 / backdrop 守卫 ----
+// 详情弹窗动作先存表单 / 删除确认保留弹窗 / backdrop 守卫
 
 REGISTER_TEST(todo_ui_detail_actions_save_form,
-              "todo_ui: 详情动作按钮先存表单 + 删除取消保留弹窗 + backdrop 守卫（审计 [2]）", {
+              "todo_ui: 详情动作按钮先存表单 + 删除取消保留弹窗 + backdrop 守卫", {
     TestEnv env;
     DOCTEST_REQUIRE(env.ready);
     auto col = env.svc->createColumn("编辑列");
@@ -3208,7 +3203,7 @@ REGISTER_TEST(todo_ui_detail_actions_save_form,
     std::unique_ptr<::core::Module> mod(create_todo_module());
     mod->onStart();
 
-    // 列序：4 个种子列 [0..3] + 编辑列(4) + 目标列(5)（UI 整改 15：详情无「移动到」按钮）
+    // 列序：4 个种子列 [0..3] + 编辑列(4) + 目标列(5)（详情无「移动到」按钮）
 
     // A. 「标记完成」先落表单：改标题不点保存 → 点标记完成 → 标题已落库 + 已完成
     {
@@ -3247,7 +3242,7 @@ REGISTER_TEST(todo_ui_detail_actions_save_form,
         DOCTEST_CHECK(found);
     }
 
-    // B. UI 整改 15：详情「移动到」已删（改拖拽/右键菜单）——改标题 →
+    // B. 详情「移动到」已删（改拖拽/右键菜单）——改标题 →
     //    保存 → 标题落库且**列不变**（弹窗不再提供切列，列身份以库中为准）；
     //    详情内不得再渲染 move.* 按钮
     {
@@ -3385,12 +3380,11 @@ REGISTER_TEST(todo_ui_detail_actions_save_form,
     return true;
 })
 
-// ---- 审计 [24]：「+ 列」命名弹窗 + 列头 ✎ 重命名入口（headless） ----
+// 「+ 列」命名弹窗 + 列头 ✎ 重命名入口（headless）
 
-// 旧行为：点「+ 列」直接 doCreateColumn("新列 N") 即时落库。新行为：先弹
-// 命名弹窗，确认才落库；Esc（输入框聚焦走 input onCancel，未聚焦走 app 级
-// 兜底两路——审计 [21] 收口后原 passthrough hack 已移除）取消不落库；
-// 留空确认采用默认名；输入名字按名字建。改名入口显性化为列头 ✎。
+// 点「+ 列」不即时落库：先弹命名弹窗，确认才落库；Esc（输入框聚焦走 input
+// onCancel，未聚焦走 app 级兜底）取消不落库；留空确认采用默认名；输入名字按名字建。
+// 改名入口显性化为列头 ✎。
 REGISTER_TEST(todo_ui_new_column_dialog,
               "todo_ui: + 列命名弹窗创建/Esc 取消/列头 ✎ 重命名（headless）", {
     TestEnv env;
@@ -3416,7 +3410,7 @@ REGISTER_TEST(todo_ui_new_column_dialog,
     const size_t seed = colCount();   // 迁移默认 4 列
     DOCTEST_REQUIRE_EQ(seed, 4u);
 
-    // 1) 点「+ 列」→ 只开弹窗，不即时落库（[24] 核心回归）
+    // 1) 点「+ 列」→ 只开弹窗，不即时落库
     auto* addcol = frame.ui.find("todo.btn.addcol.bg");
     DOCTEST_REQUIRE(addcol != nullptr);
     DOCTEST_REQUIRE(addcol->onClick != nullptr);
@@ -3433,9 +3427,9 @@ REGISTER_TEST(todo_ui_new_column_dialog,
     DOCTEST_REQUIRE_EQ(colCount(), seed + 1);
     DOCTEST_CHECK(findTitle("新列 5"));
 
-    // 3) Esc（焦点在输入框：input 内置 Escape→onCancel=取消）→ 取消不落库
-    //    审计 [21]：原 onKeyEvent passthrough hack 已由上游 onCancel 取代；
-    //    若 onCancel 被删，内置会把 Esc 回退到 onEnter 提交并建出新列 → colCount 变
+    // 3) Esc（焦点在输入框：input 内置 Escape→onCancel=取消）→ 取消不落库。
+    //    Esc 走 input 的 onCancel，不要再加模块级 passthrough；若 onCancel 被删，
+    //    内置会把 Esc 回退到 onEnter 提交并建出新列 → colCount 变
     //    注意：refresh 重建元素树，所有旧 Element* 悬垂——每次点击前重新 find
     addcol = frame.ui.find("todo.btn.addcol.bg");
     DOCTEST_REQUIRE(addcol != nullptr);
@@ -3523,10 +3517,10 @@ REGISTER_TEST(todo_ui_new_column_dialog,
     return true;
 })
 
-// ---- 审计 [19]：创建/校验失败反馈 → 弹窗内嵌红字 formError（照抄 claude 范本）----
+// 创建/校验失败反馈 → 弹窗内嵌红字 formError
 
 REGISTER_TEST(todo_ui_dialog_form_error,
-              "todo_ui: 新建列/重命名列/新建任务校验失败 → 内嵌红字 + 弹窗不关 + 输入清除（headless，审计 [19]）", {
+              "todo_ui: 新建列/重命名列/新建任务校验失败 → 内嵌红字 + 弹窗不关 + 输入清除（headless）", {
     TestEnv env;
     DOCTEST_REQUIRE(env.ready);
     auto seed = env.svc->listColumns();
@@ -3565,7 +3559,7 @@ REGISTER_TEST(todo_ui_dialog_form_error,
 
     // 注意：refresh 重建元素树，所有旧 Element* 悬垂——每次交互前重新 find
 
-    // ===== A. 重命名列空名 → 内嵌红字 + 弹窗不关（旧行为：静默返回零反馈）=====
+    // A. 重命名列空名 → 内嵌红字 + 弹窗不关
     auto* pen = frame.ui.find("todo.col.0.rename.bg");
     DOCTEST_REQUIRE(pen != nullptr);
     pen->onClick();
@@ -3586,7 +3580,7 @@ REGISTER_TEST(todo_ui_dialog_form_error,
     DOCTEST_CHECK_EQ(rerr->text, std::string("列标题不能为空"));
     DOCTEST_CHECK_EQ(frame.ui.find("todo.dialog.rename.panel")->opacity, 1.0f);  // 弹窗不关
 
-    // ===== B. 重命名撞名 → 红字；下一次输入清除；改唯一名成功关窗落库 =====
+    // B. 重命名撞名 → 红字；下一次输入清除；改唯一名成功关窗落库
     rinput = frame.ui.find("todo.dialog.rename.input.hit");
     DOCTEST_REQUIRE(rinput != nullptr);
     rinput->onKeyEvent(selectAll);
@@ -3606,7 +3600,7 @@ REGISTER_TEST(todo_ui_dialog_form_error,
     rinput->onKeyEvent(selectAll);
     eui::TextInputEvent t2;
     t2.text = "唯一新名";
-    rinput->onTextInput(t2);            // 下一次输入 → 错误清除（[19] 语义）
+    rinput->onTextInput(t2);            // 下一次输入 → 错误清除
     frame.refresh();
     DOCTEST_CHECK(frame.ui.find("todo.dialog.rename.error") == nullptr);
     rsave = frame.ui.find("todo.dialog.rename.confirm.bg");
@@ -3616,7 +3610,7 @@ REGISTER_TEST(todo_ui_dialog_form_error,
     DOCTEST_CHECK_EQ(frame.ui.find("todo.dialog.rename.panel")->opacity, 0.0f);  // 成功才关
     DOCTEST_CHECK(findTitle("唯一新名"));
 
-    // ===== C. 新建列显式输入撞名 → 红字 + 不关（留空默认名路径不受影响，[24]）=====
+    // C. 新建列显式输入撞名 → 红字 + 不关（留空默认名路径不受影响）
     auto* addcol = frame.ui.find("todo.btn.addcol.bg");
     DOCTEST_REQUIRE(addcol != nullptr);
     addcol->onClick();
@@ -3651,7 +3645,7 @@ REGISTER_TEST(todo_ui_dialog_form_error,
     DOCTEST_CHECK(findTitle("迭代列B"));
     DOCTEST_CHECK_EQ(frame.ui.find("todo.dialog.newcol.panel")->opacity, 0.0f);
 
-    // ===== D. 新建任务空标题 → 红字 + 不关（旧行为：先关弹窗再把错误 toast 到窗外）=====
+    // D. 新建任务空标题 → 红字 + 不关（错误 toast 在弹窗内，不弹到窗外）
     auto* add = frame.ui.find("todo.btn.add.bg");
     DOCTEST_REQUIRE(add != nullptr);
     add->onClick();
@@ -3681,10 +3675,10 @@ REGISTER_TEST(todo_ui_dialog_form_error,
     return true;
 })
 
-// ---- 审计 [21]：创建/编辑弹窗 Esc=取消（onCancel，不再误提交）----
+// 创建/编辑弹窗 Esc=取消（onCancel，不是误提交）
 
 REGISTER_TEST(todo_ui_esc_cancel_dialogs,
-              "todo_ui: 新建任务/重命名列 Esc=取消不落库；详情标签 Esc=清草稿（headless，审计 [21]）", {
+              "todo_ui: 新建任务/重命名列 Esc=取消不落库；详情标签 Esc=清草稿（headless）", {
     TestEnv env;
     DOCTEST_REQUIRE(env.ready);
 
@@ -3810,12 +3804,12 @@ REGISTER_TEST(todo_ui_esc_cancel_dialogs,
     return true;
 })
 
-// ---- 审计 M5：Esc 关最上层弹窗（模块级兜底）+ 焦点输入框优先让位 ----
+// Esc 关最上层弹窗（模块级兜底）+ 焦点输入框优先让位
 // 通道 = Module::onKeyEvent（app 级 onKeyEvent → Router 派发到当前页，与
 // todo_ui_keyboard_move 同款直调）。派发序见上游 core/runtime/runtime_input.h
 // updateKeyInput：焦点元素 onKeyEvent 返回 true 则不再回调本通道。
 REGISTER_TEST(todo_ui_esc_closes_topmost_dialog,
-              "todo_ui: Esc 关最上层弹窗（确认类无输入框）+ 输入框聚焦让位 onCancel（审计 M5）", {
+              "todo_ui: Esc 关最上层弹窗（确认类无输入框）+ 输入框聚焦让位 onCancel", {
     TestEnv env;
     DOCTEST_REQUIRE(env.ready);
     auto col = env.svc->createColumn("Esc列");
@@ -3907,7 +3901,7 @@ REGISTER_TEST(todo_ui_esc_closes_topmost_dialog,
     return true;
 })
 
-// ---- 审计 THS-05：弹窗打开栈（「谁在最上层」的唯一持有者）----
+// 弹窗打开栈（「谁在最上层」的唯一持有者）
 // 断言两件事：① 绘制 z 序由打开顺序给出（不再手挑 zIndex）——与栈序一致；
 // ② Esc 关栈顶 = 后开先关：依次开 A=详情 / B=日期 / C=确认，连按 Esc 关序 C→B→A。
 // 三层嵌套由各弹窗自己的开函数驱动（无头直调回调，跳过遮罩命中判定）。
@@ -4043,10 +4037,9 @@ REGISTER_TEST(todo_ui_esc_stack_lifo,
     return true;
 })
 
-// ---- 8. R5 拆分：从 todo_module.cpp 匿名命名空间提升的纯函数等价断言 ----
-// 这些函数拆分前住在 todo_module.cpp 的匿名命名空间里（无头用例够不着），
-// R5 按 god-class spec §4.4 P-C1「补等价断言」搬进 todo_ui_logic.h。这里钉住的
-// 是**搬运前**的取值口径（几何公式 / 查找语义 / chip 估宽），不是新增行为。
+// 看板几何 / 查找 / chip 估宽纯函数的取值口径。
+// 这些函数在 todo_ui_logic.h，这里钉住的是取值口径本身（几何公式 / 查找语义 /
+// chip 估宽），不是新增行为。
 REGISTER_TEST(todo_ui_r5_pure_helpers,
               "todo_ui: R5 看板几何/查找纯函数取值口径（搬运自匿名 ns）", {
     using namespace module::todo;
@@ -4072,7 +4065,7 @@ REGISTER_TEST(todo_ui_r5_pure_helpers,
                          3.0f * (ui::kCardHeight + ui::kCardGap));
 
     // chip 估宽：基础 20 + ASCII 6.6/字节、非 ASCII 4.8/字节（UTF-8 下汉字 3
-    // 字节）——UI 整改 18 字号 10 → 12 后每字节估值同比放大 ×1.2（5.5→6.6 /
+    // 字节）——字号 10 → 12 后每字节估值同比放大 ×1.2（5.5→6.6 /
     // 4→4.8），基数 20（左右各 10px 留白）不变。期望值写死（不是 chipWidth 内部
     // 常量的复述）：改估值或忘改即红——忘改会小于真实字形宽（font-em 用例复核）
     DOCTEST_CHECK_EQ(ui::chipWidth(""), 20.0f);

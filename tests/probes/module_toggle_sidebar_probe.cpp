@@ -1,25 +1,24 @@
-// module_toggle_sidebar_probe.cpp — 活门控（live-toggle）真窗口 probe（计划 Task 5 + fix 轮 [4]）
+// module_toggle_sidebar_probe.cpp — 侧边栏活门控（live-toggle）真窗口 probe
 //
-// 钉「侧边栏实时反映」在真 Runtime 帧节拍 + 真 DOM 上：真 app::compose
-//（本 probe 额外编译 src/app_sidebar.cpp，侧边栏每帧遍历 router->modules()，
-// app_sidebar.cpp:183）+ 桩 Router + 桩可开关模块。
+// 钉「侧边栏实时反映」在真 Runtime 帧节拍 + 真 DOM 上：真 app::compose（本 probe
+// 额外编译 src/app_sidebar.cpp，侧边栏每帧遍历 router->modules()）+ 桩 Router +
+// 桩可开关模块。两条路径：
 //
-// §0 = 真 点击路径（fix 轮 [4]，终审要求）：真 settings 模块实例 + 真卡片
-//   compose，queuePointerButton 真点 agent 开关（settings.card.modules.sw.4.hit
-//   命中区中心，坐标取 compose 后 DOM frame）→ settings_module
-//   applyModuleEnabled（settings_module.cpp:584 persist + onModuleToggled）
-//   → app::toggle 桥 → probe 注入的 handler（形态照 main.cpp:192-194 生产接线
-//   = dispatchModuleToggle）→ 侧边栏当帧反映 + 当前页=Agent 时回首页 redirect。
-//   覆盖「redirect 发生在点击派发栈内」的形态——直调路径（§1-§4）盖不到。
-// §1-§4 = 直调 dispatchModuleToggle（Task 5 原有覆盖）：
-//   off→on→off→on→on(幂等)，断言条目出现/消失/回来/恰好 1 份。
+//   点击路径 = 真 settings 模块实例 + 真卡片 compose，真点 agent 开关
+//         （settings.card.modules.sw.4.hit 命中区中心，坐标取 compose 后的 DOM
+//         frame）→ settings 模块 applyModuleEnabled（persist + onModuleToggled）
+//         → app::toggle 桥 → 本 probe 注入的 handler（形态同生产接线）→ 侧边栏
+//         当帧反映 + 当前页=Agent 时回首页 redirect。覆盖「redirect 发生在点击
+//         派发栈内」的形态——直调路径盖不到。
+//   直调路径 = dispatchModuleToggle：off→on→off→on→on(幂等)，断言条目
+//         出现 / 消失 / 回来 / 恰好 1 份。
 //
-// app:: 层链接说明（照 about_probe.cpp:49-56 的 app::stub 模式）：
+// app:: 层链接面：
 //   - app::compose 用真实现（app_sidebar.cpp 编译进本 probe），不桩；
-//   - app::dslAppConfig() 仍需桩（main.cpp 不在链接面）；
-//   - app::requestShow/requestUpdate 在 main() 里真调一次（GLFW 初始化后，
-//     只置原子标志，无副作用）——同时强制 dsl_app_impl.h 的内联定义落地本
-//     TU，app_assembly.cpp 对这两个符号的引用才能在链接期解析。
+//   - app::dslAppConfig() 需桩（main.cpp 不在链接面）；
+//   - app::requestShow/requestUpdate 在 main() 里真调一次——GLFW 初始化后安全
+//     （只置原子标志 + postEmptyEvent，probe 有窗），同时强制 dsl_app_impl.h 的
+//     内联定义落地本 TU，app_assembly.cpp 对这两个符号的引用才能在链接期解析。
 #include "probes/probe_harness.h"
 #include <eui/detail/dsl_app_impl.h>  // app::requestShow/requestUpdate 内联实现
 #include "app_assembly.h"             // app::assembly::dispatchModuleToggle
@@ -51,8 +50,8 @@ const app::DslAppConfig& dslAppConfig() {
 
 namespace {
 
-// 桩页面模块：Agent 页（活门控目标页）。onStart/onStop 默认空实现够用——
-// 生命周期计数已由无头 test_app_assembly 钉死，probe 只钉「开关 → 下一帧
+// 桩页面模块：Agent 页（活门控目标页）。onStart/onStop 用默认空实现——
+// 生命周期计数由无头 test_app_assembly 钉死，本 probe 只钉「开关 → 下一帧
 // 侧边栏 DOM」这一层。
 class StubPageModule : public ::core::Module {
 public:
@@ -70,15 +69,14 @@ private:
     std::string name_;
 };
 
-// ModuleLookup / ToggleHandler 都是裸函数指针（无捕获约束）→ 经文件级静态
-// 中转（形态同 test_app_assembly.cpp 的计数桩查找缝）
+// ModuleLookup / ToggleHandler 都是裸函数指针（无捕获约束）→ 经文件级静态中转
 StubPageModule* g_agent = nullptr;
 ::core::Router* g_router = nullptr;
 ::core::Module* lookupForProbe(::core::PageId page) {
     return page == ::core::PageId::Agent ? g_agent : nullptr;
 }
-// handler 形态照 main.cpp:192-194 生产接线：settings 卡片开关 → 桥 → 这里
-// → dispatchModuleToggle（§0 真点击路径靠它闭合）
+// handler 形态同生产接线：settings 卡片开关 → 桥 → 这里 → dispatchModuleToggle
+// （真点击路径靠它闭合）
 void probeToggleHandler(const std::string& moduleId, bool on) {
     if (g_router != nullptr) {
         app::assembly::dispatchModuleToggle(moduleId, on, *g_router,
@@ -118,7 +116,7 @@ int main(int argc, char* argv[]) {
     }
 
     // 配置隔离（settings 模块 onStart 吃它）：agent 不在 enabledModules =
-    // 初始 off 态，§0 点击 on / off 全程走真 persist + 真桥
+    // 初始 off 态，点击 on / off 全程走真 persist + 真桥
     const auto cfgFile = test_support::tempConfigFile("pfx_", "cfg");
     {
         std::ofstream f(cfgFile, std::ios::binary | std::ios::trunc);
@@ -137,7 +135,7 @@ int main(int argc, char* argv[]) {
     ::core::Router router;
     router.registerModule(&home);
     router.registerModule(settings.get());
-    // Agent 初始不注册（off 态）——§0 真点击 / §1 直调 on 驱动注册
+    // Agent 初始不注册（off 态）——真点击 / 直调 on 驱动注册
     ::core::registerAppRouter(&router);
     g_router = &router;
     app::toggle::setToggleHandler(&probeToggleHandler);
@@ -180,7 +178,7 @@ int main(int argc, char* argv[]) {
         }
     };
 
-    // ============ §0 真点击路径：设置卡 agent 开关（终审 fix 轮 [4]） ============
+    // 真点击路径：设置卡 agent 开关
     composeFrame();
     if (ui == nullptr) {
         std::cerr << "module_toggle_probe: ui 为空（compose 未执行）\n";
@@ -191,11 +189,11 @@ int main(int argc, char* argv[]) {
     check(ui->find("app.sidebar.item.Agent.hit") == nullptr,
           "§0 初始 off：Agent 条目应不存在");
 
-    // 进设置页 → 切「模块」tab → 真点 agent 开关。当前页=Settings 时设置卡片
-    // 在 DOM，点击派发栈内走 applyModuleEnabled → persist → 桥 → handler →
+    // 进设置页 → 切「模块」tab → 真点 agent 开关。当前页=Settings 时设置卡片在
+    // DOM，点击派发栈内走 applyModuleEnabled → persist → 桥 → handler →
     // dispatchModuleToggle → 下一 compose 侧边栏当帧反映。
-    // 注：「当前页=Agent 时点击开关」在真 UI 结构上不可达（Router 只 compose
-    // 当前页，人在 Agent 页时设置卡不在 DOM）——redirect 分支由 §0b 用直调
+    // 注：「当前页=Agent 时点击开关」在真 UI 结构上不可达——Router 只 compose
+    // 当前页，人在 Agent 页时设置卡不在 DOM。redirect 分支用直调
     // dispatchModuleToggle 覆盖（与真点击同一 dispatcher 代码路径）。
     router.navigateTo(::core::PageId::Settings);
     composeFrame();
@@ -233,10 +231,9 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // §0b redirect-in-dispatch（直调）：当前页=Agent 时 off → navigateTo(Home)
-    // + toast 发生在 dispatchModuleToggle 内部；真窗口帧节拍下断言回首页 +
-    // toast。先 on 注册（navigateTo 对未注册页会兜底回 Home，router.cpp:42-51），
-    // 再把当前页切到 Agent。
+    // redirect-in-dispatch（直调）：当前页=Agent 时 off → navigateTo(Home)
+    // + toast 发生在 dispatchModuleToggle 内部；真窗口帧节拍下断言回首页 + toast。
+    // 先 on 注册（navigateTo 对未注册页会兜底回 Home），再把当前页切到 Agent。
     app::assembly::dispatchModuleToggle(module::settings::kModuleIdAgent, true,
                                         router, &lookupForProbe);
     router.navigateTo(::core::PageId::Agent);
@@ -255,7 +252,7 @@ int main(int argc, char* argv[]) {
     check(ui != nullptr && ui->find("app.sidebar.item.Home.hit") != nullptr,
           "§0b off 后：Home 条目应存在");
 
-    // ============ §1-§4 直调 dispatchModuleToggle（Task 5 原有覆盖） ============
+    // 直调 dispatchModuleToggle
     const auto* homeHit = ui != nullptr ? ui->find("app.sidebar.item.Home.hit")
                                         : nullptr;
     check(homeHit != nullptr, "Home 条目应存在");
@@ -273,10 +270,9 @@ int main(int argc, char* argv[]) {
     }
     const float homeY = homeHit->frame.y;
 
-    // ---- 2) on → 下一帧条目出现，y = 前一条目（Home）下一格（itemH 40 + gap 4）----
-    //（注册序 = home, settings, agent；registerModule 按 PageId 序插入 →
-    // batch-C C-1 起 Agent(4) 在 Settings(5) 之前，侧边栏序 Home, Agent, Settings；
-    //  上一格锚取 Home 条目）
+    // 2) on → 下一帧条目出现，y = 前一条目下一格（itemH 40 + gap 4 = 44）。
+    // 注册序 = home, settings, agent；registerModule 按 PageId 序插入，故 Agent(4)
+    // 在 Settings(5) 之前，侧边栏序 Home, Agent, Settings → Settings 是 Agent 的下一格。
     app::assembly::dispatchModuleToggle(module::settings::kModuleIdAgent, true,
                                         router, &lookupForProbe);
     composeFrame();
@@ -295,7 +291,7 @@ int main(int argc, char* argv[]) {
               "展开态 Agent label 应存在");
     }
 
-    // ---- 3) off → 下一帧条目消失，Home 条目 y 原样 ----
+    // 3) off → 下一帧条目消失，Home 条目 y 原样
     app::assembly::dispatchModuleToggle(module::settings::kModuleIdAgent, false,
                                         router, &lookupForProbe);
     composeFrame();
@@ -306,7 +302,7 @@ int main(int argc, char* argv[]) {
     check(homeHit2 != nullptr && nearEq(homeHit2->frame.y, homeY),
           "off 后：Home 条目 y 不应错位");
 
-    // ---- 4) 再 on → 条目回来；重复 on → DOM 恰好 1 份（幂等注册）----
+    // 4) 再 on → 条目回来；重复 on → DOM 恰好 1 份（幂等注册）
     app::assembly::dispatchModuleToggle(module::settings::kModuleIdAgent, true,
                                         router, &lookupForProbe);
     composeFrame();
@@ -320,7 +316,7 @@ int main(int argc, char* argv[]) {
               countId(*ui, "app.sidebar.item.Agent.hit") == 1,
           "重复 on：Agent 条目应恰好 1 份（幂等注册，不产生重复条目）");
 
-    // 收尾（照 about_probe.cpp:449-453 顺序：模块 onStop → runtime → 窗口 → 后端）
+    // 收尾顺序：模块 onStop → runtime → 窗口 → 后端
     settings->onStop();
     agent.onStop();
     home.onStop();

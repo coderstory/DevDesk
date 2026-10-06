@@ -1,4 +1,4 @@
-// src/module_markdown/md_sync_map.cpp —— MdSyncMap 实现（Phase 3 ④），详见头文件。
+// src/module_markdown/md_sync_map.cpp —— MdSyncMap 实现，详见头文件。
 #include "md_sync_map.h"
 
 #include <algorithm>

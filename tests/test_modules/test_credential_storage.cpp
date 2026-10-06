@@ -1,10 +1,11 @@
 // tests/test_modules/test_credential_storage.cpp
-// E-1/E-2 凭据存储迁移的回归网（2026-10-02 存储统一设计 §4.2 / §6.3 / §6.4）：
-//   1) 凭据真的在库里（列往返一致），且**旧 Keychain 不再被读 / 不再被写**
-//   2) 旧 Keychain 残留清理的白名单语义 + **空 profile 护栏**（防误删，P0 事故回归网）
-//   3) 导出 / 复制配置继续脱敏（剪贴板是全局可读出口，硬约束不许回退）
-//
-// 全程用内存假 Keychain 后端（不碰真实系统钥匙串，macOS 上照跑）。
+// 凭据落库回归网：api_key_encrypted 列往返一致 + 旧 Keychain 残留清理的白名单与空库护栏。
+// 跨文件前提：
+//   - 凭据的唯一源是 claude_profiles.api_key_encrypted 列，Keychain 已不是凭据源，
+//     整条创建/更新路径不得产生任何 Keychain 条目。
+//   - cleanupOrphanKeychainEntries 只在「该列可读且至少一行存过密钥」时才删旧条目，
+//     且只删 claude: 前缀。两种「空」都要跳过：列不可读（旧库）、列可读但无一行存过密钥。
+//   - 全程装内存假 Keychain 后端，不碰真实系统钥匙串。
 #include "doctest.h"
 #include "test_support.h"
 
@@ -24,7 +25,7 @@ namespace {
 constexpr const char* kCredPrefix = "devdesk_test_cred_";
 constexpr const char* kSvc = "DevDeskTestCredentialStorage";
 
-// ---------- 内存假 Keychain（形态同 test_claude_service 的 fake，可独立跑）----------
+// 内存假 Keychain 后端（结构自足，不依赖 test_claude_service 的那份）
 struct FakeKc {
     std::map<std::string, std::string> data;
     static std::string key(const std::string& service, const std::string& account) {
@@ -69,8 +70,7 @@ core::Result<std::vector<std::string>> kcDeleteNotIn(
             for (const auto& k : keepAccounts) {
                 if (k == account) { keep = true; break; }
             }
-            // 白名单前缀（keychain.h shouldDeleteOrphan 的三平台统一语义）：
-            // claude: 之外的一律保留、不计数
+            // claude: 之外的 account 一律保留、不计数（deletableOrphanAccount 三平台统一判据）
             if (!keep && platform::keychain::deletableOrphanAccount(account)) {
                 removed.push_back(account);
                 it = g_kc->data.erase(it);
@@ -102,8 +102,6 @@ struct ScopedFakeKc {
 
 } // namespace
 
-// ---------- 1) 凭据在库里：列往返一致 ----------
-
 REGISTER_TEST(credential_stored_in_db_column_roundtrip,
               "credential: 凭据落在 api_key_encrypted 列（往返一致）+ 全量 SHA256", {
     test_support::TestDb tdb(kCredPrefix, "roundtrip");
@@ -114,7 +112,6 @@ REGISTER_TEST(credential_stored_in_db_column_roundtrip,
     DOCTEST_REQUIRE(created.isOk());
     const int64_t id = created.value().id;
 
-    // 读回一致（protect/unprotect 往返）
     auto back = svc.loadApiKey(id);
     DOCTEST_REQUIRE(back.isOk());
     DOCTEST_CHECK_EQ(back.value(), key);
@@ -136,10 +133,9 @@ REGISTER_TEST(credential_stored_in_db_column_roundtrip,
     const std::string hint = row.value().getString("api_key_hint").value();
     const std::string check = row.value().getString("api_key_check").value();
 
-    // 明文平台（macOS/POSIX）：protect 是确定性透传，stored == protect(key) 成立。
-    // 加密平台（Windows DPAPI）：CryptProtectData 每次调用含随机 salt/IV → 两次
-    // protect(key) 产不同密文，比对密文相等无意义。往返一致性已由上方
-    // loadApiKey(id)==key 证明；非明文由下方 find(key)==npos 证明。
+    // 明文平台（macOS/POSIX）：protect 是确定性透传，stored == protect(key) 成立，可以比密文。
+    // 加密平台（Windows DPAPI）每次 CryptProtectData 含随机 salt/IV，同一 key 两次 protect 产不同
+    // 密文，比相等无意义——改验明文不出现在列里。往返一致性由上方 loadApiKey(id)==key 证明。
     if (platform::credential::storesPlaintext()) {
         DOCTEST_CHECK_EQ(stored, platform::credential::protect(key).value());
     }
@@ -153,8 +149,6 @@ REGISTER_TEST(credential_stored_in_db_column_roundtrip,
     return true;
 })
 
-// ---------- 2) 旧 Keychain 不再被读 / 不再被写 ----------
-
 REGISTER_TEST(credential_legacy_keychain_not_read_nor_written,
               "credential: 旧 Keychain 既不读也不写（迁库后 Keychain 非凭据源）", {
     test_support::TestDb tdb(kCredPrefix, "legacy");
@@ -166,17 +160,16 @@ REGISTER_TEST(credential_legacy_keychain_not_read_nor_written,
     DOCTEST_REQUIRE(created.isOk());
     const int64_t id = created.value().id;
 
-    // 不写：整条创建路径一个 Keychain 条目都不该产生
     DOCTEST_CHECK_EQ(kc.fake.size(), static_cast<size_t>(0));
 
-    // 不读：往旧 account 约定（claude:<id>）里塞一个**不同的值**——若实现仍读
-    // Keychain，loadApiKey 会返回这个陈旧值
+    // 旧 account 约定是 claude:<id>。往里塞一个**不同的值**：若实现仍读 Keychain，
+    // loadApiKey 会返回这个陈旧值而不是库里那个
     kc.fake.put(kSvc, "claude:" + std::to_string(id), "sk-ant-STALE-keychain-99");
     auto key = svc.loadApiKey(id);
     DOCTEST_REQUIRE(key.isOk());
     DOCTEST_CHECK_EQ(key.value(), dbKey);
 
-    // 更新密钥同样只动库，不碰 Keychain（旧值仍是那枚陈旧值）
+    // 更新密钥同样只动库：Keychain 里仍只有那条陈旧值，条目数不增
     module::claude::Profile p = created.value();
     p.apiKeyPlain = "sk-ant-db-authoritative-02";
     DOCTEST_REQUIRE(svc.updateProfile(p).isOk());
@@ -187,15 +180,12 @@ REGISTER_TEST(credential_legacy_keychain_not_read_nor_written,
     return true;
 })
 
-// ---------- 3) 残留清理：空 profile 护栏（P0 误删事故回归网，最高优先级）----------
-
 REGISTER_TEST(credential_residue_cleanup_guard_no_profiles_deletes_nothing,
               "credential: 数据根无 profile 时旧 Keychain 清理一个都不删（防误删）", {
     test_support::TestDb tdb(kCredPrefix, "guard");   // 空库：零 profile
     ScopedFakeKc kc;
     module::claude::ClaudeService svc(tdb.handle(), kSvc);
 
-    // 预置「用户真实密钥」形态的条目 + 一条非 claude 前缀的他人条目
     kc.fake.put(kSvc, "claude:1", "user-real-key-1");
     kc.fake.put(kSvc, "claude:2", "user-real-key-2");
     kc.fake.put(kSvc, "notes:theme", "someone-elses-entry");
@@ -211,17 +201,15 @@ REGISTER_TEST(credential_residue_cleanup_guard_no_profiles_deletes_nothing,
     return true;
 })
 
-// ---- 护栏③：旧形态的库（没有 api_key_encrypted 列）绝不能放行清理 ----
-// 2026-10-03 安全审计 F1 blocker 的回归网：只看「有没有 profile」会放行——
-// 旧库同样有 claude_profiles 行，而 listProfiles 的 SELECT 不引用新列，在旧库上
-// 照样成功返回行 → keep 传空 → 把用户 Keychain 里真实可用的 API Key 全清空。
+// 旧形态库（无 api_key_encrypted 列）绝不能放行清理：只看「有没有 profile」会误判——
+// 旧库同样有 claude_profiles 行，而 listProfiles 的 SELECT 不引用新列，在旧库上照样
+// 成功返回行 → keep 传空 → 把用户 Keychain 里真实可用的 API Key 全清空。
 REGISTER_TEST(credential_residue_cleanup_guard_unmigrated_legacy_db,
               "credential: 旧 schema 库（无 api_key_encrypted 列）不清理任何 Keychain 条目", {
     test_support::TestDb tdb(kCredPrefix, "legacy_db");
     ScopedFakeKc kc;
 
-    // 把库改造成**旧形态**：按本设计之前的 17 列建表（无 api_key_encrypted），
-    // 并塞一行——这正是用户升级前机器上的形态。
+    // 建成旧形态表。列清单不可照抄当前 schema——补上 api_key_encrypted 就把护栏测没了。
     DOCTEST_REQUIRE(tdb.handle().exec("DROP TABLE claude_profiles").isOk());
     DOCTEST_REQUIRE(tdb.handle().exec(
         "CREATE TABLE claude_profiles ("
@@ -245,13 +233,12 @@ REGISTER_TEST(credential_residue_cleanup_guard_unmigrated_legacy_db,
         "('老库行', 'https://old.example.com', 'sk-ant-***abcd', 'deadbeef', "
         "'claude:1', 'm', 0, 0)")
                         .isOk());
-    // 用户 Keychain 里的真实密钥
     kc.fake.put(kSvc, "claude:1", "user-real-key-1");
     kc.fake.put(kSvc, "claude:2", "user-real-key-2");
 
     module::claude::ClaudeService svc(tdb.handle(), kSvc);
 
-    // 前置证据：旧库上 listProfiles 照样成功返回行（= 旧判据会放行清理）
+    // 前置证据：listProfiles 在旧库上照样成功返回行（这正是「只数 profile」会放行清理的原因）
     auto list = svc.listProfiles();
     DOCTEST_REQUIRE(list.isOk());
     DOCTEST_CHECK_EQ(static_cast<int>(list.value().size()), 1);
@@ -265,11 +252,10 @@ REGISTER_TEST(credential_residue_cleanup_guard_unmigrated_legacy_db,
     return true;
 })
 
-// ---- 护栏③ 的另一半：两种「空」的区别 ----
-//   · 列不可读（旧库）           → 跳过（上面那条用例）
-//   · 列可读但没有一行存过密钥   → 同样跳过（fail-safe：那种状态下「Keychain
-//     里只剩残留」是个赌注，护栏口径是「宁可不清理，也不能误删」）
-// 一旦有一行真的存着凭据 → 清理恢复执行（此时 Keychain 必是旧副本）。
+// 空 profile 护栏的另一半：两种「空」都跳过清理——列不可读（旧库，见上）、列可读但
+// 没有一行存过密钥。后者是 fail-safe：那种状态下「Keychain 里只剩残留」是个赌注，
+// 口径是宁可不清理也不能误删。一旦有一行真存着凭据 → 清理恢复执行（此时 Keychain
+// 必是旧副本）。
 REGISTER_TEST(credential_residue_cleanup_requires_at_least_one_stored_key,
               "credential: 全部 profile 都没存过密钥时不清理；有一行存了才清理", {
     test_support::TestDb tdb(kCredPrefix, "nokeys");
@@ -280,7 +266,7 @@ REGISTER_TEST(credential_residue_cleanup_requires_at_least_one_stored_key,
                                      "sk-ant-holder-01", "m");
     DOCTEST_REQUIRE(created.isOk());
     const int64_t id = created.value().id;
-    // 清空凭据列 = 「用户从没配过 key」的形态（新形态库、列可读、值为空）
+    // 清空凭据列 = 「用户从没配过 key」的形态：新形态库、列可读、值为空
     DOCTEST_REQUIRE(test_support::clearStoredCredential(tdb.handle(), id));
 
     kc.fake.put(kSvc, "claude:1", "user-real-key-1");
@@ -319,21 +305,19 @@ REGISTER_TEST(credential_residue_cleanup_sweeps_only_claude_prefix,
 
     auto r = svc.cleanupOrphanKeychainEntries();
     DOCTEST_REQUIRE(r.isOk());
+    // 返回值只统计被删掉的 claude: 前缀条目数
     DOCTEST_CHECK_EQ(r.value(), 2);                    // 只数 claude: 前缀
     DOCTEST_CHECK(!kc.fake.has(kSvc, "claude:1"));
     DOCTEST_CHECK(!kc.fake.has(kSvc, "claude:2"));
-    // 前缀外保留（不删、不计数）
     DOCTEST_CHECK(kc.fake.has(kSvc, "notes:theme"));
-    // 命名空间外的不受影响
+    // 别的 service 名下的同 account 名不受影响
     DOCTEST_CHECK(kc.fake.has(std::string(kSvc) + "-other", "claude:9"));
-    // 库里的凭据不受清理影响
+    // 清理不碰库里的凭据
     auto key = svc.loadApiKey(created.value().id);
     DOCTEST_REQUIRE(key.isOk());
     DOCTEST_CHECK_EQ(key.value(), std::string("sk-ant-sweep-key-01"));
     return true;
 })
-
-// ---------- 4) 导出 / 复制配置继续脱敏（§6.4 硬约束 2）----------
 
 REGISTER_TEST(credential_export_json_contains_no_secret,
               "credential: 导出 JSON 不含凭据（明文 / 摘要 / 存储形态一律不得出现）", {
@@ -351,10 +335,9 @@ REGISTER_TEST(credential_export_json_contains_no_secret,
                                                /*keyPlaceholder=*/p.apiKeyHint);
     DOCTEST_REQUIRE(!json.empty());
 
-    // 剪贴板是全局可读出口：明文绝不得出现
     DOCTEST_CHECK(json.find(key) == std::string::npos);
-    // 摘要（api_key_check）与存储形态（api_key_encrypted）也不得出现——
-    // 前者是密钥可爆破的判据、后者在加密平台是密文、在明文平台就是明文
+    // 摘要（api_key_check）与存储形态（api_key_encrypted）同样不得出现——前者是密钥
+    // 可爆破的判据，后者在加密平台是密文、在明文平台就是明文
     DOCTEST_CHECK(json.find(p.apiKeyCheck) == std::string::npos);
     const std::string stored =
         platform::credential::protect(key).value();
@@ -363,8 +346,8 @@ REGISTER_TEST(credential_export_json_contains_no_secret,
         DOCTEST_CHECK(json.find(stored) == std::string::npos);
     }
 
-    // 反向：把明文当占位值传进去，导出里就会出现明文——这正是生产路径**不能**
-    // 做的事（本断言证明上面那条不是恒真的空断言）
+    // 反向对照：把明文当占位值传进去，导出里就出现明文。这条钉住上面不是恒真的空断言，
+    // 同时标出生产路径绝不能这么传 keyPlaceholder
     const std::string leaky =
         module::claude::buildProfileExportJson(p, std::string(), key);
     DOCTEST_CHECK(leaky.find(key) != std::string::npos);

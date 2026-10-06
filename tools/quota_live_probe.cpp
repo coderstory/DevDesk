@@ -1,52 +1,28 @@
 // tools/quota_live_probe.cpp
-// ⚠⚠⚠ **一次性真机出网验收探针（NOT 产品代码，NOT 常规测试）** ⚠⚠⚠
+// 一次性真机出网验收探针（NOT 产品代码，NOT 常规测试，两头都不许动它）。
 //
-// 存在的唯一理由：G0-G7 的全部用例都走**注入的假 seam**（HttpSendFn 返回假
-// Response），它们锁的是**结构契约**（canonical 串怎么拼、401/403 怎么分、
-// 百分比怎么反转），证明不了**真实服务端会接受**。本探针走生产代码路径
-// ——`QuotaProvider::fetch()` + 真实 `platform::http::send`——对四家各发一次
-// 真请求，回答「签名 / URL / header / 解析跟真实服务端对不对得上」。
+// 存在的唯一理由：常规用例全走**注入的假 seam**（HttpSendFn 返回假 Response），
+// 锁的是结构契约（canonical 串怎么拼、401/403 怎么分、百分比怎么反转），
+// 证明不了真实服务端会不会接受。本探针走生产代码路径——`QuotaProvider::fetch()`
+// + 真实 `platform::http::send`——对四家各发一次真请求。
 //
-// ── 凭据红线（本文件是全项目最容易越界的地方之一）────────────────────
+// **绝不进默认门禁**：不进 tests/CMakeLists.txt 的 add_executable / add_test。
+// 三个硬理由：① 真网络，CI/离线环境必红且与代码改动无关；② 需要用户本机
+// ~/.cc-switch/cc-switch.db，别的机器上没有凭据可跑；③ 每次跑实打实消耗额度。
+// 不要为了「让它能被跑到」把它挂进 ctest——那三条理由一条都没消失。
+// 唯一入口：`bash scripts/run-quota-live-probe.sh [provider_id ...] [--dump <路径>]`
+// （或 `cd build && ctest -L live`）。手敲编译行需要 yyjson 的 .o 与 openssl
+// 路径，是平台特定的，脚本已经把它们兜住。
+//
+// 凭据红线（本文件是全项目最容易越界的地方）：
 //   · 只**读** cc-switch 库（listCcSwitchProviders 内部即 SQLITE_OPEN_READONLY）。
-//   · 凭据只在内存里从 cc-switch 到 fetch() 过一手，**永不落盘、永不进日志**。
-//   · 打印一律走 redactSecrets()：把凭据的任意 ≥8 字符子串替换成 ****，
-//     且响应体只打前 N 字节（防上游把凭据回显进 body）。
-//   · 本文件**不含**任何真实密钥（fixture 也是打码的）。
+//   · 凭据只在内存里从 cc-switch 过到 fetch() 一手，永不落盘、永不进日志。
+//   · 打印一律走 redact()：凭据的任意 ≥8 字符子串替换成 ****；响应体只打前 N
+//     字节，防上游把凭据回显进 body。本文件不含任何真实密钥。
 //
-// ── 为什么它不在 ctest 里（三个理由，都是硬理由）────────────────────
-//   1. 真网络：CI / 离线环境必红，且每次红都跟代码改动无关。
-//   2. 真凭据：需要用户本机 `~/.cc-switch/cc-switch.db`，别的机器上没有。
-//   3. 额度消耗：每次跑都实打实打四家供应商接口。
-//   故**不进** tests/CMakeLists.txt 的 add_executable（不进 add_test），
-//   手动按 README 段的命令编译运行；常规门禁（build-test-run.sh / ctest）
-//   完全看不到它。想跑就显式跑，跑挂了不影响任何门禁数字。
-//
-// ── 怎么跑（**故意不写进 CMake**：见上面三个理由）──────────────────
-//   ctest 里**没有**这个探针。入口是 `bash scripts/run-quota-live-probe.sh`
-//   （2026-10-03 final 批加的显式入口，理由见该文件头），它负责按当前平台拼
-//   编译行、跑四家、并可选 `--dump`。手动编译形态见下（macOS 实测可用，
-//   yyjson 的 .o 与 openssl 路径是这平台特有的两处）：
-//   cd <repo>/build
-//   clang++ -std=c++20 -g -O0 \
-//     -I../src -I../src/module_claude_proxy \
-//     ../tools/quota_live_probe.cpp \
-//     src/module_claude_proxy/libdevdesk_module_claude_proxy.a \
-//     src/platform/libdevdesk_platform.a \
-//     src/core/libdevdesk_core.a \
-//     src/ui_kit/libdevdesk_ui_kit.a \
-//     ./_eui_neo_build/CMakeFiles/eui_neo.dir/3rd/yyjson-0.12.0/src/yyjson.c.o \
-//     -L/opt/homebrew/opt/openssl@3/lib -lcrypto -lcurl -lsqlite3 \
-//     -o quota_live_probe
-//   ./quota_live_probe                       # 跑四家
-//   ./quota_live_probe --dump /tmp/quota.json # 跑四家 + 落 JSON（下游：
-//                                            #  home_probes --quota-fixture）
-//
-// 用法：`quota_live_probe [provider_id ...] [--dump <路径>]`
-//   不给 provider_id = 跑注册表里全部四家。
-//   `--dump <路径>`   = 把本次**真机查回来的结果**落成 JSON（见「--dump 段」）。
 // 退出码：0 = 每家都拿到可判定的结论（成功或**分类正确**的失败）；
 //         1 = 有 provider 完全不可达 / 分类可疑 / dump 落盘失败，需要人看。
+//         分类「是否正确」退出码不表达，由人判。
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
@@ -71,10 +47,9 @@ namespace q = module::claude::quota;
 
 namespace {
 
-// ── 凭据脱敏（红线兜底）──────────────────────────────────────────
 // 从 cc-switch 读到的**全部**敏感串登记进来；打印前逐个把 ≥8 字符的子串
-// 替换成 ****。为什么要按子串而不是整串：响应体 / 错误文案里可能出现
-// 「key 前 4 位」这类截断回显，整串匹配漏掉，子串匹配能盖住。
+// 替换成 ****。按子串而非整串匹配，是因为响应体 / 错误文案里常出现「key 前 4 位」
+// 这类截断回显——整串匹配漏掉，子串匹配盖得住。
 std::vector<std::string>& secretRegistry() {
     static std::vector<std::string> secrets;
     return secrets;
@@ -106,17 +81,17 @@ std::string redact(std::string text) {
     return text;
 }
 
-// 响应体只打前 N 字节：既够看清结构，又防上游把整个凭据回显进 body
-// 后被写进报告 / 终端历史。
-// 预览字节数：默认 400；G8_BODY_PREVIEW=<n> 可临时调大（**只影响本次调查的
-// 终端输出**，与门禁无关）。上限 20000，防手滑把整个响应体倒进终端历史。
+// 预览字节数：默认 400；G8_BODY_PREVIEW=<n> 可临时调大（只影响本次调查的
+// 终端输出，与门禁无关）。上限 20000，防手滑把整个响应体倒进终端历史。
 std::size_t bodyPreviewLimit() {
     const char* env = std::getenv("G8_BODY_PREVIEW");
     const long n = env != nullptr ? std::strtol(env, nullptr, 10) : 400;
     if (n <= 0) return 400;
     return static_cast<std::size_t>(n > 20000 ? 20000 : n);
 }
-constexpr std::size_t kBodyPreviewBytes = 400;  // 默认值（文案与默认截断用它）
+// 截断长度取自 bodyPreviewLimit()，而「已截断」的判定取自本常量——两者各管一段，
+// 不要合并成一个：调大 G8_BODY_PREVIEW 时该标记不再出现是预期行为。
+constexpr std::size_t kBodyPreviewBytes = 400;
 
 std::string bodyPreview(const std::string& body) {
     std::string head = body.substr(0, bodyPreviewLimit());
@@ -126,8 +101,8 @@ std::string bodyPreview(const std::string& body) {
 }
 
 const char* errorName(q::QuotaError e) {
-    // quota_store.h 的 quotaErrorName 是**落库列文本**（小写），
-    // 这里另起一份给日志看，避免把「日志用的名字」与「列里的名字」混成一个。
+    // 刻意不复用 quota_store.h 的 quotaErrorName：那份是**落库列文本**（小写），
+    // 这里给日志看。合成一份会把「日志用的名字」与「列里的名字」混成一个。
     switch (e) {
         case q::QuotaError::None: return "None";
         case q::QuotaError::Auth: return "Auth";
@@ -139,8 +114,9 @@ const char* errorName(q::QuotaError e) {
     return "?";
 }
 
-// ── 记录一次 HTTP 往返（探针自己观察，不改生产代码）────────────────
-struct HttpTrace {
+// 包装**真实** send：先调生产的 platform::http::send（真网络），再把观测到的
+// 状态码 / body 记下来。不改 provider 代码 —— provider 只看到同一个 HttpSendFn。
+    struct HttpTrace {
     std::string method;
     std::string url;
     int statusCode = 0;
@@ -206,16 +182,14 @@ void printResult(const q::QuotaResult& r) {
     }
 }
 
-// ============ --dump：把真机结果落成 JSON（2026-10-03 final 批）============
+// --dump：把本次真机查回来的结果落成 JSON，让首页余量卡被**真数据**点验过
+// （本探针只验 provider 层，UI 呈现层不在此验证）。落盘的 JSON 是下游
+// home_probes 的 `--quota-fixture <同一份 JSON>` 输入，那边走真 QuotaStore /
+// 真桥 / 真绘制。
 //
-// 为什么需要它：G8 的诚实边界是「只验了 provider 层，UI 呈现层没被真机点验过」。
-// 要让首页余量卡被**真数据**点验，需要一条「真网络 → 落库 → 渲染 → 落图」的
-// 通路。本文件是这条通路的**上游**：`--dump` 落一份 JSON，下游是 home_probes 的
-// `--quota-fixture <同一份 JSON>`（那里走真 QuotaStore 真桥真绘制）。
-//
-// ⚠ 凭据红线在落盘口同样成立：dump 的字段**只有**
-//   providerId / displayName / kind / error / errorMessage / currency /
-//   planName / balanceRemaining / windows[key,usedPercent,resetsAt]
+// 凭据红线在落盘口同样成立：dump 的字段**只有**
+//   providerId / displayName / ccswitchName / kind / error / errorMessage /
+//   currency / planName / balanceRemaining / windows[key,usedPercent,resetsAt]
 // —— apiKey / accessKeyId / secretAccessKey / base_url **一概不进**。
 // errorMessage / planName 另走 redact()（上游可能把凭据回显进错误文案）。
 //
@@ -223,7 +197,7 @@ void printResult(const q::QuotaResult& r) {
 // 映射），不是自造字符串：下游拿同一套函数反解，两边不可能各写一份映射。
 //
 // 返回 false = 没能落成（文件打不开 / JSON 不合法 / 往返自检不过），main 据此
-// 把退出码抬成 1 —— **落图链路不许静默半通**。
+// 把退出码抬成 1 —— 落图链路不许静默半通。
 struct DumpRow {
     std::string providerId;
     std::string displayName;
@@ -231,9 +205,8 @@ struct DumpRow {
     q::QuotaResult result;
 };
 
-// JSON 字符串字面量（含两端引号）。转义交给平台自己的序列化器：手搓一份转义表
-// 迟早漏字符（\u0000 / 代理对 / DEL），而漏掉的表现是「JSON 静默解析错」——
-// 那正是本工具最不能出的错。
+// 转义交给平台自己的序列化器：手搓一份转义表迟早漏字符（NUL / 代理对 / DEL），
+// 而漏掉的表现是「JSON 静默解析错」——那正是本工具最不能出的错。
 std::string jsonQuote(const std::string& s) {
     const core::Result<std::string> r =
         platform::json::stringify(platform::json::makeString(s));
@@ -272,10 +245,8 @@ bool writeDump(const std::string& path, const std::vector<DumpRow>& rows) {
     }
     text += "]}";
 
-    // **往返自检（代码保证，不是注释保证）**：写完立刻用平台的 parse 把同一段
-    // 文本解回来，元素数必须与写出一致。不这么做的话，一个坏 JSON 会被下游
-    // （home_probes）当成「0 条真数据」静默渲染成空卡片 —— 而本批要证明的
-    // 恰恰是「卡片有真数据」。
+    // 往返自检：写完立刻用平台的 parse 把同一段文本解回来，元素数必须与写出一致。
+    // 去掉它，一个坏 JSON 会被下游（home_probes）当成「0 条真数据」静默渲染成空卡片。
     const core::Result<platform::json::JsonValue> parsed =
         platform::json::parse(text);
     if (parsed.isFail()) {
@@ -367,10 +338,10 @@ int main(int argc, char** argv) {
     }
     if (wanted.empty()) {
         // 注册表里的全部 provider（表序 = 行序，不含哨兵）。
-        // ⚠ 不能写 `for (auto& e : kQuotaProviders)`：头里那行是
+        // 不能写 `for (auto& e : kQuotaProviders)`：头里那行是
         // `extern const QuotaProviderEntry kQuotaProviders[]`——**边界未知**的数组，
-        // 范围 for 会因「不完整类型」编译失败（quota_registry.h:41-52 记着同一条）。
-        // 长度只有定义所在的 quota_registry.cpp 拿得到，即 quotaProviderTableLength()。
+        // 范围 for 会因「不完整类型」编译失败。长度只有定义所在的 quota_registry.cpp
+        // 拿得到，即 quotaProviderTableLength()。
         const std::size_t tableLength = q::quotaProviderTableLength();
         for (std::size_t i = 0; i < tableLength; ++i) {
             if (q::kQuotaProviders[i].id == nullptr) break;  // 哨兵
@@ -407,14 +378,14 @@ int main(int argc, char** argv) {
             continue;
         }
         std::cout << "    displayName = " << provider->displayName() << "\n";
-        // matchesBaseUrl 与注册表 id 的一致性（G6 自动选中靠它）
+        // matchesBaseUrl 与注册表 id 的一致性：这条不一致时 UI 侧自动选中会挑错 provider
         std::cout << "    matchesBaseUrl(cfg.baseUrl) = "
                   << (provider->matchesBaseUrl(t.info->baseUrl) ? "true" : "false")
                   << "\n";
 
-        // ProviderConfig 装配：与 ProfileCredentialSource::resolveAndFetch
-        // **同形**（profile 密钥 + cc-switch AK/SK 覆盖）。这里手搭是因为
-        // 探针不建库 / 不走 ProfileRepository（那是真机 UI 的事）。
+        // ProviderConfig 装配必须与 ProfileCredentialSource::resolveAndFetch 同形
+        // （profile 密钥 + cc-switch AK/SK 覆盖）——两边漂移了本探针就验不到生产路径。
+        // 这里手搭是因为探针不建库 / 不走 ProfileRepository。
         q::ProviderConfig cfg;
         cfg.providerId = t.providerId;
         cfg.baseUrl = t.info->baseUrl;
@@ -443,7 +414,7 @@ int main(int argc, char** argv) {
         }
     }
 
-    // dump 失败也算失败（退出码 1）：本批的交付物就是「真数据落图」这条链，
+    // dump 失败也算失败（退出码 1）：本探针的交付物是「真数据落图」这条链，
     // 链子上任何一环半通都必须显式红，而不是留一张看着挺像的图。
     const bool dumpOk = dumpPath.empty() || writeDump(dumpPath, dumpRows);
 

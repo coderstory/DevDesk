@@ -1,13 +1,12 @@
 // tests/test_modules/test_llm_client.cpp
-// LlmClient 用例（agent M1 Task 7）：经本地代理发 /v1/messages 的生产
-// LlmEndpoint。三个契约各一条用例：
-//   1. 正常链路：预检代理 → POST http://127.0.0.1:<port>/v1/messages →
-//      请求体形状（model=槽位解析结果 / max_tokens / messages / tools /
-//      system；不夹带 anthropic-version——由代理补注入）→ 响应解析成
-//      LlmResponse。HTTP 经 HttpFn 注入假发送，零真实网络。
-//   2. 代理未启：send 失败（ValidationError）且**一个包都不发**。
-//   3. 槽位解析失败：send 失败且不发包（model 形参传什么都一样——形参语义
-//      是槽位键名，LlmClient 内重新解析，H1 定案）。
+// LlmClient 三条契约：正常链路（预检代理 → POST 本地代理 → 解析 LlmResponse）、代理未启、槽位解析失败。
+// 两条失败契约都要求「一个包都不发」。
+//
+// 跨文件前提：
+//   - model 形参是槽位**键名**，LlmClient 内部自行 resolveModelSlot 后才进 body——形参原文不进 body。
+//     因此换形参值不改变结果，用例 ③ 传什么都是同一个解析失败。
+//   - 请求体不夹带 anthropic-version：由代理侧补注入。
+//   - HTTP 经 HttpFn 注入假发送，本文件零真实网络。
 #include "doctest.h"
 #include "core/claude_proxy_service.h"
 #include "core/llm_endpoint.h"
@@ -20,8 +19,7 @@
 
 namespace {
 
-// FakeProxy：实现当前实际的 core::IClaudeProxyService 全部虚方法
-//（8 个既有 + resolveModelSlot）。与 FakeProxy 草图的差异以头文件为准。
+// 实现 core::IClaudeProxyService 全部虚方法（新增虚函数会编译失败——桩必须跟着补）
 class FakeProxy : public core::IClaudeProxyService {
 public:
     bool running = true;
@@ -36,7 +34,6 @@ public:
         return core::Result<int>::fail(core::ErrorCode::Internal, "unused");
     }
     bool isClaudeCodeManaged() const override { return false; }
-    // F2：接口改按值返回快照（M2 静态审计），桩同口径
     std::vector<std::string> lastSyncWarnings() const override { return {}; }
     std::string settingsFilePath() const override { return {}; }
     std::optional<std::string> resolveModelSlot(const std::string& slot) override {
@@ -60,8 +57,7 @@ REGISTER_TEST(llm_client_sends_via_local_proxy, "llm_client: 预检代理→POST
         return core::Result<platform::http::Response>::ok(res);
     });
     std::vector<core::LlmMessage> msgs{{"user", R"([{"type":"text","text":"q"}])"}};
-    // model 形参 = 槽位键名（H1 定案）：LlmClient 内 resolveModelSlot 解析，
-    // 进 body 的 model 是 FakeProxy.resolved 的返回值，不是形参原文
+    // body 里的 model 是 FakeProxy.resolved 的返回值，不是形参原文
     auto r = client.send(msgs, R"([{"name":"t.a"}])", "sys-prompt", "default");
     DOCTEST_REQUIRE(r.isOk());
     DOCTEST_CHECK_EQ(calls, 1);
@@ -103,7 +99,6 @@ REGISTER_TEST(llm_client_slot_unresolved_fails_without_send, "llm_client: 槽位
         ++calls;
         return core::Result<platform::http::Response>::fail(core::ErrorCode::NetworkUnreachable, "x");
     });
-    // 形参传什么都 fail：解析在 LlmClient 内做，槽位解析不出就没有请求
     auto r = client.send({{"user", "[]"}}, "[]", "", "does-not-matter");
     DOCTEST_CHECK(r.isFail());
     DOCTEST_CHECK_EQ(calls, 0);

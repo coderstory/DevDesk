@@ -1,8 +1,14 @@
 // tests/test_modules/test_agent_scheduler.cpp
-// Scheduler 用例（agent M2 Task 4）：cron 定时触发（tickNow 直调零等待）、同分钟防重、
-// 原子互斥派发（撞闸不双跑）、跨路径单闸（手动 module 路径 × cron 路径交叠）。
-// Task 5 追加：常驻 worker 队列 + stopAll 收口契约。
-// LlmEndpoint / ToolRegistry 均为注入桩，零网络；时钟经 NowFn 注入，断言无墙钟余量。
+// Scheduler 单测：cron 定时触发（tickNow 直调零墙钟）、同分钟防重、原子互斥
+// 派发（撞闸不双跑）、跨路径单闸（手动 × cron 交叠）、常驻队列 + stopAll 收口。
+// 跨文件前提：
+//   - LlmEndpoint / ToolRegistry 全为注入桩，零网络。
+//   - 时钟经 NowFn 注入：需要推进时间的用例传 [&nowSec]{ return nowSec; }，
+//     不需要的一律传 {}（生产时钟）。
+//   - 单闸在 AgentLoop::run 内：手动路径（独立线程直调 loop_.run）与 cron 路径
+//     （tickNow → dispatchRun）撞的是同一把闸，被拒的一路不落 DB 行。
+//   - activeRunCount 是 sched.runs_ 里的**条目数**，不是「在跑数」；被拒条目由
+//     下次 tick / stopAll 的 reapDone 摘除。别拿它当跑数断言。
 #include "doctest.h"
 #include "test_support.h"
 #include "module_agent/agent_loop.h"
@@ -25,8 +31,8 @@
 namespace {
 using namespace module::agent;
 
-// 脚本化 mock（test_agent_loop.cpp:22-45 同款，**加 std::mutex**）：常驻 / 多派发下
-// 两个 run 会并发 send，共享的 script 游标与记录容器必须自保。
+// 脚本化 mock：send 带 std::mutex——常驻队列下两跑并发 send，共享的 script
+// 游标与记录容器必须自保
 class MockLlm : public core::LlmEndpoint {
 public:
     std::vector<core::LlmResponse> script;
@@ -103,9 +109,9 @@ private:
     std::string n_;
 };
 
-// 进程级 ToolRegistry 单例 + 借用栈对象：注册/注销必须成对。本仓库 CHECK 失败即
-// `return false`（fail-fast），手写注销会被跳过 → 注册表留下悬垂裸指针（RED 期
-// 实测整个 exe 崩在 exit 138）。RAII 保证注销一定发生（test_agent_loop.cpp:129 同款）。
+// 进程级 ToolRegistry 单例 + 借用栈对象。注册/注销必须成对，不能改成手写
+// registerTool/unregisterTool 配对：doctest 断言失败即 `return false`（fail-fast），
+// 配对的后半句被跳过 → 注册表留下悬垂裸指针，exe 崩在 exit。RAII 保证注销一定发生。
 class ToolRegGuard {
 public:
     ToolRegGuard(core::ToolRegistry& reg, core::ITool* tool)
@@ -166,7 +172,7 @@ REGISTER_TEST(scheduler_tick_fires_matching_task_once_per_minute,
     DOCTEST_REQUIRE(sched.tickNow().isOk());
     // 有界等这一跑落终态**再** stopAll：只等「条目出现」就 stopAll 会与 run 线程
     // 赛跑——派发线程与 run 线程并发，cancel 先到就把本该 completed 的一跑记成
-    // cancelled（实测 3/3 命中）。终态断言必须建立在 DB 已定局之上（零墙钟余量）。
+    // cancelled。终态断言必须建立在 DB 已定局之上。
     for (int i = 0; i < 500; ++i) {
         auto rs = store.listRuns(taskId.value(), 10);
         if (rs.isOk() && rs.value().size() == 1 && rs.value()[0].status != "running")
@@ -219,12 +225,9 @@ REGISTER_TEST(scheduler_tick_skips_disabled_manual_and_bad_cron,
     return true;
 })
 
-// ARCH-02（M2 静态审计，high）：坏 trigger_config 此前是**静默** continue——
-// 用户看到任务在列表里存在、永不触发、没有任何提示（UI 用同一份 JSON 渲染，
-// 两边对「配置是否有效」的判断还会各自漂移）。修复后：解码失败 = 一条带
-// task id 的 LOG_WARN + 本分钟不派发。
-// 红（修复前）：日志里没有该 task id 的 WARN（断言失败）；
-// 绿（修复后）：日志含 task id + 「trigger_config」，且仍然不派发。
+// 坏 trigger_config 曾是**静默** continue：用户看到任务在列表里存在、永不触发、
+// 没有任何提示（UI 用同一份 JSON 渲染，两边对「配置是否有效」的判断还会各自漂移）。
+// 契约：解码失败 = 一条带 task id 的 LOG_WARN + 本分钟不派发。
 REGISTER_TEST(scheduler_bad_trigger_config_logs_and_skips,
               "scheduler: trigger_config 坏 → LOG_WARN 点名 task id 后跳过（不再静默）", {
     test_support::TestDb tdb("agentsched", "badcfg");
@@ -245,8 +248,8 @@ REGISTER_TEST(scheduler_bad_trigger_config_logs_and_skips,
                                    R"(["cron"])");
     DOCTEST_REQUIRE(nonObj.isOk());
 
-    // 日志捕获：core::log 只有 addFileOutput（无关闭接口，test_logging.cpp 同款
-    // 先例）——捕获后本进程后续日志都写这个临时文件，不影响用例正确性
+    // 日志捕获：core::log 只有 addFileOutput（无关闭接口）——捕获后本进程后续
+    // 日志都写这个临时文件，不影响用例正确性
     const auto logPath = test_temp::tempPath("devdesk_test_sched_badcfg.log");
     std::error_code ec;
     std::filesystem::remove(logPath, ec);
@@ -264,13 +267,11 @@ REGISTER_TEST(scheduler_bad_trigger_config_logs_and_skips,
     oss << in.rdbuf();
     const std::string logText = oss.str();
     for (const auto& t : {bad, empty, badJson, nonObj}) {
-        // 修复前：整段日志里连 task id 都不出现（静默 continue）
         DOCTEST_CHECK_MESSAGE(
             logText.find("任务 " + std::to_string(t.value())) != std::string::npos,
             logText);
         DOCTEST_CHECK(logText.find("trigger_config") != std::string::npos);
     }
-    // 恢复进程日志落点：后续用例（含 test_logging）各自管理自己的输出
     return true;
 })
 
@@ -296,8 +297,7 @@ REGISTER_TEST(scheduler_tick_skips_running_task,
     DOCTEST_REQUIRE(sched.tickNow().isOk());                 // 起线程 → loop_.run 撞闸
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
     // 被拒那一路不落行 → DB 仍只有 1 行 running（sched.runs_ 里会多一条已收尾的被拒
-    // 条目，由下次 tick / stopAll 的 reapDone() 摘除——activeRunCount 是条目数、
-    // 不是「在跑数」，别拿它当跑数断言）
+    // 条目，由下次 tick / stopAll 的 reapDone() 摘除）
     auto mid = store.listRuns(taskId.value(), 10);
     DOCTEST_REQUIRE(mid.isOk());
     DOCTEST_CHECK_EQ(countStatus(mid.value(), "running"), 1u);
@@ -309,10 +309,10 @@ REGISTER_TEST(scheduler_tick_skips_running_task,
     return true;
 })
 
-// Review Focus 1 跨路径钉子：手动路径（AgentModule 同款：独立线程直调 loop_.run）×
-// cron 路径（tickNow → dispatchRun）同任务交叠。单闸在 AgentLoop::run 内，第二路
-// 撞闸即拒（run 线程内 LOG_WARN，无行可落）：两套 run 线程表合计 2 个在跑条目，
-// DB 恰 1 行 running——旧「两路各自预插」案会落 2 行 running、同一任务双跑。
+// 跨路径钉子：手动路径（AgentModule 同款：独立线程直调 loop_.run）× cron 路径
+// （tickNow → dispatchRun）同任务交叠。单闸在 AgentLoop::run 内，第二路撞闸即拒
+// （WARN 在 run 线程内，无行可落）：两套 run 线程表合计 2 个在跑条目，DB 恰 1 行
+// running。若两路各自预插行，会落 2 行 running、同一任务双跑。
 REGISTER_TEST(scheduler_cross_path_single_gate_no_double_run,
               "scheduler: 手动 × cron 同任务交叠 → 单闸拒第二路（DB 恰 1 行 running）", {
     test_support::TestDb tdb("agentsched", "crossgate");
@@ -357,24 +357,24 @@ REGISTER_TEST(scheduler_cross_path_single_gate_no_double_run,
     return true;
 })
 
-// ==================== Task 5：常驻 worker 队列 + stopAll 收口 ====================
+// 常驻 worker 队列 + stopAll 收口
 
 REGISTER_TEST(scheduler_resident_queue_runs_enqueued_jobs,
               "scheduler: 常驻队列两个不同任务各起一跑（确定 2 行 run）；空队列不空转", {
     test_support::TestDb tdb("agentsched", "resident");
     module::agent::AgentStore store(tdb.handle());
-    MockLlm llm;   // 文件内副本：send 带 std::mutex（并行派发下两 run 并发 send）
+    MockLlm llm;   // send 带 mutex：并行派发下两 run 并发 send
     core::ToolRegistry::instance().unregisterTool("test.res");
-    FastToolForSched tool{"test.res"};   // 立即返回（文件内定义）
+    FastToolForSched tool{"test.res"};
     ToolRegGuard guard{core::ToolRegistry::instance(), &tool};
     llm.script = { toolUseResp("test.res"), endTurnResp(),
                    toolUseResp("test.res"), endTurnResp() };
     module::agent::AgentLoop loop(llm, core::ToolRegistry::instance(), store);
     module::agent::Scheduler sched(store, loop, {});         // 生产时钟即可
     sched.start();                                           // 起常驻线程
-    // 两个**不同** taskId：闸不互相拒 → 跑数确定（同 task 连发的闸语义见下一用例）。
-    // 常驻线程 pop 即 spawn、不等上一跑结束，两跑响应的游标交错顺序不定 → 只断言
-    // 「每任务恰 1 跑 + 终态 completed」，不断言工具调用次数。
+    // 两个**不同** taskId：闸不互相拒 → 跑数确定。常驻线程 pop 即 spawn、不等上一跑
+    // 结束，两跑响应的游标交错顺序不定 → 只断言「每任务恰 1 跑 + 终态 completed」，
+    // 不断言工具调用次数。
     auto a = store.createTask("常驻A", "g", "resident", "default", 5, false);
     auto b = store.createTask("常驻B", "g", "resident", "default", 5, false);
     DOCTEST_REQUIRE(a.isOk());
@@ -409,7 +409,7 @@ REGISTER_TEST(scheduler_resident_same_task_twice_single_gate,
     module::agent::AgentStore store(tdb.handle());
     MockLlm llm;
     core::ToolRegistry::instance().unregisterTool("test.slow");
-    SlowToolForSched tool{"test.slow"};   // 睡 300ms：第一跑钉在闸内，第二单必撞闸
+    SlowToolForSched tool{"test.slow"};   // 第一跑钉在闸内，第二单必撞闸
     ToolRegGuard guard{core::ToolRegistry::instance(), &tool};
     llm.script = { toolUseResp("test.slow"), endTurnResp() };
     module::agent::AgentLoop loop(llm, core::ToolRegistry::instance(), store);
@@ -440,7 +440,7 @@ REGISTER_TEST(scheduler_stopall_cancels_inflight_resident_run,
     module::agent::AgentStore store(tdb.handle());
     MockLlm llm;
     core::ToolRegistry::instance().unregisterTool("test.slow");
-    SlowToolForSched tool{"test.slow"};                      // 睡 300ms（Task 4 定义复用）
+    SlowToolForSched tool{"test.slow"};   // 在跑期间 stopAll
     ToolRegGuard guard{core::ToolRegistry::instance(), &tool};
     llm.script = { toolUseResp("test.slow") };
     module::agent::AgentLoop loop(llm, core::ToolRegistry::instance(), store);
@@ -460,10 +460,9 @@ REGISTER_TEST(scheduler_stopall_cancels_inflight_resident_run,
     return true;
 })
 
-// 评审修复轮（2026-10-01）：enqueueResident 的 stopFlag 检查与 push 原本不在同一把
-// 锁内 → stopAll 窗口里 push 的条目永不被消费（常驻线程已退出）。修复后「已停则不接单」
-// 在 mu_ 内判定。本用例钉住可观察后果：stopAll 之后入队**不产生任何 run**（有界观察窗，
-// 无时序余量——幽灵单若被消费，10ms 内必见 run 行）。
+// enqueueResident 的 stopFlag 检查与 push 必须在同一把锁内：stopAll 窗口里 push 的
+// 条目会被常驻线程消费不到（线程已退出）。本用例钉住可观察后果：stopAll 之后入队
+// **不产生任何 run**（有界观察窗，无时序余量——幽灵单若被消费，10ms 内必见 run 行）。
 REGISTER_TEST(scheduler_resident_enqueue_after_stop_is_dropped,
               "scheduler: stopAll 后 enqueueResident 被丢弃（不产生 run）", {
     test_support::TestDb tdb("agentsched", "stopped");

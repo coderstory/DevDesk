@@ -1,9 +1,6 @@
-// tests/test_core/test_schema.cpp
-// 测试 Database::migrate() 落下的**当前** schema 形态（无版本化迁移）
-//
-// 形态（2026-09-30 起）：src/core/schema.h 一份幂等脚本，applySchema 一个事务
-// 跑完。没有任何版本号 / schema_version 表 / 旧库升级路径——本文件因此只断言
-// 「最终形态」与「幂等」，不再有 v1→v11 的升级用例。
+// 只断言 Database::migrate() 落下的**当前** schema 形态：src/core/schema.h 是一份幂等
+// 脚本，applySchema 一个事务跑完，没有版本号 / schema_version 表 / 旧库升级路径。
+// 改 schema 的唯一途径就是改这份脚本，所以本文件只钉「最终形态」与「幂等」
 #include "doctest.h"
 #include "test_support.h"
 #include "core/database.h"
@@ -19,10 +16,8 @@
 namespace {
 
 // 给测试生成一个临时 db 路径，不污染应用数据库
-// —— 共享工厂 test_support::tempDbPath（TIN-06b）
 constexpr const char* kDbPrefix = "devdesk_test_schema_";
 
-// 读 sqlite_master，返回指定 type 的对象名集合
 std::set<std::string> listObjects(core::data::SqliteDb& db, const std::string& type) {
     auto prep = db.prepare("SELECT name FROM sqlite_master WHERE type = ?");
     if (prep.isFail()) return {};
@@ -37,11 +32,10 @@ std::set<std::string> listObjects(core::data::SqliteDb& db, const std::string& t
     return names;
 }
 
-// 读一列的完整定义序列（name / type / notnull / default），顺序 = 建表顺序。
-// default 为 NULL 时返回 "<none>"，与 sqlite_master 里 dflt_value=NULL 对齐。
-// notnull 是 PRAGMA table_info 的**值**（0/1 整数），不是「有没有这列」——
-// 注意 INTEGER PRIMARY KEY 也报 notnull=0（SQLite 的历史行为，照抄实际值）。
-// 这是「逐表逐列」断言的基础：漏一列 / 改错默认值 / 类型漂移都会在这里露出来。
+// 读一列的完整定义序列（name:type:notnull:default），顺序 = 建表顺序。default 为 NULL
+// 时返回 "<none>"，与 sqlite_master 里 dflt_value=NULL 对齐。
+// notnull 是 PRAGMA table_info 的**值**（0/1 整数），不是「有没有这列」——INTEGER
+// PRIMARY KEY 也报 notnull=0，这是 SQLite 的历史行为，照抄实际值，不要写成 1
 std::vector<std::string> columnDefs(core::data::SqliteDb& db, const std::string& table) {
     auto prep = db.prepare("PRAGMA table_info(" + table + ")");
     if (prep.isFail()) return {};
@@ -61,7 +55,6 @@ std::vector<std::string> columnDefs(core::data::SqliteDb& db, const std::string&
 
 } // namespace
 
-// ============ 表与索引的存在性 ============
 
 REGISTER_TEST(schema_creates_all_tables,
               "schema: applySchema 建出全部 15 张应用表", {
@@ -90,7 +83,7 @@ REGISTER_TEST(schema_creates_all_tables,
             "agent_tasks",
             "agent_runs",
             "agent_messages",
-            // 2026-10-03 批次 E2：六类 JSON 配置的落点（通用表 + run-settings 记录表）
+            // 六类 JSON 配置的落点：通用表 + run-settings 记录表
             "app_config",
             "claude_run_settings",
         };
@@ -102,8 +95,7 @@ REGISTER_TEST(schema_creates_all_tables,
             }
         }
 
-        // 8 个索引（含 1 个部分唯一索引 + 1 个带 WHERE 的到期索引 + agent 2 个
-        // + run-settings 1 个）
+                // 8 个索引（含 1 个部分唯一索引 + 1 个带 WHERE 的到期索引 + agent 2 个 + run-settings 1 个）
         auto indexes = listObjects(r.value().db(), "index");
         std::set<std::string> expectedIndexes{
             "idx_tasks_column",
@@ -113,7 +105,7 @@ REGISTER_TEST(schema_creates_all_tables,
             "idx_call_logs_profile",
             "idx_agent_runs_task",
             "idx_agent_messages_run",
-            // 2026-10-03 批次 E2：直连会话记录按写入时刻倒序取最近
+            // 直连会话记录按写入时刻倒序取最近
             "idx_run_settings_written",
         };
         for (const auto& i : expectedIndexes) {
@@ -129,8 +121,8 @@ REGISTER_TEST(schema_creates_all_tables,
     return true;
 })
 
-// 版本化机制已彻底删除：库里不得再有 schema_version 表。
-// 口径是「单份当前 schema、无历史包袱」——留着这张表就等于留了个版本号残骸。
+// 库里不得再有 schema_version 表：口径是「单份当前 schema、无历史包袱」，留着这张表
+// 等于留了个版本号残骸
 REGISTER_TEST(schema_has_no_version_table,
               "schema: 不存在 schema_version 表（无版本化残骸）", {
     auto path = test_support::tempDbPath(kDbPrefix, "no_version");
@@ -158,10 +150,8 @@ REGISTER_TEST(schema_has_no_version_table,
     return true;
 })
 
-// ============ 逐表逐列：最终形态 ============
-// 每张表的 name:type:notnull:default 序列逐字比对，顺序敏感。
-// 这是本次重构的核心断言——旧库升级类断言已删，形态断言取而代之。
-// 变异验证：从 schema.h 删掉任一列 / 改任一默认值 → 对应用例立刻红。
+// 逐表逐列钉最终形态：每张表的 name:type:notnull:default 序列逐字比对，顺序敏感。
+// 从 schema.h 删掉任一列 / 改任一默认值 / 类型漂移，对应用例都会红
 
 REGISTER_TEST(schema_markdown_tables_columns,
               "schema: markdown 三表 + FTS5 虚表列定义符合最终形态", {
@@ -197,9 +187,8 @@ REGISTER_TEST(schema_markdown_tables_columns,
         };
         DOCTEST_CHECK_EQ(columnDefs(db, "markdown_note_tags"), expectNoteTags);
 
-        // FTS5 虚表：path 不入索引（UNINDEXED），title/content 入索引。
-        // 虚表的 type 一律是空串（FTS5 自己不声明列类型，内容恒为文本）——照抄
-        // PRAGMA 的实际返回值，不臆断成 TEXT。
+        // FTS5 虚表：path 不入索引（UNINDEXED），title/content 入索引。虚表的 type
+        // 一律是空串（FTS5 自己不声明列类型），照抄 PRAGMA 的实际返回值，不臆断成 TEXT
         std::vector<std::string> expectFts{
             "path::0:<none>",
             "title::0:<none>",
@@ -207,9 +196,9 @@ REGISTER_TEST(schema_markdown_tables_columns,
         };
         DOCTEST_CHECK_EQ(columnDefs(db, "markdown_fts"), expectFts);
 
-        // 虚表真能用：写入后可 MATCH 命中。查询词用拉丁词元——unicode61 把连续 CJK
-        // 当成单个 token，CJK 子串命中靠的是 service 层的 LIKE 兜底
-        // （markdown_service.cpp 路径 B），不是 FTS MATCH。
+        // 虚表真能用：写入后可 MATCH 命中。查询词必须用拉丁词元——unicode61 把连续 CJK
+        // 当成单个 token，CJK 子串命中靠 service 层的 LIKE 兜底（markdown_service.cpp
+        // 路径 B），不是 FTS MATCH
         DOCTEST_REQUIRE(db.exec(
             "INSERT INTO markdown_fts (path, title, content) VALUES "
             "('a.md', 'Title', 'needlework 正文关键词')").isOk());
@@ -239,7 +228,7 @@ REGISTER_TEST(schema_todo_tables_columns,
         DOCTEST_REQUIRE(r.value().migrate().isOk());
         auto& db = r.value().db();
 
-        // kind 可空、无默认值（NULL = 普通列）
+        // kind 可空、无默认值：NULL 表示普通列
         std::vector<std::string> expectColumns{
             "id:INTEGER:0:<none>",
             "title:TEXT:1:<none>",
@@ -303,8 +292,7 @@ REGISTER_TEST(schema_claude_tables_columns,
         };
         DOCTEST_CHECK_EQ(columnDefs(db, "claude_profiles"), expectProfiles);
 
-        // 调用日志 15 列：前 10 列来自初始建表，末尾 5 列是 usage（全部可空 = 未采集，
-        // 与真实的 0 区分开）
+                // 调用日志 15 列：末尾 5 列是 usage，全部可空 = 未采集，与真实的 0 区分开
         std::vector<std::string> expectLogs{
             "id:INTEGER:0:<none>",
             "profile_id:INTEGER:1:<none>",
@@ -324,7 +312,7 @@ REGISTER_TEST(schema_claude_tables_columns,
         };
         DOCTEST_CHECK_EQ(columnDefs(db, "claude_call_logs"), expectLogs);
 
-        // 共享片段表：5 列，无 extra_env（旧 env 域列已随重构删除，不再建）
+        // 共享片段表 5 列，无 extra_env
         std::vector<std::string> expectShared{
             "id:INTEGER:0:<none>",
             "name:TEXT:1:<none>",
@@ -356,7 +344,7 @@ REGISTER_TEST(schema_agent_tables_columns,
         auto& db = r.value().db();
 
         // agent_tasks 11 列：默认值钉死（max_iterations=10 / allow_destructive=0 /
-        // enabled=1 / model_slot='default'）——AgentStore 落库契约的列形态基础
+        // enabled=1 / model_slot='default'）
         std::vector<std::string> expectTasks{
             "id:INTEGER:0:<none>",
             "name:TEXT:1:<none>",
@@ -372,8 +360,8 @@ REGISTER_TEST(schema_agent_tables_columns,
         };
         DOCTEST_CHECK_EQ(columnDefs(db, "agent_tasks"), expectTasks);
 
-        // agent_runs 9 列：ended_at/tokens/error 全可空（运行中 / 未采集 / 无错误
-        // 与真实值区分）
+        // agent_runs 9 列：ended_at/tokens/error 全可空，运行中 / 未采集 / 无错误
+        // 与真实值区分
         std::vector<std::string> expectRuns{
             "id:INTEGER:0:<none>",
             "task_id:INTEGER:1:<none>",
@@ -387,7 +375,7 @@ REGISTER_TEST(schema_agent_tables_columns,
         };
         DOCTEST_CHECK_EQ(columnDefs(db, "agent_runs"), expectRuns);
 
-        // agent_messages 7 列：tool_call_id 可空（assistant 文本块无调用 id）
+        // agent_messages 7 列：tool_call_id 可空，assistant 文本块没有调用 id
         std::vector<std::string> expectMessages{
             "id:INTEGER:0:<none>",
             "run_id:INTEGER:1:<none>",
@@ -399,7 +387,7 @@ REGISTER_TEST(schema_agent_tables_columns,
         };
         DOCTEST_CHECK_EQ(columnDefs(db, "agent_messages"), expectMessages);
 
-        // FK CASCADE 生效：删 task 清 runs、删 run 清 messages（审计链随宿主走）
+        // FK CASCADE 生效：删 task 清 runs、删 run 清 messages，审计链随宿主走
         auto ins = db.prepare(
             "INSERT INTO agent_tasks (name, goal, trigger_type, created_at, "
             "updated_at) VALUES ('t','g','manual',1,1)");
@@ -444,9 +432,8 @@ REGISTER_TEST(schema_config_and_run_settings_columns,
         DOCTEST_REQUIRE(r.value().migrate().isOk());
         auto& db = r.value().db();
 
-        // app_config：通用「键 → 值」配置存储。value 恒 TEXT 且 NOT NULL
-        //（存得住任意字节：中文 / 空串 / JSON / 换行 / 超长串）；
-        // updated_at 恒 NOT NULL INTEGER。
+        // app_config：通用「键 → 值」配置存储。value 恒 TEXT 且 NOT NULL，存得住任意
+        // 字节（中文 / 空串 / JSON / 换行 / 超长串）；updated_at 恒 NOT NULL INTEGER。
         std::vector<std::string> expectConfig{
             "key:TEXT:0:<none>",      // TEXT PRIMARY KEY：SQLite 报 notnull=0（历史行为）
             "value:TEXT:1:<none>",
@@ -454,9 +441,8 @@ REGISTER_TEST(schema_config_and_run_settings_columns,
         };
         DOCTEST_CHECK_EQ(columnDefs(db, "app_config"), expectConfig);
 
-        // claude_run_settings：run-settings 每次运行一行（单键会被覆盖，故
-        // 单独建表）。run_key UNIQUE（PRIMARY KEY 之外的唯一约束由索引实现，
-        // PRAGMA table_info 不体现，故另用一条真插入验证）。
+        // claude_run_settings：run-settings 每次运行一行（单键会被覆盖，故单独建表）。
+        // run_key 的 UNIQUE 由索引实现，PRAGMA table_info 不体现，故另用真插入验证。
         std::vector<std::string> expectRuns{
             "id:INTEGER:0:<none>",
             "run_key:TEXT:1:<none>",
@@ -468,7 +454,7 @@ REGISTER_TEST(schema_config_and_run_settings_columns,
         };
         DOCTEST_CHECK_EQ(columnDefs(db, "claude_run_settings"), expectRuns);
 
-        // 真能连写 N 份互不覆盖（同一 profile 两次不同 run_key）
+        // 真能连写 N 份互不覆盖
         auto ins = db.prepare(
             "INSERT INTO claude_run_settings (run_key, profile_id, profile_name, "
             "written_at, file_path, settings_json) VALUES (?, 1, 'p', 100, ?, ?)");
@@ -496,7 +482,7 @@ REGISTER_TEST(schema_config_and_run_settings_columns,
         DOCTEST_CHECK_EQ(rows.value()[1].getString("file_path").valueOr("?"),
                          std::string("/tmp/run-1.json"));
 
-        // run_key 的 UNIQUE 真的生效（重复插入必须失败，不是静默覆盖）
+        // run_key 的 UNIQUE 真的生效：重复插入必须失败，不是静默覆盖
         auto dup = db.prepare(
             "INSERT INTO claude_run_settings (run_key, profile_id, written_at) "
             "VALUES ('run-1', 1, 200)");
@@ -508,7 +494,6 @@ REGISTER_TEST(schema_config_and_run_settings_columns,
     return true;
 })
 
-// ============ 种子数据（自带 kind，不再「插完再按标题回填」）============
 
 REGISTER_TEST(schema_seeds_default_todo_columns,
               "schema: 首次建库插入 4 个默认 Todo 列且带 kind 语义标记", {
@@ -531,7 +516,7 @@ REGISTER_TEST(schema_seeds_default_todo_columns,
         struct Expect { const char* title; const char* color; const char* kind; };
         Expect expects[4] = {
             {"待办",   "claude-clay", "todo"},
-            {"进行中", "warm-amber",  ""},       // 普通列：kind 为 NULL
+{"进行中", "warm-amber",  ""},       // 普通列：kind 为 NULL
             {"已完成", "muted-sage",  "done"},
             {"已归档", "warm-gray",   "archive"},
         };
@@ -554,7 +539,6 @@ REGISTER_TEST(schema_seeds_default_todo_columns,
     return true;
 })
 
-// ============ 幂等：连跑多次不报错、schema 不变、种子不重复 ============
 
 REGISTER_TEST(schema_is_idempotent,
               "schema: 重复 applySchema 幂等（不报错 / schema 不变 / 种子不重复）", {
@@ -613,7 +597,7 @@ REGISTER_TEST(schema_is_idempotent,
         DOCTEST_CHECK_EQ(columnDefs(db, "claude_profiles"), firstProfilesCols);
         DOCTEST_CHECK_EQ(columnDefs(db, "claude_shared_configs"), firstSharedCols);
 
-        // 种子行不被重复插入（这是本脚本唯一的非 DDL 幂等点）
+        // 种子行不被重复插入：这是本脚本唯一的非 DDL 幂等点
         auto prep = db.prepare("SELECT COUNT(*) FROM todo_columns");
         DOCTEST_REQUIRE(prep.isOk());
         auto rows2 = prep.value().fetchAll();
@@ -668,9 +652,6 @@ REGISTER_TEST(schema_is_idempotent_preserves_user_data,
     return true;
 })
 
-// ============ 供应商余量两表（G5）============
-// 逐列断言对齐 spec 2026-10-02-provider-quota-and-storage §4.1 的 DDL。改列 /
-// 改默认值 / 类型漂移都在这里露出来——与仓库既有「逐表逐列」用例同一口径。
 REGISTER_TEST(schema_quota_tables_columns,
               "schema: 余量两表列定义符合最终形态（配置 7 列 / 结果 10 列）", {
     auto path = test_support::tempDbPath(kDbPrefix, "cols_quota");
@@ -683,8 +664,8 @@ REGISTER_TEST(schema_quota_tables_columns,
         DOCTEST_REQUIRE(r.value().migrate().isOk());
         auto& db = r.value().db();
 
-        // profile_id 是 INTEGER PRIMARY KEY：PRAGMA 报 notnull=0（SQLite 对
-        // INTEGER PRIMARY KEY 的历史行为，照抄实际值，不写成 1）。
+        // profile_id 是 INTEGER PRIMARY KEY：PRAGMA 报 notnull=0（SQLite 的历史
+        // 行为，照抄实际值，不写成 1）。
         std::vector<std::string> expectConfig{
             "profile_id:INTEGER:0:<none>",
             "provider_id:TEXT:1:''",
@@ -711,8 +692,8 @@ REGISTER_TEST(schema_quota_tables_columns,
         };
         DOCTEST_CHECK_EQ(columnDefs(db, "profile_quota_result"), expectResult);
 
-        // 默认值必须真的落成 DDL 写的值（不是靠 INSERT 时的 C++ 侧默认）：
-        // 只插 profile_id，其余全空 → 读回 default。
+        // 默认值必须真的落成 DDL 写的值，不能靠 INSERT 时的 C++ 侧默认：只插
+        // profile_id，其余全空 → 读回 default。
         DOCTEST_REQUIRE(db.exec(
             "INSERT INTO profile_quota_config (profile_id) VALUES (7)").isOk());
         auto q = db.prepare(
@@ -724,7 +705,7 @@ REGISTER_TEST(schema_quota_tables_columns,
         DOCTEST_REQUIRE(rows.isOk());
         DOCTEST_REQUIRE_EQ(rows.value().size(), 1u);
         const auto cfg = rows.value()[0];
-        // 「未配置」= provider_id 空串（不是 NULL）
+        // 「未配置」= provider_id 空串，不是 NULL
         DOCTEST_CHECK(cfg.isNull("provider_id") == false);
         DOCTEST_CHECK_EQ(cfg.getString("provider_id").valueOr("?"), std::string(""));
         DOCTEST_CHECK_EQ(cfg.getString("extra_json").valueOr("?"), std::string(""));
@@ -733,8 +714,8 @@ REGISTER_TEST(schema_quota_tables_columns,
         DOCTEST_CHECK_EQ(cfg.getInt64("auto_refresh").valueOr(-1), int64_t(1));
         DOCTEST_CHECK_EQ(cfg.getInt64("interval_minutes").valueOr(-1), int64_t(15));
 
-        // 结果表的默认 = 「从未成功过」那一行：kind 空、windows_json 空、
-        // balance 0、last_error 空。G7 靠这组默认值区分「未查过」与「查到了 0」。
+        // 结果表的默认 = 「从未成功过」那一行：kind 空、windows_json 空、balance 0、
+        // last_error 空。默认值靠这组区分「未查过」与「查到了 0」。
         DOCTEST_REQUIRE(db.exec(
             "INSERT INTO profile_quota_result (profile_id) VALUES (7)").isOk());
         auto q2 = db.prepare(
@@ -752,9 +733,8 @@ REGISTER_TEST(schema_quota_tables_columns,
         DOCTEST_CHECK_EQ(res.getString("currency").valueOr("?"), std::string(""));
         DOCTEST_CHECK_EQ(res.getString("plan_name").valueOr("?"), std::string(""));
         DOCTEST_CHECK_EQ(res.getInt64("fetched_at").valueOr(-1), int64_t(0));
-        // last_success_at 与 fetched_at 是**两列**（评审 m1）：前者只在成功时
-        // 推进，供 G7 显示「数据时间」；后者成败都推进，供定时器判到期。
-        // 默认都为 0 = 从未查过。
+        // last_success_at 与 fetched_at 是**两列**，不要合并：前者只在成功时推进，供
+        // UI 显示「数据时间」；后者成败都推进，供定时器判到期。默认都为 0 = 从未查过。
         DOCTEST_CHECK_EQ(res.getInt64("last_success_at").valueOr(-1), int64_t(0));
         DOCTEST_CHECK_EQ(res.getString("last_error").valueOr("?"), std::string(""));
         DOCTEST_CHECK_EQ(res.getString("last_error_kind").valueOr("?"), std::string(""));

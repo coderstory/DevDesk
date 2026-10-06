@@ -86,7 +86,7 @@ core::log::Level parseLogLevel(const std::string& mode) {
     return core::log::Level::Info;
 }
 
-// ---- 关于卡文案。宏缺失回退（手工编译/其他 target）----
+// 关于卡文案。宏缺失回退（手工编译/其他 target）
 #ifndef DEVDESK_VERSION
 #define DEVDESK_VERSION "dev"
 #endif

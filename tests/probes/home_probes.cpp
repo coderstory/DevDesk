@@ -1,73 +1,8 @@
-// home_probes.cpp — DevDesk probes：home 模块 6 组断言
-//（spec docs/superpowers/specs/2026-09-28-devdesk-probes-design.md
-//  §3-probe-full 的 home_probes 组，类 1b/2a/2b/4a/5a/6a）
+// home_probes.cpp — home 模块几何探针。组 A..M，每组一段，各自带判据注释。
 //
-// 组 A（类 1b sparkline z，P1）：sparkline 根 frame 与 label frame 不相交。
-//   修复 046beaa：sparkline 固定进卡内顶带（y0..16 = label 16 之上，整盒高 16），
-//   旧 32px 盒以 (0,0) 构建叠 label 文字带（home_module.cpp:156-164 注释）；
-//   歧义记录：spec 写的「gap≥2px」系实现前估量——修复落地形态为顶带与 label
-//   [16,32] **邻接**（gap=0），断言按修复后不变式 = 不相交 + 顶带严格在 label
-//   之上（gap≥0，容差 0.5px）；回归 32 盒 → 相交 → 必红。
-//   曲线段（linechart.h:147-167）空闲态 {0.0f} 零长度段被跳过（:150-152），
-//   且平线贴 bottomY 时胶囊半宽会把段 frame 探进 label 带 → 不以段为断言。
-//
-// 组 B（类 2a 空转重绘，P1）：静止 UI 不请求重绘。
-//   修复 046beaa：周期 onTimer 仅「有速率活动」时挂 1s（home_module.cpp:462-477
-//   的 seriesLive/tokenLive 门控 + :147-154 挂载点）——旧 0.5s 常挂 onTimer →
-//   整页 2Hz 重排重绘 + hover 0.1s 过渡反复打断（用户报「5 卡 hover 闪」）。
-//   断言 = 稳定后连跑 60 帧 pollOnce，runtime.update() 返 true（= 帧末返回
-//   paintRequested_，runtime_lifecycle.h:229-233）的帧数 ≤ 1；回归常驻 timer →
-//   60 帧（1s）内 ≥2 → 红。
-//
-// 组 C（类 2b hover token，P1）：colors.hover != colors.surface。
-//   修复 046beaa：浅色档 hover 由 #F5F2EC（== surface）降一步 #EDE8DF
-//   （theme.cpp:59-64）——Home 卡 .press hover 态在浅色档曾完全不可见。
-//   深色档（默认 current()）+ 浅色档各验一次，验完还原深色。
-//
-// 组 D（类 4a barChart 几何，P1）：bar 面板 plot 区总高 ≥ 36px。
-//   审核 #3/#4/#5 修：卡高 208→260（wrap 128→196），plot 16px→84px
-//   （home_module.cpp:567-570；barchart.h:84-88 plotY=70、plotHeight=H-112）。
-//   度量 = grid.3.y - grid.0.y（barchart.h:114-122 四条横线 y = plotY + k·H/3
-//   → grid.0 在 plotY、grid.3 在 bottomY）——不依赖 bar 高度（有 0.16s 帧
-//   过渡动画）；数据种入 1 条今日调用 → 非空态 → 图表必建。
-//
-// 组 E（类 5a API 卡对称，P3）：home.api.chart 卡内 title/wrap 左右间隙相等。
-//   审核 #5 修：title/wrap 去二次 position(16,..)（旧 content 已含 inset → 左
-//   32 右 0；home_module.cpp:570 注释）→ 卡 content inset 16 + (0,·) → 左右
-//   各 16。断言 |左间隙 - 右间隙| ≤ 2px。
-//
-// 组 F（类 6a stat 溢出，P1）：最小窗（--size 1200x720）下统计数字/badge 不溢。
-//   数据注入走 proxy_stats 直连（spec 搭法）：测试时钟 + 单流累计 40M →
-//   2s 窗口 delta 20M → rateTps=10M → formatRateTps → 「10000000」（8 位）。
-//   判别字段（spec「落点未定则 measureTextSize」分支）：修复实际落点 = **字号
-//   收缩**（statNumberFont，home_module.cpp:34-42，8 位 36px ≈ 173 ≤ cw 176；
-//   旧 48px 固定 ≈ 230 > 176 必溢），**未加 clip/wrap**（home_module.cpp:118-146
-//   无 .clip()/.wrap() 调用）→ 断言两段式：clip||wrap 任一 true → 过；否则
-//   TextPrimitive::measureTextSize（dsl.h:1729 同款）内在宽 ≤ 元素 frame 宽。
-//   注意：badge 判据相对当前元素 frame（cw）度量，旧长文案按当前元素宽已能
-//   收纳，属弱守卫；数字（8 位）才是强判别。
-//
-// 组 I（G7 余量卡错误行，2026-10-03）：错误文案**只出现一次**且**不溢出内容列**。
-//   缺陷：错误文案被渲染两遍——head row 的 `.status`（statusTextFor 在
-//   showsErrorLine 时返回 lastError）+ 专属 `.error` 行；且 `.status` 无
-//   clip/wrap（maxWidth 只在 wrap=true 时生效，EUI-NEO text.cpp），第一遍
-//   溢出卡片右缘被截断（真机图 /tmp/af-home-quota-live.png 的 MiniMax 行）。
-//   I(a) 数「整棵余量树里携带该错误文案的 Text 元素个数」== 1 且必须是 .error
-//        —— 钉字符串在树中的出现次数，不是「某格是否为空」。
-//   I(b) 错误行 / head .status 的**右缘 ≤ 内容列右缘**（宽度比较，非字面量）；
-//        且无 clip/wrap 时**按元素真实样式**（含 maxWidth/overflow）量文案宽。
-//   I(c) 超长错误文案以「…」(U+2026) 收尾（2026-10-03，EUI-NEO `cbd0b48`）。
-//        上一批的 `.clip()` 只把溢出部分硬剪掉——用户看到半句话却不知道后面还有
-//        内容。改成单行省略号后要钉住三件事：① 这一格确实溢出（否则整组空跑成
-//        恒真假绿）；② 产品那格真的接了 overflow==Ellipsis + maxWidth>0 +
-//        !wrap（漏一条 = 框架侧**静默 no-op**，不报错）；③ 渲染行宽逐位等于
-//        「保留前缀 + …」且 ≤ maxWidth，即末尾那个字形确实是省略号。
-//   ⚠ 门禁那条（ctest -L probe）不带 --quota-fixture，只走离线假种子，故假种子
-//   里**必须**有一条错误行（i==8），否则本组空跑成恒真假绿——已由组内
-//   「错误行 < 1 即红」硬钉住。
-//
-// 运行：home_probes.exe [--frames N] [--size 1200x720]（尺寸矩阵最小窗跑
-// 1200x720；statW 只随窗**宽**变 → 各组几何在默认 1200x1000 下同型）。
+// 运行：home_probes.exe [--frames N] [--size 1200x720]
+// 不带 --quota-fixture 时全程离线假种子，可复现、不打任何供应商接口。
+// statW 只随窗**宽**变，所以各组几何在默认 1200x1000 与最小窗 1200x720 下同型。
 
 #include "probes/probe_harness.h"
 #include "test_support.h"
@@ -76,7 +11,7 @@
 #include "core/proxy_stats.h"
 #include "module_home/home_quota_card.h"   // computeQuotaCardMetrics（组 H(a) 判据）
 #include "module_home/home_service.h"  // startOfDayEpoch（逐时 token 种子的本地零点锚）
-#include "quota/quota_store.h"  // G7：余量卡种子走真落库口（编解码单点）
+#include "quota/quota_store.h"  // 余量卡种子走真落库口（编解码单点）
 #include "platform/json.h"
 #include <fstream>
 #include <sstream>
@@ -113,7 +48,7 @@ bool framesIntersect(const core::dsl::Element& a, const core::dsl::Element& b) {
            b.frame.y < a.frame.y + a.frame.height;
 }
 
-// 统计卡 id 表（THS-08 元数据表 statCardElementId 同值五个）
+// 统计卡 id 表（与 THS-08 元数据表 statCardElementId 同值的五个）
 constexpr const char* kStatCardIds[] = {
     "home.stat.tokens", "home.stat.notes", "home.stat.todo",
     "home.stat.overdue", "home.stat.api",
@@ -138,23 +73,20 @@ bool textFitsOrGuarded(const core::dsl::Element& el) {
     return intrinsic.x <= el.frame.width + 1.0f;
 }
 
-// ============ --quota-fixture：真机数据种子（2026-10-03 final 批）============
+// --quota-fixture <path>：用 quota_live_probe --dump 落的真机数据种子。
+// 默认走离线假种子：门禁 ctest -L probe 跑的是那一条，纯离线、可复现、不打供应商接口。
+// 给了开关就把「真网络 → 真 QuotaStore 落库 → 真中立桥 → 真卡片绘制 → 真落图」
+// 这条链一次跑通。
 //
-// 默认（不给开关）走离线假种子：门禁 `ctest -L probe` 跑的是那一条，纯离线、
-// 可复现、不打任何供应商接口。给了开关就改用 `quota_live_probe --dump` 落的
-// JSON —— 即**四家真供应商真查回来的结果**，从而把
-// 「真网络 → 真 QuotaStore 落库 → 真中立桥 → 真卡片绘制 → 真落图」这条链
-// 一次跑通并留下 PNG 证据（G8 的诚实边界正是「UI 呈现层没被真机点验过」）。
+// 落库仍走真 QuotaStore::applyFetchResult：fixture 只提供「这一次 fetch 返回了什么」，
+// 之后 encode/decode、失败韧性、五态判据、标签/裁剪全部是产品代码。若落库/解码
+// 绕过了产品代码，这张图证明不了任何事。
 //
-// **为什么落库仍走真 QuotaStore::applyFetchResult**：fixture 只提供「这一次
-// fetch 返回了什么」，之后 encode/decode、失败韧性、五态判据、标签/裁剪
-// 全部是产品代码。若图好看而落库/解码绕过了产品代码，这张图证明不了任何事。
+// fixture 里没有凭据（探针侧就不导出 apiKey / AK / SK），这里也不需要——种子只落
+// config + result 两行，凭据对渲染是无关字段。
 //
-// ⚠ 凭据：fixture 里**没有**凭据（探针侧就不导出 apiKey / AK / SK）。这里也不
-// 需要——种子只落 config + result 两行，凭据对渲染是无关字段。
-//
-// 返回值 = 失败原因（空串 = 成功）。**失败必须让整个探针红**，不许退化成
-// 「悄悄改用假种子」——那会让这张图的身份变得不可知。
+// 返回值 = 失败原因（空串 = 成功）。失败必须让整个探针红，不许退化成「悄悄改用
+// 假种子」——那会让这张图的身份变得不可知。
 
 std::string loadQuotaFixture(const std::string& path, core::data::SqliteDb& sq,
                              module::claude::quota::QuotaStore& store,
@@ -190,8 +122,8 @@ std::string loadQuotaFixture(const std::string& path, core::data::SqliteDb& sq,
         const std::string providerId = po.get("providerId").asString();
         const std::string displayName = po.get("displayName").asString();
         // profile 名取 cc-switch 条目名（= 用户在 cc-switch 里看到的那个名字），
-        // 而不是 displayName：后者是**供应商中文名**，拿它当 profile 名会让卡片
-        // 两列显示同一个词，看着像渲染重复——那是种子的锅，不是产品的锅。
+        // 而不是 displayName：后者是供应商中文名，拿它当 profile 名会让卡片
+        // 两列显示同一个词，看着像渲染重复。
         std::string profileName = po.get("ccswitchName").asString();
         if (profileName.empty()) profileName = displayName;
         if (providerId.empty()) {
@@ -257,38 +189,24 @@ std::string loadQuotaFixture(const std::string& path, core::data::SqliteDb& sq,
     return std::string();
 }
 
-// ============ 组 I(c)：单行省略号（core::TextOverflow::Ellipsis）===========
+// 组 I(c)：单行省略号（core::TextOverflow::Ellipsis）
 //
-// 背景（2026-10-03）：`.error` 格上一批只加了 `.clip()`，超长错误文案被**静默
-// 剪掉**——用户看到半句话，不知道后面还有内容。EUI-NEO `cbd0b48` 落地了单行省略号，
-// 这里的活是「把它用起来 + 钉住它真的在用」。
-//
-// 取证路径与 runtime 同源：`runtime_render.h` 的 prepareText 就是把 Element 的
-// 字段逐条喂给 TextPrimitive。所以本组**不重画整张卡**，而是把 `.error` 那一格的
-// 元素字段喂进一个裸 TextPrimitive，量 `prepare()` 之后的行宽——断的是
+// 取证路径与 runtime 同源：runtime_render.h 的 prepareText 就是把 Element 的
+// 字段逐条喂给 TextPrimitive。所以本组不重画整张卡，而是把 `.error` 那一格的
+// 元素字段喂进一个裸 TextPrimitive，量 prepare() 之后的行宽——断的是
 // 「产品那一格有没有正确接线 maxWidth / overflow」，而「框架能不能画省略号」是
-// EUI-NEO 自己 tests/unit/text_ellipsis.cpp 的职责，不在这里重复。
+// EUI-NEO 自己 tests/unit/text_ellipsis.cpp 的职责。
 //
 // 三条断言，逐条可独立致红：
-//   (1) **前提**：原文按 Clip 量出来的宽 > 内容列宽。不成立 = 这一格压根没溢出，
-//       整组退化成「没溢出也不红」的恒真假绿（种子不够长时的经典坑）。
-//   (2) **接线**：产品那格声明 overflow==Ellipsis 且 maxWidth>0 且 !wrap。
-//       漏任何一条，EUI-NEO 侧 ellipsis 是**静默 no-op**（不是报错）。
-//   (3) **结果**：渲染行宽 == measureTextWidth(保留前缀 + "…")，即末尾那个字形
-//       **就是** U+2026（而不是「多留一个字」或「硬剪」）；且行宽 ≤ maxWidth。
+//   (1) 前提：原文按 Clip 量出来的宽 > 内容列宽。不成立 = 这一格压根没溢出，
+//       整组退化成恒真假绿（种子不够长的经典坑）。
+//   (2) 接线：产品那格声明 overflow==Ellipsis 且 maxWidth>0 且 !wrap。
+//       漏任何一条，EUI-NEO 侧 ellipsis 是静默 no-op（不报错）。
+//   (3) 结果：渲染行宽 == measureTextWidth(保留前缀 + "…")，即末尾那个字形就是
+//       U+2026（不是「多留一个字」也不是「硬剪」）；且行宽 ≤ maxWidth。
 //
-// 变异口径（两条都真能改变行为）：
-//   摘 `.overflow(Ellipsis)` → (3) 红（行宽变成整句宽，与「前缀+…」不等）。
-//   摘 `.maxWidth(innerW)`   → (3) 红（ellipsis 静默不生效，同上）。
-// 两者都不是等价变异：它们分别关掉「开哪个模式」和「给多宽」，都会让行宽回到
-// 整句宽这一种**不同的**取值。
-//
-// ⚠ **实测踩过的坑（这一组第一版写成恒假）**：前提 (1) 一开始用
-// `styleOfElement()` 去量「原文宽」，而那个 helper 会把元素上的 maxWidth /
-// overflow 一起带进去 —— 量回来的是**已经被省略号截断过**的行宽（1055.96 ≤
-// maxWidth 1064），于是「原文宽 > 可用宽」永远不成立，errRowsOverflowing 恒 0。
-// 症状极具欺骗性：改长种子后数字**一动不动**。故前提 (1) 必须用下面
-// `rawWidthOfElement()`（强制 Clip + maxWidth=0）单量，两者不可混用。
+// 变异口径（两条都真能改变行为）：摘 `.overflow(Ellipsis)` 或摘
+// `.maxWidth(innerW)`，(3) 都红（ellipsis 静默不生效，行宽回到整句宽）。
 
 // U+2026 HORIZONTAL ELLIPSIS（UTF-8 = E2 80 A6），与 EUI-NEO 同一常量。
 constexpr const char* kEllipsisGlyph = "\xE2\x80\xA6";
@@ -310,9 +228,9 @@ core::TextStyle styleOfElement(const core::dsl::Element& el) {
 
 // **未经任何截断的**整句宽度：强制 Clip 且 maxWidth=0（Clip 下 maxWidth 本就
 // 不参与约束，见 EUI-NEO text.cpp measureTextSize），故这条路径与元素有没有
-// 接 maxWidth / overflow 完全无关。专门用于组 I(c) 的前提 (1) 与「有没有被
-// 截断」的判断——用它去量「原文宽」是本组第一版的真实 bug，勿复用
-// styleOfElement。
+// 接 maxWidth / overflow 完全无关。专用于组 I(c) 前提 (1) 与「有没有被截断」的
+// 判断。勿用 styleOfElement 代替：它会把元素上的 maxWidth / overflow 一起带进去，
+// 量回来的是已经被省略号截断过的行宽，前提 (1) 会恒假。
 float rawWidthOfElement(const core::dsl::Element& el) {
     core::TextStyle st = styleOfElement(el);
     st.maxWidth = 0.0f;
@@ -384,13 +302,12 @@ int main(int argc, char* argv[]) {
     auto cfg = test_support::tempConfigFile("pfx_", "cfg");
     test_support::ScopedConfigPath scopedCfg(cfg);
 
-    // 数据底座（组 D/E/F 前提）：已 migrate 的临时库注册为进程级
-    // appDatabase（home onStart 拿它建 HomeService；null 则 statsError、
-    // API 分布全零 → 分布图走空态分支不建图，组 D 结构前提失效）。
-    // 种子 = 1 条 profile（claude_call_logs FK）+ 今日 2 条**带用量**的调用。
-    // 2026-09-29 ③ 改口径后纵轴 = 每小时 output_tokens 合计：没有 output_tokens
-    // 的行合计为 0（= 没数据）→ 依然走空态，组 D 的结构前提就没了，故这里必须
-    // 给用量；两条落在 9 时与 17 时 → 去头去尾后恰 9 根柱（9..17 闭区间）。
+    // 数据底座（组 D/E/F 前提）：已 migrate 的临时库注册为进程级 appDatabase。
+    // null 则 statsError、API 分布全零 → 分布图走空态分支不建图，组 D 结构前提失效。
+    // 种子 = 1 条 profile（claude_call_logs FK）+ 今日 2 条**带用量**的调用：
+    // 纵轴 = 每小时 output_tokens 合计，output_tokens 为 0 的行合计 0（= 没数据）
+    // → 依然走空态、组 D 结构前提失效。两条落在 9 时与 17 时 → 去头去尾后恰
+    // 9 根柱（9..17 闭区间）。
     test_support::TestEnv env("hprobe_", "home", true);  // 注册为 appDatabase
     {
         const int64_t now = static_cast<int64_t>(std::time(nullptr));
@@ -424,7 +341,7 @@ int main(int argc, char* argv[]) {
     const float h = static_cast<float>(args.windowH);
     bool passed = true;
 
-    // ---- G7 余量卡种子（组 G/H 前提）----
+    // 余量卡种子（组 G/H 前提）
     // p1（上一段的种子，无 quota 配置行）= 未配置态。
     // 默认再补 8 个**离线假** profile 走「正常 Tiered」+ 一个 Balance 型，逐行
     // 都是「行首 + 条 + （错误行）」。行数刻意超过卡片视口上限 → 组 H 能断言
@@ -493,30 +410,23 @@ int main(int argc, char* argv[]) {
 
                 QuotaResult r;
                 if (i == 8) {
-                    // 组 I 前提：**唯一一条错误行**（Transient + 从未成功过
-                    // → FailedNever → showsErrorLine 真）。没有它组 I 在门禁
-                    // 里就是空跑（`ctest -L probe` 不带 --quota-fixture，只走
-                    // 这批假种子）。文案刻意给长的：上游 detail 跟在 headline
-                    // 后面，真机上就是这样（见 /tmp/af-home-quota-live.png 的
-                    // MiniMax 行）—— 断言要钉的是「长文案也不越出内容列」。
+                    // i==8 是唯一一条错误行（Transient + 从未成功过 → FailedNever →
+                    // showsErrorLine 真）。门禁那条不带 --quota-fixture、只走这批
+                    // 假种子，没有它组 I 就是空跑。文案刻意给长：上游 detail 跟在
+                    // headline 后面，真机上就是这样，断言要钉「长文案也不越出内容列」。
                     //
-                    // ⚠ **长度是实测钉出来的，不是拍脑袋**（1200×1000 实测）：
-                    //   · 原种子（…可到控制台确认后再试）整句 1334.27px > 可用
-                    //     1064px —— 确实溢出，但只有 1.25 倍，省略号只吃掉尾巴
-                    //     ~25%，落图上**肉眼分不出**「省略号」与「硬剪」。
-                    //   · 追加后半段后整句 2338.97px ≈ 可用宽的 2.2 倍，保留
-                    //     114/232 字形、行宽 1055.96 ≤ 1064 —— 截掉一半，肉眼
-                    //     一眼可辨，且不因换字号/换窗口宽就翻回不溢出。
-                    //   · 真机 MiniMax 原文只有 224 字节 = 1049.63px < 1064
-                    //     （**不溢出**），所以「能看见 …」的落图必须另造场景，
-                    //     不能拿真机数据当证据。
-                    // 组 I(c) 每次运行都打印这组实时数字，空跑守卫会报「还差多少 px」。
+                    // 长度必须钉死，不是拍脑袋：整句需达可用宽的 2 倍量级——1.25 倍时
+                    // 省略号只吃掉尾巴 ~25%，落图上肉眼分不出「省略号」与「硬剪」；
+                    // 2.2 倍时保留 114/232 字形、肉眼一眼可辨，且不因换字号/换窗宽
+                    // 就翻回不溢出。真机原文只有 224 字节 ≈ 1049px（不溢出），所以
+                    // 「能看见 …」的落图必须另造场景，不能拿真机数据当证据。
+                    // 组 I(c) 每次运行都打印实时数字，空跑守卫会报「还差多少 px」。
                     r.kind = QuotaKind::Tiered;
                     r.error = QuotaError::Transient;
-                    // ⚠ errorMessage 是**供应商原文 detail**，不含 headline：
+                    // errorMessage 是**供应商原文 detail**，不含 headline：
                     // quota_home_view.cpp 会自己拼 `headline + 「：」 + detail`，
                     // 种子再写一遍 headline 就会在卡上出现
-                    // 「网络失败，稍后重试：网络失败，稍后重试：…」（实测过）。
+                    // 「网络失败，稍后重试：网络失败，稍后重试：…」。
                     r.errorMessage =
                         "套餐过期或无权限，换密钥没用，得续费"
                         "或换账号：example.invalid 接口业务错误（code 2062）："
@@ -537,11 +447,9 @@ int main(int argc, char* argv[]) {
                     if (i == 3) w.resetsAt = "2030-01-01T00:00:00";
                     r.windows.push_back(w);
                     if (i == 0) {
-                        // 组 J(a) 前提：同一 profile 两条窗口、reset **一有一无**
-                        // ——pct 列是否固定，只有混合形态才有判别力（单一形态
-                        // 的行 pct 天然同位，断它 = 恒真假绿）。真机 fixture 的
-                        // OpenCode Go 行（five_hour 无 reset / weekly+monthly 有）
-                        // 正是这个形态。
+                        // 组 J(a) 前提：同一 profile 两条窗口、reset 一有一无——pct 列是否固定，
+                        // 只有混合形态才有判别力（单一形态的行 pct 天然同位，断它
+                        // 恒真假绿）。
                         QuotaWindow w2;
                         w2.key = "weekly";
                         w2.usedPercent = 25.0;
@@ -556,8 +464,8 @@ int main(int argc, char* argv[]) {
 
 
     core::dsl::Ui* ui = nullptr;
-    // 单帧标准单元：pollOnce（输入派发 + 交互）→ compose（recompose 树 +
-    // layout；spec §4.2 成对要求）
+    // 单帧标准单元：pollOnce（输入派发 + 交互）→ compose（recompose 树 + layout），
+    // 两者成对，缺一个会让帧序与真机不一致
     auto composeFrame = [&]() {
         probe::composeModuleFrame(runtime, window, pageId, w, h,
                                   [&](eui::Ui& u, const eui::Screen& screen) {
@@ -573,17 +481,18 @@ int main(int argc, char* argv[]) {
 
     settleFrames(2);  // 首帧构建树（结构 diff 计入 paint 预算，组 B 前消化）
 
-    // ---- 「数据还在」的中途落图（--screenshot-seeded <路径>）----
-    // 为什么必须多这一个点：组 H(b) 是**破坏性收尾断言**（清空余量表），退出点
-    // 那张 --screenshot 拍到的是收尾后的空态。想看「余量卡长什么样」必须在此
-    // 处拍。未给该开关 = 立刻返回（零开销），既有行为逐字不变。
+    // 「数据还在」的中途落图（--screenshot-seeded <路径>）
+    // 必须早于组 H(b)：那是破坏性收尾断言（清空余量表），退出点那张
+    // --screenshot 拍到的是收尾后的空态。想看「余量卡长什么样」只能在此处拍。
+    // 未给该开关 = 立刻返回（零开销）。
     probe::captureSeedIfRequested(args, window, runtime, &passed);
 
-    // ==================== 组 A：类 1(b) sparkline z（P1） ====================
-    // home.stat.tokens.spark（lineChart chromeless 根，sparkwrap 顶带 y0..16，
-    // home_module.cpp:159-164）必须整带位于 label（.label y16..32，
-    // home_module.cpp:109-117）之上：不相交 + gapY ≥ 0（邻接语义；≥2 系
-    // spec 实现前估量，见文件头）。回归旧 32px 盒 (0,0) → 相交 → 红。
+    // 组 A：类 1(b) sparkline z（P1）
+    // home.stat.tokens.spark（sparkwrap 顶带 y0..16）必须整带位于 label
+    // （.label y16..32）之上：不相交 + gapY ≥ 0（邻接语义）。回归成 32px 盒
+    // (0,0) → 与 label 相交 → 红。
+    // 不断言曲线段：linechart.h 空闲态 {0.0f} 零长度段被跳过，且平线贴 bottomY
+    // 时胶囊半宽会把段 frame 探进 label 带。
     {
         const core::dsl::Element* spark =
             ui != nullptr ? ui->find("home.stat.tokens.spark") : nullptr;
@@ -610,11 +519,11 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // ==================== 组 B：类 2(a) 空转重绘（P1） ====================
-    // 稳定 15 帧（初始动画/hover 收敛，当前树结构与上帧一致不再 paint）后
-    // 连跑 60 帧 pollOnce（不注入、不 recompose），计数 update() 返回 true
-    // （= paintRequested_，runtime_lifecycle.h:229-233）。空闲态 tokenLive
-    // false → 无 .timer（home_module.cpp:462-477）→ 期望 ≤1（首帧遗留）。
+    // 组 B：类 2(a) 空转重绘（P1）
+    // 稳定 15 帧（初始动画/hover 收敛）后连跑 60 帧 pollOnce（不注入、不
+    // recompose），计数 update() 返回 true（= paintRequested_）的帧数。
+    // 空闲态 tokenLive false → 无 .timer，期望 ≤1（首帧遗留）。回归成常驻
+    // onTimer → 60 帧内 ≥2 → 红。
     {
         settleFrames(15);
         int paintFrames = 0;
@@ -631,10 +540,9 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // ==================== 组 C：类 2(b) hover token（P1） ====================
-    // hover != surface：深色档（默认 current()）天然不等；浅色档是审计根因
-    //（旧 #F5F2EC == surface #F5F2EC，theme.cpp:59-64 修后 #EDE8DF）。双档
-    // 各验一次，验完还原深色（后续段几何不受主题影响，保持确定性）。
+    // 组 C：类 2(b) hover token（P1）
+    // hover != surface：深色档（默认 current()）天然不等，浅色档需显式验。
+    // 双档各验一次，验完还原深色（后续段几何不受主题影响，保持确定性）。
     {
         bool cOk = true;
         const auto checkTheme = [&](const char* themeName) {
@@ -658,15 +566,14 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // ==================== 组 D/E 前：API 分布卡当前帧 ====================
+    // 组 D/E 前：API 分布卡当前帧
     composeFrame();
 
-    // ==================== 组 D：类 4(a) barChart 几何（P1） ====================
-    // plot 区总高 = grid.3.y - grid.0.y（barchart.h:114-122；band 不依赖 bar
-    // 的 0.16s 帧过渡）。种子的非零用量 → 非空态 → 去头去尾后 9 根柱（9..17）
-    // 正常建图（2026-09-29 ③ 改口径：纵轴 = 每小时 output_tokens 合计）；
-    // home_module.cpp:567-570 审计修：卡高 260 → wrap 196 → plot 84 ≥ 36。
-    // 回归卡高 208 → wrap 128 → plot 16 < 36 → 红。
+    // 组 D：类 4(a) barChart 几何（P1）
+    // plot 区总高 = grid.3.y - grid.0.y（barchart.h 四条横线 y = plotY + k·H/3
+    // → grid.0 在 plotY、grid.3 在 bottomY）；不量 bar 高度，因为 bar 有 0.16s
+    // 帧过渡。种子的非零用量 → 非空态 → 去头去尾后 9 根柱（9..17）正常建图。
+    // 卡高 260 → wrap 196 → plot 84 ≥ 36；回归成卡高 208 → plot 16 < 36 → 红。
     {
         const core::dsl::Element* grid0 =
             ui != nullptr ? ui->find("home.api.chart.bars.grid.0") : nullptr;
@@ -688,10 +595,9 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // ==================== 组 E：类 5(a) API 卡对称（P3） ====================
+    // 组 E：类 5(a) API 卡对称（P3）
     // title/wrap 相对卡 content（inset 16）以 (0,·) 定位 → 左右间隙各 16，
-    // |左 - 右| ≤ 2px（任务口径；master 实测差 0）。回归二次
-    // position(16,..) → 左 32 右 0。
+    // |左 - 右| ≤ 2px。content 已含 inset，再叠一层 position(16,..) → 左 32 右 0。
     {
         const core::dsl::Element* card =
             ui != nullptr ? ui->find("home.api.chart") : nullptr;
@@ -726,12 +632,13 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // ==================== 组 F：类 6(a) stat 溢出（P1） ====================
+    // 组 F：类 6(a) stat 溢出（P1）
     // 注入：测试时钟（每次 nowMs() +1000ms）+ 单流累计 20M→40M → 2s 窗口
-    // delta 20M → rateTps=10M → 「10000000」（8 位）。慢 48px 档 → 内在宽
-    // ≈230 > cw 176 必溢；statNumberFont（home_module.cpp:34-42）收缩到
-    // 36px → ≈173 ≤ 176 收纳。badge = 流式档「● 1 路 · 累计 40M」。
-    // 判别两段式（见文件头）：clip/wrap true → 过；否则 measureTextSize。
+    // delta 20M → rateTps=10M → 「10000000」（8 位）。48px 固定字号 → 内在宽
+    // ≈230 > cw 176 必溢；statNumberFont 收缩到 36px → ≈173 ≤ 176 收纳。
+    // badge = 流式档「● 1 路 · 累计 40M」，相对当前元素 frame 度量，是弱判别；
+    // 数字（8 位）才是强判别。
+    // 判别两段式：clip/wrap true → 过；否则 measureTextSize 量内在宽比盒宽。
     {
         int64_t fakeT = -1;
         core::proxy_stats::setTestClock([&fakeT]() {
@@ -782,18 +689,16 @@ int main(int argc, char* argv[]) {
         core::proxy_stats::resetForTest();  // 清时钟与状态
     }
 
-    // ==================== 组 G：G7 余量卡几何（P1） ====================
+    // 组 G：余量卡几何（P1）
     // 四条，都用**数字**判（不接受「看起来对」）：
-    //   G(a) 余量卡横向不溢出**内容列**（不再是「窗口」——整页已挂进
-    //       home.scroll，出滚动条时内容列比窗口窄，判窗口是判错对象）
-    //   G(b) **上方统计网格的 x/y/h 逐字不变**，且宽 == 内容列宽 − pad×2
-    //   G(c) 余量卡在统计网格**之下**；快捷按钮行**没被挤出滚动内容**
-    //       （⚠ 2026-10-03 改口径：原判据是「底 ≤ 窗高」，那编码的是
-    //        「整页必须塞进视口」——正是矮窗看不到余量卡的根因。现在整页挂在
-    //        home.scroll 上，页脚**允许**在视口之外，但**必须仍在内容盒内**
-    //        = 用户滚得到。判据从「塞得进视口」改成「没被挤出内容」，不是
-    //        删掉断言。）
-    //   G(d) **余量卡在任意屏高都构建**（矮窗不再两面落空，见组 I 注释）
+    //   G(a) 余量卡横向不溢出**内容列**。判窗口是判错对象：整页挂进 home.scroll，
+    //       出滚动条时内容列比窗口窄。
+    //   G(b) 上方统计网格的 x/y/h 逐字不变，且宽 == 内容列宽 − pad×2
+    //   G(c) 余量卡在统计网格**之下**；快捷按钮行**没被挤出滚动内容盒**。
+    //       整页挂在 home.scroll 上后，页脚允许在视口之外（那正是滚动存在的
+    //       意义），但必须仍在内容盒内 = 用户滚得到。判「塞得进视口」会把
+    //       「矮窗看不到余量卡」编码成正确行为。
+    //   G(d) 余量卡在任意屏高都构建（矮窗不再两面落空）
     {
         composeFrame();
         const core::dsl::Element* card =
@@ -817,12 +722,11 @@ int main(int argc, char* argv[]) {
             passed = false;
         } else {
             const float scale = core::theme::fontScale();
-            // 期望值来自 home_module.cpp 的既有常量（pad 40 / header 72 /
-            // gap 20 / statH 144×fontScale），不是从当前帧反推的
-            // （反推等于「测了它自己」）。**宽度不再写死成「屏宽 − 80」**：
-            // 出滚动条时内容列按框架口径收窄（scrollbarWidth + gap），那是
-            // 正确行为。改判「== 内容列宽 − pad×2」才是这条断言真正想守的
-            // 不变式——统计网格必须**铺满内容列**，不多不少。
+            // 期望值来自 home_module.cpp 的既有常量（pad 40 / header 72 / gap 20 /
+            // statH 144×fontScale），不从当前帧反推（反推等于「测了它自己」）。
+            // 宽度不写死成「屏宽 − 80」：出滚动条时内容列按框架口径收窄
+            // （scrollbarWidth + gap），那是正确行为。判「== 内容列宽 − pad×2」
+            // 才是这条断言想守的不变式——统计网格必须铺满内容列，不多不少。
             const float expectPad = 40.0f;
             const float expectHeaderH = 72.0f;
             const float expectGap = 20.0f;
@@ -860,10 +764,9 @@ int main(int argc, char* argv[]) {
                           << (stats->frame.y + stats->frame.height) << "\n";
                 passed = false;
             }
-            // (c) 快捷按钮行仍在**滚动内容盒内**（用户滚得到）。
-            // ⚠ 2026-10-03 改口径，理由见文件头组 G 注释：整页挂上 home.scroll
-            // 之后，页脚**允许**在视口之外（那正是滚动存在的意义），但绝不能
-            // 溢出内容盒——溢出去就等于滚到底也够不着 = 真丢内容。
+            // (c) 快捷按钮行仍在**滚动内容盒内**（用户滚得到）。整页挂上
+            // home.scroll 之后页脚允许在视口之外，但绝不能溢出内容盒——
+            // 溢出去等于滚到底也够不着 = 真丢内容。
             if (acts != nullptr) {
                 const float actsBottom = acts->frame.y + acts->frame.height;
                 const float contentBottom = root->frame.y + root->frame.height;
@@ -875,12 +778,10 @@ int main(int argc, char* argv[]) {
                 }
             }
             // (d) 余量卡在**当前屏高**确实构建出来了。
-            // 这是 G7 遗留 1 / G8 遗留 1 的判据本体：矮窗下旧实现两面落空
-            // （压不出余量卡 + 余量卡整张不画）。⚠ 本条只在探针实际跑的那个
-            // 屏高上有判别力 —— 默认 1200×1000 旧实现也画，所以门禁里另有
-            // home_probes_min_window（--size 1200x720）专门跑设计最小窗；
-            // 预算纯函数那条另有单测（test_home_quota_card 的
-            // home_quota_budget_* ），三处合起来才是完整守卫。
+            // 本条只在探针实际跑的那个屏高上有判别力——默认 1200×1000 下卡
+            // 本来就画。门禁里另有 home_probes_min_window（--size 1200x720）
+            // 跑更矮的窗，预算纯函数那条另有单测（test_home_quota_card 的
+            // home_quota_budget_*），三处合起来才是完整守卫。
             if (card->frame.height <= 0.0f || card->frame.width <= 0.0f) {
                 std::cerr << "home_probes: 组 G(d) FAIL——余量卡已构建但零尺寸："
                           << card->frame.width << "x" << card->frame.height
@@ -890,44 +791,35 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // ==================== 组 J：G7 余量卡三症状几何（2026-10-03 用户报告）====================
-    // 用户报告：供应商余量卡「布局存在错位，按钮位置没对齐，文本重叠」。
+    // 组 J：余量卡三症状几何
     // 三症状各自钉一条几何判据（全部数字判，不接受「看起来对」）：
     //
-    // J(a) 布局错位：窗口行的 pct 列 x 不固定。drawWindowRow 按有没有 reset
-    //     各算一套 gaps/barW（旧代码 `hasReset ? 3·gap : 2·gap`），无 reset
-    //     的行 pct 右移 116px——同一 profile 的百分比数字上下不齐（实测
-    //     five_hour.pct x=1068 vs weekly/monthly.pct x=952；真机 fixture 的
-    //     OpenCode Go 行可见「0.0%」顶到最右、97%/82% 缩在中间）。
-    //     判据：同一 profile 的全部 .bar.*.pct 元素 .frame.x 逐个相等
-    //     （0.5px 容差）。种子前提：quota-p0 两条窗口、reset 一有一无
-    //     （单一 reset 形态的行 pct 天然同位，断它 = 恒真）；空跑守卫：
-    //     混合形态行数 < 1 即红。
+    // J(a) 布局错位：窗口行的 pct 列 x 必须固定。drawWindowRow 若按有没有 reset
+    //     各算一套 gaps/barW（`hasReset ? 3·gap : 2·gap`），无 reset 的行 pct
+    //     会右移 116px（five_hour.pct x=1068 vs weekly/monthly.pct x=952）。
+    //     判据：同一 profile 的全部 .bar.*.pct 元素 .frame.x 逐个相等（0.5px 容差）。
+    //     种子前提：quota-p0 两条窗口、reset 一有一无（单一 reset 形态的行 pct
+    //     天然同位，断它 = 恒真）；空跑守卫：混合形态行数 < 1 即红。
     // J(b) 按钮位置没对齐（两处，各自独立致红）：
     //     (1)「去配置」按钮高 26 装在 24 的 head 行里（kHeadH=24、按钮
-    //         .size(cfgW, 26)）→ alignItems CENTER 后上下各溢出 head frame
-    //         1px（实测 button y=349 < head y=350、button 底 375 > head 底
-    //         374，行 box 顶再往上 1px 是 kRowGap 间隙带）。判据：按钮
-    //         frame 必须完全落在 head frame 之内（0.5px 容差）。
-    //     (2) 卡头行（home.quota.head）没有 .gap()，而 title 宽按
-    //         cw−104（= 按钮 96 + 间距 8）预留 → title 与按钮之间 0 间距、
-    //         [刷新] 右缘恒比内容列右缘短 8px（实测 refresh 右缘 1136 vs
-    //         head 右缘 1144，按钮不贴右）。判据：refresh 右缘 == head
-    //         右缘（0.5px 容差）。
-    // J(c) 文本重叠：head 行 .name/.provider 是固定宽单行盒且既无 clip 也
-    //     无 wrap（.status 已有 .clip()，这两格是漏网）——长 profile 名的
-    //     字形直接画出 168px 盒、压进 provider 列（真机 cc-switch 条目名
-    //     长度不受控）。判据（组 F 同款两段式）：clip/wrap 任一在场 → 过；
-    //     否则按元素真实样式量内在宽 ≤ 盒宽 + 1px。种子前提：quota-p0 名字
-    //     刻意给长（52 字符，无护栏时内在宽 ≈ 400px > 168px 必红）；空跑
-    //     守卫：没有一格真溢出 = 红（种子被改短时整组空转）。
+    //         .size(cfgW, 26)）→ alignItems CENTER 后上下各溢出 head frame 1px。
+    //         判据：按钮 frame 必须完全落在 head frame 之内（0.5px 容差）。
+    //     (2) 卡头行（home.quota.head）若没有 .gap()，而 title 宽按 cw−104
+    //         （= 按钮 96 + 间距 8）预留 → title 与按钮之间 0 间距、[刷新] 右缘
+    //         恒比 head 右缘短 8px（实测 1136 vs 1144，按钮不贴右）。
+    //         判据：refresh 右缘 == head 右缘（0.5px 容差）。
+    // J(c) 文本重叠：head 行 .name/.provider 是固定宽单行盒——长 profile 名的
+    //     字形会直接画出 168px 盒、压进 provider 列（上游条目名长度不受控）。
+    //     判据（组 F 同款两段式）：clip/wrap 任一在场 → 过；否则按元素真实样式
+    //     量内在宽 ≤ 盒宽 + 1px。种子前提：quota-p0 名字刻意给长（52 字符，
+    //     无护栏时内在宽 ≈ 400px > 168px 必红）；空跑守卫：没有一格真溢出 = 红。
     {
         composeFrame();
         const auto rows = module::claude::quota::listQuotaHomeRows(env.db->db());
-        // 审计 minor-1（2026-10-03 quota-card-fix-audit）：查询败时组 J 原直接
-        // `.value()` → LOG_FATAL+abort（result.h 契约），探针以崩溃收场而不是
-        // 干净 FAIL（后面的组全部不跑、诊断全丢）。照组 H(a) 的写法先查 isFail，
-        // 败 → FAIL + 空列表（本组三段判据全部跳过，但不恒绿：passed 已置 false）。
+        // 查询失败时不得直接 `.value()`——result.h 契约下那是 LOG_FATAL+abort，
+        // 探针会以崩溃收场而不是干净 FAIL（后面的组全不跑、诊断全丢）。
+        // 先查 isFail，败 → FAIL + 空列表（本组判据全跳过，但不恒绿：
+        // passed 已置 false）。
         if (rows.isFail()) {
             std::cerr << "home_probes: 组 J FAIL——listQuotaHomeRows 失败: "
                       << rows.errorMessage() << "（组 J 判据本轮全部跳过）\n";
@@ -937,7 +829,7 @@ int main(int argc, char* argv[]) {
             rows.isOk() ? rows.value()
                         : std::vector<module::claude::quota::QuotaHomeRow>{};
 
-        // ---- J(a) 同一 profile 的 pct 列 x 固定 ----
+        // J(a) 同一 profile 的 pct 列 x 固定
         int mixedResetRows = 0;
         for (const auto& row : rowList) {
             const std::string rid =
@@ -981,7 +873,7 @@ int main(int argc, char* argv[]) {
             passed = false;
         }
 
-        // ---- J(b)(1)「去配置」按钮 frame 必须落在 head frame 之内 ----
+        // J(b)(1)「去配置」按钮 frame 必须落在 head frame 之内
         int configBtnRows = 0;
         for (const auto& row : rowList) {
             const std::string rid =
@@ -1021,7 +913,7 @@ int main(int argc, char* argv[]) {
             passed = false;
         }
 
-        // ---- J(b)(2) 卡头 [刷新] 按钮右缘必须贴内容列右缘 ----
+        // J(b)(2) 卡头 [刷新] 按钮右缘必须贴内容列右缘
         {
             const core::dsl::Element* head =
                 ui != nullptr ? ui->find("home.quota.head") : nullptr;
@@ -1046,7 +938,7 @@ int main(int argc, char* argv[]) {
             }
         }
 
-        // ---- J(c) head 行 name/provider 防溢护栏（clip/wrap）在场 ----
+        // J(c) head 行 name/provider 防溢护栏（clip/wrap）在场
         int nameCellsChecked = 0;
         for (const auto& row : rowList) {
             const std::string rid =
@@ -1070,13 +962,12 @@ int main(int argc, char* argv[]) {
                       << "）：本轮空转 = 没有守卫\n";
             passed = false;
         }
-        // 空跑守卫：种子必须真有一格长名字（无护栏时内在宽 > 盒宽），否则
-        // 上面的宽度比较对每一格都恒过 = 恒真假绿。rawWidthOfElement 强制
-        // Clip+maxWidth=0，量的就是「没护栏时会不会溢出」，与本格是否已接
-        // clip 无关。⚠ --quota-fixture（真机）模式下本守卫会红——真 profile
-        // 名恰好都短（没有一格真溢出），这与组 I(c) 在 fixture 模式红是同一
-        // 口径（真机数据不含该场景 → 诚实呈现，不静默绿）；门禁那条
-        // （ctest -L probe）走离线假种子，长名字由种子保证。
+        // 空跑守卫：种子必须真有一格长名字（无护栏时内在宽 > 盒宽），否则上面的
+        // 宽度比较对每一格都恒过 = 恒真假绿。rawWidthOfElement 强制
+        // Clip+maxWidth=0，量的就是「没护栏时会不会溢出」，与本格是否已接 clip
+        // 无关。--quota-fixture（真机）模式下本守卫会红：真 profile 名恰好都短
+        // （没有一格真溢出），这与组 I(c) 在 fixture 模式红是同一口径（真机数据
+        // 不含该场景 → 诚实呈现，不静默绿）；门禁那条走离线假种子，长名字由种子保证。
         int longNameCells = 0;
         for (const auto& row : rowList) {
             const std::string rid =
@@ -1095,11 +986,9 @@ int main(int argc, char* argv[]) {
             passed = false;
         }
 
-        // ---- J(d) 长名/长供应商名以「…」收尾（Ellipsis 接线，2026-10-03 批次）----
+        // J(d) 长名/长供应商名以「…」收尾（Ellipsis 接线）
         // J(c) 钉「护栏在场」，J(d) 更进一步：真溢出的那格必须是**单行省略号**
-        // 而不是硬剪——上一批给 .name/.provider 补的 .clip() 只是防重叠，长名
-        // 被静默剪掉、用户看不出「后面还有字」（.error 行已走 Ellipsis 路线，
-        // 4e76052；name/provider 是同一欠账，见 quota-card-fix-audit minor-3）。
+        // 而不是硬剪——clip 只防重叠，长名被静默剪掉、用户看不出「后面还有字」。
         // 判据与组 I(c) 同款三段式，只对**真溢出**的格子生效（rawWidth > 盒宽，
         // rawWidthOfElement 强制 Clip+maxWidth=0 量「没护栏时的宽」）：
         //   (1) 接线：overflow==Ellipsis && maxWidth>0 && !wrap——漏任何一条
@@ -1185,19 +1074,18 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // ==================== 组 I：G7 错误行只出现一次 + 不溢出 ====================
-    // 缺陷（2026-10-03 修）：错误文案被渲染**两遍** —— ① head row 的 `.status`
-    // 格（statusTextFor 在 showsErrorLine 时返回 row.lastError）② 专属错误行
-    // `.error`。且 `.status` 是既无 clip 又无 wrap 的单行盒（maxWidth 只在
-    // wrap=true 时生效，见 EUI-NEO text.cpp），于是第一遍直接溢出卡片右缘被
-    // 截断。真机证据：/tmp/af-home-quota-live.png 的 MiniMax 行。
+    // 组 I：错误行只出现一次 + 不溢出
+    // 错误文案会被渲染两遍：① head row 的 `.status` 格（statusTextFor 在
+    // showsErrorLine 时返回 row.lastError）② 专属错误行 `.error`。且 `.status`
+    // 是既无 clip 又无 wrap 的单行盒（maxWidth 只在 wrap=true 时生效，见
+    // EUI-NEO text.cpp），第一遍直接溢出卡片右缘被截断。
     //
-    // I(a) **只出现一次**：错误文案在整棵余量树里**有且仅有一处**携带它 ——
-    //     钉「字符串在树里出现几次」而不是「某个格是不是空」，后者回归成
-    //     「换个别的文案渲染两遍」就又绿了。
-    // I(b) **不溢出内容列**：错误文案所在格的**右缘** ≤ 内容列右缘。
-    //     钉的是**宽度比较**（本格右缘 vs 父行内容宽），不是某个字面量宽度 ——
-    //     换字号 / 换文案长度 / 换窗口宽都仍成立。
+    // I(a) **只出现一次**：错误文案在整棵余量树里有且仅有一处携带它——钉
+    //     「字符串在树里出现几次」而不是「某个格是不是空」，后者换个别的文案
+    //     渲染两遍就又绿了。
+    // I(b) **不溢出内容列**：错误文案所在格的右缘 ≤ 内容列右缘。钉的是宽度
+    //     比较（本格右缘 vs 父行内容宽）而不是某个字面量宽度，换字号 / 换文案
+    //     长度 / 换窗口宽都仍成立。
     // 组 I(c) 的实际断言覆盖面：真正**溢出**内容列的错误行数。组尾钉 >=1，
     // 防止「种子文案不够长 → 一格都没溢出 → I(c) 整组空跑成恒真假绿」。
     // 声明在组外：本组尾部（组 I 的 {} 之外）还要读它做空跑守卫。
@@ -1211,10 +1099,8 @@ int main(int argc, char* argv[]) {
     {
         const auto rows =
             module::claude::quota::listQuotaHomeRows(env.db->db());
-        // 审计尾巴（组 J 同款）：查询败时组 I 原直接 `.value()` → LOG_FATAL
-        // +abort（result.h 契约），探针以崩溃收场而不是干净 FAIL（后面的
-        // 组全部不跑、诊断全丢）。先查 isFail，败 → FAIL + 空列表（本组
-        // 判据全部跳过，但不恒绿：passed 已置 false）。
+        // 查询失败时不得直接 `.value()`（同组 J）：否则 LOG_FATAL+abort，探针以崩溃
+        // 收场，后面的组全不跑、诊断全丢。先查 isFail，败 → FAIL + 空列表。
         if (rows.isFail()) {
             std::cerr << "home_probes: 组 I FAIL——listQuotaHomeRows 失败: "
                       << rows.errorMessage() << "（组 I 判据本轮全部跳过）\n";
@@ -1262,7 +1148,7 @@ int main(int argc, char* argv[]) {
                 continue;
             }
 
-            // ---- I(a) 错误文案在整棵余量树里只出现一次 ----
+            // I(a) 错误文案在整棵余量树里只出现一次
             // 递归扫 `home.quota` 子树，逐个 Text 元素数「文本里含该错误文案」
             // 的格数。专属错误行必须**是**携带者之一（否则就是全树都没有）。
             int carriers = 0;
@@ -1291,7 +1177,7 @@ int main(int argc, char* argv[]) {
                 passed = false;
             }
 
-            // ---- I(b) 不溢出内容列：本格右缘 ≤ 内容列右缘 ----
+            // I(b) 不溢出内容列：本格右缘 ≤ 内容列右缘
             // 宽度比较，不钉字面量：内容列 = 该行 `.head` 的内容右缘（即
             // scrollView 给的 innerW），错误行与之同宽，故直接比父行右缘。
             const float contentRight = rowEl->frame.x + rowEl->frame.width;
@@ -1313,10 +1199,10 @@ int main(int argc, char* argv[]) {
                 passed = false;
             }
             // 防溢护栏三选一：clip（scissor 硬剪）/ wrap（换行）/ 单行省略号
-            // （overflow==Ellipsis && maxWidth>0 && !wrap）。⚠ 量的必须是
-            // **元素真实声明的样式**（含 maxWidth/overflow），否则量的是「没接
-            // 线时的文本宽」——省略号那一格会被误判成「溢出」（假红），而
-            // 没接 maxWidth 的格子又会因为漏量而被放过（假绿）。
+            // （overflow==Ellipsis && maxWidth>0 && !wrap）。量的必须是**元素
+            // 真实声明的样式**（含 maxWidth/overflow）：量「没接线时的文本宽」
+            // 会让省略号那一格误判成溢出（假红），而没接 maxWidth 的格子又会
+            // 因为漏量而被放过（假绿）。
             for (const core::dsl::Element* el : {errEl, statusEl}) {
                 if (el->clip || el->wrap) continue;
                 core::TextStyle st;
@@ -1337,7 +1223,7 @@ int main(int argc, char* argv[]) {
                 }
             }
 
-            // ---- I(c) 超长错误文案以「…」收尾（不是被硬剪）----
+            // I(c) 超长错误文案以「…」收尾（不是被硬剪）
             // 只在**这一格真的溢出**时才断言：(1) 前提（原文按 Clip 量 > 内容列
             // 宽）；不溢出时本组对它无话可说，跳过——但跳过次数被 errorRowsKnown
             // 记着，组尾统一钉「至少有一格真溢出」，否则整组空跑成恒真假绿。
@@ -1423,21 +1309,16 @@ int main(int argc, char* argv[]) {
                 }
             }
         }
-        // I(c) **`.status` 的防溢护栏必须在场**（静态审计 m6）。
+        // I(c) **`.status` 的防溢护栏必须在场**。
         //
-        // 原实现只在**错误行**上查 clip/wrap，而修复后错误行的 .status 文本
-        // **恒为空串** → measureTextSize("") = 0 → 那条宽度检查对 .status 是
-        // 恒真的空转（审计实测：删掉 .status 的 .clip()，14/14 probe 全绿）。
-        //
-        // ⚠ 判据为什么是「护栏在不在」而不是「文本有没有超出盒宽」：
-        //   当前三种非错误状态的标签（未配置余量查询 / 配置不完整，去补全 /
-        //   等待首次查询）在任何窗口宽下都装得进 statusW → 宽度判据恒不触发，
-        //   那才是**又一条恒真假绿**（本条第一版就是这么写的，实测删掉
-        //   .clip() 仍然全绿，当场拆穿）。
-        //   而「.status 是固定高单行盒 + 上游文案长度不可控 → 必须有 clip 或
-        //   wrap」是代码里**明写的不变式**（home_quota_card.cpp 的 .status
-        //   段：「maxWidth 只在 wrap=true 时生效……故防溢只能靠 clip 剪裁」）。
-        //   断言这条不变式本身，才是对「护栏在不在」的真正钉死。
+        // 错误行的 .status 文本恒为空串 → measureTextSize("") = 0 → 在错误行上
+        // 查 clip/wrap 对 .status 是恒真的空转（删掉 .status 的 .clip() 全绿）。
+        // 所以判据是「护栏在不在」而不是「文本有没有超出盒宽」：当前三种非错误
+        // 状态的标签（未配置余量查询 / 配置不完整，去补全 / 等待首次查询）在任何
+        // 窗口宽下都装得进 statusW，宽度判据恒不触发。
+        // 「.status 是固定高单行盒 + 上游文案长度不可控 → 必须有 clip 或 wrap」
+        // 是 home_quota_card.cpp .status 段里明写的不变式（「maxWidth 只在
+        // wrap=true 时生效……故防溢只能靠 clip 剪裁」），断言这条不变式本身。
         int statusCheckedRows = 0;
         for (const auto& row : rowList) {
             const std::string rid =
@@ -1454,7 +1335,7 @@ int main(int argc, char* argv[]) {
             passed = false;
         }
         // 非恒真守卫的第一道闸：这条检查一行都没跑到 = 空转，必须报红。
-        // 「过滤器匹配 0 条时静默绿」是本项目踩过多次的坑。
+        // 过滤器匹配 0 条时静默绿是本项目反复踩的坑。
         if (statusCheckedRows < 1) {
             std::cerr << "home_probes: 组 I(c) FAIL——一行 .status 都没找到（读到 "
                       << statusCheckedRows
@@ -1479,24 +1360,23 @@ int main(int argc, char* argv[]) {
         passed = false;
     }
 
-    // ---- 中途落图（--screenshot-seeded <路径>，2026-10-03 Ellipsis 批次）----
-    // 此刻 = 余量种子全在场（quota-p0 的 52 字符长名 + i==8 错误行都画在卡上），
+    // 中途落图（--screenshot-seeded <路径>）
+    // 此刻余量种子全在场（quota-p0 的 52 字符长名 + i==8 错误行都画在卡上），
     // 下一组 H(b) 马上清库——「长名省略号」的取证图只能在这个状态点拍。
     // 不传开关时 captureSeedIfRequested 立即返回（零开销，probe_harness.h 契约）。
     probe::captureSeedIfRequested(args, window, runtime, &passed);
 
-    // ==================== 组 H：G7 余量卡滚动（P1） ====================
-    // H(a) 滚动条**由内容溢出驱动**：出滚动条 ⟺ 内容高 > 视口高。
-    //     「出现」这一半是原有断言；「不溢出时不出现」这一半是 2026-10-03 补的
-    //     ——它让本断言在 --quota-fixture 模式（真机数据只有 4~5 行、内容未必
-    //     溢出）与「窗口更高 → 视口更大 → 内容装得下」两种情形下依然有意义，
-    //     而不是因为行数变了就整条失去判别力。
+    // 组 H：余量卡滚动（P1）
+    // H(a) 滚动条**由内容溢出驱动**：出滚动条 ⟺ 内容高 > 视口高。「出现」与
+    //     「不溢出时不出现」两半都要断，否则 --quota-fixture 模式（真机数据
+    //     只有 4~5 行、内容未必溢出）与「窗口更高 → 视口更大 → 内容装得下」
+    //     两种情形下整条会失去判别力。
     //     判据用 computeQuotaCardMetrics（home_quota_card.h 的公开契约函数），
-    //     cap 取**实测视口高**：于是 overflows 恰好等于「内容超出这个视口」。
-    //     ⚠ bar 为 null 不直接判红——那可能正是「不溢出」的正确答案；红不红由
-    //       overflows 与 bar 存在性是否一致决定。
-    // H(b) 删掉全部余量数据后重排 → **滚动条消失**（证明它是内容驱动的，
-    //      不是「无条件画一根」的装饰）
+    //     cap 取实测视口高：overflows 恰好等于「内容超出这个视口」。
+    //     bar 为 null 不直接判红——那可能正是「不溢出」的正确答案；红不红由
+    //     overflows 与 bar 存在性是否一致决定。
+    // H(b) 删掉全部余量数据后重排 → 滚动条消失（证明它是内容驱动的，不是
+    //     「无条件画一根」的装饰）
     {
         const core::dsl::Element* bar =
             ui != nullptr ? ui->find("home.quota.scroll.scroll") : nullptr;
@@ -1538,12 +1418,11 @@ int main(int argc, char* argv[]) {
     }
     {
         // H(b)：清空余量数据**并删掉这批种子 profile** 后重排，滚动条必须消失。
-        // ⚠ 只删余量两表是不够的：剩下的 profile 全是「未配置」行，9 行 ×
-        // (24 头 + 10 间距) = 296 > 250 视口，**本来就该**出滚动条——那是
-        // 正确行为，断言它「不该出」才是错的。
-        // ⚠ 假种子按名字前缀删（quota-p%），**真机种子按 id 删**（--quota-fixture
-        // 的 profile 名就是供应商名，前缀删不掉——漏删会让本断言在真机模式下
-        // 测的根本不是「只剩一行」）。
+        // 只删余量两表是不够的：剩下的 profile 全是「未配置」行，9 行 ×
+        // (24 头 + 10 间距) = 296 > 250 视口，本来就该出滚动条——那是正确行为。
+        // 假种子按名字前缀删（quota-p%），真机种子按 id 删（--quota-fixture 的
+        // profile 名就是供应商名，前缀删不掉——漏删会让本断言在真机模式下测的
+        // 根本不是「只剩一行」）。
         auto& sq = env.db->db();
         std::string cleanup = "DELETE FROM claude_profiles WHERE name LIKE 'quota-p%'";
         for (const int64_t fid : fixtureProfileIds) {
@@ -1571,31 +1450,26 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // ==================== 组 K：矮窗多档——余量卡在真实最小窗各档都构建（2026-10-03 口径核定批）====================
-    // G7 遗留 1 / G8 遗留 1 的收口守卫，补两处判别力空缺：
-    //   · 组 G(d) 只在探针**实际运行**的那档屏高有判别力（默认 1200×1000 下
-    //     旧实现也画卡）；
-    //   · home_probes_min_window 只补了 1200×720 一档——而 720 是 **spec 早期
-    //     过期值**，真实设计最小窗是 **1330×845 逻辑**（main.cpp:529-530
-    //     kMinWindowLogical*；G8 简报把它记成「设计最小窗」是过期口径），
-    //     本机工作区放不下 845 点、经 minWindowSizeForWorkArea 收缩后的
-    //     **有效**下限是 1330×805 点（core/window_layout.h 头注）。此前
-    //     没有任何守卫钉在这两档真实可达高度上。
+    // 组 K：矮窗多档——余量卡在真实最小窗各档都构建
+    // 补两处判别力空缺：组 G(d) 只在探针**实际运行**的那档屏高有判别力；
+    // home_probes_min_window 只跑 1200×720，而真实设计最小窗是 1330×845 逻辑
+    // （main.cpp kMinWindowLogical*），本机工作区放不下 845 点、经
+    // minWindowSizeForWorkArea 收缩后的**有效**下限是 1330×805 点
+    // （core/window_layout.h 头注）。
     //
     // 本组用**无头 compose**一跑覆盖三档（同一模块实例在不同 Screen 下各排
-    // 一帧，test_home_quota_card ⑬ 的 tall/short 同款）：compose 的 screen 是
-    // 参数，不必为每档开一条 ctest 条目重跑全组。三档 = 预算的两个工作档：
-    //   · 845 设计最小窗：装得下档的**刀口**——quotaBody = 845−fixed−kHomeChartH
+    // 一帧）：compose 的 screen 是参数，不必为每档开一条 ctest 条目重跑全组。
+    // 三档 = 预算的工作档：
+    //   · 845 设计最小窗：装得下档的刀口——quotaBody = 845−fixed−kHomeChartH
     //     = 95 < 96，靠压缩图表 1px（260→259）恰好画出卡；
     //   · 805 本机有效最小窗：压缩档（图表压到 ~219）；
     //   · 700 滚动模式档（< fixed+kHomeChartH = 750）：整页出滚动条、图表
-    //     一分不压、卡照画。低于一切真实下限，作守护性深档（min_window 的
-    //     720 同理，700 比它更深）。
+    //     一分不压、卡照画。低于一切真实下限，作守护性深档。
     // 判据（每档一致）：
     //   K(a) 余量卡节点存在、非零尺寸、且不压统计网格（矮窗整张不画 = 欠账复发）
     //   K(b) 整页滚动容器在场（矮窗可见性依赖它吸收溢出；G 同款 content 节点）
     //   K(c) 既有内容一条不少（stats / chart / actions / root）
-    //   K(d) 快捷按钮行仍在滚动内容盒内（滚到底够得着 = 没丢内容，⑬④ 同款）
+    //   K(d) 快捷按钮行仍在滚动内容盒内（滚到底够得着 = 没丢内容）
     //   K(e) 图表卡高度 == computeHomeQuotaBudget 的结论，且预算说这档画卡
     //        （home_module 把 budget.chartHeight 传进图表卡；预算与渲染分叉
     //        时这里红，常量漂移时 home_quota_budget_* 单测先红）
@@ -1626,8 +1500,8 @@ int main(int argc, char* argv[]) {
                          std::to_string(static_cast<int>(tier.height)));
             mod->compose(tierUi, tierScreen);
             tierUi.end();
-            // ⚠ 必须 layout：compose 只建树不排版，不 layout 所有 frame 都是 0
-            //（⑬ 踩过「0 <= 0.5」恒真假绿的坑）。
+            // 必须 layout：compose 只建树不排版，不 layout 所有 frame 都是 0，
+            // 后面那些「>= 36 / 零尺寸」判据会全落进「0 <= 0.5」的恒真假绿。
             tierUi.layout(tierScreen.width, tierScreen.height);
 
             const core::dsl::Element* card = tierUi.find("home.quota");
@@ -1655,7 +1529,7 @@ int main(int argc, char* argv[]) {
             if (card == nullptr) {
                 std::cerr << "home_probes: 组 K(a) FAIL（" << tier.label
                           << "）——余量卡整张未构建：矮窗不可见"
-                          << "（G7 遗留 1 / G8 遗留 1 复发）\n";
+                          << "\n";
                 passed = false;
             } else {
                 if (card->frame.width <= 0.0f || card->frame.height <= 0.0f) {
@@ -1704,17 +1578,15 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // ==================== 组 L：[刷新] 与 [去配置] 右缘同线（2026-10-03 真机点验「一个前一个后」）====================
-    // 用户报告：「刷新和去配置 2 个按钮没对齐 一个前 一个后」。
-    // 根因：[去配置] 在 home.quota.scroll（scrollView）里——内容溢出时
-    // scrollView 把内容列缩成 width−(scrollbar+gap)（EUI-NEO scrollview.h:74-76，
-    // 默认 metrics 8+16=24px），行 head 连同 [去配置] 的右缘跟着缩；[刷新] 在
-    // scrollView **外**的卡头行里、不跟缩 → 滚动条一出现 [刷新] 恒比 [去配置]
-    // 突出 24px。上批（37becde）J(b)(2) 的实测数字里就带着这条错位：卡头行
-    // 右缘 1144 vs 行 head 右缘 1120——那批只把 [刷新] 对到卡头行自身右缘，
-    // 没对到行 head，真机（行多必滚动）看到的仍是「一个前一个后」。
-    // 修复：m.overflows 时卡头行宽 == 滚动内容列宽（inset 取自与 scrollView
-    // 同一份 componentTokens metrics，两侧同源不漂移）。
+    // 组 L：[刷新] 与 [去配置] 右缘同线
+    // [去配置] 在 home.quota.scroll（scrollView）里——内容溢出时 scrollView 把
+    // 内容列缩成 width−(scrollbar+gap)（EUI-NEO scrollview.h 默认 metrics
+    // 8+16=24px），行 head 连同 [去配置] 的右缘跟着缩；[刷新] 在 scrollView
+    // **外**的卡头行里、不跟缩 → 滚动条一出现 [刷新] 恒比 [去配置] 突出 24px。
+    // 卡头行宽度必须 == 滚动内容列宽（inset 取自与 scrollView 同一份
+    // componentTokens metrics，两侧同源不漂移）。
+    // 注意 J(b)(2) 的判据是「[刷新] 右缘 == **卡头行**右缘」，它不含行 head：
+    // 卡头行自身对齐了不等于行 head 也对齐，两条要各断各的。
     // 断言（两档同码，各自独立致红；空跑守卫钉前提）：
     //   L(a) 每个 [去配置] 右缘 == [刷新] 右缘（0.5px 容差）——按钮面对齐。
     //   L(b) 每个行 head 右缘 == 卡头行右缘（0.5px）——结构面（name/status
@@ -1724,9 +1596,9 @@ int main(int argc, char* argv[]) {
     //        全等不是本卡的布局语义（J(b)(1) 已钉「按钮高==行高」）；
     //        「对齐」的语义 = 右缘同线 + 行内各自居中。
     // 档位：非滚动档 = 组 H(b) 收尾态（仅 1 行未配置、无滚动条，两缘本来就
-    //       同在 cw——控制组，修复前后都应绿）；滚动档 = 本组补种 5 个双窗
-    //       profile（内容 24+5×72+5×10=434 > 视口 ~250）后断——**修复前此档
-    //       必红 24px**，断完清掉补种行再排一帧，退出状态与从前逐字一致。
+    //       同在 cw——控制组）；滚动档 = 本组补种 5 个双窗 profile
+    //       （内容 24+5×72+5×10=434 > 视口 ~250）后断，此档才是错位暴露的那档。
+    //       断完清掉补种行再排一帧，退出状态与 H(b) 收尾态一致。
     {
         auto assertTier = [&](const char* tier, bool expectBar) {
             const core::dsl::Element* refresh =
@@ -1848,12 +1720,12 @@ int main(int argc, char* argv[]) {
                       << "[去配置] " << configBtns << " 个\n";
         };
 
-        // ---- 非滚动档：组 H(b) 收尾态（1 行未配置、无滚动条）----
+        // 非滚动档：组 H(b) 收尾态（1 行未配置、无滚动条）
         composeFrame();
         composeFrame();
         assertTier("非滚动档", false);
 
-        // ---- 滚动档：补种 5 个双窗 profile → 内容必超视口 ----
+        // 滚动档：补种 5 个双窗 profile → 内容必超视口
         {
             using namespace module::claude::quota;
             QuotaStore store(env.db->db());
@@ -1912,7 +1784,7 @@ int main(int argc, char* argv[]) {
         composeFrame();
         assertTier("滚动档", true);
 
-        // ---- 清掉补种行，退出状态与从前一致（H(b) 收尾态，不污染收尾图）----
+        // 清掉补种行，退出状态回到 H(b) 收尾态（不污染收尾图）
         if (!env.db->db()
                  .exec("DELETE FROM claude_profiles WHERE name LIKE 'quota-L%'")
                  .isOk() ||
@@ -1925,20 +1797,16 @@ int main(int argc, char* argv[]) {
         composeFrame();
     }
 
-    // ==================== 组 M：[刷新] 与 [去配置] 等宽（2026-10-03 真机点验「宽度不一样」）====================
-    // 用户报告：「刷新和去配置按钮的宽度不一样」。上一批（515815b，组 L）修的
-    // 是**右缘**对齐（滚动档同线），但两按钮自身宽度不同：[刷新] 卡头行
-    // .size(96,28)（home_quota_card.cpp 硬编码字面量）vs [去配置] 行内
-    // kConfigBtnW=88——内容文字长度不同（「刷新」带 icon vs 「去配置」三字），
-    // 而 EUI-NEO button 的 .size 是**定宽帧**（无 minWidth / 无内容自适应，
-    // button.h:48 width_ 直落 frame :103-104/136）→ 宽窄不一，视觉不齐
-    // （1200x1300 落图实测 96 vs 88 逻辑 px，差 8px）。
-    // 修复：两按钮读同一个宽度常量 kQuotaBtnW=96（= 原 [刷新] 宽，含 icon 的
-    // 较大自然宽；「去配置」三字仅 ~39px 也装得下），home_quota_card.cpp 内
-    // 单一来源——两处字面量分开写就是漂移入口（本组就是为钉住它而生）。
-    // 断言：M(a) [刷新] frame.width == 每个 [去配置] frame.width（0.5px 容差）
-    //        —— 等宽是跨档不变式（按钮宽是常量，不随滚动/行数变），组 L 收尾
-    //        态（1 行未配置，必带 [去配置]）单档断言即足。
+    // 组 M：[刷新] 与 [去配置] 等宽
+    // EUI-NEO button 的 .size 是**定宽帧**（无 minWidth / 无内容自适应，
+    // button.h 的 width_ 直落 frame），所以两按钮的宽必须显式给成同一个值：
+    // 内容文字长度不同（「刷新」带 icon vs 「去配置」三字）不会被自适应拉齐。
+    // 两处必须读同一个宽度常量 kQuotaBtnW=96（= 含 icon 的「刷新」自然宽，
+    // 「去配置」三字仅 ~39px 也装得下）。home_quota_card.cpp 内分成两处字面量
+    // 就是漂移入口——本组就是为钉住它而生。
+    // 断言：M(a) [刷新] frame.width == 每个 [去配置] frame.width（0.5px 容差）。
+    //        等宽是跨档不变式（按钮宽是常量，不随滚动/行数变），组 L 收尾态
+    //        （1 行未配置，必带 [去配置]）单档断言即足。
     // 空跑守卫：[刷新] 缺失 / 一个 [去配置] 都没有 = 本组空转恒真假绿，红。
     {
         const core::dsl::Element* refresh =
@@ -1989,10 +1857,9 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // ---- 退出前落一张「当前状态图」（--screenshot <路径>，2026-10-03 帧捕获批次）----
-    // 通用看图口：跑一次 home_probes 就能拿到此刻首页长什么样，不必再靠
-    // screencapture（agent 会话拿不到屏幕录制 TCC 授权）。不传该开关时
-    // captureIfRequested 立刻返回，行为与从前逐字一致（零开销 / 不写文件）。
+    // 退出前落一张「当前状态图」（--screenshot <路径>）
+    // 通用看图口：跑一次 home_probes 就能拿到此刻首页长什么样。不传该开关时
+    // captureIfRequested 立刻返回（零开销 / 不写文件）。
     probe::captureIfRequested(args, window, runtime, &passed);
 
     mod->onStop();

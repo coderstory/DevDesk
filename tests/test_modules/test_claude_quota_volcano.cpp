@@ -1,19 +1,7 @@
 // tests/test_modules/test_claude_quota_volcano.cpp
-// 火山方舟余量 provider（G4）契约测试
-// （计划 docs/superpowers/plans/2026-10-02-quota-implementation-plan.md §G4）
-//
-// 被测实现逐字移植自 cc-switch `src-tauri/src/services/coding_plan.rs`（rev bfaaba16）
-// 火山分支（:835-1308）。行号对照见 quota_volcano.h 头注释。
-//
-// ✅ 「服务端会接受这个签名」**已于 G8 真机出网验证**（2026-10-03，cn-beijing +
-// 真实 AK/SK，两个 Action 都回 HTTP 200 且 Result 非空）——本文件当年写的
-// 「真实正确性必须等有火山账号时出网手测一次」这条悬案已关闭。
-// ⚠️ 但下面两条用例**本身仍然只是结构契约**：期望值来自**独立实现**（Python
-// hashlib/hmac 按同一算法规格重算，非本仓库代码产出），它们锁住「canonical 串
-// 拼装 + 三处火山特有偏离 + 密钥派生链」，抓的是 HMAC 用错 / header 排序 /
-// scope 结尾 / 日期格式这类实现错误。真机验证回答的是**另一个问题**（真实网关
-// 收不收），两者不可互相替代——所以这两条用例**没有被下调**，只是旁边多了一条
-// 已验证的事实。换 region / 换 Action 仍未验证。
+// 火山方舟余量 provider 契约测试：HTTP 走注入缝，零真实网络。
+// 签名用例的期望值由独立实现算出，只锁 canonical 串拼装与密钥派生链，不证明服务端收不收。
+// 换 region / 换 Action 未验证。
 #include "doctest.h"
 
 #include "platform/http_client.h"
@@ -40,14 +28,15 @@ using module::claude::quota::QuotaResult;
 using module::claude::quota::QuotaWindow;
 namespace volc = module::claude::quota::volcano_detail;
 
-// ---- 假 HTTP 发送器：**零真实网络**（按调用序号回放脚本化响应）----
-// 与 test_claude_quota.cpp 的注入缝范式一致：provider 只通过 HttpSendFn 发请求。
+// 假 HTTP 发送器：按调用序号回放脚本化响应。
+// transportFail 与 networkErrorFlag 是两条不同的失败通道：前者是缝自己 fail
+// （拿不到 Response），后者是缝成功但 Response 上标了 networkError。
 struct ScriptedHttp {
     std::vector<platform::http::Response> responses;  // 第 n 次调用回放第 n 条
-    std::vector<platform::http::Request> requests;    // 记录收到的请求
+    std::vector<platform::http::Request> requests;
     std::size_t served = 0;
-    bool transportFail = false;  // 缝本身失败（Result::fail）
-    bool networkErrorFlag = false;  // 缝成功但 Response.networkError=true
+    bool transportFail = false;
+    bool networkErrorFlag = false;
 
     HttpSendFn fn() {
         return [this](const platform::http::Request& req)
@@ -105,8 +94,7 @@ bool contains(const std::string& haystack, const std::string& needle) {
     return haystack.find(needle) != std::string::npos;
 }
 
-// 官方文档 GetAFPUsage 返回示例（逐字取自 coding_plan.rs:2020-2026 的测试夹具）：
-// 5h 25% / weekly 30% / monthly 42.525%，AFPDaily 控制台隐藏应跳过。
+// GetAFPUsage 夹具：5h 25% / weekly 30% / monthly 42.525%；AFPDaily 应跳过。
 const char* kAfpOfficialBody = R"({
   "ResponseMetadata": { "RequestId": "req-afp" },
   "Result": {
@@ -118,8 +106,8 @@ const char* kAfpOfficialBody = R"({
   }
 })";
 
-// 真实 GetCodingPlanUsage 响应（coding_plan.rs:2068-2076，用户 2026-06-21 实测）：
-// 字段名是 `Level`，只有百分比，秒级 ResetTimestamp；session 无活跃窗口回 -1。
+// GetCodingPlanUsage 夹具：Level 是周期字段，只有百分比，ResetTimestamp 为秒级；
+// session 无活跃窗口回 -1。
 const char* kCodingPlanRealBody = R"({
   "ResponseMetadata": { "RequestId": "req-coding" },
   "Result": {
@@ -135,8 +123,6 @@ const char* kCodingPlanRealBody = R"({
 
 }  // namespace
 
-// ==================== id / displayName / fields / 注册表 ====================
-
 REGISTER_TEST(claude_quota_volcano_identity_and_fields,
               "claude_quota: 火山 id/displayName 与 fields() 两项 AK/SK（secret 标记正确）", {
     const QuotaProvider* p = module::claude::quota::volcanoProvider();
@@ -144,14 +130,13 @@ REGISTER_TEST(claude_quota_volcano_identity_and_fields,
     DOCTEST_CHECK_EQ(p->id(), std::string("volcano"));
     DOCTEST_CHECK_EQ(p->displayName(), std::string("火山方舟"));
 
-    // G6 按这两项动态渲染弹窗：accessKeyId 明文、secretAccessKey 密文。
+    // secret 标记决定 UI 是否密文渲染
     const std::vector<ProviderField> f = p->fields();
     DOCTEST_CHECK_EQ(f.size(), static_cast<std::size_t>(2));
     DOCTEST_CHECK_EQ(f[0].key, std::string("accessKeyId"));
     DOCTEST_CHECK_FALSE(f[0].secret);
     DOCTEST_CHECK_EQ(f[1].key, std::string("secretAccessKey"));
     DOCTEST_CHECK_TRUE(f[1].secret);
-    // 标签非空（UI 直接显示，空标签等于用户看不懂填什么）
     DOCTEST_CHECK(!f[0].label.empty());
     DOCTEST_CHECK(!f[1].label.empty());
     return true;
@@ -162,10 +147,9 @@ REGISTER_TEST(claude_quota_volcano_registry_row_and_singleton,
     const QuotaProvider* byId = module::claude::quota::findProvider("volcano");
     DOCTEST_CHECK(byId != nullptr);
     DOCTEST_CHECK_EQ(byId->id(), std::string("volcano"));
-    // 进程内单例：重复查找拿回同一对象（create 每次 new 就是稳定泄漏）
+    // findProvider 返回进程内单例，重复查找必须是同一对象
     DOCTEST_CHECK(byId == module::claude::quota::findProvider("volcano"));
 
-    // base_url 自动选中：Agent Plan 与 Coding Plan 两档入口都命中本 provider
     const QuotaProvider* detected = module::claude::quota::detectByBaseUrl(
         "https://ark.cn-beijing.volces.com/api/coding");
     DOCTEST_CHECK(detected != nullptr);
@@ -173,8 +157,7 @@ REGISTER_TEST(claude_quota_volcano_registry_row_and_singleton,
     return true;
 })
 
-// ==================== matchesBaseUrl（host + 路径段，非裸子串）====================
-
+// matchesBaseUrl 按 host + 路径段判定，不是裸子串
 REGISTER_TEST(claude_quota_volcano_matches_base_url,
               "claude_quota: 火山 matchesBaseUrl 两档命中、/api/v3 与伪造域不命中", {
     const QuotaProvider* p = module::claude::quota::volcanoProvider();
@@ -184,33 +167,28 @@ REGISTER_TEST(claude_quota_volcano_matches_base_url,
     DOCTEST_CHECK(p->matchesBaseUrl("https://ark.cn-beijing.volces.com/api/plan/v3"));
     DOCTEST_CHECK(p->matchesBaseUrl("https://ark.cn-beijing.volces.com/api/coding"));
     DOCTEST_CHECK(p->matchesBaseUrl("https://ark.cn-beijing.volces.com/api/coding/v3"));
-    // host 大小写不敏感
     DOCTEST_CHECK(p->matchesBaseUrl("https://ARK.CN-BEIJING.VOLCES.COM/api/coding"));
 
-    // 不命中：DouBaoSeed 按量付费走 /api/v3 与 /api/compatible，没有套餐额度
+    // 不命中：按量付费入口 /api/v3 与 /api/compatible 没有套餐额度
     DOCTEST_CHECK_FALSE(p->matchesBaseUrl("https://ark.cn-beijing.volces.com/api/v3"));
     DOCTEST_CHECK_FALSE(p->matchesBaseUrl("https://ark.cn-beijing.volces.com/api/compatible"));
-    // 不命中：host 标签边界伪造（裸子串匹配会误命中，等于把别人的额度查到本 profile）
+    // 不命中：host 必须按标签边界匹配，裸子串匹配会把别人的额度查到本 profile
     DOCTEST_CHECK_FALSE(p->matchesBaseUrl("https://volces.com.evil.com/api/plan"));
     DOCTEST_CHECK_FALSE(p->matchesBaseUrl("https://evil.com/volces.com/api/plan"));
     DOCTEST_CHECK_FALSE(p->matchesBaseUrl("https://notvolces.com/api/coding"));
-    // 不命中：空串 + 别的供应商域
     DOCTEST_CHECK_FALSE(p->matchesBaseUrl(""));
     DOCTEST_CHECK_FALSE(p->matchesBaseUrl("https://api.deepseek.com/v1"));
     return true;
 })
 
-// ==================== region 提取 ====================
-
 REGISTER_TEST(claude_quota_volcano_region_extraction,
               "claude_quota: 火山 region 从 host 段提取（两例）与缺省回落", {
     DOCTEST_CHECK_EQ(volc::regionFromBaseUrl("https://ark.cn-beijing.volces.com/api/coding"),
                      std::string("cn-beijing"));
-    // 另一 region 的数据面域名按段提取（含 /v3 后缀）
+    // 段提取对 /v3 后缀同样成立
     DOCTEST_CHECK_EQ(
         volc::regionFromBaseUrl("https://ark.cn-shanghai.volces.com/api/coding/v3"),
         std::string("cn-shanghai"));
-    // ap-* 段同样命中
     DOCTEST_CHECK_EQ(volc::regionFromBaseUrl("https://ark.ap-southeast-1.volces.com/api/plan"),
                      std::string("ap-southeast-1"));
     // 无可识别 region 段 → 回落 cn-beijing（控制面 host 固定，不随 base_url 变）
@@ -222,25 +200,21 @@ REGISTER_TEST(claude_quota_volcano_region_extraction,
 
 REGISTER_TEST(claude_quota_volcano_region_extraction_is_case_insensitive,
               "claude_quota: 火山 region 对 host 大小写不敏感（混合大小写不回落成 cn-beijing）", {
-    // 为什么这条单列：base_url 是用户手填 / 粘贴导入的自由文本。matchesBaseUrl
-    // 走 hostIsVolces + pathSegments，两处都小写化 → 混合大小写**照样命中**本
-    // provider；而 region 提取若不小写化，标签 `CN-Shanghai` 匹配不上小写前缀
-    // `cn-` → 回落 cn-beijing → 签名 credential scope 与账号不符被网关拒签，
-    // 而 authMessage 恰好把排查方向指向「检查你的 AK/SK」，用户会去反复更换
-    // 一把**本来正确**的密钥。
+    // base_url 是用户手填 / 粘贴导入的自由文本，matchesBaseUrl 走的小写化
+    // region 提取必须同样小写化：否则 `CN-Shanghai` 匹配不上小写 `cn-` 前缀 →
+    // 回落 cn-beijing → 签名 credential scope 与账号不符被网关拒签，而报错文案
+    // 恰好把排查方向指向「检查你的 AK/SK」，用户会去反复更换一把本来正确的密钥。
     DOCTEST_CHECK_EQ(volc::regionFromBaseUrl("https://Ark.CN-Shanghai.volces.com/api/coding"),
                      std::string("cn-shanghai"));
     DOCTEST_CHECK_EQ(volc::regionFromBaseUrl("https://ARK.AP-Southeast-1.volces.com/api/plan"),
                      std::string("ap-southeast-1"));
     DOCTEST_CHECK_EQ(volc::regionFromBaseUrl("HTTPS://ark.CN-Beijing.volces.com/api/coding"),
                      std::string("cn-beijing"));
-    // 钉死「大小写混合」与「全小写」给的是同一个 region（不是碰巧都回落成默认值）
+    // 混合大小写与全小写给的是同一个 region（不是碰巧都回落成默认值）
     DOCTEST_CHECK_EQ(volc::regionFromBaseUrl("https://Ark.CN-Shanghai.volces.com/api/coding"),
                      volc::regionFromBaseUrl("https://ark.cn-shanghai.volces.com/api/coding"));
     return true;
 })
-
-// ==================== canonical query / uri encode ====================
 
 REGISTER_TEST(claude_quota_volcano_canonical_query_sorted_and_encoded,
               "claude_quota: 火山 canonical query 按 key 字母序 + RFC3986 编码", {
@@ -259,26 +233,19 @@ REGISTER_TEST(claude_quota_volcano_canonical_query_sorted_and_encoded,
     return true;
 })
 
-// ==================== 签名：逐字节结构契约 ====================
-//
-// ⚠️ 期望值来自**独立实现**（Python hashlib/hmac 按同一算法规格重算），不是本仓库
-// 的 C++ 反算出来的。它锁死 canonical 串拼装 + 密钥派生链，但**不能**证明服务端
-// 会接受——服务端收不收这个问题由 G8 真机出网回答（已过：两次 Action 均 200），
-// 这两条用例仍只负责结构契约。
-
 REGISTER_TEST(claude_quota_volcano_signature_byte_exact_vector_a,
               "claude_quota: 火山签名逐字节（向量 A：GetAFPUsage/cn-beijing/2024-06-21）", {
-    const std::time_t now = 1718928000;  // 2024-06-21T00:00:00Z
+    // 固定时钟：now 钉死，不能换成 time(nullptr)，签名向量依赖它
+    const std::time_t now = 1718928000;
     const std::string query = volc::canonicalQuery("GetAFPUsage", "cn-beijing");
     const volc::SignedHeaders h =
         volc::signRequest("AKLTtest", "secretkey", "cn-beijing", query, "", now);
 
     DOCTEST_CHECK_EQ(h.xDate, std::string("20240621T000000Z"));
-    // 空 body 的 SHA-256（固定值，证明签的是空 body 而不是某个默认 JSON）
+    // 空 body 的 SHA-256 固定值：证明签的是空 body，而不是某个默认 JSON
     DOCTEST_CHECK_EQ(h.xContentSha256,
                      std::string("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495"
                                  "991b7852b855"));
-    // 逐字节金标准（独立实现算出）：
     DOCTEST_CHECK_EQ(
         h.authorization,
         std::string("HMAC-SHA256 Credential=AKLTtest/20240621/cn-beijing/ark/request, "
@@ -289,14 +256,13 @@ REGISTER_TEST(claude_quota_volcano_signature_byte_exact_vector_a,
 
 REGISTER_TEST(claude_quota_volcano_signature_byte_exact_vector_b,
               "claude_quota: 火山签名逐字节（向量 B：GetCodingPlanUsage/cn-shanghai/2026-10-02）", {
-    const std::time_t now = 1790944496;  // 2026-10-02T12:34:56Z
+    const std::time_t now = 1790944496;
     const std::string query = volc::canonicalQuery("GetCodingPlanUsage", "cn-shanghai");
     const volc::SignedHeaders h =
         volc::signRequest("AKLTtest", "secretkey", "cn-shanghai", query, "", now);
 
     DOCTEST_CHECK_EQ(h.xDate, std::string("20261002T123456Z"));
-    // 换 region / 换 action / 换日期 → 签名必须整串不同（证明这些量真进了签名，
-    // 而不是被常量吞掉——单向量测不出这一类错误）
+    // region / action / 日期都必须真进签名（单个向量测不出被常量吞掉的错误）
     DOCTEST_CHECK_EQ(
         h.authorization,
         std::string("HMAC-SHA256 Credential=AKLTtest/20261002/cn-shanghai/ark/request, "
@@ -312,20 +278,19 @@ REGISTER_TEST(claude_quota_volcano_signature_three_volcengine_traits,
         "AKLTtest", "secretkey", "cn-beijing",
         volc::canonicalQuery("GetAFPUsage", "cn-beijing"), "", now);
 
-    // ① canonical headers 与 SignedHeaders 用**固定顺序**
-    //    `host;x-date;x-content-sha256;content-type`（不按字母序）
+    // ① SignedHeaders 固定序：AWS SigV4 的标准实现按字母序排，按那个排网关不认
     DOCTEST_CHECK_EQ(std::string(volc::kSignedHeaders),
                      std::string("host;x-date;x-content-sha256;content-type"));
     DOCTEST_CHECK_NE(std::string(volc::kSignedHeaders),
-                     std::string("content-type;host;x-content-sha256;x-date"));  // 字母序 ≠ 火山序
+                     std::string("content-type;host;x-content-sha256;x-date"));
     DOCTEST_CHECK(contains(h.authorization,
                            "SignedHeaders=host;x-date;x-content-sha256;content-type,"));
 
-    // ② algorithm 串 `HMAC-SHA256`（**无** AWS4 前缀）
+    // ② algorithm 串为 `HMAC-SHA256`，无 AWS4 前缀
     DOCTEST_CHECK(h.authorization.rfind("HMAC-SHA256 Credential=", 0) == 0);
     DOCTEST_CHECK_FALSE(contains(h.authorization, "AWS4"));
 
-    // ③ credential scope 结尾 `request`（非 aws4_request）
+    // ③ credential scope 结尾 `request`，非 aws4_request
     DOCTEST_CHECK(contains(h.authorization, "/cn-beijing/ark/request,"));
     DOCTEST_CHECK_FALSE(contains(h.authorization, "aws4_request"));
 
@@ -337,7 +302,7 @@ REGISTER_TEST(claude_quota_volcano_signature_three_volcengine_traits,
     for (char c : sig) {
         DOCTEST_CHECK((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'));
     }
-    // 确定性：同输入同输出（无隐藏时钟 / 随机源）
+    // 确定性：同输入同输出，不得藏时钟 / 随机源
     const volc::SignedHeaders again = volc::signRequest(
         "AKLTtest", "secretkey", "cn-beijing",
         volc::canonicalQuery("GetAFPUsage", "cn-beijing"), "", now);
@@ -350,8 +315,6 @@ REGISTER_TEST(claude_quota_volcano_signature_three_volcengine_traits,
     return true;
 })
 
-// ==================== 请求形态（控制面网关）====================
-
 REGISTER_TEST(claude_quota_volcano_request_shape,
               "claude_quota: 火山请求形态（控制面网关 URL / 四个签名头 / POST 空 body）", {
     ScriptedHttp http;
@@ -363,12 +326,12 @@ REGISTER_TEST(claude_quota_volcano_request_shape,
     DOCTEST_CHECK_EQ(http.requests.size(), static_cast<std::size_t>(1));
     const platform::http::Request& req = http.requests[0];
     DOCTEST_CHECK_EQ(req.method, std::string("POST"));
-    // 控制面统一网关（**不是**数据面 `ark.cn-beijing.volces.com`）
+    // base_url 填的是数据面 host，发出去的 URL 必须是控制面网关 open.volcengineapi.com
     DOCTEST_CHECK_EQ(req.url,
                      std::string("https://open.volcengineapi.com/"
                                  "?Action=GetAFPUsage&Region=cn-beijing&Version=2024-01-01"));
     DOCTEST_CHECK_EQ(req.body, std::string(""));
-    // 四个头都要在（少一个网关就拒签）
+    // 四个签名头都要在（少一个网关就拒签）
     DOCTEST_CHECK_EQ(req.headers.count("X-Date"), static_cast<std::size_t>(1));
     DOCTEST_CHECK_EQ(req.headers.at("Content-Type"), std::string(volc::kContentType));
     DOCTEST_CHECK_EQ(req.headers.at("X-Content-Sha256"),
@@ -378,12 +341,10 @@ REGISTER_TEST(claude_quota_volcano_request_shape,
                                                                 : std::string();
     DOCTEST_CHECK(auth.rfind("HMAC-SHA256 Credential=AKLTtest/", 0) == 0);
     DOCTEST_CHECK(contains(auth, "SignedHeaders=host;x-date;x-content-sha256;content-type,"));
-    // X-Date 形如 20261002T123456Z（长度固定 16）
+    // X-Date 为 ISO8601 basic 紧凑格式，长度固定 16
     DOCTEST_CHECK_EQ(req.headers.at("X-Date").size(), static_cast<std::size_t>(16));
     return true;
 })
-
-// ==================== AFP 路径 ====================
 
 REGISTER_TEST(claude_quota_volcano_afp_three_windows_and_daily_skipped,
               "claude_quota: 火山 AFP 三窗口（daily 跳过、Used/Quota 不截断、套餐名）", {
@@ -394,19 +355,18 @@ REGISTER_TEST(claude_quota_volcano_afp_three_windows_and_daily_skipped,
 
     DOCTEST_CHECK(r.error == QuotaError::None);
     DOCTEST_CHECK(r.kind == QuotaKind::Tiered);
-    // AFPDaily 被控制台隐藏 → 只剩 5h/周/月，顺序固定
+    // AFPDaily 被控制台隐藏 → 只剩 5h/周/月
     DOCTEST_CHECK_EQ(r.windows.size(), static_cast<std::size_t>(3));
     DOCTEST_CHECK_EQ(r.windows[0].key, std::string("five_hour"));
     DOCTEST_CHECK_EQ(r.windows[1].key, std::string("weekly"));
     DOCTEST_CHECK_EQ(r.windows[2].key, std::string("monthly"));
-    DOCTEST_CHECK(within(r.windows[0].usedPercent, 25.0));      // 12.5/50*100
-    DOCTEST_CHECK(within(r.windows[1].usedPercent, 30.0));      // 150/500*100
-    DOCTEST_CHECK(within(r.windows[2].usedPercent, 42.525));    // 850.5/2000*100，double 不截断
+    DOCTEST_CHECK(within(r.windows[0].usedPercent, 25.0));      // 12.5/50
+    DOCTEST_CHECK(within(r.windows[1].usedPercent, 30.0));      // 150/500
+    DOCTEST_CHECK(within(r.windows[2].usedPercent, 42.525));    // 850.5/2000，double 不截断
     // 重置时间：毫秒 epoch → UTC ISO8601（Z 结尾）
     DOCTEST_CHECK_EQ(r.windows[0].resetsAt, std::string("2026-05-15T01:00:00Z"));
     DOCTEST_CHECK_EQ(r.windows[1].resetsAt, std::string("2026-05-18T00:00:00Z"));
     DOCTEST_CHECK_EQ(r.windows[2].resetsAt, std::string("2026-06-04T00:00:00Z"));
-    // 套餐名（Agent Plan + PlanType）
     DOCTEST_CHECK_EQ(r.planName, std::string("Agent Plan Large"));
     // Tiered 型不许夹带余额字段
     DOCTEST_CHECK(within(r.balanceRemaining, 0.0));
@@ -416,7 +376,7 @@ REGISTER_TEST(claude_quota_volcano_afp_three_windows_and_daily_skipped,
 
 REGISTER_TEST(claude_quota_volcano_afp_zero_quota_falls_back_to_coding_plan,
               "claude_quota: 火山 AFP 全部 Quota<=0 视为未订阅 → 回落 Coding Plan", {
-    // 已鉴权但无 Agent Plan：三个窗口 Quota=0 → 三窗口全跳过 → 探测第二个 plan
+    // 已鉴权但无 Agent Plan：三窗口 Quota 全 0 → 全跳过 → 才探测第二个 plan
     ScriptedHttp http;
     http.responses.push_back(httpResp(200, R"({
       "Result": { "PlanType": "",
@@ -430,7 +390,7 @@ REGISTER_TEST(claude_quota_volcano_afp_zero_quota_falls_back_to_coding_plan,
 
     DOCTEST_CHECK(r.error == QuotaError::None);
     DOCTEST_CHECK_EQ(r.planName, std::string("Coding Plan"));
-    // 探测顺序：先 GetAFPUsage，未命中再 GetCodingPlanUsage（URL 逐字核对）
+    // 探测顺序：先 GetAFPUsage，未命中再 GetCodingPlanUsage
     DOCTEST_CHECK_EQ(http.requests.size(), static_cast<std::size_t>(2));
     DOCTEST_CHECK_EQ(http.requests[0].url,
                      std::string("https://open.volcengineapi.com/"
@@ -465,8 +425,6 @@ REGISTER_TEST(claude_quota_volcano_afp_partial_windows_only_subscribed,
     return true;
 })
 
-// ==================== Coding Plan 路径 ====================
-
 REGISTER_TEST(claude_quota_volcano_coding_plan_real_response_levels,
               "claude_quota: 火山 Coding Plan 真实响应（Level 归一 + 秒级重置 + -1 无重置）", {
     ScriptedHttp http;
@@ -496,9 +454,8 @@ REGISTER_TEST(claude_quota_volcano_coding_plan_real_response_levels,
 
 REGISTER_TEST(claude_quota_volcano_coding_plan_maps_by_level_not_reset_order,
               "claude_quota: 火山 Coding Plan 按 Level 映射（重置时间倒序也不串窗口）", {
-    // 陷阱夹具：ResetTimestamp 与 Level 的周期快慢**反着来**（monthly 最早重置）。
-    // 任何"按重置时间排序猜周期"的实现都会把 monthly 认成 five_hour——本用例专门
-    // 钉死"按显式 Level 字段映射"。
+    // 陷阱夹具：ResetTimestamp 与 Level 的周期快慢反着来（monthly 最早重置）。
+    // 周期只能按显式 Level 字段映射；按重置时间排序去猜会把 monthly 认成 five_hour。
     ScriptedHttp http;
     http.responses.push_back(httpResp(200, R"({"Result":{}})"));  // AFP 无额度
     http.responses.push_back(httpResp(200, R"({
@@ -524,14 +481,14 @@ REGISTER_TEST(claude_quota_volcano_coding_plan_maps_by_level_not_reset_order,
     DOCTEST_CHECK_EQ(w5->resetsAt, std::string("2030-03-17T17:46:40Z"));
     DOCTEST_CHECK_EQ(wk->resetsAt, std::string("2017-07-14T02:40:00Z"));
     DOCTEST_CHECK_EQ(mo->resetsAt, std::string("2001-09-09T01:46:40Z"));
-    // 数组序即展示序（移植 cc-switch：不重排上游给的顺序）
+    // 数组序即展示序，不按周期重排（上游给的顺序原样透传）
     DOCTEST_CHECK_EQ(r.windows[0].key, std::string("monthly"));
     return true;
 })
 
 REGISTER_TEST(claude_quota_volcano_coding_plan_fallback_arrays_and_unknown_level,
               "claude_quota: 火山 Coding Plan 兼容 Usages/Details 数组、未知 Level 跳过", {
-    // 未知 Level（daily）跳过，只剩 weekly
+    // 未知 Level（daily）跳过
     ScriptedHttp httpDaily;
     httpDaily.responses.push_back(httpResp(200, R"({"Result":{}})"));
     httpDaily.responses.push_back(httpResp(200, R"({
@@ -573,13 +530,8 @@ REGISTER_TEST(claude_quota_volcano_coding_plan_fallback_arrays_and_unknown_level
 
 REGISTER_TEST(claude_quota_volcano_coding_plan_level_without_percent_is_shape_not_zero,
               "claude_quota: 火山 Coding Plan 有 Level 无 Percent → Shape（绝不画成「已用 0%」）", {
-    // 契约（quota_provider.h 约定 2）的反向：没拿到值时**不得**画成有效值。
-    // 0.0 的语义是「已用 0%」= 还剩 100%，把「字段漂移」伪装成「额度充足」。
-    // 本夹具：Level 可识别（所以窗口周期认得出来），但三个百分比字段一个都没有
-    // ——正是上游给 Coding Plan 改字段名时会落进的形态。
-    //
-    // 其余三家 provider 在同类输入下都报 Shape（opencode_go / minimax_cn /
-    // deepseek），这里原先是**唯一**返回 error==None 成功结果的一条。
+    // quota_provider.h 约定 2 的反向：没拿到值时不得画成有效值。
+    // 0.0 的语义是「已用 0%」= 还剩 100%，会把「字段漂移」伪装成「额度充足」。
     ScriptedHttp http;
     http.responses.push_back(httpResp(200, R"({"Result":{}})"));  // AFP 无额度
     http.responses.push_back(httpResp(200, R"({
@@ -591,9 +543,9 @@ REGISTER_TEST(claude_quota_volcano_coding_plan_level_without_percent_is_shape_no
     const QuotaResult r = module::claude::quota::volcanoProvider()->fetch(
         volcanoConfig(), http.fn());
 
-    // 必须是「形态不认识」的失败，不是一条成功的空卡
+    // 必须是「形态不认识」的失败，不能是一条成功的空卡
     DOCTEST_CHECK(r.error == QuotaError::Shape);
-    // 失败结果里绝不许夹带半截成功值（画出来就是三条满格 = 还剩 100% 的假象）
+    // 失败结果不许夹带半截成功值（画出来就是满格 = 还剩 100% 的假象）
     DOCTEST_CHECK(r.windows.empty());
     DOCTEST_CHECK(r.planName.empty());
     // 报错带截断后的原始响应，便于核对真实字段名
@@ -603,8 +555,8 @@ REGISTER_TEST(claude_quota_volcano_coding_plan_level_without_percent_is_shape_no
 
 REGISTER_TEST(claude_quota_volcano_coding_plan_partial_percent_keeps_parsed_windows,
               "claude_quota: 火山 Coding Plan 部分条目缺 Percent → 只丢那一条，不伪造其余", {
-    // 反向对照：缺百分比的**只有一条**时，其余条目必须照常解析（不是一有缺失就
-    // 整个丢弃，也不是把缺的那条补成 0）。
+    // 反向对照：只有一条缺 Percent 时，其余条目必须照常解析——既不能一有缺失就整个
+    // 丢弃，也不能把缺的那条补成 0
     ScriptedHttp http;
     http.responses.push_back(httpResp(200, R"({"Result":{}})"));
     http.responses.push_back(httpResp(200, R"({
@@ -623,8 +575,7 @@ REGISTER_TEST(claude_quota_volcano_coding_plan_partial_percent_keeps_parsed_wind
 
 REGISTER_TEST(claude_quota_volcano_coding_plan_percent_is_clamped_to_range,
               "claude_quota: 火山 Coding Plan 百分比裁剪到 [0,100]（上游给 150 不外流）", {
-    // 上游给 >100（超额 / 量纲漂移）时不得原样画出去。裁剪由代码保证
-    //（clampUsedPercent），不是「渲染层负责」——渲染层 G7 尚不存在。
+    // 上游给 >100（超额 / 量纲漂移）时不得原样画出去，由 clampUsedPercent 裁剪
     ScriptedHttp http;
     http.responses.push_back(httpResp(200, R"({"Result":{}})"));
     http.responses.push_back(httpResp(200, R"({
@@ -643,8 +594,6 @@ REGISTER_TEST(claude_quota_volcano_coding_plan_percent_is_clamped_to_range,
     DOCTEST_CHECK(within(mo->usedPercent, 0.0));
     return true;
 })
-
-// ==================== 错误分类 ====================
 
 REGISTER_TEST(claude_quota_volcano_auth_http_401_maps_to_auth,
               "claude_quota: 火山 HTTP 401 → Auth，且不发第二次请求（同凭据硬停）", {
@@ -714,7 +663,6 @@ REGISTER_TEST(claude_quota_volcano_error_code_classifier,
 
 REGISTER_TEST(claude_quota_volcano_soft_errors_map_to_transient,
               "claude_quota: 火山非鉴权错误（4xx/5xx/非法 JSON）→ Transient", {
-    // 非鉴权 4xx + 错误信封
     ScriptedHttp http4xx;
     http4xx.responses.push_back(httpResp(400, R"({
       "ResponseMetadata": { "Error": { "Code": "InvalidParameter.Action", "Message": "bad action" } } })"));
@@ -724,10 +672,9 @@ REGISTER_TEST(claude_quota_volcano_soft_errors_map_to_transient,
         volcanoConfig(), http4xx.fn());
     DOCTEST_CHECK(r4xx.error == QuotaError::Transient);
     DOCTEST_CHECK(contains(r4xx.errorMessage, "InvalidParameter.Action"));
-    // 非鉴权软失败会继续试第二个 plan（同 cc-switch）
+    // 非鉴权软失败会继续试第二个 plan
     DOCTEST_CHECK_EQ(http4xx.requests.size(), static_cast<std::size_t>(2));
 
-    // 5xx + 非 JSON 体
     ScriptedHttp http5xx;
     http5xx.responses.push_back(httpResp(500, "<html>gateway error</html>"));
     http5xx.responses.push_back(httpResp(500, "<html>gateway error</html>"));
@@ -778,7 +725,7 @@ REGISTER_TEST(claude_quota_volcano_unknown_shape_maps_to_shape,
     // 错误文案要带诊断信息（区分"真没订阅"与"字段名猜错"）
     DOCTEST_CHECK(contains(r.errorMessage, "GetAFPUsage"));
     DOCTEST_CHECK(contains(r.errorMessage, "GetCodingPlanUsage"));
-    // 结构不认识 ≠ 成功：绝不返回 0 窗口的"成功"（G7 会画成没有额度）
+    // 结构不认识 ≠ 成功：绝不返回 0 窗口的「成功」
     DOCTEST_CHECK(r.windows.empty());
     DOCTEST_CHECK_EQ(http.requests.size(), static_cast<std::size_t>(2));
     return true;
@@ -786,13 +733,12 @@ REGISTER_TEST(claude_quota_volcano_unknown_shape_maps_to_shape,
 
 REGISTER_TEST(claude_quota_volcano_missing_credentials_not_configured,
               "claude_quota: 火山缺 AK/SK → NotConfigured，且一个请求都不发", {
-    // fetch 非 const（G0 契约），故此处取非 const 指针
+    // fetch 非 const，故此处取非 const 指针
     QuotaProvider* p = module::claude::quota::volcanoProvider();
 
     ScriptedHttp http;
     http.responses.push_back(httpResp(200, kAfpOfficialBody));
 
-    // 两项都缺
     ProviderConfig none;
     none.providerId = "volcano";
     none.baseUrl = "https://ark.cn-beijing.volces.com/api/coding";
@@ -806,7 +752,6 @@ REGISTER_TEST(claude_quota_volcano_missing_credentials_not_configured,
     const QuotaResult rNoSk = p->fetch(noSk, http.fn());
     DOCTEST_CHECK(rNoSk.error == QuotaError::NotConfigured);
 
-    // 只缺 AK
     ProviderConfig noAk = volcanoConfig();
     noAk.fields["accessKeyId"] = "";
     const QuotaResult rNoAk = p->fetch(noAk, http.fn());
@@ -826,8 +771,6 @@ REGISTER_TEST(claude_quota_volcano_empty_http_seam_returns_transient,
     DOCTEST_CHECK(r.windows.empty());
     return true;
 })
-
-// ==================== 重置时间形态 ====================
 
 REGISTER_TEST(claude_quota_volcano_reset_time_forms,
               "claude_quota: 火山重置时间（毫秒/秒/字符串/0 与负 → 空）", {
@@ -857,7 +800,7 @@ REGISTER_TEST(claude_quota_volcano_reset_time_forms,
                      std::string("2026-05-15T01:00:00Z"));
     DOCTEST_CHECK_EQ(volc::iso8601FromEpochSeconds(1782057600),
                      std::string("2026-06-21T16:00:00Z"));
-    // 2024-02-29（闰日）+ 跨年边界
+    // 闰日 + 跨年边界
     DOCTEST_CHECK_EQ(volc::iso8601FromEpochSeconds(1709164800),
                      std::string("2024-02-29T00:00:00Z"));
     DOCTEST_CHECK_EQ(volc::iso8601FromEpochSeconds(1735689599),
