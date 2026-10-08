@@ -290,9 +290,9 @@ public:
 // src/core/paths.h
 namespace core::paths {
 
-// 应用数据目录
-//   macOS:   ~/Library/Application Support/DevDesk/
-//   Windows: %APPDATA%\DevDesk\
+// 应用数据目录（2026-09-28 起挂在用户主目录下：数据根要默认可见、笔记目录要做 git 仓库）
+//   macOS:   ~/DevDesk/
+//   Windows: %USERPROFILE%\DevDesk\
 std::filesystem::path appDataDir();
 
 // 配置文件（JSON）
@@ -318,7 +318,8 @@ void ensureDirectoriesExist();
 
 **实现细节**：
 - macOS 通过 `NSHomeDirectory()` 或 `std::getenv("HOME")` + 拼接
-- Windows 通过 `SHGetKnownFolderPath(FOLDERID_RoamingAppData)` 或 `std::getenv("APPDATA")`
+- Windows 通过 `SHGetKnownFolderPath(FOLDERID_Profile)` 或 `std::getenv("USERPROFILE")`（2026-09-28 起；此前是 RoamingAppData/APPDATA）
+- 本条实证修正（2026-09-28）：实现落在 `paths_macos.cpp` / `paths_win.cpp` / `paths_posix.cpp`，Windows 侧取 `USERPROFILE`、macOS/POSIX 侧取 `HOME`（与同文件 `claudeSettingsFile` 同源），无 Win32 API 依赖
 
 ### 6.3 `sqlite_db.h` - SQLite 封装
 
@@ -1077,7 +1078,7 @@ CREATE VIRTUAL TABLE markdown_fts USING fts5(
 
 #### 文件存储
 
-- 默认根目录：`~/Library/Application Support/DevDesk/notes/` (macOS) 或 `%APPDATA%\DevDesk\notes` (Windows)
+- 默认根目录：`~/DevDesk/notes/` (macOS) 或 `%USERPROFILE%\DevDesk\notes` (Windows)（2026-09-28 起）
 - 子目录用文件夹层级表达
 - 文件名用 UTF-8，扩展名 `.md`
 
@@ -1652,7 +1653,7 @@ private:
 
 | 关注点 | macOS | Windows | EUI-NEO 真实能力 |
 |--------|-------|---------|------------------|
-| 应用数据目录 | `~/Library/Application Support/DevDesk/` | `%APPDATA%\DevDesk\` | ✅ |
+| 应用数据目录 | `~/DevDesk/` | `%USERPROFILE%\DevDesk\` | ✅ |
 | 配置目录 | 同上 | 同上 | ✅ |
 | 快捷键修饰键 | `Cmd`（`key.modifiers.shortcut()` 自动识别）| `Ctrl`（同上）| ✅ |
 | 路径分隔符 | `/` | `\`（代码统一用 `std::filesystem::path`）| ✅ |
@@ -1696,7 +1697,7 @@ private:
 main()
   │
   ├─► core::paths::ensureDirectoriesExist()
-  │     ├─ 创建 Application Support/DevDesk/
+  │     ├─ 创建 ~/DevDesk/（用户主目录下，2026-09-28 起）
   │     ├─ 创建 notes/
   │     └─ 创建 logs/
   │

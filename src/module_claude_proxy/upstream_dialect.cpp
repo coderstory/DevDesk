@@ -192,6 +192,14 @@ const char* dialectKindToText(UpstreamDialect::Kind kind) {
     return "anthropic_default";
 }
 
+const char* dialectKindDisplayName(UpstreamDialect::Kind kind) {
+    switch (kind) {
+        case UpstreamDialect::Kind::OpencodeZen: return "opencode zen";
+        case UpstreamDialect::Kind::AnthropicDefault: break;
+    }
+    return "anthropic";
+}
+
 // ==================== 模型名归一 ====================
 
 std::string stripOneMSuffix(const std::string& model) {

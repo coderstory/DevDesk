@@ -1379,7 +1379,7 @@ DirtyCheck:
 **Toast 错误（轻量）**：
 ```
 [✕] 保存失败：权限不足            [×]
-    ~/Library/Application Support/DevDesk/notes/inbox/ideas.md
+    ~/DevDesk/notes/inbox/ideas.md
 ```
 
 **页面级错误（严重）**：

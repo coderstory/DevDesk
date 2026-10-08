@@ -89,6 +89,16 @@ namespace {
 
 namespace fs = std::filesystem;
 
+// ---- 树行几何常量（2026-09-29 真机反馈：item 文本没垂直居中 + 三角箭头太小）----
+// kTreeRowHeight：目录树每行高度（文件行/文件夹行同高，行内元素 frame 也取它，
+//   使 VerticalAlign::Center 的锚点 = 行中心——见下）
+// kTreeArrowFontSize：▸/▾ 展开箭头字号。旧值 = fontSizeSmall(13)，真机反馈太小；
+//   调大一档 = 13 × 1.385 ≈ 18（落在 1.25~1.4 倍区间内），仍 < 行高 32 不溢出。
+//   改这两个值必须同步 tests/test_modules/test_markdown.cpp 的
+//   md_tree_row_geometry 数值断言（改一处不改断言 → 用例红，是刻意的守卫）。
+constexpr float kTreeRowHeight = 32.0f;
+constexpr float kTreeArrowFontSize = 18.0f;
+
 // 单行树条目。整行包一层 stack（W7 已知坑：position() 只在 stack 内生效，
 // 行元素直接做 scrollView column 的流式子元素时其 position 会被静默忽略，
 // 图标/名字会被流式排到下一行）——行是 column 的流式子元素，行内的
@@ -107,10 +117,10 @@ void drawFileTreeItem(eui::Ui& ui,
                       std::function<void(const eui::PointerEvent&, const eui::Rect&)>
                           onContextMenu = {}) {
     ui.stack(id)
-        .size(width, 32.0f)
+        .size(width, kTreeRowHeight)
         .content([&] {
             ui.rect(id + ".row")
-                .size(width, 32.0f)
+                .size(width, kTreeRowHeight)
                 .radius(t.sizes.radiusSmall)
                 // 行底 = 所在结构性面板底（background），非卡片白——hover/
                 // active 才显色（主题层级：页面结构 vs 浮动卡片）
@@ -121,20 +131,25 @@ void drawFileTreeItem(eui::Ui& ui,
                 .build();
             ui.text(id + ".icon")
                 .position(12.0f + indent, 0.0f)
-                .size(20.0f, 32.0f)
+                .size(20.0f, kTreeRowHeight)
                 .icon(icon)
                 .fontSize(t.sizes.fontSizeSmall)
-                .lineHeight(32.0f)
+                .lineHeight(kTreeRowHeight)
+                .verticalAlign(eui::VerticalAlign::Center)
                 .color(t.colors.textSecondary)
                 .build();
             ui.text(id + ".name")
-                // 32px 行高内垂直居中：y = (行高 - 字号) / 2（fontSizeSmall≈13 → ≈9.5），
-                // 不依赖 verticalAlign API
-                .position(36.0f + indent, (32.0f - t.sizes.fontSizeSmall) / 2.0f)
-                .size(std::max(0.0f, width - 48.0f - indent), 32.0f)
+                // 行内垂直居中：frame 恒等于整行（y=0、高=行高），由渲染层的
+                // VerticalAlign::Center 把墨迹中心对齐到 frame 中心
+                //（runtime_render.h:1069 用 frame 中线作渲染锚点）。旧写法
+                // y=(行高-字号)/2 ≈ 9.5 既不满足「frame 中心 == 行中心」，
+                // 又是个 .5 的半像素偏移（真机反馈「文本没垂直居中」的根因）
+                .position(36.0f + indent, 0.0f)
+                .size(std::max(0.0f, width - 48.0f - indent), kTreeRowHeight)
                 .text(name)
                 .fontSize(t.sizes.fontSizeSmall)
-                .lineHeight(32.0f)
+                .lineHeight(kTreeRowHeight)
+                .verticalAlign(eui::VerticalAlign::Center)
                 .color(active ? t.colors.primaryText : t.colors.textPrimary)
                 .fontWeight(active ? 700 : 400)
                 .build();
@@ -186,8 +201,17 @@ ViewMode nextMode(ViewMode m) {
 // core::theme::editorFontSize() 全局通道读（SettingsConfig 在 module_settings，
 // 模块隔离不经本模块 include；通道写入方 = settings onStart/切档，默认与本
 // 常量一致 15 = fontSizeBody token 基准）。行高 = 字号 × 1.2 运行时算
-constexpr float kDefaultEditorFontSize = 15.0f;
-constexpr float kEditTextColumnWidth = 720.0f;  // 仅编辑/实时态的居中文本列宽（Typora 写作宽度）
+// 常量保留为「文档基准」（上面注释按它描述默认值），加 [[maybe_unused]] 而非删除：
+// 运行时已改走全局通道，本 TU 内无引用 → clang -Wunused-const-variable 报错
+//（GCC -Wall 对 C++ 不报此告警，故 Windows 侧从不复现）。
+[[maybe_unused]] constexpr float kDefaultEditorFontSize = 15.0f;
+// 正文列左右留白（⑤ 2026-09-29）：编辑 / 实时 / 双栏三态统一 8px。
+// 取 8 的理由：① 用户要求「编辑器的区域应该越大越好」，8 是本文件里能被称作
+// 「不贴边框」的最小留白（与左栏树行 8px 内缩同一口径）；② 小于 8 时正文首字
+// 会贴上输入框描边，光标/选区在描边内侧视觉上被切；③ 再大就是白给。
+// 旧值 16px，且编辑/实时态还会把整列 clamp 到 720 居中（每侧白 272px，见
+// drawTextColumnChrome 注释）——这才是用户报「留白太多」的主因。
+constexpr float kTextColumnInsetX = 8.0f;
 constexpr float kPreviewColumnWidth = 760.0f;   // 仅预览态的居中阅读列宽
 
 // ---- Phase 3 M2：实时态单输入（活动块）----
@@ -723,7 +747,11 @@ private:
                     newFolderOpen_ = true;
                     newFolderName_.clear();
                     newFolderError_.clear();
-                    newFolderParentIdx_ = 0;      // W10：父目录默认根目录
+                    // 上级目录默认 = **当前选中目录**（旧实现硬编码根目录，
+                    // 于是「在树上选了目录再建文件夹」永远落顶层 = 用户现象 C）。
+                    // 只在选中目录已被外部删除时才回落到根目录（newItemParentDir
+                    // 的兜底分支，会落 WARN）
+                    newFolderParentDir_ = newItemParentDir();
                     newFolderParentOpen_ = false;
                 })
                 .build();
@@ -802,20 +830,39 @@ private:
                     const MdTreeRow& r = rows[i];
                     const std::string id = "md.tree.node." + std::to_string(i);
                     if (r.isFolder) {
-                        // 文件夹行：▸/▾ 展开指示 + fa-folder，点击收起/展开
-                        // （同样包 stack，position 只在 stack 内生效；📁 emoji 已换 FA）
-                        // W10：缩进按 depth（顶层夹 0 / 子夹 1），每级 16px
+                        // 目录行：▸/▾ 展开指示 + fa-folder。
+                        // **点击分工（2026-09-29 修复）**：行体点击 = 选中该目录
+                        // （此前只切换收起，没有任何选中反馈，新建笔记因此无处
+                        // 可落）；左侧 ▸/▾ 命中区（id + ".toggle"）点击 = 收起/
+                        // 展开。拆成两个命中区是为了让「点目录名选中」不会顺手
+                        // 把子树收起来（真机上一个点击干两件事必然被当成 bug）。
+                        // 同样包 stack，position 只在 stack 内生效；📁 emoji 已换 FA
+                        // 缩进按 depth（根组行 0 / 顶层夹 1（= 根组的**子**行，
+                        // 2026-09-30 起，旧口径顶层夹 0 与根组行同级已废）/
+                        // 每深一级 +1），每级 16px
                         const float indent = static_cast<float>(r.depth) * 16.0f;
                         const bool expanded = collapsedDirs_.count(r.relPath) == 0;
+                        const bool selected = r.relPath == selectedDir_;
                         inner.stack(id)
-                            .size(w, 32.0f)
+                            .size(w, kTreeRowHeight)
                             .content([&] {
                                 inner.rect(id + ".row")
-                                    .size(w, 32.0f)
-                                    // 同文件行：行底 = 面板底（background）
-                                    .color(t.colors.background)
+                                    .size(w, kTreeRowHeight)
+                                    // 行底 = 面板底（background）；选中行用
+                                    // primarySoftBg + primary 文字（与文件行的
+                                    // 「当前打开」同款视觉，可断言）
+                                    .color(selected ? t.colors.primarySoftBg
+                                                    : t.colors.background)
                                     .hoverColor(t.colors.hover)
                                     .radius(t.sizes.radiusSmall)
+                                    .onClick([this, dir = r.relPath] { selectDir(dir); })
+                                    .build();
+                                // 展开/收起命中区：盖住 ▸/▾ 那一小块（在行体之上，
+                                // 命中测试取最后一个匹配的兄弟 → 点箭头走这里）
+                                inner.rect(id + ".toggle")
+                                    .position(indent, 0.0f)
+                                    .size(26.0f, kTreeRowHeight)
+                                    .color(eui::Color{0.0f, 0.0f, 0.0f, 0.0f})
                                     .onClick([this, dir = r.relPath] {
                                         if (collapsedDirs_.count(dir) != 0) {
                                             collapsedDirs_.erase(dir);
@@ -827,35 +874,44 @@ private:
                                     .build();
                                 inner.text(id + ".arrow")
                                     .position(6.0f + indent, 0.0f)
-                                    .size(16.0f, 32.0f)
+                                    .size(16.0f, kTreeRowHeight)
                                     .text(expanded ? "▾" : "▸")
-                                    .fontSize(t.sizes.fontSizeSmall)
-                                    .lineHeight(32.0f)
+                                    // 展开箭头：字号 kTreeArrowFontSize（> 正文
+                                    // fontSizeSmall，真机反馈旧值太小）；
+                                    // 与行内其它文本同一居中口径
+                                    .fontSize(kTreeArrowFontSize)
+                                    .lineHeight(kTreeRowHeight)
+                                    .verticalAlign(eui::VerticalAlign::Center)
                                     .color(t.colors.textTertiary)
                                     .build();
                                 inner.text(id + ".ficon")
                                     .position(26.0f + indent, 0.0f)
-                                    .size(16.0f, 32.0f)
+                                    .size(16.0f, kTreeRowHeight)
                                     .icon(0xF07B)  // fa-folder
                                     .fontSize(t.sizes.fontSizeSmall)
-                                    .lineHeight(32.0f)
-                                    .color(t.colors.textTertiary)
+                                    .lineHeight(kTreeRowHeight)
+                                    .verticalAlign(eui::VerticalAlign::Center)
+                                    .color(selected ? t.colors.primary
+                                                    : t.colors.textTertiary)
                                     .build();
                                 inner.text(id + ".name")
                                     .position(46.0f + indent, 0.0f)
-                                    .size(std::max(0.0f, w - 58.0f - indent), 32.0f)
+                                    .size(std::max(0.0f, w - 58.0f - indent),
+                                          kTreeRowHeight)
                                     .text(r.name)
                                     .fontSize(t.sizes.fontSizeSmall)
-                                    .lineHeight(32.0f)
-                                    .color(t.colors.textPrimary)
+                                    .lineHeight(kTreeRowHeight)
+                                    .verticalAlign(eui::VerticalAlign::Center)
+                                    .color(selected ? t.colors.primaryText
+                                                    : t.colors.textPrimary)
                                     .fontWeight(700)
                                     .build();
                             })
                             .build();
                     } else {
-                        // 文件行：缩进 = 32 + (depth-1)*16（depth 1 = 顶层夹/根目录
-                        // 下的文件，2 = 子夹下的文件；文件名 x = 36+indent，与上一级
-                        // 文件夹名 x 差 22px，层级可辨）
+                        // 文件行：缩进 = 32 + (depth-1)*16（depth 1 = 根组直接
+                        // 文件，2 = 顶层夹下的文件，3 = 子夹下的文件……；文件名
+                        // x = 36+indent，与上一级文件夹名 x 差 22px，层级可辨）
                         const float indent =
                             32.0f + static_cast<float>(std::max(0, r.depth - 1)) * 16.0f;
                         drawFileTreeItem(inner, id, w, t, 0xF15C, r.name,
@@ -999,9 +1055,9 @@ private:
 
     // ---- W2 MD-02：编辑 / 实时两态共用的列壳（单点维护）----
     // 两态的列壳本就逐行相同：面板底 + 空态提示条 + 标签 chip 行 + 文本列几何 +
-    // 底部状态栏。差异只有两处——id 前缀、以及是否把文本列钳到 720px（编辑态
-    // 单栏钳 720 居中 = 无干扰写作宽，双栏态与实时态占满列宽）。抽出前靠注释
-    //「与编辑态同款」口头同步，任一侧调整都要改两遍且易漏。
+    // 底部状态栏。差异只剩 id 前缀（⑤ 之后两态都不再钳列宽——编辑/实时态统一
+    // 占满列宽减 2×kTextColumnInsetX）。抽出前靠注释「与编辑态同款」口头同步，
+    // 任一侧调整都要改两遍且易漏。
     // 几何回传给调用方，正文在 chip 行之下、状态栏之上绘制；元素创建顺序与
     // 抽出前逐字一致（底 → 提示 / 正文 → 状态栏），命中层级不变。
     struct TextColumnGeometry {
@@ -1017,7 +1073,6 @@ private:
                               const std::string& columnId,
                               float bodyH,
                               float midW,
-                              bool clampColumn,
                               const core::theme::Tokens& t,
                               const components::theme::ThemeColorTokens& componentTheme,
                               Body&& body) {
@@ -1040,13 +1095,16 @@ private:
                 return;
             }
 
-            float colX = 16.0f;
-            float colW = midW - 32.0f;
-            if (clampColumn) {
-                // 无干扰写作：文本列 clamp 720px 居中（Typora 写作宽度）
-                colW = std::min(colW, kEditTextColumnWidth);
-                colX = std::max(0.0f, (midW - colW) * 0.5f);
-            }
+            float colX = kTextColumnInsetX;
+            float colW = midW - kTextColumnInsetX * 2.0f;
+            // ⑤（2026-09-29 用户反馈「md 编辑器的左右留白太多了，编辑器的区域应该
+            // 越大越好」）：旧的「编辑/实时态文本列 clamp 720 居中」已删除。
+            // 原因（可复算）：1600 宽窗口下单栏可用宽 = 1520 − 240(树) − 16(gap) =
+            // 1264，钳到 720 后每侧白 (1264−720)/2 = **272px**——用户看到的
+            // 「留白太多」就是它，而不是 16px 的列内边距。现在正文列 = 栏宽 −
+            // 2×kTextColumnInsetX，留白只剩 8px（见该常量注释）。
+            // 预览态（阅读列 760 居中，kPreviewColumnWidth）不变：那是阅读宽度、
+            // 不是编辑器区；分栏比例 / 行号 / 目录树结构均未改动。
             // 标签 chip 行（spec §8.1 标签 UI；与文本列同列对齐）
             drawTagBar(ui, colX, colW, t, componentTheme);
             const float colY = 48.0f;  // 16 顶距 + 24 chip 行 + 8 间距
@@ -1070,7 +1128,7 @@ private:
         // （布局语义与耦合点见 drawTreeColumn 注释，测试统一锁在
         // md_tree_column_layout_semantics）
         drawTextColumnChrome(
-            ui, "md.editor", bodyH, midW, mode_ == ViewMode::Edit, t,
+            ui, "md.editor", bodyH, midW, t,
             componentTheme, [&](const TextColumnGeometry& g) {
                 components::input(ui, kEditorInputId)
                     .position(g.x, g.y)
@@ -1820,10 +1878,12 @@ private:
         // 开头清零 —— 同帧 echo 走 compose 帧末（此刻还没发生），不受影响；
         // 残留标志会让下一次用户滚轮被误判成程序化来源（不关跟随）。
         liveProgrammaticScroll_ = false;
-        // 列壳（面板底 / 标签 chip 行 / 720px 写作列 / 状态栏）与编辑态共用同一
-        // 实现（W2 MD-02）；本态恒钳 720 居中的写作列（spec §3.2）
+        // 列壳（面板底 / 标签 chip 行 / 正文列 / 状态栏）与编辑态共用同一
+        // 实现（W2 MD-02）；⑤ 起两态都不钳列宽：正文列 = 栏宽 − 2×8px 留白
+        // （实时态块宽随列宽变，旧实现的「恒钳 720 写作列」已删，理由见
+        // drawTextColumnChrome 与 kTextColumnInsetX 注释）
         drawTextColumnChrome(
-            ui, "md.live", bodyH, midW, true, t, componentTheme,
+            ui, "md.live", bodyH, midW, t, componentTheme,
             [&](const TextColumnGeometry& g) {
                 const components::MarkdownStyle style(componentTheme);
                 // ---- M3 / M0 C2：输入框状态换代（释放点）----
@@ -1953,7 +2013,9 @@ private:
                                        contentWidth, wrapHeight, style, live);
                     return true;  // 已画：跳过下方渲染通路
                 };
-                hooks.afterHitOverlay = [this, &live](eui::Ui& inner, size_t k,
+                // 捕获表去掉 `this`：clang -Wunused-lambda-capture（GCC 无此告警，
+                // 故 Windows 侧从不报）。本 lambda 体只用 live / 入参，不碰成员。
+                hooks.afterHitOverlay = [&live](eui::Ui& inner, size_t k,
                                                       const std::string& hitId) {
                     if (k != live.activeBlock) return;
                     if (auto* hitEl = inner.find(hitId)) {
@@ -2421,7 +2483,10 @@ private:
         //    可用快照一律消费（返回 true）——交回内置会走 framework 的
         //    per-instance 栈（存的是【块局部文本】，单输入方案下跨块混叠：
         //    换块后恢复会把旧块文本灌进新块），语义不可解释。
-        if (shortcut && !alt && !event.modifiers.super) {
+        //    谓词只认「平台快捷键 + 非 alt」：shortcut() 本身就是平台修饰位
+        //    （macOS super / 其它 control），再叠一个 !super 会让 macOS 恒假、
+        //    整条分支永不进入。
+        if (shortcut && !alt) {
             const bool redoKey = event.key == eui::InputKey::Y ||
                                  (event.key == eui::InputKey::Z &&
                                   event.modifiers.shift);
@@ -2719,8 +2784,18 @@ private:
                 ui_kit::drawDialogTitle(ui, "md.dialog.new.title", w, "新建笔记",
                                         t.sizes.fontSizeLarge, t.colors.textPrimary);
 
+                // 提示行带上**实际落点**（父目录 = 当前选中目录；根目录写「根目录」）：
+                // 提交前就能看到会建到哪儿（旧实现只写死一句示例，落点全靠猜）。
+                // 这里不用 newItemParentDir()——它带兜底 WARN，而本函数每帧都跑，
+                // 选中目录被外部删除会刷屏；等价判据（不在清单即根目录）就地写
+                const std::string newNoteParent =
+                    dirExistsOnDisk(selectedDir_) ? selectedDir_ : std::string();
                 ui_kit::drawDialogText(ui, "md.dialog.new.hint", w,
-                                       "支持子目录，例如 工作/周会.md",
+                                       "保存到：" +
+                                           (newNoteParent.empty()
+                                                ? std::string("根目录")
+                                                : newNoteParent) +
+                                           " · 名字可带子目录，如 工作/周会.md",
                                        t.sizes.fontSizeSmall, t.colors.textTertiary,
                                        {.y = 56.0f, .height = 18.0f, .lineHeight = 18.0f});
 
@@ -2770,13 +2845,15 @@ private:
         const float w = ui_kit::dialogWidthPx(ui_kit::DialogWidth::Standard);
         const float h = 320.0f;
 
-        // 父目录候选：根目录占位 + 顶层夹（两级上限下，父目录只能是根或顶层夹，
-        // 所以二级夹不进候选——选中它建出来的三级夹在树里没有行位可挂）
+        // 父目录候选：根目录 + 磁盘上每一级目录（层级不设上限）。显示名即
+        // 相对路径 → 用户在弹窗里看到的就是它实际会落到的位置。
+        const auto candidates = folderParentCandidates();
         std::vector<std::string> parents;
-        parents.push_back("根目录");
-        for (const auto& d : topLevelFolders()) parents.push_back(d);
-        const int parentCount = static_cast<int>(parents.size());
-        const int parentIdx = std::clamp(newFolderParentIdx_, 0, parentCount - 1);
+        parents.reserve(candidates.size());
+        for (const auto& c : candidates) parents.push_back(c.first);
+        // 选中项 = 存下的**路径**在候选里的下标；路径已不在候选（弹窗开着时被
+        // 外部删除）→ 0 = 根目录，与 commitNewFolder 同一条判据（显示 == 行为）
+        const int parentIdx = folderParentIndexFor(candidates, newFolderParentDir_);
 
         ui_kit::DialogFrame frame;
         frame.id = "md.dialog.newfolder";
@@ -2792,8 +2869,12 @@ private:
                 ui_kit::drawDialogTitle(ui, "md.dialog.newfolder.title", w, "新建文件夹",
                                         t.sizes.fontSizeLarge, t.colors.textPrimary);
 
+                // 提示行带上「实际落点」（= 当前上级目录）：用户看到的就是它
+                // 会创建到哪儿，「显示 A 建到 B」这类错层反馈从此自查得出
                 ui_kit::drawDialogText(ui, "md.dialog.newfolder.hint", w,
-                                       "最多两级（顶层 / 子目录）；空文件夹也会显示在树里",
+                                       "创建在：" +
+                                           parents[static_cast<size_t>(parentIdx)] +
+                                           "/ · 空文件夹也会显示在树里",
                                        t.sizes.fontSizeSmall, t.colors.textTertiary,
                                        {.y = 56.0f, .height = 18.0f, .lineHeight = 18.0f});
 
@@ -2817,7 +2898,16 @@ private:
                             .open(newFolderParentOpen_)
                             .onOpenChange(
                                 [this](bool v) { newFolderParentOpen_ = v; })
-                            .onChange([this](int idx) { newFolderParentIdx_ = idx; })
+                            // 命中即按**当帧候选的路径**落状态（capture by value）：
+                            // 用户点的是哪一行，存下的就是那一行的路径，之后候选
+                            // 列表再怎么变都不会把这次选择换到别的目录
+                            .onChange([this, candidates](int idx) {
+                                if (idx < 0 ||
+                                    static_cast<size_t>(idx) >= candidates.size()) {
+                                    return;
+                                }
+                                newFolderParentDir_ = candidates[static_cast<size_t>(idx)].second;
+                            })
                             .build();
                     })
                     .build();
@@ -3276,6 +3366,11 @@ private:
         }
         syncCurrentMtime();  // W8：外部修改检测的 mtime 基准
         if (mode_ == ViewMode::Preview) syncPreviewOnEnter_ = true;
+        // 选中态跟到这篇笔记所在目录（2026-09-29）：树的目录高亮与「新建落在
+        // 哪儿」始终指向用户正在看的这篇笔记的目录，不再出现「高亮在 A、新建
+        // 落到 B」；与目录行点击共用 selectDir（同一个 saveViewState 落盘点，
+        // 所以这里不再单独 saveViewState）
+        selectDir(parentDirOf(relPath));
         saveViewState();  // 审计 [23]：选中笔记跨会话记忆
         showToast("已打开", relPath, false);
         LOG_INFO("打开笔记: " + relPath);
@@ -3298,6 +3393,10 @@ private:
             if (mode_ == ViewMode::Live) enterLiveState("启动恢复视图");
         }
         collapsedDirs_.insert(st.collapsedDirs.begin(), st.collapsedDirs.end());
+        // 选中目录（2026-09-29）：与 collapsedDirs 同口径直接恢复。目录可能已被
+        // 外部删除 —— 不在这里校验，保留原值，由 newItemParentDir 在使用时兜底
+        // （回根目录 + WARN），树里则表现为没有高亮行
+        selectedDir_ = st.selectedDir;
         if (st.lastPath.empty()) return;
         const bool exists =
             std::any_of(notes_.begin(), notes_.end(),
@@ -3319,6 +3418,7 @@ private:
         st.lastPath = currentPath_;
         st.mode = static_cast<int>(mode_);
         st.collapsedDirs.assign(collapsedDirs_.begin(), collapsedDirs_.end());
+        st.selectedDir = selectedDir_;
         auto r = viewStore_->save(st);
         if (r.isFail()) {
             LOG_WARN("Markdown: 视图状态落盘失败（不影响编辑）: " + r.errorMessage());
@@ -3589,9 +3689,16 @@ private:
         if (defaultedName) name = "无标题笔记";
         if (!service_) return;
 
+        // 父目录 = **当前选中目录**（本次修复：此前这里只拼名字，于是新建笔记
+        // 永远落根目录；选中态失效时 newItemParentDir 回根目录 —— 那是兜底，
+        // 见该函数注释）。用户仍可在名字里写子路径（"工作/周会"），两者叠加。
+        const std::string parent = newItemParentDir();
+
         // W8 路径安全校验（目录树依赖 relativePath 落在 notesDir 内；
-        // MarkdownService::create 有同规则兜底，这里给出更友好的提示）
-        if (!MarkdownService::isSafeNewNotePath(name)) {
+        // MarkdownService::create 有同规则兜底，这里给出更友好的提示）。
+        // 校验**拼好的完整路径**：父目录来自选中态，名字里也可能带 ".."
+        std::string relPath = parent.empty() ? name : parent + "/" + name;
+        if (!MarkdownService::isSafeNewNotePath(relPath)) {
             // 审计 [30]：弹窗内校验错误改内嵌红字（原走 toast 隔到弹窗外）
             newNoteError_ =
                 "笔记名不合法：不支持绝对路径、盘符（如 C:）或 ..，请用相对路径";
@@ -3599,11 +3706,7 @@ private:
         }
 
         // 规范化路径：无扩展名时补 .md（与 MarkdownService::create 一致）
-        std::string relPath = name;
-        if (relPath.size() < 3 ||
-            relPath.compare(relPath.size() - 3, 3, ".md") != 0) {
-            relPath += ".md";
-        }
+        relPath = withMdExtension(relPath);
 
         // 已存在 → 直接打开，不报错（仅显式命名；默认名走「永远新建」编号）
         if (!defaultedName && service_->read(relPath).isOk()) {
@@ -3615,13 +3718,17 @@ private:
             return;
         }
         if (defaultedName) {
-            // 默认名撞名 → 「无标题笔记 N.md」自动编号（fileMtime 失败 = 不存在）
+            // 默认名撞名 → 「无标题笔记 N.md」自动编号（fileMtime 失败 = 不存在）。
+            // 编号段只换文件名、**保留父目录**（旧实现整体重写成根目录下的名字，
+            // 会把「在子目录里连点新建」的第二个文件扔回根目录）
             for (int i = 2; service_->fileMtime(relPath).isOk(); ++i) {
                 if (i > 999) {
                     newNoteError_ = "新建失败：同名无标题笔记过多，请手动命名";
                     return;
                 }
-                relPath = "无标题笔记 " + std::to_string(i) + ".md";
+                const std::string numbered =
+                    "无标题笔记 " + std::to_string(i) + ".md";
+                relPath = parent.empty() ? numbered : parent + "/" + numbered;
             }
         }
 
@@ -3645,21 +3752,78 @@ private:
 
     // ---- W9/W10：新建文件夹（左栏「+ 文件夹」入口）----
 
-    // W10：父目录候选 = 顶层夹（两级上限下，二级夹不能再当父目录）
-    std::vector<std::string> topLevelFolders() const {
-        std::vector<std::string> out;
+    // ==================== 目录选中态 → 新建条目的父目录 ====================
+    //
+    // 单一派生点：新建笔记 / 新建文件夹 / 弹窗里的「上级目录」默认值都从这里取，
+    // 不再各自拼路径（本次修复的核心：选中态此前根本不存在，新建只能落根目录）。
+
+    // 相对路径的父目录（POSIX；无 '/' → ""，即根目录）
+    static std::string parentDirOf(const std::string& relPath) {
+        const size_t slash = relPath.rfind('/');
+        return slash == std::string::npos ? std::string() : relPath.substr(0, slash);
+    }
+
+    // 目录是否存在于当前磁盘清单（"" = 根目录，恒存在）
+    bool dirExistsOnDisk(const std::string& dir) const {
+        return dir.empty() || allFolders_.count(dir) != 0;
+    }
+
+    // 新建条目的父目录 = **当前选中目录**。
+    // 兜底（不是默认）：选中目录已被外部删除（不在 allFolders_ 里）→ 回根目录，
+    // 并落一条 WARN。默认路径是「根目录行被选中」（selectedDir_ 初值 ""，用户
+    // 点出来的合法选择），与兜底共用同一个 "" 返回值但语义不同——前者是用户
+    // 的选择，后者是磁盘状态失效后的退化，唯一区别在日志。
+    std::string newItemParentDir() const {
+        if (selectedDir_.empty()) return std::string();          // 选中根目录
+        if (dirExistsOnDisk(selectedDir_)) return selectedDir_;  // 选中某层目录
+        LOG_WARN("Markdown: 选中目录已不存在（外部删除？），新建回退到根目录: " +
+                 selectedDir_);
+        return std::string();                                     // 兜底
+    }
+
+    // 选中目录变化（目录行点击 / openNote）→ 记住 + 落盘（沿用 [23] 跨会话口径）
+    void selectDir(const std::string& dir) {
+        if (selectedDir_ == dir) return;
+        selectedDir_ = dir;
+        saveViewState();
+    }
+
+    // 笔记文件名规范化：以 .md 结尾（索引 / 树 / 搜索只认 .md ——
+    // MarkdownService::rescan 只索引 extension() == ".md" 的文件，落成别的
+    // 扩展名 = 笔记从树里消失，属回归）。用户输入不含 .md 时**追加**。
+    static std::string withMdExtension(std::string name) {
+        if (name.size() >= 3 && name.compare(name.size() - 3, 3, ".md") == 0) {
+            return name;
+        }
+        return name + ".md";
+    }
+
+    // 新建文件夹弹窗的「上级目录」候选：根目录 + 磁盘上**每一级**目录
+    // （含二级、三级…… 层级不设上限——树现在每级都有目录行，建出来的子夹
+    // 一定看得见；旧的「两级上限」是当时树只渲染两级的配套限制，已随本次
+    // 修复一起放开）。返回 (显示名, 相对路径) 对；显示名 = 相对路径（根目录
+    // 显示为「根目录」），用户看到的就是它实际会落到的路径，不需要在脑子里
+    // 做下标换算。
+    std::vector<std::pair<std::string, std::string>> folderParentCandidates() const {
+        std::vector<std::pair<std::string, std::string>> out;
+        out.emplace_back("根目录", std::string());
         for (const auto& d : allFolders_) {
-            if (d.find('/') == std::string::npos) out.push_back(d);
+            if (d.empty()) continue;
+            out.emplace_back(d, d);
         }
         return out;
     }
 
-    // 父目录下拉下标 → 相对路径（0 = 根目录 → ""；越界/夹已消失兜底为根目录）
-    std::string parentFolderForIndex(int idx) const {
-        if (idx <= 0) return std::string();
-        const std::vector<std::string> tops = topLevelFolders();
-        const size_t i = static_cast<size_t>(idx) - 1;
-        return i < tops.size() ? tops[i] : std::string();
+    // 候选列表里某个目录的下标（找不到 → 0 = 根目录）。
+    // 找不到 = 该目录在弹窗开着的时候被外部删除 → 界面按根目录显示，
+    // 提交时也按根目录执行（显示与行为一致，不出现「显示 A 却建到 B」）。
+    static int folderParentIndexFor(
+        const std::vector<std::pair<std::string, std::string>>& candidates,
+        const std::string& dir) {
+        for (size_t i = 0; i < candidates.size(); ++i) {
+            if (candidates[i].second == dir) return static_cast<int>(i);
+        }
+        return 0;
     }
 
     void commitNewFolder() {
@@ -3679,20 +3843,23 @@ private:
         }
         if (!service_) return;
 
-        // W10：父目录下拉（默认根目录）+ 名字 → 完整相对路径
-        const std::string parent = parentFolderForIndex(newFolderParentIdx_);
+        // 上级目录 = 弹窗里存下的**路径**（不是下标）+ 名字 → 完整相对路径。
+        // 候选列表按当前磁盘清单重算一遍，再用路径找回它——列表中途变化
+        // （外部增删目录 / 5 秒轮询刷新）也不会把「选中的目录」换成别的：
+        // 旧的「下标 → 提交时重新推导路径」正是本次修复的错层根因。
+        // 路径已不在清单里（弹窗开着时被外部删除）→ 落回根目录并出声；此时
+        // 弹窗里显示的也是「根目录」（folderParentIndexFor 找不到即 0），
+        // 显示与行为一致，不会出现「显示 A 却建到 B」。
+        const auto candidates = folderParentCandidates();
+        const std::string parent =
+            candidates[static_cast<size_t>(folderParentIndexFor(candidates,
+                                                               newFolderParentDir_))]
+                .second;
+        if (parent != newFolderParentDir_) {
+            LOG_WARN("Markdown: 上级目录已不存在（外部删除？），改在根目录创建: " +
+                     newFolderParentDir_);
+        }
         const std::string relPath = parent.empty() ? name : parent + "/" + name;
-        // 树只渲染两级（顶层夹 + 一层子夹）：'/' ≥ 2 即三级夹，建出来在树里
-        // 没有文件夹行可挂（用户看不见）→ 就地红字拦下。service 层仍支持更深
-        // （createFolder 走 create_directories），这里只是 UI 侧的层级约束
-        int slashes = 0;
-        for (char c : relPath) {
-            if (c == '/') ++slashes;
-        }
-        if (slashes >= 2) {
-            newFolderError_ = "最多支持两级目录（顶层 / 子目录）";
-            return;
-        }
 
         auto r = service_->createFolder(relPath);
         if (r.isFail()) {
@@ -3704,6 +3871,9 @@ private:
         newFolderOpen_ = false;
         newFolderParentOpen_ = false;
         refreshList();  // listAllFolders 磁盘枚举 → 树里立即出现空文件夹行
+        // 新建的目录 = 新的选中目录（与「打开笔记后选中态跟到该笔记所在目录」
+        // 同一口径）：接着「+ 笔记」就落在这个新夹里，不用再点一次
+        selectDir(relPath);
         showToast("已创建文件夹", relPath, false);
         LOG_INFO("新建文件夹: " + relPath);
     }
@@ -3871,7 +4041,8 @@ private:
                 ui_kit::drawDialogTitle(ui, "md.dialog.rename.title", w, "重命名笔记",
                                         t.sizes.fontSizeLarge, t.colors.textPrimary);
                 ui_kit::drawDialogText(ui, "md.dialog.rename.hint", w,
-                                       "相对笔记目录；填「工作/新名」可同时移动，无 .md 自动补全",
+                                       "相对笔记目录；填「工作/新名」可同时移动。"
+                                       "笔记一律以 .md 结尾：不写会自动补上",
                                        t.sizes.fontSizeSmall, t.colors.textTertiary,
                                        {.y = 56.0f, .height = 18.0f, .lineHeight = 18.0f});
                 components::input(ui, "md.dialog.rename.input")
@@ -3971,6 +4142,16 @@ private:
                 "名称不合法：不支持绝对路径、盘符（如 C:）或 ..，请用相对路径";
             return;  // 弹窗保持打开让用户改
         }
+        // ④ 扩展名语义（用户可见：弹窗预填的就是带 .md 的**完整文件名**，用户
+        // 可能把 .md 改掉）：规范化只在 service 层做一次（MarkdownService::rename
+        // 的「extension() != ".md" 则追加 .md」，与 create 同一条规则）——
+        //   "周报"     → "周报.md"      （删掉扩展名 → 补回）
+        //   "周报.txt" → "周报.txt.md"  （换成别的扩展名 → 同样追加）
+        // 追加而不替换的理由：索引 / 树 / 搜索只认 .md（rescan 只索引
+        // extension() == ".md" 的文件），所以必须以 .md 结尾，否则笔记会从树里
+        // 消失（回归）；而替换会**静默丢掉用户敲进去的字符**。追加的最坏结果是
+        // 名字里多一段 ".txt"，但文件仍以 .md 结尾、仍在树里可见、内容不丢。
+        // 模块层不重复实现（两处判据必然漂移），只在弹窗提示里把规则说清。
         auto r = service_->rename(renameTargetPath_, target);
         if (r.isFail()) {
             LOG_ERROR("重命名笔记失败 " + renameTargetPath_ + " → " + target +
@@ -4046,12 +4227,22 @@ private:
     bool newFolderOpen_ = false;       // W9：新建文件夹弹窗
     std::string newFolderName_;
     std::string newFolderError_;       // 审计 [30]：同款内嵌错误行
-    // W10：父目录下拉（0 = 根目录，1..n = 顶层夹下标；只列顶层夹——
-    // 两级上限下，二级夹不能再当父目录）
-    int newFolderParentIdx_ = 0;
+    // 新建文件夹弹窗的「上级目录」（POSIX 相对路径；"" = 根目录）。
+    // **存路径而不是候选列表下标**：下标是「当帧候选列表」里的位置，而候选列表
+    // 每帧由 allFolders_（5 秒轮询 / 外部增删目录会刷）重建 → 提交时重新推导
+    // 同一个下标会落到**另一个目录**（外部新建一个排序靠前的目录即可复现：
+    // 选「工作」→ 外部出现「aaa」→ 提交时下标 1 = aaa）。路径串不随列表漂移。
+    std::string newFolderParentDir_;
     bool newFolderParentOpen_ = false; // 下拉展开态（组件自带 popup 显隐）
     // W10：磁盘全层目录（POSIX 相对路径，含空目录；树渲染 + 父目录下拉用）
     std::set<std::string> allFolders_;
+    // ---- 目录树选中态（2026-09-29 修复）----
+    // 此前模块只有「当前打开的笔记」currentPath_，目录行点了只收起/展开，
+    // 没有任何选中概念 → 界面无反馈、新建笔记永远落根目录。
+    // 选中目录（POSIX 相对路径；"" = 根目录行 —— 合法值，也是初值）。
+    // 写点：目录行点击 / openNote（取其父目录，让「选中态 = 当前所在目录」自洽）/
+    // 视图状态恢复。新建笔记与新建文件夹的父目录都从它派生（newItemParentDir）。
+    std::string selectedDir_;
 
     // ---- 生命周期（审计 [4][20]）：树行右键菜单 + 删除确认 + 重命名 ----
     bool ctxMenuOpen_ = false;

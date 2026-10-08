@@ -1,0 +1,183 @@
+{
+  "meta": {
+    "subject": "docs/superpowers/specs/2026-09-30-batch-fix-design.md（Wave B：A 缩放派生审查 / B 高级配置 UI / C 复制语义+配置导出）设计审计",
+    "date": "2026-09-30",
+    "auditor": "独立只读审计 agent（非实现者，未参与本方案实施）",
+    "method": "对照源码逐条核实 spec 的事实断言与设计选择；抽查约 30 处 file:line 引用全部逐一打开核对；git worktree/分支状态实查；测试/探针耦合面 grep 全量扫描",
+    "code_base": "DevDesk master 5616186",
+    "note": "行号为审计时点快照；本 spec 状态为『设计（未实施）』，代码侧改动为 0"
+  },
+  "dimensions": {
+    "1_correctness": {
+      "status": "已核",
+      "conclusion": "三项用户诉求映射成立。①『高级配置=env 之外的全部内容可见可改』：Profile 用户可配置面清点完毕（name/baseUrl/key/authField/模型槽位/extraEnv/sharedConfigId/dialectOverride/fallbackProfileId/isActive），除 dialectOverride 与 fallbackProfileId 外均已有 UI，B 项补齐这两个缺口后全覆盖；authField『已有控件不动』的判断正确（claude_ui_form.cpp:431-449 渲染、:307 提交已接线、state.h:139-140 状态）。②『复制能粘贴出配置』：buildProfileExportJson → setClipboardText 结构性满足（BASE_URL/三态凭据键/槽位/extra_env 全进 {"env":{...}}）；明文 key 属政策未决（见 unresolved_policy）。③『130% 重叠根治』：重叠本体的根修确在在飞分支且已成型（fix/detail-env-pane 1ca87b0 提交『行几何随字号缩放派生』），A 项定位为审查+settings 卡片小改，边界声明合理。唯一保留：生效方言的展示名映射缺现成出口（F7）。"
+    },
+    "2_regression": {
+      "status": "已核（发现 2 条）",
+      "conclusion": "核心波及面 spec 大多列全，但 D-B3 的测试同步方法漏了真正的耦合点（F3）。已核无波及的项：formTab_ 尾插——分发 catch-all else 前插 ==3 分支即可，0/1/2 语义不变；form.cpp:978 的 formTab_!=0 错误行自动覆盖新 tab；formTab_ 纯内存态、openCreateForm/openEditForm 均复位为 0（form.cpp:42,68）、无持久化；既有测试全部经 claude.form.tabs.hit.0/1/2 导航（test_claude_ui.cpp:391-893 共 9 处），尾插零影响。详情 tabs 插入对既有 4 tab：detailTab_ 仅 detail.cpp:895,898,931-937,964 + state.h:125 引用、纯内存无持久化、无按 tab 号分桶的滚动状态，锚定链（actYFloor/contentBottom/actYHi 三档，detail.cpp:945-959）对新 pane 按返回底沿契约自动生效——spec 判断『同基础 pane ② 档路径』正确。按钮组 6→7：actW=(w-actGap*5)/6（detail.cpp:693）改 6/7 与该处『n 项 n−1 个 gap』注释口径一致；kActionBlockH=61（detail.cpp:42）确与键数无关、不动正确；dup 保持第 5 键、既有 :152/:159/:249/:2033-2044 用例零破坏。右键菜单 index 重映射：grep tests/ 零命中（菜单当前无任何测试耦合），重映射成本即 spec 已设计的 case 表。基础页重排 66px 位移数学与实测行号吻合（failover 块 380..438=dropdown 398+40；hint 446/错误 470/接管警告 492 均实存；authfield 下拉底 372→新提示 380 间距 8px 成立）。"
+    },
+    "3_platform_symmetry": {
+      "status": "已核（发现 1 条备忘）",
+      "conclusion": "项 A 零默认值改动属实：fontScalePercent 默认 100（settings_config.h:121）、kMaxFontScalePercent=130（:47）、V3 换键重置注释（:117-120）均在，方案未触碰任何默认值/钳制——130% Windows 止血值不受影响。fs() 派生与行盒改造均在 module_settings 单文件、零平台分支。剪贴板 API 跨平台对称：setClipboardText 在 EUI-NEO 两个后端均有实现（window_backend.cpp:554 SDL2 / :928 GLFW），无窗口句柄参数；input_model.h:557 既有消费先例。项 B 详情 pane 走既有 bodyH 相对锚定链，无新增绝对 y；基础页重排是弹窗内固定 h=600 局部坐标，两平台同构。零新增平台宏。备忘：GLFW 后端 setClipboardText 依赖 glfwGetCurrentContext()（window_backend.cpp:928），两平台行为一致但 headless 环境行为特殊，见 F8。"
+    },
+    "4_silent_failure": {
+      "status": "已核（发现 2 条）",
+      "conclusion": "新增路径失败反馈盘点：①复制配置——无选中 → warn『复制配置失败』用户可见（spec §4.2② 已设计）；但剪贴板写本身 API 返回 void 且模块层无窗口句柄无法回读校验，写失败时『已复制配置』toast 照发（F5，低概率已知限制）。②导出序列化——buildDirectEnv 对非法 extraEnvJson 读路径容错整体忽略（provider_config.cpp:414-421），坏 env 的 profile 导出会静默缺键且零提示（F6）。③方言写入归一——下拉闭集只产规范值 + DB 层 normalizeDialectOverride 兜底（profile_repository.cpp:55 定义、:296/:484 写路径双点在），UI 路径上归一失败分支不可达，无静默失败暴露：已核。"
+    },
+    "5_test_effectiveness": {
+      "status": "已核（发现 1 条备忘）",
+      "conclusion": "三组验收断言均可回退变红、非恒真：A 的 size().height==fs(16.0f)（回退即红）+ setFontScale(1.0) 档逐值相等；B 的 submitForm 接线回退 → 用例 1/2 红、尾插改中间 → 用例 4 红；C 的占位改明文 → 用例 1 红、/7 改 /6 → 几何红、index 不改 → 用例 2 红。引用的测试手法全部实存：headless click『claude.act.dup.bg』（test_claude_ui.cpp:2044）、claude_ui_fallback_dropdown_edit_persists（:2480）、settings_effect_dropdown_fits_min_window（test_settings.cpp:1302）、ui.find 文本断言（:152,159,249,2033）。C 项风险 3 不对 headless 剪贴板写假绿断言的决策正确。备忘：headless 点击 copyconfig.bg 会真调 setClipboardText（F8，需实施时实测确认安全 no-op）。"
+    },
+    "6_doc_consistency": {
+      "status": "已核（发现 3 条）",
+      "conclusion": "spec 自我修正的两处均核实为真：failover 下拉确渲染于基础页（drawFormBasicTab 内 claude_ui_form.cpp:451-509，全文件无第二处；预填 :91-92、状态 state.h:164-165 逐行相符）；authField 确已有完整渲染控件（:431-449）。其余抽查断言全部相符：tabs items form :960 / detail :893-894；分发 :969-975 / :931-944；submitForm 硬编码空串 :308、编辑无 p.dialectOverride（:349-357 实核）；重排锚点 :511-538 与文案 :517；actW 公式 :688-693；dup 按钮 :775-792（文案 :778、warn :787）；菜单项 :786 与 case 1 onDup :808；kActionBlockH=61 :42；theme.cpp:113-121 恰乘 6 个字号 token；EUI-NEO 全树零 setFontScale（grep 实证）；fs() :25；cards fs( 文本行号 101,111,149,179,212,220,293,346 与几何字面（16px 标签/18px 描述/24px 标题/40px 下拉）逐一实证；home_module.cpp:87,344；todo 零 fontScale 引用；createProfile 签名（claude_service.h:75-89 含 dialectOverride/fallbackProfileId 默认参）；normalizeDialectOverride :55/:296/:484；dialectKindFromText/ToText upstream_dialect.h:68-76；buildDirectEnv provider_config.h:255 / provider_config.cpp:406（空 key 不写凭据键、另一键 erase——C 项『Keychain 读不到→导出无 token 键』的机制前提成立）；runProfile JSON 形态 claude_service.cpp:488-497；sharedExtraEnvJsonFor 既有只读 getter（profile_repository.h:211）；DetailView compose claude_module.cpp:135。证伪两处：§2.4 在飞分支状态描述（F1）、§3.2③/§3.5『编辑即清覆盖的隐性 bug』（F2）；另 1 处文案小疵（F9）。"
+    }
+  },
+  "findings": [
+    {
+      "file": "docs/superpowers/specs/2026-09-30-batch-fix-design.md",
+      "line": 86,
+      "lens": "文档口径",
+      "severity": "medium",
+      "confidence": "high",
+      "issue": "§2.4 在飞分支状态断言已失实：『fix/detail-env-pane … 当前 tip = master，WIP 未提交』。实测：worktree /Users/coderstory/dev/gui/wt-detail-env-pane 分支 tip = 1ca87b0『fix(claude-ui): 详情页环境变量 pane 滤模型映射键 + 行几何随字号缩放派生』，该提交不是 master(5616186) 的祖先、领先 master 1 个提交，工作树 status --porcelain = 0（干净，无 WIP）。即修复已实现并提交、待合并。",
+      "impact": "①串行施工前提描述失实——项 B 的『排在 env pane 修复合并后 rebase』实际等待的是『合并一个已完成的提交』而非『等在飞分支出活』；②实施者若按 spec 先核分支状态，会得出与文档相反的观察，动摇对 spec 其它断言的信任；③§2.2 env pane 行『归在飞修复』的进度叙事滞后。",
+      "suggestion": "spec 更新为『fix/detail-env-pane 已提交（1ca87b0）待合并、工作树干净』；项 A tech-debt 清单中『env pane』条目与 §2.4 的派生口径引用改为指向该提交的确立形态。"
+    },
+    {
+      "file": "docs/superpowers/specs/2026-09-30-batch-fix-design.md",
+      "line": 143,
+      "lens": "文档口径",
+      "severity": "medium",
+      "confidence": "high",
+      "issue": "§3.2③『缺失即把已有覆盖清空——这是当前编辑路径的隐性 bug』与 §3.5 风险 1『此前编辑即清覆盖、属行为变化』均为假。实核证据链：编辑路径 p 来自 svc->getProfile（claude_ui_form.cpp:343），getProfile 读回 dialect_override 并读侧归一（profile_repository.cpp:171,191-192），updateProfile 直写传入 struct 的该字段（profile_repository.cpp:484，服务层 claude_service.cpp:153-161 纯透传）——现编辑路径天然保留覆盖，不存在清空 bug。",
+      "impact": "风险叙述失实会误导实施与测试设计：『防编辑清空回归』用例的前提（先红后绿的『先红』）不存在，若按『修复类改动』口径做先红后绿验证会落空；也高估了本项的行为变化面（实际对『不动该下拉』场景是行为不变）。",
+      "suggestion": "两处改口径为：编辑路径赋值 + openEditForm 预填后『行为与现状等价（现路径经 getProfile 已隐式保留）』，用例定位从『修复隐性 bug』改为『接线回归钉（钉住保留语义，防未来表单重构丢字段）』。接线本身仍必要且正确（否则新下拉的值写不进编辑路径）。"
+    },
+    {
+      "file": "tests/test_modules/test_claude_ui.cpp",
+      "line": 1009,
+      "lens": "回归面",
+      "severity": "medium",
+      "confidence": "high",
+      "issue": "D-B3 的测试同步方法漏了真正的耦合点。spec 风险 3（:181）只说『grep detailTab_ 全量同步』，但 detailTab_ 在 tests/ 零引用——既有用例与探针全部经 hit id 按索引导航：claude.detail.tabs.hit.3（当前=最近调用）在 test_claude_ui.cpp 有 10 处（:1009,:1162,:1273,:1770,:3646 循环,:3691,:3742,:3818,:3963,:4024），tests/probes/claude_probes.cpp 另有 2 处（:248 循环、:290）。插入『高级配置』后 hit.3 变为新 pane、最近调用变 hit.4，这 ~12 处全部需要 +1 或改导航目标。",
+      "impact": "实施者按 spec 清单 grep detailTab_ 会得到『测试零耦合』的错误结论、漏改 ~12 处 → 定向测试与 probe 大面积红。会暴露（非静默假绿），但改动清单失准导致返工与误判。",
+      "suggestion": "§3.3/§3.5 同步方法改为：grep『detail.tabs.hit』(tests/) + 『detailTab_』(src/) 双口径，并点名三个具体点：①上列 10 处 hit.3 点击 +1；②:3646 与 claude_probes.cpp:248 的 tab 循环上界 3→4；③原 :2480 failover 用例需先 click form.tabs.hit.3（spec §3.4 判据 3 已提迁移、但未列入改动文件清单的同步点）。"
+    },
+    {
+      "file": "src/module_claude_proxy/claude_ui_state.h",
+      "line": 132,
+      "lens": "回归面",
+      "severity": "low",
+      "confidence": "high",
+      "issue": "随 tab 数变化的在码注释未被改动清单覆盖：state.h:132『0 基础 / 1 模型映射 / 2 高级 env』、state.h:123『0 基础 / … / 3 最近调用』、claude_ui_detail.h:2-4 与 :102-104『三 pane/四个 pane/四页』、detail.cpp 分发区注释『四个页签的 actY 必须相等』（:944-958 一带）及 LOG_DEBUG 口径。",
+      "impact": "本仓审计口径屡次抓『文档写了不存在的字段/数量』同类漂移；tab 数 3→4、4→5 后这些注释即刻失实，下一个读者按注释推语义会出错。",
+      "suggestion": "实施时 grep『四个页签|三个 tab|三页|tab 4|3 最近调用』做注释同步，并计入 §3.3 改动文件清单（claude_ui_state.h / claude_ui_detail.h 两行说明补『含注释』）。"
+    },
+    {
+      "file": "EUI-NEO/core/window/window_backend.h",
+      "line": 25,
+      "lens": "静默失败面",
+      "severity": "low",
+      "confidence": "high",
+      "issue": "复制配置的成功 toast 无失败反馈面：setClipboardText 返回 void，模块层拿不到窗口句柄、无法用 clipboardText(Handle) 回读校验；GLFW 后端实现为 glfwSetClipboardString(glfwGetCurrentContext(),…)（window_backend.cpp:928）。剪贴板写失败（剪贴板被占用/沙箱限制等低概率场景）时『已复制配置』照发。",
+      "impact": "低概率但符合『不崩也不报』定义：用户以为已复制，实际剪贴板是旧内容。且本仓对这类静默路径有明确审计红线。",
+      "suggestion": "三选一并写明取舍：①接受为已知限制、登记 docs/KNOWN_LIMITATIONS.md；②按 EUI-NEO 上游政策给上游提 PR 让 setClipboardText 返回 bool（两后端都能取到真值），DevDesk 消费返回值分 toast；③toast 文案不写『已复制』改中性『配置已导出到剪贴板内容（请粘贴确认）』——不推荐③，体验倒退。推荐②，工作量小且全仓受益。"
+    },
+    {
+      "file": "src/module_claude_proxy/provider_config.cpp",
+      "line": 414,
+      "lens": "静默失败面",
+      "severity": "low",
+      "confidence": "high",
+      "issue": "导出对非法 extraEnvJson 静默丢键：buildDirectEnv 读路径容错『非法 JSON 整体忽略』（:414-421，与运行功能同口径）。extra_env 坏 JSON 的 profile（DB 手改/历史数据）导出时该部分键整体缺席，粘贴出去的配置少键且零提示。",
+      "impact": "『把配置发给别人看/存档』的主诉求场景下，缺键配置被当作完整配置传播；运行功能同口径但有落盘文件可查，剪贴板导出无任何可查痕迹。",
+      "suggestion": "低成本补偿：复制配置 toast 带导出计数（『已复制配置（env N 项）』），或 parseExtraEnv 失败时在 toast 追加『N 项 env 无法解析未导出』。实现层面 buildProfileExportJson 需把解析结果/失败数一并返回（改签名为 struct 出参即可，仍纯函数）。"
+    },
+    {
+      "file": "docs/superpowers/specs/2026-09-30-batch-fix-design.md",
+      "line": 150,
+      "lens": "正确性",
+      "severity": "low",
+      "confidence": "medium",
+      "issue": "详情 pane『生效方言显示名』无现成出口：UpstreamDialect::forBaseUrl(baseUrl, dialectOverride)（upstream_dialect.h:44）返回的是行为 struct，无名称字段；dialectKindToText（:76）产出内部值 'anthropic_default'/'opencode_zen'，与 spec 设计的展示串『anthropic』『opencode zen』不一致。",
+      "impact": "实施时需要自行发明 Kind→显示名映射；若图省事直接用 dialectKindToText，详情页会显示内部值，与表单下拉的展示串不一致（同一概念两个名字）。",
+      "suggestion": "在 upstream_dialect（.h/.cpp）加一个 Kind→中文名的纯函数（与 dialectKindToText 并排，单一来源），表单下拉 items 与详情 pane 文案共用；这符合『新增网关只改本文件』的既有文件职责。"
+    },
+    {
+      "file": "docs/superpowers/specs/2026-09-30-batch-fix-design.md",
+      "line": 226,
+      "lens": "测试有效性",
+      "severity": "low",
+      "confidence": "medium",
+      "issue": "§4.4 用例 3『点击 claude.act.copyconfig.bg 触发回调』在 headless 下会真调 setClipboardText：单元测试环境若 GLFW 从未 init，GLFW 分支按 _GLFW_REQUIRE_INIT 语义应早退为安全 no-op（自 GLFW 宏语义推断，未实测）；probe（tests/probes 真窗口后端）下则是真写系统剪贴板——probe 运行会覆盖运行者当前剪贴板内容。",
+      "impact": "前者若推断错误（GLFW 已 init 且 context 为 NULL）可能触发 GLFW error callback 甚至 assert；后者是确定的测试副作用，多人并行跑 probe 时互相覆盖剪贴板。",
+      "suggestion": "实施时第一件事实测 headless 路径（临时断点/日志确认早退）；在 §4.5 风险 3 与 probe 说明里补『copyconfig probe 会写真写系统剪贴板』的副作用标注。spec 不对剪贴板内容写断言的决策维持。"
+    },
+    {
+      "file": "docs/superpowers/specs/2026-09-30-batch-fix-design.md",
+      "line": 133,
+      "lens": "文档口径",
+      "severity": "nano",
+      "confidence": "high",
+      "issue": "方言下拉首项文案『自动（按站点推断)』全角开括号 + 半角闭括号混用；该 items 字符串 spec 明言会被映射表直接消费，copy-paste 进代码即带病上线。",
+      "impact": "纯文案瑕疵，但落在逐字拷贝路径上。",
+      "suggestion": "改为全角闭合『自动（按站点推断）』，与 F7 建议的单一来源显示函数一并落。"
+    }
+  ],
+  "verified_positive": [
+    "failover 在基础页 + authField 已有控件两处自我修正均属实（spec §3.1，claude_ui_form.cpp:451-509 / :431-449 实核）",
+    "基础页重排 66px 位移的行号与间距数学全部吻合（446/470/492→380/404/426；authfield 底 372→380 间距 8px）",
+    "actW 公式 6→7 键与 detail.cpp:688-693 既有『n 项 n−1 gap』注释口径一致；kActionBlockH=61 与键数无关、不动成立",
+    "右键菜单当前零测试耦合（grep tests/ 零命中），index 重映射无既有破坏面",
+    "130% 默认链完整核实：默认 100 / 钳制 130 / V3 换键重置（settings_config.h:47,121,117-120），方案 A 零默认值改动成立",
+    "缩放唯一通道核实：applyFontScale 恰乘 6 个字号 token（theme.cpp:113-121），EUI-NEO 全树零 setFontScale 入口",
+    "剪贴板先例与跨平台实现齐备（window_backend.h:25；SDL :554 / GLFW :928；input_model.h:557 消费先例）",
+    "buildDirectEnv 空 key 不写凭据键 + erase 反向键（provider_config.cpp:448-455）——『Keychain 读不到→导出无 token 键』机制前提成立",
+    "三组验收断言非恒真、变异自检覆盖每个改动项；引用的全部测试手法实存（:2044 / :2480 / test_settings.cpp:1302）"
+  ],
+  "unresolved_policy": [
+    {
+      "id": 1,
+      "spec_ref": "未决问题 1（D-C2）",
+      "question": "『含明文 key』的复制配置要不要做",
+      "recommendation": "不做，维持 D-C2",
+      "rationale": "剪贴板是跨应用共享面，明文 key 一经粘贴（聊天/issue/截图）即离开 Keychain 托管且流向不可审计，与本仓『工艺参数可审计』的核心价值相悖；用户『粘贴出配置』的主诉求由结构+BASE_URL+槽位+extra_env 已满足，token 由使用者自填不损害可用性。与『运行』功能的明文落盘先例有本质区别：那是功能性代价（文件留本机 run-settings/ 且 24h 清扫），这是便利性诉求。若未来确有需求，另立小 spec 定二次确认交互 + 粘贴后自动清剪贴板，不在本批搭便车。"
+    },
+    {
+      "id": 2,
+      "spec_ref": "未决问题 2",
+      "question": "占位值含尾 4 位还是固定 sk-ant-***",
+      "recommendation": "维持含尾 4 位（sk-ant-***1234）",
+      "rationale": "与详情页 apiKeyHint 同一脱敏口径（同一信息已在 UI 常驻展示、截屏与日志同面），导出不会扩大既有泄露面；尾 4 位在多 profile 场景有实值（收方核对这份配置对应哪把 key）。4 字符对高熵 key 的熵损失可忽略。保留 spec 已列的一处常量退路即可。"
+    },
+    {
+      "id": 3,
+      "spec_ref": "未决问题 3",
+      "question": "settings 卡片派生化随本批还是整批 tech-debt",
+      "recommendation": "随本批",
+      "rationale": "单文件数值来源替换（settings_ui_cards.cpp 约 8-10 处）、与 B/C 零文件交叠、变异自检现成（fs(16) 断言回退即红）——是本批唯一无风险增量；若推 tech-debt，项 A 本批代码产出为零，130% 下 settings 卡片贴边实证区继续暴露。回滚也 simplest（单提交 revert）。"
+    },
+    {
+      "id": 4,
+      "spec_ref": "未决问题 5（D-B1/D-B3）",
+      "question": "表单第 4 tab 名称与顺序",
+      "recommendation": "维持尾插 + 与详情 pane 同名『高级配置』",
+      "rationale": "同名=同一内容类目，表单页与详情页心智一致；尾插保住前三页序（§6.1 既有拍板）且既有 9 处 form.tabs.hit.0/1/2 测试导航零破坏——插『高级 env』前会把 hit.2 全量 +1，为纯审美收益付 ~10 处测试返工，不值。"
+    },
+    {
+      "id": 5,
+      "spec_ref": "未决问题 6（D-C3）",
+      "question": "复制配置是否进列表右键菜单",
+      "recommendation": "进",
+      "rationale": "与既有四动作全在菜单的对称性成立；实测菜单当前零测试耦合，重映射成本即 spec 已设计的 case 表，无隐藏代价；且若未决 4 的 7 键 probe 不达标，菜单入口是兜底路径——先布好，两条入口策略解耦。"
+    },
+    {
+      "id": 6,
+      "spec_ref": "未决问题 4（风险 1）",
+      "question": "详情操作组 7 键在最小窗右栏的键宽",
+      "recommendation": "probe 实测裁决；若不达标，推荐备选『两行按钮组』而非『仅入右键菜单』",
+      "rationale": "预判：最小窗右栏下 actW=(w-72)/7 约 70px 量级，四字文案（测试连通/复制配置）13px 字号约需 76px+内边距，大概率不达标。两不达标时的取舍：复制到剪贴板是用户本条诉求的主入口（用户原话预期就是复制到剪贴板），埋进右键菜单等于把主诉求降级为隐藏功能；两行按钮组只动 kActionBlockH 一个常量（61→约 104），锚定链 kActReserve 按它推导自动传播，代价是内容框底上移 ~43px（env pane 少约一行）——波及可控且保持全部动作可见可点。"
+    }
+  ]
+}

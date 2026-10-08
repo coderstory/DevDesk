@@ -11,6 +11,8 @@
 #include <utility>
 #include <vector>
 
+#include "module_pet_bridge.h"  // PetShowOutcome（仍只依赖标准库，本头边界不变）
+
 namespace module::pet {
 
 // ---- 退出二次确认（审计 [25]：全应用删单条任务都要确认，退整个应用却零
@@ -86,6 +88,9 @@ struct PetWindowConfig {
     std::string skinName;   // 空 = kDefaultSkinName
     int x = -1;             // -1 = 未设置（取主显示器工作区右下角）；其他负值是
     int y = -1;             // 左/上副屏的合法坐标（M2 多显示器，钳制按位置选屏后保留）
+    // 显示大小档（kPetScalePresets 之一，默认中档 1.0×）。窗口尺寸 =
+    // scaledFrameSize(帧尺寸, scale)（仍钳 [16,512]）+ 气泡让位条，单位 = 点
+    double scale = 1.0;
     // 内容源②回调（main 注入；applyPetSkin 热换肤重开时从 rt.config 原样
     // 携带不丢桥）。空 = 无数据源，气泡只出静态语料①
     OverdueCountGetter getOverdueCount;
@@ -118,6 +123,8 @@ void petDragEnd(PetDragAnchor& anchor);
 
 // 已知坐标钳制进主显示器工作区（纯函数，单测断言用；设计 §4.6，M1 仅主显
 // 示器）。workW/workH <= 0（工作区查询失败：无头/早于 glfwInit）原样返回。
+// frameW/frameH = 被钳矩形尺寸——生产调用方传**整窗**尺寸（高 =
+// petWindowHeight(帧高)，气泡让位条一并关进工作区，见 pet_bubble.h）。
 // 审计 [12]：落盘路径（savePetPosition/applyPetSkin）与启动路径共用本钳制
 // ——负坐标若直接落盘，会被 pet_config 的 -1「未设置」哨兵吞掉，重启后桌宠
 // 跳回默认位。已知坐标（>=0）才许进本函数，哨兵判断归调用方
@@ -160,17 +167,40 @@ void setPetRenderPaused(bool paused);
 bool isPetRenderPaused();
 
 // 打开桌宠窗口（主循环起来前调用；openWindow 入队、首帧消费）。
-// 皮肤缺失时自动生成内置占位皮肤；位置钳制进主显示器工作区。
-void startPetWindow(const PetWindowConfig& config);
+// 皮肤缺失时先回退默认皮肤、默认皮肤也不可用则**不入队开窗**并返回 false
+//（Bug B 2026-09-30：showPetWindow 据此区分 StartFailed）；其余路径返回
+// true。返回值调用方可忽略（main 装配段等 fire-and-forget 调用不受影响）
+bool startPetWindow(const PetWindowConfig& config);
 
-// 重新显示桌宠窗口（PAB-13，波 1 L7）：设置页「显示桌宠」按钮用（经
-// module_pet_bridge.h 的声明桥，settings 不 include 本头）。门控语义：
+// 重新显示桌宠窗口（PAB-13，波 1 L7 + PET-CLOSE）：设置页「显示桌宠」按钮
+// 与模块开关重新勾选用（经 module_pet_bridge.h 的声明桥，settings 不
+// include 本头）。门控语义（Bug B 2026-09-30 起 bool 收成四态枚举，settings
+// 侧按原因区分可见反馈——原先 false 三义，把「已开着」误报成「未启用」）：
 // ① 本会话 main 从未装配过桌宠（模块开关关 = startPetWindow 从未被调用）
-//    → 返回 false，不凭空开窗（该开关本就「重启生效」）；
-// ② 窗口已开着（handle 非空）→ 返回 false（隐藏走右键「隐藏桌宠」，隐藏后
-//    handle 被 onWindowDestroyed 清空，本函数即可重开）。
-// 返回 true = 已按 rt.config（皮肤/位置/气泡数据源桥原样）重新入队开窗请求
-bool showPetWindow();
+//    → NotAssembled，不凭空开窗（该开关本就「重启生效」）；
+// ② 窗口已开着（handle 非空）→ AlreadyOpen（隐藏走右键「隐藏桌宠」或
+//    closePetWindow，隐藏后 handle 被 onWindowDestroyed 清空，本函数即可重开）；
+// ③ 已装配但重开失败（皮肤不可用，未入队开窗）→ StartFailed；
+// Shown = 已按 rt.config（皮肤/位置/气泡数据源桥原样）重新入队开窗请求
+PetShowOutcome showPetWindow();
+
+// 关闭桌宠窗口（PET-CLOSE，设置页模块开关「桌宠」取消勾选 → 立即隐藏；
+// 经 module_pet_bridge.h 的声明桥调用）。关闭路径与右键「隐藏桌宠」同一条
+//（requestWindowClose → 主循环销毁 → onWindowDestroyed 清句柄）。
+// 返回 true = 曾有窗口/可见意图并已置为关闭；false = 本来就关着（幂等）。
+// 只改「可见意图」，**不动装配标志**——重新勾选后 showPetWindow 仍能原位重开
+bool closePetWindow();
+
+// 桌宠窗口可见意图（PET-CLOSE）：startPetWindow / showPetWindow 置 true，
+// closePetWindow 置 false。无头（handle 恒 nullptr）与窗口已关时本标志是
+// 「桌宠该不该显示」的唯一可读真值——设置页模块开关的即时性断言与单测读它
+bool petWindowRequested();
+
+// 测试缝（仿 app_sidebar resetSidebarGlobals 口径）：进程级桌宠运行时整体
+// 回厂（装配标志/可见意图/句柄/皮肤快照全清）。装配标志只置不清（见
+// pet_window.cpp PetRuntime），单测要表达「本会话未装配」态（Bug B 的
+// NotAssembled 分支断言）只能经这里；生产代码不得调用
+void resetPetRuntimeForTests();
 
 // 换肤（M2）：校验 skinName 是 discoverSkins() 发现到的皮肤后写盘并热切换
 //（关旧窗 → 按新皮肤重开，位置沿用当前窗口）；未知名字拒绝不动。
@@ -187,5 +217,21 @@ void resetPetPosition();
 // 即可调用（不 include 本头、不 link 本模块），避免共享 PetConfig 结构体
 // 布局（跨 TU 重定义是 ODR 风险）。
 std::string currentSkinName();
+
+// ---- 显示大小三档（2026-09-30 用户需求；设置页经 module_pet_bridge.h
+// 消费，声明/签名哨兵同 currentSkinName 先例）----
+
+// 当前显示大小档位下标（0=小 0.75× / 1=中 1.0× / 2=大 1.5×），读
+// pet_config.json（非法值已由 sanitize 收敛默认档）
+int currentPetScaleIndex();
+
+// 三档文案（与档位下标一一对应；单源 = pet_config.h kPetScalePresetLabels，
+// 设置页下拉 items 直接消费，不自带一份防漂移）
+std::vector<std::string> petScalePresetLabels();
+
+// 显示大小切档（设置页回传下标；越界静默拒绝不动）：写盘并热切换——窗口
+// 开着即关旧开新（尺寸 = 帧尺寸 × 档位缩放 + 气泡让位条，位置沿用并重新
+// 钳制），窗口未开时只持久化（下次启动生效）
+void applyPetScaleIndex(int presetIndex);
 
 } // namespace module::pet

@@ -74,7 +74,7 @@ constexpr float kFitH = kInset * 2.0f + static_cast<float>(kLines) * kLineH;  //
 constexpr int kLineBytes = 3;     // 每行 "L00" 三个字节
 constexpr int kLineStride = 4;    // 含行尾 '\n'
 
-bool near(float a, float b, float eps = 0.5f) {
+bool nearEq(float a, float b, float eps = 0.5f) {
     return std::fabs(a - b) <= eps;
 }
 
@@ -189,11 +189,11 @@ REGISTER_TEST(mdspike_v1_relocate_keeps_identity,
         DOCTEST_CHECK_EQ(st.dragAnchor, 7);
         DOCTEST_CHECK_EQ(st.styleRevision, 42ULL);
         DOCTEST_CHECK_EQ(st.textRevision, rev1);        // 未被当"外部改文本"重灌
-        DOCTEST_CHECK(near(st.lastBounds.y, 2.0f));     // 瞬态字段也活着
+        DOCTEST_CHECK(nearEq(st.lastBounds.y, 2.0f));     // 瞬态字段也活着
     }
     // ④ 几何按新位置重算（不是残留旧坐标）：流式排在前一个兄弟之下
-    DOCTEST_CHECK(near(y2, nx->frame.y + nx->frame.height + 4.0f));
-    DOCTEST_CHECK(!near(y2, y1));
+    DOCTEST_CHECK(nearEq(y2, nx->frame.y + nx->frame.height + 4.0f));
+    DOCTEST_CHECK(!nearEq(y2, y1));
     // ⑤ 键派发目标 = 焦点元素（updateKeyInput 同一调用点）：事件仍进该实例
     const Element* hit2 = env.ui->find(kInputHit);
     DOCTEST_REQUIRE(hit2->onKeyEvent != nullptr);
@@ -214,7 +214,7 @@ REGISTER_TEST(mdspike_v1_relocate_keeps_identity,
     DOCTEST_CHECK(env.ui->isFocused(kInputHit));
     DOCTEST_CHECK_EQ(env.ui->state<InputState>(kInput).cursor, 6);
     DOCTEST_CHECK_EQ(env.ui->state<InputState>(kInput).styleRevision, 42ULL);
-    DOCTEST_CHECK(!near(env.ui->find(kInput)->frame.y, y2));
+    DOCTEST_CHECK(!nearEq(env.ui->find(kInput)->frame.y, y2));
     return true;
 })
 
@@ -425,11 +425,11 @@ REGISTER_TEST(mdspike_v3a_input_as_flow_content,
     DOCTEST_REQUIRE(bottom != nullptr);
     DOCTEST_REQUIRE(sv != nullptr);
     // ① 流式定位（非绝对定位）：input 的显式高度把后续兄弟推下去
-    DOCTEST_CHECK(near(in->frame.y, top->frame.y + top->frame.height + 20.0f));
-    DOCTEST_CHECK(near(bottom->frame.y, in->frame.y + kFitH + 20.0f));
+    DOCTEST_CHECK(nearEq(in->frame.y, top->frame.y + top->frame.height + 20.0f));
+    DOCTEST_CHECK(nearEq(bottom->frame.y, in->frame.y + kFitH + 20.0f));
     // ② input 高度进入 scrollView 的内容测量 → 滚动范围 = 内容高 − 视口高
     const float contentH = bottom->frame.y + bottom->frame.height;
-    DOCTEST_CHECK(near(sv->scrollMaxOffset, contentH - 300.0f));
+    DOCTEST_CHECK(nearEq(sv->scrollMaxOffset, contentH - 300.0f));
     DOCTEST_CHECK(sv->scrollMaxOffset > 0.0f);
     DOCTEST_CHECK(page.ui.find("live.scroll.scroll.thumb") != nullptr);   // 可滚 → 有滚动条
     // ③ D2 贴合高度 ⇒ maxVerticalScroll == 0 ⇒ 不注册 onScroll（滚轮穿透外层，spec §2.1）
@@ -437,16 +437,16 @@ REGISTER_TEST(mdspike_v3a_input_as_flow_content,
 
     // ④ 同一布局换矮 input → 内容不再超高：滚动范围归零、滚动条消失（尺寸真的参与了测量）
     page.frame(40.0f, 0.0f, text);
-    DOCTEST_CHECK(near(page.ui.find("live.scroll")->scrollMaxOffset, 0.0f));
+    DOCTEST_CHECK(nearEq(page.ui.find("live.scroll")->scrollMaxOffset, 0.0f));
     DOCTEST_CHECK(page.ui.find("live.scroll.scroll.thumb") == nullptr);
     // 非贴合高度（本例 40 < 内容 720）→ input 自己有内部滚动 → 注册滚轮处理器（吃滚轮）
     DOCTEST_CHECK(page.ui.find(kInputHit)->onScroll != nullptr);
 
     // ⑤ 偏移由框架钳制：正常值原样生效，超界钳到 maxOffset
     page.frame(kFitH, 120.0f, text);
-    DOCTEST_CHECK(near(page.ui.find("live.scroll")->scrollOffset, 120.0f));
+    DOCTEST_CHECK(nearEq(page.ui.find("live.scroll")->scrollOffset, 120.0f));
     page.frame(kFitH, 99999.0f, text);
-    DOCTEST_CHECK(near(page.ui.find("live.scroll")->scrollOffset,
+    DOCTEST_CHECK(nearEq(page.ui.find("live.scroll")->scrollOffset,
                        page.ui.find("live.scroll")->scrollMaxOffset));
 
     // ⑥ 对照：封顶块（R4，高 300 < 内容 720）→ maxVerticalScroll > 0 → 注册滚轮处理器
@@ -470,7 +470,7 @@ REGISTER_TEST(mdspike_v3b_pointer_to_caret_under_scroll,
     DOCTEST_REQUIRE(hit != nullptr);
     DOCTEST_REQUIRE(sv != nullptr);
     const float offset = sv->scrollOffset;
-    DOCTEST_REQUIRE(near(offset, 120.0f));
+    DOCTEST_REQUIRE(nearEq(offset, 120.0f));
 
     // Runtime 侧：内容列 renderTransform.translate.y -= offset，命中测试把父级变换
     // 施加到子元素 → onPress 收到的是"屏幕坐标下"的 bounds（见文件头取证）
@@ -491,7 +491,7 @@ REGISTER_TEST(mdspike_v3b_pointer_to_caret_under_scroll,
         DOCTEST_CHECK(lineOfByte(s2.cursor) == 7);
         DOCTEST_CHECK(s2.cursor >= 7 * kLineStride);
         DOCTEST_CHECK(s2.cursor <= 7 * kLineStride + kLineBytes);
-        DOCTEST_CHECK(near(s2.lastBounds.y, shifted.y));   // lastBounds = 变换后的 bounds
+        DOCTEST_CHECK(nearEq(s2.lastBounds.y, shifted.y));   // lastBounds = 变换后的 bounds
     }
 
     // 反控：若 bounds 未折算滚动位移（=错误接线），落点会少 offset/lineH 行 → 断言不等，
@@ -509,7 +509,7 @@ REGISTER_TEST(mdspike_v3b_pointer_to_caret_under_scroll,
     const Element* hit2 = page.ui.find(kInputHit);
     DOCTEST_REQUIRE(hit2 != nullptr);
     DOCTEST_CHECK(hit2->hasImeRect);
-    DOCTEST_CHECK(near(hit2->imeRect.height, kLineH));
+    DOCTEST_CHECK(nearEq(hit2->imeRect.height, kLineH));
     DOCTEST_CHECK(hit2->imeRect.y > 0.0f);          // 行首上方（元素局部，非屏幕）
     return true;
 })
@@ -554,7 +554,7 @@ REGISTER_TEST(mdspike_v4a_swap_text_scroll_residual_capped_block,
     env.frame([&](Ui& ui) { frameWith(ui, t1); });
     const Element* caret = env.ui->find("live.input.cursor");
     DOCTEST_REQUIRE(caret != nullptr);
-    DOCTEST_CHECK(near(caret->frame.y, lastLineY));                 // 未滚动基准
+    DOCTEST_CHECK(nearEq(caret->frame.y, lastLineY));                 // 未滚动基准
 
     // 用户在封顶块内滚一格（followCaret 置 false，input.h:220-227）
     const Element* hit = env.ui->find(kInputHit);
@@ -567,17 +567,17 @@ REGISTER_TEST(mdspike_v4a_swap_text_scroll_residual_capped_block,
     const float residual = 3.0f * step;
     {
         const InputState& s = env.ui->state<InputState>(kInput);
-        DOCTEST_CHECK(near(s.verticalScroll, residual));
+        DOCTEST_CHECK(nearEq(s.verticalScroll, residual));
         DOCTEST_CHECK_FALSE(s.followCaret);
     }
 
     env.frame([&](Ui& ui) { frameWith(ui, t1); });                  // 同文本：残余生效
-    DOCTEST_CHECK(near(env.ui->find("live.input.cursor")->frame.y, lastLineY - residual));
+    DOCTEST_CHECK(nearEq(env.ui->find("live.input.cursor")->frame.y, lastLineY - residual));
 
     // ① 换文本（t1→t2）且 followCaret 仍 false → 首帧带着残余 → 一帧跳位成立
     env.frame([&](Ui& ui) { frameWith(ui, t2); });
     DOCTEST_CHECK_EQ(env.ui->state<InputState>(kInput).text, t2);
-    DOCTEST_CHECK(near(env.ui->find("live.input.cursor")->frame.y, lastLineY - residual));
+    DOCTEST_CHECK(nearEq(env.ui->find("live.input.cursor")->frame.y, lastLineY - residual));
 
     // ② R5 缓解：切块帧（t2→t3）compose 前把 verticalScroll 归零（模块在 compose 回调内先
     //    归零再画 input）→ 新块首帧无跳位；与 ① 同为真·换文本帧，唯一差别是这一行归零
@@ -589,8 +589,8 @@ REGISTER_TEST(mdspike_v4a_swap_text_scroll_residual_capped_block,
     }
     env.frame([&](Ui& ui) { frameWith(ui, t3); });
     DOCTEST_CHECK_EQ(env.ui->state<InputState>(kInput).text, t3);
-    DOCTEST_CHECK(near(env.ui->find("live.input.cursor")->frame.y, lastLineY));
-    DOCTEST_CHECK(near(env.ui->state<InputState>(kInput).verticalScroll, 0.0f));
+    DOCTEST_CHECK(nearEq(env.ui->find("live.input.cursor")->frame.y, lastLineY));
+    DOCTEST_CHECK(nearEq(env.ui->state<InputState>(kInput).verticalScroll, 0.0f));
 
     // ③ 打字路径自愈：followCaret=true 时框架同帧按光标重算滚动（input_model.h:158-161）
     {
@@ -600,8 +600,8 @@ REGISTER_TEST(mdspike_v4a_swap_text_scroll_residual_capped_block,
         s.cursor = 0;
     }
     env.frame([&](Ui& ui) { frameWith(ui, t3); });
-    DOCTEST_CHECK(near(env.ui->state<InputState>(kInput).verticalScroll, 0.0f));
-    DOCTEST_CHECK(near(env.ui->find("live.input.cursor")->frame.y, kInset));
+    DOCTEST_CHECK(nearEq(env.ui->state<InputState>(kInput).verticalScroll, 0.0f));
+    DOCTEST_CHECK(nearEq(env.ui->find("live.input.cursor")->frame.y, kInset));
     return true;
 })
 
@@ -631,12 +631,12 @@ REGISTER_TEST(mdspike_v4b_fit_height_has_no_residual,
     }
     env.frame([&](Ui& ui) { frameWith(ui, t1); });
     DOCTEST_REQUIRE(env.ui->find("live.input.cursor") != nullptr);
-    DOCTEST_CHECK(near(env.ui->find("live.input.cursor")->frame.y, lastLineY));
+    DOCTEST_CHECK(nearEq(env.ui->find("live.input.cursor")->frame.y, lastLineY));
 
     // 换文本（无任何缓解）→ 首帧无跳位
     env.frame([&](Ui& ui) { frameWith(ui, t2); });
     DOCTEST_CHECK_EQ(env.ui->state<InputState>(kInput).text, t2);
-    DOCTEST_CHECK(near(env.ui->state<InputState>(kInput).verticalScroll, 0.0f));
-    DOCTEST_CHECK(near(env.ui->find("live.input.cursor")->frame.y, lastLineY));
+    DOCTEST_CHECK(nearEq(env.ui->state<InputState>(kInput).verticalScroll, 0.0f));
+    DOCTEST_CHECK(nearEq(env.ui->find("live.input.cursor")->frame.y, lastLineY));
     return true;
 })

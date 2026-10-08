@@ -1,0 +1,114 @@
+name: CI
+
+# dev 分支每次提交：双平台（macOS + Windows）构建 + 测试
+on:
+  push:
+    branches: [dev]
+  pull_request:
+    branches: [dev, master]
+  workflow_dispatch:
+
+env:
+  # EUI-NEO 用的是修改版 fork（比上游多 90+ 提交）；上游缺 setScrollOffset /
+  # TextRun / chromeless 等 API，直接编译不过
+  EUI_NEO_REPO: https://github.com/coderstory/EUI-NEO.git
+  # ccache 放在工作区下，方便 actions/cache 直接命中；BASEDIR 让不同 worktree
+  # 路径哈希一致 —— 不设 BASEDIR 等于白装缓存
+  CCACHE_DIR: ${{ github.workspace }}/.ccache
+  CCACHE_BASEDIR: ${{ github.workspace }}
+  CCACHE_COMPILERCHECK: content
+  CCACHE_MAXSIZE: 1G
+  # 让构建输出实时刷到 CI 日志（默认被脚本吞掉，看起来像卡死）
+  DEVDESK_BUILD_VERBOSE: "1"
+
+jobs:
+  macos:
+    name: macOS · 构建 + 测试
+    runs-on: xcode-27
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: DevDesk
+
+      - name: 取 EUI-NEO（须与 DevDesk 同级目录）
+        run: git clone --depth 1 "$EUI_NEO_REPO" EUI-NEO
+
+      - name: 切到镜像上最新的 Xcode
+        run: |
+          ls -d /Applications/Xcode*.app 2>/dev/null || true
+          # 过滤掉 beta/RC：官方策略里 beta 只装在最新镜像上且与 GA 并存，
+          # 直接 sort -V 取最大可能选中 beta，导致制品由非 GA 工具链产出
+          latest=$(ls -d /Applications/Xcode*.app 2>/dev/null \
+                   | grep -viE 'beta|release candidate|_rc' | sort -V | tail -1)
+          if [ -n "$latest" ]; then sudo xcode-select -switch "$latest"; fi
+          echo "--- 工具链 ---"
+          xcodebuild -version
+          clang --version | head -1
+          echo "架构: $(uname -m)　系统: $(sw_vers -productVersion)"
+
+      - name: 安装依赖
+        run: brew install ninja ccache openssl@3
+
+      - name: ccache 缓存
+        uses: actions/cache@v6
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-macos-${{ github.sha }}
+          restore-keys: ccache-macos-
+
+      - name: 构建 + 测试
+        working-directory: DevDesk
+        run: |
+          set +e
+          bash scripts/build-test-run.sh --release --no-run 2>&1 | tee /tmp/ci.log
+          rc=${PIPESTATUS[0]}
+          # ccache 命中率（诊断用；0% 说明缓存没接上）
+          ccache -s 2>/dev/null | grep -E "Hits|Misses|hit rate|Cache size" || true
+          exit "${rc}"
+
+      - name: 测试日志（失败时留档，便于定位）
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: macos-test-log
+          path: /tmp/ci.log
+          if-no-files-found: ignore
+
+  windows:
+    name: Windows · 构建 + 测试
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: DevDesk
+
+      - name: 取 EUI-NEO（须与 DevDesk 同级目录）
+        run: git clone --depth 1 "$env:EUI_NEO_REPO" EUI-NEO
+
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: false
+          install: >-
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-ninja
+            mingw-w64-x86_64-ccache
+            mingw-w64-x86_64-sqlite3
+            mingw-w64-x86_64-curl
+            mingw-w64-x86_64-openssl
+
+      - name: ccache 缓存
+        uses: actions/cache@v6
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-windows-${{ github.sha }}
+          restore-keys: ccache-windows-
+
+      - name: 构建 + 测试
+        shell: msys2 {0}
+        run: |
+          cd DevDesk
+          bash scripts/build-test-run.sh --release --no-run
+          echo "--- ccache ---"
+          ccache -s 2>/dev/null | grep -E "Hits|Misses|hit rate|Cache size" || true

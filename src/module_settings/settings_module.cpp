@@ -97,6 +97,7 @@
 #include "module_pet_bridge.h"
 
 #include <ui_kit/metrics.h>
+#include <ui_kit/toast.h>
 
 #include <eui/dsl.h>
 
@@ -452,15 +453,30 @@ public:
         }
     }
 
-    // 桌宠换肤（原桌宠卡 onChange 内联体）：下标越界守卫（含空清单）→ 桥调用
-    // → 状态行。守卫读的就是卡片渲染用的同一份皮肤清单快照
+    // 桌宠换肤（原桌宠卡 onChange 内联体）：下标越界守卫（含空清单）→ 桥
+    // 调用。守卫读的就是卡片渲染用的同一份皮肤清单快照。不补状态行 toast
+    //（2026-09-30 用户点名删除：换肤热切换即时生效、界面肉眼立即可见，
+    // toast 冗余）
     void changePetSkinAt(int idx) {
         if (idx < 0 || idx >= static_cast<int>(petSkins_.size())) {
             return;
         }
         petSkinName_ = petSkins_[static_cast<size_t>(idx)];
         ::module::pet::applyPetSkin(petSkinName_);
-        setStatus("桌宠皮肤已切换：" + petSkinName_);
+    }
+
+    // 显示大小切档（2026-09-30 用户需求「桌宠显示大小」）：下标守卫读的
+    // 就是下拉渲染用的同一份文案快照（桥取自 pet 侧，越界静默拒绝在 pet 侧
+    // 再兜一道）。选择即生效——桌宠窗关旧开新、尺寸同步缩放，肉眼立即可见，
+    // 不补状态行 toast（与切皮肤同一冗余口径）
+    void changePetScaleAt(int idx) {
+        if (idx < 0 || idx >= static_cast<int>(petScaleLabels_.size())) {
+            return;
+        }
+        ::module::pet::applyPetScaleIndex(idx);
+        petScaleIdx_ = idx;
+        LOG_INFO("Settings: 桌宠显示大小 → " +
+                 petScaleLabels_[static_cast<size_t>(idx)]);
     }
 
     // 位置重置（原桌宠卡 onClick 内联体）：回主屏右下角，持久化坐标清回未设置
@@ -469,18 +485,77 @@ public:
         setStatus("桌宠位置已重置（主屏右下角）");
     }
 
-    // 显示桌宠（PAB-13，原桌宠卡 onClick 内联体）。返回值 false 有两种：模块
-    // 开关关（本会话未装配）或窗口已开着——都只需一句提示，不阻断
+    // 显示桌宠（PAB-13，Bug B 2026-09-30）。桥已收成四态枚举：false 三义
+    // 折一个「未启用，重启后生效」既误报「已开着」，又只有页头副标题小字
+    // 这一可见通道（用户视线在卡片上）——真机反馈「点了没效果」。现在按
+    // 原因给 toast：未装配 = 中性提示非错误（开关已写盘，重启生效）；
+    // 启动失败 = 错误样式；已开着 / 成功各给一句如实反馈
     void showPetWindow() {
-        if (::module::pet::showPetWindow()) {
-            setStatus("已请求显示桌宠");
-        } else {
-            setStatus("桌宠本次会话未启用，重启后生效");
+        using Outcome = ::module::pet::PetShowOutcome;
+        switch (::module::pet::showPetWindow()) {
+            case Outcome::Shown:
+                setStatus("已请求显示桌宠");
+                break;
+            case Outcome::AlreadyOpen:
+                showToast("桌宠已在显示中");
+                break;
+            case Outcome::NotAssembled:
+                showToast("已启用，重启 DevDesk 后生效");
+                break;
+            case Outcome::StartFailed:
+                showToast("桌宠启动失败", "皮肤资产不可用，详情见日志",
+                          /*isError=*/true);
+                break;
+        }
+    }
+
+    // 桌宠开关的即时可见性（PET-CLOSE，2026-09-29 真机反馈「设置-模块-桌宠
+    // 取消勾选，桌宠没消失」）：桌宠是六个模块里**唯一**有独立可见载体
+    //（非 Router 页面的无边框子窗）的模块——注册门控确实要等重启，但窗口
+    // 本身不必：关 → 桥调用立即关窗（与右键「隐藏桌宠」同一条路径）；
+    // 开 → 桥调用立即原位重开（皮肤/位置/气泡桥沿用上次装配）。
+    // 反向口径：本会话 main 装配过桌宠（启动时开关是开的）才能即时重现；
+    // 启动时桌宠就是关的会话里模块从未装配，桥返回 false → 如实提示重启生效
+    void applyPetModuleVisibility(bool on) {
+        if (!on) {
+            const bool closed = ::module::pet::closePetWindow();
+            setStatus(closed
+                          ? "桌宠已关闭并立即隐藏（重启 DevDesk 后不再装配）"
+                          : "桌宠已关闭（本次会话未开窗；重启 DevDesk 后不再装配）");
+            LOG_INFO(std::string("Settings: 桌宠模块关闭 → ") +
+                     (closed ? "窗口已请求关闭" : "无窗口可关") + "（重启后不再装配）");
+            return;
+        }
+        // 已开着（AlreadyOpen，如关→开快速往返窗口尚未销毁）与重开成功对
+        // 用户是同一结果：窗口此刻就在屏幕上，本体即反馈，状态行收底即可
+        //（与换肤/切大小「即时肉眼可见不补 toast」同一口径）
+        using Outcome = ::module::pet::PetShowOutcome;
+        switch (::module::pet::showPetWindow()) {
+            case Outcome::Shown:
+            case Outcome::AlreadyOpen:
+                setStatus("桌宠已开启并立即显示");
+                LOG_INFO("Settings: 桌宠模块开启 → 窗口已重新入队开窗");
+                break;
+            case Outcome::NotAssembled:
+                // Bug B 2026-09-30：本会话未装配 = 窗口无从谈起，toast 给可见
+                // 反馈（改前只有页头副标题小字，用户日志 00:32:32 后感知「点了
+                // 没效果」）；中性提示非错误——开关已写盘，重启后生效
+                showToast("已启用，重启 DevDesk 后生效");
+                LOG_INFO("Settings: 桌宠模块开启 → 本会话未装配，重启后生效");
+                break;
+            case Outcome::StartFailed:
+                showToast("桌宠启动失败", "皮肤资产不可用，详情见日志",
+                          /*isError=*/true);
+                LOG_ERROR("Settings: 桌宠模块开启 → 开窗失败（皮肤不可用）");
+                break;
         }
     }
 
     // 模块开关（插拔方案 A §5.4）：只写 config.json，注册门控在下次启动的
-    // main.cpp 装配处生效。home/settings 恒启用，UI 不提供开关
+    // main.cpp 装配处生效。home/settings 恒启用，UI 不提供开关。
+    // 桌宠例外（PET-CLOSE）：写盘 + 注册门控的口径不变，但额外做一次**即时
+    // 窗口同步**（见 applyPetModuleVisibility）——其余模块无可即时撤销的可见
+    // 载体（侧边栏入口/页面注册都在启动装配期），保持「重启生效」
     void applyModuleEnabled(const std::string& moduleId, bool on) {
         auto& v = cfg_.enabledModules;
         auto it = std::find(v.begin(), v.end(), moduleId);
@@ -492,6 +567,10 @@ public:
             return;  // 状态没变（重复点击），不写盘
         }
         persist();
+        if (moduleId == kModuleIdPet) {
+            applyPetModuleVisibility(on);
+            return;
+        }
         setStatus((on ? "模块已开启" : "模块已关闭") +
                   std::string("，重启 DevDesk 后生效"));
         LOG_INFO("Settings: 模块开关 " + moduleId + " → " +
@@ -510,6 +589,24 @@ public:
     void setStatus(const std::string& msg, bool isError = false) {
         statusMessage_ = msg;
         statusIsError_ = isError;
+    }
+
+    // ---- Toast 反馈（Bug B 2026-09-30 起接入）----
+    // settings 是四个页面模块里最后一个接 toast 的（R3 备注原话「无 toast /
+    // 无对话框」）：页头副标题小字（setStatus）对「点卡片按钮」这类动作
+    // 反馈太弱（真机反馈「点了没效果」），桥失败分支改走 toast。状态位与
+    // 绘制接线走 ui_kit（D1 去重），形态与 claude 同款：3.5s + 成功
+    // fa-circle-check / 失败 fa-triangle-exclamation，节点 id = settings.toast
+    void showToast(const std::string& title, const std::string& msg = "",
+                   bool isError = false) {
+        toast_.show(title, msg, isError);
+    }
+
+    void drawToast(eui::Ui& ui, const eui::Screen& screen,
+                   const core::theme::Tokens& t) {
+        ui_kit::drawToast(ui, screen, "settings.toast", toast_,
+                          core::theme::componentTokens(t),
+                          ui_kit::ToastOptions{.okIcon = 0xF058});
     }
 
     // ============ UI ============
@@ -549,13 +646,10 @@ public:
             warnLines = std::min<size_t>(
                 svc->lastSyncWarnings().size(), 2);
         }
-        // 代理卡高 = 内容底沿 + 16px 卡内下边距（与本 tab 其它卡一致）。内容底沿：
-        // 接管状态行 98+18=116；有警告时改为警告行区底（118 + 16×行数，首行与
-        // 上一行留 2px）
-        const float proxyBottom = warnLines > 0
-            ? 118.0f + static_cast<float>(warnLines) * 16.0f
-            : 116.0f;
-        const float proxyH = proxyBottom + 16.0f;
+        // 代理卡高（2026-09-30 起随生效字号派生）：proxyCardHeightFor 是
+        // 接管/警告行几何的单一来源（drawProxyCard 同源），100% 档公式与旧字面
+        // 逐一相等（无警告 116+16=132 / n 条警告 118+16n+16）
+        const float proxyH = proxyCardHeightFor(warnLines);
         // 模块插拔门控（§5.4）：claude 关 → 代理卡整卡隐藏；markdown
         // 关 → 目录卡整卡隐藏（不显示故障态）。读 cfg_（= 启动时注册
         // 状态的来源），拨动开关即时预览下次启动的卡片布局
@@ -570,25 +664,16 @@ public:
             .padding(pad)
             .gap(t.sizes.spacingLarge)
             .content([&] {
-                // M3-4（2026-09-28，UI 现代化）：设置页主体区垫低对比渐变底
-                // （同 Home 欢迎区口径：surface → surfaceElevated 垂直，随
-                // 主题 token 运行期解析）。overlay 不参与 column 流式排布、
-                // 无事件 handlers 不拦截点击（同 claude.profiles.overlay
-                // 模式）；绘制序在最前 → 位于最底层
-                ui.stack("settings.body.gradient")
-                    .size(contentW, screen.height - pad * 2.0f)
-                    .ignoreLayout()
-                    .content([&] {
-                        ui.rect("settings.body.bg")
-                            .size(contentW, screen.height - pad * 2.0f)
-                            .gradient(t.colors.surface,
-                                      t.colors.surfaceElevated,
-                                      core::GradientDirection::Vertical)
-                            .radius(t.sizes.radiusLarge)
-                            .build();
-                    })
-                    .build();
-
+                // 2026-09-28 用户真机反馈（原话「设置页面最外层的卡片还没删除
+                // 啊，让你删除好多次了」）：删 M3-4 加的主体渐变底板
+                // （settings.body.gradient > settings.body.bg，surface →
+                // surfaceElevated 垂直）。9 卡卡框早先已删，此底板就是用户眼中
+                // 剩下的「最外层卡片」。删除后回到 frost spec 口径
+                // （docs/superpowers/specs/2026-09-22-eui-window-frost-design.md:53
+                // 「各模块页面要么靠 clearColor 当底、要么自铺不透明 surface
+                // 色」）：关档靠主窗 clearColor 当底，半透/磨砂档本就该露出窗口
+                // 背景——回归断言见 tests/test_ui_modern.cpp
+                // uiModernSettingsBodyGradientRemoved（反断言：加回即红）
                 drawHeader(ui, contentW, headerH, t);
 
                 // tab 栏（Task B：长页拆 4 tab）。components::tabs 无
@@ -647,6 +732,9 @@ public:
             })
             .build();
 
+        // toast 每帧无条件绘制（显隐由状态位控制，同 claude/markdown 各站点）
+        drawToast(ui, screen, t);
+
         LOG_DEBUG("Settings 模块 compose 完成");
     }
 
@@ -682,6 +770,7 @@ private:
         };
         a.setDropdownOpen = [this](Dropdown d, bool v) { setDropdownOpen(d, v); };
         a.changePetSkinAt = [this](int idx) { changePetSkinAt(idx); };
+        a.changePetScaleAt = [this](int idx) { changePetScaleAt(idx); };
         a.resetPetPosition = [this] { resetPetPosition(); };
         a.showPetWindow = [this] { showPetWindow(); };
         a.openNotesDirectory = [this] { openNotesDirectory(); };
@@ -707,7 +796,11 @@ private:
     static float cardHeight(const CardSpec& spec, float proxyH, float remain) {
         switch (spec.heightKind) {
         case CardHeightKind::Fixed:
-            return spec.height;
+            // 2026-09-30 缩放派生审查（spec §2.3 本期修）：spec.height 是
+            // 100% 档基准，运行期随生效字号放大（roundFs）——卡内行盒/行距
+            // 派生后内容底沿增长，卡高不同步放大就会把尾行挤出卡外（与下一
+            // 张卡的内容叠印）。100% 档 roundFs(x)==x，与旧字面逐值相等
+            return roundFs(spec.height);
         case CardHeightKind::ProxyWarnings:
             return proxyH;
         case CardHeightKind::FillRemainder:
@@ -726,12 +819,13 @@ private:
                         const core::theme::Tokens& t, float proxyH,
                         ::core::IClaudeProxyService* svc) {
         SettingsCardsIn in{cfg_, petSkins_, petSkinName_, proxyPortDraft_,
-                           logTail_};
+                           logTail_, petScaleLabels_};
         in.logTailVersion = logTailVersion_;
         in.logViewScrollOffset = logViewScrollOffset_;
         in.takeoverManaged = takeoverManaged_;
         in.notesDirExists = notesDirExists_;
         in.openDropdown = openDropdown_;
+        in.petScaleIndex = petScaleIdx_;
         in.proxy = svc;
         const SettingsCardActions a = cardActions();
         const float gapY = t.sizes.spacingLarge;
@@ -912,6 +1006,9 @@ private:
             std::filesystem::exists(::core::paths::markdownDir(), ec) && !ec;
         petSkins_ = ::module::pet::discoverSkins();
         petSkinName_ = ::module::pet::currentSkinName();
+        // 显示大小三档：文案 + 当前档下标快照（下拉 items/selected 渲染源）
+        petScaleLabels_ = ::module::pet::petScalePresetLabels();
+        petScaleIdx_ = ::module::pet::currentPetScaleIndex();
         externalStateLoaded_ = true;
     }
 
@@ -924,6 +1021,8 @@ private:
     int openDropdown_ = -1;
     std::vector<std::string> petSkins_;    // 发现到的皮肤（M2，快照见 THS-01）
     std::string petSkinName_;              // 当前皮肤名（M2，快照见 THS-01）
+    std::vector<std::string> petScaleLabels_;  // 显示大小三档文案（桥快照）
+    int petScaleIdx_ = 1;                  // 当前显示大小档下标（快照见 THS-01）
     // 代理端口输入草稿（审计 [14]）：空 = 未编辑，compose 显示 cfg_.proxyPort；
     // applyProxyPort 成功后由 persist 侧刷新（下次进页恢复显示配置值）
     std::string proxyPortDraft_;
@@ -944,6 +1043,8 @@ private:
     float logViewScrollOffset_ = 0.0f;    // 日志查看卡内滚动位置
     std::string statusMessage_;
     bool statusIsError_ = false;
+    // toast 单实例状态位（EUI-NEO toast 无队列，见 ui_kit/toast.h）
+    ui_kit::ToastState toast_;
 };
 
 } // namespace module::settings

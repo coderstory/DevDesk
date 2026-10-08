@@ -44,6 +44,7 @@ REGISTER_TEST(markdown_view_state_roundtrip, "markdown: 视图状态存读往返
         st.lastPath = "工作/周报.md";
         st.mode = 2;  // Preview
         st.collapsedDirs = {"工作", "草稿"};
+        st.selectedDir = "工作/周会";   // 2026-09-29：目录树选中目录（新建条目的父目录）
         DOCTEST_CHECK(store.save(st).isOk());
     }
     // 新 store 读同一文件 = 模拟重启
@@ -54,6 +55,8 @@ REGISTER_TEST(markdown_view_state_roundtrip, "markdown: 视图状态存读往返
     DOCTEST_CHECK_EQ(loaded.collapsedDirs.size(), static_cast<size_t>(2));
     DOCTEST_CHECK_EQ(loaded.collapsedDirs[0], std::string("工作"));
     DOCTEST_CHECK_EQ(loaded.collapsedDirs[1], std::string("草稿"));
+    // 选中目录跨会话恢复（丢了它 = 重启后新建笔记又散回根目录）
+    DOCTEST_CHECK_EQ(loaded.selectedDir, std::string("工作/周会"));
     removeFile(file);
     return true;
 });
@@ -68,6 +71,7 @@ REGISTER_TEST(markdown_view_state_fallback, "markdown: 视图状态缺失/损坏
     DOCTEST_CHECK(fresh.lastPath.empty());
     DOCTEST_CHECK_EQ(fresh.mode, 0);
     DOCTEST_CHECK(fresh.collapsedDirs.empty());
+    DOCTEST_CHECK(fresh.selectedDir.empty());   // "" = 根目录（合法默认，不是"无选中"）
     // 损坏文件：回退默认，不崩不抛
     writeGarbage(file);
     const MarkdownViewState broken = store.load();
@@ -83,6 +87,7 @@ REGISTER_TEST(markdown_view_state_fallback, "markdown: 视图状态缺失/损坏
     DOCTEST_CHECK_EQ(weird.mode, 0);
     DOCTEST_CHECK_EQ(weird.collapsedDirs.size(), static_cast<size_t>(1));
     DOCTEST_CHECK_EQ(weird.collapsedDirs[0], std::string("ok"));
+    DOCTEST_CHECK(weird.selectedDir.empty());   // 乱型 selectedDir → 回默认
     removeFile(file);
     return true;
 });
@@ -93,11 +98,20 @@ REGISTER_TEST(markdown_view_state_sanitized, "markdown: 视图状态 mode 钳制
     st.lastPath = "../outside.md";
     st.mode = 7;
     st.collapsedDirs = {"../../etc", "好目录", ""};
+    st.selectedDir = "../outside";
     const MarkdownViewState out = MarkdownViewStateStore::sanitized(st);
     DOCTEST_CHECK(out.lastPath.empty());   // 含 ".." → 整条丢弃
     DOCTEST_CHECK_EQ(out.mode, 0);         // 越界 → Edit
     DOCTEST_CHECK_EQ(out.collapsedDirs.size(), static_cast<size_t>(1));
     DOCTEST_CHECK_EQ(out.collapsedDirs[0], std::string("好目录"));  // 空串/穿越剔除
+    DOCTEST_CHECK(out.selectedDir.empty());  // 含 ".." → 丢回根目录（""）
+    // 合法选中目录原样保留；"" 也保留（根目录是合法值）
+    MarkdownViewState okSel;
+    okSel.selectedDir = "工作/周会";
+    DOCTEST_CHECK_EQ(MarkdownViewStateStore::sanitized(okSel).selectedDir,
+                     std::string("工作/周会"));
+    MarkdownViewState rootSel;
+    DOCTEST_CHECK(MarkdownViewStateStore::sanitized(rootSel).selectedDir.empty());
     // 合法域内的 mode 原样保留（三态持久化的前提）
     for (int m = 0; m <= 2; ++m) {
         MarkdownViewState ok;

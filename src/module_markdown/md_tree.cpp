@@ -1,89 +1,109 @@
 // src/module_markdown/md_tree.cpp — buildTreeRows 实现（见 md_tree.h 设计说明）
 #include "md_tree.h"
 
-#include <algorithm>
+#include <functional>
+#include <map>
 
 namespace module::markdown {
+
+namespace {
+
+// 相对路径的父目录（POSIX；无 '/' → ""，即根组）
+std::string parentOf(const std::string& relPath) {
+    const size_t slash = relPath.rfind('/');
+    return slash == std::string::npos ? std::string() : relPath.substr(0, slash);
+}
+
+// 展示层级 = 相对路径里的 '/' 个数（"工作" → 0、"工作/周会" → 1、再深逐级 +1）
+int folderDepth(const std::string& dir) {
+    int depth = 0;
+    for (char c : dir) {
+        if (c == '/') ++depth;
+    }
+    return depth;
+}
+
+// 目录行的显示名 = 路径最后一段（"工作/周会" → "周会"）
+std::string lastSegment(const std::string& dir) {
+    const size_t slash = dir.rfind('/');
+    return slash == std::string::npos ? dir : dir.substr(slash + 1);
+}
+
+} // namespace
 
 std::vector<MdTreeRow> buildTreeRows(const std::vector<NoteMeta>& notes,
                                      const std::set<std::string>& extraFolders,
                                      const std::set<std::string>& collapsed) {
-    // 目录集合 = 笔记路径推导（前两级）∪ 磁盘枚举（全层，含空目录）
-    std::set<std::string> dirs = extraFolders;
+    // 目录集合 = 磁盘枚举（全层，含空目录）∪ 笔记路径的**全部**祖先目录
+    std::set<std::string> dirs;
+    // 目录 → 直接子文件（保持 notes 传入顺序 = mtime 倒序）；一次分桶，
+    // 递归时不重复扫全表
+    std::map<std::string, std::vector<const NoteMeta*>> filesOf;
     for (const auto& n : notes) {
         const std::string p = n.relativePath.generic_string();
-        const size_t first = p.find('/');
-        if (first == std::string::npos) continue;
-        dirs.insert(p.substr(0, first));  // 一级夹
-        const size_t second = p.find('/', first + 1);
-        if (second != std::string::npos) dirs.insert(p.substr(0, second));  // 二级夹
-        // 三级及更深目录不再进树：其文件挂到最近的二级祖先行下（残余子路径）
+        size_t slash = p.find('/');
+        while (slash != std::string::npos) {
+            dirs.insert(p.substr(0, slash));  // 逐级祖先目录都进树
+            slash = p.find('/', slash + 1);
+        }
+        filesOf[parentOf(p)].push_back(&n);
+    }
+    for (const auto& d : extraFolders) {
+        if (!d.empty()) dirs.insert(d);
     }
 
-    // 一级夹 / 二级夹（"父/子"）分桶；均按字母序（std::set）
-    std::set<std::string> topFolders;
-    std::set<std::string> subFolders;
+    // 目录 → 直接子目录；dirs 是 std::set（字节序）→ 桶内顺序即字母序，
+    // 子目录行序稳定（与旧的「顶层夹 / 子夹按 std::set 顺序」一致）
+    std::map<std::string, std::vector<std::string>> childrenOf;
     for (const auto& d : dirs) {
-        const size_t first = d.find('/');
-        if (first == std::string::npos) {
-            topFolders.insert(d);
-        } else if (d.find('/', first + 1) == std::string::npos) {
-            subFolders.insert(d);
-        }
+        const std::string parent = parentOf(d);
+        if (parent == d) continue;  // 防御：自指不递归（正常数据不会出现）
+        childrenOf[parent].push_back(d);
     }
 
     std::vector<MdTreeRow> rows;
     rows.reserve(notes.size() + dirs.size() + 1);
 
-    // 文件夹行；返回是否展开（收起则其下的文件行与子夹行都不出）
-    const auto addFolderRow = [&](const std::string& dir, const std::string& label,
-                                  int depth) {
-        MdTreeRow fr;
-        fr.isFolder = true;
-        fr.name = label;
-        fr.relPath = dir;
-        fr.depth = depth;
-        rows.push_back(fr);
-        return collapsed.count(dir) == 0;
-    };
+    // 展开一个目录：目录行 → 直接文件行 → 各级子目录行（逐个递归）。
+    // 收起（collapsed 命中）→ 该目录之下整棵子树不出行。
+    // isRootGroup 影响两处：显示名（根组的 relPath 是 ""，建不出同名目录，故用
+    // 常量「根目录」当标题；顶层夹显示自己的名字）+ depth 基准（见下）。
+    std::function<void(const std::string&, bool)> emit = [&](const std::string& dir,
+                                                            bool isRootGroup) {
+        MdTreeRow folder;
+        folder.isFolder = true;
+        folder.name = isRootGroup ? std::string("根目录") : lastSegment(dir);
+        folder.relPath = dir;
+        // 深度 = 「根组行是整棵树的根」口径：根组行 0，其下每一级 +1。
+        // 顶层夹（"工作"）是**根组行的子行**（1，与根组直接文件同层）——2026-09-30
+        // 前这里是 folderDepth(dir)（顶层夹 = 0 = 与根组行**同级**），后果：在根行
+        // 选中时新建的顶层夹在树里渲染成根行的「兄弟」，用户读成「落在笔记根之外/
+        // 上一级」（落盘其实正确，纯呈现错层——见 test_markdown.cpp
+        // md_module_root_row_new_folder_inside 的红→绿取证）。
+        folder.depth = isRootGroup ? 0 : folderDepth(dir) + 1;
+        rows.push_back(folder);
+        if (collapsed.count(dir) != 0) return;  // 收起：整棵子树隐藏
 
-    // 文件行：dir 下的笔记（recursive=false → 只收直接子文件，深层文件归子夹；
-    // recursive=true → 收整棵子树的文件，残余子路径作显示名，内容不丢）
-    const auto addFileRows = [&](const std::string& dir, int depth, bool recursive) {
-        const std::string prefix = dir.empty() ? std::string() : dir + "/";
-        for (const auto& n : notes) {
-            const std::string p = n.relativePath.generic_string();
-            if (dir.empty()) {
-                // 根目录组：只收没有 '/' 的散文件
-                if (p.find('/') != std::string::npos) continue;
-            } else if (p.rfind(prefix, 0) != 0) {
-                continue;
+        const int childDepth = folder.depth + 1;
+        if (auto it = filesOf.find(dir); it != filesOf.end()) {
+            for (const NoteMeta* n : it->second) {
+                MdTreeRow r;
+                r.isFolder = false;
+                r.name = n->relativePath.filename().string();  // 含 .md（完整文件名）
+                r.relPath = n->relativePath.generic_string();
+                r.depth = childDepth;
+                rows.push_back(r);
             }
-            const std::string rest = p.substr(prefix.size());
-            if (!recursive && rest.find('/') != std::string::npos) continue;
-            MdTreeRow r;
-            r.isFolder = false;
-            r.name = rest;
-            r.relPath = p;
-            r.depth = depth;
-            rows.push_back(r);
+        }
+        if (auto it = childrenOf.find(dir); it != childrenOf.end()) {
+            for (const auto& child : it->second) emit(child, false);
         }
     };
 
-    // W9：根组标题常显且置顶——笔记目录全是根目录散文件（零子文件夹）时
-    // 树也不会退化成无结构的平铺列表，「这是树」始终可感知；空目录时
-    // 树里也保留这一行，由 UI 层叠加空态提示
-    if (addFolderRow("", "根目录", 0)) addFileRows("", 1, false);
-    for (const auto& top : topFolders) {
-        if (!addFolderRow(top, top, 0)) continue;  // 收起：整棵一级夹子树隐藏
-        addFileRows(top, 1, false);
-        for (const auto& sub : subFolders) {
-            if (sub.rfind(top + "/", 0) != 0) continue;  // 只要本夹下的二级夹
-            // 已收起的一级夹在上面就 continue 了，所以这里不会看到其子夹
-            const std::string label = sub.substr(top.size() + 1);
-            if (addFolderRow(sub, label, 1)) addFileRows(sub, 2, true);
-        }
-    }
+    // 根组标题常显且置顶——笔记目录全是根目录散文件（零子文件夹）时树也不会
+    // 退化成无结构的平铺列表，「这是树」始终可感知；空目录时树里也保留这一行，
+    // 由 UI 层叠加空态提示
+    emit("", true);
     return rows;
 }
 

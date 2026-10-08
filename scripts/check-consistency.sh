@@ -1,10 +1,12 @@
 #!/bin/bash
 # scripts/check-consistency.sh
-# DevDesk HTML demo vs C++ binary 视觉一致性检查脚本（Windows 化，波 1 TIN-13）
+# DevDesk HTML demo vs C++ binary 视觉一致性检查脚本（Windows 化，波 1 TIN-13；2026-09-28 补回 macOS 截屏分支）
 #
 # 用途：
 #   1. 用 Playwright (headless Chromium) 截取 HTML demo 各页面
-#   2. 启动 build/DevDesk.exe 并用 PowerShell（CopyFromScreen）截取主窗口；
+#   2. 启动 C++ 二进制并截主窗口：
+#      Windows → PowerShell（CopyFromScreen）按窗口矩形截 + 平均亮度检查；
+#      macOS   → screencapture -x 抓整屏（= Windows 化之前原 macOS 的行为，非新设计）；
 #      截屏不可用时回退 Pillow 合成占位图
 #   3. 输出**本次实况**（产物清单 + 各步骤结果）——不做静态结论（原硬编码
 #      结论段是 2026-09 之前的快照，已过期，见 docs/CONSISTENCY-CHECK.md）
@@ -16,10 +18,12 @@
 #   ./scripts/check-consistency.sh --no-launch # 不启动 DevDesk（只走 Pillow 合成）
 #
 # 前置：
-#   - Windows 11 + Git Bash / MSYS2（cygpath / taskkill）
+#   - Windows 11 + Git Bash / MSYS2（cygpath / taskkill）；或 macOS（screencapture）
 #   - Windows 交互式桌面会话：CopyFromScreen 需要未锁屏、RDP 未断开
 #     （锁屏/断开时可能截到黑图——脚本会打印平均亮度并 WARN）
-#   - build/DevDesk.exe 已编译
+#   - macOS：终端需被授予「屏幕录制」权限，否则 screencapture 拿不到窗口内容
+#     （只 WARN，随后回退 Pillow 合成）
+#   - build/DevDesk[.exe] 已编译
 #   - python3 + playwright（HTML 截图）、Pillow（回退合成）——缺失只 WARN 不 fail
 #
 # 退出码：0 = 流程跑完（含已 WARN 的降级）；1 = 前置缺失（HTML / exe 不存在）
@@ -31,10 +35,12 @@ SCREENSHOTS_DIR="$PROJECT_ROOT/docs/screenshots"
 HTML_FILE="$PROJECT_ROOT/docs/mockups/devdesk-prototype.html"
 DOCS_FILE="$PROJECT_ROOT/docs/CONSISTENCY-CHECK.md"
 
-# 平台化二进制名：Windows 是 DevDesk.exe（原脚本写死 build/DevDesk + -x，Windows 上必失败）
+# 平台化二进制名 + 平台标识：Windows 是 DevDesk.exe（原脚本写死 build/DevDesk + -x，Windows 上必失败）；
+# DEVDESK_OS 给下面的截屏分支用（Windows 的 CopyFromScreen 与 macOS 的 screencapture 二选一）。
 case "$(uname -s)" in
-    MINGW*|MSYS*|CYGWIN*) CPP_BIN="$PROJECT_ROOT/build/DevDesk.exe" ;;
-    *)                    CPP_BIN="$PROJECT_ROOT/build/DevDesk" ;;
+    MINGW*|MSYS*|CYGWIN*) DEVDESK_OS="windows"; CPP_BIN="$PROJECT_ROOT/build/DevDesk.exe" ;;
+    Darwin)               DEVDESK_OS="darwin";  CPP_BIN="$PROJECT_ROOT/build/DevDesk" ;;
+    *)                    DEVDESK_OS="linux";   CPP_BIN="$PROJECT_ROOT/build/DevDesk" ;;
 esac
 
 # Chromium 认 Windows 盘符路径（file:///D:/...），MSYS 的 /d/... 加载不了
@@ -54,6 +60,17 @@ log() { echo -e "${CYAN}[$(date +%H:%M:%S)]${NC} $*"; }
 ok() { echo -e "${GREEN}[OK]${NC} $*"; }
 warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
 err() { echo -e "${RED}[ERROR]${NC} $*"; }
+
+# 文件大小（字节）：BSD 的 stat 是 -f%z、GNU 的 stat 是 -c%s，两边参数不通用
+# （macOS 上用 -c%s 直接报错），故抽 helper。取不到（文件不存在等）回退打印 0，
+# 调用处只拿它做展示与 KB 换算，不影响判定（判定另用 [ -s ]）。
+file_size() {
+    if [ "$DEVDESK_OS" = "darwin" ]; then
+        stat -f%z "$1" 2>/dev/null || echo 0
+    else
+        stat -c%s "$1" 2>/dev/null || echo 0
+    fi
+}
 
 # ---- 解析参数 ----
 HTML_ONLY=false
@@ -147,8 +164,9 @@ PYEOF
 fi
 
 # ---- 任务 2: C++ 截图 ----
-# PowerShell CopyFromScreen 截主窗口（原脚本的 macOS 整屏截图 / 应用打开 / 进程
-# 清理三条命令在 Windows 上不可用，替换为 CopyFromScreen + 直启 + taskkill）。
+# Windows：PowerShell CopyFromScreen 按窗口矩形截主窗口（原脚本的 macOS 整屏截图 / 应用
+# 打开 / 进程清理三条命令在 Windows 上不可用，替换为 CopyFromScreen + 直启 + taskkill）。
+# macOS：恢复原来的 screencapture -x 整屏截图 + 直启 + 杀 PID（见分支内注释）。
 # 脚本写在 $TMP_DIR（mktemp -d）内，不往仓库里落临时文件。
 write_shot_ps1() {
     # 注意：ps1 保持纯 ASCII —— Windows PowerShell 5.1 读无 BOM 的 UTF-8 .ps1
@@ -310,6 +328,30 @@ if [ "$HTML_ONLY" = false ]; then
     if [ "$NO_LAUNCH" = true ]; then
         log "--no-launch：跳过启动，直接 Pillow 合成 cpp-home.png"
         if synth_fallback; then CPP_RESULT="Pillow 合成（--no-launch）"; else CPP_RESULT="未产出（--no-launch 且无 Pillow）"; fi
+    elif [ "$DEVDESK_OS" = "darwin" ]; then
+        # macOS 分支：screencapture 只能整屏抓（没有 CopyFromScreen 那种按窗口矩形裁剪的能力）。
+        # 这是**恢复原行为**、不是新设计——Windows 化之前本脚本在 macOS 上就是
+        # 「直启 app → sleep 3 → screencapture -x → 杀进程」三步（见 git 866b0f3）。
+        # 保留 Pillow 合成回退：screencapture 需要 TCC「屏幕录制」权限，没授权时截到的是桌面
+        # 而没有窗口内容（或直接非零退出），此时只 WARN，不 fail。
+        log "启动 $CPP_BIN ..."
+        "$CPP_BIN" >/dev/null 2>&1 &
+        APP_PID=$!
+        sleep 3   # 等窗口出现（原 macOS 实现同为 3s 有界等待；无 CLI 手段探测窗口是否已出现）
+        SHOT_OUT="$SCREENSHOTS_DIR/cpp-home.png"
+        log "screencapture 整屏 -> $SHOT_OUT"
+        if screencapture -x "$SHOT_OUT" 2>"$TMP_DIR/sc_err" && [ -s "$SHOT_OUT" ]; then
+            ok "screencapture 成功（$(( $(file_size "$SHOT_OUT") / 1024 )) KB）"
+            CPP_RESULT="screencapture 整屏（$(file_size "$SHOT_OUT") bytes）"
+        else
+            warn "screencapture 失败: $(cat "$TMP_DIR/sc_err" 2>/dev/null || echo unknown)"
+            warn "macOS 可能未授予屏幕录制权限 —— 在「系统设置 → 隐私与安全性 → 屏幕录制」里允许你的 terminal"
+            warn "回退 Pillow 合成 cpp-home.png"
+            if synth_fallback; then CPP_RESULT="Pillow 合成（screencapture 失败）"; else CPP_RESULT="未产出（screencapture 失败且无 Pillow）"; fi
+        fi
+        log "清理 DevDesk 进程..."
+        # 用启动时记下的 PID（只杀本次启动的实例），不按进程名 pkill（会误伤别的 worktree）
+        kill "$APP_PID" >/dev/null 2>&1 || true
     elif ! command -v cygpath >/dev/null 2>&1; then
         warn "找不到 cygpath（非 Git Bash 环境）—— 跳过 PowerShell 截屏"
         if synth_fallback; then CPP_RESULT="Pillow 合成（无 cygpath）"; else CPP_RESULT="未产出"; fi
@@ -327,8 +369,8 @@ if [ "$HTML_ONLY" = false ]; then
         SHOT_RC=$?
         cat "$SHOT_LOG"
         if [ "$SHOT_RC" -eq 0 ] && [ -s "$SHOT_OUT" ]; then
-            ok "PowerShell 截屏成功（$(( $(stat -c%s "$SHOT_OUT") / 1024 )) KB）"
-            CPP_RESULT="PowerShell 截屏（$(stat -c%s "$SHOT_OUT") bytes）"
+            ok "PowerShell 截屏成功（$(( $(file_size "$SHOT_OUT") / 1024 )) KB）"
+            CPP_RESULT="PowerShell 截屏（$(file_size "$SHOT_OUT") bytes）"
             BRIGHT="$(sed -n 's/.*brightness=\([0-9.]*\).*/\1/p' "$SHOT_LOG" | head -1)"
             if [ -n "$BRIGHT" ] && awk -v b="$BRIGHT" 'BEGIN{exit !(b < 5)}'; then
                 # 锁屏 / RDP 断开时 CopyFromScreen 会截到全黑

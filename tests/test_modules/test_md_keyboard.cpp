@@ -350,7 +350,7 @@ REGISTER_TEST(md_kbd_wiring_input_passthrough,
         eui::KeyEvent ev;
         ev.key = key;
         ev.action = eui::KeyAction::Press;
-        ev.modifiers.control = ctrl;
+        test_support::setShortcutModifier(ev.modifiers, ctrl);
         ev.modifiers.shift = shift;
         return ev;
     };

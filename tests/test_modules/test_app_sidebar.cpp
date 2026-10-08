@@ -13,6 +13,7 @@
 
 #include "core/module_interface.h"
 #include "core/router.h"
+#include "core/theme.h"  // 顶部留白 = spacingXXLarge（token 断言）
 
 #include <eui/dsl.h>
 
@@ -171,6 +172,15 @@ REGISTER_TEST(sidebar_collapsed_compose,
     DOCTEST_CHECK(collapsedBrand != nullptr);
     DOCTEST_CHECK(collapsedBrand->text == eui::utf8(0xF5FC));  // fa-laptop-code
 
+    // 顶部留白（2026-09-28 用户真机反馈「侧边栏加一点上边距」）：品牌块上缘 =
+    // spacingXXLarge(40)，与页面主区上 padding 同档；折叠态与展开态同一纵向位置
+    //（只差横向分支），切换时 logo 不跳
+    DOCTEST_CHECK(floatEq(collapsedBrand->y, 40.0f));
+    // 导航列表随品牌块整体下移：40 + 品牌高 32 + 品牌/导航间距 28 = 100
+    const auto* firstHit = ui.find("app.sidebar.item.Home.hit");
+    DOCTEST_CHECK(firstHit != nullptr);
+    DOCTEST_CHECK(floatEq(firstHit->y, 100.0f));
+
     // label 不渲染（折叠态模块名只走 tooltip）
     DOCTEST_CHECK(ui.find("app.sidebar.item.Home.label") == nullptr);
     DOCTEST_CHECK(ui.find("app.sidebar.item.Markdown.label") == nullptr);
@@ -219,6 +229,12 @@ REGISTER_TEST(sidebar_expanded_compose,
     const auto* logo = ui.find("app.sidebar.brand.logo");
     DOCTEST_CHECK(logo != nullptr);
     DOCTEST_CHECK(floatEq(logo->x, 16.0f));  // padX
+    // 顶部留白（2026-09-28 用户真机反馈「侧边栏加一点上边距」）：logo 与品牌文字
+    // 同 y = spacingXXLarge(40)，与页面主区上 padding 齐平
+    DOCTEST_CHECK(floatEq(logo->y, 40.0f));
+    DOCTEST_CHECK(floatEq(ui.find("app.sidebar.brand")->y, 40.0f));
+    // 导航列表随之整体下移：40 + 32 + 28 = 100
+    DOCTEST_CHECK(floatEq(ui.find("app.sidebar.item.Home.hit")->y, 100.0f));
     const auto* label = ui.find("app.sidebar.item.Home.label");
     DOCTEST_CHECK(label != nullptr);
     DOCTEST_CHECK(label->text == "首页");
@@ -238,8 +254,65 @@ REGISTER_TEST(sidebar_expanded_compose,
     return true;
 })
 
-// ============ 4. 页面区原点写入 Router（右键菜单坐标系修复） ============
+// 顶部留白的边界守卫（2026-09-28 用户纠正"改的层次不对"）：留白只能作用于
+// 侧边栏**自己子树内部**——不许把整页推下去、不许撑高 titlebar、不许在窗口顶与
+// 内容之间造一条"既无底也无内容"的空带。三条断言各对应一种错误表现：
+//   ① 右侧主内容区（app.page）几何：x=208 / y=0 / 宽 1392 / 高 1000 —— 与改动前
+//      逐项相同（页面 y 若被推下去、或窗口内容高被 titlebar 吃掉，这里立刻红）；
+//   ② 侧边栏容器与分隔线都从 y=0 起、铺满整高 —— 新增留白区仍属侧边栏区域；
+//   ③ 侧边栏**没有**自己的不透明底（底色 = 主窗口 clearColor，见 drawSidebar 内
+//      注释），故留白区不可能变成"半透档透出桌面"的透明带；把这条写成断言，
+//      防止今后有人给侧边栏加局部底时漏掉顶部留白区。
+REGISTER_TEST(sidebar_top_padding_stays_inside_sidebar,
+              "sidebar: 顶部留白只在侧边栏内部（页面几何不变 + 无透明带）", {
+    app::setSidebarCollapsed(false);
+    RecordingModule home(::core::PageId::Home, "首页");
+    RecordingModule md(::core::PageId::Markdown, "笔记");
+    ::core::Router router = makeStubRouter(home, md);
+    test_support::ScopedAppRouter scoped(&router);
 
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    eui::Ui ui;
+    ui.begin("sidebar_top_padding");
+    app::compose(ui, screen);
+    ui.end();
+    ui.layout(screen.width, screen.height);  // 取帧需显式布局（同 test_ui_modern）
+
+    const auto* sidebar = ui.find("app.sidebar");
+    const auto* page = ui.find("app.page");
+    const auto* brand = ui.find("app.sidebar.brand");
+    const auto* divider = ui.find("app.sidebar.divider");
+    DOCTEST_REQUIRE(sidebar != nullptr);
+    DOCTEST_REQUIRE(page != nullptr);
+    DOCTEST_REQUIRE(brand != nullptr);
+    DOCTEST_REQUIRE(divider != nullptr);
+
+    // ① 主内容区几何（= 改动前）——锁住"不得把整页推下去 / 不得动窗口内容几何"
+    DOCTEST_CHECK(floatEq(page->frame.x, 208.0f));
+    DOCTEST_CHECK(floatEq(page->frame.y, 0.0f));
+    DOCTEST_CHECK(floatEq(page->frame.width, 1392.0f));
+    DOCTEST_CHECK(floatEq(page->frame.height, 1000.0f));
+    // 模块拿到的页面 Screen 同源：高 = 整窗高（不因侧边栏留白缩水）
+    DOCTEST_CHECK(floatEq(RecordingModule::lastScreenWidth, 1392.0f));
+    DOCTEST_CHECK(floatEq(RecordingModule::lastScreenHeight, 1000.0f));
+
+    // ② 侧边栏容器 / 分隔线仍从 y=0 起、铺满整高（留白区仍在侧边栏区域内）
+    DOCTEST_CHECK(floatEq(sidebar->frame.y, 0.0f));
+    DOCTEST_CHECK(floatEq(sidebar->frame.height, 1000.0f));
+    DOCTEST_CHECK(floatEq(divider->frame.y, 0.0f));
+    DOCTEST_CHECK(floatEq(divider->frame.height, 1000.0f));
+
+    // 留白值 = spacingXXLarge(40)，且落在容器内部（0 ≤ brand.y < 首个导航项 y）
+    const float space = ::core::theme::current().sizes.spacingXXLarge;
+    DOCTEST_CHECK(floatEq(space, 40.0f));
+    DOCTEST_CHECK(floatEq(brand->frame.y, space));
+    DOCTEST_CHECK(brand->frame.y >= sidebar->frame.y);
+    return true;
+})
+
+// ============ 4. 页面区原点写入 Router（右键菜单坐标系修复） ============
 REGISTER_TEST(sidebar_compose_writes_page_origin,
               "sidebar: compose 每帧写入页面区原点 x（展开 208 / 折叠 72）", {
     RecordingModule home(::core::PageId::Home, "首页");

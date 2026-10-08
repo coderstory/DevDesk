@@ -21,6 +21,8 @@
 #include <components/input.h>  // InputState（程序赋值光标修复的测试显式置光标）
 #include "core/input/input_types.h"
 
+#include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <filesystem>
 #include <map>
@@ -34,6 +36,38 @@ namespace {
 
 // 临时 db 文件名前缀（共享工厂 test_support::TestEnv 的第一实参）
 constexpr const char* kDbPrefix = "devdesk_test_todoui_";
+
+// ---- UI 整改 17/18 断言小件（优先级色底 / 标签字号）----
+
+// 颜色近似相等（eui::Color 无 operator==；tint 断言不比位、比分量差）
+bool colorNear(const eui::Color& a, const eui::Color& b, float eps = 0.02f) {
+    return std::fabs(a.r - b.r) <= eps && std::fabs(a.g - b.g) <= eps &&
+           std::fabs(a.b - b.b) <= eps && std::fabs(a.a - b.a) <= eps;
+}
+
+// 单通道最大差（0..1）：判「两色看得出不同」「低优先级 tint 有多浅」
+float maxChannelDelta(const eui::Color& a, const eui::Color& b) {
+    return std::max({std::fabs(a.r - b.r), std::fabs(a.g - b.g),
+                     std::fabs(a.b - b.b)});
+}
+
+// WCAG 相对亮度（sRGB 线性化）
+float relLuminance(const eui::Color& c) {
+    auto channel = [](float v) {
+        return v <= 0.03928f ? v / 12.92f : std::pow((v + 0.055f) / 1.055f, 2.4f);
+    };
+    return 0.2126f * channel(c.r) + 0.7152f * channel(c.g) +
+           0.0722f * channel(c.b);
+}
+
+// WCAG 对比度（1..21）：文字底色改 tint 后「读不读得清」的数值判据（AA = 4.5）
+float contrastRatio(const eui::Color& a, const eui::Color& b) {
+    const float la = relLuminance(a);
+    const float lb = relLuminance(b);
+    const float hi = std::max(la, lb);
+    const float lo = std::min(la, lb);
+    return (hi + 0.05f) / (lo + 0.05f);
+}
 
 // RAII：临时库（共享 test_support::TestEnv；注册全局 appDatabase，todo 模块
 // onStart 依赖，析构时一定解除注册防悬垂污染后续用例）+ TodoService
@@ -85,12 +119,12 @@ struct Frame {
     }
 };
 
-// 构造 Ctrl+方向 键事件
+// 构造 Ctrl+方向 键事件（修饰位按平台取：macOS = Cmd，其余 = Ctrl）
 eui::KeyEvent ctrlArrow(eui::InputKey key) {
     eui::KeyEvent e;
     e.key = key;
     e.action = eui::KeyAction::Press;
-    e.modifiers.control = true;
+    test_support::setShortcutModifier(e.modifiers);
     return e;
 }
 
@@ -832,7 +866,10 @@ REGISTER_TEST(todo_ui_drag_insert_position,
         DOCTEST_CHECK_EQ(ts.value()[3].title, std::string("再移动任务"));  // 追加列尾
     }
 
-    // 场景 3：同列拖拽不预览（hoverRow=-1）→ 无占位条、松手取消
+    // 场景 3（2026-09-28 缺陷 3 起语义）：同列拖拽现在**受支持**——悬停行
+    // 照常预览（占位条进源列），落点仍在自身缝位（row 2 = 甲 与 乙 之间的
+    // 缝，含被拖卡自身的行序）→ 换算后插回原位 = no-op：顺序不变、不落库。
+    // 旧约定「同列拖拽 = 取消、不预览」与旧断言（无占位条）已废。
     {
         composeLayout();
         const auto* card = ui.find("todo.col.5.card.1.bg");  // 甲（同列拖）
@@ -843,10 +880,14 @@ REGISTER_TEST(todo_ui_drag_insert_position,
         DOCTEST_REQUIRE(srcBg != nullptr);
         core::dsl::DragEvent ev;
         ev.x = srcBg->frame.x + 40.0f;
-        ev.y = srcBg->frame.y + 56.0f + 200.0f;
+        ev.y = srcBg->frame.y + 56.0f + 190.0f;  // relY=190 ∈ 卡 2 区间 → row 2
         card->onDrag(ev);
         composeLayout();
-        DOCTEST_CHECK(ui.find("todo.col.5.dropbar") == nullptr);  // 同列 = 取消，不预览
+        const auto* dropBar = ui.find("todo.col.5.dropbar");
+        DOCTEST_REQUIRE(dropBar != nullptr);  // 同列 = 重排：源列也预览
+        const auto* card2Wrap = ui.find("todo.col.5.card.2.wrap");
+        DOCTEST_REQUIRE(card2Wrap != nullptr);
+        DOCTEST_CHECK_EQ(dropBar->frame.y, card2Wrap->frame.y - 8.0f);  // 落在缝里
         eui::PointerEvent up;
         up.x = ev.x;
         up.y = ev.y;
@@ -861,10 +902,341 @@ REGISTER_TEST(todo_ui_drag_insert_position,
         auto ts = env.svc->listTasks(dst.value().id);
         DOCTEST_REQUIRE(ts.isOk());
         DOCTEST_REQUIRE_EQ(ts.value().size(), static_cast<size_t>(4));  // 未动
-        DOCTEST_CHECK_EQ(ts.value()[1].title, std::string("甲"));
+        DOCTEST_CHECK_EQ(ts.value()[1].title, std::string("甲"));  // 插回原位 = no-op
+    }
+
+    // 场景 4（2026-09-28 缺陷 3 主用例）：同列拖到列尾 → 甲 移到最末
+    // 列序此刻 = [被移动任务, 甲, 乙, 再移动任务]；甲 ownIdx=1，悬停行 4
+    //（relY ≥ 3*92+84 = 360 → 钳到 taskCount=4）→ 换算行 3（摘出自身后
+    // 的列尾）→ 落库后 = [被移动任务, 乙, 再移动任务, 甲]
+    {
+        composeLayout();
+        const auto* card = ui.find("todo.col.5.card.1.bg");  // 甲
+        DOCTEST_REQUIRE(card != nullptr);
+        eui::PointerEvent pe;
+        card->onPress(pe, boundsOf(card));
+        const auto* srcBg = ui.find("todo.col.5.bg");
+        DOCTEST_REQUIRE(srcBg != nullptr);
+        core::dsl::DragEvent ev;
+        ev.x = srcBg->frame.x + 40.0f;
+        ev.y = srcBg->frame.y + 56.0f + 400.0f;  // 列尾空白区 → row 4（追加位）
+        card->onDrag(ev);
+        composeLayout();
+        const auto* dropBar = ui.find("todo.col.5.dropbar");
+        const auto* card3Wrap = ui.find("todo.col.5.card.3.wrap");
+        DOCTEST_REQUIRE(dropBar != nullptr);
+        DOCTEST_REQUIRE(card3Wrap != nullptr);
+        DOCTEST_CHECK_EQ(dropBar->frame.y, card3Wrap->frame.y + 84.0f);  // 末卡底缝
+        eui::PointerEvent up;
+        up.x = ev.x;
+        up.y = ev.y;
+        up.action = eui::PointerAction::Release;
+        const auto* rel = ui.find("todo.col.5.card.1.bg");
+        DOCTEST_REQUIRE(rel != nullptr);
+        rel->onRelease(up, eui::Rect{});
+    }
+    {
+        auto ts = env.svc->listTasks(dst.value().id);
+        DOCTEST_REQUIRE(ts.isOk());
+        DOCTEST_REQUIRE_EQ(ts.value().size(), static_cast<size_t>(4));
+        DOCTEST_CHECK_EQ(ts.value()[0].title, std::string("被移动任务"));
+        DOCTEST_CHECK_EQ(ts.value()[1].title, std::string("乙"));
+        DOCTEST_CHECK_EQ(ts.value()[2].title, std::string("再移动任务"));
+        DOCTEST_CHECK_EQ(ts.value()[3].title, std::string("甲"));  // 同列重排真落库
+    }
+
+    // 场景 5：同列拖拽但指针在**列外**（列间隙）松手 → target = -1 → 取消
+    //（「拖出列外松手 = 取消」语义保持；列外也不预览占位条）
+    // 列序此刻 = [被移动任务, 乙, 再移动任务, 甲]；乙 ownIdx=1
+    {
+        composeLayout();
+        const auto* card = ui.find("todo.col.5.card.1.bg");  // 乙
+        DOCTEST_REQUIRE(card != nullptr);
+        eui::PointerEvent pe;
+        card->onPress(pe, boundsOf(card));
+        const auto* srcBg = ui.find("todo.col.5.bg");
+        DOCTEST_REQUIRE(srcBg != nullptr);
+        core::dsl::DragEvent ev;
+        ev.x = srcBg->frame.x - 8.0f;  // 列 4 与列 5 之间的列间隙
+        ev.y = srcBg->frame.y + 56.0f + 400.0f;
+        card->onDrag(ev);
+        composeLayout();
+        DOCTEST_CHECK(ui.find("todo.col.5.dropbar") == nullptr);  // 列外不预览
+        eui::PointerEvent up;
+        up.x = ev.x;
+        up.y = ev.y;
+        up.action = eui::PointerAction::Release;
+        const auto* rel = ui.find("todo.col.5.card.1.bg");
+        DOCTEST_REQUIRE(rel != nullptr);
+        rel->onRelease(up, eui::Rect{});
+    }
+    {
+        auto ts = env.svc->listTasks(dst.value().id);
+        DOCTEST_REQUIRE(ts.isOk());
+        DOCTEST_REQUIRE_EQ(ts.value().size(), static_cast<size_t>(4));  // 未动
+        DOCTEST_CHECK_EQ(ts.value()[1].title, std::string("乙"));
     }
 
     mod->onStop();
+    return true;
+})
+
+// ---- 2026-09-28 真机缺陷 1/2：列内卡片边距（卡左缘 = 列左缘 + 16，两侧同源）
+// + 拖拽占位条与卡槽同宽同位（条不再右边留空）----
+// 窄列口径：16px inset 两侧各一份 ⇒ 卡宽 = 内容宽 - 32（contentCardWidth），
+// 8 列最小窗（colW 126）时 = 94，仍 > 0 且 chip 自适应不越出卡右缘。
+REGISTER_TEST(todo_ui_card_inset_and_dropbar_width,
+              "todo_ui: 卡片左边距/占位条同源宽度（缺陷 1/2 几何回归）", {
+    using module::todo::ui::contentCardWidth;
+    using module::todo::ui::kColumnContentInset;
+    TestEnv env;
+    DOCTEST_REQUIRE(env.ready);
+    auto src = env.svc->createColumn("边距源列");
+    auto dst = env.svc->createColumn("边距目标列");
+    DOCTEST_REQUIRE(src.isOk() && dst.isOk());
+    // 再造 2 列凑满 8 列（最小窗 1200 下 colW = (1120-7*16)/8 = 126 的窄列口径）
+    DOCTEST_REQUIRE(env.svc->createColumn("窄列甲").isOk());
+    DOCTEST_REQUIRE(env.svc->createColumn("窄列乙").isOk());
+    auto mover = env.svc->createTask(src.value().id, "被拖卡");
+    auto t1 = env.svc->createTask(dst.value().id, "甲");
+    auto t2 = env.svc->createTask(dst.value().id, "乙");
+    DOCTEST_REQUIRE(mover.isOk() && t1.isOk() && t2.isOk());
+
+    std::unique_ptr<::core::Module> mod(create_todo_module());
+    mod->onStart();
+
+    eui::Ui ui;
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    auto composeLayout = [&]() {
+        ui.begin("todo_card_inset_frame");
+        mod->compose(ui, screen);
+        ui.end();
+        ui.layout(screen);
+    };
+    auto boundsOf = [](const core::dsl::Element* e) {
+        return eui::Rect{e->frame.x, e->frame.y, e->frame.width, e->frame.height};
+    };
+
+    composeLayout();
+    const auto* col5 = ui.find("todo.col.5.bg");
+    const auto* card0 = ui.find("todo.col.5.card.0.bg");
+    const auto* wrap0 = ui.find("todo.col.5.card.0.wrap");
+    DOCTEST_REQUIRE(col5 != nullptr);
+    DOCTEST_REQUIRE(card0 != nullptr);
+    DOCTEST_REQUIRE(wrap0 != nullptr);
+    // (1) 左内边距：卡左缘 - 列左缘 == kColumnContentInset（缺陷形态 = 0）
+    DOCTEST_CHECK_EQ(card0->frame.x - col5->frame.x, kColumnContentInset);
+    // (2) 右内边距 == 左内边距（非滚动列：内容宽 == 列宽，两侧同源派生）。
+    // 旧形态 = 左 0 / 右 16（宽度写死「内容宽 - 16」而 x 恒 0）
+    const float rightGap =
+        (col5->frame.x + col5->frame.width) - (card0->frame.x + card0->frame.width);
+    DOCTEST_CHECK_EQ(rightGap, kColumnContentInset);
+    DOCTEST_CHECK_EQ(rightGap, card0->frame.x - col5->frame.x);
+    // (3) 卡宽 == contentCardWidth(列宽)（唯一来源；不是「列宽 - 16」）
+    DOCTEST_CHECK_EQ(card0->frame.width, contentCardWidth(col5->frame.width));
+    // (4) wrap 仍占满内容宽（流式子元素，卡在 wrap 内落位）：右缘对齐列右缘
+    DOCTEST_CHECK_EQ(wrap0->frame.x, col5->frame.x);
+    DOCTEST_CHECK_EQ(wrap0->frame.width, col5->frame.width);
+
+    // (5) 占位条：拖到目标列 → 条与卡槽同宽同位（缺陷 2：条右边留空 = 条宽
+    // 写「内容宽 - 16」且 x=0，与它覆盖的卡槽不同源）
+    {
+        const auto* card = ui.find("todo.col.4.card.0.bg");
+        DOCTEST_REQUIRE(card != nullptr);
+        eui::PointerEvent pe;
+        card->onPress(pe, boundsOf(card));
+        core::dsl::DragEvent ev;
+        ev.x = col5->frame.x + col5->frame.width / 2.0f;
+        ev.y = col5->frame.y + 56.0f + 4.0f;  // 行 0
+        card->onDrag(ev);
+        composeLayout();
+        const auto* bar = ui.find("todo.col.5.dropbar");
+        const auto* col5After = ui.find("todo.col.5.bg");
+        const auto* card0After = ui.find("todo.col.5.card.0.bg");
+        DOCTEST_REQUIRE(bar != nullptr);
+        DOCTEST_REQUIRE(col5After != nullptr);
+        DOCTEST_REQUIRE(card0After != nullptr);
+        DOCTEST_CHECK_EQ(bar->frame.x, col5After->frame.x + kColumnContentInset);
+        DOCTEST_CHECK_EQ(bar->frame.width, contentCardWidth(col5After->frame.width));
+        // 与卡槽逐值同宽同位（同源判据：条覆盖的就是卡要落的位置）
+        DOCTEST_CHECK_EQ(bar->frame.x, card0After->frame.x);
+        DOCTEST_CHECK_EQ(bar->frame.width, card0After->frame.width);
+        // 右边距对称：条右缘到列右缘 == kColumnContentInset（旧形态 = 16 但
+        // 左缘贴列边 → 视觉"右边有空余"）
+        DOCTEST_CHECK_EQ(
+            (col5After->frame.x + col5After->frame.width) -
+                (bar->frame.x + bar->frame.width),
+            kColumnContentInset);
+        eui::PointerEvent up;
+        up.x = ev.x;
+        up.y = ev.y;
+        up.action = eui::PointerAction::Release;
+        const auto* rel = ui.find("todo.col.4.card.0.bg");
+        DOCTEST_REQUIRE(rel != nullptr);
+        rel->onRelease(up, eui::Rect{});
+    }
+
+    // (6) 窄列（8 列 @1200 最小窗，colW=126）不溢出：卡宽 = 126-32 = 94 > 0，
+    // 卡右缘 ≤ 列右缘 - 16；占位条同宽同位
+    {
+        eui::Screen narrow;
+        narrow.width = 1200.0f;
+        narrow.height = 720.0f;
+        ui.begin("todo_card_inset_narrow");
+        mod->compose(ui, narrow);
+        ui.end();
+        ui.layout(narrow);
+        const auto* colN = ui.find("todo.col.5.bg");
+        const auto* cardN = ui.find("todo.col.5.card.0.bg");
+        DOCTEST_REQUIRE(colN != nullptr);
+        DOCTEST_REQUIRE(cardN != nullptr);
+        DOCTEST_CHECK_EQ(cardN->frame.x - colN->frame.x, kColumnContentInset);
+        DOCTEST_CHECK(cardN->frame.width >= 0.0f);
+        DOCTEST_CHECK(cardN->frame.x + cardN->frame.width <=
+                      colN->frame.x + colN->frame.width);
+        DOCTEST_CHECK_EQ(cardN->frame.width, contentCardWidth(colN->frame.width));
+    }
+
+    mod->onStop();
+    return true;
+})
+
+// ---- 卡内文本居中（2026-09-30 用户需求「卡内文本水平垂直居中展示」）----
+// 三种卡形态全覆盖：纯标题（组 = 标题独占整卡居中）/ 有截止 chip / 有 tags
+// chip（组 = 标题行 + chip 行整块居中）。断言口径：
+//   水平 = 标题框中心与卡中心偏差 ≤1px + horizontalAlign Center 机制位在位
+//   （框对称只保证框居中，字形居中靠该位，二者缺一即红）；
+//   垂直 = 内容组 [顶, 底] 中点与卡内容区中心偏差 ≤1px，组顶与 todo_ui_logic.h
+//   的 cardContentGroupTop 同源（居中算式没被旁路）；
+//   chip 行 x 不拽歪（仍 = 卡左缘 + 16）、组内排版保持（标题行底 → chip 顶 =
+//   kCardTitleToChipGap）。
+// 变异自检：把 drawCard 的 groupTop / 标题 x 改回左上角固定原点（14 / 16，
+// 无 horizontalAlign）→ 本用例水平与垂直断言同时变红（记录见提交说明）。
+REGISTER_TEST(todo_ui_card_text_centered,
+              "todo_ui: 卡内文本居中——内容组中心=卡内容区中心 ≤1px（headless）", {
+    using module::todo::ui::cardContentGroupTop;
+    using module::todo::ui::kCardTitleToChipGap;
+    TestEnv env;
+    DOCTEST_REQUIRE(env.ready);
+    auto col = env.svc->createColumn("居中列");
+    DOCTEST_REQUIRE(col.isOk());
+    auto a = env.svc->createTask(col.value().id, "纯标题卡");
+    auto b = env.svc->createTask(col.value().id, "带截止卡");
+    auto c = env.svc->createTask(col.value().id, "带标签卡");
+    DOCTEST_REQUIRE(a.isOk() && b.isOk() && c.isOk());
+    {
+        module::todo::Task t2 = b.value();
+        t2.dueAt = 2000000000;  // 未来时间，未逾期
+        DOCTEST_REQUIRE(env.svc->updateTask(t2).isOk());
+    }
+    {
+        module::todo::Task t3 = c.value();
+        t3.tags = {"重要", "前端"};
+        DOCTEST_REQUIRE(env.svc->updateTask(t3).isOk());
+    }
+
+    std::unique_ptr<::core::Module> mod(create_todo_module());
+    mod->onStart();
+    Frame frame(mod.get());
+    frame.ui.layout(1600.0f, 1000.0f);
+
+    const char* cardIds[3] = {"todo.col.4.card.0", "todo.col.4.card.1",
+                              "todo.col.4.card.2"};
+    const bool expectChipRow[3] = {false, true, true};
+    const char* chipIds[3] = {"", ".due.bg", ".tag.0.bg"};
+    for (int i = 0; i < 3; ++i) {
+        const std::string base = cardIds[i];
+        const auto* cardBg = frame.ui.find(base + ".bg");
+        const auto* title = frame.ui.find(base + ".title");
+        DOCTEST_REQUIRE(cardBg != nullptr);
+        DOCTEST_REQUIRE(title != nullptr);
+        const float cardCX = cardBg->frame.x + cardBg->frame.width / 2.0f;
+        const float cardCY = cardBg->frame.y + cardBg->frame.height / 2.0f;
+
+        // 水平：主文本（标题）框中心 = 卡中心（≤1px），字形居中机制位在位
+        DOCTEST_CHECK_EQ(title->horizontalAlign, eui::HorizontalAlign::Center);
+        DOCTEST_CHECK(std::abs((title->frame.x + title->frame.width / 2.0f) -
+                               cardCX) <= 1.0f);
+
+        // 垂直：内容组 [顶, 底] 中点 = 卡内容区中心（≤1px）。
+        // 组顶 = 标题顶；组底 = chip 底（有 chip 行）或标题底（纯标题卡）
+        const float groupTop = title->frame.y;
+        float groupBottom = title->frame.y + title->frame.height;
+        if (expectChipRow[i]) {
+            const auto* chipBg = frame.ui.find(base + chipIds[i]);
+            DOCTEST_REQUIRE(chipBg != nullptr);
+            // 组内排版保持：标题行底 → chip 行顶 = 原间距 12
+            DOCTEST_CHECK_EQ(chipBg->frame.y - (title->frame.y + title->frame.height),
+                             kCardTitleToChipGap);
+            // chip 行水平不拽歪：x 仍 = 卡左缘 + 16（卡内左内边距）
+            DOCTEST_CHECK_EQ(chipBg->frame.x - cardBg->frame.x, 16.0f);
+            groupBottom = chipBg->frame.y + chipBg->frame.height;
+        }
+        DOCTEST_CHECK(std::abs(((groupTop + groupBottom) / 2.0f) - cardCY) <= 1.0f);
+        // 组顶与同源常量一致（居中算式本身没被旁路 / 写死）
+        DOCTEST_CHECK_EQ(groupTop - cardBg->frame.y,
+                         cardContentGroupTop(expectChipRow[i]));
+    }
+
+    mod->onStop();
+    return true;
+})
+
+// ---- 2026-09-28 真机缺陷 3 纯函数：同列重排行号换算 + 落库插入位 ----
+REGISTER_TEST(todo_ui_reorder_pure_helpers,
+              "todo_ui: 同列重排——行号换算与插入位（纯函数）", {
+    using module::todo::ui::computeReorderInsertPosition;
+    using module::todo::ui::computeReorderRow;
+    // 列 = [A(pos 0), B(pos 1), C(pos 2)]，被拖卡 ownIndex = 0（A）
+    // 行号语义（含自身）：0=首卡前 1=A|B 缝 2=B|C 缝 3=列尾
+    DOCTEST_CHECK(!computeReorderRow(0, 0).has_value());  // 首卡前 = 原位
+    DOCTEST_CHECK(!computeReorderRow(0, 1).has_value());  // 自己下面缝 = 原位
+    DOCTEST_REQUIRE(computeReorderRow(0, 2).has_value());
+    DOCTEST_CHECK_EQ(*computeReorderRow(0, 2), 1);        // 插到 C 前
+    DOCTEST_REQUIRE(computeReorderRow(0, 3).has_value());
+    DOCTEST_CHECK_EQ(*computeReorderRow(0, 3), 2);        // 列尾追加
+    // ownIndex = 1（B）：上行插到 A 前；下行（row 3）= 列尾
+    DOCTEST_REQUIRE(computeReorderRow(1, 0).has_value());
+    DOCTEST_CHECK_EQ(*computeReorderRow(1, 0), 0);
+    DOCTEST_CHECK(!computeReorderRow(1, 1).has_value());
+    DOCTEST_CHECK(!computeReorderRow(1, 2).has_value());  // B|C 缝 = 原位（B 就在缝上）
+    DOCTEST_REQUIRE(computeReorderRow(1, 3).has_value());
+    DOCTEST_CHECK_EQ(*computeReorderRow(1, 3), 2);
+    // 退化输入 → nullopt
+    DOCTEST_CHECK(!computeReorderRow(-1, 2).has_value());
+    DOCTEST_CHECK(!computeReorderRow(0, -1).has_value());
+
+    // 落库插入位：行序**排除被拖卡自身**（moveTask 先摘出再插入）
+    std::vector<module::todo::Task> tasks = {
+        makeTask(1, 10, 0),   // A
+        makeTask(2, 10, 1),   // B
+        makeTask(3, 10, 2),   // C
+        makeTask(4, 20, 0),   // 另一列，不干扰
+    };
+    // 拖 A（id=1）：行 1（摘出自身后）= 插到 C 前 → C 的 position = 2
+    DOCTEST_CHECK_EQ(computeReorderInsertPosition(tasks, 10, 1, 1), 2);
+    // 行 2（列尾）→ 排除自身后 max position（C=2）+ 1 = 3
+    DOCTEST_CHECK_EQ(computeReorderInsertPosition(tasks, 10, 1, 2), 3);
+    // 行 0 → A 的插入位 = 摘出自身后首个任务 B 的 position = 1
+    DOCTEST_CHECK_EQ(computeReorderInsertPosition(tasks, 10, 1, 0), 1);
+    // 带空洞 position（moveTask 真实形态）：拖 C（id=3）
+    std::vector<module::todo::Task> gappy = {
+        makeTask(11, 30, 0),   // D
+        makeTask(12, 30, 2),   // E
+        makeTask(13, 30, 5),   // F（被拖）
+    };
+    DOCTEST_CHECK_EQ(computeReorderInsertPosition(gappy, 30, 13, 0), 0);  // 插到 D 前
+    DOCTEST_CHECK_EQ(computeReorderInsertPosition(gappy, 30, 13, 1), 2);  // 插到 E 前
+    DOCTEST_CHECK_EQ(computeReorderInsertPosition(gappy, 30, 13, 2), 3);  // 列尾 = max(0,2)+1
+    // 越界行号钳到列尾；空列（排除自身后无人）→ 0
+    DOCTEST_CHECK_EQ(computeReorderInsertPosition(tasks, 10, 1, 99), 3);
+    DOCTEST_CHECK_EQ(computeReorderInsertPosition(tasks, 10, 1, -1), 3);
+    // 单卡列（排除自身后无人）→ 0（该形态经 computeReorderRow 恒为 no-op，
+    // 走不到落库；此处只锁函数自身的退化行为不越界）
+    std::vector<module::todo::Task> solo = {makeTask(9, 40, 0)};
+    DOCTEST_CHECK_EQ(computeReorderInsertPosition(solo, 40, 9, 0), 0);
     return true;
 })
 
@@ -928,12 +1300,17 @@ REGISTER_TEST(todo_ui_drag_hit_pure,
     using module::todo::ui::DragHitInput;
     using module::todo::ui::dragAnchorScale;
     using module::todo::ui::dragDropTarget;
+    using module::todo::ui::kColumnContentInset;
     // 锚定卡在列 1 第 0 张：板面（dpi=1）originX=80，列 [80,280][300,500][520,720]，
-    // boardTop=144，boardBottom=644
+    // boardTop=144，boardBottom=644。
+    // 2026-09-28 缺陷 1 起：按下锚点 = **卡片**左缘 = 列左缘 + 列内容左内边距
+    //（kColumnContentInset，卡不再贴列左缘）→ pressX = 300 + 16 = 316；
+    // dragDropTarget 内部同源减掉该内边距还原列/板面原点（漏减 → 命中整体
+    // 右移 16px，列左缘 16px 带内落点会误判成左侧列/板外，见下方边界断言）
     DragHitInput in;
     in.fromColIndex = 1;
     in.colCount = 3;
-    in.pressX = 300.0f;
+    in.pressX = 300.0f + kColumnContentInset;
     in.pressY = 200.0f;
     in.pressWidth = 200.0f;
     in.cardWidth = 200.0f;
@@ -951,11 +1328,17 @@ REGISTER_TEST(todo_ui_drag_hit_pure,
     DOCTEST_CHECK_EQ(dragDropTarget(in, 50.0, 300.0), -1);   // 板左外
     DOCTEST_CHECK_EQ(dragDropTarget(in, 400.0, 100.0), -1);  // 板上方
     DOCTEST_CHECK_EQ(dragDropTarget(in, 400.0, 700.0), -1);  // 板下方
+    // 卡左内边距补偿的判别断言（漏减 inset 时命中框整体右移 16px → 这两条
+    // 会红）：列 1 左缘内 16px 带（300..316，卡占不到但仍是本列落区）必须
+    // 命中列 1；列 0 左缘内 8px（80..88）必须命中列 0
+    DOCTEST_CHECK_EQ(dragDropTarget(in, 305.0, 300.0), 1);   // 列 1 左缘 + 5
+    DOCTEST_CHECK_EQ(dragDropTarget(in, 84.0, 300.0), 0);    // 列 0 左缘 + 4
+    DOCTEST_CHECK_EQ(dragDropTarget(in, 299.0, 300.0), -1);  // 列 1 左缘前 1px = 间隙
 
     // HiDPI（dpi=2）：指针空间坐标全翻倍，命中结果不变
     // （审计 M4 后尺度由调用点显式声明 → dpiScale 字段；探针值同源）
     DragHitInput hi = in;
-    hi.pressX = 600.0f;
+    hi.pressX = (300.0f + kColumnContentInset) * 2.0f;
     hi.pressY = 400.0f;
     hi.pressWidth = 400.0f;
     hi.dpiScale = 2.0f;
@@ -1033,8 +1416,10 @@ REGISTER_TEST(todo_ui_drag_scale_from_framework,
         DragHitInput in;
         in.fromColIndex = 1;
         in.colCount = 3;
-        // 指针空间 = compose 空间 * scale（契约：物理 = 逻辑 * scale）
-        in.pressX = 300.0f * scale;      // compose 300 = 源列左缘（锚点）
+        // 指针空间 = compose 空间 * scale（契约：物理 = 逻辑 * scale）。
+        // 锚点 = 卡片左缘 = 源列左缘 + kColumnContentInset（缺陷 1 起卡不再
+        // 贴列左缘；缺内边距补偿时下面的列隙/边界断言会红）
+        in.pressX = (300.0f + module::todo::ui::kColumnContentInset) * scale;
         in.pressY = 200.0f * scale;      // compose 200 = 列头 + 第 0 张 - 无滚动
         in.pressWidth = 200.0f * scale;  // 探针分子：按下 bounds（指针空间）
         in.cardWidth = 200.0f;           // 探针分母：compose 卡宽
@@ -1101,7 +1486,9 @@ REGISTER_TEST(todo_ui_drag_hit_scroll_same_frame,
     in.boardHeight = 500.0f;
     in.cardIndex = 3;
     in.scrollOffset = 100.0f;  // 按下时刻快照（DragState.pressScrollOffset 语义）
-    in.pressX = 80.0f;
+    // 锚点 x = 列 0 左缘 + 卡左内边距（缺陷 1 起卡在列内有 16px 内边距，
+    // dragDropTarget 内同源扣减还原列左缘）
+    in.pressX = 80.0f + u::kColumnContentInset;
     in.pressY = boardTopPx + (u::kColumnHeaderHeight + 3.0f * stride - 100.0f);
 
     // 同帧（快照值）：还原出的板顶 = 真实板顶 150 → 边界精确
@@ -1118,6 +1505,168 @@ REGISTER_TEST(todo_ui_drag_hit_scroll_same_frame,
     DOCTEST_CHECK_EQ(dragDropTarget(stale, 180.0, 160.0), -1);
     // 修复后调用方始终传按下快照 → 命中框仍钉在按下时刻的真实板面上
     DOCTEST_CHECK_EQ(dragDropTarget(in, 180.0, 160.0), 0);
+    return true;
+})
+
+// 拖拽跟手（2026-09-28）：锚点换算纯函数。锚点 = 按下时卡片位置（指针空间）
+// + 按下点起累计位移（DragEvent::totalX/totalY，物理像素），换算因子与
+// dragDropTarget 同一份 dpiScale。
+REGISTER_TEST(todo_ui_drag_ghost_anchor_pure,
+              "todo_ui: dragGhostAnchor 跟手锚点换算（纯函数）", {
+    using module::todo::ui::dragGhostAnchor;
+    // 100% 缩放、页面原点 0：锚点 = 按下位置 + 逐像素位移
+    auto a = dragGhostAnchor(300.0f, 200.0f, 40.0, -25.0, 0.0f, 1.0f);
+    DOCTEST_CHECK_EQ(a.x, 340.0f);
+    DOCTEST_CHECK_EQ(a.y, 175.0f);
+    // 位移为 0（刚按下）→ 锚点 = 卡片原位置（副本与原卡重合）
+    auto still = dragGhostAnchor(300.0f, 200.0f, 0.0, 0.0, 0.0f, 1.0f);
+    DOCTEST_CHECK_EQ(still.x, 300.0f);
+    DOCTEST_CHECK_EQ(still.y, 200.0f);
+    // HiDPI（dpi=2）：同一物理位移翻倍、锚点翻倍 → compose 结果与 100% 逐位一致
+    // （尺度因子若漏除或只除一边，这里会立刻红）
+    auto hi = dragGhostAnchor(600.0f, 400.0f, 80.0, -50.0, 0.0f, 2.0f);
+    DOCTEST_CHECK_EQ(hi.x, 340.0f);
+    DOCTEST_CHECK_EQ(hi.y, 175.0f);
+    // 页面区原点（侧边栏展开）只在锚点上减一次，位移里不减（对消口径同
+    // dragDropTarget：指针与锚点同空间）
+    auto orig = dragGhostAnchor(608.0f, 200.0f, 40.0, 0.0, 208.0f, 1.0f);
+    DOCTEST_CHECK_EQ(orig.x, 440.0f);  // 608 - 208 + 40
+    DOCTEST_CHECK_EQ(orig.y, 200.0f);
+    // 退化 dpiScale（0）按同尺度处理（windowToCompose 同口径），不产生 inf
+    auto degen = dragGhostAnchor(300.0f, 200.0f, 40.0, 0.0, 0.0f, 0.0f);
+    DOCTEST_CHECK_EQ(degen.x, 340.0f);
+    DOCTEST_CHECK_EQ(degen.y, 200.0f);
+    return true;
+})
+
+// 拖拽跟手（2026-09-28）无头回归：跟手副本的锚点、层序（坑一/坑四）、
+// 半透（坑二）、松手归零。
+REGISTER_TEST(todo_ui_drag_follow_ghost,
+              "todo_ui: 拖拽跟手副本（页面顶层 + 半透 + 松手消失）", {
+    TestEnv env;
+    DOCTEST_REQUIRE(env.ready);
+    // 种子列 0..3 → 源列 = 4、目标列 = 5（同 todo_ui_drag_insert_position）
+    auto src = env.svc->createColumn("跟手源列");
+    auto dst = env.svc->createColumn("跟手目标列");
+    DOCTEST_REQUIRE(src.isOk() && dst.isOk());
+    auto mover = env.svc->createTask(src.value().id, "被拖的任务");
+    DOCTEST_REQUIRE(mover.isOk());
+    {
+        // 带优先级拖：副本底色要跟手优先级（UI 整改 17 的卡底延伸）
+        module::todo::Task tm = mover.value();
+        tm.priority = module::todo::Priority::High;
+        DOCTEST_REQUIRE(env.svc->updateTask(tm).isOk());
+    }
+
+    std::unique_ptr<::core::Module> mod(create_todo_module());
+    mod->onStart();
+
+    eui::Ui ui;
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    auto composeLayout = [&]() {
+        ui.begin("todo_drag_ghost_frame");
+        mod->compose(ui, screen);
+        ui.end();
+        ui.layout(screen);
+    };
+    auto boundsOf = [](const core::dsl::Element* e) {
+        return eui::Rect{e->frame.x, e->frame.y, e->frame.width, e->frame.height};
+    };
+
+    composeLayout();
+    DOCTEST_CHECK(ui.find("todo.dragghost") == nullptr);  // 未拖动 → 不画副本
+    const auto* card = ui.find("todo.col.4.card.0.bg");
+    DOCTEST_REQUIRE(card != nullptr);
+    const eui::Rect cardBounds = boundsOf(card);
+    eui::PointerEvent pe;
+    card->onPress(pe, cardBounds);
+
+    // 拖到目标列：累计位移 (50, -30)（框架给的是按下点起的累计值）
+    const auto* dstBg = ui.find("todo.col.5.bg");
+    DOCTEST_REQUIRE(dstBg != nullptr);
+    core::dsl::DragEvent ev;
+    ev.x = dstBg->frame.x + dstBg->frame.width / 2.0f;
+    ev.y = dstBg->frame.y + 56.0f + 4.0f;
+    ev.totalX = 50.0;
+    ev.totalY = -30.0;
+    card->onDrag(ev);
+    composeLayout();
+
+    const auto* ghost = ui.find("todo.dragghost");
+    DOCTEST_REQUIRE(ghost != nullptr);
+    // 锚点 = 按下时卡片位置 + 累计位移（无头环境 contentScale=1、页面原点=0）
+    DOCTEST_CHECK_EQ(ghost->frame.x, cardBounds.x + 50.0f);
+    DOCTEST_CHECK_EQ(ghost->frame.y, cardBounds.y - 30.0f);
+    // 尺寸 = 本帧卡宽（与真卡同宽同高，跟手时不会忽大忽小）
+    DOCTEST_CHECK_EQ(ghost->frame.width, cardBounds.width);
+    DOCTEST_CHECK_EQ(ghost->frame.height, cardBounds.height);
+    // 坑一/坑四：副本是页面**顶层 root**（不在源列 .cards 调暗容器内），
+    // 且绘制序排在 todo.root 之后 = 压在所有列之上（跨列拖不被目标列卡片盖住）
+    const auto& roots = ui.orderedRoots();
+    auto rootIndexOf = [&roots](const core::dsl::Element* target) {
+        for (size_t i = 0; i < roots.size(); ++i) {
+            if (roots[i] == target) return static_cast<int>(i);
+        }
+        return -1;
+    };
+    const auto* boardRoot = ui.find("todo.root");
+    DOCTEST_REQUIRE(boardRoot != nullptr);
+    const int ghostIdx = rootIndexOf(ghost);
+    const int boardIdx = rootIndexOf(boardRoot);
+    DOCTEST_CHECK(ghostIdx >= 0);           // 副本自身就是 root（不在列内）
+    DOCTEST_CHECK(ghostIdx > boardIdx);     // 排在 todo.root 之后 = 画在其上
+    DOCTEST_CHECK(ghost->zIndex > 0);       // z 压过看板子树（列滚动条 z+1）
+    // 坑二：半透（< 1）——目标列插入位占位条能从副本底下透出，不整块吃掉
+    DOCTEST_CHECK(ghost->opacity < 1.0f);
+    // UI 整改 17：副本底色 = 该卡的优先级底（与真卡同一条 priorityCardBg）——
+    // 拖到一半优先级指示不许消失（回退成 t.colors.surface 即红）
+    {
+        const auto* ghostBg = ui.find("todo.dragghost.bg");
+        DOCTEST_REQUIRE(ghostBg != nullptr);
+        const auto& t = core::theme::current();
+        DOCTEST_CHECK(colorNear(
+            ghostBg->color,
+            eui::mixColor(t.colors.surface, t.colors.error, 0.30f)));
+    }
+    // 跟手期间源列原卡照旧半透明 + 源列调暗（门控关系未反：被调暗的是原卡
+    // 与源列，副本全亮跟手）
+    const auto* srcCards = ui.find("todo.col.4.cards");
+    DOCTEST_REQUIRE(srcCards != nullptr);
+    DOCTEST_CHECK_EQ(srcCards->opacity, 0.6f);
+    const auto* srcCard = ui.find("todo.col.4.card.0.bg");
+    DOCTEST_REQUIRE(srcCard != nullptr);
+    DOCTEST_CHECK_EQ(srcCard->opacity, 0.45f);
+    // 目标列占位条仍在（跟手副本不改既有插入位预览）
+    DOCTEST_CHECK(ui.find("todo.col.5.dropbar") != nullptr);
+
+    // 松手（落回源列 = 取消）：副本消失、偏移归零、源列恢复全亮
+    {
+        eui::PointerEvent up;
+        up.x = ui.find("todo.col.4.bg")->frame.x + 40.0f;
+        up.y = cardBounds.y + 20.0f;
+        up.action = eui::PointerAction::Release;
+        // mid-drag composeLayout 重建元素树——release 前重新 find
+        const auto* rel = ui.find("todo.col.4.card.0.bg");
+        DOCTEST_REQUIRE(rel != nullptr);
+        rel->onRelease(up, eui::Rect{});
+    }
+    composeLayout();
+    DOCTEST_CHECK(ui.find("todo.dragghost") == nullptr);  // 偏移/副本归零
+    const auto* srcCardsAfter = ui.find("todo.col.4.cards");
+    DOCTEST_REQUIRE(srcCardsAfter != nullptr);
+    DOCTEST_CHECK_EQ(srcCardsAfter->opacity, 1.0f);  // 落位淡回起点（既有逻辑未破）
+    const auto* srcCardAfter = ui.find("todo.col.4.card.0.bg");
+    DOCTEST_REQUIRE(srcCardAfter != nullptr);
+    DOCTEST_CHECK_EQ(srcCardAfter->opacity, 1.0f);
+    // 取消（未跨列）→ 任务留在源列
+    auto ts = env.svc->listTasks(src.value().id);
+    DOCTEST_REQUIRE(ts.isOk());
+    DOCTEST_REQUIRE_EQ(ts.value().size(), static_cast<size_t>(1));
+    DOCTEST_CHECK_EQ(ts.value()[0].title, std::string("被拖的任务"));
+
+    mod->onStop();
     return true;
 })
 
@@ -1172,8 +1721,13 @@ REGISTER_TEST(todo_ui_column_scroll_geometry,
     DOCTEST_REQUIRE(card0 != nullptr);
     DOCTEST_REQUIRE(card1 != nullptr);
     DOCTEST_REQUIRE(card14 != nullptr);
-    DOCTEST_CHECK_EQ(card0->frame.x, colBg->frame.x);        // 卡片在列内（不是横向流式排开）
-    DOCTEST_CHECK_EQ(card1->frame.x, colBg->frame.x);
+    // 卡片在列内（不是横向流式排开）。2026-09-28 真机缺陷 1：卡左缘 = 列左缘
+    // + 列内容左内边距 kColumnContentInset（16px）——旧断言锁的是缺陷形态
+    //（卡贴列左缘、左零边距），现在两侧 inset 同源派生（见 contentCardWidth）
+    DOCTEST_CHECK_EQ(card0->frame.x,
+                     colBg->frame.x + module::todo::ui::kColumnContentInset);
+    DOCTEST_CHECK_EQ(card1->frame.x,
+                     colBg->frame.x + module::todo::ui::kColumnContentInset);
     DOCTEST_CHECK_EQ(card1->frame.y - card0->frame.y, 84.0f + 8.0f);  // 卡高 + 间距
     DOCTEST_CHECK(card14->frame.y > card1->frame.y);          // 超出视口的卡继续向下排
 
@@ -1505,6 +2059,14 @@ REGISTER_TEST(todo_ui_status_toast_timeout,
     const auto* title = frame.ui.find("todo.toast.title");
     DOCTEST_REQUIRE(title != nullptr);
     DOCTEST_CHECK(title->text.find("先点击卡片选中任务") != std::string::npos);
+    // 正文留空（todo 的 setStatus 只有标题）：空串必须原样落到 .message 节点，
+    // 不得回落 EUI-NEO 组件自带的英文占位正文——2026-09-29 真机截图实锤
+    // 「已调整顺序」toast 正文显示 "Short status message for non-blocking
+    // feedback."（回退 toast.cpp 的空判断即红）
+    const auto* body = frame.ui.find("todo.toast.message");
+    DOCTEST_REQUIRE(body != nullptr);
+    DOCTEST_CHECK(body->text.empty());
+    DOCTEST_CHECK(body->text.find("Short status message") == std::string::npos);
     // subtitle 始终是静态操作说明
     const auto* sub = frame.ui.find("todo.subtitle");
     DOCTEST_REQUIRE(sub != nullptr);
@@ -2234,75 +2796,308 @@ REGISTER_TEST(todo_ui_feature_pure_helpers,
     return true;
 })
 
-// UI 整改 12：优先级底色 pill（去「高/中/低」文本）+ 卡片无左侧竖条
-REGISTER_TEST(todo_ui_priority_pill,
-              "todo_ui: 优先级底色区分（pill 无文本/竖条删除，headless）", {
-    using module::todo::ui::priorityPillBg;
-    using module::todo::ui::priorityLabel;
-    const auto& t = core::theme::current();
-    // None → 无 pill（无标记）
-    DOCTEST_CHECK(!priorityPillBg(module::todo::Priority::None, t).has_value());
-    // 低/中/高 → 都有底色，且与 surface 不同（可见）、三者互不相同
-    const auto low = priorityPillBg(module::todo::Priority::Low, t);
-    const auto mid = priorityPillBg(module::todo::Priority::Medium, t);
-    const auto high = priorityPillBg(module::todo::Priority::High, t);
-    DOCTEST_REQUIRE(low.has_value() && mid.has_value() && high.has_value());
-    DOCTEST_CHECK(low->r != t.colors.surface.r || low->g != t.colors.surface.g ||
-                  low->b != t.colors.surface.b);
-    DOCTEST_CHECK(mid->r != low->r || mid->g != low->g || mid->b != low->b ||
-                  mid->a != low->a);
-    DOCTEST_CHECK(high->r != mid->r || high->g != mid->g || high->b != mid->b ||
-                  high->a != mid->a);
-    // 文案锚点仍保留（详情弹窗优先级选择器用），卡片 chip 不得再显示文本
-    DOCTEST_CHECK(std::string(priorityLabel(module::todo::Priority::High)) == "●高");
-
-    // 看板卡片：pill 存在但无文本；左侧优先级竖条（.bar）不再渲染
+// ---- UI 整改 17 ①：优先级**直接改卡底色**（不再加色块 pill）----
+// 回退任一条即红：把 .prio 色块画回来 → 元素存在断言红；把卡底算式换回
+// t.colors.surface → 「无 vs 高 背景色不同」与 tint 取值断言红；把 hover 态
+// 换回中性 token → 三态叠加断言红；调低/调高对比度 → ≥4.5:1 断言红。
+REGISTER_TEST(todo_ui_priority_card_tint,
+              "todo_ui: 优先级直接改卡底色（色块已删 / 三态叠加 / 对比度 ≥ AA）", {
+    using module::todo::Priority;
     TestEnv env;
     DOCTEST_REQUIRE(env.ready);
-    auto col = env.svc->createColumn("优先级列");
+    auto col = env.svc->createColumn("底色列");
     DOCTEST_REQUIRE(col.isOk());
-    auto a = env.svc->createTask(col.value().id, "高优先级任务");
+    const Priority kOrder[4] = {Priority::None, Priority::Low, Priority::Medium,
+                                Priority::High};
+    for (int i = 0; i < 4; ++i) {
+        auto a = env.svc->createTask(col.value().id, "底色卡" + std::to_string(i));
+        DOCTEST_REQUIRE(a.isOk());
+        module::todo::Task t2 = a.value();
+        t2.priority = kOrder[i];
+        DOCTEST_REQUIRE(env.svc->updateTask(t2).isOk());
+    }
+    // 期望值独立写死在用例里（不引用被测常量表）：改强度表/色源即红
+    const float kStrength[4] = {0.00f, 0.16f, 0.22f, 0.30f};
+
+    std::unique_ptr<::core::Module> mod(create_todo_module());
+    mod->onStart();
+    Frame frame(mod.get());
+    frame.ui.layout(1600.0f, 1000.0f);
+    const auto& t = core::theme::current();
+
+    // 判据 a：优先级色块元素已不存在（元素 id 查不到）
+    for (int i = 0; i < 4; ++i) {
+        const std::string cid = "todo.col.4.card." + std::to_string(i);
+        DOCTEST_CHECK(frame.ui.find(cid + ".prio.bg") == nullptr);
+        DOCTEST_CHECK(frame.ui.find(cid + ".prio.text") == nullptr);
+        DOCTEST_CHECK(frame.ui.find(cid + ".bar") == nullptr);
+    }
+
+    const auto* noneBg = frame.ui.find("todo.col.4.card.0.bg");
+    const auto* lowBg = frame.ui.find("todo.col.4.card.1.bg");
+    const auto* midBg = frame.ui.find("todo.col.4.card.2.bg");
+    const auto* highBg = frame.ui.find("todo.col.4.card.3.bg");
+    DOCTEST_REQUIRE(noneBg != nullptr);
+    DOCTEST_REQUIRE(lowBg != nullptr);
+    DOCTEST_REQUIRE(midBg != nullptr);
+    DOCTEST_REQUIRE(highBg != nullptr);
+
+    // 判据 b：底色 = 卡三态基色 × 强度表的 tint（None 档强度 0 = 默认卡底）
+    const eui::Color kPrio[4] = {t.colors.textTertiary, t.colors.info,
+                                 t.colors.warning, t.colors.error};
+    const core::dsl::Element* cards[4] = {noneBg, lowBg, midBg, highBg};
+    for (int i = 0; i < 4; ++i) {
+        DOCTEST_CHECK(colorNear(
+            cards[i]->color,
+            eui::mixColor(t.colors.surface, kPrio[i], kStrength[i])));
+    }
+    // 判据 b'：无优先级卡与高优先级卡背景色不同（用户原始判据 1）
+    DOCTEST_CHECK(!colorNear(noneBg->color, highBg->color, 0.01f));
+    // 判据 b'：四档两两不同（含 None ↔ Low：None 灰 vs 低优先级蓝）
+    for (int i = 0; i < 4; ++i) {
+        for (int j = i + 1; j < 4; ++j) {
+            DOCTEST_CHECK(maxChannelDelta(cards[i]->color, cards[j]->color) >
+                          0.02f);
+        }
+    }
+    // 判据 b'：低优先级「不刺眼」= 与 surface 的色差落在浅档；高优先级看得出
+    DOCTEST_CHECK(maxChannelDelta(lowBg->color, t.colors.surface) <= 32.0f / 255.0f);
+    DOCTEST_CHECK(maxChannelDelta(highBg->color, t.colors.surface) >= 45.0f / 255.0f);
+
+    // 判据 c：hover / active 与优先级底色**叠加**（不被中性态色顶掉），
+    // 且仍与 base 不同（既有 hover 反馈没被底色覆盖）
+    for (int i = 0; i < 4; ++i) {
+        DOCTEST_CHECK(colorNear(
+            cards[i]->hoverColor,
+            eui::mixColor(t.colors.hover, kPrio[i], kStrength[i])));
+        DOCTEST_CHECK(colorNear(
+            cards[i]->pressedColor,
+            eui::mixColor(t.colors.active, kPrio[i], kStrength[i])));
+        DOCTEST_CHECK(maxChannelDelta(cards[i]->hoverColor, cards[i]->color) >
+                      0.02f);
+    }
+    // 判据 c'：选中态边框仍在（2px primary 只在选中卡上；未被底色盖住）
+    DOCTEST_CHECK_EQ(noneBg->border.width, 1.0f);
+    DOCTEST_CHECK(colorNear(highBg->border.color, t.colors.borderDefault));
+    {
+        Frame f2(mod.get());
+        const auto* card = f2.ui.find("todo.col.4.card.3.bg");
+        DOCTEST_REQUIRE(card != nullptr);
+        DOCTEST_REQUIRE(card->onClick != nullptr);
+        card->onClick();  // 选中高优先级卡（下一帧看选中态）
+        Frame f3(mod.get());
+        const auto* sel = f3.ui.find("todo.col.4.card.3.bg");
+        DOCTEST_REQUIRE(sel != nullptr);
+        DOCTEST_CHECK_EQ(sel->border.width, 2.0f);
+        DOCTEST_CHECK(colorNear(sel->border.color, t.colors.primary));
+        // 选中不改变优先级底色（边框与底色两通道独立）
+        DOCTEST_CHECK(colorNear(
+            sel->color,
+            eui::mixColor(t.colors.surface, t.colors.error, 0.30f)));
+    }
+
+    // 判据 d：底色改了，卡片文字对比度不掉（WCAG AA 4.5:1）
+    for (int i = 0; i < 4; ++i) {
+        DOCTEST_CHECK(contrastRatio(cards[i]->color, t.colors.textPrimary) >= 4.5f);
+    }
+    // 浅色主题复查（默认深色）：底色随 surface 走，浅底 + 深字方向不变
+    ::core::theme::setLight();
+    const auto& tl = core::theme::current();
+    Frame light(mod.get());
+    light.ui.layout(1600.0f, 1000.0f);
+    const auto* lNone = light.ui.find("todo.col.4.card.0.bg");
+    const auto* lHigh = light.ui.find("todo.col.4.card.3.bg");
+    DOCTEST_REQUIRE(lNone != nullptr);
+    DOCTEST_REQUIRE(lHigh != nullptr);
+    DOCTEST_CHECK(colorNear(lNone->color, tl.colors.surface));
+    DOCTEST_CHECK(colorNear(
+        lHigh->color, eui::mixColor(tl.colors.surface, tl.colors.error, 0.30f)));
+    DOCTEST_CHECK(!colorNear(lNone->color, lHigh->color, 0.01f));
+    DOCTEST_CHECK(contrastRatio(lNone->color, tl.colors.textPrimary) >= 4.5f);
+    DOCTEST_CHECK(contrastRatio(lHigh->color, tl.colors.textPrimary) >= 4.5f);
+    ::core::theme::setDark();  // 恢复默认（本用例前提 = 深色，防污染后续用例）
+
+    mod->onStop();
+    return true;
+})
+
+// ---- UI 整改 17 ②：详情弹窗优先级按钮**自身带该优先级色底** ----
+// 同源判据：按钮底 = priorityButtonBg（与卡底同一张 priorityColor 表 + 同一张
+// 强度表），未选中 = 强度表浅 tint / 选中 = 0.55 深 tint（"实色感"）。
+REGISTER_TEST(todo_ui_priority_button_tint,
+              "todo_ui: 详情优先级按钮各自带该档色底（选中/未选中可区分）", {
+    using module::todo::Priority;
+    TestEnv env;
+    DOCTEST_REQUIRE(env.ready);
+    auto col = env.svc->createColumn("按钮列");
+    DOCTEST_REQUIRE(col.isOk());
+    auto a = env.svc->createTask(col.value().id, "按钮卡");
     DOCTEST_REQUIRE(a.isOk());
     {
-        // 直接对 service 任务设优先级（updateTask 带优先级字段）
+        // 起始优先级给「高」：详情弹窗打开时 pic.3 是选中态，其余三档是未选中
+        // （默认 None 起始则 prio.0 选中，会把「None 未选中档」的取值问句混淆）
         module::todo::Task t2 = a.value();
         t2.priority = module::todo::Priority::High;
-        auto up = env.svc->updateTask(t2);
-        DOCTEST_REQUIRE(up.isOk());
+        DOCTEST_REQUIRE(env.svc->updateTask(t2).isOk());
+    }
+
+    std::unique_ptr<::core::Module> mod(create_todo_module());
+    mod->onStart();
+    const auto& t = core::theme::current();
+    // 期望值独立写死（改色源 / 改强度表 / 改选中档强度即红）
+    const eui::Color kPrio[4] = {t.colors.textTertiary, t.colors.info,
+                                 t.colors.warning, t.colors.error};
+    const float kUnsel[4] = {0.12f, 0.16f, 0.22f, 0.30f};
+    const float kPicked = 0.55f;
+
+    Frame f1(mod.get());
+    const auto* card = f1.ui.find("todo.col.4.card.0.bg");
+    DOCTEST_REQUIRE(card != nullptr);
+    DOCTEST_REQUIRE(card->onClick != nullptr);
+    card->onClick();  // 打开详情（弹窗状态留在模块侧，后续帧持续渲染）
+
+    // 起始态（任务优先级 = 高）：0/1/2 档未选中、3 档选中
+    eui::Color unsel[4] = {};
+    bool observed[4] = {false, false, false, false};
+    {
+        Frame f(mod.get());
+        for (int j = 0; j < 3; ++j) {
+            const auto* bg = f.ui.find("todo.dialog.detail.prio." +
+                                       std::to_string(j) + ".bg");
+            DOCTEST_REQUIRE(bg != nullptr);
+            unsel[j] = bg->color;
+            observed[j] = true;
+            DOCTEST_CHECK(colorNear(
+                bg->color, eui::mixColor(t.colors.surfaceElevated, kPrio[j],
+                                         kUnsel[j])));
+            DOCTEST_CHECK_EQ(bg->border.width, 1.0f);
+            DOCTEST_CHECK(contrastRatio(bg->color, t.colors.textPrimary) >= 4.5f);
+        }
+        const auto* picked = f.ui.find("todo.dialog.detail.prio.3.bg");
+        DOCTEST_REQUIRE(picked != nullptr);
+        DOCTEST_CHECK(colorNear(
+            picked->color,
+            eui::mixColor(t.colors.surfaceElevated, kPrio[3], kPicked)));
+    }
+
+    // 逐档点选（i = 被点中的那档）：
+    //   选中按钮 = 深一档 tint（0.55）+ 2px 该档色边框 + 与自己的未选中态可区分
+    //   其余三档 = 强度表浅 tint + 1px 边框（四档的未选中变体在循环里全覆盖）
+    for (int i = 0; i < 4; ++i) {
+        Frame f(mod.get());
+        const auto* btn = f.ui.find("todo.dialog.detail.prio." +
+                                    std::to_string(i) + ".bg");
+        DOCTEST_REQUIRE(btn != nullptr);
+        DOCTEST_REQUIRE(btn->onClick != nullptr);
+        btn->onClick();
+        Frame g(mod.get());
+        const auto* sel = g.ui.find("todo.dialog.detail.prio." +
+                                    std::to_string(i) + ".bg");
+        DOCTEST_REQUIRE(sel != nullptr);
+        DOCTEST_CHECK(colorNear(
+            sel->color,
+            eui::mixColor(t.colors.surfaceElevated, kPrio[i], kPicked)));
+        DOCTEST_CHECK(contrastRatio(sel->color, t.colors.textPrimary) >= 4.5f);
+        DOCTEST_CHECK_EQ(sel->border.width, 2.0f);
+        DOCTEST_CHECK(colorNear(sel->border.color, kPrio[i]));
+        for (int j = 0; j < 4; ++j) {
+            const auto* other = g.ui.find("todo.dialog.detail.prio." +
+                                          std::to_string(j) + ".bg");
+            DOCTEST_REQUIRE(other != nullptr);
+            if (j == i) continue;
+            unsel[j] = other->color;
+            observed[j] = true;
+            // 其余按钮底色 == 各自档位的浅 tint（None 档也有自己的 0.12 灰）
+            DOCTEST_CHECK(colorNear(
+                other->color, eui::mixColor(t.colors.surfaceElevated, kPrio[j],
+                                            kUnsel[j])));
+            DOCTEST_CHECK_EQ(other->border.width, 1.0f);
+            // 未选中底色上的文字对比度
+            DOCTEST_CHECK(contrastRatio(other->color, t.colors.textPrimary) >=
+                          4.5f);
+        }
+        // 选中 ≠ 自己的未选中态（同档对比）
+        DOCTEST_REQUIRE(observed[i]);
+        DOCTEST_CHECK(!colorNear(sel->color, unsel[i], 0.02f));
+        // 不同优先级按钮底色互不相同（四档两两）
+        for (int x = 0; x < 4; ++x) {
+            for (int y = x + 1; y < 4; ++y) {
+                DOCTEST_REQUIRE(observed[x] && observed[y]);
+                DOCTEST_CHECK(maxChannelDelta(unsel[x], unsel[y]) > 0.03f);
+            }
+        }
+    }
+
+    mod->onStop();
+    return true;
+})
+
+// ---- UI 整改 18 ③：卡片标签文本调大一档（chip 高随之适配，不裁不溢出）----
+// 回退字号（12 → 10）→ fontSize 断言红；回退 chip 高（22 → 18）→ height 断言红；
+// 只调字号不调 chip 高 → 内边距断言红；估宽不跟着放大 → 溢出卡宽断言红。
+REGISTER_TEST(todo_ui_tag_chip_font_bigger,
+              "todo_ui: 标签 chip 字号 10→12 / 高 18→22（不裁字、不溢出卡宽）", {
+    TestEnv env;
+    DOCTEST_REQUIRE(env.ready);
+    auto col = env.svc->createColumn("标签列");
+    DOCTEST_REQUIRE(col.isOk());
+    auto a = env.svc->createTask(col.value().id, "带标签卡");
+    DOCTEST_REQUIRE(a.isOk());
+    const std::vector<std::string> kTags = {"重要", "前端"};
+    {
+        module::todo::Task t2 = a.value();
+        t2.tags = kTags;
+        DOCTEST_REQUIRE(env.svc->updateTask(t2).isOk());
     }
     std::unique_ptr<::core::Module> mod(create_todo_module());
     mod->onStart();
     Frame frame(mod.get());
-    // pill 在（id 不变）+ 文本为空；原先的 chip 文本 id 仍可定位
-    const auto* prio = frame.ui.find("todo.col.4.card.0.prio.bg");
-    DOCTEST_REQUIRE(prio != nullptr);
-    const auto* prioText = frame.ui.find("todo.col.4.card.0.prio.text");
-    DOCTEST_REQUIRE(prioText != nullptr);
-    DOCTEST_CHECK(prioText->text.empty());  // 去「高/中/低」字样
-    // 左侧竖条删除（UI 整改 16）：不再存在 .bar 元素；选中态边框也不
-    // 靠竖条表达——卡片交互层 border 未选 1px / 选中 2px（见渲染断言）
-    DOCTEST_CHECK(frame.ui.find("todo.col.4.card.0.bar") == nullptr);
+    frame.ui.layout(1600.0f, 1000.0f);
+    const auto& t = core::theme::current();
+
     const auto* cardBg = frame.ui.find("todo.col.4.card.0.bg");
     DOCTEST_REQUIRE(cardBg != nullptr);
-    DOCTEST_CHECK_EQ(cardBg->border.width, 1.0f);       // 未选中：默认边框
-    // 未选中边框色 = borderDefault（Color 无 operator==，逐分量比）
-    DOCTEST_CHECK(cardBg->border.color.r != t.colors.primary.r ||
-                  cardBg->border.color.g != t.colors.primary.g ||
-                  cardBg->border.color.b != t.colors.primary.b);
+    for (int i = 0; i < 2; ++i) {
+        const std::string cid =
+            "todo.col.4.card.0.tag." + std::to_string(i);
+        const auto* chipBg = frame.ui.find(cid + ".bg");
+        const auto* chipText = frame.ui.find(cid + ".text");
+        DOCTEST_REQUIRE(chipBg != nullptr);
+        DOCTEST_REQUIRE(chipText != nullptr);
+        // 调后字号 12（= fontSizeSmall - 1；调前 10 = fontSizeSmall - 3）
+        DOCTEST_CHECK_EQ(chipText->fontSize, t.sizes.fontSizeSmall - 1.0f);
+        DOCTEST_CHECK_EQ(chipText->fontSize, 12.0f);
+        // chip 高跟着适配（调前 18），lineHeight 同高 → 文字不裁行
+        DOCTEST_CHECK_EQ(chipBg->frame.height, 22.0f);
+        DOCTEST_CHECK_EQ(chipText->lineHeight, chipBg->frame.height);
+        // chip 高 ≥ 字号 + 上下各 5px 内边距
+        DOCTEST_CHECK(chipBg->frame.height >= chipText->fontSize + 2.0f * 5.0f);
+        // 不溢出卡片：chip 右缘 ≤ 卡右缘、下缘 ≤ 卡下缘
+        DOCTEST_CHECK(chipBg->frame.x + chipBg->frame.width <=
+                      cardBg->frame.x + cardBg->frame.width);
+        DOCTEST_CHECK(chipBg->frame.y + chipBg->frame.height <=
+                      cardBg->frame.y + cardBg->frame.height);
+        // chip 宽 = 估宽（chipWidth 已随字号同步放大：20 + 6.6/字节；
+        // 评宽 ≥ 真实字形宽在 test_font_em_layout.cpp 用真实字体复核）
+        DOCTEST_CHECK_EQ(chipBg->frame.width,
+                         module::todo::ui::chipWidth(kTags[static_cast<size_t>(i)]));
+    }
+
     mod->onStop();
     return true;
 })
 
 // ---- 跨模块剩余审计修：窄列固定 66px 截止 chip 越出卡右缘 → 自适应缩窄 ----
-// 列宽无下限（colW = (contentW - gap*(n-1)) / n）：1200 窗 8 列 → 内容宽 110
-// < 16+42+66=124，修复前固定宽 chip 越出 ~14px。修复 = 宽 min(66, 剩余空间)、
-// 放不下最小宽度（24）跳过；宽窗不缩（保持 66px 原观感）
+// 列宽无下限（colW = (contentW - gap*(n-1)) / n）。UI 整改 17 删掉 42px 优先级
+// chip 后 chipX 起点从 58 回到 16，8 列（卡宽 94 → 剩余 66）不再触发缩窄，故
+// 本用例列数 8 → 9（1200 窗：colW = (1120-8*16)/9 ≈ 110.2，卡宽 ≈ 78.2 →
+// 剩余 ≈ 50.2 < 66 仍走缩窄分支）；宽窗不缩（保持 66px 原观感）
 REGISTER_TEST(todo_card_due_chip_adapts_narrow_column,
               "todo_ui: 窄列截止 chip 自适应缩窄不越出卡右缘（审计修复）", {
     TestEnv env;
     DOCTEST_REQUIRE(env.ready);
     std::vector<int64_t> colIds;
-    for (int i = 0; i < 4; ++i) {  // 迁移默认 4 列之上再造 4 列 = 8 列
+    for (int i = 0; i < 5; ++i) {  // 迁移默认 4 列之上再造 5 列 = 9 列
         auto col = env.svc->createColumn("窄列" + std::to_string(i));
         DOCTEST_REQUIRE(col.isOk());
         colIds.push_back(col.value().id);
@@ -2319,27 +3114,27 @@ REGISTER_TEST(todo_card_due_chip_adapts_narrow_column,
 
     std::unique_ptr<::core::Module> mod(create_todo_module());
     mod->onStart();
-    // 最小窗 1200×720：8 列 → colW = (1120-7*16)/8 = 126，卡内容宽 110
+    // 最小窗 1200×720：9 列 → colW = (1120-8*16)/9 ≈ 110.2，卡宽 ≈ 78.2
     Frame frame(mod.get(), 1200.0f, 720.0f);
     frame.ui.layout(1200.0f, 720.0f);  // 元素 frame 需显式 layout（Frame 不跑）
-    const auto* cardBg = frame.ui.find("todo.col.7.card.0.bg");
-    const auto* dueBg = frame.ui.find("todo.col.7.card.0.due.bg");
-    const auto* prioBg = frame.ui.find("todo.col.7.card.0.prio.bg");
+    const auto* cardBg = frame.ui.find("todo.col.8.card.0.bg");
+    const auto* dueBg = frame.ui.find("todo.col.8.card.0.due.bg");
     DOCTEST_REQUIRE(cardBg != nullptr);
     DOCTEST_REQUIRE(dueBg != nullptr);
-    DOCTEST_REQUIRE(prioBg != nullptr);
-    // 截止 chip 右缘不越出卡右缘（修复前固定 66px → 58+66=124 > 110）
+    // 优先级 chip 已删（UI 整改 17）：此处不再有 .prio 元素
+    DOCTEST_CHECK(frame.ui.find("todo.col.8.card.0.prio.bg") == nullptr);
+    // 截止 chip 右缘不越出卡右缘（修复前固定 66px 越界）
     DOCTEST_CHECK(dueBg->frame.x + dueBg->frame.width <=
                   cardBg->frame.x + cardBg->frame.width);
-    // chip 缩窄（= 110-58=52）且仍在（≥ 最小宽 24）；优先级 pill 不越出
+    // chip 缩窄到「卡宽 - 左右留白」且仍在（≥ 最小宽 24）
     DOCTEST_CHECK(dueBg->frame.width >= 24.0f);
     DOCTEST_CHECK(dueBg->frame.width < 66.0f);
-    DOCTEST_CHECK(prioBg->frame.x + prioBg->frame.width <=
-                  cardBg->frame.x + cardBg->frame.width);
-    // 宽窗 1600×1000 8 列：colW = (1520-112)/8 = 176，内容宽 160 → 不缩
+    DOCTEST_CHECK_EQ(dueBg->frame.width,
+                     std::min(66.0f, cardBg->frame.width - 12.0f - 16.0f));
+    // 宽窗 1600×1000 9 列：colW = (1520-128)/9 ≈ 154.7 → 不缩
     Frame wide(mod.get(), 1600.0f, 1000.0f);
     wide.ui.layout(1600.0f, 1000.0f);
-    const auto* wideDue = wide.ui.find("todo.col.7.card.0.due.bg");
+    const auto* wideDue = wide.ui.find("todo.col.8.card.0.due.bg");
     DOCTEST_REQUIRE(wideDue != nullptr);
     DOCTEST_CHECK_EQ(wideDue->frame.width, 66.0f);
 
@@ -2665,7 +3460,7 @@ REGISTER_TEST(todo_ui_new_column_dialog,
     eui::KeyEvent selectAll;
     selectAll.key = eui::InputKey::A;
     selectAll.action = eui::KeyAction::Press;
-    selectAll.modifiers.control = true;
+    test_support::setShortcutModifier(selectAll.modifiers);
     rhit->onKeyEvent(selectAll);          // 内置 Ctrl+A 全选
     eui::TextInputEvent rtie;
     rtie.text = "列头改名";
@@ -2715,7 +3510,7 @@ REGISTER_TEST(todo_ui_dialog_form_error,
     eui::KeyEvent selectAll;
     selectAll.key = eui::InputKey::A;
     selectAll.action = eui::KeyAction::Press;
-    selectAll.modifiers.control = true;
+    test_support::setShortcutModifier(selectAll.modifiers);
     eui::KeyEvent del;
     del.key = eui::InputKey::Delete;
     del.action = eui::KeyAction::Press;
@@ -3228,10 +4023,13 @@ REGISTER_TEST(todo_ui_r5_pure_helpers,
                      g3.boardTop + ui::kColumnHeaderHeight +
                          3.0f * (ui::kCardHeight + ui::kCardGap));
 
-    // chip 估宽：基础 20 + ASCII 5.5/字节、非 ASCII 4/字节（UTF-8 下汉字 3 字节）
+    // chip 估宽：基础 20 + ASCII 6.6/字节、非 ASCII 4.8/字节（UTF-8 下汉字 3
+    // 字节）——UI 整改 18 字号 10 → 12 后每字节估值同比放大 ×1.2（5.5→6.6 /
+    // 4→4.8），基数 20（左右各 10px 留白）不变。期望值写死（不是 chipWidth 内部
+    // 常量的复述）：改估值或忘改即红——忘改会小于真实字形宽（font-em 用例复核）
     DOCTEST_CHECK_EQ(ui::chipWidth(""), 20.0f);
-    DOCTEST_CHECK_EQ(ui::chipWidth("ab"), 31.0f);
-    DOCTEST_CHECK_EQ(ui::chipWidth("中"), 32.0f);
+    DOCTEST_CHECK_EQ(ui::chipWidth("ab"), 20.0f + 6.6f + 6.6f);
+    DOCTEST_CHECK_EQ(ui::chipWidth("中"), 20.0f + 4.8f + 4.8f + 4.8f);
 
     // 查找辅助：列内任务按 position 升序、任务/列按 id、语义列按 kind
     std::vector<Task> tasks;

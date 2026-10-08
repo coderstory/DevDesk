@@ -171,44 +171,9 @@ const char* kGhostFixtureJson =
     "  }"
     "}";
 
-// 最小 PNG 头文件（魔数 + IHDR 尺寸 + 8bit RGBA 类型 + 填充字节）——
-// pngLooksValid 只核头部 33 字节，夹具帧只需头部合法，无需完整 IDAT/IEND
-void writeMinimalPng(const std::filesystem::path& path, int width, int height) {
-    std::ofstream out(path, std::ios::binary);
-    static const unsigned char kSig[8] = {0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A};
-    out.write(reinterpret_cast<const char*>(kSig), 8);
-    const auto be32 = [](unsigned char* p, std::uint32_t v) {
-        p[0] = static_cast<unsigned char>((v >> 24) & 0xFF);
-        p[1] = static_cast<unsigned char>((v >> 16) & 0xFF);
-        p[2] = static_cast<unsigned char>((v >> 8) & 0xFF);
-        p[3] = static_cast<unsigned char>(v & 0xFF);
-    };
-    unsigned char ihdr[26] = {};
-    be32(ihdr + 0, 13);  // IHDR 数据长度
-    ihdr[4] = 'I'; ihdr[5] = 'H'; ihdr[6] = 'D'; ihdr[7] = 'R';
-    be32(ihdr + 8, static_cast<std::uint32_t>(width));
-    be32(ihdr + 12, static_cast<std::uint32_t>(height));
-    ihdr[16] = 8;  // bit depth
-    ihdr[17] = 6;  // color type RGBA
-    out.write(reinterpret_cast<const char*>(ihdr), 18);
-    const char pad[8] = {};  // 凑满 pngLooksValid 读取的 33 字节
-    out.write(pad, sizeof(pad));
-}
-
-// 向候选根写一份 shipped 形态皮肤：pet.json + 四态 13 帧（f0..f5/p0..p1/
-// s0..s2/t0..t1，128×128 头部合法帧文件）
-void writeShippedSkinFixture(const std::filesystem::path& root, const char* name,
-                             const char* jsonText) {
-    static const char* kFrameNames[] = {
-        "f0.png", "f1.png", "f2.png", "f3.png", "f4.png", "f5.png",
-        "p0.png", "p1.png", "s0.png", "s1.png", "s2.png", "t0.png", "t1.png"};
-    std::error_code ec;
-    std::filesystem::create_directories(root / name, ec);
-    test_support::writeTextFile(root / name / "pet.json", jsonText);
-    for (const char* frame : kFrameNames) {
-        writeMinimalPng(root / name / frame, 128, 128);
-    }
-}
+// 皮肤夹具（pet.json + 四态 13 帧）与最小 PNG 头写法已收编到
+// test_support::writeShippedSkinFixture / writeMinimalPng（PET-CLOSE 起
+// test_settings 的模块开关用例共用同一份夹具，见 test_support.h 第 7 节）
 
 } // namespace
 
@@ -322,7 +287,7 @@ REGISTER_TEST(pet_default_skin_shipped, "pet: 默认皮肤加载随包 robot（�
     const auto missing = ensureDefaultSkin();
     DOCTEST_CHECK(missing.isFail());
     // 候选根出现 shipped 形态 robot 夹具 → 加载成功
-    writeShippedSkinFixture(root, "robot", kRobotFixtureJson);
+    test_support::writeShippedSkinFixture(root, "robot", kRobotFixtureJson);
     const auto r = ensureDefaultSkin();
     DOCTEST_CHECK_MESSAGE(r.isOk(), r.isFail() ? r.errorMessage() : "");
     const module::pet::PetSkin& skin = r.value();
@@ -398,7 +363,7 @@ REGISTER_TEST(pet_start_window_request, "pet: 开窗请求逐字段断言（无�
     // 清空可能残留的窗口请求队列；默认皮肤 = 随包 robot 夹具（startPetWindow
     // 不再写盘生成，皮肤须先存在于候选根）
     (void)app::consumeWindowRequests();
-    writeShippedSkinFixture(petsRoot, "robot", kRobotFixtureJson);
+    test_support::writeShippedSkinFixture(petsRoot, "robot", kRobotFixtureJson);
 
     module::pet::startPetWindow(module::pet::PetWindowConfig{
         "", 50, 60});  // 皮肤空 = 默认；位置已知
@@ -407,7 +372,8 @@ REGISTER_TEST(pet_start_window_request, "pet: 开窗请求逐字段断言（无�
     const app::DslWindowRequest& req = requests[0];
     DOCTEST_CHECK_EQ(req.pageId, "pet");
     DOCTEST_CHECK_EQ(req.width, 128);   // G2：128×128 不再被放大
-    DOCTEST_CHECK_EQ(req.height, 128);
+    // 气泡让位条（pet_bubble.h）：窗口高 = 帧高 128 + 条 34（气泡不再盖精灵）
+    DOCTEST_CHECK_EQ(req.height, 128 + static_cast<int>(module::pet::kBubbleStripH));
     DOCTEST_CHECK(req.positionSet);
     DOCTEST_CHECK_EQ(req.x, 50);
     DOCTEST_CHECK_EQ(req.y, 60);
@@ -854,7 +820,7 @@ REGISTER_TEST(pet_default_skin_m2_frames, "pet: 随包 robot 四态帧齐备可�
     using namespace module::pet;
     const PetsDirEnv pets("defaultskin_m2");
     const std::filesystem::path& root = pets.root;
-    writeShippedSkinFixture(root, "robot", kRobotFixtureJson);
+    test_support::writeShippedSkinFixture(root, "robot", kRobotFixtureJson);
     const auto r = ensureDefaultSkin();
     DOCTEST_CHECK_MESSAGE(r.isOk(), r.isFail() ? r.errorMessage() : "");
     const PetSkin& skin = r.value();
@@ -885,8 +851,8 @@ REGISTER_TEST(pet_builtin_skins, "pet: 随包 robot/ghost 两款皮肤（四态�
     using namespace module::pet;
     const PetsDirEnv pets("builtin_skins");
     const std::filesystem::path& root = pets.root;
-    writeShippedSkinFixture(root, "robot", kRobotFixtureJson);
-    writeShippedSkinFixture(root, "ghost", kGhostFixtureJson);
+    test_support::writeShippedSkinFixture(root, "robot", kRobotFixtureJson);
+    test_support::writeShippedSkinFixture(root, "ghost", kGhostFixtureJson);
     // discoverSkins 发现全部 2 款（设置页下拉/右键换肤菜单数据源，零改动）
     const std::vector<std::string> found = discoverSkins();
     DOCTEST_CHECK_EQ(found.size(), static_cast<size_t>(2));
@@ -946,7 +912,7 @@ REGISTER_TEST(pet_discover_skins, "pet: 皮肤发现（下拉/换肤菜单的数
     std::filesystem::create_directories(root);
     DOCTEST_CHECK(discoverSkins().empty());
     // 随包形态 robot 夹具 + 手工放第二个皮肤包 → 都被发现
-    writeShippedSkinFixture(root, "robot", kRobotFixtureJson);
+    test_support::writeShippedSkinFixture(root, "robot", kRobotFixtureJson);
     std::filesystem::create_directories(root / "pixel-dog");
     {
         std::ofstream out(root / "pixel-dog" / "pet.json", std::ios::trunc);
@@ -1011,7 +977,7 @@ REGISTER_TEST(pet_apply_skin_and_reset, "pet: applyPetSkin 校验/持久化 + �
     using namespace module::pet;
     const PetsDirEnv pets("applyskin");
     const std::filesystem::path& root = pets.root;
-    writeShippedSkinFixture(root, "robot", kRobotFixtureJson);
+    test_support::writeShippedSkinFixture(root, "robot", kRobotFixtureJson);
     std::filesystem::create_directories(root / "pixel-dog");
     {
         std::ofstream out(root / "pixel-dog" / "pet.json", std::ios::trunc);
@@ -1465,7 +1431,7 @@ REGISTER_TEST(pet_show_window_reenqueues,
               "pet: showPetWindow 重新入队开窗请求（PAB-13）", {
     const PetsDirEnv pets("showwin");
     (void)app::consumeWindowRequests();  // 清残留
-    writeShippedSkinFixture(pets.root, "robot", kRobotFixtureJson);  // 默认皮肤 = 随包 robot
+    test_support::writeShippedSkinFixture(pets.root, "robot", kRobotFixtureJson);  // 默认皮肤 = 随包 robot
 
     // 先装配一次（= main 模块门控通过；同时把 windowRequested 置位）
     module::pet::startPetWindow(module::pet::PetWindowConfig{"", 120, 130});
@@ -1473,14 +1439,283 @@ REGISTER_TEST(pet_show_window_reenqueues,
     DOCTEST_REQUIRE_EQ(first.size(), static_cast<size_t>(1));
 
     // 重新显示：应再入队一条（皮肤/位置沿用 rt.config）
-    DOCTEST_CHECK(module::pet::showPetWindow());
+    DOCTEST_CHECK(module::pet::showPetWindow() ==
+                  module::pet::PetShowOutcome::Shown);
     const std::vector<app::DslWindowRequest> second = app::consumeWindowRequests();
     DOCTEST_REQUIRE_EQ(second.size(), static_cast<size_t>(1));
     DOCTEST_CHECK_EQ(second[0].pageId, "pet");
     DOCTEST_CHECK_EQ(second[0].width, 128);
-    DOCTEST_CHECK_EQ(second[0].height, 128);
+    // 窗口高 = 帧高 + 气泡让位条（pet_bubble.h）
+    DOCTEST_CHECK_EQ(second[0].height,
+                     128 + static_cast<int>(module::pet::kBubbleStripH));
     DOCTEST_CHECK(second[0].positionSet);
     DOCTEST_CHECK_EQ(second[0].x, 120);
     DOCTEST_CHECK_EQ(second[0].y, 130);
+    return true;
+});
+
+// ---- Bug B 2026-09-30：showPetWindow 的 false 三义收成四态枚举 ----
+// 改前 false 把「未装配 / 已开着 / 启动失败」折成一个值，settings 侧把
+// 「已开着」误报成「未启用，重启后生效」、启动失败谎报成功。逐态断言：
+REGISTER_TEST(pet_show_window_outcomes,
+              "pet: showPetWindow 四态各归各位（Bug B）", {
+    using Outcome = module::pet::PetShowOutcome;
+    (void)app::consumeWindowRequests();  // 清残留
+
+    // ① 未装配（装配标志只置不清，进程级单例回厂只能经测试缝——这就是
+    //    「启动时开关就是关的」会话的真实形态）：拒绝凭空开窗，零请求入队
+    module::pet::resetPetRuntimeForTests();
+    DOCTEST_CHECK(module::pet::showPetWindow() == Outcome::NotAssembled);
+    DOCTEST_CHECK(app::consumeWindowRequests().empty());
+
+    // ② 已装配但皮肤不可用（空皮肤根 + 测试环境无随包资产 → 回退默认皮肤
+    //    也失败）：StartFailed，同样零请求入队（改前这种情况返回 true——
+    //    「已请求显示」但窗口永远不会出现）
+    module::pet::resetPetRuntimeForTests();
+    {
+        const PetsDirEnv pets("showwin_empty");
+        module::pet::startPetWindow(module::pet::PetWindowConfig{});
+        DOCTEST_CHECK(app::consumeWindowRequests().empty());  // 装配就没开成窗
+        DOCTEST_CHECK(module::pet::showPetWindow() == Outcome::StartFailed);
+        DOCTEST_CHECK(app::consumeWindowRequests().empty());
+    }
+
+    // ③ 隐藏后重开 = Shown：夹具皮肤装配 → 消费首条开窗请求 → 再 show 再入队
+    module::pet::resetPetRuntimeForTests();
+    {
+        const PetsDirEnv pets("showwin_shown");
+        test_support::writeShippedSkinFixture(pets.root, "robot",
+                                              kRobotFixtureJson);
+        DOCTEST_REQUIRE(module::pet::startPetWindow(
+            module::pet::PetWindowConfig{"", 120, 130}));
+        (void)app::consumeWindowRequests();
+        DOCTEST_CHECK(module::pet::showPetWindow() == Outcome::Shown);
+        DOCTEST_CHECK_EQ(app::consumeWindowRequests().size(),
+                         static_cast<size_t>(1));
+    }
+
+    // ④ AlreadyOpen：无头环境 handle 只能经请求自带的 onWindowCreated 回填
+    //（生产里这是主循环职责）——「窗口已开着」不得再落进「未启用，重启生效」
+    module::pet::resetPetRuntimeForTests();
+    {
+        const PetsDirEnv pets("showwin_open");
+        test_support::writeShippedSkinFixture(pets.root, "robot",
+                                              kRobotFixtureJson);
+        module::pet::startPetWindow(module::pet::PetWindowConfig{});
+        const std::vector<app::DslWindowRequest> reqs =
+            app::consumeWindowRequests();
+        DOCTEST_REQUIRE_EQ(reqs.size(), static_cast<size_t>(1));
+        DOCTEST_REQUIRE(reqs[0].onWindowCreated);
+        reqs[0].onWindowCreated(
+            reinterpret_cast<core::window::Handle>(0x1));  // 假句柄即可判空
+        DOCTEST_CHECK(module::pet::showPetWindow() == Outcome::AlreadyOpen);
+        DOCTEST_CHECK(app::consumeWindowRequests().empty());  // 已开=不再入队
+    }
+
+    // 收尾回厂：不留装配态污染后续用例（进程级 pet 运行时是共享状态）
+    module::pet::resetPetRuntimeForTests();
+    (void)app::consumeWindowRequests();
+    return true;
+});
+
+// ---- 气泡布局（2026-09-30 用户反馈「展示文本的框框需要上移，不要盖在
+// 桌宠上面」）----
+// 几何断言：气泡矩形与精灵帧矩形**不相交**。petBubbleRect/petSpriteRect 是
+// compose 侧同一数据源（pet_window.cpp 直接消费这两个纯函数），纯函数层
+// 断言成立 = 渲染几何成立。变异自检见本用例尾部注释
+REGISTER_TEST(pet_bubble_layout_disjoint,
+              "pet: 气泡矩形与精灵帧矩形不相交（上移不遮挡）", {
+    using namespace module::pet;
+    // 常量口径（PAB-05 数字对齐）：间距落在需求带 4-8px、条高 = 气泡高 + 间距
+    DOCTEST_CHECK_EQ(kBubbleHeight, 28.0f);
+    DOCTEST_CHECK(kBubbleGap >= 4.0f && kBubbleGap <= 8.0f);
+    DOCTEST_CHECK_EQ(kBubbleStripH, kBubbleHeight + kBubbleGap);
+    DOCTEST_CHECK_EQ(petWindowHeight(128), 162);
+    DOCTEST_CHECK_EQ(petWindowHeight(512), 546);
+
+    // 覆盖典型窗口宽（内置皮肤 136/360/512、最小帧 16）× 气泡宽（含 80 下限、
+    // 280 上限、超窗宽 600——负 x 被窗口裁剪的场景）全组合：垂直分离
+    //（气泡底 + 间距 = 帧顶）⇒ 两矩形恒不相交，与水平位置无关
+    const float windowWidths[] = {16.0f, 128.0f, 136.0f, 360.0f, 512.0f};
+    const float bubbleWidths[] = {80.0f, 136.0f, 280.0f, 600.0f};
+    const float windowHeights[] = {static_cast<float>(petWindowHeight(128)),
+                                   static_cast<float>(petWindowHeight(512))};
+    for (const float winW : windowWidths) {
+        for (const float winH : windowHeights) {
+            const PetRect sprite = petSpriteRect(winW, winH);
+            // 帧占满让位条以下全部空间（compose 侧同款：帧高 = 窗高 - 条高）
+            DOCTEST_CHECK_EQ(sprite.y, kBubbleStripH);
+            DOCTEST_CHECK_EQ(sprite.h, winH - kBubbleStripH);
+            for (const float bw : bubbleWidths) {
+                const PetRect bubble = petBubbleRect(winW, bw);
+                DOCTEST_CHECK_EQ(bubble.y, 0.0f);
+                DOCTEST_CHECK_EQ(bubble.h, kBubbleHeight);
+                // 间距钉死：气泡底沿到帧顶 = kBubbleGap（4-8px 需求带）
+                DOCTEST_CHECK_EQ(sprite.y - (bubble.y + bubble.h), kBubbleGap);
+                const bool overlap =
+                    bubble.x < sprite.x + sprite.w &&
+                    bubble.x + bubble.w > sprite.x &&
+                    bubble.y < sprite.y + sprite.h &&
+                    bubble.y + bubble.h > sprite.y;
+                DOCTEST_CHECK(!overlap);
+            }
+        }
+    }
+
+    // 气泡不越过屏幕工作区：整窗高参与钳制（调用方传 petWindowHeight）后，
+    // 窗口顶 = 气泡条上沿不会低于工作区上缘——钳到贴上缘时气泡完整可见
+    {
+        const std::vector<PetWorkArea> areas = {PetWorkArea{0, 0, 1920, 1020}};
+        const auto [cx, cy] = clampPetPosToMonitors(
+            500, -999, areas, 128, petWindowHeight(128));
+        DOCTEST_CHECK_EQ(cy, 0);  // 越界上移被回贴到工作区上缘（气泡不被裁）
+    }
+    // 变异自检（已实测）：把 petSpriteRect 的 y 改回旧布局 0（精灵帧顶回窗口
+    // 顶、气泡盖回精灵）→ 本用例 overlap 断言变红；恢复 y=kBubbleStripH 后
+    // 复绿——证明断言非恒真
+    return true;
+});
+
+// ---- 显示大小三档（2026-09-30 用户需求「桌宠显示大小」）----
+
+// 档位 → 窗口尺寸换算（纯函数 scaledFrameSize）：三档换算 + **等比单因子**
+// 上界钳制（审计 F1：min(scale, 512/w, 512/h)，长宽比恒等帧原始值——kirari
+// 360×480 大档 384×512 零裁切；旧逐维钳 512×512 破比例被 Cover 中心裁头脚
+// 12.5%，变异改回即红）。下界不钳（16 是皮肤解析界，16×0.75=12 小窗无害）
+REGISTER_TEST(pet_scale_frame_size,
+              "pet: 显示大小档位→帧尺寸换算（等比钳上界 512）", {
+    using namespace module::pet;
+    // 档位表口径：三档、默认中档
+    DOCTEST_CHECK_EQ(kPetScalePresetCount, 3);
+    DOCTEST_CHECK_EQ(kPetScaleDefaultIndex, 1);
+    DOCTEST_CHECK_EQ(kPetScalePresets[0], 0.75);
+    DOCTEST_CHECK_EQ(kPetScalePresets[1], 1.0);
+    DOCTEST_CHECK_EQ(kPetScalePresets[2], 1.5);
+    DOCTEST_CHECK_EQ(kMinFrameSize, 16);
+    DOCTEST_CHECK_EQ(kMaxFrameSize, 512);
+
+    // 换算：中档 1:1；大档 ×1.5；小档 ×0.75（128×128 夹具基准）
+    const auto mid = scaledFrameSize(128, 128, 1.0);
+    DOCTEST_CHECK_EQ(mid.first, 128);
+    DOCTEST_CHECK_EQ(mid.second, 128);
+    const auto big = scaledFrameSize(128, 128, 1.5);
+    DOCTEST_CHECK_EQ(big.first, 192);
+    DOCTEST_CHECK_EQ(big.second, 192);
+    const auto small = scaledFrameSize(128, 128, 0.75);
+    DOCTEST_CHECK_EQ(small.first, 96);
+    DOCTEST_CHECK_EQ(small.second, 96);
+    // 非方形皮肤（whale-girl 328×212）×1.5
+    const auto whale = scaledFrameSize(328, 212, 1.5);
+    DOCTEST_CHECK_EQ(whale.first, 492);
+    DOCTEST_CHECK_EQ(whale.second, 318);
+    // 上界等比钳制（审计 F1 回归锁）：512×1.5=768 → 单因子 f=1.0 → 512×512
+    //（方形无失真）；kirari 360×480×1.5 → f=512/480 → **384×512**，长宽比
+    // 0.75 保持（旧逐维钳给 512×512，Cover 中心裁切头脚各 12.5%）
+    const auto atMax = scaledFrameSize(512, 512, 1.5);
+    DOCTEST_CHECK_EQ(atMax.first, 512);
+    DOCTEST_CHECK_EQ(atMax.second, 512);
+    const auto kirari = scaledFrameSize(360, 480, 1.5);
+    DOCTEST_CHECK_EQ(kirari.first, 384);
+    DOCTEST_CHECK_EQ(kirari.second, 512);
+    // 下界不钳（等比优先）：16×0.75=12 原样缩（16 是皮肤解析界非窗口界）
+    const auto atMin = scaledFrameSize(16, 16, 0.75);
+    DOCTEST_CHECK_EQ(atMin.first, 12);
+    DOCTEST_CHECK_EQ(atMin.second, 12);
+    // 等比不变式（审计 F1 核心断言）：缩放后宽高比恒等帧原始宽高比
+    //（round 误差 ±1px 内，比值偏差 < 0.02）——逐维钳变异在此必红
+    const struct AscCase {
+        int w;
+        int h;
+        double s;
+    } ascCases[] = {
+        {128, 128, 1.5}, {128, 128, 0.75}, {128, 128, 1.0}, {360, 480, 1.5},
+        {512, 512, 1.5}, {16, 16, 0.75},   {328, 212, 1.5}, {192, 208, 0.75},
+        {136, 168, 1.0},
+    };
+    for (const AscCase& c : ascCases) {
+        const auto [sw, sh] = scaledFrameSize(c.w, c.h, c.s);
+        const double before = static_cast<double>(c.w) / c.h;
+        const double after = static_cast<double>(sw) / sh;
+        DOCTEST_CHECK(std::abs(after - before) < 0.02);
+    }
+    // 非法档位值防御：sanitize 白名单外收敛默认中档（防手改 pet_config.json）
+    DOCTEST_CHECK_EQ(sanitizePetScale(0.9), 1.0);
+    DOCTEST_CHECK_EQ(sanitizePetScale(2.0), 1.0);
+    DOCTEST_CHECK_EQ(sanitizePetScale(0.75), 0.75);
+    DOCTEST_CHECK_EQ(petScaleIndexOf(1.5), 2);
+    DOCTEST_CHECK_EQ(petScaleIndexOf(0.123), kPetScaleDefaultIndex);
+    return true;
+});
+
+// pet_config.json scale 键读写往返 + 桥只读/切档（窗口未开 = 只持久化路径）
+REGISTER_TEST(pet_scale_config_roundtrip,
+              "pet: scale 持久化往返 + 档位桥读写", {
+    using namespace module::pet;
+    const PetsDirEnv pets("scalecfg");
+    const std::filesystem::path cfgFile = pets.root / "pet_config.json";
+    {
+        PetConfigStore store(cfgFile);
+        PetConfig cfg;
+        cfg.scale = 1.5;
+        DOCTEST_CHECK(store.save(cfg).isOk());
+        const PetConfig loaded = store.load();
+        DOCTEST_CHECK_EQ(loaded.scale, 1.5);
+        // 白名单外值经 sanitized 收敛默认中档
+        PetConfig bad;
+        bad.scale = 0.9;
+        DOCTEST_CHECK_EQ(PetConfigStore::sanitized(bad).scale, 1.0);
+    }
+    // 桥：无窗口路径——切档只写盘，读回一致；越界下标拒绝不动
+    DOCTEST_CHECK_EQ(currentPetScaleIndex(), 2);  // 上面存的 1.5
+    applyPetScaleIndex(0);                        // 1.5 → 0.75
+    DOCTEST_CHECK_EQ(PetConfigStore(cfgFile).load().scale, 0.75);
+    applyPetScaleIndex(7);                        // 越界：配置不动
+    DOCTEST_CHECK_EQ(PetConfigStore(cfgFile).load().scale, 0.75);
+    applyPetScaleIndex(1);                        // 回默认中档
+    DOCTEST_CHECK_EQ(PetConfigStore(cfgFile).load().scale, 1.0);
+    DOCTEST_CHECK_EQ(currentPetScaleIndex(), 1);
+    // 桥文案：三档与下标一一对应（单源 = pet_config.h，设置页只消费）
+    const std::vector<std::string> labels = petScalePresetLabels();
+    DOCTEST_REQUIRE_EQ(labels.size(), static_cast<size_t>(3));
+    DOCTEST_CHECK(labels[0] == kPetScalePresetLabels[0]);
+    DOCTEST_CHECK(labels[2] == kPetScalePresetLabels[2]);
+    return true;
+});
+
+// 开窗请求逐档断言（无头）：窗口尺寸 = scaledFrameSize(帧尺寸, 档位) +
+// 气泡让位条。变异自检（已实测）：把 scaledFrameSize 改回「不缩放直返帧
+// 尺寸」（旧无缩放行为）→ 本用例 192/226 断言变红；恢复后复绿
+REGISTER_TEST(pet_scale_window_request,
+              "pet: 显示大小档位→开窗尺寸换算（无头）", {
+    const PetsDirEnv pets("scalewin");
+    (void)app::consumeWindowRequests();  // 清残留
+    test_support::writeShippedSkinFixture(pets.root, "robot", kRobotFixtureJson);
+
+    // 大档 1.5×：128×128 → 192×(192+34)
+    module::pet::startPetWindow(
+        module::pet::PetWindowConfig{"", 50, 60, 1.5});
+    std::vector<app::DslWindowRequest> big = app::consumeWindowRequests();
+    DOCTEST_REQUIRE_EQ(big.size(), static_cast<size_t>(1));
+    DOCTEST_CHECK_EQ(big[0].width, 192);
+    DOCTEST_CHECK_EQ(big[0].height,
+                     192 + static_cast<int>(module::pet::kBubbleStripH));
+
+    // 小档 0.75×：→ 96×(96+34)
+    module::pet::startPetWindow(
+        module::pet::PetWindowConfig{"", 50, 60, 0.75});
+    std::vector<app::DslWindowRequest> small = app::consumeWindowRequests();
+    DOCTEST_REQUIRE_EQ(small.size(), static_cast<size_t>(1));
+    DOCTEST_CHECK_EQ(small[0].width, 96);
+    DOCTEST_CHECK_EQ(small[0].height,
+                     96 + static_cast<int>(module::pet::kBubbleStripH));
+
+    // 非法档位防御：0.9 → sanitize 中档 1.0× → 128×(128+34)
+    module::pet::startPetWindow(
+        module::pet::PetWindowConfig{"", 50, 60, 0.9});
+    std::vector<app::DslWindowRequest> mid = app::consumeWindowRequests();
+    DOCTEST_REQUIRE_EQ(mid.size(), static_cast<size_t>(1));
+    DOCTEST_CHECK_EQ(mid[0].width, 128);
+    DOCTEST_CHECK_EQ(mid[0].height,
+                     128 + static_cast<int>(module::pet::kBubbleStripH));
     return true;
 });

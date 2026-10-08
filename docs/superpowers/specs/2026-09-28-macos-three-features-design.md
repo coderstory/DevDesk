@@ -1,14 +1,16 @@
 # macOS 三项能力补齐（托盘 styled 菜单 / 磨砂 / 桌宠三项）—— EUI-NEO 上游线（设计）
 
-日期：2026-09-28 ｜ 状态：**设计（未实施）** ｜ 版本：**V2**（V1 = `1049285a`，2026-09-28 独立审计修订）｜ 关联：`2026-09-20-devdesk-design.md`（权威 spec，实现前先读）、`2026-09-22-eui-window-frost-design.md`（磨砂全链既有设计，本 spec 是其 macOS 落地）、`2026-09-22-desktop-pet-design.md`（桌宠设计）
+日期：2026-09-28 ｜ 状态：**设计（已实施，未实机验收）** ｜ 版本：**V2**（V1 = `1049285a`，2026-09-28 独立审计修订）｜ 关联：`2026-09-20-devdesk-design.md`（权威 spec，实现前先读）、`2026-09-22-eui-window-frost-design.md`（磨砂全链既有设计，本 spec 是其 macOS 落地）、`2026-09-22-desktop-pet-design.md`（桌宠设计）
+
+> **实施状态补记（2026-09-28 当日回填；本文件早前的状态口径「设计（未实施）」已随之作废）**：四条任务线均已落 EUI-NEO 本地 main——**M0-1** 原生句柄（`EUI-NEO/core/app/glfw_app_main.cpp:262-268`，`b561dbe`）、**M1** 托盘左右键分流（`EUI-NEO/core/platform/tray_bridge.c`，`00eb794`）、**M2** 磨砂（`EUI-NEO/core/platform/window_effect_macos.mm`，`654e014`，merge `e115d25`）、**M3** 桌宠三项（`window_style_macos.mm` / `context_menu_macos.mm` / `power_events_macos.mm`，`6f771c3`）。两条未完成/未验证：① **M0-2**（`EUI-NEO/core/window/window_backend.cpp` 的 `__APPLE__` 分支填 `platformWindow`）曾在同日提交 `7164d55` 中被顺带删除，**恢复工作进行中**——在它合入前，M2/M3 在 macOS 上取不到 `NSWindow*`（本设计 §3 的阻塞性前置仍成立）；② 本文全部 ⚠️ 项与 §10.2 的 Mac 实机验收清单**尚未执行**（仓库内无验收记录），macOS 侧构建是否通过、测试基线多少，见 `DevDesk/TODO.md`「macOS 构建环境」段。**「已实施」只表示代码已落本地 main，不代表已在 macOS 上跑通或验收过。**
 
 > **V2 修订要点（独立审计，2026-09-28）**：① 新增 §3 **M0「macOS 原生句柄供给」**——阻塞性前置，串行先行 M2/M3（不补这两处，M2/M3 收 nullptr 恒降级 = 白做）；② §8 路径纠正：`EUI-NEO/core/platform/CMakeLists.txt` **不存在**，实际 `if(WIN32)/else()` 选源在 `EUI-NEO/CMakeLists.txt` L265-294，并补列 M0 两文件；③ §4.2 挂 action 与 `setMenu:` 共存之争（AppKit 已知争议点）升为 **M1 Mac 实机验证第 0 项**，预备改法：不挂 menu、全走显式 `popUpStatusItemMenu:`；④ **§13-6 关闭**（静态定案）：macOS 走 tray_bridge 的 `EUI_TRAY_APPKIT` 段，`3rd/tray` 的 `TRAY_APPKIT` 分支 EUI 构建不编译 → M1 实作只改 `tray_bridge.c`，原 §3.1/§3.2 作废；⑤ §7 补 DevDesk 侧改动归属与串行依赖；⑥ §6.2 补 `popUpMenuPositioningItem:atLocation:` 坐标原点注记。**章节顺延**：原 §3-§12 顺延为 §4-§13，正文交叉引用已全部同步更新（原 V1 编号仅作历史标注保留）。
 
-> **证据等级说明**：本机是 Windows 开发机（无 macOS 实机），凡 macOS 侧 API 行为 / 坐标方向 / ObjC++ 编译链均为**设计推断**，本文按 ⚠️ 标注；实施与验收以 §10 Mac 实机清单为准，不得把 ⚠️ 项当既定事实引用。
+> **证据等级说明**：成稿时本机是 Windows 开发机（无 macOS 实机），凡 macOS 侧 API 行为 / 坐标方向 / ObjC++ 编译链均为**设计推断**，本文按 ⚠️ 标注；实施与验收以 §10 Mac 实机清单为准，不得把 ⚠️ 项当既定事实引用。**（2026-09-28 补记：项目当日已搬回 macOS 本机开发，M0-M3 代码已落本地 main，但 ⚠️ 项仍未做实机验收——上句的引用纪律不变；macOS 构建状态见 `DevDesk/TODO.md`「macOS 构建环境」段。）**
 
 ## 1. 需求与决策
 
-DevDesk 目标平台含 macOS（macOS 主线 P0-P8 已完成，2026-09 迁 Windows 后平台适配代码按 `*_win.cpp` / `*_macos.cpp` / `*_posix.cpp` 拆文件保留可用）。三项 macOS 能力补齐（输入为已完成预研结论，本 spec 用 codegraph / Read 逐条核实 file:line，见 §2）：
+DevDesk 目标平台含 macOS（macOS 主线 P0-P8 已完成；2026-09-28 起本项目已搬回 macOS 本机开发，当前开发平台就是 macOS；平台适配代码按 `*_win.cpp` / `*_macos.cpp` / `*_posix.cpp` 拆文件）。三项 macOS 能力补齐（输入为已完成预研结论，本 spec 用 codegraph / Read 逐条核实 file:line，见 §2）：
 
 | # | 需求 | 现状缺口 |
 |---|------|----------|
@@ -24,7 +26,7 @@ DevDesk 目标平台含 macOS（macOS 主线 P0-P8 已完成，2026-09 迁 Windo
 | **D-4** | 平台实现按接口拆文件（`*_macos.cpp` / `*_macos.mm`），与既有 `*_win.cpp` / `*_posix.cpp` 同模式，业务代码不散布平台宏 | DevDesk CLAUDE.md 核心约束 5 / EUI-NEO 后端同模式；stubs 收窄为仅非 Apple 平台使用 |
 | **D-5** | **M0 句柄供给 / M1 托盘 / M2 磨砂 / M3 桌宠为独立任务**，各自走 §7 跨仓库交付线（**M0 阻塞性串行先行，M2/M3 依赖**；隔离 worktree 产 patch → 非隔离线 apply + 编译 + commit） | 各任务改 EUI-NEO 独立文件、共享头接口签名零改动（M0 零 API 变化），冲突面最小；跨仓库施工受隔离守卫约束，必须"产补丁 + 非隔离线应用"（DevDesk CLAUDE.md 反事故红线）；M0 是 M2/M3 的硬前置（§3） |
 | **D-6** | 收尾统一 bump `DEVDESK_EUI_NEO_MIN_REV`（DevDesk 顶层 CMakeLists.txt + DevDesk CLAUDE.md 两处同步），不掺进 M0-M3 | DevDesk CLAUDE.md：消费 EUI 新 API 后两处同步更新，当前依赖 rev `269a8c4` |
-| **D-7** | 不做 mac 自动化构建/CI、不做 Linux 对等实现（§9） | 本机无 mac，无法在本仓库验证 mac 编译；Linux 无宿主需求 |
+| **D-7** | 不做 mac 自动化构建/CI、不做 Linux 对等实现（§9） | 成稿时本机无 mac、无法在本仓库验证 mac 编译（2026-09-28 起本机已是 macOS，但本批仍不建 mac CI，macOS 编译走本机手动 + 实机验收）；Linux 无宿主需求 |
 
 ## 2. 现状事实（源码核实）
 
@@ -71,7 +73,7 @@ DevDesk 目标平台含 macOS（macOS 主线 P0-P8 已完成，2026-09 迁 Windo
 |------|------|
 | 平台适配代码接口隔离：头文件平台无关接口，`*_win.cpp` / `*_macos.cpp` / `*_posix.cpp`，CMake 按平台选源；业务代码禁散布 `#ifdef` | `DevDesk/CLAUDE.md` 核心约束 5 |
 | 跨仓库改动必须"产补丁 + 非隔离线应用"：隔离 worktree agent 无法对其它仓库 git 操作；非隔离线 prompt 写死只许改目标仓库 | `DevDesk/CLAUDE.md`「反事故红线」 |
-| EUI-NEO 当前依赖 rev `269a8c4`（2026-09-27），本地 main 领先 origin 70 个提交未 push（push 是用户决策门控）；`DEVDESK_EUI_NEO_MIN_REV` 在 DevDesk 顶层 CMakeLists.txt 与 CLAUDE.md 两处同步 | `DevDesk/CLAUDE.md`「常用命令」段 |
+| EUI-NEO 当前依赖 rev `269a8c4`（2026-09-27），本地 main 领先 origin 的提交**永不 push**（2026-09-28 用户决策：origin/main 停在 v0.6.0，本地领先是长期状态、不再按「待 push」跟踪）；`DEVDESK_EUI_NEO_MIN_REV` 在 DevDesk 顶层 CMakeLists.txt 与 CLAUDE.md 两处同步 | `DevDesk/CLAUDE.md`「常用命令」段 |
 
 ## 3. M0 —— macOS 原生句柄供给（阻塞性前置，串行先行 M2/M3）
 
@@ -180,7 +182,7 @@ stub 恒 false → GL 后端降级 → `activeWindowEffect` 回写 → 设置页
 4. 主会话读 diff 审计 + 验收（Patch 内容与任务声明一致、未夹带）；
 5. **收尾**（M0-M3 全部合入后）：bump `DEVDESK_EUI_NEO_MIN_REV`（`DevDesk/CMakeLists.txt` + DevDesk `CLAUDE.md`「常用命令」段**两处同步**，当前 `269a8c4`）——bump 改的是 DevDesk 侧文件，走 DevDesk 侧 worktree 线执行（或 EUI 合入后由主会话派 DevDesk 侧收尾子任务，见下条第 6 条）；
 6. **DevDesk 侧改动归属（V2 补）**：§8.2 的 `settings_config.cpp` 文案平台化（§5.3 案 A/B）与收尾 bump 均属 DevDesk 仓库改动——红线禁止「非隔离线 agent 碰 DevDesk」（其工作目录就是主树），一律由 **DevDesk 侧隔离 worktree 子任务**执行（普通交付流水线：worktree 子任务 → 原子 commit → 主会话审计合并），**不走本节的 EUI 补丁线**。串行依赖：**案 A** 需 EUI 侧 hint 接口先经本节补丁线合入 EUI-NEO main，DevDesk 接线后行（EUI 修订在前、DevDesk 接线在后）；**案 B** 中性文案改一行、零跨仓依赖，DevDesk 线可独立先行、不必等 EUI（§13-1 拍板选案）；
-7. EUI-NEO 本地 main 领先 origin ~70 commits 未 push（push 与否是用户决策门控）——本批改动继续落本地 main，与 push 决策解耦（§13-3）。
+7. EUI-NEO 本地 main 领先 origin 的提交**永不 push**（2026-09-28 用户决策，origin/main 停在 v0.6.0）——本批改动继续落本地 main，与 push 无关（§13-3）。
 
 ## 8. 文件改动清单
 
@@ -215,7 +217,7 @@ M1 预期 DevDesk 侧零改动（`main.cpp:566-575` / `:390-408` 已就绪）。
 - 托盘不做：图标动画、拖拽移动、多屏弹出定位自适应（单屏翻转先行）、Touch Bar；
 - 磨砂不做：分区磨砂、圆角蒙版、材质强度/类型用户可配（固定 classic 组合）、`titlebarAppearsTransparent` 联动；
 - 桌宠不做：IOKit 电池/低电量事件（只 sleep/wake）、Dock 真隐藏按钮（mac 无此概念）、按 Space 可配行为；
-- 不做 mac CI/自动化构建（本机无 mac），验收靠 §10 Mac 实机清单。
+- 不做 mac CI/自动化构建（成稿时本机无 mac；2026-09-28 起本机已是 macOS，仍不建 CI），验收靠 §10 Mac 实机清单。
 
 ## 10. 测试
 
@@ -226,7 +228,7 @@ M1 预期 DevDesk 侧零改动（`main.cpp:566-575` / `:390-408` 已就绪）。
 - **Windows 回归（必须全绿）**：M0-M3 全部为 `__APPLE__` 分支追加或新建 mac 文件，Win/Posix 路径字节不动；eui-tray / window_effect / pet 冒烟 + 定向单测；
 - 隔离 agent 构建验证（§7-1）：EUI-NEO 文件副本 + `EUI_NEO_DIR` 真编译真跑测试，证明消费 API 匹配（mac 编译器覆盖不到，见 §12-5）。
 
-### 10.2 Mac 实机验收清单（无 mac 机 → 排期到用户侧）
+### 10.2 Mac 实机验收清单（**截至 2026-09-28 未执行**；本机已具备 macOS 环境，待排期）
 
 | 任务 | 验收项 |
 |------|--------|
@@ -253,14 +255,14 @@ M0-M3 各独立；**M0 阻塞性串行先行（M2/M3 依赖、M1 不依赖）**�
 2. **NSVisualEffectView 与 GL view 的合成顺序 / 唤醒（GL 上下文唤醒）** 未实机验证（⚠️）；
 3. **坐标翻转方向为设计推断**（Cocoa 左下原点 → 左上），可能反——实机验证后微调一行；**§6.2 的 `atLocation` 为 contentView 视图坐标（左下原点），从屏幕坐标换算需窗口坐标转换 + 纵向翻转**，与托盘 `mouseLocation` 的屏系翻转是两套原点，勿混用（⚠️）；
 4. **挂 action + `setMenu:` 共存**为 AppKit 已知争议点（挂 menu 后点击自动弹菜单、action 可能不触发），显式 `popUpStatusItemMenu:` 的时序/焦点细节同样未实机验证（⚠️）——已升为 **M1 Mac 实机验证第 0 项**（§10.2），预备改法：不挂 menu、全走显式 `popUpStatusItemMenu:`（§4.2）；
-5. **ObjC++（`.mm`）首次进 EUI-NEO 编译链**（顶层 CMakeLists 需 `enable_language(OBJCXX)`，§8.1）：本机（Windows）无 mac SDK，编译正确性只能实机验证；隔离 agent 的副本构建覆盖不到 mac 编译器；
+5. **ObjC++（`.mm`）首次进 EUI-NEO 编译链**（顶层 CMakeLists 需 `enable_language(OBJCXX)`，§8.1）：成稿时本机（Windows）无 mac SDK，编译正确性只能实机验证；隔离 agent 的副本构建覆盖不到 mac 编译器；
 6. ~~`3rd/tray` APPKIT 与 tray_bridge appkit 两个后端谁被 macOS 链接未定~~ —— **V2 已定案关闭**：走 tray_bridge 的 `EUI_TRAY_APPKIT` 段（§13-6），`3rd/tray` APPKIT 分支 EUI 构建不编译，原「两处改造点都给、实现阶段按编译配置取舍」的开放式安排不再需要，本项移出开放边界。
 
 ## 13. 待用户复核
 
 1. 磨砂降级文案平台化：**案 A**（平台接口拆分，推荐，符合平台拆文件纪律；需 EUI hint 接口先落地，§7-6 串行）vs **案 B**（中性文案去 OS 名，改一行，零跨仓依赖可独立先行）；
 2. mac 磨砂材质组合（`HUDWindow` vs `UnderWindowBackground`）与 translucent 透明度数值 —— 实机观感定；
-3. 本批 EUI-NEO 改动（含既有 ~70 commits）**仍不 push**？本批随同一门控落本地 main；
+3. ~~本批 EUI-NEO 改动（含既有 ~70 commits）**仍不 push**？~~ —— **已关闭（2026-09-28 用户决策）**：EUI-NEO 永不 push 到 origin（origin/main 停在 v0.6.0），本批随同一口径落本地 main；
 4. 桌宠 `hideFromTaskbar` mac 语义（`CanJoinAllSpaces | IgnoresCycle`）是否符合"不进 Dock / ⌘Tab 不可见"预期；
 5. 托盘**原生 NSMenu 降级菜单是否保留**（本设计保留为降级数据源，与 Win keepDefault=false 语义一致；§4.2 预备改法下"降级"= 显式 popUp 同一菜单对象）；
 6. ~~macOS 构建实际走 `3rd/tray` 的 `TRAY_APPKIT` 还是 tray_bridge 的 appkit 后端~~ —— **已关闭（V2 静态定案，不再待复核）**：macOS 走 tray_bridge 的 `EUI_TRAY_APPKIT` 段（`EUI-NEO/CMakeLists.txt:404-406` `elseif(APPLE)` 定义 `EUI_TRAY_APPKIT=1` 并链接 Cocoa/objc；`tray_bridge.c:135`）；`3rd/tray` 的 `TRAY_APPKIT` 宏在 EUI 构建中从不定义（仅 3rd/tray 独立构建自定，见其 Makefile/example.c），该分支不参与编译 → M1 实作只改 `tray_bridge.c`（§4.1），不再需要实现者自证。

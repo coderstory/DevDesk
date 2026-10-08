@@ -69,6 +69,7 @@ CallLogStore::CallLogEntry callLogFromRow(const core::data::SqlRow& row) {
     auto pV = row.getString("path");
     auto sV = row.getInt64("status_code");
     auto lV = row.getInt64("latency_ms");
+    auto otV = row.getInt64("output_tokens");
     auto rbV = row.getInt64("request_bytes");
     auto rxbV = row.getInt64("response_bytes");
     auto errV = row.getString("error");
@@ -79,6 +80,9 @@ CallLogStore::CallLogEntry callLogFromRow(const core::data::SqlRow& row) {
     if (pV.isOk()) e.path = pV.value();
     if (sV.isOk()) e.statusCode = static_cast<int>(sV.value());
     if (lV.isOk()) e.latencyMs = lV.value();
+    // NULL（未采集）已由 SQL 的 COALESCE 归 0：与「0 个 token」同处理
+    // （速率列显示「—」）
+    if (otV.isOk()) e.outputTokens = otV.value();
     if (rbV.isOk()) e.requestBytes = rbV.value();
     if (rxbV.isOk()) e.responseBytes = rxbV.value();
     if (errV.isOk()) e.error = errV.value();
@@ -138,6 +142,7 @@ CallLogStore::queryCalls(const CallLogQuery& q) {
 
     std::string sql =
         "SELECT id, profile_id, method, path, status_code, latency_ms, "
+        "COALESCE(output_tokens, 0) AS output_tokens, "
         "request_bytes, response_bytes, error, started_at "
         "FROM claude_call_logs";
     const std::string where = buildCallLogWhere(q);

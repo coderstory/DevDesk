@@ -17,7 +17,7 @@
 | **D-2** | **每次安装都是用户级**：`PrivilegesRequired=lowest`（Inno 官方口径：lowest 时**没有任何进程提权**）；安装目录 `{autopf}\DevDesk`；开始菜单/桌面快捷方式与卸载项全写 HKCU（Inno 自动生成）。**措辞订正**：官方帮助原文只说"auto 常量在**非管理员安装模式**下映射到其 **user** 形式"（`{autopf}`→`{commonpf}`｜`{userpf}`），"低权限下 `{autopf}` 解析为 `%LOCALAPPDATA%\Programs`"是 **Win7+ 的结论**、非帮助原话 | R1；与 Tauri/VS Code 同款形态 |
 | **D-3** | **不开** `PrivilegesRequiredOverridesAllowed=dialog`（不给"为所有人安装"选项） | 少一个提权入口；真要全员装可另出参数化版本 |
 | **D-4** | 外观：`WizardStyle=modern dynamic hidebevels` + `WizardBackColor=#FAF9F5` + `WizardBackColorDynamicDark=#1A1816` + `SetupIconFile`/`UninstallDisplayIcon` 用 DevDesk 图标 | R3 + 与 DevDesk 方案 B 同族（token 见 §2）；`hidebevels` 去掉全部横向分割线 |
-| **D-5** | 卸载**不删** `%APPDATA%\DevDesk`（用户数据：DB/笔记/日志/皮肤）；卸载项显示名用 `UninstallDisplayName=DevDesk`；`NoModify`/`NoRepair` **由 Inno 默认提供，无需配置**（官方 `Setup.Install.pas` 在无 `AppModifyPath` 时默认就写这两个值） | 数据安全默认；卸载只清程序目录、快捷方式、HKCU 卸载键 |
+| **D-5** | 卸载**不删** `%USERPROFILE%\DevDesk`（用户数据：DB/笔记/日志/皮肤；2026-09-29 前数据根是 `%APPDATA%\DevDesk`，见 `[DataRoot]` 变更）；卸载项显示名用 `UninstallDisplayName=DevDesk`；`NoModify`/`NoRepair` **由 Inno 默认提供，无需配置**（官方 `Setup.Install.pas` 在无 `AppModifyPath` 时默认就写这两个值） | 数据安全默认；卸载只清程序目录、快捷方式、HKCU 卸载键 |
 | **D-6** | **不做**开机自启 / 不做文件关联 / 不自建"应用和功能"以外的注册表项（本期 YAGNI，登记为后续可选项） | 减少安装器职责；文件关联涉及"是否抢默认程序"的产品判断 |
 | **D-7** | 版本号**单一源** = `CMakeLists.txt` 的 `project(DevDesk VERSION 0.1.0)`：打包脚本以 configure 期变量/`CMakeCache` 取值注入 `.iss`（`MyAppVersion`），并同步 macOS `Info.plist`（后续把 plist 改为由 CMake 生成） | 现状 `Info.plist` 手写 `0.1.0` 与 CMake 各自独立，无 bump 机制；CPack 的版本是 FreeType 的（陷阱，见 §2） |
 | **D-8** | 脚本落点：**两个独立脚本**，不做平台分派 —— `scripts/package-windows.sh`（构建 Release 树 → 暂存 → 调 `ISCC`）与 `scripts/package-macos.sh`（构建 → 打包 `.app` → `create-dmg`）。**不改** `scripts/build-test-run.sh`（它只管构建/测试/启动） | 用户明确"build-test-run.sh 是跑测试的脚本，不能放这里"；分派脚本在无 Mac 的机器上永远是死代码 |
@@ -116,7 +116,7 @@ Filename: "{app}\DevDesk.exe"; Description: "启动 DevDesk"; WorkingDir: "{app}
 
 （Inno 默认卸载键名形态为 `<AppId>_is1`，实际键名在 M3 首次实编译后按现场固化。）
 
-其余：`DevDesk.exe` 与 `assets/` 就位、`{userprograms}\DevDesk.lnk` 存在 → 启动应用后确认**字体/皮肤/音乐加载正常（人工点验）** → 卸载 → 断言程序目录与快捷方式消失、**`%APPDATA%\DevDesk` 保留**。
+其余：`DevDesk.exe` 与 `assets/` 就位、`{userprograms}\DevDesk.lnk` 存在 → 启动应用后确认**字体/皮肤/音乐加载正常（人工点验）** → 卸载 → 断言程序目录与快捷方式消失、**`%USERPROFILE%\DevDesk` 保留**。
 
 ## 4. macOS：DMG
 

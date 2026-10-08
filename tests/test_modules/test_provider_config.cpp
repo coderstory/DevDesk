@@ -371,8 +371,9 @@ REGISTER_TEST(provider_config_migration_upgrade,
         // + v5 调用日志用量列（cc-switch 对照 §3.4）
         // + v6 共享配置片段表与 profile 绑定列
         // + v7 profile 认证字段 + v8 todo 归档列 kind 回填
-        // + v9 profile 方言覆盖列（CPX-13）+ v10 failover 备用列 → 全量到 10
-        DOCTEST_CHECK_EQ(db.schemaVersion(), 10);
+        // + v9 profile 方言覆盖列（CPX-13）+ v10 failover 备用列
+        // + v11 高级设置 JSON / 片段重构 → 全量到 11
+        DOCTEST_CHECK_EQ(db.schemaVersion(), 11);
 
         module::claude::ClaudeService svc(db, kTestKeychainService);
         auto profiles = svc.listProfiles();
@@ -740,7 +741,8 @@ REGISTER_TEST(provider_config_reverse_parse_mapping,
     return true;
 })
 
-// ---- 守卫表 G1–G6 + G10（§3.3/§2.4）：每条守卫一个专测，编号与用例名一一对应
+// ---- 守卫表 G1–G6（§3.3；G10 随 advanced-json-editor §8.4 片段 env 拆除）：
+// ---- 每条守卫一个专测，编号与用例名一一对应
 //（provider_config.h 的守卫表注释列出同样的编号 ↔ 用例名映射）----
 
 // G1 sidecar 托管键 → 跳过（不写也不清）
@@ -853,51 +855,6 @@ REGISTER_TEST(provider_config_guard_G6_invalid_value,
     return true;
 })
 
-// G10 捕获目标所绑共享配置片段的键 → 跳过（不写也不清）+ 一条聚合警告
-REGISTER_TEST(provider_config_guard_G10_shared_config_key,
-              "provider_config: 守卫 G10 共享片段键跳过（reverse）", {
-    using module::claude::parseEnvForReverseSync;
-
-    // 片段冻结 MY_KEY / OTHER_KEY；live 里两者被用户手工改过（值不同）
-    auto g10 = parseEnvForReverseSync(
-        R"({"MY_KEY": "live-edited", "OTHER_KEY": "v2", "FREE_KEY": "keep"})",
-        /*managedKeys=*/{}, /*ownedKeys=*/{"MY_KEY", "OTHER_KEY"});
-    DOCTEST_REQUIRE(g10.ok);
-    DOCTEST_CHECK(hasEntry(g10.skippedKeys, "MY_KEY"));
-    DOCTEST_CHECK(hasEntry(g10.skippedKeys, "OTHER_KEY"));
-    // 冻结键不收编（profile 行里的原值保持不动 = 不写也不清）
-    DOCTEST_CHECK(g10.cfg.extraEnv.find("MY_KEY") == g10.cfg.extraEnv.end());
-    DOCTEST_CHECK(g10.cfg.extraEnv.find("OTHER_KEY") == g10.cfg.extraEnv.end());
-    // 未冻结的键照常收编（G10 不扩大误伤面）
-    DOCTEST_CHECK_EQ(g10.cfg.extraEnv.at("FREE_KEY"), std::string("keep"));
-    DOCTEST_CHECK_EQ(g10.cfg.warnings.size(), 1u);  // 聚合一条，不逐键刷屏
-    DOCTEST_CHECK(g10.cfg.warnings[0].find("MY_KEY") != std::string::npos);
-
-    // 未绑定片段（ownedKeys 空）→ 与改动前逐字一致（键照常收编、零警告）
-    auto none = parseEnvForReverseSync(
-        R"({"MY_KEY": "live-edited", "FREE_KEY": "keep"})", {});
-    DOCTEST_REQUIRE(none.ok);
-    DOCTEST_CHECK(none.skippedKeys.empty());
-    DOCTEST_CHECK(none.cfg.warnings.empty());
-    DOCTEST_CHECK_EQ(none.cfg.extraEnv.at("MY_KEY"), std::string("live-edited"));
-
-    // 片段键同时命中 G1（sidecar 托管）→ 仍按跳过处置，警告归 G10（先判 G10）
-    auto both = parseEnvForReverseSync(R"({"MY_KEY": "x"})", {"MY_KEY"},
-                                       {"MY_KEY"});
-    DOCTEST_REQUIRE(both.ok);
-    DOCTEST_CHECK(hasEntry(both.skippedKeys, "MY_KEY"));
-    DOCTEST_CHECK(both.cfg.extraEnv.empty());
-
-    // 合并段（mergeReverseSyncEnv 零改动）：G10 键保持 profile 行里的原值
-    //（不写也不清），未冻结键按「出现覆盖」收编
-    auto m = module::claude::mergeReverseSyncEnv(
-        g10.cfg, "", "", R"({"MY_KEY": "profile-own", "FREE_KEY": "old"})");
-    auto ec = module::claude::parseExtraEnv(m.extraEnvJson);
-    DOCTEST_REQUIRE(ec.isOk());
-    DOCTEST_CHECK_EQ(ec.value().at("MY_KEY"), std::string("profile-own"));
-    DOCTEST_CHECK_EQ(ec.value().at("FREE_KEY"), std::string("keep"));
-    return true;
-})
 
 // ---- 合并语义（§3.4 出现覆盖 / 缺席清空 / 守卫不写也不清）----
 REGISTER_TEST(provider_config_reverse_merge_clear_keep_override,
@@ -1219,3 +1176,229 @@ REGISTER_TEST(provider_config_failover_no_switch_categories,
     return true;
 })
 
+
+// ===== 高级设置 JSON 纯函数（2026-09-30 advanced-json-editor 设计 §4.3，无头）=====
+
+// ---- 生效合并：片段赢 / 解绑回落 / env 键跳过 + 警告 / 非法按空 / 双空 ----
+REGISTER_TEST(provider_config_extra_settings_effective,
+              "provider_config: effectiveExtraSettingsJson 片段赢/解绑回落/env 键跳过/非法按空/双空", {
+    using module::claude::effectiveExtraSettingsJson;
+    std::vector<std::string> warnings;
+
+    // 片段赢（同键片段值胜；各自独有键都在；输出 pretty 规范形）
+    {
+        const std::string eff = effectiveExtraSettingsJson(
+            R"({"model": "profile-model", "statusLine": "profile-s"})",
+            R"({"model": "fragment-model", "hooks": {}})", &warnings);
+        DOCTEST_REQUIRE(!eff.empty());
+        auto parsed = platform::json::parse(eff);
+        DOCTEST_REQUIRE(parsed.isOk());
+        auto obj = parsed.value().asObject();
+        DOCTEST_REQUIRE(obj.has("model"));
+        DOCTEST_CHECK_EQ(obj.get("model").asString(), std::string("fragment-model"));
+        DOCTEST_CHECK_EQ(obj.get("statusLine").asString(), std::string("profile-s"));
+        DOCTEST_CHECK(obj.has("hooks"));
+        DOCTEST_CHECK(eff.find("\n  \"") != std::string::npos);   // pretty 形
+        DOCTEST_CHECK(warnings.empty());
+    }
+    warnings.clear();
+    // 解绑回落（fragmentJson="" → profile 值原样语义等值；round-trip 后键值不变）
+    {
+        const std::string eff = effectiveExtraSettingsJson(
+            R"({"model": "profile-model"})", "", &warnings);
+        auto parsed = platform::json::parse(eff);
+        DOCTEST_REQUIRE(parsed.isOk());
+        DOCTEST_CHECK_EQ(parsed.value().asObject().get("model").asString(),
+                         std::string("profile-model"));
+        DOCTEST_CHECK(warnings.empty());
+    }
+    warnings.clear();
+    // 任一侧 "env" 键跳过 + warnings 记录（D-5 读侧兜底）；另一侧照用
+    {
+        const std::string eff = effectiveExtraSettingsJson(
+            R"({"env": {"A": "1"}, "permissions": {"p": 1}})",
+            R"({"env": {"B": "2"}, "model": "m"})", &warnings);
+        auto parsed = platform::json::parse(eff);
+        DOCTEST_REQUIRE(parsed.isOk());
+        auto obj = parsed.value().asObject();
+        DOCTEST_CHECK_FALSE(obj.has("env"));
+        DOCTEST_CHECK(obj.has("permissions"));
+        DOCTEST_CHECK_EQ(obj.get("model").asString(), std::string("m"));
+        DOCTEST_CHECK_EQ(warnings.size(), static_cast<size_t>(2));   // 两侧各一条
+    }
+    warnings.clear();
+    // 非法一侧按空处理（warnings 记录），另一侧照用
+    {
+        const std::string eff = effectiveExtraSettingsJson(
+            "{broken", R"({"model": "m"})", &warnings);
+        auto parsed = platform::json::parse(eff);
+        DOCTEST_REQUIRE(parsed.isOk());
+        DOCTEST_CHECK_EQ(parsed.value().asObject().get("model").asString(),
+                         std::string("m"));
+        DOCTEST_CHECK_EQ(warnings.size(), static_cast<size_t>(1));
+    }
+    // 顶层非对象一侧同样按空处理
+    {
+        std::vector<std::string> w2;
+        const std::string eff = effectiveExtraSettingsJson(
+            "[1,2]", R"({"model": "m"})", &w2);
+        DOCTEST_CHECK_EQ(w2.size(), static_cast<size_t>(1));
+        auto parsed = platform::json::parse(eff);
+        DOCTEST_REQUIRE(parsed.isOk());
+        DOCTEST_CHECK(parsed.value().asObject().has("model"));
+    }
+    // 双空返回空串
+    {
+        std::vector<std::string> w3;
+        DOCTEST_CHECK(effectiveExtraSettingsJson("", "", &w3).empty());
+        DOCTEST_CHECK(w3.empty());
+    }
+    return true;
+})
+
+// ---- 文档并入：写入键集 / model 抑制 / env 键跳过 / 非法零写入 ----
+REGISTER_TEST(provider_config_extra_settings_apply,
+              "provider_config: applyExtraSettingsToSettingsDoc 写入键集/model 抑制/env 跳过/顶层非对象", {
+    using module::claude::applyExtraSettingsToSettingsDoc;
+    using platform::json::JsonValue;
+
+    // 写入键集正确；"model"（非空字符串）触发抑制：env 中 ANTHROPIC_MODEL 被移除、
+    // ANTHROPIC_DEFAULT_SONNET_MODEL 保留（其余槽位键无顶层对映键，照常）
+    {
+        platform::json::JsonObject envObj;
+        envObj.set("ANTHROPIC_MODEL", platform::json::makeString("slot-model"));
+        envObj.set("ANTHROPIC_DEFAULT_SONNET_MODEL",
+                   platform::json::makeString("slot-sonnet"));
+        envObj.set("MY_KEY", platform::json::makeString("v"));
+        platform::json::JsonObject root;
+        root.set("env", JsonValue(std::move(envObj)));
+        root.set("live", platform::json::makeString("old"));
+
+        auto r = applyExtraSettingsToSettingsDoc(
+            root, R"({"model": "json-model", "statusLine": "on"})");
+        DOCTEST_CHECK(r.modelSuppressed);
+        DOCTEST_REQUIRE_EQ(r.writtenKeys.size(), static_cast<size_t>(2));
+        DOCTEST_CHECK_EQ(r.writtenKeys[0], std::string("model"));
+        DOCTEST_CHECK_EQ(r.writtenKeys[1], std::string("statusLine"));
+        DOCTEST_CHECK(r.warnings.empty());
+        // JSON 赢过 live 既有同名非 env 键（D-3）
+        DOCTEST_CHECK_EQ(root.get("live").asString(), std::string("old"));
+        DOCTEST_CHECK_EQ(root.get("model").asString(), std::string("json-model"));
+        DOCTEST_CHECK_EQ(root.get("statusLine").asString(), std::string("on"));
+        // 抑制：ANTHROPIC_MODEL 移除、SONNET 保留
+        auto envAfter = root.get("env").asObject();
+        DOCTEST_CHECK_FALSE(envAfter.has("ANTHROPIC_MODEL"));
+        DOCTEST_CHECK(envAfter.has("ANTHROPIC_DEFAULT_SONNET_MODEL"));
+        DOCTEST_CHECK(envAfter.has("MY_KEY"));
+    }
+    // "model" 非字符串 / 空串 → 不抑制（D-4：非空字符串才触发）
+    {
+        platform::json::JsonObject envObj;
+        envObj.set("ANTHROPIC_MODEL", platform::json::makeString("slot-model"));
+        platform::json::JsonObject root;
+        root.set("env", JsonValue(std::move(envObj)));
+        auto r1 = applyExtraSettingsToSettingsDoc(root, R"({"model": ""})");
+        DOCTEST_CHECK_FALSE(r1.modelSuppressed);
+        DOCTEST_CHECK(root.get("env").asObject().has("ANTHROPIC_MODEL"));
+        auto r2 = applyExtraSettingsToSettingsDoc(root, R"({"model": 42})");
+        DOCTEST_CHECK_FALSE(r2.modelSuppressed);
+        DOCTEST_CHECK(root.get("env").asObject().has("ANTHROPIC_MODEL"));
+    }
+    // "env" 键跳过 + WARN；写入键集不含它
+    {
+        platform::json::JsonObject root;
+        root.set("env", JsonValue(platform::json::makeObject()));
+        auto r = applyExtraSettingsToSettingsDoc(
+            root, R"({"env": {"A": "1"}, "hooks": {}})");
+        DOCTEST_REQUIRE_EQ(r.writtenKeys.size(), static_cast<size_t>(1));
+        DOCTEST_CHECK_EQ(r.writtenKeys[0], std::string("hooks"));
+        DOCTEST_REQUIRE_EQ(r.warnings.size(), static_cast<size_t>(1));
+        DOCTEST_CHECK(r.warnings[0].find("env") != std::string::npos);
+    }
+    // 非法 / 超限 / 顶层非对象输入 → warnings 不写
+    {
+        platform::json::JsonObject root;
+        root.set("env", JsonValue(platform::json::makeObject()));
+        auto r1 = applyExtraSettingsToSettingsDoc(root, "{not-json");
+        DOCTEST_CHECK(r1.writtenKeys.empty());
+        DOCTEST_CHECK_EQ(r1.warnings.size(), static_cast<size_t>(1));
+        auto r2 = applyExtraSettingsToSettingsDoc(root, "[1]");
+        DOCTEST_CHECK(r2.writtenKeys.empty());
+        DOCTEST_CHECK_EQ(r2.warnings.size(), static_cast<size_t>(1));
+        std::string big(1 * 1024 * 1024 + 1, 'x');
+        big[0] = '{';
+        big[big.size() - 1] = '}';
+        auto r3 = applyExtraSettingsToSettingsDoc(root, big);
+        DOCTEST_CHECK(r3.writtenKeys.empty());
+        DOCTEST_CHECK_EQ(r3.warnings.size(), static_cast<size_t>(1));
+        DOCTEST_CHECK(r3.warnings[0].find("1MB") != std::string::npos);
+    }
+    // 空串 → 零写入零警告（未配置）
+    {
+        platform::json::JsonObject root;
+        auto r = applyExtraSettingsToSettingsDoc(root, "");
+        DOCTEST_CHECK(r.writtenKeys.empty());
+        DOCTEST_CHECK_FALSE(r.modelSuppressed);
+        DOCTEST_CHECK(r.warnings.empty());
+    }
+    return true;
+})
+
+// ---- 校验五态：空串 OK / 非法 / 顶层数组 / 超 1MB / 含 "env" ----
+REGISTER_TEST(provider_config_extra_settings_validate,
+              "provider_config: validateExtraSettingsJson 空串/非法/顶层数组/超限/env 键五态", {
+    using module::claude::validateExtraSettingsJson;
+    using module::claude::kMaxExtraSettingsBytes;
+
+    DOCTEST_CHECK_EQ(kMaxExtraSettingsBytes, static_cast<size_t>(1u * 1024u * 1024u));
+    DOCTEST_CHECK(validateExtraSettingsJson("").isOk());
+    DOCTEST_CHECK(validateExtraSettingsJson("   \n\t ").isOk());   // 空白 = 未配置
+    DOCTEST_CHECK(validateExtraSettingsJson(R"({"model": "m"})").isOk());
+
+    auto e1 = validateExtraSettingsJson("{not-json");
+    DOCTEST_REQUIRE(e1.isFail());
+    DOCTEST_CHECK(e1.errorMessage().find("解析失败") != std::string::npos);
+
+    auto e2 = validateExtraSettingsJson("[1,2]");
+    DOCTEST_REQUIRE(e2.isFail());
+    DOCTEST_CHECK(e2.errorMessage().find("顶层必须是 JSON 对象") != std::string::npos);
+
+    std::string big(1 * 1024 * 1024 + 1, 'x');
+    big[0] = '{';
+    big[big.size() - 1] = '}';
+    auto e3 = validateExtraSettingsJson(big);
+    DOCTEST_REQUIRE(e3.isFail());
+    DOCTEST_CHECK(e3.errorMessage().find("1MB") != std::string::npos);
+
+    auto e4 = validateExtraSettingsJson(R"({"env": {"A": "1"}})");
+    DOCTEST_REQUIRE(e4.isFail());
+    DOCTEST_CHECK(e4.errorMessage().find("不能包含 env 键") != std::string::npos);
+    return true;
+})
+
+// ---- F-10：def 槽位 envKey 单一来源自槽位表派生（不手抄键名）----
+REGISTER_TEST(provider_config_model_slot_def_env_key,
+              "provider_config: modelSlotDefEnvKey/isModelSlotEnvKey 自槽位表派生（F-10）", {
+    using module::claude::modelSlotDefEnvKey;
+    using module::claude::isModelSlotEnvKey;
+    // def 行的 envKey 必须与槽位表一致（对照表项，不对照手抄常量）
+    const char* expected = nullptr;
+    for (const auto& m : module::claude::modelSlotTable()) {
+        if (std::string(m.jsonKey) == "default") expected = m.envKey;
+    }
+    DOCTEST_REQUIRE(expected != nullptr);
+    DOCTEST_CHECK_EQ(std::string(modelSlotDefEnvKey()), std::string(expected));
+    // 槽位键判定：envKey 命中 / *_NAME 键命中 / 非槽位键不命中
+    DOCTEST_CHECK(isModelSlotEnvKey(modelSlotDefEnvKey()));
+    bool hasNameKey = false;
+    for (const auto& m : module::claude::modelSlotTable()) {
+        if (m.nameKey != nullptr) {
+            hasNameKey = true;
+            DOCTEST_CHECK(isModelSlotEnvKey(m.nameKey));
+        }
+    }
+    DOCTEST_CHECK(hasNameKey);
+    DOCTEST_CHECK_FALSE(isModelSlotEnvKey("ANTHROPIC_BASE_URL"));
+    DOCTEST_CHECK_FALSE(isModelSlotEnvKey("MY_CUSTOM_KEY"));
+    return true;
+})

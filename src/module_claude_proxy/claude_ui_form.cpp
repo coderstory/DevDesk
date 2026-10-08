@@ -1,5 +1,6 @@
 // src/module_claude_proxy/claude_ui_form.cpp
-// R4（P-B5）：表单弹窗（tabs 三页）+ 删除确认弹窗 + 表单状态机 —— 逐字自
+// R4（P-B5）：表单弹窗（tabs 四页，2026-09-30 batch-fix B 尾插「高级配置」）
+// + 删除确认弹窗 + 表单状态机 —— 逐字自
 // claude_module.cpp 搬出（含注释），只把 this 成员换成显式入参
 // （FormState / ImportState 引用 + FormSubmitHooks 回调）。
 #include "claude_ui_form.h"
@@ -9,6 +10,7 @@
 #include "platform/json.h"
 #include "provider_config.h"
 #include "settings_sync.h"
+#include "upstream_dialect.h"
 
 #include <components/button.h>
 #include <components/dropdown.h>
@@ -34,6 +36,28 @@ constexpr const char* kAuthFieldLabels[] = {
     "双发（默认）", "只发 Authorization: Bearer", "只发 x-api-key"};
 constexpr int kAuthFieldCount = 3;
 
+// 「格式化」共用体（2026-09-30 json-fullscreen 自表单按钮 lambda 提升为自由
+// 函数）：parse → stringify(pretty)，不自写格式化器；键序会重排为字典序——
+// 与 settings_sync 写 settings.json 同一条序列化通道，round-trip 语义不变。
+// 失败 → 行内红字（formAdvancedJsonError_，与校验失败共用）。表单按钮与全屏
+// 覆盖层按钮同调本函数——单一来源，不复制逻辑
+void formatAdvancedJson(FormState& f) {
+    f.formAdvancedJsonError_.clear();
+    if (f.formExtraSettingsJson_.empty()) return;
+    auto parsed = platform::json::parse(f.formExtraSettingsJson_);
+    if (parsed.isFail()) {
+        f.formAdvancedJsonError_ = "解析失败: " + parsed.errorMessage();
+        return;
+    }
+    auto pretty = platform::json::stringify(parsed.value(),
+                                            /*pretty=*/true);
+    if (pretty.isFail()) {
+        f.formAdvancedJsonError_ = "序列化失败: " + pretty.errorMessage();
+        return;
+    }
+    f.formExtraSettingsJson_ = pretty.value();
+}
+
 } // namespace
 
 // ============ 新建/编辑 Profile 表单弹窗（tabs 三页，§6.1） ============
@@ -50,14 +74,21 @@ void openCreateForm(FormState& f, ImportState& imp) {
     f.formEnvRows_.clear();
     f.formAuthField_ = AuthField::Both;
     f.formAuthFieldOpen_ = false;
-    // 批 2：绑定与片段赢预览复位（新建默认未绑定）
+    // 批 2：绑定复位（新建默认未绑定；advanced-json-editor §7.1：下拉已迁
+    // 高级配置页，frozenKeys 预览随片段 JSON 化拆除）
     f.formSharedConfigId_ = 0;
     f.formSharedDdOpen_ = false;
-    f.formFrozenKeys_.clear();
-    f.formOriginalOwnKeys_.clear();
+    // 高级设置 JSON 复位（advanced-json-editor §7.1：新建默认未配置）
+    f.formExtraSettingsJson_.clear();
+    f.formAdvancedJsonError_.clear();
+    // 全屏编辑态复位（json-fullscreen：新表单不带上一份的全屏残留）
+    f.formJsonFullscreen_ = false;
     // 批 3：备用 Profile 复位（新建默认不启用 failover）
     f.formFallbackProfileId_ = 0;
     f.formFallbackDdOpen_ = false;
+    // 高级配置页复位（2026-09-30 batch-fix B：新建默认不覆盖方言）
+    f.formDialectOverride_.clear();
+    f.formDialectDdOpen_ = false;
     resetImportState(imp);
     f.formOpen_ = true;
 }
@@ -77,28 +108,31 @@ void openEditForm(FormState& f, ImportState& imp, const Profile& p,
     // 认证字段：编辑必须回显当前值（否则用户以为看到的是默认值，一保存就坐实覆盖）
     f.formAuthField_ = authFieldFromText(p.authField);
     f.formAuthFieldOpen_ = false;
-    // 批 2：绑定回显 + 片段赢预览初值（K = 所绑片段 extra_env 的键，
-    // 设计 §2.3 优先级 2 > 3）
+    // 批 2：绑定回显（advanced-json-editor §7.1：下拉已迁高级配置页；悬空
+    // 绑定由下拉逐帧归一为未绑定，同既有口径）
     f.formSharedConfigId_ = p.sharedConfigId;
     f.formSharedDdOpen_ = false;
-    f.formFrozenKeys_.clear();
-    f.formOriginalOwnKeys_.clear();
-    if (p.sharedConfigId != 0) {
-        const SharedConfig* sc = findSharedById(sharedConfigs, p.sharedConfigId);
-        if (sc != nullptr) f.formFrozenKeys_ = sharedFrozenKeys(*sc);
-    }
+    // 高级设置 JSON 预填（advanced-json-editor §7.1）：DB 恒为 pretty 保存值；
+    // 外部改库的非 pretty 原文按原样预填，格式化按钮负责规范化
+    f.formExtraSettingsJson_ = p.extraSettingsJson;
+    f.formAdvancedJsonError_.clear();
+    // 全屏编辑态复位（json-fullscreen：重开表单不带上一份的全屏残留）
+    f.formJsonFullscreen_ = false;
     // 批 3：备用 Profile 回显（悬空/自引用 → 下拉逐帧归一为「无」，见绘制处）
     f.formFallbackProfileId_ = p.fallbackProfileId;
     f.formFallbackDdOpen_ = false;
-    // env 行：非法 JSON 读路径容错为空表（不炸）；自有键（归一后）记入
-    // formOriginalOwnKeys_——「新增同键」拦截只拦打开后新加的行，存量键
-    // 非破坏保留、冻结显示（解绑后恢复生效，设计 §2.3）
+    // 高级配置页回显（2026-09-30 batch-fix B：方言覆盖；空/未知值 → 下拉逐帧
+    // 归一为「自动」，见绘制处）
+    f.formDialectOverride_ = p.dialectOverride;
+    f.formDialectDdOpen_ = false;
+    // env 行：非法 JSON 读路径容错为空表（不炸）。（advanced-json-editor
+    // §7.1：frozenKeys/chip/置灰拆除后，formOriginalOwnKeys_ 的「新增同键」
+    // 拦截记账一并拆除）
     f.formEnvRows_.clear();
     auto ee = parseExtraEnv(p.extraEnvJson);
     if (ee.isOk()) {
         for (const auto& [k, v] : ee.value()) {
             f.formEnvRows_.emplace_back(k, v);
-            f.formOriginalOwnKeys_.push_back(normalizedEnvKey(k));
         }
     }
     resetImportState(imp);
@@ -268,30 +302,33 @@ void submitForm(FormState& f, const FormSubmitHooks& hooks,
     if (f.formSharedConfigId_ != 0 &&
         findSharedById(sharedConfigs, f.formSharedConfigId_) == nullptr) {
         f.formSharedConfigId_ = 0;
-        f.formFrozenKeys_.clear();
-    }
-    // 批 2：新增同键拦截（设计 §2.3「拦截优于事后被覆盖，避免以为存上了」）——
-    // 行键 ∈ 绑定片段 K 且非打开时自有存量（存量非破坏保留：冻结显示、
-    // 解绑后恢复生效）；命中给与冻结行同源的提示
-    if (!f.formFrozenKeys_.empty()) {
-        for (const auto& row : f.formEnvRows_) {
-            if (row.first.empty()) continue;
-            const std::string nk = normalizedEnvKey(row.first);
-            if (keyIn(f.formFrozenKeys_, nk) &&
-                !keyIn(f.formOriginalOwnKeys_, nk)) {
-                const SharedConfig* sc =
-                    findSharedById(sharedConfigs, f.formSharedConfigId_);
-                f.formError_ =
-                    "环境变量 " + nk + " 由共享配置片段「" +
-                    (sc != nullptr ? sc->name : std::string("?")) +
-                    "」冻结（片段赢），请在共享配置片段里修改";
-                return;
-            }
-        }
     }
     std::string modelsJson;
     std::string envJson;
     if (!serializeFormData(f, &modelsJson, &envJson)) return;
+
+    // 高级设置 JSON（advanced-json-editor §7.3，D-5/D-6）：保存前校验——
+    // 失败 → formError_ 红字（弹窗不关、不落库）+ 行内红字共用；通过 → 落库
+    // 前统一 pretty（空串跳过）。服务层/DB 不再二次校验格式（写侧已归一；
+    // 读侧容错在 effectiveExtraSettingsJson / applyExtraSettingsToSettingsDoc）
+    std::string extraSettingsPretty;
+    if (!f.formExtraSettingsJson_.empty()) {
+        auto v = validateExtraSettingsJson(f.formExtraSettingsJson_);
+        if (v.isFail()) {
+            f.formError_ = v.errorMessage();
+            f.formAdvancedJsonError_ = v.errorMessage();
+            return;
+        }
+        auto parsed = platform::json::parse(f.formExtraSettingsJson_);
+        if (parsed.isOk()) {
+            auto pretty = platform::json::stringify(parsed.value(),
+                                                    /*pretty=*/true);
+            if (pretty.isOk()) extraSettingsPretty = pretty.value();
+        }
+        // 解析失败理论不可达（validate 已保证）；退化为原文落库，读侧容错兜底
+        if (extraSettingsPretty.empty()) extraSettingsPretty =
+            f.formExtraSettingsJson_;
+    }
 
     if (f.formEditId_ == 0) {
         // 新建：API Key 必填
@@ -305,18 +342,23 @@ void submitForm(FormState& f, const FormSubmitHooks& hooks,
                                     f.formModels_.def.model, /*activateIfNoneActive=*/true,
                                     /*sharedConfigId=*/f.formSharedConfigId_,
                                     authFieldToText(f.formAuthField_),
-                                    /*dialectOverride=*/std::string(),
-                                    /*fallbackProfileId=*/f.formFallbackProfileId_);
+                                    /*dialectOverride=*/f.formDialectOverride_,
+                                    /*fallbackProfileId=*/f.formFallbackProfileId_,
+                                    /*extraSettingsJson=*/extraSettingsPretty);
         if (r.isFail()) {
             f.formError_ = r.errorMessage();
             return;
         }
         // createProfile 无槽位/env 参数（最小 diff 不动签名），二段补写
-        if (!modelsJson.empty() || !envJson.empty()) {
+        //（advanced-json-editor §7.3：门槛含 extraSettingsPretty——纯 JSON
+        // profile 同样进补写，与 duplicateProfile F-3 同口径）
+        if (!modelsJson.empty() || !envJson.empty() ||
+            !extraSettingsPretty.empty()) {
             Profile p = r.value();
             p.model = f.formModels_.def.model;
             p.modelsConfigJson = modelsJson;
             p.extraEnvJson = envJson;
+            p.extraSettingsJson = extraSettingsPretty;
             auto u = svc->updateProfile(p);
             if (u.isFail()) {
                 f.formError_ = "已创建，但模型/env 写入失败: " +
@@ -351,10 +393,16 @@ void submitForm(FormState& f, const FormSubmitHooks& hooks,
         p.model = f.formModels_.def.model;   // 旧列与 default 槽位同步（§4.2）
         p.modelsConfigJson = modelsJson;
         p.extraEnvJson = envJson;
+        p.extraSettingsJson = extraSettingsPretty;   // 高级设置 JSON（§7.3 落库统一 pretty）
         p.apiKeyPlain = f.formKey_;   // 空 = 不换 key
         p.authField = authFieldToText(f.formAuthField_);
         p.sharedConfigId = f.formSharedConfigId_;   // 批 2：绑定/解绑随保存落库
         p.fallbackProfileId = f.formFallbackProfileId_;   // 批 3：备用随保存落库（自引用由服务层校验兜底）
+        // 高级配置页接线（2026-09-30 batch-fix B）：把新下拉的值真正写进编辑路径
+        //（不接线则下拉改动落不了盘）。对「不动该下拉」场景行为与接线前等价——
+        // 现路径 p 来自 getProfile，已隐式保留既有覆盖（profile_repository.cpp
+        // 读侧归一 + updateProfile 直写该字段），用例按「接线回归钉」定位
+        p.dialectOverride = f.formDialectOverride_;
         auto r = svc->updateProfile(p);
         if (r.isFail()) {
             f.formError_ = r.errorMessage();
@@ -368,13 +416,10 @@ void submitForm(FormState& f, const FormSubmitHooks& hooks,
 namespace {
 
 // ---- 基础页（§6.1 线框）----
-// profiles：批 3 备用 Profile 下拉的数据源（编辑态排除自身；悬空/自引用逐帧
-// 归一为「无」，不把幽灵 id 留在表单态里传播——同批 2 片段绑定的归一口径）
 void drawFormBasicTab(eui::Ui& ui, float w,
                       const core::theme::Tokens& t,
                       const components::theme::ThemeColorTokens& themeTokens,
-                      bool isEdit, FormState& f,
-                      const std::vector<Profile>& profiles) {
+                      bool isEdit, FormState& f) {
     ui.text("claude.form.basic.name.label")
         .position(28.0f, 104.0f).size(w - 56.0f, 16.0f)
         .text("名称").fontSize(11.0f).lineHeight(16.0f)
@@ -448,16 +493,122 @@ void drawFormBasicTab(eui::Ui& ui, float w,
         })
         .build();
 
+    // 「备用 Profile（failover）」下拉已整段迁入高级配置页（2026-09-30
+    // batch-fix B，设计 §3.2①/②）——其后元素整体上移 66px（原 failover 块占
+    // y 380..438：label 380 / 下拉 398+40）。认证字段下拉底（332+40=372）与
+    // 下方提示行 380 间距 8px，与既有行距一致
+
+    ui.text("claude.form.basic.hint.icon")
+        .position(28.0f, 380.0f).size(14.0f, 18.0f)
+        .icon(0xF05A).fontSize(12.0f).lineHeight(18.0f)
+        .color(t.colors.textTertiary).build();
+    ui.text("claude.form.basic.hint")
+        .position(46.0f, 380.0f).size(w - 74.0f, 18.0f)
+        .text("模型映射、高级 env 和高级配置在另外几个标签页配置")
+        .fontSize(12.0f).lineHeight(18.0f)
+        .color(t.colors.textTertiary).build();
+
+    if (!f.formError_.empty()) {
+        ui.text("claude.dialog.form.error")
+            .position(28.0f, 404.0f).size(w - 56.0f, 18.0f)
+            .text(f.formError_).fontSize(12.0f).lineHeight(18.0f)
+            .color(t.colors.error).build();
+    }
+
+    // 「导入当前配置」接管态警告（不阻断，仅提示；⚠ 图标 + 文字两元素）
+    if (!f.formImportWarn_.empty()) {
+        ui.text("claude.dialog.form.importwarn.icon")
+            .position(28.0f, 426.0f).size(14.0f, 18.0f)
+            .icon(0xF071).fontSize(12.0f).lineHeight(18.0f)
+            .color(t.colors.warning).build();
+        ui.text("claude.dialog.form.importwarn")
+            .position(46.0f, 426.0f).size(w - 74.0f, 36.0f)
+            .text(f.formImportWarn_).fontSize(12.0f).lineHeight(18.0f)
+            .color(t.colors.warning).build();
+    }
+}
+
+// ---- 高级配置页（2026-09-30 batch-fix B，设计 §3.2①）：方言覆盖下拉 +
+// 备用 Profile 下拉（自基础页整段迁入：label/hint/候选归算/dropdown 逐字
+// 保留，含 profiles 快照入参与悬空归一逻辑；节点 id 同步保留——无头用例
+// 经 claude.form.basic.fallback.dd.* 导航锚定位，改名即测试返工）----
+// profiles：备用 Profile 下拉的数据源（编辑态排除自身；悬空/自引用逐帧
+// 归一为「无」，不把幽灵 id 留在表单态里传播——同批 2 片段绑定的归一口径）
+void drawFormAdvancedTab(eui::Ui& ui, float w,
+                         const core::theme::Tokens& t,
+                         const components::theme::ThemeColorTokens& themeTokens,
+                         FormState& f,
+                         const std::vector<Profile>& profiles,
+                         const std::vector<SharedConfig>& sharedConfigs) {
+    // 方言覆盖（审计 CPX-13 的 UI 侧出口）：idx↔值映射 0↔""（未覆盖）/
+    // 1↔anthropic_default / 2↔opencode_zen。items 显示名与详情 pane 文案共用
+    // dialectKindDisplayName（单一来源，不手抄字符串）；onChange 直接写规范
+    // 文本（dialectKindToText 产物，映射表以其为源），DB 层
+    // normalizeDialectOverride 再兜底（双层保险，符合 CPX-13「写侧归一」）
+    ui.text("claude.form.advanced.dialect.label")
+        .position(28.0f, 104.0f).size(72.0f, 16.0f)
+        .text("上游方言").fontSize(11.0f).lineHeight(16.0f)
+        .color(t.colors.textTertiary).build();
+    ui.text("claude.form.advanced.dialect.hint")
+        .position(104.0f, 104.0f).size(w - 132.0f, 16.0f)
+        .text("网关行为差异（鉴权头/会话头/模型名标记）不一致时切换；默认按站点推断")
+        .fontSize(11.0f).lineHeight(16.0f)
+        .color(t.colors.textTertiary).build();
+    {
+        std::vector<std::string> items;
+        items.reserve(3);
+        items.emplace_back("自动（按站点推断）");
+        items.emplace_back(
+            dialectKindDisplayName(UpstreamDialect::Kind::AnthropicDefault));
+        items.emplace_back(
+            dialectKindDisplayName(UpstreamDialect::Kind::OpencodeZen));
+        // 选中态逐帧归算：经 dialectKindFromText 反查 idx（空串/未知 → 0，
+        // 读侧兜底同口径）
+        int selIdx = 0;
+        if (const auto kind = dialectKindFromText(f.formDialectOverride_)) {
+            selIdx = *kind == UpstreamDialect::Kind::OpencodeZen ? 2 : 1;
+        }
+        ui.stack("claude.form.advanced.dialect.ddwrap")
+            .position(28.0f, 122.0f)
+            .size(w - 56.0f, 40.0f)
+            .content([&] {
+                components::dropdown(ui, "claude.form.advanced.dialect.dd")
+                    .size(w - 56.0f, 40.0f)
+                    .theme(themeTokens)
+                    .items(std::move(items))
+                    .selected(selIdx)
+                    .open(f.formDialectDdOpen_)
+                    .onOpenChange([fp = &f](bool v) { fp->formDialectDdOpen_ = v; })
+                    .onChange([fp = &f](int idx) {
+                        switch (idx) {
+                            case 1:
+                                fp->formDialectOverride_ = dialectKindToText(
+                                    UpstreamDialect::Kind::AnthropicDefault);
+                                return;
+                            case 2:
+                                fp->formDialectOverride_ = dialectKindToText(
+                                    UpstreamDialect::Kind::OpencodeZen);
+                                return;
+                            default:
+                                fp->formDialectOverride_.clear();
+                                return;
+                        }
+                    })
+                    .build();
+            })
+            .build();
+    }
+
     // 备用 Profile（failover，设计 §3.4/§3.7）：0 = 不启用。启用后主 Profile
     // 返回可重试错误时请求换发备用（§3.4 表单提示——可能按另一家计费在
     // 副提示里点明）。选项 idx 0 = 无；其余 = 候选 profile 表序 +1；编辑态
     // 排除自身（自引用由服务层 updateProfile 校验兜底，这里列表直接不给）
     ui.text("claude.form.basic.fallback.label")
-        .position(28.0f, 380.0f).size(72.0f, 16.0f)
+        .position(28.0f, 174.0f).size(72.0f, 16.0f)
         .text("备用 Profile").fontSize(11.0f).lineHeight(16.0f)
         .color(t.colors.textTertiary).build();
     ui.text("claude.form.basic.fallback.hint")
-        .position(104.0f, 380.0f).size(w - 132.0f, 16.0f)
+        .position(104.0f, 174.0f).size(w - 132.0f, 16.0f)
         .text("401/403/429/5xx/网络失败时换发备用（可能按另一家计费）")
         .fontSize(11.0f).lineHeight(16.0f)
         .color(t.colors.textTertiary).build();
@@ -484,7 +635,7 @@ void drawFormBasicTab(eui::Ui& ui, float w,
             if (selIdx == 0) f.formFallbackProfileId_ = 0;
         }
         ui.stack("claude.form.basic.fallback.ddwrap")
-            .position(28.0f, 398.0f)
+            .position(28.0f, 192.0f)
             .size(w - 56.0f, 40.0f)
             .content([&] {
                 // candidateIds 按值捕获：onChange 只取 id，不悬垂引用快照
@@ -508,33 +659,127 @@ void drawFormBasicTab(eui::Ui& ui, float w,
             .build();
     }
 
-    ui.text("claude.form.basic.hint.icon")
-        .position(28.0f, 446.0f).size(14.0f, 18.0f)
-        .icon(0xF05A).fontSize(12.0f).lineHeight(18.0f)
+    // ---- 共享配置片段绑定（advanced-json-editor §7.1/§7.2：自 env 页整段
+    // 迁入，下拉数据源/悬空归一/onChange 逻辑逐字保留；idx 0 = 未绑定）----
+    ui.text("claude.form.advanced.shared.label")
+        .position(28.0f, 244.0f).size(72.0f, 16.0f)
+        .text("绑定片段").fontSize(11.0f).lineHeight(16.0f)
         .color(t.colors.textTertiary).build();
-    ui.text("claude.form.basic.hint")
-        .position(46.0f, 446.0f).size(w - 74.0f, 18.0f)
-        .text("模型映射和高级 env 在另外两个标签页配置")
-        .fontSize(12.0f).lineHeight(18.0f)
+    ui.text("claude.form.advanced.shared.hint")
+        .position(104.0f, 244.0f).size(w - 132.0f, 16.0f)
+        .text("片段属性在写入时覆盖本页同名键，解绑回落")
+        .fontSize(11.0f).lineHeight(16.0f)
         .color(t.colors.textTertiary).build();
-
-    if (!f.formError_.empty()) {
-        ui.text("claude.dialog.form.error")
-            .position(28.0f, 470.0f).size(w - 56.0f, 18.0f)
-            .text(f.formError_).fontSize(12.0f).lineHeight(18.0f)
-            .color(t.colors.error).build();
+    {
+        std::vector<std::string> items;
+        items.reserve(sharedConfigs.size() + 1);
+        items.emplace_back("无（不绑定片段）");
+        for (const auto& sc : sharedConfigs) items.push_back(sc.name);
+        // 选中态逐帧归算；悬空绑定（片段已删 / 快照未到位）归一为未绑定
+        //（幂等：值为 0 后不再重设）——不把幽灵 id 留在表单态里传播
+        int selIdx = 0;
+        if (f.formSharedConfigId_ != 0) {
+            for (size_t k = 0; k < sharedConfigs.size(); ++k) {
+                if (sharedConfigs[k].id == f.formSharedConfigId_) {
+                    selIdx = static_cast<int>(k) + 1;
+                    break;
+                }
+            }
+            if (selIdx == 0) f.formSharedConfigId_ = 0;
+        }
+        ui.stack("claude.form.advanced.shared.ddwrap")
+            .position(28.0f, 262.0f)
+            .size(w - 56.0f, 40.0f)
+            .content([&] {
+                components::dropdown(ui, "claude.form.advanced.shared.dd")
+                    .size(w - 56.0f, 40.0f)
+                    .theme(themeTokens)
+                    .items(std::move(items))
+                    .selected(selIdx)
+                    .open(f.formSharedDdOpen_)
+                    .onOpenChange([fp = &f](bool v) { fp->formSharedDdOpen_ = v; })
+                    .onChange([fp = &f, scs = &sharedConfigs](int idx) {
+                        if (idx <= 0) {
+                            fp->formSharedConfigId_ = 0;
+                            return;
+                        }
+                        const size_t k = static_cast<size_t>(idx - 1);
+                        if (k < scs->size()) fp->formSharedConfigId_ = (*scs)[k].id;
+                    })
+                    .build();
+            })
+            .build();
     }
 
-    // 「导入当前配置」接管态警告（不阻断，仅提示；⚠ 图标 + 文字两元素）
-    if (!f.formImportWarn_.empty()) {
-        ui.text("claude.dialog.form.importwarn.icon")
-            .position(28.0f, 492.0f).size(14.0f, 18.0f)
-            .icon(0xF071).fontSize(12.0f).lineHeight(18.0f)
-            .color(t.colors.warning).build();
-        ui.text("claude.dialog.form.importwarn")
-            .position(46.0f, 492.0f).size(w - 74.0f, 36.0f)
-            .text(f.formImportWarn_).fontSize(12.0f).lineHeight(18.0f)
-            .color(t.colors.warning).build();
+    // ---- 高级设置 JSON（advanced-json-editor §7.2）：label+hint / 多行编辑框
+    // / 格式化按钮 / 行内红字。placeholder 示意「settings.json 除 env 外的
+    // 属性」；onChange 写状态并清行内错误（formError_ 提交闸门分层不动）----
+    ui.text("claude.form.advanced.json.label")
+        .position(28.0f, 314.0f).size(110.0f, 16.0f)
+        .text("高级设置 JSON").fontSize(11.0f).lineHeight(16.0f)
+        .color(t.colors.textTertiary).build();
+    ui.text("claude.form.advanced.json.hint")
+        .position(142.0f, 314.0f).size(w - 170.0f, 16.0f)
+        .text("settings.json 除 env 外的属性：model / permissions / statusLine / hooks / …")
+        .fontSize(11.0f).lineHeight(16.0f)
+        .color(t.colors.textTertiary).build();
+    components::input(ui, "claude.form.advanced.json")
+        .position(28.0f, 332.0f).size(w - 56.0f, 100.0f)
+        .value(f.formExtraSettingsJson_)
+        .placeholder(R"({ "model": "...", "permissions": { ... } })")
+        .multiline(true).scrollbar(true)
+        .fontSize(12.0f).theme(themeTokens)
+        .onChange([fp = &f](const std::string& v) {
+            fp->formExtraSettingsJson_ = v;
+            fp->formAdvancedJsonError_.clear();
+        })
+        .onCancel([fp = &f] { fp->formOpen_ = false; })   // 审计 [21]：Esc=取消（导入框同款）
+        .build();
+
+    // 「格式化」按钮（D-2：parse → stringify(pretty)——本体在匿名空间
+    // formatAdvancedJson，json-fullscreen 起与全屏覆盖层按钮共用）。失败 →
+    // 行内红字（与校验失败共用）
+    components::button(ui, "claude.form.advanced.json.format")
+        .position(28.0f, 440.0f).size(110.0f, 32.0f)
+        .text("格式化").fontSize(12.0f)
+        .colors(t.colors.surfaceElevated, t.colors.hover, t.colors.active)
+        .textColor(t.colors.textPrimary)
+        .radius(t.sizes.radiusSmall)
+        .border(1.0f, t.colors.borderDefault)
+        .onClick([fp = &f] { formatAdvancedJson(*fp); })
+        .build();
+    // 「全屏编辑」入口（2026-09-30 json-fullscreen）：与「格式化」并排，副按钮
+    // 同款。只置位 formJsonFullscreen_——覆盖层由 compose 在全部弹窗之后绘制
+    //（claude_module.cpp drawJsonFullscreenOverlay），表单态本帧不动
+    components::button(ui, "claude.form.advanced.json.fs")
+        .position(150.0f, 440.0f).size(110.0f, 32.0f)
+        .text("全屏编辑").fontSize(12.0f)
+        .colors(t.colors.surfaceElevated, t.colors.hover, t.colors.active)
+        .textColor(t.colors.textPrimary)
+        .radius(t.sizes.radiusSmall)
+        .border(1.0f, t.colors.borderDefault)
+        .onClick([fp = &f] { fp->formJsonFullscreen_ = true; })
+        .build();
+    // 已绑定片段提示行（§7.3：取代拆除的 frozenKeys/chip——文本框无逐键行，
+    // 片段赢语义在此明示；json-fullscreen 起右移让位「全屏编辑」按钮）
+    if (const SharedConfig* boundSc =
+            findSharedById(sharedConfigs, f.formSharedConfigId_);
+        boundSc != nullptr) {
+        ui.text("claude.form.advanced.json.boundhint")
+            .position(272.0f, 448.0f).size(w - 300.0f, 16.0f)
+            .text("已绑定片段「" + truncateUtf8(boundSc->name, 16) +
+                  "」：同名键以片段为准（解绑后回落本页值）")
+            .fontSize(11.0f).lineHeight(16.0f)
+            .color(t.colors.textTertiary).build();
+    }
+
+    // 行内红字（格式化/校验失败共用；480-496 单行，与底部 formError 行
+    // y=h-104=496 相邻不重叠）
+    if (!f.formAdvancedJsonError_.empty() && f.formError_.empty()) {
+        ui.text("claude.form.advanced.json.error")
+            .position(28.0f, 480.0f).size(w - 56.0f, 16.0f)
+            .text(f.formAdvancedJsonError_).fontSize(11.0f).lineHeight(16.0f)
+            .color(t.colors.error).build();
     }
 }
 
@@ -607,87 +852,26 @@ void drawFormModelsTab(eui::Ui& ui, float w,
         .color(t.colors.textTertiary).build();
 }
 
-// ---- 高级 env 页（键值编辑器 + 共享配置绑定 + cc-switch 粘贴导入，§6.1）----
+// ---- 高级 env 页（键值编辑器 + cc-switch 粘贴导入，§6.1）----
 // ponytail: 可见行数上限 5（760×600 弹窗高度约束），超出部分保存在
 // 状态里全量保存；需要编辑超长列表时再引入 scrollView
 //
-// 批 2（设计 §2.10）：顶部一行 = 共享配置绑定下拉（与 env 标题同行、右对齐，
-// 不挤动下方行几何）；绑定后 K 键行置灰只读 + chip「来自片段 X」。
+// advanced-json-editor §7.1/§8.2：共享配置绑定下拉整段迁入高级配置页，
+// frozenKeys/chip/置灰整套拆除（片段不再携带 env 键——env 域片段管线随
+// §8.4 拆除，绑定语义迁到 JSON 域「生成时叠加、片段赢」）。
 void drawFormEnvTab(eui::Ui& ui, float w,
                     const core::theme::Tokens& t,
                     const components::theme::ThemeColorTokens& themeTokens,
                     FormState& f, ImportState& imp,
                     const std::vector<SharedConfig>& sharedConfigs) {
+    (void)sharedConfigs;   // 绑定下拉已迁高级配置页；签名保留防调用点连锁改动
     constexpr size_t kMaxVisibleRows = 5;
 
-    // ---- 批 2：共享配置绑定行（顶部一行，设计 §2.10「profile 绑定」）----
     ui.text("claude.form.env.label")
         .position(28.0f, 104.0f).size(348.0f, 16.0f)
         .text("额外环境变量（原样写入 settings.json env 块）")
         .fontSize(11.0f).lineHeight(16.0f)
         .color(t.colors.textTertiary).build();
-    ui.text("claude.form.env.shared.label")
-        .position(384.0f, 104.0f).size(58.0f, 16.0f)
-        .text("共享配置：").fontSize(11.0f).lineHeight(16.0f)
-        .color(t.colors.textTertiary).build();
-    // 片段下拉：idx 0 = 未绑定；其余 = 片段表序 +1。绑定保存时随表单落库
-    //（新建 = createProfile 尾参，编辑 = updateProfile 的 sharedConfigId）
-    {
-        std::vector<std::string> items;
-        items.reserve(sharedConfigs.size() + 1);
-        items.emplace_back("无（不绑定片段）");
-        for (const auto& sc : sharedConfigs) items.push_back(sc.name);
-        // 选中态逐帧归算；悬空绑定（片段已删 / 快照未到位）归一为未绑定
-        //（幂等：值为 0 后不再重设）——不把幽灵 id 留在表单态里传播
-        int selIdx = 0;
-        if (f.formSharedConfigId_ != 0) {
-            for (size_t k = 0; k < sharedConfigs.size(); ++k) {
-                if (sharedConfigs[k].id == f.formSharedConfigId_) {
-                    selIdx = static_cast<int>(k) + 1;
-                    break;
-                }
-            }
-            if (selIdx == 0) {
-                f.formSharedConfigId_ = 0;
-                f.formFrozenKeys_.clear();
-            }
-        }
-        ui.stack("claude.form.env.shared.ddwrap")
-            .position(446.0f, 92.0f)
-            .size(w - 446.0f - 28.0f, 32.0f)
-            .content([&] {
-                components::dropdown(ui, "claude.form.env.shared.dd")
-                    .size(w - 446.0f - 28.0f, 32.0f)
-                    .theme(themeTokens)
-                    .items(std::move(items))
-                    .selected(selIdx)
-                    .open(f.formSharedDdOpen_)
-                    .onOpenChange([fp = &f](bool v) { fp->formSharedDdOpen_ = v; })
-                    .onChange([fp = &f, scs = &sharedConfigs](int idx) {
-                        if (idx <= 0) {
-                            fp->formSharedConfigId_ = 0;
-                            fp->formFrozenKeys_.clear();
-                            return;
-                        }
-                        const size_t k = static_cast<size_t>(idx - 1);
-                        if (k < scs->size()) {
-                            const SharedConfig& sc = (*scs)[k];
-                            fp->formSharedConfigId_ = sc.id;
-                            // K 键集当场重算（片段赢预览/新增同键拦截判定源）
-                            fp->formFrozenKeys_ = sharedFrozenKeys(sc);
-                        }
-                    })
-                    .build();
-            })
-            .build();
-    }
-    // 冻结行 chip 的片段名（K 键行共用的来源标记）
-    const SharedConfig* boundSc =
-        findSharedById(sharedConfigs, f.formSharedConfigId_);
-    const std::string boundScName =
-        boundSc != nullptr ? boundSc->name : std::string();
-    const std::string chipText =
-        "来自片段 " + truncateUtf8(boundScName, 18);
 
     const size_t visible =
         f.formEnvRows_.size() < kMaxVisibleRows ? f.formEnvRows_.size()
@@ -695,47 +879,6 @@ void drawFormEnvTab(eui::Ui& ui, float w,
     for (size_t i = 0; i < visible; ++i) {
         const float y = 124.0f + static_cast<float>(i) * 38.0f;
         const std::string idx = std::to_string(i);
-        // 片段赢预览（设计 §2.3/§2.10）：行键 ∈ 绑定片段 K → 置灰只读 + chip。
-        // EUI-NEO input 无禁改态（components/ 下无 disabled），DevDesk 侧用
-        // 灰字 text+chip 渲染（非 input），只读语义由「不可编辑控件」直接
-        // 表达；值 = profile 自身保留值（非破坏，解绑后恢复生效）
-        const bool frozen = !f.formEnvRows_[i].first.empty() &&
-            keyIn(f.formFrozenKeys_,
-                  normalizedEnvKey(f.formEnvRows_[i].first));
-        if (frozen) {
-            ui.rect("claude.form.env.row." + idx + ".frozen.bg")
-                .position(28.0f, y).size(644.0f, 32.0f)
-                .color(t.colors.surfaceElevated)
-                .radius(t.sizes.radiusSmall)
-                .border(1.0f, t.colors.borderMuted)
-                .build();
-            ui.text("claude.form.env.row." + idx + ".frozen.key")
-                .position(40.0f, y).size(196.0f, 32.0f)
-                .text(f.formEnvRows_[i].first)
-                .fontSize(12.0f).lineHeight(32.0f)
-                .color(t.colors.textTertiary)
-                .build();
-            ui.rect("claude.form.env.row." + idx + ".frozen.chip.bg")
-                .position(248.0f, y + 5.0f).size(130.0f, 22.0f)
-                .color(t.colors.surfaceElevated).radius(t.sizes.radiusPill)
-                .border(1.0f, t.colors.borderDefault)
-                .build();
-            ui.text("claude.form.env.row." + idx + ".frozen.chip")
-                .position(248.0f, y + 5.0f).size(130.0f, 22.0f)
-                .text(chipText)
-                .fontSize(10.0f).lineHeight(22.0f)
-                .horizontalAlign(eui::HorizontalAlign::Center)
-                .color(t.colors.textTertiary)
-                .build();
-            ui.text("claude.form.env.row." + idx + ".frozen.val")
-                .position(386.0f, y).size(258.0f, 32.0f)
-                .clip()
-                .text(f.formEnvRows_[i].second)
-                .fontSize(12.0f).lineHeight(32.0f)
-                .color(t.colors.textTertiary)
-                .build();
-            continue;
-        }
         components::input(ui, "claude.form.env.row." + idx + ".key")
             .position(28.0f, y).size(220.0f, 32.0f)
             .value(f.formEnvRows_[i].first).placeholder("ENV_KEY")
@@ -949,7 +1092,9 @@ void drawProfileFormDialog(eui::Ui& ui, const eui::Screen& screen,
                 isEdit ? "编辑 Profile" : "新建 Profile", 20.0f, t.colors.textPrimary,
                 {.y = 20.0f, .height = 26.0f, .lineHeight = 26.0f});
 
-            // tabs（§6.1：基础 / 模型映射 / 高级 env）。
+            // tabs（§6.1：基础 / 模型映射 / 高级 env；2026-09-30 batch-fix B
+            // 尾插第 4 页「高级配置」——前三页序是既有拍板，尾插保住
+            // form.tabs.hit.0/1/2 既有测试导航零破坏，D-B1）。
             // TabsBuilder 无 position，套 stack 定位（字号下拉同款包装）
             ui.stack("claude.form.tabs.wrap")
                 .position(28.0f, 52.0f)
@@ -957,7 +1102,7 @@ void drawProfileFormDialog(eui::Ui& ui, const eui::Screen& screen,
                 .content([&] {
                     components::tabs(ui, "claude.form.tabs")
                         .size(w - 56.0f, 34.0f)
-                        .items({"基础", "模型映射", "高级 env"})
+                        .items({"基础", "模型映射", "高级 env", "高级配置"})
                         .selected(f.formTab_)
                         .fontSize(13.0f)
                         .theme(themeTokens)
@@ -967,9 +1112,15 @@ void drawProfileFormDialog(eui::Ui& ui, const eui::Screen& screen,
                 .build();
 
             if (f.formTab_ == 0) {
-                drawFormBasicTab(ui, w, t, themeTokens, isEdit, f, profiles);
+                drawFormBasicTab(ui, w, t, themeTokens, isEdit, f);
             } else if (f.formTab_ == 1) {
                 drawFormModelsTab(ui, w, t, themeTokens, f);
+            } else if (f.formTab_ == 3) {
+                // 高级配置（2026-09-30 batch-fix B；advanced-json-editor §7
+                // 加绑定下拉 + JSON 区块）：catch-all else 前插 ==3 分支，
+                // 0/1/2 分支语义不动
+                drawFormAdvancedTab(ui, w, t, themeTokens, f, profiles,
+                                    sharedConfigs);
             } else {
                 drawFormEnvTab(ui, w, t, themeTokens, f, imp, sharedConfigs);
             }
@@ -998,6 +1149,122 @@ void drawProfileFormDialog(eui::Ui& ui, const eui::Screen& screen,
             ui_kit::drawDialogButtons(ui, "claude.dialog.form", w, h, cancel, confirm, t,
                                       themeTokens);
     });
+}
+
+// ============ 高级设置 JSON 全屏编辑覆盖层（2026-09-30 json-fullscreen）============
+// 层级落点（任务两案取「ui_kit 顶层 overlay」案，理由见 commit message）：画在
+// compose 全部弹窗之后（claude_module.cpp）+ 显式 zIndex 1050——介于表单弹窗
+//（EUI-NEO dialog 默认 1000）与 toast（1100）之间：盖住表单 dialog（本需求），
+// 又让位 toast（「应用」成功的确认必须可见）。
+// 可见性派生自 formOpen_ && formJsonFullscreen_：「应用」复用 submitForm，成功
+// 路径关表单 → 全屏同帧消失（若留在全屏，会出现无表单的孤儿覆盖层，且「完成」
+// 回表单无处可回；toast 确认由既有 hooks 照发）。文本/红字/落库全部复用表单
+// 既有字段与路径——本函数只是同一状态的大画布
+void drawJsonFullscreenOverlay(eui::Ui& ui, const eui::Screen& screen,
+                               const core::theme::Tokens& t,
+                               const components::theme::ThemeColorTokens& themeTokens,
+                               FormState& f, const FormSubmitHooks& hooks,
+                               const std::vector<SharedConfig>& sharedConfigs) {
+    // 结构性不变式（审计 F-3）：表单不在场 ⇒ 全屏旗必复位——任何关表单路径
+    //（取消 / Esc / 应用成功）之后下一帧即清，不依赖 openCreate/openEditForm
+    // 两个入口的顺手复位（旗与 formOpen_ 的从属关系在此收口）
+    if (!f.formJsonFullscreen_ || !f.formOpen_) {
+        f.formJsonFullscreen_ = false;
+        return;
+    }
+    const float w = screen.width;
+    const float h = screen.height;
+
+    ui.stack("claude.jsonfs.root")
+        .size(w, h)
+        .zIndex(1050)
+        .content([&] {
+            // 整页不透明底（模块页平时不自铺底色——底=窗口 clearColor；全屏态
+            // 必须盖住底下全部内容，故自铺不透明 background）+ blockPointer
+            //（与 dialog 面板 hit 同款模态手法：点击不穿透到表单弹窗）
+            ui.rect("claude.jsonfs.bg")
+                .size(w, h)
+                .color(t.colors.background)
+                .blockPointer()
+                .build();
+
+            ui_kit::drawDialogTitle(ui, "claude.jsonfs.title", w,
+                                    "高级设置 JSON（全屏）", 20.0f,
+                                    t.colors.textPrimary,
+                                    {.y = 20.0f, .height = 26.0f,
+                                     .lineHeight = 26.0f});
+            // 末句 = 审计 F-2：应用闸门里的基础项（名称/URL/Key）错误修复字段在
+            // 基础页、全屏态不可达——明示「回表单补填」这条修复路径
+            ui.text("claude.jsonfs.hint")
+                .position(28.0f, 48.0f).size(w - 56.0f, 16.0f)
+                .text("与表单弹窗同一份编辑缓冲：格式化 / 应用（=保存）在此生效；"
+                      "Esc 或「完成」返回表单，未应用的文本保留；"
+                      "基础项（名称/URL/Key）缺失需回表单基础页补填")
+                .fontSize(11.0f).lineHeight(16.0f)
+                .color(t.colors.textTertiary).build();
+
+            // 大号多行编辑框：占满内容区减标题区与底部按钮行。value/onChange
+            // 与表单框同接 formExtraSettingsJson_（同一编辑缓冲）；Esc 走
+            // onCancel 退全屏回表单（表单框的 Esc 是关表单——层级不同语义不同）
+            components::input(ui, "claude.jsonfs.editor")
+                .position(28.0f, 72.0f).size(w - 56.0f, h - 176.0f)
+                .value(f.formExtraSettingsJson_)
+                .placeholder(R"({ "model": "...", "permissions": { ... } })")
+                .multiline(true).scrollbar(true)
+                .fontSize(13.0f).theme(themeTokens)
+                .onChange([fp = &f](const std::string& v) {
+                    fp->formExtraSettingsJson_ = v;
+                    fp->formAdvancedJsonError_.clear();
+                })
+                .onCancel([fp = &f] { fp->formJsonFullscreen_ = false; })
+                .build();
+
+            // 红字（同源分层与表单侧一致：优先 formError_ 提交闸门，其次
+            // 格式化/校验行内红字——两个来源都是表单弹窗自己在显示的那份）
+            const std::string& fsError = !f.formError_.empty()
+                                             ? f.formError_
+                                             : f.formAdvancedJsonError_;
+            if (!fsError.empty()) {
+                ui.text("claude.jsonfs.error")
+                    .position(28.0f, h - 96.0f).size(w - 56.0f, 16.0f)
+                    .text(fsError).fontSize(12.0f).lineHeight(16.0f)
+                    .color(t.colors.error).build();
+            }
+
+            // 底部按钮行：「格式化」（与表单按钮共用 formatAdvancedJson）/
+            //「应用」（= submitForm 整条既有路径：校验 → formError_ 闸门 →
+            // pretty 落库 → toast）/「完成」（退全屏回表单，文本留在缓冲）
+            components::button(ui, "claude.jsonfs.format")
+                .position(28.0f, h - 68.0f).size(110.0f, 40.0f)
+                .text("格式化").fontSize(12.0f)
+                .colors(t.colors.surfaceElevated, t.colors.hover, t.colors.active)
+                .textColor(t.colors.textPrimary)
+                .radius(t.sizes.radiusSmall)
+                .border(1.0f, t.colors.borderDefault)
+                .onClick([fp = &f] { formatAdvancedJson(*fp); })
+                .build();
+            components::button(ui, "claude.jsonfs.apply")
+                .position(150.0f, h - 68.0f).size(110.0f, 40.0f)
+                .text("应用").fontSize(12.0f)
+                .colors(t.colors.primary, t.colors.primaryHover,
+                        t.colors.primaryPressed)
+                .textColor(t.colors.onPrimary)
+                .radius(t.sizes.radiusSmall)
+                .onClick([fp = &f, hooks, scs = &sharedConfigs] {
+                    submitForm(*fp, hooks, *scs);
+                })
+                .build();
+            components::button(ui, "claude.jsonfs.done")
+                .position(272.0f, h - 68.0f).size(110.0f, 40.0f)
+                .text("完成").fontSize(12.0f)
+                .colors(t.colors.surfaceElevated, t.colors.hover, t.colors.active)
+                .textColor(t.colors.textPrimary)
+                .radius(t.sizes.radiusSmall)
+                .border(1.0f, t.colors.borderDefault)
+                .onClick([fp = &f] { fp->formJsonFullscreen_ = false; })
+                .build();
+        })
+        .build();
 }
 
 // ============ 删除确认弹窗 ============
@@ -1055,7 +1322,7 @@ void drawDeleteConfirmDialog(eui::Ui& ui, const eui::Screen& screen,
 void openSharedCreate(SharedConfigDialogState& s) {
     s.editId_ = 0;
     s.name_.clear();
-    s.envRows_.clear();
+    s.extraSettingsJson_.clear();
     s.error_.clear();
     s.open_ = true;
 }
@@ -1064,11 +1331,9 @@ void openSharedEdit(SharedConfigDialogState& s, const SharedConfig& c) {
     s.editId_ = c.id;
     s.name_ = c.name;
     s.error_.clear();
-    s.envRows_.clear();
-    auto ee = parseExtraEnv(c.extraEnvJson);
-    if (ee.isOk()) {
-        for (const auto& [k, v] : ee.value()) s.envRows_.emplace_back(k, v);
-    }
+    // 预填片段 JSON 原文（DB 恒为 pretty 保存值；外部改库原文按原样预填，
+    // 格式化按钮负责规范化——与表单高级设置 JSON 同口径）
+    s.extraSettingsJson_ = c.extraSettingsJson;
     s.open_ = true;
 }
 
@@ -1084,22 +1349,26 @@ void submitSharedForm(SharedConfigDialogState& s,
         s.error_ = "片段名不能为空";
         return;
     }
-    std::map<std::string, std::string> envMap;   // 空键行跳过（同表单口径）
-    for (const auto& row : s.envRows_) {
-        if (row.first.empty()) continue;
-        envMap[row.first] = row.second;
-    }
-    std::string envJson;
-    if (!envMap.empty()) {
-        auto r = serializeExtraEnv(envMap);
-        if (r.isFail()) {
-            s.error_ = "env 序列化失败: " + r.errorMessage();
+    // 片段 JSON（advanced-json-editor §8.1）：保存走 validateExtraSettingsJson
+    // 同一套规则（含 env 键拒绝——片段是 settings.json 属性预设，不是 env 装饰
+    // 层了）；通过 → 落库前统一 pretty（空串跳过，= 未配置）
+    std::string settingsPretty;
+    if (!s.extraSettingsJson_.empty()) {
+        auto v = validateExtraSettingsJson(s.extraSettingsJson_);
+        if (v.isFail()) {
+            s.error_ = v.errorMessage();
             return;
         }
-        envJson = r.value();
+        auto parsed = platform::json::parse(s.extraSettingsJson_);
+        if (parsed.isOk()) {
+            auto pretty = platform::json::stringify(parsed.value(),
+                                                    /*pretty=*/true);
+            if (pretty.isOk()) settingsPretty = pretty.value();
+        }
+        if (settingsPretty.empty()) settingsPretty = s.extraSettingsJson_;
     }
     if (s.editId_ == 0) {
-        auto r = svc->createSharedConfig(s.name_, envJson);
+        auto r = svc->createSharedConfig(s.name_, settingsPretty);
         if (r.isFail()) {
             s.error_ = r.errorMessage();   // 重名等校验错误红字回显
             return;
@@ -1111,7 +1380,7 @@ void submitSharedForm(SharedConfigDialogState& s,
         SharedConfig c;
         c.id = s.editId_;
         c.name = s.name_;
-        c.extraEnvJson = envJson;
+        c.extraSettingsJson = settingsPretty;
         auto r = svc->updateSharedConfig(c);
         if (r.isFail()) {
             s.error_ = r.errorMessage();
@@ -1126,7 +1395,10 @@ void submitSharedForm(SharedConfigDialogState& s,
     }
 }
 
-// 共享配置片段编辑弹窗（name 行 + 键值编辑器；编辑态底部多一枚「删除」）
+// 共享配置片段编辑弹窗（advanced-json-editor §8.1 JSON 化：name 行 + 高级设置
+// JSON 编辑框四件（label / 多行框 / 格式化按钮 / 行内红字），§7 同款组件复用；
+// 编辑态底部多一枚「删除」。几何按 h=460 逐项核：name 82-118 / label 128 /
+// 框 146-316 / 格式化 324-356 / 红字 364-380 / 按钮行 h-60=400）
 void drawSharedConfigDialog(eui::Ui& ui, const eui::Screen& screen,
                             const core::theme::Tokens& t,
                             const components::theme::ThemeColorTokens& themeTokens,
@@ -1135,7 +1407,6 @@ void drawSharedConfigDialog(eui::Ui& ui, const eui::Screen& screen,
     const float w = ui_kit::dialogWidthPx(ui_kit::DialogWidth::Form);
     const float h = 460.0f;
     const bool isEdit = (s.editId_ != 0);
-    constexpr size_t kMaxVisibleRows = 5;
 
     ui_kit::DialogFrame frame;
     frame.id = "claude.dialog.shared";
@@ -1153,7 +1424,7 @@ void drawSharedConfigDialog(eui::Ui& ui, const eui::Screen& screen,
         // 片段名
         ui.text("claude.dialog.shared.name.label")
             .position(28.0f, 64.0f).size(w - 56.0f, 16.0f)
-            .text("片段名（共享给所有 Profile 的 env 装饰层，不含密钥/Base URL）")
+            .text("片段名（共享给所有 Profile 的高级属性预设，不含密钥/Base URL）")
             .fontSize(11.0f).lineHeight(16.0f)
             .color(t.colors.textTertiary).build();
         components::input(ui, "claude.dialog.shared.name")
@@ -1164,84 +1435,53 @@ void drawSharedConfigDialog(eui::Ui& ui, const eui::Screen& screen,
             .onCancel([sp = &s] { sp->open_ = false; })   // Esc=取消（同表单各输入框）
             .build();
 
-        // 键值编辑器（kMaxVisibleRows 同款；行 = 该片段的冻结键集 K 的来源）
-        ui.text("claude.dialog.shared.env.label")
+        // 高级设置 JSON 编辑框（§7 同款四件：label / 多行框 / 格式化按钮 /
+        // 行内红字——片段即 settings.json 属性预设，绑定它的 Profile 生成时
+        // 逐键叠加、片段赢，解绑回落）
+        ui.text("claude.dialog.shared.json.label")
             .position(28.0f, 128.0f).size(w - 56.0f, 16.0f)
-            .text("额外环境变量（绑定它的 Profile 将冻结这些键，片段单点决定）")
+            .text("高级设置 JSON（settings.json 除 env 外的属性，绑定它的 Profile 写入时覆盖同名键）")
             .fontSize(11.0f).lineHeight(16.0f)
             .color(t.colors.textTertiary).build();
-        const size_t visible = s.envRows_.size() < kMaxVisibleRows
-            ? s.envRows_.size() : kMaxVisibleRows;
-        for (size_t i = 0; i < visible; ++i) {
-            const float y = 148.0f + static_cast<float>(i) * 36.0f;
-            const std::string idx = std::to_string(i);
-            components::input(ui, "claude.dialog.shared.env.row." + idx + ".key")
-                .position(28.0f, y).size(220.0f, 30.0f)
-                .value(s.envRows_[i].first).placeholder("ENV_KEY")
-                .fontSize(12.0f).theme(themeTokens)
-                .onChange([sp = &s, i](const std::string& v) {
-                    sp->envRows_[i].first = v;
-                })
-                .onCancel([sp = &s] { sp->open_ = false; })
-                .build();
-            if (!s.envRows_[i].first.empty() &&
-                envVarHint(s.envRows_[i].first) == nullptr) {
-                ui.rect("claude.dialog.shared.env.row." + idx + ".key.unknown")
-                    .position(28.0f, y).size(220.0f, 30.0f)
-                    .color(eui::Color{0.0f, 0.0f, 0.0f, 0.0f})
-                    .border(1.0f, t.colors.error)
-                    .radius(t.sizes.radiusSmall)
-                    .build();
-            }
-            components::input(ui, "claude.dialog.shared.env.row." + idx + ".value")
-                .position(258.0f, y).size(414.0f, 30.0f)
-                .value(s.envRows_[i].second).placeholder("值（字符串）")
-                .fontSize(12.0f).theme(themeTokens)
-                .onChange([sp = &s, i](const std::string& v) {
-                    sp->envRows_[i].second = v;
-                })
-                .onCancel([sp = &s] { sp->open_ = false; })
-                .build();
-            components::button(ui, "claude.dialog.shared.env.row." + idx + ".del")
-                .position(682.0f, y).size(50.0f, 30.0f)
-                .icon(0xF00D)   // fa-xmark（同 profile 表单 env 行）
-                .fontSize(12.0f)
-                .colors(t.colors.surfaceElevated, t.colors.hover,
-                        t.colors.active)
-                .textColor(t.colors.error)
-                .iconColor(t.colors.error)
-                .radius(t.sizes.radiusSmall)
-                .border(1.0f, t.colors.borderDefault)
-                .onClick([sp = &s, i] {
-                    if (i < sp->envRows_.size()) {
-                        sp->envRows_.erase(sp->envRows_.begin() +
-                                           static_cast<long>(i));
-                    }
-                })
-                .build();
-        }
-        components::button(ui, "claude.dialog.shared.env.add")
-            .position(28.0f, 330.0f).size(110.0f, 30.0f)
-            .text("+ 添加变量").fontSize(12.0f)
+        components::input(ui, "claude.dialog.shared.json")
+            .position(28.0f, 146.0f).size(w - 56.0f, 170.0f)
+            .value(s.extraSettingsJson_)
+            .placeholder(R"({ "model": "...", "permissions": { ... } })")
+            .multiline(true).scrollbar(true)
+            .fontSize(12.0f).theme(themeTokens)
+            .onChange([sp = &s](const std::string& v) {
+                sp->extraSettingsJson_ = v;
+                sp->error_.clear();
+            })
+            .onCancel([sp = &s] { sp->open_ = false; })   // Esc=取消（同表单各输入框）
+            .build();
+        components::button(ui, "claude.dialog.shared.json.format")
+            .position(28.0f, 324.0f).size(110.0f, 32.0f)
+            .text("格式化").fontSize(12.0f)
             .colors(t.colors.surfaceElevated, t.colors.hover, t.colors.active)
             .textColor(t.colors.textPrimary)
             .radius(t.sizes.radiusSmall)
             .border(1.0f, t.colors.borderDefault)
-            .onClick([sp = &s] { sp->envRows_.emplace_back(); })
+            .onClick([sp = &s] {
+                sp->error_.clear();
+                if (sp->extraSettingsJson_.empty()) return;
+                auto parsed = platform::json::parse(sp->extraSettingsJson_);
+                if (parsed.isFail()) {
+                    sp->error_ = "解析失败: " + parsed.errorMessage();
+                    return;
+                }
+                auto pretty = platform::json::stringify(parsed.value(),
+                                                        /*pretty=*/true);
+                if (pretty.isFail()) {
+                    sp->error_ = "序列化失败: " + pretty.errorMessage();
+                    return;
+                }
+                sp->extraSettingsJson_ = pretty.value();
+            })
             .build();
-        if (s.envRows_.size() > kMaxVisibleRows) {
-            ui.text("claude.dialog.shared.env.overflow")
-                .position(150.0f, 336.0f).size(w - 150.0f - 28.0f, 16.0f)
-                .text("另有 " + std::to_string(s.envRows_.size() -
-                                               kMaxVisibleRows) +
-                      " 项已保存（保存时全量写入，列表仅显示前 " +
-                      std::to_string(kMaxVisibleRows) + " 项）")
-                .fontSize(11.0f).lineHeight(16.0f)
-                .color(t.colors.textTertiary).build();
-        }
         if (!s.error_.empty()) {
             ui.text("claude.dialog.shared.error")
-                .position(28.0f, 368.0f).size(w - 56.0f, 18.0f)
+                .position(28.0f, 364.0f).size(w - 56.0f, 18.0f)
                 .text(s.error_).fontSize(12.0f).lineHeight(18.0f)
                 .color(t.colors.error).build();
         }

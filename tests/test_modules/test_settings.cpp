@@ -19,6 +19,7 @@
 #include "core/paths.h"
 #include "core/service_locator.h"
 #include "core/theme.h"
+#include "module_pet/pet_window.h"  // PET-CLOSE：桌宠开关即时性断言读窗口可见意图
 #include "platform/keychain.h"
 #include "platform/system_theme.h"
 
@@ -723,14 +724,16 @@ REGISTER_TEST(settings_log_dropdown_popup_stays_in_window, "settings: log dropdo
     mod->onStart();
 
     // Task B tab 化后日志卡位于「日志」tab 顶部（cardsTopY = 40 pad + 64
-    // header + 16 gap + 40 tab + 16 gap = 176）。1200×1000 向下展开空间充足
-    // （保留字段底 264 + 8 gap + 弹层 216 = 488 ≤ 984）→ 默认 openDown；
-    // 短窗 1200×500 下同一弹层越出窗底（488 > 484）→ 应改 openUp 向上展开
-    //（弹层整体留在窗体内且位于字段上方）。卡顶游标只累计本 tab 的卡，
+    // header + 16 gap + 40 tab + 16 gap = 176）。1600×1300 向下展开空间充足
+    // （保留字段底 = 176 + 48 + 36 = 260，+ 8 gap + 弹层 216 = 484 ≤ 1284）
+    // → 默认 openDown；短窗下同一弹层越出窗底（484 > 高 − 16）→ 应改 openUp
+    // 向上展开（弹层整体留在窗体内且位于字段上方）。卡顶游标只累计本 tab 的卡，
     // 全量累加会把这里算错——即审计裁决「日志卡 openUp 游标」的回归位）
+    // 2026-09-29：日志卡两行改同列口径后字段高 40→36（底边 88→84），越界阈值
+    // 随之右移——短窗高度 500 → 470 才复现同一场景（484 > 454）
     eui::Screen screen;
     screen.width = 1200.0f;
-    screen.height = 500.0f;
+    screen.height = 470.0f;
     DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 2));
     eui::Ui ui;
     ui.begin("small");
@@ -1083,11 +1086,51 @@ REGISTER_TEST(settings_window_effect_param_mapping, "settings: 档位→alpha/ba
     namespace ms = module::settings;
     using WE = core::platform::WindowEffect;
 
-    // clearColor alpha：off=1.0 / translucent=0.85 / frosted=0.55 / 未知→1.0
+    // 两处 alpha 各自独立（2026-09-29 二轮黑壁纸标定）：
+    //   clearColor（内容区纱）：off=1.0 / translucent=0.60 / frosted=0.15 / 未知→1.0
+    //   窗口背景色（标题栏底）：off=1.0 / translucent=0.90 / frosted=0.65 / 未知→1.0
+    // 回退任一常量本用例即红（旧值：两处同为 0.94 / 同为 0.30，即 EUI-NEO 按 clearColor
+    // 推导标题栏底的年代——那正是 P1「半透等同关闭」与 P2「标题栏与内容区差 105」的成因）
     DOCTEST_CHECK(ms::windowEffectAlpha(ms::kWindowEffectOff) == 1.0f);
-    DOCTEST_CHECK(ms::windowEffectAlpha(ms::kWindowEffectTranslucent) == 0.85f);
-    DOCTEST_CHECK(ms::windowEffectAlpha(ms::kWindowEffectFrosted) == 0.55f);
+    DOCTEST_CHECK(ms::windowEffectAlpha(ms::kWindowEffectTranslucent) == 0.60f);
+    DOCTEST_CHECK(ms::windowEffectAlpha(ms::kWindowEffectFrosted) == 0.15f);
     DOCTEST_CHECK(ms::windowEffectAlpha("bogus") == 1.0f);
+    DOCTEST_CHECK(ms::windowEffectTitleBarAlpha(ms::kWindowEffectOff) == 1.0f);
+    DOCTEST_CHECK(ms::windowEffectTitleBarAlpha(ms::kWindowEffectTranslucent) == 0.90f);
+    DOCTEST_CHECK(ms::windowEffectTitleBarAlpha(ms::kWindowEffectFrosted) == 0.65f);
+    DOCTEST_CHECK(ms::windowEffectTitleBarAlpha("bogus") == 1.0f);
+
+    // 半透档目标带（用户第三轮反馈「半透的透明度几乎没了」后重标）：**240 上下一档**。
+    // 带的两端都有来历，不是随手取的：
+    //   下界 236 —— 用户第 4 次反馈「看不清内容」时实测 236.3，低于此即重蹈覆辙；
+    //   上界 244 —— 第 5 次反馈「几乎没了」时实测 246.25，高于此即与关闭档无差。
+    // 故 0.60/0.90 → 250×(1−0.10×0.40) = 240.0，落在带中央。
+    // **这条同时锁常量与目标**：回退任一 alpha（如 0.60/0.90 → 0.70/0.95）→ 246.25 出上界变红；
+    // 回退到首轮 0.45/0.90 → 236.25 出下界变红；回退到「两层同 0.94」→ 249.1 变红。
+    const float translucentOverBlack =
+        250.0f * ms::windowEffectThemeOpacity(ms::kWindowEffectTranslucent);
+    DOCTEST_CHECK(translucentOverBlack >= 236.0f);
+    DOCTEST_CHECK(translucentOverBlack <= 244.0f);
+    DOCTEST_CHECK(translucentOverBlack < 250.0f);
+    // 关闭档：实色，黑壁纸下恒 250
+    DOCTEST_CHECK(250.0f * ms::windowEffectThemeOpacity(ms::kWindowEffectOff) == 250.0f);
+    // 半透档标题栏 vs 内容区差 ≤ 20（黑壁纸：标题栏 = 250×titleAlpha）
+    const float translucentBar = 250.0f * ms::windowEffectTitleBarAlpha(ms::kWindowEffectTranslucent);
+    DOCTEST_CHECK(std::abs(translucentOverBlack - translucentBar) <= 20.0f);
+
+    // 磨砂档判据（同一判据链，材质输出 M 用实机标定值 192@titleAlpha=0.65）：
+    //   内容区 = M + contentAlpha×(250−M)，标题栏 = M → 差值 = contentAlpha×(250−M) ≤ 20
+    // 旧值 0.30 与「标题栏没有材质」两件事都会被这两条拆开判：差值式在 M 恒定时只惩罚
+    // 内容区纱，故另加「标题栏 alpha 必须落在能把材质抬到浅灰的区间」一条。
+    constexpr float kFrostedMaterialOut = 192.0f;  // 实机实测（黑壁纸，titleAlpha=0.65）
+    const float frostedVeil = ms::windowEffectAlpha(ms::kWindowEffectFrosted);
+    DOCTEST_CHECK(frostedVeil * (250.0f - kFrostedMaterialOut) <= 20.0f);
+    DOCTEST_CHECK(ms::windowEffectTitleBarAlpha(ms::kWindowEffectFrosted) >= 0.6f);
+    // 磨砂必须比半透更透（用户原话「半透……明显比磨砂档实」）：两处 alpha 都要更小
+    DOCTEST_CHECK(ms::windowEffectAlpha(ms::kWindowEffectFrosted) <
+                  ms::windowEffectAlpha(ms::kWindowEffectTranslucent));
+    DOCTEST_CHECK(ms::windowEffectTitleBarAlpha(ms::kWindowEffectFrosted) <
+                  ms::windowEffectTitleBarAlpha(ms::kWindowEffectTranslucent));
 
     // backdrop 请求：off/translucent 显式关（None），frosted→Acrylic，未知→None
     DOCTEST_CHECK(ms::windowEffectRequest(ms::kWindowEffectOff) == WE::None);
@@ -1124,20 +1167,36 @@ REGISTER_TEST(settings_window_effect_apply_visuals, "settings: applyWindowVisual
     namespace ms = module::settings;
     using WE = core::platform::WindowEffect;
 
-    // 半透档：clearColor alpha=0.85 + backdrop 请求 None（显式关）
+    // 半透档：clearColor alpha=0.60 + backdrop 请求 None（显式关）
     ms::applyWindowVisuals(ms::kWindowEffectTranslucent);
-    DOCTEST_CHECK(app::currentClearColor().a == 0.85f);
+    DOCTEST_CHECK(app::currentClearColor().a == 0.60f);
     DOCTEST_CHECK(app::currentWindowEffect() == WE::None);
+    // 标题栏底**独立** alpha（显式 customColor 覆盖 EUI-NEO 的按 clearColor 推导）
+    {
+        const auto tb = app::currentTitleBarAppearance();
+        DOCTEST_CHECK(tb.customColor);
+        DOCTEST_CHECK(tb.colorAlpha == 0.90f);
+    }
 
-    // 磨砂档：alpha=0.55 + Acrylic 请求
+    // 磨砂档：alpha=0.15 + Acrylic 请求 + 标题栏 0.65
     ms::applyWindowVisuals(ms::kWindowEffectFrosted);
-    DOCTEST_CHECK(app::currentClearColor().a == 0.55f);
+    DOCTEST_CHECK(app::currentClearColor().a == 0.15f);
     DOCTEST_CHECK(app::currentWindowEffect() == WE::Acrylic);
+    {
+        const auto tb = app::currentTitleBarAppearance();
+        DOCTEST_CHECK(tb.customColor);
+        DOCTEST_CHECK(tb.colorAlpha == 0.65f);
+    }
 
     // 关档：alpha=1（视觉等价实色，透明 hint 仍开）——收尾恢复，不污染后续用例
     ms::applyWindowVisuals(ms::kWindowEffectOff);
     DOCTEST_CHECK(app::currentClearColor().a == 1.0f);
     DOCTEST_CHECK(app::currentWindowEffect() == WE::None);
+    {
+        const auto tb = app::currentTitleBarAppearance();
+        DOCTEST_CHECK(tb.customColor);
+        DOCTEST_CHECK(tb.colorAlpha == 1.0f);
+    }
     return true;
 })
 
@@ -1376,9 +1435,877 @@ REGISTER_TEST(settings_pet_dropdown_z_escape, "settings: pet skin dropdown popup
     return true;
 })
 
-// ---- 跨模块剩余审计修：桌宠皮肤下拉 openUp（≥3 皮肤小窗弹层被 scrollView
-// clip 裁掉）。修复 = 仿外观卡 z40 抬层（见 settings_pet_dropdown_z_escape）
-// + 编辑器字号/日志卡同款 openUp 几何判定（卡顶 + 字段偏移 + 弹层高 vs 屏高）
+// ---- 2026-09-29 用户真机反馈「设置-日志：日志和日志级别这 2 个条件 错位了啊
+//      日志显示 2 行」----
+// 判据全部数值化（改前逐条必红）：
+//   ① 两个下拉同列：field.frame.x 相等（改前 28 vs 124，差 96px）、同宽同高；
+//   ② 标签同列 + 标签→下拉间距一致（改前行 1 根本没有标签列，本用例
+//      REQUIRE("settings.card.log.label") 即回归位）；
+//   ③ 标签单行：标签框高 ≤ 单行行高、文本无换行符、估算文本宽 ≤ 标签框宽
+//      （「日志保留」4 字 × 12px = 48 ≤ 84，折行根本装不下 → 恒单行）。
+REGISTER_TEST(settings_log_rows_same_column,
+              "settings: 日志 tab 两下拉同列 + 标签单行（错位修复）", {
+    test_support::TestEnv env(kCfgPrefix, "logcols", true);
+    test_support::ScopedConfigPath cfgEnv(
+        test_support::tempConfigFile(kCfgPrefix, "logcols_cfg"));
+    std::unique_ptr<::core::Module> mod(create_settings_module());
+    mod->onStart();
+
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 2));  // 日志 tab
+    eui::Ui ui;
+    ui.begin("logcols");
+    mod->compose(ui, screen);
+    ui.end();
+    ui.layout(screen.width, screen.height);
+
+    const auto* field1 = ui.find("settings.card.log.dd.field");        // 日志保留
+    const auto* field2 = ui.find("settings.card.log.level.dd.field");  // 日志级别
+    const auto* label1 = ui.find("settings.card.log.label");
+    const auto* label2 = ui.find("settings.card.log.level.label");
+    const auto* card = ui.find("settings.card.log");
+    DOCTEST_REQUIRE(field1 != nullptr);
+    DOCTEST_REQUIRE(field2 != nullptr);
+    DOCTEST_REQUIRE(label1 != nullptr);  // 改前缺失 → 本行即回归位
+    DOCTEST_REQUIRE(label2 != nullptr);
+    DOCTEST_REQUIRE(card != nullptr);
+
+    // ① 两下拉同列（左边缘 / 宽 / 高）
+    DOCTEST_CHECK_MESSAGE(std::abs(field1->frame.x - field2->frame.x) < 0.5f,
+                          "两下拉 frame.x " + std::to_string(field1->frame.x) +
+                              " vs " + std::to_string(field2->frame.x));
+    DOCTEST_CHECK(std::abs(field1->frame.width - field2->frame.width) < 0.5f);
+    DOCTEST_CHECK(std::abs(field1->frame.height - field2->frame.height) < 0.5f);
+
+    // ② 标签同列 + 标签→下拉间距一致 + 标签与控件垂直居中对齐（基线口径）
+    DOCTEST_CHECK(std::abs(label1->frame.x - label2->frame.x) < 0.5f);
+    DOCTEST_CHECK(std::abs(label1->frame.width - label2->frame.width) < 0.5f);
+    const float gap1 = field1->frame.x - (label1->frame.x + label1->frame.width);
+    const float gap2 = field2->frame.x - (label2->frame.x + label2->frame.width);
+    DOCTEST_CHECK_MESSAGE(std::abs(gap1 - gap2) < 0.5f,
+                          "标签→下拉间距 " + std::to_string(gap1) + " vs " +
+                              std::to_string(gap2));
+    DOCTEST_CHECK(gap1 > 0.0f);
+    DOCTEST_CHECK(std::abs((label1->frame.y + label1->frame.height * 0.5f) -
+                           (field1->frame.y + field1->frame.height * 0.5f)) <
+                  0.5f);
+    DOCTEST_CHECK(std::abs((label2->frame.y + label2->frame.height * 0.5f) -
+                           (field2->frame.y + field2->frame.height * 0.5f)) <
+                  0.5f);
+
+    // ③ 标签单行（框高 / 无换行 / 文本放得进框）
+    for (const core::dsl::Element* label : {label1, label2}) {
+        DOCTEST_CHECK_MESSAGE(label->frame.height <= 20.5f,
+                              "标签框高 " + std::to_string(label->frame.height));
+        DOCTEST_CHECK_MESSAGE(label->text.find('\n') == std::string::npos,
+                              "标签文案含换行：" + label->text);
+        const float textW =
+            module::settings::estimatedTextWidth(label->text, label->fontSize);
+        DOCTEST_CHECK_MESSAGE(textW <= label->frame.width + 0.5f,
+                              "标签文本宽 " + std::to_string(textW) + " > 框宽 " +
+                                  std::to_string(label->frame.width));
+    }
+    DOCTEST_CHECK(std::string(label1->text) == "日志保留");
+    DOCTEST_CHECK(std::string(label2->text) == "日志级别");
+
+    // 卡内不与标题重叠、两行自上而下不叠，说明列在控件列右侧，
+    // 且内容底沿仍留 ≥16 下边距（卡高 148 不变的前提）
+    DOCTEST_CHECK(field1->frame.y > card->frame.y + 38.0f);
+    DOCTEST_CHECK(field2->frame.y >= field1->frame.y + field1->frame.height);
+    const auto* hint = ui.find("settings.card.log.hint");
+    DOCTEST_REQUIRE(hint != nullptr);
+    DOCTEST_CHECK(hint->frame.x >= field1->frame.x + field1->frame.width + 8.0f);
+    DOCTEST_CHECK(field2->frame.y + field2->frame.height + 16.0f <=
+                  card->frame.y + card->frame.height + 0.5f);
+
+    mod->onStop();
+    ::core::theme::setDark();
+    return true;
+})
+
+// ---- 2026-09-30 缩放派生审查（spec 2026-09-30-batch-fix-design.md §2.3 本期修）----
+// settings 卡片行盒/行距/卡高随生效字号派生（roundFs 口径见 settings_ui_logic.h，
+// 与 env pane 修复 1ca87b0 同款）。两例分工：
+//   纯件例 = proxyCardHeightFor 两分支 100% 档与旧字面公式逐值相等（零回归锚）+
+//   130% 档等于派生式字面期望；无头 compose 例 = 三 tab 每卡行盒矩形两两不重叠
+//   （跨卡叠印同池判定；x 相离的同行「标签|控件|说明」列不算重叠）+ 行盒 ⊆ 卡
+//   frame（卡高没跟派生即红）+ 派生钉值（把派生改回字面 16 即红，非恒真）。
+// 缩放守卫：fontScale 是进程级全局状态，RAII 还原（fail-fast REQUIRE 提前
+// return 时靠析构还原，尾部手动还原会漏）。
+REGISTER_TEST(settings_fs_derive_pure,
+              "settings: 行盒派生纯件 proxyCardHeightFor（100% 锚 + 130% 档）", {
+    namespace ms = module::settings;
+    struct FontScaleGuard {
+        float prev;
+        explicit FontScaleGuard(float s)
+            : prev(::core::theme::fontScale()) {
+            ::core::theme::setFontScale(s);
+        }
+        ~FontScaleGuard() { ::core::theme::setFontScale(prev); }
+    };
+    {
+        FontScaleGuard g{1.0f};
+        // 零回归锚：与 compose 旧字面公式（118+16n / 116，+16 下边距）逐值相等
+        DOCTEST_CHECK_EQ(ms::proxyCardHeightFor(0), 132.0f);
+        DOCTEST_CHECK_EQ(ms::proxyCardHeightFor(2), 166.0f);
+        DOCTEST_CHECK_EQ(ms::roundFs(16.0f), 16.0f);
+        DOCTEST_CHECK_EQ(ms::roundFs(18.0f), 18.0f);
+    }
+    {
+        FontScaleGuard g{1.3f};
+        // round(基准×1.3)：16→21 / 18→23 / 2→3 / 16（下边距）→21
+        DOCTEST_CHECK_EQ(ms::roundFs(16.0f), 21.0f);
+        DOCTEST_CHECK_EQ(ms::roundFs(18.0f), 23.0f);
+        // 无警告 98+23+21=142；2 条警告 (98+23+3)+2×21+21=187
+        DOCTEST_CHECK_EQ(ms::proxyCardHeightFor(0), 142.0f);
+        DOCTEST_CHECK_EQ(ms::proxyCardHeightFor(2), 187.0f);
+    }
+    return true;
+})
+
+REGISTER_TEST(settings_card_rows_scale_derived,
+              "settings: 卡片行盒派生（130% 不重叠 + 派生钉值，RAII 守卫）", {
+    test_support::TestEnv env(kCfgPrefix, "fsderive", true);
+    test_support::ScopedConfigPath cfgEnv(
+        test_support::tempConfigFile(kCfgPrefix, "fsderive_cfg"));
+    // 桌宠默认关闭 → pet 卡整卡隐藏；写显式全启用配置，全部卡参与几何判定
+    module::settings::SettingsConfig cfg;
+    cfg.enabledModules = {module::settings::kModuleIdHome,
+                          module::settings::kModuleIdMarkdown,
+                          module::settings::kModuleIdTodo,
+                          module::settings::kModuleIdSettings,
+                          module::settings::kModuleIdPet,
+                          module::settings::kModuleIdClaudeProxy};
+    DOCTEST_REQUIRE(
+        module::settings::SettingsStore(cfgEnv.cfgPath).save(cfg).isOk());
+    std::unique_ptr<::core::Module> mod(create_settings_module());
+    mod->onStart();  // 读临时 config：全模块启用、fontScale=100
+
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+
+    // 每卡参与判定的行元素（条件行——降级提示 / 警告行——headless 默认档不
+    // 渲染，不列入；日志卡两行 20px 盒不在本期修清单，留作「未派生」对照钉）
+    struct CardRows {
+        int tab;
+        const char* card;
+        std::vector<const char*> rows;
+    };
+    const std::vector<CardRows> kCards = {
+        {0, "settings.card.appearance",
+         {"settings.card.appearance.title", "settings.card.appearance.desc",
+          "settings.card.appearance.theme.label",
+          "settings.card.appearance.font.label",
+          "settings.card.appearance.effect.label"}},
+        {0, "settings.card.editor",
+         {"settings.card.editor.title", "settings.card.editor.hint"}},
+        {1, "settings.card.modules",
+         {"settings.card.modules.title", "settings.card.modules.desc",
+          "settings.card.modules.name.0", "settings.card.modules.rowdesc.0",
+          "settings.card.modules.name.1", "settings.card.modules.rowdesc.1",
+          "settings.card.modules.name.2", "settings.card.modules.rowdesc.2",
+          "settings.card.modules.name.3", "settings.card.modules.rowdesc.3"}},
+        {1, "settings.card.pet",
+         {"settings.card.pet.title", "settings.card.pet.desc"}},
+        {1, "settings.card.directory",
+         {"settings.card.directory.title", "settings.card.directory.hint"}},
+        {1, "settings.card.proxy",
+         {"settings.card.proxy.title", "settings.card.proxy.desc",
+          "settings.card.proxy.port.label", "settings.card.proxy.port.hint",
+          "settings.card.proxy.takeover.label",
+          "settings.card.proxy.takeover.value"}},
+        {2, "settings.card.log",
+         {"settings.card.log.title", "settings.card.log.label",
+          "settings.card.log.hint", "settings.card.log.level.label",
+          "settings.card.log.level.hint"}},
+        {2, "settings.tab.log", {"settings.tab.log.title"}},
+    };
+
+    struct FontScaleGuard {
+        float prev;
+        explicit FontScaleGuard(float s)
+            : prev(::core::theme::fontScale()) {
+            ::core::theme::setFontScale(s);
+        }
+        ~FontScaleGuard() { ::core::theme::setFontScale(prev); }
+    };
+
+    // 判定 helper（返回空串 = 通过；框架断言宏展开含 return false，只能
+    // 写在用例体里，与 claude_env_tab_no_overlap 同款手法）：
+    //   ① 行盒矩形两两不重叠（同 tab 全行池化，跨卡叠印也在此被抓）
+    //   ② 卡 frame 两两不重叠 + 行盒 ⊆ 所属卡 frame（卡高没跟派生即红）
+    //   ③ 派生钉值：行盒高/y 偏移 == 字面期望（at130 选档）
+    const auto tabProblem = [&](eui::Ui& ui, int tab, bool at130) {
+        struct Rect {
+            const char* id;
+            float x0, y0, x1, y1;
+        };
+        std::vector<Rect> rowRects;
+        std::vector<Rect> cardRects;
+        const auto nearEq = [](float a, float b) {
+            return std::fabs(a - b) < 0.01f;
+        };
+        for (const CardRows& cr : kCards) {
+            if (cr.tab != tab) continue;
+            const auto* card = ui.find(cr.card);
+            if (card == nullptr) {
+                return std::string("缺卡 ") + cr.card;
+            }
+            const float cardBottom = card->frame.y + card->frame.height;
+            cardRects.push_back({cr.card, card->frame.x, card->frame.y,
+                                 card->frame.x + card->frame.width,
+                                 cardBottom});
+            for (const char* rid : cr.rows) {
+                const auto* row = ui.find(rid);
+                if (row == nullptr) {
+                    return std::string("缺行 ") + rid;
+                }
+                if (row->frame.y < card->frame.y - 0.5f ||
+                    row->frame.y + row->frame.height > cardBottom + 0.5f) {
+                    return std::string("行越卡: ") + rid + " 行底 " +
+                           std::to_string(row->frame.y + row->frame.height) +
+                           " 卡底 " + std::to_string(cardBottom);
+                }
+                rowRects.push_back({rid, row->frame.x, row->frame.y,
+                                    row->frame.x + row->frame.width,
+                                    row->frame.y + row->frame.height});
+            }
+        }
+        for (size_t i = 0; i < rowRects.size(); ++i) {
+            for (size_t j = i + 1; j < rowRects.size(); ++j) {
+                const Rect& p = rowRects[i];
+                const Rect& q = rowRects[j];
+                if (p.x0 < q.x1 - 0.01f && q.x0 < p.x1 - 0.01f &&
+                    p.y0 < q.y1 - 0.01f && q.y0 < p.y1 - 0.01f) {
+                    return std::string("行盒叠印: ") + p.id + " × " + q.id;
+                }
+            }
+        }
+        for (size_t i = 0; i < cardRects.size(); ++i) {
+            for (size_t j = i + 1; j < cardRects.size(); ++j) {
+                const Rect& p = cardRects[i];
+                const Rect& q = cardRects[j];
+                if (p.x0 < q.x1 - 0.01f && q.x0 < p.x1 - 0.01f &&
+                    p.y0 < q.y1 - 0.01f && q.y0 < p.y1 - 0.01f) {
+                    return std::string("卡叠印: ") + p.id + " × " + q.id;
+                }
+            }
+        }
+        // 派生钉值（字面期望；改回写死/改系数必红）。f(id) = frame 高，
+        // yOff = 两行 frame.y 差
+        const auto heightOf = [&](const char* id) -> float {
+            const auto* e = ui.find(id);
+            return e != nullptr ? e->frame.height : -1.0f;
+        };
+        const auto yOf = [&](const char* id) -> float {
+            const auto* e = ui.find(id);
+            return e != nullptr ? e->frame.y : -1.0f;
+        };
+        const auto pin = [&](const char* what, float got, float want) {
+            if (!nearEq(got, want)) {
+                return std::string(what) + " = " + std::to_string(got) +
+                       "（期望 " + std::to_string(want) + "）";
+            }
+            return std::string();
+        };
+        std::string err;
+        if (tab == 0) {
+            err = pin("appearance.title 高", heightOf("settings.card.appearance.title"),
+                      at130 ? 31.0f : 24.0f);
+            if (err.empty())
+                err = pin("appearance.desc 高",
+                          heightOf("settings.card.appearance.desc"),
+                          at130 ? 23.0f : 18.0f);
+            if (err.empty())
+                err = pin("appearance.theme.label 高",
+                          heightOf("settings.card.appearance.theme.label"),
+                          at130 ? 21.0f : 16.0f);
+            if (err.empty())
+                err = pin("editor.hint 高", heightOf("settings.card.editor.hint"),
+                          at130 ? 23.0f : 18.0f);
+            if (err.empty())
+                err = pin("appearance 卡高", heightOf("settings.card.appearance"),
+                          at130 ? 224.0f : 172.0f);
+        } else if (tab == 1) {
+            err = pin("modules.name.0 高",
+                      heightOf("settings.card.modules.name.0"),
+                      at130 ? 23.0f : 18.0f);
+            if (err.empty())
+                err = pin("modules 行距",
+                          yOf("settings.card.modules.name.1") -
+                              yOf("settings.card.modules.name.0"),
+                          at130 ? 73.0f : 56.0f);
+            if (err.empty())
+                err = pin("modules 行内偏移",
+                          yOf("settings.card.modules.rowdesc.0") -
+                              yOf("settings.card.modules.name.0"),
+                          at130 ? 26.0f : 20.0f);
+            if (err.empty())
+                err = pin("modules 卡高", heightOf("settings.card.modules"),
+                          at130 ? 374.0f : 288.0f);
+            if (err.empty())
+                err = pin("proxy.takeover.label 高",
+                          heightOf("settings.card.proxy.takeover.label"),
+                          at130 ? 23.0f : 18.0f);
+            if (err.empty())
+                err = pin("proxy 卡高（无警告）",
+                          heightOf("settings.card.proxy"),
+                          at130 ? 142.0f : 132.0f);
+        } else {
+            // 日志卡未在本期修清单（20px 盒 130% 档余量 4.4px）：两档都恒 20，
+            // 兼作「未派生行不随缩放变化」的对照钉
+            err = pin("log.label 高", heightOf("settings.card.log.label"), 20.0f);
+            if (err.empty())
+                err = pin("log 卡高", heightOf("settings.card.log"),
+                          at130 ? 192.0f : 148.0f);
+        }
+        return err;
+    };
+
+    // 断言宏展开含 return，只能留在用例体——helper 只收集问题串（空串 = 该
+    // tab 通过），逐 tab 一条
+    const auto runAllTabs = [&](bool at130) -> std::vector<std::string> {
+        std::vector<std::string> problems;
+        for (int tab : {0, 1, 2}) {
+            if (!clickSettingsTab(*mod, screen, tab)) {
+                problems.push_back("tab 切换失败: " + std::to_string(tab));
+                continue;
+            }
+            eui::Ui ui;
+            ui.begin(at130 ? "fsderive130" : "fsderive100");
+            mod->compose(ui, screen);
+            ui.end();
+            ui.layout(screen.width, screen.height);
+            problems.push_back(tabProblem(ui, tab, at130));
+        }
+        return problems;
+    };
+
+    // 100% 档（零回归锚：几何与改前逐值相等）
+    {
+        FontScaleGuard g{1.0f};
+        for (const std::string& problem : runAllTabs(false)) {
+            DOCTEST_CHECK_MESSAGE(problem.empty(), problem);
+        }
+    }
+    // 130% 档（用户机档位，真机根因复现）：行盒随字号派生 → 两两不重叠
+    {
+        FontScaleGuard g{1.3f};
+        for (const std::string& problem : runAllTabs(true)) {
+            DOCTEST_CHECK_MESSAGE(problem.empty(), problem);
+        }
+    }
+
+    mod->onStop();
+    return true;
+})
+
+// ---- 文案宽度纯件（③ 判据的来源）：估算 / 单行适配 / 皮肤下拉宽度 ----
+REGISTER_TEST(settings_label_fit_pure,
+              "settings: 文案宽度估算/单行适配/皮肤下拉宽度（不溢出判据）", {
+    namespace ms = module::settings;
+    // 估算口径钉死：ASCII 0.62em / 全角 1.0em（UTF-8 多字节按字符计一次）
+    DOCTEST_CHECK(std::abs(ms::estimatedTextWidth("abc", 10.0f) - 18.6f) < 1e-3f);
+    DOCTEST_CHECK(std::abs(ms::estimatedTextWidth("永久保留", 12.0f) - 48.0f) <
+                  1e-3f);
+    DOCTEST_CHECK(std::abs(ms::estimatedTextWidth("ab中文", 10.0f) -
+                           (2.0f * 0.62f + 2.0f) * 10.0f) < 1e-3f);
+    DOCTEST_CHECK(std::abs(ms::estimatedTextWidth("", 16.0f)) < 1e-3f);
+
+    // 放得下 → 原文；放不下 → 截断 + U+2026，且含省略号后仍不超宽
+    const std::string kLong = "super-long-skin-name-here";
+    DOCTEST_CHECK(ms::fitControlLabel("robot", 178.0f, 16.0f) == "robot");
+    const std::string fit = ms::fitControlLabel(kLong, 178.0f, 16.0f);
+    DOCTEST_CHECK(fit != kLong);
+    DOCTEST_CHECK(fit.size() >= 4u);  // ≥1 字符 + '…'(3 字节)
+    DOCTEST_CHECK(fit.compare(fit.size() - 3u, 3u, "\xE2\x80\xA6") == 0);
+    DOCTEST_CHECK_MESSAGE(ms::estimatedTextWidth(fit, 16.0f) <= 178.0f + 1e-3f,
+                          "截断后宽 " +
+                              std::to_string(ms::estimatedTextWidth(fit, 16.0f)));
+    DOCTEST_CHECK(kLong.compare(0, fit.size() - 3u,
+                                fit.substr(0, fit.size() - 3u)) == 0);
+
+    // 皮肤下拉宽度：下限 240（同其余控件）/ 按最长名放宽 / 上限 420
+    DOCTEST_CHECK(std::abs(ms::petSkinFieldWidth({}, 16.0f) - 240.0f) < 1e-3f);
+    DOCTEST_CHECK(std::abs(ms::petSkinFieldWidth({"robot"}, 16.0f) - 240.0f) <
+                  1e-3f);
+    DOCTEST_CHECK(std::abs(ms::petSkinFieldWidth({kLong}, 16.0f) -
+                           (25.0f * 0.62f * 16.0f + 62.0f)) < 1e-3f);
+    DOCTEST_CHECK(std::abs(ms::petSkinFieldWidth({std::string(80, 'x')}, 16.0f) -
+                           420.0f) < 1e-3f);
+    return true;
+})
+
+// ---- 2026-09-29 用户真机反馈「桌宠设置的下拉框不应该换行」----
+// EUI-NEO 的 text 默认 wrap=false（core/dsl.h:149）：超宽皮肤名**不折行**，
+// 而是画出控件右边缘（真机复现：25 字符名在 240 宽下拉里文本压过 chevron）。
+// 判据（改回固定 240 宽 / 去掉截断都会红）：
+//   ① 字段宽度 ≥ 最长皮肤名估算宽 + 字段 chrome（且 ≤ 420 上限）；
+//   ② 字段文案与每个选项的估算宽 ≤ 各自可用宽（放不下 = 溢出）；
+//   ③ 文案无换行符；短名原样显示、清单项数不减（截断只碰显示串，不改取值）。
+REGISTER_TEST(settings_pet_skin_dropdown_label_fits,
+              "settings: 桌宠皮肤下拉单行不溢出（按最长名放宽 + 超长截断）", {
+    test_support::TestEnv env(kCfgPrefix, "petskinfit", true);
+    test_support::ScopedConfigPath cfgEnv(
+        test_support::tempConfigFile(kCfgPrefix, "petskinfit_cfg"));
+    {
+        std::ofstream out(cfgEnv.cfgPath);
+        out << "{\"theme\":\"dark\",\"enabledModules\":["
+               "\"home\",\"markdown\",\"todo\",\"claude_proxy\",\"settings\","
+               "\"pet\"]}";
+    }
+    test_support::TempDir petsDir("pet_skins_fit");
+    const std::string kLong = "super-long-skin-name-here";  // 25 字符
+    for (const std::string& s : {std::string("robot"), kLong}) {
+        std::filesystem::create_directories(petsDir.path / s);
+        std::ofstream(petsDir.path / s / "pet.json") << "{}";
+    }
+    test_support::ScopedEnv petsEnv("DEVDESK_PETS_DIR", petsDir.path.string());
+
+    std::unique_ptr<::core::Module> mod(create_settings_module());
+    mod->onStart();
+
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 1));  // 模块 tab
+
+    // 探针：compose 一帧后把下拉几何 / 文案拷出来（Ui 是局部的，指针不外带）
+    struct Snapshot {
+        bool ok = false;
+        float width = 0.0f;
+        std::string label;
+        float labelFont = 0.0f;
+        std::vector<std::string> items;
+        float itemFont = 0.0f;
+    };
+    auto snapshot = [&]() {
+        Snapshot snap;
+        eui::Ui ui;
+        ui.begin("petskinfit");
+        mod->compose(ui, screen);
+        ui.end();
+        ui.layout(screen.width, screen.height);
+        const auto* field = ui.find("settings.card.pet.skin.dd.field");
+        const auto* label = ui.find("settings.card.pet.skin.dd.label");
+        if (field == nullptr || label == nullptr) return snap;
+        snap.ok = true;
+        snap.width = field->frame.width;
+        snap.label = label->text;
+        snap.labelFont = label->fontSize;
+        for (size_t i = 0;; ++i) {
+            const auto* item = ui.find(
+                "settings.card.pet.skin.dd.item.label." + std::to_string(i));
+            if (item == nullptr) break;
+            snap.items.push_back(item->text);
+            snap.itemFont = item->fontSize;
+        }
+        return snap;
+    };
+    namespace ms = module::settings;
+    const float kFieldFont = 16.0f;   // components/theme.h typography.body
+    const float kChrome = 62.0f;      // content(12) + micro(2) + overlay(48)
+    const float kItemChrome = 36.0f;  // small(6)×2 + panel(24)
+
+    // ① 按最长皮肤名放宽（固定 240 = 改前状态 → 本行红）
+    const float longEst = ms::estimatedTextWidth(kLong, kFieldFont);
+    DOCTEST_CHECK(std::abs(longEst - 248.0f) < 0.5f);  // 25 × 0.62 × 16
+    const Snapshot wide = snapshot();
+    DOCTEST_REQUIRE(wide.ok);
+    DOCTEST_CHECK_MESSAGE(wide.width >= longEst + kChrome - 0.5f,
+                          "皮肤下拉宽 " + std::to_string(wide.width) + "（应 ≥ " +
+                              std::to_string(longEst + kChrome) + "）");
+    DOCTEST_CHECK(wide.width <= 420.5f);
+
+    // ② 字段文案 + 每个选项都放得进各自可用宽（溢出 = 压 chevron 的根因）
+    DOCTEST_CHECK(wide.label.find('\n') == std::string::npos);
+    DOCTEST_CHECK_MESSAGE(
+        ms::estimatedTextWidth(wide.label, wide.labelFont) <=
+            wide.width - kChrome + 0.5f,
+        "字段文案 " + wide.label + " 估算宽 " +
+            std::to_string(ms::estimatedTextWidth(wide.label, wide.labelFont)));
+    for (const std::string& t : wide.items) {
+        DOCTEST_CHECK(t.find('\n') == std::string::npos);
+        DOCTEST_CHECK_MESSAGE(
+            ms::estimatedTextWidth(t, wide.itemFont) <=
+                wide.width - kItemChrome + 0.5f,
+            "选项 " + t + " 溢出（控件宽 " + std::to_string(wide.width) + "）");
+    }
+    // ③ 短名原样显示（截断只碰显示串）+ 清单项数不减
+    DOCTEST_CHECK_MESSAGE(
+        std::find(wide.items.begin(), wide.items.end(), std::string("robot")) !=
+            wide.items.end(),
+        "短皮肤名应原样显示");
+    DOCTEST_CHECK_EQ(wide.items.size(), 2u);
+    DOCTEST_CHECK(wide.label == "robot");  // 选中项 = 默认皮肤
+
+    // ④ 超长名（估算宽破上限）→ 控件封顶 420、文案截断（'…'）且仍放得下
+    const std::string kHuge =
+        "skin-with-a-very-long-name-that-exceeds-the-cap-limit-for-sure";
+    std::filesystem::create_directories(petsDir.path / kHuge);
+    std::ofstream(petsDir.path / kHuge / "pet.json") << "{}";
+    {
+        // 当前皮肤 = 超长名（pet_config.json 是 currentSkinName 的真值来源）
+        std::ofstream out(petsDir.path / "pet_config.json");
+        out << "{\"skinName\":\"" << kHuge << "\",\"x\":-1,\"y\":-1}";
+    }
+    mod->onPageEnter();  // 皮肤清单 / 当前皮肤的刷新点（THS-01）
+    const Snapshot huge = snapshot();
+    DOCTEST_REQUIRE(huge.ok);
+    DOCTEST_CHECK(std::abs(huge.width - 420.0f) < 0.5f);  // 上限封顶
+    DOCTEST_CHECK_EQ(huge.items.size(), 3u);              // 清单没丢项
+    DOCTEST_CHECK(huge.label.size() >= 4u);
+    DOCTEST_CHECK_MESSAGE(
+        huge.label.compare(huge.label.size() - 3u, 3u, "\xE2\x80\xA6") == 0,
+        "超长皮肤名应截断显示：" + huge.label);
+    DOCTEST_CHECK_MESSAGE(
+        ms::estimatedTextWidth(huge.label, huge.labelFont) <=
+            huge.width - kChrome + 0.5f,
+        "截断后仍溢出：" +
+            std::to_string(ms::estimatedTextWidth(huge.label, huge.labelFont)));
+    // 截断串 = 原名前缀（只改显示，取值仍是原下标 → onChange 语义不变）
+    DOCTEST_CHECK(kHuge.compare(0, huge.label.size() - 3u,
+                                huge.label.substr(0, huge.label.size() - 3u)) ==
+                  0);
+
+    mod->onStop();
+    ::core::theme::setDark();
+    return true;
+})
+
+// ---- 2026-09-29 用户真机反馈（第二次，上一轮只改了宽度）
+//      「设置-模块-桌宠 下拉框不应该另起一行 这个没修」----
+// 模块 tab 的桌宠卡（drawPetCard）此前**没有标签列**：皮肤下拉在卡内 (28,64)
+// 独占一行，读起来就是「下拉另起一行」。修复 = 补「皮肤」标签列（28/72）+
+// 控件列（104/40），标签左、控件右、同一基线。判据全数值化，改前逐条必红：
+//   ① 标签 settings.card.pet.skin.label 存在（改前无此元素 → REQUIRE 即红）；
+//   ② 标签框中心 y == 下拉字段框中心 y（±0.5，同一基线）；
+//   ③ 下拉字段框顶 y ≤ 标签框底（证明控件没被折到标签下面 = 没另起一行）；
+//   ④ 标签在控件左侧、水平不重叠（标签右缘 ≤ 控件左缘）。
+REGISTER_TEST(settings_pet_skin_row_inline,
+              "settings: 桌宠卡皮肤下拉与标签同行（不另起一行）", {
+    test_support::TestEnv env(kCfgPrefix, "petrow", true);
+    test_support::ScopedConfigPath cfgEnv(
+        test_support::tempConfigFile(kCfgPrefix, "petrow_cfg"));
+    {
+        std::ofstream out(cfgEnv.cfgPath);
+        out << "{\"theme\":\"dark\",\"enabledModules\":[\"home\",\"markdown\","
+               "\"todo\",\"claude_proxy\",\"settings\",\"pet\"]}";
+    }
+    std::unique_ptr<::core::Module> mod(create_settings_module());
+    mod->onStart();
+
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 1));  // 模块 tab
+    eui::Ui ui;
+    ui.begin("petrow");
+    mod->compose(ui, screen);
+    ui.end();
+    ui.layout(screen.width, screen.height);
+
+    const auto* card = ui.find("settings.card.pet");
+    const auto* label = ui.find("settings.card.pet.skin.label");
+    const auto* field = ui.find("settings.card.pet.skin.dd.field");
+    DOCTEST_REQUIRE(card != nullptr);
+    DOCTEST_REQUIRE(label != nullptr);  // 改前无标签列 → 本行即回归位
+    DOCTEST_REQUIRE(field != nullptr);
+    DOCTEST_CHECK(std::string(label->text) == "皮肤");
+
+    // ② 同一基线：两框中心 y 相等（标签框高 20、控件高 40，靠 y 偏置对齐）
+    const float labelCy = label->frame.y + label->frame.height * 0.5f;
+    const float fieldCy = field->frame.y + field->frame.height * 0.5f;
+    DOCTEST_CHECK_MESSAGE(std::abs(labelCy - fieldCy) < 0.5f,
+                          "标签中心 y " + std::to_string(labelCy) +
+                              " vs 下拉中心 y " + std::to_string(fieldCy));
+
+    // ③ 没另起一行：控件顶不超过标签底（改回「标签在上、控件在下一行」→ 红）
+    DOCTEST_CHECK_MESSAGE(field->frame.y <= label->frame.y + label->frame.height,
+                          "下拉 frame.y " + std::to_string(field->frame.y) +
+                              " > 标签底 " +
+                              std::to_string(label->frame.y + label->frame.height) +
+                              "（折到下一行了）");
+
+    // ④ 标签左、控件右，水平不重叠
+    DOCTEST_CHECK(label->frame.x < field->frame.x);
+    DOCTEST_CHECK(label->frame.x + label->frame.width <= field->frame.x);
+    // 同排且行仍在卡内（卡高 168、内容底沿 152——2026-09-30 加显示大小行
+    // 后由 120/104 抬高，审计 F4 注释对齐）
+    DOCTEST_CHECK(field->frame.y + field->frame.height <=
+                  card->frame.y + card->frame.height + 0.5f);
+    DOCTEST_CHECK(label->frame.y > card->frame.y + 38.0f);  // 不与标题/说明重叠
+
+    mod->onStop();
+    ::core::theme::setDark();
+    return true;
+})
+
+// ---- 2026-09-29 用户真机反馈「设置-模块-桌宠取消勾选，桌宠没消失」----
+// 口径（PET-CLOSE）：模块开关的**注册门控**仍要重启（main 装配期），但桌宠
+// 是唯一有独立可见载体的模块 → 取消勾选立即关窗、重新勾选立即重开（本会话
+// 装配过时）。判据（去掉 settings 侧的桥调用逐条必红）：
+//   ① 点开关命中矩形（settings.card.modules.sw.3.hit，勾选态）→ pet 侧
+//      「窗口可见意图」由 true 翻 false（= 取消勾选即关窗，不是等重启）；
+//   ② enabledModules 持久化不受影响：盘上 config.json 去掉 pet（插拔语义不变）；
+//   ③ 卡片门控即时预览不变：pet 卡随开关消失；
+//   ④ 重新勾选 → 意图回 true **且真的重新入队一条 pet 开窗请求**（窗口能再出现）。
+REGISTER_TEST(settings_pet_module_toggle_closes_window,
+              "settings: 取消勾选桌宠立即关窗 / 重新勾选立即重现（PET-CLOSE）", {
+    test_support::TestEnv env(kCfgPrefix, "petclose", true);
+    test_support::ScopedConfigPath cfgEnv(
+        test_support::tempConfigFile(kCfgPrefix, "petclose_cfg"));
+    {
+        std::ofstream out(cfgEnv.cfgPath);
+        out << "{\"theme\":\"dark\",\"enabledModules\":[\"home\",\"markdown\","
+               "\"todo\",\"claude_proxy\",\"settings\",\"pet\"]}";
+    }
+    // 皮肤夹具：DEVDESK_PETS_DIR 指临时目录并写入 shipped 形态皮肤（帧只需
+    // PNG 头合法，无头不解码）。不造夹具时测试环境 exeDir/build/tests 没有
+    // 随包资产 → ensureDefaultSkin 失败 → startPetWindow 根本不开窗
+    test_support::TempDir petsDir("pet_close_pets");
+    test_support::ScopedEnv petsEnv("DEVDESK_PETS_DIR", petsDir.path.string());
+    static const char* kSkinJson =
+        "{\"name\":\"robot\",\"frameSize\":[128,128],\"frameRate\":4,"
+        "\"states\":{\"idle\":[\"f0.png\",\"f1.png\"],\"poked\":[\"p0.png\"]}}";
+    test_support::writeShippedSkinFixture(petsDir.path, "robot", kSkinJson);
+
+    std::unique_ptr<::core::Module> mod(create_settings_module());
+    mod->onStart();
+
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 1));  // 模块 tab
+
+    // 前置：本会话已装配桌宠（= 启动时 enabledModules 含 pet 的会话状态）
+    (void)app::consumeWindowRequests();
+    module::pet::startPetWindow(module::pet::PetWindowConfig{});
+    {
+        // 装配必须真的入队开窗请求（皮肤夹具失效时在此先红，不把「关了窗」
+        // 的假绿带到下面）
+        const std::vector<app::DslWindowRequest> initial =
+            app::consumeWindowRequests();
+        DOCTEST_REQUIRE_MESSAGE(initial.size() == 1u,
+                                "装配未入队开窗请求（皮肤夹具不可用？实测 " +
+                                    std::to_string(initial.size()) + " 条）");
+        DOCTEST_REQUIRE_EQ(initial[0].pageId, "pet");
+    }
+    DOCTEST_REQUIRE(module::pet::petWindowRequested());  // 装配 = 想显示
+
+    eui::Ui ui;
+    auto composeModules = [&](const char* page) {
+        ui.begin(page);
+        mod->compose(ui, screen);
+        ui.end();
+        ui.layout(screen.width, screen.height);
+    };
+    composeModules("petclose1");
+    // 模块卡第 4 行 = 桌宠（kToggleable 序：markdown/todo/claude/pet）；
+    // 命中矩形 onClick 按 compose 期勾选态取反 → 本次点击 = 取消勾选
+    const auto* offHit = ui.find("settings.card.modules.sw.3.hit");
+    DOCTEST_REQUIRE(offHit != nullptr);
+    DOCTEST_REQUIRE(offHit->onClick != nullptr);
+    DOCTEST_REQUIRE(ui.find("settings.card.pet") != nullptr);  // 取消前卡在
+    offHit->onClick();
+
+    // ① 取消勾选 → 立即关窗（改前这里恒 true：真机现象「桌宠没消失」）
+    DOCTEST_CHECK_MESSAGE(
+        !module::pet::petWindowRequested(),
+        "取消勾选后桌宠仍处于「应显示」状态（窗口没被关）");
+    // ② 持久化：盘上 enabledModules 去掉 pet
+    {
+        std::ifstream in(cfgEnv.cfgPath);
+        std::ostringstream buf;
+        buf << in.rdbuf();
+        DOCTEST_CHECK_MESSAGE(buf.str().find("\"pet\"") == std::string::npos,
+                              "config.json 仍含 pet：" + buf.str());
+    }
+    // ③ 卡片门控即时预览不变（关掉的模块整卡隐藏）
+    composeModules("petclose2");
+    DOCTEST_CHECK(ui.find("settings.card.pet") == nullptr);
+    const auto* onHit = ui.find("settings.card.modules.sw.3.hit");
+    DOCTEST_REQUIRE(onHit != nullptr);  // 开关行恒在（不受门控影响）
+    onHit->onClick();                   // 本次点击 = 重新勾选
+
+    // ④ 重新勾选 → 立即重现：意图回 true + 真的重新入队一条 pet 开窗请求
+    DOCTEST_CHECK_MESSAGE(module::pet::petWindowRequested(),
+                          "重新勾选后桌宠没有回到「应显示」状态");
+    {
+        const std::vector<app::DslWindowRequest> reqs =
+            app::consumeWindowRequests();
+        DOCTEST_CHECK_MESSAGE(reqs.size() == 1u,
+                              "重新勾选应重新入队 1 条开窗请求，实测 " +
+                                  std::to_string(reqs.size()));
+        if (reqs.size() == 1u) {
+            DOCTEST_CHECK_EQ(reqs[0].pageId, "pet");
+        }
+    }
+    {
+        std::ifstream in(cfgEnv.cfgPath);
+        std::ostringstream buf;
+        buf << in.rdbuf();
+        DOCTEST_CHECK(buf.str().find("\"pet\"") != std::string::npos);
+    }
+
+    // 收尾：不留残留可见意图 / 待消费开窗请求（进程级 pet 运行时是共享状态）
+    module::pet::closePetWindow();
+    (void)app::consumeWindowRequests();
+    mod->onStop();
+    ::core::theme::setDark();
+    return true;
+})
+
+// ---- Bug B 2026-09-30：运行中开桌宠模块后点「显示桌宠」必须有可见反馈 ----
+// 真机现象：本会话未装配（启动时开关关）时，点按钮/开开关只有 setStatus
+//（页头副标题小字，用户视线在卡片上根本看不到）+ 一行日志——用户日志
+// 00:32:32「本会话未装配，重启后生效」后感知「点了没效果」。断言口径：桥
+// NotAssembled 分支 → settings.toast 出现、文案 =「已启用，重启 DevDesk 后
+// 生效」（中性提示非错误），且不凭空入队开窗请求。变异自检：把 settings
+// 侧 switch 换回旧 setStatus 形态，toast 节点不存在 → 本用例必红（见
+// docs/superpowers/plans/2026-09-30-pet-enable-feedback-verify.md）
+REGISTER_TEST(settings_pet_show_button_toast_when_not_assembled,
+              "settings: 未装配态点「显示桌宠」出「重启生效」toast（Bug B）", {
+    test_support::TestEnv env(kCfgPrefix, "pettoast", true);
+    test_support::ScopedConfigPath cfgEnv(
+        test_support::tempConfigFile(kCfgPrefix, "pettoast_cfg"));
+    {
+        std::ofstream out(cfgEnv.cfgPath);
+        out << "{\"theme\":\"dark\",\"enabledModules\":[\"home\",\"markdown\","
+               "\"todo\",\"claude_proxy\",\"settings\",\"pet\"]}";
+    }
+    // 皮肤根隔离到临时夹具（不读真机 appData 皮肤清单，pet 卡下拉非空）；
+    // NotAssembled 分支本身不触皮肤发现
+    test_support::TempDir petsDir("pet_toast_na");
+    test_support::ScopedEnv petsEnv("DEVDESK_PETS_DIR", petsDir.path.string());
+    static const char* kToastSkinJson =
+        "{\"name\":\"robot\",\"frameSize\":[128,128],\"frameRate\":4,"
+        "\"states\":{\"idle\":[\"f0.png\",\"f1.png\"],\"poked\":[\"p0.png\"]}}";
+    test_support::writeShippedSkinFixture(petsDir.path, "robot",
+                                          kToastSkinJson);
+    // 回厂 = 本会话从未装配（装配标志只置不清，见 pet_window.cpp PetRuntime；
+    // 前序用例可能装配过，进程级单例必须先清）
+    module::pet::resetPetRuntimeForTests();
+    (void)app::consumeWindowRequests();
+
+    std::unique_ptr<::core::Module> mod(create_settings_module());
+    mod->onStart();
+
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 1));  // 模块 tab
+
+    eui::Ui ui;
+    auto composeModules = [&](const char* page) {
+        ui.begin(page);
+        mod->compose(ui, screen);
+        ui.end();
+        ui.layout(screen.width, screen.height);
+    };
+    composeModules("pettoast1");
+    const auto* showBtn = ui.find("settings.card.pet.show.bg");
+    DOCTEST_REQUIRE(showBtn != nullptr);
+    DOCTEST_REQUIRE(showBtn->onClick != nullptr);
+    showBtn->onClick();
+
+    // 反馈在下一帧 compose 可见（toast 状态位 → drawToast 绘制）
+    composeModules("pettoast2");
+    const auto* toast = ui.find("settings.toast");
+    DOCTEST_CHECK_MESSAGE(toast != nullptr,
+                          "点「显示桌宠」后没有任何 toast（Bug B：点了没效果）");
+    const auto* title = ui.find("settings.toast.title");
+    DOCTEST_REQUIRE(title != nullptr);
+    DOCTEST_CHECK_EQ(title->text, std::string("已启用，重启 DevDesk 后生效"));
+    // 中性提示非错误：正文为空（错误样式的补充说明只在失败分支给）
+    const auto* msg = ui.find("settings.toast.message");
+    DOCTEST_REQUIRE(msg != nullptr);
+    DOCTEST_CHECK(msg->text.empty());
+
+    // 未装配态拒绝凭空开窗：点按钮不得入队任何开窗请求
+    DOCTEST_CHECK(app::consumeWindowRequests().empty());
+
+    mod->onStop();
+    module::pet::resetPetRuntimeForTests();
+    ::core::theme::setDark();
+    return true;
+})
+
+// ---- Bug B 2026-09-30 第二分支：已装配但启动失败 → 错误样式 toast ----
+// 改前这种情况桥谎报 true（「已请求显示桌宠」但窗口永远不会出现）。皮肤根
+// 空且测试环境无随包资产 → 回退默认皮肤也失败 → StartFailed。断言：toast
+// 出现、标题 =「桌宠启动失败」、正文带原因（错误样式走 isError，与中性分支
+// 文案互异即钉死分类）
+REGISTER_TEST(settings_pet_show_button_toast_when_start_failed,
+              "settings: 桌宠启动失败点「显示桌宠」出错误 toast（Bug B）", {
+    test_support::TestEnv env(kCfgPrefix, "pettoastfail", true);
+    test_support::ScopedConfigPath cfgEnv(
+        test_support::tempConfigFile(kCfgPrefix, "pettoastfail_cfg"));
+    {
+        std::ofstream out(cfgEnv.cfgPath);
+        out << "{\"theme\":\"dark\",\"enabledModules\":[\"home\",\"markdown\","
+               "\"todo\",\"claude_proxy\",\"settings\",\"pet\"]}";
+    }
+    // 皮肤根 = 「可发现但不可加载」的 robot：discoverSkins 只验 pet.json
+    // 存在（pet_skin.cpp:231），loadSkin 要解析 JSON——写非法 JSON 使下拉
+    // 清单非空而加载必败 → 回退默认皮肤也败 → StartFailed 确定可达
+    test_support::TempDir petsDir("pet_toast_fail");
+    test_support::ScopedEnv petsEnv("DEVDESK_PETS_DIR", petsDir.path.string());
+    {
+        std::filesystem::create_directories(petsDir.path / "robot");
+        std::ofstream(petsDir.path / "robot" / "pet.json") << "{broken json";
+    }
+    module::pet::resetPetRuntimeForTests();
+    (void)app::consumeWindowRequests();
+
+    // 先装配（= 启动时开关开、本会话装配过的会话形态）：皮肤不可用 →
+    // 装配本身就没开成窗（startPetWindow 现在返回 false），但 assembled 已置位
+    DOCTEST_CHECK_MESSAGE(
+        !module::pet::startPetWindow(module::pet::PetWindowConfig{}),
+        "前置失效：pet.json 非法的夹具下装配居然成功（loadSkin 没验 JSON？）");
+    DOCTEST_CHECK(module::pet::petWindowRequested());  // 装配=想显示，与开成无关
+    DOCTEST_CHECK(app::consumeWindowRequests().empty());
+
+    std::unique_ptr<::core::Module> mod(create_settings_module());
+    mod->onStart();
+
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 1));  // 模块 tab
+
+    eui::Ui ui;
+    auto composeModules = [&](const char* page) {
+        ui.begin(page);
+        mod->compose(ui, screen);
+        ui.end();
+        ui.layout(screen.width, screen.height);
+    };
+    composeModules("pettoastfail1");
+    const auto* showBtn = ui.find("settings.card.pet.show.bg");
+    DOCTEST_REQUIRE(showBtn != nullptr);
+    DOCTEST_REQUIRE(showBtn->onClick != nullptr);
+    showBtn->onClick();
+
+    composeModules("pettoastfail2");
+    const auto* title = ui.find("settings.toast.title");
+    DOCTEST_REQUIRE_MESSAGE(title != nullptr,
+                            "启动失败分支没有 toast（静默失败复现）");
+    DOCTEST_CHECK_EQ(title->text, std::string("桌宠启动失败"));
+    const auto* msg = ui.find("settings.toast.message");
+    DOCTEST_REQUIRE(msg != nullptr);
+    DOCTEST_CHECK(msg->text.find("皮肤") != std::string::npos);
+
+    mod->onStop();
+    module::pet::resetPetRuntimeForTests();
+    (void)app::consumeWindowRequests();
+    ::core::theme::setDark();
+    return true;
+})
+
 REGISTER_TEST(settings_pet_skin_dropdown_openup,
               "settings: 桌宠皮肤下拉 openUp——小窗 3 皮肤弹层留在窗内", {
     test_support::TestEnv env(kCfgPrefix, "petopenup", true);
@@ -1575,7 +2502,7 @@ REGISTER_TEST(settings_port_esc_discards_draft,
     eui::KeyEvent selectAll;
     selectAll.key = eui::InputKey::A;
     selectAll.action = eui::KeyAction::Press;
-    selectAll.modifiers.control = true;
+    test_support::setShortcutModifier(selectAll.modifiers);
     input->onKeyEvent(selectAll);
     eui::TextInputEvent t;
     t.text = "9999";
@@ -1631,11 +2558,12 @@ REGISTER_TEST(settings_ctrl_s_save_shortcut,
         mod->compose(ui, screen);
         ui.end();
     };
+    // Ctrl+S（修饰位按平台取：macOS = Cmd，其余 = Ctrl；见 setShortcutModifier）
     auto ctrlS = [](eui::KeyAction action) {
         eui::KeyEvent e;
         e.key = eui::InputKey::S;
         e.action = action;
-        e.modifiers.control = true;
+        test_support::setShortcutModifier(e.modifiers);
         return e;
     };
 
@@ -1679,7 +2607,7 @@ REGISTER_TEST(settings_ctrl_s_save_shortcut,
         eui::KeyEvent selectAll;
         selectAll.key = eui::InputKey::A;
         selectAll.action = eui::KeyAction::Press;
-        selectAll.modifiers.control = true;
+        test_support::setShortcutModifier(selectAll.modifiers);
         input->onKeyEvent(selectAll);           // Ctrl+A 全选
         eui::TextInputEvent t;
         t.text = "9001";
@@ -1913,12 +2841,32 @@ REGISTER_TEST(settings_editor_font_dropdown_applies_channel,
 // 除，卡渲染测试随之删除）；settings_config.cpp 的 about* 函数暂留死代码
 //（D-02 明确不属该需求范围），以下纯函数测试保留防宏注入回归 ----
 
+// 版本断言与真值同源的前提：本 TU 必须拿到与 devdesk_module_settings **同一**
+// PROJECT_VERSION 注入的 DEVDESK_VERSION 宏（tests/CMakeLists.txt 的
+// target_compile_definitions）。缺了就是编译期硬失败，不让下方断言悄悄退化成
+// 「只查应用名」的假绿。
+#ifndef DEVDESK_VERSION
+#error "devdesk_tests 缺 DEVDESK_VERSION 宏注入（见 tests/CMakeLists.txt）"
+#endif
+
 REGISTER_TEST(settings_about_text_helpers,
               "settings: aboutVersionLine/aboutEuiNeoLine 纯函数（spec缩水 C）", {
+    // 2026-09-29 修硬编码版本断言：原写法 DOCTEST_CHECK(v.find("DevDesk 0.1.")
+    // != npos) 把版本号写死成写用例当时的 VERSION，真值涨到 0.7.x 后恒红
+    // （且无法再反映真值）。现在期望版本段取自 DEVDESK_VERSION 宏——与
+    // settings_config.cpp 构造 aboutVersionLine() 用的是同一个宏、同一个
+    // PROJECT_VERSION 来源，VERSION 文件变则两边同步变。
+    const std::string expectPrefix = std::string("DevDesk ") + DEVDESK_VERSION;
     const std::string v = module::settings::aboutVersionLine();
-    DOCTEST_CHECK(v.find("DevDesk 0.1.") != std::string::npos);
-    // 宏缺失回退分支不可能在本 target 命中；有值即可（构建戳/类型非空）
-    DOCTEST_CHECK(v.find("dev") == std::string::npos);  // VERSION 注入生效
+    DOCTEST_CHECK_MESSAGE(v.rfind(expectPrefix, 0) == 0,
+                          "actual=[" + v + "] expected_prefix=[" + expectPrefix + "]");
+    // 格式不变式（不依赖具体版本值）：
+    // "DevDesk <版本> · <构建类型> · 构建 <日期> <时刻>"
+    DOCTEST_CHECK(v.rfind(expectPrefix + " · ", 0) == 0);
+    DOCTEST_CHECK(v.find(" · 构建 ") != std::string::npos);
+    // 原 v.find("dev") == npos 只是「宏注入生效」的启发式，且会被 "0.8.0-dev"
+    // 这类合法版本误伤；前缀比对已直接证明注入生效（回退分支产出
+    // "DevDesk dev · …" 即红），故删。
     const std::string e = module::settings::aboutEuiNeoLine();
     DOCTEST_CHECK(e.find("EUI-NEO rev") != std::string::npos);
     // 最低依赖 rev 恒打印（顶层 CMake 变量）
@@ -2366,7 +3314,7 @@ REGISTER_TEST(settings_ui_logic_equivalence,
     DOCTEST_CHECK_EQ(ms::kAppearanceCardHeight, 172.0f);
     DOCTEST_CHECK_EQ(ms::kEditorFontCardHeight, 108.0f);
     DOCTEST_CHECK_EQ(ms::kModulesCardHeight, 288.0f);
-    DOCTEST_CHECK_EQ(ms::kPetCardHeight, 120.0f);
+    DOCTEST_CHECK_EQ(ms::kPetCardHeight, 168.0f);  // 两行控件（皮肤+显示大小）
     DOCTEST_CHECK_EQ(ms::kDirectoryCardHeight, 116.0f);
     DOCTEST_CHECK_EQ(ms::kLogSettingsCardHeight, 148.0f);
 
@@ -2522,10 +3470,15 @@ REGISTER_TEST(settings_card_registry_order,
 // 加了卡片？底色是白色？不需要啊」。根因：settings 9 张卡每张调 ui_kit::cardFrame
 //（surface 填充 + 1px 边框 + panelShadow 阴影 + radiusLarge 圆角），白色卡框叠在
 // M3-4 主体渐变底（settings.body.bg）之上 = 用户看到的「最外层卡片」。
-// 修复 = 删全部 9 处 cardFrame 调用（settings_ui_cards.cpp），卡内容直接铺页面渐变
-// 底，不再有 <id>.bg 矩形 / 边框 / 阴影 / 圆角。旧「阴影分层」回归断言随卡框废弃，
-// 改反断言：bg 矩形必须不存在（cardFrame 若被加回会重新出现）、卡 stack 必须仍在。
+// 修复 = 删全部 9 处 cardFrame 调用（settings_ui_cards.cpp），不再有 <id>.bg 矩形 /
+// 边框 / 阴影 / 圆角。旧「阴影分层」回归断言随卡框废弃，改反断言：bg 矩形必须不存在
+//（cardFrame 若被加回会重新出现）、卡 stack 必须仍在。
 // 回归断言（两档主题 × 9 张可见卡）：<stack>.bg 不存在、卡 stack 存在（内容未丢）。
+//
+// 同日第二轮（用户真机反馈「设置页面最外层的卡片还没删除啊，让你删除好多次了」）：
+// 上面说的「页面渐变底」本身也是用户眼中的「最外层卡片」→ 已删。本用例只看卡级
+// <id>.bg，不受影响；页面级底板的反断言在 test_ui_modern.cpp
+// uiModernSettingsBodyGradientRemoved（settings.body.gradient / .bg 必须都不存在）。
 REGISTER_TEST(settings_cards_no_outer_cardframe,
               "settings: 8 卡无外层 cardFrame——内容直接铺页面底（两档主题）", {
     test_support::TestEnv env(kCfgPrefix, "noframe", true);

@@ -284,6 +284,10 @@ private:
 
 // ---------- 测试用 ClaudeService（InMemoryDb 内存库，不触碰 Keychain）----------
 
+// 显式测试 service（2026-09-30）：默认构造现按数据根派生 service 名，此处
+// 传显式名钉死隔离语义——绝不派生、更不触碰任何真实 Keychain 命名空间
+constexpr const char* kStreamTestKeychainService = "DevDeskTestStreamingProxy";
+
 // 模块 glue，keep-local（TIN-06）：InMemoryDb 基座 + ClaudeService 构造；
 // 构造失败即抛（InMemoryDb），service 恒非空。
 struct StreamEnv {
@@ -291,7 +295,8 @@ struct StreamEnv {
     std::unique_ptr<module::claude::ClaudeService> service;
 
     StreamEnv() {
-        service = std::make_unique<module::claude::ClaudeService>(db.handle());
+        service = std::make_unique<module::claude::ClaudeService>(
+            db.handle(), kStreamTestKeychainService);
     }
 
     module::claude::ClaudeService& svc() const { return *service; }

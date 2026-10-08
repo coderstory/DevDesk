@@ -21,16 +21,21 @@
 #include <ctime>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <map>
+#include <sstream>
 #include <string>
 #include <utility>
+
+#include <openssl/sha.h>
 
 namespace module::claude {
 
 namespace {
 
-// 默认 Keychain service name（约定：DevDesk 全部密钥都用此 service）
-constexpr const char* kDefaultKeychainService = "DevDesk";
+// 旧全局 Keychain service 名（< 2026-09-30 的所有数据根共用它；现仅作一次性
+// 迁移源 migrateLegacyKeychainService，新代码的读写一律走按根派生的名字）
+constexpr const char* kLegacyKeychainService = "DevDesk";
 
 // 取当前 unix 秒
 std::time_t nowUnix() {
@@ -63,16 +68,48 @@ bool keyAtOldValue(const std::string& keychainService,
 
 } // namespace
 
-// ---------- 构造 / 行解析 ----------
+// ---------- Keychain service 派生 / 构造 / 行解析 ----------
+
+// Keychain service 名按数据根派生（声明见 claude_service.h 纯函数段）
+std::string keychainServiceForDataRoot(const std::string& dataRoot) {
+    if (dataRoot.empty()) {
+        return std::string();   // 空根无法派生（生产不可达；调用方兜底旧名）
+    }
+    unsigned char digest[SHA256_DIGEST_LENGTH];
+    SHA256(reinterpret_cast<const unsigned char*>(dataRoot.data()),
+           dataRoot.size(), digest);
+    std::ostringstream oss;
+    // 前 4 字节 8 位 hex（同 ProfileRepository::sha256HexPrefix 口径：
+    // 8 位足够区分数据根，又不至于把 service 名拉长）
+    for (int i = 0; i < 4 && i < SHA256_DIGEST_LENGTH; ++i) {
+        oss << std::hex << std::setw(2) << std::setfill('0')
+            << static_cast<int>(digest[i]);
+    }
+    return std::string(kLegacyKeychainService) + "-" + oss.str();
+}
+
+namespace {
+
+// 生产路径（未显式传 service）：按当前数据根派生 service 名。派生失败
+//（空根，理论不可达）兜底旧全局名——名字退化但不至于抛错。
+std::string resolveKeychainService() {
+    auto derived = keychainServiceForDataRoot(core::paths::appDataDir().string());
+    return derived.empty() ? std::string(kLegacyKeychainService) : derived;
+}
+
+} // namespace
 
 ClaudeService::ClaudeService(core::data::SqliteDb& db,
                              const std::string& keychainService)
     : db_(db),
       callLogStore_(db),
-      profileRepository_(db, keychainService.empty() ? kDefaultKeychainService
+      profileRepository_(db, keychainService.empty() ? resolveKeychainService()
                                                      : keychainService),
-      keychainService_(keychainService.empty() ? kDefaultKeychainService
+      keychainService_(keychainService.empty() ? resolveKeychainService()
                                                : keychainService),
+      legacyKeychainService_(keychainService.empty()
+                                 ? std::string(kLegacyKeychainService)
+                                 : std::string()),
       proxyRuntime_(*this) {}
 
 ClaudeService::~ClaudeService() {
@@ -112,7 +149,8 @@ core::Result<Profile> ClaudeService::createProfile(const std::string& name,
                                                    int64_t sharedConfigId,
                                                    const std::string& authField,
                                                    const std::string& dialectOverride,
-                                                   int64_t fallbackProfileId) {
+                                                   int64_t fallbackProfileId,
+                                                   const std::string& extraSettingsJson) {
     // R10-A2 段级拆分：校验 + INSERT ... RETURNING + Keychain 两段写 + 失败回滚
     //（DB 段）已迁 ProfileRepository::createProfile；本方法保留「首建自动激活」
     // 策略尾——创建成功后若当前无任何激活 Profile 则自动激活刚建的这条（经门面
@@ -122,7 +160,7 @@ core::Result<Profile> ClaudeService::createProfile(const std::string& name,
     // 「点击启用」文案）
     auto created = profileRepository_.createProfile(
         name, baseUrl, apiKey, model, sharedConfigId, authField,
-        dialectOverride, fallbackProfileId);
+        dialectOverride, fallbackProfileId, extraSettingsJson);
     if (created.isFail()) {
         return created;
     }
@@ -194,6 +232,12 @@ core::Result<int> ClaudeService::cleanupOrphanKeychainEntries() {
     // R10-A2 段级拆分：listProfiles + Keychain 孤儿条目清理（「Keychain
     // 条目与行一一对应」不变式的维护者）已迁 ProfileRepository
     return profileRepository_.cleanupOrphanKeychainEntries();
+}
+
+core::Result<int> ClaudeService::migrateLegacyKeychainService() {
+    // 显式传 service（测试）时 legacyKeychainService_ 为空 → 迁移 no-op
+    return profileRepository_.migrateLegacyKeychainService(
+        legacyKeychainService_);
 }
 
 // ---------- API key ----------
@@ -274,8 +318,8 @@ core::Result<std::vector<SharedConfig>> ClaudeService::listSharedConfigs() {
 }
 
 core::Result<SharedConfig> ClaudeService::createSharedConfig(
-    const std::string& name, const std::string& extraEnvJson) {
-    return profileRepository_.createSharedConfig(name, extraEnvJson);
+    const std::string& name, const std::string& extraSettingsJson) {
+    return profileRepository_.createSharedConfig(name, extraSettingsJson);
 }
 
 core::Result<void> ClaudeService::updateSharedConfig(const SharedConfig& config) {
@@ -310,11 +354,6 @@ core::Result<void> ClaudeService::deleteSharedConfig(int64_t id) {
         (void)syncTakeOver();
     }
     return core::Result<void>::ok();
-}
-
-core::Result<std::vector<std::string>> ClaudeService::sharedEnvKeysFor(
-    int64_t profileId) {
-    return profileRepository_.sharedEnvKeysFor(profileId);
 }
 
 // ---------- failover 备用解析（设计 §3.7/§3.8）----------
@@ -486,15 +525,31 @@ core::Result<void> ClaudeService::runProfile(int64_t id, std::string* hint) {
     // JSON（{"env": {...}}）→ 落盘 appDataDir()/run-settings/run-<id>-<ts>.json。
     // 关键：**零全局改动**——不启代理、不切激活、不读也不写 ~/.claude/settings.json
     const auto env = buildDirectEnv(p.baseUrl, key.value(), p.authField,
-                                    p.modelsConfigJson, p.model, p.extraEnvJson,
-                                    profileRepository_.sharedExtraEnvJsonFor(
-                                        p.sharedConfigId));
+                                    p.modelsConfigJson, p.model, p.extraEnvJson);
     platform::json::JsonObject envObj;
     for (const auto& [k, v] : env) {
         envObj.set(k, platform::json::makeString(v));
     }
     platform::json::JsonObject root;
     root.set("env", platform::json::JsonValue(std::move(envObj)));
+    // 生效高级设置 JSON 并入顶层（2026-09-30 advanced-json-editor 设计 §4.1
+    // 裁决①：直连会话同样带 hooks/permissions，三链不分叉；临时文件随会话
+    // 自删 + 24h 清扫兜底，无 sidecar 记账负担）。生效 = profile JSON ⊕ 片段
+    // JSON（片段赢，§8.2 生成时叠加；§4.2 步骤 1）
+    {
+        std::vector<std::string> effWarnings;
+        const std::string effective = effectiveExtraSettingsJson(
+            p.extraSettingsJson,
+            profileRepository_.sharedExtraSettingsJsonFor(p.sharedConfigId),
+            &effWarnings);
+        for (const auto& w : effWarnings) {
+            LOG_WARN("runProfile: " + w);
+        }
+        auto apply = applyExtraSettingsToSettingsDoc(root, effective);
+        for (const auto& w : apply.warnings) {
+            LOG_WARN("runProfile: 高级设置 JSON: " + w);
+        }
+    }
     auto text = platform::json::stringify(platform::json::JsonValue(std::move(root)));
     if (text.isFail()) {
         return core::Result<void>::fail(text.errorCode(),
@@ -607,17 +662,10 @@ core::Result<void> ClaudeService::syncCaptureActiveProfile() {
         return core::Result<void>::ok();
     }
 
-    // 纯函数层（M2）：映射表 + 守卫表（G1–G4/G6 + G10 跳过的键记在 skippedKeys）
-    // G10（设计 §2.4）：捕获目标（= 即将离场的旧 active，此刻 getActiveProfile()
-    // 仍指向它）所绑片段的键集 —— 按「绑定关系」取，不取全片段并集：live 里的
-    // 片段键恒由绑定了该片段的那个 profile 的接管写入，按绑定关系挡即可，取并集
-    // 会让没绑该片段的 profile 无法收编用户在 live 的改动（误伤面更大）
-    std::vector<std::string> ownedKeys;
-    auto keysR = sharedEnvKeysFor(prof.id);
-    if (keysR.isOk()) {
-        ownedKeys = std::move(keysR).value();
-    }
-    auto parsed = parseEnvForReverseSync(read.envJson, read.managedKeys, ownedKeys);
+    // 纯函数层（M2）：映射表 + 守卫表（G1–G4/G6 跳过的键记在 skippedKeys）。
+    //（原 G10「绑定片段 ownedKeys」入参随 advanced-json-editor §8.4 拆除：
+    // 片段不再携带 env 键，守卫为永不触发的死通道）
+    auto parsed = parseEnvForReverseSync(read.envJson, read.managedKeys);
     if (!parsed.ok) {
         return core::Result<void>::fail(core::ErrorCode::JsonParseError,
             "settings.json env 解析失败（" +
@@ -753,20 +801,33 @@ core::Result<void> ClaudeService::syncCaptureActiveProfile() {
 }
 
 core::Result<void> ClaudeService::syncTakeOver() {
-    // R10-A4：编排留门面——从 ProfileRepository 取激活 Profile、从
-    // ProxyRuntime 取端口、取所绑片段 env，一并传入 SettingsTakeOver
-    //（P-A4 双入参，子对象不反向依赖 ProfileRepository / ProxyRuntime）。
-    // 路径/开关门控与接管/还原协议在子对象内部，调用顺序逐字保持。
+    // R10-A4：编排留门面——从 ProfileRepository 取激活 Profile、从 ProxyRuntime
+    // 取端口，一并传入 SettingsTakeOver（P-A4 双入参，子对象不反向依赖
+    // ProfileRepository / ProxyRuntime）。路径/开关门控与接管/还原协议在子对象
+    // 内部，调用顺序逐字保持。
     // 无激活 profile：仍接管 BASE_URL/api key 占位（接入路径先就位，转发层会
-    // 报 503 提示用户先启用 profile）
+    // 报 503 提示用户先启用 profile）。
+    // advanced-json-editor §5.2①：门面把「生效 JSON」预先算好放进传入的
+    // Profile 副本（生效 = profile JSON ⊕ 片段 JSON，片段赢 §8.2 生成时叠加；
+    // 非法/超限一侧按空处理并 WARN），settings_sync::takeOver 零新增参数直接
+    // 消费 profile.extraSettingsJson
     Profile active;
     auto a = getActiveProfile();
     if (a.isOk()) {
         active = std::move(a).value();
     }
-    return settingsTakeover_.syncTakeOver(
-        active, proxyPort(),
-        profileRepository_.sharedExtraEnvJsonFor(active.sharedConfigId));
+    {
+        std::vector<std::string> effWarnings;
+        active.extraSettingsJson = effectiveExtraSettingsJson(
+            active.extraSettingsJson,
+            profileRepository_.sharedExtraSettingsJsonFor(
+                active.sharedConfigId),
+            &effWarnings);
+        for (const auto& w : effWarnings) {
+            LOG_WARN("syncTakeOver: " + w);
+        }
+    }
+    return settingsTakeover_.syncTakeOver(active, proxyPort());
 }
 
 void ClaudeService::syncRestore() {

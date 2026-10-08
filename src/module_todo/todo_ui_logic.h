@@ -30,6 +30,20 @@ constexpr float kCardHeight = 84.0f;
 constexpr float kCardGap = 8.0f;
 constexpr float kColumnHeaderHeight = 56.0f;
 
+// 列内容区水平内边距（= t.sizes.spacingLarge，16px 网格；与列头文字 x=16
+// 同一基线，见 drawColumnContent 的 .title/.dot 定位）。
+// 卡左缘 = 列内容左缘 + kColumnContentInset，卡宽/拖拽占位条宽一律由
+// contentCardWidth 派生——**只有一个来源**。2026-09-28 真机缺陷 1/2 根因：
+// 卡宽写「内容宽 - 16」而 x 恒为 0 → 左零边距、右侧 16，占位条同病
+//（宽短一截、右边空余）；现在两侧 inset 由同一常量派生，卡与条同宽同位。
+constexpr float kColumnContentInset = 16.0f;
+
+// 列内容区里卡片 / 占位条共用的可用宽（内容宽 - 双侧 inset）。
+// 窄列（多列并排时 colW 可跌破 100）钳到 0，永不越出内容区。
+inline float contentCardWidth(float contentWidth) {
+    return std::max(0.0f, contentWidth - kColumnContentInset * 2.0f);
+}
+
 // 键盘移动的目标（columnId + moveTask 的 newPosition 语义）
 struct MoveTarget {
     int64_t columnId;
@@ -112,7 +126,10 @@ inline int computeAppendPosition(const std::vector<Task>& tasks, int64_t columnI
 struct DragHitInput {
     int fromColIndex = 0;
     int colCount = 0;
-    float pressX = 0.0f;        // 按下时卡片 bounds（指针空间）
+    // 按下时卡片 bounds（指针空间）。注意卡片左缘 = 所在列左缘 +
+    // kColumnContentInset（列内容左内边距），板面原点回推要先减掉它
+    //（dragDropTarget / dragDropRowIndex 内已同源扣除）。
+    float pressX = 0.0f;
     float pressY = 0.0f;
     float pressWidth = 0.0f;    // 按下时卡片 bounds 宽（dpi 探针的分子）
     float cardWidth = 0.0f;     // compose 空间卡宽（dpi 探针的分母）
@@ -157,8 +174,12 @@ inline int dragDropTarget(const DragHitInput& in, double pointerX, double pointe
     }
     const float dpi = in.dpiScale;
     const float stride = in.colWidth + in.colGap;
-    // 板面原点：按下锚点（→ compose）左移若干列步长 = 源列左缘
+    // 板面原点：按下锚点（→ compose）左移若干列步长 = 源列左缘。按下锚点
+    // 是**卡片**左缘，而卡片在列内容里有 kColumnContentInset 左内边距
+    //（见 contentCardWidth / 看板绘制）→ 先减掉它才是列左缘（2026-09-28
+    // 真机缺陷 1 的连锁修正：卡不再贴列左缘，原点回推必须同源）。
     const float originX = ::core::windowToCompose(in.pressX, in.pageOriginX, dpi) -
+                          kColumnContentInset -
                           static_cast<float>(in.fromColIndex) * stride;
     // 板面顶边：卡片在列内的未滚动 y = 列头高 + 序号 * (卡高+间距) - 滚动偏移
     const float cardTopInCol =
@@ -196,8 +217,10 @@ inline int dragDropRowIndex(const DragHitInput& in, int targetCol, double pointe
     }
     const float dpi = in.dpiScale;
     const float stride = in.colWidth + in.colGap;
-    // 与 dragDropTarget 同源：由按下锚点回推板面原点
+    // 与 dragDropTarget 同源：由按下锚点回推板面原点（锚点 = 卡片左缘，
+    // 先减列内容内边距 kColumnContentInset 还原列左缘，见其注释）
     const float originX = ::core::windowToCompose(in.pressX, in.pageOriginX, dpi) -
+                          kColumnContentInset -
                           static_cast<float>(in.fromColIndex) * stride;
     const float x = ::core::windowToCompose(static_cast<float>(pointerX),
                                             in.pageOriginX, dpi);
@@ -217,6 +240,36 @@ inline int dragDropRowIndex(const DragHitInput& in, int targetCol, double pointe
     if (row < 0) row = 0;
     if (row > taskCount) row = taskCount;  // 尾部空白区 → 追加
     return row;
+}
+
+// 拖拽跟手副本的锚点（页面 compose 空间左上角）。
+//
+// 输入 = 按下时被拖卡片的 bounds（指针空间，DragState.pressX/pressY）+
+// 按下点起的指针**累计**位移（DragEvent::totalX/totalY，物理像素——与
+// onPress/onDrag 的指针坐标同空间，框架在按下时记 dragStart、每次移动给
+// 累计值，见 core/input/input_types.h:266）。用累计位移而不是"当下指针 -
+// 按下指针"：模块侧不必多存一份按下指针，且不受 onDrag 派发时机影响。
+//
+// 尺度因子与 dragDropTarget 同源（调用点喂框架值 app::contentScale()，见
+// U1 尺度契约）：锚点走 core::windowToCompose、位移是**同一个** dpiScale 的
+// 除法。两者不可各用一套因子——否则非 100% 缩放下跟手距离按缩放比走偏。
+// 页面原点 x 在位移里同样对消（锚点已含，位移不含），故只在此处减一次。
+//
+// 纯函数，无副作用。位移为 0（刚按下 / 已被松手清零）→ 锚点 = 卡片原位置，
+// 副本与原卡重合。退化 dpiScale（0/负/NaN）按同尺度处理（同 windowToCompose）。
+struct GhostAnchor {
+    float x = 0.0f;
+    float y = 0.0f;
+};
+
+inline GhostAnchor dragGhostAnchor(float pressX, float pressY, double totalX,
+                                   double totalY, float pageOriginX,
+                                   float dpiScale) {
+    if (!(dpiScale > 0.0f)) dpiScale = 1.0f;
+    return {::core::windowToCompose(pressX, pageOriginX, dpiScale) +
+                static_cast<float>(totalX) / dpiScale,
+            ::core::windowToCompose(pressY, 0.0f, dpiScale) +
+                static_cast<float>(totalY) / dpiScale};
 }
 
 // 年月日（本地时区零点）→ Unix 秒
@@ -320,22 +373,61 @@ inline eui::Color priorityColor(Priority p, const core::theme::Tokens& t) {
     return t.colors.*kColorFields[idx <= static_cast<size_t>(Priority::High) ? idx : 0];
 }
 
-// 优先级底色（UI 整改 12：底色区分，去「高/中/低」文本）。
-// 高=警示色底 / 中=中性底 / 低=弱底（各向 surface 掺 token 的 tint，
-// 深浅主题下都保持「底」的弱对比语义）；None=无标记（不画 pill）。
-// eui::mixColor 是 header-only 值函数（与 eui::Color 同层），模块层可直用。
-inline std::optional<eui::Color> priorityPillBg(Priority p,
-                                                const core::theme::Tokens& t) {
-    switch (p) {
-        case Priority::Low:
-            return eui::mixColor(t.colors.surface, t.colors.info, 0.18f);     // 弱底
-        case Priority::Medium:
-            return eui::mixColor(t.colors.surface, t.colors.textTertiary, 0.40f);  // 中性底
-        case Priority::High:
-            return eui::mixColor(t.colors.surface, t.colors.error, 0.45f);    // 警示色底
-        default:
-            return std::nullopt;
-    }
+// 优先级色底（UI 整改 17）：**卡底 ① 与详情弹窗优先级按钮底 ② 的唯一色源**。
+// 两处都吃本段这四件：priorityColor 色表 + kPriorityTintStrength 强度表 +
+// priorityTintBg 算式，改配色只动这里一处。
+//
+// 强度下标 = Priority 值域（None=0 … High=3）：新增枚举成员时 static_assert
+// 编译期失败。低档刻意压在 0.16 以下（「极低饱和浅色」＝不刺眼），高档才明显
+// ——底色深浅本身就是优先级信息，但整卡着色不能喧宾夺主。
+inline constexpr float kPriorityTintStrength[] = {0.12f, 0.16f, 0.22f, 0.30f};
+static_assert(std::size(kPriorityTintStrength) ==
+              static_cast<size_t>(Priority::High) + 1);
+
+// 越界（脏数据）走 [0] 档，与 priorityLabel / priorityColor 同款兜底
+inline float priorityTintStrength(Priority p) {
+    const size_t idx = static_cast<size_t>(p);
+    return kPriorityTintStrength[idx <= static_cast<size_t>(Priority::High) ? idx
+                                                                           : 0];
+}
+
+// 底色算式（唯一实现）：把任意基色向该优先级的色混 strength 比例。
+// strength = 0 → 原样返回基色（一像素不动），故 None 档走这里等于「无 tint」。
+inline eui::Color priorityTintBg(Priority p, const core::theme::Tokens& t,
+                                 const eui::Color& base, float strength) {
+    if (strength <= 0.0f) return base;
+    return eui::mixColor(base, priorityColor(p, t), strength);
+}
+
+// ① 看板卡底：None 不加 tint（用户约束「无优先级不出现底色」＝保持默认卡底），
+// 低/中/高按强度表混。入参是**基色**而不是固定 surface：卡的三态
+// （surface / hover / active）各走一次同一算式，优先级色相与 hover/active
+// 反馈**叠加**而非互相覆盖（旧实现 hover/active 直接换成中性 token，一 hover
+// 优先级指示就整块消失）。
+inline eui::Color priorityCardBg(Priority p, const core::theme::Tokens& t,
+                                 const eui::Color& base) {
+    return priorityTintBg(p, t, base,
+                          p == Priority::None ? 0.0f : priorityTintStrength(p));
+}
+
+// ② 详情弹窗优先级按钮底的选中档强度：深一档、接近实色（未选中 = 强度表浅色）。
+// 不取 1.0 实色：四个优先级色在原色下亮度跨度过大（浅色档 error #B82850
+// 2.8:1 vs warning #9A6B30 4.4:1），实色底配任何单一前景 token 都会有一档
+// 掉到 4.5:1 以下；0.55 的深 tint 在四档上对 textPrimary 实测均 ≥ 6.0:1
+// （浅/深主题皆是，见 todo_ui_priority_button_tint 用例）。
+inline constexpr float kPriorityButtonPickedStrength = 0.55f;
+
+// ② 详情弹窗优先级按钮底。**按钮不吃卡片那条「None 不着色」的例外**：
+// 「无」也是一个可点选的选项，没有自己的底色就无法与其它档区分（选中/未选中
+// 也认不出来），故按钮的 None 档取强度表里的 0.12（近中性灰，仍是「无」色
+// textTertiary 的既定变体）。
+// base 由调用方给三态基色（surfaceElevated / hover / active）——与卡片同款：
+// 优先级色相与 hover/按下反馈叠加，不再被中性态色整块顶掉。
+inline eui::Color priorityButtonBg(Priority p, const core::theme::Tokens& t,
+                                   bool picked, const eui::Color& base) {
+    return priorityTintBg(p, t, base,
+                          picked ? kPriorityButtonPickedStrength
+                                 : priorityTintStrength(p));
 }
 
 // epoch 秒 → "MM-DD"；-1 表示无截止日期
@@ -391,6 +483,46 @@ inline int computeInsertPosition(const std::vector<Task>& tasks,
         return computeAppendPosition(tasks, columnId);
     }
     return colTasks[static_cast<size_t>(rowIndex)]->position;
+}
+
+// ---- 同列上下重排（2026-09-28 真机缺陷 3）----
+// 旧约定「同列拖拽 = 取消」改为「同列 = 上下重排」后，落库位置要过两道换算：
+//
+// ① 行号换算（本函数）：dragDropRowIndex 给的行号是**含被拖卡自身**的行序
+//    （预览条就画在那个缝里，用户看到什么就是什么）；落库要的是「摘出自身
+//    后」的行序——row > ownIndex 时减 1（自身之后所有卡的行号前移一位）。
+//    换算后 == ownIndex = 插回原位（顺序不变）→ nullopt，调用方跳过落库
+//    （不写无谓 position，也不出"已移动"提示）。真·原地松手 / 微小位移在
+//    框架侧已被 dragThreshold 门控（不派发 onDrag → 不进本换算）。
+inline std::optional<int> computeReorderRow(int ownIndex, int rowIndex) {
+    if (ownIndex < 0 || rowIndex < 0) return std::nullopt;
+    const int adjusted = rowIndex > ownIndex ? rowIndex - 1 : rowIndex;
+    if (adjusted == ownIndex) return std::nullopt;
+    return adjusted;
+}
+
+// ② 落库位置（本函数）：语义同 computeInsertPosition（「插到第 row 个任务
+//    之前」），但行序**排除被拖卡自身**——moveTask 先把它摘出（position=-1）
+//    再插入，自身出现在行序里会让插入位整体错一格。
+//    rowIndex 越界（含列尾追加位）→ 排除自身后的 max position + 1。
+inline int computeReorderInsertPosition(const std::vector<Task>& tasks,
+                                        int64_t columnId, int64_t draggedTaskId,
+                                        int rowIndex) {
+    std::vector<const Task*> others;
+    for (const auto& t : tasks) {
+        if (t.columnId == columnId && t.id != draggedTaskId) others.push_back(&t);
+    }
+    std::sort(others.begin(), others.end(), [](const Task* a, const Task* b) {
+        return a->position < b->position;
+    });
+    if (rowIndex < 0 || static_cast<size_t>(rowIndex) >= others.size()) {
+        int maxPos = -1;
+        for (const Task* t : others) {
+            if (t->position > maxPos) maxPos = t->position;
+        }
+        return maxPos + 1;
+    }
+    return others[static_cast<size_t>(rowIndex)]->position;
 }
 
 // 按语义标记找列 id（'done'=已完成列 / 'todo'=待办列；找不到返回 0）
@@ -462,14 +594,45 @@ inline float cardTop(const BoardGeom& g, int cardIndex) {
            static_cast<float>(cardIndex) * (kCardHeight + kCardGap);
 }
 
-// chip 宽度估算（fontSizeSmall-3 ≈ 11px：CJK ≈ 11px/字（3 字节），ASCII ≈ 5.5px/字节）
+// chip 几何与字号（标签 / 截止 pill）——drawChip（todo_ui_common.h）与下面的
+// chipWidth 估宽**共用这同一份常量**：调字号必须同步调估宽，否则估宽偏小会把
+// 右侧 chip 排到卡外、或 chip 内文字被裁。UI 整改 18：字号 10 → 12（用户反馈
+// 「标签文本太小」），chip 高 18 → 22（字号 + 上下各 5px 内边距，lineHeight 同
+// 高，文字不裁）。
+constexpr float kChipHeight = 22.0f;
+constexpr float kChipFontInset = 1.0f;  // 字号 = fontSizeSmall - inset（13-1=12）
+
+// chip 宽度估算（字号 12px：ASCII ≈ 0.55em ≈ 6.6px/字节；CJK 3 字节 ≈ 14.4px/字，
+// 真实字形 ≈ 12px/字——估宽**略偏大**，只多留白、不会裁字）
 // ponytail: 估宽不发 FontRegistry 实测；偏差只影响 chip 间留白，可接受
 inline float chipWidth(const std::string& text) {
     float w = 20.0f;
     for (unsigned char c : text) {
-        w += (c >= 0x80) ? 4.0f : 5.5f;
+        w += (c >= 0x80) ? 4.8f : 6.6f;
     }
     return w;
+}
+
+// ---- 卡片内容组垂直居中 + 主文本水平居中（2026-09-30 用户需求「卡内文本
+// 水平垂直居中展示」）----
+// 卡内是多行结构（标题行 + 可选 chip 行）：整块内容组在 kCardHeight 内垂直
+// 居中、块内保持原排版（行高/间距/chip 高全不变）；水平只居中主文本——标题
+// 框对称化 + horizontalAlign Center（home 统计卡同款先例），chip 行与完成
+// 角标的 x 不动（不把 chip/角标拽歪）。常量供 drawCard / drawDragGhost 与
+// 无头几何断言（test_todo_ui）三方同源消费。
+constexpr float kCardTitleLineH = 18.0f;      // 标题行高（= lineHeight，原值）
+constexpr float kCardTitleToChipGap = 12.0f;  // 标题行底 → chip 行顶（原 44-14-18）
+constexpr float kCardTitleBoxInset = 22.0f;   // 标题框左右对称内缩（= 44/2，总留白不变）
+
+// 内容组高度：有 chip 行 = 标题 18 + 间距 12 + chip 22 = 52；无 = 仅标题 18
+inline float cardContentGroupH(bool hasChipRow) {
+    return kCardTitleLineH +
+           (hasChipRow ? kCardTitleToChipGap + kChipHeight : 0.0f);
+}
+
+// 内容组顶（相对卡内容原点）：组在 kCardHeight 内容区内垂直居中
+inline float cardContentGroupTop(bool hasChipRow) {
+    return (kCardHeight - cardContentGroupH(hasChipRow)) / 2.0f;
 }
 
 // 改色预设（token 与 columnDotColor 的映射表一一对应；spec §8.2 承诺）

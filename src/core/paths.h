@@ -7,9 +7,17 @@
 namespace core::paths {
 
 // 应用数据根目录 —— **全部应用数据的唯一根**（审计 CP-04）
-//   macOS:   ~/Library/Application Support/DevDesk/
-//   Windows: %APPDATA%/DevDesk/
+//   macOS:   ~/DevDesk/
+//   Windows: %USERPROFILE%/DevDesk/
+//   Linux:   ~/DevDesk/
 // 环境变量 DEVDESK_DATA_ROOT 已设且非空 → 该目录。
+// 为什么不用系统惯例位置（2026-09-28 决策）：数据根要**默认可见**——macOS 的
+// ~/Library/Application Support、Windows 的 %APPDATA% 在 Finder / 资源管理器里
+// 默认是隐藏的，用户看不见自己有哪些数据；且笔记目录后续要做成 git 仓库
+// （用户会自己去 commit / 推远端），放在用户主目录下一级最顺手。
+// 代价（已接受）：改动前落在旧位置（macOS ~/Library/Application Support/DevDesk、
+// Windows %APPDATA%/DevDesk）的既有数据**不会自动搬**——本版不做迁移，新根从零
+// 开始；要保留旧数据只能手动拷贝（旧位置的文件原样留在原处，本应用不读也不删）。
 // 覆盖只有这一个入口：配置 / 笔记 / 宠物 / 数据库 / 日志 / 视图状态等**全部**
 // 应用数据路径都经本函数派生（旧形态是每个路径各自读自己的环境变量，隔离缝
 // 散落三层且无中心入口，漏设一个就静默读写真实用户目录）。

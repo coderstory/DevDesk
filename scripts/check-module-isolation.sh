@@ -12,8 +12,8 @@
 #   A. src/module_settings/settings_module.cpp
 #      1) 不得出现 module_pet/、PetConfigStore、petConfigFile、namespace module::pet
 #      2) 必含 #include "module_pet_bridge.h" 恰好 1 次（桥声明唯一来源）
-#      3) ::module::pet::{discoverSkins,applyPetSkin,resetPetPosition,currentSkinName}
-#         各 ≥ 1 次（解耦不是删功能：四条桥都要真被调用）
+#      3) ::module::pet::{discoverSkins,applyPetSkin,resetPetPosition,currentSkinName,closePetWindow}
+#         各 ≥ 1 次（解耦不是删功能：桥函数都要真被调用）
 #   B. src/module_settings/CMakeLists.txt 的非注释行
 #      4) 不得出现 devdesk_module_pet / devdesk_module_claude_proxy
 #        （解释性注释里允许提及，故按行过滤首非空白字符为 '#' 的行）
@@ -110,8 +110,12 @@ check_absent_fixed "$SRC" 'namespace module::pet'
 # ---- A2. 正向：桥声明唯一来源 = src 根中立头，恰好 include 一次 ----
 check_exactly_once_fixed "$SRC" '#include "module_pet_bridge.h"'
 
-# ---- A3. 正向：四条桥函数都真在调用点被用到（`::module::pet::X` 调用形）----
-for fn in discoverSkins applyPetSkin resetPetPosition currentSkinName; do
+# ---- A3. 正向：桥函数都真在调用点被用到（`::module::pet::X` 调用形）----
+# closePetWindow（PET-CLOSE，模块开关取消勾选 → 立即关窗）同样要求真被调用：
+# 解耦不是删功能。showPetWindow 为既有遗漏顺带补（审计 F5）；2026-09-30 起
+# 新增 currentPetScaleIndex / petScalePresetLabels / applyPetScaleIndex 三桥
+for fn in discoverSkins applyPetSkin resetPetPosition currentSkinName closePetWindow \
+          showPetWindow currentPetScaleIndex petScalePresetLabels applyPetScaleIndex; do
     check_at_least_once_fixed "$SRC" "::module::pet::${fn}"
 done
 

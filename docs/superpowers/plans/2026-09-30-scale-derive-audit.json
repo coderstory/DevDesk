@@ -1,0 +1,68 @@
+{
+  "meta": {
+    "audit_date": "2026-09-30",
+    "subject": "分支 fix/settings-card-fs-derive 提交 e175b47（settings 卡片行盒/行距/卡高随生效字号派生 roundFs + 代理行几何 proxyCardHeightFor 单一来源 + 2 条几何用例 + 探针 §D dump）",
+    "auditor": "独立只读审计（未参与实现；唯一写动作 = 本文件）",
+    "base": "master @ 73af50b（e175b47 父提交即 73af50b，分支自其切出，verify doc 口径一致）",
+    "diff_scope": "git diff 73af50b...e175b47：10 文件 632+/60-（settings_ui_logic.h +40/0、settings_ui_cards.cpp 94+/52-、settings_module.cpp 9+/8-、test_settings.cpp +278/0、settings_cards_probes.cpp +100/0、spec +8、tech-debt +29、verify +74、2 PNG）",
+    "evidence": [
+      "git diff 73af50b...e175b47 全量逐行读；numstat 实证 test_settings.cpp 与 settings_cards_probes.cpp 均纯新增（删除数 0，grep '^-' 仅命中 diff 文件头）",
+      "100% 档零回归锚手算复算逐值成立：外观卡链 descY=18+24+2=44 / labelY=72 / ddY=94 / hintY=140（与改前字面逐一相等）；模块行 68+i×56、行内偏移 +20；代理卡 warnY0=98+18+2=118、卡高 132 / 118+16n+16；editor hint 18 / pet desc 16 / directory hint 14",
+      "roundFs 系数表核对（盒基准/字号基准）：外观标题 24/18=1.33、desc 18/12=1.5、标签 16/12=1.33、降级提示 16/11=1.45、模块名 18/(15-1)=1.286、目录 hint 14/11=1.273、代理端口/接管 18/12、警告 16/11——最紧两条（1.273/1.286）仍 >1.25；token 基准实测 theme.cpp fontSizeLarge=18/Body=15（非臆测值）",
+      "卡内绝对定位元素逐卡核对：模块 4 个开关随派生 rowPitch（rowY-2 字面相对偏移）、外观 3 组下拉/标签随派生 ddY/labelY、桌宠皮肤行字面 y64（派生 desc 盒底 130% 档=61 < 64 无碰撞）、目录/编辑器 hint 上方均为字面控件行且下方无行、代理警告行从派生接管盒底起算——无「仍按旧字面 y 定位却被派生盒推挤」的遗漏点",
+      "settings_module.cpp 全 diff 仅 2 hunk（proxyH 公式 + cardHeight Fixed 分支）；drawHeader（34px 字面 h1 + 20px 字面副标题）/tab 栏/弹窗零触碰；proxyCardHeightFor 全仓唯一 compose 消费点 settings_module.cpp:588，draw 侧（settings_ui_cards.cpp:664-668）用同头同源 helper，grep 无残留 118.0f/116.0f 卡高字面（仅剩常量注释 kDirectoryCardHeight=116 为另一卡基准值）",
+      "theme.h:86-87 setFontScale/fontScale 公共 API 实存；settings_config.h 零触碰（fontScalePercent 默认 100 / kMaxFontScalePercent=130 原样）；130% 档派生值手算复核 round(16×1.3)=21 / round(18×1.3)=23 / round(56×1.3)=73 / round(172×1.3)=224 / round(288×1.3)=374 / round(148×1.3)=192，float 精度下无 .5 边界抖动",
+      "verify doc 引用的变异 FAIL 行号 test_settings.cpp:1559（roundFs(16)≠21）与 :1798（appearance.title 高 24≠31）与 e175b47 源码逐行对上；REGISTER_TEST 计数 57→59（+2 与声称一致）",
+      "2 张 PNG 以 blob 实存于 e175b47：均为 2400×2000 8-bit RGB PNG（174635 / 198632 字节，1200×1000 逻辑窗 @2x retina，尺寸合理）；probe §D --dump 源码为真 GLFW 渲染 + present 前 glReadPixels + P6 PPM 落盘（sips 转 PNG），与 verify doc 口径一致",
+      "git worktree list：settings-card-fs-derive 工作区干净 @ e175b47；git reflog master 无该 agent 残留提交（master 头 f4fe418 为桌宠审计留痕，e175b47 仅被 fix/settings-card-fs-derive 包含；2e6d9ed 在 feat/advanced-config-and-copy，与本 diff 无关）——「误写主树已还原」核销"
+    ],
+    "not_verified": "未独立复跑构建与测试（复跑需 checkout 分支 + 编译，越出本次只读边界）：Total 92/92、基线 90、探针 8/8、变异红→绿均为 verify doc 落盘自报（静态佐证见 S-AUD-1，红路径机械可推）。「系数 > 最坏 CJK 墨迹 1.25×」是字体度量假设，无头断言只能断 frame 不能断 ink——与 env-pane 审计同款保留。"
+  },
+  "dimensions": {
+    "1_正确性": "已核。roundFs=round(base×fontScale)，各派生行系数全部 >1.25×（最紧目录 hint 14/11=1.273、模块名 18/14=1.286），且这些比值正是 100% 档旧字面比值，100% 档实测无越盒 ⇒ 按同系数放大后 130% 档墨迹恒包住。100% 档逐值等于旧字面：六卡所有改动点手算复算逐一相等（见 evidence），无一处漂移。卡高经 cardHeight Fixed 分支 roundFs(spec.height) 同步放大后，卡内内容底沿与卡底的余量只增不减（外观 16→38 / 模块 16→40 / 代理公式同源）。卡内绝对定位元素逐一核对无遗漏（开关随派生行距、下拉随派生 ddY、字面 chrome 行锚点均经 130% 档手算确认不被派生盒推挤）。残留未派生点均有登记而非漏网：22px 卡标题盒（1.222×<1.25，130% 越盒 1.4px）= tech-debt T6、页头 34px 盒 = T5，均如实标注「未修」。唯一新发现余量收窄点见 S-AUD-2（代理卡 desc 盒底与端口行 1px 间隙，130% 封顶下不叠印）。",
+    "2_回归面": "已核。settings_module.cpp 仅 2 hunk（proxyH 单源化 + cardHeight Fixed 分支），页头/侧栏/tab 栏/弹窗/动作区零触碰；settings_ui_cards.cpp 改动全部落在 6 张卡的卡内几何，非卡片渲染零波及。proxyCardHeightFor 单源实证：compose 唯一消费点 :588，draw 侧 takeover/warn 行用同一组 helper（proxyTakeoverRowHeight/proxyWarnRowTop/proxyWarnRowHeight），两侧警告行数同一 min(size,2) 截断口径，grep 全仓无第二份卡高公式、无残留 118/116 字面。cardHeight 另两分支（ProxyWarnings→proxyH、FillRemainder）语义不变。contentKey 含 int(proxyH) ⇒ 字号档变化经代理卡高传导触发滚动缓存失效。测试两文件纯新增（0 删改），既有 90 条断言零改动实证成立。",
+    "3_平台对称性": "已核。roundFs 零平台宏（settings_ui_logic.h / settings_ui_cards.cpp grep _WIN32/__APPLE__/ifdef 零命中）；fontScale 是 core 存值的单标量用户设置，fs()（settings_ui_logic.cpp:25）与 roundFs 读同一 ::core::theme::fontScale()，无双通道无双倍缩放；取整用 std::round 纯算术，100% 档等值在任何平台成立。探针 §D 仅一处 #pragma clang diagnostic 编译器守卫（非平台守卫，GCC/MinGW 下无 deprecated 警告本就不需要）。",
+    "4_静默失败面": "不适用（纯渲染几何，无新增错误路径）。唯一条件行为——外观卡降级提示行与代理卡警告行——两分支均有显式渲染文案（不静默空白）；warnLines 上游 min(size,2) 截断与 draw 侧 shown 同口径，无「compose 算 3 行画 2 行」的静默漂移。",
+    "5_测试有效性": "已核（带保留，见 S-AUD-1）。两条新用例非恒真可静态证明：纯件例在 130% 档钉 roundFs(16)==21 / proxyCardHeightFor==142/187——roundFs 若改回写死（=16/132/166）必红；compose 例在 130% 档钉 title 高 31 / 行距 73 / 行内偏移 26 / 卡高 224/374/142——派生回退即红，且这些钉值与手算派生式逐一吻合。「100% 档逐值等于旧字面」锚双保险：① 新用例 100% 档钉 24/18/16/18/172/288/132/148 等旧字面值；② 既有 90 条含 frame 位置断言的用例（如 log rows same column 的 y/高断言）零改动，派生公式在 100% 档变值必被既有断言抓红（变异自检「90 条既有在写死下仍绿」即其直接证明）。T5/T6 登记如实：drawHeader 34px 盒与各卡 22px 标题盒在 e175b47 实测仍字面、tech-debt 均标「不修/未修」，无未修项写成已修；T4「已结案」有 merge 0edd3cf 实证（已在 master）。保留：92/92 与变异红→绿为落盘自报，未独立复跑。",
+    "6_文档口径": "已核（2 处小口径，见 S-AUD-3）。commit message 与 diff 逐段对得上（派生清单/单源/零默认值/测试/变异/留痕均有实证）；spec §2.3 新增登记注记与 tech-debt 文件 T1-T6 一致，T4 结案/T5-T6 新增如实；两张 PNG 实存且为 probe §D 真渲染产物（2400×2000 RGB）；「误写主树已还原」核销（master reflog 干净、e175b47 不在 master）。小口径：① verify doc「5 卡行盒/链派生」实为 6 卡（漏计一张）；② spec §2.3 本期修表原文写「改为 fs() 派生（不取整）」而实现取整（roundFs，与 env-pane 1ca87b0 同口径且更稳），spec 原文未回写；③ 桌宠卡「卡高保持 120」注释被同提交的 cardHeight 派生在 >100% 档证伪（130% 档=156），注释未补括注。"
+  },
+  "findings": [
+    {
+      "id": "S-AUD-1",
+      "file": "docs/superpowers/plans/2026-09-30-scale-derive-verify.md",
+      "line": 17,
+      "also": ["tests/test_modules/test_settings.cpp:1559", "tests/test_modules/test_settings.cpp:1798"],
+      "lens": "测试有效性（证据等级）",
+      "severity": "info",
+      "symptom": "Total 92/92、基线 90、探针 8/8、变异红→绿均为实现者 worktree 自报并落盘，本次只读审计未独立复跑（复跑需 checkout 分支 + 编译，越出只读边界）。",
+      "mechanism": "静态佐证链完整：变异 FAIL 行号 :1559/:1798 与源码逐行对上；+2 用例（REGISTER_TEST 57→59）与既有断言零删改（numstat 0 删除）实证；红路径机械可推——130% 档钉值 21/142/31/73 等在 roundFs 恒等回退下全部必红，且 130% 档是 FontScaleGuard 显式置 1.3 后重 compose，非依赖默认态。与 env-pane 审计 E-AUD-4 同款处置：可采信，证据等级=落盘自报而非独立复跑。",
+      "impact": "无行为影响；合并决策的证据链依赖 verify doc 自报。",
+      "fix_sketch": "无需返工。合并后（或阶段 4 复核时）在 master 上跑一次 --filter settings 确认 92/92 即闭环；后续变异自检如附 sha 化的构建日志更稳。"
+    },
+    {
+      "id": "S-AUD-2",
+      "file": "src/module_settings/settings_ui_cards.cpp",
+      "line": 707,
+      "also": ["settings_ui_cards.cpp:725", "src/module_settings/settings_ui_logic.h:216-221"],
+      "lens": "正确性（前瞻余量）",
+      "severity": "low",
+      "symptom": "代理卡 desc 行盒锚 y=40 字面、盒派生（130% 档高 21 → 盒底 61），而端口行 y=62 是字面锚——130% 档两行间隙从 100% 档的 6px 收窄到 1px。当前不叠印（61<62），但这是全卡链上唯一被派生盒吃掉余量的字面锚点。",
+      "mechanism": "desc 盒派生是必要的（fs(12) 130% 档 advance 15.6px 装旧 16px 盒余量仅 0.4px，正是 spec §2.3 点名的实证越盒区），但端口行锚 y62 未随派生盒底联动（对比警告行已从派生盒底起算）。kMaxFontScalePercent=130 封顶下最坏 1px 不重叠；若未来上限调高（如 140%：desc 盒底 40+round(22.4)=62 ⇒ 与端口行 0 间隙、再高即叠印），此处第一个贴边。",
+      "impact": "当前零视觉缺陷（盒不交叠、墨迹不出盒）；是「缩放上限松绑」场景下的预埋重叠点，且无断言守卫该间隙（compose 例只断两两不重叠，130% 档恰好不红）。",
+      "fix_sketch": "端口行/输入行锚改从派生 desc 盒底起算（与警告行同款：portY = 40 + roundFs(16) + roundFs(6)，100% 档 = 62 逐值不变，零回归锚成立）；或至少在 tech-debt 挂一条「缩放上限 >130% 时代理卡 desc/端口行先叠印」，与 T5/T6 同表。"
+    },
+    {
+      "id": "S-AUD-3",
+      "file": "docs/superpowers/plans/2026-09-30-scale-derive-verify.md",
+      "line": 71,
+      "also": ["docs/superpowers/specs/2026-09-30-batch-fix-design.md:82", "src/module_settings/settings_ui_cards.cpp:553"],
+      "lens": "文档口径",
+      "severity": "info",
+      "symptom": "三处小口径漂移：① verify doc 边界核对写「settings_ui_cards.cpp（5 卡行盒/链派生）」，实际触及 6 张卡（外观/编辑器字号/模块/桌宠/目录/代理）；② spec §2.3 本期修表原文「行盒高与 lineHeight 从字面改为 fs() 派生（如 fs(16.0f)）」是不取整口径，实现取整（roundFs）——实现与 env-pane 1ca87b0 先例一致且像素对齐更稳，属合理演进，但 spec 原文未回写标注；③ 桌宠卡「显示桌宠」按钮注释「卡高保持 120（内容底沿 104 不变，故 contentKey 不变）」被同提交 cardHeight Fixed 分支派生在 >100% 档证伪（130% 档卡高 156）。",
+      "mechanism": "均为单读会得到旧口径的文档/注释漂移，无行为影响；卡高变化经 contentKey 的 int(proxyH) 传导仍有缓存失效（见维度 2），③ 的「contentKey 不变」结论在 100% 档仍真、跨档场景不真。",
+      "impact": "极轻：仅文档/注释口径，后续派生化批次（T1/T2/T5/T6 同批）按 spec 原文照抄会复制「fs 不取整」与「5 卡」两处偏差。",
+      "fix_sketch": "verify doc「5 卡」改「6 卡」；spec §2.3 该行尾补「（实施取整口径 roundFs，与 1ca87b0 一致，100% 档逐值不变）」括注；桌宠卡注释补「（130% 档随 cardHeight 派生放大）」一处括注。可随批修或挂账。"
+    }
+  ],
+  "conclusion": "可合并——findings 共 3 条（1 low + 2 info），无阻塞项。六维全核：roundFs 系数全部 >1.25×、100% 档六卡逐值手算等于旧字面（零回归锚实）、卡内绝对定位元素无派生遗漏、proxyCardHeightFor 单源实证、平台对称零宏、T5/T6 未修项登记如实、PNG 与「误写主树已还原」核销。S-AUD-2（代理卡 desc/端口行 130% 档 1px 间隙）是唯一前瞻余量点，130% 封顶下无缺陷，可随批修或挂 tech-debt；S-AUD-1/3 为证据等级与文档括注级。"
+}

@@ -1,0 +1,91 @@
+{
+  "meta": {
+    "subject": "独立只读审计——① EUI-NEO patch eui-neo-dropdown-popup-z.patch（dropdown 弹层 open 态 zIndex 900）；② DevDesk 分支 fix/dropdown-popup-z 667788a（git diff a1451e9...fix/dropdown-popup-z，3 文件：probe_harness.h +assertDrawnAbove、settings_dropdown_z_probe.cpp 用例 5、claude_probes.cpp 用例 ⑤）",
+    "date": "2026-09-30",
+    "auditor": "独立只读审计 agent（未参与实现；唯一写 = 本审计文件）",
+    "method": "双仓实读：EUI-NEO components/dropdown.h 全 255 行、core/dsl.h zIndex setter/subtreeMaxZIndex/rebuildOrderedChildren（:123/:244-248/:519-522/:1748-1779）、runtime_render.h 与 runtime_input.h 的 orderedChildren 消费、全组件 zIndex 默认档盘点（grep 17 组件）；DevDesk settings_ui_cards.cpp / settings_module.cpp / settings_ui_logic.h / claude_ui_form.cpp / todo_dialogs.h 单开与档位实读；patch 文件与工作树 diff / EUI-NEO 提交 72a5187 三方对账；red→green 运行证据核对（/tmp/zprobe-baseline.log + base2/base3、/tmp/claude-base3.log、/tmp/zprobe-patch.log、/tmp/claude-patch.log、build-euipatch/Testing/Temporary/LastTest.log 16:14 全 9 probe 通过，build-euipatch 的 EUI_NEO_DIR 指向 eui-neo-zpatch-copy 补丁副本）",
+    "code_base": "DevDesk fix/dropdown-popup-z 667788a（= master a1451e9 + 1 commit，未合并）；EUI-NEO 本地 main 72a5187（2026-09-30 16:25:57 提交，含 patch 全部内容，工作树干净）；patch 文件 16:08 与 72a5187 内容一致（docs hunk 头差 1 行偏移，可带 offset 应用）",
+    "note": "只读约束：未重跑构建/变异；红绿证据取自实现线留存的 /tmp 日志与 ctest LastTest.log（时间戳 16:13-16:14，早于 16:25 的 EUI-NEO 提交，时序自洽）。审计文件落盘于 master 工作树（merge 前核，不影响分支）"
+  },
+  "audit_points": {
+    "1_correctness_z_mechanism": {
+      "status": "已核（成立；open 态整组件抬升的副作用逐条核毕，无一成立为害）",
+      "conclusion": "①根因属实：dropdown 根 stack .zIndex(zIndex_=20)（EUI-NEO components/dropdown.h:107，默认 20 :242），弹层 stack 原本无自档（Element 默认 zIndex=0，core/dsl.h:123）内联绘制于组件子树（dropdown.h:145）；两纵向相邻 dropdown 子树上界同 20 → rebuildOrderedChildren 以 subtreeMaxZIndex 稳定排序、等值保持 DOM 序（dsl.h:1776-1779）→ 后绘的下方字段盖住上方弹层。绘制与命中消费同一 orderedChildren：paint（core/runtime/runtime_render.h:250/:502 正序）与 hit（core/runtime/runtime_input.h:155-160 逆序 = 顶先）——「命中序同病」机制证实，弹层不被穿与不被截获由同一修复解决。②修复与逃逸机制一致：popup 子树 .zIndex(open_ ? 900 : 0)（dropdown.h:160）经后序 subtreeMax 上界（dsl.h:1757-1774）把整个 dropdown 根子树抬到 900；900 高于 DevDesk 全部常规内容档（卡片 30/40 settings_ui_cards.cpp:100/:264/:441/:895、sidebar 60 sidebar.h:235、claude tooltip 60 claude_ui_form.cpp:880、markdown 10、字段 20），低于 dialog 1000（dialog.h:239）/ datepicker/timepicker/colorpicker 1000 / contextmenu 1050（contextmenu.h:369）/ toast 1100（toast.h:241）/ todo 弹窗栈 1000-1070（todo_dialogs.h:55-56）——模态层照常盖住展开弹层，todo 侧弹窗不被穿。③open 态整组件抬升的副作用清单：抬的是子树排序键，zIndex 不参与布局/几何（dsl.h 全文 zIndex 仅 rebuildOrderedChildren 读）→ 零几何影响；组件内相对序不变（弹层本就在 field 之后 DOM，900>0 与原 0=0 的 DOM 序同结果）；field 自身随子树抬到 900，只在「field 与 z<900 内容重叠」时可见变化——DevDesk 布局中 field 不与 sidebar/其它卡重叠，弹层区覆盖 sidebar 由「弹层应盖住一切常规内容」的正确语义承担（修复前 sidebar 60 盖弹层 20 反而是同类潜伏病，一并解决）；被遮方向核过：900 之上仍有 1000+ 五族（dialog/picker×3/contextmenu/toast）与 todo 栈，无任何原本盖得住弹层的内容失去覆盖力。④关闭态逐位一致证明：修复前弹层无 .zIndex 调用 → Element 默认 zIndex=0（dsl.h:123）；修复后关闭态 .zIndex(0) → 同值。zIndex setter 只赋 element_->zIndex 无任何旗标/副作用（dsl.h:519-522）；rebuildOrderedChildren 输入完全一致 → 排序逐位一致；opacity 0 / hit disabled(!open_) 路径未触碰。EUI-NEO 单测场景 5（zindex_escape.cpp 关闭态断言 subtreeMax==20、DOM 序保持）即此证明的结构化版本。⑤双仓对账：patch 文件 = EUI-NEO 工作树 diff = 提交 72a5187（3 文件 124 行全为增），DevDesk 探针与上游单测/文档口径一致。"
+    },
+    "2_regression_surface": {
+      "status": "已核（harness 纯增量，其余 probe 零影响；冲突矩阵推演无回归）",
+      "conclusion": "①probe_harness.h diff 逐行核：仅 +1 行 #include <algorithm> 与 +84 行新 inline 函数 assertDrawnAbove（@hunk @@ -364,6 +365,90 @@ 全为 + 行，零删改）；既有 assertNoEqualZOverlap（:318 起）/framesIntersect（:302，预存）未触碰——9 个既有 probe 仅重编共享头，行为零变化。②新探针依赖的基建全部预存：test_support::tempConfigFile/ScopedConfigPath/makeTempDir/setEnvVar（tests/test_support.h，非本次改动）；clickElement 重构为 clickPoint 委托，press/release 排队序列与原逐字节等价（settings_dropdown_z_probe.cpp 内既有 4 个用例的点击路径不变）。③冲突矩阵推演（按档位盘点）：卡 40 vs 邻卡开弹层 900 → 邻卡盖过（跨卡病，2026-09-28 修的档位继续有效且被本修复泛化）；同卡双下拉一开一关 → 开者 900 > 关者 20 ✓；dialog 1000 内下拉（claude 表单/md newfolder）→ 弹层 900 为 dialog 内容内相对档，dialog 框架与 1000+ 遮罩仍在其上 ✓；todo 弹窗栈 1000-1070 内无 dropdown 组件（grep 全部 10 处 dropdown 调用：settings×8 / markdown×1 / claude×1）→ 无交互面；sidebar 60 与展开弹层重叠 → 弹层改为盖 sidebar（语义正确方向）；两个 900 平局 → DOM 序（点 4 口径）。④DevDesk 档位消费点全量 grep：settings 30/40、claude tooltip 60、markdown 10、todo kDragGhostZIndex + zOf 栈——无一落在 (900,1100) 区间被弹层越档，也无 20-900 区间档位被 open 态穿越后失去原有覆盖关系。"
+    },
+    "3_platform_symmetry": {
+      "status": "已核（零平台差异）",
+      "conclusion": "EUI-NEO patch 三个文件（dropdown.h / zindex_escape.cpp / docs/组件.md）grep #ifdef/_WIN32/__APPLE__ 0 命中；DevDesk diff（3 文件）同 grep 0 命中。改动全部落在 dsl/组件纯 UI 层（排序键 + 断言 + 文档），绘制/命中排序为平台无关的 core 机制（runtime_render/runtime_input 单一实现）；新探针用 std::filesystem + 预存 test_support 环境隔离，无平台分支。构建与红绿运行证据仅 macOS 侧产出，但改动不含任何平台条件路径，Windows 侧同一代码路径，无不对称引入。"
+    },
+    "4_silent_failure_dual_open": {
+      "status": "已核（声明边界在 DevDesk 宿主侧不可达；退化模式无静默数据风险）",
+      "conclusion": "①settings 宿主强制单开：8 个下拉共用一个 openDropdown_ 索引（settings_module.cpp:754-759 setDropdownOpen → settings_ui_logic.h:180-184 applyDropdownOpen 开新即关旧，Dropdown 枚举 8 值 :162-171 含 PetSkin/PetSize）→ 同卡双开在宿主侧结构性不可能。②claude 表单各下拉独立 bool（formDialectDdOpen_/formFallbackDdOpen_/formSharedDdOpen_/formAuthFieldOpen_，claude_ui_form.cpp:54-101）但弹层 .hit 挡针：弹层 rect .popup.hit blockPointer + disabled(!open_)（dropdown.h:176-183），纵向相邻字段被已开弹层覆盖（探针前提守卫断言交集非空且绿跑通过）→ 覆盖区内点第二字段被 .hit 吞掉不落 onClick，第二弹层无法经真命中开出；表单列内三连下拉（y122/192/262）的弹层高度（≥3 项 ≈114px+）恒覆盖下方字段。③markdown/todo：单下拉/无下拉，无双开面。④真实可达性结论：DevDesk 三宿主在「快速点两个 dropdown」交互下均不可达双开平局；即便未来某宿主开出（如 openUp 错开覆盖），退化 = 两弹层同 900 按 DOM 序——与修复前行为相同、无崩溃无脏数据，且代码注释与 docs/组件.md 均已声明该边界（dropdown.h:158-159）。非静默失败。"
+    },
+    "5_test_effectiveness_and_delivery_order": {
+      "status": "已核（双探针红→绿证据为真且完整；上游单测未跑 + MIN_REV 未升两条登记见 findings）",
+      "conclusion": "①红→绿证据链核对（时间戳自洽：16:08 patch 落盘 → 16:13-16:14 红绿跑 → 16:25:57 EUI-NEO 提交）：红 = /tmp/zprobe-baseline.log（未打补丁基线：assertDrawnAbove 'skin.ddwrap subtreeMaxZ=20' 未压过 'scale.ddwrap 20' 绘制序红 + 重叠区点击被 scale 字段截获「大小」误开命中序红，与探针声明的双红变异口径逐字一致；base2/base3 为几何夹具修正后复跑，两条主判据红稳定重现）、/tmp/claude-base3.log（claude_probes 三档窗尺寸 1200x720/1200x1000/1262x801 全红：20 vs 20 + dialect 未收起 + fallback 误开）；绿 = /tmp/zprobe-patch.log（0 字节 = 探针通过零输出）、/tmp/claude-patch.log（仅信息行无 FAIL）、build-euipatch/Testing/Temporary/LastTest.log（16:14，ctest 9 探针全 Passed，含 settings_dropdown_z_probe 0.26s 与 claude_probes），该构建 EUI_NEO_DIR 指向补丁副本 eui-neo-zpatch-copy（CMakeCache 实证）——变异口径（回退 patch → 双红；应用 → 双绿）实测成立，非恒真假绿。②断言设计核：assertDrawnAbove 判 LCA 处两侧直接子级 subtreeMaxZIndex 严格 >（与 LCA 稳定排序语义精确对应，父链按指针建避开无名包装栈，祖先关系误用有守卫报错）；前提守卫（弹层首项 ∩ 下方字段 framesIntersect）先响几何漂移，防 z 判据落空；命中判据点交集中心而非项中心，保证命中序真被考验；逐帧重查元素指针避免 recompose 悬垂。③上游单测场景 4/5（zindex_escape.cpp:129-243）：手工搭树手抄 z 值（z20/z900），只验 dsl.h 排序机制、不验 dropdown.h 组件接线——kPopupOpenZIndex 回退为 0 时该单测仍绿（组件级变异探测完全依赖 DevDesk 探针，已实测双向成立）；且 EUI 单测被 EUI_BUILD_TEST_FIXTURES（默认 OFF，CMakeLists.txt:672 门 + :762 glob）门控，全盘无 zindex_escape 二进制（find 0 命中）→ 场景 4/5 本次从未编译运行。④交付顺序：EUI-NEO 72a5187 已于 16:25:57 落本地 main（决策永不 push origin，本地消费），晚于 DevDesk 分支提交 667788a——合并顺序要求「先 EUI-NEO 后 DevDesk」在审计时点已满足；残留风险 = DEVDESK_EUI_NEO_MIN_REV 仍 7164d55（CMakeLists.txt:69，分支未触碰），指旧 EUI-NEO 的环境 configure 无软警告、新探针红得不知所云（响亮非静默，见 F-2）。"
+    }
+  },
+  "findings": [
+    {
+      "id": "F-1",
+      "severity": "low",
+      "type": "test-gap",
+      "file": "EUI-NEO tests/unit/zindex_escape.cpp",
+      "line": "129-243",
+      "issue": "新增场景 4/5 手工搭树手抄 z 值（ui.stack z20/z900），不经过 components::dropdown——只验 dsl.h subtreeMaxZIndex 排序机制，对 dropdown.h 的 kPopupOpenZIndex 接线零变异探测（该常量回退 0 单测仍绿）；且 EUI 单测被 EUI_BUILD_TEST_FIXTURES（默认 OFF）门控，本次交付未编译运行过（全盘无 zindex_escape 二进制）",
+      "impact": "上游单测对本次核心改动的保护是间接的（机制级）；组件级回归门禁完全押在 DevDesk 两个探针上，跨仓消费方若不跑 DevDesk 探针则无任何信号；「上游单测已加」易被误读为已验证",
+      "suggestion": "合并前在 EUI-NEO 侧以 -DEUI_BUILD_TEST_FIXTURES=ON 跑一次 zindex_escape 留存输出；或在该单测头部注明「机制级，组件接线由 DevDesk settings_dropdown_z_probe/claude_probes 变异门禁」"
+    },
+    {
+      "id": "F-2",
+      "severity": "low",
+      "type": "dependency-guard",
+      "file": "DevDesk CMakeLists.txt",
+      "line": 69,
+      "issue": "DEVDESK_EUI_NEO_MIN_REV 仍为 7164d55，未随 EUI-NEO 72a5187（本修复）提升；分支 diff 未触碰 CMakeLists",
+      "impact": "指向旧 EUI-NEO 检出的 worktree/环境 configure 时无软警告，新探针在该环境必红且报错信息（subtreeMax 20≡20）不易联想到缺上游提交；merge-base 软检查是本项目对「永不 push」依赖的唯一防线",
+      "suggestion": "合并 fix/dropdown-popup-z 进 master 时同步把 MIN_REV 升到 72a5187（CLAUDE.md 约定：消费 EUI 变化后 CMakeLists 与文档两处同步）"
+    },
+    {
+      "id": "F-3",
+      "severity": "info",
+      "type": "tier-collision",
+      "file": "EUI-NEO components/workshop/card_slider.h",
+      "line": 147,
+      "issue": "该处已存在裸 zIndex(900)，与新 kPopupOpenZIndex 同档；等值时经稳定排序退化为 DOM 序",
+      "impact": "当前 DevDesk 零引用 workshop 组件（grep 无命中），无现实交叠；但 900 成为「弹层档」后，散落的裸 900 会在未来同页混用时产生无声明的等值档碰撞",
+      "suggestion": "不修（超出本轮范围）；后续若引入 workshop 组件或再加弹层类组件，考虑把弹层档收成具名常量表（dropdown 900 / dialog 1000 / contextMenu 1050 / toast 1100）防裸值碰撞"
+    },
+    {
+      "id": "F-4",
+      "severity": "info",
+      "type": "leftover-artifacts",
+      "file": "/Users/coderstory/dev/gui/eui-neo-zpatch-copy 与 DevDesk/.claude/worktrees/dd-z-popup/build-euipatch/",
+      "line": "-",
+      "issue": "验证用 EUI-NEO 全仓副本 eui-neo-zpatch-copy（已含补丁）与 worktree 内未跟踪 build-euipatch/ 构建目录在交付后残留",
+      "impact": "与 worktree 用完即清/禁止残留的纪律相悖；副本含完整仓库易被误当第二份 EUI-NEO 源使用（漂移风险）",
+      "suggestion": "DevDesk 分支合并后：删 eui-neo-zpatch-copy/ 与 build-euipatch/，按纪律 git worktree remove dd-z-popup + prune"
+    },
+    {
+      "id": "F-5",
+      "severity": "info",
+      "type": "doc-drift",
+      "file": "/Users/coderstory/dev/gui/eui-neo-dropdown-popup-z.patch",
+      "line": "-",
+      "issue": "patch 文件已被 EUI-NEO 提交 72a5187 取代（内容一致，唯 docs/组件.md hunk 头 @@ -881 与实际 -882 差 1 行偏移，git apply 带偏移可过）；文件继续留在 gui/ 根目录",
+      "impact": "无功能影响；留着易被重复应用或误当最新来源",
+      "suggestion": "确认 72a5187 为唯一来源后归档或删除该 patch 文件"
+    }
+  ],
+  "conclusion": {
+    "verdict": "通过（无阻塞 findings；2 low + 3 info 建议合并时顺手处理 F-2）",
+    "root_cause_claim": "属实——固定字段档 20 下等值 z 稳定排序保持 DOM 序，后绘下方字段盖住上方展开弹层；绘制与命中同病同源（同一 orderedChildren）",
+    "fix_claim": "属实——open 态 900 经子树上界逃逸整组件抬升，夹在卡片 40 与 dialog 1000 之间的档位盘点逐项核实；关闭态 .zIndex(0) 与旧行为逐位一致（默认值 0 + setter 无副作用 + 排序输入不变）",
+    "probe_gate_claim": "属实——harness 纯增量，既有 probe 零行为影响；双探针在未打补丁基线双红（绘制序 + 命中序）、补丁态全绿，/tmp 日志与 ctest LastTest.log 证据链完整",
+    "delivery_order": "确认满足——EUI-NEO 72a5187 已落本地 main（16:25:57）且先于 DevDesk 合并动作；合并 DevDesk fix/dropdown-popup-z 前唯一要求 = 确认消费环境 EUI-NEO ≥ 72a5187，建议同时升 DEVDESK_EUI_NEO_MIN_REV（F-2）"
+  }
+}

@@ -31,11 +31,16 @@
 #include "core/module_interface.h"
 #include "core/theme.h"
 #include "core/component_theme.h"
+#include "platform/json.h"
+#include "provider_config.h"
+#include "upstream_dialect.h"
+#include <core/window/window_backend.h>
 #include <ui_kit/metrics.h>
 #include <ui_kit/toast.h>
 
 #include <eui/dsl.h>
 
+#include <algorithm>
 #include <atomic>
 #include <ctime>
 #include <string>
@@ -83,8 +88,16 @@ public:
         // 引导条（§6.4）：代理未运行且本会话从未启动过时显示（内存态一次性）
         if (proxyRunning) state_.list.proxyEverSeen_ = true;
         const bool showGuide = !proxyRunning && !state_.list.proxyEverSeen_;
+        // 引导条的预留高 = 它的渲染高（kGuideBarH，绘制侧同一常量）+ 根 column
+        // 给它的那一个 spacingLarge 间距。此前这里写死 30（绘制侧实际 18 + 间距
+        // 16 = 34），预留与绘制各写一份 → 根 column 子项总高超出可用高 4px，
+        // 底部 padding 被压缩（macOS 布局审计 finding: claude_module.cpp:86）。
+        // 为什么不改成让 body 行 flexGrow 吃剩余高：body 行的高度（bodyH）在
+        // **compose 期间**就要传给左右两个子面板（claude_ui_list / claude_ui_detail
+        // 都按它排内部几何），而 flexGrow 的结果要 layout 之后才知道 → 需要两遍
+        // 布局，改动面远大于收益。故取「同一常量」这条修法。
         const float bodyH = contentH - headerH - t.sizes.spacingLarge -
-                            (showGuide ? 30.0f : 0.0f);
+                            (showGuide ? kGuideBarH + t.sizes.spacingLarge : 0.0f);
 
         // 页面底色 = 主窗口 clearColor（随主题/窗口效果档运行时跟随，
         // 磨砂 Phase B/D）——不自铺不透明底，半透/磨砂档主体才生效
@@ -136,8 +149,96 @@ public:
         dv.recent = &recent;
         dv.callsError = callsError;
         dv.now = now;
-        dv.bodyH = bodyH;
+        // 注：DetailView 不再带 bodyH（审计 F-01）；容器可用高只由下面
+        // drawDetailPanel 的 bodyH 形参进详情面板
         dv.sharedConfigs = &state_.list.cachedSharedConfigs_;   // 批 2：详情绑定行
+        // 高级配置 pane（2026-09-30 batch-fix B，设计 §3.2④）：生效方言 +
+        // 备用 Profile 名。方言：显式覆盖 → 「名（显式）」；空 →
+        // 「自动（按站点推断）→ 生效名」（推断结果可审计，正是本 pane 的价值）；
+        // 显示名统一走 dialectKindDisplayName（§3.2① 单一来源，不直接用
+        // dialectKindToText 内部值）。备用名：从既有 profiles 快照按
+        // fallbackProfileId 解析（悬空/0 → 「无」/「（已删除）」），与列表
+        // 快照同源、pane 内不做服务调用（避免每帧 DB 查询）
+        if (shown != nullptr) {
+            const UpstreamDialect effective = UpstreamDialect::forBaseUrl(
+                shown->baseUrl, shown->dialectOverride);
+            const char* displayName = dialectKindDisplayName(effective.kind);
+            if (dialectKindFromText(shown->dialectOverride)) {
+                dv.dialectText = std::string(displayName) + "（显式）";
+            } else {
+                dv.dialectText =
+                    std::string("自动（按站点推断）→ ") + displayName;
+            }
+            if (shown->fallbackProfileId == 0) {
+                dv.fallbackName = "无";
+            } else {
+                dv.fallbackName = "（已删除）";
+                for (const auto& p : profiles) {
+                    if (p.id == shown->fallbackProfileId) {
+                        dv.fallbackName = p.name;
+                        break;
+                    }
+                }
+            }
+        } else {
+            dv.dialectText = "-";
+            dv.fallbackName = "-";
+        }
+
+        // 高级配置 pane 的键来源清单（advanced-json-editor 设计 §8.5，0edd3cf
+        // 形态复用）：生效 JSON = profile ⊕ 片段（片段赢，§8.2 生成时叠加）。
+        // 逐顶层键给来源：键 ∈ 片段对象 → 片段（envSourceLabel(Shared)——片段
+        // 赢的键都来自片段）；其余 → 本 Profile。"model" 键 → 附加说明（覆盖
+        // 模型槽位，D-4）。与列表快照同源、compose 内装配（pane 零服务调用）。
+        // 空态/解析失败经 keys 空 + note 区分（约定见 DetailView 注释）
+        if (shown != nullptr) {
+            std::string fragmentJson;
+            if (shown->sharedConfigId != 0) {
+                const SharedConfig* sc = findSharedById(
+                    state_.list.cachedSharedConfigs_, shown->sharedConfigId);
+                if (sc != nullptr) fragmentJson = sc->extraSettingsJson;
+            }
+            // warningsOut（审计 F-03）：非法/超限一侧被合并纯函数按空处理时
+            // 在此捕获——keys 空且 warnings 非空 = 配置存在但失效，pane 显示
+            // 「解析失败」提示态而非「未配置」（§8.5 验收点；接管 WARN 日志
+            // 之外的展示层口径）
+            std::vector<std::string> effWarnings;
+            const std::string effective = effectiveExtraSettingsJson(
+                shown->extraSettingsJson, fragmentJson, &effWarnings);
+            if (effective.empty() && !effWarnings.empty()) {
+                dv.extraSettingsNote = "（JSON 解析失败，接管时将忽略）";
+            }
+            if (!effective.empty()) {
+                auto parsed = platform::json::parse(effective);
+                if (parsed.isOk() && parsed.value().isObject()) {
+                    auto effObj = parsed.value().asObject();
+                    // 片段对象键集（片段赢的键 = 片段里出现过的键）
+                    std::vector<std::string> fragmentKeys;
+                    if (!fragmentJson.empty()) {
+                        auto fp = platform::json::parse(fragmentJson);
+                        if (fp.isOk() && fp.value().isObject()) {
+                            fragmentKeys = fp.value().asObject().keys();
+                        }
+                    }
+                    for (const auto& k : effObj.keys()) {
+                        const bool fromFragment =
+                            std::find(fragmentKeys.begin(), fragmentKeys.end(),
+                                      k) != fragmentKeys.end();
+                        dv.extraSettingsKeys.emplace_back(
+                            k, fromFragment
+                                   ? envSourceLabel(EnvSource::Shared)
+                                   : envSourceLabel(EnvSource::Profile));
+                        if (k == "model") {
+                            dv.extraSettingsNote =
+                                "「model」覆盖模型槽位（ANTHROPIC_MODEL 不写入）";
+                        }
+                    }
+                } else {
+                    dv.extraSettingsNote =
+                        "（JSON 解析失败，接管时将忽略）";
+                }
+            }
+        }
 
         ui.column("claude.root")
             .size(screen.width, screen.height)
@@ -185,6 +286,13 @@ public:
             [this](int64_t id, const std::string& name) {
                 doDeleteShared(id, name);
             });
+        // 高级设置 JSON 全屏编辑覆盖层（2026-09-30 json-fullscreen）：画在全部
+        // 弹窗之后 + 显式 z=1050——盖住表单 dialog（默认 1000）、让位 toast
+        //（1100，「应用」成功的确认可见）。可见性派生自 formOpen_ &&
+        // formJsonFullscreen_（应用成功关表单 → 全屏同帧消失，零孤儿态）
+        drawJsonFullscreenOverlay(ui, screen, t, themeTokens, state_.form,
+                                  formHooks(),
+                                  state_.list.cachedSharedConfigs_);
         harvestTestResult();  // 后台「测试连通」结果回 UI（每帧轮询）
         drawToast(ui, screen, themeTokens);
 
@@ -208,6 +316,18 @@ public:
         // 恒读快照，首帧必须有值——异步首刷会让页面先闪一帧空列表（硬约束：
         // 不得空帧/闪空）；此后每次刷新都走 refreshDataCache 的后台线程
         applyDataRefresh(state_.list, runDataRefresh(svc, true, true));
+        // 一次性迁移（2026-09-30 数据丢失事故根治）：旧全局 service
+        // "DevDesk" 的 profile 密钥搬进按数据根派生的独立命名空间。必须
+        // 先于孤儿清理——迁移先把条目写进本实例的 service，清理的 keep
+        // （来自 DB 行）才与新命名空间对得上
+        auto mig = svc->migrateLegacyKeychainService();
+        if (mig.isFail()) {
+            LOG_WARN("onStart: 旧 Keychain service 迁移失败 - " +
+                     mig.errorMessage());
+        } else if (mig.value() > 0) {
+            LOG_INFO("onStart: 已迁移 " + std::to_string(mig.value()) +
+                     " 个密钥到数据根派生 service");
+        }
         // 启动时孤儿密钥清理（一次扫描，删除无对应 profile 的 keychain 条目）
         auto orphan = svc->cleanupOrphanKeychainEntries();
         if (orphan.isFail()) {
@@ -285,10 +405,16 @@ public:
     }
 
 private:
-    // 审计 M5：Esc 关最上层弹窗（顺序 = 绘制序/z 序倒序：共享片段删除确认 >
-    // 共享片段编辑 > 调用记录 > 删除确认 > 表单——批 2 起共享片段两弹窗画在
-    // 最上层 → Esc 最先关它们）。返回 true = 本键已消费；无弹窗返回 false
+    // 审计 M5：Esc 关最上层弹窗（顺序 = 绘制序/z 序倒序：全屏 JSON 编辑覆盖层
+    //（z=1050，画在所有弹窗之上）> 共享片段删除确认 > 共享片段编辑 > 调用记录
+    // > 删除确认 > 表单）。返回 true = 本键已消费；无弹窗返回 false
     bool closeTopmostDialog() {
+        // 全屏编辑覆盖层先于一切弹窗（2026-09-30 json-fullscreen：Esc 退全屏
+        // 回表单，第二次 Esc 才关表单）
+        if (state_.form.formJsonFullscreen_ && state_.form.formOpen_) {
+            state_.form.formJsonFullscreen_ = false;
+            return true;
+        }
         if (state_.shared.deleteConfirmOpen_) { state_.shared.deleteConfirmOpen_ = false; return true; }
         if (state_.shared.open_) { state_.shared.open_ = false; return true; }
         if (state_.logs.callsDialogOpen_) { state_.logs.callsDialogOpen_ = false; return true; }
@@ -314,6 +440,8 @@ private:
                          state_.list.cachedSharedConfigs_);
         };
         a.requestDuplicate = [this](int64_t id) { doDuplicate(id); };
+        // 复制配置（2026-09-30 batch-fix C）：与详情第 7 键同源 doCopyConfig
+        a.requestCopyConfig = [this](const Profile& p) { doCopyConfig(p); };
         a.requestDelete = [this](int64_t id, const std::string& name) {
             state_.form.deleteTargetId_ = id;
             state_.form.deleteTargetName_ = name;
@@ -366,6 +494,8 @@ private:
             state_.form.deleteConfirmOpen_ = true;
         };
         a.duplicate = [this](int64_t id) { doDuplicate(id); };
+        // 复制配置（2026-09-30 batch-fix C，设计 §4.2② 第 7 键接线）
+        a.copyConfig = [this](const Profile& p) { doCopyConfig(p); };
         a.run = [this](int64_t id) { doRun(id); };
         a.openCalls = [this] { openCallsDialog(state_.logs); };
         return a;
@@ -449,18 +579,95 @@ private:
         state_.list.dataDirty_ = true;   // 下帧重查列表（动作本身零全局改动，成本一帧）
     }
 
-    // 复制（设计 §4.1/§4.2，M5）：建副本但不激活 → 选中态/激活态都不动
+    // 建副本（设计 §4.1/§4.2，M5；2026-09-30 batch-fix C 改名 D-C1）：
+    // 建副本但不激活 → 选中态/激活态都不动
     void doDuplicate(int64_t id) {
         ClaudeService* svc = ClaudeService::global();
         if (!svc) return;
         state_.list.dataDirty_ = true;   // 审计 perf [13]：写操作标脏
         auto r = svc->duplicateProfile(id);
         if (r.isFail()) {
-            showToast("复制失败", r.errorMessage(), true);
+            showToast("建副本失败", r.errorMessage(), true);
             return;
         }
-        showToast("已复制",
+        showToast("已建副本",
                   "已创建副本「" + r.value().name + "」（未激活）", false);
+    }
+
+    // 复制配置（2026-09-30 batch-fix C，设计 §4.2②）：当前 profile →
+    // settings.json 形态 JSON → 系统剪贴板。占位 sk-ant-***<尾4>（与详情页
+    // apiKeyHint 同一脱敏口径），**不导明文 key**（§5① 裁决——剪贴板是跨
+    // 应用共享面，明文一经粘贴即离开 Keychain 托管）。setClipboardText 返回
+    // void、模块层无窗口句柄无法回读校验 → 接线处固定 LOG_WARN 一行留痕
+    //（低概率写失败时 toast 已提示成功，属已知限制，audit F5）
+    void doCopyConfig(const Profile& p) {
+        ClaudeService* svc = ClaudeService::global();
+        if (svc == nullptr || p.id == 0) {
+            showToast("复制配置失败", "请先选择 Profile", true);
+            return;
+        }
+        // 坏 JSON 防静默丢键（advanced-json-editor §6，两域覆盖——同坏
+        // extraEnvJson 的防静默手法 batch-fix §4.2②）：env 域与高级设置 JSON
+        // 域（profile 自身 + 片段）各自试解析，失败先 LOG_WARN 一行再继续导出
+        //（对应域读路径容错为空/按 profile 自身值），不静默
+        if (!p.extraEnvJson.empty()) {
+            auto ee = parseExtraEnv(p.extraEnvJson);
+            if (ee.isFail()) {
+                LOG_WARN("复制配置: extra_env 解析失败（profile id=" +
+                         std::to_string(p.id) + "），导出将缺失该部分 env 键 - " +
+                         ee.errorMessage());
+            }
+        }
+        if (!p.extraSettingsJson.empty() &&
+            validateExtraSettingsJson(p.extraSettingsJson).isFail()) {
+            LOG_WARN("复制配置: 高级设置 JSON 解析失败（profile id=" +
+                     std::to_string(p.id) + "），导出将缺失高级属性 - " +
+                     validateExtraSettingsJson(p.extraSettingsJson).errorMessage());
+        }
+        // 片段 JSON：与列表/详情同源的快照解析（不落服务调用）。v11 起片段
+        // 内容 = 高级属性 JSON 原文（§8），坏片段按 profile 自身 JSON 导出
+        std::string fragmentJson;
+        if (p.sharedConfigId != 0) {
+            const SharedConfig* sc = findSharedById(
+                state_.list.cachedSharedConfigs_, p.sharedConfigId);
+            if (sc != nullptr) {
+                fragmentJson = sc->extraSettingsJson;
+                if (!fragmentJson.empty() &&
+                    validateExtraSettingsJson(fragmentJson).isFail()) {
+                    LOG_WARN("复制配置: 片段 JSON 解析失败（profile id=" +
+                             std::to_string(p.id) + "），导出将缺失片段叠加 - " +
+                             validateExtraSettingsJson(fragmentJson).errorMessage());
+                }
+            }
+        }
+        // 占位值：apiKeyHint 即「前6 + *** + 尾4」形态（profile_repository
+        // 脱敏生成，同源同口径）；hint 为空（Keychain 读不到）→ 传空串，
+        // buildDirectEnv 空值不写凭据键 → 导出无 token 键
+        const std::string json = buildProfileExportJson(
+            p, fragmentJson, /*keyPlaceholder=*/p.apiKeyHint);
+        if (json.empty()) {
+            showToast("复制配置失败", "配置序列化失败", true);
+            return;
+        }
+        core::window::setClipboardText(json);
+        // void API 无回读下的最低留痕（§4.2②）：profile id + 导出键数
+        //（advanced-json-editor §6：env 键数 + 非 env 顶层键数两域合计）
+        size_t exportedKeys = 0;
+        size_t exportedNonEnvKeys = 0;
+        if (auto doc = platform::json::parse(json);
+            doc.isOk() && doc.value().isObject()) {
+            const auto rootObj = doc.value().asObject();
+            const auto envVal = rootObj.get("env");
+            if (envVal.isObject()) exportedKeys = envVal.asObject().keys().size();
+            for (const auto& k : rootObj.keys()) {
+                if (k != "env") ++exportedNonEnvKeys;
+            }
+        }
+        LOG_WARN("复制配置: 已调用系统剪贴板写入（void API 无回读校验）" +
+                 std::string("profile id=") + std::to_string(p.id) +
+                 " env 键数=" + std::to_string(exportedKeys) +
+                 " 高级属性键数=" + std::to_string(exportedNonEnvKeys));
+        showToast("已复制配置", kCopyConfigToastSubtitle, false);
     }
 
     void doDelete(int64_t id) {

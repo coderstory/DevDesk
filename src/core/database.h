@@ -25,7 +25,12 @@ namespace core {
 //   - 提供 db() 访问器给 module_* 层的 service 用
 class Database {
 public:
-    Database() = default;
+    // 审计 CP-07：默认构造明确禁用（open() 是唯一入口，见 test_sqlite.cpp 的
+    // static_assert）。此前写 `= default` 只是「碰巧」不可默认构造——SqliteDb 的
+    // 默认构造是 private（sqlite_db.h），故本行被隐式删除；clang 会对隐式删除的
+    // 显式 default 报 -Wdefaulted-function-deleted（GCC 不报）。改成 `= delete`
+    // 明确表达同一语义，跨编译器一致。
+    Database() = delete;
     ~Database() = default;
 
     Database(const Database&) = delete;

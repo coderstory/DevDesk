@@ -122,6 +122,18 @@ endif()
 
 devdesk_apply_warnings(devdesk_tests)
 
+# ---- 版本真值注入（2026-09-29）----
+# test_settings.cpp 的 aboutVersionLine 断言必须与**被测量**同源：
+# devdesk_module_settings 用 PRIVATE 的 DEVDESK_VERSION="${PROJECT_VERSION}"
+# 编译 settings_config.cpp，测试 TU 看不到那个宏，历史写法只能把版本号写死
+# （v.find("DevDesk 0.1.")，VERSION 涨到 0.7.x 后恒红、且与真值脱钩）。这里把
+# **同一个** PROJECT_VERSION 也注进测试 target，断言改成
+# 「前缀 == "DevDesk " + DEVDESK_VERSION」——版本一变两边同步变。
+# 只挂 devdesk_tests（probes 无版本断言）；不做 PUBLIC 传播，宏不外泄到生产目标。
+target_compile_definitions(devdesk_tests PRIVATE
+    DEVDESK_VERSION="${PROJECT_VERSION}"
+)
+
 target_include_directories(devdesk_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/src
     ${CMAKE_SOURCE_DIR}/tests

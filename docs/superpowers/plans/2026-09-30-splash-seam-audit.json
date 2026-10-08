@@ -1,0 +1,65 @@
+{
+  "meta": {
+    "subject": "独立只读快审——fix/splash-test-seam 480724b（git diff 28e5fad...fix/splash-test-seam，5 文件：splash.h/cpp 测试缝 + test_main.cpp resetCaseGlobals 置位 + probe_harness.h 同调 + verify 文档）",
+    "date": "2026-09-30",
+    "auditor": "独立只读审计 agent（未参与实现，唯一写 = 本审计文件）",
+    "method": "git show 分支版全量实读 splash.cpp / splash.h / test_main.cpp（runner 循环与 resetCaseGlobals）/ probe_harness.h / tests/CMakeLists.txt / src/ui_kit/CMakeLists.txt / 顶层 CMakeLists.txt；git grep 对账 setSplashDisabledForTests / splashDisabledForTestsFlag / drawSplashIfNeeded / dsl_app_impl / initializeWindowBackend / DOCTEST_SKIP / REGISTER_TEST 全部引用点；EUI-NEO 实读 include/eui/app.h:110、include/eui/detail/dsl_app_impl.h:332、core/app/glfw_app_main.cpp:24、CMakeLists.txt:407/:413/:533-540（eui_neo_configure_app 注入链）；Python 预处理栈模拟（macOS 目标）对 878 处 REGISTER_TEST 源头计数与运行总数 868 对账",
+    "code_base": "fix/splash-test-seam 480724b（= master 28e5fad + 1 commit；行号 = 分支快照实测）",
+    "note": "只读约束：未重跑构建/测试/变异（验证数字为结构复核，非复测）。审计文件落盘于 master 工作树（merge 前核，不影响分支）"
+  },
+  "audit_points": {
+    "1_seam_semantics": {
+      "status": "已核",
+      "conclusion": "①零副作用成立：splash.cpp:46 `if (splashDisabledForTestsFlag()) return false;` 是 drawSplashIfNeeded 的第一条语句，先于 splashState()（:47）——置位时 SplashState 函数局部 static 根本不构造（惰性初始化不触发），不启动计时（startSet/start 不写）、不写日志（LOG_INFO 两处 :57/:63 均在其后）、不加载 shader（graphLoaded/resolveResourcePath/addPass :74-80 在其后）、不 requestUpdate（:138 在其后）、不构任何 ui 元素，恒返 false → compose 正常画主界面。②ODR 实际安全：inline 函数（外链名，namespace ui_kit 非匿名）+ 函数局部 static，[basic.def.odr] / [stmt.dcl] 对 vague linkage 的保证 = 全部 TU 共享同一 flag 实体（Meyers singleton 头文件形态的标准保证）；所有 TU include 同一份 splash.h 定义逐字相同；单 exe 静态链接（ui_kit 为 STATIC 库、项目无 DLL 边界切分），不存在跨动态库各持一份的场景。且有经验证：变异实验把 test_main TU 里的置位注释掉 → splash.cpp TU 行为随之翻转（4 条用例复红），若两 TU 各持一份 flag 该缝永不生效、绿跑不可能出现——红→绿本身就是跨 TU 单实体 flag 的运行期证明。③thread-safety 非问题：置位只发生在 test/probe 进程单线程启动序列，生产进程无人置位（见点 2），flag 读写无竞争面。"
+    },
+    "2_wiring_completeness": {
+      "status": "已核",
+      "conclusion": "①两处置位点实证在案：tests/test_main.cpp:147（resetCaseGlobals 内）+ tests/probes/probe_harness.h:38（initializeWindowBackend 内）。resetCaseGlobals 由 runner 循环在每个用例体之前调用（test_main.cpp:194，含第一条用例），devdesk_tests 全量 800+ 例无一漏网；8 个 probe main（home/pet/settings_cards/claude/todo/about/markdown/settings_dropdown_z）全部经 initializeWindowBackend 进窗（grep 实测 8/8 命中 :120/:129/:223/:77/:121/:66/:164/:59），无旁路。②第三条测试启动路径不存在：drawSplashIfNeeded 全仓唯一调用点 = src/app_sidebar.cpp:276（compose 开头）；app_sidebar.cpp 只编进两个目标——DevDesk.exe（CMakeLists.txt:165，生产路径，splash 应在，不缝）与 devdesk_tests（tests/CMakeLists.txt:3，已缝）；probes 用 composeModuleFrame 驱动 module compose，不链接 app_sidebar.cpp.o，今日无 probe 实际触达 splash——probe_harness 的置位是前瞻防护（若后续 probe 直连 app::compose/drawSidebar），verify 文档对此表述诚实（『若后续 probe 直连』措辞）。③main.cpp 零引用实证：git grep setSplashDisabledForTests -- src/main.cpp 零命中（exit 1）；全仓引用仅 splash.h 定义 2 处 + splash.cpp 读 1 处 + test_main/probe_harness 置位 2 处，无第三写点、无任何置 false 回位点（进程级一次性禁用，语义单一）。"
+    },
+    "3_mutation_evidence": {
+      "status": "已核（结构复核，非复测——审计只读未跑构建）",
+      "conclusion": "①Total 868 与源结构精确对账：全 tests/ 源头 REGISTER_TEST( 共 878 处（git grep -o 实测），减去 macOS 不可达注册 = _WIN32 门控 5 处（test_claude_service.cpp:763 区 1 + test_settings_sync.cpp:975-1004 区 1 + test_keychain.cpp:124-207 区 2 + test_file_open.cpp:107-145 区 1）+ Linux-only 1 处（test_terminal_launch.cpp:367-377）+ EUI_HAS_MD4C 假分支 2 处（test_md_block_model.cpp:274-365，md4c 在 EUI-NEO CMakeLists.txt:450 对 eui_neo PUBLIC 定义、真分支 6 处）= 868，与 verify 文档全量 Total 逐字一致。②868−862=6 SKIP 与运行器口径及 macOS 跳过点吻合：test_main.cpp:206-216 实读确认 SKIP 单独计（Total 含 skip、Failed 不含），macOS 可达 DOCTEST_SKIP 恰 6 处 = keychain 隔离跳过 ×2（SKIP_ON_MACOS_KEYCHAIN :23/:90）+ junction :254（mklink 不可用）+ psapi 内存采样 :774（Windows-only）+ soak 60s :878 + soak 300s :890（均 DEVDESK_SOAK 门控）；FileWatcher 两用例（:945/:978）在 macOS 走 file_watcher_macos.cpp 真实现不跳。③--filter sidebar Total 8 对账：test_app_sidebar.cpp 恰 7 条 'sidebar: ' 前缀用例（:76/:98/:113/:148/:207/:266/:316）+ test_font_em_layout.cpp 1 条 'font-em: sidebar labels fit item height/width'（filter 子串命中）= 8。④变异 4 红 = 精确命中 4 条 compose 几何用例：文档所列 4 名与 test_app_sidebar.cpp:148/207/266/316 注册逐一对应，均经 HeadlessFrame 走 app_sidebar compose → splash 活性期内主界面不画 → 几何断言必红；其余 4 条（3 条配置往返 + 1 条 font-em）不经 compose，缝失效也不红——红绿分布与机理自洽，证明断言非恒真、由本缝控制。⑤ctest -L probe 8/8 与 probes/ 目录 8 个 .cpp → 8 个 ctest 注册（tests/CMakeLists.txt:164-192）一致。"
+    },
+    "4_deviation_rationale": {
+      "status": "已核（成立，无更优解）",
+      "conclusion": "①链接依赖链逐环实证：app::requestUpdate 在 include/eui/app.h:110 仅声明，唯一定义在 include/eui/detail/dsl_app_impl.h:332（头内联）；dsl_app_impl.h 唯一生产 include 点 = core/app/glfw_app_main.cpp:24，该 TU 由 EUI-NEO CMakeLists.txt:407/:413 经 GLOBAL PROPERTY EUI_NEO_APP_MAIN_SOURCE 传递、仅在 eui_neo_configure_app(DevDesk)（DevDesk CMakeLists.txt:167 → EUI-NEO CMakeLists.txt:533-540 target_sources 注入）时编入——即只进 DevDesk.exe。若 setter 出线（.cpp 静态 + 前置声明）：8 个 probe 全部经 module PUBLIC 链拉 devdesk_ui_kit 档案（src/ui_kit/CMakeLists.txt:24-26 + 各 module CMakeLists PUBLIC），引用 setter 符号即拉入 splash.cpp.o → 其 app::requestUpdate(:138) 在无注入 TU 的 probe 侧未定义 → 链接失败；dsl_app_impl 注入无法统一补：注入 TU 须自带 dslAppConfig/compose 定义，about/todo/pet/settings_cards/settings_dropdown_z 5 个已注入，home/claude/markdown 3 个缺 app::compose（app_sidebar.cpp.o 不在 probe 链接集）——verify 文档『实测两次链接失败后定位』与构建结构逐环吻合（文档只举 about/todo，实为 5 个已注入，属少列非错列）。②替代方案自判均不更优：env 变量门控（getenv）→ 生产 drawSplashIfNeeded 路径引入隐藏环境耦合、行为不可从代码审计，劣；weak symbol → 不拉 .o 时调用悬空须地址判空守卫，脆弱非惯用，劣；独立 test_seam.h → 与 splash.h inline 同族、零增益，平；撤掉 probe_harness 置位 → 接线面缩水（点 2 的前瞻防护消失），劣。inline 头文件函数局部 static 是该约束（测试进程可置位、probe 链接零新增依赖、生产零变化）下的最小惯用解。③生产面核：splash.cpp 改动仅 :44-46 三行注释 + 一条早返回，主程序路径其余逐字未动；缺省 flag=false，DevDesk.exe 完整保留 28e5fad splash 行为。"
+    }
+  },
+  "findings": [
+    {
+      "id": "I-1",
+      "severity": "nano",
+      "type": "style",
+      "file": "src/ui_kit/splash.h",
+      "line": 42,
+      "issue": "文件末尾缺换行符（diff 『\\ No newline at end of file』）",
+      "impact": "纯卫生项；后续任何 append 型编辑都会引入无意义的 diff 尾巴",
+      "suggestion": "合并时顺手补一个换行，或留待下次触碰该文件时处理；不阻塞"
+    },
+    {
+      "id": "I-2",
+      "severity": "nano",
+      "type": "doc",
+      "file": "docs/superpowers/plans/2026-09-30-splash-seam-verify.md",
+      "line": 29,
+      "issue": "『差值 6 = DEVDESK_SOAK=1 等门控 SKIP，与 2026-09-30-skipped-cases.md 口径一致』的交叉引用错位：该文档实际登记的是 S1-S4 四个调查未闭环案，与 6 条测试 SKIP（keychain×2 / junction / psapi / soak×2）无关",
+      "impact": "读者按图索骥会找不到 6 条 SKIP 的登记处（SKIP 组成本审计点 3 ② 已独立对账闭环，数字本身无矛盾）",
+      "suggestion": "把交叉引用改为指向 test_main.cpp SKIP 计数口径（TIN-03 注释）或直接内联列出 6 条构成；不阻塞"
+    },
+    {
+      "id": "I-3",
+      "severity": "info",
+      "type": "scope-note",
+      "file": "tests/probes/probe_harness.h",
+      "line": 38,
+      "issue": "probe 侧置位今日为前瞻防护：现有 8 个 probe 无一实际触达 drawSplashIfNeeded（全仓唯一调用点 app_sidebar.cpp:276 不在 probe 链接集）",
+      "impact": "非缺陷——verify 文档已如实标注『若后续 probe 直连』；记录在案防止后续审计误判为死代码",
+      "suggestion": "保留现状；首个直连 app::compose 的 probe 落地时此缝即为活线"
+    }
+  ],
+  "conclusion": {
+    "verdict": "可合并",
+    "blocking_findings": 0,
+    "summary": "四点全部已核：缝语义零副作用（第一条语句早返回 + ODR 标准保证 + 变异红绿即跨 TU 单实体 flag 的运行期证明）；接线完备无第三路径（main.cpp 零引用实证、8/8 probe 全覆盖、drawSplashIfNeeded 唯一调用点在案）；verify 数字与源结构逐项精确对账（878 源头注册 − 8 平台/特性门控 = 868、6 SKIP 位点、filter sidebar 8 = 7+1、变异 4 红精确命中 4 条 compose 几何用例）；偏离理由经 EUI-NEO 注入链逐环实证成立、替代方案自判均不更优。3 条 nano/info 级记录项，无一阻塞。"
+  }
+}

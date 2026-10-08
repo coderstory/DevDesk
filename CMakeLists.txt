@@ -66,7 +66,7 @@ endif()
 # 升级为硬检查。最低依赖 rev 与 CLAUDE.md「当前依赖 rev」保持一致，消费
 # EUI-NEO 新 API 后两处同步更新（当前门槛取 U1 尺度契约合入点，含
 # app::contentScale / core::dsl::Screen::scale 与 yyjson writer 放开）。
-set(DEVDESK_EUI_NEO_MIN_REV "7164d55")
+set(DEVDESK_EUI_NEO_MIN_REV "72a5187")
 execute_process(
     COMMAND git -C "${EUI_NEO_DIR}" rev-parse --short HEAD
     OUTPUT_VARIABLE EUI_NEO_GIT_REV
@@ -223,6 +223,30 @@ add_custom_command(TARGET DevDesk POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${CMAKE_SOURCE_DIR}/assets/pets" "$<TARGET_FILE_DIR:DevDesk>/assets/pets"
     COMMENT "Copying pet skins to build directory"
+)
+
+# 托盘 template 图标（assets/tray-icon-template.png，2026-09-30 Bug A 修）：
+# main.cpp .trayIcon() 传入，运行时经 EUI-NEO resolveIconPath 的 exeDir/assets
+# 候选在 .app bundle 内命中（build-app.sh 把 <build>/assets 整树拷进
+# Contents/MacOS/assets，本命令负责先把图标送进 <build>/assets）。文件入 git，
+# 无需守卫（同上 pets）。单文件用 copy_if_different；目录由上面 pets 的
+# copy_directory 先建，make_directory 兜底防顺序依赖。
+add_custom_command(TARGET DevDesk POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory
+        "$<TARGET_FILE_DIR:DevDesk>/assets"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_SOURCE_DIR}/assets/tray-icon-template.png"
+        "$<TARGET_FILE_DIR:DevDesk>/assets/tray-icon-template.png"
+    COMMENT "Copying tray template icon to build directory"
+)
+
+# 启动 splash shader（assets/shaders/splash.frag，随仓库分发；运行时经
+# eui::platform::resolveResourcePath 从 exe 旁或 cwd 的 assets/ 下解析，
+# 从 build 目录启动即可命中）
+add_custom_command(TARGET DevDesk POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_SOURCE_DIR}/assets/shaders" "$<TARGET_FILE_DIR:DevDesk>/assets/shaders"
+    COMMENT "Copying splash shader to build directory"
 )
 
 # 构建版本自增（2026-09-28 about 页设计）：每次 cmake --build 都跑 bump-version

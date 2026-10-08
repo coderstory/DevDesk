@@ -154,7 +154,7 @@
 | 10 | **TIN-06 剩余迁移**（`TestDb ×4`：`test_claude_service.cpp:58` / `test_provider_config.cpp:67` / `test_proxy_router.cpp:55` / `test_settings_sync.cpp:99`；TestEnv 家族 11 个等） | **在飞**：worktree `wave2-TIN-06b`（分支 `wave2/TIN-06b`，23 个 `tests/*` 已改**未提交**、零 commit）→ 清理/接管前先按反事故红线判活 |
 | 11 | **TIN-08 存量绕法清理**（宏已可变参，仅 3 处示范清理） | 约 29 处 `tests/` 的「裸逗号」注释/绕法仍在（`grep -n '裸逗号\|切参' tests/` 实测 30 命中，含 `doctest.h` 新护栏注释本身=非绕法）—— 纯清理、无行为风险 |
 | 12 | **codegraph 索引瘦身**（9 份 worktree 副本） | `codegraph.json` 已排除 `**/.claude/worktrees/**` / `wt-*/**` / `**/build/**`（出处 `2026-09-27-session-handoff.md:39`：当时索引 2.4GB、含 9 份副本）；本轮实测库已 ~583MB 且 `files` 表 worktree 路径命中 **0** —— 仍待闲时跑一次 `codegraph index D:/project/gui` 重建确认，并纳入本夜新增文件 |
-| 13 | **EUI-NEO push** | 本地 main 领先 origin 70 个提交（依赖 rev `269a8c4`）；**本机无推送通道** → 阻塞在用户侧（CLAUDE.md「常用命令」段）；push 后启用硬版本检查 |
+| 13 | **EUI-NEO push** | **已关闭（2026-09-28 用户决策）**：EUI-NEO **永不 push 到 origin**（origin/main 停在 v0.6.0），本地领先（本行原文记 70 个提交、依赖 rev `269a8c4`）是长期状态；原「本机无推送通道 → 阻塞在用户侧」不必再解除，原计划「push 后启用硬版本检查」的前置条件也不会到来（硬版本检查保持未启用） |
 | 14 | 已关闭项：CPX-08 的 UI 用例 pin 剩余项 | 已清（`4d37216`/`632e673`：槽位分母改由槽位表派生 + 变异检验两向）—— **无需再排** |
 | 15 | 低优先 / 未取证（§7 存疑表残留） | **THS-16 DST 已修（`32162ce`）+ TIN-13 截图 Windows 化已修（`6456c61`），用户 2026-09-28 拍板忽略验证缺口，记入 KNOWN_LIMITATIONS，不再追**；CP-12 macOS `system_theme_macos.cpp` 未编译（`KNOWN_LIMITATIONS.md` §18）；FileWatcher 回调线程内析构未做运行期复现 |
 

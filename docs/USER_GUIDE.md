@@ -16,7 +16,7 @@ DevDesk 是一个**本地优先**的开发者桌面工具集（C++ 原生应用�
 | **设置** | 外观（主题 / 字号 / 窗口效果）/ 模块开关 / 桌宠 / 笔记目录 / Claude 代理（自启 · 端口 · Token · 接管）/ 日志保留，共 6 张卡 |
 | **桌宠** | 桌面独立透明小窗宠物：动画 / 拖拽 / 气泡 / 右键菜单（默认关闭，设置页开启，见 [§3.6](#36-桌宠)） |
 
-所有数据都保存在本机 `%APPDATA%\DevDesk`（见 [§5 数据都在哪](#5-数据都在哪)），不上传任何内容。
+所有数据都保存在本机 `%USERPROFILE%\DevDesk`（macOS 为 `~/DevDesk`；见 [§5 数据都在哪](#5-数据都在哪)），不上传任何内容。
 
 ## 2. 启动与界面导航
 
@@ -120,7 +120,7 @@ DevDesk 是一个**本地优先**的开发者桌面工具集（C++ 原生应用�
 | **Claude 代理**（仅 Claude 开启时） | 「随应用启动代理」开关（默认**关**）；「代理端口」输入框（回车或点「应用」）；认证 Token（只读 · 默认脱敏，眼睛按钮临时显形、离开本页即恢复掩码；「重新生成」换新 Token）；「Claude Code 接管」状态行 | 自启开关下次启动生效；改端口**代理运行中自动重启（Token 不变）**；重新生成同步重写 `proxy_token.txt` |
 | **调用日志保留** | 下拉：「永久保留」「7 天」「30 天」「90 天」「180 天」「365 天」（默认 30 天；永久 = 不清理） | **切换立即执行一次清理**并反馈「已清理 N 条历史日志」（旧说法「下次启动才生效」已过期） |
 
-配置持久化在 `%APPDATA%\DevDesk\config.json`（共 11 键，与 `SettingsStore::save` 一一对应：`theme` / `themeMode` / `editorFontSize` / `logLevel` / `fontScalePercentV3` / `logRetentionDays` / `claudeProxyAutoStart` / `claudeProxyPort` / `windowEffect` / `sidebarCollapsed` / `enabledModules`。`themeMode` 是用户意图档（`auto`/`light`/`dark`，默认 `auto` 跟随系统），`theme` 与其双写、存当前解析出的深浅档供启动路径直读；字体缩放只认 `fontScalePercentV3`，旧键 `fontScalePercent` / `fontScalePercentV2` 刻意不读、写了也无效；文件损坏或字段缺失时自动回退默认值，数值越界收敛到合法范围）。
+配置持久化在 `%USERPROFILE%\DevDesk\config.json`（共 11 键，与 `SettingsStore::save` 一一对应：`theme` / `themeMode` / `editorFontSize` / `logLevel` / `fontScalePercentV3` / `logRetentionDays` / `claudeProxyAutoStart` / `claudeProxyPort` / `windowEffect` / `sidebarCollapsed` / `enabledModules`。`themeMode` 是用户意图档（`auto`/`light`/`dark`，默认 `auto` 跟随系统），`theme` 与其双写、存当前解析出的深浅档供启动路径直读；字体缩放只认 `fontScalePercentV3`，旧键 `fontScalePercent` / `fontScalePercentV2` 刻意不读、写了也无效；文件损坏或字段缺失时自动回退默认值，数值越界收敛到合法范围）。
 
 ### 3.6 桌宠
 
@@ -131,7 +131,7 @@ DevDesk 是一个**本地优先**的开发者桌面工具集（C++ 原生应用�
 - **气泡对话**：左键点它立即说一句（语料表随皮肤变化，内置如「喵~」「在忙吗？」「摸鱼中…」）；待机时约每 60 秒随机一句（显示约 3 秒）；**逾期提醒**——平均约每 5 分钟一句「你有 N 条逾期任务」（无逾期时说「全部搞定，真棒！」，显示约 4 秒；数据来自仪表盘统计，Todo 模块关闭时回退静态语料）。
 - **右键菜单**（独立样式化菜单窗：圆角、跟随主题、带图标）：`关闭鼠标穿透` / `挂机穿透（点击透到下层；锁死后到设置页桌宠卡关闭）`（随状态切换）——开启后点击透到下层窗口、不打扰干活，但桌宠自身右键也点不中，**去设置页桌宠卡关「鼠标穿透（挂机）」即可恢复** / `换肤 ▸`（每次打开菜单都会重扫皮肤目录，新放的皮肤立即可选）/ `位置重置（回主屏右下角）` / `隐藏桌宠（本次会话；重启后恢复）` / `退出 DevDesk`。
 - **「退出 DevDesk」退出的是整个应用，不是只关桌宠**：点击先弹二段确认「将退出 DevDesk：断开代理、丢失未保存弹窗状态，确定？」，选「确认退出」才会结束全部进程。想暂时清静请选「隐藏桌宠（本次会话）」。
-- **皮肤**：内置两款程序化皮肤（robot/ghost）；第三方素材可按 `assets/pets/README.md` 的结构手动放入 `%APPDATA%\DevDesk\pets\<皮肤名>\`（`pet.json` + 帧图），即出现在换肤菜单与设置页桌宠卡的皮肤下拉中。设置页桌宠卡的换肤 / 位置重置即时生效，仅开关桌宠需重启。
+- **皮肤**：内置两款程序化皮肤（robot/ghost）；第三方素材可按 `assets/pets/README.md` 的结构手动放入 `%USERPROFILE%\DevDesk\pets\<皮肤名>\`（`pet.json` + 帧图），即出现在换肤菜单与设置页桌宠卡的皮肤下拉中。设置页桌宠卡的换肤 / 位置重置即时生效，仅开关桌宠需重启。
 - **与主窗独立**：主窗点 ✕ 隐藏到托盘后，桌宠照常运行；「隐藏桌宠（本次会话）」只关桌宠、主窗不受影响。但菜单里的「退出 DevDesk」是**整应用退出**（见上条）。
 - **已知限制**：主窗「最小化」期间桌宠动画会暂时暂停（还原本窗即恢复，见 [KNOWN_LIMITATIONS](KNOWN_LIMITATIONS.md) Windows-4）。
 
@@ -156,7 +156,7 @@ DevDesk 是一个**本地优先**的开发者桌面工具集（C++ 原生应用�
 ### 4.3 手工配置（不想让 DevDesk 碰 settings.json 时的备选）
 
 - **Base URL**：`http://127.0.0.1:<端口>`（端口看 Claude 页「运行中 :<端口>」状态）
-- **Token**：打开 `%APPDATA%\DevDesk\proxy_token.txt`（每次启动代理 / 重新生成时自动重写），或到设置页「Claude 代理」卡点眼睛按钮显形查看。应用**没有复制按钮**（无剪贴板 API），需手动抄录。文件内容形如：
+- **Token**：打开 `%USERPROFILE%\DevDesk\proxy_token.txt`（每次启动代理 / 重新生成时自动重写），或到设置页「Claude 代理」卡点眼睛按钮显形查看。应用**没有复制按钮**（无剪贴板 API），需手动抄录。文件内容形如：
 
   ```ini
   # DevDesk Claude 代理凭据（自动生成，请勿提交到版本控制）
@@ -175,20 +175,22 @@ DevDesk 是一个**本地优先**的开发者桌面工具集（C++ 原生应用�
 
 ## 5. 数据都在哪
 
-全部在本机 `%APPDATA%\DevDesk`（即 `C:\Users\<用户名>\AppData\Roaming\DevDesk`，`core/paths_win.cpp` 定义）：
+全部在本机 `%USERPROFILE%\DevDesk`（即 `C:\Users\<用户名>\DevDesk`，`core/paths_win.cpp` 定义；macOS 为 `~/DevDesk`，`core/paths_macos.cpp` 定义）——刻意放在用户主目录下（Finder / 资源管理器里默认可见），不再用系统惯例的 `%APPDATA%\DevDesk` / `~/Library/Application Support/DevDesk`：
 
 | 路径 | 内容 | 说明 |
 |------|------|------|
-| `%APPDATA%\DevDesk\notes\` | **所有笔记** | 普通 `.md` 文件树，可直接备份 / 同步 |
-| `%APPDATA%\DevDesk\devdesk.db` | SQLite 数据库 | Todo 列与任务、Profile 元数据、笔记索引（FTS5）与笔记标签、代理调用日志 |
-| `%APPDATA%\DevDesk\config.json` | 应用配置 | 共 11 键：`theme` / `themeMode` / `editorFontSize` / `logLevel` / `fontScalePercentV3` / `logRetentionDays` / `claudeProxyAutoStart` / `claudeProxyPort` / `windowEffect` / `sidebarCollapsed` / `enabledModules`（键义与旧键忽略规则见 [§3.5](#35-设置)） |
-| `%APPDATA%\DevDesk\keychain\` | 凭据密文 | `<service>\<account>.key`，DPAPI 加密（绑定当前 Windows 用户），存 API Key 明文的唯一位置 |
-| `%APPDATA%\DevDesk\logs\devdesk.log` | 运行日志 | 排查问题先看这里；调用日志的保留天数在设置页配置 |
-| `%APPDATA%\DevDesk\proxy_token.txt` | 代理凭据 | port + token，见 [§4.3](#43-手工配置不想让-devdesk-碰-settingsjson-时的备选) |
-| `%APPDATA%\DevDesk\pets\` | 桌宠数据与皮肤 | `pet_config.json`（皮肤 / 位置 / 穿透状态）+ 手动安装的第三方皮肤目录 |
+| `%USERPROFILE%\DevDesk\notes\` | **所有笔记** | 普通 `.md` 文件树，可直接备份 / 同步 |
+| `%USERPROFILE%\DevDesk\devdesk.db` | SQLite 数据库 | Todo 列与任务、Profile 元数据、笔记索引（FTS5）与笔记标签、代理调用日志 |
+| `%USERPROFILE%\DevDesk\config.json` | 应用配置 | 共 11 键：`theme` / `themeMode` / `editorFontSize` / `logLevel` / `fontScalePercentV3` / `logRetentionDays` / `claudeProxyAutoStart` / `claudeProxyPort` / `windowEffect` / `sidebarCollapsed` / `enabledModules`（键义与旧键忽略规则见 [§3.5](#35-设置)） |
+| `%USERPROFILE%\DevDesk\keychain\` | 凭据密文 | `<service>\<account>.key`，DPAPI 加密（绑定当前 Windows 用户），存 API Key 明文的唯一位置 |
+| `%USERPROFILE%\DevDesk\logs\devdesk.log` | 运行日志 | 排查问题先看这里；调用日志的保留天数在设置页配置 |
+| `%USERPROFILE%\DevDesk\proxy_token.txt` | 代理凭据 | port + token，见 [§4.3](#43-手工配置不想让-devdesk-碰-settingsjson-时的备选) |
+| `%USERPROFILE%\DevDesk\pets\` | 桌宠数据与皮肤 | `pet_config.json`（皮肤 / 位置 / 穿透状态）+ 手动安装的第三方皮肤目录 |
 | `%USERPROFILE%\.claude\settings.json` | Claude Code 用户配置（接管） | **代理运行期间** DevDesk 只写托管键（`ANTHROPIC_*` 等），其余键原样保留；停止代理 / 退出应用自动还原（见 [§4.2](#42-配置步骤推荐接管模式无需手抄-token)） |
 
-**备份**：拷贝整个 `%APPDATA%\DevDesk` 目录即可（keychain 密文只能在同一 Windows 用户账号下解密）。
+**备份**：拷贝整个 `%USERPROFILE%\DevDesk` 目录即可（keychain 密文只能在同一 Windows 用户账号下解密）。
+
+> **从旧位置升级**（数据根 2026-09-28 前是 `%APPDATA%\DevDesk` / `~/Library/Application Support/DevDesk`）：本次改动**不做自动迁移**——新位置从头开始，旧位置的数据**原样留在原处**（不被读取也不被删除）。想保留旧配置 / 笔记 / 看板，手动把旧目录里的 `config.json` / `notes/` / `devdesk.db`（连同 `-wal` / `-shm`）拷进新目录即可（拷贝前先退出 DevDesk）。
 
 ## 6. 常见问题
 

@@ -341,6 +341,10 @@ private:
 
 // ---------- 代理环境（ProxyRouter + InMemoryDb 内存库，不触碰 Keychain）----------
 
+// 显式测试 service（2026-09-30，理由同 test_streaming_proxy.cpp）：默认构造
+// 现按数据根派生，显式传名钉死隔离语义——绝不派生、不触碰真实 Keychain
+constexpr const char* kStressTestKeychainService = "DevDeskTestStreamingStress";
+
 // 模块 glue，keep-local（TIN-06）：InMemoryDb 基座 + ClaudeService 构造。
 struct StressEnv {
     test_support::InMemoryDb db;
@@ -349,7 +353,7 @@ struct StressEnv {
 
     bool start(const std::string& upstreamBase) {
         service = std::make_unique<module::claude::ClaudeService>(
-            db.handle());
+            db.handle(), kStressTestKeychainService);
         proxy = std::make_unique<platform::http::Server>("127.0.0.1", 0);
         router_ = std::make_unique<module::claude::ProxyRouter>(*service, *proxy);
         router_->setProfileProvider([upstreamBase]() {
@@ -601,7 +605,11 @@ private:
 // 卡/慢且偶发解析失败 → 返回 0 且把用例拖到 300s+，故弃用。
 // MinGW 下 psapi.h 在 NTDDI_VERSION >= WIN7 时把 GetProcessMemoryInfo
 // 宏转发到 kernel32 的 K32GetProcessMemoryInfo，默认链接集即可用，无需 -lpsapi。
-long long selfMemoryKb() {
+// [[maybe_unused]]：本函数唯一的调用点在 `#ifdef _WIN32` 块内（stressMemoryBody），
+// 非 Windows 编译时函数体走 `#else return -1`，无人调用 → clang
+// -Wunused-function 报错（GCC -Wall 不报此告警，故 Windows 侧从不复现）。
+// 保留函数而非按平台围 #ifdef：Windows 行为零变化，macOS 侧结构也零变化。
+[[maybe_unused]] long long selfMemoryKb() {
 #ifdef _WIN32
     PROCESS_MEMORY_COUNTERS pmc{};
     pmc.cb = sizeof(pmc);

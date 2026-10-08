@@ -4,6 +4,8 @@
 #include <core/paths.h>
 
 #include <filesystem>
+#include <set>
+#include <string>
 
 // macOS 平台守卫：本平台实现走 Security.framework，只能操作**真实 login keychain**
 // （keychain_macos.cpp 用 SecKeychainAddGenericPassword + nullptr 默认钥匙串，没有
@@ -52,6 +54,39 @@ REGISTER_TEST(keychain_delete_nonexistent, "keychain: delete nonexistent ok", {
     return true;
 })
 
+// 空 service / 空 account 在 macOS Keychain API 里是**通配**（serviceLength /
+// accountLength 传 0 = 匹配任意值），于是「空 account」会被静默当成「随便给我
+// 一条」——load 返回**别人**的密钥、delete 删掉**别人**的条目。本仓库空 account
+// 有确切含义 =「该 profile 没有密钥」（反向同步「缺席即清空」会清空
+// keychain_account），此时必须回答「没有这条」。见 keychain_macos.cpp 的
+// 「空 service / 空 account 守卫」段。
+// 断言顺序是**故意的**：store 放最前。守卫被摘掉时它先红（fail-fast），后面的
+// load / delete 断言就不再执行 —— 否则 load 会真的从用户真实钥匙串里读出一条
+// 任意密钥、delete 更会通配删掉真实条目（实测：摘掉守卫后 loadSecret("","")
+// 返回 Ok，即整库任取一条）。摘守卫的代价只有一条：往
+// DevDeskTestBlankIdentity 这个测试专用 service 写一条空 account 条目（缺陷本身
+// 的行为），可在「钥匙串访问」里手工删除。
+#if defined(__APPLE__)
+REGISTER_TEST(keychain_blank_identity_no_wildcard,
+              "keychain: 空 service/account 不通配（macOS）", {
+    // store：无身份可写 → 显式拒绝（不通配删旧，也不写查不回来的孤儿条目）
+    auto stored = platform::keychain::storeSecret("DevDeskTestBlankIdentity", "",
+                                                  "sk-blank-identity");
+    DOCTEST_CHECK(stored.isFail());
+
+    // load：空 account / 空 service / 两者皆空 → 一律没这条，不能命中任意条目
+    DOCTEST_CHECK(platform::keychain::loadSecret("DevDeskTestBlankIdentity", "")
+                      .isFail());
+    DOCTEST_CHECK(platform::keychain::loadSecret("", "claude:blank").isFail());
+    DOCTEST_CHECK(platform::keychain::loadSecret("", "").isFail());
+
+    // delete：无身份 = 没有这条 → 幂等 ok（不允许落成通配删除）
+    DOCTEST_CHECK(
+        platform::keychain::deleteSecret("DevDeskTestBlankIdentity", "").isOk());
+    return true;
+})
+#endif
+
 REGISTER_TEST(keychain_delete_secrets_not_in,
               "keychain: deleteSecretsNotIn 只留 keep 集合", {
     SKIP_ON_MACOS_KEYCHAIN();   // 写 3 条 + 枚举整库 → macOS 跳过
@@ -64,11 +99,15 @@ REGISTER_TEST(keychain_delete_secrets_not_in,
         service, "claude:2", "sk-keep-2").isOk());
     DOCTEST_REQUIRE(platform::keychain::storeSecret(
         service, "claude:999", "sk-orphan").isOk());
+    // P0 护栏②（2026-09-30）：白名单前缀（claude:）之外的条目——
+    // 「同 service 下未来别的用途」的形态，扫描必须不删、不计数
+    DOCTEST_REQUIRE(platform::keychain::storeSecret(
+        service, "notes:theme", "dark").isOk());
 
     auto r = platform::keychain::deleteSecretsNotIn(
         service, {"claude:1", "claude:2"});
     DOCTEST_REQUIRE(r.isOk());
-    DOCTEST_CHECK_EQ(r.value().size(), 1u);
+    DOCTEST_CHECK_EQ(r.value().size(), 1u);   // 只删 claude:999
 
     // 孤儿被删，保留的仍可读
     DOCTEST_CHECK(platform::keychain::loadSecret(service, "claude:999").isFail());
@@ -78,9 +117,41 @@ REGISTER_TEST(keychain_delete_secrets_not_in,
     auto k2 = platform::keychain::loadSecret(service, "claude:2");
     DOCTEST_REQUIRE(k2.isOk());
     DOCTEST_CHECK_EQ(k2.value(), std::string("sk-keep-2"));
+    // 前缀不匹配的条目原样保留（也没被算进 deleted）
+    auto other = platform::keychain::loadSecret(service, "notes:theme");
+    DOCTEST_REQUIRE(other.isOk());
+    DOCTEST_CHECK_EQ(other.value(), std::string("dark"));
 
     platform::keychain::deleteSecret(service, "claude:1");
     platform::keychain::deleteSecret(service, "claude:2");
+    platform::keychain::deleteSecret(service, "notes:theme");
+    return true;
+})
+
+// P0 护栏②（2026-09-30）：各平台扫描删除分支共用的白名单决策函数。
+// 平台实现里只是「扫描到 account → 交给它决策」，决策语义在此逐条钉死；
+// macOS 的真实扫描用例不可跑（真实 login keychain 不可隔离，见文件头），
+// 这里是该守卫在 macOS 上唯一可执行的断言面。
+REGISTER_TEST(keychain_orphan_sweep_prefix_whitelist,
+              "keychain: 孤儿清理白名单前缀（非 claude: 一律不删）", {
+    using platform::keychain::deletableOrphanAccount;
+    using platform::keychain::shouldDeleteOrphan;
+
+    // 白名单前缀命中
+    DOCTEST_CHECK(deletableOrphanAccount("claude:1"));
+    DOCTEST_CHECK(deletableOrphanAccount("claude:"));
+    // 非白名单形态一律不删
+    DOCTEST_CHECK(!deletableOrphanAccount("notes:theme"));
+    DOCTEST_CHECK(!deletableOrphanAccount("claude"));    // 少冒号
+    DOCTEST_CHECK(!deletableOrphanAccount("Claude:1"));  // 大小写敏感
+    DOCTEST_CHECK(!deletableOrphanAccount(""));
+
+    // 决策函数：keep 集合内 → 不删（无论前缀）；keep 外只有白名单前缀才删
+    const std::set<std::string> keep{"claude:1"};
+    DOCTEST_CHECK(!shouldDeleteOrphan("claude:1", keep));     // 在 keep 里
+    DOCTEST_CHECK(shouldDeleteOrphan("claude:999", keep));    // 白名单孤儿 → 删
+    DOCTEST_CHECK(!shouldDeleteOrphan("notes:theme", keep));  // 前缀外 → 保留
+    DOCTEST_CHECK(!shouldDeleteOrphan("notes:theme", {}));    // 空 keep 也不动前缀外
     return true;
 })
 

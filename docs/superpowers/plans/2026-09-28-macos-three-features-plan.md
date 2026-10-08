@@ -2,18 +2,20 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: 用 superpowers:executing-plans 或 subagent-driven-development 按任务逐条执行；步骤用 `- [ ]` 复选框跟踪。
 
+> **执行状态补记（2026-09-28）**：本计划的 M0-1 / M1 / M2 / M3 已实装并落 EUI-NEO 本地 main（M0-2 的 `__APPLE__` 分支曾在 `7164d55` 被顺带删除，恢复进行中），**§10.2 的 Mac 实机验收未执行**；本文件的 `- [ ]` 复选框**未回填**，实施状态以 spec `2026-09-28-macos-three-features-design.md` 文首状态行为准。另：本计划成稿于 Windows 本机，文中「本机无 mac SDK」一类口径自 2026-09-28 起已失效（项目已搬回 macOS 本机）——macOS 侧构建是否通过、测试基线多少，见 `DevDesk/TODO.md`「macOS 构建环境」段。
+
 **Goal:** 补齐 DevDesk 在 macOS 的三项平台能力：**M1** 托盘左右键分流 + styled 自绘菜单（与 Windows 一致，原生 NSMenu 仅降级）；**M2** 窗口磨砂三档（off/translucent/frosted）可用、失败保留 Transparent 降级；**M3** 桌宠三项 mac 等价能力（不进 Dock/⌘Tab、原生右键菜单、sleep/wake 电源事件）。全部走 **EUI-NEO 上游线**（修改 `../EUI-NEO/`）；DevDesk 侧除降级文案平台化与收尾版本 bump 外零改动（D-1、D-4）。
 
 **Architecture:** 四层（main → modules → core → platform → EUI-NEO）。本批在 **EUI-NEO** 侧补平台真实现：M0 打通两处 macOS 原生句柄供给（GLFW `glfwGetCocoaWindow`）；M1 在 `tray_bridge.c` 的 `EUI_TRAY_APPKIT` 段（**唯一 mac 后端**，`3rd/tray` 的 `TRAY_APPKIT` 分支 EUI 构建不编译，§13-6 已关案）给状态栏按钮挂 action + `sendActionOn:` 分流，钩子 `eui_tray_menu_requested` 复用既有 DSL→DevDesk 登记链；M2/M3 新建四个 `*_macos.mm`（ObjC++ 平台实现，接口签名与 stubs 完全一致，stub 收窄给非 Apple 平台），顶层 CMake 四族 `if(WIN32)/else()` 拆 `elseif(APPLE)` + `if(APPLE)` 守卫下 `enable_language(OBJCXX)`。DevDesk 侧：`settings_config.cpp` 降级文案平台化（§5.3 案 B 默认，零跨仓依赖）+ 收尾 `DEVDESK_EUI_NEO_MIN_REV` bump 两处同步。
 
-**Tech Stack:** C++20 / CMake 4.3.3 + Ninja + MSYS2 MinGW64 + ccache（本机验证）/ Objective-C++（`.mm` ×4 首进 EUI 编译链，仅 Apple 平台编译）/ AppKit（`NSVisualEffectView`、`NSStatusItem`+`NSStatusBarButton`、`NSMenu popUpMenuPositioningItem:atLocation:inView:`、`NSWorkspace` 通知）/ GLFW 3.4 内置 `glfwGetCocoaWindow`/`glfwGetCocoaView`（`3rd/glfw` 已随 `glfw` target 提供头文件，两个 M0 文件已 include `<GLFW/glfw3native.h>`）。
+**Tech Stack:** C++20 / CMake 4.3.3 + Ninja + MSYS2 MinGW64 + ccache（成稿时的本机 = Windows 侧验证环境；2026-09-28 起本机是 macOS/arm64，见文首补记）/ Objective-C++（`.mm` ×4 首进 EUI 编译链，仅 Apple 平台编译）/ AppKit（`NSVisualEffectView`、`NSStatusItem`+`NSStatusBarButton`、`NSMenu popUpMenuPositioningItem:atLocation:inView:`、`NSWorkspace` 通知）/ GLFW 3.4 内置 `glfwGetCocoaWindow`/`glfwGetCocoaView`（`3rd/glfw` 已随 `glfw` target 提供头文件，两个 M0 文件已 include `<GLFW/glfw3native.h>`）。
 
 **Spec:** `docs/superpowers/specs/2026-09-28-macos-three-features-design.md`（**V2**，commit `8a5a8b2`，265 行）—— 计划与 spec 逐条一致；两者冲突以 spec 为准并回报。关联 spec：`2026-09-20-devdesk-design.md`（权威）、`2026-09-22-eui-window-frost-design.md`（磨砂全链）、`2026-09-22-desktop-pet-design.md`（桌宠）。
 
 ## Global Constraints
 
 - **执行方式**：本批每个 M 的 EUI-NEO 改动走「隔离 worktree 产 patch → 非隔离线 apply + 编译（已有隔离线证据时免重编）+ 原子 commit」；DevDesk 侧改动（文案、收尾 bump）走 DevDesk 侧 worktree 线。**主工作树禁跑构建**；涉及编译/测试的子任务必须 `isolation: "worktree"`。
-- **命令**：DevDesk 构建 + 定向测试用 `bash scripts/build-test-run.sh --no-run --filter <子串>`（worktree 首建自动 configure，`EUI_NEO_DIR` 自动解析；禁全量重建、禁全量套件）。EUI-NEO 侧本机可编译的文件（M0 两个 `.cpp`、M1 的 `tray_bridge.c` Win 分支）以隔离线 eui-mock 全量编译 + 定向用例为验证；**mac 专属段（`__APPLE__` 分支 / `.mm`）本机无 mac SDK 编译不到，编译正确性只留实机验证**（spec §12-5），不得谎称本机已编译。
+- **命令**：DevDesk 构建 + 定向测试用 `bash scripts/build-test-run.sh --no-run --filter <子串>`（worktree 首建自动 configure，`EUI_NEO_DIR` 自动解析；禁全量重建、禁全量套件）。EUI-NEO 侧本机可编译的文件（M0 两个 `.cpp`、M1 的 `tray_bridge.c` Win 分支）以隔离线 eui-mock 全量编译 + 定向用例为验证；**mac 专属段（`__APPLE__` 分支 / `.mm`）成稿时（Windows 本机）无 mac SDK、编译不到，编译正确性只留实机验证**（spec §12-5），不得谎称本机已编译。（2026-09-28 补记：本机已切回 macOS，「无 mac SDK」的前提失效——macOS 侧可否编译以本机构建结果为准，见 `DevDesk/TODO.md`「macOS 构建环境」段。）
 - **不抛 C++ 异常**：本批不引入任何新的 C++ 异常路径；`.mm` 内 `@try/@catch` 仅用于兜底 AppKit/ObjC 异常（Tahoe 风险门），不是 C++ 异常。
 - **平台纪律**：平台实现按文件拆分（`*_macos.mm`），业务代码零平台宏；新实现接口签名与 stubs 逐字一致。
 - **代码注释一律中文**（技术专有名词如 `NSVisualEffectView` 保留英文）；行尾 LF。
@@ -828,7 +830,7 @@ git -C D:/project/gui/EUI-NEO commit -m "feat(macos): 桌宠三项平台实现�
 3. **非隔离 agent**（不设 `isolation`）在 `D:/project/gui/EUI-NEO` 主树：`git apply --check <patch>` → `git apply` → 编译（隔离线已证编译面时免重编，只做 `--check` + 必要时 EUI-NEO 独立 configure 冒烟；**禁止在 DevDesk 主工作树跑构建**、禁止碰 DevDesk 任何文件）→ 原子 commit（显式 pathspec，commit message 注明需求来源「DevDesk 需要 X」）。
 4. 主会话读 diff 审计：patch 内容与任务声明一致、无夹带；EUI-NEO main tip 推进；`git worktree remove` + `prune` 清理隔离 worktree，**不留残留**。
 5. DevDesk 侧改动（M2 文案 / 收尾 bump）**不走本条线**：由 DevDesk 侧隔离 worktree 子任务执行（普通交付流水线：worktree 子任务 → 原子 commit → 主会话审计合并），红线禁止非隔离线 agent 碰 DevDesk（其工作目录就是主树）。
-6. EUI-NEO 本地 main 领先 origin 的既有 ~70 commits 未 push——本批继续落本地 main，与 push 决策解耦（§13-3）。
+6. EUI-NEO 本地 main 领先 origin 的既有提交**永不 push**（2026-09-28 用户决策，origin/main 停在 v0.6.0）——本批继续落本地 main，与 push 无关（§13-3）。
 
 ## 测试
 
@@ -839,7 +841,7 @@ git -C D:/project/gui/EUI-NEO commit -m "feat(macos): 桌宠三项平台实现�
 - **Windows 回归（必须全绿，每任务）**：M0-M3 全部为 `__APPLE__` 分支追加或新建 mac 文件（`enable_language(OBJCXX)` 有 `if(APPLE)` 守卫），Win/Posix 路径字节不动；eui-tray / window_effect / pet 相关定向用例 + configure 冒烟。
 - 隔离 agent 的 eui-mock 构建验证（§7-1）：证明消费 API 匹配（M0/M1 的 Win 编译段真编译；mac 专属段覆盖不到，见下）。
 
-### Mac 实机验收清单（本机无 mac → 排期到用户侧；spec §10.2 原文）
+### Mac 实机验收清单（spec §10.2 原文；**截至 2026-09-28 未执行**——成稿时本机无 mac，现本机已是 macOS，待排期）
 
 | 任务 | 验收项 |
 |------|--------|

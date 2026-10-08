@@ -15,8 +15,11 @@
 //     数组；缺失回退内置语料（换肤可换性格）
 #pragma once
 
+#include <algorithm>
+#include <cmath>
 #include <filesystem>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "core/result.h"
@@ -25,6 +28,32 @@ namespace module::pet {
 
 // 内置占位皮肤名（pet_config 的 skinName 默认值与此一致）
 inline constexpr const char* kDefaultSkinName = "robot";
+
+// 帧尺寸合法域（PAB-05 数字对齐口径：parsePetSkinJson 的帧尺寸校验与显示
+// 大小缩放共用同一条界——原两处裸字面量 16/512 收成命名常量单源）
+inline constexpr int kMinFrameSize = 16;
+inline constexpr int kMaxFrameSize = 512;
+
+// 显示大小缩放后的帧尺寸（纯函数，「档位 → 窗口尺寸换算」单测断言用）：
+// **等比单因子** f = min(scale, kMaxFrameSize/w, kMaxFrameSize/h)（审计 F1，
+// 2026-09-30）——上界按比例收敛：缩放后长宽比恒等帧原始宽高比，sprite
+//（ui.image 未设 imageFit = 默认 Cover）恰好贴合零裁切；不越界时 f=scale，
+// 其余档位/皮肤行为不变。旧实现逐维独立钳 [16,512] 会破宽高比：kirari
+// 360×480 大档 540×720→512×512（0.75→1.0），Cover 中心裁掉头脚各 12.5%，
+// 已废弃。下界不钳：16 是皮肤解析的帧域下限（本文件 parsePetSkinJson），
+// 16×0.75=12 的小窗无害且等比优先。窗口单位 = 点（GLFW windowSize 同
+// 口径），不乘 Retina contentScale
+inline std::pair<int, int> scaledFrameSize(int frameWidth, int frameHeight,
+                                           double scale) {
+    if (frameWidth <= 0 || frameHeight <= 0 || scale <= 0.0) {
+        return {frameWidth, frameHeight};  // 非法入参防御（上游已保证合法）
+    }
+    const double f = std::min(
+        {scale, static_cast<double>(kMaxFrameSize) / frameWidth,
+         static_cast<double>(kMaxFrameSize) / frameHeight});
+    return {static_cast<int>(std::round(frameWidth * f)),
+            static_cast<int>(std::round(frameHeight * f))};
+}
 
 struct PetSkin {
     std::string name;                 // 皮肤名（= 目录名）

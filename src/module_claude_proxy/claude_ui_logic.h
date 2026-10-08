@@ -32,23 +32,36 @@ std::string modelsSummary(const Profile& p);
 // 提取不到（无 BASE_URL）→「导入 <日期>」；用户可改
 std::string suggestImportName(const std::string& baseUrl);
 
-// ---- 共享配置片段（批 2，设计 §2.10；纯函数，无 IO）----
-
-// 片段 K 键集：extra_env 全部键经 applyEnvAliases 别名归一（与写进 live 的
-// 键形、服务层 sharedEnvKeysFor 同口径；空串/非法 JSON → 空集，读路径容错）。
-// 片段赢预览的置灰行 / 新增同键拦截的判定源
-std::vector<std::string> sharedFrozenKeys(const SharedConfig& sc);
-
-// 键名归一（同写侧口径）：别名 → 官方键名，未命中透传原名。
-// 行键与 K 比对前先归一——「用户敲了别名、片段里是官方名」也算同键
-std::string normalizedEnvKey(const std::string& k);
+// ---- 共享配置片段（批 2 建立；advanced-json-editor §8.2 拆除 frozenKeys
+// ---- 家族：片段不再携带 env 键，sharedFrozenKeys/normalizedEnvKey/keyIn
+// ---- 随 UI 冻结视觉一同移除，findSharedById 保留）----
 
 // 片段按 id 查找（快照定位；未绑定/不存在 → nullptr）
 const SharedConfig* findSharedById(const std::vector<SharedConfig>& configs,
                                    int64_t id);
 
-// 键集成员判定（小向量线性扫，片段键集 ≤64）
-bool keyIn(const std::vector<std::string>& keys, const std::string& k);
+// 「复制配置」序列化（2026-09-30 batch-fix C §4.2② 建立；advanced-json-editor
+// §6 升级为**完整 settings.json 形态**，已拍板②；纯函数，无 IO）：
+// env 域复用 buildDirectEnv 纯函数（BASE_URL 去尾斜杠 / 密钥键三态 / 槽位 /
+// extra_env 别名归一——与「运行」临时 settings 同一条管线）；非 env 域追加
+// effectiveExtraSettingsJson(p.extraSettingsJson, fragmentJson) 并入顶层
+//（片段叠加 + 片段赢，advanced-json-editor §4.2）。fragmentJson = 所绑片段的
+// extra_settings_json 原文（JSON 域，自 cachedSharedConfigs_ 快照取；空串 =
+// 未绑定）。序列化 = stringify(pretty)——完整形态 = 用户可直接粘贴进
+// settings.json 的文本（键序为字典序，D-2 同一条通道）。
+// keyPlaceholder = 凭据键的占位值："sk-ant-***<尾4>"（与详情页 apiKeyHint 同一
+// 脱敏口径，已裁决 §5②）；**不导明文 key**（剪贴板是跨应用共享面，§5① 裁决）；
+// 传空串 → buildDirectEnv 空值不写凭据键，导出即无 token 键（Keychain 读不到
+// 的兜底形态）。序列化失败（理论不可达）→ 返回空串，调用方按失败处理。
+std::string buildProfileExportJson(const Profile& p,
+                                   const std::string& fragmentJson,
+                                   const std::string& keyPlaceholder);
+
+// 「复制配置」toast 副文案（advanced-json-editor §6：完整形态升级后同步；
+// 常量落 logic 层供无头断言，模块层直出）
+inline constexpr const char* kCopyConfigToastSubtitle =
+    "已把该 Profile 的完整 settings.json 配置（env + 高级属性）导出到剪贴板"
+    "（API Key 为占位符，不含明文）";
 
 // ---- 调用记录弹窗常量（审计 [11]）----
 //

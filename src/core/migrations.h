@@ -287,6 +287,36 @@ inline const Migration kClaudeFailoverColumns = {
     )"
 };
 
+// Profile 高级设置 JSON + 片段重构（version 11，2026-09-30 advanced-json-editor
+// 设计 §3.2/§8.3）
+//   - claude_profiles.extra_settings_json：settings.json **除 env 外全部顶层属性**
+//     （model / permissions / statusLine / hooks / …）整体作为一份原始 JSON 存储，
+//     空串 = 未配置（设计 D-1：只存原文，不拆字段）
+//   - claude_shared_configs.extra_env → extra_settings_json：共享片段从「env 装饰
+//     层」重构为「高级属性 JSON 预设」（同设计 §8）。旧片段 env 数据**弃用不转换**
+//     （设计 §8.3）：env 键值对（如 ANTHROPIC_BASE_URL）不是合法的非 env 属性
+//     JSON——把它当 settings.json 顶层属性并入，会把回环地址/占位 token 顶到
+//     root 层写进 live 文件，是注入垃圾不是迁移；「尽力转换」同样做不了（env 键
+//     没有 settings.json 对映规则）。按项目「No migration, no back-compat」口径
+//     直接 DROP COLUMN，用户按新语义重录
+//   - DROP COLUMN 需 SQLite ≥3.35（3.35.0 才加入；3.25 是 RENAME COLUMN，不可
+//     混写）——与项目既有 INSERT … RETURNING 要求同一条下限
+//    （profile_repository.cpp createProfile 注释），两端平台 SQLite 均 ≥3.45。
+//     extra_env 列无索引/约束/触发器（v6 建表核），可安全删除
+// 版本号 11：v1..v10 已落库，顺延为 v11
+// 注意：ALTER TABLE ADD/DROP COLUMN 无 IF NOT EXISTS，靠 schema_version
+// 版本号保证只执行一次（runMigrations 事务内，失败整体回滚）。
+inline const Migration kClaudeExtraSettingsJson = {
+    .version = 11,
+    .description = "claude profiles add extra settings json; shared configs "
+                   "rework to non-env settings json (old fragment env data discarded)",
+    .sql = R"(
+        ALTER TABLE claude_profiles ADD COLUMN extra_settings_json TEXT NOT NULL DEFAULT '';
+        ALTER TABLE claude_shared_configs ADD COLUMN extra_settings_json TEXT NOT NULL DEFAULT '';
+        ALTER TABLE claude_shared_configs DROP COLUMN extra_env;
+    )"
+};
+
 // 所有 migrations 的权威列表（顺序敏感，必须按 version 升序）
 inline const std::vector<core::data::Migration>& all() {
     static const std::vector<core::data::Migration> kMigrations = {
@@ -300,6 +330,7 @@ inline const std::vector<core::data::Migration>& all() {
         kTodoArchiveColumnKind,
         kClaudeProfileDialectOverride,
         kClaudeFailoverColumns,
+        kClaudeExtraSettingsJson,
     };
     return kMigrations;
 }

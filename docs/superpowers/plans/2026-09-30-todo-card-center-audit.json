@@ -1,0 +1,144 @@
+{
+  "meta": {
+    "subject": "feat/todo-card-text-center @ 69be5ec —— todo 看板卡片内文本水平/垂直居中（独立只读审计）",
+    "date": "2026-09-30",
+    "auditor": "独立只读审计 agent（非实现者，未参与本轮改动；唯一写动作 = 本文件）",
+    "method": "git diff master...feat/todo-card-text-center 逐 hunk 核对（3 文件，+170/-37）；三方消费点 grep 全量扫描；EUI-NEO 上游渲染源码（core/runtime/runtime_render.h、core/render/text.cpp、core/render/text_types.h）追 horizontalAlign 实现机制；master 版 drawCard 与分支版逐条件对照查 chip 重构漂移；分支 worktree（.claude/worktrees/todo-card-center）实跑测试二进制（定向 3 组 + 全量套件）",
+    "code_base": "DevDesk master 5616186 + feat/todo-card-text-center 69be5ec（父提交即 master tip，单提交分支）",
+    "note": "file:line 为分支 worktree @ 69be5ec 审计时点快照"
+  },
+  "claimed_goal_verification": {
+    "组高组顶公式": "已核实。cardContentGroupH(true)=18+12+22=52、(false)=18（todo_ui_logic.h:626-631）；cardContentGroupTop=(84-组高)/2 → 16/33（todo_ui_logic.h:633-636）。kCardHeight=84（todo_ui_logic.h:29）、kChipHeight=22（todo_ui_logic.h:602）均实测存在",
+    "标题水平居中": "已核实。框 x=22、宽=width-44（总留白 44 不变，框中心=卡中心，todo_ui_board.cpp:603-604）+ horizontalAlign Center（todo_ui_board.cpp:609）。机制在 EUI 侧核实：runtime_render.h:1019-1022 Center 时锚点=frame 中心，text.cpp:1955-1957 lineX -= line.width*0.5 → 字形中心=框中心。『home 统计卡同款先例』实存（home_module.cpp:120/134/147）",
+    "chip 行/完成角标不拽歪": "已核实。chip x 仍从卡内 16 起算、推进算式逐项同 master（todo_ui_board.cpp:615-620）；.done x=width-36 不动，仅 y 随组顶（todo_ui_board.cpp:625）",
+    "拖拽 ghost 同款": "已核实。drawDragGhost 消费 kCardTitleBoxInset/cardContentGroupTop(false)/kCardTitleLineH + Center（todo_ui_board.cpp:703-710），副本无 chips=无 chip 卡形态，与注释口径一致",
+    "三方同源": "已核实。新常量/函数的全部消费点 grep 仅三处：drawCard、drawDragGhost、test_todo_ui.cpp:1119-1180"
+  },
+  "dimensions": {
+    "1_correctness": {
+      "status": "已核（1 Low）",
+      "conclusion": "几何公式各形态自洽；唯一保留项是 ✓ 角标避让口径（F1）",
+      "evidence": [
+        "有 chip：组[16,68] 中心 42=84/2 精确；无 chip：组[33,51] 中心 42 精确；chipY=y+16+18+12=y+46、chip 底 68<84（todo_ui_board.cpp:596）",
+        "多 tag 溢出策略=不换行、放不下 break/skip（tag 循环 chipX+tw>width-12 即 break、+N more 放不下不画，todo_ui_board.cpp:572-588）——与 master 逐条件相同；chip 行恒单行，组高与 chip 数无关，自洽",
+        "due chip 被跳过（dueW<24）而 tags 在场的窄卡：chipRow 由 pendingChips 实际内容推导（todo_ui_board.cpp:594），存在性与绘制同源不分叉——『先算后画』把这类边界自动收敛",
+        "标题框宽=width-44 与 master 相同；卡宽<44 时框宽为负属列宽无下限的既有暴露面，本次未扩大（见 F5）",
+        "✓ 避让：框级重叠从 master 8px 扩到 14px；字形级清空带收窄约 14px（F1）"
+      ]
+    },
+    "2_regression_surface": {
+      "status": "已核（1 Low 注释口径）",
+      "conclusion": "绘制面零波及；头文件增量无编译单元波及；一处既有测试注释过期（F2）",
+      "evidence": [
+        "diff hunk 仅：include <vector>、drawCard、drawDragGhost 三处；drawHeader（含搜索框/逾期入口按钮/列操作）、drawColumn/drawColumnContent、filterBySearch（todo_ui_board.cpp:299 搜索命中过滤）、列头 chrome 均未触碰",
+        "todo_ui_logic.h 新增 4 constexpr + 2 inline 函数，纯增量；includers 全集=todo_module.cpp / todo_ui_common.h / todo_ui_board.h / todo_dialogs.h / test_ui_modern.cpp / test_font_em_layout.cpp / test_todo_ui.cpp，全量套件实跑通过 → 编译与行为零波及；无符号名冲突（grep 全仓新名仅 3 个消费文件）",
+        "todo_probes.cpp 自锁常量（kCardHeight 84/kCardGap 8/kColumnHeaderHeight 56/kColumnContentInset 16，todo_probes.cpp:71-77）无一被本提交改动，probe 面不受影响",
+        "既有测试 test_font_em_layout.cpp:108-112 的不等式仍成立（标题顶→chip 顶带宽 30px 不变：44-14=46-16），不会红；但其注释已过期（F2）"
+      ]
+    },
+    "3_platform_symmetry": {
+      "status": "已核",
+      "conclusion": "纯逻辑像素，无平台条件量",
+      "evidence": [
+        "新增常量/函数全为 float 字面量与纯算式，diff 零平台宏（grep _WIN32/__APPLE__ 零命中）",
+        "eui::HorizontalAlign 为 EUI-NEO core 跨平台枚举（core/render/text_types.h:10），渲染路径平台无关",
+        "headless 几何断言在 compose 逻辑像素空间断言，不依赖 dpi/平台"
+      ]
+    },
+    "4_silent_failure_surface": {
+      "status": "不适用，已核",
+      "conclusion": "纯渲染改动，未新增/触及任何错误路径；无吞错、无 clamp 兜底、无默认值回退面",
+      "evidence": [
+        "diff 无 Result/日志/分支守卫变化；chip『放不下就跳过』为 master 既有策略且注释明示（详情弹窗兜底），非本次引入",
+        "唯一结构性新增=per-card per-frame 的 std::vector<PendingChip> 堆分配（≤3 项）；同函数每帧本就构造多个 std::string id，非新增量级，不构成失效面"
+      ]
+    },
+    "5_test_effectiveness": {
+      "status": "已核（1 Info 缺口 + 1 Info 证据口径）",
+      "conclusion": "断言结构有效、三形态双轴全覆盖，实测绿；done 卡角标无断言（F3）、变异证据为转述（F4）",
+      "evidence": [
+        "实测（worktree 内构建产物 build/tests/devdesk_tests，构建时间 01:29 > 提交 00:52）：『卡内文本居中』1/1 绿；『todo_ui』组 49/49 绿；『font-em』组 4/4 绿；全量 Total 853 / Passed 847 / Failed 0、exit 0（差值 6 条为门控跳过，无 [FAIL] 行）",
+        "三形态（纯标题/截止 chip/tags chip）每形态均断言两轴：水平=horizontalAlign==Center 机制位（CHECK_EQ，枚举回退 Left 即红）+ 框中心-卡中心 ≤1px；垂直=组中点-卡中心 ≤1px + 组顶==cardContentGroupTop(同源等式)（test_todo_ui.cpp:1147-1180）",
+        "防旁路组合正确：组顶等式钉『用了同源函数』，≤1px 中心断言钉『算式本身正确』——改函数+改实现或绕开函数写死，二者互补必红",
+        "chip 拽歪防护：chip 间距等式（chipBg.y-标题底==12，test_todo_ui.cpp:1171-1172）+ chip x 等式（==16，:1175）；chip 缺失由 REQUIRE(chipBg!=nullptr) 钉住",
+        "变异自检复算：groupTop→14 时 chip 卡垂直偏差恰 2px、纯标题卡 19px；x→16 无 Center 时水平偏差恰 6px——均 >1px 阈值（2x/6x/19x），判定稳健无浮点噪声风险（16/33/42 均精确值）；机制位断言在删 horizontalAlign 行时必红（默认 Left）。数值关系核实无误，但变异构建本身未由审计复跑（F4）"
+      ]
+    },
+    "6_documentation_consistency": {
+      "status": "已核（2 Low/Info 口径项）",
+      "conclusion": "commit message 断言逐条核实为真，chip 重构零行为漂移；仅『右缘避开完成角标』口径过强（F1）+ 既有测试注释过期（F2）",
+      "evidence": [
+        "commit message 中『52/18→16/33』『常量落 todo_ui_logic.h』『drawCard/拖拽副本同源消费』『chip 行/角标 x 不动』『先算后画单一清单』『无头断言三形态』逐条与代码一致",
+        "chip『先算后画』重构行为漂移核查：push 条件与 master 绘制条件逐条相同（due: has_value && dueW>=24；tag: shown<2 && chipX+tw<=width-12；more: tags>shown && chipX+moreW<=width-12）；ids/颜色/宽度/顺序/UI 文档序（title→due→tags→more→done）全同——零漂移，原两处条件本就一致，重构只消除未来漂移面，无未覆盖的行为变化",
+        "两处口径偏差见 F1（commit+代码注释『右缘仍避开完成角标』）与 F2（test_font_em_layout.cpp 注释）"
+      ]
+    }
+  },
+  "findings": [
+    {
+      "id": "F1",
+      "severity": "Low",
+      "dimension": "1_correctness / 6_documentation",
+      "file": "src/module_todo/todo_ui_board.cpp",
+      "line": "598-601, 603-604, 622-634（commit message 同句）",
+      "issue": "『框对称化 x=22（总留白 44 不变，右缘仍避开完成角标）』口径过强：框右缘从 master 的 width-28 移到 width-22，与 ✓ 角标框（width-36 起）的框级重叠由 8px 扩大到 14px；字形级清空带相应收窄约 14px——master 左对齐下标题宽需 >卡宽-46px 才触及 ✓ 字形区，居中后 >卡宽-60px 即可触及。即『仍避开』仅对中短标题成立",
+      "impact": "done 卡（标题 0.6 opacity）上长标题末字形可能与 ✓ 图标字形相邻/相接，纯视觉；不阻塞合并，但注释与 commit 口径会误导后续维护者以为该避让是无条件的",
+      "suggestion": "三选一：① 软化注释为『总留白 44 不变；✓ 避让对标题宽 ≲卡宽-60px 成立，长标题由 0.6 opacity + 概率低兜底』；② done 时标题框右缘不对称收缩（width-36-右侧留白）；③ 补一条 done 卡标题/✓ 几何断言",
+      "confidence": "高（框级数值精确；字形级阈值基于 ✓ 图标宽约 12px 的估算，量级可靠）"
+    },
+    {
+      "id": "F2",
+      "severity": "Low",
+      "dimension": "6_documentation / 2_regression",
+      "file": "tests/test_modules/test_font_em_layout.cpp",
+      "line": "17-18, 108-109",
+      "issue": "注释仍写『drawCard：title y=14 lineHeight 18、chip y=44、卡高 84』，本次改动后实际为 title y=16/33、chip y=46；注释与实现漂移",
+      "impact": "断言本身仍有效（14+ratio*字号≤44 是比新布局 16+ratio*字号≤46 更严的同一不等式，30px 带宽不变，不会红也不会假绿），但下一位维护者按注释理解几何会得出错误结论",
+      "suggestion": "随下一批捎带刷新注释（一行）：『title y=16/33（组顶）、chip y=46、带宽 30 不变』",
+      "confidence": "高"
+    },
+    {
+      "id": "F3",
+      "severity": "Info",
+      "dimension": "5_test_effectiveness",
+      "file": "tests/test_modules/test_todo_ui.cpp",
+      "line": "1116-1188（用例三形态均未设 completedAt）",
+      "issue": "done 卡形态无断言：.done 角标 y 随组顶移动（todo_ui_board.cpp:625）是无测试钉住的行为；同函数内 .done 的 lineHeight 仍写字面 18.0f 而 size 已用 kCardTitleLineH（:626-629，值相等，纯风格）",
+      "impact": "角标 y 回退到 y+14 不会变红；属覆盖缺口非缺陷",
+      "suggestion": "可选：用例加第 4 张 done 卡断言 .done.frame.y==标题 y；lineHeight 换 kCardTitleLineH",
+      "confidence": "高"
+    },
+    {
+      "id": "F4",
+      "severity": "Info",
+      "dimension": "5_test_effectiveness",
+      "file": "commit 69be5ec message",
+      "issue": "『变异自检（groupTop/x 改回 14/16）实测变红』为提交说明转述，审计未复跑变异构建（只读约束）；已解析复算偏差数值（2px/6px/19px 均超 1px 阈值 2x~19x）证明断言非恒真",
+      "impact": "证据可信但属间接；不影响判定",
+      "suggestion": "无需动作；后续变异自检可留存红输出片段于提交说明或审计文件",
+      "confidence": "高"
+    },
+    {
+      "id": "F5",
+      "severity": "Info",
+      "dimension": "1_correctness（既有暴露面，非本次引入）",
+      "file": "src/module_todo/todo_ui_board.cpp",
+      "line": "604（width-2*22 在 width<44 时为负）",
+      "issue": "列宽无下限（既有注释 todo_ui_board.cpp:553 自认 ≥6-7 列 colW 跌破 130）下，极窄卡标题框宽为负、chips 全跳过 → 退化为无 chip 形态；负宽框渲染行为 master 同款（width-44 相同），本次居中未扩大暴露面",
+      "impact": "既有退化路径，居中算式对负宽框与 master 左对齐同属未定义观感；不构成回归",
+      "suggestion": "无需随本提交处理；列宽下限若日后立项可一并收口",
+      "confidence": "中高"
+    }
+  ],
+  "conclusion": {
+    "verdict": "可合并",
+    "highest_severity": "Low（F1：✓ 角标避让口径过强 + 长标题清空带收窄约 14px，纯视觉、仅 done 卡）",
+    "blockers": [],
+    "followups": [
+      "F1：软化 todo_ui_board.cpp:599 注释与 commit 口径（或 done 卡右侧不对称留白，另立小任务）",
+      "F2：test_font_em_layout.cpp:17-18/108 注释一行刷新，可随下一批捎带",
+      "F3：可选补 done 卡角标 y 断言"
+    ],
+    "test_evidence": "worktree 实跑：卡内文本居中 1/1、todo_ui 49/49、font-em 4/4、全量 Total 853 / Passed 847 / Failed 0（exit 0，6 条门控跳过）"
+  }
+}

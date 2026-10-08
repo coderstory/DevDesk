@@ -5,6 +5,7 @@
 // 经 core::appDatabase() 拿共享连接（与 Markdown/Todo 模块同一装配模式）。
 // 导航：core::appRouter()（main.cpp 注册），module_* 之间互不依赖；
 // 跨模块动作经 Router payload 下发（"action:*" / "open:*"），由目标页消费。
+#include "core/call_rate.h"
 #include "core/component_theme.h"
 #include "core/database.h"
 #include "core/logging.h"
@@ -17,9 +18,9 @@
 #include <eui/dsl.h>
 
 #include <components/button.h>
-#include <components/barchart.h>
 #include <components/card.h>
 #include <components/linechart.h>
+#include <components/theme.h>
 
 #include <ctime>
 #include <functional>
@@ -53,6 +54,8 @@ int digitCount(const std::string& text) {
 // numberColor/badgeColor 非空时覆盖默认配色（accent ? error : 常规）
 // timerSeconds > 0 时挂一个 0 尺寸 onTimer 元素驱动本卡定期重绘
 // chart 非空时在卡内叠加迷你图表（sparkline 等），由调用点提供渲染 lambda
+// onTick 非空时作为该 timer 的回调（默认空实现——只有需要「按拍做事」的卡
+// 才传，见 Token 卡的流末重查）
 //
 // M3（2026-09-28）：手绘卡换 card 组件。保留：accent/numberColor/badgeColor
 // 语义色与 timerSeconds 重绘驱动。card 组件无 hover states（CardStyle 无
@@ -78,7 +81,8 @@ void drawStatCard(eui::Ui& ui,
                   const eui::Color* badgeColor = nullptr,
                   float timerSeconds = 0.0f,
                   std::function<void(eui::Ui&, float, float)> chart =
-                      nullptr) {
+                      nullptr,
+                  std::function<void()> onTick = nullptr) {
     const auto ct = core::theme::componentTokens(t);
     const float s = core::theme::fontScale();
     const float inset = t.sizes.spacingLarge; // 16：卡内容统一内边距（16px 网格）
@@ -147,10 +151,13 @@ void drawStatCard(eui::Ui& ui,
                         .build();
                     if (timerSeconds > 0.0f) {
                         // 保留：0.5s 周期整卡重绘（流式速率实时刷新，设计
-                        // §2.6——compose 不是每帧重跑，靠 onTimer 触发）
+                        // §2.6——compose 不是每帧重跑，靠 onTimer 触发）。
+                        // onTick 非空时用它（Token 卡靠它感知「流式刚结束」）
                         ui.stack(id + ".timer")
                             .size(0.0f, 0.0f)
-                            .onTimer(timerSeconds, [] {})
+                            .onTimer(timerSeconds,
+                                     onTick ? std::move(onTick)
+                                            : std::function<void()>([] {}))
                             .build();
                     }
                     if (chart) {
@@ -294,6 +301,30 @@ public:
             statsError_ = r.errorMessage();
             LOG_ERROR("Home 仪表盘数据加载失败: " + statsError_);
         }
+        refreshLastRate();
+    }
+
+    // ① 最近一次成功调用的速率（独立于 getStats：它的失败不该把整页统计
+    // 拖成「加载失败」，但也不能静默——查询失败单独记 lastRateError_，
+    // Token 卡据此显示「加载失败」而不是假装空态「暂无成功调用」）
+    void refreshLastRate() {
+        if (!service_) return;
+        auto r = service_->getLastCallRate();
+        if (r.isOk()) {
+            lastRate_ = r.value();
+            lastRateError_.clear();
+            LOG_INFO(std::string("Home 最近一次成功调用速率：") +
+                     (lastRate_.hasValue
+                          ? core::call_rate::formatTps(lastRate_.tps) + " tok/s（输出 " +
+                                std::to_string(lastRate_.outputTokens) +
+                                " tok / " + std::to_string(lastRate_.latencyMs) +
+                                " ms）"
+                          : std::string("无（暂无成功调用）")));
+        } else {
+            lastRate_ = LastCallRate{};
+            lastRateError_ = r.errorMessage();
+            LOG_ERROR("Home 最近一次调用速率查询失败: " + lastRateError_);
+        }
     }
 
     // ==================== 渲染 ====================
@@ -350,7 +381,7 @@ public:
                             .content([&] {
                                 ui.text("home.h1")
                                     .size(std::max(280.0f, contentW - kHeaderActionsW), 40.0f)
-                                    .text("欢迎回到 DevDesk")
+                                    .text("欢迎回来～")
                                     .fontSize(t.sizes.fontSizePage)
                                     .lineHeight(40.0f)
                                     .fontWeight(700)
@@ -414,23 +445,44 @@ public:
                     return ok ? std::to_string(v) : std::string("--");
                 };
 
-                // Token 速率卡三态（设计 §4 方案 A）：
-                //   流式中 = primary 色 + success 绿 badge；空闲/刚结束 = 灰，
-                //   速率随 2s 窗口自然衰减到 0，累计定格保留
+                // Token 速率卡（真机反馈 ①，2026-09-29 改口径）：
+                //   数字 = **最近一次成功调用**的速率 = output_tokens /
+                //   (latency_ms / 1000)（口径单源 core/call_rate.h，与 Claude
+                //   详情页「最近调用」的速率列同一判定）；没有成功调用 →
+                //   空态「--」+ 副标题「暂无成功调用」。
+                //   流式实时值（2s 窗口 rateTps / 实时序列）仍在，但只喂卡内
+                //   sparkline —— 曲线语义本来就是「刚才几秒的速率」，与卡片
+                //   数字（单次调用口径）不是一回事，故保留。
+                //   配色沿用旧三态：流式中 primary 数字 + success 绿 badge。
                 const core::proxy_stats::Snapshot snap =
                     core::proxy_stats::snapshot();
                 const bool streaming = snap.activeStreams > 0;
-                const std::string sessionCn =
-                    formatTokenCount(snap.sessionTokens);
+                // 「加载失败」= 整页统计没加载成功（未 onStart / DB 不可用 /
+                // getStats 失败）**或**最近速率查询自己失败——不把「未加载」
+                // 冒充成「暂无成功调用」（同 notes 卡的 ok 口径）
+                const bool rateFailed =
+                    !statsLoaded_ || !lastRateError_.empty();
+                const bool rateOk = !rateFailed && lastRate_.hasValue;
+                const std::string tokenNumber =
+                    rateOk ? core::call_rate::formatTps(lastRate_.tps)
+                           : std::string("--");
                 // W9：badge 文案不带「会话」二字——em 修复后 11px 全角文案
                 // 在最小窗口（statW 208）下会溢出卡片（实测 154.85 > 152 可用宽）
-                // 2026-09-28 审计 #2：并发措辞「路并发」→「路」（省 2 个全角，
-                // 最长档「● 999 路 · 累计 999.9M」实测 ~111px ≤ 144 可用宽）
+                // 2026-09-28 审计 #2：并发措辞「路并发」→「路」
+                // 2026-09-29 ①：**不再写「累计」**——累计 token 与新口径无关。
+                // 副标题分档（数字是「最近一次」时必须说出来）：
+                //   流式中 → 「● N 路生成中」+（数字有值时）「 · 最近一次」；
+                //            数字为空态（整页没加载 / 没有成功调用）时不缀
+                //            「最近一次」，免得承诺一个并不存在的值
+                //   空闲   → 「最近一次成功调用」/「暂无成功调用」/「加载失败」
                 const std::string tokenBadge =
                     streaming
                         ? "● " + std::to_string(snap.activeStreams) +
-                              " 路 · 累计 " + sessionCn
-                        : "空闲 · 累计 " + sessionCn;
+                              " 路生成中" + (rateOk ? " · 最近一次" : "")
+                        : (rateFailed
+                               ? "加载失败"
+                               : (rateOk ? "最近一次成功调用"
+                                         : "暂无成功调用"));
 
                 if (statCount == 0) {
                     // 三模块全关的空态兜底（§5.5）：欢迎区保留 + 一句引导
@@ -476,15 +528,18 @@ public:
                                     const bool tokenLive =
                                         snap.activeStreams > 0 ||
                                         snap.rateTps > 0.05 || seriesLive;
+                                    const eui::Color* tokenNumberColor =
+                                        streaming ? &t.colors.primaryText
+                                        : rateOk  ? &t.colors.textPrimary
+                                                  : &t.colors.textTertiary;
                                     drawStatCard(ui, statCardElementId(card.kind),
                                                  statW, statH, t, card.title,
-                                                 formatRateTps(snap.rateTps),
+                                                 tokenNumber,
                                                  tokenBadge, false,
                                                  [this, target = card.target] {
                                                      navigateTo(target);
                                                  },
-                                                 streaming ? &t.colors.primaryText
-                                                           : &t.colors.textTertiary,
+                                                 tokenNumberColor,
                                                  streaming ? &t.colors.success
                                                            : nullptr,
                                                  tokenLive ? 1.0f : 0.0f,
@@ -507,6 +562,23 @@ public:
                                                                     componentTokens(
                                                                         t))
                                                          .build();
+                                                 },
+                                                 // 流末重查（① 的数字来自
+                                                 // 落库行，用量在流末才回填）：
+                                                 // 只在 1→0 的那一拍查一次，
+                                                 // 不给流式期间加查询
+                                                 [this] {
+                                                     const int active =
+                                                         core::proxy_stats::
+                                                             snapshot()
+                                                                 .activeStreams;
+                                                     if (prevActiveStreams_ >
+                                                             0 &&
+                                                         active == 0) {
+                                                         refreshLastRate();
+                                                     }
+                                                     prevActiveStreams_ =
+                                                         active;
                                                  });
                                     break;
                                 }
@@ -557,45 +629,50 @@ public:
                     .build();
                 }
 
-                // ========== 今日 API 调用分布（UI 现代化 M3-1 剩余：API barChart） ==========
-                // barChart 组件按整图硬几何设计（plot 区 ≥ ~112px、barchart.h
-                // build 内 plotY=70/title 区），统计卡内 32px 迷你槽放不下 →
-                // 独立整卡呈现（plan M3-1 Step 3 的适配口径：「以 barchart.h
-                // 为准适配，不新建组件」）。数据 = HomeService::getTodayApiCallSeries
-                // （24 点当日逐时分布；恒 24 点 → 绝不空，barChart 空 values
-                // 会填演示数据）；barChart 值域 [0,1]（percent 语义）→ 按当日
-                // 峰值归一化。加载失败（!ok）→ 全 0（统计卡 badge 已示失败）。
-                // 2026-09-28 审计 #3/#4/#5：barChart 内嵌化（透明底/边框/阴影
-                // 样式消第二底，不动 barchart.h）；卡高 208→260（wrap 128→196，
-                // plot 16px→84px，不再出 8px 地板假条）；全零画空态不画假条；
-                // title/wrap 去二次 16（content 坐标已含 inset，左 32 右 0 不对称）
+                // ========== 今日 Token 用量分布（每小时输出 token 合计，去头去尾） ==========
+                // 真机反馈 ③（2026-09-29 改口径）：旧的「按当日峰值归一」百分比
+                // 口径作废 —— 纵轴 = 该小时 output_tokens 合计；x 轴只画「第一个
+                // 有数据的小时」..「最后一个有数据的小时」闭区间（区间外的空小时
+                // 不画）；整天没有数据 → 空态（不画空轴）。数据 =
+                // HomeService::getTodayHourlyTokenTotals（恒 24 点 → 绝不空）。
+                //
+                // 为什么不再用 components::barChart（本卡 M3-1 的原实现）：
+                // barchart.h 把纵值硬编码成 [0,1] 百分比语义（build 内
+                // clamp(v,0,1)、tooltip 恒拼 percent(v)），喂 token 合计（整数、
+                // 动辄上万）会被整体夹成满格、悬停仍显示「N%」——与本需求
+                // 「显示每小时 token 总和」直接冲突。上游改造（spec
+                // 2026-09-28-ui-modernization-design §6 的「缺的能力走上游贡献」）
+                // 本轮被排除（禁止改 EUI-NEO），故本卡在模块内自绘柱体：
+                //   · 几何沿用 barchart.h 的常量（plotX 32 / plotY 70 /
+                //     plotH = wrapH−112 / slot 均分 / 柱宽 min(32,max(18,slot*0.54))
+                //     / 4 条网格线），chromeless 语义不变（无第二底、无边框阴影）；
+                //   · 元素 id 沿用 home.api.chart.bars.*（grid.N / bar.N / label.N）
+                //     —— 既有 probe（home_probes 类 4(a) 量 grid.0..grid.3 的
+                //     plot 高）与单测定位不失效；
+                //   · 代价：没有悬停 tooltip。改由柱顶数值标签直接标出 token
+                //     合计（数字可见比悬停更直接）。
+                // 2026-09-28 审计 #3/#4/#5 的口径保留：卡高 260、wrap 196、
+                // plot 84、全零走空态；title/wrap 不二次偏移 16。
                 if (moduleRegistered(::core::PageId::ClaudeProxy)) {
-                    const auto apiSeries =
-                        service_ ? service_->getTodayApiCallSeries(24)
+                    const auto tokenSeries =
+                        service_ ? service_->getTodayHourlyTokenTotals(24)
                                  : core::Result<std::vector<int64_t>>::fail(
                                        core::ErrorCode::Internal,
                                        "服务未就绪");
-                    std::vector<float> bars;
-                    if (ok && apiSeries.isOk()) {
-                        bars.reserve(apiSeries.value().size());
-                        for (const int64_t v : apiSeries.value()) {
-                            bars.push_back(static_cast<float>(v));
-                        }
+                    std::vector<int64_t> hourly;
+                    if (ok && tokenSeries.isOk()) {
+                        hourly = tokenSeries.value();
                     }
-                    if (bars.empty()) bars.assign(24, 0.0f);
-                    float maxV = 1.0f;
-                    bool allZero = true;
-                    for (const float bv : bars) {
-                        maxV = std::max(maxV, bv);
-                        if (bv > 0.0f) allZero = false;
-                    }
-                    std::vector<float> norm;
-                    norm.reserve(bars.size());
-                    for (const float bv : bars) norm.push_back(bv / maxV);
-                    std::vector<std::string> labels;
-                    labels.reserve(bars.size());
-                    for (size_t h = 0; h < bars.size(); ++h) {
-                        labels.push_back(std::to_string(h) + "时");
+                    if (hourly.empty()) hourly.assign(24, 0);
+                    // 去头去尾（纯函数，见 home_service.h）：闭区间两端都是
+                    // 「有 token 的小时」；全零 → hasData=false → 空态
+                    const module::home::HourRange range =
+                        module::home::hourlyDataRange(hourly);
+                    const size_t barCount =
+                        range.hasData ? range.last - range.first + 1 : 0;
+                    int64_t peak = 0;
+                    for (size_t i = 0; i < barCount; ++i) {
+                        peak = std::max(peak, hourly[range.first + i]);
                     }
                     const float chartCardH = 260.0f;
                     const float chartWrapH = chartCardH - 48.0f - 16.0f;  // 196
@@ -607,22 +684,22 @@ public:
                             ui.text("home.api.chart.title")
                                 .position(0.0f, 16.0f)
                                 .size(contentW - 32.0f, 22.0f)
-                                .text("今日 API 调用分布（按当日峰值归一）")
+                                .text("今日 Token 用量分布（每小时输出 token 合计）")
                                 .fontSize(t.sizes.fontSizeLarge - 1.0f)
                                 .lineHeight(22.0f)
                                 .fontWeight(600)
                                 .color(t.colors.textPrimary)
                                 .build();
-                            // barChart 无 position 接口 → 包定位 stack
-                            // （title 置空：本卡自带标题，避免组件内默认
-                            // 「BarChart」字样）
+                            // 图表区：自绘柱体包一层定位 stack（沿用 wrap id，
+                            // probe 类 5(a) 按它量卡片内左右对称）
                             ui.stack("home.api.chart.wrap")
                                 .position(0.0f, 48.0f)
                                 .size(contentW - 32.0f, chartWrapH)
                                 .content([&] {
-                                    if (allZero) {
-                                        // 空态（审计 #4）：全零不画 8px 地板
-                                        // 假条，居中一句引导
+                                    const float wrapW = contentW - 32.0f;
+                                    if (!range.hasData) {
+                                        // 空态（审计 #4）：整天没数据不画空轴
+                                        // 也不画假条，居中一句引导
                                         ui.text("home.api.chart.empty")
                                             .position(
                                                 0.0f,
@@ -636,29 +713,115 @@ public:
                                             .color(t.colors.textTertiary)
                                             .build();
                                     } else {
-                                        // 审计 #3：内嵌 chromeless 样式——
-                                        // 透明底/透明边框/禁阴影，消除与外层
-                                        // 卡同色但带边框阴影的「第二底」
+                                        // 柱体容器（id 沿用组件根 id：probe 与
+                                        // 单测按 home.api.chart.bars.* 定位，
+                                        // 坐标原点与 wrap 重合）
+                                        ui.stack("home.api.chart.bars")
+                                            .position(0.0f, 0.0f)
+                                            .size(wrapW, chartWrapH)
+                                            .content([&] {
+                                        // 自绘几何：常量逐项取自 barchart.h
+                                        // （改这里 = 改图表观感，probe 类 4(a)
+                                        // 量 grid.0→grid.3 的 plot 高）
+                                        const float plotX = 32.0f;
+                                        const float plotY = 70.0f;
+                                        const float plotW =
+                                            std::max(1.0f, wrapW - 64.0f);
+                                        const float plotH =
+                                            std::max(1.0f, chartWrapH - 112.0f);
+                                        const float bottomY = plotY + plotH;
+                                        const float slotW =
+                                            plotW / static_cast<float>(barCount);
+                                        const float barW = std::min(
+                                            32.0f,
+                                            std::max(18.0f, slotW * 0.54f));
+                                        // chromeless（审计 #3 口径）：网格线用
+                                        // 主题描边色的低透明版，无第二底、无边框
                                         components::theme::ThemeColorTokens
                                             chartTokens =
                                                 core::theme::componentTokens(t);
-                                        components::BarChartStyle chartStyle(
-                                            chartTokens);
-                                        chartStyle.background =
-                                            components::theme::color(0.0f, 0.0f,
-                                                                     0.0f, 0.0f);
-                                        chartStyle.border =
-                                            components::theme::color(0.0f, 0.0f,
-                                                                     0.0f, 0.0f);
-                                        chartStyle.shadow = core::Shadow{};
-                                        components::barChart(
-                                            ui, "home.api.chart.bars")
-                                            .size(contentW - 32.0f, chartWrapH)
-                                            .title("")
-                                            .values(norm)
-                                            .labels(labels)
-                                            .theme(chartTokens)
-                                            .style(chartStyle)
+                                        for (int line = 0; line < 4; ++line) {
+                                            ui.rect("home.api.chart.bars.grid." +
+                                                    std::to_string(line))
+                                                .x(plotX)
+                                                .y(plotY + static_cast<float>(
+                                                               line) *
+                                                               plotH / 3.0f)
+                                                .size(plotW, 1.0f)
+                                                .color(components::theme::
+                                                           withOpacity(
+                                                               chartTokens.border,
+                                                               0.36f))
+                                                .build();
+                                        }
+                                        for (size_t i = 0; i < barCount; ++i) {
+                                            const int64_t v =
+                                                hourly[range.first + i];
+                                            // 柱高按区间峰值归一（相对高度）；
+                                            // 0 token 的小时只剩 1px 底线，不画
+                                            // 假柱（审计 #4 口径）
+                                            const float ratio =
+                                                peak > 0
+                                                    ? static_cast<float>(v) /
+                                                          static_cast<float>(
+                                                              peak)
+                                                    : 0.0f;
+                                            const float barH =
+                                                std::max(1.0f, ratio * plotH);
+                                            const float bx =
+                                                plotX +
+                                                static_cast<float>(i) * slotW +
+                                                (slotW - barW) * 0.5f;
+                                            const float by = bottomY - barH;
+                                            ui.rect(
+                                                "home.api.chart.bars.bar." +
+                                                std::to_string(i))
+                                                .x(bx)
+                                                .y(by)
+                                                .size(barW, barH)
+                                                // 色取 barchart.h 默认 palette[0]
+                                                // ——与改口径前的柱子同色，本次
+                                                // 只改数不改观感
+                                                .color(components::theme::color(
+                                                    0.22f, 0.50f, 0.88f))
+                                                .radius(std::min(
+                                                    t.sizes.radius,
+                                                    barW * 0.34f))
+                                                .build();
+                                            // 柱顶数值 = 该小时 token 合计
+                                            //（替代旧 barChart 的悬停百分比）
+                                            ui.text(
+                                                "home.api.chart.bars.val." +
+                                                std::to_string(i))
+                                                .x(bx - 12.0f)
+                                                .y(by - 14.0f)
+                                                .size(barW + 24.0f, 14.0f)
+                                                .text(formatTokenCount(v))
+                                                .fontSize(10.0f)
+                                                .lineHeight(14.0f)
+                                                .horizontalAlign(
+                                                    eui::HorizontalAlign::Center)
+                                                .color(t.colors.textSecondary)
+                                                .build();
+                                            // x 轴小时标签：去头去尾后第 i 根
+                                            // 对应真实小时 range.first + i
+                                            ui.text(
+                                                "home.api.chart.bars.label." +
+                                                std::to_string(i))
+                                                .x(bx - 12.0f)
+                                                .y(chartWrapH - 22.0f)
+                                                .size(barW + 24.0f, 16.0f)
+                                                .text(std::to_string(
+                                                          range.first + i) +
+                                                      "时")
+                                                .fontSize(10.0f)
+                                                .lineHeight(16.0f)
+                                                .horizontalAlign(
+                                                    eui::HorizontalAlign::Center)
+                                                .color(t.colors.textTertiary)
+                                                .build();
+                                        }
+                                            })
                                             .build();
                                     }
                                 })
@@ -730,6 +893,9 @@ public:
 private:
     static constexpr int kRecentNoteLimit = 5;
 
+    // ① 的取数结果（compose 只读；空态/失败态靠 hasValue + lastRateError_ 区分）
+    using LastCallRate = module::home::LastCallRate;
+
     void navigateTo(::core::PageId page, const std::string& payload = "") {
         auto* router = ::core::appRouter();
         if (router == nullptr) {
@@ -744,6 +910,12 @@ private:
     DashboardStats stats_;
     bool statsLoaded_ = false;
     std::string statsError_;
+    LastCallRate lastRate_;
+    std::string lastRateError_;   // 非空 = 最近速率查询失败（卡显示「加载失败」）
+    // 上一拍看到的活跃流数（只有 Token 卡的 timer 回调写它，compose 不写）：
+    // 1→0 的那一拍 = 流式刚结束 → 重查最近一次成功调用（① 的数字来自落库行，
+    // 流末才回填用量；不重查的话用户停在首页时看到的永远是进页那一刻的数字）
+    int prevActiveStreams_ = 0;
 };
 
 } // namespace module::home

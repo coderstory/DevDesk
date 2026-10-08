@@ -1,0 +1,105 @@
+{
+  "meta": {
+    "subject": "独立只读审计——fix/md-tree-root-create b6a6b11（git diff a1451e9...fix/md-tree-root-create，7 文件：md_tree.cpp/h + markdown_module.cpp + test_markdown.cpp + verify 文档 + 真机截图 ×2）",
+    "date": "2026-09-30",
+    "auditor": "独立只读审计 agent（未参与实现，唯一写 = 本审计文件）",
+    "method": "分支 worktree（.claude/worktrees/fix-md-tree-root-create @ b6a6b11）全量实读 md_tree.cpp/h / markdown_module.cpp（树渲染 770-960、newItemParentDir 3776、commitNewFolder 3862、弹窗 2875）/ markdown_service.cpp（isSafeNewNotePath 1281、createFolder 1333）/ test_markdown.cpp（新增用例 1257-1386 + 全部 depth 断言 + 全部 frame.x 断言逐条推演）；grep 全仓 .depth 消费点与 md.tree.node 引用点（含 probes / test_ui_modern / test_md_keyboard / test_menu_beautify）；用 worktree 既有构建产物（build/tests/devdesk_tests，mtime 16:11:39，含新用例——filter '呈现为根的子行' 命中）实跑 --filter markdown；真机证据核 /tmp/mdroot-rf 存留产物（app.log / view_state / 磁盘目录）；两张 PNG 逐张目验",
+    "code_base": "fix/md-tree-root-create b6a6b11（= master a1451e9 + 1 commit；行号 = 分支快照实测）",
+    "note": "只读约束：未改任何源码、未重建（红/变异跑为静态推演 + 存留产物核，绿跑为既有二进制实跑）。审计文件落盘于 master 工作树，不影响分支"
+  },
+  "audit_points": {
+    "1_correctness": {
+      "status": "已核（逐层验算 + 逻辑面复证）",
+      "conclusion": "①根因定性成立：落盘侧三环复证——markdown_module.cpp:3776 newItemParentDir 根行（relPath \"\"，md_tree.cpp:76）→ 返回 \"\"；:3862 relPath = parent.empty() ? name : parent+\"/\"+name；markdown_service.cpp:1281 isSafeNewNotePath 挡 \"..\"/绝对路径/盘符/反斜杠、:1333 createFolder absPath = notesDir_/name——磁盘不可能落根外，缺陷纯在呈现。②深度逐类验算（md_tree.cpp:83 isRootGroup ? 0 : folderDepth(dir)+1）：根组行 0（isRootGroup=true 唯一来源 = :106 emit(\"\", true)，children 全走 :99 emit(child, false)；dirs 集合不可能含 \"\"——extraFolders :52 跳空、祖先目录 :46 为 slash 切分非空段）；顶层夹（\"工作\"）0+1=1；嵌套夹（\"工作/周会\"）1+1=2；根组直接文件 childDepth=0+1=1（不变）；夹直接文件 = 夹+1（md_tree.cpp:87）；三级链 a/deep/more = 1/2/3、其文件 2/3/4——与 test_markdown.cpp:271-291 更新后断言逐一吻合；空目录（extraFolders 无笔记）与磁盘枚举目录走同一 dirs/childrenOf 路径，深度同口径；深度无 clamp（folderDepth 线性计 slash，不封顶，:83 无上限）。③几何推算（markdown_module.cpp:843 夹 indent=depth*16 → arrow 6+/ficon 26+/name 46+indent；:916 文件 indent=32+(depth-1)*16 → name 36+indent）：md_tree_row_geometry 六行 x = 46/68/62/84/78/100，与 :690-697 全部关系式吻合；新用例：新目录 62 = 根 46+16 = 工作 62，子夹 78 = 62+16 ✓。④「新建笔记同源入口无同病」成立：根文件行 depth 修前修后均 1（root childDepth 未变），md_tree.h:19 口径自洽。"
+    },
+    "2_regression_surface": {
+      "status": "已核（含「既有断言为何修前不红」定论）",
+      "conclusion": "①定论：md_tree_row_geometry 修前**没有漏**「顶层夹 vs 根行」这一对——base 版断言恰是 xOf(node.0.arrow)==xOf(node.2.arrow)（diff 实读），即该对**被覆盖但把缺陷几何锁成了期望值**，绿是「测试固化了 bug」而非「没测到」。因此新用例几何半边与更新后的 md_tree_row_geometry 部分重叠（根行+16 关系式），但新增端到端建夹链路 + 磁盘反证 + 弹窗落点提示 + 选中态跟随，非纯重复。②depth 消费点穷举：src 内 .depth 读点仅 markdown_module.cpp:817（contentKey 哈希含 depth → 树重建，无持久态以 depth 为键——collapsedDirs 以 relPath 为键）/:843（夹缩进）/:916（文件缩进），其余为零；夹行 toggle 命中区（position=indent）、arrow、ficon、name 全部由同一 indent 变量派生 → 随 depth 同步移动；文件行走 drawFileTreeItem(indent)（icon 12+/name 36+indent）；树行**无拖拽**（无 onDrag），折叠箭头几何即 toggle/arrow，已随 indent 一致。③其它测试面：markdown_probes.cpp 组 T 只断 y 居中/半像素/箭头字号（depth 无关，node.0/1 深度未变）；test_ui_modern/test_md_keyboard/test_editor_font/test_md_highlight 只按 id 点 node.1.row，零几何；test_menu_beautify.cpp:170/:219 的 .depth 是 StyledMenuRow（另一结构），无关。④跨层 x 断言存活核：test_markdown.cpp:572（夹 vs 其文件，delta 恒 22px——两者同 +16 平移，margin 不变）、:982（夹 vs 子夹，delta 恒 16px）、:704（箭头列不压 ficon，margin 恒 4px）均平移不变量，无需改；:686-699 已同步新口径。⑤verify 文档「既有测试同步更新 depth 断言 ×4 用例 + x 关系式」与 diff 实况一致（md_tree_grouping / collapse_and_deep / two_level_empty / root_group_always + md_tree_row_geometry）。"
+    },
+    "3_platform_symmetry": {
+      "status": "已核",
+      "conclusion": "三个改动源文件 grep _WIN32/__APPLE__/ifdef 零命中；改动是纯函数层（buildTreeRows）整数算术 + 注释 + 测试，无平台分支可失对称；构建/验证在 macOS（当前开发平台）完成，Windows 路径按代码同一性必然同行为（generic_string 统一 POSIX '/'，folderDepth 只数 '/'，无分隔符平台差）。"
+    },
+    "4_silent_failure": {
+      "status": "已核（本改动不适用 + 一条既有近邻备注）",
+      "conclusion": "改动不新增/触及任何错误路径：深度是纯计算、无 fallback/clamp/吞错；唯一近邻是既有行为——夹名宽 max(0, w-58-indent)（markdown_module.cpp:905）在极深嵌套时静默夹到 0（名字消失无提示），本次 +1 使该阈值提前一级触发（侧栏 ~284px 下约 depth 14→13），属既有 clamp 设计的既有静默面，非本次引入、不登记为新缺陷。"
+    },
+    "5_test_validity": {
+      "status": "已核（绿跑实证 + 红/变异静态推演 + 真机产物核）",
+      "conclusion": "①绿跑实证：worktree 既有二进制（16:11:39 构建，晚于全部源文件 mtime 16:08-16:11、早于 commit 16:20）实跑——--filter markdown → Total 87 / Passed 87 / Failed 0（与 commit/verify 文档逐字一致，87 = 基线 86 + 新 1，源码 REGISTER_TEST 差分恰 +1）；filter '呈现为根的子行' 单独命中新用例 1/0。模块隔离守卫复跑 exit 0。②变异推演（只读不可改源，静态推导）：回退 :83 为 folderDepth(dir) → 新顶层夹 depth 0 → name x = 46 = 根行 → 新用例 :1350-1357（newX==rootX+16）与 md_tree_row_geometry :690-692（node.2==node.0+16）**双双必红**，且几何断言在逻辑断言（fs::is_directory 等）之后、fail-fast 报错行即文档所引 1350 行——与「同跑逻辑断言全过 = 落盘正确呈现错层」的结构性自洽。红跑/变异跑本身无日志留档（见 F-4）。③真机证据核：两张 PNG 实存（16:17:33，介于构建与 commit 之间）且目验相符——fixed 图 verifydir 嵌根行下、选中高亮、与 工作 同层；tree 图种子树 工作 嵌根行下；/tmp/mdroot-rf 存留核验：notes/verifydir 在笔记根内（16:15）、数据根一级无新建杂目录（仅 logs/notes/pets）、app.log:43 `[INFO] 新建文件夹: verifydir (markdown_module.cpp:3878)`、markdown_view_state.json selectedDir=\"verifydir\"——与「磁盘根内 + 选中态跟随 + 截图」三面互证。"
+    }
+  },
+  "findings": [
+    {
+      "id": "F-1",
+      "file": "src/module_markdown/md_tree.h",
+      "line": 37,
+      "severity": "LOW",
+      "dim": "文档口径",
+      "verdict": "CONFIRMED",
+      "summary": "MdTreeRow::depth 结构体字段注释仍是旧口径（「根组与顶层夹 = 0，其下文件与子夹 = 1」），与同文件 :17-21 刚更新的文件头注释（根组行 0 / 顶层夹 1）及 md_tree.cpp:83 实现直接矛盾",
+      "evidence": "md_tree.h:37-38 `int depth = 0; // 展示层级：根组与顶层夹 = 0，其下文件与子夹 = 1，更深逐级 +1（UI 按它算缩进）` 对照 md_tree.h:18 「根组行 = 0，顶层夹与其直接文件 = 1」与 md_tree.cpp:83 `folder.depth = isRootGroup ? 0 : folderDepth(dir) + 1`。本次改动的全部主题就是 depth 口径，唯一漏改的注释恰在字段本体上",
+      "impact": "下一个只读结构体注释（最常被读的位置）的改动会按旧模型推层级，正是本次修的 off-by-one 类错误的复发入口；也违反本仓库「文档口径」审计维度的自洽要求",
+      "fix": "一行注释改写：「展示层级：根组行 0，顶层夹与其直接文件 1，更深逐级 +1（UI 按它算缩进）」——与文件头 :18 逐字对齐"
+    },
+    {
+      "id": "F-2",
+      "file": "src/module_markdown/md_tree.cpp",
+      "line": 17,
+      "severity": "LOW",
+      "dim": "文档口径",
+      "verdict": "CONFIRMED",
+      "summary": "folderDepth 的函数注释仍自称「展示层级 = 相对路径里的 '/' 个数」——新口径下它只是中间量，展示层级 = 本值 +1（根组行 0），注释会把读者引回旧模型",
+      "evidence": "md_tree.cpp:17-24 `// 展示层级 = 相对路径里的 '/' 个数（\"工作\" → 0...）` 对照 :83 `folderDepth(dir) + 1`——\"工作\" 的展示层级已是 1，注释宣称 0",
+      "impact": "维护性：函数名/注释与消费方语义差 1，后续在别处复用 folderDepth 时易直接当展示层级用（本次 bug 的同型根因）",
+      "fix": "注释改为「路径层级 = '/' 个数（展示层级 = 本值 +1，根组行 0——见 :83）」"
+    },
+    {
+      "id": "F-3",
+      "file": "docs/superpowers/plans/2026-09-30-md-tree-root-verify.md",
+      "line": 62,
+      "severity": "INFO",
+      "dim": "文档口径",
+      "verdict": "CONFIRMED",
+      "summary": "verify 文档（与 commit message）引 contentKey 在 markdown_module.cpp:825，实际 depth 进哈希在 :815-818（treeKey 组装）——行号漂移 ~8 行，其余全部 file:line 引用逐一对上（76/858/3776/3862/1333/1281/2875/1350 均实测吻合）",
+      "evidence": "grep 实测：treeKey 哈希 = markdown_module.cpp:815-818（depth 项在 :817）；文档 :62 写「contentKey（markdown_module.cpp:825）」",
+      "impact": "零——仅引注不精确，不影响任何结论",
+      "fix": "可不修；若顺手，改 :817"
+    },
+    {
+      "id": "F-4",
+      "file": "docs/superpowers/plans/2026-09-30-md-tree-root-verify.md",
+      "line": 50,
+      "severity": "INFO",
+      "dim": "测试有效性/留证",
+      "verdict": "CONFIRMED",
+      "summary": "「修前红」「变异红」两次实跑无日志留档（仓库内无红跑产物），事后只能静态推演其必然性——推演结论：成立（回退 md_tree.cpp:83 单行 → 新用例 :1350 与 md_tree_row_geometry :690-692 双红，依赖关系单一、公式确定）；绿跑与真机侧证据链完整（二进制实跑 87/87 + 截图 + /tmp/mdroot-rf 磁盘与日志）",
+      "evidence": "分支 diff 仅含 verify 文档与截图，无红跑/变异跑日志文件；本审计以静态推导补证（见 audit_points.5）",
+      "impact": "留证完整性略缺，不影响结论正确性；与阶段 4「先红后绿证据」口径相比属于可用推演等价证明的形态",
+      "fix": "可不修；后续变异验证建议把红跑输出 tail 存 verify 文档同目录（如 *.red-run.log）"
+    },
+    {
+      "id": "F-5",
+      "file": "tests/test_modules/test_markdown.cpp",
+      "line": 690,
+      "severity": "INFO",
+      "dim": "测试有效性（回归面定论，非缺陷）",
+      "verdict": "CONFIRMED",
+      "summary": "对核五点之问 2 的定论：修前 md_tree_row_geometry **覆盖了**「根行 vs 顶层夹」对但断言为相等（base: xOf(node.0.arrow)==xOf(node.2.arrow)）——绿是因为测试把缺陷几何固化为期望，不是漏测；本条为审计结论记录，非待修项",
+      "evidence": "base a1451e9 test_markdown.cpp md_tree_row_geometry 段（diff 移除行）：`DOCTEST_CHECK_EQ(xOf(\"md.tree.node.0.arrow\"), xOf(\"md.tree.node.2.arrow\"));` 与另两列等值断言",
+      "impact": "经验教训：几何断言锁的是「当前实现」而非「正确层级模型」时，回归测试对同型缺陷免疫；新用例已把该对改锁为 +16 关系并补端到端链路",
+      "fix": "无需修（已由本次更新消解）；后续改 depth 口径时须同步 md_tree_row_geometry 与新用例两处"
+    }
+  ],
+  "conclusion": {
+    "verdict": "PASS——修复正确且自洽，无代码缺陷；2 LOW（均为注释口径残留：md_tree.h:37 / md_tree.cpp:17）+ 3 INFO。建议合并（可先行或在合并 commit 里随手带上一行注释修，无阻塞）",
+    "five_point_summary": {
+      "1_正确性": "已核——逐层深度验算全对（根组 0/顶层夹 1/嵌套 +1/根文件 1 不变/无 clamp/空目录同口径），isRootGroup 判定源唯一且 dirs 不含 \"\"，落盘侧三环（newItemParentDir→commitNewFolder→isSafeNewNotePath）复证「纯呈现错层」根因定性成立",
+      "2_回归面": "已核——旧断言不红的原因 = 覆盖了该对但锁了缺陷几何（非漏测）；depth 消费点全枚举（contentKey/夹缩进/文件缩进），命中区/箭头随同一 indent 变量，树无拖拽，其它引用点零几何依赖，跨层断言均为平移不变量",
+      "3_平台对称": "已核——零平台宏，纯函数层算术，两平台同代码路径",
+      "4_静默失败": "不适用——无新错误路径；既有名宽 clamp 提前一级触发的既有静默面仅备注",
+      "5_测试有效性": "已核——绿跑实证（87/87/0 + 新用例单跑 1/0）+ 变异静态推演双红成立 + 截图实存相符 + /tmp/mdroot-rf 磁盘/日志/view_state 三面互证"
+    },
+    "merge_blocker": "无"
+  }
+}

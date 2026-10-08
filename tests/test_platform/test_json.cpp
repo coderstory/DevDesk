@@ -347,3 +347,47 @@ REGISTER_TEST(json_stringify_bytes_snapshot, "json: stringify 输出逐字节快
     DOCTEST_CHECK_EQ(bad, static_cast<size_t>(0));
     return true;
 })
+// ---- D-2 格式化通道（2026-09-30 advanced-json-editor 设计 §10）：parse→
+// stringify(pretty) 即格式化器，不自写格式化器。四断言：幂等 / 两空格缩进 /
+// round-trip 等值 / 键序为字典序（std::map 存储——把「格式化会重排键序」钉进
+// 测试，Claude Code 不依赖键序，语义不变）----
+REGISTER_TEST(json_pretty_formatter_d2,
+              "json: pretty 格式化器幂等 + 两空格缩进 + round-trip 等值 + 字典序", {
+    const std::string compact = R"({"b":1,"a":2,"nested":{"zz":true,"aa":[1,2]}})";
+
+    // 两空格缩进：二级键行首恰为 2 空格；无 tab
+    auto p1 = parse(compact);
+    DOCTEST_REQUIRE(p1.isOk());
+    auto s1 = stringify(p1.value(), /*pretty=*/true);
+    DOCTEST_REQUIRE(s1.isOk());
+    DOCTEST_CHECK(s1.value().find("\n  \"a\"") != std::string::npos);
+    DOCTEST_CHECK(s1.value().find("\n\t") == std::string::npos);   // 无 tab
+
+    // 幂等：格式化两次输出相等
+    auto p2 = parse(s1.value());
+    DOCTEST_REQUIRE(p2.isOk());
+    auto s2 = stringify(p2.value(), /*pretty=*/true);
+    DOCTEST_REQUIRE(s2.isOk());
+    DOCTEST_CHECK_EQ(s2.value(), s1.value());
+
+    // round-trip 等值：pretty 前后 parse 结果相等（键序规范化不改语义）
+    auto s1Compact = stringify(p1.value(), /*pretty=*/false);
+    DOCTEST_REQUIRE(s1Compact.isOk());
+    auto rt = parse(s1.value());
+    DOCTEST_REQUIRE(rt.isOk());
+    auto rtCompact = stringify(rt.value(), /*pretty=*/false);
+    DOCTEST_REQUIRE(rtCompact.isOk());
+    DOCTEST_CHECK_EQ(rtCompact.value(), s1Compact.value());
+
+    // 字典序：{"b":1,"a":2} → a 先行（D-2 键序重排行为钉死）
+    auto ord = parse(R"({"b":1,"a":2})");
+    DOCTEST_REQUIRE(ord.isOk());
+    auto ordPretty = stringify(ord.value(), /*pretty=*/true);
+    DOCTEST_REQUIRE(ordPretty.isOk());
+    const size_t posA = ordPretty.value().find("\"a\"");
+    const size_t posB = ordPretty.value().find("\"b\"");
+    DOCTEST_REQUIRE(posA != std::string::npos);
+    DOCTEST_REQUIRE(posB != std::string::npos);
+    DOCTEST_CHECK(posA < posB);
+    return true;
+})

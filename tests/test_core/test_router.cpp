@@ -4,6 +4,7 @@
 // compose 空态兜底由 app 层注入（core 只派发不绘制，spec §4.2.1 / 审计 CP-01）+
 // 跨模块跳转负载（payload）设/取/一次性消费语义/默认空/页面隔离/纯导航不清负载
 #include "doctest.h"
+#include "test_support.h"   // test_support::pressShortcut —— 快捷键修饰位（平台同源）
 #include "core/module_interface.h"
 #include "core/router.h"
 #include "core/ui_geometry.h"
@@ -240,10 +241,7 @@ REGISTER_TEST(router_dispatch_key_event, "router: dispatchKeyEvent 派发到当�
     router.registerModule(&md);
     router.registerModule(&home);
 
-    eui::KeyEvent key;
-    key.key = ::eui::InputKey::P;
-    key.modifiers.control = true;
-    key.modifiers.shift = true;
+    eui::KeyEvent key = test_support::pressShortcut(eui::InputKey::P, /*shift=*/true);
 
     // 默认 current_=Home → Home 模块无 onKeyEvent 覆盖（默认 false）
     DOCTEST_CHECK(!router.dispatchKeyEvent(key));

@@ -22,7 +22,7 @@ elseif(APPLE)
         keychain_macos.cpp
         file_open_macos.cpp
         system_theme_macos.cpp
-        file_watcher_stub.cpp
+        file_watcher_macos.cpp
         http_client_ca_posix.cpp
         terminal_launch_macos.cpp
     )
@@ -61,10 +61,12 @@ target_compile_definitions(devdesk_platform PUBLIC
 
 # macOS Security.framework (Keychain) + CoreFoundation（APPLE 分支系统深浅检测
 # 实现读 NSGlobalDomain AppleInterfaceStyle 用；两者都只在 APPLE 分支链接）
+# CoreServices：file_watcher_macos.cpp 的 FSEvents（FSEventStreamCreate 等）
 if(APPLE)
     target_link_libraries(devdesk_platform PUBLIC
         "-framework Security"
         "-framework CoreFoundation"
+        "-framework CoreServices"
     )
 endif()
 

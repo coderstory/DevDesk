@@ -11,8 +11,8 @@
 // 成员的分配依据「谁画谁持有」：
 //   - ProfileListState：左栏列表 + header/引导条 + 数据缓存/后台刷新（compose
 //     每帧读的快照 + 刷新意图都在这里；claude_ui_list 与 compose 骨架共用）
-//   - DetailState：右栏三 pane 的页签
-//   - FormState：表单三页 + 编辑弹窗 + 删除确认弹窗（同文件 —— claude_ui_form）
+//   - DetailState：右栏四 pane 的页签（基础/模型映射/环境变量/高级配置）
+//   - FormState：表单四页 + 编辑弹窗 + 删除确认弹窗（同文件 —— claude_ui_form）
 //   - LogsState：完整调用记录弹窗（过滤/分页/后台取数）—— claude_ui_logs
 //   - ImportState：cc-switch / settings.json 粘贴导入（高级 env 页）—— claude_ui_form
 #pragma once
@@ -80,10 +80,28 @@ struct ProfileListState {
     // 只声明在状态旁边，不占实例字节）
     static constexpr int64_t kRefreshIntervalMs = 200;
 
+    // 「最近调用」页签的**数据侧**上限（2026-09-28 组 B P2）。
+    // 注意语义：这**不是**显示上限——显示行数由详情面板按内容框可用高推
+    //（`(内容框底 − 表头 − 查看全部带)/24`），超出部分用「另有 N 条」表达。
+    // 旧值 3 是「面板底部固定预览块」（该块恒画 3 行）时代的遗留；「最近调用」
+    // 抽成整页页签后（2175c24）它变成了第二个隐形上限：页签可容 13 行，数据
+    // 却只给 3 行 —— 只修行数预算不修这里，「显示不全」依旧。取 30 覆盖
+    // 常规窗口的页签预算（页高 1000 → 约 22 行）；再高的窗口靠「另有 N 条」
+    //（相对快照条数）+「查看全部」弹窗拿全量。
+    static constexpr int kRecentCallsSnapshot = 30;
+
     // 选中态（0 = 跟随激活 profile）
     int64_t selectedId_ = 0;
     // Profile 列表滚动位置（审计 [26]：卡片超界可滚，不再压底部按钮）
     float profilesScrollOffset_ = 0.0f;
+    // 共享配置片段卡片区的滚动位置（2026-09-28 组 B P4）：片段区块整体**钉面板
+    // 底**，卡片装不下时在区块内部滚（而不是把「+ 新建片段」推出去/盖掉）——
+    // 卡片全部可达可编辑，按钮恒可见可点
+    float sharedScrollOffset_ = 0.0f;
+    // 上一帧的片段集签名（审计 F-09 补的复位路径）：签名（片段集 / 空态 / 错误态）
+    // 一变就把 sharedScrollOffset_ 归零。初值故意取一个不可能撞上的值 → 首帧即
+    // 归零一次（首帧偏移本来就是 0，无行为变化）。
+    size_t sharedScrollKey_ = static_cast<size_t>(-1);
     // 引导条一次性标记（§6.4：会话内代理从未启动过才显示；内存态不持久化）
     bool proxyEverSeen_ = false;
     // 列表右键菜单（UI 现代化 M1-5）：目标 profile id（0 = 无）+ 锚点
@@ -100,10 +118,11 @@ struct ProfileListState {
     std::string cachedSharedConfigsError_;   // 空 = 成功（失败保旧快照 + 记日志）
 };
 
-// ============ 右栏：详情面板页签（三 pane + 最近调用）============
+// ============ 右栏：详情面板页签（四 pane + 最近调用）============
 struct DetailState {
-    // 详情页签：0 基础 / 1 模型映射 / 2 环境变量 / 3 最近调用
-    //（2026-09-24 起 0-2；3 = 2026-09-28 由底部固定预览块抽出的独立页签）
+    // 详情页签：0 基础 / 1 模型映射 / 2 环境变量 / 3 高级配置 / 4 最近调用
+    //（0-2 = 2026-09-24 起；3 = 2026-09-30 batch-fix B 新增「高级配置」；
+    // 4 = 2026-09-28 由底部固定预览块抽出的独立页签，原 3 顺移至此）
     int detailTab_ = 0;
 };
 
@@ -111,7 +130,7 @@ struct DetailState {
 struct FormState {
     bool formOpen_ = false;
     int64_t formEditId_ = 0;   // 0 = 新建，非 0 = 编辑该 id
-    int formTab_ = 0;          // 0 基础 / 1 模型映射 / 2 高级 env
+    int formTab_ = 0;          // 0 基础 / 1 模型映射 / 2 高级 env / 3 高级配置
     std::string formName_;
     std::string formUrl_;
     std::string formKey_;
@@ -128,23 +147,40 @@ struct FormState {
     int64_t deleteTargetId_ = 0;
     std::string deleteTargetName_;
 
-    // 批 2（设计 §2.10）：共享配置片段绑定（高级 env 页顶部下拉 +
-    // 片段赢预览/新增同键拦截判定）
+    // 批 2（设计 §2.10）建立、advanced-json-editor §7.1 迁移：共享配置片段
+    // 绑定下拉（2026-09-30 起渲染在**高级配置页**——片段重构为高级属性 JSON
+    // 预设，绑定下拉自 env 页整段迁入；frozenKeys/chip/置灰随文本框化拆除，
+    // 冻结视觉被 §7.3 提示行与详情 pane 来源标注取代）
     int64_t formSharedConfigId_ = 0;   // 表单态绑定（0 = 未绑定；保存时写入 profile）
     bool formSharedDdOpen_ = false;    // 绑定下拉展开态
-    // 当前绑定片段 K 键集（sharedFrozenKeys，别名归一后，与写进 live 的键形
-    // 一致；悬空绑定 → 归一为空）——K 键行置灰只读 + 新增同键拦截的判定源
-    std::vector<std::string> formFrozenKeys_;
-    // 打开表单时该 profile 自有 env 的键（归一后）：「新增同键」拦截只拦
-    // **打开后新加的**行（存量键非破坏保留、冻结显示，解绑后恢复生效，
-    // 设计 §2.3）
-    std::vector<std::string> formOriginalOwnKeys_;
 
-    // 批 3（设计 §3.4/§3.8）：备用 Profile（failover）绑定（基础页下拉，
-    // 复用批 2 绑定下拉模式——索引 0 = 无，其余 = 候选 profile 表序 +1，
-    // 编辑态排除自身；保存时写入 profile.fallbackProfileId）
+    // 高级设置 JSON（2026-09-30 advanced-json-editor 设计 §7.1）：多行编辑框
+    // 原文。openCreateForm 置空、openEditForm 预填 p.extraSettingsJson（DB 里
+    // 恒为 pretty 保存值；外部改库的非 pretty 原文按原样预填，格式化按钮负责
+    // 规范化）；submitForm 校验通过后统一 pretty 落库（D-6）
+    std::string formExtraSettingsJson_;
+    // 高级设置 JSON 的行内红字（§7.2 的 claude.form.advanced.json.error 节点；
+    // 格式化/校验失败共用，onChange 清空——与 formError_ 提交闸门分层）
+    std::string formAdvancedJsonError_;
+    // 高级设置 JSON 全屏编辑态（2026-09-30 json-fullscreen）：true = 全屏覆盖层
+    // 在场。覆盖层可见性派生自 formOpen_ && formJsonFullscreen_（「应用」复用
+    // submitForm 成功关表单 → 全屏同帧随之消失，零孤儿态）；文本/红字一律复用
+    // formExtraSettingsJson_ / formError_ / formAdvancedJsonError_——全屏只是
+    // 同一状态的大画布，不出现第二份状态
+    bool formJsonFullscreen_ = false;
+
+    // 批 3（设计 §3.4/§3.8）：备用 Profile（failover）绑定（2026-09-30
+    // batch-fix B 起渲染在**高级配置页**，原基础页整段迁入；复用批 2 绑定
+    // 下拉模式——索引 0 = 无，其余 = 候选 profile 表序 +1，编辑态排除自身；
+    // 保存时写入 profile.fallbackProfileId）
     int64_t formFallbackProfileId_ = 0;   // 表单态备用（0 = 不启用 failover）
     bool formFallbackDdOpen_ = false;     // 备用下拉展开态
+
+    // 高级配置页（2026-09-30 batch-fix B，设计 §3.2①）：方言覆盖。只存规范
+    // 文本（dialectKindToText 产物，空串 = 未覆盖）；选中态逐帧经
+    // dialectKindFromText 反查 idx（空/未知 → 0「自动」，读侧兜底同口径）
+    std::string formDialectOverride_;
+    bool formDialectDdOpen_ = false;      // 方言下拉展开态
 };
 
 // ============ 共享配置片段编辑弹窗（批 2，设计 §2.10 待拍板②：独立状态）============
@@ -156,7 +192,10 @@ struct SharedConfigDialogState {
     bool open_ = false;
     int64_t editId_ = 0;             // 0 = 新建，非 0 = 编辑该 id
     std::string name_;               // 片段名（name UNIQUE，服务层校验）
-    std::vector<std::pair<std::string, std::string>> envRows_;  // 键值行
+    // 片段内容 JSON 原文（advanced-json-editor §8.1：弹窗 JSON 化——envRows_
+    // 键值行拆除，片段 = settings.json 非 env 顶层属性 JSON 预设；保存走
+    // validateExtraSettingsJson 同一套规则，落库统一 pretty）
+    std::string extraSettingsJson_;
     std::string error_;              // 校验/保存错误（红字）
 
     // 删除确认弹窗（删除 = 同事务解绑绑定它的 profile，设计 §2.6）

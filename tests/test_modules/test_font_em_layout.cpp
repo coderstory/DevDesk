@@ -13,8 +13,9 @@
 //     badge 底对齐（height-48）、卡高 144、padX 16、最小窗口 1200 时 statW=208
 //     （2026-09-28 内边距系统性修复：16 四周统一，替代旧 20 inset + 20/42/98
 //     坐标叠加的「顶留空/底溢出」）
-//   - todo_module.cpp drawChip：chip 高 18、字号 fontSizeSmall-3；
-//     drawCard：title y=14 lineHeight 18、chip y=44、卡高 84（todo_ui_logic.h）
+//   - todo_module.cpp drawChip：chip 高 22、字号 fontSizeSmall-1（UI 整改 18
+//     由 18 / fontSizeSmall-3 调大）；drawCard：title y=14 lineHeight 18、
+//     chip y=44、卡高 84（todo_ui_logic.h）
 //   - app_sidebar.cpp 侧边栏：itemH 40、label 宽 200、brand 32px
 #include "doctest.h"
 
@@ -64,12 +65,15 @@ REGISTER_TEST(home_stat_card_text_fits, "font-em: home stat card text fits fixed
 
     // 标签（最长："Token 速率 (tok/s)"）
     DOCTEST_CHECK(textW("Token 速率 (tok/s)", labelSize) <= kHomeStatTextW);
-    // 数字（formatRateTps 上限 5 位；700 字重）
-    DOCTEST_CHECK(textW("99999", numberSize, 700) <= kHomeStatTextW);
-    // badge 最坏情况（formatTokenCount 上限 "999.9M"；2026-09-28 审计 #2
-    // 「路并发」→「路」：11px 全角最长档实测 ~111px ≤ 144 实际可用宽）
-    DOCTEST_CHECK(textW("● 999 路 · 累计 999.9M", badgeSize) <=
+    // 数字（① 2026-09-29 改口径：最近一次调用速率，恒 1 位小数；
+    // 三位整数 + 小数位 = 5 字符是常见上限档；700 字重）
+    DOCTEST_CHECK(textW("999.9", numberSize, 700) <= kHomeStatTextW);
+    // badge 最坏情况（① 后不再有「累计」字样）：
+    // 流式档「● 999 路生成中 · 最近一次」/ 空闲档「最近一次成功调用」
+    DOCTEST_CHECK(textW("● 999 路生成中 · 最近一次", badgeSize) <=
                   kHomeStatTextW);
+    DOCTEST_CHECK(textW("最近一次成功调用", badgeSize) <= kHomeStatTextW);
+    DOCTEST_CHECK(textW("暂无成功调用", badgeSize) <= kHomeStatTextW);
     DOCTEST_CHECK(textW("今日修改过的笔记", badgeSize) <= kHomeStatTextW);
 
     // 纵向（drawStatCard 绝对定位：label 16 / number 40 / badge 底对齐
@@ -84,16 +88,28 @@ REGISTER_TEST(home_stat_card_text_fits, "font-em: home stat card text fits fixed
 REGISTER_TEST(todo_card_text_fits, "font-em: todo card & chips fit fixed heights", {
     const auto& t = core::theme::current();
     core::theme::setFontScale(1.0f);
-    const float chipFont = t.sizes.fontSizeSmall - 3.0f;  // 10
+    // UI 整改 18：chip 字号 10（fontSizeSmall-3）→ 12（fontSizeSmall-1）
+    const float chipFont = t.sizes.fontSizeSmall - 1.0f;  // 12
 
-    // chip 固定宽：优先级 48、截止 66（drawChip 内容水平居中，超宽即视觉外溢）。
-    // 优先级 chip 现为「●高」（文本字形，随前景色）；截止 chip 已去 ⏰ emoji
-    DOCTEST_CHECK(textW("●高", chipFont, 600) <= 48.0f);
-    DOCTEST_CHECK(textW("12-31", chipFont) <= 66.0f);
+    // 截止 chip 最大宽 66（drawChip 内容水平居中，超宽即视觉外溢）；
+    // chip 内可用文字宽 = 66 - 20（估宽基数 20 = 左右各 10px 留白）
+    DOCTEST_CHECK(textW("12-31", chipFont) <= 66.0f - 20.0f);
+    // 标签 chip：宽由 chipWidth 估值决定 → 实测字形 + 两侧留白必须放得进估值
+    // （字号调大而估值没跟着放大 = 裁字；估值口径见 todo_ui_logic.h）
+    DOCTEST_CHECK(textW("重要", chipFont, 600) + 2.0f * 5.0f <=
+                  module::todo::ui::chipWidth("重要"));
+    DOCTEST_CHECK(textW("前端重构", chipFont, 600) + 2.0f * 5.0f <=
+                  module::todo::ui::chipWidth("前端重构"));
+    DOCTEST_CHECK(textW("frontend", chipFont, 600) + 2.0f * 5.0f <=
+                  module::todo::ui::chipWidth("frontend"));
+    // 详情弹窗优先级按钮（宽 100、字号 fontSizeSmall-1）文案「●高」放得下
+    DOCTEST_CHECK(textW("●高", chipFont, 600) <= 100.0f);
 
     // 纵向（drawCard：title y=14 lineHeight 18、chip y=44；卡高 84）
     DOCTEST_CHECK(14.0f + kGlyphExtentRatio * (t.sizes.fontSizeBody - 1.0f) <= 44.0f);
-    DOCTEST_CHECK(44.0f + kGlyphExtentRatio * chipFont <= module::todo::ui::kCardHeight);
+    // chip 高 22（UI 整改 18：原 18）：字形纵向范围 ≤ chip 高 = 文字不被裁
+    DOCTEST_CHECK(kGlyphExtentRatio * chipFont <= 22.0f);
+    DOCTEST_CHECK(44.0f + 22.0f <= module::todo::ui::kCardHeight);
     // 列头（title y=16，高 56）
     DOCTEST_CHECK(16.0f + kGlyphExtentRatio * t.sizes.fontSizeBody <=
                   module::todo::ui::kColumnHeaderHeight);

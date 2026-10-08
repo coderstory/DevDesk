@@ -32,11 +32,13 @@ struct SettingsCardsIn {
     const std::string& petSkinName;            // 当前皮肤名快照（THS-01）
     const std::string& proxyPortDraft;         // 端口草稿（空 = 未编辑）
     const std::vector<std::string>& logTail;   // 日志 tail 快照（H2）
+    const std::vector<std::string>& petScaleLabels;  // 显示大小三档文案（桥快照）
     unsigned logTailVersion = 0;               // tail 版本号（进查看卡 contentKey）
     float logViewScrollOffset = 0.0f;          // 日志查看卡内滚动位置
     bool takeoverManaged = false;              // 接管状态快照（THS-01）
     bool notesDirExists = false;               // 笔记目录存在性快照（THS-01）
     int openDropdown = -1;                     // 下拉唯一持有者（THS-05）
+    int petScaleIndex = 1;                     // 当前显示大小档下标快照
     ::core::IClaudeProxyService* proxy = nullptr;  // 代理运行面（null = 未装配）
 };
 
@@ -48,6 +50,7 @@ struct SettingsCardActions {
     std::function<void(const std::string&, bool)> applyModuleEnabled;  // 模块插拔
     std::function<void(Dropdown, bool)> setDropdownOpen;      // 下拉唯一持有者（THS-05）
     std::function<void(int)> changePetSkinAt;                 // 桌宠换肤（按下标）
+    std::function<void(int)> changePetScaleAt;                // 桌宠显示大小切档（按下标）
     std::function<void()> resetPetPosition;                   // 桌宠位置重置
     std::function<void()> showPetWindow;                      // 显示桌宠（PAB-13）
     std::function<void()> openNotesDirectory;                 // 打开笔记目录
