@@ -205,6 +205,10 @@ core::Result<int> ClaudeService::cleanupOrphanKeychainEntries() {
     return profileRepository_.cleanupOrphanKeychainEntries();
 }
 
+core::Result<int> ClaudeService::backfillCredentialsFromKeychain() {
+    return profileRepository_.backfillCredentialsFromKeychain();
+}
+
 core::Result<std::string> ClaudeService::loadApiKey(int64_t profileId) {
     return profileRepository_.loadApiKey(profileId);
 }
