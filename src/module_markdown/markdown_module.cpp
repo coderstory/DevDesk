@@ -1684,11 +1684,11 @@ private:
                     .step(56.0f)
                     .theme(componentTheme)
                     .offset(liveScrollY_)
-                    // contentKey 用内容 hash + 活动块 stableId：同长度换字符或换块
-                    // 时高度缓存必须失效。
-                    .contentKey("md.live.scroll." + currentPath_ + "." +
-                                std::to_string(previewTextHash_) + "." +
-                                std::to_string(liveActiveBlockStableId()))
+                    // contentKey 不用：实态点击切块会换 key → scrollView 视为全新内容 → 滚动归零。
+                    // 若用 contentKey 带 activeBlockStableId，cache 只在点击帧 miss；不带则
+                    // cache 永久返回旧活动块高度、maxOffset 永误。空字符串走每帧实量，O(blocks)
+                    // 成本可忽略（rebuildSyncMap 同文零成本、仅 estimateHeight 逐块重付）。
+                    // 规则性注释：实时模式点击不得重建编辑器子树 / id 必须稳定，否则滚动重置。
                     .onChange([this](float v) {
                         // 程序化来源（跟随落地 echo）：只记账、不关跟随
                         if (liveProgrammaticScroll_) {

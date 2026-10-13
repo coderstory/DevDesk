@@ -7399,6 +7399,81 @@ REGISTER_TEST(md_module_live_block_cap_5000_fence,
     return true;
 })
 
+// 点击可见块不重置滚动（回归守卫）：有滚动偏移时点击视口内任意块 → 滚动位置
+// 保持。根因修复 = contentKey 去除活动块 stableId（rv：点击换 contentKey →
+// scrollView 视为全新内容 → 归零）。
+REGISTER_TEST(md_module_live_scroll_click_keeps_offset,
+              "markdown_module: 实时态点击视口内块不重置滚动（headless，回归守卫）", {
+    const std::string doc = tallNoteDoc("S", 40);
+    test_support::MdHeadlessEnv env(kDirPrefix, "liveclickscroll", kDbName);
+    DOCTEST_REQUIRE(env.db != nullptr);
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "clickscroll.md", doc));
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    test_support::HeadlessFrame e("mdlive");
+    auto frame = [&](void) { e.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
+
+    frame();
+    DOCTEST_REQUIRE(openFirstNote(*e.ui));
+    frame();
+    DOCTEST_REQUIRE(e.ui->find(kEditorInputId) != nullptr);
+    DOCTEST_REQUIRE(cycleMode(mod.get()));   // → 实时
+    frame();
+
+    const auto* sv0 = e.ui->find(kLiveScrollId0);
+    DOCTEST_REQUIRE(sv0 != nullptr);
+    DOCTEST_REQUIRE_MESSAGE(sv0->scrollMaxOffset > 300.0f,
+                            "文档高度须 > 视口（实测 maxOffset=" +
+                            std::to_string(sv0->scrollMaxOffset) + ")");
+    DOCTEST_CHECK_EQ(sv0->scrollOffset, 0.0f);   // 进态归零
+
+    // ① 模拟用户向下滚动：走 Ui::setScrollOffset（直写 scrollState + 触发 onChange
+    //    回调 → 同步 liveScrollY_），不走 onChange 直接调用（只更新 liveScrollY_ 不动
+    //    instance.offset，会导致 element.scrollOffset ≠ instance.offset 假绿）。
+    e.ui->setScrollOffset(kLiveScrollId0, 200.0f);
+    frame();
+    const auto* svScrolled = e.ui->find(kLiveScrollId0);
+    DOCTEST_REQUIRE(svScrolled != nullptr);
+    DOCTEST_REQUIRE_MESSAGE(std::fabs(svScrolled->scrollOffset - 200.0f) <= 2.0f,
+                            "滚动后偏移=" + std::to_string(svScrolled->scrollOffset));
+
+    // ② 点视口内的块（块内容 y 在 [200, 200+viewH] 区间，caret 不越界）
+    const std::vector<int> sids = liveBlockSidsByY(*e.ui);
+    DOCTEST_REQUIRE(sids.size() >= 15);
+    // 取 ~第 8 个块，content_y 约在 ~320px——滚动 200 后正好在视口上半部
+    const size_t clickOrdinal = std::min<size_t>(8, sids.size() - 3);
+    const int clickSid = sids[clickOrdinal];
+    const auto* wrap = e.ui->find("md.live.blk." + std::to_string(clickSid));
+    DOCTEST_REQUIRE(wrap != nullptr);
+    const float contentOrigin = svScrolled->frame.y;
+    const float clickContentY = wrap->frame.y - contentOrigin;
+    DOCTEST_REQUIRE_MESSAGE(
+        clickContentY > svScrolled->scrollOffset + 10.0f &&
+        clickContentY < svScrolled->scrollOffset + svScrolled->frame.height - 10.0f,
+        "点击块须在视口内：content_y=" + std::to_string(clickContentY) +
+        " scroll=" + std::to_string(svScrolled->scrollOffset) +
+        " viewH=" + std::to_string(svScrolled->frame.height));
+    DOCTEST_REQUIRE(clickLiveBlock(*e.ui, clickSid, wrap->frame.height * 0.5f));
+    frame();   // 定位帧：cursor pending，不评滚动
+    frame();   // 跟随评估帧：caret 在安全带内 → 不拉
+    frame();   // +1 帧：声明值稳定
+
+    // ③ 断案：滚动位置保持不变（未被点击归零）
+    const auto* svPost = e.ui->find(kLiveScrollId0);
+    DOCTEST_REQUIRE(svPost != nullptr);
+    DOCTEST_REQUIRE_MESSAGE(
+        std::fabs(svPost->scrollOffset - 200.0f) <= 4.0f,
+        "点击后滚动未被重置。期望≈200 实测=" +
+            std::to_string(svPost->scrollOffset));
+
+    mod->onStop();
+    return true;
+})
+
 // 记录式验收（无墙钟红线，人工/脚本扫日志复核）：200KB /
 // 列整帧 compose 耗时（headless 合成，取中等规模文档作缩放基——全量 200KB/5000
 // 块在 Debug 无优化 headless 下单帧 ~10s，规模记录留给真机 GUI 的 `[live] frame
