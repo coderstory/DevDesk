@@ -7,6 +7,7 @@ add_library(devdesk_core STATIC
     router.cpp
     proxy_stats.cpp
     database.cpp
+    migrations.cpp
     app_config.cpp
     window_layout.cpp
     atomic_write.cpp

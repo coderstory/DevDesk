@@ -703,6 +703,93 @@ core::Result<int> ProfileRepository::cleanupOrphanKeychainEntries() {
     return core::Result<int>::ok(removed);
 }
 
+core::Result<int> ProfileRepository::backfillCredentialsFromKeychain() {
+    // 前提：旧 keychain_account 列还在旧库中——新库无此行，跳过不报错
+    {
+        auto prep = db_.prepare("SELECT keychain_account FROM claude_profiles LIMIT 0");
+        if (prep.isFail()) {
+            // 列不存在 → 新库，无旧凭据需回填
+            LOG_INFO("凭据回填跳过：keychain_account 列不存在（新库或已清理）");
+            return core::Result<int>::ok(0);
+        }
+    }
+
+    // 查待回填行：api_key_encrypted 仍为空但 keychain_account 有值
+    auto prep = db_.prepare(
+        "SELECT id, keychain_account FROM claude_profiles "
+        "WHERE api_key_encrypted = '' AND keychain_account IS NOT NULL "
+        "AND keychain_account != ''");
+    if (prep.isFail()) {
+        return core::Result<int>::fail(prep.errorCode(),
+                                       "凭据回填查询失败: " + prep.errorMessage());
+    }
+    auto rows = prep.value().fetchAll();
+    if (rows.isFail()) {
+        return core::Result<int>::fail(rows.errorCode(),
+                                       "凭据回填取行失败: " + rows.errorMessage());
+    }
+
+    int backfilled = 0;
+    for (const auto& row : rows.value()) {
+        auto idV = row.getInt64("id");
+        auto accountV = row.getString("keychain_account");
+        if (idV.isFail() || accountV.isFail()) continue;
+        const int64_t id = idV.value();
+        const std::string account = accountV.value();
+
+        // 读旧 Keychain 凭据（DPAPI 密文文件）
+        auto secretR = platform::keychain::loadSecret(keychainService_, account);
+        if (secretR.isFail()) {
+            LOG_WARN("凭据回填：id=" + std::to_string(id) +
+                     " Keychain 读取失败（跳过）: " + secretR.errorMessage());
+            continue;
+        }
+        if (secretR.value().empty()) {
+            LOG_WARN("凭据回填：id=" + std::to_string(id) +
+                     " Keychain 凭据为空串（跳过）");
+            continue;
+        }
+
+        // 经当前平台 protect 入库
+        auto protectedR = platform::credential::protect(secretR.value());
+        if (protectedR.isFail()) {
+            LOG_WARN("凭据回填：id=" + std::to_string(id) +
+                     " 凭据保护失败（跳过）: " + protectedR.errorMessage());
+            continue;
+        }
+        const std::string hint = makeApiKeyHint(secretR.value());
+        const std::string check = sha256Hex(secretR.value());
+
+        auto up = db_.prepare(
+            "UPDATE claude_profiles SET api_key_encrypted = ?, api_key_hint = ?, "
+            "api_key_check = ?, updated_at = ? WHERE id = ?");
+        if (up.isFail()) {
+            LOG_WARN("凭据回填：id=" + std::to_string(id) +
+                     " UPDATE 准备失败（跳过）: " + up.errorMessage());
+            continue;
+        }
+        auto& stmt = up.value();
+        stmt.bind(1, protectedR.value());
+        stmt.bind(2, hint);
+        stmt.bind(3, check);
+        stmt.bind(4, static_cast<int64_t>(nowUnix()));
+        stmt.bind(5, id);
+        auto stepR = stmt.step();
+        if (stepR.isFail()) {
+            LOG_WARN("凭据回填：id=" + std::to_string(id) +
+                     " UPDATE 执行失败（跳过）: " + stepR.errorMessage());
+            continue;
+        }
+        ++backfilled;
+        LOG_INFO("凭据回填：id=" + std::to_string(id) + " 已从 Keychain 迁入数据库");
+    }
+
+    if (backfilled > 0) {
+        LOG_INFO("凭据回填完成：共回填 " + std::to_string(backfilled) + " 个 profile");
+    }
+    return core::Result<int>::ok(backfilled);
+}
+
 core::Result<std::string> ProfileRepository::loadApiKey(int64_t profileId) {
     auto p = getProfile(profileId);
     if (p.isFail()) {

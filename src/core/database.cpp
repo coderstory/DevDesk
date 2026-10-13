@@ -1,5 +1,6 @@
 #include "database.h"
 #include "logging.h"
+#include "migrations.h"
 #include "schema.h"
 
 #include <atomic>
@@ -37,8 +38,15 @@ core::Result<void> Database::migrate() {
     auto r = db_.applySchema(core::schema::kSql);
     if (r.isFail()) {
         LOG_ERROR("Database schema 应用失败: " + r.errorMessage());
+        return r;
     }
-    return r;
+    // schema 落完后跑版本升级：applySchema 建库 = user_version 0，各组经预检全跳过 → 直落最新
+    auto m = core::migrations::applyPending(db_);
+    if (m.isFail()) {
+        LOG_ERROR("数据库版本升级失败: " + m.errorMessage());
+        return m;
+    }
+    return core::Result<void>::ok();
 }
 
 core::Result<int64_t> Database::pruneCallLogs(int retentionDays) {

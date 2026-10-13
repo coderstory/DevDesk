@@ -79,6 +79,10 @@ public:
     // 启动时清理旧 Keychain 残留（只删 claude:*，护栏：数据根零 profile 整体跳过）。
     core::Result<int> cleanupOrphanKeychainEntries();
 
+    // 迁移旧 Keychain 凭据入库：api_key_encrypted 仍空且 keychain_account 列存在的 profile，
+    // 逐行读旧 Keychain → protect → 写回凭据三列；失败不中断（LOG_WARN 继续）。
+    core::Result<int> backfillCredentialsFromKeychain();
+
     // API key
 
     // 加载明文 API key（发请求时调用，用完即丢弃）。列空 = NotFound；

@@ -1,7 +1,7 @@
-// DevDesk 数据库当前完整 schema（单份、无版本、无历史包袱）
-// 口径：不写迁移、不兼容旧数据——没有 schema_version 表 / ALTER 序列 / 新库守卫。
-// applySchema 在一个事务里幂等执行全脚本；旧 DB 缺列不检测、不迁移、不兜底。
-// 改 schema 的唯一动作：直接改这份脚本，不追加版本、不写兼容分支。
+// DevDesk 数据库当前完整 schema（新建库直接建成最新形态）。
+// 版本升级机制见 core/migrations.h：每版本一组升级 SQL，PRAGMA user_version 记版本；
+// ALTER TABLE ADD COLUMN 经 PRAGMA table_info 预检幂等，对任意旧基线安全。
+// schema_version 表是历史遗留（合并前旧机制残骸），不读不写、保留不动。
 #pragma once
 
 namespace core::schema {
