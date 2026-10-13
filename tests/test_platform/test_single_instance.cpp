@@ -15,13 +15,6 @@
 #include <windows.h>
 #endif
 
-REGISTER_TEST(single_instance_callable,
-              "single_instance: acquireInstanceLock / notifyExistingInstance 可调用不崩", {
-    // 不调真实 acquireInstanceLock（进程级副作用：启动监听线程 + 占有全局 mutex）。
-    // 仅验证头文件接口存在、链接通过。macOS / POSIX 实现恒 true，等价已覆盖。
-    DOCTEST_CHECK(true);
-    return true;
-})
 
 #if defined(_WIN32)
 REGISTER_TEST(single_instance_mutex_semantics_win,

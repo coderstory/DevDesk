@@ -2860,7 +2860,7 @@ REGISTER_TEST(todo_ui_priority_card_tint,
         DOCTEST_REQUIRE(env.svc->updateTask(t2).isOk());
     }
     // 期望值独立写死在用例里（不引用被测常量表）：改强度表/色源即红
-    const float kStrength[4] = {0.00f, 0.16f, 0.22f, 0.30f};
+    const float kStrength[4] = {0.00f, 0.22f, 0.27f, 0.30f};
 
     std::unique_ptr<::core::Module> mod(create_todo_module());
     mod->onStart();
@@ -2903,8 +2903,8 @@ REGISTER_TEST(todo_ui_priority_card_tint,
                           0.02f);
         }
     }
-    // 判据 b'：低优先级「不刺眼」= 与 surface 的色差落在浅档；高优先级看得出
-    DOCTEST_CHECK(maxChannelDelta(lowBg->color, t.colors.surface) <= 32.0f / 255.0f);
+    // 判据 b'：低优先级配色加深后仍不刺眼（48/255 对应 0.188，与 Low=0.22 等比例）；高优先级看得出
+    DOCTEST_CHECK(maxChannelDelta(lowBg->color, t.colors.surface) <= 48.0f / 255.0f);
     DOCTEST_CHECK(maxChannelDelta(highBg->color, t.colors.surface) >= 45.0f / 255.0f);
 
     // 判据 c：hover / active 与优先级底色**叠加**（不被中性态色顶掉），
@@ -2990,7 +2990,7 @@ REGISTER_TEST(todo_ui_priority_button_tint,
     // 期望值独立写死（改色源 / 改强度表 / 改选中档强度即红）
     const eui::Color kPrio[4] = {t.colors.textTertiary, t.colors.info,
                                  t.colors.warning, t.colors.error};
-    const float kUnsel[4] = {0.12f, 0.16f, 0.22f, 0.30f};
+    const float kUnsel[4] = {0.12f, 0.22f, 0.27f, 0.30f};
     const float kPicked = 0.55f;
 
     Frame f1(mod.get());

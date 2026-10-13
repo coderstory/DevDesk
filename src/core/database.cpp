@@ -31,6 +31,11 @@ core::Result<Database> Database::open(const std::filesystem::path& path) {
     // Result::value() 返回 T&（lvalue ref），std::move 转 xvalue 触发 move ctor
     core::data::SqliteDb db(std::move(dbResult.value()));
     Database inst(std::move(db));
+    // open = connect + schema + 版本升级（unified entry）；migrate 幂等，二次调无副作用
+    auto m = inst.migrate();
+    if (m.isFail()) {
+        return core::Result<Database>::fail(m.errorCode(), m.errorMessage());
+    }
     return core::Result<Database>::ok(std::move(inst));
 }
 

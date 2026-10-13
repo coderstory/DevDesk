@@ -292,7 +292,10 @@ inline eui::Color priorityColor(Priority p, const core::theme::Tokens& t) {
 }
 
 // 优先级色底：卡底与详情弹窗优先级按钮底的唯一色源（priorityColor 色表 + 强度表 + priorityTintBg 算式）
-inline constexpr float kPriorityTintStrength[] = {0.12f, 0.24f, 0.32f, 0.30f};
+// 前三档在旧值 {0.12,0.16,0.22,0.30} 上加深以提单/中档可区分性（用户反馈"前三个太淡不好区分"）。
+// 档间单调递增：None<Low<Medium<High。High 档（红 #CF2D56）保持 0.30 不动——其视觉强度较高，
+// 等量 tint 比前三档的蓝/橙基色更"跳"，再加大反喧宾夺主。
+inline constexpr float kPriorityTintStrength[] = {0.12f, 0.22f, 0.27f, 0.30f};
 static_assert(std::size(kPriorityTintStrength) ==
               static_cast<size_t>(Priority::High) + 1);
 
