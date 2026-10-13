@@ -286,7 +286,7 @@ inline eui::Color priorityColor(Priority p, const core::theme::Tokens& t) {
 }
 
 // 优先级色底：卡底与详情弹窗优先级按钮底的唯一色源（priorityColor 色表 + 强度表 + priorityTintBg 算式）
-inline constexpr float kPriorityTintStrength[] = {0.12f, 0.16f, 0.22f, 0.30f};
+inline constexpr float kPriorityTintStrength[] = {0.12f, 0.24f, 0.32f, 0.30f};
 static_assert(std::size(kPriorityTintStrength) ==
               static_cast<size_t>(Priority::High) + 1);
 
