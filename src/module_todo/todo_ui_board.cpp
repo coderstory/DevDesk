@@ -516,10 +516,48 @@ void drawCard(eui::Ui& ui, const std::string& id, float x, float y, float width,
     const float groupTop = cardContentGroupTop(chipRow);
     const float chipY = y + groupTop + kCardTitleLineH + kCardTitleToChipGap;
 
+    // 序号徽章：每列独立 1..n，纯渲染期计算
+    const bool badgeMuted = colIndex >= 0 &&
+        static_cast<size_t>(colIndex) < v.columns.size() &&
+        (v.columns[static_cast<size_t>(colIndex)].kind == "done" ||
+         v.columns[static_cast<size_t>(colIndex)].kind == "archive");
+    const eui::Color badgeBg =
+        badgeMuted ? t.colors.surface : t.colors.surfaceElevated;
+    const eui::Color badgeText =
+        badgeMuted ? t.colors.textTertiary : t.colors.textSecondary;
+    const bool overflow = cardIndex >= 99;
+    const std::string ordinalText =
+        overflow ? "99+" : std::to_string(cardIndex + 1);
+    const float badgeFontSize = overflow ? 10.0f : 11.0f;
+    // 正圆底：与 18px 标题行垂直居中（20-18=2 → 上偏 1）
+    ui.rect(id + ".badge")
+        .position(12.0f, y + groupTop - 1.0f)
+        .size(kCardOrdinalBadgeSize, kCardOrdinalBadgeSize)
+        .color(badgeBg)
+        .radius(kCardOrdinalBadgeSize / 2.0f)
+        .border(1.0f, t.colors.borderMuted)
+        .opacity(cardOpacity)
+        .build();
+    // 数字（EUI-NEO verticalAlign::Center 补偿基线偏移，不靠目测）
+    ui.text(id + ".badge.text")
+        .position(12.0f, y + groupTop - 1.0f)
+        .size(kCardOrdinalBadgeSize, kCardOrdinalBadgeSize)
+        .text(ordinalText)
+        .fontSize(badgeFontSize)
+        .lineHeight(kCardOrdinalBadgeSize)
+        .horizontalAlign(eui::HorizontalAlign::Center)
+        .verticalAlign(eui::VerticalAlign::Center)
+        .color(badgeText)
+        .fontWeight(600)
+        .opacity(cardOpacity)
+        .build();
+
     // 标题水平居中 = 框对称化（总留白 80、右缘让开完成角标区）+ horizontalAlign Center
+    // 徽章占用 kCardOrdinalBadgeHoriz（20+8=28px），标题可用宽度相应缩减
     ui.text(id + ".title")
         .position(kCardTitleBoxInset, y + groupTop)
-        .size(width - 2.0f * kCardTitleBoxInset, kCardTitleLineH)
+        .size(width - 2.0f * kCardTitleBoxInset - kCardOrdinalBadgeHoriz,
+              kCardTitleLineH)
         .text(task.title)
         .fontSize(t.sizes.fontSizeBody - 1.0f)
         .lineHeight(kCardTitleLineH)
