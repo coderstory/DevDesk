@@ -175,8 +175,8 @@ REGISTER_TEST(migrations_old_db_upgrade,
         DOCTEST_REQUIRE(r.isOk());
         auto& db = r.value().db();
 
-        // user_version = 2（v1 + v2 组已全部应用）
-        DOCTEST_CHECK_EQ(readUserVersion(db), 2);
+        // user_version = 3（v1+v2+v3 组已全部应用）
+        DOCTEST_CHECK_EQ(readUserVersion(db), 3);
 
         // claude_profiles 补全 8 列
         DOCTEST_CHECK(hasColumn(db, "claude_profiles", "api_key_encrypted"));
@@ -232,7 +232,7 @@ REGISTER_TEST(migrations_is_idempotent,
         auto r = core::Database::open(path);
         DOCTEST_REQUIRE(r.isOk());
         auto& db = r.value().db();
-        DOCTEST_CHECK_EQ(readUserVersion(db), 2);
+        DOCTEST_CHECK_EQ(readUserVersion(db), 3);
 
         // 二次跑 migration：再次打开库会再调 applyPending，各组应跳过
     }
@@ -259,7 +259,7 @@ REGISTER_TEST(migrations_new_db_gets_latest_version,
     auto& db = tdb.handle();
 
     // 全新库：applySchema 建全部列 → 各组 ALTER 预检全跳过 → user_version = 2
-    DOCTEST_CHECK_EQ(readUserVersion(db), 2);
+    DOCTEST_CHECK_EQ(readUserVersion(db), 3);
 
     // 按 schema 建了全部列：不应缺
     DOCTEST_CHECK(hasColumn(db, "claude_profiles", "api_key_encrypted"));
@@ -351,7 +351,7 @@ REGISTER_TEST(migrations_partial_upgrade,
         DOCTEST_REQUIRE(r.isOk());
         auto& db = r.value().db();
 
-        DOCTEST_CHECK_EQ(readUserVersion(db), 2);
+        DOCTEST_CHECK_EQ(readUserVersion(db), 3);
 
         // 已补的列保留：
         DOCTEST_CHECK(hasColumn(db, "claude_profiles", "api_key_encrypted"));
@@ -421,7 +421,7 @@ REGISTER_TEST(migrations_credential_backfill,
         auto& db = r.value().db();
 
         // applySchema + 迁移把列补全
-        DOCTEST_CHECK_EQ(readUserVersion(db), 2);
+        DOCTEST_CHECK_EQ(readUserVersion(db), 3);
 
         // 凭据列仍是空（没有真的 Keychain 文件）
         DOCTEST_CHECK_EQ(cell(db, "claude_profiles", "api_key_encrypted", 1),
@@ -443,7 +443,7 @@ REGISTER_TEST(migrations_credential_backfill_skip_new_db,
 
     // 新库：applySchema + 迁移 → 无 keychain_account 列
     DOCTEST_CHECK(!hasColumn(db, "claude_profiles", "keychain_account"));
-    DOCTEST_CHECK_EQ(readUserVersion(db), 2);
+    DOCTEST_CHECK_EQ(readUserVersion(db), 3);
 
     return true;
 })
@@ -457,7 +457,7 @@ REGISTER_TEST(migrations_v2_todo_archived_at,
 
     // 新库 applySchema + applyPending → v2 已完成
     DOCTEST_CHECK(hasColumn(db, "todo_tasks", "archived_at"));
-    DOCTEST_CHECK_EQ(readUserVersion(db), 2);
+    DOCTEST_CHECK_EQ(readUserVersion(db), 3);
 
     // PRAGMA table_info 验证列可空（notnull=0）
     {

@@ -269,7 +269,7 @@ void drawAppearanceCard(const CardDrawArgs& args) {
                     .fontSize(fs(10.0f))
                     .lineHeight(accentNameH)
                     .color(selected ? t.colors.textPrimary : t.colors.textTertiary)
-                    .textAlign(eui::TextAlign::Center)
+                    .horizontalAlign(eui::HorizontalAlign::Center)
                     .build();
             }
         })

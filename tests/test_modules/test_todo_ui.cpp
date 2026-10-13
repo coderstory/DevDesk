@@ -1672,7 +1672,7 @@ REGISTER_TEST(todo_ui_drag_follow_ghost,
         const auto& t = core::theme::current();
         DOCTEST_CHECK(colorNear(
             ghostBg->color,
-            eui::mixColor(t.colors.surface, t.colors.error, 0.30f)));
+            eui::mixColor(t.colors.surface, t.colors.error, 0.42f)));
     }
     // 跟手期间源列原卡照旧半透明 + 源列调暗（门控关系未反：被调暗的是原卡
     // 与源列，副本全亮跟手）
@@ -2937,7 +2937,7 @@ REGISTER_TEST(todo_ui_priority_card_tint,
         // 选中不改变优先级底色（边框与底色两通道独立）
         DOCTEST_CHECK(colorNear(
             sel->color,
-            eui::mixColor(t.colors.surface, t.colors.error, 0.30f)));
+            eui::mixColor(t.colors.surface, t.colors.error, 0.42f)));
     }
 
     // 判据 d：底色改了，卡片文字对比度不掉（WCAG AA 4.5:1）
@@ -2955,7 +2955,7 @@ REGISTER_TEST(todo_ui_priority_card_tint,
     DOCTEST_REQUIRE(lHigh != nullptr);
     DOCTEST_CHECK(colorNear(lNone->color, tl.colors.surface));
     DOCTEST_CHECK(colorNear(
-        lHigh->color, eui::mixColor(tl.colors.surface, tl.colors.error, 0.30f)));
+        lHigh->color, eui::mixColor(tl.colors.surface, tl.colors.error, 0.42f)));
     DOCTEST_CHECK(!colorNear(lNone->color, lHigh->color, 0.01f));
     DOCTEST_CHECK(contrastRatio(lNone->color, tl.colors.textPrimary) >= 4.5f);
     DOCTEST_CHECK(contrastRatio(lHigh->color, tl.colors.textPrimary) >= 4.5f);
@@ -2991,7 +2991,7 @@ REGISTER_TEST(todo_ui_priority_button_tint,
     // 期望值独立写死（改色源 / 改强度表 / 改选中档强度即红）
     const eui::Color kPrio[4] = {t.colors.textTertiary, t.colors.info,
                                  t.colors.warning, t.colors.error};
-    const float kUnsel[4] = {0.12f, 0.22f, 0.27f, 0.30f};
+    const float kUnsel[4] = {0.18f, 0.30f, 0.38f, 0.42f};
     const float kPicked = 0.55f;
 
     Frame f1(mod.get());
