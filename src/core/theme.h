@@ -39,6 +39,14 @@ struct ColorTokens {
     eui::Color warning;
     eui::Color error;
     eui::Color info;
+    // 与现有功能色同族的去饱和强调色（区别于 blue 的品牌色档位，浅色档达图形 AA）
+    eui::Color purple;
+    eui::Color pink;
+    // 腾讯 QQ 经典蓝（用户点名），识别度优先于家族去饱和纪律；
+    // 对浅色底约 2.5:1（低于图形 AA 3.0），与 primary（2.96:1）同属品牌色档位——
+    // 只作图标/标签/边框/装饰强调，禁止作小字正文色。
+    // 同 primaryText 模式：将来需要文字用法另设 blueText 档，勿直接拿本值当文字色。
+    eui::Color blue;
 };
 
 // 尺寸 token（唯一权威定义）
