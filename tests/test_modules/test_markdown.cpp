@@ -831,8 +831,8 @@ REGISTER_TEST(md_module_new_folder, "markdown_module: W9 新建文件夹入口�
     DOCTEST_CHECK(fs::is_directory(env.dir / "工作"));
 
     // 新建笔记走子路径（placeholder 承诺「可用 / 分文件夹」——create 建中间目录）。
-    // 注意：新建文件夹会把**选中目录**挪到刚建的那个夹（与「打开笔记后选中态跟到
-    // 笔记所在目录」同口径），所以这里先点根目录行把选中态放回根，再验证「名字带
+    // 注意：新建文件夹会把**选中目录**挪到刚建的那个夹（与 selectDir 口径一致）。
+    // 这里先点根目录行把选中态放回根，再验证「名字带
     // 子路径」这条语义——顺带覆盖「点根目录行 = 选中根」。
     const auto* rootRowSel = ui.find("md.tree.node.0.row");
     DOCTEST_REQUIRE(rootRowSel != nullptr);
@@ -1100,7 +1100,8 @@ REGISTER_TEST(md_module_new_folder_parent,
 //      （不是根、也不是父目录 工作）；
 //   ③ 点**一级目录**行 → 新建笔记落 工作/xxx.md；
 //   ④ 点**根目录**行 → 新建笔记落 根/xxx.md；
-//   ⑤ 点**笔记行** → 选中态跟到该笔记所在目录（打开笔记 = 选中它所在目录）；
+//   ⑤ 点**笔记行** → 文件夹不级联选中，但功能目标（newItemTargetDir_）跟到该笔记所在
+//      目录；新建弹窗「保存到」验证功能落地在 parent dir；
 //   ⑥ 点箭头命中区只收起/展开、不改选中态（两个命中区分工）。
 REGISTER_TEST(md_module_tree_select_dir_new_note,
               "markdown_module: 目录树选中态（→ 二级/一级/根逐档）+ 新建笔记落选中目录（headless）", {
@@ -1198,21 +1199,29 @@ REGISTER_TEST(md_module_tree_select_dir_new_note,
     DOCTEST_CHECK(fs::is_regular_file(env.dir / "根选中笔记.md"));
     DOCTEST_CHECK(!fs::exists(env.dir / "工作" / "根选中笔记.md"));
 
-    // ⑤ 点**笔记行**（纪要.md）→ 选中态跟到该笔记所在目录（工作/周会）
+    // ⑤ 点**笔记行**（纪要.md）→ 文件夹不级联选中，但功能目标跟到 parent dir
     const int noteRow = treeRowIndex(ui, "纪要.md", false);
     DOCTEST_REQUIRE(noteRow >= 0);
     DOCTEST_REQUIRE(clickId("md.tree.node." + std::to_string(noteRow) + ".row"));
     frame("sel14");
-    DOCTEST_CHECK(folderRowSelected(ui, "周会"));
-    DOCTEST_CHECK(!folderRowSelected(ui, "根目录"));
+    // 选中不级联：父文件夹「周会」不入选
+    DOCTEST_CHECK(!folderRowSelected(ui, "周会"));
+    DOCTEST_CHECK(folderRowSelected(ui, "根目录"));  // 上一选中不变
+    // 功能目标已跟到笔记所在目录（保存到提示行验证）
+    DOCTEST_REQUIRE(clickId("md.tree.new.bg"));
+    frame("sel14a");
+    DOCTEST_CHECK_EQ(ui.find("md.dialog.new.hint")->text,
+                     std::string("保存到：工作/周会 · 名字可带子目录，如 工作/周会.md"));
+    DOCTEST_REQUIRE(clickId("md.dialog.new.cancel.bg"));  // 关弹窗，不创建
 
-    // ⑥ 箭头命中区只收起/展开，不改选中态（⑤ 之后选中在「周会」）
+    // ⑥ 箭头命中区只收起/展开，不改选中态（⑤ 之后选中仍是「根目录」，
+    // 打开笔记不级联、不覆盖文件夹选中态）
     const int weekMeeting2 = treeRowIndex(ui, "周会", true);
     DOCTEST_REQUIRE(clickId("md.tree.node." + std::to_string(weekMeeting2) + ".toggle"));
     frame("sel15");
     // 收起：纪要不在了（该目录整棵子树隐藏），但选中态不变
     DOCTEST_CHECK_EQ(treeRowIndex(ui, "纪要.md", false), -1);
-    DOCTEST_CHECK(folderRowSelected(ui, "周会"));
+    DOCTEST_CHECK(folderRowSelected(ui, "根目录"));
     DOCTEST_REQUIRE(clickId("md.tree.node." + std::to_string(weekMeeting2) + ".toggle"));
     frame("sel16");
     DOCTEST_CHECK_EQ(treeRowIndex(ui, "纪要.md", false) >= 0, true);  // 展开回来
