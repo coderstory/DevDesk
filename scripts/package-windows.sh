@@ -109,6 +109,8 @@ ASSETS_DIR_POSIX="$EXE_DIR_POSIX/assets"
 rm -rf "$ASSETS_DIR_POSIX"
 cmake -E copy_directory "$EUI_DIR/assets" "$ASSETS_DIR_POSIX"
 cmake -E copy_directory "$PROJECT_DIR/assets/pets" "$ASSETS_DIR_POSIX/pets"
+# DevDesk/assets 根文件（托盘图标 / splash 着色器 / 模板），09-30 后才加入，与 pets 同源幂等
+cmake -E copy_directory "$PROJECT_DIR/assets" "$ASSETS_DIR_POSIX"
 
 # 断言 ①：shaders/shadertoy 非空（字体 / 音乐 / 着色器确实拷进来了）
 if [ -z "$(ls -A "$ASSETS_DIR_POSIX/shaders/shadertoy" 2>/dev/null)" ]; then
@@ -127,6 +129,16 @@ for petdir in "$ASSETS_DIR_POSIX/pets"/*/; do
     exit 1
   fi
 done
+# 断言 ③：DevDesk/assets 根文件（托盘图标 / splash 着色器），09-30 新增，缺则安装版托盘空图标 + splash 回退
+if [ ! -f "$ASSETS_DIR_POSIX/shaders/splash.frag" ]; then
+  echo "❌ 断言失败：$ASSETS_DIR_POSIX/shaders/splash.frag 缺失" >&2
+  exit 1
+fi
+# 断言 ④：托盘图标，缺则安装版任务栏空图标
+if [ ! -f "$ASSETS_DIR_POSIX/tray-icon-win.ico" ]; then
+  echo "❌ 断言失败：$ASSETS_DIR_POSIX/tray-icon-win.ico 缺失" >&2
+  exit 1
+fi
 echo "✅ assets 就位（shaders/shadertoy 非空；pets 含 $(ls -d "$ASSETS_DIR_POSIX/pets"/*/ 2>/dev/null | wc -l) 皮肤包）"
 
 # ISCC 是原生 Windows 程序：路径要 Windows 形态（Git Bash 的 /d/... 形态可能被拒）
