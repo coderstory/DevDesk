@@ -7,6 +7,8 @@
 #include "core/schema.h"
 #include "core/sqlite_db.h"
 
+#include <sqlite3.h>
+
 #include <filesystem>
 #include <set>
 #include <string>

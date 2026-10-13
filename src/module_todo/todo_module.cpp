@@ -492,7 +492,6 @@ public:
             setStatus(up ? "已经在最上面了" : "已经在最下面了");
             return;
         }
-        const Task* self = ui::findTask(tasks_, selectedTaskId_);
         const std::string title = self != nullptr ? self->title : "";
         doMoveTask(selectedTaskId_, mv->columnId, mv->position);
         setStatus((up ? "已上移「" : "已下移「") + title + "」");
