@@ -14,6 +14,9 @@ struct Migration {
     const char* description;  // 面向日志的变动说明
     const char* const* sql;   // 版本组内 SQL（逐条执行，ALTER 经预检跳过）
     int sqlCount;
+    const char* requireColumn; // "表.列" 格式，非 NULL 时整组仅在列存在时执行；
+                               // 新库无此列 → 跳过 + 版本照常推进（视为"已满足"）。
+                               // 面向旧形态遗留数据清理——新库天然没有遗留列，免修。
 };
 
 // 执行未应用的升级组（version > current），全部成功则 user_version = max(version)。
