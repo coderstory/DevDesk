@@ -358,6 +358,19 @@ inline const Column* findColumn(const std::vector<Column>& columns, int64_t id) 
     return nullptr;
 }
 
+// epoch 秒 → "YYYY-MM-DD HH:MM:SS"（24h 制，本地时区）；<=0 返回空串
+inline std::string formatArchivedAt(int64_t epoch) {
+    if (epoch <= 0) return {};
+    std::time_t tt = static_cast<std::time_t>(epoch);
+    std::tm tmv{};
+    core::time::localTime(tt, &tmv);
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "%04d-%02d-%02d %02d:%02d:%02d",
+                  tmv.tm_year + 1900, tmv.tm_mon + 1, tmv.tm_mday,
+                  tmv.tm_hour, tmv.tm_min, tmv.tm_sec);
+    return std::string(buf);
+}
+
 // 列内任务（按 position 升序）；看板列内容与删除确认弹窗共用
 inline std::vector<const Task*> tasksInColumn(const std::vector<Task>& tasks,
                                               int64_t columnId) {
@@ -367,6 +380,23 @@ inline std::vector<const Task*> tasksInColumn(const std::vector<Task>& tasks,
     }
     std::sort(out.begin(), out.end(), [](const Task* a, const Task* b) {
         return a->position < b->position;
+    });
+    return out;
+}
+
+// 归档列任务（按 archived_at 倒序，最近归档的在最上面；同刻并列时 position 兜底）
+// 非归档列用 tasksInColumn（按 position 升序）。手动 position 写入对归档列仍可发生但显示忽略。
+inline std::vector<const Task*> tasksInArchiveColumn(const std::vector<Task>& tasks,
+                                                      int64_t columnId) {
+    std::vector<const Task*> out;
+    for (const auto& t : tasks) {
+        if (t.columnId == columnId) out.push_back(&t);
+    }
+    std::sort(out.begin(), out.end(), [](const Task* a, const Task* b) {
+        const auto aVal = a->archivedAt.value_or(0);
+        const auto bVal = b->archivedAt.value_or(0);
+        if (aVal != bVal) return aVal > bVal;  // 最近的在最上面 → DESC
+        return a->position < b->position;      // 同刻并列靠 position 兜底
     });
     return out;
 }

@@ -151,6 +151,9 @@ struct ConfirmDeleteDialog {
 struct DetailDialog {
     // backdrop 关闭守卫：有未存改动时第一次点遮罩只警告，再点一次才真正关闭。
     bool discardArmed = false;
+    // 归档列任务只读：隐藏保存/删除/切换完成按钮，输入框不可编辑。判据 = 所在列 kind=='archive'（运行期），
+    // 不靠 archived_at 值——拖出归档列后 archived_at 被清，不应残留只读态。
+    bool readOnly = false;
     int64_t taskId = 0;
     // 列身份以库中为准（collect 从 findTask 读回，dirty 不比列）
     std::string title;

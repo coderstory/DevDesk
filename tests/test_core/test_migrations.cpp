@@ -173,8 +173,8 @@ REGISTER_TEST(migrations_old_db_upgrade,
         DOCTEST_REQUIRE(r.isOk());
         auto& db = r.value().db();
 
-        // user_version = 1（v1 是唯一组）
-        DOCTEST_CHECK_EQ(readUserVersion(db), 1);
+        // user_version = 2（v1 + v2 组已全部应用）
+        DOCTEST_CHECK_EQ(readUserVersion(db), 2);
 
         // claude_profiles 补全 8 列
         DOCTEST_CHECK(hasColumn(db, "claude_profiles", "api_key_encrypted"));
@@ -230,7 +230,7 @@ REGISTER_TEST(migrations_is_idempotent,
         auto r = core::Database::open(path);
         DOCTEST_REQUIRE(r.isOk());
         auto& db = r.value().db();
-        DOCTEST_CHECK_EQ(readUserVersion(db), 1);
+        DOCTEST_CHECK_EQ(readUserVersion(db), 2);
 
         // 二次跑 migration：再次打开库会再调 applyPending，各组应跳过
     }
@@ -238,8 +238,8 @@ REGISTER_TEST(migrations_is_idempotent,
         auto r2 = core::Database::open(path);
         DOCTEST_REQUIRE(r2.isOk());
         auto& db2 = r2.value().db();
-        // user_version 仍是 1，没有推进（没有新版本组）
-        DOCTEST_CHECK_EQ(readUserVersion(db2), 1);
+        // user_version 仍是 2，没有推进（没有新版本组）
+        DOCTEST_CHECK_EQ(readUserVersion(db2), 2);
         // 数据仍完好
         DOCTEST_CHECK_EQ(rowCount(db2, "claude_profiles"), 1);
     }
@@ -252,12 +252,12 @@ REGISTER_TEST(migrations_is_idempotent,
 // ─── 3. 全新库 → user_version = 最新 ───
 
 REGISTER_TEST(migrations_new_db_gets_latest_version,
-              "迁移: 全新库 applySchema+迁移 → user_version=最新(v1)", {
+              "迁移: 全新库 applySchema+迁移 → user_version=最新(v2)", {
     test_support::TestDb tdb("devdesk_test_mig_", "new");
     auto& db = tdb.handle();
 
-    // 全新库：applySchema 建全部列 → 各组 ALTER 预检全跳过 → user_version = 1
-    DOCTEST_CHECK_EQ(readUserVersion(db), 1);
+    // 全新库：applySchema 建全部列 → 各组 ALTER 预检全跳过 → user_version = 2
+    DOCTEST_CHECK_EQ(readUserVersion(db), 2);
 
     // 按 schema 建了全部列：不应缺
     DOCTEST_CHECK(hasColumn(db, "claude_profiles", "api_key_encrypted"));
@@ -349,7 +349,7 @@ REGISTER_TEST(migrations_partial_upgrade,
         DOCTEST_REQUIRE(r.isOk());
         auto& db = r.value().db();
 
-        DOCTEST_CHECK_EQ(readUserVersion(db), 1);
+        DOCTEST_CHECK_EQ(readUserVersion(db), 2);
 
         // 已补的列保留：
         DOCTEST_CHECK(hasColumn(db, "claude_profiles", "api_key_encrypted"));
@@ -419,7 +419,7 @@ REGISTER_TEST(migrations_credential_backfill,
         auto& db = r.value().db();
 
         // applySchema + 迁移把列补全
-        DOCTEST_CHECK_EQ(readUserVersion(db), 1);
+        DOCTEST_CHECK_EQ(readUserVersion(db), 2);
 
         // 凭据列仍是空（没有真的 Keychain 文件）
         DOCTEST_CHECK_EQ(cell(db, "claude_profiles", "api_key_encrypted", 1),
@@ -441,7 +441,76 @@ REGISTER_TEST(migrations_credential_backfill_skip_new_db,
 
     // 新库：applySchema + 迁移 → 无 keychain_account 列
     DOCTEST_CHECK(!hasColumn(db, "claude_profiles", "keychain_account"));
-    DOCTEST_CHECK_EQ(readUserVersion(db), 1);
+    DOCTEST_CHECK_EQ(readUserVersion(db), 2);
+
+    return true;
+})
+
+// ─── 7. v2：todo_tasks 加 archived_at ───
+
+REGISTER_TEST(migrations_v2_todo_archived_at,
+              "迁移 v2: todo_tasks 加 archived_at（列存在 + 可空 + 版本号 2）", {
+    test_support::TestDb tdb("devdesk_test_mig_", "v2a");
+    auto& db = tdb.handle();
+
+    // 新库 applySchema + applyPending → v2 已完成
+    DOCTEST_CHECK(hasColumn(db, "todo_tasks", "archived_at"));
+    DOCTEST_CHECK_EQ(readUserVersion(db), 2);
+
+    // PRAGMA table_info 验证列可空（notnull=0）
+    {
+        auto prep = db.prepare("PRAGMA table_info(todo_tasks)");
+        DOCTEST_REQUIRE(prep.isOk());
+        auto rows = prep.value().fetchAll();
+        DOCTEST_REQUIRE(rows.isOk());
+        bool sawArchived = false;
+        for (const auto& row : rows.value()) {
+            auto name = row.getString("name");
+            if (name.isOk() && name.value() == "archived_at") {
+                sawArchived = true;
+                auto nn = row.getInt64("notnull");
+                DOCTEST_CHECK(nn.isOk() && nn.value() == 0);
+                break;
+            }
+        }
+        DOCTEST_CHECK(sawArchived);
+    }
+
+    // 在待办列建任务（archived_at 应自动为 NULL），然后移到归档列验证时间戳被置
+    {
+        auto prep = db.prepare("SELECT id FROM todo_columns WHERE kind = 'archive' LIMIT 1");
+        DOCTEST_REQUIRE(prep.isOk());
+        auto rows = prep.value().fetchAll();
+        DOCTEST_REQUIRE(rows.isOk() && !rows.value().empty());
+        int64_t archiveId = rows.value()[0].getInt64("id").valueOr(0);
+        DOCTEST_REQUIRE(archiveId > 0);
+
+        auto prepTodo = db.prepare("SELECT id FROM todo_columns WHERE kind = 'todo' LIMIT 1");
+        DOCTEST_REQUIRE(prepTodo.isOk());
+        auto rowsTodo = prepTodo.value().fetchAll();
+        DOCTEST_REQUIRE(rowsTodo.isOk() && !rowsTodo.value().empty());
+        int64_t todoId = rowsTodo.value()[0].getInt64("id").valueOr(0);
+
+        // 在待办列建任务
+        int64_t now = static_cast<int64_t>(std::time(nullptr));
+        std::string sql = "INSERT INTO todo_tasks (column_id, title, priority, due_at, tags, position, "
+            "completed_at, created_at, updated_at) VALUES (" + std::to_string(todoId) +
+            ", '归档测试', 0, NULL, '[]', 999, NULL, " +
+            std::to_string(now) + ", " + std::to_string(now) + ")";
+        std::lock_guard<std::recursive_mutex> lock(db.mutex());
+        char* errMsg = nullptr;
+        int rc = sqlite3_exec(db.handle(), sql.c_str(), nullptr, nullptr, &errMsg);
+        if (rc != SQLITE_OK) { std::string e = errMsg ? errMsg : ""; sqlite3_free(errMsg);
+            DOCTEST_CHECK_MESSAGE(false, e.c_str());
+        } else {
+            // archived_at 应为 NULL（在非归档列）
+            auto p = db.prepare("SELECT archived_at FROM todo_tasks WHERE title = '归档测试'");
+            DOCTEST_REQUIRE(p.isOk());
+            auto r = p.value().fetchAll();
+            DOCTEST_REQUIRE(r.isOk() && !r.value().empty());
+            DOCTEST_CHECK(r.value()[0].isNull("archived_at"));
+        }
+    }
 
     return true;
 })

@@ -4112,3 +4112,50 @@ REGISTER_TEST(todo_ui_r5_pure_helpers,
     DOCTEST_CHECK(!ui::isOverdue(Task{}));
     return true;
 })
+
+REGISTER_TEST(todo_archive_format,
+              "Todo UI: formatArchivedAt 按 YYYY-MM-DD HH:MM:SS 输出",
+              {
+    // 用固定 epoch 验证格式（2026-10-13 12:30:45 UTC+8 = 2026-10-13 12:30:45 本地）
+    // epoch = 2026-10-13T04:30:45Z = 1792331445
+    const int64_t epoch = 1792331445;
+    const std::string s = ui::formatArchivedAt(epoch);
+    // 主断言：19 字符 "YYYY-MM-DD HH:MM:SS"
+    DOCTEST_CHECK_EQ(s.size(), 19u);
+    // 前 4 位年份
+    DOCTEST_CHECK(s[0] == '2' && s[1] == '0');
+    // 第 5 位 '-'
+    DOCTEST_CHECK_EQ(s[4], '-');
+    // 第 8 位 '-'
+    DOCTEST_CHECK_EQ(s[7], '-');
+    // 第 11 位 ' '
+    DOCTEST_CHECK_EQ(s[10], ' ');
+    // 0 入参返回空
+    DOCTEST_CHECK(ui::formatArchivedAt(0).empty());
+    DOCTEST_CHECK(ui::formatArchivedAt(-1).empty());
+    return true;
+})
+
+REGISTER_TEST(todo_archive_tasks_in_column_sort,
+              "Todo UI: tasksInArchiveColumn 按 archived_at DESC 排序",
+              {
+    std::vector<Task> tasks;
+    Task a; a.id = 1; a.columnId = 10; a.archivedAt = 100; a.position = 2;
+    Task b; b.id = 2; b.columnId = 10; b.archivedAt = 300; b.position = 1;
+    Task c; c.id = 3; c.columnId = 10; c.archivedAt = 300; c.position = 0;
+    // c 与 b 同 archivedAt，position 小的在前 (0 < 1)
+    Task d; d.id = 4; d.columnId = 10; d.archivedAt = std::nullopt; d.position = 3;
+    Task e; e.id = 5; e.columnId = 20; e.archivedAt = 500; e.position = 0;  // 不同列
+    tasks = {a, b, c, d, e};
+
+    auto result = ui::tasksInArchiveColumn(tasks, 10);
+    DOCTEST_CHECK_EQ(result.size(), 4u);
+    // 300 (b, then c), then 100 (a), then nullopt (d) → 300 treated as 0
+    // wait: nullopt → value_or(0) = 0. 300 > 100 > 0.
+    // So: b(300, pos=1) = c(300, pos=0), then a(100), then d(0)
+    DOCTEST_CHECK_EQ(result[0]->id, 3);  // archivedAt=300, pos=0
+    DOCTEST_CHECK_EQ(result[1]->id, 2);  // archivedAt=300, pos=1
+    DOCTEST_CHECK_EQ(result[2]->id, 1);  // archivedAt=100
+    DOCTEST_CHECK_EQ(result[3]->id, 4);  // archivedAt=nullopt→0
+    return true;
+})
