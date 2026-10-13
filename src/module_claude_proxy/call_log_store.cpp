@@ -1,6 +1,9 @@
 // src/module_claude_proxy/call_log_store.cpp
-// CallLogStore 实现（方法体自 ClaudeService 原实现搬移，语义零变化）
+// CallLogStore 实现
 #include "call_log_store.h"
+
+#include "core/str_util.h"
+#include "core/time.h"
 
 #include <ctime>
 #include <string>
@@ -11,25 +14,13 @@ namespace module::claude {
 
 namespace {
 
-// 取当前 unix 秒
-std::time_t nowUnix() {
-    return std::time(nullptr);
-}
+using core::time::nowUnix;
 
-// LIKE 模式转义（审计 [11]）：用户输入的 % / _ / \ 按字面量匹配
-// （SQL 侧统一 ESCAPE '\'，SQLite 的 LIKE 对 ASCII 默认大小写不敏感）
-std::string escapeLikePattern(const std::string& term) {
-    std::string out;
-    out.reserve(term.size() + 8);
-    for (const char c : term) {
-        if (c == '\\' || c == '%' || c == '_') out.push_back('\\');
-        out.push_back(c);
-    }
-    return out;
-}
+// 用户输入的 % / _ / \ 按字面量匹配（SQL 侧统一 ESCAPE '\'）
+using core::str::escapeLikePattern;
 
-// queryCalls / countCalls 共用 WHERE 片段（无命中返回空串 → 调用方省略 WHERE）。
-// status_code 列可 NULL（早期直插行），COALESCE 归 0 → 落「错误」桶
+// 生成 WHERE 片段；无命中返回空串，调用方省略 WHERE。
+// status_code 列可 NULL，COALESCE 归 0 → 落「错误」桶
 std::string buildCallLogWhere(const CallLogStore::CallLogQuery& q) {
     std::string where;
     if (!q.search.empty()) {
@@ -80,8 +71,7 @@ CallLogStore::CallLogEntry callLogFromRow(const core::data::SqlRow& row) {
     if (pV.isOk()) e.path = pV.value();
     if (sV.isOk()) e.statusCode = static_cast<int>(sV.value());
     if (lV.isOk()) e.latencyMs = lV.value();
-    // NULL（未采集）已由 SQL 的 COALESCE 归 0：与「0 个 token」同处理
-    // （速率列显示「—」）
+    // NULL（未采集）已由 SQL 的 COALESCE 归 0，速率列显示「—」
     if (otV.isOk()) e.outputTokens = otV.value();
     if (rbV.isOk()) e.requestBytes = rbV.value();
     if (rxbV.isOk()) e.responseBytes = rxbV.value();
@@ -122,8 +112,7 @@ core::Result<void> CallLogStore::logCall(const CallLogEntry& entry) {
     if (stepR.isFail()) {
         return core::Result<void>::fail(stepR.errorCode(), stepR.errorMessage());
     }
-    // 审计 perf [13]：落库成功即推进日志版本号，Claude 页 compose 据此
-    // 只在有新调用时重查 recentCalls（proxy worker 线程写，UI 线程读）
+    // 落库成功即推进版本号（proxy worker 线程写，UI 线程读）
     callLogVersion_.fetch_add(1, std::memory_order_release);
     return core::Result<void>::ok();
 }

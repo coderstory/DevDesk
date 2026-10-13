@@ -1,0 +1,242 @@
+{
+  "meta": {
+    "date": "2026-10-01",
+    "auditor": "stage-2 independent audit agent (not an implementer)",
+    "baseline": "dev @ 4850c26",
+    "scope": "8 fix branches, all merge-base = 4850c26 (three-way diffs clean)",
+    "method": "read-only: git diff/show/grep + file reads; no build/test/merge executed",
+    "verdict": "可合并（需先修 1 处）：分支 6+7 在 test_provider_config.cpp 有一处真实文本冲突 + 语义连带，其余 7 组重叠文件全部可干净自动合并"
+  },
+  "branches": [
+    {
+      "id": 1,
+      "name": "worktree-agent-ac65fd7e0b9a42dca",
+      "head": "08bdcc6",
+      "title": "Windows 托盘品牌 ico + platform::tray::defaultIconPath 三平台分发",
+      "dimensions": {
+        "correctness": "pass — ico 实测 3 个 32bpp BGRA DIB 条目（16/32/48，xxd 抽验文件头 0000 0100 0300 + 三条 1010/2020/3030 目录项）；macOS 返回原 template png（行为不变）、Windows 返回 .ico、其它 POSIX 返回空串（=应用图标兜底，与未传等价）；业务代码零平台宏，分发收在 src/platform/（与 file_watcher/keychain 同模式）",
+        "tests": "pass — 2 条用例：defaultIconPath 非空 + 后缀随平台；资产文件存在且 >0 字节（防改回单一路径又忘分发）",
+        "consistency": "pass — CMake POST_BUILD 两个图标都 copy_if_different（macOS 多拷 .ico 无害且被用例钉住）；src/platform/CMakeLists.txt 三平台 target_sources 各接一实现",
+        "regression": "pass — macOS 路径逐字不变；唯一行为变化在 Windows（目标平台，回归期验证项）",
+        "merge": "clean — main.cpp 与 B6 改动区（dev 行 20-25、593-610 vs 74-77 注释）不相交；tests/CMakeLists.txt（20-23 vs 9-12）不相交",
+        "honesty": "pass — Windows 侧真机效果标注为回归期验证项，未声称已实测"
+      },
+      "findings": []
+    },
+    {
+      "id": 2,
+      "name": "worktree-agent-a6f7e48153e153c12",
+      "head": "1d62744",
+      "title": "settings_sync 非 env 托管键手写冲突出警告",
+      "dimensions": {
+        "correctness": "pass — detectNonEnvRemovalConflicts 判据三元组（键在 nonEnvKeys 并集 ∧ 本轮 pendingNonEnvKeys 不含 ∧ live root 确有该键）正确；env 键显式排除（3.5 步永不动 env）；去重+排序稳定输出；警告并入 out.warnings 与 detectOverlayConflicts 同一出口（UI 可见）",
+        "tests": "pass — ①真冲突：1 条合并警告、文案含两键名 + 曾被接管写入/手写/高级配置 JSON 三要素、且告警≠免删（键仍被移除，语义不变）②零噪音：第 1 轮 warnings.empty() + 陈旧清理正常路径（并集里有但 root 无）不告警，防噪音回归有钉",
+        "consistency": "pass — 复用 dev 已有 helpers（hasKeyEntry/readSidecarNonEnvKeys/joinKeys 均在 dev 存在，grep 验证）",
+        "regression": "pass — 警告是纯增量输出，不改移除语义",
+        "merge": "clean — settings_sync.cpp 与 B7 改动区（dev 275-278 插入、457+、508+ vs 298-305 单调用点去参）不相交；test_settings_sync.cpp 为 EOF 追加（dev 1476-1478 之后），与 B5 尾部插入点（1476/1477 之间）隔 2 行未变行，自动合并成立",
+        "honesty": "pass"
+      },
+      "findings": [
+        {
+          "file": "src/module_claude_proxy/settings_sync.cpp",
+          "line": "278-303",
+          "issue": "警告对「live 值只是上一轮 DevDesk 写的托管值（用户随后手改过）」同样触发——live 形态上两者不可区分，代码注释已自认此口径",
+          "impact": "理论上存在一轮非手写也告警的噪音面；文案『同名手写值』在纯托管值场景略不精确",
+          "suggestion": "可接受（保守告警优于静默删）；如后续收到噪音反馈，可在 sidecar 里记「本轮移除键的上轮值哈希」做精确判定",
+          "severity": "info"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "name": "worktree-agent-a60a5ee2e40ab96d7",
+      "head": "0154745",
+      "title": "probe --dump requireEl 守卫 + 6 图清单双保险",
+      "dimensions": {
+        "correctness": "pass — requireEl（缺元素/缺指定回调 → 打印 step+id、置红、返回 nullptr 短路）接入全部 6 个 dump 前置点；renderBackend 不可用从『跳过』改置红；dump 打开/写失败已置红且 renderAndDump 返回 bool",
+        "tests": "pass — 双保险：require 拦『进不去』；末尾 expected 6 项清单（actions7/detail_adv/form_adv/json_fs/shared_dialog/ctx_menu）与 6 处 dumpState 调用逐一核对（grep 验证 6=6），缺一张即红",
+        "consistency": "pass — 非 dump 断言路径容错保持原样（注释明确两者口径不同）",
+        "regression": "pass — 单文件 tests/probes/claude_probes.cpp，无生产代码",
+        "merge": "clean — 独占文件",
+        "honesty": "pass — 变量 dumped（lambda 内 bool）与外层 vector dumped 同名但作用域不相交（lambda 先定义、vector 后声明），无遮蔽 bug，可读性略降"
+      },
+      "findings": []
+    },
+    {
+      "id": 4,
+      "name": "worktree-agent-aedc406fffb5a2114",
+      "head": "0f19a52+8fae75f",
+      "title": "隔离守卫桥清单双口径自动抽取 / probe 皮肤夹具置红 / macOS keychain 扫描测试缝",
+      "dimensions": {
+        "correctness": "pass — keychain_macos 拆成 realEnumerateScanEntries（枚举）+ realDeleteSecretsNotIn（决策循环）：service 过滤在真实枚举段（纯优化）与决策循环（对任何枚举来源含注入假命名空间都生效的闸）双重在场，生产语义逐字等价；shouldDeleteOrphan（claude: 白名单 P0 护栏）一行未动；CFRelease 收进枚举函数成功路径，失败路径在创建 entries 前返回，无泄漏；删除失败短路语义保持",
+        "tests": "pass — test_keychain.cpp +144（扫描接线断言，文件 dev 已注册进 tests/CMakeLists.txt:18 会进编译）；脚本抽取失效 → exit 2 绝不静默绿；探针夹具失败置红+中止不回落本机真实数据",
+        "consistency": "pass — 脚本双口径（声明式 awk / static_assert 哨兵 grep）交叉校验漂移，桥名单单一来源 = 头文件本身，消除手维护清单静默漏检",
+        "regression": "pass — 『顺带把 service 过滤移进循环』为刻意加固（注释自述：真实枚举段同款过滤降级为纯优化），非偷改语义；范围漂移已审、可接受",
+        "merge": "clean — 5 个文件均独占",
+        "honesty": "pass — shell 字符串跨行拼接（report 行）写法有效但可读性一般，无功能问题"
+      },
+      "findings": []
+    },
+    {
+      "id": 5,
+      "name": "worktree-agent-a47d07703efb5969c",
+      "head": "01dcc03+ffa33a5",
+      "title": "格式化逐字节真断言 / roundtrip 真回读 / getActiveProfile 腿 / settings_sync 假 keychain",
+      "dimensions": {
+        "correctness": "pass — 格式化用例改断言『编辑框当场变 pretty + 乱序键 {zz,aa} 字典序重排』（无操作/只 trim/保序三类假实现全红）+ 格式化前帧仍是原文（判别力自证）+ 落库值逐字节 == kFormatted；roundtrip 用例改『重开弹窗编辑框文本 == listSharedConfigs 落库原文（逐字节）』+ 弹窗真开（backdrop 未 disabled + delete 键在场）真关（disabled + 无 error）",
+        "tests": "pass — getActiveProfile 腿：激活 a 读回 extraSettingsJson 相等 + 激活 b（无 JSON）读回空串（防恒非空蒙混）；settings_sync 端到端装 ScopedFakeKeychain，头断言 count()==1（写链真跑过）尾断言 count()==0（清理链真跑过），真钥匙串零读写",
+        "consistency": "pass — ScopedFakeKeychain 写法与 test_claude_service.cpp:592 / test_keychain.cpp 既有形态同源；platform::keychain::setBackendForTest 在 dev 已存在",
+        "regression": "pass — 纯测试文件改动",
+        "merge": "clean — test_settings_sync.cpp 与 B2（EOF 追加）/B7（102-186、1101、1273-1288）dev 行区间均不相交；test_claude_service.cpp 与 B7（885-1046、3520-3597）不相交（B5 在 2557）；test_claude_ui.cpp 与 B7（4381）/B8（6189）不相交",
+        "honesty": "pass — 每处加强都写明『原断言为什么测不到』（保存链自己会 pretty 化 / 只覆盖两条 SELECT 自称三条）"
+      },
+      "findings": []
+    },
+    {
+      "id": 6,
+      "name": "worktree-agent-a98641de5f561d669",
+      "head": "d6a0f51",
+      "title": "11 条版本化迁移 → 单份 schema.h（9 表 5 索引，applySchema 幂等整事务）",
+      "dimensions": {
+        "correctness": "pass — 逐列等价人工抽验全过：claude_profiles 17 列（v1 的 10 列 + v3 models_config/extra_env + v6 shared_config_id + v7 auth_field + v9 dialect_override + v10 fallback_profile_id + v11 extra_settings_json，ALTER 追加序 == 新建表列序，类型/NOT NULL/DEFAULT 逐项一致）；claude_shared_configs 5 列（v6 建 5 含 extra_env → v11 DROP extra_env + ADD extra_settings_json 末位 → id/name/created_at/updated_at/extra_settings_json，与新建一致）；todo_columns 6 列（v1 5 列 + v4 kind TEXT 可空）；另验 claude_call_logs 15 列、todo_tasks 11 列、markdown 三表 + FTS 虚表逐字一致；5 索引同名同列同 WHERE；种子 4 列 title/position/color/kind 等价（v2+v4+v8 累积终态 todo/NULL/done/archive == 新种子直插终态）",
+        "tests": "pass — test_schema.cpp（627 行 test_migrations 重写为 491 行）：PRAGMA table_info 逐表逐列断言（17/15/5 列）、种子行含 kind、连跑两次 sqlite_master 逐条相同且不踩用户数据、断言无 schema_version 表/无 trigger/无 view；test_provider_config 旧库升级用例改写为新列默认值；test_markdown_service 内联 DDL 改共用 kSql（消重复漂移源）",
+        "consistency": "pass — 全仓 grep 无残留：migrations::all / runMigrations / schemaVersion / core::data::Migration / migrations.h 在 src+tests 零命中（仅 CHANGELOG/注释/测试里的『断言不存在』 intentionally 提及）；migrations.h 338 行删除、Migration 结构体删除、Database 构造签名收单参，main.cpp/test_support.h/home_service.h/todo_service.*/todo_ui_logic.h 调用点全部同步（其中 6 处为注释口径同步）",
+        "regression": "见 findings — 旧库行为是本分支唯一的实质风险面，口径与项目『No migration, no back-compat』决策一致且有文档，但有两处低危边缘",
+        "merge": "与 B7 在 test_provider_config.cpp 冲突（见冲突清单）；main.cpp/tests/CMakeLists.txt 与 B1 不相交",
+        "honesty": "pass — schema.h 抬头把『不升级旧库、缺列就是缺列』写在明面；commit message 与实际一致"
+      },
+      "findings": [
+        {
+          "file": "src/core/schema.h",
+          "line": "11-13(语义) / src/core/sqlite_db.cpp:300-315(实现)",
+          "issue": "CREATE TABLE IF NOT EXISTS 对已存在的表不改结构——删除版本机制后，『半新不旧』旧库（停在 v4..v10 之间，缺 auth_field/dialect_override/extra_settings_json 等列）会在 applySchema 静默通过（IF NOT EXISTS 全跳过、种子被 NOT EXISTS 守卫跳过），启动照常，直到第一条引用缺列的 SQL（如 listProfiles SELECT）才在运行时报错",
+          "impact": "旧库用户的故障面从『启动即报』退化为『运行期零散报错』；这与 schema.h 抬头『不检测、不迁移、不兜底』的明示口径一致，属接受的策略代价而非缺陷",
+          "suggestion": "保持现状；建议在 CHANGELOG/用户可见处加一句『若从旧版本升级遇数据库报错，删除 AppData 下 devdesk.db 重来』，把恢复路径告诉人",
+          "severity": "low"
+        },
+        {
+          "file": "src/main.cpp",
+          "line": "90-93(openAppDatabase migrate 失败分支)",
+          "issue": "更旧的库（≤v3，todo_columns 无 kind 列）会让种子 INSERT（引用 kind）失败 → 整事务回滚 → migrate 失败 → LOG_FATAL + std::abort() 硬退；且日志文案仍是『数据库迁移失败: 应用 schema 失败: ...no column named kind』，没告诉用户『删掉旧 db 文件重来』",
+          "impact": "极老库用户启动即崩且得不到自助恢复指引；对已明确『无真实旧库』的项目实际命中率≈0",
+          "suggestion": "把 abort 前文案改成『数据库 schema 应用失败（旧版本数据库不再兼容），删除 <路径> 后重启即可』——一行改动，顺手即可",
+          "severity": "low"
+        },
+        {
+          "file": "src/core/database.cpp",
+          "line": "migrate()",
+          "issue": "旧库里遗留的 schema_version 表（v1..v11 时代产物）永不清理，成为死表",
+          "impact": "无功能影响（test_schema 只断言新库无此表）；仅残留",
+          "suggestion": "不处理（删它反而又是一段兼容代码，违背本分支主旨）",
+          "severity": "info"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "name": "worktree-agent-a3cd7b10602821f23",
+      "head": "3bc5eed",
+      "title": "旧数据兼容读路径全删",
+      "dimensions": {
+        "correctness": "pass — 五个符号全仓 grep（src+tests）零残留：legacyModel / migrateLegacyKeychainService / legacySanitize / legacyKeyFilePath / kLegacyKeychainService；Keychain 三层迁移（claude_service kLegacyKeychainService+派生回退兜底旧名、profile_repository.migrateLegacyKeychainService、claude_module onStart 迁移调用）同 commit 一并删除（claude_module.cpp -12 行调用块在 diff 内，先前 stat 截断系 tail 所致，name-status 复核为 21 文件）；Win legacySanitize/legacyKeyFilePath 双读+双删全删；config legacy theme 派生删（load 只认 themeMode 三档字面值，save 双写保留——是写侧非读路径）；provider_config 4 签名去 legacyModel 形参，9 个调用点（claude_service x3、claude_ui_detail/form/list/logic x4、profile_repository x1、settings_sync x1）全部同步为单参形态；详情 pane 旧 model fallback 删",
+        "tests": "pass — test_claude_service 删 claude_service_migrate_legacy_keychain 整段（-134 行）；keychainServiceForDataRoot 用例口径改『绝不与裸前缀同形』；test_provider_config 删 legacy_model_fallback 用例改 effective_models_read；test_claude_ui modelsSummary 断言改『model 列非空但无槽位配置 → \"-\"』（与新读语义一致）；test_settings/test_settings_sync 同步去参",
+        "consistency": "pass — P0 护栏核验：keychain_win realDeleteSecretsNotIn 对现行命名 keep 语义完整——keep 集合 = encodeName(keepAccounts) 逐个入集、只删 .key 后缀文件、只删 stem 以 encodeName(\"claude:\") 开头的条目、不在 keep 即删之外一律 continue；claude: 白名单护栏未因删除弱化（与 dev 逐行 diff 对核）",
+        "regression": "见 findings — 两条低危/信息级边缘，均不阻塞",
+        "merge": "与 B6 在 test_provider_config.cpp 冲突（见冲突清单）；settings_sync.cpp 与 B2、claude_ui_detail.cpp 与 B8、三个测试文件与 B5/B8 的 dev 行区间均不相交",
+        "honesty": "pass — commit message 与 diff 完全对得上，无夹带（cl 小心核对过 21 文件均在删除/同步语义内）"
+      },
+      "findings": [
+        {
+          "file": "src/module_claude_proxy/claude_service.cpp",
+          "line": "83-86(resolveKeychainService)",
+          "issue": "派生失败空根兜底从『旧全局名』改为『裸前缀』，但 kKeychainServicePrefix 的值就是 \"DevDesk\"——兜底产出的字符串与旧 legacy 全局 service 名完全相同。原 claude_service.cpp:95-98 的『兜底旧名』语义在字面上被原样保留，只是注释与概念上不再认它是 legacy 名",
+          "impact": "该路径生产不可达（paths::appDataDir 恒非空）且无任何 legacy 识别/读旧代码残留，实际风险≈0；但若真走到，实例会落在旧命名空间里读到旧条目（=与『不认旧名』口径在这一个不可达点相抵）",
+          "suggestion": "如要口径绝对纯净，可让空根兜底返回 \"DevDesk-unknown\" 之类必不等于旧名的串；或保持现状（推荐，改了反而多一个非自然名字）",
+          "severity": "low"
+        },
+        {
+          "file": "src/platform/keychain_win.cpp",
+          "line": "realDeleteSecretsNotIn(170-215)",
+          "issue": "删除 legacy keep 注入后，旧命名形态文件（legacySanitize 产物 claude_5.key 等）不再匹配 encodeName(\"claude:\") 前缀（claude%3A），从此永不入 keep 也永不被清——成为永久孤儿文件",
+          "impact": "只留垃圾不丢数据（保留方向安全）；磁盘占用可忽略；与『不认旧名』口径一致",
+          "suggestion": "不处理",
+          "severity": "info"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "name": "worktree-agent-af1ddf46d94186af7",
+      "head": "3f8c0b8",
+      "title": "drawDetailAdvanced 字号行盒随 fontScale 派生",
+      "dimensions": {
+        "correctness": "pass — rfs = round(base*fs)，100% 档 round(x*1.0)==x 与旧字面常量逐值相等（14/18/28/10/28/34/18/18 全部保留语义）；字号 11*fs / 12*fs 不取整（与 env pane 同款）；横向不缩放（沿既有做法）；<cmath> 已在 include 列表；fontScale/setFontScale 为 dev 既有 API（core/theme.h:86-87）",
+        "tests": "pass — claude_advjson_pane_geometry_follows_font_scale（268 行）：12 顶层键构造溢出路径、FontScaleGuard RAII 守卫进程级全局态、期望值手算传入不回填实现表达式（85% 钉值 12/15/24/9/24/29/15/15，字号 9.35/10.2）、frame 断言真 layout",
+        "consistency": "pass — 与 env pane E2 修法同构",
+        "regression": "pass — 100% 档零变化由『round(x*1.0)==x』数学性质 + 用例双保险",
+        "merge": "clean — claude_ui_detail.cpp 与 B7 改动区（drawDetailModels:228 / drawDetailEnv:282 vs drawDetailAdvanced:748+）不同函数不相交；test_claude_ui.cpp（6189 vs B5 的 23/3085/6250、B7 的 4381）不相交",
+        "honesty": "pass"
+      },
+      "findings": []
+    }
+  ],
+  "merge_conflicts": [
+    {
+      "files": "tests/test_provider_config.cpp",
+      "branches": [6, 7],
+      "verdict": "会有冲突（唯一真实冲突）",
+      "detail": "B6 hunk @@ -333,60（把 provider_config_migration_upgrade 整段重写为 provider_config_new_column_defaults：删 v2 旧库手工构造、Database::open+migrate、改列默认值断言）覆盖 dev 行 333-392；B7 hunk @@ -382,14（在该测试体内删 2 参 effectiveModelsConfig(p.modelsConfigJson, p.model) 调用与 eff 断言、去注释）覆盖 dev 行 382-395——区间重叠 382-392，git 三方合并必出冲突标记；且 B7 hunk 的锚上下文（旧测试头）被 B6 改名后失配",
+      "resolution": "机械可解：取 B6 的新测试体，再按 B7 语义把其尾部『未配置的 JSON 列 → default 槽位 = model 列』的 2 参 effectiveModelsConfig 调用 + eff.def.model=='claude-3-5-haiku' 断言删掉（B7 口径下 model 列不再参与读时回退，1 参调用对空 models_config 得空槽位）。注意 B6 版本体里那处 2 参调用在 B6 单独合入时可编译（B6 未动 provider_config.h），但 B6+B7 同合时必须删，否则编译红",
+      "severity": "medium"
+    },
+    {
+      "files": "tests/test_settings_sync.cpp",
+      "branches": [2, 5, 7],
+      "verdict": "可干净合并",
+      "detail": "B5（dev 28、88-94 插入假 keychain 基建、1425-1478 端到端改装+头尾 count 断言）、B7（102-109、129-140、145-151、179-186、1101-1111、1273-1288 去参调用点）、B2（EOF 追加 nonEnvKeys 冲突测试 96 行）dev 行区间互不相交；B5 尾部插入点（1476/1477 之间）与 B2 的 EOF 追加（1478 之后）隔 2 行未变行（return true; })），xdiff 自动合并成立；合并结果同时含假 keychain 装载、nonEnvKeys 冲突测试、去参调用点，三者互不依赖无语义耦合（B2 新测试不走 keychain/createProfile）"
+    },
+    {
+      "files": "tests/test_claude_service.cpp",
+      "branches": [5, 7],
+      "verdict": "可干净合并",
+      "detail": "B5 唯一 hunk 在 dev 2557（getActiveProfile 腿，+18 行）；B7 hunk 在 885-1046（迁移用例删除 -134 行）与 3520-3597（buildDirectEnv 去参）；区间不相交。合并后迁移用例已删且 getActiveProfile 腿在场，满足双口径"
+    },
+    {
+      "files": "tests/test_claude_ui.cpp",
+      "branches": [5, 7, 8],
+      "verdict": "可干净合并",
+      "detail": "B5（23、3085-3115 格式化逐字节、6250-6267 roundtrip 回读）、B7（4381-4395 modelsSummary 改口径）、B8（6189-6194 处插入 +268 页签字号测试）互不相交；B8 的 +268 仅平移 B5 尾部 hunk 的行号不构成冲突。合并后格式化/roundtrip 新断言、页签字号新测试、旧 model fallback 用例改写三者共存"
+    },
+    {
+      "files": "src/module_claude_proxy/claude_ui_detail.cpp",
+      "branches": [7, 8],
+      "verdict": "可干净合并",
+      "detail": "B7 改 drawDetailModels（228-235 删旧列 fallback）与 drawDetailEnv（282-290 buildProxyEnv 去参）；B8 改 drawDetailAdvanced（748 起，行几何派生）。不同函数、hunk 不相接"
+    },
+    {
+      "files": "src/main.cpp",
+      "branches": [1, 6],
+      "verdict": "可干净合并",
+      "detail": "B1（20-25 include、593-610 trayIcon 分发）与 B6（74-77 注释口径）不相交"
+    },
+    {
+      "files": "tests/CMakeLists.txt",
+      "branches": [1, 6],
+      "verdict": "可干净合并",
+      "detail": "B1（20-23 加 test_tray_icon.cpp）与 B6（9-12 test_migrations→test_schema 改名）不相交"
+    },
+    {
+      "files": "src/module_claude_proxy/settings_sync.cpp",
+      "branches": [2, 7],
+      "verdict": "可干净合并",
+      "detail": "B2（275-278 后插 31 行新函数、457-462 后插警告块、508-517 warnings 合流）与 B7（298-305 buildProxyEnv 去参单点）dev 区间不相交（B2 插入点与 B7 编辑点隔 19 行未变行）。警告文案不会被 B7 波及（B7 只动 takeOver 内 buildProxyEnv 一处调用形，不触 warnings 通路）"
+    }
+  ],
+  "overall": {
+    "verdict": "可合并（1 处需先修）",
+    "blockers": [
+      "B6+B7 合并前须手工解决 tests/test_provider_config.cpp 的 333-395 区冲突：取 B6 新测试体 + 按 B7 语义删 2 参 effectiveModelsConfig 调用及其断言（否则编译红）"
+    ],
+    "non_blockers_summary": "5 条 findings：2 low（B6 旧库缺列静默通过启动后运行期报错——策略内已文档化，建议补一句用户恢复指引；B6 极老库 abort 文案未给删库指引）+ 2 low/info（B7 空根兜底值恰同旧名——生产不可达、无 legacy 读路径残留；旧命名 keychain 文件成永久孤儿——只留垃圾不丢数据）+ 1 info（B2 警告对上轮托管值同样触发——保守告警可接受）。P0 护栏（keychain_win claude: 白名单 keep 语义、macOS shouldDeleteOrphan）两分支核验均未弱化。B1-B5、B8 六维度全过零 findings 阻塞"
+  }
+}

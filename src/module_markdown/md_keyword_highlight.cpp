@@ -1,16 +1,7 @@
-// src/module_markdown/md_keyword_highlight.cpp
-// 代码关键字多色词法器（Phase 3 ⑤，接口语义与扩展路线见头文件）。
-//
-// 实现形态：单一手写状态机 + per-language LangSpec 数据表（关键字集合、
-// 注释/字符串/三引号/预处理规则以 Lang 枚举开关表达——语言数 ≤3 时比
-// vtable 干净，加 JS/Go 等仍在 langOf/词法开关两处扩展）。按行驱动：
-// 跨行 token（C++ 块注释、Python 三引号串）用 mode_ 状态在行间传递，
-// 每行独立产 run ⇒ 「空行无 run、普通 run 不含换行」结构与逐行 fallback
-// 完全一致，跨行 token 按行切成同色相邻 run（换行恒为间隙）。
-//
-// 容错哲学（与 md_highlight 同源）：识别不确定 = 漏标回默认色，不错标：
-//   - 单行字符串未闭合（行内无配对引号）→ 整段按默认色，状态清零
-//   - 数字扫描过配（"1and" 之类畸形字面量）→ 宁多并一档，不影响可读
+// 代码关键字多色词法器（接口语义见头文件）。
+// 形态：单一手写状态机 + per-language LangSpec 数据表。按行驱动：跨行 token 用
+// mode_ 在行间传递，跨行 token 按行切同色 run。
+// 容错（与 md_highlight 同源）：识别不确定 = 漏标回默认色，不错标。
 #include "md_keyword_highlight.h"
 
 #include <cctype>
@@ -229,7 +220,6 @@ constexpr bool colorEq(const eui::Color& a, const eui::Color& b) {
     return a.r == b.r && a.g == b.g && a.b == b.b && a.a == b.a;
 }
 
-// ── 行驱动状态机 ──────────────────────────────────────────────────────
 class LineLexer {
 public:
     LineLexer(std::string_view code, Lang lang, const MdHighlightColors& colors)
@@ -318,9 +308,8 @@ private:
         }
     }
 
-    // 尝试把 s_[pos]（须为引号字符）开始的串按字符串消费。
-    // 返回串后位置；单行串未闭合 → npos（漏标回默认）。
-    // 三引号未在本行闭合 → 置 mode_ 跨行，返回本行行尾。
+    // 尝试把 s_[pos]（须为引号字符）开始的串按字符串消费：返回串后位置，单行串未闭合
+    // → npos（漏标回默认）；三引号未在本行闭合 → 置 mode_ 跨行，返回本行行尾。
     size_t lexString(size_t pos, size_t b) {
         const char q = s_[pos];
         if (lang_ == Lang::Python && pos + 2 < b && s_[pos + 1] == q &&
@@ -342,8 +331,7 @@ private:
         return std::string_view::npos;  // 未闭合
     }
 
-    // 数字字面量扫描（自 pos 起，pos 为数字字符）。返回数字段终点。
-    // 容忍过配（后缀字母并入），宁多并不错断
+    // 数字字面量扫描：容忍过配（后缀字母并入），宁多并不错断。
     size_t lexNumber(size_t pos, size_t b) {
         size_t j = pos;
         bool radix = false;
@@ -364,8 +352,7 @@ private:
                 ++j;
                 while (j < b && (isDigit(s_[j]) || s_[j] == '_')) ++j;
             }
-            if (j < b && s_[j] == 'e') {  // 指数：e[+-]?digits（E 大写走标识符
-                                          // 分支前的过配并入，够着色用）
+            if (j < b && s_[j] == 'e') {  // 指数 e[+-]?digits（E 大写走标识符过配并入，够着色用）
                 size_t k = j + 1;
                 if (k < b && (s_[k] == '+' || s_[k] == '-')) ++k;
                 if (k < b && isDigit(s_[k])) {
@@ -428,8 +415,7 @@ private:
                 return;
             }
             if (lang_ == Lang::Cpp && ch == '#') {
-                // 预处理指令词（#include/#define…）按关键字色（meta 惯例）；
-                // 裸 #（lambda 捕获等）回默认
+                // 预处理指令词（#include/#define…）按关键字色；裸 #（lambda 捕获等）回默认。
                 size_t j = i + 1;
                 while (j < b && isIdentChar(s_[j])) ++j;
                 if (j > i + 1) {
@@ -493,8 +479,7 @@ private:
                         i = after;
                         continue;
                     }
-                    // 未闭合：前缀+引号整体落默认，逐字续扫（j 不动，
-                    // 下面按普通标识符消费前缀两字，引号下轮再处理）
+                    // 未闭合：前缀+引号整体落默认，逐字续扫（j 不动，按普通标识符消费前缀）。
                 }
                 const bool keyword = keywordsOf(lang_).count(w) > 0;
                 if (keyword) {

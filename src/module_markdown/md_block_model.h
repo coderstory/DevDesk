@@ -1,45 +1,24 @@
-// src/module_markdown/md_block_model.h
-// Markdown 块级元素模型（Phase 3 首块，ux-design §4 方案 2 / §7 Phase 3）。
-//
-// 职责：把整篇源码按【安全块边界】切成连续覆盖的块序列（段落/标题/代码块/
-// 表格/列表/引用/分隔线），供预览按块拼装 components::markdown，实现
-// 「编辑只重算受影响块」——不变块的内容哈希不变 → 上游按 source 键控的
-// md4c 解析缓存（cachedMarkdownDocument）命中，只重析脏块。容量现实（登记
-// KNOWN_LIMITATIONS #9）：解析缓存 LRU 仅 8 条 → 增量重析收益对 ≤8 块文档
-// 完整成立；更大文档解析缓存抖动（成本回落到与整篇模式同量级），而昂贵的
-// 行内布局缓存（cachedInlineLayout，256 条、按块 runs 键控）两种模式等效。
-//
-// 安全切分原则（保证「逐块渲染 == 整篇渲染」，与 md4c 分块语义对齐）：
-//   - 只在这些位置切：空行之后、围栏块（```/~~~，语义与 scanFences 同源）、
-//     GFM 表格行段（| 开头 + 分隔行校验）、ATX 标题行（列 0，必打断段落）、
-//     分隔线（仅空行后的 ---/***/___；紧跟文本行的是 setext 标题下划线，
-//     留在段落块内交给 md4c）
-//   - 列表块 = 整个最大列表（含跨空行的松散项），引用块 = 到空行为止的
-//     最大 > 段——二者绝不从中间切开（有序列表编号/松散度是跨项状态）
-//   - 段落/标题/表格/代码/分隔线各自独立终结（下一块要么空行隔开要么必打断）
-//   - 链接引用定义（[label]: url）是 md4c 的全文档上下文：任何（围栏外）
-//     refdef 行 → 整篇退化为单块（单块恒等价；引用式链接笔记增量收益归零）
-//
-// 增量语义（MdBlockModel::update）：文本相等 → 零重算；否则重跑分块扫描
-// （O(n) 行扫描，与既有 scanFences 同量级），完成后按 (kind, hash) 双端
-// 对齐旧序列——内容未变的块继承 stableId（块身份跨编辑稳定），变化窗口
-// 以新序列脏区间下标报告。「编辑只重算受影响块」的收益在【解析/布局层】：
-// 预览逐块渲染时，未变块按内容串命中上游 md4c 解析缓存与行内布局缓存，
-// 只有脏块重新解析（整篇渲染模式则任何一字符变化都全文重析）。
-// （连分块扫描本身也增量化——变化窗口区段重扫——留给实测超预算再做。）
-//
-// 纯函数 + 单 UI 线程使用的轻量状态机，不抛异常、无 EUI-NEO 依赖（可单测）。
+// Markdown 块级元素模型：把源码按安全块边界切成连续覆盖的块序列，供预览按块
+// 拼装，实现「编辑只重算受影响块」。
+// 切分原则（保证「逐块渲染 == 整篇渲染」）：只在空行后 / 围栏块 / GFM 表格段 /
+// ATX 标题 / 分隔线处切；列表块与引用块绝不从中间切开；围栏外出现链接引用定义
+// 行 → 整篇退化为单块。
+// update：文本相等零重算，否则重扫后按 (kind, hash) 对齐旧序列 —— 未变块继承
+// stableId。解析缓存 LRU 仅 8 条，故增量收益对 ≤8 块文档完整成立。
+// 纯函数 + 单 UI 线程使用，不抛异常、无 EUI-NEO 依赖（可单测）。
+
 #pragma once
 
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace module::markdown {
 
-// 块类型（Phase 3 首批：CodeFence/Table 独立成块直渲；Heading/Divider
-// 为安全切分点；Paragraph/List/Quote 覆盖其余全部行）
+// 块类型：CodeFence/Table 独立成块直渲；Heading/Divider 为安全切分点；
+// Paragraph/List/Quote 覆盖其余行。
 enum class MdBlockKind {
     Paragraph,
     Heading,
@@ -50,8 +29,7 @@ enum class MdBlockKind {
     Divider,
 };
 
-// 一个块 = 源码的一个连续字节区间 [start, end)（含块尾换行/空行）。
-// 全文档的块序列连续覆盖 [0, size)，无缝无重叠。
+// 一个块 = 源码连续字节区间 [start, end)（含块尾换行/空行）。块序列连续覆盖 [0, size)。
 struct MdBlock {
     MdBlockKind kind = MdBlockKind::Paragraph;
     size_t start = 0;
@@ -60,29 +38,23 @@ struct MdBlock {
     int stableId = -1;      // update() 维护：内容不变跨编辑保持的 id
 };
 
-// FNV-1a 64 位（与 md_block_model 内部同源，供测试/日志复用）
+// FNV-1a 64 位（与内部同源，供测试/日志复用）
 uint64_t mdBlockHash(std::string_view text);
 
-// 全文切块（纯函数，MdBlockModel 内部与测试共用；stableId 恒为 -1）
+// 全文切块（纯函数；stableId 恒为 -1）
 std::vector<MdBlock> segmentMarkdownBlocks(const std::string& text);
 
-// 重载后活动块内容映射（MD-01，spec 2026-09-28-md01-reload-block-mapping-design
-// §3/§4）：reloadCurrentNote 把文档整篇换成磁盘版本后，在【新块序列】里定位旧
-// 活动块。匹配规则：
-//   ① 三元组 (kind, hash, stableId) 全等命中即返回该下标（唯一——stableId 单调
-//      递增不重复，重复块也能区分精确实例；平移/前插场景 old stableId 保留）
-//   ② 三元组无命中 → 退回 (kind, hash) 内容等价类：多命中取 |start - nearByte|
-//      最小者，等距取下标小者（覆盖尾改 / 不相邻双改后 stableId 失配但内容未变）
-//   ③ 全无 → 返回 npos（内容被外部删改消失，调用侧按钳位处置）
-// 纯函数、O(n)（n = 块数）、无副作用，可单测。
+// 重载后活动块内容映射：在【新块序列】里定位旧活动块。
+//   ① (kind, hash, stableId) 全等命中 → 该下标（stableId 不重复，可区分实例）
+//   ② 无命中 → 退回 (kind, hash) 等价类，取 |start - nearByte| 最小者（等距取小）
+//   ③ 全无 → npos（内容被删改消失，调用侧钳位）。纯函数、O(块数)。
 size_t mdFindBlockByContent(const std::vector<MdBlock>& blocks, MdBlockKind kind,
                             uint64_t hash, int stableId, size_t nearByte);
 
 // kind 中文名（日志用）
 const char* mdBlockKindName(MdBlockKind kind);
 
-// 一次 update 的结果摘要（脏区间按新块序列下标，闭区间；无脏块统一用
-// 哨兵 dirtyFirst=1 > dirtyLast=0）
+// update 结果摘要（脏区间按新块序列下标，闭区间；无脏块 dirtyFirst=1 > dirtyLast=0）
 struct MdBlockUpdate {
     bool changed = false;
     size_t dirtyFirst = 0;
@@ -91,7 +63,7 @@ struct MdBlockUpdate {
     bool incremental = false; // true = 走了区段重扫；false = 全文回退重扫
 };
 
-// 块模型：持有一份文本快照 + 切块结果。update(text) 是唯一入口。
+// 块模型：持有文本快照 + 切块结果。update(text) 是唯一入口。
 class MdBlockModel {
 public:
     MdBlockUpdate update(const std::string& text);
@@ -99,7 +71,7 @@ public:
     const std::vector<MdBlock>& blocks() const { return blocks_; }
     const std::string& text() const { return text_; }
 
-    // 块序号（二分），字节偏移落在哪个块；offset == size() 归最后一块
+// 块序号（二分）；offset == size() 归最后一块
     size_t blockIndexAt(size_t offset) const;
 
 private:

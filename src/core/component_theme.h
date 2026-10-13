@@ -1,17 +1,8 @@
-// src/core/component_theme.h
-// core::theme 设计 token → EUI-NEO 组件主题（components::theme::ThemeColorTokens）
-// 的唯一映射。模块层所有 EUI-NEO 组件的 .theme() 注入一律走本函数；
-// 禁止直接用 components::theme::light()/dark() 内置默认——那是冷灰底 +
-// 蓝主色的通用默认，与方案 B 暖米色系（spec §6.5.1）不一致，曾导致浅色
-// 模式下"页面米色、组件纯白"的色源不统一 bug。
-//
-// 分层说明：本头文件供模块层使用，core 静态库自身的 .cpp 不包含它
-//（core 实现不依赖 EUI-NEO components，分层铁律不变；与 theme.h 引
-// eui/types.h 同属"类型桥接"性质的例外，且以 header-only 形式存在）。
-// 例外正式声明（2026-09-23 审计 [6]，spec §4.2.1）：core → EUI-NEO 仅限
-// header-only 类型桥接（类型定义 + 值类型 + inline 纯映射，本文件即代表），
-// 禁止调用 EUI-NEO 运行时行为；devdesk_core PUBLIC 链接 eui_neo 是为传播
-// 类型桥接所需的 include usage requirements，非运行时依赖。
+// DevDesk 设计 token → EUI-NEO 组件主题的唯一映射：模块层组件的 .theme() 一律走本函数。
+// 禁用 components::theme::light()/dark() 内置默认（冷灰+蓝主色，与暖米色系不一致，
+// 曾致浅色模式「页面米色、组件纯白」色源分裂）。
+// 分层例外：core → EUI-NEO 仅限 header-only 类型桥接（类型 + 值 + inline 纯映射），
+// 禁止调用其运行时行为；core 静态库 .cpp 不含此头。
 #pragma once
 
 #include "theme.h"
@@ -20,10 +11,7 @@
 
 namespace core::theme {
 
-// 从 DevDesk 设计 token 派生 EUI-NEO 组件主题（唯一色源 = core::theme）。
-// 字段映射：background←background / primary←primary / surface←surface /
-// surfaceHover←hover / surfaceActive←active / text←textPrimary /
-// border←borderDefault / dark←isDark；metrics 用 EUI-NEO 默认
+// 从 design token 派生组件主题（唯一色源 = core::theme）
 inline components::theme::ThemeColorTokens componentTokens(const Tokens& t) {
     components::theme::ThemeColorTokens tokens;
     tokens.background = t.colors.background;

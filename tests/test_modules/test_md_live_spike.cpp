@@ -1,43 +1,30 @@
 // tests/test_modules/test_md_live_spike.cpp
 //
-// Markdown Phase 3 · M0 技术验证 spike（门禁）
-// 依据：docs/superpowers/specs/2026-09-27-markdown-phase3-block-render-design.md
-//       §2.2（待验证项 V1~V4）/ §4.1（选型 D1/D2/D7）/ §5（性能目标 #4）
+// Markdown 活体输入的技术验证：稳定 id 跨帧搬家（V1）、父级消失时的焦点归属（V2）、
+// input 作为 scrollView 流式内容（V3）、换文本瞬间的滚动残余（V4）。
 //
-// M0 是门禁：V1~V4 任一项不成立就要触发 R1 兜底方案重估、不进入 M1。本文件把四项
-// 拆成可复跑的 REGISTER_TEST 用例（用例名统一 mdspike 前缀，便于
-// `./devdesk_tests.exe mdspike` 子串过滤），长期留作回归证据；结论表与手工点验
-// 清单在 docs/superpowers/plans/2026-09-27-md-phase3-m0-spike.md。
+// 无头边界（本文件不是端到端验证）：
+//   - 帧驱动走 core::dsl::Runtime，Ui::requestFocus 的帧末消费端即在 Runtime::compose，
+//     焦点状态不伪造。
+//   - 键/指针的「事件队列 → dispatch」段需要真窗口（事件由 consumeKeyEvents/PointerEvents
+//     从窗口队列取，入口是 Runtime::update），无头不可驱动。故：键用例直接调
+//     `focusedElement->onKeyEvent(key)`；指针用例直接调 onPress/onScroll，并按 Runtime 的算法把
+//     scrollView 滚动位移折算进 bounds（命中测试把父级 renderTransform 施加到子元素）。
+//     「队列段 + 真实 IME 候选框 + 真实击键节奏」属人工点验。
+//   - 不依赖真实 ~/.claude、不起 app、不联网、不碰 sqlite。
 //
-// 无头边界（诚实声明，勿把本文件当端到端验证）：
-//  1) 焦点协议可全量驱动：Ui::requestFocus 的帧末消费端就在 Runtime::compose
-//     （core/runtime/runtime_lifecycle.h:38-42），故本文件用 core::dsl::Runtime
-//     逐帧 compose，不伪造焦点状态。
-//  2) 键/指针的「事件队列 → dispatch」段需要真窗口（事件由
-//     core::window::consumeKeyEvents/PointerEvents 从窗口队列取，入口是
-//     Runtime::update），无头不可驱动。因此：
-//       · 键用例直接调用 updateKeyInput 内部的同一调用点
-//         `focusedElement->onKeyEvent(key)`（core/runtime/runtime_input.h:303-305）；
-//       · 指针用例直接调用 onPress/onScroll，并按 Runtime 的算法把 scrollView 滚动
-//         位移折算进 bounds（runtime_update.h:374-382 → hitMatrixForElement →
-//         runtime_state_bindings.h:157-178 的 translate.y -= offset；子元素在命中
-//         测试里继承父级 renderTransform，runtime_input.h:156-167）。
-//     「队列段 + 真实 IME 候选框 + 真实击键节奏」由手工点验清单补。
-//  3) 不依赖真实 ~/.claude、不起 app、不联网、不碰 sqlite。
-//
-// 结论（详细见计划文件 V1~V4 表）：
-//  V1 成立（有条件）：同 id input 跨帧换位/换父级 → 焦点、StateStore、几何、键派发
-//     目标全部存活；条件 = 焦点 id 必须是 `<input id>.hit`（见 v1b）。
-//  V2 不成立（spec 的担心方向反了）：元素消失时 focusedId_ **不会**被清除，而是
-//     变成"陈旧焦点"（isFocused 只比字符串）；真正会清焦点的是 releaseStateScope
-//     覆盖该 id —— 兜底与约束见 v2a/v2c。
-//  V3 成立：input 作为 scrollView 流式 content，尺寸参与布局与内容测量；滚动偏移下
-//     pointer→caret 落在点击行；imeRect 在元素局部坐标系（候选框随元素变换）。
-//  V4 条件成立：贴合高度（D2 默认）下无残余跳位；仅「封顶块 + followCaret=false」
-//     同时成立时换文本首帧跳位，按 R5 同帧归零消除。
+// 钉死的结论（后续改 Runtime 时这些是回归判据）：
+//   - V1 成立（有条件）：同 id input 跨帧换位/换父级 → 焦点、StateStore、几何、键派发目标全部存活；
+//     条件 = 焦点 id 必须是 `<input id>.hit`（见 v1b）。
+//   - V2 不成立（担心方向反了）：元素消失时 focusedId_ **不会**被清除，而是变成陈旧焦点
+//     （isFocused 只比字符串）；真正会清焦点的是 releaseStateScope 覆盖该 id（见 v2a/v2c）。
+//   - V3 成立：input 作为 scrollView 流式 content，尺寸参与布局与内容测量；滚动偏移下
+//     pointer→caret 落在点击行；imeRect 在元素局部坐标系。
+//   - V4 条件成立：贴合高度（D2 默认）下无残余跳位；仅「封顶块 + followCaret=false」同时成立时
+//     换文本首帧跳位，按 R5 同帧归零消除。
 
 #include "doctest.h"
-#include "../frame_env.h"   // TIN-06 收尾波：headless 帧驱动三合一 HeadlessFrame
+#include "../frame_env.h"   // headless 帧驱动三合一 HeadlessFrame
 #include "module_markdown/md_ids.h"
 
 using module::markdown::kEditorInputId;
@@ -63,7 +50,7 @@ using InputState = components::input_detail::InputModel::InputState;
 // 所有用例共用同一个 pageId：Ui 的 state/焦点前缀以 pageId 起头，换名等于换命名空间
 constexpr const char* kPage = "mdspike";
 
-// 单输入方案（D1）里的稳定 id：input 元素 id 与"真正可聚焦元素"id（input.h:113）
+// 稳定 id：input 元素 id 与「真正可聚焦元素」id（后者才吃 requestFocus / onKeyEvent）
 constexpr const char* kInput = "live.input";
 constexpr const char* kInputHit = "live.input.hit";
 
@@ -94,7 +81,6 @@ int lineOfByte(int byte) {
     return byte / kLineStride;
 }
 
-// 无头帧驱动（test_support::HeadlessFrame，TIN-06 收尾波三合一）
 // 单输入（multiline）构建：与 Live 的接线同形——稳定 id、显式 content-fit 高度
 void spikeBuildInput(Ui& ui, const std::string& text, float height) {
     components::input(ui, kInput)
@@ -107,7 +93,7 @@ void spikeBuildInput(Ui& ui, const std::string& text, float height) {
         .build();
 }
 
-// 直接驱动 input.h:199 的 onPress（queue→dispatch 段需真窗口，见文件头说明）
+// 直接调 onPress 驱动（queue→dispatch 段需真窗口，见文件头说明）
 void spikePress(const Element* hit, const eui::Rect& bounds, double x, double y) {
     eui::PointerEvent down;
     down.action = eui::PointerAction::Press;
@@ -119,17 +105,13 @@ void spikePress(const Element* hit, const eui::Rect& bounds, double x, double y)
 
 } // namespace
 
-// ============================================================
-// V1：稳定 id 的 input 跨帧换位 / 换父级
-// ============================================================
-
-// ---- V1 主用例：换位 + 换父级后，元素身份/焦点/状态/几何/键派发全部存活 ----
+// V1 主用例：稳定 id 的 input 跨帧换位 / 换父级后，元素身份、焦点、状态、几何、键派发全部存活
 REGISTER_TEST(mdspike_v1_relocate_keeps_identity,
               "mdspike V1: 同 id input 换位换父级 → 焦点+状态+几何+键派发存活", {
     test_support::HeadlessFrame env(kPage);
     const std::string text = spikeLines(kLines, "A");
 
-    // 帧 1：根 column = [a, input, b]，帧末 requestFocus（照"点击渲染块→聚焦活动块"接线）
+    // 帧 1：根 column = [a, input, b]，帧末 requestFocus（照「点击渲染块→聚焦活动块」接线）
     auto layout1 = [&](Ui& ui) {
         ui.column("spike.root").gap(10.0f).content([&] {
             ui.rect("spike.a").size(600.0f, 40.0f).build();
@@ -143,7 +125,7 @@ REGISTER_TEST(mdspike_v1_relocate_keeps_identity,
     DOCTEST_REQUIRE(env.ui->find(kInputHit) != nullptr);
     DOCTEST_CHECK(env.ui->find(kInputHit)->focusable);   // 可聚焦元素 = <id>.hit（input.h:197）
     DOCTEST_CHECK(env.ui->isFocused(kInputHit));         // requestFocus 帧末消费 → 焦点已建立
-    // 焦点在帧末消费（runtime_lifecycle.h:38-42），故"聚焦态才画"的 caret 元素次帧才出现
+    // 焦点在帧末消费，故「聚焦态才画」的 caret 元素次帧才出现
     env.frame(layout1);
     DOCTEST_CHECK(env.ui->find("live.input.cursor") != nullptr);
 
@@ -218,11 +200,9 @@ REGISTER_TEST(mdspike_v1_relocate_keeps_identity,
     return true;
 })
 
-// ---- V1b：焦点 id 口径陷阱（requestFocus 必须打到 <id>.hit，否则静默失效）----
-// 事故面：DevDesk 现有 4 处 `ui.requestFocus(kEditorInputId)`
-// （markdown_module.cpp:1611/2425/2453/2616）发的是**基 id**，而 input 组件认的
-// 是 `<id>.hit`（input.h:114 `ui_.isFocused(id + ".hit")`）——本用例把两种口径的
-// 可观测差异钉死，供 M3 接线前拍板。
+// V1b：焦点 id 口径陷阱（requestFocus 必须打到 <id>.hit，否则静默失效）。
+// input 组件认的是 `<id>.hit`，发基 id 会「看起来设上了焦点」但组件判未聚焦——本用例把两种口径
+// 的可观测差异钉死。
 REGISTER_TEST(mdspike_v1b_focus_target_must_be_hit_id,
               "mdspike V1b: requestFocus 必须指向 <input>.hit（基 id 静默失效）", {
     test_support::HeadlessFrame env(kPage);
@@ -240,7 +220,7 @@ REGISTER_TEST(mdspike_v1b_focus_target_must_be_hit_id,
     });
     DOCTEST_CHECK(env.ui->isFocused(kInput));           // 焦点确实落在基 id 上
     DOCTEST_CHECK_FALSE(env.ui->isFocused(kInputHit));  // 组件认的是 .hit
-    // 次帧（焦点已生效一帧）后仍然如此——差异不是"晚一帧"，而是口径不同
+    // 次帧后仍然如此——差异不是「晚一帧」，而是口径不同
     env.frame([&](Ui& ui) { buildOne(ui); });
     DOCTEST_CHECK_FALSE(env.ui->isFocused(kInputHit));
     DOCTEST_CHECK(env.ui->find("live.input.cursor") == nullptr);   // 无 caret
@@ -258,14 +238,8 @@ REGISTER_TEST(mdspike_v1b_focus_target_must_be_hit_id,
     return true;
 })
 
-// ============================================================
-// V2：焦点元素所在父级被合并 / 删除时的焦点归属
-// ============================================================
-
-// ---- V2a：元素从帧树消失 → focusedId_ 不清除（陈旧焦点，而非丢焦点）----
-// spec §2.2 V2 假设"父级被删会清 focusedId_ → 打字丢失"；实测方向相反：
-// focusedId_ 只在 ① releaseStateScope 前缀命中 ② 禁用子树 ③ 指针按下重定焦
-// 三处变化（runtime_input.h:227-249 / runtime_lifecycle.h:28-45），元素消失不在其列。
+// V2a：元素从帧树消失 → focusedId_ 不清除（陈旧焦点，而非丢焦点）。focusedId_ 只在三处变化——
+// releaseStateScope 前缀命中 / 禁用子树 / 指针按下重定焦；元素消失不在其列。
 REGISTER_TEST(mdspike_v2a_unmount_leaves_stale_focus,
               "mdspike V2a: 元素消失时焦点不被清除（陈旧焦点）+ 重挂载静默恢复", {
     test_support::HeadlessFrame env(kPage);
@@ -298,7 +272,7 @@ REGISTER_TEST(mdspike_v2a_unmount_leaves_stale_focus,
     return true;
 })
 
-// ---- V2b：目标不在本帧树中时 requestFocus 被丢弃（不排队）----
+// V2b：目标不在本帧树中时 requestFocus 被丢弃（不排队）
 // 这条是兜底方案的前提：不能"提前"或"事后"补发，必须与元素同帧。
 REGISTER_TEST(mdspike_v2b_requestfocus_when_absent_is_dropped,
               "mdspike V2b: 目标不在本帧树中 → requestFocus 丢弃不排队", {
@@ -321,11 +295,10 @@ REGISTER_TEST(mdspike_v2b_requestfocus_when_absent_is_dropped,
     return true;
 })
 
-// ---- V2c：真正会清焦点的是 releaseStateScope；同帧「释放 + 补发」可恢复 ----
-// R7 要求块切换时释放旧块状态；若单输入被放进被释放的 scope 前缀下，焦点会被连带清掉，
-// 同时 InputState（光标/undo）被销毁重建 —— 这是 Live 接线的硬约束。
-// 缓解顺序成立：Runtime::compose 先消费 releasedStateScopes 再消费 pendingFocus
-// （runtime_lifecycle.h:28-42），故同帧补发 requestFocus 会在释放之后生效。
+// V2c：真正会清焦点的是 releaseStateScope；同帧「释放 + 补发」可恢复。
+// 块切换要释放旧块状态，若单输入被放进被释放的 scope 前缀下，焦点会被连带清掉，InputState
+// （光标/undo）同时被销毁重建——这是 Live 接线的硬约束。缓解顺序成立：Runtime::compose 先消费
+// releasedStateScopes 再消费 pendingFocus，故同帧补发 requestFocus 在释放之后生效。
 REGISTER_TEST(mdspike_v2c_release_scope_clears_then_same_frame_request_restores,
               "mdspike V2c: releaseStateScope 清焦点；同帧补发 requestFocus 可恢复", {
     test_support::HeadlessFrame env(kPage);
@@ -370,14 +343,9 @@ REGISTER_TEST(mdspike_v2c_release_scope_clears_then_same_frame_request_restores,
     return true;
 })
 
-// ============================================================
-// V3：input 作为 scrollView content 内的流式元素
-// ============================================================
-
 namespace {
 
 // scrollView 内容： [top(60)] + input(显式高) + [bottom(60)]，gap 20，视口 600×300
-// 单文件专属帧驱动，keep-local（TIN-06）
 struct SpikeScrollPage {
     Ui ui;
 
@@ -409,7 +377,7 @@ struct SpikeScrollPage {
 
 } // namespace
 
-// ---- V3a：尺寸参与流式布局 + 进入内容测量（滚动范围）+ 贴合高度不注册滚轮 ----
+// V3a：尺寸参与流式布局 + 进入内容测量（滚动范围）+ 贴合高度不注册滚轮
 REGISTER_TEST(mdspike_v3a_input_as_flow_content,
               "mdspike V3a: input 流式 content（布局/滚动范围/贴合无滚轮处理器）", {
     SpikeScrollPage page;
@@ -432,7 +400,7 @@ REGISTER_TEST(mdspike_v3a_input_as_flow_content,
     DOCTEST_CHECK(nearEq(sv->scrollMaxOffset, contentH - 300.0f));
     DOCTEST_CHECK(sv->scrollMaxOffset > 0.0f);
     DOCTEST_CHECK(page.ui.find("live.scroll.scroll.thumb") != nullptr);   // 可滚 → 有滚动条
-    // ③ D2 贴合高度 ⇒ maxVerticalScroll == 0 ⇒ 不注册 onScroll（滚轮穿透外层，spec §2.1）
+    // ③ 贴合高度 ⇒ maxVerticalScroll == 0 ⇒ 不注册 onScroll（滚轮穿透外层）
     DOCTEST_CHECK(page.ui.find(kInputHit)->onScroll == nullptr);
 
     // ④ 同一布局换矮 input → 内容不再超高：滚动范围归零、滚动条消失（尺寸真的参与了测量）
@@ -449,14 +417,14 @@ REGISTER_TEST(mdspike_v3a_input_as_flow_content,
     DOCTEST_CHECK(nearEq(page.ui.find("live.scroll")->scrollOffset,
                        page.ui.find("live.scroll")->scrollMaxOffset));
 
-    // ⑥ 对照：封顶块（R4，高 300 < 内容 720）→ maxVerticalScroll > 0 → 注册滚轮处理器
-    //    （= spec §5 #5 的"块内滚动/轮盘死区"确实存在，属已接受取舍）
+    // ⑥ 对照：封顶块（高 300 < 内容 720）→ maxVerticalScroll > 0 → 注册滚轮处理器
+    //    （块内滚动/轮盘死区确实存在，属已接受取舍）
     page.frame(300.0f, 0.0f, text);
     DOCTEST_CHECK(page.ui.find(kInputHit)->onScroll != nullptr);
     return true;
 })
 
-// ---- V3b：滚动偏移下 pointer→caret 映射 + lastBounds + imeRect ----
+// V3b：滚动偏移下 pointer→caret 映射 + lastBounds + imeRect
 REGISTER_TEST(mdspike_v3b_pointer_to_caret_under_scroll,
               "mdspike V3b: 滚动偏移下 pointer→caret 落点击行（含反控）", {
     SpikeScrollPage page;
@@ -473,13 +441,13 @@ REGISTER_TEST(mdspike_v3b_pointer_to_caret_under_scroll,
     DOCTEST_REQUIRE(nearEq(offset, 120.0f));
 
     // Runtime 侧：内容列 renderTransform.translate.y -= offset，命中测试把父级变换
-    // 施加到子元素 → onPress 收到的是"屏幕坐标下"的 bounds（见文件头取证）
+    // 施加到子元素 → onPress 收到的是「屏幕坐标下」的 bounds
     const float hitW = in->frame.width;
     const eui::Rect shifted(in->frame.x, in->frame.y - offset, hitW, in->frame.height);
     const eui::Rect unshifted(in->frame.x, in->frame.y, hitW, in->frame.height);
 
     // 视口中部点（屏幕坐标）：内容坐标 270 → input 局部 190 → 第 7 行（0 基）
-    // 反函数：lineIndexFromY(localY) = floor((localY − textTop) / lineHeight)（input_model.h:256-263）
+    // 反函数：lineIndexFromY(localY) = floor((localY − textTop) / lineHeight)
     const double px = 300.0;
     const double py = 150.0;
     const int expectLine = static_cast<int>((py - shifted.y - kInset) / kLineH);
@@ -503,8 +471,7 @@ REGISTER_TEST(mdspike_v3b_pointer_to_caret_under_scroll,
         DOCTEST_CHECK(lineOfByte(s3.cursor) == expectLine - static_cast<int>(offset / kLineH));
     }
 
-    // IME 候选框：imeRect 记在元素局部坐标系（input.h:198），平台侧再叠加元素变换
-    // （runtime_input.h:318-360 → toPixelRect(frame) + hitMatrixForElement）→ 随滚动走
+    // IME 候选框：imeRect 记在元素局部坐标系，平台侧再叠加元素变换 → 随滚动走
     page.frame(kFitH, 120.0f, text);
     const Element* hit2 = page.ui.find(kInputHit);
     DOCTEST_REQUIRE(hit2 != nullptr);
@@ -514,15 +481,9 @@ REGISTER_TEST(mdspike_v3b_pointer_to_caret_under_scroll,
     return true;
 })
 
-// ============================================================
-// V4：换文本瞬间 verticalScroll / followCaret 残余
-// ============================================================
-
-// ---- V4a：封顶块 + followCaret=false → 首帧跳位成立；同帧归零（R5）消除 ----
-// 首帧几何探针用 caret 元素：frame.y = inset + cursorLine×lineH − verticalScroll
-// （input.h:487-492 → layout.cursorY = textTop + cursorLine×lineH − verticalScroll）。
-// 换文本时 focused → 光标落到新文本末尾（input.h:143-147）→ cursorLine 固定为末行，
-// 故 caret.y 直接读出残余 verticalScroll。
+// V4a：封顶块 + followCaret=false → 首帧跳位成立；同帧归零（R5）消除。
+// 首帧几何探针用 caret 元素：frame.y = inset + cursorLine×lineH − verticalScroll。换文本时
+// focused → 光标落到新文本末尾 → cursorLine 固定为末行，故 caret.y 直接读出残余 verticalScroll。
 REGISTER_TEST(mdspike_v4a_swap_text_scroll_residual_capped_block,
               "mdspike V4a: 封顶块换文本首帧跳位 + R5 同帧归零消除", {
     test_support::HeadlessFrame env(kPage);
@@ -547,7 +508,7 @@ REGISTER_TEST(mdspike_v4a_swap_text_scroll_residual_capped_block,
         s.cursor = static_cast<int>(t1.size());
         s.selectionStart = s.cursor;
         s.selectionEnd = s.cursor;
-        // followCaret=true 会把 caret 拉进视口（input_model.h:158-161），先关掉让滚动可读
+        // followCaret=true 会把 caret 拉进视口，先关掉让滚动可读
         s.followCaret = false;
         s.verticalScroll = 0.0f;
     }
@@ -556,7 +517,7 @@ REGISTER_TEST(mdspike_v4a_swap_text_scroll_residual_capped_block,
     DOCTEST_REQUIRE(caret != nullptr);
     DOCTEST_CHECK(nearEq(caret->frame.y, lastLineY));                 // 未滚动基准
 
-    // 用户在封顶块内滚一格（followCaret 置 false，input.h:220-227）
+    // 用户在封顶块内滚一格（内部滚动同时把 followCaret 置 false）
     const Element* hit = env.ui->find(kInputHit);
     DOCTEST_REQUIRE(hit != nullptr);
     DOCTEST_REQUIRE(hit->onScroll != nullptr);
@@ -579,8 +540,8 @@ REGISTER_TEST(mdspike_v4a_swap_text_scroll_residual_capped_block,
     DOCTEST_CHECK_EQ(env.ui->state<InputState>(kInput).text, t2);
     DOCTEST_CHECK(nearEq(env.ui->find("live.input.cursor")->frame.y, lastLineY - residual));
 
-    // ② R5 缓解：切块帧（t2→t3）compose 前把 verticalScroll 归零（模块在 compose 回调内先
-    //    归零再画 input）→ 新块首帧无跳位；与 ① 同为真·换文本帧，唯一差别是这一行归零
+    // ② 缓解：切块帧（t2→t3）compose 前把 verticalScroll 归零（模块在 compose 回调内先归零再画
+    //    input）→ 新块首帧无跳位；与 ① 同为真·换文本帧，唯一差别是这一行归零
     const std::string t3 = spikeLines(kLines, "C");
     {
         InputState& s = env.ui->state<InputState>(kInput);
@@ -592,7 +553,7 @@ REGISTER_TEST(mdspike_v4a_swap_text_scroll_residual_capped_block,
     DOCTEST_CHECK(nearEq(env.ui->find("live.input.cursor")->frame.y, lastLineY));
     DOCTEST_CHECK(nearEq(env.ui->state<InputState>(kInput).verticalScroll, 0.0f));
 
-    // ③ 打字路径自愈：followCaret=true 时框架同帧按光标重算滚动（input_model.h:158-161）
+    // ③ 打字路径自愈：followCaret=true 时框架同帧按光标重算滚动
     {
         InputState& s = env.ui->state<InputState>(kInput);
         s.verticalScroll = residual;
@@ -605,7 +566,7 @@ REGISTER_TEST(mdspike_v4a_swap_text_scroll_residual_capped_block,
     return true;
 })
 
-// ---- V4b：贴合高度（D2 默认路径）→ 不注册滚轮、残余恒为 0、换文本无跳位 ----
+// V4b：贴合高度（D2 默认路径）→ 不注册滚轮、残余恒为 0、换文本无跳位
 REGISTER_TEST(mdspike_v4b_fit_height_has_no_residual,
               "mdspike V4b: 贴合高度换文本无残余跳位（D2 默认）", {
     test_support::HeadlessFrame env(kPage);

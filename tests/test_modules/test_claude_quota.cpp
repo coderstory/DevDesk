@@ -1,0 +1,1154 @@
+// tests/test_modules/test_claude_quota.cpp
+// 供应商余量抽象层契约测试：显式注册表、detectByBaseUrl、ProviderField、QuotaResult 默认值、fetch 契约。
+// 覆盖 opencode_go 与 deepseek 两家 provider；HTTP 一律走注入缝，零真实网络。
+// 跨文件前提：
+//   - 注册表是「哨兵结尾的 extern 数组」，消费方一律靠哨兵走界；新加的行必须插在哨兵之前，
+//     插在之后不会有任何编译期或运行期信号。
+//   - fetch 恒返回 QuotaResult，错误只走 error / errorMessage 字段，不抛异常。
+//   - http 注入缝有两种失败形态：Result::fail，以及 ok(Response{statusCode=0, networkError=true})。
+//     provider 两种都得判，漏掉后者时 statusCode 0 会落进 <200 分支，报出一个不存在的状态码。
+#include "doctest.h"
+
+#include "quota/opencode_go_provider.h"
+#include "quota/deepseek_provider.h"
+#include "quota/quota_provider.h"
+#include "quota/quota_registry.h"
+
+#include <algorithm>
+#include <cstddef>
+#include <iterator>
+#include <map>
+#include <span>
+#include <string>
+#include <utility>
+#include <vector>
+
+namespace {
+
+using module::claude::quota::HttpSendFn;
+using module::claude::quota::ProviderConfig;
+using module::claude::quota::ProviderField;
+using module::claude::quota::QuotaError;
+using module::claude::quota::QuotaKind;
+using module::claude::quota::QuotaProvider;
+using module::claude::quota::QuotaProviderEntry;
+using module::claude::quota::QuotaResult;
+using module::claude::quota::QuotaWindow;
+
+// 测试替身：三个出口（fields / matchesBaseUrl / fetch 返回值）全由构造参数驱动，
+// 便于逐条断言契约，而不是拿被测实现自证。
+class FakeProvider final : public QuotaProvider {
+public:
+    FakeProvider(std::string id, std::string displayName,
+                 std::vector<ProviderField> fields, std::string matchedBaseUrl = {},
+                 QuotaResult result = {})
+        : id_(std::move(id)),
+          displayName_(std::move(displayName)),
+          fields_(std::move(fields)),
+          matchedBaseUrl_(std::move(matchedBaseUrl)),
+          result_(std::move(result)) {}
+
+    std::string id() const override { return id_; }
+    std::string displayName() const override { return displayName_; }
+    std::vector<ProviderField> fields() const override { return fields_; }
+
+    // 未构造 matchedBaseUrl 时走基类默认（return false）：provider 忘了覆写探测时
+    // 不能误命中任何 profile
+    bool matchesBaseUrl(const std::string& baseUrl) const override {
+        if (matchedBaseUrl_.empty()) return QuotaProvider::matchesBaseUrl(baseUrl);
+        return baseUrl == matchedBaseUrl_;
+    }
+
+    QuotaResult fetch(const ProviderConfig& cfg, const HttpSendFn& http) const override {
+        lastConfig_ = cfg;
+        httpSeamPresent_ = static_cast<bool>(http);
+        // 真把请求交给注入缝（测试传假发送 → 零真实网络）：证明 HttpSendFn 是可调用对象
+        if (http) {
+            platform::http::Request req;
+            req.method = "GET";
+            req.url = cfg.baseUrl + "/quota";
+            const core::Result<platform::http::Response> resp = http(req);
+            seamSawStatusCode_ = resp.isOk() ? resp.value().statusCode : -1;
+        }
+        return result_;
+    }
+
+    const ProviderConfig& lastConfig() const { return lastConfig_; }
+    bool httpSeamPresent() const { return httpSeamPresent_; }
+    int seamSawStatusCode() const { return seamSawStatusCode_; }
+
+private:
+    std::string id_;
+    std::string displayName_;
+    std::vector<ProviderField> fields_;
+    std::string matchedBaseUrl_;
+    QuotaResult result_;
+    mutable ProviderConfig lastConfig_;   // fetch 是 const 成员，故这几个字段必须 mutable
+    mutable bool httpSeamPresent_ = false;
+    mutable int seamSawStatusCode_ = 0;
+};
+
+// 注册表行工厂：进程内单例。findProvider 返回 const 指针，调用方无从释放，
+// 每次 new 就是稳定泄漏。
+FakeProvider& fakeSingleton() {
+    static FakeProvider instance("fake_provider", "假供应商",
+                                 {ProviderField{"apiKey", "API 密钥", true}});
+    return instance;
+}
+
+QuotaProvider* createFake() { return &fakeSingleton(); }
+
+FakeProvider& matchingSingleton() {
+    static FakeProvider instance("matcher", "会命中的假供应商", {},
+                                 "https://api.example.com");
+    return instance;
+}
+QuotaProvider* createMatcher() { return &matchingSingleton(); }
+
+FakeProvider& nonMatchingSingleton() {
+    static FakeProvider instance("non_matcher", "不覆写探测的假供应商", {});
+    return instance;
+}
+QuotaProvider* createNonMatcher() { return &nonMatchingSingleton(); }
+
+// 重复 id 的表：首行 + 同 id 第二行（两个不同单例，便于分辨返回的是谁）
+FakeProvider& dupFirstSingleton() {
+    static FakeProvider instance("dup", "第一个同 id", {});
+    return instance;
+}
+QuotaProvider* createDupFirst() { return &dupFirstSingleton(); }
+
+FakeProvider& dupSecondSingleton() {
+    static FakeProvider instance("dup", "第二个同 id", {});
+    return instance;
+}
+QuotaProvider* createDupSecond() { return &dupSecondSingleton(); }
+
+const QuotaProviderEntry kFakeTable[] = {
+    {"fake_provider", &createFake},
+    {"matcher", &createMatcher},
+    {"non_matcher", &createNonMatcher},
+    {nullptr, nullptr},  // 表尾哨兵，与生产表同约定
+};
+
+const QuotaProviderEntry kDupTable[] = {
+    {"dup", &createDupFirst},
+    {"dup", &createDupSecond},
+    {nullptr, nullptr},
+};
+
+// 行 id 与工厂造出来的 provider.id() 不一致的坏表：这类行「看着在表里」，
+// 实际查出来是另一个供应商——结构守卫必须报出来，否则会静默张冠李戴。
+const QuotaProviderEntry kMismatchedTable[] = {
+    {"dup", &createFake},
+    {nullptr, nullptr},
+};
+
+// 「行落在哨兵之后」的坏表：哨兵占了中间一行，真实行跟在它后面。对它，
+// findProvider / detectByBaseUrl / firstDuplicateId / firstInconsistentId 一律绿
+// （循环遇哨兵即停，谁也看不见后面的行）——先拿它证明哨兵守卫非恒真，再对真表断言。
+const QuotaProviderEntry kRowAfterSentinelTable[] = {
+    {"fake_provider", &createFake},
+    {nullptr, nullptr},   // ← 哨兵错位到了中间
+    {"stranded", &createMatcher},  // ← 这行永久不可达
+};
+
+// 「整表没有哨兵」的坏表：查找会一路读出数组末尾（UB）。
+const QuotaProviderEntry kNoSentinelTable[] = {
+    {"fake_provider", &createFake},
+    {"matcher", &createMatcher},
+};
+
+// 落库 / UI 用的键值对：fields() 声明的键 → 值
+ProviderConfig configWith(std::string providerId, std::string baseUrl,
+                          std::string apiKey) {
+    ProviderConfig cfg;
+    cfg.providerId = std::move(providerId);
+    cfg.baseUrl = std::move(baseUrl);
+    cfg.apiKey = std::move(apiKey);
+    return cfg;
+}
+
+// 哨兵位置守卫：返回首个问题的描述串，无问题返回空串。
+// findProvider / detectByBaseUrl / firstDuplicateId / firstInconsistentId 的循环边界都是
+// 哨兵本身（遇 `id == nullptr` 即停），所以「某行落在哨兵之后」对它们一律不可见——编译通过、
+// 全部用例绿，而那个 provider 永久不可达。
+// 遍历一律按 len 走界，不按哨兵数行：哨兵缺失时靠哨兵数行会走出数组，越界读是 UB，不是可诊断
+// 的红，测试会崩或随机绿，而不是给出一条能指认「末行不是哨兵」的失败。
+std::string sentinelPlacementProblem(const QuotaProviderEntry* table, std::size_t len) {
+    if (table == nullptr || len == 0) return "表为空";
+    std::size_t rows = 0;
+    while (rows < len && table[rows].id != nullptr) ++rows;
+    if (rows == len) return "整表没有哨兵（查找会一路读出数组末尾）";
+    if (rows + 1 != len) {
+        return "有 " + std::to_string(len - rows - 1) + " 行落在哨兵之后（哨兵必须在最后一行）";
+    }
+    return {};
+}
+
+// 结构守卫（对任意显式表可跑）：返回首个重复 id；无重复返回空串。
+// 空 id（非哨兵位置）也按违规报——那种行永远查不到但看起来「在表里」。
+std::string firstDuplicateId(const QuotaProviderEntry* table) {
+    std::vector<std::string> seen;
+    for (const QuotaProviderEntry* e = table; e->id != nullptr; ++e) {
+        const std::string id = e->id;
+        if (id.empty()) return "<empty>";
+        if (std::find(seen.begin(), seen.end(), id) != seen.end()) return id;
+        seen.push_back(id);
+    }
+    return {};
+}
+
+// 哨兵前的前缀长度 → span。注册表本体是「不完全边界」的 extern 数组，消费方一律靠哨兵走界
+std::span<const QuotaProviderEntry> tableSpan(const QuotaProviderEntry* table) {
+    std::size_t n = 0;
+    while (table[n].id != nullptr) ++n;
+    return std::span<const QuotaProviderEntry>(table, n);
+}
+
+// 行 ↔ provider 一致性：每行都能按**自己的 id** 查到，且查到的 provider 的
+// id() 与行 id 相同。返回首个不一致的行 id（无则空串）。
+std::string firstInconsistentId(const QuotaProviderEntry* table) {
+    const std::span<const QuotaProviderEntry> span = tableSpan(table);
+    for (const QuotaProviderEntry& e : span) {
+        const QuotaProvider* p = module::claude::quota::findProvider(e.id, span);
+        if (p == nullptr || p->id() != e.id) return e.id;
+    }
+    return {};
+}
+
+// provider 实际发出的那个请求（断言其 URL / 头 / 超时确实如契约）
+struct CapturedRequest {
+    bool called = false;
+    std::string method;
+    std::string url;
+    std::map<std::string, std::string> headers;
+    long timeoutMs = 0;
+};
+
+// 假发送：记录请求 + 回一个固定 HTTP 响应。
+// 断言宏内含 `return false`，不能写进返回非 bool 的 lambda——lambda 只记录，
+// 断言一律在用例体里做。
+HttpSendFn httpResponding(CapturedRequest* sink, int statusCode, std::string body) {
+    return [sink, statusCode, body](const platform::http::Request& req)
+               -> core::Result<platform::http::Response> {
+        if (sink != nullptr) {
+            sink->called = true;
+            sink->method = req.method;
+            sink->url = req.url;
+            sink->headers = req.headers;
+            sink->timeoutMs = req.timeoutMs;
+        }
+        platform::http::Response resp;
+        resp.statusCode = statusCode;
+        resp.body = body;
+        return core::Result<platform::http::Response>::ok(std::move(resp));
+    };
+}
+
+// 传输层失败的真实形态：platform::http::send 网络失败时返回 Result::fail，
+// 不是 ok(Response{networkError=true})。
+HttpSendFn httpTransportFailure() {
+    return [](const platform::http::Request&) -> core::Result<platform::http::Response> {
+        return core::Result<platform::http::Response>::fail(
+            core::ErrorCode::NetworkUnreachable, "connection refused");
+    };
+}
+
+ProviderConfig deepseekConfig(std::string apiKey = "sk-deepseek-test") {
+    ProviderConfig cfg;
+    cfg.providerId = "deepseek";
+    cfg.baseUrl = "https://api.deepseek.com";
+    cfg.apiKey = std::move(apiKey);
+    return cfg;
+}
+
+// DeepSeek /user/balance 的响应形态（金额是字符串小数，非 JSON number——
+// 解析器两种都收，本用例两种都要钉住）
+const char* const kDeepSeekBalanceMultiCurrency =
+    R"({"is_available":true,"balance_infos":[)"
+    R"({"currency":"CNY","total_balance":"110.00","granted_balance":"10.00","topped_up_balance":"100.00"},)"
+    R"({"currency":"USD","total_balance":"4.25","granted_balance":"0.00","topped_up_balance":"4.25"}]})";
+
+}  // namespace
+
+// 显式注册表（非静态自注册）
+REGISTER_TEST(claude_quota_registry_unknown_id_returns_null,
+              "claude_quota: 注册表未知 id 返回 nullptr", {
+    DOCTEST_CHECK(module::claude::quota::findProvider("no_such_provider") == nullptr);
+    // 空 id 不是任何一行，且不能命中哨兵之后的行
+    DOCTEST_CHECK(module::claude::quota::findProvider("") == nullptr);
+    return true;
+})
+
+REGISTER_TEST(claude_quota_registry_finds_registered_row,
+              "claude_quota: 注册表命中行返回非空且 id 一致", {
+    const QuotaProvider* p =
+        module::claude::quota::findProvider("fake_provider", kFakeTable);
+    DOCTEST_CHECK(p != nullptr);
+    DOCTEST_CHECK_EQ(p->id(), std::string("fake_provider"));
+    DOCTEST_CHECK_EQ(p->displayName(), std::string("假供应商"));
+    // 单例契约：重复查找拿回同一个对象（调用方只借不还，无泄漏）
+    DOCTEST_CHECK(p == module::claude::quota::findProvider("fake_provider", kFakeTable));
+    // 只认整串相等：前缀 / 后缀都不算命中
+    DOCTEST_CHECK(module::claude::quota::findProvider("fake", kFakeTable) == nullptr);
+    DOCTEST_CHECK(module::claude::quota::findProvider("fake_provider_x", kFakeTable) ==
+                  nullptr);
+    return true;
+})
+
+REGISTER_TEST(claude_quota_registry_empty_table_returns_null,
+              "claude_quota: 空表（无任何行）查找返回 nullptr", {
+    const QuotaProviderEntry empty[] = {{nullptr, nullptr}};
+    DOCTEST_CHECK(module::claude::quota::findProvider("fake_provider", empty) == nullptr);
+    DOCTEST_CHECK(module::claude::quota::detectByBaseUrl("https://api.example.com",
+                                                         empty) == nullptr);
+    return true;
+})
+
+REGISTER_TEST(claude_quota_registry_duplicate_id_first_row_wins,
+              "claude_quota: 重复 id 取表序首行（确定性，不随哈希漂移）", {
+    // 表本身不允许重复（结构守卫见下一条用例），但查找语义必须是确定性的：
+    // 命中首行而不是「随便一个」
+    const QuotaProvider* p = module::claude::quota::findProvider("dup", kDupTable);
+    DOCTEST_CHECK(p != nullptr);
+    DOCTEST_CHECK_EQ(p->id(), std::string("dup"));
+    DOCTEST_CHECK_EQ(p->displayName(), std::string("第一个同 id"));  // 首行那个单例
+    return true;
+})
+
+REGISTER_TEST(claude_quota_registry_table_structure_guard,
+              "claude_quota: 生产注册表结构守卫（哨兵结尾 / 无空 id / 无重复 / 行↔实现一致）", {
+    // 守卫必须先自证非恒真：对构造的坏表必须报出来，再对真表断言。
+    // 长度一律用 std::size 就地算——本地数组是完整类型，不用人工计数常量
+    //（真表做不到，见下面 quotaProviderTableLength 那条）。
+    const QuotaProviderEntry emptyIdTable[] = {
+        {"", &createFake}, {nullptr, nullptr}};
+    DOCTEST_CHECK_EQ(firstDuplicateId(kDupTable), std::string("dup"));
+    DOCTEST_CHECK_EQ(firstDuplicateId(emptyIdTable), std::string("<empty>"));
+    DOCTEST_CHECK_EQ(firstInconsistentId(kMismatchedTable), std::string("dup"));
+    DOCTEST_CHECK_EQ(firstDuplicateId(kFakeTable), std::string(""));
+    DOCTEST_CHECK_EQ(firstInconsistentId(kFakeTable), std::string(""));
+
+    DOCTEST_CHECK_EQ(sentinelPlacementProblem(kRowAfterSentinelTable,
+                                              std::size(kRowAfterSentinelTable)),
+                     std::string("有 1 行落在哨兵之后（哨兵必须在最后一行）"));
+    // 报的是「没有哨兵」而不是「有行落在哨兵之后」——两种坏法诊断信息不该混
+    DOCTEST_CHECK_EQ(sentinelPlacementProblem(kNoSentinelTable, std::size(kNoSentinelTable)),
+                     std::string("整表没有哨兵（查找会一路读出数组末尾）"));
+    DOCTEST_CHECK_EQ(sentinelPlacementProblem(kFakeTable, std::size(kFakeTable)),
+                     std::string(""));
+
+    const QuotaProviderEntry* table = module::claude::quota::kQuotaProviders;
+    // 表长只能问 quotaProviderTableLength：kQuotaProviders 在头文件里是边界未知的
+    // `extern const QuotaProviderEntry []`，对它 sizeof 编译不过
+    //（AppleClang: invalid application of 'sizeof' to an incomplete type）。
+    // 别在这条上「顺手统一」成 sizeof。
+    const std::size_t len = module::claude::quota::quotaProviderTableLength();
+    DOCTEST_CHECK(table != nullptr);
+    DOCTEST_CHECK_EQ(sentinelPlacementProblem(table, len), std::string(""));
+
+    // firstDuplicateId / firstInconsistentId 的循环边界就是哨兵，覆盖范围仅限哨兵
+    // 之前的行；哨兵之后的行由上面那条哨兵守卫负责
+    DOCTEST_CHECK_EQ(firstDuplicateId(table), std::string(""));
+    // 哨兵之前的每一行都必须能被自己的 id 查到、且查到的就是它自己
+    DOCTEST_CHECK_EQ(firstInconsistentId(table), std::string(""));
+    return true;
+})
+
+REGISTER_TEST(claude_quota_detect_by_base_url_hits,
+              "claude_quota: detectByBaseUrl 命中首个匹配行", {
+    const QuotaProvider* p = module::claude::quota::detectByBaseUrl(
+        "https://api.example.com", kFakeTable);
+    DOCTEST_CHECK(p != nullptr);
+    DOCTEST_CHECK_EQ(p->id(), std::string("matcher"));
+    return true;
+})
+
+REGISTER_TEST(claude_quota_detect_by_base_url_misses,
+              "claude_quota: detectByBaseUrl 不命中返回 nullptr（不猜）", {
+    DOCTEST_CHECK(module::claude::quota::detectByBaseUrl("https://api.other.com",
+                                                         kFakeTable) == nullptr);
+    // 空串：宁可不选中，也不能命中任意一行
+    DOCTEST_CHECK(module::claude::quota::detectByBaseUrl("", kFakeTable) == nullptr);
+    DOCTEST_CHECK(module::claude::quota::detectByBaseUrl("https://non_matcher.example.com",
+                                                         kFakeTable) == nullptr);
+    // 生产表：无对应 provider 的 host 依旧不命中，且不炸
+    DOCTEST_CHECK(module::claude::quota::detectByBaseUrl(
+                      "https://api.unknown-vendor.example") == nullptr);
+    return true;
+})
+
+REGISTER_TEST(claude_quota_provider_default_detection_is_false,
+              "claude_quota: QuotaProvider 默认 matchesBaseUrl 恒 false", {
+    FakeProvider nonMatcher("x", "x", {});
+    DOCTEST_CHECK_FALSE(nonMatcher.matchesBaseUrl("https://api.example.com"));
+    DOCTEST_CHECK_FALSE(nonMatcher.matchesBaseUrl(""));
+    return true;
+})
+
+REGISTER_TEST(claude_quota_fields_driven_rendering_contract,
+              "claude_quota: fields() 声明什么就得到什么（key/label/secret 三列钉死）", {
+    const std::vector<ProviderField> declared = {
+        ProviderField{"accessKeyId", "AccessKey ID", false},
+        ProviderField{"secretAccessKey", "AccessKey Secret", true},
+    };
+    FakeProvider p("volcano_like", "火山样", declared);
+
+    const std::vector<ProviderField> got = p.fields();
+    DOCTEST_CHECK_EQ(got.size(), static_cast<std::size_t>(2));
+    // 期望值取自独立构造的 declared，不拿 fields() 自己当期望
+    DOCTEST_CHECK_EQ(got[0].key, std::string("accessKeyId"));
+    DOCTEST_CHECK_EQ(got[0].label, std::string("AccessKey ID"));
+    DOCTEST_CHECK_FALSE(got[0].secret);
+    DOCTEST_CHECK_EQ(got[1].key, std::string("secretAccessKey"));
+    DOCTEST_CHECK_EQ(got[1].label, std::string("AccessKey Secret"));
+    DOCTEST_CHECK_TRUE(got[1].secret);
+    // secret 默认值必须是 false（漏填 = 明文框，不是密文框——语义由 provider 显式声明）
+    DOCTEST_CHECK_FALSE(ProviderField{}.secret);
+    return true;
+})
+
+REGISTER_TEST(claude_quota_fields_empty_is_legal,
+              "claude_quota: 空 fields 合法（沿用 profile 凭据型供应商）", {
+    FakeProvider p("uses_profile_key", "沿用 profile 密钥", {});
+    DOCTEST_CHECK(p.fields().empty());
+    return true;
+})
+
+REGISTER_TEST(claude_quota_result_defaults,
+              "claude_quota: QuotaResult 默认值逐字段", {
+    const QuotaResult r;
+    DOCTEST_CHECK(r.kind == QuotaKind::Tiered);
+    DOCTEST_CHECK(r.windows.empty());
+    DOCTEST_CHECK_EQ(r.balanceRemaining, 0.0);
+    DOCTEST_CHECK(r.currency.empty());
+    DOCTEST_CHECK(r.planName.empty());
+    DOCTEST_CHECK(r.error == QuotaError::None);
+    DOCTEST_CHECK(r.errorMessage.empty());
+    return true;
+})
+
+REGISTER_TEST(claude_quota_fetch_returns_error_only_via_field,
+              "claude_quota: fetch 恒返回 QuotaResult，错误只走 error 字段", {
+    QuotaResult failing;
+    failing.error = QuotaError::Transient;
+    failing.errorMessage = "网络不可达";
+    FakeProvider p("failing", "会失败的假供应商", {}, "", failing);
+
+    const ProviderConfig cfg = configWith("failing", "https://api.example.com", "k");
+    const HttpSendFn noHttp;  // 空缝：provider 也不许抛
+    const QuotaResult r = p.fetch(cfg, noHttp);
+
+    DOCTEST_CHECK(r.error == QuotaError::Transient);
+    DOCTEST_CHECK_EQ(r.errorMessage, std::string("网络不可达"));
+    // 失败结果里不许夹带半截成功值（只渲染错误行，绝不画 0% 条）
+    DOCTEST_CHECK(r.windows.empty());
+    DOCTEST_CHECK_EQ(r.balanceRemaining, 0.0);
+    DOCTEST_CHECK(r.currency.empty());
+    return true;
+})
+
+REGISTER_TEST(claude_quota_fetch_receives_config_and_http_seam,
+              "claude_quota: fetch 收到完整 ProviderConfig，且注入缝真被调用", {
+    QuotaResult ok;
+    ok.kind = QuotaKind::Tiered;
+    ok.windows.push_back(QuotaWindow{"five_hour", 38.7, "2026-10-02T12:00:00Z"});
+    FakeProvider p("seam", "注入缝验证", {}, "", ok);
+
+    ProviderConfig cfg = configWith("seam", "https://api.example.com", "sk-test");
+    cfg.fields["accessKeyId"] = "AK";
+    cfg.fields["secretAccessKey"] = "SK";
+
+    bool seamCalled = false;
+    std::string seenMethod;
+    std::string seenUrl;
+    // 断言宏内含 `return false`，不能写在返回非 bool 的 lambda 里——缝里只记录
+    const HttpSendFn http = [&seamCalled, &seenMethod, &seenUrl](
+                                const platform::http::Request& req)
+        -> core::Result<platform::http::Response> {
+        seamCalled = true;
+        seenMethod = req.method;
+        seenUrl = req.url;
+        platform::http::Response resp;
+        resp.statusCode = 200;
+        resp.body = "{}";
+        return core::Result<platform::http::Response>::ok(std::move(resp));
+    };
+
+    const QuotaResult r = p.fetch(cfg, http);
+    DOCTEST_CHECK(seamCalled);
+    DOCTEST_CHECK_EQ(seenMethod, std::string("GET"));
+    DOCTEST_CHECK_EQ(seenUrl, std::string("https://api.example.com/quota"));
+    DOCTEST_CHECK(p.httpSeamPresent());
+    // seamSawStatusCode 说明 provider 真消费了缝回的响应，不是拿了不用
+    DOCTEST_CHECK_EQ(p.seamSawStatusCode(), 200);
+    DOCTEST_CHECK_EQ(p.lastConfig().providerId, std::string("seam"));
+    DOCTEST_CHECK_EQ(p.lastConfig().baseUrl, std::string("https://api.example.com"));
+    DOCTEST_CHECK_EQ(p.lastConfig().apiKey, std::string("sk-test"));
+    DOCTEST_CHECK_EQ(p.lastConfig().fields.size(), static_cast<std::size_t>(2));
+    // lastConfig().fields 是 const map：operator[] 会插入，必须用 at()
+    DOCTEST_CHECK_EQ(p.lastConfig().fields.at("accessKeyId"), std::string("AK"));
+    DOCTEST_CHECK_EQ(p.lastConfig().fields.at("secretAccessKey"), std::string("SK"));
+    DOCTEST_CHECK_EQ(r.windows.size(), static_cast<std::size_t>(1));
+    DOCTEST_CHECK_EQ(r.windows[0].key, std::string("five_hour"));
+    DOCTEST_CHECK_EQ(r.windows[0].usedPercent, 38.7);   // double 不截断
+    DOCTEST_CHECK_EQ(r.windows[0].resetsAt, std::string("2026-10-02T12:00:00Z"));
+    return true;
+})
+
+REGISTER_TEST(claude_quota_balance_kind_has_no_windows,
+              "claude_quota: Balance 型无窗口（不许硬造窗口）", {
+    QuotaResult balance;
+    balance.kind = QuotaKind::Balance;
+    balance.balanceRemaining = 12.34;
+    balance.currency = "CNY";
+    FakeProvider p("balance", "余额型", {}, "", balance);
+
+    const QuotaResult r = p.fetch(configWith("balance", "", ""), HttpSendFn{});
+    DOCTEST_CHECK(r.kind == QuotaKind::Balance);
+    DOCTEST_CHECK(r.windows.empty());
+    DOCTEST_CHECK_EQ(r.balanceRemaining, 12.34);
+    DOCTEST_CHECK_EQ(r.currency, std::string("CNY"));
+    return true;
+})
+
+// OpenCode Go provider
+//
+// 探测：/zen/go 与 /zen/go/v1 两档命中，/zen/v1 刻意不命中。
+// 三窗口按 key 名映射（不按 resetsAt 排序）/ percent 解析 / percent==0 丢占位
+// resetsAt / 窗口级跳过而非整体失败。
+// 请求：端点 /zen/go/v1/usage，Bearer 认证（与推理侧 x-api-key 相反）、
+// 403（无订阅）与 401（密钥无效）分开、空 tiers = 形态不认识。
+
+namespace {
+
+using module::claude::quota::createOpenCodeGoProvider;
+
+// 假发送：记录请求 + 回预置响应。
+// 断言宏内含 `return false`，只能写在返回 bool 的用例体里；这个返回 Result
+// 的 lambda 里只记录，断言一律在用例体做。
+class RecordingHttp {
+public:
+    HttpSendFn fn() {
+        return [this](const platform::http::Request& req)
+                   -> core::Result<platform::http::Response> {
+            called = true;
+            lastRequest = req;
+            if (transportFails) {
+                return core::Result<platform::http::Response>::fail(
+                    core::ErrorCode::NetworkUnreachable, "连接被拒绝");
+            }
+            platform::http::Response resp;
+            resp.statusCode = status;
+            resp.body = body;
+            if (networkErrorFlag) {
+                // 传输层失败的**第二种形态**：Result 是 ok，但响应自报网络错误
+                //（超时 / 连接失败 / 读体中断）。provider 两形态都得查——漏掉这
+                // 形态时 statusCode 0 会落进 <200 分支，报出一个不存在的状态码。
+                resp.statusCode = 0;
+                resp.networkError = true;
+                resp.errorMessage = "curl error 28";
+            }
+            return core::Result<platform::http::Response>::ok(resp);
+        };
+    }
+
+    bool called = false;
+    platform::http::Request lastRequest;
+    int status = 200;
+    std::string body = "{}";
+    bool transportFails = false;
+    bool networkErrorFlag = false;
+};
+
+ProviderConfig openCodeGoConfig(const std::string& apiKey = "sk-zen-go") {
+    ProviderConfig cfg;
+    cfg.providerId = "opencode_go";
+    cfg.baseUrl = "https://opencode.ai/zen/go/v1";
+    cfg.apiKey = apiKey;
+    return cfg;
+}
+
+// 上游三窗口齐全的响应。weekly 的 resetsAt 故意**早于** rolling——靠 resetsAt
+// 排序猜周期的实现在这里会把窗口顺序排错。别把这份夹具的 resetsAt 调成单调递增。
+const char* const kThreeWindowBody = R"({
+  "usage": {
+    "rolling": {"status": "ok", "percent": 12, "resetsAt": "2026-10-02T20:00:00Z"},
+    "weekly":  {"status": "ok", "percent": 38.7, "resetsAt": "2026-10-02T15:00:00Z"},
+    "monthly": {"status": "rate-limited", "percent": 100, "resetsAt": "2026-11-01T00:00:00Z"}
+  }
+})";
+
+}  // namespace
+
+REGISTER_TEST(claude_quota_opencode_go_identity_and_registry_row,
+              "claude_quota: OpenCode Go 身份 / 空 fields / 注册表单例行生效", {
+    QuotaProvider* p = createOpenCodeGoProvider();
+    DOCTEST_REQUIRE(p != nullptr);
+    DOCTEST_CHECK_EQ(p->id(), std::string("opencode_go"));
+    DOCTEST_CHECK_EQ(p->displayName(), std::string("OpenCode Go"));
+    // 沿用 profile 的 API Key：不吃额外字段（弹窗不渲染额外输入框）
+    DOCTEST_CHECK(p->fields().empty());
+    // 进程内单例：两次工厂返回同一对象（调用方只借不还，无泄漏）
+    DOCTEST_CHECK(p == createOpenCodeGoProvider());
+    // 注册表那行真的接上了：直接钉死 id ↔ 实现
+    const QuotaProvider* viaRegistry = module::claude::quota::findProvider("opencode_go");
+    DOCTEST_REQUIRE(viaRegistry != nullptr);
+    DOCTEST_CHECK_EQ(viaRegistry->id(), std::string("opencode_go"));
+    DOCTEST_CHECK(viaRegistry == p);
+    return true;
+})
+
+REGISTER_TEST(claude_quota_opencode_go_maps_three_windows_by_key,
+              "claude_quota: OpenCode Go 三窗口按 key 名映射（顺序固定，不按 resetsAt 排序）", {
+    QuotaProvider* p = createOpenCodeGoProvider();
+    DOCTEST_REQUIRE(p != nullptr);
+    RecordingHttp http;
+    http.body = kThreeWindowBody;
+
+    const QuotaResult r = p->fetch(openCodeGoConfig(), http.fn());
+
+    DOCTEST_CHECK(r.error == QuotaError::None);
+    DOCTEST_CHECK(r.errorMessage.empty());
+    DOCTEST_CHECK(r.kind == QuotaKind::Tiered);
+    DOCTEST_REQUIRE_EQ(r.windows.size(), static_cast<std::size_t>(3));
+    // rolling→five_hour / weekly→weekly / monthly→monthly，展示序 = key 表序
+    DOCTEST_CHECK_EQ(r.windows[0].key, std::string("five_hour"));
+    DOCTEST_CHECK_EQ(r.windows[1].key, std::string("weekly"));
+    DOCTEST_CHECK_EQ(r.windows[2].key, std::string("monthly"));
+    // usedPercent == 上游 percent（已用，不反转）；double 不截断小数
+    DOCTEST_CHECK_EQ(r.windows[0].usedPercent, 12.0);
+    DOCTEST_CHECK_EQ(r.windows[1].usedPercent, 38.7);
+    DOCTEST_CHECK_EQ(r.windows[2].usedPercent, 100.0);
+    DOCTEST_CHECK_EQ(r.windows[0].resetsAt, std::string("2026-10-02T20:00:00Z"));
+    DOCTEST_CHECK_EQ(r.windows[1].resetsAt, std::string("2026-10-02T15:00:00Z"));
+    DOCTEST_CHECK_EQ(r.windows[2].resetsAt, std::string("2026-11-01T00:00:00Z"));
+    // Tiered 型不带余额字段（不许混用）
+    DOCTEST_CHECK_EQ(r.balanceRemaining, 0.0);
+    DOCTEST_CHECK(r.currency.empty());
+    return true;
+})
+
+REGISTER_TEST(claude_quota_opencode_go_zero_percent_drops_placeholder_reset,
+              "claude_quota: OpenCode Go percent==0 保留窗口但丢弃占位 resetsAt", {
+    QuotaProvider* p = createOpenCodeGoProvider();
+    DOCTEST_REQUIRE(p != nullptr);
+    RecordingHttp http;
+    // percent 为 0 时上游的 resetsAt 是「now + 窗口时长」的占位值（窗口其实早已过期），
+    // 拿来显示倒计时是错的——丢弃
+    http.body = R"({"usage": {
+      "rolling": {"status": "ok", "percent": 0, "resetsAt": "2026-10-02T20:00:00Z"},
+      "weekly":  {"status": "ok", "percent": 0},
+      "monthly": {"status": "ok", "percent": 5.5, "resetsAt": "2026-11-01T00:00:00Z"}
+    }})";
+
+    const QuotaResult r = p->fetch(openCodeGoConfig(), http.fn());
+
+    DOCTEST_CHECK(r.error == QuotaError::None);
+    // 窗口保留，不是跳过
+    DOCTEST_REQUIRE_EQ(r.windows.size(), static_cast<std::size_t>(3));
+    DOCTEST_CHECK_EQ(r.windows[0].usedPercent, 0.0);
+    DOCTEST_CHECK(r.windows[0].resetsAt.empty());
+    DOCTEST_CHECK(r.windows[1].resetsAt.empty());
+    // 非 0 的窗口照常带重置时间（别把丢弃做成全局行为）
+    DOCTEST_CHECK_EQ(r.windows[2].usedPercent, 5.5);
+    DOCTEST_CHECK_EQ(r.windows[2].resetsAt, std::string("2026-11-01T00:00:00Z"));
+    return true;
+})
+
+REGISTER_TEST(claude_quota_opencode_go_skips_unparsable_window,
+              "claude_quota: OpenCode Go 缺窗口 / percent 不可解析 → 跳过该窗口，不整体失败", {
+    QuotaProvider* p = createOpenCodeGoProvider();
+    DOCTEST_REQUIRE(p != nullptr);
+    RecordingHttp http;
+    // rolling 缺失、monthly 没有 percent —— 逐窗口防御解析
+    http.body = R"({"usage": {"weekly": {"status": "ok", "percent": 42},
+                              "monthly": {"status": "ok"}}})";
+
+    const QuotaResult r = p->fetch(openCodeGoConfig(), http.fn());
+
+    DOCTEST_CHECK(r.error == QuotaError::None);
+    DOCTEST_REQUIRE_EQ(r.windows.size(), static_cast<std::size_t>(1));
+    DOCTEST_CHECK_EQ(r.windows[0].key, std::string("weekly"));
+    DOCTEST_CHECK_EQ(r.windows[0].usedPercent, 42.0);
+    DOCTEST_CHECK(r.windows[0].resetsAt.empty());
+    return true;
+})
+
+REGISTER_TEST(claude_quota_opencode_go_accepts_numeric_string_percent,
+              "claude_quota: OpenCode Go percent 为数字字符串时照样解析（parse_f64 口径）", {
+    QuotaProvider* p = createOpenCodeGoProvider();
+    DOCTEST_REQUIRE(p != nullptr);
+    RecordingHttp http;
+    http.body = R"({"usage": {"rolling": {"status": "ok", "percent": "38.7"}}})";
+
+    const QuotaResult r = p->fetch(openCodeGoConfig(), http.fn());
+
+    DOCTEST_CHECK(r.error == QuotaError::None);
+    DOCTEST_REQUIRE_EQ(r.windows.size(), static_cast<std::size_t>(1));
+    DOCTEST_CHECK_EQ(r.windows[0].usedPercent, 38.7);
+    return true;
+})
+
+REGISTER_TEST(claude_quota_opencode_go_legacy_flat_shape_is_shape_error,
+              "claude_quota: OpenCode Go 旧扁平形态 → Shape 错误，不渲染空卡", {
+    QuotaProvider* p = createOpenCodeGoProvider();
+    DOCTEST_REQUIRE(p != nullptr);
+    RecordingHttp http;
+    // 旧扁平 rollingUsage / usagePercent / resetInSec 形态：必须报「形态不认识」，
+    // 而不是渲染一张 0% 的空卡（等于告诉用户「还有 100% 可用」）。
+    http.body = R"({"rollingUsage": {"usagePercent": 10, "resetInSec": 3600},
+                    "weeklyUsage": {"usagePercent": 5, "resetInSec": 90000}})";
+
+    const QuotaResult r = p->fetch(openCodeGoConfig(), http.fn());
+
+    DOCTEST_CHECK(r.error == QuotaError::Shape);
+    DOCTEST_CHECK_FALSE(r.errorMessage.empty());
+    DOCTEST_CHECK(r.windows.empty());
+    return true;
+})
+
+REGISTER_TEST(claude_quota_opencode_go_unknown_shape_is_shape_error,
+              "claude_quota: OpenCode Go 根键缺失 / usage 非对象 / 非 JSON → 一律 Shape", {
+    QuotaProvider* p = createOpenCodeGoProvider();
+    DOCTEST_REQUIRE(p != nullptr);
+
+    RecordingHttp emptyBody;  // {}
+    const QuotaResult r1 = p->fetch(openCodeGoConfig(), emptyBody.fn());
+    DOCTEST_CHECK(r1.error == QuotaError::Shape);
+    DOCTEST_CHECK(r1.windows.empty());
+
+    RecordingHttp emptyUsage;  // usage 在但没有可用窗口
+    emptyUsage.body = R"({"usage": {}})";
+    DOCTEST_CHECK(p->fetch(openCodeGoConfig(), emptyUsage.fn()).error == QuotaError::Shape);
+
+    RecordingHttp usageNotObject;  // usage 不是对象
+    usageNotObject.body = R"({"usage": 42})";
+    DOCTEST_CHECK(p->fetch(openCodeGoConfig(), usageNotObject.fn()).error ==
+                  QuotaError::Shape);
+
+    RecordingHttp notJson;  // 200 + 非 JSON 体
+    notJson.body = "<html>gateway</html>";
+    DOCTEST_CHECK(p->fetch(openCodeGoConfig(), notJson.fn()).error == QuotaError::Shape);
+    return true;
+})
+
+REGISTER_TEST(claude_quota_opencode_go_http_403_is_entitlement,
+              "claude_quota: OpenCode Go HTTP 403 → Entitlement（key 有效但无 Go 订阅）", {
+    QuotaProvider* p = createOpenCodeGoProvider();
+    DOCTEST_REQUIRE(p != nullptr);
+    RecordingHttp http;
+    http.status = 403;  // Zen 与 Go 共用同一把 workspace key，403 = 该 workspace 没订阅
+    http.body = R"({"error": "forbidden"})";
+
+    const QuotaResult r = p->fetch(openCodeGoConfig(), http.fn());
+
+    DOCTEST_CHECK(r.error == QuotaError::Entitlement);
+    DOCTEST_CHECK(r.error != QuotaError::Auth);  // 改密钥没用，得换套餐 —— 不许混
+    DOCTEST_CHECK_FALSE(r.errorMessage.empty());
+    DOCTEST_CHECK(r.errorMessage.find("403") != std::string::npos);
+    DOCTEST_CHECK(r.windows.empty());
+    return true;
+})
+
+REGISTER_TEST(claude_quota_opencode_go_http_401_is_auth,
+              "claude_quota: OpenCode Go HTTP 401 → Auth（密钥无效 / 过期）", {
+    QuotaProvider* p = createOpenCodeGoProvider();
+    DOCTEST_REQUIRE(p != nullptr);
+    RecordingHttp http;
+    http.status = 401;
+    http.body = R"({"error": "unauthorized"})";
+
+    const QuotaResult r = p->fetch(openCodeGoConfig(), http.fn());
+
+    DOCTEST_CHECK(r.error == QuotaError::Auth);
+    DOCTEST_CHECK(r.error != QuotaError::Entitlement);
+    DOCTEST_CHECK_FALSE(r.errorMessage.empty());
+    DOCTEST_CHECK(r.windows.empty());
+    return true;
+})
+
+REGISTER_TEST(claude_quota_opencode_go_transient_classification,
+              "claude_quota: OpenCode Go 5xx / 限流 / 网络失败 / 空缝 → Transient", {
+    QuotaProvider* p = createOpenCodeGoProvider();
+    DOCTEST_REQUIRE(p != nullptr);
+
+    RecordingHttp serverError;
+    serverError.status = 503;
+    DOCTEST_CHECK(p->fetch(openCodeGoConfig(), serverError.fn()).error ==
+                  QuotaError::Transient);
+
+    RecordingHttp rateLimited;
+    rateLimited.status = 429;
+    DOCTEST_CHECK(p->fetch(openCodeGoConfig(), rateLimited.fn()).error ==
+                  QuotaError::Transient);
+
+    RecordingHttp offline;
+    offline.transportFails = true;
+    const QuotaResult netResult = p->fetch(openCodeGoConfig(), offline.fn());
+    DOCTEST_CHECK(netResult.error == QuotaError::Transient);
+    DOCTEST_CHECK(netResult.windows.empty());
+
+    // 空缝：必须返回 Transient 而不是 std::bad_function_call（项目铁律：不抛异常）
+    const HttpSendFn noSeam;
+    const QuotaResult noSeamResult = p->fetch(openCodeGoConfig(), noSeam);
+    DOCTEST_CHECK(noSeamResult.error == QuotaError::Transient);
+    DOCTEST_CHECK_FALSE(noSeamResult.errorMessage.empty());
+    return true;
+})
+
+REGISTER_TEST(claude_quota_opencode_go_network_error_is_not_reported_as_http_zero,
+              "claude_quota: OpenCode Go networkError → 报网络原因，不报「HTTP 0」", {
+    // 传输失败有两种形态：Result::fail，以及 ok(Response{statusCode=0, networkError=true})。
+    // 漏掉后者时 statusCode 0 落进 <200 分支 → 用户看到「余量接口返回 HTTP 0」这个不存在的
+    // 状态码，而真因（超时）在网络层，一个字都不出现。
+    QuotaProvider* p = createOpenCodeGoProvider();
+    DOCTEST_REQUIRE(p != nullptr);
+
+    RecordingHttp timedOut;
+    timedOut.networkErrorFlag = true;  // statusCode 会被置 0
+    const QuotaResult r = p->fetch(openCodeGoConfig(), timedOut.fn());
+
+    DOCTEST_CHECK(r.error == QuotaError::Transient);
+    // 文案必须带上真正的失败原因（curl 的错误串），而不是一个编造的 HTTP 码
+    DOCTEST_CHECK(r.errorMessage.find("curl error 28") != std::string::npos);
+    DOCTEST_CHECK(r.errorMessage.find("HTTP 0") == std::string::npos);
+    DOCTEST_CHECK(r.windows.empty());
+    return true;
+})
+
+REGISTER_TEST(claude_quota_opencode_go_percent_is_clamped_to_range,
+              "claude_quota: OpenCode Go 百分比裁剪到 [0,100]（上游给 150 不外流）", {
+    QuotaProvider* p = createOpenCodeGoProvider();
+    DOCTEST_REQUIRE(p != nullptr);
+
+    RecordingHttp over;
+    over.body = R"({"usage": {
+      "rolling": {"status": "ok", "percent": 150},
+      "weekly":  {"status": "ok", "percent": -3},
+      "monthly": {"status": "ok", "percent": 12.5} }})";
+    const QuotaResult r = p->fetch(openCodeGoConfig(), over.fn());
+
+    DOCTEST_CHECK(r.error == QuotaError::None);
+    DOCTEST_REQUIRE_EQ(r.windows.size(), static_cast<std::size_t>(3));
+    DOCTEST_CHECK(r.windows[0].usedPercent >= 0.0);
+    DOCTEST_CHECK(r.windows[0].usedPercent <= 100.0);
+    DOCTEST_CHECK(r.windows[1].usedPercent >= 0.0);
+    DOCTEST_CHECK(r.windows[1].usedPercent <= 100.0);
+    // 小数不取整（契约：上游给小数时不截断）
+    DOCTEST_CHECK(r.windows[2].usedPercent > 12.4);
+    DOCTEST_CHECK(r.windows[2].usedPercent < 12.6);
+    return true;
+})
+
+REGISTER_TEST(claude_quota_opencode_go_calls_injected_http_seam,
+              "claude_quota: OpenCode Go 经注入缝发 GET /zen/go/v1/usage + Bearer 认证", {
+    QuotaProvider* p = createOpenCodeGoProvider();
+    DOCTEST_REQUIRE(p != nullptr);
+    RecordingHttp http;
+    http.body = kThreeWindowBody;
+
+    const QuotaResult r = p->fetch(openCodeGoConfig("sk-zen-abc"), http.fn());
+
+    DOCTEST_CHECK(http.called);
+    DOCTEST_CHECK_EQ(http.lastRequest.method, std::string("GET"));
+    DOCTEST_CHECK_EQ(http.lastRequest.url,
+                     std::string("https://opencode.ai/zen/go/v1/usage"));
+    // 余量端点只认 Authorization: Bearer —— 与推理侧只认 x-api-key 正好相反，不可互换
+    DOCTEST_CHECK_EQ(http.lastRequest.headers.count("Authorization"),
+                     static_cast<std::size_t>(1));
+    DOCTEST_CHECK_EQ(http.lastRequest.headers.at("Authorization"),
+                     std::string("Bearer sk-zen-abc"));
+    DOCTEST_CHECK(http.lastRequest.headers.find("x-api-key") ==
+                  http.lastRequest.headers.end());
+    DOCTEST_CHECK_EQ(http.lastRequest.headers.count("Accept"),
+                     static_cast<std::size_t>(1));
+    // 缝回的响应真的被消费（不是拿了不用）
+    DOCTEST_CHECK_EQ(r.windows.size(), static_cast<std::size_t>(3));
+    return true;
+})
+
+REGISTER_TEST(claude_quota_opencode_go_matches_base_url,
+              "claude_quota: OpenCode Go matchesBaseUrl 两档命中、/zen/v1 与伪造域不命中", {
+    QuotaProvider* p = createOpenCodeGoProvider();
+    DOCTEST_REQUIRE(p != nullptr);
+
+    // 两档 base_url 都命中（claude/claude-desktop 直连档 + codex/opencode 走 /v1 档）
+    DOCTEST_CHECK(p->matchesBaseUrl("https://opencode.ai/zen/go"));
+    DOCTEST_CHECK(p->matchesBaseUrl("https://opencode.ai/zen/go/v1"));
+    DOCTEST_CHECK(p->matchesBaseUrl("https://opencode.ai/zen/go/v1/"));
+    DOCTEST_CHECK(p->matchesBaseUrl("HTTPS://OpenCode.AI/zen/go/v1"));
+    DOCTEST_CHECK(p->matchesBaseUrl("opencode.ai/zen/go"));  // 无 scheme 也认
+    DOCTEST_CHECK(p->matchesBaseUrl("https://api.opencode.ai/zen/go"));  // 子域（同组织）
+
+    // Zen 按量版刻意不命中（该端点返回 404）
+    DOCTEST_CHECK_FALSE(p->matchesBaseUrl("https://opencode.ai/zen/v1"));
+    DOCTEST_CHECK_FALSE(p->matchesBaseUrl("https://opencode.ai/zen"));
+    DOCTEST_CHECK_FALSE(p->matchesBaseUrl("https://opencode.ai/"));
+    DOCTEST_CHECK_FALSE(p->matchesBaseUrl(""));
+
+    // host 标签边界，不能用裸子串包含——否则下面每一条都会误命中
+    DOCTEST_CHECK_FALSE(p->matchesBaseUrl("https://notopencode.ai/zen/go"));
+    DOCTEST_CHECK_FALSE(p->matchesBaseUrl("https://opencode.ai.evil.com/zen/go"));
+    DOCTEST_CHECK_FALSE(p->matchesBaseUrl("https://evil.com/opencode.ai/zen/go"));
+    DOCTEST_CHECK_FALSE(p->matchesBaseUrl("https://api.example.com/zen/go"));
+    return true;
+})
+
+REGISTER_TEST(claude_quota_opencode_go_detected_by_base_url_in_registry,
+              "claude_quota: 生产注册表 detectByBaseUrl 按 base_url 选中 opencode_go", {
+    const QuotaProvider* byGo =
+        module::claude::quota::detectByBaseUrl("https://opencode.ai/zen/go");
+    DOCTEST_REQUIRE(byGo != nullptr);
+    DOCTEST_CHECK_EQ(byGo->id(), std::string("opencode_go"));
+    DOCTEST_CHECK(module::claude::quota::detectByBaseUrl("https://opencode.ai/zen/go/v1") ==
+                  byGo);
+    DOCTEST_CHECK(byGo == createOpenCodeGoProvider());
+    // Zen 按量版不选中任何 provider
+    DOCTEST_CHECK(module::claude::quota::detectByBaseUrl("https://opencode.ai/zen/v1") ==
+                  nullptr);
+    return true;
+})
+
+// DeepSeek **只有余额**：无时间窗口、无 used、无 reset。
+REGISTER_TEST(claude_quota_deepseek_identity_and_fields,
+              "claude_quota: DeepSeek id/显示名/空 fields（沿用 profile 凭据）", {
+    const QuotaProvider* p = module::claude::quota::createDeepSeekProvider();
+    DOCTEST_CHECK(p != nullptr);
+    if (p == nullptr) return false;
+    DOCTEST_CHECK_EQ(p->id(), std::string("deepseek"));
+    DOCTEST_CHECK_EQ(p->displayName(), std::string("DeepSeek"));
+    DOCTEST_CHECK(p->fields().empty());
+    // 进程内单例：重复取回同一对象（注册表工厂契约）
+    DOCTEST_CHECK(p == module::claude::quota::createDeepSeekProvider());
+    return true;
+})
+
+REGISTER_TEST(claude_quota_deepseek_registered_in_production_table,
+              "claude_quota: DeepSeek 已进生产注册表（哨兵之前）且可按 URL 探测", {
+    const QuotaProvider* byId = module::claude::quota::findProvider("deepseek");
+    DOCTEST_CHECK(byId != nullptr);
+    if (byId == nullptr) return false;
+    DOCTEST_CHECK_EQ(byId->id(), std::string("deepseek"));
+    DOCTEST_CHECK_EQ(byId->displayName(), std::string("DeepSeek"));
+    const QuotaProvider* byUrl =
+        module::claude::quota::detectByBaseUrl("https://api.deepseek.com/anthropic");
+    DOCTEST_CHECK(byUrl != nullptr);
+    if (byUrl == nullptr) return false;
+    DOCTEST_CHECK_EQ(byUrl->id(), std::string("deepseek"));
+    return true;
+})
+
+REGISTER_TEST(claude_quota_deepseek_matches_base_url_host_boundary,
+              "claude_quota: DeepSeek baseUrl 探测走 host 标签边界（伪造域不命中）", {
+    const QuotaProvider* p = module::claude::quota::createDeepSeekProvider();
+    // 命中：官方域（带 / 路径、带端口、带子域、大小写）
+    DOCTEST_CHECK(p->matchesBaseUrl("https://api.deepseek.com"));
+    DOCTEST_CHECK(p->matchesBaseUrl("https://api.deepseek.com/v1"));
+    DOCTEST_CHECK(p->matchesBaseUrl("https://api.deepseek.com:443/anthropic"));
+    DOCTEST_CHECK(p->matchesBaseUrl("HTTPS://API.DEEPSEEK.COM/v1"));
+    // 裸子串 contains 会把 api.deepseek.com.evil.com 也放进来；契约要求按 host 标签边界匹配
+    DOCTEST_CHECK_FALSE(p->matchesBaseUrl("https://api.deepseek.com.evil.com"));
+    DOCTEST_CHECK_FALSE(p->matchesBaseUrl("https://notapi.deepseek.com"));
+    DOCTEST_CHECK_FALSE(p->matchesBaseUrl("https://evil.com/?next=api.deepseek.com"));
+    DOCTEST_CHECK_FALSE(p->matchesBaseUrl("https://api.openai.com/v1"));
+    DOCTEST_CHECK_FALSE(p->matchesBaseUrl(""));
+    return true;
+})
+
+REGISTER_TEST(claude_quota_deepseek_request_shape,
+              "claude_quota: DeepSeek 请求 URL/Bearer 头/方法/超时（域名写死，不派生 baseUrl）", {
+    CapturedRequest seen;
+    // 故意把 profile 的 baseUrl 指到一个网关：余量接口域名由 provider 写死，
+    // baseUrl 只是事实记录，不参与派生
+    ProviderConfig cfg = deepseekConfig("sk-abc123");
+    cfg.baseUrl = "https://my-gateway.internal/deepseek/v1";
+
+    const QuotaResult r = module::claude::quota::createDeepSeekProvider()->fetch(
+        cfg, httpResponding(&seen, 200, kDeepSeekBalanceMultiCurrency));
+
+    DOCTEST_CHECK(seen.called);
+    DOCTEST_CHECK_EQ(seen.method, std::string("GET"));
+    DOCTEST_CHECK_EQ(seen.url, std::string("https://api.deepseek.com/user/balance"));
+    DOCTEST_CHECK_EQ(seen.headers.at("Authorization"), std::string("Bearer sk-abc123"));
+    DOCTEST_CHECK_EQ(seen.headers.at("Accept"), std::string("application/json"));
+    DOCTEST_CHECK_EQ(seen.timeoutMs, 15000L);
+    DOCTEST_CHECK(r.error == QuotaError::None);
+    return true;
+})
+
+REGISTER_TEST(claude_quota_deepseek_balance_ok_multi_currency_takes_first,
+              "claude_quota: DeepSeek 正常余额（多币种取表序首条，金额字符串可解析）", {
+    CapturedRequest seen;
+    const QuotaResult r = module::claude::quota::createDeepSeekProvider()->fetch(
+        deepseekConfig(), httpResponding(&seen, 200, kDeepSeekBalanceMultiCurrency));
+
+    DOCTEST_CHECK(r.error == QuotaError::None);
+    DOCTEST_CHECK(r.errorMessage.empty());
+    DOCTEST_CHECK(r.kind == QuotaKind::Balance);
+    DOCTEST_CHECK(r.windows.empty());
+    // 多币种取表序首条：balance_infos 按数组序展示（不排序、不挑币种），契约只有单标量
+    DOCTEST_CHECK_EQ(r.balanceRemaining, 110.0);
+    DOCTEST_CHECK_EQ(r.currency, std::string("CNY"));
+    return true;
+})
+
+REGISTER_TEST(claude_quota_deepseek_currency_passthrough_no_conversion,
+              "claude_quota: DeepSeek 币种原样保留、金额不换算（number 与 string 两种形态）", {
+    // number 形态（非 DeepSeek 现行格式，解析器两种都收）
+    const QuotaResult usd = module::claude::quota::createDeepSeekProvider()->fetch(
+        deepseekConfig(),
+        httpResponding(nullptr, 200,
+                       R"({"is_available":true,"balance_infos":[{"currency":"USD","total_balance":7.5}]})"));
+    DOCTEST_CHECK(usd.error == QuotaError::None);
+    DOCTEST_CHECK_EQ(usd.currency, std::string("USD"));
+    DOCTEST_CHECK_EQ(usd.balanceRemaining, 7.5);
+
+    // string 形态：大数值 + 多小数位原样透传，不截断
+    const QuotaResult cny = module::claude::quota::createDeepSeekProvider()->fetch(
+        deepseekConfig(),
+        httpResponding(nullptr, 200,
+                       R"({"is_available":true,"balance_infos":[{"currency":"CNY","total_balance":"1234.5678"}]})"));
+    DOCTEST_CHECK(cny.error == QuotaError::None);
+    DOCTEST_CHECK_EQ(cny.currency, std::string("CNY"));
+    DOCTEST_CHECK_EQ(cny.balanceRemaining, 1234.5678);
+    return true;
+})
+
+REGISTER_TEST(claude_quota_deepseek_is_available_false_is_entitlement,
+              "claude_quota: DeepSeek is_available=false → Entitlement（改密钥没用）", {
+    const QuotaResult r = module::claude::quota::createDeepSeekProvider()->fetch(
+        deepseekConfig(),
+        httpResponding(nullptr, 200,
+                       R"({"is_available":false,"balance_infos":[)"
+                       R"({"currency":"CNY","total_balance":"0.00","granted_balance":"0.00","topped_up_balance":"0.00"}]})"));
+
+    DOCTEST_CHECK(r.error == QuotaError::Entitlement);
+    DOCTEST_CHECK(r.errorMessage.find("余额不足") != std::string::npos);
+    // 失败态不许夹带半截成功值，也不许有窗口
+    DOCTEST_CHECK(r.windows.empty());
+    DOCTEST_CHECK_EQ(r.balanceRemaining, 0.0);
+    DOCTEST_CHECK(r.currency.empty());
+    DOCTEST_CHECK(r.kind == QuotaKind::Balance);
+    return true;
+})
+
+REGISTER_TEST(claude_quota_deepseek_is_available_missing_defaults_true,
+              "claude_quota: DeepSeek is_available 缺失按 true（cc-switch unwrap_or(true)）", {
+    const QuotaResult r = module::claude::quota::createDeepSeekProvider()->fetch(
+        deepseekConfig(),
+        httpResponding(nullptr, 200,
+                       R"({"balance_infos":[{"currency":"CNY","total_balance":"9.99"}]})"));
+    DOCTEST_CHECK(r.error == QuotaError::None);  // 没有证据不判欠费
+    DOCTEST_CHECK_EQ(r.balanceRemaining, 9.99);
+    DOCTEST_CHECK_EQ(r.currency, std::string("CNY"));
+    return true;
+})
+
+REGISTER_TEST(claude_quota_deepseek_shape_errors,
+              "claude_quota: DeepSeek 空 balance_infos / 结构不认识 → Shape", {
+    // 空数组：DevDesk 契约要求报 Shape，不返回「无数据的成功态」空卡
+    const QuotaResult empty = module::claude::quota::createDeepSeekProvider()->fetch(
+        deepseekConfig(),
+        httpResponding(nullptr, 200, R"({"is_available":true,"balance_infos":[]})"));
+    DOCTEST_CHECK(empty.error == QuotaError::Shape);
+    DOCTEST_CHECK_FALSE(empty.errorMessage.empty());
+
+    // 缺 balance_infos 根键
+    const QuotaResult missing = module::claude::quota::createDeepSeekProvider()->fetch(
+        deepseekConfig(), httpResponding(nullptr, 200, R"({"is_available":true})"));
+    DOCTEST_CHECK(missing.error == QuotaError::Shape);
+
+    const QuotaResult notObject = module::claude::quota::createDeepSeekProvider()->fetch(
+        deepseekConfig(), httpResponding(nullptr, 200, "[1,2,3]"));
+    DOCTEST_CHECK(notObject.error == QuotaError::Shape);
+
+    const QuotaResult badJson = module::claude::quota::createDeepSeekProvider()->fetch(
+        deepseekConfig(), httpResponding(nullptr, 200, "not json at all"));
+    DOCTEST_CHECK(badJson.error == QuotaError::Shape);
+
+    // 条目缺 total_balance / currency
+    const QuotaResult noTotal = module::claude::quota::createDeepSeekProvider()->fetch(
+        deepseekConfig(),
+        httpResponding(nullptr, 200,
+                       R"({"is_available":true,"balance_infos":[{"currency":"CNY"}]})"));
+    DOCTEST_CHECK(noTotal.error == QuotaError::Shape);
+    const QuotaResult noCurrency = module::claude::quota::createDeepSeekProvider()->fetch(
+        deepseekConfig(),
+        httpResponding(nullptr, 200,
+                       R"({"is_available":true,"balance_infos":[{"total_balance":"1.00"}]})"));
+    DOCTEST_CHECK(noCurrency.error == QuotaError::Shape);
+    return true;
+})
+
+REGISTER_TEST(claude_quota_deepseek_transport_and_http_errors,
+              "claude_quota: DeepSeek 传输失败/5xx/限流 → Transient；401→Auth；403→Entitlement", {
+    // fetch 非 const 成员 → 必须用非 const 指针（注册表返回的 const 指针只够读元信息）
+    QuotaProvider* p = module::claude::quota::createDeepSeekProvider();
+
+    // 空缝：不许 std::bad_function_call
+    const QuotaResult noSeam = p->fetch(deepseekConfig(), HttpSendFn{});
+    DOCTEST_CHECK(noSeam.error == QuotaError::Transient);
+
+    // 传输层失败（Result::fail）
+    const QuotaResult netFail = p->fetch(deepseekConfig(), httpTransportFailure());
+    DOCTEST_CHECK(netFail.error == QuotaError::Transient);
+
+    DOCTEST_CHECK(p->fetch(deepseekConfig(), httpResponding(nullptr, 500, "{}")).error ==
+                  QuotaError::Transient);
+    DOCTEST_CHECK(p->fetch(deepseekConfig(), httpResponding(nullptr, 503, "{}")).error ==
+                  QuotaError::Transient);
+    DOCTEST_CHECK(p->fetch(deepseekConfig(), httpResponding(nullptr, 429, "{}")).error ==
+                  QuotaError::Transient);
+
+    // 401 → Auth：改密钥有用
+    const QuotaResult auth =
+        p->fetch(deepseekConfig("sk-bad"), httpResponding(nullptr, 401, "{}"));
+    DOCTEST_CHECK(auth.error == QuotaError::Auth);
+    DOCTEST_CHECK(auth.errorMessage.find("401") != std::string::npos);
+
+    // 403 → Entitlement：凭据有效、缺的是产品权限，与 401 的处置方式不同，不可合并
+    const QuotaResult forbidden = p->fetch(deepseekConfig(), httpResponding(nullptr, 403, "{}"));
+    DOCTEST_CHECK(forbidden.error == QuotaError::Entitlement);
+    return true;
+})
+
+REGISTER_TEST(claude_quota_deepseek_missing_key_is_not_configured,
+              "claude_quota: DeepSeek 缺 API key → NotConfigured（不发请求）", {
+    CapturedRequest seen;
+    const QuotaResult r = module::claude::quota::createDeepSeekProvider()->fetch(
+        deepseekConfig(""), httpResponding(&seen, 200, kDeepSeekBalanceMultiCurrency));
+    DOCTEST_CHECK(r.error == QuotaError::NotConfigured);
+    DOCTEST_CHECK_FALSE(seen.called);  // 配置不全不发请求
+    return true;
+})
+
+REGISTER_TEST(claude_quota_deepseek_never_has_windows,
+              "claude_quota: DeepSeek 任何形态都无窗口（Balance 契约钉死）", {
+    // DeepSeek 没有 5h/周/月窗口，任何「为凑数硬造一个窗口」的改动都会在这里红。
+    // 别把这组用例当冗余删掉——它是跨形态（含错误态）的 Balance 契约护栏。
+    struct Case {
+        int status;
+        const char* body;
+    };
+    const Case cases[] = {
+        {200, kDeepSeekBalanceMultiCurrency},
+        {200, R"({"is_available":false,"balance_infos":[{"currency":"CNY","total_balance":"0.00"}]})"},
+        {200, R"({"is_available":true,"balance_infos":[]})"},
+        {200, "not json"},
+        {401, "{}"},
+        {500, "{}"},
+    };
+    for (const Case& c : cases) {
+        const QuotaResult r = module::claude::quota::createDeepSeekProvider()->fetch(
+            deepseekConfig(), httpResponding(nullptr, c.status, c.body));
+        DOCTEST_CHECK(r.windows.empty());
+        DOCTEST_CHECK(r.kind == QuotaKind::Balance);
+    }
+    // 空缝形态也不许有窗口
+    const QuotaResult noSeam =
+        module::claude::quota::createDeepSeekProvider()->fetch(deepseekConfig(), HttpSendFn{});
+    DOCTEST_CHECK(noSeam.windows.empty());
+    return true;
+})

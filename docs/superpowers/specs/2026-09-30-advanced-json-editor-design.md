@@ -1,6 +1,6 @@
 # Profile 高级设置 JSON（非 env 属性）+ 生成链合并 + 共享配置片段重构——设计
 
-日期：2026-09-30 ｜ 状态：**待实施（设计，已过独立审计——10 findings 全处置，见 §12）** ｜ 来源：用户需求「高级设置里的 json 是除 env 属性之外的全部属性之合」+「支持 json 自动格式化」+ 共享配置片段重构追加 ｜ 关联：`2026-09-30-batch-fix-design.md`（项 B 建立的表单「高级配置」tab 与详情 pane，本文在其上加 JSON 编辑框区块）、`2026-09-27-shared-config-and-failover-design.md`（片段绑定既有拍板，本文 §8 迁移其语义）、`2026-09-28-profile-run-design.md`（runProfile 临时 settings 生成链）、审计留痕 `plans/2026-09-30-advanced-json-audit.json` ｜ **依赖：master `0f1f734`**
+日期：2026-09-30 ｜ 状态：**已实施（2026-09-30，merge a1451e9；设计已过独立审计——10 findings 全处置，见 §12）** ｜ 来源：用户需求「高级设置里的 json 是除 env 属性之外的全部属性之合」+「支持 json 自动格式化」+ 共享配置片段重构追加 ｜ 关联：`2026-09-30-batch-fix-design.md`（项 B 建立的表单「高级配置」tab 与详情 pane，本文在其上加 JSON 编辑框区块）、`2026-09-27-shared-config-and-failover-design.md`（片段绑定既有拍板，本文 §8 迁移其语义）、`2026-09-28-profile-run-design.md`（runProfile 临时 settings 生成链）、审计留痕 `plans/2026-09-30-advanced-json-audit.json` ｜ **依赖：master `0f1f734`**
 
 > 用户已拍板三项：① 模型类键冲突 = **JSON 赢**（显式手写覆盖 UI 槽位）；② 「复制配置」导出从 `{"env":{...}}` 升级为**完整 settings.json 形态**；③ 停代理还原的 managedKeys 记账**扩到非 env 属性**（migration v11，无迁移包袱口径直接扩）。
 > UI tab 结构一概不动（编辑弹窗四 tab、详情五 pane），本文只新增：高级配置 tab 在现有方言/备用下拉之下加 JSON 编辑框区块。

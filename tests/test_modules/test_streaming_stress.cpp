@@ -1,32 +1,15 @@
 // tests/test_modules/test_streaming_stress.cpp
-// P10b 流式压测（恢复计划 T8）
-//
-// 测试架构（与 test_streaming_proxy.cpp 相同）：
-//   [mock 上游 httplib::Server]  ← libcurl(StreamingResponse) ← [ProxyRouter]
-//                                                                     ↓
-//                                                    [platform::http::Server]
-//                                                                     ↓
-//                                                       [httplib::Client 收]
-//
-// 用例（./build/tests/devdesk_tests.exe stress 可过滤）：
-//   1. 10MB 大 body 流式端到端透传：字节数完整 + 顺序正确
-//      （全串比对 + FNV-1a 累计哈希 + 每 64KB 块前 8 字节块号独立校验）
-//   2. 10MB 大 body 缓冲（非流式）路径
-//   3. soak 60s：上游每 50ms 一个 chunk，断言收到 chunk 数误差 < 5% 且顺序完整
-//   4. soak 300s：DEVDESK_SOAK=1 门控；未设时打印 [SKIP] 直接通过（常规套件
-//      不背 5 分钟）
-//   5. 上游断连恢复：原始 socket 上游发到一半 closesocket（不发终止 chunk），
-//      断言流以 End 干净收尾（不是 Error），已收数据与上游已发字节完全一致
-//   6. 内存采样：10MB 流式 e2e 循环 20 轮，每 5 轮用 psapi GetProcessMemoryInfo
-//      记录本进程工作集内存，断言增量 < 100MB（宽松阈值：防泄漏而非精确测量）
-//
-// 注意：
-//   - REGISTER_TEST 的 body 是宏参数：**预处理器指令（#ifdef 等）不能出现在
-//     body 里**，需要条件编译的逻辑放到 body 外的普通函数（见用例 6 内存采样）。
-//   - mock 上游 provider 结束时必须 sink.done() + return true（返回 false 会被
-//     cpp-httplib 当作 Canceled，不写终止 chunk，客户端看到的是截断）。
+// 流式压测：10MB 大 body 端到端透传 / 缓冲路径 / 定节奏 soak / 上游中途断连的收尾语义 /
+// 20 轮 10MB 流式后的内存上界。
+// 拓扑：[mock httplib 上游] ←libcurl(StreamingResponse)← [ProxyRouter] ← [platform::http::Server] ← [httplib::Client]
+// 反重构警告 / 跨文件前提：
+//   - REGISTER_TEST 的 body 是宏参数，预处理器指令（#ifdef 等）不能出现在里面。需要条件编译的逻辑
+//     一律放到 body 外的普通函数（内存采样用例就是这样绕开 _WIN32 的）。
+//   - mock 上游的 chunked provider 收尾必须 sink.done() + return true。返回 false 会被 cpp-httplib
+//     当作 Canceled：不写终止 chunk，客户端看到的是一次截断。
+//   - soak 两条用例受 DEVDESK_SOAK 门控，未启用即 SKIP——常规套件不背 5 分钟。
 #include "doctest.h"
-#include "test_support.h"  // TIN-06 收尾波：InMemoryDb
+#include "test_support.h"  // InMemoryDb
 
 #include "claude_service.h"
 #include "core/sqlite_db.h"
@@ -72,7 +55,7 @@ using module::claude::Profile;
 constexpr size_t kBlockSize = 65536;
 constexpr size_t kBlockCount = 160;
 
-// ---------- 确定性大 body ----------
+// 确定性大 body 夹具
 
 // 第 blockIndex 块的确定性字节：前 8 字节写块号（小端），其余 xorshift64 填充。
 // 块号前缀让"乱序"能独立于哈希比对定位到具体块。
@@ -118,9 +101,9 @@ uint64_t fnv1a64(const std::string& data) {
     return h;
 }
 
-// ---------- 测试环境（与 test_streaming_proxy.cpp 相同的骨架）----------
+// 测试环境（与 test_streaming_proxy.cpp 同一套骨架）
 
-// 轮询等待谓词成立
+// 轮询等待谓词成立，超时返回最后一次求值
 template <typename Fn>
 bool waitUntil(Fn fn, int waitMs) {
     const auto deadline = steady_clock::now() + milliseconds(waitMs);
@@ -205,7 +188,7 @@ ClientStreamResult clientPostStream(httplib::Client& cli,
     return out;
 }
 
-// ---------- mock 上游：大 body（流式 + 缓冲两种供给方式）----------
+// mock 上游：大 body（流式 + 缓冲两种供给方式）
 
 class StressUpstream {
 public:
@@ -272,7 +255,7 @@ private:
     int port_ = 0;
 };
 
-// ---------- mock 上游：固定节奏 soak ----------
+// mock 上游：固定节奏 soak
 
 class SoakUpstream {
 public:
@@ -339,13 +322,10 @@ private:
         std::make_shared<std::atomic<size_t>>(0);
 };
 
-// ---------- 代理环境（ProxyRouter + InMemoryDb 内存库，不触碰 Keychain）----------
+// 代理环境：ProxyRouter + InMemoryDb 内存库，不触碰 Keychain
 
-// 显式测试 service（2026-09-30，理由同 test_streaming_proxy.cpp）：默认构造
-// 现按数据根派生，显式传名钉死隔离语义——绝不派生、不触碰真实 Keychain
+// 显式传 Keychain service 名，不走默认构造按数据根派生的那条路：派生会碰到真实 Keychain。
 constexpr const char* kStressTestKeychainService = "DevDeskTestStreamingStress";
-
-// 模块 glue，keep-local（TIN-06）：InMemoryDb 基座 + ClaudeService 构造。
 struct StressEnv {
     test_support::InMemoryDb db;
     std::unique_ptr<module::claude::ClaudeService> service;
@@ -370,12 +350,12 @@ struct StressEnv {
     int port() const { return proxy->actualPort(); }
 
 private:
-    // 声明在最后：析构顺序 router → proxy → service → db（handler 捕获
-    // router 的 this，必须先于 proxy 销毁；server stop 后不再有调用）
+    // 声明在最后：析构顺序 router → proxy → service → db。handler 捕获的是 router 的 this，
+    // 必须先于 proxy 销毁；server stop 后不再有回调进来。
     std::unique_ptr<module::claude::ProxyRouter> router_;
 };
 
-// ---------- 原始 socket 上游（断连恢复用）----------
+// 原始 socket 上游（断连恢复用）
 
 #ifdef _WIN32
 using RawSocket = SOCKET;
@@ -460,7 +440,7 @@ public:
         sockaddr_in addr;
         std::memset(&addr, 0, sizeof(addr));
         addr.sin_family = AF_INET;
-        addr.sin_addr.s_addr = htonl(0x7F000001u);   // 127.0.0.1
+        addr.sin_addr.s_addr = htonl(0x7F000001u);
         addr.sin_port = 0;
         if (bind(listen_, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) {
             closeRawSocket(listen_);
@@ -549,7 +529,6 @@ private:
             }
         }
 
-        // 回 chunked SSE 响应头
         static const char kHead[] =
             "HTTP/1.1 200 OK\r\n"
             "Content-Type: text/event-stream\r\n"
@@ -560,7 +539,6 @@ private:
             return;
         }
 
-        // 逐 chunk（带节奏）发，记录已发载荷
         for (int i = 0; i < chunkCount; ++i) {
             std::string payload =
                 "data: {\"seq\":" + std::to_string(i) + "}\n\n";
@@ -597,18 +575,17 @@ private:
     std::atomic<bool> closed_{false};
 };
 
-// ---------- 内存采样（Windows psapi）----------
+// 内存采样（Windows psapi）
 
 // 读本进程当前工作集内存（KB）；失败返回 -1。
-// psapi GetProcessMemoryInfo 是进程内 Win32 API：不 shell、不解析文本，
-// 每毫秒级返回。旧实现 _popen("tasklist ...") 每轮起子进程，本机 tasklist
-// 卡/慢且偶发解析失败 → 返回 0 且把用例拖到 300s+，故弃用。
-// MinGW 下 psapi.h 在 NTDDI_VERSION >= WIN7 时把 GetProcessMemoryInfo
-// 宏转发到 kernel32 的 K32GetProcessMemoryInfo，默认链接集即可用，无需 -lpsapi。
-// [[maybe_unused]]：本函数唯一的调用点在 `#ifdef _WIN32` 块内（stressMemoryBody），
-// 非 Windows 编译时函数体走 `#else return -1`，无人调用 → clang
-// -Wunused-function 报错（GCC -Wall 不报此告警，故 Windows 侧从不复现）。
-// 保留函数而非按平台围 #ifdef：Windows 行为零变化，macOS 侧结构也零变化。
+// 用进程内 Win32 API（psapi）而不是 shell 调 tasklist：后者每轮起一个子进程，本机上卡/慢且偶发
+// 解析失败返回 0，还会把整个用例拖到分钟级。
+// MinGW 下 psapi.h 在 NTDDI_VERSION >= WIN7 时把 GetProcessMemoryInfo 宏转发到 kernel32 的
+// K32GetProcessMemoryInfo，默认链接集即可用，链接行不需要 -lpsapi。
+// [[maybe_unused]] 不能删：唯一调用点在 `#ifdef _WIN32` 块内（stressMemoryBody），非 Windows
+// 编译时走 `#else return -1` 无人调用，clang -Wunused-function 会报错——GCC -Wall 不报此告警，
+// 所以只有非 Windows 侧编译才看得到它。
+// 函数整体保留、不按平台围 #ifdef：这样 Windows 行为与 macOS 侧结构都零变化。
 [[maybe_unused]] long long selfMemoryKb() {
 #ifdef _WIN32
     PROCESS_MEMORY_COUNTERS pmc{};
@@ -624,9 +601,10 @@ private:
 #endif
 }
 
-// ---------- soak 实现（60s / 300s 共用）----------
+// soak 实现（60s / 300s 共用）
 
-// 返回 false 时已打印失败原因。DOCTEST_* 宏在 helper 里 fail 即 return false。
+// 返回 false 时失败原因已打印。DOCTEST_* 宏在 helper 里 fail 即 return false，
+// 所以这个函数的 bool 返回值就是用例的返回值。
 bool soakRun(int durationSec) {
     const long intervalMs = 50;
     const size_t count =
@@ -699,16 +677,16 @@ bool soakRun(int durationSec) {
                           "soak chunk count error " +
                               std::to_string(diff * 100 / (expected > 0 ? expected : 1)) +
                               "% > 5%");
-    // 更强的无丢失断言：TCP + 干净结束 → 必须收到上游发出的每一个 chunk
+    // 无丢失的精确判据：TCP + 干净结束 → 必须收到上游发出的每一个 chunk
     DOCTEST_CHECK_EQ(received, upstream.sent());
-    // 兜底：至少收到了九成（防止上游根本没节奏地发）
+    // 反向也要够：不低于期望的九成，防止上游压根没按节奏发
     DOCTEST_CHECK(got * 10 >= expected * 9);
 
     upstream.stop();
     return true;
 }
 
-// ---------- 内存采样用例的 body（需要 #ifdef，不能放进宏参数）----------
+// 内存采样用例的 body（需要 #ifdef，不能放进 REGISTER_TEST 的宏参数）
 
 #ifdef _WIN32
 bool stressMemoryBody() {
@@ -781,8 +759,6 @@ bool stressMemoryBody() {
 
 } // namespace
 
-// ==================== 1. 10MB 大 body：流式端到端透传 ====================
-
 REGISTER_TEST(stress_body_10mb_streaming_e2e,
               "stress: 10MB body streaming end-to-end passthrough", {
     std::vector<std::string> blocks = makeBlocks();
@@ -810,15 +786,15 @@ REGISTER_TEST(stress_body_10mb_streaming_e2e,
     DOCTEST_CHECK_EQ(res.status, 200);
     DOCTEST_CHECK(res.contentType.find("text/event-stream") !=
                   std::string::npos);
-    // 字节数完整
+    // 下面三条校验（全串 / 累计哈希 / 块号前缀）在全串比对已通过的前提下都恒真——它们是分层定位
+    // 手段，不是额外覆盖：哈希只说得出「变了」，块号前缀才指出「哪一块变了」。真正独立的只有全串
+    // 那条，别当重复把它删掉。
     DOCTEST_CHECK_EQ(res.body.size(), expected.size());
-    // 顺序正确（全串比对，任何丢/乱/改字节都会挂）
     DOCTEST_CHECK_MESSAGE(res.body == expected,
                           "10MB streaming body mismatch, got " +
                               std::to_string(res.body.size()) + " bytes");
-    // 累计哈希（第二重校验 + 留档数字）
     DOCTEST_CHECK_EQ(fnv1a64(res.body), expectedHash);
-    // 块序独立校验：每 64KB 块的前 8 字节是块号
+    // 每 64KB 块的前 8 字节是块号（小端），据此定位乱序/丢块发生在哪一块
     bool blockOrderOk = true;
     for (size_t i = 0; i < kBlockCount; ++i) {
         uint64_t prefix = 0;
@@ -837,8 +813,6 @@ REGISTER_TEST(stress_body_10mb_streaming_e2e,
     upstream.stop();
     return true;
 })
-
-// ==================== 2. 10MB 大 body：缓冲（非流式）路径 ====================
 
 REGISTER_TEST(stress_body_10mb_buffered_path,
               "stress: 10MB body buffered (non-streaming) path", {
@@ -876,14 +850,10 @@ REGISTER_TEST(stress_body_10mb_buffered_path,
     return true;
 })
 
-// ==================== 3. soak 60s（常跑）====================
-
 REGISTER_TEST(stress_soak_60s, "stress: soak 60s paced chunks all received", {
     if (!std::getenv("DEVDESK_SOAK")) DOCTEST_SKIP("DEVDESK_SOAK=1 未启用");
     return soakRun(60);
 })
-
-// ==================== 4. soak 300s（DEVDESK_SOAK=1 门控）====================
 
 REGISTER_TEST(stress_soak_300s_gated,
               "stress: soak 300s full run (DEVDESK_SOAK=1)", {
@@ -897,11 +867,9 @@ REGISTER_TEST(stress_soak_300s_gated,
     return soakRun(300);
 })
 
-// ==================== 5. 上游断连恢复 ====================
-
 REGISTER_TEST(stress_upstream_disconnect_mid_stream,
               "stress: upstream disconnect mid-stream ends clean", {
-    // ---- 直接层：StreamingResponse 遇上游中途断连 → End（非 Error）+ 数据完整 ----
+    // 直接层：StreamingResponse 遇上游中途断连 → End（非 Error）+ 数据完整
     AbruptCloseUpstream raw1;
     DOCTEST_REQUIRE(raw1.start(5, 150));
 
@@ -923,16 +891,14 @@ REGISTER_TEST(stress_upstream_disconnect_mid_stream,
 
     DOCTEST_CHECK(raw1.closed() ||
                   waitUntil([&raw1] { return raw1.closed(); }, 5000));
-    // 断连后流必须以 End 干净收尾，不是 Error
     DOCTEST_CHECK(last == platform::http::ChunkResult::End);
     DOCTEST_CHECK(err.empty());
-    // 已收数据完整：与上游实际发出的字节完全一致
     DOCTEST_CHECK_EQ(got, raw1.sentPayload());
     DOCTEST_CHECK(got.size() > 0);
 
     raw1.stop();
 
-    // ---- 端到端：经 ProxyRouter，客户端看到的是干净收尾的完整响应 ----
+    // 端到端：经 ProxyRouter，客户端看到的是干净收尾的完整响应
     AbruptCloseUpstream raw2;
     DOCTEST_REQUIRE(raw2.start(5, 150));
 
@@ -958,8 +924,6 @@ REGISTER_TEST(stress_upstream_disconnect_mid_stream,
     raw2.stop();
     return true;
 })
-
-// ==================== 6. 内存采样：10MB 流式 × 20 轮 ====================
 
 REGISTER_TEST(stress_memory_20_rounds_10mb,
               "stress: memory bounded over 20x10MB streams", {

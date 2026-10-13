@@ -1,38 +1,27 @@
 // tests/test_modules/test_streaming_proxy.cpp
-// SSE 流式转发测试（spec §10.4 / P10a）
-//
-// 测试架构：
-//   [mock 上游 httplib::Server]  ← libcurl(StreamingResponse) ← [ProxyRouter]
-//                                                                     ↓
-//                                                    [platform::http::Server]
-//                                                                     ↓
-//                                                       [httplib::Client 收]
-//
-// 覆盖：
-//   1. stream:true 检测（JSON 顶层字段）
-//   2. baseUrl + path 拼接
-//   3. SSE 上游 chunk 透传（顺序 + 完整性 + Content-Type）
-//   4. 真流式（非 buffer）：chunk 到达节奏符合上游
-//   5. backpressure：大批 chunk 不丢不乱序
-//   6. 上游错误状态码透传（429）
-//   7. cancel()：立即停止上游且不阻塞
-//   8. 端到端：ProxyRouter + SSE Content-Type
-//   9. 端到端：错误状态码透传
-//  10. 客户端断开 → 上游请求被取消
-//  11. stream:false 走缓冲路径（不受流式改动影响）
-//  12. 上游中途截断 → 流干净结束
-//  13. StreamingContext 结构契约
-//  14. 并发流互不串扰
-//
+// SSE 流式转发：
+//   [mock 上游 httplib::Server] ← libcurl(StreamingResponse) ← [ProxyRouter]
+//                                               ↓
+//                                      [platform::http::Server]
+//                                               ↓
+//                                        [httplib::Client 收]
 // 全部使用 127.0.0.1 随机端口 + 短超时，不依赖外网。
-//
-// 注意：tests/doctest.h 是极简框架（DOCTEST_CHECK 失败即 `return false`）。
+// 跨文件前提：
+//   - tests/doctest.h 是极简框架：DOCTEST_CHECK 失败展开为 `return false`——断言不能进
+//     lambda（只退出 lambda，用例照样绿），fail-fast 早退也会跳过后续清理，故清理一律 RAII。
+//   - streaming_proxy.h / proxy_router.h 的 Stop 顺序：cancelActiveStreams() 必须在
+//     Server::stop() 之前——stop() 只关监听 socket 就 join worker，在途流的 worker 阻塞在
+//     readChunk（上游持续产出时空闲超时永不触发），顺序反了会挂到流自然结束。
+//   - SseUsageParser.feed 跨 chunk 保活：TCP 分段边界 ≠ SSE 事件边界，被切断的事件在补完
+//     后续字节后才出值；\r\n 分隔符与 [DONE] / 畸形 JSON / 非 data 行安全跳过。
+//   - claude_call_logs 落库两步：响应头就绪插行（status/latency），流末 UPDATE 回填 token
+//     四列与 first_event_ms——客户端读完整流时回填还差几毫秒，落库断言必须轮询。
 #include "doctest.h"
-#include "test_support.h"  // TIN-06 收尾波：InMemoryDb / ScopedAppDatabase
+#include "test_support.h"  // InMemoryDb / ScopedAppDatabase
 
 #include "claude_service.h"
 #include "core/database.h"
-#include "core/migrations.h"
+#include "core/schema.h"
 #include "core/proxy_stats.h"
 #include "core/sqlite_db.h"
 #include "json_scan.h"
@@ -63,9 +52,6 @@ namespace {
 using namespace std::chrono;
 using module::claude::Profile;
 
-// ---------- 通用工具 ----------
-
-// 轮询等待谓词成立
 template <typename Fn>
 bool waitUntil(Fn fn, int waitMs) {
     const auto deadline = steady_clock::now() + milliseconds(waitMs);
@@ -82,7 +68,6 @@ std::string sseChunk(int i) {
            std::to_string(i) + "}\n\n";
 }
 
-// 构造 n 个 delta + 末尾 [DONE]
 std::vector<std::string> makeSseScript(size_t n, bool withDone) {
     std::vector<std::string> out;
     out.reserve(n + 1);
@@ -93,14 +78,12 @@ std::vector<std::string> makeSseScript(size_t n, bool withDone) {
     return out;
 }
 
-// 把所有 chunk 拼成一个期望字符串
 std::string joinChunks(const std::vector<std::string>& v) {
     std::string out;
     for (const auto& s : v) out += s;
     return out;
 }
 
-// 验证 text 中 sseChunk(0..n-1) 依序出现（顺序 + 完整性）
 bool sseOrderOk(const std::string& text, int n) {
     size_t lastPos = 0;
     for (int i = 0; i < n; ++i) {
@@ -112,8 +95,6 @@ bool sseOrderOk(const std::string& text, int n) {
     }
     return true;
 }
-
-// ---------- mock 上游 SSE 服务器 ----------
 
 struct MockScript {
     std::vector<std::string> chunks;
@@ -148,7 +129,6 @@ public:
         return "http://127.0.0.1:" + std::to_string(port_);
     }
 
-    // 注册 POST /v1/messages，按 script 逐 chunk 吐 SSE
     void onMessages(const MockScript& script) {
         auto scriptPtr = std::make_shared<MockScript>(script);
         auto emitted = emitted_;
@@ -177,7 +157,6 @@ public:
                       // 发现连接断开（is_writable 失败）时会直接退出写循环、
                       // 不再调用 provider——sink.write 失败路径没机会执行，
                       // finished 只能在 ~Response() 的 releaser 里置位。
-                      // （与产品侧 http_server.cpp 的 releaser 模式一致。）
                       res.set_chunked_content_provider(
                           scriptPtr->contentType,
                           [scriptPtr, idx, emitted, finished](
@@ -193,7 +172,6 @@ public:
                               }
                               const std::string& c = scriptPtr->chunks[*idx];
                               if (!sink.write(c.data(), c.size())) {
-                                  // 客户端（代理）断开
                                   finished->store(true);
                                   return false;
                               }
@@ -211,7 +189,6 @@ public:
                   });
     }
 
-    // 注册 GET /v1/models（缓冲路径用）
     void onModels(const std::string& jsonBody) {
         svr_.Get("/v1/models",
                  [jsonBody](const httplib::Request&, httplib::Response& res) {
@@ -219,9 +196,7 @@ public:
                  });
     }
 
-    // 注册 POST /v1/messages 的「静默」处理器：请求收下后一字节都不回
-    //（模拟「上游连着但不发数据」——取消只能靠 libcurl 进度回调叫醒的实现
-    // 就是在这一档上翻车的，见用例 20）。releaseSilent() 放行以便 join。
+    // 静默 handler：请求收下后一字节都不回，逼出「取消只能靠 libcurl 进度回调叫醒」那类实现
     void onMessagesSilent() {
         auto gate = silentGate_;
         svr_.Post("/v1/messages",
@@ -239,8 +214,7 @@ public:
 
     std::string lastRequestBody() const { return lastRequestBody_->get(); }
     std::string lastApiKey() const { return lastApiKey_->get(); }
-    // 上游收到的 x-opencode-session（方言专属会话头；未注入 = 空串）——
-    // 用于断言 profile.dialectOverride 真的走到了流式转发路径（CPX-13 接线）
+    // 上游收到的 x-opencode-session（方言专属会话头；未注入 = 空串）
     std::string lastOpenCodeSession() const { return lastSessionHeader_->get(); }
     size_t emitted() const { return emitted_->load(); }
     bool upstreamFinished() const { return finished_->load(); }
@@ -277,19 +251,15 @@ private:
     std::shared_ptr<StringSlot> lastApiKey_ = std::make_shared<StringSlot>();
     std::shared_ptr<StringSlot> lastRequestBody_ = std::make_shared<StringSlot>();
     std::shared_ptr<StringSlot> lastSessionHeader_ = std::make_shared<StringSlot>();
-    // 静默 handler 的放行闸（onMessagesSilent / releaseSilent）
     std::shared_ptr<std::atomic<bool>> silentGate_ =
         std::make_shared<std::atomic<bool>>(false);
 };
 
-// ---------- 测试用 ClaudeService（InMemoryDb 内存库，不触碰 Keychain）----------
-
-// 显式测试 service（2026-09-30）：默认构造现按数据根派生 service 名，此处
-// 传显式名钉死隔离语义——绝不派生、更不触碰任何真实 Keychain 命名空间
+// 显式测试 service：默认构造现按数据根派生 service 名，此处传显式名钉死隔离
+// 语义——绝不派生、更不触碰任何真实 Keychain 命名空间
 constexpr const char* kStreamTestKeychainService = "DevDeskTestStreamingProxy";
 
-// 模块 glue，keep-local（TIN-06）：InMemoryDb 基座 + ClaudeService 构造；
-// 构造失败即抛（InMemoryDb），service 恒非空。
+// InMemoryDb 内存库（不触碰 Keychain）；ClaudeService 构造失败即抛，service 恒非空
 struct StreamEnv {
     test_support::InMemoryDb db;
     std::unique_ptr<module::claude::ClaudeService> service;
@@ -313,7 +283,6 @@ Profile makeProfile(const std::string& baseUrl) {
     return p;
 }
 
-// 把 Result<unique_ptr<T>> 里的指针 move 出来（避免拷贝）
 std::unique_ptr<platform::http::StreamingResponse> takeStream(
     core::Result<std::unique_ptr<platform::http::StreamingResponse>>& r) {
     if (r.isFail()) return nullptr;
@@ -321,7 +290,7 @@ std::unique_ptr<platform::http::StreamingResponse> takeStream(
     return std::unique_ptr<platform::http::StreamingResponse>(std::move(ref));
 }
 
-// 读完整个流；返回 false 表示读到 Error
+// 读完整个流；返回 false 表示读到 Error（含 100000 轮 guard 上限）
 bool drainStream(platform::http::StreamingResponse& sr,
                  std::string& textOut,
                  std::string& errOut) {
@@ -339,7 +308,6 @@ bool drainStream(platform::http::StreamingResponse& sr,
     return false;
 }
 
-// 用 cpp-httplib Client 发带 content receiver 的 POST（客户端流式接收）
 struct ClientStreamResult {
     bool ok = false;
     int status = 0;
@@ -384,8 +352,6 @@ ClientStreamResult clientPostStream(httplib::Client& cli,
 
 } // namespace
 
-// ==================== 1. stream:true 检测 ====================
-
 REGISTER_TEST(streaming_wants_stream_detection,
               "streaming: detect stream:true in request body", {
     using module::claude::wantsStream;
@@ -395,7 +361,6 @@ REGISTER_TEST(streaming_wants_stream_detection,
     DOCTEST_CHECK(wantsStream("{\n  \"stream\":\n  true\n}"));
     DOCTEST_CHECK(wantsStream(R"({"a":1,"stream":true,"b":[1,2,3]})"));
 
-    // 不是 true → 不走流式
     DOCTEST_CHECK_FALSE(wantsStream(R"({"stream":false})"));
     DOCTEST_CHECK_FALSE(wantsStream(R"({"stream":"true"})"));
     DOCTEST_CHECK_FALSE(wantsStream(R"({"model":"m"})"));
@@ -405,8 +370,6 @@ REGISTER_TEST(streaming_wants_stream_detection,
     DOCTEST_CHECK_FALSE(wantsStream(R"({"a":{"stream":true}})"));
     return true;
 })
-
-// ==================== 2. 路径判定 + URL 拼接 ====================
 
 REGISTER_TEST(streaming_path_and_url_join,
               "streaming: streamable path check + upstream url join", {
@@ -427,14 +390,11 @@ REGISTER_TEST(streaming_path_and_url_join,
     DOCTEST_CHECK_EQ(buildUpstreamUrl("http://127.0.0.1:8888", ""),
                      std::string("http://127.0.0.1:8888/"));
 
-    // 已是绝对 URL → 原样返回
     DOCTEST_CHECK_EQ(buildUpstreamUrl("https://ignored.example",
                                       "http://127.0.0.1:1234/v1/messages"),
                      std::string("http://127.0.0.1:1234/v1/messages"));
     return true;
 })
-
-// ==================== 3. SSE chunk 透传（顺序 + 完整性） ====================
 
 REGISTER_TEST(streaming_send_streaming_claude_passthrough,
               "streaming: sendStreamingClaude forwards upstream sse chunks", {
@@ -461,26 +421,21 @@ REGISTER_TEST(streaming_send_streaming_claude_passthrough,
     DOCTEST_REQUIRE_MESSAGE(drainStream(*sr, all, err),
                             "stream ended with error: " + err);
 
-    // 完整 + 顺序
     DOCTEST_CHECK_EQ(all, joinChunks(script.chunks));
     DOCTEST_CHECK(sseOrderOk(all, 5));
     DOCTEST_CHECK(all.find("data: [DONE]\n\n") != std::string::npos);
 
     DOCTEST_CHECK_EQ(sr->statusCode(), 200);
     DOCTEST_CHECK_EQ(sr->contentType(), std::string("text/event-stream"));
-    // 上游看到的 x-api-key 来自 profile
     DOCTEST_CHECK_EQ(upstream.lastApiKey(), std::string("sk-ant-test-key"));
 
     upstream.stop();
     return true;
 })
 
-// ==================== 3b. profile.dialectOverride 接通流式转发（CPX-13 接线） ====================
-// 断言的是上游实际收到的头 / body（转发路径的真实效果），不是 forBaseUrl 的
-// 返回值：host 是 loopback（host 推断 = 默认方言），profile 钉住 opencode_zen →
-// 上游必须收到 x-opencode-session、模型名 [1M] 必须被剥。
-// 空串 = 未覆盖 → 与改动前逐项一致：无会话头 + body 逐字节不变。
-
+// 断言的是上游实际收到的头 / body（转发路径的真实效果），不是 forBaseUrl 的返回值。
+// host 是 loopback → host 推断只能给默认方言，必须靠 profile 钉住 opencode_zen。
+// 空串 dialectOverride = 未覆盖 → 无会话头 + body 逐字节不变。
 REGISTER_TEST(streaming_proxy_dialect_override_wired,
               "streaming: profile.dialectOverride 装方言头（空串等价未覆盖）", {
     MockSseServer upstream;
@@ -496,7 +451,7 @@ REGISTER_TEST(streaming_proxy_dialect_override_wired,
     req.body = R"({"model":"claude-sonnet-4-5[1M]","stream":true})";
     req.timeoutMs = 10000;
 
-    // ---- (1) 覆盖 opencode_zen（loopback host 推断不出该方言）----
+    // (1) 覆盖 opencode_zen
     Profile p = makeProfile(upstream.baseUrl());
     p.dialectOverride = "opencode_zen";
 
@@ -517,7 +472,6 @@ REGISTER_TEST(streaming_proxy_dialect_override_wired,
                   std::string::npos);
     DOCTEST_CHECK_EQ(upstream.lastApiKey(), std::string("sk-ant-test-key"));
 
-    // ---- (2) 空串 = 未覆盖：无会话头 + body 逐字节不变 ----
     Profile p2 = makeProfile(upstream.baseUrl());
     auto r2 = module::claude::sendStreamingClaude(req, p2);
     DOCTEST_REQUIRE(r2.isOk());
@@ -535,8 +489,6 @@ REGISTER_TEST(streaming_proxy_dialect_override_wired,
     upstream.stop();
     return true;
 })
-
-// ==================== 4. 真流式（非 buffer）：到达节奏 ====================
 
 REGISTER_TEST(streaming_is_incremental_not_buffered,
               "streaming: chunks arrive incrementally not buffered", {
@@ -564,7 +516,7 @@ REGISTER_TEST(streaming_is_incremental_not_buffered,
     std::string err;
     std::vector<long> arrivalMs;
 
-    // 读到第 3 个 chunk 的到达时间应该明显晚于第 1 个（证明没有整体缓冲）
+    // 到达节奏：第 3 个明显晚于第 1 个（证明没有整体缓冲）
     for (int i = 0; i < 3; ++i) {
         const auto cr = sr->readChunk(chunk, err);
         DOCTEST_REQUIRE_MESSAGE(cr == platform::http::ChunkResult::More, err);
@@ -581,8 +533,6 @@ REGISTER_TEST(streaming_is_incremental_not_buffered,
     upstream.stop();
     return true;
 })
-
-// ==================== 5. backpressure：大批 chunk 不丢不乱序 ====================
 
 REGISTER_TEST(streaming_backpressure_large_volume,
               "streaming: backpressure preserves all chunks under load", {
@@ -610,15 +560,12 @@ REGISTER_TEST(streaming_backpressure_large_volume,
     DOCTEST_REQUIRE_MESSAGE(drainStream(*sr, all, err),
                             "stream ended with error: " + err);
 
-    // 全部 chunk 都在，且字节级一致（顺序 + 无丢失）
     DOCTEST_CHECK_EQ(all, joinChunks(script.chunks));
     DOCTEST_CHECK(sseOrderOk(all, static_cast<int>(kCount)));
 
     upstream.stop();
     return true;
 })
-
-// ==================== 6. 上游错误状态码 ====================
 
 REGISTER_TEST(streaming_upstream_error_status_forwarded,
               "streaming: upstream error status is surfaced to caller", {
@@ -651,8 +598,6 @@ REGISTER_TEST(streaming_upstream_error_status_forwarded,
     upstream.stop();
     return true;
 })
-
-// ==================== 7. cancel() 立即停止上游 ====================
 
 REGISTER_TEST(streaming_cancel_stops_upstream,
               "streaming: cancel unblocks reader and stops upstream", {
@@ -697,15 +642,12 @@ REGISTER_TEST(streaming_cancel_stops_upstream,
     DOCTEST_CHECK_EQ(err, std::string("cancelled"));
     DOCTEST_CHECK(elapsed < 2000);
 
-    // 上游不应跑完 1000 个
     waitUntil([&] { return upstream.upstreamFinished(); }, 3000);
     DOCTEST_CHECK(upstream.emitted() < many.size());
 
     upstream.stop();
     return true;
 })
-
-// ==================== 8. 端到端：ProxyRouter + SSE Content-Type ====================
 
 REGISTER_TEST(streaming_proxy_end_to_end_sse,
               "streaming: proxy relays sse end-to-end with correct content type", {
@@ -736,7 +678,6 @@ REGISTER_TEST(streaming_proxy_end_to_end_sse,
 
     DOCTEST_CHECK(res.ok);
     DOCTEST_CHECK_EQ(res.status, 200);
-    // Content-Type 必须是 text/event-stream（spec §10.4）
     DOCTEST_CHECK(res.contentType.find("text/event-stream") != std::string::npos);
     DOCTEST_CHECK_EQ(res.body, joinChunks(script.chunks));
     DOCTEST_CHECK(sseOrderOk(res.body, 4));
@@ -746,8 +687,6 @@ REGISTER_TEST(streaming_proxy_end_to_end_sse,
     upstream.stop();
     return true;
 })
-
-// ==================== 9. 端到端：错误状态码透传 ====================
 
 REGISTER_TEST(streaming_proxy_forwards_error_status,
               "streaming: proxy forwards upstream error status to client", {
@@ -783,8 +722,6 @@ REGISTER_TEST(streaming_proxy_forwards_error_status,
     return true;
 })
 
-// ==================== 10. 客户端断开 → 取消上游 ====================
-
 REGISTER_TEST(streaming_proxy_client_disconnect_cancels_upstream,
               "streaming: client disconnect cancels upstream request", {
     MockSseServer upstream;
@@ -812,14 +749,12 @@ REGISTER_TEST(streaming_proxy_client_disconnect_cancels_upstream,
     httplib::Client cli("127.0.0.1", proxy.actualPort());
     cli.set_read_timeout(15, 0);
 
-    // 收到第一个 chunk 后主动中止读取 → 客户端关闭连接
     auto res = clientPostStream(cli, "/v1/messages", R"({"stream":true})",
                                 /*abortAfterFirstChunk=*/true);
 
     // 客户端中止不是干净成功，这里只关心服务端反应
     DOCTEST_CHECK(res.receiverCalls.size() >= 1u);
 
-    // 客户端断开后上游应在短时间内被取消（不跑完 2000 个）
     const bool stopped = waitUntil([&] { return upstream.upstreamFinished(); },
                                    5000);
     DOCTEST_CHECK(stopped);
@@ -829,8 +764,6 @@ REGISTER_TEST(streaming_proxy_client_disconnect_cancels_upstream,
     upstream.stop();
     return true;
 })
-
-// ==================== 11. stream:false 走缓冲路径 ====================
 
 REGISTER_TEST(streaming_proxy_buffered_path_unaffected,
               "streaming: non-streaming requests still use buffered path", {
@@ -853,13 +786,11 @@ REGISTER_TEST(streaming_proxy_buffered_path_unaffected,
     httplib::Client cli("127.0.0.1", proxy.actualPort());
     cli.set_read_timeout(10, 0);
 
-    // 非 /v1/messages 路径 → 缓冲转发
     auto res = cli.Get("/v1/models");
     DOCTEST_REQUIRE(res);
     DOCTEST_CHECK_EQ(res->status, 200);
     DOCTEST_CHECK(res->body.find("claude-sonnet-4-5") != std::string::npos);
 
-    // 路由判定
     DOCTEST_CHECK(module::claude::ProxyRouter::shouldUseStreaming(
         "/v1/messages", R"({"stream":true})"));
     DOCTEST_CHECK_FALSE(module::claude::ProxyRouter::shouldUseStreaming(
@@ -871,8 +802,6 @@ REGISTER_TEST(streaming_proxy_buffered_path_unaffected,
     upstream.stop();
     return true;
 })
-
-// ==================== 12. 上游中途截断 ====================
 
 REGISTER_TEST(streaming_upstream_truncation_ends_cleanly,
               "streaming: upstream truncation ends the stream cleanly", {
@@ -904,8 +833,6 @@ REGISTER_TEST(streaming_upstream_truncation_ends_cleanly,
     return true;
 })
 
-// ==================== 13. StreamingContext 结构契约 ====================
-
 REGISTER_TEST(streaming_context_contract,
               "streaming: StreamingContext backpressure contract", {
     module::claude::StreamingContext ctx;
@@ -932,8 +859,6 @@ REGISTER_TEST(streaming_context_contract,
                      std::string("\n\n"));
     return true;
 })
-
-// ==================== 14. 并发流互不串扰 ====================
 
 REGISTER_TEST(streaming_concurrent_requests_isolated,
               "streaming: concurrent streams do not cross chunks", {
@@ -976,8 +901,6 @@ REGISTER_TEST(streaming_concurrent_requests_isolated,
     return true;
 })
 
-// ==================== 15. SSE usage 重组器（首页 Token 速率卡片） ====================
-
 REGISTER_TEST(streaming_sse_usage_parser,
               "SseUsageParser: 跨 chunk 切断重组 / 多事件 / CRLF / 缺 usage / DONE / 畸形", {
     using module::claude::SseUsageParser;
@@ -1017,7 +940,6 @@ REGISTER_TEST(streaming_sse_usage_parser,
     DOCTEST_CHECK(p4.feed("data: {not json at all\n\n").empty());
     DOCTEST_CHECK(p4.feed("event: ping\n\n").empty());
     DOCTEST_CHECK(p4.feed("data: {\"type\":\"message_delta\"").empty());
-    // 补完剩余字节后正常出值
     v = p4.feed(",\"usage\":{\"output_tokens\":9}}\n\n");
     DOCTEST_CHECK_EQ(v.size(), static_cast<size_t>(1));
     DOCTEST_CHECK_EQ(v[0], 9);
@@ -1029,8 +951,6 @@ REGISTER_TEST(streaming_sse_usage_parser,
     DOCTEST_CHECK(p5.feed("data: {\"type\":\"message_delta\"}\n\n").empty());
     return true;
 })
-
-// ==================== 16. 端到端：流式统计接线 ====================
 
 REGISTER_TEST(streaming_stats_end_to_end,
               "streaming: 代理流式请求驱动 proxy_stats（usage 累计 + 流结束回收）", {
@@ -1070,7 +990,6 @@ REGISTER_TEST(streaming_stats_end_to_end,
     DOCTEST_CHECK(res.ok);
     DOCTEST_CHECK_EQ(res.status, 200);
 
-    // 流结束后（releaser 必触发）：累计 = 40，活动流归零
     DOCTEST_CHECK(waitUntil([] {
         const auto s = core::proxy_stats::snapshot();
         return s.activeStreams == 0 && s.sessionTokens == 40;
@@ -1086,8 +1005,6 @@ REGISTER_TEST(streaming_stats_end_to_end,
     core::proxy_stats::resetForTest();
     return true;
 })
-
-// ==================== 17. 上游断流 error 帧合成（W7 P0-2）====================
 
 REGISTER_TEST(streaming_error_frame_synthesis,
               "streaming: 上游断流合成 event: error SSE 帧（合法 JSON + 转义）", {
@@ -1127,8 +1044,6 @@ REGISTER_TEST(streaming_error_frame_synthesis,
     return true;
 })
 
-// ==================== 18. 低速空闲超时（W7 P0-3）====================
-
 REGISTER_TEST(streaming_low_speed_idle_timeout,
               "streaming: 低速空闲超时中止（无总墙钟上限，无新 chunk 才判死）", {
     MockSseServer upstream;
@@ -1152,17 +1067,15 @@ REGISTER_TEST(streaming_low_speed_idle_timeout,
     auto sr = takeStream(r);
     DOCTEST_REQUIRE(sr != nullptr);
 
-    // 第 1 个 chunk 正常到达（空闲超时不影响活跃数据）
     std::string chunk;
     std::string err;
     DOCTEST_REQUIRE(sr->readChunk(chunk, err) ==
                     platform::http::ChunkResult::More);
 
-    // 之后无新数据 → 低速超时触发 Error。libcurl 的低速检测基于滑动窗口
-    // 速率采样，实测要么 3-10s 内自行中止、要么等下一次 socket 事件
-    // （mock 的 15s chunk 到达）时才中止；个别轮次还会先把那个 chunk
-    // 交付出来再中止。所以这里读到终态为止（Error/End），只断言
-    // "远早于无超时的无限挂死"，不卡精确时刻。
+    // 无新数据 → 低速超时触发 Error。libcurl 的低速检测基于滑动窗口速率采样，中止时机
+    // 不确定：3-10s 内自行中止、等下一次 socket 事件（mock 的 15s chunk 到达）才中止、
+    // 或先把那个 chunk 交付出来再中止。所以这里读到终态为止（Error/End），只断言
+    // 「远早于无超时的无限挂死」，不卡精确时刻——别把它改成固定 sleep。
     const auto t0 = steady_clock::now();
     platform::http::ChunkResult cr = platform::http::ChunkResult::More;
     while (cr == platform::http::ChunkResult::More &&
@@ -1179,11 +1092,9 @@ REGISTER_TEST(streaming_low_speed_idle_timeout,
     return true;
 })
 
-// ==================== 19. 在途流进行中停服（审计 2026-09-23 [9]）====================
-// 回归：stopProxy 先 cancelActiveStreams() 再 server stop()。旧实现
-// Server::stop() 只关监听 socket 就 join worker，在途流的 worker 阻塞在
-// readChunk（上游持续产出时空闲超时永不触发），「停止代理」/应用退出会
-// 挂到流自然结束（幽灵进程）。本测试上游脚本约 1000 chunk × 10ms ≈ 10s，
+// Server::stop() 只关监听 socket 就 join worker，在途流的 worker 阻塞在 readChunk
+// （上游持续产出时空闲超时永不触发），所以 stopProxy 必须先 cancelActiveStreams()
+// 再 server stop()——反了会挂到流自然结束。本测试上游脚本约 1000 chunk × 10ms ≈ 10s，
 // 取消生效后 stop 必须秒级返回。
 REGISTER_TEST(streaming_proxy_stop_unblocks_inflight_stream,
               "streaming: server stop with an in-flight stream returns promptly", {
@@ -1208,7 +1119,6 @@ REGISTER_TEST(streaming_proxy_stop_unblocks_inflight_stream,
     router.registerRoutes();
     DOCTEST_REQUIRE(proxy.start());
 
-    // 客户端线程：持续流式接收（content_receiver 一直 true）
     std::atomic<bool> gotFirstChunk{false};
     const int proxyPort = proxy.actualPort();
     std::thread client([proxyPort, &gotFirstChunk] {
@@ -1230,7 +1140,6 @@ REGISTER_TEST(streaming_proxy_stop_unblocks_inflight_stream,
 
     DOCTEST_CHECK(waitUntil([&] { return gotFirstChunk.load(); }, 10000));
 
-    // 与 stopProxy 相同顺序：先取消在途流，再停 server
     const auto t0 = steady_clock::now();
     env.svc().cancelActiveStreams();
     proxy.stop();
@@ -1246,20 +1155,12 @@ REGISTER_TEST(streaming_proxy_stop_unblocks_inflight_stream,
     return true;
 })
 
-// ==================== 20. 上游静默（连着不发数据）时取消必须秒级生效 ====================
-// 回归（H1，2026-09-27）：cancelWithReason 只置 cancelled 标志 + notify_all，
-// 旧实现的两条唤醒路径都要求「有人正好堵在队列/回调上」——上游**连着但不发
-// 一个字节**（请求已送出、响应头未到）时 write callback 从未进入，消费者
-// 醒来也叫不动 libcurl 线程，于是 libcurl 一直等到低速空闲超时
-//（生产 lowSpeedTimeSec=60s → 实测 60~70s）才退；而 stopProxy / 退出应用要
-// 等 worker join，就被拖着挂同样时长。
-// 修复：进度回调（CURLOPT_XFERINFOFUNCTION + NOPROGRESS=0）在上游静默期也按
-// 秒级节拍被调用，回调里读 cancelled 原子量 → 立即 CURLE_ABORTED_BY_CALLBACK。
-// 本用例把低速超时设为 5s（生产值 60s）以限制回归时用例自身的挂起时长；
-// 断言 cancel → libcurl 线程 join 完成 ≤ 2s。取消原因语义一并断言。
-// 实测（2026-09-27，本机）：带修复 ~500ms 稳定复现；把进度回调关掉
-//（NOPROGRESS=1，等价修复前）同一用例 10592ms —— 即旧实现挂在低速空闲
-// 超时上（生产 60s 配置对应 60~70s）。
+// 上游连着但不发一个字节（请求已送出、响应头未到）时，队列与回调两条唤醒路径都不触发，
+// libcurl 只能一路等到低速空闲超时（生产 lowSpeedTimeSec=60s）。唯一出路是进度回调
+// （CURLOPT_XFERINFOFUNCTION + NOPROGRESS=0）：静默期它也按秒级节拍被调用，回调里读
+// cancelled 原子量后立即 CURLE_ABORTED_BY_CALLBACK。关掉它本用例就退化到低速超时量级。
+// 本用例低速超时设 5s（生产 60s）以限制回归时自身挂起时长；断言 cancel → libcurl
+// 线程 join 完成 ≤ 2s。
 REGISTER_TEST(streaming_cancel_silent_upstream_prompt,
               "streaming: cancel is prompt when upstream stays silent", {
     MockSseServer upstream;
@@ -1292,11 +1193,11 @@ REGISTER_TEST(streaming_cancel_silent_upstream_prompt,
     const auto cancelMs =
         duration_cast<milliseconds>(steady_clock::now() - t0).count();
 
+    // releaseSilent() 必须在 stop() 之前，否则 stop 提前返回、libcurl 线程还没退出就 join 不到
     upstream.releaseSilent();
     upstream.stop();
 
-    // 实测值打出来（同 [stress] 系列风格）：回归时一眼看出是从 1s 级退化到
-    // 低速超时量级，还是别的路径变慢
+    // 实测值打出来：一眼看出是退化到低速超时量级，还是别的路径变慢
     std::cout << "[stream] 静默上游 cancel→libcurl 线程退出: " << cancelMs
               << "ms" << std::endl;
 
@@ -1309,8 +1210,6 @@ REGISTER_TEST(streaming_cancel_silent_upstream_prompt,
                               "本用例配置实测 ~10.6s）");
     return true;
 })
-
-// ==================== 21. 流末用量落库（migration v5） ====================
 
 REGISTER_TEST(streaming_sse_usage_parser_tokens,
               "SseUsageParser: 四类累计 token（input/output/cache read/cache write）", {
@@ -1365,16 +1264,16 @@ REGISTER_TEST(streaming_call_log_usage_columns,
 
     StreamEnv env;
     test_support::ScopedAppDatabase appDb(env.db.handle());
-    // TestEnv 只 open(":memory:")、没建表 → 本用例要真落库，先跑全量迁移；
+    // InMemoryDb 只 open(":memory:")、没建表 → 本用例要真落库，先跑全量迁移。
     // claude_call_logs.profile_id 有外键（open 即 PRAGMA foreign_keys=ON），
     // 而 makeProfile 的 id=1 只是内存里的号 → 再补一行 profile 供外键落地
     DOCTEST_REQUIRE(
-        env.db.handle().runMigrations(core::migrations::all()).isOk());
+        env.db.handle().applySchema(core::schema::kSql).isOk());
     DOCTEST_REQUIRE(env.db.handle().exec(
         "INSERT INTO claude_profiles (id, name, base_url, api_key_hint, "
-        "api_key_check, keychain_account, model, is_active, created_at, updated_at) "
+        "api_key_check, model, is_active, created_at, updated_at) "
         "VALUES (1, 'streaming-usage', 'http://127.0.0.1', 'sk-***', 'x', "
-        "'claude:1', 'claude-sonnet-4-5', 1, 0, 0)")
+        "'claude-sonnet-4-5', 1, 0, 0)")
                         .isOk());
 
     platform::http::Server proxy("127.0.0.1", 0);
@@ -1443,12 +1342,12 @@ REGISTER_TEST(streaming_call_log_usage_absent,
     test_support::ScopedAppDatabase appDb(env.db.handle());
     // 同 streaming_call_log_usage_columns：先迁移建表，再补 profile 行满足外键
     DOCTEST_REQUIRE(
-        env.db.handle().runMigrations(core::migrations::all()).isOk());
+        env.db.handle().applySchema(core::schema::kSql).isOk());
     DOCTEST_REQUIRE(env.db.handle().exec(
         "INSERT INTO claude_profiles (id, name, base_url, api_key_hint, "
-        "api_key_check, keychain_account, model, is_active, created_at, updated_at) "
+        "api_key_check, model, is_active, created_at, updated_at) "
         "VALUES (1, 'streaming-no-usage', 'http://127.0.0.1', 'sk-***', 'x', "
-        "'claude:1', 'claude-sonnet-4-5', 1, 0, 0)")
+        "'claude-sonnet-4-5', 1, 0, 0)")
                         .isOk());
 
     platform::http::Server proxy("127.0.0.1", 0);
@@ -1501,16 +1400,13 @@ REGISTER_TEST(streaming_call_log_usage_absent,
     return true;
 })
 
-// ==================== json_scan：与旧实现逐字节等价（CPX-11） ====================
-// CPX-11 把两套重复的顶层 JSON 扫描器（streaming_proxy 的 findTopLevelField、
-// upstream_dialect 的 findTopLevelStringSpan，外加三份逐字节相同的 helper）合并
-// 进 json_scan.h。旧实现逐字留在这里做对照 corpus：同一批 body 上，新扫描器的
-// 结论必须与两份旧实现逐一相同——顶层 key / 嵌套同名 key / 非字符串值 /
-// 值含逗号 / 截断 body / 非对象。
+// 下面这套 legacy* 是两份旧扫描器（streaming 侧 findTopLevelField / dialect 侧
+// findTopLevelStringSpan）的副本，作为对照 corpus：新扫描器 findTopLevelValueSpan 的
+// 结论必须与它们在同一批 body 上逐一相同（顶层 key / 嵌套同名 key / 非字符串值 /
+// 值含逗号 / 截断 body / 非对象）。它们看着像死代码——删掉就没有对照基线了。
 namespace {
 
-// —— 旧实现（原 streaming_proxy.cpp 副本；helper 与原 upstream_dialect.cpp 的
-//    同名实现逐字节相同，故只留一份） ——
+// helper 与 upstream_dialect 侧的同名实现逐字节相同，故只留一份
 
 void legacySkipWs(const std::string& s, size_t& i) {
     while (i < s.size() &&
@@ -1572,7 +1468,6 @@ bool legacySkipJsonValue(const std::string& s, size_t& i) {
         }
         return false;
     }
-    // null / true / false / 数字：吃到分隔符
     while (i < s.size() && s[i] != ',' && s[i] != '}' && s[i] != ']' &&
            s[i] != ' ' && s[i] != '\t' && s[i] != '\n' && s[i] != '\r') {
         ++i;
@@ -1686,34 +1581,28 @@ REGISTER_TEST(json_scan_top_level_span_equivalence,
     using module::claude::json_scan::findTopLevelValueSpan;
 
     std::vector<std::string> bodies = {
-        // 顶层 key 命中
         R"({"stream":true})",
         R"({"stream":true,"model":"m"})",
         R"({"model":"m","stream":true})",
         "{\n  \"stream\":\n  true\n}",
         R"({"stream" : true , "model" : "m" })",
         R"({"a":1,"stream":true,"b":[1,2,3]})",
-        // 嵌套同名 key：只有顶层生效
         R"({"a":{"stream":true}})",
         R"({"model":"deepseek[1M]","x":{"model":"nested[1M]"}})",
-        // 非字符串值 / 各种值类型
         R"({"model":123})",
         R"({"model":null,"stream":false})",
         R"({"stream":{"x":1}})",
         R"({"stream":truex})",
         R"({"model":"a\"b","stream":true})",
-        // 值含逗号 / 括号（字符串内与数组内）
         R"({"model":"a,b[1M]"})",
         R"({"model":"a,b","stream":true})",
         R"({"b":[1,2],"stream":true})",
-        // 截断 body
         R"({"model":"a)",
         R"({"stream":tru)",
         R"({"model":)",
         R"({"model")",
         R"({"stream":true)",
         R"(  {"model":"a","stream")",
-        // 空对象 / 非对象 / 非法
         R"({})",
         "  ",
         "",
@@ -1744,7 +1633,6 @@ REGISTER_TEST(json_scan_top_level_span_equivalence,
 
             // 2) 与旧 dialect 侧等价：它额外要求「值必须是字符串」——生产侧
             //    那层判定就是 upstream_dialect.cpp 的一行 s[begin] == '"'
-            //    （该路径另有 dialect_normalize_body_* 端到端覆盖）
             size_t legacyBegin = 0;
             size_t legacyEnd = 0;
             const bool legacyStr =

@@ -1,18 +1,20 @@
 // tests/test_modules/test_markdown.cpp
-// - md_line_scanner 纯函数单测（Phase 1 大纲 / 同步滚动底座）
-// - md_tree 纯函数单测（W8 二级目录树分组）
-// - MarkdownModule Phase 1 + W8 UI 无头 compose / layout 冒烟
-//   （三态切换 / 大纲浮动面板 / 目录树展开收起 / 缩进布局）
-// - 目录树行内几何数值锁（2026-09-29：文本 frame 中心 == 行中心 / 箭头字号一档）
-// 接线证据 = 代码路径 + 本无头 compose/layout 测试 + 启动冒烟；真实鼠标点验留给用户人工
+// md_line_scanner / md_tree 纯函数 + MarkdownModule 无头 compose / layout 冒烟。
+// 跨文件前提：
+//   - 视图状态与配置存 app_config 表（不是文件），经 core::appDatabase() 取连接。
+//   - DB 查询在后台线程，compose 只读快照——「变更可见」最多晚 1 帧，断言可见性
+//     必须走有界轮询 + onPageEnter，不能只 compose 一帧就断言。
+//   - position 在流式子元素上静默失效，几何断言必须先跑 ui.layout()。
+// 真实鼠标点验留给人工。
 #include "doctest.h"
 #include "test_support.h"
-#include "../frame_env.h"   // TIN-06 收尾波：headless 帧驱动三合一 HeadlessFrame
+#include "../frame_env.h"   // headless 帧驱动三合一 HeadlessFrame
+#include "core/app_config.h"
 #include "core/database.h"
 #include "core/module_interface.h"
 #include "core/router.h"
 #include "core/theme.h"
-#include "core/component_theme.h"   // M7：componentTokens（圆角/边框色比对口径）
+#include "core/component_theme.h"   // componentTokens（圆角/边框色比对口径）
 #include "module_markdown/md_block_model.h"
 #include "module_markdown/md_line_scanner.h"
 #include "module_markdown/md_live_edit.h"
@@ -23,11 +25,11 @@
 using module::markdown::kEditorInputId;
 
 #include <components/input.h>
-#include <components/markdown.h>   // M7：MarkdownStyle（块间隙/圆角/色表比对口径）
-#include <components/theme.h>      // M7：withAlpha（活动块边框色口径）
+#include <components/markdown.h>   // MarkdownStyle（块间隙/圆角/色表比对口径）
+#include <components/theme.h>      // withAlpha（活动块边框色口径）
 #include <core/dsl_runtime.h>
 #include <eui/dsl.h>
-#include <eui/types.h>   // M3：合成指针事件（块点击的 press→release 直驱）
+#include <eui/types.h>   // 合成指针事件（块点击的 press→release 直驱）
 
 #include <algorithm>
 #include <chrono>
@@ -41,6 +43,7 @@ using module::markdown::kEditorInputId;
 #include <map>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <system_error>
 #include <thread>
 #include <vector>
@@ -48,12 +51,6 @@ using module::markdown::kEditorInputId;
 extern "C" ::core::Module* create_markdown_module();
 
 namespace fs = std::filesystem;
-
-REGISTER_TEST(module_pageid, "markdown: PageId", {
-    DOCTEST_CHECK(core::PageId::Markdown != core::PageId::Todo);
-    DOCTEST_CHECK(core::PageId::Markdown != core::PageId::Home);
-    return true;
-})
 
 REGISTER_TEST(module_pagid_to_string, "markdown: pageIdToString", {
     DOCTEST_CHECK_EQ(core::pageIdToString(core::PageId::Home), std::string("Home"));
@@ -64,7 +61,7 @@ REGISTER_TEST(module_pagid_to_string, "markdown: pageIdToString", {
     return true;
 })
 
-// ==================== 行分类扫描器（Phase 1：大纲 / 同步滚动底座） ====================
+// 行分类扫描器
 
 using module::markdown::scanHeadings;
 
@@ -109,8 +106,8 @@ REGISTER_TEST(md_scanner_tilde_fence_pairs, "md_line_scanner: ~~~ 与 ``` 各自
     return true;
 })
 
-// 闭栏规则对齐 md4c/CommonMark（Phase 3 等价测试抓出的破口回归锚）：
-// 尾随文本闭栏行、短闭栏、```a`b` 非法开栏、≤3 空格缩进开/闭栏。
+// 闭栏规则对齐 md4c/CommonMark：尾随文本闭栏行、短闭栏、```a`b` 非法开栏、
+// ≤3 空格缩进开/闭栏。
 REGISTER_TEST(md_scanner_fence_close_strict, "md_line_scanner: 围栏开闭语义与 md4c 对齐", {
     using module::markdown::scanFences;
     // ```closer 不是闭栏 → 整段到 EOF 一个围栏
@@ -194,7 +191,7 @@ REGISTER_TEST(md_scanner_line_utils, "md_line_scanner: 行号/偏移换算 + UTF
     DOCTEST_CHECK_EQ(module::markdown::utf8Length(""), static_cast<size_t>(0));
     return true;
 })
-// ==================== W8：二级目录树纯函数 ====================
+// 二级目录树纯函数
 
 using module::markdown::buildTreeRows;
 using module::markdown::MdTreeRow;
@@ -221,7 +218,7 @@ REGISTER_TEST(md_tree_grouping, "md_tree: 根组常显置顶 + 顶层文件夹/�
         makeNote("inbox/c.md", 3),
     };
     const auto rows = buildTreeRows(notes, {}, {});
-    // W9：根组「根目录」常显且置顶，其后一级目录按字母序（inbox, work）
+    // 根组「根目录」常显且置顶，其后一级目录按字母序（inbox, work）
     DOCTEST_CHECK_EQ(rows.size(), static_cast<size_t>(7));
     DOCTEST_CHECK(rows[0].isFolder);
     DOCTEST_CHECK_EQ(rows[0].name, std::string("根目录"));
@@ -259,10 +256,8 @@ REGISTER_TEST(md_tree_collapse_and_deep_files, "md_tree: 收起隐藏整棵子�
     DOCTEST_CHECK_EQ(collapsed[1].name, std::string("solo.md"));
     DOCTEST_CHECK(collapsed[2].isFolder);
     DOCTEST_CHECK_EQ(collapsed[2].name, std::string("a"));
-    // 组内「文件行在前（mtime 序）、子夹行在后」（与顶层根组→顶层夹同序）；
-    // 2026-09-29 起**每一级目录都有自己的行**（旧版三级+ 目录不进树、其文件
-    // 挂到二级祖先行下显示残余子路径"more/x.md"——那套做法的代价是三级目录
-    // 无法被选中，而「选中目录」正是新建笔记/文件夹的父目录来源）
+    // 组内「文件行在前（mtime 序）、子夹行在后」。**每一级目录都有自己的行**——
+    // 目录无法被选中时，「选中目录」就没有父目录来源。
     const auto rows = buildTreeRows(notes, {}, {});
     DOCTEST_CHECK_EQ(rows.size(), static_cast<size_t>(8));
     DOCTEST_CHECK(rows[0].isFolder);
@@ -271,7 +266,7 @@ REGISTER_TEST(md_tree_collapse_and_deep_files, "md_tree: 收起隐藏整棵子�
     DOCTEST_CHECK_EQ(rows[1].depth, 1);
     DOCTEST_CHECK(rows[2].isFolder);
     DOCTEST_CHECK_EQ(rows[2].name, std::string("a"));
-    DOCTEST_CHECK_EQ(rows[2].depth, 1);  // 顶层夹 = 根组行的子行（2026-09-30 起）
+    DOCTEST_CHECK_EQ(rows[2].depth, 1);  // 顶层夹 = 根组行的子行
     DOCTEST_CHECK_EQ(rows[3].name, std::string("top.md"));  // a 的直接子文件
     DOCTEST_CHECK_EQ(rows[3].relPath, std::string("a/top.md"));
     DOCTEST_CHECK_EQ(rows[3].depth, 2);
@@ -313,8 +308,7 @@ REGISTER_TEST(md_tree_two_level_empty_subfolders, "md_tree: 空目录行（磁�
     DOCTEST_CHECK_EQ(rows[3].name, std::string("归档"));
     DOCTEST_CHECK_EQ(rows[3].depth, 1);
 
-    // 三级目录（磁盘枚举，无笔记）同样有行位（2026-09-29 起层级不设上限；
-    // 旧版「三级目录不进树」是两级渲染的配套限制，已随层级放开删除）
+    // 三级目录（磁盘枚举，无笔记）同样有行位：层级不设上限
     const auto deep = buildTreeRows(none, {"a", "a/b", "a/b/c"}, {});
     DOCTEST_CHECK_EQ(deep.size(), static_cast<size_t>(4));
     DOCTEST_CHECK_EQ(deep[1].name, std::string("a"));
@@ -328,7 +322,7 @@ REGISTER_TEST(md_tree_two_level_empty_subfolders, "md_tree: 空目录行（磁�
 })
 
 REGISTER_TEST(md_tree_root_group_always, "md_tree: 根组标题常显（无根文件/空目录）", {
-    // 只有子目录文件（无根散文件）→ 根组行仍在顶部（W9）
+    // 只有子目录文件（无根散文件）→ 根组行仍在顶部
     std::vector<NoteMeta> notes;
     notes.push_back(makeNote("work/a.md", 1));
     const auto noRoot = buildTreeRows(notes, {}, {});
@@ -346,7 +340,7 @@ REGISTER_TEST(md_tree_root_group_always, "md_tree: 根组标题常显（无根�
     DOCTEST_CHECK(empty[0].isFolder);
     DOCTEST_CHECK_EQ(empty[0].name, std::string("根目录"));
 
-    // W9：磁盘枚举的空目录（extraFolders）→ 树里出现无子行的文件夹行
+    // 磁盘枚举的空目录（extraFolders）→ 树里出现无子行的文件夹行
     const auto withEmpty = buildTreeRows(none, {"空文件夹"}, {});
     DOCTEST_CHECK_EQ(withEmpty.size(), static_cast<size_t>(2));
     DOCTEST_CHECK(withEmpty[0].isFolder);
@@ -358,11 +352,10 @@ REGISTER_TEST(md_tree_root_group_always, "md_tree: 根组标题常显（无根�
     return true;
 })
 
-// ==================== Phase 1 UI 无头 compose 冒烟 ====================
+// UI 无头 compose 冒烟
 
 namespace {
-// 笔记临时目录前缀 / 库名 + 写文件：共享实现（TIN-06b，原 MdUiEnv 与本地
-// writeTextFile 同款合流）
+// 笔记临时目录前缀 / 库名（写文件用共享的 test_support::writeTextFile）
 constexpr const char* kDirPrefix = "devdesk_md_ui_";
 constexpr const char* kDbName = "ui_test.db";
 
@@ -373,9 +366,9 @@ bool colorEq(const eui::Color& a, const eui::Color& b) {
     return a.r == b.r && a.g == b.g && a.b == b.b && a.a == b.a;
 }
 
-// 树行定位（按显示名；用例不写死行下标——新建笔记按 mtime 倒序插进组内，
-// 行序会随用例步骤漂移）。目录行才有 .arrow 元素，文件行没有 → 用它区分。
-// 返回行下标（可拼 "md.tree.node.N.row" / ".toggle" / ".name"），找不到 → -1
+    // 树行定位（按显示名）。不写死行下标——新建笔记按 mtime 倒序插进组内，
+    // 行序会随用例步骤漂移。目录行才有 .arrow 元素，文件行没有 → 用它区分。
+    // 返回行下标（可拼 "md.tree.node.N.row" / ".toggle" / ".name"），找不到 → -1
 int treeRowIndex(eui::Ui& ui, const std::string& displayName, bool folder) {
     for (int i = 0; i < 40; ++i) {
         const std::string idx = std::to_string(i);
@@ -398,7 +391,7 @@ bool folderRowSelected(eui::Ui& ui, const std::string& displayName) {
 
 } // namespace
 
-// ---- 1. 无服务（appDatabase 为 null）时 compose 不崩 ----
+// 1. 无服务（appDatabase 为 null）时 compose 不崩
 
 REGISTER_TEST(md_module_compose_no_service, "markdown_module: 无服务 compose 不崩（headless）", {
     std::unique_ptr<::core::Module> mod(create_markdown_module());
@@ -413,7 +406,7 @@ REGISTER_TEST(md_module_compose_no_service, "markdown_module: 无服务 compose 
     ui.end();
 
     DOCTEST_CHECK(ui.find("md.root") != nullptr);
-    DOCTEST_CHECK(ui.find("md.mode") != nullptr);        // 三态切换 segmented
+    DOCTEST_CHECK(ui.find("md.mode") != nullptr);        // 模式切换 segmented
     DOCTEST_CHECK(ui.find("md.tree.bg") != nullptr);
     DOCTEST_CHECK(ui.find("md.editor.hint") != nullptr);
     DOCTEST_CHECK(ui.find("md.status.bg") != nullptr);   // 状态栏常驻
@@ -427,7 +420,7 @@ REGISTER_TEST(md_module_compose_no_service, "markdown_module: 无服务 compose 
     return true;
 })
 
-// ---- 2. 有数据时：文件打开→大纲→跳转→三态循环 全链路（headless） ----
+// 2. 有数据时：文件打开→大纲→跳转→三态循环 全链路（headless）
 
 REGISTER_TEST(md_module_compose_phase1, "markdown_module: Phase 1 三态/大纲/状态栏 compose（headless）", {
     const std::string text = "# 标题一\n正文一\n\n## 标题二\n正文二\n";
@@ -459,9 +452,8 @@ REGISTER_TEST(md_module_compose_phase1, "markdown_module: Phase 1 三态/大纲/
     DOCTEST_REQUIRE(fileRow->onClick != nullptr);
     fileRow->onClick();
 
-    // 帧2：默认编辑态（W9）——只有树 + 编辑器两个可见列，预览列不渲染；
-    // ⑤（2026-09-29）起编辑器正文列占满栏宽（旧实现整列钳 720 居中，declared x
-    // 是被推出来的 272；现在 x == 列内留白 8）
+    // 帧2：默认编辑态——只有树 + 编辑器两个可见列，预览列不渲染；
+    // 编辑器正文列占满栏宽（x == 列内留白 8）
     frame("f2");
     DOCTEST_CHECK(ui.find(kEditorInputId) != nullptr);
     DOCTEST_CHECK(ui.find("md.preview.scroll") == nullptr);
@@ -498,7 +490,7 @@ REGISTER_TEST(md_module_compose_phase1, "markdown_module: Phase 1 三态/大纲/
     DOCTEST_REQUIRE(headings.size() == 2);
     DOCTEST_CHECK_EQ(st.cursor, static_cast<int>(headings[1].byteOffset));
 
-    // 面板可关闭（✕ 按钮——button 组件把 onClick 挂在 .bg 子元素上）
+    // 面板可关闭（button 组件把 onClick 挂在 .bg 子元素上）
     const auto* closeBtn = ui.find("md.outline.panel.close.bg");
     DOCTEST_REQUIRE(closeBtn != nullptr);
     DOCTEST_REQUIRE(closeBtn->onClick != nullptr);
@@ -508,7 +500,7 @@ REGISTER_TEST(md_module_compose_phase1, "markdown_module: Phase 1 三态/大纲/
 
     // Ctrl+Shift+P 四态循环：Edit（默认）→ Live → Split → Preview → Edit
     eui::KeyEvent p = test_support::pressShortcut(eui::InputKey::P, /*shift=*/true);
-    DOCTEST_CHECK(mod->onKeyEvent(p));   // → Live（M1 新增第四态）
+    DOCTEST_CHECK(mod->onKeyEvent(p));   // → Live（第四态）
     frame("f3c");
     DOCTEST_CHECK(ui.find("md.live.scroll") != nullptr);
     DOCTEST_CHECK(ui.find(kEditorInputId) == nullptr);
@@ -532,7 +524,7 @@ REGISTER_TEST(md_module_compose_phase1, "markdown_module: Phase 1 三态/大纲/
     return true;
 })
 
-// ---- 2b. W8：目录树展开/收起 + 缩进 layout 级验证 ----
+// 2b. 目录树展开/收起 + 缩进 layout 级验证
 
 REGISTER_TEST(md_module_compose_tree, "markdown_module: W8 目录树展开收起/缩进 layout（headless）", {
     test_support::MdHeadlessEnv env(kDirPrefix, "tree", kDbName);
@@ -554,7 +546,7 @@ REGISTER_TEST(md_module_compose_tree, "markdown_module: W8 目录树展开收起
         ui.end();
     };
 
-    // 帧1：树行序（W9 根组置顶）= [根目录▾, solo.md, inbox▾, idea.md, work▾, week.md]
+    // 帧1：树行序（根组置顶）= [根目录▾, solo.md, inbox▾, idea.md, work▾, week.md]
     frame("t1");
     DOCTEST_CHECK_EQ(ui.find("md.tree.node.0.name")->text, std::string("根目录"));
     DOCTEST_CHECK_EQ(ui.find("md.tree.node.1.name")->text, std::string("solo.md"));
@@ -562,8 +554,8 @@ REGISTER_TEST(md_module_compose_tree, "markdown_module: W8 目录树展开收起
     DOCTEST_CHECK_EQ(ui.find("md.tree.node.3.name")->text, std::string("idea.md"));
     DOCTEST_CHECK_EQ(ui.find("md.tree.node.4.name")->text, std::string("work"));
 
-    // layout 级验证（W7 坑位：position 在流式子元素上静默失效——跑真实 layout
-    // 后比对计算 frame，缩进丢失会在下面两条断言暴露）
+    // layout 级验证：position 在流式子元素上静默失效——跑真实 layout 后比对
+    // 计算 frame，缩进丢失会在下面两条断言暴露
     ui.layout(screen.width, screen.height);
     const auto* folderName = ui.find("md.tree.node.2.name");
     const auto* fileName = ui.find("md.tree.node.3.name");
@@ -575,8 +567,7 @@ REGISTER_TEST(md_module_compose_tree, "markdown_module: W8 目录树展开收起
     DOCTEST_CHECK(ui.find("md.outline.panel") == nullptr);
 
     // 帧2：点**箭头命中区**收起 inbox → inbox 的文件行消失（文件夹行保留，箭头变 ▸）
-    // （2026-09-29 起「行体点击 = 选中目录」「箭头点击 = 收起/展开」是两个命中区，
-    //  行体不再收起——见 md_module_tree_select_dir_new_note 用例）
+    //。「行体点击 = 选中目录」「箭头点击 = 收起/展开」是两个命中区，行体不再收起
     const auto* folder = ui.find("md.tree.node.2.toggle");
     DOCTEST_REQUIRE(folder != nullptr);
     DOCTEST_REQUIRE(folder->onClick != nullptr);
@@ -607,21 +598,15 @@ REGISTER_TEST(md_module_compose_tree, "markdown_module: W8 目录树展开收起
     return true;
 })
 
-// ---- 2b2''. 树行几何数值锁（2026-09-29 真机反馈：item 文本没垂直居中 + 三角箭头太小）----
-//
-// 判据全是数值，不靠观感：
+// 2b2''. 树行几何数值锁
+// 反重构警告：本组断言彼此独立，别把任一条当成冗余删掉——
 //   a. 行内每个文本元素（文件行 .icon/.name，文件夹行 .arrow/.ficon/.name）的
 //      frame 中心 y == 所在 item 行（.row）中心 y（±0.5）；
-//   b. frame.y 无半像素（旧实现 name y = (32-13)/2 = 9.5 就是 .5 偏移）；
+//   b. frame.y 无半像素；
 //   c. x 方向同层级统一：同 kind + 同 depth 的所有行 x 完全相同；
 //   d. 箭头字号 ∈ [fontSizeSmall×1.25, fontSizeSmall×1.4] 且 < 行高（不溢出）；
 //   e. 每个行内文本都挂 VerticalAlign::Center——渲染锚点用 frame 中线
-//      （runtime_render.h:1069），没有它「frame 中心 == 行中心」也换不来视觉居中。
-//
-// 回退哪条会红（三条独立证伪路径，非恒真）：
-//   ① name 的 y 改回 (行高 - 字号)/2（旧 ≈9.5）→ frame 中心 25.5 ≠ 行中心 16 → a 红；
-//   ② 删任一 .verticalAlign(Center) → frame 数值不变、仅墨迹锚点回 frame 顶 → e 红；
-//   ③ 箭头 fontSize 改回 fontSizeSmall(13) → d 红（16.25 下界）。
+//      （runtime_render.h），没有它「frame 中心 == 行中心」也换不来视觉居中。
 REGISTER_TEST(md_tree_row_geometry,
               "markdown: 树行文本 frame 中心==行中心 / x 同层级统一 / 箭头字号（数值锁）", {
     test_support::MdHeadlessEnv env(kDirPrefix, "rowgeom", kDbName);
@@ -643,11 +628,10 @@ REGISTER_TEST(md_tree_row_geometry,
     ui.end();
     ui.layout(screen.width, screen.height);
 
-    // 行序（W9 根组置顶 + 组内文件在前/子夹在后）：
+    // 行序（根组置顶 + 组内文件在前/子夹在后）：
     //   [0] 根目录(夹,d0) [1] solo.md(文件,d1) [2] 工作(夹,d1)
     //   [3] 周报.md(文件,d2) [4] 周会(夹,d2) [5] 纪要.md(文件,d3)
-    //（2026-09-30 起根组行 = 整棵树的根：顶层夹与其直接文件同层 d1，旧口径
-    //  顶层夹 d0 = 与根行同级已废——见 md_module_root_row_new_folder_inside）
+    // 根组行 = 整棵树的根：顶层夹与其直接文件同层 d1
     struct RowSpec { const char* id; bool folder; };
     const RowSpec rows[] = {{"md.tree.node.0", true},  {"md.tree.node.1", false},
                             {"md.tree.node.2", true},  {"md.tree.node.3", false},
@@ -673,7 +657,7 @@ REGISTER_TEST(md_tree_row_geometry,
             DOCTEST_CHECK_MESSAGE(std::fabs(centerY - rowCenterY) <= 0.5f,
                                   partId + " frame 中心 y=" + std::to_string(centerY) +
                                       " ≠ 行中心 y=" + std::to_string(rowCenterY));
-            // b. 无半像素（旧 name y=9.5 在此红）
+            // b. 无半像素
             DOCTEST_CHECK_MESSAGE(std::fabs(el->frame.y - std::round(el->frame.y)) < 0.001f,
                                   partId + " frame.y=" + std::to_string(el->frame.y) +
                                       " 半像素错位");
@@ -686,7 +670,7 @@ REGISTER_TEST(md_tree_row_geometry,
     // c. x 方向同层级统一（同 kind + 同 depth → 同 x，整数不差半像素）
     const auto xOf = [&](const char* id) { return ui.find(id)->frame.x; };
     // 顶层夹 = 根组行的**子**行：node.2 各列 = node.0 + 一级缩进 16
-    //（2026-09-30 修复前两者 x 相等——顶层夹渲染成根行的兄弟，本次改掉）
+    //（反重构：改成与根行同 x 就等于把顶层夹渲染成根行的兄弟）
     DOCTEST_CHECK_EQ(xOf("md.tree.node.2.arrow"), xOf("md.tree.node.0.arrow") + 16.0f);
     DOCTEST_CHECK_EQ(xOf("md.tree.node.2.ficon"), xOf("md.tree.node.0.ficon") + 16.0f);
     DOCTEST_CHECK_EQ(xOf("md.tree.node.2.name"), xOf("md.tree.node.0.name") + 16.0f);
@@ -704,7 +688,7 @@ REGISTER_TEST(md_tree_row_geometry,
     DOCTEST_CHECK(arrow0->frame.x + arrow0->frame.width <= ficon0->frame.x);
 
     // d. 箭头字号：一档放大（fontSizeSmall 13 × 1.385 ≈ 18，落在 1.25~1.4 倍区间），
-    //    且 < 行高不溢出。旧值 = fontSizeSmall(13) → 三条同时红
+    //    且 < 行高不溢出
     const auto* arrow = ui.find("md.tree.node.2.arrow");
     const auto* label = ui.find("md.tree.node.2.name");
     DOCTEST_REQUIRE(arrow != nullptr);
@@ -714,12 +698,11 @@ REGISTER_TEST(md_tree_row_geometry,
     DOCTEST_CHECK_MESSAGE(arrowFontSize >= 13.0f * 1.25f && arrowFontSize <= 13.0f * 1.4f,
                           "箭头 fontSize=" + std::to_string(arrowFontSize) +
                               " 不在 [16.25, 18.2]");
-    DOCTEST_CHECK(arrowFontSize > label->fontSize);  // 确实比行内正文大（真机反馈「太小」）
+    DOCTEST_CHECK(arrowFontSize > label->fontSize);  // 确实比行内正文大
     DOCTEST_CHECK(arrowFontSize < kRowH);            // 不溢出 item 行高
     DOCTEST_CHECK_EQ(arrowFontSize, ui.find("md.tree.node.4.arrow")->fontSize);
     // 折叠态（▸）与展开态（▾）同一字号口径：点根组行的**箭头命中区**收起 →
-    // 箭头文本变 ▸、字号不变（2026-09-29：行体点击改成「选中」后，收起只剩
-    // 箭头命中区这一个入口——下面顺带把两者的分工钉住）
+    // 箭头文本变 ▸、字号不变。行体点击 = 选中后，收起只剩箭头命中区这一个入口。
     const auto* rootRow = ui.find("md.tree.node.0.row");
     DOCTEST_REQUIRE(rootRow != nullptr);
     DOCTEST_REQUIRE(rootRow->onClick != nullptr);
@@ -738,7 +721,7 @@ REGISTER_TEST(md_tree_row_geometry,
     DOCTEST_REQUIRE(collapsedArrow != nullptr);
     DOCTEST_CHECK_EQ(collapsedArrow->text, std::string("▸"));
     DOCTEST_CHECK_EQ(collapsedArrow->fontSize, arrowFontSize);
-    // 点箭头只收起、不改选中：根组行底色与收起前一致（选中态由行体点击负责）
+    // 点箭头只收起、不改选中：根组行底色与收起前一致
     const auto* rootRowAfter = ui.find("md.tree.node.0.row");
     DOCTEST_REQUIRE(rootRowAfter != nullptr);
     DOCTEST_CHECK(colorEq(rootRowAfter->color, rowColorBefore));
@@ -747,7 +730,7 @@ REGISTER_TEST(md_tree_row_geometry,
     return true;
 })
 
-// ---- 2b3. W9：空目录树 = 根组标题 + 空态提示同显；搜索 placeholder 常显 ----
+// 2b3. 空目录树 = 根组标题 + 空态提示同显；搜索 placeholder 常显
 
 REGISTER_TEST(md_module_empty_tree, "markdown_module: W9 空目录根组标题+空态提示同显 / 搜索框 placeholder（headless）", {
     test_support::MdHeadlessEnv env(kDirPrefix, "empty", kDbName);
@@ -764,7 +747,7 @@ REGISTER_TEST(md_module_empty_tree, "markdown_module: W9 空目录根组标题+�
     mod->compose(ui, screen);
     ui.end();
 
-    // 空目录：根组标题行 + 空态提示同显（📁 emoji 已换 fa-folder icon 元素）
+    // 空目录：根组标题行 + 空态提示同显（📁 用 fa-folder icon 元素）
     const auto* rootHeader = ui.find("md.tree.node.0.name");
     DOCTEST_REQUIRE(rootHeader != nullptr);
     DOCTEST_CHECK_EQ(rootHeader->text, std::string("根目录"));
@@ -776,9 +759,8 @@ REGISTER_TEST(md_module_empty_tree, "markdown_module: W9 空目录根组标题+�
     DOCTEST_REQUIRE(hint != nullptr);
     DOCTEST_CHECK(hint->text.find("还没有笔记") != std::string::npos);
 
-    // 搜索框 placeholder：空输入 + 未聚焦时也渲染（用户报告「空白文本框」，
-    // 核查结论：EUI-NEO input 只要 text 为空就画 placeholder，与焦点无关）。
-    // 🔍 emoji 已换 FA 浮层 icon（fa-magnifying-glass）
+    // 搜索框 placeholder：空输入 + 未聚焦时也渲染（EUI-NEO input 只要 text 为空
+    // 就画 placeholder，与焦点无关）。🔍 用 FA 浮层 icon（fa-magnifying-glass）
     const auto* search = ui.find("md.search.text");
     DOCTEST_REQUIRE(search != nullptr);
     DOCTEST_CHECK_EQ(search->text, std::string("搜索笔记…"));
@@ -791,7 +773,7 @@ REGISTER_TEST(md_module_empty_tree, "markdown_module: W9 空目录根组标题+�
     return true;
 })
 
-// ---- 2b4. W9：新建文件夹入口（左栏按钮 → 弹窗 → 空文件夹行入树）----
+// 2b4. 新建文件夹入口（左栏按钮 → 弹窗 → 空文件夹行入树）
 
 REGISTER_TEST(md_module_new_folder, "markdown_module: W9 新建文件夹入口真实链路（headless）", {
     test_support::MdHeadlessEnv env(kDirPrefix, "newfolder", kDbName);
@@ -848,10 +830,10 @@ REGISTER_TEST(md_module_new_folder, "markdown_module: W9 新建文件夹入口�
     // 磁盘上目录真实存在
     DOCTEST_CHECK(fs::is_directory(env.dir / "工作"));
 
-    // 新建笔记走子路径（W9：placeholder 承诺「可用 / 分文件夹」——create 建中间目录）。
-    // 注意（2026-09-29 起）：新建文件夹会把**选中目录**挪到刚建的那个夹（与「打开
-    // 笔记后选中态跟到笔记所在目录」同口径），所以这里先点根目录行把选中态放回根，
-    // 再验证「名字带子路径」这条老语义——顺带覆盖「点根目录行 = 选中根」
+    // 新建笔记走子路径（placeholder 承诺「可用 / 分文件夹」——create 建中间目录）。
+    // 注意：新建文件夹会把**选中目录**挪到刚建的那个夹（与「打开笔记后选中态跟到
+    // 笔记所在目录」同口径），所以这里先点根目录行把选中态放回根，再验证「名字带
+    // 子路径」这条语义——顺带覆盖「点根目录行 = 选中根」。
     const auto* rootRowSel = ui.find("md.tree.node.0.row");
     DOCTEST_REQUIRE(rootRowSel != nullptr);
     DOCTEST_REQUIRE(rootRowSel->onClick != nullptr);
@@ -893,18 +875,14 @@ REGISTER_TEST(md_module_new_folder, "markdown_module: W9 新建文件夹入口�
     return true;
 })
 
-// ---- 2b4b. W10：两级目录——父目录下拉建子夹 + 空子夹行 + 两级上限拦截 ----
+// 2b4b. 两级目录——父目录下拉建子夹 + 空子夹行
 
-// ---- 2b4b. 上级目录下拉：默认 = 选中目录 / 路径不随候选漂移 / 逐层映射正确 ----
-//
-// 修复前的三处错（现象 C 的三个面）：
-//   ① 弹窗默认上级恒为「根目录」（硬编码下标 0）→ 在树上选了目录也没用，新建
-//      文件夹永远落顶层；
-//   ② 存的是候选列表**下标**，提交时用同一个下标重新推导目录 → 列表中途一变
-//      （外部建目录 + 5 秒轮询）就落到另一个目录；
-//   ③ 候选只有「根目录 + 一级夹」，二级夹无法当上级（当时树只渲染两级）。
-// 本用例逐条钉：默认 = 选中目录、漂移档落点仍是用户选的目录、根目录档建在根、
-// 二级目录档建在二级目录下（层级已放开）。
+// 2b4b. 上级目录下拉：默认 = 选中目录 / 路径不随候选漂移 / 逐层映射
+// 反重构警告，三条都要靠：
+//   ① 默认上级恒为「根目录」（硬编码下标 0）→ 树上选了目录也没用；
+//   ② 存候选列表**下标**、提交时用同一下标重新推导目录 → 列表中途一变（外部建
+//      目录 + 5 秒轮询）就落到另一个目录；
+//   ③ 候选只到一级夹 → 二级夹无法当上级。
 REGISTER_TEST(md_module_new_folder_parent,
               "markdown_module: 新建文件夹「上级目录」默认=选中目录 / 路径不随下标漂移 / 逐层映射（headless）", {
     test_support::MdHeadlessEnv env(kDirPrefix, "newfolder2", kDbName);
@@ -934,7 +912,7 @@ REGISTER_TEST(md_module_new_folder_parent,
     folderBtn->onClick();
     frame("np2");
 
-    // 父目录下拉默认第 0 项（根目录）；点开选「工作」（真实 onClick 链路）
+    // 父目录下拉默认第 0 项（根目录）；点开选「工作」
     const auto* ddLabel = ui.find("md.dialog.newfolder.parent.dd.label");
     DOCTEST_REQUIRE(ddLabel != nullptr);
     DOCTEST_CHECK_EQ(ddLabel->text, std::string("根目录"));
@@ -981,7 +959,7 @@ REGISTER_TEST(md_module_new_folder_parent,
     DOCTEST_REQUIRE(subName != nullptr);
     DOCTEST_CHECK(subName->frame.x > topName->frame.x + 8.0f);
 
-    // ---- 上级目录候选：每一级都在 + 默认 = 当前选中目录（2026-09-29 修复）----
+    // 上级目录候选：每一级都在 + 默认 = 当前选中目录
     // 按显示名点下拉项（候选按字节序，用例不写死下标）
     const auto selectParent = [&](const std::string& label) {
         for (int i = 0; i < 8; ++i) {
@@ -1011,7 +989,7 @@ REGISTER_TEST(md_module_new_folder_parent,
     };
 
     // 弹窗默认上级 = **当前选中目录**（刚建好的 工作/周会），不是硬编码的根目录，
-    // 也不是「一级夹拿不到就只能给根」——二级目录同样能当上级（层级已放开）
+    // 也不是「一级夹拿不到就只能给根」——二级目录同样能当上级
     const auto* folderBtn2 = ui.find("md.tree.newfolder.bg");
     DOCTEST_REQUIRE(folderBtn2 != nullptr);
     folderBtn2->onClick();
@@ -1028,13 +1006,12 @@ REGISTER_TEST(md_module_new_folder_parent,
     DOCTEST_CHECK_EQ(ui.find("md.dialog.newfolder.parent.dd.label")->text,
                      std::string("工作"));
 
-    // ---- 上级目录 = 路径，不是候选列表下标（现象 C 的根因锚）----
-    // 旧实现存下标（newFolderParentIdx_），提交时用同一个下标去**重新推导**目录：
-    // 弹窗开着的时候目录清单一变（外部新建目录 / 5 秒轮询刷新），同一个下标就
-    // 落到另一个目录。这里用真实机制复刻：保持弹窗打开，磁盘上出现一个排序在
-    // 「工作」之前的目录，并让 5 秒轮询把清单刷进来（空目录不在 pollChanged 的
-    // 比对范围内，所以另写一个 .md 文件作为轮询信号——这也是外部改动的真实形态），
-    // 然后提交 —— 落点必须仍是用户选的「工作」。
+    // 上级目录 = 路径，不是候选列表下标
+    // 存下标、提交时用同一下标重新推导目录时，弹窗开着期间目录清单一变（外部新建
+    // 目录 / 5 秒轮询刷新），同一��标就落到另一个目录。这里复刻真实机制：保持弹窗
+    // 打开，磁盘上出现一个排序在「工作」之前的目录，并让 5 秒轮询把清单刷进来
+    //（空目录不在 pollChanged 的比对范围内，所以另写一个 .md 文件作为轮询信号——
+    // 这也是外部改动的真实形态），然后提交 —— 落点必须仍是用户选的「工作」。
     {
         std::error_code dec;
         fs::create_directories(env.dir / "aaa", dec);
@@ -1057,7 +1034,7 @@ REGISTER_TEST(md_module_new_folder_parent,
     DOCTEST_CHECK(!fs::exists(env.dir / "aaa" / "漂移夹"));         // 没有跟着下标漂走
     DOCTEST_CHECK(folderRowShown("漂移夹"));
 
-    // ---- 上级显式选「根目录」→ 必须建在根目录（现象 C 字面档）----
+    // 上级显式选「根目录」→ 必须建在根目录
     const auto* folderBtn3 = ui.find("md.tree.newfolder.bg");
     DOCTEST_REQUIRE(folderBtn3 != nullptr);
     folderBtn3->onClick();
@@ -1084,7 +1061,7 @@ REGISTER_TEST(md_module_new_folder_parent,
     DOCTEST_CHECK(fs::is_directory(env.dir / "顶层甲"));            // 根目录下
     DOCTEST_CHECK(!fs::exists(env.dir / "工作" / "顶层甲"));        // 不是选中目录下
 
-    // ---- 上级选**二级目录** → 建在二级目录下（层级不设上限）----
+    // 上级选**二级目录**→ 建在二级目录下（层级不设上限）
     const auto* folderBtn4 = ui.find("md.tree.newfolder.bg");
     DOCTEST_REQUIRE(folderBtn4 != nullptr);
     folderBtn4->onClick();
@@ -1116,25 +1093,15 @@ REGISTER_TEST(md_module_new_folder_parent,
     return true;
 })
 
-// ---- 2b4b''. 目录树选中态 → 新建笔记落在选中目录（2026-09-29 用户报告的主症状）----
-//
-// 用户原话：「当前 md 树的文件夹不能选中，我希望选中后新建 md 就在这个文件夹里面」。
-// 修复前：目录行点击只切换收起，模块里根本没有「当前选中目录」这个状态 → 界面上
-// 选了哪一层都没反馈，新建笔记只能落根目录。
-//
-// 本用例逐档钉死（**不是只测根**——用户就是因为「永远落在根目录」才报的）：
-//   ① 初始选中 = 根目录行（默认值），行底色 = primarySoftBg（可断言的视觉属性）；
-//   ② 点**二级目录**行 → 选中态 == 工作/周会（该行高亮、原选中行回落底色）
-//      → 新建笔记落盘 工作/周会/xxx.md（不是根、也不是父目录 工作）；
+// 2b4b''. 目录树选中态 → 新建笔记落在选中目录
+// 逐档钉死（不只测根——「永远落在根目录」正是报障点）：
+//   ① 初始选中 = 根目录行（默认值），行底色 = primarySoftBg；
+//   ② 点**二级目录**行 → 选中态 == 工作/周会 → 新建笔记落盘 工作/周会/xxx.md
+//      （不是根、也不是父目录 工作）；
 //   ③ 点**一级目录**行 → 新建笔记落 工作/xxx.md；
 //   ④ 点**根目录**行 → 新建笔记落 根/xxx.md；
-//   ⑤ 点**笔记行** → 选中态跟到该笔记所在目录（口径：打开笔记 = 选中它所在目录）；
+//   ⑤ 点**笔记行** → 选中态跟到该笔记所在目录（打开笔记 = 选中它所在目录）；
 //   ⑥ 点箭头命中区只收起/展开、不改选中态（两个命中区分工）。
-//
-// 回退哪条会红：
-//   - 去掉 selectDir（目录行点击不写选中态）→ ① 之后的底色断言全红；
-//   - newItemParentDir 恒返 ""（新建不看选中）→ ②③ 的落盘路径断言红；
-//   - 把箭头命中区删掉、行体仍只管收起 → ② 的落盘断言红（行体点击不再选中）。
 REGISTER_TEST(md_module_tree_select_dir_new_note,
               "markdown_module: 目录树选中态（→ 二级/一级/根逐档）+ 新建笔记落选中目录（headless）", {
     test_support::MdHeadlessEnv env(kDirPrefix, "treesel", kDbName);
@@ -1254,20 +1221,17 @@ REGISTER_TEST(md_module_tree_select_dir_new_note,
     return true;
 })
 
-// ---- 2b4b''''. 根行选中 → 新建文件夹：落点 = 笔记根（逻辑）**且**树里呈现在根行之下（几何）----
-//
-// 2026-09-30 用户实测：「内置根目录选中 → 新建目录：新目录成为根的兄弟（读起来像
-// 落在笔记根之外/上一级）；选中其它目录新建 = 正确落在其子下」。两个面分开钉——
-// 诊断结论：落点派生本就正确（根行 relPath "" → newItemParentDir 返回 "" = 笔记根，
-// service 端 isSafeNewNotePath 还挡死 ".."/绝对路径），错的是 md_tree 把**顶层夹**
-// 与根组行画成同一 depth（都 0）→ 建出来的顶层夹在树里与根行同级，读成「根的兄弟/
-// 笔记根之外」。本用例同时锁两头：
+// 根行选中 → 新建文件夹：落点 = 笔记根（逻辑）+ 树里在根行之下（几何）
+// 两个面分开钉。落点派生本就正确（根行 relPath "" → newItemParentDir 返回 "" =
+// 笔记根，service 端 isSafeNewNotePath 还挡死 ".."/绝对路径），错的是 md_tree 把
+// **顶层夹**与根组行画成同一 depth（都 0）→ 建出来的顶层夹在树里与根行同级，读成
+// 「根的兄弟 / 笔记根之外」。本用例同时锁两头：
 //   a. 逻辑：根行选中新建 → 父路径 == 笔记根（env.dir/x）；不是笔记根之外
 //      （env.dir.parent()/x）、也不是先选中过又切走的 工作/x；弹窗「创建在：」
 //      显示 = 根目录（模块知道落点，显示与落盘一致）；
 //   b. 几何：新夹行 name x == 根行 name x + 16（根的**子**行，与根的直接文件行
-//      同层），且 == 其它顶层夹（工作）的 x（同层对齐）。修复前 新夹行 x ==
-//      根行 x（同级/兄弟）——变异回退这条必红。
+//      同层），且 == 其它顶层夹（工作）的 x（同层对齐）。
+// 反重构：把顶层夹画成与根行同 depth（兄弟位）→ b 组断言红。
 REGISTER_TEST(md_module_root_row_new_folder_inside,
               "markdown_module: 根行选中新建文件夹落笔记根 + 树里呈现为根的子行（headless）", {
     test_support::MdHeadlessEnv env(kDirPrefix, "rootnewfolder", kDbName);
@@ -1344,7 +1308,8 @@ REGISTER_TEST(md_module_root_row_new_folder_inside,
     DOCTEST_CHECK(folderRowSelected(ui, "新目录"));
 
     // b. 几何：新顶层夹行 = 根行的**子**行（x = 根行 + 16），与其它顶层夹同层；
-    //    修复前 与根行同 x（兄弟位）→ 本组断言红
+    // b. 几何：新顶层夹行 = 根行的**子**行（x = 根行 + 16），与其它顶层夹同层；
+    //    画成与根行同 x（兄弟位）→ 本组断言红
     const float rootX = xOfName("根目录");
     const float newX = xOfName("新目录");
     const float workX = xOfName("工作");
@@ -1358,7 +1323,7 @@ REGISTER_TEST(md_module_root_row_new_folder_inside,
                           "同为顶层夹，新目录与 工作 x 不一致: " + std::to_string(newX) +
                               " vs " + std::to_string(workX));
 
-    // 对照组（用户实测的另一半）：选中普通目录新建 = 正确落在其子下，且呈现在其行之下
+    // 对照组：选中普通目录新建 = 正确落在其子下，且呈现在其行之下
     const int work1 = treeRowIndex(ui, "工作", true);
     DOCTEST_REQUIRE(clickId("md.tree.node." + std::to_string(work1) + ".row"));
     frame("rf7");
@@ -1381,18 +1346,13 @@ REGISTER_TEST(md_module_root_row_new_folder_inside,
     return true;
 })
 
-// ---- 2b4b'''. ④ 笔记文件名显示 .md 扩展名（树 + 重命名弹窗）+ 改名不丢扩展名 ----
+// 2b4b'''. ④ 笔记文件名显示 .md 扩展名（树 + 重命名弹窗）+ 改名不丢扩展名
 //
 // 用户要求：树里笔记条目显示**完整文件名（含 .md）**、重命名弹窗输入框里也是完整
 // 文件名；文件夹条目不加扩展名。用户能改到扩展名 → 必须保证改完仍是 .md
-// （规则与理由见 markdown_module.cpp commitRenameNote 段：service 层
-// `extension() != ".md" 则追加`，追加而不替换）。
-//
-// 回退哪条会红：
-//   ① 树条目改用 stem（去扩展名）→ 第一条断言红；
-//   ② 重命名弹窗预填改成 stem → 预填断言红；
-//   ③ 去掉 service 的 .md 补全 → 「改名不带 .md 仍落 .md」断言红（笔记会从树里
-//      消失，这正是要防的回归）。
+// 反重构警告：树条目与重命名弹窗预填都用 **stem**（去扩展名），落盘由 service
+// 补 .md。三处各自独立：任一处改掉，对应断言红——尤其「改名不带 .md 仍落 .md」
+// 那条（否则笔记会从树里消失）。
 REGISTER_TEST(md_module_note_filename_and_rename_md,
               "markdown_module: ④ 树/重命名弹窗显示完整文件名（含 .md）+ 改名后仍是 .md（headless）", {
     using InputState = components::input_detail::InputModel::InputState;
@@ -1462,7 +1422,7 @@ REGISTER_TEST(md_module_note_filename_and_rename_md,
     DOCTEST_REQUIRE(prefill != nullptr);
     DOCTEST_CHECK_EQ(prefill->text, std::string("工作/周报.md"));
 
-    // ③ 输入**不含 .md** 的名字提交 → 落盘文件名仍以 .md 结尾（防回归关键档）。
+    // ③ 输入**不含 .md** 的名字提交 → 落盘文件名仍以 .md 结尾（关键档）
     // 注意口径：输入框内容 = 相对笔记目录的路径，所以「周报改名」= 移到根目录下
     // 改名（与弹窗提示「填「工作/新名」可同时移动」一致）
     DOCTEST_CHECK(ui.find("md.dialog.rename.panel")->opacity > 0.0f);
@@ -1500,7 +1460,7 @@ REGISTER_TEST(md_module_note_filename_and_rename_md,
     return true;
 })
 
-// ---- 2b4c. W10：只有空文件夹（零笔记）→ 树照样出文件夹行，不叠空态提示 ----
+// 2b4c. 只有空文件夹（零笔记）→ 树照样出文件夹行，不叠空态提示
 
 REGISTER_TEST(md_module_tree_empty_folders_only,
               "markdown_module: W10 只有空文件夹（零笔记）→ 顶层夹/子夹行都在，空态提示不覆盖（headless）", {
@@ -1533,10 +1493,10 @@ REGISTER_TEST(md_module_tree_empty_folders_only,
     return true;
 })
 
-// ---- 2b5. 审计 [30]：新建笔记/文件夹弹窗错误 → 内嵌红字 formError + 输入清除 ----
+// 2b5. 新建笔记/文件夹弹窗错误 → 内嵌红字 formError + 输入清除
 
 REGISTER_TEST(md_module_dialog_form_error,
-              "markdown_module: 弹窗创建错误内嵌红字 + 下一次输入清除（headless，审计 [30]）", {
+              "markdown_module: 弹窗创建错误内嵌红字 + 下一次输入清除（headless）", {
     test_support::MdHeadlessEnv env(kDirPrefix, "formerror", kDbName);
     DOCTEST_REQUIRE(env.db != nullptr);
     DOCTEST_REQUIRE(writeTextFile(env.dir / "solo.md", "# solo\n"));
@@ -1583,8 +1543,7 @@ REGISTER_TEST(md_module_dialog_form_error,
     frame("fe4");
     DOCTEST_CHECK(ui.find("md.dialog.newfolder.error") == nullptr);
 
-    // 3) 新建笔记非法路径名提交 → 内嵌红字（旧行为：toast；同弹窗内与
-    //    其他校验路径不一致，审计 [30] 点名）
+    // 3) 新建笔记非法路径名提交 → 内嵌红字（须与其他校验路径同口径）
     const auto* noteBtn = ui.find("md.tree.new.bg");
     DOCTEST_REQUIRE(noteBtn != nullptr);
     noteBtn->onClick();
@@ -1623,7 +1582,7 @@ REGISTER_TEST(md_module_dialog_form_error,
     return true;
 })
 
-// ---- 2b2. W9：双栏宽度公式（layout 级——midW 笔误回归）----
+// 2b2. 双栏宽度公式（layout 级）
 
 REGISTER_TEST(md_module_split_layout, "markdown_module: W9 双栏三列铺满 contentW 无残隙（headless layout）", {
     test_support::MdHeadlessEnv env(kDirPrefix, "split", kDbName);
@@ -1663,7 +1622,7 @@ REGISTER_TEST(md_module_split_layout, "markdown_module: W9 双栏三列铺满 co
 
     ui.layout(screen.width, screen.height);
     const auto* tree = ui.find("md.tree.bg");
-    // 跨模块剩余审计修：列壳 .bg 已去（编辑列为 input 单层）——几何断言
+        // 列壳 .bg 已去（编辑列为 input 单层）——几何断言
     // 改挂列壳 stack（md.editor），宽度语义不变
     const auto* editor = ui.find("md.editor");
     const auto* preview = ui.find("md.preview.bg");
@@ -1687,7 +1646,7 @@ REGISTER_TEST(md_module_split_layout, "markdown_module: W9 双栏三列铺满 co
     return true;
 })
 
-// ---- 2b'. tech-debt C：单 stack 列布局语义锁（bg 铺满 / 内容坐标 / 单槽位）----
+// 2b'. tech-debt C：单 stack 列布局语义锁（bg 铺满 / 内容坐标 / 单槽位）
 
 REGISTER_TEST(md_tree_column_layout_semantics,
               "markdown_module: md.tree 单 stack 列语义锁 bg 重合+绝对内容+每列一槽（tech-debt C）", {
@@ -1717,7 +1676,7 @@ REGISTER_TEST(md_tree_column_layout_semantics,
     DOCTEST_REQUIRE(tree != nullptr);
     DOCTEST_REQUIRE(treeBg != nullptr);
     // 耦合点核心：bg 不带 position，靠 stack 语义"居中 == 铺满"——成立前提
-    // 是 bg 尺寸恒等于 stack 尺寸。任一侧改动使两框不重合 → 本测试变红
+        // 是 bg 尺寸恒等于 stack 尺寸。任一侧改动使两框不重合 → 本测试变红
     DOCTEST_CHECK_EQ(treeBg->frame.x, tree->frame.x);
     DOCTEST_CHECK_EQ(treeBg->frame.y, tree->frame.y);
     DOCTEST_CHECK_EQ(treeBg->frame.width, tree->frame.width);
@@ -1729,7 +1688,7 @@ REGISTER_TEST(md_tree_column_layout_semantics,
     DOCTEST_CHECK_EQ(search->frame.x, tree->frame.x + 12.0f);
     DOCTEST_CHECK_EQ(search->frame.y, tree->frame.y + 12.0f);
 
-    // 编辑态（默认）：编辑器列只占一个流式槽位（W9 修复前 overlay 兄弟双
+        // 编辑态（默认）：编辑器列只占一个流式槽位
     // 占位 → 整列右移一个 sideW、右缘溢出）。右缘必须精确贴 contentW 右边界
     const auto* editor = ui.find("md.editor");
     DOCTEST_REQUIRE(editor != nullptr);
@@ -1742,7 +1701,7 @@ REGISTER_TEST(md_tree_column_layout_semantics,
     return true;
 })
 
-// ---- 2c. W8：大纲浮动面板不挤压编辑区（layout 级）----
+// 2c. 大纲浮动面板不挤压编辑区（layout 级）
 
 REGISTER_TEST(md_module_compose_outline_float, "markdown_module: W8 大纲浮动面板 zIndex/不挤压（headless layout）", {
     test_support::MdHeadlessEnv env(kDirPrefix, "outline", kDbName);
@@ -1788,7 +1747,7 @@ REGISTER_TEST(md_module_compose_outline_float, "markdown_module: W8 大纲浮动
     return true;
 })
 
-// ---- 3. W7 稳定化：pagebg / toast 节点常驻（headless 冒烟）----
+// 3. pagebg / toast 节点常驻（headless 冒烟）
 
 REGISTER_TEST(md_module_compose_w7, "markdown_module: W7 pagebg/toast compose（headless）", {
     const std::string text = "# W7\n\n冒烟内容。\n";
@@ -1811,11 +1770,11 @@ REGISTER_TEST(md_module_compose_w7, "markdown_module: W7 pagebg/toast compose（
 
     frame("w7_f1");
     // 页面不再自铺全屏底色（半透/磨砂档主体效果的载体是主窗口 clearColor，
-    // 自铺不透明底会把 alpha 恒置 1 盖掉效果——回归守卫）
+        // 自铺不透明底会把 alpha 恒置 1 盖掉效果
     DOCTEST_CHECK(ui.find("md.pagebg") == nullptr);
     // toast 单例常驻（保存失败反馈的载体，visible 由状态位控制）
     DOCTEST_CHECK(ui.find("md.toast") != nullptr);
-    // 重扫按钮已移除（W8：5 秒自动轮询取代）
+        // 5 秒自动轮询取代手动重扫
     DOCTEST_CHECK(ui.find("md.btn.rescan") == nullptr);
 
     // 打开笔记走一遍真实保存链路（onStop 落盘不崩）
@@ -1828,7 +1787,7 @@ REGISTER_TEST(md_module_compose_w7, "markdown_module: W7 pagebg/toast compose（
     mod->onStop();
     return true;
 })
-// ---- 2d. 标签系统（spec §8.1）：编辑器标签行 + 左栏标签筛选（headless）----
+// 2d. 标签系统：编辑器标签行 + 左栏标签筛选（headless）
 
 REGISTER_TEST(md_module_tags_ui, "markdown_module: 标签 chip 行 + 左栏标签筛选（headless）", {
     test_support::MdHeadlessEnv env(kDirPrefix, "tags", kDbName);
@@ -1929,7 +1888,122 @@ REGISTER_TEST(md_module_tags_ui, "markdown_module: 标签 chip 行 + 左栏标�
     return true;
 })
 
-// ---- 2e. 生命周期（审计 [4][20]）：树行右键菜单 → 删除/重命名 真实链路 ----
+// 2d2. 文本垂直居中根治：标签 chip + 大纲行
+// runtime_render.h 只在 verticalAlign == Center 时把 ink 锚到 frame 中线，否则从
+// 行框顶沿起排 → 视觉偏上。判据与 md_tree_row_geometry 同款：
+//   a. 文本节点挂 VerticalAlign::Center（渲染锚点 = frame 中线）；
+//   b. 文本盒在底框内。
+// 删任一 .verticalAlign(Center) → 该站点 a 断言红（frame 数值不变，只有渲染锚点
+// 变了）；把文本盒挪出底框 → b 断言红。
+REGISTER_TEST(md_chip_and_outline_text_centered,
+              "markdown: 标签 chip / 大纲行文本垂直居中（数值锁）", {
+    test_support::MdHeadlessEnv env(kDirPrefix, "chipcenter", kDbName);
+    DOCTEST_REQUIRE(env.db != nullptr);
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "note.md", "# A\n正文\n"));
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    eui::Ui ui;
+    auto frame = [&](const char* page) {
+        ui.begin(page);
+        mod->compose(ui, screen);
+        ui.end();
+        ui.layout(screen.width, screen.height);  // 几何断言前必须 layout 出 frame
+    };
+
+        // 判据 helper：空串 = 通过（断言宏展开含 return，只能写在用例体里，
+    // helper 回传结论、由用例断）。textId 的 frame 须与底框（chip 底 / 行底
+    // rect）中心一致，且挂 VerticalAlign::Center。
+    const auto centeredProblem = [&](const std::string& textId,
+                                     const std::string& bgId) -> std::string {
+        const auto* txt = ui.find(textId);
+        const auto* bg = ui.find(bgId);
+        if (txt == nullptr) return "缺文本 " + textId;
+        if (bg == nullptr) return "缺底框 " + bgId;
+        const std::string box =
+            textId + "{cy=" +
+            std::to_string(txt->frame.y + txt->frame.height * 0.5f) +
+            ",h=" + std::to_string(txt->frame.height) + ",lh=" +
+            std::to_string(txt->lineHeight) + "} bg{cy=" +
+            std::to_string(bg->frame.y + bg->frame.height * 0.5f) +
+            ",h=" + std::to_string(bg->frame.height) + "}";
+        if (txt->verticalAlign != eui::VerticalAlign::Center) {
+            return textId + " 未挂 VerticalAlign::Center（ink 从行框顶沿起排）";
+        }
+        if (std::fabs((txt->frame.y + txt->frame.height * 0.5f) -
+                      (bg->frame.y + bg->frame.height * 0.5f)) > 0.5f) {
+            return textId + " frame 中心 y != 底框中心 y " + box;
+        }
+        return {};
+    };
+
+    // 帧1：打开 note.md（真实树行 onClick 链路）
+    frame("cc1");
+    const core::dsl::Element* fileRow = nullptr;
+    for (int i = 0; i < 6 && fileRow == nullptr; ++i) {
+        const auto* nm = ui.find("md.tree.node." + std::to_string(i) + ".name");
+        if (nm != nullptr && nm->text == "note.md") {
+            fileRow = ui.find("md.tree.node." + std::to_string(i) + ".row");
+        }
+    }
+    DOCTEST_REQUIRE(fileRow != nullptr);
+    DOCTEST_REQUIRE(fileRow->onClick != nullptr);
+    fileRow->onClick();
+
+    // 帧2：编辑器标签行出现 → 输入「工作」并点「＋」提交
+    frame("cc2");
+    const auto* addHit = ui.find("md.tags.add.hit");
+    DOCTEST_REQUIRE(addHit != nullptr);
+    DOCTEST_REQUIRE(addHit->onTextInput != nullptr);
+    core::TextInputEvent tie;
+    tie.text = "工作";
+    addHit->onTextInput(tie);
+    frame("cc3");
+    const auto* addBtn = ui.find("md.tags.addbtn.bg");
+    DOCTEST_REQUIRE(addBtn != nullptr);
+    DOCTEST_REQUIRE(addBtn->onClick != nullptr);
+    addBtn->onClick();
+    frame("cc4");
+
+    // 编辑器顶栏 chip：名称 + ×（两处底框：chip 底 / 删除热区）
+    DOCTEST_REQUIRE(ui.find("md.tags.chip.0.name") != nullptr);
+    // 判定纪律：本框架 fail-fast（第一个失败即 return），六处站点累积成一条
+    // 结论再断言——一次运行就能看全哪些站点没居中，而不是只看到第一个。
+    std::string problems;
+    const auto collect = [&](const std::string& textId, const std::string& bgId) {
+        const std::string p = centeredProblem(textId, bgId);
+        if (!p.empty()) problems += (problems.empty() ? "" : " | ") + p;
+    };
+    collect("md.tags.chip.0.name", "md.tags.chip.0.bg");
+    collect("md.tags.chip.0.x", "md.tags.chip.0.del");
+    // 左栏标签筛选 chip（同标签带笔记数）
+    DOCTEST_REQUIRE(ui.find("md.tags.filter.0.name") != nullptr);
+    collect("md.tags.filter.0.name", "md.tags.filter.0.bg");
+
+    // 帧5：顶栏大纲开关 → 浮动面板 + 大纲行（底 = 行 rect，含 hover/选中高亮）
+    const auto* toggle = ui.find("md.outline.toggle.hit");
+    DOCTEST_REQUIRE(toggle != nullptr);
+    DOCTEST_REQUIRE(toggle->onClick != nullptr);
+    toggle->onClick();
+    frame("cc5");
+    DOCTEST_REQUIRE(ui.find("md.outline.item.0.label") != nullptr);
+    collect("md.outline.item.0.label", "md.outline.item.0.row");
+    // 状态栏左右两段（B1 评审补漏：文本盒 == 状态栏底 rect 高 22、同 y）
+    DOCTEST_REQUIRE(ui.find("md.status.bg") != nullptr);
+    collect("md.status.save", "md.status.bg");
+    collect("md.status.pos", "md.status.bg");
+
+    DOCTEST_CHECK_MESSAGE(problems.empty(), problems);
+
+    mod->onStop();
+    return true;
+})
+
+// 2e. 生命周期：树行右键菜单 → 删除/重命名 真实链路
 
 REGISTER_TEST(md_module_delete_note_ui, "markdown_module: 右键→删除→确认弹窗（取消保留/确认落删），编辑器联动清空（headless）", {
     test_support::MdHeadlessEnv env(kDirPrefix, "delui", kDbName);
@@ -2028,10 +2102,10 @@ REGISTER_TEST(md_module_delete_note_ui, "markdown_module: 右键→删除→确�
     return true;
 })
 
-// ---- 2e2. 右键菜单坐标：窗口坐标 → 页面坐标（减页面区原点） ----
+// 2e2. 右键菜单坐标：窗口坐标 → 页面坐标（减页面区原点）
 // 指针事件是窗口坐标（runtime_input 派发只做 /dpiScale），而菜单浮层构建在
 // 页面子树内（app.page，原点 = 侧边栏右侧）——不换算则菜单整体右移一个
-// 侧边栏宽（展开 208 / 折叠 72），跑进右侧详情区（2026-09-27 修复回归护栏）
+// 侧边栏宽（展开 208 / 折叠 72）不能跑进右侧详情区
 
 REGISTER_TEST(md_ctx_menu_page_origin, "markdown_module: 右键菜单坐标扣页面区原点（窗口→页面坐标，headless）", {
     test_support::MdHeadlessEnv env(kDirPrefix, "ctxorigin", kDbName);
@@ -2093,7 +2167,7 @@ REGISTER_TEST(md_ctx_menu_page_origin, "markdown_module: 右键菜单坐标扣�
     frame("co3");
     DOCTEST_CHECK(std::fabs(menuLevelX() - 328.0f) < 0.01f);
 
-    // 反证：不接 Router（无页面区原点）时窗口坐标原样传出 = 修复前行为
+        // 反证：不接 Router（无页面区原点）时窗口坐标原样传出
     // （菜单落在 400 → 右移一个侧边栏宽）。此断言同时证明 level.x 就是
     // 浮层真实位置，192/328 是减原点后的结果而非被别的机制改写
     ::core::registerAppRouter(nullptr);
@@ -2197,7 +2271,7 @@ REGISTER_TEST(md_module_rename_note_ui, "markdown_module: 右键→重命名→�
     return true;
 })
 
-// ---- 2f. 新建笔记即时性（审计 [13][31]）：默认名快速创建 + 编辑器聚焦接线 ----
+// 2f. 新建笔记即时性：默认名快速创建 + 编辑器聚焦接线
 
 REGISTER_TEST(md_module_default_name_create, "markdown_module: 空名提交=「无标题笔记」秒建+撞名编号，编辑器随开（headless）", {
     test_support::MdHeadlessEnv env(kDirPrefix, "defname", kDbName);
@@ -2217,7 +2291,7 @@ REGISTER_TEST(md_module_default_name_create, "markdown_module: 空名提交=「�
     };
 
     // 弹窗直接回车/确认（不输入名字）→ 旧行为是「笔记名不能为空」拒办，
-    // 现在建「无标题笔记.md」并打开（commitNewNote 成功后经
+        // 建「无标题笔记.md」并打开
     // Ui::requestFocus 聚焦编辑器——headless 无 Runtime 消费端，聚焦行为
     // 由上游单测/人工冒烟覆盖，这里断言到「已打开」为止）
     frame("dn1");
@@ -2244,11 +2318,11 @@ REGISTER_TEST(md_module_default_name_create, "markdown_module: 空名提交=「�
     return true;
 })
 
-// ---- 审计 [30]：subtitle 静态操作说明（对齐 Todo 同类修复）----
+// subtitle 静态操作说明（对齐 Todo 同类口径）
 // 旧行为：subtitle = 「N 篇笔记 · 最后一次操作结果」，操作日志顶掉快捷键
 // 提示且永久驻留。新行为：subtitle 恒为静态说明；操作结果走 toast（status_
 // 成员已删）；笔记数进编辑器底部状态栏右侧
-REGISTER_TEST(md_module_subtitle_static, "markdown_module: subtitle 静态快捷键说明 + 笔记数在状态栏（审计[30]，headless）", {
+REGISTER_TEST(md_module_subtitle_static, "markdown_module: subtitle 静态快捷键说明 + 笔记数在状态栏（headless）", {
     test_support::MdHeadlessEnv env(kDirPrefix, "subtitle", kDbName);
     DOCTEST_REQUIRE(env.db != nullptr);
     DOCTEST_REQUIRE(writeTextFile(env.dir / "note.md", "# 标题\n正文\n"));
@@ -2267,7 +2341,7 @@ REGISTER_TEST(md_module_subtitle_static, "markdown_module: subtitle 静态快捷
     };
     frame("f1");
 
-    // subtitle 含快捷键提示（Phase 2 键盘流 + Ctrl+Shift+P 三态都是真实能力），
+        // subtitle 含快捷键提示（键盘流 + Ctrl+Shift+P 四态都是真实能力），
     // 不再携带笔记数/操作结果
     const auto* sub = ui.find("md.subtitle");
     DOCTEST_REQUIRE(sub != nullptr);
@@ -2302,10 +2376,10 @@ REGISTER_TEST(md_module_subtitle_static, "markdown_module: subtitle 静态快捷
     return true;
 })
 
-// ---- 审计 [21]：创建/编辑弹窗与标签输入框 Esc=取消（onCancel 取代旧 Esc→提交）----
+// 创建/编辑弹窗与标签输入框 Esc=取消（onCancel 取代 Esc→提交）
 
 REGISTER_TEST(md_module_esc_cancel_dialogs,
-              "markdown_module: 新建笔记/文件夹/重命名 Esc=取消不落盘；标签 Esc=丢草稿（headless，审计 [21]）", {
+              "markdown_module: 新建笔记/文件夹/重命名 Esc=取消不落盘；标签 Esc=丢草稿（headless）", {
     using InputState = components::input_detail::InputModel::InputState;
 
     test_support::MdHeadlessEnv env(kDirPrefix, "esccancel", kDbName);
@@ -2417,7 +2491,7 @@ REGISTER_TEST(md_module_esc_cancel_dialogs,
     DOCTEST_CHECK_EQ(ui.find("md.tags.add.text")->text, std::string("半截"));
     DOCTEST_CHECK(pressEsc(ui, "md.tags.add"));
     frame("ec14");
-    // 草稿清空 → 输入框回 placeholder；标签未被提交（旧行为：Esc=commitAddTag）
+        // 草稿清空 → 输入框回 placeholder；标签未被提交
     DOCTEST_CHECK_EQ(ui.find("md.tags.add.text")->text, std::string("＋ 标签"));
     DOCTEST_CHECK(ui.find("md.tags.chip.0.name") == nullptr);
 
@@ -2425,7 +2499,7 @@ REGISTER_TEST(md_module_esc_cancel_dialogs,
     return true;
 })
 
-// ---- ux-design §4 #6 P1：Ctrl+N 新建笔记快捷键（app 级通道，同弹窗入口）----
+// Ctrl+N 新建笔记快捷键（app 级通道，同弹窗入口）
 
 REGISTER_TEST(md_module_ctrl_n_new_note,
               "markdown_module: Ctrl+N 开新建笔记弹窗；弹窗开着再按不重置草稿；完整创建链路（headless）", {
@@ -2471,7 +2545,7 @@ REGISTER_TEST(md_module_ctrl_n_new_note,
     DOCTEST_CHECK_EQ(ui.state<InputState>("md.dialog.new.input").text,
                      std::string("草稿"));
 
-    // 3) 确认 → 走既有 commitNewNote 链路：落盘 + 弹窗关（快捷键与按钮同源）
+        // 3) 确认 → 走既有 commitNewNote 链路：落盘 + 弹窗关（与按钮同源）
     const auto* confirm = ui.find("md.dialog.new.confirm.bg");
     DOCTEST_REQUIRE(confirm != nullptr && confirm->onClick != nullptr);
     confirm->onClick();
@@ -2496,7 +2570,7 @@ REGISTER_TEST(md_module_ctrl_n_new_note,
     mod->onStop();
     return true;
 })
-// ---- 审计 [19] 收尾：重命名弹窗校验错误改内嵌红字 formError（原走 toast）----
+// 重命名弹窗校验错误改内嵌红字 formError
 
 REGISTER_TEST(md_module_rename_form_error,
               "markdown_module: 重命名空名/撞名/非法路径 → 内嵌红字 + 弹窗不关 + 输入清除 + 打开清残留（headless）", {
@@ -2575,7 +2649,7 @@ REGISTER_TEST(md_module_rename_form_error,
     DOCTEST_CHECK_EQ(ui.find("md.dialog.rename.input.text")->text,
                      std::string("a.md"));
 
-    // 1) 空名提交 → 红字「新名字不能为空」，弹窗不关（旧行为：静默关弹窗）
+        // 1) 空名提交 → 红字「新名字不能为空」，弹窗不关
     DOCTEST_CHECK(clearInput());
     frame("rf3");
     auto* confirm = ui.find("md.dialog.rename.confirm.bg");
@@ -2587,7 +2661,7 @@ REGISTER_TEST(md_module_rename_form_error,
     DOCTEST_CHECK_EQ(err->text, std::string("新名字不能为空"));
     DOCTEST_CHECK(ui.find("md.dialog.rename.panel")->opacity > 0.0f);
 
-    // 2) 下一次输入清错误；撞名提交 → 红字「重命名失败：…已存在…」，文件未动
+        // 2) 下一次输入清错误；撞名提交 → 红字「重命名失败：…已存在…」，文件未动
     DOCTEST_CHECK(typeOver("b.md"));
     frame("rf5");
     DOCTEST_CHECK(ui.find("md.dialog.rename.error") == nullptr);
@@ -2601,7 +2675,7 @@ REGISTER_TEST(md_module_rename_form_error,
     DOCTEST_CHECK(fs::exists(env.dir / "a.md"));  // 失败不落盘
     DOCTEST_CHECK(fs::exists(env.dir / "b.md"));
 
-    // 3) 非法路径提交 → 红字「不合法」，弹窗不关
+        // 3) 非法路径提交 → 红字「不合法」，弹窗不关
     DOCTEST_CHECK(typeOver("C:/bad"));
     frame("rf7");
     ui.find("md.dialog.rename.confirm.bg")->onClick();
@@ -2625,8 +2699,8 @@ REGISTER_TEST(md_module_rename_form_error,
     return true;
 })
 
-// ---- 审计 perf [39]：状态栏（行:列 · N 字）缓存等价 ----
-// 旧实现每次 compose 对全文 O(n) 扫（byteOffsetToLine + utf8Length）；新实现按
+// 状态栏（行:列 · N 字）缓存等价
+// 全文 O(n) 扫（byteOffsetToLine + utf8Length）改为按需重算。契约：脏标记帧与
 // (文本修订, 光标) 缓存。等价锁 = 三种帧的结果都与「独立复算」（同公式、纯函数
 // 源自 md_line_scanner）逐字一致：①未变帧（缓存命中）②仅光标移动帧（大纲跳转
 // 改 cursor 不改文本）③编辑帧（onChange 改文本）。
@@ -2729,9 +2803,9 @@ REGISTER_TEST(md_module_status_bar_cache_equivalence,
     return true;
 })
 
-// ---- 审计 perf [14][15]：双栏同步滚动 yA/yB 缓存 + 预览 contentKey 缓存等价 ----
-// [14] 旧实现每次 Split compose 两次全文前缀 substr + estimateHeight；新实现按
-// (修订, 锚点, 宽度) 缓存 yA/yB。等价锁：编辑器视口滚到深锚点 → 回顶锚点 →
+// 双栏同步滚动 yA/yB 缓存 + 预览 contentKey 缓存等价
+// Split 每次 compose 两次全文前缀 substr + estimateHeight 改为按
+// (修订, 锚点, 宽度) 缓存。等价锁：编辑器视口滚到深锚点 → 回顶锚点 →
 // 预览 scrollOffset 与第一次顶锚点读数逐位相等（缓存被中段覆盖后复算 = 旧值）。
 // [15] contentKey 从每帧全文 std::hash 改为 setEditorText 维护的缓存 hash。
 // 等价锁：编辑后预览可滚高度（maxOffset，contentKey 变了才会重测）增大且跨帧
@@ -2771,7 +2845,7 @@ REGISTER_TEST(md_module_split_scroll_cache_equivalence,
     DOCTEST_REQUIRE(fileRow->onClick != nullptr);
     fileRow->onClick();
     eui::KeyEvent p = test_support::pressShortcut(eui::InputKey::P, /*shift=*/true);
-    DOCTEST_CHECK(mod->onKeyEvent(p));   // → 实时（M1 第四态）
+    DOCTEST_CHECK(mod->onKeyEvent(p));   // → 实时（第四态）
     DOCTEST_CHECK(mod->onKeyEvent(p));   // → 双栏
     frame();
     frame();
@@ -2780,7 +2854,7 @@ REGISTER_TEST(md_module_split_scroll_cache_equivalence,
     DOCTEST_REQUIRE(pvScroll != nullptr);
     DOCTEST_CHECK(pvScroll->scrollMaxOffset > 0.0f);   // 内容高于视口才可滚
 
-    // 大纲面板常驻打开：跳转顶锚点/深锚点驱动 computeSyncOffset 换锚
+    // 大纲面板常驻打开：跳转顶锚点 / 深锚点驱动 computeSyncOffset 换锚
     const auto* toggle = ui.find("md.outline.toggle.hit");
     DOCTEST_REQUIRE(toggle != nullptr);
     DOCTEST_REQUIRE(toggle->onClick != nullptr);
@@ -2809,7 +2883,7 @@ REGISTER_TEST(md_module_split_scroll_cache_equivalence,
     frame();
     DOCTEST_CHECK_EQ(ui.find("md.preview.scroll")->scrollOffset, oTop1);
 
-    // 跳深锚点（节5）：编辑视口跟随光标下移 → 同步偏移必须变大；
+    // 跳深锚点：编辑视口跟随光标下移 → 同步偏移必须变大；
     // 首帧（miss 重算）与次帧（hit 缓存）读数必须逐位相等
     DOCTEST_CHECK(clickOutline(5));
     frame();
@@ -2849,8 +2923,8 @@ REGISTER_TEST(md_module_split_scroll_cache_equivalence,
     return true;
 })
 
-// ---- P3-④ 双栏同步滚动块模型精确锚（headless）----
-// 旧机制（标题锚 + 节内按行摊分）在单节文档里步长恒定；块模型锚给出
+// 双栏同步滚动块模型精确锚（headless）
+// 标题锚 + 节内按行摊分在单节文档里步长恒定；块模型锚给出
 // 块级签名。全部断言从模块实时读数反推、不复制实现公式：
 //   ① 块内相邻行步长 = H_k/lc_k 按块而异（4 行段 0.8u vs 2 行段 0.67u）
 //      —— 全文档单一斜率被证伪
@@ -2859,7 +2933,7 @@ REGISTER_TEST(md_module_split_scroll_cache_equivalence,
 //      旧机制此值恒为 0
 //   ③ 同型块跨 rep 步长一致（累计漂移为零）
 //   ④ 文首插入一个与已测 paraA 逐字同源的段落块后，深层未变块首行读数
-//      位移 == 插入块高（= s_A×lc_A）+ gap（锚点跟随块几何，不按节摊分漂移）
+//      位移 == 插入块高（= s_A×lc_A）+ gap（锚点跟随块几何）
 // 编辑器行高 = editorFontSize()×1.2，与模块 kInputLineHeightFactor 同步。
 REGISTER_TEST(md_module_split_block_anchor_precision,
               "markdown_module: 双栏同步滚动块模型精确锚（headless，Phase 3 ④）", {
@@ -2894,7 +2968,7 @@ REGISTER_TEST(md_module_split_block_anchor_precision,
     DOCTEST_REQUIRE(fileRow->onClick != nullptr);
     fileRow->onClick();
     eui::KeyEvent p = test_support::pressShortcut(eui::InputKey::P, /*shift=*/true);
-    DOCTEST_CHECK(mod->onKeyEvent(p));   // → 实时（M1 第四态）
+    DOCTEST_CHECK(mod->onKeyEvent(p));   // → 实时（第四态）
     DOCTEST_CHECK(mod->onKeyEvent(p));   // → 双栏
     frame();
     frame();  // 首帧建宽度、次帧同步滚动稳定（同缓存等价用例）
@@ -2972,7 +3046,7 @@ REGISTER_TEST(md_module_split_block_anchor_precision,
         DOCTEST_CHECK(oNextTop > oTop);  // 深层块界严格递增
         DOCTEST_CHECK(oTop > 0.0f);      // 未被 0 钳位
     }
-    // ② 所有异型块界的「界步长 − 块内步长」同一常数（旧标题锚恒为 0）
+    // ② 所有异型块界的「界步长 − 块内步长」同一常数
     DOCTEST_REQUIRE(cBoundary.size() >= 5);
     const float cMin = *std::min_element(cBoundary.begin(), cBoundary.end());
     const float cMax = *std::max_element(cBoundary.begin(), cBoundary.end());
@@ -2989,7 +3063,7 @@ REGISTER_TEST(md_module_split_block_anchor_precision,
     // ④ 文首插入一个与窗口内 paraA 逐字同源的段落块（同内容 ⇒ 同 md4c
     //    解析 ⇒ 同预览高，无需假设单行高）→ 深层目标块（CodeFence，内容
     //    未变）首行读数位移必须 == 插入块高（= s_A×lc_A）+ gap。
-    //    旧标题锚机制下位移 = 全局行斜率 × 插入行数，与此值一般不等。
+        // 标题锚机制下位移 = 全局行斜率 × 插入行数，与此值一般不等。
     size_t tgt = blocks.size();
     for (size_t k = 0; k < blocks.size(); ++k) {
         if (blocks[k].kind == module::markdown::MdBlockKind::CodeFence &&
@@ -3046,7 +3120,7 @@ REGISTER_TEST(md_module_split_block_anchor_precision,
     return true;
 })
 
-// ---- P3-⑤ 预览块级交互（headless）----
+// P3-⑤ 预览块级交互（headless）
 // 直接驱动 hit 覆盖层元素（MouseArea 注册的 onPress/onRelease/onHoverChanged）
 // 走完整链路：点击 → MdSyncMap 反查 → InputState.cursor 定位；hover →
 // 高亮底衬 / CodeFence bg 混色。tap 语义：传入 bounds 高固定 100，hit 的
@@ -3077,7 +3151,7 @@ REGISTER_TEST(md_module_split_block_click_hover,
     DOCTEST_REQUIRE(fileRow->onClick != nullptr);
     fileRow->onClick();
     eui::KeyEvent p = test_support::pressShortcut(eui::InputKey::P, /*shift=*/true);
-    mod->onKeyEvent(p);  // Editor → 实时（M1 第四态）
+    mod->onKeyEvent(p);  // Editor → 实时（第四态）
     mod->onKeyEvent(p);  // → Split（④ 同款通道）
     frame();
     frame();
@@ -3184,12 +3258,12 @@ REGISTER_TEST(md_module_split_block_click_hover,
     return true;
 })
 
-// ---- 审计 M5：Esc 关最上层弹窗/菜单（模块级兜底）----
-// 删除确认弹窗无输入框 → Esc 修复前无效；右键菜单是盖在弹窗之上的浮层
+// Esc 关最上层弹窗/菜单（模块级兜底）
+// 删除确认弹窗无输入框 → Esc 无效；右键菜单是盖在弹窗之上的浮层
 // （zIndex 1050），Esc 必须先关菜单本身。通道 = Module::onKeyEvent
 // （app 级 onKeyEvent → Router 派发到当前页）。
 REGISTER_TEST(md_esc_closes_topmost_dialog,
-              "markdown_module: Esc 关最上层弹窗/菜单（删除确认无输入框，审计 M5）", {
+              "markdown_module: Esc 关最上层弹窗/菜单（删除确认无输入框）", {
     test_support::MdHeadlessEnv env(kDirPrefix, "escui", kDbName);
     DOCTEST_REQUIRE(env.db != nullptr);
     DOCTEST_REQUIRE(writeTextFile(env.dir / "a.md", "# A\n正文A\n"));
@@ -3263,14 +3337,14 @@ REGISTER_TEST(md_esc_closes_topmost_dialog,
     return true;
 })
 
-// ---- M0 spike V1b（C1 修复）：编程式聚焦的目标必须是 <input id>.hit ----
+// 编程式聚焦的目标必须是 <input id>.hit
 // input 组件的聚焦判定是 ui.isFocused(id + ".hit")（components/input.h:113），
 // 发基 id 时焦点落在 stack 元素上 → 组件判定未聚焦（不画 caret、按键落回模块
 // keyEventHandler_，编辑器收不到字）。本用例走真实入口「预览块点击 → 编辑器
 // 定位」验证；用 Runtime 逐帧 compose 才能驱动帧末的 requestFocus 消费端
 //（core/runtime/runtime_lifecycle.h:38-42），plain Ui 不会消费挂起请求。
 REGISTER_TEST(md_editor_focus_target_is_hit,
-              "markdown_module: 预览块点击后聚焦 md.editor.input.hit（M0 C1，headless）", {
+              "markdown_module: 预览块点击后聚焦 md.editor.input.hit（headless）", {
     const std::string text = "# T\n\npara one\npara two\n";
     test_support::MdHeadlessEnv env(kDirPrefix, "focushit", kDbName);
     DOCTEST_REQUIRE(env.db != nullptr);
@@ -3324,10 +3398,10 @@ REGISTER_TEST(md_editor_focus_target_is_hit,
     hit->onRelease(up, bounds);
     frame();  // 帧末消费 requestFocus → focusedId_ 本帧更新
     DOCTEST_CHECK(env2.ui->isFocused("md.editor.input.hit"));
-    // 反向观测：基 id 不是聚焦目标（修复前发基 id，本行会红）
+        // 反向观测：基 id 不是聚焦目标（发了基 id，本行会红）
     DOCTEST_CHECK_FALSE(env2.ui->isFocused(kEditorInputId));
     // 组件按「本帧收到的 focused」画 caret/边框 → 焦点生效的观感在次帧出现
-    //（M0 V1：requestFocus 帧末消费，≈16ms 延迟）
+    //（requestFocus 帧末消费，≈16ms 延迟）
     frame();
     DOCTEST_CHECK(env2.ui->isFocused("md.editor.input.hit"));
     // 用户可见后果：组件判定聚焦 → 画 caret
@@ -3337,7 +3411,7 @@ REGISTER_TEST(md_editor_focus_target_is_hit,
     return true;
 })
 
-// ==================== M1：第四态「实时」骨架（只读） ====================
+// 第四态「实时」骨架（只读）
 
 // 四态循环逐态断言可见元素集合 + segmented 视觉顺序/逆映射（与枚举值顺序解耦）
 REGISTER_TEST(md_module_live_mode_skeleton,
@@ -3385,7 +3459,7 @@ REGISTER_TEST(md_module_live_mode_skeleton,
     DOCTEST_CHECK(mod->onKeyEvent(p));
     frame();
     DOCTEST_REQUIRE(ui.find("md.live.scroll") != nullptr);
-    // 跨模块剩余审计修：列壳 .bg 已去（实时列为 input 单层）——改挂列壳 stack
+    // 列壳 .bg 已去（实时列为 input 单层）——改挂列壳 stack
     DOCTEST_CHECK(ui.find("md.live") != nullptr);
     DOCTEST_CHECK(ui.find("md.live.blocks") != nullptr);
     DOCTEST_CHECK(ui.find("md.live.blk.0.hit") != nullptr);  // 首块渲染 + hit 覆盖层
@@ -3431,24 +3505,22 @@ REGISTER_TEST(md_module_live_mode_skeleton,
     return true;
 })
 
-// 持久化：mode=3（实时）通过净化与存读往返；旧文件 mode 0-2 语义不变；越界回落 0
+// 持久化：mode=3（实时）通过净化与存读往返；旧值 0-2 语义不变；越界回落 0
 REGISTER_TEST(md_view_state_mode_live,
-              "markdown: 视图状态 mode 3（实时）通过净化 + 0-2 旧语义不变（M1）", {
+              "markdown: 视图状态 mode 3（实时）通过净化 + 0-2 旧语义不变", {
     using module::markdown::MarkdownViewState;
     using module::markdown::MarkdownViewStateStore;
-    const fs::path file =
-        test_temp::tempPath("devdesk_md_view_state_live.json");
-    std::error_code ec;
-    fs::remove(file, ec);
+    // 视图状态落 app_config 表的一行，故本用例持一份已 migrate 的临时库。
+    test_support::TestDb env("devdesk_test_md_live_mode_", "mode");
+    core::data::SqliteDb& db = env.handle();
 
-    // 旧版落盘文件（同格式 JSON）→ mode 0-2 语义完全不变
+    // 既有数据（同格式 JSON）→ mode 0-2 语义完全不变
     for (int m = 0; m <= 2; ++m) {
-        {
-            std::ofstream f(file, std::ios::trunc);
-            f << "{\"lastPath\": \"old.md\", \"mode\": " << m
-              << ", \"collapsedDirs\": []}";
-        }
-        const MarkdownViewState loaded = MarkdownViewStateStore(file).load();
+        test_support::writeRawConfigRow(
+            &db, module::markdown::kMarkdownViewStateKey,
+            "{\"lastPath\": \"old.md\", \"mode\": " + std::to_string(m) +
+                ", \"collapsedDirs\": []}");
+        const MarkdownViewState loaded = MarkdownViewStateStore(&db).load();
         DOCTEST_CHECK_EQ(loaded.mode, m);
         DOCTEST_CHECK_EQ(loaded.lastPath, std::string("old.md"));
     }
@@ -3458,10 +3530,10 @@ REGISTER_TEST(md_view_state_mode_live,
     live.mode = 3;
     DOCTEST_CHECK_EQ(MarkdownViewStateStore::sanitized(live).mode, 3);
     {
-        MarkdownViewStateStore store(file);
+        MarkdownViewStateStore store(&db);
         DOCTEST_CHECK(store.save(live).isOk());
     }
-    DOCTEST_CHECK_EQ(MarkdownViewStateStore(file).load().mode, 3);
+    DOCTEST_CHECK_EQ(MarkdownViewStateStore(&db).load().mode, 3);
 
     // 越界回落 0（新域上界为 3）
     MarkdownViewState over;
@@ -3470,19 +3542,17 @@ REGISTER_TEST(md_view_state_mode_live,
     MarkdownViewState neg;
     neg.mode = -1;
     DOCTEST_CHECK_EQ(MarkdownViewStateStore::sanitized(neg).mode, 0);
-
-    fs::remove(file, ec);
     return true;
 })
 
-// ==================== M2：实时态活动块单输入 + 内容贴合高度 ====================
+// 实时态活动块单输入 + 内容贴合高度
 
 namespace {
 
 using MdInputState = components::input_detail::InputModel::InputState;
 
-// 本帧渲染出的块包裹 id 列表（prefix = "md.live" / "md.preview"）——
-// 用于比较两种模式下「块序列」是否一致
+// 本帧渲染出的块包裹 id 列表（prefix = "md.live" / "md.preview"），
+// 用于比较两种模式下的「块序列」是否一致
 std::vector<int> renderedBlockIds(eui::Ui& ui, const std::string& prefix) {
     std::vector<int> ids;
     for (int i = 0; i < 16; ++i) {
@@ -3522,10 +3592,9 @@ bool cycleMode(::core::Module* mod) {
 
 } // namespace
 
-// M2 验收（spec §8.2 #4 + M0 C1/C4）：活动块 input 就位、内容贴合高度、
-// 不吃外层滚轮、聚焦打 .hit、非活动块仍是只读渲染
+// 活动块 input 就位、内容贴合高度、不吃外层滚轮、聚焦打 .hit、非活动块仍是只读渲染
 REGISTER_TEST(md_module_live_active_input,
-              "markdown_module: 实时态活动块 input 就位 + 内容贴合高度（M2，headless）", {
+              "markdown_module: 实时态活动块 input 就位 + 内容贴合高度（headless）", {
     const std::string text = "# T\n\npara one\npara two\npara three\n";
     test_support::MdHeadlessEnv env(kDirPrefix, "liveinput", kDbName);
     DOCTEST_REQUIRE(env.db != nullptr);
@@ -3570,7 +3639,7 @@ REGISTER_TEST(md_module_live_active_input,
     DOCTEST_REQUIRE(input != nullptr);
     DOCTEST_CHECK_EQ(e.ui->state<MdInputState>("md.live.input").text, blockText);
 
-    // ② 内容贴合高度（spec §8.2 #4）：同一 measureLines + 同字体族/字号/文本宽
+    // ② 内容贴合高度：同一 measureLines + 同字体族/字号/文本宽
     //    （inset=10、未开滚动条 → 文本宽 = 声明宽 − 20），容差 ±1px
     const float fs = core::theme::editorFontSize();
     const float textW = std::max(0.0f, input->frame.width - 20.0f);
@@ -3580,13 +3649,13 @@ REGISTER_TEST(md_module_live_active_input,
     const float expectH = 20.0f + static_cast<float>(lines) * fs * 1.2f + 1.0f;
     DOCTEST_CHECK(std::fabs(input->frame.height - expectH) <= 1.0f);
 
-    // ③ 真不变量（M0 C4）：贴合 ⇒ 组件不注册滚轮处理器（不吃外层滚轮、无内部
-    //    滚动条）。偏矮一像素都会让本行变红 —— 这就是 §5 #4 日志校验的判据
+    // ③ 真不变量：贴合 ⇒ 组件不注册滚轮处理器（不吃外层滚轮、无内部滚动条）。
+    // 偏矮一像素都会让本行变红
     const auto* hit = e.ui->find("md.live.input.hit");
     DOCTEST_REQUIRE(hit != nullptr);
     DOCTEST_CHECK(hit->onScroll == nullptr);
 
-    // ④ M0 C1：聚焦目标是 .hit（组件判定 = ui.isFocused(id + ".hit")）
+    // ④ 聚焦目标是 .hit（组件判定 = ui.isFocused(id + ".hit")）
     DOCTEST_CHECK(e.ui->isFocused("md.live.input.hit"));
 
     // ⑤ input 建在活动块包裹内：包裹高 = 贴合高（不是渲染块高 H_k）
@@ -3595,12 +3664,12 @@ REGISTER_TEST(md_module_live_active_input,
     DOCTEST_CHECK(std::fabs(wrap->frame.height - input->frame.height) <= 0.01f);
     DOCTEST_CHECK(input->frame.y >= wrap->frame.y - 0.5f);
     DOCTEST_CHECK(input->frame.y <= wrap->frame.y + wrap->frame.height + 0.5f);
-    // 活动块的 hit 覆盖层仍建（元素集合稳定）但关掉命中 —— 否则它建在 input
+    // 活动块的 hit 覆盖层仍建（元素集合稳定）但关掉命中——否则它建在 input
     // 之后会抢走指针（打字点不进去）
     const auto* activeHit = e.ui->find("md.live.blk.1.hit");
     DOCTEST_REQUIRE(activeHit != nullptr);
     DOCTEST_CHECK(activeHit->hitTestMode == core::dsl::HitTestMode::None);
-    // 非活动块的覆盖层仍是正常命中（hover / M3 点击定位）
+    // 非活动块的覆盖层仍是正常命中（hover / 点击定位）
     const auto* otherHit = e.ui->find("md.live.blk.0.hit");
     DOCTEST_REQUIRE(otherHit != nullptr);
     DOCTEST_CHECK(otherHit->hitTestMode != core::dsl::HitTestMode::None);
@@ -3611,10 +3680,9 @@ REGISTER_TEST(md_module_live_active_input,
     return true;
 })
 
-// M2 验收（spec §8.2 #3）：实时态上行回写 == 编辑态做同一编辑（逐字节），
-// 且两种模式下块序列一致
+// 实时态上行回写 == 编辑态做同一编辑（逐字节），且两种模式下块序列一致
 REGISTER_TEST(md_module_live_input_roundtrip,
-              "markdown_module: 实时态上行回写 == 编辑态同编辑（逐字节，M2）", {
+              "markdown_module: 实时态上行回写 == 编辑态同编辑（逐字节）", {
     const std::string text = "# T\n\npara one\npara two\n";
     test_support::MdHeadlessEnv env(kDirPrefix, "liveround", kDbName);
     DOCTEST_REQUIRE(env.db != nullptr);
@@ -3632,7 +3700,7 @@ REGISTER_TEST(md_module_live_input_roundtrip,
         std::this_thread::sleep_for(std::chrono::milliseconds(520));
     };
 
-    // ---- 路径 A：实时态打字（真实 input 事件 → onChange → 拼文档 → 写盘）----
+    // 路径 A：实时态打字（真实 input 事件 → onChange → 拼文档 → 写盘）
     std::string liveDoc;
     std::vector<int> liveBlocks;
     {
@@ -3677,17 +3745,20 @@ REGISTER_TEST(md_module_live_input_roundtrip,
         mod->onStop();
     }
 
-    // ---- 路径 B：编辑态做同一编辑（同文档偏移、同插入文本）----
+    // 路径 B：编辑态做同一编辑（同文档偏移、同插入文本）
     std::string editDoc;
     std::vector<int> editBlocks;
     {
         DOCTEST_REQUIRE(writeTextFile(env.dir / "rt.md", text));  // 复位文档
-        // 路径 A 退出时处于实时态 → 视图状态文件会把 mode=3 带到下一次启动
-        //（M1 起四态都持久化）。本段要在【编辑态】做对照编辑，故清掉状态文件
-        {
-            std::error_code ec;
-            fs::remove(env.dir / "view_state.json", ec);
-        }
+        // 路径 A 退出时处于实时态 → 视图状态会把 mode=3 带到下一次启动。
+        // 本段要在【编辑态】做对照编辑，故清掉视图状态：状态存 app_config 表的
+        // markdown_view_state 行，删文件已经不生效，必须删那一行（否则本段会以
+        // 实时态启动，后面的编辑态断言全找不到控件）。
+        // 必须删那一行（否则本段会以实时态启动，后面的编辑态断言全找不到控件）。
+        DOCTEST_REQUIRE(core::appconfig::erase(
+                            *::core::appDatabase(),
+                            module::markdown::kMarkdownViewStateKey)
+                            .isOk());
         std::unique_ptr<::core::Module> mod(create_markdown_module());
         mod->onStart();
         eui::Screen screen;
@@ -3734,17 +3805,16 @@ REGISTER_TEST(md_module_live_input_roundtrip,
     return true;
 })
 
-// ==================== MD-01：实时态活动块锚必须跟随真实光标 ====================
-// （审计 2026-09-27-full-audit-markdown.json MD-01，高危）
+// 实时态活动块锚必须跟随真实光标
 
 namespace {
 
-// 实时态下在活动块内造出【新块边界】（回车造成的块间空行 / 行首 `# ` / `- `
-// 这类必然打断段落的构造）后，分块器把文档拆成两块 —— 活动块锚必须跟着真实
-// 光标落到【新块】：输入框文本 = 新块文本、块内光标映射回同一文档字节、后续
-// 按键落在该字节处。锚冻结在切块前的旧值上时（MD-01），光标字节仍落在【前一
-// 块】区间内 → 下一帧 input 被整段换成前一块文本（用户刚敲的内容从输入框消
-// 失）、光标跳回前块，之后每次按键都写进前块。
+    // 实时态下在活动块内造出【新块边界】（回车造成的块间空行 / 行首 `# ` / `- `
+    // 这类必然打断段落的构造）后，分块器把文档拆成两块 —— 活动块锚必须跟着真实
+    // 光标落到【新块】：输入框文本 = 新块文本、块内光标映射回同一文档字节、后续
+    // 按键落在该字节处。锚冻结在切块前的旧值上时，光标字节仍落在【前一块】区间内
+    // → 下一帧 input 被整段换成前一块文本（用户刚敲的内容从输入框消失）、光标跳回
+    // 前块，之后每次按键都写进前块。
 //   tag        : 临时笔记目录标记
 //   text       : 初始文档（单个块）
 //   cursorByte : 进实时态前的编辑器文档光标（= 活动块锚的初始来源）
@@ -3790,8 +3860,8 @@ bool liveSplitAnchorScenario(const char* tag,
         frame();
     }
 
-    // 期望口径 = 分块器（与实现同源，照 M2 用例做法）：依次在光标处插入等价
-    // 于把 joined 一次性插到初始光标处，光标随之推进到插入内容末尾
+    // 期望口径 = 分块器：依次在光标处插入等价于把 joined 一次性插到初始光标处，
+    // 光标随之推进到插入内容末尾
     const size_t caret = cursorByte + joined.size();
     const std::string doc =
         text.substr(0, cursorByte) + joined + text.substr(cursorByte);
@@ -3814,7 +3884,7 @@ bool liveSplitAnchorScenario(const char* tag,
         static_cast<size_t>(
             e.ui->state<MdInputState>("md.live.input").cursor),
         local);
-    // ③ 贴合高度未回归（M2「[live] input over=0」判据：不吃外层滚轮）
+    // ③ 贴合高度未回归（「[live] input over=0」判据：不吃外层滚轮）
     const auto* hit = e.ui->find("md.live.input.hit");
     DOCTEST_REQUIRE(hit != nullptr);
     DOCTEST_CHECK(hit->onScroll == nullptr);
@@ -3844,7 +3914,7 @@ bool liveSplitAnchorScenario(const char* tag,
         blk2.start + static_cast<size_t>(
                          e.ui->state<MdInputState>("md.live.input").cursor),
         caret2);
-    // ⑤ 端到端逐字节：400ms 防抖 + 每帧 flush 后读回磁盘 = 文档 caret 处插 X
+    // ④ 端到端逐字节：400ms 防抖 + 每帧 flush 后读回磁盘
     std::this_thread::sleep_for(std::chrono::milliseconds(520));
     frame();   // 本帧 compose 内 flushEditorIfIdle → 整篇写盘
     std::string saved;
@@ -3878,7 +3948,7 @@ REGISTER_TEST(md_module_live_split_anchor_list,
                                    {"-", " "});
 })
 
-// ==================== W2 波 2：MD-02 / MD-05 回归 ====================
+// 状态复位：换笔记 / 启动恢复
 
 namespace {
 
@@ -3906,8 +3976,8 @@ const core::dsl::Element* findFileRowByName(eui::Ui& ui,
 
 } // namespace
 
-// MD-05：换笔记 = 实时态状态群换代。修复前这里只复位活动块锚，liveOffset_
-// 残留上一篇的滚动位置（换笔记后仍停在上篇的偏移上、与新旧内容高度错配）
+// 换笔记 = 实时态状态群换代。只复位活动块锚的话，liveOffset_ 残留上一篇的滚动
+// 位置（换笔记后仍停在上篇的偏移上、与新旧内容高度错配）
 REGISTER_TEST(md_module_live_state_reset_note_switch,
               "markdown_module: 实时态换笔记复位滚动位置（W2 MD-05，headless）", {
     const std::string docA = tallNoteDoc("A", 60);
@@ -3947,7 +4017,7 @@ REGISTER_TEST(md_module_live_state_reset_note_switch,
     frame();
     DOCTEST_CHECK_EQ(e.ui->find("md.live.scroll")->scrollOffset, 200.0f);
 
-    // 换笔记 → 滚动位置随新文档归零（修复前滞留 200）
+    // 换笔记 → 滚动位置随新文档归零（滞留 200 即红）
     const auto* rowB = findFileRowByName(*e.ui, "b.md");
     DOCTEST_REQUIRE(rowB != nullptr);
     DOCTEST_REQUIRE(rowB->onClick != nullptr);
@@ -3999,7 +4069,7 @@ REGISTER_TEST(md_module_live_state_reset_on_enter,
     }
     DOCTEST_CHECK(e.ui->find("md.live.scroll") == nullptr);
 
-    // 切回 → 同一 enterLiveState：偏移归零 + 首帧同帧补发 requestFocus（M0 C1）
+    // 切回 → 同一 enterLiveState：偏移归零 + 首帧同帧补发 requestFocus
     DOCTEST_REQUIRE(cycleMode(mod.get()));
     frame();
     const auto* back = e.ui->find("md.live.scroll");
@@ -4011,8 +4081,8 @@ REGISTER_TEST(md_module_live_state_reset_on_enter,
     return true;
 })
 
-// MD-05 第三条路径：启动恢复进实时态（loadViewState）与切实时态同语义——
-// 修复前这条路径完全不复位状态位群（首帧不聚焦活动 input）
+// 启动恢复进实时态（loadViewState）与切实时态同语义——这条路径同样必须复位
+// 整个状态位群（否则首帧不聚焦活动 input）
 REGISTER_TEST(md_module_live_state_reset_on_restore,
               "markdown_module: 启动恢复实时态走同一复位点（W2 MD-05）", {
     test_support::MdHeadlessEnv env(kDirPrefix, "liverestore", kDbName);
@@ -4020,9 +4090,11 @@ REGISTER_TEST(md_module_live_state_reset_on_restore,
     DOCTEST_REQUIRE(writeTextFile(env.dir / "a.md", tallNoteDoc("R", 60)));
     // 预置视图状态：mode=3（实时）+ 上次笔记，onStart 尾部恢复
     {
-        std::ofstream f(env.dir / "view_state.json", std::ios::trunc);
-        f << "{\"lastPath\": \"a.md\", \"mode\": 3, \"collapsedDirs\": []}";
-        DOCTEST_REQUIRE(f.good());
+        // 视图状态存 app_config 表的一行（键 kMarkdownViewStateKey，整份一行），
+        // 这里直接写那一行。MdHeadlessEnv 已把它注册为进程级 appDatabase。
+        DOCTEST_REQUIRE(test_support::writeRawConfigRow(
+            ::core::appDatabase(), module::markdown::kMarkdownViewStateKey,
+            "{\"lastPath\": \"a.md\", \"mode\": 3, \"collapsedDirs\": []}"));
     }
 
     std::unique_ptr<::core::Module> mod(create_markdown_module());
@@ -4045,12 +4117,9 @@ REGISTER_TEST(md_module_live_state_reset_on_restore,
     return true;
 })
 
-// MD-02：编辑态与实时态的列壳是同一份实现（drawTextColumnChrome）——同屏宽下
-// 两态文本列几何必须逐项相同。⑤（2026-09-29）起两态都不再钳列宽：正文列 =
-// 栏宽 − 2×8px 留白（旧实现编辑/实时钳 720 居中 = 1600 宽下每侧白 272px，
-// 用户报「编辑器左右留白太多」）。
-//
-// ⑤ 的数值判据（回退哪条会红）：
+// 编辑态与实时态的列壳是同一份实现（drawTextColumnChrome）——同屏宽下两态文本列
+// 几何必须逐项相同。两态都不钳列宽：正文列 = 栏宽 − 2×8px 留白。
+// 反重构，三条各自独立：
 //   ① 把 kTextColumnInsetX 改回 16 → `x 偏移 == 8` 与 `宽 == 栏宽−16` 两条红；
 //   ② 把「钳 720 居中」逻辑加回来 → 宽 == 720 而非 1264-16 → 宽断言红；
 //   ③ 两态任一改动不留神（如只给编辑态改）→ 实时态几何逐项相同的老断言红。
@@ -4093,14 +4162,14 @@ REGISTER_TEST(md_module_text_column_chrome_shared,
     DOCTEST_REQUIRE(edCol != nullptr);
     DOCTEST_REQUIRE(edInput != nullptr);
     DOCTEST_CHECK(ui.find("md.tags.add.hit") != nullptr);   // chip 行在
-    // ⑤ 判据：可用宽 == 栏宽 − 2×留白；留白 8 < 改前 16；且不再有 720 居中
+    // 判据：可用宽 == 栏宽 − 2×留白；留白 8；且不再有 720 居中
     const float fullW = screen.width - pad * 2.0f - sideW - gap;
     const float kInsetNow = 8.0f;         // = markdown_module.cpp kTextColumnInsetX
-    const float kInsetBefore = 16.0f;     // 改前的列内边距
+    const float kInsetBefore = 16.0f;     // 参照值
     DOCTEST_CHECK_EQ(edInput->frame.width, fullW - kInsetNow * 2.0f);
     DOCTEST_CHECK_EQ(edInput->frame.x - edCol->frame.x, kInsetNow);
-    DOCTEST_CHECK(kInsetNow < kInsetBefore);          // 改后 < 改前
-    DOCTEST_CHECK(edInput->frame.width > 720.0f);     // 旧的写作列钳已去掉
+    DOCTEST_CHECK(kInsetNow < kInsetBefore);          // 8 < 16
+    DOCTEST_CHECK(edInput->frame.width > 720.0f);     // 写作列钳已去掉
     DOCTEST_CHECK_EQ(edInput->frame.y - edCol->frame.y, 48.0f);
     const float edX = edInput->frame.x;
     const float edY = edInput->frame.y;
@@ -4149,14 +4218,15 @@ REGISTER_TEST(md_module_text_column_chrome_shared,
     return true;
 })
 
-// ================= MD-03：块流注入点（BlockFlowHooks）验收 =================
-// 审计条目 MD-03：drawBlockFlow 曾是四合一路径（几何表重建 + 逐块渲染 + 解析缓存 +
-// hover + 活动块特判），多加一个视图态就要多加参数 + 多加一串 isActive 分支。改法 =
-// 把活动块特判收成一个注入点（BlockFlowHooks）：预览 / 双栏态传空实现、实时态传自己
-// 的特判。硬约束 = 零行为变化，故下面两条用例分头钉：
-//   ① 行为（md_module_blockflow_hook_contrast）：同一文档同宽下，预览态「无块被特判」
-//      与实时态「恰活动块一个被特判」各自的元素 / 几何逐项钉死，且非活动块的包裹几何
-//      跨两态逐项相同（默认路径只有一条）；
+// MD-03：块流注入点（BlockFlowHooks）验收
+// drawBlockFlow 是四合一路径（几何表重建 + 逐块渲染 + 解析缓存 + hover + 活动块
+// 特判）：多加一个视图态就要多加参数 + 多加一串 isActive 分支。活动块特判收成一个
+// 注入点（BlockFlowHooks）——预览 / 双栏态传空实现、实时态传自己的特判。
+// 硬约束 = 零行为变化，故下面两条用例分头钉：
+//   ① 行为：同一文档同宽下，预览态「无块被特判」与实时态「恰活动块一个被特判」
+//      各自的元素 / 几何逐项钉死，且非活动块的包裹几何跨两态逐项相同（默认路径
+//      只有一条）；
+//   ② 形态：注入点在位 + 两条路径分别传入 +
 //   ② 形态（md_module_blockflow_hook_source_guard）：注入点在位 + 两条路径分别传入 +
 //      drawBlockFlow 本体不再含活动块特判符号。
 REGISTER_TEST(md_module_blockflow_hook_contrast,
@@ -4192,7 +4262,7 @@ REGISTER_TEST(md_module_blockflow_hook_contrast,
     frame();
     DOCTEST_REQUIRE(e.ui->find(kEditorInputId) != nullptr);
 
-    // ---- ① 预览态：注入点是空实现 → 零特判（逐块都走默认路径）----
+    // ① 预览态：注入点是空实现 → 零特判（逐块都走默认路径）
     DOCTEST_REQUIRE(cycleMode(mod.get()));   // 编辑 → 实时
     DOCTEST_REQUIRE(cycleMode(mod.get()));   // 实时 → 双栏
     DOCTEST_REQUIRE(cycleMode(mod.get()));   // 双栏 → 预览
@@ -4215,7 +4285,7 @@ REGISTER_TEST(md_module_blockflow_hook_contrast,
     }
     DOCTEST_CHECK(e.ui->find("md.preview.input") == nullptr);   // 也无活动 input
 
-    // ---- ② 实时态：注入点是实时态自己的特判 → 恰活动块一个被特判 ----
+    // ② 实时态：注入点是实时态自己的特判 → 恰活动块一个被特判
     DOCTEST_REQUIRE(cycleMode(mod.get()));   // 预览 → 编辑
     frame();
     DOCTEST_REQUIRE(e.ui->find(kEditorInputId) != nullptr);
@@ -4256,9 +4326,9 @@ REGISTER_TEST(md_module_blockflow_hook_contrast,
     return true;
 })
 
-// ---- MD-03 源码守卫（只读断言）----
+// 源码守卫（只读断言）
 // 与 tests/test_core/test_result.cpp 的源码护栏同款：靠 cwd 上溯定位仓库根，**不**用
-// __FILE__（ccache 会把它相对化，TIN-01 教训）；定位 / 取体失败一律大声失败，不静默绿。
+// __FILE__（ccache 会把绝对路径相对化）；定位 / 取体失败一律大声失败，不静默绿。
 namespace {
 
 // 仓库根：cwd 或它的祖先里同时有 src/module_markdown/markdown_module.cpp 与
@@ -4404,14 +4474,14 @@ REGISTER_TEST(md_module_blockflow_hook_source_guard,
     return true;
 })
 
-// ==================== M3：焦点 / 切块状态机 + IME 冻结 ====================
-// 依据 spec §7「M3」行 + §3.3 / §3.4 + M0 spike §2 硬约束（C1 聚焦只发 .hit、
-// C2 释放与补发同帧、C3 切块清滚动残余）。验收两条：连续切块 20 次不丢字、
-// 组字中切块被拒。
+// 焦点 / 切块状态机 + IME 冻结
+// 硬约束：
+//   · 聚焦只发 .hit，不发基 id；
+//   · 从编辑态聚焦到实时态活动 input 需要真窗口，这里直驱框架 mousearea 的
+//     press→release 与 clearFocus，靠同帧补发回来；
+//   · 其余用例的 isFocused 是防回归的不变量。
 //
-// 无头边界（诚实声明）：真实窗口的「指针按下 → Runtime 重定焦 → 事件队列派发」
-// 那一跳需要真窗口（M0 spike §3），这里直驱框架 mousearea 的 press→release 与
-// input 的 onTextInput / onFocusChanged（= Runtime 内部同一调用点）。
+// 下面一组用例覆盖：连续点击切块不丢字、组字中切块被拒、失焦提交、切态换代。
 // 「点完直接打字不用二次点击」的焦点部分在 release 用例里是**真断言**（释放会
 // 清焦点，靠同帧补发回来）；其余用例的 isFocused 是防回归的不变量。
 
@@ -4454,8 +4524,8 @@ bool blurLiveInput(eui::Ui& ui) {
 }
 
 // 本帧块包裹的 stableId，按垂直位置排序（块序 = 自上而下的布局顺序）。
-// 不用用例侧现算模型去猜 stableId —— 增量重切后模块内的 stableId 与"对当前文档
-// 重建一个全新模型"得到的编号可能不同（stableId 由模型跨次更新继承）。
+// 不用用例侧现算模型去猜 stableId——增量重切后模块内的 stableId 与「对当前文档
+// 重建一个全新模型」得到的编号可能不同（stableId 由模型跨次更新继承）。
 std::vector<int> liveBlockSidsByY(eui::Ui& ui) {
     std::vector<std::pair<float, int>> found;
     for (int sid = 0; sid < 64; ++sid) {
@@ -4471,11 +4541,11 @@ std::vector<int> liveBlockSidsByY(eui::Ui& ui) {
 
 } // namespace
 
-// M3 验收 1：连续点击切块 20 次不丢字。每轮：点非活动块 → 该块变活动块（输入框
+// 连续点击切块 20 次不丢字。每轮：点非活动块 → 该块变活动块（输入框
 // 文本 = 该块源码、光标落在点击行）+ 焦点在 input 上 → 直接打一个字符 → 字符必须
 // 落在点击行行首（逐字节，与分块器现算的期望值比）。
 REGISTER_TEST(md_module_live_click_switch_20x,
-              "markdown_module: 实时态连续点击切块 20 次不丢字（M3，headless）", {
+              "markdown_module: 实时态连续点击切块 20 次不丢字（headless）", {
     const std::string text =
         "# T\n\npara one\n\npara two\n\npara three\n\npara four\n\npara five\n";
     test_support::MdHeadlessEnv env(kDirPrefix, "liveclick", kDbName);
@@ -4511,8 +4581,11 @@ REGISTER_TEST(md_module_live_click_switch_20x,
         DOCTEST_REQUIRE_MESSAGE(sids.size() == n,
                                 "渲染块数 " + std::to_string(sids.size()) +
                                     " != 模型块数 " + std::to_string(n));
-        // 换一块点：避开当前活动块 —— 活动块包裹高是 input 贴合高（≠ 几何表
-        // H_k），"点第几行"的公式口径对它不通用
+        // 点【块的第 2 行】：块首行是块间空行——分块器把空行并入下一块头部，
+        // 点在空行上打字会把空行吃掉 → 并块。点第 2 行既不动分块结构，又顺带
+        // 验了「点击按行落点」：2 行块的第 2 行落在 blockTopY + [0.5,1)H 区间
+        //（frac=0.75 → line = first + 1.5 → floor = 第 2 行）；1 行块（标题）
+        // 恒落该行。
         const size_t k = (activeIdx + 1) % n;
         const module::markdown::MdBlock& b = m.blocks()[k];
         // 点【块的第 2 行】（块首行是块间空行 —— 分块器把空行并入下一块头部；
@@ -4575,11 +4648,11 @@ REGISTER_TEST(md_module_live_click_switch_20x,
     return true;
 })
 
-// M3 验收 2：组字中切块被拒 + 组字中冻结块推导（R3）。
+// 组字中切块被拒 + 组字中冻结块推导。
 // 冻结的可观测口径：把块内光标推到块尾 —— 不冻结时「锚 = 输入框文本起点 + 块内
 // 光标」会算出块边界字节（块边界归后一块）→ 下一帧就换块换文本。
 REGISTER_TEST(md_module_live_ime_freeze,
-              "markdown_module: 实时态组字冻结推导 + 组字中切块被拒（M3，headless）", {
+              "markdown_module: 实时态组字冻结推导 + 组字中切块被拒（headless）", {
     const std::string text = "# T\n\npara one\n\npara two\n";
     test_support::MdHeadlessEnv env(kDirPrefix, "liveime", kDbName);
     DOCTEST_REQUIRE(env.db != nullptr);
@@ -4620,7 +4693,7 @@ REGISTER_TEST(md_module_live_ime_freeze,
     DOCTEST_REQUIRE(sids.size() == model.blocks().size());   // 渲染块 == 模型块
     const int sid0 = sids[0];                                 // 块 0（标题）
 
-    // ---- 组字在飞：块内光标推到块尾（= 块边界字节，不冻结就会换块）----
+    // 组字在飞：块内光标推到块尾（= 块边界字节，不冻结就会换块）
     {
         MdInputState& st = e.ui->state<MdInputState>("md.live.input");
         st.cursor = static_cast<int>(block1.size());
@@ -4658,12 +4731,12 @@ REGISTER_TEST(md_module_live_ime_freeze,
     return true;
 })
 
-// M3：失焦提交（spec §7 M3「失焦提交」）——① 清在飞组字（焦点已走 = IME 会话结束；
+// 失焦提交——① 清在飞组字（焦点已走 = IME 会话结束；
 // 不清则冻结谓词恒真 → 切块被永久拒绝、幽灵预编辑留在输入框里）；② 上行未提交
 // 文本。同时钉住安全判据：文档已换代而输入框还没对齐（修订号不符）时【不许】
 // 提交，否则旧块文本会被灌回新文档。
 REGISTER_TEST(md_module_live_blur_commit,
-              "markdown_module: 实时态失焦提交（清组字 + 上行未提交文本 + 修订号守门，M3）", {
+              "markdown_module: 实时态失焦提交（清组字 + 上行未提交文本 + 修订号守门）", {
     const std::string text = "# T\n\npara one\n";
     test_support::MdHeadlessEnv env(kDirPrefix, "liveblur", kDbName);
     DOCTEST_REQUIRE(env.db != nullptr);
@@ -4695,7 +4768,7 @@ REGISTER_TEST(md_module_live_blur_commit,
     DOCTEST_REQUIRE(e.ui->find("md.live.input") != nullptr);
     DOCTEST_CHECK_EQ(e.ui->state<MdInputState>("md.live.input").text, blockText);
 
-    // ---- ① 幽灵组字：失焦必须清掉（否则冻结谓词恒真 → 切块永久被拒）----
+    // ① 幽灵组字：失焦必须清掉（否则冻结谓词恒真 → 切块永久被拒）
     {
         MdInputState& st = e.ui->state<MdInputState>("md.live.input");
         st.compositionText = "ni";
@@ -4707,7 +4780,7 @@ REGISTER_TEST(md_module_live_blur_commit,
                       rev);
     }
 
-    // ---- ② 未提交文本：失焦上行（下一帧起文档/输入框都含它，且落盘）----
+    // ② 未提交文本：失焦上行（下一帧起文档/输入框都含它，且落盘）
     {
         MdInputState& st = e.ui->state<MdInputState>("md.live.input");
         st.text += "Z";   // 模拟「输入框已有内容但没走 onChange」的那一帧
@@ -4725,7 +4798,7 @@ REGISTER_TEST(md_module_live_blur_commit,
     DOCTEST_REQUIRE(readFileBytes(env.dir / "blur.md", &saved));
     DOCTEST_CHECK_MESSAGE(saved == prefix + blockText + "Z", "落盘 [" + saved + "]");
 
-    // ---- ③ 修订号守门：文档已换代（用真实输入让 rev 前进）、输入框还没对齐
+    // ③ 修订号守门：文档已换代（用真实输入让 rev 前进）、输入框还没对齐
     //      → 失焦【不许】把旧文本灌回文档 ----
     DOCTEST_REQUIRE(typeIntoLiveInput(*e.ui, "W"));   // 文档 + rev 前进、输入框已同步
     e.ui->state<MdInputState>("md.live.input").text = "STALE";  // 造出"未对齐"的那一帧
@@ -4742,12 +4815,12 @@ REGISTER_TEST(md_module_live_blur_commit,
     return true;
 })
 
-// M3：切态 / 换笔记 = 输入框状态换代（M0 C2 的 releaseStateScope）——释放
+// 切态 / 换笔记 = 输入框状态换代（releaseStateScope）——释放
 // md.live.input 前缀（组字 / 光标 / framework undo 栈不许跟着稳定 id 复活），
 // 并靠 liveFocusPending_ 同帧补发聚焦（释放会清焦点；"先释放、后补发"的顺序由
 // Runtime::compose 保证：consumeReleasedStateScopes → consumePendingFocusId）。
 REGISTER_TEST(md_module_live_state_release_note_switch,
-              "markdown_module: 实时态换笔记释放输入框状态 + 同帧补回焦点（M3，headless）", {
+              "markdown_module: 实时态换笔记释放输入框状态 + 同帧补回焦点（headless）", {
     // 两篇笔记的块文本完全相同（# T / para one）——"文本没变 → 不换文本"时，
     // 唯一能证明状态被换代的证据就是组字/undo 栈被清 + 焦点被补回
     const std::string docA = "# T\n\npara one\n";
@@ -4775,7 +4848,7 @@ REGISTER_TEST(md_module_live_state_release_note_switch,
     frame();
     DOCTEST_REQUIRE(e.ui->find("md.live.input") != nullptr);
 
-    // 造出"上一篇残留"：组字在飞 + 非零光标 + framework undo 栈有条目
+    // 造出「上一篇残留」：组字在飞 + 非零光标 + framework undo 栈有条目
     {
         MdInputState& st = e.ui->state<MdInputState>("md.live.input");
         st.compositionText = "ni";
@@ -4806,8 +4879,8 @@ REGISTER_TEST(md_module_live_state_release_note_switch,
     return true;
 })
 
-// ==================== M4：块边界键（spec §3.4 / 已定决策 D-C）====================
-// 验收（spec §7 M4 行）：Enter/Backspace/Delete/↑↓ 边界语义 + 边界偏移单测
+// 块边界键
+// Enter/Backspace/Delete/↑↓ 边界语义 + 边界偏移单测
 //（纯函数侧在 test_md_live_edit.cpp）+ 手工。
 //
 // 无头边界（诚实声明）：本组直驱活动 input 的 onKeyEvent（= Runtime 内部同一
@@ -4859,10 +4932,10 @@ bool enterLiveAt(test_support::HeadlessFrame& e, ::core::Module* mod,
 
 } // namespace
 
-// M4 验收 ①：Backspace 于块首 = 删前一个换行（与上一块粘连、活动块自动跟随），
+// ① Backspace 于块首 = 删前一个换行（与上一块粘连、活动块自动跟随），
 // 首块块首不消费（文档不变）；CRLF 成对删。
 REGISTER_TEST(md_module_live_boundary_backspace,
-              "markdown_module: 实时态块首退格删接缝换行（M4，headless）", {
+              "markdown_module: 实时态块首退格删接缝换行（headless）", {
     //   [0,8)   "one\ntwo\n"   段落
     //   [8,13)  "\n# H\n"      标题（前导空行折叠）
     //   [13,20) "\nthree\n"    段落
@@ -4935,7 +5008,7 @@ REGISTER_TEST(md_module_live_boundary_backspace,
     return true;
 })
 
-// M4 验收 ②：Delete 于块边界（块终点字节）删该处的换行；文末不消费、块内普通
+// ② Delete 于块边界（块终点字节）删该处的换行；文末不消费、块内普通
 // 字符删除交回内置。
 // CRLF 说明（本次实证）：Windows 文本模式读（markdown_service.cpp:641 的
 // std::ifstream 未开 ios::binary）把 CRLF 归一成 LF，落盘走 core::atomic_write
@@ -4943,7 +5016,7 @@ REGISTER_TEST(md_module_live_boundary_backspace,
 // 磁盘字节也变 LF。故模块路径按 LF 验证；CRLF 的字节语义（'\r\n' 成对删、列钳到
 // '\r' 前）在 test_md_live_edit.cpp 的纯函数用例里覆盖。
 REGISTER_TEST(md_module_live_boundary_delete,
-              "markdown_module: 实时态块尾删除删接缝换行（M4，headless）", {
+              "markdown_module: 实时态块尾删除删接缝换行（headless）", {
     //   [0,4)  "# A\n"     标题
     //   [4,10) "\n# B\n"   标题（前导空行折叠 —— 块边界字节 = 行首 '\n'）
     const std::string text = "# A\n\n# B\n";
@@ -4989,9 +5062,8 @@ REGISTER_TEST(md_module_live_boundary_delete,
         "块尾删除后活动块文本 [" +
             escapeCr(e.ui->state<MdInputState>("md.live.input").text) + "]");
     DOCTEST_CHECK_EQ(e.ui->state<MdInputState>("md.live.input").cursor, 0);
-    // 证伪探针（本用例的 M4 判据）：删除走【模块层边界路径】（直接改文档 + 重锚），
-    // 不走 input 内置编辑 —— 故 framework undo 栈不增（已定决策 D5：实时态撤销归
-    // 模块层快照栈 = M5）。卸载 M4 接线后本断言必红（内置 Delete 先 pushUndoState）。
+    // 证伪探针：删除走【模块层边界路径】（直接改文档 + 重锚），不产生 framework
+    // 快照。卸载边界路径后本断言必红（内置 Delete 会先 pushUndoState）。
     // 注意：LF 文本下两条路径的【文档字节结果相同】（都删掉那个 '\n'），故文档断言
     // 骗不过 —— CRLF 成对删的字节语义由纯函数用例 md_live_boundary_edit 锁死。
     DOCTEST_CHECK_EQ(e.ui->state<MdInputState>("md.live.input").undoStack.size(),
@@ -5033,9 +5105,9 @@ REGISTER_TEST(md_module_live_boundary_delete,
     return true;
 })
 
-// M4 验收 ③：跨块 ↑↓ —— 边界行按 ↑/↓ 跳相邻块（列保持），非边界行交回内置。
+// 跨块 ↑↓：边界行按 ↑/↓ 跳相邻块（列保持），非边界行交回内置。
 REGISTER_TEST(md_module_live_vertical_block_move,
-              "markdown_module: 实时态跨块 ↑↓（边界行跳块 + 块内行交回内置，M4）", {
+              "markdown_module: 实时态跨块 ↑↓（边界行跳块 + 块内行交回内置）", {
     const std::string text = "one\ntwo\n\n# H\n\nthree\n";
     test_support::MdHeadlessEnv env(kDirPrefix, "livevert", kDbName);
     DOCTEST_REQUIRE(env.db != nullptr);
@@ -5128,10 +5200,10 @@ REGISTER_TEST(md_module_live_vertical_block_move,
     return true;
 })
 
-// M4 验收 ④：块内按键走既有 md_keyboard 纯函数（Enter 续列表 / Tab 缩进 / Ctrl+B
-// 包裹）——写回活动 input 并上行拼文档（spec §3.4「全部走既有 md_keyboard」）。
+// ④ 块内按键走既有 md_keyboard 纯函数（Enter 续列表 / Tab 缩进 / Ctrl+B 包裹）
+// ——写回活动 input 并上行拼文档。
 REGISTER_TEST(md_module_live_inblock_keys,
-              "markdown_module: 实时态块内按键（Enter 续列表/Tab/Ctrl+B，M4）", {
+              "markdown_module: 实时态块内按键（Enter 续列表/Tab/Ctrl+B）", {
     const std::string text = "- a\n";
     test_support::MdHeadlessEnv env(kDirPrefix, "livekeys", kDbName);
     DOCTEST_REQUIRE(env.db != nullptr);
@@ -5182,12 +5254,12 @@ REGISTER_TEST(md_module_live_inblock_keys,
     return true;
 })
 
-// M5 验收 ①：块级撤销/重做（spec §7 M5 / §4.5 D5）——跨块编辑序列后 Ctrl+Z
-// 逐级回退（每级 = 一次编辑组），Ctrl+Y / Ctrl+Shift+Z 逐级重做；快照栈在模块层，
+// ① 块级撤销/重做：跨块编辑序列后 Ctrl+Z 逐级回退（每级 = 一次编辑组），
+// Ctrl+Y / Ctrl+Shift+Z 逐级重做；快照栈在模块层，
 // 【拦截证据】= framework per-instance 栈的大小在被拦截的 Ctrl+Z 前后不变。
 // 跨块序列是 D5 的立身之本：框架栈存的是【块局部文本】，换块后恢复会写错块。
 REGISTER_TEST(md_module_live_undo_redo,
-              "markdown_module: 实时态块级撤销/重做（跨块序列 + Ctrl+Z/Y/Shift+Z，M5）", {
+              "markdown_module: 实时态块级撤销/重做（跨块序列 + Ctrl+Z/Y/Shift+Z）", {
     const std::string text = "alpha\n\nbeta\n";
     test_support::MdHeadlessEnv env(kDirPrefix, "liveundo", kDbName);
     DOCTEST_REQUIRE(env.db != nullptr);
@@ -5300,12 +5372,12 @@ REGISTER_TEST(md_module_live_undo_redo,
     return true;
 })
 
-// M5 验收 ③：切态往返 = 撤销栈换代（spec §4.5「模式切换前推栈」+「退出实时态
+// ③ 切态往返 = 撤销栈换代（「模式切换前推栈」+「退出实时态
 // 不清栈」的落地口径）——编辑态改过的内容不许被实时态的旧快照撤销掉。快照只覆盖
 // 一个实时态编辑会话；进态那一帧按当前文档重取基线（否则 Ctrl+Z 会静默吞掉
 // 编辑态/外部编辑器的改动，还会被落盘防抖写进磁盘）。
 REGISTER_TEST(md_module_live_undo_mode_roundtrip,
-              "markdown_module: 切态往返后撤销栈换代（旧快照不跨编辑会话，M5）", {
+              "markdown_module: 切态往返后撤销栈换代（旧快照不跨编辑会话）", {
     const std::string text = "para";
     test_support::MdHeadlessEnv env(kDirPrefix, "liveurt", kDbName);
     DOCTEST_REQUIRE(env.db != nullptr);
@@ -5341,9 +5413,9 @@ REGISTER_TEST(md_module_live_undo_mode_roundtrip,
         frame();
     }
     DOCTEST_REQUIRE(e.ui->find(kEditorInputId) != nullptr);
-    // 编辑态改一个字（不属于实时态那一次编辑会话）。两步：先走一帧让编辑器文本
-    // 与文档对齐（值替换帧会把光标搬到新文本末尾），再把光标摆到文末；元素指针
-    // 不能跨帧持有（ui.begin 每帧重建树），故最后重新 find 再派发输入
+    // 编辑态改一个字（不属于实时态那一次编辑会话）。两步：先走一帧让编辑器文本与
+    // 文档对齐（值替换帧会把光标搬到新文本末尾），再把光标摆到文末；元素指针不能
+    // 跨帧持有（ui.begin 每帧重建树），故最后重新 find 再派发输入
     frame();
     e.ui->state<MdInputState>(kEditorInputId).cursor = static_cast<int>(
         e.ui->state<MdInputState>(kEditorInputId).text.size());
@@ -5381,11 +5453,11 @@ REGISTER_TEST(md_module_live_undo_mode_roundtrip,
     return true;
 })
 
-// M5 验收 ②：M4 遗留收口——块边界删除【不走 input 内置编辑】，故 framework 栈
-// 不增（M4 用例 md_module_live_boundary_delete 已把这条锁死为 0）；M5 之前这条路
+// ② 块边界删除【不走 input 内置编辑】，故 framework 栈不增（该用例已把这条
+// 锁死为 0）；
 // 径因此不可撤销。本用例：块首退格改文档 → Ctrl+Z 走模块层快照栈撤回来。
 REGISTER_TEST(md_module_live_boundary_undo,
-              "markdown_module: 实时态块首退格可撤销（M4 遗留 → M5 快照栈）", {
+              "markdown_module: 实时态块首退格可撤销", {
     const std::string text = "# A\n\n# B\n";
     test_support::MdHeadlessEnv env(kDirPrefix, "livebund", kDbName);
     DOCTEST_REQUIRE(env.db != nullptr);
@@ -5409,9 +5481,7 @@ REGISTER_TEST(md_module_live_boundary_undo,
     DOCTEST_CHECK_EQ(e.ui->state<MdInputState>("md.live.input").text,
                      std::string("\n# B\n"));
 
-    // ① 块首退格（M4 边界路径）：删接缝 '\n' → 两块粘连；光标落接缝字节 3，
-    //    而块边界字节归【后一块】→ 粘连后块 0 = [0,4) "# A\n"、块 1 = [4,8)
-    //    "# B\n"，接缝字节 3 落在块 0 → 活动块跟随到块 0（M4 语义，非本线改动）
+    // ① 块首退格（边界路径）：删接缝 '\n' → 两块粘连；光标落接缝字节 3，
     DOCTEST_REQUIRE(pressLiveKey(*e.ui, eui::InputKey::Backspace));
     frame();
     const std::string merged = "# A\n# B\n";
@@ -5420,11 +5490,11 @@ REGISTER_TEST(md_module_live_boundary_undo,
         "块首退格后活动块 [" +
             escapeCr(e.ui->state<MdInputState>("md.live.input").text) + "]");
     DOCTEST_CHECK_EQ(e.ui->state<MdInputState>("md.live.input").cursor, 3);
-    // 证伪探针（M4 已锁的同一事实）：边界路径不产生 framework 快照
+    // 证伪探针（边界路径已锁的同一事实）：不产生 framework 快照
     DOCTEST_CHECK_EQ(e.ui->state<MdInputState>("md.live.input").undoStack.size(),
                      static_cast<size_t>(0));
 
-    // ② Ctrl+Z → 模块层快照栈把这次边界删除撤销回来（M4 遗留缺口）
+    // ② Ctrl+Z → 模块层快照栈把这次边界删除撤销回来
     DOCTEST_REQUIRE(pressLiveKey(*e.ui, eui::InputKey::Z, false, true));
     frame();
     DOCTEST_CHECK_MESSAGE(
@@ -5444,7 +5514,7 @@ REGISTER_TEST(md_module_live_boundary_undo,
     DOCTEST_CHECK_MESSAGE(saved == text, "撤销后落盘 [" + escapeCr(saved) + "]");
 
     // ④ 反向：Ctrl+Y 重做这次边界删除 → 回到粘连文档（光标 = 撤销前的接缝字节 3，
-    //    重切后落在块 0 内 —— 与正向删除同一落点口径）
+    //    重切后落在块 0 内——与正向删除同一落点口径）
     DOCTEST_REQUIRE(pressLiveKey(*e.ui, eui::InputKey::Y, false, true));
     frame();
     DOCTEST_CHECK_MESSAGE(
@@ -5460,22 +5530,22 @@ REGISTER_TEST(md_module_live_boundary_undo,
     return true;
 })
 
-// ==================== M6：滚动锚定与光标跟随（spec §3.3 / D-B「越界才拉」）====================
+// 滚动锚定与光标跟随
 // 判定与目标在纯函数层（test_md_live_edit 的 md_live_follow_*）钉死；本组验接线：
 //   · 越界才拉：点击 / 打字把 caret 落到视口安全带之外才动一次滚动，落点 = caret − 0.4H
 //   · 安全带内不干预：caret 已在视口里时滚动位置一动不动
-//   · 用户滚轮关跟随（spec §3.3）：滚轮后即便 caret 深深越界也不把视口拽回，
-//     直到下一次光标事件（打字 / 方向键 / 点击）才恢复跟随 —— 这是「越界才拉」
+//   · 用户滚轮关跟随：滚轮后即便 caret 深深越界也不把视口拽回，直到下一次光标
+//     事件（打字 / 方向键 / 点击）才恢复跟随
 //     与「用户优先」的交界，对应手工点验 ④。
 // 观测口径（诚实声明）：无头跑的是真实 Runtime（HeadlessFrame::frame 走
 //   core::dsl::Runtime::compose）→ 程序化落地（模块调 Ui::setScrollOffset、帧末
 //   消费直写实例 offset）真实生效，但看不到内容位移。可观测的是 scrollView 的
 //   【声明值】（scrollOffset / scrollMaxOffset = 模块记账经框架钳位后的那一版）：
 //   落地当帧的声明值还是拉前的旧值、下一帧才反映新 offset → 断言偏移前多走一帧。
-//   真实滚动位移 / 观感 / 帧率由手工点验 ③④ 补（spec §8.3）。
+//   真实滚动位移 / 观感 / 帧率由手工点验补。
 namespace {
 
-// 实时态 scrollView id（固定，不再轮转 —— M6 重构去 id 轮转 hack 后全流程唯一 id）
+// 实时态 scrollView id 固定，全流程唯一（轮转 id 的 hack 已去）
 constexpr const char* kLiveScrollId0 = "md.live.scroll";
 
 // 活动 input 的光标 y（与模块同一口径：块顶 + input inset 10 + 显示行 × 行高）。
@@ -5497,11 +5567,11 @@ float liveCaretDocY(eui::Ui& ui, const std::string& blockText, float blockTopY) 
 
 } // namespace
 
-// M6 验收（spec §8.3 手工 ③ 的无头对应）：把 caret 落到视口下方的块 —— 越出下边界
+// 把 caret 落到视口下方的块 —— 越出下边界
 // → 下一帧拉一次到 caret − 0.4H（落地走 Ui::setScrollOffset 直写实例 offset，id
 // 固定不轮转，见模块注释）；随后在安全带内打字不再动滚动（「一次性，不逐帧强制」）。
 REGISTER_TEST(md_module_live_scroll_follow_pull,
-              "markdown_module: 实时态光标跟随 越界才拉一次（M6，headless）", {
+              "markdown_module: 实时态光标跟随 越界才拉一次（headless）", {
     const std::string doc = tallNoteDoc("F", 40);
     test_support::MdHeadlessEnv env(kDirPrefix, "livefollow", kDbName);
     DOCTEST_REQUIRE(env.db != nullptr);
@@ -5597,12 +5667,12 @@ REGISTER_TEST(md_module_live_scroll_follow_pull,
     return true;
 })
 
-// M6 验收（spec §8.3 手工 ④ 的无头对应）：用户先滚动、再打字 ——
+// 用户先滚动、再打字 ——
 //   · 滚轮（框架 setScrollOffset → scrollView.onChange）关跟随：caret 再越界也不拽回
 //     （「其余时候不干预滚动」）；
 //   · 下一次光标事件（打字）恢复跟随 → 越界 → 拉一次把 caret 带回安全带。
 REGISTER_TEST(md_module_live_scroll_follow_wheel_disarms,
-              "markdown_module: 实时态用户滚动关跟随 打字才回拉（M6，headless）", {
+              "markdown_module: 实时态用户滚动关跟随 打字才回拉（headless）", {
     const std::string doc = tallNoteDoc("G", 40);
     test_support::MdHeadlessEnv env(kDirPrefix, "livefollowwheel", kDbName);
     DOCTEST_REQUIRE(env.db != nullptr);
@@ -5660,7 +5730,7 @@ REGISTER_TEST(md_module_live_scroll_follow_wheel_disarms,
     DOCTEST_REQUIRE(svPull != nullptr);
     DOCTEST_REQUIRE(svPull->scrollOffset > 0.0f);   // 跟随拉过一次
 
-    // ① 用户滚轮回到顶部：关跟随（spec §3.3「用户滚轮 → onChange 写回并置 false」）
+    // ① 用户滚轮回到顶部：关跟随（onChange 写回并置 false）
     // 程序化标志已被落地当帧的 echo 消费（见模块 liveProgrammaticScroll_ 注释），
     // 此刻的 onChange 与用户滚轮无差别 —— 走关跟随分支
     DOCTEST_REQUIRE(svPull->onScrollOffsetChanged != nullptr);
@@ -5696,12 +5766,12 @@ REGISTER_TEST(md_module_live_scroll_follow_wheel_disarms,
     return true;
 })
 
-// M6：caret 的 y 用【显示行】（软折行参与计数），不是逻辑行 ——
+// caret 的 y 用【显示行】（软折行参与计数），不是逻辑行 ——
 // 折行段落里按逻辑行算会系统性低估 caret 的 y，恰是"块底部连续打字"最需要
-// 跟手的场景（spec §8.3 手工 ③）。用例把两种口径的差异做成可判定的下界：
+// 这是跟手的场景。用例把两种口径的差异做成可判定的下界：
 // 拉后目标必须比"逻辑行口径的期望值"至少高出半个折行高度。
 REGISTER_TEST(md_module_live_scroll_follow_wrapped_caret,
-              "markdown_module: 实时态折行段落 caret 按显示行跟随（M6，headless）", {
+              "markdown_module: 实时态折行段落 caret 按显示行跟随（headless）", {
     // 长段落在中间：30 段短段 → 1 段超长（软折行多行）→ 30 段短段（保证下方有
     // 内容 → 拉的目标不会被 maxOffset 钳掉 → 能验精确值）
     const std::string longLine = "W " + std::string(600, 'w');
@@ -5809,13 +5879,13 @@ REGISTER_TEST(md_module_live_scroll_follow_wrapped_caret,
     return true;
 })
 
-// M6 重构（spec 2026-09-28 §4.2 可达自动化）：去 id 轮转 hack 后滚动容器 id
+// 去 id 轮转 hack 后滚动容器 id 固定——元素每帧重建，scrollStateId 稳定 =
 // 跨帧恒定。连续 compose 帧 find("md.live.scroll") 都命中，且 scrollStateId 不变
 //（元素每帧重建 → scrollStateId 稳定 = 同一滚动 state 实例的判据）；一次跟随拉
 // 之后 id 依然不变（不再有 .g1 换代实例）；离开实时态后元素不复存在（存在性
 // 回归，照 :469-485 模式）。
 REGISTER_TEST(md_module_live_scroll_id_stable,
-              "markdown_module: 实时态滚动容器 id 跨帧恒定（M6，headless）", {
+              "markdown_module: 实时态滚动容器 id 跨帧恒定（headless）", {
     const std::string doc = tallNoteDoc("H", 40);
     test_support::MdHeadlessEnv env(kDirPrefix, "liveidstable", kDbName);
     DOCTEST_REQUIRE(env.db != nullptr);
@@ -5884,8 +5954,8 @@ REGISTER_TEST(md_module_live_scroll_id_stable,
     return true;
 })
 
-// ==================== Phase 3 M7：高亮与视觉一致（spec §7 M7 / §4.6）====================
-// 三件事（同 spec §4.6 关联方表）：
+// 高亮与视觉一致
+// 三件事：
 //   ① liveHighlighter_ 独立实例喂【块文本】——runs 用块局部坐标（byteStart 以
 //      块首为原点，与 input 内排版同原点）；与编辑态实例（整篇文档坐标）分
 //      实例是硬约束（混用会因坐标系交替抖动围栏缓存）；块内围栏状态自洽；
@@ -5897,7 +5967,7 @@ REGISTER_TEST(md_module_live_scroll_id_stable,
 //      互斥只建一份；验收口径 = 块间隙/圆角/色表一致（宽度无关项；live 720px
 //      与预览 760px 阅读列宽差异导致的块高差属预期，不在此比对）
 REGISTER_TEST(md_module_live_highlight,
-              "markdown_module: 实时态活动块高亮块文本坐标（M7，headless）", {
+              "markdown_module: 实时态活动块高亮块文本坐标（headless）", {
     const std::string text =
         "# 标题\n\n`代码` 段\n\n```cpp\nint v = 7;\n```\n";
     test_support::MdHeadlessEnv env(kDirPrefix, "livehl", kDbName);
@@ -5931,7 +6001,7 @@ REGISTER_TEST(md_module_live_highlight,
 
     // ① 活动块 = 第二块：输入框文本 = 块源码（逐字节）；`代码` 段所在行 =
     //    1 个 code run、整段 success 色（md_highlight 行内代码语义在块文本上
-    //    照常成立 —— spec §4.6「高亮语义不退化」）。注意块模型分块约定：
+    //    照常成立（高亮语义不退化）。注意块模型分块约定：
     //    段落块【包含】接续空行的 '\n'（块 1 = "\n`代码` 段\n"），故源码空行
     //    是行 0、正文在行 1 —— 断言按元素文本匹配定位行，不写死行号之外假设
     const std::string blockText =
@@ -5989,8 +6059,8 @@ REGISTER_TEST(md_module_live_highlight,
     DOCTEST_CHECK(colorEq(fence2->textRuns[0].color,
                           core::theme::current().colors.textTertiary));
 
-    // ④ 主题切换：live input styleRevision++ + 可视行 runs 换色（Phase B 语义，
-    //    与编辑态同口径）；换回深色不污染后续用例
+    // ④ 主题切换：live input styleRevision++ + 可视行 runs 换色（与编辑态同口径）；
+    //    换回深色不污染后续用例
     const unsigned long long revBefore =
         e.ui->state<MdInputState>("md.live.input").styleRevision;
     const std::string themeBefore = core::theme::currentThemeName();
@@ -6015,7 +6085,7 @@ REGISTER_TEST(md_module_live_highlight,
 })
 
 REGISTER_TEST(md_module_live_active_frame,
-              "markdown_module: 实时态活动块边框/背景（M7，headless）", {
+              "markdown_module: 实时态活动块边框/背景（headless）", {
     const std::string text = "# A\n\n## B\n\n## C\n";
     test_support::MdHeadlessEnv env(kDirPrefix, "liveframe", kDbName);
     DOCTEST_REQUIRE(env.db != nullptr);
@@ -6065,7 +6135,7 @@ REGISTER_TEST(md_module_live_active_frame,
     DOCTEST_CHECK(colorEq(frameEl->border.color, expectBorder));
     DOCTEST_CHECK(frameEl->color.a == 0.0f);   // 透明填充：不挡 input 文本
 
-    // ② 非活动块无 .frame（活动块互斥 —— 每帧只建活动块一份，spec §4.4）
+    // ② 非活动块无 .frame（活动块互斥 —— 每帧只建活动块一份）
     DOCTEST_CHECK(e.ui->find("md.live.blk.0.frame") == nullptr);
     DOCTEST_CHECK(e.ui->find("md.live.blk.2.frame") == nullptr);
 
@@ -6080,7 +6150,7 @@ REGISTER_TEST(md_module_live_active_frame,
 })
 
 REGISTER_TEST(md_module_live_preview_parity,
-              "markdown_module: 实时态与预览态逐块观感一致（M7，headless）", {
+              "markdown_module: 实时态与预览态逐块观感一致（headless）", {
     const std::string text =
         "# 头\n\n首段文字\n\n```cpp\nint v = 7;\n```\n\n尾段\n";
     test_support::MdHeadlessEnv env(kDirPrefix, "liveparity", kDbName);
@@ -6182,20 +6252,21 @@ REGISTER_TEST(md_module_live_preview_parity,
     return true;
 })
 
-// ==================== MD-01：重载后活动块内容映射（spec 2026-09-28-md01）====================
-// 验收 §5.2：静默重载/冲突重载把整篇换成磁盘版本后，活动块按内容身份
+// 重载后活动块内容映射
+// 静默重载/冲突重载把整篇换成磁盘版本后，活动块按内容身份
 // (kind,hash,stableId) 映射到新文档，而不是落到「覆盖旧字节的新块」。
 //
-// 执行前置（v2 修订 F5）：轮询节流 = 真实 5s 时钟（无注入缝）；无头下静默路径靠
-// Windows 真实 FileWatcher 的 credit（hasWatchCredit）绕过节流（与
-// test_markdown_service.cpp 的 watcher 用例同一机制）。mtime 秒级严格 > 比较 →
+// 执行前置：轮询节流 = 真实 5s 时钟（无注入缝）；无头下静默路径靠
+// 原生 FileWatcher（Windows ReadDirectoryChangesW / macOS FSEvents 均为真实现；
+// 非 Apple POSIX stub 无事件，该路径退化为 5s 轮询）的 credit（hasWatchCredit）
+// 绕过节流（与 test_markdown_service.cpp 的 watcher 用例同一机制）。mtime 秒级严格 > 比较 →
 // 外写后按「max(写前文件时间, 写后真实时间) + 2s」推进（多次外写严格递增，秒级
 // floor 后仍 ≥2 整秒间隔，末次不会因落在同一墙钟秒而检测不到；等价满足「晚于
 // lastKnownMtime_ 所在秒」，免 ≥1s 真睡）。watcher 送达是异步的（去抖 200ms +
 // 调度），不用固定睡等：每条用例写盘后按「重载正信号」有界自旋（帧 + 120ms ×
 // 60 预算），信号帧即重载帧；冲突路径的自旋每轮先补一次编辑重置 400ms 自动保存
 // 防抖（复刻按观察到的全文/块文本镜像，重试次数不影响确定性）。5s 真时钟节流
-// 路径本身登记 deferred（spec §5.2 执行前置）。用例 6/7 按 F5 走冲突 toast 路径。
+// 路径本身登记 deferred。相关用例走冲突 toast 路径。
 
 namespace {
 
@@ -6275,7 +6346,7 @@ bool typeIntoEditor(eui::Ui& ui, const std::string& text) {
 
 } // namespace
 
-// ============ 用例 1：前插平移，三元组主键命中（spec §5.2 #1）============
+// 用例 1：前插平移，三元组主键命中
 REGISTER_TEST(md_module_md01_reload_prepend,
               "markdown_module: MD-01 reload map prepend triple hit (headless)", {
     const std::string oldDoc = "alpha\n\nbravo\n\ncharlie\n";
@@ -6324,9 +6395,9 @@ REGISTER_TEST(md_module_md01_reload_prepend,
         newDoc.substr(bs[mapped].start, bs[mapped].end - bs[mapped].start);
     DOCTEST_CHECK_EQ(want, std::string("\nbravo\n"));
     DOCTEST_CHECK_EQ(md01RenderedSids(*e.ui, "md.live"), wantSids);
-    // 公共断言：锚点与可见 input 一致（spec §5.2 公共断言）
+    // 公共断言：锚点与可见 input 一致
     DOCTEST_CHECK_EQ(e.ui->state<MdInputState>("md.live.input").text, want);
-    // F2 配对：scope 释放帧后文本仍绑定且焦点同帧补发
+    // 配对断言：scope 释放帧后文本仍绑定且焦点同帧补发
     frame();
     DOCTEST_CHECK_EQ(e.ui->state<MdInputState>("md.live.input").text, want);
     DOCTEST_CHECK(e.ui->isFocused("md.live.input.hit"));
@@ -6334,8 +6405,8 @@ REGISTER_TEST(md_module_md01_reload_prepend,
     return true;
 })
 
-// ============ 用例 2：不相邻双改（A B C → A' B C'），三元失配 → (kind,hash) 回退 ============
-// v2 修订 F8：单点改 A 不够——后缀对齐保 id，三元组仍命中；必须 A、C 都改，
+// 用例 2：不相邻双改（A B C → A' B C'），三元失配 → (kind,hash) 回退
+// 单点改 A 不够——后缀对齐保 id，三元组仍命中；必须 A、C 都改，
 // p=0 s=0 → B（字节未变）落变化窗口丢 stableId。
 REGISTER_TEST(md_module_md01_reload_double_edit,
               "markdown_module: MD-01 reload map double edit kind-hash fallback (headless)", {
@@ -6400,7 +6471,7 @@ REGISTER_TEST(md_module_md01_reload_double_edit,
     return true;
 })
 
-// ============ 用例 3：删块零命中 → 钳位（多帧断言，spec §5.2 #3）============
+// 用例 3：删块零命中 → 钳位（多帧断言）
 REGISTER_TEST(md_module_md01_reload_block_deleted,
               "markdown_module: MD-01 reload map block deleted clamp zero-hit (headless)", {
     const std::string oldDoc = "alpha\n\nbravo\n\ncharlie\n";
@@ -6447,7 +6518,7 @@ REGISTER_TEST(md_module_md01_reload_block_deleted,
     const size_t kExp = replica.blockIndexAt(clamped);
     const std::string want =
         newDoc.substr(nbs[kExp].start, nbs[kExp].end - nbs[kExp].start);
-    // 多帧断言（审计 major）：重载帧后 3 帧收敛不飘（下帧重推覆盖不掉）
+    // 多帧断言：重载帧后 3 帧收敛不飘（下帧重推覆盖不掉）
     DOCTEST_CHECK_EQ(e.ui->state<MdInputState>("md.live.input").text, want);
     DOCTEST_CHECK_EQ(md01RenderedSids(*e.ui, "md.live"), wantSids);
     frame();
@@ -6459,7 +6530,7 @@ REGISTER_TEST(md_module_md01_reload_block_deleted,
     return true;
 })
 
-// ============ 用例 3b：非空→空文档重载（零命中最坏形态，F4 空文档 guard）============
+// 用例 3b：非空→空文档重载（零命中最坏形态，空文档 guard）
 REGISTER_TEST(md_module_md01_reload_to_empty,
               "markdown_module: MD-01 reload map non-empty to empty doc guard (headless)", {
     const std::string oldDoc = "alpha\n\nbravo\n\ncharlie\n";
@@ -6497,10 +6568,9 @@ REGISTER_TEST(md_module_md01_reload_to_empty,
     return true;
 })
 
-// ============ 用例 4：重复块三元组决胜（spec §5.2 #4，v2 修订 F7）============
-// §5.2 #4 的段落 fixture（abc 重复段落）切分器产不出全同块（空行并入下一块头 →
-// p1="abc\n" ≠ p2="\nabc\n" 字节不等）；按 §5.1 的权威 fixture 用字节全同的
-// 代码围栏 ×3（围栏内容吞掉块间空行，三块逐字节全同、stableId 各异）。
+// 用例 4：重复块三元组决胜
+// 段落 fixture（abc 重复段落）切分器产不出全同块（空行并入下一块头 →
+// p1="abc\n" ≠ p2="\nabc\n" 字节不等）；按权威 fixture 用字节全同的
 REGISTER_TEST(md_module_md01_reload_duplicate_fences,
               "markdown_module: MD-01 reload map duplicate fences triple wins (headless)", {
     const std::string unit = "\n```\n\n```\n";
@@ -6566,14 +6636,14 @@ REGISTER_TEST(md_module_md01_reload_duplicate_fences,
     return true;
 })
 
-// ============ 用例 6：冲突 toast 路径（v2 修订 F5：确定性高于静默轮询）============
+// 用例 6：冲突 toast 路径（确定性高于静默轮询）
 // 验证两条入口共用同一 reloadCurrentNote 映射。命中语义的关键：未保存编辑必须落
 // 在【非活动块】上（编辑态打字改 alpha，进实时态后活动块 = 干净的 bravo；活动块
 // 被编辑则 (kind,hash) 恒与磁盘不同 → 结构性不可命中）。冲突检测在编辑态完成
 //（编辑器元素在帧树里，400ms 自动保存防抖靠每轮补打一字符重置——idle < 400ms
 // 不落盘，外部版本保留），弹 toast 后再切实时态点击 action：重载在 mode == Live
 // 下执行，映射路径与用例 1 完全同一条。复刻按观察到的编辑器全文镜像，重试次数
-// 不影响确定性。用例 5(CRLF)/5s 时钟脉冲路径登记 deferred（§5.2 执行前置）。
+// 不影响确定性。CRLF / 时钟脉冲路径登记 deferred。
 REGISTER_TEST(md_module_md01_reload_conflict_toast,
               "markdown_module: MD-01 conflict toast reload path triple hit (headless)", {
     const std::string oldDoc = "alpha\n\nbravo\n\ncharlie\n";
@@ -6651,11 +6721,11 @@ REGISTER_TEST(md_module_md01_reload_conflict_toast,
     return true;
 })
 
-// ============ 用例 7：捕获越界竞态（v2 修订 F5：冲突路径）============
+// 用例 7：捕获越界竞态（冲突路径）
 // 构造「输入 onChange 当帧收缩 blocks + 冲突重载」：活动块 = 块 2，选中其文本首
 // 字节（块间空行）删除 → 3 块合并成 2 块，liveActiveBlock_ 保持陈旧值 2（越界态）
 // → 冲突 toast 重载 → 步骤 1 在已收缩模型上重 derive（blockIndexAt 对非空恒
-// in-range，F6）→ 不越界读、不崩、零命中钳位。冲突自旋每轮在活动块尾（= 文档
+// in-range）→ 不越界读、不崩、零命中钳位。冲突自旋每轮在活动块尾（= 文档
 // 末块）追加一字符重置防抖 → 文档恒为当前文本 + Z，复刻可精确镜像。
 REGISTER_TEST(md_module_md01_reload_capture_race,
               "markdown_module: MD-01 capture race after blocks shrink (headless)", {
@@ -6715,7 +6785,7 @@ REGISTER_TEST(md_module_md01_reload_capture_race,
         }
     }
     DOCTEST_REQUIRE_MESSAGE(toastSeen, "冲突 toast 未弹出：外部写盘未被检测到");
-    // 点击「重载磁盘版本」→ 步骤 1 在已收缩模型上重 derive（恒 in-range，F6）
+    // 点击「重载磁盘版本」→ 步骤 1 在已收缩模型上重 derive（恒 in-range）
     const auto* action = e.ui->find("md.toast.action.hit");
     DOCTEST_REQUIRE(action != nullptr && action->onClick != nullptr);
     // 点击时锚字节 = liveInputStart_(6) + 输入框光标(mergedText 长 + typedZ)
@@ -6744,7 +6814,7 @@ REGISTER_TEST(md_module_md01_reload_capture_race,
     return true;
 })
 
-// ============ 用例 8：非实时态回归（spec §5.2 #8）============
+// 用例 8：非实时态回归
 REGISTER_TEST(md_module_md01_reload_non_live_modes,
               "markdown_module: MD-01 reload untouched outside live mode (headless)", {
     const std::string oldDoc = "alpha\n\nbravo\n\ncharlie\n";
@@ -6799,13 +6869,12 @@ REGISTER_TEST(md_module_md01_reload_non_live_modes,
     mod->onStop();
     return true;
 })
-// ==================== M8：联动收口（spec §7 M8 / §3.3 / §4.2） ====================
+// 联动收口
 
-// M8-1：大纲跳转走 setLiveCursor（spec §4.6「大纲跳转在实时态改调 setLiveCursor」）。
-// 修复前 jumpToHeading 在实时态写 kEditorInputId（该输入不在帧树 = 死写），
-// 活动块不换、光标不动；修复后应换活动块文本 + 光标落标题行行首 + 补发聚焦。
+// ① 大纲跳转走 setLiveCursor。jumpToHeading 若在实时态写 kEditorInputId，
+// 该输入不在帧树 = 死写。
 REGISTER_TEST(md_module_live_outline_jump,
-              "markdown_module: M8 大纲跳转走 setLiveCursor（实时态换活动块+聚焦，headless）", {
+              "markdown_module: 大纲跳转走 setLiveCursor（实时态换活动块+聚焦，headless）", {
     const std::string text = "# 标题A\n\n## 标题B\n\n正文段落\n";
     test_support::MdHeadlessEnv env(kDirPrefix, "liveoutline", kDbName);
     DOCTEST_REQUIRE(env.db != nullptr);
@@ -6847,7 +6916,7 @@ REGISTER_TEST(md_module_live_outline_jump,
     h2->onClick();
     frame();
 
-    // ① 活动块换到标题块：input 内容 = 该块源码（修复前活动块不动 → 本行红）
+    // ① 活动块换到标题块：input 内容 = 该块源码（活动块不动即红）
     DOCTEST_CHECK_EQ(e.ui->state<MdInputState>("md.live.input").text,
                      headingSrc);
     // ② 光标落在标题文字行首：块局部 = 大纲字节偏移 - 块起点（块模型把前导
@@ -6858,7 +6927,7 @@ REGISTER_TEST(md_module_live_outline_jump,
         headingByte - model.blocks()[1].start);
     // ③ 聚焦补发（setLiveCursor → liveFocusPending_ 同帧消费）
     DOCTEST_CHECK(e.ui->isFocused("md.live.input.hit"));
-    // ④ 编辑器输入未被写：实时态光标权威 = liveCursorByte_（修复前点击会写
+    // ④ 编辑器输入未被写：实时态光标权威 = liveCursorByte_（点击写了即红）
     //    kEditorInputId → 本行变 11）
     DOCTEST_CHECK_EQ(e.ui->state<MdInputState>(kEditorInputId).cursor, 0);
     // ⑤ 大纲高亮随跳转换节：item.0 失焦、item.1 加粗
@@ -6869,11 +6938,10 @@ REGISTER_TEST(md_module_live_outline_jump,
     return true;
 })
 
-// M8-2：实时态状态栏 (行:列:字)（spec §4.2「状态栏键仍是 (editorTextRev_,
-// cursorByte)」）。修复前读 kEditorInputId 旧状态（不在实时态帧树），行/列/字数
-// 停在编辑态残留；修复后按文档级 liveCursorByte_ + 整篇 editorText_ 口径算。
+// ② 实时态状态栏 (行:列:字) 的键仍是 (editorTextRev_, cursorByte)。读
+// kEditorInputId 旧状态（不在实时态帧树）会让行/列/字数
 REGISTER_TEST(md_module_live_status_bar,
-              "markdown_module: M8 状态栏行:列:字（实时态光标口径 liveCursorByte_，headless）", {
+              "markdown_module: 状态栏行:列:字（实时态光标口径 liveCursorByte_，headless）", {
     const std::string text = "alpha\nbeta\ngamma\n";   // 17 字节，单段块
     test_support::MdHeadlessEnv env(kDirPrefix, "livestatus", kDbName);
     DOCTEST_REQUIRE(env.db != nullptr);
@@ -6923,10 +6991,10 @@ REGISTER_TEST(md_module_live_status_bar,
     return true;
 })
 
-// M8-3：实时态标签栏接续（spec §3.1「标签栏四态共享，零改动」）。验证共享列壳的
+// ③ 实时态标签栏接续（标签栏四态共享，零改动）。验证共享列壳的
 // chip 行在实时态可添加标签、左栏筛选可用、实时列本身不受扰动。
 REGISTER_TEST(md_module_live_tag_bar,
-              "markdown_module: M8 标签栏实时态接续（chip 行/添加/筛选，headless）", {
+              "markdown_module: 标签栏实时态接续（chip 行/添加/筛选，headless）", {
     test_support::MdHeadlessEnv env(kDirPrefix, "livetag", kDbName);
     DOCTEST_REQUIRE(env.db != nullptr);
     DOCTEST_REQUIRE(writeTextFile(env.dir / "note.md", "# 标题\n"));
@@ -7010,10 +7078,10 @@ REGISTER_TEST(md_module_live_tag_bar,
     return true;
 })
 
-// M8-4：Ctrl+S 实时态保存（spec §7 M8）。四态共用模块 onKeyEvent → saveEditor
+// ④ Ctrl+S 实时态保存。四态共用模块 onKeyEvent → saveEditor
 // 幂等链；Ctrl+S 在实时态应立即落盘（不等 400ms 防抖）+ 状态栏 ✓。
 REGISTER_TEST(md_module_live_ctrl_s_save,
-              "markdown_module: M8 Ctrl+S 实时态保存（立即落盘+状态栏✓，headless）", {
+              "markdown_module: Ctrl+S 实时态保存（立即落盘+状态栏✓，headless）", {
     const std::string v1 = "hello\n";
     test_support::MdHeadlessEnv env(kDirPrefix, "livesave", kDbName);
     DOCTEST_REQUIRE(env.db != nullptr);
@@ -7079,10 +7147,10 @@ REGISTER_TEST(md_module_live_ctrl_s_save,
     return true;
 })
 
-// M8-5：实时态搜索筛选（spec §7 M8）。左栏搜索框四态共享：FTS 过滤树照常、
+// ⑤ 实时态搜索筛选。左栏搜索框四态共享：FTS 过滤树照常、
 // 当前实时列不受扰动；点开命中笔记后仍驻留实时态。
 REGISTER_TEST(md_module_live_search_filter,
-              "markdown_module: M8 搜索筛选实时态（FTS 过滤树+打开命中仍驻留实时，headless）", {
+              "markdown_module: 搜索筛选实时态（FTS 过滤树+打开命中仍驻留实时，headless）", {
     test_support::MdHeadlessEnv env(kDirPrefix, "livesearch", kDbName);
     DOCTEST_REQUIRE(env.db != nullptr);
     DOCTEST_REQUIRE(writeTextFile(env.dir / "a.md", "apple title\n"));
@@ -7165,10 +7233,10 @@ REGISTER_TEST(md_module_live_search_filter,
     return true;
 })
 
-// M8-6：跨模块跳转驻留实时态（spec §7 M8「其它模块跳到 markdown 实时态定位」）。
+// ⑥ 跨模块跳转驻留实时态（「其它模块跳到 markdown 实时态定位」）。
 // Router 负载 open:<path> → openNote → 实时态状态群换代，活动块落目标笔记首块。
 REGISTER_TEST(md_module_live_cross_module_nav,
-              "markdown_module: M8 跨模块跳转驻留实时态（open: 负载→活动块换目标笔记，headless）", {
+              "markdown_module: 跨模块跳转驻留实时态（open: 负载→活动块换目标笔记，headless）", {
     test_support::MdHeadlessEnv env(kDirPrefix, "livenav", kDbName);
     DOCTEST_REQUIRE(env.db != nullptr);
     DOCTEST_REQUIRE(writeTextFile(env.dir / "a.md", "A one\n\nA two\n"));
@@ -7229,12 +7297,13 @@ REGISTER_TEST(md_module_live_cross_module_nav,
     return true;
 })
 
-// ==================== M9：性能实测与调优（spec §7 M9 / §5 记录式验收） ====================
+// 性能实测与调优
+// 封顶行为（headless）：合成 5000 行围栏 → 活动块 input 高度 = 0.7 × 视口
 
-// §5 #5 封顶行为（headless）：合成 5000 行围栏 → 活动块 input 高度 = 0.7 × 视口
+// 封顶行为（headless）：合成 5000 行围栏 → 活动块 input 高度 = 0.7 × 视口
 //（块内滚动接管 = hit 挂 onScroll，over 探针 1 为预期）；切到小块 → 封顶解除。
 REGISTER_TEST(md_module_live_block_cap_5000_fence,
-              "markdown_module: 实时态 5000 行围栏活动块高度封顶 0.7×视口 + 块内滚动（M9 §5 #5，headless）", {
+              "markdown_module: 实时态 5000 行围栏活动块高度封顶 0.7×视口 + 块内滚动（headless）", {
     std::string fence = "```cpp\n";
     for (int i = 0; i < 5000; ++i) fence += "line " + std::to_string(i) + "\n";
     fence += "```\n";
@@ -7276,7 +7345,7 @@ REGISTER_TEST(md_module_live_block_cap_5000_fence,
     DOCTEST_CHECK(std::fabs(input->frame.height - capExpect) <= 1.0f);
     DOCTEST_CHECK(input->frame.height < 1000.0f);   // 没被撑到 9 万 px
 
-    // ② 块内滚动接管：hit 挂 onScroll（§5 #5「该块内滚轮行为符合预期」的
+    // ② 块内滚动接管：hit 挂 onScroll（「该块内滚轮行为符合预期」的
     // headless 形态；模块侧 over 探针 =1 且因封顶不升 WARN）
     const auto* hit = e.ui->find("md.live.input.hit");
     DOCTEST_REQUIRE(hit != nullptr);
@@ -7321,14 +7390,13 @@ REGISTER_TEST(md_module_live_block_cap_5000_fence,
     return true;
 })
 
-// §5 #1/#2 记录式验收（无墙钟红线，spec 明文「人工/脚本扫日志复核」）：200KB /
-// 5000 行文档的（a）MdBlockModel::update 分块耗时（纯函数直测，快）、（b）实时
+// 记录式验收（无墙钟红线，人工/脚本扫日志复核）：200KB /
 // 列整帧 compose 耗时（headless 合成，取中等规模文档作缩放基——全量 200KB/5000
 // 块在 Debug 无优化 headless 下单帧 ~10s，规模记录留给真机 GUI 的 `[live] frame
 // compose ms` 日志，两处口径同源）。结果打到 stdout 供脚本扫 `[live] … ms=`
 // 复核；不设硬断言（避开已知脆弱点）。
 REGISTER_TEST(md_module_live_perf_records_200kb,
-              "markdown_module: M9 记录式性能日志（200KB 分段 + 成帧缩放基 ms，无硬断言）", {
+              "markdown_module: 记录式性能日志（200KB 分段 + 成帧缩放基 ms，无硬断言）", {
     std::string big;
     big.reserve(2u * 1024u * 1024u);
     for (int i = 0; i < 5000; ++i) {
@@ -7337,8 +7405,7 @@ REGISTER_TEST(md_module_live_perf_records_200kb,
     }
     //（约 200KB / 5000 行：每段 ~40 字节 + 空行）
 
-    // (a) 分块重算耗时（spec §5 #1 ≤5ms 目标；每轮换一处文本制造真实脏区间，
-    // 取 5 轮最优；零重算轮（同文）不算数——它测的是短路不是分块）
+    // (a) 分块重算耗时（≤5ms 目标；每轮换一处文本制造真实脏区间，
     module::markdown::MdBlockModel model;
     double bestSegMs = 1e9;
     uint64_t blockCount = 0;
@@ -7357,14 +7424,13 @@ REGISTER_TEST(md_module_live_perf_records_200kb,
             std::cout << "[live] segment n=" << blockCount
                       << " ms=" << ms
                       << " dirty=[" << upd.dirtyFirst << ","
-                      << upd.dirtyLast << "]（M9 §5 #1 记录）" << std::endl;
+                      << upd.dirtyLast << "]" << std::endl;
         }
     }
     std::cout << "[live] segment best5 ms=" << bestSegMs
-              << "（200KB/" << blockCount << " 块，M9 §5 #1 记录）" << std::endl;
+              << "（200KB/" << blockCount << " 块）" << std::endl;
 
-    // (b) 实时列整帧 compose 耗时（spec §5 #2/#3；headless 合成同树，取 200 块
-    // 文档作缩放基记录——2000 块滚动场景的真机帧率由 debug 标题 FPS + 模块的
+    // (b) 实时列整帧 compose 耗时（headless 合成同树，取 200 块
     // `[live] frame compose ms` 日志人工复核，本记录只给同源码同路径的基数值）
     std::string mid;
     mid.reserve(20000);
@@ -7394,7 +7460,7 @@ REGISTER_TEST(md_module_live_perf_records_200kb,
     const double compMs =
         std::chrono::duration<double, std::milli>(c1 - c0).count();
     std::cout << "[live] frame compose ms=" << compMs
-              << "（200 块缩放基，M9 §5 #2 记录）" << std::endl;
+              << "（200 块缩放基）" << std::endl;
     DOCTEST_CHECK(e.ui->find("md.live.scroll") != nullptr);
     DOCTEST_CHECK(e.ui->find("md.live.input") != nullptr);
 

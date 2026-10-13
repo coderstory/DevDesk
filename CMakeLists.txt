@@ -14,6 +14,13 @@ else()
 endif()
 project(DevDesk VERSION ${DEVDESK_VERSION} LANGUAGES C CXX)
 
+if(WIN32)
+  # httplib 0.58+ 要求 Win10+（头内 #error + CreateFile2 需要 _WIN32_WINNT>=0x0A00）。
+  # MSYS2 MinGW 默认值偏低；本项目 Windows 门槛本就是 Win10+，全局统一定义
+  #（含 EUI-NEO 子目录与全部测试目标，避免各 TU 取值不一致）。
+  add_compile_definitions(_WIN32_WINNT=0x0A00 WINVER=0x0A00)
+endif()
+
 # VERSION 文件变更（bump_version 写入）→ 自动重新 configure
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/VERSION")
 
@@ -65,7 +72,9 @@ endif()
 # （他人克隆只有 v0.6.0，硬 fail 会造成误阻断）；EUI-NEO push 后可将本诊断
 # 升级为硬检查。最低依赖 rev 与 CLAUDE.md「当前依赖 rev」保持一致，消费
 # EUI-NEO 新 API 后两处同步更新（当前门槛取 U1 尺度契约合入点，含
-# app::contentScale / core::dsl::Screen::scale 与 yyjson writer 放开）。
+# app::contentScale / core::dsl::Screen::scale 与 yyjson writer 放开；
+# 2026-09-30 起另含 dropdown 展开态弹层 z 修复——tests/probes 的弹层 z 序
+# 门禁依赖，见 tests/probes/settings_dropdown_z_probe.cpp）。
 set(DEVDESK_EUI_NEO_MIN_REV "72a5187")
 execute_process(
     COMMAND git -C "${EUI_NEO_DIR}" rev-parse --short HEAD
@@ -147,14 +156,56 @@ function(devdesk_add_eui_includes target)
     )
 endfunction()
 
-# 功能模块（home / markdown / todo / claude_proxy / settings / about）
+# 功能模块（home / markdown / todo / claude_proxy / settings / about / agent）
 add_subdirectory(src/module_home)
 add_subdirectory(src/module_markdown)
 add_subdirectory(src/module_todo)
+add_subdirectory(src/module_agent)
 add_subdirectory(src/module_claude_proxy)
 add_subdirectory(src/module_settings)
 add_subdirectory(src/module_about)
 add_subdirectory(src/module_pet)
+
+# ---- 覆盖率插桩（2026-10-03 已知欠账落地）：DEVDESK_COVERAGE=ON → llvm source-based 覆盖率 ----
+# 配套 scripts/coverage.sh（独立 build-coverage/ 目录：configure → 只编 devdesk_tests →
+# 跑测试 → llvm-profdata merge → llvm-cov 分层汇总），build-test-run.sh 保持零改动。
+# 默认 OFF：正常构建的编译 / 链接命令一字不变，CI 与日常路径不受影响。
+# 插桩口径：只插桩 DevDesk 自己的库层（core / platform / ui_kit / module_*，含 agent）——
+#   * EUI-NEO 子目录不插桩（外部框架，且其 add_subdirectory 在上方已处理完，
+#     本块的目录级 / 目标级操作都够不着它，第三方代码不进分层口径）；
+#   * 可执行文件（devdesk_tests / probes / DevDesk）只加**链接期** flag：它们链接了
+#     插过桩的静态库，链接期不带 profile runtime 会 undefined symbol（__llvm_profile_*）；
+#     自身源码不插桩——测试代码与 UI 探针自身的行覆盖不是本工具要回答的问题，
+#     插了只拖慢编译与运行（探针还要开 GL 窗口）。
+# Windows（MinGW GCC）走 gcovr 路线，是 CLAUDE.md 已知欠账的 TODO；非 AppleClang
+# 工具链开此开关直接 FATAL_ERROR，不静默产出带错 flag 的构建。
+option(DEVDESK_COVERAGE "llvm source-based 覆盖率插桩（AppleClang 专用；配套 scripts/coverage.sh，默认 OFF 不影响正常构建）" OFF)
+if(DEVDESK_COVERAGE)
+    if(NOT CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+        message(FATAL_ERROR "DEVDESK_COVERAGE=ON 目前只支持 AppleClang（-fprofile-instr-generate -fcoverage-mapping）；"
+            "Windows/MinGW GCC 的 gcovr 路线是待办欠账（见 CLAUDE.md 已知欠账表），请勿在 GCC/MSVC 上开启")
+    endif()
+    # 链接期（目录级，置于 add_subdirectory(tests) 与主程序定义**之前**）：
+    # 之后创建的所有可执行文件都拉进 profile runtime
+    add_link_options(-fprofile-instr-generate -fcoverage-mapping)
+    # 编译期（目标级）：只插桩 DevDesk 自己的库层（与上方 add_subdirectory 清单同源维护；
+    # 注意 module_agent 的库名是 devdesk_agent，无 module_ 前缀）
+    set(DEVDESK_COVERAGE_LIBS
+        devdesk_core devdesk_platform devdesk_ui_kit
+        devdesk_module_home devdesk_module_markdown devdesk_module_todo
+        devdesk_agent
+        devdesk_module_claude_proxy devdesk_module_settings
+        devdesk_module_about devdesk_module_pet)
+    foreach(_devdesk_cov_lib IN LISTS DEVDESK_COVERAGE_LIBS)
+        if(TARGET ${_devdesk_cov_lib})
+            target_compile_options(${_devdesk_cov_lib} PRIVATE
+                -fprofile-instr-generate -fcoverage-mapping)
+        else()
+            message(WARNING "DEVDESK_COVERAGE: 目标 ${_devdesk_cov_lib} 不存在（模块清单变动？），该层不会被插桩")
+        endif()
+    endforeach()
+    message(STATUS "覆盖率插桩: ON（AppleClang，DevDesk 库层；EUI-NEO / 测试 / 探针源码不插桩）")
+endif()
 
 # 测试
 enable_testing()
@@ -162,7 +213,8 @@ add_subdirectory(tests)
 
 # 主程序（app_sidebar.cpp = 侧边栏 + 根布局，app_assembly.cpp = 装配层，
 # 两者单测复用同一份实现）
-add_executable(DevDesk src/main.cpp src/app_sidebar.cpp src/app_assembly.cpp)
+add_executable(DevDesk src/main.cpp src/app_sidebar.cpp src/app_assembly.cpp
+    src/module_toggle_bridge.cpp)
 devdesk_apply_warnings(DevDesk)
 eui_neo_configure_app(DevDesk)
 
@@ -180,6 +232,7 @@ target_link_libraries(DevDesk PRIVATE
     devdesk_module_home
     devdesk_module_markdown
     devdesk_module_todo
+    devdesk_agent
     devdesk_module_claude_proxy
     devdesk_module_settings
     devdesk_module_about
@@ -225,19 +278,25 @@ add_custom_command(TARGET DevDesk POST_BUILD
     COMMENT "Copying pet skins to build directory"
 )
 
-# 托盘 template 图标（assets/tray-icon-template.png，2026-09-30 Bug A 修）：
-# main.cpp .trayIcon() 传入，运行时经 EUI-NEO resolveIconPath 的 exeDir/assets
-# 候选在 .app bundle 内命中（build-app.sh 把 <build>/assets 整树拷进
-# Contents/MacOS/assets，本命令负责先把图标送进 <build>/assets）。文件入 git，
-# 无需守卫（同上 pets）。单文件用 copy_if_different；目录由上面 pets 的
-# copy_directory 先建，make_directory 兜底防顺序依赖。
+# 托盘图标（assets/tray-icon-template.png，2026-09-30 Bug A 修；macOS 侧
+# template 蒙版，Windows 侧品牌 .ico tray-icon-win.ico —— 路径由
+# platform::tray::defaultIconPath() 按平台分发，main.cpp 不带平台宏）。
+# 运行时经 EUI-NEO resolveIconPath 的 exeDir/assets 候选在 .app bundle 内命中
+# （build-app.sh 把 <build>/assets 整树拷进 Contents/MacOS/assets，本命令负责
+# 先把图标送进 <build>/assets）。两个文件均入 git，无需平台守卫（同上 pets：
+# macOS 多拷一个 .ico 无害，反而让「产物里两个文件都在」可被用例直接验证）。
+# 单文件用 copy_if_different；目录由上面 pets 的 copy_directory 先建，
+# make_directory 兜底防顺序依赖。
 add_custom_command(TARGET DevDesk POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory
         "$<TARGET_FILE_DIR:DevDesk>/assets"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "${CMAKE_SOURCE_DIR}/assets/tray-icon-template.png"
         "$<TARGET_FILE_DIR:DevDesk>/assets/tray-icon-template.png"
-    COMMENT "Copying tray template icon to build directory"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_SOURCE_DIR}/assets/tray-icon-win.ico"
+        "$<TARGET_FILE_DIR:DevDesk>/assets/tray-icon-win.ico"
+    COMMENT "Copying tray icons to build directory"
 )
 
 # 启动 splash shader（assets/shaders/splash.frag，随仓库分发；运行时经

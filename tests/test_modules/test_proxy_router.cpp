@@ -1,18 +1,10 @@
 // tests/test_modules/test_proxy_router.cpp
-// ProxyRouter 单元测试：转发 / 鉴权 / 上游失败 / 日志
-//
-// 测试环境隔离：
-//   - 上游用 platform::http::Server 起一个本地 mock
-//   - 数据库用临时文件
-//   - Keychain 用 "DevDeskTestProxyRouter" service
-//
-// 覆盖：
-//   1. 200 转发（body / status / x-api-key 注入 / 日志落库）
-//   2. 401 上游透传（不吞错）
-//   3. 404 上游透传
-//   4. 上游不可达 → 502
-//   5. 无激活 profile → 503
-//   6. 代理 server 端到端（Bearer 鉴权 + 转发）
+// ProxyRouter 单测：转发 / 鉴权 / 方言覆盖 / 伪头剥离 / 错误 JSON / failover 换家。
+// 跨文件前提：
+//   - 上游用 platform::http::Server 或裸 httplib 起本地 mock；数据库走临时文件。
+//   - 凭据存 claude_profiles.api_key_encrypted 列，不在 Keychain；清 Keychain 对它无效。
+//   - 无激活 profile 与「取 key 失败」统一报 503 no_active_profile，两者均不写调用日志。
+//   - 方言由 host 推断，profile.dialectOverride 可钉死；默认方言不改 body、不加会话头。
 #include "doctest.h"
 
 #include "claude_service.h"
@@ -46,7 +38,7 @@ namespace {
 
 constexpr const char* kTestKeychainService = "DevDeskTestProxyRouter";
 
-// 临时 db 文件名前缀（共享工厂 test_support::tempDbPath / TestDb 的第一实参）
+// 临时 db 文件名前缀（TestDb 第一实参）
 constexpr const char* kDbPrefix = "devdesk_test_proxy_";
 
 // 用 platform::http::send 发同步请求（测试用，走 libcurl）
@@ -74,8 +66,6 @@ platform::http::Response syncSend(const std::string& method,
     return std::move(r.value());
 }
 
-// 头名大小写不敏感取头 / 计数：共享实现（原 test_claude_service /
-// test_upstream_dialect 三份同款合流，TIN-06b）
 using test_support::countCI;
 using test_support::headerCI;
 using test_support::HeaderMap;
@@ -105,11 +95,9 @@ bool anyHeaderValueContains(const httplib::Headers& h, const std::string& frag) 
     return false;
 }
 
-// 原始 httplib mock 上游：伪头断言需要**未去重**的 Headers multimap
-// （get_header_value_count / count）。platform::http::Server 的 ctx.headers
-// 已按小写键去重（CP-06：httplib 的大小写不敏感 multimap 降级时键统一小写），
-// 且它自己对每封收到的请求也注入同名伪头（httplib.h:7186-7192，键同样被降为
-// 小写），无法区分「代理转发来的」与「mock 自己注入的」。
+// 伪头断言需要**未去重**的 Headers multimap（get_header_value_count / count）。
+// platform::http::Server 的 ctx.headers 已按小写键去重，且 has_header/get_header_value
+// 对禁用名直接拒见——只有直读 multimap 能看到真泄漏。
 class RawUpstream {
 public:
     RawUpstream() = default;
@@ -150,8 +138,9 @@ private:
     int port_ = 0;
 };
 
-// cpp-httplib 服务端对**每封收到的请求**注入的本地连接伪头（httplib.h:7186-7192），
-// 就是代理必须从客户端头里过滤掉的那 4 个名字
+// 本地连接伪头（REMOTE_ADDR/REMOTE_PORT/LOCAL_ADDR/LOCAL_PORT）：httplib 0.58.0 起
+// 改为 is_prohibited_header_name 主动禁止、不再注入。代理侧剥离保留为纵深防御
+// （客户端仍可能手工携带）；断言预期 0 条——>0 即泄漏。
 const char* const kPseudoHeaders[] = {"REMOTE_ADDR", "REMOTE_PORT",
                                       "LOCAL_ADDR", "LOCAL_PORT"};
 
@@ -177,8 +166,6 @@ DirectResult directCall(module::claude::ProxyRouter& router,
 }
 
 } // namespace
-
-// ---- 1. 200 转发：status / body / 日志 ----
 
 REGISTER_TEST(proxy_router_forward_200,
               "proxy_router: 200 转发 + 写 claude_call_logs", {
@@ -220,11 +207,10 @@ REGISTER_TEST(proxy_router_forward_200,
 
     DOCTEST_CHECK_EQ(r.status, 200);
     DOCTEST_CHECK(r.body.find("msg_01") != std::string::npos);
-    // 上游收到的 x-api-key 应是 Keychain 里的明文（而不是客户端传来的）
+    // 上游收到的 x-api-key 应是 profile 存的明文（而不是客户端传来的）
     DOCTEST_CHECK_EQ(upstreamKey, std::string("sk-ant-upstream-key-9999"));
     DOCTEST_CHECK_EQ(upstreamBody, reqBody);
 
-    // 应写入一条 claude_call_logs
     auto logs = svc.recentCalls(10);
     DOCTEST_REQUIRE(logs.isOk());
     DOCTEST_CHECK_EQ(logs.value().size(), 1u);
@@ -240,8 +226,6 @@ REGISTER_TEST(proxy_router_forward_200,
         kTestKeychainService, "claude:" + std::to_string(created.value().id));
     return true;
 })
-
-// ---- 2. 上游 401 透传（代理不吞错） ----
 
 REGISTER_TEST(proxy_router_upstream_401,
               "proxy_router: 上游 401 原样透传", {
@@ -286,12 +270,10 @@ REGISTER_TEST(proxy_router_upstream_401,
     return true;
 })
 
-// ---- 3. 上游 404 透传 ----
-
 REGISTER_TEST(proxy_router_upstream_404,
               "proxy_router: 上游 404 原样透传", {
-    platform::http::Server upstream("127.0.0.1", 0);
     // 只注册 /v1/messages；请求 /v1/unknown 会 404
+    platform::http::Server upstream("127.0.0.1", 0);
     upstream.route("POST", "/v1/messages",
                    [](const platform::http::RequestCtx&,
                        platform::http::ResponseWriter& w) {
@@ -330,14 +312,11 @@ REGISTER_TEST(proxy_router_upstream_404,
     return true;
 })
 
-// ---- 4. 上游不可达 → 502 ----
-
 REGISTER_TEST(proxy_router_upstream_unreachable,
               "proxy_router: 上游不可达返回 502", {
     test_support::TestDb tdb(kDbPrefix, "fwd502");
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
 
-    // 指向一个没有监听的端口
     auto created = svc.createProfile("Dead", "http://127.0.0.1:1",
                                      "sk-ant-dead-0001", "claude-sonnet-4-5");
     DOCTEST_REQUIRE(created.isOk());
@@ -352,7 +331,7 @@ REGISTER_TEST(proxy_router_upstream_unreachable,
     DOCTEST_CHECK_EQ(r.status, 502);
     DOCTEST_CHECK(r.body.find("upstream_unreachable") != std::string::npos);
 
-    // 日志应记录失败（status_code = 0 + error 非空）
+    // 传输失败的日志约定：status_code = 0 哨兵 + error 非空
     auto logs = svc.recentCalls(10);
     DOCTEST_REQUIRE(logs.isOk());
     DOCTEST_CHECK_EQ(logs.value().size(), 1u);
@@ -364,17 +343,14 @@ REGISTER_TEST(proxy_router_upstream_unreachable,
     return true;
 })
 
-// ---- 5. 无激活 profile → 503 ----
-
 REGISTER_TEST(proxy_router_no_active_profile,
               "proxy_router: 无激活 profile 返回 503", {
     test_support::TestDb tdb(kDbPrefix, "noactive");
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
 
-    // 建一个 profile 但不激活
     auto created = svc.createProfile("Inactive", "http://127.0.0.1:1",
                                      "sk-ant-inactive", "m");
-    DOCTEST_REQUIRE(created.isOk());
+    DOCTEST_REQUIRE(created.isOk());   // 刻意不 setActiveProfile
 
     platform::http::Server proxyServer("127.0.0.1", 0);
     module::claude::ProxyRouter router(svc, proxyServer);
@@ -384,7 +360,6 @@ REGISTER_TEST(proxy_router_no_active_profile,
     DOCTEST_CHECK_EQ(r.status, 503);
     DOCTEST_CHECK(r.body.find("no_active_profile") != std::string::npos);
 
-    // 无激活 profile 时不应写日志
     auto logs = svc.recentCalls(10);
     DOCTEST_REQUIRE(logs.isOk());
     DOCTEST_CHECK_EQ(logs.value().size(), 0u);
@@ -393,8 +368,6 @@ REGISTER_TEST(proxy_router_no_active_profile,
         kTestKeychainService, "claude:" + std::to_string(created.value().id));
     return true;
 })
-
-// ---- 6. Keychain 缺 key → 两条路径统一 503 no_active_profile ----
 
 REGISTER_TEST(proxy_router_missing_api_key,
               "proxy_router: Keychain 缺 key 缓冲/流式统一 503 no_active_profile", {
@@ -406,27 +379,27 @@ REGISTER_TEST(proxy_router_missing_api_key,
     DOCTEST_REQUIRE(created.isOk());
     DOCTEST_REQUIRE(svc.setActiveProfile(created.value().id).isOk());
 
-    // 故意删掉 Keychain 里的 key
-    platform::keychain::deleteSecret(
-        kTestKeychainService, "claude:" + std::to_string(created.value().id));
+    // 故意清空凭据列，造「该 profile 没存过 API Key」的形态
+    DOCTEST_REQUIRE(test_support::clearStoredCredential(
+        tdb.handle(), created.value().id));
 
     platform::http::Server proxyServer("127.0.0.1", 0);
     module::claude::ProxyRouter router(svc, proxyServer);
     router.registerRoutes();
 
-    // 同一失败（profile 已激活、Keychain 无 key）分别打两条转发路径：
-    // 缓冲（body 无 stream）/ 流式（POST /v1/messages + "stream":true）
+    // 同一失败（profile 已激活但取不到 key）分别打两条转发路径：缓冲（body 无
+    // stream）/ 流式（POST /v1/messages + "stream":true）
     auto buffered = directCall(router, "POST", "/v1/messages",
                                R"({"model":"m","messages":[]})");
     auto streaming = directCall(router, "POST", "/v1/messages",
                                 R"({"model":"m","stream":true,"messages":[]})");
 
-    // CPX-10：两条路径必须报同一状态码且响应体逐字一致（含 message）
+    // 两条路径必须报同一状态码且响应体逐字一致（含 message）
     DOCTEST_CHECK_EQ(buffered.status, 503);
     DOCTEST_CHECK_EQ(streaming.status, 503);
     DOCTEST_CHECK_EQ(streaming.body, buffered.body);
     DOCTEST_CHECK(buffered.body.find("no_active_profile") != std::string::npos);
-    // 错误类别统一了，但 message 仍点名 Keychain（排障不被抹平）
+    // 错误类别统一了，但 message 仍点名取 key 失败（排障不被抹平）
     DOCTEST_CHECK(buffered.body.find("读取 API key 失败") != std::string::npos);
 
     // 取 profile 失败不写调用日志（与「无激活 profile」同口径，两条路径一致）
@@ -436,8 +409,6 @@ REGISTER_TEST(proxy_router_missing_api_key,
 
     return true;
 })
-
-// ---- 7. 端到端：代理 server + Bearer 鉴权 + 转发 ----
 
 REGISTER_TEST(proxy_router_end_to_end,
               "proxy_router: 端到端 HTTP 代理（Bearer 鉴权 + 转发）", {
@@ -475,19 +446,18 @@ REGISTER_TEST(proxy_router_end_to_end,
     const std::string payload =
         R"({"model":"claude-sonnet-4-5","max_tokens":8,"messages":[{"role":"user","content":"ping"}]})";
 
-    // (a) 不带 Authorization → 直接放行（代理不看该头）
+    // 代理不校验 Authorization：不带 (a) 与带任意值 (b) 都放行，上游拿到的始终是
+    // profile 的真实 key（代理覆盖客户端发来的值）
     auto noAuth = syncSend("POST", proxyUrl + "/v1/messages", payload, "");
     DOCTEST_CHECK_EQ(noAuth.statusCode, 200);
     DOCTEST_CHECK(noAuth.body.find("msg_e2e") != std::string::npos);
 
-    // (b) 带任意 Authorization → 同样放行
     auto anyAuth = syncSend("POST", proxyUrl + "/v1/messages", payload, "whatever");
     DOCTEST_CHECK_EQ(anyAuth.statusCode, 200);
 
-    // 上游拿到的始终是 profile 的真实 key（代理覆盖客户端发来的值）
     DOCTEST_CHECK_EQ(seenApiKey, std::string("sk-ant-e2e-key-0001"));
 
-    // (c) 两次请求都写进了日志
+    // 两次请求都写进了日志
     auto logs = svc.recentCalls(10);
     DOCTEST_REQUIRE(logs.isOk());
     DOCTEST_CHECK_EQ(logs.value().size(), 2u);
@@ -500,8 +470,6 @@ REGISTER_TEST(proxy_router_end_to_end,
         kTestKeychainService, "claude:" + std::to_string(created.value().id));
     return true;
 })
-
-// ---- 8. 错误响应是合法 JSON（message 含引号/反斜杠/换行时转义） ----
 
 REGISTER_TEST(proxy_router_error_json_escaped,
               "proxy_router: 错误 JSON 转义（message 含引号/反斜杠）", {
@@ -542,8 +510,6 @@ REGISTER_TEST(proxy_router_error_json_escaped,
     return true;
 })
 
-// ---- 9. 转发经上游方言层：客户端 UA 不泄漏、鉴权头被覆盖 ----
-
 REGISTER_TEST(proxy_router_applies_upstream_dialect,
               "proxy_router: 转发覆盖 UA + 鉴权头（客户端 python-urllib 不泄漏）", {
     platform::http::Server upstream("127.0.0.1", 0);
@@ -574,8 +540,8 @@ REGISTER_TEST(proxy_router_applies_upstream_dialect,
     module::claude::ProxyRouter router(svc, proxyServer);
     router.registerRoutes();
 
-    // 客户端形态 = doc/scripts/proxy_smoke_test.py（python-urllib：
-    // UA 会被 Cloudflare 判 browser_signature_banned，鉴权头是假 key）
+    // 客户端形态 = python-urllib：UA 会被 Cloudflare 判 browser_signature_banned，
+    // 鉴权头是假 key
     HeaderMap clientH;
     clientH["user-agent"] = "Python-urllib/3.14";
     clientH["x-api-key"] = "sk-client-bogus";
@@ -610,12 +576,11 @@ REGISTER_TEST(proxy_router_applies_upstream_dialect,
     return true;
 })
 
-// ---- 9b. profile.dialectOverride 接通转发路径（CPX-13 接线） ----
 // 承载断言的必须是**转发路径的实际效果**（上游收到的头 / body），不是
 // forBaseUrl 的返回值：host 是 loopback（host 推断 = 默认方言），profile 钉住
 // opencode_zen → 上游必须收到会话头、模型名 [1M] 必须被剥。覆盖值经生产路径
 //（createProfile 落库 → 激活 → resolveProfile 读回）注入，不绕过 DB。
-// 后半段把覆盖清空（空串 = 未覆盖）→ 与改动前逐项一致：无会话头 + body 逐字节不变。
+// 后半段把覆盖清空（空串 = 未覆盖）→ 与未覆盖时逐项一致：无会话头 + body 逐字节不变。
 
 REGISTER_TEST(proxy_router_dialect_override_wired,
               "proxy_router: profile.dialectOverride 接通转发（空串等价未覆盖）", {
@@ -637,7 +602,7 @@ REGISTER_TEST(proxy_router_dialect_override_wired,
 
     test_support::TestDb tdb(kDbPrefix, "dialect_ovr");
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
-    // 第 8 个参数 = dialectOverride（值域见 upstream_dialect.h）
+    // createProfile 第 8 个参数 = dialectOverride（值域见 upstream_dialect.h）
     auto created = svc.createProfile(
         "Ovr", "http://127.0.0.1:" + std::to_string(upstream.actualPort()),
         "sk-ant-ovr-key-0001", "deepseek-v4-flash",
@@ -667,7 +632,7 @@ REGISTER_TEST(proxy_router_dialect_override_wired,
     DOCTEST_CHECK(seenBody.find("\"model\":\"deepseek-v4-flash\"") !=
                   std::string::npos);
 
-    // ---- 空串 = 未覆盖：与改动前逐项一致（无会话头 + body 逐字节不变）----
+    // 空串 = 未覆盖，与未覆盖时逐项一致（无会话头 + body 逐字节不变）
     module::claude::Profile p = active.value();
     p.dialectOverride.clear();
     DOCTEST_REQUIRE(svc.updateProfile(p).isOk());
@@ -697,8 +662,6 @@ REGISTER_TEST(proxy_router_dialect_override_wired,
     return true;
 })
 
-// ---- 10. httplib 注入的本地连接伪头不转发（缓冲路径：直接调 handleRequest） ----
-
 REGISTER_TEST(proxy_router_drops_httplib_pseudo_headers,
               "proxy_router: 不转发 httplib 注入伪头（LOCAL_ADDR/REMOTE_PORT 等）", {
     // mock 上游：捕获原始请求头（未去重的 Headers multimap）
@@ -719,8 +682,8 @@ REGISTER_TEST(proxy_router_drops_httplib_pseudo_headers,
     module::claude::ProxyRouter router(svc, proxyServer);
     router.registerRoutes();
 
-    // 模拟路由收到的头：httplib 注入的大写伪头（值换成本机不可能出现的标记值）
-    // + 客户端大小写变体 + 必须保留的正常头
+    // 模拟恶意/旧版客户端手工携带的伪头（大小写变体，值换成本机不可能出现的
+    // 标记值）+ 必须保留的正常头
     HeaderMap clientH;
     clientH["REMOTE_ADDR"] = "198.51.100.21";
     clientH["REMOTE_PORT"] = "19861";
@@ -739,11 +702,10 @@ REGISTER_TEST(proxy_router_drops_httplib_pseudo_headers,
     auto r = directCall(router, "POST", "/v1/messages", reqBody, clientH);
     DOCTEST_CHECK_EQ(r.status, 200);
 
-    // 上游 mock 自己也对每封收到的请求注入一份伪头（httplib.h:7186-7192 服务端
-    // 行为）；Headers 键大小写不敏感（httplib.h:506-508），所以每个伪头名在
-    // 上游应**恰好 1 条**——就是 mock 自注入那条；≥2 即代理转发了伪头（任何拼写）
+    // 上游 mock 不再自注入伪头（is_prohibited_header_name 主动禁止）——任何 >0
+    // 计数都只能来自代理转发，即泄漏
     for (const char* name : kPseudoHeaders) {
-        DOCTEST_CHECK_EQ(seen.count(name), 1u);
+        DOCTEST_CHECK_EQ(seen.count(name), 0u);
     }
     // 兜底：标记值以任意拼写/键名出现 = 泄漏
     DOCTEST_CHECK_FALSE(anyHeaderValueContains(seen, "198.51.100."));
@@ -751,7 +713,6 @@ REGISTER_TEST(proxy_router_drops_httplib_pseudo_headers,
     DOCTEST_CHECK_FALSE(anyHeaderValueEq(seen, "19862"));
     DOCTEST_CHECK_FALSE(anyHeaderValueEq(seen, "19863"));
     DOCTEST_CHECK_FALSE(anyHeaderValueEq(seen, "19864"));
-    // 正常头必须继续透传
     DOCTEST_CHECK_EQ(headerValueCI(seen, "anthropic-version"),
                      std::string("2023-06-01"));
     DOCTEST_CHECK_EQ(headerValueCI(seen, "content-type"),
@@ -764,10 +725,8 @@ REGISTER_TEST(proxy_router_drops_httplib_pseudo_headers,
     return true;
 })
 
-// ---- 11. 端到端（真 httplib 注入）：缓冲 + 流式两条路径都不转发伪头 ----
-
 REGISTER_TEST(proxy_router_pseudo_headers_filtered_end_to_end,
-              "proxy_router: 端到端不转发伪头（缓冲 + 流式，真 httplib 注入）", {
+              "proxy_router: 端到端不转发伪头（缓冲 + 流式）", {
     // 上游 mock 捕获每封请求的原始头
     RawUpstream upstream;
     std::vector<httplib::Headers> snaps;
@@ -784,14 +743,14 @@ REGISTER_TEST(proxy_router_pseudo_headers_filtered_end_to_end,
     DOCTEST_REQUIRE(created.isOk());
     DOCTEST_REQUIRE(svc.setActiveProfile(created.value().id).isOk());
 
-    // 起真代理 server（其 httplib 会对每封收到的请求注入 LOCAL_ADDR 等伪头）
+    // 起真代理 server
     auto started = svc.startProxy("127.0.0.1", 0);
     DOCTEST_REQUIRE(started.isOk());
     DOCTEST_CHECK(svc.isProxyRunning());
     const std::string proxyUrl =
         "http://127.0.0.1:" + std::to_string(started.value());
 
-    // 客户端头：正常头 + 小写伪头 canary（与代理端注入的大写伪头同属 CI 同名）
+    // 客户端头：正常头 + 小写伪头 canary（模拟客户端手工携带）
     HeaderMap reqH;
     reqH["Content-Type"] = "application/json";
     reqH["anthropic-version"] = "2023-06-01";
@@ -827,15 +786,13 @@ REGISTER_TEST(proxy_router_pseudo_headers_filtered_end_to_end,
 
     DOCTEST_REQUIRE_EQ(snaps.size(), 2u);
     for (const auto& h : snaps) {
-        // 每个伪头名恰好 1 条（上游自注入）——代理注入的（大写）与客户端
-        // canary（小写）都被过滤；≥2 即泄漏
+        // 上游 mock 无任何自注入——计数 >0 只能是客户端伪头穿透代理 = 泄漏
         for (const char* name : kPseudoHeaders) {
-            DOCTEST_CHECK_EQ(h.count(name), 1u);
+            DOCTEST_CHECK_EQ(h.count(name), 0u);
         }
         DOCTEST_CHECK_FALSE(anyHeaderValueContains(h, "198.51.100."));
         DOCTEST_CHECK_FALSE(anyHeaderValueEq(h, "19871"));
         DOCTEST_CHECK_FALSE(anyHeaderValueEq(h, "19872"));
-        // 正常头仍在
         DOCTEST_CHECK_EQ(headerValueCI(h, "anthropic-version"),
                          std::string("2023-06-01"));
         DOCTEST_CHECK_EQ(headerValueCI(h, "content-type"),
@@ -851,11 +808,8 @@ REGISTER_TEST(proxy_router_pseudo_headers_filtered_end_to_end,
     return true;
 })
 
-// ---- 12. failover：上游 5xx → 换备用重试一次，成功回备用的结果（设计 §3.8）----
-// 取数 = seed profile 行（决议：既有注入用例断言不换家；「注入 + 换家」场景
-// seed 行——不走 profileProvider_ 注入，测试走真实 DB 路径，双 profile 落库：
-// 激活 A + A.fallbackProfileId = B）
-
+// failover 取数一律走真实 DB 路径（seed profile 行）而非 profileProvider_ 注入：
+// 激活 A + A.fallbackProfileId = B 双行落库
 REGISTER_TEST(proxy_router_failover_switch_on_5xx,
               "proxy_router: 上游 500 → 换备用重试成功（fallback_profile_id）", {
     platform::http::Server upA("127.0.0.1", 0);
@@ -922,8 +876,6 @@ REGISTER_TEST(proxy_router_failover_switch_on_5xx,
         kTestKeychainService, "claude:" + std::to_string(b.value().id));
     return true;
 })
-
-// ---- 13. failover 负列表：400 不换家（即使配了可用备用） ----
 
 REGISTER_TEST(proxy_router_failover_negative_list_no_switch,
               "proxy_router: failover 上游 400（负列表）不换家，原样透传", {
@@ -992,8 +944,6 @@ REGISTER_TEST(proxy_router_failover_negative_list_no_switch,
     return true;
 })
 
-// ---- 14. failover 传输失败（statusCode==0）：主家不可达 → 换备家 ----
-
 REGISTER_TEST(proxy_router_failover_transport_failure_switch,
               "proxy_router: failover 主家不可达（传输失败）→ 换备用成功", {
     platform::http::Server upB("127.0.0.1", 0);
@@ -1045,8 +995,6 @@ REGISTER_TEST(proxy_router_failover_transport_failure_switch,
         kTestKeychainService, "claude:" + std::to_string(b.value().id));
     return true;
 })
-
-// ---- 15. 两次都失败 → 回第二次的结果（错误更相关），日志 = 备家 ----
 
 REGISTER_TEST(proxy_router_failover_both_fail_second_result,
               "proxy_router: failover 主备都失败回第二次结果（错误更相关）", {
@@ -1112,11 +1060,9 @@ REGISTER_TEST(proxy_router_failover_both_fail_second_result,
     return true;
 })
 
-// ---- 16. 注入模式守卫：profileProvider_ 已设 → 不换家（设计 §3.8 显式
-//      声明，不依赖「内存库无 profile → 恒 nullopt」的巧合）----
-// 取数：seed 一条**可用**的备家行（若守卫缺失，resolveFallbackProfile 能读到
-// 它并换家成功——用例断言「没换」才是守卫在起作用）
-
+// 注入模式守卫：profileProvider_ 已设 → 不换家。这是显式声明的规则，不依赖
+// 「内存库无 profile → 恒 nullopt」的巧合。seed 一条**可用**备家行：若守卫缺失，
+// resolveFallbackProfile 能读到它并换家成功，用例断言「没换」才是守卫生效
 REGISTER_TEST(proxy_router_failover_injected_mode_no_switch,
               "proxy_router: failover 注入模式（profileProvider_）下不换家（守卫）", {
     platform::http::Server upB("127.0.0.1", 0);
@@ -1145,8 +1091,8 @@ REGISTER_TEST(proxy_router_failover_injected_mode_no_switch,
     module::claude::ProxyRouter router(svc, proxyServer);
     router.registerRoutes();
 
-    // 注入完整 profile（绕过 DB/Keychain）：主家 = 死端口；fallbackProfileId
-    // 指向 seed 的可用备家（守卫缺失时会换过去 → 200）
+    // 注入完整 profile（绕过 DB 与凭据列）：主家 = 死端口；fallbackProfileId 指向
+    // seed 的可用备家（守卫缺失时会换过去 → 200）
     router.setProfileProvider([fbId = b.value().id]() {
         module::claude::Profile p;
         p.id = 999;
@@ -1170,10 +1116,8 @@ REGISTER_TEST(proxy_router_failover_injected_mode_no_switch,
     return true;
 })
 
-// ---- 17. 流式路径 failover：waitForStatus 后写响应头前换家（设计 §3.8）----
-// 走真代理 server（cpp-httplib 驱动 chunked provider），主家 500 → 废弃本次
-// 流 → 备用起新流 → 客户端拿到备家的 200 与 body
-
+// 流式路径 failover：waitForStatus 后写响应头前换家。走真代理 server 驱动 chunked
+// provider，主家 500 → cancel 本次流 → 备用起新流 → 客户端拿到备家的 200 与 body
 REGISTER_TEST(proxy_router_failover_streaming_switch,
               "proxy_router: 流式主家 500 → cancelWithReason(failover) 换备用", {
     platform::http::Server upA("127.0.0.1", 0);
@@ -1226,7 +1170,7 @@ REGISTER_TEST(proxy_router_failover_streaming_switch,
     DOCTEST_CHECK_EQ(resp.statusCode, 200);
     DOCTEST_CHECK(resp.body.find("message_start") != std::string::npos);
     DOCTEST_CHECK(resp.body.find("[DONE]") != std::string::npos);
-    // 备家的 500 body（A down）不该出现在客户端（已随废弃流销毁）
+    // 备家的 500 body（A down）不该出现在客户端（已随 cancel 的流销毁）
     DOCTEST_CHECK(resp.body.find("A down") == std::string::npos);
 
     auto logs = svc.recentCalls(10);

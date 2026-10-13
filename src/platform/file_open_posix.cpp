@@ -1,6 +1,5 @@
 // src/platform/file_open_posix.cpp
-// 其他平台（Linux 等）实现：openFileFromArgv 暂不支持返回空（与原行为一致）；
-// openDirectory 走 xdg-open
+// 其他平台（Linux 等）：openFileFromArgv 不支持返回空；openDirectory 走 xdg-open
 #include "file_open.h"
 #include "file_open_common.h"
 

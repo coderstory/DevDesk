@@ -1,8 +1,6 @@
 // src/platform/terminal_launch_common.cpp
-// terminal_launch 的跨平台纯函数（2026-09-28 profile-run 设计 §4）：
-// 命令文本拼装的**全部**逻辑集中在这里，平台实现只负责系统调用——这样两套正文
-// 拼装（Windows wt/PowerShell、macOS .command）在当前平台就能被单测覆盖。
-// 本文件**无条件编译**（CMake 三支之外），故这些符号在所有平台都存在。
+// terminal_launch 的跨平台纯函数：命令文本拼装的全部逻辑集中在这里，平台实现只负责系统调用；
+// 本文件无条件编译。
 #include "terminal_launch_common.h"
 
 #include <chrono>
@@ -14,8 +12,7 @@ namespace platform::terminal {
 
 namespace {
 
-// 从启动参数里找 --settings 的下一项（临时 settings 文件路径，profile-run §4.2）。
-// 自删段（PowerShell Remove-Item / macOS trap）只跟这个文件走；找不到 → 空串
+// 从启动参数找 --settings 的下一项（临时 settings 文件路径）。自删段只跟这个文件走；找不到 → 空串
 //（正文退化为「程序 + 参数」、无自删段）
 std::string settingsPathArg(const std::vector<std::string>& args) {
     for (size_t i = 0; i + 1 < args.size(); ++i) {
@@ -24,8 +21,7 @@ std::string settingsPathArg(const std::vector<std::string>& args) {
     return {};
 }
 
-// 「程序 + 各参数」拼成一行命令文本；arg 逐个经 quoteOne 包裹（调用方传
-// PowerShell / POSIX shell 各自的单引号转义）
+// 「程序 + 各参数」拼成一行命令文本；arg 逐个经 quoteOne 包裹（调用方传各自平台的单引号转义）
 std::string commandLine(const LaunchSpec& spec,
                         std::string (*quoteOne)(const std::string&)) {
     std::string out = spec.program;
@@ -38,10 +34,7 @@ std::string commandLine(const LaunchSpec& spec,
 
 } // namespace
 
-// ---------- 引号 / 转义 ----------
-
-// shellSingleQuote 已下沉为 platform::file_open::shellSingleQuote（审计
-// CP-09），本文件经 terminal_launch_common.h 的 using 声明复用，不再自持。
+// 引号 / 转义
 
 std::string powershellSingleQuote(const std::string& s) {
     std::string out = "'";
@@ -54,8 +47,7 @@ std::string powershellSingleQuote(const std::string& s) {
 }
 
 std::string quoteWindowsArg(const std::string& arg) {
-    // 不含空格/Tab/双引号 → 原样（含中文等非 ASCII 字节：它们都 >= 0x80，
-    // 不会被误当分隔符或引号）
+    // 不含空格/Tab/双引号 → 原样（中文等非 ASCII 字节都 >= 0x80，不会被误当分隔符或引号）
     if (!arg.empty() && arg.find_first_of(" \t\"") == std::string::npos) {
         return arg;
     }
@@ -92,7 +84,7 @@ std::string joinWindowsCommandLine(const std::vector<std::string>& argv) {
     return out;
 }
 
-// ---------- 编码 ----------
+// 编码
 
 std::string utf8ToUtf16LEBytes(const std::string& utf8) {
     std::string out;
@@ -188,16 +180,14 @@ std::string encodePowerShellCommand(const std::string& body) {
     return base64Encode(utf8ToUtf16LEBytes(body));
 }
 
-// ---------- 命令文本 ----------
+// 命令文本
 
 std::string buildPowerShellBody(const LaunchSpec& spec) {
-    // 正文本身**不含任何密钥**（密钥在 --settings 指向的临时 settings 文件里，
-    // 会话正文只引用它的路径；profile-run 设计 D-1/§4.2）
+    // 正文本身**不含任何密钥**（密钥在 --settings 指向的临时文件里，正文只引用它的路径）
     std::string body = "Set-Location -LiteralPath " +
                        powershellSingleQuote(spec.workingDir) + "\n";
     body += commandLine(spec, powershellSingleQuote);
-    // 退出后自删（§5）：claude 退出 → 这一行删掉临时 settings 文件；会话期间
-    // 被强杀 / 崩溃留下的孤儿由 run-settings/ 的 24h 启动清扫兜底
+    // 退出后自删：claude 退出 → 删临时 settings；强杀/崩溃留下的孤儿由 run-settings/ 24h 启动清扫兜底
     const std::string settingsPath = settingsPathArg(spec.args);
     if (!settingsPath.empty()) {
         body += "\nRemove-Item -LiteralPath " +
@@ -208,9 +198,7 @@ std::string buildPowerShellBody(const LaunchSpec& spec) {
 }
 
 std::string escapeWtTitle(const std::string& title) {
-    // wt 的命令行用 `;` 分隔多条命令 → 标题里的 `;` 必须写成 `\;`（本机实测：
-    // `--title 'A;B'` 窗口标题只剩 "B"，`--title 'A\;B'` 才得到 "A;B"）。
-    // 只处理 `;`：其余字符（含 `\`）按原样交给 wt——不引入未经实测的转义规则。
+    // wt 命令行用 `;` 分隔多条命令 → 标题里的 `;` 必须写成 `\;` 才能按字面显示；其余字符原样交给 wt。
     std::string out;
     out.reserve(title.size() + 4);
     for (const char c : title) {
@@ -239,7 +227,7 @@ std::vector<std::string> buildWindowsLaunchArgs(const LaunchSpec& spec) {
     argv.push_back("--title");
     argv.push_back(escapeWtTitle(spec.title));   // `;` 是 wt 的命令分隔符，不转义会截断标题
     argv.push_back("powershell.exe");
-    argv.push_back("-NoExit");       // D-6：claude 退出后保留窗口，回滚内容可见
+    argv.push_back("-NoExit");       // claude 退出后保留窗口，回滚内容可见
     argv.push_back("-NoProfile");
     argv.push_back("-EncodedCommand");
     argv.push_back(encodePowerShellCommand(buildPowerShellBody(spec)));
@@ -257,30 +245,26 @@ std::vector<std::string> buildWindowsFallbackArgs(const LaunchSpec& spec) {
 }
 
 std::string buildMacCommandBody(const LaunchSpec& spec) {
-    // D-7 + D-1（V3）：cd + （无 exec 的）claude --settings '<临时文件>'；脚本
-    // 本身不含密钥。为什么去掉 exec：自删靠 EXIT 陷阱——exec 会替换 shell 进程、
-    // trap 随 shell 一起消失，自删语义就没了
+    // cd + claude --settings '<临时文件>'；脚本本身不含密钥。不能 exec：exec 替换 shell 进程，
+    // EXIT 陷阱随之消失、自删就没了。
     std::string body = "cd " + shellSingleQuote(spec.workingDir) + " && " +
                        commandLine(spec, shellSingleQuote) + "\n";
     const std::string settingsPath = settingsPathArg(spec.args);
     if (!settingsPath.empty()) {
-        // 退出后自删（§5）：trap 行在 claude 退出后执行，删临时 settings 文件；
-        // 会话期间被强杀 / 崩溃留下的孤儿由 run-settings/ 的 24h 启动清扫兜底
+        // 退出后自删：trap 行在 claude 退出后删临时 settings；强杀/崩溃留下的孤儿由 24h 启动清扫兜底
         body += "trap 'rm -f \"" + settingsPath + "\"' EXIT\n";
     }
     return body;
 }
 
 void sweepStaleRunSettingsFiles(const std::filesystem::path& dir) {
-    // 镜像 terminal_launch_macos.cpp 的 sweepStaleScripts（run-scripts/ 24h 模式）：
-    // 删 24h 前修改的 run-*.json（含原子写失败残留的 .devdesk-tmp，名字也是
-    // run- 前缀）。单条失败忽略（best-effort，不阻断本次启动）；目录不存在 →
-    // directory_iterator 构造失败 → 直接无操作
+    // 镜像 terminal_launch_macos.cpp 的 sweepStaleScripts：删 24h 前修改的 run-*.json（含原子写残留的
+    // .devdesk-tmp，名字也是 run- 前缀）。best-effort，单条失败忽略；目录不存在 → 构造失败 → 无操作。
     const auto now = std::filesystem::file_time_type::clock::now();
     std::error_code ec;
     for (const auto& entry : std::filesystem::directory_iterator(dir, ec)) {
         if (ec) return;
-        // 只碰本功能创建的文件（run- 前缀；目录里不该有别的文件，但防御起见）
+        // 只碰本功能创建的文件（run- 前缀）
         const std::string name = entry.path().filename().string();
         if (name.rfind("run-", 0) != 0) continue;
         std::error_code inner;

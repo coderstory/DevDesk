@@ -1,5 +1,4 @@
-// src/module_markdown/md_sync_map.cpp
-// MdSyncMap 实现——见头文件注释（Phase 3 ④ 同步滚动块模型精确锚）。
+// src/module_markdown/md_sync_map.cpp —— MdSyncMap 实现，详见头文件。
 #include "md_sync_map.h"
 
 #include <algorithm>
@@ -8,8 +7,7 @@ namespace module::markdown {
 
 namespace {
 
-// 块占编辑器行数：span 内 '\n' 个数 +（span 未以 '\n' 结尾时）1。
-// 与 md_line_scanner::countLines 的行定义一致（CRLF 的行由 '\n' 界定）。
+// 块占编辑器行数：span 内 '\n' 个数 +（span 未以 '\n' 结尾时）1；行定义与 countLines 一致（CRLF 由 '\n' 界定）。
 int spanLineCount(const std::string& text, const MdBlock& b) {
     int nl = 0;
     for (size_t i = b.start; i < b.end && i < text.size(); ++i) {
@@ -29,8 +27,7 @@ void MdSyncMap::rebuild(const std::string& text,
                         float width,
                         float blockGap,
                         const HeightFn& heightFn) {
-    // rev 与文本内容一一对应（setEditorText 唯一写点 +1），同 rev ⇒ 同
-    // blocks；(rev, width, gap, 块数) 全等 → 几何表未失效，零重算。
+    // (rev, width, gap, 块数) 全等 ⇒ 几何表未失效，零重算（同 rev ⇒ 同 blocks）。
     if (built_ && rev_ == rev && width_ == width && gap_ == blockGap &&
         n_ == blocks.size()) {
         return;
@@ -47,9 +44,8 @@ void MdSyncMap::rebuild(const std::string& text,
     height_.assign(n_, 0.0f);
     topY_.assign(n_, 0.0f);
 
-    // stableId ↔ 内容一一对应（MdBlockModel 前/后缀对齐继承，新块取新 id），
-    // 按 (stableId, width) 备忘块高度：未变块跨 rebuild 零重测。重建后 memo
-    // 只保留本代仍存活的 id（死亡 id 随 swap 淘汰，不无界增长）。
+    // stableId ↔ 内容一一对应（前后缀对齐继承，新块取新 id）；按 (stableId, width) 备忘
+    // 块高度：未变块跨 rebuild 零重测，死亡 id 随 swap 淘汰，不无界增长。
     std::unordered_map<int, MemoEntry> nextMemo;
     nextMemo.reserve(n_ * 2 + 1);
 

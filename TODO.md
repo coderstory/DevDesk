@@ -1,6 +1,11 @@
 # DevDesk 未完成任务清单
 
-> 2026-09-28 会话截止  
+> ⚠ **本文是 2026-09-28 的时点快照，之后没有整体维护**——里面的"状态"与"分支"描述多数已过期。
+> **当前状态以 `CLAUDE.md` 的「🚦 当前状态」段为准**（那段带日期与出处）。权威待办见 `docs/superpowers/plans/2026-09-22-backlog.md`。
+> 仍在生效的内容：**§13 profile「高级配置」tab（需求 + 已定决策，待写 spec，未开始）**——这条是唯一还开着的需求条目。
+> 2026-10-03 订正：§4 probes / §9 EUI-NEO / §「macOS 构建环境」/ §「分支-合并状态」四处已按当时事实改写（原描述均已失效）。
+
+> 原始日期：2026-09-28 会话截止
 > 已交付 20+ commit（详见 `git log --oneline`）
 
 ## 未完成项
@@ -20,11 +25,12 @@
 - **需求**：拖动卡片时，卡片本体跟随光标移动（此前只变半透明 0.45，不跟手）
 - ✅ **已完成**（598a970）：跟手副本 `todo.dragghost` 画在**页面级顶层 root**（`todo_ui_board.cpp` 的 `drawDragGhost`）——anchor = 按下时卡片 bounds + 按下点起累计位移（框架 `DragEvent::totalX/totalY`），经新纯函数 `ui::dragGhostAnchor` 换算到页面 compose 空间；zIndex 100（压过看板子树、低于弹窗栈底 1000）；opacity 0.85（让目标列插入位占位条从副本底下透出）。源列原卡照旧 0.45 半透明留原位（占位骨架），源列 0.6 调暗门控未动
 - **原「关键点」两处失实，已纠正**：① `BoardPlate.dragOffset` 字段不存在（全仓零命中）；② 方案不是 `drawCard` 加 `.translate()` —— 列内容在 `components::scrollView` 根 stack 的 `.clip()` 内（`components/scrollview.h:88`，clip 在渲染侧对整棵子树做 scissor 求交：`core/runtime/runtime_render.h:223-230`），列内 translate 会被裁到列边界，跨列拖（主用例）不成立，故改页面级副本 + 绝对锚点定位
-- **未验证**：真人手拖的体感与屏幕像素（本机 `screencapture` 被 TCC 挡，无截屏，也无人肉眼看过）。替代证据（均实测绿）：无头用例 `todo_ui_drag_follow_ghost` + `todo_probes` 类 12（`queuePointerButton/Motion` 真实注入指针走真实命中测试与拖拽派发，断言副本帧位 = 卡位 + 累计位移；fc1b4f8）——两处都做过变异验证（去掉跟手副本 / 去掉位移项即红）
+- **未验证**：真人手拖的体感与屏幕像素（本机 `screencapture` 被 TCC 挡，无截屏，也无人肉眼看过）。替代证据（均实测绿）：无头用例 `todo_ui_drag_follow_ghost`（**2026-10-03 轻量化后仅剩这一条**——原并列的 `todo_probes` 类 12 探针与本用例逐条重复、CI 从不执行，已随 8 个重复 probe 一并删除）；本用例做过变异验证（去掉跟手副本 / 去掉位移项即红）
 
 ### 4. Probes 扩展
-- **已交付**：7 probe exe 全编译 + 全 PASS + harness 补键盘/右键/滚轮/拖拽/文本
-- **版本控制缺口（2026-09-28 实测）**：`tests/probes/` 下 3 个 probe 源文件从未被 git 跟踪——`claude_probes.cpp`（172 行）、`home_probes.cpp`（386 行）、`markdown_probes.cpp`（384 行），共 942 行。它们是真交付物：文件头分别引用 spec `docs/superpowers/specs/2026-09-28-devdesk-probes-design.md`（§3-probe-full）与具体 commit（`046beaa` home sparkline 顶带修复 / `770beb3` markdown 双层卡修复）。这 3 个正是上面「7 probe exe」里缺失的 3 个（7 = claude / home / markdown / pet / settings_cards / settings_dropdown_z / todo），同目录另 4 个 probe 源文件与 `probe_harness.h` 已被 git 跟踪。**待办：把这 3 个文件 `git add` 进版本控制**（本清单只记录文档事实，未代为提交）。
+- **已交付**：`tests/probes/` 现有 **5 个探针源文件**（2026-10-03 轻量化：从 13 个收到 5 个）（home / module_toggle_sidebar / screenshot / settings_dropdown_z + `probe_harness.h`），全部编译、接入 `ctest -L probe`，并在 `scripts/build-test-run.sh` 测试段之后自动跑（失败即整体 `exit 1`）。
+- ~~**版本控制缺口（2026-09-28 实测）**：`tests/probes/` 下 3 个 probe 源文件从未被 git 跟踪——`claude_probes.cpp` / `home_probes.cpp` / `markdown_probes.cpp`，共 942 行。**待办：把这 3 个文件 `git add` 进版本控制**~~ → ✅ **已解决**：`git ls-files tests/probes/` 现在 13 个文件全在版本控制里（2026-10-03 核）。
+- **2026-10-03 新增能力**：探针进程内帧捕获 `--screenshot <路径>`（`glReadPixels` → PNG，不需要系统「屏幕录制」授权；`screenshot_probe` 是它的自测）。详见 `CLAUDE.md`「功能开发生命周期」阶段 4。
 - **待补**：
   - 多窗 stub（pet 行为档 P3）
   - `confirmDialogProbe` 共享骨架（spec 规划未实现）
@@ -52,7 +58,7 @@
 
 ### 9. EUI-NEO 上游
 - ✅ `5b0cd34` styledmenu dismiss rect + requestDismiss 按值参数防 UAF
-- **永不 push 到 origin（2026-09-28 用户决策）**：EUI-NEO 本地 main 领先 origin 82 个提交（2026-09-28 实测），已决策永不推送——origin/main 停在 v0.6.0，本地领先是长期状态、提交数只会继续增长，不再按「待 push」跟踪。
+- **永不 push 到 `origin`（2026-09-28 用户决策）**：原文记「本地 main 领先 origin 94 个提交（2026-09-30 实测）」——**2026-10-03 实测为 97 个**（`git -C ../EUI-NEO rev-list --count origin/main..HEAD`），且 `fork/main` 已与本地齐平（`cbd0b48`，即 CI 用的那个远端）。origin/main 停在 `v0.6.0-4-g782c569`，本地领先是长期状态、提交数只会继续增长，不再按「待 push」跟踪。
 
 ### 10. About 页布局调整（2026-09-28 真机反馈）
 - ✅ **已完成**（`a97355b`）
@@ -98,16 +104,18 @@
 
 ---
 
-## macOS 构建环境（2026-09-28 本机实测）
+## macOS 构建环境（原文为 2026-09-28 本机实测；2026-10-03 订正）
+
+> ⚠ **下面这段的"未验证"结论已全部失效**——macOS 从 2026-09-28 起就是日常开发平台，`build-test-run.sh` 逐日真跑，CI 的 macOS job 也在跑它。留在下面只为沿革，**别再按它行事**（尤其别照抄"在端到端跑通之前，手敲两条命令仍是当前最可靠的路径"——现在反之：**一律走脚本，手敲是违规**）。
 
 - 本机 macOS / arm64 已装 Homebrew 工具链（`/opt/homebrew/bin`）：ninja 1.13.2、openssl@3 3.6.4（同路径另有 cmake 4.4.3）
-- configure 命令（**macOS 上须手敲**；`build/` 首建或换平台时先删重建）：
+- configure 命令（**原文写"macOS 上须手敲"——已作废**；日常构建与测试一律 `bash scripts/build-test-run.sh`，它会自动定位 EUI-NEO 并补 `-DOPENSSL_ROOT_DIR=/opt/homebrew/opt/openssl@3`）：
   ```
   export PATH="/opt/homebrew/bin:$PATH"
   cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DOPENSSL_ROOT_DIR=/opt/homebrew/opt/openssl@3
   ```
-- `scripts/build-test-run.sh` **已移植为跨平台**（提交 `577e0d0` 给三个脚本加 macOS/Linux 分支：Darwin 的 `/opt/homebrew/bin` PATH 前置、`-DOPENSSL_ROOT_DIR=/opt/homebrew/opt/openssl@3`、`pkill -f` 杀进程、`otool -L` 依赖清单、macOS 的 ccache 配置路径；原先写死的 Windows 工具链 PATH 与 `C:/msys64/mingw64` openssl 路径改为按 `DEVDESK_OS` 分支取，Windows 分支行为不变）。**但端到端未验证**——移植后只做过语法检查与定点验证，从未在 macOS 上完整跑过一次「构建 + 测试 + 启动」，`check-consistency.sh` 的 `screencapture` 分支还依赖「屏幕录制」TCC 权限（无权限时的行为未知，见 `docs/KNOWN_LIMITATIONS.md`）。在端到端跑通之前，手敲上面两条命令仍是当前最可靠的路径。
-- macOS 首次构建失败：EUI-NEO `core/platform/window_style_macos.mm` 与 `core/platform/context_menu_macos.mm` 编译不过（详见 backlog `docs/superpowers/plans/2026-09-22-backlog.md` §三）。归因：EUI-NEO 2026-09-28 提交 `6f771c3` 从未在 macOS 上编译过。
+- `scripts/build-test-run.sh` **已移植为跨平台**并已在 macOS 上长期真跑（提交 `577e0d0` 给三个脚本加 macOS/Linux 分支：Darwin 的 `/opt/homebrew/bin` PATH 前置、`-DOPENSSL_ROOT_DIR=/opt/homebrew/opt/openssl@3`、`pkill -f` 杀进程、`otool -L` 依赖清单、macOS 的 ccache 配置路径；原先写死的 Windows 工具链 PATH 与 `C:/msys64/mingw64` openssl 路径改为按 `DEVDESK_OS` 分支取，Windows 分支行为不变）。
+- ~~macOS 首次构建失败：EUI-NEO `core/platform/window_style_macos.mm` 与 `core/platform/context_menu_macos.mm` 编译不过~~ → ✅ **已解决**，macOS 构建早已全绿（见 `CLAUDE.md`「🚦 当前状态」）。
 
 ---
 
@@ -122,9 +130,9 @@
 
 ---
 
-## 分支/合并状态
+## 分支/合并状态（2026-10-03 订正）
 
-- 全在 `master`（ddf3425 起 22+ commit）
-- 无残留 worktree
-- 未提交改动：`tests/probes/` 下 3 个 probe 源文件未跟踪（`claude_probes.cpp` / `home_probes.cpp` / `markdown_probes.cpp`，共 942 行，见 §4）——此前记的「0 未提交改动」不成立；除此之外工作区干净
-- EUI-NEO：**永不 push 到 origin（2026-09-28 用户决策）**，origin/main 停在 v0.6.0；本地 main 领先 origin 82 个提交（2026-09-28 实测）为长期状态，不再有「待 push」事项（见 §9）
+- **集成分支是 `dev`，不是 `master`**（原文写"全在 `master`"已过期）：近期合并全是 `Merge branch 'worktree-agent-*' into dev`；`master` 只是发布分支（`.github/workflows/release.yml` 只在 `push master` 时出制品），本机没有本地 `master`。
+- 工作区干净（`git status` 只剩 `?? Testing/` 之类非仓库产物）。
+- ~~未提交改动：`tests/probes/` 下 3 个 probe 源文件未跟踪~~ → ✅ **已解决**（13 个探针文件全在版本控制里，见 §4）。
+- EUI-NEO：**永不 push 到 `origin`（2026-09-28 用户决策）**，origin/main 停在 `v0.6.0-4-g782c569`；本地 main 领先 origin **97** 个提交（2026-10-03 实测）为长期状态，**`fork` 已齐平（`cbd0b48`）**，不再有「待 push」事项（见 §9）。

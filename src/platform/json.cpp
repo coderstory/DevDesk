@@ -2,6 +2,7 @@
 
 #include <yyjson.h>
 
+#include <cstddef>
 #include <cstdlib>
 #include <map>
 #include <string>
@@ -25,7 +26,7 @@ namespace {
 
     JsonImpl* getImpl(void* p) { return static_cast<JsonImpl*>(p); }
 
-    // JsonImpl::Kind → JsonValue::Type（对外类型由 kind 派生，见 CP-02 注释）
+    // JsonImpl::Kind → JsonValue::Type（对外类型由 kind 派生）
     JsonValue::Type kindToType(JsonImpl::Kind kind) {
         switch (kind) {
             case JsonImpl::Kind::Null: return JsonValue::T_Null;
@@ -39,16 +40,14 @@ namespace {
         return JsonValue::T_Null;  // 枚举全覆盖，仅为消除 -Wreturn-type
     }
 
-    // 唯一的值装配入口：把 JsonImpl 子树搬进新 JsonValue（镜像字段已删，
-    // 这里就是"值"本身，无需再同步任何副本）
+    // 唯一的值装配入口：把 JsonImpl 子树搬进新 JsonValue
     JsonValue makeFromImpl(JsonImpl impl) {
         JsonValue v;
         *getImpl(v.internal()) = std::move(impl);
         return v;
     }
 
-    // yyjson_val → JsonImpl（递归；数组/对象完整还原）
-    // 注意：yyjson 读 API 不接收 const 指针（上游 const 语义不完整），此处不 const 化
+    // yyjson_val → JsonImpl（递归；数组/对象完整还原）。yyjson 读 API 不接收 const 指针，故不 const 化
     JsonImpl valToImpl(yyjson_val* val) {
         JsonImpl out;
         if (yyjson_is_null(val)) {
@@ -87,16 +86,8 @@ namespace {
         return out;
     }
 
-    // JsonImpl → yyjson 可变文档（写侧）。键序照 std::map 序（= 旧手写实现的输出序），
-    // 缩进/分隔交给 yyjson 的 YYJSON_WRITE_PRETTY_TWO_SPACES。
-    // 与旧手写实现（implToString + escapeTo，2026-09-27 删除）的字节差异只有两类，
-    // 均为文本形态、语义等价（解析结果不变）：
-    //   ① double：旧用 %.17g（512.0→"512"、1e17→"1e+17"），新用 yyjson 最短形
-    //      （512.0→"512.0"、1e17→"100000000000000000.0"、0.1→"0.1"）；
-    //   ② 控制字符转义十六进制大小写：旧 "\u000b" 小写，新 "\u000B" 大写。
-    // 其余形态（两空格缩进 / 键序 / ": " 分隔 / 空容器 [] {} / 无尾换行 / "/" 不转义 /
-    // UTF-8 原样透传 / 整数）逐字节一致；期望值锁在 tests/test_platform/test_json.cpp
-    // 的 json_stringify_bytes_snapshot 用例（U8 消费侧）。
+    // JsonImpl → yyjson 可变文档（写侧）。键序照 std::map 序；double 用 yyjson 最短形
+    //（512.0→"512.0"）、控制字符转义 hex 大写，期望值锁在 test_json.cpp 的 json_stringify_bytes_snapshot。
     yyjson_mut_val* implToMut(yyjson_mut_doc* doc, const JsonImpl& impl) {
         switch (impl.kind) {
             case JsonImpl::Kind::Null:
@@ -207,14 +198,11 @@ JsonValue::JsonValue(const std::string& s) : data_(new JsonImpl()) {
 }
 JsonValue::JsonValue(const char* s) : JsonValue(std::string(s)) {}
 JsonValue::JsonValue(JsonObject obj) : data_(new JsonImpl(*getImpl(obj.internal()))) {
-    // 强制 Object：被移动过的 JsonObject 持有的空 JsonImpl kind 是 Null，
-    // 但 JsonValue(JsonObject) 的类型契约始终是 T_Object（与旧镜像语义一致）
+    // 强制 Object：被移动过的 JsonObject 持有的空 JsonImpl kind 是 Null，但类型契约始终是 T_Object
     static_cast<JsonImpl*>(data_)->kind = JsonImpl::Kind::Object;
 }
 
-// CP-02（2026-09-27 全量审计，high）：4 个特殊成员只需搬 data_ —— 值与类型全部
-// 存放在 JsonImpl 里（唯一真值源），不再有需要逐个同步的镜像字段。此前漏同步
-// 镜像会让左值拷贝/移动后的 asString()/asInt() 静默返回默认值。
+// 4 个特殊成员只需搬 data_——值与类型全在 JsonImpl（唯一真值源），无需同步镜像字段
 JsonValue::JsonValue(const JsonValue& o) : data_(new JsonImpl(*getImpl(o.data_))) {}
 JsonValue& JsonValue::operator=(const JsonValue& o) {
     if (this != &o) {
@@ -223,7 +211,7 @@ JsonValue& JsonValue::operator=(const JsonValue& o) {
     }
     return *this;
 }
-// 被移动的源对象换上一份新的空 JsonImpl（保持合法 Null 值，不留悬垂/旧值）
+// 被移动的源换上新的空 JsonImpl（保持合法 Null 值，不留悬垂/旧值）
 JsonValue::JsonValue(JsonValue&& o) noexcept : data_(o.data_) { o.data_ = new JsonImpl(); }
 JsonValue& JsonValue::operator=(JsonValue&& o) noexcept {
     if (this != &o) {
@@ -235,7 +223,7 @@ JsonValue& JsonValue::operator=(JsonValue&& o) noexcept {
 }
 JsonValue::~JsonValue() { delete getImpl(data_); }
 
-// 类型与取值（读 JsonImpl；见 json.h 的 CP-02 注释）
+// 类型与取值（读 JsonImpl）
 JsonValue::Type JsonValue::type() const { return kindToType(getImpl(data_)->kind); }
 bool JsonValue::asBool() const { return getImpl(data_)->boolVal; }
 int64_t JsonValue::asInt() const { return getImpl(data_)->intVal; }
@@ -289,7 +277,7 @@ JsonValue makeStringArray(const std::vector<std::string>& items) {
     return v;
 }
 
-// 解析（yyjson；T11 实装——此前是返回 null 的桩，config.json 持久化首个消费者）
+// 解析（yyjson）
 core::Result<JsonValue> parse(const std::string& text) {
     yyjson_doc* doc = yyjson_read(text.data(), text.size(), 0);
     if (!doc) {
@@ -305,9 +293,7 @@ core::Result<JsonValue> parse(const std::string& text) {
     return core::Result<JsonValue>::ok(std::move(out));
 }
 
-// 序列化（yyjson writer；上游 U8 已放开 YYJSON_DISABLE_WRITER，DevDesk 不再自实现。
-// 与旧手写实现的字节差异、以及锁定的期望值见 implToMut 注释与
-// json_stringify_bytes_snapshot 用例）
+// 序列化（yyjson writer）。字节级期望值见 implToMut 注释与 snapshot 用例
 core::Result<std::string> stringify(const JsonValue& value, bool pretty) {
     yyjson_mut_doc* doc = yyjson_mut_doc_new(nullptr);
     if (doc == nullptr) {
@@ -321,12 +307,10 @@ core::Result<std::string> stringify(const JsonValue& value, bool pretty) {
                                                "JSON 序列化失败（yyjson 节点构造失败）");
     }
     yyjson_mut_doc_set_root(doc, root);
-    // ALLOW_INVALID_UNICODE / ALLOW_INF_AND_NAN：与旧实现的"原样透传"语义对齐，
-    // 不让此前能成功序列化的值变成失败（非法字节转义为替换字符、inf/nan 写
-    // Infinity/NaN，旧实现分别写原字节与 inf/nan——均非 DevDesk 读写路径的形状）
+    // ALLOW_INVALID_UNICODE / ALLOW_INF_AND_NAN：非法字节转义为替换字符、inf/nan 写 Infinity/NaN
     yyjson_write_flag flags =
         YYJSON_WRITE_ALLOW_INVALID_UNICODE | YYJSON_WRITE_ALLOW_INF_AND_NAN;
-    if (pretty) flags |= YYJSON_WRITE_PRETTY_TWO_SPACES;  // 两空格缩进 = 旧实现缩进
+    if (pretty) flags |= YYJSON_WRITE_PRETTY_TWO_SPACES;  // 两空格缩进
     yyjson_write_err err{};
     size_t len = 0;
     char* text = yyjson_mut_write_opts(doc, flags, nullptr, &len, &err);

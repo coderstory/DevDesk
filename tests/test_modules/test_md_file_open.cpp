@@ -1,6 +1,6 @@
 // tests/test_modules/test_md_file_open.cpp
-// 「打开方式」文件分发路径解析（审计 2026-09-23 [5]）无头单测：
-//   目录内相对化 / 目录外复制捕获 / 撞名编号 / 非法输入拒绝
+// 「打开方式」文件分发路径解析无头单测：目录内相对化 / 目录外复制捕获 / 撞名编号 / 非法输入拒绝。
+// captureFileIntoNotesDir 对三种坏输入（不存在 / 目录 / 空串）都只 fail，不区分错误码。
 #include "doctest.h"
 #include "test_support.h"
 #include "module_markdown/md_file_open.h"
@@ -14,7 +14,6 @@
 namespace fs = std::filesystem;
 
 namespace {
-// 写文本文件 —— 共享实现（TIN-06b，六份 writeTextFile/writeText 合流）
 using test_support::writeTextFile;
 
 std::string readText(const fs::path& p) {
@@ -37,7 +36,7 @@ REGISTER_TEST(md_open_relative_inside_root,
     auto r = captureFileIntoNotesDir(notes, file.string());
     DOCTEST_REQUIRE(r.isOk());
     DOCTEST_CHECK_EQ(r.value(), std::string("note.md"));
-    // 只解析不复制：目录里仍然只有原文件
+    // 目录内不复制：递归后仍是 1 个条目
     size_t count = 0;
     for (auto it = fs::recursive_directory_iterator(notes);
          it != fs::recursive_directory_iterator(); ++it) ++count;
@@ -73,9 +72,9 @@ REGISTER_TEST(md_open_external_copied_as_md,
     DOCTEST_CHECK_EQ(r.value(), std::string("report.md"));
     DOCTEST_CHECK(fs::exists(notes / "report.md"));
     DOCTEST_CHECK_EQ(readText(notes / "report.md"), std::string("外部正文ABC\n"));
-    DOCTEST_CHECK(fs::exists(src));  // 复制而非移动
+    DOCTEST_CHECK(fs::exists(src));  // 复制语义：源文件不被移动
 
-    // 再次打开同一外部文件 → 撞名编号「 2」
+    // 撞名编号用空格分隔，扩展名保持 .md
     auto r2 = captureFileIntoNotesDir(notes, src.string());
     DOCTEST_REQUIRE(r2.isOk());
     DOCTEST_CHECK_EQ(r2.value(), std::string("report 2.md"));
@@ -89,16 +88,13 @@ REGISTER_TEST(md_open_rejects_bad_inputs,
               "md_file_open: 不存在/目录/空路径拒绝；笔记目录缺失时自动创建", {
     const auto tmp = test_support::makeTempDir("devdesk_mdopen_test_", "reject");
 
-    // 不存在的路径 → FileNotFound
     DOCTEST_CHECK(captureFileIntoNotesDir(tmp / "notes",
                                           (tmp / "ghost.md").string())
                       .isFail());
-    // 目录本身 → 拒绝
     DOCTEST_CHECK(captureFileIntoNotesDir(tmp / "notes", tmp.string()).isFail());
-    // 空路径 → 拒绝
     DOCTEST_CHECK(captureFileIntoNotesDir(tmp / "notes", std::string()).isFail());
 
-    // 笔记目录尚未创建 + 有效外部文件 → 自动建目录并捕获成功
+    // 笔记目录不存在时函数自行创建
     const auto src = tmp / "data.json.md";
     DOCTEST_REQUIRE(writeTextFile(src, "x\n"));
     const auto freshNotes = tmp / "brand_new_notes";

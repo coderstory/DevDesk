@@ -36,6 +36,14 @@ config.json
 # Build version (per-machine auto-bump, 2026-09-28 about page)
 VERSION
 
+# Windows `> NUL` 重定向在 macOS/Unix 的真实产物（sh: mklink: command not found）。
+# 静态审计 m7：它曾被**误提交进仓库**（内容就是那句报错文本），而
+# src/module_home/CMakeLists.txt 里有一段长注释专门警告「macOS APFS 大小写
+# 不敏感，libc++ 内部 #include <version> 会命中仓库根的 VERSION 文件 →
+# expected unqualified-id 编译爆炸」。VERSION 与 NUL 是同一类事故的两个实例：
+# 配置产物 / 命令产物漏进源码根。故两者都显式忽略。
+NUL
+
 # Fonts (download on first build)
 fonts/Inter-*.ttf
 fonts/JetBrainsMono-*.ttf
@@ -49,7 +57,17 @@ fonts/JetBrainsMono-*.ttf
 Thumbs.db
 desktop.ini
 build-release/
+build-coverage/
 
 # 打包产物（安装器/DMG 输出目录，spec §3.2/§5）
 installer/**/out/
 *.dmg
+
+# Claude Code worktree 工作区（临时，防 worktree 内容误提交）
+.claude/worktrees/
+
+# SDD/审计工作区草稿（progress/review 包/报告/截图），永不入库
+.superpowers/
+
+# ctest 在源码根跑时生成的临时目录（CTestCostData.txt 等），不是源码
+Testing/

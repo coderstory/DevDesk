@@ -1,58 +1,16 @@
 // src/module_claude_proxy/settings_sync.h
-// Claude Code settings.json 接管通道（provider-config Phase C，设计 §5.3）
-//
-// 边界声明（审计 CPX-15）：本模块是 DevDesk 对 settings.json 的**唯一写入口**
-//（读-改-写 + 原子写 + sidecar 协议）；读侧另有导入路径直读
-//（claude_module 的 doImportCurrentConfig），不经本模块。
-//
-// 接管协议（takeOver，代理启动 / 运行中切 profile 触发）：
-//   1. 读现有 settings.json（不存在 → 视为空对象；解析失败 → **中止不写**——
-//      宁可不让用户自动接入，不能弄坏用户文件）
-//   2. 首份快照：接管前把原 env 对象完整存入 sidecar（DevDesk 数据目录的
-//      claude_settings_snapshot.json，**不往 settings.json 塞标记字段**）；
-//      sidecar 已存在则保留首份快照（热切换 / 重生成 token 不覆盖），
-//      仅把新的托管键并入 managedKeys（防旧托管键漏还原）。
-//      **污染守卫**：首份快照拍之前先扫现有 env，命中「本机代理形态」（BASE_URL
-//      指向回环地址，或凭据键 == kProxyAuthPlaceholder）的键不进快照——它们是
-//      上次残留 / 别的工具的托管值，不是用户原值（还原时不该被"恢复"），
-//      该情况随 SyncResult.warnings 上报
-//   3. 只动 env 键 + 生效高级设置 JSON 的顶层键（2026-09-30 advanced-json-editor
-//      设计 §4/§5，D-3/D-4）：buildProxyEnv() 产出的托管键写入/覆盖；**写前先删
-//      「上一轮托管、本轮不再生成」的键**（env 域与 nonEnv 域各一套，同构）；
-//      生效 JSON 的非 env 顶层键在 env 合并之后并入（赢过 live 既有同名键——
-//      被覆盖旧值已在首份快照中，还原无损）；JSON 含非空字符串顶层 "model" →
-//      apply 步同时从 env 移除 ANTHROPIC_MODEL（抑制唯一落点，F-5 时序）；
-//      用户自己的其他 env 键原样保留
-//      （读-改-写，platform::json；注意序列化会统一 pretty 格式，字段值不变）
-//   4. 原子写：同目录临时文件 + rename
-//   5. 上层覆盖检测（§5.3）：managed（企业策略）/ project（cwd 的
-//      .claude/settings.json + settings.local.json）层 env 含托管键
-//      （managedEnvKeyNames() 的 12 键全集 ∪ 本轮实际写入的托管键 = buildProxyEnv
-//      产出 ∪ sidecar managedKeys 并集）→ LOG_WARN + 警告信息随 SyncResult 返回
-//      （UI 展示留给 Phase D），**提示不代改**。检测域维持 env 键（裁决④：
-//      非 env 层同名键覆盖 = 文件分层正常语义，不扩）
-//
-// 还原协议（restore，代理停止 / 应用退出触发）：
-//   - 按 sidecar 快照按键级还原：快照里有值 → 恢复原值；原本不存在的键 →
-//     删除；其余一切不动；写回后删除 sidecar。还原域 = env 键（managedKeys/
-//     envSnapshot）+ 非 env 顶层键（nonEnvKeys/nonEnvSnapshot，sidecar v2 新增，
-//     merge-only 补拍防多轮接管丢用户原值——审计 F-1；旧 sidecar 无新字段 =
-//     空集 = root 层全透传，D-9）
-//   - 代理停止 = settings.json 永不指向死代理
-//
-// 崩溃兜底：启动时 sidecar 残留（上次没走完还原）→ recoverPendingSnapshot()
-// 自动补还原，必须先于任何 takeOver 调用（否则残留的托管键会被误快照为
-// 用户原值）。
-//
-// 热切换：官方 settings-reference 已确认 env 键在「at startup, and again in
-// the running session when a saved change alters the merged env」时重新加载，
-// 即保存后运行中的 Claude Code 会话即生效，无需重启客户端（model settings
-// 键的 /model 例外不影响 env 路径）。
+// Claude Code settings.json 接管通道：DevDesk 对 settings.json 的唯一写入口
+//（读-改-写 + 原子写 + sidecar 快照协议）。接管只动 env 键 + 生效高级设置 JSON
+// 顶层键；还原按键级还原快照后删 sidecar（代理停止 = settings.json 永不指向
+// 死代理）；sidecar 残留时 recoverPendingSnapshot 自动补还原，必须先于任何 takeOver。
+
 #pragma once
 
 #include <filesystem>
 #include <string>
 #include <vector>
+
+#include "core/sqlite_db.h"
 
 namespace module::claude {
 
@@ -60,11 +18,15 @@ struct Profile;
 
 namespace settings_sync {
 
-// 路径注入点：生产用 defaultPaths()（core::paths），测试传临时目录，
-// 绝不碰真实 ~/.claude
+// sidecar（接管前 settings.json 的 env 快照）的 app_config 键名
+inline constexpr const char* kSidecarConfigKey = "claude.settings_snapshot";
+
+// 注入点：生产用 defaultPaths()，测试传临时目录 + 临时库句柄，不碰真实 ~/.claude
 struct Paths {
     std::filesystem::path settingsFile;  // ~/.claude/settings.json
-    std::filesystem::path sidecarFile;   // appDataDir()/claude_settings_snapshot.json
+    // sidecar 落点 = app_config 表的 kSidecarConfigKey 行。nullptr = 数据库未就绪：
+    // 按「无快照」处理并 WARN，不静默当成没接管过（会让 restore 把用户 settings.json 留在代理形态）
+    core::data::SqliteDb* db = nullptr;
     // 上层覆盖检测要读的文件（managed + project 层；user 层就是 settingsFile 自身，不列）
     std::vector<std::filesystem::path> overlayFiles;
 };
@@ -74,20 +36,15 @@ Paths defaultPaths();
 struct SyncResult {
     bool ok = false;
     std::string error;                  // 失败 / 中止原因（解析失败中止等）
-    std::vector<std::string> warnings;  // 上层覆盖检测命中（Phase D UI 展示）
+    std::vector<std::string> warnings;  // 上层覆盖检测命中（UI 展示）
 };
 
-// 反向同步读侧（设计 §3.3 G7/G8/G9）：把 settings.json 的 env 读成「原文 JSON
-// + sidecar 托管键集」，供切 profile 前的反向同步（settings.json → profile）
-// 使用。**只读，不写任何文件、不碰 profile**。
-//   - 文件不存在 / 0 字节空文件 / 无 env 键 → ok=true, present=false
-//     （no-op 成功：调用方照常完成本次切换，不清空任何 profile 字段）
-//   - 存在但读不出（IO/权限）/ 非法 JSON / 顶层非对象 / env 非对象
-//     → ok=false + error（含路径与原因；调用方据此中止本次切换 S-2）
-//     ——「存在但读不出」与「不存在 / 0 字节」是两种处置，不得合并
-//   - 正常 → ok=true, present=true + envJson（env 对象原文）+ managedKeys
-//     （sidecar 的 managedKeys 键集；sidecar 缺失 → 空集；sidecar 损坏 →
-//     空集 + WARN，绝不因此失败）
+// 反向同步读侧：把 settings.json 的 env 读成「原文 JSON + sidecar 托管键集」，
+// 供切 profile 前的反向同步使用。只读，不写任何文件、不碰 profile。
+//   - 不存在 / 0 字节 / 无 env 键 → ok=true, present=false（no-op 成功）
+//   - 读不出（IO/权限）/ 非法 JSON / env 非对象 → ok=false + error（调用方中止切换）
+//     ——「读不出」与「不存在/空」是两种处置，不得合并
+//   - 正常 → present=true + envJson + managedKeys（sidecar 缺失/损坏 → 空集 + WARN）
 struct SettingsEnvRead {
     bool ok = true;
     bool present = false;
@@ -99,18 +56,13 @@ struct SettingsEnvRead {
 SettingsEnvRead readSettingsEnvForSync(const Paths& paths);
 
 // 接管。profile 可为默认构造（无激活 profile 时只写 BASE_URL + 占位凭据）。
-// 生效高级设置 JSON 经 profile.extraSettingsJson 携带（§5.2① 门面装配：门面
-// 先算 effectiveExtraSettingsJson(profile JSON, 片段 JSON) 再传副本——片段赢
-// 的叠加在门面完成；advanced-json-editor §8.4：原 sharedExtraEnvJson 形参拆除，
-// 片段不再携带 env 键）。其写入键进 sidecar nonEnvKeys / nonEnvSnapshot 记账
-//（§5.1 sidecar v2），env 托管键照旧
+// 生效高级设置 JSON 经 profile.extraSettingsJson 携带（片段赢），其写入键进
+// sidecar nonEnvKeys / nonEnvSnapshot 记账，env 托管键照旧
 SyncResult takeOver(const Profile& profile, int proxyPort,
                     const Paths& paths);
 
-// 还原（写回后删 sidecar；settings.json 解析失败 → fail 且保留 sidecar 供人工
-// 恢复）。**无 sidecar 时不再无条件 no-op**：settings.json 里若仍留着本机代理
-// 形态键（回环 BASE_URL / 占位凭据——sidecar 被清掉或与其它工具互抢的残留），
-// 做最小清除（只删这些键，不按 active profile 重建 env）；无该形态 → 真 no-op
+// 还原（写回后删 sidecar；解析失败 → fail 且保留 sidecar 供人工恢复）。无
+// sidecar 但 settings.json 仍留本机代理形态键 → 最小清除；无该形态 → 真 no-op
 SyncResult restore(const Paths& paths);
 
 // sidecar 是否存在（设置页「接管状态」行数据源 + 崩溃补还原检测）

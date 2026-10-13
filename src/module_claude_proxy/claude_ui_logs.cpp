@@ -1,7 +1,5 @@
 // src/module_claude_proxy/claude_ui_logs.cpp
-// R4（P-B5）：完整调用记录弹窗（过滤/分页/后台取数）—— 逐字自
-// claude_module.cpp 搬出（含注释），只把 this 成员换成显式入参
-// （LogsState& + toast 回调）。测试缝计数器随之迁来（符号名不变）。
+// 完整调用记录弹窗（过滤/分页/后台取数）；测试缝计数器定义在本文件。
 #include "claude_ui_logs.h"
 
 #include "claude_ui_logic.h"
@@ -17,7 +15,10 @@
 #include <atomic>
 #include <chrono>
 #include <ctime>
+#include <exception>
 #include <functional>
+#include <future>   // promise / shared_future（先就绪、后唤醒）
+#include <memory>
 #include <string>
 #include <thread>
 #include <utility>
@@ -25,28 +26,38 @@
 
 namespace module::claude {
 
-// 审计 CPX-06 测试缝计数器（生产零读取点，只在文件末尾经 extern "C" 导出给
-// 无头用例；照 core/proxy_stats.h resetForTest / platform/file_open_win.h
-// wideToUtf8ForTest 先例）：调用记录后台查询的累计**派发**次数（在派发点由
-// 渲染线程自增 → 同一帧即可读，断言不靠时序）+ 最近一次**实际执行**查询的
-// 线程 id 哈希（worker 线程写入，0 = 还没跑过）。用例靠它断言「弹窗打开那一帧
-// 只发意图（不发生同步查询）」「搜索防抖把逐键的多次意图合并成一次派发」
+// 测试缝计数器（生产零读取点，文件末尾经 extern "C" 导出给无头用例）：
+// 累计派发次数 + 最近一次实际执行查询的线程 id 哈希（worker 写入，0 = 还没跑过）。
 std::atomic<int> g_callsQueryDispatches{0};
 std::atomic<unsigned long long> g_callsQueryDispatchThread{0};
 
+// 诊断计时缝：「打开弹窗 → 查询派发 → 结果上屏」各段 steady_clock 纳秒打点
+//（0 = 未发生），无头用例读差值即得各段耗时（生产零读取点）。
+std::atomic<long long> g_callsQueryDispatchNs{0};
+std::atomic<long long> g_callsQueryWorkerStartNs{0};
+std::atomic<long long> g_callsQueryWorkerDoneNs{0};
+std::atomic<long long> g_callsQueryHarvestNs{0};
+// 次序缝：唤醒那一刻真实探一次结果共享状态是否已就绪，把次序违规变成可判定断言。
+std::atomic<bool> g_callsQueryWakeSawReady{false};
+
 namespace {
 
-// 唯一跑在后台线程的调用记录 DB 入口（static：不碰成员，可安全脱离渲染
-// 线程）。当页行 + 总匹配数在**同一次派发**内取（原先渲染路径每键两次同步
-// 查询）。queryCalls 失败 → error 回传（调用方清空当页 + toast）；countCalls
-// 失败按本页行数兜底（同一 WHERE 走同一连接，几乎只会连带 queryCalls 一起
-// 失败，不让已取到的行配一个「0 条匹配」）
+// steady_clock 纳秒（唯一用途：上面四个计时缝）
+long long steadyNs() {
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(
+               std::chrono::steady_clock::now().time_since_epoch())
+        .count();
+}
+
+// 唯一跑在后台线程的调用记录 DB 入口（static：不碰成员）。当页行 + 总匹配数同
+// 一次派发取；queryCalls 失败 → error 回传；countCalls 失败按本页行数兜底。
 CallsPage runCallsQuery(ClaudeService* svc, ClaudeService::CallLogQuery q) {
     // 测试缝：本函数跑在哪个线程（派发计数在派发点记，见 refreshCallsCache）
     g_callsQueryDispatchThread.store(
         static_cast<unsigned long long>(
             std::hash<std::thread::id>{}(std::this_thread::get_id())),
         std::memory_order_relaxed);
+    g_callsQueryWorkerStartNs.store(steadyNs(), std::memory_order_relaxed);
     CallsPage p;
     auto r = svc->queryCalls(q);
     if (r.isFail()) {
@@ -70,9 +81,8 @@ ClaudeService::CallLogQuery callsQueryNow(const LogsState& st) {
     return q;
 }
 
-// 置脏：下一次 compose（弹窗打开时）发一次读意图。debounce=true（搜索框按键）
-// 时把最早派发时刻顺延一个窗口——窗口内继续按键只顺延，停手后派发一次；
-// 翻页 / 状态下拉 / 开弹窗走 false（下一帧即派发）
+// 置脏：下一次 compose（弹窗打开时）发一次读意图。debounce=true（搜索按键）时
+// 顺延一个防抖窗口——窗口内继续按键只顺延，停手后派发一次；其余动作走 false。
 void markCallsStale(LogsState& st, bool debounce) {
     st.callsPageDirty_ = true;
     st.callsEarliestQueryAt_ = std::chrono::steady_clock::now() +
@@ -86,8 +96,7 @@ void applyCallsFilter(LogsState& st, bool debounce) {
     markCallsStale(st, debounce);
 }
 
-// 落快照（只在渲染线程调：compose 收割）。成功替换行 + 总数；失败清空当页
-// 并提示（不留上次过滤条件的残留行，同原 reloadCallsPage 失败分支语义）
+// 落快照（只在渲染线程调）：成功替换行 + 总数；失败清空当页并提示
 void applyCallsPage(LogsState& st, CallsPage p,
                     const std::function<void(const std::string&,
                                              const std::string&, bool)>& toast) {
@@ -101,20 +110,20 @@ void applyCallsPage(LogsState& st, CallsPage p,
     }
     st.allCalls_ = std::move(p.rows);
     st.callsTotalMatches_ = p.total;
+    g_callsQueryHarvestNs.store(steadyNs(), std::memory_order_relaxed);
 }
 
-// 审计 CPX-06：弹窗打开时 compose 每帧调，只做两件零 IO 的事——
-// ①在途读已就绪 → 搬进快照（wait_for(0) 不阻塞；未就绪直接跳过，快照沿用
-//   上次值，不丢不改不闪空）；②脏 + 无在途 + 过了防抖窗口 → 发一次读意图
-//   （std::async 后台线程跑 runCallsQuery，结果经 future 值回渲染线程）。
-// 失败不自动重试（同原实现：开弹窗失败即止、翻页失败静默），再次操作即重新置脏
+// 弹窗打开时 compose 每帧调，只做两件零 IO 的事——①在途读已就绪 → 搬进快照
+//（wait_for(0) 不阻塞）；②脏 + 无在途 + 过防抖窗口 → 发一次读意图。失败不自动重试。
 void refreshCallsCache(LogsState& st,
                        const std::function<void(const std::string&,
                                                 const std::string&, bool)>& toast) {
     if (st.callsFuture_.valid() &&
         st.callsFuture_.wait_for(std::chrono::seconds(0)) ==
             std::future_status::ready) {
-        applyCallsPage(st, st.callsFuture_.get(), toast);
+        CallsPage page = st.callsFuture_.get();   // shared_future::get 不失效
+        st.callsFuture_ = {};                     // 显式清空 = 让出「在途」判据
+        applyCallsPage(st, std::move(page), toast);
     }
     if (!st.callsPageDirty_ || st.callsFuture_.valid()) {
         return;   // 空闲帧零开销 / 上一轮在途不叠加（脏标记留到下帧再判）
@@ -133,14 +142,31 @@ void refreshCallsCache(LogsState& st,
     st.callsPageDirty_ = false;
     // 测试缝：派发点计数（在渲染线程上做 → 同帧可读，断言不靠时序）
     g_callsQueryDispatches.fetch_add(1, std::memory_order_relaxed);
-    st.callsFuture_ = std::async(std::launch::async, runCallsQuery, svc,
-                                 callsQueryNow(st));
+    g_callsQueryDispatchNs.store(steadyNs(), std::memory_order_relaxed);
+    // 后台查询：**先就绪、后唤醒**，次序不能反——async 在 callable 返回后才发布值，先唤醒会让 UI 抢跑。
+    // 唤醒用 core::platform::requestUiUpdate()（app::requestUpdate 只编进 app main TU）；失败也要唤醒。
+    auto promise = std::make_shared<std::promise<CallsPage>>();
+    std::shared_future<CallsPage> published = promise->get_future().share();
+    st.callsFuture_ = published;
+    st.callsWorker_ = std::async(
+        std::launch::async,
+        [svc, q = callsQueryNow(st), promise, published]() {
+            // 次序缝复位：本轮若没有「唤醒前探到已就绪」的记录，用例判红
+            g_callsQueryWakeSawReady.store(false, std::memory_order_relaxed);
+            try {
+                promise->set_value(runCallsQuery(svc, q));   // ① 结果落到共享状态
+            } catch (...) {
+                promise->set_exception(std::current_exception());
+            }
+            // ② 就绪之后才唤醒（唯一出口，内部先探一次真实就绪再发）
+            wakeAfterPublish(published, g_callsQueryWakeSawReady);
+            g_callsQueryWorkerDoneNs.store(steadyNs(), std::memory_order_relaxed);
+        });
 }
 
 } // namespace
 
-// 「查看全部 →」：开弹窗 + 置脏（下一帧后台查第一页；渲染路径不再同步查库）。
-// 首帧显示「加载中…」占位，查询失败由收割出的 toast 提示（不再拒开弹窗）
+// 「查看全部 →」：开弹窗 + 置脏（下一帧后台查第一页）。首帧显示「加载中…」占位
 void openCallsDialog(LogsState& st) {
     st.callsPage_ = 0;
     st.callsScrollOffset_ = 0;
@@ -154,8 +180,7 @@ void drawCallsDialog(eui::Ui& ui, const eui::Screen& screen,
                      LogsState& st,
                      const std::function<void(const std::string&,
                                               const std::string&, bool)>& toast) {
-    // 审计 CPX-06：只在弹窗打开时维持快照（关着不查库）。本帧只做零 IO 的
-    // 两件事——搬已就绪结果 + 发一次读意图（见 refreshCallsCache）
+    // 只在弹窗打开时维持快照（关着不查库）；本帧只做零 IO 的两件事（见 refreshCallsCache）
     if (st.callsDialogOpen_) refreshCallsCache(st, toast);
 
     const float w = ui_kit::dialogWidthPx(ui_kit::DialogWidth::ExtraWide);
@@ -173,7 +198,7 @@ void drawCallsDialog(eui::Ui& ui, const eui::Screen& screen,
             ui_kit::drawDialogTitle(ui, "claude.dialog.calls.title", w, "调用记录",
                                     20.0f, t.colors.textPrimary, {.y = 20.0f});
 
-            // ---- 工具行：搜索框 + 状态码过滤 + 匹配总数 ----
+            // 工具行：搜索框 + 状态码过滤 + 匹配总数
             components::input(ui, "claude.dialog.calls.search")
                 .position(28.0f, 58.0f)
                 .size(260.0f, 32.0f)
@@ -184,13 +209,11 @@ void drawCallsDialog(eui::Ui& ui, const eui::Screen& screen,
                 .onChange([sp = &st](const std::string& v) {
                     if (v == sp->callsSearch_) return;   // 无变化不重查（IME 组字等）
                     sp->callsSearch_ = v;
-                    // 审计 CPX-06：逐键只置脏 + 顺延防抖窗口，停手后派发
-                    // 一次后台查询（原先每键同步两条 SQL）
+                    // 逐键只置脏 + 顺延防抖窗口，停手后派发一次后台查询
                     applyCallsFilter(*sp, true);
                 })
                 .onEnter([sp = &st] {
-                    // Enter/Esc 清空（EUI-NEO input 把 Escape 映射到 onEnter，
-                    // 与 todo.search 交互一致）；显式动作 → 不防抖，立即重查
+                    // EUI-NEO input 把 Escape 映射到 onEnter；显式动作不防抖，立即重查
                     if (!sp->callsSearch_.empty()) {
                         sp->callsSearch_.clear();
                         applyCallsFilter(*sp, false);
@@ -234,7 +257,7 @@ void drawCallsDialog(eui::Ui& ui, const eui::Screen& screen,
                 .color(t.colors.textTertiary)
                 .build();
 
-            // ---- 列表区：当页行 + scrollView（440 > 视口时出滚动条） ----
+            // 列表区：当页行 + scrollView（440 > 视口时出滚动条）
             if (!st.callsPageLoaded_) {
                 // 弹窗首帧：读意图已发出、查询在途 → 显示加载态（不闪假空态）
                 ui.text("claude.dialog.calls.loading")
@@ -255,12 +278,8 @@ void drawCallsDialog(eui::Ui& ui, const eui::Screen& screen,
                     .color(t.colors.textTertiary)
                     .build();
             } else {
-                // 当页行 + virtualList（UI 现代化 M3-2）：scrollView 平铺换
-                // virtualList——行高 22 恒定，仅可见行进 slot 窗口重建。
-                // 行 id 沿用绝对行号（claude.dialog.calls.row.N：测试缝
-                // / 既有断言按绝对行号找行）。页容量固定 kCallsPageSize
-                // (20) 行 → overscan 一个视口高让当页整段渲染（slot 窗口
-                // 语义退化为 1 视口，观感与旧平铺一致）
+                // 当页行 + virtualList：行高 22 恒定，仅可见行进 slot 窗口重建；
+                // 行 id 用绝对行号（测试缝按它找行）。overscan 一个视口高。
                 const std::time_t now = std::time(nullptr);
                 const float scrollY = 100.0f;
                 const float scrollBottom = h - 60.0f - 12.0f;  // 底部按钮上方
@@ -285,7 +304,7 @@ void drawCallsDialog(eui::Ui& ui, const eui::Screen& screen,
                             st.allCalls_[idx];
                         const std::string absId =
                             "claude.dialog.calls.row." + std::to_string(idx);
-                        // 行包 stack（position 只在 stack 内生效，仿旧平铺）
+                        // 行包 stack：position 只在 stack 内生效
                         inner.stack(absId + ".wrap")
                             .size(contentWidth, static_cast<float>(rowH))
                             .content([&] {
@@ -319,7 +338,7 @@ void drawCallsDialog(eui::Ui& ui, const eui::Screen& screen,
                     .build();
             }
 
-            // ---- 底部：翻页 + 页码 + 关闭 ----
+            // 底部：翻页 + 页码 + 关闭
             const int pages = std::max(
                 1, (st.callsTotalMatches_ + kCallsPageSize - 1) / kCallsPageSize);
             const bool hasNext =
@@ -364,12 +383,7 @@ void drawCallsDialog(eui::Ui& ui, const eui::Screen& screen,
                 .text("第 " + std::to_string(st.callsPage_ + 1) + " / " +
                       std::to_string(pages) + " 页")
                 .fontSize(12.0f)
-                // 真机反馈 ⑦（2026-09-29）：页码文本与左右翻页按钮没垂直对齐。
-                // 三者的行框本来就是同一档（40 高、同 y = h−60），差的是**文本
-                // 没做垂直居中** —— runtime 只在 verticalAlign=Center 时把 ink
-                // 中心对齐到 frame 中心（EUI-NEO runtime_render.h renderText），
-                // 否则 ink 从行框顶沿起排（40 行高 + 12 字号的偏差很显眼）。
-                // 只加对齐，三者的位置/高度/顺序/禁用态一律不动。
+                // 页码文本必须 verticalAlign=Center，否则 ink 从行框顶沿起排
                 .lineHeight(40.0f)
                 .verticalAlign(eui::VerticalAlign::Center)
                 .color(t.colors.textSecondary)
@@ -390,16 +404,33 @@ void drawCallsDialog(eui::Ui& ui, const eui::Screen& screen,
 
 } // namespace module::claude
 
-// ============ 审计 CPX-06 测试缝（生产零调用点） ============
-// 照 core/proxy_stats.h resetForTest / platform/file_open_win.h
-// wideToUtf8ForTest 先例：把「调用记录后台查询」的派发次数与执行线程暴露给
-// 无头用例，好让「弹窗打开那一帧只发意图（不发生同步查询）」「搜索防抖把逐键
-// 的多次意图合并成一次派发」成为计数断言而不靠墙钟。extern "C" 免名字修饰，
-// 测试侧写同名声明即可链接（计数器定义见本文件头 g_callsQueryDispatches）
+// 测试缝导出（生产零调用点，extern "C" 免名字修饰）：暴露给无头用例做计数断言。
 extern "C" int claude_calls_query_dispatches_for_test() {
     return module::claude::g_callsQueryDispatches.load();
 }
 
 extern "C" unsigned long long claude_calls_query_last_thread_for_test() {
     return module::claude::g_callsQueryDispatchThread.load();
+}
+
+// 诊断计时缝导出：四个计时点的纳秒时刻（0 = 未发生），用例读差值得各段耗时。
+extern "C" long long claude_calls_query_dispatch_ns_for_test() {
+    return module::claude::g_callsQueryDispatchNs.load();
+}
+
+extern "C" long long claude_calls_query_worker_start_ns_for_test() {
+    return module::claude::g_callsQueryWorkerStartNs.load();
+}
+
+extern "C" long long claude_calls_query_worker_done_ns_for_test() {
+    return module::claude::g_callsQueryWorkerDoneNs.load();
+}
+
+extern "C" long long claude_calls_query_harvest_ns_for_test() {
+    return module::claude::g_callsQueryHarvestNs.load();
+}
+
+// 次序缝：最近一次唤醒发出时，结果共享状态是否**已经就绪**（true = 先就绪后唤醒）
+extern "C" bool claude_calls_query_wake_saw_ready_for_test() {
+    return module::claude::g_callsQueryWakeSawReady.load();
 }

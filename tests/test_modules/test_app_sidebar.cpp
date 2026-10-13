@@ -1,10 +1,11 @@
 // tests/test_modules/test_app_sidebar.cpp
-// 侧边栏折叠/展开（2026-09-23）单测：
-//   1. SettingsConfig.sidebarCollapsed 持久化：默认值 / 往返 / 老配置缺键兼容
-//   2. setSidebarCollapsed：内存态 + 落盘（含其他字段不被覆盖）
-//   3. 无头 compose（真实 app::compose + 桩 Router）：
-//      折叠态宽 72 / label 不渲染 / 图标水平居中 / tooltip 挂载 / 模块内容区
-//      宽度 = 窗口宽 - 72；展开态 208 / label 回来 / tooltip 无 / 宽 - 208
+// 侧边栏单测：sidebarCollapsed 持久化 / setSidebarCollapsed 内存态+落盘 / 无头 compose 几何 /
+// 页面区原点写入 Router / 注册表变化的当帧反映。
+// 跨文件前提：
+//   - 配置落在 app_config 表，生产代码经 core::appDatabase() 取连接；TestEnv 必须 registerAppDb，
+//     否则 store.save() 因「库未就绪」如实失败。
+//   - app::setSidebarCollapsed 是进程级全局态，改动会跨用例存活，用例尾部必须复位。
+//   - app::compose 只建树不排版；读任何 frame 之前必须自己调 ui.layout()，否则 frame 全是 0。
 #include "doctest.h"
 #include "test_support.h"
 
@@ -13,7 +14,7 @@
 
 #include "core/module_interface.h"
 #include "core/router.h"
-#include "core/theme.h"  // 顶部留白 = spacingXXLarge（token 断言）
+#include "core/theme.h"  // 顶部留白断言直接比 spacingXXLarge token
 
 #include <eui/dsl.h>
 
@@ -49,14 +50,15 @@ private:
 
 float RecordingModule::lastScreenWidth = 0.0f;
 float RecordingModule::lastScreenHeight = 0.0f;
-// 每个用例独立的临时配置文件 —— 共享工厂（TIN-06b，原三份 tempConfigFile
-// 合流），调用点统一 test_support::tempConfigFile(kCfgPrefix, name)
+// 每个用例独立的临时配置文件，统一走 test_support::tempConfigFile 工厂
 constexpr const char* kCfgPrefix = "devdesk_test_sidebar_";
 
-void writeRawConfig(const std::filesystem::path& file,
-                    const std::string& json) {
-    std::ofstream f(file, std::ios::trunc);
-    f << json;
+// 手改过的配置文本按顶层键分发成 app_config 表的各行。
+// 返回 bool：doctest 断言宏自带 `return false`，void 会编译不过（-Wreturn-mismatch = -Werror）。
+bool writeRawConfig(const std::string& json) {
+    return test_support::seedConfigJsonRows(
+        ::core::appDatabase(), module::settings::SettingsStore::keyNamespace(),
+        json);
 }
 
 // 桩 Router（Home = 当前页，compose 落到 RecordingModule）
@@ -71,23 +73,19 @@ bool floatEq(float a, float b) { return std::fabs(a - b) < 0.01f; }
 
 } // namespace
 
-// ============ 1. SettingsConfig.sidebarCollapsed 持久化 ============
-
 REGISTER_TEST(sidebar_config_default_and_roundtrip,
               "sidebar: sidebarCollapsed 默认 false + 存取往返", {
+    test_support::TestEnv cfgDbEnv("devdesk_test_sidebar_", "sbcfg1", /*registerAppDb=*/true);
     const std::filesystem::path file = test_support::tempConfigFile(kCfgPrefix, "roundtrip");
     std::error_code ec;
     std::filesystem::remove(file, ec);
 
-    const module::settings::SettingsStore store(file);
-    // 默认值（无文件）
+    const module::settings::SettingsStore store(::core::appDatabase());
     DOCTEST_CHECK_FALSE(store.load().sidebarCollapsed);
-    // 往返 true
     module::settings::SettingsConfig cfg = store.load();
     cfg.sidebarCollapsed = true;
     DOCTEST_CHECK(store.save(cfg).isOk());
     DOCTEST_CHECK(store.load().sidebarCollapsed);
-    // 往返 false
     cfg = store.load();
     cfg.sidebarCollapsed = false;
     DOCTEST_CHECK(store.save(cfg).isOk());
@@ -97,57 +95,54 @@ REGISTER_TEST(sidebar_config_default_and_roundtrip,
 
 REGISTER_TEST(sidebar_config_legacy_missing_key,
               "sidebar: 老配置无 sidebarCollapsed 键 → 默认展开", {
+    test_support::TestEnv cfgDbEnv("devdesk_test_sidebar_", "sbcfg2", /*registerAppDb=*/true);
     const std::filesystem::path file = test_support::tempConfigFile(kCfgPrefix, "legacy");
-    // 老格式：只有 theme（其余字段缺省）
-    writeRawConfig(file, R"({"theme": "light"})");
-    const module::settings::SettingsStore store(file);
+    DOCTEST_REQUIRE(writeRawConfig(R"({"theme": "light"})"));
+    const module::settings::SettingsStore store(::core::appDatabase());
     DOCTEST_CHECK_FALSE(store.load().sidebarCollapsed);
-    // 显式 true 能读回
-    writeRawConfig(file, R"({"theme": "light", "sidebarCollapsed": true})");
+    DOCTEST_REQUIRE(writeRawConfig(
+        R"({"theme": "light", "sidebarCollapsed": true})"));
     DOCTEST_CHECK(store.load().sidebarCollapsed);
     return true;
 })
 
-// ============ 2. setSidebarCollapsed：内存态 + 落盘不覆盖其他字段 ============
-
 REGISTER_TEST(sidebar_toggle_persists,
               "sidebar: setSidebarCollapsed 翻内存态并落盘（保留其他字段）", {
+    test_support::TestEnv cfgDbEnv("devdesk_test_sidebar_", "sbcfg3", /*registerAppDb=*/true);
     const std::filesystem::path file = test_support::tempConfigFile(kCfgPrefix, "toggle");
     std::error_code ec;
     std::filesystem::remove(file, ec);
 
     // 预置一份带主题的配置，折叠切换后主题必须原样保留
-    module::settings::SettingsStore store(file);
+    module::settings::SettingsStore store(::core::appDatabase());
     module::settings::SettingsConfig base;
-    base.darkTheme = false;  // light
+    base.darkTheme = false;
     DOCTEST_CHECK(store.save(base).isOk());
 
-    app::setSidebarCollapsed(true, file);
+    app::setSidebarCollapsed(true, true);
     DOCTEST_CHECK(app::sidebarCollapsed());
     {
         const auto cfg = store.load();
         DOCTEST_CHECK(cfg.sidebarCollapsed);
-        DOCTEST_CHECK_FALSE(cfg.darkTheme);  // load→改→save 没有吃掉主题
+        DOCTEST_CHECK_FALSE(cfg.darkTheme);
     }
 
-    app::setSidebarCollapsed(false, file);
+    app::setSidebarCollapsed(false, true);
     DOCTEST_CHECK_FALSE(app::sidebarCollapsed());
     DOCTEST_CHECK_FALSE(store.load().sidebarCollapsed);
 
-    // 空路径 = 只改内存不落盘（启动恢复路径）
+    // 落盘路径为空 = 只改内存；这是启动恢复路径（配置尚未就绪时）
     app::setSidebarCollapsed(true);
     DOCTEST_CHECK(app::sidebarCollapsed());
     DOCTEST_CHECK_FALSE(store.load().sidebarCollapsed);
-    // 还原默认，不污染后续用例
+    // 复位：sidebarCollapsed 是进程级全局态，不还原会污染后续用例
     app::setSidebarCollapsed(false);
     return true;
 })
 
-// ============ 3. 无头 compose：折叠态 / 展开态 ============
-
 REGISTER_TEST(sidebar_collapsed_compose,
               "sidebar: 折叠态 72px、label 隐藏、图标居中、tooltip、内容区 +136", {
-    app::setSidebarCollapsed(true);  // 只改内存，不动真实 config.json
+    app::setSidebarCollapsed(true);  // 空落盘路径：不能动真实用户配置
     RecordingModule home(::core::PageId::Home, "首页");
     RecordingModule md(::core::PageId::Markdown, "笔记");
     ::core::Router router = makeStubRouter(home, md);
@@ -161,46 +156,44 @@ REGISTER_TEST(sidebar_collapsed_compose,
     app::compose(ui, screen);
     ui.end();
 
-    // 侧边栏宽 72（含分隔线位置）
+    // 侧边栏宽 72；分隔线落在 x=71（宽 1，贴右边）
     const auto* sidebar = ui.find("app.sidebar");
     DOCTEST_CHECK(sidebar != nullptr);
     DOCTEST_CHECK(floatEq(sidebar->width.value, 72.0f));
     DOCTEST_CHECK(floatEq(ui.find("app.sidebar.divider")->x, 71.0f));
 
-    // brand 折叠 = 只显示 logo 图标（icon 模式：text 存 glyph 的 UTF-8 串）
+    // brand 折叠 = 只显示 logo 图标，icon 模式下 text 存的是 glyph 的 UTF-8 串
     const auto* collapsedBrand = ui.find("app.sidebar.brand");
     DOCTEST_CHECK(collapsedBrand != nullptr);
     DOCTEST_CHECK(collapsedBrand->text == eui::utf8(0xF5FC));  // fa-laptop-code
 
-    // 顶部留白（2026-09-28 用户真机反馈「侧边栏加一点上边距」）：品牌块上缘 =
-    // spacingXXLarge(40)，与页面主区上 padding 同档；折叠态与展开态同一纵向位置
-    //（只差横向分支），切换时 logo 不跳
+    // 顶部留白 = spacingXXLarge(40)，与页面主区上 padding 同档；折叠/展开两态必须同值，
+    // 否则切换时 logo 会纵向跳
     DOCTEST_CHECK(floatEq(collapsedBrand->y, 40.0f));
-    // 导航列表随品牌块整体下移：40 + 品牌高 32 + 品牌/导航间距 28 = 100
     const auto* firstHit = ui.find("app.sidebar.item.Home.hit");
     DOCTEST_CHECK(firstHit != nullptr);
-    DOCTEST_CHECK(floatEq(firstHit->y, 100.0f));
+    DOCTEST_CHECK(floatEq(firstHit->y, 100.0f));  // 40 + 品牌高 32 + 品牌/导航间距 28
 
-    // label 不渲染（折叠态模块名只走 tooltip）
+    // 折叠态不渲染 label（模块名只走 tooltip）
     DOCTEST_CHECK(ui.find("app.sidebar.item.Home.label") == nullptr);
     DOCTEST_CHECK(ui.find("app.sidebar.item.Markdown.label") == nullptr);
 
-    // 图标水平居中：(72 - 28) / 2 = 22
+    // 图标在 72 内水平居中：(72 - 28) / 2
     const auto* icon = ui.find("app.sidebar.item.Home.icon");
     DOCTEST_CHECK(icon != nullptr);
     DOCTEST_CHECK(floatEq(icon->x, 22.0f));
 
-    // 折叠开关：居中 (72 - 36) / 2 = 18
+    // 折叠开关同样居中：(72 - 36) / 2
     const auto* toggle = ui.find("app.sidebar.toggle");
     DOCTEST_CHECK(toggle != nullptr);
     DOCTEST_CHECK(floatEq(toggle->x, 18.0f));
 
-    // 模块内容区宽度跟随：1600 - 72 = 1528（展开 1392 → 折叠 +136）
+    // 模块内容区宽度跟随侧边栏实际占宽
     DOCTEST_CHECK(floatEq(app::pageContentWidth(1600.0f), 1528.0f));
     DOCTEST_CHECK(floatEq(RecordingModule::lastScreenWidth, 1528.0f));
     DOCTEST_CHECK(floatEq(RecordingModule::lastScreenHeight, 1000.0f));
 
-    app::setSidebarCollapsed(false);  // 还原，不污染后续用例
+    app::setSidebarCollapsed(false);  // 复位进程级全局态
     return true;
 })
 
@@ -224,16 +217,15 @@ REGISTER_TEST(sidebar_expanded_compose,
     DOCTEST_CHECK(sidebar != nullptr);
     DOCTEST_CHECK(floatEq(sidebar->width.value, 208.0f));
 
-    // brand 文字不变 + logo 图标在文字左侧（2026-09-24）
+    // brand 文字不变，logo 图标在文字左侧
     DOCTEST_CHECK(ui.find("app.sidebar.brand")->text == "DevDesk");
     const auto* logo = ui.find("app.sidebar.brand.logo");
     DOCTEST_CHECK(logo != nullptr);
     DOCTEST_CHECK(floatEq(logo->x, 16.0f));  // padX
-    // 顶部留白（2026-09-28 用户真机反馈「侧边栏加一点上边距」）：logo 与品牌文字
-    // 同 y = spacingXXLarge(40)，与页面主区上 padding 齐平
+    // logo 与品牌文字同 y = spacingXXLarge(40)，与折叠态一致
     DOCTEST_CHECK(floatEq(logo->y, 40.0f));
     DOCTEST_CHECK(floatEq(ui.find("app.sidebar.brand")->y, 40.0f));
-    // 导航列表随之整体下移：40 + 32 + 28 = 100
+    // 导航列表整体下移到 40 + 32 + 28
     DOCTEST_CHECK(floatEq(ui.find("app.sidebar.item.Home.hit")->y, 100.0f));
     const auto* label = ui.find("app.sidebar.item.Home.label");
     DOCTEST_CHECK(label != nullptr);
@@ -242,27 +234,19 @@ REGISTER_TEST(sidebar_expanded_compose,
     DOCTEST_CHECK(icon != nullptr);
     DOCTEST_CHECK(floatEq(icon->x, 28.0f));  // padX 16 + inset 12
 
-    // 展开态不挂 tooltip
     DOCTEST_CHECK(ui.find("app.sidebar.item.Home.tip") == nullptr);
-
-    // 开关：左对齐 padX
-    DOCTEST_CHECK(floatEq(ui.find("app.sidebar.toggle")->x, 16.0f));
-
-    // 内容区宽度 1600 - 208 = 1392
+    DOCTEST_CHECK(floatEq(ui.find("app.sidebar.toggle")->x, 16.0f));  // 开关左对齐 padX
     DOCTEST_CHECK(floatEq(app::pageContentWidth(1600.0f), 1392.0f));
     DOCTEST_CHECK(floatEq(RecordingModule::lastScreenWidth, 1392.0f));
     return true;
 })
 
-// 顶部留白的边界守卫（2026-09-28 用户纠正"改的层次不对"）：留白只能作用于
-// 侧边栏**自己子树内部**——不许把整页推下去、不许撑高 titlebar、不许在窗口顶与
-// 内容之间造一条"既无底也无内容"的空带。三条断言各对应一种错误表现：
-//   ① 右侧主内容区（app.page）几何：x=208 / y=0 / 宽 1392 / 高 1000 —— 与改动前
-//      逐项相同（页面 y 若被推下去、或窗口内容高被 titlebar 吃掉，这里立刻红）；
-//   ② 侧边栏容器与分隔线都从 y=0 起、铺满整高 —— 新增留白区仍属侧边栏区域；
-//   ③ 侧边栏**没有**自己的不透明底（底色 = 主窗口 clearColor，见 drawSidebar 内
-//      注释），故留白区不可能变成"半透档透出桌面"的透明带；把这条写成断言，
-//      防止今后有人给侧边栏加局部底时漏掉顶部留白区。
+// 顶部留白只能作用于侧边栏**自己子树内部**。改留白位置的三种典型错误：
+//   ① 把整页往下推 / 动窗口内容几何 —— ① 组断言立刻红
+//   ② 让侧边栏容器或分隔线不铺满整高 —— ② 组断言立刻红
+//   ③ 给侧边栏加局部不透明底后忘了覆盖顶部留白区，露出"半透档透出桌面"的带
+//      —— 侧边栏当前**没有**自己的底（底色 = 主窗口 clearColor）才天然免疫，
+//      今后加底时必须连带处理留白区
 REGISTER_TEST(sidebar_top_padding_stays_inside_sidebar,
               "sidebar: 顶部留白只在侧边栏内部（页面几何不变 + 无透明带）", {
     app::setSidebarCollapsed(false);
@@ -278,7 +262,7 @@ REGISTER_TEST(sidebar_top_padding_stays_inside_sidebar,
     ui.begin("sidebar_top_padding");
     app::compose(ui, screen);
     ui.end();
-    ui.layout(screen.width, screen.height);  // 取帧需显式布局（同 test_ui_modern）
+    ui.layout(screen.width, screen.height);  // 上面几条要读 frame，必须显式排版
 
     const auto* sidebar = ui.find("app.sidebar");
     const auto* page = ui.find("app.page");
@@ -289,16 +273,16 @@ REGISTER_TEST(sidebar_top_padding_stays_inside_sidebar,
     DOCTEST_REQUIRE(brand != nullptr);
     DOCTEST_REQUIRE(divider != nullptr);
 
-    // ① 主内容区几何（= 改动前）——锁住"不得把整页推下去 / 不得动窗口内容几何"
+    // ① 主内容区几何：页面 y 被推下去、或窗口内容高被 titlebar 吃掉，这里立刻红
     DOCTEST_CHECK(floatEq(page->frame.x, 208.0f));
     DOCTEST_CHECK(floatEq(page->frame.y, 0.0f));
     DOCTEST_CHECK(floatEq(page->frame.width, 1392.0f));
     DOCTEST_CHECK(floatEq(page->frame.height, 1000.0f));
-    // 模块拿到的页面 Screen 同源：高 = 整窗高（不因侧边栏留白缩水）
+    // 模块拿到的页面 Screen 高仍是整窗高（不因侧边栏留白缩水）
     DOCTEST_CHECK(floatEq(RecordingModule::lastScreenWidth, 1392.0f));
     DOCTEST_CHECK(floatEq(RecordingModule::lastScreenHeight, 1000.0f));
 
-    // ② 侧边栏容器 / 分隔线仍从 y=0 起、铺满整高（留白区仍在侧边栏区域内）
+    // ② 侧边栏容器 / 分隔线从 y=0 起、铺满整高（留白区仍属侧边栏区域）
     DOCTEST_CHECK(floatEq(sidebar->frame.y, 0.0f));
     DOCTEST_CHECK(floatEq(sidebar->frame.height, 1000.0f));
     DOCTEST_CHECK(floatEq(divider->frame.y, 0.0f));
@@ -312,7 +296,6 @@ REGISTER_TEST(sidebar_top_padding_stays_inside_sidebar,
     return true;
 })
 
-// ============ 4. 页面区原点写入 Router（右键菜单坐标系修复） ============
 REGISTER_TEST(sidebar_compose_writes_page_origin,
               "sidebar: compose 每帧写入页面区原点 x（展开 208 / 折叠 72）", {
     RecordingModule home(::core::PageId::Home, "首页");
@@ -324,8 +307,8 @@ REGISTER_TEST(sidebar_compose_writes_page_origin,
     screen.width = 1600.0f;
     screen.height = 1000.0f;
 
-    // 展开态：页面区原点 = 侧边栏占宽 208（模块把窗口坐标换算成页面
-    // 坐标时减本值；不写入 → 菜单右移一个侧边栏宽，跑进右侧详情区）
+    // 原点 = 侧边栏占宽；模块把窗口坐标换算成页面坐标时减本值。
+    // compose 不写入 → 右键菜单整体右移一个侧边栏宽，跑进右侧详情区。
     app::setSidebarCollapsed(false);
     {
         eui::Ui ui;
@@ -335,7 +318,7 @@ REGISTER_TEST(sidebar_compose_writes_page_origin,
     }
     DOCTEST_CHECK(floatEq(router.pageOriginX(), 208.0f));
 
-    // 折叠态：原点随侧边栏收窄到 72
+    // 折叠态原点随侧边栏收窄
     app::setSidebarCollapsed(true);
     {
         eui::Ui ui;
@@ -345,10 +328,150 @@ REGISTER_TEST(sidebar_compose_writes_page_origin,
     }
     DOCTEST_CHECK(floatEq(router.pageOriginX(), 72.0f));
 
-    // 未接入 app 布局的 Router：默认 0 = 模块侧换算无偏移（旧行为）
+    // 未接入 app 布局的 Router：默认 0 = 模块侧换算无偏移
     ::core::Router fresh;
     DOCTEST_CHECK(floatEq(fresh.pageOriginX(), 0.0f));
 
+    app::setSidebarCollapsed(false);  // 复位进程级全局态
+    return true;
+})
+
+// compose 每帧遍历 router->modules()，注册表变化在下一次 compose 立即反映。
+// 三步都要钉：反注册后当帧条目消失、再注册后条目回来、其余条目 y 不被挤压错位
+// （条目 y 由 compose 循环变量决定，天然重排；置顶的 Home 条目尤其不许动）。
+REGISTER_TEST(sidebar_live_toggle_reflects_registration,
+              "sidebar: 注册/反注册后 compose 当帧反映（活门控）", {
+    app::setSidebarCollapsed(false);
+    RecordingModule home(::core::PageId::Home, "首页");
+    RecordingModule md(::core::PageId::Markdown, "笔记");
+    RecordingModule agent(::core::PageId::Agent, "智能体");
+    ::core::Router router;
+    router.registerModule(&home);
+    router.registerModule(&md);
+    router.registerModule(&agent);
+    test_support::ScopedAppRouter scoped(&router);
+
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+
+    // 基础 id（"app.sidebar.item." + pageIdToString(page)）自身不构成元素，
+    // 直接 find 必为空；元素本体是 .hit/.icon/.label 三个。
+    // 注册态：Agent 排在 Home/Markdown 之后，y = 100 + 2×(40+4)
+    {
+        eui::Ui ui;
+        ui.begin("live_toggle_on");
+        app::compose(ui, screen);
+        ui.end();
+        const auto* agentHit = ui.find("app.sidebar.item.Agent.hit");
+        DOCTEST_REQUIRE(agentHit != nullptr);
+        DOCTEST_CHECK(floatEq(agentHit->y, 188.0f));
+        const auto* agentLabel = ui.find("app.sidebar.item.Agent.label");
+        DOCTEST_REQUIRE(agentLabel != nullptr);
+        DOCTEST_CHECK(agentLabel->text == "智能体");
+    }
+
+    // 反注册 → 三件套全部消失，其余条目 y 原样
+    router.unregisterModule(&agent);
+    {
+        eui::Ui ui;
+        ui.begin("live_toggle_off");
+        app::compose(ui, screen);
+        ui.end();
+        DOCTEST_CHECK(ui.find("app.sidebar.item.Agent.hit") == nullptr);
+        DOCTEST_CHECK(ui.find("app.sidebar.item.Agent.icon") == nullptr);
+        DOCTEST_CHECK(ui.find("app.sidebar.item.Agent.label") == nullptr);
+        const auto* homeHit = ui.find("app.sidebar.item.Home.hit");
+        const auto* mdHit = ui.find("app.sidebar.item.Markdown.hit");
+        DOCTEST_REQUIRE(homeHit != nullptr);
+        DOCTEST_REQUIRE(mdHit != nullptr);
+        DOCTEST_CHECK(floatEq(homeHit->y, 100.0f));
+        DOCTEST_CHECK(floatEq(mdHit->y, 144.0f));
+    }
+
+    // 再注册 → 条目回来，y 仍是 188（表序把它排在末位）
+    router.registerModule(&agent);
+    {
+        eui::Ui ui;
+        ui.begin("live_toggle_re_on");
+        app::compose(ui, screen);
+        ui.end();
+        const auto* agentHit = ui.find("app.sidebar.item.Agent.hit");
+        DOCTEST_REQUIRE(agentHit != nullptr);
+        DOCTEST_CHECK(floatEq(agentHit->y, 188.0f));
+        const auto* homeHit = ui.find("app.sidebar.item.Home.hit");
+        const auto* mdHit = ui.find("app.sidebar.item.Markdown.hit");
+        DOCTEST_REQUIRE(homeHit != nullptr);
+        DOCTEST_REQUIRE(mdHit != nullptr);
+        DOCTEST_CHECK(floatEq(homeHit->y, 100.0f));
+        DOCTEST_CHECK(floatEq(mdHit->y, 144.0f));
+    }
+    return true;
+})
+
+// registerModule 按表序插入，compose 遍历序即表序，与注册调用的先后无关。
+// 本用例故意乱序注册把「表序」与「注册序」分开：若 registerModule 退回 push_back
+// 追加语义，Agent（最先注册）会恒停在第 1 位（y=100），下面第 2 步立刻红。
+// 上一个用例注册序恰好等于表序，两序无差，测不出这个区别。
+REGISTER_TEST(sidebar_re_register_lands_table_order,
+              "sidebar: Agent 先注册、Home/Markdown 后注册 → compose 序仍表序（Agent y=188 回末位）", {
+    app::setSidebarCollapsed(false);
+    RecordingModule agent(::core::PageId::Agent, "智能体");
+    RecordingModule home(::core::PageId::Home, "首页");
+    RecordingModule md(::core::PageId::Markdown, "笔记");
+    ::core::Router router;
+    test_support::ScopedAppRouter scoped(&router);
+
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+
+    // 只注册 Agent → 它是唯一条目，y=100
+    router.registerModule(&agent);
+    {
+        eui::Ui ui;
+        ui.begin("re_register_agent_only");
+        app::compose(ui, screen);
+        ui.end();
+        const auto* agentHit = ui.find("app.sidebar.item.Agent.hit");
+        DOCTEST_REQUIRE(agentHit != nullptr);
+        DOCTEST_CHECK(floatEq(agentHit->y, 100.0f));
+    }
+
+    // 再注册 Home、Markdown → 它们插到 Agent 前面，Agent 被挤到 y=188
+    router.registerModule(&home);
+    router.registerModule(&md);
+    {
+        eui::Ui ui;
+        ui.begin("re_register_after_backfill");
+        app::compose(ui, screen);
+        ui.end();
+        const auto* homeHit = ui.find("app.sidebar.item.Home.hit");
+        const auto* mdHit = ui.find("app.sidebar.item.Markdown.hit");
+        const auto* agentHit = ui.find("app.sidebar.item.Agent.hit");
+        DOCTEST_REQUIRE(homeHit != nullptr);
+        DOCTEST_REQUIRE(mdHit != nullptr);
+        DOCTEST_REQUIRE(agentHit != nullptr);
+        DOCTEST_CHECK(floatEq(homeHit->y, 100.0f));
+        DOCTEST_CHECK(floatEq(mdHit->y, 144.0f));
+        DOCTEST_CHECK(floatEq(agentHit->y, 188.0f));
+    }
+
+    // unregister → 再 register：y 仍 188（表序位由 pageId 决定，不受反复开关影响）
+    router.unregisterModule(&agent);
+    router.registerModule(&agent);
+    {
+        eui::Ui ui;
+        ui.begin("re_register_off_on");
+        app::compose(ui, screen);
+        ui.end();
+        const auto* agentHit = ui.find("app.sidebar.item.Agent.hit");
+        DOCTEST_REQUIRE(agentHit != nullptr);
+        DOCTEST_CHECK(floatEq(agentHit->y, 188.0f));
+        const auto* homeHit = ui.find("app.sidebar.item.Home.hit");
+        DOCTEST_REQUIRE(homeHit != nullptr);
+        DOCTEST_CHECK(floatEq(homeHit->y, 100.0f));
+    }
     app::setSidebarCollapsed(false);  // 还原，不污染后续用例
     return true;
 })

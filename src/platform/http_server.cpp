@@ -1,17 +1,7 @@
 // src/platform/http_server.cpp
-// 基于 cpp-httplib 的本地 HTTP 服务器（详见 spec §7.2 / P0a PoC）
-//
-// 线程模型：
-//   - `httplib::Server` 在用户提供的线程里运行 listen 循环
-//   - 我们在 std::thread 里调 listen_after_bind()，stop() 时 join
-//   - 实际请求处理由 cpp-httplib 内部线程池完成（每个请求一个任务）
-//
-// 绑定地址由调用方给定（DevDesk 代理固定 127.0.0.1，仅本机可访问，无鉴权）
-//
-// 路由模型：
-//   - route(method, path, handler) 转发到 svr.Get/Post/Put/Delete/Patch/Options
-//   - handler 是 std::function<void(const RequestCtx&, ResponseWriter&)>
-//     我们在 cpp-httplib 的 Handler 里手动桥接 ctx → writer
+// 基于 cpp-httplib 的本地 HTTP 服务器。
+// 线程模型：std::thread 里跑 httplib listen 循环，stop() 时 join；请求由 cpp-httplib 内部线程池处理。
+// 绑定地址由调用方给定（本地代理固定 127.0.0.1，仅本机可访问，无鉴权）。
 
 #include "http_server.h"
 #include "http_headers.h"
@@ -25,14 +15,13 @@
 #include <map>
 #include <mutex>
 #include <thread>
+#include <utility>
 
 namespace platform::http {
 
 namespace {
 
-// 把 cpp-httplib 的 Headers（大小写不敏感 multimap）转成 std::map：
-// **键统一小写**，同名（大小写不敏感）多条保留首个 value，值原样。
-// 键归一后消费方按小写拼写查找即可稳定命中（CP-06）。
+// cpp-httplib Headers（大小写不敏感 multimap）→ std::map：键统一小写，同名多条保留首个 value。
 std::map<std::string, std::string> toHeaderMap(const httplib::Headers& src) {
     return toLowerKeyHeaderMap(src);
 }
@@ -55,10 +44,8 @@ httplib::Server::Handler toLibHandler(RouteHandler userHandler) {
         // 把 ResponseWriter 的状态写回 cpp-httplib Response
         res.status = rw.status();
 
-        // ---- 流式路径（spec §10.4）----
-        // ResponseWriter 设置了 chunk provider → 用 chunked 传输编码流式回写。
-        // provider 由 cpp-httplib 在其 worker 线程反复调用；我们把它桥接到
-        // 用户提供的 ChunkProvider（内部从 queue 拉数据、实现 backpressure）。
+        // 流式路径：ResponseWriter 设了 chunk provider → 用 chunked 传输编码流式回写。provider 由
+        // cpp-httplib 在 worker 线程反复调用，桥接到用户的 ChunkProvider（内部从 queue 拉数据、实现背压）。
         if (rw.isStreaming()) {
             for (const auto& kv : rw.headers()) {
                 res.set_header(kv.first, kv.second);
@@ -82,10 +69,8 @@ httplib::Server::Handler toLibHandler(RouteHandler userHandler) {
                     };
                     const bool more = provider(writeChunk, isWritable);
                     if (!more) {
-                        // cpp-httplib 的约定：provider 返回 false 会被当作
-                        // Canceled（不写终止 chunk，客户端会看到截断）。
-                        // 正确做法是调用 sink.done() 写 "0\r\n\r\n" 正常收尾，
-                        // 然后返回 true 让写循环按 data_available=false 退出。
+                        // provider 返回 false 会被 cpp-httplib 当 Canceled（客户端看到截断）；
+                        // sink.done() 写 "0\r\n\r\n" 正常收尾，再返回 true 让写循环退出。
                         sink.done();
                     }
                     return true;
@@ -100,8 +85,7 @@ httplib::Server::Handler toLibHandler(RouteHandler userHandler) {
             res.set_header(kv.first, kv.second);
         }
         if (!rw.body().empty()) {
-            // 响应头名大小写不敏感（CP-06）：消费方可能写 "content-type"
-            // 也可能写 "Content-Type"，都要命中；否则 body 会被标成 text/plain
+            // 头名大小写不敏感：消费方可能写 "content-type" 或 "Content-Type"，都要命中；否则 body 被标成 text/plain
             if (const char* ctype = findHeaderCI(rw.headers(), "content-type")) {
                 res.set_content(rw.body(), ctype);
             } else {
@@ -113,7 +97,7 @@ httplib::Server::Handler toLibHandler(RouteHandler userHandler) {
 
 } // namespace
 
-// ---------- ResponseWriter 实现 ----------
+// ResponseWriter 实现
 
 void ResponseWriter::setStatus(int code) { status_ = code; }
 void ResponseWriter::setHeader(const std::string& key,
@@ -124,7 +108,6 @@ void ResponseWriter::write(const std::string& data) {
     body_ += data;
 }
 // 空操作：响应在 handler 返回时由适配层统一提交（见 http_server.h 注释）。
-// 原 ended_ 标志从未被任何消费方读取（CP-10），已删。
 void ResponseWriter::end() {}
 
 void ResponseWriter::setChunkProvider(const std::string& contentType,
@@ -136,7 +119,7 @@ void ResponseWriter::setChunkProvider(const std::string& contentType,
     chunkReleaser_ = std::move(releaser);
 }
 
-// ---------- Server::Impl ----------
+// Server::Impl
 
 struct Server::Impl {
     httplib::Server svr;
@@ -146,13 +129,13 @@ struct Server::Impl {
     std::mutex routeMutex;
 };
 
-// ---------- Server 实现 ----------
+// Server 实现
 
 Server::Server(std::string bindAddress, int port)
     : bindAddress_(std::move(bindAddress)),
       port_(port),
       impl_(new Impl()) {
-    // 请求体上限（spec §10.4）：所有路由单点收口，超出由 cpp-httplib 回 413
+    // 请求体上限：所有路由单点收口，超出由 cpp-httplib 回 413
     impl_->svr.set_payload_max_length(kMaxBodyBytes);
 }
 

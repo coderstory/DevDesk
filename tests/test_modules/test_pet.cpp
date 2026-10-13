@@ -1,29 +1,9 @@
 // tests/test_modules/test_pet.cpp
-// 桌宠 MVP + M2（2026-09-22-desktop-pet-design.md §6 M1/M2）单测：
-//   1. 皮肤 pet.json 解析（纯函数）：合法/缺字段/坏帧数组/数值钳制/poked 可选
-//   2. 帧序列状态机（纯函数）：idle 循环 / poke 反应播一遍回 idle / 无 poked 帧皮肤
-//   3. 默认皮肤（随包 robot）加载：候选根解析 + 缺失返回 fail
-//   4. 设置门控：pet 是已知模块 ID（可持久化）但默认关闭；pet 字段往返
-//   5. startPetWindow 无头冒烟：openWindow 入队的 DslWindowRequest 逐字段断言
-//     （透明/无边框/置顶/不抢焦点/不进任务栏/位置钳制/未知皮肤回退）
-//   6. M2 四态状态机（纯函数）：sleep 入睡/唤醒 / typing 流式联动（经
-//      core::proxy_stats 测试时钟）/ typing 帧回落 / 状态优先级
-//   7. M2 气泡：超时消失纯函数 + 短语表（皮肤语料/内置回退）
-//   8. M2 多皮肤：sleep/typing/phrases 解析、随包 robot 四态帧加载、
-//      discoverSkins 发现消费、applyPetSkin/resetPetPosition 持久化行为
-//   9. 内置皮肤全集（robot/ghost 两款，随包资产模拟夹具）：四态帧齐全、
-//      两款互异、discoverSkins 发现、短语表区分、用户替换保留
-//  10. （已移除 2026-09-25）内置美术皮肤 anime-girl CC0 四态测试——皮肤
-//      随用户要求只留 robot/ghost 而删，测试同步移除（见 §10 占位注释）
-//  11. 审计修复（2026-09-23 pet 簇）：帧名路径穿越拒绝 [28] + 已知坐标
-//      钳进工作区纯函数 [12]（[0][1] 的 onWindowDestroyed 接线断言在 §5）
-//  12. M2 收尾（2026-09-23 pet-m2）：多显示器按位置选屏钳制 + 负坐标持久化
-//      往返 + Sleep 零渲染暂停门（电源事件真触发属人工点验）
-//  13. 气泡内容源（产品审计 [18]，§4.5 ①②）：②逾期计数 mock 桥三分支
-//      （N>0 计数文案 / N=0 正面文案 / 无数据回退）+ ①静态语料逐条往返
-//  14. 气泡调度纯函数（PAB-05）：dt/状态/roll → 「文案来源 + 停留时长」的
-//      来源判定与边界（门控/阈值/不足一帧）+ 节拍数字与注释对齐
-// 子窗口真实渲染/拖拽/穿透/气泡视觉属人工点验（设计 §6 M2 验收项）。
+// 桌宠模块单测：皮肤解析 / 帧序列状态机 / 开窗请求 / 气泡 / 多显示器钳制 / 拖拽锚点。
+// 跨文件前提：
+//   - pet 配置存 app_config 表（不是文件），经 core::appDatabase() 取连接；用例必须注册应用库。
+//   - 皮肤候选根由 skinRootCandidates 纯派生；随包资产不在测试 exeDir 内，须用夹具模拟。
+//   - 无头环境没有工作区也没有窗口 handle，位置与开窗断言只能到请求字段为止。
 #include "doctest.h"
 #include "test_support.h"
 
@@ -57,8 +37,7 @@ void compose(eui::Ui&, const eui::Screen&);
 
 namespace {
 
-// 临时目录路径前缀 —— 共享工厂 test_support::makeTempDir（TIN-06b，原 tempDir
-// 合流；makeTempDir 先清残骸再建空目录，各调用点随后的 remove / 建目录保持原样）
+// makeTempDir 先清残骸再建空目录；调用点随后的 remove / 建目录保持原样
 constexpr const char* kPetDirPrefix = "devdesk_test_pet_";
 
 void removeTreeQuietly(const std::filesystem::path& p) {
@@ -66,13 +45,16 @@ void removeTreeQuietly(const std::filesystem::path& p) {
     std::filesystem::remove_all(p, ec);
 }
 
-// 审计 [16]：DEVDESK_PETS_DIR 隔离的 RAII 守卫（test_settings.cpp TestEnv +
-// ScopedConfigPath 同款约定，原类名已随 TIN-06 移除法）。构造 = 清残留 + 建临时目录 + 指环境变量；析构 = 环境变量拉回
-// 未设置 + 删临时目录。断言 fail-fast 提前 return false 也会走析构，不留
-// 环境/磁盘泄漏给同进程后续用例（旧版手工 set/clear 配对失败即跳尾）。
+// DEVDESK_PETS_DIR 隔离 + 应用库注册的 RAII 守卫。
+// registerAppDb 不可去掉：pet 各桥的 save 经 core::appDatabase() 取连接，库未注册时
+// save 会因库未就绪如实失败，整组用例必红。
+// 析构顺序不可换：先注销 appDatabase，再删库文件——句柄还开着时删文件会失败。
 struct PetsDirEnv {
     const std::filesystem::path root;
-    explicit PetsDirEnv(const std::string& tag) : root(test_support::makeTempDir(kPetDirPrefix, tag.c_str())) {
+    test_support::TestEnv db;
+    explicit PetsDirEnv(const std::string& tag)
+        : root(test_support::makeTempDir(kPetDirPrefix, tag.c_str())),
+          db("devdesk_test_pet_", tag, /*registerAppDb=*/true) {
         removeTreeQuietly(root);
         test_support::setEnvVar("DEVDESK_PETS_DIR", root.string());
     }
@@ -82,6 +64,7 @@ struct PetsDirEnv {
         test_support::setEnvVar("DEVDESK_PETS_DIR", "");
         removeTreeQuietly(root);
     }
+    core::data::SqliteDb& handle() { return db.handle(); }
 };
 
 // PNG 结构断言：魔数 + IHDR 宽高（不做完整解码，解码属 EUI-NEO stb 路径）
@@ -123,7 +106,7 @@ const char* kValidSkinJson =
     "  }"
     "}";
 
-// M2 四态齐全的皮肤（sleep/typing/phrases）
+    // 四态齐全的皮肤（sleep/typing/phrases）
 const char* kM2SkinJson =
     "{"
     "  \"name\": \"m2-cat\","
@@ -138,11 +121,9 @@ const char* kM2SkinJson =
     "  }"
     "}";
 
-// 随包皮肤夹具：robot/ghost 自 2026-09-28 起为 assets/pets/ 静态资产；
-// 测试环境 exeDir（build/tests）没有随包资产拷贝（POST_BUILD 只拷给
-// DevDesk 目标），故以「重定向后的 petsDir 候选根出现 shipped 形态皮肤」
-// 模拟随包加载路径，断言契约与真随包一致（pet.json + 四态 13 帧，
-// frames 名与真实 assets/pets 逐字一致）
+// 随包皮肤夹具：测试 exeDir（build/tests）没有 assets/pets 拷贝（POST_BUILD 只拷给
+// DevDesk 目标），故以 petsDir 候选根下的 shipped 形态皮肤模拟随包加载路径。
+// frames 名与真实 assets/pets 逐字一致。
 const char* kRobotFixtureJson =
     "{"
     "  \"name\": \"robot\","
@@ -171,13 +152,9 @@ const char* kGhostFixtureJson =
     "  }"
     "}";
 
-// 皮肤夹具（pet.json + 四态 13 帧）与最小 PNG 头写法已收编到
-// test_support::writeShippedSkinFixture / writeMinimalPng（PET-CLOSE 起
-// test_settings 的模块开关用例共用同一份夹具，见 test_support.h 第 7 节）
 
 } // namespace
 
-// ============ 1. 皮肤 JSON 解析（纯函数）============
 
 REGISTER_TEST(pet_skin_parse_valid, "pet: pet.json 合法解析", {
     auto r = module::pet::parsePetSkinJson(kValidSkinJson);
@@ -191,7 +168,7 @@ REGISTER_TEST(pet_skin_parse_valid, "pet: pet.json 合法解析", {
     DOCTEST_CHECK_EQ(skin.idleFrames[0], "f0.png");
     DOCTEST_CHECK_EQ(skin.pokedFrames.size(), static_cast<size_t>(2));
     DOCTEST_CHECK_EQ(skin.license, "CC0");
-    // 帧路径拼接（dir 由 loadSkin 填）
+    // framePath 以 s.dir 为前缀；dir 由 loadSkin 填入
     const module::pet::PetSkin withDir = [&] {
         module::pet::PetSkin s = skin;
         s.dir = std::filesystem::path("C:/skins/clay-cat");
@@ -217,7 +194,7 @@ REGISTER_TEST(pet_skin_parse_missing_states, "pet: pet.json 缺 states/idle 报�
 });
 
 REGISTER_TEST(pet_skin_parse_clamps, "pet: frameRate/frameSize 越界收敛默认", {
-    // frameRate 超范围 → 保持默认 4；frameSize 越界 → 保持默认 128
+// 越界值不 clamp，一律回落默认（4 / 128）
     const std::string json =
         "{\"frameRate\": 999, \"frameSize\": [8, 9999],"
         " \"states\": {\"idle\": [\"f.png\"]}}";
@@ -232,7 +209,6 @@ REGISTER_TEST(pet_skin_parse_clamps, "pet: frameRate/frameSize 越界收敛默�
     return true;
 });
 
-// ============ 2. 帧序列状态机（纯函数）============
 
 REGISTER_TEST(pet_anim_idle_cycle, "pet: idle 帧循环推进", {
     auto r = module::pet::parsePetSkinJson(kValidSkinJson);
@@ -277,16 +253,14 @@ REGISTER_TEST(pet_anim_no_poked_frames, "pet: 无 poked 帧皮肤 poke 无反应
     return true;
 });
 
-// ============ 3. 默认皮肤（随包 robot）加载 ============
 
 REGISTER_TEST(pet_default_skin_shipped, "pet: 默认皮肤加载随包 robot（缺失返回 fail）", {
     using namespace module::pet;
     const PetsDirEnv pets("defaultskin");
     const std::filesystem::path& root = pets.root;
-    // 无任何候选根有 robot：fail（生成器已删，不写盘生成）
+    // 无候选根含 robot → fail；ensureDefaultSkin 不写盘生成
     const auto missing = ensureDefaultSkin();
     DOCTEST_CHECK(missing.isFail());
-    // 候选根出现 shipped 形态 robot 夹具 → 加载成功
     test_support::writeShippedSkinFixture(root, "robot", kRobotFixtureJson);
     const auto r = ensureDefaultSkin();
     DOCTEST_CHECK_MESSAGE(r.isOk(), r.isFail() ? r.errorMessage() : "");
@@ -296,45 +270,40 @@ REGISTER_TEST(pet_default_skin_shipped, "pet: 默认皮肤加载随包 robot（�
     DOCTEST_CHECK_EQ(skin.frameRate, 4.0);
     DOCTEST_CHECK(skin.idleFrames.size() >= 3);
     DOCTEST_CHECK(skin.pokedFrames.size() >= 2);
-    // idle + poked 帧文件全部存在且 PNG 头结构合法
     for (size_t i = 0; i < skin.idleFrames.size(); ++i) {
         DOCTEST_CHECK(pngLooksValid(skin.framePath(false, i), 128, 128));
     }
     for (size_t i = 0; i < skin.pokedFrames.size(); ++i) {
         DOCTEST_CHECK(pngLooksValid(skin.framePath(true, i), 128, 128));
     }
-    // 重复调用结果一致（加载语义稳定、无副作用）
+    // 重复调用结果一致（加载无副作用）
     const auto again = ensureDefaultSkin();
     DOCTEST_CHECK(again.isOk());
     DOCTEST_CHECK_EQ(again.value().idleFrames.size(), skin.idleFrames.size());
     return true;
 });
 
-// ============ 4. 设置门控 + pet 字段往返 ============
 
 REGISTER_TEST(pet_gating_defaults, "pet: 默认关闭、已知 ID 可持久化", {
     using namespace module::settings;
     SettingsConfig cfg;
-    // 默认不含 pet（氛围功能默认关，设计 §4.1）
+    // 默认不含 pet（氛围功能默认关）
     DOCTEST_CHECK(!moduleEnabled(cfg, kModuleIdPet));
     DOCTEST_CHECK(std::find(cfg.enabledModules.begin(), cfg.enabledModules.end(),
                             std::string(kModuleIdPet)) == cfg.enabledModules.end());
-    // 手动加入 → sanitized 保留（pet 是已知 ID）→ 开启
     cfg.enabledModules.push_back(kModuleIdPet);
     const SettingsConfig fixed = SettingsStore::sanitized(cfg);
     DOCTEST_CHECK(moduleEnabled(fixed, kModuleIdPet));
-    // 默认五模块数量不变（既有 gating 测试的基线）
+    // 默认模块清单 5 项（agent 默认关闭）
     DOCTEST_CHECK_EQ(SettingsConfig{}.enabledModules.size(), static_cast<size_t>(5));
     return true;
 });
 
 REGISTER_TEST(pet_settings_roundtrip, "pet: pet_config.json 读写往返 + 钳制", {
+// pet 配置存 app_config 表，经 core::appDatabase() 取连接；未注册则 save() 如实失败。
+    test_support::TestEnv cfgDbEnv("devdesk_test_pet_", "petcfg1", /*registerAppDb=*/true);
     using namespace module::pet;
-    const std::filesystem::path file =
-        test_temp::tempPath("devdesk_test_pet_config.json");
-    std::error_code ec;
-    std::filesystem::remove(file, ec);
-    PetConfigStore store(file);
+    PetConfigStore store(::core::appDatabase());
     PetConfig cfg;
     cfg.skinName = "my-cat";
     cfg.x = 1600;
@@ -344,24 +313,21 @@ REGISTER_TEST(pet_settings_roundtrip, "pet: pet_config.json 读写往返 + 钳�
     DOCTEST_CHECK_EQ(loaded.skinName, "my-cat");
     DOCTEST_CHECK_EQ(loaded.x, 1600);
     DOCTEST_CHECK_EQ(loaded.y, 800);
-    // 皮肤名白名单：路径分隔符/空 → 收敛默认 robot；坐标钳制保留 -1 哨兵
+    // 皮肤名白名单：路径分隔符 / 空 → 收敛默认 robot；坐标钳制保留 -1 哨兵
     cfg.skinName = "../evil";
     cfg.x = 999999;
     const PetConfig sanitizedCfg = PetConfigStore::sanitized(cfg);
     DOCTEST_CHECK_EQ(sanitizedCfg.skinName, "robot");
     DOCTEST_CHECK_EQ(sanitizedCfg.x, 32767);
     DOCTEST_CHECK_EQ(PetConfigStore::sanitized(PetConfig{}).x, -1);
-    std::filesystem::remove(file, ec);
     return true;
 });
 
-// ============ 5. startPetWindow 无头冒烟 ============
 
 REGISTER_TEST(pet_start_window_request, "pet: 开窗请求逐字段断言（无头）", {
     const PetsDirEnv pets("petsroot");
     const std::filesystem::path& petsRoot = pets.root;
-    // 清空可能残留的窗口请求队列；默认皮肤 = 随包 robot 夹具（startPetWindow
-    // 不再写盘生成，皮肤须先存在于候选根）
+    // startPetWindow 不写盘生成皮肤，夹具须先备在候选根
     (void)app::consumeWindowRequests();
     test_support::writeShippedSkinFixture(petsRoot, "robot", kRobotFixtureJson);
 
@@ -371,8 +337,8 @@ REGISTER_TEST(pet_start_window_request, "pet: 开窗请求逐字段断言（无�
     DOCTEST_CHECK_EQ(requests.size(), static_cast<size_t>(1));
     const app::DslWindowRequest& req = requests[0];
     DOCTEST_CHECK_EQ(req.pageId, "pet");
-    DOCTEST_CHECK_EQ(req.width, 128);   // G2：128×128 不再被放大
-    // 气泡让位条（pet_bubble.h）：窗口高 = 帧高 128 + 条 34（气泡不再盖精灵）
+    DOCTEST_CHECK_EQ(req.width, 128);   // 默认帧 128×128 不放大
+    // 窗口高 = 帧高 + 气泡让位条 kBubbleStripH
     DOCTEST_CHECK_EQ(req.height, 128 + static_cast<int>(module::pet::kBubbleStripH));
     DOCTEST_CHECK(req.positionSet);
     DOCTEST_CHECK_EQ(req.x, 50);
@@ -382,38 +348,34 @@ REGISTER_TEST(pet_start_window_request, "pet: 开窗请求逐字段断言（无�
     DOCTEST_CHECK(!req.resizable);
     DOCTEST_CHECK(!req.focusOnShow);          // 不抢焦点
     DOCTEST_CHECK(req.hideFromTaskbar);       // 不进任务栏/Alt+Tab
-    DOCTEST_CHECK(req.transparentFramebuffer);  // 逐像素透明（黑底修复：不随
-                                                // 全局窗口效果档位回落 None）
+    DOCTEST_CHECK(req.transparentFramebuffer);  // 逐像素透明：不随全局窗口效果档位回落 None
     DOCTEST_CHECK(!req.mousePassthrough);     // 默认不穿透
     DOCTEST_CHECK(!req.followClearColorOverride);  // 全透底不被主题广播冲掉
     DOCTEST_CHECK(req.clearColor.a == 0.0f);  // 全透
     DOCTEST_CHECK(static_cast<bool>(req.compose));
-    // 审计 [0][1]：创建/销毁回调都须随请求下传（销毁回调置空缓存句柄，
-    // Alt+F4/菜单隐藏/应用退出所有路径覆盖）
+    // 创建 / 销毁回调随请求下传；销毁回调须置空缓存句柄（覆盖 Alt+F4 / 菜单隐藏 / 退出）
     DOCTEST_CHECK(static_cast<bool>(req.onWindowCreated));
     DOCTEST_CHECK(static_cast<bool>(req.onWindowDestroyed));
-    // 默认皮肤 = 夹具就位的随包 robot（无头环境启动前后不生成皮肤）
+    // 无头环境启动前后不生成皮肤
     DOCTEST_CHECK(std::filesystem::exists(petsRoot / "robot" / "pet.json"));
 
     // 未知皮肤名 → 回退默认皮肤，窗口照常入队
     module::pet::startPetWindow(module::pet::PetWindowConfig{"no-such-skin", -1, -1});
     std::vector<app::DslWindowRequest> second = app::consumeWindowRequests();
     DOCTEST_CHECK_EQ(second.size(), static_cast<size_t>(1));
-    DOCTEST_CHECK(!second[0].mousePassthrough);   // 挂机穿透已移除，恒不穿透
+    DOCTEST_CHECK(!second[0].mousePassthrough);   // 恒不穿透
     DOCTEST_CHECK(second[0].width == 128);       // 默认皮肤 128×128
 
-    // 单边 -1 哨兵：只重置未设置的那一边，已知坐标不丢
-    //（无头环境无工作区 → 未设置边落到兜底值 100）
+// 单边 -1 哨兵：只重置未设置的那一边（无头无工作区 → 兜底 100）
     module::pet::startPetWindow(module::pet::PetWindowConfig{"", 77, -1});
     std::vector<app::DslWindowRequest> third = app::consumeWindowRequests();
     DOCTEST_CHECK_EQ(third.size(), static_cast<size_t>(1));
-    DOCTEST_CHECK_EQ(third[0].x, 77);   // 已知的 x 原样保留
-    DOCTEST_CHECK_EQ(third[0].y, 100);  // 未设置的 y 走兜底
+    DOCTEST_CHECK_EQ(third[0].x, 77);   // 已知边原样保留
+    DOCTEST_CHECK_EQ(third[0].y, 100);  // 未设置边走兜底
 
     return true;
 });
 
-// ============ 6. M2 四态状态机（纯函数）============
 
 REGISTER_TEST(pet_anim_sleep_cycle, "pet: 无交互超时入睡 + 交互唤醒", {
     using namespace module::pet;
@@ -421,10 +383,8 @@ REGISTER_TEST(pet_anim_sleep_cycle, "pet: 无交互超时入睡 + 交互唤醒",
     DOCTEST_CHECK(r.isOk());
     const PetSkin& skin = r.value();
     PetAnimation anim;
-    // 未到阈值不入睡
     anim.considerSleep(kSleepAfterSeconds - 1.0, skin);
     DOCTEST_CHECK(anim.state == PetAnimState::Idle);
-    // 到阈值 → Sleep，播 sleep 帧循环
     anim.considerSleep(kSleepAfterSeconds, skin);
     DOCTEST_CHECK(anim.state == PetAnimState::Sleep);
     DOCTEST_CHECK_EQ(anim.currentPath(skin).filename().string(), "s0.png");
@@ -434,7 +394,6 @@ REGISTER_TEST(pet_anim_sleep_cycle, "pet: 无交互超时入睡 + 交互唤醒",
     anim.tick(skin);  // sleep 循环回卷，不退出
     DOCTEST_CHECK(anim.state == PetAnimState::Sleep);
     DOCTEST_CHECK_EQ(anim.currentPath(skin).filename().string(), "s0.png");
-    // 交互唤醒 → Idle（先醒，再点才戳）
     anim.poke(skin);
     DOCTEST_CHECK(anim.state == PetAnimState::Idle);
     DOCTEST_CHECK_EQ(anim.currentPath(skin).filename().string(), "f0.png");
@@ -459,20 +418,19 @@ REGISTER_TEST(pet_anim_typing, "pet: typing 态进出 + 帧回落 + 优先级", 
     DOCTEST_CHECK_EQ(anim.currentPath(skin).filename().string(), "t1.png");
     anim.tick(skin);  // typing 循环不退出
     DOCTEST_CHECK(anim.state == PetAnimState::Typing);
-    // 流结束回 Idle
     anim.setStreaming(false, skin);
     DOCTEST_CHECK(anim.state == PetAnimState::Idle);
-    // typing 中点击不重置（poke 只在 Idle 生效）
+    // poke 仅 Idle 生效，typing 中点击不重置
     anim.setStreaming(true, skin);
     anim.poke(skin);
     DOCTEST_CHECK(anim.state == PetAnimState::Typing);
-    // 流式优先于入睡：Sleep 中来流 → Typing（AI 干活时宠物不睡）
+    // 状态优先级：流式 > 入睡，Sleep 中来流转 Typing
     PetAnimation sleeper;
     sleeper.considerSleep(kSleepAfterSeconds, skin);
     DOCTEST_CHECK(sleeper.state == PetAnimState::Sleep);
     sleeper.setStreaming(true, skin);
     DOCTEST_CHECK(sleeper.state == PetAnimState::Typing);
-    // 无 typing 帧的皮肤：状态语义仍在，视觉回落 idle 帧
+    // 无 typing 帧：状态语义仍在，视觉回落 idle 帧
     const PetSkin plainSkin = parsePetSkinJson(kValidSkinJson).value();
     PetAnimation plain;
     plain.setStreaming(true, plainSkin);
@@ -481,7 +439,7 @@ REGISTER_TEST(pet_anim_typing, "pet: typing 态进出 + 帧回落 + 优先级", 
     return true;
 });
 
-// 代理联动全链路（pet 状态机吃 core::proxy_stats 快照；测试时钟注入）
+// pet 状态机吃 core::proxy_stats 快照；测试时钟注入
 REGISTER_TEST(pet_anim_proxy_stats_linkage, "pet: proxy_stats 活动流驱动 typing", {
     using namespace module::pet;
     core::proxy_stats::resetForTest();
@@ -516,7 +474,6 @@ REGISTER_TEST(pet_anim_proxy_stats_linkage, "pet: proxy_stats 活动流驱动 ty
     return true;
 });
 
-// ============ 7. M2 气泡 ============
 
 REGISTER_TEST(pet_bubble_timeout, "pet: 气泡超时消失 + 空短语不显示", {
     using namespace module::pet;
@@ -544,11 +501,11 @@ REGISTER_TEST(pet_phrase_table, "pet: 短语表皮肤语料优先 + 内置回退
     DOCTEST_CHECK_EQ(r.value().phrases.size(), static_cast<size_t>(2));
     DOCTEST_CHECK_EQ(phraseTable(r.value()).size(), static_cast<size_t>(2));
     DOCTEST_CHECK_EQ(phraseTable(r.value())[0], "你好呀");
-    // 无 phrases 皮肤 → 内置语料（非空，换肤可换性格）
+    // 无 phrases 皮肤 → 内置语料（非空）
     auto plain = parsePetSkinJson(kValidSkinJson);
     DOCTEST_CHECK(plain.value().phrases.empty());
     DOCTEST_CHECK(!phraseTable(plain.value()).empty());
-    // 非法 phrases 数组（非字符串成员）静默忽略 → 回退内置
+    // phrases 含非字符串成员 → 静默忽略，回退内置语料
     auto bad = parsePetSkinJson(
         "{\"phrases\":[42],\"states\":{\"idle\":[\"f.png\"]}}");
     DOCTEST_CHECK(bad.isOk());
@@ -556,8 +513,8 @@ REGISTER_TEST(pet_phrase_table, "pet: 短语表皮肤语料优先 + 内置回退
     return true;
 });
 
-// 内容源②（审计 [18]，§4.5）：mock 逾期计数桥三分支——N>0 含计数文案 /
-// N=0 正面文案不带死数字 / 桥空或 nullopt（todo 关、查询失败）回退静态语料
+// 内容源②：逾期计数桥三分支——N>0 计数文案 / N=0 正面文案不带死数字 /
+// 桥空或 nullopt → 空串，由调用方回退内容源①
 REGISTER_TEST(pet_bubble_overdue_content, "pet: 气泡内容源②逾期数文案（N>0/N=0/无数据）", {
     using namespace module::pet;
     // N>0 → 「你有 N 条逾期任务」：文本含计数与款式词，装气泡可往返
@@ -584,7 +541,7 @@ REGISTER_TEST(pet_bubble_overdue_content, "pet: 气泡内容源②逾期数文�
     const std::string t0 = overdueBubbleText(zero);
     DOCTEST_CHECK_MESSAGE(!t0.empty(), t0);
     DOCTEST_CHECK_MESSAGE(t0.find("0") == std::string::npos, t0);
-    // 桥返回 nullopt（todo 模块关闭 / 查询失败）→ 空串 = 回退内容源①
+    // 桥返回 nullopt（todo 关 / 查询失败）→ 空串 = 回退①
     std::function<std::optional<int64_t>()> unavailable =
         [] { return std::optional<int64_t>(std::nullopt); };
     DOCTEST_CHECK(overdueBubbleText(unavailable).empty());
@@ -594,8 +551,7 @@ REGISTER_TEST(pet_bubble_overdue_content, "pet: 气泡内容源②逾期数文�
     return true;
 });
 
-// 内容源①补强（审计 [18]）：静态语料逐条装气泡往返——语料退化（空表/空串/
-// 装不进气泡）直接红，M2 验收「关 todo 模块时回退通用语料」的数据侧保障
+// 内容源①：静态语料逐条装气泡往返；语料退化（空表 / 空串 / 装不进气泡）直接红
 REGISTER_TEST(pet_bubble_static_corpus_roundtrip, "pet: 内容源①静态语料逐条气泡往返", {
     using namespace module::pet;
     const std::vector<std::string>& phrases = defaultPhrases();
@@ -612,8 +568,8 @@ REGISTER_TEST(pet_bubble_static_corpus_roundtrip, "pet: 内容源①静态语料
     return true;
 });
 
-// 内容源③（M2 §4.5，产品审计 [18]）：代理事件文案——mock ProxyEventGetter
-// 返回各终态码，断言气泡文案；无事件（nullopt）/ 未注入桥回退（空串）
+// 内容源③：代理事件文案——mock ProxyEventGetter 返回各终态码；
+// nullopt（无事件 / claude 关 / 过期）或桥未注入 → 空串
 REGISTER_TEST(pet_bubble_proxy_event_content,
               "pet: 气泡内容源③代理事件文案（2xx/4xx/5xx/网络失败/无事件）", {
     using namespace module::pet;
@@ -625,14 +581,13 @@ REGISTER_TEST(pet_bubble_proxy_event_content,
     DOCTEST_CHECK_MESSAGE(!tOk.empty(), tOk);
     DOCTEST_CHECK_MESSAGE(tOk.find("代理") != std::string::npos, tOk);
     DOCTEST_CHECK_MESSAGE(tOk.find("完成") != std::string::npos, tOk);
-    // 装气泡可往返
     PetBubble bubble;
     bubble.show(tOk, 3.0);
     DOCTEST_CHECK(bubble.visible);
     DOCTEST_CHECK_EQ(bubble.text, tOk);
     bubble.tick(3.5);
     DOCTEST_CHECK(!bubble.visible);
-    // 3xx（如 301）也归转发完成，不出「出错」字样
+    // 3xx 同样归转发完成，不出「出错」
     std::function<std::optional<int>()> redirect = [] {
         return std::optional<int>(301);
     };
@@ -670,8 +625,7 @@ REGISTER_TEST(pet_bubble_proxy_event_content,
     return true;
 });
 
-// 三级内容源回退序（§4.5 ③>②>①，审计 [18]）：petDataBubbleText 纯函数——
-// ③有事件必压过②；③无回退②；③②皆无数据回空串（调用方出①静态语料）
+// 内容源回退序 ③>②>①：petDataBubbleText 两者皆空时返回空串，由调用方出①静态语料
 REGISTER_TEST(pet_bubble_three_level_fallback,
               "pet: 气泡三级内容源回退序（③代理事件>②逾期>①静态）", {
     using namespace module::pet;
@@ -687,52 +641,45 @@ REGISTER_TEST(pet_bubble_three_level_fallback,
     std::function<std::optional<int64_t>()> overdueNone = [] {
         return std::optional<int64_t>(std::nullopt);
     };
-    // ③有 + ②有 → 取③（3s），即便②也有逾期数
     const auto both = petDataBubbleText(proxyOk, overdue3);
     DOCTEST_CHECK_MESSAGE(both.first.find("代理") != std::string::npos, both.first);
     DOCTEST_CHECK_MESSAGE(both.first.find("逾期") == std::string::npos, both.first);
     DOCTEST_CHECK(both.second == 3.0);
-    // ③无 + ②有 → 取②（4s，逾期文案）
     const auto onlyOverdue = petDataBubbleText(proxyNone, overdue3);
     DOCTEST_CHECK_MESSAGE(onlyOverdue.first.find("逾期") != std::string::npos,
                           onlyOverdue.first);
     DOCTEST_CHECK(onlyOverdue.second == 4.0);
-    // ③有（4xx）+ ②有 → 仍取③（出错事件优先）
     std::function<std::optional<int>()> proxyErr = [] {
         return std::optional<int>(500);
     };
     const auto proxyErrWins = petDataBubbleText(proxyErr, overdue3);
     DOCTEST_CHECK_MESSAGE(proxyErrWins.first.find("500") != std::string::npos,
                           proxyErrWins.first);
-    // ③无 + ②无 → 空串 = 调用方回退①静态语料
     const auto empty = petDataBubbleText(proxyNone, overdueNone);
     DOCTEST_CHECK(empty.first.empty());
-    // 两桥都未注入 → 空串
     std::function<std::optional<int>()> noProxy;
     std::function<std::optional<int64_t>()> noOverdue;
     DOCTEST_CHECK(petDataBubbleText(noProxy, noOverdue).first.empty());
     return true;
 });
 
-// 气泡调度纯函数（PAB-05）：调度原先内联在 pet_window.cpp 的 onTimer 闭包里
-// 无法单测——这里固定 dt / 状态 / roll 输入，断言「弹哪一级 + 停多久」与各边界
+// 气泡调度纯函数：固定 dt / 状态 / roll 输入，断言「弹哪一级 + 停多久」与各边界
 REGISTER_TEST(pet_bubble_schedule_pure,
               "pet: 气泡调度纯函数（来源/停留/门控/边界）", {
     using namespace module::pet;
-    // dt = 1s 时的两个阈值：数据槽位 1/150 ≈ 0.00667，两级共享槽位上界 1/60
+    // dt = 1s 时的两个阈值：数据槽位 1/150，共享槽位上界 1/60
     const double tData = 1.0 / kPetDataSlotSec;
     const double tAny = 1.0 / kPetAnyBubbleSlotSec;
-    // 命中数据槽位（③代理事件 > ②逾期）→ 停留 = 桥无数据降级静态语料的兜底
+    // 数据槽位停留 = kPetBubbleHoldSec
     const PetBubblePlan data = petBubbleSchedule(1.0, false, true, 0.0);
     DOCTEST_CHECK(data.source == PetBubbleSource::Data);
     DOCTEST_CHECK_EQ(data.holdSec, 3.0);
-    // 槽位内贴近上界仍是数据槽位；恰好压在上界（严格小于）→ 落①静态语料
+    // 上界为严格小于：恰好压在上界 → 落①静态语料
     DOCTEST_CHECK(petBubbleSchedule(1.0, false, true, tData - 1e-9).source ==
                   PetBubbleSource::Data);
     DOCTEST_CHECK(petBubbleSchedule(1.0, false, true, tData).source ==
                   PetBubbleSource::Static);
-    // 无可用文案（③②两桥都无数据 → petDataBubbleText 空串）：调用方据此走
-    // ①静态语料兜底，兜底停留就是计划里的 holdSec（3.0，非 0——0 会让气泡立消）
+    // 两桥皆无 → 空串，调用方走①兜底；兜底停留取计划 holdSec（0 会让气泡立消）
     std::function<std::optional<int>()> noProxy;
     std::function<std::optional<int64_t>()> noOverdue;
     DOCTEST_CHECK(petDataBubbleText(noProxy, noOverdue).first.empty());
@@ -765,10 +712,8 @@ REGISTER_TEST(pet_bubble_schedule_pure,
     return true;
 });
 
-// 调度节拍 = 注释数字（PAB-05 核心：旧注释写「①静态语料平均 ~60s 一句」，代码
-// 实为 ~100s）。dt = 1s 上用整数网格数各级命中占比（全固定算术、无随机源）：
+// 节拍推导：dt = 1s 上按整数网格统计命中占比（全固定算术、无随机源）。
 //   数据槽位 = 1/150 → 1000/150000 点；静态 = 1/60 − 1/150 = 1/100 → 1500 点。
-// 断言钉死这两个数，注释与代码再漂移即红
 REGISTER_TEST(pet_bubble_schedule_cadence,
               "pet: 气泡调度节拍与注释数字一致（静态 ~100s 非 ~60s）", {
     using namespace module::pet;
@@ -785,8 +730,8 @@ REGISTER_TEST(pet_bubble_schedule_cadence,
         if (plan.source == PetBubbleSource::Static) ++staticHits;
     }
     DOCTEST_CHECK_EQ(dataHits, 1000);    // 1/150（~2.5min 一泡）
-    DOCTEST_CHECK_EQ(staticHits, 1500);  // 1/100（~100s；按 1/60 算才是旧注释）
-    // 计划 → 气泡接线语义：按计划的停留时长装上气泡，到点消失
+    DOCTEST_CHECK_EQ(staticHits, 1500);  // 1/100（~100s）
+    // 按计划停留时长装气泡，到点消失
     PetBubble bubble;
     bubble.show("按调度弹一句", kPetBubbleHoldSec);
     DOCTEST_CHECK(bubble.visible);
@@ -795,7 +740,6 @@ REGISTER_TEST(pet_bubble_schedule_cadence,
     return true;
 });
 
-// ============ 8. M2 多皮肤 ============
 REGISTER_TEST(pet_skin_parse_m2_states, "pet: pet.json sleep/typing 帧解析", {
     using namespace module::pet;
     auto r = parsePetSkinJson(kM2SkinJson);
@@ -833,8 +777,7 @@ REGISTER_TEST(pet_default_skin_m2_frames, "pet: 随包 robot 四态帧齐备可�
     for (size_t i = 0; i < skin.typingFrames.size(); ++i) {
         DOCTEST_CHECK(pngLooksValid(skin.dir / skin.typingFrames[i], 128, 128));
     }
-    // 用户替换语义：petsDir 的 robot 是替换皮肤（source 非随包标记）→ 候选
-    // 优先命中 petsDir，原样加载不动；帧数不足也如实返回
+    // 用户替换皮肤（source 非随包标记）→ 候选优先命中 petsDir，原样加载不动；帧数不足也如实返回
     {
         std::ofstream out(root / "robot" / "pet.json", std::ios::trunc);
         out << "{\"name\":\"robot\",\"source\":\"artist\","
@@ -853,13 +796,13 @@ REGISTER_TEST(pet_builtin_skins, "pet: 随包 robot/ghost 两款皮肤（四态�
     const std::filesystem::path& root = pets.root;
     test_support::writeShippedSkinFixture(root, "robot", kRobotFixtureJson);
     test_support::writeShippedSkinFixture(root, "ghost", kGhostFixtureJson);
-    // discoverSkins 发现全部 2 款（设置页下拉/右键换肤菜单数据源，零改动）
+    // discoverSkins 发现全部 2 款
     const std::vector<std::string> found = discoverSkins();
     DOCTEST_CHECK_EQ(found.size(), static_cast<size_t>(2));
     for (const char* name : {"robot", "ghost"}) {
         DOCTEST_CHECK(std::find(found.begin(), found.end(), name) != found.end());
     }
-    // 两款皮肤全部载入
+    // 两款皮肤均可载入
     std::vector<PetSkin> skins;
     for (const char* name : {"robot", "ghost"}) {
         auto r = loadSkin(root / name);
@@ -869,7 +812,7 @@ REGISTER_TEST(pet_builtin_skins, "pet: 随包 robot/ghost 两款皮肤（四态�
         }
     }
     DOCTEST_CHECK_EQ(skins.size(), static_cast<size_t>(2));
-    // 每款：四态帧数齐全 + 128×128 + 全帧 PNG 头结构合法 + 短语表非空
+    // 每款：四态帧齐全 + 128×128 + 全帧 PNG 头合法 + 短语表非空
     for (const PetSkin& skin : skins) {
         DOCTEST_CHECK_EQ(skin.idleFrames.size(), static_cast<size_t>(6));
         DOCTEST_CHECK_EQ(skin.pokedFrames.size(), static_cast<size_t>(2));
@@ -885,10 +828,9 @@ REGISTER_TEST(pet_builtin_skins, "pet: 随包 robot/ghost 两款皮肤（四态�
             }
         }
     }
-    // 两款短语表互异（性格区分）
+    // 两款短语表互异
     DOCTEST_CHECK(skins[0].phrases != skins[1].phrases);
-    // 用户替换语义：robot 换成美术包（source 非随包标记）→ ensureDefaultSkin
-    // 候选 petsDir 优先命中，原样加载不动
+    // robot 换成美术包（source 非随包标记）→ 候选优先命中 petsDir
     {
         std::ofstream out(root / "robot" / "pet.json", std::ios::trunc);
         out << "{\"name\":\"robot\",\"source\":\"artist\","
@@ -900,18 +842,15 @@ REGISTER_TEST(pet_builtin_skins, "pet: 随包 robot/ghost 两款皮肤（四态�
     return true;
 });
 
-// ============ 10. （已移除）内置美术皮肤 anime-girl 测试 ============
-// 2026-09-25：用户要求只留 robot/ghost + 本地 tatsu-pet，anime-girl CC0
-// 美术皮肤已从 assets/pets 删除，本 CC0 四态断言用例随之移除。
 
 REGISTER_TEST(pet_discover_skins, "pet: 皮肤发现（下拉/换肤菜单的数据源）", {
     using namespace module::pet;
     const PetsDirEnv pets("discover");
     const std::filesystem::path& root = pets.root;
-    // 空目录：无皮肤
+    // 空目录 → 无皮肤
     std::filesystem::create_directories(root);
     DOCTEST_CHECK(discoverSkins().empty());
-    // 随包形态 robot 夹具 + 手工放第二个皮肤包 → 都被发现
+    // 手工放第二个皮肤包 → 一并被发现
     test_support::writeShippedSkinFixture(root, "robot", kRobotFixtureJson);
     std::filesystem::create_directories(root / "pixel-dog");
     {
@@ -924,7 +863,7 @@ REGISTER_TEST(pet_discover_skins, "pet: 皮肤发现（下拉/换肤菜单的数
                   skins.end());
     DOCTEST_CHECK(std::find(skins.begin(), skins.end(), "pixel-dog") !=
                   skins.end());
-    // 无 pet.json 的目录与非法名目录（路径穿越风险）不进清单
+    // 无 pet.json 与非法名目录不进清单
     std::filesystem::create_directories(root / "no-json-dir");
     std::filesystem::create_directories(root / "bad..name");
     {
@@ -936,10 +875,8 @@ REGISTER_TEST(pet_discover_skins, "pet: 皮肤发现（下拉/换肤菜单的数
     return true;
 });
 
-// ---- 审计 CP-04：皮肤根候选不再看环境变量 ----
-// 辅助：候选里是否含「安装目录」那条（exe 旁 assets/pets）。exe 目录解析
-// 失败时本就没有该候选，此时不评（返回 true，与 skinRootCandidates 的跳过
-// 语义一致）
+    // 候选里是否含「安装目录」那条（exe 旁 assets/pets）。exe 目录解析失败时本就没有
+    // 该候选，此时不评（返回 true，与 skinRootCandidates 的跳过语义一致）
 static bool rootsContainPackaged(const std::vector<std::filesystem::path>& roots) {
     const std::filesystem::path exeDir = core::paths::executableDir();
     if (exeDir.empty()) return true;
@@ -950,24 +887,22 @@ static bool rootsContainPackaged(const std::vector<std::filesystem::path>& roots
     return false;
 }
 
-// 旧实现：DEVDESK_PETS_DIR 已设 → 候选列表只剩 petsDir 一条（整个丢掉 exe 旁
-// 随包皮肤候选），环境变量因此参与**产品行为**。新契约：候选纯派生（数据根 +
-// 安装目录），环境变量只搬 petsDir() 的位置，不改候选形态。
+// 契约：候选纯派生（数据根 + 安装目录），DEVDESK_PETS_DIR 只搬 petsDir() 的位置。
+// 设了 env 也必须保留安装目录候选，不得提前 return。
 REGISTER_TEST(pet_skin_roots_env_independent,
               "pet: 皮肤根候选不随 DEVDESK_PETS_DIR 变化（CP-04）", {
     using namespace module::pet;
     const PetsDirEnv pets("roots_env");
     const std::vector<std::filesystem::path> withEnv = skinRootCandidates();
     DOCTEST_REQUIRE(!withEnv.empty());
-    // 设着 env 时 petsDir 仍被隔离——向后兼容没退化（它既是第一条候选，
-    // 也是换肤写盘处）
+    // 设着 env 时 petsDir 仍是第一条候选，也是换肤写盘处
     DOCTEST_CHECK_EQ(withEnv[0], pets.root);
 
-    // 清掉 env（空串 = 删除变量）→ 候选形态必须与设着时一致
+    // 清掉 env（空串 = 删除变量）→ 候选形态不变
     test_support::setEnvVar("DEVDESK_PETS_DIR", "");
     const std::vector<std::filesystem::path> withoutEnv = skinRootCandidates();
     DOCTEST_CHECK_EQ(withEnv.size(), withoutEnv.size());
-    // 关键回归：设了 env 也不能丢掉安装目录候选（旧实现正是在这里提前 return）
+    // 设了 env 也不能丢掉安装目录候选
     DOCTEST_CHECK(rootsContainPackaged(withEnv));
     DOCTEST_CHECK(rootsContainPackaged(withoutEnv));
     return true;
@@ -983,10 +918,9 @@ REGISTER_TEST(pet_apply_skin_and_reset, "pet: applyPetSkin 校验/持久化 + �
         std::ofstream out(root / "pixel-dog" / "pet.json", std::ios::trunc);
         out << "{\"name\":\"pixel-dog\",\"states\":{\"idle\":[\"d0.png\"]}}";
     }
-    // 预置配置：已知位置 + 默认皮肤（无头环境窗口未开 → 只持久化路径）
-    const std::filesystem::path cfgFile = root / "pet_config.json";
+    // 预置配置：已知位置 + 默认皮肤（窗口未开 → 只落库）
     {
-        PetConfigStore store(cfgFile);
+        PetConfigStore store(::core::appDatabase());
         PetConfig cfg;
         cfg.skinName = "robot";
         cfg.x = 500;
@@ -996,13 +930,13 @@ REGISTER_TEST(pet_apply_skin_and_reset, "pet: applyPetSkin 校验/持久化 + �
     // 未发现的皮肤名被拒绝，配置不动
     applyPetSkin("no-such-skin");
     {
-        const PetConfig cfg = PetConfigStore(cfgFile).load();
+        const PetConfig cfg = PetConfigStore(::core::appDatabase()).load();
         DOCTEST_CHECK_EQ(cfg.skinName, "robot");
     }
     // 合法皮肤名 → 持久化生效，位置不动（窗口未开）
     applyPetSkin("pixel-dog");
     {
-        const PetConfig cfg = PetConfigStore(cfgFile).load();
+        const PetConfig cfg = PetConfigStore(::core::appDatabase()).load();
         DOCTEST_CHECK_EQ(cfg.skinName, "pixel-dog");
         DOCTEST_CHECK_EQ(cfg.x, 500);
         DOCTEST_CHECK_EQ(cfg.y, 600);
@@ -1010,7 +944,7 @@ REGISTER_TEST(pet_apply_skin_and_reset, "pet: applyPetSkin 校验/持久化 + �
     // 位置重置 → 坐标清回 -1（未设置哨兵），皮肤不被动
     resetPetPosition();
     {
-        const PetConfig cfg = PetConfigStore(cfgFile).load();
+        const PetConfig cfg = PetConfigStore(::core::appDatabase()).load();
         DOCTEST_CHECK_EQ(cfg.x, -1);
         DOCTEST_CHECK_EQ(cfg.y, -1);
         DOCTEST_CHECK_EQ(cfg.skinName, "pixel-dog");
@@ -1018,11 +952,9 @@ REGISTER_TEST(pet_apply_skin_and_reset, "pet: applyPetSkin 校验/持久化 + �
     return true;
 });
 
-// ---- 拖拽锚点跟随（2026-09-23 真机症状 1：拖动抖动）----
-// 复现坐标模型：GLFW 上报的光标位置是「窗口相对」的——窗口被拖拽回调移动
-// 后，同样的屏幕移动产生反向偏差的读数。旧 delta 累加方案在此模型下
-// +10/-5/+10 振荡；锚点方案：首个拖拽事件捕获锚点（窗口原地起步），
-// 此后窗口逐事件精确移动光标屏幕位移（1:1，无振荡无累积漂移）。
+// GLFW 上报的光标位置是窗口相对的：窗口被拖拽回调移动后，同样的屏幕移动产生反向
+// 偏差的读数。锚点方案——首个拖拽事件捕获锚点（窗口原地起步），此后逐事件 1:1 跟
+// 光标屏幕位移。改回 delta 累加会在此坐标模型下振荡。
 
 REGISTER_TEST(pet_drag_anchor_follow, "pet: 拖拽锚点跟随——1:1 跟光标，无反馈抖动", {
     module::pet::PetDragAnchor anchor;
@@ -1034,13 +966,13 @@ REGISTER_TEST(pet_drag_anchor_follow, "pet: 拖拽锚点跟随——1:1 跟光�
     int prevTargetY = winY;
     int prevScreenXi = static_cast<int>(screenX);
     int prevScreenYi = static_cast<int>(screenY);
-    // 光标轨迹步进（模拟真机轨迹：单调右移 + 下移）
+    // 光标轨迹步进：单调右移 + 下移
     const int stepX[5] = {8, 5, 5, 7, 6};
     const int stepY[5] = {0, 3, 4, 2, 5};
     for (int i = 0; i < 5; ++i) {
         screenX += stepX[i];
         screenY += stepY[i];
-        // GLFW 会报的窗口内光标位（窗口移动后参考系已变——抖动根源所在）
+        // GLFW 上报的窗口内光标位（窗口移动后参考系已变）
         const double relX = screenX - static_cast<double>(winX);
         const double relY = screenY - static_cast<double>(winY);
         const auto target =
@@ -1050,8 +982,7 @@ REGISTER_TEST(pet_drag_anchor_follow, "pet: 拖拽锚点跟随——1:1 跟光�
             DOCTEST_CHECK_EQ(target.first, 500);
             DOCTEST_CHECK_EQ(target.second, 400);
         } else {
-            // 1:1 跟随：窗口位移 == 光标屏幕位移（旧 delta 方案在此轨迹上
-            // 会出现负增量/振荡）
+            // 1:1 跟随：窗口位移 == 光标屏幕位移（delta 累加在此轨迹上会振荡）
             DOCTEST_CHECK_EQ(target.first - prevTargetX,
                              static_cast<int>(screenX) - prevScreenXi);
             DOCTEST_CHECK_EQ(target.second - prevTargetY,
@@ -1092,16 +1023,14 @@ REGISTER_TEST(pet_drag_anchor_follow, "pet: 拖拽锚点跟随——1:1 跟光�
     return true;
 });
 
-// ============ 11. 审计修复（2026-09-23 pet 簇）============
 
-REGISTER_TEST(pet_pos_clamp_work_area, "pet: 已知坐标钳进工作区（审计[12]）", {
+REGISTER_TEST(pet_pos_clamp_work_area, "pet: 已知坐标钳进工作区", {
     // 常规位置不动
     const auto normal =
         module::pet::clampPetPosToWorkArea(100, 200, 0, 0, 1920, 1080, 128, 128);
     DOCTEST_CHECK_EQ(normal.first, 100);
     DOCTEST_CHECK_EQ(normal.second, 200);
-    // 负坐标（拖出左/上缘）→ 钳到工作区原点——这是哨兵冲突根因：落盘后
-    // sanitized 的 x<-1→-1 把「未设置」哨兵和真实负位混为一谈，重启跳默认位
+    // 负坐标 → 钳到工作区原点；落盘须能区分真实负位与 -1「未设置」哨兵
     const auto negative =
         module::pet::clampPetPosToWorkArea(-50, -80, 0, 0, 1920, 1080, 128, 128);
     DOCTEST_CHECK_EQ(negative.first, 0);
@@ -1129,15 +1058,14 @@ REGISTER_TEST(pet_pos_clamp_work_area, "pet: 已知坐标钳进工作区（审�
     return true;
 });
 
-// 帧名穿越拒绝判定（合法皮肤包/单点扩展名必须放行）。辅助函数避免 9 处
-// 断言重复拼 JSON
+    // 帧名穿越拒绝判定；辅助函数避免多处断言重复拼 JSON
 static bool frameNameRejected(const char* frameName) {
     const std::string json =
         std::string("{\"states\":{\"idle\":[\"") + frameName + "\"]}}";
     return module::pet::parsePetSkinJson(json).isFail();
 }
 
-REGISTER_TEST(pet_skin_frame_name_traversal, "pet: 帧名路径穿越拒绝（审计[28]）", {
+REGISTER_TEST(pet_skin_frame_name_traversal, "pet: 帧名路径穿越拒绝", {
     // 穿越/绝对路径/盘符形态 → 解析整体失败（idle 必填）
     DOCTEST_CHECK(frameNameRejected("../secret.png"));
     DOCTEST_CHECK(frameNameRejected("..\\secret.png"));
@@ -1168,9 +1096,8 @@ REGISTER_TEST(pet_skin_frame_name_traversal, "pet: 帧名路径穿越拒绝（�
     return true;
 });
 
-// ---- 审计 [25]：退出二段确认 ----
 
-REGISTER_TEST(pet_exit_confirm_menu, "pet: 退出确认菜单文本结构（审计[25]）", {
+REGISTER_TEST(pet_exit_confirm_menu, "pet: 退出确认菜单文本结构", {
     const auto items = module::pet::petExitConfirmItems();
     DOCTEST_REQUIRE_EQ(items.size(), static_cast<size_t>(4));
     // 0=影响说明（不可点）：必须讲清断代理 + 丢弹窗状态两个后果
@@ -1188,44 +1115,40 @@ REGISTER_TEST(pet_exit_confirm_menu, "pet: 退出确认菜单文本结构（审�
     return true;
 })
 
-REGISTER_TEST(pet_exit_confirm_decision, "pet: 只有「确认退出」路径触发退出（审计[25]）", {
+REGISTER_TEST(pet_exit_confirm_decision, "pet: 只有「确认退出」路径触发退出", {
     using module::pet::petExitConfirmChosen;
-    // 确认退出（下标 2）→ 退
     DOCTEST_CHECK(petExitConfirmChosen(std::vector<int>{2}));
-    // 取消 / 点中说明行 / 嵌套路径（防御）→ 不退
     DOCTEST_CHECK(!petExitConfirmChosen(std::vector<int>{3}));
     DOCTEST_CHECK(!petExitConfirmChosen(std::vector<int>{0}));
     DOCTEST_CHECK(!petExitConfirmChosen(std::vector<int>{1}));
     DOCTEST_CHECK(!petExitConfirmChosen(std::vector<int>{2, 1}));
-    // 空选择（Esc/点别处/平台不支持）→ 不退
     DOCTEST_CHECK(!petExitConfirmChosen(std::vector<int>{}));
     return true;
 })
 
-// ============ 12. M2 收尾：多显示器钳制 + Sleep 零渲染（2026-09-23 pet-m2）============
 
 namespace {
 
-// 左副屏布局：主屏 [0,1920) + 副屏 [-1920,0)（负坐标区）
+// 主屏 + 左侧负坐标区副屏
 std::vector<module::pet::PetWorkArea> dualMonitorLeft() {
     return {{0, 0, 1920, 1080}, {-1920, 0, 1920, 1080}};
 }
 
-// 右副屏布局：主屏 [0,1920) + 副屏 [1920,3840)
+// 主屏 + 右侧正坐标副屏
 std::vector<module::pet::PetWorkArea> dualMonitorRight() {
     return {{0, 0, 1920, 1080}, {1920, 0, 1920, 1080}};
 }
 
-// 仅主屏（M1 形态回归基准）
+// 仅主屏（无副屏基准）
 std::vector<module::pet::PetWorkArea> primaryOnly() {
     return {{0, 0, 1920, 1080}};
 }
 
 } // namespace
 
-REGISTER_TEST(pet_multi_monitor_clamp, "pet: 多显示器按位置选屏钳制（M2 任务A）", {
+REGISTER_TEST(pet_multi_monitor_clamp, "pet: 多显示器按位置选屏钳制", {
     using module::pet::clampPetPosToMonitors;
-    // 副屏内合法负坐标：不动（M1 只按主屏钳会把 -1500 钳回 0 = 跳回主屏）
+    // 副屏内合法负坐标不动（只按主屏钳会跳回主屏）
     const auto onSecondary = clampPetPosToMonitors(-1500, 500, dualMonitorLeft(), 128, 128);
     DOCTEST_CHECK_EQ(onSecondary.first, -1500);
     DOCTEST_CHECK_EQ(onSecondary.second, 500);
@@ -1241,12 +1164,11 @@ REGISTER_TEST(pet_multi_monitor_clamp, "pet: 多显示器按位置选屏钳制�
     const auto onRight = clampPetPosToMonitors(2500, 300, dualMonitorRight(), 128, 128);
     DOCTEST_CHECK_EQ(onRight.first, 2500);
     DOCTEST_CHECK_EQ(onRight.second, 300);
-    // 两块屏都不含的远处（x=99999）→ 取最近屏（右副屏）钳 3840-128=3712，
-    // 不是主屏的 1792（MONITOR_DEFAULTTONEAREST 语义）
+    // 两屏都不含的远处 → 取最近屏钳制（MONITOR_DEFAULTTONEAREST 语义）
     const auto farRight = clampPetPosToMonitors(99999, 300, dualMonitorRight(), 128, 128);
     DOCTEST_CHECK_EQ(farRight.first, 3712);
     DOCTEST_CHECK_EQ(farRight.second, 300);
-    // M1 行为回归：仅主屏枚举时负坐标仍钳回主屏原点（单机无副屏用户零变化）
+    // 仅主屏枚举时负坐标钳回主屏原点（无副屏用户行为不变）
     const auto legacy = clampPetPosToMonitors(-50, -80, primaryOnly(), 128, 128);
     DOCTEST_CHECK_EQ(legacy.first, 0);
     DOCTEST_CHECK_EQ(legacy.second, 0);
@@ -1262,14 +1184,16 @@ REGISTER_TEST(pet_multi_monitor_clamp, "pet: 多显示器按位置选屏钳制�
     return true;
 });
 
-REGISTER_TEST(pet_negative_coord_persist, "pet: 副屏负坐标落盘往返（M2 任务A 哨兵）", {
+REGISTER_TEST(pet_negative_coord_persist, "pet: 副屏负坐标落盘往返", {
+    // pet 配置存 app_config 表，经 core::appDatabase() 取连接；未注册则 save() 如实失败。
+    test_support::TestEnv cfgDbEnv("devdesk_test_pet_", "petcfg2", /*registerAppDb=*/true);
     using namespace module::pet;
     const std::filesystem::path file =
         test_temp::tempPath("devdesk_test_pet_config_neg.json");
     std::error_code ec;
     std::filesystem::remove(file, ec);
-    PetConfigStore store(file);
-    // 左副屏坐标落盘 → 读回原值（旧 sanitize 的 x<-1→-1 会把它吞成「未设置」）
+    PetConfigStore store(::core::appDatabase());
+    // 左副屏坐标落盘 → 读回原值（负坐标不得被吞成「未设置」）
     PetConfig cfg;
     cfg.skinName = "robot";
     cfg.x = -1500;
@@ -1296,22 +1220,19 @@ REGISTER_TEST(pet_negative_coord_persist, "pet: 副屏负坐标落盘往返（M2
     return true;
 });
 
-// Sleep 零渲染（任务B）：无头可断言的是「暂停门」——compose 入口唯一的读值
-// isPetRenderPaused()（true 即整帧 return，不重建成/不推动画/不跑计时器），
-// 以及电源回调写入方与读取方共用同一标志。WM_POWERBROADCAST → 回调 → 标志
-// 的真实链路属真机点验（EUI-NEO power_events 只在 Windows 消息泵触发）。
-REGISTER_TEST(pet_sleep_render_pause, "pet: Sleep 零渲染暂停门（M2 任务B）", {
+// compose 入口唯一的读值是 isPetRenderPaused()——true 即整帧 return，不重建成 /
+// 不推动画 / 不跑计时器；电源回调写入方与该读取方共用同一标志。
+// WM_POWERBROADCAST → 回调 → 标志的真实链路属真机点验（EUI-NEO power_events 只在
+// Windows 消息泵触发）。
+REGISTER_TEST(pet_sleep_render_pause, "pet: Sleep 零渲染暂停门", {
     using module::pet::isPetRenderPaused;
     using module::pet::setPetRenderPaused;
-    // 默认不暂停（首帧正常 compose）
     DOCTEST_CHECK(!isPetRenderPaused());
-    // 挂起回调侧：置位 → compose 跳帧门生效
     setPetRenderPaused(true);
     DOCTEST_CHECK(isPetRenderPaused());
-    // 唤醒回调侧：清位 → 恢复渲染
     setPetRenderPaused(false);
     DOCTEST_CHECK(!isPetRenderPaused());
-    // 重复挂起/唤醒幂等（PBT_APMRESUMEAUTOMATIC 与 RESUMESUSPEND 先后到也只收敛到 false）
+    // 重复挂起 / 唤醒幂等：两种电源通知先后到也只收敛到 false
     setPetRenderPaused(true);
     setPetRenderPaused(true);
     setPetRenderPaused(false);
@@ -1320,41 +1241,30 @@ REGISTER_TEST(pet_sleep_render_pause, "pet: Sleep 零渲染暂停门（M2 任务
     return true;
 });
 
-// ---- 审计 [5][36]：设置页解耦只读桥 currentSkinName ----
-// settings 不再 include pet 头也不 link pet，桌宠卡初值改走该标量只读
-// 函数（盘即真值：apply 路径双写运行时 + pet_config.json）。本用例锁桥语义：
-// 无盘 → 默认值；store 写皮肤 → 桥跟随。（挂机穿透桥 currentClickThrough
-// 已于 2026-09-24 随功能移除）
+// 跨模块不变量：settings 不 include pet 头也不 link pet，桌宠卡初值走
+// currentSkinName 只读函数（盘即真值——apply 路径双写运行时 + 配置表）。
+// 不要为了取皮肤名把 pet 依赖引进 settings。
 REGISTER_TEST(pet_bridge_readonly_accessors,
-              "pet: currentSkinName 只读桥（审计 [5][36] 设置页解耦）", {
+              "pet: currentSkinName 只读桥（设置页解耦）", {
     PetsDirEnv env("bridge");
     using namespace module::pet;
 
-    // pet_config.json 不存在 → PetConfig 默认值
+    // 无配置 → PetConfig 默认值
     DOCTEST_CHECK_EQ(currentSkinName(), std::string(kDefaultSkinName));
 
-    // 换皮肤名走盘 store（applyPetSkin 需 discoverSkins 命中，桥只读同一张盘）
+    // 换皮肤名走 store（applyPetSkin 需 discoverSkins 命中）
     PetConfig cfg;
     cfg.skinName = "bridge-skin";
-    DOCTEST_CHECK(!PetConfigStore(petConfigFile()).save(cfg).isFail());
+    DOCTEST_CHECK(!PetConfigStore(::core::appDatabase()).save(cfg).isFail());
     DOCTEST_CHECK_EQ(currentSkinName(), std::string("bridge-skin"));
     return true;
 });
 
-// ---- 审计 THS-03 第二批：pet 侧写点的原子写收口 ----
-// （2026-09-28 起皮肤生成器已删，pet 侧写点只剩配置 store 一个；皮肤帧/
-// pet.json 的原子写注入用例随生成器一起移除）
-// 失败注入照上一批（test_view_state.cpp）约定：把临时文件路径 <目标>.devdesk-tmp
-// 用目录占住（打开必失败），不 sleep、不杀进程，且可顺带断言「失败时旧内容一字未变」。
+// 失败注入约定：把临时文件路径 <目标>.devdesk-tmp 用目录占住（打开必失败），
+// 不 sleep、不杀进程，可顺带断言「失败时旧内容一字未变」。
 
 namespace {
 
-std::string readAllBytes(const std::filesystem::path& p) {
-    std::ifstream f(p, std::ios::binary);
-    std::ostringstream ss;
-    ss << f.rdbuf();
-    return ss.str();
-}
 
 std::filesystem::path tmpPathOf(const std::filesystem::path& p) {
     return std::filesystem::path(p.string() + ".devdesk-tmp");
@@ -1363,6 +1273,8 @@ std::filesystem::path tmpPathOf(const std::filesystem::path& p) {
 } // namespace
 
 REGISTER_TEST(pet_config_save_failure_keeps_old, "pet: 配置原子写失败不破坏旧文件（THS-03）", {
+    // pet 配置存 app_config 表，经 core::appDatabase() 取连接；未注册则 save() 如实失败。
+    test_support::TestEnv cfgDbEnv("devdesk_test_pet_", "petcfg3", /*registerAppDb=*/true);
     using namespace module::pet;
     const std::filesystem::path file =
         std::filesystem::temp_directory_path() / "devdesk_test_pet_config_atomic.json";
@@ -1371,26 +1283,37 @@ REGISTER_TEST(pet_config_save_failure_keeps_old, "pet: 配置原子写失败不�
     std::filesystem::remove_all(tmp, ec);
     std::filesystem::remove(file, ec);
 
-    PetConfigStore store(file);
+    PetConfigStore store(::core::appDatabase());
     PetConfig cfg;
     cfg.skinName = "my-cat";
     cfg.x = 1600;
     cfg.y = 800;
     DOCTEST_REQUIRE(store.save(cfg).isOk());
-    // 成功后字节与旧实现一致：serialize 结果 + "\n" 尾
-    const std::string bytes = readAllBytes(file);
-    DOCTEST_CHECK(!bytes.empty());
-    DOCTEST_CHECK_EQ(bytes.back(), '\n');
+    // 一次成功落库的证据是该行原文，且须是完整配置（skinName/x/y/scale 四键齐全）
+    const std::string row = test_support::readRawConfigRow(
+        ::core::appDatabase(), module::pet::kPetConfigKey);
+    DOCTEST_CHECK(!row.empty());
+    {
+        auto parsed = platform::json::parse(row);
+        DOCTEST_REQUIRE(parsed.isOk());
+        DOCTEST_REQUIRE(parsed.value().isObject());
+        auto o = parsed.value().asObject();
+        DOCTEST_CHECK(o.has("skinName"));
+        DOCTEST_CHECK(o.has("x"));
+        DOCTEST_CHECK(o.has("y"));
+        DOCTEST_CHECK(o.has("scale"));
+    }
 
-    // 落盘通道被占住 → 保存失败，但上一次成功落盘的配置必须原样可读
-    DOCTEST_REQUIRE(std::filesystem::create_directory(tmp, ec));
+    // save 失败（库未就绪）时，上一次成功落库的配置必须原样可读。整份存一行 =
+    // 单条 UPSERT，本身即原子。
+    PetConfigStore noDb(nullptr);
     PetConfig changed;
     changed.skinName = "robot";
     changed.x = 0;
     changed.y = 0;
-    DOCTEST_CHECK(store.save(changed).isFail());
+    DOCTEST_CHECK(noDb.save(changed).isFail());
 
-    PetConfigStore reopened(file);
+    PetConfigStore reopened(::core::appDatabase());
     const PetConfig loaded = reopened.load();
     DOCTEST_CHECK_EQ(loaded.skinName, std::string("my-cat"));
     DOCTEST_CHECK_EQ(loaded.x, 1600);
@@ -1401,10 +1324,8 @@ REGISTER_TEST(pet_config_save_failure_keeps_old, "pet: 配置原子写失败不�
     return true;
 });
 
-// ---- PAB-12（波 1 L7）：气泡短语随机源 ----
-// 旧实现 std::rand 从未 srand = 每次启动同一序列（且短语顺序固定）。
-// 单进程内只能锁「随机源活着」：64 次抽样须出 ≥2 种短语，且每个结果都
-// 落在短语表内（不越界、不空串）。跨进程不再同序列无法在本用例断言
+// 随机源只能锁「活着」：64 次抽样须出 ≥2 种短语，且每个结果都落在短语表内
+//（不越界、不空串）。跨进程不同序列在本用例断言不到。
 REGISTER_TEST(pet_phrase_randomized, "pet: 气泡短语随机化（64 次抽样出多种）", {
     using namespace module::pet;
     auto parsed = parsePetSkinJson(kM2SkinJson);
@@ -1424,8 +1345,7 @@ REGISTER_TEST(pet_phrase_randomized, "pet: 气泡短语随机化（64 次抽样�
     return true;
 });
 
-// ---- PAB-13（波 1 L7）：设置页「显示桌宠」桥 ----
-// 无头：handle 恒为 nullptr（onWindowCreated 只在主循环里回填），故这里锁
+// 无头：handle 恒为 nullptr（onWindowCreated 只在主循环里回填），故锁的是
 // 「已装配过的会话 → showPetWindow 重新入队一条开窗请求，几何沿用 rt.config」
 REGISTER_TEST(pet_show_window_reenqueues,
               "pet: showPetWindow 重新入队开窗请求（PAB-13）", {
@@ -1454,23 +1374,20 @@ REGISTER_TEST(pet_show_window_reenqueues,
     return true;
 });
 
-// ---- Bug B 2026-09-30：showPetWindow 的 false 三义收成四态枚举 ----
-// 改前 false 把「未装配 / 已开着 / 启动失败」折成一个值，settings 侧把
-// 「已开着」误报成「未启用，重启后生效」、启动失败谎报成功。逐态断言：
+// showPetWindow 四态互斥：settings 侧不得把 AlreadyOpen 误报成「未启用，重启后生效」
 REGISTER_TEST(pet_show_window_outcomes,
               "pet: showPetWindow 四态各归各位（Bug B）", {
     using Outcome = module::pet::PetShowOutcome;
     (void)app::consumeWindowRequests();  // 清残留
 
-    // ① 未装配（装配标志只置不清，进程级单例回厂只能经测试缝——这就是
-    //    「启动时开关就是关的」会话的真实形态）：拒绝凭空开窗，零请求入队
+    // ① NotAssembled：装配标志只置不清，进程级单例回厂只能经测试缝——即「启动时
+    //    开关就是关的」会话的真实形态。拒绝凭空开窗，零请求入队
     module::pet::resetPetRuntimeForTests();
     DOCTEST_CHECK(module::pet::showPetWindow() == Outcome::NotAssembled);
     DOCTEST_CHECK(app::consumeWindowRequests().empty());
 
-    // ② 已装配但皮肤不可用（空皮肤根 + 测试环境无随包资产 → 回退默认皮肤
-    //    也失败）：StartFailed，同样零请求入队（改前这种情况返回 true——
-    //    「已请求显示」但窗口永远不会出现）
+    // ② StartFailed：已装配但皮肤不可用（空皮肤根 + 测试环境无随包资产 → 回退默认
+    //    皮肤也失败），同样零请求入队
     module::pet::resetPetRuntimeForTests();
     {
         const PetsDirEnv pets("showwin_empty");
@@ -1494,8 +1411,8 @@ REGISTER_TEST(pet_show_window_outcomes,
                          static_cast<size_t>(1));
     }
 
-    // ④ AlreadyOpen：无头环境 handle 只能经请求自带的 onWindowCreated 回填
-    //（生产里这是主循环职责）——「窗口已开着」不得再落进「未启用，重启生效」
+    // ④ AlreadyOpen：无头环境 handle 只能经请求自带的 onWindowCreated 回填（生产里
+    // 这是主循环职责）——不得再落进「未启用，重启生效」
     module::pet::resetPetRuntimeForTests();
     {
         const PetsDirEnv pets("showwin_open");
@@ -1518,24 +1435,21 @@ REGISTER_TEST(pet_show_window_outcomes,
     return true;
 });
 
-// ---- 气泡布局（2026-09-30 用户反馈「展示文本的框框需要上移，不要盖在
-// 桌宠上面」）----
-// 几何断言：气泡矩形与精灵帧矩形**不相交**。petBubbleRect/petSpriteRect 是
-// compose 侧同一数据源（pet_window.cpp 直接消费这两个纯函数），纯函数层
-// 断言成立 = 渲染几何成立。变异自检见本用例尾部注释
+// 几何断言：气泡矩形与精灵帧矩形**不相交**。petBubbleRect / petSpriteRect 是
+// compose 侧同一数据源（pet_window.cpp 直接消费这两个纯函数），纯函数层断言成立
+// = 渲染几何成立。
 REGISTER_TEST(pet_bubble_layout_disjoint,
               "pet: 气泡矩形与精灵帧矩形不相交（上移不遮挡）", {
     using namespace module::pet;
-    // 常量口径（PAB-05 数字对齐）：间距落在需求带 4-8px、条高 = 气泡高 + 间距
+    // 常量口径：间距落在 4-8px 需求带，条高 = 气泡高 + 间距
     DOCTEST_CHECK_EQ(kBubbleHeight, 28.0f);
     DOCTEST_CHECK(kBubbleGap >= 4.0f && kBubbleGap <= 8.0f);
     DOCTEST_CHECK_EQ(kBubbleStripH, kBubbleHeight + kBubbleGap);
     DOCTEST_CHECK_EQ(petWindowHeight(128), 162);
     DOCTEST_CHECK_EQ(petWindowHeight(512), 546);
 
-    // 覆盖典型窗口宽（内置皮肤 136/360/512、最小帧 16）× 气泡宽（含 80 下限、
-    // 280 上限、超窗宽 600——负 x 被窗口裁剪的场景）全组合：垂直分离
-    //（气泡底 + 间距 = 帧顶）⇒ 两矩形恒不相交，与水平位置无关
+    // 覆盖典型窗口宽 × 气泡宽（含 80 下限、280 上限、超窗宽 600——负 x 被窗口裁剪）
+    // 全组合：垂直分离（气泡底 + 间距 = 帧顶）⇒ 两矩形恒不相交，与水平位置无关
     const float windowWidths[] = {16.0f, 128.0f, 136.0f, 360.0f, 512.0f};
     const float bubbleWidths[] = {80.0f, 136.0f, 280.0f, 600.0f};
     const float windowHeights[] = {static_cast<float>(petWindowHeight(128)),
@@ -1570,18 +1484,13 @@ REGISTER_TEST(pet_bubble_layout_disjoint,
             500, -999, areas, 128, petWindowHeight(128));
         DOCTEST_CHECK_EQ(cy, 0);  // 越界上移被回贴到工作区上缘（气泡不被裁）
     }
-    // 变异自检（已实测）：把 petSpriteRect 的 y 改回旧布局 0（精灵帧顶回窗口
-    // 顶、气泡盖回精灵）→ 本用例 overlap 断言变红；恢复 y=kBubbleStripH 后
-    // 复绿——证明断言非恒真
     return true;
 });
 
-// ---- 显示大小三档（2026-09-30 用户需求「桌宠显示大小」）----
 
-// 档位 → 窗口尺寸换算（纯函数 scaledFrameSize）：三档换算 + **等比单因子**
-// 上界钳制（审计 F1：min(scale, 512/w, 512/h)，长宽比恒等帧原始值——kirari
-// 360×480 大档 384×512 零裁切；旧逐维钳 512×512 破比例被 Cover 中心裁头脚
-// 12.5%，变异改回即红）。下界不钳（16 是皮肤解析界，16×0.75=12 小窗无害）
+// scaledFrameSize：上界按**等比单因子** min(scale, 512/w, 512/h) 钳制，长宽比恒等帧
+// 原始值——360×480 大档得 384×512 零裁切。改成逐维钳会破比例（512×512 被 Cover
+// 中心裁掉头脚各 12.5%）。下界不钳：16 是皮肤解析界，16×0.75=12 小窗无害。
 REGISTER_TEST(pet_scale_frame_size,
               "pet: 显示大小档位→帧尺寸换算（等比钳上界 512）", {
     using namespace module::pet;
@@ -1608,9 +1517,8 @@ REGISTER_TEST(pet_scale_frame_size,
     const auto whale = scaledFrameSize(328, 212, 1.5);
     DOCTEST_CHECK_EQ(whale.first, 492);
     DOCTEST_CHECK_EQ(whale.second, 318);
-    // 上界等比钳制（审计 F1 回归锁）：512×1.5=768 → 单因子 f=1.0 → 512×512
-    //（方形无失真）；kirari 360×480×1.5 → f=512/480 → **384×512**，长宽比
-    // 0.75 保持（旧逐维钳给 512×512，Cover 中心裁切头脚各 12.5%）
+    // 上界等比钳制：512×1.5=768 → f=1.0 → 512×512（方形无失真）；
+    // 360×480×1.5 → f=512/480 → 384×512，长宽比 0.75 保持
     const auto atMax = scaledFrameSize(512, 512, 1.5);
     DOCTEST_CHECK_EQ(atMax.first, 512);
     DOCTEST_CHECK_EQ(atMax.second, 512);
@@ -1621,8 +1529,7 @@ REGISTER_TEST(pet_scale_frame_size,
     const auto atMin = scaledFrameSize(16, 16, 0.75);
     DOCTEST_CHECK_EQ(atMin.first, 12);
     DOCTEST_CHECK_EQ(atMin.second, 12);
-    // 等比不变式（审计 F1 核心断言）：缩放后宽高比恒等帧原始宽高比
-    //（round 误差 ±1px 内，比值偏差 < 0.02）——逐维钳变异在此必红
+    // 等比不变式：缩放后宽高比恒等帧原始宽高比（round 误差 ±1px 内，偏差 < 0.02）
     const struct AscCase {
         int w;
         int h;
@@ -1652,9 +1559,8 @@ REGISTER_TEST(pet_scale_config_roundtrip,
               "pet: scale 持久化往返 + 档位桥读写", {
     using namespace module::pet;
     const PetsDirEnv pets("scalecfg");
-    const std::filesystem::path cfgFile = pets.root / "pet_config.json";
     {
-        PetConfigStore store(cfgFile);
+        PetConfigStore store(::core::appDatabase());
         PetConfig cfg;
         cfg.scale = 1.5;
         DOCTEST_CHECK(store.save(cfg).isOk());
@@ -1668,11 +1574,11 @@ REGISTER_TEST(pet_scale_config_roundtrip,
     // 桥：无窗口路径——切档只写盘，读回一致；越界下标拒绝不动
     DOCTEST_CHECK_EQ(currentPetScaleIndex(), 2);  // 上面存的 1.5
     applyPetScaleIndex(0);                        // 1.5 → 0.75
-    DOCTEST_CHECK_EQ(PetConfigStore(cfgFile).load().scale, 0.75);
+    DOCTEST_CHECK_EQ(PetConfigStore(::core::appDatabase()).load().scale, 0.75);
     applyPetScaleIndex(7);                        // 越界：配置不动
-    DOCTEST_CHECK_EQ(PetConfigStore(cfgFile).load().scale, 0.75);
+    DOCTEST_CHECK_EQ(PetConfigStore(::core::appDatabase()).load().scale, 0.75);
     applyPetScaleIndex(1);                        // 回默认中档
-    DOCTEST_CHECK_EQ(PetConfigStore(cfgFile).load().scale, 1.0);
+    DOCTEST_CHECK_EQ(PetConfigStore(::core::appDatabase()).load().scale, 1.0);
     DOCTEST_CHECK_EQ(currentPetScaleIndex(), 1);
     // 桥文案：三档与下标一一对应（单源 = pet_config.h，设置页只消费）
     const std::vector<std::string> labels = petScalePresetLabels();
@@ -1682,16 +1588,14 @@ REGISTER_TEST(pet_scale_config_roundtrip,
     return true;
 });
 
-// 开窗请求逐档断言（无头）：窗口尺寸 = scaledFrameSize(帧尺寸, 档位) +
-// 气泡让位条。变异自检（已实测）：把 scaledFrameSize 改回「不缩放直返帧
-// 尺寸」（旧无缩放行为）→ 本用例 192/226 断言变红；恢复后复绿
+// 开窗请求逐档断言（无头）：窗口尺寸 = scaledFrameSize(帧尺寸, 档位) + 气泡让位条。
 REGISTER_TEST(pet_scale_window_request,
               "pet: 显示大小档位→开窗尺寸换算（无头）", {
     const PetsDirEnv pets("scalewin");
     (void)app::consumeWindowRequests();  // 清残留
     test_support::writeShippedSkinFixture(pets.root, "robot", kRobotFixtureJson);
 
-    // 大档 1.5×：128×128 → 192×(192+34)
+    // 大档 1.5×：128×128 → 192×(192+条高)
     module::pet::startPetWindow(
         module::pet::PetWindowConfig{"", 50, 60, 1.5});
     std::vector<app::DslWindowRequest> big = app::consumeWindowRequests();
@@ -1700,7 +1604,7 @@ REGISTER_TEST(pet_scale_window_request,
     DOCTEST_CHECK_EQ(big[0].height,
                      192 + static_cast<int>(module::pet::kBubbleStripH));
 
-    // 小档 0.75×：→ 96×(96+34)
+    // 小档 0.75×：→ 96×(96+条高)
     module::pet::startPetWindow(
         module::pet::PetWindowConfig{"", 50, 60, 0.75});
     std::vector<app::DslWindowRequest> small = app::consumeWindowRequests();
@@ -1709,7 +1613,7 @@ REGISTER_TEST(pet_scale_window_request,
     DOCTEST_CHECK_EQ(small[0].height,
                      96 + static_cast<int>(module::pet::kBubbleStripH));
 
-    // 非法档位防御：0.9 → sanitize 中档 1.0× → 128×(128+34)
+    // 非法档位 0.9 → sanitize 中档 1.0× → 128×(128+条高)
     module::pet::startPetWindow(
         module::pet::PetWindowConfig{"", 50, 60, 0.9});
     std::vector<app::DslWindowRequest> mid = app::consumeWindowRequests();

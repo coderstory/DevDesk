@@ -10,21 +10,18 @@
 #include <iomanip>
 #include <iostream>
 #include <sstream>
+#include <system_error>
 
 namespace core::log {
 
 namespace {
-    // 审计 L7：级别/控制台开关由设置页（UI 线程）写、代理 worker 线程读
-    // （worker 在读 g_level 时还没取 g_mutex），原来用普通全局变量属数据竞争。
-    // 改 atomic 只为消竞争，行为不变。
+    // 级别/控制台开关由 UI 线程写、代理 worker 线程读，用 atomic 消数据竞争
     std::atomic<Level> g_level{Level::Info};
     std::atomic<bool> g_console{false};
     std::ofstream g_file;
     std::mutex g_mutex;
 
-    // 审计 M7：文本日志按大小轮转。原来 devdesk.log 以 app 追加打开、永不
-    // 轮转（设置页可把级别切到 DEBUG），体积无限增长。这里在启动打开日志时
-    // 滚动：超过阈值把当前文件改名 .1，旧的依次后移，最多保留 2 份。
+    // 文本日志按大小轮转：超过阈值把当前文件改名 .1，旧的依次后移，最多留 2 份
     constexpr std::uintmax_t kRotateThresholdBytes = 8 * 1024 * 1024; // 8MB
     constexpr int kMaxRotatedFiles = 2;                               // .1 / .2
 
@@ -32,8 +29,7 @@ namespace {
         return file.string() + "." + std::to_string(index);
     }
 
-    // 全用 error_code 版本：本仓库不抛异常，轮转失败静默跳过——日志轮转
-    // 失败不应影响日志功能本身
+    // 全用 error_code 版本（本仓库不抛异常）：轮转失败静默跳过，不影响日志功能
     void rotateIfTooLarge(const std::filesystem::path& file) {
         std::error_code ec;
         auto size = std::filesystem::file_size(file, ec);

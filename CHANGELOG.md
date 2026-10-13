@@ -6,6 +6,41 @@
 
 > **当前基线（2026-09-24，master @ 817af80）**：用例 **407**（`grep REGISTER_TEST` 口径，本会话 324 → 407；全绿与否以主会话终验为准）。各波次条目内的测试数为该波时点事实，不代表当前总数；波次按合并时间倒序排列。
 
+## [M2-Agent] 2026-10-02 —— 智能体二期：资源上限 / 单一闸 / Scheduler / 8 新工具 / 任务与运行 UI
+
+- feat(agent)：**资源上限落地**——单次运行墙钟预算 `min(迭代 × 60s, 30min)` + 200K token 上限，由 **AgentLoop 检查点**强制（Scheduler 等触发路径经 loop 组合传递，全覆盖）；超限当轮的 assistant 消息**仍然入库**，只是不再发下一次请求。
+- feat(agent)：**AgentStore 补齐**——`createTask`（触发配置）/ `getTask` / `updateTask` / `setTaskEnabled`，以及 **`startRunExclusive` 单一闸**：手动触发与 cron 共用同一入口，锁内「查在跑 + 插 run」原子完成，**同一任务不并发**。
+- feat(scheduler)：**cron 调度**——vixie 语义解析（含溢出防护）+ tick 派发 + 常驻任务队列 + `stopAll` 收口顺序（**先停常驻、再停运行中 run**，避免常驻线程在停机窗口里新起 run）。
+- feat(agent,tools)：**新增 8 个工具**——`md.create` / `md.list_tags` / `md.delete`（破坏性 + 路径逃逸防护）/ `claude.list_profiles` / `claude.get_active_profile` / `claude.switch_profile`（破坏性）/ `claude.test_connection` / `app.read_settings`（**9 键白名单**，其余配置键零泄密）。
+- fix(agent,claude)：`setActiveProfile` 加服务内锁（`switchMutex_`），并发切换不再竞态。
+- feat(ui,agent)：**任务与运行管理界面**——任务列表 / 新建 / 编辑（cron 表达式保存期校验）/ 启停 / 常驻入队；模型槽位抽到中立头 `src/model_slots.h`；run 列表（状态 / 耗时 / 迭代 / token / 错误），选中 run 驱动消息区；补**真窗 probe**。
+- fix(claude)：**代理服务惰性解析**——会话内开启 claude 模块后，已经在跑的 agent 无须再 off→on 一轮。
+
+## [LazyAssemble] 2026-10-01 —— claude 服务惰性装配 + auto-start 会话内恢复 + 侧边栏表序插入（`adeb3b8`）
+
+- feat(assembly,claude)：**claude 服务惰性装配**——启动期 claude 模块关闭时不再创建 `ClaudeService`；会话内在设置页开启该模块即可**即时装配**服务，不再需要重启。落点：`module_toggle_bridge` 增第二桥函数 `ensureClaudeServiceAssembled`，`main.cpp` 侧 `assembleClaudeServiceNow` 幂等拆分（重复调用安全）。
+- feat(settings)：**auto-start 会话内恢复**——会话内开启 claude 模块时读取 `claudeProxyAutoStart` 配置，为真则自动启动代理。
+- fix(router)：**侧边栏表序插入**——`Router::registerModule` 改为按 `PageId` 表序插入，off→on 重注册回原位，不再 append 到末尾。
+- fix(assembly,claude)：**退出时序 UAF**——惰性装配使 `ClaudeService` 构造晚于 exit hook 注册，`atexit` LIFO 反转导致退出路径踩悬空指针；两层修法：`~ClaudeService` 清 global 指针做防御 + `getClaudeService` 改**永不析构堆持有**，保证退出时 `stopProxy` 正常还原 `settings.json`。
+- **已知边界更新**：`[LiveToggle]` 遗留的「claude 启动期被关闭后、会话内重新开启需重启才能完成装配接线」与「模块重新启用后回侧边栏末位」两条边界，本批已消除。
+
+## [LiveToggle] 2026-10-01 —— 模块开关即时生效（路线 A 注册表活门控）（`39b44f5`，13 提交）
+
+- feat(router,assembly,settings)：设置页「模块」开关从**重启生效**改为**即时生效**——路线 A（注册表活门控）。三层落点：`Router` 活门控基座（`fc68ee0`，新增 `unregisterModule` + register/unregister 幂等）→ 装配层 `dispatchModuleToggle`（`615ca70`，on/off 驱动注册与模块生命周期 + 当前页停在该模块时重定向）→ `main.cpp` 装配段注入活门控 handler（`149b279`）+ settings 侧经中立层桥头接 `app::toggle`（`8f4cd65`，可注入缝）。
+- fix(modules)：四页面模块 onStart/onStop 重入幂等（`f955fb7`，double-onStart no-op 守卫）；todo/markdown service_ 进程级存活收口 off→on UAF 窗口（`6002c50`，onStart 复用存活服务，不重建悬空指针）。
+- test：侧边栏实时反映门控状态（`eb3d0d6`，无头 + probe 双层；probe 增真点击路径 + redirect-in-dispatch 断言 `2a2e2cc`）；装配层锁 D-1 off 路径 onStop 先于 unregisterModule 的时序（`83ab3ed`）。
+- fix(ui)：模块开关与托盘文案改即时生效口径 + claude 模块关闭后进入其页面给死页（无服务）toast 缓解（`3d20fc6`）。
+- **已知边界**：claude 在启动期被关闭的，会话内重新开启需要重启才能完成装配服务接线；模块重新启用后回侧边栏末位（不保留原顺序位）。
+
+## [Schema] 2026-09-30 —— 删版本化迁移，改单份当前 schema 建表（无历史包袱）
+
+- refactor(core)：`src/core/migrations.h`（11 条版本化迁移 v1–v11）→ `src/core/schema.h`，一份 `core::schema::kSql`（9 表 + 5 索引 + FTS5 虚表 + 默认 Todo 列种子）。`SqliteDb::runMigrations(vector<Migration>)` + `schemaVersion()` → `applySchema(const std::string&)`：整份脚本一个事务幂等执行。`Migration` 结构体、`schema_version` 建表/查询/插入、「数据库比二进制新」降级守卫**全部删除**。
+- **为什么**（用户决策）：程序尚未开发完毕，不存在需要升级的真实旧数据。版本化迁移是为「已发布产品要保住存量行」准备的，这份包袱在本项目没有对象；而 DROP COLUMN（曾要求 SQLite ≥3.35）之类约束因此自动消失——新库直接建最终形态。
+- **已知后果（既定决策，不是 bug）**：**旧 DB 文件不再被升级**。schema 改动后旧库缺列就是缺列，本程序不检测、不迁移、不告警、不自动重建——删掉旧 db 文件重来即可。当前形态的旧库不受影响（全部 `CREATE ... IF NOT EXISTS`，打开即命中，不改结构）。
+- 幂等：DDL 靠 `IF NOT EXISTS`，唯一的种子 INSERT 靠 `WHERE NOT EXISTS (SELECT 1 FROM todo_columns)`（`todo_columns.title` 无 UNIQUE，写不了 ON CONFLICT）——连跑多次种子仍是 4 行，且不覆盖用户改过/删过/加过的行。
+- test：新增 `tests/test_core/test_schema.cpp`（原 test_migrations.cpp 改名重写）——逐表逐列断言最终形态（`PRAGMA table_info` 的 name:type:notnull:default 逐条比对）、种子行含 kind、连跑两次 sqlite_master 逐条相同且不踩用户数据、断言**无** `schema_version` 表 / 无 trigger / 无 view。`test_provider_config` 的「旧库升级」用例改为「新列默认值 + 空 JSON 读侧回落」；`test_markdown_service` 原内联复制的 markdown DDL 改为共用 `core::schema::kSql`。变异验证：删 `claude_profiles.fallback_profile_id` 列 / 改 `auth_field` 默认值 → 新断言红，恢复即绿。
+- 实测（macOS/arm64 Debug）：定向 `--filter schema` **Total 8 / Passed 8 / Failed 0**；全量 **Total 894 / Passed 888 / Failed 0**。另用一次性程序对全新空 DB 连跑两次 `applySchema` 核验：两次均无错、25 个 sqlite_master 对象逐条相同、9 张表列清单与 schema 逐列一致。
+
 ## [DataRoot] 2026-09-29 —— 应用数据根搬到用户主目录 `<home>/DevDesk`（`03c896c`）
 
 - fix(paths)：三个平台的 `platformDefaultAppDataDir()` 从系统惯例位置改为用户主目录下一级——macOS `~/DevDesk`（原 `~/Library/Application Support/DevDesk`）、Windows `%USERPROFILE%\DevDesk`（原 `%APPDATA%\DevDesk`）、POSIX `~/DevDesk`（原 `~/.local/share/DevDesk`）。主目录来源按平台取（macOS/POSIX `HOME`、Windows `USERPROFILE`，与同文件 `claudeSettingsFile` 同源；不硬编码、不用 cwd）。**为什么**：数据根要默认可见（`~/Library/Application Support` 在 Finder 里是隐藏的），且笔记目录后续要做 git 仓库、用户会自己去 commit / 推远端。单一数据根设计（`appDataDir()` 唯一入口 / `DEVDESK_DATA_ROOT` 优先 / `executableDir` + `claudeSettingsFile` 两个刻意例外）不变。

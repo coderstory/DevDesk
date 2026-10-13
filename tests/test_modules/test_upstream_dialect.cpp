@@ -1,14 +1,10 @@
 // tests/test_modules/test_upstream_dialect.cpp
-// 上游方言（UpstreamDialect）单元测试
-//
-// 覆盖：
-//   1. stripOneMSuffix：大小写 / 前后空白 / 未命中 / 边缘输入
-//   2. forBaseUrl：host 分派（opencode.ai 及其子域 vs 其余）
-//   3. applyHeaders：UA 无条件覆盖、鉴权头覆盖且大小写变体不残留、
-//      anthropic-version 补默认值、opencodeZen 会话头注入但不覆盖客户端值
-//   4. normalizeBody：只剥顶层 model 的 [1M]，其余字节原样透传
-//   5. 端到端：sendStreamingClaude 的请求头确实经过方言层（UA 不再泄漏）
-//
+// 上游方言（UpstreamDialect）单元测试：[1M] 后缀剥离 / baseUrl 分派 / 请求头方言化 /
+// 请求体改写 / 流式路径端到端。
+// 跨文件前提：
+//   - 方言来自 baseUrl 的 host 推断，也可用 profile 的 dialectOverride 显式钉住；
+//     未知或空值一律回落 host 推断，不静默换方言。
+//   - applyHeaders 只做「覆写 + 清除大小写变体」，非方言所有的头原样透传。
 #include "doctest.h"
 
 #include "claude_service.h"
@@ -26,7 +22,6 @@
 
 namespace {
 
-// 大小写不敏感取头值 / 计数 + 别名：共享实现（TIN-06b，原三份同款合流）
 using module::claude::UpstreamDialect;
 using test_support::countCI;
 using test_support::headerCI;
@@ -49,15 +44,11 @@ bool hasCI(const HeaderMap& h, const std::string& lowerKey) {
 
 } // namespace
 
-// ---- 1. 模型名 [1M] 剥离 ----
-
 REGISTER_TEST(dialect_strip_one_m_suffix,
               "upstream_dialect: stripOneMSuffix 大小写/空白/未命中", {
     using module::claude::stripOneMSuffix;
-    // 基本形态
     DOCTEST_CHECK_EQ(stripOneMSuffix("deepseek-v4-flash[1M]"),
                      std::string("deepseek-v4-flash"));
-    // 大小写不敏感
     DOCTEST_CHECK_EQ(stripOneMSuffix("deepseek-v4-flash[1m]"),
                      std::string("deepseek-v4-flash"));
     DOCTEST_CHECK_EQ(stripOneMSuffix("deepseek-v4-flash [1m]"),
@@ -70,44 +61,35 @@ REGISTER_TEST(dialect_strip_one_m_suffix,
                      std::string("deepseek-v4-flash"));
     DOCTEST_CHECK_EQ(stripOneMSuffix("deepseek-v4-flash [1M]\t"),
                      std::string("deepseek-v4-flash"));
-    // 未命中：原样返回
     DOCTEST_CHECK_EQ(stripOneMSuffix("deepseek-v4-flash"),
                      std::string("deepseek-v4-flash"));
     DOCTEST_CHECK_EQ(stripOneMSuffix("claude-opus-4-5[2M]"),
                      std::string("claude-opus-4-5[2M]"));
     DOCTEST_CHECK_EQ(stripOneMSuffix("bailian/glm-5.2"),
                      std::string("bailian/glm-5.2"));
-    // 边缘：标记在中间不剥
     DOCTEST_CHECK_EQ(stripOneMSuffix("a[1M]b"), std::string("a[1M]b"));
-    // 边缘：整串就是标记 → 剥成空串
     DOCTEST_CHECK_EQ(stripOneMSuffix("[1M]"), std::string(""));
-    // 边缘：空串 / 短于标记
     DOCTEST_CHECK_EQ(stripOneMSuffix(""), std::string(""));
     DOCTEST_CHECK_EQ(stripOneMSuffix("[1M"), std::string("[1M"));
     return true;
 })
 
-// ---- 2. baseUrl → 方言分派 ----
-
 REGISTER_TEST(dialect_for_base_url,
               "upstream_dialect: forBaseUrl host 分派", {
     using module::claude::UpstreamDialect;
-    // 当前用户实际在用的网关
     DOCTEST_CHECK(UpstreamDialect::forBaseUrl("https://opencode.ai/zen/go").kind ==
                   UpstreamDialect::Kind::OpencodeZen);
-    // 子域 / 大小写 / 带端口
     DOCTEST_CHECK(UpstreamDialect::forBaseUrl("https://zen.opencode.ai/v1").kind ==
                   UpstreamDialect::Kind::OpencodeZen);
     DOCTEST_CHECK(UpstreamDialect::forBaseUrl("HTTPS://OPENCODE.AI/zen/go").kind ==
                   UpstreamDialect::Kind::OpencodeZen);
     DOCTEST_CHECK(UpstreamDialect::forBaseUrl("http://opencode.ai:8080/zen").kind ==
                   UpstreamDialect::Kind::OpencodeZen);
-    // 形似但不同域：不算
+    // host 标签边界：形似但不同域不算
     DOCTEST_CHECK(UpstreamDialect::forBaseUrl("https://notopencode.ai/x").kind ==
                   UpstreamDialect::Kind::AnthropicDefault);
     DOCTEST_CHECK(UpstreamDialect::forBaseUrl("https://opencode.ai.evil.com/x").kind ==
                   UpstreamDialect::Kind::AnthropicDefault);
-    // 通用网关
     DOCTEST_CHECK(UpstreamDialect::forBaseUrl("https://api.anthropic.com").kind ==
                   UpstreamDialect::Kind::AnthropicDefault);
     DOCTEST_CHECK(UpstreamDialect::forBaseUrl(
@@ -123,15 +105,11 @@ REGISTER_TEST(dialect_for_base_url,
     return true;
 })
 
-// ---- 2b. 方言覆盖（Profile::dialectOverride → forBaseUrl 第二参数，CPX-13）----
-// 诉求：自建网关 / 内网镜像的 host 后缀推断不出正确方言（zen 镜像被判成
-// opencodeZen，或内网反代被当成默认 → 模型名 [1M] 不剥被上游 400），
-// profile 侧要能显式钉住方言；未设置时行为与从前逐项一致（存量零变化）。
-
+// 自建网关 / 内网镜像的 host 后缀推断不出正确方言（zen 镜像被判成 opencodeZen，
+// 或内网反代被当成默认 → 模型名 [1M] 不剥被上游 400），profile 侧可显式钉住。
 REGISTER_TEST(dialect_for_base_url_override,
               "upstream_dialect: forBaseUrl 覆盖参数优先于 host 推断", {
     using module::claude::UpstreamDialect;
-    // ① 覆盖值生效：host 后缀像别的，仍走指定的方言
     DOCTEST_CHECK(UpstreamDialect::forBaseUrl("https://api.anthropic.com",
                                               "opencode_zen").kind ==
                   UpstreamDialect::Kind::OpencodeZen);
@@ -147,8 +125,7 @@ REGISTER_TEST(dialect_for_base_url_override,
                                               "anthropic_default").kind ==
                   UpstreamDialect::Kind::AnthropicDefault);
 
-    // 覆盖后的**行为**随方言走（方言的价值在这两条上）：
-    // 钉成 zen → 注入会话头 + 剥模型名标记
+    // 覆盖后的**行为**随方言走（方言的价值在这两条上）
     const UpstreamDialect forcedZen =
         UpstreamDialect::forBaseUrl("https://api.anthropic.com", "opencode_zen");
     DOCTEST_CHECK_TRUE(forcedZen.stripModelSuffix());
@@ -159,7 +136,6 @@ REGISTER_TEST(dialect_for_base_url_override,
     DOCTEST_CHECK_TRUE(forcedZen.normalizeBody(bodyZen));
     DOCTEST_CHECK_EQ(bodyZen, std::string(R"({"model":"deepseek-v4-flash"})"));
 
-    // 钉成通用方言 → 两条都不做
     const UpstreamDialect forcedDefault =
         UpstreamDialect::forBaseUrl("https://opencode.ai/zen/go",
                                     "anthropic_default");
@@ -171,7 +147,7 @@ REGISTER_TEST(dialect_for_base_url_override,
     DOCTEST_CHECK_FALSE(forcedDefault.normalizeBody(bodyDef));
     DOCTEST_CHECK_EQ(bodyDef, std::string(R"({"model":"deepseek-v4-flash[1M]"})"));
 
-    // ② 存量零变化：空串 = 未覆盖 → 与单参数调用（旧签名）逐项一致
+    // 空串 = 未覆盖 → 与单参数调用逐项一致
     DOCTEST_CHECK(UpstreamDialect::forBaseUrl("https://opencode.ai/zen/go", "").kind ==
                   UpstreamDialect::forBaseUrl("https://opencode.ai/zen/go").kind);
     DOCTEST_CHECK(UpstreamDialect::forBaseUrl("https://api.anthropic.com", "").kind ==
@@ -217,8 +193,6 @@ REGISTER_TEST(dialect_kind_text_mapping,
     return true;
 })
 
-// ---- 3. 请求头方言化：UA / 鉴权 ----
-
 REGISTER_TEST(dialect_apply_headers_default,
               "upstream_dialect: 默认方言覆盖 UA + 鉴权头（无重复头）", {
     HeaderMap h = clientHeaders();
@@ -229,19 +203,15 @@ REGISTER_TEST(dialect_apply_headers_default,
                      std::string(module::claude::kProxyUserAgent));
     DOCTEST_CHECK_EQ(countCI(h, "user-agent"), 1);
 
-    // 鉴权换成 profile 的 key，且客户端的大小写变体不残留
     DOCTEST_CHECK_EQ(headerCI(h, "x-api-key"), std::string("sk-profile-key"));
     DOCTEST_CHECK_EQ(countCI(h, "x-api-key"), 1);
     DOCTEST_CHECK_EQ(headerCI(h, "authorization"), std::string("Bearer sk-profile-key"));
     DOCTEST_CHECK_EQ(countCI(h, "authorization"), 1);
 
-    // 客户端没带 anthropic-version → 补默认值
     DOCTEST_CHECK_EQ(headerCI(h, "anthropic-version"), std::string("2023-06-01"));
 
-    // 默认方言不注入会话头
     DOCTEST_CHECK_FALSE(hasCI(h, "x-opencode-session"));
 
-    // 其他客户端头原样保留
     DOCTEST_CHECK_EQ(headerCI(h, "content-type"), std::string("application/json"));
     DOCTEST_CHECK_EQ(headerCI(h, "accept"), std::string("text/event-stream"));
     return true;
@@ -263,11 +233,11 @@ REGISTER_TEST(dialect_apply_headers_client_variants,
     DOCTEST_CHECK_EQ(countCI(h, "x-api-key"), 1);
     DOCTEST_CHECK_EQ(countCI(h, "authorization"), 1);
     DOCTEST_CHECK_EQ(headerCI(h, "x-api-key"), std::string("sk-profile-key"));
-    // 客户端显式给的版本保留（客户端比代理更清楚要哪个版本）
+    // 客户端显式给的版本优先于代理默认值
     DOCTEST_CHECK_EQ(headerCI(h, "anthropic-version"), std::string("2024-06-01"));
     DOCTEST_CHECK_EQ(countCI(h, "anthropic-version"), 1);
 
-    // 空 key：不发鉴权头（http_client 会跳过空值头，这里直接清掉更干净）
+    // 空 key：客户端带来的鉴权头也一并清掉，不能留着裸奔上游
     HeaderMap h2 = clientHeaders();
     UpstreamDialect::anthropicDefault().applyHeaders(h2, "", module::claude::AuthField::Both);
     DOCTEST_CHECK_EQ(countCI(h2, "x-api-key"), 0);
@@ -277,7 +247,7 @@ REGISTER_TEST(dialect_apply_headers_client_variants,
 
 REGISTER_TEST(dialect_apply_headers_opencode_session,
               "upstream_dialect: opencodeZen 注入会话头但不覆盖客户端已有值", {
-    // 客户端没带 → 注入代理实例级 id（进程内稳定，保上游缓存亲和）
+    // 客户端没带 → 注入代理实例级 id（进程内稳定值，靠它保上游缓存亲和）
     HeaderMap h = clientHeaders();
     UpstreamDialect::opencodeZen().applyHeaders(h, "sk-profile-key", module::claude::AuthField::Both);
     DOCTEST_CHECK_EQ(headerCI(h, "x-opencode-session"),
@@ -302,7 +272,7 @@ REGISTER_TEST(dialect_apply_headers_opencode_session,
     return true;
 })
 
-// ---- 3b. 认证字段三态（2026-09-27 profile-auth-field 设计 §4.1/§4.2）----
+// 认证字段三态
 
 REGISTER_TEST(dialect_apply_headers_auth_field_three_states,
               "upstream_dialect: 认证字段三态（both/bearer/api_key × 有 key/空 key）", {
@@ -316,19 +286,16 @@ REGISTER_TEST(dialect_apply_headers_auth_field_three_states,
     dialect.applyHeaders(bearer, key, module::claude::AuthField::Bearer);
     dialect.applyHeaders(apiKeyOnly, key, module::claude::AuthField::ApiKey);
     dialect.applyHeaders(emptyKey, "", module::claude::AuthField::Both);
-    // both：两个头都在
     DOCTEST_CHECK_EQ(countCI(both, "x-api-key"), 1);
     DOCTEST_CHECK_EQ(countCI(both, "authorization"), 1);
     // bearer：只有 Authorization（负断言是核心）
     DOCTEST_CHECK_EQ(countCI(bearer, "x-api-key"), 0);
     DOCTEST_CHECK_EQ(countCI(bearer, "authorization"), 1);
-    // api_key：只有 x-api-key
     DOCTEST_CHECK_EQ(countCI(apiKeyOnly, "x-api-key"), 1);
     DOCTEST_CHECK_EQ(countCI(apiKeyOnly, "authorization"), 0);
     // 空 key：两个都不注入
     DOCTEST_CHECK_EQ(countCI(emptyKey, "x-api-key"), 0);
     DOCTEST_CHECK_EQ(countCI(emptyKey, "authorization"), 0);
-    // UA 与上游契约头不受影响
     DOCTEST_CHECK_EQ(countCI(bearer, "user-agent"), 1);
     DOCTEST_CHECK_EQ(countCI(bearer, "anthropic-version"), 1);
     return true;
@@ -337,7 +304,6 @@ REGISTER_TEST(dialect_apply_headers_auth_field_three_states,
 REGISTER_TEST(dialect_apply_headers_auth_field_clears_client_creds,
               "upstream_dialect: 三态都清客户端凭据（大小写变体）", {
     const auto dialect = UpstreamDialect::anthropicDefault();
-    // bearer 态：客户端两个大小写变体 x-api-key 都必须消失
     HeaderMap hb = {
         {"x-api-key", "sk-client-bogus"},
         {"X-Api-Key", "sk-client-bogus-2"},
@@ -348,7 +314,6 @@ REGISTER_TEST(dialect_apply_headers_auth_field_clears_client_creds,
     DOCTEST_CHECK_EQ(countCI(hb, "authorization"), 1);
     DOCTEST_CHECK_EQ(headerCI(hb, "authorization"),
                      std::string("Bearer sk-profile-key"));
-    // api_key 态：客户端的 authorization 必须消失
     HeaderMap ha = {
         {"Authorization", "Bearer sk-client-bogus"},
         {"X-Api-Key", "sk-client-bogus"},
@@ -357,7 +322,6 @@ REGISTER_TEST(dialect_apply_headers_auth_field_clears_client_creds,
     DOCTEST_CHECK_EQ(countCI(ha, "authorization"), 0);
     DOCTEST_CHECK_EQ(countCI(ha, "x-api-key"), 1);
     DOCTEST_CHECK_EQ(headerCI(ha, "x-api-key"), std::string("sk-profile-key"));
-    // both 态：客户端值被 profile key 覆盖且不残留变体
     HeaderMap hboth = clientHeaders();
     dialect.applyHeaders(hboth, "sk-profile-key", module::claude::AuthField::Both);
     DOCTEST_CHECK_EQ(countCI(hboth, "x-api-key"), 1);
@@ -367,8 +331,6 @@ REGISTER_TEST(dialect_apply_headers_auth_field_clears_client_creds,
                      std::string("Bearer sk-profile-key"));
     return true;
 })
-
-// ---- 4. 请求体方言化：只剥顶层 model 的 [1M] ----
 
 REGISTER_TEST(dialect_normalize_body_strips_model,
               "upstream_dialect: normalizeBody 剥顶层 model，其余字节不动", {
@@ -412,7 +374,7 @@ REGISTER_TEST(dialect_normalize_body_edge_cases,
     DOCTEST_CHECK_FALSE(d.normalizeBody(p1));
     DOCTEST_CHECK_EQ(p1, plain);
 
-    // 无 model 字段 / model 非字符串 / body 非 JSON → 不动
+    // 无 model 字段 / model 非字符串 / body 非 JSON → 一个字节都不动
     const std::string noModel = R"({"max_tokens":1,"stream":true})";
     std::string p2 = noModel;
     DOCTEST_CHECK_FALSE(d.normalizeBody(p2));
@@ -433,8 +395,6 @@ REGISTER_TEST(dialect_normalize_body_edge_cases,
     DOCTEST_CHECK_EQ(empty, std::string(""));
     return true;
 })
-
-// ---- 5. 端到端：流式路径的请求确实经过方言层（UA 不再泄漏） ----
 
 REGISTER_TEST(dialect_streaming_path_applies_dialect,
               "upstream_dialect: sendStreamingClaude 覆盖 UA / 注入 key", {
@@ -462,7 +422,7 @@ REGISTER_TEST(dialect_streaming_path_applies_dialect,
     req.method = "POST";
     req.url = "/v1/messages";
     req.body = R"({"model":"deepseek-v4-flash[1M]","stream":true,"max_tokens":8})";
-    req.headers = clientHeaders();   // 客户端 UA = python-urllib（修复前原样泄漏）
+    req.headers = clientHeaders();   // 客户端 UA = python-urllib
     req.timeoutMs = 5000;
 
     auto r = module::claude::sendStreamingClaude(req, p);

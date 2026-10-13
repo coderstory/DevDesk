@@ -1,25 +1,22 @@
-// src/core/database.cpp
 #include "database.h"
 #include "logging.h"
-#include "migrations.h"
+#include "schema.h"
 
 #include <atomic>
 #include <ctime>
+#include <utility>
 
 #include <sqlite3.h>
 
 namespace core {
 
-Database::Database(core::data::SqliteDb db, std::vector<core::data::Migration> migrations)
-    : db_(std::move(db)), migrations_(std::move(migrations)) {}
+Database::Database(core::data::SqliteDb db) : db_(std::move(db)) {}
 
-Database::Database(Database&& other) noexcept
-    : db_(std::move(other.db_)), migrations_(std::move(other.migrations_)) {}
+Database::Database(Database&& other) noexcept : db_(std::move(other.db_)) {}
 
 Database& Database::operator=(Database&& other) noexcept {
     if (this != &other) {
         db_ = std::move(other.db_);
-        migrations_ = std::move(other.migrations_);
     }
     return *this;
 }
@@ -30,19 +27,16 @@ core::Result<Database> Database::open(const std::filesystem::path& path) {
         return core::Result<Database>::fail(dbResult.errorCode(), dbResult.errorMessage());
     }
 
-    std::vector<core::data::Migration> ms(migrations::all().begin(),
-                                          migrations::all().end());
-
-    // Result::value() 返回 T&（lvalue ref），用 std::move 转成 xvalue 触发 move ctor
+    // Result::value() 返回 T&（lvalue ref），std::move 转 xvalue 触发 move ctor
     core::data::SqliteDb db(std::move(dbResult.value()));
-    Database inst(std::move(db), std::move(ms));
+    Database inst(std::move(db));
     return core::Result<Database>::ok(std::move(inst));
 }
 
 core::Result<void> Database::migrate() {
-    auto r = db_.runMigrations(migrations_);
+    auto r = db_.applySchema(core::schema::kSql);
     if (r.isFail()) {
-        LOG_ERROR("Database migrate failed: " + r.errorMessage());
+        LOG_ERROR("Database schema 应用失败: " + r.errorMessage());
     }
     return r;
 }
@@ -56,8 +50,7 @@ core::Result<int64_t> pruneCallLogs(core::data::SqliteDb& db, int retentionDays)
     const int64_t cutoff = static_cast<int64_t>(std::time(nullptr)) -
                            static_cast<int64_t>(retentionDays) * 86400;
 
-    // 持锁覆盖 step + sqlite3_changes，避免并发语句插队导致计数失真
-    //（recursive_mutex，Statement 内部加锁可重入）
+    // 持锁覆盖 step + sqlite3_changes（recursive_mutex 内部可重入），避免并发语句插队导致计数失真
     std::lock_guard<std::recursive_mutex> lock(db.mutex());
 
     auto prep = db.prepare(
@@ -77,7 +70,7 @@ core::Result<int64_t> pruneCallLogs(core::data::SqliteDb& db, int retentionDays)
         static_cast<int64_t>(sqlite3_changes(db.handle())));
 }
 
-// ============ 进程级数据库共享访问器 ============
+// 进程级数据库共享访问器
 
 namespace {
 std::atomic<core::data::SqliteDb*> g_appDatabase{nullptr};

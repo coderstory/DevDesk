@@ -1,12 +1,10 @@
-// src/module_claude_proxy/claude_ui_form.cpp
-// R4（P-B5）：表单弹窗（tabs 四页，2026-09-30 batch-fix B 尾插「高级配置」）
-// + 删除确认弹窗 + 表单状态机 —— 逐字自
-// claude_module.cpp 搬出（含注释），只把 this 成员换成显式入参
-// （FormState / ImportState 引用 + FormSubmitHooks 回调）。
+// 表单弹窗（tabs 四页）+ 删除/片段确认弹窗 + 表单状态机；状态经 FormState/ImportState 引用显式入参。
+#include "core/fs_text.h"
 #include "claude_ui_form.h"
 
 #include "claude_ui_logic.h"
 #include "env_var_hints.h"
+#include "platform/credential_protection.h"
 #include "platform/json.h"
 #include "provider_config.h"
 #include "settings_sync.h"
@@ -31,16 +29,24 @@ namespace module::claude {
 
 namespace {
 
-// 认证字段下拉选项（**顺序必须与 AuthField 枚举声明一致**：Both/Bearer/ApiKey）
+// 认证字段下拉选项（顺序必须与 AuthField 枚举一致：Both/Bearer/ApiKey）
 constexpr const char* kAuthFieldLabels[] = {
     "双发（默认）", "只发 Authorization: Bearer", "只发 x-api-key"};
 constexpr int kAuthFieldCount = 3;
 
-// 「格式化」共用体（2026-09-30 json-fullscreen 自表单按钮 lambda 提升为自由
-// 函数）：parse → stringify(pretty)，不自写格式化器；键序会重排为字典序——
-// 与 settings_sync 写 settings.json 同一条序列化通道，round-trip 语义不变。
-// 失败 → 行内红字（formAdvancedJsonError_，与校验失败共用）。表单按钮与全屏
-// 覆盖层按钮同调本函数——单一来源，不复制逻辑
+// formError_ 统一写入点：多来源红字，fromJson 标记使「放弃修改」只清 JSON 源那条；
+// 全部写入点必须走这两个 helper（直接赋值会留过期标记）。
+void setFormError(FormState& f, const std::string& msg, bool fromJson = false) {
+    f.formError_ = msg;
+    f.formErrorFromJson_ = fromJson;
+}
+
+void clearFormError(FormState& f) {
+    f.formError_.clear();
+    f.formErrorFromJson_ = false;
+}
+
+// 「格式化」：parse→pretty stringify（与 settings_sync 同一序列化通道）；失败写行内红字。
 void formatAdvancedJson(FormState& f) {
     f.formAdvancedJsonError_.clear();
     if (f.formExtraSettingsJson_.empty()) return;
@@ -60,33 +66,40 @@ void formatAdvancedJson(FormState& f) {
 
 } // namespace
 
-// ============ 新建/编辑 Profile 表单弹窗（tabs 三页，§6.1） ============
+// 全屏 JSON「放弃修改」（按钮/Esc/点遮罩）：恢复 formExtraSettingsJsonBaseline_（落库值）。
+void discardJsonFullscreenEdits(FormState& f) {
+    f.formExtraSettingsJson_ = f.formExtraSettingsJsonBaseline_;
+    // JSON 行内红字随文本回退一并清
+    f.formAdvancedJsonError_.clear();
+    // 按来源标记清 JSON 校验遗留的幽灵 formError_（其它来源保留）
+    if (f.formErrorFromJson_) {
+        clearFormError(f);
+    }
+    f.formJsonFullscreen_ = false;
+}
+
 void openCreateForm(FormState& f, ImportState& imp) {
     f.formEditId_ = 0;   // 0 = 新建
     f.formTab_ = 0;
     f.formName_.clear();
     f.formUrl_.clear();
     f.formKey_.clear();
-    f.formError_.clear();
+    clearFormError(f);
     f.formKeyHint_.clear();
     f.formImportWarn_.clear();
     f.formModels_ = ModelsConfig{};
     f.formEnvRows_.clear();
     f.formAuthField_ = AuthField::Both;
     f.formAuthFieldOpen_ = false;
-    // 批 2：绑定复位（新建默认未绑定；advanced-json-editor §7.1：下拉已迁
-    // 高级配置页，frozenKeys 预览随片段 JSON 化拆除）
     f.formSharedConfigId_ = 0;
     f.formSharedDdOpen_ = false;
-    // 高级设置 JSON 复位（advanced-json-editor §7.1：新建默认未配置）
+    // 基线 = 新建的「上次落库值」= 空
     f.formExtraSettingsJson_.clear();
+    f.formExtraSettingsJsonBaseline_.clear();
     f.formAdvancedJsonError_.clear();
-    // 全屏编辑态复位（json-fullscreen：新表单不带上一份的全屏残留）
-    f.formJsonFullscreen_ = false;
-    // 批 3：备用 Profile 复位（新建默认不启用 failover）
+    f.formJsonFullscreen_ = false;   // 全屏编辑态复位
     f.formFallbackProfileId_ = 0;
     f.formFallbackDdOpen_ = false;
-    // 高级配置页复位（2026-09-30 batch-fix B：新建默认不覆盖方言）
     f.formDialectOverride_.clear();
     f.formDialectDdOpen_ = false;
     resetImportState(imp);
@@ -100,34 +113,29 @@ void openEditForm(FormState& f, ImportState& imp, const Profile& p,
     f.formName_ = p.name;
     f.formUrl_ = p.baseUrl;
     f.formKey_.clear();   // 留空 = 不换 key（updateProfile 语义）
-    f.formError_.clear();
+    clearFormError(f);
     f.formKeyHint_ = p.apiKeyHint;
     f.formImportWarn_.clear();
-    // 槽位：models_config + 旧 model 列 fallback（§4.2 兼容读取）
-    f.formModels_ = effectiveModelsConfig(p.modelsConfigJson, p.model);
-    // 认证字段：编辑必须回显当前值（否则用户以为看到的是默认值，一保存就坐实覆盖）
+    // 槽位：models_config（空 / 非法 JSON → 全空槽位）
+    f.formModels_ = effectiveModelsConfig(p.modelsConfigJson);
+    // 认证字段：编辑必须回显现状，否则用户误以为是默认值、一保存即覆盖
     f.formAuthField_ = authFieldFromText(p.authField);
     f.formAuthFieldOpen_ = false;
-    // 批 2：绑定回显（advanced-json-editor §7.1：下拉已迁高级配置页；悬空
-    // 绑定由下拉逐帧归一为未绑定，同既有口径）
+    // 绑定回显（悬空由下拉逐帧归一为未绑定）
     f.formSharedConfigId_ = p.sharedConfigId;
     f.formSharedDdOpen_ = false;
-    // 高级设置 JSON 预填（advanced-json-editor §7.1）：DB 恒为 pretty 保存值；
-    // 外部改库的非 pretty 原文按原样预填，格式化按钮负责规范化
+    // 预填 DB 值；基线 = 同一份（「放弃修改」恢复目标）
     f.formExtraSettingsJson_ = p.extraSettingsJson;
+    f.formExtraSettingsJsonBaseline_ = p.extraSettingsJson;
     f.formAdvancedJsonError_.clear();
-    // 全屏编辑态复位（json-fullscreen：重开表单不带上一份的全屏残留）
-    f.formJsonFullscreen_ = false;
-    // 批 3：备用 Profile 回显（悬空/自引用 → 下拉逐帧归一为「无」，见绘制处）
+    f.formJsonFullscreen_ = false;   // 全屏编辑态复位
+    // 备用 Profile 回显（悬空/自引用 → 下拉逐帧归一为「无」）
     f.formFallbackProfileId_ = p.fallbackProfileId;
     f.formFallbackDdOpen_ = false;
-    // 高级配置页回显（2026-09-30 batch-fix B：方言覆盖；空/未知值 → 下拉逐帧
-    // 归一为「自动」，见绘制处）
+    // 高级配置页回显（方言覆盖；空/未知 → 下拉逐帧归一为「自动」）
     f.formDialectOverride_ = p.dialectOverride;
     f.formDialectDdOpen_ = false;
-    // env 行：非法 JSON 读路径容错为空表（不炸）。（advanced-json-editor
-    // §7.1：frozenKeys/chip/置灰拆除后，formOriginalOwnKeys_ 的「新增同键」
-    // 拦截记账一并拆除）
+    // env 行：非法 JSON 读路径容错为空表
     f.formEnvRows_.clear();
     auto ee = parseExtraEnv(p.extraEnvJson);
     if (ee.isOk()) {
@@ -146,7 +154,7 @@ void resetImportState(ImportState& imp) {
     imp.importPreview_ = ImportedConfig{};
 }
 
-// 导入解析（纯函数消费，Phase D）：失败只写红字，不动表单
+// 导入解析：失败只写红字，不动表单
 void doParseImport(ImportState& imp) {
     imp.importError_.clear();
     imp.importReady_ = false;
@@ -159,15 +167,13 @@ void doParseImport(ImportState& imp) {
     imp.importReady_ = true;
 }
 
-// 确认导入：按解析结果填充三页表单（BASE_URL/token → 基础页，
-// 槽位非空覆盖，env 键同名替换 / 新键追加）
+// 确认导入：按解析结果填三页表单（BASE_URL/token → 基础页，槽位非空覆盖，env 同名替换/新键追加）
 void doApplyImport(FormState& f, ImportState& imp) {
     if (!imp.importReady_) return;
     if (!imp.importPreview_.baseUrl.empty()) f.formUrl_ = imp.importPreview_.baseUrl;
     if (!imp.importPreview_.authToken.empty()) {
         f.formKey_ = imp.importPreview_.authToken;
     }
-    // 槽位：非空则覆盖（遍历槽位表派生，CPX-08）
     for (const auto& meta : modelSlotTable()) {
         const ModelSlot& src = imp.importPreview_.models.*meta.slot;
         if (!src.model.empty()) f.formModels_.*meta.slot = src;
@@ -183,33 +189,25 @@ void doApplyImport(FormState& f, ImportState& imp) {
         }
         if (!replaced) f.formEnvRows_.emplace_back(k, v);
     }
-    // 认证字段：按键名证据填（空串 = 无证据，不覆盖表单现值；设计 §5）
+    // 认证字段：按键名证据填（空串 = 无证据，不覆盖表单现值）
     if (!imp.importPreview_.authFieldFromEnv.empty()) {
         f.formAuthField_ = authFieldFromText(imp.importPreview_.authFieldFromEnv);
     }
     imp.importReady_ = false;
     imp.importText_.clear();
-    f.formError_.clear();   // 导入成功清掉旧校验错误
+    clearFormError(f);   // 导入成功清掉旧校验错误
 }
 
-// ============ 导入当前配置（一键读 settings.json → 预填新建表单）============
-// 等价于用户手动「从 cc-switch / settings.json 粘贴导入」但全自动：
-// 读用户级 settings.json → parseImportedEnv → 打开新建弹窗并预填
-// （基础页 BASE_URL/Token、模型映射页槽位、高级 env 页 + 预览标记）。
-// 接管态（sidecar 快照存在）时 settings.json 里是代理托管值
-// （BASE_URL=127.0.0.1:8888）而非原始上游 → 弹窗内给警告，不阻断。
+// 全自动「粘贴导入」：读用户级 settings.json → parseImportedEnv → 新建弹窗预填；接管态导入的是代理托管值，仅警告不阻断。
 void startImportCurrentConfig(FormState& f, ImportState& imp,
                               const FormSubmitHooks& hooks) {
-    // 路径解析：service 注入优先（生产 = main 注入的 defaultPaths，
-    // 测试 = 临时目录注入），未注入（service 为 null 的防御分支）回落
-    // defaultPaths()——与设置页/引导条的路径口径一致
+    // 路径解析：service 注入优先（测试=临时目录），未注入回落 defaultPaths()
     settings_sync::Paths paths = settings_sync::defaultPaths();
     ClaudeService* svc = ClaudeService::global();
     if (svc && !svc->settingsSyncPaths().settingsFile.empty()) {
         paths = svc->settingsSyncPaths();
     }
 
-    // 读文件：不存在 → toast，不弹窗
     std::error_code ec;
     if (!std::filesystem::exists(paths.settingsFile, ec) || ec) {
         hooks.toast("导入失败",
@@ -218,13 +216,8 @@ void startImportCurrentConfig(FormState& f, ImportState& imp,
                     true);
         return;
     }
-    std::ifstream in(paths.settingsFile, std::ios::binary);
-    std::ostringstream ss;
-    ss << in.rdbuf();
-    const std::string content = ss.str();
-    // 整段 settings.json 没有 env 键 = 没有可导入的配置（区别于粘贴导入
-    // 认裸 env 对象的形状启发：文件只会是 settings.json 形状），给明确
-    // 提示而非共享解析器的「键名非法: permissions」误报
+    const std::string content = core::readTextFile(paths.settingsFile);
+    // 无 env 键 = 无可导入配置（给明确提示，避免误报「键名非法」）
     if (auto doc = platform::json::parse(content);
         doc.isOk() && doc.value().isObject() &&
         !doc.value().asObject().has("env")) {
@@ -239,13 +232,16 @@ void startImportCurrentConfig(FormState& f, ImportState& imp,
         return;
     }
 
-    // 全自动「粘贴导入」：新建表单 → 解析结果 → 应用 → 名称建议
     openCreateForm(f, imp);
     imp.importPreview_ = std::move(parsed).value();
     imp.importReady_ = true;
     doApplyImport(f, imp);       // 预填三页表单（结束时清 importReady_）
     imp.importReady_ = true;   // 保留高级 env 页预览标记（识别数 + 警告角标）
     f.formName_ = suggestImportName(imp.importPreview_.baseUrl);
+
+    // 非 env 的顶层属性 parseImportedEnv/doApplyImport 都不管，必须在此独立抽取为「高级设置 JSON」
+    f.formExtraSettingsJson_ = nonEnvTopLevelJson(content);
+    f.formExtraSettingsJsonBaseline_ = f.formExtraSettingsJson_;
 
     // 接管态警告：sidecar 存在 → 导入的是代理配置而非原始上游
     if (settings_sync::hasPendingSnapshot(paths)) {
@@ -258,14 +254,16 @@ void startImportCurrentConfig(FormState& f, ImportState& imp,
 // 表单 → models_config / extra_env JSON（全空 = 空串，保持「未配置」语义）
 bool serializeFormData(FormState& f, std::string* modelsJson, std::string* envJson) {
     bool anySlot = false;
-    for (const auto& meta : modelSlotTable()) {   // 槽位表派生（CPX-08）
+    for (const auto& meta : modelSlotTable()) {   // 槽位表派生
         const ModelSlot& s = f.formModels_.*meta.slot;
         if (!s.model.empty() || !s.name.empty()) { anySlot = true; break; }
     }
     if (anySlot) {
+        // 保存前归一（就地改写）：支持 1M 的规范成 [1M]，不支持的强制剥离，其余原样
+        normalizeOneMMarkers(f.formModels_);
         auto r = serializeModelsConfig(f.formModels_);
         if (r.isFail()) {
-            f.formError_ = "模型配置序列化失败: " + r.errorMessage();
+            setFormError(f, "模型配置序列化失败: " + r.errorMessage());
             return false;
         }
         *modelsJson = r.value();
@@ -278,7 +276,7 @@ bool serializeFormData(FormState& f, std::string* modelsJson, std::string* envJs
     if (!envMap.empty()) {
         auto r = serializeExtraEnv(envMap);
         if (r.isFail()) {
-            f.formError_ = "env 序列化失败: " + r.errorMessage();
+            setFormError(f, "env 序列化失败: " + r.errorMessage());
             return false;
         }
         *envJson = r.value();
@@ -290,15 +288,15 @@ void submitForm(FormState& f, const FormSubmitHooks& hooks,
                 const std::vector<SharedConfig>& sharedConfigs) {
     ClaudeService* svc = ClaudeService::global();
     if (!svc) {
-        f.formError_ = "服务未就绪（ClaudeService 未注册）";
+        setFormError(f, "服务未就绪（ClaudeService 未注册）");
         return;
     }
-    hooks.markDataDirty();   // 审计 perf [13]：写操作前即标脏（失败也不伤，下帧重查）
+    hooks.markDataDirty();   // 写操作前即标脏（失败也不伤，下帧重查）
     if (f.formName_.empty() || f.formUrl_.empty()) {
-        f.formError_ = "名称和 Base URL 不能为空";
+        setFormError(f, "名称和 Base URL 不能为空");
         return;
     }
-    // 批 2：悬空绑定防御（片段已删 / 快照未到位）——按未绑定保存，不留幽灵 id
+    // 悬空绑定防御（片段已删 / 快照未到位）：按未绑定保存，不留幽灵 id
     if (f.formSharedConfigId_ != 0 &&
         findSharedById(sharedConfigs, f.formSharedConfigId_) == nullptr) {
         f.formSharedConfigId_ = 0;
@@ -307,15 +305,13 @@ void submitForm(FormState& f, const FormSubmitHooks& hooks,
     std::string envJson;
     if (!serializeFormData(f, &modelsJson, &envJson)) return;
 
-    // 高级设置 JSON（advanced-json-editor §7.3，D-5/D-6）：保存前校验——
-    // 失败 → formError_ 红字（弹窗不关、不落库）+ 行内红字共用；通过 → 落库
-    // 前统一 pretty（空串跳过）。服务层/DB 不再二次校验格式（写侧已归一；
-    // 读侧容错在 effectiveExtraSettingsJson / applyExtraSettingsToSettingsDoc）
+    // 保存前校验：失败→formError_+行内红字（不关弹窗不落库）；通过→统一 pretty 落库（空串跳过）
     std::string extraSettingsPretty;
     if (!f.formExtraSettingsJson_.empty()) {
         auto v = validateExtraSettingsJson(f.formExtraSettingsJson_);
         if (v.isFail()) {
-            f.formError_ = v.errorMessage();
+            // 唯一 fromJson=true 的写入点（放弃修改按来源清）
+            setFormError(f, v.errorMessage(), /*fromJson=*/true);
             f.formAdvancedJsonError_ = v.errorMessage();
             return;
         }
@@ -325,19 +321,17 @@ void submitForm(FormState& f, const FormSubmitHooks& hooks,
                                                     /*pretty=*/true);
             if (pretty.isOk()) extraSettingsPretty = pretty.value();
         }
-        // 解析失败理论不可达（validate 已保证）；退化为原文落库，读侧容错兜底
+        // 解析失败理论不可达（validate 已保证）；退化为原文落库
         if (extraSettingsPretty.empty()) extraSettingsPretty =
             f.formExtraSettingsJson_;
     }
 
     if (f.formEditId_ == 0) {
-        // 新建：API Key 必填
         if (f.formKey_.empty()) {
-            f.formError_ = "新建 Profile 必须填写 API Key";
+            setFormError(f, "新建 Profile 必须填写 API Key");
             return;
         }
-        // 产品审计 2026-09-23 [6]：activateIfNoneActive=true——当前无激活
-        // Profile 时 service 层自动激活这条（首次体验闭环）；已有激活则不抢占
+        // activateIfNoneActive=true：无激活 Profile 时自动激活这条；已有激活不抢占
         auto r = svc->createProfile(f.formName_, f.formUrl_, f.formKey_,
                                     f.formModels_.def.model, /*activateIfNoneActive=*/true,
                                     /*sharedConfigId=*/f.formSharedConfigId_,
@@ -346,12 +340,10 @@ void submitForm(FormState& f, const FormSubmitHooks& hooks,
                                     /*fallbackProfileId=*/f.formFallbackProfileId_,
                                     /*extraSettingsJson=*/extraSettingsPretty);
         if (r.isFail()) {
-            f.formError_ = r.errorMessage();
+            setFormError(f, r.errorMessage());
             return;
         }
-        // createProfile 无槽位/env 参数（最小 diff 不动签名），二段补写
-        //（advanced-json-editor §7.3：门槛含 extraSettingsPretty——纯 JSON
-        // profile 同样进补写，与 duplicateProfile F-3 同口径）
+        // createProfile 无槽位/env 参数，二段补写（纯 JSON profile 也进补写）
         if (!modelsJson.empty() || !envJson.empty() ||
             !extraSettingsPretty.empty()) {
             Profile p = r.value();
@@ -361,15 +353,16 @@ void submitForm(FormState& f, const FormSubmitHooks& hooks,
             p.extraSettingsJson = extraSettingsPretty;
             auto u = svc->updateProfile(p);
             if (u.isFail()) {
-                f.formError_ = "已创建，但模型/env 写入失败: " +
-                               u.errorMessage();
+                setFormError(f, "已创建，但模型/env 写入失败: " +
+                                  u.errorMessage());
                 return;
             }
         }
         f.formOpen_ = false;
+        // 落库成功 → 基线随落库值刷新（「放弃修改」目标恒等于持久化值）
+        f.formExtraSettingsJsonBaseline_ = extraSettingsPretty;
         hooks.selectProfile(r.value().id);
-        // 审计 2026-09-23 [6]：按是否自动激活分文案——只说「已保存」会让
-        // 用户以为点「启动代理」就能用（无激活时 Claude Code 直接 503）
+        // 按是否自动激活分文案（只说「已保存」会让用户以为点「启动代理」就能用）
         if (r.value().isActive) {
             hooks.toast("已创建并启用",
                         "Profile「" + f.formName_ + "」已设为激活（ACTIVE）",
@@ -381,41 +374,38 @@ void submitForm(FormState& f, const FormSubmitHooks& hooks,
                         false);
         }
     } else {
-        // 编辑：先取现有行（保留 keychain 引用等字段），再覆盖表单值
+        // 编辑：先取现有行（保留凭据/片段绑定），再覆盖表单值
         auto got = svc->getProfile(f.formEditId_);
         if (got.isFail()) {
-            f.formError_ = got.errorMessage();
+            setFormError(f, got.errorMessage());
             return;
         }
         Profile p = std::move(got).value();
         p.name = f.formName_;
         p.baseUrl = f.formUrl_;
-        p.model = f.formModels_.def.model;   // 旧列与 default 槽位同步（§4.2）
+        p.model = f.formModels_.def.model;   // model 列与 default 槽位同步
         p.modelsConfigJson = modelsJson;
         p.extraEnvJson = envJson;
-        p.extraSettingsJson = extraSettingsPretty;   // 高级设置 JSON（§7.3 落库统一 pretty）
+        p.extraSettingsJson = extraSettingsPretty;   // 高级设置 JSON（统一 pretty）
         p.apiKeyPlain = f.formKey_;   // 空 = 不换 key
         p.authField = authFieldToText(f.formAuthField_);
-        p.sharedConfigId = f.formSharedConfigId_;   // 批 2：绑定/解绑随保存落库
-        p.fallbackProfileId = f.formFallbackProfileId_;   // 批 3：备用随保存落库（自引用由服务层校验兜底）
-        // 高级配置页接线（2026-09-30 batch-fix B）：把新下拉的值真正写进编辑路径
-        //（不接线则下拉改动落不了盘）。对「不动该下拉」场景行为与接线前等价——
-        // 现路径 p 来自 getProfile，已隐式保留既有覆盖（profile_repository.cpp
-        // 读侧归一 + updateProfile 直写该字段），用例按「接线回归钉」定位
+        p.sharedConfigId = f.formSharedConfigId_;   // 绑定/解绑随保存落库
+        p.fallbackProfileId = f.formFallbackProfileId_;   // 备用随保存落库（自引用由服务层校验兜底）
+        // 新下拉值须真正写入编辑路径（不接线则落不了盘）；p 来自 getProfile 已含既有覆盖
         p.dialectOverride = f.formDialectOverride_;
         auto r = svc->updateProfile(p);
         if (r.isFail()) {
-            f.formError_ = r.errorMessage();
+            setFormError(f, r.errorMessage());
             return;
         }
         f.formOpen_ = false;
+        f.formExtraSettingsJsonBaseline_ = extraSettingsPretty;
         hooks.toast("已保存", "Profile「" + f.formName_ + "」已更新", false);
     }
 }
 
 namespace {
 
-// ---- 基础页（§6.1 线框）----
 void drawFormBasicTab(eui::Ui& ui, float w,
                       const core::theme::Tokens& t,
                       const components::theme::ThemeColorTokens& themeTokens,
@@ -429,8 +419,7 @@ void drawFormBasicTab(eui::Ui& ui, float w,
         .value(f.formName_).placeholder("例如：官方 / 中转 A")
         .fontSize(14.0f).theme(themeTokens)
         .onChange([fp = &f](const std::string& v) { fp->formName_ = v; })
-        // 审计 [21]：Esc=取消（关表单不提交，同「取消」按钮）；表单各输入框统一
-        .onCancel([fp = &f] { fp->formOpen_ = false; })
+        .onCancel([fp = &f] { fp->formOpen_ = false; })  // Esc=取消（关表单不提交，各输入框统一）
         .build();
 
     ui.text("claude.form.basic.url.label")
@@ -442,12 +431,12 @@ void drawFormBasicTab(eui::Ui& ui, float w,
         .value(f.formUrl_).placeholder("https://api.anthropic.com")
         .fontSize(14.0f).theme(themeTokens)
         .onChange([fp = &f](const std::string& v) { fp->formUrl_ = v; })
-        .onCancel([fp = &f] { fp->formOpen_ = false; })  // 审计 [21]：Esc=取消
+        .onCancel([fp = &f] { fp->formOpen_ = false; })  // Esc=取消
         .build();
 
     ui.text("claude.form.basic.key.label")
         .position(28.0f, 244.0f).size(w - 56.0f, 16.0f)
-        .text("API Key（存入 Keychain，不落数据库）")
+        .text("API Key（" + std::string(platform::credential::protectionDescription()) + "）")
         .fontSize(11.0f).lineHeight(16.0f)
         .color(t.colors.textTertiary).build();
     const std::string keyPlaceholder = isEdit
@@ -458,12 +447,10 @@ void drawFormBasicTab(eui::Ui& ui, float w,
         .value(f.formKey_).placeholder(keyPlaceholder)
         .fontSize(14.0f).theme(themeTokens)
         .onChange([fp = &f](const std::string& v) { fp->formKey_ = v; })
-        .onCancel([fp = &f] { fp->formOpen_ = false; })  // 审计 [21]：Esc=取消
+        .onCancel([fp = &f] { fp->formOpen_ = false; })  // Esc=取消
         .build();
 
-    // 认证字段（鉴权头三态；2026-09-27 profile-auth-field 设计 §6）：
-    // 标签与灰字说明同行，下拉紧随其后；其下三块（副提示/错误/接管警告）
-    // 整体下移 64px 让位
+    // 认证字段（鉴权头三态）：标签与灰字说明同行，下拉紧随
     ui.text("claude.form.basic.authfield.label")
         .position(28.0f, 314.0f).size(72.0f, 16.0f)
         .text("认证字段").fontSize(11.0f).lineHeight(16.0f)
@@ -493,11 +480,6 @@ void drawFormBasicTab(eui::Ui& ui, float w,
         })
         .build();
 
-    // 「备用 Profile（failover）」下拉已整段迁入高级配置页（2026-09-30
-    // batch-fix B，设计 §3.2①/②）——其后元素整体上移 66px（原 failover 块占
-    // y 380..438：label 380 / 下拉 398+40）。认证字段下拉底（332+40=372）与
-    // 下方提示行 380 间距 8px，与既有行距一致
-
     ui.text("claude.form.basic.hint.icon")
         .position(28.0f, 380.0f).size(14.0f, 18.0f)
         .icon(0xF05A).fontSize(12.0f).lineHeight(18.0f)
@@ -515,7 +497,7 @@ void drawFormBasicTab(eui::Ui& ui, float w,
             .color(t.colors.error).build();
     }
 
-    // 「导入当前配置」接管态警告（不阻断，仅提示；⚠ 图标 + 文字两元素）
+    // 「导入当前配置」接管态警告（不阻断，仅提示）
     if (!f.formImportWarn_.empty()) {
         ui.text("claude.dialog.form.importwarn.icon")
             .position(28.0f, 426.0f).size(14.0f, 18.0f)
@@ -528,23 +510,14 @@ void drawFormBasicTab(eui::Ui& ui, float w,
     }
 }
 
-// ---- 高级配置页（2026-09-30 batch-fix B，设计 §3.2①）：方言覆盖下拉 +
-// 备用 Profile 下拉（自基础页整段迁入：label/hint/候选归算/dropdown 逐字
-// 保留，含 profiles 快照入参与悬空归一逻辑；节点 id 同步保留——无头用例
-// 经 claude.form.basic.fallback.dd.* 导航锚定位，改名即测试返工）----
-// profiles：备用 Profile 下拉的数据源（编辑态排除自身；悬空/自引用逐帧
-// 归一为「无」，不把幽灵 id 留在表单态里传播——同批 2 片段绑定的归一口径）
+// 高级配置页：方言覆盖 + 备用 Profile + 片段绑定 + 高级设置 JSON；下拉逐帧归一悬空/自引用为「无」
 void drawFormAdvancedTab(eui::Ui& ui, float w,
                          const core::theme::Tokens& t,
                          const components::theme::ThemeColorTokens& themeTokens,
                          FormState& f,
                          const std::vector<Profile>& profiles,
                          const std::vector<SharedConfig>& sharedConfigs) {
-    // 方言覆盖（审计 CPX-13 的 UI 侧出口）：idx↔值映射 0↔""（未覆盖）/
-    // 1↔anthropic_default / 2↔opencode_zen。items 显示名与详情 pane 文案共用
-    // dialectKindDisplayName（单一来源，不手抄字符串）；onChange 直接写规范
-    // 文本（dialectKindToText 产物，映射表以其为源），DB 层
-    // normalizeDialectOverride 再兜底（双层保险，符合 CPX-13「写侧归一」）
+    // 方言覆盖：idx 0=未覆盖 / 1=anthropic_default / 2=opencode_zen；显示名与详情页共用 dialectKindDisplayName
     ui.text("claude.form.advanced.dialect.label")
         .position(28.0f, 104.0f).size(72.0f, 16.0f)
         .text("上游方言").fontSize(11.0f).lineHeight(16.0f)
@@ -562,8 +535,7 @@ void drawFormAdvancedTab(eui::Ui& ui, float w,
             dialectKindDisplayName(UpstreamDialect::Kind::AnthropicDefault));
         items.emplace_back(
             dialectKindDisplayName(UpstreamDialect::Kind::OpencodeZen));
-        // 选中态逐帧归算：经 dialectKindFromText 反查 idx（空串/未知 → 0，
-        // 读侧兜底同口径）
+        // 选中态逐帧归算（空串/未知 → 0）
         int selIdx = 0;
         if (const auto kind = dialectKindFromText(f.formDialectOverride_)) {
             selIdx = *kind == UpstreamDialect::Kind::OpencodeZen ? 2 : 1;
@@ -599,10 +571,7 @@ void drawFormAdvancedTab(eui::Ui& ui, float w,
             .build();
     }
 
-    // 备用 Profile（failover，设计 §3.4/§3.7）：0 = 不启用。启用后主 Profile
-    // 返回可重试错误时请求换发备用（§3.4 表单提示——可能按另一家计费在
-    // 副提示里点明）。选项 idx 0 = 无；其余 = 候选 profile 表序 +1；编辑态
-    // 排除自身（自引用由服务层 updateProfile 校验兜底，这里列表直接不给）
+    // 备用 Profile（0=不启用）：主 Profile 返回可重试错误时换发备用（可能按另一家计费）
     ui.text("claude.form.basic.fallback.label")
         .position(28.0f, 174.0f).size(72.0f, 16.0f)
         .text("备用 Profile").fontSize(11.0f).lineHeight(16.0f)
@@ -623,7 +592,7 @@ void drawFormAdvancedTab(eui::Ui& ui, float w,
             candidateIds.push_back(p.id);
             items.push_back(p.name);
         }
-        // 选中态逐帧归算；悬空（备用已删 / 快照未到位）归一为无（幂等）
+        // 选中态逐帧归算；悬空归一为无（幂等）
         int selIdx = 0;
         if (f.formFallbackProfileId_ != 0) {
             for (size_t k = 0; k < candidateIds.size(); ++k) {
@@ -659,8 +628,7 @@ void drawFormAdvancedTab(eui::Ui& ui, float w,
             .build();
     }
 
-    // ---- 共享配置片段绑定（advanced-json-editor §7.1/§7.2：自 env 页整段
-    // 迁入，下拉数据源/悬空归一/onChange 逻辑逐字保留；idx 0 = 未绑定）----
+    // 共享配置片段绑定（idx 0 = 未绑定）
     ui.text("claude.form.advanced.shared.label")
         .position(28.0f, 244.0f).size(72.0f, 16.0f)
         .text("绑定片段").fontSize(11.0f).lineHeight(16.0f)
@@ -675,8 +643,7 @@ void drawFormAdvancedTab(eui::Ui& ui, float w,
         items.reserve(sharedConfigs.size() + 1);
         items.emplace_back("无（不绑定片段）");
         for (const auto& sc : sharedConfigs) items.push_back(sc.name);
-        // 选中态逐帧归算；悬空绑定（片段已删 / 快照未到位）归一为未绑定
-        //（幂等：值为 0 后不再重设）——不把幽灵 id 留在表单态里传播
+        // 选中态逐帧归算；悬空绑定归一为未绑定（幂等，不把幽灵 id 留在表单态）
         int selIdx = 0;
         if (f.formSharedConfigId_ != 0) {
             for (size_t k = 0; k < sharedConfigs.size(); ++k) {
@@ -711,9 +678,6 @@ void drawFormAdvancedTab(eui::Ui& ui, float w,
             .build();
     }
 
-    // ---- 高级设置 JSON（advanced-json-editor §7.2）：label+hint / 多行编辑框
-    // / 格式化按钮 / 行内红字。placeholder 示意「settings.json 除 env 外的
-    // 属性」；onChange 写状态并清行内错误（formError_ 提交闸门分层不动）----
     ui.text("claude.form.advanced.json.label")
         .position(28.0f, 314.0f).size(110.0f, 16.0f)
         .text("高级设置 JSON").fontSize(11.0f).lineHeight(16.0f)
@@ -733,12 +697,10 @@ void drawFormAdvancedTab(eui::Ui& ui, float w,
             fp->formExtraSettingsJson_ = v;
             fp->formAdvancedJsonError_.clear();
         })
-        .onCancel([fp = &f] { fp->formOpen_ = false; })   // 审计 [21]：Esc=取消（导入框同款）
+        .onCancel([fp = &f] { fp->formOpen_ = false; })   // Esc=取消（导入框同款）
         .build();
 
-    // 「格式化」按钮（D-2：parse → stringify(pretty)——本体在匿名空间
-    // formatAdvancedJson，json-fullscreen 起与全屏覆盖层按钮共用）。失败 →
-    // 行内红字（与校验失败共用）
+    // 「格式化」：与全屏覆盖层按钮共用 formatAdvancedJson；失败写行内红字
     components::button(ui, "claude.form.advanced.json.format")
         .position(28.0f, 440.0f).size(110.0f, 32.0f)
         .text("格式化").fontSize(12.0f)
@@ -748,9 +710,7 @@ void drawFormAdvancedTab(eui::Ui& ui, float w,
         .border(1.0f, t.colors.borderDefault)
         .onClick([fp = &f] { formatAdvancedJson(*fp); })
         .build();
-    // 「全屏编辑」入口（2026-09-30 json-fullscreen）：与「格式化」并排，副按钮
-    // 同款。只置位 formJsonFullscreen_——覆盖层由 compose 在全部弹窗之后绘制
-    //（claude_module.cpp drawJsonFullscreenOverlay），表单态本帧不动
+    // 「全屏编辑」入口：只置位 formJsonFullscreen_，覆盖层由 compose 绘制，表单态本帧不动
     components::button(ui, "claude.form.advanced.json.fs")
         .position(150.0f, 440.0f).size(110.0f, 32.0f)
         .text("全屏编辑").fontSize(12.0f)
@@ -760,8 +720,7 @@ void drawFormAdvancedTab(eui::Ui& ui, float w,
         .border(1.0f, t.colors.borderDefault)
         .onClick([fp = &f] { fp->formJsonFullscreen_ = true; })
         .build();
-    // 已绑定片段提示行（§7.3：取代拆除的 frozenKeys/chip——文本框无逐键行，
-    // 片段赢语义在此明示；json-fullscreen 起右移让位「全屏编辑」按钮）
+    // 已绑定片段提示行：文本框无逐键行，片段赢语义在此明示
     if (const SharedConfig* boundSc =
             findSharedById(sharedConfigs, f.formSharedConfigId_);
         boundSc != nullptr) {
@@ -773,8 +732,7 @@ void drawFormAdvancedTab(eui::Ui& ui, float w,
             .color(t.colors.textTertiary).build();
     }
 
-    // 行内红字（格式化/校验失败共用；480-496 单行，与底部 formError 行
-    // y=h-104=496 相邻不重叠）
+    // 行内红字（格式化/校验失败共用；单行，与底部 formError 行相邻不重叠）
     if (!f.formAdvancedJsonError_.empty() && f.formError_.empty()) {
         ui.text("claude.form.advanced.json.error")
             .position(28.0f, 480.0f).size(w - 56.0f, 16.0f)
@@ -783,14 +741,12 @@ void drawFormAdvancedTab(eui::Ui& ui, float w,
     }
 }
 
-// ---- 模型映射页（槽位逐行 × model/name，§6.1 线框；行 = 槽位表派生，CPX-08）----
 void drawFormModelsTab(eui::Ui& ui, float w,
                        const core::theme::Tokens& t,
                        const components::theme::ThemeColorTokens& themeTokens,
                        FormState& f) {
     const auto slotTable = modelSlotTable();
 
-    // 表头
     ui.text("claude.form.slots.h.slot")
         .position(28.0f, 104.0f).size(110.0f, 14.0f)
         .text("槽位").fontSize(11.0f).lineHeight(14.0f)
@@ -820,9 +776,9 @@ void drawFormModelsTab(eui::Ui& ui, float w,
             .onChange([fp = &f, m = row.slot](const std::string& v) {
                 (fp->formModels_.*m).model = v;
             })
-            .onCancel([fp = &f] { fp->formOpen_ = false; })  // 审计 [21]：Esc=取消
+            .onCancel([fp = &f] { fp->formOpen_ = false; })  // Esc=取消
             .build();
-        // 显示名留空 → placeholder 渲染派生预览（§6.1）
+        // 显示名留空 → placeholder 显示派生预览
         const std::string derived = deriveDisplayName(slot.model);
         components::input(ui, "claude.form.slot." + idx + ".name")
             .position(492.0f, y).size(240.0f, 36.0f)
@@ -832,7 +788,7 @@ void drawFormModelsTab(eui::Ui& ui, float w,
             .onChange([fp = &f, m = row.slot](const std::string& v) {
                 (fp->formModels_.*m).name = v;
             })
-            .onCancel([fp = &f] { fp->formOpen_ = false; })  // 审计 [21]：Esc=取消
+            .onCancel([fp = &f] { fp->formOpen_ = false; })  // Esc=取消
             .build();
     }
 
@@ -852,19 +808,13 @@ void drawFormModelsTab(eui::Ui& ui, float w,
         .color(t.colors.textTertiary).build();
 }
 
-// ---- 高级 env 页（键值编辑器 + cc-switch 粘贴导入，§6.1）----
-// ponytail: 可见行数上限 5（760×600 弹窗高度约束），超出部分保存在
-// 状态里全量保存；需要编辑超长列表时再引入 scrollView
-//
-// advanced-json-editor §7.1/§8.2：共享配置绑定下拉整段迁入高级配置页，
-// frozenKeys/chip/置灰整套拆除（片段不再携带 env 键——env 域片段管线随
-// §8.4 拆除，绑定语义迁到 JSON 域「生成时叠加、片段赢」）。
+// 高级 env 页（键值编辑器 + 粘贴导入）；可见行数上限 5（弹窗高度约束），超出部分仍在状态里全量保存
 void drawFormEnvTab(eui::Ui& ui, float w,
                     const core::theme::Tokens& t,
                     const components::theme::ThemeColorTokens& themeTokens,
                     FormState& f, ImportState& imp,
                     const std::vector<SharedConfig>& sharedConfigs) {
-    (void)sharedConfigs;   // 绑定下拉已迁高级配置页；签名保留防调用点连锁改动
+    (void)sharedConfigs;   // 签名保留，参数不使用
     constexpr size_t kMaxVisibleRows = 5;
 
     ui.text("claude.form.env.label")
@@ -886,11 +836,9 @@ void drawFormEnvTab(eui::Ui& ui, float w,
             .onChange([fp = &f, i](const std::string& v) {
                 fp->formEnvRows_[i].first = v;
             })
-            .onCancel([fp = &f] { fp->formOpen_ = false; })  // 审计 [21]：Esc=取消
+            .onCancel([fp = &f] { fp->formOpen_ = false; })  // Esc=取消
             .build();
-        // 变量名识别（2026-09-24，官方 env-vars 文档全量清单）：
-        // 已知 → hover 显示说明 tooltip；未知且非空 → 红边框提示
-        //（仍可导入，键名格式校验已在解析侧放开）
+        // 变量名识别：已知→hover 说明 tooltip；未知且非空→红边框（仍可导入，解析侧已放开键名校验）
         if (const char* hint = envVarHint(f.formEnvRows_[i].first)) {
             components::tooltip(ui, "claude.form.env.row." + idx + ".tip")
                 .source("claude.form.env.row." + idx + ".key.hit")
@@ -915,11 +863,11 @@ void drawFormEnvTab(eui::Ui& ui, float w,
             .onChange([fp = &f, i](const std::string& v) {
                 fp->formEnvRows_[i].second = v;
             })
-            .onCancel([fp = &f] { fp->formOpen_ = false; })  // 审计 [21]：Esc=取消
+            .onCancel([fp = &f] { fp->formOpen_ = false; })  // Esc=取消
             .build();
         components::button(ui, "claude.form.env.row." + idx + ".del")
             .position(682.0f, y).size(50.0f, 32.0f)
-            .icon(0xF00D)  // fa-xmark（✕ 换 FA）
+            .icon(0xF00D)  // fa-xmark
             .fontSize(12.0f)
             .colors(t.colors.surfaceElevated, t.colors.hover,
                     t.colors.active)
@@ -936,7 +884,6 @@ void drawFormEnvTab(eui::Ui& ui, float w,
             .build();
     }
 
-    // 底部：添加按钮 + 溢出说明
     components::button(ui, "claude.form.env.add")
         .position(28.0f, 314.0f).size(110.0f, 30.0f)
         .text("+ 添加变量").fontSize(12.0f)
@@ -957,7 +904,6 @@ void drawFormEnvTab(eui::Ui& ui, float w,
             .color(t.colors.textTertiary).build();
     }
 
-    // ---- 粘贴导入（cc-switch / settings.json）----
     ui.text("claude.form.import.label")
         .position(28.0f, 356.0f).size(w - 56.0f, 16.0f)
         .text("── 从 cc-switch / settings.json 粘贴导入 ──")
@@ -970,7 +916,7 @@ void drawFormEnvTab(eui::Ui& ui, float w,
         .multiline(true).scrollbar(true)
         .fontSize(12.0f).theme(themeTokens)
         .onChange([ip = &imp](const std::string& v) { ip->importText_ = v; })
-        .onCancel([fp = &f] { fp->formOpen_ = false; })  // 审计 [21]：Esc=取消
+        .onCancel([fp = &f] { fp->formOpen_ = false; })  // Esc=取消
         .build();
 
     components::button(ui, "claude.form.import.parse")
@@ -994,8 +940,7 @@ void drawFormEnvTab(eui::Ui& ui, float w,
             .build();
     }
 
-    // 解析结果：失败红字 / 成功预览（槽位/env 识别数 + 别名/未识别提示）
-    //（✕/⚠ 换 FA：图标/文字拆两个元素）
+    // 解析结果：失败红字 / 成功预览（识别数 + 别名/未识别提示）
     if (!imp.importError_.empty()) {
         ui.text("claude.form.import.error.icon")
             .position(270.0f, 468.0f).size(13.0f, 16.0f)
@@ -1017,9 +962,7 @@ void drawFormEnvTab(eui::Ui& ui, float w,
                   std::to_string(imp.importPreview_.unrecognizedKeys.size()))
             .fontSize(11.0f).lineHeight(16.0f)
             .color(t.colors.textSecondary).build();
-        // 警告角标透传（§4.3 规则 6）：别名映射 / 未识别键 / 解析警告，
-        // 最多 3 条（弹窗高度约束——再往下会压到底部按钮；全量信息在
-        // 保存后的 settings.json 与日志可查）
+        // 警告角标最多 3 条（弹窗高度约束；全量信息在保存后的 settings.json 与日志可查）
         std::vector<std::string> notes;
         for (size_t i = 0; i < imp.importPreview_.aliasMappedKeys.size() && i < 2; ++i) {
             notes.push_back("已映射为官方变量: " +
@@ -1035,9 +978,7 @@ void drawFormEnvTab(eui::Ui& ui, float w,
              i < imp.importPreview_.warnings.size() && notes.size() < 3; ++i) {
             notes.push_back(imp.importPreview_.warnings[i]);
         }
-        // 角标与底部校验错误行（dialog 里 y=h-104，formTab_!=0 时画）
-        // 同屏重叠：有校验错误时让位，只显示校验错误（提交失败更可行动；
-        // 角标信息全量在保存后的 settings.json 与日志可查）
+        // 角标与底部校验错误行同屏重叠：有校验错误时让位，只显示更可行动的校验错误
         if (f.formError_.empty()) {
             for (size_t i = 0; i < notes.size(); ++i) {
                 ui.text("claude.form.import.note.icon." + std::to_string(i))
@@ -1092,10 +1033,7 @@ void drawProfileFormDialog(eui::Ui& ui, const eui::Screen& screen,
                 isEdit ? "编辑 Profile" : "新建 Profile", 20.0f, t.colors.textPrimary,
                 {.y = 20.0f, .height = 26.0f, .lineHeight = 26.0f});
 
-            // tabs（§6.1：基础 / 模型映射 / 高级 env；2026-09-30 batch-fix B
-            // 尾插第 4 页「高级配置」——前三页序是既有拍板，尾插保住
-            // form.tabs.hit.0/1/2 既有测试导航零破坏，D-B1）。
-            // TabsBuilder 无 position，套 stack 定位（字号下拉同款包装）
+            // tabs 四页；TabsBuilder 无 position，套 stack 定位
             ui.stack("claude.form.tabs.wrap")
                 .position(28.0f, 52.0f)
                 .size(w - 56.0f, 34.0f)
@@ -1116,16 +1054,13 @@ void drawProfileFormDialog(eui::Ui& ui, const eui::Screen& screen,
             } else if (f.formTab_ == 1) {
                 drawFormModelsTab(ui, w, t, themeTokens, f);
             } else if (f.formTab_ == 3) {
-                // 高级配置（2026-09-30 batch-fix B；advanced-json-editor §7
-                // 加绑定下拉 + JSON 区块）：catch-all else 前插 ==3 分支，
-                // 0/1/2 分支语义不动
                 drawFormAdvancedTab(ui, w, t, themeTokens, f, profiles,
                                     sharedConfigs);
             } else {
                 drawFormEnvTab(ui, w, t, themeTokens, f, imp, sharedConfigs);
             }
 
-            // 错误信息（基础页之外也要能看到校验错误）
+            // 错误信息（基础页之外也要看得到校验错误）
             if (f.formTab_ != 0) {
                 ui_kit::drawDialogText(ui, "claude.dialog.form.error", w, f.formError_,
                                        12.0f, t.colors.error,
@@ -1133,7 +1068,6 @@ void drawProfileFormDialog(eui::Ui& ui, const eui::Screen& screen,
                                         .lineHeight = 18.0f, .skipIfEmpty = true});
             }
 
-            // 底部按钮
             ui_kit::DialogButtonSpec cancel;
             cancel.label = "取消";
             cancel.fontSize = 14.0f;
@@ -1151,23 +1085,13 @@ void drawProfileFormDialog(eui::Ui& ui, const eui::Screen& screen,
     });
 }
 
-// ============ 高级设置 JSON 全屏编辑覆盖层（2026-09-30 json-fullscreen）============
-// 层级落点（任务两案取「ui_kit 顶层 overlay」案，理由见 commit message）：画在
-// compose 全部弹窗之后（claude_module.cpp）+ 显式 zIndex 1050——介于表单弹窗
-//（EUI-NEO dialog 默认 1000）与 toast（1100）之间：盖住表单 dialog（本需求），
-// 又让位 toast（「应用」成功的确认必须可见）。
-// 可见性派生自 formOpen_ && formJsonFullscreen_：「应用」复用 submitForm，成功
-// 路径关表单 → 全屏同帧消失（若留在全屏，会出现无表单的孤儿覆盖层，且「完成」
-// 回表单无处可回；toast 确认由既有 hooks 照发）。文本/红字/落库全部复用表单
-// 既有字段与路径——本函数只是同一状态的大画布
+// 高级设置 JSON 全屏编辑覆盖层：zIndex 1050，介于表单弹窗(1000)与 toast(1100)之间；文本/落库复用表单既有状态
 void drawJsonFullscreenOverlay(eui::Ui& ui, const eui::Screen& screen,
                                const core::theme::Tokens& t,
                                const components::theme::ThemeColorTokens& themeTokens,
                                FormState& f, const FormSubmitHooks& hooks,
                                const std::vector<SharedConfig>& sharedConfigs) {
-    // 结构性不变式（审计 F-3）：表单不在场 ⇒ 全屏旗必复位——任何关表单路径
-    //（取消 / Esc / 应用成功）之后下一帧即清，不依赖 openCreate/openEditForm
-    // 两个入口的顺手复位（旗与 formOpen_ 的从属关系在此收口）
+    // 结构性不变式：表单不在场 ⇒ 全屏旗必复位（任何关表单路径后下一帧即清）
     if (!f.formJsonFullscreen_ || !f.formOpen_) {
         f.formJsonFullscreen_ = false;
         return;
@@ -1179,13 +1103,12 @@ void drawJsonFullscreenOverlay(eui::Ui& ui, const eui::Screen& screen,
         .size(w, h)
         .zIndex(1050)
         .content([&] {
-            // 整页不透明底（模块页平时不自铺底色——底=窗口 clearColor；全屏态
-            // 必须盖住底下全部内容，故自铺不透明 background）+ blockPointer
-            //（与 dialog 面板 hit 同款模态手法：点击不穿透到表单弹窗）
+            // 整页不透明底 + blockPointer 模态（点击不穿透）；点遮罩 = 「放弃修改」（同 Esc）
             ui.rect("claude.jsonfs.bg")
                 .size(w, h)
                 .color(t.colors.background)
                 .blockPointer()
+                .onClick([fp = &f] { discardJsonFullscreenEdits(*fp); })
                 .build();
 
             ui_kit::drawDialogTitle(ui, "claude.jsonfs.title", w,
@@ -1193,19 +1116,16 @@ void drawJsonFullscreenOverlay(eui::Ui& ui, const eui::Screen& screen,
                                     t.colors.textPrimary,
                                     {.y = 20.0f, .height = 26.0f,
                                      .lineHeight = 26.0f});
-            // 末句 = 审计 F-2：应用闸门里的基础项（名称/URL/Key）错误修复字段在
-            // 基础页、全屏态不可达——明示「回表单补填」这条修复路径
+            // 基础项（名称/URL/Key）缺失的修复入口在基础页、全屏态不可达，末尾明示回表单补填
             ui.text("claude.jsonfs.hint")
                 .position(28.0f, 48.0f).size(w - 56.0f, 16.0f)
-                .text("与表单弹窗同一份编辑缓冲：格式化 / 应用（=保存）在此生效；"
-                      "Esc 或「完成」返回表单，未应用的文本保留；"
+                .text("与表单弹窗同一份编辑缓冲：格式化 / 保存（= 整表单提交）在此生效；"
+                      "「放弃修改」、Esc 或点击遮罩 = 丢弃本次改动并回到上次保存值；"
                       "基础项（名称/URL/Key）缺失需回表单基础页补填")
                 .fontSize(11.0f).lineHeight(16.0f)
                 .color(t.colors.textTertiary).build();
 
-            // 大号多行编辑框：占满内容区减标题区与底部按钮行。value/onChange
-            // 与表单框同接 formExtraSettingsJson_（同一编辑缓冲）；Esc 走
-            // onCancel 退全屏回表单（表单框的 Esc 是关表单——层级不同语义不同）
+            // 大号多行编辑框；与表单框同接 formExtraSettingsJson_（同一编辑缓冲），Esc = 放弃修改
             components::input(ui, "claude.jsonfs.editor")
                 .position(28.0f, 72.0f).size(w - 56.0f, h - 176.0f)
                 .value(f.formExtraSettingsJson_)
@@ -1216,11 +1136,10 @@ void drawJsonFullscreenOverlay(eui::Ui& ui, const eui::Screen& screen,
                     fp->formExtraSettingsJson_ = v;
                     fp->formAdvancedJsonError_.clear();
                 })
-                .onCancel([fp = &f] { fp->formJsonFullscreen_ = false; })
+                .onCancel([fp = &f] { discardJsonFullscreenEdits(*fp); })
                 .build();
 
-            // 红字（同源分层与表单侧一致：优先 formError_ 提交闸门，其次
-            // 格式化/校验行内红字——两个来源都是表单弹窗自己在显示的那份）
+            // 红字分层同表单侧：优先 formError_ 提交闸门，其次行内 JSON 红字
             const std::string& fsError = !f.formError_.empty()
                                              ? f.formError_
                                              : f.formAdvancedJsonError_;
@@ -1231,9 +1150,7 @@ void drawJsonFullscreenOverlay(eui::Ui& ui, const eui::Screen& screen,
                     .color(t.colors.error).build();
             }
 
-            // 底部按钮行：「格式化」（与表单按钮共用 formatAdvancedJson）/
-            //「应用」（= submitForm 整条既有路径：校验 → formError_ 闸门 →
-            // pretty 落库 → toast）/「完成」（退全屏回表单，文本留在缓冲）
+            // 底部三键：格式化 / 保存（=submitForm 整条路径）/ 放弃修改（恢复落库值并退全屏）
             components::button(ui, "claude.jsonfs.format")
                 .position(28.0f, h - 68.0f).size(110.0f, 40.0f)
                 .text("格式化").fontSize(12.0f)
@@ -1245,7 +1162,7 @@ void drawJsonFullscreenOverlay(eui::Ui& ui, const eui::Screen& screen,
                 .build();
             components::button(ui, "claude.jsonfs.apply")
                 .position(150.0f, h - 68.0f).size(110.0f, 40.0f)
-                .text("应用").fontSize(12.0f)
+                .text("保存").fontSize(12.0f)
                 .colors(t.colors.primary, t.colors.primaryHover,
                         t.colors.primaryPressed)
                 .textColor(t.colors.onPrimary)
@@ -1254,20 +1171,19 @@ void drawJsonFullscreenOverlay(eui::Ui& ui, const eui::Screen& screen,
                     submitForm(*fp, hooks, *scs);
                 })
                 .build();
-            components::button(ui, "claude.jsonfs.done")
+            components::button(ui, "claude.jsonfs.discard")
                 .position(272.0f, h - 68.0f).size(110.0f, 40.0f)
-                .text("完成").fontSize(12.0f)
+                .text("放弃修改").fontSize(12.0f)
                 .colors(t.colors.surfaceElevated, t.colors.hover, t.colors.active)
                 .textColor(t.colors.textPrimary)
                 .radius(t.sizes.radiusSmall)
                 .border(1.0f, t.colors.borderDefault)
-                .onClick([fp = &f] { fp->formJsonFullscreen_ = false; })
+                .onClick([fp = &f] { discardJsonFullscreenEdits(*fp); })
                 .build();
         })
         .build();
 }
 
-// ============ 删除确认弹窗 ============
 void drawDeleteConfirmDialog(eui::Ui& ui, const eui::Screen& screen,
                              const core::theme::Tokens& t,
                              const components::theme::ThemeColorTokens& themeTokens,
@@ -1286,13 +1202,11 @@ void drawDeleteConfirmDialog(eui::Ui& ui, const eui::Screen& screen,
     ui_kit::drawDialogFrame(ui, screen, frame, themeTokens, [&] {
             ui_kit::drawDialogTitle(ui, "claude.dialog.delete.title", w, "确认删除？",
                                     20.0f, t.colors.textPrimary);
-            // 2026-09-28：文本加 wrap + 高 60（同共享片段删除确认弹窗口径）
-            // —— 原单行写死 40px 不换行，长 Profile 名把正文挤出弹窗右缘
-            //（EUI 文本不裁剪，超宽直接画出弹窗）
+            // 文本 wrap + 高 60：长 Profile 名换行，避免 EUI 文本不裁剪被画出右缘
             ui_kit::drawDialogText(
                 ui, "claude.dialog.delete.msg", w,
                 "将删除 Profile「" + f.deleteTargetName_ +
-                    "」及其 Keychain 中的 API Key，不可恢复。",
+                    "」及其保存的 API Key，不可恢复。",
                 t.sizes.fontSizeSmall, t.colors.textSecondary,
                 {.y = 58.0f, .height = 60.0f, .lineHeight = 20.0f,
                  .wrap = true});
@@ -1316,9 +1230,7 @@ void drawDeleteConfirmDialog(eui::Ui& ui, const eui::Screen& screen,
     });
 }
 
-// ============ 共享配置片段弹窗（批 2，设计 §2.10）============
-// 独立状态 SharedConfigDialogState（待拍板②：不复用 FormState，不污染 profile
-// 表单状态）；键值行写入模式照 formEnvRows_（kMaxVisibleRows 同款）。
+// 共享配置片段弹窗：独立 SharedConfigDialogState（不复用 FormState，不污染 profile 表单态）
 void openSharedCreate(SharedConfigDialogState& s) {
     s.editId_ = 0;
     s.name_.clear();
@@ -1331,8 +1243,7 @@ void openSharedEdit(SharedConfigDialogState& s, const SharedConfig& c) {
     s.editId_ = c.id;
     s.name_ = c.name;
     s.error_.clear();
-    // 预填片段 JSON 原文（DB 恒为 pretty 保存值；外部改库原文按原样预填，
-    // 格式化按钮负责规范化——与表单高级设置 JSON 同口径）
+    // 预填片段 JSON 原文（外部改库原文按原样，格式化按钮负责规范化）
     s.extraSettingsJson_ = c.extraSettingsJson;
     s.open_ = true;
 }
@@ -1349,9 +1260,7 @@ void submitSharedForm(SharedConfigDialogState& s,
         s.error_ = "片段名不能为空";
         return;
     }
-    // 片段 JSON（advanced-json-editor §8.1）：保存走 validateExtraSettingsJson
-    // 同一套规则（含 env 键拒绝——片段是 settings.json 属性预设，不是 env 装饰
-    // 层了）；通过 → 落库前统一 pretty（空串跳过，= 未配置）
+    // 保存走 validateExtraSettingsJson 同一套规则（含拒绝 env 键）；通过→统一 pretty 落库
     std::string settingsPretty;
     if (!s.extraSettingsJson_.empty()) {
         auto v = validateExtraSettingsJson(s.extraSettingsJson_);
@@ -1387,18 +1296,14 @@ void submitSharedForm(SharedConfigDialogState& s,
             return;
         }
         s.open_ = false;
-        // 服务层已处理「代理在跑且激活 profile 绑定了它 → 立即 re-takeover」
-        //（§2.6，claude_service.cpp 的 updateSharedConfig）——UI 不重复写
+        // 服务层已处理绑定 profile 的即时 re-takeover（claude_service.cpp），UI 不重复写
         hooks.toast("已保存",
                     "共享配置片段「" + s.name_ + "」已更新，绑定 Profile 下次接管生效",
                     false);
     }
 }
 
-// 共享配置片段编辑弹窗（advanced-json-editor §8.1 JSON 化：name 行 + 高级设置
-// JSON 编辑框四件（label / 多行框 / 格式化按钮 / 行内红字），§7 同款组件复用；
-// 编辑态底部多一枚「删除」。几何按 h=460 逐项核：name 82-118 / label 128 /
-// 框 146-316 / 格式化 324-356 / 红字 364-380 / 按钮行 h-60=400）
+// 共享配置片段编辑弹窗：name + 高级设置 JSON 四件；编辑态底部多一枚「删除」
 void drawSharedConfigDialog(eui::Ui& ui, const eui::Screen& screen,
                             const core::theme::Tokens& t,
                             const components::theme::ThemeColorTokens& themeTokens,
@@ -1421,7 +1326,6 @@ void drawSharedConfigDialog(eui::Ui& ui, const eui::Screen& screen,
             isEdit ? "编辑共享配置片段" : "新建共享配置片段", 20.0f,
             t.colors.textPrimary, {.y = 20.0f, .height = 26.0f, .lineHeight = 26.0f});
 
-        // 片段名
         ui.text("claude.dialog.shared.name.label")
             .position(28.0f, 64.0f).size(w - 56.0f, 16.0f)
             .text("片段名（共享给所有 Profile 的高级属性预设，不含密钥/Base URL）")
@@ -1435,9 +1339,7 @@ void drawSharedConfigDialog(eui::Ui& ui, const eui::Screen& screen,
             .onCancel([sp = &s] { sp->open_ = false; })   // Esc=取消（同表单各输入框）
             .build();
 
-        // 高级设置 JSON 编辑框（§7 同款四件：label / 多行框 / 格式化按钮 /
-        // 行内红字——片段即 settings.json 属性预设，绑定它的 Profile 生成时
-        // 逐键叠加、片段赢，解绑回落）
+        // 片段即 settings.json 属性预设：绑定它的 Profile 写入时逐键叠加、片段赢，解绑回落
         ui.text("claude.dialog.shared.json.label")
             .position(28.0f, 128.0f).size(w - 56.0f, 16.0f)
             .text("高级设置 JSON（settings.json 除 env 外的属性，绑定它的 Profile 写入时覆盖同名键）")
@@ -1486,8 +1388,7 @@ void drawSharedConfigDialog(eui::Ui& ui, const eui::Screen& screen,
                 .color(t.colors.error).build();
         }
 
-        // 底部按钮：编辑态 = 删除（左）/ 取消 / 保存；新建态 = 取消 / 创建。
-        // 删除键另开删除确认弹窗（删除 = 同事务解绑绑定它的 Profile）
+        // 底部按钮：编辑态删除/取消/保存，新建态取消/创建；删除另开确认弹窗（同事务解绑绑定 Profile）
         const float py = h - 60.0f;
         if (isEdit) {
             components::button(ui, "claude.dialog.shared.delete")
@@ -1530,8 +1431,7 @@ void drawSharedConfigDialog(eui::Ui& ui, const eui::Screen& screen,
     });
 }
 
-// 片段删除确认弹窗（删除 = 同事务解绑绑定它的 profile，设计 §2.6；
-// 「N 个 Profile 已解绑」计数由模块侧在确认回调里给出）
+// 片段删除确认弹窗（删除 = 同事务解绑绑定它的 profile；解绑计数由模块侧在回调里给出）
 void drawSharedConfigDeleteConfirmDialog(
     eui::Ui& ui, const eui::Screen& screen, const core::theme::Tokens& t,
     const components::theme::ThemeColorTokens& themeTokens,

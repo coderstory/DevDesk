@@ -15,8 +15,11 @@
 #   3) <构建目录>/assets/icon.png（构建时 POST_BUILD 从 EUI-NEO assets 拷来的图标，
 #      零手工步骤、构过就能跑；当前是 360×351，大档靠 sips 放大、清晰度略降，故只作兜底）
 #   构建目录 = DEVDESK_BUILD_DIR 或 <仓库根>/build（与 platform/macos/build-app.sh 同款开关）。
-#   —— 只跑打包、不关心 icns 入库时不必用本脚本：build-app.sh 已内联等价的 sips+iconutil 步骤。
+#   —— 只跑打包、不关心 icns 入库时不必用本脚本：build-app.sh 已内联等价步骤
+#      （同样先补画布留白，见下方「画布留白」）。
 #   - 已安装 Xcode Command Line Tools（自带 iconutil / sips）
+#   - python3 + Pillow（补画布留白用；与 doc/scripts/gen_dmg_background.py 同一依赖，
+#     缺了给中文提示退出，不生成满幅图标。可用 DEVDESK_PYTHON=<python> 换解释器）
 #
 # 产物（均入库交付，spec §4.4 第 1 项）：
 #   - installer/macos/DevDesk.icns      —— App 图标（.app bundle 的 CFBundleIconFile 用）
@@ -30,6 +33,15 @@
 # 尺寸说明（Apple iconset 标准，共 10 张）：
 #   16 / 32 / 128 / 256 / 512 各一张，及各自 @2x == 32 / 64 / 256 / 512 / 1024；
 #   即 iconset 文件名为 icon_{16,16@2x,32,32@2x,128,128@2x,256,256@2x,512,512@2x}.png
+#
+# 画布留白（2026-10-02 加，修「Dock 里比别的应用大」）：
+#   缩放前先把源图等比缩到最长边 82% 并居中放进 1024×1024 的**透明**画布
+#   （doc/scripts/pad_icon_canvas.py，比例见下方 PAD_RATIO），下面 10 档全部从
+#   这张 1024 母图派生。Dock 用同一格子绘制所有应用图标，苹果自家图标内容约占
+#   格子 80%、四周留白；满幅内容在同样格子里就显得大一圈 —— 补留白即可，尺寸
+#   参数一个都没动。
+#   不另加圆角：现用源图本身已是圆角方形（超椭圆 n≈3.4），再叠一层只会切边或
+#   无效，理由写在 pad_icon_canvas.py 头部。
 # =============================================================================
 set -euo pipefail
 
@@ -76,11 +88,32 @@ if [ -n "${SRC_W}" ] && [ -n "${SRC_H}" ] && { [ "${SRC_W}" -lt 1024 ] || [ "${S
   echo "[WARN] 源图尺寸为 ${SRC_W}×${SRC_H}，小于标准 1024×1024；小尺寸条目会放大、质量可能下降" >&2
 fi
 
-# ---------- 用 sips 生成标准 .iconset 的 10 张图（全部从 1024 源图向下缩放） ----------
+# ---------- 用 sips 生成标准 .iconset 的 10 张图（全部从 1024 母图向下缩放） ----------
 TMP_ROOT="$(mktemp -d /tmp/DevDesk-icns.XXXXXX)"
 ICONSET_DIR="${TMP_ROOT}/DevDesk.iconset"
 mkdir -p "${ICONSET_DIR}"
 trap 'rm -rf "${TMP_ROOT}"' EXIT
+
+# 先补画布留白得到 1024 母图，再让 10 档全部派生自它（见文件头「画布留白」）。
+# sips 的 --padColor 只吃 6 位十六进制 = 只能补不透明色，补不了透明留白，
+# 所以这一步必须走 Pillow（与 doc/scripts/gen_dmg_background.py 同一依赖）。
+PAD_RATIO="${DEVDESK_ICON_PAD_RATIO:-0.82}"
+PAD_HELPER="${SCRIPT_DIR}/pad_icon_canvas.py"
+PYTHON_BIN="${DEVDESK_PYTHON:-python3}"
+MASTER_PNG="${TMP_ROOT}/icon-master-1024.png"
+
+if [ ! -f "${PAD_HELPER}" ]; then
+  echo "[ERROR] 缺少 ${PAD_HELPER}（补画布留白用）" >&2
+  exit 1
+fi
+if ! command -v "${PYTHON_BIN}" >/dev/null 2>&1; then
+  echo "[ERROR] 找不到 python3（补画布留白需要 Pillow；可用 DEVDESK_PYTHON=<python> 指定）" >&2
+  exit 1
+fi
+if ! "${PYTHON_BIN}" "${PAD_HELPER}" "${SRC_PNG}" "${MASTER_PNG}" --ratio "${PAD_RATIO}"; then
+  echo "[ERROR] 画布留白步骤失败（缺 Pillow 时执行: python3 -m pip install Pillow）" >&2
+  exit 1
+fi
 
 # 每行: <iconset 文件名> <目标像素边长>（sips -z 参数顺序为「高 宽」，两值相等无差别）
 SIZES="
@@ -97,8 +130,24 @@ icon_512x512@2x.png 1024
 "
 while read -r name px; do
   [ -z "${name}" ] && continue
-  sips -z "${px}" "${px}" "${SRC_PNG}" --out "${ICONSET_DIR}/${name}" >/dev/null
+  sips -z "${px}" "${px}" "${MASTER_PNG}" --out "${ICONSET_DIR}/${name}" >/dev/null
 done <<< "${SIZES}"
+
+# ---------- 产物校验：1024 档真的带上了留白（没留白 = 本次修改没生效） ----------
+"${PYTHON_BIN}" - "${ICONSET_DIR}/icon_512x512@2x.png" <<'PYCHECK' || exit 1
+import sys
+from PIL import Image
+p = sys.argv[1]
+im = Image.open(p).convert("RGBA")
+bbox = im.getchannel("A").getbbox()
+side = im.size[0]
+if bbox is None:
+    print(f"[ERROR] 1024 档全透明: {p}", file=sys.stderr); sys.exit(1)
+margins = (bbox[0], bbox[1], side - bbox[2], side - bbox[3])
+if min(margins) < side * 0.02:
+    print(f"[ERROR] 1024 档没有画布留白（边距 {margins}，画布 {side}）", file=sys.stderr); sys.exit(1)
+print(f"[OK] 1024 档 alpha bbox={bbox} 边距 左{margins[0]} 上{margins[1]} 右{margins[2]} 下{margins[3]}")
+PYCHECK
 
 # ---------- iconutil 打包为 .icns（App 图标与 DMG 卷图标两份产物） ----------
 mkdir -p "${OUT_DIR}"

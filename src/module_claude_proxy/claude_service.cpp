@@ -1,11 +1,13 @@
 // src/module_claude_proxy/claude_service.cpp
-// ClaudeService 实现：Profile CRUD + Keychain + 上游连通性测试
+// ClaudeService 实现：Profile CRUD + 凭据列 + 上游连通性测试
 #include "claude_service.h"
 
 #include "core/atomic_write.h"
+#include "core/file_perms.h"
 #include "core/logging.h"
 #include "core/paths.h"
 #include "core/time.h"
+#include "platform/credential_protection.h"
 #include "platform/json.h"
 #include "platform/keychain.h"
 #include "platform/terminal_launch_common.h"
@@ -33,14 +35,10 @@ namespace module::claude {
 
 namespace {
 
-// 旧全局 Keychain service 名（< 2026-09-30 的所有数据根共用它；现仅作一次性
-// 迁移源 migrateLegacyKeychainService，新代码的读写一律走按根派生的名字）
-constexpr const char* kLegacyKeychainService = "DevDesk";
+// 旧 Keychain service 名前缀（拼在数据根短哈希之前）
+constexpr const char* kKeychainServicePrefix = "DevDesk";
 
-// 取当前 unix 秒
-std::time_t nowUnix() {
-    return std::time(nullptr);
-}
+using core::time::nowUnix;
 
 // 去除前导/尾随空白
 std::string trim(const std::string& s) {
@@ -57,44 +55,39 @@ std::string stripTrailingSlash(const std::string& s) {
     return s;
 }
 
-// CPX-07：Keychain 当前是否处于给定值（读不到 = 条目不存在，按空串比较）。
-// 反向同步写库失败后用「实际状态」判断密钥是否已回到旧值，不信补偿返回值。
-bool keyAtOldValue(const std::string& keychainService,
-                   const std::string& account,
+// 本行凭据当前是否等于 expected（列空/解不开 = 按空串比较）。反向同步写库失败后
+// 用它按实际状态判断密钥是否回到旧值，不信补偿返回值。
+bool keyAtOldValue(ProfileRepository& repo, int64_t profileId,
                    const std::string& expected) {
-    auto r = platform::keychain::loadSecret(keychainService, account);
+    auto r = repo.loadApiKey(profileId);
     return (r.isOk() ? r.value() : std::string()) == expected;
 }
 
 } // namespace
 
-// ---------- Keychain service 派生 / 构造 / 行解析 ----------
-
-// Keychain service 名按数据根派生（声明见 claude_service.h 纯函数段）
+// 按数据根派生 Keychain 命名空间名（仅用于残留清理）
 std::string keychainServiceForDataRoot(const std::string& dataRoot) {
     if (dataRoot.empty()) {
-        return std::string();   // 空根无法派生（生产不可达；调用方兜底旧名）
+        return std::string();   // 空根无法派生（生产不可达）
     }
     unsigned char digest[SHA256_DIGEST_LENGTH];
     SHA256(reinterpret_cast<const unsigned char*>(dataRoot.data()),
            dataRoot.size(), digest);
     std::ostringstream oss;
-    // 前 4 字节 8 位 hex（同 ProfileRepository::sha256HexPrefix 口径：
-    // 8 位足够区分数据根，又不至于把 service 名拉长）
+    // 前 4 字节 8 位 hex（同 ProfileRepository::sha256HexPrefix 口径）
     for (int i = 0; i < 4 && i < SHA256_DIGEST_LENGTH; ++i) {
         oss << std::hex << std::setw(2) << std::setfill('0')
             << static_cast<int>(digest[i]);
     }
-    return std::string(kLegacyKeychainService) + "-" + oss.str();
+    return std::string(kKeychainServicePrefix) + "-" + oss.str();
 }
 
 namespace {
 
-// 生产路径（未显式传 service）：按当前数据根派生 service 名。派生失败
-//（空根，理论不可达）兜底旧全局名——名字退化但不至于抛错。
+// 生产路径：按数据根派生清理命名空间名；派生失败（空根）兜底裸前缀。
 std::string resolveKeychainService() {
     auto derived = keychainServiceForDataRoot(core::paths::appDataDir().string());
-    return derived.empty() ? std::string(kLegacyKeychainService) : derived;
+    return derived.empty() ? std::string(kKeychainServicePrefix) : derived;
 }
 
 } // namespace
@@ -107,32 +100,25 @@ ClaudeService::ClaudeService(core::data::SqliteDb& db,
                                                      : keychainService),
       keychainService_(keychainService.empty() ? resolveKeychainService()
                                                : keychainService),
-      legacyKeychainService_(keychainService.empty()
-                                 ? std::string(kLegacyKeychainService)
-                                 : std::string()),
       proxyRuntime_(*this) {}
 
-ClaudeService::~ClaudeService() {
-    // 析构时确保停止代理（Server 析构会 join 线程）。审计 2026-09-23 [9]：
-    // 与 stopProxy 同款顺序——先取消在途流，否则 ~Server 的 join 被阻塞在
-    // readChunk 的 worker 卡住。R10-A3：停机序列已收进 ProxyRuntime::stop()
-    //（cancelActiveStreams → server->stop → reset），析构显式调用一次
-    //（proxyRuntime_ 声明序末位，成员析构也会兜底）
-    proxyRuntime_.stop();
-}
-
-// ---------- 全局单例 ----------
-
+// 全局单例指针（析构要在它身上摘牌）
 namespace {
     ClaudeService* g_globalClaudeService = nullptr;
+}
+
+ClaudeService::~ClaudeService() {
+    // 析构摘牌：防止 onStop 经 global() 拿到已析构对象（悬垂读）。
+    if (g_globalClaudeService == this) g_globalClaudeService = nullptr;
+    // 确保停止代理（停机序列在 ProxyRuntime::stop()）；声明序末位，成员析构也会兜底。
+    proxyRuntime_.stop();
 }
 
 void ClaudeService::setGlobal(ClaudeService* svc) { g_globalClaudeService = svc; }
 ClaudeService* ClaudeService::global() { return g_globalClaudeService; }
 
-// ---------- Profile CRUD（R10-A2：落库/Keychain 段已迁 ProfileRepository，
-// 本门面保留转发与策略尾：首建自动激活 / re-takeover 时机 / 停代理）----------
-
+// Profile CRUD：落库/凭据段在 ProfileRepository，门面留策略尾（首建自动激活 /
+// re-takeover 时机 / 停代理）
 core::Result<std::vector<Profile>> ClaudeService::listProfiles() {
     return profileRepository_.listProfiles();
 }
@@ -151,13 +137,8 @@ core::Result<Profile> ClaudeService::createProfile(const std::string& name,
                                                    const std::string& dialectOverride,
                                                    int64_t fallbackProfileId,
                                                    const std::string& extraSettingsJson) {
-    // R10-A2 段级拆分：校验 + INSERT ... RETURNING + Keychain 两段写 + 失败回滚
-    //（DB 段）已迁 ProfileRepository::createProfile；本方法保留「首建自动激活」
-    // 策略尾——创建成功后若当前无任何激活 Profile 则自动激活刚建的这条（经门面
-    // setActiveProfile，代理运行中会同步接管 settings.json）。已有激活 Profile
-    // 时不抢占。激活失败不回滚创建：行已完整可用，用户仍可手动点「启用」；只
-    // WARN 留痕，返回值按实际 is_active 状态回填（失败时维持 false，UI 走
-    // 「点击启用」文案）
+    // 策略尾：无激活 Profile 时自动激活（经 setActiveProfile，代理运行中会同步
+    // 接管 settings.json）。失败不回滚创建，只 WARN（UI 走「点击启用」文案）。
     auto created = profileRepository_.createProfile(
         name, baseUrl, apiKey, model, sharedConfigId, authField,
         dialectOverride, fallbackProfileId, extraSettingsJson);
@@ -181,20 +162,15 @@ core::Result<Profile> ClaudeService::createProfile(const std::string& name,
                          act.errorMessage());
             }
         }
-        // cur.isOk()（已有激活）→ 不抢占；cur 失败但非 NoActiveProfile
-        //（DB 异常等）→ 保守不动作
+        // 已有激活 → 不抢占；失败但非 NoActiveProfile（DB 异常）→ 保守不动作
     }
     out.isActive = autoActivated;
     return core::Result<Profile>::ok(std::move(out));
 }
 
 core::Result<void> ClaudeService::updateProfile(const Profile& profile) {
-    // R10-A2 段级拆分：校验 + 旧值读取 + 两段写 + DB 更新已迁
-    // ProfileRepository::updateProfile（旧行经出参回填）；本方法保留 re-takeover
-    // 策略尾——片段绑定发生变化（绑定 / 解绑）且旧行激活且代理运行 → 立即重写
-    // live（解绑 = 片段键从 live 撤走、与片段同名的 profile 自身值恢复生效，
-    // 片段值从未写进 profile 行，故「回落」无需搬数据）。只在绑定变化时触发：
-    // 既有 updateProfile 不重写 live 的行为逐字不变
+    // 策略尾：片段绑定变化（绑定/解绑）且旧行激活且代理运行 → 立即重写 live。
+    // 解绑即片段键从 live 撤走、同名 profile 自身值恢复生效（片段值从不写进 profile 行）。
     Profile old;
     auto r = profileRepository_.updateProfile(profile, &old);
     if (r.isFail()) {
@@ -209,12 +185,8 @@ core::Result<void> ClaudeService::updateProfile(const Profile& profile) {
 
 core::Result<void> ClaudeService::deleteProfile(int64_t id, bool* proxyStopped) {
     if (proxyStopped) *proxyStopped = false;
-    // R10-A2 段级拆分：两段写删除（段一清 Keychain、段二删 SQLite 行，失败按
-    // 旧值回写）已迁 ProfileRepository::deleteProfile（wasActive 经出参回填）；
-    // 本方法保留停代理策略尾——删的是激活 profile 且代理运行中 → 停代理
-    //（stopProxy 内部 syncRestore 还原 ~/.claude/settings.json），settings.json
-    // 不能继续指向无激活 profile 的代理（否则 Claude Code 此后每个请求 503
-    // no_active_profile）。UI 经 proxyStopped 出参获知并 toast 告知用户
+    // 策略尾：删的是激活 profile 且代理运行中 → stopProxy()（内部还原
+    // ~/.claude/settings.json），否则 Claude Code 后续请求全 503。proxyStopped 出参供 UI toast。
     bool wasActive = false;
     auto r = profileRepository_.deleteProfile(id, &wasActive);
     if (r.isFail()) {
@@ -229,48 +201,35 @@ core::Result<void> ClaudeService::deleteProfile(int64_t id, bool* proxyStopped) 
 }
 
 core::Result<int> ClaudeService::cleanupOrphanKeychainEntries() {
-    // R10-A2 段级拆分：listProfiles + Keychain 孤儿条目清理（「Keychain
-    // 条目与行一一对应」不变式的维护者）已迁 ProfileRepository
+    // 残留清理实现在 ProfileRepository
     return profileRepository_.cleanupOrphanKeychainEntries();
 }
-
-core::Result<int> ClaudeService::migrateLegacyKeychainService() {
-    // 显式传 service（测试）时 legacyKeychainService_ 为空 → 迁移 no-op
-    return profileRepository_.migrateLegacyKeychainService(
-        legacyKeychainService_);
-}
-
-// ---------- API key ----------
 
 core::Result<std::string> ClaudeService::loadApiKey(int64_t profileId) {
     return profileRepository_.loadApiKey(profileId);
 }
-
-// ---------- 激活 ----------
 
 core::Result<Profile> ClaudeService::getActiveProfile() {
     return profileRepository_.getActiveProfile();
 }
 
 core::Result<void> ClaudeService::setActiveProfile(int64_t id) {
+    // 服务内互斥：方法体含 DB 事务 + settings.json 接管 + warnings_ 内存态，非原子；
+    // agent 线程与 UI 线程可并发进入，锁护整个方法体。其余读方法保持无锁。
+    std::lock_guard<std::mutex> lock(switchMutex_);
+
     if (id == 0) {
         return core::Result<void>::fail(core::ErrorCode::ValidationError,
             "id 不能为 0");
     }
 
-    // 校验 profile 存在
     auto p = getProfile(id);
     if (p.isFail()) {
         return core::Result<void>::fail(p.errorCode(), p.errorMessage());
     }
 
-    // 反向同步（设计 §3.1 调用序号 2-3）：把 settings.json 的 env 收编进**当前
-    // 激活 profile**——必须发生在「激活行更新（下方 activateProfile）」之前，
-    // 否则代理运行中 syncTakeOver 会把自己刚写进去的托管值当用户值捕获。
-    // 无激活 profile（首建自动激活 / 首次点「启用」）→ 直接跳过、不读文件：
-    // 否则一个坏 settings.json 会把 profile 首建路径整个挡死（G0）。
-    // 失败 = 文件存在但读不了/解析失败（G8）→ 中止本次切换（S-2），profile
-    // 一字未改；错误经既有 doSetActive 的 toast 呈现，UI 零改动。
+    // 反向同步必须早于 activateProfile（否则 syncTakeOver 会把自己写的托管值当
+    // 用户值捕获）。无激活 → 跳过；读不了/解析失败 → 中止本次切换。
     auto curActive = getActiveProfile();
     if (curActive.isOk()) {
         auto capture = syncCaptureActiveProfile();
@@ -279,40 +238,23 @@ core::Result<void> ClaudeService::setActiveProfile(int64_t id) {
         }
     }
 
-    // R10-A2 段级拆分：事务内「清零 → 置位」（is_active 全局唯一）已迁
-    // ProfileRepository::activateProfile
+    // 事务内「清零 → 置位」，保证 is_active 全局唯一（在 ProfileRepository）
     auto result = profileRepository_.activateProfile(id);
 
-    // 代理运行中切 profile → settings.json env 跟随（§5.2 触发点 2）；
-    // 代理未运行 → 只更新 DB，不动 settings.json（写了反而制造死指向）。
-    // 条目 3：接管失败**不阻断**本次切换（DB 已切成功），失败原因已并入
-    // 接管子对象的警告表（经 lastSyncWarnings 透传）供 UI
+    // 代理运行中切 profile → settings.json env 跟随；未运行 → 只更新 DB（写了会
+    // 制造死指向）。接管失败不阻断本次切换，原因并入警告表（经 lastSyncWarnings）。
     if (result.isOk() && isProxyRunning()) {
         (void)syncTakeOver();
     }
     return result;
 }
 
-// ---------- Profile 复制（设计 §4.2/§4.3）----------
-
 core::Result<Profile> ClaudeService::duplicateProfile(int64_t srcId) {
-    // R10-A2：整方法搬入 ProfileRepository（全部是行 + Keychain 层面操作，
-    // 无代理 / 接管交互，且副本不激活 S-4 → 不触发任何策略尾）
+    // 整方法在 ProfileRepository（纯行 + 凭据列操作，副本不激活，无策略尾）
     return profileRepository_.duplicateProfile(srcId);
 }
 
-// ---------- 共享配置片段（设计 §2.1/§2.4/§2.6）----------
-// 生命周期语义（改动当场生效，避免 cc-switch 的「改了片段不生效」头号 bug）：
-//   改（改名 / 改 env）→ 绑定它的 profile 下次接管生效；代理在跑且属激活
-//     profile → 立即 re-takeover（策略尾在本门面 updateSharedConfig）
-//   删 → 同事务解绑绑定它的 profile（shared_config_id = 0，不留悬空 id），
-//     随后若代理在跑且激活 profile 在其中 → re-takeover（策略尾在本门面
-//     deleteSharedConfig）
-//   解绑（经 updateProfile 把 sharedConfigId 置 0）→ 同款当场生效，同名键
-//     回落 profile 自身值（片段值从不写进 profile 行）
-// DB 段（行读写 / 存在性校验 / 同事务解绑删行 / 悬空 id 读路径容错）随
-// R10-A2 迁 ProfileRepository，本门面只留 re-takeover 策略尾与转发
-
+// 共享配置片段：DB 段在 ProfileRepository，门面留 re-takeover 策略尾。
 core::Result<std::vector<SharedConfig>> ClaudeService::listSharedConfigs() {
     return profileRepository_.listSharedConfigs();
 }
@@ -323,10 +265,8 @@ core::Result<SharedConfig> ClaudeService::createSharedConfig(
 }
 
 core::Result<void> ClaudeService::updateSharedConfig(const SharedConfig& config) {
-    // R10-A2 段级拆分：校验 + 存在性 + 行更新（DB 段）已迁
-    // ProfileRepository::updateSharedConfig；本方法保留「改后生效」策略尾——
-    // 代理在跑且激活 profile 绑定了它 → 立即重写 settings.json（否则 live 会
-    // 留旧片段值到下次切换——cc-switch 的「改了片段不生效」头号 bug）
+    // 策略尾「改后生效」：代理在跑且激活 profile 绑定了它 → 立即重写 settings.json，
+    // 否则 live 留旧片段值到下次切换。
     auto r = profileRepository_.updateSharedConfig(config);
     if (r.isFail()) {
         return r;
@@ -340,11 +280,8 @@ core::Result<void> ClaudeService::updateSharedConfig(const SharedConfig& config)
 }
 
 core::Result<void> ClaudeService::deleteSharedConfig(int64_t id) {
-    // R10-A2 段级拆分：存在性校验 + 同事务解绑删行（DB 段）已迁
-    // ProfileRepository::deleteSharedConfig（activeBound 经出参回填——绑定关系
-    // 必须在删除前捕获：删除侧同事务把 shared_config_id 解绑为 0，删后读不到
-    // 原绑定）；本方法保留「删后生效」策略尾——代理在跑且激活 profile 绑定了
-    // 它 → 重写 live（片段键撤走、与片段同名的 profile 自身值恢复生效）
+    // activeBound 在删除前捕获（删除侧同事务解绑 shared_config_id=0，删后读不到）。
+    // 策略尾「删后生效」：代理在跑且激活 profile 绑定它 → 重写 live。
     bool activeBound = false;
     auto r = profileRepository_.deleteSharedConfig(id, &activeBound);
     if (r.isFail()) {
@@ -356,12 +293,10 @@ core::Result<void> ClaudeService::deleteSharedConfig(int64_t id) {
     return core::Result<void>::ok();
 }
 
-// ---------- failover 备用解析（设计 §3.7/§3.8）----------
-
 std::optional<Profile> ClaudeService::resolveFallbackProfile(
     const Profile& profile) {
     if (profile.fallbackProfileId == 0) {
-        return std::nullopt;   // 未配备用 → 不换家（最常见路径，零 I/O）
+        return std::nullopt;   // 未配备用 → 不换家（常见路径，零 I/O）
     }
     auto fbR = profileRepository_.getProfile(profile.fallbackProfileId);
     if (fbR.isFail()) {
@@ -382,11 +317,47 @@ std::optional<Profile> ClaudeService::resolveFallbackProfile(
     return fb;
 }
 
-// ---------- 连通性测试 ----------
+std::optional<std::string> ClaudeService::resolveModelSlot(
+    const std::string& slot) {
+    auto profileR = profileRepository_.getActiveProfile();
+    if (profileR.isFail()) {
+        return std::nullopt;   // 无激活 profile → 无可解析（常见路径）
+    }
+    Profile profile = std::move(profileR).value();
+
+    // "def" 是 "default" 的别名；表行 jsonKey 就是 "default"，先归一再查表
+    const std::string key = (slot == "def") ? "default" : slot;
+
+    // default 槽：models_config 未配置或解析失败时回落 profile.model。
+    if (key == "default") {
+        if (!profile.modelsConfigJson.empty()) {
+            auto cfgR = parseModelsConfig(profile.modelsConfigJson);
+            if (cfgR.isOk() && !cfgR.value().def.model.empty()) {
+                return cfgR.value().def.model;
+            }
+        }
+        if (profile.model.empty()) return std::nullopt;
+        return profile.model;
+    }
+
+    if (profile.modelsConfigJson.empty()) return std::nullopt;
+    auto cfgR = parseModelsConfig(profile.modelsConfigJson);
+    if (cfgR.isFail()) return std::nullopt;
+    const ModelsConfig& cfg = cfgR.value();
+    // 槽位键 ↔ 成员映射唯一真相源 = provider_config.h 的 DEVDESK_MODEL_SLOT_LIST（遍历派生，不手写分支）
+    for (const ModelSlotMeta& meta : modelSlotTable()) {
+        if (key == meta.jsonKey) {
+            const std::string& model = (cfg.*(meta.slot)).model;
+            if (model.empty()) return std::nullopt;
+            return model;
+        }
+    }
+    return std::nullopt;   // 未知槽位键
+}
 
 core::Result<platform::http::Response>
-ClaudeService::testConnection(const Profile& profile) {
-    // 先取 API key（无 key 时也允许，UI 可用未授权请求触发 401 用作验证）
+ClaudeService::probeProfile(const Profile& profile, int timeoutMs) {
+    // 无 key 也允许：UI 可用未授权请求触发 401 作验证
     auto keyResult = loadApiKey(profile.id);
     std::string key;
     if (keyResult.isOk()) {
@@ -399,16 +370,12 @@ ClaudeService::testConnection(const Profile& profile) {
     platform::http::Request req;
     req.method = "GET";
     req.url = stripTrailingSlash(profile.baseUrl) + "/v1/models";
-    // 与真实转发同源：探测请求也经上游方言层装配头部（鉴权头形态 / UA 覆盖 /
-    // 方言专属会话头），否则探测结果与转发结果会不一致——如 opencode.ai/zen
-    // 缺 x-opencode-session、或 Cloudflare 按 UA 拦截时，转得通而探测误报失败。
-    // dialectOverride 与两条转发路径（proxy_router / streaming_proxy）同样传参：
-    // 漏传会让配了覆盖的 profile 出现「探测按 A 方言、转发按 B 方言」的错位
-    //（空串 = 未覆盖 → 方言层回落 host 推断，与不传该参逐项一致）
+    // 探测请求经上游方言层装配头部，与真实转发同源（否则转得通而探测误报失败）。
+    // dialectOverride 必传（漏传 = 探测与转发方言错位；空串 → 回落 host 推断）。
     const UpstreamDialect dialect =
         UpstreamDialect::forBaseUrl(profile.baseUrl, profile.dialectOverride);
     dialect.applyHeaders(req.headers, key, authFieldFromText(profile.authField));
-    req.timeoutMs = 15000;
+    req.timeoutMs = timeoutMs;
 
     auto resp = platform::http::send(req);
     if (resp.isFail()) {
@@ -423,8 +390,47 @@ ClaudeService::testConnection(const Profile& profile) {
     return core::Result<platform::http::Response>::ok(std::move(resp).value());
 }
 
-// ---------- 调用日志（R10-A1：读写已抽至 CallLogStore，门面转发）----------
+core::Result<platform::http::Response>
+ClaudeService::testConnection(const Profile& profile) {
+    // 探测体在 probeProfile（前置校验传短超时）；本方法超时恒为 15000
+    return probeProfile(profile, kTestConnectionTimeoutMs);
+}
 
+core::Result<void> ClaudeService::validateProxyPreconditions(int probeTimeoutMs) {
+    // 检查 1：激活 profile（零网络）。失败原样透传错误码 + 指引，前缀标明是本校验挡下的
+    auto active = getActiveProfile();
+    if (active.isFail()) {
+        LOG_WARN("代理启动前置校验未通过：无激活 profile - " + active.errorMessage());
+        return core::Result<void>::fail(
+            active.errorCode(),
+            "代理启动前置校验未通过（1/2 激活 Profile）：" + active.errorMessage());
+    }
+    const Profile prof = std::move(active).value();
+
+    // 检查 2：连通测试（联网，最长 probeTimeoutMs）。探测失败 / 非 2xx 都算不过
+    auto resp = probeProfile(prof, probeTimeoutMs);
+    if (resp.isFail()) {
+        LOG_WARN("代理启动前置校验未通过：连通测试失败（profile id=" +
+                 std::to_string(prof.id) + "）- " + resp.errorMessage());
+        return core::Result<void>::fail(
+            resp.errorCode(),
+            "代理启动前置校验未通过（2/2 连通测试）：" + resp.errorMessage());
+    }
+    const int code = resp.value().statusCode;
+    if (code < 200 || code >= 300) {
+        LOG_WARN("代理启动前置校验未通过：上游返回 HTTP " + std::to_string(code) +
+                 "（profile id=" + std::to_string(prof.id) + "）");
+        return core::Result<void>::fail(
+            core::ErrorCode::HttpError,
+            "代理启动前置校验未通过（2/2 连通测试）：上游返回 HTTP " +
+                std::to_string(code) + "（检查 API Key 或 Base URL）");
+    }
+    LOG_INFO("代理启动前置校验通过：profile「" + prof.name + "」(id=" +
+             std::to_string(prof.id) + ") 连通 OK（HTTP " + std::to_string(code) + "）");
+    return core::Result<void>::ok();
+}
+
+// 调用日志：读写已抽至 CallLogStore，门面转发。
 core::Result<void> ClaudeService::logCall(const CallLogEntry& entry) {
     return callLogStore_.logCall(entry);
 }
@@ -443,10 +449,7 @@ core::Result<int> ClaudeService::countCalls(const CallLogQuery& q) {
     return callLogStore_.countCalls(q);
 }
 
-// ---------- 最近代理请求事件（气泡③，审计 [18]）----------
-// R10-A3：单槽邮箱（mailbox）已随 ProxyRuntime 迁至 proxy_runtime.cpp 同段
-//（与在途流登记同写者-读者对，见 R10 spec §2.2），本门面转发
-
+// 最近代理请求事件：单槽邮箱在 ProxyRuntime（与在途流登记同写者-读者对），门面转发。
 void ClaudeService::recordProxyEvent(int statusCode) {
     proxyRuntime_.recordProxyEvent(statusCode);
 }
@@ -455,20 +458,13 @@ std::optional<int> ClaudeService::takeProxyEvent(std::time_t nowSec) {
     return proxyRuntime_.takeProxyEvent(nowSec);
 }
 
-// ---------- 代理 server 生命周期 ----------
-// R10-A3 段级拆分：server/路由/在途流登记/端口镜像/停机序列已随 ProxyRuntime
-// 迁至 proxy_runtime.cpp（上游会话标识定义同迁）。门面保留两条
-// settings.json 策略尾并逐字编排顺序：startProxy 尾 syncTakeOver（启动成功 →
-// 接管，失败不阻断），stopProxy 尾 syncRestore（停机后还原，settings.json 永
-// 不指向死代理）；R10-A4 起两条尾的协议侧都经 SettingsTakeOver 子对象
-
+// 代理 server 生命周期：server/路由/在途流/端口镜像在 ProxyRuntime。门面保留两条
+// settings.json 策略尾——startProxy 尾 syncTakeOver（失败不阻断），stopProxy 尾 syncRestore。
 core::Result<int> ClaudeService::startProxy(const std::string& bindAddress,
                                             int port) {
     auto started = proxyRuntime_.startProxy(bindAddress, port);
     if (started.isOk()) {
-        // 接管 Claude Code settings.json（§5.2 触发点 1；含手动启动、设置页
-        // 改端口的重启）。失败不阻断：代理已可用，接入失败经接管子对象的
-        // 警告表上报（条目 3，经 lastSyncWarnings 透传），用户可感知
+        // 接管 settings.json；失败不阻断（代理已可用，接入失败经警告表上报）
         (void)syncTakeOver();
     }
     return started;
@@ -476,7 +472,7 @@ core::Result<int> ClaudeService::startProxy(const std::string& bindAddress,
 
 void ClaudeService::stopProxy() {
     proxyRuntime_.stop();
-    // 停止即还原（§5.3）：settings.json 永不指向死代理
+    // 停止即还原：settings.json 永不指向死代理
     syncRestore();
 }
 
@@ -505,37 +501,32 @@ core::Result<void> ClaudeService::runProfile(int64_t id, std::string* hint) {
             "profile.id 不能为 0");
     }
 
-    // 顺序 1：目标 profile 必须存在（标题 / baseUrl / 认证字段 / 模型配置都取自它）
+    // 顺序 1：profile 必须存在（标题/baseUrl/认证/模型都取自它）
     auto prof = getProfile(id);
     if (prof.isFail()) {
         return core::Result<void>::fail(prof.errorCode(), prof.errorMessage());
     }
     const Profile& p = prof.value();
 
-    // 顺序 2：读 Keychain 密钥（D-1 直连形态：密钥由本功能带进临时 settings 文件，
-    // 不再由代理转发注入）。失败 / 条目不存在 → 中止，不落盘、不开窗（§5）。
+    // 顺序 2：读密钥（直连形态，密钥带进临时 settings）。失败 → 中止，不落盘、不开窗。
     auto key = loadApiKey(id);
     if (key.isFail()) {
         return core::Result<void>::fail(key.errorCode(),
-            "读取 Keychain 密钥失败，未打开会话: " + key.errorMessage());
+            "读取 API Key 失败，未打开会话: " + key.errorMessage());
     }
 
-    // 顺序 3：直连 env（纯函数 buildDirectEnv：BASE_URL 去尾斜杠 / 密钥键三态 /
-    // 槽位 + 共享片段 + extra_env，托管键压过 extra_env）→ 序列化成 settings
-    // JSON（{"env": {...}}）→ 落盘 appDataDir()/run-settings/run-<id>-<ts>.json。
-    // 关键：**零全局改动**——不启代理、不切激活、不读也不写 ~/.claude/settings.json
+    // 顺序 3：buildDirectEnv（规则见 provider_config.h）→ 序列化 {"env":{...}} →
+    // 落盘 run-settings/。零全局改动：不启代理、不切激活、不碰 ~/.claude/settings.json。
     const auto env = buildDirectEnv(p.baseUrl, key.value(), p.authField,
-                                    p.modelsConfigJson, p.model, p.extraEnvJson);
+                                    p.modelsConfigJson, p.extraEnvJson);
     platform::json::JsonObject envObj;
     for (const auto& [k, v] : env) {
         envObj.set(k, platform::json::makeString(v));
     }
     platform::json::JsonObject root;
     root.set("env", platform::json::JsonValue(std::move(envObj)));
-    // 生效高级设置 JSON 并入顶层（2026-09-30 advanced-json-editor 设计 §4.1
-    // 裁决①：直连会话同样带 hooks/permissions，三链不分叉；临时文件随会话
-    // 自删 + 24h 清扫兜底，无 sidecar 记账负担）。生效 = profile JSON ⊕ 片段
-    // JSON（片段赢，§8.2 生成时叠加；§4.2 步骤 1）
+    // 生效高级设置 JSON 并入顶层（profile ⊕ 片段，片段赢；三链不分叉，
+    // 临时文件随会话自删 + 24h 清扫兜底）。
     {
         std::vector<std::string> effWarnings;
         const std::string effective = effectiveExtraSettingsJson(
@@ -563,20 +554,48 @@ core::Result<void> ClaudeService::runProfile(int64_t id, std::string* hint) {
         return core::Result<void>::fail(core::ErrorCode::Internal,
             "创建 run-settings 目录失败: " + dir.string() + "（" + ec.message() + "）");
     }
-    // per-launch 24h 清扫（§5）：上次崩溃 / 强制结束的会话留下的孤儿文件在此兜底
+    // per-launch 24h 清扫：兜底上次崩溃/强杀留下的孤儿文件
     platform::terminal::sweepStaleRunSettingsFiles(dir);
 
-    const std::filesystem::path file =
-        dir / ("run-" + std::to_string(id) + "-" +
-               std::to_string(static_cast<long long>(nowUnix())) + ".json");
+    const auto writtenAt = nowUnix();
+    // 键用毫秒而非秒：run_key 有 UNIQUE 约束，同一秒内连开两次会撞键；撞键只能
+    // 让该次会话失败（补偿路径拿的是调用点算出的键，换键重试会删不掉、留假记录）。
+    const auto writtenAtMs =
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch())
+            .count();
+    const std::string runKey = "run-" + std::to_string(id) + "-" +
+                               std::to_string(writtenAtMs);
+    const std::filesystem::path file = dir / (runKey + ".json");
+
+    // DB 记录先行：DB 行是真值，文件是临时载体（会话可能被强杀、文件会被清扫）。
+    // settings_json 含明文 API key，经分平台保护入库。
+    auto record = recordRunSettings(runKey, id, p.name, writtenAt, file.string(),
+                                    text.value());
+    if (record.isFail()) {
+        return core::Result<void>::fail(record.errorCode(),
+            "记录直连会话 settings 失败，未打开会话: " + record.errorMessage());
+    }
+
     auto wrote = core::atomicWriteFile(file, text.value(), "临时 settings");
     if (wrote.isFail()) {
+        // 文件没落地 → 撤掉这条记录（不留指向不存在文件的记录）
+        forgetRunSettings(runKey);
         return core::Result<void>::fail(wrote.errorCode(),
             "写临时 settings 失败，未打开会话: " + wrote.errorMessage());
     }
+    // 权限收紧：临时 settings 含明文 API key，atomicWriteFile 不设权限 → umask 022
+    // 下落成 0644，同机其他用户可直读。收紧失败即删掉已落盘的明文文件并按失败返回。
+    if (auto permR = core::fileperms::restrictToOwnerOnly(file); permR.isFail()) {
+        std::error_code rmEc;
+        std::filesystem::remove(file, rmEc);
+        forgetRunSettings(runKey);
+        return core::Result<void>::fail(permR.errorCode(),
+            "临时 settings 权限收紧失败，已删除该文件且未打开会话: " +
+                permR.errorMessage());
+    }
 
-    // 顺序 4：派发终端（D-1：claude --settings <临时文件>；会话正文退出后自删
-    // 该文件。分离式启动，DevDesk 不持有会话句柄——D-9 只提示、不阻止）
+    // 顺序 4：claude --settings <临时文件>，分离式启动（DevDesk 不持有会话句柄）。
     platform::terminal::LaunchSpec spec;
     spec.title = p.name + " · Claude Code";
     spec.workingDir = platform::terminal::homeDir();
@@ -588,12 +607,11 @@ core::Result<void> ClaudeService::runProfile(int64_t id, std::string* hint) {
         // 会话没起来 → 替它做掉「退出后自删」（best-effort），不留孤儿等 24h 清扫
         std::error_code rmEc;
         std::filesystem::remove(file, rmEc);
+        forgetRunSettings(runKey);
         return launched;
     }
 
-    // D-5：wt 缺失 → 平台层已退化传统控制台，这里补一句非致命提示（不静默、不阻断）。
-    // 文案保持中性：「传统控制台」只说「不是 Windows Terminal 那条路径」，
-    // 不臆断机器上没装——系统默认终端本身可能就是 Windows Terminal（此时措辞仍成立）。
+    // wt 缺失 → 平台层已退化传统控制台，补一句非致命提示。文案中性：「传统控制台」不说没装。
     if (hint != nullptr && platform::terminal::windowsTerminalMissing()) {
         *hint = "未检测到 Windows Terminal，已用系统默认终端打开会话";
     }
@@ -602,10 +620,56 @@ core::Result<void> ClaudeService::runProfile(int64_t id, std::string* hint) {
     return core::Result<void>::ok();
 }
 
-// ---------- 在途流式上游登记（审计 2026-09-23 [9]）----------
-// R10-A3：登记表状态与实现已迁 ProxyRuntime（在途流登记状态与停止标志在
-// proxy_runtime.{h,cpp}），本门面转发
+core::Result<void> ClaudeService::recordRunSettings(
+    const std::string& runKey, int64_t profileId,
+    const std::string& profileName, std::time_t writtenAt,
+    const std::string& filePath, const std::string& settingsJson) const {
+    // 含明文 API key → 走分平台保护再入库
+    auto protectedJson =
+        platform::credential::protect(settingsJson);
+    if (protectedJson.isFail()) {
+        return core::Result<void>::fail(protectedJson.errorCode(),
+            "临时 settings 凭据保护失败: " + protectedJson.errorMessage());
+    }
+    auto prep = db_.prepare(
+        "INSERT INTO claude_run_settings (run_key, profile_id, profile_name, "
+        "written_at, file_path, settings_json) VALUES (?, ?, ?, ?, ?, ?)");
+    if (prep.isFail()) {
+        return core::Result<void>::fail(prep.errorCode(), prep.errorMessage());
+    }
+    if (auto b = prep.value().bind(1, runKey); b.isFail()) return b;
+    if (auto b = prep.value().bind(2, profileId); b.isFail()) return b;
+    if (auto b = prep.value().bind(3, profileName); b.isFail()) return b;
+    if (auto b = prep.value().bind(4, static_cast<int64_t>(writtenAt)); b.isFail()) return b;
+    if (auto b = prep.value().bind(5, filePath); b.isFail()) return b;
+    if (auto b = prep.value().bind(6, protectedJson.value()); b.isFail()) return b;
+    auto stepped = prep.value().step();
+    if (stepped.isFail()) {
+        return core::Result<void>::fail(stepped.errorCode(), stepped.errorMessage());
+    }
+    return core::Result<void>::ok();
+}
 
+void ClaudeService::forgetRunSettings(const std::string& runKey) const {
+    // 键走绑定参数而非拼进 SQL 文本
+    auto prep = db_.prepare("DELETE FROM claude_run_settings WHERE run_key = ?");
+    if (prep.isFail()) {
+        LOG_WARN("recordRunSettings 补偿删除失败（prepare）: " +
+                 prep.errorMessage());
+        return;
+    }
+    if (auto b = prep.value().bind(1, runKey); b.isFail()) {
+        LOG_WARN("recordRunSettings 补偿删除失败（bind）: " + b.errorMessage());
+        return;
+    }
+    auto stepped = prep.value().step();
+    if (stepped.isFail()) {
+        LOG_WARN("recordRunSettings 补偿删除失败（留下一条指向不存在文件的记录）: " +
+                 stepped.errorMessage());
+    }
+}
+
+// 在途流式上游登记：状态与实现在 ProxyRuntime，门面转发。
 void ClaudeService::registerActiveStream(
     const std::shared_ptr<platform::http::StreamingResponse>& stream) {
     proxyRuntime_.registerActiveStream(stream);
@@ -615,44 +679,36 @@ void ClaudeService::cancelActiveStreams() {
     proxyRuntime_.cancelActiveStreams();
 }
 
-// ---------- Claude Code settings 接管（Phase C；R10-A4：协议侧已迁
-// SettingsTakeOver，本段为门面转发 + 编排：setSettingsSyncPaths 注入（inline，
-// 在 claude_service.h）/ recoverPendingSettingsRestore 补还原 / 状态 getter）
-// ----------
-
+// Claude Code settings 接管：协议侧在 SettingsTakeOver，本段为门面转发 + 编排。
 bool ClaudeService::isClaudeCodeManaged() const {
     return settingsTakeover_.isClaudeCodeManaged();
 }
 
-const std::vector<std::string>& ClaudeService::lastSyncWarnings() const {
-    return settingsTakeover_.warnings();
+std::vector<std::string> ClaudeService::lastSyncWarnings() const {
+    // 值快照，不是活引用（写入口见 setActiveProfile → syncTakeOver，agent 线程）
+    return settingsTakeover_.warningsSnapshot();
 }
 
 void ClaudeService::recoverPendingSettingsRestore() {
-    // R10-A4：路径/开关门控 + 补还原协议（recoverPendingSnapshot 的调用在
-    // settings_takeover.cpp）已迁 SettingsTakeOver
+    // 路径/开关门控 + 补还原协议在 SettingsTakeOver
     settingsTakeover_.recoverPendingSettingsRestore();
 }
 
-// ---------- 反向同步（settings.json → 激活 profile，设计 §3.1/§3.4/§3.5）----------
-
+// 反向同步：settings.json → 激活 profile
 core::Result<void> ClaudeService::syncCaptureActiveProfile() {
     if (settingsTakeover_.paths().settingsFile.empty()) {
-        return core::Result<void>::ok();  // 通道未注入（§3.6 唯一开关）
+        return core::Result<void>::ok();  // 通道未注入（唯一开关）
     }
 
-    // G0 由调用方（setActiveProfile）判断：「无激活 profile 不读文件」。此处
-    // 防御式再查一次，避免被其它入口误调时把值写进错误的 profile
+    // 调用方已判「无激活不读文件」；此处防御式再查，避免被误调时写错 profile。
     auto activeR = getActiveProfile();
     if (activeR.isFail()) {
         return core::Result<void>::ok();
     }
     const Profile prof = std::move(activeR).value();
 
-    // 读侧（M1）：不存在 / 0 字节空文件 / 无 env → present=false（no-op 成功，
-    // 照常切换）；存在但读不了 / 解析失败 / env 非对象 → ok=false（G8 → S-2）
-    // R10-A4：这是本文件唯一保留的接管协议调用（Q2 否决 4 口径 b，R10 spec
-    // §2.4 P-A4 断言 ≤1）——读侧留门面、不搬 SettingsTakeOver
+    // 读侧：不存在/空文件/无 env → present=false（no-op 成功）；读不了/解析失败/
+    // env 非对象 → ok=false。这是本文件唯一保留的接管协议调用（读侧留门面）。
     auto read = settings_sync::readSettingsEnvForSync(settingsTakeover_.paths());
     if (!read.ok) {
         return core::Result<void>::fail(core::ErrorCode::FileReadFailed,
@@ -662,9 +718,7 @@ core::Result<void> ClaudeService::syncCaptureActiveProfile() {
         return core::Result<void>::ok();
     }
 
-    // 纯函数层（M2）：映射表 + 守卫表（G1–G4/G6 跳过的键记在 skippedKeys）。
-    //（原 G10「绑定片段 ownedKeys」入参随 advanced-json-editor §8.4 拆除：
-    // 片段不再携带 env 键，守卫为永不触发的死通道）
+    // 纯函数层：映射表 + 守卫表（跳过的键记在 skippedKeys）。
     auto parsed = parseEnvForReverseSync(read.envJson, read.managedKeys);
     if (!parsed.ok) {
         return core::Result<void>::fail(core::ErrorCode::JsonParseError,
@@ -681,23 +735,22 @@ core::Result<void> ClaudeService::syncCaptureActiveProfile() {
     };
 
     const ReverseSyncMerge merged = mergeReverseSyncEnv(
-        parsed.cfg, prof.modelsConfigJson, prof.model, prof.extraEnvJson);
+        parsed.cfg, prof.modelsConfigJson, prof.extraEnvJson);
 
-    // ---- 逐字段比较（§3.5 无变化 → 零写入，不 bump updated_at）----
-    // base_url：G2 命中（loopback 本地代理形态）→ 保持 profile 原值，不清
+    // 逐字段比较：无变化 → 零写入；base_url 命中 loopback 守卫 → 保持原值不清
     const std::string newBaseUrl = isSkipped("ANTHROPIC_BASE_URL")
         ? prof.baseUrl
         : stripTrailingSlash(trim(parsed.cfg.baseUrl));
     const bool baseUrlChanged = (newBaseUrl != prof.baseUrl);
 
-    // token：G1/G2 联动/G3 占位/G4 空值/G6 非法 → 不写也不清（保持原密钥）
+    // token：命中跳过族（托管键 / loopback 联动 / 占位 / 空值 / 非字符串或超长）
+    // → 不写也不清（保持原密钥）
     const bool tokenSkipped = isSkipped("ANTHROPIC_AUTH_TOKEN") ||
                               isSkipped("ANTHROPIC_API_KEY");
-    auto curKeyR =
-        platform::keychain::loadSecret(keychainService_, prof.keychainAccount);
+    auto curKeyR = profileRepository_.loadApiKey(prof.id);
     const std::string curKey = curKeyR.isOk() ? curKeyR.value() : std::string();
-    bool keyWrite = false;  // 出现 → 覆盖 Keychain（经 updateProfile）
-    bool keyClear = false;  // 缺席 → 清空（Keychain 条目 + 三列元数据）
+    bool keyWrite = false;  // 出现 → 覆盖本行凭据列（经 updateProfile）
+    bool keyClear = false;  // 缺席 → 清空（凭据三列一起清）
     if (!tokenSkipped) {
         if (!parsed.cfg.authToken.empty()) {
             keyWrite = (parsed.cfg.authToken != curKey);
@@ -708,44 +761,37 @@ core::Result<void> ClaudeService::syncCaptureActiveProfile() {
 
     if (!baseUrlChanged && !merged.modelsChanged && !merged.extraEnvChanged &&
         !keyWrite && !keyClear) {
-        return core::Result<void>::ok();  // 无变化：不 UPDATE、不写 Keychain
+        return core::Result<void>::ok();  // 无变化：不 UPDATE、不碰凭据列
     }
 
-    // ---- 目标值 ----
     Profile upd = prof;
     upd.baseUrl = newBaseUrl;
     if (merged.modelsChanged) {
         upd.modelsConfigJson = merged.modelsConfigJson;
-        // 旧 model 列显式跟随 default 槽位：updateProfile 内虽有同款跟随，但
-        // 「default 槽位被清空」时它拿不到空值，旧 model 会经
-        // effectiveModelsConfig 的 legacy fallback 复活，清空就落不了库
-        upd.model = effectiveModelsConfig(merged.modelsConfigJson, "").def.model;
+        // model 列显式跟随 default 槽位：updateProfile 内的同款跟随拿不到空值，清空落不了库。
+        upd.model = effectiveModelsConfig(merged.modelsConfigJson).def.model;
     }
     if (merged.extraEnvChanged) {
         upd.extraEnvJson = merged.extraEnvJson;
     }
 
-    // 两段写（CPX-07）：Keychain 侧统一走助手（§3.5 表末行的失败补偿即其
-    // 内置行为），旧值 = 上面 loadSecret 取到的 curKey。任一落库段失败 → 按
-    // 旧值回写 Keychain，profile 回到「改之前」的状态。回写失败的风险如实
-    // 登记于设计 §8.5
-    TwoPhaseKeyWrite keyTx(keychainService_, prof.keychainAccount, curKey);
+    // 两段写：凭据三列走助手，旧值由 capture 读回；任一落库段失败 → 按旧值回写
+    // 三列，profile 回到改之前。
+    TwoPhaseKeyWrite keyTx = TwoPhaseKeyWrite::capture(db_, prof.id);
 
-    // key 缺席清空：先删 Keychain 条目（同 deleteProfile 的顺序——先 Keychain
-    // 后落库，失败即中止且 profile 一字未改；keychain 层不新增 API）
+    // key 缺席清空：先清凭据三列（同 deleteProfile 顺序），失败即中止、profile 未改。
     if (keyClear) {
-        auto del = keyTx.writeKey(std::string());   // 空串 = 删除该条目
+        auto del = keyTx.writeKey(std::string());   // 空串 = 清空三列
         if (del.isFail()) {
-            LOG_ERROR("反向同步清理 Keychain 失败，中止本次切换（profile id=" +
+            LOG_ERROR("反向同步清理凭据失败，中止本次切换（profile id=" +
                       std::to_string(prof.id) + "）: " + del.errorMessage());
             return core::Result<void>::fail(del.errorCode(),
                 "清理该 Profile 的密钥失败，已中止本次切换: " + del.errorMessage());
         }
     }
 
-    // 字段（+ key 写入）与元数据清除同属段二：updateProfile 内部也是
-    // Keychain → DB 的两段写（同一助手语义），keyClear 的「清三列」紧随其后；
-    // 任一步失败都由助手把 Keychain 回写到旧值
+    // 字段（+ key 写入）同属段二：updateProfile 内部也是「凭据三列 → 其余列」两段写，
+    // 任一步失败由助手回写三列。keyClear 的三列清除已由上面 writeKey("") 完成。
     if (baseUrlChanged || merged.modelsChanged || merged.extraEnvChanged ||
         keyWrite || keyClear) {
         if (keyWrite) upd.apiKeyPlain = parsed.cfg.authToken;
@@ -758,36 +804,14 @@ core::Result<void> ClaudeService::syncCaptureActiveProfile() {
                                                     u.errorMessage());
                 }
             }
-            // 三列元数据清除（keychain_account / api_key_hint / api_key_check）：
-            // updateProfile 的空 apiKeyPlain 分支不触碰它们，故走这条最小 UPDATE
-            if (keyClear) {
-                auto prep = db_.prepare(
-                    "UPDATE claude_profiles SET keychain_account = '', "
-                    "api_key_hint = '', api_key_check = '', updated_at = ? "
-                    "WHERE id = ?");
-                if (prep.isFail()) {
-                    return core::Result<void>::fail(prep.errorCode(),
-                                                    prep.errorMessage());
-                }
-                auto& stmt = prep.value();
-                stmt.bind(1, static_cast<int64_t>(nowUnix()));
-                stmt.bind(2, prof.id);
-                auto stepR = stmt.step();
-                if (stepR.isFail()) {
-                    return core::Result<void>::fail(stepR.errorCode(),
-                                                    stepR.errorMessage());
-                }
-            }
             return core::Result<void>::ok();
         });
         if (w.isFail()) {
             std::string msg =
                 "反向同步写库失败，已中止本次切换: " + w.errorMessage();
-            // 是否要提示「密钥可能不可用」只看 Keychain 的实际状态，不信补偿
-            // 返回值：仍在旧值 = 已回到改之前（含「压根没写成」这种情形）
-            if ((keyWrite || keyClear) && !keyAtOldValue(keychainService_,
-                                                         prof.keychainAccount,
-                                                         curKey)) {
+            // 提示「密钥可能不可用」只看凭据列实际状态，不信补偿返回值。
+            if ((keyWrite || keyClear) &&
+                !keyAtOldValue(profileRepository_, prof.id, curKey)) {
                 msg += "；该 Profile 的密钥可能处于不可用态，"
                        "重新填一次 API Key 即可恢复";
             }
@@ -801,16 +825,8 @@ core::Result<void> ClaudeService::syncCaptureActiveProfile() {
 }
 
 core::Result<void> ClaudeService::syncTakeOver() {
-    // R10-A4：编排留门面——从 ProfileRepository 取激活 Profile、从 ProxyRuntime
-    // 取端口，一并传入 SettingsTakeOver（P-A4 双入参，子对象不反向依赖
-    // ProfileRepository / ProxyRuntime）。路径/开关门控与接管/还原协议在子对象
-    // 内部，调用顺序逐字保持。
-    // 无激活 profile：仍接管 BASE_URL/api key 占位（接入路径先就位，转发层会
-    // 报 503 提示用户先启用 profile）。
-    // advanced-json-editor §5.2①：门面把「生效 JSON」预先算好放进传入的
-    // Profile 副本（生效 = profile JSON ⊕ 片段 JSON，片段赢 §8.2 生成时叠加；
-    // 非法/超限一侧按空处理并 WARN），settings_sync::takeOver 零新增参数直接
-    // 消费 profile.extraSettingsJson
+    // 编排：取激活 Profile + 端口传入 SettingsTakeOver；无激活仍接管 BASE_URL/占位
+    // key（转发层报 503）。「生效 JSON」（profile ⊕ 片段，片段赢）预先算好放进 Profile 副本。
     Profile active;
     auto a = getActiveProfile();
     if (a.isOk()) {
@@ -831,9 +847,7 @@ core::Result<void> ClaudeService::syncTakeOver() {
 }
 
 void ClaudeService::syncRestore() {
-    // CPX-02（R10-A4 收尾）：协议侧已迁 SettingsTakeOver::syncRestore() 并改返
-    // Result<void>（失败并入其 warnings_，UI 经 lastSyncWarnings 透传）；
-    // 门面保持 void 签名不变，失败 LOG_WARN 留痕
+    // 协议侧已返 Result<void>（失败并入 warnings_）；门面保持 void，失败 LOG_WARN。
     auto r = settingsTakeover_.syncRestore();
     if (r.isFail()) {
         LOG_WARN("Claude Code settings 还原失败: " + r.errorMessage());
@@ -854,8 +868,7 @@ std::string formatCallTime(std::time_t ts, std::time_t now) {
         std::snprintf(buf, sizeof(buf), "%02d:%02d", tmv.tm_hour, tmv.tm_min);
         return std::string(buf);
     }
-    // ponytail: 昨天判定取 now-86400 的本地日；DST 切换日误差 ≤1 小时，
-    // 只影响「昨天/日期」文案边界，无正确性风险
+    // 昨天判定取 now-86400 的本地日；DST 切换日误差 ≤1 小时，只影响文案边界。
     std::tm yestTm{};
     core::time::localTime(now - 86400, &yestTm);
     if (sameDay(tmv, yestTm)) {

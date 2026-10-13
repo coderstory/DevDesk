@@ -1,39 +1,31 @@
 // src/module_claude_proxy/claude_module.cpp
-// Claude 配置切换器模块 - Module 接口 + compose 骨架 + 事件回调接线 + 操作
-//
-// 接线清单（W5）：
-//   新建/编辑 Profile（dialog 表单）→ createProfile / updateProfile
-//   启用 → setActiveProfile；删除（确认 dialog）→ deleteProfile
-//   测试连通 → testConnection；代理开关 → startProxy / stopProxy
-//   每次操作后标脏 compose 数据缓存，下一帧发一次刷新意图（审计 perf [13]
-//   + H2：命中帧零 SQLite，查询全在后台线程跑，渲染线程只读快照）
-//
-// R4（CPX-05，spec 2026-09-27-god-class-refactor-design §3）：本文件从「上帝
-// 类」退化为**骨架**——可视区域全部搬进同模块的 4 个 UI 单元（自由函数，状态
-// 显式入参、不捕获 this）：
-//   claude_ui_list.{h,cpp}    顶部 header / 引导条 / 左栏 Profile 列表
-//   claude_ui_detail.{h,cpp}  右栏三 pane + 操作按钮组 + 「最近调用」预览
-//   claude_ui_form.{h,cpp}    表单弹窗（tabs 三页）+ 删除确认弹窗 + 表单状态机
-//   claude_ui_logs.{h,cpp}    完整调用记录弹窗（过滤/分页/后台取数）
-//   claude_ui_state.h/.cpp    41 项成员按区域收成 5 个纯值 struct + 数据缓存的
-//                             后台刷新（H2 快照，原成员函数搬出）
-//   claude_ui_logic.{h,cpp}   4 个纯函数 + 调用记录常量（可无头单测）
-// 本文件保留：Module 接口、compose 骨架（分区委派）、事件回调接线、onStart/
-// onStop、真接 ClaudeService 的操作。
+// Claude 配置切换器模块：Module 接口 + compose 骨架 + 事件回调接线 + 操作。
+// 可视区域在 claude_ui_*.cpp 的自由函数里（状态显式入参、不捕获 this），本文件只管分区委派。
+// 数据缓存：compose 只读内存快照，SQLite 查询全在后台线程，命中帧零 IO；写操作标脏缓存，下一帧重查。
 #include "claude_service.h"
+#include "claude_tools.h"
 #include "claude_ui_detail.h"
+#include "claude_ui_ccswitch.h"
 #include "claude_ui_form.h"
 #include "claude_ui_list.h"
 #include "claude_ui_logic.h"
 #include "claude_ui_logs.h"
+#include "claude_ui_quota.h"
 #include "claude_ui_state.h"
 #include "core/logging.h"
 #include "core/module_interface.h"
+#include "core/router.h"   // appRouter（消费首页发来的「去配置」负载）
 #include "core/theme.h"
 #include "core/component_theme.h"
+#include "core/database.h"
 #include "platform/json.h"
 #include "provider_config.h"
+#include "quota/quota_credential.h"
+#include "quota/quota_registry.h"
+#include "quota/quota_refresh.h"
+#include "quota/quota_store.h"
 #include "upstream_dialect.h"
+#include <core/platform/platform.h>   // core::platform::requestUiUpdate（唤醒主循环）
 #include <core/window/window_backend.h>
 #include <ui_kit/metrics.h>
 #include <ui_kit/toast.h>
@@ -43,6 +35,7 @@
 #include <algorithm>
 #include <atomic>
 #include <ctime>
+#include <memory>
 #include <string>
 #include <thread>
 #include <vector>
@@ -57,15 +50,16 @@ public:
     std::string iconGlyph() const override { return eui::utf8(0xF021); }  // fa-arrows-rotate
 
     ~ClaudeModule() override {
-        // 后台测试线程必须先收（最坏阻塞到 HTTP 超时 15s，避免悬垂 this）
+        // 必须 join 干净（留 joinable 即 std::terminate）。
+        stopQuotaRefresh();
         if (testThread_.joinable()) testThread_.join();
-        // 审计 H2：后台刷新经 future 回传（工作线程不触碰 this），成员析构
-        // 自动等本轮查询结束，无需显式 join（CPX-06 的调用记录查询同款）
     }
 
-    // ============ UI（骨架：分区委派，各区实现见 claude_ui_*.cpp） ============
+    // UI（骨架：分区委派，各区实现见 claude_ui_*.cpp）
 
     void compose(eui::Ui& ui, const eui::Screen& screen) override {
+        // 消费跨模块跳转负载（取走即清，放最前保证同帧画出弹窗）
+        consumeQuotaConfigPayload();
         const auto& t = core::theme::current();
         const auto themeTokens = core::theme::componentTokens(t);
         const float pad = t.sizes.spacingXXLarge;        // 40
@@ -77,41 +71,28 @@ public:
         const float leftW = 400.0f;
         const float rightW = contentW - leftW - gap;
 
-        // ---- 读真实状态（ClaudeService 全局单例，由 main.cpp 注册）----
+        // 读真实状态（ClaudeService 全局单例，由 main.cpp 注册）
         ClaudeService* svc = ClaudeService::global();
         const bool proxyRunning = svc ? svc->isProxyRunning() : false;
         const int runningPort = svc ? svc->proxyPort() : 0;
         const std::string portStr = runningPort > 0
             ? (":" + std::to_string(runningPort))
-            : std::string("");   // 未运行时不显示假端口（副标题另有提示）
+            : std::string("");   // 未运行时不显示假端口
 
-        // 引导条（§6.4）：代理未运行且本会话从未启动过时显示（内存态一次性）
+        // 引导条：代理未运行且本会话从未启动过时显示（内存态一次性）
         if (proxyRunning) state_.list.proxyEverSeen_ = true;
         const bool showGuide = !proxyRunning && !state_.list.proxyEverSeen_;
-        // 引导条的预留高 = 它的渲染高（kGuideBarH，绘制侧同一常量）+ 根 column
-        // 给它的那一个 spacingLarge 间距。此前这里写死 30（绘制侧实际 18 + 间距
-        // 16 = 34），预留与绘制各写一份 → 根 column 子项总高超出可用高 4px，
-        // 底部 padding 被压缩（macOS 布局审计 finding: claude_module.cpp:86）。
-        // 为什么不改成让 body 行 flexGrow 吃剩余高：body 行的高度（bodyH）在
-        // **compose 期间**就要传给左右两个子面板（claude_ui_list / claude_ui_detail
-        // 都按它排内部几何），而 flexGrow 的结果要 layout 之后才知道 → 需要两遍
-        // 布局，改动面远大于收益。故取「同一常量」这条修法。
+        // 预留高必须与绘制侧一致；bodyH 在 compose 期间就要传给左右子面板。
         const float bodyH = contentH - headerH - t.sizes.spacingLarge -
                             (showGuide ? kGuideBarH + t.sizes.spacingLarge : 0.0f);
 
-        // 页面底色 = 主窗口 clearColor（随主题/窗口效果档运行时跟随，
-        // 磨砂 Phase B/D）——不自铺不透明底，半透/磨砂档主体才生效
+        // 页面不自铺不透明底，用主窗口 clearColor（半透/磨砂档才生效）
 
-        // 错误态（仿 Home statsError_）：加载失败不静默吞错显示假空态
+        // 错误态：加载失败不静默吞错显示假空态
         std::string profilesError;
         std::string callsError;
 
-        // 审计 perf [13] + H2：profiles/recent/active 缓存为成员，重组合只从
-        // 内存拷贝，SQLite 查询全部在后台线程（refreshDataCache 只发意图 /
-        // 搬已就绪结果，零 IO）。脏标记（onStart/onPageEnter/写操作）触发三类
-        // 重查；recent 另按 ClaudeService::callLogVersion 感知代理 worker 异步
-        // 落库（刷新最多晚一个 200ms 节流 tick + 1 帧，不丢数据）；
-        // 查询失败保持脏、按节流窗口重试（错误态照常显示），同旧退化路径。
+        // profiles/recent/active 走内存快照（脏标记触发重查，失败保持脏重试）
         std::vector<Profile> profiles;
         std::vector<ClaudeService::CallLogEntry> recent;
         Profile activeProfile;
@@ -120,6 +101,12 @@ public:
             profilesError = "服务未就绪（ClaudeService 未注册）";
             callsError = "服务未就绪（ClaudeService 未注册）";
             state_.list.dataDirty_ = true;   // 服务未就绪查不了，保持脏等下帧
+            // 防御分支：装配已落地，此处理论不可达
+            if (!serviceNotReadyWarned_) {
+                showToast("Claude 服务未装配",
+                          "本会话内开启的模块需重启后才能提供代理服务", true);
+                serviceNotReadyWarned_ = true;
+            }
         } else {
             refreshDataCache(state_.list, svc);
             profiles = state_.list.cachedProfiles_;
@@ -130,35 +117,26 @@ public:
             callsError = state_.list.cachedCallsError_;
         }
 
-        // 详情面板展示的 profile：优先用户选中的，其次激活的
         const Profile* shown = nullptr;
         for (const auto& p : profiles) {
             if (p.id == state_.list.selectedId_) { shown = &p; break; }
         }
         if (!shown && hasActive) shown = &activeProfile;
 
-        DetailView dv;   // 右栏只读视图（R4：显式入参取代自由函数捕获 this）
+        DetailView dv;   // 右栏只读视图（显式入参，不捕获 this）
         dv.svc = svc;
         dv.shown = shown;
         dv.nameValue = shown ? shown->name : std::string("(未启用)");
         dv.modelValue = shown ? modelsSummary(*shown) : std::string("-");
         dv.urlValue = shown ? shown->baseUrl : std::string("-");
         dv.tokenValue = shown
-            ? (shown->apiKeyHint + " [Keychain]")
+            ? (shown->apiKeyHint + " [本机库]")
             : std::string("(无激活 profile)");
         dv.recent = &recent;
         dv.callsError = callsError;
         dv.now = now;
-        // 注：DetailView 不再带 bodyH（审计 F-01）；容器可用高只由下面
-        // drawDetailPanel 的 bodyH 形参进详情面板
-        dv.sharedConfigs = &state_.list.cachedSharedConfigs_;   // 批 2：详情绑定行
-        // 高级配置 pane（2026-09-30 batch-fix B，设计 §3.2④）：生效方言 +
-        // 备用 Profile 名。方言：显式覆盖 → 「名（显式）」；空 →
-        // 「自动（按站点推断）→ 生效名」（推断结果可审计，正是本 pane 的价值）；
-        // 显示名统一走 dialectKindDisplayName（§3.2① 单一来源，不直接用
-        // dialectKindToText 内部值）。备用名：从既有 profiles 快照按
-        // fallbackProfileId 解析（悬空/0 → 「无」/「（已删除）」），与列表
-        // 快照同源、pane 内不做服务调用（避免每帧 DB 查询）
+        dv.sharedConfigs = &state_.list.cachedSharedConfigs_;
+        // 高级配置 pane：生效方言 + 备用 Profile 名（从列表快照解析），pane 内零服务调用
         if (shown != nullptr) {
             const UpstreamDialect effective = UpstreamDialect::forBaseUrl(
                 shown->baseUrl, shown->dialectOverride);
@@ -185,12 +163,7 @@ public:
             dv.fallbackName = "-";
         }
 
-        // 高级配置 pane 的键来源清单（advanced-json-editor 设计 §8.5，0edd3cf
-        // 形态复用）：生效 JSON = profile ⊕ 片段（片段赢，§8.2 生成时叠加）。
-        // 逐顶层键给来源：键 ∈ 片段对象 → 片段（envSourceLabel(Shared)——片段
-        // 赢的键都来自片段）；其余 → 本 Profile。"model" 键 → 附加说明（覆盖
-        // 模型槽位，D-4）。与列表快照同源、compose 内装配（pane 零服务调用）。
-        // 空态/解析失败经 keys 空 + note 区分（约定见 DetailView 注释）
+        // 生效 JSON = profile ⊕ 片段（片段赢）；解析失败经 note 区分。
         if (shown != nullptr) {
             std::string fragmentJson;
             if (shown->sharedConfigId != 0) {
@@ -198,10 +171,7 @@ public:
                     state_.list.cachedSharedConfigs_, shown->sharedConfigId);
                 if (sc != nullptr) fragmentJson = sc->extraSettingsJson;
             }
-            // warningsOut（审计 F-03）：非法/超限一侧被合并纯函数按空处理时
-            // 在此捕获——keys 空且 warnings 非空 = 配置存在但失效，pane 显示
-            // 「解析失败」提示态而非「未配置」（§8.5 验收点；接管 WARN 日志
-            // 之外的展示层口径）
+            // keys 空且 warnings 非空 = 配置存在但失效，显示「解析失败」而非「未配置」
             std::vector<std::string> effWarnings;
             const std::string effective = effectiveExtraSettingsJson(
                 shown->extraSettingsJson, fragmentJson, &effWarnings);
@@ -212,7 +182,6 @@ public:
                 auto parsed = platform::json::parse(effective);
                 if (parsed.isOk() && parsed.value().isObject()) {
                     auto effObj = parsed.value().asObject();
-                    // 片段对象键集（片段赢的键 = 片段里出现过的键）
                     std::vector<std::string> fragmentKeys;
                     if (!fragmentJson.empty()) {
                         auto fp = platform::json::parse(fragmentJson);
@@ -229,8 +198,11 @@ public:
                                    ? envSourceLabel(EnvSource::Shared)
                                    : envSourceLabel(EnvSource::Profile));
                         if (k == "model") {
-                            dv.extraSettingsNote =
-                                "「model」覆盖模型槽位（ANTHROPIC_MODEL 不写入）";
+                            const auto mv = effObj.get(k);
+                            if (mv.isString() && !mv.asString().empty()) {
+                                dv.extraSettingsNote =
+                                    "「model」覆盖模型槽位（ANTHROPIC_MODEL 不写入）";
+                            }
                         }
                     }
                 } else {
@@ -248,10 +220,8 @@ public:
                 drawClaudeHeader(ui, contentW, headerH, t, proxyRunning, portStr,
                                  [this] { doToggleProxy(); });
 
-                // 引导条（§6.4）：代理未运行且本会话从未启动过时一次性提示接管语义
                 if (showGuide) drawClaudeGuideBar(ui, contentW, t);
 
-                // ========== 主区: Profile 列表 + 详情 ==========
                 ui.row("claude.body")
                     .size(contentW, bodyH)
                     .gap(gap)
@@ -272,13 +242,12 @@ public:
         // 弹窗（画在最上层）
         drawProfileFormDialog(ui, screen, t, themeTokens, state_.form,
                               state_.import, state_.list.cachedSharedConfigs_,
-                              state_.list.cachedProfiles_,   // 批 3：备用下拉数据源
+                              state_.list.cachedProfiles_,
                               formHooks());
         drawDeleteConfirmDialog(ui, screen, t, themeTokens, state_.form,
                                 [this](int64_t id) { doDelete(id); });
         drawCallsDialog(ui, screen, t, themeTokens, state_.logs, toastHook());
-        // 批 2：共享配置片段编辑弹窗 + 删除确认（画在表单弹窗之后 =
-        // Esc 序链最顶层，见 closeTopmostDialog）
+        // 共享配置片段编辑弹窗 + 删除确认；绘制序 = Esc 序链（见 closeTopmostDialog）
         drawSharedConfigDialog(ui, screen, t, themeTokens, state_.shared,
                                sharedHooks());
         drawSharedConfigDeleteConfirmDialog(
@@ -286,18 +255,19 @@ public:
             [this](int64_t id, const std::string& name) {
                 doDeleteShared(id, name);
             });
-        // 高级设置 JSON 全屏编辑覆盖层（2026-09-30 json-fullscreen）：画在全部
-        // 弹窗之后 + 显式 z=1050——盖住表单 dialog（默认 1000）、让位 toast
-        //（1100，「应用」成功的确认可见）。可见性派生自 formOpen_ &&
-        // formJsonFullscreen_（应用成功关表单 → 全屏同帧消失，零孤儿态）
+        // 高级设置 JSON 全屏覆盖层（显式 z=1050，盖表单、让 toast）
         drawJsonFullscreenOverlay(ui, screen, t, themeTokens, state_.form,
                                   formHooks(),
                                   state_.list.cachedSharedConfigs_);
-        harvestTestResult();  // 后台「测试连通」结果回 UI（每帧轮询）
+        // 余量查询 / cc-switch 导入弹窗，绘制序即 Esc 序链最顶层
+        drawQuotaConfigDialog(ui, screen, t, themeTokens, state_.quota,
+                              quotaHooks());
+        drawCcSwitchImportDialog(ui, screen, t, themeTokens,
+                                 state_.ccswitchImport, ccswitchImportHooks());
+        harvestQuotaTestResult();   // 后台结果回 UI（每帧轮询）
+        harvestTestResult();
         drawToast(ui, screen, themeTokens);
 
-        // 列表右键菜单（UI 现代化 M1-5）：画在弹窗之上（同 todo 的
-        // drawContextMenu 位置——组件自身管理 zIndex）
         drawProfileContextMenu(ui, screen, themeTokens, state_.list, profiles,
                                listActions());
 
@@ -305,75 +275,61 @@ public:
     }
 
     void onStart() override {
+        if (started_) return;   // 重入幂等
+        started_ = true;
         LOG_INFO("Claude 模块启动");
         ClaudeService* svc = ClaudeService::global();
         if (!svc) {
             LOG_WARN("onStart: ClaudeService::global() 为 null");
-            state_.list.dataDirty_ = true;   // 服务未就绪查不了：保持脏，进页后由后台刷新补上
+            state_.list.dataDirty_ = true;   // 服务未就绪，保持脏
             return;
         }
-        // 审计 H2：首次装载同步做一次（onStart = 启动期，非渲染路径）。compose
-        // 恒读快照，首帧必须有值——异步首刷会让页面先闪一帧空列表（硬约束：
-        // 不得空帧/闪空）；此后每次刷新都走 refreshDataCache 的后台线程
+        // 首次装载必须同步（onStart 非渲染路径）：compose 恒读快照，异步首刷会闪空帧
         applyDataRefresh(state_.list, runDataRefresh(svc, true, true));
-        // 一次性迁移（2026-09-30 数据丢失事故根治）：旧全局 service
-        // "DevDesk" 的 profile 密钥搬进按数据根派生的独立命名空间。必须
-        // 先于孤儿清理——迁移先把条目写进本实例的 service，清理的 keep
-        // （来自 DB 行）才与新命名空间对得上
-        auto mig = svc->migrateLegacyKeychainService();
-        if (mig.isFail()) {
-            LOG_WARN("onStart: 旧 Keychain service 迁移失败 - " +
-                     mig.errorMessage());
-        } else if (mig.value() > 0) {
-            LOG_INFO("onStart: 已迁移 " + std::to_string(mig.value()) +
-                     " 个密钥到数据根派生 service");
-        }
-        // 启动时孤儿密钥清理（一次扫描，删除无对应 profile 的 keychain 条目）
         auto orphan = svc->cleanupOrphanKeychainEntries();
         if (orphan.isFail()) {
-            LOG_WARN("onStart: 孤儿 Keychain 清理失败 - " + orphan.errorMessage());
+            LOG_WARN("onStart: 旧 Keychain 残留清理失败 - " + orphan.errorMessage());
         }
-        // 硬性需求 1（provider-config Phase B）：代理默认不启动，不再兜底
-        // startProxy——由 main.cpp 按设置页「随应用启动」门控，或用户点本页
-        // 右上角按钮手动启动；这里只做状态日志
+        // 代理默认不启动：由 main.cpp 按设置门控或用户手动启动
         if (svc->isProxyRunning()) {
             LOG_INFO("onStart: 代理已在运行 port=" +
                      std::to_string(svc->proxyPort()));
         } else {
             LOG_INFO("onStart: 代理未运行（默认不自动启动，等待用户手动启动）");
         }
+        // 智能体工具注册（claude.* 四工具）；注册失败只记日志
+        claudeTools_ = std::make_unique<ClaudeTools>(*svc);
+        claudeTools_->registerAll();
+        startQuotaRefresh();
     }
 
-    // 审计 perf [13]：进入页面（切页回来/同页重入）标记缓存脏，下一帧 compose
-    // 重查三类数据（Home 仪表盘进页刷新同款模式）
+    // 进页标记缓存脏，下一帧 compose 重查
     void onPageEnter() override { state_.list.dataDirty_ = true; }
 
     void onStop() override {
+        if (!started_) return;   // 重入幂等
         LOG_INFO("Claude 模块停止");
+        // 先停余量刷新（线程里的 QuotaStore 引用会在成员析构后悬垂）；再注销工具、最后停代理。
+        stopQuotaRefresh();
+        if (claudeTools_) {
+            claudeTools_->unregisterAll();
+            claudeTools_.reset();
+        }
         ClaudeService* svc = ClaudeService::global();
         if (svc && svc->isProxyRunning()) {
             svc->stopProxy();
             LOG_INFO("onStop: 代理已停止");
         }
+        started_ = false;
     }
 
-    // 产品审计 [22]：页级快捷键（通道 = app 级 onKeyEvent → Router 派发到
-    // 当前页模块，同 Markdown Ctrl+Shift+P / Todo Ctrl+↑↓ 先例；只在窗口
-    // 聚焦时生效——EUI-NEO 无全局 OS hotkey 是已登记限制）。
-    //   Ctrl+N      新建 Profile（任一弹窗打开时不响应，防止重置填写中的表单）
-    //   Ctrl+S      保存/创建表单中编辑的 Profile（=「保存/创建」按钮，
-    //               表单内输入框聚焦时同样生效：input 不消费 Ctrl+字母组合键）；
-    //               表单未打开 = 无可保存对象，不消费
-    //   Ctrl+Enter  启动/停止代理（仅 Press 消费，按住 Repeat 不会来回启停；
-    //               弹窗打开时不生效；输入框聚焦时 Enter 被 input 消费，
-    //               天然不触发——正好避免打字中途启停代理）
-    // 返回 false = 未消费（键盘事件继续按 EUI-NEO 语义丢弃/传递）。
+    // 页级快捷键：Ctrl+N 新建 / Ctrl+S 保存表单 / Ctrl+Enter 启停代理。
+    // 弹窗打开时 Ctrl+N / Ctrl+Enter 不响应。返回 false = 未消费。
     bool onKeyEvent(const eui::KeyEvent& key) override {
         if (key.action != eui::KeyAction::Press) {
             return false;
         }
-        // 审计 M5：Esc 关最上层弹窗。键走得到本通道 = 焦点元素没消费（表单各
-        // 输入框均挂 onCancel，聚焦时 Esc 已被 input 收走 → 天然让位不重复）
+        // Esc 关最上层弹窗；焦点元素（表单输入框）聚焦时 Esc 已被 input 收走
         if (key.key == eui::InputKey::Escape) {
             return closeTopmostDialog();
         }
@@ -383,7 +339,8 @@ public:
         const bool anyDialogOpen =
             state_.form.formOpen_ || state_.form.deleteConfirmOpen_ ||
             state_.logs.callsDialogOpen_ ||
-            state_.shared.open_ || state_.shared.deleteConfirmOpen_;
+            state_.shared.open_ || state_.shared.deleteConfirmOpen_ ||
+            state_.quota.open || state_.ccswitchImport.open_;
         if (key.key == eui::InputKey::N) {
             if (anyDialogOpen) return false;
             openCreateForm(state_.form, state_.import);
@@ -405,16 +362,15 @@ public:
     }
 
 private:
-    // 审计 M5：Esc 关最上层弹窗（顺序 = 绘制序/z 序倒序：全屏 JSON 编辑覆盖层
-    //（z=1050，画在所有弹窗之上）> 共享片段删除确认 > 共享片段编辑 > 调用记录
-    // > 删除确认 > 表单）。返回 true = 本键已消费；无弹窗返回 false
+    // Esc 关最上层弹窗（顺序 = 绘制序倒序）。全屏覆盖层最优先：Esc = 放弃修改
+    //（恢复落库值 + 退全屏），第二次才关表单
     bool closeTopmostDialog() {
-        // 全屏编辑覆盖层先于一切弹窗（2026-09-30 json-fullscreen：Esc 退全屏
-        // 回表单，第二次 Esc 才关表单）
         if (state_.form.formJsonFullscreen_ && state_.form.formOpen_) {
-            state_.form.formJsonFullscreen_ = false;
+            discardJsonFullscreenEdits(state_.form);
             return true;
         }
+        if (state_.quota.open) { state_.quota.open = false; return true; }
+        if (state_.ccswitchImport.open_) { state_.ccswitchImport.open_ = false; return true; }
         if (state_.shared.deleteConfirmOpen_) { state_.shared.deleteConfirmOpen_ = false; return true; }
         if (state_.shared.open_) { state_.shared.open_ = false; return true; }
         if (state_.logs.callsDialogOpen_) { state_.logs.callsDialogOpen_ = false; return true; }
@@ -423,24 +379,21 @@ private:
         return false;
     }
 
-    // ============ compose 每帧的接线装配（R4）============
-    // 自由函数不捕获 this（spec §5.2）：compose 在调用点把回调显式绑到本模块的
-    // 操作 / 状态上；状态写回一律经引用（ClaudeUiState 成员，活到下一帧）。
+    // 每帧接线装配：回调显式绑到本模块操作/状态
     ProfileListActions listActions() {
         ProfileListActions a;
         a.onNewProfile = [this] { openCreateForm(state_.form, state_.import); };
         a.onImportCurrent = [this] {
             startImportCurrentConfig(state_.form, state_.import, formHooks());
         };
-        // 右键菜单动作（UI 现代化 M1-5）：与 detailActions 既有按钮回调
-        // 同源的最小委托（编辑=openEditForm / 复制=doDuplicate /
-        // 删除=确认弹窗 / 设为当前=doSetActive），不新写业务逻辑
+        a.onImportCcSwitch = [this] {
+            openCcSwitchImportDialog(state_.ccswitchImport);
+        };
         a.requestEdit = [this](const Profile& p) {
             openEditForm(state_.form, state_.import, p,
                          state_.list.cachedSharedConfigs_);
         };
         a.requestDuplicate = [this](int64_t id) { doDuplicate(id); };
-        // 复制配置（2026-09-30 batch-fix C）：与详情第 7 键同源 doCopyConfig
         a.requestCopyConfig = [this](const Profile& p) { doCopyConfig(p); };
         a.requestDelete = [this](int64_t id, const std::string& name) {
             state_.form.deleteTargetId_ = id;
@@ -448,7 +401,6 @@ private:
             state_.form.deleteConfirmOpen_ = true;
         };
         a.requestSetActive = [this](int64_t id) { doSetActive(id); };
-        // 批 2：共享配置片段动作（区块新建 / 卡片编辑）
         a.onNewShared = [this] { openSharedCreate(state_.shared); };
         a.requestEditShared = [this](const SharedConfig& c) {
             openSharedEdit(state_.shared, c);
@@ -469,7 +421,13 @@ private:
         return h;
     }
 
-    // 批 2：共享配置片段提交钩子（toast / 标脏与表单同源）
+    CcSwitchImportDialogHooks ccswitchImportHooks() {
+        CcSwitchImportDialogHooks h;
+        h.toast = toastHook();
+        h.markDataDirty = [this] { state_.list.dataDirty_ = true; };
+        return h;
+    }
+
     SharedConfigSubmitHooks sharedHooks() {
         SharedConfigSubmitHooks h;
         h.toast = toastHook();
@@ -480,7 +438,7 @@ private:
     DetailActions detailActions() {
         DetailActions a;
         a.warn = [this](const std::string& title, const std::string& msg) {
-            showToast(title, msg, true);   // 未选中 Profile 的各键红字提示
+            showToast(title, msg, true);
         };
         a.enable = [this](int64_t id) { doSetActive(id); };
         a.test = [this](const Profile& p) { doTestConnection(p); };
@@ -488,22 +446,16 @@ private:
             openEditForm(state_.form, state_.import, p,
                          state_.list.cachedSharedConfigs_);
         };
-        a.requestDelete = [this](int64_t id, const std::string& name) {
-            state_.form.deleteTargetId_ = id;
-            state_.form.deleteTargetName_ = name;
-            state_.form.deleteConfirmOpen_ = true;
-        };
-        a.duplicate = [this](int64_t id) { doDuplicate(id); };
-        // 复制配置（2026-09-30 batch-fix C，设计 §4.2② 第 7 键接线）
-        a.copyConfig = [this](const Profile& p) { doCopyConfig(p); };
         a.run = [this](int64_t id) { doRun(id); };
+        a.quota = [this](int64_t id) { openQuotaDialog(id); };
         a.openCalls = [this] { openCallsDialog(state_.logs); };
+        a.setOneM = [this](int64_t id, std::size_t slotIdx, bool on) {
+            doSetOneM(id, slotIdx, on);
+        };
         return a;
     }
 
-    // ============ Toast 反馈 ============
-    // 状态位与绘制接线走 ui_kit（D1 去重）；勾/叹图标仍走 toast 自带 Icon 字体
-    // 通道（⚠/✓ 前缀混排正文不可行）——成功用 fa-circle-check（现状逐字保留）
+    // Toast 走 ui_kit（成功图标 fa-circle-check）
     void drawToast(eui::Ui& ui, const eui::Screen& screen,
                    const components::theme::ThemeColorTokens& themeTokens) {
         ui_kit::drawToast(ui, screen, "claude.toast", toast_, themeTokens,
@@ -514,34 +466,47 @@ private:
         toast_.show(title, msg, isError);
     }
 
-    // ============ 操作（全部真接 ClaudeService） ============
-
+    // 手动启动 = 前置校验（联网）+ bind + 接管。只有联网校验进后台线程：
+    // bind + syncTakeOver 必须回 UI 线程（settings_takeover 契约）。
     void doToggleProxy() {
         ClaudeService* svc = ClaudeService::global();
         if (!svc) {
             showToast("代理操作失败", "服务未就绪（ClaudeService 未注册）", true);
             return;
         }
+        // 排在「运行中」判断之前：收割可能刚起代理，反序会误起第二条校验线程
+        harvestTestResult();
         if (svc->isProxyRunning()) {
             svc->stopProxy();
             showToast("代理已停止", "本地代理已停止监听", false);
             return;
         }
-        // 端口读 service 上的配置值（审计 [14]：main 启动注入 + 设置页改端口
-        // 同步；默认 8888）。此前硬编码导致 8888 被占用时用户无处改端口
-        auto r = svc->startProxy("127.0.0.1", svc->configuredProxyPort());
-        if (r.isFail()) {
-            showToast("启动代理失败", r.errorMessage(), true);
+        if (testThread_.joinable()) {
+            showToast("操作进行中", "上一次校验/测试仍在进行，请稍候", false);
             return;
         }
-        showToast("代理已启动",
-                  "监听 http://127.0.0.1:" + std::to_string(r.value()), false);
+        showToast("正在校验",
+                  "检测激活 Profile 与上游连通性（最长 " +
+                      std::to_string(ClaudeService::kProxyPreStartProbeTimeoutMs / 1000 + 1) +
+                      " 秒）…", false);
+        testThread_ = std::thread([this, svc] {
+            // 线程里只跑探测；startProxy 由 harvestTestResult 在 UI 线程里调
+            auto v = svc->validateProxyPreconditions();
+            testResultStartProxy_ = v.isOk();
+            if (v.isFail()) {
+                testResultTitle_ = "启动代理失败";
+                testResultMsg_ = v.errorMessage();
+                testResultIsError_ = true;
+            }
+            testDone_.store(true, std::memory_order_release);
+            core::platform::requestUiUpdate();   // 状态落好后再唤醒主循环
+        });
     }
 
     void doSetActive(int64_t id) {
         ClaudeService* svc = ClaudeService::global();
         if (!svc) return;
-        state_.list.dataDirty_ = true;   // 审计 perf [13]：写操作标脏
+        state_.list.dataDirty_ = true;   // 写操作标脏
         auto r = svc->setActiveProfile(id);
         if (r.isFail()) {
             showToast("启用失败", r.errorMessage(), true);
@@ -551,8 +516,50 @@ private:
         showToast("已启用", "该 Profile 已设为激活（ACTIVE）", false);
     }
 
-    // 运行：直连——生成临时 settings + claude --settings 打开新会话（D-1：
-    // 零全局改动：不启代理、不切激活、不改 ~/.claude/settings.json）
+    // 「1M」开关落库（models_config 里「基础名 + 可选 [1M]」字符串）；归一与表单保存同口径
+    void doSetOneM(int64_t id, std::size_t slotIdx, bool on) {
+        ClaudeService* svc = ClaudeService::global();
+        if (svc == nullptr) return;
+        const auto table = modelSlotTable();
+        if (id == 0 || slotIdx >= table.size()) return;   // 防御：无选中 / 越界
+        state_.list.dataDirty_ = true;
+        // 每次重读：同一帧连点两行时不拿陈旧快照互相覆盖
+        auto got = svc->getProfile(id);
+        if (got.isFail()) {
+            showToast("设置失败", got.errorMessage(), true);
+            return;
+        }
+        Profile p = std::move(got).value();
+        ModelsConfig cfg = effectiveModelsConfig(p.modelsConfigJson);
+        ModelSlot& slot = cfg.*table[slotIdx].slot;
+        const std::string before = slot.model;
+        slot.model = setOneMMarker(slot.model, on);
+        if (slot.model == before) return;   // 幂等：无变化不写库
+        normalizeOneMMarkers(cfg);
+        auto text = serializeModelsConfig(cfg);
+        if (text.isFail()) {
+            showToast("设置失败", text.errorMessage(), true);
+            return;
+        }
+        p.modelsConfigJson = text.value();
+        for (const auto& m : table) {
+            if (std::string(m.jsonKey) == "default") {
+                p.model = (cfg.*m.slot).model;
+                break;
+            }
+        }
+        auto r = svc->updateProfile(p);
+        if (r.isFail()) {
+            showToast("设置失败", r.errorMessage(), true);
+            return;
+        }
+        showToast("已更新",
+                  std::string("「") + table[slotIdx].label + "」的 1M 上下文标记已" +
+                      (on ? "开启" : "关闭"),
+                  false);
+    }
+
+    // 直连：生成临时 settings + claude --settings 打开新会话（零全局改动）
     void doRun(int64_t id) {
         ClaudeService* svc = ClaudeService::global();
         if (svc == nullptr) {
@@ -569,22 +576,19 @@ private:
             showToast("运行失败", r.errorMessage(), true);
             return;
         }
-        // 成功：D-5 的退化提示（hint 非空时）+ 直连语义说明（D-1：临时配置
-        // 生命周期——会话结束即删；不经代理、不改任何全局配置）
         const std::string head = hint.empty()
             ? std::string("已用该 Profile 直连打开 Claude Code 会话"
                           "（临时配置会话结束后自动删除，未改动任何全局配置）。")
             : (hint + std::string("。"));
         showToast("已启动", head, false);
-        state_.list.dataDirty_ = true;   // 下帧重查列表（动作本身零全局改动，成本一帧）
+        state_.list.dataDirty_ = true;   // 下帧重查列表
     }
 
-    // 建副本（设计 §4.1/§4.2，M5；2026-09-30 batch-fix C 改名 D-C1）：
-    // 建副本但不激活 → 选中态/激活态都不动
+    // 建副本但不激活
     void doDuplicate(int64_t id) {
         ClaudeService* svc = ClaudeService::global();
         if (!svc) return;
-        state_.list.dataDirty_ = true;   // 审计 perf [13]：写操作标脏
+        state_.list.dataDirty_ = true;   // 写操作标脏
         auto r = svc->duplicateProfile(id);
         if (r.isFail()) {
             showToast("建副本失败", r.errorMessage(), true);
@@ -594,22 +598,15 @@ private:
                   "已创建副本「" + r.value().name + "」（未激活）", false);
     }
 
-    // 复制配置（2026-09-30 batch-fix C，设计 §4.2②）：当前 profile →
-    // settings.json 形态 JSON → 系统剪贴板。占位 sk-ant-***<尾4>（与详情页
-    // apiKeyHint 同一脱敏口径），**不导明文 key**（§5① 裁决——剪贴板是跨
-    // 应用共享面，明文一经粘贴即离开 Keychain 托管）。setClipboardText 返回
-    // void、模块层无窗口句柄无法回读校验 → 接线处固定 LOG_WARN 一行留痕
-    //（低概率写失败时 toast 已提示成功，属已知限制，audit F5）
+    // 当前 profile → settings.json 形态 JSON → 系统剪贴板。占位 = 脱敏 hint，
+    // 不导明文 key；setClipboardText 无回读校验 → 固定 LOG_WARN 留痕。
     void doCopyConfig(const Profile& p) {
         ClaudeService* svc = ClaudeService::global();
         if (svc == nullptr || p.id == 0) {
             showToast("复制配置失败", "请先选择 Profile", true);
             return;
         }
-        // 坏 JSON 防静默丢键（advanced-json-editor §6，两域覆盖——同坏
-        // extraEnvJson 的防静默手法 batch-fix §4.2②）：env 域与高级设置 JSON
-        // 域（profile 自身 + 片段）各自试解析，失败先 LOG_WARN 一行再继续导出
-        //（对应域读路径容错为空/按 profile 自身值），不静默
+        // 坏 JSON 防「静默丢键」：各域试解析，失败先 LOG_WARN 再继续导出
         if (!p.extraEnvJson.empty()) {
             auto ee = parseExtraEnv(p.extraEnvJson);
             if (ee.isFail()) {
@@ -624,8 +621,7 @@ private:
                      std::to_string(p.id) + "），导出将缺失高级属性 - " +
                      validateExtraSettingsJson(p.extraSettingsJson).errorMessage());
         }
-        // 片段 JSON：与列表/详情同源的快照解析（不落服务调用）。v11 起片段
-        // 内容 = 高级属性 JSON 原文（§8），坏片段按 profile 自身 JSON 导出
+        // 片段 JSON 走列表/详情同源快照解析
         std::string fragmentJson;
         if (p.sharedConfigId != 0) {
             const SharedConfig* sc = findSharedById(
@@ -640,18 +636,25 @@ private:
                 }
             }
         }
-        // 占位值：apiKeyHint 即「前6 + *** + 尾4」形态（profile_repository
-        // 脱敏生成，同源同口径）；hint 为空（Keychain 读不到）→ 传空串，
-        // buildDirectEnv 空值不写凭据键 → 导出无 token 键
         const std::string json = buildProfileExportJson(
             p, fragmentJson, /*keyPlaceholder=*/p.apiKeyHint);
         if (json.empty()) {
             showToast("复制配置失败", "配置序列化失败", true);
             return;
         }
+        // 导出脱敏守卫：明文密钥出现在待写文本里即中止。
+        if (svc != nullptr) {
+            auto secret = svc->loadApiKey(p.id);
+            if (secret.isOk() && !secret.value().empty() &&
+                json.find(secret.value()) != std::string::npos) {
+                LOG_ERROR("复制配置: 导出文本命中明文凭据，已中止（profile id=" +
+                          std::to_string(p.id) + "）");
+                showToast("复制配置失败", "导出内容含明文凭据，已中止", true);
+                return;
+            }
+        }
         core::window::setClipboardText(json);
-        // void API 无回读下的最低留痕（§4.2②）：profile id + 导出键数
-        //（advanced-json-editor §6：env 键数 + 非 env 顶层键数两域合计）
+        // 无回读下的最低留痕：profile id + 导出键数
         size_t exportedKeys = 0;
         size_t exportedNonEnvKeys = 0;
         if (auto doc = platform::json::parse(json);
@@ -673,11 +676,7 @@ private:
     void doDelete(int64_t id) {
         ClaudeService* svc = ClaudeService::global();
         if (!svc) return;
-        state_.list.dataDirty_ = true;   // 审计 perf [13]：写操作标脏
-        // 产品审计 2026-09-23 [1]（§7 安全第 5 条）：删除激活 Profile 且代理
-        // 运行中 → service 层已停代理并还原 settings.json，proxyStopped 出参
-        // 告知这里，toast 明示（否则用户只见「已删除」，不知道 Claude Code
-        // 接入配置已被还原）
+        state_.list.dataDirty_ = true;
         bool proxyStopped = false;
         auto r = svc->deleteProfile(id, &proxyStopped);
         if (r.isFail()) {
@@ -690,18 +689,15 @@ private:
                       "删除的是激活 Profile，已停止代理并还原 Claude Code 配置",
                       false);
         } else {
-            showToast("已删除", "Profile 已删除（含 Keychain 条目）", false);
+            showToast("已删除", "Profile 已删除（含保存的 API Key）", false);
         }
     }
 
-    // 批 2：删除共享配置片段（确认弹窗回调）。删除 = 同事务解绑绑定它的
-    // profile（服务层已落地 + 激活绑定下的 re-takeover）；这里只负责计数
-    // toast 文案 + 关闭编辑弹窗（目标已不存在）
+    // 删除共享配置片段：服务层同事务解绑，这里只做计数 toast + 关弹窗
     void doDeleteShared(int64_t id, const std::string& name) {
         ClaudeService* svc = ClaudeService::global();
         if (!svc) return;
-        state_.list.dataDirty_ = true;   // 审计 perf [13]：写操作标脏
-        // 计数绑定该片段的 profile（事件驱动直查，给 toast「N 个已解绑」）
+        state_.list.dataDirty_ = true;
         size_t bound = 0;
         auto list = svc->listProfiles();
         if (list.isOk()) {
@@ -714,7 +710,7 @@ private:
             showToast("删除失败", r.errorMessage(), true);
             return;
         }
-        state_.shared.open_ = false;   // 编辑目标已删除，编辑弹窗一并关闭
+        state_.shared.open_ = false;   // 编辑目标已删除，弹窗一并关闭
         if (bound > 0) {
             showToast("已删除",
                       "片段「" + name + "」已删除，" +
@@ -725,18 +721,203 @@ private:
         }
     }
 
+    // 起后台刷新（幂等）；依赖缺失 → 记日志 + 不装
+    void startQuotaRefresh() {
+        if (quotaRefresher_) return;
+        auto* db = ::core::appDatabase();
+        ClaudeService* svc = ClaudeService::global();
+        if (db == nullptr || svc == nullptr) {
+            LOG_WARN("startQuotaRefresh: appDatabase()/ClaudeService 缺位，余量刷新未启动");
+            return;
+        }
+        quotaStore_ = std::make_unique<quota::QuotaStore>(*db);
+        quotaCredentials_ = std::make_unique<quota::ProfileCredentialSource>(
+            svc->profiles(), *quotaStore_, &quota::readRealCcSwitchProviders);
+        quotaRefresher_ = std::make_unique<quota::QuotaRefresher>(
+            *quotaStore_, *quotaCredentials_,
+            quota::makeRegistryProviderResolver(), quota::makeRealHttpSendFn());
+        quotaRefresher_->start();
+        LOG_INFO("余量后台刷新已启动");
+    }
+
+    // 停并释放（幂等）。顺序固定：先收线程，再按「刷新器 → 凭据源 → store」
+    // 反构造序释放——三者互持引用，顺序错了悬垂。
+    void stopQuotaRefresh() {
+        if (quotaTestThread_.joinable()) quotaTestThread_.join();
+        quotaTestDone_.store(false, std::memory_order_release);
+        if (quotaRefresher_) {
+            quotaRefresher_->stopAll();   // 幂等 + join；析构里还有一次兜底
+            quotaRefresher_.reset();
+        }
+        quotaCredentials_.reset();
+        quotaStore_.reset();
+    }
+
+    // 打开余量查询弹窗：取 profile + 已存配置预填
+    void openQuotaDialog(int64_t profileId) {
+        ClaudeService* svc = ClaudeService::global();
+        if (svc == nullptr) {
+            showToast("余量查询", "服务未就绪", true);
+            return;
+        }
+        auto profile = svc->getProfile(profileId);
+        if (profile.isFail()) {
+            showToast("余量查询失败", profile.errorMessage(), true);
+            return;
+        }
+        // 明文密钥只取一次、仅供内存；读失败不阻断开窗
+        std::string apiKey;
+        auto key = svc->loadApiKey(profileId);
+        if (key.isOk()) apiKey = key.value();
+        quota::QuotaConfigRow existing;
+        bool hasExisting = false;
+        if (quotaStore_) {
+            auto cfg = quotaStore_->loadConfig(profileId);
+            if (cfg.isOk()) {
+                existing = cfg.value();
+                hasExisting = true;
+            }
+        }
+        quota::openQuotaDialog(state_.quota, profileId, profile.value().baseUrl, apiKey,
+                               hasExisting ? &existing : nullptr);
+    }
+
+    // 消费 Router 挂在本页的「去配置」负载（模块隔离，home 不得 include 本模块）。
+    void consumeQuotaConfigPayload() {
+        auto* router = ::core::appRouter();
+        if (router == nullptr) return;
+        const std::string payload =
+            router->consumePendingPayload(::core::PageId::ClaudeProxy);
+        static const std::string kPrefix = "action:quota_config:";
+        if (payload.rfind(kPrefix, 0) != 0) return;   // 不是本模块的负载
+        const std::string idText = payload.substr(kPrefix.size());
+        if (idText.empty()) return;
+        // 全数字才认：atoi 遇非数字返 0 会误开 profile 0
+        bool allDigits = true;
+        for (char c : idText) {
+            if (c < '0' || c > '9') { allDigits = false; break; }
+        }
+        if (!allDigits) {
+            LOG_WARN("余量配置负载 id 非法: " + payload);
+            return;
+        }
+        openQuotaDialog(std::strtoll(idText.c_str(), nullptr, 10));
+    }
+
+    // 后台跑一次真 fetch（UI 不等）；结果槽独立于详情页 testResult*
+    void runQuotaTestConnection(const quota::ProviderConfig& cfg) {
+        harvestQuotaTestResult();
+        if (quotaTestThread_.joinable()) {
+            state_.quota.testMessage = "上一次测试连接仍在进行，请稍候";
+            state_.quota.testIsError = true;
+            return;
+        }
+        const std::string providerId = cfg.providerId;
+        const quota::QuotaProvider* provider =
+            quota::findProvider(providerId);
+        if (provider == nullptr) {
+            state_.quota.testMessage = "未选择供应商";
+            state_.quota.testIsError = true;
+            return;
+        }
+        quotaTestResult_ = quota::QuotaResult{};
+        state_.quota.testMessage.clear();
+        state_.quota.testIsError = false;
+        quotaTestThread_ = std::thread([this, providerId, cfg] {
+            const quota::QuotaProvider* p = quota::findProvider(providerId);
+            if (p == nullptr) {
+                quotaTestResult_.error = quota::QuotaError::NotConfigured;
+                quotaTestResult_.errorMessage = "未注册的余量供应商：" + providerId;
+            } else {
+                quotaTestResult_ = p->fetch(cfg, quota::makeRealHttpSendFn());
+            }
+            quotaTestDone_.store(true, std::memory_order_release);
+            ::core::platform::requestUiUpdate();
+        });
+    }
+
+    // 收割测试连接结果（每帧轮询；join 即 happens-before）
+    void harvestQuotaTestResult() {
+        if (!quotaTestThread_.joinable()) return;
+        if (!quotaTestDone_.load(std::memory_order_acquire)) return;
+        quotaTestThread_.join();
+        quotaTestDone_.store(false, std::memory_order_release);
+        state_.quota.testing = false;
+        state_.quota.testErrorKind = quotaTestResult_.error;
+        state_.quota.testMessage = quota::quotaTestMessage(quotaTestResult_);
+        state_.quota.testIsError = quotaTestResult_.error != quota::QuotaError::None;
+    }
+
+    // 保存弹窗配置：落库 + 关闭 + toast
+    void saveQuotaConfig(const quota::QuotaConfigRow& row) {
+        if (!quotaStore_) {
+            state_.quota.error = "数据库未就绪，无法保存（应用数据根未初始化）";
+            return;
+        }
+        auto saved = quotaStore_->saveConfig(row);
+        if (saved.isFail()) {
+            state_.quota.error = "保存失败：" + saved.errorMessage();
+            return;
+        }
+        state_.quota.open = false;
+        showToast("已保存",
+                  row.providerId.empty()
+                      ? std::string("已关闭该 Profile 的余量查询")
+                      : ("余量查询配置已保存（供应商：" + row.providerId +
+                         "），后台将在 " +
+                         std::to_string(quota::kQuotaProductionScanIntervalSec) +
+                         " 秒内自动查询"),
+                  false);
+        // 不在这里同步 refreshNow()：真网络查询会冻 UI 线程
+        LOG_INFO("余量配置已保存（profile=" + std::to_string(row.profileId) +
+                 "，provider=" + row.providerId + "，ccswitch=" +
+                 row.ccswitchProviderId + "）");
+    }
+
+    QuotaDialogHooks quotaHooks() {
+        QuotaDialogHooks h;
+        h.save = [this](const quota::QuotaConfigRow& row) { saveQuotaConfig(row); };
+        h.testConnection = [this](const quota::ProviderConfig& cfg) {
+            runQuotaTestConnection(cfg);
+        };
+        h.setField = [this](const std::string& key, const std::string& value) {
+            for (quota::QuotaDialogField& f : state_.quota.fields) {
+                if (f.spec.key != key) continue;
+                f.value = value;
+                // 一改即从 cc-switch 脱钩
+                f.fromCcSwitch = false;
+                f.sourceLabel = "手动填写";
+                return;
+            }
+        };
+        h.selectProvider = [this](int idx) {
+            state_.quota.providerIdx = idx;
+            state_.quota.providerDdOpen = false;
+            quota::syncQuotaDialogFields(state_.quota);
+            // 换供应商后旧 cc-switch 引用对不上，不清会写到新供应商行上
+            state_.quota.ccSwitchIdx = -1;
+        };
+        h.loadCcSwitch = [this] {
+            state_.quota.ccSwitchLoaded = false;   // 允许重读
+            quota::loadQuotaCcSwitch(state_.quota);
+        };
+        h.selectCcSwitch = [this](int idx) {
+            quota::selectQuotaCcSwitch(state_.quota, idx);
+        };
+        h.toast = [this](const std::string& title, const std::string& msg,
+                         bool isError) { showToast(title, msg, isError); };
+        return h;
+    }
+
     void doTestConnection(const Profile& p) {
         ClaudeService* svc = ClaudeService::global();
         if (!svc) return;
-        // 先收上一轮结果（页面不可见时 compose 不跑，会在这里积累）
-        harvestTestResult();
+        harvestTestResult();   // 先收上一轮结果（页面不可见时在这里积累）
         if (testThread_.joinable()) {
-            showToast("测试进行中", "请等待上一轮测试完成", false);
+            showToast("操作进行中", "上一次校验/测试仍在进行，请稍候", false);
             return;
         }
-        // ponytail 升级路径已落地：testConnection 是同步 HTTP（timeout 15s），
-        // 在 UI 线程直接调最坏冻结界面 15s → 挪后台线程，立即 toast「测试中」，
-        // 结果经原子标志回 compose 每帧收割（模块析构时 join 防悬垂）
+        // 同步 HTTP（15s）挪后台线程避免冻 UI；结果经原子标志回 compose 收割
         showToast("测试中", "正在请求 " + p.baseUrl + "/v1/models，最长 15 秒…", false);
         testThread_ = std::thread([this, p, svc] {
             auto r = svc->testConnection(p);
@@ -758,38 +939,71 @@ private:
                 }
             }
             testDone_.store(true, std::memory_order_release);
+            core::platform::requestUiUpdate();
         });
     }
 
-    // 收割后台测试结果：线程跑完后 join 并弹结果 toast（compose 每帧调）
+    // 收割后台结果：join 后弹 toast；代理启动也在这里（join 后无并发写者，
+    // bind + syncTakeOver 回 UI 线程）。模块被关时这里不被调，代理不会偷偷起来。
     void harvestTestResult() {
         if (!testThread_.joinable()) return;
         if (!testDone_.load(std::memory_order_acquire)) return;  // 还在跑
         testThread_.join();
         testDone_.store(false);
+        if (testResultStartProxy_) {          // 校验通过 → 这时才 bind + 接管
+            testResultStartProxy_ = false;
+            ClaudeService* svc = ClaudeService::global();
+            if (svc != nullptr) {             // 模块已停/析构 → 不起
+                auto r = svc->startProxy("127.0.0.1", svc->configuredProxyPort());
+                if (r.isFail()) {
+                    testResultTitle_ = "启动代理失败";
+                    testResultMsg_ = r.errorMessage();
+                    testResultIsError_ = true;
+                } else {
+                    testResultTitle_ = "代理已启动";
+                    testResultMsg_ = "监听 http://127.0.0.1:" +
+                                     std::to_string(r.value());
+                    testResultIsError_ = false;
+                }
+            }
+        }
         showToast(testResultTitle_, testResultMsg_, testResultIsError_);
     }
 
-    // ============ 状态 ============
-    // R4（P-B2）：41 项原成员按区域收进 5 个纯值 struct（claude_ui_state.h）；
-    // 顶层只剩「状态容器 + toast + 测试连通后台线程」三组（收口断言 ≤12 项）
     ClaudeUiState state_;
 
-    // Toast（状态位 + 绘制接线统一走 ui_kit，任务 D / R1）
     ui_kit::ToastState toast_;
 
-    // 测试连通后台线程（结果经 testDone_ 原子标志回 compose 收割；
-    // 普通成员的发布顺序由 release/acquire + join 保证）
+    // 「服务未就绪」toast 只发一次的门
+    bool serviceNotReadyWarned_ = false;
+
+    // 测试连通/启动代理后台线程。结果成员为普通变量，由 release/acquire
+    //（testDone_）+ join 保证发布序；testResultStartProxy_ 供收割点起代理
     std::thread testThread_;
     std::atomic<bool> testDone_{false};
     std::string testResultTitle_;
     std::string testResultMsg_;
     bool testResultIsError_ = false;
+    bool testResultStartProxy_ = false;
+
+    // 余量链装配（析构安全靠 stopQuotaRefresh() 的显式顺序，不靠声明序）
+    std::unique_ptr<quota::QuotaStore> quotaStore_;
+    std::unique_ptr<quota::ProfileCredentialSource> quotaCredentials_;
+    std::unique_ptr<quota::QuotaRefresher> quotaRefresher_;
+    // 弹窗「测试连接」后台线程 + 结果槽（独立于详情页；UI 线程 join 后才读）
+    std::thread quotaTestThread_;
+    std::atomic<bool> quotaTestDone_{false};
+    quota::QuotaResult quotaTestResult_;
+
+    // 智能体工具集（claude.* 四工具）；onStart 注册 / onStop 先注销
+    std::unique_ptr<ClaudeTools> claudeTools_;
+
+    // 重入幂等守卫
+    bool started_ = false;
 };
 
 } // namespace module::claude
 
-// ============ 模块工厂 ============
 extern "C" ::core::Module* create_claude_module() {
     return new module::claude::ClaudeModule();
 }

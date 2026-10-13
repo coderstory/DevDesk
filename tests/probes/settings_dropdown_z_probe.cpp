@@ -1,46 +1,34 @@
-// settings_dropdown_z_probe.cpp — DevDesk probes MVP（spec §4，P0）
-// 目标：类 1(a) dropdown z 序碰撞（settings 外观卡 vs 编辑器字号卡等值 z）。
-// 回归 1379cc1：外观卡 zIndex(40)（settings_ui_cards.cpp:83）被回退成 30 时，
-// 与后绘的编辑器字号卡（zIndex(30)，settings_ui_cards.cpp:244）等值 z + frame
-// 相交 → 稳定排序（core/dsl.h:1752-1778）下编辑器字号卡盖住外观卡弹层。
+// settings_dropdown_z_probe.cpp — settings dropdown 弹层 z 序 / 命中序探针
 //
-// 断言机制（probe_harness.h 的 L2 扫描）：
-//   assertNoEqualZOverlap(ui, popupId) —— 与弹层 frame 相交的每个非祖先元素
-//   的 subtreeMaxZIndex 必须 < 弹层链上界（= max(弹层子树 max, 弹层→根链上
-//   每元素 zIndex)，spec §2.2）；≥ 即 FAIL 打印双方 id + z。
-//   当前 master：外观卡链上界 40 > 编辑器字号卡子树 max 30 → 绿（1379cc1
-//   已修状态）；回退 zIndex(40)→30 后上界 30 ≡ 编辑器卡 30 → 红（证伪门禁）。
+// 覆盖两类同源缺陷：
+//   A. 跨卡等值 z 碰撞（外观卡 zIndex 40 vs 编辑器字号卡 30）
+//   B. 卡内兄弟等值 z 碰撞（桌宠卡「皮肤」弹层被下方「大小」行盖住）
 //
-// 判定细节：
-//   - dropdown 关闭态 popup 仍 compose 在树里（opacity=0 隐没，components/
-//     dropdown.h:145-148），故「关闭」不得用存在性断言，判据 = popup 根
-//     opacity==0 或 .popup.hit disabled（spec §4 不残留判据）。
-//   - 弹层链上界需沿祖先链求值（Element 无 parent 指针），harness 内部自建
-//     id→父 映射后扫描（spec §2.2）。
-//   - 输入走真命中分发（queue press/release → update → 立即 recompose）：弹层
-//     在 compose 时才按 open 状态进/出 DOM，漏 recompose 则断言全落空。
+// 判据要点：
+//   - 稳定排序按子树 z 上界排兄弟（core/dsl.h rebuildOrderedChildren），上界**相等**
+//     时保持 DOM 序 → DOM 序靠后的元素盖住靠前的。两个下拉的等值 z 因此必须靠
+//     assertDrawnAbove 在 LCA 处判「严格大于」，光靠叶子扫描抓不住（B 类的相交
+//     叶子自身 subtreeMax 常为 0，永不触发）。
+//   - dropdown 关闭态 popup 仍 compose 在树里（opacity=0 隐没），所以「已关闭」
+//     **不得**用存在性断言；判据 = popup 根 opacity==0 或 .popup.hit disabled。
+//   - 弹层链上界需沿祖先链求值（Element 无 parent 指针），harness 内部自建映射。
+//   - 输入走真命中分发（press/release → update → 立即 recompose）：弹层在 compose
+//     时才按 open 状态进出 DOM，漏 recompose 断言全落空。
 //
-// 用例 5（2026-09-30）：桌宠卡「皮肤」弹层被下方「大小」行遮挡 —— 卡内等值
-// z 碰撞类。两个 ddwrap 是卡片根的直接子级、子树上界同为 dropdown 字段档
-// zIndex_=20，兄弟稳定排序（core/dsl.h rebuildOrderedChildren）保持 DOM 序 →
-// 后绘的「大小」行盖住展开的皮肤弹层。既有两道防线都抓不住这类：卡片级
-// zIndex(40)（2026-09-28 修的跨卡遮挡）救不了同卡内兄弟；L2 叶子扫描里相交
-// 叶子自身 subtreeMax 常为 0 也永不触发。修 = EUI-NEO dropdown open 态给
-// popup 子树挂 900 档（patch 生产线，eui-neo-dropdown-popup-z.patch），关闭态
-// 归 0 与旧行为逐位一致。主判据（probe_harness 新增 assertDrawnAbove）：
-//   1) 绘制序：popup 与「大小」字段的 LCA 处，popup 侧子级 subtreeMaxZ(900)
-//      必须严格大于字段侧(20)；
-//   2) 真命中路由：点「弹层首项 ∩ 大小字段」交集中心（前提守卫 = 交集非空），
-//      必须选中皮肤项并收起皮肤弹层，「大小」下拉不得被误开（重叠区点击被
-//      下方字段截获 = 命中序同病的第二症状）。
-// 变异口径：回退 EUI-NEO patch（popup 归 0）→ 1)(20≡20) 与 2)(点中
-// scale.dd.field，scale 弹层 .hit enabled) 双红；应用 patch → 双绿。
+// 两处 fail-fast 都不可改成「打一行 cerr 就往下跑」：
+//   - 皮肤夹具（DEVDESK_PETS_DIR → 临时 4 皮肤目录）。不设则读到本机真实 appData
+//     皮肤清单，用例 B 的几何前提（4 项弹层 148px、首项与「大小」行相交）不再
+//     成立 → 非 hermetic，夹具失准时探针仍可能绿。创建失败即置红 + 提前结束。
+//   - 配置预置（enabledModules 显式含 pet）。预置没落库还往下跑，症状是
+//     「settings.card.pet missing」——报错指着几何 / z 判据，真原因在上游预置，
+//     排查方向整个跑偏。故当场读回校验，失败即置红 + 提前结束。
 
 #include "probes/probe_harness.h"
 #include <eui/detail/dsl_app_impl.h>  // app:: 层内联实现自给（链接需要）
 #include "test_support.h"
 #include "app_registry.h"
 #include "core/module_interface.h"
+#include "settings_config.h"  // SettingsStore::keyNamespace()（配置键前缀单一来源）
 
 #include <cmath>
 #include <cstdlib>
@@ -50,11 +38,9 @@
 #include <memory>
 #include <string>
 
-// app:: 层实现（openWindow/activeWindowEffect 等随 dsl_app_impl.h 自给，
-// 与 pet_probes.cpp:63-69 同款注入；glfw_app_main.cpp 只编进 DevDesk 主程序）。
-// dsl_app_impl.h 头内 emit 的函数体引用 dslAppConfig/compose 两个符号——
-// 探针不建应用级 UI（compose 走 probe::composeModuleFrame 直接驱动 runtime），
-// compose 空实现仅满足链接
+// app:: 层实现随 dsl_app_impl.h 自给（glfw_app_main.cpp 只编进主程序）。dslAppConfig
+// 与 compose 是 dsl_app_impl.h 头内 emit 的函数体所引用的两个符号：探针不建应用级 UI，
+// compose 走 probe::composeModuleFrame 直接驱动 runtime，故 compose 空实现仅满足链接。
 namespace app {
 const app::DslAppConfig& dslAppConfig() {
     static const DslAppConfig config =
@@ -81,16 +67,23 @@ int main(int argc, char* argv[]) {
         return 2;
     }
 
-    // 配置隔离：DEVDESK_CONFIG_PATH 指到临时路径（不落盘），探针与机器本地
-    // config.json 无关（onStart 吃真机配置会让卡片增减/几何漂移）。
-    // 用例 5 前提 = 桌宠卡在树：enabledModules 显式含 pet（pet 默认关闭，
-    // 不加则桌宠卡整卡隐藏、皮肤下拉不存在）
-    auto cfg = test_support::tempConfigFile("pfx_", "cfg");
-    {
-        std::ofstream f(cfg, std::ios::binary | std::ios::trunc);
-        f << "{\"enabledModules\":[\"pet\"]}";
+    // 配置隔离：enabledModules 预置进 app_config 表（不再有 config.json 文件），写进
+    // ScopedConfigPath 已注册为进程级 appDatabase 的那份临时库——生产 settings 模块
+    // onStart 正是经 core::appDatabase() 取连接，故与生产读路径同一条，不是模拟。
+    test_support::ScopedConfigPath scopedCfg(
+        test_support::tempConfigFile("pfx_", "cfg"));
+    if (!test_support::seedAppConfigJson(
+            module::settings::SettingsStore::keyNamespace(),
+            "{\"enabledModules\":[\"pet\"]}")) {
+        std::cerr << "settings_dropdown_z_probe: 配置预置失败 —— app_config 表的 '"
+                  << module::settings::SettingsStore::keyNamespace()
+                  << "enabledModules' 行没写进去（用例 5 依赖 enabledModules "
+                     "显式含 pet，否则桌宠卡整卡不出现）。置红并中止。\n";
+        core::releaseInputQueue(window);
+        core::window::destroyWindow(window);
+        probe::terminateWindowBackend();
+        return 5;
     }
-    test_support::ScopedConfigPath scopedCfg(cfg);
 
     // 皮肤夹具：DEVDESK_PETS_DIR → 临时目录 4 个空皮肤（discoverSkins 只要求
     // pet.json 存在），弹层 4×34+12=148px；不设则读到本机真实 appData 皮肤
@@ -114,12 +107,24 @@ int main(int argc, char* argv[]) {
             }
         }
     }
+    // 夹具失败 = 置红并中止，绝不回落真实数据（见文件头）。清理照做，不留残骸。
+    bool fixtureFailed = false;
     if (petsFixtureOk) {
         test_support::setEnvVar("DEVDESK_PETS_DIR", petsDir.string());
     } else {
-        std::cerr << "settings_dropdown_z_probe: 皮肤夹具创建失败\n";
+        std::cerr << "settings_dropdown_z_probe: 皮肤夹具创建失败 —— 用例 5 依赖"
+                     "固定 4 皮肤夹具，缺失时只能读到本机真实 appData 皮肤清单"
+                     "（非 hermetic）。置红并中止，不回落真实数据。\n";
         std::error_code ec;
         std::filesystem::remove_all(petsDir, ec);
+        fixtureFailed = true;
+    }
+    if (fixtureFailed) {
+        test_support::setEnvVar("DEVDESK_PETS_DIR", "");
+        core::window::destroyWindow(window);   // 与正常收尾同款（此时 runtime 未起）
+        probe::terminateWindowBackend();
+        std::cerr << "FAIL\n";
+        return 1;
     }
 
     std::unique_ptr<::core::Module> mod(create_settings_module());
@@ -134,8 +139,7 @@ int main(int argc, char* argv[]) {
     bool passed = true;
 
     core::dsl::Ui* ui = nullptr;
-    // 单帧标准单元：pollOnce（输入派发 + 交互）→ compose（recompose 弹层
-    // 进出树 + layout，帧即有效，runtime_lifecycle.h:30-33）
+    // 单帧标准单元：pollOnce（输入派发 + 交互）→ compose（recompose 弹层进出树 + layout）
     auto composeFrame = [&]() {
         probe::composeModuleFrame(runtime, window, pageId, w, h,
                                   [&](eui::Ui& u, const eui::Screen& screen) {
@@ -198,7 +202,7 @@ int main(int argc, char* argv[]) {
             ok = false;
         }
         // L2 z 碰撞扫描（弹层锚定）：与 popup 相交的每个非祖先元素
-        // subtreeMaxZIndex 必须 < 弹层链上界。外观卡 40 / 编辑器字号卡 30
+        // subtreeMaxZIndex 必须 < 弹层链上界
         if (!probe::assertNoEqualZOverlap(*ui, popupId)) {
             std::cerr << "settings_dropdown_z_probe: L2 z-collision scan "
                          "FAILED for '"
@@ -220,8 +224,7 @@ int main(int argc, char* argv[]) {
             ui != nullptr ? ui->find(popupId) : nullptr;
         const core::dsl::Element* closedHit =
             closedPopup != nullptr ? ui->find(popupId + ".hit") : nullptr;
-        // 不残留判据（spec §4）：opacity==0（dropdown.h:148 visible）或
-        // .popup.hit disabled（dropdown.h:168）
+        // 不残留判据：opacity==0 或 .popup.hit disabled
         const bool hidden =
             (closedPopup != nullptr && closedPopup->opacity <= 0.5f) ||
             (closedHit != nullptr && closedHit->disabled);
@@ -236,9 +239,9 @@ int main(int argc, char* argv[]) {
         return ok;
     };
 
-    // 1) 首帧 compose（通用 tab 为默认页，settings_module.cpp:935）
+    // 1) 首帧 compose（通用 tab 为默认页）
     composeFrame();
-    // 2) 切到外观 tab（通用）：真命中点 tab hit 区 → onChange(0)
+    // 2) 切到外观 tab：真命中点 tab hit 区 → onChange(0)
     const core::dsl::Element* tabHit =
         ui != nullptr ? ui->find("settings.tabs.hit.0") : nullptr;
     if (tabHit == nullptr) {
@@ -256,20 +259,17 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // 3) 外观卡字号下拉（settings_ui_cards.cpp:154，id .font.dd）：开 →
-    //    L2 扫描（链上界 40，盖过下方编辑器字号卡 30）→ 关
+    // 3) 外观卡字号下拉：开 → L2 扫描 → 关
     passed = verifyDropdown("settings.card.appearance.font.dd") && passed;
 
-    // 4) 编辑器字号下拉（settings_ui_cards.cpp:262，id .dd）：同卡同 tab，
-    //    把它当「编辑器字号」目标开 → L2 扫描（链上界 30）→ 关
+    // 4) 编辑器字号下拉：同卡同 tab，当「编辑器字号」目标开 → L2 扫描 → 关
     passed = verifyDropdown("settings.card.editor.dd") && passed;
 
-    // 5) 桌宠卡双下拉（模块 tab，2026-09-30 用户实测「皮肤弹层被大小行遮住」）：
-    //    卡内等值 z 碰撞 —— 皮肤/大小两个 ddwrap 同为卡片根直接子级、子树上界
-    //    同为字段档 20，稳定排序保持 DOM 序 → 后绘的「大小」行盖住展开的皮肤
-    //    弹层。卡片 zIndex(40) 只救跨卡遮挡；L2 叶子扫描的相交叶子自身
-    //    subtreeMax=0 也抓不住。主判据 = assertDrawnAbove（LCA 处两侧子级子树
-    //    上界 900 > 20）+ 重叠区真命中路由（点弹层首项 ≠ 被下方字段截获）。
+    // 5) 桌宠卡双下拉（卡内等值 z 碰撞，见文件头 B 类）：皮肤/大小两个 ddwrap 同为
+    //    卡片根直接子级、子树上界同为字段档 20，稳定排序保持 DOM 序 → 后绘的
+    //    「大小」行盖住展开的皮肤弹层。卡片级 zIndex(40) 只救跨卡遮挡，叶子扫描的
+    //    相交叶子自身 subtreeMax=0 也抓不住。主判据 = assertDrawnAbove（LCA 处两侧
+    //    子级子树上界 900 > 20）+ 重叠区真命中路由（点弹层首项 ≠ 被下方字段截获）。
     {
         composeFrame();
         const core::dsl::Element* tabModules =
@@ -292,7 +292,10 @@ int main(int argc, char* argv[]) {
                 ui != nullptr ? ui->find(scaleDd + ".field") : nullptr;
             if (petCard == nullptr) {
                 std::cerr << "settings_dropdown_z_probe: 'settings.card.pet' "
-                             "missing（enabledModules 缺 pet？）\n";
+                             "missing —— 预置已读回校验过 app_config 的 '"
+                          << module::settings::SettingsStore::keyNamespace()
+                          << "enabledModules' = [\"pet\"]，故此处为空 = "
+                             "模块门控与配置读出之间断了（不再是「预置没生效」）\n";
                 passed = false;
             } else if (skinField == nullptr || scaleField == nullptr) {
                 std::cerr << "settings_dropdown_z_probe: skin/scale field "

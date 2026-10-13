@@ -1,17 +1,33 @@
 add_library(devdesk_module_claude_proxy STATIC
     call_log_store.cpp
+    ccswitch_import.cpp
     claude_module.cpp
+    claude_ui_ccswitch.cpp
     claude_ui_list.cpp
     claude_ui_detail.cpp
     claude_ui_form.cpp
     claude_ui_logs.cpp
     claude_ui_logic.cpp
+    claude_ui_quota.cpp
     claude_ui_state.cpp
     claude_service.cpp
+    claude_tools.cpp
     profile_repository.cpp
     provider_config.cpp
     proxy_router.cpp
     proxy_runtime.cpp
+    quota/opencode_go_provider.cpp
+    quota/ccswitch_source.cpp
+    quota/deepseek_provider.cpp
+    quota/provider_minimax_cn.cpp
+    quota/quota_credential.cpp
+    quota/quota_dialog_config.cpp
+    quota/quota_error_text.cpp
+    quota/quota_home_view.cpp
+    quota/quota_refresh.cpp
+    quota/quota_registry.cpp
+    quota/quota_store.cpp
+    quota/quota_volcano.cpp
     settings_sync.cpp
     settings_takeover.cpp
     streaming_proxy.cpp

@@ -1,51 +1,17 @@
 // tests/test_support.h
-// 用例共享支撑头（审计 TIN-06 首批 + TIN-06b 第二批）：51 个用例文件此前各自
-// 抄一份 test fixture —— TestEnv 5 份 / TempDir 2 份 / setEnvVar 7 份 /
-// TestDb 4 份 / tempDbPath 10 份 / writeTextFile 6 份 …，同一语义还有多种入参
-// 签名（const char* / std::string）；口径漂移是 TIN-07 与历次 flake 的温床。
-//
-// 这里收七件套（header-only；tests/ 已在 target_include_directories 里，
-// 无需改 tests/CMakeLists.txt）：
-//   1) 环境变量作用域 —— setEnvVar（两种入参签名）+ ScopedEnv（RAII 还原）
-//   2) 临时目录       —— makeTempDir（一次性）+ TempDir（RAII，析构删）
-//   3) 数据根隔离     —— AppDataEnv（APPDATA / HOME 重定向到临时目录）
-//   4) 应用单例作用域 —— ScopedAppRouter
-//   5) 已 migrate 的临时库 —— tempDbPath / TestDb / TestEnv（TIN-06b）
-//   6) 笔记无头环境   —— MdHeadlessEnv（笔记目录 + 库 + appDatabase + 环境隔离）
-//   7) 小工具         —— writeTextFile / tempConfigFile / cleanupProfileKey /
-//                        HeaderMap + headerCI + countCI（TIN-06b）
-//  TIN-06 收尾波新增：ScopedAppDatabase / DataRootEnv / ScopedConfigPath /
-//  InMemoryDb（见各定义处「原 XXX 同款」出处注释）。
-//
-// 迁移约定：只删本地重复脚手架 + 改 include/调用，**不动用例语义**；
-// 收编时每个分支逐字保留原样（见各函数上的「原 XXX 同款」出处注释）。
-//
-// ==================== 失败口径（TIN-06b 统一决策）====================
-// **构造失败即抛**（throw std::runtime_error）。存量两派 —— TestDb 派构造失败
-// 就抛；TestEnv 派设 ready=false 不抛、由用例 DOCTEST_REQUIRE(env.ready) 判红。
-// 统一到「抛」，理由：
-//   1) 夹具没建成 = 用例后续断言必然连锁失真，fail-fast 符合本仓库 doctest 的
-//      既有约定（doctest.h 头注释「断言三条」第 2 条）；
-//   2) 抛是构造器唯一诚实的出口：不抛就得给对象一个「存在但不可用」态，
-//      调用方要逐处记得查 ready，漏查即崩在半初始化的对象上；
-//   3) 与首批收编的 TempDir 一致（其构造失败即 throw std::runtime_error）；
-//   4) 记账等价 —— test_main 逐用例 catch（test_main.cpp「单个测试的异常…
-//      不炸掉整个套件」段）：构造抛异常与该用例 DOCTEST_REQUIRE 判红**同样记
-//      一条 Failed**，只是失败机制从「断言 false」换成「未捕获异常」，
-//      PASS/FAIL 结果不变（受影响的四个文件：test_home / test_todo_service /
-//      test_todo_ui / test_theme_hierarchy，本批已复跑全绿）。
-// 兼容：TestEnv 保留 ready 成员（构造成功恒 true），
-// 既有 `DOCTEST_REQUIRE(env.ready)` 断言行不需要改动。
+// 用例共享脚手架（header-only）：env 作用域 / 临时目录 / 数据根隔离 / 单例作用域 /
+// 临时库 / 笔记无头环境 / 小工具。
+// 所有夹具构造失败即抛 std::runtime_error（fail-fast，不提供 ready=false 态）。
 #pragma once
 
 #include "doctest.h" // test_temp::tempPath —— 临时路径唯一化（pid + 进程内序号）
 
-#include "core/database.h" // TestDb / TestEnv / MdHeadlessEnv
-#include "core/router.h"   // ScopedAppRouter
-#include "platform/keychain.h" // cleanupProfileKey
-// 键盘事件类型（KeyEvent / KeyModifiers / InputKey）——注意此 "core/" 是 **EUI-NEO**
-// 的 core 目录（EUI-NEO 的命名空间也叫 core，与本仓库 src/core 合并同名），
-// 路径写法与 test_claude_ui.cpp 同款。仅供第 8 节快捷键修饰键 helper 使用。
+#include "core/app_config.h"
+#include "core/database.h"
+#include "core/router.h"
+#include "platform/json.h"
+#include "platform/keychain.h"
+// 键盘事件类型 —— 此 "core/" 是 EUI-NEO 的目录，与本仓库 src/core 同名
 #include "core/input/input_types.h"
 
 #include <cctype>
@@ -63,14 +29,10 @@
 
 namespace test_support {
 
-// ==================== 1) 环境变量作用域 ====================
-// 两种入参签名都是存量原样收编（同一语义各写一份是本次审计的靶子本身）。
-// 分支逐字保留，不要合并：
-//   Windows：_putenv_s，传空串即删除变量
-//   POSIX  ：空值走 unsetenv ——「未设置」与「空串」语义不同
-// 空值判定两版写法不同（std::string::empty() / const char* 判空），各自保真。
+// 1) 环境变量作用域
+// 空值 = 删除：Windows 走 _putenv_s，POSIX 走 unsetenv ——「未设置」与「空串」
+// 语义不同。两种入参签名都在用，各自保真，不要合并成一份。
 
-// 入参 std::string（原 test_paths.cpp / test_pet.cpp / test_settings.cpp 同款）
 inline void setEnvVar(const char* name, const std::string& value) {
 #if defined(_WIN32)
     ::_putenv_s(name, value.c_str());
@@ -83,7 +45,6 @@ inline void setEnvVar(const char* name, const std::string& value) {
 #endif
 }
 
-// 入参 const char*（原 test_claude_service.cpp / test_http_client.cpp 同款）
 inline void setEnvVar(const char* name, const char* value) {
 #if defined(_WIN32)
     _putenv_s(name, value);
@@ -96,9 +57,8 @@ inline void setEnvVar(const char* name, const char* value) {
 #endif
 }
 
-// RAII：作用域内设置环境变量，析构还原原值（原 test_settings.cpp EnvVarGuard
-// 同款——构造时快照当前值，「未设置」记为空串，析构时传空串即删除）。
-// 用例体内 fail-fast 提前 return false 也会走析构，不留环境泄漏给后续用例。
+// RAII：作用域内设置环境变量，析构还原原值（「未设置」记为空串，析构传空串即
+// 删除）。用例体内 fail-fast 提前 return false 也会走析构，不泄漏给后续用例。
 class ScopedEnv {
 public:
     ScopedEnv(const char* name, const std::string& value) : name_(name) {
@@ -115,13 +75,10 @@ private:
     std::string saved_;
 };
 
-// ==================== 2) 临时目录 ====================
+// 2) 临时目录
 // 一次性临时目录：确保干净后返回路径（**不**自动清理，调用方自己管）。
-// 原 test_markdown_service.cpp / test_md_file_open.cpp 的 makeTempDir 与
-// test_markdown.cpp / test_md_highlight.cpp / test_md_keyboard.cpp 的
-// makeTempNotesDir 合流——三处 body 一字不差，只有 %TEMP% 文件名前缀不同
-// （前缀保留，便于辨认残骸是谁留下的）。路径唯一性由 test_temp::tempPath
-// 的 pid + 序号兜底，这里的 count 只维持原有命名形态。
+// 路径唯一性由 test_temp::tempPath 的 pid + 进程内序号兜底，这里的 count
+// 只维持命名形态；prefix 保留，便于辨认残骸是谁留下的。
 inline std::filesystem::path makeTempDir(const std::string& prefix,
                                          const std::string& tag) {
     static int count = 0;
@@ -135,8 +92,7 @@ inline std::filesystem::path makeTempDir(const std::string& prefix,
 }
 
 // RAII 临时目录：构造 = 清残骸 + 建空目录（失败即抛，别让用例跑在
-// 不存在的目录上）；析构 = 整棵删掉。原 test_claude_service.cpp 的 TempDir
-// 与 test_claude_ui.cpp 的 ImportTempDir 合流。
+// 不存在的目录上）；析构 = 整棵删掉。
 struct TempDir {
     std::filesystem::path path;
 
@@ -180,18 +136,11 @@ struct TempDir {
     }
 };
 
-// ==================== 3) 数据根隔离 ====================
-// RAII：把「应用数据根目录」重定向到临时目录（原 test_settings.cpp
-// AppDataEnv 同款）——数据根挂在**平台用户主目录**下（2026-09-28 起，
-// 不再是系统惯例位置），日志路径 core::paths::logFile() 的平台来源是：
-//   Windows: %USERPROFILE%/DevDesk/logs/devdesk.log   （paths_win.cpp）
-//   macOS:   $HOME/DevDesk/logs/devdesk.log           （paths_macos.cpp）
-//   Linux:   $HOME/DevDesk/logs/devdesk.log           （paths_posix.cpp）
-// 所以要重定向的是「用户主目录」变量：Windows 为 USERPROFILE、macOS/Linux 为
-// HOME（Windows 侧另把 APPDATA 一并指到临时目录，沿用旧行为——历史实现经它
-// 派生数据根，重定向它无可害）。不重定向主目录的话，用例会把自造数据写进
-// **真实**用户目录；故两套变量都在此隔离。
-// 析构恢复原值，fail-fast 早退也不影响后续用例。
+// 3) 数据根隔离
+// RAII：把应用数据根重定向到临时目录，析构恢复原值（fail-fast 早退也不影响
+// 后续用例）。日志路径 core::paths::logFile() 派生自**平台用户主目录**
+//（Windows: %USERPROFILE%，macOS/Linux: $HOME），故必须重定向主目录变量；
+// APPDATA 一并指到临时目录。漏掉主目录会让用例把自造数据写进真实用户目录。
 struct AppDataEnv {
     std::string saved;
     std::string savedHome; // 平台用户主目录：Windows=USERPROFILE、其余=HOME
@@ -233,13 +182,10 @@ struct AppDataEnv {
     AppDataEnv& operator=(const AppDataEnv&) = delete;
 };
 
-// ==================== 4) 应用单例作用域脚手架 ====================
+// 4) 应用单例作用域脚手架
 // RAII：作用域内登记进程级 appRouter（assembleAndStart 会把 Router 注册进
 // 进程级访问器，armExitHook 的 handler 经它取 Router，而用例里的 Router 是
 // 栈对象），析构复位 null——否则进程退出时 atexit 会摸到已析构的 Router。
-// 原 test_app_assembly.cpp / test_app_sidebar.cpp / test_module_gating.cpp
-// 三份 ScopedAppRouter 与 test_markdown.cpp 用例体内的 RouterGuard 合流；
-// 默认构造传 nullptr = 只保留「复位」语义（test_app_assembly 那份本就如此）。
 class ScopedAppRouter {
 public:
     explicit ScopedAppRouter(::core::Router* router = nullptr) {
@@ -251,7 +197,7 @@ public:
 };
 
 // RAII：作用域内登记/release 进程级 appDatabase（与 ScopedAppRouter 同构）。
-// 原 test_streaming_proxy.cpp 的 AppDbScope 收编。
+// 默认构造传 nullptr = 只保留「复位」语义。
 class ScopedAppDatabase {
 public:
     explicit ScopedAppDatabase(core::data::SqliteDb& db) {
@@ -262,13 +208,10 @@ public:
     ScopedAppDatabase& operator=(const ScopedAppDatabase&) = delete;
 };
 
-// ==================== 5) 已 migrate 的临时数据库（TIN-06b）====================
-// 临时 db 路径工厂（只造路径、不落盘，调用方自己 open）。原 test_migrations /
-// test_claude_service / test_claude_ui / test_home / test_provider_config /
-// test_proxy_router / test_settings_sync / test_theme_hierarchy /
-// test_todo_service / test_todo_ui 十份同款工厂合流——原先每份各带自己的
-// static counter，合流后共用一个计数；路径唯一性由 test_temp::tempPath 的
-// pid + 进程内序号兜底，文件名不参与任何断言。
+// 5) 临时数据库
+// 临时 db 路径工厂（只造路径、不落盘，调用方自己 open）。共用一个 static
+// counter；路径唯一性由 test_temp::tempPath 的 pid + 进程内序号兜底，
+// 文件名不参与任何断言。
 inline std::filesystem::path tempDbPath(const std::string& prefix,
                                         const std::string& tag) {
     static int counter = 0;
@@ -278,11 +221,8 @@ inline std::filesystem::path tempDbPath(const std::string& prefix,
 }
 
 // RAII：DEVDESK_DATA_ROOT 重定向到临时 .data 目录（core/paths.cpp 的统一覆盖
-// 入口，绝不碰真实 %APPDATA%/DevDesk）。析构删目录 + 还原进入前值。
-// 原 test_claude_ui.cpp / test_claude_service.cpp 两份 ScopedDataRoot 合流，
-// 析构语义统一为快照还原（claude_ui 版原为清空，见 TIN-06 spec §1）。
-// 等价前置：外部环境未预设非空 DEVDESK_DATA_ROOT（预设时「清空」与「还原」
-// 不等价；正常开发机未预设）。
+// 入口，绝不碰真实 %APPDATA%/DevDesk）。析构删目录 + 快照还原进入前值。
+// 前置：外部环境未预设非空 DEVDESK_DATA_ROOT（预设时快照还原会把它一并清掉）。
 struct DataRootEnv {
     std::string dir;
     std::string prev;
@@ -307,30 +247,44 @@ struct DataRootEnv {
     DataRootEnv& operator=(const DataRootEnv&) = delete;
 };
 
-// RAII：DEVDESK_CONFIG_PATH 指向临时 config.json 路径，析构清空环境变量 +
-// 删文件（cfg 文件由用例自行写内容，同原 PruneEnv 语义）。原 test_settings.cpp
-// PruneEnv 的 cfg 段收编。
+// RAII：配置存储隔离。配置的落点是 SQLite 的 app_config 表，故本夹具真正起
+// 隔离作用的是它持有的那份已 migrate 的临时库（并注册为进程级 appDatabase——
+// 生产代码正是经 core::appDatabase() 取连接）。
+// 构造入参 cfgPath 是「临时 config.json 路径」约定的遗留形参：没有任何代码写
+// 它，本夹具也不把它指给任何环境变量——保留形参只为不动调用点，析构时顺手清
+// 一次同名残骸。
+// 析构顺序：先注销 appDatabase，再删库文件（反过来会在句柄仍开着时删文件）。
 struct ScopedConfigPath {
     std::filesystem::path cfgPath;
-    explicit ScopedConfigPath(std::filesystem::path p) : cfgPath(std::move(p)) {
-        setEnvVar("DEVDESK_CONFIG_PATH", cfgPath.string());
+    std::unique_ptr<core::Database> db;
+    ScopedConfigPath(std::filesystem::path p) : cfgPath(std::move(p)) {
+        auto r = core::Database::open(
+            test_temp::tempPath("devdesk_test_cfgstore_.db"));
+        if (r.isFail()) {
+            throw std::runtime_error("ScopedConfigPath: Database::open failed: " +
+                                     r.errorMessage());
+        }
+        db = std::make_unique<core::Database>(std::move(r.value()));
+        if (db->migrate().isFail()) {
+            throw std::runtime_error("ScopedConfigPath: migrate failed");
+        }
+        ::core::registerAppDatabase(&db->db());
     }
     ~ScopedConfigPath() {
-        setEnvVar("DEVDESK_CONFIG_PATH", "");
+        ::core::registerAppDatabase(nullptr);
         std::error_code ec;
         std::filesystem::remove(cfgPath, ec);
+        db.reset();
     }
     ScopedConfigPath(const ScopedConfigPath&) = delete;
     ScopedConfigPath& operator=(const ScopedConfigPath&) = delete;
 };
 
-// RAII：已 migrate 的临时数据库（原 test_claude_service / test_provider_config /
-// test_proxy_router / test_settings_sync 四份 TestDb 合流）。构造失败即抛
-// （见文件头「失败口径」）；析构删库文件与 sqlite 的 -wal / -shm 伴生文件。
+// RAII：已 migrate 的临时数据库。构造失败即抛；析构删库文件与 sqlite 的
+// -wal / -shm 伴生文件。
 struct TestDb {
     std::filesystem::path path;
-    // 审计 CP-07：Database/SqliteDb 已不可默认构造（open() 是唯一入口），
-    // 「先占位、后 move 进来」改用指针表达
+    // Database/SqliteDb 不可默认构造（open() 是唯一入口），故用指针表达持有
     std::unique_ptr<core::Database> db;
 
     TestDb(const std::string& prefix, const std::string& tag) {
@@ -361,8 +315,7 @@ struct TestDb {
 };
 
 // RAII：SqliteDb::open(":memory:") 的内存库（供不需要 migrate 的纯内存
-// 形态——如 ClaudeService 测试）。构造失败即抛。原 test_streaming_proxy.cpp
-// TestEnv 的 dbResult 段收编；handle() 命名对齐 TestDb::handle()。
+// 形态）。构造失败即抛；handle() 命名对齐 TestDb::handle()。
 struct InMemoryDb {
     std::unique_ptr<core::data::SqliteDb> db;
     InMemoryDb() {
@@ -377,12 +330,10 @@ struct InMemoryDb {
 };
 
 // RAII：已 migrate 的临时库 +（可选）注册为进程级 appDatabase——模块 onStart
-// 依赖 appDatabase 的用法传 registerAppDb = true（原 test_home /
-// test_todo_service / test_todo_ui 的 TestEnv 与 test_theme_hierarchy 的 DbEnv
-// 同款）。析构顺序：本类先注销 appDatabase，再轮到基类销毁库与删文件。
+// 依赖 appDatabase 的用法传 registerAppDb = true。析构顺序：本类先注销
+// appDatabase，再轮到基类销毁库与删文件。
 struct TestEnv : TestDb {
-    // 兼容既有 `DOCTEST_REQUIRE(env.ready)` 断言行：构造成功恒为 true
-    //（构造失败在构造期已抛，不再存在「对象在、ready=false」态）
+    // 构造成功恒为 true：失败已在构造期抛出，不存在 ready=false 态
     bool ready = true;
     bool appDbRegistered = false;
 
@@ -402,20 +353,48 @@ struct TestEnv : TestDb {
     TestEnv& operator=(const TestEnv&) = delete;
 };
 
-// ==================== 6) 笔记无头环境（TIN-06b）====================
-// RAII：临时笔记目录 + 目录内已 migrate 的临时库（注册为 appDatabase），并把
-// 视图状态文件 / 笔记目录两个环境变量指到该临时目录，析构撤销环境变量 + 删
-// 整棵目录。原 test_markdown.cpp 的 MdUiEnv / test_md_highlight.cpp 的 MdHlEnv
-// / test_md_keyboard.cpp 的 MdKbEnv 三份合流——三份 body 一字不差，只有临时目录
-// 前缀与库文件名不同（前缀保留，便于辨认残骸是谁留下的）。构造失败即抛。
+// path「严格位于 ancestor 之下」判定（先各自 lexically_normal，再词法前缀比对；
+// child == ancestor 不算「之下」）。词法比较不解 .. 与符号链接，只适用于同根
+// 无歧义的测试路径；勿用于需要对付 .. / 符号链接的生产路径校验。
+inline bool isPathUnder(const std::filesystem::path& child,
+                        const std::filesystem::path& ancestor) {
+    std::string c = child.lexically_normal().generic_string();
+    std::string a = ancestor.lexically_normal().generic_string();
+    while (a.size() > 1 && a.back() == '/') a.pop_back();
+    while (c.size() > 1 && c.back() == '/') c.pop_back();
+    if (a == "/" ) return c.size() > 1 && c.front() == '/';
+    return c.size() > a.size() + 1 && c.compare(0, a.size(), a) == 0 &&
+           c[a.size()] == '/';
+}
+
+// 6) 笔记无头环境
+// RAII：临时笔记目录 + **被监听目录之外**的伴生状态目录（内含已 migrate 的
+// 临时库，注册为 appDatabase），并把笔记目录环境变量指到该临时目录，析构
+// 撤销环境变量 + 删两棵目录。构造失败即抛。
+// 库一律住 stateDir：MarkdownService 构造即对笔记目录起原生 FileWatcher
+//（Windows ReadDirectoryChangesW / macOS FSEvents），而 watcher 对监听根下
+// **一切**文件变化都上报（不区分扩展名）；库若建在笔记目录**内**（连同
+// -wal/-shm 伴生文件），每次落库都是 watcher 事件，撞上模块层 5s 轮询节流的
+// 绕过路径，用例中途 rescan+refreshList 的随机竞态。
 struct MdHeadlessEnv {
-    std::filesystem::path dir;
+    std::filesystem::path dir;       // 笔记目录（DEVDESK_NOTES_DIR；被 FileWatcher 监听）
+    std::filesystem::path stateDir;  // 伴生状态目录（库；刻意在监听范围外）
+    std::filesystem::path dbPath;    // 库文件绝对路径（= stateDir / dbName）
     std::unique_ptr<core::Database> db;
 
     MdHeadlessEnv(const std::string& dirPrefix, const std::string& tag,
                   const std::string& dbName) {
         dir = makeTempDir(dirPrefix, tag);
-        auto r = core::Database::open(dir / dbName);
+        stateDir = makeTempDir(dirPrefix, tag + "_state");
+        // 守卫（fail-fast）：库不得落在被监听的笔记目录内
+        if (isPathUnder(stateDir, dir)) {
+            throw std::runtime_error(
+                "MdHeadlessEnv: 伴生状态目录不得建在笔记目录（被 FileWatcher "
+                "监听）内: " +
+                stateDir.string() + " under " + dir.string());
+        }
+        dbPath = stateDir / dbName;
+        auto r = core::Database::open(dbPath);
         if (r.isFail()) {
             throw std::runtime_error("Database::open failed: " +
                                      r.errorMessage());
@@ -425,30 +404,23 @@ struct MdHeadlessEnv {
             throw std::runtime_error("migrate failed");
         }
         ::core::registerAppDatabase(&db->db());
-        // 视图状态文件隔离（审计 [23]）：无头用例不碰真实 %APPDATA% 状态
-        setEnvVar("DEVDESK_MARKDOWN_VIEW_STATE_PATH",
-                  (dir / "view_state.json").string());
         // 笔记目录隔离：只对本用例生效
         setEnvVar("DEVDESK_NOTES_DIR", dir.string());
     }
 
     ~MdHeadlessEnv() {
         setEnvVar("DEVDESK_NOTES_DIR", "");
-        setEnvVar("DEVDESK_MARKDOWN_VIEW_STATE_PATH", "");
         ::core::registerAppDatabase(nullptr);
         std::error_code ec;
         std::filesystem::remove_all(dir, ec);
+        std::filesystem::remove_all(stateDir, ec);
     }
     MdHeadlessEnv(const MdHeadlessEnv&) = delete;
     MdHeadlessEnv& operator=(const MdHeadlessEnv&) = delete;
 };
 
-// ==================== 7) 小工具（TIN-06b）====================
-// 写文本文件（覆盖；自动建父目录——支持子目录笔记）；返回 false = 建不了 / 写
-// 失败。原 test_markdown.cpp / test_md_highlight.cpp / test_md_keyboard.cpp /
-// test_markdown_service.cpp / test_file_watcher.cpp 的 writeTextFile 与
-// test_md_file_open.cpp 的 writeText 六份合流（后一份用流 `<<` 写入且不先建父
-// 目录，对既有调用点行为等价）。
+// 7) 小工具
+// 写文本文件（覆盖；自动建父目录）；返回 false = 建不了 / 写失败。
 inline bool writeTextFile(const std::filesystem::path& path,
                           const std::string& content) {
     std::filesystem::create_directories(path.parent_path());
@@ -460,8 +432,6 @@ inline bool writeTextFile(const std::filesystem::path& path,
 
 // 最小 PNG 头（魔数 + IHDR 尺寸 + 8bit RGBA 类型 + 填充字节）——只核头部
 // 33 字节；无头用例不做解码，夹具帧只需头部合法，无需完整 IDAT/IEND。
-// 原 test_pet.cpp 的 writeMinimalPng 收编（PET-CLOSE 起 test_settings 的
-// 模块开关用例也要造皮肤夹具）
 inline void writeMinimalPng(const std::filesystem::path& path, int width,
                             int height) {
     std::ofstream out(path, std::ios::binary);
@@ -487,10 +457,8 @@ inline void writeMinimalPng(const std::filesystem::path& path, int width,
 }
 
 // 向候选根写一份 shipped 形态皮肤：pet.json + 四态 13 帧（f0..f5 / p0..p1 /
-// s0..s2 / t0..t1，128×128 头部合法帧）。原 test_pet.cpp 的
-// writeShippedSkinFixture 收编——无头用例的 exeDir（build/tests）没有随包
-// 资产拷贝（POST_BUILD 只拷给 DevDesk 目标），不造夹具时 ensureDefaultSkin
-// 失败 → startPetWindow 不开窗
+// s0..s2 / t0..t1，128×128 头部合法帧）。无头用例的 exeDir（build/tests）没有
+// 随包资产拷贝，不造夹具时 ensureDefaultSkin 失败 → startPetWindow 不开窗。
 inline void writeShippedSkinFixture(const std::filesystem::path& root,
                                     const char* name, const char* jsonText) {
     static const char* kFrameNames[] = {
@@ -504,25 +472,30 @@ inline void writeShippedSkinFixture(const std::filesystem::path& root,
     }
 }
 
-// 配置文件临时路径（只造路径、不落盘、不自动清理）。原 test_app_sidebar.cpp /
-// test_module_gating.cpp / test_settings.cpp 三份 tempConfigFile 合流，只有
-// 前缀不同（前缀保留）。
+// 配置文件临时路径（只造路径、不落盘、不自动清理）。
 inline std::filesystem::path tempConfigFile(const std::string& prefix,
                                             const std::string& name) {
     return test_temp::tempPath(prefix + name + ".json");
 }
 
-// 清掉某个测试 Keychain service 下某 profile 的密钥（原 test_claude_service.cpp
-// / test_claude_ui.cpp 两份 cleanupKey 合流；service 由调用方传自身的测试常量）
+// 把某 profile 的凭据清空（造「该 profile 没存过 API Key」的形态）。凭据存
+// claude_profiles.api_key_encrypted 列，清 Keychain 对它无效。
+inline bool clearStoredCredential(core::data::SqliteDb& db, int64_t profileId) {
+    return db.exec("UPDATE claude_profiles SET api_key_encrypted = '', "
+                   "api_key_hint = '', api_key_check = '' WHERE id = " +
+                   std::to_string(profileId))
+        .isOk();
+}
+
+// 删某个 service 下某 profile 的 Keychain 条目；service 由调用方传自身的测试常量
 inline void cleanupProfileKey(const char* service, int64_t profileId) {
     platform::keychain::deleteSecret(service,
                                      "claude:" + std::to_string(profileId));
 }
 
 // 头名大小写不敏感取头 / 计数（转发后头名拼写由方言层决定，可能与客户端不同）。
-// 原 test_claude_service.cpp / test_proxy_router.cpp / test_upstream_dialect.cpp
-// 三份同款合流。别名供 REGISTER_TEST body 使用——宏大括号不保护逗号，带逗号的
-// 类型名不能直接写在用例体里。
+// 别名供 REGISTER_TEST body 使用——宏大括号不保护逗号，带逗号的类型名不能
+// 直接写在用例体里。
 using HeaderMap = std::map<std::string, std::string>;
 
 inline std::string headerCI(const HeaderMap& h, const std::string& lowerKey) {
@@ -549,12 +522,89 @@ inline int countCI(const HeaderMap& h, const std::string& lowerKey) {
     return n;
 }
 
-// ==================== 8) 快捷键修饰键（与实现同源，2026-09-29）====================
-// 背景：快捷键的「修饰位」是**平台相关**的 —— EUI-NEO core/input/input_types.h 的
+// 9) app_config / sidecar 原文存取
+// 配置落点是 app_config 表的一行，用例的「塞一段手写内容、跑一遍、再读回」
+// 改成往该行塞原文。空串 = 不存在；原文按字节进出，不做任何规范化。
+
+// 写入整份文档原文（模拟「脏数据/损坏内容」，如 "{broken"）
+inline bool writeRawConfigRow(core::data::SqliteDb* db, const char* key,
+                              const std::string& text) {
+    if (db == nullptr) return false;
+    return core::appconfig::set(*db, key, text).isOk();
+}
+
+// 读回整份文档原文；键不存在 → 空串
+inline std::string readRawConfigRow(core::data::SqliteDb* db, const char* key) {
+    if (db == nullptr) return std::string();
+    auto v = core::appconfig::get(*db, key);
+    return v.isOk() ? v.value() : std::string();
+}
+
+// 该行是否存在
+inline bool configRowExists(core::data::SqliteDb* db, const char* key) {
+    if (db == nullptr) return false;
+    auto v = core::appconfig::has(*db, key);
+    return v.isOk() && v.value();
+}
+
+// 把一段「手改过的配置 JSON」按**顶层键**分发进 app_config 表的各行（顶层键 =
+// 行键，值存该键的 JSON 值文本），供「手改成未知模块 ID / 乱类型 / 半截 JSON」
+// 的负例使用。顶层不是对象或解析失败 → false（调用方 DOCTEST_REQUIRE 它）。
+inline bool seedConfigJsonRows(core::data::SqliteDb* db,
+                               const char* keyNamespace,
+                               const std::string& jsonText) {
+    if (db == nullptr) return false;
+    auto parsed = platform::json::parse(jsonText);
+    if (parsed.isFail() || !parsed.value().isObject()) return false;
+    auto obj = parsed.value().asObject();
+    std::vector<core::appconfig::Entry> entries;
+    for (const auto& k : obj.keys()) {
+        auto text = platform::json::stringify(obj.get(k), /*pretty=*/false);
+        if (text.isFail()) return false;
+        entries.push_back(
+            core::appconfig::Entry{std::string(keyNamespace) + k, text.value(), 0});
+    }
+    // **整份替换**语义：先清掉本命名空间下已有的行再写。只补不删的话，上一次
+    // save 留下的键会活下来，「存量配置只有 theme → 别的字段回落默认」这类用例
+    // 就会读到脏数据。两步包在同一个事务里，免得中间态被别的线程读到。
+    return db->transaction([&]() -> core::Result<void> {
+        auto cleared = core::appconfig::eraseWithPrefixExcept(
+            *db, keyNamespace, {});
+        if (cleared.isFail()) return cleared;
+        return core::appconfig::setMany(*db, entries);
+    }).isOk();
+}
+
+// 预置进「进程级已注册的那个连接」
+//
+// 上面三个 helper 收 db 句柄；探针 / 无头用例手上**没有**句柄——它们只有
+// ::core::appDatabase()（夹具 ScopedConfigPath 注册进去的那个，生产模块 onStart
+// 正是经它取连接）。这两个是它的「已注册连接」入口。
+//
+// **必须当场读回校验**：预置失败必须在写入点当场报出来（false），由调用方
+// fail-fast，绝不带着没落地的配置往下跑断言——否则只会在下游症状上变红。
+inline bool seedAppConfigRow(const char* key, const std::string& text) {
+    auto* db = ::core::appDatabase();
+    if (db == nullptr) return false;
+    return writeRawConfigRow(db, key, text) && readRawConfigRow(db, key) == text;
+}
+
+// 同上，但输入是一整份 config.json 文本（按顶层键分发进该命名空间的各行）。
+// 校验 = 该命名空间下**至少一行**落库且读得回（整份替换语义已清过旧行，空清单
+// 就是预置没生效）。
+inline bool seedAppConfigJson(const char* keyNamespace,
+                              const std::string& jsonText) {
+    auto* db = ::core::appDatabase();
+    if (db == nullptr) return false;
+    if (!seedConfigJsonRows(db, keyNamespace, jsonText)) return false;
+    auto rows = core::appconfig::listWithPrefix(*db, keyNamespace);
+    return rows.isOk() && !rows.value().empty();
+}
+
+// 8) 快捷键修饰键（与实现同源）
+// 快捷键的「修饰位」是**平台相关**的 —— EUI-NEO core/input/input_types.h 的
 // KeyModifiers::shortcut() 在 __APPLE__ 下读 super（Cmd）、其余平台读 control。
-// 用例构造「快捷键按下」事件时若写死 modifiers.control = true，macOS 上模块/组件
-// 读到的 shortcut() 恒为 false → 所有 Ctrl 类快捷键用例在 macOS 上永远不触发
-// （2026-09-29 实测：全量 64 条失败里 61 条出自这一条）。
+// 用例若写死 modifiers.control = true，macOS 上读到的 shortcut() 恒为 false。
 //
 // 做法：**不在这里重写平台分支** —— 测试与实现各写一份 #if defined(__APPLE__)
 // 就是"同一个平台判断存在两份"，上游平台语义一改立刻又漂。改为把 EUI-NEO 的
@@ -562,11 +612,10 @@ inline int countCI(const HeaderMap& h, const std::string& lowerKey) {
 // 一次，测试侧零平台宏（全仓平台判断仍只有 EUI-NEO 那一处）。
 //
 // 非 macOS 语义不变（Windows/Linux 路径）：只置 control 时 shortcut() 返 true
-// （其实现就是 `return control`）→ 探针选中 control → 写入的位与改写前的硬编码
-// control = true 完全一致。等价性不靠"我记得 Windows 是 Ctrl"，靠的是读同一函数。
+// （其实现就是 `return control`）→ 探针选中 control。等价性不靠"我记得 Windows
+// 是 Ctrl"，靠的是读同一函数。
 //
-// 用法：新写用例一律走这两个入口，别再直接碰 modifiers.control / modifiers.super
-// ——散落的 control = true 就是本次全红的病灶。
+// 用法：新写用例一律走这两个入口，别再直接碰 modifiers.control / modifiers.super。
 inline bool shortcutUsesControl() {
     core::KeyModifiers probe;
     probe.control = true;
@@ -587,8 +636,7 @@ inline void setShortcutModifier(core::KeyModifiers& mods, bool on = true) {
 }
 
 // 快捷键按下事件（key + 平台快捷键修饰位 [+ Shift]）——Ctrl/Cmd+P、
-// Ctrl/Cmd+Shift+P 一族的构造口。原样对应各用例里手写的
-// `p.key = P; p.modifiers.control = true; p.modifiers.shift = true;`
+// Ctrl/Cmd+Shift+P 一族的构造口。
 inline core::KeyEvent pressShortcut(core::InputKey key, bool shift = false) {
     core::KeyEvent e;
     e.key = key;

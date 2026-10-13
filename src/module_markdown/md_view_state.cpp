@@ -1,15 +1,13 @@
 // src/module_markdown/md_view_state.cpp
-// markdown_view_state.json 读写（容错模式照抄 pet_config：缺失/损坏回退默认）
+// markdown 视图状态的 app_config 表存取（接口见 md_view_state.h）。
+// 整份状态存为 app_config 一行（键 markdown_view_state），原 JSON 文件已退役、不迁移；
+// 单写者（markdown 模块页）且整存整取，故不按顶层键拆行。
 #include "module_markdown/md_view_state.h"
 
-#include <cstdlib>
-#include <fstream>
-#include <sstream>
 #include <utility>
 
-#include "core/atomic_write.h"
+#include "core/app_config.h"
 #include "core/logging.h"
-#include "core/paths.h"
 #include "platform/json.h"
 
 namespace module::markdown {
@@ -27,18 +25,11 @@ bool hasTraversal(const std::string& p) {
 }
 } // namespace
 
-std::filesystem::path markdownViewStateFile() {
-    // 环境变量覆盖（无头测试隔离真实 %APPDATA% 状态文件；与 markdownDir 同款机制）
-    if (const char* env = std::getenv("DEVDESK_MARKDOWN_VIEW_STATE_PATH")) {
-        if (*env != '\0') return std::filesystem::path(env);
-    }
-    return core::paths::appDataDir() / "markdown_view_state.json";
-}
+MarkdownViewStateStore::MarkdownViewStateStore(core::data::SqliteDb* db)
+    : db_(db) {}
 
-MarkdownViewStateStore::MarkdownViewStateStore(std::filesystem::path file)
-    : file_(std::move(file)) {}
-
-MarkdownViewState MarkdownViewStateStore::sanitized(const MarkdownViewState& st) {
+MarkdownViewState MarkdownViewStateStore::sanitized(
+    const MarkdownViewState& st) {
     MarkdownViewState out;
     if (!st.lastPath.empty() && !hasTraversal(st.lastPath)) {
         out.lastPath = st.lastPath;
@@ -54,27 +45,32 @@ MarkdownViewState MarkdownViewStateStore::sanitized(const MarkdownViewState& st)
     return out;
 }
 
-MarkdownViewState MarkdownViewStateStore::load() const {
+core::Result<MarkdownViewState> MarkdownViewStateStore::loadChecked() const {
     MarkdownViewState st;  // 全默认值兜底
-
-    std::error_code ec;
-    if (!std::filesystem::exists(file_, ec) || ec) {
-        return st;  // 首次启动：无视图状态文件，正常路径
+    if (db_ == nullptr) {
+        return core::Result<MarkdownViewState>::fail(
+            core::ErrorCode::NotFound,
+            "应用数据库未就绪（core::appDatabase() 为空）");
     }
-
-    std::ifstream f(file_);
-    if (!f) {
-        LOG_WARN("Markdown: 无法读取视图状态文件，使用默认值: " + file_.string());
-        return st;
+    auto raw = core::appconfig::get(*db_, kMarkdownViewStateKey);
+    if (raw.isFail()) {
+        // 键不存在 = 首次启动（正常路径，静默用默认）；表不存在 / SQL 失败 = 真故障，报出来。
+        if (raw.errorCode() == core::ErrorCode::NotFound) {
+            return core::Result<MarkdownViewState>::ok(st);
+        }
+        return core::Result<MarkdownViewState>::fail(
+            raw.errorCode(),
+            "读取 app_config[" + std::string(kMarkdownViewStateKey) +
+                "] 失败: " + raw.errorMessage());
     }
-    std::ostringstream ss;
-    ss << f.rdbuf();
-    f.close();
-
-    auto parsed = platform::json::parse(ss.str());
+    auto parsed = platform::json::parse(raw.value());
     if (parsed.isFail() || !parsed.value().isObject()) {
-        LOG_WARN("Markdown: 视图状态文件解析失败，使用默认值: " + file_.string());
-        return st;
+        return core::Result<MarkdownViewState>::fail(
+            core::ErrorCode::JsonParseError,
+            "app_config[" + std::string(kMarkdownViewStateKey) +
+                "] 不是合法 JSON 对象: " +
+                (parsed.isFail() ? parsed.errorMessage()
+                                 : std::string("顶层非对象")));
     }
     platform::json::JsonObject obj = parsed.value().asObject();
 
@@ -94,11 +90,27 @@ MarkdownViewState MarkdownViewStateStore::load() const {
     if (obj.has(kKeySelectedDir) && obj.get(kKeySelectedDir).isString()) {
         st.selectedDir = obj.get(kKeySelectedDir).asString();
     }
-    return sanitized(st);
+    return core::Result<MarkdownViewState>::ok(sanitized(st));
 }
 
-core::Result<void> MarkdownViewStateStore::save(const MarkdownViewState& stRaw) const {
+MarkdownViewState MarkdownViewStateStore::load() const {
+    auto loaded = loadChecked();
+    if (loaded.isFail()) {
+        LOG_ERROR("Markdown: 读取视图状态失败，回退默认值（本次改动将无法保存）: " +
+                  loaded.errorMessage());
+        return sanitized(MarkdownViewState{});
+    }
+    return loaded.value();
+}
+
+core::Result<void> MarkdownViewStateStore::save(
+    const MarkdownViewState& stRaw) const {
     const MarkdownViewState st = sanitized(stRaw);
+    if (db_ == nullptr) {
+        return core::Result<void>::fail(
+            core::ErrorCode::NotFound,
+            "应用数据库未就绪（core::appDatabase() 为空），视图状态未保存");
+    }
 
     platform::json::JsonObject obj;
     obj.set(kKeyLastPath, platform::json::makeString(st.lastPath));
@@ -112,23 +124,8 @@ core::Result<void> MarkdownViewStateStore::save(const MarkdownViewState& stRaw) 
         return core::Result<void>::fail(core::ErrorCode::Internal,
                                         "视图状态序列化失败: " + text.errorMessage());
     }
-
-    // 父目录确保存在（appDataDir 正常已由 ensureDirectoriesExist 建好，兜底）
-    std::error_code ec;
-    const auto parent = file_.parent_path();
-    if (!parent.empty() && !std::filesystem::exists(parent, ec) && !ec) {
-        std::filesystem::create_directories(parent, ec);
-        if (ec) {
-            return core::Result<void>::fail(core::ErrorCode::Internal,
-                                            "视图状态目录创建失败: " + ec.message());
-        }
-    }
-
-    // 原子写（tmp → remove → rename，core/atomic_write.h 唯一实现，审计 THS-03
-    // 第二批收口）：旧的 std::ofstream(file_, trunc) 原地写在写窗口内崩溃/断电
-    // 会把文件截成半截，load 走解析失败分支静默回落默认值（上次笔记路径/视图
-    // 模式/目录折叠全丢）。逐字节尾处理照旧实现：serialize 结果 + "\n"
-    return core::atomicWriteFile(file_, text.value() + "\n", "视图状态");
+    // 一次 UPSERT 即一次提交——与旧的「原子写文件」等价，且自带事务原子性（不会半截）。
+    return core::appconfig::set(*db_, kMarkdownViewStateKey, text.value());
 }
 
 } // namespace module::markdown

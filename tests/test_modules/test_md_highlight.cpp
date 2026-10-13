@@ -1,14 +1,10 @@
 // tests/test_modules/test_md_highlight.cpp
-// 编辑器行级 Markdown 高亮器（styled-runs Phase C）测试：
-//   1. md_line_scanner 扩展：scanFences 围栏区间（开/闭/未闭合/~~~ 与 ```
-//      各自配对/CRLF）——与 scanHeadings 共用围栏语义（一鱼三吃）
-//   2. md_highlight 纯函数：各 token 类型的字节区间 + 颜色断言（标题/引用/
-//      列表/行内代码/粗体/斜体/链接/表格管道/围栏跨行/CJK 边界/空行/
-//      软换行段防误判/未闭合标记不误标）
-//   3. 色表映射：mdHighlightColors ← theme token
-//   4. 无头接线：markdown_module 编辑器 input 挂 lineStyles（行元素 runs
-//      落色）+ 主题切换 bump styleRevision 且 runs 换色
-//   5. 性能冒烟：万行文档可视窗重高亮耗时记录（设计 §7 预算 8ms 仅打印，不设红线）
+// 编辑器行级 Markdown 高亮器单测：scanFences 围栏区间 / runsForLine 各 token 的字节区间与
+// 颜色 / 色表映射 / 无头接线 / 万行可视窗重亮耗时。
+// 跨文件前提：
+//   - scanFences 与 scanHeadings 共用围栏语义，两者对本文件同一批输入必须给出一致结果。
+//   - 重叠 run 取最后一个命中，与框架 normalizeTextRuns 的「后写覆盖前写」一致（行内色叠引用底色）。
+//   - 万行重亮只记录耗时、不设墙钟红线：并发编译负载下墙钟不能当失败判据。
 #include "doctest.h"
 #include "test_support.h"
 #include "core/database.h"
@@ -29,6 +25,7 @@ using module::markdown::kEditorInputId;
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <ratio>
 #include <string>
 #include <system_error>
 #include <vector>
@@ -98,8 +95,7 @@ double msSince(std::chrono::steady_clock::time_point t) {
         .count();
 }
 
-// 笔记临时目录前缀 + 写文件 / 无头笔记环境：共享实现（TIN-06b，原 MdHlEnv
-// 与本地 writeTextFile 同款合流）
+// 笔记临时目录前缀 + 写文件 / 无头笔记环境：共享实现
 constexpr const char* kDirPrefix = "devdesk_mdhl_";
 constexpr const char* kDbName = "mdhl_test.db";
 
@@ -107,7 +103,7 @@ using test_support::writeTextFile;
 
 } // namespace
 
-// ---- scanFences：围栏区间（md_line_scanner 扩展）----
+// scanFences：围栏区间（md_line_scanner 扩展）
 
 REGISTER_TEST(md_scanner_scan_fences, "md_line_scanner: scanFences 围栏区间", {
     using module::markdown::scanFences;
@@ -167,7 +163,7 @@ REGISTER_TEST(md_scanner_scan_fences, "md_line_scanner: scanFences 围栏区间"
     return true;
 })
 
-// ---- runsForLine：块级前缀 ----
+// runsForLine：块级前缀
 
 REGISTER_TEST(md_highlight_block_prefix, "md_highlight: 标题/引用/列表/表格前缀", {
     MdHighlighter h;
@@ -243,7 +239,7 @@ REGISTER_TEST(md_highlight_block_prefix, "md_highlight: 标题/引用/列表/表
     return true;
 })
 
-// ---- runsForLine：行内 token ----
+// runsForLine：行内 token
 
 REGISTER_TEST(md_highlight_inline_tokens, "md_highlight: 代码/粗体/斜体/链接字节区间", {
     MdHighlighter h;
@@ -273,7 +269,7 @@ REGISTER_TEST(md_highlight_inline_tokens, "md_highlight: 代码/粗体/斜体/�
         DOCTEST_CHECK_EQ(hl(h, "未闭合 `代码").size(), static_cast<size_t>(0));
     }
 
-    // 粗体：** 标记弱化，内容保持正文色（Phase D weight run 前的设计取舍）
+    // 粗体：** 标记弱化，内容保持正文色
     {
         const std::string line = "**重要** 提示";
         const auto runs = hl(h, line);
@@ -288,7 +284,7 @@ REGISTER_TEST(md_highlight_inline_tokens, "md_highlight: 代码/粗体/斜体/�
         DOCTEST_CHECK_EQ(hl(h, "**未闭合").size(), static_cast<size_t>(0));
     }
 
-    // 斜体：标记弱化 + 内容 info 色（无 italic 字形用颜色替代，§6.2）
+    // 斜体：标记弱化 + 内容 info 色（无 italic 字形，用颜色区分）
     {
         const std::string line = "前 *斜体字* 后";
         const auto runs = hl(h, line);
@@ -342,7 +338,7 @@ REGISTER_TEST(md_highlight_inline_tokens, "md_highlight: 代码/粗体/斜体/�
     return true;
 })
 
-// ---- runsForLine：围栏跨行 + 软换行段防误判 ----
+// runsForLine：围栏跨行 + 软换行段防误判
 
 REGISTER_TEST(md_highlight_fence_and_wrap, "md_highlight: 围栏跨行状态 / 软换行段不误判", {
     MdHighlighter h;
@@ -399,7 +395,7 @@ REGISTER_TEST(md_highlight_fence_and_wrap, "md_highlight: 围栏跨行状态 / �
     return true;
 })
 
-// ---- 色表映射 ----
+// 色表映射
 
 REGISTER_TEST(md_highlight_theme_colors, "md_highlight: §6.2 色表 → theme token", {
     const auto dark = core::theme::current();  // 默认 Dark
@@ -412,7 +408,7 @@ REGISTER_TEST(md_highlight_theme_colors, "md_highlight: §6.2 色表 → theme t
     return true;
 })
 
-// ---- 接线：markdown_module 编辑器 lineStyles + 主题切换 ----
+// 接线：markdown_module 编辑器 lineStyles + 主题切换
 
 REGISTER_TEST(md_highlight_wiring,
               "md_highlight: 编辑器 lineStyles 接线 + 主题切换重高亮", {
@@ -468,7 +464,7 @@ REGISTER_TEST(md_highlight_wiring,
     DOCTEST_CHECK(colorEq(line1->textRuns[0].color,
                           core::theme::current().colors.success));
 
-    // 主题切换：styleRevision++ 且可视行 runs 换色（Phase B 语义）
+    // 主题切换：styleRevision++ 且可视行 runs 换色
     const auto revBefore = ui.state<InputState>(kEditorInputId).styleRevision;
     const std::string themeBefore = core::theme::currentThemeName();
     core::theme::setLight();
@@ -493,7 +489,7 @@ REGISTER_TEST(md_highlight_wiring,
     return true;
 })
 
-// ---- 性能冒烟：万行文档可视窗重高亮耗时记录（设计 §7 预算 8ms 仅打印，不设红线）----
+// 性能冒烟：万行文档可视窗重亮耗时记录（只 printf 打印，不设墙钟红线）
 
 REGISTER_TEST(md_highlight_perf,
               "md_highlight: 万行文档可视窗重高亮耗时记录（不设墙钟红线）", {
@@ -510,7 +506,7 @@ REGISTER_TEST(md_highlight_perf,
     MdHighlighter h;
     h.setColors(testColors());
 
-    // 可视窗 27 行（Phase B 探针同规格 500px / 19.2 行高），钉在文档中部。
+    // 可视窗 27 行（探针同规格 500px / 19.2 行高），钉在文档中部。
     // 预计算窗口内各硬行的行首偏移（模拟 input 的可视行坐标）。
     const int firstLine = 5000;
     std::vector<size_t> starts;
@@ -565,7 +561,7 @@ REGISTER_TEST(md_highlight_perf,
     DOCTEST_CHECK(firstTotal > 0);
     // 原 `worst < 8.0` 墙钟红线在多 worktree 并发编译负载下会 flake，改为
     // 非时间断言：证明 100 轮击键重高亮每轮都真的跑到了（可视窗产出 run），
-    // 耗时仍由上面的 printf 记录，供人工对照设计 §7 的 8ms 预算
+    // 耗时由上面的 printf 记录，供人工对照 8ms 预算
     DOCTEST_CHECK(roundRuns >= static_cast<size_t>(kRounds));
     return true;
 })

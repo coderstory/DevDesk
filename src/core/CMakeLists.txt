@@ -7,8 +7,10 @@ add_library(devdesk_core STATIC
     router.cpp
     proxy_stats.cpp
     database.cpp
+    app_config.cpp
     window_layout.cpp
     atomic_write.cpp
+    tool.cpp
 )
 
 # 平台适配实现按平台选择编译（接口隔离：头文件平台无关，实现 *_win/_macos/_posix，
@@ -19,6 +21,7 @@ if(WIN32)
         time_win.cpp
         atomic_write_win.cpp
         window_layout_win.cpp
+        file_perms_win.cpp              # Windows 无需 POSIX 权限位（DPAPI 保护内容）
     )
 elseif(APPLE)
     target_sources(devdesk_core PRIVATE
@@ -26,6 +29,7 @@ elseif(APPLE)
         time_posix.cpp
         atomic_write_posix.cpp
         window_layout_macos.cpp
+        file_perms_posix.cpp            # 与 Linux 同实现（chmod 0600），共用 _posix
     )
 else()
     target_sources(devdesk_core PRIVATE
@@ -33,6 +37,7 @@ else()
         time_posix.cpp
         atomic_write_posix.cpp
         window_layout_posix.cpp
+        file_perms_posix.cpp
     )
 endif()
 

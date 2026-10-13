@@ -1,14 +1,7 @@
 // src/module_claude_proxy/json_scan.h
-// 顶层 JSON 字段的原始字节区间扫描（CPX-11：合并两套重复扫描器）
-//
-// 只做「顶层 key → 值的原始字节区间 [begin, end)」的定位：不做类型判定、
-// 不做全量反序列化。两个消费方各取所需：
-//   - streaming_proxy::wantsStream：看区间里的文本是不是字面量 true
-//   - upstream_dialect::findTopLevelStringSpan：先判区间首字节是不是 '"'，
-//     命中后做 [1M] 定点替换（不整包 parse + 重新序列化，避免扰动其余字节）
-//
-// 为什么全 inline：本头被多个 TU 包含——非 inline 会重复定义；而
-// Debug 下 -Wall -Wextra -Werror，匿名 / static 函数会撞 -Wunused-function。
+// 顶层 JSON 字段原始字节区间扫描：只定位「顶层 key → 值的字节区间」，不做类型
+// 判定、不做全量反序列化。消费方：streaming_proxy::wantsStream、upstream_dialect
+// 的 [1M] 定点替换。全 inline：多 TU。
 #pragma once
 
 #include <cctype>
@@ -91,10 +84,8 @@ inline bool skipJsonValue(const std::string& s, size_t& i) {
     return true;
 }
 
-// 在顶层对象里找 key，回填其值的原始字节区间 [begin, end)（begin 已跳过
-// key 与 ':' 之后的空白）。**不做类型判定**——值是什么类型、是不是合法
-// JSON 字面量，由调用方读区间内容自行决定（如 '"' 开头才算字符串）。
-// 找不到该 key / 结构非法 / 值缺失 → false（begin/end 不写）。
+// 在顶层对象里找 key，回填其值的原始字节区间 [begin, end)（begin 已跳 ':' 后空白）。
+// 不做类型判定（由调用方读区间自决）；找不到 / 结构非法 → false（begin/end 不写）。
 inline bool findTopLevelValueSpan(const std::string& s, const std::string& key,
                                   size_t& begin, size_t& end) {
     size_t i = 0;

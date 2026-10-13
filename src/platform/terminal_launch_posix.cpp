@@ -1,9 +1,10 @@
 // src/platform/terminal_launch_posix.cpp
-// 其他平台（Linux 等）：非目标平台，明确不支持（spec §10.5）
+// 其他平台（Linux 等）：非目标平台，明确不支持。
 #include "terminal_launch.h"
 
 #include <cstdlib>
 #include <filesystem>
+#include <system_error>
 
 namespace platform::terminal {
 

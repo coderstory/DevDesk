@@ -1,6 +1,7 @@
 add_library(devdesk_module_todo STATIC
     todo_module.cpp
     todo_service.cpp
+    todo_tools.cpp
     todo_ui_board.cpp
     todo_ui_dialogs.cpp
     todo_view_state.cpp

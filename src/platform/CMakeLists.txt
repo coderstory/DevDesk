@@ -2,6 +2,7 @@ add_library(devdesk_platform STATIC
     http_client.cpp
     http_server.cpp
     json.cpp
+    utf8.cpp                            # UTF-8 良构校验/清洗（M2 审计 F1：跨模块纯函数）
     file_open_common.cpp
     terminal_launch_common.cpp          # 跨平台纯函数（三支之外，无条件编译）
 )
@@ -11,29 +12,35 @@ add_library(devdesk_platform STATIC
 if(WIN32)
     target_sources(devdesk_platform PRIVATE
         keychain_win.cpp
+        credential_protection_win.cpp  # DPAPI 密文入库（不得降级明文）
         file_open_win.cpp
         system_theme_win.cpp
         file_watcher_win.cpp
         http_client_ca_win.cpp
         terminal_launch_win.cpp
+        tray_icon_win.cpp              # 托盘图标走真 .ico（ExtractIconExW 不认 PNG）
     )
 elseif(APPLE)
     target_sources(devdesk_platform PRIVATE
         keychain_macos.cpp
+        credential_protection_posix.cpp  # macOS 与 Linux 同实现，共用 _posix
         file_open_macos.cpp
         system_theme_macos.cpp
         file_watcher_macos.cpp
         http_client_ca_posix.cpp
         terminal_launch_macos.cpp
+        tray_icon_macos.cpp            # 托盘图标走 22×22 template 蒙版（不变）
     )
 else()
     target_sources(devdesk_platform PRIVATE
         keychain_posix.cpp
+        credential_protection_posix.cpp
         file_open_posix.cpp
         system_theme_posix.cpp
         file_watcher_stub.cpp
         http_client_ca_posix.cpp
         terminal_launch_posix.cpp
+        tray_icon_posix.cpp            # 其它 POSIX 兜底：返回空串（用应用图标）
     )
 endif()
 

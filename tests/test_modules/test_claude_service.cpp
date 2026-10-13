@@ -1,9 +1,11 @@
 // tests/test_modules/test_claude_service.cpp
-// ClaudeService 单元测试：Profile CRUD + Keychain + 激活 + 连通性 + 共享配置片段
-//
-// 测试环境隔离：
-//   - 数据库用临时文件（std::filesystem::temp_directory_path）
-//   - Keychain service 用 "DevDeskTestClaudeService"，不污染生产数据
+// ClaudeService 单测：Profile CRUD / 凭据两段写补偿 / settings.json 反向同步 / 代理前置校验。
+// 跨文件前提：
+//   - 凭据本体只落 claude_profiles.api_key_encrypted，platform::keychain 已不是凭据来源；
+//     生产侧对它的唯一写操作是 cleanupOrphanKeychainEntries 里那次 deleteSecretsNotIn。
+//   - sidecar（托管键表）是 app_config 表的一行而非文件，故 setSettingsSyncPaths 的 db 必须是已 migrate 的连接。
+//   - Keychain service 名生产走 keychainServiceForDataRoot 按数据根派生；本文件一律显式传固定串，绕开派生。
+//   - 数据库走临时文件（temp_directory_path），Keychain service 固定 "DevDeskTestClaudeService"，不碰生产数据。
 #include "doctest.h"
 #include "test_support.h"
 
@@ -14,6 +16,7 @@
 #include "core/sqlite_db.h"
 #include "platform/http_server.h"
 #include "platform/json.h"
+#include "platform/credential_protection.h"
 #include "platform/keychain.h"
 #include "provider_config.h"
 #include "settings_sync.h"
@@ -34,6 +37,10 @@
 #include <thread>
 #include <vector>
 
+#if !defined(_WIN32)
+#include <sys/stat.h>   // run-settings 权限位断言
+#endif
+
 namespace {
 
 constexpr const char* kTestKeychainService = "DevDeskTestClaudeService";
@@ -41,17 +48,16 @@ constexpr const char* kTestKeychainService = "DevDeskTestClaudeService";
 // 临时 db 文件名前缀（共享工厂 test_support::tempDbPath / TestDb 的第一实参）
 constexpr const char* kDbPrefix = "devdesk_test_claude_";
 
-// 清某个 profile 的测试密钥 / 头名大小写不敏感取头与计数：共享实现
-// （原 cleanupKey / headerCI / countCI 同款合流，TIN-06b；service 传本文件常量）
+// 头名大小写不敏感取头与计数：共享实现
 using test_support::countCI;
 using test_support::DataRootEnv;
 using test_support::headerCI;
 using test_support::HeaderMap;
 
-// 测试用：作用域内把 http_proxy 指到本地 mock、清空 no_proxy，析构还原原值。
-// 用途：让 baseUrl host 为 opencode.ai 的探测请求仍落到本地 mock——curl 走
-// 代理时请求行是绝对 URI（GET http://opencode.ai/... HTTP/1.1），不解析该
-// 域名，请求不出本机（libcurl 从环境变量取代理，send() 未显式设置 CURLOPT_PROXY）。
+// 作用域内把 http_proxy 指到本地 mock、清空 no_proxy，析构还原原值。
+// 用途：让 baseUrl host 为 opencode.ai 的探测请求仍落到本地 mock——curl 走代理时请求行是绝对 URI
+// （GET http://opencode.ai/... HTTP/1.1），不解析该域名，请求不出本机。
+// send() 未显式设 CURLOPT_PROXY，代理只从环境变量取，所以只能靠改 env 来劫持。
 struct ScopedProxyEnv {
     std::string savedProxy;
     std::string savedNoProxy;
@@ -80,24 +86,23 @@ struct ScopedProxyEnv {
     ScopedProxyEnv& operator=(const ScopedProxyEnv&) = delete;
 };
 
-// 接管通道路径用的临时文件（settings.json + sidecar；绝不碰真实 ~/.claude）。
-// runProfile 零全局回归闸（D-1）用它断言「settings.json 未被写、sidecar 未建」。
+// 接管通道用的临时 settings.json 文件（绝不碰真实 ~/.claude）。
+// runProfile 零全局回归闸用它断言「settings.json 未被写」。
+// sidecar 是 app_config 表的一行而不是文件，故本结构**不持有 sidecar 路径**，只持一个已 migrate 的连接供 paths() 填 db。
 struct TempSyncPaths {
     std::filesystem::path settings;
-    std::filesystem::path sidecar;
+    core::data::SqliteDb* db = nullptr;
 
-    explicit TempSyncPaths(const std::string& tag) {
+    TempSyncPaths(const std::string& tag, core::data::SqliteDb& database) {
         const std::string base = test_support::tempDbPath(kDbPrefix, tag).string();   // 复用同一 tempPath 工厂
         settings = base + ".settings.json";
-        sidecar = base + ".sidecar.json";
+        db = &database;
         std::error_code ec;
         std::filesystem::remove(settings, ec);
-        std::filesystem::remove(sidecar, ec);
     }
     ~TempSyncPaths() {
         std::error_code ec;
         std::filesystem::remove(settings, ec);
-        std::filesystem::remove(sidecar, ec);
     }
 
     void writeSettings(const std::string& content) const {
@@ -106,7 +111,7 @@ struct TempSyncPaths {
     module::claude::settings_sync::Paths paths() const {
         module::claude::settings_sync::Paths p;
         p.settingsFile = settings;
-        p.sidecarFile = sidecar;
+        p.db = db;
         return p;
     }
 };
@@ -118,20 +123,19 @@ std::string readFileToString(const std::filesystem::path& p) {
                        std::istreambuf_iterator<char>());
 }
 
-// 反向同步（M3）测试基建：临时 settings.json 目录（共享头 test_support::TempDir，
-// 前缀沿用原样；绝不碰真实 ~/.claude）
 constexpr const char* kRevTempDirPrefix = "devdesk_test_claude_rev_";
 
-module::claude::settings_sync::Paths makeSyncPaths(const test_support::TempDir& d) {
+// sidecar 在 app_config 表里，paths() 必须一并拿到已 migrate 的连接
+// （测试侧一律用同一个 tdb，避免各用例各开一库）。
+module::claude::settings_sync::Paths makeSyncPaths(const test_support::TempDir& d,
+                                                   core::data::SqliteDb& db) {
     module::claude::settings_sync::Paths p;
     p.settingsFile = d.file("settings.json");
-    p.sidecarFile = d.file("snapshot.json");
+    p.db = &db;
     return p;
 }
 
 } // namespace
-
-// ---- 1. createProfile + getProfile 往返 ----
 
 REGISTER_TEST(claude_service_create_get_profile,
               "claude_service: createProfile + getProfile 往返", {
@@ -148,15 +152,12 @@ REGISTER_TEST(claude_service_create_get_profile,
     DOCTEST_CHECK_EQ(p.baseUrl, std::string("https://api.anthropic.com"));
     DOCTEST_CHECK_EQ(p.model, std::string("claude-sonnet-4-5"));
     DOCTEST_CHECK_FALSE(p.isActive);
-    // API key 明文绝不能出现在返回的 Profile 中
     DOCTEST_CHECK(p.apiKeyPlain.empty());
-    // hint 应脱敏（前 6 + *** + 后 4）
+    // hint = 前 6 + *** + 尾 4
     DOCTEST_CHECK(p.apiKeyHint.find("***") != std::string::npos);
-    DOCTEST_CHECK(p.apiKeyCheck.size() == 8);
-    DOCTEST_CHECK_EQ(p.keychainAccount, std::string("claude:") +
-                                        std::to_string(p.id));
+    // api_key_check = 全量 SHA256 hex（64 字符），不是短前缀
+    DOCTEST_CHECK_EQ(p.apiKeyCheck.size(), static_cast<size_t>(64));
 
-    // getProfile 应返回除 apiKeyPlain 外全部字段
     auto got = svc.getProfile(p.id);
     DOCTEST_REQUIRE(got.isOk());
     DOCTEST_CHECK_EQ(got.value().name, p.name);
@@ -173,8 +174,6 @@ REGISTER_TEST(claude_service_create_get_profile,
     return true;
 })
 
-// ---- 2. listProfiles ----
-
 REGISTER_TEST(claude_service_list_profiles,
               "claude_service: listProfiles 返回全部 profile", {
     test_support::TestDb tdb(kDbPrefix, "list");
@@ -190,17 +189,12 @@ REGISTER_TEST(claude_service_list_profiles,
     auto list = svc.listProfiles();
     DOCTEST_REQUIRE(list.isOk());
     DOCTEST_CHECK_EQ(list.value().size(), 2u);
-    // 不应有任何 apiKeyPlain
     for (const auto& p : list.value()) {
         DOCTEST_CHECK(p.apiKeyPlain.empty());
     }
 
-    test_support::cleanupProfileKey(kTestKeychainService, a.value().id);
-    test_support::cleanupProfileKey(kTestKeychainService, b.value().id);
     return true;
 })
-
-// ---- 3. setActiveProfile + getActiveProfile ----
 
 REGISTER_TEST(claude_service_set_active_profile,
               "claude_service: setActiveProfile 切换激活（唯一）", {
@@ -214,12 +208,10 @@ REGISTER_TEST(claude_service_set_active_profile,
     DOCTEST_REQUIRE(a.isOk());
     DOCTEST_REQUIRE(b.isOk());
 
-    // 初始无激活 → NoActiveProfile
     auto none = svc.getActiveProfile();
     DOCTEST_CHECK(none.isFail());
     DOCTEST_CHECK(none.errorCode() == core::ErrorCode::NoActiveProfile);
 
-    // 激活 A
     DOCTEST_REQUIRE(svc.setActiveProfile(a.value().id).isOk());
     auto actA = svc.getActiveProfile();
     DOCTEST_REQUIRE(actA.isOk());
@@ -233,7 +225,6 @@ REGISTER_TEST(claude_service_set_active_profile,
     DOCTEST_CHECK_EQ(actB.value().id, b.value().id);
     DOCTEST_CHECK_EQ(actB.value().name, std::string("Active-B"));
 
-    // 全部 profile 中只有 1 个 is_active
     auto list = svc.listProfiles();
     DOCTEST_REQUIRE(list.isOk());
     int activeCount = 0;
@@ -242,7 +233,6 @@ REGISTER_TEST(claude_service_set_active_profile,
     }
     DOCTEST_CHECK_EQ(activeCount, 1);
 
-    // 再次激活 A，回到 A
     DOCTEST_REQUIRE(svc.setActiveProfile(a.value().id).isOk());
     auto actA2 = svc.getActiveProfile();
     DOCTEST_REQUIRE(actA2.isOk());
@@ -258,14 +248,12 @@ REGISTER_TEST(claude_service_set_active_profile,
     return true;
 })
 
-// ---- 3b. 首建自动激活（产品审计 2026-09-23 [6]） ----
-
 REGISTER_TEST(claude_service_first_create_auto_activates,
               "claude_service: createProfile 首建自动激活 + 不抢占 + 503 指引文案", {
     test_support::TestDb tdb(kDbPrefix, "autoactivate");
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
 
-    // 1) 默认参数保持旧行为：不激活（既有调用方/测试零影响）
+    // 1) 省略 activateIfNoneActive → 不激活（默认 false，既有调用方零影响）
     auto legacy = svc.createProfile("Legacy", "https://legacy.example.com",
                                     "sk-ant-legacy-0001", "m");
     DOCTEST_REQUIRE(legacy.isOk());
@@ -273,7 +261,7 @@ REGISTER_TEST(claude_service_first_create_auto_activates,
     DOCTEST_CHECK(svc.getActiveProfile().isFail());
     test_support::cleanupProfileKey(kTestKeychainService, legacy.value().id);
 
-    // 2) activateIfNoneActive=true 且无激活 → 自动激活，返回 isActive=true
+    // 2) activateIfNoneActive=true 且无激活 → 自动激活
     auto first = svc.createProfile("First", "https://first.example.com",
                                    "sk-ant-first-0002", "m", true);
     DOCTEST_REQUIRE(first.isOk());
@@ -282,7 +270,7 @@ REGISTER_TEST(claude_service_first_create_auto_activates,
     DOCTEST_REQUIRE(act.isOk());
     DOCTEST_CHECK_EQ(act.value().id, first.value().id);
 
-    // 3) 已有激活 → 不抢占（返回值 isActive=false，UI 走「点击启用」文案）
+    // 3) 已有激活 → 不抢占（返回 isActive=false，UI 据此显示「点击启用」）
     auto second = svc.createProfile("Second", "https://second.example.com",
                                     "sk-ant-second-0003", "m", true);
     DOCTEST_REQUIRE(second.isOk());
@@ -291,7 +279,7 @@ REGISTER_TEST(claude_service_first_create_auto_activates,
     DOCTEST_REQUIRE(actStill.isOk());
     DOCTEST_CHECK_EQ(actStill.value().id, first.value().id);
 
-    // 4) 无激活时错误 message 带可操作指引（503 body 原样透传此文案）
+    // 4) 无激活时错误 message 带可操作指引；503 路径原样透传同一份文案
     auto del = svc.deleteProfile(first.value().id);
     DOCTEST_REQUIRE(del.isOk());
     auto none = svc.getActiveProfile();
@@ -303,18 +291,15 @@ REGISTER_TEST(claude_service_first_create_auto_activates,
     return true;
 })
 
-// ---- 3c. 配置代理端口（产品审计 2026-09-23 [14]） ----
-
 REGISTER_TEST(claude_service_configured_proxy_port,
               "claude_service: setConfiguredProxyPort 默认/钳制 + 换端口重启保 token", {
     test_support::TestDb tdb(kDbPrefix, "cfgport");
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
 
-    // 默认 = 历史硬编码 8888
     DOCTEST_CHECK_EQ(svc.configuredProxyPort(), 8888);
     svc.setConfiguredProxyPort(9000);
     DOCTEST_CHECK_EQ(svc.configuredProxyPort(), 9000);
-    // 非法值回落默认（0 / 负数 / 越界）；边界保留
+    // 非法值回落默认（0 / 负数 / 越界），上界 65535 保留
     svc.setConfiguredProxyPort(0);
     DOCTEST_CHECK_EQ(svc.configuredProxyPort(), 8888);
     svc.setConfiguredProxyPort(-5);
@@ -324,8 +309,8 @@ REGISTER_TEST(claude_service_configured_proxy_port,
     svc.setConfiguredProxyPort(65535);
     DOCTEST_CHECK_EQ(svc.configuredProxyPort(), 65535);
 
-    // 设置页 applyProxyPort 的运行期原语：stop→start 换端口
-    //（测试用 port=0 让 OS 分配，两次 start 即端口变更）
+    // 设置页 applyProxyPort 的运行期原语就是 stop→start 换端口；这里传 port=0 让 OS 分配，
+    // 两次 start 拿到不同端口即可证明端口确实换过。
     auto first = svc.startProxy("127.0.0.1", 0);
     DOCTEST_REQUIRE(first.isOk());
     const int portA = first.value();
@@ -336,8 +321,6 @@ REGISTER_TEST(claude_service_configured_proxy_port,
     svc.stopProxy();
     return true;
 })
-
-// ---- 4. loadApiKey（从 Keychain 读明文） ----
 
 REGISTER_TEST(claude_service_load_api_key,
               "claude_service: loadApiKey 从 Keychain 读明文", {
@@ -354,7 +337,8 @@ REGISTER_TEST(claude_service_load_api_key,
     DOCTEST_REQUIRE(key.isOk());
     DOCTEST_CHECK_EQ(key.value(), secret);
 
-    // 明文 key 不落 SQLite：直接查表确认 api_key_hint / api_key_check 都不含明文
+    // 反重构：绕开 service 直接查表，是为了确认明文 key 不落 SQLite 的**存储列**——
+    // 只调 loadApiKey 看不到这一点。
     auto prep = tdb.handle().prepare(
         "SELECT api_key_hint, api_key_check FROM claude_profiles WHERE id = ?");
     DOCTEST_REQUIRE(prep.isOk());
@@ -366,14 +350,11 @@ REGISTER_TEST(claude_service_load_api_key,
     const auto check = rows.value()[0].getString("api_key_check").value();
     DOCTEST_CHECK(hint.find(secret) == std::string::npos);
     DOCTEST_CHECK(check.find(secret) == std::string::npos);
-    // hint 应含末 4 位
     DOCTEST_CHECK(hint.find("key") != std::string::npos);
 
     test_support::cleanupProfileKey(kTestKeychainService, id);
     return true;
 })
-
-// ---- 5. updateProfile ----
 
 REGISTER_TEST(claude_service_update_profile,
               "claude_service: updateProfile 改字段 + 可选换 key", {
@@ -385,7 +366,7 @@ REGISTER_TEST(claude_service_update_profile,
     DOCTEST_REQUIRE(created.isOk());
     module::claude::Profile p = created.value();
 
-    // 1. 只改 name / url / model（apiKeyPlain 留空 → 不换 key）
+    // 1) 只改 name / url / model，apiKeyPlain 留空 → 不换 key
     p.name = "After";
     p.baseUrl = "https://new.example.com";
     p.model = "claude-opus-4-5";
@@ -397,12 +378,11 @@ REGISTER_TEST(claude_service_update_profile,
     DOCTEST_CHECK_EQ(got.value().name, std::string("After"));
     DOCTEST_CHECK_EQ(got.value().baseUrl, std::string("https://new.example.com"));
     DOCTEST_CHECK_EQ(got.value().model, std::string("claude-opus-4-5"));
-    // key 未变
     auto key1 = svc.loadApiKey(p.id);
     DOCTEST_REQUIRE(key1.isOk());
     DOCTEST_CHECK_EQ(key1.value(), std::string("sk-ant-old-1111"));
 
-    // 2. 换 key（apiKeyPlain 非空）
+    // 2) 换 key（apiKeyPlain 非空）
     module::claude::Profile p2 = got.value();
     p2.apiKeyPlain = "sk-ant-new-2222";
     auto upd2 = svc.updateProfile(p2);
@@ -412,7 +392,7 @@ REGISTER_TEST(claude_service_update_profile,
     DOCTEST_REQUIRE(key2.isOk());
     DOCTEST_CHECK_EQ(key2.value(), std::string("sk-ant-new-2222"));
 
-    // api_key_check 应随 key 变化
+    // api_key_check 是密钥的纯函数，随 key 变化
     auto got2 = svc.getProfile(p.id);
     DOCTEST_REQUIRE(got2.isOk());
     DOCTEST_CHECK(got2.value().apiKeyCheck != p.apiKeyCheck);
@@ -421,10 +401,8 @@ REGISTER_TEST(claude_service_update_profile,
     return true;
 })
 
-// ---- 5b. CPX-07：两段写失败补偿（审计「Keychain + DB 两段写」条目） ----
-
 REGISTER_TEST(claude_service_update_db_fail_rolls_back_keychain,
-              "claude_service: updateProfile DB 写失败按旧值回写 Keychain（CPX-07）", {
+              "claude_service: updateProfile DB 写失败按旧值回写 Keychain", {
     test_support::TestDb tdb(kDbPrefix, "updcomp");
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
 
@@ -436,10 +414,8 @@ REGISTER_TEST(claude_service_update_db_fail_rolls_back_keychain,
     DOCTEST_REQUIRE(b.isOk());
     const int64_t bid = b.value().id;
 
-    // 失败注入：把 B 的 name 改成 A 的 name → UPDATE 撞 claude_profiles.name 的
-    // UNIQUE 约束 = 段二（DB 写）确定性失败，断言「段一已写成新密钥、段二失败后
-    // 被回写」。刻意不经注入缝（CPX-14 起可用）：本用例的价值就在补偿逻辑走
-    // **真实** Keychain 落盘再回写；Keychain 自身失败的分支见下方 CPX-14 三条用例。
+    // 失败注入：把 B 的 name 改成 A 的 name → UPDATE 撞 claude_profiles.name 的 UNIQUE 约束 = 段二（DB 写）确定性失败。
+    // 刻意不经注入缝：本用例的价值就在补偿逻辑走**真实**凭据存储落盘再回写；改走注入缝会让它与下一组用例同形、丧失鉴别力。
     module::claude::Profile pb = b.value();
     pb.name = "NameA";
     pb.apiKeyPlain = "sk-ant-bbb-9999";
@@ -447,21 +423,20 @@ REGISTER_TEST(claude_service_update_db_fail_rolls_back_keychain,
     DOCTEST_CHECK(upd.isFail());
     DOCTEST_CHECK(upd.errorCode() == core::ErrorCode::ProfileAlreadyExists);
 
-    // 补偿生效：Keychain 里是旧密钥，而不是刚写进去的新密钥
+    // 补偿生效：凭据里是旧密钥，而不是刚写进去的新密钥
     auto key = svc.loadApiKey(bid);
     DOCTEST_REQUIRE(key.isOk());
     DOCTEST_CHECK_EQ(key.value(), std::string("sk-ant-bbb-0002"));
 
-    // DB 行一字未改 → 元数据与 Keychain 里的密钥一致
+    // DB 行一字未改 → 元数据与凭据里的密钥一致
     auto got = svc.getProfile(bid);
     DOCTEST_REQUIRE(got.isOk());
     DOCTEST_CHECK_EQ(got.value().name, std::string("NameB"));
     DOCTEST_CHECK_EQ(got.value().apiKeyHint, b.value().apiKeyHint);
     DOCTEST_CHECK_EQ(got.value().apiKeyCheck, b.value().apiKeyCheck);
 
-    // 一致性锚：hint / check 是密钥的纯函数——同一把旧密钥另建一条必须算出相同
-    // 值（证明「元数据 = Keychain 实际值」），新密钥必须算出不同的值（证明本
-    // 断言有鉴别力，不是「怎么写都一样」）
+    // 一致性锚：hint / check 是密钥的纯函数——同一把旧密钥另建一条必须算出相同值（钉「元数据 = 凭据实际值」），
+    // 新密钥必须算出不同值（钉本组断言有鉴别力，否则怎么写都恒等）。
     auto twin = svc.createProfile("Twin", "https://t.example.com",
                                   "sk-ant-bbb-0002", "m");
     DOCTEST_REQUIRE(twin.isOk());
@@ -473,12 +448,11 @@ REGISTER_TEST(claude_service_update_db_fail_rolls_back_keychain,
     DOCTEST_CHECK(got.value().apiKeyHint != other.value().apiKeyHint);
     DOCTEST_CHECK(got.value().apiKeyCheck != other.value().apiKeyCheck);
 
-    // 撞名的那条（A）不受影响
     auto ga = svc.getProfile(a.value().id);
     DOCTEST_REQUIRE(ga.isOk());
     DOCTEST_CHECK_EQ(ga.value().apiKeyHint, a.value().apiKeyHint);
 
-    // 改回原名 + 换 key 仍是正常路径（补偿没有把正常写路径带坏）
+    // 改回原名 + 换 key 走正常路径：补偿没把正常写路径带坏
     pb.name = "NameB";
     pb.apiKeyPlain = "sk-ant-bbb-9999";
     DOCTEST_CHECK(svc.updateProfile(pb).isOk());
@@ -493,20 +467,14 @@ REGISTER_TEST(claude_service_update_db_fail_rolls_back_keychain,
     return true;
 })
 
-// ---- 5c. CPX-14：Keychain 注入缝 + 两段写三条失败分支 ----
-// 背景：TwoPhaseKeyWrite（CPX-07）的补偿路径此前只能靠「DB 写必然失败」（UNIQUE
-// 撞名）间接触发；「Keychain 自身失败」那一支（段一失败 → 回写旧值）根本走不到，
-// 因为 Keychain 是自由函数、没有注入口（见上一条用例里的注记）。CPX-14 在
-// platform/keychain.h 加了最小注入缝（函数指针表 + 单槽位，默认指真实实现），
-// 下面三条用例分别覆盖：段一写失败 / 段二删行失败 / 段二回填失败。
-
+// platform/keychain.h 与 platform/credential_protection.h 各提供一组最小注入缝（函数指针表 + 单槽位，默认指真实实现），
+// 否则「凭据段自身失败」那一支（段一失败 → 回写旧值）根本走不到。
 namespace {
 
 // 假 Keychain：密钥存内存 map（service + 0x1F + account → secret）。
-// store 的失败注入语义是「**先落值、再报失败**」：各平台存储不承诺失败时旧值
-// 完好（见 TwoPhaseKeyWrite::writeKey 的注释——失败也可能已破坏旧值），补偿
-// 回写正是为这种情形准备的。若假实现「失败且不落值」，用例就丧失鉴别力
-//（不补偿也照样读回旧值，反证跑不出 FAIL）。
+// store 的失败注入语义是「**先落值、再报失败**」：各平台存储不承诺失败时旧值完好
+// （见 TwoPhaseKeyWrite::writeKey 的注释——失败也可能已破坏旧值），补偿回写正是为这种情形准备的。
+// 反重构：若把假实现改成「失败且不落值」，不补偿也照样读回旧值，下面几条用例全部丧失鉴别力（跑不出 FAIL）。
 struct FakeKeychain {
     static constexpr const char* kStoreFailSentinel = "INJECT-STORE-FAIL";
 
@@ -527,8 +495,7 @@ struct FakeKeychain {
     }
 };
 
-// 函数指针表不能带捕获 → 假实现经文件级指针取当前实例（用例内单实例，生命周期
-// 由 ScopedFakeKeychain 管）
+// 函数指针表不能带捕获 → 假实现经文件级指针取当前实例（用例内单实例，生命周期由 ScopedFakeKeychain 管）
 FakeKeychain* g_fakeKeychain = nullptr;
 
 core::Result<void> fakeStore(const std::string& service,
@@ -550,7 +517,6 @@ core::Result<std::string> fakeLoad(const std::string& service,
     FakeKeychain& f = *g_fakeKeychain;
     const auto it = f.data.find(FakeKeychain::keyOf(service, account));
     if (it == f.data.end()) {
-        // 与真实实现同语义：不存在 → NotFound
         return core::Result<std::string>::fail(core::ErrorCode::NotFound,
                                                "Keychain item not found");
     }
@@ -587,8 +553,7 @@ core::Result<std::vector<std::string>> fakeDeleteNotIn(
     return core::Result<std::vector<std::string>>::ok(std::move(removed));
 }
 
-// RAII：安装假后端，析构恢复真实后端——用例体内 fail-fast（return false）或
-// 抛异常都不会把假后端泄漏给后续用例
+// RAII：安装假后端，析构恢复真实后端——用例体内 fail-fast（return false）或抛异常都不会把假后端泄漏给后续用例
 struct ScopedFakeKeychain {
     FakeKeychain fake;
     platform::keychain::Backend table;
@@ -608,60 +573,102 @@ struct ScopedFakeKeychain {
     ScopedFakeKeychain& operator=(const ScopedFakeKeychain&) = delete;
 };
 
+// 「段一写失败」的点 = platform::credential::protect / unprotect，形态与 ScopedFakeKeychain 同款（RAII，析构必复位）。
+core::Result<std::string> failProtect(const std::string&) {
+    return core::Result<std::string>::fail(core::ErrorCode::Internal,
+                                           "注入：protect 失败");
+}
+
+core::Result<std::string> failUnprotect(const std::string&) {
+    return core::Result<std::string>::fail(
+        core::ErrorCode::Internal, "注入：列形态损坏，解不开");
+}
+
+// protect 恒失败（模拟 Windows DPAPI 报错 / 平台保护不可用）
+struct ScopedFailProtect {
+    platform::credential::Backend table;
+    const platform::credential::Backend* prev;
+    ScopedFailProtect() {
+        table = platform::credential::Backend{
+            &failProtect, &platform::credential::realUnprotect};
+        prev = platform::credential::setBackendForTest(&table);
+    }
+    ~ScopedFailProtect() { platform::credential::setBackendForTest(prev); }
+    ScopedFailProtect(const ScopedFailProtect&) = delete;
+    ScopedFailProtect& operator=(const ScopedFailProtect&) = delete;
+};
+
+// unprotect 恒失败（模拟换机 / 换用户 / 列被篡改）
+struct ScopedFailUnprotect {
+    platform::credential::Backend table;
+    const platform::credential::Backend* prev;
+    ScopedFailUnprotect() {
+        table = platform::credential::Backend{
+            &platform::credential::realProtect, &failUnprotect};
+        prev = platform::credential::setBackendForTest(&table);
+    }
+    ~ScopedFailUnprotect() { platform::credential::setBackendForTest(prev); }
+    ScopedFailUnprotect(const ScopedFailUnprotect&) = delete;
+    ScopedFailUnprotect& operator=(const ScopedFailUnprotect&) = delete;
+};
+
 } // namespace
 
-// 段一（Keychain 写）失败 → 按捕获到的旧值回写
+// 段一（凭据三列）失败 → 旧值完好（写入前就失败，不留半截）
 REGISTER_TEST(claude_cpx14_stage1_key_write_fail_restores_old,
-              "claude_service: CPX-14 段一 Keychain 写失败回写旧值", {
+              "claude_service: 段一保护失败 → 旧密钥完好", {
     test_support::TestDb tdb(kDbPrefix, "cpx14stage1");
-    ScopedFakeKeychain kc;
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
 
     auto created = svc.createProfile("Outer", "https://a.example.com",
                                      "sk-ant-old-0001", "m");
     DOCTEST_REQUIRE(created.isOk());
     const int64_t id = created.value().id;
-    const std::string account = created.value().keychainAccount;
-    DOCTEST_CHECK_EQ(kc.fake.get(kTestKeychainService, account),
-                     std::string("sk-ant-old-0001"));
 
-    // 注入：新密钥含哨兵 → 假后端落值后报失败 → writeKey 内部按旧值回写
-    module::claude::Profile p = created.value();
-    p.apiKeyPlain = std::string("sk-ant-new-0002-") +
-                    FakeKeychain::kStoreFailSentinel;
-    auto upd = svc.updateProfile(p);
-    DOCTEST_CHECK(upd.isFail());
+    // 注入 protect 失败；旧值 = 当前凭据，先捕获
+    {
+        ScopedFailProtect cred;
+        module::claude::Profile p = created.value();
+        p.apiKeyPlain = "sk-ant-new-0002";
+        auto upd = svc.updateProfile(p);
+        DOCTEST_CHECK(upd.isFail());
+    }
 
-    // 补偿生效：Keychain 里是旧值，而不是刚写坏的新值
-    DOCTEST_CHECK_EQ(kc.fake.get(kTestKeychainService, account),
-                     std::string("sk-ant-old-0001"));
-    // 段一失败即返回，段二没跑过：DB 元数据与旧密钥仍一致
+    // 段一在落任何字节之前失败 → 旧值**压根没被动过**（比「写坏再回写」更强）
+    auto key = svc.loadApiKey(id);
+    DOCTEST_REQUIRE(key.isOk());
+    DOCTEST_CHECK_EQ(key.value(), std::string("sk-ant-old-0001"));
+    // 段二没跑过：DB 元数据与旧密钥仍一致
     auto got = svc.getProfile(id);
     DOCTEST_REQUIRE(got.isOk());
     DOCTEST_CHECK_EQ(got.value().apiKeyCheck, created.value().apiKeyCheck);
     DOCTEST_CHECK_EQ(got.value().apiKeyHint, created.value().apiKeyHint);
 
     // 正常路径未被注入层带坏（同一用例内换回合法密钥 → 写入成功）
-    p.apiKeyPlain = "sk-ant-new-0002";
-    DOCTEST_CHECK(svc.updateProfile(p).isOk());
-    DOCTEST_CHECK_EQ(kc.fake.get(kTestKeychainService, account),
-                     std::string("sk-ant-new-0002"));
+    module::claude::Profile p2 = created.value();
+    p2.apiKeyPlain = "sk-ant-new-0002";
+    DOCTEST_CHECK(svc.updateProfile(p2).isOk());
+    auto key2 = svc.loadApiKey(id);
+    DOCTEST_REQUIRE(key2.isOk());
+    DOCTEST_CHECK_EQ(key2.value(), std::string("sk-ant-new-0002"));
+    // 全量 SHA256 随新密钥重算（证明判据在跟，不是恒等）
+    auto got2 = svc.getProfile(id);
+    DOCTEST_REQUIRE(got2.isOk());
+    DOCTEST_CHECK_NE(got2.value().apiKeyCheck, created.value().apiKeyCheck);
+    DOCTEST_CHECK_EQ(got2.value().apiKeyCheck.size(), static_cast<size_t>(64));
     return true;
 })
 
-// 段二（DB 删行）失败 → 密钥已删时补偿回写 + 行保留可重试
+// 段二（DB 删行）失败 → 凭据已清时补偿回写 + 行保留可重试
 REGISTER_TEST(claude_cpx14_delete_stage2_fail_restores_key,
-              "claude_service: CPX-14 段二删行失败回写已删密钥", {
+              "claude_service: 段二删行失败回写已清凭据", {
     test_support::TestDb tdb(kDbPrefix, "cpx14delstage2");
-    ScopedFakeKeychain kc;
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
 
     auto created = svc.createProfile("Victim", "https://v.example.com",
                                      "sk-ant-victim-0003", "m");
     DOCTEST_REQUIRE(created.isOk());
     const int64_t id = created.value().id;
-    const std::string account = created.value().keychainAccount;
-    DOCTEST_REQUIRE(kc.fake.has(kTestKeychainService, account));
 
     // 段二注入失败：BEFORE DELETE 触发器 RAISE(ABORT) → DELETE 语句确定性失败
     DOCTEST_REQUIRE(tdb.handle().exec(
@@ -671,28 +678,26 @@ REGISTER_TEST(claude_cpx14_delete_stage2_fail_restores_key,
     auto del = svc.deleteProfile(id);
     DOCTEST_CHECK(del.isFail());
 
-    // 段一确实删过密钥（不是「段一失败即中止」）：段二失败后补偿把它写回来
-    DOCTEST_CHECK_EQ(kc.fake.get(kTestKeychainService, account),
-                     std::string("sk-ant-victim-0003"));
+    // 段一确实清过凭据列（不是「段一失败即中止」）：段二失败后补偿把它写回来
+    auto k = svc.loadApiKey(id);
+    DOCTEST_REQUIRE(k.isOk());
+    DOCTEST_CHECK_EQ(k.value(), std::string("sk-ant-victim-0003"));
     // 行保留（用户可重试，密钥没丢）
     DOCTEST_CHECK(svc.getProfile(id).isOk());
 
-    // 撤掉注入源后重试 → 成功，两边都清干净（补偿没把正常路径带坏）
+    // 撤掉注入源后重试成功，行没了（凭据随之不可达）
     DOCTEST_REQUIRE(tdb.handle().exec("DROP TRIGGER cpx14_block_delete").isOk());
     DOCTEST_CHECK(svc.deleteProfile(id).isOk());
     DOCTEST_CHECK(svc.getProfile(id).isFail());
-    DOCTEST_CHECK(!kc.fake.has(kTestKeychainService, account));
     return true;
 })
 
-// 段二（回填 keychain_account）失败 → 删行回滚 + 段一写入的密钥被清掉
-REGISTER_TEST(claude_cpx14_create_stage2_fail_rolls_back,
-              "claude_service: CPX-14 回填 account 失败删行回滚", {
-    test_support::TestDb tdb(kDbPrefix, "cpx14createstage2");
-    ScopedFakeKeychain kc;
+// 建行失败零残留：凭据与元数据同一条 INSERT，天然原子，两条失败路径都不留半截行 / 半截凭据。
+REGISTER_TEST(claude_cpx14_create_fail_no_residue,
+              "claude_service: 建行失败零残留（重名 / 保护失败）", {
+    test_support::TestDb tdb(kDbPrefix, "createfail");
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
 
-    // 基线一条无关 profile（创建走完整两段写正常路径）
     auto base = svc.createProfile("Base", "https://base.example.com",
                                   "sk-ant-base-0004", "m");
     DOCTEST_REQUIRE(base.isOk());
@@ -700,36 +705,37 @@ REGISTER_TEST(claude_cpx14_create_stage2_fail_rolls_back,
     DOCTEST_REQUIRE(before.isOk());
     const size_t countBefore = before.value().size();
 
-    // 段二注入失败：BEFORE UPDATE 触发器 RAISE(ABORT) → 回填 keychain_account
-    // 的 UPDATE 必失败（此刻段一已把密钥写进 Keychain）
-    DOCTEST_REQUIRE(tdb.handle().exec(
-        "CREATE TRIGGER cpx14_block_update BEFORE UPDATE ON claude_profiles "
-        "BEGIN SELECT RAISE(ABORT, 'cpx14: update blocked'); END").isOk());
+    // 路径一：重名 → INSERT 撞 UNIQUE，单语句原子失败，一行都不落
+    auto dup = svc.createProfile("Base", "https://d.example.com",
+                                 "sk-ant-doomed-0005", "m");
+    DOCTEST_CHECK(dup.isFail());
+    DOCTEST_CHECK(dup.errorCode() == core::ErrorCode::ProfileAlreadyExists);
 
-    auto created = svc.createProfile("Doomed", "https://d.example.com",
-                                     "sk-ant-doomed-0005", "m");
-    DOCTEST_CHECK(created.isFail());
+    // 路径二：protect 失败 → 在 INSERT 之前就失败
+    {
+        ScopedFailProtect cred;
+        auto doomed = svc.createProfile("Doomed", "https://d.example.com",
+                                        "sk-ant-doomed-0006", "m");
+        DOCTEST_CHECK(doomed.isFail());
+    }
 
-    // 零残留一：段一写入的密钥被补偿清掉（不留孤儿密钥）
-    const std::string doomedAccount = kc.fake.lastStoredAccount;
-    DOCTEST_CHECK_EQ(doomedAccount.substr(0, 7), std::string("claude:"));
-    DOCTEST_CHECK(!kc.fake.has(kTestKeychainService, doomedAccount));
-    // 零残留二：INSERT 的行也回滚了
     auto after = svc.listProfiles();
     DOCTEST_REQUIRE(after.isOk());
     DOCTEST_CHECK_EQ(after.value().size(), countBefore);
 
-    // 撤掉注入源后重试 → 成功（正常路径未被注入层带坏）
-    DOCTEST_REQUIRE(tdb.handle().exec("DROP TRIGGER cpx14_block_update").isOk());
+    auto baseKey = svc.loadApiKey(base.value().id);
+    DOCTEST_REQUIRE(baseKey.isOk());
+    DOCTEST_CHECK_EQ(baseKey.value(), std::string("sk-ant-base-0004"));
+
+    // 撤掉注入源后重试成功：正常路径未被注入层带坏
     auto ok = svc.createProfile("Doomed", "https://d.example.com",
-                                "sk-ant-doomed-0005", "m");
+                                "sk-ant-doomed-0006", "m");
     DOCTEST_REQUIRE(ok.isOk());
-    DOCTEST_CHECK_EQ(kc.fake.get(kTestKeychainService, ok.value().keychainAccount),
-                     std::string("sk-ant-doomed-0005"));
+    auto okKey = svc.loadApiKey(ok.value().id);
+    DOCTEST_REQUIRE(okKey.isOk());
+    DOCTEST_CHECK_EQ(okKey.value(), std::string("sk-ant-doomed-0006"));
     return true;
 })
-
-// ---- 6. deleteProfile 清理 SQLite + Keychain ----
 
 REGISTER_TEST(claude_service_delete_profile,
               "claude_service: deleteProfile 清 SQLite + Keychain", {
@@ -743,11 +749,11 @@ REGISTER_TEST(claude_service_delete_profile,
 
     DOCTEST_REQUIRE(svc.deleteProfile(id).isOk());
 
-    // SQLite 行应消失
     auto got = svc.getProfile(id);
     DOCTEST_CHECK(got.isFail());
 
-    // Keychain 条目应消失
+    // 恒真：凭据已不落 Keychain，本用例建 profile 时从未往里写过条目。
+    // 保留这条断言只为钉「deleteProfile 不会顺手写出一个新条目」。
     auto key = platform::keychain::loadSecret(
         kTestKeychainService, "claude:" + std::to_string(id));
     DOCTEST_CHECK(key.isFail());
@@ -759,54 +765,8 @@ REGISTER_TEST(claude_service_delete_profile,
     return true;
 })
 
-// ---- 6b. deleteProfile：Keychain 清理失败时中止（SQLite 行保留） ----
-
-#if defined(_WIN32)
-REGISTER_TEST(claude_service_delete_profile_keychain_fail,
-              "claude_service: Keychain 删除失败时中止 deleteProfile", {
-    test_support::TestDb tdb(kDbPrefix, "delfail");
-    module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
-
-    auto created = svc.createProfile("Stuck", "https://stuck.example.com",
-                                     "sk-ant-stuck-7777", "m");
-    DOCTEST_REQUIRE(created.isOk());
-    const int64_t id = created.value().id;
-
-    // Windows keychain 存储路径（见 keychain_win.cpp）：
-    // <appData>/keychain/<service>/<encode(account)>.key，account "claude:<id>"
-    // 经 CP-11 可逆编码（非白名单字符 %XX 转义）后为 "claude%3A<id>"。
-    // 把密钥文件换成非空目录 → fs::remove 必失败，注入 Keychain 删除失败
-    const auto keyPath = core::paths::appDataDir() / "keychain" /
-                         kTestKeychainService /
-                         ("claude%3A" + std::to_string(id) + ".key");
-    std::error_code ec;
-    DOCTEST_REQUIRE(std::filesystem::exists(keyPath, ec));
-    std::filesystem::remove(keyPath, ec);
-    std::filesystem::create_directories(keyPath, ec);
-    {
-        std::ofstream blocker(keyPath / "blocker.txt");
-        blocker << "make dir non-empty";
-    }
-
-    // 中止：deleteProfile 失败，SQLite 行保留（可重试，数据不丢）
-    auto r = svc.deleteProfile(id);
-    DOCTEST_CHECK(r.isFail());
-    DOCTEST_CHECK(svc.getProfile(id).isOk());
-
-    // 恢复现场后重试 → 成功，两边都清干净
-    std::filesystem::remove_all(keyPath, ec);
-    DOCTEST_REQUIRE(platform::keychain::storeSecret(
-        kTestKeychainService, "claude:" + std::to_string(id),
-        "sk-ant-stuck-7777").isOk());
-    DOCTEST_REQUIRE(svc.deleteProfile(id).isOk());
-    DOCTEST_CHECK(svc.getProfile(id).isFail());
-    DOCTEST_CHECK(platform::keychain::loadSecret(
-        kTestKeychainService, "claude:" + std::to_string(id)).isFail());
-    return true;
-})
-#endif  // _WIN32
-
-// ---- 6c. 启动时孤儿 Keychain 清理 ----
+// deleteProfile 只清 DB 凭据列 + 删行。「凭据清理失败时中止 deleteProfile、行保留可重试」这条安全属性由
+// TwoPhaseKeyWrite 在 DB 层结构性保证（profile_repository.cpp：先清三列、失败即 return，行不动）。
 
 REGISTER_TEST(claude_service_orphan_keychain_cleanup,
               "claude_service: cleanupOrphanKeychainEntries 清孤儿密钥", {
@@ -820,7 +780,7 @@ REGISTER_TEST(claude_service_orphan_keychain_cleanup,
                                "sk-ant-keep-bbbb", "m");
     DOCTEST_REQUIRE(b.isOk());
 
-    // 塞一个无对应 profile 的孤儿密钥（历史 bug 遗留形态）
+    // 塞一个无对应 profile 的孤儿密钥（凭据迁库前的遗留形态）
     DOCTEST_REQUIRE(platform::keychain::storeSecret(
         kTestKeychainService, "claude:999", "sk-ant-orphan").isOk());
 
@@ -828,7 +788,7 @@ REGISTER_TEST(claude_service_orphan_keychain_cleanup,
     DOCTEST_REQUIRE(r.isOk());
     DOCTEST_CHECK(r.value() >= 1);
 
-    // 孤儿被清，在册 profile 的 key 完好
+    // 孤儿被清，在册 profile 的凭据完好
     DOCTEST_CHECK(platform::keychain::loadSecret(
         kTestKeychainService, "claude:999").isFail());
     auto ka = svc.loadApiKey(a.value().id);
@@ -838,7 +798,7 @@ REGISTER_TEST(claude_service_orphan_keychain_cleanup,
     DOCTEST_REQUIRE(kb.isOk());
     DOCTEST_CHECK_EQ(kb.value(), std::string("sk-ant-keep-bbbb"));
 
-    // 再跑一次 → 无孤儿可清
+    // 再跑一次无孤儿可清（幂等）
     auto again = svc.cleanupOrphanKeychainEntries();
     DOCTEST_REQUIRE(again.isOk());
     DOCTEST_CHECK_EQ(again.value(), 0);
@@ -848,19 +808,17 @@ REGISTER_TEST(claude_service_orphan_keychain_cleanup,
     return true;
 })
 
-// ---- 6c-2. P0 护栏①（2026-09-30 数据丢失事故）：空数据根 → 零删除 ----
-// 事故形态：keychain service "DevDesk" 是全局命名空间，不随 DEVDESK_DATA_ROOT
-// 隔离；空根实例（测试 / 误设环境变量）启动时库中零 profile → keep 为空集合，
-// 而 deleteSecretsNotIn 是「凡不在 keep 里的都删」→ 用户真实密钥被清光。
-// 护栏①：keep 为空直接跳过清理（连扫描都不发起，一个条目都不碰）。
-// 注入缝把「用户真实密钥」做成假 keychain 里的事件，断言它一字未动。
+// 空数据根 → 零删除。
+// Keychain service 是全局命名空间，隔离弱于数据根；空根实例（测试 / 误设环境变量）启动时库中零 profile →
+// keep 为空集合，而 deleteSecretsNotIn 是「凡不在 keep 里的都删」→ 用户真实密钥被清光。
+// 契约：keep 为空直接跳过清理，连扫描都不发起。
 REGISTER_TEST(claude_cleanup_empty_keep_never_sweeps,
               "claude_service: P0 空 profile 孤儿清理零删除（护栏①）", {
     test_support::TestDb tdb(kDbPrefix, "orphanguard");
     ScopedFakeKeychain kc;
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
 
-    // 假 keychain = 用户真实命名空间的替身：profile 密钥 + 未来其它用途条目
+    // 假 keychain 扮演用户真实命名空间：profile 密钥 + 一条非 profile 用途的条目
     DOCTEST_REQUIRE(platform::keychain::storeSecret(
         kTestKeychainService, "claude:7", "sk-ant-user-real").isOk());
     DOCTEST_REQUIRE(platform::keychain::storeSecret(
@@ -885,190 +843,48 @@ REGISTER_TEST(claude_cleanup_empty_keep_never_sweeps,
     return true;
 })
 
-// ---- 6c-3. 服务名按数据根派生 + 旧 service 一次性迁移（2026-09-30 根治）----
-
 REGISTER_TEST(claude_keychain_service_for_data_root,
               "claude_service: keychainServiceForDataRoot 派生纯函数", {
     const std::string a =
         module::claude::keychainServiceForDataRoot("/tmp/rootA");
     const std::string b =
         module::claude::keychainServiceForDataRoot("/tmp/rootB");
-    // 形态：DevDesk-<8 hex>
+    // 形态 DevDesk-<8 hex>
     DOCTEST_CHECK(a.rfind("DevDesk-", 0) == 0);
     DOCTEST_CHECK_EQ(a.size(), size_t{16});
     // 不同根 → 不同 service（数据根隔离的根基）
     DOCTEST_CHECK(a != b);
     // 同根 → 稳定（跨次启动一致）
     DOCTEST_CHECK_EQ(a, module::claude::keychainServiceForDataRoot("/tmp/rootA"));
-    // 绝不与旧全局名同形（防迁移判定混淆）
+    // 反重构：不得与裸前缀同形（派生名必带 8 hex 后缀），否则不同数据根共用一个命名空间
     DOCTEST_CHECK(a != std::string("DevDesk"));
-    // 空根 → 空串（调用方兜底旧名）
+    // 空根 → 空串（调用方兜底裸前缀）
     DOCTEST_CHECK(module::claude::keychainServiceForDataRoot("").empty());
     return true;
 })
-
-REGISTER_TEST(claude_service_migrate_legacy_keychain,
-              "claude_service: 旧 service 一次性迁移（读旧写新删旧）", {
-    DataRootEnv env(kDbPrefix, "migrate");
-    ScopedFakeKeychain kc;
-    test_support::TestDb tdb(kDbPrefix, "migrate");
-
-    // 变更前形态：profile 已存在、密钥在旧全局 service "DevDesk" 下
-    const std::string legacy = "DevDesk";
-    int64_t id = 0;
-    std::string account;
-    {
-        module::claude::ClaudeService oldSvc(tdb.handle(), legacy);
-        auto created = oldSvc.createProfile("Legacy", "https://l.example.com",
-                                            "sk-ant-legacy-0001", "m");
-        DOCTEST_REQUIRE(created.isOk());
-        id = created.value().id;
-        account = created.value().keychainAccount;
-        DOCTEST_REQUIRE(kc.fake.has(legacy, account));
-    }
-
-    // 新代码实例（默认构造 = 派生 service）；派生名不与旧名同形
-    const std::string derived = module::claude::keychainServiceForDataRoot(
-        core::paths::appDataDir().string());
-    DOCTEST_CHECK(derived != legacy);
-    module::claude::ClaudeService svc(tdb.handle());
-
-    // 迁移前：新 service 读不到 key
-    DOCTEST_CHECK(svc.loadApiKey(id).isFail());
-
-    auto r = svc.migrateLegacyKeychainService();
-    DOCTEST_REQUIRE(r.isOk());
-    DOCTEST_CHECK_EQ(r.value(), 1);
-
-    // 读旧写新删旧逐项核对
-    auto k = platform::keychain::loadSecret(derived, account);
-    DOCTEST_REQUIRE(k.isOk());
-    DOCTEST_CHECK_EQ(k.value(), std::string("sk-ant-legacy-0001"));
-    DOCTEST_CHECK(!kc.fake.has(legacy, account));
-    auto viaSvc = svc.loadApiKey(id);
-    DOCTEST_REQUIRE(viaSvc.isOk());
-    DOCTEST_CHECK_EQ(viaSvc.value(), std::string("sk-ant-legacy-0001"));
-
-    // 幂等：再跑一次 = 0，数据原样
-    auto again = svc.migrateLegacyKeychainService();
-    DOCTEST_REQUIRE(again.isOk());
-    DOCTEST_CHECK_EQ(again.value(), 0);
-    auto k2 = platform::keychain::loadSecret(derived, account);
-    DOCTEST_REQUIRE(k2.isOk());
-    DOCTEST_CHECK_EQ(k2.value(), std::string("sk-ant-legacy-0001"));
-
-    // 迁移后的启动序列（孤儿清理）不误删刚搬进来的条目
-    auto orphan = svc.cleanupOrphanKeychainEntries();
-    DOCTEST_REQUIRE(orphan.isOk());
-    auto k3 = platform::keychain::loadSecret(derived, account);
-    DOCTEST_REQUIRE(k3.isOk());
-    DOCTEST_CHECK_EQ(k3.value(), std::string("sk-ant-legacy-0001"));
-
-    test_support::cleanupProfileKey(derived.c_str(), id);
-    return true;
-})
-
-REGISTER_TEST(claude_service_migrate_disabled_and_failure,
-              "claude_service: 迁移仅派生模式启用；写新失败旧条目保留", {
-    DataRootEnv env(kDbPrefix, "migratefail");
-    ScopedFakeKeychain kc;
-
-    // 形态一：显式传 service（全部测试的形态）→ 迁移必须 no-op，
-    // 旧全局 "DevDesk" 命名空间一字不碰（防测试误迁真实密钥）
-    const std::string legacy = "DevDesk";
-    DOCTEST_REQUIRE(platform::keychain::storeSecret(
-        legacy, "claude:42", "sk-ant-do-not-touch").isOk());
-    test_support::TestDb tdb(kDbPrefix, "migratefail");
-    module::claude::ClaudeService explicitSvc(tdb.handle(), kTestKeychainService);
-    auto r0 = explicitSvc.migrateLegacyKeychainService();
-    DOCTEST_REQUIRE(r0.isOk());
-    DOCTEST_CHECK_EQ(r0.value(), 0);
-    auto untouched = platform::keychain::loadSecret(legacy, "claude:42");
-    DOCTEST_REQUIRE(untouched.isOk());
-    DOCTEST_CHECK_EQ(untouched.value(), std::string("sk-ant-do-not-touch"));
-
-    // 形态二：派生模式 + 注入「写新失败」（哨兵值走假后端先落值后报失败）
-    // → 半写入被补偿清掉、旧条目原样保留，修复后重试成功
-    test_support::TestDb tdb2(kDbPrefix, "migratefail2");
-    {
-        module::claude::ClaudeService oldSvc(tdb2.handle(), legacy);
-        auto created = oldSvc.createProfile("Doomed", "https://d.example.com",
-                                            "sk-ant-bad-0001", "m");
-        DOCTEST_REQUIRE(created.isOk());
-        const int64_t id = created.value().id;
-        const std::string account = created.value().keychainAccount;
-        // 直接改写旧条目为哨兵值（绕过两段写，模拟「旧 service 里躺着的值
-        // 会让写新失败」）。假后端「先落值、再报失败」：写入返回失败但值已落
-        const std::string poisoned = std::string("sk-ant-bad-") +
-                                     FakeKeychain::kStoreFailSentinel;
-        (void)platform::keychain::storeSecret(legacy, account, poisoned);
-        DOCTEST_REQUIRE(kc.fake.get(legacy, account) == poisoned);
-
-        module::claude::ClaudeService svc(tdb2.handle());
-        auto r = svc.migrateLegacyKeychainService();
-        DOCTEST_REQUIRE(r.isOk());
-        DOCTEST_CHECK_EQ(r.value(), 0);   // 全部失败
-        // 旧条目原样在（值逐字相同，含哨兵）
-        auto old = platform::keychain::loadSecret(legacy, account);
-        DOCTEST_REQUIRE(old.isOk());
-        DOCTEST_CHECK_EQ(old.value(),
-                         std::string("sk-ant-bad-INJECT-STORE-FAIL"));
-        // 半写入的新条目被补偿清掉（不是留着毒数据等下次重试误判）
-        DOCTEST_CHECK(!kc.fake.has(
-            module::claude::keychainServiceForDataRoot(
-                core::paths::appDataDir().string()),
-            account));
-
-        // 修复注入后重试 → 成功迁移
-        DOCTEST_REQUIRE(platform::keychain::storeSecret(
-            legacy, account, "sk-ant-good-0002").isOk());
-        auto retry = svc.migrateLegacyKeychainService();
-        DOCTEST_REQUIRE(retry.isOk());
-        DOCTEST_CHECK_EQ(retry.value(), 1);
-        auto fixed = svc.loadApiKey(id);
-        DOCTEST_REQUIRE(fixed.isOk());
-        DOCTEST_CHECK_EQ(fixed.value(), std::string("sk-ant-good-0002"));
-        DOCTEST_CHECK(!kc.fake.has(legacy, account));
-
-        test_support::cleanupProfileKey(
-            module::claude::keychainServiceForDataRoot(
-                core::paths::appDataDir().string()).c_str(),
-            id);
-    }
-    // 形态一的条目全程未动
-    DOCTEST_CHECK(kc.fake.has(legacy, "claude:42"));
-    DOCTEST_CHECK(platform::keychain::loadSecret(legacy, "claude:42").isOk());
-    return true;
-})
-
-// ---- 7. createProfile 校验：重名 / 空字段 ----
 
 REGISTER_TEST(claude_service_create_validation,
               "claude_service: createProfile 校验重名 + 空字段", {
     test_support::TestDb tdb(kDbPrefix, "validate");
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
 
-    // 空 name
     auto e1 = svc.createProfile("", "https://x.example.com", "sk-x", "m");
     DOCTEST_CHECK(e1.isFail());
     DOCTEST_CHECK(e1.errorCode() == core::ErrorCode::ValidationError);
 
-    // 空 baseUrl
     auto e2 = svc.createProfile("N", "", "sk-x", "m");
     DOCTEST_CHECK(e2.isFail());
     DOCTEST_CHECK(e2.errorCode() == core::ErrorCode::ValidationError);
 
-    // 空 apiKey
     auto e3 = svc.createProfile("N", "https://x.example.com", "", "m");
     DOCTEST_CHECK(e3.isFail());
     DOCTEST_CHECK(e3.errorCode() == core::ErrorCode::InvalidApiKey);
 
-    // 正常创建
     auto ok1 = svc.createProfile("DupName", "https://x.example.com",
                                  "sk-ant-ddd-4444", "m");
     DOCTEST_REQUIRE(ok1.isOk());
 
-    // 重名 → ProfileAlreadyExists（name UNIQUE 约束）
+    // 重名 → ProfileAlreadyExists（claude_profiles.name UNIQUE）
     auto dup = svc.createProfile("DupName", "https://y.example.com",
                                  "sk-ant-eee-5555", "m");
     DOCTEST_CHECK(dup.isFail());
@@ -1078,11 +894,8 @@ REGISTER_TEST(claude_service_create_validation,
     return true;
 })
 
-// ---- 8. testConnection（对本地 mock 上游发 GET /v1/models） ----
-
 REGISTER_TEST(claude_service_test_connection,
               "claude_service: testConnection 发 GET /v1/models", {
-    // 启动一个 mock 上游，响应 GET /v1/models
     platform::http::Server upstream("127.0.0.1", 0);
     int hitCount = 0;
     std::string lastPath;
@@ -1111,7 +924,7 @@ REGISTER_TEST(claude_service_test_connection,
     DOCTEST_REQUIRE(created.isOk());
     const int64_t id = created.value().id;
 
-    // 等 mock 上游 ready（bind 后立刻可用，但给一点余量）
+    // bind 后端口即可用，这里只是给 accept 循环一点余量
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
     auto resp = svc.testConnection(created.value());
@@ -1120,10 +933,10 @@ REGISTER_TEST(claude_service_test_connection,
     DOCTEST_CHECK(resp.value().body.find("claude-sonnet-4-5") != std::string::npos);
     DOCTEST_CHECK_EQ(hitCount, 1);
     DOCTEST_CHECK_EQ(lastPath, std::string("/v1/models"));
-    // 上游收到的 x-api-key 应该是 Keychain 里的明文
+    // 上游收到的 x-api-key 是凭据列里的明文
     DOCTEST_CHECK_EQ(lastApiKey, std::string("sk-ant-conn-6666"));
 
-    // 上游返回 401 时也算 Ok（UI 用于显示状态码）
+    // 上游返回 401 也算 Ok：testConnection 只探测连通性，状态码原样带回给 UI 显示
     upstream.stop();
     platform::http::Server upstream401("127.0.0.1", 0);
     upstream401.route("GET", "/v1/models",
@@ -1147,12 +960,8 @@ REGISTER_TEST(claude_service_test_connection,
     return true;
 })
 
-// ---- 8b. testConnection 经上游方言层装配请求头 ----
-// 回归（专家审计 V1）：此前 testConnection 自己拼 x-api-key / anthropic-version，
-// 没走 UpstreamDialect——对要求 x-opencode-session、且 Cloudflare 按 UA 拦截的
-// 网关（opencode.ai/zen）探测会误报失败，而真实转发是通的。本用例断言探测
-// 请求确实经方言层：统一 UA + 鉴权头 + opencode 会话头。
-
+// 探测请求必须走 UpstreamDialect，不能自己拼 x-api-key / anthropic-version：
+// 对要求 x-opencode-session、且 Cloudflare 按 UA 拦截的网关（opencode.ai/zen）自拼会误报失败，而真实转发是通的。
 REGISTER_TEST(claude_service_test_connection_uses_dialect,
               "claude_service: testConnection 经上游方言（UA/鉴权/opencode 会话头）", {
     platform::http::Server upstream("127.0.0.1", 0);
@@ -1175,7 +984,7 @@ REGISTER_TEST(claude_service_test_connection_uses_dialect,
     test_support::TestDb tdb(kDbPrefix, "conn_dialect");
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
 
-    // ---- (1) 默认方言（loopback host）：统一 UA + 鉴权头由方言层注入 ----
+    // (1) 默认方言（loopback host）：统一 UA + 鉴权头由方言层注入
     const std::string loopbackUrl = "http://127.0.0.1:" + std::to_string(port);
     auto created = svc.createProfile("ConnDialect", loopbackUrl,
                                      "sk-ant-conn-dialect-9999", "m");
@@ -1185,11 +994,11 @@ REGISTER_TEST(claude_service_test_connection_uses_dialect,
     DOCTEST_REQUIRE(resp.isOk());
     DOCTEST_CHECK_EQ(resp.value().statusCode, 200);
     DOCTEST_CHECK_EQ(hitCount, 1);
-    // 统一 UA（opencode.ai 前置 Cloudflare 按 UA 指纹拦截，客户端签名不能泄漏）
+    // 统一 UA：opencode.ai 前置 Cloudflare 按 UA 指纹拦截，客户端签名不能泄漏
     DOCTEST_CHECK_EQ(headerCI(seen, "user-agent"),
                      std::string(module::claude::kProxyUserAgent));
     DOCTEST_CHECK_EQ(countCI(seen, "user-agent"), 1);
-    // 鉴权经方言层：x-api-key + Authorization: Bearer 双发
+    // 鉴权经方言层双发：x-api-key + Authorization: Bearer
     DOCTEST_CHECK_EQ(headerCI(seen, "x-api-key"),
                      std::string("sk-ant-conn-dialect-9999"));
     DOCTEST_CHECK_EQ(headerCI(seen, "authorization"),
@@ -1200,8 +1009,8 @@ REGISTER_TEST(claude_service_test_connection_uses_dialect,
     // 非 opencode host：不注入会话头
     DOCTEST_CHECK_EQ(countCI(seen, "x-opencode-session"), 0);
 
-    // ---- (2) opencode 方言：会话头注入（host 命中 opencode.ai → opencodeZen）----
-    // 借 http_proxy 把 curl 指到本地 mock（请求行是绝对 URI，不解析该域名）
+    // (2) opencode 方言：会话头注入（host 命中 opencode.ai → opencodeZen）
+    // 借 http_proxy 把 curl 指到本地 mock：走代理时请求行是绝对 URI，域名不被解析，请求不出本机
     ScopedProxyEnv proxyEnv("http://127.0.0.1:" + std::to_string(port));
     module::claude::Profile p = created.value();
     p.baseUrl = "http://opencode.ai/zen/go";
@@ -1223,13 +1032,10 @@ REGISTER_TEST(claude_service_test_connection_uses_dialect,
     return true;
 })
 
-// ---- 8c. testConnection 接 profile.dialectOverride（CPX-13 接线）----
-// 「探测与转发同源」的最后一环：profile 钉住方言时，探测请求必须和两条转发
-// 路径（proxy_router / streaming_proxy）按同一方言装头，否则配了覆盖的
-// profile 会出现「探测按 A 方言、转发按 B 方言」的错位。
+// 「探测与转发同源」：profile 钉住方言时，探测请求必须和两条转发路径（proxy_router / streaming_proxy）按同一方言装头，
+// 否则配了覆盖的 profile 会出现「探测按 A 方言、转发按 B 方言」的错位。
 // 断言的是上游实际收到的头（探测路径的真实效果），不是 forBaseUrl 的返回值：
 // host 是 loopback（推断 = 默认方言），覆盖 opencode_zen → 会话头必须出现。
-
 REGISTER_TEST(claude_service_test_connection_dialect_override,
               "claude_service: testConnection 接 profile.dialectOverride", {
     platform::http::Server upstream("127.0.0.1", 0);
@@ -1261,7 +1067,7 @@ REGISTER_TEST(claude_service_test_connection_dialect_override,
                                      "opencode_zen");
     DOCTEST_REQUIRE(created.isOk());
 
-    // ---- (1) 覆盖 opencode_zen：loopback 推断不出 zen → 会话头出现即证明接了覆盖 ----
+    // (1) 覆盖 opencode_zen：loopback 推断不出 zen → 会话头出现即证明接了覆盖
     auto resp = svc.testConnection(created.value());
     DOCTEST_REQUIRE(resp.isOk());
     DOCTEST_CHECK_EQ(resp.value().statusCode, 200);
@@ -1277,7 +1083,7 @@ REGISTER_TEST(claude_service_test_connection_dialect_override,
                      std::string("sk-ant-conn-ovr-0001"));
     DOCTEST_CHECK_EQ(headerCI(seen, "anthropic-version"), std::string("2023-06-01"));
 
-    // ---- (2) 空串 = 未覆盖：与改动前逐项一致（不注入会话头）----
+    // (2) 空串 = 未覆盖：不注入会话头
     module::claude::Profile p = created.value();
     p.dialectOverride.clear();
     seen.clear();
@@ -1300,14 +1106,11 @@ REGISTER_TEST(claude_service_test_connection_dialect_override,
     return true;
 })
 
-// ---- 9. testConnection 网络不可达 ----
-
 REGISTER_TEST(claude_service_test_connection_unreachable,
               "claude_service: testConnection 上游不可达返回失败", {
     test_support::TestDb tdb(kDbPrefix, "connfail");
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
 
-    // 用一个几乎肯定会拒绝连接的端口
     auto created = svc.createProfile("Bad", "http://127.0.0.1:1",
                                      "sk-ant-bad-7777", "m");
     DOCTEST_REQUIRE(created.isOk());
@@ -1320,8 +1123,6 @@ REGISTER_TEST(claude_service_test_connection_unreachable,
     return true;
 })
 
-// ---- 10. logCall / recentCalls ----
-
 REGISTER_TEST(claude_service_call_logs,
               "claude_service: logCall + recentCalls 往返", {
     test_support::TestDb tdb(kDbPrefix, "logs");
@@ -1332,7 +1133,6 @@ REGISTER_TEST(claude_service_call_logs,
     DOCTEST_REQUIRE(created.isOk());
     const int64_t id = created.value().id;
 
-    // 写 3 条日志
     for (int i = 0; i < 3; ++i) {
         module::claude::ClaudeService::CallLogEntry e;
         e.profileId = id;
@@ -1349,18 +1149,17 @@ REGISTER_TEST(claude_service_call_logs,
     auto recent = svc.recentCalls(10);
     DOCTEST_REQUIRE(recent.isOk());
     DOCTEST_CHECK_EQ(recent.value().size(), 3u);
-    // 按 started_at DESC → 最新的是 429
+    // started_at DESC → 最新的是 429
     DOCTEST_CHECK_EQ(recent.value()[0].statusCode, 429);
     DOCTEST_CHECK_EQ(recent.value()[0].method, std::string("POST"));
     DOCTEST_CHECK_EQ(recent.value()[0].path, std::string("/v1/messages"));
     DOCTEST_CHECK_EQ(recent.value()[0].latencyMs, 300);
 
-    // limit 生效
     auto two = svc.recentCalls(2);
     DOCTEST_REQUIRE(two.isOk());
     DOCTEST_CHECK_EQ(two.value().size(), 2u);
 
-    // 删除 profile 应该 CASCADE 清空日志
+    // CASCADE：删 profile 连日志一起清
     DOCTEST_REQUIRE(svc.deleteProfile(id).isOk());
     auto afterDelete = svc.recentCalls(10);
     DOCTEST_REQUIRE(afterDelete.isOk());
@@ -1370,9 +1169,7 @@ REGISTER_TEST(claude_service_call_logs,
     return true;
 })
 
-// ---- 10a+. 最近代理请求事件槽（M2 §4.5 气泡③，产品审计 [18]）----
-// recordProxyEvent/takeProxyEvent：take 读走即清（一事件一泡）、单槽后写
-// 覆盖先写、滞留超 kProxyEventFreshSec 过期丢弃、时钟回摆不误吞
+// recordProxyEvent/takeProxyEvent 单槽事件：take 读走即清（一事件一泡）、后写覆盖先写、滞留超 kProxyEventFreshSec 丢弃、时钟回摆不误吞。
 
 REGISTER_TEST(claude_proxy_event_slot,
               "claude_service: 代理事件槽 take-once/覆盖/过期语义", {
@@ -1419,9 +1216,7 @@ REGISTER_TEST(claude_proxy_event_slot,
     return true;
 })
 
-// ---- 10b. queryCalls / countCalls（产品审计 2026-09-23 [11]）----
-// 日志弹窗承诺的「过滤 + 搜索」在 service 层的支撑：search 按 path/method
-// 模糊匹配、statusClass 分桶、limit/offset 翻页、countCalls 总数
+// queryCalls：search 按 path/method 模糊匹配（LIKE 通配符已转义）、statusClass 分桶、limit/offset 翻页。
 
 REGISTER_TEST(claude_call_log_query,
               "claude_service: queryCalls 搜索/状态码过滤/翻页 + countCalls", {
@@ -1435,8 +1230,8 @@ REGISTER_TEST(claude_call_log_query,
     const std::time_t base = std::time(nullptr);
 
     // 8 场景行（seq 递增 = 越后越新）+ 20 条老 filler 行（测 limit 截断）
-    // 注：REGISTER_TEST body 是函数，DOCTEST 宏 return false → lambda 须显式
-    // bool 返回，调用点用 DOCTEST_REQUIRE 传播失败
+    // 反重构：addRow 必须返回 bool 而非 void —— DOCTEST_REQUIRE 展开成 `return false`，void lambda 里编译不过；
+    // 调用点也必须用 DOCTEST_REQUIRE 传播，不能用 DOCTEST_CHECK（那会让失败被吞掉、继续跑完）。
     auto addRow = [&](const std::string& m, const std::string& p, int st,
                       const std::string& err, int seq) -> bool {
         module::claude::ClaudeService::CallLogEntry e;
@@ -1463,8 +1258,7 @@ REGISTER_TEST(claude_call_log_query,
     for (int i = 0; i < 20; ++i) {
         DOCTEST_REQUIRE(addRow("GET", "/filler", 200, "", -1000 - i));
     }
-    // 直插一行 status_code NULL（历史/旁路写入，仿 home/settings 测试）：
-    // 应被 COALESCE 归入「错误」桶
+    // 旁路直插一行 status_code NULL：必须被 COALESCE 归入「错误」桶，不能漏出任何桶
     DOCTEST_REQUIRE(tdb.handle().exec(
         "INSERT INTO claude_call_logs (profile_id, method, path, started_at) "
         "VALUES (" + std::to_string(pid) + ", 'GET', '/legacy-null', " +
@@ -1472,7 +1266,7 @@ REGISTER_TEST(claude_call_log_query,
 
     using Q = module::claude::ClaudeService::CallLogQuery;
 
-    // 全量：29 行，最新在前（row 8 = /v1/status）
+    // 全量 29 行，最新在前
     Q all;
     all.limit = 100;
     auto rAll = svc.queryCalls(all);
@@ -1480,7 +1274,7 @@ REGISTER_TEST(claude_call_log_query,
     DOCTEST_CHECK_EQ(rAll.value().size(), 29u);
     DOCTEST_CHECK_EQ(rAll.value()[0].path, std::string("/v1/status"));
 
-    // 搜索命中 path（messages ×3）
+    // search 命中 path
     Q qMsg;
     qMsg.search = "messages";
     qMsg.limit = 100;
@@ -1491,7 +1285,7 @@ REGISTER_TEST(claude_call_log_query,
     DOCTEST_REQUIRE(cMsg.isOk());
     DOCTEST_CHECK_EQ(cMsg.value(), 3);
 
-    // 搜索命中 method 且 ASCII 大小写不敏感（post → 4 行）
+    // search 命中 method 且 ASCII 大小写不敏感
     Q qPost;
     qPost.search = "post";
     qPost.limit = 100;
@@ -1508,7 +1302,7 @@ REGISTER_TEST(claude_call_log_query,
     DOCTEST_CHECK_EQ(rEsc.value().size(), 1u);
     DOCTEST_CHECK_EQ(rEsc.value()[0].path, std::string("/admin%status"));
 
-    // 状态码分桶（NULL 归错误桶）
+    // statusClass 分桶（4xx / 5xx / 3xx 各桶的量）
     Q q2xx;
     q2xx.statusClass = Q::kStatus2xx;
     q2xx.limit = 100;
@@ -1539,7 +1333,7 @@ REGISTER_TEST(claude_call_log_query,
     DOCTEST_REQUIRE(rErr.isOk());
     DOCTEST_CHECK_EQ(rErr.value().size(), 2u);  // timeout 行 + NULL 行
 
-    // 组合：搜索 + 状态桶（messages ∧ 4xx → 1 行 429）
+    // 搜索 ∧ 状态桶
     Q qCombo;
     qCombo.search = "messages";
     qCombo.statusClass = Q::kStatus4xx;
@@ -1547,7 +1341,7 @@ REGISTER_TEST(claude_call_log_query,
     DOCTEST_REQUIRE(cCombo.isOk());
     DOCTEST_CHECK_EQ(cCombo.value(), 1);
 
-    // 翻页：limit 10 × 3 页互不重叠，拼起来 == 全量顺序
+    // 翻页：3 页互不重叠且顺序 == 全量顺序
     std::vector<int64_t> paged;
     for (int pg = 0; pg < 3; ++pg) {
         Q qPage;
@@ -1564,7 +1358,7 @@ REGISTER_TEST(claude_call_log_query,
     }
     DOCTEST_CHECK(sameOrder);
 
-    // 非法参数归一：limit<=0 按 20；offset<0 按 0（首 20 行）
+    // 非法参数归一：limit<=0 → 20；offset<0 → 0
     Q qClamp;
     qClamp.limit = 0;
     qClamp.offset = -5;
@@ -1577,14 +1371,11 @@ REGISTER_TEST(claude_call_log_query,
     return true;
 })
 
-// ---- 11. startProxy / stopProxy / isProxyRunning ----
-
 REGISTER_TEST(claude_service_proxy_lifecycle,
               "claude_service: startProxy / stopProxy 生命周期", {
     test_support::TestDb tdb(kDbPrefix, "proxy");
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
 
-    // 初始未运行
     DOCTEST_CHECK_FALSE(svc.isProxyRunning());
     DOCTEST_CHECK_EQ(svc.proxyPort(), 0);
 
@@ -1596,7 +1387,7 @@ REGISTER_TEST(claude_service_proxy_lifecycle,
     DOCTEST_CHECK(svc.isProxyRunning());
     DOCTEST_CHECK_EQ(svc.proxyPort(), port);
 
-    // 重复启动应失败（AlreadyExists）
+    // 重复启动 → AlreadyExists
     auto again = svc.startProxy("127.0.0.1", 0);
     DOCTEST_CHECK(again.isFail());
     DOCTEST_CHECK(again.errorCode() == core::ErrorCode::AlreadyExists);
@@ -1605,7 +1396,6 @@ REGISTER_TEST(claude_service_proxy_lifecycle,
     DOCTEST_CHECK_FALSE(svc.isProxyRunning());
     DOCTEST_CHECK_EQ(svc.proxyPort(), 0);
 
-    // 停止后再启动应该成功
     auto restarted = svc.startProxy("127.0.0.1", 0);
     DOCTEST_REQUIRE(restarted.isOk());
     DOCTEST_CHECK(restarted.value() > 0);
@@ -1616,17 +1406,13 @@ REGISTER_TEST(claude_service_proxy_lifecycle,
     return true;
 })
 
-// ===== 反向同步（M3，设计 2026-09-27-profile-reverse-sync-and-copy §3.1/§3.4/§3.5）=====
-// 全部经临时 settings_sync::Paths 注入，绝不碰真实 ~/.claude。
-
-// ---- 12. ① 切 profile 前捕获 settings.json 的真实上游值 ----
-
+// 反向同步：全部经临时 settings_sync::Paths 注入，绝不碰真实 ~/.claude。
 REGISTER_TEST(claude_reverse_capture_on_switch,
               "claude_service: 反向同步① 切 profile 前捕获 settings.json", {
     using namespace module::claude;
     test_support::TestDb tdb(kDbPrefix, "revcap");
     test_support::TempDir d("revcap", kRevTempDirPrefix);
-    auto paths = makeSyncPaths(d);
+    auto paths = makeSyncPaths(d, tdb.handle());
 
     ClaudeService svc(tdb.handle(), kTestKeychainService);
     svc.setSettingsSyncPaths(paths);
@@ -1641,14 +1427,14 @@ REGISTER_TEST(claude_reverse_capture_on_switch,
         R"("haiku": {"model": "old-haiku"}})";
     pa.extraEnvJson = R"({"OLD_KEY": "old"})";
     DOCTEST_REQUIRE(svc.updateProfile(pa).isOk());
-    // 首次激活：此时无激活 profile → G0 跳过（不读文件）
+    // 无前置激活 profile → setActiveProfile 不读 settings.json
     DOCTEST_REQUIRE(svc.setActiveProfile(pa.id).isOk());
 
     auto b = svc.createProfile("目标B", "https://b.example.com",
                                "sk-b-key-0123456789abcdef", "");
     DOCTEST_REQUIRE(b.isOk());
 
-    // Claude Code 侧（或 cc-switch）改过的真实上游值
+    // Claude Code / cc-switch 侧改过的真实上游值
     d.write(paths.settingsFile, R"({"env": {
         "ANTHROPIC_BASE_URL": "https://new.example.com/",
         "ANTHROPIC_AUTH_TOKEN": "sk-new-upstream-9876543210",
@@ -1665,7 +1451,7 @@ REGISTER_TEST(claude_reverse_capture_on_switch,
     // base_url：尾斜杠清洗后覆盖
     DOCTEST_CHECK_EQ(gotA.value().baseUrl,
                      std::string("https://new.example.com"));
-    // key：新上游 key 进 Keychain（经 updateProfile.apiKeyPlain）
+    // 上游 token 经 updateProfile.apiKeyPlain 落到凭据列
     auto keyA = svc.loadApiKey(pa.id);
     DOCTEST_REQUIRE(keyA.isOk());
     DOCTEST_CHECK_EQ(keyA.value(), std::string("sk-new-upstream-9876543210"));
@@ -1677,14 +1463,13 @@ REGISTER_TEST(claude_reverse_capture_on_switch,
     DOCTEST_CHECK_EQ(mc.value().sonnet.name, std::string("Sonnet 显示名"));
     // 缺席的非守卫槽位（haiku）被清空
     DOCTEST_CHECK(mc.value().haiku.model.empty());
-    // 旧 model 列跟随 default 槽位
     DOCTEST_CHECK_EQ(gotA.value().model, std::string("new-default"));
     // extra_env：出现覆盖 + 缺席删除（OLD_KEY 消失）
     auto ee = parseExtraEnv(gotA.value().extraEnvJson);
     DOCTEST_REQUIRE(ee.isOk());
     DOCTEST_CHECK_EQ(ee.value().at("MY_EXTRA"), std::string("extra-value"));
     DOCTEST_CHECK(ee.value().find("OLD_KEY") == ee.value().end());
-    // 目标 profile 正常激活且未被误写；源 profile 不再激活
+    // 目标 profile 正常激活且未被误写；源 profile 取消激活
     auto gotB = svc.getProfile(b.value().id);
     DOCTEST_REQUIRE(gotB.isOk());
     DOCTEST_CHECK(gotB.value().isActive);
@@ -1696,17 +1481,17 @@ REGISTER_TEST(claude_reverse_capture_on_switch,
     return true;
 })
 
-// ---- 13. ② 守卫键不写也不清（loopback BASE_URL 联动 token / 占位 / 空值）----
-// 每形态都同批带一个**非守卫**变化（MY_EXTRA），保证确实发生了一次写库——
-// 否则「没被覆盖」会因为整次 no-op 而白白通过
-// 注：a/b 交替激活是为了让「被捕获的那条」始终是 a
-
+// 守卫键不写也不清：loopback BASE_URL 联动 token / 占位 PROXY_MANAGED / 值为空串，三形态。
+// 反重构：每形态同批那个 MY_EXTRA 不能省——它保证确实发生了一次写库；没有它整次 no-op，
+// 「没被覆盖」会白白通过（真正的回归会被它掩盖）。
+// 反重构：a/b 交替激活的两次 setActiveProfile 不能合并成一次——捕获对象是「切换前那个激活 profile」，
+// 只切一次的话被捕获的不是 a，下面全部断言指向错行、恒真通过。
 REGISTER_TEST(claude_reverse_guard_keys_not_touched,
               "claude_service: 反向同步② 守卫键不写也不清", {
     using namespace module::claude;
     test_support::TestDb tdb(kDbPrefix, "revguard");
     test_support::TempDir d("revguard", kRevTempDirPrefix);
-    auto paths = makeSyncPaths(d);
+    auto paths = makeSyncPaths(d, tdb.handle());
 
     ClaudeService svc(tdb.handle(), kTestKeychainService);
     svc.setSettingsSyncPaths(paths);
@@ -1719,7 +1504,7 @@ REGISTER_TEST(claude_reverse_guard_keys_not_touched,
                                "sk-b-key-0123456789abcdef", "");
     DOCTEST_REQUIRE(b.isOk());
 
-    // G2：loopback BASE_URL + 非占位 token（本机 cc-switch 形态）→ 都不写也不清
+    // loopback BASE_URL + 非占位 token（本机 cc-switch 形态）
     d.write(paths.settingsFile, R"({"env": {
         "ANTHROPIC_BASE_URL": "http://127.0.0.1:15721",
         "ANTHROPIC_AUTH_TOKEN": "local-cc-switch-token",
@@ -1740,7 +1525,7 @@ REGISTER_TEST(claude_reverse_guard_keys_not_touched,
         DOCTEST_CHECK_EQ(ee.value().at("MY_EXTRA"), std::string("extra-v1"));
     }
 
-    // G3：占位 token PROXY_MANAGED → token 不写也不清
+    // 占位 token PROXY_MANAGED
     d.write(paths.settingsFile, R"({"env": {
         "ANTHROPIC_BASE_URL": "https://old.example.com",
         "ANTHROPIC_AUTH_TOKEN": "PROXY_MANAGED",
@@ -1762,7 +1547,7 @@ REGISTER_TEST(claude_reverse_guard_keys_not_touched,
         DOCTEST_CHECK_EQ(ee.value().at("MY_EXTRA"), std::string("extra-v2"));
     }
 
-    // G4：键存在但值为空串 → 不写也不清（不拿空串覆盖、也不因空值清空）
+    // 键存在但值为空串：不拿空串覆盖，也不因空值清空
     d.write(paths.settingsFile, R"({"env": {
         "ANTHROPIC_BASE_URL": "https://old.example.com",
         "ANTHROPIC_AUTH_TOKEN": "",
@@ -1789,14 +1574,12 @@ REGISTER_TEST(claude_reverse_guard_keys_not_touched,
     return true;
 })
 
-// ---- 14. ③ 缺席即清空（非守卫托管字段）----
-
 REGISTER_TEST(claude_reverse_absent_clears,
               "claude_service: 反向同步③ 缺席即清空", {
     using namespace module::claude;
     test_support::TestDb tdb(kDbPrefix, "revclear");
     test_support::TempDir d("revclear", kRevTempDirPrefix);
-    auto paths = makeSyncPaths(d);
+    auto paths = makeSyncPaths(d, tdb.handle());
 
     ClaudeService svc(tdb.handle(), kTestKeychainService);
     svc.setSettingsSyncPaths(paths);
@@ -1815,7 +1598,7 @@ REGISTER_TEST(claude_reverse_absent_clears,
                                "sk-b-key-0123456789abcdef", "");
     DOCTEST_REQUIRE(b.isOk());
 
-    // 合法 settings.json：只有 default 槽位 + 一个新 extra 键 → 其余全清
+    // 只有 default 槽位 + 一个新 extra 键 → 其余托管字段全清
     d.write(paths.settingsFile,
             R"({"env": {"ANTHROPIC_MODEL": "only-default", "NEW_KEY": "n"}})");
     DOCTEST_REQUIRE(svc.setActiveProfile(b.value().id).isOk());
@@ -1823,17 +1606,17 @@ REGISTER_TEST(claude_reverse_absent_clears,
     auto g = svc.getProfile(a.value().id);
     DOCTEST_REQUIRE(g.isOk());
     DOCTEST_CHECK(g.value().baseUrl.empty());          // 缺席 → 清空
-    DOCTEST_CHECK(g.value().keychainAccount.empty());  // 三列元数据一并清空
-    DOCTEST_CHECK(g.value().apiKeyHint.empty());
+    DOCTEST_CHECK(g.value().apiKeyHint.empty());       // 三列一并清空
     DOCTEST_CHECK(g.value().apiKeyCheck.empty());
-    auto k = svc.loadApiKey(a.value().id);             // Keychain 条目已删
+    auto k = svc.loadApiKey(a.value().id);             // 凭据列已清
     DOCTEST_CHECK(k.isFail());
+    DOCTEST_CHECK(k.errorCode() == core::ErrorCode::NotFound);
     DOCTEST_CHECK_EQ(g.value().model, std::string("only-default"));
     auto mc = parseModelsConfig(g.value().modelsConfigJson);
     DOCTEST_REQUIRE(mc.isOk());
     DOCTEST_CHECK_EQ(mc.value().def.model, std::string("only-default"));
     DOCTEST_CHECK(mc.value().sonnet.model.empty());
-    // extra_env 键集合完全由 settings.json 决定：出现的新键在、缺席的旧键没了
+    // extra_env 键集合完全由 settings.json 决定
     auto ee = parseExtraEnv(g.value().extraEnvJson);
     DOCTEST_REQUIRE(ee.isOk());
     DOCTEST_CHECK_EQ(static_cast<int>(ee.value().size()), 1);
@@ -1843,14 +1626,12 @@ REGISTER_TEST(claude_reverse_absent_clears,
     return true;
 })
 
-// ---- 15. ④ 坏 JSON / env 非对象 → 中止切换（S-2）且 profile 一字未改 ----
-
 REGISTER_TEST(claude_reverse_broken_json_aborts,
               "claude_service: 反向同步④ 坏 JSON 中止切换且 profile 一字未改", {
     using namespace module::claude;
     test_support::TestDb tdb(kDbPrefix, "revbad");
     test_support::TempDir d("revbad", kRevTempDirPrefix);
-    auto paths = makeSyncPaths(d);
+    auto paths = makeSyncPaths(d, tdb.handle());
 
     ClaudeService svc(tdb.handle(), kTestKeychainService);
     svc.setSettingsSyncPaths(paths);
@@ -1881,7 +1662,7 @@ REGISTER_TEST(claude_reverse_broken_json_aborts,
         return true;
     };
 
-    // 非法 JSON → fail（S-2）且 is_active 仍是 a、a 的字段一字未改
+    // 非法 JSON → fail，is_active 仍是 a、a 的字段一字未改
     d.write(paths.settingsFile, R"({"env": {"ANTHROPIC_MODEL": )");
     DOCTEST_CHECK(abortsAndKeepsA("坏 JSON"));
     {
@@ -1897,7 +1678,7 @@ REGISTER_TEST(claude_reverse_broken_json_aborts,
                          std::string("sk-old-key-0123456789abcdef"));
     }
 
-    // env 非对象 → 同款中止（空文件不在此列——见用例⑤）
+    // env 非对象 → 同款中止
     d.write(paths.settingsFile, R"({"env": "not-an-object"})");
     DOCTEST_CHECK(abortsAndKeepsA("env 非对象"));
     {
@@ -1916,14 +1697,12 @@ REGISTER_TEST(claude_reverse_broken_json_aborts,
     return true;
 })
 
-// ---- 16. ⑤ 文件不存在 / 空文件 / 无 env → no-op 成功且照常切换 ----
-
 REGISTER_TEST(claude_reverse_missing_or_empty_noop,
               "claude_service: 反向同步⑤ 缺失或空文件 no-op 且照常切换", {
     using namespace module::claude;
     test_support::TestDb tdb(kDbPrefix, "revnoop");
     test_support::TempDir d("revnoop", kRevTempDirPrefix);
-    auto paths = makeSyncPaths(d);
+    auto paths = makeSyncPaths(d, tdb.handle());
 
     ClaudeService svc(tdb.handle(), kTestKeychainService);
     svc.setSettingsSyncPaths(paths);
@@ -1939,7 +1718,7 @@ REGISTER_TEST(claude_reverse_missing_or_empty_noop,
                                "sk-b-key-0123456789abcdef", "");
     DOCTEST_REQUIRE(b.isOk());
 
-    // 文件根本不存在（G7）：no-op 成功 + 照常切换 + a 一字未改
+    // 文件不存在：no-op 成功 + 照常切换 + a 一字未改
     {
         DOCTEST_REQUIRE(svc.setActiveProfile(b.value().id).isOk());
         auto act = svc.getActiveProfile();
@@ -1956,7 +1735,7 @@ REGISTER_TEST(claude_reverse_missing_or_empty_noop,
                          std::string("sk-old-key-0123456789abcdef"));
     }
 
-    // 0 字节空文件（G9，视为不存在）：a 侧同样一字未改
+    // 0 字节空文件按「视为不存在」处理
     d.write(paths.settingsFile, "");
     DOCTEST_REQUIRE(svc.setActiveProfile(a.value().id).isOk());
     DOCTEST_REQUIRE(svc.setActiveProfile(b.value().id).isOk());
@@ -1974,7 +1753,7 @@ REGISTER_TEST(claude_reverse_missing_or_empty_noop,
         DOCTEST_CHECK_EQ(ee.value().at("OLD_KEY"), std::string("old"));
     }
 
-    // 解析成功但无 env 键（G9 另一半）
+    // 解析成功但无 env 键 → 同为 no-op
     d.write(paths.settingsFile, R"({"permissions": {"allow": ["Bash"]}})");
     DOCTEST_REQUIRE(svc.setActiveProfile(a.value().id).isOk());
     DOCTEST_REQUIRE(svc.setActiveProfile(b.value().id).isOk());
@@ -1994,19 +1773,17 @@ REGISTER_TEST(claude_reverse_missing_or_empty_noop,
     return true;
 })
 
-// ---- 17. ⑥ 无激活 profile（G0）：坏 settings.json 也不挡首建自动激活 ----
-
 REGISTER_TEST(claude_reverse_no_active_skips,
               "claude_service: 反向同步⑥ 无激活 profile 时不读文件", {
     using namespace module::claude;
     test_support::TestDb tdb(kDbPrefix, "revnoact");
     test_support::TempDir d("revnoact", kRevTempDirPrefix);
-    auto paths = makeSyncPaths(d);
+    auto paths = makeSyncPaths(d, tdb.handle());
 
     ClaudeService svc(tdb.handle(), kTestKeychainService);
     svc.setSettingsSyncPaths(paths);
 
-    // 坏 settings.json：首建自动激活路径不得被它挡住（不读文件）
+    // 坏 settings.json 不得挡住首建自动激活（无前置激活 profile → 不读文件）
     d.write(paths.settingsFile, "{ not json at all");
     auto c = svc.createProfile("首建", "https://first.example.com",
                                "sk-first-key-0123456789", "",
@@ -2021,14 +1798,12 @@ REGISTER_TEST(claude_reverse_no_active_skips,
     return true;
 })
 
-// ---- 18. ⑦ 无变化 → 零写入（不 UPDATE、不写 Keychain、不 bump updated_at）----
-
 REGISTER_TEST(claude_reverse_no_change_zero_write,
               "claude_service: 反向同步⑦ 无变化零写入 updated_at 不变", {
     using namespace module::claude;
     test_support::TestDb tdb(kDbPrefix, "revsame");
     test_support::TempDir d("revsame", kRevTempDirPrefix);
-    auto paths = makeSyncPaths(d);
+    auto paths = makeSyncPaths(d, tdb.handle());
 
     ClaudeService svc(tdb.handle(), kTestKeychainService);
     svc.setSettingsSyncPaths(paths);
@@ -2054,7 +1829,7 @@ REGISTER_TEST(claude_reverse_no_change_zero_write,
                                "sk-b-key-0123456789abcdef", "");
     DOCTEST_REQUIRE(b.isOk());
 
-    // settings.json 与 a 的现值逐字段一致 → 不该发生任何写入
+    // settings.json 与 a 现值逐字段一致 → 不该发生任何写入
     d.write(paths.settingsFile,
             std::string(R"({"env": {)") +
                 R"("ANTHROPIC_BASE_URL": "https://same.example.com",)" +
@@ -2081,14 +1856,12 @@ REGISTER_TEST(claude_reverse_no_change_zero_write,
     return true;
 })
 
-// ---- 19. ⑧ sidecar 托管键（G1）：不写也不清 ----
-
 REGISTER_TEST(claude_reverse_sidecar_managed_key_skipped,
               "claude_service: 反向同步⑧ sidecar 托管键不被覆盖", {
     using namespace module::claude;
     test_support::TestDb tdb(kDbPrefix, "revside");
     test_support::TempDir d("revside", kRevTempDirPrefix);
-    auto paths = makeSyncPaths(d);
+    auto paths = makeSyncPaths(d, tdb.handle());
 
     ClaudeService svc(tdb.handle(), kTestKeychainService);
     svc.setSettingsSyncPaths(paths);
@@ -2108,10 +1881,11 @@ REGISTER_TEST(claude_reverse_sidecar_managed_key_skipped,
                                "sk-b-key-0123456789abcdef", "");
     DOCTEST_REQUIRE(b.isOk());
 
-    // sidecar 声明 ANTHROPIC_MODEL 是托管键；同批还有一个非托管变化（NEW_KEY），
-    // 保证确实写了一次库（否则整次 no-op 会让「未被覆盖」白白通过）
-    d.write(paths.sidecarFile,
-            R"({"managedKeys": {"ANTHROPIC_MODEL": ""}, "envSnapshot": {}})");
+    // sidecar 声明 ANTHROPIC_MODEL 是托管键。NEW_KEY 不能省：它保证确实写了一次库，
+    // 否则整次 no-op 会让「未被覆盖」白白通过。
+    test_support::writeRawConfigRow(
+        &tdb.handle(), module::claude::settings_sync::kSidecarConfigKey,
+        R"({"managedKeys": {"ANTHROPIC_MODEL": ""}, "envSnapshot": {}})");
     d.write(paths.settingsFile, R"({"env": {
         "ANTHROPIC_MODEL": "from-settings",
         "NEW_KEY": "n"
@@ -2133,16 +1907,12 @@ REGISTER_TEST(claude_reverse_sidecar_managed_key_skipped,
     return true;
 })
 
-// ===== Profile 复制（M4，设计 §4.1/§4.2/§4.3）=====
-
-// ---- 20. 副本字段 / Keychain 全等同源、id 与 account 不同、不激活、源行未动 ----
-
 REGISTER_TEST(claude_dup_profile_basic,
               "claude_service: 复制 profile 全等同源且不激活", {
     using namespace module::claude;
     test_support::TestDb tdb(kDbPrefix, "dup");
     test_support::TempDir d("dup", kRevTempDirPrefix);
-    auto paths = makeSyncPaths(d);
+    auto paths = makeSyncPaths(d, tdb.handle());
 
     ClaudeService svc(tdb.handle(), kTestKeychainService);
     svc.setSettingsSyncPaths(paths);
@@ -2157,7 +1927,7 @@ REGISTER_TEST(claude_dup_profile_basic,
     DOCTEST_REQUIRE(svc.updateProfile(pa).isOk());
     DOCTEST_REQUIRE(svc.setActiveProfile(pa.id).isOk());
 
-    // 此刻 settings.json 有别的值：复制若误触发反向同步就会污染源
+    // settings.json 此刻是别的值：复制若误触发反向同步就会污染源
     d.write(paths.settingsFile, R"({"env": {
         "ANTHROPIC_BASE_URL": "https://other.example.com",
         "ANTHROPIC_AUTH_TOKEN": "sk-other-key-0987654321"
@@ -2174,15 +1944,12 @@ REGISTER_TEST(claude_dup_profile_basic,
     DOCTEST_CHECK_EQ(cp.model, std::string("m-def"));
     DOCTEST_CHECK_EQ(cp.apiKeyCheck, pa.apiKeyCheck);
     DOCTEST_CHECK(!cp.isActive);                       // S-4：副本不激活
-    DOCTEST_CHECK_EQ(cp.keychainAccount,
-                     std::string("claude:") + std::to_string(cp.id));
-    DOCTEST_CHECK_NE(cp.keychainAccount, pa.keychainAccount);
-    // Keychain：副本 account 下是同一条源密钥
+    // 凭据本体在副本自己那一行，不是共享源行
     auto k = svc.loadApiKey(cp.id);
     DOCTEST_REQUIRE(k.isOk());
     DOCTEST_CHECK_EQ(k.value(), std::string("sk-src-key-0123456789abcdef"));
 
-    // 源行未动、激活态未变、未被反向同步污染（副本不激活 ⇒ 两需求零耦合）
+    // 源行未动、激活态未变（副本不激活 ⇒ 复制与反向同步两需求零耦合）
     auto src = svc.getProfile(pa.id);
     DOCTEST_REQUIRE(src.isOk());
     DOCTEST_CHECK(src.value().isActive);
@@ -2194,7 +1961,7 @@ REGISTER_TEST(claude_dup_profile_basic,
     DOCTEST_REQUIRE(act.isOk());
     DOCTEST_CHECK_EQ(act.value().id, pa.id);
 
-    // 重名避让：「副本 2」「副本 3」
+    // 重名避让
     auto dup2 = svc.duplicateProfile(pa.id);
     DOCTEST_REQUIRE(dup2.isOk());
     DOCTEST_CHECK_EQ(dup2.value().name, std::string("复制源 副本 2"));
@@ -2202,7 +1969,6 @@ REGISTER_TEST(claude_dup_profile_basic,
     DOCTEST_REQUIRE(dup3.isOk());
     DOCTEST_CHECK_EQ(dup3.value().name, std::string("复制源 副本 3"));
 
-    // 源不存在 → fail
     DOCTEST_CHECK(svc.duplicateProfile(99999).isFail());
 
     test_support::cleanupProfileKey(kTestKeychainService, pa.id);
@@ -2211,8 +1977,6 @@ REGISTER_TEST(claude_dup_profile_basic,
     test_support::cleanupProfileKey(kTestKeychainService, dup3.value().id);
     return true;
 })
-
-// ---- 21. 源 key 缺失（Keychain 孤儿）→ fail 且不建行 ----
 
 REGISTER_TEST(claude_dup_missing_key_fails,
               "claude_service: 复制时源密钥缺失 fail 且无新行", {
@@ -2223,7 +1987,8 @@ REGISTER_TEST(claude_dup_missing_key_fails,
     auto a = svc.createProfile("缺钥源", "https://src.example.com",
                                "sk-src-key-0123456789abcdef", "");
     DOCTEST_REQUIRE(a.isOk());
-    test_support::cleanupProfileKey(kTestKeychainService, a.value().id);            // 造 Keychain 孤儿
+    // 造「没存过密钥」：凭据在库列里，只能直接清列
+    DOCTEST_REQUIRE(test_support::clearStoredCredential(tdb.handle(), a.value().id));
 
     auto before = svc.listProfiles();
     DOCTEST_REQUIRE(before.isOk());
@@ -2239,24 +2004,24 @@ REGISTER_TEST(claude_dup_missing_key_fails,
     return true;
 })
 
-// 复制失败三态（2026-09-30 复盘）：条目不存在 / 读失败 / 值为空串，文案可分辨
-// 且带恢复提示——原来三态合成一句「密钥缺失」，用户分不清病因也无从恢复。
-// 全程注入缝假 keychain：三态都是确定性构造，不依赖真实 Keychain 行为。
-REGISTER_TEST(claude_dup_missing_key_three_states,
-              "claude_service: 复制失败三态（NotFound / 读错误 / 空串）+ 恢复提示", {
-    test_support::TestDb tdb(kDbPrefix, "dup3state");
-    ScopedFakeKeychain kc;
+// 复制失败两态，文案可分辨且带恢复提示。单列模型下「列空」与「值为空串」是同一种形态，故只有两态：
+//   列空（NotFound）→「密钥缺失」+ 恢复提示
+//   读失败（非 NotFound，如 Windows DPAPI 解不开）→ 原样透传（读不了 ≠ 没有）
+REGISTER_TEST(claude_dup_missing_key_two_states,
+              "claude_service: 复制失败两态（列空 / 解不开）+ 恢复提示", {
+    test_support::TestDb tdb(kDbPrefix, "dup2state");
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
     const std::string hint = "编辑该 Profile 重新填一次 API Key 即可";
 
-    auto created = svc.createProfile("三态源", "https://s.example.com",
-                                     "sk-ant-3state-0001", "m");
+    auto created = svc.createProfile("两态源", "https://s.example.com",
+                                     "sk-ant-2state-0001", "m");
     DOCTEST_REQUIRE(created.isOk());
     const int64_t id = created.value().id;
-    const std::string account = created.value().keychainAccount;
 
-    // 态一：条目不存在（NotFound，历史孤儿形态）→「密钥缺失」+ 恢复提示
-    kc.fake.data.erase(FakeKeychain::keyOf(kTestKeychainService, account));
+    // 态一：凭据列为空（没有密钥）→「密钥缺失」+ 恢复提示
+    DOCTEST_REQUIRE(tdb.handle().exec(
+        "UPDATE claude_profiles SET api_key_encrypted = '', api_key_hint = '', "
+        "api_key_check = '' WHERE id = " + std::to_string(id)).isOk());
     auto dupMissing = svc.duplicateProfile(id);
     DOCTEST_CHECK(dupMissing.isFail());
     DOCTEST_CHECK(dupMissing.errorCode() == core::ErrorCode::InvalidApiKey);
@@ -2264,41 +2029,39 @@ REGISTER_TEST(claude_dup_missing_key_three_states,
                   std::string::npos);
     DOCTEST_CHECK(dupMissing.errorMessage().find(hint) != std::string::npos);
 
-    // 态二：读失败（非 NotFound 的真实错误）→ 原样透传错误码与信息
-    //（读不了 ≠ 没有，不能报「密钥缺失」误导用户去重填）
-    kc.table.loadSecret = [](const std::string&, const std::string&) {
-        return core::Result<std::string>::fail(core::ErrorCode::Internal,
-                                               "注入：读取失败");
-    };
-    auto dupErr = svc.duplicateProfile(id);
-    DOCTEST_CHECK(dupErr.isFail());
-    DOCTEST_CHECK(dupErr.errorCode() == core::ErrorCode::Internal);
-    DOCTEST_CHECK(dupErr.errorMessage().find("读取源 Profile 密钥失败") !=
-                  std::string::npos);
-    DOCTEST_CHECK(dupErr.errorMessage().find("注入：读取失败") !=
-                  std::string::npos);
-    DOCTEST_CHECK(dupErr.errorMessage().find("密钥缺失") == std::string::npos);
-    // 恢复假实现（态三还要正常读）
-    kc.table.loadSecret = &fakeLoad;
+    // 恢复正常凭据（态二要正常读列）
+    module::claude::Profile fix = created.value();
+    fix.apiKeyPlain = "sk-ant-2state-0001";
+    DOCTEST_REQUIRE(svc.updateProfile(fix).isOk());
 
-    // 态三：条目在但值是空串 →「密钥为空串」+ 恢复提示
-    DOCTEST_REQUIRE(platform::keychain::storeSecret(
-        kTestKeychainService, account, "").isOk());
-    auto dupEmpty = svc.duplicateProfile(id);
-    DOCTEST_CHECK(dupEmpty.isFail());
-    DOCTEST_CHECK(dupEmpty.errorCode() == core::ErrorCode::InvalidApiKey);
-    DOCTEST_CHECK(dupEmpty.errorMessage().find("密钥为空串") !=
-                  std::string::npos);
-    DOCTEST_CHECK(dupEmpty.errorMessage().find(hint) != std::string::npos);
+    // 态二：解不开（非 NotFound 的真实错误）→ 原样透传错误码与信息。
+    // 读不了 ≠ 没有，报「密钥缺失」会误导用户去重填一遍。
+    {
+        ScopedFailUnprotect cred;
+        auto dupErr = svc.duplicateProfile(id);
+        DOCTEST_CHECK(dupErr.isFail());
+        DOCTEST_CHECK(dupErr.errorCode() == core::ErrorCode::Internal);
+        DOCTEST_CHECK(dupErr.errorMessage().find("读取源 Profile 密钥失败") !=
+                      std::string::npos);
+        DOCTEST_CHECK(dupErr.errorMessage().find("注入：列形态损坏，解不开") !=
+                      std::string::npos);
+        DOCTEST_CHECK(dupErr.errorMessage().find("密钥缺失") ==
+                      std::string::npos);
+    }
 
-    // 三个失败态都没建行（不建无 key 的副本）
+    // 两个失败态都没建行（不建无 key 的副本）
     auto after = svc.listProfiles();
     DOCTEST_REQUIRE(after.isOk());
     DOCTEST_CHECK_EQ(static_cast<int>(after.value().size()), 1);
+
+    // 撤掉注入源后复制成功：正常路径未被注入层带坏
+    auto ok = svc.duplicateProfile(id);
+    DOCTEST_REQUIRE(ok.isOk());
+    auto copyKey = svc.loadApiKey(ok.value().id);
+    DOCTEST_REQUIRE(copyKey.isOk());
+    DOCTEST_CHECK_EQ(copyKey.value(), std::string("sk-ant-2state-0001"));
     return true;
 })
-
-// ---- 22. 二段写失败 → 回滚（零残留：行没了、Keychain 条目也清了）----
 
 REGISTER_TEST(claude_dup_stage2_rollback,
               "claude_service: 复制二段失败回滚且零残留", {
@@ -2306,16 +2069,14 @@ REGISTER_TEST(claude_dup_stage2_rollback,
     test_support::TestDb tdb(kDbPrefix, "duprb");
     ClaudeService svc(tdb.handle(), kTestKeychainService);
 
-    // 先归零孤儿基线（清掉同套件其它用例可能残留在测试 Keychain 命名空间
-    // 的条目，让下面的孤儿计数断言只反映本用例）
+    // 先归零孤儿基线：清掉同套件其它用例残留在测试 Keychain 命名空间的条目，让下面的孤儿计数只反映本用例。
     auto orphansBase = svc.cleanupOrphanKeychainEntries();
     DOCTEST_REQUIRE(orphansBase.isOk());
 
     auto a = svc.createProfile("脏行源", "https://src.example.com",
                                "sk-src-key-0123456789abcdef", "");
     DOCTEST_REQUIRE(a.isOk());
-    // 直接 SQL 写坏 models_config 造 legacy 脏行：createProfile 阶段不读它，
-    // 二段 updateProfile 会校验 JSON 并拒绝 → 触发回滚
+    // 直接 SQL 写坏 models_config 造 legacy 脏行：createProfile 不读它，二段 updateProfile 校验 JSON 时拒绝 → 触发回滚
     auto bad = tdb.handle().exec(
         "UPDATE claude_profiles SET models_config = '{bad-json' WHERE id = " +
         std::to_string(a.value().id));
@@ -2328,11 +2089,10 @@ REGISTER_TEST(claude_dup_stage2_rollback,
     auto list = svc.listProfiles();
     DOCTEST_REQUIRE(list.isOk());
     DOCTEST_CHECK_EQ(static_cast<int>(list.value().size()), 1);
-    // Keychain 条目也已清（无残留孤儿）
+    // 无残留孤儿
     auto orphansAfter = svc.cleanupOrphanKeychainEntries();
     DOCTEST_REQUIRE(orphansAfter.isOk());
     DOCTEST_CHECK_EQ(orphansAfter.value(), 0);
-    // 源 key 未受影响
     auto k = svc.loadApiKey(a.value().id);
     DOCTEST_REQUIRE(k.isOk());
     DOCTEST_CHECK_EQ(k.value(), std::string("sk-src-key-0123456789abcdef"));
@@ -2341,15 +2101,13 @@ REGISTER_TEST(claude_dup_stage2_rollback,
     return true;
 })
 
-// ---- 23. 共享配置片段：CRUD + 绑定/解绑（设计 §2.1/§2.2/§2.6）----
-
 REGISTER_TEST(claude_shared_config_crud_and_binding,
               "claude_service: 片段 CRUD 与 profile 绑定/解绑", {
     using namespace module::claude;
     test_support::TestDb tdb(kDbPrefix, "sharedcrud");
     ClaudeService svc(tdb.handle(), kTestKeychainService);
 
-    // 建：空名 / 非法 JSON 拒绝
+    // 空名 / 非法 JSON 拒绝
     DOCTEST_CHECK(svc.createSharedConfig("   ", "{}").isFail());
     DOCTEST_CHECK(svc.createSharedConfig("片段A", "{bad-json").isFail());
 
@@ -2361,7 +2119,6 @@ REGISTER_TEST(claude_shared_config_crud_and_binding,
     DOCTEST_CHECK(dupName.isFail());
     DOCTEST_CHECK(dupName.errorCode() == core::ErrorCode::AlreadyExists);
 
-    // 列
     auto list = svc.listSharedConfigs();
     DOCTEST_REQUIRE(list.isOk());
     DOCTEST_REQUIRE_EQ(list.value().size(), 1u);
@@ -2382,13 +2139,13 @@ REGISTER_TEST(claude_shared_config_crud_and_binding,
     ghost.name = "x";
     DOCTEST_CHECK(svc.updateSharedConfig(ghost).isFail());
 
-    // 绑定：createProfile 尾部参数可建时即绑
+    // createProfile 尾部参数可建时即绑
     auto a = svc.createProfile("绑片段", "https://a.example.com",
                                "sk-ind-test-0123456789abcdef", "", false,
                                f.value().id);
     DOCTEST_REQUIRE(a.isOk());
     DOCTEST_CHECK_EQ(a.value().sharedConfigId, f.value().id);  // 返回值带上
-    // 读路径带该列（getProfile / listProfiles）
+    // getProfile / listProfiles 读路径也带该列
     auto ga = svc.getProfile(a.value().id);
     DOCTEST_REQUIRE(ga.isOk());
     DOCTEST_CHECK_EQ(ga.value().sharedConfigId, f.value().id);
@@ -2397,10 +2154,7 @@ REGISTER_TEST(claude_shared_config_crud_and_binding,
     DOCTEST_REQUIRE_EQ(la.value().size(), 1u);
     DOCTEST_CHECK_EQ(la.value()[0].sharedConfigId, f.value().id);
 
-    //（原「冻结键集（G10 用）/ 别名归一键集 / 解绑键集空」三段随
-    // advanced-json-editor §8.4 拆除：片段不再携带 env 键，sharedEnvKeysFor
-    // 与 G10 守卫同批移除；绑定/解绑的 DB 往返断言保留如下）
-    // 解绑（updateProfile 置 0）→ DB 列回 0
+    // 解绑：updateProfile 置 0 → DB 列回 0
     Profile unbind = ga.value();
     unbind.sharedConfigId = 0;
     DOCTEST_REQUIRE(svc.updateProfile(unbind).isOk());
@@ -2411,8 +2165,6 @@ REGISTER_TEST(claude_shared_config_crud_and_binding,
     test_support::cleanupProfileKey(kTestKeychainService, a.value().id);
     return true;
 })
-
-// ---- 24. 删除片段：同事务解绑绑定它的 profile（不留悬空 id）----
 
 REGISTER_TEST(claude_shared_config_delete_unbinds,
               "claude_service: 删片段同事务解绑绑定它的 profile", {
@@ -2436,7 +2188,7 @@ REGISTER_TEST(claude_shared_config_delete_unbinds,
 
     DOCTEST_REQUIRE(svc.deleteSharedConfig(f.value().id).isOk());
 
-    // 绑定行解绑、未绑行不受影响、profile 行一条不删（不做级联删）
+    // 绑定行解绑、profile 行一条不删（不做级联删）
     auto ga = svc.getProfile(a.value().id);
     auto gb = svc.getProfile(b.value().id);
     auto gc = svc.getProfile(c.value().id);
@@ -2457,17 +2209,11 @@ REGISTER_TEST(claude_shared_config_delete_unbinds,
     DOCTEST_CHECK(again.errorCode() == core::ErrorCode::NotFound);
     DOCTEST_CHECK(svc.deleteSharedConfig(0).isFail());
 
-    //（原「悬空 id 读路径冻结键集为空」断言随 sharedEnvKeysFor 拆除——
-    // advanced-json-editor §8.4；悬空绑定读路径容错由 getProfile 的
-    // sharedConfigId==0 断言承接）
-
     test_support::cleanupProfileKey(kTestKeychainService, a.value().id);
     test_support::cleanupProfileKey(kTestKeychainService, b.value().id);
     test_support::cleanupProfileKey(kTestKeychainService, c.value().id);
     return true;
 })
-
-// ---- 25. 复制 profile 携带片段绑定（设计 §2.6）----
 
 REGISTER_TEST(claude_shared_config_duplicate_copies_binding,
               "claude_service: 复制 profile 携带片段绑定", {
@@ -2482,7 +2228,7 @@ REGISTER_TEST(claude_shared_config_duplicate_copies_binding,
                                f.value().id);
     DOCTEST_REQUIRE(a.isOk());
 
-    // 二段补写条件（models/extra_env 非空）不成立时也必须带上绑定
+    // 反重构：这里 models/extra_env 全空，二段补写的门槛条件不成立——绑定只能靠 createProfile 尾参那条通道带过去
     auto dup = svc.duplicateProfile(a.value().id);
     DOCTEST_REQUIRE(dup.isOk());
     DOCTEST_CHECK_EQ(dup.value().sharedConfigId, f.value().id);
@@ -2494,8 +2240,6 @@ REGISTER_TEST(claude_shared_config_duplicate_copies_binding,
     test_support::cleanupProfileKey(kTestKeychainService, dup.value().id);
     return true;
 })
-
-// ---- 26. 未绑定片段的回归：列为 0、键集空（既有行为零变化）----
 
 REGISTER_TEST(claude_shared_config_unbound_regression,
               "claude_service: 未绑定片段读路径零值（回归）", {
@@ -2516,11 +2260,10 @@ REGISTER_TEST(claude_shared_config_unbound_regression,
     return true;
 })
 
-// ===== 高级设置 JSON（2026-09-30 advanced-json-editor 设计 §3.3）=====
-
-// ---- 26b. Profile::extraSettingsJson 往返：createProfile 尾参 / updateProfile
-//      两分支 / getProfile / listProfiles（「漏改 SELECT 列静默失效」的回归闸，
-//      同 fallback_profile_id 口径）
+// extraSettingsJson 往返：createProfile 尾参 / updateProfile 两分支 / 三条 SELECT。
+// 跨文件不变量：rowToProfile 对每个可选列都是 `if (isOk())` 守卫——SELECT 漏掉该列不报错，
+// 只会静默吞成默认值。所以「该字段在 getProfile / getActiveProfile / listProfiles 三条 SELECT 上都读得到」
+// 必须逐条断言，漏改任何一条都不会自己变红。
 REGISTER_TEST(claude_profile_extra_settings_roundtrip,
               "claude_service: extraSettingsJson createProfile 尾参 / updateProfile 两分支 / 三条 SELECT 往返", {
     using namespace module::claude;
@@ -2537,13 +2280,13 @@ REGISTER_TEST(claude_profile_extra_settings_roundtrip,
     DOCTEST_REQUIRE(a.isOk());
     DOCTEST_CHECK_EQ(a.value().extraSettingsJson, settingsJson);
 
-    // 未传尾参（既有调用方）→ 默认空串，既有行为零变化
+    // 未传尾参 → 默认空串
     auto b = svc.createProfile("无JSON", "https://b.example.com",
                                "sk-xs-b-0123456789abcdef", "");
     DOCTEST_REQUIRE(b.isOk());
     DOCTEST_CHECK_EQ(b.value().extraSettingsJson, std::string());
 
-    // 三条 SELECT 都要读到（rowToProfile 的 if (isOk()) 守卫会把缺列吞成空串）
+    // getProfile / listProfiles 两条
     auto ga = svc.getProfile(a.value().id);
     DOCTEST_REQUIRE(ga.isOk());
     DOCTEST_CHECK_EQ(ga.value().extraSettingsJson, settingsJson);
@@ -2557,8 +2300,23 @@ REGISTER_TEST(claude_profile_extra_settings_roundtrip,
         }
     }
     DOCTEST_CHECK(found);
+    // 第三条 getActiveProfile：代理接管链直供它，漏列同样静默失效
+    DOCTEST_REQUIRE(svc.setActiveProfile(a.value().id).isOk());
+    auto gact = svc.getActiveProfile();
+    DOCTEST_REQUIRE(gact.isOk());
+    DOCTEST_CHECK_EQ(gact.value().id, a.value().id);
+    DOCTEST_CHECK_EQ(gact.value().extraSettingsJson, settingsJson);
+    // 反向口径：b 那条激活后读到空串。缺列时这里也是空，所以这条不是「恒非空」的反证，
+    // 它的作用是钉「列被读到」而非「碰巧相等」。
+    DOCTEST_REQUIRE(svc.setActiveProfile(b.value().id).isOk());
+    auto gactB = svc.getActiveProfile();
+    DOCTEST_REQUIRE(gactB.isOk());
+    DOCTEST_CHECK_EQ(gactB.value().id, b.value().id);
+    DOCTEST_CHECK_EQ(gactB.value().extraSettingsJson, std::string());
+    // 交还激活态，为后续分支留确定初态
+    DOCTEST_REQUIRE(svc.setActiveProfile(a.value().id).isOk());
 
-    // updateProfile 分支一（apiKeyPlain 非空）也携带该列
+    // updateProfile 分支一（apiKeyPlain 非空）
     Profile upd = ga.value();
     upd.apiKeyPlain = "sk-xs-new-0123456789abcdef";
     DOCTEST_REQUIRE(svc.updateProfile(upd).isOk());
@@ -2566,7 +2324,7 @@ REGISTER_TEST(claude_profile_extra_settings_roundtrip,
     DOCTEST_REQUIRE(gu.isOk());
     DOCTEST_CHECK_EQ(gu.value().extraSettingsJson, settingsJson);
 
-    // updateProfile 分支二（只改元数据）：改 JSON 落库 + 清空落库
+    // updateProfile 分支二（只改元数据）：改 JSON 与清空都要落库
     Profile upd2 = gu.value();
     upd2.apiKeyPlain.clear();
     upd2.extraSettingsJson = R"({"statusLine": {"type": "command"}})";
@@ -2586,10 +2344,9 @@ REGISTER_TEST(claude_profile_extra_settings_roundtrip,
     return true;
 })
 
-// ---- 26c. 复制链带 extraSettingsJson（审计 F-3）：纯 JSON profile（两个 env
-//      字段均空、仅 extraSettingsJson 非空）复制不得静默丢字段——门槛条件
-//      （models/extra_env 非空）不成立时，二段补写与 createProfile 尾参双通道
-//      必须有一个把它带上
+// 复制链带 extraSettingsJson：纯 JSON profile（两个 env 字段均空、仅 extraSettingsJson 非空）复制不得静默丢字段。
+// 门槛条件：models_config / extra_env 至少一个非空时才走二段补写；此形态下二段不触发，
+// createProfile 尾参与二段补写两条通道必须有一条把它带上。
 REGISTER_TEST(claude_profile_extra_settings_duplicate_pure_json,
               "claude_service: 纯 JSON profile 复制携带 extraSettingsJson（F-3 门槛）", {
     using namespace module::claude;
@@ -2620,11 +2377,7 @@ REGISTER_TEST(claude_profile_extra_settings_duplicate_pure_json,
     return true;
 })
 
-// ===== failover 备用（2026-09-27 shared-config-and-failover 设计 §3.7/§3.8）=====
-
-// ---- 27a. 默认 0 + 三条 SELECT 往返（getActiveProfile 是「漏改 SELECT 列静默
-//      失效」的回归闸，同 auth_field 口径）----
-
+// fallbackProfileId 默认 0 + 三条 SELECT 往返（同 extraSettingsJson 口径：rowToProfile 缺列静默吞成默认值）。
 REGISTER_TEST(claude_service_fallback_default_and_roundtrip,
               "claude_service: failover 备用默认 0 + createProfile 尾参 / getProfile / "
               "getActiveProfile / listProfiles 往返", {
@@ -2643,7 +2396,7 @@ REGISTER_TEST(claude_service_fallback_default_and_roundtrip,
     DOCTEST_REQUIRE(b.isOk());
     DOCTEST_CHECK_EQ(b.value().fallbackProfileId, a.value().id);
 
-    // 三条 SELECT 都要读到（rowToProfile 的 if (isOk()) 守卫会把缺列吞成 0）
+    // getProfile / getActiveProfile / listProfiles 三条都要读到
     auto gb = svc.getProfile(b.value().id);
     DOCTEST_REQUIRE(gb.isOk());
     DOCTEST_CHECK_EQ(gb.value().fallbackProfileId, a.value().id);
@@ -2661,7 +2414,7 @@ REGISTER_TEST(claude_service_fallback_default_and_roundtrip,
     }
     DOCTEST_CHECK(listed);
 
-    // 清回 0 = 不启用（updateProfile 空密钥分支也要写该列）
+    // 清回 0 = 不启用；updateProfile 空密钥分支也要写该列
     Profile p = gb.value();
     p.fallbackProfileId = 0;
     DOCTEST_REQUIRE(svc.updateProfile(p).isOk());
@@ -2673,8 +2426,6 @@ REGISTER_TEST(claude_service_fallback_default_and_roundtrip,
     test_support::cleanupProfileKey(kTestKeychainService, b.value().id);
     return true;
 })
-
-// ---- 27b. 自引用校验（设计 §3.7：拒 fallback_profile_id == id）----
 
 REGISTER_TEST(claude_service_fallback_self_reference_rejected,
               "claude_service: failover 备用 = 自身被拒（updateProfile 校验）", {
@@ -2690,7 +2441,7 @@ REGISTER_TEST(claude_service_fallback_self_reference_rejected,
     auto r = svc.updateProfile(p);
     DOCTEST_REQUIRE(r.isFail());
     DOCTEST_CHECK(r.errorMessage().find("自身") != std::string::npos);
-    // 行未被污染（仍是 0）
+    // 校验失败时行未被污染（仍是 0）
     auto ga = svc.getProfile(a.value().id);
     DOCTEST_REQUIRE(ga.isOk());
     DOCTEST_CHECK_EQ(ga.value().fallbackProfileId, 0);
@@ -2698,8 +2449,6 @@ REGISTER_TEST(claude_service_fallback_self_reference_rejected,
     test_support::cleanupProfileKey(kTestKeychainService, a.value().id);
     return true;
 })
-
-// ---- 27c. 删除 profile 时同事务解绑「备用指向它」的行（设计 §3.7）----
 
 REGISTER_TEST(claude_service_delete_profile_unbinds_fallback,
               "claude_service: failover 删 profile 解绑指向它的备用引用", {
@@ -2717,21 +2466,18 @@ REGISTER_TEST(claude_service_delete_profile_unbinds_fallback,
     p.fallbackProfileId = b.value().id;
     DOCTEST_REQUIRE(svc.updateProfile(p).isOk());
 
-    // 删掉备用 → 主家解绑回 0
     DOCTEST_REQUIRE(svc.deleteProfile(b.value().id).isOk());
     auto ga = svc.getProfile(a.value().id);
     DOCTEST_REQUIRE(ga.isOk());
     DOCTEST_CHECK_EQ(ga.value().fallbackProfileId, 0);
 
-    // 删带备用的行本身（清理）不炸
+    // 删带备用的行本身不炸
     DOCTEST_REQUIRE(svc.deleteProfile(a.value().id).isOk());
 
     test_support::cleanupProfileKey(kTestKeychainService, a.value().id);
     test_support::cleanupProfileKey(kTestKeychainService, b.value().id);
     return true;
 })
-
-// ---- 27d. 复制携带备用（设计 §3.7：备用属于配置，复制 = 拿到同一套）----
 
 REGISTER_TEST(claude_service_duplicate_copies_fallback,
               "claude_service: failover duplicateProfile 携带备用 id", {
@@ -2759,9 +2505,7 @@ REGISTER_TEST(claude_service_duplicate_copies_fallback,
     return true;
 })
 
-// ---- 27e. resolveFallbackProfile 读路径（设计 §3.8）：id==0 / 不存在 / 无 key
-//      → nullopt；可用 → 带明文 key 的备用 ----
-
+// resolveFallbackProfile 读路径三态：id==0 / 指向不存在的 id / 备用凭据列空 → nullopt；可用 → 带明文 key 的备用。
 REGISTER_TEST(claude_service_resolve_fallback_profile,
               "claude_service: resolveFallbackProfile（无备用/失效/可用三态）", {
     using namespace module::claude;
@@ -2775,26 +2519,26 @@ REGISTER_TEST(claude_service_resolve_fallback_profile,
                                "sk-b-test-0123456789abcdef", "m");
     DOCTEST_REQUIRE(b.isOk());
 
-    // 未配备用（最常见路径，零 I/O）→ nullopt
+    // 未配备用（零 I/O）→ nullopt
     DOCTEST_CHECK_FALSE(svc.resolveFallbackProfile(a.value()).has_value());
 
-    // 指向不存在的 profile → nullopt（读路径容错，原样回错不换家）
+    // 指向不存在的 profile → nullopt（读路径容错，回错不换家）
     Profile dangling = a.value();
     dangling.fallbackProfileId = 987654;
     DOCTEST_CHECK_FALSE(svc.resolveFallbackProfile(dangling).has_value());
 
-    // 备用存在但 Keychain 缺 key → nullopt（「备用失效」档）
+    // 备用存在但凭据列空 → nullopt（「备用失效」档）
     Profile noKey = a.value();
     noKey.fallbackProfileId = b.value().id;
-    platform::keychain::deleteSecret(
-        kTestKeychainService, "claude:" + std::to_string(b.value().id));
+    DOCTEST_REQUIRE(test_support::clearStoredCredential(tdb.handle(), b.value().id));
     DOCTEST_CHECK_FALSE(svc.resolveFallbackProfile(noKey).has_value());
 
-    // 备用可用 → 返回完整备用（含明文 key，供代理转发注入）
-    // loadApiKey 读不到 = 上面已删 → 先重建 key（直接写 Keychain）
-    DOCTEST_REQUIRE(platform::keychain::storeSecret(
-        kTestKeychainService, "claude:" + std::to_string(b.value().id),
-        "sk-b-test-0123456789abcdef").isOk());
+    // 备用可用 → 返回含明文 key 的完整备用，供代理转发注入。上面已清空凭据，先经服务写回。
+    {
+        Profile reb = b.value();
+        reb.apiKeyPlain = "sk-b-test-0123456789abcdef";
+        DOCTEST_REQUIRE(svc.updateProfile(reb).isOk());
+    }
     auto fb = svc.resolveFallbackProfile(noKey);
     DOCTEST_REQUIRE(fb.has_value());
     DOCTEST_CHECK_EQ(fb->id, b.value().id);
@@ -2806,18 +2550,14 @@ REGISTER_TEST(claude_service_resolve_fallback_profile,
     return true;
 })
 
-// ===== 认证字段三态（鉴权头；2026-09-27 profile-auth-field 设计 §3/§4）=====
-
-// ---- 27. 默认 both + 三处 SELECT 往返（getActiveProfile 是「漏改 SELECT 列
-//      静默失效」的回归闸：rowToProfile 的 if (isOk()) 守卫会把缺列吞成默认值）----
-
+// authField 三态（both / bearer / api_key）决定直连带哪个密钥头。
 REGISTER_TEST(claude_service_auth_field_default_and_roundtrip,
               "claude_service: 认证字段默认 both + getProfile/getActiveProfile 往返", {
     using namespace module::claude;
     test_support::TestDb tdb(kDbPrefix, "authfield_rt");
     ClaudeService svc(tdb.handle(), kTestKeychainService);
 
-    // 不传尾参 → 默认 'both'
+    // 不传尾参 → 默认 both
     auto d = svc.createProfile("默认", "https://d.example.com",
                                "sk-def-test-0123456789abcdef", "m");
     DOCTEST_REQUIRE(d.isOk());
@@ -2826,7 +2566,7 @@ REGISTER_TEST(claude_service_auth_field_default_and_roundtrip,
     DOCTEST_REQUIRE(gd.isOk());
     DOCTEST_CHECK_EQ(gd.value().authField, std::string("both"));
 
-    // 显式 'bearer'：getProfile / getActiveProfile / listProfiles 三条 SELECT 都要读到
+    // 显式 bearer：三条 SELECT 都要读到
     auto b = svc.createProfile("Bearer", "https://b.example.com",
                                "sk-bear-test-0123456789abcdef", "m",
                                /*activateIfNoneActive=*/false,
@@ -2857,8 +2597,6 @@ REGISTER_TEST(claude_service_auth_field_default_and_roundtrip,
     return true;
 })
 
-// ---- 28. updateProfile 两条 UPDATE 分支都能改该字段 ----
-
 REGISTER_TEST(claude_service_auth_field_update_both_branches,
               "claude_service: 认证字段 updateProfile 两分支（换 key / 不换 key）", {
     using namespace module::claude;
@@ -2869,7 +2607,7 @@ REGISTER_TEST(claude_service_auth_field_update_both_branches,
                                "sk-upd-test-0123456789abcdef", "m");
     DOCTEST_REQUIRE(a.isOk());
 
-    // 分支一：apiKeyPlain 非空（换 key 分支）
+    // 分支一：apiKeyPlain 非空（换 key）
     Profile p1 = a.value();
     p1.apiKeyPlain = "sk-upd-test-newkey-0123456789";
     p1.authField = "api_key";
@@ -2878,7 +2616,7 @@ REGISTER_TEST(claude_service_auth_field_update_both_branches,
     DOCTEST_REQUIRE(g1.isOk());
     DOCTEST_CHECK_EQ(g1.value().authField, std::string("api_key"));
 
-    // 分支二：apiKeyPlain 留空（不换 key 分支）
+    // 反重构：分支二必须走 apiKeyPlain 留空这条。两条 UPDATE 语句是分开写的，只跑换 key 那条覆盖不到它。
     Profile p2 = g1.value();
     p2.authField = "bearer";
     DOCTEST_REQUIRE(svc.updateProfile(p2).isOk());
@@ -2889,8 +2627,6 @@ REGISTER_TEST(claude_service_auth_field_update_both_branches,
     test_support::cleanupProfileKey(kTestKeychainService, a.value().id);
     return true;
 })
-
-// ---- 29. 二段补写不覆盖（createProfile 返回值必须带上该字段）----
 
 REGISTER_TEST(claude_service_auth_field_survives_two_stage_update,
               "claude_service: 认证字段经二段补写（models/env）仍保持", {
@@ -2903,7 +2639,8 @@ REGISTER_TEST(claude_service_auth_field_survives_two_stage_update,
                                /*activateIfNoneActive=*/false,
                                /*sharedConfigId=*/0, "bearer");
     DOCTEST_REQUIRE(c.isOk());
-    // 模拟 UI 新建：以 createProfile 返回值为基，二段补写 models/env
+    // 模拟 UI 新建：以 createProfile 返回值为基，二段补写 models/env。反重构：必须以 createProfile 的返回值
+    // 为基（而非重读一遍），否则二段补写用不到 createProfile 装进内存的那份字段，覆盖不回写路径。
     Profile p = c.value();
     p.modelsConfigJson = R"({"default": {"model": "m-def"}})";
     p.extraEnvJson = R"({"EXTRA_A": "1"})";
@@ -2917,8 +2654,6 @@ REGISTER_TEST(claude_service_auth_field_survives_two_stage_update,
     test_support::cleanupProfileKey(kTestKeychainService, c.value().id);
     return true;
 })
-
-// ---- 30. 复制保留该字段 ----
 
 REGISTER_TEST(claude_service_duplicate_keeps_auth_field,
               "claude_service: 复制 profile 保留认证字段", {
@@ -2945,15 +2680,13 @@ REGISTER_TEST(claude_service_duplicate_keeps_auth_field,
     return true;
 })
 
-// ---- 31. 写侧规范化（非法值 → both，设计 D-8）----
-
 REGISTER_TEST(claude_service_auth_field_invalid_normalized,
               "claude_service: 认证字段非法值写侧规范化为 both", {
     using namespace module::claude;
     test_support::TestDb tdb(kDbPrefix, "authfield_norm");
     ClaudeService svc(tdb.handle(), kTestKeychainService);
 
-    // createProfile 传非法串 → 落库与返回值都是 'both'
+    // createProfile 传非法串 → 落库与返回值都是 both
     auto a = svc.createProfile("规范化建", "https://n.example.com",
                                "sk-norm-test-0123456789abcdef", "m",
                                /*activateIfNoneActive=*/false,
@@ -2961,7 +2694,7 @@ REGISTER_TEST(claude_service_auth_field_invalid_normalized,
     DOCTEST_REQUIRE(a.isOk());
     DOCTEST_CHECK_EQ(a.value().authField, std::string("both"));
 
-    // updateProfile 传非法串（直接构造 Profile）→ 读回 'both'
+    // updateProfile 传非法串（直接构造 Profile）→ 读回 both
     Profile p;
     p.id = a.value().id;
     p.name = "规范化建";
@@ -2976,17 +2709,13 @@ REGISTER_TEST(claude_service_auth_field_invalid_normalized,
     return true;
 })
 
-// ---- 32. 方言覆盖：默认空串 + 三处 SELECT 往返（CPX-13）----
-// getActiveProfile 是「漏改 SELECT 列静默失效」的回归闸：rowToProfile 的
-// if (isOk()) 守卫会把缺列吞成默认值
-
 REGISTER_TEST(claude_service_dialect_override_default_and_roundtrip,
               "claude_service: dialectOverride 默认空串 + 三处 SELECT 往返", {
     using namespace module::claude;
     test_support::TestDb tdb(kDbPrefix, "dialect_rt");
     ClaudeService svc(tdb.handle(), kTestKeychainService);
 
-    // 不传尾参 → 空串（未覆盖 = 按 host 推断；存量调用零变化）
+    // 不传尾参 → 空串（空串 = 未覆盖 = 按 host 推断）
     auto d = svc.createProfile("方言默认", "https://d.example.com",
                                "sk-dial-default-0123456789abcdef", "m");
     DOCTEST_REQUIRE(d.isOk());
@@ -2995,7 +2724,7 @@ REGISTER_TEST(claude_service_dialect_override_default_and_roundtrip,
     DOCTEST_REQUIRE(gd.isOk());
     DOCTEST_CHECK(gd.value().dialectOverride.empty());
 
-    // 显式 opencode_zen：getProfile / getActiveProfile / listProfiles 三条 SELECT 都要读到
+    // 显式 opencode_zen：getProfile / getActiveProfile / listProfiles 三条都要读到
     auto z = svc.createProfile("方言Zen", "https://zen.example.com",
                                "sk-dial-zen-0123456789abcdef", "m",
                                /*activateIfNoneActive=*/false,
@@ -3021,7 +2750,7 @@ REGISTER_TEST(claude_service_dialect_override_default_and_roundtrip,
     }
     DOCTEST_CHECK(listed);
 
-    // ① 覆盖值对 profile 生效：host 后缀普通（默认方言）也被钉成 zen 方言
+    // 覆盖值对 profile 生效：host 后缀普通（默认方言）也被钉成 zen 方言
     const UpstreamDialect pinned =
         UpstreamDialect::forBaseUrl(gz.value().baseUrl,
                                     gz.value().dialectOverride);
@@ -3031,8 +2760,6 @@ REGISTER_TEST(claude_service_dialect_override_default_and_roundtrip,
     test_support::cleanupProfileKey(kTestKeychainService, z.value().id);
     return true;
 })
-
-// ---- 33. updateProfile 两条 UPDATE 分支都能改该字段 ----
 
 REGISTER_TEST(claude_service_dialect_override_update_both_branches,
               "claude_service: dialectOverride updateProfile 两分支（换 key / 不换 key）", {
@@ -3046,7 +2773,7 @@ REGISTER_TEST(claude_service_dialect_override_update_both_branches,
                                /*sharedConfigId=*/0, "both", "opencode_zen");
     DOCTEST_REQUIRE(a.isOk());
 
-    // 分支一：apiKeyPlain 非空（换 key 分支）——覆盖改成通用方言
+    // 分支一：apiKeyPlain 非空（换 key），覆盖改成通用方言
     Profile p1 = a.value();
     p1.apiKeyPlain = "sk-dial-upd-newkey-0123456789";
     p1.dialectOverride = "anthropic_default";
@@ -3055,7 +2782,7 @@ REGISTER_TEST(claude_service_dialect_override_update_both_branches,
     DOCTEST_REQUIRE(g1.isOk());
     DOCTEST_CHECK_EQ(g1.value().dialectOverride, std::string("anthropic_default"));
 
-    // 分支二：apiKeyPlain 留空（不换 key 分支）——覆盖改回 zen
+    // 分支二：apiKeyPlain 留空（不换 key），覆盖改回 zen
     Profile p2 = g1.value();
     p2.dialectOverride = "opencode_zen";
     DOCTEST_REQUIRE(svc.updateProfile(p2).isOk());
@@ -3063,7 +2790,7 @@ REGISTER_TEST(claude_service_dialect_override_update_both_branches,
     DOCTEST_REQUIRE(g2.isOk());
     DOCTEST_CHECK_EQ(g2.value().dialectOverride, std::string("opencode_zen"));
 
-    // 清空 = 回到 host 推断（空串是合法值，不是"写不进去"）
+    // 清空 = 回到 host 推断（空串是合法值，不是「写不进去」）
     Profile p3 = g2.value();
     p3.dialectOverride.clear();
     DOCTEST_REQUIRE(svc.updateProfile(p3).isOk());
@@ -3074,8 +2801,6 @@ REGISTER_TEST(claude_service_dialect_override_update_both_branches,
     test_support::cleanupProfileKey(kTestKeychainService, a.value().id);
     return true;
 })
-
-// ---- 34. 二段补写不覆盖（createProfile 返回值必须带上该字段）----
 
 REGISTER_TEST(claude_service_dialect_override_survives_two_stage_update,
               "claude_service: dialectOverride 经二段补写（models/env）仍保持", {
@@ -3088,7 +2813,7 @@ REGISTER_TEST(claude_service_dialect_override_survives_two_stage_update,
                                /*activateIfNoneActive=*/false,
                                /*sharedConfigId=*/0, "both", "opencode_zen");
     DOCTEST_REQUIRE(c.isOk());
-    // 模拟 UI 新建：以 createProfile 返回值为基，二段补写 models/env
+    // 模拟 UI 新建：以 createProfile 返回值为基，二段补写 models/env（与 authField 那条同构）
     Profile p = c.value();
     p.modelsConfigJson = R"({"default": {"model": "m-def"}})";
     p.extraEnvJson = R"({"EXTRA_A": "1"})";
@@ -3102,8 +2827,6 @@ REGISTER_TEST(claude_service_dialect_override_survives_two_stage_update,
     test_support::cleanupProfileKey(kTestKeychainService, c.value().id);
     return true;
 })
-
-// ---- 35. 复制保留该字段 ----
 
 REGISTER_TEST(claude_service_duplicate_keeps_dialect_override,
               "claude_service: 复制 profile 保留 dialectOverride", {
@@ -3130,15 +2853,13 @@ REGISTER_TEST(claude_service_duplicate_keeps_dialect_override,
     return true;
 })
 
-// ---- 36. 写侧 / 读侧规范化（非法值 → 空串 = 未覆盖，同 authField 口径）----
-
 REGISTER_TEST(claude_service_dialect_override_invalid_normalized,
               "claude_service: dialectOverride 非法值写侧归一为空串", {
     using namespace module::claude;
     test_support::TestDb tdb(kDbPrefix, "dialect_norm");
     ClaudeService svc(tdb.handle(), kTestKeychainService);
 
-    // createProfile 传非法串 → 落库与返回值都是空串（未覆盖）
+    // createProfile 传非法串（大小写也对不上）→ 落库与返回值都是空串
     auto a = svc.createProfile("方言规范化", "https://n.example.com",
                                "sk-dial-norm-0123456789abcdef", "m",
                                /*activateIfNoneActive=*/false,
@@ -3164,14 +2885,12 @@ REGISTER_TEST(claude_service_dialect_override_invalid_normalized,
     return true;
 })
 
-// ---- 37. 反向同步不丢该字段（settings.json env 无对应键 = 不适用，但也不清）----
-
 REGISTER_TEST(claude_service_dialect_override_survives_reverse_sync,
               "claude_service: 反向同步不丢 dialectOverride", {
     using namespace module::claude;
     test_support::TestDb tdb(kDbPrefix, "dialect_sync");
     test_support::TempDir d("dialect_sync");
-    auto paths = makeSyncPaths(d);
+    auto paths = makeSyncPaths(d, tdb.handle());
 
     ClaudeService svc(tdb.handle(), kTestKeychainService);
     svc.setSettingsSyncPaths(paths);
@@ -3187,7 +2906,7 @@ REGISTER_TEST(claude_service_dialect_override_survives_reverse_sync,
                                "sk-dial-sync-b-0123456789abcdef", "m");
     DOCTEST_REQUIRE(b.isOk());
 
-    // live 侧带一条非守卫变化，保证确实发生了一次写库（不是整次 no-op 白过）
+    // live 侧带非守卫变化，保证确实写了一次库（否则整次 no-op，dialectOverride 原样保留会白白通过）
     d.write(paths.settingsFile, R"({"env": {
         "ANTHROPIC_BASE_URL": "https://new.example.com/",
         "ANTHROPIC_AUTH_TOKEN": "sk-new-upstream-9876543210",
@@ -3198,9 +2917,9 @@ REGISTER_TEST(claude_service_dialect_override_survives_reverse_sync,
 
     auto gotA = svc.getProfile(a.value().id);
     DOCTEST_REQUIRE(gotA.isOk());
-    // 确实被反向同步写过（base_url 已收编）…
+    // 确实被反向同步写过（base_url 已收编）
     DOCTEST_CHECK_EQ(gotA.value().baseUrl, std::string("https://new.example.com"));
-    // …而方言覆盖原样保留（反向同步只碰 models/env/base_url/token，不碰它）
+    // 而方言覆盖原样保留：反向同步只碰 models / env / base_url / token
     DOCTEST_CHECK_EQ(gotA.value().dialectOverride, std::string("opencode_zen"));
 
     test_support::cleanupProfileKey(kTestKeychainService, a.value().id);
@@ -3208,8 +2927,22 @@ REGISTER_TEST(claude_service_dialect_override_survives_reverse_sync,
     return true;
 })
 
-// ---- 运行（profile-run 设计 §5/§8；D-1（V3）：直连——临时 settings + --settings，
-//      零全局改动：不启代理、不切激活、不读写 ~/.claude/settings.json）----
+// runProfile 直连形态：临时 settings + --settings，不启代理、不切激活、不读写 ~/.claude/settings.json。
+//
+// run-settings 临时文件里带**明文 API key**，POSIX 下必须 0600。
+// 反重构：平台分支必须留在函数体内——doctest 宏参数里嵌预处理指令是 UB，
+// -Werror,-Wembedded-directive 下直接编译失败；写进宏参数会让整个测试文件编不过。
+// Windows 走 DPAPI/ACL 口径，权限位不适用 → 该分支恒 true，不构成保护断言（真实保护由 credential 用例覆盖）。
+bool runSettingsFileIsOwnerOnly(const std::filesystem::path& p) {
+#if defined(_WIN32)
+    (void)p;
+    return true;
+#else
+    struct stat st {};
+    if (::stat(p.string().c_str(), &st) != 0) return false;
+    return (static_cast<unsigned>(st.st_mode) & 07777u) == 0600u;
+#endif
+}
 
 REGISTER_TEST(claude_service_run_profile_direct_env_writes_temp_settings,
               "claude_service: runProfile 直连——不启代理、写 run-settings 临时文件、假 launch 收到 --settings 参数", {
@@ -3217,9 +2950,8 @@ REGISTER_TEST(claude_service_run_profile_direct_env_writes_temp_settings,
     test_support::TestDb tdb(kDbPrefix, "runprofile1");
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
 
-    // 接管通道注入（指向临时文件）——零全局回归闸的一部分：settings.json 与
-    // sidecar 都不该被本次运行触碰
-    TempSyncPaths paths("runprofile1");
+    // 接管通道注入（指向临时文件）：零全局回归闸断言 settings.json 与 sidecar 都不被本次运行触碰
+    TempSyncPaths paths("runprofile1", tdb.handle());
     svc.setSettingsSyncPaths(paths.paths());
     const std::string settingsBefore = R"({
       "env": { "MY_EXISTING": "keep-me" },
@@ -3247,7 +2979,7 @@ REGISTER_TEST(claude_service_run_profile_direct_env_writes_temp_settings,
     DOCTEST_REQUIRE(r.isOk());
     DOCTEST_CHECK(!svc.isProxyRunning());
 
-    // ② 假 launch 收到正确参数：--settings + run-settings/ 下的路径
+    // 假 launch 收到 --settings + run-settings/ 下的绝对路径
     DOCTEST_CHECK_EQ(calls, 1);
     DOCTEST_CHECK_EQ(got.title, std::string("官方 · Claude Code"));
     DOCTEST_CHECK_EQ(got.workingDir, platform::terminal::homeDir());
@@ -3262,51 +2994,54 @@ REGISTER_TEST(claude_service_run_profile_direct_env_writes_temp_settings,
     DOCTEST_CHECK(settingsFile.filename().string().rfind("run-", 0) == 0);
     DOCTEST_CHECK_EQ(settingsFile.extension().string(), std::string(".json"));
 
-    // ③ 落盘文件 = --settings 指向的同一路径；内容 = 合法 settings JSON（env 子对象）
+    // 落盘文件 = --settings 指向的同一路径；内容 = 合法 settings JSON（env 子对象）
     DOCTEST_REQUIRE(std::filesystem::exists(settingsFile));
+    // 权限 0600：atomicWriteFile 的 prepareRestrictedFile 让 tmp 出生即 0600，写入侧再过一道
+    // restrictToOwnerOnly；此处断言的是最终落盘态，两道都得保住。
+    DOCTEST_CHECK(runSettingsFileIsOwnerOnly(settingsFile));
     auto parsed = platform::json::parse(readFileToString(settingsFile));
     DOCTEST_REQUIRE(parsed.isOk());
     DOCTEST_REQUIRE(parsed.value().isObject());
     auto envVal = parsed.value().asObject().get("env");
     DOCTEST_REQUIRE(envVal.isObject());
     auto envObj = envVal.asObject();
-    // BASE_URL 去尾斜杠（profile 里存的是带 '/' 的 url）
+    // BASE_URL 去尾斜杠（profile 里存的是带尾 '/' 的 url）
     DOCTEST_CHECK_EQ(envObj.get("ANTHROPIC_BASE_URL").asString(),
                      std::string("https://api.anthropic.com"));
-    // 密钥键三态默认 both → 只写 ANTHROPIC_AUTH_TOKEN
+    // authField 默认 both → 只写 ANTHROPIC_AUTH_TOKEN
     DOCTEST_CHECK_EQ(envObj.get("ANTHROPIC_AUTH_TOKEN").asString(),
                      std::string("sk-ant-run-0001"));
     DOCTEST_CHECK(!envObj.has("ANTHROPIC_API_KEY"));
 
-    // ④ 零全局回归闸：settings.json 内容未变、sidecar 未建、激活态未变、代理未动
+    // 零全局回归闸：settings.json 内容未变、sidecar 未建、激活态未变、代理未动
     DOCTEST_CHECK_EQ(readFileToString(paths.settings), settingsBefore);
-    DOCTEST_CHECK(!std::filesystem::exists(paths.sidecar));
+    DOCTEST_CHECK(!test_support::configRowExists(
+        &tdb.handle(), module::claude::settings_sync::kSidecarConfigKey));
     auto activeAfter = svc.getActiveProfile();
     DOCTEST_REQUIRE(activeAfter.isOk());
     DOCTEST_CHECK_EQ(activeAfter.value().id, a.value().id);
     DOCTEST_CHECK(!svc.isProxyRunning());
 
-    // 会话没真跑，正文自删不会发生 → 测试自清临时文件
+    // 假 launch 没真起会话，生产侧的自删不会发生 → 用例自清临时文件
     std::error_code rmEc;
     std::filesystem::remove(settingsFile, rmEc);
     test_support::cleanupProfileKey(kTestKeychainService, a.value().id);
     return true;
 })
 
-// runProfile 合并接线钉（审计 F-01，仿 F-8 门面钉）：生效 JSON（profile ⊕
-// 片段、片段赢）并入临时 settings 顶层——接线整段删除则本用例红（三链不分叉
-// 裁决①的第三条链守护）
+// 生效 JSON（profile ⊕ 片段，片段赢）并入临时 settings 顶层。反重构：这段接线整段删掉本用例即红，
+// 不能因为「看不出它干什么」就清掉。
 REGISTER_TEST(claude_service_run_profile_merges_extra_settings,
               "claude_service: runProfile 临时 settings 并入生效 JSON（片段赢/model 抑制，F-01 接线钉）", {
     test_support::DataRootEnv root(kDbPrefix, "runprofile6");
     test_support::TestDb tdb(kDbPrefix, "runprofile6");
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
 
-    TempSyncPaths paths("runprofile6");
+    TempSyncPaths paths("runprofile6", tdb.handle());
     svc.setSettingsSyncPaths(paths.paths());
 
-    // 片段与 profile 各含独有键 + 同键（片段赢）；JSON 含顶层 model（触发
-    // ANTHROPIC_MODEL 抑制——legacy model 列本会生成该 env 键）
+    // 片段与 profile 各含独有键 + 同键（片段赢）；JSON 含顶层 model（触发 ANTHROPIC_MODEL 抑制——
+    // legacy model 列本会生成该 env 键）
     auto frag = svc.createSharedConfig("片段R", R"({"statusLine": "frag-s"})");
     DOCTEST_REQUIRE(frag.isOk());
     auto a = svc.createProfile("直连JSON", "https://api.anthropic.com",
@@ -3337,18 +3072,19 @@ REGISTER_TEST(claude_service_run_profile_merges_extra_settings,
     DOCTEST_REQUIRE(parsed.isOk());
     DOCTEST_REQUIRE(parsed.value().isObject());
     auto rootObj = parsed.value().asObject();
-    // 生效 JSON 并入顶层：同键片段赢、独有键与 profile 键都在
+    // 生效 JSON 并入顶层：同键片段赢，独有键与 profile 键都在
     DOCTEST_CHECK_EQ(rootObj.get("statusLine").asString(),
                      std::string("frag-s"));
     DOCTEST_CHECK_EQ(rootObj.get("model").asString(), std::string("json-model"));
     DOCTEST_REQUIRE(rootObj.get("permissions").isObject());
-    // model 抑制随行生效：env 无 ANTHROPIC_MODEL（legacy m-legacy 不落 env）
+    // model 抑制随行生效：顶层有 model 时 env 不再生成 ANTHROPIC_MODEL（legacy m-legacy 不落 env）
     auto envObj = rootObj.get("env").asObject();
     DOCTEST_CHECK(!envObj.has("ANTHROPIC_MODEL"));
     DOCTEST_CHECK_EQ(envObj.get("ANTHROPIC_AUTH_TOKEN").asString(),
                      std::string("sk-ant-run-0006"));
-    // 零全局闸（同既有直连用例）：settings.json / sidecar 未被触碰
-    DOCTEST_CHECK(!std::filesystem::exists(paths.sidecar));
+    // 零全局闸：settings.json / sidecar 未被触碰
+    DOCTEST_CHECK(!test_support::configRowExists(
+        &tdb.handle(), module::claude::settings_sync::kSidecarConfigKey));
 
     std::error_code rmEc;
     std::filesystem::remove(settingsFile, rmEc);
@@ -3357,7 +3093,7 @@ REGISTER_TEST(claude_service_run_profile_merges_extra_settings,
 })
 
 REGISTER_TEST(claude_service_run_profile_key_read_failure_aborts,
-              "claude_service: runProfile 读 Keychain 失败 → fail 且不落盘、不开窗", {
+              "claude_service: runProfile 读凭据失败 → fail 且不落盘、不开窗", {
     test_support::DataRootEnv root(kDbPrefix, "runprofile2");
     test_support::TestDb tdb(kDbPrefix, "runprofile2");
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
@@ -3367,18 +3103,9 @@ REGISTER_TEST(claude_service_run_profile_key_read_failure_aborts,
     DOCTEST_REQUIRE(a.isOk());
     DOCTEST_REQUIRE(svc.setActiveProfile(a.value().id).isOk());
 
-    // 注入 load 失败的后端（CPX-14 缝）：createProfile 在注入前已完成，
-    // store/delete 仍走真实实现——只让「读」失败
-    const auto failLoad = [](const std::string&, const std::string&)
-        -> core::Result<std::string> {
-        return core::Result<std::string>::fail(core::ErrorCode::Internal,
-            "注入：Keychain 读失败");
-    };
-    platform::keychain::Backend table{&platform::keychain::realStoreSecret,
-                                      failLoad,
-                                      &platform::keychain::realDeleteSecret,
-                                      &platform::keychain::realDeleteSecretsNotIn};
-    const auto* prev = platform::keychain::setBackendForTest(&table);
+    // 注入 credential::unprotect 失败。反重构：ScopedFailUnprotect 必须放在 createProfile 之后——
+    // 放前面连写入路径也会失败，测的就不是「读失败」这条分支了。
+    ScopedFailUnprotect cred;
 
     int calls = 0;
     svc.setTerminalLauncher([&](const platform::terminal::LaunchSpec&) {
@@ -3388,12 +3115,10 @@ REGISTER_TEST(claude_service_run_profile_key_read_failure_aborts,
     auto r = svc.runProfile(a.value().id, nullptr);
     DOCTEST_CHECK(r.isFail());     // 中止
     DOCTEST_CHECK_EQ(calls, 0);    // 不开会话
-    // 未落盘：run-settings 目录都不该建（中止在写文件之前）
+    // 未落盘：run-settings 目录都不该建（中止发生在写文件之前）
     DOCTEST_CHECK(!std::filesystem::exists(
         std::filesystem::path(root.dir) / "run-settings"));
 
-    platform::keychain::setBackendForTest(prev);   // 先还原再清密钥（清密钥走真实后端）
-    test_support::cleanupProfileKey(kTestKeychainService, a.value().id);
     return true;
 })
 
@@ -3403,8 +3128,8 @@ REGISTER_TEST(claude_service_run_profile_zero_global_change_gate,
     test_support::TestDb tdb(kDbPrefix, "runprofile3");
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
 
-    // 接管通道路径注入（指向临时 settings.json）——回归闸断言的就是它**不被碰**
-    TempSyncPaths paths("runprofile3");
+    // 接管通道路径注入（指向临时 settings.json）：回归闸断言的就是它不被碰
+    TempSyncPaths paths("runprofile3", tdb.handle());
     svc.setSettingsSyncPaths(paths.paths());
 
     auto a = svc.createProfile("甲", "https://a.example.com", "sk-ant-run-a", "");
@@ -3423,7 +3148,7 @@ REGISTER_TEST(claude_service_run_profile_zero_global_change_gate,
         return core::Result<void>::ok();
     });
 
-    // ① 目标 = 激活 profile（a）：成功 + settings.json 一字未变 + 激活态未变
+    // 目标 = 激活 profile（a）：成功，settings.json 一字未变，激活态未变
     const std::string settingsBefore = R"({
       "env": { "ANTHROPIC_BASE_URL": "http://127.0.0.1:8888",
                "ANTHROPIC_AUTH_TOKEN": "PROXY_MANAGED",
@@ -3436,16 +3161,17 @@ REGISTER_TEST(claude_service_run_profile_zero_global_change_gate,
     DOCTEST_REQUIRE(ra.isOk());
     DOCTEST_CHECK_EQ(readFileToString(paths.settings), settingsBefore);
 
-    // ② 目标 ≠ 激活 profile（b）：**不再切激活**（D-1）——坏 settings.json 也不挡
-    //    路（直连形态根本不解析全局文件）；写坏文件本身作为反证
+    // 目标 ≠ 激活 profile（b）：不切激活，坏 settings.json 也不挡路（直连形态根本不解析全局文件）；
+    // 先写坏文件本身作反证。
     paths.writeSettings("{ 这不是合法 JSON");
     auto rb = svc.runProfile(b.value().id, nullptr);
     DOCTEST_REQUIRE(rb.isOk());
     DOCTEST_CHECK_EQ(readFileToString(paths.settings),
                      std::string("{ 这不是合法 JSON"));
 
-    // ③ 回归闸汇总：sidecar 未建、激活态未变、代理未动、每次都开窗
-    DOCTEST_CHECK(!std::filesystem::exists(paths.sidecar));
+    // 回归闸汇总：sidecar 未建、激活态未变、代理未动、两次都开窗
+    DOCTEST_CHECK(!test_support::configRowExists(
+        &tdb.handle(), module::claude::settings_sync::kSidecarConfigKey));
     auto active = svc.getActiveProfile();
     DOCTEST_REQUIRE(active.isOk());
     DOCTEST_CHECK_EQ(active.value().id, a.value().id);
@@ -3472,9 +3198,8 @@ REGISTER_TEST(claude_service_run_profile_write_failure_aborts,
     DOCTEST_REQUIRE(a.isOk());
     DOCTEST_REQUIRE(svc.setActiveProfile(a.value().id).isOk());
 
-    // 用同名**普通文件**占住 run-settings 路径 → create_directories 必失败
-    //（路径已存在且不是目录）；Windows 上「只读目录」拦不住建文件，这是跨平台
-    // 可复现的目录不可建形态
+    // 反重构：用同名**普通文件**占住 run-settings 路径而不是「只读目录」——Windows 上只读目录拦不住建文件，
+    // 普通文件占位才是跨平台可复现的「目录不可建」形态。
     const std::filesystem::path dir = std::filesystem::path(root.dir) / "run-settings";
     {
         std::ofstream out(dir, std::ios::binary | std::ios::trunc);
@@ -3513,14 +3238,13 @@ REGISTER_TEST(claude_service_run_profile_invalid_id,
     return true;
 })
 
-// ---- 直连 env 生成（buildDirectEnv 纯函数，profile-run 设计 §4.2）----
-
+// buildDirectEnv 是纯函数：直连形态下最终落到 --settings 临时文件里的 env 全由它生成。
 REGISTER_TEST(claude_build_direct_env_three_state_auth_and_base_url,
               "buildDirectEnv: 认证字段三态密钥键名 + BASE_URL 去尾斜杠 + 空值不写键", {
     // bearer → 只写 ANTHROPIC_AUTH_TOKEN
     {
         auto env = module::claude::buildDirectEnv(
-            "https://api.anthropic.com/", "sk-bearer-1", "bearer", "", "", "");
+            "https://api.anthropic.com/", "sk-bearer-1", "bearer", "", "");
         DOCTEST_CHECK_EQ(env["ANTHROPIC_BASE_URL"],
                          std::string("https://api.anthropic.com"));  // 去尾斜杠
         DOCTEST_CHECK_EQ(env["ANTHROPIC_AUTH_TOKEN"], std::string("sk-bearer-1"));
@@ -3529,26 +3253,24 @@ REGISTER_TEST(claude_build_direct_env_three_state_auth_and_base_url,
     // api_key → 只写 ANTHROPIC_API_KEY
     {
         auto env = module::claude::buildDirectEnv(
-            "https://gw.example.com", "sk-api-1", "api_key", "", "", "");
+            "https://gw.example.com", "sk-api-1", "api_key", "", "");
         DOCTEST_CHECK_EQ(env["ANTHROPIC_API_KEY"], std::string("sk-api-1"));
         DOCTEST_CHECK(env.find("ANTHROPIC_AUTH_TOKEN") == env.end());
     }
-    // both（默认）/ 未知值 → 只写 ANTHROPIC_AUTH_TOKEN
+    // both（默认）与未知值走同一分支：authFieldFromText 对未知值兜底成 both
     {
         auto env = module::claude::buildDirectEnv(
-            "https://api.anthropic.com", "sk-both-1", "both", "", "", "");
+            "https://api.anthropic.com", "sk-both-1", "both", "", "");
         DOCTEST_CHECK_EQ(env["ANTHROPIC_AUTH_TOKEN"], std::string("sk-both-1"));
         DOCTEST_CHECK(env.find("ANTHROPIC_API_KEY") == env.end());
-        // 未知 / 空串认证字段按 both 读（authFieldFromText 兜底，D-8 读侧口径）
         auto env2 = module::claude::buildDirectEnv(
-            "https://x.example.com", "sk-both-2", "什么奇怪的值", "", "", "");
+            "https://x.example.com", "sk-both-2", "什么奇怪的值", "", "");
         DOCTEST_CHECK_EQ(env2["ANTHROPIC_AUTH_TOKEN"], std::string("sk-both-2"));
         DOCTEST_CHECK(env2.find("ANTHROPIC_API_KEY") == env2.end());
     }
-    // 空 baseUrl / 空密钥 → 对应托管键不写（不产生空值键；BASE_URL 空 = Claude
-    // Code 回落内置默认上游）
+    // 空 baseUrl / 空密钥 → 不产生空值键（BASE_URL 空 = Claude Code 回落内置默认上游）
     {
-        auto env = module::claude::buildDirectEnv("", "", "both", "", "", "");
+        auto env = module::claude::buildDirectEnv("", "", "both", "", "");
         DOCTEST_CHECK(env.find("ANTHROPIC_BASE_URL") == env.end());
         DOCTEST_CHECK(env.find("ANTHROPIC_AUTH_TOKEN") == env.end());
         DOCTEST_CHECK(env.find("ANTHROPIC_API_KEY") == env.end());
@@ -3569,29 +3291,274 @@ REGISTER_TEST(claude_build_direct_env_slots_extra_env_and_managed_override,
         "AUTO_COMPACT_ENABLED": "1",
         "MY_VAR": "v"
     })";
-    //（advanced-json-editor §8.4：共享片段 env 叠加形参已拆除——片段走 JSON 域）
+    // 反重构：签名里没有「片段 env 叠加」形参，别再往里加——片段一律走 extraSettingsJson 的 JSON 域
     auto env = module::claude::buildDirectEnv(
         "https://api.anthropic.com/", "sk-real-key", "both",
-        models, "", extra);
+        models, extra);
 
-    // 托管键压过 extra_env 的同名旧值（BASE_URL 去尾斜杠后为 profile 值）
+    // 托管键压过 extra_env 的同名旧值（BASE_URL 去尾斜杠后取 profile 值）
     DOCTEST_CHECK_EQ(env["ANTHROPIC_BASE_URL"],
                      std::string("https://api.anthropic.com"));
     DOCTEST_CHECK_EQ(env["ANTHROPIC_AUTH_TOKEN"], std::string("sk-real-key"));
-    // 「第二密钥键」不存活：直连只写托管键一个（extra 带进的另一键被跳过）
+    // extra 带进的另一个密钥键不存活：直连只写托管的那一个
     DOCTEST_CHECK(env.find("ANTHROPIC_API_KEY") == env.end());
-    // extra_env 键原样入表
+    // 非托管 extra_env 键原样入表
     DOCTEST_CHECK_EQ(env["MY_VAR"], std::string("v"));
-    // 槽位：非空槽位写 envKey；name 空 → 派生显示名（剥 [1M] 类标记）
+    // 非空槽位写 envKey；name 空 → 派生显示名（剥 [1M] 类标记）
     DOCTEST_CHECK_EQ(env["ANTHROPIC_MODEL"], std::string("claude-sonnet-4"));
     DOCTEST_CHECK_EQ(env["ANTHROPIC_DEFAULT_SONNET_MODEL"],
                      std::string("claude-sonnet-4-5"));
     DOCTEST_CHECK_EQ(env["ANTHROPIC_DEFAULT_SONNET_MODEL_NAME"],
                      std::string("S4.5"));
-    // 空槽位（opus）跳过
+    // model 为空的槽位跳过，不生成 env 键
     DOCTEST_CHECK(env.find("ANTHROPIC_DEFAULT_OPUS_MODEL") == env.end());
     // extra_env 别名归一：AUTO_COMPACT_ENABLED=1 → DISABLE_AUTO_COMPACT=0
     DOCTEST_CHECK_EQ(env["DISABLE_AUTO_COMPACT"], std::string("0"));
     DOCTEST_CHECK(env.find("AUTO_COMPACT_ENABLED") == env.end());
+    return true;
+})
+
+// resolveModelSlot：激活 profile 的槽位键 → 实际 model id（LlmClient 消费）。
+// 三态返回：解析到 → 字符串；槽位未配 / model 为空 / 键未知 → nullopt（调用方据此回落默认模型）。
+REGISTER_TEST(claude_service_resolve_model_slot,
+              "claude_service: resolveModelSlot 解析激活 profile 槽位", {
+    using namespace module::claude;
+    // 反重构：这里必须用 TestDb 而不是 InMemoryDb——claude_profiles 由 migrate 建表，
+    // InMemoryDb 是无迁移裸库，profile CRUD 会因缺表失败。
+    test_support::TestDb tdb(kDbPrefix, "resolve_slot");
+    ClaudeService svc(tdb.handle(), kTestKeychainService);
+
+    // 无激活 profile（新库新 service，未 setActive）→ nullopt
+    DOCTEST_CHECK(!svc.resolveModelSlot("default").has_value());
+    DOCTEST_CHECK(!svc.resolveModelSlot("sonnet").has_value());
+
+    auto p = svc.createProfile("R", "https://api.anthropic.com", "sk-test",
+                               "claude-sonnet-4-5");
+    DOCTEST_REQUIRE(p.isOk());
+    DOCTEST_REQUIRE(svc.setActiveProfile(p.value().id).isOk());
+
+    // 无 models_config → default 槽位回落 profile.model（旧列是 default 槽位的 fallback）
+    DOCTEST_CHECK(svc.resolveModelSlot("default").value_or("") ==
+                  "claude-sonnet-4-5");
+    DOCTEST_CHECK(!svc.resolveModelSlot("sonnet").has_value());
+
+    Profile pa = p.value();
+    pa.modelsConfigJson =
+        R"({"default": {"model": "m-default"},)"
+        R"("sonnet": {"model": "m-s"},)"
+        R"("haiku": {"model": "m-h"},)"
+        R"("subagent": {"model": "m-sub"}})";
+    DOCTEST_REQUIRE(svc.updateProfile(pa).isOk());
+
+    // default / def 等价，取 def 槽位
+    DOCTEST_CHECK(svc.resolveModelSlot("default").value_or("") == "m-default");
+    DOCTEST_CHECK(svc.resolveModelSlot("def").value_or("") == "m-default");
+    // haiku 独立断言（与 opus 互换须变红，防止槽位映射整体错位）
+    DOCTEST_CHECK(svc.resolveModelSlot("sonnet").value_or("") == "m-s");
+    DOCTEST_CHECK(svc.resolveModelSlot("haiku").value_or("") == "m-h");
+    DOCTEST_CHECK(svc.resolveModelSlot("subagent").value_or("") == "m-sub");
+    // 表内但未配置的槽位 → nullopt
+    DOCTEST_CHECK(!svc.resolveModelSlot("opus").has_value());
+    // 表内但 model 为空串 → nullopt
+    {
+        Profile pe = p.value();
+        pe.modelsConfigJson = R"({"fable": {"model": "", "name": ""}})";
+        DOCTEST_REQUIRE(svc.updateProfile(pe).isOk());
+        DOCTEST_CHECK(!svc.resolveModelSlot("fable").has_value());
+    }
+    DOCTEST_CHECK(!svc.resolveModelSlot("no-such-slot").has_value());
+
+    test_support::cleanupProfileKey(kTestKeychainService, p.value().id);
+    return true;
+})
+
+// 惰性装配反转 atexit LIFO：main.cpp 的 getClaudeService() 持有 static unique_ptr<ClaudeService>，
+// 惰性装配路径下它构造在 armExitHook 注册之后 → 退出时析构先于 exit hook，hook 里的模块 onStop
+// （claude_module.cpp 的 ClaudeService::global() 分支）读到的是已析构对象。
+// 契约：析构即摘牌，global() 回 nullptr → onStop 走「未运行」分支，不悬垂读、不进 stopProxy。
+REGISTER_TEST(claude_service_destroy_clears_global,
+              "claude_service: 析构清 global 单例指针（退出时序 UAF 防护）", {
+    test_support::TestDb tdb(kDbPrefix, "global_clear");
+    {
+        module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
+        module::claude::ClaudeService::setGlobal(&svc);
+        // 反恒真：这一行保证契约没有退化成「setGlobal 根本不生效」——那样析构后的 nullptr 断言会恒绿
+        DOCTEST_CHECK(module::claude::ClaudeService::global() == &svc);
+    }   // ← svc 析构（等价于退出时 unique_ptr 先析构、exit hook 的 onStop 后跑）
+    DOCTEST_CHECK(module::claude::ClaudeService::global() == nullptr);
+    return true;
+})
+
+// 守卫反向：析构里的 `if (g == this)` 只摘自己的牌，未注册对象不得误清别人的注册。
+REGISTER_TEST(claude_service_destroy_keeps_other_global,
+              "claude_service: 析构未注册实例不动他人 global 注册（this 守卫）", {
+    test_support::TestDb tdb(kDbPrefix, "global_guard");
+    module::claude::ClaudeService registered(tdb.handle(), kTestKeychainService);
+    module::claude::ClaudeService::setGlobal(&registered);
+    {
+        module::claude::ClaudeService other(tdb.handle(), kTestKeychainService);
+    }   // other 析构：global 指向 registered，不该被清
+    DOCTEST_CHECK(module::claude::ClaudeService::global() == &registered);
+    module::claude::ClaudeService::setGlobal(nullptr);   // 用例内自清（同 resetCaseGlobals 口径）
+    return true;
+})
+
+// validateProxyPreconditions：无激活 profile / 上游不可达 / 非 2xx 都不得起代理，也不得留下接管痕迹。
+REGISTER_TEST(claude_pv_no_active_profile,
+              "claude_service: 前置校验① 无激活 profile → fail（NoActiveProfile）且零副作用", {
+    test_support::TestDb tdb(kDbPrefix, "pv_noactive");
+    module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
+
+    auto r = svc.validateProxyPreconditions();
+    DOCTEST_CHECK(r.isFail());
+    DOCTEST_CHECK(r.errorCode() == core::ErrorCode::NoActiveProfile);
+    DOCTEST_CHECK(r.errorMessage().find("前置校验未通过（1/2 激活 Profile）") !=
+                  std::string::npos);
+    DOCTEST_CHECK(r.errorMessage().find("没有激活的 Claude profile") !=
+                  std::string::npos);          // 可操作指引随错误码原样透传
+    DOCTEST_CHECK_FALSE(svc.isProxyRunning());  // 不 bind
+    DOCTEST_CHECK_EQ(svc.proxyPort(), 0);
+    return true;
+})
+
+REGISTER_TEST(claude_pv_unreachable_no_takeover,
+              "claude_service: 前置校验② 上游不可达 → fail（NetworkUnreachable）且 settings.json 未被接管", {
+    test_support::TestDb tdb(kDbPrefix, "pv_conn");
+    TempSyncPaths sync("pv_conn", tdb.handle());                   // 文件内桩：临时 settings.json + sidecar
+    module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
+    svc.setSettingsSyncPaths(sync.paths());
+    svc.setSettingsTakeOverEnabled(true);            // 接管开关默认即 true，此处显式钉住
+    const std::string kOriginal = R"({"env":{"FOO":"bar"}})";
+    sync.writeSettings(kOriginal);
+
+    // 端口 1 几乎必然拒绝连接
+    auto created = svc.createProfile("Bad", "http://127.0.0.1:1",
+                                     "sk-ant-pv-7777", "m");
+    DOCTEST_REQUIRE(created.isOk());
+    DOCTEST_REQUIRE(svc.setActiveProfile(created.value().id).isOk());  // 首次激活：不读文件
+
+    auto r = svc.validateProxyPreconditions(500);
+    DOCTEST_CHECK(r.isFail());
+    DOCTEST_CHECK(r.errorCode() == core::ErrorCode::NetworkUnreachable);
+    DOCTEST_CHECK(r.errorMessage().find("前置校验未通过（2/2 连通测试）") !=
+                  std::string::npos);
+    DOCTEST_CHECK_FALSE(svc.isProxyRunning());
+    DOCTEST_CHECK_EQ(svc.proxyPort(), 0);
+    // settings.json 一字未改、无 sidecar：没走到 syncTakeOver
+    DOCTEST_CHECK_EQ(readFileToString(sync.settings), kOriginal);
+    DOCTEST_CHECK_FALSE(test_support::configRowExists(
+        &tdb.handle(), module::claude::settings_sync::kSidecarConfigKey));
+    DOCTEST_CHECK(svc.lastSyncWarnings().empty());
+    test_support::cleanupProfileKey(kTestKeychainService, created.value().id);
+    return true;
+})
+
+REGISTER_TEST(claude_pv_non_2xx_fails,
+              "claude_service: 前置校验③ 上游 401 → fail（无/坏 key 不得起代理）", {
+    platform::http::Server upstream401("127.0.0.1", 0);   // 模式照 :994-1010
+    upstream401.route("GET", "/v1/models",
+                      [](const platform::http::RequestCtx&,
+                         platform::http::ResponseWriter& w) {
+                          w.setStatus(401);
+                          w.setHeader("Content-Type", "application/json");
+                          w.write(R"({"error":{"type":"authentication_error"}})");
+                          w.end();
+                      });
+    DOCTEST_REQUIRE(upstream401.start());
+
+    test_support::TestDb tdb(kDbPrefix, "pv_401");
+    module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
+    auto created = svc.createProfile(
+        "NoKey", "http://127.0.0.1:" + std::to_string(upstream401.actualPort()),
+        "sk-ant-pv-401", "m");
+    DOCTEST_REQUIRE(created.isOk());
+    DOCTEST_REQUIRE(svc.setActiveProfile(created.value().id).isOk());
+
+    auto r = svc.validateProxyPreconditions(2000);
+    DOCTEST_CHECK(r.isFail());
+    DOCTEST_CHECK(r.errorCode() == core::ErrorCode::HttpError);
+    DOCTEST_CHECK(r.errorMessage().find("401") != std::string::npos);
+    DOCTEST_CHECK_FALSE(svc.isProxyRunning());
+    upstream401.stop();
+    test_support::cleanupProfileKey(kTestKeychainService, created.value().id);
+    return true;
+})
+
+REGISTER_TEST(claude_pv_ok_then_start_proxy,
+              "claude_service: 前置校验④ 通过（2xx）→ 校验只探一次，startProxy 仍可用", {
+    platform::http::Server upstream("127.0.0.1", 0);       // 模式照 :952-968
+    int hitCount = 0;
+    std::string lastPath;
+    upstream.route("GET", "/v1/models",
+                   [&](const platform::http::RequestCtx& ctx,
+                       platform::http::ResponseWriter& w) {
+                       ++hitCount;
+                       lastPath = ctx.path;
+                       w.setStatus(200);
+                       w.setHeader("Content-Type", "application/json");
+                       w.write(R"({"data":[{"id":"claude-sonnet-4-5"}]})");
+                       w.end();
+                   });
+    DOCTEST_REQUIRE(upstream.start());
+
+    test_support::TestDb tdb(kDbPrefix, "pv_ok");
+    module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
+    auto created = svc.createProfile(
+        "Good", "http://127.0.0.1:" + std::to_string(upstream.actualPort()),
+        "sk-ant-pv-ok-8888", "claude-sonnet-4-5");
+    DOCTEST_REQUIRE(created.isOk());
+    DOCTEST_REQUIRE(svc.setActiveProfile(created.value().id).isOk());
+
+    auto v = svc.validateProxyPreconditions(2000);
+    DOCTEST_CHECK(v.isOk());
+    DOCTEST_CHECK_EQ(hitCount, 1);
+    DOCTEST_CHECK_EQ(lastPath, std::string("/v1/models"));
+    DOCTEST_CHECK_FALSE(svc.isProxyRunning());   // 校验本身绝不 bind
+
+    // 通过后 startProxy 照常，端口 0 = OS 分配
+    auto started = svc.startProxy("127.0.0.1", 0);
+    DOCTEST_REQUIRE(started.isOk());
+    DOCTEST_CHECK(svc.isProxyRunning());
+    DOCTEST_CHECK(svc.proxyPort() > 0);
+    // 不变式：校验不在 startProxy 内部。反重构：不能为「省一次探测」把校验塞进 startProxy——
+    // 那会让这里变成 2，且破坏 startProxy「无激活 profile 仍接管」的既有契约。
+    DOCTEST_CHECK_EQ(hitCount, 1);
+    svc.stopProxy();
+    upstream.stop();
+    test_support::cleanupProfileKey(kTestKeychainService, created.value().id);
+    return true;
+})
+
+REGISTER_TEST(claude_pv_timeout_honored,
+              "claude_service: 前置校验⑤ 探测超时按入参生效（不静默回落 15s）", {
+    // mock 上游挂 1500ms 才回 200，probeTimeoutMs=150 → 必须 fail。
+    // 超时参数若没接上（回落 testConnection 的 15000），请求会在 1.5s 后成功 → 本用例红。
+    // 断言是 ok/fail 二值、不测墙钟，10× 余量保证负载抖动下也不误判；收尾 slow.stop() 会 join
+    // 上游 worker，故本用例总耗时 ≈1.5s。
+    platform::http::Server slow("127.0.0.1", 0);
+    slow.route("GET", "/v1/models",
+               [](const platform::http::RequestCtx&,
+                  platform::http::ResponseWriter& w) {
+                   std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+                   w.setStatus(200);
+                   w.setHeader("Content-Type", "application/json");
+                   w.write(R"({"data":[]})");
+                   w.end();
+               });
+    DOCTEST_REQUIRE(slow.start());
+
+    test_support::TestDb tdb(kDbPrefix, "pv_timeout");
+    module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
+    auto created = svc.createProfile(
+        "Slow", "http://127.0.0.1:" + std::to_string(slow.actualPort()),
+        "sk-ant-pv-slow", "m");
+    DOCTEST_REQUIRE(created.isOk());
+    DOCTEST_REQUIRE(svc.setActiveProfile(created.value().id).isOk());
+
+    auto r = svc.validateProxyPreconditions(150);
+    DOCTEST_CHECK(r.isFail());
+    DOCTEST_CHECK_FALSE(svc.isProxyRunning());
+    slow.stop();
+    test_support::cleanupProfileKey(kTestKeychainService, created.value().id);
     return true;
 })

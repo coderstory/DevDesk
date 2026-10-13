@@ -3,7 +3,15 @@ add_library(devdesk_module_settings STATIC
     settings_config.cpp
     settings_ui_logic.cpp
     settings_ui_cards.cpp
+    app_tools.cpp
 )
+
+# 平台适配：磨砂降级文案按平台拆文件（业务代码零平台宏，见 window_effect_hint.h）
+if(WIN32)
+    target_sources(devdesk_module_settings PRIVATE window_effect_hint_win.cpp)
+else()
+    target_sources(devdesk_module_settings PRIVATE window_effect_hint_macos.cpp)
+endif()
 
 devdesk_apply_warnings(devdesk_module_settings)
 

@@ -5,9 +5,9 @@
 > **目标平台**：Windows 11（当前开发环境）、macOS 27+
 > **作者**：纯 AI 开发（用户不熟悉 C++）
 > **创建日期**：2026-09-30
-> **性质**：只读设计 spec，未改任何代码、未跑构建/测试
+> **性质**：设计 spec（R4 定稿，可作 writing-plans 输入）
 > **参考**：`ignacionr/cppgpt`（对话历史管理模式参考，依赖不照搬）
-> **修订**：2026-09-30 R2——落实自审 + skeptic 审计（H1/H2/M1-M5/L1-L4/A1/A2）；R3——落实第三轮独立审计（M1 const/M2 表名/M3 契约测试/M4 stopAll 顺序/L1-L3）
+> **修订**：2026-09-30 R2——落实自审 + skeptic 审计（H1/H2/M1-M5/L1-L4/A1/A2）；R3——落实第三轮独立审计（M1 const/M2 表名/M3 契约测试/M4 stopAll 顺序/L1-L3）；**R4（定稿）**——交付切分 M1/M2（§14）+ 关闭四项开放项：cron 语法（§5.1）、工具回调线程安全分层（§10）、HttpClient 注入缝与 anthropic-version 归属（§11）+ 工程纪律与工作区（§15）
 
 ---
 
@@ -23,6 +23,7 @@
 | D-6 | 工具来源 | **仅内置工具**（todo / markdown / claude 配置 / 读应用状态）；不支持用户自定义、不接 MCP |
 | D-7 | 迭代控制 | `max_iterations` 硬上限 + 用户可配；请求超时；cancel；破坏性操作经 `allow_destructive` 开关授权（=0 遇破坏性工具直接 fail run，不挂起确认，见 §5.3） |
 | D-8 | LlmEndpoint 抽象 | core 定义 `LlmEndpoint` 接口，`LlmClient` 实现（走本地代理）；agent loop 依赖抽象，可 mock 测试。**扩展 `core::IClaudeProxyService` 加 `resolveModelSlot`** 解析激活 profile 的模型槽位（见 §2.2 H1） |
+| D-9 | 交付切分 | **两期**：M1 核心链路端到端（手动触发 + 9 工具 + 最小 UI）；M2 调度（cron 定时 + 常驻）+ 其余 8 工具 + UI 补全（见 §14） |
 
 ---
 
@@ -68,6 +69,7 @@ DevDesk 现有四层（`main → module_* → core → platform → EUI-NEO`）�
 
 1. 调度层触发任务 → `AgentLoop::run(task)` 在后台线程启动
 2. `AgentLoop` 取任务 goal 作 system+user 首条消息，构造 Anthropic `/v1/messages` 请求（带 `tools` 定义）
+   > **M1 实况标注（2026-10-01，final-review Fix 4）**：M1 无 system prompt（`AgentTask` 无该字段，`LlmEndpoint::send` 的 systemPrompt 形参传空串），goal 仅作 user 首条消息；system prompt 由 M2 引入。
 3. `LlmClient::send()` 先经 `core::IClaudeProxyService` 预检代理状态（未跑 → run 标 failed + error「代理未启」）+ 取实际端口；经 `resolveModelSlot(task.modelSlot)` 取实际 model id 填进 body（解析失败 → run 标 failed，见 §2.2 H1）；再经 `platform::http::HttpClient` POST 到本地代理 `127.0.0.1:<port>/v1/messages`（代理已由 `module_claude_proxy` 起好，按激活 profile 转发到真实上游，带 failover）
 4. 解析响应：若 `stop_reason == "tool_use"`，逐个 `tool_use` block → `core::ToolRegistry::find(name)` 取 `shared_ptr<ITool>`（keep-alive，防 unregister 悬垂）；**find NotFound（迭代间模块被拔）→ 构造 `tool_result {is_error: true, content: "工具 <name> 未找到，可能模块已禁用"}` 回喂 LLM，不中止 run**（L3a，让 LLM 自纠或换工具）→ `execute(args)` → 把 `tool_result` 拼进 messages → 回到步骤 3
 5. 若 `stop_reason == "end_turn"`（或达 `max_iterations`）→ run 结束，落库 agent_runs / agent_messages
@@ -195,6 +197,11 @@ public:
     // toolsJson 为 Anthropic tools 定义数组。systemPrompt 可空。
     // model 参数由调用方（LlmClient）经 IClaudeProxyService::resolveModelSlot
     // 解析后传入（见下方 H1）——本接口只发，不解析槽位。
+    // > **M1 实况标注（2026-10-01，final-review Fix 4；按 Task 7 裁定，
+    // > 上两行原文被取代）**：model 形参语义 = **槽位键名**（AgentLoop 原样
+    // > 传 task.modelSlot），槽位 → 实际 model id 的解析在 LlmClient::send
+    // > **内**经 IClaudeProxyService::resolveModelSlot 完成（proxy_.resolveModelSlot），
+    // > 本抽象不解析槽位——与上两行的「解析后传入」相反，实现以此为准。
     virtual Result<LlmResponse> send(
         const std::vector<LlmMessage>& messages,
         const std::string& toolsJson,
@@ -343,6 +350,8 @@ agent 定位为「DevDesk 内部消费者」——经本地代理 = 复用全部
 [assistant] 最终响应（stop_reason == end_turn）
 ```
 
+> **M1 实况标注（2026-10-01）**：`[system]` 行 M1 缺席——无 system prompt（`AgentTask` 无该字段），消息序列自 `[user] goal` 起；M2 引入。
+
 每轮的 messages 全量发给上游（Anthropic 无自动历史，agent 自管）。长对话超模型上下文时，按 `max_iterations` + 用户可配的截断策略（YAGNI：先不截断，靠 max_iterations 兜底）。
 
 ---
@@ -361,6 +370,16 @@ agent 定位为「DevDesk 内部消费者」——经本地代理 = 复用全部
 
 **常驻 worker**：用户可配一个「常驻」任务（`trigger_type='resident'`），`Scheduler` 起一个长存线程，从内部任务队列取子任务跑（队列空则等待）。常驻任务每轮 run 仍是单次 AgentLoop（受 `max_iterations` 单次上限约束）；常驻语义 = 「持续待命接受外部派单」，本阶段不接受外部事件派单（事件触发 Phase 2），故常驻 worker 本阶段实际只跑用户手动入队的子任务（如「整理所有逾期 todo」可重复跑）。常驻任务 teardown 见 §3 生命周期。
 
+**定时触发（cron 语法，R4 定义）**：
+
+- 语法：标准 5 字段 `分 时 日 月 周`；支持 `*` `,` `-` `/`（如 `*/5 * * * *`、`0 9 * * 1-5`）；周字段 0-6（0=周日）；**不支持** Quartz 扩展（`L`/`W`/`#`）与英文名称
+- 时区：本地时间
+- 解析：纯函数 `parse(str) → Result<CronExpr>`（任务保存时校验，非法即拒）+ `matches(tm) → bool` 纯函数，表驱动单测
+- tick：`Scheduler` 内部线程按分钟边界醒来，对每个 enabled 的 schedule 任务调 `matches`；`lastFiredMinute` 同分钟防重
+- 补跑：**错过的触发不补跑**（app 关闭期间错过的定时直接跳过，YAGNI）
+- 时钟注入：构造注入 `std::function<int64_t()>`，测试零等待
+- 存储：表达式原文存 `agent_tasks.trigger_config`（§6，JSON 形如 `{"cron": "0 9 * * 1-5"}`）
+
 ### 5.2 迭代控制（D-7）
 
 每个 run（单次 loop）的硬约束：
@@ -371,6 +390,8 @@ agent 定位为「DevDesk 内部消费者」——经本地代理 = 复用全部
 | 单次 LLM 请求超时 | 60s | 用户可配 |
 | 单 run 墙钟 | `max_iterations × 请求超时` | 硬上限 30 分钟 |
 | token 累计 | 上游返回的 input+output 累计 | 硬上限 200K（防烧钱） |
+
+> **M1 实况标注（2026-10-01，final-review Fix 4）**：30 分钟墙钟与 200K token 上限**M1 未实现**——M1 的实际边界 = `max_iterations`（默认 10，UI 可调至 50，loop 内 clamp）× 60s 请求超时（HttpClient 层）兜底；两硬上限由 AgentLoop 检查点强制（Scheduler 等触发路径经 loop 组合传递全覆盖；见 agent_loop.cpp 墙钟超时判定注释）。
 
 **状态语义**（L1 统一）：
 
@@ -400,10 +421,10 @@ agent 定位为「DevDesk 内部消费者」——经本地代理 = 复用全部
 
 ## 6. 数据模型
 
-三张新表，migration version 11（接续现有 `kClaudeFailoverColumns` v10，已核实 `src/core/migrations.h:282`）。
+三张新表，migration version **12**（R4 修正：原定 v11 已被并行交付的 `kClaudeExtraSettingsJson` 占用，2026-09-30 实测 `migrations.h` all() 末项 = v11；接续顺延 v12）。
 
 ```sql
--- migration v11：智能体子系统（spec 2026-09-30-agent-design §6）
+-- migration v12：智能体子系统（spec 2026-09-30-agent-design §6；R4 修正 v11→v12）
 --   - agent_tasks：任务定义（goal + 触发配置 + 迭代上限 + 模型槽位 + allow_destructive）
 --   - agent_runs：单次执行记录（一个 task 可有多次 run）
 --   - agent_messages：每轮消息（role + content blocks 原文，可审计 + 上下文重建）
@@ -522,7 +543,7 @@ UI 实现细节（具体组件、布局）在 plan 阶段定，本 spec 只约�
 | `module_claude_proxy` | `ClaudeTools.{h,cpp}`：4 个 ITool 实现（调 ClaudeService 既有方法）；onStart 注册；实现 `IClaudeProxyService::resolveModelSlot`（**non-const**，经 ProfileRepository 取激活 profile 的 models_config 解析槽位键→model id，M1） | claude_service.cpp 既有 43 签名、代理转发、failover |
 | `module_settings` | `AppTools.{h,cpp}`：1 个 ITool 实现（`app.read_settings`）；onStart 注册 | settings 配置、UI |
 | `module_agent` | `AppStatsTool`：1 个 ITool 实现（`app.stats`，经 SQLite 统计）；`AgentModule` + `AgentLoop` + `LlmClient` + `Scheduler` | — |
-| `core/migrations.h` | 加 `kAgentTables` v11（§6 SQL） | 既有 10 个 migration |
+| `core/migrations.h` | 加 `kAgentTables` v12（§6 SQL） | 既有 11 个 migration |
 | `core/module_interface.h` | `PageId::Agent` 枚举（加在 About 前）+ `pageIdToString` 分支 | Module 基类签名 |
 | `core/claude_proxy_service.h` | `IClaudeProxyService` 加 `resolveModelSlot` 虚方法 + `GlobalClaudeProxyService` 适配器转发 | 既有方法签名 |
 | `app_registry.h` | `kModuleRegistry` 加一行 Agent（About 前）+ `create_agent_module` 声明 | 既有 6 行 |
@@ -553,13 +574,14 @@ UI 实现细节（具体组件、布局）在 plan 阶段定，本 spec 只约�
 | 悬挂 run 清扫（L2） | 应用启动 / 首次进 agent 页时 `UPDATE agent_runs SET status='failed', error='应用异常退出（悬挂 run）' WHERE status='running'`（崩溃时在跑的 run 标 failed，UI 状态准确） |
 | tool_result 体积（L3c） | 单 result 硬上限 32KB，超限截断 + 末尾 `[truncated]` 标记（防 `md.read` 长笔记 + 多迭代烧爆上下文致上游 400） |
 
-### 工具回调线程模型（M3）
+### 工具回调线程模型（M3，R4 分层定案）
 
-`ITool::execute` 在 **AgentLoop 工作线程**执行（非 UI 线程）。实现方须保证调用的模块服务**线程安全**：
+`ITool::execute` 在 **AgentLoop 工作线程**执行（非 UI 线程）。线程安全按服务实况分层（2026-09-30 逐一核实）：
 
-- `claude.switch_profile` / `claude.list_profiles` 等调 `ClaudeService::global()`——`ClaudeService` 是 UI 线程单例，现有方法**无显式 mutex**保护。实现 `ClaudeTools` 时须给 ClaudeService 关键方法加锁（或经 Router post 到 UI 线程执行）；本 spec 只约束「工具回调必须线程安全」，具体加锁/ post 策略在 plan 阶段定。
-- `todo.*` / `md.*` 调各模块 service——同理，实现方负责线程安全（加锁或 post UI 线程）。
-- `app.stats` 在 module_agent 内直查 SQLite——`SqliteDb` 已有 `recursive_mutex` 序列化全部访问（`sqlite_db.h:93-101`），三方线程（UI/agent/proxy）共享一把锁，线程安全。
+- `todo.*`：**直调**。`TodoService` 无内存态、纯 DB 访问（`todo_service.h:104` 成员仅 `db_`），`SqliteDb` 的 `recursive_mutex` 已全局序列化全部访问（`sqlite_db.h:93-101`）——工具工作线程直调即安全，零改动。
+- `md.*`：**走既有路径**。`MarkdownService` 已有 `rescanMu_` 串行化 watcher 线程与 UI 线程的 rescan（`markdown_service.h:175`）；工具调用复用既有 service 入口，plan 阶段如发现某方法需额外保护，锁加在该 service 内。
+- `claude.*`：**service 内加锁（默认方案）**。`ClaudeService` 是 UI 线程单例且被工具触碰的方法无锁（listProfiles / getActiveProfile / switchProfile / testConnection / recentLogs）——实现 `ClaudeTools` 时在这些方法内加锁覆盖其内存态读写。**逃生舱**：仅当某操作本质必须在 UI 线程执行且加锁不可行时，经 EUI-NEO `core::async::runOnce` post 到 UI 线程并同步等待（带超时）——其 `then` 回调已在主线程队列执行（`async.cpp:119` finishTask 入 `gMainQueue`，UI 侧 `dispatchReady` 泵出，已核实）。硬约束：**UI 线程永不等待 agent 线程**（无死锁环）。逐方法加锁位置在 plan 阶段定。
+- `app.stats` / `app.read_settings`：直查 SQLite（同 `recursive_mutex` 序列化，安全）。
 
 ---
 
@@ -570,7 +592,7 @@ UI 实现细节（具体组件、布局）在 plan 阶段定，本 spec 只约�
 | core 纯函数 | ToolSchema 拼接、Anthropic 消息累积、tool_use 解析 | 自制 doctest + mock LlmEndpoint |
 | AgentLoop | 注入 mock LlmEndpoint 返回固定序列（tool_use×2 → end_turn），断言工具调用顺序 + 消息累积 + 落库 | InMemoryDb + 向真 ToolRegistry 注册 fake ITool |
 | 工具实现 | 每个 ITool 用 InMemoryDb 单测（复用 TIN-06 测试 scaffold） | ScopedAppDatabase + HeadlessFrame |
-| LlmClient | mock platform::http 返回固定 /v1/messages 响应，断言解析 + 预检代理 + resolveModelSlot | 注入 http client + fake IClaudeProxyService |
+| LlmClient | 注入的 http 发送函数返回固定 /v1/messages 响应，断言响应解析 + 代理预检 + resolveModelSlot 调用 | **std::function 注入缝（R4）**：`LlmClient` 构造注入 `std::function<Result<Response>(const Request&)>`，默认 = 真 `platform::http::send`（已核实其为自由函数，无类可 mock，零 platform 改动）+ fake IClaudeProxyService |
 | 集成 | 真实本地代理（起 ClaudeService + fake 上游）跑一次完整 run | 端到端（可选，需真 API key） |
 | 迭代控制 | mock 让 LLM 永远返 tool_use，断言达 max_iterations 终止（`status='limited'`） | mock |
 | 破坏性授权 | mock 返回破坏性 tool_use，断言 `allow_destructive=0` 时 run `failed`、`=1` 时执行 | mock |
@@ -578,6 +600,8 @@ UI 实现细节（具体组件、布局）在 plan 阶段定，本 spec 只约�
 **测试 scaffold 复用**（TIN-06）：`HeadlessFrame` + `InMemoryDb` + `ScopedAppDatabase` + `DataRootEnv`，agent 测试直接用。`LlmEndpoint` 抽象使 agent loop 单测零网络。
 
 **注**：`AgentLoop` 依赖具体 `ToolRegistry`（单例类，非接口）——测试时向真 `ToolRegistry::instance()` 注册 fake `ITool` 即可（register/unregister 成对），不引入第二抽象（YAGNI）。`LlmEndpoint` 是接口可注入 mock。
+
+**R4 核实（请求头归属）**：`anthropic-version` 头由本地代理自动补注入（`upstream_dialect.cpp:161-162`：客户端没带时补 `2023-06-01`），**LlmClient 只需发 `content-type: application/json` + body**；模型名 `[1M]` 后缀剥离同样由代理处理。agent 侧零方言代码。
 
 ---
 
@@ -608,3 +632,37 @@ UI 实现细节（具体组件、布局）在 plan 阶段定，本 spec 只约�
 - OpenAI function_calling 协议
 - run 崩溃后续跑
 - **事件触发（`todo.created` / `md.saved` 等）**——Phase 2 后续：core 无通用事件总线，发射点要改 module_todo/markdown 业务逻辑（违反 §9 零改动 + 模块隔离）；硬上 = core 加事件总线（超出本 spec 范围）。本阶段触发只保留手动 + 定时。
+
+---
+
+## 14. 交付切分（R4）
+
+**M1 核心链路**（端到端闭环，手动触发）：
+
+| 层 | 内容 |
+|---|---|
+| core | `tool.h`（ITool/ToolRegistry）+ `llm_endpoint.h`（LlmEndpoint）+ `IClaudeProxyService::resolveModelSlot` 扩展 + `GlobalClaudeProxyService` 适配器转发 |
+| 数据 | migration v12 三表（§6）+ 悬挂 run 清扫（§10 L2） |
+| module_agent | `AgentModule`（最小 UI：任务列表 / 新建表单 / 手动启动 / run 列表与详情最简版）+ `AgentLoop` + `LlmClient` + `AppStatsTool` |
+| 工具 | `TodoTools`（6 个）+ `MarkdownTools` M1 部分（`md.search` / `md.read`） |
+| 装配 | `PageId::Agent`、`kModuleRegistry`、`kModuleIdAgent`、main.cpp switch、CMakeLists、模块隔离守卫扩展、契约测试更新（router 序 / assembly 表，§9 M3 两用例） |
+| 测试 | AgentLoop mock 序列 + 工具 InMemoryDb + LlmClient 注入 http + 迭代控制 + 破坏性授权（§11 全表） |
+| 验收 | 手动跑通一次完整 run（如 todo.list → todo.create → end_turn），三表落库可查、UI 可审计 |
+
+**M2 调度与工具补全**：
+
+| 层 | 内容 |
+|---|---|
+| 调度 | `Scheduler`：cron 解析器（§5.1 R4 语法）+ 定时触发 + 常驻 worker 队列 |
+| 工具 | `MarkdownTools` 余下（`md.create` / `md.list_tags` / `md.delete`）+ `ClaudeTools`（4 个）+ `AppTools`（`app.read_settings`） |
+| UI | 任务编辑 / 触发配置表单（cron 输入校验）/ run 详情完整展示 |
+| 测试 | cron 纯函数表驱动 + Scheduler 注入时钟 + 常驻队列 + M2 各工具 |
+
+切分依据：M1 不含 Scheduler 即可交付完整价值闭环（手动触发→LLM→工具循环→落库审计）；调度与工具补全相互独立、可分别验收。M2 在 M1 合并后续作。
+
+## 15. 工程纪律与工作区（R4）
+
+- **模块化开发（用户纪律）**：每个工具集独立文件、归属各自模块（`TodoTools.{h,cpp}` 归 module_todo、`MarkdownTools` 归 module_markdown、`ClaudeTools` 归 module_claude_proxy、`AppTools` 归 module_settings、`AppStatsTool` 归 module_agent）；`module_agent` 内 `AgentModule` / `AgentLoop` / `LlmClient` / `Scheduler` 各自独立文件。单文件单职责，禁止跨模块 include（隔离守卫脚本查）。
+- **工作区**：开发在独立功能分支 `feat/agent-subsystem`（worktree `DevDesk/.claude/worktrees/agent-subsystem`）；实现全部 TDD（红-绿-重构）。
+- **worktree 构建坑**：worktree 内 `EUI_NEO_DIR` 默认 `../EUI-NEO` 相对路径会解析到错误位置，cmake configure 必须显式传 `-DEUI_NEO_DIR=/Users/coderstory/dev/gui/EUI-NEO`。
+- **基线**：分支起点 = dev `e379950`（与已实测 646 用例的 dev 同码，仅多 .gitignore 一行）；worktree 全量构建 + ctest 作为实现阶段第一个任务实证基线。

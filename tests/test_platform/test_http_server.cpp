@@ -30,9 +30,9 @@ const CurlGlobalInit& curlInit() {
     return g;
 }
 
-// 本文件所有客户端请求都打 127.0.0.1（本用例自己起的 server）：
-// 与产品侧 http_client.cpp 同口径设 NOPROXY，否则环境里存在 http_proxy 时
-// 请求会被送到代理（验收要求在 HTTP_PROXY=… 的 shell 下同样全绿）。
+// 本文件所有客户端请求都打 127.0.0.1（本用例自己起的 server）：必须设 NOPROXY，
+// 否则环境里存在 http_proxy 时请求会被送到代理（验收要求在 HTTP_PROXY=… 的 shell
+// 下同样全绿）。
 void setNoProxy(CURL* curl) {
     curl_easy_setopt(curl, CURLOPT_NOPROXY, "localhost,127.0.0.1,::1");
 }
@@ -162,8 +162,6 @@ bool waitForReady(int port, int maxMs = 2000) {
 
 }  // namespace
 
-// ---- Server on random port responds with handler output ----
-
 REGISTER_TEST(http_server_basic_get, "http_server: GET handler responds", {
     platform::http::Server srv("127.0.0.1", 0);
     int capturedStatus = 0;
@@ -196,8 +194,6 @@ REGISTER_TEST(http_server_basic_get, "http_server: GET handler responds", {
     return true;
 })
 
-// ---- POST handler reads body ----
-
 REGISTER_TEST(http_server_post_body, "http_server: POST handler reads body", {
     platform::http::Server srv("127.0.0.1", 0);
     std::string receivedBody;
@@ -223,8 +219,6 @@ REGISTER_TEST(http_server_post_body, "http_server: POST handler reads body", {
     return true;
 })
 
-// ---- Unknown route returns 404 ----
-
 REGISTER_TEST(http_server_404_unknown, "http_server: unknown path returns 404", {
     platform::http::Server srv("127.0.0.1", 0);
     srv.route("GET", "/known", [](const platform::http::RequestCtx&,
@@ -245,7 +239,9 @@ REGISTER_TEST(http_server_404_unknown, "http_server: unknown path returns 404", 
     return true;
 })
 
-// ---- 无鉴权：带不带 Authorization 都直接放行（2026-09-27 起代理仅本机访问） ----
+// 无鉴权是**有前提**的：Server 只 bind 127.0.0.1（代理仅本机访问）。若哪天改成
+// bind 0.0.0.0，「带不带 Authorization 都放行」就从设计变成漏洞——改 bind 时必须
+// 同时给这个服务端加鉴权。
 
 REGISTER_TEST(http_server_no_auth_required,
               "http_server: no auth required, any request passes through", {
@@ -284,8 +280,6 @@ REGISTER_TEST(http_server_no_auth_required,
     return true;
 })
 
-// ---- Custom status code and multi header pass through ----
-
 REGISTER_TEST(http_server_custom_status_and_headers,
               "http_server: custom status code and headers", {
     platform::http::Server srv("127.0.0.1", 0);
@@ -311,8 +305,6 @@ REGISTER_TEST(http_server_custom_status_and_headers,
     return true;
 })
 
-// ---- Multiple sequential stop/start cycles don't crash ----
-
 REGISTER_TEST(http_server_stop_restart, "http_server: stop and start cycles", {
     platform::http::Server srv("127.0.0.1", 0);
     srv.route("GET", "/ping", [](const platform::http::RequestCtx&,
@@ -336,8 +328,6 @@ REGISTER_TEST(http_server_stop_restart, "http_server: stop and start cycles", {
     return true;
 })
 
-// ---- Request body size limit（spec §10.4：>10MB 拒绝） ----
-
 REGISTER_TEST(http_server_body_size_limit,
               "http_server: 请求体 >10MB 拒绝（413），边界 10MB 通过", {
     platform::http::Server srv("127.0.0.1", 0);
@@ -354,7 +344,8 @@ REGISTER_TEST(http_server_body_size_limit,
     int port = srv.actualPort();
     DOCTEST_CHECK(waitForReady(port));
 
-    // 恰好 10MB（边界，含）→ 200，handler 收到完整 body
+    // 边界语义是**含** kMaxBodyBytes：恰好等于上限通过，超一字节 413 且 handler
+    // 不执行（413 由 server 层在读 body 前判掉，不靠 handler 自觉拒绝）。
     const std::string exact(platform::http::kMaxBodyBytes, 'x');
     std::string body;
     long statusExact = httpPost(
@@ -363,7 +354,7 @@ REGISTER_TEST(http_server_body_size_limit,
     DOCTEST_CHECK_EQ(body,
                      std::string("len:") + std::to_string(exact.size()));
 
-    // 10MB + 1 → 413，handler 不执行
+    // 超限 → 413，handler 不执行（handlerCalls 不变才是「没进 handler」的证据）
     const std::string over(platform::http::kMaxBodyBytes + 1, 'x');
     const int callsBefore = handlerCalls;
     long statusOver = httpPost(
@@ -374,8 +365,6 @@ REGISTER_TEST(http_server_body_size_limit,
     srv.stop();
     return true;
 })
-
-// ---- 头名大小写：请求侧键归一（去重）+ 响应侧大小写不敏感命中（CP-06） ----
 
 REGISTER_TEST(http_server_header_case_insensitive_dedup,
               "http_server: 头名大小写不敏感（请求去重 + 响应 Content-Type 命中）", {
@@ -390,7 +379,8 @@ REGISTER_TEST(http_server_header_case_insensitive_dedup,
                 if (c >= 'A' && c <= 'Z') { anyUpperKey = true; break; }
             }
         }
-        // 故意用小写拼写写响应头：响应侧必须大小写不敏感地命中它
+        // 故意用小写拼写写响应头：响应侧必须大小写不敏感地命中它，否则会退化成
+        // 两个同名头，客户端读到 text/plain。
         w.setStatus(200);
         w.setHeader("content-type", "application/json");
         w.write("{}");
@@ -407,7 +397,8 @@ REGISTER_TEST(http_server_header_case_insensitive_dedup,
         {"Authorization: Bearer first", "authorization: Bearer second"}, body,
         rawRespHeaders);
     DOCTEST_CHECK_EQ(status, 200L);
-    // 请求侧：同名不同拼写降级后归一到 1 条（httplib 侧本是 2 条）
+    // 请求侧：同名不同拼写降级后归一到 1 条。httplib 原生是 2 条——若归一逻辑被摘掉，
+    // 后面的 `count("authorization")` 仍是 1（只命中小写那条），所以这条必须独立断言。
     DOCTEST_CHECK_EQ(authCount, 1u);
     // 请求侧：map 里不再有大写键（httplib 注入的 REMOTE_ADDR 等也已归一）
     DOCTEST_CHECK_FALSE(anyUpperKey);

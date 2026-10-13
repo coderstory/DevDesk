@@ -1,23 +1,21 @@
 // tests/test_modules/test_provider_config.cpp
-// 供应商完整配置数据模型层测试
-// （spec docs/superpowers/specs/2026-09-22-claude-provider-config-design.md Phase A）
+// 供应商配置数据模型层：models_config / extra_env 序列化、导入解析、反向同步（settings.json → profile）、
+// 高级设置 JSON 纯函数、failover 判据、[1M] 标记三纯函数、槽位表派生面一致性。
 //
-// 覆盖：
-//   - models_config 6 槽位序列化往返 / 空槽位
-//   - 旧单 model 字段兼容读取（fallback）
-//   - extra_env 序列化往返 / 非法值拒绝
-//   - 非法 JSON 容错（读路径不炸）
-//   - displayName 派生（剥 [1M] 等标记）
-//   - 别名映射（AUTO_COMPACT_ENABLED → DISABLE_AUTO_COMPACT 值取反 + 透传标记）
-//   - ClaudeService 读写 API 往返 + 旧库升级（migration v3）
-//   - 槽位单一真相源（审计 CPX-08）：表行驱动的派生面一致性（用例遍历
-//     modelSlotTable()，加一行槽位即自动进入覆盖，无需改用例）
+// 跨文件前提：
+//   - 槽位是单一真相源：modelSlotTable() 声明什么，接管写入 / 导入识别 / 反向回填 / models_config 键 /
+//     UI 文案就必须是什么。末尾几条用例遍历该表断言派生面，加一行槽位即自动进入覆盖。
+//   - 反向同步三态语义落在 mergeReverseSyncEnv 而非 parse：键**出现** → 覆盖；键**缺席** → 清空
+//     （空串约定）；由 sidecar 托管的键 → 不写也不清。
+//   - parseImportedEnv 回填的 authFieldFromEnv 是四态（含空串 = 无证据），不是三态：空串表示无证据，
+//     UI 侧据此不覆盖表单现值。
+//   - 项目无历史包袱，schema 不做旧库升级，新列靠表默认值回落。
 #include "doctest.h"
 #include "test_support.h"
 
 #include "claude_service.h"
 #include "core/database.h"
-#include "core/migrations.h"
+#include "core/schema.h"
 #include "core/sqlite_db.h"
 #include "platform/keychain.h"
 #include "env_var_hints.h"
@@ -53,12 +51,12 @@ bool slotEq(const module::claude::ModelSlot& a,
     return a.model == b.model && a.name == b.name;
 }
 
-// 临时 db 文件名前缀（共享工厂 test_support::tempDbPath / TestDb 的第一实参）
+// 临时 db 文件名前缀（test_support::tempDbPath / TestDb 的第一实参）
 constexpr const char* kDbPrefix = "devdesk_test_pconfig_";
 
 } // namespace
 
-// ---- 1. models_config 序列化往返（6 槽位全填）----
+// models_config 序列化往返（6 槽位全填）
 REGISTER_TEST(provider_config_models_roundtrip,
               "provider_config: models_config 6 槽位序列化往返", {
     auto c = fullConfig();
@@ -77,7 +75,7 @@ REGISTER_TEST(provider_config_models_roundtrip,
     return true;
 })
 
-// ---- 2. 空槽位：全空配置往返 + 空串/空对象解析 ----
+// 空槽位：全空配置往返 + 空串/空对象解析
 REGISTER_TEST(provider_config_empty_slots,
               "provider_config: 空槽位与空串解析", {
     module::claude::ModelsConfig c;  // 全空
@@ -100,7 +98,7 @@ REGISTER_TEST(provider_config_empty_slots,
     return true;
 })
 
-// ---- 3. 非法 JSON 容错 ----
+// 非法 JSON 容错
 REGISTER_TEST(provider_config_invalid_json_tolerance,
               "provider_config: 非法 JSON 容错", {
     // JSON 解析失败 → fail
@@ -131,34 +129,29 @@ REGISTER_TEST(provider_config_invalid_json_tolerance,
     return true;
 })
 
-// ---- 4. 旧单 model 字段兼容读取（§4.2 fallback）----
-REGISTER_TEST(provider_config_legacy_model_fallback,
-              "provider_config: 旧 model 列 fallback 到 default 槽位", {
+// models_config 读入槽位（空 / 非法 JSON → 全空槽位）
+REGISTER_TEST(provider_config_effective_models_read,
+              "provider_config: effectiveModelsConfig 读入槽位与容错", {
     using module::claude::effectiveModelsConfig;
 
-    // models_config 空 + 旧 model 非空 → default 槽位 = 旧值
-    auto c1 = effectiveModelsConfig("", "claude-sonnet-4-5");
-    DOCTEST_CHECK_EQ(c1.def.model, std::string("claude-sonnet-4-5"));
+    // 空串 → 全空槽位
+    auto c1 = effectiveModelsConfig("");
+    DOCTEST_CHECK(c1.def.model.empty());
     DOCTEST_CHECK(c1.sonnet.model.empty());
 
-    // models_config 非法 JSON → 容错为空 + fallback
-    auto c2 = effectiveModelsConfig("{broken", "claude-opus-4-6");
-    DOCTEST_CHECK_EQ(c2.def.model, std::string("claude-opus-4-6"));
+    // 非法 JSON → 容错为全空槽位（读路径不炸）
+    auto c2 = effectiveModelsConfig("{broken");
+    DOCTEST_CHECK(c2.def.model.empty());
 
-    // default 槽位已配置 → 不吃 fallback，其余槽位保留
+    // 正常 JSON → 逐槽位落位
     auto c3 = effectiveModelsConfig(
-        R"({"default": {"model": "m-default"}, "sonnet": {"model": "m-sonnet"}})",
-        "legacy-model");
+        R"({"default": {"model": "m-default"}, "sonnet": {"model": "m-sonnet"}})");
     DOCTEST_CHECK_EQ(c3.def.model, std::string("m-default"));
     DOCTEST_CHECK_EQ(c3.sonnet.model, std::string("m-sonnet"));
-
-    // 两者都空 → 空
-    auto c4 = effectiveModelsConfig("", "");
-    DOCTEST_CHECK(c4.def.model.empty());
     return true;
 })
 
-// ---- 5. extra_env 序列化往返 + 非字符串值拒绝 ----
+// extra_env 序列化往返 + 非字符串值拒绝
 REGISTER_TEST(provider_config_extra_env_roundtrip,
               "provider_config: extra_env 序列化往返与值校验", {
     std::map<std::string, std::string> env = {
@@ -176,7 +169,7 @@ REGISTER_TEST(provider_config_extra_env_roundtrip,
     DOCTEST_CHECK_EQ(back.value()["CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"],
                      std::string("75"));
 
-    // 值非字符串 → 拒绝（不做隐式转换，避免 "1" vs 1 语义歧义）
+    // 值非字符串 → 拒绝（不做隐式转换，避免 "1" 与 1 的语义歧义）
     auto bad = module::claude::parseExtraEnv(R"({"FOO": 1})");
     DOCTEST_CHECK(bad.isFail());
 
@@ -189,7 +182,7 @@ REGISTER_TEST(provider_config_extra_env_roundtrip,
     return true;
 })
 
-// ---- 6. displayName 派生 ----
+// displayName 派生
 REGISTER_TEST(provider_config_derive_display_name,
               "provider_config: displayName 剥除 [1M]/[200K] 标记", {
     using module::claude::deriveDisplayName;
@@ -205,7 +198,7 @@ REGISTER_TEST(provider_config_derive_display_name,
     return true;
 })
 
-// ---- 7. 别名映射（§4.3 规则 6）----
+// 别名映射
 REGISTER_TEST(provider_config_env_alias_mapping,
               "provider_config: AUTO_COMPACT_ENABLED 别名映射值取反 + 透传标记", {
     using module::claude::applyEnvAliases;
@@ -225,7 +218,7 @@ REGISTER_TEST(provider_config_env_alias_mapping,
         auto r = applyEnvAliases({{"AUTO_COMPACT_ENABLED", "0"}});
         DOCTEST_CHECK_EQ(r.env["DISABLE_AUTO_COMPACT"], std::string("1"));
     }
-    // "true" → 0；空值 → 1（保守：无法确认时不禁用/按关处理见头文件注释）
+    // "true" → 0；空值 → 1（保守：无法确认时按关处理）
     {
         auto r = applyEnvAliases({{"AUTO_COMPACT_ENABLED", "true"}});
         DOCTEST_CHECK_EQ(r.env["DISABLE_AUTO_COMPACT"], std::string("0"));
@@ -250,7 +243,7 @@ REGISTER_TEST(provider_config_env_alias_mapping,
     return true;
 })
 
-// ---- 7b. 官方键判定源 = env_var_hints（审计 CPX-09）----
+// 官方键判定源 = env_var_hints
 REGISTER_TEST(provider_config_official_keys_derived_from_hints,
               "provider_config: 官方键判定源自 env_var_hints 清单", {
     using module::claude::applyEnvAliases;
@@ -278,7 +271,7 @@ REGISTER_TEST(provider_config_official_keys_derived_from_hints,
     return true;
 })
 
-// ---- 8. ClaudeService 读写往返 + model 列同步 ----
+// ClaudeService 读写往返 + model 列同步
 REGISTER_TEST(provider_config_service_roundtrip,
               "claude_service: models_config/extra_env 读写往返", {
     test_support::TestDb tdb(kDbPrefix, "svc_roundtrip");
@@ -333,63 +326,41 @@ REGISTER_TEST(provider_config_service_roundtrip,
     return true;
 })
 
-// ---- 9. 旧库升级（v2 → v3）：存量行零迁移，读出为空串 ----
-REGISTER_TEST(provider_config_migration_upgrade,
-              "migration v3: 旧库升级加列，存量行 models_config/extra_env 为空串", {
-    auto path = test_support::tempDbPath(kDbPrefix, "upgrade");
+// 新列默认值 + 空 JSON 读侧回落
+REGISTER_TEST(provider_config_new_column_defaults,
+              "claude_profiles: 新列默认值空串/0/'' 且空 models_config 回落 model 列", {
+    auto path = test_support::tempDbPath(kDbPrefix, "defaults");
     std::error_code ec;
     std::filesystem::remove(path, ec);
 
-    // 手工构造 v2 旧库（只跑前两条 migration），插入存量 profile 行
-    {
-        auto openR = core::data::SqliteDb::open(path);
-        DOCTEST_REQUIRE(openR.isOk());
-        auto& db = openR.value();
-        std::vector<core::data::Migration> oldMigrations = {
-            core::migrations::kCreateInitialTables,
-            core::migrations::kSeedDefaultTodoColumns,
-        };
-        DOCTEST_REQUIRE(db.runMigrations(oldMigrations).isOk());
-
-        auto ins = db.prepare(
-            "INSERT INTO claude_profiles (name, base_url, api_key_hint, "
-            "api_key_check, keychain_account, model, is_active, "
-            "created_at, updated_at) VALUES "
-            "('旧供应商', 'https://old.example.com', 'sk-***abcd', "
-            "'deadbeef', 'claude:1', 'claude-3-5-haiku', 1, 0, 0)");
-        DOCTEST_REQUIRE(ins.isOk());
-        DOCTEST_REQUIRE(ins.value().step().isOk());
-    }  // 句柄关闭（Windows 文件锁）
-
-    // 重新打开 + 全量 migrate → v3 补两列
     {
         auto r = core::Database::open(path);
         DOCTEST_REQUIRE(r.isOk());
         DOCTEST_REQUIRE(r.value().migrate().isOk());
         auto& db = r.value().db();
-        // v3 供应商配置迁移 + v4 todo kind 迁移（W9 批次并入后全量到 4）
-        // + v5 调用日志用量列（cc-switch 对照 §3.4）
-        // + v6 共享配置片段表与 profile 绑定列
-        // + v7 profile 认证字段 + v8 todo 归档列 kind 回填
-        // + v9 profile 方言覆盖列（CPX-13）+ v10 failover 备用列
-        // + v11 高级设置 JSON / 片段重构 → 全量到 11
-        DOCTEST_CHECK_EQ(db.schemaVersion(), 11);
+
+        // 只写 v1 就有的列，其余走 schema 默认值
+        auto ins = db.prepare(
+            "INSERT INTO claude_profiles (name, base_url, api_key_hint, "
+            "api_key_check, model, is_active, "
+            "created_at, updated_at) VALUES "
+            "('默认供应商', 'https://old.example.com', 'sk-***abcd', "
+            "'deadbeef', 'claude-3-5-haiku', 1, 0, 0)");
+        DOCTEST_REQUIRE(ins.isOk());
+        DOCTEST_REQUIRE(ins.value().step().isOk());
 
         module::claude::ClaudeService svc(db, kTestKeychainService);
         auto profiles = svc.listProfiles();
         DOCTEST_REQUIRE(profiles.isOk());
         DOCTEST_REQUIRE_EQ(profiles.value().size(), 1u);
         const auto& p = profiles.value()[0];
-        DOCTEST_CHECK_EQ(p.name, std::string("旧供应商"));
+        DOCTEST_CHECK_EQ(p.name, std::string("默认供应商"));
         DOCTEST_CHECK_EQ(p.model, std::string("claude-3-5-haiku"));
-        DOCTEST_CHECK(p.modelsConfigJson.empty());  // 存量行零迁移
-        DOCTEST_CHECK(p.extraEnvJson.empty());
-        DOCTEST_CHECK(p.dialectOverride.empty());   // 存量行零迁移（v9，CPX-13）
-
-        // 旧数据经兼容读取 → default 槽位 = 旧 model
-        auto eff = module::claude::effectiveModelsConfig(
-            p.modelsConfigJson, p.model);
-        DOCTEST_CHECK_EQ(eff.def.model, std::string("claude-3-5-haiku"));
+        DOCTEST_CHECK(p.modelsConfigJson.empty());  // schema 默认 ''
+        DOCTEST_CHECK(p.extraEnvJson.empty());      // schema 默认 ''
+        DOCTEST_CHECK(p.dialectOverride.empty());   // schema 默认 ''
+        DOCTEST_CHECK(p.extraSettingsJson.empty()); // schema 默认 ''
+        // Profile::model 是活列、双向同步，没有 fallback 语义可断言
     }
     std::filesystem::remove(path, ec);
     std::filesystem::remove(path.string() + "-wal", ec);
@@ -397,11 +368,9 @@ REGISTER_TEST(provider_config_migration_upgrade,
     return true;
 })
 
-// ---- parseImportedEnv（Phase D 导入解析，§6.1 + §7.4）----
-
-// 用户真实模板（设计 §1）包进整段 settings.json（含非 env 顶层字段）。
-// 注意 raw string 用自定义分隔符 json(...)json —— 模板里的 `)"` 序列
-//（如 "Bash(ls)"）会提前终止默认 R"(...)"
+// 用户真实模板把 env 包在整段 settings.json 里（含非 env 顶层字段）。
+// raw string 的自定义分隔符 json(...)json 不可改回 R"(...)"：模板里的 "Bash(ls)" 含 `)"`，
+// 会提前终止默认分隔的 raw string（编译直接报错）。
 static const char* kImportTemplate = R"json({
     "permissions": {"allow": ["Bash(ls)"]},
     "env": {
@@ -491,8 +460,8 @@ REGISTER_TEST(provider_config_parse_import_bare_env,
 REGISTER_TEST(provider_config_parse_import_rejects,
               "parseImportedEnv: 非法输入整体拒绝（不部分导入）", {
     using module::claude::parseImportedEnv;
-    // 空白 / 非法 JSON / 顶层非对象 / 值非字符串 / 超键数 / 超长值
-    //（键名格式校验 2026-09-24 放开：非标准键名可导入，见下方 loose_keys 用例）
+    // 空白 / 非法 JSON / 顶层非对象 / 值非字符串 / 超键数 / 超长值。
+    // 键名格式已放开校验：非标准键名（小写/连字符/数字开头）同样可导入。
     DOCTEST_CHECK(parseImportedEnv("   \n  ").isFail());
     DOCTEST_CHECK(parseImportedEnv("{ not json").isFail());
     DOCTEST_CHECK(parseImportedEnv("[1,2,3]").isFail());
@@ -521,7 +490,7 @@ REGISTER_TEST(provider_config_parse_import_rejects,
 })
 
 REGISTER_TEST(provider_config_parse_import_text_limit,
-              "provider_config: parseImportedEnv 整体文本上限 1MB（超限整体 fail + 文案含上限，审计 L6）", {
+              "provider_config: parseImportedEnv 整体文本上限 1MB（超限整体 fail + 文案含上限）", {
     using module::claude::kMaxImportTextBytes;
     using module::claude::parseImportedEnv;
 
@@ -570,7 +539,7 @@ REGISTER_TEST(provider_config_parse_import_key_conflict,
     return true;
 })
 
-// ---- 认证字段三态（2026-09-27 profile-auth-field 设计 §3/§4/§5）----
+// 认证字段
 
 REGISTER_TEST(provider_config_auth_field_text_roundtrip,
               "provider_config: 认证字段文本/枚举往返 + 未知/空串兜底 both", {
@@ -645,7 +614,7 @@ REGISTER_TEST(claude_env_var_hints,
     return true;
 })
 
-// ---- 反向同步（设计 §3.2 映射表 / §3.3 守卫表 / §3.4 出现缺席语义）----
+// 反向同步：映射表 / 守卫表 / 出现缺席语义
 
 namespace {
 
@@ -658,7 +627,7 @@ bool hasEntry(const std::vector<std::string>& keys, const char* key) {
 
 } // namespace
 
-// ---- isLoopbackUrl（G2）----
+// isLoopbackUrl
 REGISTER_TEST(provider_config_reverse_loopback_url,
               "provider_config: isLoopbackUrl 数字段/大小写/方括号（reverse loopback）", {
     using module::claude::isLoopbackUrl;
@@ -680,7 +649,7 @@ REGISTER_TEST(provider_config_reverse_loopback_url,
     return true;
 })
 
-// ---- 映射表 14 条（§3.2）----
+// 映射表 14 条
 REGISTER_TEST(provider_config_reverse_parse_mapping,
               "provider_config: parseEnvForReverseSync 映射表 14 条（reverse）", {
     const std::string env = R"json({
@@ -741,70 +710,66 @@ REGISTER_TEST(provider_config_reverse_parse_mapping,
     return true;
 })
 
-// ---- 守卫表 G1–G6（§3.3；G10 随 advanced-json-editor §8.4 片段 env 拆除）：
-// ---- 每条守卫一个专测，编号与用例名一一对应
-//（provider_config.h 的守卫表注释列出同样的编号 ↔ 用例名映射）----
-
-// G1 sidecar 托管键 → 跳过（不写也不清）
-REGISTER_TEST(provider_config_guard_G1_sidecar_managed_key,
-              "provider_config: 守卫 G1 sidecar 托管键跳过（reverse）", {
+// sidecar 托管键 → 跳过（不写也不清）
+REGISTER_TEST(provider_config_guard_sidecar_managed_key,
+              "provider_config: sidecar 托管键跳过（reverse）", {
     using module::claude::parseEnvForReverseSync;
-    auto g1 = parseEnvForReverseSync(
+    auto sidecarManaged = parseEnvForReverseSync(
         R"({"ANTHROPIC_MODEL": "m-cc", "MY_KEY": "x"})", {"ANTHROPIC_MODEL"});
-    DOCTEST_REQUIRE(g1.ok);
-    DOCTEST_CHECK(g1.cfg.models.def.model.empty());  // 未被收编
-    DOCTEST_CHECK_EQ(g1.cfg.extraEnv.at("MY_KEY"), std::string("x"));
-    DOCTEST_CHECK(hasEntry(g1.skippedKeys, "ANTHROPIC_MODEL"));
+    DOCTEST_REQUIRE(sidecarManaged.ok);
+    DOCTEST_CHECK(sidecarManaged.cfg.models.def.model.empty());  // 未被收编
+    DOCTEST_CHECK_EQ(sidecarManaged.cfg.extraEnv.at("MY_KEY"), std::string("x"));
+    DOCTEST_CHECK(hasEntry(sidecarManaged.skippedKeys, "ANTHROPIC_MODEL"));
     return true;
 })
 
-// G2 loopback BASE_URL → base_url + token 联动跳过
-//（本机 cc-switch 形态：127.0.0.1 + 非占位符的本地 token 不得被当上游 key 收编）
-REGISTER_TEST(provider_config_guard_G2_loopback_base_url,
-              "provider_config: 守卫 G2 loopback BASE_URL 联动跳过（reverse）", {
+// loopback BASE_URL → base_url + token 联动跳过（本机 cc-switch 形态：127.0.0.1 +
+// 非占位符的本地 token 不得被当上游 key 收编）
+REGISTER_TEST(provider_config_guard_loopback_base_url,
+              "provider_config: loopback BASE_URL 联动跳过（reverse）", {
     using module::claude::parseEnvForReverseSync;
-    auto g2 = parseEnvForReverseSync(
+    auto loopbackBaseUrl = parseEnvForReverseSync(
         R"({"ANTHROPIC_BASE_URL": "http://127.0.0.1:15721", "ANTHROPIC_AUTH_TOKEN": "local-token"})",
         {});
-    DOCTEST_REQUIRE(g2.ok);
-    DOCTEST_CHECK(g2.cfg.baseUrl.empty());
-    DOCTEST_CHECK(g2.cfg.authToken.empty());
-    DOCTEST_CHECK(hasEntry(g2.skippedKeys, "ANTHROPIC_BASE_URL"));
-    DOCTEST_CHECK(hasEntry(g2.skippedKeys, "ANTHROPIC_AUTH_TOKEN"));
-    DOCTEST_CHECK(hasEntry(g2.skippedKeys, "ANTHROPIC_API_KEY"));
+    DOCTEST_REQUIRE(loopbackBaseUrl.ok);
+    DOCTEST_CHECK(loopbackBaseUrl.cfg.baseUrl.empty());
+    DOCTEST_CHECK(loopbackBaseUrl.cfg.authToken.empty());
+    DOCTEST_CHECK(hasEntry(loopbackBaseUrl.skippedKeys, "ANTHROPIC_BASE_URL"));
+    DOCTEST_CHECK(hasEntry(loopbackBaseUrl.skippedKeys, "ANTHROPIC_AUTH_TOKEN"));
+    DOCTEST_CHECK(hasEntry(loopbackBaseUrl.skippedKeys, "ANTHROPIC_API_KEY"));
     return true;
 })
 
-// G3 占位 token → 跳过（保持 profile 原密钥）
-REGISTER_TEST(provider_config_guard_G3_placeholder_token,
-              "provider_config: 守卫 G3 占位 token 跳过（reverse）", {
+// 占位 token → 跳过（保持 profile 原密钥）
+REGISTER_TEST(provider_config_guard_placeholder_token,
+              "provider_config: 占位 token 跳过（reverse）", {
     using module::claude::parseEnvForReverseSync;
-    auto g3 = parseEnvForReverseSync(
+    auto placeholderToken = parseEnvForReverseSync(
         R"({"ANTHROPIC_AUTH_TOKEN": "PROXY_MANAGED"})", {});
-    DOCTEST_REQUIRE(g3.ok);
-    DOCTEST_CHECK(g3.cfg.authToken.empty());
-    DOCTEST_CHECK(hasEntry(g3.skippedKeys, "ANTHROPIC_AUTH_TOKEN"));
+    DOCTEST_REQUIRE(placeholderToken.ok);
+    DOCTEST_CHECK(placeholderToken.cfg.authToken.empty());
+    DOCTEST_CHECK(hasEntry(placeholderToken.skippedKeys, "ANTHROPIC_AUTH_TOKEN"));
     return true;
 })
 
-// G4 空值 → 跳过（不拿空串覆盖，也不清空）；别名键同时登记归一后的键名
-REGISTER_TEST(provider_config_guard_G4_empty_value,
-              "provider_config: 守卫 G4 空值跳过（reverse）", {
+// 空值 → 跳过（不拿空串覆盖，也不清空）；别名键同时登记归一后的键名
+REGISTER_TEST(provider_config_guard_empty_value,
+              "provider_config: 空值跳过（reverse）", {
     using module::claude::parseEnvForReverseSync;
-    auto g4 = parseEnvForReverseSync(
+    auto emptyValue = parseEnvForReverseSync(
         R"({"DISABLE_AUTOUPDATER": "", "AUTO_COMPACT_ENABLED": ""})", {});
-    DOCTEST_REQUIRE(g4.ok);
-    DOCTEST_CHECK(g4.cfg.extraEnv.empty());
-    DOCTEST_CHECK(hasEntry(g4.skippedKeys, "DISABLE_AUTOUPDATER"));
-    DOCTEST_CHECK(hasEntry(g4.skippedKeys, "AUTO_COMPACT_ENABLED"));
-    DOCTEST_CHECK(hasEntry(g4.skippedKeys, "DISABLE_AUTO_COMPACT"));
+    DOCTEST_REQUIRE(emptyValue.ok);
+    DOCTEST_CHECK(emptyValue.cfg.extraEnv.empty());
+    DOCTEST_CHECK(hasEntry(emptyValue.skippedKeys, "DISABLE_AUTOUPDATER"));
+    DOCTEST_CHECK(hasEntry(emptyValue.skippedKeys, "AUTO_COMPACT_ENABLED"));
+    DOCTEST_CHECK(hasEntry(emptyValue.skippedKeys, "DISABLE_AUTO_COMPACT"));
     return true;
 })
 
-// G5 键缺席（非守卫托管字段不在 env 里）→ 清空 profile 对应值
-//（语义落在 mergeReverseSyncEnv，不在 parse）
-REGISTER_TEST(provider_config_guard_G5_absent_clears,
-              "provider_config: 守卫 G5 缺席即清空（reverse）", {
+// 键缺席（非托管字段不在 env 里）→ 清空 profile 对应值。语义落在 mergeReverseSyncEnv，
+// 不在 parse
+REGISTER_TEST(provider_config_guard_absent_clears,
+              "provider_config: 缺席即清空（reverse）", {
     using module::claude::mergeReverseSyncEnv;
     using module::claude::parseEnvForReverseSync;
     using module::claude::parseModelsConfig;
@@ -816,7 +781,7 @@ REGISTER_TEST(provider_config_guard_G5_absent_clears,
     // env 空 → 全部非守卫托管字段缺席 → 清空（models 槽位 + extra_env）
     auto parsed = parseEnvForReverseSync("{}", {});
     DOCTEST_REQUIRE(parsed.ok);
-    auto m = mergeReverseSyncEnv(parsed.cfg, curModels, "", R"({"K": "v"})");
+    auto m = mergeReverseSyncEnv(parsed.cfg, curModels, R"({"K": "v"})");
     DOCTEST_CHECK(m.modelsChanged);
     DOCTEST_CHECK(m.extraEnvChanged);
 
@@ -829,17 +794,17 @@ REGISTER_TEST(provider_config_guard_G5_absent_clears,
     return true;
 })
 
-// G6 非字符串 / 超长 → 跳过该键 + warning，不整体 fail
-REGISTER_TEST(provider_config_guard_G6_invalid_value,
-              "provider_config: 守卫 G6 值形态非法跳过（reverse）", {
+// 非字符串 / 超长 → 跳过该键 + warning，不整体 fail
+REGISTER_TEST(provider_config_guard_invalid_value,
+              "provider_config: 值形态非法跳过（reverse）", {
     using module::claude::parseEnvForReverseSync;
-    auto g6 = parseEnvForReverseSync(
+    auto invalidValue = parseEnvForReverseSync(
         R"({"NUM_KEY": 1, "BOOL_KEY": true, "OK_KEY": "v"})", {});
-    DOCTEST_REQUIRE(g6.ok);
-    DOCTEST_CHECK_EQ(g6.cfg.extraEnv.size(), 1u);
-    DOCTEST_CHECK(hasEntry(g6.skippedKeys, "NUM_KEY"));
-    DOCTEST_CHECK(hasEntry(g6.skippedKeys, "BOOL_KEY"));
-    DOCTEST_CHECK_EQ(g6.cfg.warnings.size(), 2u);
+    DOCTEST_REQUIRE(invalidValue.ok);
+    DOCTEST_CHECK_EQ(invalidValue.cfg.extraEnv.size(), 1u);
+    DOCTEST_CHECK(hasEntry(invalidValue.skippedKeys, "NUM_KEY"));
+    DOCTEST_CHECK(hasEntry(invalidValue.skippedKeys, "BOOL_KEY"));
+    DOCTEST_CHECK_EQ(invalidValue.cfg.warnings.size(), 2u);
     {
         const std::string big =
             "{ \"BIG_KEY\": \"" + std::string(4097, 'x') + "\" }";
@@ -849,14 +814,12 @@ REGISTER_TEST(provider_config_guard_G6_invalid_value,
         DOCTEST_CHECK(hasEntry(rb.skippedKeys, "BIG_KEY"));
         DOCTEST_CHECK_EQ(rb.cfg.warnings.size(), 1u);
     }
-    // 只有 env 本身非法才 ok=false（与 G6 的单键容错分界）
+    // 只有 env 本身非法才 ok=false（值形态非法是单键容错，不整体 fail）
     DOCTEST_CHECK(!parseEnvForReverseSync("{not json", {}).ok);
     DOCTEST_CHECK(!parseEnvForReverseSync("[1,2]", {}).ok);
     return true;
 })
-
-
-// ---- 合并语义（§3.4 出现覆盖 / 缺席清空 / 守卫不写也不清）----
+// 合并语义：出现覆盖 / 缺席清空 / 守卫不写也不清
 REGISTER_TEST(provider_config_reverse_merge_clear_keep_override,
               "provider_config: mergeReverseSyncEnv 缺席清空/守卫跳过/出现覆盖（reverse）", {
     using module::claude::mergeReverseSyncEnv;
@@ -871,9 +834,9 @@ REGISTER_TEST(provider_config_reverse_merge_clear_keep_override,
     const std::string curExtra =
         R"json({"DISABLE_AUTOUPDATER": "1", "MY_KEY": "keep"})json";
 
-    // settings.json：default 由 sidecar 托管（G1，不清）；sonnet 出现覆盖
+    // settings.json：default 由 sidecar 托管（不清）；sonnet 出现覆盖
     //（_NAME 缺席 → 清）；opus 全缺席 → 清；haiku 仅 _NAME 出现（其 model 缺席
-    // → 清）；MY_KEY 空值（G4，不清）；OTHER 新增；DISABLE_AUTOUPDATER 缺席 → 删
+    // → 清）；MY_KEY 空值（不清）；OTHER 新增；DISABLE_AUTOUPDATER 缺席 → 删
     const std::string env = R"json({
         "ANTHROPIC_MODEL": "m-cc",
         "ANTHROPIC_DEFAULT_SONNET_MODEL": "s-new",
@@ -884,14 +847,14 @@ REGISTER_TEST(provider_config_reverse_merge_clear_keep_override,
     auto parsed = parseEnvForReverseSync(env, {"ANTHROPIC_MODEL"});
     DOCTEST_REQUIRE(parsed.ok);
 
-    auto m = mergeReverseSyncEnv(parsed.cfg, curModels, "", curExtra);
+    auto m = mergeReverseSyncEnv(parsed.cfg, curModels, curExtra);
     DOCTEST_CHECK(m.modelsChanged);
     DOCTEST_CHECK(m.extraEnvChanged);
 
     auto mc = module::claude::parseModelsConfig(m.modelsConfigJson);
     DOCTEST_REQUIRE(mc.isOk());
     const auto& s = mc.value();
-    DOCTEST_CHECK_EQ(s.def.model, std::string("m-old"));  // G1：不写也不清
+    DOCTEST_CHECK_EQ(s.def.model, std::string("m-old"));  // sidecar 托管：不写也不清
     DOCTEST_CHECK_EQ(s.sonnet.model, std::string("s-new"));  // 出现覆盖
     DOCTEST_CHECK(s.sonnet.name.empty());                    // _NAME 缺席 → 清空
     DOCTEST_CHECK(s.opus.model.empty());                     // 缺席 → 清空
@@ -902,7 +865,7 @@ REGISTER_TEST(provider_config_reverse_merge_clear_keep_override,
 
     auto ec = module::claude::parseExtraEnv(m.extraEnvJson);
     DOCTEST_REQUIRE(ec.isOk());
-    DOCTEST_CHECK_EQ(ec.value().at("MY_KEY"), std::string("keep"));  // G4：不清
+    DOCTEST_CHECK_EQ(ec.value().at("MY_KEY"), std::string("keep"));  // 空值：不清
     DOCTEST_CHECK_EQ(ec.value().at("OTHER"), std::string("new"));    // 新增
     DOCTEST_CHECK(ec.value().find("DISABLE_AUTOUPDATER") == ec.value().end());
     DOCTEST_CHECK_EQ(ec.value().size(), 2u);
@@ -914,29 +877,31 @@ REGISTER_TEST(provider_config_reverse_merge_no_change,
     using module::claude::mergeReverseSyncEnv;
     using module::claude::parseEnvForReverseSync;
 
-    // 无变化：env 与现值逐字段一致（含旧 model 列 fallback 等价——models_config
-    // 空 + 旧列 m-1，env 给 m-1 → 不算变化，零写入）
+    // 无变化：env 与现值逐字段一致（models_config 现值 default 槽位已是 m-1，
+    // env 给 m-1 → 不算变化，零写入）
     auto parsed = parseEnvForReverseSync(
         R"({"ANTHROPIC_MODEL": "m-1", "DISABLE_AUTOUPDATER": "1"})", {});
     DOCTEST_REQUIRE(parsed.ok);
-    auto m = mergeReverseSyncEnv(parsed.cfg, "", "m-1",
+    auto m = mergeReverseSyncEnv(parsed.cfg,
+                                 R"({"default": {"model": "m-1"}})",
                                  R"({"DISABLE_AUTOUPDATER": "1"})");
     DOCTEST_CHECK(!m.modelsChanged);
     DOCTEST_CHECK(!m.extraEnvChanged);
-    DOCTEST_CHECK(m.modelsConfigJson.empty());  // 回传原文（空 = 未配置）
+    DOCTEST_CHECK_EQ(m.modelsConfigJson,
+                     std::string(R"({"default": {"model": "m-1"}})"));  // 回传原文
     DOCTEST_CHECK(m.extraEnvJson.find("DISABLE_AUTOUPDATER") != std::string::npos);
 
     // extra_env 全清 → 空串（本层「空串 = 未配置」约定）
     auto empty = parseEnvForReverseSync("{}", {});
     DOCTEST_REQUIRE(empty.ok);
-    auto m2 = mergeReverseSyncEnv(empty.cfg, "", "", R"({"K": "v"})");
+    auto m2 = mergeReverseSyncEnv(empty.cfg, "", R"({"K": "v"})");
     DOCTEST_CHECK(!m2.modelsChanged);   // 两侧都空 → 不算变化
     DOCTEST_CHECK(m2.extraEnvChanged);  // 缺席 → 清空
     DOCTEST_CHECK(m2.extraEnvJson.empty());
     return true;
 })
 
-// ---- 副本命名（§4.2）----
+// 副本命名
 REGISTER_TEST(provider_config_copyname,
               "provider_config: makeCopyName 副本命名与避让（copyname）", {
     using module::claude::makeCopyName;
@@ -950,7 +915,7 @@ REGISTER_TEST(provider_config_copyname,
         std::string("官方中转 副本 3"));
     DOCTEST_CHECK_EQ(makeCopyName("", {}), std::string(" 副本"));  // 空名
 
-    // 100 次上限：占满 100 个候选 → 空串（调用方按命名失败处理）；退一个可用
+    // 100 次上限：占满 100 个候选 → 空串（调用方按命名失败处理）；退一个则仍可用
     Names full;
     full.push_back("X 副本");
     for (int i = 2; i <= 100; ++i) full.push_back("X 副本 " + std::to_string(i));
@@ -960,17 +925,12 @@ REGISTER_TEST(provider_config_copyname,
     return true;
 })
 
-// ============================================================================
-// 槽位单一真相源（审计 CPX-08）
-//
-// 这三个用例全部**遍历 modelSlotTable()** 断言派生面：新增一个槽位（表加一行）
-// 后无需改用例即自动进入覆盖——表行声明什么，接管写入 / 导入识别 / 反向回填 /
-// models_config 键 / UI 文案就必须是什么，多写、少写、串槽三种漏改都会红。
-// ============================================================================
+// 以下三条遍历 modelSlotTable() 断言派生面：新增槽位（表加一行）无需改用例即自动进入覆盖，
+// 多写、少写、串槽三种漏改都会红。勿改成手抄键名清单——那会让新槽位静默漏测。
 
-// 表 → 托管键全集 + 接管实际写入（「遍历表得到的键集合 == 接管里实际写出的键集合」）
+// 表 → 托管键全集 == 接管实际写出的键集合
 REGISTER_TEST(provider_config_slot_table_managed_keys,
-              "provider_config: 槽位表派生托管键与接管写入（slot table CPX-08）", {
+              "provider_config: 槽位表派生托管键与接管写入（slot table）", {
     using namespace module::claude;
     const auto table = modelSlotTable();
     DOCTEST_CHECK_EQ(table.size(), kModelSlotCount);   // 表长 == 派生的槽位数
@@ -1005,7 +965,7 @@ REGISTER_TEST(provider_config_slot_table_managed_keys,
         (mc.*m.slot).name = std::string("n-") + m.jsonKey;
         auto text = serializeModelsConfig(mc);
         DOCTEST_REQUIRE(text.isOk());
-        const auto env = buildProxyEnv(text.value(), "", "", 8888);
+        const auto env = buildProxyEnv(text.value(), "", 8888);
         std::vector<std::string> written;
         for (const auto& kv : env) {
             if (kv.first == "ANTHROPIC_BASE_URL" ||
@@ -1033,7 +993,7 @@ REGISTER_TEST(provider_config_slot_table_managed_keys,
         }
         auto text = serializeModelsConfig(all);
         DOCTEST_REQUIRE(text.isOk());
-        const auto env = buildProxyEnv(text.value(), "", "", 8888);
+        const auto env = buildProxyEnv(text.value(), "", 8888);
         std::vector<std::string> written;
         for (const auto& kv : env) {
             if (kv.first == "ANTHROPIC_BASE_URL" ||
@@ -1050,7 +1010,7 @@ REGISTER_TEST(provider_config_slot_table_managed_keys,
 
 // 表 → 导入识别 + 反向回填（逐行：该行的 env 键 → 恰好落到该槽位）
 REGISTER_TEST(provider_config_slot_table_import_and_reverse,
-              "provider_config: 槽位表派生导入识别与反向回填（slot table CPX-08）", {
+              "provider_config: 槽位表派生导入识别与反向回填（slot table）", {
     using namespace module::claude;
     for (const auto& m : modelSlotTable()) {
         std::string json = std::string("{\"") + m.envKey + "\": \"m-x\"";
@@ -1074,7 +1034,7 @@ REGISTER_TEST(provider_config_slot_table_import_and_reverse,
         DOCTEST_REQUIRE(rp.ok);
         DOCTEST_CHECK_EQ(rp.cfg.recognizedSlots, 1);
         DOCTEST_CHECK_EQ((rp.cfg.models.*m.slot).model, std::string("m-x"));
-        auto merged = mergeReverseSyncEnv(rp.cfg, "", "", "");
+        auto merged = mergeReverseSyncEnv(rp.cfg, "", "");
         DOCTEST_CHECK(merged.modelsChanged);
         auto back = parseModelsConfig(merged.modelsConfigJson);
         DOCTEST_REQUIRE(back.isOk());
@@ -1085,7 +1045,7 @@ REGISTER_TEST(provider_config_slot_table_import_and_reverse,
 
 // 表 → models_config JSON 键 + UI 文案（UI 遍历派生的前提：文案齐备且互异）
 REGISTER_TEST(provider_config_slot_table_json_and_labels,
-              "provider_config: 槽位表 JSON 键与 UI 文案（slot table CPX-08）", {
+              "provider_config: 槽位表 JSON 键与 UI 文案（slot table）", {
     using namespace module::claude;
     std::vector<std::string> labels, formLabels, jsonKeys;
     for (const auto& m : modelSlotTable()) {
@@ -1115,7 +1075,7 @@ REGISTER_TEST(provider_config_slot_table_json_and_labels,
         std::sort(sorted.begin(), sorted.end());
         DOCTEST_CHECK(std::unique(sorted.begin(), sorted.end()) == sorted.end());
     }
-    // 既有 UI 外观取样（详情面板 / 表单页两套文案），防收敛时误改外观
+    // 外观取样钉死：详情面板 / 表单页两套文案，防止收敛派生时误改外观
     const auto table = modelSlotTable();
     DOCTEST_REQUIRE(!table.empty());
     DOCTEST_CHECK_EQ(std::string(table.front().label), std::string("默认"));
@@ -1125,9 +1085,8 @@ REGISTER_TEST(provider_config_slot_table_json_and_labels,
     return true;
 })
 
-// ---- failover 换家判据（设计 §3.8；纯函数，判据表逐行锚定）----
-// 换 → true / 不换 → false，与设计表的 category 一一对应：
-//   传输失败（statusCode==0）                换
+// failover 换家判据（纯函数）：换 → true / 不换 → false。判据表逐行：
+//   传输失败（statusCode==0）                 换
 //   401 / 403（换 key 才可能变好）            换
 //   429（限流）                             换
 //   5xx 含 500/502/503/504/529（上游故障）    换
@@ -1144,8 +1103,8 @@ REGISTER_TEST(provider_config_failover_switch_categories,
     DOCTEST_CHECK(module::claude::shouldFailoverTo(403, ""));
     // 429：上游限流
     DOCTEST_CHECK(module::claude::shouldFailoverTo(429, ""));
-    // 5xx：上游侧故障（含 500/502/503/504/529 过载）——503 空 errorKind 时
-    // 属上游 5xx 档（换）；带 no_active_profile 才归「不换」（见下一条用例）
+    // 5xx：上游侧故障（含 500/502/503/504/529 过载）——503 空 errorKind 时属上游 5xx 档（换）；
+    // 带 no_active_profile 才归「不换」（见下一条用例）
     for (const int sc : {500, 502, 503, 504, 529}) {
         DOCTEST_CHECK(module::claude::shouldFailoverTo(sc, ""));
     }
@@ -1161,8 +1120,8 @@ REGISTER_TEST(provider_config_failover_no_switch_categories,
     for (const int sc : {400, 405, 406, 413, 414, 415, 422, 501}) {
         DOCTEST_CHECK_FALSE(module::claude::shouldFailoverTo(sc, ""));
     }
-    // DevDesk 自身 503 no_active_profile → 不换（writeNoProfileError 在转发
-    // **前**直接回，判定点理论收不到；本行是防御——本地配置错误不换家）
+    // DevDesk 自身 503 no_active_profile → 不换（writeNoProfileError 在转发**前**直接回，判定点
+    // 理论收不到；本行是防御——本地配置错误不换家）
     DOCTEST_CHECK_FALSE(
         module::claude::shouldFailoverTo(503, "no_active_profile"));
     // errorKind 兜底优先于状态码：即使换家档状态码带上 no_active_profile 也不换
@@ -1175,11 +1134,9 @@ REGISTER_TEST(provider_config_failover_no_switch_categories,
     DOCTEST_CHECK_FALSE(module::claude::shouldFailoverTo(302, ""));
     return true;
 })
+// 高级设置 JSON 纯函数（无头）
 
-
-// ===== 高级设置 JSON 纯函数（2026-09-30 advanced-json-editor 设计 §4.3，无头）=====
-
-// ---- 生效合并：片段赢 / 解绑回落 / env 键跳过 + 警告 / 非法按空 / 双空 ----
+// 生效合并：片段赢 / 解绑回落 / env 键跳过 + 警告 / 非法按空 / 双空
 REGISTER_TEST(provider_config_extra_settings_effective,
               "provider_config: effectiveExtraSettingsJson 片段赢/解绑回落/env 键跳过/非法按空/双空", {
     using module::claude::effectiveExtraSettingsJson;
@@ -1213,7 +1170,7 @@ REGISTER_TEST(provider_config_extra_settings_effective,
         DOCTEST_CHECK(warnings.empty());
     }
     warnings.clear();
-    // 任一侧 "env" 键跳过 + warnings 记录（D-5 读侧兜底）；另一侧照用
+    // 任一侧 "env" 键跳过 + warnings 记录（读侧兜底）；另一侧照用
     {
         const std::string eff = effectiveExtraSettingsJson(
             R"({"env": {"A": "1"}, "permissions": {"p": 1}})",
@@ -1256,7 +1213,7 @@ REGISTER_TEST(provider_config_extra_settings_effective,
     return true;
 })
 
-// ---- 文档并入：写入键集 / model 抑制 / env 键跳过 / 非法零写入 ----
+// 文档并入：写入键集 / model 抑制 / env 键跳过 / 非法零写入
 REGISTER_TEST(provider_config_extra_settings_apply,
               "provider_config: applyExtraSettingsToSettingsDoc 写入键集/model 抑制/env 跳过/顶层非对象", {
     using module::claude::applyExtraSettingsToSettingsDoc;
@@ -1273,6 +1230,9 @@ REGISTER_TEST(provider_config_extra_settings_apply,
         platform::json::JsonObject root;
         root.set("env", JsonValue(std::move(envObj)));
         root.set("live", platform::json::makeString("old"));
+        // 夹具：live 侧预置与 JSON 同名的 statusLine（异值）——没有同名键时下面那条
+        // 「JSON 赢过 live」的断言恒真（假绿）
+        root.set("statusLine", platform::json::makeString("live-s"));
 
         auto r = applyExtraSettingsToSettingsDoc(
             root, R"({"model": "json-model", "statusLine": "on"})");
@@ -1281,7 +1241,8 @@ REGISTER_TEST(provider_config_extra_settings_apply,
         DOCTEST_CHECK_EQ(r.writtenKeys[0], std::string("model"));
         DOCTEST_CHECK_EQ(r.writtenKeys[1], std::string("statusLine"));
         DOCTEST_CHECK(r.warnings.empty());
-        // JSON 赢过 live 既有同名非 env 键（D-3）
+        // JSON 赢过 live 既有同名非 env 键——statusLine 取 JSON 值 "on"，
+        // live 原值 "live-s" 被压过；JSON 没有的 "live" 键零触碰
         DOCTEST_CHECK_EQ(root.get("live").asString(), std::string("old"));
         DOCTEST_CHECK_EQ(root.get("model").asString(), std::string("json-model"));
         DOCTEST_CHECK_EQ(root.get("statusLine").asString(), std::string("on"));
@@ -1291,7 +1252,7 @@ REGISTER_TEST(provider_config_extra_settings_apply,
         DOCTEST_CHECK(envAfter.has("ANTHROPIC_DEFAULT_SONNET_MODEL"));
         DOCTEST_CHECK(envAfter.has("MY_KEY"));
     }
-    // "model" 非字符串 / 空串 → 不抑制（D-4：非空字符串才触发）
+    // "model" 非字符串 / 空串 → 不抑制（非空字符串才触发）
     {
         platform::json::JsonObject envObj;
         envObj.set("ANTHROPIC_MODEL", platform::json::makeString("slot-model"));
@@ -1344,7 +1305,7 @@ REGISTER_TEST(provider_config_extra_settings_apply,
     return true;
 })
 
-// ---- 校验五态：空串 OK / 非法 / 顶层数组 / 超 1MB / 含 "env" ----
+// 校验五态：空串 OK / 非法 / 顶层数组 / 超 1MB / 含 "env"
 REGISTER_TEST(provider_config_extra_settings_validate,
               "provider_config: validateExtraSettingsJson 空串/非法/顶层数组/超限/env 键五态", {
     using module::claude::validateExtraSettingsJson;
@@ -1376,7 +1337,7 @@ REGISTER_TEST(provider_config_extra_settings_validate,
     return true;
 })
 
-// ---- F-10：def 槽位 envKey 单一来源自槽位表派生（不手抄键名）----
+// def 槽位 envKey 自槽位表派生（不手抄键名）
 REGISTER_TEST(provider_config_model_slot_def_env_key,
               "provider_config: modelSlotDefEnvKey/isModelSlotEnvKey 自槽位表派生（F-10）", {
     using module::claude::modelSlotDefEnvKey;
@@ -1400,5 +1361,232 @@ REGISTER_TEST(provider_config_model_slot_def_env_key,
     DOCTEST_CHECK(hasNameKey);
     DOCTEST_CHECK_FALSE(isModelSlotEnvKey("ANTHROPIC_BASE_URL"));
     DOCTEST_CHECK_FALSE(isModelSlotEnvKey("MY_CUSTOM_KEY"));
+    return true;
+})
+
+// nonEnvTopLevelJson（settings.json 原文 → 非 env 顶层属性）
+// 边界一律返回静默空串、无 warning 通道：空/纯空白、超输入上限、非法 JSON、顶层非对象、
+// 除 env 外无键。正常路径 = pretty 规范形 + env 排除 + 键序字典序（与 effectiveExtraSettingsJson
+// 同一条序列化通道）。
+REGISTER_TEST(provider_config_non_env_top_level_json,
+              "provider_config: nonEnvTopLevelJson 抽取规则与边界（空/非对象/无键/超限静默）", {
+    using module::claude::nonEnvTopLevelJson;
+
+    // 正常：非 env 顶层属性全取 + env 排除 + pretty + 字典序
+    {
+        const std::string j = nonEnvTopLevelJson(R"({
+            "statusLine": {"type": "command"},
+            "env": {"ANTHROPIC_BASE_URL": "https://x"},
+            "model": "m-1",
+            "permissions": {"allow": ["Bash"]}
+        })");
+        DOCTEST_REQUIRE(!j.empty());
+        DOCTEST_CHECK(j.find("\n  \"") != std::string::npos);   // pretty 形
+        auto parsed = platform::json::parse(j);
+        DOCTEST_REQUIRE(parsed.isOk());
+        auto obj = parsed.value().asObject();
+        DOCTEST_CHECK(obj.has("model"));
+        DOCTEST_CHECK(obj.has("permissions"));
+        DOCTEST_CHECK(obj.has("statusLine"));
+        DOCTEST_CHECK_FALSE(obj.has("env"));
+        DOCTEST_REQUIRE_EQ(obj.keys().size(), static_cast<size_t>(3));
+        DOCTEST_CHECK_EQ(obj.keys()[0], std::string("model"));
+        DOCTEST_CHECK_EQ(obj.keys()[1], std::string("permissions"));
+        DOCTEST_CHECK_EQ(obj.keys()[2], std::string("statusLine"));
+    }
+    // 空 / 纯空白 → 空串
+    DOCTEST_CHECK(nonEnvTopLevelJson("").empty());
+    DOCTEST_CHECK(nonEnvTopLevelJson("   \n\t ").empty());
+    // 非法 JSON / 顶层非对象（数组、标量）→ 空串（读路径容错，不炸）
+    DOCTEST_CHECK(nonEnvTopLevelJson("{broken").empty());
+    DOCTEST_CHECK(nonEnvTopLevelJson("[1,2,3]").empty());
+    DOCTEST_CHECK(nonEnvTopLevelJson("\"just-a-string\"").empty());
+    // 只有 env（含 env = 空对象）→ 空串（= 未配置，与 extraSettingsJson 语义一致）
+    DOCTEST_CHECK(nonEnvTopLevelJson(R"({"env": {"A": "1"}})").empty());
+    DOCTEST_CHECK(nonEnvTopLevelJson(R"({"env": {}})").empty());
+    // 输入超上限（kMaxImportTextBytes = 1MB）→ 静默空串（挡在解析之前）
+    {
+        const std::string huge = "{\"model\":\"" +
+            std::string(module::claude::kMaxImportTextBytes, 'x') + "\"}";
+        DOCTEST_CHECK(huge.size() > module::claude::kMaxImportTextBytes);
+        DOCTEST_CHECK(nonEnvTopLevelJson(huge).empty());
+    }
+    // 输出超上限（kMaxExtraSettingsBytes = 1MB）：compact 输入 < 1MB、pretty 后
+    // 超限 → 静默空串（不产超限值；不设 warning 通道）
+    {
+        std::string big = "{\"big\":[";
+        big.reserve(500000);
+        for (int i = 0; i < 200000; ++i) {
+            if (i > 0) big += ',';
+            big += '1';
+        }
+        big += "]}";
+        DOCTEST_REQUIRE(big.size() <= module::claude::kMaxImportTextBytes);
+        DOCTEST_CHECK(nonEnvTopLevelJson(big).empty());
+    }
+    return true;
+})
+
+// 1M 上下文标记（槽位 supportsOneM 列 + 三纯函数）。trimEnd 后大小写不敏感判尾；strip 命中才切尾
+// 4 字符再 trimEnd、未命中原样返回；set 先 strip 再 trim 得 base，base 空返回空串（空 base 不许带标记）。
+REGISTER_TEST(provider_config_one_m_marker_pure,
+              "provider_config: [1M] 标记 判定/剥离/设置（大小写不敏感 + 空 base）", {
+    using module::claude::hasOneMMarker;
+    using module::claude::stripOneMMarker;
+    using module::claude::setOneMMarker;
+
+    // 判定：大小写不敏感 + 容忍尾空白；非尾部 / 空串不算
+    DOCTEST_CHECK(hasOneMMarker("claude-opus-5-5[1M]"));
+    DOCTEST_CHECK(hasOneMMarker("claude-opus-5-5[1m]"));
+    DOCTEST_CHECK(hasOneMMarker("claude-opus-5-5 [1M]  "));
+    DOCTEST_CHECK_FALSE(hasOneMMarker("claude-opus-5-5"));
+    DOCTEST_CHECK_FALSE(hasOneMMarker(""));
+    DOCTEST_CHECK_FALSE(hasOneMMarker("[1M]-prefix"));
+    // 整串即标记：判定为真（endsWith 语义），剥离后是空串
+    DOCTEST_CHECK(hasOneMMarker("[1M]"));
+
+    // 剥离：命中才动；未命中原样返回（含大小写混合）
+    DOCTEST_CHECK_EQ(stripOneMMarker("m-sonnet[1M]"), std::string("m-sonnet"));
+    DOCTEST_CHECK_EQ(stripOneMMarker("m-sonnet[1m]"), std::string("m-sonnet"));
+    DOCTEST_CHECK_EQ(stripOneMMarker("m-sonnet [1M] "), std::string("m-sonnet"));
+    DOCTEST_CHECK_EQ(stripOneMMarker("m-sonnet"), std::string("m-sonnet"));
+    DOCTEST_CHECK_EQ(stripOneMMarker(""), std::string(""));
+    DOCTEST_CHECK_EQ(stripOneMMarker("[1M]"), std::string(""));
+
+    // 设置：off = 纯 base；on = base + 规范大写标记（重复拼接防护：已含标记时再 on 仍只有一个
+    // [1M]）；空 base 恒返回空串
+    DOCTEST_CHECK_EQ(setOneMMarker("m-sonnet", true), std::string("m-sonnet[1M]"));
+    DOCTEST_CHECK_EQ(setOneMMarker("m-sonnet", false), std::string("m-sonnet"));
+    DOCTEST_CHECK_EQ(setOneMMarker("m-sonnet[1m]", true), std::string("m-sonnet[1M]"));
+    DOCTEST_CHECK_EQ(setOneMMarker("m-sonnet[1M]", true), std::string("m-sonnet[1M]"));
+    DOCTEST_CHECK_EQ(setOneMMarker("m-sonnet[1M]", false), std::string("m-sonnet"));
+    DOCTEST_CHECK_EQ(setOneMMarker("  m-sonnet  ", true), std::string("m-sonnet[1M]"));
+    // 空 base（空串 / 纯空白 / 整串即标记）→ 不允许带标记
+    DOCTEST_CHECK_EQ(setOneMMarker("", true), std::string(""));
+    DOCTEST_CHECK_EQ(setOneMMarker("   ", true), std::string(""));
+    DOCTEST_CHECK_EQ(setOneMMarker("[1M]", true), std::string(""));
+    return true;
+})
+
+// 槽位 supportsOneM 列：逐槽位钉死取值。sonnet / opus / fable / subagent = true，haiku = false
+// （小快模型无 1M 变体）；def 无对应外部参考（ANTHROPIC_MODEL 是独立主模型输入框）→ 按主模型语义 true。
+// 不要「保守」取值：给 true 的槽位改 false 会让用户选得到却用不了。
+// 反向断言：新增槽位必须同时进本用例的清单，否则红。
+REGISTER_TEST(provider_config_one_m_slot_support_table,
+              "provider_config: 槽位 supportsOneM 列（六槽位取值逐个钉死）", {
+    const auto table = module::claude::modelSlotTable();
+    DOCTEST_REQUIRE_EQ(table.size(), module::claude::kModelSlotCount);
+    DOCTEST_REQUIRE_EQ(table.size(), static_cast<size_t>(6));   // 表长硬钉
+    struct Expected {
+        const char* key;
+        bool oneM;
+    };
+    const Expected expected[] = {
+        {"default", true},    // ANTHROPIC_MODEL（主模型）
+        {"sonnet", true},
+        {"opus", true},
+        {"haiku", false},     // 小快模型，无 1M 变体（cc-switch: false）
+        {"fable", true},
+        {"subagent", true},   // cc-switch: true —— 勿改回「保守 false」
+    };
+    DOCTEST_REQUIRE_EQ(sizeof(expected) / sizeof(expected[0]),
+                       static_cast<size_t>(6));
+    for (const auto& e : expected) {
+        const module::claude::ModelSlotMeta* hit = nullptr;
+        for (const auto& m : table) {
+            if (std::string(m.jsonKey) == e.key) {
+                hit = &m;
+                break;
+            }
+        }
+        DOCTEST_REQUIRE_MESSAGE(hit != nullptr,
+                                std::string("槽位表缺行: ") + e.key);
+        DOCTEST_CHECK_MESSAGE(
+            hit->supportsOneM == e.oneM,
+            std::string("槽位 ") + e.key + " 的 supportsOneM 应为 " +
+                (e.oneM ? "true" : "false") + "（照 cc-switch 取值，改错即红）");
+    }
+    // 反向：表里每一行都必须被上面的清单钉到
+    for (const auto& m : table) {
+        bool listed = false;
+        for (const auto& e : expected) {
+            if (std::string(m.jsonKey) == e.key) {
+                listed = true;
+                break;
+            }
+        }
+        DOCTEST_CHECK_MESSAGE(listed,
+                              std::string("槽位未进本用例（新增槽位请同步）: ") +
+                                  m.jsonKey);
+    }
+    return true;
+})
+
+// 保存前归一（UI 写入口调用）：支持槽位标记规范化成大写 [1M]；不支持槽位强制剥离；无标记 /
+// 空槽位原样不动（displayName 派生不因标记变化而变）
+REGISTER_TEST(provider_config_one_m_normalize,
+              "provider_config: 保存前归一（不支持槽位强制剥离 + 大小写规范化）", {
+    using module::claude::ModelsConfig;
+    using module::claude::normalizeOneMMarkers;
+    using module::claude::modelSlotTable;
+
+    ModelsConfig c;
+    c.def.model = "m-def[1m]";        // 支持 → 规范化（大小写）
+    c.sonnet.model = "m-sonnet";      // 支持、无标记 → 不动
+    c.opus.model = "";                // 空槽位 → 不动
+    c.haiku.model = "m-haiku[1M]";    // **唯一不支持槽位** → 强制剥离
+    c.fable.model = "m-fable [1m] ";  // 支持 → 规范化成 base+[1M]
+    c.subagent.model = "m-sub[1m]";   // 支持（照 cc-switch）→ 规范化
+    normalizeOneMMarkers(c);
+    DOCTEST_CHECK_EQ(c.def.model, std::string("m-def[1M]"));
+    DOCTEST_CHECK_EQ(c.sonnet.model, std::string("m-sonnet"));
+    DOCTEST_CHECK_EQ(c.opus.model, std::string(""));
+    DOCTEST_CHECK_EQ(c.haiku.model, std::string("m-haiku"));
+    DOCTEST_CHECK_EQ(c.fable.model, std::string("m-fable[1M]"));
+    DOCTEST_CHECK_EQ(c.subagent.model, std::string("m-sub[1M]"));
+
+    // 幂等：再归一一次结果不变（保存重入 / 多次写不累积）
+    const ModelsConfig once = c;
+    normalizeOneMMarkers(c);
+    for (const auto& m : modelSlotTable()) {
+        DOCTEST_CHECK_EQ((c.*m.slot).model, (once.*m.slot).model);
+    }
+
+    // 显示名（派生）不因标记变化而变：归一前后 deriveDisplayName 同值
+    DOCTEST_CHECK_EQ(module::claude::deriveDisplayName("m-def[1M]"),
+                     module::claude::deriveDisplayName("m-def"));
+    return true;
+})
+
+REGISTER_TEST(provider_config_reverse_sync_normalizes_one_m_markers,
+              "provider_config: 反向同步归一 1M 标记（不支持槽位的手写标记不落库）", {
+    // 反向同步（settings.json → profile）也必须归一：用户手写 [1M] 到不支持 1M 的槽位
+    //（haiku 是全表唯一 supportsOneM=false）时，标记若照落库，下次打开表单的开关状态就会与落库值不一致。
+    using module::claude::mergeReverseSyncEnv;
+    using module::claude::parseEnvForReverseSync;
+    using module::claude::parseModelsConfig;
+
+    // 现值（已归一：haiku 无标记、def 带规范标记）
+    const std::string curModels = R"json({
+        "default": {"model": "m-old[1M]", "name": ""},
+        "haiku":   {"model": "m-haiku-old", "name": ""}
+    })json";
+    // settings.json 侧：用户给不支持 1M 的 haiku 手写了 [1m]（小写也不放过）
+    auto parsed = parseEnvForReverseSync(
+        R"({"ANTHROPIC_MODEL": "m-new[1m]", "ANTHROPIC_DEFAULT_HAIKU_MODEL": "m-haiku-new[1m]"})",
+        {});
+    DOCTEST_REQUIRE(parsed.ok);
+
+    const auto m = mergeReverseSyncEnv(parsed.cfg, curModels, "{}");
+    auto mc = parseModelsConfig(m.modelsConfigJson);
+    DOCTEST_REQUIRE(mc.isOk());
+    // 支持 1M 的 default：保留 + 规范化大小写
+    DOCTEST_CHECK_EQ(mc.value().def.model, std::string("m-new[1M]"));
+    // **不支持 1M 的 haiku：标记被剥掉**
+    DOCTEST_CHECK_EQ(mc.value().haiku.model, std::string("m-haiku-new"));
+
+    // 反向对照：若现值本身就与归一后的结果一致，判为「无变化」，不产生写库
+    const auto same = mergeReverseSyncEnv(parsed.cfg, m.modelsConfigJson, "{}");
+    DOCTEST_CHECK_FALSE(same.modelsChanged);
     return true;
 })

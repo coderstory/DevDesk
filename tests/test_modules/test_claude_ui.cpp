@@ -1,14 +1,15 @@
 // tests/test_modules/test_claude_ui.cpp
-// Claude 模块 UI 接线无头冒烟（照 T11 settings 的 compose 模式）：
-//   1. 无 ClaudeService（global 为 null）时 compose 不崩、关键元素渲染
-//   2. 有真实服务 + 数据时 compose 渲染 profile 卡片 / ACTIVE 徽标 / 详情 /
-//      全部操作按钮（新建/启用/测试连通/编辑/删除/代理开关）
-// 接线证据 = 代码路径 + 本无头 compose 测试 + 启动冒烟；真实鼠标点击留给用户人工点验
+// Claude 模块 UI 接线无头冒烟（compose 模式）：无服务时不崩、有服务时渲染
+// profile 卡片 / ACTIVE 徽标 / 详情 / 操作按钮。
+// 跨文件前提：详情面板读的是后台快照（H2），保存 / 外部写库后最多晚 1 帧可见——
+// 断言可见性一律走有界轮询 + onPageEnter，不能只 compose 一帧就断言。
+// 真实鼠标点击留给人工点验。
 #include "doctest.h"
 #include "test_support.h"
 
 #include "claude_service.h"
 #include "claude_ui_logic.h"
+#include "claude_ui_quota.h"      // 余量查询弹窗绘制 + 几何纯函数
 #include "core/database.h"
 #include "platform/json.h"
 #include "core/input/input_types.h"
@@ -20,11 +21,15 @@
 #include "platform/keychain.h"
 #include "platform/terminal_launch.h"
 #include "provider_config.h"
+#include "quota/quota_store.h"
 #include "settings_sync.h"
 
 #include <eui/dsl.h>
+#include <components/input.h>   // InputState：读回编辑框文本（格式化当场改写的判据）
+#include <ui_kit/dialog_form.h>  // 弹窗宽度（几何不溢出断言用）
 
 #include <chrono>
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <ctime>
@@ -39,10 +44,9 @@
 #include <utility>
 
 extern "C" ::core::Module* create_claude_module();
-// 审计 CPX-06 测试缝（claude_module.cpp 文件末尾同名导出）：调用记录后台查询的
-// 累计派发次数（派发点即增，同帧可读）/ 最近一次实际执行查询的线程 id 哈希
-// （worker 写，0 = 未跑过）。用于把「弹窗打开那一帧只发意图」「搜索防抖把逐键
-// 多次意图合并成一次派发」写成计数断言
+// 调用记录后台查询的测试缝（claude_module.cpp 文件末尾同名导出）：累计派发
+// 次数（派发点即增，同帧可读）/ 最近一次实际执行查询的线程 id 哈希
+//（worker 写，0 = 未跑过）。用于把「渲染帧只发意图」写成计数断言
 extern "C" int claude_calls_query_dispatches_for_test();
 extern "C" unsigned long long claude_calls_query_last_thread_for_test();
 
@@ -50,12 +54,11 @@ namespace {
 
 constexpr const char* kTestKeychainService = "DevDeskTestClaudeModule";
 
-// 临时 db 文件名前缀（共享工厂 test_support::TestDb 的第一实参）
+// 临时 db 文件名前缀（test_support::TestDb 的第一实参）
 constexpr const char* kDbPrefix = "devdesk_test_claude_ui_";
 
-// RAII：临时库（共享 test_support::TestDb）+ 注册全局 ClaudeService
-//（析构时一定解除注册，防悬垂污染后续用例）
-// 模块 glue，keep-local（TIN-06）：TestDb 基座已是共享头，剩 ClaudeService glue。
+// RAII：临时库 + 注册全局 ClaudeService（析构时解除注册，防悬垂污染后续用例）
+// TestDb 基座在共享头，这里只剩 ClaudeService glue。
 struct TestEnv : test_support::TestDb {
     std::unique_ptr<module::claude::ClaudeService> svc;
 
@@ -70,13 +73,12 @@ struct TestEnv : test_support::TestDb {
     }
 };
 
-// 清某个 profile 的测试密钥（共享实现，TIN-06b）
+// 清某个 profile 的测试密钥
 using test_support::cleanupProfileKey;
 
-// 动态空闲端口（审计 L2 / HANDOFF 排队 #9 测试脆弱点）：借 platform::http::Server
-// 的 bind 0 支持（http_server.cpp：port==0 → bind_to_any_port）向系统要一个空闲
-// 端口随即释放，交还调用方独占——多 worktree / 残留进程并发跑测试时不再撞写死的
-// 端口号。失败返回 0（调用方 REQUIRE 拦）。
+// 动态空闲端口：借 platform::http::Server 的 bind 0 支持（http_server.cpp：
+// port==0 → bind_to_any_port）向系统要一个空闲端口随即释放，交还调用方独占——
+// 多 worktree / 残留进程并发跑测试时不撞写死的端口号。失败返回 0（调用方 REQUIRE 拦）。
 int pickFreePort() {
     platform::http::Server probe("127.0.0.1", 0);
     if (!probe.start()) {
@@ -87,21 +89,23 @@ int pickFreePort() {
     return port;
 }
 
-// 「导入当前配置」测试的 settings.json / sidecar 路径（共享头 test_support::TempDir，
-// 前缀沿用原样；绝不碰真实 ~/.claude——settings_sync 的 Paths 注入模式）
+// 「导入当前配置」测试的 settings.json 路径（不碰真实 ~/.claude——
+// settings_sync 的 Paths 注入模式）
 constexpr const char* kImportTempDirPrefix = "devdesk_test_import_cur_";
 
-module::claude::settings_sync::Paths importPaths(const test_support::TempDir& d) {
+// sidecar 是 app_config 表的一行（键 kSidecarConfigKey），故要一并传入库句柄
+module::claude::settings_sync::Paths importPaths(
+    const test_support::TempDir& d, core::data::SqliteDb& db) {
     module::claude::settings_sync::Paths p;
     p.settingsFile = d.file("settings.json");
-    p.sidecarFile = d.file("snapshot.json");
+    p.db = &db;
     return p;
 }
 
 } // namespace
 
-// ---- 0. 纯函数 formatCallTime（W10 复审：调用时间列跨天显示） ----
-// 锚定本地正午避免跨零点抖动（仿 test_home 的 noon 模式）
+// 0. 纯函数 formatCallTime
+    // 锚定本地正午避免跨零点抖动
 REGISTER_TEST(claude_format_call_time, "claude: formatCallTime 今日/昨天/更早三态", {
     const std::time_t now = std::time(nullptr);
     std::tm nowTm{};
@@ -123,7 +127,7 @@ REGISTER_TEST(claude_format_call_time, "claude: formatCallTime 今日/昨天/更
                      std::string("昨天 12:00"));
     DOCTEST_CHECK_EQ(module::claude::formatCallTime(noon - 86400 - 3600, noon),
                      std::string("昨天 11:00"));
-    // 更早 → MM-DD（5 字符，中间 '-'）
+    // 更早 → MM-DD
     const std::string older =
         module::claude::formatCallTime(noon - 3 * 86400, noon);
     DOCTEST_CHECK_EQ(older.size(), static_cast<size_t>(5));
@@ -131,11 +135,11 @@ REGISTER_TEST(claude_format_call_time, "claude: formatCallTime 今日/昨天/更
     return true;
 })
 
-// ---- 1. 无服务（global 为 null）时 compose 不崩 ----
+// 1. 无服务（global 为 null）时 compose 不崩
 
 REGISTER_TEST(claude_module_compose_null_service,
               "claude_module: compose 无服务不崩（headless）", {
-    module::claude::ClaudeService::setGlobal(nullptr);   // 保险：确保干净起点
+    module::claude::ClaudeService::setGlobal(nullptr);   // 干净起点
     std::unique_ptr<::core::Module> mod(create_claude_module());
     eui::Screen screen{1600.0f, 1000.0f};
     eui::Ui ui;
@@ -143,45 +147,50 @@ REGISTER_TEST(claude_module_compose_null_service,
     mod->compose(ui, screen);
     ui.end();
 
-    // 页面骨架 + 关键操作按钮存在（即使无数据也应渲染，按钮带防误触提示）
+    // 关键操作按钮即使无数据也应渲染
     DOCTEST_CHECK(ui.find("claude.root") != nullptr);
     DOCTEST_CHECK(ui.find("claude.btn.proxy") != nullptr);
     DOCTEST_CHECK(ui.find("claude.profiles.new") != nullptr);
     DOCTEST_CHECK(ui.find("claude.act.enable") != nullptr);
     DOCTEST_CHECK(ui.find("claude.act.test") != nullptr);
     DOCTEST_CHECK(ui.find("claude.act.edit") != nullptr);
-    DOCTEST_CHECK(ui.find("claude.act.del") != nullptr);
-    DOCTEST_CHECK(ui.find("claude.act.dup") != nullptr);   // 第 5 键（M5）
-    // 无服务时显示错误态（W7：不再静默吞错显示假空态）
+    DOCTEST_CHECK(ui.find("claude.act.run") != nullptr);   // 第 4 键（profile-run）
+    // 删除 / 建副本 / 复制配置三键不在动作行（入口只剩列表右键菜单，业务逻辑同源保留）
+    DOCTEST_CHECK(ui.find("claude.act.del") == nullptr);
+    DOCTEST_CHECK(ui.find("claude.act.dup") == nullptr);
+    DOCTEST_CHECK(ui.find("claude.act.copyconfig") == nullptr);
+    // 无服务时显示错误态（不静默吞错显示假空态）
     DOCTEST_CHECK(ui.find("claude.profiles.error") != nullptr);
     DOCTEST_CHECK(ui.find("claude.profiles.empty") == nullptr);
 
-    // 无选中（shown.id == 0）+ 无服务：点「复制」不崩，toast 提示先选 Profile
+    // 活门控死页缓解：无服务时补「未装配」toast（回退成静默即红）
     {
-        const auto* dupBtn = ui.find("claude.act.dup.bg");
-        DOCTEST_REQUIRE(dupBtn != nullptr);
-        DOCTEST_REQUIRE(dupBtn->onClick != nullptr);
-        dupBtn->onClick();
-        eui::Ui ui2;
-        ui2.begin("claude_null2");
-        mod->compose(ui2, screen);
-        ui2.end();
-        const auto* msg = ui2.find("claude.toast.message");
-        DOCTEST_REQUIRE(msg != nullptr);
-        DOCTEST_CHECK(msg->text.find("请先选择 Profile") != std::string::npos);
+        const auto* warnTitle = ui.find("claude.toast.title");
+        DOCTEST_REQUIRE(warnTitle != nullptr);
+        DOCTEST_CHECK(warnTitle->text.find("未装配") != std::string::npos);
+        const auto* warnMsg = ui.find("claude.toast.message");
+        DOCTEST_REQUIRE(warnMsg != nullptr);
+        DOCTEST_CHECK(warnMsg->text.find("重启") != std::string::npos);
+    }
+
+    // 无选中 + 无服务：动作行只剩 4 键——「未选中提示」通道由右键菜单的 warn 覆盖
+    {
+        DOCTEST_CHECK(ui.find("claude.act.del.bg") == nullptr);
+        DOCTEST_CHECK(ui.find("claude.act.dup.bg") == nullptr);
+        DOCTEST_CHECK(ui.find("claude.act.copyconfig.bg") == nullptr);
+        DOCTEST_CHECK(ui.find("claude.act.run.bg") != nullptr);
     }
 
     mod->onStop();
     return true;
 })
 
-// ---- 1b. 6 键均分几何：第 6 键右缘对齐分隔线（回归闸）----
-// actW = (w0 - actGap*5)/6 —— EUI 的 row spacing 只在相邻子项之间生效，n 项只有
-// n−1 个间隙。旧算式扣 6 个 gap 会让第 6 键右缘比分隔线短一整个 gap（12px）。
-// 跑真实 layout 后比对计算 frame，无头也能锁死这个几何。
+// 5 键均分几何：末键右缘对齐分隔线
+// actW = (w0 − actGap×4)/5。EUI 的 row spacing 只在相邻子项之间生效，n 项只有
+// n−1 个间隙；多扣一个 gap 会让末键右缘短一整个 gap。
 
 REGISTER_TEST(claude_module_actions_row_alignment,
-              "claude_module: 6 键均分——第 6 键右缘对齐分隔线（headless layout）", {
+              "claude_module: 5 键均分——第 5 键（余量查询）右缘对齐分隔线（headless layout）", {
     module::claude::ClaudeService::setGlobal(nullptr);
     std::unique_ptr<::core::Module> mod(create_claude_module());
     eui::Screen screen;
@@ -194,19 +203,26 @@ REGISTER_TEST(claude_module_actions_row_alignment,
     ui.layout(screen.width, screen.height);
 
     const auto* divider = ui.find("claude.act.divider");
-    const auto* run6 = ui.find("claude.act.run.bg");   // 第 6 键（profile-run）
+    const auto* row = ui.find("claude.detail.actions");
+    const auto* quota5 = ui.find("claude.act.quota.bg");
     DOCTEST_REQUIRE(divider != nullptr);
-    DOCTEST_REQUIRE(run6 != nullptr);
+    DOCTEST_REQUIRE(row != nullptr);
+    DOCTEST_REQUIRE(quota5 != nullptr);
     const float dividerRight = divider->frame.x + divider->frame.width;
-    const float runRight = run6->frame.x + run6->frame.width;
-    DOCTEST_CHECK(runRight >= dividerRight - 0.5f);
-    DOCTEST_CHECK(runRight <= dividerRight + 0.5f);
+    const float quotaRight = quota5->frame.x + quota5->frame.width;
+    DOCTEST_CHECK(quotaRight >= dividerRight - 0.5f);
+    DOCTEST_CHECK(quotaRight <= dividerRight + 0.5f);
+        // 单键宽 = (行宽 − 4×gap) / 5（gap=12）
+    const float expect = (row->frame.width - 12.0f * 4.0f) / 5.0f;
+    DOCTEST_CHECK(std::fabs(quota5->frame.width - expect) < 0.01f);
+    DOCTEST_CHECK(std::fabs(ui.find("claude.act.enable.bg")->frame.width - expect) <
+                  0.01f);
 
     mod->onStop();
     return true;
 })
 
-// ---- 2. 有真实服务 + 数据时 compose 渲染卡片/徽标/详情 ----
+// 2. 有真实服务 + 数据时 compose 渲染卡片/徽标/详情
 
 REGISTER_TEST(claude_module_compose_with_data,
               "claude_module: compose 有数据渲染卡片+按钮（headless）", {
@@ -228,14 +244,12 @@ REGISTER_TEST(claude_module_compose_with_data,
     mod->compose(ui, screen);
     ui.end();
 
-    // 两张卡片
     DOCTEST_CHECK(ui.find("claude.profile.0.name") != nullptr);
     DOCTEST_CHECK(ui.find("claude.profile.1.name") != nullptr);
     // 激活卡片的 ACTIVE 徽标（profile 0 = 激活的「官方」）
     DOCTEST_CHECK(ui.find("claude.profile.0.active.text") != nullptr);
     DOCTEST_CHECK(ui.find("claude.profile.1.active.text") == nullptr);
 
-    // 详情面板显示激活 profile 的真实值
     const auto* nameV = ui.find("claude.field.name.value");
     DOCTEST_REQUIRE(nameV != nullptr);
     DOCTEST_CHECK_EQ(nameV->text, std::string("官方"));
@@ -243,12 +257,14 @@ REGISTER_TEST(claude_module_compose_with_data,
     DOCTEST_REQUIRE(urlV != nullptr);
     DOCTEST_CHECK_EQ(urlV->text, std::string("https://api.anthropic.com"));
 
-    // 操作按钮 + 代理开关存在
     DOCTEST_CHECK(ui.find("claude.act.enable") != nullptr);
     DOCTEST_CHECK(ui.find("claude.act.test") != nullptr);
     DOCTEST_CHECK(ui.find("claude.act.edit") != nullptr);
-    DOCTEST_CHECK(ui.find("claude.act.del") != nullptr);
-    DOCTEST_CHECK(ui.find("claude.act.dup") != nullptr);   // 第 5 键（M5）
+    DOCTEST_CHECK(ui.find("claude.act.run") != nullptr);   // 第 4 键（profile-run）
+    // 删除 / 建副本 / 复制配置三键不在动作行（入口只剩列表右键菜单）
+    DOCTEST_CHECK(ui.find("claude.act.del") == nullptr);
+    DOCTEST_CHECK(ui.find("claude.act.dup") == nullptr);
+    DOCTEST_CHECK(ui.find("claude.act.copyconfig") == nullptr);
     DOCTEST_CHECK(ui.find("claude.btn.proxy") != nullptr);
 
     mod->onStop();
@@ -257,14 +273,13 @@ REGISTER_TEST(claude_module_compose_with_data,
     return true;
 })
 
-// ---- 3. 测试连通不阻塞 UI 线程（后台线程 + 结果回 compose 收割） ----
-// 回归：此前 UI 线程同步调 testConnection（timeout 15s），慢上游时
-// 点「测试连通」整个界面冻结。现在点击立即返回 + toast「测试中」，
-// 上游返回后由 compose 每帧收割结果弹 toast。
+// 3. 测试连通不阻塞 UI 线程（后台线程 + 结果回 compose 收割）
+// UI 线程同步调 testConnection（timeout 15s）会在慢上游时冻结整个界面。
+// 点击立即返回 + toast「测试中」，上游返回后由 compose 每帧收割结果。
 REGISTER_TEST(claude_module_test_connection_async,
               "claude_module: 测试连通后台执行不冻结 UI（headless）", {
     TestEnv env;
-    // mock 上游挂 500ms 再回 200：点击必须立即返回（不等上游）
+        // mock 上游挂 500ms 再回 200：点击必须立即返回（不等上游）
     platform::http::Server upstream("127.0.0.1", 0);
     upstream.route("GET", "/v1/models",
                    [](const platform::http::RequestCtx&,
@@ -294,7 +309,6 @@ REGISTER_TEST(claude_module_test_connection_async,
         ui.end();
     };
 
-    // 点「测试连通」→ 立即返回，toast 切到「测试中」
     {
         eui::Ui ui;
         compose(ui);
@@ -311,7 +325,7 @@ REGISTER_TEST(claude_module_test_connection_async,
         DOCTEST_CHECK(title->text.find("测试中") != std::string::npos);
     }
 
-    // 轮询 compose（每帧收割）直到上游 500ms 响应被收割成结果 toast
+        // 轮询 compose（每帧收割）直到上游响应被收割成结果 toast
     bool gotResult = false;
     for (int i = 0; i < 250 && !gotResult; ++i) {
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
@@ -331,9 +345,158 @@ REGISTER_TEST(claude_module_test_connection_async,
     return true;
 })
 
-// ---- 4. Profile 表单 tabs：槽位/env 填写 → 保存 → DB 往返 → 重开回显 ----
-// （provider-config Phase D，§6.1；输入经 input.hit 的 onTextInput 驱动，
-//   等价于真实键盘输入路径——insertAtCursor + onChange 回模块状态）
+// 3b. 前置校验：无激活 profile 点「启动代理」
+REGISTER_TEST(claude_module_start_proxy_requires_active_profile,
+              "claude_module: 无激活 profile 点「启动代理」→ 后台校验挡下（不起代理 + toast 给原因）", {
+    TestEnv env;                       // 空库 = 事故现场；svc 已 setGlobal
+    // 绝不绑 8888（本机开发会话的推理链路走 127.0.0.1:8888）。也不能写 0——
+    // setConfiguredProxyPort 把越界值（含 0）钳回 kDefaultProxyPort = 8888，
+    // 等于把红线焊死。取系统空闲端口。
+    const int port = pickFreePort();
+    DOCTEST_REQUIRE(port > 0);
+    env.svc->setConfiguredProxyPort(port);
+    std::unique_ptr<::core::Module> mod(create_claude_module());
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    auto compose = [&](eui::Ui& ui) {
+        ui.begin("claude_pv");
+        mod->compose(ui, screen);
+        ui.end();
+    };
+
+    {
+        eui::Ui ui;
+        compose(ui);
+        // components::button 的**可点节点**是 `<id>.bg`（根 stack 只作容器，
+        const auto* btn = ui.find("claude.btn.proxy.bg");
+        DOCTEST_REQUIRE(btn != nullptr);
+        DOCTEST_REQUIRE(btn->onClick != nullptr);
+        btn->onClick();
+    }
+
+        // 轮询 compose（每帧收割）直到失败结果 toast（空库路径零网络，通常 1-2 帧）
+    bool gotResult = false;
+    for (int i = 0; i < 250 && !gotResult; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        eui::Ui ui;
+        compose(ui);
+        const auto* title = ui.find("claude.toast.title");
+        const auto* msg = ui.find("claude.toast.message");
+        if (title != nullptr && msg != nullptr &&
+            title->text.find("启动代理失败") != std::string::npos &&
+            msg->text.find("前置校验未通过") != std::string::npos) {
+            gotResult = true;
+        }
+    }
+    DOCTEST_CHECK(gotResult);
+    DOCTEST_CHECK_FALSE(env.svc->isProxyRunning());
+    DOCTEST_CHECK_EQ(env.svc->proxyPort(), 0);
+    mod->onStop();
+    return true;
+})
+
+// 3c. startProxy 只在 UI 收割帧执行
+// 判别式：上游 1500ms 后才回 200；点击后在**不 compose** 的情况下静置 2000ms——
+//   · startProxy 在 harvestTestResult 里 → 线程早已跑完但没人收割 → 仍不 bind；
+//   · startProxy 在线程里 → 上游一回包线程立刻 bind → 循环里的 CHECK_FALSE 红。
+REGISTER_TEST(claude_module_start_proxy_binds_only_at_harvest,
+              "claude_module: startProxy 只在 UI 收割帧执行（校验在飞时不 bind，A1）", {
+    TestEnv env;
+    // 绝不绑 8888。也不能写 0——会被 setConfiguredProxyPort 钳回 8888，
+    // 而本用例会真的走到 bind。取系统空闲端口（harvest 帧按此端口 bind）
+    const int port = pickFreePort();
+    DOCTEST_REQUIRE(port > 0);
+    env.svc->setConfiguredProxyPort(port);
+    platform::http::Server upstream("127.0.0.1", 0);
+    upstream.route("GET", "/v1/models",
+                   [](const platform::http::RequestCtx&,
+                      platform::http::ResponseWriter& w) {
+                       // 1500ms ≫ 一帧：探测在飞窗口足够长，「startProxy 又回
+                       // 线程」的变异必然落在下面的静置窗内 → 必红（延迟降到
+                       // 500ms 时静置窗与延迟 1:1，边界时序会漏咬）
+                       std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+                       w.setStatus(200);
+                       w.setHeader("Content-Type", "application/json");
+                       w.write(R"({"data":[]})");
+                       w.end();
+                   });
+    DOCTEST_REQUIRE(upstream.start());
+    auto a = env.svc->createProfile(
+        "慢校验", "http://127.0.0.1:" + std::to_string(upstream.actualPort()),
+        "sk-ant-pv-harvest", "claude-sonnet-4-5");
+    DOCTEST_REQUIRE(a.isOk());
+    DOCTEST_REQUIRE(env.svc->setActiveProfile(a.value().id).isOk());
+
+    std::unique_ptr<::core::Module> mod(create_claude_module());
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    auto compose = [&](eui::Ui& ui) {
+        ui.begin("claude_pv_harvest");
+        mod->compose(ui, screen);
+        ui.end();
+    };
+
+    {   // 点「启动代理」→ 立即返回（不冻结 UI 由 3b 钉；这里钉「不立刻 bind」）
+        eui::Ui ui;
+        compose(ui);
+        // components::button 的**可点节点**是 `<id>.bg`（根 stack 只作容器，
+        const auto* btn = ui.find("claude.btn.proxy.bg");
+        DOCTEST_REQUIRE(btn != nullptr);
+        DOCTEST_REQUIRE(btn->onClick != nullptr);
+        btn->onClick();
+    }
+
+    // 点击立即返回的可见面：此刻 toast 是 pending 态「正在校验」，结果要等收割帧。
+    // pending 态钉在本用例（上游挂 1500ms）而非 3b——3b 的空库路径线程 ~µs 即回，
+    // 下一帧 compose 已收割掉，那条断言与收割竞速、非确定。
+    {
+        eui::Ui ui;
+        compose(ui);
+        const auto* title = ui.find("claude.toast.title");
+        DOCTEST_REQUIRE(title != nullptr);
+        DOCTEST_CHECK(title->text.find("正在校验") != std::string::npos);
+        DOCTEST_CHECK_FALSE(env.svc->isProxyRunning());   // 仍在飞 = 未 bind
+    }
+
+    // 校验在飞 + 已回包但**尚无 compose 帧**的整个窗口：一律不 bind
+    //（100×20ms ≈ 2000ms > 上游 1500ms 延迟，留 500ms 余量；这段刻意不 compose）
+    for (int i = 0; i < 100; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        DOCTEST_CHECK_FALSE(env.svc->isProxyRunning());   // A1：绑定必须晚于收割帧
+    }
+    DOCTEST_CHECK_EQ(env.svc->proxyPort(), 0);
+
+    // 一帧 compose = 一次收割 → 这时才 bind
+    bool started = false;
+    for (int i = 0; i < 50 && !started; ++i) {
+        eui::Ui ui;
+        compose(ui);
+        started = env.svc->isProxyRunning();
+        if (!started) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        }
+    }
+    DOCTEST_CHECK(started);
+    DOCTEST_CHECK_EQ(env.svc->proxyPort(), port);  // bind 在配置的空闲端口上（非 8888）
+    {
+        eui::Ui ui;
+        compose(ui);
+        const auto* title = ui.find("claude.toast.title");
+        DOCTEST_REQUIRE(title != nullptr);
+        DOCTEST_CHECK(title->text.find("代理已启动") != std::string::npos);
+    }
+    env.svc->stopProxy();  // 用完还原
+    mod->onStop();
+    upstream.stop();
+    cleanupProfileKey(kTestKeychainService, a.value().id);
+    return true;
+})
+
+    // 4. Profile 表单 tabs：槽位/env 填写 → 保存 → DB 往返 → 重开回显
+// 输入经 input.hit 的 onTextInput 驱动，等价于真实键盘输入路径（insertAtCursor
+// + onChange 回模块状态）
 REGISTER_TEST(claude_module_form_tabs_roundtrip,
               "claude_module: 表单 tabs 槽位/env 填写保存回显（headless）", {
     TestEnv env;
@@ -351,8 +514,8 @@ REGISTER_TEST(claude_module_form_tabs_roundtrip,
         mod->compose(ui, screen);
         ui.end();
     };
-    // CHECK 宏内含 return false，不能进 void lambda —— helper 返回 bool，
-    // 由测试体的 DOCTEST_CHECK 收敛（失败即 fail-fast 本用例）
+    // CHECK 宏内含 return false，不能进 void lambda —— helper 返回 bool，由测试体的
+    // DOCTEST_CHECK 收敛（失败即 fail-fast 本用例）
     auto click = [](eui::Ui& ui, const std::string& id) -> bool {
         const auto* node = ui.find(id);
         if (node == nullptr || node->onClick == nullptr) {
@@ -375,13 +538,12 @@ REGISTER_TEST(claude_module_form_tabs_roundtrip,
         return true;
     };
 
-    // 选中卡片（无激活 profile 时详情面板需要 selectedId 才有编辑目标）
+    // 无激活 profile 时详情面板需要 selectedId 才有编辑目标
     {
         eui::Ui ui;
         compose(ui);
         DOCTEST_CHECK(click(ui, "claude.profile.0.bg"));
     }
-    // 打开编辑弹窗：基础页默认，tabs 存在，名称回显
     {
         eui::Ui ui;
         compose(ui);
@@ -394,9 +556,9 @@ REGISTER_TEST(claude_module_form_tabs_roundtrip,
         const auto* nameText = ui.find("claude.dialog.form.name.text");
         DOCTEST_REQUIRE(nameText != nullptr);
         DOCTEST_CHECK_EQ(nameText->text, std::string("槽位测试"));
-        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.1"));   // → 模型映射页
+        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.1"));
     }
-    // 模型映射页：6 行槽位输入；默认槽位空 → name placeholder 是「自动派生」
+    // 模型映射页：槽位输入；默认槽位空 → name placeholder 是「自动派生」
     {
         eui::Ui ui;
         compose(ui);
@@ -411,9 +573,8 @@ REGISTER_TEST(claude_module_form_tabs_roundtrip,
         type(ui, "claude.form.slot.1.model.hit", "m-sonnet");
         type(ui, "claude.form.slot.1.name.hit", "sonnet显示名");
         type(ui, "claude.form.slot.5.model.hit", "m-sub");
-        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.2"));   // → 高级 env 页
+        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.2"));
     }
-    // 高级 env 页：添加一行键值后保存
     {
         eui::Ui ui;
         compose(ui);
@@ -426,21 +587,43 @@ REGISTER_TEST(claude_module_form_tabs_roundtrip,
         type(ui, "claude.form.env.row.0.value.hit", "1");
         DOCTEST_CHECK(click(ui, "claude.dialog.form.confirm.bg"));
     }
-    // 详情面板模型映射 pane（2026-09-24 页签式）：切模型 tab，默认槽位含模型
+    // 详情面板模型映射 pane
     {
         {
             eui::Ui ui;
             compose(ui);
-            DOCTEST_CHECK(click(ui, "claude.detail.tabs.hit.1"));  // 切到模型 tab（tabs 组件 hit 区）
+            DOCTEST_CHECK(click(ui, "claude.detail.tabs.hit.1"));  // 切到模型 tab
         }
+        // 保存是异步刷新：详情 pane 读的是后台快照——有界轮询等新槽位值进**渲染树**。
+        // 只 compose 两帧就读旧快照 = 快照竞态 flaky。
+        bool slotUpdated = false;
+        for (int i = 0; i < 300 && !slotUpdated; ++i) {
+            mod->onPageEnter();   // 保持脏意图存活（在途旧快照收割会清脏 → 重新置脏）
+            eui::Ui ui;
+            compose(ui);
+            const auto* s0 = ui.find("claude.slot.val.0");
+            slotUpdated = s0 != nullptr &&
+                          s0->text.find("fangzhou/glm-5.3") !=
+                              std::string::npos;
+            if (!slotUpdated) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            }
+        }
+        DOCTEST_CHECK(slotUpdated);   // 新 models_config 已进渲染快照
         eui::Ui ui;
         compose(ui);
         const auto* slot0 = ui.find("claude.slot.val.0");  // 默认槽位
         DOCTEST_REQUIRE(slot0 != nullptr);
-        DOCTEST_CHECK(slot0->text.find("fangzhou/glm-5.3[1M]") !=
-                      std::string::npos);
+        // 显示层剥 [1M]：1M 状态已由复选框表达，名字里不重复带标记。值列文本 =
+        // deriveDisplayName(存储值)。用**精确相等**断言——find 前缀命中会被未剥的
+        // "…[1M]" 假绿混过。
+        DOCTEST_CHECK_EQ(slot0->text, std::string("fangzhou/glm-5.3"));
+        // 列表卡片 model 行同口径剥除（同一 deriveDisplayName 通道）
+        const auto* cardModel = ui.find("claude.profile.0.model");
+        DOCTEST_REQUIRE(cardModel != nullptr);
+        DOCTEST_CHECK_EQ(cardModel->text,
+                         std::string("model: fangzhou/glm-5.3"));
     }
-    // DB 往返：models_config / extra_env / 旧 model 列同步
     {
         auto got = env.svc->getProfile(pid);
         DOCTEST_REQUIRE(got.isOk());
@@ -459,7 +642,6 @@ REGISTER_TEST(claude_module_form_tabs_roundtrip,
         DOCTEST_REQUIRE_EQ(ee.value().size(), 1u);
         DOCTEST_CHECK_EQ(ee.value().at("DISABLE_AUTOUPDATER"), std::string("1"));
     }
-    // 重开编辑 → 槽位 / env 回显
     {
         eui::Ui ui;
         compose(ui);
@@ -498,7 +680,7 @@ REGISTER_TEST(claude_module_form_tabs_roundtrip,
     return true;
 })
 
-// ---- 5. cc-switch JSON 粘贴导入：解析预览 → 应用到表单 → 保存 ----
+// 5. cc-switch JSON 粘贴导入：解析预览 → 应用到表单 → 保存
 REGISTER_TEST(claude_module_import_flow,
               "claude_module: cc-switch 粘贴导入解析应用（headless）", {
     TestEnv env;
@@ -511,8 +693,8 @@ REGISTER_TEST(claude_module_import_flow,
         mod->compose(ui, screen);
         ui.end();
     };
-    // CHECK 宏内含 return false，不能进 void lambda —— helper 返回 bool，
-    // 由测试体的 DOCTEST_CHECK 收敛（失败即 fail-fast 本用例）
+    // CHECK 宏内含 return false，不能进 void lambda —— helper 返回 bool，由测试体的
+    // DOCTEST_CHECK 收敛（失败即 fail-fast 本用例）
     auto click = [](eui::Ui& ui, const std::string& id) -> bool {
         const auto* node = ui.find(id);
         if (node == nullptr || node->onClick == nullptr) {
@@ -534,7 +716,6 @@ REGISTER_TEST(claude_module_import_flow,
         node->onTextInput(ev);
         return true;
     };
-    // 用户模板（BASE_URL/AUTH_TOKEN/模型键/别名键/非官方键）
     std::string tpl = R"({"env":{)";
     tpl += R"("ANTHROPIC_BASE_URL":"https://gw.example.com/a",)";
     tpl += R"("ANTHROPIC_AUTH_TOKEN":"sk-import-tok",)";
@@ -545,7 +726,6 @@ REGISTER_TEST(claude_module_import_flow,
     tpl += R"("DISABLE_AUTOUPDATER":"1")";
     tpl += "}}";
 
-    // 新建表单 → 填名称 → 高级 env 页粘贴导入
     {
         eui::Ui ui;
         compose(ui);
@@ -563,14 +743,13 @@ REGISTER_TEST(claude_module_import_flow,
         type(ui, "claude.form.import.text.hit", tpl);
         DOCTEST_CHECK(click(ui, "claude.form.import.parse.bg"));
     }
-    // 解析预览：槽位 2/<槽位表行数> + 别名 1 + 未识别 1；别名提示行存在
+    // 解析预览：槽位 2/<行数> + 别名 1 + 未识别 1；别名提示行存在
     {
         eui::Ui ui;
         compose(ui);
         const auto* preview = ui.find("claude.form.import.preview");
         DOCTEST_REQUIRE(preview != nullptr);
-        // 分母从槽位表派生（CPX-08）：表加一行 → UI 预览分母自动跟随，
-        // 此处不再钉死 6（否则新增槽位就让本断言红）
+        // 分母从槽位表派生：表加一行 → UI 预览分母自动跟随，故不钉死具体行数
         const std::string slotTag =
             "槽位 2/" + std::to_string(module::claude::modelSlotTable().size());
         DOCTEST_CHECK(preview->text.find(slotTag) != std::string::npos);
@@ -582,7 +761,6 @@ REGISTER_TEST(claude_module_import_flow,
         DOCTEST_CHECK(ui.find("claude.form.import.apply.bg") != nullptr);
         DOCTEST_CHECK(click(ui, "claude.form.import.apply.bg"));
     }
-    // 应用后基础页回填 BASE_URL，确认创建（API Key 来自导入的 AUTH_TOKEN）
     {
         eui::Ui ui;
         compose(ui);
@@ -596,7 +774,6 @@ REGISTER_TEST(claude_module_import_flow,
         DOCTEST_CHECK_EQ(url->text, std::string("https://gw.example.com/a"));
         DOCTEST_CHECK(click(ui, "claude.dialog.form.confirm.bg"));
     }
-    // DB 断言：base_url / 槽位 / env 别名归一 + 透传 / key 入库
     {
         auto list = env.svc->listProfiles();
         DOCTEST_REQUIRE(list.isOk());
@@ -604,14 +781,14 @@ REGISTER_TEST(claude_module_import_flow,
         const auto& p = list.value()[0];
         DOCTEST_CHECK_EQ(p.name, std::string("导入测试"));
         DOCTEST_CHECK_EQ(p.baseUrl, std::string("https://gw.example.com/a"));
-        DOCTEST_CHECK(!p.apiKeyHint.empty());   // 导入 token 已入 Keychain
+        DOCTEST_CHECK(!p.apiKeyHint.empty());
         auto mc = module::claude::parseModelsConfig(p.modelsConfigJson);
         DOCTEST_REQUIRE(mc.isOk());
         DOCTEST_CHECK_EQ(mc.value().def.model, std::string("m-default[1M]"));
         DOCTEST_CHECK_EQ(mc.value().sonnet.model, std::string("m-sonnet[1M]"));
         auto ee = module::claude::parseExtraEnv(p.extraEnvJson);
         DOCTEST_REQUIRE(ee.isOk());
-        // AUTO_COMPACT_ENABLED=0 → DISABLE_AUTO_COMPACT=1（值取反）
+    // AUTO_COMPACT_ENABLED=0 → DISABLE_AUTO_COMPACT=1（值取反）
         DOCTEST_CHECK_EQ(ee.value().at("DISABLE_AUTO_COMPACT"),
                          std::string("1"));
         DOCTEST_CHECK_EQ(ee.value().at("CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"),
@@ -626,7 +803,7 @@ REGISTER_TEST(claude_module_import_flow,
     return true;
 })
 
-// ---- 6. 「导入当前配置」按钮存在 + 读 settings.json → 弹窗预填全链 ----
+// 6. 「导入当前配置」按钮存在 + 读 settings.json → 弹窗预填全链
 // 点按钮 = 等价用户手动「粘贴导入」但全自动：临时 settings.json（Paths 注入）
 // → 弹窗打开 → 基础页名称建议/BASE_URL/Token、模型映射页槽位、高级 env 页
 // env 行 + 预览标记 → 保存 → DB 往返。
@@ -634,7 +811,7 @@ REGISTER_TEST(claude_module_import_current_full_chain,
               "claude_module: 导入当前配置读settings.json预填表单（headless）", {
     TestEnv env;
     test_support::TempDir d("full", kImportTempDirPrefix);
-    const auto paths = importPaths(d);
+    const auto paths = importPaths(d, env.handle());
     env.svc->setSettingsSyncPaths(paths);
     env.svc->setSettingsTakeOverEnabled(true);
     // 整段 settings.json 形状（含非 env 顶层字段，验证取 env 子对象）
@@ -673,7 +850,6 @@ REGISTER_TEST(claude_module_import_current_full_chain,
                                : node->text;
     };
 
-    // 按钮存在（profile 列表底部，与「+ 新建 Profile」并列）→ 点击
     {
         eui::Ui ui;
         compose(ui);
@@ -681,24 +857,21 @@ REGISTER_TEST(claude_module_import_current_full_chain,
         DOCTEST_CHECK(ui.find("claude.profiles.new") != nullptr);
         DOCTEST_CHECK(click(ui, "claude.profiles.import.bg"));
     }
-    // 弹窗已开 + 基础页预填（名称建议取 BASE_URL host）
     {
         eui::Ui ui;
         compose(ui);
         const auto* backdrop = ui.find("claude.dialog.form.backdrop");
         DOCTEST_REQUIRE(backdrop != nullptr);
-        DOCTEST_CHECK(!backdrop->disabled);   // 弹窗开着
+        DOCTEST_CHECK(!backdrop->disabled);
         DOCTEST_CHECK_EQ(textOf(ui, "claude.dialog.form.name.text"),
                          std::string("导入 gw.example.com"));
         DOCTEST_CHECK_EQ(textOf(ui, "claude.dialog.form.url.text"),
                          std::string("https://gw.example.com/v1"));
         DOCTEST_CHECK_EQ(textOf(ui, "claude.dialog.form.key.text"),
                          std::string("sk-imp-current-0001"));
-        // 非接管态（无 sidecar）→ 无警告行
         DOCTEST_CHECK(ui.find("claude.dialog.form.importwarn") == nullptr);
         DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.1"));
     }
-    // 模型映射页：default / sonnet 槽位预填
     {
         eui::Ui ui;
         compose(ui);
@@ -708,7 +881,6 @@ REGISTER_TEST(claude_module_import_current_full_chain,
                          std::string("m-cur-sonnet"));
         DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.2"));
     }
-    // 高级 env 页：env 行预填 + 预览标记保留（识别槽位 2/<槽位表行数> · env 1 项）
     {
         eui::Ui ui;
         compose(ui);
@@ -724,7 +896,6 @@ REGISTER_TEST(claude_module_import_current_full_chain,
         DOCTEST_CHECK(preview->text.find("env 1 项") != std::string::npos);
         DOCTEST_CHECK(click(ui, "claude.dialog.form.confirm.bg"));
     }
-    // 保存 → DB 往返（名称/Base URL/槽位/env 全量落地）
     {
         auto list = env.svc->listProfiles();
         DOCTEST_REQUIRE(list.isOk());
@@ -732,7 +903,7 @@ REGISTER_TEST(claude_module_import_current_full_chain,
         const auto& p = list.value()[0];
         DOCTEST_CHECK_EQ(p.name, std::string("导入 gw.example.com"));
         DOCTEST_CHECK_EQ(p.baseUrl, std::string("https://gw.example.com/v1"));
-        DOCTEST_CHECK(!p.apiKeyHint.empty());   // AUTH_TOKEN 已入 Keychain
+        DOCTEST_CHECK(!p.apiKeyHint.empty());
         auto mc = module::claude::parseModelsConfig(p.modelsConfigJson);
         DOCTEST_REQUIRE(mc.isOk());
         DOCTEST_CHECK_EQ(mc.value().def.model, std::string("m-cur-default"));
@@ -748,12 +919,184 @@ REGISTER_TEST(claude_module_import_current_full_chain,
     return true;
 })
 
-// ---- 7. 「导入当前配置」文件缺失 → toast 提示，不弹窗 ----
+// 6b.「导入当前配置」必须读入高级配置
+// parseImportedEnv 按其职责只取 env 子对象，doApplyImport 也只回填基础/槽位/env
+// 三域——非 env 顶层属性没有任何导入路径读它。startImportCurrentConfig 抽取
+// 非 env 顶层属性写入 formExtraSettingsJson_（与源一致，pretty 规范形）。
+REGISTER_TEST(claude_module_import_current_reads_advanced_json,
+              "claude_module: 导入当前配置读入高级配置（非 env 顶层属性→高级设置 JSON，headless）", {
+    TestEnv env;
+    test_support::TempDir d("adv", kImportTempDirPrefix);
+    const auto paths = importPaths(d, env.handle());
+    env.svc->setSettingsSyncPaths(paths);
+    env.svc->setSettingsTakeOverEnabled(true);
+    // 整段 settings.json：env（基础/槽位域）+ 三个非 env 顶层属性（高级配置域）
+    d.write(d.file("settings.json"), R"({
+        "permissions": {"allow": ["Bash"]},
+        "statusLine": {"type": "command", "command": "~/sl.sh"},
+        "model": "m-adv",
+        "env": {
+            "ANTHROPIC_BASE_URL": "https://adv.example.com",
+            "ANTHROPIC_AUTH_TOKEN": "sk-imp-adv-0001"
+        }
+    })");
+
+    std::unique_ptr<::core::Module> mod(create_claude_module());
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    auto compose = [&](eui::Ui& ui) {
+        ui.begin("claude_imp_adv");
+        mod->compose(ui, screen);
+        ui.end();
+    };
+    auto click = [](eui::Ui& ui, const std::string& id) -> bool {
+        const auto* node = ui.find(id);
+        if (node == nullptr || node->onClick == nullptr) {
+            std::cerr << "missing clickable: " << id << std::endl;
+            return false;
+        }
+        node->onClick();
+        return true;
+    };
+    // 多行输入框全文（逐行 .text.N 拼接）
+    auto joinedText = [](eui::Ui& ui,
+                         const std::string& prefix) -> std::string {
+        std::string out;
+        for (size_t i = 0;; ++i) {
+            const auto* n = ui.find(prefix + std::to_string(i));
+            if (n == nullptr) break;
+            if (!out.empty()) out += "\n";
+            out += n->text;
+        }
+        return out;
+    };
+
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK(click(ui, "claude.profiles.import.bg"));
+    }
+    // 高级配置页：缓冲 = 源文件非 env 顶层属性（env 键不外泄——它属 env 域）。
+    // 多行 pretty 会超出表单小框的可视行数（输入框只渲染视口内的行节点），故经
+    // 「全屏编辑」读**全量**缓冲。
+    std::string advText;
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.3"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK(click(ui, "claude.form.advanced.json.fs.bg"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui);
+        advText = joinedText(ui, "claude.jsonfs.editor.text.");
+        DOCTEST_CHECK(advText.find("permissions") != std::string::npos);
+        DOCTEST_CHECK(advText.find("statusLine") != std::string::npos);
+        DOCTEST_CHECK(advText.find("m-adv") != std::string::npos);
+        DOCTEST_CHECK(advText.find("\"env\"") == std::string::npos);
+    // 逐键与源一致（解析后比对，格式无关）
+        auto parsed = platform::json::parse(advText);
+        DOCTEST_REQUIRE(parsed.isOk());
+        DOCTEST_REQUIRE(parsed.value().isObject());
+        auto obj = parsed.value().asObject();
+        DOCTEST_CHECK(obj.has("permissions"));
+        DOCTEST_CHECK(obj.has("statusLine"));
+        DOCTEST_CHECK(obj.has("model"));
+        DOCTEST_CHECK(!obj.has("env"));
+        DOCTEST_CHECK_EQ(obj.get("model").asString(), std::string("m-adv"));
+        DOCTEST_CHECK_EQ(obj.get("statusLine").asObject().get("command").asString(),
+                         std::string("~/sl.sh"));
+    // 「放弃修改」回落到基线 = 导入预填值
+        DOCTEST_CHECK(click(ui, "claude.jsonfs.discard.bg"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK(ui.find("claude.jsonfs.root") == nullptr);
+        DOCTEST_CHECK(ui.find("claude.jsonfs.editor.text.0") == nullptr);
+    // 表单小框仍在、首行 = pretty 的 "{"（缓冲未被清空——放弃 = 回导入基线）
+        const auto* first = ui.find("claude.form.advanced.json.text.0");
+        DOCTEST_REQUIRE(first != nullptr);
+        DOCTEST_CHECK_EQ(first->text, std::string("{"));
+    }
+    // 保存 → 落库 → 详情「高级配置」pane 逐键显示同一组键
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK(click(ui, "claude.dialog.form.confirm.bg"));
+    }
+        // 轮询必须等**渲染快照**（等写库而非快照 = 快照竞态 flaky）
+    bool saved = false;
+    bool cardReady = false;  // 快照收割完成：卡片已进渲染树（下一步 click 依赖）
+    int64_t pid = 0;
+    for (int i = 0; i < 300 && !(saved && cardReady); ++i) {
+        mod->onPageEnter();
+        eui::Ui ui;
+        compose(ui);
+        if (!cardReady) {
+            cardReady = ui.find("claude.profile.0.bg") != nullptr;
+        }
+        auto list = env.svc->listProfiles();
+        if (list.isOk()) {
+            for (const auto& p : list.value()) {
+                if (p.name.find("adv.example.com") != std::string::npos) {
+                    pid = p.id;
+                    saved = p.extraSettingsJson.find("statusLine") !=
+                            std::string::npos;
+                }
+            }
+        }
+        if (!(saved && cardReady)) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+    }
+    DOCTEST_CHECK(saved);  // 高级配置真落库（不只是 UI 显示）
+    DOCTEST_CHECK(cardReady);  // 快照收割完成（卡片进渲染树，可点）
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK(click(ui, "claude.profile.0.bg"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK(click(ui, "claude.detail.tabs.hit.3"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui);
+    // 详情「高级配置」pane：逐键来源行（键名节点）
+        std::vector<std::string> keys;
+        for (size_t i = 0;; ++i) {
+            const auto* n =
+                ui.find("claude.advjson.row.key." + std::to_string(i));
+            if (n == nullptr) break;
+            keys.push_back(n->text);
+        }
+        DOCTEST_CHECK(std::find(keys.begin(), keys.end(), "model") != keys.end());
+        DOCTEST_CHECK(std::find(keys.begin(), keys.end(), "permissions") !=
+                      keys.end());
+        DOCTEST_CHECK(std::find(keys.begin(), keys.end(), "statusLine") !=
+                      keys.end());
+        DOCTEST_CHECK(std::find(keys.begin(), keys.end(), "env") == keys.end());
+    }
+
+    if (pid != 0) cleanupProfileKey(kTestKeychainService, pid);
+    mod->onStop();
+    return true;
+})
+
+    // 7.「导入当前配置」文件缺失 → toast 提示，不弹窗
 REGISTER_TEST(claude_module_import_current_missing_file,
               "claude_module: 导入当前配置文件缺失toast不弹窗（headless）", {
     TestEnv env;
     test_support::TempDir d("miss", kImportTempDirPrefix);
-    const auto paths = importPaths(d);   // settings.json 不创建
+    const auto paths = importPaths(d, env.handle());   // settings.json 不创建
     env.svc->setSettingsSyncPaths(paths);
     env.svc->setSettingsTakeOverEnabled(true);
 
@@ -801,7 +1144,6 @@ REGISTER_TEST(claude_module_import_current_missing_file,
     }
 
     // 补充分支：settings.json 存在但没有 env 块 → 明确提示（而非共享解析器
-    // 把整段当裸 env 对象报「键名非法」的误报）
     d.write(d.file("settings.json"), R"({"permissions": {"allow": ["Bash"]}})");
     {
         eui::Ui ui;
@@ -826,17 +1168,17 @@ REGISTER_TEST(claude_module_import_current_missing_file,
     return true;
 })
 
-// ---- 8. 「导入当前配置」接管态 → 弹窗内警告 + 仍预填（不阻断）----
-// sidecar 快照存在 = 接管态：导入的是代理托管值（BASE_URL=127.0.0.1:8888）
-// 而非原始上游 → 警告行展示，弹窗照开照预填，由用户决定。
+// 8.「导入当前配置」接管态 → 弹窗内警告 + 仍预填（不阻断）
+// sidecar 存在 = 接管态：导入的是代理托管值而非原始上游 → 警告行展示，
+// 弹窗照开照预填，由用户决定。
 REGISTER_TEST(claude_module_import_current_takeover_warn,
               "claude_module: 导入当前配置接管态警告不阻断（headless）", {
     TestEnv env;
     test_support::TempDir d("takeover", kImportTempDirPrefix);
-    const auto paths = importPaths(d);
+    const auto paths = importPaths(d, env.handle());
     env.svc->setSettingsSyncPaths(paths);
     env.svc->setSettingsTakeOverEnabled(true);
-    // 模拟接管态：settings.json 是代理托管值 + sidecar 快照残留
+    // 接管态：settings.json 是代理托管值 + sidecar 残留
     d.write(d.file("settings.json"), R"({
         "env": {
             "ANTHROPIC_BASE_URL": "http://127.0.0.1:8888",
@@ -844,8 +1186,10 @@ REGISTER_TEST(claude_module_import_current_takeover_warn,
             "MY_KEY": "user"
         }
     })");
-    d.write(d.file("snapshot.json"),
-            R"({"env": {"ANTHROPIC_BASE_URL": "https://orig.example.com"}})");
+    // sidecar 是 app_config 表的 claude.settings_snapshot 行（整份一行）
+    DOCTEST_REQUIRE(test_support::writeRawConfigRow(
+        &env.handle(), module::claude::settings_sync::kSidecarConfigKey,
+        R"({"env": {"ANTHROPIC_BASE_URL": "https://orig.example.com"}})"));
 
     std::unique_ptr<::core::Module> mod(create_claude_module());
     eui::Screen screen;
@@ -879,19 +1223,16 @@ REGISTER_TEST(claude_module_import_current_takeover_warn,
     {
         eui::Ui ui;
         compose(ui);
-        // 不阻断：弹窗照开、照预填（导入的就是接管态值）
         const auto* backdrop = ui.find("claude.dialog.form.backdrop");
         DOCTEST_REQUIRE(backdrop != nullptr);
         DOCTEST_CHECK(!backdrop->disabled);
         DOCTEST_CHECK_EQ(textOf(ui, "claude.dialog.form.url.text"),
                          std::string("http://127.0.0.1:8888"));
-        // 接管态警告行：提示导入的是代理配置而非原始上游 + 建议先停代理
         const auto* warn = ui.find("claude.dialog.form.importwarn");
         DOCTEST_REQUIRE(warn != nullptr);
         DOCTEST_CHECK(warn->text.find("接管态") != std::string::npos);
         DOCTEST_CHECK(warn->text.find("代理配置") != std::string::npos);
         DOCTEST_CHECK(warn->text.find("停止代理") != std::string::npos);
-        // MY_KEY 透传进 env 行（未识别键原样保留）
         DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.2"));
     }
     {
@@ -905,9 +1246,9 @@ REGISTER_TEST(claude_module_import_current_takeover_warn,
     return true;
 })
 
-// ---- 9. 调用记录弹窗：搜索 / 状态码过滤 / 翻页（产品审计 2026-09-23 [11]） ----
-// spec §8.3 第 6 条「完整日志面板（支持过滤、搜索）」：25 条日志 → 弹窗每页
-// 20 条 + 搜索框（path/method 模糊）+ 状态码下拉 + 上下页；过滤条件跨开关保留
+// 9. 调用记录弹窗：搜索 / 状态码过滤 / 翻页
+// 25 条日志 → 弹窗每页 20 条 + 搜索框（path/method 模糊）+ 状态码下拉 +
+// 上下页；过滤条件跨开关保留
 REGISTER_TEST(claude_module_calls_dialog,
               "claude_module: 调用记录弹窗搜索/状态码过滤/翻页（headless）", {
     TestEnv env;
@@ -918,7 +1259,7 @@ REGISTER_TEST(claude_module_calls_dialog,
     const std::time_t base = std::time(nullptr);
 
     // 20×200 messages + 3×429 complete + 2×超时（status 0 带 error）
-    // 注：DOCTEST 宏在 lambda 内 return false → 显式 bool 返回，调用点传播
+    // DOCTEST 宏在 lambda 内 return false → 显式 bool 返回，调用点传播
     auto addRow = [&](const std::string& m, const std::string& path, int st,
                       const std::string& err, std::time_t ts) -> bool {
         module::claude::ClaudeService::CallLogEntry e;
@@ -977,8 +1318,8 @@ REGISTER_TEST(claude_module_calls_dialog,
         const auto* node = ui.find(id);
         return node == nullptr ? std::string("<missing>") : node->text;
     };
-    // 审计 CPX-06：取数已后台化（开弹窗 / 改过滤 / 翻页后结果下一帧起才可见），
-    // 断言前先有界轮询——每轮新起一帧 compose（帧内收割后台结果），不靠固定睡眠
+    // 取数已后台化（开弹窗 / 改过滤 / 翻页后结果下一帧起才可见），断言前先有界
+    // 轮询——每轮新起一帧 compose（帧内收割后台结果），不靠固定睡眠
     auto waitFrame = [&](auto&& pred) -> bool {
         for (int i = 0; i < 400; ++i) {
             eui::Ui ui;
@@ -993,7 +1334,7 @@ REGISTER_TEST(claude_module_calls_dialog,
             return textOf(ui, "claude.dialog.calls.count") == want;
         });
     };
-    auto waitRows = [&](int n) -> bool {   // 当页恰有 n 行（新页到位的判据）
+    auto waitRows = [&](int n) -> bool {   // 当页恰有 n 行
         return waitFrame([&](eui::Ui& ui) {
             return (n == 0 || ui.find("claude.dialog.calls.row." +
                                        std::to_string(n - 1) + ".wrap") != nullptr) &&
@@ -1002,9 +1343,8 @@ REGISTER_TEST(claude_module_calls_dialog,
         });
     };
 
-    // 1. 点「查看全部 →」开弹窗（CPX-06：渲染路径不再同步查库，数据由后台取。
-    //    2026-09-28 调用记录抽成详情页签、2026-09-30 batch-fix B 起为第 5 页签
-    //    （idx 4）：先切 tab 该帧，再点「查看全部」开弹窗）
+    // 1. 点「查看全部 →」开弹窗。调用记录是详情面板第 5 页签（idx 4）：先切 tab
+    // 该帧，再点「查看全部」
     {
         eui::Ui ui;
         compose(ui);
@@ -1016,7 +1356,6 @@ REGISTER_TEST(claude_module_calls_dialog,
         DOCTEST_CHECK(click(ui, "claude.calls.viewall.hit"));
     }
     // 2. 弹窗数据到齐（等后台结果）：搜索框 / 状态下拉 / scrollView / 首页 20 行
-    //    / 页码 / 总数 / 超时行错误摘要
     DOCTEST_REQUIRE(waitCount("25 条匹配"));
     DOCTEST_REQUIRE(waitRows(20));
     {
@@ -1028,7 +1367,6 @@ REGISTER_TEST(claude_module_calls_dialog,
         DOCTEST_CHECK(ui.find("claude.dialog.calls.row.0.wrap") != nullptr);
         DOCTEST_CHECK(ui.find("claude.dialog.calls.row.19.wrap") != nullptr);
         DOCTEST_CHECK(ui.find("claude.dialog.calls.row.20.wrap") == nullptr);
-        // 超时行（status 0）行尾附错误摘要
         DOCTEST_CHECK(textOf(ui, "claude.dialog.calls.row.0").find("/v1/hold") !=
                       std::string::npos);
         DOCTEST_CHECK(textOf(ui, "claude.dialog.calls.row.0").find("connection timeout") !=
@@ -1037,10 +1375,9 @@ REGISTER_TEST(claude_module_calls_dialog,
                          std::string("25 条匹配"));
         DOCTEST_CHECK_EQ(textOf(ui, "claude.dialog.calls.page"),
                          std::string("第 1 / 2 页"));
-        // disabled/onClick 都挂在按钮的 .bg rect 上（button build 结构）
+        // disabled/onClick 都挂在按钮的 .bg rect 上
         DOCTEST_CHECK(ui.find("claude.dialog.calls.prev.bg")->disabled);
     }
-    // 3. 下一页：剩 5 行，下一页置灰（翻页后等新页到位）
     {
         eui::Ui ui;
         compose(ui);
@@ -1058,7 +1395,6 @@ REGISTER_TEST(claude_module_calls_dialog,
                       std::string::npos);
         DOCTEST_CHECK(ui.find("claude.dialog.calls.next.bg")->disabled);
     }
-    // 4. 上一页回第一页
     {
         eui::Ui ui;
         compose(ui);
@@ -1071,8 +1407,8 @@ REGISTER_TEST(claude_module_calls_dialog,
         DOCTEST_CHECK_EQ(textOf(ui, "claude.dialog.calls.page"),
                          std::string("第 1 / 2 页"));
     }
-    // 5. 搜索框过滤（path 子串）：3 条命中，单页
-    //（CPX-06：按键 → 防抖窗口满后一次后台查询 → 等结果再断言）
+    // 5. 搜索框过滤（path 子串）：3 条命中，单页。按键 → 防抖窗口满后一次后台
+    // 查询 → 等结果再断言
     {
         eui::Ui ui;
         compose(ui);
@@ -1103,7 +1439,7 @@ REGISTER_TEST(claude_module_calls_dialog,
         DOCTEST_CHECK(ui.find("claude.dialog.calls.status.dd.item.3") != nullptr);
         DOCTEST_CHECK(click(ui, "claude.dialog.calls.status.dd.item.3"));  // 4xx
     }
-    // complete 全是 429 → 4xx 命中不变（下拉立即重查：等一轮后台结果落地）
+        // complete 全是 429 → 4xx 命中不变（下拉立即重查：等一轮后台结果落地）
     DOCTEST_REQUIRE(waitFrame([&](eui::Ui& ui) {
         return ui.find("claude.dialog.calls.row.2.wrap") != nullptr &&
                ui.find("claude.dialog.calls.row.3.wrap") == nullptr;
@@ -1133,7 +1469,6 @@ REGISTER_TEST(claude_module_calls_dialog,
         DOCTEST_CHECK(ui.find("claude.dialog.calls.empty") != nullptr);
         DOCTEST_CHECK(ui.find("claude.dialog.calls.scroll") == nullptr);
     }
-    // 7. 切回全部状态 → 恢复 3 条
     {
         eui::Ui ui;
         compose(ui);
@@ -1151,8 +1486,8 @@ REGISTER_TEST(claude_module_calls_dialog,
         DOCTEST_CHECK_EQ(textOf(ui, "claude.dialog.calls.count"),
                          std::string("3 条匹配"));
     }
-    // 8. 关闭再打开：过滤条件保留（会话内记忆），页码回第一页
-    //（dialog 关闭只是收起，content 节点树仍在，不以此断言开关）
+    // 8. 关闭再打开：过滤条件保留（会话内记忆），页码回第一页。dialog 关闭只是收起，
+    // content 节点树仍在，不以此断言开关。
     {
         eui::Ui ui;
         compose(ui);
@@ -1185,19 +1520,18 @@ REGISTER_TEST(claude_module_calls_dialog,
     return true;
 })
 
-// ---- 审计 CPX-06：调用记录弹窗取数后台化 + 搜索防抖（渲染路径零 DB）----
-// 回归：原实现开弹窗 / 搜索框逐键都在回调里同步查库（queryCalls 分页行 +
-// countCalls 总数两条 SQL），代理 worker 持同一把 SQLite 锁时开弹窗/打字会卡帧。
-// H2 立的「渲染路径不做 IO/DB」硬约束此前只落了 compose 的 profiles/recent/
-// active 三处，弹窗侧全靠注释维持——本用例把它锁成可回归的行为：
+// 9b. 调用记录弹窗取数后台化 + 搜索防抖（渲染路径零 DB）
+// 开弹窗 / 搜索框逐键在回调里同步查库（queryCalls 分页行 + countCalls 总数
+// 两条 SQL），与代理 worker 持同一把 SQLite 锁时会卡帧。渲染路径不做 IO/DB 是
+// 硬约束——本用例把它锁成可回归的行为：
 //   1. 弹窗关着 compose 多帧零查询；
 //   2. 开弹窗那一帧只发意图：数据未到（加载态）、恰好派发一次；查询由 worker
 //      线程跑完才回填（渲染线程同步查库会在线程 id 上现形）；
 //   3. 空闲帧不重复派发；数据由后台结果回填（下一帧起可见）；
 //   4. 搜索框同一防抖窗口内 3 次按键只派发一次查询，停手后按最终文本出结果。
-// 查询次数走 claude_module.cpp 的测试缝计数（不靠墙钟 / 不靠固定睡眠）
+// 查询次数走测试缝计数（不靠墙钟 / 不靠固定睡眠）
 REGISTER_TEST(claude_cpx06_calls_query_async_debounce,
-              "claude_module: 调用记录取数后台化 + 搜索防抖单次派发（CPX-06）", {
+              "claude_module: 调用记录取数后台化 + 搜索防抖单次派发", {
     TestEnv env;
     auto p = env.svc->createProfile("异步弹窗", "https://async.example.com",
                                     "sk-ant-cpx06-01", "m");
@@ -1269,14 +1603,13 @@ REGISTER_TEST(claude_cpx06_calls_query_async_debounce,
     }
     DOCTEST_CHECK_EQ(claude_calls_query_dispatches_for_test(), q0);
 
-    {   // 开弹窗帧：调用记录在详情面板第 5 页签里（idx 4，2026-09-30 batch-fix B
-        // 起），先切 tab（同帧不派发查询）
+    {   // 开弹窗帧：调用记录在详情面板第 5 页签里（idx 4），先切 tab（同帧不派发）
         eui::Ui ui;
         compose(ui);
         DOCTEST_REQUIRE(click(ui, "claude.detail.tabs.hit.4"));
     }
-    // ② 开弹窗那一帧：只发意图（查询在后台）——数据未到 + 恰好派发一次
-    //   （同步查库会让本帧就把行画出来，且派发计数按每次点击 +1 而非 +1/帧）
+    // ② 开弹窗那一帧：只发意图（查询在后台）——数据未到 + 恰好派发一次。同步查库
+    // 会让本帧就把行画出来，且派发计数按每次点击 +1 而非 +1/帧。
     {
         eui::Ui ui;
         compose(ui);
@@ -1319,13 +1652,13 @@ REGISTER_TEST(claude_cpx06_calls_query_async_debounce,
         DOCTEST_REQUIRE(type(ui, "claude.dialog.calls.search.hit", "o"));
         DOCTEST_REQUIRE(type(ui, "claude.dialog.calls.search.hit", "m"));
     }
-    {   // 防抖窗口内的一帧：未派发，快照沿用上次值（不闪空/不逐键查）
+    {  // 防抖窗口内的一帧：未派发，快照沿用上次值（不闪空 / 不逐键查）
         eui::Ui ui;
         compose(ui);
         DOCTEST_CHECK_EQ(claude_calls_query_dispatches_for_test(), q1);
         DOCTEST_CHECK_EQ(countText(ui), std::string("4 条匹配"));
     }
-    {   // 停手满一个窗口 → 一次查询按最终文本 "com" 出结果
+    {  // 停手满一个窗口 → 一次查询按最终文本 "com" 出结果
         bool searched = false;
         for (int i = 0; i < 300 && !searched; ++i) {
             eui::Ui ui;
@@ -1336,7 +1669,7 @@ REGISTER_TEST(claude_cpx06_calls_query_async_debounce,
         DOCTEST_CHECK(searched);
     }
     DOCTEST_CHECK_EQ(claude_calls_query_dispatches_for_test(), q1 + 1);
-    for (int i = 0; i < 5; ++i) {   // 收敛后仍零重查
+    for (int i = 0; i < 5; ++i) {
         eui::Ui ui;
         compose(ui);
     }
@@ -1347,9 +1680,9 @@ REGISTER_TEST(claude_cpx06_calls_query_async_debounce,
     return true;
 })
 
-// ---- 10. Profile 列表 scrollView（产品审计 2026-09-23 [26]） ----
-// 此前卡片固定 y=56+i*108 平铺：8 个 profile 时第 7 张起画出左栏、叠底部按钮，
-// 最小窗口高度 720 下第 4 张即溢出。现在整列表进 scrollView，超界可滚、全可达
+// 10. Profile 列表 scrollView
+// 卡片固定 y=56+i*108 平铺时，8 个 profile 的第 7 张起画出左栏、叠底部按钮，
+// 最小窗高 720 下第 4 张即溢出。整列表进 scrollView，超界可滚、全可达。
 REGISTER_TEST(claude_profiles_scrollview,
               "claude_module: Profile 列表超长可滚动不压按钮（headless）", {
     TestEnv env;
@@ -1385,10 +1718,9 @@ REGISTER_TEST(claude_profiles_scrollview,
         DOCTEST_CHECK(ui.find("claude.profiles.new") != nullptr);
         DOCTEST_CHECK(ui.find("claude.profiles.import") != nullptr);
     }
-    // 最小高度 720：末卡滚到底可达且可点选（详情面板跟随第 8 个 profile）。
-    // 审计修复后视口让出共享区块高（~76px）→ 720 高下 7×108=756 的末卡起点
-    // 在视口外：virtualList 只渲染可见行 + overscan，先滚到底（钳到 maxOffset）
-    // 再断言树内 + 可点选
+    // 最小高度 720：末卡滚到底可达且可点选。视口让出共享区块高（~76px）后，
+    // 7×108=756 的末卡起点在视口外——virtualList 只渲染可见行 + overscan，
+    // 先滚到底（钳到 maxOffset）再断言树内 + 可点选。
     {
         eui::Ui ui;
         composeAt(ui, 720.0f);
@@ -1396,7 +1728,7 @@ REGISTER_TEST(claude_profiles_scrollview,
         const auto* root = ui.find("claude.profiles.scroll");
         DOCTEST_REQUIRE(root != nullptr);
         DOCTEST_REQUIRE(root->onScrollOffsetChanged != nullptr);
-        root->onScrollOffsetChanged(2000.0f);  // 超界值 → 内部钳到 maxOffset
+        root->onScrollOffsetChanged(2000.0f);
         composeAt(ui, 720.0f);
         const auto* node = ui.find("claude.profile.7.bg");
         DOCTEST_REQUIRE(node != nullptr);
@@ -1416,10 +1748,10 @@ REGISTER_TEST(claude_profiles_scrollview,
     return true;
 })
 
-// ---- 跨模块剩余审计修：共享配置区块必须整体位于 virtualList 视口 clip 之外 ----
-// 修复前视口按 scrollH 全高、区块只压自己的绝对 Y，后建区块叠在带 clip 的
-// 视口底带上 → ≥5 profile 时末 1-2 张卡被盖、滚到底显示不全、点击误开片段
-// 编辑。现在视口高度 = listH（让出区块高 + 12px），区块钉在 clip 之外。
+// 共享配置区块必须整体位于 virtualList 视口 clip 之外
+// 视口若按 scrollH 全高、区块只压自己的绝对 Y，后建区块会叠在带 clip 的
+// 视口底带上 → ≥5 profile 时末 1-2 张卡被盖、滚到底显示不全、点击误开片段编辑。
+// 视口高度 = listH（让出区块高 + 12px），区块钉在 clip 之外。
 REGISTER_TEST(claude_shared_block_outside_viewport,
               "claude_module: 共享配置区块钉在 virtualList 视口之外（审计修复）", {
     TestEnv env;
@@ -1446,12 +1778,11 @@ REGISTER_TEST(claude_shared_block_outside_viewport,
         ui.layout(screen.width, screen.height);  // 元素 frame 需显式布局
     };
 
-    // 三种高度（默认 / 最小窗 / 超短窗）：区块顶 ≥ 视口底 12px（间距），
-    // 区块落在带 clip 的视口之外——不盖末卡、不误点片段；
-    // 720 以上窗口区块底 == 底部按钮行上沿 − 12（**钉底**，新建/导入同排同 y）。
-    // 500 属极端矮窗（低于最小窗），P4 起区块仍钉底、不再向下溢出按钮区
-    //（审计 F-10a：本注释此前写「可向下溢出按钮区」，是 clamp 让位时代的旧口径）；
-    // 该档下区块会被压扁到自然高以下（LOG_ERROR 记录），本用例只锁锚点关系
+    // 三种高度（默认 / 最小窗 / 超短窗）：区块顶 ≥ 视口底 12px，且区块落在带 clip
+    // 的视口之外——不盖末卡、不误点片段；720 以上窗口区块底 == 底部按钮行上沿 − 12
+    //（**钉底**，新建/导入同排同 y）。
+    // 500 属极端矮窗（低于最小窗）：区块仍钉底、不向下溢出按钮区（该档下区块会被
+    // 压扁到自然高以下，LOG_ERROR 记录），本用例只锁锚点关系。
     for (float h : {1000.0f, 720.0f, 500.0f}) {
         eui::Ui ui;
         composeAt(ui, h);
@@ -1475,7 +1806,7 @@ REGISTER_TEST(claude_shared_block_outside_viewport,
 })
 
 REGISTER_TEST(claude_module_form_esc_cancels,
-              "claude_module: 表单基础页/模型页输入框 Esc=取消不落库（headless，审计 [21]）", {
+              "claude_module: 表单基础页/模型页输入框 Esc=取消不落库（headless）", {
     TestEnv env;
     std::unique_ptr<::core::Module> mod(create_claude_module());
     mod->onStart();
@@ -1488,8 +1819,8 @@ REGISTER_TEST(claude_module_form_esc_cancels,
     };
     DOCTEST_REQUIRE_EQ(profileCount(), 0u);
 
-    // CHECK 宏内含 return false，不能进 void lambda —— helper 返回 bool，
-    // 由测试体的 DOCTEST_CHECK 收敛（本文件既有约定）
+    // CHECK 宏内含 return false，不能进 void lambda —— helper 返回 bool，由测试体的
+    // DOCTEST_CHECK 收敛（本文件既有约定）
     auto openForm = [&](void) -> bool {
         eui::Ui ui;
         ui.begin("fe_open");
@@ -1526,8 +1857,8 @@ REGISTER_TEST(claude_module_form_esc_cancels,
         eui::KeyEvent esc;
         esc.key = eui::InputKey::Escape;
         esc.action = eui::KeyAction::Press;
-        DOCTEST_CHECK(hit->onKeyEvent(esc));   // onCancel 消费（旧行为：Esc 无响应）
-        eui::Ui ui2;   // 新帧确认弹窗关闭（每帧新建 Ui，旧指针失效）
+        DOCTEST_CHECK(hit->onKeyEvent(esc));  // onCancel 消费
+        eui::Ui ui2;  // 新帧确认弹窗关闭（每帧新建 Ui，旧指针失效）
         ui2.begin(page);
         mod->compose(ui2, screen);
         ui2.end();
@@ -1564,11 +1895,11 @@ REGISTER_TEST(claude_module_form_esc_cancels,
     return true;
 })
 
-// ---- 产品审计 [22]：Claude 页级快捷键 Ctrl+N / Ctrl+S / Ctrl+Enter（headless）----
-// 通道 = Module::onKeyEvent（模拟 app 级 onKeyEvent → Router 派发到当前页
-// 模块，与 todo_ui_keyboard_move 同款直调）。端口动态取空闲端口避让冲突。
+// Claude 页级快捷键 Ctrl+N / Ctrl+S / Ctrl+Enter（headless）
+// 通道 = Module::onKeyEvent（模拟 app 级 onKeyEvent → Router 派发到当前页模块）。
+// 端口动态取空闲端口避让冲突。
 REGISTER_TEST(claude_module_keyboard_shortcuts,
-              "claude: Ctrl+N 新建 / Ctrl+S 保存表单 / Ctrl+Enter 启停代理（审计 [22]）", {
+              "claude: Ctrl+N 新建 / Ctrl+S 保存表单 / Ctrl+Enter 启停代理", {
     TestEnv env;
     std::unique_ptr<::core::Module> mod(create_claude_module());
     eui::Screen screen;
@@ -1580,7 +1911,7 @@ REGISTER_TEST(claude_module_keyboard_shortcuts,
         mod->compose(ui, screen);
         ui.end();
     };
-    // 快捷键修饰位按平台取（macOS = Cmd，其余 = Ctrl；见 setShortcutModifier）
+    // 快捷键修饰位按平台取（见 setShortcutModifier）
     auto ctrlPress = [](eui::InputKey k) {
         eui::KeyEvent e;
         e.key = k;
@@ -1610,8 +1941,7 @@ REGISTER_TEST(claude_module_keyboard_shortcuts,
         DOCTEST_CHECK(ui.find("claude.dialog.form.name.hit") != nullptr);
         type(ui, "claude.dialog.form.name.hit", "快捷键建档");
     }
-    // 2) 表单开着再按 Ctrl+N → 不消费（不得重置填写中的草稿）；
-    //    Ctrl+Enter 表单开着 → 不消费（不得打字中途启停代理）
+    // 2) 表单开着再按 Ctrl+N → 不消费（不得重置草稿）；Ctrl+Enter → 不消费
     DOCTEST_CHECK(!mod->onKeyEvent(ctrlPress(eui::InputKey::N)));
     DOCTEST_CHECK(!mod->onKeyEvent(ctrlPress(eui::InputKey::Enter)));
     DOCTEST_CHECK(!env.svc->isProxyRunning());
@@ -1638,8 +1968,8 @@ REGISTER_TEST(claude_module_keyboard_shortcuts,
         DOCTEST_REQUIRE(panel != nullptr);
         DOCTEST_CHECK_EQ(panel->opacity, 0.0f);   // 提交成功后表单关闭
     }
-    // 4) 表单外 Ctrl+S（无保存对象）、未注册组合、裸键、Alt 修饰、Release
-    //    全部不消费，且不得开表单
+    // 4) 表单外 Ctrl+S（无保存对象）、未注册组合、裸键、Alt 修饰、Release 全不消费，
+    //    且不得开表单。
     DOCTEST_CHECK(!mod->onKeyEvent(ctrlPress(eui::InputKey::S)));
     DOCTEST_CHECK(!mod->onKeyEvent(ctrlPress(eui::InputKey::X)));
     {
@@ -1662,12 +1992,29 @@ REGISTER_TEST(claude_module_keyboard_shortcuts,
         DOCTEST_CHECK_EQ(panel->opacity, 0.0f);   // 上述不消费按键不得重开表单
     }
 
-    // 5) Ctrl+Enter 启停：无弹窗开着 → 按一次启动（端口 = configuredProxyPort）、
-    //    再按一次停止。（原「token 文件写进重定向的临时 APPDATA」一项随代理
-    //    鉴权移除，2026-09-27——启动代理不再向用户目录写任何凭据文件）
-    //    端口动态取（原写死 28888：多实例/残留进程会撞端口）——取系统空闲端口，
-    //    万一在探测与 bind 之间被抢则换端口重试 ≤3 次；断言语义不变
-    //    （启动后监听在配置的端口上）
+    // 5) Ctrl+Enter 启停：无弹窗开着 → 按一次启动、再按一次停止。
+    // 前置校验与手动按钮同入口：起代理前先过「激活 profile + 连通测试」，
+    // 且**联网校验段在后台线程**、bind 在 compose 收割帧——故用例先备好
+    // 「可达上游 + 激活 profile」，再把「按一次键」改成「按键 + 收割帧轮询」。
+    // 断言面不变：启动后监听在配置端口。
+    platform::http::Server upstream("127.0.0.1", 0);
+    upstream.route("GET", "/v1/models",
+                   [](const platform::http::RequestCtx&,
+                      platform::http::ResponseWriter& w) {
+                       w.setStatus(200);
+                       w.setHeader("Content-Type", "application/json");
+                       w.write(R"({"data":[]})");
+                       w.end();
+                   });
+    DOCTEST_REQUIRE(upstream.start());
+    // 上面的表单建档 profile 是首建自动激活，但 baseUrl 指向真实网络域名——
+    // 换一套指向 mock 上游的 profile 并激活
+    auto mockProf = env.svc->createProfile(
+        "校验通过", "http://127.0.0.1:" + std::to_string(upstream.actualPort()),
+        "sk-ant-kbd-ok", "m");
+    DOCTEST_REQUIRE(mockProf.isOk());
+    DOCTEST_REQUIRE(env.svc->setActiveProfile(mockProf.value().id).isOk());
+
     int port = 0;
     bool started = false;
     for (int attempt = 0; attempt < 3 && !started; ++attempt) {
@@ -1675,26 +2022,37 @@ REGISTER_TEST(claude_module_keyboard_shortcuts,
         DOCTEST_REQUIRE(port > 0);
         env.svc->setConfiguredProxyPort(port);
         DOCTEST_CHECK(mod->onKeyEvent(ctrlPress(eui::InputKey::Enter)));
-        started = env.svc->isProxyRunning();
+        started = env.svc->isProxyRunning();   // 同步返回时必为 false（校验在飞）
+        // 收割帧轮询：bind 发生在 harvestTestResult（UI 线程、join 之后）
+        for (int i = 0; i < 50 && !started; ++i) {
+            eui::Ui ui;
+            compose(ui, "ks5");
+            started = env.svc->isProxyRunning();
+            if (!started) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            }
+        }
     }
     DOCTEST_CHECK(started);
     DOCTEST_CHECK_EQ(env.svc->proxyPort(), port);
+    // 停止是同步路径（isProxyRunning 早退分支），不经过线程 / 收割
     DOCTEST_CHECK(mod->onKeyEvent(ctrlPress(eui::InputKey::Enter)));
     DOCTEST_CHECK(!env.svc->isProxyRunning());
+    upstream.stop();
+    cleanupProfileKey(kTestKeychainService, mockProf.value().id);
 
     mod->onStop();
     cleanupProfileKey(kTestKeychainService, pid);
     return true;
 })
 
-// ---- 11. 审计 perf [13]：compose 数据缓存等价 ----
-// 优化前 compose 每帧同步跑 listProfiles/recentCalls(3)/getActiveProfile 三条
-// 查询；优化后缓存命中帧零查询。本用例锁等价契约：
+// 11. compose 数据缓存等价
+// compose 每帧同步跑 listProfiles/recentCalls/getActiveProfile 三条查询；
+// 缓存命中帧零查询。本用例锁等价契约：
 //   1. 首帧（脏）与次帧（缓存命中）渲染结果逐字段一致
 //   2. 代理 worker 的 logCall（不经过模块、不标脏）经 callLogVersion 驱动
 //      recent 重查 —— 「新调用下一帧可见」不变
-//   3. 外部直写 DB 绕过模块：缓存帧不可见（新语义，TodoModule 同款），
-//      onPageEnter 后可见
+//   3. 外部直写 DB 绕过模块：缓存帧不可见，onPageEnter 后可见
 //   4. 模块写操作（启用）标脏：ACTIVE 徽标与详情即时更新
 REGISTER_TEST(claude_module_compose_cache_equivalence,
               "claude_module: compose 缓存等价（脏标记/callLogVersion/onPageEnter）（headless）", {
@@ -1705,7 +2063,6 @@ REGISTER_TEST(claude_module_compose_cache_equivalence,
     auto b = env.svc->createProfile("B缓存", "https://b.example.com",
                                     "sk-ant-cache-bbbb", "m");
     DOCTEST_REQUIRE(b.isOk());
-    // B 激活 → 列表序（is_active DESC, name ASC）= [B, A]
     DOCTEST_REQUIRE(env.svc->setActiveProfile(b.value().id).isOk());
 
     std::unique_ptr<::core::Module> mod(create_claude_module());
@@ -1731,9 +2088,9 @@ REGISTER_TEST(claude_module_compose_cache_equivalence,
         const auto* node = ui.find(id);
         return node == nullptr ? std::string("<missing>") : node->text;
     };
-    // 审计 H2：DB 查询挪到后台线程 → 「变更可见」最多晚 1 帧（本帧发刷新
-    // 意图、下帧收割）。以下三处原为「一次 compose 即断言」，改为有界轮询
-    // 等可见——契约不变（脏标记 / callLogVersion / onPageEnter 各自仍驱动重查）
+    // DB 查询在后台线程 → 「变更可见」最多晚 1 帧（本帧发刷新意图、下帧收割）。
+    // 断言可见性改有界轮询等——契约不变（脏标记 / callLogVersion / onPageEnter 各自
+    // 仍驱动重查）
     auto composeUntil = [&](auto&& pred) -> bool {
         for (int i = 0; i < 200; ++i) {
             eui::Ui ui;
@@ -1766,7 +2123,7 @@ REGISTER_TEST(claude_module_compose_cache_equivalence,
         DOCTEST_CHECK_EQ(textOf(ui, "claude.profile.1.name"), name1);
         DOCTEST_CHECK_EQ(textOf(ui, "claude.field.name.value"), detail);
     }
-    // 调用记录已抽成详情面板页签（2026-09-28；2026-09-30 起 idx 4）：切过去断空态
+    // 调用记录是详情面板页签（idx 4）：切过去断空态
     {
         eui::Ui ui;
         compose(ui);
@@ -1778,7 +2135,7 @@ REGISTER_TEST(claude_module_compose_cache_equivalence,
         DOCTEST_CHECK(ui.find("claude.calls.empty") != nullptr);
     }
 
-    // 2) 代理 worker 落库（logCall 直写，不经过模块）→ callLogVersion 驱动重查
+    // 2) 代理 worker 落库（logCall 直写，不经过模块）
     {
         module::claude::ClaudeService::CallLogEntry e;
         e.profileId = a.value().id;
@@ -1799,7 +2156,7 @@ REGISTER_TEST(claude_module_compose_cache_equivalence,
         }
     }
 
-    // 3) 外部直写绕过模块：缓存帧不可见（新语义），onPageEnter 后可见
+    // 3) 外部直写绕过模块：缓存帧不可见，onPageEnter 后可见
     auto c = env.svc->createProfile("C缓存", "https://c.example.com",
                                     "sk-ant-cache-cccc", "m");
     DOCTEST_REQUIRE(c.isOk());
@@ -1809,7 +2166,7 @@ REGISTER_TEST(claude_module_compose_cache_equivalence,
         DOCTEST_CHECK(ui.find("claude.profile.2.name") == nullptr);
     }
     mod->onPageEnter();
-    // 脏标记 → 本帧发刷新意图、下帧收割（H2 异步）：有界轮询等到 C 可见
+    // 脏标记 → 本帧发刷新意图、下帧收割：有界轮询等到 C 可见
     DOCTEST_REQUIRE(composeUntil([](eui::Ui& ui) {
         return ui.find("claude.profile.2.name") != nullptr;
     }));
@@ -1821,18 +2178,18 @@ REGISTER_TEST(claude_module_compose_cache_equivalence,
         DOCTEST_CHECK_EQ(n2->text, std::string("C缓存"));
     }
 
-    // 4) 模块写操作（选中 A → 启用）标脏：ACTIVE 徽标移到 A，详情跟随
+    // 4) 模块写操作（选中 A → 启用）标脏
     {
         eui::Ui ui;
         compose(ui);
-        DOCTEST_CHECK(click(ui, "claude.profile.1.bg"));   // 选中「A缓存」
+        DOCTEST_CHECK(click(ui, "claude.profile.1.bg"));
     }
     {
         eui::Ui ui;
         compose(ui);
-        DOCTEST_CHECK(click(ui, "claude.act.enable.bg"));  // doSetActive(A)
+        DOCTEST_CHECK(click(ui, "claude.act.enable.bg"));
     }
-    // 启用写操作标脏 → 后台重查、下帧收割（H2 异步）：有界轮询等 A 排到 index 0
+    // 启用写操作标脏 → 后台重查、下帧收割：有界轮询等 A 排到 index 0
     DOCTEST_REQUIRE(composeUntil([](eui::Ui& ui) {
         const auto* n0 = ui.find("claude.profile.0.name");
         return n0 != nullptr && n0->text == std::string("A缓存");
@@ -1840,7 +2197,6 @@ REGISTER_TEST(claude_module_compose_cache_equivalence,
     {
         eui::Ui ui;
         compose(ui);
-        // A 激活后排到 index 0，B 不再是 ACTIVE
         DOCTEST_CHECK_EQ(textOf(ui, "claude.profile.0.name"),
                          std::string("A缓存"));
         DOCTEST_CHECK(ui.find("claude.profile.0.active.text") != nullptr);
@@ -1854,11 +2210,11 @@ REGISTER_TEST(claude_module_compose_cache_equivalence,
     return true;
 })
 
-// ---- 审计 M5：Esc 关最上层弹窗（删除确认无输入框）----
+// Esc 关最上层弹窗（删除确认无输入框）
 // 表单弹窗的输入框聚焦时 Esc 走 input.onCancel（既有链路，天然让位）；
-// 确认删除弹窗没有输入框、Esc 修复前无任何响应 → 模块级兜底补上。
+// 确认删除弹窗没有输入框 → 需要模块级兜底。
 REGISTER_TEST(claude_ui_esc_closes_delete_confirm,
-              "claude_ui: Esc 关删除确认弹窗（无输入框，审计 M5）", {
+              "claude_ui: Esc 关删除确认弹窗（无输入框）", {
     TestEnv env;
     auto created = env.svc->createProfile("Esc目标", "https://esc.example.com",
                                           "sk-ant-esc-00001", "claude-sonnet-4-5");
@@ -1891,14 +2247,24 @@ REGISTER_TEST(claude_ui_esc_closes_delete_confirm,
         return e;
     };
 
-    // 0) 无弹窗：不消费（兜底不越权吃键）
     DOCTEST_CHECK(!mod->onKeyEvent(escPress()));
 
-    // 1) 选中 profile → 「删除」→ 确认弹窗（无输入框）→ Esc = 取消，profile 不删
+    // 1) 选中 profile → 右键菜单「删除」→ 确认弹窗（无输入框）→ Esc = 取消，
     frame("esc1");
-    DOCTEST_CHECK(click(ui, "claude.profile.0.bg"));   // 详情面板需要选中项
+    DOCTEST_CHECK(click(ui, "claude.profile.0.bg"));
     frame("esc2");
-    DOCTEST_CHECK(click(ui, "claude.act.del.bg"));
+    {
+        const auto* wrap = ui.find("claude.profile.0.wrap");
+        DOCTEST_REQUIRE(wrap != nullptr);
+        DOCTEST_REQUIRE(wrap->onContextMenu != nullptr);
+        eui::PointerEvent pe;
+        eui::Rect rect;
+        pe.x = 400;
+        pe.y = 300;
+        wrap->onContextMenu(pe, rect);
+    }
+    frame("esc2b");
+    DOCTEST_CHECK(click(ui, "claude.list.ctx.level.0.item.3"));
     frame("esc3");
     DOCTEST_REQUIRE(ui.find("claude.dialog.delete.panel") != nullptr);
     DOCTEST_CHECK_EQ(ui.find("claude.dialog.delete.panel")->opacity, 1.0f);
@@ -1908,7 +2274,7 @@ REGISTER_TEST(claude_ui_esc_closes_delete_confirm,
     {
         auto listed = env.svc->listProfiles();
         DOCTEST_REQUIRE(listed.isOk());
-        DOCTEST_CHECK_EQ(listed.value().size(), static_cast<size_t>(1));  // 未删
+        DOCTEST_CHECK_EQ(listed.value().size(), static_cast<size_t>(1));
     }
 
     mod->onStop();
@@ -1916,11 +2282,11 @@ REGISTER_TEST(claude_ui_esc_closes_delete_confirm,
     return true;
 })
 
-// ---- 审计 H2：compose 只读快照 + DB 查询在后台线程 ----
-// 回归：此前 refreshDataCache 在 compose 里同步跑 listProfiles /
-// getActiveProfile / recentCalls，与代理 worker 的 logCall INSERT 争同一把
-// recursive_mutex（事务全程持锁，core/sqlite_db.cpp）→ 代理忙时整帧被卡。
-// 现在渲染路径只发刷新意图 + 搬已就绪结果，查询在后台线程（std::async）。
+// compose 只读快照 + DB 查询在后台线程
+// refreshDataCache 若在 compose 里同步跑 listProfiles / getActiveProfile /
+// recentCalls，会与代理 worker 的 logCall INSERT 争同一把 recursive_mutex
+//（事务全程持锁，core/sqlite_db.cpp）→ 代理忙时整帧被卡。
+// 渲染路径只发刷新意图 + 搬已就绪结果，查询在后台线程（std::async）。
 REGISTER_TEST(claude_h2_compose_snapshot_async,
               "claude_module: compose 只读快照 DB 后台刷新（H2 tick 前旧值/后新值）", {
     TestEnv env;
@@ -1929,13 +2295,12 @@ REGISTER_TEST(claude_h2_compose_snapshot_async,
     DOCTEST_REQUIRE(a.isOk());
 
     std::unique_ptr<::core::Module> mod(create_claude_module());
-    mod->onStart();   // 首次装载在启动期同步做（非渲染路径）
+    mod->onStart();
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
 
     // 探针：跑一帧 compose，返回渲染出的全部 profile 卡名（列表序 =
-    // is_active DESC, name ASC → 断言按名字集合，不绑 index）
     auto cardNames = [&]() -> std::vector<std::string> {
         eui::Ui ui;
         ui.begin("claude_h2_probe");
@@ -1965,20 +2330,19 @@ REGISTER_TEST(claude_h2_compose_snapshot_async,
         DOCTEST_CHECK_EQ(names[0], std::string("官方"));
     }
 
-    // ② 外部新增一条（不经模块写路径）+ 模拟进页 → 置脏（= 发刷新意图）
+    // ② 外部新增一条（不经模块写路径）+ 模拟进页 → 置脏
     auto b = env.svc->createProfile("中转", "https://relay.example.com",
                                     "sk-ant-bbbb-2222", "claude-opus-4-5");
     DOCTEST_REQUIRE(b.isOk());
     mod->onPageEnter();
     {
         // tick 前：本帧才发出刷新意图（查询本帧上路），快照恒为上次值。
-        // 同一次 compose 内断言 → 不依赖时序
         const auto names = cardNames();
-        DOCTEST_CHECK(hasName(names, "官方"));    // 非空 + = 上次值
-        DOCTEST_CHECK(!hasName(names, "中转"));   // 新值未到（确定，非时序）
+        DOCTEST_CHECK(hasName(names, "官方"));  // 非空 + = 上次值
+        DOCTEST_CHECK(!hasName(names, "中转"));  // 新值未到（确定，非时序）
     }
 
-    // ③ tick 后：后台结果被收割 → 新值可见（有界轮询，不依赖固定睡眠）
+    // ③ tick 后：后台结果被收割 → 新值可见（有界轮询）
     bool updated = false;
     for (int i = 0; i < 200 && !updated; ++i) {
         updated = hasName(cardNames(), "中转");
@@ -1987,7 +2351,7 @@ REGISTER_TEST(claude_h2_compose_snapshot_async,
         }
     }
     DOCTEST_CHECK(updated);
-    DOCTEST_CHECK(hasName(cardNames(), "官方"));   // 旧卡不丢
+    DOCTEST_CHECK(hasName(cardNames(), "官方"));
 
     mod->onStop();
     cleanupProfileKey(kTestKeychainService, a.value().id);
@@ -1995,9 +2359,8 @@ REGISTER_TEST(claude_h2_compose_snapshot_async,
     return true;
 })
 
-// ---- M5（复制 UI）：详情页第 5 键「复制」→ 建副本、不激活、选中态不变 ----
-// 设计 §4.1/§4.4；服务层 duplicateProfile 由 M4 落地，这里只验 UI 接线。
-// 卡片列表走后台刷新（H2）→ 新卡片用有界轮询；toast / 选中态同帧即定。
+// 详情页「复制」→ 建副本、不激活、选中态不变
+// 卡片列表走后台刷新 → 新卡片用有界轮询；toast / 选中态同帧即定。
 REGISTER_TEST(claude_module_duplicate_profile_ui,
               "claude_module: 复制键建副本不激活且选中态不变（headless）", {
     TestEnv env;
@@ -2028,25 +2391,38 @@ REGISTER_TEST(claude_module_duplicate_profile_ui,
         return true;
     };
 
-    // 第 5 键存在且可点（.bg 点击节点，与同区其他键同款）；列表序 =
-    // is_active DESC, name ASC → index 1 =「中转」，选中它
+    // 详情动作行不再有「建副本」键（入口只剩右键菜单）。列表序 = is_active DESC,
+    // name ASC → index 1 =「中转」，选中它
     {
         eui::Ui ui;
         compose(ui);
-        DOCTEST_CHECK(ui.find("claude.act.dup") != nullptr);
-        DOCTEST_CHECK(ui.find("claude.act.dup.bg") != nullptr);
+        DOCTEST_CHECK(ui.find("claude.act.dup") == nullptr);
         DOCTEST_CHECK(click(ui, "claude.profile.1.bg"));
     }
-    // 详情面板跟随选中项 → 复制源就是它（shown）
-    {
+    // 右键菜单「建副本」（item.1）→ 复制源 = 选中项
+    auto dupViaCtxMenu = [&](const char* tag) -> bool {
         eui::Ui ui;
         compose(ui);
         const auto* nameV = ui.find("claude.field.name.value");
-        DOCTEST_REQUIRE(nameV != nullptr);
+        if (nameV == nullptr) return false;
         DOCTEST_CHECK_EQ(nameV->text, std::string("中转"));
-        DOCTEST_CHECK(click(ui, "claude.act.dup.bg"));
-    }
-    // 成功 toast（同帧可见）：副本名 + 明示未激活
+        const auto* wrap = ui.find("claude.profile.1.wrap");
+        if (wrap == nullptr || wrap->onContextMenu == nullptr) return false;
+        eui::PointerEvent pe;
+        eui::Rect rect;
+        pe.x = 400;
+        pe.y = 300;
+        wrap->onContextMenu(pe, rect);
+        eui::Ui ui2;
+        ui2.begin(tag);
+        mod->compose(ui2, screen);
+        ui2.end();
+        const auto* item = ui2.find("claude.list.ctx.level.0.item.1");
+        if (item == nullptr || item->onClick == nullptr) return false;
+        item->onClick();
+        return true;
+    };
+    DOCTEST_REQUIRE(dupViaCtxMenu("claude_dup_ctx"));
     {
         eui::Ui ui;
         compose(ui);
@@ -2054,12 +2430,10 @@ REGISTER_TEST(claude_module_duplicate_profile_ui,
         DOCTEST_REQUIRE(msg != nullptr);
         DOCTEST_CHECK(msg->text.find("中转 副本") != std::string::npos);
         DOCTEST_CHECK(msg->text.find("未激活") != std::string::npos);
-        // 选中态未变：详情仍显示「中转」，未跳去副本
         const auto* nameV = ui.find("claude.field.name.value");
         DOCTEST_REQUIRE(nameV != nullptr);
         DOCTEST_CHECK_EQ(nameV->text, std::string("中转"));
     }
-    // DB 层对账：3 条；副本 key 同源、is_active 未变、源行未动
     int64_t copyId = 0;
     {
         auto list = env.svc->listProfiles();
@@ -2073,13 +2447,13 @@ REGISTER_TEST(claude_module_duplicate_profile_ui,
         DOCTEST_REQUIRE(got.isOk());
         DOCTEST_CHECK_EQ(got.value().baseUrl,
                          std::string("https://relay.example.com"));
-        DOCTEST_CHECK(!got.value().isActive);   // 副本不激活（S-4）
+        DOCTEST_CHECK(!got.value().isActive);
         auto key = env.svc->loadApiKey(copyId);
         DOCTEST_REQUIRE(key.isOk());
         DOCTEST_CHECK_EQ(key.value(), std::string("sk-ant-bbbb-2222"));
         auto gotA = env.svc->getProfile(a.value().id);
         DOCTEST_REQUIRE(gotA.isOk());
-        DOCTEST_CHECK(gotA.value().isActive);   // 原激活未被副本顶掉
+        DOCTEST_CHECK(gotA.value().isActive);
     }
     // UI 层：新卡片出现（后台刷新 → 有界轮询），激活徽标仍在 index 0
     bool sawCopy = false;
@@ -2104,13 +2478,13 @@ REGISTER_TEST(claude_module_duplicate_profile_ui,
     return true;
 })
 
-// ---- M5 验收（spec §5 无头 UI 行）：选中卡 → 点启用 → settings.json 的值
-// 收编进原激活 profile（M3 反向同步链路的 UI 侧证据）----
+// 选中卡 → 点启用 → settings.json 的值收编进原激活 profile
+// 反向同步链路的 UI 侧证据。
 REGISTER_TEST(claude_module_ui_enable_captures_settings,
               "claude_module: 详情页启用触发反向同步（headless）", {
     TestEnv env;
     test_support::TempDir d("uienable", kImportTempDirPrefix);
-    env.svc->setSettingsSyncPaths(importPaths(d));
+    env.svc->setSettingsSyncPaths(importPaths(d, env.handle()));
     // Claude Code 侧（或 cc-switch）改过的真实上游值：非守卫键 → 会被收编
     d.write(d.file("settings.json"), R"({"env": {
         "ANTHROPIC_BASE_URL": "https://new.example.com/",
@@ -2120,7 +2494,7 @@ REGISTER_TEST(claude_module_ui_enable_captures_settings,
     auto a = env.svc->createProfile("源A", "https://old.example.com",
                                     "sk-old-key-0123456789abcdef", "");
     DOCTEST_REQUIRE(a.isOk());
-    // 首次激活：无激活 profile → G0 跳过（不读文件）
+    // 首次激活：无激活 profile → 跳过（不读文件）
     DOCTEST_REQUIRE(env.svc->setActiveProfile(a.value().id).isOk());
     auto b = env.svc->createProfile("目标B", "https://b.example.com",
                                     "sk-b-key-0123456789abcdef", "");
@@ -2151,7 +2525,6 @@ REGISTER_TEST(claude_module_ui_enable_captures_settings,
         compose(ui);
         DOCTEST_CHECK(click(ui, "claude.profile.1.bg"));
     }
-    // 点启用 → setActiveProfile(B)：先反向收编 A，再切激活
     {
         eui::Ui ui;
         compose(ui);
@@ -2160,7 +2533,6 @@ REGISTER_TEST(claude_module_ui_enable_captures_settings,
         DOCTEST_CHECK_EQ(nameV->text, std::string("目标B"));
         DOCTEST_CHECK(click(ui, "claude.act.enable.bg"));
     }
-    // 断言：settings.json 的值已进原 profile（A）
     {
         auto gotA = env.svc->getProfile(a.value().id);
         DOCTEST_REQUIRE(gotA.isOk());
@@ -2170,7 +2542,6 @@ REGISTER_TEST(claude_module_ui_enable_captures_settings,
         DOCTEST_REQUIRE(keyA.isOk());
         DOCTEST_CHECK_EQ(keyA.value(),
                          std::string("sk-new-upstream-9876543210"));
-        // B 正常激活且未被误写；A 不再激活
         auto gotB = env.svc->getProfile(b.value().id);
         DOCTEST_REQUIRE(gotB.isOk());
         DOCTEST_CHECK(gotB.value().isActive);
@@ -2184,15 +2555,15 @@ REGISTER_TEST(claude_module_ui_enable_captures_settings,
     return true;
 })
 
-// ---- 审计 CPX-02（UI 半边）：接管失败/上层覆盖警告在 Claude 页详情可见 ----
-// 服务侧已把失败原因与覆盖警告并入 ClaudeService::lastSyncWarnings_；此前详情页
-// 只在「已接管」分支渲染警告，接管失败（无 sidecar → 未接管）时用户只看到
-// 「未接管」而看不到原因。空警告时不显示（不留空占位）。
+// 接管失败 / 上层覆盖警告在 Claude 页详情可见
+// 失败原因与覆盖警告并入 ClaudeService::lastSyncWarnings_。详情页只在「已接管」
+// 分支渲染警告时，接管失败（无 sidecar → 未接管）用户只看到「未接管」而看不到原因。
+// 空警告时不显示（不留空占位）。
 REGISTER_TEST(claude_module_takeover_warn_visible,
               "claude_module: 接管失败警告在详情页可见（headless）", {
     TestEnv env;
     test_support::TempDir d("warnfail", kImportTempDirPrefix);
-    env.svc->setSettingsSyncPaths(importPaths(d));
+    env.svc->setSettingsSyncPaths(importPaths(d, env.handle()));
     env.svc->setSettingsTakeOverEnabled(true);
     // 坏 settings.json（非法 JSON）→ takeOver 解析失败中止，全程不写 sidecar
     d.write(d.file("settings.json"), "{ 这不是合法 JSON");
@@ -2207,7 +2578,6 @@ REGISTER_TEST(claude_module_takeover_warn_visible,
         ui.end();
     };
 
-    // 代理未启动、从未接管 → 无警告：警告元素不存在（空时不显示）
     {
         eui::Ui ui;
         compose(ui);
@@ -2215,15 +2585,13 @@ REGISTER_TEST(claude_module_takeover_warn_visible,
         DOCTEST_CHECK(ui.find("claude.field.takeover.warn.icon") == nullptr);
     }
 
-    // 起代理 → 接管失败（不阻断起代理），原因并入 lastSyncWarnings_
     const int port = pickFreePort();
     DOCTEST_REQUIRE(port != 0);
     DOCTEST_REQUIRE(env.svc->startProxy("127.0.0.1", port).isOk());
     DOCTEST_CHECK(!env.svc->lastSyncWarnings().empty());
-    DOCTEST_CHECK(!env.svc->isClaudeCodeManaged());   // 失败 → 未接管
+    DOCTEST_CHECK(!env.svc->isClaudeCodeManaged());
 
-    // 无需额外刷新调用：下一次 compose（进页面/启停代理后的首帧）即见警告，
-    // 文案含失败原因；状态行仍如实显示「未接管」
+    // 无需额外刷新调用：下一次 compose 即见警告
     {
         eui::Ui ui;
         compose(ui);
@@ -2241,12 +2609,12 @@ REGISTER_TEST(claude_module_takeover_warn_visible,
     return true;
 })
 
-// 上层覆盖警告（接管成功路径）：多条 → 摘要 + 条数（本地注入两层 overlay 文件）
+// 上层覆盖警告（接管成功路径）：多条 → 摘要 + 条数（注入两层 overlay 文件）
 REGISTER_TEST(claude_module_takeover_warn_summary,
               "claude_module: 上层覆盖警告条数+摘要（headless）", {
     TestEnv env;
     test_support::TempDir d("warnover", kImportTempDirPrefix);
-    auto paths = importPaths(d);
+    auto paths = importPaths(d, env.handle());
     // managed（企业策略）+ project 两层各含冲突 env 键 → 2 条覆盖警告
     paths.overlayFiles = {d.file("managed.json"), d.file("project.json")};
     env.svc->setSettingsSyncPaths(paths);
@@ -2279,11 +2647,11 @@ REGISTER_TEST(claude_module_takeover_warn_summary,
     return true;
 })
 
-// ---- 认证字段下拉（鉴权头三态 UI；2026-09-27 profile-auth-field 设计 §6）----
+// 认证字段下拉（鉴权头三态 UI）
 
 REGISTER_TEST(claude_ui_form_auth_field_dropdown_exists,
               "claude_module: 表单基础页认证字段下拉渲染（无服务不崩）", {
-    module::claude::ClaudeService::setGlobal(nullptr);   // 保险：确保干净起点
+    module::claude::ClaudeService::setGlobal(nullptr);   // 干净起点
     std::unique_ptr<::core::Module> mod(create_claude_module());
     eui::Screen screen;
     screen.width = 1600.0f;
@@ -2315,7 +2683,6 @@ REGISTER_TEST(claude_ui_form_auth_field_dropdown_exists,
         DOCTEST_CHECK(ui.find("claude.form.basic.authfield.hint") != nullptr);
         DOCTEST_CHECK(ui.find("claude.form.basic.authfield.ddwrap") != nullptr);
         DOCTEST_CHECK(ui.find("claude.dialog.form.authfield.dd") != nullptr);
-        // 默认选中第 0 项（双发）
         const auto* label = ui.find("claude.dialog.form.authfield.dd.label");
         DOCTEST_REQUIRE(label != nullptr);
         DOCTEST_CHECK_EQ(label->text, std::string("双发（默认）"));
@@ -2359,7 +2726,6 @@ REGISTER_TEST(claude_ui_auth_field_create_persists,
         return true;
     };
 
-    // 新建表单 → 填名称 / URL / Key
     {
         eui::Ui ui;
         compose(ui, "authfield_c1");
@@ -2373,7 +2739,6 @@ REGISTER_TEST(claude_ui_auth_field_create_persists,
                            "https://af.example.com"));
         DOCTEST_CHECK(type(ui, "claude.dialog.form.key.hit", "sk-ant-af-00001"));
     }
-    // 下拉：打开 → 选 index 2（只发 x-api-key）
     {
         eui::Ui ui;
         compose(ui, "authfield_c3");
@@ -2385,7 +2750,6 @@ REGISTER_TEST(claude_ui_auth_field_create_persists,
         DOCTEST_CHECK(ui.find("claude.dialog.form.authfield.dd.item.2") != nullptr);
         DOCTEST_CHECK(click(ui, "claude.dialog.form.authfield.dd.item.2"));
     }
-    // 选中回显 → 保存
     {
         eui::Ui ui;
         compose(ui, "authfield_c5");
@@ -2394,14 +2758,12 @@ REGISTER_TEST(claude_ui_auth_field_create_persists,
         DOCTEST_CHECK_EQ(label->text, std::string("只发 x-api-key"));
         DOCTEST_CHECK(click(ui, "claude.dialog.form.confirm.bg"));
     }
-    // DB 断言：新建路径把表单选择传进了 createProfile（落库 = api_key）
     {
         auto list = env.svc->listProfiles();
         DOCTEST_REQUIRE(list.isOk());
         DOCTEST_REQUIRE_EQ(list.value().size(), 1u);
         DOCTEST_CHECK_EQ(list.value()[0].name, std::string("认证字段建档"));
         DOCTEST_CHECK_EQ(list.value()[0].authField, std::string("api_key"));
-        // 首建自动激活 → 代理转发主路径（getActiveProfile）也必须读到
         auto act = env.svc->getActiveProfile();
         DOCTEST_REQUIRE(act.isOk());
         DOCTEST_CHECK_EQ(act.value().authField, std::string("api_key"));
@@ -2477,14 +2839,12 @@ REGISTER_TEST(claude_ui_auth_field_edit_shows_current,
     return true;
 })
 
-// ---- 27f. failover 备用下拉（批 3，设计 §3.4/§3.7）：编辑回显 + 选择保存落库
-//      + 自引用排除（编辑态列表里没有自己）----
+// failover 备用下拉：编辑回显 + 选择保存落库 + 自引用排除
 
 REGISTER_TEST(claude_ui_fallback_dropdown_edit_persists,
               "claude_module: failover 备用 Profile 下拉（回显/保存落库/自引用排除，headless）", {
     TestEnv env;
-    // 备家先建（名字「备家」<「主家」也随 is_active DESC 排后；编辑主家时
-    // 候选 = 全部排除自身 → 只剩备家 = item.1）
+    // 备家先建；编辑主家时候选 = 全部排除自身 → 只剩备家 = item.1
     auto b = env.svc->createProfile("备家", "https://fb-b.example.com",
                                     "sk-ant-fbb-00001", "m");
     DOCTEST_REQUIRE(b.isOk());
@@ -2512,7 +2872,6 @@ REGISTER_TEST(claude_ui_fallback_dropdown_edit_persists,
         return true;
     };
 
-    // 选中主家 → 编辑：初始「无（不启用 failover）」
     {
         eui::Ui ui;
         compose(ui, "fb_e1");
@@ -2523,8 +2882,8 @@ REGISTER_TEST(claude_ui_fallback_dropdown_edit_persists,
         compose(ui, "fb_e2");
         DOCTEST_CHECK(click(ui, "claude.act.edit.bg"));
     }
-    // 2026-09-30 batch-fix B：failover 下拉自基础页整段迁入表单第 4 tab
-    //（高级配置，idx 3）——先切 tab 再操作下拉（formTab_ 持久，后续帧免重切）
+    // failover 下拉在表单第 4 tab（高级配置，idx 3）——先切 tab 再操作下拉
+    //（formTab_ 持久，后续帧免重切）
     {
         eui::Ui ui;
         compose(ui, "fb_tab3");
@@ -2537,8 +2896,7 @@ REGISTER_TEST(claude_ui_fallback_dropdown_edit_persists,
         DOCTEST_REQUIRE(label != nullptr);
         DOCTEST_CHECK_EQ(label->text, std::string("无（不启用 failover）"));
     }
-    // 拉开 → 自引用排除：候选只有「备家」（item.0=无 / item.1=备家；
-    // 「主家」不出现 = item.2 不存在）
+    // 拉开 → 自引用排除：候选只有「备家」（item.0=无 / item.1=备家）
     {
         eui::Ui ui;
         compose(ui, "fb_e4");
@@ -2551,7 +2909,6 @@ REGISTER_TEST(claude_ui_fallback_dropdown_edit_persists,
         DOCTEST_CHECK(ui.find("claude.form.basic.fallback.dd.item.2") == nullptr);
         DOCTEST_CHECK(click(ui, "claude.form.basic.fallback.dd.item.1"));
     }
-    // 选中回显 → 保存 → 落库（编辑路径写 p.fallbackProfileId）
     {
         eui::Ui ui;
         compose(ui, "fb_e6");
@@ -2565,8 +2922,8 @@ REGISTER_TEST(claude_ui_fallback_dropdown_edit_persists,
         DOCTEST_REQUIRE(g.isOk());
         DOCTEST_CHECK_EQ(g.value().fallbackProfileId, b.value().id);
     }
-    // 重开编辑：下拉回显「备家」（等后台刷新把新值带进缓存——打开表单的
-    // profile 取自缓存快照，与真实应用一致）
+    // 重开编辑：下拉回显「备家」（等后台刷新把新值带进缓存——打开表单的 profile 取自
+    // 缓存快照，与真实应用一致）
     bool sawBackup = false;
     for (int i = 0; i < 300 && !sawBackup; ++i) {
         {
@@ -2579,7 +2936,7 @@ REGISTER_TEST(claude_ui_fallback_dropdown_edit_persists,
             compose(ui, "fb_e7b");
             DOCTEST_CHECK(click(ui, "claude.act.edit.bg"));
         }
-        {   // 2026-09-30 batch-fix B：重开的表单回到 tab 0，failover 下拉在 tab 3
+        {   // 重开的表单回到 tab 0，failover 下拉在 tab 3
             eui::Ui ui;
             compose(ui, "fb_e7b2");
             DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.3"));
@@ -2603,8 +2960,8 @@ REGISTER_TEST(claude_ui_fallback_dropdown_edit_persists,
     return true;
 })
 
-// ---- 27g. 高级配置 tab（2026-09-30 batch-fix B，设计 §3.2①/③）：
-//      表单第 4 页方言下拉（新建/编辑接线 + 自动档 + 接线回归钉）----
+// 高级配置 tab：表单第 4 页方言下拉
+// 覆盖新建 / 编辑接线 + 自动档 + 接线回归钉。
 REGISTER_TEST(claude_ui_advanced_tab_dialect_persists,
               "claude_module: 高级配置页方言下拉（新建与编辑落库/自动档/不触碰保留，headless）", {
     TestEnv env;
@@ -2638,8 +2995,7 @@ REGISTER_TEST(claude_ui_advanced_tab_dialect_persists,
         node->onTextInput(ev);
         return true;
     };
-    // 按名字点卡片（不依赖中文名排序的列表序——is_active DESC + name 的
-    // collation 语义不进本用例的判别面）
+    // 按名字点卡片（不依赖中文名排序的列表序）
     auto clickCardNamed = [&](eui::Ui& ui, const char* nm) -> bool {
         for (int i = 0; i < 8; ++i) {
             const auto* name = ui.find("claude.profile." + std::to_string(i) +
@@ -2650,13 +3006,13 @@ REGISTER_TEST(claude_ui_advanced_tab_dialect_persists,
         }
         return false;
     };
-    // 等后台刷新把写库结果带进缓存快照（与 failover 用例同款有界轮询）
+    // 等后台刷新把写库结果带进缓存快照
     auto waitFor = [&](auto&& pred) -> bool {
         for (int i = 0; i < 300; ++i) {
-            // 每轮重发 onPageEnter：服务侧直写后的重查通道（若上一轮 post 的
-            // 查询先于本批写库落库，其结果会把 dataDirty_ 清掉 —— 200ms 节流
-            // 窗口内的写库会被这次「旧结果收割」吞掉，重发脏标记保证下一窗口
-            // 必有新 post；生产用户等价场景 = 切页重入）
+            // 每轮重发 onPageEnter：服务侧直写后的重查通道。若上一轮 post 的查询
+            // 先于本批写库落库，其结果会把 dataDirty_ 清掉——200ms 节流窗口内的
+            // 写库会被这次「旧结果收割」吞掉。重发脏标记保证下一窗口必有新 post；
+            // 生产用户等价场景 = 切页重入。
             mod->onPageEnter();
             eui::Ui ui;
             compose(ui, "adv_poll");
@@ -2681,7 +3037,7 @@ REGISTER_TEST(claude_ui_advanced_tab_dialect_persists,
     {
         eui::Ui ui;
         compose(ui, "adv_c3");
-        // 选中态逐帧归算：未覆盖 → 「自动（按站点推断）」（全角括号，审计 F9）
+        // 选中态逐帧归算：未覆盖 → 「自动（按站点推断）」（全角括号）
         const auto* label = ui.find("claude.form.advanced.dialect.dd.label");
         DOCTEST_REQUIRE(label != nullptr);
         DOCTEST_CHECK_EQ(label->text, std::string("自动（按站点推断）"));
@@ -2704,7 +3060,7 @@ REGISTER_TEST(claude_ui_advanced_tab_dialect_persists,
         const auto* label = ui.find("claude.form.advanced.dialect.dd.label");
         DOCTEST_REQUIRE(label != nullptr);
         DOCTEST_CHECK_EQ(label->text, std::string("opencode zen"));
-        // 几何断言：本页两下拉底沿 ≤ 弹窗底部按钮区上沿（dialog h=600）
+        // 几何断言：本页两下拉底沿 ≤ 弹窗底部按钮区上沿
         const auto* fbDd = ui.find("claude.form.basic.fallback.dd.field");
         const auto* confirm = ui.find("claude.dialog.form.confirm.bg");
         DOCTEST_REQUIRE(fbDd != nullptr);
@@ -2789,7 +3145,6 @@ REGISTER_TEST(claude_ui_advanced_tab_dialect_persists,
         DOCTEST_REQUIRE(g.isOk());
         DOCTEST_CHECK_EQ(g.value().dialectOverride, std::string("anthropic_default"));
     }
-    // 自动档（idx 0）保存 → 覆盖清空
     {
         eui::Ui ui;
         compose(ui, "adv_e6");
@@ -2821,11 +3176,10 @@ REGISTER_TEST(claude_ui_advanced_tab_dialect_persists,
         DOCTEST_CHECK_EQ(g.value().dialectOverride, std::string(""));
     }
 
-    // ③ 接线回归钉（spec §3.4 判据 2 第三分支）：先服务层设覆盖，编辑弹窗里
-    //    **不触碰**方言下拉直接保存 → 覆盖值保留（钉住透传保留语义，防未来
-    //    表单重构丢字段；现路径经 getProfile 本就保留，非「先红后绿」修复）。
-    //    前置：等缓存快照带上新覆盖 —— 详情 pane 文案与编辑预填同源自快照，
-    //    pane 显示「opencode zen（显式）」即快照已新（否则表单会拿旧值保存）
+    // ③ 接线回归钉：先服务层设覆盖，编辑弹窗里**不触碰**方言下拉直接保存 →
+    //    覆盖值保留（钉住透传保留语义，防未来表单重构丢字段；现路径经 getProfile
+    //    本就保留）。前置：等缓存快照带上新覆盖——详情 pane 文案与编辑预填同源自
+    //    快照，pane 显示「opencode zen（显式）」即快照已新（否则表单会拿旧值保存）。
     {
         auto g = env.svc->getProfile(editId);
         DOCTEST_REQUIRE(g.isOk());
@@ -2874,9 +3228,9 @@ REGISTER_TEST(claude_ui_advanced_tab_dialect_persists,
     return true;
 })
 
-// ---- 高级设置 JSON（2026-09-30 advanced-json-editor 设计 §7，headless）----
-// 变异④钉子（审计 F-7）：落库 pretty 断言的表单输入必须用 **compact/未格式化
-// 文本**——输入本身是 pretty 时「存原文」与「存 pretty」字节相同，变异恒绿
+// 高级设置 JSON（headless）
+// 反重构警告：落库 pretty 断言的表单输入**必须**用 compact / 未格式化文本——
+// 输入本身是 pretty 时，「存原文」与「存 pretty」字节相同，断言恒绿。
 REGISTER_TEST(claude_ui_advanced_json_pretty_persisted,
               "claude_module: 高级设置 JSON compact 输入落库为 pretty 文本（headless，变异④钉子）", {
     TestEnv env;
@@ -2918,7 +3272,7 @@ REGISTER_TEST(claude_ui_advanced_json_pretty_persisted,
     {
         eui::Ui ui;
         compose(ui, "json_c3");
-        // compact 单行输入（F-7：非 pretty 输入才能区分「存原文」与「存 pretty」）
+        // compact 单行输入（非 pretty 才能区分「存原文」与「存 pretty」）
         DOCTEST_CHECK(type(ui, "claude.form.advanced.json.hit",
                            R"({"model":"cmp-x","permissions":{"allow":["Bash"]}})"));
     }
@@ -3085,19 +3439,50 @@ REGISTER_TEST(claude_ui_advanced_json_invalid_and_env_key_rejected,
         DOCTEST_REQUIRE(err != nullptr);
         DOCTEST_CHECK(err->text.find("解析失败") != std::string::npos);
     }
-    // 成功分支：compact → 格式化 → 保存 → DB 为 pretty
+    // 成功分支：compact 输入 → 点「格式化」→ **编辑框文本当场**变成 pretty
+    // 且键序重排为字典序。
+    // 就会 pretty 化（claude_ui_form.cpp:322-327）——格式化按钮整段失效（no-op /
+    // 只 trim / 解析失败提前 return）该断言照样绿。这里改断言格式化**当场**
+    // 改写编辑框文本，并用乱序键（{"zz","aa"}）让「无操作」「只去空白」
+    // 「保留原序」三类半吊子实现全部变红；键序契约见 formatAdvancedJson 注释
+    // （parse→stringify 走 std::map = 字典序）。
     {
         eui::Ui ui;
         compose(ui, "jsonf_4");
         DOCTEST_CHECK(click(ui, "claude.dialog.form.cancel.bg"));
     }
-    openFormTab3FillBasic("jsonf_5");
+    DOCTEST_CHECK(openFormTab3FillBasic("jsonf_5"));
     {
         eui::Ui ui;
         compose(ui, "jsonf_6");
         DOCTEST_CHECK(type(ui, "claude.form.advanced.json.hit",
-                           R"({"statusLine":"on"})"));
+                           R"({"zz":1,"aa":2})"));
+    }
+    // 格式化前：编辑框仍是用户敲进去的 compact 原文（判别力来源——若这一帧
+    // 就已是 pretty，说明断言测的不是格式化按钮）
+    {
+        eui::Ui ui;
+        compose(ui, "jsonf_6b");
+        using InputState = components::input_detail::InputModel::InputState;
+        DOCTEST_CHECK_EQ(
+            ui.state<InputState>("claude.form.advanced.json").text,
+            std::string(R"({"zz":1,"aa":2})"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "jsonf_6c");
         DOCTEST_CHECK(click(ui, "claude.form.advanced.json.format.bg"));
+    }
+    const std::string kFormatted =
+        "{\n  \"aa\": 2,\n  \"zz\": 1\n}";
+    {
+        eui::Ui ui;
+        compose(ui, "jsonf_6d");
+        using InputState = components::input_detail::InputModel::InputState;
+        DOCTEST_CHECK_EQ(ui.state<InputState>("claude.form.advanced.json").text,
+                         kFormatted);
+        // 成功分支不留行内红字（与失败分支的「解析失败」红字互斥）
+        DOCTEST_CHECK(ui.find("claude.form.advanced.json.error") == nullptr);
     }
     DOCTEST_CHECK(fillBasicAndSave("jsonf_7"));
     bool fmtOk = false;
@@ -3109,7 +3494,9 @@ REGISTER_TEST(claude_ui_advanced_json_invalid_and_env_key_rejected,
         if (list.isOk()) {
             for (const auto& p : list.value()) {
                 if (p.name == "JSON坏值") {
-                    fmtOk = p.extraSettingsJson.find("\n  \"") != std::string::npos;
+                    // 落库值 == 格式化后的编辑框文本（逐字节）：保存链不再二次
+                    // 改写形状，只把编辑框那份原文带进 DB
+                    fmtOk = p.extraSettingsJson == kFormatted;
                 }
             }
         }
@@ -3132,7 +3519,7 @@ REGISTER_TEST(claude_ui_advanced_json_invalid_and_env_key_rejected,
     return true;
 })
 
-// ---- 高级设置 JSON 全屏编辑（2026-09-30 json-fullscreen，headless）----
+// 高级设置 JSON 全屏编辑（headless）
 // 用例 A：全屏态进入（覆盖层 = 整个窗口几何，且表单 dialog 面板整体落在覆盖层
 // 内 = 「盖住表单弹窗」的数值断言）+ Esc 双通道退出回表单（输入框 onCancel
 // 消费 / 模块级 closeTopmostDialog 序链先全屏后表单）+ 未应用文本留在缓冲
@@ -3194,7 +3581,23 @@ REGISTER_TEST(claude_ui_json_fullscreen_enter_cover_and_esc,
         DOCTEST_CHECK_EQ(bg->frame.width, screen.width);
         DOCTEST_CHECK_EQ(bg->frame.height, screen.height);
         DOCTEST_CHECK(ui.find("claude.jsonfs.editor.hit") != nullptr);
-        DOCTEST_CHECK(ui.find("claude.jsonfs.apply.bg") != nullptr);
+        // 底部三键 = 格式化 / 保存 / 放弃修改（新节点 claude.jsonfs.discard）
+        DOCTEST_CHECK(ui.find("claude.jsonfs.format.bg") != nullptr);
+        const auto* saveBtn = ui.find("claude.jsonfs.apply.bg");
+        DOCTEST_REQUIRE(saveBtn != nullptr);
+        const auto* saveText = ui.find("claude.jsonfs.apply.text");
+        DOCTEST_REQUIRE(saveText != nullptr);
+        DOCTEST_CHECK_EQ(saveText->text, std::string("保存"));
+        const auto* discardBtn = ui.find("claude.jsonfs.discard.bg");
+        DOCTEST_REQUIRE(discardBtn != nullptr);
+        const auto* discardText = ui.find("claude.jsonfs.discard.text");
+        DOCTEST_REQUIRE(discardText != nullptr);
+        DOCTEST_CHECK_EQ(discardText->text, std::string("放弃修改"));
+        DOCTEST_CHECK(ui.find("claude.jsonfs.done.bg") == nullptr);
+        DOCTEST_CHECK(ui.find("claude.jsonfs.done.text") == nullptr);
+        // 按钮行右缘不溢出覆盖层（三键同行：x=28 / 150 / 272，各 110 宽）
+        DOCTEST_CHECK(discardBtn->frame.x + discardBtn->frame.width <=
+                      screen.width - 27.0f);
         const auto* panel = ui.find("claude.dialog.form.panel");
         DOCTEST_REQUIRE(panel != nullptr);   // 表单弹窗仍画（被盖在下面）
         DOCTEST_CHECK(panel->frame.x >= bg->frame.x - 0.5f);
@@ -3203,9 +3606,9 @@ REGISTER_TEST(claude_ui_json_fullscreen_enter_cover_and_esc,
                       bg->frame.x + bg->frame.width + 0.5f);
         DOCTEST_CHECK(panel->frame.y + panel->frame.height <=
                       bg->frame.y + bg->frame.height + 0.5f);
-        // z 档位钉（审计 F-1）：覆盖层 1050 —— 高于表单弹窗根（dialog 默认
-        // 1000）、低于 toast（1100，应用成功确认可见）。变异 1050→900 必红
-        //（900 < 1000 时 dialog 的全屏 backdrop 反序先命中 = 全屏里一点就关
+        // z 档位钉：覆盖层 1050 —— 高于表单弹窗根（dialog 默认 1000）、低于 toast
+        //（1100，应用成功确认可见）。改成 900 必红：900 < 1000 时 dialog 的全屏
+        // backdrop 反序先命中 = 全屏里一点就关表单，功能真坏。
         // 表单，功能真坏；这里以 z 值直接钉住该序）
         const auto* fsRoot = ui.find("claude.jsonfs.root");
         DOCTEST_REQUIRE(fsRoot != nullptr);
@@ -3217,7 +3620,9 @@ REGISTER_TEST(claude_ui_json_fullscreen_enter_cover_and_esc,
         DOCTEST_REQUIRE(toastRoot != nullptr);
         DOCTEST_CHECK(fsRoot->zIndex < toastRoot->zIndex);
     }
-    // 全屏框输入 → Esc（输入框 onCancel 消费）→ 回表单，文本保留在缓冲
+    // 全屏框输入 → Esc（输入框 onCancel 消费）→ 回表单；Esc = 放弃修改
+    // **Esc = 放弃修改**（原语义「保留文本回表单」已变）：编辑缓冲恢复为
+    // 上次落库值 + 关闭全屏，表单仍开
     {
         eui::Ui ui;
         compose(ui, "fs_a5");
@@ -3229,7 +3634,7 @@ REGISTER_TEST(claude_ui_json_fullscreen_enter_cover_and_esc,
         eui::KeyEvent esc;
         esc.key = eui::InputKey::Escape;
         esc.action = eui::KeyAction::Press;
-        DOCTEST_CHECK(hit->onKeyEvent(esc));   // 输入框消费（退全屏，不关表单）
+        DOCTEST_CHECK(hit->onKeyEvent(esc));   // 输入框消费（放弃修改 + 退全屏）
     }
     {
         eui::Ui ui;
@@ -3239,12 +3644,12 @@ REGISTER_TEST(claude_ui_json_fullscreen_enter_cover_and_esc,
         DOCTEST_REQUIRE(panel != nullptr);   // 回到表单（弹窗还开）
         DOCTEST_CHECK_EQ(panel->opacity, 1.0f);
         DOCTEST_CHECK(ui.find("claude.form.advanced.json.fs.bg") != nullptr);
-        // 未应用的编辑留在缓冲、回表单可见（多行框首行 = 输入原文）
-        const auto* line = ui.find("claude.form.advanced.json.text.0");
-        DOCTEST_REQUIRE(line != nullptr);
-        DOCTEST_CHECK_EQ(line->text, std::string(R"({"keep":"me"})"));
+        // 新建表单的落库基线 = 空 → 放弃后编辑缓冲回到空（多行空值渲染
+        // 单节点 .text（占位符），不产生 .text.N 行节点）
+        DOCTEST_CHECK(ui.find("claude.form.advanced.json.text.0") == nullptr);
     }
-    // 重进全屏 → 模块级 Esc（closeTopmostDialog）先退全屏、再按一次才关表单
+    // 重进全屏 → 模块级 Esc（closeTopmostDialog）先退全屏（= 放弃修改）、
+    // 再按一次才关表单
     {
         eui::Ui ui;
         compose(ui, "fs_a7");
@@ -3257,7 +3662,7 @@ REGISTER_TEST(claude_ui_json_fullscreen_enter_cover_and_esc,
         eui::KeyEvent esc;
         esc.key = eui::InputKey::Escape;
         esc.action = eui::KeyAction::Press;
-        DOCTEST_CHECK(mod->onKeyEvent(esc));   // 消费 = 退全屏
+        DOCTEST_CHECK(mod->onKeyEvent(esc));   // 消费 = 放弃修改 + 退全屏
     }
     {
         eui::Ui ui;
@@ -3281,9 +3686,9 @@ REGISTER_TEST(claude_ui_json_fullscreen_enter_cover_and_esc,
     return true;
 })
 
-// ---- 用例 B：文本往返（表单框 ↔ 全屏框同一编辑缓冲，经 DB 真值验证，F-7
-//      同款变异钉口径：输入一律 compact，pretty 落库才能区分）+ 校验红字同源
-//（全屏 error 节点与表单 claude.dialog.form.error 同读 formError_，文本相等）----
+// 用例 B：文本往返（表单框 ↔ 全屏框同一编辑缓冲，经 DB 真值验证）
+// 输入一律 compact，pretty 落库才能区分。全屏 error 节点与表单
+// claude.dialog.form.error 同读 formError_，文本相等。
 REGISTER_TEST(claude_ui_json_fullscreen_buffer_roundtrip_and_error_gate,
               "claude_module: JSON 全屏编辑同一缓冲往返（双向落库）+ 应用校验红字同源（headless）", {
     TestEnv env;
@@ -3313,9 +3718,9 @@ REGISTER_TEST(claude_ui_json_fullscreen_buffer_roundtrip_and_error_gate,
         return true;
     };
 
-    // ① 方向 A（表单框 → 全屏框 → 应用落库）：表单框输 compact → 全屏内点
-    //    「格式化」（若全屏是第二份缓冲则空串 no-op，落库仍是 compact → 红）
-    //    → 「完成」回表单 → 保存 → DB 为 pretty
+    // ① 方向 A（表单框 → 全屏框 → 保存落库）：新建表单→基础项先填全→高级配置页
+    //    输 compact → 全屏内点「格式化」（若全屏是第二份缓冲则空串 no-op，
+    //    全屏编辑器看不到 pretty 形 → 红）→「保存」（节点 claude.jsonfs.apply，
     {
         eui::Ui ui;
         compose(ui, "fs_b1");
@@ -3324,6 +3729,9 @@ REGISTER_TEST(claude_ui_json_fullscreen_buffer_roundtrip_and_error_gate,
     {
         eui::Ui ui;
         compose(ui, "fs_b2");
+        DOCTEST_CHECK(type(ui, "claude.dialog.form.name.hit", "FS往返A"));
+        DOCTEST_CHECK(type(ui, "claude.dialog.form.url.hit", "https://fs-a.example.com"));
+        DOCTEST_CHECK(type(ui, "claude.dialog.form.key.hit", "sk-ant-fs-a-0001"));
         DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.3"));
     }
     {
@@ -3336,25 +3744,22 @@ REGISTER_TEST(claude_ui_json_fullscreen_buffer_roundtrip_and_error_gate,
     {
         eui::Ui ui;
         compose(ui, "fs_b4");
+        // 全屏编辑器与表单同缓冲：进全屏即见表单框里输的 compact 原文
+        const auto* l0 = ui.find("claude.jsonfs.editor.text.0");
+        DOCTEST_REQUIRE(l0 != nullptr);
+        DOCTEST_CHECK_EQ(l0->text,
+                         std::string(R"({"model":"fs-a","statusLine":"on"})"));
         DOCTEST_CHECK(click(ui, "claude.jsonfs.format.bg"));
     }
     {
         eui::Ui ui;
         compose(ui, "fs_b5");
-        DOCTEST_CHECK(click(ui, "claude.jsonfs.done.bg"));
-    }
-    {
-        eui::Ui ui;
-        compose(ui, "fs_b6");
-        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.0"));
-    }
-    {
-        eui::Ui ui;
-        compose(ui, "fs_b7");
-        DOCTEST_CHECK(type(ui, "claude.dialog.form.name.hit", "FS往返A"));
-        DOCTEST_CHECK(type(ui, "claude.dialog.form.url.hit", "https://fs-a.example.com"));
-        DOCTEST_CHECK(type(ui, "claude.dialog.form.key.hit", "sk-ant-fs-a-0001"));
-        DOCTEST_CHECK(click(ui, "claude.dialog.form.confirm.bg"));
+        // 格式化作用在同一缓冲：全屏首行变 pretty 的 "{"；底层表单框（被盖住）
+        // 同步可见同一份 pretty 文本
+        const auto* l0 = ui.find("claude.jsonfs.editor.text.0");
+        DOCTEST_REQUIRE(l0 != nullptr);
+        DOCTEST_CHECK_EQ(l0->text, std::string("{"));
+        DOCTEST_CHECK(click(ui, "claude.jsonfs.apply.bg"));   // 保存
     }
     bool okA = false;
     int64_t idA = 0;
@@ -3376,8 +3781,8 @@ REGISTER_TEST(claude_ui_json_fullscreen_buffer_roundtrip_and_error_gate,
     }
     DOCTEST_CHECK(okA);   // pretty 落库 = 全屏「格式化」确实作用在同一缓冲
 
-    // ② 方向 B（全屏框 → 表单框 → 保存落库）：新建表单 → 高级配置页 → 直接进
-    //    全屏输入 compact → 「完成」回表单 → 保存 → DB 含该键
+    // ② 方向 B（全屏框 → 表单保存落库）：新建表单→基础项填全→高级配置页→
+    //    直接进全屏输入 compact →「保存」→ DB 含该键
     {
         eui::Ui ui;
         compose(ui, "fs_c1");
@@ -3386,6 +3791,9 @@ REGISTER_TEST(claude_ui_json_fullscreen_buffer_roundtrip_and_error_gate,
     {
         eui::Ui ui;
         compose(ui, "fs_c2");
+        DOCTEST_CHECK(type(ui, "claude.dialog.form.name.hit", "FS往返B"));
+        DOCTEST_CHECK(type(ui, "claude.dialog.form.url.hit", "https://fs-b.example.com"));
+        DOCTEST_CHECK(type(ui, "claude.dialog.form.key.hit", "sk-ant-fs-b-0001"));
         DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.3"));
     }
     {
@@ -3398,27 +3806,18 @@ REGISTER_TEST(claude_ui_json_fullscreen_buffer_roundtrip_and_error_gate,
         compose(ui, "fs_c4");
         DOCTEST_CHECK(type(ui, "claude.jsonfs.editor.hit",
                            R"({"model":"fs-b"})"));
-        DOCTEST_CHECK(click(ui, "claude.jsonfs.done.bg"));
-    }
-    {
-        eui::Ui ui;
-        compose(ui, "fs_c5");
-        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.0"));
-    }
-    {
-        eui::Ui ui;
-        compose(ui, "fs_c6");
-        DOCTEST_CHECK(type(ui, "claude.dialog.form.name.hit", "FS往返B"));
-        DOCTEST_CHECK(type(ui, "claude.dialog.form.url.hit", "https://fs-b.example.com"));
-        DOCTEST_CHECK(type(ui, "claude.dialog.form.key.hit", "sk-ant-fs-b-0001"));
-        DOCTEST_CHECK(click(ui, "claude.dialog.form.confirm.bg"));
+        DOCTEST_CHECK(click(ui, "claude.jsonfs.apply.bg"));   // 保存
     }
     bool okB = false;
+    bool cardReady = false;   // 快照收割完成：卡片已进渲染树（fs_d1 的 click 依赖）
     int64_t idB = 0;
-    for (int i = 0; i < 300 && !okB; ++i) {
+    for (int i = 0; i < 300 && !(okB && cardReady); ++i) {
         mod->onPageEnter();
         eui::Ui ui;
         compose(ui, "fs_b_poll_b");
+        if (!cardReady) {
+            cardReady = ui.find("claude.profile.0.bg") != nullptr;
+        }
         auto list = env.svc->listProfiles();
         if (list.isOk()) {
             for (const auto& p : list.value()) {
@@ -3428,13 +3827,17 @@ REGISTER_TEST(claude_ui_json_fullscreen_buffer_roundtrip_and_error_gate,
                 }
             }
         }
-        if (!okB) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        if (!(okB && cardReady)) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
     }
     DOCTEST_CHECK(okB);   // 全屏框的输入确实写进了表单保存的那份缓冲
+    DOCTEST_CHECK(cardReady);   // 快照收割完成（卡片进渲染树，fs_d1 可点）
 
-    // ③ 校验红字同源：编辑 ①的 profile → 全屏内改坏 JSON → 「应用」→ 全屏
-    //    error 节点非空且不退全屏；「完成」回表单后 claude.dialog.form.error
-    //    与全屏 error 文本相等（同一 formError_，两处显示）
+    // ③ 校验红字同源：编辑 ①的 profile → 全屏内改坏 JSON → 「保存」→ 全屏
+    //    error 节点非空且不退全屏；「放弃修改」
+    //    formError_，两处显示；放弃只清 JSON 行内红字与编辑缓冲，提交闸门
+    //    文案保留）
     {
         eui::Ui ui;
         compose(ui, "fs_d1");
@@ -3455,7 +3858,6 @@ REGISTER_TEST(claude_ui_json_fullscreen_buffer_roundtrip_and_error_gate,
         compose(ui, "fs_d4");
         DOCTEST_CHECK(click(ui, "claude.form.advanced.json.fs.bg"));
     }
-    std::string fsErrText;
     {
         eui::Ui ui;
         compose(ui, "fs_d5");
@@ -3469,7 +3871,11 @@ REGISTER_TEST(claude_ui_json_fullscreen_buffer_roundtrip_and_error_gate,
         const auto* err = ui.find("claude.jsonfs.error");
         DOCTEST_REQUIRE(err != nullptr);
         DOCTEST_CHECK(!err->text.empty());
-        fsErrText = err->text;
+        // 全屏红字 = 提交闸门 formError_（JSON 源，同文案双写）；表单侧同一帧
+        // 也有这条红字（fs_d8 断言放弃后两处都消失）
+        const auto* ferr = ui.find("claude.dialog.form.error");
+        DOCTEST_REQUIRE(ferr != nullptr);
+        DOCTEST_CHECK_EQ(ferr->text, err->text);
         // 应用失败不退全屏、表单不关（闸门拦截，同 submitForm 语义）
         DOCTEST_CHECK(ui.find("claude.jsonfs.root") != nullptr);
         DOCTEST_CHECK(ui.find("claude.dialog.form.panel") != nullptr);
@@ -3477,14 +3883,20 @@ REGISTER_TEST(claude_ui_json_fullscreen_buffer_roundtrip_and_error_gate,
     {
         eui::Ui ui;
         compose(ui, "fs_d7");
-        DOCTEST_CHECK(click(ui, "claude.jsonfs.done.bg"));
+        DOCTEST_CHECK(click(ui, "claude.jsonfs.discard.bg"));   // 放弃修改
     }
     {
         eui::Ui ui;
         compose(ui, "fs_d8");
-        const auto* ferr = ui.find("claude.dialog.form.error");
-        DOCTEST_REQUIRE(ferr != nullptr);
-        DOCTEST_CHECK_EQ(ferr->text, fsErrText);   // 同源：同一 formError_
+        // 这条 formError_ 是 **JSON 源**（保存时 validateExtraSettingsJson 失败写入，
+        // 与 formAdvancedJsonError_ 同文案）→「放弃修改」必须把它一并清掉，否则
+        // 留下一条描述**已被丢弃**文本的幽灵错误。
+        DOCTEST_CHECK(ui.find("claude.dialog.form.error") == nullptr);
+        DOCTEST_CHECK(ui.find("claude.form.advanced.json.error") == nullptr);
+        // 放弃 = 编辑缓冲回到落库值（坏片段没留下）
+        const auto* adv = ui.find("claude.form.advanced.json.text.0");
+        DOCTEST_REQUIRE(adv != nullptr);
+        DOCTEST_CHECK(adv->text.find("{broken") == std::string::npos);
         DOCTEST_CHECK(click(ui, "claude.dialog.form.cancel.bg"));   // 不落坏值
     }
     // 坏值未落库：全表扫描，任何 profile 的 extraSettingsJson 都不含 "{broken"
@@ -3498,9 +3910,9 @@ REGISTER_TEST(claude_ui_json_fullscreen_buffer_roundtrip_and_error_gate,
         }
     }
 
-    // ④ 判别式（审计 F-6）：红字两来源可辨 + 优先级钉住——③ 的路径上
-    // formError_ 与 formAdvancedJsonError_ 同文本（submitForm 两条一起写），
-    // 读哪个都绿、非判别。这里构造两源文本不同的状态：
+    // ④ 判别式：红字两来源可辨 + 优先级钉住——③ 的路径上 formError_ 与
+    // formAdvancedJsonError_ 同文本（submitForm 两条一起写），读哪个都绿、非判别。
+    // 这里构造两源文本不同的状态：
     //   路径① 先「格式化」坏 JSON → 仅 formAdvancedJsonError_ 非空
     //        （formError_ 空）→ 全屏 error 必须显示「解析失败…」（行内源可达）
     //   路径② 再「应用」触发基础项闸门 → formError_ = 名称/URL 文案，
@@ -3560,9 +3972,347 @@ REGISTER_TEST(claude_ui_json_fullscreen_buffer_roundtrip_and_error_gate,
     return true;
 })
 
-// ---- 运行第 6 键（2026-09-28 profile-run 设计 §6/§8；D-1 直连形态）----
-// ⚠️ 本文件用真实 ClaudeService（setGlobal）：点「运行」前**必须**注入假 launch，
-//    否则测试会真的启动 wt/powershell + claude（spec §6 第 4 项）
+// 全屏 JSON「放弃修改」语义（按钮 / 点遮罩 / Esc 三通道）
+// 契约：
+//   底部三键 = 格式化 / 保存（节点 claude.jsonfs.apply）/ 放弃修改（新节点
+//   claude.jsonfs.discard）。
+//   放弃 = 编辑缓冲恢复**上次落库值** + 关全屏（表单仍开，不报错）；
+//   放弃 = 编辑缓冲恢复**上次落库值** + 关全屏（表单仍开，不报错）；
+//   Esc / 点遮罩同「放弃修改」（原 Esc「保留文本回表单」语义已作废——防误丢）。
+REGISTER_TEST(claude_ui_json_fullscreen_discard_semantics,
+              "claude_module: JSON 全屏「放弃修改」= 缓冲恢复落库值（按钮/遮罩/Esc 三通道，headless）", {
+    TestEnv env;
+    // DB 原值用 compact 原文（读侧按原样预填，格式化按钮才规范化）——便于
+    // 「恢复为落库值」用整串相等断言区分「恢复了」与「没动」
+    const std::string savedJson = R"({"model":"keep-me","statusLine":"on"})";
+    auto p = env.svc->createProfile("放弃源", "https://discard.example.com",
+                                    "sk-ant-disc-0001", "m",
+                                    /*activateIfNoneActive=*/true,
+                                    /*sharedConfigId=*/0, "both", "",
+                                    /*fallbackProfileId=*/0, savedJson);
+    DOCTEST_REQUIRE(p.isOk());
+    const int64_t pid = p.value().id;
+
+    std::unique_ptr<::core::Module> mod(create_claude_module());
+    mod->onStart();
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    auto compose = [&](eui::Ui& ui, const char* tag) {
+        ui.begin(tag);
+        mod->compose(ui, screen);
+        ui.end();
+        ui.layout(screen.width, screen.height);
+    };
+    auto click = [](eui::Ui& ui, const std::string& id) -> bool {
+        const auto* node = ui.find(id);
+        if (node == nullptr || node->onClick == nullptr) return false;
+        node->onClick();
+        return true;
+    };
+    auto type = [](eui::Ui& ui, const std::string& id,
+                   const std::string& text) -> bool {
+        const auto* node = ui.find(id);
+        if (node == nullptr || node->onTextInput == nullptr) return false;
+        core::TextInputEvent ev;
+        ev.text = text;
+        node->onTextInput(ev);
+        return true;
+    };
+    // 全屏编辑器全文（多行 .text.N 逐行拼；空值走单节点 .text 占位符 → 空串）
+    auto editorText = [](eui::Ui& ui) -> std::string {
+        std::string out;
+        bool any = false;
+        for (size_t i = 0;; ++i) {
+            const auto* n =
+                ui.find("claude.jsonfs.editor.text." + std::to_string(i));
+            if (n == nullptr) break;
+            if (any) out += "\n";
+            out += n->text;
+            any = true;
+        }
+        return out;
+    };
+    // 返回 bool（DOCTEST_CHECK 展开含 `return false;`——显式 void 会撞
+    // "void block should not return a value"；不写返回类型又会被推导成 bool
+    // 而尾路径缺 return）。调用方用 DOCTEST_REQUIRE 包。
+    auto openFullscreen = [&]() -> bool {
+        {
+            eui::Ui ui;
+            compose(ui, "disc_sel");
+            DOCTEST_CHECK(click(ui, "claude.profile.0.bg"));
+        }
+        {
+            eui::Ui ui;
+            compose(ui, "disc_edit");
+            DOCTEST_CHECK(click(ui, "claude.act.edit.bg"));
+        }
+        {
+            eui::Ui ui;
+            compose(ui, "disc_tab3");
+            DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.3"));
+        }
+        {
+            eui::Ui ui;
+            compose(ui, "disc_fs");
+            DOCTEST_CHECK(click(ui, "claude.form.advanced.json.fs.bg"));
+        }
+        return true;
+    };
+
+    // 进全屏：编辑器 = 落库原文（int64 真值经 DB 预填，非第二份缓冲）
+    DOCTEST_REQUIRE(openFullscreen());
+    {
+        eui::Ui ui;
+        compose(ui, "disc_in");
+        DOCTEST_REQUIRE(ui.find("claude.jsonfs.root") != nullptr);
+        DOCTEST_CHECK_EQ(editorText(ui), savedJson);
+    }
+
+    // ① 按钮通道：插入坏片段 → 「放弃修改」→ 缓冲回落库值、全屏关、表单开、
+    //    无红字（formAdvancedJsonError_ 一并清）
+    {
+        eui::Ui ui;
+        compose(ui, "disc_btn_type");
+        DOCTEST_CHECK(type(ui, "claude.jsonfs.editor.hit", "{broken"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "disc_btn_pre");
+        DOCTEST_CHECK(editorText(ui) != savedJson);   // 改动已进缓冲
+        DOCTEST_CHECK(click(ui, "claude.jsonfs.discard.bg"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "disc_btn_after");
+        DOCTEST_CHECK(ui.find("claude.jsonfs.root") == nullptr);   // 全屏已关
+        DOCTEST_CHECK(ui.find("claude.dialog.form.panel") != nullptr);  // 表单仍开
+        DOCTEST_CHECK(ui.find("claude.form.advanced.json.error") == nullptr);
+        const auto* l0 = ui.find("claude.form.advanced.json.text.0");
+        DOCTEST_REQUIRE(l0 != nullptr);
+        DOCTEST_CHECK_EQ(l0->text, savedJson);   // 恢复为落库值
+    }
+
+    // ② 点遮罩通道：重进全屏 → 改坏 → 点覆盖层底（claude.jsonfs.bg）→ 同放弃
+    DOCTEST_REQUIRE(openFullscreen());
+    {
+        eui::Ui ui;
+        compose(ui, "disc_mask_type");
+        DOCTEST_REQUIRE(ui.find("claude.jsonfs.root") != nullptr);
+        DOCTEST_CHECK(type(ui, "claude.jsonfs.editor.hit", "{broken"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "disc_mask_pre");
+        DOCTEST_CHECK(editorText(ui) != savedJson);
+        DOCTEST_CHECK(click(ui, "claude.jsonfs.bg"));   // 遮罩点击 = 放弃修改
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "disc_mask_after");
+        DOCTEST_CHECK(ui.find("claude.jsonfs.root") == nullptr);
+        DOCTEST_CHECK(ui.find("claude.dialog.form.panel") != nullptr);
+        const auto* l0 = ui.find("claude.form.advanced.json.text.0");
+        DOCTEST_REQUIRE(l0 != nullptr);
+        DOCTEST_CHECK_EQ(l0->text, savedJson);
+    }
+
+    // ③ Esc 通道（模块级 closeTopmostDialog，输入框未聚焦可达）：同放弃 +
+    //    只消费一层（第二次 Esc 才关表单）
+    DOCTEST_REQUIRE(openFullscreen());
+    {
+        eui::Ui ui;
+        compose(ui, "disc_esc_type");
+        DOCTEST_REQUIRE(ui.find("claude.jsonfs.root") != nullptr);
+        DOCTEST_CHECK(type(ui, "claude.jsonfs.editor.hit", "{broken"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "disc_esc_pre");
+        DOCTEST_CHECK(editorText(ui) != savedJson);
+        eui::KeyEvent esc;
+        esc.key = eui::InputKey::Escape;
+        esc.action = eui::KeyAction::Press;
+        DOCTEST_CHECK(mod->onKeyEvent(esc));   // 消费 = 放弃修改 + 退全屏
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "disc_esc_after");
+        DOCTEST_CHECK(ui.find("claude.jsonfs.root") == nullptr);
+        DOCTEST_CHECK(ui.find("claude.dialog.form.panel") != nullptr);
+        const auto* l0 = ui.find("claude.form.advanced.json.text.0");
+        DOCTEST_REQUIRE(l0 != nullptr);
+        DOCTEST_CHECK_EQ(l0->text, savedJson);
+    }
+
+    // ④ 边界：当前文本 == 落库值（未改动）时放弃 = 等价于关闭，不报错
+    DOCTEST_REQUIRE(openFullscreen());
+    {
+        eui::Ui ui;
+        compose(ui, "disc_noop");
+        DOCTEST_REQUIRE(ui.find("claude.jsonfs.root") != nullptr);
+        DOCTEST_CHECK(click(ui, "claude.jsonfs.discard.bg"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "disc_noop_after");
+        DOCTEST_CHECK(ui.find("claude.jsonfs.root") == nullptr);
+        DOCTEST_CHECK(ui.find("claude.dialog.form.panel") != nullptr);
+        DOCTEST_CHECK(ui.find("claude.form.advanced.json.error") == nullptr);
+        const auto* l0 = ui.find("claude.form.advanced.json.text.0");
+        DOCTEST_REQUIRE(l0 != nullptr);
+        DOCTEST_CHECK_EQ(l0->text, savedJson);
+        DOCTEST_CHECK(click(ui, "claude.dialog.form.cancel.bg"));   // 收尾不落库
+    }
+    // ⑤ 幽灵错误：全屏内「保存」因非法 JSON 被提交闸门拦下 → formError_ +
+    //    formAdvancedJsonError_ 同文案双写；此时放弃 → 缓冲已回滚，这条红字描述的
+    //    是**已被丢弃**的内容 → 必须一并消失
+    DOCTEST_REQUIRE(openFullscreen());
+    {
+        eui::Ui ui;
+        compose(ui, "disc_err_type");
+        DOCTEST_CHECK(type(ui, "claude.jsonfs.editor.hit", "{broken"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "disc_err_save");
+        DOCTEST_CHECK(click(ui, "claude.jsonfs.apply.bg"));   // 保存 → JSON 校验失败
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "disc_err_gate");
+        // 闸门红字在：全屏 error 与表单 error 同文案（同一条 formError_）
+        const auto* ferr = ui.find("claude.dialog.form.error");
+        DOCTEST_REQUIRE(ferr != nullptr);
+        DOCTEST_CHECK(ferr->text.find("高级设置 JSON") != std::string::npos);
+        DOCTEST_CHECK(ui.find("claude.jsonfs.root") != nullptr);   // 未退全屏
+        DOCTEST_CHECK(click(ui, "claude.jsonfs.discard.bg"));      // 放弃修改
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "disc_err_after");
+        DOCTEST_CHECK(ui.find("claude.jsonfs.root") == nullptr);
+        DOCTEST_CHECK(ui.find("claude.dialog.form.error") == nullptr);   // 无残留
+        DOCTEST_CHECK(ui.find("claude.form.advanced.json.error") == nullptr);
+        const auto* l0 = ui.find("claude.form.advanced.json.text.0");
+        DOCTEST_REQUIRE(l0 != nullptr);
+        DOCTEST_CHECK_EQ(l0->text, savedJson);
+    }
+    // ⑤b 同一条幽灵错误在「先改回合法、再放弃」路径上也要清：错误文案与当前
+    //     缓冲无关——按**来源**清，不按「当前文本是否仍非法」重新判定
+    {
+        eui::Ui ui;
+        compose(ui, "disc_err2_fs");
+        DOCTEST_CHECK(click(ui, "claude.form.advanced.json.fs.bg"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "disc_err2_type");
+        DOCTEST_CHECK(type(ui, "claude.jsonfs.editor.hit", "{broken"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "disc_err2_save");
+        DOCTEST_CHECK(click(ui, "claude.jsonfs.apply.bg"));   // 留下闸门红字
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "disc_err2_fix");
+        // 全选（Ctrl/Cmd+A）后**同帧**输入合法 JSON → 缓冲整体改回合法。
+        // 必须同帧：InputState（选区）挂在 Ui 实例上，跨帧新 Ui 不保证保留
+        const auto* hit = ui.find("claude.jsonfs.editor.hit");
+        DOCTEST_REQUIRE(hit != nullptr);
+        DOCTEST_REQUIRE(hit->onKeyEvent != nullptr);
+        eui::KeyEvent selectAll;
+        selectAll.key = eui::InputKey::A;
+        selectAll.action = eui::KeyAction::Press;
+        selectAll.modifiers.control = true;   // shortcut() = control（非 Apple）
+        selectAll.modifiers.super = true;     // shortcut() = super（Apple）
+        DOCTEST_CHECK(hit->onKeyEvent(selectAll));
+        DOCTEST_REQUIRE(hit->onTextInput != nullptr);
+        core::TextInputEvent ev;
+        ev.text = R"({"ok":true})";
+        hit->onTextInput(ev);
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "disc_err2_check_valid");
+        const auto* l0 = ui.find("claude.jsonfs.editor.text.0");
+        DOCTEST_REQUIRE(l0 != nullptr);
+        DOCTEST_CHECK_EQ(l0->text, std::string(R"({"ok":true})"));   // 已改回合法
+        // 闸门红字仍在（onChange 只清行内红字，提交闸门要等下一次提交/放弃）
+        DOCTEST_CHECK(ui.find("claude.dialog.form.error") != nullptr);
+        DOCTEST_CHECK(click(ui, "claude.jsonfs.discard.bg"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "disc_err2_after");
+        DOCTEST_CHECK(ui.find("claude.dialog.form.error") == nullptr);
+        const auto* l0 = ui.find("claude.form.advanced.json.text.0");
+        DOCTEST_REQUIRE(l0 != nullptr);
+        DOCTEST_CHECK_EQ(l0->text, savedJson);
+        DOCTEST_CHECK(click(ui, "claude.dialog.form.cancel.bg"));
+    }
+    // ⑥ 精准性：**非** JSON 源的 formError_ 不被放弃清掉。新建表单（名称/URL
+    //    为空）→ 全屏内「保存」→ 基础项闸门先于 JSON 校验命中，写的是
+    //    「名称和 Base URL 不能为空」（fromJson=false）→ 放弃后这条红字必须还在
+    {
+        eui::Ui ui;
+        compose(ui, "disc_prec_new");
+        DOCTEST_CHECK(click(ui, "claude.profiles.new.bg"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "disc_prec_tab3");
+        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.3"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "disc_prec_fs");
+        DOCTEST_CHECK(click(ui, "claude.form.advanced.json.fs.bg"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "disc_prec_type");
+        DOCTEST_CHECK(type(ui, "claude.jsonfs.editor.hit", R"({"a":1})"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "disc_prec_save");
+        DOCTEST_CHECK(click(ui, "claude.jsonfs.apply.bg"));   // 基础项闸门
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "disc_prec_gate");
+        const auto* ferr = ui.find("claude.dialog.form.error");
+        DOCTEST_REQUIRE(ferr != nullptr);
+        DOCTEST_CHECK(ferr->text.find("名称和 Base URL") != std::string::npos);
+        DOCTEST_CHECK(click(ui, "claude.jsonfs.discard.bg"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "disc_prec_after");
+        const auto* ferr = ui.find("claude.dialog.form.error");
+        DOCTEST_REQUIRE(ferr != nullptr);   // 非 JSON 源 → 保留（仍成立）
+        DOCTEST_CHECK(ferr->text.find("名称和 Base URL") != std::string::npos);
+        DOCTEST_CHECK(click(ui, "claude.dialog.form.cancel.bg"));   // 收尾不落库
+    }
+
+    // DB 未被放弃路径污染
+    {
+        auto got = env.svc->getProfile(pid);
+        DOCTEST_REQUIRE(got.isOk());
+        DOCTEST_CHECK_EQ(got.value().extraSettingsJson, savedJson);
+    }
+
+    mod->onStop();
+    cleanupProfileKey(kTestKeychainService, pid);
+    return true;
+})
+
+// 运行第 7 键（直连形态）
+// 本文件用真实 ClaudeService（setGlobal）：点「运行」前**必须**注入假 launch，
+// 否则测试会真的启动 wt/powershell + claude
 REGISTER_TEST(claude_module_run_button_headless,
               "claude_module: 「运行」按钮存在 + 无选中 toast + 假 launch 收到 --settings 参数", {
     TestEnv env;
@@ -3585,7 +4335,7 @@ REGISTER_TEST(claude_module_run_button_headless,
         node->onClick();
         return true;
     };
-    // 审计 H2：DB 查询在后台线程 + 200ms 节流 → 「变更可见」最多晚一帧，
+        // DB 查询在后台线程 + 200ms 节流 → 「变更可见」最多晚一帧，有界轮询等可见
     // 有界轮询等可见（同本文件「compose 缓存等价」用例的 composeUntil）
     auto composeUntil = [&](auto&& pred) -> bool {
         for (int i = 0; i < 200; ++i) {
@@ -3606,7 +4356,7 @@ REGISTER_TEST(claude_module_run_button_headless,
     });
     // runProfile 直连形态不启代理：isProxyRunning 全程恒 false（零全局改动）
 
-    // 第 6 键存在且可点（无 profile 时：无选中 → toast「请先选择 Profile」，不启动）
+    // 第 7 键存在且可点（无 profile 时：无选中 → toast「请先选择 Profile」，不启动）
     {
         eui::Ui ui;
         compose(ui);
@@ -3669,10 +4419,9 @@ REGISTER_TEST(claude_module_run_button_headless,
     return true;
 })
 
-// ============ 批 2（设计 §2.10）：共享配置片段 编辑器 UI ============
+// 共享配置片段 编辑器 UI
 
-// ---- 纯函数：片段按 id 查找（frozenKeys/normalizedEnvKey/keyIn 家族随
-// advanced-json-editor §8.2 片段 JSON 化拆除——env 冻结语义死亡）----
+// 纯函数：片段按 id 查找
 REGISTER_TEST(claude_ui_logic_shared_pure_functions,
               "claude_ui_logic: 片段查找（批 2 纯函数，frozenKeys 家族已拆）", {
     using module::claude::findSharedById;
@@ -3689,7 +4438,7 @@ REGISTER_TEST(claude_ui_logic_shared_pure_functions,
     return true;
 })
 
-// ---- 1. 左栏「共享配置」区块：标题 / 片段卡片（name + 预设副文案）/ 新建按钮；
+// 1. 左栏「共享配置」区块：标题 / 片段卡片（name + 预设副文案）/ 新建按钮；
 //      点卡片开编辑弹窗（回显 name/env）----
 REGISTER_TEST(claude_module_shared_block_and_card,
               "claude_module: 共享配置区块卡片+点卡片开编辑弹窗（headless）", {
@@ -3741,13 +4490,11 @@ REGISTER_TEST(claude_module_shared_block_and_card,
                          std::string("片段A"));
         DOCTEST_CHECK_EQ(textOf(ui, "claude.shared.card.1.name"),
                          std::string("片段B"));
-        // 副文案（advanced-json-editor §8.2）：「N 个键」计数随片段 env 域拆除
-        // 失效，改「高级属性 JSON 预设」
+        // 副文案：「N 个键」计数已随片段 env 域拆除失效，改「高级属性 JSON 预设」
         DOCTEST_CHECK(textOf(ui, "claude.shared.card.1.keys").find(
                           "高级属性 JSON 预设") != std::string::npos);
     }
-    // 点片段B 卡片 → 编辑弹窗打开、name/env 回显（parseExtraEnv 出 map 按
-    // 键名排序：MY_B 在前）
+    // 点片段B 卡片 → 编辑弹窗打开、name / 高级设置 JSON 回显（键值行已拆除；
     {
         eui::Ui ui;
         compose(ui);
@@ -3761,7 +4508,7 @@ REGISTER_TEST(claude_module_shared_block_and_card,
         DOCTEST_CHECK_EQ(panel->opacity, 1.0f);
         DOCTEST_CHECK_EQ(textOf(ui, "claude.dialog.shared.name.text"),
                          std::string("片段B"));
-        // advanced-json-editor §8.1：弹窗 JSON 化——键值行拆除，编辑框在场
+        // 弹窗 JSON 化：键值行拆除，编辑框在场
         DOCTEST_CHECK(ui.find("claude.dialog.shared.json.hit") != nullptr);
         DOCTEST_CHECK(ui.find("claude.dialog.shared.json.format.bg") != nullptr);
     }
@@ -3785,7 +4532,7 @@ REGISTER_TEST(claude_module_shared_block_and_card,
     return true;
 })
 
-// ---- 2. 新建片段弹窗 → 填名/JSON → 保存 → DB 往返 ----
+// 2. 新建片段弹窗 → 填名/JSON → 保存 → DB 往返
 REGISTER_TEST(claude_module_shared_editor_create,
               "claude_module: 新建共享配置片段保存落库（headless）", {
     TestEnv env;
@@ -3849,13 +4596,13 @@ REGISTER_TEST(claude_module_shared_editor_create,
         DOCTEST_REQUIRE(err != nullptr);
         DOCTEST_CHECK(err->text.find("不能为空") != std::string::npos);
     }
-    // 填名 + 高级设置 JSON（advanced-json-editor §8.1：弹窗 JSON 化）→ 创建
+    // 填名 + 高级设置 JSON（弹窗 JSON 化）→ 创建
     {
         eui::Ui ui;
         compose(ui);
         DOCTEST_CHECK(type(ui, "claude.dialog.shared.name.hit", "网关env"));
         DOCTEST_CHECK(type(ui, "claude.dialog.shared.json.hit",
-                           R"({"MY_GW":"v1"})"));
+                           R"({"MY_GW":"v1","gateway":{"timeout":30,"retry":true}})"));
         DOCTEST_CHECK(click(ui, "claude.dialog.shared.confirm.bg"));
     }
     // 弹窗关 + 成功 toast
@@ -3869,25 +4616,33 @@ REGISTER_TEST(claude_module_shared_editor_create,
         DOCTEST_REQUIRE(title != nullptr);
         DOCTEST_CHECK_EQ(title->text, std::string("已创建"));
     }
-    // DB 往返：name + 片段 JSON 落地（v11 起存 extra_settings_json 列）
+    // DB 往返：name + 片段 JSON 落地（v11 起存 extra_settings_json 列）。
+    // 断言经 platform::json 按对象核键值，含嵌套对象值——用 env 域 parseExtraEnv
+    // 解析的话非字符串值即 fail，盖不住真实片段形态
     {
         auto list = env.svc->listSharedConfigs();
         DOCTEST_REQUIRE(list.isOk());
         DOCTEST_REQUIRE_EQ(list.value().size(), static_cast<size_t>(1));
         DOCTEST_CHECK_EQ(list.value()[0].name, std::string("网关env"));
-        auto ee = module::claude::parseExtraEnv(list.value()[0].extraSettingsJson);
-        DOCTEST_REQUIRE(ee.isOk());
-        DOCTEST_REQUIRE_EQ(ee.value().size(), static_cast<size_t>(1));
-        DOCTEST_CHECK_EQ(ee.value().at("MY_GW"), std::string("v1"));
+        auto doc = platform::json::parse(list.value()[0].extraSettingsJson);
+        DOCTEST_REQUIRE(doc.isOk());
+        DOCTEST_REQUIRE(doc.value().isObject());
+        const auto obj = doc.value().asObject();
+        DOCTEST_CHECK_EQ(obj.get("MY_GW").asString(), std::string("v1"));
+        DOCTEST_REQUIRE(obj.get("gateway").isObject());   // 嵌套对象往返不失真
+        const auto gw = obj.get("gateway").asObject();
+        DOCTEST_CHECK(gw.get("timeout").isNumber());
+        DOCTEST_CHECK_EQ(gw.get("timeout").asInt(), 30);
+        DOCTEST_CHECK(gw.get("retry").isBool());
+        DOCTEST_CHECK_EQ(gw.get("retry").asBool(), true);
     }
 
     mod->onStop();
     return true;
 })
 
-// ---- 3. 绑定下拉（advanced-json-editor §7.1 迁入高级配置页）：绑定保存落库、
-//      profile 自有同名键非破坏保留；env 页无绑定 UI、行恒为普通输入
-//      （frozenKeys/chip/置灰随片段 JSON 化拆除，§7.1/§8.2）----
+// 3. 绑定下拉（迁入高级配置页）
+// 绑定保存落库、profile 自有同名键非破坏保留；env 页无绑定 UI、行恒为普通输入
 REGISTER_TEST(claude_module_shared_bind_and_frozen_preview,
               "claude_module: 绑定下拉（高级配置页）选片段 + 保存落库 + 同名键保留（headless）", {
     TestEnv env;
@@ -4063,7 +4818,7 @@ REGISTER_TEST(claude_module_shared_bind_and_frozen_preview,
 })
 
 
-// ---- 5. 详情行「共享配置：片段 A（高级属性预设）」+ 列表卡片「共享」角标 ----
+// 5. 详情行「共享配置：片段 A（高级属性预设）」+ 列表卡片「共享」角标
 REGISTER_TEST(claude_module_shared_detail_row_and_badge,
               "claude_module: 详情共享配置行 + 列表「共享」角标（headless）", {
     TestEnv env;
@@ -4112,7 +4867,7 @@ REGISTER_TEST(claude_module_shared_detail_row_and_badge,
         DOCTEST_CHECK(ui.find("claude.profile.0.shared.badge") != nullptr);
         DOCTEST_CHECK(ui.find("claude.profile.1.shared.badge") == nullptr);
     }
-    // 选中绑定的 → 详情行「共享配置：片段A（高级属性预设）」（§8.2 改造）
+    // 选中绑定的 → 详情行「共享配置：片段A（高级属性预设）」
     {
         eui::Ui ui;
         compose(ui);
@@ -4143,7 +4898,7 @@ REGISTER_TEST(claude_module_shared_detail_row_and_badge,
     return true;
 })
 
-// ---- 6. 弹窗管理链：共享片段编辑弹窗入 anyDialogOpen 门控 + Esc 序链最顶层 ----
+// 6. 弹窗管理链：共享片段编辑弹窗入 anyDialogOpen 门控 + Esc 序链最顶层
 REGISTER_TEST(claude_module_shared_esc_chain_and_gating,
               "claude_module: 片段弹窗 Esc 最顶层关闭 + Ctrl+N 门控（headless）", {
     TestEnv env;
@@ -4251,7 +5006,7 @@ REGISTER_TEST(claude_module_shared_esc_chain_and_gating,
     return true;
 })
 
-// ---- 7. 删除片段 → 同事务解绑绑定 Profile → toast「N 个 Profile 已解绑」----
+// 7. 删除片段 → 同事务解绑绑定 Profile → toast「N 个 Profile 已解绑」
 REGISTER_TEST(claude_module_shared_delete_unbinds,
               "claude_module: 删除片段解绑 N 个 Profile（headless）", {
     TestEnv env;
@@ -4347,10 +5102,9 @@ REGISTER_TEST(claude_module_shared_delete_unbinds,
     return true;
 })
 
-// ---- R4（P-B1）：claude_ui_logic 抽出的 4 个纯函数等价断言 ----
+// R4（P-B1）：claude_ui_logic 抽出的 4 个纯函数等价断言
 // 目的：证明「匿名 ns → claude_ui_logic.{h,cpp}」的搬迁**逐字等价**（spec
-// 2026-09-27-refactor-incremental N9：只在抽出的纯函数上补等价断言，不算
-// 新功能测试）。取值按搬迁前实现逐条钉死（边界 + 分支各一）。
+// 只在抽出的纯函数上补等价断言（不算新功能测试）。取值逐条钉死（边界 + 分支各一）。
 REGISTER_TEST(claude_ui_logic_pure_functions,
               "claude_ui_logic: 纯函数等价断言（延时/UTF-8 截断/模型摘要/导入名）", {
     using module::claude::formatLatency;
@@ -4372,15 +5126,14 @@ REGISTER_TEST(claude_ui_logic_pure_functions,
     // "αααα" = 8 字节；截 5 会落在第 3 个 α 的续字节上 → 回退到第 4 字节
     DOCTEST_CHECK_EQ(truncateUtf8("αααα", 5), std::string("αα…"));
 
-    // modelsSummary：空配置 → "-"；仅旧 model 列 → 默认 + 1/6；
-    // 仅槽位 → 「默认未配」+ 1/6（分母取自槽位表，不再硬编码 /6）
+    // modelsSummary：空配置 → "-"；model 列非空但无槽位配置 → 同样 "-"
+    //（models_config 是槽位的唯一真相源，model 列不再参与读时回退）
     module::claude::Profile emptyProfile;
     DOCTEST_CHECK_EQ(modelsSummary(emptyProfile), std::string("-"));
 
-    module::claude::Profile legacyOnly;
-    legacyOnly.model = "claude-sonnet-4-5";
-    DOCTEST_CHECK_EQ(modelsSummary(legacyOnly),
-                     std::string("默认 claude-sonnet-4-5 · 槽位已配 1/6"));
+    module::claude::Profile modelColumnOnly;
+    modelColumnOnly.model = "claude-sonnet-4-5";
+    DOCTEST_CHECK_EQ(modelsSummary(modelColumnOnly), std::string("-"));
 
     module::claude::ModelsConfig mc;
     mc.sonnet.model = "fangzhou/glm-5.3[1M]";
@@ -4390,6 +5143,16 @@ REGISTER_TEST(claude_ui_logic_pure_functions,
     slotOnly.modelsConfigJson = mcJson.value();
     DOCTEST_CHECK_EQ(modelsSummary(slotOnly),
                      std::string("（默认未配）· 槽位已配 1/6"));
+
+    // 显示层剥 [1M]：默认槽位带标记 → 摘要显示剥除后的名字
+    module::claude::ModelsConfig mcDef;
+    mcDef.def.model = "m-def[1M]";
+    auto defJson = module::claude::serializeModelsConfig(mcDef);
+    DOCTEST_REQUIRE(defJson.isOk());
+    module::claude::Profile defWithMarker;
+    defWithMarker.modelsConfigJson = defJson.value();
+    DOCTEST_CHECK_EQ(modelsSummary(defWithMarker),
+                     std::string("默认 m-def · 槽位已配 1/6"));
 
     // suggestImportName：剥 scheme / 路径 / 端口；无 host → 「导入 <日期>」
     DOCTEST_CHECK_EQ(suggestImportName("https://api.example.com/v1"),
@@ -4404,7 +5167,7 @@ REGISTER_TEST(claude_ui_logic_pure_functions,
     return true;
 })
 
-// ---- 28. 复制配置（2026-09-30 batch-fix C，设计 §4.2/§4.4）----
+// 28. 复制配置
 // 纯函数形状：{"env":{...}} 顶层 / 尾斜杠剥离 / 三态凭据键 / 槽位 / extra_env /
 // 片段冻结键赢 / 占位非明文 / 空占位无凭据键
 REGISTER_TEST(claude_export_json_shape,
@@ -4473,8 +5236,7 @@ REGISTER_TEST(claude_export_json_shape,
         DOCTEST_CHECK_EQ(env.get("ANTHROPIC_BASE_URL").asString(),
                          std::string("https://exp.example.com"));
     }
-    // 绑定片段（advanced-json-editor §6：片段已重构为高级属性 JSON 预设）——
-    // 片段键并入**顶层**（非 env 域），同键片段赢；env 域不再吃片段
+    // 绑定片段：片段键并入**顶层**（非 env 域），同键片段赢；env 域不吃片段
     {
         const std::string jf = buildProfileExportJson(
             p, R"({"MY_TOP_KEY":"frozen","SHARED_ONLY":"sv"})", p.apiKeyHint);
@@ -4502,9 +5264,11 @@ REGISTER_TEST(claude_export_json_shape,
     return true;
 })
 
-// UI 侧：改名「建副本」（D-C1）+ 第 7 键「复制配置」+ actW 等分几何 + 点击派发
-REGISTER_TEST(claude_copyconfig_ui_seven_keys,
-              "claude_module: 建副本改名 + 复制配置第7键（文案/等分宽/右缘对齐/点击派发）", {
+// 详情动作行 4 键（启用/测试连通/编辑/运行）；删除 / 建副本 / 复制配置三键
+// **只**保留列表右键菜单入口（业务逻辑同源保留：requestDelete /
+// requestDuplicate / requestCopyConfig）
+REGISTER_TEST(claude_copyconfig_ctx_menu_after_row_slim,
+              "claude_module: 详情动作行 4 键 + 复制配置仅右键菜单（文案/节点收口/点击派发）", {
     TestEnv env;
     std::unique_ptr<::core::Module> mod(create_claude_module());
     mod->onStart();
@@ -4526,19 +5290,17 @@ REGISTER_TEST(claude_copyconfig_ui_seven_keys,
         return true;
     };
 
-    // 无选中（库空 → shown 为 null）点击 → warn（沿用 warn 通道，spec §4.2②；
-    // 须在造数前做——有激活 profile 时 shown 回落激活项，warn 不可达）
+        // 库空（shown 为 null）：三键节点一律不在动作行，
+    // 4 键仍在（防误渲染提示）
     {
         eui::Ui ui;
         compose(ui);
-        DOCTEST_CHECK(click(ui, "claude.act.copyconfig.bg"));
-    }
-    {
-        eui::Ui ui;
-        compose(ui);
-        const auto* title = ui.find("claude.toast.title");
-        DOCTEST_REQUIRE(title != nullptr);
-        DOCTEST_CHECK_EQ(title->text, std::string("复制配置失败"));
+        for (const char* k : {"claude.act.del", "claude.act.dup",
+                              "claude.act.copyconfig"}) {
+            DOCTEST_CHECK(ui.find(std::string(k) + ".bg") == nullptr);
+        }
+        DOCTEST_CHECK(ui.find("claude.act.enable.bg") != nullptr);
+        DOCTEST_CHECK(ui.find("claude.act.run.bg") != nullptr);
     }
 
     auto a = env.svc->createProfile("导出源", "https://cfg.example.com",
@@ -4560,30 +5322,36 @@ REGISTER_TEST(claude_copyconfig_ui_seven_keys,
     }
     DOCTEST_CHECK(cardReady);
 
-    // 改名断言（D-C1）：按钮文本「建副本」，warn 标题「建副本失败」
+    // 动作行只剩 4 键（顺序：启用/测试连通/编辑/运行），且窄行下
     {
         eui::Ui ui;
         compose(ui);
-        const auto* dup = ui.find("claude.act.dup.text");
-        DOCTEST_REQUIRE(dup != nullptr);
-        DOCTEST_CHECK_EQ(dup->text, std::string("建副本"));
-        const auto* cc = ui.find("claude.act.copyconfig.text");
-        DOCTEST_REQUIRE(cc != nullptr);
-        DOCTEST_CHECK_EQ(cc->text, std::string("复制配置"));
-        // 7 键齐（§4.2③ 顺序：启用/测试连通/编辑/删除/建副本/复制配置/运行）
         for (const char* k : {"claude.act.enable", "claude.act.test",
-                              "claude.act.edit", "claude.act.del",
-                              "claude.act.dup", "claude.act.copyconfig",
-                              "claude.act.run"}) {
+                              "claude.act.edit", "claude.act.run"}) {
             DOCTEST_CHECK(ui.find(std::string(k) + ".bg") != nullptr);
         }
+        for (const char* k : {"claude.act.del", "claude.act.dup",
+                              "claude.act.copyconfig"}) {
+            DOCTEST_CHECK(ui.find(std::string(k) + ".bg") == nullptr);
+        }
     }
-    // 选中后点击 → 真派发：toast「已复制配置」（headless 下 setClipboardText
-    // 经 GLFW 未 init 早退 = 安全 no-op，不写真剪贴板；剪贴板真写以真机验收）
+    // 右键菜单 → 「复制配置」（item.2）→ 真派发：toast「已复制配置」
+    //（headless 下 setClipboardText 经 GLFW 未 init 早退 = 安全 no-op，不写真
+    // 剪贴板；剪贴板真写以真机验收）
     {
         eui::Ui ui;
         compose(ui);
-        DOCTEST_CHECK(click(ui, "claude.act.copyconfig.bg"));
+        const auto* wrap = ui.find("claude.profile.0.wrap");
+        DOCTEST_REQUIRE(wrap != nullptr);
+        DOCTEST_REQUIRE(wrap->onContextMenu != nullptr);
+        eui::PointerEvent pe;
+        eui::Rect rect;
+        pe.x = 400;
+        pe.y = 300;
+        wrap->onContextMenu(pe, rect);
+        eui::Ui ui2;
+        compose(ui2);
+        DOCTEST_CHECK(click(ui2, "claude.list.ctx.level.0.item.2"));
     }
     {
         eui::Ui ui;
@@ -4600,16 +5368,18 @@ REGISTER_TEST(claude_copyconfig_ui_seven_keys,
 
 
 
-// ============================================================================
-// 组 B（macOS 布局统一方案 §1 组 B / §5 组 B verify 口径，2026-09-28）
-//   P1 动作区钉面板底（四页签分隔线 y 恒定）+ 内容框显式边界
+
+
+// 组 B（macOS 布局统一）
+//   P1 动作区钉面板底（五页签分隔线 y 恒定）+ 内容框显式边界
 //   P2 「最近调用」去掉 10 行硬上限 / 3 行硬下限，行数纯按可用高推
 //   P3 「环境变量」列全部生效 env + 每键来源
 //   P4 共享配置区块钉面板底 + 「+ 新建片段」恒可见可点
 // 尺寸取**真实 macOS 页面尺寸** 1262×801（窗口 1470×801 − 侧边栏 208），
 // 这是「真实窗口尺寸下的区域比例」类问题在无头侧唯一能覆盖的方式。
 // 统一原则：容器可用高只有一个来源（bodyH）；贴底元素锚容器底。
-// ============================================================================
+
+
 namespace {
 
 // 合成一帧 + 显式布局（元素 frame 需 layout 后才有值；见
@@ -4654,12 +5424,11 @@ bool seedCalls(module::claude::ClaudeService* svc, int64_t pid, int n) {
 
 }  // namespace
 
-// ---- 组 B P1：全部页签的动作区必须落在同一条水平线上 ----
+// 组 B P1：全部页签的动作区必须落在同一条水平线上
 // 用户主诉（原话）：「环境变量 最近调用 2 个 tab 下方的区域高度不对」。
 // 根因：actY = paneBottom + 20 跟着内容底跑，面板底恒为 bodyH → 数据少时动作区
 // 浮在上部，页签间的分隔线互差最大 171px。修后 actY = max(paneBottom + 20,
-// bodyH − 动作块预留)，内容框底由容器底推出 → 五值恒等（2026-09-30 batch-fix B
-// 起五页签；用例名保留 four_tabs 沿用历史锚）。
+// bodyH − 动作块预留)，内容框底由容器底推出 → 五页签五值恒等。
 REGISTER_TEST(claude_detail_actions_anchor_four_tabs,
               "claude_module: 详情动作区五页签同一条水平线（macOS 真实尺寸 1262x801）", {
     TestEnv env;
@@ -4702,10 +5471,10 @@ REGISTER_TEST(claude_detail_actions_anchor_four_tabs,
         actY[tab] = act->frame.y;
         dividerY[tab] = divider->frame.y;
         panelBottom = panel->frame.y + panel->frame.height;
-        // 贴底元素不得越出容器底（方案 §4 不变量）
+        // 贴底元素不得越出容器底（不变量）
         DOCTEST_CHECK(act->frame.y + act->frame.height <= panelBottom + 0.5f);
     }
-    // 五页签完全相等（旧实现下这五值互不相等 → 本用例即用户主诉的红灯）
+    // 五页签完全相等（这五值互不相等即红）
     for (int tab = 1; tab < 5; ++tab) {
         DOCTEST_CHECK_EQ(actY[tab], actY[0]);
         DOCTEST_CHECK_EQ(dividerY[tab], dividerY[0]);
@@ -4716,9 +5485,8 @@ REGISTER_TEST(claude_detail_actions_anchor_four_tabs,
     return true;
 })
 
-// ---- 27h. 详情页「高级配置」pane（2026-09-30 batch-fix B，设计 §3.2④）：
-//      tab 3 显示生效方言/备用名只读两行；tab 4 仍是最近调用；几何不越内容框
-//      （macOS 真实尺寸数值断言，composeAtSize 同组 B P1 口径）----
+// 27h. 详情页「高级配置」pane
+// tab 3 显示生效方言 / 备用名只读两行；tab 4 仍是最近调用；几何不越内容框
 REGISTER_TEST(claude_detail_advanced_pane_readonly,
               "claude_module: 详情高级配置 pane（自动推断/显式覆盖/备用名/悬空/tab4 仍最近调用）", {
     TestEnv env;
@@ -4849,8 +5617,7 @@ REGISTER_TEST(claude_detail_advanced_pane_readonly,
         DOCTEST_CHECK(ui.find("claude.calls.empty") != nullptr);
         DOCTEST_CHECK(ui.find("claude.field.dialect.bg") == nullptr);
         DOCTEST_CHECK(ui.find("claude.field.fallback.bg") == nullptr);
-        // 页签文字↔索引映射钉（变异自检 B2：把「高级配置」改插中间 → 红；
-        // 只断 pane 元素不断页签文字时该变异不红 = 假绿缝）
+        // 页签文字↔索引映射钉：把「高级配置」改插中间即红；只断 pane 元素不断
         const auto* lab3 = ui.find("claude.detail.tabs.label.3");
         const auto* lab4 = ui.find("claude.detail.tabs.label.4");
         DOCTEST_REQUIRE(lab3 != nullptr);
@@ -4866,10 +5633,10 @@ REGISTER_TEST(claude_detail_advanced_pane_readonly,
     return true;
 })
 
-// 7 键几何（macOS 真实页面 1262×801）：actW == (w0 − 6×12) / 7 且行右缘与容器
-// 右缘对齐（等分无溢出）；放在 composeAtSize 声明之后（组 B helpers 区）
+// 4 键几何（macOS 真实页面 1262×801）：actW == (w0 − 3×12) / 4 且行右缘与容器
+// 右缘对齐（等分无溢出）；末键 = 运行。放在 composeAtSize 声明之后
 REGISTER_TEST(claude_copyconfig_seven_keys_geometry,
-              "claude_module: 复制配置第7键 actW 等分几何（macOS 真实尺寸）", {
+              "claude_module: 动作行 4 键 actW 等分几何（macOS 真实尺寸）", {
     TestEnv env;
     auto a = env.svc->createProfile("几何源", "https://geo.example.com",
                                     "sk-ant-geo-0001", "m");
@@ -4883,25 +5650,26 @@ REGISTER_TEST(claude_copyconfig_seven_keys_geometry,
     eui::Ui ui;
     composeAtSize(mod.get(), ui, "claude_copycfg_geom", kW, kH);
     const auto* row = ui.find("claude.detail.actions");
-    const auto* cc = ui.find("claude.act.copyconfig.bg");
     const auto* run = ui.find("claude.act.run.bg");
     DOCTEST_REQUIRE(row != nullptr);
-    DOCTEST_REQUIRE(cc != nullptr);
     DOCTEST_REQUIRE(run != nullptr);
     const float w0 = row->frame.width;
-    const float expect = (w0 - 12.0f * 6.0f) / 7.0f;
-    DOCTEST_CHECK(std::fabs(cc->frame.width - expect) < 0.01f);
+    // 动作行 5 键（含「余量查询」），末键右缘对齐断言据此定宽
+    const float expect = (w0 - 12.0f * 4.0f) / 5.0f;
     DOCTEST_CHECK(std::fabs(run->frame.width - expect) < 0.01f);
     // 行右缘对齐：末键右缘 == row 右缘（浮点 0.5px 容差）
     const float rowRight = row->frame.x + row->frame.width;
-    const float runRight = run->frame.x + run->frame.width;
-    DOCTEST_CHECK(std::fabs(rowRight - runRight) < 0.5f);
+    // 末键是「余量查询」（第 5 键），右缘对齐断言按它换键
+    const auto* quota5 = ui.find("claude.act.quota.bg");
+    DOCTEST_REQUIRE(quota5 != nullptr);
+    const float quotaRight = quota5->frame.x + quota5->frame.width;
+    DOCTEST_CHECK(std::fabs(rowRight - quotaRight) < 0.5f);
     mod->onStop();
     cleanupProfileKey(kTestKeychainService, pid);
     return true;
 })
 
-// ---- 组 B P2：行数纯按可用高推（旧实现锁死 10 行且截断无提示）----
+// 组 B P2：行数纯按可用高推
 REGISTER_TEST(claude_calls_rows_by_available_height,
               "claude_module: 最近调用行数按可用高推 + 截断有「另有 N 条」", {
     TestEnv env;
@@ -4925,7 +5693,7 @@ REGISTER_TEST(claude_calls_rows_by_available_height,
 
     // 预算：内容框底 = bodyH − 85 − 20；行区 = 内容框底 − 表头底(24) −
     // 「查看全部」带(8+24)。本尺寸（bodyH=607 → 内容框底 502、表头底 136、
-    // 带 32）→ floor(334/24) = 13 行（旧实现恒为 clamp(...,3,10) = 10 行）
+    // 带 32）→ floor(334/24) = 13 行（写死 clamp(...,3,10) 恒为 10 行）
     int drawn = 0;
     while (ui2.find("claude.calls.t." + std::to_string(drawn)) != nullptr) {
         ++drawn;
@@ -4951,8 +5719,7 @@ REGISTER_TEST(claude_calls_rows_by_available_height,
     return true;
 })
 
-// ---- 组 B P2 极端档：可用高不足一行 → 只画空态，不画越界行 ----
-// 旧实现的硬下限 3 会把 3 行画进动作区（越界）；现在画 0 行 + 明确文案。
+// 硬下限 3 会把 3 行画进动作区（越界）；这里是画 0 行 + 明确文案。
 REGISTER_TEST(claude_calls_no_rows_when_too_short,
               "claude_module: 内容区不足一行时画 0 行 + 空态（含 F-02 叠印/越框锁）", {
     TestEnv env;
@@ -4978,8 +5745,8 @@ REGISTER_TEST(claude_calls_no_rows_when_too_short,
     const auto* empty = ui2.find("claude.calls.empty");
     DOCTEST_REQUIRE(empty != nullptr);
     DOCTEST_CHECK(empty->text.find("不足") != std::string::npos);
-    // ---- 审计 F-02：0 行档的两条硬约束（此前这条用例断不到）----
-    // ① 不再画「另有 N 条」—— 它与空态行同坐标会叠印（旧实现就是这么错的）
+    // 0 行档的两条硬约束
+    // ① 不画「另有 N 条」—— 它与空态行同坐标会叠印
     DOCTEST_CHECK(ui2.find("claude.calls.overflow") == nullptr);
     // ② 空态行与「查看全部」带都不得越出内容框（真实裁剪下沿 = 内容框底）
     const auto* box = ui2.find("claude.detail.contentbox");
@@ -4989,7 +5756,7 @@ REGISTER_TEST(claude_calls_no_rows_when_too_short,
     if (const auto* va = ui2.find("claude.calls.viewall.hit")) {
         DOCTEST_CHECK(va->frame.y + va->frame.height <= boxBottom + 0.5f);
     }
-    // 动作区仍在面板内（贴底锚定 + F-03 的 actYHi 夹取语义）
+        // 动作区仍在面板内（贴底锚定 + actYHi 夹取语义）
     const auto* act = ui2.find("claude.detail.actions");
     const auto* panel = ui2.find("claude.detail");
     DOCTEST_REQUIRE(act != nullptr);
@@ -5002,8 +5769,7 @@ REGISTER_TEST(claude_calls_no_rows_when_too_short,
     return true;
 })
 
-// ---- 真机反馈 ②（2026-09-29）：最近调用明细列「本地调用速率」 ----
-// 手算值对照：速率 = output_tokens / (latency_ms/1000)，只有 2xx 且
+// 最近调用明细列「本地调用速率」
 // output_tokens > 0 的调用有值；非 2xx / 0 token 行显示「—」（不是 0 —— 0 是
 // 合法速率值，两者必须可区分）。口径单源 core/call_rate.h（与首页卡同一处）。
 REGISTER_TEST(claude_calls_rate_column,
@@ -5092,8 +5858,7 @@ REGISTER_TEST(claude_calls_rate_column,
     return true;
 })
 
-// ---- 真机反馈 ④⑤⑥（2026-09-29）：两处文本垂直居中 + 「查看全部」改按钮 ----
-// 居中判据：runtime 只在 verticalAlign == Center 时把 ink 中心对齐到 frame
+// 两处文本垂直居中 + 「查看全部」改按钮
 // 中心（EUI-NEO runtime_render.h renderText：y = frame.y + frame.height/2），
 // 故「flag == Center」+「frame 中心 == 行框中心（±0.5）」两条合起来才是
 // 「文本在行内垂直居中」的数值证据 —— 只写 position/size 的那一版（无 flag）
@@ -5120,7 +5885,7 @@ REGISTER_TEST(claude_detail_vertical_center_and_viewall_button,
         return el.verticalAlign == eui::VerticalAlign::Center;
     };
 
-    // ---- ⑤ 基础信息（tab 0 默认）：标签列与值列都相对各自行高居中 ----
+    // ⑤ 基础信息（tab 0 默认）：标签列与值列都相对各自行高居中
     {
         eui::Ui ui;
         composeAtSize(mod.get(), ui, "claude_center_basic", kW, kH);
@@ -5161,7 +5926,7 @@ REGISTER_TEST(claude_detail_vertical_center_and_viewall_button,
         DOCTEST_CHECK(nameValue->frame.x > nameLabel->frame.x);
     }
 
-    // ---- ④ 模型映射（tab 1）：每个槽位行的名称列/值列都相对 32 高行框居中 ----
+    // ④ 模型映射（tab 1）：每个槽位行的名称列/值列都相对 32 高行框居中
     {
         eui::Ui ui;
         composeAtSize(mod.get(), ui, "claude_center_models", kW, kH);
@@ -5187,7 +5952,7 @@ REGISTER_TEST(claude_detail_vertical_center_and_viewall_button,
         DOCTEST_CHECK_EQ(rows, 6);
     }
 
-    // ---- ⑥ 最近调用（tab 3）：「查看全部 →」是按钮，点击开弹窗 ----
+    // ⑥ 最近调用（tab 3）：「查看全部 →」是按钮，点击开弹窗
     {
         eui::Ui ui;
         composeAtSize(mod.get(), ui, "claude_center_calls", kW, kH);
@@ -5229,8 +5994,7 @@ REGISTER_TEST(claude_detail_vertical_center_and_viewall_button,
     return true;
 })
 
-// ---- 真机反馈 ⑦（2026-09-29）：调用记录弹窗分页控件垂直对齐 ----
-// 页码文本与左右翻页按钮的行框本来就是同一档（同 y = h−60、同 40 高），差的
+// 调用记录弹窗分页控件垂直对齐
 // 是文本没做垂直居中（ink 从行框顶沿起排）。判据 = 三者 frame 中心 y 相等
 // （±0.5）+ 行框高相等（不靠给文本加 padding 蒙）。回退掉
 // claude.dialog.calls.page 的 verticalAlign → 本用例红。
@@ -5259,7 +6023,7 @@ REGISTER_TEST(claude_dialog_pagination_vertical_align,
         composeAtSize(mod.get(), ui, "claude_page_align", kW, kH);
         DOCTEST_REQUIRE(clickById(ui, "claude.calls.viewall.hit"));
     }
-    // 等后台查询落地（总匹配数到位 → 页数 = ceil(30/20) = 2；CPX-06 起数据是
+    // 等后台查询落地（总匹配数到位 → 页数 = ceil(30/20) = 2；数据是
     // 异步的，每轮新起一帧收割，不靠固定睡眠）
     bool loaded = false;
     for (int i = 0; i < 400 && !loaded; ++i) {
@@ -5314,8 +6078,7 @@ REGISTER_TEST(claude_dialog_pagination_vertical_align,
     return true;
 })
 
-// ---- 真机反馈 ⑧（2026-09-29）：Profile 卡 ACTIVE 胶囊徽标文字居中 ----
-// 文字框与胶囊同 y 同高，缺的只是垂直居中（ink 默认从行框顶沿起排）。判据 =
+// Profile 卡 ACTIVE 胶囊徽标文字居中
 // 文字 frame 中心 == 胶囊 frame 中心（x/y 各 ±0.5）+ 行高口径一致（文本
 // lineHeight == 胶囊高，不靠 padding 蒙）。回退 active.text 的 verticalAlign
 // → 本用例红；「共享」胶囊是同类项，一并钉住。
@@ -5393,7 +6156,236 @@ REGISTER_TEST(claude_profile_active_badge_centered,
     return true;
 })
 
-// E-AUD-1（2026-09-30 审计）：长模型键在键列会截断显示 —— 键列宽 220px、
+// 头像圆圈三处改
+// 圆形头像 = 随机颜色 + 外层包边 + 垂直居中。
+// 裁定：compose 每帧都跑，真随机会闪烁 → 「随机」= 按 profile id 稳定派生
+//（哈希 → 9 色板）；包边 = 同色系加深/提亮一档的描边环；垂直居中用数值断言
+// 钉住（圆心 y == 行 y + 行高/2，容差 0.5）。
+REGISTER_TEST(claude_profile_avatar_color_ring_centered,
+              "claude_module: Profile 头像圆圈稳定随机色 + 外层包边 + 垂直居中", {
+    TestEnv env;
+    for (int i = 0; i < 3; ++i) {
+        auto p = env.svc->createProfile(
+            "头像" + std::to_string(i),
+            "https://av" + std::to_string(i) + ".example.com",
+            "sk-ant-av-000" + std::to_string(i), "m");
+        DOCTEST_REQUIRE(p.isOk());
+    }
+
+    std::unique_ptr<::core::Module> mod(create_claude_module());
+    mod->onStart();
+
+    const auto compose = [&](eui::Ui& ui) {
+        composeAtSize(mod.get(), ui, "claude_avatar", 1262.0f, 801.0f);
+    };
+    const auto sameColor = [](const eui::Color& a, const eui::Color& b) {
+        return a.r == b.r && a.g == b.g && a.b == b.b && a.a == b.a;
+    };
+
+    eui::Ui ui1;
+    compose(ui1);
+    const auto* av = ui1.find("claude.profile.0.avatar");
+    const auto* tx = ui1.find("claude.profile.0.avatar.text");
+    const auto* row = ui1.find("claude.profile.0.wrap");
+    DOCTEST_REQUIRE(av != nullptr);
+    DOCTEST_REQUIRE(tx != nullptr);
+    DOCTEST_REQUIRE(row != nullptr);
+
+    // (a) 同一 profile 两次 compose 颜色一致（稳定派生，不闪烁）
+    eui::Ui ui2;
+    compose(ui2);
+    const auto* av2 = ui2.find("claude.profile.0.avatar");
+    DOCTEST_REQUIRE(av2 != nullptr);
+    DOCTEST_CHECK_MESSAGE(sameColor(av->color, av2->color),
+                          "同一 profile 两次 compose 头像色不一致（每帧随机闪烁）");
+
+    // (a) 非占位底色：既不是 surfaceElevated 占位，也不是纯白
+    const core::theme::Tokens& t = core::theme::current();
+    const bool isPlaceholder = sameColor(av->color, t.colors.surfaceElevated);
+    const bool isWhite = av->color.r >= 0.999f && av->color.g >= 0.999f &&
+                         av->color.b >= 0.999f;
+    DOCTEST_CHECK_MESSAGE(!isPlaceholder,
+                          "头像圆圈仍是占位底色 surfaceElevated（未改随机色）");
+    DOCTEST_CHECK_MESSAGE(!isWhite, "头像圆圈仍是纯白底");
+
+    // (b) 不同 profile 颜色不同（三个样本至少两色；id 确定 → 结果确定）
+    std::vector<eui::Color> fills;
+    for (int i = 0; i < 3; ++i) {
+        const auto* avi = ui1.find("claude.profile." + std::to_string(i) +
+                                   ".avatar");
+        DOCTEST_REQUIRE(avi != nullptr);
+        fills.push_back(avi->color);
+    }
+    const bool anyDistinct =
+        !sameColor(fills[0], fills[1]) || !sameColor(fills[1], fills[2]) ||
+        !sameColor(fills[0], fills[2]);
+    DOCTEST_CHECK_MESSAGE(anyDistinct,
+                          "三个不同 profile 的头像色全相同（派生未生效）");
+
+    // (c) 外层包边存在（描边环宽度 ≥ 1）
+    DOCTEST_CHECK_MESSAGE(av->border.width >= 1.0f,
+                          "头像圆圈缺外层包边（border 宽度 < 1）");
+    // (c) 环色是派生的同色系色，不是回退到中性 borderDefault（只断宽度时，
+    const bool ringIsBorderDefault =
+        sameColor(av->border.color, t.colors.borderDefault);
+    DOCTEST_CHECK_MESSAGE(!ringIsBorderDefault,
+                          "头像包边色回退为中性 borderDefault（未用派生环色）");
+
+    // (d) 垂直居中：圆心 y == 行（96 高卡片）中心 y，容差 0.5；字形同框
+    const float rowCy = row->frame.y + row->frame.height * 0.5f;
+    const float circleCy = av->frame.y + av->frame.height * 0.5f;
+    const float textCy = tx->frame.y + tx->frame.height * 0.5f;
+    DOCTEST_CHECK_MESSAGE(std::fabs(circleCy - rowCy) <= 0.5f,
+                          "头像圆圈未垂直居中：圆心 " +
+                              std::to_string(circleCy) + " vs 行中心 " +
+                              std::to_string(rowCy));
+    DOCTEST_CHECK_MESSAGE(std::fabs(textCy - circleCy) <= 0.5f,
+                          "头像字形框与圆圈不同心");
+
+    // (e) 深浅主题派生分支：两主题各 compose 一帧，
+    // borderDefault；结束恢复原主题（全局态还原，不污染后续用例）。
+    // g_current 是单例被 setDark/setLight 原地改写 → token 只能**值拷贝**快照，
+    // 引用会跨主题别名
+    const std::string themeBefore = core::theme::currentThemeName();
+    const auto avatarOf = [&](eui::Ui& ui) {
+        return ui.find("claude.profile.0.avatar");   // 断言由调用方做（宏含 return false，不能进非 bool helper）
+    };
+    core::theme::setLight();
+    const core::theme::Tokens tokensLight = core::theme::current();
+    eui::Ui uiLight;
+    compose(uiLight);
+    const auto* lightAv = avatarOf(uiLight);
+    DOCTEST_REQUIRE(lightAv != nullptr);
+    const eui::Color lightFill = lightAv->color;
+    const eui::Color lightRing = lightAv->border.color;
+    core::theme::setDark();
+    const core::theme::Tokens tokensDark = core::theme::current();
+    eui::Ui uiDark;
+    compose(uiDark);
+    const auto* darkAv = avatarOf(uiDark);
+    DOCTEST_REQUIRE(darkAv != nullptr);
+    DOCTEST_CHECK_MESSAGE(!sameColor(darkAv->color, lightFill),
+                          "深浅主题头像底色相同（isDark 派生分支未生效）");
+    DOCTEST_CHECK_MESSAGE(!sameColor(darkAv->border.color, lightRing),
+                          "深浅主题包边色相同（isDark 派生分支未生效）");
+    DOCTEST_CHECK_MESSAGE(!sameColor(darkAv->color,
+                                     tokensDark.colors.surfaceElevated) &&
+                              !sameColor(lightAv->color,
+                                         tokensLight.colors.surfaceElevated),
+                          "头像回退占位底色（深或浅主题）");
+    DOCTEST_CHECK_MESSAGE(!sameColor(darkAv->border.color,
+                                     tokensDark.colors.borderDefault) &&
+                              !sameColor(lightAv->border.color,
+                                         tokensLight.colors.borderDefault),
+                          "包边回退中性 borderDefault（深或浅主题）");
+    if (themeBefore == "Dark") {
+        core::theme::setDark();
+    } else {
+        core::theme::setLight();
+    }
+
+    mod->onStop();
+    return true;
+})
+
+// 头像首字按 UTF-8 码点取
+// std::string(1, p.name[0]) 只取首**字节**：CJK 首字符是 3 字节 UTF-8，截出
+// 单字节非法序列 → 渲染 ?。判据：CJK 名渲染首字 == 名首字符完整 UTF-8；
+// 英文名 == 首字符。
+// 非法序列回退 ?。判据：CJK 名渲染首字 == 名首字符完整 UTF-8；英文名 == 首字符。
+REGISTER_TEST(claude_profile_avatar_initial_utf8,
+              "claude_module: Profile 头像首字按 UTF-8 码点取（CJK 不再渲染 ?）", {
+    TestEnv env;
+    auto cjk = env.svc->createProfile("智谱网关", "https://z.example.com",
+                                      "sk-ant-u8-001", "m");
+    DOCTEST_REQUIRE(cjk.isOk());
+    auto lat = env.svc->createProfile("Alpha", "https://a.example.com",
+                                      "sk-ant-u8-002", "m");
+    DOCTEST_REQUIRE(lat.isOk());
+    std::unique_ptr<::core::Module> mod(create_claude_module());
+    mod->onStart();
+    eui::Ui ui;
+    composeAtSize(mod.get(), ui, "claude_u8", 1262.0f, 801.0f);
+
+    // 列表按 name ASC 排序（"Alpha" < "智谱网关"），不能写死下标——经 service
+    // 的同一排序把名字映到行号
+    auto listed = env.svc->listProfiles();
+    DOCTEST_REQUIRE(listed.isOk());
+    const auto indexOfName = [&](const std::string& name) -> int {
+        for (size_t i = 0; i < listed.value().size(); ++i) {
+            if (listed.value()[i].name == name) return static_cast<int>(i);
+        }
+        return -1;
+    };
+    const int cjkIdx = indexOfName("智谱网关");
+    const int latIdx = indexOfName("Alpha");
+    DOCTEST_REQUIRE(cjkIdx >= 0);
+    DOCTEST_REQUIRE(latIdx >= 0);
+    const auto* txCjk =
+        ui.find("claude.profile." + std::to_string(cjkIdx) + ".avatar.text");
+    const auto* txLat =
+        ui.find("claude.profile." + std::to_string(latIdx) + ".avatar.text");
+    DOCTEST_REQUIRE(txCjk != nullptr);
+    DOCTEST_REQUIRE(txLat != nullptr);
+    // "智" = 3 字节 UTF-8（E6 99 BA）；只留首字节 0xE5 → 断言红
+    DOCTEST_CHECK_MESSAGE(txCjk->text == "智",
+                          "CJK 名首字未按码点取：渲染 text 长度 " +
+                              std::to_string(txCjk->text.size()) + "（应为 3）");
+    DOCTEST_CHECK_MESSAGE(txLat->text == "A",
+                          "拉丁名首字取错：" + txLat->text);
+
+    mod->onStop();
+    return true;
+})
+
+// Profile 卡头像首字：文本垂直居中根治
+// claude_profile_active_badge_centered）：文字框与圆形底同 y 同高、
+// lineHeight == 圆高，缺 VerticalAlign::Center 时 runtime 把 ink 从行框顶沿
+// 起排（runtime_render.h:1068 取 y=frame.y、:1069 才切到 frame 中线），圆形里看着偏上。
+// 与上面两条头像用例的分工：它们钉的是 frame 数值（圆心/首字码点），**frame
+// 数值对不代表墨迹居中**——本用例钉渲染锚点，是那两条的唯一补集。
+// 删 .verticalAlign(Center) → 本用例 verticalAlign 断言红
+//（frame 数值不变、只有渲染锚点回 frame 顶，故上面两条不会红）。
+REGISTER_TEST(claude_profile_avatar_centered,
+              "claude_module: Profile 头像首字垂直居中（锚点 = 圆形底中心）", {
+    TestEnv env;
+    auto p = env.svc->createProfile("Zed", "https://avatar.example.com",
+                                    "sk-ant-avatar-001", "m-avatar");
+    DOCTEST_REQUIRE(p.isOk());
+    const int64_t pid = p.value().id;
+
+    std::unique_ptr<::core::Module> mod(create_claude_module());
+    mod->onStart();
+    eui::Ui ui;
+    composeAtSize(mod.get(), ui, "claude_avatar", 1262.0f, 801.0f);
+
+    const auto* txt = ui.find("claude.profile.0.avatar.text");
+    const auto* bg = ui.find("claude.profile.0.avatar");
+    DOCTEST_REQUIRE(txt != nullptr);
+    DOCTEST_REQUIRE(bg != nullptr);
+    DOCTEST_CHECK_EQ(txt->text, std::string("Z"));   // 首字
+    DOCTEST_CHECK_MESSAGE(txt->verticalAlign == eui::VerticalAlign::Center,
+                          "头像首字未挂 VerticalAlign::Center"
+                          "（ink 从行框顶沿起排 → 圆形内偏上）");
+    DOCTEST_CHECK_MESSAGE(txt->horizontalAlign == eui::HorizontalAlign::Center,
+                          "头像首字未水平居中");
+    DOCTEST_CHECK_MESSAGE(
+        std::fabs((txt->frame.y + txt->frame.height * 0.5f) -
+                  (bg->frame.y + bg->frame.height * 0.5f)) <= 0.5f,
+        "头像首字 frame 中心 y=" +
+            std::to_string(txt->frame.y + txt->frame.height * 0.5f) +
+            " != 圆形底中心 y=" +
+            std::to_string(bg->frame.y + bg->frame.height * 0.5f));
+    // 圆形底尺寸不变（40×40 圆，radius 20）
+    DOCTEST_CHECK_EQ(bg->frame.width, 40.0f);
+    DOCTEST_CHECK_EQ(bg->frame.height, 40.0f);
+
+    mod->onStop();
+    cleanupProfileKey(kTestKeychainService, pid);
+    return true;
+})
+
+// 长模型键在键列会截断显示
 // 估宽 8px/字符 → 100% 档 keyMaxChars=27，"ANTHROPIC_DEFAULT_HAIKU_MODEL"(31)
 // / "ANTHROPIC_DEFAULT_OPUS_MODEL"(29) 渲染成「前 26 字符 + …」，渲染文本
 // ≠ 全键名，按全键名 count/find 断言会被截断掩蔽（泄漏了也恒真）。判据：
@@ -5423,9 +6415,10 @@ static std::string leakedModelEnvKey(const std::string& rendered) {
     return {};
 }
 
-// ---- 组 B P3：环境变量页签列生效 env + 每键来源（2026-09-30 E1 起模型键除外）----
-// 用户读到「只显示 1 条」的真相：该页此前只列 profile 自身的 extra_env。
-// E1（2026-09-30）：模型映射域的键不再在本页展示（「模型映射」页签已列）——
+// 组 B P3：环境变量页签列生效 env + 每键来源
+// 该页只列 profile 自身的 extra_env 时，用户读到的是「只显示 1 条」。
+// 模型映射域的键不在本页展示（「模型映射」页签已列）——托管写入的 ANTHROPIC_MODEL
+// 与用户手写在 extra_env 的模型键都按键名过滤（不按来源）。
 // 托管写入的 ANTHROPIC_MODEL 与用户手写在 extra_env 的
 // ANTHROPIC_DEFAULT_OPUS_MODEL 都按键名过滤（不按来源）。
 REGISTER_TEST(claude_env_tab_lists_effective_env_with_source,
@@ -5480,8 +6473,7 @@ REGISTER_TEST(claude_env_tab_lists_effective_env_with_source,
     DOCTEST_CHECK_EQ(srcOf["ANTHROPIC_AUTH_TOKEN"], std::string("托管键"));
     DOCTEST_REQUIRE(srcOf.count("MY_PROFILE") == 1);
     DOCTEST_CHECK_EQ(srcOf["MY_PROFILE"], std::string("本 Profile"));
-    //（advanced-json-editor §8.4：片段不再携带 env 键——片段键不出现在
-    // env pane，片段高级属性来源标注在高级配置 pane）
+        //（片段不再携带 env 键——片段键不出现在
     DOCTEST_REQUIRE(srcOf.count("MY_SHARED") == 0);
 
     mod->onStop();
@@ -5489,9 +6481,8 @@ REGISTER_TEST(claude_env_tab_lists_effective_env_with_source,
     return true;
 })
 
-// ---- 2026-09-30 E1/E2 几何断言：模型键不渲染 + 行几何不重叠（130% 缩放档）----
-// 用户真机根因：全局字号缩放（用户机 130%）放大字号而行盒按 100% 写死 → 墨迹
-// 越盒叠印；旧实现值框还跨整卡垂直居中，与行带 2 的来源/说明文本叠印。断言：
+// 模型键不渲染 + 行几何不重叠（130% 缩放档）
+// 全局字号缩放（130%）放大字号而行盒按 100% 写死 → 墨迹越盒叠印。断言：
 //   ① 行卡 y 区间两两不重叠（行距 ≥ 行卡高）
 //   ② 行内「键/值」带与「来源/说明」带 y 区间不重叠
 //   ③ 渲染项里没有任何模型映射键（含 legacy model 派生的 ANTHROPIC_MODEL 与
@@ -5594,11 +6585,10 @@ REGISTER_TEST(claude_env_tab_no_overlap_and_model_keys_hidden,
     return true;
 })
 
-// ---- 组 B P4：共享配置区块钉面板底 + 「+ 新建片段」恒可点 ----
-// 用户原话：「新建片段的按钮原本底部对齐的，现在没了」。
-// 旧实现 listH = clamp(scrollH − sharedH − 12, min(96, scrollH), scrollH)：
-// 96px 保底一生效（≈5 个片段起）区块就被推下去 → ≥6 个按钮被底部按钮压住点不到、
-// ≥8 个被整页 clip。现在区块底锚定 = 底部按钮行上沿 − 12，高度取
+// 组 B P4：共享配置区块钉面板底 + 「+ 新建片段」恒可点
+// 区块底必须锚定：listH 若按 clamp(scrollH − sharedH − 12, min(96, scrollH), scrollH)
+// 算，96px 保底一生效（≈5 个片段起）区块就被推下去 → ≥6 个按钮被底部按钮压住
+// 点不到、≥8 个被整页 clip。现在区块底锚定 = 底部按钮行上沿 − 12，高度取
 // min(自然高, 不侵占列表保底视口)，卡片在区块内部滚。
 REGISTER_TEST(claude_shared_block_bottom_anchored,
               "claude_module: 共享配置区块钉面板底 + 新建片段恒可点（8 片段）", {
@@ -5663,9 +6653,9 @@ REGISTER_TEST(claude_shared_block_bottom_anchored,
         //（弹窗保持开着不影响下面的块内滚动断言：断言直读元素，不走命中测试）
     }
 
-    // ---- 审计 F-09：片段集变化 → 块内滚动偏移归零 ----
-    // 判别力设计（避免恒真断言）：旧集与新集都是 8 张卡 → 内容高/maxOffset 不变，
-    // 单靠渲染侧的 clamp 藏不住旧偏移；只有真的复位才会回到 0
+    // 片段集变化 → 块内滚动偏移归零
+    // 判别力：旧集与新集都是 8 张卡 → 内容高/maxOffset 不变，单靠渲染侧的 clamp
+    // 藏不住旧偏移；只有真的复位才会回到 0
     {
         eui::Ui ui;
         composeAtSize(mod.get(), ui, "claude_shared_anchor", 1262.0f, 801.0f);
@@ -5686,7 +6676,7 @@ REGISTER_TEST(claude_shared_block_bottom_anchored,
     // 换一整套片段（8 个新名字）：签名变 → 偏移必须归零。
     // 注意：这里绕过 UI 直改 service，模块的快照是**后台刷新 + 200ms 节流**的
     //（直改 DB 不标脏）→ 必须 onPageEnter() 标脏 + 有界轮询等快照换过来，
-    // 否则断言的还是旧快照（旧签名 → 不复位），会得到假红
+        // 否则断言的还是旧快照（旧签名 → 不复位），会得到假红
     for (int64_t id : scIds) {
         DOCTEST_REQUIRE(env.svc->deleteSharedConfig(id).isOk());
     }
@@ -5717,8 +6707,7 @@ REGISTER_TEST(claude_shared_block_bottom_anchored,
     return true;
 })
 
-// ---- 2026-09-30：共享配置片段列表限高 2 条 + 块内滚 ----
-// 用户原话：「共享配置片段这个列表高度需要限制，最多显示 2 条，超过使用滚动条。」
+// 共享配置片段列表限高 2 条 + 块内滚
 // 改前区块自然高随条目数涨（固定部分 + N×(卡 56+行距 8)，≤4 条不触
 // sharedBlockMaxH 上界）→ 每加一个片段左列整列重排。现在条目区恒 2 整行
 //（128 = 2×64）：
@@ -5754,8 +6743,7 @@ REGISTER_TEST(claude_shared_list_cap_two_cards,
         DOCTEST_REQUIRE(block != nullptr);
         DOCTEST_REQUIRE(newBtn != nullptr);
 
-        // ① 区块高恒 204，与条目数无关（变异判别：改回随条目数涨 → 0 条 94 /
-        //    1 条 140 / 3 条 268，≠ 204 → 红）
+    // ① 区块高恒 204，与条目数无关（改回随条目数涨
         DOCTEST_CHECK(std::fabs(block->frame.height - 204.0f) <= 0.5f);
         // ② 不溢出：区块底 ≤ 底部按钮行上沿（钉底锚点）
         DOCTEST_CHECK(block->frame.y + block->frame.height <=
@@ -5816,8 +6804,7 @@ REGISTER_TEST(claude_shared_list_cap_two_cards,
 })
 
 
-// ---- 29. 复制配置完整形态升级（2026-09-30 advanced-json-editor 设计 §6，
-// 已拍板②）：顶层 = env + JSON 属性（如 model）；片段叠加片段赢；pretty 文本；
+// 29. 复制配置完整形态升级
 // toast 副文案同步
 REGISTER_TEST(claude_export_full_settings_shape,
               "claude_module: buildProfileExportJson 完整 settings.json 形态（env+高级属性/片段赢/pretty/toast）", {
@@ -5871,7 +6858,7 @@ REGISTER_TEST(claude_export_full_settings_shape,
                              .asObject().get("type").asString(),
                          std::string("command"));
     }
-    // toast 副文案同步（§6）：完整形态措辞 + 占位声明
+    // toast 副文案同步：完整形态措辞 + 占位声明
     DOCTEST_CHECK(std::string(kCopyConfigToastSubtitle)
                       .find("完整 settings.json") != std::string::npos);
     DOCTEST_CHECK(std::string(kCopyConfigToastSubtitle)
@@ -5881,8 +6868,7 @@ REGISTER_TEST(claude_export_full_settings_shape,
     return true;
 })
 
-// ---- 高级配置 pane 键来源标注（advanced-json-editor 设计 §8.5，0edd3cf 形态
-// ---- 复用）+ contentBottom 真消费护栏（裁决⑤，变异⑥）
+// 高级配置 pane 键来源标注 + contentBottom 真消费护栏
 REGISTER_TEST(claude_detail_advanced_key_sources,
               "claude_module: 详情高级配置 pane 键来源（片段/本 Profile/model 说明）+ 不越内容框", {
     TestEnv env;
@@ -5900,7 +6886,7 @@ REGISTER_TEST(claude_detail_advanced_key_sources,
         p.sharedConfigId = f.value().id;
         DOCTEST_REQUIRE(env.svc->updateProfile(p).isOk());
     }
-    // 坏 JSON profile（F-03：解析失败提示态必须可达——compose 经 warningsOut
+    // 坏 JSON profile：解析失败提示态必须可达——compose 经 warningsOut
     // 感知「配置存在但被合并按空」，pane 显示失败行而非「未配置」）
     auto bad = env.svc->createProfile("坏JSON源", "https://ksb.example.com",
                                       "sk-ant-ksrc-0002", "");
@@ -5908,6 +6894,26 @@ REGISTER_TEST(claude_detail_advanced_key_sources,
     {
         module::claude::Profile p = bad.value();
         p.extraSettingsJson = "{broken json";
+        DOCTEST_REQUIRE(env.svc->updateProfile(p).isOk());
+    }
+    // model 说明仅对**非空字符串** model 显示（抑制只在该形态真
+    // settings.json，说明不适用
+    auto emptyModel = env.svc->createProfile("空串model源",
+                                             "https://kse.example.com",
+                                             "sk-ant-ksrc-0003", "");
+    DOCTEST_REQUIRE(emptyModel.isOk());
+    {
+        module::claude::Profile p = emptyModel.value();
+        p.extraSettingsJson = R"({"model":""})";
+        DOCTEST_REQUIRE(env.svc->updateProfile(p).isOk());
+    }
+    auto nonStrModel = env.svc->createProfile("非串model源",
+                                              "https://ksn.example.com",
+                                              "sk-ant-ksrc-0004", "");
+    DOCTEST_REQUIRE(nonStrModel.isOk());
+    {
+        module::claude::Profile p = nonStrModel.value();
+        p.extraSettingsJson = R"({"model":123})";
         DOCTEST_REQUIRE(env.svc->updateProfile(p).isOk());
     }
 
@@ -5997,7 +7003,7 @@ REGISTER_TEST(claude_detail_advanced_key_sources,
         }
     }
 
-    // 切到坏 JSON profile → 解析失败提示态（§8.5 单行；F-03 接线断言）
+    // 切到坏 JSON profile → 解析失败提示态（单行）
     {
         eui::Ui ui;
         compose(ui);
@@ -6026,9 +7032,44 @@ REGISTER_TEST(claude_detail_advanced_key_sources,
         DOCTEST_CHECK(ui.find("claude.advjson.label") == nullptr);
     }
 
+    // 空串 / 非字符串 model：key 行在场但「ANTHROPIC_MODEL 不
+    for (const std::string target : {"空串model源", "非串model源"}) {
+        {
+            eui::Ui ui;
+            compose(ui);
+            bool clicked = false;
+            for (int i = 0; i < 8 && !clicked; ++i) {
+                const auto* name = ui.find("claude.profile." +
+                                           std::to_string(i) + ".name");
+                if (name != nullptr && name->text == target) {
+                    clicked = click(ui, "claude.profile." + std::to_string(i) +
+                                            ".bg");
+                }
+            }
+            DOCTEST_CHECK(clicked);
+        }
+        {
+            eui::Ui ui;
+            compose(ui);
+            DOCTEST_CHECK(click(ui, "claude.detail.tabs.hit.3"));
+        }
+        {
+            eui::Ui ui;
+            compose(ui);
+            // model 行在场（证明 pane 渲染到该 profile 且键被解析出）
+            const auto* k0 = ui.find("claude.advjson.row.key.0");
+            DOCTEST_REQUIRE(k0 != nullptr);
+            DOCTEST_CHECK_EQ(k0->text, std::string("model"));
+        // 说明不显示
+            DOCTEST_CHECK(ui.find("claude.advjson.note") == nullptr);
+        }
+    }
+
     mod->onStop();
     cleanupProfileKey(kTestKeychainService, pid);
     cleanupProfileKey(kTestKeychainService, bad.value().id);
+    cleanupProfileKey(kTestKeychainService, emptyModel.value().id);
+    cleanupProfileKey(kTestKeychainService, nonStrModel.value().id);
     return true;
 })
 
@@ -6099,8 +7140,7 @@ REGISTER_TEST(claude_detail_advanced_key_overflow_within_box,
         DOCTEST_REQUIRE(box != nullptr);
         const float boxBottom = box->frame.y + box->frame.height;
         // 行数 < 12（预算生效）；画出的行 + 溢出提示全部 ≤ 内容框底。
-        //（逐行 frame 断言曾随 c32581a 清理调试输出被误删——审计 F-02 恢复；
-        // 绿态应过：行数预算 while 收缩保证 rows+tail ≤ availH）
+        //（逐行 frame 断言别删——绿态应过：行数预算 while 收缩保证 rows+tail ≤
         int drawn = 0;
         for (int i = 0; i < 12; ++i) {
             const auto* row =
@@ -6123,7 +7163,270 @@ REGISTER_TEST(claude_detail_advanced_key_overflow_within_box,
     return true;
 })
 
-// ---- 片段弹窗 JSON 化（advanced-json-editor 设计 §8.1）：JSON 保存/重开回读 +
+// 高级配置 pane 字号/行盒随生效字号派生（85% 档钉值）
+// 全局字号 85% 档下字号缩小但行盒不动 → 盒内大片空白 + 行距相对过宽，内容易越
+// 内容框与下一块叠印。修法同 env pane：字号 = 基准×fs，盒/纵向间距 = round(基准×fs)。
+// 期望值**手算写死**，不复刻实现表达式：
+//   100% 档：14 / 18 / 28 / 10 / 28 / 34 / 18 / 18，字号 11 / 12（字面常量逐值）
+//   85%  档：12 / 15 / 24 /  9 / 24 / 29 / 15 / 15，字号 9.35 / 10.2
+//            （round(14×0.85)=12、round(18×0.85)=15、round(28×0.85)=24、
+//              round(10×0.85)=round(8.5)=9、行距 24+round(6×0.85)=24+5=29、
+//              round(18×0.85)=15；字号不取整）
+//            （round(14×0.85)=12、round(18×0.85)=15、round(28×0.85)=24、
+//              round(10×0.85)=round(8.5)=9、行距 24+round(6×0.85)=24+5=29、
+//              round(18×0.85)=15；字号不取整）
+REGISTER_TEST(claude_advjson_pane_geometry_follows_font_scale,
+              "claude_module: 高级配置 pane 字号行盒随生效字号派生（100% 逐值 + 85% 钉值）", {
+    TestEnv env;
+    auto p = env.svc->createProfile("派生档", "https://fs.example.com",
+                                    "sk-ant-fsc-0001", "m-fs");
+    DOCTEST_REQUIRE(p.isOk());
+    const int64_t pid = p.value().id;
+    {
+        // 12 个顶层键（> 暂定上限 8 → 必走「另有 N 项」溢出行）+ 非空字符串
+        // model 键（→ 说明行 note 在场）
+        module::claude::Profile pr = p.value();
+        std::string json = R"({"model":"m-user")";
+        for (int i = 0; i < 12; ++i) {
+            json += ",\"k" + std::to_string(i) + "\":\"v\"";
+        }
+        json += "}";
+        pr.extraSettingsJson = json;
+        DOCTEST_REQUIRE(env.svc->updateProfile(pr).isOk());
+    }
+
+    std::unique_ptr<::core::Module> mod(create_claude_module());
+    eui::Screen screen;
+    screen.width = 1262.0f;
+    screen.height = 1000.0f;
+    auto compose = [&](eui::Ui& ui) {
+        ui.begin("claude_advjson_scale");
+        mod->compose(ui, screen);
+        ui.end();
+        ui.layout(screen.width, screen.height);   // frame 断言必须真 layout
+    };
+    auto click = [](eui::Ui& ui, const std::string& id) -> bool {
+        const auto* node = ui.find(id);
+        if (node == nullptr || node->onClick == nullptr) return false;
+        node->onClick();
+        return true;
+    };
+    // 缩放守卫：fontScale 是进程级全局状态，RAII 还原
+    struct FontScaleGuard {
+        float prev;
+        explicit FontScaleGuard(float s)
+            : prev(::core::theme::fontScale()) {
+            ::core::theme::setFontScale(s);
+        }
+        ~FontScaleGuard() { ::core::theme::setFontScale(prev); }
+    };
+    // 选中卡片 + 切到「高级配置」页签（等缓存就绪；键清单仅在 shown 非空时渲染）
+    bool sawCard = false;
+    for (int i = 0; i < 250 && !sawCard; ++i) {
+        eui::Ui ui;
+        compose(ui);
+        sawCard = click(ui, "claude.profile.0.bg");
+        if (!sawCard) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    DOCTEST_CHECK(sawCard);
+    bool sawTab = false;
+    bool sawPane = false;
+    for (int i = 0; i < 250 && !sawPane; ++i) {
+        eui::Ui ui;
+        compose(ui);
+        if (!sawTab) {
+            sawTab = click(ui, "claude.detail.tabs.hit.3");
+        }
+        sawPane = ui.find("claude.field.dialect.label") != nullptr;
+        if (!sawPane) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    DOCTEST_CHECK(sawTab);
+    DOCTEST_CHECK(sawPane);
+
+    // 判据 helper：逐项核对本档期望派生值（返回空串 = 通过）。期望值由调用方
+    // 按档位**手算传入**（不复刻实现里的 rfs 表达式）
+    struct Geom {
+        float labelH, labelGap, fieldH, fieldGap;
+        float keyRowH, keyPitch, noteH, overflowH;
+        float labelFs, keyFs, valueFs;
+    };
+    const auto geomProblem = [&](eui::Ui& ui, const Geom& g,
+                                 int* drawnOut) -> std::string {
+        const auto* dL = ui.find("claude.field.dialect.label");
+        const auto* dB = ui.find("claude.field.dialect.bg");
+        const auto* dV = ui.find("claude.field.dialect.value");
+        const auto* fL = ui.find("claude.field.fallback.label");
+        const auto* fB = ui.find("claude.field.fallback.bg");
+        const auto* aL = ui.find("claude.advjson.label");
+        if (dL == nullptr || dB == nullptr || dV == nullptr || fL == nullptr ||
+            fB == nullptr || aL == nullptr) {
+            return "高级配置 pane 固定行元素缺失";
+        }
+        const auto near = [](float a, float b) {
+            return std::fabs(a - b) <= 0.01f;
+        };
+        // 标签行盒（行高 = 盒高，单行不折行）
+        if (!near(dL->lineHeight, g.labelH) || !near(dL->frame.height, g.labelH)) {
+            return "方言标签行盒 " + std::to_string(dL->frame.height) +
+                   " != " + std::to_string(g.labelH);
+        }
+        if (!near(fL->frame.height, g.labelH) || !near(aL->frame.height, g.labelH)) {
+            return "备用/高级属性标签行盒 != " + std::to_string(g.labelH);
+        }
+        // 标签底 → 值盒顶
+        if (!near(dB->frame.y - dL->frame.y, g.labelGap)) {
+            return "方言标签底→盒顶 " + std::to_string(dB->frame.y - dL->frame.y) +
+                   " != " + std::to_string(g.labelGap);
+        }
+        // 值盒高（两行同款）
+        if (!near(dB->frame.height, g.fieldH) ||
+            !near(fB->frame.height, g.fieldH) ||
+            !near(dV->frame.height, g.fieldH)) {
+            return "方言/备用值盒高 != " + std::to_string(g.fieldH);
+        }
+        // 值盒底 → 下一标签顶
+        if (!near(fL->frame.y - dB->frame.y, g.fieldH + g.fieldGap)) {
+            return "方言盒底→备用标签顶 " +
+                   std::to_string(fL->frame.y - dB->frame.y) + " != " +
+                   std::to_string(g.fieldH + g.fieldGap);
+        }
+        // 标签字号（小字 11×fs，值走 token 13×fs）
+        if (!near(dL->fontSize, g.labelFs) || !near(fL->fontSize, g.labelFs) ||
+            !near(aL->fontSize, g.labelFs)) {
+            return "标签字号 != " + std::to_string(g.labelFs);
+        }
+        if (!near(dV->fontSize, g.valueFs)) {
+            return "方言值字号 != " + std::to_string(g.valueFs);
+        }
+        // 键行卡：卡高 / 行距 / 字号 / 行高
+        int drawn = 0;
+        const ::core::dsl::Element* prevBg = nullptr;
+        for (int i = 0; i < 12; ++i) {
+            const std::string n = std::to_string(i);
+            const auto* bg = ui.find("claude.advjson.row.bg." + n);
+            if (bg == nullptr) break;
+            const auto* k = ui.find("claude.advjson.row.key." + n);
+            const auto* s = ui.find("claude.advjson.row.src." + n);
+            if (k == nullptr || s == nullptr) return "行 " + n + " 缺 key/src";
+            if (!near(bg->frame.height, g.keyRowH) ||
+                !near(k->frame.height, g.keyRowH) ||
+                !near(s->lineHeight, g.keyRowH)) {
+                return "键行卡高/行高 != " + std::to_string(g.keyRowH);
+            }
+            if (!near(k->fontSize, g.keyFs)) {
+                return "键名字号 " + std::to_string(k->fontSize) + " != " +
+                       std::to_string(g.keyFs);
+            }
+            if (!near(s->fontSize, g.labelFs)) {
+                return "来源字号 != " + std::to_string(g.labelFs);
+            }
+            if (prevBg != nullptr &&
+                !near(bg->frame.y - prevBg->frame.y, g.keyPitch)) {
+                return "键行距 " + std::to_string(bg->frame.y - prevBg->frame.y) +
+                       " != " + std::to_string(g.keyPitch);
+            }
+            prevBg = bg;
+            ++drawn;
+        }
+        if (drawn < 2) return "键行画得太少（行距断言无从判别）: " +
+                            std::to_string(drawn);
+        *drawnOut = drawn;
+        // 溢出行 + 说明行（12 键 > 上限 8，note 由 model 键触发，两者必在场）
+        const auto* ovf = ui.find("claude.advjson.overflow");
+        const auto* note = ui.find("claude.advjson.note");
+        if (ovf == nullptr || note == nullptr) return "溢出行/说明行缺场";
+        if (!near(ovf->frame.height, g.overflowH) ||
+            !near(ovf->lineHeight, g.overflowH)) {
+            return "溢出行高 != " + std::to_string(g.overflowH);
+        }
+        if (!near(note->frame.height, g.noteH) ||
+            !near(note->lineHeight, g.noteH)) {
+            return "说明行高 != " + std::to_string(g.noteH);
+        }
+        // 溢出/说明两行紧跟键清单（行数预算自然跟随派生行距）
+        const auto* box = ui.find("claude.detail.contentbox");
+        if (box == nullptr) return "内容框缺场";
+        const float boxBottom = box->frame.y + box->frame.height;
+        if (ovf->frame.y < prevBg->frame.y + prevBg->frame.height - 0.01f) {
+            return "溢出行压住最后一行键卡";
+        }
+        if (note->frame.y < ovf->frame.y + ovf->frame.height - 0.01f) {
+            return "说明行压住溢出行";
+        }
+        if (note->frame.y + note->frame.height > boxBottom + 0.5f) {
+            return "说明行越内容框底";
+        }
+        return {};
+    };
+
+    int drawn100 = 0;
+    int drawn85 = 0;
+    // 100% 档：全部与字面常量逐值相等（零回归锚）
+    {
+        eui::Ui ui;
+        compose(ui);
+        const std::string msg = geomProblem(ui, Geom{
+            /*labelH*/14.0f, /*labelGap*/18.0f, /*fieldH*/28.0f, /*fieldGap*/10.0f,
+            /*keyRowH*/28.0f, /*keyPitch*/34.0f, /*noteH*/18.0f, /*overflowH*/18.0f,
+            /*labelFs*/11.0f, /*keyFs*/12.0f, /*valueFs*/13.0f}, &drawn100);
+        DOCTEST_CHECK_MESSAGE(msg.empty(), msg);
+    }
+    // 85% 档（kFontPresets[0]，本次修的真机风险档）：钉值见上注释
+    {
+        FontScaleGuard guard{0.85f};
+        eui::Ui ui;
+        compose(ui);
+        const std::string msg = geomProblem(ui, Geom{
+            /*labelH*/12.0f, /*labelGap*/15.0f, /*fieldH*/24.0f, /*fieldGap*/9.0f,
+            /*keyRowH*/24.0f, /*keyPitch*/29.0f, /*noteH*/15.0f, /*overflowH*/15.0f,
+            /*labelFs*/9.35f, /*keyFs*/10.2f, /*valueFs*/11.05f}, &drawn85);
+        DOCTEST_CHECK_MESSAGE(msg.empty(), msg);
+    }
+    // 行数预算随派生行距自然跟随：85% 档行距 29 < 100% 档 34，同一可用高下画得
+    // 出的行数**只多不少**（不多 = 预算没把行白扔；不少 = 派生行距真被消费）。
+    // 12 键 > 暂定上限 8，两档都撞 8 行上限时该判据退化为 8 ≥ 8（仍成立）——
+    // 短窗档（行数由 availH 而非上限决定）才有判别力。
+    DOCTEST_CHECK(drawn85 >= drawn100);
+    {
+        // 短窗档：行数预算由 contentBottom 推（不撞 8 行上限），85% 档（行距
+        // 29）应比 100% 档（行距 34）**多画行**（实测 4 → 6）—— 派生行距真被
+        // 行数预算消费的判别力：行距若被写死回 34，本判据变红
+        auto drawnAt = [&](float h, int* out) -> bool {
+            eui::Screen s2;
+            s2.width = 1262.0f;
+            s2.height = h;
+            eui::Ui ui;
+            ui.begin("claude_advjson_scale_short");
+            mod->compose(ui, s2);
+            ui.end();
+            ui.layout(s2.width, s2.height);
+            *out = 0;
+            for (int i = 0; i < 12; ++i) {
+                if (ui.find("claude.advjson.row.bg." + std::to_string(i)) ==
+                    nullptr) {
+                    break;
+                }
+                ++*out;
+            }
+            return true;
+        };
+        int short100 = 0;
+        int short85 = 0;
+        DOCTEST_REQUIRE(drawnAt(720.0f, &short100));
+        DOCTEST_CHECK(short100 > 0);
+        {
+            FontScaleGuard guard{0.85f};
+            DOCTEST_REQUIRE(drawnAt(720.0f, &short85));
+        }
+        DOCTEST_CHECK(short85 > short100);
+    }
+
+    mod->onStop();
+    cleanupProfileKey(kTestKeychainService, pid);
+    return true;
+})
+
+// 片段弹窗 JSON 化：JSON 保存/重开回读 +
 // env 键拒绝 + 格式化
 REGISTER_TEST(claude_shared_dialog_json_roundtrip,
               "claude_module: 片段弹窗 JSON 保存落库 pretty + 重开回读 + env 键拒绝（headless）", {
@@ -6167,11 +7470,17 @@ REGISTER_TEST(claude_shared_dialog_json_roundtrip,
                            R"({"model":"frag-m","permissions":{"p":1}})"));
         DOCTEST_CHECK(click(ui, "claude.dialog.shared.confirm.bg"));
     }
+    // 保存是异步刷新（H2）：写库同步、快照收割异步——轮询必须等**渲染快照**
+        //（DB 第 1 轮即真 = 等的是写库而非快照，Windows CI 快照竞态 flaky
     bool saved = false;
-    for (int i = 0; i < 300 && !saved; ++i) {
+    bool cardReady = false;   // 快照收割完成：片段卡已进渲染树（下一步 click 依赖）
+    for (int i = 0; i < 300 && !(saved && cardReady); ++i) {
         mod->onPageEnter();
         eui::Ui ui;
         compose(ui);
+        if (!cardReady) {
+            cardReady = ui.find("claude.shared.card.0.bg") != nullptr;
+        }
         auto list = env.svc->listSharedConfigs();
         if (list.isOk()) {
             for (const auto& c : list.value()) {
@@ -6180,11 +7489,15 @@ REGISTER_TEST(claude_shared_dialog_json_roundtrip,
                 }
             }
         }
-        if (!saved) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        if (!(saved && cardReady)) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
     }
     DOCTEST_CHECK(saved);
+    DOCTEST_CHECK(cardReady);   // 快照收割完成（片段卡进渲染树，可点）
 
-    // 重开编辑回读：JSON 框预填 DB 原文；改名保存 → 更新生效
+    // 重开编辑回读：JSON 框预填 DB 原文（= 上一步落库的 pretty 文本，
+    // 逐字节相等才算「保存 → 重开回读」这条链真的走通）
     {
         eui::Ui ui;
         compose(ui);
@@ -6192,10 +7505,74 @@ REGISTER_TEST(claude_shared_dialog_json_roundtrip,
         DOCTEST_CHECK(click(ui, "claude.shared.card.0.bg"));
     }
     {
+        using InputState = components::input_detail::InputModel::InputState;
         eui::Ui ui;
         compose(ui);
-        // env 键拒绝：清不掉旧文 → 直接追加会破坏 JSON；改走新建弹窗验证拒绝
-        DOCTEST_CHECK(click(ui, "claude.dialog.shared.cancel.bg"));
+        // 编辑弹窗真的开着（backdrop 未 disabled = open_ 为真；isEdit 分支
+        // 才画的删除键同时在，说明走的是 openSharedEdit 而非 openSharedCreate）
+        const auto* backdrop = ui.find("claude.dialog.shared.backdrop");
+        DOCTEST_REQUIRE(backdrop != nullptr);
+        DOCTEST_CHECK(!backdrop->disabled);
+        DOCTEST_CHECK(ui.find("claude.dialog.shared.delete.bg") != nullptr);
+        // 回读：编辑框文本 == DB 落库原文
+        std::string dbJson;
+        auto list = env.svc->listSharedConfigs();
+        DOCTEST_REQUIRE(list.isOk());
+        for (const auto& c : list.value()) {
+            if (c.name == "JSON片段") dbJson = c.extraSettingsJson;
+        }
+        DOCTEST_REQUIRE(!dbJson.empty());
+        DOCTEST_CHECK_EQ(ui.state<InputState>("claude.dialog.shared.json").text,
+                         dbJson);
+    }
+    // 改名保存 → 更新生效（openSharedEdit 预填 + submitSharedForm update 分支）
+    {
+        using InputState = components::input_detail::InputModel::InputState;
+        eui::Ui ui;
+        compose(ui);
+        const auto* nameHit = ui.find("claude.dialog.shared.name.hit");
+        DOCTEST_REQUIRE(nameHit != nullptr);
+        // 全选后重打（预填文本非空，onTextInput 只在光标处插入——不选区就会
+        // 把新名插到旧名中间，测不到「改名」）
+        auto& st = ui.state<InputState>("claude.dialog.shared.name");
+        st.cursor = 0;
+        st.selectionStart = 0;
+        st.selectionEnd = static_cast<int>(st.text.size());
+        core::TextInputEvent ev;
+        ev.text = "JSON片段改名";
+        nameHit->onTextInput(ev);
+        DOCTEST_CHECK(click(ui, "claude.dialog.shared.confirm.bg"));
+    }
+    {
+        bool renamed = false;
+        for (int i = 0; i < 300 && !renamed; ++i) {
+            mod->onPageEnter();
+            eui::Ui ui;
+            compose(ui);
+            auto list = env.svc->listSharedConfigs();
+            if (list.isOk()) {
+                for (const auto& c : list.value()) {
+                    if (c.name == "JSON片段改名") {
+                        renamed = true;
+                        // 改名不该动 JSON（update 分支带的是预填原文）
+                        DOCTEST_CHECK(c.extraSettingsJson.find("frag-m") !=
+                                      std::string::npos);
+                    }
+                }
+            }
+            if (!renamed) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        DOCTEST_CHECK(renamed);
+    }
+    {
+        eui::Ui ui;
+        compose(ui);
+        // 弹窗保存后已关（backdrop disabled = open_ 已清；update 失败会留在
+        // 开着 + error_ 红字）
+        const auto* backdrop = ui.find("claude.dialog.shared.backdrop");
+        DOCTEST_REQUIRE(backdrop != nullptr);
+        DOCTEST_CHECK(backdrop->disabled);
+        DOCTEST_CHECK(ui.find("claude.dialog.shared.error") == nullptr);
     }
     {
         eui::Ui ui;
@@ -6225,5 +7602,641 @@ REGISTER_TEST(claude_shared_dialog_json_roundtrip,
     }
 
     mod->onStop();
+    return true;
+})
+
+// N. onStart/onStop 重入幂等（活门控 Task 4）：双 onStart / 双 onStop 不崩
+
+REGISTER_TEST(claude_module_onstart_reentry_idempotent,
+              "claude_module: onStart→onStop→onStart 重入 + 双 onStart/双 onStop no-op", {
+    TestEnv env;
+    DOCTEST_REQUIRE(module::claude::ClaudeService::global() != nullptr);
+    std::unique_ptr<::core::Module> mod(create_claude_module());
+
+    // 观察面（onStart 无注册表副作用，取服务状态一致性最低契约）：
+    // 硬性需求 1 —— onStart 不自动起代理（main 按设置门控 / 用户手动启动）
+    mod->onStart();
+    DOCTEST_CHECK(!module::claude::ClaudeService::global()->isProxyRunning());
+    mod->onStart();   // 双 onStart：no-op（不重跑同步首刷 + 孤儿 Keychain 清理）
+    DOCTEST_CHECK(!module::claude::ClaudeService::global()->isProxyRunning());
+    mod->onStop();
+    DOCTEST_CHECK(!module::claude::ClaudeService::global()->isProxyRunning());
+    mod->onStop();    // 双 onStop：no-op（代理未运行不重复 stop）
+    mod->onStart();   // off→on 循环
+    DOCTEST_CHECK(!module::claude::ClaudeService::global()->isProxyRunning());
+    mod->onStop();
+    DOCTEST_CHECK(!module::claude::ClaudeService::global()->isProxyRunning());
+    return true;
+})
+
+// O. 模型映射「1M」开关（详情页）
+// 语义照 cc-switch useModelState.ts：勾态 = **槽位支持位 && 串尾（大小写不敏感）
+// 有 [1M]**（双重条件，不是只看串）；不支持槽位 / 空 base 的行开关置灰且点了
+// 不落库。落库仍存「基础名 + 可选 [1M]」一个字符串（零 schema 迁移）。
+REGISTER_TEST(claude_ui_model_one_m_switch,
+              "claude_module: 模型映射 1M 开关（回显/落库/禁用行不生效）", {
+    TestEnv env;
+    auto a = env.svc->createProfile("1M开关", "https://onem.example.com",
+                                    "sk-ant-onem-0001", "");
+    DOCTEST_REQUIRE(a.isOk());
+    const int64_t pid = a.value().id;
+    // 造数（直接写库，绕开 UI）：覆盖四种状态
+    //   def     支持 + 无标记        → 开关可用、未勾
+    //   sonnet  支持 + 串尾 [1m]     → **回显勾上**（大小写不敏感）
+    //   opus    支持 + 无标记
+    //   haiku   不支持（唯一）+ [1M] → 禁用 + 不勾（双重条件第二项不成立）
+    //   fable   支持 + 空 base       → 禁用（空 base 不许勾）
+    //   subagent 支持 + 空 base      → 禁用（空 base 不许勾）
+    module::claude::ModelsConfig mc;
+    mc.def.model = "m-def";
+    mc.sonnet.model = "m-sonnet[1m]";
+    mc.opus.model = "m-opus";
+    mc.haiku.model = "m-haiku[1M]";
+    auto seeded = module::claude::serializeModelsConfig(mc);
+    DOCTEST_REQUIRE(seeded.isOk());
+    auto cur = env.svc->getProfile(pid);
+    DOCTEST_REQUIRE(cur.isOk());
+    cur.value().modelsConfigJson = seeded.value();
+    DOCTEST_REQUIRE(env.svc->updateProfile(cur.value()).isOk());
+
+    std::unique_ptr<::core::Module> mod(create_claude_module());
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    auto compose = [&](eui::Ui& ui) {
+        ui.begin("claude_onem");
+        mod->compose(ui, screen);
+        ui.end();
+        // 几何断言要 frame 有效：headless 的 ui.end() 不跑 layout，需显式补
+        //（claude_module_actions_row_alignment 同款）
+        ui.layout(screen.width, screen.height);
+    };
+    auto click = [](eui::Ui& ui, const std::string& id) -> bool {
+        const auto* node = ui.find(id);
+        if (node == nullptr || node->onClick == nullptr) {
+            std::cerr << "missing clickable: " << id << std::endl;
+            return false;
+        }
+        node->onClick();
+        return true;
+    };
+
+    // 选中该 profile（详情面板 shown 取选中，其次激活）
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK(click(ui, "claude.profile.0.bg"));
+    }
+    // 切到「模型映射」页签，核对每行开关存在 + 勾态回显
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK(click(ui, "claude.detail.tabs.hit.1"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui);
+        const auto& table = module::claude::modelSlotTable();
+        for (size_t i = 0; i < table.size(); ++i) {
+            DOCTEST_CHECK(ui.find("claude.slot.onem." + std::to_string(i) +
+                                  ".hit") != nullptr);
+        }
+        const auto* trackDef = ui.find("claude.slot.onem.0.track");
+        const auto* knobDef = ui.find("claude.slot.onem.0.knob");
+        const auto* trackSonnet = ui.find("claude.slot.onem.1.track");
+        const auto* knobSonnet = ui.find("claude.slot.onem.1.knob");
+        const auto* trackHaiku = ui.find("claude.slot.onem.3.track");
+        const auto* knobHaiku = ui.find("claude.slot.onem.3.knob");
+        DOCTEST_REQUIRE(trackDef != nullptr);
+        DOCTEST_REQUIRE(knobDef != nullptr);
+        DOCTEST_REQUIRE(trackSonnet != nullptr);
+        DOCTEST_REQUIRE(knobSonnet != nullptr);
+        DOCTEST_REQUIRE(trackHaiku != nullptr);
+        DOCTEST_REQUIRE(knobHaiku != nullptr);
+        // 勾态判据 = 滑块相对轨道的偏移（勾上滑块移到轨道右端）；未勾也有
+        // margin 偏移（= max(spacing.micro, 轨道高×0.125)）→ 用**相对比较**
+        // （勾上行偏移 − 未勾行偏移 ≈ 轨道可走行程 ≥ 5px），不写绝对阈值
+        const float defOff = knobDef->frame.x - trackDef->frame.x;
+        const float sonOff = knobSonnet->frame.x - trackSonnet->frame.x;
+        const float haiOff = knobHaiku->frame.x - trackHaiku->frame.x;
+        DOCTEST_CHECK(sonOff > defOff + 5.0f);
+        // haiku：串尾确有 [1M] 但槽位不支持 → 双重条件 → 不勾（与未勾行同态）
+        DOCTEST_CHECK(std::fabs(haiOff - defOff) < 1.0f);
+        // 禁用态可辨识：不支持行轨道色 != 支持但未勾行（灰）
+        const bool sameColor =
+            trackHaiku->color.r == trackDef->color.r &&
+            trackHaiku->color.g == trackDef->color.g &&
+            trackHaiku->color.b == trackDef->color.b &&
+            trackHaiku->color.a == trackDef->color.a;
+        DOCTEST_CHECK_FALSE(sameColor);
+        // 显示层剥标记：1M 由复选框表达，名字不重复带
+        // [1m] 照剥；haiku 槽位不支持但串尾 [1M] 同样剥（剥除是无条件显示
+        // 语义，勾态才看双重条件）。存储值原样（下方落库断言仍带标记）
+        const auto* valSonnet = ui.find("claude.slot.val.1");
+        const auto* valHaiku = ui.find("claude.slot.val.3");
+        DOCTEST_REQUIRE(valSonnet != nullptr);
+        DOCTEST_REQUIRE(valHaiku != nullptr);
+        DOCTEST_CHECK_EQ(valSonnet->text, std::string("m-sonnet"));
+        DOCTEST_CHECK_EQ(valHaiku->text, std::string("m-haiku"));
+    }
+    // 禁用行点了不落库：haiku(3) 不支持 / fable(4) 空 base / subagent(5) 空 base
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK(click(ui, "claude.slot.onem.3.hit"));
+        DOCTEST_CHECK(click(ui, "claude.slot.onem.4.hit"));
+        DOCTEST_CHECK(click(ui, "claude.slot.onem.5.hit"));
+    }
+    {
+        auto got = env.svc->getProfile(pid);
+        DOCTEST_REQUIRE(got.isOk());
+        auto gotMc = module::claude::parseModelsConfig(got.value().modelsConfigJson);
+        DOCTEST_REQUIRE(gotMc.isOk());
+        DOCTEST_CHECK_EQ(gotMc.value().haiku.model, std::string("m-haiku[1M]"));
+        DOCTEST_CHECK_EQ(gotMc.value().fable.model, std::string(""));
+        DOCTEST_CHECK_EQ(gotMc.value().subagent.model, std::string(""));
+        DOCTEST_CHECK_EQ(gotMc.value().def.model, std::string("m-def"));
+    }
+    // 可用行：def 点一下 → 加标记落库；sonnet 点一下 → 去标记落库
+    //（两下都在同一帧的 UI 快照上：勾态取自当帧构建时的 checked，互不串扰）
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK(click(ui, "claude.slot.onem.0.hit"));
+        DOCTEST_CHECK(click(ui, "claude.slot.onem.1.hit"));
+    }
+    {
+        auto got = env.svc->getProfile(pid);
+        DOCTEST_REQUIRE(got.isOk());
+        auto gotMc = module::claude::parseModelsConfig(got.value().modelsConfigJson);
+        DOCTEST_REQUIRE(gotMc.isOk());
+        DOCTEST_CHECK_EQ(gotMc.value().def.model, std::string("m-def[1M]"));
+        DOCTEST_CHECK_EQ(gotMc.value().sonnet.model, std::string("m-sonnet"));
+        // 旧 model 列与 def 槽位同步（与表单保存同口径）
+        DOCTEST_CHECK_EQ(got.value().model, std::string("m-def[1M]"));
+        // 保存前归一是全表口径：不支持槽位的遗留标记顺带剥掉（自愈到不变式）
+        DOCTEST_CHECK_EQ(gotMc.value().haiku.model, std::string("m-haiku"));
+    }
+    mod->onStop();
+    cleanupProfileKey(kTestKeychainService, pid);
+    return true;
+})
+
+// P. 表单保存前归一（不支持槽位强制剥离 + 大小写规范化）
+REGISTER_TEST(claude_ui_form_one_m_normalize_on_save,
+              "claude_module: 表单保存 1M 归一（不支持剥离 + 大小写规范化）", {
+    TestEnv env;
+    auto a = env.svc->createProfile("1M表单", "https://form1m.example.com",
+                                    "sk-ant-1m-form-0001", "");
+    DOCTEST_REQUIRE(a.isOk());
+    const int64_t pid = a.value().id;
+
+    std::unique_ptr<::core::Module> mod(create_claude_module());
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    auto compose = [&](eui::Ui& ui) {
+        ui.begin("claude_onem_form");
+        mod->compose(ui, screen);
+        ui.end();
+    };
+    auto click = [](eui::Ui& ui, const std::string& id) -> bool {
+        const auto* node = ui.find(id);
+        if (node == nullptr || node->onClick == nullptr) {
+            std::cerr << "missing clickable: " << id << std::endl;
+            return false;
+        }
+        node->onClick();
+        return true;
+    };
+    auto type = [](eui::Ui& ui, const std::string& id,
+                   const std::string& text) -> bool {
+        const auto* node = ui.find(id);
+        if (node == nullptr || node->onTextInput == nullptr) {
+            std::cerr << "missing input: " << id << std::endl;
+            return false;
+        }
+        core::TextInputEvent ev;
+        ev.text = text;
+        node->onTextInput(ev);
+        return true;
+    };
+
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK(click(ui, "claude.profile.0.bg"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK(click(ui, "claude.act.edit.bg"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.1"));   // 模型映射页
+    }
+    // 手输：def 小写标记（支持→规范化）/ haiku 大写标记（不支持→剥离）/
+    //       opus 无标记（原样）
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK(type(ui, "claude.form.slot.0.model.hit", "m-form-def[1m]"));
+        DOCTEST_CHECK(type(ui, "claude.form.slot.2.model.hit", "m-form-opus"));
+        DOCTEST_CHECK(type(ui, "claude.form.slot.3.model.hit", "m-form-haiku[1M]"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK(click(ui, "claude.dialog.form.confirm.bg"));
+    }
+    {
+        auto got = env.svc->getProfile(pid);
+        DOCTEST_REQUIRE(got.isOk());
+        auto gotMc = module::claude::parseModelsConfig(got.value().modelsConfigJson);
+        DOCTEST_REQUIRE(gotMc.isOk());
+        // 支持槽位：保留且**规范成大写 [1M]**
+        DOCTEST_CHECK_EQ(gotMc.value().def.model, std::string("m-form-def[1M]"));
+        // 不支持槽位：手输的标记被**强制剥离**
+        DOCTEST_CHECK_EQ(gotMc.value().haiku.model, std::string("m-form-haiku"));
+        DOCTEST_CHECK_EQ(gotMc.value().opus.model, std::string("m-form-opus"));
+        // 旧 model 列 = def 槽位（含规范化后的标记）
+        DOCTEST_CHECK_EQ(got.value().model, std::string("m-form-def[1M]"));
+    }
+    mod->onStop();
+    cleanupProfileKey(kTestKeychainService, pid);
+    return true;
+})
+
+
+
+// 余量查询弹窗的**无头渲染断言**
+//
+// 逻辑层（字段集合 / 保存行 / 脱敏）在 test_claude_quota_dialog.cpp；这里只管
+// 「画出来没有、画对没有」：
+//   ① 未配置时按钮**存在**（用户硬要求：常驻）
+//   ② 选火山 → 渲染两个字段、secret 字段明文不进 InputState；
+//      选 deepseek → **不渲染**任何额外字段
+//   ③ cc-switch 读不到 → 明确文案节点出现 + 仍可手填
+//   ④ 「测试连接」两条路径都显示得出（不静默）
+//   ⑤ 保存 → 配置表落库正确（provider_id / ccswitch 引用 / 手填值）
+//   ⑥ 弹窗几何在 1200×720 下不溢出；动态字段增减后按钮行与内容底**不错位**
+
+
+
+namespace {
+
+// 无头 compose 一帧（与既有 compose lambda 同形）
+void composeQuotaFrame(::core::Module& mod, eui::Ui& ui, eui::Screen screen,
+                       const char* treeId) {
+    ui.begin(treeId);
+    mod.compose(ui, screen);
+    ui.end();
+}
+
+// 从 InputState 读回输入框文本（secret 明文断言靠它）
+std::string inputText(eui::Ui& ui, const std::string& id) {
+    using InputState = components::input_detail::InputModel::InputState;
+    const auto& st = ui.state<InputState>(id);
+    return st.text;
+}
+
+}  // namespace
+
+// ① 按钮常驻：没配、没 cc-switch、一个 profile 都没有时都在
+REGISTER_TEST(claude_quota_button_always_present,
+              "claude_module: 「余量查询」按钮常驻（无 profile / 未配置也在）", {
+    module::claude::ClaudeService::setGlobal(nullptr);
+    std::unique_ptr<::core::Module> mod(create_claude_module());
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    eui::Ui ui;
+    composeQuotaFrame(*mod, ui, screen, "claude_quota_btn");
+    DOCTEST_CHECK(ui.find("claude.act.quota") != nullptr);
+    DOCTEST_CHECK(ui.find("claude.act.quota.bg") != nullptr);
+    mod->onStop();
+    return true;
+})
+
+// ② 选火山 → 两个字段（secret 明文不进 InputState）；deepseek → 零字段
+REGISTER_TEST(claude_quota_dialog_dynamic_field_render,
+              "claude_module: 弹窗按 provider 动态渲染字段（火山 2 / deepseek 0）", {
+    test_support::setEnvVar("CCSWITCH_DB_PATH", "/nonexistent-g6/cc-switch.db");
+    TestEnv env;
+    auto volcano = env.svc->createProfile(
+        "火山", "https://ark.cn-beijing.volces.com/api/coding/v3", "sk-ant-vv", "m");
+    DOCTEST_REQUIRE(volcano.isOk());
+    auto deepseek = env.svc->createProfile("DS", "https://api.deepseek.com",
+                                           "sk-ant-dd", "m");
+    DOCTEST_REQUIRE(deepseek.isOk());
+    DOCTEST_REQUIRE(env.svc->setActiveProfile(volcano.value().id).isOk());
+
+    std::unique_ptr<::core::Module> mod(create_claude_module());
+    mod->onStart();   // 生产里 main.cpp 一定先 onStart（余量 store 在那里建）
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    const auto compose = [&](eui::Ui& ui, const char* tree) {
+        composeQuotaFrame(*mod, ui, screen, tree);
+    };
+
+    // 点「余量查询」→ 弹窗开；base_url 是火山 → 默认选中火山 → 两个字段
+    {
+        eui::Ui ui;
+        compose(ui, "claude_quota_open");
+        DOCTEST_REQUIRE(clickById(ui, "claude.act.quota.bg"));
+        eui::Ui ui2;
+        compose(ui2, "claude_quota_open2");
+        DOCTEST_CHECK(ui2.find("claude.dialog.quota") != nullptr);
+        DOCTEST_CHECK(ui2.find("claude.dialog.quota.provider.dd") != nullptr);
+        DOCTEST_CHECK(ui2.find("claude.dialog.quota.field.accessKeyId") != nullptr);
+        DOCTEST_CHECK(ui2.find("claude.dialog.quota.field.secretAccessKey") != nullptr);
+        // 字段来源标注节点（任务书要求）
+        DOCTEST_CHECK(ui2.find("claude.dialog.quota.field.accessKeyId.source") != nullptr);
+        DOCTEST_CHECK(ui2.find("claude.dialog.quota.field.secretAccessKey.source") != nullptr);
+        // cc-switch 读取按钮恒在
+        DOCTEST_CHECK(ui2.find("claude.dialog.quota.ccswitch.load") != nullptr);
+        DOCTEST_CHECK(ui2.find("claude.dialog.quota.test") != nullptr);
+        DOCTEST_CHECK(ui2.find("claude.dialog.quota.confirm") != nullptr);
+        DOCTEST_CHECK(ui2.find("claude.dialog.quota.cancel") != nullptr);
+    }
+
+    // 切到 deepseek（下拉第 2 项 = 索引 2）→ **零**额外字段
+    {
+        eui::Ui ui;
+        compose(ui, "claude_quota_switch");
+        clickById(ui, "claude.act.quota.bg");
+        // 展开供应商下拉（字段本身的 hit 区挂 onOpenChange）
+        eui::Ui openUi;
+        compose(openUi, "claude_quota_ddopen");
+        const auto* ddField = openUi.find("claude.dialog.quota.provider.dd.field");
+        DOCTEST_REQUIRE(ddField != nullptr);
+        DOCTEST_REQUIRE(ddField->onClick != nullptr);
+        ddField->onClick();
+        // 弹层选项节点（EUI dropdown 的 <id>.item.<index>）
+        eui::Ui optUi;
+        compose(optUi, "claude_quota_ddopt");
+        const auto* opt = optUi.find("claude.dialog.quota.provider.dd.item.2");
+        DOCTEST_REQUIRE(opt != nullptr);
+        DOCTEST_REQUIRE(opt->onClick != nullptr);
+        opt->onClick();
+        eui::Ui after;
+        compose(after, "claude_quota_after_switch");
+        DOCTEST_CHECK(after.find("claude.dialog.quota.field.accessKeyId") == nullptr);
+        DOCTEST_CHECK(after.find("claude.dialog.quota.field.secretAccessKey") == nullptr);
+        DOCTEST_CHECK(after.find("claude.dialog.quota.provider.dd") != nullptr);
+        // 下拉收起（选完即收，与既有弹窗下拉同口径）
+        DOCTEST_CHECK(after.find("claude.dialog.quota.provider.dd.popup") != nullptr);
+    }
+
+    mod->onStop();
+    cleanupProfileKey(kTestKeychainService, volcano.value().id);
+    cleanupProfileKey(kTestKeychainService, deepseek.value().id);
+    test_support::setEnvVar("CCSWITCH_DB_PATH", "");
+    return true;
+})
+
+// ②b secret 字段：明文不进 InputState（绘制层结构保证，不是注释）
+// 造一行**已保存了 secret** 的余量配置，开弹窗 → secret 输入框里必须是脱敏串，
+// 明文一个字符都不许出现在 EUI 的 InputState 里。
+REGISTER_TEST(claude_quota_dialog_secret_not_echoed,
+              "claude_module: secret 字段渲染的是脱敏串，InputState 里没有明文", {
+    test_support::setEnvVar("CCSWITCH_DB_PATH", "/nonexistent-g6/cc-switch.db");
+    TestEnv env;
+    test_support::ScopedAppDatabase scoped(env.db->db());
+    auto p = env.svc->createProfile(
+        "火山", "https://ark.cn-beijing.volces.com/api/coding/v3", "sk-ant-vv", "m");
+    DOCTEST_REQUIRE(p.isOk());
+    DOCTEST_REQUIRE(env.svc->setActiveProfile(p.value().id).isOk());
+
+    // 预置一行带 secret 的配置（夹具密钥，非真实凭据）
+    module::claude::quota::QuotaStore store(env.db->db());
+    module::claude::quota::QuotaConfigRow row;
+    row.profileId = p.value().id;
+    row.providerId = "volcano";
+    row.secretsJson = R"({"secretAccessKey":"G6-FIXTURE-SK-abcdef123456"})";
+    row.enabled = true;
+    DOCTEST_REQUIRE(store.saveConfig(row).isOk());
+
+    std::unique_ptr<::core::Module> mod(create_claude_module());
+    mod->onStart();   // store 在 onStart 里建；没它读不到已存配置
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+
+    eui::Ui ui;
+    composeQuotaFrame(*mod, ui, screen, "claude_quota_secret");
+    DOCTEST_REQUIRE(clickById(ui, "claude.act.quota.bg"));
+    eui::Ui ui2;
+    composeQuotaFrame(*mod, ui2, screen, "claude_quota_secret2");
+
+    // 输入框**恒为空**（EUI input 是所见即所得：预填任何内容，用户一打字
+    // 就会把光标插进去、回传「脱敏串 + 新字符」的混合物）
+    DOCTEST_CHECK_EQ(inputText(ui2, "claude.dialog.quota.field.secretAccessKey"),
+                     std::string(""));
+    DOCTEST_CHECK_EQ(inputText(ui2, "claude.dialog.quota.field.accessKeyId"),
+                     std::string(""));
+    // 「已设置」脱敏回显走独立节点：看得见状态，但不含明文
+    const auto* masked = ui2.find("claude.dialog.quota.field.secretAccessKey.masked");
+    DOCTEST_REQUIRE(masked != nullptr);
+    DOCTEST_CHECK(masked->text.find("已设置") != std::string::npos);
+    DOCTEST_CHECK(masked->text.find("G6-FIXTURE-SK-abcdef123456") == std::string::npos);
+    DOCTEST_CHECK(masked->text.find("abcdef") == std::string::npos);
+    // **整棵元素树**里都不许出现明文（不只是这两个框 —— 任何一处漏出去
+    // 都是把 AK/SK 画在屏幕上）。深度优先走 children 逐节点查 text。
+    {
+        const std::string secret = "G6-FIXTURE-SK-abcdef123456";
+        bool leaked = false;
+        std::string leakedId;
+        const std::function<void(const core::dsl::Element&)> walk =
+            [&](const core::dsl::Element& e) {
+                if (e.text.find(secret) != std::string::npos) {
+                    leaked = true;
+                    leakedId = e.id;
+                }
+                for (const auto& child : e.children) {
+                    if (child) walk(*child);
+                }
+            };
+        for (const auto& root : ui2.roots()) {
+            if (root) walk(*root);
+        }
+        DOCTEST_CHECK(!leaked);
+        if (leaked) {
+            std::cerr << "secret leaked into element: " << leakedId << std::endl;
+        }
+    }
+
+    mod->onStop();
+    cleanupProfileKey(kTestKeychainService, p.value().id);
+    test_support::setEnvVar("CCSWITCH_DB_PATH", "");
+    return true;
+})
+
+// ③ cc-switch 读不到 → 明确文案 + 仍可手填
+REGISTER_TEST(claude_quota_dialog_ccswitch_unavailable_message,
+              "claude_module: cc-switch 读不到时弹窗给出明确文案且不崩", {
+    test_support::setEnvVar("CCSWITCH_DB_PATH", "/nonexistent-g6/cc-switch.db");
+    TestEnv env;
+    auto p = env.svc->createProfile(
+        "火山", "https://ark.cn-beijing.volces.com/api/coding/v3", "sk-ant-vv", "m");
+    DOCTEST_REQUIRE(p.isOk());
+    DOCTEST_REQUIRE(env.svc->setActiveProfile(p.value().id).isOk());
+
+    std::unique_ptr<::core::Module> mod(create_claude_module());
+    mod->onStart();
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+
+    eui::Ui ui;
+    composeQuotaFrame(*mod, ui, screen, "claude_quota_cc1");
+    clickById(ui, "claude.act.quota.bg");
+    eui::Ui ui2;
+    composeQuotaFrame(*mod, ui2, screen, "claude_quota_cc2");
+    DOCTEST_REQUIRE(clickById(ui2, "claude.dialog.quota.ccswitch.load.bg"));
+    eui::Ui ui3;
+    composeQuotaFrame(*mod, ui3, screen, "claude_quota_cc3");
+    const auto* note = ui3.find("claude.dialog.quota.ccswitch.note");
+    DOCTEST_REQUIRE(note != nullptr);
+    DOCTEST_CHECK(note->text.find("未找到 cc-switch 配置") != std::string::npos);
+    DOCTEST_CHECK(note->text.find("可手动填写") != std::string::npos);
+    // 候选下拉仍在（显示「无可用候选」），不消失
+    DOCTEST_CHECK(ui3.find("claude.dialog.quota.ccswitch.dd") != nullptr);
+    // 字段仍可手填
+    DOCTEST_CHECK(ui3.find("claude.dialog.quota.field.accessKeyId") != nullptr);
+
+    mod->onStop();
+    cleanupProfileKey(kTestKeychainService, p.value().id);
+    test_support::setEnvVar("CCSWITCH_DB_PATH", "");
+    return true;
+})
+
+// ④ 「测试连接」失败路径显示得出（不静默）
+// **零真实网络**：选火山但不填 AK/SK —— provider 在发请求**之前**就返回
+// NotConfigured（quota_volcano.cpp 的 AK/SK 空判），于是这条断言验的是
+// 「后台结果 → UI 文案」整条链，而不会真的去打火山网关。
+REGISTER_TEST(claude_quota_dialog_test_connection_reports,
+              "claude_module: 测试连接失败有文案显示（不静默吞掉）", {
+    test_support::setEnvVar("CCSWITCH_DB_PATH", "/nonexistent-g6/cc-switch.db");
+    TestEnv env;
+    test_support::ScopedAppDatabase scoped(env.db->db());
+    auto p = env.svc->createProfile(
+        "火山", "https://ark.cn-beijing.volces.com/api/coding/v3", "sk-ant-vv", "m");
+    DOCTEST_REQUIRE(p.isOk());
+    DOCTEST_REQUIRE(env.svc->setActiveProfile(p.value().id).isOk());
+
+    std::unique_ptr<::core::Module> mod(create_claude_module());
+    mod->onStart();
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+
+    eui::Ui ui;
+    composeQuotaFrame(*mod, ui, screen, "claude_quota_tc1");
+    clickById(ui, "claude.act.quota.bg");
+    eui::Ui ui2;
+    composeQuotaFrame(*mod, ui2, screen, "claude_quota_tc2");
+    DOCTEST_REQUIRE(clickById(ui2, "claude.dialog.quota.test.bg"));
+
+    // 有界轮询收割（不用长 sleep）：后台线程跑完 + compose 收割后结果行出现
+    bool got = false;
+    std::string shown;
+    for (int i = 0; i < 400 && !got; ++i) {
+        eui::Ui frame;
+        composeQuotaFrame(*mod, frame, screen, "claude_quota_tcpoll");
+        const auto* res = frame.find("claude.dialog.quota.result");
+        if (res != nullptr) {
+            shown = res->text;
+            got = true;
+        }
+    }
+    DOCTEST_CHECK(got);
+    DOCTEST_CHECK(!shown.empty());
+    // 文案必须指向「配置不完整」而不是空串 / 「测试中」
+    DOCTEST_CHECK(shown.find("配置") != std::string::npos);
+    DOCTEST_CHECK(shown.find("测试中") == std::string::npos);
+
+    mod->onStop();
+    cleanupProfileKey(kTestKeychainService, p.value().id);
+    test_support::setEnvVar("CCSWITCH_DB_PATH", "");
+    return true;
+})
+
+// ⑤ 保存 → 配置表落库正确
+REGISTER_TEST(claude_quota_dialog_saves_to_db,
+              "claude_module: 弹窗保存后 profile_quota_config 行正确", {
+    test_support::setEnvVar("CCSWITCH_DB_PATH", "/nonexistent-g6/cc-switch.db");
+    TestEnv env;
+    // 保存走 QuotaStore → core::appDatabase()，必须注册（模块装配同款）
+    test_support::ScopedAppDatabase scoped(env.db->db());
+    auto p = env.svc->createProfile(
+        "火山", "https://ark.cn-beijing.volces.com/api/coding/v3", "sk-ant-vv", "m");
+    DOCTEST_REQUIRE(p.isOk());
+    DOCTEST_REQUIRE(env.svc->setActiveProfile(p.value().id).isOk());
+
+    std::unique_ptr<::core::Module> mod(create_claude_module());
+    mod->onStart();
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+
+    eui::Ui ui;
+    composeQuotaFrame(*mod, ui, screen, "claude_quota_sv1");
+    clickById(ui, "claude.act.quota.bg");
+    eui::Ui ui2;
+    composeQuotaFrame(*mod, ui2, screen, "claude_quota_sv2");
+    DOCTEST_REQUIRE(clickById(ui2, "claude.dialog.quota.confirm.bg"));
+
+    // 落库校验（期望值是手写字面量，不来自被测代码的输出）
+    module::claude::quota::QuotaStore store(*core::appDatabase());
+    auto row = store.loadConfig(p.value().id);
+    DOCTEST_REQUIRE(row.isOk());
+    DOCTEST_CHECK_EQ(row.value().providerId, std::string("volcano"));
+    DOCTEST_CHECK_EQ(row.value().ccswitchProviderId, std::string(""));
+    DOCTEST_CHECK(row.value().enabled);
+    DOCTEST_CHECK(row.value().secretsJson.find("sk-ant-vv") == std::string::npos);
+
+    mod->onStop();
+    cleanupProfileKey(kTestKeychainService, p.value().id);
+    test_support::setEnvVar("CCSWITCH_DB_PATH", "");
+    return true;
+})
+
+// ⑥ 弹窗几何：1200×720 不溢出；字段增减后按钮行不错位
+// 几何是**纯函数**（computeQuotaDialogLayout），无头直接断言它：
+//  ① 弹窗高 ≤ 最小窗高 720
+//  ② 内容底恒 ≤ 按钮行上沿（动态字段增减不压按钮）
+//  ③ 字段数 +2 → 下方**所有**区块整体下移恰好 2×fieldPitch（不错位）
+REGISTER_TEST(claude_quota_dialog_geometry_no_overflow,
+              "claude_module: 弹窗 1200×720 不溢出，动态字段增减后元信息行不错位", {
+    const auto g0 = module::claude::computeQuotaDialogLayout(0);
+    const auto g2 = module::claude::computeQuotaDialogLayout(2);
+    // ① 不溢出最小窗（弹窗宽固定 ui_kit::DialogWidth::Form = 760 ≤ 1200）
+    DOCTEST_CHECK(g0.height > 0.0f);
+    DOCTEST_CHECK(g2.height > 0.0f);
+    DOCTEST_CHECK(g0.height <= 720.0f);
+    DOCTEST_CHECK(g2.height <= 720.0f);
+    DOCTEST_CHECK(ui_kit::dialogWidthPx(ui_kit::DialogWidth::Form) <= 1200.0f);
+    // ② 内容底恒在按钮行上沿之上
+    DOCTEST_CHECK(g0.contentBottom <= g0.buttonsY - 8.0f + 0.01f);
+    DOCTEST_CHECK(g2.contentBottom <= g2.buttonsY - 8.0f + 0.01f);
+    // ③ 字段 +2 → 下方区块整体下移恰好 2×fieldPitch，区块间距恒定
+    const float d = 2.0f * g2.fieldPitch;
+    DOCTEST_CHECK(std::fabs((g2.ccSwitchY - g0.ccSwitchY) - d) < 0.01f);
+    DOCTEST_CHECK(std::fabs((g2.ccNoteY - g0.ccNoteY) - d) < 0.01f);
+    DOCTEST_CHECK(std::fabs((g2.ccDdY - g0.ccDdY) - d) < 0.01f);
+    DOCTEST_CHECK(std::fabs((g2.testBtnY - g0.testBtnY) - d) < 0.01f);
+    DOCTEST_CHECK(std::fabs((g2.resultY - g0.resultY) - d) < 0.01f);
+    // 区块之间的相对间距在两档下**逐项相同**（这才是「不错位」的实质）
+    DOCTEST_CHECK(std::fabs((g2.ccNoteY - g2.ccSwitchY) -
+                            (g0.ccNoteY - g0.ccSwitchY)) < 0.01f);
+    DOCTEST_CHECK(std::fabs((g2.testBtnY - g2.ccDdY) -
+                            (g0.testBtnY - g0.ccDdY)) < 0.01f);
+    // 按钮行恒在弹窗底 60 处（与 ui_kit::drawDialogButtons 同款）
+    DOCTEST_CHECK(std::fabs(g0.buttonsY - (g0.height - 60.0f)) < 0.01f);
+    DOCTEST_CHECK(std::fabs(g2.buttonsY - (g2.height - 60.0f)) < 0.01f);
     return true;
 })

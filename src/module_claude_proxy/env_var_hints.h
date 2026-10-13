@@ -1,6 +1,5 @@
 // src/module_claude_proxy/env_var_hints.h
 // Claude Code 环境变量名 → 中文说明（env 表单变量名 hover tooltip 用）。
-// 来源：官方文档 code.claude.com/docs/en/env-vars（2026-09-23 更新）全量清单。
 // 未收录的变量返回 nullptr（不挂 tooltip）。header-only inline：多 TU 安全。
 #pragma once
 
@@ -14,7 +13,7 @@ struct EnvVarHint {
 };
 
 inline const EnvVarHint kEnvVarHints[] = {
-    // ---- 一、认证与 API 密钥 ----
+    // 一、认证与 API 密钥
     {"ANTHROPIC_API_KEY", "API 密钥（X-Api-Key 头）；设置后优先于订阅登录"},
     {"ANTHROPIC_AUTH_TOKEN", "Authorization 头的值（自动加 Bearer 前缀）"},
     {"ANTHROPIC_AWS_API_KEY", "Claude Platform on AWS 的工作区密钥（x-api-key 头）"},
@@ -25,7 +24,7 @@ inline const EnvVarHint kEnvVarHints[] = {
     {"CLAUDE_CODE_OAUTH_REFRESH_TOKEN", "OAuth refresh token（免浏览器直接交换）"},
     {"CLAUDE_CODE_OAUTH_SCOPES", "refresh token 的 scope 列表（空格分隔）"},
     {"MCP_CLIENT_SECRET", "MCP 服务器的 OAuth client secret"},
-    // ---- 二、模型配置 ----
+    // 二、模型配置
     {"ANTHROPIC_MODEL", "模型名称（被 --model 和 /model 覆盖）"},
     {"ANTHROPIC_CUSTOM_MODEL_OPTION", "在 /model 选择器中添加自定义模型 ID"},
     {"ANTHROPIC_CUSTOM_MODEL_OPTION_NAME", "自定义模型在选择器中的显示名"},
@@ -43,7 +42,7 @@ inline const EnvVarHint kEnvVarHints[] = {
     {"ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME", "Haiku 默认模型显示名"},
     {"ANTHROPIC_DEFAULT_HAIKU_MODEL_DESCRIPTION", "Haiku 默认模型描述"},
     {"ANTHROPIC_DEFAULT_HAIKU_MODEL_SUPPORTED_CAPABILITIES", "Haiku 默认模型能力"},
-    {"ANTHROPIC_SMALL_FAST_MODEL", "[废弃] 后台任务的 Haiku 类模型，改用 ANTHROPIC_DEFAULT_HAIKU_MODEL"},
+    {"ANTHROPIC_SMALL_FAST_MODEL", "后台任务的 Haiku 类模型；新配置用 ANTHROPIC_DEFAULT_HAIKU_MODEL"},
     {"ANTHROPIC_SMALL_FAST_MODEL_AWS_REGION", "Bedrock/Mantle 上 Haiku 模型的 AWS 区域覆盖"},
     {"CLAUDE_CODE_SUBAGENT_MODEL", "子代理使用的模型"},
     {"CLAUDE_CODE_MAX_OUTPUT_TOKENS", "大多数请求的最大输出 token 数"},
@@ -56,7 +55,7 @@ inline const EnvVarHint kEnvVarHints[] = {
     {"CLAUDE_CODE_DISABLE_LEGACY_MODEL_REMAP", "禁止旧版 Opus 自动重映射到当前版本"},
     {"CLAUDE_CODE_OPUS_4_6_FAST_MODE_OVERRIDE", "设 1 = fast mode 固定在 Opus 4.6（默认 4.7）"},
     {"FALLBACK_FOR_ALL_PRIMARY_MODELS", "非空 = 主模型过载错误触发 --fallback-model 回退"},
-    // ---- 三、API 端点与云平台路由 ----
+    // 三、API 端点与云平台路由
     {"ANTHROPIC_BASE_URL", "覆盖 API 端点（经代理/网关路由请求）"},
     {"ANTHROPIC_BETAS", "额外 anthropic-beta 头值（逗号分隔）"},
     {"ANTHROPIC_CUSTOM_HEADERS", "自定义请求头（Name: Value 格式，换行分隔）"},
@@ -98,7 +97,7 @@ inline const EnvVarHint kEnvVarHints[] = {
     {"CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS", "剥离 beta 头/字段（代理网关报错时用）"},
     {"CLAUDE_CODE_ENABLE_FINE_GRAINED_TOOL_STREAMING", "控制工具调用输入是否流式传输"},
     {"CLAUDE_CODE_ATTRIBUTION_HEADER", "设 0 = 省略归属块（提升网关 prompt-cache 命中率）"},
-    // ---- 四、API 请求、超时与重试 ----
+    // 四、API 请求、超时与重试
     {"API_TIMEOUT_MS", "API 请求超时（毫秒，默认 600000 = 10 分钟）"},
     {"CLAUDE_CODE_MAX_RETRIES", "失败请求重试次数（默认 10）"},
     {"CLAUDE_CODE_DISABLE_NONSTREAMING_FALLBACK", "禁用流式失败时的非流式回退"},
@@ -107,7 +106,7 @@ inline const EnvVarHint kEnvVarHints[] = {
     {"CLAUDE_ENABLE_BYTE_WATCHDOG", "强制启用/禁用字节级流式空闲看门狗"},
     {"CLAUDE_ENABLE_BYTE_WATCHDOG_BEDROCK", "在 Bedrock 上启用字节级流式看门狗"},
     {"MAX_STRUCTURED_OUTPUT_RETRIES", "JSON Schema 校验失败重试次数（默认 5）"},
-    // ---- 五、网络代理与 TLS ----
+    // 五、网络代理与 TLS
     {"HTTP_PROXY", "HTTP 代理服务器"},
     {"HTTPS_PROXY", "HTTPS 代理服务器"},
     {"NO_PROXY", "绕过代理的域名和 IP 列表"},
@@ -116,7 +115,7 @@ inline const EnvVarHint kEnvVarHints[] = {
     {"CLAUDE_CODE_CLIENT_CERT", "mTLS 客户端证书文件路径"},
     {"CLAUDE_CODE_CLIENT_KEY", "mTLS 客户端私钥文件路径"},
     {"CLAUDE_CODE_CLIENT_KEY_PASSPHRASE", "加密私钥的口令"},
-    // ---- 六、Bash / Shell 工具 ----
+    // 六、Bash / Shell 工具
     {"BASH_DEFAULT_TIMEOUT_MS", "bash 命令默认超时（默认 120000 = 2 分钟）"},
     {"BASH_MAX_TIMEOUT_MS", "bash 命令最大超时（默认 600000 = 10 分钟）"},
     {"BASH_MAX_OUTPUT_LENGTH", "bash 输出最大字符数（超出存文件返回路径+预览）"},
@@ -127,7 +126,7 @@ inline const EnvVarHint kEnvVarHints[] = {
     {"CLAUDE_CODE_USE_POWERSHELL_TOOL", "控制 PowerShell 工具的启用"},
     {"CLAUDE_CODE_POWERSHELL_RESPECT_EXECUTION_POLICY", "设 1 = 尊重系统执行策略（不传 Bypass）"},
     {"CLAUDE_ENV_FILE", "每条 Bash 命令前执行的脚本路径（virtualenv/conda 激活）"},
-    // ---- 七、上下文压缩与会话 ----
+    // 七、上下文压缩与会话
     {"DISABLE_AUTO_COMPACT", "禁用自动压缩（手动 /compact 仍可用）"},
     {"DISABLE_COMPACT", "禁用所有压缩（自动+手动）"},
     {"CLAUDE_AUTOCOMPACT_PCT_OVERRIDE", "自动压缩触发百分比（1-100，默认约 95）"},
@@ -141,7 +140,7 @@ inline const EnvVarHint kEnvVarHints[] = {
     {"CLAUDE_CODE_REMOTE", "云会话中自动设为 true"},
     {"CLAUDE_CODE_REMOTE_SESSION_ID", "云会话中自动设置的会话 ID"},
     {"CLAUDE_EFFORT", "子进程中自动设置：当前轮次的努力级别"},
-    // ---- 八、MCP ----
+    // 八、MCP
     {"ENABLE_TOOL_SEARCH", "MCP 工具搜索控制：true/auto/auto:N/false"},
     {"MAX_MCP_OUTPUT_TOKENS", "MCP 工具响应最大 token（默认 25000）"},
     {"MCP_TIMEOUT", "MCP 服务器启动超时（默认 30000 = 30 秒）"},
@@ -153,7 +152,7 @@ inline const EnvVarHint kEnvVarHints[] = {
     {"MCP_OAUTH_CALLBACK_PORT", "MCP OAuth 重定向回调的固定端口"},
     {"CLAUDE_CODE_MCP_ALLOWLIST_ENV", "设 1 = stdio MCP 仅继承安全基线环境+配置 env"},
     {"ENABLE_CLAUDEAI_MCP_SERVERS", "设 false = 禁用 claude.ai MCP 服务器"},
-    // ---- 九、插件与技能 ----
+    // 九、插件与技能
     {"CLAUDE_CODE_PLUGIN_CACHE_DIR", "覆盖插件根目录（默认 ~/.claude/plugins）"},
     {"CLAUDE_CODE_PLUGIN_GIT_TIMEOUT_MS", "插件 git 操作超时（默认 120000）"},
     {"CLAUDE_CODE_PLUGIN_KEEP_MARKETPLACE_ON_FAILURE", "git pull 失败时保留现有 marketplace 缓存"},
@@ -168,12 +167,12 @@ inline const EnvVarHint kEnvVarHints[] = {
     {"CLAUDE_CODE_SYNC_SKILLS_WAIT_TIMEOUT_MS", "首次技能同步等待超时（默认 5000）"},
     {"CLAUDE_CODE_DISABLE_POLICY_SKILLS", "设 1 = 跳过系统级托管技能目录"},
     {"SLASH_COMMAND_TOOL_CHAR_BUDGET", "Skill 工具元数据的字符预算覆盖"},
-    // ---- 十、调试与日志 ----
+    // 十、调试与日志
     {"DEBUG", "设 1 = 调试模式（等价 --debug），日志写 ~/.claude/debug/"},
     {"CLAUDE_CODE_DEBUG_LOGS_DIR", "覆盖调试日志文件路径"},
     {"CLAUDE_CODE_DEBUG_LOG_LEVEL", "调试日志级别：verbose/debug/info/warn/error"},
     {"CLAUDE_CODE_API_KEY_HELPER_TTL_MS", "apiKeyHelper 凭证刷新间隔"},
-    // ---- 十一、遥测与 OpenTelemetry ----
+    // 十一、遥测与 OpenTelemetry
     {"DISABLE_TELEMETRY", "设 1 = 退出遥测（同时禁 feature-flag 获取）"},
     {"DO_NOT_TRACK", "等价 DISABLE_TELEMETRY（跨工具标准约定）"},
     {"DISABLE_ERROR_REPORTING", "设 1 = 退出 Sentry 错误报告"},
@@ -200,12 +199,12 @@ inline const EnvVarHint kEnvVarHints[] = {
     {"OTEL_EXPORTER_OTLP_HEADERS", "标准 OTel：OTLP 头"},
     {"OTEL_METRIC_EXPORT_INTERVAL", "标准 OTel：指标导出间隔"},
     {"OTEL_RESOURCE_ATTRIBUTES", "标准 OTel：资源属性"},
-    // ---- 十二、自动更新 ----
+    // 十二、自动更新
     {"DISABLE_AUTOUPDATER", "设 1 = 禁用后台自动更新（手动 claude update 可用）"},
     {"DISABLE_UPDATES", "设 1 = 阻止所有更新（含手动，比上条更严格）"},
     {"DISABLE_UPGRADE_COMMAND", "设 1 = 隐藏 /upgrade 命令"},
     {"CLAUDE_CODE_PACKAGE_MANAGER_AUTO_UPDATE", "设 1 = 后台跑包管理器升级（Homebrew/WinGet）"},
-    // ---- 十三、UI / 终端渲染 ----
+    // 十三、UI / 终端渲染
     {"CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN", "设 1 = 禁用全屏渲染（经典主屏渲染器）"},
     {"CLAUDE_CODE_NO_FLICKER", "设 1 = 全屏渲染（减少闪烁，预览特性）"},
     {"CLAUDE_CODE_ALT_SCREEN_FULL_REPAINT", "设 1 = 每帧全屏重绘"},
@@ -220,7 +219,7 @@ inline const EnvVarHint kEnvVarHints[] = {
     {"CLAUDE_CODE_SYNTAX_HIGHLIGHT", "设 false = 禁用 diff 语法高亮"},
     {"CLAUDE_CODE_HIDE_CWD", "设 1 = 启动 logo 隐藏工作目录"},
     {"IS_DEMO", "设 1 = 演示模式（隐藏邮箱/组织名）"},
-    // ---- 十四、功能开关（Disable 系列）----
+    // 十四、功能开关（Disable 系列）
     {"CLAUDE_CODE_DISABLE_AGENT_VIEW", "关闭后台代理和 agent view"},
     {"CLAUDE_CODE_DISABLE_BACKGROUND_TASKS", "禁用所有后台任务功能"},
     {"CLAUDE_CODE_DISABLE_CRON", "禁用定时任务（/loop 与 cron 工具）"},
@@ -247,25 +246,25 @@ inline const EnvVarHint kEnvVarHints[] = {
     {"CLAUDE_CODE_FORK_SUBAGENT", "设 1 = forked subagents（继承完整上下文）"},
     {"CLAUDE_AGENT_SDK_DISABLE_BUILTIN_AGENTS", "设 1 = 禁用内置子代理类型（非交互）"},
     {"CLAUDE_AGENT_SDK_MCP_NO_PREFIX", "设 1 = SDK MCP 工具名不加 mcp__ 前缀"},
-    // ---- 十五、IDE 集成 ----
+    // 十五、IDE 集成
     {"CLAUDE_CODE_AUTO_CONNECT_IDE", "覆盖自动 IDE 连接（false 阻止 / true 强制）"},
     {"CLAUDE_CODE_IDE_HOST_OVERRIDE", "覆盖 IDE 扩展连接主机地址"},
     {"CLAUDE_CODE_IDE_SKIP_AUTO_INSTALL", "跳过 IDE 扩展自动安装"},
     {"CLAUDE_CODE_IDE_SKIP_VALID_CHECK", "设 1 = 跳过 IDE lockfile 条目验证"},
-    // ---- 十六、安全与子进程隔离 ----
+    // 十六、安全与子进程隔离
     {"CLAUDE_CODE_SUBPROCESS_ENV_SCRUB", "设 1 = 子进程剥离 Anthropic/云凭证（防注入窃取）"},
     {"CLAUDE_CODE_SCRIPT_CAPS", "JSON：限制脚本每会话调用次数"},
     {"CLAUDECODE", "子进程中自动设 1（检测是否 Claude Code 子进程）"},
     {"CLAUDE_CODE_PERFORCE_MODE", "设 1 = Perforce 感知写保护"},
-    // ---- 十七、Prompt 缓存 ----
+    // 十七、Prompt 缓存
     {"DISABLE_PROMPT_CACHING", "禁用所有模型的 prompt 缓存"},
     {"DISABLE_PROMPT_CACHING_HAIKU", "禁用 Haiku 的 prompt 缓存"},
     {"DISABLE_PROMPT_CACHING_OPUS", "禁用 Opus 的 prompt 缓存"},
     {"DISABLE_PROMPT_CACHING_SONNET", "禁用 Sonnet 的 prompt 缓存"},
     {"ENABLE_PROMPT_CACHING_1H", "设 1 = 1 小时缓存 TTL（默认 5 分钟）"},
-    {"ENABLE_PROMPT_CACHING_1H_BEDROCK", "[废弃] 改用 ENABLE_PROMPT_CACHING_1H"},
+    {"ENABLE_PROMPT_CACHING_1H_BEDROCK", "1 小时缓存；新配置用 ENABLE_PROMPT_CACHING_1H"},
     {"FORCE_PROMPT_CACHING_5M", "设 1 = 强制 5 分钟 TTL（覆盖 1 小时设置）"},
-    // ---- 十八、文件搜索与工具 ----
+    // 十八、文件搜索与工具
     {"USE_BUILTIN_RIPGREP", "设 0 = 用系统 rg 而非内置"},
     {"CLAUDE_CODE_USE_NATIVE_FILE_SEARCH", "设 1 = Node 文件 API 发现命令/子代理（非 rg）"},
     {"CLAUDE_CODE_GLOB_HIDDEN", "设 false = Glob 排除 dotfile"},
@@ -274,21 +273,21 @@ inline const EnvVarHint kEnvVarHints[] = {
     {"CLAUDE_CODE_FILE_READ_MAX_OUTPUT_TOKENS", "覆盖文件读取的 token 限制"},
     {"CLAUDE_CODE_MAX_TOOL_USE_CONCURRENCY", "只读工具/子代理最大并行（默认 10）"},
     {"TASK_MAX_OUTPUT_LENGTH", "子代理输出最大字符（默认 32000，最大 160000）"},
-    // ---- 十九、后台任务与子代理 ----
+    // 十九、后台任务与子代理
     {"CLAUDE_AUTO_BACKGROUND_TASKS", "设 1 = 强制长任务自动后台化"},
     {"CLAUDE_ASYNC_AGENT_STALL_TIMEOUT_MS", "后台子代理停滞超时（默认 600000）"},
     {"CLAUDE_CODE_TASK_LIST_ID", "跨会话共享任务列表 ID"},
     {"CLAUDE_CODE_TEAM_NAME", "agent team 团队名（自动设置）"},
     {"CLAUDE_CODE_STOP_HOOK_BLOCK_CAP", "Stop hook 连续阻止上限（默认 8）"},
-    // ---- 二十、配置目录与临时文件 ----
+    // 二十、配置目录与临时文件
     {"CLAUDE_CONFIG_DIR", "覆盖配置目录（默认 ~/.claude，多账号用）"},
     {"CLAUDE_CODE_TMPDIR", "覆盖内部临时文件目录"},
     {"CCR_FORCE_BUNDLE", "设 1 = claude --remote 强制打包上传本地仓库"},
     {"CLAUDE_REMOTE_CONTROL_SESSION_NAME_PREFIX", "Remote Control 会话名前缀（默认主机名）"},
-    // ---- 二十一、Hook 相关 ----
+    // 二十一、Hook 相关
     {"CLAUDE_CODE_SESSIONEND_HOOKS_TIMEOUT_MS", "SessionEnd hook 时间预算覆盖"},
     {"CLAUDE_CODE_NEW_INIT", "设 1 = /init 走交互式设置流程"},
-    // ---- 二十二、主机嵌入与托管 ----
+    // 二十二、主机嵌入与托管
     {"CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST", "主机平台托管提供商路由（忽略用户设置）"},
     {"CLAUDE_CODE_SIMPLE", "设 1 = 最小系统提示（仅 Bash/读写文件，同 --bare）"},
     {"CLAUDE_CODE_SIMPLE_SYSTEM_PROMPT", "设 1 = 更短系统提示和缩写工具描述"},

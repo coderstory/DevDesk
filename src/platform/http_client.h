@@ -1,5 +1,5 @@
 // src/platform/http_client.h
-// 基于 libcurl 的 HTTP 客户端（详见 spec §7.1）
+// 基于 libcurl 的 HTTP 客户端。同步 send + 流式 sendStreaming（三线程 + 队列 + backpressure）。
 #pragma once
 
 #include <atomic>
@@ -22,10 +22,8 @@ struct Request {
     std::string body;
     long timeoutMs = 30000;
     bool verifyTls = true;
-    // 流式专用空闲超时（W7 P0-3，仅 sendStreaming 生效）：
-    // 传输速率低于 lowSpeedBytesPerSec 持续 lowSpeedTimeSec 秒 → curl 中止
-    // （CURLE_OPERATION_TIMEDOUT）。替代"总墙钟超时"——长生成场景只要一直
-    // 有新 chunk 就不会被砍。两者任一 <= 0 表示不启用。
+    // 流式专用空闲超时（仅 sendStreaming）：速率低于 lowSpeedBytesPerSec 持续 lowSpeedTimeSec 秒
+    // → curl 中止（CURLE_OPERATION_TIMEDOUT），替代总墙钟超时；任一 <= 0 表示不启用。
     long lowSpeedBytesPerSec = 0;
     long lowSpeedTimeSec = 0;
 };
@@ -49,21 +47,11 @@ enum class ChunkResult {
     Error,
 };
 
-// 流式响应句柄（spec §10.4 三线程 + 队列 + backpressure）
-//
-// 内部架构：
-//   - libcurl 在独立 std::thread 上跑 curl_easy_perform（Thread B）
-//   - CURLOPT_WRITEFUNCTION 把每个 chunk 推入内部 queue（生产者）
-//   - 消费者通过 readChunk() 拉数据
-//   - backpressure：队列 >= 100 时生产者阻塞在 write callback 内部
-//     （libcurl 停止收数据，TCP 窗口收敛），队列 <= 50 恢复——回调内阻塞
-//     是 libcurl 唯一线程安全的背压方式，不使用跨线程 curl_easy_pause
-//   - statusCode 由 header callback 解析状态行后填充
-//
-// 生命周期：
-//   - sendStreaming() 启动 libcurl 线程并返回 unique_ptr
-//   - 析构时 cancel() + join()，所以引用方应在销毁前读完所有 chunk
-//   - 或者调用 cancel() 主动取消
+// 流式响应句柄（三线程 + 队列 + backpressure）
+// 内部：libcurl 在独立线程跑 curl_easy_perform，每个 chunk 推入内部 queue，消费方经 readChunk() 拉；
+// 队列 >= 100 时生产者阻塞在 write callback 内（libcurl 停止收数据、TCP 窗口收敛），<= 50 恢复——
+// 回调内阻塞是 libcurl 唯一线程安全的背压方式，不使用跨线程 curl_easy_pause。
+// 生命周期：sendStreaming() 启动线程并返回 unique_ptr；析构 = cancel() + join()，引用方应在销毁前读完。
 class StreamingResponse {
 public:
     StreamingResponse();
@@ -74,12 +62,11 @@ public:
     // 阻塞读取下一个 chunk；队列空 + 上游未结束 → 阻塞等待
     ChunkResult readChunk(std::string& chunk, std::string& errorMessage);
 
-    // 从 header callback 解析得到的状态码
+    // header callback 解析得到的状态码
     int statusCode() const;
 
-    // 等待上游响应头到达（状态码可用），最多 timeoutMs 毫秒。
-    // 返回 true 表示状态码已知（或流已结束），false 表示超时。
-    // 代理场景下用于在写客户端响应头之前拿到上游状态码。
+    // 等上游响应头到达（状态码可用），最多 timeoutMs 毫秒；true = 状态码已知或流已结束，
+    // false = 超时。代理场景用于在写客户端响应头之前拿到上游状态码。
     bool waitForStatus(int timeoutMs);
 
     // 上游 Content-Type（如 text/event-stream）；未到达时返回空串
@@ -88,19 +75,16 @@ public:
     // readChunk 返回 Error 时的错误信息
     std::string finalErrorMessage() const;
 
-    // 主动取消（立即停止 libcurl 接收、解锁 readChunk）。
-    // readChunk 将以 Error + "cancelled" 返回。
+    // 主动取消（立即停止 libcurl 接收、解锁 readChunk）；readChunk 以 Error + "cancelled" 返回。
     void cancel();
 
-    // 带原因的主动取消：readChunk 返回 Error + reason（消费者据此区分
-    // 「客户端断开」与「服务方主动中止」，审计 2026-09-23 [9] 用于
-    // stopProxy 时告诉在途流「代理正在停止」）
+    // 带原因的主动取消：readChunk 返回 Error + reason（消费方据此区分断开与主动中止）。
     void cancelWithReason(const std::string& reason);
 
-    // 当前队列深度（用于测试 / 调试）
+    // 当前队列深度（测试/调试用）
     size_t queueDepth() const;
 
-    // 当前生产者是否被背压阻塞（queue >= 100，backpressure 触发）
+    // 当前生产者是否被背压阻塞（queue >= 100）
     bool isPaused() const;
 
 private:
@@ -111,8 +95,7 @@ private:
     friend size_t streamWriteCb(char* ptr, size_t size, size_t nmemb, void* userp);
     friend size_t streamHeaderCb(char* buffer, size_t size, size_t nitems, void* userp);
 
-    // 三线程 + 队列 + backpressure 的真实实现（spec §10.4）
-    // 全部状态隐藏在 Impl 内；header 只暴露 Pimpl 前向声明。
+    // 三线程 + 队列 + backpressure 的真实实现；全部状态藏在 Impl 内，header 只暴露前向声明。
     struct Impl;
     Impl* impl_ = nullptr;
 };

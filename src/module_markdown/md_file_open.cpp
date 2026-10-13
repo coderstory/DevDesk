@@ -25,11 +25,8 @@ core::Result<std::string> captureFileIntoNotesDir(const fs::path& notesDir,
             "无法创建笔记目录: " + ec.message());
     }
 
-    // 两侧规范化消除 ./.. 与链接写法差异；weakly_canonical 不要求文件
-    // 存在，失败退回原路径。注意 std::filesystem::relative 按大小写敏感
-    // 比较——Windows「打开方式」传回的路径一般与磁盘大小写一致；万一个别
-    // 段大小写不同导致相对化判到目录外，会走「复制捕获」兜底：行为安全
-    // （多一个可见副本，不丢数据、不越界写），不做大小写特判。
+    // 两侧规范化消除 ./.. 与链接写法差异（weakly_canonical 不要求文件存在）。注意 relative
+    // 大小写敏感：个别段大小写不同会判到目录外，走「复制捕获」兜底，行为安全。
     fs::path srcC = src;
     fs::path baseC = notesDir;
     {
@@ -43,8 +40,7 @@ core::Result<std::string> captureFileIntoNotesDir(const fs::path& notesDir,
         if (!ec2) baseC = t;
     }
 
-    // 1) 已在笔记目录内 → 相对化（relative 对目录外路径生成 ../.. 形式，
-    //    用 ".." 前缀识别逃逸，不采信）
+    // 1) 已在笔记目录内 → 相对化（目录外路径 relative 生成 ../.. 形式，用 ".." 前缀识别逃逸）
     const fs::path rel = fs::relative(srcC, baseC, ec);
     if (!ec && !rel.empty()) {
         const std::string relPosix = rel.generic_string();
@@ -53,9 +49,8 @@ core::Result<std::string> captureFileIntoNotesDir(const fs::path& notesDir,
         }
     }
 
-    // 2) 目录外文件 → 复制进笔记目录根。强制 .md：rescan / pollChanged /
-    //    树只认 .md 扩展名，非 .md 落进去也永远进不了索引；名字 = 原文件名
-    //    主干 + .md（去原扩展名），撞名追加「 2」「 3」
+    // 2) 目录外文件 → 复制进笔记目录根，强制 .md（rescan/pollChanged/树只认 .md，否则永不
+    //    进索引）；名字 = 原文件名主干 + .md，撞名追加「 2」「 3」。
     std::string stem = srcC.stem().string();
     if (stem.empty()) stem = "导入文件";
     fs::path dst = notesDir / fs::path(stem + ".md");

@@ -1,4 +1,3 @@
-// src/core/logging.h
 #pragma once
 
 #include <filesystem>
@@ -12,13 +11,10 @@ enum class Level { Trace, Debug, Info, Warn, Error, Fatal };
 void setLevel(Level level);
 Level level();
 
-// 添加文件输出
 void addFileOutput(const std::filesystem::path& file);
 
-// 添加控制台输出
 void addConsoleOutput();
 
-// 核心日志函数
 void logMessage(Level level, const std::string& message,
                 const char* file = "", int line = 0);
 
