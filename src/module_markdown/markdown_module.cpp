@@ -2291,7 +2291,7 @@ private:
 
                 // 提示行用就地判据而非 newItemParentDir()（后者每帧 WARN 刷屏）
                 const std::string newNoteParent =
-                    dirExistsOnDisk(selectedDir_) ? selectedDir_ : std::string();
+                    dirExistsOnDisk(newItemTargetDir_) ? newItemTargetDir_ : std::string();
                 ui_kit::drawDialogText(ui, "md.dialog.new.hint", w,
                                        "保存到：" +
                                            (newNoteParent.empty()
@@ -2806,8 +2806,9 @@ private:
         }
         syncCurrentMtime();  // 外部修改检测的 mtime 基准
         if (mode_ == ViewMode::Preview) syncPreviewOnEnter_ = true;
-        // 选中态跟到该笔记所在目录：树的目录高亮与「新建落在哪儿」始终一致
-        selectDir(parentDirOf(relPath));
+        // 新建条目的父目录跟随当前打开笔记的所在目录
+        // 选中不级联：文件夹选中标记仅精确匹配，不因打开笔记而上溯选中父目录
+        newItemTargetDir_ = parentDirOf(relPath);
         saveViewState();  // 选中笔记跨会话记忆
         showToast("已打开", relPath, false);
         LOG_INFO("打开笔记: " + relPath);
@@ -2828,6 +2829,7 @@ private:
         collapsedDirs_.insert(st.collapsedDirs.begin(), st.collapsedDirs.end());
         // 目录已被外部删除时不在此校验，由 newItemParentDir 兜底
         selectedDir_ = st.selectedDir;
+        newItemTargetDir_ = selectedDir_;  // 启动时与选中态同步，后续由 openNote / selectDir 分别更新
         if (st.lastPath.empty()) return;
         const bool exists =
             std::any_of(notes_.begin(), notes_.end(),
@@ -3147,20 +3149,23 @@ private:
         return dir.empty() || allFolders_.count(dir) != 0;
     }
 
-    // 新建条目的父目录 = 当前选中目录；已被外部删除 → 回根目录 + WARN。
-    // "" 既表「选中根目录」也表兜底，区别只在日志。
+    // 新建条目的父目录 = newItemTargetDir_（由点击文件夹 / 打开笔记同步更新）；
+    // 已被外部删除 → 回根目录 + WARN。
+    // "" 既表「根目录」也表兜底，区别只在日志。
     std::string newItemParentDir() const {
-        if (selectedDir_.empty()) return std::string();          // 选中根目录
-        if (dirExistsOnDisk(selectedDir_)) return selectedDir_;  // 选中某层目录
-        LOG_WARN("Markdown: 选中目录已不存在（外部删除？），新建回退到根目录: " +
-                 selectedDir_);
-        return std::string();                                     // 兜底
+        if (newItemTargetDir_.empty()) return std::string();          // 根目录
+        if (dirExistsOnDisk(newItemTargetDir_)) return newItemTargetDir_;
+        LOG_WARN("Markdown: 新建目标目录已不存在（外部删除？），回退到根目录: " +
+                 newItemTargetDir_);
+        return std::string();                                         // 兜底
     }
 
     // 选中目录变化 → 记住 + 落盘（跨会话）
+    // 用户直接点文件夹时视觉选中与功能目标同步更新
     void selectDir(const std::string& dir) {
         if (selectedDir_ == dir) return;
         selectedDir_ = dir;
+        newItemTargetDir_ = dir;
         saveViewState();
     }
 
@@ -3564,8 +3569,12 @@ private:
     // 磁盘全层目录（POSIX 相对路径，含空目录；树渲染 + 父目录下拉用）
     std::set<std::string> allFolders_;
     // 目录树选中态（POSIX 相对路径；"" = 根目录，是合法值也是初值）。
-    // 新建笔记/文件夹的父目录都从它派生（newItemParentDir）。
+    // 选中不级联：仅由用户直接点击文件夹行更新；打开笔记不上溯选中父目录。
     std::string selectedDir_;
+    // 新建条目的目标目录（POSIX 相对路径；"" = 根目录）。
+    // 由 selectDir（点击文件夹）和 openNote（打开笔记）同步更新。
+    // 跨会话由 selectedDir_ 初始化，其后跟笔记打开实时变化。
+    std::string newItemTargetDir_;
 
     // 生命周期：树行右键菜单 + 删除确认 + 重命名
     bool ctxMenuOpen_ = false;
