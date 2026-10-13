@@ -76,6 +76,8 @@ struct SettingsConfig {
     int proxyPort = kDefaultProxyPort;
     // 窗口效果："off"|"translucent"|"frosted"，未知值收敛 off。
     std::string windowEffect = kWindowEffectOff;
+    // 强调色："clay"|"purple"|"pink"|"blue"
+    std::string accentTheme = "clay";
     // true = 启动恢复 72px 图标栏；运行时切换在 app_sidebar，经 SettingsStore 持久化到这里。
     bool sidebarCollapsed = false;
     // 模块开关：home/settings 恒启用（sanitized 强制补齐）；agent 与 pet 默认关闭。

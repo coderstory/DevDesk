@@ -91,4 +91,8 @@ float editorFontSize();
 
 std::string currentThemeName();
 
+enum class Accent { Clay, Purple, Pink, Blue };
+void setAccent(Accent a);
+Accent accent();
+
 } // namespace core::theme

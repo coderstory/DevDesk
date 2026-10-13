@@ -218,6 +218,60 @@ void drawAppearanceCard(const CardDrawArgs& args) {
                     .clip()
                     .build();
             }
+            // 强调色选择：4 个色卡圆点 + 名称，点击即时更换主色家族
+            const float accentLabelY = hintY + (degraded.empty() ? roundFs(8.0f) : hintH + roundFs(8.0f));
+            const float accentLabelH = roundFs(16.0f);
+            const float accentSwatchSize = roundFs(28.0f);
+            const float accentSwatchGap = roundFs(12.0f);
+            const float accentSwatchY = accentLabelY + accentLabelH + roundFs(6.0f);
+            const float accentNameH = roundFs(12.0f);
+            const float accentNameY = accentSwatchY + accentSwatchSize + roundFs(4.0f);
+
+            struct AccentSwatch { const char* name; eui::Color color; };
+            const AccentSwatch kSwatches[] = {
+                {"Claude 橙", eui::Color("#D97757")},
+                {"雾紫", eui::Color("#71639B")},
+                {"玫瑰粉", eui::Color("#B4567C")},
+                {"QQ 蓝", eui::Color("#12B7F5")},
+            };
+
+            ui.text(id + ".accent.label")
+                .position(28.0f, accentLabelY)
+                .size(200.0f, accentLabelH)
+                .text("主题色")
+                .fontSize(fs(12.0f))
+                .lineHeight(accentLabelH)
+                .color(t.colors.textSecondary)
+                .build();
+
+            int curAccent = static_cast<int>(core::theme::accent());
+            for (int i = 0; i < 4; ++i) {
+                float x = 28.0f + static_cast<float>(i) * (accentSwatchSize + accentSwatchGap);
+                const bool selected = (i == curAccent);
+
+                // 色卡圆点：使用 button 组件以获得 onClick，空文本纯色块 + pill 半径
+                components::button(ui, id + ".accent.sw." + std::to_string(i))
+                    .position(x, accentSwatchY)
+                    .size(accentSwatchSize, accentSwatchSize)
+                    .text("")
+                    .fontSize(fs(10.0f))
+                    .theme(compTheme, /*primary=*/false)
+                    .colors(kSwatches[i].color, kSwatches[i].color, kSwatches[i].color)
+                    .radius(t.sizes.radiusPill)
+                    .border(selected ? 2.0f : 0.0f, t.colors.primary)
+                    .onClick([f = a.applyAccentTheme, idx = i] { f(idx); })
+                    .build();
+                // 色卡名称
+                ui.text(id + ".accent.name." + std::to_string(i))
+                    .position(x - roundFs(6.0f), accentNameY)
+                    .size(accentSwatchSize + roundFs(12.0f), accentNameH)
+                    .text(kSwatches[i].name)
+                    .fontSize(fs(10.0f))
+                    .lineHeight(accentNameH)
+                    .color(selected ? t.colors.textPrimary : t.colors.textTertiary)
+                    .textAlign(eui::TextAlign::Center)
+                    .build();
+            }
         })
         .build();
 }
