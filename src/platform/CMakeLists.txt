@@ -11,6 +11,7 @@ add_library(devdesk_platform STATIC
 # 业务代码零平台宏 —— 与 EUI-NEO 后端选择同一模式）
 if(WIN32)
     target_sources(devdesk_platform PRIVATE
+        exec_capture_win.cpp
         keychain_win.cpp
         credential_protection_win.cpp  # DPAPI 密文入库（不得降级明文）
         file_open_win.cpp
@@ -23,6 +24,7 @@ if(WIN32)
     )
 elseif(APPLE)
     target_sources(devdesk_platform PRIVATE
+        exec_capture_posix.cpp
         keychain_macos.cpp
         credential_protection_posix.cpp  # macOS 与 Linux 同实现，共用 _posix
         file_open_macos.cpp
@@ -35,6 +37,7 @@ elseif(APPLE)
     )
 else()
     target_sources(devdesk_platform PRIVATE
+        exec_capture_posix.cpp
         keychain_posix.cpp
         credential_protection_posix.cpp
         file_open_posix.cpp
