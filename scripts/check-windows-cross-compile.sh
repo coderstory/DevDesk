@@ -127,7 +127,7 @@ build_incs() {
           -I "${ROOT}/src/module_home" -I "${ROOT}/src/module_markdown"
           -I "${ROOT}/src/module_todo" -I "${ROOT}/src/module_claude_proxy"
           -I "${ROOT}/src/module_settings" -I "${ROOT}/src/module_about"
-          -I "${ROOT}/src/module_pet" -I "${ROOT}/tests")
+          -I "${ROOT}/tests")
     if [ -n "$EUI_DIR" ]; then
         INCS+=(-I "${EUI_DIR}/include" -I "${EUI_DIR}"
                -I "${EUI_DIR}/3rd/yyjson-0.12.0/src" -I "${EUI_DIR}/3rd/md4c/src")

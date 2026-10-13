@@ -141,8 +141,8 @@ discover_tus() {
 count_nonempty() { awk 'NF{c++} END{print c+0}' "$1"; }
 
 # 平台过滤：`*_win.cpp` 只在 Windows 编、`*_macos.cpp` 只在 macOS 编。必须用
-# **精确后缀**匹配，不做子串匹配——`src/module_pet/pet_window.cpp` 含 "_win" 但
-# 不是 Windows 专属文件，子串匹配会把它误杀。
+# **精确后缀**匹配，不做子串匹配——`src/module_markdown/md_sync_map.cpp` 含 "_sync" 但
+# 不是同步专属文件，子串匹配会把它误杀。
 filter_platform() {
     while IFS= read -r f; do
         [ -n "$f" ] || continue
