@@ -2860,7 +2860,7 @@ REGISTER_TEST(todo_ui_priority_card_tint,
         DOCTEST_REQUIRE(env.svc->updateTask(t2).isOk());
     }
     // 期望值独立写死在用例里（不引用被测常量表）：改强度表/色源即红
-    const float kStrength[4] = {0.00f, 0.22f, 0.27f, 0.30f};
+    const float kStrength[4] = {0.00f, 0.30f, 0.38f, 0.42f};
 
     std::unique_ptr<::core::Module> mod(create_todo_module());
     mod->onStart();
@@ -2903,8 +2903,9 @@ REGISTER_TEST(todo_ui_priority_card_tint,
                           0.02f);
         }
     }
-    // 判据 b'：低优先级配色加深后仍不刺眼（48/255 对应 0.188，与 Low=0.22 等比例）；高优先级看得出
-    DOCTEST_CHECK(maxChannelDelta(lowBg->color, t.colors.surface) <= 48.0f / 255.0f);
+    // 判据 b'：低优先级配色色泽鲜艳后仍不刺眼（72/255，用户 2026-10-13 要求更鲜艳，'不刺眼'阈值同步上调）；
+    // 高优先级看得出（≥45/255 保持不变——High 档相对增幅与上两档一致）
+    DOCTEST_CHECK(maxChannelDelta(lowBg->color, t.colors.surface) <= 72.0f / 255.0f);
     DOCTEST_CHECK(maxChannelDelta(highBg->color, t.colors.surface) >= 45.0f / 255.0f);
 
     // 判据 c：hover / active 与优先级底色**叠加**（不被中性态色顶掉），

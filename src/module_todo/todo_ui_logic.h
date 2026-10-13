@@ -291,11 +291,12 @@ inline eui::Color priorityColor(Priority p, const core::theme::Tokens& t) {
     return t.colors.*kColorFields[idx <= static_cast<size_t>(Priority::High) ? idx : 0];
 }
 
-// 优先级色底：卡底与详情弹窗优先级按钮底的唯一色源（priorityColor 色表 + 强度表 + priorityTintBg 算式）
-// 前三档在旧值 {0.12,0.16,0.22,0.30} 上加深以提单/中档可区分性（用户反馈"前三个太淡不好区分"）。
-// 档间单调递增：None<Low<Medium<High。High 档（红 #CF2D56）保持 0.30 不动——其视觉强度较高，
-// 等量 tint 比前三档的蓝/橙基色更"跳"，再加大反喧宾夺主。
-inline constexpr float kPriorityTintStrength[] = {0.12f, 0.22f, 0.27f, 0.30f};
+// 优先级色底：卡底与详情弹窗优先级按钮底的唯一色源（priorityColor 色表 + 强度表 + priorityTintBg 算式）。
+// 强度表在旧值 {0.12,0.16,0.22,0.30} 上两轮上调：第一轮 {0.12,0.22,0.27,0.30}（提单中档可区分性），
+// 第二轮 {0.18,0.30,0.38,0.42}（用户 2026-10-13 要求更鲜艳，None 档 0.12→0.18 由列色淡染接管后按需调）。
+// 档间单调递增：None<Low<Medium<High。High 档（红 #CF2D56）保持与上两档同增幅（+0.04），
+// 其视觉强度较高，等量 tint 比前三档的蓝/橙基色更"跳"，再加大反喧宾夺主。
+inline constexpr float kPriorityTintStrength[] = {0.18f, 0.30f, 0.38f, 0.42f};
 static_assert(std::size(kPriorityTintStrength) ==
               static_cast<size_t>(Priority::High) + 1);
 
@@ -313,11 +314,16 @@ inline eui::Color priorityTintBg(Priority p, const core::theme::Tokens& t,
     return eui::mixColor(base, priorityColor(p, t), strength);
 }
 
-// ① 看板卡底：None 不加 tint，低/中/高按强度表混；优先级色相与 hover/active 反馈叠加而非互相覆盖
+// ① 看板卡底：None 走列色淡染 0.12——列区分列（待办=clay橙、进行中=amber、已完成=sage、
+// 归档=warm-gray，归档天然灰契合只读气质）；低/中/高按强度表混优先级原生色（优先级语义覆盖列染）。
+// columnColor=nullopt 时退 base 原色（列无色/无头测试等场景）。色相与 hover/active 反馈叠加而非互相覆盖
 inline eui::Color priorityCardBg(Priority p, const core::theme::Tokens& t,
-                                 const eui::Color& base) {
-    return priorityTintBg(p, t, base,
-                          p == Priority::None ? 0.0f : priorityTintStrength(p));
+                                 const eui::Color& base,
+                                 const std::optional<eui::Color>& columnColor = std::nullopt) {
+    if (p == Priority::None) {
+        return columnColor.has_value() ? eui::mixColor(base, *columnColor, 0.12f) : base;
+    }
+    return priorityTintBg(p, t, base, priorityTintStrength(p));
 }
 
 // ② 按钮选中档强度：不取 1.0 实色——实色底配单一前景 token 总有一档掉到 4.5:1 以下；0.55 深 tint 四档均 ≥ 6.0:1

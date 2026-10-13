@@ -439,13 +439,21 @@ void drawCard(eui::Ui& ui, const std::string& id, float x, float y, float width,
         .border(0.0f, t.colors.borderDefault)  // 边框职责已移到内部交互层
         .content([&] {
 
+    // 交互层（卡内首层）：优先级直接改卡底色，hover/active 同走该算式；边框与底色独立，选中态不被盖掉
+    // 列色淡染：None 优先级按所在列色 0.12 混底，列区分列（优先级语义优先于列染）
+    const auto colTint = colIndex >= 0 &&
+        static_cast<size_t>(colIndex) < v.columns.size()
+            ? columnDotColor(v.columns[static_cast<size_t>(colIndex)].color)
+            : std::optional<eui::Color>{};
+    const auto cardBase = t.colors.surface;
+    const auto cardHover = t.colors.hover;
+    const auto cardActive = t.colors.active;
     ui.rect(id + ".bg")
         .position(0.0f, y)
         .size(width, kCardHeight)
-    // 交互层（卡内首层）：优先级直接改卡底色，hover/active 同走该算式；边框与底色独立，选中态不被盖掉
-        .states(priorityCardBg(task.priority, t, t.colors.surface),
-                priorityCardBg(task.priority, t, t.colors.hover),
-                priorityCardBg(task.priority, t, t.colors.active))
+        .states(priorityCardBg(task.priority, t, cardBase, colTint),
+                priorityCardBg(task.priority, t, cardHover, colTint),
+                priorityCardBg(task.priority, t, cardActive, colTint))
         .border(selected ? 2.0f : 1.0f,
                 selected ? t.colors.primary : t.colors.borderDefault)
         // hover/按下颜色过渡（0.1s OutQuad；拖拽半透明 opacity 不在掩码里）
@@ -660,11 +668,17 @@ void drawDragGhost(eui::Ui& ui, const core::theme::Tokens& t,
                 .padding(0.0f)
                 .border(0.0f, t.colors.borderDefault)
                 .content([&] {
-            // 底 + 2px primary 描边（同真卡选中态）；底色同走 priorityCardBg，否则拖到一半优先级指示消失
+            // 底 + 2px primary 描边（同真卡选中态）；底色同走 priorityCardBg，否则拖到一半优先级指示消失。
+            // 列色淡染：同 drawCard——None 优先级按所在列色区分（拖印副本延续列身份）
+                    const auto* ghostCol = findColumn(v.columns, task->columnId);
+                    const auto ghostColTint = ghostCol
+                        ? columnDotColor(ghostCol->color)
+                        : std::optional<eui::Color>{};
                     ui.rect("todo.dragghost.bg")
                         .position(0.0f, 0.0f)
                         .size(w, kCardHeight)
-                        .color(priorityCardBg(task->priority, t, t.colors.surface))
+                        .color(priorityCardBg(task->priority, t, t.colors.surface,
+                                              ghostColTint))
                         .border(2.0f, t.colors.primary)
                         .radius(t.sizes.radius)
                         .build();
