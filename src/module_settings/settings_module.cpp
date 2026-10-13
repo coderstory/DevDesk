@@ -107,6 +107,15 @@ public:
                       toolReg.errorMessage());
         }
         applyThemeRuntime();
+        // 启动时恢复强调色（load 期写入 cfg_.accentTheme，sanitized 已保证合法值）
+        {
+            ::core::theme::Accent a;
+            if (cfg_.accentTheme == "purple")      a = ::core::theme::Accent::Purple;
+            else if (cfg_.accentTheme == "pink")   a = ::core::theme::Accent::Pink;
+            else if (cfg_.accentTheme == "blue")   a = ::core::theme::Accent::Blue;
+            else                                    a = ::core::theme::Accent::Clay;
+            ::core::theme::setAccent(a);
+        }
         ::core::theme::setFontScale(
             static_cast<float>(cfg_.fontScalePercent) / 100.0f);
         // 编辑器字号经 core::theme 通道传给 markdown（模块隔离）。
@@ -191,6 +200,22 @@ public:
                   "）");
         LOG_INFO("Settings: 主题模式 → " + cfg_.themeMode + "（生效=" +
                  ::core::theme::currentThemeName() + "）");
+    }
+
+    void applyAccentTheme(int index) {
+        if (index < 0 || index >= kAccentPresetCount) return;
+        cfg_.accentTheme = kAccentPresetValues[index];
+        ::core::theme::Accent a;
+        if (cfg_.accentTheme == "purple")      a = ::core::theme::Accent::Purple;
+        else if (cfg_.accentTheme == "pink")   a = ::core::theme::Accent::Pink;
+        else if (cfg_.accentTheme == "blue")   a = ::core::theme::Accent::Blue;
+        else                                    a = ::core::theme::Accent::Clay;
+        ::core::theme::setAccent(a);
+        persist();
+        // 提示文案不带色名以避免 "clay" 这个内部名对用户无意义
+        const char* names[] = {"Claude 橙", "雾紫", "玫瑰粉", "QQ 蓝"};
+        setStatus(std::string("主题色：") + names[index] + "（即时生效）");
+        LOG_INFO("Settings: 强调色 → " + cfg_.accentTheme);
     }
 
     void applyFontPreset(int index) {
@@ -569,6 +594,7 @@ private:
     SettingsCardActions cardActions() {
         SettingsCardActions a;
         a.applyThemeMode = [this](int idx) { applyThemeMode(idx); };
+        a.applyAccentTheme = [this](int idx) { applyAccentTheme(idx); };
         a.applyFontPreset = [this](int idx) { applyFontPreset(idx); };
         a.applyWindowEffect = [this](int idx) { applyWindowEffectPreset(idx); };
         a.applyModuleEnabled = [this](const std::string& moduleId, bool on) {

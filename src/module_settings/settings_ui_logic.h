@@ -41,6 +41,10 @@ inline constexpr int kThemeModePresetCount = 3;
 inline constexpr const char* kThemeModePresetLabels[] = {"跟随系统", "浅色",
                                                          "深色"};
 
+// 强调色四档（与 settings_config 的 "clay"/"purple"/"pink"/"blue" 一一对应）
+inline constexpr const char* kAccentPresetValues[] = {"clay", "purple", "pink", "blue"};
+inline constexpr int kAccentPresetCount = 4;
+
 // 编辑器字号档位（px；15 = fontSizeBody token 基准）
 inline constexpr int kEditorFontPresets[] = {13, 15, 17, 20};
 inline constexpr int kEditorFontPresetCount = 4;
@@ -65,7 +69,7 @@ inline constexpr long kLogTailReadWindow = 256 * 1024;  // tail 只读末尾 256
 
 // 卡片高度（唯一来源：注册表卡高与卡内几何同源）
 // 内边距四周 ≥16px，改动须同时满足「内容底沿 + 16」；这些是 100% 档基准，注册表运行期取 roundFs(常量)，卡高与行盒同缩放才不挤出尾行。
-inline constexpr float kAppearanceCardHeight = 172.0f;  // 外观卡（通用；降级提示行底 156 + 16）
+inline constexpr float kAppearanceCardHeight = 248.0f;  // 外观卡（通用；强调色行底 232 + 16）
 inline constexpr float kEditorFontCardHeight = 108.0f;  // 编辑器字号卡（通用）
 inline constexpr float kModulesCardHeight = 344.0f;     // 模块插拔卡（模块）
 inline constexpr float kPetCardHeight = 168.0f;

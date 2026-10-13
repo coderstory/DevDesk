@@ -128,3 +128,82 @@ REGISTER_TEST(theme_accent_deltaE, "theme accent: pairwise CIE76 ΔE >= 20", {
     core::theme::setDark();
     return true;
 })
+
+// 强调色切换：setAccent → accent getter 返回对应枚举值
+REGISTER_TEST(theme_accent_select_getter, "theme accent: setAccent/getter roundtrip", {
+    core::theme::setAccent(core::theme::Accent::Purple);
+    DOCTEST_CHECK(core::theme::accent() == core::theme::Accent::Purple);
+    core::theme::setAccent(core::theme::Accent::Pink);
+    DOCTEST_CHECK(core::theme::accent() == core::theme::Accent::Pink);
+    core::theme::setAccent(core::theme::Accent::Blue);
+    DOCTEST_CHECK(core::theme::accent() == core::theme::Accent::Blue);
+    core::theme::setAccent(core::theme::Accent::Clay);
+    DOCTEST_CHECK(core::theme::accent() == core::theme::Accent::Clay);
+    return true;
+})
+
+// setAccent 触发 ChangeHandler（含同值不重复通知）
+REGISTER_TEST(theme_accent_select_notify, "theme accent: setAccent triggers ChangeHandler", {
+    int calls = 0;
+    core::theme::setChangeHandler([&](bool) { ++calls; });
+    core::theme::setAccent(core::theme::Accent::Purple);
+    DOCTEST_CHECK_EQ(calls, 1);
+    core::theme::setAccent(core::theme::Accent::Pink);
+    DOCTEST_CHECK_EQ(calls, 2);
+    core::theme::setAccent(core::theme::Accent::Pink);  // same accent, no notify
+    DOCTEST_CHECK_EQ(calls, 2);
+    core::theme::setChangeHandler(nullptr);
+    core::theme::setAccent(core::theme::Accent::Clay);
+    return true;
+})
+
+// setDark/setLight 保留 accent（覆盖后重建须重新施加 applyAccentPrimary）
+REGISTER_TEST(theme_accent_select_preserve, "theme accent: setDark/setLight preserves accent", {
+    core::theme::setDark();
+    core::theme::setAccent(core::theme::Accent::Purple);
+    // 深色 Purple primary = #A18FC8 → R=0xA1
+    DOCTEST_CHECK_EQ(toHexByte(core::theme::current().colors.primary.r), 0xA1);
+    core::theme::setLight();
+    // 浅色 Purple primary = #71639B → R=0x71
+    DOCTEST_CHECK_EQ(toHexByte(core::theme::current().colors.primary.r), 0x71);
+    core::theme::setDark();
+    // 回到深色 purple → R=0xA1
+    DOCTEST_CHECK_EQ(toHexByte(core::theme::current().colors.primary.r), 0xA1);
+    core::theme::setAccent(core::theme::Accent::Clay);
+    return true;
+})
+
+// 非 Clay 的 primary 在深浅下不同（切换即见色值变化）
+REGISTER_TEST(theme_accent_select_values, "theme accent: non-Clay primary differs per mode", {
+    core::theme::setLight();
+    core::theme::setAccent(core::theme::Accent::Blue);
+    // 浅色 Blue primary = #12B7F5（亮色档也是蓝）
+    DOCTEST_CHECK_EQ(toHexByte(core::theme::current().colors.primary.r), 0x12);
+    DOCTEST_CHECK_EQ(toHexByte(core::theme::current().colors.primary.g), 0xB7);
+    DOCTEST_CHECK_EQ(toHexByte(core::theme::current().colors.primary.b), 0xF5);
+
+    core::theme::setDark();
+    core::theme::setAccent(core::theme::Accent::Blue);
+    // 深色 Blue primary 同值 #12B7F5，但 primarySoftBg/primaryText 不同
+    DOCTEST_CHECK_EQ(toHexByte(core::theme::current().colors.primary.r), 0x12);
+    DOCTEST_CHECK_EQ(toHexByte(core::theme::current().colors.primary.g), 0xB7);
+    DOCTEST_CHECK_EQ(toHexByte(core::theme::current().colors.primary.b), 0xF5);
+
+    core::theme::setAccent(core::theme::Accent::Clay);
+    return true;
+})
+
+// Pink accent light-mode hex values: primary=#B4567C, primaryText=#904563
+REGISTER_TEST(theme_accent_select_pink_light, "theme accent: Pink light exact hex", {
+    core::theme::setLight();
+    core::theme::setAccent(core::theme::Accent::Pink);
+    const auto& c = core::theme::current().colors;
+    DOCTEST_CHECK_EQ(toHexByte(c.primary.r), 0xB4);
+    DOCTEST_CHECK_EQ(toHexByte(c.primary.g), 0x56);
+    DOCTEST_CHECK_EQ(toHexByte(c.primary.b), 0x7C);
+    DOCTEST_CHECK_EQ(toHexByte(c.primaryText.r), 0x90);
+    DOCTEST_CHECK_EQ(toHexByte(c.primaryText.g), 0x45);
+    DOCTEST_CHECK_EQ(toHexByte(c.primaryText.b), 0x63);
+    core::theme::setAccent(core::theme::Accent::Clay);
+    return true;
+})

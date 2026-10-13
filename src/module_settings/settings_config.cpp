@@ -30,6 +30,7 @@ constexpr const char* kKeyProxyPort = "claudeProxyPort";
 constexpr const char* kKeyWindowEffect = "windowEffect";
 constexpr const char* kKeyEnabledModules = "enabledModules";
 constexpr const char* kKeySidebarCollapsed = "sidebarCollapsed";
+constexpr const char* kKeyAccentTheme = "accentTheme";
 
 // 合法模块 ID 清单（sanitized 过滤未知项；与 kModuleId* 一一对应）
 const char* const kKnownModuleIds[] = {
@@ -150,6 +151,10 @@ SettingsConfig SettingsStore::sanitized(const SettingsConfig& cfg) {
     if (out.windowEffect != kWindowEffectTranslucent &&
         out.windowEffect != kWindowEffectFrosted) {
         out.windowEffect = kWindowEffectOff;
+    }
+    if (out.accentTheme != "clay" && out.accentTheme != "purple" &&
+        out.accentTheme != "pink" && out.accentTheme != "blue") {
+        out.accentTheme = "clay";
     }
     // 未知 ID 过滤（防手改 config）+ 去重 + 强制补齐恒启用项（home/settings）。
     std::vector<std::string> modules;
@@ -390,6 +395,12 @@ core::Result<SettingsConfig> SettingsStore::loadChecked() const {
             v.errorCode(), v.errorMessage());
         if (v.value().isBool()) cfg.sidebarCollapsed = v.value().asBool();
     }
+    if (auto raw = readRow(kKeyAccentTheme); raw.isOk()) {
+        auto v = parseRow(configKey(kKeyAccentTheme), raw.value());
+        if (v.isFail()) return core::Result<SettingsConfig>::fail(
+            v.errorCode(), v.errorMessage());
+        if (v.value().isString()) cfg.accentTheme = v.value().asString();
+    }
     // 字符串数组；未知 ID 忽略 + WARN（防脏数据打死模块）；键缺失 → 默认全启用。
     if (auto raw = readRow(kKeyEnabledModules); raw.isOk()) {
         auto v = parseRow(configKey(kKeyEnabledModules), raw.value());
@@ -437,6 +448,7 @@ core::Result<void> SettingsStore::save(const SettingsConfig& cfgRaw) const {
         {kKeyProxyPort, platform::json::makeInt(cfg.proxyPort)},
         {kKeyWindowEffect, platform::json::makeString(cfg.windowEffect)},
         {kKeySidebarCollapsed, platform::json::makeBool(cfg.sidebarCollapsed)},
+        {kKeyAccentTheme, platform::json::makeString(cfg.accentTheme)},
         {kKeyEnabledModules,
          platform::json::makeStringArray(cfg.enabledModules)},
     };
