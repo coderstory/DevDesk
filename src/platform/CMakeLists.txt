@@ -19,6 +19,7 @@ if(WIN32)
         http_client_ca_win.cpp
         terminal_launch_win.cpp
         tray_icon_win.cpp              # 托盘图标走真 .ico（ExtractIconExW 不认 PNG）
+        single_instance_win.cpp        # 单实例互斥：命名 mutex + 事件监听线程
     )
 elseif(APPLE)
     target_sources(devdesk_platform PRIVATE
@@ -30,6 +31,7 @@ elseif(APPLE)
         http_client_ca_posix.cpp
         terminal_launch_macos.cpp
         tray_icon_macos.cpp            # 托盘图标走 22×22 template 蒙版（不变）
+        single_instance_macos.cpp      # .app bundle 系统保证单实例，恒 true
     )
 else()
     target_sources(devdesk_platform PRIVATE
@@ -41,6 +43,7 @@ else()
         http_client_ca_posix.cpp
         terminal_launch_posix.cpp
         tray_icon_posix.cpp            # 其它 POSIX 兜底：返回空串（用应用图标）
+        single_instance_posix.cpp      # 暂 no-op 恒 true
     )
 endif()
 

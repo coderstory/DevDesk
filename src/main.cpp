@@ -20,6 +20,7 @@
 #include "module_pet/pet_window.h"
 #include "module_toggle_bridge.h"
 #include "platform/tray_icon.h"
+#include "platform/single_instance.h"
 #include "settings_config.h"
 
 #include <components/styledmenu.h>
@@ -421,6 +422,13 @@ namespace app {
 
 // 常驻侧边栏 + 根布局在 app_sidebar
 const DslAppConfig& dslAppConfig() {
+    // 单实例互斥：二次运行 → 唤起首个实例窗口 → 快速退出（DB/日志/窗口等任何副作用之前）
+    if (!platform::single_instance::acquireInstanceLock()) {
+        platform::single_instance::notifyExistingInstance();
+        LOG_INFO("已有实例运行中，已发送唤起信号，本进程退出");
+        std::exit(0);
+    }
+
     // 顺序敏感：先开库再读主题/字号（themeRestored 先于 config 求值，不先开库读到默认值）
     static const bool themeRestored = []() {
         ::core::paths::ensureDirectoriesExist();
