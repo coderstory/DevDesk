@@ -198,9 +198,7 @@ sendStreamingClaude(const platform::http::Request& req,
     // 3. SSE 场景下上游不应做压缩（避免 chunk 边界被改变）
     upstream.headers["Accept-Encoding"] = "identity";
 
-    LOG_INFO("流式转发 " + upstream.method + " " + upstream.url +
-             " (profile=" + std::to_string(profile.id) + ")");
-
+    // 成功不记：代理流量大，每请求一条 INFO 会刷屏；失败路径各有独立日志
     return platform::http::sendStreaming(upstream);
 }
 
