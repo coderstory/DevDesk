@@ -12,6 +12,7 @@ add_executable(devdesk_tests
     test_core/test_sqlite_concurrency.cpp
     test_core/test_theme.cpp
     test_core/test_theme_fontscale.cpp
+    test_core/test_theme_accents.cpp
     test_core/test_router.cpp
     test_core/test_schema.cpp
     test_core/test_migrations.cpp

@@ -33,6 +33,9 @@ namespace {
         c.warning = eui::Color("#C29243");
         c.error = eui::Color("#CF2D56");
         c.info = eui::Color("#6A9BCC");
+        c.purple = eui::Color("#A18FC8");
+        c.pink = eui::Color("#DE8FB4");
+        c.blue = eui::Color("#12B7F5");
 
         auto& s = t.sizes;
         s.spacing = 8.0f;
@@ -81,6 +84,9 @@ namespace {
         c.warning = eui::Color("#9A6B30");
         c.error = eui::Color("#B82850");
         c.info = eui::Color("#4A7AAB");
+        c.purple = eui::Color("#71639B");
+        c.pink = eui::Color("#C05E86");
+        c.blue = eui::Color("#12B7F5");
 
         auto& s = t.sizes;
         s.spacing = 8.0f;
