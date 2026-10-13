@@ -4116,6 +4116,7 @@ REGISTER_TEST(todo_ui_r5_pure_helpers,
 REGISTER_TEST(todo_archive_format,
               "Todo UI: formatArchivedAt 按 YYYY-MM-DD HH:MM:SS 输出",
               {
+    using namespace module::todo;
     // 用固定 epoch 验证格式（2026-10-13 12:30:45 UTC+8 = 2026-10-13 12:30:45 本地）
     // epoch = 2026-10-13T04:30:45Z = 1792331445
     const int64_t epoch = 1792331445;
@@ -4139,6 +4140,7 @@ REGISTER_TEST(todo_archive_format,
 REGISTER_TEST(todo_archive_tasks_in_column_sort,
               "Todo UI: tasksInArchiveColumn 按 archived_at DESC 排序",
               {
+    using namespace module::todo;
     std::vector<Task> tasks;
     Task a; a.id = 1; a.columnId = 10; a.archivedAt = 100; a.position = 2;
     Task b; b.id = 2; b.columnId = 10; b.archivedAt = 300; b.position = 1;
