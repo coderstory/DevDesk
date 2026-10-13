@@ -1144,7 +1144,7 @@ REGISTER_TEST(todo_ui_card_text_centered,
         const float cardCX = cardBg->frame.x + cardBg->frame.width / 2.0f;
         const float cardCY = cardBg->frame.y + cardBg->frame.height / 2.0f;
 
-        // 水平：主文本（标题）框中心 = 卡中心 − 徽章占用半宽（kCardOrdinalBadgeHoriz/2=14）
+        // 水平：主文本（标题）框中心 = 卡中心 − 徽章占用半宽（kCardOrdinalBadgeHoriz/2=16）
         DOCTEST_CHECK_EQ(title->horizontalAlign, eui::HorizontalAlign::Center);
         DOCTEST_CHECK(std::abs((title->frame.x + title->frame.width / 2.0f) -
                                (cardCX - ::module::todo::ui::kCardOrdinalBadgeHoriz / 2.0f)) <= 1.0f);

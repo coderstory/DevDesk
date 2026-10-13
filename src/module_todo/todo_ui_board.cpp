@@ -544,24 +544,35 @@ void drawCard(eui::Ui& ui, const std::string& id, float x, float y, float width,
          v.columns[static_cast<size_t>(colIndex)].kind == "archive");
     const eui::Color badgeBg =
         badgeMuted ? t.colors.surface : t.colors.surfaceElevated;
+    // 数字中性色：颜色全交给彩环——pink 浅色档 3.6:1 不够 12px 小字 WCAG AA，
+    // 数字染彩会破可读性；环色独立承载徽章身份。done/archive 列照旧降档
     const eui::Color badgeText =
         badgeMuted ? t.colors.textTertiary : t.colors.textSecondary;
     const bool overflow = cardIndex >= 99;
     const std::string ordinalText =
         overflow ? "99+" : std::to_string(cardIndex + 1);
-    const float badgeFontSize = overflow ? 10.0f : 11.0f;
-    // 正圆底：与 18px 标题行垂直居中（20-18=2 → 上偏 1）
+    const float badgeFontSize = overflow ? 11.0f : 12.0f;
+    // 六色池按 task.id 稳定哈希伪随机——视觉随机 + 跨帧/跨重启不变，禁止逐帧真随机（会闪变）。
+    // 不含 error/primary：error 语义因列独立、primary 主色保留给品牌焦点
+    static const eui::Color core::theme::ColorTokens::*kBadgeRingColors[] = {
+        &core::theme::ColorTokens::purple, &core::theme::ColorTokens::pink,
+        &core::theme::ColorTokens::blue,  &core::theme::ColorTokens::info,
+        &core::theme::ColorTokens::success, &core::theme::ColorTokens::warning,
+    };
+    const size_t colorIdx = static_cast<size_t>(task.id) * 2654435761u % 6;
+    const eui::Color ringColor = t.colors.*kBadgeRingColors[colorIdx];
+    // 正圆底：与 18px 标题行垂直居中（24-18=6 → 上偏 3）
     ui.rect(id + ".badge")
-        .position(12.0f, y + groupTop - 1.0f)
+        .position(12.0f, y + groupTop - 3.0f)
         .size(kCardOrdinalBadgeSize, kCardOrdinalBadgeSize)
         .color(badgeBg)
         .radius(kCardOrdinalBadgeSize / 2.0f)
-        .border(1.0f, t.colors.borderMuted)
+        .border(2.0f, ringColor)
         .opacity(cardOpacity)
         .build();
     // 数字（EUI-NEO verticalAlign::Center 补偿基线偏移，不靠目测）
     ui.text(id + ".badge.text")
-        .position(12.0f, y + groupTop - 1.0f)
+        .position(12.0f, y + groupTop - 3.0f)
         .size(kCardOrdinalBadgeSize, kCardOrdinalBadgeSize)
         .text(ordinalText)
         .fontSize(badgeFontSize)
@@ -574,7 +585,9 @@ void drawCard(eui::Ui& ui, const std::string& id, float x, float y, float width,
         .build();
 
     // 标题水平居中 = 框对称化（总留白 80、右缘让开完成角标区）+ horizontalAlign Center
-    // 徽章占用 kCardOrdinalBadgeHoriz（20+8=28px），标题可用宽度相应缩减
+    // 徽章占用 kCardOrdinalBadgeHoriz（24+8=32px），标题可用宽度相应缩减。
+    // 省略号需 overflow==Ellipsis && maxWidth>0 && !wrap 三件套；右缘角标约束不变——
+    // maxWidth 与 size 同宽，已计入完成角标区 [W-36, W-12] 让位
     ui.text(id + ".title")
         .position(kCardTitleBoxInset, y + groupTop)
         .size(width - 2.0f * kCardTitleBoxInset - kCardOrdinalBadgeHoriz,
@@ -584,6 +597,8 @@ void drawCard(eui::Ui& ui, const std::string& id, float x, float y, float width,
         .lineHeight(kCardTitleLineH)
         .fontWeight(500)
         .horizontalAlign(eui::HorizontalAlign::Center)
+        .maxWidth(width - 2.0f * kCardTitleBoxInset - kCardOrdinalBadgeHoriz)
+        .overflow(core::TextOverflow::Ellipsis)
         .color(t.colors.textPrimary)
         .opacity(done ? 0.6f : cardOpacity)
         .build();
