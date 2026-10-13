@@ -905,7 +905,7 @@ void drawLogViewCard(const CardDrawArgs& args) {
                         inner.text(id + ".empty")
                             .position(8.0f, 8.0f)
                             .size(cw - 16.0f, 20.0f)
-                            .text("（暂无日志内容，或日志文件尚未生成）")
+                            .text("（暂无日志内容，或日志文件尚未生成，或均低于所选级别）")
                             .fontSize(fs(12.0f))
                             .lineHeight(20.0f)
                             .color(t.colors.textTertiary)

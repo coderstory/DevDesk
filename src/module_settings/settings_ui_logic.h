@@ -10,6 +10,7 @@
 
 #include <cmath>
 #include <cstddef>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -171,5 +172,42 @@ std::string fitControlLabel(const std::string& text, float availableWidth,
 // 皮肤下拉宽度：按最长皮肤名估算放大，clamp 到 [kPetSkinFieldMinWidth, kPetSkinFieldMaxWidth]。
 float petSkinFieldWidth(const std::vector<std::string>& skinNames,
                         float fontSize);
+
+// 日志行级别解析（纯函数）：从 "[timestamp] [LEVEL] ..." 格式提取第二个方括号内的级别 token，映射到 core::log::Level。levelToString 对 INFO/WARN 末尾补空格对齐宽度，token 需 trim 后再匹配。解析不出返回 nullopt。
+inline std::optional<core::log::Level> logLineLevel(const std::string& line) {
+    size_t first = line.find('[');
+    if (first == std::string::npos) return std::nullopt;
+    size_t second = line.find('[', first + 1);
+    if (second == std::string::npos) return std::nullopt;
+    size_t close = line.find(']', second + 1);
+    if (close == std::string::npos) return std::nullopt;
+
+    std::string token = line.substr(second + 1, close - second - 1);
+    // levelToString 对 INFO/WARN 末尾补空格对齐宽度，需 trim 以防不匹配
+    while (!token.empty() && token.back() == ' ') token.pop_back();
+    while (!token.empty() && token.front() == ' ') token.erase(token.begin());
+
+    if (token == "TRACE") return core::log::Level::Trace;
+    if (token == "DEBUG") return core::log::Level::Debug;
+    if (token == "INFO")  return core::log::Level::Info;
+    if (token == "WARN")  return core::log::Level::Warn;
+    if (token == "ERROR") return core::log::Level::Error;
+    if (token == "FATAL") return core::log::Level::Fatal;
+    return std::nullopt;
+}
+
+// 日志 tail 按最低级别过滤（纯函数）：只保留级别 ≥ minLevel 的行。解析不出级别的行保留不吞（fail-open）——日志视图吞内容比显示杂行危害大；空行与格式异常行因此一律通过。
+inline std::vector<std::string> filterLogTailByLevel(
+    const std::vector<std::string>& lines, core::log::Level minLevel) {
+    std::vector<std::string> out;
+    out.reserve(lines.size());
+    for (const auto& line : lines) {
+        auto lvl = logLineLevel(line);
+        if (!lvl || static_cast<int>(*lvl) >= static_cast<int>(minLevel)) {
+            out.push_back(line);
+        }
+    }
+    return out;
+}
 
 } // namespace module::settings

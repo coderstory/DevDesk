@@ -614,8 +614,11 @@ private:
                         float cardsH, float screenH,
                         const core::theme::Tokens& t, float proxyH,
                         ::core::IClaudeProxyService* svc) {
+        // logTail_ 保持原始不预过滤——过滤在装配期做，切档零额外磁盘 IO、下一帧立即生效；
+        // 若在 readLogTailLines/applyLogTail 里过滤，切到低级别要重读磁盘才能看到更多行。
+        auto filteredLogTail = filterLogTailByLevel(logTail_, parseLogLevel(cfg_.logLevel));
         SettingsCardsIn in{cfg_, petSkins_, petSkinName_, proxyPortDraft_,
-                           logTail_, petScaleLabels_};
+                           filteredLogTail, petScaleLabels_};
         in.logTailVersion = logTailVersion_;
         in.logViewScrollOffset = logViewScrollOffset_;
         in.takeoverManaged = takeoverManaged_;
