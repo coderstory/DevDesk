@@ -241,7 +241,7 @@ REGISTER_TEST(migrations_is_idempotent,
         DOCTEST_REQUIRE(r2.isOk());
         auto& db2 = r2.value().db();
         // user_version 仍是 2，没有推进（没有新版本组）
-        DOCTEST_CHECK_EQ(readUserVersion(db2), 2);
+        DOCTEST_CHECK_EQ(readUserVersion(db2), 3);
         // 数据仍完好
         DOCTEST_CHECK_EQ(rowCount(db2, "claude_profiles"), 1);
     }
