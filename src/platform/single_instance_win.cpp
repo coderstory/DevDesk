@@ -60,7 +60,7 @@ void listenerLoop() {
 
 namespace platform::single_instance {
 
-bool acquireInstanceLock() {
+bool acquireLockOnce() {
     HANDLE h = CreateMutexW(nullptr, TRUE, kMutexName);
     if (!h) return false;
 
@@ -81,6 +81,16 @@ bool acquireInstanceLock() {
         CloseHandle(h);
     }
 
+    return isFirst;
+}
+
+bool acquireInstanceLock() {
+    // 进程内幂等（magic static 只判一次）：EUI 框架会多次调 dslAppConfig（启动早期一次、
+    // 窗口高度计算经 initialWindowHeight 又一次），而命名 mutex 对同进程的第二次
+    // CreateMutexW 同样返回 ERROR_ALREADY_EXISTS——不防重入会把本进程当第二实例，
+    // std::exit 走静态析构撞上已启动的监听线程（joinable thread 析构 = terminate，
+    // 启动即崩）。任何后续调用沿用首判结果。
+    static const bool isFirst = acquireLockOnce();
     return isFirst;
 }
 
