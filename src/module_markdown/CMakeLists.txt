@@ -14,6 +14,7 @@ add_library(devdesk_module_markdown STATIC
     md_live_edit.cpp
     md_preview_highlight.cpp
     md_sync_map.cpp
+    md_note_git.cpp
 )
 
 devdesk_apply_warnings(devdesk_module_markdown)

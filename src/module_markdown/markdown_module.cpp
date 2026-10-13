@@ -24,6 +24,7 @@
 #include "md_line_scanner.h"
 #include "md_live_edit.h"
 #include "md_preview_highlight.h"
+#include "md_note_git.h"
 #include "md_sync_map.h"
 #include "md_tree.h"
 #include "md_view_state.h"
@@ -222,6 +223,14 @@ public:
         }
         refreshList();
         loadViewState();  // 恢复上次的选中笔记 / 视图模式 / 收起目录
+
+        // 笔记目录 git 自动提交：后台启动（异步 init，不阻塞 onStart）
+        if (!noteGit_) {
+            noteGit_ = std::make_unique<NoteGitAutoCommit>(
+                service_->notesDir());
+        }
+        noteGit_->start();
+
         LOG_INFO("Markdown 模块启动，共 " + std::to_string(notes_.size()) + " 篇笔记");
     }
 
@@ -241,6 +250,9 @@ public:
             LOG_ERROR("退出时保存笔记失败，未落盘的编辑已丢失: " + currentPath_ +
                       "（EUI-NEO 暂无退出拦截 API，无法阻断退出）");
         }
+        // 笔记 git 自动提交：析构 join 后台线程（已在 onFileSaved 推进时间戳，
+        // 本 onStop 也会经循环 saveEditor → onFileSaved 触发最后一次 commit）
+        noteGit_.reset();
         started_ = false;
         LOG_INFO("Markdown 模块停止");
     }
@@ -2902,6 +2914,10 @@ private:
         saveBackoffMs_ = 0;
         lastSavedAt_ = std::time(nullptr);
         syncCurrentMtime();  // 自己写盘后推进 mtime 基准（避免误报外部修改）
+        // 写盘成功 → 触发 git 自动提交（节流判定在 onFileSaved 内，<5 分钟不重复）
+        if (noteGit_) {
+            noteGit_->onFileSaved(lastSavedAt_);
+        }
     }
 
     // 文件变化自动感知（5 秒轮询）
@@ -3524,6 +3540,7 @@ private:
     static constexpr int64_t kPollIntervalMs = 5000;     // 文件变化轮询周期
 
     std::unique_ptr<MarkdownService> service_;
+    std::unique_ptr<class NoteGitAutoCommit> noteGit_;  // 笔记目录 git 自动提交
     // 引用 service_，onStop 须先注销再放 service
     std::unique_ptr<MarkdownTools> markdownTools_;
     // 重入幂等守卫：double-onStart / double-onStop / 未启动的 off = no-op
