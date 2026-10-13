@@ -245,7 +245,6 @@ foreach(_probe_source ${_devdesk_probe_sources})
         devdesk_module_claude_proxy
         devdesk_module_settings
         devdesk_module_about
-        devdesk_module_pet
     )
     # probe_harness.h 的帧捕获段（--screenshot）要 <png.h> 编码 PNG：libpng 由
     # EUI-NEO vendored（1.6.43，简化 API png_image_write_to_file 自带 deflate），

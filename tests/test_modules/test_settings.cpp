@@ -998,12 +998,16 @@ REGISTER_TEST(settings_modules_card_renders, "settings: 模块管理卡渲染（
     ui.end();
 
     DOCTEST_CHECK(ui.find("settings.card.modules") != nullptr);
-    DOCTEST_CHECK(ui.find("settings.card.modules.sw.    DOCTEST_CHECK(ui.find("settings.card.modules.sw.    DOCTEST_CHECK(ui.find("settings.card.modules.sw.    // 桌宠（sw.    DOCTEST_CHECK(ui.find("settings.card.modules.sw.    DOCTEST_CHECK(ui.find("settings.card.modules.sw.    const auto* agentName = ui.find("settings.card.modules.name.    DOCTEST_REQUIRE(agentName != nullptr);
+    // 桌宠已摘除（feat/remove-pet-module），开关序: sw.0=markdown/sw.1=todo/sw.2=claude/sw.3=agent
+    const auto* agentName = ui.find("settings.card.modules.name.3");
+    DOCTEST_REQUIRE(agentName != nullptr);
     DOCTEST_CHECK(agentName->text == "智能体");
     // agent 行开关默认**不**勾选（默认清单不含 kModuleIdAgent）。track 色 =
-    // checked ? on : off——默认开的 markdown 行（sw.    // 同主题下色必不同，抓「回退成默认勾选」的回归（Color 无 operator==，
-    // 逐分量比）
-    const auto* mdTrack = ui.find("settings.card.modules.sw.    const auto* agentTrack = ui.find("settings.card.modules.sw.    DOCTEST_REQUIRE(mdTrack != nullptr);
+    // checked ? on : off——默认开的 markdown 行（sw.0）与默认关的 agent 行（sw.3）
+    // 同主题下色必不同，抓「回退成默认勾选」的回归（Color 无 operator==，逐分量比）
+    const auto* mdTrack = ui.find("settings.card.modules.sw.0.track");
+    const auto* agentTrack = ui.find("settings.card.modules.sw.3.track");
+    DOCTEST_REQUIRE(mdTrack != nullptr);
     DOCTEST_REQUIRE(agentTrack != nullptr);
     DOCTEST_CHECK(agentTrack->color.r != mdTrack->color.r ||
                   agentTrack->color.g != mdTrack->color.g ||
