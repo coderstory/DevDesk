@@ -197,7 +197,16 @@ constexpr int kMigrationV1SqlCount =
 
 	constexpr int kMigrationV3SqlCount =
 	    sizeof(kMigrationV3Sqls) / sizeof(kMigrationV3Sqls[0]);
-// todo_tasks 加 archived_at（INTEGER，NULL = 未归档）；存量回填已入库的归档列任务。
+// --- v4 升级组（2026-10-13 桌宠整模块摘除）---
+	// 清除所有 pet_config 命名空间数据（app_config 表里的 pet_config: 键）。
+	// 无条件 DML，幂等（重复执行零行）。
+	const char* kMigrationV4Sqls[] = {
+	    "DELETE FROM app_config WHERE key LIKE 'pet_config%'",
+	};
+	constexpr int kMigrationV4SqlCount =
+	    sizeof(kMigrationV4Sqls) / sizeof(kMigrationV4Sqls[0]);
+
+	// todo_tasks 加 archived_at（INTEGER，NULL = 未归档）；存量回填已入库的归档列任务。
 // 迁移进入/离开归档列的时间戳由 TodoService::moveTask 运行时计算，不靠本组。
 const char* kMigrationV2Sqls[] = {
     "ALTER TABLE todo_tasks ADD COLUMN archived_at INTEGER",
@@ -219,6 +228,8 @@ constexpr Migration kMigrations[] = {
     {3, "claude_profiles 表重建：keychain_account 遗留列除 NOT NULL 约束",
      kMigrationV3Sqls, kMigrationV3SqlCount,
      "claude_profiles.keychain_account"},
+    {4, "清除桌宠配置数据（pet_config 命名空间；桌宠模块已整模块摘除）",
+     kMigrationV4Sqls, kMigrationV4SqlCount, nullptr},
 };
 
 constexpr int kMigrationCount = sizeof(kMigrations) / sizeof(kMigrations[0]);

@@ -8,12 +8,8 @@
 # 该候选退化成裸相对路径并误命中 → 报「找不到仓库根」→ 全量必红。
 #
 # 断言（本守卫的全部契约）：
-#   A. src/module_settings/settings_module.cpp 不得触碰 pet：零 module_pet/ include、
-#      零 PetConfigStore / petConfigFile / namespace module::pet；桥声明
-#      module_pet_bridge.h 恰好 include 一次；头文件导出的每一个桥函数都必须在
-#      settings_module.cpp 有 ≥1 次 `::module::pet::X` 真调用（解耦不是删功能）；
-#      头里两道抽取口径（声明式 / static_assert 哨兵式）集合必须一致，否则报
-#      「抽取不可靠」，防止某道口径单独漂移又互相掩盖。
+#   A. src/module_settings/settings_module.cpp 不得触碰兄弟模块头（零 include `module_pet/`、零 PetConfigStore 等符号引用、零兄弟模块命名空间）。
+#      桥头 module_pet_bridge.h 已于 2026-10-13 随桌宠整模块摘除一并删除，本组断言随之移除。
 #   B. src/module_settings/CMakeLists.txt 的**非注释行**不得出现
 #      devdesk_module_pet / devdesk_module_claude_proxy（解释性注释里允许提及）。
 #   C. module_agent 消费 todo/markdown 工具走 core::ToolRegistry 按名调用
@@ -184,23 +180,6 @@ if [ "$SELF_TEST" -eq 1 ]; then
     sed_i "$TMP/link_missing_home/CMakeLists.txt" '/devdesk_module_home[ \t]*$/d'
     assert_red link_missing_home "链接表里缺 devdesk_module_home，守卫看不见自己要守的东西（D9 抽取失配）"
 
-    new_tree settings_pet_include
-    printf '%s\n' '#include "module_pet/pet_window.h"' >> "$TMP/settings_pet_include/src/module_settings/settings_module.cpp"
-    assert_red settings_pet_include "settings_module.cpp include module_pet/（A1）"
-
-    new_tree bridge_include_dup
-    printf '%s\n' '#include "module_pet_bridge.h"' >> "$TMP/bridge_include_dup/src/module_settings/settings_module.cpp"
-    assert_red bridge_include_dup "桥头被 include 两次，声明不再唯一（A2 要求恰好 1 次）"
-
-    new_tree bridge_call_missing
-    sed_i "$TMP/bridge_call_missing/src/module_settings/settings_module.cpp" '/::module::pet::/d'
-    assert_red bridge_call_missing "桥函数无真调用点（解耦退化成删功能，A3）"
-
-    new_tree settings_cmake_link
-    printf '%s\n' 'target_link_libraries(devdesk_settings PRIVATE devdesk_module_pet)' \
-        >> "$TMP/settings_cmake_link/src/module_settings/CMakeLists.txt"
-    assert_red settings_cmake_link "settings CMakeLists 非注释行 link 兄弟模块库（B）"
-
     new_tree agent_include_sibling
     for f in "$TMP/agent_include_sibling"/src/module_agent/*.cpp \
              "$TMP/agent_include_sibling"/src/module_agent/*.h; do
@@ -228,7 +207,7 @@ if [ "$SELF_TEST" -eq 1 ]; then
             printf '%s\n' '// 判据按 include 路径形态（带斜杠后缀）匹配，不是按子串。'
         } >> "$f"
     done
-    printf '%s\n' '// 说明：本模块不依赖 module_pet，所有桥调用都经 module_pet_bridge.h。' \
+    printf '%s\n' '// 说明：本模块不依赖 module_pet。' \
         >> "$TMP/benign_style/src/module_settings/settings_module.cpp"
     awk '
         { L[NR] = $0 }
@@ -253,18 +232,16 @@ if [ "$SELF_TEST" -eq 1 ]; then
         echo "❌ --self-test 失败：守卫不能自证有效" >&2
         exit 1
     fi
-    echo "✅ --self-test 通过：好树绿 / 10 棵坏树各红 / 反向树绿 —— 非恒真"
+    echo "✅ --self-test 通过：好树绿 / 6 棵坏树各红 / 反向树绿 —— 非恒真"
     exit 0
 fi
 
 SRC="$ROOT/src/module_settings/settings_module.cpp"
 CMK="$ROOT/src/module_settings/CMakeLists.txt"
-BRIDGE="$ROOT/src/module_pet_bridge.h"
 
 [ -d "$ROOT" ] || { echo "环境错误：仓库根不存在: $ROOT" >&2; exit 2; }
 [ -f "$SRC" ] && [ -r "$SRC" ] || { echo "环境错误：不可读 $SRC" >&2; exit 2; }
 [ -f "$CMK" ] && [ -r "$CMK" ] || { echo "环境错误：不可读 $CMK" >&2; exit 2; }
-[ -f "$BRIDGE" ] && [ -r "$BRIDGE" ] || { echo "环境错误：不可读 $BRIDGE" >&2; exit 2; }
 
 VIOLATIONS=0
 
@@ -304,81 +281,10 @@ check_at_least_once_fixed() {
     fi
 }
 
-check_absent_fixed "$SRC" 'module_pet/'
-check_absent_fixed "$SRC" 'PetConfigStore'
-check_absent_fixed "$SRC" 'petConfigFile'
-check_absent_fixed "$SRC" 'namespace module::pet'
-
-# A2：桥声明的唯一来源是 src 根中立头 module_pet_bridge.h，必须恰好 include 一次
-check_exactly_once_fixed "$SRC" '#include "module_pet_bridge.h"'
-
-# A3：桥函数都真在调用点被用到（`::module::pet::X` 调用形）。桥名单**不手工维护**，
-# 从 src/module_pet_bridge.h 自动抽取，两道口径交叉校验：
-#   ① 声明式——namespace module::pet 块内行尾为 `);` 的函数声明，取 `(` 前标识符
-#   ② 哨兵式——static_assert 段里 &module::pet::NAME 的 NAME
-# 两口径必须给出同一集合：只在一侧出现的名字判违规（抽取口径漂移/声明被改成跨行
-# 都归此类，宁红勿静默绿）。随后每个名字都必须在 settings_module.cpp 有 ≥ 1 次
-# 真调用（解耦不是删功能：closePetWindow / showPetWindow 等同样要求真被调用）。
-# 名单退回手维护清单 = 与头文件导出双份并存，新增桥函数漏改本脚本就静默漏检，
-# 等于守卫失准。
-
-BRIDGE_DECL="$(awk '
-    /^namespace module::pet[[:space:]]*\{/ { inns = 1; next }
-    inns && /^}[[:space:]]*\/\// { inns = 0; next }
-    inns {
-        line = $0
-        sub(/^[ \t]+/, "", line)
-        if (line == "" || line ~ /^\/\//) next
-        if (line !~ /\);[ \t]*$/) next          # 只认函数声明行尾
-        pre = line
-        sub(/\(.*$/, "", pre)                    # 砍掉参数表 → 剩「返回类型 + 名字」
-        cnt = split(pre, part, /[^A-Za-z0-9_]/)
-        name = part[cnt]
-        if (name != "") printf "%d:%s\n", FNR, name
-    }
-' "$BRIDGE" || true)"
-
-BRIDGE_ASSERT="$(grep -nEo '&module::pet::[A-Za-z_][A-Za-z0-9_]*' "$BRIDGE" \
-    | sed -E 's#^([0-9]+):&module::pet::#\1:#' || true)"
-
-DECL_COUNT="$(printf '%s' "$BRIDGE_DECL" | grep -c ':' || true)"
-ASSERT_COUNT="$(printf '%s' "$BRIDGE_ASSERT" | grep -c ':' || true)"
-
-# 抽取彻底失效（头被清空/改名/解析规则整体失配）→ 环境错，绝不静默绿
-if [ "${DECL_COUNT:-0}" -eq 0 ] || [ "${ASSERT_COUNT:-0}" -eq 0 ]; then
-    echo "环境错误：无法从 $BRIDGE 抽取桥函数名单（声明式 ${DECL_COUNT:-0} 项 /" \
-         "哨兵式 ${ASSERT_COUNT:-0} 项）——抽取规则已与头文件失配，不放行" >&2
-    exit 2
-fi
-
-DECL_NAMES="$(printf '%s' "$BRIDGE_DECL" | cut -d: -f2 | sort -u)"
-ASSERT_NAMES="$(printf '%s' "$BRIDGE_ASSERT" | cut -d: -f2 | sort -u)"
-DRIFT="$(printf '%s\n' "$DECL_NAMES" "$ASSERT_NAMES" | sort | uniq -c \
-    | awk '$1 == 1 { print $2 }')"
-if [ -n "$DRIFT" ]; then
-    while IFS= read -r name; do
-        [ -n "$name" ] || continue
-        ln="$(printf '%s\n' "$BRIDGE_DECL" | awk -F: -v n="$name" '$2 == n { print $1; exit }')"
-        [ -n "$ln" ] || ln="$(printf '%s\n' "$BRIDGE_ASSERT" | awk -F: -v n="$name" '$2 == n { print $1; exit }')"
-        report "$(rel "$BRIDGE"):${ln:-0}:${name}（桥名单抽取口径漂移：声明式与 " \
-                 "static_assert 哨兵式集合不一致，该桥无法被可靠断言）"
-    done <<< "$DRIFT"
-fi
-
-# 逐桥真调用点断言。未被调用时打印 头文件:声明行:桥名
-while IFS= read -r name; do
-    [ -n "$name" ] || continue
-    if ! grep -qF -- "::module::pet::${name}" "$SRC"; then
-        ln="$(printf '%s\n' "$BRIDGE_DECL" | awk -F: -v n="$name" '$2 == n { print $1; exit }')"
-        report "$(rel "$BRIDGE"):${ln:-0}:${name}（头文件导出但 settings_module.cpp " \
-                 "无 '::module::pet::${name}' 调用点：解耦不是删功能，桥必须真被调用）"
-    fi
-done <<< "$DECL_NAMES"
-
 # B：settings CMakeLists.txt 的**非注释行**不得 link 兄弟模块库（注释行允许提及）
 CMK_HITS="$(awk -v f="$(rel "$CMK")" '
     /^[ \t]*#/ { next }                       # 注释行允许提及目标名
-    /devdesk_module_pet|devdesk_module_claude_proxy/ {
+    /devdesk_module_claude_proxy/ {
         printf "%s:%d:%s\n", f, FNR, $0
     }
 ' "$CMK" || true)"
@@ -395,7 +301,7 @@ AGENT_DIR="$ROOT/src/module_agent"
 for agent_file in "$AGENT_DIR"/*.h "$AGENT_DIR"/*.cpp; do
     [ -f "$agent_file" ] || { echo "环境错误：module_agent 源文件缺失: $agent_file" >&2; exit 2; }
     for sibling in module_home module_markdown module_todo \
-                   module_claude_proxy module_settings module_pet; do
+                   module_claude_proxy module_settings; do
         check_absent_fixed "$agent_file" "${sibling}/"
     done
 done
@@ -430,7 +336,7 @@ for home_file in "$HOME_DIR"/*.h "$HOME_DIR"/*.cpp; do
     [ -f "$home_file" ] || { echo "环境错误：module_home 源文件缺失: $home_file" >&2; exit 2; }
     home_files=$((home_files + 1))
     for sibling in module_markdown module_todo module_claude_proxy \
-                   module_settings module_pet module_agent; do
+                   module_settings module_agent; do
         check_absent_fixed "$home_file" "${sibling}/"
     done
     # 不得打开/定义 module::claude 命名空间：home 只能**消费**中立头里的类型与
@@ -465,5 +371,5 @@ if [ "$VIOLATIONS" -gt 0 ]; then
     exit 1
 fi
 
-echo "✅ 模块隔离守卫通过（settings_module.cpp 无 pet 依赖 / 头文件导出的 ${DECL_COUNT} 个桥调用齐全；CMakeLists 未 link 兄弟模块；module_agent 零兄弟 include 且工具方不回依赖；module_home ${home_files} 个源文件零兄弟 include、零 namespace module::claude 定义、链接顺序 home<claude_proxy）"
+echo "✅ 模块隔离守卫通过（settings_module.cpp 无兄弟模块依赖；CMakeLists 未 link 兄弟模块；module_agent 零兄弟 include 且工具方不回依赖；module_home ${home_files} 个源文件零兄弟 include、零 namespace module::claude 定义、链接顺序 home<claude_proxy）"
 exit 0

@@ -35,8 +35,7 @@ constexpr const char* kKeyAccentTheme = "accentTheme";
 // 合法模块 ID 清单（sanitized 过滤未知项；与 kModuleId* 一一对应）
 const char* const kKnownModuleIds[] = {
     kModuleIdHome, kModuleIdMarkdown,     kModuleIdTodo,
-    kModuleIdClaudeProxy, kModuleIdSettings, kModuleIdAgent,
-    kModuleIdPet};
+    kModuleIdClaudeProxy, kModuleIdSettings, kModuleIdAgent};
 
 bool isKnownModuleId(const std::string& id) {
     for (const char* known : kKnownModuleIds) {

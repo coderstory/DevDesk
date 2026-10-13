@@ -22,17 +22,13 @@ namespace module::settings {
 // 卡片的只读入参（compose 每帧装配；引用指向模块的存活成员，只在绘制期读）
 struct SettingsCardsIn {
     const SettingsConfig& cfg;                 // 配置（模块成员 cfg_）
-    const std::vector<std::string>& petSkins;  // 皮肤清单快照
-    const std::string& petSkinName;            // 当前皮肤名快照
     const std::string& proxyPortDraft;         // 端口草稿（空 = 未编辑）
     const std::vector<std::string>& logTail;   // 日志 tail 快照
-    const std::vector<std::string>& petScaleLabels;  // 显示大小三档文案（桥快照）
     unsigned logTailVersion = 0;               // tail 版本号（进查看卡 contentKey）
     float logViewScrollOffset = 0.0f;          // 日志查看卡内滚动位置
     bool takeoverManaged = false;              // 接管状态快照
     bool notesDirExists = false;               // 笔记目录存在性快照
     int openDropdown = -1;                     // 下拉唯一持有者
-    int petScaleIndex = 1;                     // 当前显示大小档下标快照
     ::core::IClaudeProxyService* proxy = nullptr;  // 代理运行面（null = 未装配）
 };
 
@@ -44,10 +40,6 @@ struct SettingsCardActions {
     std::function<void(int)> applyWindowEffect;              // 窗口效果三档
     std::function<void(const std::string&, bool)> applyModuleEnabled;  // 模块插拔
     std::function<void(Dropdown, bool)> setDropdownOpen;      // 下拉唯一持有者
-    std::function<void(int)> changePetSkinAt;                 // 桌宠换肤（按下标）
-    std::function<void(int)> changePetScaleAt;                // 桌宠显示大小切档（按下标）
-    std::function<void()> resetPetPosition;                   // 桌宠位置重置
-    std::function<void()> showPetWindow;                      // 显示桌宠
     std::function<void()> openNotesDirectory;                 // 打开笔记目录
     std::function<void(bool)> applyProxyAutoStart;            // 随应用启动代理
     std::function<void()> applyProxyPort;                     // 应用代理端口
@@ -77,7 +69,6 @@ struct CardDrawArgs {
 void drawAppearanceCard(const CardDrawArgs& args);   // 通用：外观（主题/字号/窗口效果）
 void drawEditorFontCard(const CardDrawArgs& args);   // 通用：编辑器字号
 void drawModulesCard(const CardDrawArgs& args);      // 模块：插拔开关
-void drawPetCard(const CardDrawArgs& args);          // 模块：桌宠（开关门控）
 void drawDirectoryCard(const CardDrawArgs& args);    // 模块：笔记目录（开关门控）
 void drawProxyCard(const CardDrawArgs& args);        // 模块：Claude 代理（开关门控）
 void drawLogCard(const CardDrawArgs& args);          // 日志：保留天数 + 级别

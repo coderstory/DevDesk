@@ -16,8 +16,6 @@
 #include "core/tray_menu_spec.h"
 #include "core/window_layout.h"
 #include "module_home/home_service.h"
-#include "module_pet/pet_config.h"
-#include "module_pet/pet_window.h"
 #include "module_toggle_bridge.h"
 #include "platform/tray_icon.h"
 #include "platform/single_instance.h"
@@ -201,36 +199,6 @@ claudeProxyProvider() {
             &claudeProxyProvider());
     }
     return holder->get();
-}
-
-// 桌宠气泡内容源：跨模块逾期计数，懒建只读 HomeService；todo 关闭或查询失败 → nullopt
-std::optional<int64_t> getOverdueTaskCount() {
-    if (!isModuleEnabled(module::settings::kModuleIdTodo)) {
-        return std::nullopt;
-    }
-    static std::unique_ptr<module::home::HomeService> svc;
-    static bool initialized = false;
-    if (!initialized) {
-        auto& db = openAppDatabase();
-        svc = std::make_unique<module::home::HomeService>(db.db());
-        initialized = true;
-    }
-    const auto stats = svc->getStats();
-    if (stats.isFail()) {
-        return std::nullopt;
-    }
-    // 失败即 LOG_FATAL+abort，不抛异常（本 TU 非 Debug 档带 -fno-exceptions）
-    return stats.value().overdueTodos;
-}
-
-// 桌宠内容源：读最近请求终态（take 语义=读走即清+过期丢弃）；透传原值：
-// 2xx/3xx=完成、>=400=出错、0=上游不可达；nullopt=未就绪/无待消费事件/过期
-std::optional<int> getProxyEventStatus() {
-    auto* svc = module::claude::ClaudeService::global();
-    if (svc == nullptr) {
-        return std::nullopt;
-    }
-    return svc->takeProxyEvent();
 }
 
 // 启动本地 Claude 代理（全局唯一）；notifyFailure=true（用户动作）时校验失败额外弹 notice，
@@ -525,20 +493,7 @@ const DslAppConfig& dslAppConfig() {
         const auto settingsCfg = settingsStore.load();
         app::setSidebarCollapsed(settingsCfg.sidebarCollapsed, false);
         getRouter();
-        // 桌宠非 Router 页面模块，门控/装载/开窗收进 maybeStartPet
-        app::assembly::maybeStartPet(
-            gatingConfigSnapshot(),
-            [] {
-                // 桌宠配置走 app_config 的 pet_config 键（模块隔离，不走 config.json 命名空间）
-                return module::pet::PetConfigStore(
-                           ::core::appDatabase())
-                    .load();
-            },
-            [](const module::pet::PetConfig& petCfg) {
-                module::pet::startPetWindow(module::pet::PetWindowConfig{
-                    petCfg.skinName, petCfg.x, petCfg.y, petCfg.scale,
-                    &getOverdueTaskCount, &getProxyEventStatus});
-            });
+        // 桌宠模块已于 2026-10-13 整模块摘除（分支 feat/remove-pet-module）
         return true;
     }();
     (void)initialized;

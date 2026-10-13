@@ -1,16 +1,9 @@
 // tests/test_modules/test_menu_beautify.cpp
-// 菜单结构测试（headless，真机圆角/主题/图标属视觉点验）：托盘 spec、桌宠右键菜单项、
+// 菜单结构测试（headless，真机圆角/主题/图标属视觉点验）：托盘 spec、
 // path→动作选择数学、退出二段确认、styledMenu 纯函数、showStyledMenu 降级守卫。
-// 跨文件前提：
-//   - petContextMenuItems 与 petMenuActionForPath 是同一条链：前者产出的扁平下标即后者
-//     吃的 path 下标，改一侧必须同改另一侧，否则点击落到别的动作。
-//   - styledMenuFlatten 产出的 row.path 是同一套下标，showStyledMenu 按它回调。
-//   - showStyledMenu 返回 false = 开不了 styled 菜单，调用方改走原生托盘菜单
-//     （main.cpp 的 onTrayMenu 据此回落 nativeTrayMenuItems）。
 #include "doctest.h"
 
 #include "core/tray_menu_spec.h"
-#include "module_pet/pet_window.h"
 
 #include <components/styledmenu.h>
 

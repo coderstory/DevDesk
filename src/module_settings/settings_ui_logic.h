@@ -72,7 +72,6 @@ inline constexpr long kLogTailReadWindow = 256 * 1024;  // tail 只读末尾 256
 inline constexpr float kAppearanceCardHeight = 248.0f;  // 外观卡（通用；强调色行底 232 + 16）
 inline constexpr float kEditorFontCardHeight = 108.0f;  // 编辑器字号卡（通用）
 inline constexpr float kModulesCardHeight = 344.0f;     // 模块插拔卡（模块）
-inline constexpr float kPetCardHeight = 168.0f;
 inline constexpr float kDirectoryCardHeight = 176.0f;   // 目录卡（模块）
 inline constexpr float kLogSettingsCardHeight = 148.0f; // 日志卡（日志）
 
@@ -109,10 +108,6 @@ inline constexpr float kDropdownItemChrome = 36.0f;   // 6 × 2 + 24
 inline constexpr float kAsciiWidthEm = 0.62f;
 inline constexpr float kFullWidthEm = 1.0f;
 
-// 皮肤下拉宽度：下限 240（与其余控件同宽），按最长皮肤名放大、上限 420（超出由截断兜底）。
-inline constexpr float kPetSkinFieldMinWidth = 240.0f;
-inline constexpr float kPetSkinFieldMaxWidth = 420.0f;
-
 // 下拉「谁打开着」的单一持有者：一个索引代替 7 个 bool（打开任一项自动关掉先前那个，-1 = 全关）；新增下拉在 Dropdown 加一项即可。
 enum class Dropdown {
     Theme,
@@ -121,8 +116,6 @@ enum class Dropdown {
     Retention,
     LogLevel,
     EditorFont,
-    PetSkin,
-    PetSize,  // 桌宠显示大小三档
 };
 
 inline bool isDropdownOpen(int openIndex, Dropdown d) {
@@ -172,10 +165,6 @@ float estimatedTextWidth(const std::string& text, float fontSize);
 // 单行文案适配：放不进则从左截断补 '…'（含省略号后仍不超宽）；只改显示串不改取值。
 std::string fitControlLabel(const std::string& text, float availableWidth,
                             float fontSize);
-
-// 皮肤下拉宽度：按最长皮肤名估算放大，clamp 到 [kPetSkinFieldMinWidth, kPetSkinFieldMaxWidth]。
-float petSkinFieldWidth(const std::vector<std::string>& skinNames,
-                        float fontSize);
 
 // 日志行级别解析（纯函数）：从 "[timestamp] [LEVEL] ..." 格式提取第二个方括号内的级别 token，映射到 core::log::Level。levelToString 对 INFO/WARN 末尾补空格对齐宽度，token 需 trim 后再匹配。解析不出返回 nullopt。
 inline std::optional<core::log::Level> logLineLevel(const std::string& line) {

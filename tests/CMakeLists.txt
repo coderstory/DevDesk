@@ -92,7 +92,6 @@ add_executable(devdesk_tests
     test_modules/test_module_icons.cpp
     test_modules/test_font_em_layout.cpp
     test_modules/test_module_gating.cpp
-    test_modules/test_pet.cpp
     test_modules/test_menu_beautify.cpp
     test_modules/test_tray_dynamic.cpp
     test_modules/test_theme_hierarchy.cpp
@@ -193,7 +192,6 @@ target_link_libraries(devdesk_tests PRIVATE
     devdesk_module_claude_proxy
     devdesk_module_settings
     devdesk_module_about
-    devdesk_module_pet
 )
 
 # 确保 doctest.h 可被 #include "doctest.h" 找到
