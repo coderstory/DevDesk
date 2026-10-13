@@ -3878,3 +3878,88 @@ REGISTER_TEST(app_read_settings_tool_missing_file_is_defaults_without_write,
     DOCTEST_CHECK_FALSE(std::filesystem::exists(path, ec));
     return true;
 })
+
+REGISTER_TEST(settings_log_tail_level_parse, "settings: log_tail_level 解析各行级别", {
+    using module::settings::logLineLevel;
+    using core::log::Level;
+
+    // 四档标准行（levelToString 对 INFO/WARN 加尾空格 padding）
+    DOCTEST_CHECK_EQ(logLineLevel("[2025-01-01 00:00:00.000] [DEBUG] x"), Level::Debug);
+    DOCTEST_CHECK_EQ(logLineLevel("[2025-01-01 00:00:00.000] [INFO ] x"), Level::Info);
+    DOCTEST_CHECK_EQ(logLineLevel("[2025-01-01 00:00:00.000] [WARN ] x"), Level::Warn);
+    DOCTEST_CHECK_EQ(logLineLevel("[2025-01-01 00:00:00.000] [ERROR] x"), Level::Error);
+
+    // TRACE / FATAL 虽不开放给设置页下拉，但日志文件中可能出现
+    DOCTEST_CHECK_EQ(logLineLevel("[2025-01-01 00:00:00.000] [TRACE] x"), Level::Trace);
+    DOCTEST_CHECK_EQ(logLineLevel("[2025-01-01 00:00:00.000] [FATAL] x"), Level::Fatal);
+
+    // 解析失败 → nullopt
+    DOCTEST_CHECK_FALSE(logLineLevel("garbage line").has_value());
+    DOCTEST_CHECK_FALSE(logLineLevel("[stamp] no-second-bracket").has_value());
+    DOCTEST_CHECK_FALSE(logLineLevel("[stamp] [XYZ] unknown level").has_value());
+    DOCTEST_CHECK_FALSE(logLineLevel("").has_value());
+    // 第一个方括号不是时间戳但格式上存在两个方括号 → 仍能解析
+    DOCTEST_CHECK_EQ(logLineLevel("[a] [DEBUG] functional"), Level::Debug);
+    return true;
+})
+
+REGISTER_TEST(settings_log_tail_level_filter, "settings: log_tail_level 按级别过滤", {
+    using module::settings::filterLogTailByLevel;
+    using core::log::Level;
+
+    const std::vector<std::string> lines = {
+        "[2025-01-01 00:00:00.000] [TRACE] t",
+        "[2025-01-01 00:00:01.000] [DEBUG] d",
+        "[2025-01-01 00:00:02.000] [INFO ] i",
+        "[2025-01-01 00:00:03.000] [WARN ] w",
+        "[2025-01-01 00:00:04.000] [ERROR] e",
+        "[2025-01-01 00:00:05.000] [FATAL] f",
+        "garbage line",
+        "",
+    };
+
+    // DEBUG → 保留 DEBUG 及以上（TRACE 被过滤）
+    auto rDebug = filterLogTailByLevel(lines, Level::Debug);
+    DOCTEST_CHECK_EQ(rDebug.size(), 7u);  // TRACE 被滤，garbage+空行保留
+
+    // INFO → 保留 INFO 及以上 + 无级别行
+    auto rInfo = filterLogTailByLevel(lines, Level::Info);
+    DOCTEST_CHECK_EQ(rInfo.size(), 6u);  // TRACE/DEBUG 被过滤
+
+    // WARN → 保留 WARN 及以上 + 无级别行
+    auto rWarn = filterLogTailByLevel(lines, Level::Warn);
+    DOCTEST_CHECK_EQ(rWarn.size(), 5u);  // WARN/ERROR/FATAL + garbage + 空行
+
+    // ERROR → 保留 ERROR 及以上 + 无级别行
+    auto rError = filterLogTailByLevel(lines, Level::Error);
+    DOCTEST_CHECK_EQ(rError.size(), 4u);  // ERROR/FATAL + garbage + 空行
+
+    // FATAL → FATAL 本身 + garbage + 空行
+    auto rFatal = filterLogTailByLevel(lines, Level::Fatal);
+    DOCTEST_CHECK_EQ(rFatal.size(), 3u);  // FATAL(5) + garbage + 空行，其余均被滤
+
+    // TRACE 永远保留全部
+    auto rTrace = filterLogTailByLevel(lines, Level::Trace);
+    DOCTEST_CHECK_EQ(rTrace.size(), 8u);
+    return true;
+})
+
+REGISTER_TEST(settings_log_tail_level_filter_empty, "settings: log_tail_level 空输入与全滤空", {
+    using module::settings::filterLogTailByLevel;
+    using core::log::Level;
+
+    // 空输入 → 空输出
+    auto rEmpty = filterLogTailByLevel({}, Level::Info);
+    DOCTEST_CHECK(rEmpty.empty());
+
+    // 所有行级别都低于阈值 → 只保留无级别行；全有级别则全滤空
+    const std::vector<std::string> allDebug = {"[x] [DEBUG] a", "[x] [DEBUG] b"};
+    auto rErr = filterLogTailByLevel(allDebug, Level::Error);
+    DOCTEST_CHECK(rErr.empty());
+
+    // 纯 garbage 行 → 全部保留（fail-open）
+    const std::vector<std::string> garbage = {"foo", "bar", ""};
+    auto rG = filterLogTailByLevel(garbage, Level::Error);
+    DOCTEST_CHECK_EQ(rG.size(), 3u);
+    return true;
+})
