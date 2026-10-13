@@ -51,8 +51,8 @@ std::vector<std::string> buildWindowsLaunchArgs(const LaunchSpec& spec);
 // wt 缺失时的退化分支：powershell.exe -NoExit -NoProfile -EncodedCommand <BASE64_UTF16LE>
 std::vector<std::string> buildWindowsFallbackArgs(const LaunchSpec& spec);
 
-// 退化分支派发给 CreateProcessW 的 PowerShell **绝对路径**：<systemRoot>\System32\WindowsPowerShell\
-// v1.0\powershell.exe。必须绝对路径：CreateProcessW 的 lpApplicationName 不查 PATH；systemRoot 空 → C:\Windows。
+// 退化分支派发给 CreateProcessW 的 PowerShell **绝对路径**：<systemRoot>\System32\WindowsPowerShell\v1.0\powershell.exe。
+// 必须绝对路径：CreateProcessW 的 lpApplicationName 不查 PATH；systemRoot 空 → C:\Windows。
 std::string fallbackPowerShellExe(const std::string& systemRoot);
 
 // wt 的 `;` 是命令分隔符：标题原样会被截断，拼参数前对 `;` 做 `\;` 转义；只在 wt 参数向量调用。
