@@ -516,3 +516,325 @@ REGISTER_TEST(migrations_v2_todo_archived_at,
 
     return true;
 })
+
+// ─── 8. v3：keychain_account NOT NULL 旧库 → 重建为可空 ───
+
+// 造一个 post-v1+v2 形态的旧库（user_version=2），claude_profiles 含
+// keychain_account TEXT NOT NULL（真实用户故障形态）。v3 应重建表为可空。
+REGISTER_TEST(migrations_v3_legacy_constraint,
+              "迁移 v3: keychain_account NOT NULL→可空，INSERT 不写它也能成功", {
+    auto path = test_support::tempDbPath("devdesk_test_mig_", "v3legacy");
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+
+    {
+        auto dbR = core::data::SqliteDb::open(path);
+        DOCTEST_REQUIRE(dbR.isOk());
+        auto& db = dbR.value();
+
+        // 建 claude_profiles 表：schema.h 全 17 列 + keychain_account NOT NULL（用户故障形态）
+        db.exec(
+            "CREATE TABLE claude_profiles ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            "name TEXT UNIQUE NOT NULL,"
+            "base_url TEXT NOT NULL,"
+            "api_key_hint TEXT NOT NULL,"
+            "api_key_check TEXT NOT NULL,"
+            "api_key_encrypted TEXT NOT NULL DEFAULT '',"
+            "model TEXT NOT NULL,"
+            "is_active INTEGER NOT NULL DEFAULT 0,"
+            "created_at INTEGER NOT NULL,"
+            "updated_at INTEGER NOT NULL,"
+            "models_config TEXT NOT NULL DEFAULT '',"
+            "extra_env TEXT NOT NULL DEFAULT '',"
+            "shared_config_id INTEGER NOT NULL DEFAULT 0,"
+            "auth_field TEXT NOT NULL DEFAULT 'both',"
+            "dialect_override TEXT NOT NULL DEFAULT '',"
+            "fallback_profile_id INTEGER NOT NULL DEFAULT 0,"
+            "extra_settings_json TEXT NOT NULL DEFAULT '',"
+            "keychain_account TEXT NOT NULL"
+            ")"
+        );
+
+        // 建 claude_shared_configs（v1 列齐）
+        db.exec(
+            "CREATE TABLE claude_shared_configs ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            "name TEXT UNIQUE NOT NULL,"
+            "created_at INTEGER NOT NULL,"
+            "updated_at INTEGER NOT NULL,"
+            "extra_settings_json TEXT NOT NULL DEFAULT ''"
+            ")"
+        );
+
+        // 建 claude_call_logs（含 v1 五列 usage，带 FK 到 claude_profiles）
+        db.exec(
+            "CREATE TABLE claude_call_logs ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            "profile_id INTEGER NOT NULL,"
+            "method TEXT NOT NULL,"
+            "path TEXT NOT NULL,"
+            "status_code INTEGER,"
+            "latency_ms INTEGER,"
+            "request_bytes INTEGER,"
+            "response_bytes INTEGER,"
+            "error TEXT,"
+            "started_at INTEGER NOT NULL,"
+            "input_tokens INTEGER,"
+            "output_tokens INTEGER,"
+            "cache_read_tokens INTEGER,"
+            "cache_write_tokens INTEGER,"
+            "first_event_ms INTEGER,"
+            "FOREIGN KEY (profile_id) REFERENCES claude_profiles(id) ON DELETE CASCADE"
+            ")"
+        );
+
+        // 插两行数据（含 keychain_account 值，凭据回填的来源）
+        db.exec(
+            "INSERT INTO claude_profiles "
+            "(name, base_url, api_key_hint, api_key_check, api_key_encrypted, model,"
+            " is_active, created_at, updated_at, models_config, extra_env,"
+            " shared_config_id, auth_field, dialect_override, fallback_profile_id,"
+            " extra_settings_json, keychain_account) "
+            "VALUES ('p1', 'https://a.com', 'h1', 'c1', '', 'm1', 1, 1000, 1000,"
+            " '', '', 0, 'both', '', 0, '', 'claude:1')"
+        );
+        db.exec(
+            "INSERT INTO claude_profiles "
+            "(name, base_url, api_key_hint, api_key_check, api_key_encrypted, model,"
+            " is_active, created_at, updated_at, models_config, extra_env,"
+            " shared_config_id, auth_field, dialect_override, fallback_profile_id,"
+            " extra_settings_json, keychain_account) "
+            "VALUES ('p2', 'https://b.com', 'h2', 'c2', '', 'm2', 0, 2000, 2000,"
+            " '', '', 0, 'both', '', 0, '', 'claude:2')"
+        );
+
+        // 插一条 claude_call_logs 引用 p1（验证 FK 在重建后仍成立）
+        db.exec(
+            "INSERT INTO claude_call_logs "
+            "(profile_id, method, path, status_code, latency_ms,"
+            " request_bytes, response_bytes, started_at,"
+            " input_tokens, output_tokens) "
+            "VALUES (1, 'POST', '/v1/messages', 200, 500, 100, 200, 1000, 100, 50)"
+        );
+
+        // 设置 user_version = 2（模拟 v1+v2 已应用）
+        db.exec("PRAGMA user_version = 2");
+    }
+
+    // 复现用户故障：v3 前 INSERT 不写 keychain_account 会被 NOT NULL 约束拦截
+    {
+        auto dbR = core::data::SqliteDb::open(path);
+        DOCTEST_REQUIRE(dbR.isOk());
+        auto& db = dbR.value();
+        std::lock_guard<std::recursive_mutex> lock(db.mutex());
+        char* errMsg = nullptr;
+        int rc = sqlite3_exec(db.handle(),
+            "INSERT INTO claude_profiles "
+            "(name, base_url, api_key_hint, api_key_check, api_key_encrypted, model,"
+            " is_active, created_at, updated_at) "
+            "VALUES ('p3_no_kca', 'https://c.com', 'h3', 'c3', '', 'm3', 0, 3000, 3000)",
+            nullptr, nullptr, &errMsg);
+        DOCTEST_CHECK_NE(rc, SQLITE_OK);  // NOT NULL constraint 命中
+        if (errMsg) sqlite3_free(errMsg);
+    }
+
+    // 跑 v3 迁移
+    {
+        auto r = core::Database::open(path);
+        DOCTEST_REQUIRE(r.isOk());
+        auto& db = r.value().db();
+
+        // user_version 推进到 3
+        DOCTEST_CHECK_EQ(readUserVersion(db), 3);
+
+        // keychain_account 列仍存在
+        DOCTEST_CHECK(hasColumn(db, "claude_profiles", "keychain_account"));
+
+        // PRAGMA table_info 验证列可空（notnull=0）
+        {
+            auto prep = db.prepare("PRAGMA table_info(claude_profiles)");
+            DOCTEST_REQUIRE(prep.isOk());
+            auto rows = prep.value().fetchAll();
+            DOCTEST_REQUIRE(rows.isOk());
+            bool sawKca = false;
+            for (const auto& row : rows.value()) {
+                auto name = row.getString("name");
+                if (name.isOk() && name.value() == "keychain_account") {
+                    sawKca = true;
+                    auto nn = row.getInt64("notnull");
+                    DOCTEST_CHECK(nn.isOk() && nn.value() == 0);
+                    break;
+                }
+            }
+            DOCTEST_CHECK(sawKca);
+        }
+
+        // 所有列存在（schema.h 全量）
+        DOCTEST_CHECK(hasColumn(db, "claude_profiles", "api_key_encrypted"));
+        DOCTEST_CHECK(hasColumn(db, "claude_profiles", "extra_settings_json"));
+        DOCTEST_CHECK(hasColumn(db, "claude_profiles", "models_config"));
+        DOCTEST_CHECK(hasColumn(db, "claude_profiles", "shared_config_id"));
+        DOCTEST_CHECK(hasColumn(db, "claude_profiles", "auth_field"));
+        DOCTEST_CHECK(hasColumn(db, "claude_profiles", "dialect_override"));
+        DOCTEST_CHECK(hasColumn(db, "claude_profiles", "fallback_profile_id"));
+
+        // 数据不丢
+        DOCTEST_CHECK_EQ(rowCount(db, "claude_profiles"), 2);
+        DOCTEST_CHECK_EQ(cell(db, "claude_profiles", "name", 1),
+                         std::string("p1"));
+        DOCTEST_CHECK_EQ(cell(db, "claude_profiles", "name", 2),
+                         std::string("p2"));
+        // keychain_account 数据保留
+        DOCTEST_CHECK_EQ(cell(db, "claude_profiles", "keychain_account", 1),
+                         std::string("claude:1"));
+        DOCTEST_CHECK_EQ(cell(db, "claude_profiles", "keychain_account", 2),
+                         std::string("claude:2"));
+
+        // claude_call_logs 数据保留
+        DOCTEST_CHECK_EQ(rowCount(db, "claude_call_logs"), 1);
+
+        // 核心断言：INSERT 不写 keychain_account 能成功（复现用户的导入故障）
+        {
+            std::lock_guard<std::recursive_mutex> lock(db.mutex());
+            char* errMsg2 = nullptr;
+            int rc2 = sqlite3_exec(db.handle(),
+                "INSERT INTO claude_profiles "
+                "(name, base_url, api_key_hint, api_key_check, api_key_encrypted, model,"
+                " is_active, created_at, updated_at) "
+                "VALUES ('p4_ok', 'https://d.com', 'h4', 'c4', '', 'm4', 0, 4000, 4000)",
+                nullptr, nullptr, &errMsg2);
+            DOCTEST_CHECK_EQ(rc2, SQLITE_OK);
+            if (errMsg2) sqlite3_free(errMsg2);
+        }
+
+        // 部分唯一索引存在（DROP TABLE 后重建）
+        DOCTEST_CHECK(hasColumn(db, "claude_profiles", "is_active"));
+    }
+
+    std::filesystem::remove(path, ec);
+    return true;
+})
+
+// ─── 9. v3：新库无 keychain_account → 整组跳过 ───
+
+REGISTER_TEST(migrations_v3_new_db_skip,
+              "迁移 v3: 新库无 keychain_account 列→整组跳过（版本仍到 3）", {
+    test_support::TestDb tdb("devdesk_test_mig_", "v3new");
+    auto& db = tdb.handle();
+
+    // 新库：applySchema 建全部列 → 无 keychain_account → v3 被 requireColumn 守卫跳过
+    DOCTEST_CHECK(!hasColumn(db, "claude_profiles", "keychain_account"));
+    DOCTEST_CHECK_EQ(readUserVersion(db), 3);
+
+    // 无中间表残留
+    {
+        auto prep = db.prepare(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+            " AND name='claude_profiles_v3'");
+        DOCTEST_REQUIRE(prep.isOk());
+        auto step = prep.value().step();
+        DOCTEST_CHECK(step.isOk() && !step.value());
+    }
+
+    // INSERT 不写 keychain_account 正常（本来就没有这列）
+    {
+        std::lock_guard<std::recursive_mutex> lock(db.mutex());
+        char* errMsg = nullptr;
+        int rc = sqlite3_exec(db.handle(),
+            "INSERT INTO claude_profiles "
+            "(name, base_url, api_key_hint, api_key_check, api_key_encrypted, model,"
+            " is_active, created_at, updated_at) "
+            "VALUES ('test', 'https://t.com', 'ht', 'ct', '', 'mt', 0, 5000, 5000)",
+            nullptr, nullptr, &errMsg);
+        DOCTEST_CHECK_EQ(rc, SQLITE_OK);
+        if (errMsg) sqlite3_free(errMsg);
+    }
+
+    return true;
+})
+
+// ─── 10. v3：幂等（二次 applyPending 不出错） ───
+
+REGISTER_TEST(migrations_v3_idempotent,
+              "迁移 v3: 二次 applyPending 幂等（不报错、版本不漂移）", {
+    auto path = test_support::tempDbPath("devdesk_test_mig_", "v3idem");
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+
+    // 造旧库（同 v3_legacy_constraint）
+    {
+        auto dbR = core::data::SqliteDb::open(path);
+        DOCTEST_REQUIRE(dbR.isOk());
+        auto& db = dbR.value();
+        db.exec(
+            "CREATE TABLE claude_profiles ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            "name TEXT UNIQUE NOT NULL,"
+            "base_url TEXT NOT NULL,"
+            "api_key_hint TEXT NOT NULL,"
+            "api_key_check TEXT NOT NULL,"
+            "api_key_encrypted TEXT NOT NULL DEFAULT '',"
+            "model TEXT NOT NULL,"
+            "is_active INTEGER NOT NULL DEFAULT 0,"
+            "created_at INTEGER NOT NULL,"
+            "updated_at INTEGER NOT NULL,"
+            "models_config TEXT NOT NULL DEFAULT '',"
+            "extra_env TEXT NOT NULL DEFAULT '',"
+            "shared_config_id INTEGER NOT NULL DEFAULT 0,"
+            "auth_field TEXT NOT NULL DEFAULT 'both',"
+            "dialect_override TEXT NOT NULL DEFAULT '',"
+            "fallback_profile_id INTEGER NOT NULL DEFAULT 0,"
+            "extra_settings_json TEXT NOT NULL DEFAULT '',"
+            "keychain_account TEXT NOT NULL"
+            ")"
+        );
+        db.exec(
+            "INSERT INTO claude_profiles "
+            "(name, base_url, api_key_hint, api_key_check, api_key_encrypted, model,"
+            " is_active, created_at, updated_at, keychain_account) "
+            "VALUES ('p1', 'https://a.com', 'h1', 'c1', '', 'm1', 1, 1000, 1000,"
+            " 'claude:1')"
+        );
+        db.exec("PRAGMA user_version = 2");
+    }
+
+    // 第一次迁移
+    {
+        auto r = core::Database::open(path);
+        DOCTEST_REQUIRE(r.isOk());
+        auto& db = r.value().db();
+        DOCTEST_CHECK_EQ(readUserVersion(db), 3);
+        DOCTEST_CHECK_EQ(rowCount(db, "claude_profiles"), 1);
+    }
+
+    // 第二次打开（applyPending 再次执行）——版本仍是 3、数据不变、不报错
+    {
+        auto r2 = core::Database::open(path);
+        DOCTEST_REQUIRE(r2.isOk());
+        auto& db2 = r2.value().db();
+        DOCTEST_CHECK_EQ(readUserVersion(db2), 3);
+        DOCTEST_CHECK_EQ(rowCount(db2, "claude_profiles"), 1);
+        DOCTEST_CHECK_EQ(cell(db2, "claude_profiles", "keychain_account", 1),
+                         std::string("claude:1"));
+        // 验证列仍可空
+        auto prep = db2.prepare("PRAGMA table_info(claude_profiles)");
+        DOCTEST_REQUIRE(prep.isOk());
+        auto rows = prep.value().fetchAll();
+        DOCTEST_REQUIRE(rows.isOk());
+        bool sawKca = false;
+        for (const auto& row : rows.value()) {
+            auto name = row.getString("name");
+            if (name.isOk() && name.value() == "keychain_account") {
+                sawKca = true;
+                auto nn = row.getInt64("notnull");
+                DOCTEST_CHECK(nn.isOk() && nn.value() == 0);
+                break;
+            }
+        }
+        DOCTEST_CHECK(sawKca);
+    }
+
+    std::filesystem::remove(path, ec);
+    return true;
+})
