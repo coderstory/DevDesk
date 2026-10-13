@@ -456,22 +456,6 @@ inline void writeMinimalPng(const std::filesystem::path& path, int width,
     out.write(pad, sizeof(pad));
 }
 
-// 向候选根写一份 shipped 形态皮肤：pet.json + 四态 13 帧（f0..f5 / p0..p1 /
-// s0..s2 / t0..t1，128×128 头部合法帧）。无头用例的 exeDir（build/tests）没有
-// 随包资产拷贝，不造夹具时 ensureDefaultSkin 失败 → startPetWindow 不开窗。
-inline void writeShippedSkinFixture(const std::filesystem::path& root,
-                                    const char* name, const char* jsonText) {
-    static const char* kFrameNames[] = {
-        "f0.png", "f1.png", "f2.png", "f3.png", "f4.png", "f5.png",
-        "p0.png", "p1.png", "s0.png", "s1.png", "s2.png", "t0.png", "t1.png"};
-    std::error_code ec;
-    std::filesystem::create_directories(root / name, ec);
-    writeTextFile(root / name / "pet.json", jsonText);
-    for (const char* frame : kFrameNames) {
-        writeMinimalPng(root / name / frame, 128, 128);
-    }
-}
-
 // 配置文件临时路径（只造路径、不落盘、不自动清理）。
 inline std::filesystem::path tempConfigFile(const std::string& prefix,
                                             const std::string& name) {
