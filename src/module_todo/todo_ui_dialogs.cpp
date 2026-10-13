@@ -593,7 +593,7 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
                       const DialogHost& host) {
     const auto themeTokens = core::theme::componentTokens(t);
     const float w = ui_kit::dialogWidthPx(ui_kit::DialogWidth::Wide);
-    const float h = 588.0f;  // 弹窗高；底部操作区 y 随 h-58 上移
+    const float h = 656.0f;  // 弹窗高；底部操作区 y 随 h-58 上移
 
     ui_kit::DialogFrame frame;
     frame.id = "todo.dialog.detail";
@@ -631,7 +631,7 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
                                     .lineHeight = 16.0f});
             components::input(ui, "todo.dialog.detail.input.desc")
                 .position(28.0f, 144.0f)
-                .size(w - 56.0f, 88.0f)
+                .size(w - 56.0f, 144.0f)
                 .value(d.detail.description)
                 .placeholder("补充说明…（可多行）")
                 .fontSize(t.sizes.fontSizeSmall)
@@ -645,7 +645,7 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
 
             ui_kit::drawDialogText(ui, "todo.dialog.detail.plabel", w, "优先级",
                                    t.sizes.fontSizeSmall - 2.0f, t.colors.textTertiary,
-                                   {.y = 244.0f, .width = 80.0f, .height = 16.0f,
+                                   {.y = 300.0f, .width = 80.0f, .height = 16.0f,
                                     .lineHeight = 16.0f});
             const Priority prios[4] = {Priority::None, Priority::Low,
                                        Priority::Medium, Priority::High};
@@ -655,7 +655,7 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
                 // 按钮底色 = 它代表的优先级色（priorityButtonBg：未选中浅 tint、选中 0.55 深 tint，与卡底同源）。
                 // 文字用 textPrimary（textSecondary 浅色档 < WCAG AA 4.5:1）；选中/未选中靠底色深浅 + 边框区分
                 components::button(ui, "todo.dialog.detail.prio." + std::to_string(i))
-                    .position(28.0f + static_cast<float>(i) * (bw + 8.0f), 264.0f)
+                    .position(28.0f + static_cast<float>(i) * (bw + 8.0f), 320.0f)
                     .size(bw, 32.0f)
                     .text(priorityLabel(prios[i]))
                     .fontSize(t.sizes.fontSizeSmall - 1.0f)
@@ -675,11 +675,11 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
             // 截止日期：清除 + datepicker 滚轮选任意日期
             ui_kit::drawDialogText(ui, "todo.dialog.detail.dlabel2", w, "截止日期",
                                    t.sizes.fontSizeSmall - 2.0f, t.colors.textTertiary,
-                                   {.y = 308.0f, .width = 120.0f, .height = 16.0f,
+                                   {.y = 364.0f, .width = 120.0f, .height = 16.0f,
                                     .lineHeight = 16.0f});
             const bool hasDue = d.detail.dueAt.has_value();
             components::button(ui, "todo.dialog.detail.due.clear")
-                .position(28.0f, 328.0f)
+                .position(28.0f, 384.0f)
                 .size(100.0f, 32.0f)
                 .text(!hasDue ? "未设置" : "清除")
                 .fontSize(t.sizes.fontSizeSmall - 1.0f)
@@ -692,7 +692,7 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
                 .build();
             // fa-calendar
             components::button(ui, "todo.dialog.detail.due.pick")
-                .position(136.0f, 328.0f)
+                .position(136.0f, 384.0f)
                 .size(180.0f, 32.0f)
                 .text(hasDue ? formatDue(d.detail.dueAt.value()) : "选择日期…")
                 .icon(0xF133)
@@ -708,7 +708,7 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
             // 标签：chip × 删除 + 输入回车添加；保存时走 updateTask 的 JSON 序列化
             ui_kit::drawDialogText(ui, "todo.dialog.detail.taglabel", w, "标签",
                                    t.sizes.fontSizeSmall - 2.0f, t.colors.textTertiary,
-                                   {.y = 372.0f, .width = 120.0f, .height = 16.0f,
+                                   {.y = 428.0f, .width = 120.0f, .height = 16.0f,
                                     .lineHeight = 16.0f});
             {
                 float chipX = 28.0f;
@@ -718,11 +718,11 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
                     if (chipX + tw + 22.0f > w - 28.0f) break;
                     const std::string chipId =
                         "todo.dialog.detail.tag." + std::to_string(ti);
-                    drawChip(ui, chipId, chipX, 392.0f, tw, t, d.detail.tags[ti],
+                    drawChip(ui, chipId, chipX, 448.0f, tw, t, d.detail.tags[ti],
                              t.colors.info, t.colors.surface);
                     components::button(ui, chipId + ".x")
                         // 删除按钮高 22 与 chip（kChipHeight）同高，y 对齐 chip 顶
-                        .position(chipX + tw + 1.0f, 392.0f)
+                        .position(chipX + tw + 1.0f, 448.0f)
                         .size(20.0f, 22.0f)
                         .text("×")
                         .fontSize(t.sizes.fontSizeSmall)
@@ -740,7 +740,7 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
                 }
             }
             components::input(ui, "todo.dialog.detail.tag.input")
-                .position(28.0f, 418.0f)
+                .position(28.0f, 474.0f)
                 .size(w - 56.0f, 36.0f)
                 .value(d.detail.tagInput)
                 .placeholder("输入标签，回车添加…")
