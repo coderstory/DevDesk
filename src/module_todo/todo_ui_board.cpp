@@ -275,6 +275,13 @@ void drawColumnContent(eui::Ui& ui, const std::string& id, const Column& col,
     colTasks = filterBySearch(colTasks, v.searchMatchIds, !v.searchQuery.empty());
     // 归档列语义走 kind；按标题判会在重命名后失效
     const bool isArchive = (col.kind == "archive");
+    // 归档列排序强制按 archived_at DESC（最近的在最上面），忽略手动 position——列内拖拽排序无效化
+    auto archiveTasks = isArchive ? tasksInArchiveColumn(v.tasks, col.id) : std::vector<const Task*>{};
+    auto archiveFiltered = isArchive
+        ? filterBySearch(archiveTasks, v.searchMatchIds, !v.searchQuery.empty())
+        : std::vector<const Task*>{};
+    const auto& renderTasks = isArchive ? archiveFiltered : colTasks;
+    const size_t taskCount = renderTasks.size();
 
     // 列头右键热区。纯命中区必须显式给全透明：Rect 默认不透明白色，深色主题会刷白
     ui.rect(id + ".head")
@@ -303,7 +310,7 @@ void drawColumnContent(eui::Ui& ui, const std::string& id, const Column& col,
         .position(colDot.has_value() ? 34.0f : 16.0f, 16.0f)
         // 右侧留到 width-88：给 ✎ 重命名（width-70 起）和 + 加任务（width-36 起）两个按钮
         .size(width - 88.0f - (colDot.has_value() ? 18.0f : 0.0f), 20.0f)
-        .text(col.title + " (" + std::to_string(colTasks.size()) + ")")
+        .text(col.title + " (" + std::to_string(taskCount) + ")")
         .fontSize(t.sizes.fontSizeBody)
         .lineHeight(20.0f)
         .fontWeight(600)
@@ -333,7 +340,7 @@ void drawColumnContent(eui::Ui& ui, const std::string& id, const Column& col,
         .onClick([cb = v.act.addTaskToColumn, col] { cb(col.id); })
         .build();
 
-    if (colTasks.empty()) {
+    if (taskCount == 0) {
         // 空列无滚动容器，占位条直接画在列内容层首卡位（内容高 0，滚动恒 0）
         if (v.dragActive && v.dragHoverColumn == static_cast<int>(colIndex) &&
             v.dragHoverRow >= 0) {
@@ -370,7 +377,7 @@ void drawColumnContent(eui::Ui& ui, const std::string& id, const Column& col,
                 .gap(kCardGap)
                 .step(60.0f)
                 .theme(componentTheme)
-                .contentKey(id + ".scroll." + std::to_string(colTasks.size()))
+                .contentKey(id + ".scroll." + std::to_string(taskCount))
                 .offset(columnScrollOffset(v.columns, v.columnScrolls, colIndex))
                 .onChange([cb = v.act.columnScrollChanged, colIndex](float value) {
                     cb(colIndex, value);
@@ -387,7 +394,7 @@ void drawColumnContent(eui::Ui& ui, const std::string& id, const Column& col,
                                       (kCardHeight + kCardGap) - kCardGap);
                         drawDropBar(inner, barY, cardW);
                     }
-                    for (size_t i = 0; i < colTasks.size(); ++i) {
+                    for (size_t i = 0; i < taskCount; ++i) {
                         const std::string cardId =
                             id + ".card." + std::to_string(i);
                         // wrap 占满内容宽（流式子元素，position 无效），卡在 wrap 内按 inset 落位
@@ -396,7 +403,7 @@ void drawColumnContent(eui::Ui& ui, const std::string& id, const Column& col,
                             .content([&] {
                                 drawCard(inner, cardId, kColumnContentInset,
                                          0.0f, cardW, t,
-                                         *colTasks[i],
+                                         *renderTasks[i],
                                          static_cast<int>(colIndex),
                                          static_cast<int>(v.columns.size()),
                                          static_cast<int>(i), v, plate);
@@ -490,6 +497,20 @@ void drawCard(eui::Ui& ui, const std::string& id, float x, float y, float width,
     }
 
     // tags chip（前 2 个 + 超出 +N；完整编辑在详情弹窗）
+    // 归档列卡片显示归档时间戳（muted textTertiary，pill 形）
+    const bool showArchivedChip = colIndex >= 0 &&
+        static_cast<size_t>(colIndex) < v.columns.size() &&
+        v.columns[static_cast<size_t>(colIndex)].kind == "archive" &&
+        task.archivedAt.has_value();
+    if (showArchivedChip) {
+        const std::string archText = formatArchivedAt(task.archivedAt.value());
+        const float archW = chipWidth(archText);
+        const float avail = std::max(0.0f, width - 12.0f - chipX);
+        if (archW <= avail) {
+            pendingChips.push_back({id + ".archived", archW, archText,
+                                    t.colors.textTertiary});
+        }
+    }
     if (!task.tags.empty()) {
         size_t shown = 0;
         for (size_t ti = 0; ti < task.tags.size() && shown < 2; ++ti) {

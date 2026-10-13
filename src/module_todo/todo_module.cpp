@@ -442,6 +442,12 @@ public:
         const auto& dst = columns_[static_cast<size_t>(target)];
         if (target == from) {
             if (hoverRow < 0) return;  // 搜索态同列拖 = 取消（旧语义）
+            // 归档列内拖拽排序无效化：显示顺序强制 archived_at DESC，不写 position
+            const Column* srcCol =
+                static_cast<size_t>(from) < columns_.size()
+                    ? &columns_[static_cast<size_t>(from)]
+                    : nullptr;
+            if (srcCol != nullptr && srcCol->kind == "archive") return;
             // ownIdx 现算（列数据可能被外部改动，须与当下 tasks_ 一致）
             const auto colTasks = ui::tasksInColumn(tasks_, dst.id);
             int ownIdx = -1;
@@ -472,6 +478,15 @@ public:
 
     // 键盘/菜单共用的上移下移（position 语义见 todo_ui_logic.h）
     void moveTaskByKeyboard(bool up) {
+        // 归档列内禁止 Ctrl+↑/↓ 移动（排序强制 archived_at DESC，位置写入无效）
+        const Task* self = ui::findTask(tasks_, selectedTaskId_);
+        if (self != nullptr) {
+            const Column* taskCol = ui::findColumn(columns_, self->columnId);
+            if (taskCol != nullptr && taskCol->kind == "archive") {
+                setStatus("归档任务按归档时间排序，不支持手动移动", true);
+                return;
+            }
+        }
         const auto mv = ui::computeKeyboardMove(tasks_, selectedTaskId_, up);
         if (!mv) {
             setStatus(up ? "已经在最上面了" : "已经在最下面了");
@@ -535,6 +550,9 @@ public:
         selectedTaskId_ = task.id;  // 选中态：详情弹窗关闭后保留，供 Ctrl+↑/↓
         saveViewState();
         dialogs_.detail.reset(task);
+        // 归档列卡片详情只读：判据 = 所在列 kind（运行期真相，不靠 archived_at 值）
+        const Column* col = ui::findColumn(columns_, task.columnId);
+        dialogs_.detail.readOnly = (col != nullptr && col->kind == "archive");
         dialogs_.popups.open(ui::Popup::Detail);
     }
 

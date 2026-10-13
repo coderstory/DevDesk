@@ -160,6 +160,12 @@ core::Result<Task> TodoService::parseTaskRow(const core::data::SqlRow& row) {
             t.completedAt = completedResult.value();
         }
     }
+    if (!row.isNull("archived_at")) {
+        auto archivedResult = row.getInt64("archived_at");
+        if (archivedResult.isOk()) {
+            t.archivedAt = archivedResult.value();
+        }
+    }
     return core::Result<Task>::ok(std::move(t));
 }
 
@@ -361,7 +367,7 @@ core::Result<void> TodoService::reorderColumns(const std::vector<int64_t>& ids) 
 
 core::Result<std::vector<Task>> TodoService::listTasks(int64_t columnId) {
     auto prep = db_.prepare(
-        "SELECT id, column_id, title, description, priority, due_at, tags, position, completed_at "
+        "SELECT id, column_id, title, description, priority, due_at, tags, position, completed_at, archived_at "
         "FROM todo_tasks WHERE column_id = ? ORDER BY position ASC");
     if (prep.isFail()) {
         return core::Result<std::vector<Task>>::fail(prep.errorCode(), prep.errorMessage());
@@ -389,7 +395,7 @@ core::Result<std::vector<Task>> TodoService::listTasks(int64_t columnId) {
 
 core::Result<std::vector<Task>> TodoService::listAllTasks() {
     auto prep = db_.prepare(
-        "SELECT id, column_id, title, description, priority, due_at, tags, position, completed_at "
+        "SELECT id, column_id, title, description, priority, due_at, tags, position, completed_at, archived_at "
         "FROM todo_tasks ORDER BY column_id ASC, position ASC");
     if (prep.isFail()) {
         return core::Result<std::vector<Task>>::fail(prep.errorCode(), prep.errorMessage());
@@ -624,6 +630,46 @@ core::Result<void> TodoService::moveTask(int64_t taskId, int64_t toColumnId, int
             return core::Result<void>::fail(step6.errorCode(), step6.errorMessage());
         }
 
+        // 归档时间戳：进归档列置 now，出归档列置 NULL，其它列间移动留 NULL。
+        // 只读判据走列 kind（运行期真相），不靠 archived_at 值——拖出归档列后 archived_at 被清，
+        // 但保留在其它列上的卡不应该因 archived_at 残留而被误判只读。
+        auto prepKind = db_.prepare("SELECT kind FROM todo_columns WHERE id = ?");
+        if (prepKind.isFail()) {
+            return core::Result<void>::fail(prepKind.errorCode(), prepKind.errorMessage());
+        }
+        auto& stmtKind = prepKind.value();
+        if (auto r = stmtKind.bind(1, toColumnId); r.isFail()) return r;
+        auto kindRows = stmtKind.fetchAll();
+        std::string targetKind;
+        if (kindRows.isOk() && !kindRows.value().empty()) {
+            auto k = kindRows.value()[0].getString("kind");
+            if (k.isOk()) targetKind = k.value();
+        }
+        if (targetKind == "archive") {
+            auto prepA = db_.prepare("UPDATE todo_tasks SET archived_at = ? WHERE id = ?");
+            if (prepA.isFail()) {
+                return core::Result<void>::fail(prepA.errorCode(), prepA.errorMessage());
+            }
+            auto& stmtA = prepA.value();
+            if (auto r = stmtA.bind(1, now); r.isFail()) return r;
+            if (auto r = stmtA.bind(2, taskId); r.isFail()) return r;
+            auto stepA = stmtA.step();
+            if (stepA.isFail()) {
+                return core::Result<void>::fail(stepA.errorCode(), stepA.errorMessage());
+            }
+        } else {
+            auto prepA = db_.prepare("UPDATE todo_tasks SET archived_at = NULL WHERE id = ?");
+            if (prepA.isFail()) {
+                return core::Result<void>::fail(prepA.errorCode(), prepA.errorMessage());
+            }
+            auto& stmtA = prepA.value();
+            if (auto r = stmtA.bind(1, taskId); r.isFail()) return r;
+            auto stepA = stmtA.step();
+            if (stepA.isFail()) {
+                return core::Result<void>::fail(stepA.errorCode(), stepA.errorMessage());
+            }
+        }
+
         return core::Result<void>::ok();
     });
     return txResult;
@@ -671,7 +717,7 @@ core::Result<std::vector<Task>> TodoService::search(const std::string& query) {
         return listAllTasks();
     }
     auto prep = db_.prepare(
-        "SELECT id, column_id, title, description, priority, due_at, tags, position, completed_at "
+        "SELECT id, column_id, title, description, priority, due_at, tags, position, completed_at, archived_at "
         "FROM todo_tasks "
         "WHERE title LIKE ? ESCAPE '\\' "
         "   OR (description IS NOT NULL AND description LIKE ? ESCAPE '\\') "
@@ -710,7 +756,7 @@ core::Result<std::vector<Task>> TodoService::listOverdue() {
     // 逾期谓词单源：core/overdue.h 的 kWhereSql（与 HomeService::getStats 共用，改一处两边同步）
     const std::string sql =
         std::string(
-            "SELECT id, column_id, title, description, priority, due_at, tags, position, completed_at "
+            "SELECT id, column_id, title, description, priority, due_at, tags, position, completed_at, archived_at "
             "FROM todo_tasks WHERE ") +
         core::overdue::kWhereSql + " ORDER BY due_at ASC";
     auto prep = db_.prepare(sql);

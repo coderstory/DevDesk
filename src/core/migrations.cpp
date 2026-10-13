@@ -146,9 +146,26 @@ const char* kMigrationV1Sqls[] = {
 constexpr int kMigrationV1SqlCount =
     sizeof(kMigrationV1Sqls) / sizeof(kMigrationV1Sqls[0]);
 
+// --- v2 升级组 ---
+// todo_tasks 加 archived_at（INTEGER，NULL = 未归档）；存量回填已入库的归档列任务。
+// 迁移进入/离开归档列的时间戳由 TodoService::moveTask 运行时计算，不靠本组。
+const char* kMigrationV2Sqls[] = {
+    "ALTER TABLE todo_tasks ADD COLUMN archived_at INTEGER",
+    // 回填已在归档列（kind='archive'）但 archived_at 为 NULL 的行：用 updated_at 作近似归档时刻，
+    // 保证强制排序对老数据也有确定键（updated_at 是本行知道的唯一可靠时间）。WHERE 幂等，重复执行无副作用。
+    "UPDATE todo_tasks SET archived_at = updated_at "
+    "WHERE column_id IN (SELECT id FROM todo_columns WHERE kind = 'archive') "
+    "AND archived_at IS NULL",
+};
+
+constexpr int kMigrationV2SqlCount =
+    sizeof(kMigrationV2Sqls) / sizeof(kMigrationV2Sqls[0]);
+
 constexpr Migration kMigrations[] = {
     {1, "补齐 claude_profiles / claude_shared_configs / claude_call_logs 历史缺列",
      kMigrationV1Sqls, kMigrationV1SqlCount},
+    {2, "todo_tasks 加 archived_at + 存量归档列回填",
+     kMigrationV2Sqls, kMigrationV2SqlCount},
 };
 
 constexpr int kMigrationCount = sizeof(kMigrations) / sizeof(kMigrations[0]);
