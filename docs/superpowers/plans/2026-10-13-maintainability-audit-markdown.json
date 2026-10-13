@@ -1,0 +1,131 @@
+{
+  "shard": "markdown",
+  "baseline_sha": "HEAD",
+  "scope": "src/module_markdown/** (16 .cpp + 15 .h, 8,451 行). 只读审计：未改代码、未跑构建/测试/app. 已读 2026-09-27-expert-audit.md、2026-09-27-full-audit-markdown.json 去重; 31 文件全文通读.",
+  "findings": [
+    {
+      "id": "MD-N1",
+      "severity": "HIGH",
+      "lens": "architect",
+      "title": "markdown_module.cpp 3672 行 + ~92 个成员变量（含 ~30 个实时态状态位），比上次审计又涨 10%",
+      "file": "src/module_markdown/markdown_module.cpp",
+      "line": 3522,
+      "issue": "单 class MarkdownModule 承载四态视图渲染（编辑/实时/双栏/预览）+ 12 个浮层/弹窗 + 服务编排 + 键盘流接线 + 标签管理 + 大纲面板 + 目录树 + 外部修改冲突处理 + 跨模块导航负载 + 撤销/重做 + 文件轮询。成员变量段（:3522-3674）含 ~92 个变量，其中实时态独占 ~30 个（光标/锚/撤销/贴合高/跟随/帽子）。上次审计（MD-04, 3327 行）后 M1/M2 新增的实时态内容全数并入同一个 class，enterLiveState() 虽中心化了复位逻辑，但每加一个对话框字段或实时态状态位仍直接加进 class 全局命名空间。",
+      "impact": "任何涉及编辑/实时/对话框的改动都需要在 3672 行文件中定位；新对话框字段直接污染 class 顶层变量命名空间（newNote、newFolder、rename、delete、ctxMenu 五组对话框各占 2-5 个成员）；实时态三套状态群（光标/锚、撤销/重做、贴合高/帽子）与编辑态变量混存在同一个 class 里，他人改预览态时可能误触实时态状态位。新增四态之外任何 UI 元素（如新类型弹窗、新侧面板）都只能继续往 class 里塞成员。",
+      "suggestion": "按 R7 原范围切分：md_ui_live.cpp（drawLiveColumn/drawLiveInputBlock/drawBlockFlow + 实时态 30 个成员收进 LiveState struct）、md_ui_dialogs.cpp（5 个弹窗 + ~20 个对话框成员收进 DialogState struct）、markdown_module.cpp 只保留 compose/dispatch/hotkey/hooks 层。状态结构体随 class 持有，每帧引用分发。纯搬运零逻辑变化，目标单文件 ≤ 1200 行。",
+      "already_registered": true,
+      "registered_ref": "MD-04（2026-09-27-full-audit-markdown.json: 3327 行已登记 R7）+ god-class spec §5"
+    },
+    {
+      "id": "MD-N2",
+      "severity": "MEDIUM",
+      "lens": "architect",
+      "title": "drawBlockFlow hooks 系统灵活性好但参数列表臃肿：BlockFlowHooks（3 个 std::function）+ LiveBlockCtx（2 个可选字段）+ 5 个必选参数 + 每帧重建 hooks 闭包链",
+      "file": "src/module_markdown/markdown_module.cpp",
+      "line": 1386,
+      "issue": "drawBlockFlow 的注入机制用 BlockFlowHooks（wrapHeight/drawContent/afterHitOverlay 三个 std::function）和 LiveBlockCtx（activeBlock/theme 可选）为实时态块级特判提供注入点。每帧调用点（drawLiveColumn :1708）会创建 3 个 lambda hooks + 1 个 LiveBlockCtx，合计 4 个临时闭包对象。hooks 内部又通过 [this, &live] 捕获 10+ 个成员/局部变量。新增视图态（如只读批注态、diff 态）需要新增闭包参数意味着又要在调用点重构 lambda 链。",
+      "impact": "新增视图态需求（M3 点击定位、M4 跨块移动、M7 活动块边框已验证）每次都在 drawBlockFlow 的基础上叠加 hooks 回传；三 function 的设计虽然避免了 if (isLive) 散落在函数体内的更差局面，但每新建一种视图态就要评估这三个 hooks 是否需要新回传——预览态现在全传空，实时态三个全传——中间态（如只读但可点击大纲跳转）需要部分传、部分空，组合爆炸会体现在调用点而非函数体内。",
+      "suggestion": "把 BlockFlowHooks 的三个 function 收成一个虚接口（IBlockFlowHook），实时态实现它、预览态传 nullptr——调用点变成一个指针判空，不再逐帧构造三个 lambda。LiveBlockCtx 也可以塞进 IBlockFlowHook 的实现体内部，不再从外部传入。改动约 20 行，行为零变化。",
+      "already_registered": true,
+      "registered_ref": "MD-03（2026-09-27-full-audit-markdown.json: drawBlockFlow 四合一路径；当前 hooks 系统是它的改进版但仍有臃肿）"
+    },
+    {
+      "id": "MD-N3",
+      "severity": "MEDIUM",
+      "lens": "cpp20-expert",
+      "title": "markdown_tools.cpp JSON 数组拼装用字符串拼接而非结构化构建",
+      "file": "src/module_markdown/markdown_tools.cpp",
+      "line": 110,
+      "issue": "md.search 和 md.list_tags 的响应用 `\"{\\\"notes\\\":[\" + joined + \"]}\"` 硬编码字符串拼接。joined 由逐行 `noteToJsonText + \",\"` 拼成。缺少闭合括号/花括号 = 整个工具结果非法 JSON —— 此路径没有编程错误补偿，LLM 拿到 parse 失败的响应即断链。下方虽有 `pj::parse(content).isFail()` 自检，但只是崩溃防线而非健壮设计。平台层已有 `platform::json::JsonArray` + `JsonObject::set(key, JsonValue)` 结构化 API，本文件却回退到字符串拼接。",
+      "impact": "新增一个返回数组结构的工具时需要复制同款拼接模式；每次复制都面临逗号遗漏、花括号遗漏、字符串转义遗漏三重风险。当前已在 5 个工具中的 2 个（md.search/md.list_tags）重复了同一拼接模式，md.create 和 md.delete 用的却是结构化 `pj::JsonObject` —— 同一文件内两套口径。",
+      "suggestion": "统一走 `platform::json::JsonArray` + `JsonObject::set` 结构化路径：构建 JsonObject root, notes 字段用 JsonArray `push(JsonValue(noteObj))`, 最后 `pj::stringify(root)`. md.search 和 md.list_tags 各减 8 行字符串拼接逻辑。可在一次清理中完成。",
+      "already_registered": false,
+      "registered_ref": ""
+    },
+    {
+      "id": "MD-N4",
+      "severity": "MEDIUM",
+      "lens": "cpp20-expert",
+      "title": "MdSyncMap::memo_ 用 int stableId 作键且无溢出保护",
+      "file": "src/module_markdown/md_sync_map.h",
+      "line": 76,
+      "issue": "memo_ 是 `std::unordered_map<int, MemoEntry>`, 键为 MdBlockModel::nextStableId_（int 型，自增永不归零）。int 范围约 21 亿——单 session 打不到但跨长时间运行（数天不关 + 每秒数百次分块重算）理论上可触及。溢出时 new stableId 碰撞旧 active 条目 → 高度缓存错配 → 同步滚动偏移（块内线性插值偏斜），只在实机滚动时暴露且无日志可追踪。",
+      "impact": "极低概率但默无声息的几何漂移 bug。当前无任何前置检查——nextStableId_ 递增无上限、memo 从不按老化驱逐（只靠 prune 后的 swap 淘汰死亡 id）。",
+      "suggestion": "改为 `uint64_t` 或对 nextStableId_ 加 wrap 检测（> INT_MAX-1 时重新扫描活着的 stableId 并重映射起号）。短期：在 MdBlockModel::update 末尾加一条 `if (nextStableId_ > INT_MAX - 1000) LOG_WARN(...)` 作为检测哨兵。代价：1 行日志。",
+      "already_registered": false,
+      "registered_ref": ""
+    },
+    {
+      "id": "MD-N5",
+      "severity": "LOW",
+      "lens": "architect",
+      "title": "newItemTargetDir_ 被 selectDir 和 openNote 双路径更新，各自语义不同",
+      "file": "src/module_markdown/markdown_module.cpp",
+      "line": 2811,
+      "issue": "selectDir（用户点击文件夹行）意图明确：选中同时更新新建目标。openNote（打开笔记）也更新 newItemTargetDir_（:2811），注释写「不级联选中」——文件夹选中态不变，但新建条目的父目录跟笔记走。两路径语义不同（选文件夹 vs 跟随笔记），靠同一个变量承载双义——变量名 targetDir 无法区分来源。",
+      "impact": "用户体验细微偏差：用户点了一个深层文件夹里的笔记、再点「+ 笔记」时父目录自动切到该笔记所在目录（由 openNote 触发）——行为是对的但不可见；反过来用户先点文件夹 A（selectDir 同步更新 targetDir）、再打开文件夹 B 里的笔记（openNote 也更新 targetDir），A 的选中态保留了但新建入口已指向 B——用户可能困惑「明明选中了 A 怎么建到 B」。",
+      "suggestion": "去 openNote 的 newItemTargetDir_ 更新：打开笔记不改新建父目录。若用户真的想在当前笔记同目录下新建，CLAUDE.md 共识是「加字段封装独立方法不动既有装配」——可让「+ 笔记」按钮旁加一个「同目录新建」的小入口，而非隐式覆盖。改动 2 行删除。",
+      "already_registered": false,
+      "registered_ref": ""
+    },
+    {
+      "id": "MD-N6",
+      "severity": "LOW",
+      "lens": "architect",
+      "title": "五组对话框状态（~20 个成员变量）散落在 class 顶层，每加一个弹窗字段就多一个成员",
+      "file": "src/module_markdown/markdown_module.cpp",
+      "line": 3558,
+      "issue": "newNote 包（open/name/error 3 个成员）、newFolder 包（open/name/error/parentDir/parentOpen 5 个）、rename 包（open/targetPath/input/error 4 个）、delete 包（open/targetPath 2 个）、ctxMenu 包（open/x/y/path 4 个），合计 ~20 个成员变量，堆在 :3558-3593。新增一个弹窗（如导出、批量操作确认）意味着又要在 class 顶层加 2-4 个成员，且命名须手动确保不与已有 92 个成员中的任何一个冲突。",
+      "impact": "每次新弹窗都要在 3672 行文件中定位到变量段，新增 2-4 个成员，确认命名无冲突，然后在该行上方补注释。弹窗字段类型单调（string + bool），不具备编译期冲突检测（两个弹窗各有一个 error 字段是可以的，但都叫 xxError_ 时 IDE 自动补全不会拦）。同级文件中 5 种弹窗的 draw* 方法各自 ~60 行，近乎模板复制。",
+      "suggestion": "定义一个 DialogState 聚合 struct 收口（含 open/input/error 等通用位；特殊字段单独 struct），或至少把每组弹窗的成员收进独立 struct（如 NewNoteDialogState、RenameDialogState），MarkdownModule 只持有一个 DialogStates 聚合体。与 MD-N1 的拆分建议同批做。",
+      "already_registered": false,
+      "registered_ref": ""
+    },
+    {
+      "id": "MD-N7",
+      "severity": "LOW",
+      "lens": "cpp20-expert",
+      "title": "md_keyword_highlight.cpp 新增语言需顺序触 5 处修改点",
+      "file": "src/module_markdown/md_keyword_highlight.cpp",
+      "line": 29,
+      "issue": "添加一门新编程语言的关键字高亮需修改：(1) enum class Lang 加新值,(2) langOf() 加新别名映射,(3) 新增 XxxKeywords() 返回 keyword set,(4) keywordsOf() switch 加新分支,(5) hasLineComment/hasBlockComment/hasBacktickString 按需加新语言分支。5 处都在同一文件，但有 3 处分属不同函数——新增者须逐函数排查后补全，编译报不出遗漏。当前已支持 C++/Python/JS/Go/Rust/Shell/Java/JSON 共 8 门语言，再增 2-3 门时这种模式会愈发脆弱。",
+      "impact": "加语言是低频操作（当前 8 门已满足常见需求）——维护成本低但架构气味明显：数据（关键字集、注释风格）与行为（按语言分派）散在同文件的独立函数里。漏加 hasBlockComment 不会编译报错，只会在用户代码里静默漏标。",
+      "suggestion": "把 per-language 数据集中到一个 LangSpec struct（含 keywords、lineComment、blockComment、backtickString 四个 bool + keyword set），Lang 枚举值 → LangSpec 的映射用静态数组。新增一门语言 = 加一条 LangSpec 数据行 + enum 值。纯重构，零行为变化。",
+      "already_registered": false,
+      "registered_ref": ""
+    },
+    {
+      "id": "MD-N8",
+      "severity": "LOW",
+      "lens": "cpp20-expert",
+      "title": "statusCacheRev_ 初始化为 ~0ull（非 0）是蓄意的首帧 cache-miss 技巧，未注释说明",
+      "file": "src/module_markdown/markdown_module.cpp",
+      "line": 3545,
+      "issue": "statusCacheRev_ = ~0ull 确保 `statusCacheRev_ != editorTextRev_` 恒真（editorTextRev_ 初始 0），从而首帧必然 bypass 缓存执行 O(n) 字节偏移计算。这是正确的 trick 但完全不可推测——读者必须沿着三个 cache 判定条件反推「~0ull 永远不会等于任何真实修订号」。该值与 pushLiveUndoSnapshot 的 `liveUndo_.reset(...)` 无直接关系（undo 基线有独立种子变量 liveUndoSeeded_）。",
+      "impact": "纯文档/可读性问题。维护者看到 ~0ull 会自然问「为什么要用这个值，不能直接用 0 吗？」——答案藏在对 `editorTextRev_` 初始值 0 的跨变量约束里，而两个变量隔了 13 行定义，文本注释未建立关联。",
+      "suggestion": "加一行注释：`// ~0ull 永不等 editorTextRev_ 初始值 0，保首帧走 O(n) 字节偏计算`",
+      "already_registered": false,
+      "registered_ref": ""
+    }
+  ],
+  "notes": {
+    "前次审计已解决": [
+      "MD-02（列壳逐行复制，drawTextColumnChrome 模板已抽）",
+      "MD-05（实时态状态位分散复位，enterLiveState 已中心化）",
+      "MD-06（编辑器 id 字面量散落，md_ids.h 已收口 kEditorInputId）",
+      "MD-07（kInputLineHeightFactor 双份，已归一进 md_live_edit.h）"
+    ],
+    "前次审计仍存在": [
+      "MD-01（liveCursorByte_ 冻结；锚现已每帧跟随真实光标推进 l:1616-1625，liveCaretPending_ 帧跳过重推 l:1613-1615——修复核心链路但一次性标记帧仍跳过更新，属残余风险）",
+      "MD-03（drawBlockFlow 复杂度；hooks 系统改进了注入机制但增加了闭包参数，见 MD-N2）",
+      "MD-08（索引写两条路径锁不对称：write()/create()/remove() 仍不持 rescanMu_ 而 onWatchEvent 持锁调用同一批 DB 函数——SQLite serialized 模式防止数据损坏，但锁纪律不一致）"
+    ],
+    "注释清理抽查结论": [
+      "commit 6365a68 的注释改写按 CLAUDE.md 纪律执行——删了演化叙事/引用证据/验证体系自解说/装饰符；保留了反重构警告三处：'[[maybe_unused]] 不可删'(l:149)、'id 不得落在 releaseStateScope 释放前缀下'(l:155)、'顺序不能反'(l:2145). 未发现必要注释误删。"
+    ],
+    "模块隔离": [
+      "CMakeLists.txt 仅 link devdesk_core/devdesk_platform/devdesk_ui_kit——无兄弟模块依赖",
+      "代码内唯一的 module_* include 是 core/module_interface.h（基础设施），无违规"
+    ]
+  }
+}
