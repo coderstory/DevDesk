@@ -251,6 +251,7 @@ REGISTER_TEST(schema_todo_tables_columns,
             "completed_at:INTEGER:0:<none>",
             "created_at:INTEGER:1:<none>",
             "updated_at:INTEGER:1:<none>",
+            "archived_at:INTEGER:0:<none>",
         };
         DOCTEST_CHECK_EQ(columnDefs(db, "todo_tasks"), expectTasks);
     }

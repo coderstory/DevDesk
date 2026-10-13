@@ -5937,10 +5937,13 @@ REGISTER_TEST(md_module_live_scroll_id_stable,
     const int deepSid = sids[sids.size() * 2 / 3];
     const auto* deepWrap = e.ui->find("md.live.blk." + std::to_string(deepSid));
     DOCTEST_REQUIRE(deepWrap != nullptr);
+    // sv0 是进态首帧的元素指针，跨 compose 帧后不可再读——断言用当前帧的 sv
+    const auto* svNow = e.ui->find(kLiveScrollId0);
+    DOCTEST_REQUIRE(svNow != nullptr);
     DOCTEST_REQUIRE_MESSAGE(
-        deepWrap->frame.y - sv0->frame.y > sv0->frame.height * 0.75f,
+        deepWrap->frame.y - svNow->frame.y > svNow->frame.height * 0.75f,
         "被测块须在视口安全带下方（实测 " +
-            std::to_string(deepWrap->frame.y - sv0->frame.y) + "）");
+            std::to_string(deepWrap->frame.y - svNow->frame.y) + "）");
     DOCTEST_REQUIRE(clickLiveBlock(*e.ui, deepSid, 0.75f * deepWrap->frame.height));
     frame();   // 定位帧
     frame();   // 跟随评估帧：越界 → 落地（帧末生效）
@@ -7435,7 +7438,8 @@ REGISTER_TEST(md_module_live_scroll_click_keeps_offset,
     //    回调 → 同步 liveScrollY_），不走 onChange 直接调用（只更新 liveScrollY_ 不动
     //    instance.offset，会导致 element.scrollOffset ≠ instance.offset 假绿）。
     e.ui->setScrollOffset(kLiveScrollId0, 200.0f);
-    frame();
+    frame();  // 本帧帧末消费挂起偏移（Runtime::compose 尾部）
+    frame();  // 元素字段下一帧才反映实例值
     const auto* svScrolled = e.ui->find(kLiveScrollId0);
     DOCTEST_REQUIRE(svScrolled != nullptr);
     DOCTEST_REQUIRE_MESSAGE(std::fabs(svScrolled->scrollOffset - 200.0f) <= 2.0f,
