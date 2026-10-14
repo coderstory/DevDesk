@@ -24,6 +24,9 @@
 // 模块开关即时生效桥：函数指针缝 + 默认 no-op，真 handler 由 main.cpp 装配段注入。
 #include "module_toggle_bridge.h"
 
+// 余量开关桥：进程级标记读/写，供 home/claude 等模块零依赖取用。
+#include "quota_home_bridge.h"
+
 #include <ui_kit/metrics.h>
 #include <ui_kit/toast.h>
 
@@ -70,6 +73,8 @@ const CardSpec kCardSpecs[] = {
      kEditorFontCardHeight, true, &drawEditorFontCard},
     {kTabModules, "settings.card.modules", nullptr, CardHeightKind::Fixed,
      kModulesCardHeight, false, &drawModulesCard},
+    {kTabModules, "settings.card.quota", nullptr, CardHeightKind::Fixed,
+     48.0f, false, &drawQuotaCard},
     {kTabModules, "settings.card.directory", kModuleIdMarkdown,
      CardHeightKind::Fixed, kDirectoryCardHeight, false, &drawDirectoryCard},
     {kTabModules, "settings.card.proxy", kModuleIdClaudeProxy,
@@ -111,6 +116,7 @@ public:
             else                                    a = ::core::theme::Accent::Clay;
             ::core::theme::setAccent(a);
         }
+        module::claude::quota::setQuotaFeatureEnabled(cfg_.quotaEnabled);
         ::core::theme::setFontScale(
             static_cast<float>(cfg_.fontScalePercent) / 100.0f);
         // 编辑器字号经 core::theme 通道传给 markdown（模块隔离）。
@@ -288,6 +294,17 @@ public:
                      : "代理不再随应用启动（下次启动生效）");
         LOG_INFO("Settings: claudeProxyAutoStart → " +
                  std::string(on ? "true" : "false"));
+    }
+
+    // 供应商余量总开关：即时生效（开 → 启动后台刷新 + 首页卡出现；关 → 停刷新 + 卡隐藏）。
+    // 关闭不删数据库里配额表/数据/已配供应商引用。
+    void applyQuotaEnabled(bool on) {
+        cfg_.quotaEnabled = on;
+        persist();
+        module::claude::quota::setQuotaFeatureEnabled(on);
+        setStatus(on ? "供应商余量已开启（首页卡片与配置入口即时生效）"
+                     : "供应商余量已关闭（数据保留不删）");
+        LOG_INFO("Settings: quotaEnabled → " + std::string(on ? "true" : "false"));
     }
 
     // 应用代理端口：重启失败时代理已停、sidecar 已还原，状态栏提示可换端口重试。
@@ -519,6 +536,7 @@ private:
         a.setDropdownOpen = [this](Dropdown d, bool v) { setDropdownOpen(d, v); };
         a.openNotesDirectory = [this] { openNotesDirectory(); };
         a.applyProxyAutoStart = [this](bool on) { applyAutoStart(on); };
+        a.applyQuotaEnabled = [this](bool on) { applyQuotaEnabled(on); };
         a.applyProxyPort = [this] { applyProxyPort(); };
         a.setProxyPortDraft = [this](const std::string& v) {
             setProxyPortDraft(v);

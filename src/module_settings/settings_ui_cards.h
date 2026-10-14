@@ -42,6 +42,7 @@ struct SettingsCardActions {
     std::function<void(Dropdown, bool)> setDropdownOpen;      // 下拉唯一持有者
     std::function<void()> openNotesDirectory;                 // 打开笔记目录
     std::function<void(bool)> applyProxyAutoStart;            // 随应用启动代理
+    std::function<void(bool)> applyQuotaEnabled;              // 供应商余量功能总开关
     std::function<void()> applyProxyPort;                     // 应用代理端口
     std::function<void(const std::string&)> setProxyPortDraft;  // 端口输入（含清错误态）
     std::function<void()> discardProxyPortDraft;              // 端口草稿 Esc 丢弃
@@ -73,5 +74,6 @@ void drawDirectoryCard(const CardDrawArgs& args);    // 模块：笔记目录（
 void drawProxyCard(const CardDrawArgs& args);        // 模块：Claude 代理（开关门控）
 void drawLogCard(const CardDrawArgs& args);          // 日志：保留天数 + 级别
 void drawLogViewCard(const CardDrawArgs& args);      // 日志：tail 查看
+void drawQuotaCard(const CardDrawArgs& args);       // 模块：供应商余量功能总开关
 
 } // namespace module::settings
