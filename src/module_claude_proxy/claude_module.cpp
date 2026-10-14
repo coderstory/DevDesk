@@ -27,6 +27,7 @@
 #include "upstream_dialect.h"
 #include <core/platform/platform.h>   // core::platform::requestUiUpdate（唤醒主循环）
 #include <core/window/window_backend.h>
+#include "quota_home_bridge.h"  // isQuotaFeatureEnabled 门控
 #include <ui_kit/metrics.h>
 #include <ui_kit/toast.h>
 
@@ -60,6 +61,14 @@ public:
     void compose(eui::Ui& ui, const eui::Screen& screen) override {
         // 消费跨模块跳转负载（取走即清，放最前保证同帧画出弹窗）
         consumeQuotaConfigPayload();
+        // 余量功能开关即时生效：检测标记变化以启动/停止后台刷新
+        const bool quotaNow = module::claude::quota::isQuotaFeatureEnabled();
+        if (quotaNow && !quotaWasEnabled_) {
+            startQuotaRefresh();
+        } else if (!quotaNow && quotaWasEnabled_) {
+            stopQuotaRefresh();
+        }
+        quotaWasEnabled_ = quotaNow;
         const auto& t = core::theme::current();
         const auto themeTokens = core::theme::componentTokens(t);
         const float pad = t.sizes.spacingXXLarge;        // 40
@@ -211,6 +220,7 @@ public:
                 }
             }
         }
+        dv.quotaEnabled = module::claude::quota::isQuotaFeatureEnabled();
 
         ui.column("claude.root")
             .size(screen.width, screen.height)
@@ -305,7 +315,11 @@ public:
         // 智能体工具注册（claude.* 四工具）；注册失败只记日志
         claudeTools_ = std::make_unique<ClaudeTools>(*svc);
         claudeTools_->registerAll();
-        startQuotaRefresh();
+        // 余量后台刷新由功能总开关门控；默认关闭不启动
+        quotaWasEnabled_ = module::claude::quota::isQuotaFeatureEnabled();
+        if (quotaWasEnabled_) {
+            startQuotaRefresh();
+        }
     }
 
     // 进页标记缓存脏，下一帧 compose 重查
@@ -1005,6 +1019,8 @@ private:
 
     // 重入幂等守卫
     bool started_ = false;
+    // 余量开关追踪（上一帧值），检测变化以即时启停后台刷新
+    bool quotaWasEnabled_ = false;
 };
 
 } // namespace module::claude

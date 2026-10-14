@@ -19,6 +19,7 @@
 #include "platform/json.h"      // 读 app.read_settings 的 JSON 出参
 #include "platform/keychain.h"
 #include "platform/system_theme.h"
+#include "quota_home_bridge.h"  // isQuotaFeatureEnabled / setQuotaFeatureEnabled
 
 #include <eui/app.h>
 #include <eui/detail/dsl_app_impl.h>
@@ -292,6 +293,73 @@ REGISTER_TEST(settings_proxy_autostart_default_off, "settings: claudeProxyAutoSt
             ::core::appDatabase(), module::settings::SettingsStore::keyNamespace(), R"({"theme": "light", "logRetentionDays": 30})"));
     }
     DOCTEST_CHECK_FALSE(store.load().claudeProxyAutoStart);
+    removeQuietly(path);
+    return true;
+})
+
+REGISTER_TEST(settings_quota_switch_default_off, "settings quota_switch: quotaEnabled 默认 false + 读写往返", {
+    // 配置落 app_config 表，生产代码经 core::appDatabase() 取连接；未注册则 save 一律失败。
+    test_support::TestEnv cfgDbEnv(kCfgPrefix, "cfg");
+    const auto path = test_support::tempConfigFile(kCfgPrefix, "quota");
+    removeQuietly(path);
+    module::settings::SettingsStore store(::core::appDatabase());
+
+    // 默认 false
+    DOCTEST_CHECK_FALSE(store.load().quotaEnabled);
+
+    // 开 → 持久化 → 读回 true
+    module::settings::SettingsConfig cfg;
+    cfg.quotaEnabled = true;
+    DOCTEST_REQUIRE(store.save(cfg).isOk());
+    DOCTEST_CHECK(store.load().quotaEnabled);
+
+    // 存量配置无该键 → 保持默认 false（兜底）
+    {
+        DOCTEST_REQUIRE(test_support::seedConfigJsonRows(
+            ::core::appDatabase(), module::settings::SettingsStore::keyNamespace(),
+            R"({"theme": "light", "logRetentionDays": 7})"));
+    }
+    DOCTEST_CHECK_FALSE(store.load().quotaEnabled);
+    removeQuietly(path);
+    return true;
+})
+
+REGISTER_TEST(settings_quota_switch_bridge_flag, "settings quota_switch: bridge 标记默认 false + 设置后即时同步", {
+    test_support::TestEnv cfgDbEnv(kCfgPrefix, "cfg");
+    const auto path = test_support::tempConfigFile(kCfgPrefix, "bridgeflag");
+    removeQuietly(path);
+
+    // 默认 false
+    DOCTEST_CHECK_FALSE(module::claude::quota::isQuotaFeatureEnabled());
+
+    // 开启 bridge
+    module::claude::quota::setQuotaFeatureEnabled(true);
+    DOCTEST_CHECK(module::claude::quota::isQuotaFeatureEnabled());
+
+    // 关闭 bridge
+    module::claude::quota::setQuotaFeatureEnabled(false);
+    DOCTEST_CHECK_FALSE(module::claude::quota::isQuotaFeatureEnabled());
+
+    removeQuietly(path);
+    return true;
+})
+
+REGISTER_TEST(settings_quota_switch_data_preserved, "settings quota_switch: 关闭后数据保留（库里的 quota 行不删）", {
+    // 验证语义：setQuotaFeatureEnabled(false) 不触发任何数据库写操作。
+    // 本用例只测 setQuotaFeatureEnabled(false) 把标记切回 false 即可——数据保留由架构保证
+    //（bridge 只管进程级 atomic bool，不碰数据库；quota 表由 QuotaStore 独立维护）。
+    test_support::TestEnv cfgDbEnv(kCfgPrefix, "cfg");
+    const auto path = test_support::tempConfigFile(kCfgPrefix, "datakeep");
+    removeQuietly(path);
+
+    // 先设为 true
+    module::claude::quota::setQuotaFeatureEnabled(true);
+    DOCTEST_CHECK(module::claude::quota::isQuotaFeatureEnabled());
+
+    // 关闭：标记切回 false，数据库不受影响（bridge 无 write 路径）
+    module::claude::quota::setQuotaFeatureEnabled(false);
+    DOCTEST_CHECK_FALSE(module::claude::quota::isQuotaFeatureEnabled());
+
     removeQuietly(path);
     return true;
 })

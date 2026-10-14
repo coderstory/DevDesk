@@ -846,4 +846,54 @@ void drawLogViewCard(const CardDrawArgs& args) {
         .build();
 }
 
+// 供应商余量功能总开关（单行小卡）。默认关闭；开启后首页余量卡、profile 余量配置入口、
+// 后台刷新线程才激活。关闭不删数据。放置位置：模块 tab，在模块插拔卡下方——余量是功能开关，
+// 与模块开关并列（影响多个模块的 UI 可见面 + 后台行为，但不卸载模块本身）。
+// 卡高固定（不随字号缩放），下缘与模块卡保持标准间距。
+void drawQuotaCard(const CardDrawArgs& args) {
+    eui::Ui& ui = args.ui;
+    const std::string& id = args.id;
+    const float w = args.w;
+    const core::theme::Tokens& t = args.t;
+    const SettingsCardsIn& in = args.in;
+    const SettingsCardActions& a = args.a;
+
+    const auto compTheme = core::theme::componentTokens(t);
+    const float rowH = roundFs(20.0f);
+    ui.stack(id)
+        .size(w, 48.0f)
+        .content([&] {
+            ui.text(id + ".label")
+                .position(28.0f, 4.0f)
+                .size(w - 160.0f, rowH)
+                .text("供应商余量")
+                .fontSize(t.sizes.fontSizeBody - 1.0f)
+                .lineHeight(rowH)
+                .fontWeight(500)
+                .color(t.colors.textPrimary)
+                .build();
+            ui.text(id + ".desc")
+                .position(28.0f, 28.0f)
+                .size(w - 160.0f, roundFs(16.0f))
+                .text("关闭后首页余量卡隐藏、配置入口消失（已存数据保留）；开启即时生效")
+                .fontSize(fs(12.0f))
+                .lineHeight(roundFs(16.0f))
+                .color(t.colors.textTertiary)
+                .build();
+            ui.stack(id + ".sw.wrap")
+                .position(w - 28.0f - 80.0f, 4.0f)
+                .size(80.0f, 32.0f)
+                .content([&] {
+                    components::toggleSwitch(ui, id + ".sw")
+                        .size(80.0f, 32.0f)
+                        .checked(in.cfg.quotaEnabled)
+                        .theme(compTheme)
+                        .onChange([f = a.applyQuotaEnabled](bool v) { f(v); })
+                        .build();
+                })
+                .build();
+        })
+        .build();
+}
+
 } // namespace module::settings

@@ -883,7 +883,8 @@ void drawDetailActions(eui::Ui& ui, float x0, float w, float actY,
                     f(shownId);
                 })
                 .build();
-            // 余量查询常驻：没配时也在（配置入口不能因「还没配」消失）；未选中点了给提示
+            // 余量查询：功能开关关闭时入口隐藏（数据保留不删），开启后可配置/查询
+            if (v.quotaEnabled) {
             components::button(ui, "claude.act.quota")
                 .size(actW, 36.0f)
                 .text("余量查询")
@@ -901,6 +902,7 @@ void drawDetailActions(eui::Ui& ui, float x0, float w, float actY,
                     f(shownId);
                 })
                 .build();
+            }
         })
         .build();
 
