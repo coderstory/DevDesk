@@ -17,6 +17,7 @@
 #include "claude_service.h"
 #include "core/module_interface.h"
 #include "core/router.h"
+#include "quota_home_bridge.h"  // devdesk::quota_bridge::setQuotaFeatureEnabled
 #include "quota/quota_store.h"
 
 #include <eui/dsl.h>
@@ -96,6 +97,17 @@ struct ScopedGlobalClaudeService {
     ScopedGlobalClaudeService& operator=(const ScopedGlobalClaudeService&) = delete;
 };
 
+// RAII：用例期间打开余量功能总开关，出作用域必还原 false。
+// 开关关时 onStart() 不启动余量刷新器、也不创建 quotaStore_ → openQuotaDialog 的 `if (quotaStore_)`
+// 落空 → 种子的余量配置行读不回 → 弹窗 providerId 为空，弹不到「未配置 API 密钥」。不能手写在用例末尾
+// 还原：DOCTEST_* 宏自带 `return false;`，断言早退时那行执行不到，开关会泄漏给同进程后续用例。
+struct ScopedQuotaFeatureEnabled {
+    ScopedQuotaFeatureEnabled() { devdesk::quota_bridge::setQuotaFeatureEnabled(true); }
+    ~ScopedQuotaFeatureEnabled() { devdesk::quota_bridge::setQuotaFeatureEnabled(false); }
+    ScopedQuotaFeatureEnabled(const ScopedQuotaFeatureEnabled&) = delete;
+    ScopedQuotaFeatureEnabled& operator=(const ScopedQuotaFeatureEnabled&) = delete;
+};
+
 void composeFrame(::core::Module& mod, eui::Ui& ui, eui::Screen screen,
                   const char* treeId) {
     ui.begin(treeId);
@@ -154,6 +166,7 @@ REGISTER_TEST(claude_quota_lifecycle_test_connection_round_trip,
 
     module::claude::ClaudeService svc(sq, kKeychainService);
     ScopedGlobalClaudeService globalSvc(svc);
+    ScopedQuotaFeatureEnabled quotaOn;   // 必须在 onStart() 前开：开关关时 onStart 不建 quotaStore_，弹窗读不到种子配置行
     std::unique_ptr<::core::Module> mod(create_claude_module());
     mod->onStart();
 
@@ -218,6 +231,7 @@ REGISTER_TEST(claude_quota_lifecycle_test_connection_then_immediate_stop,
 
     module::claude::ClaudeService svc(sq, kKeychainService);
     ScopedGlobalClaudeService globalSvc(svc);
+    ScopedQuotaFeatureEnabled quotaOn;   // 覆盖下面全部轮次（含「停了又起」）：onStart 只在开关开时建 quotaStore_
 
     eui::Screen screen;
     screen.width = 1600.0f;

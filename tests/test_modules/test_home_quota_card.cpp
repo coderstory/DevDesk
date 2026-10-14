@@ -760,6 +760,7 @@ REGISTER_TEST(home_quota_card_visible_at_design_minimum_window,
 
     std::unique_ptr<::core::Module> mod(create_home_module());
     mod->onStart();
+    devdesk::quota_bridge::setQuotaFeatureEnabled(true);
 
     // ① 高窗（1000）：装得下 → 画
     eui::Screen tall;
