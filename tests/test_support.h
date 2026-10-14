@@ -9,6 +9,7 @@
 #include "core/app_config.h"
 #include "core/database.h"
 #include "core/router.h"
+#include "module_markdown/md_note_git.h"  // MdHeadlessEnv 关自动 git 提交（测试总闸）
 #include "platform/json.h"
 #include "platform/keychain.h"
 // 键盘事件类型 —— 此 "core/" 是 EUI-NEO 的目录，与本仓库 src/core 同名
@@ -406,9 +407,14 @@ struct MdHeadlessEnv {
         ::core::registerAppDatabase(&db->db());
         // 笔记目录隔离：只对本用例生效
         setEnvVar("DEVDESK_NOTES_DIR", dir.string());
+        // 自动 git 提交在 headless 用例里关掉：真跑 git init/commit 会在临时目录
+        // 制造 .git 与额外文件事件，扰动树扫描/mtime 类用例（NoteGitAutoCommit
+        // 自身的集成用例不经 start()，不受影响）
+        module::markdown::NoteGitAutoCommit::setEnabledForTest(false);
     }
 
     ~MdHeadlessEnv() {
+        module::markdown::NoteGitAutoCommit::setEnabledForTest(true);
         setEnvVar("DEVDESK_NOTES_DIR", "");
         ::core::registerAppDatabase(nullptr);
         std::error_code ec;

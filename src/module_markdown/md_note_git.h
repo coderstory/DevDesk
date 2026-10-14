@@ -47,6 +47,13 @@ public:
                                 std::chrono::seconds interval =
                                     std::chrono::minutes(5));
 
+    // 进程级测试总闸（默认开）。headless 夹具构造时关掉：自动提交在测试临时
+    // 目录里真跑 git（init/commit 制造 .git 目录与额外文件事件，扰动树扫描/
+    // mtime 类用例；git 可用性随环境漂移也让结果不确定）。本类自身的集成用例
+    // 不经 start()（直接 runGit），不受影响。
+    static void setEnabledForTest(bool enabled);
+    static bool enabledForTest();
+
 private:
     std::filesystem::path notesDir_;
 

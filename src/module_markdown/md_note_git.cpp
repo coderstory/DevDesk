@@ -16,6 +16,19 @@ namespace module::markdown {
 
 namespace fs = std::filesystem;
 
+// 进程级测试总闸（默认开；语义见头文件注释）
+namespace {
+std::atomic<bool> g_noteGitEnabledForTest{true};
+}  // namespace
+
+void NoteGitAutoCommit::setEnabledForTest(bool enabled) {
+    g_noteGitEnabledForTest.store(enabled, std::memory_order_release);
+}
+
+bool NoteGitAutoCommit::enabledForTest() {
+    return g_noteGitEnabledForTest.load(std::memory_order_acquire);
+}
+
 // ---------- 纯函数（节流判定） ----------
 
 bool NoteGitAutoCommit::shouldCommitNow(std::time_t lastCommitAt,
@@ -48,6 +61,11 @@ NoteGitAutoCommit::~NoteGitAutoCommit() {
 // ---------- 启动 ----------
 
 void NoteGitAutoCommit::start() {
+    // 测试总闸（headless 夹具关掉时）：直接标禁用——不起线程、不探测 git
+    if (!enabledForTest()) {
+        disabled_.store(true, std::memory_order_release);
+        return;
+    }
     // 幂等：已启动或被禁用则空操作
     bool expected = false;
     if (!initStarted_.compare_exchange_strong(expected, true,

@@ -54,20 +54,24 @@ std::wstring joinArgsForCmdLine(const std::vector<std::string>& args) {
     return cmd;
 }
 
+// SearchPathW 把名字解析成可执行文件全路径（查当前目录 + PATH）。
+// lpExtension 传 NULL 不会自动补 .exe（只有名字以句点结尾才补默认扩展）——
+// 调用方传裸名（"git"）时必须显式补 .exe，否则 cmd 里明明能跑、这里却找不到。
+std::wstring resolveOnPath(const std::string& name) {
+    std::string probe = name;
+    if (probe.find('.') == std::string::npos) probe += ".exe";
+    const std::wstring wname = utf8ToWide(probe);
+    wchar_t buf[MAX_PATH];
+    const DWORD len = SearchPathW(nullptr, wname.c_str(), nullptr,
+                                  MAX_PATH, buf, nullptr);
+    if (len == 0 || len >= MAX_PATH) return std::wstring();
+    return std::wstring(buf, len);
+}
+
 } // namespace
 
 bool executableOnPath(const std::string& name) {
-    // SearchPathW 查当前目录 + PATH；成功返回找到的全路径长度。
-    // lpExtension 传 NULL 不会自动补 .exe（只有名字以句点结尾才补默认扩展）——
-    // 调用方传裸名（"git"）时必须显式补 .exe，否则 cmd 里明明能跑、这里却找不到。
-    if (name.find('.') == std::string::npos) {
-        return executableOnPath(name + ".exe");
-    }
-    const std::wstring wname = utf8ToWide(name);
-    wchar_t buf[MAX_PATH];
-    const DWORD len = SearchPathW(nullptr, wname.c_str(), nullptr,
-                                 MAX_PATH, buf, nullptr);
-    return len > 0 && len < MAX_PATH;
+    return !resolveOnPath(name).empty();
 }
 
 int execCapture(const std::string& workingDir,
@@ -78,8 +82,16 @@ int execCapture(const std::string& workingDir,
     std::vector<wchar_t> cmdBuf(cmdLine.begin(), cmdLine.end());
     cmdBuf.push_back(L'\0');
 
-    // 程序名取第一个 arg 的宽字符版（lpApplicationName 不解析命令行）
-    const std::wstring exe = utf8ToWide(args[0]);
+    // 程序名：含路径分隔符（绝对/相对路径）→ 原样；裸名 → 先经 resolveOnPath 解析
+    // 成全路径再传。lpApplicationName 非空时既不搜 PATH 也不补 .exe（与 cmd 的
+    // 语义相反；2026-10-14 实证：裸名 "git" 直接喂必失败 ERROR_FILE_NOT_FOUND，
+    // md 自动提交整链路在 Windows 上因此全断）。
+    std::wstring exe = utf8ToWide(args[0]);
+    if (!exe.empty() && exe.find(L'\\') == std::wstring::npos &&
+        exe.find(L'/') == std::wstring::npos) {
+        exe = resolveOnPath(args[0]);
+        if (exe.empty()) return -1;   // PATH 上找不到：与 executableOnPath 同口径
+    }
     const std::wstring dir = utf8ToWide(workingDir);
 
     STARTUPINFOW si{};
