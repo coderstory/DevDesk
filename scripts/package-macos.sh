@@ -57,8 +57,7 @@ if [ ! -x "$MACOS_DIR/DevDesk" ]; then
 fi
 
 # 补拷 assets 进 .app，必须与 exe 同级（Contents/MacOS/assets）：EUI-NEO 按「exe 旁」找资源，
-# 放进 Contents/Resources/assets 不生效。来源是构建树的 assets/（EUI-NEO 字体/音乐/shaders/icon +
-# 仓库 assets/pets 的 POST_BUILD 合集）。
+# 放进 Contents/Resources/assets 不生效。来源是构建树的 assets/（EUI-NEO 字体/音乐/shaders/icon）。
 rm -rf "$MACOS_DIR/assets"
 cmake -E copy_directory "$BUILD_DIR/assets" "$MACOS_DIR/assets"
 # 防残留断言：cmake -E copy_directory 只增不删，所以上面必须先 rm -rf。与 package-windows.sh 同款。
@@ -66,23 +65,7 @@ if [ -z "$(ls -A "$MACOS_DIR/assets/shaders/shadertoy" 2>/dev/null)" ]; then
   echo "❌ 断言失败：$MACOS_DIR/assets/shaders/shadertoy 为空" >&2
   exit 1
 fi
-if [ ! -f "$MACOS_DIR/assets/pets/README.md" ]; then
-  echo "❌ 断言失败：$MACOS_DIR/assets/pets/README.md 缺失" >&2
-  exit 1
-fi
-# 断言 ②：每个皮肤子目录含 pet.json，与 package-windows.sh 同款口径。
-# 不要退回「pets 下只能有 README.md」：DevDesk POST_BUILD 会把全部皮肤拷进 build/assets/pets，
-# 皮肤数量随仓库增删，写死单文件断言在真实构建树上必失败。
-PET_COUNT=0
-for petdir in "$MACOS_DIR/assets/pets"/*/; do
-  [ -d "$petdir" ] || continue
-  if [ ! -f "$petdir/pet.json" ]; then
-    echo "❌ 断言失败：皮肤目录缺 pet.json: $petdir" >&2
-    exit 1
-  fi
-  PET_COUNT=$((PET_COUNT + 1))
-done
-echo "✅ assets 就位（Contents/MacOS/assets；pets 含 $PET_COUNT 皮肤包）"
+echo "✅ assets 就位（Contents/MacOS/assets）"
 
 # 版本号单一源 = 顶层 CMakeLists.txt 的 project(DevDesk VERSION ...)，configure 后落到
 # CMakeCache.txt 的 CMAKE_PROJECT_VERSION。不要在别处再写一份版本号。
