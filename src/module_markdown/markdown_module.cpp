@@ -2822,7 +2822,6 @@ private:
         // 选中不级联：文件夹选中标记仅精确匹配，不因打开笔记而上溯选中父目录
         newItemTargetDir_ = parentDirOf(relPath);
         saveViewState();  // 选中笔记跨会话记忆
-        showToast("已打开", relPath, false);
         LOG_INFO("打开笔记: " + relPath);
     }
 

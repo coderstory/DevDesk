@@ -2372,10 +2372,8 @@ REGISTER_TEST(md_module_subtitle_static, "markdown_module: subtitle 静态快捷
     const auto* sub2 = ui.find("md.subtitle");
     DOCTEST_REQUIRE(sub2 != nullptr);
     DOCTEST_CHECK_EQ(sub2->text, staticSub);
-    // 操作反馈改走 toast（title=「已打开」）
-    const auto* toastTitle = ui.find("md.toast.title");
-    DOCTEST_REQUIRE(toastTitle != nullptr);
-    DOCTEST_CHECK_EQ(toastTitle->text, std::string("已打开"));
+    // 「已打开」toast 已删（用户 2026-10-14）：打开笔记不再弹提示，subtitle 恒静态
+    DOCTEST_CHECK(ui.find("md.toast.title") == nullptr);
     // 笔记数落点：编辑器底部状态栏右侧
     const auto* pos = ui.find("md.status.pos");
     DOCTEST_REQUIRE(pos != nullptr);
