@@ -22,7 +22,7 @@
 #include "core/paths.h"
 #include "core/router.h"
 #include "core/service_locator.h"
-#include "platform/http_server.h"  // 前置校验用例的 mock 上游（200 /v1/models）
+#include "platform/http_server.h"  // 前置校验用例的 mock 上游（200 POST /v1/messages）
 
 #include <eui/dsl.h>
 

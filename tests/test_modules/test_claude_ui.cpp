@@ -281,7 +281,7 @@ REGISTER_TEST(claude_module_test_connection_async,
     TestEnv env;
         // mock 上游挂 500ms 再回 200：点击必须立即返回（不等上游）
     platform::http::Server upstream("127.0.0.1", 0);
-    upstream.route("GET", "/v1/models",
+    upstream.route("POST", "/v1/messages",
                    [](const platform::http::RequestCtx&,
                       platform::http::ResponseWriter& w) {
                        std::this_thread::sleep_for(
@@ -409,7 +409,7 @@ REGISTER_TEST(claude_module_start_proxy_binds_only_at_harvest,
     DOCTEST_REQUIRE(port > 0);
     env.svc->setConfiguredProxyPort(port);
     platform::http::Server upstream("127.0.0.1", 0);
-    upstream.route("GET", "/v1/models",
+    upstream.route("POST", "/v1/messages",
                    [](const platform::http::RequestCtx&,
                       platform::http::ResponseWriter& w) {
                        // 1500ms ≫ 一帧：探测在飞窗口足够长，「startProxy 又回
@@ -1998,7 +1998,7 @@ REGISTER_TEST(claude_module_keyboard_shortcuts,
     // 「可达上游 + 激活 profile」，再把「按一次键」改成「按键 + 收割帧轮询」。
     // 断言面不变：启动后监听在配置端口。
     platform::http::Server upstream("127.0.0.1", 0);
-    upstream.route("GET", "/v1/models",
+    upstream.route("POST", "/v1/messages",
                    [](const platform::http::RequestCtx&,
                       platform::http::ResponseWriter& w) {
                        w.setStatus(200);

@@ -286,7 +286,7 @@ REGISTER_TEST(claude_tools_test_connection_ok_and_error_paths,
               "claude_tools: test_connection 打 mock 上游 + 缺密钥/不存在 id → toolError", {
     platform::http::Server upstream("127.0.0.1", 0);
     int hitCount = 0;
-    upstream.route("GET", "/v1/models",
+    upstream.route("POST", "/v1/messages",
                    [&](const platform::http::RequestCtx& ctx,
                        platform::http::ResponseWriter& w) {
                        (void)ctx;
