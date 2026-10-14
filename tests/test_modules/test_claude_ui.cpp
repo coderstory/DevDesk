@@ -22,6 +22,7 @@
 #include "platform/terminal_launch.h"
 #include "provider_config.h"
 #include "quota/quota_store.h"
+#include "quota_home_bridge.h"  // devdesk::quota_bridge::setQuotaFeatureEnabled
 #include "settings_sync.h"
 
 #include <eui/dsl.h>
@@ -198,6 +199,8 @@ REGISTER_TEST(claude_module_actions_row_alignment,
     screen.height = 1000.0f;
     eui::Ui ui;
     ui.begin("claude_actions_align");
+    // 余量功能默认关，测试侧显式打开以验证按钮渲染
+    devdesk::quota_bridge::setQuotaFeatureEnabled(true);
     mod->compose(ui, screen);
     ui.end();
     ui.layout(screen.width, screen.height);
@@ -5645,6 +5648,7 @@ REGISTER_TEST(claude_copyconfig_seven_keys_geometry,
     DOCTEST_REQUIRE(env.svc->setActiveProfile(pid).isOk());
     std::unique_ptr<::core::Module> mod(create_claude_module());
     mod->onStart();
+    devdesk::quota_bridge::setQuotaFeatureEnabled(true);
     constexpr float kW = 1262.0f;
     constexpr float kH = 801.0f;
     eui::Ui ui;
@@ -7913,6 +7917,7 @@ REGISTER_TEST(claude_quota_button_always_present,
     screen.width = 1600.0f;
     screen.height = 1000.0f;
     eui::Ui ui;
+    devdesk::quota_bridge::setQuotaFeatureEnabled(true);
     composeQuotaFrame(*mod, ui, screen, "claude_quota_btn");
     DOCTEST_CHECK(ui.find("claude.act.quota") != nullptr);
     DOCTEST_CHECK(ui.find("claude.act.quota.bg") != nullptr);
@@ -7935,6 +7940,7 @@ REGISTER_TEST(claude_quota_dialog_dynamic_field_render,
 
     std::unique_ptr<::core::Module> mod(create_claude_module());
     mod->onStart();   // 生产里 main.cpp 一定先 onStart（余量 store 在那里建）
+    devdesk::quota_bridge::setQuotaFeatureEnabled(true);
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
@@ -8022,6 +8028,7 @@ REGISTER_TEST(claude_quota_dialog_secret_not_echoed,
 
     std::unique_ptr<::core::Module> mod(create_claude_module());
     mod->onStart();   // store 在 onStart 里建；没它读不到已存配置
+    devdesk::quota_bridge::setQuotaFeatureEnabled(true);
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
@@ -8087,6 +8094,7 @@ REGISTER_TEST(claude_quota_dialog_ccswitch_unavailable_message,
 
     std::unique_ptr<::core::Module> mod(create_claude_module());
     mod->onStart();
+    devdesk::quota_bridge::setQuotaFeatureEnabled(true);
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
@@ -8130,6 +8138,7 @@ REGISTER_TEST(claude_quota_dialog_test_connection_reports,
 
     std::unique_ptr<::core::Module> mod(create_claude_module());
     mod->onStart();
+    devdesk::quota_bridge::setQuotaFeatureEnabled(true);
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
@@ -8179,6 +8188,7 @@ REGISTER_TEST(claude_quota_dialog_saves_to_db,
 
     std::unique_ptr<::core::Module> mod(create_claude_module());
     mod->onStart();
+    devdesk::quota_bridge::setQuotaFeatureEnabled(true);
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;

@@ -116,7 +116,7 @@ public:
             else                                    a = ::core::theme::Accent::Clay;
             ::core::theme::setAccent(a);
         }
-        module::claude::quota::setQuotaFeatureEnabled(cfg_.quotaEnabled);
+        devdesk::quota_bridge::setQuotaFeatureEnabled(cfg_.quotaEnabled);
         ::core::theme::setFontScale(
             static_cast<float>(cfg_.fontScalePercent) / 100.0f);
         // 编辑器字号经 core::theme 通道传给 markdown（模块隔离）。
