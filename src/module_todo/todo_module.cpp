@@ -467,13 +467,11 @@ public:
             }
             return;
         }
-        const std::string title = dst.title;
         const int newPos = (hoverRow >= 0)
             ? ui::computeInsertPosition(tasks_, dst.id, hoverRow)
             : ui::computeAppendPosition(tasks_, dst.id);
-        if (doMoveTask(taskId, dst.id, newPos)) {
-            setStatus("已移动到「" + title + "」");  // 失败时保留 doMoveTask 的错误提示
-        }
+        // 成功不提示；失败时 doMoveTask 自己的错误 toast 保留
+        doMoveTask(taskId, dst.id, newPos);
     }
 
     // 键盘/菜单共用的上移下移（position 语义见 todo_ui_logic.h）
@@ -624,10 +622,8 @@ public:
             for (const auto& c : columns_) {
                 if (c.id == self->columnId) continue;
                 if (k == 0) {
-                    const std::string title = c.title;
                     doMoveTask(dialogs_.ctx.taskId, c.id,
                                ui::computeAppendPosition(tasks_, c.id));
-                    setStatus("已移动到「" + title + "」");
                     return;
                 }
                 --k;

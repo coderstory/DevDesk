@@ -737,8 +737,13 @@ core::Result<int> ProfileRepository::backfillCredentialsFromKeychain() {
         const int64_t id = idV.value();
         const std::string account = accountV.value();
 
-        // 读旧 Keychain 凭据（DPAPI 密文文件）
+        // 读旧 Keychain 凭据（DPAPI 密文文件）。keychainService_ 是按数据根派生的新命名空间
+        // （"DevDesk-<hash>"）；Windows 旧版实际用纯 "DevDesk" 存（keychain/DevDesk/claude%3A<id>.key），
+        // 派生空间 miss 时必须回退旧名——否则老用户的密钥永远「找不到」，凭据静默丢失（2026-10-14 实证）。
         auto secretR = platform::keychain::loadSecret(keychainService_, account);
+        if (secretR.isFail()) {
+            secretR = platform::keychain::loadSecret("DevDesk", account);
+        }
         if (secretR.isFail()) {
             LOG_WARN("凭据回填：id=" + std::to_string(id) +
                      " Keychain 读取失败（跳过）: " + secretR.errorMessage());

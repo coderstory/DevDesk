@@ -57,8 +57,13 @@ std::wstring joinArgsForCmdLine(const std::vector<std::string>& args) {
 } // namespace
 
 bool executableOnPath(const std::string& name) {
+    // SearchPathW 查当前目录 + PATH；成功返回找到的全路径长度。
+    // lpExtension 传 NULL 不会自动补 .exe（只有名字以句点结尾才补默认扩展）——
+    // 调用方传裸名（"git"）时必须显式补 .exe，否则 cmd 里明明能跑、这里却找不到。
+    if (name.find('.') == std::string::npos) {
+        return executableOnPath(name + ".exe");
+    }
     const std::wstring wname = utf8ToWide(name);
-    // SearchPathW 查当前目录 + PATH；成功返回找到的全路径长度
     wchar_t buf[MAX_PATH];
     const DWORD len = SearchPathW(nullptr, wname.c_str(), nullptr,
                                  MAX_PATH, buf, nullptr);
