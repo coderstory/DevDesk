@@ -60,22 +60,22 @@ target_include_directories(devdesk_platform PUBLIC
     ${CMAKE_SOURCE_DIR}/3rd/cpp-httplib
 )
 
+# Windows 系统库只在 WIN32 链接：它们必须紧跟 CURL::libcurl 之后（GNU ld 左→右解析，
+# 早位满足不了 libcurl.a 的 Winsock 符号），但 macOS/Linux 没有这些库，无条件链接即
+# CI 链接期炸（ld: library 'ws2_32' not found）。用变量占位保序：WIN32 下展开五个库、
+# 其他平台展开为空（CMake 丢弃空 list 项，不产生空 -l）
+if(WIN32)
+    set(DEVDESK_WIN_SYSTEM_LIBS ws2_32 crypt32 shell32 advapi32 shlwapi)
+endif()
+
 target_link_libraries(devdesk_platform
     PUBLIC
         devdesk_core
         CURL::libcurl
-        # ws2_32/crypt32 紧跟 libcurl.a 之后：GNU ld 左→右解析，早位的 -lws2_32（下方 if(WIN32) 块）
-        # 满足不了 libcurl.a 的 Winsock 符号——顺序即语义，别把这两行挪走（2026-10-14 pet 摘除后链接序变化实证炸过）
-        ws2_32
-        crypt32
-        # shell32（file_open_win.cpp）与 advapi32（system_theme_win.cpp）也放 curl 后：
-        # CMake 链接项去重保首位，全集中一处，别在别处早位再声明（会抢首位）
-        shell32
-        advapi32
-        # shlwapi（folder_picker_win.cpp 的路径解析）：同样只在 curl 后集中声明
-        shlwapi
+        # Windows 系统库紧跟 CURL::libcurl 之后：GNU ld 左→右解析，早位满足不了
+        # libcurl.a 的 Winsock 符号——顺序即语义，别把变量占位挪走
+        ${DEVDESK_WIN_SYSTEM_LIBS}
         Threads::Threads
-        # cpp-httplib OpenSSL 支持（可选，定义 CPPHTTPLIB_OPENSSL_SUPPORT 时需要）
         OpenSSL::SSL
         OpenSSL::Crypto
 )
@@ -96,12 +96,10 @@ if(APPLE)
     )
 endif()
 
-# Windows：Winsock2（http_client/http_server 网络）+ Crypt32（TLS 证书链）
-# + Shell32（file_open_win.cpp 的 CommandLineToArgvW）
-# 之前靠 -DCMAKE_CXX_STANDARD_LIBRARIES="-lws2_32 -lcrypt32" 绕过，现烤进构建系统
-# advapi32：system_theme_win.cpp 的 RegGetValueW（跟随系统主题，spec 缩水 A）
-# Winsock2/Crypt32/Shell32/Advapi32/Shlwapi 不在此声明——统一放上方 PUBLIC 列表
-#   CURL::libcurl 之后；早位声明会被 CMake 去重保首位，libcurl.a 的 Winsock 符号
-#   解析不到（2026-10-14 实证）
+# Windows 系统库：Winsock2（网络）+ Crypt32（TLS 证书链）+ Shell32（file_open_win.cpp
+# CommandLineToArgvW）+ Advapi32（system_theme_win.cpp RegGetValueW，spec 缩水 A）
+# + Shlwapi（folder_picker_win.cpp 路径解析）。统一经上方 WIN32 变量占位
+# ${DEVDESK_WIN_SYSTEM_LIBS} 排在 CURL::libcurl 之后；早位声明会被 CMake 去重保首位
+# ——别在别处再声明 Windows 系统库
 # DevDesk 自己的警告等级（-Werror 只作用于 DevDesk target，不泄漏给第三方）
 devdesk_apply_warnings(devdesk_platform)
