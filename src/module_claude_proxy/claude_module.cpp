@@ -18,6 +18,8 @@
 #include "core/theme.h"
 #include "core/component_theme.h"
 #include "core/database.h"
+#include "core/app_config.h"
+#include "platform/folder_picker.h"
 #include "platform/json.h"
 #include "provider_config.h"
 #include "quota/quota_credential.h"
@@ -27,6 +29,7 @@
 #include "upstream_dialect.h"
 #include <core/platform/platform.h>   // core::platform::requestUiUpdate（唤醒主循环）
 #include <core/window/window_backend.h>
+#include "quota_home_bridge.h"  // isQuotaFeatureEnabled 门控
 #include <ui_kit/metrics.h>
 #include <ui_kit/toast.h>
 
@@ -60,6 +63,14 @@ public:
     void compose(eui::Ui& ui, const eui::Screen& screen) override {
         // 消费跨模块跳转负载（取走即清，放最前保证同帧画出弹窗）
         consumeQuotaConfigPayload();
+        // 余量功能开关即时生效：检测标记变化以启动/停止后台刷新
+        const bool quotaNow = module::claude::quota::isQuotaFeatureEnabled();
+        if (quotaNow && !quotaWasEnabled_) {
+            startQuotaRefresh();
+        } else if (!quotaNow && quotaWasEnabled_) {
+            stopQuotaRefresh();
+        }
+        quotaWasEnabled_ = quotaNow;
         const auto& t = core::theme::current();
         const auto themeTokens = core::theme::componentTokens(t);
         const float pad = t.sizes.spacingXXLarge;        // 40
@@ -211,6 +222,7 @@ public:
                 }
             }
         }
+        dv.quotaEnabled = module::claude::quota::isQuotaFeatureEnabled();
 
         ui.column("claude.root")
             .size(screen.width, screen.height)
@@ -305,7 +317,11 @@ public:
         // 智能体工具注册（claude.* 四工具）；注册失败只记日志
         claudeTools_ = std::make_unique<ClaudeTools>(*svc);
         claudeTools_->registerAll();
-        startQuotaRefresh();
+        // 余量后台刷新由功能总开关门控；默认关闭不启动
+        quotaWasEnabled_ = module::claude::quota::isQuotaFeatureEnabled();
+        if (quotaWasEnabled_) {
+            startQuotaRefresh();
+        }
     }
 
     // 进页标记缓存脏，下一帧 compose 重查
@@ -564,7 +580,12 @@ private:
                   false);
     }
 
-    // 直连：生成临时 settings + claude --settings 打开新会话（零全局改动）
+    // app_config 键名：上次 claude 运行所选的工作目录
+    static constexpr const char* kClaudeRunLastDirKey = "claude.run.lastDir";
+
+    // 直连：生成临时 settings + claude --settings 打开新会话（零全局改动）。
+    // 运行前先弹出目录选择对话框（原生模态框），所选目录作为 claude 进程工作目录；
+    // 用户取消 = 静默返回，不弹 toast、不启动会话。
     void doRun(int64_t id) {
         ClaudeService* svc = ClaudeService::global();
         if (svc == nullptr) {
@@ -575,8 +596,29 @@ private:
             showToast("运行失败", "请先选择 Profile", true);
             return;
         }
+
+        // 读上次所选目录作为对话框初始定位
+        std::string lastDir;
+        if (auto* db = ::core::appDatabase()) {
+            auto saved = core::appconfig::get(*db, kClaudeRunLastDirKey);
+            if (saved.isOk()) lastDir = saved.value();
+        }
+
+        // 弹出目录选择（走注入缝：生产 = 平台原生对话框，测试经 setPickerForTest 替换）
+        auto chosen = platform::folderpicker::pickerSlot()("选择工作目录", lastDir);
+        if (chosen.isFail()) {
+            // 用户取消：静默返回，不启动、不弹 toast
+            return;
+        }
+        const std::string& workingDir = chosen.value();
+
+        // 记录本次所选目录（下次打开默认定位到它）
+        if (auto* db = ::core::appDatabase()) {
+            core::appconfig::set(*db, kClaudeRunLastDirKey, workingDir);
+        }
+
         std::string hint;
-        auto r = svc->runProfile(id, &hint);
+        auto r = svc->runProfile(id, &hint, workingDir);
         if (r.isFail()) {
             showToast("运行失败", r.errorMessage(), true);
             return;
@@ -923,7 +965,7 @@ private:
             return;
         }
         // 同步 HTTP（15s）挪后台线程避免冻 UI；结果经原子标志回 compose 收割
-        showToast("测试中", "正在请求 " + p.baseUrl + "/v1/models，最长 15 秒…", false);
+        showToast("测试中", "正在请求 " + p.baseUrl + "/v1/messages，最长 15 秒…", false);
         testThread_ = std::thread([this, p, svc] {
             auto r = svc->testConnection(p);
             if (r.isFail()) {
@@ -938,8 +980,14 @@ private:
                     testResultIsError_ = false;
                 } else {
                     testResultTitle_ = "连通异常";
+                    std::string hint = "（检查 API Key 或 Base URL）";
+                    if (code == 401 || code == 403) {
+                        hint = "（API Key 被上游拒绝）";
+                    } else if (code == 404) {
+                        hint = "（接口不存在或模型不可用，检查 Base URL 与模型配置）";
+                    }
                     testResultMsg_ = "上游返回 HTTP " + std::to_string(code) +
-                                      "（检查 API Key 或 Base URL）";
+                                      std::move(hint);
                     testResultIsError_ = true;
                 }
             }
@@ -1005,6 +1053,8 @@ private:
 
     // 重入幂等守卫
     bool started_ = false;
+    // 余量开关追踪（上一帧值），检测变化以即时启停后台刷新
+    bool quotaWasEnabled_ = false;
 };
 
 } // namespace module::claude

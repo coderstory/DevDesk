@@ -498,7 +498,8 @@ void ClaudeService::setTerminalLauncher(
     if (launcher) terminalLauncher_ = std::move(launcher);
 }
 
-core::Result<void> ClaudeService::runProfile(int64_t id, std::string* hint) {
+core::Result<void> ClaudeService::runProfile(int64_t id, std::string* hint,
+                                           const std::string& workingDir) {
     if (hint != nullptr) hint->clear();
     if (id == 0) {
         return core::Result<void>::fail(core::ErrorCode::ValidationError,
@@ -602,7 +603,9 @@ core::Result<void> ClaudeService::runProfile(int64_t id, std::string* hint) {
     // 顺序 4：claude --settings <临时文件>，分离式启动（DevDesk 不持有会话句柄）。
     platform::terminal::LaunchSpec spec;
     spec.title = p.name + " · Claude Code";
-    spec.workingDir = platform::terminal::homeDir();
+    spec.workingDir = workingDir.empty()
+        ? platform::terminal::homeDir()
+        : workingDir;
     spec.program = "claude";
     spec.args = {"--settings", file.string()};
 

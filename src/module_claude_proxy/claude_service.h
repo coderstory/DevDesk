@@ -186,7 +186,9 @@ public:
     // 用该 Profile 生成临时 settings 直连，打开新的 Claude Code 会话
     // 不启代理、不切激活、不碰 ~/.claude/settings.json（零全局副作用）；密钥临时明文落盘。
     // id 为 0/不存在/读密钥失败/落盘失败 → fail；hint：非致命提示出参。
-    core::Result<void> runProfile(int64_t id, std::string* hint = nullptr);
+    // workingDir：claude 进程工作目录；空串 = 略过（回退 homeDir() 默认值）。
+    core::Result<void> runProfile(int64_t id, std::string* hint = nullptr,
+                                  const std::string& workingDir = "");
 
     // 终端启动注入点（默认 = platform::terminal::launch）；测试注入假实现断言参数。
     void setTerminalLauncher(
