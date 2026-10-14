@@ -138,10 +138,12 @@ std::vector<std::string> scanFileForTokens(
     std::vector<std::string> hits;
     std::ifstream in(root / relPath);
     if (!in) {
-        hits.push_back(relPath + ":        return hits;
+        hits.push_back(relPath + ":0: 读不到该文件（护栏无法取证）");
+        return hits;
     }
     std::string line;
-    int lineNo =    while (std::getline(in, line)) {
+    int lineNo = 0;
+    while (std::getline(in, line)) {
         ++lineNo;
         std::string code = line;
         if (stripLineComment) {
@@ -182,7 +184,9 @@ std::string r    const std::filesystem::path root = findRepoRoot();
     //    const std::string src = readWholeFile(root / rel);
     if (src.find("core/service_locator.h") == std::string::npos) {
         report += "设置页没有 include core/service_locator.h —— 代理运行面应由"
-                  " core 只读服务定位器取（R    }
+                  " core 只读服务定位器取（R0/D6）
+";
+    }
     if (src.find("::core::IClaudeProxyService") == std::string::npos) {
         report += "设置页没有用 core::IClaudeProxyService —— 定位器通道被摘掉了？"
                   "（解耦不是删功能）\n";

@@ -57,7 +57,6 @@ std::filesystem::path legacyDefaultAppDataDirForTest(
 bool allDataPathsUnder(const std::filesystem::path& root) {
     DOCTEST_CHECK(isUnderOrEqual(core::paths::appDataDir(), root));
     DOCTEST_CHECK(isUnderOrEqual(core::paths::markdownDir(), root));
-    DOCTEST_CHECK(isUnderOrEqual(core::paths::petsDir(), root));
     DOCTEST_CHECK(isUnderOrEqual(core::paths::sqliteDbFile(), root));
     DOCTEST_CHECK(isUnderOrEqual(core::paths::logsDir(), root));
     DOCTEST_CHECK(isUnderOrEqual(core::paths::logFile(), root));
@@ -155,8 +154,6 @@ REGISTER_TEST(paths_data_root_derives_all,
     // 派生的是「根下的固定名」而非等于根本身：防止只把 appDataDir 换了、别的路径仍指向真实目录
     DOCTEST_CHECK_EQ(normPath(core::paths::markdownDir()),
                      normPath(tempRoot / "notes"));
-    DOCTEST_CHECK_EQ(normPath(core::paths::petsDir()),
-                     normPath(tempRoot / "pets"));
     DOCTEST_CHECK_EQ(normPath(core::paths::sqliteDbFile()),
                      normPath(tempRoot / "devdesk.db"));
     DOCTEST_CHECK_EQ(normPath(core::paths::logsDir()),
@@ -197,20 +194,16 @@ REGISTER_TEST(paths_override_precedence,
         test_temp::tempPath("devdesk_test_data_root_prec");
     const std::filesystem::path notes =
         test_temp::tempPath("devdesk_test_notes_prec");
-    const std::filesystem::path pets = test_temp::tempPath("devdesk_test_pets_prec");
     const test_support::ScopedEnv dataRoot("DEVDESK_DATA_ROOT",
                                            tempRoot.string());
     const test_support::ScopedEnv notesEnv("DEVDESK_NOTES_DIR", notes.string());
-    const test_support::ScopedEnv petsEnv("DEVDESK_PETS_DIR", pets.string());
 
     DOCTEST_CHECK_EQ(normPath(core::paths::markdownDir()), normPath(notes));
-    DOCTEST_CHECK_EQ(normPath(core::paths::petsDir()), normPath(pets));
     DOCTEST_CHECK(isUnderOrEqual(core::paths::appDataDir(), tempRoot));
     DOCTEST_CHECK(isUnderOrEqual(core::paths::sqliteDbFile(), tempRoot));
     DOCTEST_CHECK(isUnderOrEqual(core::paths::logsDir(), tempRoot));
 
     test_support::setEnvVar("DEVDESK_NOTES_DIR", "");
-    test_support::setEnvVar("DEVDESK_PETS_DIR", "");
     DOCTEST_CHECK(allDataPathsUnder(tempRoot));
     return true;
 })

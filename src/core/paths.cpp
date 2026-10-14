@@ -150,7 +150,7 @@ fs::path claudeConfigDirOverride() {
 
 void ensureDirectoriesExist() {
     std::error_code ec;
-    for (const auto& dir : {appDataDir(), markdownDir(), logsDir(), petsDir()}) {
+    for (const auto& dir : {appDataDir(), markdownDir(), logsDir()}) {
         fs::create_directories(dir, ec);
         if (ec) {
             LOG_WARN("创建目录失败: " + dir.string() + " (" + ec.message() + ")");

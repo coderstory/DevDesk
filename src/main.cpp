@@ -50,10 +50,6 @@ const module::settings::SettingsConfig& gatingConfigSnapshot() {
     return cfg;
 }
 
-bool isModuleEnabled(const char* moduleId) {
-    return module::settings::moduleEnabled(gatingConfigSnapshot(), moduleId);
-}
-
 void setupLogging() {
     core::log::addFileOutput(::core::paths::logFile());
     core::log::addConsoleOutput();

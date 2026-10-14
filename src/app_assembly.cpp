@@ -89,7 +89,7 @@ std::vector<GatedEntry> buildGatedEntries(
     return gated;
 }
 
-void armExitHook() {
+bool armExitHook() {
     if (g_exitHookArmed) {
         return false;
     }
