@@ -889,7 +889,7 @@ REGISTER_TEST(assembly_dispatch_claude_lazy_assemble_autostart,
     // 并种下激活 profile。在**空 profile store** 上断言「代理已起」是错的方向——那正是事故
     // 语义（空库那条用例钉的就是这一侧）。
     platform::http::Server upstream("127.0.0.1", 0);
-    upstream.route("GET", "/v1/models",
+    upstream.route("POST", "/v1/messages",
                    [](const platform::http::RequestCtx&,
                       platform::http::ResponseWriter& w) {
                        w.setStatus(200);

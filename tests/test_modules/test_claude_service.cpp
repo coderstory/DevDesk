@@ -1041,7 +1041,7 @@ REGISTER_TEST(claude_service_test_connection_dialect_override,
     platform::http::Server upstream("127.0.0.1", 0);
     HeaderMap seen;
     int hitCount = 0;
-    upstream.route("GET", ".*",
+    upstream.route("POST", ".*",
                    [&](const platform::http::RequestCtx& ctx,
                        platform::http::ResponseWriter& w) {
                        ++hitCount;
