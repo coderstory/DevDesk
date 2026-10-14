@@ -314,6 +314,9 @@ void drawColumnContent(eui::Ui& ui, const std::string& id, const Column& col,
         .fontSize(t.sizes.fontSizeBody)
         .lineHeight(20.0f)
         .fontWeight(600)
+        // 省略号三件套：列名 + 计数超宽时截断，不压右侧 ✎/+ 按钮
+        .maxWidth(width - 88.0f - (colDot.has_value() ? 18.0f : 0.0f))
+        .overflow(core::TextOverflow::Ellipsis)
         .color(t.colors.textPrimary)
         .build();
 
@@ -682,7 +685,9 @@ void drawDragGhost(eui::Ui& ui, const core::theme::Tokens& t,
                         .border(2.0f, t.colors.primary)
                         .radius(t.sizes.radius)
                         .build();
-                    // 标题同真卡居中形态（副本不画 chips = 无 chip 卡：独占整卡居中）
+                    // 标题同真卡居中形态（副本不画 chips = 无 chip 卡：独占整卡居中）。
+                    // 省略号三件套同真卡；副本无序号徽章，不减 kCardOrdinalBadgeHoriz——
+                    // 缺了长标题会从副本卡两侧溢出（居中对齐两侧一起冒）
                     ui.text("todo.dragghost.title")
                         .position(kCardTitleBoxInset, cardContentGroupTop(false))
                         .size(w - 2.0f * kCardTitleBoxInset, kCardTitleLineH)
@@ -691,6 +696,8 @@ void drawDragGhost(eui::Ui& ui, const core::theme::Tokens& t,
                         .lineHeight(kCardTitleLineH)
                         .fontWeight(500)
                         .horizontalAlign(eui::HorizontalAlign::Center)
+                        .maxWidth(w - 2.0f * kCardTitleBoxInset)
+                        .overflow(core::TextOverflow::Ellipsis)
                         .color(t.colors.textPrimary)
                         .build();
                 })

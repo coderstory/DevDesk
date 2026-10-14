@@ -4162,3 +4162,127 @@ REGISTER_TEST(todo_archive_tasks_in_column_sort,
     DOCTEST_CHECK_EQ(result[3]->id, 4);  // archivedAt=nullopt→0
     return true;
 })
+
+// 列头 / 真卡 / 拖拽副本三处标题省略号三件套（overflow==Ellipsis && maxWidth>0 && !wrap）
+REGISTER_TEST(todo_ui_title_ellipsis,
+              "todo_ui: 列头+真卡+拖拽副本标题省略号三件套（headless）", {
+    TestEnv env;
+    DOCTEST_REQUIRE(env.ready);
+    auto list = env.svc->listColumns();
+    DOCTEST_REQUIRE(list.isOk());
+    DOCTEST_REQUIRE(!list.value().empty());
+    const int64_t col0 = list.value()[0].id;
+
+    DOCTEST_REQUIRE(env.svc->renameColumn(col0, std::string(60, 'X')).isOk());
+    auto t = env.svc->createTask(col0, std::string(120, 'A'));
+    DOCTEST_REQUIRE(t.isOk());
+
+    std::unique_ptr<::core::Module> mod(create_todo_module());
+    mod->onStart();
+
+    eui::Ui ui;
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    auto composeLayout = [&]() {
+        ui.begin("todo_ellipsis_frame");
+        mod->compose(ui, screen);
+        ui.end();
+        ui.layout(screen);
+    };
+    auto boundsOf = [](const core::dsl::Element* e) {
+        return eui::Rect{e->frame.x, e->frame.y, e->frame.width, e->frame.height};
+    };
+    // inline ellipsis check (DOCTEST macros use early-return from test fn, cannot
+    // be in a lambda without tripping -Wreturn-type in -Werror builds)
+    auto checkEllipsis = [](const core::dsl::Element* el) -> bool {
+        return el != nullptr && el->overflow == core::TextOverflow::Ellipsis &&
+               el->maxWidth > 0.0f;
+    };
+
+    composeLayout();
+
+    // 列头标题
+    {
+        const auto* el = ui.find("todo.col.0.title");
+        DOCTEST_REQUIRE(el != nullptr);
+        DOCTEST_CHECK_EQ(el->overflow, core::TextOverflow::Ellipsis);
+        DOCTEST_CHECK(el->maxWidth > 0.0f);
+    }
+
+    // 真卡标题（拖前）
+    const auto* cardTitle = ui.find("todo.col.0.card.0.title");
+    DOCTEST_REQUIRE(cardTitle != nullptr);
+    DOCTEST_CHECK_EQ(cardTitle->text, std::string(120, 'A'));
+    DOCTEST_CHECK(checkEllipsis(cardTitle));
+
+    // 拖拽 → 副本出现
+    const auto* card = ui.find("todo.col.0.card.0.bg");
+    DOCTEST_REQUIRE(card != nullptr);
+    const eui::Rect cardBounds = boundsOf(card);
+    eui::PointerEvent pe;
+    card->onPress(pe, cardBounds);
+    core::dsl::DragEvent ev;
+    ev.x = cardBounds.x + 100.0f;
+    ev.y = cardBounds.y + 50.0f;
+    ev.totalX = 100.0;
+    ev.totalY = 50.0;
+    card->onDrag(ev);
+    composeLayout();
+
+    const auto* ghost = ui.find("todo.dragghost");
+    DOCTEST_REQUIRE(ghost != nullptr);
+    {
+        const auto* el = ui.find("todo.dragghost.title");
+        DOCTEST_REQUIRE(el != nullptr);
+        DOCTEST_CHECK_EQ(el->overflow, core::TextOverflow::Ellipsis);
+        DOCTEST_CHECK(el->maxWidth > 0.0f);
+    }
+
+    mod->onStop();
+    return true;
+})
+
+// 逾期弹窗行标题省略号三件套
+REGISTER_TEST(todo_ui_overdue_row_ellipsis,
+              "todo_ui: 逾期弹窗行标题省略号三件套（headless）", {
+    TestEnv env;
+    DOCTEST_REQUIRE(env.ready);
+    auto list = env.svc->listColumns();
+    DOCTEST_REQUIRE(list.isOk());
+    DOCTEST_REQUIRE(!list.value().empty());
+    const int64_t todoCol = list.value()[0].id;
+
+    auto ov = env.svc->createTask(todoCol, std::string(120, 'B'));
+    DOCTEST_REQUIRE(ov.isOk());
+    const int64_t now = static_cast<int64_t>(std::time(nullptr));
+    {
+        module::todo::Task t = ov.value();
+        std::tm dueTm{};
+        core::time::localTime(now, &dueTm);
+        dueTm.tm_hour = 12;
+        dueTm.tm_min = 0;
+        dueTm.tm_sec = 0;
+        t.dueAt = std::mktime(&dueTm) - 2 * 86400;
+        DOCTEST_REQUIRE(env.svc->updateTask(t).isOk());
+    }
+
+    std::unique_ptr<::core::Module> mod(create_todo_module());
+    mod->onStart();
+
+    {
+        Frame frame(mod.get());
+        const auto* btn = frame.ui.find("todo.btn.overdue.bg");
+        DOCTEST_REQUIRE(btn != nullptr);
+        DOCTEST_REQUIRE(btn->onClick != nullptr);
+        btn->onClick();
+        frame.refresh();
+        const auto* el = frame.ui.find("todo.dialog.overdue.row.0.title");
+        DOCTEST_REQUIRE(el != nullptr);
+        DOCTEST_CHECK_EQ(el->overflow, core::TextOverflow::Ellipsis);
+        DOCTEST_CHECK(el->maxWidth > 0.0f);
+    }
+
+    mod->onStop();
+    return true;
+})
