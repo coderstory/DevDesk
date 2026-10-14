@@ -155,12 +155,12 @@ public:
     // 代理 server 生命周期
 
     // 代理启动前置校验（无激活 profile 起代理会全量 503）；任一不过 → fail 且零副作用
-    //（不 bind、不接管、不动激活行）：① 有激活且可读的 profile；② GET /v1/models 2xx。
+    //（不 bind、不接管、不动激活行）：① 有激活且可读的 profile；② POST /v1/messages 2xx（1-token ping）。
     // 不得在 UI 线程同步调用。
     core::Result<void> validateProxyPreconditions(
         int probeTimeoutMs = kProxyPreStartProbeTimeoutMs);
 
-    // 前置校验探测超时：只发一个 GET /v1/models，短于 testConnection 的 15s
+    // 前置校验探测超时：只发一个 POST /v1/messages，短于 testConnection 的 15s
     //（校验失败要用户可感知地快）。
     static constexpr int kProxyPreStartProbeTimeoutMs = 2000;
 

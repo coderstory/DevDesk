@@ -372,13 +372,34 @@ ClaudeService::probeProfile(const Profile& profile, int timeoutMs) {
     }
 
     platform::http::Request req;
-    req.method = "GET";
-    req.url = stripTrailingSlash(profile.baseUrl) + "/v1/models";
+    // 探测路径与真实转发同源：claude CLI 走 POST /v1/messages（proxy_router 原样拼
+    // base+path）。GET /v1/models 是 OpenAI 惯例，Anthropic-compatible 网关常不实现
+    // ——实测 bailian 网关带有效 key 也 404，旧探测把好配置误报成「连通异常」。
+    req.method = "POST";
+    req.url = stripTrailingSlash(profile.baseUrl) + "/v1/messages";
+    // 1-token ping；模型取该 profile 实际会用的（models_config 的 default 槽回落
+    // profile.model），都没有则发占位名——上游 4xx 仍可区分「可达+鉴权已过」与
+    // 「密钥/网络问题」（无 key 请求会被鉴权中间件 401 挡在路由之前）。
+    std::string probeModel;
+    if (!profile.modelsConfigJson.empty()) {
+        auto cfgR = parseModelsConfig(profile.modelsConfigJson);
+        if (cfgR.isOk() && !cfgR.value().def.model.empty()) {
+            probeModel = cfgR.value().def.model;
+        }
+    }
+    if (probeModel.empty()) probeModel = profile.model;
+    if (probeModel.empty()) probeModel = "ping";
+    req.body = "{\"model\":\"" + probeModel +
+               "\",\"max_tokens\":1,\"messages\":[{\"role\":\"user\",\"content\":\"ping\"}]}";
+    req.headers["content-type"] = "application/json";   // 转发时由客户端头带来，探测需自备
     // 探测请求经上游方言层装配头部，与真实转发同源（否则转得通而探测误报失败）。
     // dialectOverride 必传（漏传 = 探测与转发方言错位；空串 → 回落 host 推断）。
     const UpstreamDialect dialect =
         UpstreamDialect::forBaseUrl(profile.baseUrl, profile.dialectOverride);
     dialect.applyHeaders(req.headers, key, authFieldFromText(profile.authField));
+    if (dialect.normalizeBody(req.body)) {
+        LOG_INFO("testConnection: 按上游方言剥掉模型名 [1M] 标记");
+    }
     req.timeoutMs = timeoutMs;
 
     auto resp = platform::http::send(req);

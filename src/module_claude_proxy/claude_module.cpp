@@ -923,7 +923,7 @@ private:
             return;
         }
         // 同步 HTTP（15s）挪后台线程避免冻 UI；结果经原子标志回 compose 收割
-        showToast("测试中", "正在请求 " + p.baseUrl + "/v1/models，最长 15 秒…", false);
+        showToast("测试中", "正在请求 " + p.baseUrl + "/v1/messages，最长 15 秒…", false);
         testThread_ = std::thread([this, p, svc] {
             auto r = svc->testConnection(p);
             if (r.isFail()) {
@@ -938,8 +938,14 @@ private:
                     testResultIsError_ = false;
                 } else {
                     testResultTitle_ = "连通异常";
+                    std::string hint = "（检查 API Key 或 Base URL）";
+                    if (code == 401 || code == 403) {
+                        hint = "（API Key 被上游拒绝）";
+                    } else if (code == 404) {
+                        hint = "（接口不存在或模型不可用，检查 Base URL 与模型配置）";
+                    }
                     testResultMsg_ = "上游返回 HTTP " + std::to_string(code) +
-                                      "（检查 API Key 或 Base URL）";
+                                      std::move(hint);
                     testResultIsError_ = true;
                 }
             }
