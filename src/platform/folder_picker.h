@@ -13,6 +13,12 @@ namespace platform::folderpicker {
 using PickFolderFn = core::Result<std::string> (*)(const std::string& title,
                                                     const std::string& startDir);
 
+// 弹出原生目录选择对话框。title 为对话框标题栏文本（可为空串）；startDir 为初始定位目录
+//（空串 = 系统默认，通常为"文档"/"此电脑"）。成功返回所选目录的绝对路径；用户取消返回 fail
+//（错误信息「用户取消选择」）。
+core::Result<std::string> pickFolder(const std::string& title,
+                                     const std::string& startDir);
+
 // 注入缝：默认 = 真实平台实现；测试经 setPickerForTest 替换（nullptr = 恢复默认）
 inline PickFolderFn& pickerSlot() {
     static PickFolderFn slot = &pickFolder;
@@ -22,11 +28,5 @@ inline PickFolderFn& pickerSlot() {
 inline void setPickerForTest(PickFolderFn fn) {
     pickerSlot() = (fn ? fn : &pickFolder);
 }
-
-// 弹出原生目录选择对话框。title 为对话框标题栏文本（可为空串）；startDir 为初始定位目录
-//（空串 = 系统默认，通常为"文档"/"此电脑"）。成功返回所选目录的绝对路径；用户取消返回 fail
-//（错误信息「用户取消选择」）。
-core::Result<std::string> pickFolder(const std::string& title,
-                                     const std::string& startDir);
 
 } // namespace platform::folderpicker
