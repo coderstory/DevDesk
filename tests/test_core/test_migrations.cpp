@@ -175,8 +175,8 @@ REGISTER_TEST(migrations_old_db_upgrade,
         DOCTEST_REQUIRE(r.isOk());
         auto& db = r.value().db();
 
-        // user_version = 3（v1+v2+v3 组已全部应用）
-        DOCTEST_CHECK_EQ(readUserVersion(db), 3);
+        // user_version = 4（v1~v4 组已全部应用）
+        DOCTEST_CHECK_EQ(readUserVersion(db), 4);
 
         // claude_profiles 补全 8 列
         DOCTEST_CHECK(hasColumn(db, "claude_profiles", "api_key_encrypted"));
@@ -232,7 +232,7 @@ REGISTER_TEST(migrations_is_idempotent,
         auto r = core::Database::open(path);
         DOCTEST_REQUIRE(r.isOk());
         auto& db = r.value().db();
-        DOCTEST_CHECK_EQ(readUserVersion(db), 3);
+        DOCTEST_CHECK_EQ(readUserVersion(db), 4);
 
         // 二次跑 migration：再次打开库会再调 applyPending，各组应跳过
     }
@@ -240,8 +240,8 @@ REGISTER_TEST(migrations_is_idempotent,
         auto r2 = core::Database::open(path);
         DOCTEST_REQUIRE(r2.isOk());
         auto& db2 = r2.value().db();
-        // user_version 仍是 2，没有推进（没有新版本组）
-        DOCTEST_CHECK_EQ(readUserVersion(db2), 3);
+        // user_version 仍是 4，没有推进（没有新版本组）
+        DOCTEST_CHECK_EQ(readUserVersion(db2), 4);
         // 数据仍完好
         DOCTEST_CHECK_EQ(rowCount(db2, "claude_profiles"), 1);
     }
@@ -259,7 +259,7 @@ REGISTER_TEST(migrations_new_db_gets_latest_version,
     auto& db = tdb.handle();
 
     // 全新库：applySchema 建全部列 → 各组 ALTER 预检全跳过 → user_version = 2
-    DOCTEST_CHECK_EQ(readUserVersion(db), 3);
+    DOCTEST_CHECK_EQ(readUserVersion(db), 4);
 
     // 按 schema 建了全部列：不应缺
     DOCTEST_CHECK(hasColumn(db, "claude_profiles", "api_key_encrypted"));
@@ -351,7 +351,7 @@ REGISTER_TEST(migrations_partial_upgrade,
         DOCTEST_REQUIRE(r.isOk());
         auto& db = r.value().db();
 
-        DOCTEST_CHECK_EQ(readUserVersion(db), 3);
+        DOCTEST_CHECK_EQ(readUserVersion(db), 4);
 
         // 已补的列保留：
         DOCTEST_CHECK(hasColumn(db, "claude_profiles", "api_key_encrypted"));
@@ -421,7 +421,7 @@ REGISTER_TEST(migrations_credential_backfill,
         auto& db = r.value().db();
 
         // applySchema + 迁移把列补全
-        DOCTEST_CHECK_EQ(readUserVersion(db), 3);
+        DOCTEST_CHECK_EQ(readUserVersion(db), 4);
 
         // 凭据列仍是空（没有真的 Keychain 文件）
         DOCTEST_CHECK_EQ(cell(db, "claude_profiles", "api_key_encrypted", 1),
@@ -443,7 +443,7 @@ REGISTER_TEST(migrations_credential_backfill_skip_new_db,
 
     // 新库：applySchema + 迁移 → 无 keychain_account 列
     DOCTEST_CHECK(!hasColumn(db, "claude_profiles", "keychain_account"));
-    DOCTEST_CHECK_EQ(readUserVersion(db), 3);
+    DOCTEST_CHECK_EQ(readUserVersion(db), 4);
 
     return true;
 })
@@ -457,7 +457,7 @@ REGISTER_TEST(migrations_v2_todo_archived_at,
 
     // 新库 applySchema + applyPending → v2 已完成
     DOCTEST_CHECK(hasColumn(db, "todo_tasks", "archived_at"));
-    DOCTEST_CHECK_EQ(readUserVersion(db), 3);
+    DOCTEST_CHECK_EQ(readUserVersion(db), 4);
 
     // PRAGMA table_info 验证列可空（notnull=0）
     {
@@ -646,7 +646,7 @@ REGISTER_TEST(migrations_v3_legacy_constraint,
         auto& db = r.value().db();
 
         // user_version 推进到 3
-        DOCTEST_CHECK_EQ(readUserVersion(db), 3);
+        DOCTEST_CHECK_EQ(readUserVersion(db), 4);
 
         // keychain_account 列仍存在
         DOCTEST_CHECK(hasColumn(db, "claude_profiles", "keychain_account"));
@@ -725,7 +725,7 @@ REGISTER_TEST(migrations_v3_new_db_skip,
 
     // 新库：applySchema 建全部列 → 无 keychain_account → v3 被 requireColumn 守卫跳过
     DOCTEST_CHECK(!hasColumn(db, "claude_profiles", "keychain_account"));
-    DOCTEST_CHECK_EQ(readUserVersion(db), 3);
+    DOCTEST_CHECK_EQ(readUserVersion(db), 4);
 
     // 无中间表残留
     {
@@ -804,7 +804,7 @@ REGISTER_TEST(migrations_v3_idempotent,
         auto r = core::Database::open(path);
         DOCTEST_REQUIRE(r.isOk());
         auto& db = r.value().db();
-        DOCTEST_CHECK_EQ(readUserVersion(db), 3);
+        DOCTEST_CHECK_EQ(readUserVersion(db), 4);
         DOCTEST_CHECK_EQ(rowCount(db, "claude_profiles"), 1);
     }
 
@@ -813,7 +813,7 @@ REGISTER_TEST(migrations_v3_idempotent,
         auto r2 = core::Database::open(path);
         DOCTEST_REQUIRE(r2.isOk());
         auto& db2 = r2.value().db();
-        DOCTEST_CHECK_EQ(readUserVersion(db2), 3);
+        DOCTEST_CHECK_EQ(readUserVersion(db2), 4);
         DOCTEST_CHECK_EQ(rowCount(db2, "claude_profiles"), 1);
         DOCTEST_CHECK_EQ(cell(db2, "claude_profiles", "keychain_account", 1),
                          std::string("claude:1"));
