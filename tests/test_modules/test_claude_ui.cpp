@@ -20,6 +20,7 @@
 #include "platform/http_server.h"
 #include "platform/keychain.h"
 #include "platform/terminal_launch.h"
+#include "platform/folder_picker.h"
 #include "provider_config.h"
 #include "quota/quota_store.h"
 #include "quota_home_bridge.h"  // devdesk::quota_bridge::setQuotaFeatureEnabled
@@ -4313,6 +4314,8 @@ REGISTER_TEST(claude_ui_json_fullscreen_discard_semantics,
     return true;
 })
 
+static std::string s_claudeRunPickerDir;  // 假 picker 目标目录（函数指针缝，不能捕获）
+
 // 运行第 7 键（直连形态）
 // 本文件用真实 ClaudeService（setGlobal）：点「运行」前**必须**注入假 launch，
 // 否则测试会真的启动 wt/powershell + claude
@@ -4320,6 +4323,18 @@ REGISTER_TEST(claude_module_run_button_headless,
               "claude_module: 「运行」按钮存在 + 无选中 toast + 假 launch 收到 --settings 参数", {
     TestEnv env;
     test_support::DataRootEnv root(kDbPrefix, "run");
+    // doRun 先弹原生目录选择框：注入假 picker 防真弹窗阻塞套件。
+    // RAII 保证断言失败提前退出也复位，stub 不泄漏进后续用例
+    struct PickerStub {
+        PickerStub(const std::string& d) {
+            s_claudeRunPickerDir = d;
+            platform::folderpicker::setPickerForTest(
+                [](const std::string&, const std::string&) {
+                    return core::Result<std::string>::ok(s_claudeRunPickerDir);
+                });
+        }
+        ~PickerStub() { platform::folderpicker::setPickerForTest(nullptr); }
+    } pickerStub(root.dir);
     std::unique_ptr<::core::Module> mod(create_claude_module());
     eui::Screen screen;
     screen.width = 1600.0f;
