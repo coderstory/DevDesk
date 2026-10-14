@@ -2895,7 +2895,7 @@ REGISTER_TEST(settings_card_registry_order,
         {
                 // 按顶层键写进 app_config 表各行
             DOCTEST_REQUIRE(test_support::seedConfigJsonRows(
-                ::core::appDatabase(), module::settings::SettingsStore::keyNamespace(), "{\"theme\":\"dark\",\"enabledModules\":[\"home\"," "\"markdown\",\"todo\",\"claude_proxy\",\"settings\",\"pet\"]}"));
+                ::core::appDatabase(), module::settings::SettingsStore::keyNamespace(), "{\"theme\":\"dark\",\"enabledModules\":[\"home\"," "\"markdown\",\"todo\",\"claude_proxy\",\"settings\"]}"));
         }
         std::unique_ptr<::core::Module> mod(create_settings_module());
         mod->onStart();
@@ -2962,7 +2962,7 @@ REGISTER_TEST(settings_cards_no_outer_cardframe,
     {
             // 按顶层键写进 app_config 表各行
         DOCTEST_REQUIRE(test_support::seedConfigJsonRows(
-            ::core::appDatabase(), module::settings::SettingsStore::keyNamespace(), "{\"theme\":\"dark\",\"enabledModules\":[" "\"home\",\"markdown\",\"todo\",\"claude_proxy\",\"settings\",\"pet\"]}"));
+            ::core::appDatabase(), module::settings::SettingsStore::keyNamespace(), "{\"theme\":\"dark\",\"enabledModules\":[" "\"home\",\"markdown\",\"todo\",\"claude_proxy\",\"settings\"]}"));
     }
     std::unique_ptr<::core::Module> mod(create_settings_module());
     mod->onStart();

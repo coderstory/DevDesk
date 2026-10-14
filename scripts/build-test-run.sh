@@ -680,9 +680,7 @@ echo "✅ 守卫自检全过（${_GUARD_SELF_COUNT} 道守卫的自检均好树�
 # 每一步都在补一个曾被漏掉的环节：
 #   ① 重组 bundle：build-app.sh 会 rm -rf 重建 .app + 拷二进制 + 刷 Info.plist 版本 + 拷 assets。
 #      **必须走它**，不要手搓 cp —— 手搓不会重组 bundle，壳会一直停在旧版本。
-#   ② assets 补拷 + 三条断言（与 scripts/package-macos.sh §4 同款口径：rm -rf 后
-#      cmake -E copy_directory，再断言 shadertoy 非空 / pets/README.md / 每个皮肤目录有
-#      pet.json）。顺序关键：**必须在 ① 之后** —— build-app.sh 会 rm -rf 整个 bundle，
+#   ② assets 补拷 + shadertoy 断言：cmake -E copy_directory 后断言 shadertoy 非空。
 #      先补后建等于白补。改这里要同步改 package-macos.sh §4（不发明第二套口径）。
 #   ③ 版本号：单一源 = 构建目录 CMakeCache.txt 的 CMAKE_PROJECT_VERSION（同
 #      package-macos.sh §5）；build-app.sh 已把它写进产物 Info.plist，这里断言产物里确实
@@ -739,20 +737,7 @@ if [ "$INSTALL" = "1" ]; then
     echo "❌ 断言失败：$MACOS_DIR/assets/shaders/shadertoy 为空" >&2
     exit 1
   fi
-  if [ ! -f "$MACOS_DIR/assets/pets/README.md" ]; then
-    echo "❌ 断言失败：$MACOS_DIR/assets/pets/README.md 缺失" >&2
-    exit 1
-  fi
-  PET_COUNT=0
-  for petdir in "$MACOS_DIR/assets/pets"/*/; do
-    [ -d "$petdir" ] || continue
-    if [ ! -f "$petdir/pet.json" ]; then
-      echo "❌ 断言失败：皮肤目录缺 pet.json: $petdir" >&2
-      exit 1
-    fi
-    PET_COUNT=$((PET_COUNT + 1))
-  done
-  echo "✅ assets 就位（Contents/MacOS/assets；pets 含 $PET_COUNT 皮肤包）"
+  echo "✅ assets 就位（Contents/MacOS/assets）"
 
   APP_VERSION="$(sed -n 's/^CMAKE_PROJECT_VERSION:[A-Za-z]*=\(.*\)$/\1/p' "$BUILD_DIR/CMakeCache.txt" | head -1 | tr -d '\r')"
   if [ -z "$APP_VERSION" ]; then
