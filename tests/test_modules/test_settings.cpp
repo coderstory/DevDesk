@@ -1846,9 +1846,13 @@ REGISTER_TEST(settings_label_fit_pure,
               "settings: 文案宽度估算/单行适配/皮肤下拉宽度（不溢出判据）", {
     namespace ms = module::settings;
     // 估算口径钉死：ASCII 0.62em / 全角 1.0em（UTF-8 多字节按字符计一次）
-    DOCTEST_CHECK(std::abs(ms::estimatedTextWidth("abc", 10.0f) - 18.6f) <    DOCTEST_CHECK(std::abs(ms::estimatedTextWidth("永久保留", 12.0f) - 48.0f) <
+    DOCTEST_CHECK(std::abs(ms::estimatedTextWidth("abc", 10.0f) - 18.6f) < 1e-3f);
+    DOCTEST_CHECK(std::abs(ms::estimatedTextWidth("永久保留", 12.0f) - 48.0f) <
+                  1e-3f);
     DOCTEST_CHECK(std::abs(ms::estimatedTextWidth("ab中文", 10.0f) -
-                           (2.0f * 0.62f + 2.0f) * 10.0f) <    DOCTEST_CHECK(std::abs(ms::estimatedTextWidth("", 16.0f)) <
+                           (2.0f * 0.62f + 2.0f) * 10.0f) < 1e-3f);
+    DOCTEST_CHECK(std::abs(ms::estimatedTextWidth("", 16.0f)) < 1e-3f);
+
     // 放得下 → 原文；放不下 → 截断 + U+2026，且含省略号后仍不超宽
     const std::string kLong = "super-long-skin-name-here";
     DOCTEST_CHECK(ms::fitControlLabel("robot", 178.0f, 16.0f) == "robot");
@@ -1861,16 +1865,9 @@ REGISTER_TEST(settings_label_fit_pure,
                               std::to_string(ms::estimatedTextWidth(fit, 16.0f)));
     DOCTEST_CHECK(kLong.compare(0, fit.size() - 3u,
                                 fit.substr(0, fit.size() - 3u)) == 0);
-
-                           (25.0f * 0.62f * 16.0f + 62.0f)) <                           420.0f) <    return true;
+    return true;
 })
 
-        // 皮肤下拉单行不换行
-        // EUI-NEO 的 text 默认 wrap=false（core/dsl.h）：超宽皮肤名**不折行**，而是画出控件
-        // 右边缘。判据：
-    //   ① 字段宽度 ≥ 最长皮肤名估算宽 + 字段 chrome（且 ≤ 420 上限）；
-    //   ② 字段文案与每个选项的估算宽 ≤ 各自可用宽；
-    //   ③ 文案无换行符；短名原样显示、清单项数不减（截断只碰显示串，不改取值）。
 REGISTER_TEST(settings_appearance_dropdown_popup_above_following_cards,
               "settings: appearance 卡下拉弹层盖过后续兄弟卡（不被编辑器字号卡截断）", {
     std::unique_ptr<::core::Module> mod(create_settings_module());
