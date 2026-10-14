@@ -11,6 +11,7 @@
 #include "core/proxy_stats.h"
 #include "module_home/home_quota_card.h"   // computeQuotaCardMetrics（组 H(a) 判据）
 #include "module_home/home_service.h"  // startOfDayEpoch（逐时 token 种子的本地零点锚）
+#include "quota_home_bridge.h"  // devdesk::quota_bridge::setQuotaFeatureEnabled
 #include "quota/quota_store.h"  // 余量卡种子走真落库口（编解码单点）
 #include "platform/json.h"
 #include <fstream>
@@ -332,6 +333,8 @@ int main(int argc, char* argv[]) {
 
     std::unique_ptr<::core::Module> mod(create_home_module());
     mod->onStart();  // service_ + refreshStats（读种子库）
+    // 余量功能默认关，probe 侧显式打开以验证卡片渲染
+    devdesk::quota_bridge::setQuotaFeatureEnabled(true);
 
     core::dsl::Runtime runtime;
     runtime.initialize(window);

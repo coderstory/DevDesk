@@ -299,7 +299,7 @@ REGISTER_TEST(settings_proxy_autostart_default_off, "settings: claudeProxyAutoSt
 
 REGISTER_TEST(settings_quota_switch_default_off, "settings quota_switch: quotaEnabled 默认 false + 读写往返", {
     // 配置落 app_config 表，生产代码经 core::appDatabase() 取连接；未注册则 save 一律失败。
-    test_support::TestEnv cfgDbEnv(kCfgPrefix, "cfg");
+    test_support::TestEnv cfgDbEnv(kCfgPrefix, "cfg", true);
     const auto path = test_support::tempConfigFile(kCfgPrefix, "quota");
     removeQuietly(path);
     module::settings::SettingsStore store(::core::appDatabase());
@@ -330,15 +330,15 @@ REGISTER_TEST(settings_quota_switch_bridge_flag, "settings quota_switch: bridge 
     removeQuietly(path);
 
     // 默认 false
-    DOCTEST_CHECK_FALSE(module::claude::quota::isQuotaFeatureEnabled());
+    DOCTEST_CHECK_FALSE(devdesk::quota_bridge::isQuotaFeatureEnabled());
 
     // 开启 bridge
-    module::claude::quota::setQuotaFeatureEnabled(true);
-    DOCTEST_CHECK(module::claude::quota::isQuotaFeatureEnabled());
+    devdesk::quota_bridge::setQuotaFeatureEnabled(true);
+    DOCTEST_CHECK(devdesk::quota_bridge::isQuotaFeatureEnabled());
 
     // 关闭 bridge
-    module::claude::quota::setQuotaFeatureEnabled(false);
-    DOCTEST_CHECK_FALSE(module::claude::quota::isQuotaFeatureEnabled());
+    devdesk::quota_bridge::setQuotaFeatureEnabled(false);
+    DOCTEST_CHECK_FALSE(devdesk::quota_bridge::isQuotaFeatureEnabled());
 
     removeQuietly(path);
     return true;
@@ -353,12 +353,12 @@ REGISTER_TEST(settings_quota_switch_data_preserved, "settings quota_switch: 关�
     removeQuietly(path);
 
     // 先设为 true
-    module::claude::quota::setQuotaFeatureEnabled(true);
-    DOCTEST_CHECK(module::claude::quota::isQuotaFeatureEnabled());
+    devdesk::quota_bridge::setQuotaFeatureEnabled(true);
+    DOCTEST_CHECK(devdesk::quota_bridge::isQuotaFeatureEnabled());
 
     // 关闭：标记切回 false，数据库不受影响（bridge 无 write 路径）
-    module::claude::quota::setQuotaFeatureEnabled(false);
-    DOCTEST_CHECK_FALSE(module::claude::quota::isQuotaFeatureEnabled());
+    devdesk::quota_bridge::setQuotaFeatureEnabled(false);
+    DOCTEST_CHECK_FALSE(devdesk::quota_bridge::isQuotaFeatureEnabled());
 
     removeQuietly(path);
     return true;
@@ -2972,7 +2972,7 @@ REGISTER_TEST(settings_card_registry_order,
         DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 1));
         const std::vector<std::string> wantModulesAll = {
             "settings.card.modules",
-
+            "settings.card.quota",
             "settings.card.directory",
             "settings.card.proxy"};
         const auto t1 = cardIdsOf(*mod, screen);
@@ -2998,7 +2998,8 @@ REGISTER_TEST(settings_card_registry_order,
         mod->onStart();
         DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 1));
         const std::vector<std::string> wantModulesGated = {
-            "settings.card.modules"};
+            "settings.card.modules",
+            "settings.card.quota"};
         const auto g1 = cardIdsOf(*mod, screen);
         DOCTEST_CHECK_MESSAGE(g1 == wantModulesGated, "模块 tab（门控全关） 实测：" + join(g1));
         DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 0));
@@ -3042,7 +3043,7 @@ REGISTER_TEST(settings_cards_no_outer_cardframe,
         "settings.card.appearance",
         "settings.card.editor",
         "settings.card.modules",
-
+        "settings.card.quota",
         "settings.card.directory",
         "settings.card.proxy",
         "settings.card.log",
@@ -3052,7 +3053,7 @@ REGISTER_TEST(settings_cards_no_outer_cardframe,
         "settings.card.appearance.bg",
         "settings.card.editor.bg",
         "settings.card.modules.bg",
-
+        "settings.card.quota.bg",
         "settings.card.directory.bg",
         "settings.card.proxy.bg",
         "settings.card.log.bg",

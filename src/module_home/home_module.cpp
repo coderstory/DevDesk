@@ -562,7 +562,7 @@ public:
                     module::home::quota_card::computeHomeQuotaBudget(
                         screen.height, statH, pad, gap);
                 if (moduleRegistered(::core::PageId::ClaudeProxy) &&
-                    module::claude::quota::isQuotaFeatureEnabled()) {
+                    devdesk::quota_bridge::isQuotaFeatureEnabled()) {
                     if (quotaBudget.drawsQuotaCard) {
                     refreshQuotaRows();
                     const std::vector<module::claude::quota::QuotaHomeRow>&

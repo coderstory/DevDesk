@@ -62,7 +62,7 @@ public:
         // 消费跨模块跳转负载（取走即清，放最前保证同帧画出弹窗）
         consumeQuotaConfigPayload();
         // 余量功能开关即时生效：检测标记变化以启动/停止后台刷新
-        const bool quotaNow = module::claude::quota::isQuotaFeatureEnabled();
+        const bool quotaNow = devdesk::quota_bridge::isQuotaFeatureEnabled();
         if (quotaNow && !quotaWasEnabled_) {
             startQuotaRefresh();
         } else if (!quotaNow && quotaWasEnabled_) {
@@ -220,7 +220,7 @@ public:
                 }
             }
         }
-        dv.quotaEnabled = module::claude::quota::isQuotaFeatureEnabled();
+        dv.quotaEnabled = devdesk::quota_bridge::isQuotaFeatureEnabled();
 
         ui.column("claude.root")
             .size(screen.width, screen.height)
@@ -316,7 +316,7 @@ public:
         claudeTools_ = std::make_unique<ClaudeTools>(*svc);
         claudeTools_->registerAll();
         // 余量后台刷新由功能总开关门控；默认关闭不启动
-        quotaWasEnabled_ = module::claude::quota::isQuotaFeatureEnabled();
+        quotaWasEnabled_ = devdesk::quota_bridge::isQuotaFeatureEnabled();
         if (quotaWasEnabled_) {
             startQuotaRefresh();
         }

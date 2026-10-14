@@ -85,10 +85,16 @@ int64_t quotaHomeRowsQueryCountForTest();
 // 复位计数（用例开头调）
 void quotaHomeResetQueryCountForTest();
 
+}  // namespace module::claude::quota
+
 // 余量功能总开关（默认 false）。关闭 = 整套余量子系统不可见；数据保留不删。
 // 消费方：home compose（首页余量卡）、claude compose（详情余量查询入口）、
 // claude onStart（后台刷新线程）、agent 工具暴露（暂无）。
 // 实现为 inline 函数共享单一 static atomic（零 link 期依赖，任何模块 include 即可调）。
+// 中立命名空间 devdesk::quota_bridge —— 被 home/claude/settings 三方共用，
+// 不得放在 module::claude::quota，否则设置页直接引兄弟模块会触发 R0 模块隔离守卫。
+
+namespace devdesk::quota_bridge {
 
 inline std::atomic<bool>& _quotaFeatureFlag() {
     static std::atomic<bool> flag{false};
@@ -103,4 +109,4 @@ inline void setQuotaFeatureEnabled(bool enabled) {
     _quotaFeatureFlag().store(enabled, std::memory_order_relaxed);
 }
 
-}  // namespace module::claude::quota
+}  // namespace devdesk::quota_bridge

@@ -271,6 +271,7 @@ REGISTER_TEST(home_quota_five_state_render,
 
     std::unique_ptr<::core::Module> mod(create_home_module());
     mod->onStart();
+    devdesk::quota_bridge::setQuotaFeatureEnabled(true);
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1400.0f;   // 装得下 7 行，不至于把别的行挤出视口
@@ -368,6 +369,7 @@ REGISTER_TEST(home_quota_balance_success_not_misread,
 
     std::unique_ptr<::core::Module> mod(create_home_module());
     mod->onStart();
+    devdesk::quota_bridge::setQuotaFeatureEnabled(true);
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1400.0f;
@@ -415,6 +417,7 @@ REGISTER_TEST(home_quota_tint_boundaries,
 
     std::unique_ptr<::core::Module> mod(create_home_module());
     mod->onStart();
+    devdesk::quota_bridge::setQuotaFeatureEnabled(true);
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1400.0f;
@@ -454,6 +457,7 @@ REGISTER_TEST(home_quota_refresh_button_wakes_refresher,
 
     std::unique_ptr<::core::Module> mod(create_home_module());
     mod->onStart();
+    devdesk::quota_bridge::setQuotaFeatureEnabled(true);
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1400.0f;
@@ -493,6 +497,7 @@ REGISTER_TEST(home_quota_config_button_opens_g6_dialog,
     router.registerModule(home.get());
     router.registerModule(claude.get());
     home->onStart();
+    devdesk::quota_bridge::setQuotaFeatureEnabled(true);
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1400.0f;
@@ -963,6 +968,7 @@ REGISTER_TEST(home_quota_snapshot_reflects_db_changes,
 
     std::unique_ptr<::core::Module> mod(create_home_module());
     mod->onStart();
+    devdesk::quota_bridge::setQuotaFeatureEnabled(true);
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1400.0f;
@@ -1072,6 +1078,7 @@ REGISTER_TEST(home_quota_snapshot_not_requery_when_unchanged,
 
     std::unique_ptr<::core::Module> mod(create_home_module());
     mod->onStart();
+    devdesk::quota_bridge::setQuotaFeatureEnabled(true);
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1400.0f;
