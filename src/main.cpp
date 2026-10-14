@@ -23,6 +23,8 @@
 
 #include <components/styledmenu.h>
 
+#include <utility>
+
 #include <eui/dsl.h>
 #include <eui/dsl_app.h>
 #include <core/render/text.h>

@@ -10,6 +10,8 @@
 #include <ctime>
 #include <filesystem>
 #include <string>
+#include <system_error>
+#include <utility>
 #include <vector>
 
 namespace module::markdown {

@@ -38,11 +38,13 @@
 
 #include <algorithm>
 #include <chrono>
+#include <exception>
 #include <filesystem>
 #include <fstream>
 #include <future>
 #include <memory>
 #include <string>
+#include <system_error>
 #include <vector>
 
 namespace module::settings {

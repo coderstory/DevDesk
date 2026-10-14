@@ -9,6 +9,7 @@
 
 #include <sqlite3.h>
 
+#include <ctime>
 #include <filesystem>
 #include <set>
 #include <string>

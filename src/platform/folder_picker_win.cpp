@@ -7,6 +7,7 @@
 #include <Shlwapi.h>     // SHCreateItemFromParsingName（MinGW 需要链接 shell32 与 shlwapi）
 
 #include <string>
+#include <utility>
 
 namespace platform::folderpicker {
 
