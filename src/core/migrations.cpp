@@ -157,42 +157,42 @@ constexpr int kMigrationV1SqlCount =
 	    // 清理上一轮部分提交的中间表（迁移写 user_version 失败且事务已提交的极罕见路径）
 	    "DROP TABLE IF EXISTS claude_profiles_v3",
 	    // 重建表：17 列全量 + keychain_account 可空遗留列在末尾
-	    "CREATE TABLE claude_profiles_v3 ("
-	    "id INTEGER PRIMARY KEY AUTOINCREMENT,"
-	    "name TEXT UNIQUE NOT NULL,"
-	    "base_url TEXT NOT NULL,"
-	    "api_key_hint TEXT NOT NULL,"
-	    "api_key_check TEXT NOT NULL,"
-	    "api_key_encrypted TEXT NOT NULL DEFAULT '',"
-	    "model TEXT NOT NULL,"
-	    "is_active INTEGER NOT NULL DEFAULT 0,"
-	    "created_at INTEGER NOT NULL,"
-	    "updated_at INTEGER NOT NULL,"
-	    "models_config TEXT NOT NULL DEFAULT '',"
-	    "extra_env TEXT NOT NULL DEFAULT '',"
-	    "shared_config_id INTEGER NOT NULL DEFAULT 0,"
-	    "auth_field TEXT NOT NULL DEFAULT 'both',"
-	    "dialect_override TEXT NOT NULL DEFAULT '',"
-	    "fallback_profile_id INTEGER NOT NULL DEFAULT 0,"
-	    "extra_settings_json TEXT NOT NULL DEFAULT '',"
-	    "keychain_account TEXT"  // 可空、无默认——新库无此行，本组被 requireColumn 跳过
-	    ")",
-	    "INSERT INTO claude_profiles_v3 ("
-	    "id, name, base_url, api_key_hint, api_key_check, api_key_encrypted, model,"
-	    "is_active, created_at, updated_at, models_config, extra_env, shared_config_id,"
-	    "auth_field, dialect_override, fallback_profile_id, extra_settings_json,"
-	    "keychain_account"
-	    ") SELECT "
-	    "id, name, base_url, api_key_hint, api_key_check, api_key_encrypted, model,"
-	    "is_active, created_at, updated_at, models_config, extra_env, shared_config_id,"
-	    "auth_field, dialect_override, fallback_profile_id, extra_settings_json,"
-	    "keychain_account "
-	    "FROM claude_profiles",
+	    ("CREATE TABLE claude_profiles_v3 ("
+	     "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+	     "name TEXT UNIQUE NOT NULL,"
+	     "base_url TEXT NOT NULL,"
+	     "api_key_hint TEXT NOT NULL,"
+	     "api_key_check TEXT NOT NULL,"
+	     "api_key_encrypted TEXT NOT NULL DEFAULT '',"
+	     "model TEXT NOT NULL,"
+	     "is_active INTEGER NOT NULL DEFAULT 0,"
+	     "created_at INTEGER NOT NULL,"
+	     "updated_at INTEGER NOT NULL,"
+	     "models_config TEXT NOT NULL DEFAULT '',"
+	     "extra_env TEXT NOT NULL DEFAULT '',"
+	     "shared_config_id INTEGER NOT NULL DEFAULT 0,"
+	     "auth_field TEXT NOT NULL DEFAULT 'both',"
+	     "dialect_override TEXT NOT NULL DEFAULT '',"
+	     "fallback_profile_id INTEGER NOT NULL DEFAULT 0,"
+	     "extra_settings_json TEXT NOT NULL DEFAULT '',"
+	     "keychain_account TEXT"  // 可空、无默认——新库无此行，本组被 requireColumn 跳过
+	     ")"),
+	    ("INSERT INTO claude_profiles_v3 ("
+	     "id, name, base_url, api_key_hint, api_key_check, api_key_encrypted, model,"
+	     "is_active, created_at, updated_at, models_config, extra_env, shared_config_id,"
+	     "auth_field, dialect_override, fallback_profile_id, extra_settings_json,"
+	     "keychain_account"
+	     ") SELECT "
+	     "id, name, base_url, api_key_hint, api_key_check, api_key_encrypted, model,"
+	     "is_active, created_at, updated_at, models_config, extra_env, shared_config_id,"
+	     "auth_field, dialect_override, fallback_profile_id, extra_settings_json,"
+	     "keychain_account "
+	     "FROM claude_profiles"),
 	    "DROP TABLE claude_profiles",
 	    "ALTER TABLE claude_profiles_v3 RENAME TO claude_profiles",
 	    // DROP TABLE 连走了旧索引，按 schema.h 当前定义重建
-	    "CREATE UNIQUE INDEX IF NOT EXISTS idx_claude_active "
-	    "ON claude_profiles(is_active) WHERE is_active = 1",
+	    ("CREATE UNIQUE INDEX IF NOT EXISTS idx_claude_active "
+	     "ON claude_profiles(is_active) WHERE is_active = 1"),
 	};
 
 	constexpr int kMigrationV3SqlCount =
@@ -212,9 +212,9 @@ const char* kMigrationV2Sqls[] = {
     "ALTER TABLE todo_tasks ADD COLUMN archived_at INTEGER",
     // 回填已在归档列（kind='archive'）但 archived_at 为 NULL 的行：用 updated_at 作近似归档时刻，
     // 保证强制排序对老数据也有确定键（updated_at 是本行知道的唯一可靠时间）。WHERE 幂等，重复执行无副作用。
-    "UPDATE todo_tasks SET archived_at = updated_at "
-    "WHERE column_id IN (SELECT id FROM todo_columns WHERE kind = 'archive') "
-    "AND archived_at IS NULL",
+    ("UPDATE todo_tasks SET archived_at = updated_at "
+     "WHERE column_id IN (SELECT id FROM todo_columns WHERE kind = 'archive') "
+     "AND archived_at IS NULL"),
 };
 
 constexpr int kMigrationV2SqlCount =
