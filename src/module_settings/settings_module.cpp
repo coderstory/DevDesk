@@ -301,7 +301,7 @@ public:
     void applyQuotaEnabled(bool on) {
         cfg_.quotaEnabled = on;
         persist();
-        module::claude::quota::setQuotaFeatureEnabled(on);
+        devdesk::quota_bridge::setQuotaFeatureEnabled(on);
         setStatus(on ? "供应商余量已开启（首页卡片与配置入口即时生效）"
                      : "供应商余量已关闭（数据保留不删）");
         LOG_INFO("Settings: quotaEnabled → " + std::string(on ? "true" : "false"));
