@@ -12,6 +12,7 @@ add_library(devdesk_platform STATIC
 if(WIN32)
     target_sources(devdesk_platform PRIVATE
         exec_capture_win.cpp
+        folder_picker_win.cpp           # IFileDialog COM 目录选择（FOS_PICKFOLDERS）
         keychain_win.cpp
         credential_protection_win.cpp  # DPAPI 密文入库（不得降级明文）
         file_open_win.cpp
@@ -25,6 +26,7 @@ if(WIN32)
 elseif(APPLE)
     target_sources(devdesk_platform PRIVATE
         exec_capture_posix.cpp
+        folder_picker_macos.cpp         # osascript choose folder（免 ObjC 链接）
         keychain_macos.cpp
         credential_protection_posix.cpp  # macOS 与 Linux 同实现，共用 _posix
         file_open_macos.cpp
@@ -38,6 +40,7 @@ elseif(APPLE)
 else()
     target_sources(devdesk_platform PRIVATE
         exec_capture_posix.cpp
+        folder_picker_posix.cpp         # 无 GUI 环境 stub（NotImplemented）
         keychain_posix.cpp
         credential_protection_posix.cpp
         file_open_posix.cpp
@@ -69,6 +72,8 @@ target_link_libraries(devdesk_platform
         # CMake 链接项去重保首位，全集中一处，别在别处早位再声明（会抢首位）
         shell32
         advapi32
+        # shlwapi（folder_picker_win.cpp 的路径解析）：同样只在 curl 后集中声明
+        shlwapi
         Threads::Threads
         # cpp-httplib OpenSSL 支持（可选，定义 CPPHTTPLIB_OPENSSL_SUPPORT 时需要）
         OpenSSL::SSL
@@ -95,8 +100,8 @@ endif()
 # + Shell32（file_open_win.cpp 的 CommandLineToArgvW）
 # 之前靠 -DCMAKE_CXX_STANDARD_LIBRARIES="-lws2_32 -lcrypt32" 绕过，现烤进构建系统
 # advapi32：system_theme_win.cpp 的 RegGetValueW（跟随系统主题，spec 缩水 A）
-# Winsock2/Crypt32/Shell32/Advapi32 不在此声明——统一放上方 PUBLIC 列表 CURL::libcurl 之后；
-#   早位声明会被 CMake 去重保首位，libcurl.a 的 Winsock 符号解析不到（2026-10-14 实证）
-
+# Winsock2/Crypt32/Shell32/Advapi32/Shlwapi 不在此声明——统一放上方 PUBLIC 列表
+#   CURL::libcurl 之后；早位声明会被 CMake 去重保首位，libcurl.a 的 Winsock 符号
+#   解析不到（2026-10-14 实证）
 # DevDesk 自己的警告等级（-Werror 只作用于 DevDesk target，不泄漏给第三方）
 devdesk_apply_warnings(devdesk_platform)
