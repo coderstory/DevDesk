@@ -1,0 +1,563 @@
+// tests/test_modules/test_github_sync_card.cpp
+// GitHub Sync 设置卡片 + 错误详情弹窗：无头 compose 断言。
+//
+// 本文件的断言写法约定，勿"顺手改回"更省事的写法：
+// - 断言节点存在/不存在，不要退回「状态枚举 == X」——那只证明判据函数对了，
+//   证明不了绘制层照它画了。
+// - 「不存在」类断言必须带对照组（例如「运行中按钮禁用」旁边必须有「非运行态可点」）：
+//   没有对照组的断言可能只是因为根本没渲染任何东西而恒真。
+// - EUI-NEO 的 dialog 关着时照样把整棵树建出来（只把 panel 的 opacity 设 0 并
+//   disable），判「弹窗开着」必须看 panel 的 opacity，find != nullptr 恒真。
+// - button 的根元素没有 onClick/disabled，两者都在 `<id>.bg` 上（见 components/button.h）。
+// - 全部依赖注入：卡片的三个动作与弹窗的日志源/回调都是本文件构造的 lambda，
+//   零真网、零真线程（本文件不启动任何后台任务）。
+#include "doctest.h"
+#include "frame_env.h"
+#include "test_support.h"
+
+#include "core/theme.h"
+#include "git_error_dialog.h"
+#include "github_sync_card.h"
+#include "github_sync_config.h"
+#include "github_sync_logic.h"
+#include "platform/github_api.h"
+#include "settings_config.h"
+#include "settings_ui_cards.h"
+
+#include <eui/dsl.h>
+
+#include <filesystem>
+#include <fstream>
+#include <string>
+#include <vector>
+
+namespace {
+
+namespace ms = module::settings;
+
+constexpr const char* kCardId = "settings.card.github_sync";
+constexpr const char* kDlgId = "settings.github.err";
+
+// 卡片夹具：只读入参 + 注入回调全部本文件构造（零真网、零真线程）。
+struct CardFixture {
+    ms::SettingsConfig cfg;
+    std::vector<std::string> petSkins;
+    std::string petSkinName;
+    std::string proxyPortDraft;
+    std::vector<std::string> logTail;
+    std::vector<std::string> petScaleLabels;
+    ms::SettingsCardsIn in;
+    ms::SettingsCardActions a;
+    int testClicks = 0;
+    int pushClicks = 0;
+    int pullClicks = 0;
+    int detailClicks = 0;
+
+    CardFixture()
+        : in{cfg, petSkins, petSkinName, proxyPortDraft, logTail,
+             petScaleLabels} {
+        in.githubSyncEnabled = true;   // 未启用时卡片早退，按钮根本不画
+        a.githubSyncTestConnection = [this] { ++testClicks; };
+        a.githubSyncPush = [this] { ++pushClicks; };
+        a.githubSyncPull = [this] { ++pullClicks; };
+        a.githubSyncShowErrorDetail = [this] { ++detailClicks; };
+    }
+
+    void draw(eui::Ui& ui) {
+        ms::CardDrawArgs args{ui, kCardId, 1520.0f, 380.0f,
+                              core::theme::current(), 0.0f, 1000.0f, in, a};
+        ms::drawGithubSyncCard(args);
+    }
+};
+
+platform::github::ApiLogEntry makeEntry(const char* method, const char* url,
+                                        long status, int ms) {
+    platform::github::ApiLogEntry e;
+    e.method = method;
+    e.urlMasked = url;
+    e.statusCode = status;
+    e.durationMs = ms;
+    return e;
+}
+
+// 弹窗夹具：日志源为纯内存假数据（零真网）。
+struct DialogFixture {
+    ms::GitErrorDialogState st;
+    ms::GitErrorDialogIn in;
+    ms::GitErrorDialogActions a;
+    std::vector<platform::github::ApiLogEntry> logs;
+    std::string copied;
+    int retryClicks = 0;
+    int closeClicks = 0;
+    int pullThenPushClicks = 0;
+
+    DialogFixture() {
+        auto e1 = makeEntry("GET", "https://api.github.com/repos/u/r", 401, 123);
+        e1.bodyTail = "{\"message\":\"Bad credentials\"}";
+        logs.push_back(e1);
+        auto e2 = makeEntry("PUT",
+                            "https://api.github.com/repos/u/r/contents/database.sql",
+                            0, 0);
+        e2.networkError = true;
+        e2.errorMessage = "connect timeout";
+        logs.push_back(e2);
+
+        in.summary = "推送失败：HTTP 401（Token 无效或已过期）";
+        in.logs = [this] { return logs; };
+        a.copyDetail = [this](const std::string& t) { copied = t; };
+        a.retry = [this] { ++retryClicks; };
+        a.pullThenPush = [this] { ++pullThenPushClicks; };
+        a.close = [this] { ++closeClicks; };
+        a.selectLog = [this](int i) { st.selectedLogIndex = i; };
+        a.logScrolled = [this](float v) { st.logScrollOffset = v; };
+    }
+
+    void draw(eui::Ui& ui, const eui::Screen& screen) {
+        ms::drawGitErrorDialog(ui, screen, core::theme::current(), st, in, a);
+    }
+};
+
+} // namespace
+
+REGISTER_TEST(github_sync_card_has_test_button,
+              "github_sync 卡片: 测试连接按钮存在且带注入 onClick", {
+    CardFixture fx;
+    test_support::HeadlessFrame f("githubsynccard");
+    DOCTEST_CHECK(f.frame([&](eui::Ui& ui) {
+        fx.draw(ui);
+        const auto* btn = ui.find(std::string(kCardId) + ".btn.test.bg");
+        DOCTEST_REQUIRE(btn != nullptr);
+        DOCTEST_CHECK(btn->onClick != nullptr);
+        const auto* label = ui.find(std::string(kCardId) + ".btn.test.text");
+        DOCTEST_REQUIRE(label != nullptr);
+        DOCTEST_CHECK_EQ(label->text, std::string("测试连接"));
+        // 点击只落到注入回调（零真线程/零真网）
+        btn->onClick();
+        return true;
+    }));
+    DOCTEST_CHECK_EQ(fx.testClicks, 1);
+    DOCTEST_CHECK_EQ(fx.pushClicks, 0);
+    DOCTEST_CHECK_EQ(fx.pullClicks, 0);
+    return true;
+})
+
+REGISTER_TEST(github_sync_card_running_disables_three_buttons,
+              "github_sync 卡片: 运行中三按钮禁用（带非运行态对照）", {
+    CardFixture busy;
+    busy.in.githubSyncRunning = true;
+    test_support::HeadlessFrame fb("githubsynccardbusy");
+    DOCTEST_CHECK(fb.frame([&](eui::Ui& ui) {
+        busy.draw(ui);
+        for (const char* id :
+             {"settings.card.github_sync.btn.push.bg",
+              "settings.card.github_sync.btn.test.bg",
+              "settings.card.github_sync.btn.pull.bg"}) {
+            const auto* b = ui.find(id);
+            DOCTEST_REQUIRE(b != nullptr);
+            DOCTEST_CHECK_MESSAGE(b->disabled, id);
+        }
+        return true;
+    }));
+
+    // 对照组：非运行态三个都不可禁（否则「恒 disabled」也能让上面全绿）
+    CardFixture idle;
+    test_support::HeadlessFrame fi("githubsynccardidle");
+    DOCTEST_CHECK(fi.frame([&](eui::Ui& ui) {
+        idle.draw(ui);
+        for (const char* id :
+             {"settings.card.github_sync.btn.push.bg",
+              "settings.card.github_sync.btn.test.bg",
+              "settings.card.github_sync.btn.pull.bg"}) {
+            const auto* b = ui.find(id);
+            DOCTEST_REQUIRE(b != nullptr);
+            DOCTEST_CHECK_MESSAGE(!b->disabled, id);
+        }
+        return true;
+    }));
+    return true;
+})
+
+REGISTER_TEST(github_sync_card_progress_row,
+              "github_sync 卡片: 运行中显示阶段进度行", {
+    CardFixture fx;
+    fx.in.githubSyncRunning = true;
+    fx.in.githubSyncProgress = "① 校验 token…";
+    test_support::HeadlessFrame f("githubsynccardprog");
+    DOCTEST_CHECK(f.frame([&](eui::Ui& ui) {
+        fx.draw(ui);
+        const auto* p = ui.find(std::string(kCardId) + ".progress");
+        DOCTEST_REQUIRE(p != nullptr);
+        DOCTEST_CHECK_EQ(p->text, std::string("① 校验 token…"));
+        return true;
+    }));
+
+    // 对照组：非运行态无进度行
+    CardFixture idle;
+    test_support::HeadlessFrame fi("githubsynccardprogidle");
+    DOCTEST_CHECK(fi.frame([&](eui::Ui& ui) {
+        idle.draw(ui);
+        DOCTEST_CHECK(ui.find(std::string(kCardId) + ".progress") == nullptr);
+        return true;
+    }));
+    return true;
+})
+
+REGISTER_TEST(github_sync_card_error_row_and_detail_button,
+              "github_sync 卡片: 失败态错误行 + 详情按钮（带无错误对照）", {
+    CardFixture fx;
+    fx.in.githubSyncError = "网络不可达：api.github.com";
+    test_support::HeadlessFrame f("githubsynccarderr");
+    DOCTEST_CHECK(f.frame([&](eui::Ui& ui) {
+        fx.draw(ui);
+        const auto* err = ui.find(std::string(kCardId) + ".error");
+        DOCTEST_REQUIRE(err != nullptr);
+        DOCTEST_CHECK(err->text.find("网络不可达") != std::string::npos);
+        const auto* det = ui.find(std::string(kCardId) + ".btn.detail.bg");
+        DOCTEST_REQUIRE(det != nullptr);
+        DOCTEST_CHECK(det->onClick != nullptr);
+        det->onClick();
+        return true;
+    }));
+    DOCTEST_CHECK_EQ(fx.detailClicks, 1);
+
+    // 对照组：无错误时错误行与详情按钮都不在（否则断言恒真）
+    CardFixture clean;
+    test_support::HeadlessFrame fc("githubsynccardclean");
+    DOCTEST_CHECK(fc.frame([&](eui::Ui& ui) {
+        clean.draw(ui);
+        DOCTEST_CHECK(ui.find(std::string(kCardId) + ".error") == nullptr);
+        DOCTEST_CHECK(ui.find(std::string(kCardId) + ".btn.detail.bg") ==
+                      nullptr);
+        return true;
+    }));
+    return true;
+})
+
+REGISTER_TEST(github_error_dialog_content,
+              "github_sync 错误弹窗: 摘要 + 日志条目 + 三按钮 + 注入回调", {
+    DialogFixture fx;
+    fx.st.open = true;
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+
+    test_support::HeadlessFrame f("githubsyncdlg");
+    DOCTEST_CHECK(f.frame([&](eui::Ui& ui) {
+        fx.draw(ui, screen);
+
+        // 弹窗开着 = panel opacity > 0.5（关着时整树仍建、opacity=0）
+        const auto* panel = ui.find(std::string(kDlgId) + ".panel");
+        DOCTEST_REQUIRE(panel != nullptr);
+        DOCTEST_CHECK(panel->opacity > 0.5f);
+
+        // 上半部：中文错误摘要
+        const auto* sum = ui.find(std::string(kDlgId) + ".summary");
+        DOCTEST_REQUIRE(sum != nullptr);
+        DOCTEST_CHECK(sum->text.find("401") != std::string::npos);
+        DOCTEST_CHECK(sum->text.find("推送失败") != std::string::npos);
+
+        // 中部：日志条目（方法 URL 状态码 耗时）
+        const auto* r0 = ui.find(std::string(kDlgId) + ".logs.row.0.text");
+        DOCTEST_REQUIRE(r0 != nullptr);
+        DOCTEST_CHECK(r0->text.find("GET") != std::string::npos);
+        DOCTEST_CHECK(r0->text.find("401") != std::string::npos);
+        DOCTEST_CHECK(r0->text.find("123ms") != std::string::npos);
+        const auto* r1 = ui.find(std::string(kDlgId) + ".logs.row.1.text");
+        DOCTEST_REQUIRE(r1 != nullptr);
+        DOCTEST_CHECK(r1->text.find("网络错误") != std::string::npos);
+
+        // 底部三按钮
+        for (const char* id : {"settings.github.err.btn.retry.bg",
+                               "settings.github.err.btn.copy.bg",
+                               "settings.github.err.btn.close.bg"}) {
+            const auto* b = ui.find(id);
+            DOCTEST_REQUIRE(b != nullptr);
+            DOCTEST_CHECK_MESSAGE(b->onClick != nullptr, id);
+        }
+
+        // 复制详情：注入回调拿到含摘要 + 日志行的文本
+        ui.find(std::string(kDlgId) + ".btn.copy.bg")->onClick();
+        // 选中第 2 条 → 详情区显示其 errorMessage
+        ui.find(std::string(kDlgId) + ".logs.row.1.bg")->onClick();
+        ui.find(std::string(kDlgId) + ".btn.retry.bg")->onClick();
+        ui.find(std::string(kDlgId) + ".btn.close.bg")->onClick();
+        return true;
+    }));
+
+    DOCTEST_CHECK(fx.copied.find("401") != std::string::npos);
+    DOCTEST_CHECK(fx.copied.find("GET") != std::string::npos);
+    DOCTEST_CHECK(fx.copied.find("connect timeout") != std::string::npos);
+    DOCTEST_CHECK_EQ(fx.st.selectedLogIndex, 1);
+    DOCTEST_CHECK_EQ(fx.retryClicks, 1);
+    DOCTEST_CHECK_EQ(fx.closeClicks, 1);
+    return true;
+})
+
+REGISTER_TEST(github_error_dialog_closed_is_transparent,
+              "github_sync 错误弹窗: 关闭态 panel 透明（开/关对照）", {
+    DialogFixture fx;
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+
+    fx.st.open = false;
+    test_support::HeadlessFrame f("githubsyncdlgclosed");
+    DOCTEST_CHECK(f.frame([&](eui::Ui& ui) {
+        fx.draw(ui, screen);
+        const auto* panel = ui.find(std::string(kDlgId) + ".panel");
+        DOCTEST_REQUIRE(panel != nullptr);
+        DOCTEST_CHECK(panel->opacity < 0.5f);   // 关着 = 透明，不是「没建树」
+        return true;
+    }));
+
+    // 对照组：同一夹具置 open=true → 不透明
+    DialogFixture open;
+    open.st.open = true;
+    test_support::HeadlessFrame f2("githubsyncdlgopen");
+    DOCTEST_CHECK(f2.frame([&](eui::Ui& ui) {
+        open.draw(ui, screen);
+        const auto* panel = ui.find(std::string(kDlgId) + ".panel");
+        DOCTEST_REQUIRE(panel != nullptr);
+        DOCTEST_CHECK(panel->opacity > 0.5f);
+        return true;
+    }));
+    return true;
+})
+
+REGISTER_TEST(github_error_detail_format,
+              "github_sync: 日志行/详情文本格式（纯函数）", {
+    auto e = makeEntry("GET", "https://api.github.com/x", 200, 45);
+    DOCTEST_CHECK_EQ(ms::formatGitLogRowLine(e),
+                     std::string("GET https://api.github.com/x 200 45ms"));
+
+    // 无状态码（网络错误）→ 明确写「网络错误」而不是 0
+    auto net = makeEntry("PUT", "https://api.github.com/y", 0, 0);
+    net.networkError = true;
+    net.errorMessage = "timeout";
+    DOCTEST_CHECK_EQ(ms::formatGitLogRowLine(net),
+                     std::string("PUT https://api.github.com/y 网络错误 0ms"));
+    // 详情优先 bodyTail，其次 errorMessage
+    DOCTEST_CHECK_EQ(ms::formatGitLogDetail(net), std::string("timeout"));
+    e.bodyTail = "{\"a\":1}";
+    DOCTEST_CHECK_EQ(ms::formatGitLogDetail(e), std::string("{\"a\":1}"));
+
+    // 汇总文本含摘要 + 每条日志 + 每条的非空详情（不依赖选中行）
+    std::vector<platform::github::ApiLogEntry> logs{e, net};
+    const std::string all = ms::formatGitErrorDetail("摘要X", logs);
+    DOCTEST_CHECK(all.find("摘要X") != std::string::npos);
+    DOCTEST_CHECK(all.find("GET") != std::string::npos);
+    DOCTEST_CHECK(all.find("PUT") != std::string::npos);
+    DOCTEST_CHECK(all.find("timeout") != std::string::npos);
+    DOCTEST_CHECK(all.find("{\"a\":1}") != std::string::npos);
+    return true;
+})
+
+REGISTER_TEST(github_sync_card_info_rows,
+              "github_sync 卡片: public 提醒 / 分支提示 / 本地 git 灰字（带对照）", {
+    CardFixture fx;
+    fx.in.githubSyncRepoPublic = true;
+    fx.in.githubSyncBranchHint = "分支 main 不存在，已按仓库默认分支自动创建";
+    fx.in.githubSyncLocalGitUnavailable = true;
+    test_support::HeadlessFrame f("githubsynccardinfo");
+    DOCTEST_CHECK(f.frame([&](eui::Ui& ui) {
+        fx.draw(ui);
+        const auto* pub = ui.find(std::string(kCardId) + ".publicwarn");
+        DOCTEST_REQUIRE(pub != nullptr);
+        DOCTEST_CHECK(pub->text.find("公开") != std::string::npos);
+        const auto* hint = ui.find(std::string(kCardId) + ".branchhint");
+        DOCTEST_REQUIRE(hint != nullptr);
+        DOCTEST_CHECK(hint->text.find("自动创建") != std::string::npos);
+        const auto* git = ui.find(std::string(kCardId) + ".localgit");
+        DOCTEST_REQUIRE(git != nullptr);
+        DOCTEST_CHECK_EQ(git->text, std::string("本地版本历史：不可用"));
+        return true;
+    }));
+
+    // 对照组：三个标志全 false → 三行都不画（否则上面可能只是「恒画」）
+    CardFixture clean;
+    test_support::HeadlessFrame fc("githubsynccardinfoclean");
+    DOCTEST_CHECK(fc.frame([&](eui::Ui& ui) {
+        clean.draw(ui);
+        DOCTEST_CHECK(ui.find(std::string(kCardId) + ".publicwarn") == nullptr);
+        DOCTEST_CHECK(ui.find(std::string(kCardId) + ".branchhint") == nullptr);
+        DOCTEST_CHECK(ui.find(std::string(kCardId) + ".localgit") == nullptr);
+        return true;
+    }));
+    return true;
+})
+
+REGISTER_TEST(github_error_dialog_conflict_variant,
+              "github_sync 409 弹窗: 标题/主按钮 + 二次确认才触发拉取后再推", {
+    DialogFixture fx;
+    fx.st.open = true;
+    fx.st.variant = ms::GitErrorDialogVariant::Conflict409;
+    fx.in.summary = "远端 database.sql 已被改动（409 冲突）";
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+
+    test_support::HeadlessFrame f("githubsyncdlg409");
+    DOCTEST_CHECK(f.frame([&](eui::Ui& ui) {
+        fx.draw(ui, screen);
+        const auto* title = ui.find(std::string(kDlgId) + ".title");
+        DOCTEST_REQUIRE(title != nullptr);
+        DOCTEST_CHECK(title->text.find("409") != std::string::npos);
+        const auto* label = ui.find(std::string(kDlgId) + ".btn.retry.text");
+        DOCTEST_REQUIRE(label != nullptr);
+        DOCTEST_CHECK_EQ(label->text, std::string("拉取远端后再推"));
+        // 第一下只武装，不触发动作
+        ui.find(std::string(kDlgId) + ".btn.retry.bg")->onClick();
+        return true;
+    }));
+    DOCTEST_CHECK_EQ(fx.pullThenPushClicks, 0);
+    DOCTEST_CHECK(fx.st.conflictConfirmArmed);
+
+    // 第二帧：文案变确认态 + 提示行变成覆盖警告；第二下才真触发
+    DOCTEST_CHECK(f.frame([&](eui::Ui& ui) {
+        fx.draw(ui, screen);
+        const auto* label = ui.find(std::string(kDlgId) + ".btn.retry.text");
+        DOCTEST_REQUIRE(label != nullptr);
+        DOCTEST_CHECK(label->text.find("确认") != std::string::npos);
+        const auto* hint = ui.find(std::string(kDlgId) + ".hint");
+        DOCTEST_REQUIRE(hint != nullptr);
+        DOCTEST_CHECK(hint->text.find("覆盖本地") != std::string::npos);
+        ui.find(std::string(kDlgId) + ".btn.retry.bg")->onClick();
+        return true;
+    }));
+    DOCTEST_CHECK_EQ(fx.pullThenPushClicks, 1);
+    DOCTEST_CHECK(!fx.st.conflictConfirmArmed);   // 触发后解除武装
+    return true;
+})
+
+REGISTER_TEST(github_sync_logic_throttle,
+              "github_sync 逻辑: 5 分钟节流窗口 + 手动绕开", {
+    using namespace module::settings::gsync;
+    // 从未 commit → 立即到点
+    DOCTEST_CHECK(throttleDue(0, 1'000'000));
+    // 窗口内 → 不到点；边界（恰好 300s）→ 到点
+    DOCTEST_CHECK(!throttleDue(1'000'000, 1'000'000 + kCommitThrottleSec - 1));
+    DOCTEST_CHECK(throttleDue(1'000'000, 1'000'000 + kCommitThrottleSec));
+    // 时钟回拨 → 不把用户锁死在窗口里
+    DOCTEST_CHECK(throttleDue(1'000'000, 999'000));
+    DOCTEST_CHECK_EQ(kCommitThrottleSec, static_cast<int64_t>(300));
+    return true;
+})
+
+REGISTER_TEST(github_sync_logic_diff_notes,
+              "github_sync 逻辑: 笔记变更集（新增/修改 PUT + 删除传播 DELETE）", {
+    using namespace module::settings::gsync;
+    const std::map<std::string, std::string> local{{"a.md", "A"}, {"b.md", "B"}};
+    const std::set<std::string> remote{"b.md", "gone.md"};
+    const auto changes = diffNotes(local, remote);
+    DOCTEST_REQUIRE_EQ(changes.size(), static_cast<size_t>(3));
+    // Put：按文件名字典序
+    DOCTEST_CHECK(changes[0].kind == FileChange::Kind::Put);
+    DOCTEST_CHECK_EQ(changes[0].path, std::string("notes/a.md"));
+    DOCTEST_CHECK_EQ(changes[0].content, std::string("A"));
+    DOCTEST_CHECK(changes[1].kind == FileChange::Kind::Put);
+    DOCTEST_CHECK_EQ(changes[1].path, std::string("notes/b.md"));
+    // Delete：远端有、本地没有（重命名 = 删旧 + 建新）
+    DOCTEST_CHECK(changes[2].kind == FileChange::Kind::Delete);
+    DOCTEST_CHECK_EQ(changes[2].path, std::string("notes/gone.md"));
+    // 远端为空 + 本地为空 → 空变更集
+    DOCTEST_CHECK(diffNotes({}, {}).empty());
+    return true;
+})
+
+REGISTER_TEST(github_sync_logic_backup_prune,
+              "github_sync 逻辑: 备份名 + 只保留最近 5 份", {
+    using namespace module::settings::gsync;
+    DOCTEST_CHECK_EQ(backupFileName(1700000000),
+                     std::string("devdesk-1700000000.db"));
+    DOCTEST_CHECK_EQ(kBackupKeep, 5);
+
+    test_support::TempDir d("gsbackup");
+    for (int i = 0; i < 8; ++i) {
+        std::ofstream o(d.path / backupFileName(1700000000 + i),
+                        std::ios::binary | std::ios::trunc);
+        o << "x";
+    }
+    // 混入不该被删/不该被数的文件
+    std::ofstream(d.path / "notes.md", std::ios::binary | std::ios::trunc) << "x";
+    std::ofstream(d.path / "devdesk-notadb.txt", std::ios::binary | std::ios::trunc)
+        << "x";
+
+    const int removed = pruneBackups(d.path, kBackupPrefix, kBackupKeep);
+    DOCTEST_CHECK_EQ(removed, 3);   // 8 - 5
+
+    int remaining = 0;
+    for (const auto& e : std::filesystem::directory_iterator(d.path)) {
+        const std::string name = e.path().filename().string();
+        if (name.rfind(kBackupPrefix, 0) == 0 &&
+            name.size() > 3 && name.compare(name.size() - 3, 3, ".db") == 0) {
+            ++remaining;
+        }
+    }
+    DOCTEST_CHECK_EQ(remaining, 5);
+    // 最旧的 3 份被删，最新的还在；无关文件零触碰
+    DOCTEST_CHECK(!std::filesystem::exists(d.path / backupFileName(1700000000)));
+    DOCTEST_CHECK(std::filesystem::exists(d.path / backupFileName(1700000007)));
+    DOCTEST_CHECK(std::filesystem::exists(d.path / "notes.md"));
+    DOCTEST_CHECK(std::filesystem::exists(d.path / "devdesk-notadb.txt"));
+    return true;
+})
+
+REGISTER_TEST(github_sync_logic_first_sync_choice,
+              "github_sync 逻辑: 首次方向判定（远端有→拉取覆盖 / 无→上传 / 探测失败→不动作）", {
+    using namespace module::settings::gsync;
+    DOCTEST_CHECK(firstSyncChoice(true, false) ==
+                  FirstSyncChoice::PullThenPush);
+    DOCTEST_CHECK(firstSyncChoice(false, true) == FirstSyncChoice::Push);
+    // 网络错 / 认证错（既非存在也非缺失）→ 不动作，错误交给用户
+    DOCTEST_CHECK(firstSyncChoice(false, false) == FirstSyncChoice::Fail);
+    return true;
+})
+
+REGISTER_TEST(github_sync_store_state_keys,
+              "github_sync 存储: 首次标记 + 笔记登记往返；save() 不得清状态键", {
+    test_support::TestEnv env("gitsync", "store1");
+    module::settings::GithubSyncStore store(&env.handle());
+
+    auto done0 = store.isFirstSyncDone();
+    DOCTEST_REQUIRE(done0.isOk());
+    DOCTEST_CHECK(!done0.value());   // 默认未做过
+    DOCTEST_CHECK(store.setFirstSyncDone().isOk());
+    auto done1 = store.isFirstSyncDone();
+    DOCTEST_REQUIRE(done1.isOk());
+    DOCTEST_CHECK(done1.value());
+
+    // 笔记登记往返（删除传播的远端基线）
+    DOCTEST_CHECK(store.recordSyncedNote("a.md", "abc123").isOk());
+    DOCTEST_CHECK(store.recordSyncedNote("b.md", "def456").isOk());
+    auto names = store.syncedNoteNames();
+    DOCTEST_REQUIRE(names.isOk());
+    DOCTEST_CHECK_EQ(names.value().size(), static_cast<size_t>(2));
+    DOCTEST_CHECK(names.value().count("a.md") == 1);
+    DOCTEST_CHECK(names.value().count("b.md") == 1);
+
+    // 回归：save() 曾按前缀整库清理（eraseWithPrefixExcept），会把状态键
+    // 一并清掉——保存配置后首次标记与笔记登记必须原样存活
+    module::settings::GithubSyncConfig cfg;
+    cfg.enabled = true;
+    cfg.repoUrl = "https://github.com/u/r.git";
+    cfg.branch = "main";
+    DOCTEST_CHECK(store.save(cfg).isOk());
+    auto done2 = store.isFirstSyncDone();
+    DOCTEST_REQUIRE(done2.isOk());
+    DOCTEST_CHECK(done2.value());
+    auto names2 = store.syncedNoteNames();
+    DOCTEST_REQUIRE(names2.isOk());
+    DOCTEST_CHECK_EQ(names2.value().size(), static_cast<size_t>(2));
+
+    // 清除语义
+    DOCTEST_CHECK(store.forgetSyncedNote("a.md").isOk());
+    auto names3 = store.syncedNoteNames();
+    DOCTEST_REQUIRE(names3.isOk());
+    DOCTEST_CHECK_EQ(names3.value().size(), static_cast<size_t>(1));
+    DOCTEST_CHECK(names3.value().count("b.md") == 1);
+    DOCTEST_CHECK(store.clearFirstSyncDone().isOk());
+    auto done3 = store.isFirstSyncDone();
+    DOCTEST_REQUIRE(done3.isOk());
+    DOCTEST_CHECK(!done3.value());
+    return true;
+})

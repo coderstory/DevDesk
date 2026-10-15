@@ -33,8 +33,11 @@ inline constexpr float kLabelW = 64.0f;
 inline constexpr float kFieldW = 320.0f;
 inline constexpr float kBtnW = 120.0f;
 inline constexpr float kBtnSmallW = 80.0f;
+inline constexpr float kBtnTestW = 100.0f;
+inline constexpr float kDetailBtnW = 64.0f;
 inline constexpr float kSwitchW = 44.0f;
 inline constexpr float kStatusH = 20.0f;
+inline constexpr float kBtnGapX = 8.0f;
 
 } // namespace
 
@@ -42,7 +45,6 @@ void drawGithubSyncCard(const CardDrawArgs& args) {
     eui::Ui& ui = args.ui;
     const std::string& id = args.id;
     const float w = args.w;
-    const float h = args.h;
     const core::theme::Tokens& t = args.t;
     const SettingsCardsIn& in = args.in;
     const SettingsCardActions& a = args.a;
@@ -88,12 +90,18 @@ void drawGithubSyncCard(const CardDrawArgs& args) {
         .lineHeight(labelH)
         .color(t.colors.textSecondary)
         .build();
-    components::switch_(ui, id + ".enabled.sw")
+    // switch 无 position（EUI-NEO SwitchBuilder 只吃 flow）→ 套一层定位 stack 放到标签右侧。
+    ui.stack(id + ".enabled.sw.wrap")
         .position(fieldStartX, y + (rowH - 20.0f) * 0.5f)
         .size(kSwitchW, 20.0f)
-        .checked(in.githubSyncEnabled)
-        .theme(compTheme)
-        .onChange([f = a.applyGithubSyncEnabled](bool v) { f(v); })
+        .content([&] {
+            components::toggleSwitch(ui, id + ".enabled.sw")
+                .size(kSwitchW, 20.0f)
+                .checked(in.githubSyncEnabled)
+                .theme(compTheme)
+                .onChange([f = a.applyGithubSyncEnabled](bool v) { f(v); })
+                .build();
+        })
         .build();
     y += rowH + roundFs(kRowGap);
 
@@ -172,16 +180,23 @@ void drawGithubSyncCard(const CardDrawArgs& args) {
         .lineHeight(labelH)
         .color(t.colors.textSecondary)
         .build();
-    components::switch_(ui, id + ".autopush.sw")
+    ui.stack(id + ".autopush.sw.wrap")
         .position(fieldStartX, y + (rowH - 20.0f) * 0.5f)
         .size(kSwitchW, 20.0f)
-        .checked(in.githubSyncAutoPush)
-        .theme(compTheme)
-        .onChange([f = a.applyGithubSyncAutoPush](bool v) { f(v); })
+        .content([&] {
+            components::toggleSwitch(ui, id + ".autopush.sw")
+                .size(kSwitchW, 20.0f)
+                .checked(in.githubSyncAutoPush)
+                .theme(compTheme)
+                .onChange([f = a.applyGithubSyncAutoPush](bool v) { f(v); })
+                .build();
+        })
         .build();
 
-    // 操作按钮（右对齐）
-    const float btnAreaX = w - kCardPaddingX - kBtnW - 8.0f - kBtnSmallW;
+    // 操作按钮（右对齐，三个并排：立即同步 / 测试连接 / 拉取）；运行中三个一律禁用。
+    const float btnTotalW =
+        kBtnW + kBtnTestW + kBtnSmallW + kBtnGapX * 2.0f;
+    const float btnAreaX = w - kCardPaddingX - btnTotalW;
     components::button(ui, id + ".btn.push")
         .position(btnAreaX, y)
         .size(kBtnW, rowH)
@@ -189,10 +204,24 @@ void drawGithubSyncCard(const CardDrawArgs& args) {
         .fontSize(fs(12.0f))
         .theme(compTheme, /*primary=*/true)
         .radius(t.sizes.radiusSmall)
+        .disabled(in.githubSyncRunning)
         .onClick([f = a.githubSyncPush] { f(); })
         .build();
+    components::button(ui, id + ".btn.test")
+        .position(btnAreaX + kBtnW + kBtnGapX, y)
+        .size(kBtnTestW, rowH)
+        .text("测试连接")
+        .fontSize(fs(12.0f))
+        .theme(compTheme, /*primary=*/false)
+        .colors(t.colors.surfaceElevated, t.colors.hover, t.colors.active)
+        .textColor(t.colors.textPrimary)
+        .radius(t.sizes.radiusSmall)
+        .border(1.0f, t.colors.borderDefault)
+        .disabled(in.githubSyncRunning)
+        .onClick([f = a.githubSyncTestConnection] { f(); })
+        .build();
     components::button(ui, id + ".btn.pull")
-        .position(btnAreaX + kBtnW + 8.0f, y)
+        .position(btnAreaX + kBtnW + kBtnGapX + kBtnTestW + kBtnGapX, y)
         .size(kBtnSmallW, rowH)
         .text("拉取")
         .fontSize(fs(12.0f))
@@ -201,12 +230,53 @@ void drawGithubSyncCard(const CardDrawArgs& args) {
         .textColor(t.colors.textPrimary)
         .radius(t.sizes.radiusSmall)
         .border(1.0f, t.colors.borderDefault)
+        .disabled(in.githubSyncRunning)
         .onClick([f = a.githubSyncPull] { f(); })
         .build();
     y += rowH + roundFs(kRowGap);
 
-    // 状态行
-    if (!in.githubSyncStatus.empty()) {
+    // 进度行（运行中：阶段文案）
+    if (in.githubSyncRunning && !in.githubSyncProgress.empty()) {
+        ui.text(id + ".progress")
+            .position(kCardPaddingX, y)
+            .size(w - kCardPaddingX * 2, roundFs(kStatusH))
+            .text(in.githubSyncProgress)
+            .fontSize(fs(11.0f))
+            .lineHeight(roundFs(kStatusH))
+            .color(t.colors.textSecondary)
+            .build();
+        y += roundFs(kStatusH) + roundFs(4.0f);
+    }
+
+    // 错误行（红字摘要 + 「详情」小按钮）；摘要宽度让出按钮位，避免压字。
+    if (!in.githubSyncError.empty()) {
+        ui.text(id + ".error")
+            .position(kCardPaddingX, y)
+            .size(w - kCardPaddingX * 2 - kDetailBtnW - kBtnGapX,
+                  roundFs(kStatusH))
+            .text(in.githubSyncError)
+            .fontSize(fs(11.0f))
+            .lineHeight(roundFs(kStatusH))
+            .color(t.colors.error)
+            .build();
+        components::button(ui, id + ".btn.detail")
+            .position(w - kCardPaddingX - kDetailBtnW, y)
+            .size(kDetailBtnW, roundFs(kStatusH))
+            .text("详情")
+            .fontSize(fs(11.0f))
+            .theme(compTheme, /*primary=*/false)
+            .colors(t.colors.surfaceElevated, t.colors.hover, t.colors.active)
+            .textColor(t.colors.error)
+            .radius(t.sizes.radiusSmall)
+            .border(1.0f, t.colors.borderDefault)
+            .onClick([f = a.githubSyncShowErrorDetail] { f(); })
+            .build();
+        y += roundFs(kStatusH) + roundFs(4.0f);
+    }
+
+    // 状态行。错误行在显示时接管状态文案（两者内容相同，同显 = 同一句话画
+    // 两遍），故 error 非空 → 状态行让位。
+    if (!in.githubSyncStatus.empty() && in.githubSyncError.empty()) {
         ui.text(id + ".status")
             .position(kCardPaddingX, y)
             .size(w - kCardPaddingX * 2, roundFs(kStatusH))
@@ -214,6 +284,45 @@ void drawGithubSyncCard(const CardDrawArgs& args) {
             .fontSize(fs(11.0f))
             .lineHeight(roundFs(kStatusH))
             .color(in.githubSyncStatusError ? t.colors.error : t.colors.textTertiary)
+            .build();
+        y += roundFs(kStatusH) + roundFs(4.0f);
+    }
+
+    // 分支被自动创建提示（决策 #10）
+    if (!in.githubSyncBranchHint.empty()) {
+        ui.text(id + ".branchhint")
+            .position(kCardPaddingX, y)
+            .size(w - kCardPaddingX * 2, roundFs(kStatusH))
+            .text(in.githubSyncBranchHint)
+            .fontSize(fs(11.0f))
+            .lineHeight(roundFs(kStatusH))
+            .color(t.colors.warning)
+            .build();
+        y += roundFs(kStatusH) + roundFs(4.0f);
+    }
+
+    // public 仓黄字提醒（决策 #13：提示不硬拦）
+    if (in.githubSyncRepoPublic) {
+        ui.text(id + ".publicwarn")
+            .position(kCardPaddingX, y)
+            .size(w - kCardPaddingX * 2, roundFs(kStatusH))
+            .text("仓库为公开（public）：笔记、待办与密钥将公开可见")
+            .fontSize(fs(11.0f))
+            .lineHeight(roundFs(kStatusH))
+            .color(t.colors.warning)
+            .build();
+        y += roundFs(kStatusH) + roundFs(4.0f);
+    }
+
+    // 本地 git 不可用（决策 #15：灰字，不影响同步）
+    if (in.githubSyncLocalGitUnavailable) {
+        ui.text(id + ".localgit")
+            .position(kCardPaddingX, y)
+            .size(w - kCardPaddingX * 2, roundFs(kStatusH))
+            .text("本地版本历史：不可用")
+            .fontSize(fs(11.0f))
+            .lineHeight(roundFs(kStatusH))
+            .color(t.colors.textTertiary)
             .build();
     }
 }

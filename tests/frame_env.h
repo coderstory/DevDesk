@@ -13,6 +13,7 @@
 #include <eui/dsl.h>          // eui::Ui / eui::Screen
 
 #include <string>
+#include <type_traits>
 #include <utility>
 
 namespace test_support {
@@ -25,13 +26,23 @@ struct HeadlessFrame {
     eui::Ui* ui = nullptr;
     std::string pageId;
     explicit HeadlessFrame(std::string pageId) : pageId(std::move(pageId)) {}
+    // body 返回 bool 时（内部用 DOCTEST_CHECK 断言，失败路径 return false），
+    // 结果经本返回值透出：调用方必须 `DOCTEST_CHECK(f.frame(...))` 接住，
+    // 否则帧内断言失败只提前结束本帧、用例照绿 = 假绿。void body 恒 true。
     template <typename Fn>
-    void frame(Fn&& body) {
+    bool frame(Fn&& body) {
+        bool bodyOk = true;
         rt.compose(pageId, 1600.0f, 1000.0f,
                    [&](eui::Ui& u, const eui::Screen&) {
                        ui = &u;
-                       body(u);
+                       if constexpr (std::is_void_v<
+                                         std::invoke_result_t<Fn&, eui::Ui&>>) {
+                           body(u);
+                       } else {
+                           bodyOk = static_cast<bool>(body(u));
+                       }
                    });
+        return bodyOk;
     }
 };
 
