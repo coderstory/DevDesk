@@ -36,6 +36,8 @@ enum class ErrorCode {
     AlreadyExists,
     NotImplemented,
     Internal,
+    // 远端 sha 与本地期望（shaIfMatch）不符 = 并发写入冲突（GitHub Contents API 的 409）
+    Conflict,
 };
 
 inline const char* errorCodeToString(ErrorCode code) {
@@ -63,6 +65,7 @@ inline const char* errorCodeToString(ErrorCode code) {
         case ErrorCode::AlreadyExists: return "AlreadyExists";
         case ErrorCode::NotImplemented: return "NotImplemented";
         case ErrorCode::Internal: return "Internal";
+        case ErrorCode::Conflict: return "Conflict";
     }
     return "Unknown";
 }

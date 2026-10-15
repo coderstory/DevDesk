@@ -73,7 +73,11 @@ core::Result<Response> send(const Request& req) {
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, req.verifyTls ? 2L : 0L);
     applyCaOptions(curl);
 
-    if (req.method == "POST" || req.method == "PUT" || req.method == "PATCH") {
+    // DELETE 也要带 body：GitHub Contents API 的删除要求 JSON 体（message + sha）。
+    // 设 POSTFIELDS 会把内部方法改成 POST，但 CURLOPT_CUSTOMREQUEST 已把方法串钉成 req.method，
+    // 故 DELETE 仍按 DELETE 发出、只是多了请求体。去掉 DELETE 会让删除请求丢 body。
+    if (req.method == "POST" || req.method == "PUT" || req.method == "PATCH" ||
+        req.method == "DELETE") {
         curl_easy_setopt(curl, CURLOPT_POSTFIELDS, req.body.c_str());
         curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, static_cast<long>(req.body.size()));
     }

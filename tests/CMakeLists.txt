@@ -29,6 +29,7 @@ add_executable(devdesk_tests
     test_platform/test_keychain.cpp
     test_platform/test_credential_protection.cpp
     test_platform/test_json.cpp
+    test_platform/test_github_api.cpp
     test_platform/test_utf8.cpp
     test_platform/test_file_open.cpp
     test_platform/test_terminal_launch.cpp
