@@ -1093,6 +1093,10 @@ public:
             return;
         }
         githubSyncError_ = githubSyncResultSummary_;
+        // 失败也记节流时点（与成功路径同一变量）：dirty 不清（改动仍待推），但不
+        // 记的话线程完成唤醒下一帧 maybeAutoGithubSync 立即重启 → 每轮全库 dump +
+        // 多次 API 的自持重试风暴。手动重试不受影响（throttle 只拦自动路径）。
+        githubSyncLastCommitSec_ = nowSec();
         githubSyncErrorDialog_.selectedLogIndex = 0;
         githubSyncErrorDialog_.conflictConfirmArmed = false;
         githubSyncErrorDialog_.variant =
