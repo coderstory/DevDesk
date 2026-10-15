@@ -7,6 +7,7 @@
 #include "core/router.h"
 #include "core/theme.h"
 #include "core/component_theme.h"
+#include "core/event_bus.h"
 #include <ui_kit/metrics.h>
 #include <ui_kit/toast.h>
 #include "todo_dialogs.h"
@@ -175,6 +176,7 @@ public:
             return "新建任务失败：" + r.errorMessage();
         }
         setStatus("已创建任务「" + title + "」");
+        core::event::bus().emit(core::event::kTodoCreated);
         reloadAll();
         return "";
     }
@@ -210,6 +212,7 @@ public:
             return;
         }
         // 完成后移到已完成列（kind='done'），追加列尾
+        core::event::bus().emit(core::event::kTodoCompleted);
         finishCompletionMove(taskId, "done");
     }
 

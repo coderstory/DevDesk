@@ -10,6 +10,7 @@
 #include "core/theme.h"
 #include "core/ui_geometry.h"
 #include "core/component_theme.h"
+#include "core/event_bus.h"
 #include "core/time.h"
 #include <ui_kit/dialog_form.h>
 #include <ui_kit/metrics.h>
@@ -2900,6 +2901,7 @@ private:
         saveBackoffMs_ = 0;
         lastSavedAt_ = std::time(nullptr);
         syncCurrentMtime();  // 自己写盘后推进 mtime 基准（避免误报外部修改）
+        core::event::bus().emit(core::event::kMdSaved);
     }
 
     // 文件变化自动感知（5 秒轮询）

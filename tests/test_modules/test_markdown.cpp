@@ -15,6 +15,7 @@
 #include "core/router.h"
 #include "core/theme.h"
 #include "core/component_theme.h"   // componentTokens（圆角/边框色比对口径）
+#include "core/event_bus.h"
 #include "module_markdown/md_block_model.h"
 #include "module_markdown/md_line_scanner.h"
 #include "module_markdown/md_live_edit.h"
@@ -7463,6 +7464,62 @@ REGISTER_TEST(md_module_live_perf_records_200kb,
               << "（200 块缩放基）" << std::endl;
     DOCTEST_CHECK(e.ui->find("md.live.scroll") != nullptr);
     DOCTEST_CHECK(e.ui->find("md.live.input") != nullptr);
+
+    mod->onStop();
+    return true;
+})
+
+// ⑥ md.saved 事件接线。saveEditor 真实写盘成功 → core::event::bus() 收到
+// md.saved；幂等早退（editorText_==lastSavedText_）与未落盘打字均不发。
+REGISTER_TEST(md_module_event_wiring,
+              "markdown_module: saveEditor 写盘成功→md.saved；幂等早退不发（headless）", {
+    const std::string v1 = "hello\n";
+    test_support::MdHeadlessEnv env(kDirPrefix, "event", kDbName);
+    DOCTEST_REQUIRE(env.db != nullptr);
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "s.md", v1));
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    test_support::HeadlessFrame e("mdlive");
+    auto frame = [&] { e.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
+
+    int gotSaved = 0;
+    auto sub = core::event::bus().subscribe(core::event::kMdSaved,
+        [&](const std::string&) { ++gotSaved; });
+
+    frame();
+    DOCTEST_REQUIRE(openFirstNote(*e.ui));
+    frame();
+    DOCTEST_REQUIRE(cycleMode(mod.get()));   // → 实时
+    frame();
+
+    // 实时态打字：仅内存变化、未落盘 → 不发 md.saved
+    e.ui->state<MdInputState>("md.live.input").cursor = 6;
+    const auto* hit = e.ui->find("md.live.input.hit");
+    DOCTEST_REQUIRE(hit != nullptr);
+    DOCTEST_REQUIRE(hit->onTextInput != nullptr);
+    core::TextInputEvent ev;
+    ev.text = "world";
+    hit->onTextInput(ev);
+    frame();
+    DOCTEST_CHECK_EQ(gotSaved, 0);
+
+    // Ctrl+S → 真实写盘成功 → md.saved 恰发一次
+    eui::KeyEvent cs;
+    cs.key = eui::InputKey::S;
+    test_support::setShortcutModifier(cs.modifiers);
+    DOCTEST_CHECK(mod->onKeyEvent(cs));
+    std::string disk;
+    DOCTEST_REQUIRE(readFileBytes(env.dir / "s.md", &disk));
+    DOCTEST_CHECK_EQ(disk, std::string("hello\nworld"));
+    DOCTEST_CHECK_EQ(gotSaved, 1);
+
+    // 已落盘后再 Ctrl+S：幂等早退（editorText_==lastSavedText_）→ 不发
+    DOCTEST_CHECK(mod->onKeyEvent(cs));
+    DOCTEST_CHECK_EQ(gotSaved, 1);
 
     mod->onStop();
     return true;

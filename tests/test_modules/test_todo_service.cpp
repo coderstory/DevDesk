@@ -8,6 +8,7 @@
 #include "doctest.h"
 #include "test_support.h"
 #include "core/database.h"
+#include "core/event_bus.h"
 #include "core/sqlite_db.h"
 #include "module_todo/todo_service.h"
 
@@ -866,5 +867,33 @@ REGISTER_TEST(todo_svc_returning_drain_commit,
     }
     DOCTEST_CHECK(sawDrain);
     DOCTEST_CHECK(sawTxCol);
+    return true;
+})
+
+// M4 Task 1 负向：事件只在 module UI 层发布，service 直调（todo_tools.cpp 走的正是这条
+// 路径）不得发事件——agent 工具建的任务不触发 todo.created，契约如此。
+REGISTER_TEST(todo_svc_direct_calls_emit_no_events,
+              "TodoService: service 层直调不发 EventBus 事件（负向）", {
+    TestEnv env("no_events");
+    DOCTEST_REQUIRE(env.ready);
+
+    auto cols = env.svc->listColumns();
+    DOCTEST_REQUIRE(cols.isOk());
+    const int64_t colId = cols.value()[0].id;
+
+    int gotCreated = 0, gotCompleted = 0;
+    {
+        auto tc = ::core::event::bus().subscribe(
+            ::core::event::kTodoCreated, [&](const std::string&) { ++gotCreated; });
+        auto tk = ::core::event::bus().subscribe(
+            ::core::event::kTodoCompleted, [&](const std::string&) { ++gotCompleted; });
+
+        auto created = env.svc->createTask(colId, "service直建不应发事件");
+        DOCTEST_REQUIRE(created.isOk());
+        auto completed = env.svc->completeTask(created.value().id);
+        DOCTEST_REQUIRE(completed.isOk());
+    }
+    DOCTEST_CHECK_EQ(gotCreated, 0);    // service 层不是发布点
+    DOCTEST_CHECK_EQ(gotCompleted, 0);
     return true;
 })

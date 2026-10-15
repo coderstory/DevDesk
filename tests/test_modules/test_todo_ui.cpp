@@ -8,6 +8,7 @@
 #include "test_support.h"
 
 #include "core/database.h"
+#include "core/event_bus.h"
 #include "core/module_interface.h"
 #include "core/sqlite_db.h"
 #include "core/theme.h"
@@ -4110,5 +4111,60 @@ REGISTER_TEST(todo_ui_r5_pure_helpers,
     DOCTEST_CHECK_EQ(std::string(ui::priorityLabel(static_cast<Priority>(99))), "无");
     DOCTEST_CHECK_EQ(ui::formatDue(0), std::string());
     DOCTEST_CHECK(!ui::isOverdue(Task{}));
+    return true;
+})
+
+// M4 Task 1：todo 动作 → EventBus 事件。发布点在 module UI 层（doCreateTask /
+// doCompleteTask 成功分支），headless 走真实 UI 回调链验证：新建任务弹窗提交 →
+// todo.created；详情弹窗「标记完成」→ todo.completed。
+REGISTER_TEST(todo_ui_event_wiring,
+              "todo_ui: 建待办→todo.created、标记完成→todo.completed（headless）", {
+    TestEnv env;
+    DOCTEST_REQUIRE(env.ready);
+
+    std::unique_ptr<::core::Module> mod(create_todo_module());
+    mod->onStart();
+
+    int gotCreated = 0, gotCompleted = 0;
+    auto tc = ::core::event::bus().subscribe(
+        ::core::event::kTodoCreated, [&](const std::string&) { ++gotCreated; });
+    auto tk = ::core::event::bus().subscribe(
+        ::core::event::kTodoCompleted, [&](const std::string&) { ++gotCompleted; });
+
+    // 1) 新建任务弹窗：输入标题 → 提交 → doCreateTask 成功分支发布 todo.created
+    {
+        Frame frame(mod.get());
+        auto* add = frame.ui.find("todo.btn.add.bg");
+        DOCTEST_REQUIRE(add != nullptr);
+        add->onClick();
+        frame.refresh();
+        auto* hit = frame.ui.find("todo.dialog.newtask.input.hit");
+        DOCTEST_REQUIRE(hit != nullptr);
+        DOCTEST_REQUIRE(hit->onTextInput != nullptr);
+        eui::TextInputEvent t;
+        t.text = "事件任务";
+        hit->onTextInput(t);
+        frame.refresh();
+        auto* conf = frame.ui.find("todo.dialog.newtask.confirm.bg");
+        DOCTEST_REQUIRE(conf != nullptr);
+        conf->onClick();
+        frame.refresh();
+        DOCTEST_CHECK_EQ(gotCreated, 1);   // UI 路径成功即发布
+    }
+
+    // 2) 详情弹窗「标记完成」→ doCompleteTask 成功分支发布 todo.completed
+    {
+        Frame frame(mod.get());
+        const auto* card = frame.ui.find("todo.col.0.card.0.bg");
+        DOCTEST_REQUIRE(card != nullptr);
+        DOCTEST_REQUIRE(card->onClick != nullptr);
+        card->onClick();   // 打开详情弹窗
+        frame.refresh();
+        const auto* toggle = frame.ui.find("todo.dialog.detail.toggle.bg");
+        DOCTEST_REQUIRE(toggle != nullptr);
+        DOCTEST_REQUIRE(toggle->onClick != nullptr);
+        toggle->onClick();  // 标记完成
+        DOCTEST_CHECK_EQ(gotCompleted, 1);
+    }
     return true;
 })
