@@ -49,6 +49,12 @@ void Scheduler::start() {
     } catch (const std::system_error& e) {
         LOG_ERROR(std::string("Scheduler: 常驻线程创建失败: ") + e.what());
     }
+    try {
+        if (!eventThread_.joinable())
+            eventThread_ = std::thread([this] { eventThreadLoop(); });
+    } catch (const std::system_error& e) {
+        LOG_ERROR(std::string("Scheduler: 事件线程创建失败: ") + e.what());
+    }
 }
 
 void Scheduler::enqueueResident(int64_t taskId) {
@@ -71,6 +77,7 @@ void Scheduler::stopAll() {
     // 顺序契约：先灭派发源、再收在跑 run；常驻线程先 join（收尾窗口里唯一继续接单的源）
     if (residentThread_.joinable()) residentThread_.join();
     if (tickThread_.joinable()) tickThread_.join();
+    if (eventThread_.joinable()) eventThread_.join();
     std::vector<std::unique_ptr<ActiveRun>> doomed;
     {
         std::lock_guard<std::mutex> lock(mu_);
@@ -92,6 +99,21 @@ size_t Scheduler::activeRunCount() {
 size_t Scheduler::residentQueueSize() {
     std::lock_guard<std::mutex> lock(mu_);
     return residentQueue_.size();
+}
+
+size_t Scheduler::eventQueueSize() {
+    std::lock_guard<std::mutex> lock(mu_);
+    return eventQueue_.size();
+}
+
+void Scheduler::onEvent(const std::string& name) {
+    {
+        // 与 enqueueResident 同因：停止判定与入队同锁，锁外判 stopFlag_ 会有幽灵单窗口
+        std::lock_guard<std::mutex> lock(mu_);
+        if (stopFlag_.load()) return;   // 已停：不再接单
+        eventQueue_.push_back(name);
+    }
+    cv_.notify_one();
 }
 
 void Scheduler::reapDone() {
@@ -161,6 +183,83 @@ void Scheduler::residentThreadLoop() {
         LOG_ERROR(std::string("Scheduler: 常驻线程异常退出: ") + e.what());
     } catch (...) {
         LOG_ERROR("Scheduler: 常驻线程未知异常退出");
+    }
+}
+
+void Scheduler::eventThreadLoop() {
+    try {
+        while (true) {
+            {
+                std::unique_lock<std::mutex> lock(mu_);
+                cv_.wait(lock, [this] {
+                    return stopFlag_.load() || !eventQueue_.empty();
+                });
+                // 停了就不消费（收尾窗口里不再起新 run）
+                if (stopFlag_.load()) break;
+            }
+            // drain 内部先锁外取全队再逐个路由：事件消费不依赖 cron tick 的分钟节奏
+            auto drained = drainEventQueue();
+            if (drained.isFail())
+                LOG_WARN("Scheduler: 事件队列消费失败: " + drained.errorMessage());
+        }
+    } catch (const std::exception& e) {
+        // 线程体兜底：异常不许逃出线程入口（逃出 = std::terminate）
+        LOG_ERROR(std::string("Scheduler: 事件线程异常退出: ") + e.what());
+    } catch (...) {
+        LOG_ERROR("Scheduler: 事件线程未知异常退出");
+    }
+}
+
+core::Result<void> Scheduler::drainEventQueue() {
+    reapDone();
+    std::vector<std::string> pending;
+    {
+        std::lock_guard<std::mutex> lock(mu_);
+        pending.swap(eventQueue_);   // 取走即清：路由耗时不再堵 onEvent 入队
+    }
+    for (const auto& name : pending) processEvent(name);
+    return core::Result<void>::ok();
+}
+
+void Scheduler::processEvent(const std::string& name) {
+    auto tasks = store_.listTasks();
+    if (tasks.isFail()) {
+        LOG_WARN("Scheduler: 事件路由读任务列表失败: " + tasks.errorMessage());
+        return;
+    }
+    const int64_t nowSec = now_ ? now_() : systemNowSec();
+    for (const auto& t : tasks.value()) {
+        if (!t.enabled || t.triggerType != "event") continue;
+        // 坏配置不静默 continue：点名 task id 的 WARN 是用户唯一可见通道（同 tickNow 口径）
+        auto cfg = decodeTriggerConfig(t.triggerConfig);
+        if (cfg.isFail()) {
+            LOG_WARN("Scheduler: 任务 " + std::to_string(t.id) +
+                     " 的 trigger_config 无法解析，本事件跳过不派发：" +
+                     cfg.errorMessage());
+            continue;
+        }
+        bool match = false;
+        for (const auto& ev : cfg.value().events) {
+            if (ev == name) {
+                match = true;
+                break;
+            }
+        }
+        if (!match) continue;
+        const int64_t cooldown =
+            cfg.value().cooldownSec > 0 ? cfg.value().cooldownSec
+                                       : kDefaultEventCooldownSec;
+        {   // 任务级冷却：窗口内的事件直接丢弃——不排队、不延后（R-5/R-7 硬边界）
+            std::lock_guard<std::mutex> lock(mu_);
+            auto it = lastEventFireSec_.find(t.id);
+            if (it != lastEventFireSec_.end() && nowSec - it->second < cooldown)
+                continue;
+            lastEventFireSec_[t.id] = nowSec;   // 冷却起点 = 派发判定通过之时
+        }
+        auto fired = dispatchRun(t.id);
+        if (fired.isFail())
+            LOG_WARN("Scheduler: 事件派发失败 task=" + std::to_string(t.id) + ": " +
+                     fired.errorMessage());
     }
 }
 

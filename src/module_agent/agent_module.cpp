@@ -197,10 +197,19 @@ constexpr const char* kModelSlotLabels[] = {
 constexpr int kModelSlotCount = static_cast<int>(
     sizeof(kModelSlotKeys) / sizeof(kModelSlotKeys[0]));
 
-constexpr const char* kTriggerKeys[] = {"manual", "schedule", "resident"};
-constexpr const char* kTriggerLabels[] = {"手动", "定时", "常驻"};
-constexpr int kTriggerCount = 3;
+constexpr const char* kTriggerKeys[] = {"manual", "schedule", "resident", "event"};
+constexpr const char* kTriggerLabels[] = {"手动", "定时", "常驻", "事件"};
+constexpr int kTriggerCount = 4;
 constexpr int kTriggerScheduleIdx = 1;
+constexpr int kTriggerEventIdx = 3;
+
+// 事件触发可选事件表：名字 = core::event 常量（唯一真源），label 是表单文案。
+// 顺序即 editEvents_ 下标——两表必须同长，加事件只改这里 + editEvents_ 容量
+constexpr const char* kEventNames[] = {
+    ::core::event::kTodoCreated, ::core::event::kTodoCompleted,
+    ::core::event::kMdSaved};
+constexpr const char* kEventLabels[] = {"新建待办", "完成待办", "保存笔记"};
+constexpr int kEventCount = 3;
 
 constexpr float kPageHeaderH = 40.0f;
 constexpr float kNewTaskBtnW = 140.0f;
@@ -340,7 +349,8 @@ void AgentModule::onStop() {
         std::lock_guard<std::mutex> lock(runsMu_);
         runs_.clear();
     }
-    // Scheduler 收口：onStart 早退时 scheduler_ 未创建，须判空；stopAll 先停派发源再收尾在跑 run
+    // Scheduler 收口：先退订事件（断 emit→onEvent 入队源），再 stopAll 停派发源并收在跑 run
+    eventSubs_.clear();
     if (scheduler_) scheduler_->stopAll();
     ::core::ToolRegistry::instance().unregisterTool("app.stats");
     loop_.reset();
@@ -417,6 +427,16 @@ void AgentModule::ensureLlm() {
                                         });
     if (scheduler_ == nullptr) {
         scheduler_ = std::make_unique<Scheduler>(*store_, *loop_, deps_.schedulerNow);
+        // 事件触发接线：订阅 core EventBus 三事件 → Scheduler::onEvent。emit 在 UI
+        // 主线程同步执行，onEvent 契约「轻入队」不阻塞 UI。token 存 eventSubs_（RAII），
+        // onStop 清空即退订——漏退订会让 bus() 单例持有悬垂 this 的回调
+        auto& bus = ::core::event::bus();
+        eventSubs_.clear();
+        for (const char* ev : kEventNames) {
+            eventSubs_.push_back(bus.subscribe(ev, [this](const std::string& name) {
+                if (scheduler_) scheduler_->onEvent(name);
+            }));
+        }
         scheduler_->start();
     }
     llmMissingWarned_ = false;
@@ -501,6 +521,7 @@ void AgentModule::openNewTaskDialog() {
     editSlot_ = kModelSlotKeys[0];
     editIter_ = 10;
     editDestructive_ = false;
+    editEvents_ = {};
     editTriggerIdx_ = 0;
     editError_.clear();
     editTriggerOpen_ = false;
@@ -577,6 +598,24 @@ void AgentModule::openTaskEditor(int64_t taskId) {
     editIter_ = r.maxIterations;
     editDestructive_ = r.allowDestructive;
     editTriggerIdx_ = triggerIndexOf(r.triggerType);
+    // 「事件」分支回填：按 decode 结果逐项勾选；坏配置不静默（与 cronTextOf 同口径）
+    editEvents_ = {};
+    if (r.triggerType == "event") {
+        auto cfg = decodeTriggerConfig(r.triggerConfig);
+        if (cfg.isOk()) {
+            for (int i = 0; i < kEventCount; ++i) {
+                const std::string name = kEventNames[i];
+                if (std::find(cfg.value().events.begin(), cfg.value().events.end(),
+                               name) != cfg.value().events.end()) {
+                    editEvents_[i] = true;
+                }
+            }
+        } else if (!r.triggerConfig.empty()) {
+            LOG_WARN("Agent: 任务 " + std::to_string(r.id) +
+                     " 的 trigger_config 无法解析（事件表单按全不勾显示）：" +
+                     cfg.errorMessage());
+        }
+    }
     editError_.clear();
     editTriggerOpen_ = false;
     editSlotOpen_ = false;
@@ -584,7 +623,8 @@ void AgentModule::openTaskEditor(int64_t taskId) {
     refreshCronPreview();
 }
 
-// 保存任务弹窗（新建/编辑同一路径）：定时先 parseCron 校验，非法 → 弹窗内报错不关窗
+// 保存任务弹窗（新建/编辑同一路径）：定时先 parseCron 校验、事件校验 events 至少
+// 勾选 1 个；非法 → 弹窗内报错不关窗
 void AgentModule::saveTaskDialog() {
     if (store_ == nullptr) {
         editError_ = "数据库未就绪";
@@ -605,7 +645,26 @@ void AgentModule::saveTaskDialog() {
             return;
         }
         // 编码唯一落点 = trigger_config.h；不手拼 JSON（字符集一变就得逐个改）
-        auto encoded = encodeTriggerConfig(TriggerConfig{cron});
+        TriggerConfig cfg;
+        cfg.cron = cron;
+        auto encoded = encodeTriggerConfig(cfg);
+        if (encoded.isFail()) {
+            editError_ = "保存失败：" + encoded.errorMessage();
+            LOG_ERROR("Agent: 触发配置编码失败: " + encoded.errorMessage());
+            return;
+        }
+        triggerConfig = encoded.value();
+    } else if (triggerType == std::string("event")) {
+        // 编码唯一落点 = trigger_config.h；events 至少 1 个（全不勾 = 永不触发的死配置）
+        TriggerConfig cfg;
+        for (int i = 0; i < kEventCount; ++i) {
+            if (editEvents_[i]) cfg.events.push_back(kEventNames[i]);
+        }
+        if (cfg.events.empty()) {
+            editError_ = "事件触发需至少勾选一个事件";
+            return;
+        }
+        auto encoded = encodeTriggerConfig(cfg);
         if (encoded.isFail()) {
             editError_ = "保存失败：" + encoded.errorMessage();
             LOG_ERROR("Agent: 触发配置编码失败: " + encoded.errorMessage());
@@ -1353,6 +1412,7 @@ void AgentModule::composeTaskDialog(
     const float innerW = w - ui_kit::kDialogBodyInsetX;
     const float x0 = ui_kit::kDialogInsetX;
     const bool isSchedule = editTriggerIdx_ == kTriggerScheduleIdx;
+    const bool isEvent = editTriggerIdx_ == kTriggerEventIdx;
     const bool isEdit = editingTaskId_.has_value();
 
     ui_kit::DialogFrame frame;
@@ -1426,6 +1486,32 @@ void AgentModule::composeTaskDialog(
                     .build();
             })
             .build();
+        if (isEvent) {
+            // 事件分支：触发下拉右侧同行放三个事件开关（与 schedule 分支的 cron 行
+            // 同一行、互斥渲染；不新增行——kTaskDialogH/metaY 几何契约不许动）
+            const float evX = fieldX + ddW + kDialogGap;
+            const float evW = innerW - (evX - x0);
+            const float itemW = (evW - kDialogGap * 2.0f) / 3.0f;
+            for (int i = 0; i < kEventCount; ++i) {
+                // SwitchBuilder 无 position，套 stack 定位（destructive 同款）
+                ui.stack("agent.dialog.task.event.wrap." + std::to_string(i))
+                    .position(evX + static_cast<float>(i) * (itemW + kDialogGap),
+                              triggerY)
+                    .size(itemW, kDialogRowH)
+                    .content([&] {
+                        components::toggleSwitch(
+                            ui, "agent.dialog.task.event." + std::to_string(i))
+                            .size(itemW, 32.0f)
+                            .text(kEventLabels[i])
+                            .checked(editEvents_[i])
+                            .fontSize(12.0f)
+                            .theme(themeTokens)
+                            .onChange([this, i](bool v) { editEvents_[i] = v; })
+                            .build();
+                    })
+                    .build();
+            }
+        }
         if (isSchedule) {
             const float cronLabelX = fieldX + ddW + kDialogGap;
             const float cronX = cronLabelX + kDialogLabelW + kDialogGap;

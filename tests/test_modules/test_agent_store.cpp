@@ -255,7 +255,8 @@ REGISTER_TEST(agent_store_trigger_config_roundtrip,
     // json 层转义才对）。decode 回来的结构必须逐字相等
     for (const char* expr : {"0 9 * * 1-5", "* * * * *",
                              R"(a"b\c	d)"}) {
-        const module::agent::TriggerConfig cfg{expr};
+        module::agent::TriggerConfig cfg;
+        cfg.cron = expr;
         auto encoded = module::agent::encodeTriggerConfig(cfg);
         DOCTEST_REQUIRE(encoded.isOk());
         // 编码产物必须是合法 JSON 对象（不是手拼的近似物）

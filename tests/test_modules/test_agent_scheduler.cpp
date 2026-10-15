@@ -486,3 +486,186 @@ REGISTER_TEST(scheduler_resident_enqueue_after_stop_is_dropped,
     }
     return true;
 })
+
+// ---- 事件触发 + 冷却（M4 Task 2）。用例名前缀 event_trigger_（--filter event_trigger
+// 可定向跑，避开中文过滤词的传参编码坑）。驱动方式与 tickNow 用例同构：不起事件线程，
+// onEvent 入队 + drainEventQueue 直调（零等待、确定性），冷却用注入时钟推走。 ----
+
+// 事件路由：event 型任务在事件到达后被起跑；manual/schedule/resident 任务对同一事件
+// 无感；不匹配的事件名不触发
+REGISTER_TEST(event_trigger_routing_fires_matching_event_task_only,
+              "event_trigger: 事件路由只派发 enabled+event 型+events 含该名的任务", {
+    test_support::TestDb tdb("agentsched", "evtroute");
+    module::agent::AgentStore store(tdb.handle());
+    MockLlm llm; llm.script = { endTurnResp(), endTurnResp(), endTurnResp() };
+    module::agent::AgentLoop loop(llm, core::ToolRegistry::instance(), store);
+    module::agent::Scheduler sched(store, loop, {});         // 生产时钟即可（无冷却断言）
+    auto evOk = store.createTask("事件", "g", "event", "default", 5, false,
+                                 R"({"events":["todo.created","md.saved"]})");
+    auto manual = store.createTask("手动", "g", "manual", "default", 5, false,
+                                   R"({"events":["todo.created"]})");
+    auto cronT = store.createTask("定时", "g", "schedule", "default", 5, false,
+                                  R"({"cron":"0 9 * * 1-5"})");
+    auto other = store.createTask("别的事件", "g", "event", "default", 5, false,
+                                  R"({"events":["md.saved"]})");
+    DOCTEST_REQUIRE(evOk.isOk() && manual.isOk() && cronT.isOk() && other.isOk());
+    // 不匹配的事件名：没有任何任务起跑（队列清空、零 run）
+    sched.onEvent("todo.completed");
+    DOCTEST_REQUIRE(sched.drainEventQueue().isOk());
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    for (const auto& t : {evOk, manual, cronT, other})
+        DOCTEST_CHECK(store.listRuns(t.value(), 10).value().empty());
+    // 匹配：只有第一个任务派发
+    sched.onEvent("todo.created");
+    DOCTEST_REQUIRE(sched.drainEventQueue().isOk());
+    DOCTEST_CHECK_EQ(sched.eventQueueSize(), 0u);
+    for (int i = 0; i < 500; ++i) {                          // 有界等唯一一跑落终态
+        auto runs = store.listRuns(evOk.value(), 10);
+        if (runs.isOk() && runs.value().size() == 1 &&
+            runs.value()[0].status != "running") break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    auto fired = store.listRuns(evOk.value(), 10);
+    DOCTEST_REQUIRE(fired.isOk());
+    DOCTEST_REQUIRE_EQ(fired.value().size(), 1u);
+    DOCTEST_CHECK_EQ(fired.value()[0].status, std::string("completed"));
+    // 其它三类任务零 run（schedule 不因事件被起，manual/resident 不消费事件）
+    for (const auto& t : {manual, cronT, other})
+        DOCTEST_CHECK(store.listRuns(t.value(), 10).value().empty());
+    sched.stopAll();
+    return true;
+})
+
+// 任务级冷却默认 300s：窗口内第二次事件被**丢弃**（不排队不延后——eventQueueSize 归
+// 零、无第二行 run）；窗口过后再触发
+REGISTER_TEST(event_trigger_cooldown_default_300s_drops_within_window,
+              "event_trigger: 冷却默认 300s——窗口内事件丢弃不排队，窗口过后再派发", {
+    test_support::TestDb tdb("agentsched", "evtcd");
+    module::agent::AgentStore store(tdb.handle());
+    MockLlm llm; llm.script = { endTurnResp(), endTurnResp() };
+    module::agent::AgentLoop loop(llm, core::ToolRegistry::instance(), store);
+    int64_t nowSec = 100000;
+    module::agent::Scheduler sched(store, loop, [&nowSec] { return nowSec; });
+    auto taskId = store.createTask("冷却", "g", "event", "default", 5, false,
+                                    R"({"events":["todo.created"]})");
+    DOCTEST_REQUIRE(taskId.isOk());
+    // 第一次事件 → 派发（冷却起点 = nowSec）
+    sched.onEvent("todo.created");
+    DOCTEST_REQUIRE(sched.drainEventQueue().isOk());
+    for (int i = 0; i < 500; ++i) {
+        auto runs = store.listRuns(taskId.value(), 10);
+        if (runs.isOk() && runs.value().size() == 1 &&
+            runs.value()[0].status != "running") break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    DOCTEST_REQUIRE_EQ(store.listRuns(taskId.value(), 10).value().size(), 1u);
+    // 窗口内（+100s < 300s）：第二次事件被丢弃——不排队（队列已清）、不产生第二行
+    nowSec += 100;
+    sched.onEvent("todo.created");
+    DOCTEST_REQUIRE(sched.drainEventQueue().isOk());
+    DOCTEST_CHECK_EQ(sched.eventQueueSize(), 0u);             // 丢弃不是延后
+    for (int i = 0; i < 50; ++i) {                            // 有界观察窗（500ms）
+        DOCTEST_CHECK_EQ(store.listRuns(taskId.value(), 10).value().size(), 1u);
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    // 窗口边界过后（+300s 相对冷却起点已过）：再触发第二跑
+    nowSec += 200;                                           // 累计 +300s
+    sched.onEvent("todo.created");
+    DOCTEST_REQUIRE(sched.drainEventQueue().isOk());
+    for (int i = 0; i < 500; ++i) {
+        auto runs = store.listRuns(taskId.value(), 10);
+        if (runs.isOk() && runs.value().size() == 2 &&
+            runs.value()[0].status != "running" &&
+            runs.value()[1].status != "running") break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    auto runs = store.listRuns(taskId.value(), 10);
+    DOCTEST_REQUIRE(runs.isOk());
+    DOCTEST_REQUIRE_EQ(runs.value().size(), 2u);
+    DOCTEST_CHECK_EQ(runs.value()[0].status, std::string("completed"));
+    DOCTEST_CHECK_EQ(runs.value()[1].status, std::string("completed"));
+    sched.stopAll();
+    return true;
+})
+
+// cooldown_sec 覆盖默认：60s 冷却下 +100s 的第二次事件照常派发
+REGISTER_TEST(event_trigger_cooldown_override_by_config,
+              "event_trigger: cooldown_sec=60 覆盖默认——+100s 的第二次事件再派发", {
+    test_support::TestDb tdb("agentsched", "evtcdovr");
+    module::agent::AgentStore store(tdb.handle());
+    MockLlm llm; llm.script = { endTurnResp(), endTurnResp() };
+    module::agent::AgentLoop loop(llm, core::ToolRegistry::instance(), store);
+    int64_t nowSec = 200000;
+    module::agent::Scheduler sched(store, loop, [&nowSec] { return nowSec; });
+    auto taskId = store.createTask("短冷却", "g", "event", "default", 5, false,
+                                    R"({"events":["md.saved"],"cooldown_sec":60})");
+    DOCTEST_REQUIRE(taskId.isOk());
+    sched.onEvent("md.saved");
+    DOCTEST_REQUIRE(sched.drainEventQueue().isOk());
+    for (int i = 0; i < 500; ++i) {
+        auto runs = store.listRuns(taskId.value(), 10);
+        if (runs.isOk() && runs.value().size() == 1 &&
+            runs.value()[0].status != "running") break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    DOCTEST_REQUIRE_EQ(store.listRuns(taskId.value(), 10).value().size(), 1u);
+    nowSec += 100;                                           // > 60s 冷却窗口
+    sched.onEvent("md.saved");
+    DOCTEST_REQUIRE(sched.drainEventQueue().isOk());
+    for (int i = 0; i < 500; ++i) {
+        auto runs = store.listRuns(taskId.value(), 10);
+        if (runs.isOk() && runs.value().size() == 2 &&
+            runs.value()[1].status != "running") break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    DOCTEST_CHECK_EQ(store.listRuns(taskId.value(), 10).value().size(), 2u);
+    sched.stopAll();
+    return true;
+})
+
+// 坏 trigger_config（两者皆缺 / events 空数组 / events 非数组）→ 点名 task id 的
+// WARN + 跳过（不静默）；disabled 的 event 任务不派发。日志捕获同 badcfg 用例
+REGISTER_TEST(event_trigger_bad_config_logs_and_skips,
+              "event_trigger: 坏 events 配置 → WARN 点名 task id 后跳过；disabled 不派发", {
+    test_support::TestDb tdb("agentsched", "evtbad");
+    module::agent::AgentStore store(tdb.handle());
+    MockLlm llm; llm.script = { endTurnResp() };
+    module::agent::AgentLoop loop(llm, core::ToolRegistry::instance(), store);
+    module::agent::Scheduler sched(store, loop, [] { return int64_t(3600 * 24); });
+    auto both = store.createTask("两者皆缺", "g", "event", "default", 5, false, R"({})");
+    auto emptyArr = store.createTask("空数组", "g", "event", "default", 5, false,
+                                     R"({"events":[]})");
+    auto notArr = store.createTask("非数组", "g", "event", "default", 5, false,
+                                   R"({"events":"todo.created"})");
+    auto dis = store.createTask("禁用", "g", "event", "default", 5, false,
+                                R"({"events":["todo.created"]})");
+    DOCTEST_REQUIRE(both.isOk() && emptyArr.isOk() && notArr.isOk() && dis.isOk());
+    DOCTEST_REQUIRE(store.setTaskEnabled(dis.value(), false).isOk());
+
+    const auto logPath = test_temp::tempPath("devdesk_test_sched_evtbad.log");
+    std::error_code ec;
+    std::filesystem::remove(logPath, ec);
+    core::log::addFileOutput(logPath);
+
+    for (const char* ev : {"todo.created", "md.saved"}) {
+        sched.onEvent(ev);
+        DOCTEST_REQUIRE(sched.drainEventQueue().isOk());
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    for (const auto& t : {both, emptyArr, notArr, dis})
+        DOCTEST_CHECK(store.listRuns(t.value(), 10).value().empty());
+
+    std::ifstream in(logPath, std::ios::binary);
+    std::ostringstream oss;
+    oss << in.rdbuf();
+    const std::string logText = oss.str();
+    for (const auto& t : {both, emptyArr, notArr}) {
+        DOCTEST_CHECK_MESSAGE(
+            logText.find("任务 " + std::to_string(t.value())) != std::string::npos,
+            logText);
+        DOCTEST_CHECK(logText.find("trigger_config") != std::string::npos);
+    }
+    // disabled 无 WARN、无 run（用例自身的 listRuns 空断言已钉）
+    sched.stopAll();
+    return true;
+})

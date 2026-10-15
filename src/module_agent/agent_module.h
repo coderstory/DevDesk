@@ -3,6 +3,7 @@
 // cancel/done atomic 与 AgentStore。onStop 顺序是结构契约（勿改）：全取消 → 全 join → 清容器 → 注销工具 → 放服务。
 #pragma once
 
+#include <array>
 #include <atomic>
 #include <cstdint>
 #include <map>
@@ -15,6 +16,7 @@
 #include <utility>
 #include <vector>
 
+#include "core/event_bus.h"
 #include "core/module_interface.h"
 #include "core/theme.h"
 #include "core/tool.h"
@@ -158,6 +160,10 @@ private:
     // 先亡，其 run 线程 join 期间被引用的 loop_/store_ 仍存活
     std::unique_ptr<Scheduler> scheduler_;
     std::shared_ptr<::core::ITool> statsTool_;
+    // 事件触发的 EventBus 订阅 token（ensureLlm 建 scheduler_ 时订阅三事件，emit 在
+    // UI 主线程同步回调 → scheduler_->onEvent 轻入队）。RAII：onStop 清空即退订，
+    // 不得漏——bus() 单例跨用例/跨生命周期共享（Task 1 concerns ④）
+    std::vector<core::event::EventBus::Subscription> eventSubs_;
 
     // run 线程表：主线程写；mutex 为纵深防御（现调用点全在主线程）
     std::mutex runsMu_;
@@ -188,9 +194,11 @@ private:
     bool taskDialogOpen_ = false;
     std::optional<int64_t> editingTaskId_;
     std::string editGoal_, editCron_, editSlot_, editError_;
-    int editTriggerIdx_ = 0;      // 0=手动 1=定时 2=常驻（kTriggerTypes 下标）
+    int editTriggerIdx_ = 0;      // 0=手动 1=定时 2=常驻 3=事件（kTriggerKeys 下标）
     int editIter_ = 10;
     bool editDestructive_ = false;
+    // 「事件」分支的勾选态（与 agent_module.cpp 的 kEventNames 一一对应；仅主线程）
+    std::array<bool, 3> editEvents_{};
     bool editTriggerOpen_ = false;   // 触发类型下拉开合（UI 态）
     bool editSlotOpen_ = false;      // 模型槽位下拉弹层开合
     bool editCronTemplateOpen_ = false;   // cron 模板下拉弹层开合

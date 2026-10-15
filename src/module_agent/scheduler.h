@@ -1,6 +1,8 @@
-// Scheduler：agent 任务的触发侧。定时（cron）触发 + 常驻 worker 队列；「同 task 不并发」的闸
-// 在 AgentLoop::run，本类只做「起线程 + 等收尾」的薄 spawn。契约：① 成员声明顺序——Scheduler
-// 必须声明在 loop_/llm_/store_ 之后（逆序析构下先亡）；② stopAll 可重复但不支持并发调用。
+// Scheduler：agent 任务的触发侧。定时（cron）触发 + 常驻 worker 队列 + 事件触发路由
+//（事件源 = core::event::EventBus，订阅接线在 AgentModule 装配层）；「同 task 不并发」
+// 的闸在 AgentLoop::run，本类只做「起线程 + 等收尾」的薄 spawn。契约：① 成员声明顺序
+//——Scheduler 必须声明在 loop_/llm_/store_ 之后（逆序析构下先亡）；② stopAll 可重复
+// 但不支持并发调用。
 #pragma once
 #include <atomic>
 #include <condition_variable>
@@ -34,6 +36,16 @@ public:
     void enqueueResident(int64_t taskId);
     // 测试观察面：常驻待跑队列长度——「停止后入队不落地」不变式只能由队列长度断言钉住
     size_t residentQueueSize();
+    // 事件触发入队口：EventBus emit 在 UI 主线程同步调用本函数——契约「轻入队」，
+    // 只做锁内记事件名 + notify（锁内含 stopFlag 判定，与 enqueueResident 同因），
+    // 不做 listTasks / 冷却判定等重活（不阻塞 UI 发射方）。消费归事件线程
+    void onEvent(const std::string& name);
+    // 事件队列消费：取出全部排队事件逐个路由（listTasks → event 型且 events 含该
+    // 事件名且 enabled → 冷却判定 → dispatchRun）。事件线程体循环调用；公开供测试
+    // 直调（与 tickNow 同理：零等待、不起线程即可驱动事件路径）
+    core::Result<void> drainEventQueue();
+    // 测试观察面：待消费事件数——「冷却窗口内事件被丢弃不排队」的不变式由它钉住
+    size_t eventQueueSize();
 
 private:
     struct ActiveRun {
@@ -47,16 +59,23 @@ private:
     void reapDone();
     void tickThreadLoop();
     void residentThreadLoop();
+    void eventThreadLoop();
+    // 单个事件的路由：listTasks 过滤（enabled + event 型 + events 含 name）→
+    // 任务级冷却（窗口内直接丢弃，不排队不延后）→ dispatchRun
+    void processEvent(const std::string& name);
     AgentStore& store_;
     AgentLoop& loop_;
     NowFn now_;
     std::atomic<bool> stopFlag_{false};
     std::thread tickThread_;
     std::thread residentThread_;
-    std::mutex mu_;                                 // 护 runs_ / lastFiredMinute_ / residentQueue_
-    std::condition_variable cv_;                    // 常驻队列有新单 / stopAll 唤醒
+    std::thread eventThread_;
+    std::mutex mu_;                                 // 护 runs_ / lastFiredMinute_ / residentQueue_ / eventQueue_ / lastEventFireSec_
+    std::condition_variable cv_;                    // 常驻/事件队列有新单 / stopAll 唤醒
     std::map<int64_t, int64_t> lastFiredMinute_;    // taskId → 上次触发的分钟序（now/60）
+    std::map<int64_t, int64_t> lastEventFireSec_;   // taskId → 事件型上次派发的 unix 秒（冷却起点）
     std::vector<std::unique_ptr<ActiveRun>> runs_;  // 派发线程写 / stopAll 与观察面读（mu_ 护）
     std::deque<int64_t> residentQueue_;             // 常驻待跑 taskId（mu_ 护）
+    std::deque<std::string> eventQueue_;            // 待路由的事件名（mu_ 护；只存名字，冷却按消费时刻计时）
 };
 } // namespace module::agent
