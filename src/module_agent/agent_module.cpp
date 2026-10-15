@@ -48,6 +48,21 @@ bool hasLiveRun(const std::map<int64_t, AgentRunRow>& latestRuns,
     return false;
 }
 
+std::vector<int64_t> detectRunEndNotifications(
+    const std::map<int64_t, std::string>& prevStatus,
+    const std::map<int64_t, std::string>& nowStatus,
+    const std::set<int64_t>& notifiedRunIds) {
+    std::vector<int64_t> toNotify;
+    for (const auto& [runId, status] : nowStatus) {
+        const auto prevIt = prevStatus.find(runId);
+        if (prevIt == prevStatus.end() || prevIt->second != "running") continue;
+        if (status != "failed" && status != "limited") continue;
+        if (notifiedRunIds.count(runId) != 0) continue;
+        toNotify.push_back(runId);
+    }
+    return toNotify;   // map 迭代升序，无需再排
+}
+
 namespace {
 
 // run 状态 → 中文展示；未知态显示「—」
@@ -664,6 +679,38 @@ void AgentModule::refreshData() {
         }
         taskRuns_[task.id] = std::move(list);
     }
+    // run 完成通知：本次轮询 vs 上次轮询的 running→failed/limited 迁移必响；
+    // completed/cancelled 静默；同一 runId 只通知一次（notifiedRunIds_）。
+    // 只看 latestRuns_ 即可：刚结束的 run 必是其任务的最近一次 run，不会漏迁移。
+    {
+        std::map<int64_t, std::string> nowStatus;
+        for (const auto& [taskId, run] : latestRuns_) {
+            (void)taskId;
+            nowStatus[run.id] = run.status;
+        }
+        for (int64_t runId : detectRunEndNotifications(prevRunStatuses_, nowStatus,
+                                                       notifiedRunIds_)) {
+            // 任务名反查：runId → taskId（latestRuns_ map 值）→ tasks_ 名称；缺失兜底
+            std::string taskName;
+            for (const auto& [tid, run] : latestRuns_) {
+                if (run.id != runId) continue;
+                for (const auto& task : tasks_) {
+                    if (task.id == tid) {
+                        taskName = task.name;
+                        break;
+                    }
+                }
+                break;
+            }
+            if (taskName.empty()) taskName = "任务 " + std::to_string(runId);
+            const std::string& st = nowStatus[runId];
+            runToast_.show(st == "failed" ? "智能体任务失败" : "智能体任务受限",
+                           "「" + taskName + "」运行结束（" + runStatusText(st) + "）",
+                           /*isError=*/true);
+            notifiedRunIds_.insert(runId);
+        }
+        prevRunStatuses_ = std::move(nowStatus);
+    }
     if (detailTaskId_) {
         detailMessages_.clear();
         // 配置摘要快照：走 getTask（tasks_ 列表可能滞后于库）
@@ -1174,6 +1221,8 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
     if (detailTaskId_) {
         composeTaskDetailDialog(ui, screen, t, themeTokens);
     }
+    // run 完成通知（refreshData 迁移检测置位）：弹窗之后绘制，盖在其上
+    ui_kit::drawToast(ui, screen, "agent.toast", runToast_, themeTokens);
 }
 
 // 任务弹窗：新建/编辑共用同一张表单；关闭态在内容回调内 return——内容节点即开合状态

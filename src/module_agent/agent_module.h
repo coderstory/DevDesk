@@ -23,6 +23,7 @@
 #include "module_agent/tool_info.h"
 
 #include <components/theme.h>
+#include <ui_kit/toast.h>
 
 namespace core {
 class IClaudeProxyService;
@@ -36,6 +37,15 @@ class AgentLoop;
 // 则 uiPolling_ 永不复位。孤儿 runId 须按 AgentRunRow::id（runId）排除，非 map 键 taskId
 bool hasLiveRun(const std::map<int64_t, AgentRunRow>& latestRuns,
                 const std::set<int64_t>& orphanedRunIds);
+
+// run 完成通知的迁移检测（纯逻辑，refreshData 每次轮询消费）：
+// prev/now = 上次/本次轮询的 runId→status 快照；notified = 已通知过的 runId。
+// 返回需通知的 runId（升序）：仅「prev=running 且 now=failed/limited 且未通知过」；
+// completed/cancelled 静默；prev 缺席（未观测过 running，如 run 结束后才进页）不算迁移不通知。
+std::vector<int64_t> detectRunEndNotifications(
+    const std::map<int64_t, std::string>& prevStatus,
+    const std::map<int64_t, std::string>& nowStatus,
+    const std::set<int64_t>& notifiedRunIds);
 
 class AgentModule : public ::core::Module {
 public:
@@ -156,6 +166,12 @@ private:
     std::string pageError_;
     bool tasksDirty_ = false;   // onStart/onPageEnter/写操作置位 → 下帧重查
     bool uiPolling_ = false;    // 有 run 期间每帧跟进状态/消息，全终止后停
+
+    // run 完成通知（refreshData 迁移检测）：上次轮询快照 + 已通知集合（同一 run 只通知一次）。
+    // EUI-NEO toast 单实例：同帧多个 run 迁移时后发顶替先发（接受，M3 Task 1 裁决）。
+    std::map<int64_t, std::string> prevRunStatuses_;   // runId → status
+    std::set<int64_t> notifiedRunIds_;
+    ui_kit::ToastState runToast_;
 
     // 重入幂等守卫：double-onStart = no-op（防重复注册工具 / 重建服务）；未启动的 off = no-op
     bool started_ = false;

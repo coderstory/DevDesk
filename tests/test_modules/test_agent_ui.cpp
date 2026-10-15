@@ -6,7 +6,7 @@
 //   页面   agent.page / agent.page.header / agent.title / agent.page.newTask /
 //          agent.tools.*（可用工具区块）/ agent.tasklist（scrollView）+.content /
 //          agent.task.<id>（.title / .status / .detail / .edit / .toggle /
-//          [.enqueue 仅常驻] / .run）
+//          [.enqueue 仅常驻] / .run）/ agent.toast（run 完成通知，Task 1）
 //   任务弹窗 agent.dialog.task.*（新建 / 编辑共用）：
 //          .goal（多行）/ .trigger / .cron（仅定时）/ .slot / .iter /
 //          .destructive / .cancel / .save / .close / .error（有错才渲染）
@@ -41,6 +41,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -1411,5 +1412,176 @@ REGISTER_TEST(agent_has_live_run_excludes_orphaned_finish_failure,
     // ⑦ 按 taskId（map 的键）而不是 runId 去匹配孤儿，必须匹配不上：runId 10 / taskId 1，
     // 传 {1} 不该把它排除掉、仍算活 run。传 {1} 若被排除 = 拿错了键，排除逻辑形同虚设
     DOCTEST_CHECK(module::agent::hasLiveRun({{1, running(10, 1)}}, {1}));
+    return true;
+})
+
+// ===================== Task 1：run 完成桌面通知（迁移检测纯逻辑 + toast 接线） =====================
+
+REGISTER_TEST(agent_run_end_notify_transition_rules,
+              "agent: run 完成迁移检测纯逻辑（completed 静默 / failed·limited 必响 / 同 runId 不重复）", {
+    using StatusMap = std::map<int64_t, std::string>;
+
+    // ① 上轮 running 本轮 completed → 不通知（completed 静默）
+    DOCTEST_CHECK(module::agent::detectRunEndNotifications(
+                      {{10, "running"}}, {{10, "completed"}}, {})
+                      .empty());
+    // ② 上轮 running 本轮 failed → 通知一次（恰好一个且是它）
+    {
+        const auto r = module::agent::detectRunEndNotifications(
+            {{10, "running"}}, {{10, "failed"}}, {});
+        DOCTEST_REQUIRE(r.size() == 1);
+        DOCTEST_CHECK(r[0] == 10);
+    }
+    // ③ 上轮 running 本轮 limited → 同样必响
+    {
+        const auto r = module::agent::detectRunEndNotifications(
+            {{10, "running"}}, {{10, "limited"}}, {});
+        DOCTEST_REQUIRE(r.size() == 1);
+        DOCTEST_CHECK(r[0] == 10);
+    }
+    // ④ 同 runId 二次迁移（已进已通知集合）→ 不再通知
+    DOCTEST_CHECK(module::agent::detectRunEndNotifications(
+                      {{10, "running"}}, {{10, "failed"}}, {10})
+                      .empty());
+    // ⑤ 稳态不算迁移：failed→failed 不通知
+    DOCTEST_CHECK(module::agent::detectRunEndNotifications(
+                      {{10, "failed"}}, {{10, "failed"}}, {})
+                      .empty());
+    // ⑥ prev 缺席（未观测过 running，如 run 结束后才进页）→ 不通知
+    DOCTEST_CHECK(module::agent::detectRunEndNotifications(
+                      StatusMap{}, {{10, "failed"}}, {})
+                      .empty());
+    // ⑦ cancelled 静默（不在必响名单：completed/cancelled 都不打扰）
+    DOCTEST_CHECK(module::agent::detectRunEndNotifications(
+                      {{10, "running"}}, {{10, "cancelled"}}, {})
+                      .empty());
+    // ⑧ 混合迁移：failed + completed 并存 → 只通知 failed 那个 runId
+    {
+        const auto r = module::agent::detectRunEndNotifications(
+            {{10, "running"}, {11, "running"}},
+            {{10, "completed"}, {11, "failed"}}, {});
+        DOCTEST_REQUIRE(r.size() == 1);
+        DOCTEST_CHECK(r[0] == 11);
+    }
+    // ⑨ run 掉出本轮快照（被新 run 顶出最近列表）→ 不通知，不误报
+    DOCTEST_CHECK(module::agent::detectRunEndNotifications(
+                      {{10, "running"}}, {{11, "running"}}, {})
+                      .empty());
+    // ⑩ 空快照不崩、不通知
+    DOCTEST_CHECK(module::agent::detectRunEndNotifications(
+                      StatusMap{}, StatusMap{}, {})
+                      .empty());
+    return true;
+})
+
+REGISTER_TEST(agent_ui_run_failed_shows_toast,
+              "agent_ui: run 失败 → 页面 toast 通知（failed 必响，agent.toast 含任务名）", {
+    test_support::TestDb tdb("agentui", "failtoast");
+    FakeProxy proxy;
+    ToolGuard statsGuard{"app.stats"};
+    core::ToolRegistry::instance().unregisterTool("app.stats");
+    module::agent::AgentStore store(tdb.handle());
+    auto taskId = store.createTask("会失败的任务", "直接回复完成，不调用任何工具",
+                                    "manual", "default", 10, false);
+    DOCTEST_REQUIRE(taskId.isOk());
+    const std::string tid = std::to_string(taskId.value());
+
+    module::agent::AgentModule::Deps deps;
+    deps.db = &tdb.handle();
+    deps.proxy = &proxy;
+    deps.http = [](const platform::http::Request&) {
+        // 拖慢失败返回：保证轮询帧先观测到 running（否则首帧即终态 → 无迁移、无通知）
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        return core::Result<platform::http::Response>::fail(
+            core::ErrorCode::Internal, "connection refused");
+    };
+    module::agent::AgentModule mod(deps);
+    mod.onStart();
+
+    eui::Ui ui;
+    composeTo(ui, mod, kScreen, "agent_ui_failtoast1");
+    DOCTEST_REQUIRE_MESSAGE(clickId(ui, "agent.task." + tid + ".run.bg"),
+                            "启动按钮未渲染/不可点");
+
+    // 有界轮询（10ms 步进 ≤5s）+ 每轮 recompose：迁移发生的那帧必须弹出 toast
+    bool toasted = false;
+    eui::Ui ui2;
+    for (int i = 0; i < 500; ++i) {
+        composeTo(ui2, mod, kScreen, "agent_ui_failtoast_poll");
+        const auto* title = ui2.find("agent.toast.title");
+        if (title != nullptr && !title->text.empty()) {
+            DOCTEST_CHECK_MESSAGE(title->text.find("失败") != std::string::npos,
+                                   "toast 标题不含「失败」，实测: " + title->text);
+            const auto* msg = ui2.find("agent.toast.message");
+            DOCTEST_REQUIRE_MESSAGE(msg != nullptr, "toast 缺正文节点");
+            DOCTEST_CHECK_MESSAGE(msg->text.find("会失败的任务") != std::string::npos,
+                                   "toast 正文不含任务名，实测: " + msg->text);
+            toasted = true;
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    DOCTEST_REQUIRE_MESSAGE(toasted, "run 失败后 5s 内未弹出通知 toast");
+
+    mod.onStop();
+    return true;
+})
+
+REGISTER_TEST(agent_ui_run_completed_silent_no_toast,
+              "agent_ui: run 成功 → 不弹通知 toast（completed 静默）", {
+    test_support::TestDb tdb("agentui", "silentok");
+    FakeProxy proxy;
+    ToolGuard statsGuard{"app.stats"};
+    core::ToolRegistry::instance().unregisterTool("app.stats");
+    module::agent::AgentStore store(tdb.handle());
+    auto taskId = store.createTask("静默任务", "直接回复完成，不调用任何工具",
+                                    "manual", "default", 10, false);
+    DOCTEST_REQUIRE(taskId.isOk());
+    const std::string tid = std::to_string(taskId.value());
+
+    module::agent::AgentModule::Deps deps;
+    deps.db = &tdb.handle();
+    deps.proxy = &proxy;
+    deps.http = [](const platform::http::Request&) {
+        platform::http::Response res;
+        res.statusCode = 200;
+        res.body = R"({"id":"m1","stop_reason":"end_turn","content":[)"
+                    R"({"type":"text","text":"done"}],)"
+                    R"("usage":{"input_tokens":1,"output_tokens":1}})";
+        return core::Result<platform::http::Response>::ok(res);
+    };
+    module::agent::AgentModule mod(deps);
+    mod.onStart();
+
+    eui::Ui ui;
+    composeTo(ui, mod, kScreen, "agent_ui_silent1");
+    DOCTEST_REQUIRE_MESSAGE(clickId(ui, "agent.task." + tid + ".run.bg"),
+                            "启动按钮未渲染/不可点");
+
+    // 轮询到落库 completed，再补 3 帧确认迁移帧过后 toast 仍空（completed 静默）
+    bool completed = false;
+    eui::Ui ui2;
+    for (int i = 0; i < 500; ++i) {
+        composeTo(ui2, mod, kScreen, "agent_ui_silent_poll");
+        auto runs = store.listRuns(taskId.value(), 1);
+        if (runs.isOk() && !runs.value().empty() &&
+            runs.value().front().status == "completed") {
+            completed = true;
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    DOCTEST_REQUIRE_MESSAGE(completed, "run 5s 内未落库 completed");
+    for (int i = 0; i < 3; ++i) {
+        composeTo(ui2, mod, kScreen, "agent_ui_silent_tail");
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    const auto* title = ui2.find("agent.toast.title");
+    DOCTEST_CHECK_MESSAGE(title == nullptr || title->text.empty(),
+                          "completed 迁移不该弹 toast，实测: " +
+                              (title == nullptr ? std::string("<无节点>")
+                                                : title->text));
+
+    mod.onStop();
     return true;
 })
