@@ -301,3 +301,145 @@ REGISTER_TEST(agent_store_trigger_config_decode_rejects_malformed,
     DOCTEST_CHECK_EQ(extra.value().cron, std::string("* * * * *"));
     return true;
 })
+
+// context_note / auto_note：createTask 默认值（不传尾参 = 空串/1）+ getTask 读回一致
+REGISTER_TEST(agent_store_context_note_defaults,
+              "agent_store: createTask 不传 context note 尾参 → 默认空串/autoNote=1", {
+    test_support::TestDb tdb("agentstore", "ctxdef");
+    module::agent::AgentStore store(tdb.handle());
+    auto taskId = store.createTask("默认记忆", "g", "manual", "default", 10, false);
+    DOCTEST_REQUIRE(taskId.isOk());
+    auto row = store.getTask(taskId.value());
+    DOCTEST_REQUIRE(row.isOk());
+    DOCTEST_CHECK_EQ(row.value().contextNote, std::string(""));
+    DOCTEST_CHECK_EQ(row.value().autoNote, 1);
+    return true;
+})
+
+// createTask 显式传 context_note + auto_note → 落库读回一致
+REGISTER_TEST(agent_store_context_note_roundtrip,
+              "agent_store: createTask 带 context_note + auto_note → 读回一致", {
+    test_support::TestDb tdb("agentstore", "ctxrt");
+    module::agent::AgentStore store(tdb.handle());
+    auto taskId = store.createTask("记忆任务", "g", "manual", "default", 10, false,
+                                   "", "上次运行完成", 0);
+    DOCTEST_REQUIRE(taskId.isOk());
+    auto row = store.getTask(taskId.value());
+    DOCTEST_REQUIRE(row.isOk());
+    DOCTEST_CHECK_EQ(row.value().contextNote, std::string("上次运行完成"));
+    DOCTEST_CHECK_EQ(row.value().autoNote, 0);
+    return true;
+})
+
+// updateTask 覆写 context_note + auto_note
+REGISTER_TEST(agent_store_context_note_update,
+              "agent_store: updateTask 覆写 context_note + auto_note", {
+    test_support::TestDb tdb("agentstore", "ctxupd");
+    module::agent::AgentStore store(tdb.handle());
+    auto taskId = store.createTask("旧记忆", "g", "manual", "default", 10, false);
+    DOCTEST_REQUIRE(taskId.isOk());
+    // updateTask 带 context_note + auto_note 尾参
+    DOCTEST_REQUIRE(store.updateTask(taskId.value(), "旧记忆", "g", "manual", "",
+                                     "default", 10, false, "新记忆内容", 1)
+                        .isOk());
+    auto row = store.getTask(taskId.value());
+    DOCTEST_REQUIRE(row.isOk());
+    DOCTEST_CHECK_EQ(row.value().contextNote, std::string("新记忆内容"));
+    DOCTEST_CHECK_EQ(row.value().autoNote, 1);
+    // updateTask 不传尾参 → 默认空串/1（覆盖为默认值）
+    DOCTEST_REQUIRE(store.updateTask(taskId.value(), "旧记忆", "g", "manual", "",
+                                     "default", 10, false)
+                        .isOk());
+    auto row2 = store.getTask(taskId.value());
+    DOCTEST_REQUIRE(row2.isOk());
+    DOCTEST_CHECK_EQ(row2.value().contextNote, std::string(""));
+    DOCTEST_CHECK_EQ(row2.value().autoNote, 1);
+    return true;
+})
+
+// appendContextNote：多次追加顺序累积
+REGISTER_TEST(agent_store_append_context_note_accumulates,
+              "agent_store: appendContextNote 多次追加顺序累积", {
+    test_support::TestDb tdb("agentstore", "appacc");
+    module::agent::AgentStore store(tdb.handle());
+    auto taskId = store.createTask("累积", "g", "manual", "default", 10, false);
+    DOCTEST_REQUIRE(taskId.isOk());
+    DOCTEST_REQUIRE(store.appendContextNote(taskId.value(), "第一行。").isOk());
+    DOCTEST_REQUIRE(store.appendContextNote(taskId.value(), "第二行。").isOk());
+    auto row = store.getTask(taskId.value());
+    DOCTEST_REQUIRE(row.isOk());
+    DOCTEST_CHECK_EQ(row.value().contextNote, std::string("第一行。第二行。"));
+    return true;
+})
+
+// appendContextNote：空串 no-op
+REGISTER_TEST(agent_store_append_context_note_empty_noop,
+              "agent_store: appendContextNote 空串 no-op", {
+    test_support::TestDb tdb("agentstore", "appemp");
+    module::agent::AgentStore store(tdb.handle());
+    auto taskId = store.createTask("空串", "g", "manual", "default", 10, false,
+                                   "", "已有内容", 1);
+    DOCTEST_REQUIRE(taskId.isOk());
+    DOCTEST_REQUIRE(store.appendContextNote(taskId.value(), "").isOk());
+    auto row = store.getTask(taskId.value());
+    DOCTEST_REQUIRE(row.isOk());
+    DOCTEST_CHECK_EQ(row.value().contextNote, std::string("已有内容"));
+    return true;
+})
+
+// appendContextNote：taskId 不存在 → NotFound
+REGISTER_TEST(agent_store_append_context_note_not_found,
+              "agent_store: appendContextNote 不存在 task → NotFound", {
+    test_support::TestDb tdb("agentstore", "appnf");
+    module::agent::AgentStore store(tdb.handle());
+    auto r = store.appendContextNote(99999, "内容");
+    DOCTEST_REQUIRE(r.isFail());
+    DOCTEST_CHECK(r.errorCode() == core::ErrorCode::NotFound);
+    return true;
+})
+
+// appendContextNote：4KB 滚动丢最旧 + UTF-8 边界不切半
+REGISTER_TEST(agent_store_append_context_note_4kb_roll,
+              "agent_store: appendContextNote 超 4KB 从头丢最旧至 UTF-8 边界", {
+    test_support::TestDb tdb("agentstore", "app4k");
+    module::agent::AgentStore store(tdb.handle());
+    auto taskId = store.createTask("4KB", "g", "manual", "default", 10, false);
+    DOCTEST_REQUIRE(taskId.isOk());
+    // 写 4000 个 ASCII 'A'
+    std::string bigA(4000, 'A');
+    DOCTEST_REQUIRE(store.appendContextNote(taskId.value(), bigA).isOk());
+    // 再追加 100 个 'B'，总长 4100 > 4096 → 丢最旧 4 个 'A'
+    std::string bigB(100, 'B');
+    DOCTEST_REQUIRE(store.appendContextNote(taskId.value(), bigB).isOk());
+    auto row = store.getTask(taskId.value());
+    DOCTEST_REQUIRE(row.isOk());
+    DOCTEST_CHECK_EQ(row.value().contextNote.size(), static_cast<size_t>(4096));
+    // 内容以 'A' 开头（丢的是最旧的 4 个），以 'B' 结尾
+    DOCTEST_CHECK_EQ(row.value().contextNote[0], 'A');
+    DOCTEST_CHECK_EQ(row.value().contextNote[4095], 'B');
+    return true;
+})
+
+// appendContextNote：UTF-8 边界裁剪——中文 3 字节字符不切半
+REGISTER_TEST(agent_store_append_context_note_utf8_boundary,
+              "agent_store: appendContextNote 超 4KB 裁剪落在 UTF-8 字符边界", {
+    test_support::TestDb tdb("agentstore", "apputf");
+    module::agent::AgentStore store(tdb.handle());
+    auto taskId = store.createTask("UTF8", "g", "manual", "default", 10, false);
+    DOCTEST_REQUIRE(taskId.isOk());
+    // 写 4090 个 'A'，再加 3 字节中文"中"（E4 B8 AD），总长 4093
+    std::string base(4090, 'A');
+    base += "中";   // 3 bytes
+    DOCTEST_REQUIRE(store.appendContextNote(taskId.value(), base).isOk());
+    // 再加 "国"（E5 9B BD，3 bytes），总长 4096
+    DOCTEST_REQUIRE(store.appendContextNote(taskId.value(), "国").isOk());
+    auto row = store.getTask(taskId.value());
+    DOCTEST_REQUIRE(row.isOk());
+    // 总长应 ≤ 4096
+    DOCTEST_CHECK_LE(row.value().contextNote.size(), static_cast<size_t>(4096));
+    // 末尾应是 "国" 的 3 字节完整保留
+    std::string tail = row.value().contextNote.substr(
+        row.value().contextNote.size() - 3);
+    DOCTEST_CHECK_EQ(tail, std::string("国"));
+    return true;
+})

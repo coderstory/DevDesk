@@ -332,7 +332,7 @@ REGISTER_TEST(schema_claude_tables_columns,
 })
 
 REGISTER_TEST(schema_agent_tables_columns,
-              "schema: agent 三表列定义符合最终形态（11/9/7 列，双 FK CASCADE）", {
+              "schema: agent 三表列定义符合最终形态（13/9/7 列，双 FK CASCADE）", {
     auto path = test_support::tempDbPath(kDbPrefix, "cols_agent");
     std::error_code ec;
     std::filesystem::remove(path, ec);
@@ -343,8 +343,8 @@ REGISTER_TEST(schema_agent_tables_columns,
         DOCTEST_REQUIRE(r.value().migrate().isOk());
         auto& db = r.value().db();
 
-        // agent_tasks 11 列：默认值钉死（max_iterations=10 / allow_destructive=0 /
-        // enabled=1 / model_slot='default'）
+        // agent_tasks 13 列：默认值钉死（max_iterations=10 / allow_destructive=0 /
+        // enabled=1 / model_slot='default' / context_note='' / auto_note=1）
         std::vector<std::string> expectTasks{
             "id:INTEGER:0:<none>",
             "name:TEXT:1:<none>",
@@ -355,6 +355,8 @@ REGISTER_TEST(schema_agent_tables_columns,
             "max_iterations:INTEGER:1:10",
             "allow_destructive:INTEGER:1:0",
             "enabled:INTEGER:1:1",
+            "context_note:TEXT:1:''",
+            "auto_note:INTEGER:1:1",
             "created_at:INTEGER:1:<none>",
             "updated_at:INTEGER:1:<none>",
         };

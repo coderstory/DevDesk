@@ -17,6 +17,8 @@ struct AgentTaskRow {
     int maxIterations = 10;
     bool allowDestructive = false;
     bool enabled = true;
+    std::string contextNote;
+    int autoNote = 1;
 };
 struct AgentRunRow {
     int64_t id = 0, taskId = 0;
@@ -41,18 +43,22 @@ public:
                                const std::string& triggerType,
                                const std::string& modelSlot,
                                int maxIterations, bool allowDestructive,
-                               const std::string& triggerConfig = "");
+                               const std::string& triggerConfig = "",
+                               const std::string& contextNote = "",
+                               int autoNote = 1);
     Result<std::vector<AgentTaskRow>> listTasks();
     Result<AgentTaskRow> getTask(int64_t id);                    // 不存在 → NotFound
     // 任务的唯一「同 task 不并发」闸：锁内查 running 再插 = 原子；已有 running → fail(AlreadyExists) 且不落行
     Result<int64_t> startRunExclusive(int64_t taskId);
     Result<int64_t> startRun(int64_t taskId);                    // INSERT status='running'
-    // 七列覆盖 + updated_at；enabled 归 setTaskEnabled（两动作互不覆盖）；id 不存在 → NotFound
+    // 九列覆盖 + updated_at；enabled 归 setTaskEnabled（两动作互不覆盖）；id 不存在 → NotFound
     Result<void> updateTask(int64_t id, const std::string& name, const std::string& goal,
                             const std::string& triggerType,
                             const std::string& triggerConfig,
                             const std::string& modelSlot, int maxIterations,
-                            bool allowDestructive);
+                            bool allowDestructive,
+                            const std::string& contextNote = "",
+                            int autoNote = 1);
     Result<void> setTaskEnabled(int64_t id, bool enabled);   // 不存在 → NotFound
     Result<void> finishRun(int64_t runId, const std::string& status,
                            int iterations,
@@ -65,6 +71,9 @@ public:
     Result<std::vector<AgentMessageRow>> listMessages(int64_t runId);   // ORDER BY seq
     Result<std::vector<AgentRunRow>> listRuns(int64_t taskId, int limit);
     Result<void> sweepStaleRuns();   // running → failed('应用异常退出（悬挂 run）')
+    // 追加文本到 context_note：锁内读-拼-裁-写单事务；超 4096 字节从头丢最旧至 UTF-8 边界；
+    // 空串 no-op；taskId 不存在 → NotFound
+    Result<void> appendContextNote(int64_t taskId, const std::string& text);
 private:
     core::data::SqliteDb& db_;
 };
