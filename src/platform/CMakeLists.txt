@@ -19,6 +19,7 @@ if(WIN32)
         http_client_ca_win.cpp
         terminal_launch_win.cpp
         tray_icon_win.cpp              # 托盘图标走真 .ico（ExtractIconExW 不认 PNG）
+        message_box_win.cpp             # 启动期阻塞对话框（损坏还原流程）
     )
 elseif(APPLE)
     target_sources(devdesk_platform PRIVATE
@@ -30,6 +31,7 @@ elseif(APPLE)
         http_client_ca_posix.cpp
         terminal_launch_macos.cpp
         tray_icon_macos.cpp            # 托盘图标走 22×22 template 蒙版（不变）
+        message_box_macos.cpp          # osascript display dialog（启动期阻塞对话框）
     )
 else()
     target_sources(devdesk_platform PRIVATE
@@ -41,6 +43,7 @@ else()
         http_client_ca_posix.cpp
         terminal_launch_posix.cpp
         tray_icon_posix.cpp            # 其它 POSIX 兜底：返回空串（用应用图标）
+        message_box_posix.cpp          # 无原生阻塞对话框：诚实降级（LOG + Cancel）
     )
 endif()
 

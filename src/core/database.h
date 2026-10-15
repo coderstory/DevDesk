@@ -30,6 +30,9 @@ public:
     // 滚动清理调用日志：删 started_at 早于 now - retentionDays 的行，返回删除条数；幂等，retentionDays<0 按 0
     core::Result<int64_t> pruneCallLogs(int retentionDays);
 
+    // PRAGMA quick_check：true = 完整，false = 判定损坏（core::dbmaint::quickCheckOnHandle）
+    core::Result<bool> quickCheck();
+
     core::data::SqliteDb& db() { return db_; }
     const core::data::SqliteDb& db() const { return db_; }
 

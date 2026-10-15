@@ -145,6 +145,10 @@ REGISTER_TEST(paths_data_root_gitignore_content,
     // 至少 `*.db` / `*.db-*` / `config.json*` / `run-settings/` 四条必须在内：少一条就有一条明文凭据路径会被 `git add .` 带走（-wal 里就有凭据页）
     DOCTEST_CHECK(text.find("*.db\n") != std::string::npos);
     DOCTEST_CHECK(text.find("*.db-*") != std::string::npos);
+    // 启动备份 / corrupt 隔离文件（db_backup.cpp 产物）：后缀是 .backup-/.corrupt-，
+    // `*.db-*` 匹配不到，必须有独立的两条
+    DOCTEST_CHECK(text.find("*.db.backup-*") != std::string::npos);
+    DOCTEST_CHECK(text.find("*.db.corrupt-*") != std::string::npos);
     DOCTEST_CHECK(text.find("config.json*") != std::string::npos);
     DOCTEST_CHECK(text.find("run-settings/") != std::string::npos);
     // 接管前的 settings.json env 快照（可能含用户真 token）就在数据根里，漏了它等于打穿这个文件存在的理由
@@ -186,6 +190,8 @@ REGISTER_TEST(paths_gitignore_appends_only_and_preserves_user_rules,
     // 必需项被补齐，包括上面那条被注释掉的：注释行不算「已有规则」
     DOCTEST_CHECK(after.find("\n*.db\n") != std::string::npos);
     DOCTEST_CHECK(after.find("*.db-*") != std::string::npos);
+    DOCTEST_CHECK(after.find("*.db.backup-*") != std::string::npos);
+    DOCTEST_CHECK(after.find("*.db.corrupt-*") != std::string::npos);
     DOCTEST_CHECK(after.find("config.json*") != std::string::npos);
     DOCTEST_CHECK(after.find("run-settings/") != std::string::npos);
     DOCTEST_CHECK(after.find("claude_settings_snapshot.json") != std::string::npos);

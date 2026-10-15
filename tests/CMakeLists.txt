@@ -21,6 +21,7 @@ add_executable(devdesk_tests
     test_core/test_tool_registry.cpp
     test_core/test_file_perms.cpp
     test_core/test_atomic_write.cpp
+    test_core/test_db_backup.cpp
     test_platform/test_http_client.cpp
     test_platform/test_http_server.cpp
     test_platform/test_keychain.cpp

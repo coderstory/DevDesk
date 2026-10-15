@@ -7,6 +7,7 @@ add_library(devdesk_core STATIC
     router.cpp
     proxy_stats.cpp
     database.cpp
+    db_backup.cpp                       # 启动备份/损坏检测/还原（core 层，UI 决策在 main.cpp）
     app_config.cpp
     window_layout.cpp
     atomic_write.cpp

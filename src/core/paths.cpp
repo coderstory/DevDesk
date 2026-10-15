@@ -56,6 +56,8 @@ namespace {
 constexpr const char* kRequiredGitignoreLines[] = {
     "*.db",                           // 主库（凭据进库后凭据页就在里面）
     "*.db-*",                         // WAL 伴生（-wal / -shm，会复制凭据页）
+    "*.db.backup-*",                  // 启动备份（db_backup.cpp 产物，含主库全部页——`*.db-*` 匹配不到这个后缀）
+    "*.db.corrupt-*",                 // 损坏库隔离残骸（同上，必须挡住）
     "config.json*",                   // 旧配置文件残骸（应用不再读写，但用户盘上可能还有）
     "run-settings/",                  // 每会话临时 settings（含明文 API key）
     "claude_settings_snapshot.json",  // 接管前 settings.json 原 env 快照（可能含真 token）

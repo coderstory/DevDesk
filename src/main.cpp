@@ -7,6 +7,7 @@
 #include "core/claude_proxy_service.h"
 #include "core/component_theme.h"
 #include "core/database.h"
+#include "core/db_backup.h"
 #include "core/logging.h"
 #include "core/module_interface.h"
 #include "core/paths.h"
@@ -19,6 +20,7 @@
 #include "module_pet/pet_config.h"
 #include "module_pet/pet_window.h"
 #include "module_toggle_bridge.h"
+#include "platform/message_box.h"
 #include "platform/tray_icon.h"
 #include "settings_config.h"
 
@@ -61,19 +63,92 @@ void setupLogging() {
     core::log::setLevel(core::log::Level::Info);
 }
 
+// 数据库损坏的用户决策（app 层 UI；文件级操作全在 core::dbmaint）。
+// 返回 true = 已还原，调用方应重开库继续；false = 用户选择退出或还原失败（对话框已弹过）
+bool handleDbCorruption(const std::filesystem::path& dbPath) {
+    auto backup = ::core::dbmaint::latestBackup(dbPath);
+    if (backup.isFail() || !backup.value().has_value()) {
+        LOG_ERROR("数据库损坏且无可用备份: " +
+                  (backup.isFail() ? backup.errorMessage() : dbPath.string()));
+        ::platform::msgbox::show(
+            "数据库损坏",
+            "数据库文件损坏，且没有可用备份可还原。\n应用即将退出。",
+            false);
+        return false;
+    }
+    const std::filesystem::path& bak = *backup.value();
+    const auto choice = ::platform::msgbox::show(
+        "数据库损坏",
+        "检测到数据库损坏。\n\n是否用最近一次备份还原并继续启动？\n损坏的文件会改名隔离保留"
+        "（原样不删）。\n\n备份: " + bak.filename().string(),
+        true);
+    if (choice != ::platform::msgbox::Choice::Ok) {
+        LOG_INFO("数据库损坏：用户选择退出");
+        return false;
+    }
+    auto restored = ::core::dbmaint::restoreFromBackup(dbPath, bak);
+    if (restored.isFail()) {
+        LOG_ERROR("备份还原失败: " + restored.errorMessage());
+        ::platform::msgbox::show(
+            "还原失败",
+            "备份还原失败，应用即将退出。\n\n" + restored.errorMessage(),
+            false);
+        return false;
+    }
+    LOG_INFO("已从备份还原数据库，损坏库隔离于: " + restored.value().string());
+    return true;
+}
+
 // 打开应用数据库并落当前 schema；失败即 LOG_FATAL+abort，不抛异常
 ::core::Database& openAppDatabase() {
     static std::unique_ptr<::core::Database> db;
     static bool initialized = false;
     if (!initialized) {
-        auto r = ::core::Database::open(::core::paths::sqliteDbFile());
-        if (r.isFail()) {
-            LOG_FATAL("无法打开数据库: " + r.errorMessage());
-            std::abort();
+        const std::filesystem::path dbPath = ::core::paths::sqliteDbFile();
+        std::unique_ptr<::core::Database> opened;
+        // 损坏允许「还原后重开」一轮：首开坏 → 还原 → 二开；二开仍坏即退出（循环上限 2）
+        for (int round = 0; round < 2 && opened == nullptr; ++round) {
+            auto r = ::core::Database::open(dbPath);
+            std::unique_ptr<::core::Database> cand;
+            if (r.isFail()) {
+                // open 失败 ≠ 一定损坏（权限/磁盘也可能），quick_check 也判坏才走还原流程
+                auto qc = ::core::dbmaint::quickCheckOk(dbPath);
+                if (qc.isFail() || qc.value()) {
+                    LOG_FATAL("无法打开数据库: " + r.errorMessage());
+                    std::abort();
+                }
+                LOG_ERROR("数据库打开失败且判定损坏: " + r.errorMessage());
+            } else {
+                cand = std::make_unique<::core::Database>(std::move(r.value()));
+                auto chk = cand->quickCheck();
+                if (chk.isFail() || !chk.value()) {
+                    LOG_ERROR("数据库损坏（quick_check 非 ok）: " +
+                              (chk.isFail() ? chk.errorMessage() : dbPath.string()));
+                    // 还原是文件级改名/拷贝：先关掉本连接，否则 Windows 上 rename 主库会失败
+                    cand.reset();
+                }
+            }
+            if (cand == nullptr) {
+                if (!handleDbCorruption(dbPath)) {
+                    // 用户选择退出 / 还原失败（对话框已弹过）。
+                    // _Exit 而非 exit：此刻还在 dslAppConfig 静态初始化内，atexit
+                    //（armExitHook 等）会摸到尚未构造的 Router/modules；日志逐行 flush，无丢失
+                    LOG_INFO("数据库损坏：应用退出");
+                    std::_Exit(1);
+                }
+                continue;  // 已还原，重开
+            }
+            opened = std::move(cand);
         }
-        // 非 const value() 返回 T&，move 触发 Database 的 move ctor
-        auto raw = new ::core::Database(std::move(r.value()));
-        db.reset(raw);
+        if (opened == nullptr) {
+            ::platform::msgbox::show(
+                "数据库损坏",
+                "还原后的数据库仍无法通过完整性检查，应用即将退出。",
+                false);
+            LOG_FATAL("还原后仍损坏，无法继续启动");
+            std::_Exit(1);
+        }
+        db = std::move(opened);
         auto migrateResult = db->migrate();
         if (migrateResult.isFail()) {
             LOG_FATAL("数据库迁移失败: " + migrateResult.errorMessage());
@@ -531,6 +606,17 @@ const DslAppConfig& dslAppConfig() {
                     petCfg.skinName, petCfg.x, petCfg.y, petCfg.scale,
                     &getOverdueTaskCount, &getProxyEventStatus});
             });
+        // 启动成功后自动备份一次（模块 onStart 完成、窗口创建前）：进程级闩防重复；
+        // 失败（磁盘满/权限）只 LOG_ERROR，绝不阻断启动
+        auto startupBackup = ::core::dbmaint::performStartupBackupOnce(
+            paths::sqliteDbFile());
+        if (startupBackup.isOk()) {
+            if (startupBackup.value().has_value()) {
+                LOG_INFO("启动备份完成: " + startupBackup.value()->string());
+            }
+        } else {
+            LOG_ERROR("启动备份失败（不阻断启动）: " + startupBackup.errorMessage());
+        }
         return true;
     }();
     (void)initialized;

@@ -1,4 +1,5 @@
 #include "database.h"
+#include "db_backup.h"
 #include "logging.h"
 #include "schema.h"
 
@@ -43,6 +44,12 @@ core::Result<void> Database::migrate() {
 
 core::Result<int64_t> Database::pruneCallLogs(int retentionDays) {
     return core::pruneCallLogs(db_, retentionDays);
+}
+
+core::Result<bool> Database::quickCheck() {
+    // 持锁覆盖 prepare/step/finalize（sqlite_db.h 的并发纪律：触碰句柄一律在锁内）
+    std::lock_guard<std::recursive_mutex> lock(db_.mutex());
+    return core::dbmaint::quickCheckOnHandle(db_.handle());
 }
 
 core::Result<int64_t> pruneCallLogs(core::data::SqliteDb& db, int retentionDays) {
