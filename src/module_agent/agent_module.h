@@ -12,6 +12,7 @@
 #include <set>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include "core/module_interface.h"
@@ -23,7 +24,6 @@
 #include "module_agent/tool_info.h"
 
 #include <components/theme.h>
-#include <ui_kit/toast.h>
 
 namespace core {
 class IClaudeProxyService;
@@ -76,6 +76,14 @@ public:
     // 测试缝：输入框 onTextInput 只能追加、无法覆盖草稿（赋值把光标置 0），故草稿写入口在此
     void setEditCronDraft(const std::string& cron);
     void setDialogIterDraft(int iter);
+
+    // ---- run 完成通知的 app 级通道（fix round：页面无关） ----
+    // 装配层每帧调（app::compose 内）：等价 refreshData 的检测路径，不依赖智能体页可见。
+    // 离开智能体页后 AgentModule::compose 不跑，迁移检测的唯一驱动就是这里。
+    void pollRunEnd();
+    // 取走语义访问器：返回待发通知（title, message），取走即清；空 = 无待发。
+    // 装配层拉到后经 app::showAppNotice 发应用级 toast（跨页可见）。
+    std::optional<std::pair<std::string, std::string>> takeRunEndNotice();
 
 private:
     // 一次 run：cancel 由 onStop 置位，done 由 run 线程收尾置位（reap 收割依据）
@@ -168,10 +176,13 @@ private:
     bool uiPolling_ = false;    // 有 run 期间每帧跟进状态/消息，全终止后停
 
     // run 完成通知（refreshData 迁移检测）：上次轮询快照 + 已通知集合（同一 run 只通知一次）。
-    // EUI-NEO toast 单实例：同帧多个 run 迁移时后发顶替先发（接受，M3 Task 1 裁决）。
+    // 通知经 pendingNotices_ 队列由装配层取走后发 app 级 toast（app::showAppNotice）——
+    // 页内直发 toast 已删（页面无关，fix round 裁决）。
     std::map<int64_t, std::string> prevRunStatuses_;   // runId → status
     std::set<int64_t> notifiedRunIds_;
-    ui_kit::ToastState runToast_;
+    // 待发通知队列（title, message）：迁移检测置入，takeRunEndNotice 取走即清。
+    // 同帧多个迁移按 runId 升序入队；app 通道 toast 单实例，后发顶替先发（接受）。
+    std::vector<std::pair<std::string, std::string>> pendingNotices_;
 
     // 重入幂等守卫：double-onStart = no-op（防重复注册工具 / 重建服务）；未启动的 off = no-op
     bool started_ = false;

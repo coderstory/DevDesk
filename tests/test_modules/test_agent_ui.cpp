@@ -6,7 +6,7 @@
 //   页面   agent.page / agent.page.header / agent.title / agent.page.newTask /
 //          agent.tools.*（可用工具区块）/ agent.tasklist（scrollView）+.content /
 //          agent.task.<id>（.title / .status / .detail / .edit / .toggle /
-//          [.enqueue 仅常驻] / .run）/ agent.toast（run 完成通知，Task 1）
+//          [.enqueue 仅常驻] / .run）/ run 结束通知（Task 1；fix round 起经 takeRunEndNotice 走 app 级通道）
 //   任务弹窗 agent.dialog.task.*（新建 / 编辑共用）：
 //          .goal（多行）/ .trigger / .cron（仅定时）/ .slot / .iter /
 //          .destructive / .cancel / .save / .close / .error（有错才渲染）
@@ -1475,7 +1475,7 @@ REGISTER_TEST(agent_run_end_notify_transition_rules,
 })
 
 REGISTER_TEST(agent_ui_run_failed_shows_toast,
-              "agent_ui: run 失败 → 页面 toast 通知（failed 必响，agent.toast 含任务名）", {
+              "agent_ui: run 失败 → 通知入队（failed 必响，标题含失败、正文含任务名）", {
     test_support::TestDb tdb("agentui", "failtoast");
     FakeProxy proxy;
     ToolGuard statsGuard{"app.stats"};
@@ -1503,32 +1503,34 @@ REGISTER_TEST(agent_ui_run_failed_shows_toast,
     DOCTEST_REQUIRE_MESSAGE(clickId(ui, "agent.task." + tid + ".run.bg"),
                             "启动按钮未渲染/不可点");
 
-    // 有界轮询（10ms 步进 ≤5s）+ 每轮 recompose：迁移发生的那帧必须弹出 toast
+    // 有界轮询（10ms 步进 ≤5s）+ 每轮 recompose：迁移发生的帧通知必须入队
+    //（fix round 起页面内不再画 agent.toast，通知统一由装配层取走发 app 级 toast）
     bool toasted = false;
     eui::Ui ui2;
     for (int i = 0; i < 500; ++i) {
         composeTo(ui2, mod, kScreen, "agent_ui_failtoast_poll");
-        const auto* title = ui2.find("agent.toast.title");
-        if (title != nullptr && !title->text.empty()) {
-            DOCTEST_CHECK_MESSAGE(title->text.find("失败") != std::string::npos,
-                                   "toast 标题不含「失败」，实测: " + title->text);
-            const auto* msg = ui2.find("agent.toast.message");
-            DOCTEST_REQUIRE_MESSAGE(msg != nullptr, "toast 缺正文节点");
-            DOCTEST_CHECK_MESSAGE(msg->text.find("会失败的任务") != std::string::npos,
-                                   "toast 正文不含任务名，实测: " + msg->text);
+        const auto notice = mod.takeRunEndNotice();
+        if (notice.has_value()) {
+            DOCTEST_CHECK_MESSAGE(notice->first.find("失败") != std::string::npos,
+                                   "通知标题不含「失败」，实测: " + notice->first);
+            DOCTEST_CHECK_MESSAGE(notice->second.find("会失败的任务") != std::string::npos,
+                                   "通知正文不含任务名，实测: " + notice->second);
+            const auto again = mod.takeRunEndNotice();
+            DOCTEST_CHECK_MESSAGE(!again.has_value(),
+                                  "同 runId 不应通知两次（取走即清）");
             toasted = true;
             break;
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
-    DOCTEST_REQUIRE_MESSAGE(toasted, "run 失败后 5s 内未弹出通知 toast");
+    DOCTEST_REQUIRE_MESSAGE(toasted, "run 失败后 5s 内未产生 run 结束通知");
 
     mod.onStop();
     return true;
 })
 
 REGISTER_TEST(agent_ui_run_completed_silent_no_toast,
-              "agent_ui: run 成功 → 不弹通知 toast（completed 静默）", {
+              "agent_ui: run 成功 → 不产生 run 结束通知（completed 静默）", {
     test_support::TestDb tdb("agentui", "silentok");
     FakeProxy proxy;
     ToolGuard statsGuard{"app.stats"};
@@ -1576,11 +1578,132 @@ REGISTER_TEST(agent_ui_run_completed_silent_no_toast,
         composeTo(ui2, mod, kScreen, "agent_ui_silent_tail");
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
-    const auto* title = ui2.find("agent.toast.title");
-    DOCTEST_CHECK_MESSAGE(title == nullptr || title->text.empty(),
-                          "completed 迁移不该弹 toast，实测: " +
-                              (title == nullptr ? std::string("<无节点>")
-                                                : title->text));
+    const auto notice = mod.takeRunEndNotice();
+    DOCTEST_CHECK_MESSAGE(!notice.has_value(),
+                          "completed 迁移不该产生通知，实测: " +
+                              (notice.has_value() ? notice->first
+                                                  : std::string("<无>")));
+
+    mod.onStop();
+    return true;
+})
+
+// ===================== Task 1 fix round：通知走 app 级通道（页面无关） =====================
+
+// 「非智能体页也能发通知」：run 失败迁移发生在 Home 页（非 Agent 页）时，装配层
+// 每帧拉取路径（app::compose 内 poll + take + showAppNotice）必须把通知送达
+// app.notice toast。守的是接线方向：模块只暴露状态，装配层拉取后发应用级通知。
+REGISTER_TEST(agent_run_end_notice_app_channel_off_page,
+              "agent_ui: run 失败迁移在非智能体页时经装配层拉取路径弹 app.notice（跨页可见）", {
+    test_support::TestDb tdb("agentui", "appchan");
+    FakeProxy proxy;
+    ToolGuard statsGuard{"app.stats"};
+    core::ToolRegistry::instance().unregisterTool("app.stats");
+    module::agent::AgentStore store(tdb.handle());
+    auto taskId = store.createTask("跨页通知任务", "直接回复完成，不调用任何工具",
+                                    "manual", "default", 10, false);
+    DOCTEST_REQUIRE(taskId.isOk());
+    const std::string tid = std::to_string(taskId.value());
+
+    module::agent::AgentModule::Deps deps;
+    deps.db = &tdb.handle();
+    deps.proxy = &proxy;
+    deps.http = [](const platform::http::Request&) {
+        // 拖慢失败返回：保证轮询帧先观测到 running（否则首帧即终态 → 无迁移、无通知）
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        return core::Result<platform::http::Response>::fail(
+            core::ErrorCode::Internal, "connection refused");
+    };
+    module::agent::AgentModule mod(deps);
+    mod.onStart();
+
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+
+    // 阶段一：在 Agent 页启动 run（唯一合法启动入口是页面按钮）
+    eui::Ui uiStart;
+    composeTo(uiStart, mod, kScreen, "agent_appchan_start");
+    DOCTEST_REQUIRE_MESSAGE(clickId(uiStart, "agent.task." + tid + ".run.bg"),
+                            "启动按钮未渲染/不可点");
+
+    // 阶段二：切到 Home 页（非 Agent 页）——迁移检测与通知都必须与 Agent 页可见性解耦
+    ::core::Router router;
+    router.registerModule(&mod);
+    test_support::ScopedAppRouter scoped(&router);
+    router.navigateTo(::core::PageId::Home);
+    DOCTEST_CHECK(router.currentPage() != ::core::PageId::Agent);
+
+    // 阶段三：循环 app::compose（等价装配层每帧拉取）。迁移发生的那帧，
+    // app.notice（应用级 toast，跨页可见）必须带上「失败」标题与任务名
+    bool toasted = false;
+    eui::Ui uiApp;
+    for (int i = 0; i < 500; ++i) {
+        uiApp.begin("agent_appchan_frame");
+        app::compose(uiApp, screen);
+        uiApp.end();
+        const auto* title = uiApp.find("app.notice.title");
+        if (title != nullptr && !title->text.empty()) {
+            DOCTEST_CHECK_MESSAGE(title->text.find("失败") != std::string::npos,
+                                   "app 通知标题不含「失败」，实测: " + title->text);
+            const auto* msg = uiApp.find("app.notice.message");
+            DOCTEST_REQUIRE_MESSAGE(msg != nullptr, "app 通知缺正文节点");
+            DOCTEST_CHECK_MESSAGE(msg->text.find("跨页通知任务") != std::string::npos,
+                                  "app 通知正文不含任务名，实测: " + msg->text);
+            toasted = true;
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    DOCTEST_REQUIRE_MESSAGE(toasted, "非 Agent 页期间 run 失败，5s 内未弹出 app.notice");
+
+    mod.onStop();
+    return true;
+})
+
+// 取走语义：takeRunEndNotice 一次取走后清空，同 runId 不重复（守 notifiedRunIds_
+// 经 app 通道的同一约束——装配层拉两帧不得收到两条）
+REGISTER_TEST(agent_run_end_notice_take_semantics,
+              "agent_ui: takeRunEndNotice 取走即清（同 runId 两帧只取到一次）", {
+    test_support::TestDb tdb("agentui", "takenotice");
+    module::agent::AgentStore store(tdb.handle());
+    auto taskId = store.createTask("取走语义任务", "直接回复完成，不调用任何工具",
+                                    "manual", "default", 10, false);
+    DOCTEST_REQUIRE(taskId.isOk());
+
+    module::agent::AgentModule::Deps deps;
+    deps.db = &tdb.handle();
+    module::agent::AgentModule mod(deps);
+    mod.onStart();
+
+    // 无迁移时取走 = 空
+    {
+        const auto n = mod.takeRunEndNotice();
+        DOCTEST_CHECK(!n.has_value());
+    }
+
+    // 直写一条终态 run（running → failed），再经 poll 触发迁移：take 必须恰好取到一次
+    {
+        auto runId = store.startRun(taskId.value());
+        DOCTEST_REQUIRE(runId.isOk());
+        // 先 poll 一次让 prevRunStatuses_ 捕获 running（迁移判据 = prev running → now 终态）
+        mod.pollRunEnd();
+        DOCTEST_REQUIRE(store.finishRun(runId.value(), "failed", 1,
+                                        std::optional<int64_t>{},
+                                        std::optional<int64_t>{},
+                                        "api broken").isOk());
+
+        mod.pollRunEnd();   // 装配层等价路径：轮询检测（不依赖页面 compose）
+        const auto first = mod.takeRunEndNotice();
+        DOCTEST_REQUIRE_MESSAGE(first.has_value(), "迁移发生后未取到通知");
+        DOCTEST_CHECK_MESSAGE(first->first.find("失败") != std::string::npos,
+                               "通知标题不含「失败」，实测: " + first->first);
+        DOCTEST_CHECK_MESSAGE(first->second.find("取走语义任务") != std::string::npos,
+                               "通知正文不含任务名，实测: " + first->second);
+        const auto second = mod.takeRunEndNotice();
+        DOCTEST_CHECK_MESSAGE(!second.has_value(),
+                              "同 runId 第二帧不应再取到通知（取走即清）");
+    }
 
     mod.onStop();
     return true;

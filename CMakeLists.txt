@@ -249,6 +249,7 @@ target_include_directories(DevDesk PRIVATE
     src/module_claude_proxy
     src/module_settings
     src/module_about
+    src/module_agent
     src/module_pet
     ${EUI_NEO_INCLUDE_DIR}
     ${EUI_NEO_DIR}

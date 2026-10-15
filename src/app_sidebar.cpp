@@ -7,6 +7,7 @@
 #include "core/logging.h"
 #include "core/router.h"
 #include "core/theme.h"
+#include "module_agent/agent_module.h"
 #include "settings_config.h"
 #include <ui_kit/metrics.h>
 #include <ui_kit/splash.h>
@@ -76,6 +77,7 @@ float pageContentWidth(float windowWidth) {
 void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
     ::core::Router* router = ::core::appRouter();
     if (!router) return;
+
     const auto& t = ::core::theme::current();
     const bool collapsed = g_sidebarCollapsed;
     const float kWidth = sidebarWidth();
@@ -234,6 +236,19 @@ void compose(eui::Ui& ui, const eui::Screen& screen) {
     }
     ::core::Router* router = ::core::appRouter();
     if (!router) return;
+    // 智能体 run 结束通知拉取（fix round）：迁移检测与通知发放都不依赖智能体页可见性——
+    // 每帧在此 poll（页内 compose 的 refreshData 只在 Agent 页跑）；取走语义 = 模块入队、
+    // 这里拉空即止。app 通道单实例：后发顶替先发（同帧多通知只显示最后一条，可接受——
+    // notifiedRunIds_ 保证每条至少入队一次，用户回页仍能在任务列表看到终态）。
+    for (::core::Module* m : router->modules()) {
+        if (m->pageId() != ::core::PageId::Agent) continue;
+        if (auto* agent = dynamic_cast<::module::agent::AgentModule*>(m)) {
+            agent->pollRunEnd();
+            while (auto notice = agent->takeRunEndNotice()) {
+                showAppNotice(notice->first, notice->second);
+            }
+        }
+    }
     // 首帧一次性落真实 contentScale：窗口创建前查不到（首次 update 前恒 1.0）；Screen::scale 与
     // app::contentScale() 同源同值（物理 = 逻辑 × scale）
     static const bool scaleLogged = [&screen]() {

@@ -16,6 +16,7 @@
 #include <components/scrollview.h>
 #include <components/switch.h>
 #include <core/window/window_backend.h>
+#include <core/platform/platform.h>
 #include <eui/dsl.h>
 #include <ui_kit/dialog_form.h>
 #include <ui_kit/metrics.h>
@@ -445,6 +446,12 @@ void AgentModule::startTask(int64_t taskId) {
                           started.errorMessage());
             }
             raw->done.store(true);
+            // 通知驱动的关键一步（fix round）：run 结束必须主动请求一帧——
+            // EUI-NEO 帧循环是事件驱动（无动画/输入时不 compose），不请求则
+            // 迁移检测（装配层 pollRunEnd / 页内 compose 的 refreshData）都要
+            // 等到下一次用户输入才发生，通知延迟不可控。模块内调 core API 合法
+            //（先例：settings_module.cpp:780 / claude_module.cpp:502 同款）。
+            ::core::platform::requestUiUpdate();
         });
     } catch (const std::system_error& e) {
         // 线程创建失败：摘除占位（线程未启动，无需 join），状态列不打「运行中」
@@ -647,6 +654,33 @@ void AgentModule::ensureToolsCache(bool forceReload) {
     toolsCacheLoaded_ = true;
 }
 
+// 装配层每帧拉取路径（app::compose 内调用）：迁移检测不依赖智能体页可见性。
+// 守卫：store_ 在 +（uiPolling_ 或 页脏 或 上次观测仍有 running run）。第三个条件
+// 覆盖不经页面启动的 run（直写库/外部进程）：prevRunStatuses_ 有 running 就该继续
+// 轮询到终态，否则迁移永不发生。无 run 在身时零 DB 查询。
+void AgentModule::pollRunEnd() {
+    if (store_ == nullptr) return;
+    bool prevAlive = false;
+    for (const auto& [id, st] : prevRunStatuses_) {
+        (void)id;
+        if (st == "running") {
+            prevAlive = true;
+            break;
+        }
+    }
+    if (!uiPolling_ && !tasksDirty_ && !prevAlive) return;
+    refreshData();
+}
+
+// 取走语义：返回队首待发通知并移除；无待发 = nullopt。装配层拉到后调
+// app::showAppNotice（app 级 toast，跨页可见）。
+std::optional<std::pair<std::string, std::string>>
+AgentModule::takeRunEndNotice() {
+    if (pendingNotices_.empty()) return std::nullopt;
+    auto notice = std::move(pendingNotices_.front());
+    pendingNotices_.erase(pendingNotices_.begin());
+    return notice;
+}
 // 重查任务/最近 run/详情消息；触发：tasksDirty_ 或 uiPolling_。判停：run 线程全 done 且库内无 running
 void AgentModule::refreshData() {
     tasksDirty_ = false;
@@ -682,6 +716,8 @@ void AgentModule::refreshData() {
     // run 完成通知：本次轮询 vs 上次轮询的 running→failed/limited 迁移必响；
     // completed/cancelled 静默；同一 runId 只通知一次（notifiedRunIds_）。
     // 只看 latestRuns_ 即可：刚结束的 run 必是其任务的最近一次 run，不会漏迁移。
+    // 通知不在此直发 toast：入 pendingNotices_ 队列，由装配层每帧 takeRunEndNotice()
+    // 取走后发 app 级 toast（app::showAppNotice，跨页可见）——页面无关（fix round）。
     {
         std::map<int64_t, std::string> nowStatus;
         for (const auto& [taskId, run] : latestRuns_) {
@@ -704,9 +740,9 @@ void AgentModule::refreshData() {
             }
             if (taskName.empty()) taskName = "任务 " + std::to_string(runId);
             const std::string& st = nowStatus[runId];
-            runToast_.show(st == "failed" ? "智能体任务失败" : "智能体任务受限",
-                           "「" + taskName + "」运行结束（" + runStatusText(st) + "）",
-                           /*isError=*/true);
+            pendingNotices_.emplace_back(
+                st == "failed" ? "智能体任务失败" : "智能体任务受限",
+                "「" + taskName + "」运行结束（" + runStatusText(st) + "）");
             notifiedRunIds_.insert(runId);
         }
         prevRunStatuses_ = std::move(nowStatus);
@@ -1221,8 +1257,6 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
     if (detailTaskId_) {
         composeTaskDetailDialog(ui, screen, t, themeTokens);
     }
-    // run 完成通知（refreshData 迁移检测置位）：弹窗之后绘制，盖在其上
-    ui_kit::drawToast(ui, screen, "agent.toast", runToast_, themeTokens);
 }
 
 // 任务弹窗：新建/编辑共用同一张表单；关闭态在内容回调内 return——内容节点即开合状态
