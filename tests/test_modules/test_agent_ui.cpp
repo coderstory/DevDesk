@@ -1130,7 +1130,7 @@ REGISTER_TEST(agent_ui_tools_section_toggle,
 // 下拉展开态全在屏内）：「弹窗不超出视口」被 dialog 组件自身的 clamp 兜住，恒真。
 
 REGISTER_TEST(agent_ui_dialog_geometry_design_size_and_budget,
-              "agent_ui: 任务弹窗几何——设计尺寸 760x400 / 行底 ≤ 按钮行顶 / 超长目标与超长任务名不挤位 / 下拉展开态全在屏内", {
+              "agent_ui: 任务弹窗几何——设计尺寸 760x500 / 行底 ≤ 按钮行顶 / 超长目标与超长任务名不挤位 / 下拉展开态全在屏内", {
     test_support::TestDb tdb("agentui", "dlggeom");
     FakeProxy proxy;
     ToolGuard statsGuard{"app.stats"};
@@ -1166,8 +1166,8 @@ REGISTER_TEST(agent_ui_dialog_geometry_design_size_and_budget,
     DOCTEST_CHECK_MESSAGE(nearPx(panel->frame.width, 760.0f),
                           "任务弹窗宽应为设计值 760，实测 " +
                               std::to_string(panel->frame.width));
-    DOCTEST_CHECK_MESSAGE(nearPx(panel->frame.height, 400.0f),
-                          "任务弹窗高应为设计值 400，实测 " +
+    DOCTEST_CHECK_MESSAGE(nearPx(panel->frame.height, 500.0f),
+                          "任务弹窗高应为设计值 500，实测 " +
                               std::to_string(panel->frame.height));
     DOCTEST_CHECK(panel->frame.x >= -0.5f && panel->frame.y >= -0.5f &&
                   panel->frame.x + panel->frame.width <= kScreen.width + 0.5f &&
@@ -1808,7 +1808,7 @@ REGISTER_TEST(agent_run_end_notice_take_semantics,
 })
 
 // Task 2：定时分支模板下拉 + 下次触发预览。布局契约：模板 dropdown 与预览行
-// 不得改变弹窗总高（面板仍 400、meta 行仍 +224），预览行只能落在 cron 行与
+// 不得改变弹窗总高（面板仍 500、meta 行仍 +224），预览行只能落在 cron 行与
 // meta 行之间的原 gap 内。
 REGISTER_TEST(agent_ui_cron_template_dropdown_and_preview,
               "agent_ui: 定时分支模板下拉（≥4 条）选中回填 cron / 预览行随 editCron 即时更新（合法显下次触发、非法显校验、无匹配显一年内）/ 弹窗高不变", {
@@ -1849,11 +1849,11 @@ REGISTER_TEST(agent_ui_cron_template_dropdown_and_preview,
                          std::string(module::agent::kCronTemplates[i].label));
     }
 
-    // ② 布局契约：面板高仍 400；meta 行仍 +224（模板下拉/预览行未挤动布局）
+    // ② 布局契约：面板高仍 500；meta 行仍 +224（模板下拉/预览行未挤动布局）
     const auto* panel3 = ui3.find("agent.dialog.task.panel");
     DOCTEST_REQUIRE(panel3 != nullptr);
-    DOCTEST_CHECK_MESSAGE(nearPx(panel3->frame.height, 400.0f),
-                          "任务弹窗高应恒为 400，实测 " +
+    DOCTEST_CHECK_MESSAGE(nearPx(panel3->frame.height, 500.0f),
+                          "任务弹窗高应恒为 500，实测 " +
                               std::to_string(panel3->frame.height));
     const auto* metaRow3 = ui3.find("agent.dialog.task.destructive.wrap");
     DOCTEST_REQUIRE(metaRow3 != nullptr);
@@ -2302,7 +2302,13 @@ REGISTER_TEST(agent_ui_edit_dialog_prefills_context_note,
                           "knob.x=" + std::to_string(knob2->frame.x) +
                           " track.x=" + std::to_string(track2->frame.x));
 
-    // 修改记忆内容
+    // 修改记忆内容。真实用户路径 = 先点输入框（聚焦 + 光标落到点击点）再输入；
+    // 裸 Ui 无 Runtime 焦点消费端，且未聚焦时预填同步把光标拨回 0（input.h 有意
+    // 行为），直发 typeInto 会插在开头 —— 等价模拟：先把光标/选区落到文本末尾再输入
+    auto& noteState = ui2.state<InputState>("agent.dialog.task.note");
+    noteState.cursor = static_cast<int>(noteState.text.size());
+    noteState.selectionStart = noteState.cursor;
+    noteState.selectionEnd = noteState.cursor;
     auto* noteHit = ui2.find("agent.dialog.task.note.hit");
     DOCTEST_REQUIRE(noteHit != nullptr);
     typeInto(noteHit, "新增内容");
