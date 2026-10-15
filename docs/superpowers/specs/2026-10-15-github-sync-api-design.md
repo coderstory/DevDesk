@@ -37,6 +37,22 @@
 | 19 | 删除传播 | 本地删除笔记 → 同步时 `DELETE` 远端同路径；重命名 = 删旧 + 建新 |
 | 20 | dirty 触发源 | 仅**笔记写入/删除 + 待办增删改**标记 dirty；其他配置变更不主动触发，但随下次 dump 一并同步 |
 
+## 2.1 审计补正（实现前必读，2026-10-15 审计）
+
+审计对代码实证后发现 9 处缺口，处置如下。**F1–F4 是实现前必须先解决的硬伤**，其余为实现约束。
+
+| # | 问题 | 处置 |
+|---|---|---|
+| F1 | **变更检测机制未定义**：如何判定某笔记是新增/修改/删除 | 维护本地同步状态：`app_config` 键 `github_sync:sha:<相对路径>` 存「上次同步成功后的远端 sha」，另存 `github_sync:sha:data/database.sql`。判定：本地有而状态无 → 新增；本地内容 hash 与状态记录不符 → 修改；状态有而本地无 → 删除（→ DELETE 远端）。**不用 mtime**（跨设备/备份恢复后不可靠） |
+| F2 | **`sql_dump` 不导索引/触发器**（`sql_dump.cpp` 只遍历 `listUserTables`）：导入 = DROP+重建，索引/触发器丢失；且 dump 里的 `schema_version` 与本地一致 → 迁移不会重建 → schema 静默退化 | 导出补 `sqlite_master` 中 `type='index'`（排除 `sqlite_autoindex_%`）与 `type='trigger'` 的 DDL，放在建表之后、INSERT 之前；导入前先 `DROP INDEX/TRIGGER IF EXISTS` 保证幂等。**本项属 `core/sql_dump` 修复，作为独立 ticket 先做** |
+| F3 | **导入覆盖活库**：DROP TABLE 时其他模块持有缓存/prepared statement | 导入前：暂停后台任务（余量刷新、同步自身）；导入后：发一次全局数据重载信号（`requestUiUpdate()` + 模块 `onPageEnter` 语义的强制重载），并重新执行 `PRAGMA foreign_keys` 与索引校验。导入失败 → 从备份回滚并明确报错（不静默） |
+| F4 | **skip 表清单未定**：`exportToString` 默认导全部表 → `claude_call_logs`（日志量大）会进 dump 并上传 | 固定 `skipTables = {"claude_call_logs", "claude_run_settings"}`（与 handoff 一致），常量放 `github_sync_logic`，单测锁死 |
+| F5 | **退出时 dirty 未推** | 退出序列里：若 dirty 且距上次 commit ≥ 60s，后台尝试推一次（上限 5s 等待，超时则放弃并记日志 + 下次启动卡片提示「有未同步改动」）。不阻塞退出 |
+| F6 | **409 拉取覆盖会丢本地未推改动**（备份只保库，不保笔记） | 该动作的二次确认框必须**列出将被覆盖的本地未推文件清单**；确认后：库走 `backups/`，**笔记也先整目录备份到 `backups/notes-<ts>/`**（同样保留 5 份） |
+| F7 | 远端列举端点未写 | 拉取时用 `GET /repos/{o}/{r}/git/trees/{branch}?recursive=1` 拿全树，筛 `notes/**.md` 与 `data/database.sql`；大仓分页 `truncated=true` 时按需再取子树 |
+| F8 | 本地 git 探测与「零检测」的边界 | 探测**只服务于本地版本历史**，不参与同步判定。macOS 必须先 `xcode-select -p` 判断 CLT 是否安装（未装则视作不可用，**不得**直接调 `/usr/bin/git` —— 会弹系统 GUI 提示）；Windows 探 PATH + `%ProgramFiles%\Git\cmd\git.exe` + `%LOCALAPPDATA%\Programs\Git\cmd\git.exe`。探测结果缓存，配置变更时失效 |
+| F9 | 大 dump 的请求体积 | base64 使体积 ×1.37。PUT 单请求上限 100MB（≈ 原始 73MB）。超限 → 明确报错「数据库导出过大，暂不支持同步」+ 详情；不做分块。GET 侧 >1MB 走 `Accept: application/vnd.github.raw` |
+
 ## 3. 架构
 
 ```
@@ -117,9 +133,11 @@ public:
 
 **拉取（手动按钮 / 409 弹窗动作）**
 ```
-备份本地库 → backups/devdesk-<ts>.db（保留 5 份）
-   → GET data/database.sql（远端）→ sql_dump::importFromFile 覆盖本地库
-   → GET notes/*.md 列表（远端 tree）→ 与本地对比：新增/更新覆盖、远端已删的本地保留
+（F6）列出将被覆盖的本地未推文件 → 用户确认
+   → 备份：库 → backups/devdesk-<ts>.db；笔记整目录 → backups/notes-<ts>/（各保留 5 份）
+   → GET /git/trees/{branch}?recursive=1 取全树（F7）
+   → GET data/database.sql（远端）→ sql_dump::importFromFile 覆盖本地库（F3：导入前后暂停/重载）
+   → GET notes/*.md → 与本地按 sha 状态比对（F1）：新增/更新覆盖、远端已删的本地保留
    → 刷新 UI（模块数据重载）
 ```
 
@@ -160,7 +178,10 @@ public:
 
 ## 8. 测试
 
-- `tests/test_platform/test_github_api.cpp`：重试分类与次数（计数假发送器）、退避序列、base64 往返、`maskUrl` 脱敏、409→Conflict、环形日志上限 50、`parseRepoUrl` 变体、testConnection 三步短路。**零真网**。
+- `tests/test_platform/test_github_api.cpp`：重试分类与次数（计数假发送器）、退避序列、base64 往返、`maskUrl` 脱敏、409→Conflict、环形日志上限 50、`parseRepoUrl` 变体、testConnection 三步（建 ref → PUT → 删 ref）与删 ref 失败时的 summary 提示。**零真网**。
+- `tests/test_core/test_sql_dump.cpp`（F2）：导出含索引/触发器 DDL、`sqlite_autoindex_%` 被排除、导入后索引与触发器存在（回环断言：导出→导入→查 `sqlite_master` 比对）、skip 表不进 dump（F4 常量锁死）。
+- 变更检测（F1）：状态机单测 —— 新增/修改/删除三态判定、sha 记录写入与读取、状态缺失时按新增处理、笔记改名 = 删+建。
+- 备份策略（F6）：保留 5 份、超额删最旧、笔记目录备份与库备份各自独立计数。
 - `tests/test_modules/test_github_sync_card.cpp`：无头 compose —— 三按钮存在/禁用态、进度行、错误行 + 详情入口、弹窗内容（注入日志）。
 - 编排层：节流窗口（假时钟）、首次方向分支、删除传播、备份保留 5 份（临时目录断言）。
 - 边界：Windows 侧仅到交叉编译守卫 + CI 编译级；运行时未验（无 Windows 机器），如实标注。
