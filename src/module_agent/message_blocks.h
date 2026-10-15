@@ -33,6 +33,12 @@ std::vector<MessageBlock> decodeMessageBlocks(const std::string& contentJson);
 // 全部块纯文本拼接（预览/复制用）；tool_use 贡献「<name>(<input 摘要>)」一行
 std::string messagePlainText(const std::vector<MessageBlock>& blocks);
 
+// run 最终回复全文（详情弹窗「复制回复」chip 的数据源）：取最后一条 role=assistant 的
+// 消息——不是最后一条消息（run 可能以 tool 结果收尾）——解析 contentJson，按序拼接全部
+// type=text 块的 text（中间夹 tool_use 也保持顺序、tool_use 不混入）；无 assistant 或
+// 全无 text 块 → 空串
+std::string finalAssistantText(const std::vector<AgentMessageRow>& msgs);
+
 // UTF-8 边界安全截断：超长时回退到字符边界再截，不加省略号（调用方决定）
 std::string utf8Truncate(const std::string& s, size_t maxBytes);
 

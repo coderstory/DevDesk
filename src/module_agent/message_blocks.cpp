@@ -147,6 +147,22 @@ std::string messagePlainText(const std::vector<MessageBlock>& blocks) {
     return out;
 }
 
+std::string finalAssistantText(const std::vector<AgentMessageRow>& msgs) {
+    const AgentMessageRow* lastAssistant = nullptr;
+    for (const auto& m : msgs) {
+        if (m.role == "assistant") lastAssistant = &m;
+    }
+    if (lastAssistant == nullptr) return std::string();
+    const auto blocks = decodeMessageBlocks(lastAssistant->contentJson);
+    std::string out;
+    for (const auto& b : blocks) {
+        if (b.type != MessageBlock::Type::Text) continue;
+        if (!out.empty()) out += "\n";
+        out += b.text;
+    }
+    return out;
+}
+
 std::string utf8Truncate(const std::string& s, size_t maxBytes) {
     if (s.size() <= maxBytes) return s;
     size_t cut = maxBytes;

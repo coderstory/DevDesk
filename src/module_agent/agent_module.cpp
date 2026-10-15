@@ -1679,6 +1679,31 @@ void AgentModule::composeTaskDetailDialog(
             .fontWeight(600)
             .color(t.colors.textPrimary)
             .build();
+        // 「复制回复」：一键复制 run 最终回复全文（最后一条 assistant 的全部 text 块，
+        // 见 finalAssistantText）。空串（run 刚起 / 全 tool_use）不渲染。
+        // 几何：chip 高 32 比标题行 18 高，y 上移 7 与标题文本带居中对齐（destructive
+        // switch 同款 wrap 定位法——actionChip 自身不带 position）
+        const std::string finalText = finalAssistantText(detailMessages_);
+        if (!finalText.empty()) {
+            constexpr float kCopyFinalChipW = 76.0f;
+            const float chipX = x0 + innerW - kCopyFinalChipW;
+            const float chipY = msgsTitleY - 7.0f;
+            ui.stack("agent.dialog.detail.msgs.copyfinal.wrap")
+                .position(chipX, chipY)
+                .size(kCopyFinalChipW, 32.0f)
+                .content([&] {
+                    actionChip(ui, "agent.dialog.detail.msgs.copyfinal",
+                               "复制回复", kCopyFinalChipW, /*primary=*/true,
+                               /*enabled=*/true, themeTokens, [text = finalText] {
+                                   // setClipboardText 返回 void 无法校验 → LOG 留痕
+                                   core::window::setClipboardText(text);
+                                   LOG_INFO("Agent: 已复制最终回复 " +
+                                            std::to_string(text.size()) +
+                                            " 字节到剪贴板");
+                               });
+                })
+                .build();
+        }
         const float scrollY = msgsTitleY + 22.0f;
         const float availH = std::max(kMsgAreaMinH, h - scrollY - 24.0f);
         const float scrollH = std::min(

@@ -786,6 +786,104 @@ REGISTER_TEST(agent_ui_detail_message_toggle_and_copy,
     return true;
 })
 
+REGISTER_TEST(agent_ui_detail_copy_final_reply_chip,
+               "agent_ui: 详情弹窗「消息（N）」标题行复制回复 chip（tool 收尾取最后 assistant / 无回复不渲染）", {
+    test_support::TestDb tdb("agentui", "copyfinal");
+    FakeProxy proxy;
+    ToolGuard statsGuard{"app.stats"};
+    core::ToolRegistry::instance().unregisterTool("app.stats");
+    module::agent::AgentStore store(tdb.handle());
+    const std::string base = "agent.dialog.detail";
+
+    // 任务 A：run 以 tool_result 收尾——最终回复在中间的 assistant（钉「最后一条
+    // assistant ≠ 最后一条消息」风险）
+    auto createdA = store.createTask("任务A", "g", "manual", "default", 10, false);
+    DOCTEST_REQUIRE(createdA.isOk());
+    const std::string tidA = std::to_string(createdA.value());
+    auto rA = store.startRun(createdA.value());
+    DOCTEST_REQUIRE(rA.isOk());
+    DOCTEST_REQUIRE(store.appendMessage(rA.value(), 0, "user",
+                                        R"([{"type":"text","text":"查一下"}])",
+                                        std::nullopt).isOk());
+    DOCTEST_REQUIRE(store.appendMessage(
+                        rA.value(), 1, "assistant",
+                        R"([{"type":"text","text":"我先查。"},)"
+                        R"({"type":"tool_use","id":"tu1","name":"todo.list","input":{"limit":5}},)"
+                        R"({"type":"text","text":"查完了，共 2 条。"}])",
+                        std::nullopt).isOk());
+    DOCTEST_REQUIRE(store.appendMessage(
+                        rA.value(), 2, "user",
+                        R"([{"type":"tool_result","tool_use_id":"tu1",)"
+                        R"("content":[{"type":"text","text":"ok"}],"is_error":false}])",
+                        std::string("tu1")).isOk());
+    DOCTEST_REQUIRE(store.finishRun(rA.value(), "completed", 1, std::nullopt,
+                                    std::nullopt, std::nullopt).isOk());
+
+    // 任务 B：run 只有 user 消息（刚起 / 全 tool_use）→ 无最终回复
+    auto createdB = store.createTask("任务B", "g", "manual", "default", 10, false);
+    DOCTEST_REQUIRE(createdB.isOk());
+    const std::string tidB = std::to_string(createdB.value());
+    auto rB = store.startRun(createdB.value());
+    DOCTEST_REQUIRE(rB.isOk());
+    DOCTEST_REQUIRE(store.appendMessage(rB.value(), 0, "user",
+                                        R"([{"type":"text","text":"刚起跑"}])",
+                                        std::nullopt).isOk());
+    DOCTEST_REQUIRE(store.finishRun(rB.value(), "limited", 0, std::nullopt,
+                                    std::nullopt, std::nullopt).isOk());
+
+    module::agent::AgentModule::Deps deps;
+    deps.db = &tdb.handle();
+    deps.proxy = &proxy;
+    module::agent::AgentModule mod(deps);
+    mod.onStart();
+
+    // 任务 A：chip 存在、可点、几何落在弹窗内且在标题行右侧
+    eui::Ui uiA1;
+    composeTo(uiA1, mod, kScreen, "agent_ui_cf1");
+    DOCTEST_REQUIRE(openDetailDialog(uiA1, mod, tidA));
+    eui::Ui uiA2;
+    composeTo(uiA2, mod, kScreen, "agent_ui_cf2");
+    const std::string chipId = base + ".msgs.copyfinal";
+    const auto* chip = uiA2.find(chipId);
+    DOCTEST_REQUIRE_MESSAGE(chip != nullptr, "有最终回复时缺「复制回复」chip");
+    DOCTEST_CHECK_EQ(chip->text, std::string("复制回复"));
+    const auto* title = uiA2.find(base + ".msgs.title");
+    const auto* panel = uiA2.find(base);
+    DOCTEST_REQUIRE(title != nullptr);
+    DOCTEST_REQUIRE(panel != nullptr);
+    // 无头几何断言：chip 与标题带纵向重叠（chip 高 32 比标题行 18 高，居中对齐上移 7）、
+    // chip 在标题文本右侧、整体在弹窗内
+    DOCTEST_CHECK_MESSAGE(chip->frame.y < title->frame.y + 18.0f &&
+                              chip->frame.y + chip->frame.height >
+                                  title->frame.y,
+                          "chip 未与「消息（N）」标题同带: chip.y=" +
+                              std::to_string(chip->frame.y) + " title.y=" +
+                              std::to_string(title->frame.y));
+    DOCTEST_CHECK_MESSAGE(chip->frame.x > title->frame.x,
+                          "chip 应在标题右侧");
+    DOCTEST_CHECK(frameContained(*panel, *chip));
+    DOCTEST_REQUIRE_MESSAGE(clickId(uiA2, chipId + ".bg"),
+                            "复制回复 chip 无命中面 <id>.bg");
+    // 既有逐条复制 chip 零回归：msg.2 展开后仍有 .copy
+    DOCTEST_REQUIRE(clickId(uiA2, base + ".msg.2.toggle"));
+    eui::Ui uiA3;
+    composeTo(uiA3, mod, kScreen, "agent_ui_cf3");
+    DOCTEST_CHECK(uiA3.find(base + ".msg.2.copy") != nullptr);
+    DOCTEST_CHECK(uiA3.find(chipId) != nullptr);
+
+    // 任务 B：无 assistant 回复 → chip 不渲染
+    eui::Ui uiB1;
+    composeTo(uiB1, mod, kScreen, "agent_ui_cf4");
+    DOCTEST_REQUIRE(openDetailDialog(uiB1, mod, tidB));
+    eui::Ui uiB2;
+    composeTo(uiB2, mod, kScreen, "agent_ui_cf5");
+    DOCTEST_CHECK_MESSAGE(uiB2.find(chipId) == nullptr,
+                          "无最终回复时「复制回复」chip 应不渲染");
+
+    mod.onStop();
+    return true;
+})
+
 REGISTER_TEST(agent_ui_detail_dialog_close_and_reopen,
               "agent_ui: 关详情弹窗不改任务列表；重开回到最近一次 run", {
     test_support::TestDb tdb("agentui", "detailreopen");

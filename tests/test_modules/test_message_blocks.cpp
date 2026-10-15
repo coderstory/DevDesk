@@ -356,3 +356,78 @@ REGISTER_TEST(msg_blocks_tool_result_nontext_block_preserved,
                           "非 text 块（image）内容被静默丢弃: " + tr->text);
     return true;
 })
+
+// finalAssistantText：run 最终回复全文提取（复制回复 chip 的数据源）
+
+namespace {
+
+module::agent::AgentMessageRow row(int64_t seq, const std::string& role,
+                                   const std::string& contentJson) {
+    module::agent::AgentMessageRow r;
+    r.seq = seq;
+    r.role = role;
+    r.contentJson = contentJson;
+    return r;
+}
+
+} // namespace
+
+REGISTER_TEST(msg_blocks_final_text_single_block,
+               "finalAssistantText: 单 text block 回复取全文", {
+    std::vector<module::agent::AgentMessageRow> msgs{
+        row(0, "user", R"([{"type":"text","text":"帮我列待办"}])"),
+        row(1, "assistant", R"([{"type":"text","text":"好的，共 3 条待办"}])"),
+    };
+    DOCTEST_CHECK_EQ(module::agent::finalAssistantText(msgs),
+                     std::string("好的，共 3 条待办"));
+    return true;
+})
+
+REGISTER_TEST(msg_blocks_final_text_multiblock_order,
+               "finalAssistantText: text+tool_use+text 按序拼接且 tool_use 不混入", {
+    std::vector<module::agent::AgentMessageRow> msgs{
+        row(0, "assistant",
+            R"([{"type":"text","text":"我先查一下。"},)"
+            R"({"type":"tool_use","id":"tu_1","name":"todo.list","input":{"limit":5}},)"
+            R"({"type":"text","text":"查完了，共 2 条。"}])"),
+    };
+    DOCTEST_CHECK_EQ(module::agent::finalAssistantText(msgs),
+                     std::string("我先查一下。\n查完了，共 2 条。"));
+    return true;
+})
+
+REGISTER_TEST(msg_blocks_final_text_last_assistant_not_last_message,
+               "finalAssistantText: run 以 tool 结果收尾时取最后一条 assistant 而非最后一条消息", {
+    std::vector<module::agent::AgentMessageRow> msgs{
+        row(0, "user", R"([{"type":"text","text":"跑一下"}])"),
+        row(1, "assistant", R"([{"type":"text","text":"第一步"}])"),
+        // 落库 role 是 "user" 的 tool 回喂（见 messageRoleBadge 契约）
+        row(2, "user",
+            R"([{"type":"tool_result","tool_use_id":"t1","content":"ok","is_error":false}])"),
+    };
+    DOCTEST_CHECK_EQ(module::agent::finalAssistantText(msgs),
+                     std::string("第一步"));
+    return true;
+})
+
+REGISTER_TEST(msg_blocks_final_text_empty_cases,
+               "finalAssistantText: 无 assistant / assistant 全 tool_use → 空串", {
+    DOCTEST_CHECK_EQ(module::agent::finalAssistantText({}), std::string());
+    // 只有 user（run 刚起、还没有任何回复）
+    DOCTEST_CHECK_EQ(module::agent::finalAssistantText({row(0, "user",
+                     R"([{"type":"text","text":"刚起"}])")}),
+                     std::string());
+    // 最后一条 assistant 全是 tool_use（无 text block）
+    DOCTEST_CHECK_EQ(module::agent::finalAssistantText({row(
+                         0, "assistant",
+                         R"([{"type":"tool_use","id":"tu_1","name":"f","input":{}}])")}),
+                     std::string());
+    // 多条 assistant 取最后一条
+    std::vector<module::agent::AgentMessageRow> two{
+        row(0, "assistant", R"([{"type":"text","text":"旧的"}])"),
+        row(1, "assistant", R"([{"type":"text","text":"新的"}])"),
+    };
+    DOCTEST_CHECK_EQ(module::agent::finalAssistantText(two),
+                     std::string("新的"));
+    return true;
+})
