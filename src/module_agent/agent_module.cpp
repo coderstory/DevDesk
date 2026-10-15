@@ -222,8 +222,9 @@ constexpr float kPageHintH = 16.0f;
 constexpr float kDialogRowH = 40.0f;
 constexpr float kDialogLabelW = 72.0f;
 constexpr float kDialogGap = 12.0f;
-constexpr float kTaskDialogH = 400.0f;
+constexpr float kTaskDialogH = 500.0f;
 constexpr float kGoalInputH = 96.0f;
+constexpr float kContextNoteH = 72.0f;
 
 constexpr float kDetailDialogH = 660.0f;
 
@@ -521,6 +522,8 @@ void AgentModule::openNewTaskDialog() {
     editSlot_ = kModelSlotKeys[0];
     editIter_ = 10;
     editDestructive_ = false;
+    editContextNote_.clear();
+    editAutoNote_ = true;
     editEvents_ = {};
     editTriggerIdx_ = 0;
     editError_.clear();
@@ -597,6 +600,8 @@ void AgentModule::openTaskEditor(int64_t taskId) {
     editSlot_ = r.modelSlot;
     editIter_ = r.maxIterations;
     editDestructive_ = r.allowDestructive;
+    editContextNote_ = r.contextNote;
+    editAutoNote_ = (r.autoNote != 0);
     editTriggerIdx_ = triggerIndexOf(r.triggerType);
     // 「事件」分支回填：按 decode 结果逐项勾选；坏配置不静默（与 cronTextOf 同口径）
     editEvents_ = {};
@@ -673,10 +678,12 @@ void AgentModule::saveTaskDialog() {
         triggerConfig = encoded.value();
     }
     const int iter = editIter_ < 1 ? 1 : (editIter_ > 50 ? 50 : editIter_);
+    const int autoNoteInt = editAutoNote_ ? 1 : 0;
     if (editingTaskId_) {
         auto updated = store_->updateTask(*editingTaskId_, deriveTaskName(goal), goal,
                                           triggerType, triggerConfig, editSlot_, iter,
-                                          editDestructive_);
+                                          editDestructive_, editContextNote_,
+                                          autoNoteInt);
         if (updated.isFail()) {
             editError_ = "保存失败：" + updated.errorMessage();
             LOG_ERROR("Agent: 保存任务失败: " + updated.errorMessage());
@@ -685,7 +692,8 @@ void AgentModule::saveTaskDialog() {
     } else {
         auto created = store_->createTask(deriveTaskName(goal), goal, triggerType,
                                           editSlot_, iter, editDestructive_,
-                                          triggerConfig);
+                                          triggerConfig, editContextNote_,
+                                          autoNoteInt);
         if (created.isFail()) {
             editError_ = "创建失败：" + created.errorMessage();
             LOG_ERROR("Agent: 创建任务失败: " + created.errorMessage());
@@ -1627,10 +1635,46 @@ void AgentModule::composeTaskDialog(
             })
             .build();
 
+        // 执行记忆：多行文本输入（与 goal 同款 multiline + scrollbar），
+        // 用于 agent 运行时注入 system prompt；编辑态从 AgentTaskRow 回填
+        const float noteY = 276.0f;
+        fieldCaption(ui, "agent.dialog.task.note.caption", "执行记忆", x0,
+                     noteY, kDialogLabelW, kContextNoteH, t.colors.textSecondary);
+        components::input(ui, "agent.dialog.task.note")
+            .position(x0 + kDialogLabelW + kDialogGap, noteY)
+            .size(innerW - kDialogLabelW - kDialogGap, kContextNoteH)
+            .value(editContextNote_)
+            .placeholder("记录任务执行上下文，运行时注入 system prompt")
+            .fontSize(t.sizes.fontSizeBody)
+            .multiline(true)
+            .scrollbar(true)
+            .theme(themeTokens)
+            .onChange([this](const std::string& v) { editContextNote_ = v; })
+            .onCancel([this] { closeTaskDialog(); })
+            .build();
+
+        // 自动记录开关：结束后把最后一条 assistant 回复追加进 context note
+        const float autoY = 356.0f;
+        const float autoSwitchW = innerW - kDialogLabelW - kDialogGap;
+        ui.stack("agent.dialog.task.autonote.wrap")
+            .position(x0 + kDialogLabelW + kDialogGap, autoY)
+            .size(autoSwitchW, kDialogRowH)
+            .content([&] {
+                components::toggleSwitch(ui, "agent.dialog.task.autonote")
+                    .size(autoSwitchW, 32.0f)
+                    .text("结束后自动记录回复")
+                    .checked(editAutoNote_)
+                    .fontSize(12.0f)
+                    .theme(themeTokens)
+                    .onChange([this](bool v) { editAutoNote_ = v; })
+                    .build();
+            })
+            .build();
+
         // 校验 / 保存错误（有错才渲染，弹窗不关）
         ui_kit::drawDialogText(ui, "agent.dialog.task.error", w, editError_,
                                t.sizes.fontSizeSmall, t.colors.error,
-                               {.x = x0, .y = 276.0f, .height = 18.0f,
+                               {.x = x0, .y = 408.0f, .height = 18.0f,
                                 .lineHeight = 18.0f, .skipIfEmpty = true});
 
         const float btnW =

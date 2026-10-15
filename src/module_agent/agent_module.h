@@ -197,6 +197,8 @@ private:
     int editTriggerIdx_ = 0;      // 0=手动 1=定时 2=常驻 3=事件（kTriggerKeys 下标）
     int editIter_ = 10;
     bool editDestructive_ = false;
+    std::string editContextNote_;
+    bool editAutoNote_ = true;
     // 「事件」分支的勾选态（与 agent_module.cpp 的 kEventNames 一一对应；仅主线程）
     std::array<bool, 3> editEvents_{};
     bool editTriggerOpen_ = false;   // 触发类型下拉开合（UI 态）

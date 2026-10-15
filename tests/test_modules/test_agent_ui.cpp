@@ -2187,3 +2187,188 @@ REGISTER_TEST(agent_ui_page_error_no_hint_other_errors,
     mod.onStop();
     return true;
 })
+
+REGISTER_TEST(agent_ui_new_task_context_note_and_autonote,
+              "agent_ui: 新建弹窗含执行记忆多行输入 + 自动记录开关（默认开）→ 保存后读回一致", {
+    test_support::TestDb tdb("agentui", "notecreate");
+    FakeProxy proxy;
+    ToolGuard statsGuard{"app.stats"};
+    core::ToolRegistry::instance().unregisterTool("app.stats");
+
+    module::agent::AgentModule::Deps deps;
+    deps.db = &tdb.handle();
+    deps.proxy = &proxy;
+    module::agent::AgentModule mod(deps);
+    mod.onStart();
+    module::agent::AgentStore store(tdb.handle());
+
+    eui::Ui ui;
+    DOCTEST_REQUIRE(openNewTaskDialog(ui, mod, "agent_ui_note1"));
+    eui::Ui ui2;
+    composeTo(ui2, mod, kScreen, "agent_ui_note2");
+
+    // 执行记忆多行输入存在
+    const auto* note = ui2.find("agent.dialog.task.note");
+    DOCTEST_REQUIRE_MESSAGE(note != nullptr,
+                            "新建弹窗缺 agent.dialog.task.note 多行输入");
+    DOCTEST_CHECK_MESSAGE(note->frame.height >= 68.0f,
+                          "执行记忆输入框应 ≥68px（多行），实测 " +
+                              std::to_string(note->frame.height));
+    DOCTEST_CHECK_EQ(inputText(ui2, "agent.dialog.task.note"), std::string(""));
+
+    // 自动记录开关存在且默认开
+    const auto* autosw = ui2.find("agent.dialog.task.autonote");
+    DOCTEST_REQUIRE_MESSAGE(autosw != nullptr,
+                            "新建弹窗缺 agent.dialog.task.autonote 开关");
+    DOCTEST_CHECK(autosw->checked);
+
+    // 填 goal + 执行记忆 → 保存
+    auto* goalHit = ui2.find("agent.dialog.task.goal.hit");
+    DOCTEST_REQUIRE(goalHit != nullptr);
+    typeInto(goalHit, "测试执行记忆");
+    auto* noteHit = ui2.find("agent.dialog.task.note.hit");
+    DOCTEST_REQUIRE(noteHit != nullptr);
+    typeInto(noteHit, "这是一段上下文记忆");
+
+    // 关闭自动记录
+    const auto* autoHit = ui2.find("agent.dialog.task.autonote.hit");
+    DOCTEST_REQUIRE(autoHit != nullptr);
+    DOCTEST_REQUIRE(autoHit->onClick != nullptr);
+    autoHit->onClick();
+
+    eui::Ui ui3;
+    composeTo(ui3, mod, kScreen, "agent_ui_note3");
+    DOCTEST_REQUIRE(clickId(ui3, "agent.dialog.task.save.bg"));
+
+    // 读回
+    auto tasks = store.listTasks();
+    DOCTEST_REQUIRE(tasks.isOk());
+    DOCTEST_REQUIRE_EQ(tasks.value().size(), static_cast<size_t>(1));
+    const auto& row = tasks.value()[0];
+    DOCTEST_CHECK_EQ(row.contextNote, std::string("这是一段上下文记忆"));
+    DOCTEST_CHECK_EQ(row.autoNote, 0);   // 已关闭
+
+    // 弹窗关闭
+    eui::Ui ui4;
+    composeTo(ui4, mod, kScreen, "agent_ui_note4");
+    DOCTEST_CHECK(ui4.find("agent.dialog.task.note") == nullptr);
+
+    mod.onStop();
+    return true;
+})
+
+REGISTER_TEST(agent_ui_edit_dialog_prefills_context_note,
+              "agent_ui: 编辑弹窗从库行回填 contextNote + autoNote；修改保存后读回更新值", {
+    test_support::TestDb tdb("agentui", "noteedit");
+    FakeProxy proxy;
+    ToolGuard statsGuard{"app.stats"};
+    core::ToolRegistry::instance().unregisterTool("app.stats");
+    module::agent::AgentStore store(tdb.handle());
+    auto created = store.createTask("记忆任务", "旧目标", "manual", "default", 10,
+                                    false, "", "旧记忆内容", 1);
+    DOCTEST_REQUIRE(created.isOk());
+    const std::string tid = std::to_string(created.value());
+
+    module::agent::AgentModule::Deps deps;
+    deps.db = &tdb.handle();
+    deps.proxy = &proxy;
+    module::agent::AgentModule mod(deps);
+    mod.onStart();
+
+    eui::Ui ui;
+    composeTo(ui, mod, kScreen, "agent_ui_noteedit1");
+    DOCTEST_REQUIRE(clickId(ui, "agent.task." + tid + ".edit"));
+    eui::Ui ui2;
+    composeTo(ui2, mod, kScreen, "agent_ui_noteedit2");
+
+    // 回填：contextNote 与 autoNote 与库一致
+    DOCTEST_CHECK_EQ(inputText(ui2, "agent.dialog.task.note"),
+                     std::string("旧记忆内容"));
+    const auto* autosw = ui2.find("agent.dialog.task.autonote");
+    DOCTEST_REQUIRE(autosw != nullptr);
+    DOCTEST_CHECK(autosw->checked);   // autoNote=1 → 开
+
+    // 修改记忆内容
+    auto* noteHit = ui2.find("agent.dialog.task.note.hit");
+    DOCTEST_REQUIRE(noteHit != nullptr);
+    typeInto(noteHit, "新增内容");
+    // 关闭自动记录
+    const auto* autoHit = ui2.find("agent.dialog.task.autonote.hit");
+    DOCTEST_REQUIRE(autoHit != nullptr);
+    DOCTEST_REQUIRE(autoHit->onClick != nullptr);
+    autoHit->onClick();
+
+    eui::Ui ui3;
+    composeTo(ui3, mod, kScreen, "agent_ui_noteedit3");
+    DOCTEST_REQUIRE(clickId(ui3, "agent.dialog.task.save.bg"));
+
+    auto updated = store.getTask(created.value());
+    DOCTEST_REQUIRE(updated.isOk());
+    DOCTEST_CHECK_EQ(updated.value().contextNote,
+                     std::string("旧记忆内容新增内容"));
+    DOCTEST_CHECK_EQ(updated.value().autoNote, 0);
+    // goal 未改
+    DOCTEST_CHECK_EQ(updated.value().goal, std::string("旧目标"));
+
+    mod.onStop();
+    return true;
+})
+
+REGISTER_TEST(agent_ui_dialog_geometry_context_note_within_bounds,
+              "agent_ui: 新字段（执行记忆/自动记录）不越弹窗边界 + 行底 ≤ 按钮行顶", {
+    test_support::TestDb tdb("agentui", "notegeom");
+    FakeProxy proxy;
+    ToolGuard statsGuard{"app.stats"};
+    core::ToolRegistry::instance().unregisterTool("app.stats");
+
+    module::agent::AgentModule::Deps deps;
+    deps.db = &tdb.handle();
+    deps.proxy = &proxy;
+    module::agent::AgentModule mod(deps);
+    mod.onStart();
+
+    eui::Ui ui;
+    DOCTEST_REQUIRE(openNewTaskDialog(ui, mod, "agent_ui_notegeo1"));
+    eui::Ui ui2;
+    composeTo(ui2, mod, kScreen, "agent_ui_notegeo2");
+
+    const auto* panel = ui2.find("agent.dialog.task.panel");
+    DOCTEST_REQUIRE(panel != nullptr);
+    // 弹窗高 = 设计值 500（M4 从 400 提升到 500 以容纳新字段）
+    DOCTEST_CHECK_MESSAGE(nearPx(panel->frame.height, 500.0f),
+                          "任务弹窗高应为设计值 500，实测 " +
+                              std::to_string(panel->frame.height));
+
+    // 执行记忆多行输入在面板内
+    const auto* note = ui2.find("agent.dialog.task.note");
+    DOCTEST_REQUIRE(note != nullptr);
+    DOCTEST_CHECK_MESSAGE(frameContained(*panel, *note),
+                          "执行记忆输入框跑出弹窗外");
+
+    // 自动记录开关在面板内
+    const auto* autosw = ui2.find("agent.dialog.task.autonote");
+    DOCTEST_REQUIRE(autosw != nullptr);
+    DOCTEST_CHECK_MESSAGE(frameContained(*panel, *autosw),
+                          "自动记录开关跑出弹窗外");
+
+    // 行底（自动记录）≤ 按钮行顶
+    const auto* autoWrap = ui2.find("agent.dialog.task.autonote.wrap");
+    const auto* saveBtn = ui2.find("agent.dialog.task.save");
+    DOCTEST_REQUIRE(autoWrap != nullptr);
+    DOCTEST_REQUIRE(saveBtn != nullptr);
+    DOCTEST_CHECK_MESSAGE(
+        autoWrap->frame.y + autoWrap->frame.height <= saveBtn->frame.y + 0.5f,
+        "自动记录行底 " +
+            std::to_string(autoWrap->frame.y + autoWrap->frame.height) +
+            " 压到按钮行顶 " + std::to_string(saveBtn->frame.y));
+
+    // 元信息行 y 仍然恒等面板顶 +224（新字段在它下面，不动它）
+    const auto* metaRow = ui2.find("agent.dialog.task.destructive.wrap");
+    DOCTEST_REQUIRE(metaRow != nullptr);
+    DOCTEST_CHECK_MESSAGE(nearPx(metaRow->frame.y, panel->frame.y + 224.0f),
+                          "元信息行 y 应恒为面板顶 +224（新字段不得挤动），实测 " +
+                              std::to_string(metaRow->frame.y));
+
+    mod.onStop();
+    return true;
+})
