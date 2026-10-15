@@ -16,6 +16,28 @@ namespace module::settings::gsync {
 inline constexpr const char* kRemoteSqlPath = "data/database.sql";
 inline constexpr const char* kRemoteNotesDir = "notes/";
 
+// ── 笔记同步状态机（spec F1）──
+// 状态 = f(登记记录, 本地现状, 远端现状)；纯件判定，编排层按状态选动作。
+enum class NoteSyncState {
+    InSync,          // 记录有 && 本地 hash==记录 && 远端 sha==记录 → 跳过
+    New,             // 记录无 && 本地有 → 本地领先，推送 PUT
+    LocalModified,   // 记录有 && 本地 hash≠记录 && 远端 sha==记录 → PUT（shaIfMatch=记录 sha）
+    RemoteModified,  // 记录有 && 本地 hash==记录 && 远端 sha≠记录 → 拉取覆盖
+    Diverged,        // 记录有 && 本地 hash≠记录 && 远端 sha≠记录 → 409 弹窗路径
+    LocalDeleted,    // 记录有 && 本地无 → 删除传播 DELETE
+    RemoteNew,       // 记录无 && 本地无 → 仅 pull 场景有意义（远端树里有该名）
+};
+
+// 跨文件不变量：调用方枚举域保证「hasRecord=false && localExists=false」的输入
+// 必然来自远端树枚举（pull 遍历 远端树 ∪ 登记名），push 侧枚举（本地文件 ∪ 登记）
+// 不产生该组合；全假输入不在契约内，归 RemoteNew 仅为全定义域。
+NoteSyncState classifyNote(bool hasRecord, bool localExists,
+                           bool localHashMatches, bool remoteShaMatches);
+
+// 本地内容哈希：FNV-1a 64bit → 16 位小写 hex。纯件零依赖（不引 OpenSSL 进 logic），
+// 同内容恒同值 —— 状态判定用内容而非 mtime（spec F1：mtime 跨设备/备份恢复不可靠）。
+std::string contentHash(const std::string& bytes);
+
 // ── commit 节流（决策 #14 / #17）──
 // 自动同步 5 分钟内最多一次；手动「立即同步」绕开窗口（调用方传 manual=true）。
 inline constexpr int64_t kCommitThrottleSec = 5 * 60;

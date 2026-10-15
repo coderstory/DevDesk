@@ -6,6 +6,35 @@
 
 namespace module::settings::gsync {
 
+NoteSyncState classifyNote(bool hasRecord, bool localExists,
+                           bool localHashMatches, bool remoteShaMatches) {
+    if (!hasRecord) {
+        return localExists ? NoteSyncState::New : NoteSyncState::RemoteNew;
+    }
+    if (!localExists) return NoteSyncState::LocalDeleted;
+    if (localHashMatches) {
+        return remoteShaMatches ? NoteSyncState::InSync
+                                : NoteSyncState::RemoteModified;
+    }
+    return remoteShaMatches ? NoteSyncState::LocalModified
+                            : NoteSyncState::Diverged;
+}
+
+std::string contentHash(const std::string& bytes) {
+    uint64_t h = 14695981039346656037ull;   // FNV-1a 64 offset basis
+    for (const unsigned char c : bytes) {
+        h ^= c;
+        h *= 1099511628211ull;              // FNV-1a 64 prime
+    }
+    static const char* kHex = "0123456789abcdef";
+    std::string out(16, '0');
+    for (int i = 15; i >= 0; --i) {
+        out[static_cast<size_t>(i)] = kHex[h & 0xF];
+        h >>= 4;
+    }
+    return out;
+}
+
 bool throttleDue(int64_t lastCommitSec, int64_t nowSec) {
     if (lastCommitSec <= 0) return true;   // 从未 commit → 到点
     if (nowSec < lastCommitSec) return true;  // 时钟回拨：不把用户锁死在窗口里

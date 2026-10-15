@@ -90,6 +90,7 @@ add_executable(devdesk_tests
     test_modules/test_home.cpp
     test_modules/test_home_quota_card.cpp
     test_modules/test_github_sync_card.cpp
+    test_modules/test_github_sync_logic.cpp
     test_modules/test_settings.cpp
     test_modules/test_module_icons.cpp
     test_modules/test_font_em_layout.cpp
