@@ -27,11 +27,11 @@
 `core::dbmaint` 接口：
 
 - `quickCheckOnHandle(sqlite3*)`：已开连接跑 quick_check，调用方须持锁（`Database::quickCheck()` 内持 `db_.mutex()`）。
-- `quickCheckOk(path)`：独立只读连接（无 CREATE，绝不在检查里顺手造库）；CORRUPT/NOTADB → `ok(false)`，文件不存在 → fail。
+- `quickCheckOk(path, readOnlyOpen=false)`：独立连接（无 CREATE，绝不在检查里顺手造库）。判定口径：CORRUPT/NOTADB → `ok(false)`（损坏）；文件不存在与其余 sqlite 错误（BUSY/IOERR 等瞬态错误）→ fail（检查失败，调用方不得当损坏处理——主库路径瞬态错误跳过还原流程 LOG_ERROR 继续启动，备份校验路径按还原失败处理）。打开方式按路径区分：主库检测用 READWRITE（主库 WAL 模式，存在热 `-wal` 时只读连接会因 `-shm` 不可写而打开失败、误判）；备份校验用 READONLY（备份可能是用户拷贝来的/置了只读属性，READWRITE 会误拒还原）。
 - `latestBackup(dbFile)`：同目录 `<名>.backup-*` 字典序最大者；无 → nullopt。
 - `createBackup(dbFile, keep=5)`：`sqlite3_backup` 在线备份（step(-1) 循环 + BUSY/LOCKED 重试），失败删半成品；成功后按 POSIX 收紧 0600（内容含凭据页，与主库同保护级别），收紧失败仅 LOG_WARN 不回滚。
 - `performStartupBackupOnce(dbFile)`：进程级 `std::atomic<bool>` 闩，首调备份、非首调 `ok(nullopt)` 跳过；失败 fail 由调用方 LOG_ERROR 后继续启动。
-- `restoreFromBackup(dbFile, backup)`：删主库旧 `-wal/-shm` → rename 主库为 `.corrupt-<ts>` → 拷贝备份 → quick_check 校验；任一步失败把隔离文件改回原名复原现场（绝不让用户两头落空）。corrupt 滚动只留最近 1 份。
+- `restoreFromBackup(dbFile, backup)`：删主库旧 `-wal/-shm` → rename 主库为 `.corrupt-<ts>` → 拷贝备份 → 清除落盘文件的只读位（copy 会连只读属性一起拷来）→ quick_check 校验（只读打开）；任一步失败把隔离文件改回原名复原现场（绝不让用户两头落空）。corrupt 滚动只留最近 1 份。
 - `pruneFilesWithPrefix(dir, prefix, keep)`：文件名字典序 = 时间戳时间序，滚动删旧。
 - `resetStartupBackupLatchForTests()`：测试缝，生产禁调。
 
@@ -69,7 +69,7 @@ EUI-NEO 建窗、进入 compose 循环
 - 备份在线进行、允许并发写（`sqlite3_backup` 语义），防 -wal 丢失页。
 - 还原是文件级操作，前置是「全部连接已关闭」；quick_check 在模块写入前做，该前置天然成立。Windows 上有连接开着 rename 会失败，还原前 `cand.reset()` 显式关连接。
 - 损坏库隔离不删（改名保留），给用户/支持留排查材料；只滚动删旧到 1 份。
-- 还原失败复原现场：隔离文件改回原名，用户至少拿得回损坏原件。
+- 还原失败复原现场：隔离文件改回原名，用户至少拿得回损坏原件。复原本身也可能失败（目标被占用/权限）：remove/rename 逐项 LOG_ERROR（含路径与 ec.message()），并把「原损坏文件已保留为 <corrupt 路径>」的实情追加进弹给用户的文案——绝不让主库下落不明静默发生。
 
 ### 4.4 备份/隔离文件的 gitignore
 

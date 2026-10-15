@@ -121,9 +121,12 @@ bool handleDbCorruption(const std::filesystem::path& dbPath) {
             } else {
                 cand = std::make_unique<::core::Database>(std::move(r.value()));
                 auto chk = cand->quickCheck();
-                if (chk.isFail() || !chk.value()) {
-                    LOG_ERROR("数据库损坏（quick_check 非 ok）: " +
-                              (chk.isFail() ? chk.errorMessage() : dbPath.string()));
+                if (chk.isFail()) {
+                    // 瞬态错误（BUSY/IOERR 等）≠ 损坏：不进还原流程，LOG_ERROR 后带着已打开的库继续启动
+                    LOG_ERROR("主库完整性检查无法执行（瞬态错误，不判定损坏，不触发还原）: " +
+                              chk.errorMessage());
+                } else if (!chk.value()) {
+                    LOG_ERROR("数据库损坏（quick_check 非 ok）: " + dbPath.string());
                     // 还原是文件级改名/拷贝：先关掉本连接，否则 Windows 上 rename 主库会失败
                     cand.reset();
                 }

@@ -19,8 +19,13 @@ namespace core::dbmaint {
 core::Result<bool> quickCheckOnHandle(sqlite3* handle);
 
 // 独立打开 dbFile 跑 quick_check（自开连接、即开即关；不带 CREATE——绝不在检查里顺手造库）。
-// 文件不存在 → fail(FileNotFound)；prepare/step 报 CORRUPT/NOTADB → ok(false)；其余 sqlite 错误 → fail
-core::Result<bool> quickCheckOk(const std::filesystem::path& dbFile);
+// 文件不存在 → fail(FileNotFound)；prepare/step 报 CORRUPT/NOTADB → ok(false)（判定损坏）；
+// 其余 sqlite 错误（BUSY/IOERR 等瞬态错误）→ fail（检查失败，调用方绝不能当损坏处理）。
+// readOnlyOpen：true = SQLITE_OPEN_READONLY 打开——用于校验备份文件（备份可能被用户置为只读，
+//   READWRITE 打开会误拒还原）；false = READWRITE——用于主库检测路径，主库是 WAL 模式，
+//   只读连接在存在热 -wal 且 -shm 不可写时会打开失败，会误判，不能改成只读。
+core::Result<bool> quickCheckOk(const std::filesystem::path& dbFile,
+                                bool readOnlyOpen = false);
 
 // 主库最新的备份文件（<文件名>.backup-* 里字典序最大者）；无 → ok(nullopt)
 core::Result<std::optional<std::filesystem::path>> latestBackup(

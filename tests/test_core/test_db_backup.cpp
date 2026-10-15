@@ -287,3 +287,92 @@ REGISTER_TEST(db_backup_restore_fails_on_bad_backup,
     std::filesystem::remove(dbPath, ec);
     return true;
 })
+
+// ---------- 只读备份文件可被还原接受（MINOR-A：校验不得用 READWRITE 误拒只读备份） ----------
+
+REGISTER_TEST(db_backup_restore_accepts_readonly_backup,
+               "db_backup: 只读备份文件可被还原接受，且落盘主库清掉只读位", {
+    const std::filesystem::path dbPath = test_support::tempDbPath(kPrefix, "robak");
+    std::error_code ec;
+    std::filesystem::remove(dbPath, ec);
+    {
+        auto r = core::Database::open(dbPath);
+        DOCTEST_REQUIRE(r.isOk());
+        core::Database db(std::move(r.value()));
+        DOCTEST_REQUIRE(db.db().exec("CREATE TABLE t(v TEXT)").isOk());
+        DOCTEST_REQUIRE(db.db().exec("INSERT INTO t VALUES ('data')").isOk());
+    }
+    auto backup = core::dbmaint::createBackup(dbPath);
+    DOCTEST_REQUIRE(backup.isOk());
+
+    // 用户拷贝来的/属性设了只读的备份：Windows 上映射 FILE_ATTRIBUTE_READONLY
+    std::filesystem::permissions(backup.value(),
+                                 std::filesystem::perms::owner_write,
+                                 std::filesystem::perm_options::remove);
+    DOCTEST_CHECK(
+        (std::filesystem::status(backup.value()).permissions() &
+         std::filesystem::perms::owner_write) == std::filesystem::perms::none);
+
+    writeGarbageFile(dbPath);
+    auto restored = core::dbmaint::restoreFromBackup(dbPath, backup.value());
+    // 关键断言：只读备份不得被校验环节误拒
+    DOCTEST_REQUIRE(restored.isOk());
+    // 落盘主库的只读位被清掉（copy 连属性一起拷来，还原方负责恢复可写）
+    DOCTEST_CHECK(
+        (std::filesystem::status(dbPath).permissions() &
+         std::filesystem::perms::owner_write) != std::filesystem::perms::none);
+    auto good = core::dbmaint::quickCheckOk(dbPath, /*readOnlyOpen=*/true);
+    DOCTEST_REQUIRE(good.isOk());
+    DOCTEST_CHECK(good.value());
+    // 落盘库可正常写开（还原产物真的可用）
+    {
+        sqlite3* raw = nullptr;
+        DOCTEST_REQUIRE(sqlite3_open_v2(dbPath.string().c_str(), &raw,
+                                        SQLITE_OPEN_READWRITE, nullptr) == SQLITE_OK);
+        sqlite3_close(raw);
+    }
+
+    std::filesystem::remove(dbPath, ec);
+    std::filesystem::remove(backup.value(), ec);
+    std::filesystem::remove(restored.value(), ec);
+    return true;
+})
+
+// ---------- 瞬态错误（BUSY）不触发损坏判定（MINOR-B：fail ≠ ok(false)） ----------
+// 注入方式：rollback-journal 模式库被另一连接 BEGIN EXCLUSIVE 锁住，
+// quickCheckOk 自开连接 prepare 时拿到 SQLITE_BUSY——fail 而不是 ok(false)，
+// 调用方（main.cpp）据此跳过还原流程而不是弹还原对话框。
+
+REGISTER_TEST(db_backup_busy_lock_is_not_corruption,
+               "db_backup: BUSY 锁库 → quickCheckOk fail（检查失败），不判损坏", {
+    const std::filesystem::path dbPath = test_support::tempDbPath(kPrefix, "busy");
+    std::error_code ec;
+    std::filesystem::remove(dbPath, ec);
+    // 造一个非 WAL（默认 rollback journal）的合法库——WAL 下读不受写锁阻塞，注不出 BUSY
+    sqlite3* maker = nullptr;
+    DOCTEST_REQUIRE(sqlite3_open_v2(dbPath.string().c_str(), &maker,
+                                    SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE,
+                                    nullptr) == SQLITE_OK);
+    DOCTEST_REQUIRE(sqlite3_exec(maker, "CREATE TABLE t(v TEXT);", nullptr, nullptr, nullptr) == SQLITE_OK);
+    sqlite3_close(maker);
+
+    sqlite3* locker = nullptr;
+    DOCTEST_REQUIRE(sqlite3_open_v2(dbPath.string().c_str(), &locker,
+                                    SQLITE_OPEN_READWRITE, nullptr) == SQLITE_OK);
+    sqlite3_busy_timeout(locker, 0);
+    DOCTEST_REQUIRE(sqlite3_exec(locker, "BEGIN EXCLUSIVE;", nullptr, nullptr, nullptr) == SQLITE_OK);
+
+    auto qc = core::dbmaint::quickCheckOk(dbPath);
+    // 瞬态错误：isFail（检查失败），绝不能是 ok(false)（损坏）——损坏判定会触发还原流程
+    DOCTEST_CHECK(qc.isFail());
+    DOCTEST_CHECK(!qc.isOk());
+
+    sqlite3_exec(locker, "ROLLBACK;", nullptr, nullptr, nullptr);
+    sqlite3_close(locker);
+    // 解锁后同一文件判 ok —— 证明上面的 fail 是瞬态锁导致、不是文件本身坏
+    auto qcAfter = core::dbmaint::quickCheckOk(dbPath);
+    DOCTEST_REQUIRE(qcAfter.isOk());
+    DOCTEST_CHECK(qcAfter.value());
+    std::filesystem::remove(dbPath, ec);
+    return true;
+})

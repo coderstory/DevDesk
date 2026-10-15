@@ -8,7 +8,9 @@
 #include <atomic>
 #include <chrono>
 #include <cstdio>
+#include <system_error>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include <sqlite3.h>
@@ -74,13 +76,14 @@ core::Result<bool> quickCheckOnHandle(sqlite3* handle) {
     return core::Result<bool>::ok(ok);
 }
 
-core::Result<bool> quickCheckOk(const fs::path& dbFile) {
+core::Result<bool> quickCheckOk(const fs::path& dbFile, bool readOnlyOpen) {
     std::error_code ec;
     if (!fs::exists(dbFile, ec) || ec) {
         return core::Result<bool>::fail(core::ErrorCode::FileNotFound,
                                         "库文件不存在: " + dbFile.string());
     }
-    auto opened = openRaw(dbFile, SQLITE_OPEN_READWRITE);
+    auto opened = openRaw(dbFile, readOnlyOpen ? SQLITE_OPEN_READONLY
+                                              : SQLITE_OPEN_READWRITE);
     if (opened.isFail()) return core::Result<bool>::fail(opened.errorCode(),
                                                          opened.errorMessage());
     sqlite3* handle = opened.value();
@@ -269,7 +272,20 @@ core::Result<fs::path> restoreFromBackup(const fs::path& dbFile,
         std::error_code rmEc, rnEc;
         fs::remove(dbFile, rmEc);
         fs::rename(corruptPath, dbFile, rnEc);
-        return core::Result<fs::path>::fail(core::ErrorCode::FileWriteFailed, msg);
+        // 复原本身也可能失败（目标被占用/权限问题）：逐个 LOG_ERROR 并把实情追加进
+        // 返回给用户的 msg——绝不让「主库下落不明」静默发生
+        std::string finalMsg = msg;
+        if (rmEc) {
+            LOG_ERROR("还原失败后清理半还原主库失败: " + dbFile.string() + ": " +
+                      rmEc.message());
+            finalMsg += "\n半还原的主库文件未能清理: " + dbFile.string();
+        }
+        if (rnEc) {
+            LOG_ERROR("还原失败后隔离文件改回原名失败: " + corruptPath.string() +
+                      " → " + dbFile.string() + ": " + rnEc.message());
+            finalMsg += "\n原损坏文件已保留为: " + corruptPath.string();
+        }
+        return core::Result<fs::path>::fail(core::ErrorCode::FileWriteFailed, finalMsg);
     };
 
     // 同秒重名：上一份 corrupt 同名会被 rename 挡（Windows rename 不覆盖目标），先删
@@ -291,12 +307,26 @@ core::Result<fs::path> restoreFromBackup(const fs::path& dbFile,
     if (cpEc) {
         return failRestore("备份拷贝失败: " + backupFile.string() + ": " + cpEc.message());
     }
+    // copy_file 会把源文件的只读属性一并拷到主库（Windows CopyFile 保留属性位），
+    // 只读主库会让后续 Database::open 失败：清掉只读位，失败仅 WARN（校验/启动自会兜底报错）
+    {
+        std::error_code permEc;
+        fs::permissions(dbFile, fs::perms::owner_write, fs::perm_options::add, permEc);
+        if (permEc) {
+            LOG_WARN("还原库清除只读位失败: " + dbFile.string() + ": " + permEc.message());
+        }
+    }
 
-    // 校验：备份本身也坏 → fail（走调用方的「还原失败→退出」路径），现场复原
-    auto verify = quickCheckOk(dbFile);
-    if (verify.isFail() || !verify.value()) {
-        return failRestore("还原后的库未通过完整性检查（备份本身损坏?）: " +
-                           (verify.isFail() ? verify.errorMessage() : "quick_check 非 ok"));
+    // 校验：备份本身也坏 → fail（走调用方的「还原失败→退出」路径），现场复原。
+    // 只读方式打开——备份文件可能是用户拷贝来的/被置了只读属性，READWRITE 会误拒还原。
+    // isFail（BUSY/IOERR 等瞬态错误）同样走还原失败：此刻无法证明还原结果可用
+    auto verify = quickCheckOk(dbFile, /*readOnlyOpen=*/true);
+    if (verify.isFail()) {
+        return failRestore("还原后的库完整性检查无法执行（备份损坏或瞬态 IO 错误）: " +
+                           verify.errorMessage());
+    }
+    if (!verify.value()) {
+        return failRestore("还原后的库未通过完整性检查（备份本身损坏?）: quick_check 非 ok");
     }
 
     if (auto perm = core::fileperms::restrictToOwnerOnly(dbFile); perm.isFail()) {
