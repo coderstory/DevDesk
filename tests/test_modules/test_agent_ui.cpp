@@ -1708,3 +1708,107 @@ REGISTER_TEST(agent_run_end_notice_take_semantics,
     mod.onStop();
     return true;
 })
+
+// Task 2：定时分支模板下拉 + 下次触发预览。布局契约：模板 dropdown 与预览行
+// 不得改变弹窗总高（面板仍 400、meta 行仍 +224），预览行只能落在 cron 行与
+// meta 行之间的原 gap 内。
+REGISTER_TEST(agent_ui_cron_template_dropdown_and_preview,
+              "agent_ui: 定时分支模板下拉（≥4 条）选中回填 cron / 预览行随 editCron 即时更新（合法显下次触发、非法显校验、无匹配显一年内）/ 弹窗高不变", {
+    test_support::TestDb tdb("agentui", "crontpl");
+    FakeProxy proxy;
+    ToolGuard statsGuard{"app.stats"};
+    core::ToolRegistry::instance().unregisterTool("app.stats");
+    module::agent::AgentModule::Deps deps;
+    deps.db = &tdb.handle();
+    deps.proxy = &proxy;
+    module::agent::AgentModule mod(deps);
+    mod.onStart();
+
+    eui::Ui ui1;
+    DOCTEST_REQUIRE(openNewTaskDialog(ui1, mod, "agent_ui_crontpl1"));
+    eui::Ui ui2;
+    composeTo(ui2, mod, kScreen, "agent_ui_crontpl2");
+    DOCTEST_REQUIRE(callDropdownChange(ui2, "agent.dialog.task.trigger", 1));
+    eui::Ui ui3;
+    composeTo(ui3, mod, kScreen, "agent_ui_crontpl3");
+
+    // ① 模板下拉存在；item.0 是「选择模板…」占位，item.1..4 对应 kCronTemplates
+    DOCTEST_REQUIRE_MESSAGE(ui3.find("agent.dialog.task.cron.template") != nullptr,
+                            "模板下拉 agent.dialog.task.cron.template 缺失");
+    const auto* tplLabel3 = ui3.find("agent.dialog.task.cron.template.label");
+    DOCTEST_REQUIRE_MESSAGE(tplLabel3 != nullptr, "模板下拉 label 缺失");
+    DOCTEST_CHECK_EQ(tplLabel3->text, std::string("选择模板…"));
+    for (int i = 0; i < module::agent::kCronTemplateCount; ++i) {
+        const auto* item = ui3.find("agent.dialog.task.cron.template.item." +
+                                    std::to_string(i + 1));
+        DOCTEST_REQUIRE_MESSAGE(item != nullptr,
+                                "模板项 item." + std::to_string(i + 1) + " 缺失");
+        const auto* itemLabel = ui3.find(
+            "agent.dialog.task.cron.template.item.label." + std::to_string(i + 1));
+        DOCTEST_REQUIRE_MESSAGE(itemLabel != nullptr,
+                                "模板项 label." + std::to_string(i + 1) + " 缺失");
+        DOCTEST_CHECK_EQ(itemLabel->text,
+                         std::string(module::agent::kCronTemplates[i].label));
+    }
+
+    // ② 布局契约：面板高仍 400；meta 行仍 +224（模板下拉/预览行未挤动布局）
+    const auto* panel3 = ui3.find("agent.dialog.task.panel");
+    DOCTEST_REQUIRE(panel3 != nullptr);
+    DOCTEST_CHECK_MESSAGE(nearPx(panel3->frame.height, 400.0f),
+                          "任务弹窗高应恒为 400，实测 " +
+                              std::to_string(panel3->frame.height));
+    const auto* metaRow3 = ui3.find("agent.dialog.task.destructive.wrap");
+    DOCTEST_REQUIRE(metaRow3 != nullptr);
+    DOCTEST_CHECK_MESSAGE(nearPx(metaRow3->frame.y, panel3->frame.y + 224.0f),
+                          "meta 行 y 应恒为面板顶 +224，实测 " +
+                              std::to_string(metaRow3->frame.y));
+    // cron 为空 → 预览行不渲染（skipIfEmpty）
+    DOCTEST_CHECK(ui3.find("agent.dialog.task.cron.preview") == nullptr);
+
+    // ③ 选中模板 2（每天 9 点）→ cron 回填 + 预览立即出现
+    DOCTEST_REQUIRE(
+        callDropdownChange(ui3, "agent.dialog.task.cron.template", 2));
+    eui::Ui ui4;
+    composeTo(ui4, mod, kScreen, "agent_ui_crontpl4");
+    DOCTEST_CHECK_EQ(inputText(ui4, "agent.dialog.task.cron"),
+                     std::string("0 9 * * *"));
+    const auto* preview4 = ui4.find("agent.dialog.task.cron.preview");
+    DOCTEST_REQUIRE_MESSAGE(preview4 != nullptr, "合法 cron 未渲染预览行");
+    DOCTEST_CHECK_MESSAGE(preview4->text.rfind("下次触发：", 0) == 0,
+                          "预览行应以「下次触发：」开头，实测: " + preview4->text);
+    // 预览行落在 cron 行与 meta 行之间（原 gap 内）
+    const auto* cronRow4 = ui4.find("agent.dialog.task.cron");
+    DOCTEST_REQUIRE(cronRow4 != nullptr);
+    const auto* metaRow4 = ui4.find("agent.dialog.task.destructive.wrap");
+    DOCTEST_REQUIRE(metaRow4 != nullptr);
+    DOCTEST_CHECK_MESSAGE(
+        preview4->frame.y >= cronRow4->frame.y + cronRow4->frame.height - 0.5f,
+        "预览行应在 cron 行之下");
+    DOCTEST_CHECK_MESSAGE(
+        preview4->frame.y + preview4->frame.height <= metaRow4->frame.y + 0.5f,
+        "预览行压到 meta 行：底 " +
+            std::to_string(preview4->frame.y + preview4->frame.height) +
+            " meta 顶 " + std::to_string(metaRow4->frame.y));
+
+    // ④ 手改非法表达式 → 预览位显示校验文案（不等到保存才报）
+    mod.setEditCronDraft("0 9 * * 1-5x");
+    eui::Ui ui5;
+    composeTo(ui5, mod, kScreen, "agent_ui_crontpl5");
+    const auto* preview5 = ui5.find("agent.dialog.task.cron.preview");
+    DOCTEST_REQUIRE_MESSAGE(preview5 != nullptr, "非法 cron 未渲染预览行");
+    DOCTEST_CHECK_MESSAGE(preview5->text.find("cron 表达式非法") !=
+                              std::string::npos,
+                          "非法 cron 预览应显校验文案，实测: " + preview5->text);
+
+    // ⑤ 无匹配（2 月 31 日）→ 预览显「一年内无触发时间」
+    mod.setEditCronDraft("0 9 31 2 *");
+    eui::Ui ui6;
+    composeTo(ui6, mod, kScreen, "agent_ui_crontpl6");
+    const auto* preview6 = ui6.find("agent.dialog.task.cron.preview");
+    DOCTEST_REQUIRE_MESSAGE(preview6 != nullptr, "无匹配 cron 未渲染预览行");
+    DOCTEST_CHECK_MESSAGE(preview6->text == "一年内无触发时间",
+                          "无匹配预览文案错误，实测: " + preview6->text);
+
+    mod.onStop();
+    return true;
+})

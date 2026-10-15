@@ -6,6 +6,8 @@
 #include "agent_module.h"
 
 #include <algorithm>
+#include <cstdio>
+#include <ctime>
 #include <functional>
 #include <system_error>
 #include <utility>
@@ -28,6 +30,7 @@
 #include "core/logging.h"
 #include "core/service_locator.h"
 #include "core/theme.h"
+#include "core/time.h"
 #include "module_agent/agent_loop.h"
 #include "module_agent/app_stats_tool.h"
 #include "module_agent/cron.h"
@@ -482,6 +485,8 @@ void AgentModule::openNewTaskDialog() {
     editError_.clear();
     editTriggerOpen_ = false;
     editSlotOpen_ = false;
+    editCronTemplateOpen_ = false;
+    refreshCronPreview();
 }
 
 // 关闭任务弹窗（多条路径共用）：不落库、不碰任务列表，只退弹窗态与草稿
@@ -491,14 +496,46 @@ void AgentModule::closeTaskDialog() {
     editError_.clear();
     editTriggerOpen_ = false;
     editSlotOpen_ = false;
+    editCronTemplateOpen_ = false;
 }
 
 void AgentModule::setEditCronDraft(const std::string& cron) {
     editCron_ = cron;
+    refreshCronPreview();
 }
 
 void AgentModule::setDialogIterDraft(int iter) {
     editIter_ = iter;
+}
+
+// 预览行重算：只在 editCron_ 变化点调用（不在 compose 每帧调——无匹配表达式
+// 的 366*1440 步前探最坏数十万次 localTime，每帧算会拖垮弹窗）。
+// 「现在」取 deps_.schedulerNow（测试可注入假时钟），缺省真实系统时间。
+void AgentModule::refreshCronPreview() {
+    cronPreview_.clear();
+    cronPreviewIsError_ = false;
+    const std::string cron = trimCopy(editCron_);
+    if (cron.empty()) return;
+    auto expr = parseCron(cron);
+    if (expr.isFail()) {
+        cronPreview_ = "cron 表达式非法：" + expr.errorMessage();
+        cronPreviewIsError_ = true;
+        return;
+    }
+    const std::time_t now = deps_.schedulerNow ? deps_.schedulerNow()
+                                               : core::time::nowUnix();
+    auto next = nextCronMatch(expr.value(), now);
+    if (next.isFail()) {
+        cronPreview_ = "一年内无触发时间";
+        cronPreviewIsError_ = true;
+        return;
+    }
+    const std::tm& t = next.value();
+    char buf[40];
+    std::snprintf(buf, sizeof(buf), "下次触发：%04d-%02d-%02d %02d:%02d",
+                  t.tm_year + 1900, t.tm_mon + 1, t.tm_mday, t.tm_hour,
+                  t.tm_min);
+    cronPreview_ = buf;
 }
 
 // 编辑态：字段以库为准回填（tasks_ 可能滞后，故直接 getTask）；读库失败 → 页内错误行
@@ -523,6 +560,8 @@ void AgentModule::openTaskEditor(int64_t taskId) {
     editError_.clear();
     editTriggerOpen_ = false;
     editSlotOpen_ = false;
+    editCronTemplateOpen_ = false;
+    refreshCronPreview();
 }
 
 // 保存任务弹窗（新建/编辑同一路径）：定时先 parseCron 校验，非法 → 弹窗内报错不关窗
@@ -1347,16 +1386,59 @@ void AgentModule::composeTaskDialog(
             fieldCaption(ui, "agent.dialog.task.cron.caption", "cron 表达式",
                          cronLabelX, triggerY, kDialogLabelW, kDialogRowH,
                          t.colors.textSecondary);
+            // cron 输入右侧让位给模板下拉（选中即回填，宽度预算见下行两条 size）
+            const float tplW = 110.0f;
+            const float cronW = innerW - (cronX - x0) - tplW - kDialogGap;
             components::input(ui, "agent.dialog.task.cron")
                 .position(cronX, triggerY)
-                .size(innerW - (cronX - x0), kDialogRowH)
+                .size(cronW, kDialogRowH)
                 .value(editCron_)
                 .placeholder("分 时 日 月 周，例如 0 9 * * 1-5")
                 .fontSize(t.sizes.fontSizeBody)
                 .theme(themeTokens)
-                .onChange([this](const std::string& v) { editCron_ = v; })
+                .onChange([this](const std::string& v) {
+                    editCron_ = v;
+                    refreshCronPreview();
+                })
                 .onCancel([this] { closeTaskDialog(); })
                 .build();
+            ui.stack("agent.dialog.task.cron.template.wrap")
+                .position(cronX + cronW + kDialogGap, triggerY)
+                .size(tplW, kDialogRowH)
+                .content([&] {
+                    // selected 恒 0（「选择模板…」占位）——下拉当菜单用：选完不
+                    // 留选中态，label 不许变成表达式（表达式在 cron 输入框里）
+                    std::vector<std::string> items;
+                    items.reserve(kCronTemplateCount + 1);
+                    items.emplace_back("选择模板…");
+                    for (int i = 0; i < kCronTemplateCount; ++i) {
+                        items.emplace_back(kCronTemplates[i].label);
+                    }
+                    components::dropdown(ui, "agent.dialog.task.cron.template")
+                        .size(tplW, kDialogRowH)
+                        .theme(themeTokens)
+                        .items(std::move(items))
+                        .selected(0)
+                        .open(editCronTemplateOpen_)
+                        .onOpenChange(
+                            [this](bool v) { editCronTemplateOpen_ = v; })
+                        .onChange([this](int idx) {
+                            // idx 0 = 占位项，不回填
+                            if (idx >= 1 && idx <= kCronTemplateCount) {
+                                setEditCronDraft(kCronTemplates[idx - 1].expr);
+                            }
+                        })
+                        .build();
+                })
+                .build();
+            // 预览行：cron 行与 meta 行之间的原 12px gap 内，弹窗总高不变
+            // （kTaskDialogH 与 metaY=224 都不许动，改即破几何契约）
+            ui_kit::drawDialogText(
+                ui, "agent.dialog.task.cron.preview", w, cronPreview_,
+                t.sizes.fontSizeSmall - 1.0f,
+                cronPreviewIsError_ ? t.colors.error : t.colors.textTertiary,
+                {.x = x0, .y = 212.0f, .height = 12.0f, .lineHeight = 12.0f,
+                 .skipIfEmpty = true});
         }
 
         const float metaY = 224.0f;

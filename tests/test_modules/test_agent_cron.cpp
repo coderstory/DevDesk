@@ -63,3 +63,98 @@ REGISTER_TEST(cron_rejects_oversized_step,
     DOCTEST_CHECK(!fires("*/60 * * * *", tmOf(1, 9, 5, 10, 3)));
     return true;
 })
+
+namespace {
+// 本地墙钟 → time_t（mktime 是 localTime 的逆，测试期望值与被测函数走同一时区口径）
+std::time_t localSecOf(int year, int mon1to12, int mday, int hour, int min) {
+    std::tm t{};
+    t.tm_year = year - 1900;
+    t.tm_mon = mon1to12 - 1;
+    t.tm_mday = mday;
+    t.tm_hour = hour;
+    t.tm_min = min;
+    t.tm_isdst = -1;   // 让 mktime 按当时夏令时规则归一
+    return std::mktime(&t);
+}
+// 期望的本地 tm（wday 由 mktime 补齐，与生产 localTime 填充路径同源）
+std::tm expectLocalOf(int year, int mon1to12, int mday, int hour, int min) {
+    std::tm t{};
+    t.tm_year = year - 1900;
+    t.tm_mon = mon1to12 - 1;
+    t.tm_mday = mday;
+    t.tm_hour = hour;
+    t.tm_min = min;
+    t.tm_isdst = -1;
+    std::mktime(&t);
+    return t;
+}
+bool sameMinute(const std::tm& a, const std::tm& b) {
+    return a.tm_year == b.tm_year && a.tm_mon == b.tm_mon &&
+           a.tm_mday == b.tm_mday && a.tm_hour == b.tm_hour &&
+           a.tm_min == b.tm_min;
+}
+} // namespace
+
+// nextCronMatch：fromSec 起下一个命中分钟（本地墙钟），硬上限 366*1440 步、
+// 到顶 fail(ValidationError)。语义与 Scheduler 分钟翻转触发对齐：fromSec 所在
+// 分钟不参与（已翻过），从下一分钟边界起探。
+REGISTER_TEST(cron_next_match_table,
+              "cron: nextCronMatch 表驱动（同日命中 / 跨日 / 星期语义跨周末 / 无匹配到顶）", {
+    const char* exprs[] = {"*/15 * * * *", "0 9 * * *", "0 9 * * 1-5",
+                           "0 9 * * 1-5", "0 9 31 2 *"};
+    const std::time_t froms[] = {
+        localSecOf(2026, 10, 9, 10, 7), localSecOf(2026, 10, 9, 12, 0),
+        localSecOf(2026, 10, 9, 12, 34), localSecOf(2026, 10, 9, 8, 0),
+        localSecOf(2026, 10, 9, 0, 0)};
+    static_assert(sizeof(exprs) == sizeof(froms));
+
+    // ① 同日基本命中：10:07 注入 */15 → 10:15（不是 10:00，fromSec 所在分钟已翻过）
+    {
+        auto parsed = module::agent::parseCron(exprs[0]);
+        DOCTEST_REQUIRE(parsed.isOk());
+        auto r = module::agent::nextCronMatch(parsed.value(), froms[0]);
+        DOCTEST_REQUIRE(r.isOk());
+        DOCTEST_CHECK(sameMinute(r.value(), expectLocalOf(2026, 10, 9, 10, 15)));
+    }
+    // ② 跨日：当天 09:00 已过 → 次日 09:00
+    {
+        auto parsed = module::agent::parseCron(exprs[1]);
+        DOCTEST_REQUIRE(parsed.isOk());
+        auto r = module::agent::nextCronMatch(parsed.value(), froms[1]);
+        DOCTEST_REQUIRE(r.isOk());
+        DOCTEST_CHECK(sameMinute(r.value(), expectLocalOf(2026, 10, 10, 9, 0)));
+    }
+    // ③ 星期语义：2026-10-09 是周五、周五 09:00 已过 → 下周一 2026-10-12 09:00
+    {
+        std::tm friday = expectLocalOf(2026, 10, 9, 12, 34);
+        DOCTEST_CHECK_EQ(friday.tm_wday, 5);
+        std::tm expect = expectLocalOf(2026, 10, 12, 9, 0);
+        DOCTEST_CHECK_EQ(expect.tm_wday, 1);
+        auto parsed = module::agent::parseCron(exprs[2]);
+        DOCTEST_REQUIRE(parsed.isOk());
+        auto r = module::agent::nextCronMatch(parsed.value(), froms[2]);
+        DOCTEST_REQUIRE(r.isOk());
+        DOCTEST_CHECK(sameMinute(r.value(), expect));
+    }
+    // ③b 同周五 08:00（09:00 未过）→ 当天周五 09:00
+    {
+        auto parsed = module::agent::parseCron(exprs[3]);
+        DOCTEST_REQUIRE(parsed.isOk());
+        auto r = module::agent::nextCronMatch(parsed.value(), froms[3]);
+        DOCTEST_REQUIRE(r.isOk());
+        DOCTEST_CHECK(sameMinute(r.value(), expectLocalOf(2026, 10, 9, 9, 0)));
+    }
+    // ④ 无匹配到顶：2 月 31 日永不命中 → fail(ValidationError) 且不死循环
+    {
+        auto parsed = module::agent::parseCron(exprs[4]);
+        DOCTEST_REQUIRE(parsed.isOk());
+        auto r = module::agent::nextCronMatch(parsed.value(), froms[4]);
+        DOCTEST_REQUIRE(r.isFail());
+        DOCTEST_CHECK_EQ(r.errorCode(), core::ErrorCode::ValidationError);
+        DOCTEST_CHECK_MESSAGE(r.errorMessage().find("一年内无触发时间") !=
+                                  std::string::npos,
+                              "错误文案应含「一年内无触发时间」，实得: " +
+                                  r.errorMessage());
+    }
+    return true;
+})

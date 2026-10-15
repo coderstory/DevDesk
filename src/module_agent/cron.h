@@ -23,4 +23,11 @@ core::Result<CronExpr> parseCron(const std::string& expr);
 // 纯匹配：只读 tm 的 min/hour/mday/mon/wday（wday 由调用方填，不从日期推导）。
 // 日/周同时受限 → vixie「或」；仅一方受限 → 该方必须命中
 bool cronMatches(const CronExpr& c, const std::tm& local);
+
+// fromSec 起的下一个命中时刻（本地墙钟 std::tm，wday 已填）：从 fromSec 的下一
+// 分钟边界起逐分钟前探（与 Scheduler「分钟翻转即触发」同粒度，fromSec 所在分钟
+// 不参与）；硬上限 366*1440 步，到顶 fail(ValidationError, "一年内无触发时间")。
+// 纯函数：不读真时钟，fromSec 全由调用方注入；仅时区转换经 core::time::localTime
+// （逐分钟调用，语义与 Scheduler 逐 tick 判定一致，DST 缺失的小时同样被跳过）。
+core::Result<std::tm> nextCronMatch(const CronExpr& c, std::time_t fromSec);
 } // namespace module::agent

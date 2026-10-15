@@ -8,6 +8,8 @@
 #include <utility>
 #include <vector>
 
+#include "core/time.h"
+
 namespace module::agent {
 namespace {
 
@@ -145,6 +147,21 @@ bool cronMatches(const CronExpr& c, const std::tm& local) {
     if (c.domRestricted) return domHit;
     if (c.dowRestricted) return dowHit;
     return true;
+}
+
+core::Result<std::tm> nextCronMatch(const CronExpr& c, std::time_t fromSec) {
+    // 候选 = fromSec 之后的每个分钟边界（floor((fromSec+60)/60) = fromSec/60 + 1，
+    // 恰为 fromSec 所在分钟的下一分钟）；上限 366*1440 步覆盖一年（含闰）所有分钟
+    constexpr int64_t kMaxSteps = 366LL * 1440;
+    const int64_t firstMinute = static_cast<int64_t>(fromSec) / 60 + 1;
+    for (int64_t step = 0; step < kMaxSteps; ++step) {
+        const std::time_t t = static_cast<std::time_t>((firstMinute + step) * 60);
+        std::tm local{};
+        core::time::localTime(t, &local);   // tm_wday 同步填充（cronMatches 依赖）
+        if (cronMatches(c, local)) return core::Result<std::tm>::ok(local);
+    }
+    return core::Result<std::tm>::fail(core::ErrorCode::ValidationError,
+                                       "一年内无触发时间");
 }
 
 } // namespace module::agent

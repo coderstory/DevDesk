@@ -47,6 +47,21 @@ std::vector<int64_t> detectRunEndNotifications(
     const std::map<int64_t, std::string>& nowStatus,
     const std::set<int64_t>& notifiedRunIds);
 
+// 任务弹窗定时分支的常用 cron 模板表：文案与表达式成对，选中即回填 editCron_。
+// 表内容是产品文案不是代码结构，加条目只改这里；表达式必须能过 parseCron。
+struct CronTemplate {
+    const char* label;
+    const char* expr;
+};
+inline constexpr CronTemplate kCronTemplates[] = {
+    {"工作日 9 点", "0 9 * * 1-5"},
+    {"每天 9 点", "0 9 * * *"},
+    {"每小时", "0 * * * *"},
+    {"每周一 9 点", "0 9 * * 1"},
+};
+inline constexpr int kCronTemplateCount =
+    static_cast<int>(sizeof(kCronTemplates) / sizeof(kCronTemplates[0]));
+
 class AgentModule : public ::core::Module {
 public:
     // 依赖注入：测试传 fake；生产工厂传空 Deps，onStart 内回退 appDatabase / ServiceLocator
@@ -103,6 +118,8 @@ private:
     void closeTaskDialog();
     void saveTaskDialog();
     void toggleTaskEnabled(const AgentTaskRow& task);
+    // 定时分支预览行：editCron_ 每变（模板回填 / 手改 / 编辑回填）后重算
+    void refreshCronPreview();
     // 详情弹窗
     void openTaskDetail(int64_t taskId);
     void closeTaskDetail();
@@ -170,6 +187,11 @@ private:
     bool editDestructive_ = false;
     bool editTriggerOpen_ = false;   // 触发类型下拉开合（UI 态）
     bool editSlotOpen_ = false;      // 模型槽位下拉弹层开合
+    bool editCronTemplateOpen_ = false;   // cron 模板下拉弹层开合
+    // 预览行文案（空 = 不渲染）。合法 →「下次触发：<yyyy-MM-dd HH:mm>」；
+    // 非法 → 校验文案（前置于保存期报错）；无匹配 →「一年内无触发时间」。
+    std::string cronPreview_;
+    bool cronPreviewIsError_ = false;   // 预览行配色：错误色 vs 次要文本色
     // 页内错误行：弹窗之外动作失败唯一可见出口（弹窗内走 editError_）；下一次成功动作清
     std::string pageError_;
     bool tasksDirty_ = false;   // onStart/onPageEnter/写操作置位 → 下帧重查
