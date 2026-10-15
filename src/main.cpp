@@ -64,19 +64,40 @@ void setupLogging() {
 }
 
 // 数据库损坏的用户决策（app 层 UI；文件级操作全在 core::dbmaint）。
+// exclude：跳过该备份（上一轮已尝试过的——还原失败或还原后重开仍坏的那份，再弹一次没有意义）。
+// attemptedBackup：[out] 本次弹框所基于的备份路径（未进入弹框流程则不变），调用方
+//   下一轮传回 exclude，避免对同一份备份重复问「还原」。
 // 返回 true = 已还原，调用方应重开库继续；false = 用户选择退出或还原失败（对话框已弹过）
-bool handleDbCorruption(const std::filesystem::path& dbPath) {
-    auto backup = ::core::dbmaint::latestBackup(dbPath);
-    if (backup.isFail() || !backup.value().has_value()) {
-        LOG_ERROR("数据库损坏且无可用备份: " +
-                  (backup.isFail() ? backup.errorMessage() : dbPath.string()));
+bool handleDbCorruption(
+    const std::filesystem::path& dbPath,
+    const std::optional<std::filesystem::path>& exclude,
+    std::optional<std::filesystem::path>& attemptedBackup) {
+    auto backup = ::core::dbmaint::latestBackup(dbPath, exclude);
+    if (backup.isFail()) {
+        // 扫描失败（权限/IO）≠ 真的没有备份：分开报，别让用户误以为无备份可救
+        LOG_ERROR("备份目录扫描失败，无法确认是否有可用备份: " +
+                  backup.errorMessage());
         ::platform::msgbox::show(
             "数据库损坏",
-            "数据库文件损坏，且没有可用备份可还原。\n应用即将退出。",
+            "数据库文件损坏，且备份目录无法访问（无法确认是否有可用备份）。\n" +
+                backup.errorMessage() + "\n应用即将退出。",
+            false);
+        return false;
+    }
+    if (!backup.value().has_value()) {
+        LOG_ERROR("数据库损坏且无可用备份: " +
+                  std::string(exclude.has_value() ? "（已排除本轮尝试过的备份）" : "") +
+                  dbPath.string());
+        ::platform::msgbox::show(
+            "数据库损坏",
+            exclude.has_value()
+                ? "数据库文件损坏，且除已尝试过的备份外没有其他可用备份可还原。\n应用即将退出。"
+                : "数据库文件损坏，且没有可用备份可还原。\n应用即将退出。",
             false);
         return false;
     }
     const std::filesystem::path& bak = *backup.value();
+    attemptedBackup = bak;
     const auto choice = ::platform::msgbox::show(
         "数据库损坏",
         "检测到数据库损坏。\n\n是否用最近一次备份还原并继续启动？\n损坏的文件会改名隔离保留"
@@ -106,7 +127,10 @@ bool handleDbCorruption(const std::filesystem::path& dbPath) {
     if (!initialized) {
         const std::filesystem::path dbPath = ::core::paths::sqliteDbFile();
         std::unique_ptr<::core::Database> opened;
-        // 损坏允许「还原后重开」一轮：首开坏 → 还原 → 二开；二开仍坏即退出（循环上限 2）
+        // 损坏允许「还原后重开」一轮：首开坏 → 还原 → 二开；二开仍坏即退出（循环上限 2）。
+        // triedBackup 记录本轮已尝试过的备份：下一轮经 exclude 递补更早一份，
+        // 不对同一份刚验证失败的备份重复弹「还原」
+        std::optional<std::filesystem::path> triedBackup;
         for (int round = 0; round < 2 && opened == nullptr; ++round) {
             auto r = ::core::Database::open(dbPath);
             std::unique_ptr<::core::Database> cand;
@@ -132,7 +156,7 @@ bool handleDbCorruption(const std::filesystem::path& dbPath) {
                 }
             }
             if (cand == nullptr) {
-                if (!handleDbCorruption(dbPath)) {
+                if (!handleDbCorruption(dbPath, triedBackup, triedBackup)) {
                     // 用户选择退出 / 还原失败（对话框已弹过）。
                     // _Exit 而非 exit：此刻还在 dslAppConfig 静态初始化内，atexit
                     //（armExitHook 等）会摸到尚未构造的 Router/modules；日志逐行 flush，无丢失

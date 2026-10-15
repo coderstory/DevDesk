@@ -8,8 +8,11 @@
 #include "core/db_backup.h"
 
 #include <algorithm>
+#include <cstdint>
 #include <filesystem>
+#include <fstream>
 #include <string>
+#include <vector>
 
 #include <sqlite3.h>
 
@@ -17,10 +20,33 @@ namespace {
 
 const std::string kPrefix = "db_backup_";
 
-// 造一个「页头合法但内容烂」/「根本不是库」的坏文件：两种 quick_check 都必须判 false。
-// 刻意不用合法 SQLite 头 16 字节开头（避免被误认成库）
+// 造一个「根本不是库」的 NOTADB 坏文件（开库即失败的那类损坏）。
+// 「页头合法但内容烂」的 CORRUPT 类见 corruptInteriorPage——两种损坏路径分开注入
 void writeGarbageFile(const std::filesystem::path& p) {
     test_support::writeTextFile(p, "this is definitely not a sqlite database 1234567890");
+}
+
+// 造一个「页头合法但内部页烂」的 CORRUPT 库：与 writeGarbageFile 的 NOTADB 相对，
+// 覆盖真页损坏路径——文件能当库打开（头 16 字节完好），quick_check 在遍历 b-tree
+// 时发现页结构损坏，返回非 "ok" 首行（而非开库即失败）。
+// 做法：合法库写入跨多页的数据 → 篡改第 2 页页头（页类型/指针字节），
+// 页 1（文件头 + sqlite_master）不动，保证「开得开、check 不过」
+bool corruptInteriorPage(const std::filesystem::path& p) {
+    std::ifstream f(p, std::ios::binary | std::ios::ate);
+    if (!f) return false;
+    const std::streamsize size = f.tellg();
+    if (size < 4096 * 2) return false;  // 至少两页，第 2 页才存在
+    std::vector<char> buf(static_cast<size_t>(size));
+    f.seekg(0);
+    if (!f.read(buf.data(), size)) return false;
+    f.close();
+    // 覆盖第 2 页前 100 字节：b-tree 页头（页类型/首单元格偏移/单元格数/右指针）必在其中，
+    // 任何合法页型（2/5/10/13）都被破坏 → quick_check 必检出不一致
+    for (int i = 0; i < 100; ++i) buf[4096 + i] = static_cast<char>(0xA7);
+    std::ofstream out(p, std::ios::binary | std::ios::trunc);
+    if (!out) return false;
+    out.write(buf.data(), size);
+    return out.good();
 }
 
 // 用裸 sqlite3 连接数 sqlite_master 行数（>0 = 库可读且有表）；RAII 关闭
@@ -185,8 +211,6 @@ REGISTER_TEST(db_backup_restore_recovers_data,
     auto good = core::dbmaint::quickCheckOk(dbPath);
     DOCTEST_REQUIRE(good.isOk());
     DOCTEST_CHECK(good.value());
-    bool ok = false;
-    int rows = -1;
     sqlite3* raw = nullptr;
     DOCTEST_REQUIRE(sqlite3_open_v2(dbPath.string().c_str(), &raw, SQLITE_OPEN_READONLY, nullptr) == SQLITE_OK);
     sqlite3_stmt* stmt = nullptr;
@@ -195,7 +219,6 @@ REGISTER_TEST(db_backup_restore_recovers_data,
     DOCTEST_CHECK_EQ(std::string(reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0))), std::string("hello"));
     sqlite3_finalize(stmt);
     sqlite3_close(raw);
-    (void)ok; (void)rows;
 
     // corrupt 隔离文件恰好 1 份
     const std::string corruptPrefix = dbPath.filename().string() + ".corrupt-";
@@ -211,7 +234,7 @@ REGISTER_TEST(db_backup_restore_recovers_data,
     // ——不睡则第二份隔离名相同、覆盖旧份，结果同样是 1 份，断言不受影响
     DOCTEST_CHECK_EQ(countFilesWithPrefix(dbPath.parent_path(), corruptPrefix), 1);
 
-    // 清理本用例目录外残留（tempDbPath 生成在 %TEMP% 根，逐个删）
+    // 清理本用例目录外残留（tempDbPath 生成在测试基目录根，逐个删）
     std::filesystem::remove(dbPath, ec);
     std::filesystem::remove(backup.value(), ec);
     std::filesystem::remove(backup2.value(), ec);
@@ -374,5 +397,64 @@ REGISTER_TEST(db_backup_busy_lock_is_not_corruption,
     DOCTEST_REQUIRE(qcAfter.isOk());
     DOCTEST_CHECK(qcAfter.value());
     std::filesystem::remove(dbPath, ec);
+    return true;
+})
+
+// ---------- CORRUPT 类损坏：页头合法、内部页烂（与 NOTADB 垃圾相对的真页损坏路径） ----------
+
+REGISTER_TEST(db_backup_quick_check_detects_corrupt_page,
+               "db_backup: quickCheckOk 对「页头合法但内部页烂」判 false（不 fail）", {
+    const std::filesystem::path dbPath = test_support::tempDbPath(kPrefix, "corrupt");
+    std::error_code ec;
+    std::filesystem::remove(dbPath, ec);
+    {
+        // 造多页库：单行小表只占 1 页，篡改第 2 页前先把页「喂」出来
+        auto r = core::Database::open(dbPath);
+        DOCTEST_REQUIRE(r.isOk());
+        core::Database db(std::move(r.value()));
+        DOCTEST_REQUIRE(db.db().exec("CREATE TABLE t(v TEXT)").isOk());
+        for (int i = 0; i < 200; ++i) {
+            DOCTEST_REQUIRE(db.db().exec(
+                "INSERT INTO t VALUES ('" + std::to_string(i) +
+                "-0123456789012345678901234567890123456789')").isOk());
+        }
+    }
+    DOCTEST_REQUIRE(corruptInteriorPage(dbPath));
+    // 页头合法 → 库能打开、quick_check 能执行（isOk）；真页损坏 → 首行非 "ok"（value false）。
+    // 不允许 isFail：瞬态 IO 误注入或损坏口径回退都会以 fail 形态暴露在此
+    auto qc = core::dbmaint::quickCheckOk(dbPath);
+    DOCTEST_REQUIRE(qc.isOk());
+    DOCTEST_CHECK(!qc.value());
+    std::filesystem::remove(dbPath, ec);
+    return true;
+})
+
+// ---------- latestBackup exclude：跳过已尝试过的备份，递补更早一份 ----------
+
+REGISTER_TEST(db_backup_latest_backup_excludes_tried,
+               "db_backup: latestBackup exclude 跳过指定备份，无其余备份时 nullopt", {
+    test_support::TestDb tdb(kPrefix, "excl");
+    const std::string prefix = tdb.path.filename().string() + ".backup-";
+    const std::filesystem::path oldBak =
+        tdb.path.parent_path() / (prefix + "20260101-000000");
+    const std::filesystem::path newBak =
+        tdb.path.parent_path() / (prefix + "20260304-050607");
+    test_support::writeTextFile(oldBak, "old");
+    test_support::writeTextFile(newBak, "new");
+
+    auto r = core::dbmaint::latestBackup(tdb.path);
+    DOCTEST_REQUIRE(r.isOk() && r.value().has_value());
+    DOCTEST_CHECK_EQ(r.value()->filename().string(), newBak.filename().string());
+
+    // 排除最新那份 → 递补更早一份
+    auto r2 = core::dbmaint::latestBackup(tdb.path, newBak);
+    DOCTEST_REQUIRE(r2.isOk() && r2.value().has_value());
+    DOCTEST_CHECK_EQ(r2.value()->filename().string(), oldBak.filename().string());
+
+    // 排除后无其余备份 → nullopt（调用方据此提示「无可用备份」）
+    std::filesystem::remove(newBak);
+    auto r3 = core::dbmaint::latestBackup(tdb.path, oldBak);
+    DOCTEST_REQUIRE(r3.isOk());
+    DOCTEST_CHECK(!r3.value().has_value());
     return true;
 })

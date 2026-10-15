@@ -7,7 +7,7 @@
 
 ## 1. 需求
 
-1. **启动成功后自动备份一次**：备份主库到同目录 `devdesk.db.backup-YYYYMMDD-HHMMSS`，滚动保留最多 5 份（超出删最旧），每进程只备份一次。
+1. **启动成功后自动备份一次**：备份主库到同目录 `devdesk.db.backup-YYYYMMDD-HHMMSS`（**UTC** 时间戳——本地时间 DST 回拨时非单调，滚动修剪按字典序会误删新备份），滚动保留最多 5 份（超出删最旧），每进程只备份一次。
 2. **启动时损坏检测**：打开数据库后立即 `PRAGMA quick_check`，非 `ok` 判损坏。此刻模块尚未写入，文件级操作安全。
 3. **损坏时弹模态对话框**：
    - 【还原】：损坏文件改名隔离 `devdesk.db.corrupt-<时间戳>`（只留最近 1 份），拷贝最近备份到主库路径，重开数据库继续启动。
@@ -28,7 +28,7 @@
 
 - `quickCheckOnHandle(sqlite3*)`：已开连接跑 quick_check，调用方须持锁（`Database::quickCheck()` 内持 `db_.mutex()`）。
 - `quickCheckOk(path, readOnlyOpen=false)`：独立连接（无 CREATE，绝不在检查里顺手造库）。判定口径：CORRUPT/NOTADB → `ok(false)`（损坏）；文件不存在与其余 sqlite 错误（BUSY/IOERR 等瞬态错误）→ fail（检查失败，调用方不得当损坏处理——主库路径瞬态错误跳过还原流程 LOG_ERROR 继续启动，备份校验路径按还原失败处理）。打开方式按路径区分：主库检测用 READWRITE（主库 WAL 模式，存在热 `-wal` 时只读连接会因 `-shm` 不可写而打开失败、误判）；备份校验用 READONLY（备份可能是用户拷贝来的/置了只读属性，READWRITE 会误拒还原）。
-- `latestBackup(dbFile)`：同目录 `<名>.backup-*` 字典序最大者；无 → nullopt。
+- `latestBackup(dbFile, exclude=nullopt)`：同目录 `<名>.backup-*` 字典序最大者；无 → nullopt。`exclude` 跳过指定备份（文件名比较）——损坏还原循环里排除本轮已尝试过的那份，使下一轮递补更早一份。
 - `createBackup(dbFile, keep=5)`：`sqlite3_backup` 在线备份（step(-1) 循环 + BUSY/LOCKED 重试），失败删半成品；成功后按 POSIX 收紧 0600（内容含凭据页，与主库同保护级别），收紧失败仅 LOG_WARN 不回滚。
 - `performStartupBackupOnce(dbFile)`：进程级 `std::atomic<bool>` 闩，首调备份、非首调 `ok(nullopt)` 跳过；失败 fail 由调用方 LOG_ERROR 后继续启动。
 - `restoreFromBackup(dbFile, backup)`：删主库旧 `-wal/-shm` → rename 主库为 `.corrupt-<ts>` → 拷贝备份 → 清除落盘文件的只读位（copy 会连只读属性一起拷来）→ quick_check 校验（只读打开）；任一步失败把隔离文件改回原名复原现场（绝不让用户两头落空）。corrupt 滚动只留最近 1 份。
@@ -57,7 +57,7 @@ EUI-NEO 建窗、进入 compose 循环
 损坏检测发生在 `dslAppConfig` 静态初始化期间（`themeRestored` → `openAppDatabase`），此刻 EUI-NEO 窗口、compose 循环都不存在——EUI-NEO 的 dialog 组件是 compose 树声明式（需要运行中的帧循环），时序上不可能用于启动期。EUI-NEO 也无 `onStarted/firstFrame` 类钩子（grep 确认）。故新增 `platform::msgbox::show(title, message, withCancel)`：
 
 - Windows：`MessageBoxW`（UTF-8→宽字符；`MB_ICONERROR | MB_OKCANCEL|MB_OK`、`MB_SETFOREGROUND|MB_TOPMOST`——启动早期弹框必须抢前台）
-- macOS：`posix_spawn` osascript `display dialog`，pipe 读 stdout 解析 `button returned:`；用户取消 → Cancel
+- macOS：`posix_spawn` osascript `display dialog`，pipe 读 stdout 解析 `button returned:`，stderr 另走管道；用户取消（stderr "User canceled"）→ Cancel；osascript 运行期失败（无 GUI 会话/权限被拒）→ LOG_ERROR 后 Cancel 兜底，不静默
 - Linux：无统一原生阻塞框，stub 返回 Cancel + LOG_WARN（诚实降级——调用方对 Cancel 的语义就是退出，安全缺省）
 
 ### 4.2 退出用 `std::_Exit(1)`，不用 exit/abort

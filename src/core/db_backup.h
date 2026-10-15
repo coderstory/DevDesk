@@ -27,9 +27,12 @@ core::Result<bool> quickCheckOnHandle(sqlite3* handle);
 core::Result<bool> quickCheckOk(const std::filesystem::path& dbFile,
                                 bool readOnlyOpen = false);
 
-// 主库最新的备份文件（<文件名>.backup-* 里字典序最大者）；无 → ok(nullopt)
+// 主库最新的备份文件（<文件名>.backup-* 里字典序最大者）；无 → ok(nullopt)。
+// exclude：跳过该备份（文件名比较）——损坏还原循环里用于排除本轮已尝试过的那份，
+// 使下一轮递补更早一份；exclude 之外再无备份 → ok(nullopt)（调用方提示无可用备份）
 core::Result<std::optional<std::filesystem::path>> latestBackup(
-    const std::filesystem::path& dbFile);
+    const std::filesystem::path& dbFile,
+    const std::optional<std::filesystem::path>& exclude = std::nullopt);
 
 // sqlite3_backup 在线备份主库到同目录 <文件名>.backup-<YYYYMMDD-HHMMSS>，滚动保留最近 keepBackups 份。
 // 备份文件落成后按 POSIX 收紧到 0600（内容含凭据页，与主库同保护级别），失败仅 LOG_WARN 不回滚
@@ -57,7 +60,8 @@ core::Result<std::filesystem::path> restoreFromBackup(
 core::Result<int> pruneFilesWithPrefix(const std::filesystem::path& dir,
                                        const std::string& prefix, int keep);
 
-// 本地时间文件名时间戳 "YYYYMMDD-HHMMSS"（字典序 = 时间序，滚动删除依赖这一点）
+// UTC 时间文件名时间戳 "YYYYMMDD-HHMMSS"（字典序 = 时间序，滚动删除依赖这一点。
+// 刻意不用本地时间：DST 回拨时本地时间非单调，新备份名字典序可能小于旧备份）
 std::string timestampForFileSuffix();
 
 } // namespace core::dbmaint

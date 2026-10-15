@@ -10,10 +10,12 @@
 //    返回非 bool 的 helper 中不能直接用，helper 需把结果回传、由调用方断言。
 #include <atomic>
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <iostream>
 #include <sstream>
 #include <string>
+#include <system_error>  // std::error_code（tempPath 的 create_directories 用）
 #include <utility>
 #include <vector>
 
@@ -108,7 +110,7 @@ inline bool consumeSkipped() {
 
 // 临时路径唯一化
 // 仓库按「并发多 worktree」开发：多个会话可能同时跑同一个 devdesk_tests.exe，
-// %TEMP% 下的固定名临时路径会被另一进程 remove_all / 覆写 → 随机红。
+// 固定名临时路径会被另一进程 remove_all / 覆写 → 随机红。
 // 统一走 tempPath()：pid（进程间唯一）+ 进程内自增序号（进程内唯一），
 // 扩展名原样保留（.db / .json 语义不变）。
 namespace test_temp {
@@ -121,14 +123,35 @@ inline long processId() {
 #endif
 }
 
-// tempPath("devdesk_test.db") → %TEMP%/devdesk_test-<pid>-<n>.db
+// 临时文件基目录：可用环境变量 DEVDESK_TEST_TMPDIR 注入；默认 "build/testtmp"
+// （相对 cwd——build-test-run.sh 从仓库根跑测试，即 <repo>/build/testtmp；从别处
+// 直接调测试二进制时落在其 cwd 下的 build/testtmp）。刻意不依赖系统 %TEMP%/TMPDIR：
+// 受限执行环境（沙箱 ec=13）对用户临时目录写入被拒，整套测试无法原地跑。
+// 进程内缓存一次；目录不存在则按需创建。
+inline const std::filesystem::path& tempBaseDir() {
+    static const std::filesystem::path base = [] {
+        if (const char* env = std::getenv("DEVDESK_TEST_TMPDIR"); env && *env) {
+            return std::filesystem::path(env);
+        }
+        return std::filesystem::path("build") / "testtmp";
+    }();
+    static const bool created = [] {
+        std::error_code ec;
+        std::filesystem::create_directories(base, ec);
+        return !ec;
+    }();
+    (void)created;  // 创建失败不在此兜底：后续文件读写自会以可见错误暴露，不静默换目录
+    return base;
+}
+
+// tempPath("devdesk_test.db") → <基目录>/devdesk_test-<pid>-<n>.db
 inline std::filesystem::path tempPath(const std::string& name) {
     static std::atomic<unsigned long long> seq{0};
     const auto n = seq.fetch_add(1, std::memory_order_relaxed);
     std::filesystem::path p(name);
     const std::string ext = p.extension().string();
     p.replace_extension();
-    return std::filesystem::temp_directory_path() /
+    return tempBaseDir() /
            (p.string() + "-" + std::to_string(processId()) + "-" +
             std::to_string(n) + ext);
 }

@@ -7,4 +7,8 @@ void localTime(std::time_t t, std::tm* out) {
     localtime_s(out, &t);
 }
 
+void utcTime(std::time_t t, std::tm* out) {
+    gmtime_s(out, &t);
+}
+
 } // namespace core::time

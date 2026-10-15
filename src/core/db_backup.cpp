@@ -93,16 +93,19 @@ core::Result<bool> quickCheckOk(const fs::path& dbFile, bool readOnlyOpen) {
 }
 
 std::string timestampForFileSuffix() {
-    std::tm local{};
-    core::time::localTime(core::time::nowUnix(), &local);
+    // 刻意用 UTC 而非本地时间：latestBackup/pruneFilesWithPrefix 按文件名字典序取
+    // 「最新」，本地时间在 DST 回拨时非单调（新备份名可能小于旧备份 → 误删新备份/取错还原源）
+    std::tm utc{};
+    core::time::utcTime(core::time::nowUnix(), &utc);
     char buf[32];
     std::snprintf(buf, sizeof(buf), "%04d%02d%02d-%02d%02d%02d",
-                  local.tm_year + 1900, local.tm_mon + 1, local.tm_mday,
-                  local.tm_hour, local.tm_min, local.tm_sec);
+                  utc.tm_year + 1900, utc.tm_mon + 1, utc.tm_mday,
+                  utc.tm_hour, utc.tm_min, utc.tm_sec);
     return buf;
 }
 
-core::Result<std::optional<fs::path>> latestBackup(const fs::path& dbFile) {
+core::Result<std::optional<fs::path>> latestBackup(
+    const fs::path& dbFile, const std::optional<fs::path>& exclude) {
     const fs::path dir = dbFile.parent_path();
     const std::string prefix = dbFile.filename().string() + ".backup-";
     std::error_code ec;
@@ -113,6 +116,12 @@ core::Result<std::optional<fs::path>> latestBackup(const fs::path& dbFile) {
     for (fs::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec)) {
         const std::string name = it->path().filename().string();
         if (name.size() <= prefix.size() || name.compare(0, prefix.size(), prefix) != 0) {
+            continue;
+        }
+        // exclude：跳过本轮已尝试过的备份（main.cpp 损坏还原循环里，同一份刚验证
+        // 失败的备份再弹「还原」没有意义——应递补更早一份或提示无可用备份）。
+        // 按文件名比较：exclude 由上一次 latestBackup 在同一目录下选出，名字即唯一键
+        if (exclude.has_value() && name == exclude->filename().string()) {
             continue;
         }
         if (!newest || name > newest->filename().string()) {
@@ -209,7 +218,8 @@ core::Result<fs::path> createBackup(const fs::path& dbFile, int keepBackups) {
     for (int tries = 0; tries < 250; ++tries) {
         rc = sqlite3_backup_step(bk, -1);
         if (rc == SQLITE_DONE) break;
-        if (rc == SQLITE_OK || rc == SQLITE_BUSY || rc == SQLITE_LOCKED) {
+        // step(-1) 只返回 SQLITE_DONE 或错误码（BUSY/LOCKED 才可重试），绝不返回 SQLITE_OK
+        if (rc == SQLITE_BUSY || rc == SQLITE_LOCKED) {
             std::this_thread::sleep_for(std::chrono::milliseconds(20));
             continue;
         }
