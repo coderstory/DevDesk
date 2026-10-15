@@ -53,6 +53,10 @@
 # 自动定位 EUI-NEO 并传给 configure（-DEUI_NEO_DIR），worktree 首建无需手敲；
 # <构建目录> 未初始化（首次/换平台）时脚本自动 configure，无需 --clean。
 set -e
+# pipefail：管道退出码取最左非零 —— 防「构建/测试失败却被输出管道（tee/grep/head）吞掉
+#   退出码」的假绿。代价：grep 无命中（全绿时查 FAIL 行是常态）也返回非零，凡「无命中属
+#   正常」的解析/显示 grep 必须就地 || true 兜住，否则 set -e 会在打印 ❌ 摘要前杀掉脚本。
+set -o pipefail
 
 cd "$(dirname "$0")/.."
 
@@ -337,21 +341,21 @@ echo "── 构建（增量）──"
 # 看起来像卡死。CI 里设这个变量即可看到实时进度。
 if [ "${DEVDESK_BUILD_VERBOSE:-0}" = "1" ]; then
   _build_log="$(mktemp -t devdesk-build.XXXXXX)"
-  # 退出码必须取 PIPESTATUS[0]（= cmake 的码），不能取管道的码：管道码是**最后一个**命令的
-  #   码，这里恒为 `tee` 的 0，于是 `if !` 永远不成立 —— 构建失败也照样打「✅ 构建成功」。
-  #   没有 pipefail 时 PIPESTATUS 是唯一正确来源（bash 数组，读一次即失效，故立刻存进变量）。
-  cmake --build "$BUILD_DIR" 2>&1 | tee "$_build_log"
-  _build_rc=${PIPESTATUS[0]}
+  # 全局 pipefail 下管道退出码 = 最左非零 = cmake 的码；`|| _build_rc=$?` 既把真码存进
+  #   变量，又豁免 set -e —— 错误摘要与「❌ 构建失败」得以在 exit 前打印（裸跑管道时
+  #   set -e 会在摘要打印前把脚本杀掉，诊断全丢）。
+  _build_rc=0
+  cmake --build "$BUILD_DIR" 2>&1 | tee "$_build_log" || _build_rc=$?
   if [ "$_build_rc" -ne 0 ]; then
     echo "──── 错误摘要 ────"
-    grep -iE "error|FAILED" "$_build_log" | head -30
+    grep -iE "error|FAILED" "$_build_log" | head -30 || true
     echo "❌ 构建失败（上方为错误摘要）"; rm -f "$_build_log"; exit "$_build_rc"
   fi
   rm -f "$_build_log"
   echo "✅ 构建成功"
 else
   BUILD_OUT=$(cmake --build "$BUILD_DIR" 2>&1) || {
-    echo "$BUILD_OUT" | grep -iE "error|FAILED" | head -30
+    echo "$BUILD_OUT" | grep -iE "error|FAILED" | head -30 || true
     echo "❌ 构建失败（上方为错误摘要）"; exit 1; }
   echo "$BUILD_OUT" | tail -2
   echo "✅ 构建成功"
@@ -436,9 +440,10 @@ fi
 if [ "$RUN_TEST" = "1" ]; then
   echo "── 测试 ──"
   TEST_OUT=$("$TEST_BIN" $FILTER 2>&1) || true
-  FAIL_LINES=$(echo "$TEST_OUT" | grep -E "\[FAIL\]|^FAIL \[" | head -20)
+  # 全绿时 grep 无命中 → 管道码 1，pipefail 下必须 || true 兜住（红绿判定在下面 Failed: 0）
+  FAIL_LINES=$(echo "$TEST_OUT" | grep -E "\[FAIL\]|^FAIL \[" | head -20) || true
   if [ -n "$FAIL_LINES" ]; then echo "$FAIL_LINES"; fi
-  echo "$TEST_OUT" | grep -E "^(Total|Passed|Failed):" | tr '\n' ' '
+  echo "$TEST_OUT" | grep -E "^(Total|Passed|Failed):" | tr '\n' ' ' || true
   echo ""
   if echo "$TEST_OUT" | grep -q "Failed: 0"; then
     echo "✅ 测试全绿"
@@ -478,7 +483,7 @@ if [ "$RUN_TEST" = "1" ]; then
     #   全部条数，**含跳过项**；恒等于 `ctest -N` 的 Total Tests）。不必再跑一次 -N ——
     #   那一次会把 Testing/Temporary/LastTest.log 清成 121 字节，跳过原因就永远捞不到了。
     PROBE_OUT=$(cd "$BUILD_DIR" && ctest -L probe --output-on-failure 2>&1) || true
-    echo "$PROBE_OUT" | grep -E "tests passed|tests failed" | tail -1
+    echo "$PROBE_OUT" | grep -E "tests passed|tests failed" | tail -1 || true
     # 跳过数：ctest 把跳过项列在 "The following tests did not run:" 段里，
     # 形如 "  2 - t_skip (Skipped)"。逐条数 (Skipped) 行，不靠百分比反推。
     PROBE_SKIPPED=$(echo "$PROBE_OUT" | grep -cE '^\s*[0-9]+ - .*\(Skipped\)$' || true)
@@ -497,9 +502,9 @@ if [ "$RUN_TEST" = "1" ]; then
     # 失败优先：任何 Failed 都是红（含「有失败也有跳过」）
     if ! echo "$PROBE_OUT" | grep -q "100% tests passed"; then
       # 失败原因优先透出：probe 的 stderr 才是有用信息，失败清单次之
-      echo "$PROBE_OUT" | grep -E "^\s*[0-9]+ - .*Failed" | head -20
+      echo "$PROBE_OUT" | grep -E "^\s*[0-9]+ - .*Failed" | head -20 || true
       echo "──── probe 失败原因（前 60 行）────"
-      echo "$PROBE_OUT" | grep -vE "^\s*([0-9]+/[0-9]+|Test +#|Start +[0-9]+:)|: (Passed|Failed) +[0-9]" | head -60
+      echo "$PROBE_OUT" | grep -vE "^\s*([0-9]+/[0-9]+|Test +#|Start +[0-9]+:)|: (Passed|Failed) +[0-9]" | head -60 || true
       echo "❌ UI probe 有失败（上方为失败清单与原因；本地复现: cd $BUILD_DIR && ctest -L probe --output-on-failure）"
       exit 1
     fi
@@ -701,7 +706,7 @@ if [ "$INSTALL" = "1" ]; then
   esac
   echo "── 安装（重组 .app → 补 assets → 覆盖 ${INSTALL_DIR}）──"
 
-  file_sha256() { shasum -a 256 "$1" 2>/dev/null | awk '{print $1}'; }
+  file_sha256() { shasum -a 256 "$1" 2>/dev/null | awk '{print $1}' || true; }
   file_stamp()  { stat -f '%Sm  %z bytes' -t '%Y-%m-%d %H:%M:%S' "$1" 2>/dev/null; }
   # 防陈旧断言：$1（本次构建产物）与 $2（待验物）必须**字节一致**；不一致即硬失败，打印
   # 两边 mtime/sha256 后 exit 1（不静默通过、也不降级成警告）
