@@ -55,6 +55,13 @@ std::filesystem::path claudeConfigDirOverride();
 // C:\ProgramData\ClaudeCode\；macOS /Library/Application Support/ClaudeCode/；POSIX /etc/claude-code/
 std::filesystem::path claudeManagedSettingsFile();
 
+// GitHub Sync 相关路径
+// Git 仓库根目录 = appDataDir()（数据根即 git 仓库根）
+std::filesystem::path gitRepoDir();
+
+// SQL dump 文件路径（仓库根目录下的 database.sql）
+std::filesystem::path sqlDumpFile();
+
 // 确保所有目录存在
 void ensureDirectoriesExist();
 

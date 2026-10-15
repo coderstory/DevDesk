@@ -53,11 +53,12 @@ inline constexpr int kLogLevelPresetCount = 4;
 inline constexpr const char* kLogLevelPresetLabels[] = {
     "DEBUG（详尽）", "INFO（默认）", "WARN", "ERROR"};
 
-inline constexpr const char* kSettingTabLabels[] = {"通用", "模块", "日志"};
-inline constexpr int kSettingTabCount = 3;
+inline constexpr const char* kSettingTabLabels[] = {"通用", "模块", "日志", "同步"};
+inline constexpr int kSettingTabCount = 4;
 inline constexpr int kTabGeneral = 0;
 inline constexpr int kTabModules = 1;
 inline constexpr int kTabLog = 2;
+inline constexpr int kTabSync = 3;
 inline constexpr float kSettingsTabHeight = 40.0f;  // tab 栏高
 inline constexpr int kLogTailMaxLines = 500;        // 日志查看 tail 行数上限
 inline constexpr long kLogTailReadWindow = 256 * 1024;  // tail 只读末尾 256KB
@@ -70,6 +71,7 @@ inline constexpr float kModulesCardHeight = 344.0f;     // 模块插拔卡（模
 inline constexpr float kPetCardHeight = 168.0f;
 inline constexpr float kDirectoryCardHeight = 176.0f;   // 目录卡（模块）
 inline constexpr float kLogSettingsCardHeight = 148.0f; // 日志卡（日志）
+inline constexpr float kGithubSyncCardHeight = 380.0f;   // GitHub Sync 卡（同步）
 
 // 行盒 / 间距随生效字号派生：行盒 = round(基准 × fontScale)，系数恒包住最坏 CJK 墨迹；字号本体仍走 fs()（不取整）。
 inline float roundFs(float base) {

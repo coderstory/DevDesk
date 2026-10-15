@@ -1,5 +1,5 @@
 // src/module_settings/settings_ui_cards.h
-// settings 模块 8 张卡的绘制单元，全部是自由函数：吃只读入参（SettingsCardsIn）与
+// settings 模块 9 张卡的绘制单元，全部是自由函数：吃只读入参（SettingsCardsIn）与
 // 回调（SettingsCardActions），不捕获 this、不写模块成员。
 // 回调约定：卡片在元素回调里按值捕获用到的 std::function（`[f = a.xxx]`），不捕获
 // 本文件内的临时对象——元素树比一帧活得久，捕引用会悬垂；写回模块状态一律经
@@ -34,6 +34,15 @@ struct SettingsCardsIn {
     int openDropdown = -1;                     // 下拉唯一持有者
     int petScaleIndex = 1;                     // 当前显示大小档下标快照
     ::core::IClaudeProxyService* proxy = nullptr;  // 代理运行面（null = 未装配）
+
+    // GitHub Sync 快照
+    bool githubSyncEnabled = false;
+    std::string githubSyncRepoUrl;
+    std::string githubSyncBranch;
+    std::string githubSyncTokenDraft;   // Token 输入草稿（不存明文）
+    bool githubSyncAutoPush = true;
+    std::string githubSyncStatus;
+    bool githubSyncStatusError = false;
 };
 
 // 卡片回写模块的回调（compose 每帧装配；lambda 只捕获 this → SBO 无堆分配）
@@ -57,6 +66,15 @@ struct SettingsCardActions {
     std::function<void(int)> applyEditorFontPreset;           // 编辑器字号档
     std::function<void()> requestLogTailReload;               // 日志查看卡刷新
     std::function<void(float)> logViewScrolled;               // 日志查看卡内滚动
+
+    // GitHub Sync 回调
+    std::function<void(bool)> applyGithubSyncEnabled;           // 启用开关
+    std::function<void(const std::string&)> applyGithubSyncRepoUrl;  // 仓库 URL
+    std::function<void(const std::string&)> applyGithubSyncBranch;   // 分支
+    std::function<void(const std::string&)> setGithubSyncTokenDraft;  // Token 输入
+    std::function<void(bool)> applyGithubSyncAutoPush;          // 自动推送
+    std::function<void()> githubSyncPush;                       // 立即同步
+    std::function<void()> githubSyncPull;                       // 拉取
 };
 
 // 单卡绘制入参（注册表按序调用；签名统一，未用到的字段忽略）

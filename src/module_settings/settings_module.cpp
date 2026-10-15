@@ -6,6 +6,8 @@
 #include "app_tools.h"
 #include "settings_config.h"
 #include "settings_ui_cards.h"
+#include "github_sync_card.h"
+#include "github_sync_config.h"
 #include "settings_ui_logic.h"
 
 #include "core/claude_proxy_service.h"
@@ -83,6 +85,8 @@ const CardSpec kCardSpecs[] = {
      kLogSettingsCardHeight, true, &drawLogCard},
     {kTabLog, "settings.tab.log", nullptr, CardHeightKind::FillRemainder,
      0.0f, false, &drawLogViewCard},
+    {kTabSync, "settings.card.github_sync", nullptr, CardHeightKind::Fixed,
+     kGithubSyncCardHeight, false, &drawGithubSyncCard},
 };
 
 } // namespace
@@ -97,6 +101,8 @@ public:
     void onStart() override {
         store_ = std::make_unique<SettingsStore>(::core::appDatabase());
         cfg_ = store_->load();
+        githubSyncStore_ = std::make_unique<GithubSyncStore>(::core::appDatabase());
+        githubSyncCfg_ = githubSyncStore_->load();
         // 注册 app.read_settings；name 冲突记日志不中断。
         appReadSettingsTool_ =
             makeAppReadSettingsTool(::core::appDatabase());
@@ -461,6 +467,29 @@ public:
                           ui_kit::ToastOptions{.okIcon = 0xF058});
     }
 
+    // ── GitHub Sync 操作方法 ──
+
+    void applyGithubSyncEnabled(bool on) {
+        githubSyncCfg_.enabled = on;
+        if (githubSyncStore_) githubSyncStore_->save(githubSyncCfg_);
+        setStatus(on ? "GitHub 同步已启用" : "GitHub 同步已禁用");
+        LOG_INFO("Settings: GitHub Sync " + std::string(on ? "启用" : "关闭"));
+    }
+
+    void githubSyncPush() {
+        githubSyncStatus_ = "同步功能开发中...";
+        githubSyncStatusError_ = false;
+        setStatus("GitHub Sync: 推送功能开发中，请期待后续版本");
+        LOG_INFO("Settings: GitHub Sync push 触发（占位）");
+    }
+
+    void githubSyncPull() {
+        githubSyncStatus_ = "拉取功能开发中...";
+        githubSyncStatusError_ = false;
+        setStatus("GitHub Sync: 拉取功能开发中，请期待后续版本");
+        LOG_INFO("Settings: GitHub Sync pull 触发（占位）");
+    }
+
     void compose(eui::Ui& ui, const eui::Screen& screen) override {
         const auto& t = core::theme::current();
         const float pad = t.sizes.spacingXXLarge;
@@ -592,6 +621,24 @@ private:
         a.applyEditorFontPreset = [this](int idx) { applyEditorFontPreset(idx); };
         a.requestLogTailReload = [this] { logTailDirty_ = true; };
         a.logViewScrolled = [this](float v) { logViewScrollOffset_ = v; };
+
+        // GitHub Sync 回调
+        a.applyGithubSyncEnabled = [this](bool on) { applyGithubSyncEnabled(on); };
+        a.applyGithubSyncRepoUrl = [this](const std::string& url) {
+            githubSyncCfg_.repoUrl = url;
+        };
+        a.applyGithubSyncBranch = [this](const std::string& branch) {
+            githubSyncCfg_.branch = branch;
+        };
+        a.setGithubSyncTokenDraft = [this](const std::string& token) {
+            githubSyncTokenDraft_ = token;
+        };
+        a.applyGithubSyncAutoPush = [this](bool on) {
+            githubSyncCfg_.autoPush = on;
+        };
+        a.githubSyncPush = [this] { githubSyncPush(); };
+        a.githubSyncPull = [this] { githubSyncPull(); };
+
         return a;
     }
 
@@ -623,6 +670,14 @@ private:
         in.openDropdown = openDropdown_;
         in.petScaleIndex = petScaleIdx_;
         in.proxy = svc;
+        // GitHub Sync 快照
+        in.githubSyncEnabled = githubSyncCfg_.enabled;
+        in.githubSyncRepoUrl = githubSyncCfg_.repoUrl;
+        in.githubSyncBranch = githubSyncCfg_.branch;
+        in.githubSyncTokenDraft = githubSyncTokenDraft_;
+        in.githubSyncAutoPush = githubSyncCfg_.autoPush;
+        in.githubSyncStatus = githubSyncStatus_;
+        in.githubSyncStatusError = githubSyncStatusError_;
         const SettingsCardActions a = cardActions();
         const float gapY = t.sizes.spacingLarge;
         float cardY = 0.0f;
@@ -798,6 +853,12 @@ private:
 
     std::unique_ptr<SettingsStore> store_;
     SettingsConfig cfg_;
+    // GitHub Sync
+    std::unique_ptr<GithubSyncStore> githubSyncStore_;
+    GithubSyncConfig githubSyncCfg_;
+    std::string githubSyncTokenDraft_;        // Token 输入草稿（不存明文）
+    std::string githubSyncStatus_;
+    bool githubSyncStatusError_ = false;
     // app.read_settings 工具：onStart 注册 / onStop 注销；与注册表同寿（注销对未注册名是 no-op）。
     std::shared_ptr<core::ITool> appReadSettingsTool_;
     // 当前打开的下拉（7 个 bool 收成一个索引，-1 = 全关）；取值 = static_cast<int>(Dropdown)。
@@ -809,7 +870,7 @@ private:
     // 代理端口输入草稿：空 = 未编辑（compose 显示 cfg_.proxyPort），应用成功后刷新。
     std::string proxyPortDraft_;
     float cardsScrollOffset_ = 0.0f;      // 卡片区 scrollView 滚动位置
-    int settingsTab_ = 0;                 // 当前 tab（通用/模块/日志）
+    int settingsTab_ = 0;                 // 当前 tab（通用/模块/日志/同步）
     std::vector<std::string> logTail_;    // 日志文件末尾行内存快照（compose 只渲染）
     unsigned logTailVersion_ = 0;         // tail 读取版本号（进日志查看卡 contentKey）
     bool logTailDirty_ = true;            // 待重读标记（切日志 tab / 点刷新置位）

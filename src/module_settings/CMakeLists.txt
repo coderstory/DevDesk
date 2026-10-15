@@ -4,6 +4,8 @@ add_library(devdesk_module_settings STATIC
     settings_ui_logic.cpp
     settings_ui_cards.cpp
     app_tools.cpp
+    github_sync_config.cpp
+    github_sync_card.cpp
 )
 
 # 平台适配：磨砂降级文案按平台拆文件（业务代码零平台宏，见 window_effect_hint.h）
