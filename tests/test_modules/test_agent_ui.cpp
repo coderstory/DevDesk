@@ -1910,3 +1910,280 @@ REGISTER_TEST(agent_ui_cron_template_dropdown_and_preview,
     mod.onStop();
     return true;
 })
+
+// ---------------------------------------------------------------------------
+// Task 4：错误行「去 Claude 页」直达引导
+// ---------------------------------------------------------------------------
+
+// 跳转目标占位模块：navigateTo 对未注册页回退 Home，判据 currentPage()==ClaudeProxy
+// 需要 ClaudeProxy 已注册
+class StubPageModule : public core::Module {
+public:
+    explicit StubPageModule(core::PageId page) : page_(page) {}
+    core::PageId pageId() const override { return page_; }
+    std::string displayName() const override { return "stub"; }
+    std::string iconGlyph() const override { return "x"; }
+    void compose(eui::Ui&, const eui::Screen&) override {}
+
+private:
+    core::PageId page_;
+};
+
+// 两类错误原文常量：与 llm_client.cpp:56 / :63 逐字一致（文案一变本组用例即红——
+// 前缀匹配刻意脆弱，防文案漂移后引导静默失效）
+const char* const kProxyNotRunningErr =
+    "代理未启，请先在 Claude 页启动代理";
+const char* const kSlotResolveErr =
+    "无法解析模型槽位「default」（无激活 profile 或槽位未配置）";
+
+REGISTER_TEST(agent_needs_claude_page_hint_predicate,
+              "agent: needsClaudePageHint 前缀匹配两类 LLM 预检错误原文，其余一律 false", {
+    using module::agent::needsClaudePageHint;
+    // 正例：llm_client.cpp:56 / :63 原文钉死
+    DOCTEST_CHECK(needsClaudePageHint(kProxyNotRunningErr));
+    DOCTEST_CHECK(needsClaudePageHint(kSlotResolveErr));
+    // 同前缀 + 追加后缀仍匹配（错误行拼接 / 重试提示等）
+    DOCTEST_CHECK(needsClaudePageHint(
+        std::string(kProxyNotRunningErr) + "（已重试 3 次）"));
+    DOCTEST_CHECK(needsClaudePageHint(
+        std::string(kSlotResolveErr) + "，请检查配置"));
+    // 负例：不含两前缀的普通错误一律 false（「代理未启动」以「代理未启」开头，
+    // 属前缀匹配的正当命中——它是 app 级 toast 标题，不经错误行，不构成误配面）
+    DOCTEST_CHECK(!needsClaudePageHint(""));
+    DOCTEST_CHECK(!needsClaudePageHint("错误文案 1"));
+    DOCTEST_CHECK(!needsClaudePageHint("读取任务失败：库锁"));
+    DOCTEST_CHECK(!needsClaudePageHint("启停切换失败：库锁"));
+    DOCTEST_CHECK(!needsClaudePageHint("落库 agent_messages 失败：disk full"));
+    DOCTEST_CHECK(!needsClaudePageHint("请求失败：connection refused"));
+    return true;
+})
+
+REGISTER_TEST(agent_ui_detail_error_hint_navigates_to_claude,
+              "agent_ui: 详情弹窗两类错误行下出现「去 Claude 页」可点引导，点击跳转 Claude 页", {
+    test_support::TestDb tdb("agentui", "errhint");
+    FakeProxy proxy;
+    ToolGuard statsGuard{"app.stats"};
+    core::ToolRegistry::instance().unregisterTool("app.stats");
+    module::agent::AgentStore store(tdb.handle());
+    auto created = store.createTask("错误引导任务", "g", "manual", "default", 10, false);
+    DOCTEST_REQUIRE(created.isOk());
+    const std::string tid = std::to_string(created.value());
+    // 两条 run 分别落两类错误原文（runlist 按时间倒序：runlist.1 在前 = 最新）
+    auto r1 = store.startRun(created.value());
+    DOCTEST_REQUIRE(r1.isOk());
+    DOCTEST_REQUIRE(store.finishRun(r1.value(), "failed", 1, int64_t(10),
+                                    int64_t(1), kProxyNotRunningErr).isOk());
+    auto r2 = store.startRun(created.value());
+    DOCTEST_REQUIRE(r2.isOk());
+    DOCTEST_REQUIRE(store.finishRun(r2.value(), "failed", 1, int64_t(10),
+                                    int64_t(1), kSlotResolveErr).isOk());
+
+    module::agent::AgentModule::Deps deps;
+    deps.db = &tdb.handle();
+    deps.proxy = &proxy;
+    module::agent::AgentModule mod(deps);
+    mod.onStart();
+
+    eui::Ui ui;
+    composeTo(ui, mod, kScreen, "agent_ui_hintnav1");
+    DOCTEST_REQUIRE(openDetailDialog(ui, mod, tid));
+    eui::Ui ui2;
+    composeTo(ui2, mod, kScreen, "agent_ui_hintnav2");
+
+    // 两处错误行下都有引导（id 契约：可点元素带 text 与 onClick）
+    for (const char* row : {"agent.dialog.detail.runlist.0",
+                            "agent.dialog.detail.runlist.1"}) {
+        const std::string hintId = std::string(row) + ".err.hint";
+        const auto* hint = ui2.find(hintId);
+        DOCTEST_REQUIRE_MESSAGE(hint != nullptr,
+                                std::string(row) + " 下缺「去 Claude 页」引导");
+        DOCTEST_CHECK_MESSAGE(hint->text.find("去 Claude 页") != std::string::npos,
+                              "引导文案缺「去 Claude 页」，实测: " + hint->text);
+        DOCTEST_REQUIRE_MESSAGE(hint->onClick != nullptr,
+                                 "引导元素不可点（缺 onClick）");
+    }
+    // 引导行与错误行不重叠（childrenH 同步的证据：hint 也是子元素）
+    const auto* err0 = ui2.find("agent.dialog.detail.runlist.0.err");
+    const auto* hint0 = ui2.find("agent.dialog.detail.runlist.0.err.hint");
+    const auto* msgsTitle = ui2.find("agent.dialog.detail.msgs.title");
+    const auto* panel = ui2.find("agent.dialog.detail.panel");
+    DOCTEST_REQUIRE(err0 != nullptr && hint0 != nullptr && msgsTitle != nullptr &&
+                    panel != nullptr);
+    DOCTEST_CHECK(err0->frame.y + err0->frame.height <= hint0->frame.y + 0.5f);
+    DOCTEST_CHECK(hint0->frame.y + hint0->frame.height <=
+                  msgsTitle->frame.y + 0.5f);
+    DOCTEST_CHECK(hint0->frame.y + hint0->frame.height <=
+                  panel->frame.y + panel->frame.height);
+
+    // 点击引导 → Router 切 Claude 页（须 ClaudeProxy 已注册，否则回退 Home）
+    ::core::Router router;
+    router.registerModule(&mod);
+    StubPageModule claudePage(core::PageId::ClaudeProxy);
+    router.registerModule(&claudePage);
+    test_support::ScopedAppRouter scoped(&router);
+    DOCTEST_REQUIRE(clickId(ui2, "agent.dialog.detail.runlist.0.err.hint"));
+    DOCTEST_CHECK_MESSAGE(router.currentPage() == ::core::PageId::ClaudeProxy,
+                          "点击引导未跳转 Claude 页，实测: " +
+                              std::string(::core::pageIdToString(
+                                  router.currentPage())));
+    // 第二条错误行的引导同样可跳（从 Claude 页回 Agent 后再点）
+    router.navigateTo(::core::PageId::Agent);
+    DOCTEST_REQUIRE(clickId(ui2, "agent.dialog.detail.runlist.1.err.hint"));
+    DOCTEST_CHECK(router.currentPage() == ::core::PageId::ClaudeProxy);
+
+    mod.onStop();
+    return true;
+})
+
+REGISTER_TEST(agent_ui_detail_error_hint_only_two_classes,
+              "agent_ui: 其它错误（网络/落库/普通文案）不渲染「去 Claude 页」引导", {
+    test_support::TestDb tdb("agentui", "errhintneg");
+    FakeProxy proxy;
+    ToolGuard statsGuard{"app.stats"};
+    core::ToolRegistry::instance().unregisterTool("app.stats");
+    module::agent::AgentStore store(tdb.handle());
+    auto created = store.createTask("普通失败任务", "g", "manual", "default", 10, false);
+    DOCTEST_REQUIRE(created.isOk());
+    const std::string tid = std::to_string(created.value());
+    const std::string otherErrs[] = {
+        "请求失败：connection refused",
+        "落库 agent_messages 失败：disk full",
+        "错误文案 0",
+    };
+    for (const std::string& err : otherErrs) {
+        auto r = store.startRun(created.value());
+        DOCTEST_REQUIRE(r.isOk());
+        DOCTEST_REQUIRE(store.finishRun(r.value(), "failed", 1, int64_t(10),
+                                        int64_t(1), err).isOk());
+    }
+
+    module::agent::AgentModule::Deps deps;
+    deps.db = &tdb.handle();
+    deps.proxy = &proxy;
+    module::agent::AgentModule mod(deps);
+    mod.onStart();
+
+    eui::Ui ui;
+    composeTo(ui, mod, kScreen, "agent_ui_hintneg1");
+    DOCTEST_REQUIRE(openDetailDialog(ui, mod, tid));
+    eui::Ui ui2;
+    composeTo(ui2, mod, kScreen, "agent_ui_hintneg2");
+    for (int i = 0; i < 3; ++i) {
+        const std::string hintId =
+            "agent.dialog.detail.runlist." + std::to_string(i) + ".err.hint";
+        DOCTEST_CHECK_MESSAGE(ui2.find(hintId) == nullptr,
+                              "非两类错误渲染了引导: " + hintId);
+        const std::string errId =
+            "agent.dialog.detail.runlist." + std::to_string(i) + ".err";
+        DOCTEST_CHECK(ui2.find(errId) != nullptr);   // 错误行本身仍在
+    }
+
+    mod.onStop();
+    return true;
+})
+
+REGISTER_TEST(agent_ui_page_error_hint_navigates_to_claude,
+              "agent_ui: 页内错误行同两类错误 → 同样「去 Claude 页」引导（弹窗外路径）", {
+    test_support::TestDb tdb("agentui", "pagehint");
+    FakeProxy proxy;
+    ToolGuard statsGuard{"app.stats"};
+    core::ToolRegistry::instance().unregisterTool("app.stats");
+    module::agent::AgentStore store(tdb.handle());
+    auto created = store.createTask("页内引导任务", "g", "manual", "default", 10, false);
+    DOCTEST_REQUIRE(created.isOk());
+    const std::string tid = std::to_string(created.value());
+    // 两类错误各一条 run（同一任务，最新在前）
+    auto r1 = store.startRun(created.value());
+    DOCTEST_REQUIRE(r1.isOk());
+    DOCTEST_REQUIRE(store.finishRun(r1.value(), "failed", 1, int64_t(10),
+                                    int64_t(1), kSlotResolveErr).isOk());
+    auto r2 = store.startRun(created.value());
+    DOCTEST_REQUIRE(r2.isOk());
+    DOCTEST_REQUIRE(store.finishRun(r2.value(), "limited", 1, int64_t(10),
+                                    int64_t(1), kProxyNotRunningErr).isOk());
+
+    module::agent::AgentModule::Deps deps;
+    deps.db = &tdb.handle();
+    deps.proxy = &proxy;
+    module::agent::AgentModule mod(deps);
+    mod.onStart();
+
+    eui::Ui ui;
+    composeTo(ui, mod, kScreen, "agent_ui_pagehint1");
+    const auto* pageErr = ui.find("agent.page.error");
+    DOCTEST_REQUIRE_MESSAGE(pageErr != nullptr,
+                            "run 两类错误未同步到页内错误行（弹窗外零可见出口）");
+    DOCTEST_CHECK(pageErr->text.find("代理未启") == 0);
+    const auto* hint = ui.find("agent.page.error.hint");
+    DOCTEST_REQUIRE_MESSAGE(hint != nullptr, "页内错误行下缺「去 Claude 页」引导");
+    DOCTEST_CHECK_MESSAGE(hint->text.find("去 Claude 页") != std::string::npos,
+                          "引导文案缺「去 Claude 页」，实测: " + hint->text);
+    DOCTEST_REQUIRE_MESSAGE(hint->onClick != nullptr, "页内引导不可点（缺 onClick）");
+
+    // 几何：引导行在错误行之下、不压工具区头部；错误+引导挤占的 listH 已扣减
+    const auto* toolsHeader = ui.find("agent.tools.header");
+    const auto* tasklist = ui.find("agent.tasklist");
+    DOCTEST_REQUIRE(toolsHeader != nullptr && tasklist != nullptr);
+    DOCTEST_CHECK(pageErr->frame.y + pageErr->frame.height <=
+                  hint->frame.y + 0.5f);
+    DOCTEST_CHECK(hint->frame.y + hint->frame.height <=
+                  toolsHeader->frame.y + 0.5f);
+    DOCTEST_CHECK(tasklist->frame.y + tasklist->frame.height <=
+                  kScreen.height + 0.5f);
+
+    // 点击引导 → Router 切 Claude 页
+    ::core::Router router;
+    router.registerModule(&mod);
+    StubPageModule claudePage(core::PageId::ClaudeProxy);
+    router.registerModule(&claudePage);
+    test_support::ScopedAppRouter scoped(&router);
+    DOCTEST_REQUIRE(clickId(ui, "agent.page.error.hint"));
+    DOCTEST_CHECK_MESSAGE(router.currentPage() == ::core::PageId::ClaudeProxy,
+                          "点击页内引导未跳转 Claude 页，实测: " +
+                              std::string(::core::pageIdToString(
+                                  router.currentPage())));
+
+    mod.onStop();
+    return true;
+})
+
+REGISTER_TEST(agent_ui_page_error_no_hint_other_errors,
+              "agent_ui: 页内错误行非两类错误（读库失败/普通 run 失败）不渲染引导", {
+    test_support::TestDb tdb("agentui", "pagehintneg");
+    FakeProxy proxy;
+    ToolGuard statsGuard{"app.stats"};
+    core::ToolRegistry::instance().unregisterTool("app.stats");
+    module::agent::AgentStore store(tdb.handle());
+    auto created = store.createTask("页内无引导任务", "g", "manual", "default", 10, false);
+    DOCTEST_REQUIRE(created.isOk());
+    const std::string tid = std::to_string(created.value());
+    auto r = store.startRun(created.value());
+    DOCTEST_REQUIRE(r.isOk());
+    DOCTEST_REQUIRE(store.finishRun(r.value(), "failed", 1, int64_t(10),
+                                    int64_t(1), "请求失败：connection refused").isOk());
+
+    module::agent::AgentModule::Deps deps;
+    deps.db = &tdb.handle();
+    deps.proxy = &proxy;
+    module::agent::AgentModule mod(deps);
+    mod.onStart();
+
+    // 普通 run 失败不同步页内错误行（非两类错误）
+    eui::Ui ui;
+    composeTo(ui, mod, kScreen, "agent_ui_pagehintneg1");
+    DOCTEST_CHECK(ui.find("agent.page.error") == nullptr);
+    DOCTEST_CHECK(ui.find("agent.page.error.hint") == nullptr);
+
+    // 读库失败走页内错误行（既有路径）但不渲染引导
+    DOCTEST_REQUIRE(tdb.handle().exec("DELETE FROM agent_tasks WHERE id=" + tid).isOk());
+    eui::Ui ui2;
+    composeTo(ui2, mod, kScreen, "agent_ui_pagehintneg2");
+    DOCTEST_REQUIRE(clickId(ui2, "agent.task." + tid + ".edit"));
+    eui::Ui ui3;
+    composeTo(ui3, mod, kScreen, "agent_ui_pagehintneg3");
+    DOCTEST_REQUIRE(ui3.find("agent.page.error") != nullptr);
+    DOCTEST_CHECK(ui3.find("agent.page.error.hint") == nullptr);
+
+    mod.onStop();
+    return true;
+})

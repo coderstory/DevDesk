@@ -28,6 +28,7 @@
 #include "core/component_theme.h"
 #include "core/database.h"
 #include "core/logging.h"
+#include "core/router.h"
 #include "core/service_locator.h"
 #include "core/theme.h"
 #include "core/time.h"
@@ -49,6 +50,13 @@ bool hasLiveRun(const std::map<int64_t, AgentRunRow>& latestRuns,
         if (orphanedRunIds.count(run.id) != 0) continue;
         return true;
     }
+    return false;
+}
+
+bool needsClaudePageHint(const std::string& errorText) {
+    // 前缀必须与 llm_client.cpp:56 / :63 原文逐字一致（见头文件注释）
+    if (errorText.rfind("代理未启", 0) == 0) return true;
+    if (errorText.rfind("无法解析模型槽位", 0) == 0) return true;
     return false;
 }
 
@@ -132,6 +140,16 @@ void actionChip(::eui::Ui& ui, const std::string& id, const std::string& label,
         .build();
 }
 
+// 「去 Claude 页」引导的跳转动作：Router 未装配时仅 LOG_WARN（测试 compose 无 router 不崩）
+void navigateToClaudePage() {
+    auto* router = ::core::appRouter();
+    if (router == nullptr) {
+        LOG_WARN("Agent: 跳转 Claude 页失败——Router 未装配");
+        return;
+    }
+    router->navigateTo(::core::PageId::ClaudeProxy);
+}
+
 // 弹窗字段标签：显式垂直居中（光靠 lineHeight 不居中）+ 显式定位；id 用 .caption 避开 dropdown 的 .label
 void fieldCaption(::eui::Ui& ui, const std::string& id, const std::string& text,
                   float x, float y, float width, float height,
@@ -188,6 +206,8 @@ constexpr float kPageHeaderH = 40.0f;
 constexpr float kNewTaskBtnW = 140.0f;
 constexpr float kTaskRowH = 44.0f;
 constexpr float kPageErrorH = 16.0f;
+// 页内错误行下的「去 Claude 页」引导行高（仅两类 LLM 预检错误渲染）
+constexpr float kPageHintH = 16.0f;
 
 // 任务弹窗几何（cron 与触发同行、仅「定时」渲染、弹窗高度不变）
 constexpr float kDialogRowH = 40.0f;
@@ -752,6 +772,18 @@ void AgentModule::refreshData() {
         }
         taskRuns_[task.id] = std::move(list);
     }
+    // 两类 LLM 预检错误（代理未启 / 槽位解析失败）同步到页内错误行：run 线程失败只
+    // LOG_ERROR，不落 pageError_，弹窗外将零可见出口。仅 pageError_ 为空时同步（用户
+    // 动作的错误优先），且只认 needsClaudePageHint 的两类错误——普通失败不上页内错误行。
+    if (pageError_.empty()) {
+        for (const auto& [taskId, run] : latestRuns_) {
+            (void)taskId;
+            if (run.error && needsClaudePageHint(*run.error)) {
+                pageError_ = *run.error;
+                break;
+            }
+        }
+    }
     // run 完成通知：本次轮询 vs 上次轮询的 running→failed/limited 迁移必响；
     // completed/cancelled 静默；同一 runId 只通知一次（notifiedRunIds_）。
     // 只看 latestRuns_ 即可：刚结束的 run 必是其任务的最近一次 run，不会漏迁移。
@@ -1002,11 +1034,13 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                               kToolsListMaxH)
                    : 0.0f;
     const float toolsH = kToolsHeaderH + (toolsOpen_ ? kMsgGap + toolsListH : 0.0f);
-    // 页 column 子项：标题行 / [错误行] / tools / tasklist；子项数或行高一变，kPageGapCount 与减项必须同步
+    // 页 column 子项：标题行 / [错误行] / [引导行] / tools / tasklist；子项数或行高一变，kPageGapCount 与减项必须同步
     const bool hasPageError = !pageError_.empty();
-    const int kPageGapCount = 2 + (hasPageError ? 1 : 0);
+    const bool hasPageHint = hasPageError && needsClaudePageHint(pageError_);
+    const int kPageGapCount = 2 + (hasPageError ? 1 : 0) + (hasPageHint ? 1 : 0);
     const float listH = screen.height - pad * 2.0f - kPageHeaderH - toolsH -
                         (hasPageError ? kPageErrorH : 0.0f) -
+                        (hasPageHint ? kPageHintH : 0.0f) -
                         static_cast<float>(kPageGapCount) * t.sizes.spacingLarge;
 
     ui.column("agent.page")
@@ -1047,6 +1081,18 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                     .verticalAlign(eui::VerticalAlign::Center)
                     .color(t.colors.error)
                     .build();
+                // 「去 Claude 页」引导：仅两类 LLM 预检错误渲染（needsClaudePageHint 前缀钉死）
+                if (hasPageHint) {
+                    ui.text("agent.page.error.hint")
+                        .size(contentW, kPageHintH)
+                        .text("去 Claude 页 →")
+                        .fontSize(12.0f)
+                        .lineHeight(kPageHintH)
+                        .verticalAlign(eui::VerticalAlign::Center)
+                        .color(t.colors.primary)
+                        .onClick([] { navigateToClaudePage(); })
+                        .build();
+                }
             }
 
             // 可用工具区块：收起默认、头部点击展开；卡多了由 scrollView 内滚
@@ -1604,7 +1650,7 @@ void AgentModule::composeTaskDetailDialog(
             .build();
         float runsH = 18.0f;
         if (runs != nullptr && !runs->empty()) {
-            // gap 数 = 子元素数 - 1：error 行也是子元素，漏算会让消息标题压到 error 行上
+            // gap 数 = 子元素数 - 1：error 行与 hint 行都是子元素，漏算会让消息标题压到上者
             float childrenH = 0.0f;
             int childCount = 0;
             for (const auto& run : *runs) {
@@ -1613,6 +1659,11 @@ void AgentModule::composeTaskDetailDialog(
                 if (run.error && !run.error->empty()) {
                     ++childCount;
                     childrenH += 16.0f;
+                    // 「去 Claude 页」引导行：仅两类 LLM 预检错误渲染，与下方渲染条件一致
+                    if (needsClaudePageHint(*run.error)) {
+                        ++childCount;
+                        childrenH += 16.0f;
+                    }
                 }
             }
             runsH = childrenH + 4.0f * static_cast<float>(childCount - 1);
@@ -1653,6 +1704,18 @@ void AgentModule::composeTaskDetailDialog(
                                 .wrap(false)
                                 .color(t.colors.error)
                                 .build();
+                            // 「去 Claude 页」引导：仅两类 LLM 预检错误渲染（needsClaudePageHint 前缀钉死）
+                            if (needsClaudePageHint(*run.error)) {
+                                ui.text(runRowId + ".err.hint")
+                                    .size(innerW, 16.0f)
+                                    .text("去 Claude 页 →")
+                                    .fontSize(11.0f)
+                                    .lineHeight(16.0f)
+                                    .wrap(false)
+                                    .color(t.colors.primary)
+                                    .onClick([] { navigateToClaudePage(); })
+                                    .build();
+                            }
                         }
                     }
                 })

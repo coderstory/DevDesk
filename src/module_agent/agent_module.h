@@ -38,6 +38,12 @@ class AgentLoop;
 bool hasLiveRun(const std::map<int64_t, AgentRunRow>& latestRuns,
                 const std::set<int64_t>& orphanedRunIds);
 
+// 错误行「去 Claude 页」引导的判定：仅两类 LLM 预检错误为 true——
+// 「代理未启」（llm_client.cpp:56）/「无法解析模型槽位」（llm_client.cpp:63），均按前缀匹配。
+// 其余错误（网络 / 落库 / 读库）一律 false。前缀与两处文案原文刻意钉死：文案一变，
+// 测试（test_agent_ui.cpp predicate 用例）即红，防文案漂移后引导静默失效。
+bool needsClaudePageHint(const std::string& errorText);
+
 // run 完成通知的迁移检测（纯逻辑，refreshData 每次轮询消费）：
 // prev/now = 上次/本次轮询的 runId→status 快照；notified = 已通知过的 runId。
 // 返回需通知的 runId（升序）：仅「prev=running 且 now=failed/limited 且未通知过」；
