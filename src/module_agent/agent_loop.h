@@ -20,6 +20,8 @@ struct AgentTask {
     std::string modelSlot;      // "default"/"sonnet"/...（profile 槽位键名）
     int maxIterations = 10;
     bool allowDestructive = false;
+    std::string contextNote;    // 任务级执行记忆（注入 system prompt 末尾）
+    bool autoNote = false;      // run 正常结束后自动 append 最终回复到 contextNote
 };
 
 // store 行 → 执行体入参的唯一映射：AgentModule/Scheduler/测试三方共用，避免手抄漂移

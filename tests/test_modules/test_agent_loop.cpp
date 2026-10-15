@@ -25,6 +25,7 @@ public:
     std::vector<core::LlmResponse> script;
     std::vector<std::vector<core::LlmMessage>> sentMessages;
     std::vector<std::string> sentModels;   // 每次 send 收到的 model，原样不解析
+    std::vector<std::string> sentSystemPrompts;  // 每次 send 收到的 systemPrompt
     // 置上则每次 send 直接返回该失败（模拟网络超时），不消耗 script
     std::optional<core::Result<core::LlmResponse>> failResponse;
     // 每次 send 入口触发（在首轮把 cancel 置位）
@@ -33,9 +34,10 @@ public:
         const std::vector<core::LlmMessage>& messages,
         const std::string& toolsJson, const std::string& systemPrompt,
         const std::string& model) override {
-        (void)toolsJson; (void)systemPrompt;
+        (void)toolsJson;
         sentMessages.push_back(messages);
         sentModels.push_back(model);
+        sentSystemPrompts.push_back(systemPrompt);
         if (onSendHook) onSendHook();
         if (failResponse.has_value()) return *failResponse;
         if (cursor >= script.size())
@@ -689,5 +691,149 @@ REGISTER_TEST(agent_loop_goal_escaping, "agent_loop: goal 含引号/反斜杠/�
     DOCTEST_REQUIRE(msgs.isOk());
     DOCTEST_REQUIRE_EQ(msgs.value().size(), 2u);
     DOCTEST_CHECK_EQ(textBlockText(msgs.value()[0].contentJson, 0), goal);
+    return true;
+})
+
+// contextNote 非空 + autoNote → system prompt 注入格式头 + 原文
+REGISTER_TEST(agent_loop_context_note_injected, "agent_loop: contextNote 非空 → system prompt 含记忆头 + 原文", {
+    Fixture fx;
+    AgentTask task;
+    DOCTEST_REQUIRE(setupTask(fx, task, "打招呼", 10, false));
+    task.contextNote = "上次 run 用了 t.hello";
+    task.autoNote = true;
+    fx.llm.script = { resp(R"([{"type":"text","text":"收到"}])", "end_turn") };
+    std::atomic<bool> cancel{false};
+    auto runId = fx.loop.run(task, cancel);
+    DOCTEST_REQUIRE(runId.isOk());
+    DOCTEST_REQUIRE_EQ(fx.llm.sentSystemPrompts.size(), 1u);
+    const std::string& sp = fx.llm.sentSystemPrompts[0];
+    DOCTEST_CHECK(sp.find("[任务上下文记忆]") != std::string::npos);
+    DOCTEST_CHECK(sp.find("上次 run 用了 t.hello") != std::string::npos);
+    return true;
+})
+
+// contextNote 空串 → system prompt 为空串（llm_client 侧不发 system 字段）
+REGISTER_TEST(agent_loop_context_note_empty_not_injected, "agent_loop: contextNote 空串 → system prompt 为空", {
+    Fixture fx;
+    AgentTask task;
+    DOCTEST_REQUIRE(setupTask(fx, task, "打招呼", 10, false));
+    task.contextNote = "";
+    task.autoNote = true;
+    fx.llm.script = { resp(R"([{"type":"text","text":"收到"}])", "end_turn") };
+    std::atomic<bool> cancel{false};
+    auto runId = fx.loop.run(task, cancel);
+    DOCTEST_REQUIRE(runId.isOk());
+    DOCTEST_REQUIRE_EQ(fx.llm.sentSystemPrompts.size(), 1u);
+    DOCTEST_CHECK(fx.llm.sentSystemPrompts[0].empty());
+    return true;
+})
+
+// autoNote=false → 即使 contextNote 非空也不注入
+REGISTER_TEST(agent_loop_autonote_off_not_injected, "agent_loop: autoNote=false → system prompt 为空（不注入）", {
+    Fixture fx;
+    AgentTask task;
+    DOCTEST_REQUIRE(setupTask(fx, task, "打招呼", 10, false));
+    task.contextNote = "有记忆但不注入";
+    task.autoNote = false;
+    fx.llm.script = { resp(R"([{"type":"text","text":"收到"}])", "end_turn") };
+    std::atomic<bool> cancel{false};
+    auto runId = fx.loop.run(task, cancel);
+    DOCTEST_REQUIRE(runId.isOk());
+    DOCTEST_REQUIRE_EQ(fx.llm.sentSystemPrompts.size(), 1u);
+    DOCTEST_CHECK(fx.llm.sentSystemPrompts[0].empty());
+    return true;
+})
+
+// completed + autoNote → 自动 append 最终回复到 context note（含时间戳前缀）
+REGISTER_TEST(agent_loop_completed_autonote_appends, "agent_loop: completed + autoNote → contextNote 追加时间戳 + 回复截断", {
+    Fixture fx;
+    auto taskId = fx.store.createTask("t", "打招呼", "manual", "default", 10, false, "",
+                                      "旧记忆\n", 1);
+    DOCTEST_REQUIRE(taskId.isOk());
+    AgentTask task; task.id = taskId.value(); task.goal = "打招呼";
+    task.modelSlot = "default"; task.maxIterations = 10;
+    task.contextNote = "旧记忆\n";
+    task.autoNote = true;
+    // 回复 2000+ 字节确保触发截断
+    std::string longText(2500, 'X');
+    fx.llm.script = { resp((std::string(R"([{"type":"text","text":")") + longText +
+                            R"("}])").c_str(), "end_turn") };
+    std::atomic<bool> cancel{false};
+    auto runId = fx.loop.run(task, cancel);
+    DOCTEST_REQUIRE(runId.isOk());
+    // 读回 contextNote 验证追加
+    auto row = fx.store.getTask(taskId.value());
+    DOCTEST_REQUIRE(row.isOk());
+    const std::string& cn = row.value().contextNote;
+    // 旧记忆保留
+    DOCTEST_CHECK(cn.find("旧记忆") != std::string::npos);
+    // 新条目含时间戳格式 "[yyyy-MM-dd HH:mm] "
+    DOCTEST_CHECK(cn.find("] ") != std::string::npos);
+    // 截断后不超过 1500 字节（+ 时间戳前缀 ~18 + 旧记忆 ~7 字节 UTF-8）
+    // 注：旧记忆 + 新条目经 4KB 滚动（旧记忆很短不会触发滚动），追加文本 ≤ 1500+18 字节
+    DOCTEST_CHECK(cn.size() <= std::string("旧记忆\n").size() + 18 + 1500 + 16);
+    return true;
+})
+
+// failed → 即使 autoNote 也不追加
+REGISTER_TEST(agent_loop_failed_no_append, "agent_loop: failed → autoNote 也不追加", {
+    Fixture fx;
+    auto taskId = fx.store.createTask("t", "打招呼", "manual", "default", 10, false, "",
+                                      "旧记忆", 1);
+    DOCTEST_REQUIRE(taskId.isOk());
+    AgentTask task; task.id = taskId.value(); task.goal = "打招呼";
+    task.modelSlot = "default"; task.maxIterations = 10;
+    task.contextNote = "旧记忆";
+    task.autoNote = true;
+    fx.llm.failResponse =
+        core::Result<core::LlmResponse>::fail(core::ErrorCode::NetworkTimeout, "超时");
+    std::atomic<bool> cancel{false};
+    auto runId = fx.loop.run(task, cancel);
+    DOCTEST_REQUIRE(runId.isOk());
+    auto row = fx.store.getTask(taskId.value());
+    DOCTEST_REQUIRE(row.isOk());
+    // contextNote 不变：failed 不追加
+    DOCTEST_CHECK_EQ(row.value().contextNote, std::string("旧记忆"));
+    return true;
+})
+
+// autoNote=false → completed 也不追加
+REGISTER_TEST(agent_loop_autonote_off_no_append, "agent_loop: autoNote=false → completed 也不追加", {
+    Fixture fx;
+    auto taskId = fx.store.createTask("t", "打招呼", "manual", "default", 10, false, "",
+                                      "旧记忆", 0);
+    DOCTEST_REQUIRE(taskId.isOk());
+    AgentTask task; task.id = taskId.value(); task.goal = "打招呼";
+    task.modelSlot = "default"; task.maxIterations = 10;
+    task.contextNote = "旧记忆";
+    task.autoNote = false;
+    fx.llm.script = { resp(R"([{"type":"text","text":"完成"}])", "end_turn") };
+    std::atomic<bool> cancel{false};
+    auto runId = fx.loop.run(task, cancel);
+    DOCTEST_REQUIRE(runId.isOk());
+    auto row = fx.store.getTask(taskId.value());
+    DOCTEST_REQUIRE(row.isOk());
+    // autoNote=0 时 completed 也不追加
+    DOCTEST_CHECK_EQ(row.value().contextNote, std::string("旧记忆"));
+    return true;
+})
+
+// agent_messages 落库内容不含 system prompt（system 不进消息流）
+REGISTER_TEST(agent_loop_system_not_in_messages, "agent_loop: system prompt 注入后 agent_messages 不含 system", {
+    Fixture fx;
+    AgentTask task;
+    DOCTEST_REQUIRE(setupTask(fx, task, "打招呼", 10, false));
+    task.contextNote = "记忆文本";
+    task.autoNote = true;
+    fx.llm.script = { resp(R"([{"type":"text","text":"收到"}])", "end_turn") };
+    std::atomic<bool> cancel{false};
+    auto runId = fx.loop.run(task, cancel);
+    DOCTEST_REQUIRE(runId.isOk());
+    // 落库消息不含 system role
+    auto msgs = fx.store.listMessages(runId.value());
+    DOCTEST_REQUIRE(msgs.isOk());
+    for (const auto& m : msgs.value()) {
+        DOCTEST_CHECK_NE(m.role, std::string("system"));
+    }
     return true;
 })

@@ -11,7 +11,9 @@
 #include <vector>
 
 #include "core/logging.h"
+#include "core/time.h"
 #include "module_agent/agent_store.h"
+#include "module_agent/message_blocks.h"
 #include "platform/json.h"
 #include "platform/utf8.h"
 
@@ -121,6 +123,8 @@ AgentTask taskFromRow(const AgentTaskRow& row) {
     t.modelSlot = row.modelSlot;
     t.maxIterations = row.maxIterations;
     t.allowDestructive = row.allowDestructive;
+    t.contextNote = row.contextNote;
+    t.autoNote = (row.autoNote != 0);
     return t;
 }
 
@@ -198,8 +202,13 @@ Result<int64_t> AgentLoop::run(const AgentTask& task,
             error = "达到迭代上限 " + std::to_string(iterations);
             break;
         }
+        // system prompt：context note 非空且 autoNote 开时注入任务记忆；空串 = 不发 system 字段
+        std::string systemPrompt;
+        if (task.autoNote && !task.contextNote.empty()) {
+            systemPrompt = "\n\n[任务上下文记忆]\n" + task.contextNote;
+        }
         // 槽位→真实 model id 由 LlmClient 解析
-        auto resp = llm_.send(messages, toolsJson, std::string(), task.modelSlot);
+        auto resp = llm_.send(messages, toolsJson, systemPrompt, task.modelSlot);
         if (resp.isFail()) {
             status = "failed";
             error = resp.errorMessage();
@@ -336,6 +345,38 @@ Result<int64_t> AgentLoop::run(const AgentTask& task,
                   " 将留在 running）：" + finished.errorMessage());
         if (onFinishFailure_) {
             onFinishFailure_(runId, finished.errorMessage());
+        }
+    } else if (status == "completed" && task.autoNote) {
+        // 自动 append 最终回复到 context note：取内存 messages 最后一条 assistant 的 text 块，
+        // 截断 500 字（1500 字节），加时间戳前缀；append 失败只 WARN 不改变 run 终态
+        const core::LlmMessage* lastAssistant = nullptr;
+        for (const auto& m : messages) {
+            if (m.role == "assistant") lastAssistant = &m;
+        }
+        if (lastAssistant != nullptr) {
+            auto blocks = decodeMessageBlocks(lastAssistant->contentJson);
+            std::string finalText;
+            for (const auto& b : blocks) {
+                if (b.type != MessageBlock::Type::Text) continue;
+                if (!finalText.empty()) finalText += "\n";
+                finalText += b.text;
+            }
+            if (!finalText.empty()) {
+                finalText = utf8Truncate(finalText, 1500);  // 500 汉字 ≈ 1500 UTF-8 字节
+                std::time_t now = std::time(nullptr);
+                std::tm local{};
+                core::time::localTime(now, &local);
+                char ts[20];
+                std::snprintf(ts, sizeof(ts), "%04d-%02d-%02d %02d:%02d",
+                              local.tm_year + 1900, local.tm_mon + 1,
+                              local.tm_mday, local.tm_hour, local.tm_min);
+                std::string note = std::string("[") + ts + "] " + finalText;
+                auto appended = store_.appendContextNote(task.id, note);
+                if (appended.isFail()) {
+                    LOG_WARN("AgentLoop: 自动 append context note 失败（run " +
+                             std::to_string(runId) + "）：" + appended.errorMessage());
+                }
+            }
         }
     }
     return Result<int64_t>::ok(runId);
