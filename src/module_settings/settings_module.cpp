@@ -104,9 +104,7 @@ const CardSpec kCardSpecs[] = {
 
 // ── GitHub Sync（纯 API 方案，无 git 依赖）──
 // 远端路径常量在 github_sync_logic.h（kRemoteSqlPath / remoteNotePath）。
-// 与 sql_dump.h 的示例口径一致：调用日志 / 运行设置不入同步（非用户数据）。
-const std::vector<std::string> kGithubSyncSkipTables = {"claude_call_logs",
-                                                        "claude_run_settings"};
+// skip 表清单单一来源 = core::sql_dump::defaultSkipTables()，不得本地另抄。
 
 // 同步动作（弹窗「重试」按原动作重跑；PullThenPush = 409 冲突弹窗的主动作；
 // FirstSync = 首次启用的方向判定，见 runGithubSyncFirstSync）。
@@ -813,8 +811,8 @@ public:
         // ① 全库 dump
         publishGithubSyncProgress("① 导出数据库…");
         const auto dumpFile = ::core::paths::sqlDumpFile();
-        auto exported = ::core::sql_dump::exportToFile(*db, dumpFile,
-                                                       kGithubSyncSkipTables);
+        auto exported = ::core::sql_dump::exportToFile(
+            *db, dumpFile, ::core::sql_dump::defaultSkipTables());
         if (exported.isFail()) {
             summary = "导出失败：" + exported.errorMessage();
             return false;
