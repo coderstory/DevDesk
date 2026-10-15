@@ -43,6 +43,12 @@ struct SettingsCardsIn {
     bool githubSyncAutoPush = true;
     std::string githubSyncStatus;
     bool githubSyncStatusError = false;
+    bool githubSyncRunning = false;      // 同步/拉取/测试进行中 → 三按钮禁用
+    std::string githubSyncProgress;      // 阶段文案（如「① 校验 token…」）
+    std::string githubSyncError;         // 非空 = 错误行（红字摘要）+「详情」小按钮
+    bool githubSyncRepoPublic = false;   // 仓库是 public → 黄字提醒（不硬拦）
+    std::string githubSyncBranchHint;    // 分支被自动创建时的提示（决策 #10）
+    bool githubSyncLocalGitUnavailable = false;  // 本地 git 不可用 → 灰字
 };
 
 // 卡片回写模块的回调（compose 每帧装配；lambda 只捕获 this → SBO 无堆分配）
@@ -75,6 +81,8 @@ struct SettingsCardActions {
     std::function<void(bool)> applyGithubSyncAutoPush;          // 自动推送
     std::function<void()> githubSyncPush;                       // 立即同步
     std::function<void()> githubSyncPull;                       // 拉取
+    std::function<void()> githubSyncTestConnection;             // 测试连接
+    std::function<void()> githubSyncShowErrorDetail;            // 错误行「详情」
 };
 
 // 单卡绘制入参（注册表按序调用；签名统一，未用到的字段忽略）

@@ -71,7 +71,11 @@ inline constexpr float kModulesCardHeight = 344.0f;     // 模块插拔卡（模
 inline constexpr float kPetCardHeight = 168.0f;
 inline constexpr float kDirectoryCardHeight = 176.0f;   // 目录卡（模块）
 inline constexpr float kLogSettingsCardHeight = 148.0f; // 日志卡（日志）
-inline constexpr float kGithubSyncCardHeight = 380.0f;   // GitHub Sync 卡（同步）
+// GitHub Sync 卡（同步）：启用态满高（最坏行序 = 按钮行 + 进度 + 状态 + 分支
+// 提示 + public 提醒 + 本地 git 灰字，内容底沿 450；错误行与进度行互斥、错误行
+// 显示时状态行让位，故 460 包住所有组合）。未启用时卡片早退，改用折叠高。
+inline constexpr float kGithubSyncCardHeight = 460.0f;
+inline constexpr float kGithubSyncCollapsedHeight = 132.0f;  // 未启用（标题+描述+开关）
 
 // 行盒 / 间距随生效字号派生：行盒 = round(基准 × fontScale)，系数恒包住最坏 CJK 墨迹；字号本体仍走 fs()（不取整）。
 inline float roundFs(float base) {

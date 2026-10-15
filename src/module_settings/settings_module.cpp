@@ -8,19 +8,26 @@
 #include "settings_ui_cards.h"
 #include "github_sync_card.h"
 #include "github_sync_config.h"
+#include "github_sync_logic.h"
+#include "git_error_dialog.h"
+#include "local_git_probe.h"
 #include "settings_ui_logic.h"
 
 #include "core/claude_proxy_service.h"
 #include "core/database.h"
+#include "core/event_bus.h"
 #include "core/logging.h"
 #include "core/module_interface.h"
 #include "core/paths.h"
 #include "core/service_locator.h"
+#include "core/sql_dump.h"
 #include "core/theme.h"
 #include "core/tool.h"
 #include "core/component_theme.h"
 #include "platform/file_open.h"
+#include "platform/github_api.h"     // platform::github::GithubApi / TestStep / ApiLogEntry
 #include <core/platform/platform.h>   // core::platform::requestUiUpdate（唤醒主循环）
+#include <core/window/window_backend.h>   // core::window::setClipboardText（复制详情）
 #include "platform/system_theme.h"
 
 // module_pet 解耦桥：settings 不 include module_pet 头，符号在可执行文件链接期解析。
@@ -39,12 +46,17 @@
 #include <components/theme.h>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <future>
+#include <map>
 #include <memory>
+#include <mutex>
+#include <sstream>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace module::settings {
@@ -56,6 +68,7 @@ enum class CardHeightKind {
     Fixed,
     ProxyWarnings,
     FillRemainder,
+    GithubSync,   // 随启用态切换满高/折叠高（未启用时卡片只画标题+描述+开关）
 };
 
 struct CardSpec {
@@ -85,9 +98,45 @@ const CardSpec kCardSpecs[] = {
      kLogSettingsCardHeight, true, &drawLogCard},
     {kTabLog, "settings.tab.log", nullptr, CardHeightKind::FillRemainder,
      0.0f, false, &drawLogViewCard},
-    {kTabSync, "settings.card.github_sync", nullptr, CardHeightKind::Fixed,
-     kGithubSyncCardHeight, false, &drawGithubSyncCard},
+    {kTabSync, "settings.card.github_sync", nullptr, CardHeightKind::GithubSync,
+     0.0f, false, &drawGithubSyncCard},
 };
+
+// ── GitHub Sync（纯 API 方案，无 git 依赖）──
+// 远端路径常量在 github_sync_logic.h（kRemoteSqlPath / remoteNotePath）。
+// 与 sql_dump.h 的示例口径一致：调用日志 / 运行设置不入同步（非用户数据）。
+const std::vector<std::string> kGithubSyncSkipTables = {"claude_call_logs",
+                                                        "claude_run_settings"};
+
+// 同步动作（弹窗「重试」按原动作重跑；PullThenPush = 409 冲突弹窗的主动作；
+// FirstSync = 首次启用的方向判定，见 runGithubSyncFirstSync）。
+enum class SyncAction { None, Push, Pull, Test, PullThenPush, FirstSync };
+
+// epoch 秒（节流窗口与备份文件名共用）。
+int64_t nowSec() {
+    return std::chrono::duration_cast<std::chrono::seconds>(
+               std::chrono::system_clock::now().time_since_epoch())
+        .count();
+}
+
+// 整文件读回（小文件：database.sql 量级）。失败 → false。
+bool readFileToString(const std::filesystem::path& f, std::string& out) {
+    std::ifstream in(f, std::ios::binary);
+    if (!in) return false;
+    std::ostringstream ss;
+    ss << in.rdbuf();
+    out = ss.str();
+    return true;
+}
+
+// 整文件写入（截断）。失败 → false。
+bool writeFileFromString(const std::filesystem::path& f,
+                         const std::string& content) {
+    std::ofstream out(f, std::ios::binary | std::ios::trunc);
+    if (!out) return false;
+    out << content;
+    return out.good();
+}
 
 } // namespace
 
@@ -103,6 +152,18 @@ public:
         cfg_ = store_->load();
         githubSyncStore_ = std::make_unique<GithubSyncStore>(::core::appDatabase());
         githubSyncCfg_ = githubSyncStore_->load();
+        // 本地 git 探测（决策 #15）：结果只驱动卡片灰字，不阻塞同步。
+        githubSyncLocalGitUnavailable_ = !localGitAvailable();
+        // dirty 触发源（决策 #20）：笔记写入 + 待办增删改。token 必须存成员，丢了就退订。
+        githubSyncSubs_.push_back(::core::event::bus().subscribe(
+            ::core::event::kMdSaved,
+            [this](const std::string&) { markGithubSyncDirty("md.saved"); }));
+        githubSyncSubs_.push_back(::core::event::bus().subscribe(
+            ::core::event::kTodoCreated,
+            [this](const std::string&) { markGithubSyncDirty("todo.created"); }));
+        githubSyncSubs_.push_back(::core::event::bus().subscribe(
+            ::core::event::kTodoCompleted,
+            [this](const std::string&) { markGithubSyncDirty("todo.completed"); }));
         // 注册 app.read_settings；name 冲突记日志不中断。
         appReadSettingsTool_ =
             makeAppReadSettingsTool(::core::appDatabase());
@@ -131,6 +192,10 @@ public:
     }
 
     void onStop() override {
+        // 先收后台线程再放资源：GitHub Sync 线程体捕获 this，join 前释放任何成员都会悬垂。
+        if (githubSyncThread_.joinable()) githubSyncThread_.join();
+        // 退订 dirty 事件（token 析构即退订；不清会留下悬垂 this 的 handler）。
+        githubSyncSubs_.clear();
         // 先注销工具再释放（registry find() 返回 shared_ptr keep-alive，在跑 run 不会悬垂）。
         ::core::ToolRegistry::instance().unregisterTool("app.read_settings");
         appReadSettingsTool_.reset();
@@ -474,24 +539,601 @@ public:
         if (githubSyncStore_) githubSyncStore_->save(githubSyncCfg_);
         setStatus(on ? "GitHub 同步已启用" : "GitHub 同步已禁用");
         LOG_INFO("Settings: GitHub Sync " + std::string(on ? "启用" : "关闭"));
+        if (on) maybeStartFirstGithubSync();
     }
 
-    void githubSyncPush() {
-        githubSyncStatus_ = "同步功能开发中...";
-        githubSyncStatusError_ = false;
-        setStatus("GitHub Sync: 推送功能开发中，请期待后续版本");
-        LOG_INFO("Settings: GitHub Sync push 触发（占位）");
+    // 首次方向（决策 #16）：启用开关打开且配置齐全时跑一次首次同步
+    //（远端有数据 → 拉取覆盖；没有 → 首次上传）。只跑一次：成功后落
+    // first_sync_done，repoUrl/branch 变更即清除（换仓 = 重新判定方向）。
+    // 配置不齐（URL/Token 缺）静默跳过——用户手动操作时自会得到明确报错，
+    // 不能在拨开关的瞬间弹错误弹窗。
+    void maybeStartFirstGithubSync() {
+        if (githubSyncThread_.joinable()) return;
+        if (!githubSyncStore_) return;
+        if (githubSyncCfg_.repoUrl.empty()) return;
+        auto done = githubSyncStore_->isFirstSyncDone();
+        if (done.isOk() && done.value()) return;
+        const bool hasToken = !githubSyncTokenDraft_.empty() ||
+                              GithubSyncStore::loadToken().isOk();
+        if (!hasToken) return;
+        startGithubSyncAction(SyncAction::FirstSync, /*manual=*/true);
     }
 
-    void githubSyncPull() {
-        githubSyncStatus_ = "拉取功能开发中...";
+    // 目标仓库/分支变了 → 首次方向重新判定（下次启用或手动同步生效）。
+    void clearGithubSyncFirstSyncFlag(const char* what) {
+        if (!githubSyncStore_) return;
+        if (auto r = githubSyncStore_->clearFirstSyncDone(); r.isFail()) {
+            LOG_WARN(std::string("Settings: 清除首次同步标记失败（") + what +
+                     "）: " + r.errorMessage());
+        }
+    }
+
+    void githubSyncPush() { startGithubSyncAction(SyncAction::Push, true); }
+
+    void githubSyncPull() { startGithubSyncAction(SyncAction::Pull, true); }
+
+    void applyGithubSyncTestConnection() {
+        startGithubSyncAction(SyncAction::Test, true);
+    }
+
+    // 409 冲突弹窗的主动作：拉取远端后再推（二次确认已在弹窗内完成）。
+    void githubSyncPullThenPush() {
+        startGithubSyncAction(SyncAction::PullThenPush, true);
+    }
+
+    // 失败弹窗「重试」：按上次动作重跑（无上次 → 测试连接）。
+    void retryGithubSync() {
+        closeGithubSyncErrorDialog();
+        startGithubSyncAction(githubSyncLastAction_ == SyncAction::None
+                                  ? SyncAction::Test
+                                  : githubSyncLastAction_,
+                              true);
+    }
+
+    void showGithubSyncErrorDetail() { githubSyncErrorDialog_.open = true; }
+
+    void closeGithubSyncErrorDialog() {
+        githubSyncErrorDialog_.open = false;
+        githubSyncErrorDialog_.conflictConfirmArmed = false;
+    }
+
+    // 复制详情：文本由弹窗拼好，这里只落 EUI-NEO 剪贴板 + 回执。
+    void copyGithubSyncDetail(const std::string& text) {
+        ::core::window::setClipboardText(text);
+        showToast("已复制详情");
+    }
+
+    // 自动同步判定（决策 #14/#20）：dirty 且过 5 分钟窗口才自动推；手动绕开。
+    void maybeAutoGithubSync() {
+        if (!githubSyncCfg_.enabled || !githubSyncDirty_) return;
+        if (githubSyncThread_.joinable()) return;
+        if (!gsync::throttleDue(githubSyncLastCommitSec_, nowSec())) return;
+        startGithubSyncAction(SyncAction::Push, /*manual=*/false);
+    }
+
+    // dirty 触发源（决策 #20）：笔记写入 + 待办增删改。其他配置变更不主动触发。
+    void markGithubSyncDirty(const char* source) {
+        if (githubSyncDirty_) return;
+        githubSyncDirty_ = true;
+        LOG_INFO(std::string("Settings: GitHub Sync 置 dirty（来源=") + source + "）");
+    }
+
+    // 无 git 警告（决策 #15）：用户改配置时提示一次，不阻塞同步、不在启动/失败时弹。
+    void maybeWarnNoLocalGit() {
+        if (!githubSyncLocalGitUnavailable_ || githubSyncNoGitWarned_) return;
+        githubSyncNoGitWarned_ = true;
+        showToast("本地未检测到 git",
+                  "同步仍可用，但没有本地版本历史（远端 + 本地备份兜底）", false);
+    }
+
+    // 前置校验失败等 UI 线程内的即时错误：进错误行 + 直接开详情弹窗。
+    void setGithubSyncError(const std::string& msg) {
+        githubSyncStatus_ = msg;
+        githubSyncStatusError_ = true;
+        githubSyncError_ = msg;
+        githubSyncErrorDialog_.variant = GitErrorDialogVariant::Error;
+        githubSyncErrorDialog_.conflictConfirmArmed = false;
+        githubSyncErrorDialog_.selectedLogIndex = 0;
+        githubSyncErrorDialog_.open = true;
+        LOG_WARN("Settings: GitHub Sync " + msg);
+    }
+
+    // 发起一个后台同步动作。三按钮在运行中已禁用，这里的 joinable 判定是兜底。
+    void startGithubSyncAction(SyncAction action, bool manual) {
+        harvestGithubSync();
+        if (githubSyncThread_.joinable()) return;
+        if (githubSyncCfg_.repoUrl.empty()) {
+            setGithubSyncError("未配置仓库 URL");
+            return;
+        }
+        // 节流（决策 #14）：自动同步 5 分钟内最多一次；手动「立即同步」绕开（#17）。
+        if (!manual && !gsync::throttleDue(githubSyncLastCommitSec_, nowSec())) {
+            return;
+        }
+        std::string token = githubSyncTokenDraft_;
+        if (token.empty()) {
+            auto t = GithubSyncStore::loadToken();
+            if (t.isOk()) token = t.value();
+        }
+        if (token.empty()) {
+            setGithubSyncError("未配置 Token（请在上方填写后再操作）");
+            return;
+        }
+        // 用户在本次会话里填过 Token → 落 keychain（下次启动仍可用）。
+        if (!githubSyncTokenDraft_.empty()) {
+            auto saved = GithubSyncStore::saveToken(githubSyncTokenDraft_);
+            if (saved.isFail()) {
+                LOG_WARN("Settings: GitHub Sync Token 落 keychain 失败: " +
+                         saved.errorMessage());
+            }
+        }
+
+        githubSyncLastAction_ = action;
+        githubSyncLastManual_ = manual;
+        githubSyncRunning_ = true;
+        githubSyncError_.clear();
+        githubSyncStatus_.clear();
         githubSyncStatusError_ = false;
-        setStatus("GitHub Sync: 拉取功能开发中，请期待后续版本");
-        LOG_INFO("Settings: GitHub Sync pull 触发（占位）");
+        githubSyncLogs_.clear();
+        githubSyncBranchHint_.clear();
+        publishGithubSyncProgress("① 准备中…");
+        githubSyncProgress_ = "① 准备中…";
+
+        const std::string repoUrl = githubSyncCfg_.repoUrl;
+        const std::string branch = githubSyncCfg_.branch;
+        githubSyncThread_ = std::thread([this, action, repoUrl, token, branch] {
+            runGithubSyncAction(action, repoUrl, token, branch);
+            githubSyncDone_.store(true, std::memory_order_release);
+            core::platform::requestUiUpdate();   // 就绪之后才唤醒（次序反了 UI 抢跑读不到结果）
+        });
+        LOG_INFO("Settings: GitHub Sync 后台任务启动（action=" +
+                 std::to_string(static_cast<int>(action)) +
+                 (manual ? "，手动" : "，自动") + "）");
+    }
+
+    // 后台线程体：platform::github 的唯一调用点。结果暂存 staged_*（锁内），
+    // 由 harvestGithubSync 在 join 后搬到 UI 侧成员。
+    void runGithubSyncAction(SyncAction action, const std::string& repoUrl,
+                             const std::string& token,
+                             const std::string& branch) {
+        const auto parts = platform::github::GithubApi::parseRepoUrl(repoUrl);
+        std::string summary;
+        bool ok = false;
+        bool conflict = false;
+        bool publicRepo = false;
+        std::string branchHint;
+        if (parts.first.empty() || parts.second.empty()) {
+            summary = "仓库 URL 无法解析（需要 https://github.com/<owner>/<repo>）";
+        } else {
+            platform::github::GithubApi api(token, parts.first, parts.second);
+            switch (action) {
+                case SyncAction::Test: {
+                    // 仓库可见性（决策 #13：public 黄字提醒，不硬拦）
+                    auto repo = api.getRepo();
+                    if (repo.isOk()) publicRepo = repo.value().isPrivate == false;
+                    auto report = api.testConnection(
+                        [this](const platform::github::TestStep& step) {
+                            publishGithubSyncProgress(step.name +
+                                                      (step.ok ? " ✓" : " ✗"));
+                        });
+                    ok = report.ok;
+                    summary = report.summary;
+                    break;
+                }
+                case SyncAction::Push:
+                    ok = runGithubSyncPush(api, branch, summary, conflict,
+                                           branchHint);
+                    break;
+                case SyncAction::Pull:
+                    ok = runGithubSyncPull(api, branch, summary);
+                    break;
+                case SyncAction::PullThenPush: {
+                    std::string pullSummary;
+                    if (!runGithubSyncPull(api, branch, pullSummary)) {
+                        summary = "先拉取失败：" + pullSummary;
+                        break;
+                    }
+                    ok = runGithubSyncPush(api, branch, summary, conflict,
+                                           branchHint);
+                    if (ok) summary = "已拉取远端后再推送：" + summary;
+                    break;
+                }
+                case SyncAction::FirstSync:
+                    ok = runGithubSyncFirstSync(api, branch, summary, conflict,
+                                                branchHint);
+                    break;
+                case SyncAction::None:
+                    break;
+            }
+            if (summary.empty()) summary = ok ? "完成" : "失败";
+            std::lock_guard<std::mutex> lk(githubSyncMutex_);
+            githubSyncStagedLogs_ = api.recentLog();
+        }
+        if (summary.empty()) summary = ok ? "完成" : "失败";
+        std::lock_guard<std::mutex> lk(githubSyncMutex_);
+        githubSyncStagedOk_ = ok;
+        githubSyncStagedSummary_ = summary;
+        githubSyncStagedConflict_ = conflict;
+        githubSyncStagedPublicRepo_ = publicRepo;
+        githubSyncStagedBranchHint_ = branchHint;
+    }
+
+    // 首次方向（决策 #16）：远端已有 database.sql → 先拉取覆盖（含备份）再推送；
+    // 远端没有 → 首次上传（runGithubSyncPush 内含分支自动创建）。
+    bool runGithubSyncFirstSync(platform::github::GithubApi& api,
+                                const std::string& branch,
+                                std::string& summary, bool& conflict,
+                                std::string& branchHint) {
+        publishGithubSyncProgress("① 探测远端数据…");
+        auto probe = api.getFile(gsync::kRemoteSqlPath, branch);
+        const bool exists = probe.isOk() && probe.value().exists;
+        const bool missing =
+            probe.isFail() && probe.errorCode() == core::ErrorCode::NotFound;
+        switch (gsync::firstSyncChoice(exists, missing)) {
+            case gsync::FirstSyncChoice::PullThenPush: {
+                std::string pullSummary;
+                if (!runGithubSyncPull(api, branch, pullSummary)) {
+                    summary = "首次拉取失败：" + pullSummary;
+                    return false;
+                }
+                if (!runGithubSyncPush(api, branch, summary, conflict,
+                                       branchHint)) {
+                    return false;
+                }
+                summary = "已用远端数据覆盖本地并推送：" + summary;
+                return true;
+            }
+            case gsync::FirstSyncChoice::Push: {
+                if (!runGithubSyncPush(api, branch, summary, conflict,
+                                       branchHint)) {
+                    return false;
+                }
+                summary = "首次上传完成：" + summary;
+                return true;
+            }
+            case gsync::FirstSyncChoice::Fail:
+                summary = "探测远端失败：" + (probe.isFail()
+                                                  ? probe.errorMessage()
+                                                  : std::string("远端状态未知"));
+                return false;
+        }
+        summary = "首次同步方向未知";
+        return false;
+    }
+
+    // 推送：dump 全库 + 笔记 → PUT / DELETE（单文件粒度 = 单次 commit）。
+    bool runGithubSyncPush(platform::github::GithubApi& api,
+                           const std::string& branch, std::string& summary,
+                           bool& conflict, std::string& branchHint) {
+        auto* db = ::core::appDatabase();
+        if (db == nullptr) {
+            summary = "数据库未就绪";
+            return false;
+        }
+        // ① 全库 dump
+        publishGithubSyncProgress("① 导出数据库…");
+        const auto dumpFile = ::core::paths::sqlDumpFile();
+        auto exported = ::core::sql_dump::exportToFile(*db, dumpFile,
+                                                       kGithubSyncSkipTables);
+        if (exported.isFail()) {
+            summary = "导出失败：" + exported.errorMessage();
+            return false;
+        }
+        std::string dump;
+        if (!readFileToString(dumpFile, dump)) {
+            summary = "读取导出文件失败";
+            return false;
+        }
+
+        // ② 分支：不存在则以仓库默认分支为基点自动创建（决策 #10/#16）。
+        publishGithubSyncProgress("② 校验分支…");
+        auto repo = api.getRepo();
+        if (repo.isFail()) {
+            summary = "读取仓库信息失败：" + repo.errorMessage();
+            return false;
+        }
+        auto probe = api.getFile(gsync::kRemoteSqlPath, branch);
+        const bool branchMissing =
+            probe.isFail() && probe.errorCode() == core::ErrorCode::NotFound;
+        if (branchMissing) {
+            auto created =
+                api.createRef(branch, repo.value().defaultBranch);
+            if (created.isFail()) {
+                summary = "创建分支 " + branch + " 失败：" +
+                          created.errorMessage();
+                return false;
+            }
+            branchHint = gsync::branchCreatedHint(branch);
+        }
+
+        // ③ database.sql（sha 作冲突检测：远端已变 → 409）
+        publishGithubSyncProgress("③ 上传 database.sql…");
+        std::string sha;
+        if (probe.isOk() && probe.value().exists) sha = probe.value().sha;
+        auto put = api.putFile(gsync::kRemoteSqlPath, dump,
+                               "DevDesk sync: database.sql", sha);
+        if (put.isFail()) {
+            if (put.errorCode() == core::ErrorCode::Conflict) {
+                conflict = true;
+                summary = "远端 database.sql 已被改动（409 冲突）";
+            } else {
+                summary = "上传 database.sql 失败：" + put.errorMessage();
+            }
+            return false;
+        }
+
+        // ④ 笔记变更集（决策 #19 删除传播）：远端基线 = 上次推送登记
+        //（github_sync:sha:notes/*），本地有 → PUT，登记有而本地无 → DELETE。
+        // 基线不含「从未由本机推送过」的远端文件——首次接管既有仓库不误删。
+        publishGithubSyncProgress("④ 同步笔记…");
+        const auto local = collectLocalNotes();
+        auto synced = githubSyncStore_->syncedNoteNames();
+        if (synced.isFail()) {
+            summary = "读取同步登记失败：" + synced.errorMessage();
+            return false;
+        }
+        const auto changes = gsync::diffNotes(local, synced.value());
+        int putCount = 0;
+        int delCount = 0;
+        for (const auto& change : changes) {
+            if (change.kind == gsync::FileChange::Kind::Put) {
+                auto cur = api.getFile(change.path, branch);
+                const std::string curSha =
+                    (cur.isOk() && cur.value().exists) ? cur.value().sha
+                                                       : std::string();
+                auto r = api.putFile(change.path, change.content,
+                                     "DevDesk sync: " + change.path, curSha);
+                if (r.isFail()) {
+                    summary = "上传笔记 " + change.path + " 失败：" +
+                              r.errorMessage();
+                    return false;
+                }
+                // 登记远端 sha（PUT 成功 = 远端 sha 已变；拿不到新 sha 就存占位，
+                // 下轮 DELETE 前会重新 GET 现值，占位只影响登记精度不影响正确性）。
+                const std::string sha = r.isOk() ? r.value() : std::string("put");
+                if (auto rec = githubSyncStore_->recordSyncedNote(
+                        change.path.substr(
+                            std::string(gsync::kRemoteNotesDir).size()),
+                        sha);
+                    rec.isFail()) {
+                    LOG_WARN("Settings: 笔记推送登记失败 " + change.path + ": " +
+                             rec.errorMessage());
+                }
+                ++putCount;
+            } else {
+                const std::string name = change.path.substr(
+                    std::string(gsync::kRemoteNotesDir).size());
+                // 安全栏：登记有而本地读不到 ≠ 本地已删。文件还在磁盘上
+                //（本轮读内容失败等瞬态原因）→ 不删远端、不清登记，下轮再判。
+                std::error_code existsEc;
+                const bool stillThere =
+                    std::filesystem::exists(
+                        ::core::paths::markdownDir() / name, existsEc) &&
+                    !existsEc;
+                if (stillThere) {
+                    LOG_WARN("Settings: 本地文件仍在但未能读取，跳过删除远端 " +
+                             change.path);
+                    continue;
+                }
+                // DELETE 需要远端现值 sha：先 GET；远端已没有 = 无需删，只清登记。
+                auto cur = api.getFile(change.path, branch);
+                if (cur.isOk() && cur.value().exists) {
+                    auto r = api.deleteFile(change.path,
+                                            "DevDesk sync: delete " + change.path,
+                                            cur.value().sha);
+                    if (r.isFail()) {
+                        summary = "删除远端笔记 " + change.path + " 失败：" +
+                                  r.errorMessage();
+                        return false;
+                    }
+                }
+                if (auto f = githubSyncStore_->forgetSyncedNote(name);
+                    f.isFail()) {
+                    LOG_WARN("Settings: 笔记删除登记清理失败 " + name + ": " +
+                             f.errorMessage());
+                }
+                ++delCount;
+            }
+        }
+        summary = "已推送 database.sql 与 " + std::to_string(putCount) +
+                  " 篇笔记" + (delCount > 0 ? "（删除 " + std::to_string(delCount) +
+                                              " 篇）" : "");
+        return true;
+    }
+
+    // 拉取：备份本地库 → 覆盖导入（决策 #11）。
+    bool runGithubSyncPull(platform::github::GithubApi& api,
+                           const std::string& branch, std::string& summary) {
+        publishGithubSyncProgress("① 下载 database.sql…");
+        auto remote = api.getFile(gsync::kRemoteSqlPath, branch);
+        if (remote.isFail()) {
+            summary = "下载失败：" + remote.errorMessage();
+            return false;
+        }
+        if (!remote.value().exists || remote.value().content.empty()) {
+            summary = "远端 database.sql 不存在或为空";
+            return false;
+        }
+        auto* db = ::core::appDatabase();
+        if (db == nullptr) {
+            summary = "数据库未就绪";
+            return false;
+        }
+        // 覆盖本地 DB 前必须先备份（备份失败即中止，绝不在无退路时覆盖）。
+        publishGithubSyncProgress("② 备份本地数据库…");
+        std::string backupName;
+        auto backup = backupLocalDb(*db, backupName);
+        if (backup.isFail()) {
+            summary = "备份失败，已中止拉取：" + backup.errorMessage();
+            return false;
+        }
+        const auto dumpFile = ::core::paths::sqlDumpFile();
+        if (!writeFileFromString(dumpFile, remote.value().content)) {
+            summary = "写入临时文件失败";
+            return false;
+        }
+        publishGithubSyncProgress("③ 导入数据库…");
+        auto imported = ::core::sql_dump::importFromFile(*db, dumpFile);
+        if (imported.isFail()) {
+            summary = "导入失败：" + imported.errorMessage();
+            return false;
+        }
+        summary = "已拉取并导入 database.sql（本地备份：" + backupName + "）";
+        return true;
+    }
+
+    // 备份本地库到 backups/devdesk-<ts>.db（保留最近 5 份，决策 #11）。
+    // 先 wal_checkpoint 再整文件拷贝：WAL 里未回写的页不 checkpoint 会丢。
+    core::Result<void> backupLocalDb(core::data::SqliteDb& db,
+                                     std::string& outName) {
+        const auto dbFile = ::core::paths::sqliteDbFile();
+        const auto dir = ::core::paths::appDataDir() / gsync::kBackupDirName;
+        std::error_code ec;
+        std::filesystem::create_directories(dir, ec);
+        if (ec) {
+            return core::Result<void>::fail(core::ErrorCode::FileWriteFailed,
+                                            "创建备份目录失败：" + ec.message());
+        }
+        auto cp = db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+        if (cp.isFail()) {
+            LOG_WARN("Settings: wal_checkpoint 失败（继续备份）: " +
+                     cp.errorMessage());
+        }
+        const std::string name = gsync::backupFileName(nowSec());
+        const auto target = dir / name;
+        std::filesystem::copy_file(dbFile, target,
+                                   std::filesystem::copy_options::overwrite_existing,
+                                   ec);
+        if (ec) {
+            return core::Result<void>::fail(core::ErrorCode::FileWriteFailed,
+                                            "拷贝数据库失败：" + ec.message());
+        }
+        gsync::pruneBackups(dir, gsync::kBackupPrefix, gsync::kBackupKeep);
+        outName = name;
+        return core::Result<void>::ok();
+    }
+
+    // 本地笔记快照（文件名 → 内容）。
+    static std::map<std::string, std::string> collectLocalNotes() {
+        std::map<std::string, std::string> out;
+        std::error_code ec;
+        const auto dir = ::core::paths::markdownDir();
+        if (!std::filesystem::is_directory(dir, ec)) return out;
+        for (std::filesystem::directory_iterator it(dir, ec), end; it != end;
+             it.increment(ec)) {
+            if (ec) break;
+            std::error_code fec;
+            if (!it->is_regular_file(fec)) continue;
+            const std::string name = it->path().filename().string();
+            if (name.size() < 3 || name.compare(name.size() - 3, 3, ".md") != 0) {
+                continue;
+            }
+            std::string content;
+            if (readFileToString(it->path(), content)) {
+                out.emplace(name, std::move(content));
+            }
+        }
+        return out;
+    }
+
+    // 本地 git 探测（决策 #15 / 审计 F8）：平台差异在 local_git_probe_*.cpp
+    //（macOS 直接调 /usr/bin/git 会弹 CLT 安装 GUI，故按平台拆、只查不执行）。
+
+    // 后台线程写阶段文案（UI 每帧消费）。
+    void publishGithubSyncProgress(const std::string& text) {
+        std::lock_guard<std::mutex> lk(githubSyncMutex_);
+        githubSyncProgressPending_ = text;
+    }
+
+    // compose 每帧：① 消费进度；② 任务完成则 join + 落结果（失败弹详情 / 409 弹冲突）。
+    void harvestGithubSync() {
+        {
+            std::lock_guard<std::mutex> lk(githubSyncMutex_);
+            if (!githubSyncProgressPending_.empty()) {
+                githubSyncProgress_ = githubSyncProgressPending_;
+                githubSyncProgressPending_.clear();
+            }
+        }
+        if (!githubSyncThread_.joinable()) return;
+        if (!githubSyncDone_.load(std::memory_order_acquire)) return;
+        githubSyncThread_.join();   // join 即 happens-before，之后读 staged_* 安全
+        githubSyncDone_.store(false, std::memory_order_release);
+        githubSyncRunning_ = false;
+        githubSyncProgress_.clear();
+        bool conflict = false;
+        {
+            std::lock_guard<std::mutex> lk(githubSyncMutex_);
+            githubSyncLogs_ = githubSyncStagedLogs_;
+            githubSyncResultOk_ = githubSyncStagedOk_;
+            githubSyncResultSummary_ = githubSyncStagedSummary_;
+            conflict = githubSyncStagedConflict_;
+            if (githubSyncStagedPublicRepo_) githubSyncRepoPublic_ = true;
+            if (!githubSyncStagedBranchHint_.empty()) {
+                githubSyncBranchHint_ = githubSyncStagedBranchHint_;
+            }
+            githubSyncStagedLogs_.clear();
+            githubSyncProgressPending_.clear();
+        }
+        githubSyncStatus_ = githubSyncResultSummary_;
+        githubSyncStatusError_ = !githubSyncResultOk_;
+        if (githubSyncResultOk_) {
+            // commit 成功 → 清 dirty + 记时刻（节流窗口起点，决策 #14）。
+            githubSyncDirty_ = false;
+            githubSyncLastCommitSec_ = nowSec();
+            githubSyncError_.clear();
+            // 首次方向跑成功 → 落「首次已完成」（repoUrl/branch 变更时清除）。
+            if (githubSyncLastAction_ == SyncAction::FirstSync &&
+                githubSyncStore_) {
+                if (auto r = githubSyncStore_->setFirstSyncDone(); r.isFail()) {
+                    LOG_WARN("Settings: 首次同步标记落库失败: " +
+                             r.errorMessage());
+                }
+            }
+            LOG_INFO("Settings: GitHub Sync 完成: " + githubSyncResultSummary_);
+            return;
+        }
+        githubSyncError_ = githubSyncResultSummary_;
+        githubSyncErrorDialog_.selectedLogIndex = 0;
+        githubSyncErrorDialog_.conflictConfirmArmed = false;
+        githubSyncErrorDialog_.variant =
+            conflict ? GitErrorDialogVariant::Conflict409
+                     : GitErrorDialogVariant::Error;
+        // 手动操作失败 → 弹窗；自动同步失败只留卡片红字 + 详情入口（决策 #6）。
+        if (githubSyncLastAction_ != SyncAction::None && githubSyncLastManual_) {
+            githubSyncErrorDialog_.open = true;
+        }
+        LOG_ERROR("Settings: GitHub Sync 失败: " + githubSyncResultSummary_);
+    }
+
+    // 错误详情弹窗（compose 每帧绘制；open=false 时整树仍建、面板透明）。
+    void drawGithubSyncErrorDialog(eui::Ui& ui, const eui::Screen& screen,
+                                   const core::theme::Tokens& t) {
+        GitErrorDialogIn in;
+        in.summary = githubSyncError_;
+        in.logs = [this] { return githubSyncLogs_; };
+
+        GitErrorDialogActions a;
+        a.retry = [this] { retryGithubSync(); };
+        a.pullThenPush = [this] { githubSyncPullThenPush(); };
+        a.close = [this] { closeGithubSyncErrorDialog(); };
+        a.copyDetail = [this](const std::string& text) {
+            copyGithubSyncDetail(text);
+        };
+        a.selectLog = [this](int idx) {
+            githubSyncErrorDialog_.selectedLogIndex = idx;
+        };
+        a.logScrolled = [this](float v) {
+            githubSyncErrorDialog_.logScrollOffset = v;
+        };
+        drawGitErrorDialog(ui, screen, t, githubSyncErrorDialog_, in, a);
     }
 
     void compose(eui::Ui& ui, const eui::Screen& screen) override {
         const auto& t = core::theme::current();
+        // GitHub Sync 后台任务的每帧收割（进度 + 完成落结果）；与 tab 无关，恒跑。
+        harvestGithubSync();
+        // 自动同步判定（dirty + 节流窗口）；手动按钮不走这里。
+        maybeAutoGithubSync();
         const float pad = t.sizes.spacingXXLarge;
         const float contentW = screen.width - pad * 2.0f;
 
@@ -577,6 +1219,7 @@ public:
             .build();
 
         drawToast(ui, screen, t);
+        drawGithubSyncErrorDialog(ui, screen, t);
 
         LOG_DEBUG("Settings 模块 compose 完成");
     }
@@ -626,24 +1269,32 @@ private:
         a.applyGithubSyncEnabled = [this](bool on) { applyGithubSyncEnabled(on); };
         a.applyGithubSyncRepoUrl = [this](const std::string& url) {
             githubSyncCfg_.repoUrl = url;
+            clearGithubSyncFirstSyncFlag("repoUrl");
+            maybeWarnNoLocalGit();
         };
         a.applyGithubSyncBranch = [this](const std::string& branch) {
             githubSyncCfg_.branch = branch;
+            clearGithubSyncFirstSyncFlag("branch");
+            maybeWarnNoLocalGit();
         };
         a.setGithubSyncTokenDraft = [this](const std::string& token) {
             githubSyncTokenDraft_ = token;
+            maybeWarnNoLocalGit();
         };
         a.applyGithubSyncAutoPush = [this](bool on) {
             githubSyncCfg_.autoPush = on;
         };
         a.githubSyncPush = [this] { githubSyncPush(); };
         a.githubSyncPull = [this] { githubSyncPull(); };
+        a.githubSyncTestConnection = [this] { applyGithubSyncTestConnection(); };
+        a.githubSyncShowErrorDetail = [this] { showGithubSyncErrorDetail(); };
 
         return a;
     }
 
     // 注册表卡高解析：Fixed = 表内常量；ProxyWarnings = 警告行数推导；FillRemainder = 剩余视口高。
-    static float cardHeight(const CardSpec& spec, float proxyH, float remain) {
+    static float cardHeight(const CardSpec& spec, float proxyH, float remain,
+                            bool githubSyncEnabled) {
         switch (spec.heightKind) {
         case CardHeightKind::Fixed:
             // spec.height 是 100% 档基准，运行期随生效字号放大：卡高不同步放大就会把尾行挤出卡外。
@@ -652,6 +1303,10 @@ private:
             return proxyH;
         case CardHeightKind::FillRemainder:
             return std::max(260.0f, remain);
+        case CardHeightKind::GithubSync:
+            // 未启用时卡片早退（不画表单）→ 用折叠高，否则留一大片空面板。
+            return roundFs(githubSyncEnabled ? kGithubSyncCardHeight
+                                             : kGithubSyncCollapsedHeight);
         }
         return spec.height;  // 兜底：枚举穷举，仅为满足「所有路径有返回」
     }
@@ -678,6 +1333,12 @@ private:
         in.githubSyncAutoPush = githubSyncCfg_.autoPush;
         in.githubSyncStatus = githubSyncStatus_;
         in.githubSyncStatusError = githubSyncStatusError_;
+        in.githubSyncRunning = githubSyncRunning_;
+        in.githubSyncProgress = githubSyncProgress_;
+        in.githubSyncError = githubSyncError_;
+        in.githubSyncRepoPublic = githubSyncRepoPublic_;
+        in.githubSyncBranchHint = githubSyncBranchHint_;
+        in.githubSyncLocalGitUnavailable = githubSyncLocalGitUnavailable_;
         const SettingsCardActions a = cardActions();
         const float gapY = t.sizes.spacingLarge;
         float cardY = 0.0f;
@@ -690,7 +1351,8 @@ private:
             if (spec.gate != nullptr && !moduleEnabled(cfg_, spec.gate)) {
                 continue;  // 模块关 → 整卡隐藏（不显示故障态）
             }
-            const float h = cardHeight(spec, proxyH, cardsH - cardY);
+            const float h =
+                cardHeight(spec, proxyH, cardsH - cardY, githubSyncCfg_.enabled);
             CardDrawArgs args{ui, spec.id, contentWidth, h, t,
                               cardsTopY + cardY - cardsScrollOffset_, screenH,
                               in, a};
@@ -859,6 +1521,37 @@ private:
     std::string githubSyncTokenDraft_;        // Token 输入草稿（不存明文）
     std::string githubSyncStatus_;
     bool githubSyncStatusError_ = false;
+    // GitHub Sync 后台任务：照 quotaTestThread_ 模式（原子完成位 + 每帧 compose 收割）。
+    std::thread githubSyncThread_;
+    std::atomic<bool> githubSyncDone_{false};
+    // 后台线程写、UI 线程读的共享面一律经此锁（进度文案 + 结果暂存）。
+    std::mutex githubSyncMutex_;
+    std::string githubSyncProgressPending_;   // 后台写的阶段文案（UI 每帧消费）
+    std::vector<platform::github::ApiLogEntry> githubSyncStagedLogs_;
+    std::string githubSyncStagedSummary_;
+    bool githubSyncStagedOk_ = false;
+    bool githubSyncStagedConflict_ = false;
+    bool githubSyncStagedPublicRepo_ = false;
+    std::string githubSyncStagedBranchHint_;
+    // 以下成员仅 UI 线程读写（harvest 在 join 后搬运）。
+    bool githubSyncRunning_ = false;
+    std::string githubSyncProgress_;          // 卡片进度行快照
+    std::string githubSyncError_;             // 卡片错误行快照（非空 = 显示 + 详情按钮）
+    std::vector<platform::github::ApiLogEntry> githubSyncLogs_;  // 弹窗日志源
+    std::string githubSyncResultSummary_;
+    bool githubSyncResultOk_ = false;
+    SyncAction githubSyncLastAction_ = SyncAction::None;  // 弹窗「重试」按原动作重跑
+    bool githubSyncLastManual_ = false;   // 手动失败才弹窗；自动失败只留卡片红字
+    GitErrorDialogState githubSyncErrorDialog_;
+    // 编排状态（决策 #10/#13/#14/#15/#20）
+    bool githubSyncDirty_ = false;          // 笔记写入 / 待办增删改
+    int64_t githubSyncLastCommitSec_ = 0;   // 上次 commit 时刻（节流窗口起点）
+    bool githubSyncRepoPublic_ = false;     // 测试连接发现 public 仓 → 黄字提醒
+    std::string githubSyncBranchHint_;      // 分支被自动创建提示
+    bool githubSyncLocalGitUnavailable_ = false;  // 本地 git 探测结果
+    bool githubSyncNoGitWarned_ = false;    // 无 git 警告只弹一次（改配置时触发）
+    // EventBus 订阅 token 必须持有：token 析构即退订（丢弃 = 订阅立刻失效）。
+    std::vector<::core::event::EventBus::Subscription> githubSyncSubs_;
     // app.read_settings 工具：onStart 注册 / onStop 注销；与注册表同寿（注销对未注册名是 no-op）。
     std::shared_ptr<core::ITool> appReadSettingsTool_;
     // 当前打开的下拉（7 个 bool 收成一个索引，-1 = 全关）；取值 = static_cast<int>(Dropdown)。
