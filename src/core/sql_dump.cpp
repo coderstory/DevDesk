@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <ctime>
+#include <set>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -18,6 +19,12 @@
 #include <sqlite3.h>
 
 namespace core::sql_dump {
+
+const std::vector<std::string>& defaultSkipTables() {
+    static const std::vector<std::string> kTables = {
+        "claude_call_logs", "claude_run_settings"};
+    return kTables;
+}
 
 namespace {
 
@@ -105,6 +112,106 @@ std::string tableDdl(sqlite3* handle, const std::string& table) {
     return ddl;
 }
 
+// 索引 / 触发器共用的三要素：对象名、所属表名、原始 DDL 原文
+struct SchemaObject {
+    std::string name;
+    std::string table;
+    std::string ddl;
+};
+
+// 列出 sqlite_master 里某类对象的 DDL（type 传 'index' 或 'trigger'）。
+// 排除 name LIKE 'sqlite_autoindex_%'：那是 UNIQUE / PRIMARY KEY 约束的**内部**自动索引，
+// sql 列为 NULL 不可重建，而重建表本身就会自动恢复它——导出它既没有 DDL 可写，回导也必失败。
+// 必须用 tbl_name 回带所属表：索引/触发器的导出范围跟着表的 skip / FTS 影子判据走。
+std::vector<SchemaObject> listSchemaObjects(sqlite3* handle, const char* type) {
+    std::vector<SchemaObject> objects;
+    sqlite3_stmt* stmt = nullptr;
+    const char* sql =
+        "SELECT name, tbl_name, sql FROM sqlite_master "
+        "WHERE type=? AND name NOT LIKE 'sqlite_autoindex_%' "
+        "ORDER BY name";
+    if (sqlite3_prepare_v2(handle, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        return objects;
+    }
+    sqlite3_bind_text(stmt, 1, type, -1, SQLITE_STATIC);
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        const char* name = reinterpret_cast<const char*>(
+            sqlite3_column_text(stmt, 0));
+        const char* table = reinterpret_cast<const char*>(
+            sqlite3_column_text(stmt, 1));
+        const char* ddl = reinterpret_cast<const char*>(
+            sqlite3_column_text(stmt, 2));
+        if (name && ddl) objects.push_back({name, table ? table : "", ddl});
+    }
+    sqlite3_finalize(stmt);
+    return objects;
+}
+
+// 全部 VIRTUAL TABLE 名（CREATE VIRTUAL TABLE ...）：FTS5 影子表判定的锚点
+std::set<std::string> listVirtualTables(sqlite3* handle) {
+    std::set<std::string> names;
+    sqlite3_stmt* stmt = nullptr;
+    const char* sql =
+        "SELECT name FROM sqlite_master "
+        "WHERE type='table' AND sql LIKE 'CREATE VIRTUAL TABLE%'";
+    if (sqlite3_prepare_v2(handle, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        return names;
+    }
+    while (sqlite3_step(stmt) == SQLITE_ROW) {
+        const char* name = reinterpret_cast<const char*>(
+            sqlite3_column_text(stmt, 0));
+        if (name) names.insert(name);
+    }
+    sqlite3_finalize(stmt);
+    return names;
+}
+
+// FTS5 影子表 = 表名恰为某个 VIRTUAL TABLE 名加五个影子后缀之一。
+// 不能按「名字含 _config 等」子串判：真实业务表 profile_quota_config 会被误判成
+// 影子表，从备份里静默消失。后缀清单与 FTS5 模块落表名一致，别按记忆改写。
+bool isFtsShadowName(const std::string& name,
+                     const std::set<std::string>& virtualTables) {
+    static const char* kSuffixes[] = {
+        "_content", "_idx", "_docsize", "_config", "_data"};
+    for (const char* suffix : kSuffixes) {
+        const size_t n = std::char_traits<char>::length(suffix);
+        if (name.size() > n &&
+            name.compare(name.size() - n, n, suffix) == 0) {
+            if (virtualTables.count(name.substr(0, name.size() - n)) > 0) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+// 剥掉 dump 自带的事务外壳：db.transaction 会再包一层 BEGIN，脚本里的
+// BEGIN TRANSACTION / COMMIT 原样执行会报 "cannot start a transaction within a
+// transaction"（早到的 COMMIT 还会把外层事务提前提交）。外壳是给 sqlite3 CLI
+// 直跑用的；导入侧原子性由外层事务兜（失败整体 ROLLBACK）。
+// 只剥首个 BEGIN 与最后一个 COMMIT 两个 token，其余原样保留——真外壳先于全部
+// 数据出现、后于全部数据结束，数据字面量里即便有同名文本也轮不到被剥；
+// COMMIT 之后的尾巴（外键恢复 PRAGMA 等在事务内是 no-op）**不能丢**：坏 dump
+// 尾部多出的语句要原样执行并报错，静默截断 = 悄悄少数据。
+// 无 BEGIN 的脚本原样返回。
+std::string stripTransactionShell(const std::string& sql) {
+    static const std::string kBegin = "BEGIN TRANSACTION;";
+    static const std::string kCommit = "COMMIT;";
+    const size_t b = sql.find(kBegin);
+    if (b == std::string::npos) {
+        return sql;
+    }
+    const size_t e = sql.rfind(kCommit);
+    std::string out = sql.substr(0, b);  // 外壳前的头注释保留
+    if (e != std::string::npos && e > b) {
+        out += sql.substr(b + kBegin.size(), e - b - kBegin.size());
+        out += sql.substr(e + kCommit.size());
+    } else {
+        out += sql.substr(b + kBegin.size());
+    }
+    return out;
+}
+
 } // namespace
 
 core::Result<std::string> exportToString(
@@ -115,15 +222,9 @@ core::Result<std::string> exportToString(
     sqlite3* handle = db.handle();
 
     std::set<std::string> skip(skipTables.begin(), skipTables.end());
-
-    // FTS 影子表前缀：这些表有对应的 VIRTUAL TABLE，DDL 里已有，影子表不单独导
-    // 但 sqlite_master 里影子表也列出 type='table'（而非 virtual），需跳过
-    const auto isFtsShadow = [](const std::string& name) -> bool {
-        return name.find("_content") != std::string::npos ||
-               name.find("_idx") != std::string::npos ||
-               name.find("_docsize") != std::string::npos ||
-               name.find("_config") != std::string::npos ||
-               name.find("_data") != std::string::npos;
+    const std::set<std::string> virtuals = listVirtualTables(handle);
+    const auto isFtsShadow = [&virtuals](const std::string& name) {
+        return isFtsShadowName(name, virtuals);
     };
 
     std::ostringstream out;
@@ -137,18 +238,38 @@ core::Result<std::string> exportToString(
         out << t;
         first = false;
     }
-    out << "\n\nBEGIN TRANSACTION;\n\n";
+    // foreign_keys 开关与事务外壳配套：CLI 直跑时 FK 默认关，但开着 FK 的会话
+    // （如 sqlite3 -cmd "PRAGMA foreign_keys=ON"）按表名字典序导数，子表行可能
+    // 先于父表行落库被当场拒收。PRAGMA 在事务内是 no-op，必须落在 BEGIN 之外。
+    out << "\n\nPRAGMA foreign_keys=OFF;\n\nBEGIN TRANSACTION;\n\n";
 
+    // 导出顺序四段：① 建表 DDL ② 索引 DDL ③ INSERT 数据 ④ 触发器 DDL。
+    // 索引必须在 INSERT 前，触发器必须在 INSERT 后（各自段注释写明反了会怎样）；
+    // 两段 DDL 自带 DROP IF EXISTS，之间无先后依赖。
+    std::vector<std::string> exported;
     for (const auto& table : listUserTables(handle)) {
         if (skip.count(table) || isFtsShadow(table)) continue;
-
-        // DDL
         std::string ddl = tableDdl(handle, table);
         if (ddl.empty()) continue;
+        exported.push_back(table);
         out << "-- Table: " << table << "\n";
         out << "DROP TABLE IF EXISTS \"" << table << "\";\n";
         out << ddl << ";\n\n";
+    }
 
+    // 索引写成「DROP ... IF EXISTS + 原 DDL」，重复导入同一份 dump 才幂等。
+    // 不采用改写 DDL 成 CREATE ... IF NOT EXISTS 的做法：sqlite_master 里的原文形如
+    // CREATE [UNIQUE] INDEX，前缀改写要分辨 UNIQUE、大小写与空白，而 DROP IF EXISTS
+    // 是固定前缀、与原文无关。DROP TABLE 已连带删掉所属表的索引，这里的 DROP 兜的
+    // 是「同名对象在别的表上」以及「表未被重建」的情形。
+    for (const auto& obj : listSchemaObjects(handle, "index")) {
+        if (skip.count(obj.table) || isFtsShadow(obj.table)) continue;
+        out << "-- Index: " << obj.name << "\n";
+        out << "DROP INDEX IF EXISTS \"" << obj.name << "\";\n";
+        out << obj.ddl << ";\n\n";
+    }
+
+    for (const auto& table : exported) {
         // INSERT
         std::string selectSql = "SELECT * FROM \"" + table + "\"";
         sqlite3_stmt* stmt = nullptr;
@@ -172,7 +293,17 @@ core::Result<std::string> exportToString(
         if (rowCount > 0) out << "\n";
     }
 
-    out << "COMMIT;\n";
+    // 触发器必须在 INSERT **之后**建（区别于索引）：先建的话，回导 INSERT 会把
+    // 触发器本身点着（AFTER INSERT 落审计行一类），触发器写到的表在 dump 里还有
+    // 自己的原始 INSERT，重建库的数据 = 原始 + 点火新增，还原即悄悄多数据。
+    for (const auto& obj : listSchemaObjects(handle, "trigger")) {
+        if (skip.count(obj.table) || isFtsShadow(obj.table)) continue;
+        out << "-- Trigger: " << obj.name << "\n";
+        out << "DROP TRIGGER IF EXISTS \"" << obj.name << "\";\n";
+        out << obj.ddl << ";\n\n";
+    }
+
+    out << "COMMIT;\nPRAGMA foreign_keys=ON;\n";
 
     std::string result = out.str();
     LOG_INFO("sql_dump: 导出完成，大小=" + std::to_string(result.size()) + " 字节");
@@ -195,9 +326,30 @@ core::Result<void> importFromString(
     core::data::SqliteDb& db,
     const std::string& sql) {
 
-    return db.transaction([&]() -> core::Result<void> {
-        return db.exec(sql);
+    // 导入期间临时关外键：dump 的 DDL/INSERT 按表名字典序，子表行（agent_runs 对
+    // agent_tasks 一类）可能先于父表行落库，open() 恒置 foreign_keys=ON 会当场拒收；
+    // 结束后恢复原值。PRAGMA 在事务内是 no-op，必须在 BEGIN 之外设 → 不进 transaction。
+    int fkWas = 1;  // 读不到按 ON 恢复（open() 恒置 ON）
+    if (auto pr = db.prepare("PRAGMA foreign_keys"); pr.isOk()) {
+        auto& stmt = pr.value();
+        auto stepped = stmt.step();
+        if (stepped.isOk() && stepped.value()) {
+            auto row = stmt.currentRow();
+            if (row.isOk() && !row.value().values.empty()) {
+                if (auto v = std::get_if<int64_t>(&row.value().values[0])) {
+                    fkWas = *v != 0;
+                }
+            }
+        }
+    }
+    db.exec("PRAGMA foreign_keys = OFF;");
+
+    auto result = db.transaction([&]() -> core::Result<void> {
+        return db.exec(stripTransactionShell(sql));
     });
+
+    db.exec(std::string("PRAGMA foreign_keys = ") + (fkWas ? "ON;" : "OFF;"));
+    return result;
 }
 
 core::Result<void> importFromFile(
