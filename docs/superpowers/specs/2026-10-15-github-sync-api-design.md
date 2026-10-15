@@ -44,7 +44,7 @@
 | # | 问题 | 处置 |
 |---|---|---|
 | F1 | **变更检测机制未定义**：如何判定某笔记是新增/修改/删除 | 维护本地同步状态：`app_config` 键 `github_sync:sha:<相对路径>` 存「上次同步成功后的远端 sha」，另存 `github_sync:sha:data/database.sql`。判定：本地有而状态无 → 新增；本地内容 hash 与状态记录不符 → 修改；状态有而本地无 → 删除（→ DELETE 远端）。**不用 mtime**（跨设备/备份恢复后不可靠） |
-| F2 | **`sql_dump` 不导索引/触发器**（`sql_dump.cpp` 只遍历 `listUserTables`）：导入 = DROP+重建，索引/触发器丢失；且 dump 里的 `schema_version` 与本地一致 → 迁移不会重建 → schema 静默退化 | 导出补 `sqlite_master` 中 `type='index'`（排除 `sqlite_autoindex_%`）与 `type='trigger'` 的 DDL，放在建表之后、INSERT 之前；导入前先 `DROP INDEX/TRIGGER IF EXISTS` 保证幂等。**本项属 `core/sql_dump` 修复，作为独立 ticket 先做** |
+| F2 | **`sql_dump` 不导索引/触发器**（`sql_dump.cpp` 只遍历 `listUserTables`）：导入 = DROP+重建，索引/触发器丢失；且 dump 里的 `schema_version` 与本地一致 → 迁移不会重建 → schema 静默退化 | 导出补 `sqlite_master` 中 `type='index'`（排除 `sqlite_autoindex_%`）与 `type='trigger'` 的 DDL；段序改为：① 建表 DDL ② 索引 DDL ③ INSERT ④ 触发器 DDL。**触发器必须放在 INSERT 之后（2026-10-15 T1 实测修订，偏离本表最初写法）**：若先建 AFTER INSERT 触发器，回导 INSERT 会点火触发器，重建出的数据 = 原始数据 + 点火产物，还原悄悄多数据；回环测试已钉死该顺序。索引/触发器均带 `DROP ... IF EXISTS` 保证幂等。**本项属 `core/sql_dump` 修复，作为独立 ticket 先做** |
 | F3 | **导入覆盖活库**：DROP TABLE 时其他模块持有缓存/prepared statement | 导入前：暂停后台任务（余量刷新、同步自身）；导入后：发一次全局数据重载信号（`requestUiUpdate()` + 模块 `onPageEnter` 语义的强制重载），并重新执行 `PRAGMA foreign_keys` 与索引校验。导入失败 → 从备份回滚并明确报错（不静默） |
 | F4 | **skip 表清单未定**：`exportToString` 默认导全部表 → `claude_call_logs`（日志量大）会进 dump 并上传 | 固定 `skipTables = {"claude_call_logs", "claude_run_settings"}`（与 handoff 一致），常量放 `github_sync_logic`，单测锁死 |
 | F5 | **退出时 dirty 未推** | 退出序列里：若 dirty 且距上次 commit ≥ 60s，后台尝试推一次（上限 5s 等待，超时则放弃并记日志 + 下次启动卡片提示「有未同步改动」）。不阻塞退出 |
