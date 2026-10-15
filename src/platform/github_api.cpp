@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cctype>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -276,9 +277,27 @@ core::Result<void> GithubApi::validateConfig() const {
         return core::Result<void>::fail(core::ErrorCode::InvalidApiKey,
                                         "未配置访问令牌（PAT）");
     }
-    if (owner_.empty() || repo_.empty()) {
+    // owner/repo 字符白名单（GitHub 规则）：owner 仅字母数字与连字符（1-39，首尾
+    // 不可连字符）；repo 另允许 `_` 与 `.`。手误（空格/中文/整段 URL 误填）若放行
+    // 会构造出畸形 URL，被 http 层折叠成 networkError 而白耗 3 次退避重试后误报
+    // 「网络错误」——这里发送前拦成 ValidationError，零请求
+    const auto isOwnerChar = [](char c) {
+        return std::isalnum(static_cast<unsigned char>(c)) || c == '-';
+    };
+    if (owner_.empty() || owner_.size() > 39 || owner_.front() == '-' ||
+        owner_.back() == '-' ||
+        !std::all_of(owner_.begin(), owner_.end(), isOwnerChar)) {
         return core::Result<void>::fail(core::ErrorCode::ValidationError,
-                                        "仓库归属或仓库名为空，URL 无法构造");
+                                        "仓库归属（owner）含不合法字符或超长：" + owner_);
+    }
+    const auto isRepoChar = [](char c) {
+        return std::isalnum(static_cast<unsigned char>(c)) || c == '-' || c == '_' ||
+               c == '.';
+    };
+    if (repo_.empty() ||
+        !std::all_of(repo_.begin(), repo_.end(), isRepoChar)) {
+        return core::Result<void>::fail(core::ErrorCode::ValidationError,
+                                        "仓库名（repo）含不合法字符：" + repo_);
     }
     return core::Result<void>::ok();
 }
@@ -662,6 +681,12 @@ core::Result<void> GithubApi::createRef(const std::string& branch, const std::st
                                         "网络错误：" + a.errorMessage);
     }
     if (a.resp.statusCode != 201) {
+        // POST 已被服务端受理但响应丢失 → 重试撞 422 "Reference already exists"：
+        // 分支实际已建成，视为成功（对齐「测完不留痕」——若当失败处理会漏删临时分支）
+        if (a.resp.statusCode == 422 &&
+            a.resp.body.find("already exists") != std::string::npos) {
+            return core::Result<void>::ok();
+        }
         return core::Result<void>::fail(mapStatusToError(a.resp.statusCode),
                                         httpStatusText(a.resp.statusCode));
     }
@@ -758,6 +783,13 @@ TestReport GithubApi::testConnection(std::function<void(const TestStep&)> onStep
         if (created.isFail()) {
             step.ok = false;
             step.detail = "创建临时分支失败：" + created.errorMessage();
+            // 兜底删除：POST 可能已被服务端受理但响应丢失（重试耗尽仍报失败）。
+            // 分支没建成时删的是 404，无害；只有删除也失败（非 404）才算真残留
+            if (const core::Result<void> removed = deleteRef(branch);
+                removed.isFail() && removed.errorCode() != core::ErrorCode::NotFound) {
+                residueHint = "临时分支 " + branch + " 删除失败（" + removed.errorMessage() +
+                              "），远端有残留，请手动删除";
+            }
         } else {
             const core::Result<std::string> put =
                 putFileOnBranch("devdesk-probe.txt", kProbeContent,

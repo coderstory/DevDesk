@@ -660,3 +660,136 @@ REGISTER_TEST(github_errorcode_conflict_to_string, "github: ErrorCode::Conflict 
                      std::string("Conflict"));
     return true;
 })
+
+// ---- 审计补修：createRef 受理后响应丢失 / owner-repo 白名单 ----
+
+REGISTER_TEST(github_create_ref_422_already_exists_is_success,
+              "github: createRef POST 422 already exists 视为成功（响应丢失重试撞车）", {
+    Recorder rec;
+    rec.plan.push_back(okResp(200, R"({"object":{"sha":"basesha"}})"));  // GET 基点 HEAD
+    rec.plan.push_back(okResp(422, R"({"message":"Reference already exists"})"));
+
+    std::vector<int> sleeps;
+    platform::github::GithubApi api("tok", "owner", "repo",
+                                    platform::github::RetryPolicy{3, {10, 20, 30}});
+    wire(api, rec);
+    SleepGuard guard(sleeps);
+
+    const auto created = api.createRef("devdesk-test-1", "main");
+    DOCTEST_CHECK(created.isOk());
+    DOCTEST_CHECK_EQ(rec.reqs.size(), static_cast<std::size_t>(2));  // 422 不重试
+    DOCTEST_CHECK(sleeps.empty());
+    return true;
+})
+
+REGISTER_TEST(github_create_ref_422_other_reason_still_fails,
+              "github: createRef POST 422 非 already exists 仍失败", {
+    Recorder rec;
+    rec.plan.push_back(okResp(200, R"({"object":{"sha":"basesha"}})"));
+    rec.plan.push_back(okResp(422, R"({"message":"Invalid request.","errors":[]})"));
+
+    std::vector<int> sleeps;
+    platform::github::GithubApi api("tok", "owner", "repo",
+                                    platform::github::RetryPolicy{1, {}});
+    wire(api, rec);
+    SleepGuard guard(sleeps);
+
+    const auto created = api.createRef("devdesk-test-1", "main");
+    DOCTEST_CHECK(created.isFail());
+    DOCTEST_CHECK_EQ(created.errorCode(), core::ErrorCode::ValidationError);
+    return true;
+})
+
+REGISTER_TEST(github_test_connection_create_fail_delete_fallback_no_residue,
+              "github: 建临时分支失败 → 兜底删除；删到 404 = 无残留无提示", {
+    Recorder rec;
+    rec.plan.push_back(okResp(200, R"({"login":"me"})"));                       // ①
+    rec.plan.push_back(okResp(                                                  // ②
+        200, R"({"full_name":"owner/repo","default_branch":"main","permissions":{"push":true}})"));
+    rec.plan.push_back(okResp(200, R"({"object":{"sha":"basesha","type":"commit"}})"));  // ③a
+    rec.plan.push_back(okResp(500, R"({})"));  // ③b POST 三次全 500（分支可能已建成）
+    rec.plan.push_back(okResp(500, R"({})"));
+    rec.plan.push_back(okResp(500, R"({})"));
+    rec.plan.push_back(okResp(404, R"({"message":"Not Found"})"));  // 兜底 DELETE：没建成 → 404
+
+    std::vector<int> sleeps;
+    platform::github::GithubApi api("tok", "owner", "repo",
+                                    platform::github::RetryPolicy{3, {1, 2, 3}});
+    wire(api, rec);
+    SleepGuard guard(sleeps);
+
+    const auto report = api.testConnection({});
+    DOCTEST_CHECK(!report.ok);
+    DOCTEST_CHECK(report.summary.find("创建临时分支失败") != std::string::npos);
+    // 兜底删除真的发出了（POST×3 + DELETE×1）
+    DOCTEST_CHECK_EQ(rec.reqs.size(), static_cast<std::size_t>(7));
+    DOCTEST_CHECK_EQ(rec.reqs[6].method, std::string("DELETE"));
+    DOCTEST_CHECK(rec.reqs[6].url.find("/git/refs/heads/devdesk-test-") != std::string::npos);
+    // 404 = 分支没建成，不算残留，summary 不带提示
+    DOCTEST_CHECK(report.summary.find("残留") == std::string::npos);
+    return true;
+})
+
+REGISTER_TEST(github_test_connection_create_fail_delete_fails_hints_residue,
+              "github: 建临时分支失败且兜底删除也失败 → summary 提示残留", {
+    Recorder rec;
+    rec.plan.push_back(okResp(200, R"({"login":"me"})"));
+    rec.plan.push_back(okResp(
+        200, R"({"full_name":"owner/repo","default_branch":"main","permissions":{"push":true}})"));
+    rec.plan.push_back(okResp(200, R"({"object":{"sha":"basesha","type":"commit"}})"));
+    rec.plan.push_back(failNet("connection reset"));  // POST 三次全网络错（分支可能已建成）
+    rec.plan.push_back(failNet("connection reset"));
+    rec.plan.push_back(failNet("connection reset"));
+    rec.plan.push_back(okResp(403, R"({})"));  // 兜底 DELETE 被拒（非 404）→ 真残留
+
+    std::vector<int> sleeps;
+    platform::github::GithubApi api("tok", "owner", "repo",
+                                    platform::github::RetryPolicy{3, {1, 2, 3}});
+    wire(api, rec);
+    SleepGuard guard(sleeps);
+
+    const auto report = api.testConnection({});
+    DOCTEST_CHECK(!report.ok);
+    DOCTEST_CHECK(report.summary.find("创建临时分支失败") != std::string::npos);
+    DOCTEST_CHECK(report.summary.find("残留") != std::string::npos);
+    DOCTEST_CHECK_EQ(rec.reqs.size(), static_cast<std::size_t>(7));
+    return true;
+})
+
+REGISTER_TEST(github_validate_config_owner_repo_charset,
+              "github: owner/repo 字符白名单——不合法 → ValidationError 零请求", {
+    Recorder rec;
+    std::vector<int> sleeps;
+    SleepGuard guard(sleeps);
+
+    // 断言宏是 `return false` 展开，不能进 auto 推导 lambda——所以 lambda 返回 bool、调用点再 CHECK
+    const auto expectRejected = [&rec](const std::string& owner,
+                                       const std::string& repo) -> bool {
+        platform::github::GithubApi api("tok", owner, repo,
+                                        platform::github::RetryPolicy{3, {1, 2, 3}});
+        wire(api, rec);
+        const auto r = api.getAuthenticatedUser();
+        DOCTEST_CHECK(r.isFail());
+        DOCTEST_CHECK_EQ(r.errorCode(), core::ErrorCode::ValidationError);
+        return true;
+    };
+    DOCTEST_CHECK(expectRejected("own er", "repo"));        // 空格
+    DOCTEST_CHECK(expectRejected("owner", "my repo"));      // repo 空格
+    DOCTEST_CHECK(expectRejected("-lead", "repo"));         // 首连字符
+    DOCTEST_CHECK(expectRejected("trail-", "repo"));        // 尾连字符
+    DOCTEST_CHECK(expectRejected(std::string(40, 'a'), "repo"));  // owner 超 39 上限
+    DOCTEST_CHECK(expectRejected("张三", "repo"));           // 非 ASCII
+    DOCTEST_CHECK(expectRejected("owner", "repo:x"));       // repo 冒号
+    DOCTEST_CHECK(rec.reqs.empty());         // 全部发送前拦截
+    DOCTEST_CHECK(sleeps.empty());
+
+    // 合法形态（连字符/点/下划线）放行：请求真的发出
+    platform::github::GithubApi api("tok", "octo-cat", "my.repo_name-2",
+                                    platform::github::RetryPolicy{1, {}});
+    wire(api, rec);
+    rec.plan.push_back(okResp(200, R"({"login":"me"})"));
+    const auto good = api.getAuthenticatedUser();
+    DOCTEST_CHECK(good.isOk());
+    DOCTEST_CHECK_EQ(rec.reqs.size(), static_cast<std::size_t>(1));
+    return true;
+})
