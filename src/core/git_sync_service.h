@@ -5,6 +5,7 @@
 // 线程安全：所有操作持内部 mutex，一次只跑一个 git 命令。
 #pragma once
 
+#include <filesystem>
 #include <functional>
 #include <mutex>
 #include <string>
