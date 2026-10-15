@@ -212,7 +212,7 @@ void Scheduler::eventThreadLoop() {
 
 core::Result<void> Scheduler::drainEventQueue() {
     reapDone();
-    std::vector<std::string> pending;
+    std::deque<std::string> pending;
     {
         std::lock_guard<std::mutex> lock(mu_);
         pending.swap(eventQueue_);   // 取走即清：路由耗时不再堵 onEvent 入队

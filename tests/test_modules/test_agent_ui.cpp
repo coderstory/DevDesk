@@ -2216,11 +2216,18 @@ REGISTER_TEST(agent_ui_new_task_context_note_and_autonote,
                               std::to_string(note->frame.height));
     DOCTEST_CHECK_EQ(inputText(ui2, "agent.dialog.task.note"), std::string(""));
 
-    // 自动记录开关存在且默认开
+    // 自动记录开关存在且默认开：knob.x > track.x + 1 表示 checked（右端）
     const auto* autosw = ui2.find("agent.dialog.task.autonote");
     DOCTEST_REQUIRE_MESSAGE(autosw != nullptr,
                             "新建弹窗缺 agent.dialog.task.autonote 开关");
-    DOCTEST_CHECK(autosw->checked);
+    const auto* knob = ui2.find("agent.dialog.task.autonote.knob");
+    const auto* track = ui2.find("agent.dialog.task.autonote.track");
+    DOCTEST_REQUIRE(knob != nullptr);
+    DOCTEST_REQUIRE(track != nullptr);
+    DOCTEST_CHECK_MESSAGE(knob->frame.x > track->frame.x + 1.0f,
+                          "新建任务 auto_note 默认应为开（knob 在右端），"
+                          "knob.x=" + std::to_string(knob->frame.x) +
+                          " track.x=" + std::to_string(track->frame.x));
 
     // 填 goal + 执行记忆 → 保存
     auto* goalHit = ui2.find("agent.dialog.task.goal.hit");
@@ -2284,9 +2291,16 @@ REGISTER_TEST(agent_ui_edit_dialog_prefills_context_note,
     // 回填：contextNote 与 autoNote 与库一致
     DOCTEST_CHECK_EQ(inputText(ui2, "agent.dialog.task.note"),
                      std::string("旧记忆内容"));
-    const auto* autosw = ui2.find("agent.dialog.task.autonote");
-    DOCTEST_REQUIRE(autosw != nullptr);
-    DOCTEST_CHECK(autosw->checked);   // autoNote=1 → 开
+    const auto* autosw2 = ui2.find("agent.dialog.task.autonote");
+    DOCTEST_REQUIRE(autosw2 != nullptr);
+    const auto* knob2 = ui2.find("agent.dialog.task.autonote.knob");
+    const auto* track2 = ui2.find("agent.dialog.task.autonote.track");
+    DOCTEST_REQUIRE(knob2 != nullptr);
+    DOCTEST_REQUIRE(track2 != nullptr);
+    DOCTEST_CHECK_MESSAGE(knob2->frame.x > track2->frame.x + 1.0f,
+                          "编辑回填 auto_note=1 → knob 应在右端，"
+                          "knob.x=" + std::to_string(knob2->frame.x) +
+                          " track.x=" + std::to_string(track2->frame.x));
 
     // 修改记忆内容
     auto* noteHit = ui2.find("agent.dialog.task.note.hit");

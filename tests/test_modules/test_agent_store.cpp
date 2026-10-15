@@ -436,7 +436,7 @@ REGISTER_TEST(agent_store_append_context_note_utf8_boundary,
     auto row = store.getTask(taskId.value());
     DOCTEST_REQUIRE(row.isOk());
     // 总长应 ≤ 4096
-    DOCTEST_CHECK_LE(row.value().contextNote.size(), static_cast<size_t>(4096));
+    DOCTEST_CHECK(row.value().contextNote.size() <= static_cast<size_t>(4096));
     // 末尾应是 "国" 的 3 字节完整保留
     std::string tail = row.value().contextNote.substr(
         row.value().contextNote.size() - 3);
