@@ -14,6 +14,7 @@
 #include "settings_ui_logic.h"
 
 #include "core/claude_proxy_service.h"
+#include "core/atomic_write.h"
 #include "core/database.h"
 #include "core/event_bus.h"
 #include "core/logging.h"
@@ -128,13 +129,12 @@ bool readFileToString(const std::filesystem::path& f, std::string& out) {
     return true;
 }
 
-// 整文件写入（截断）。失败 → false。
+// 整文件写入（原子替换）。失败 → false。
+// 必须原子：拉取写笔记文件的同一时刻，UI 线程可能因 kDbImported 正在重读该文件；
+// 截断式直写会让读方拿到半截内容（并被当成 lastSavedText_ 记住）。
 bool writeFileFromString(const std::filesystem::path& f,
                          const std::string& content) {
-    std::ofstream out(f, std::ios::binary | std::ios::trunc);
-    if (!out) return false;
-    out << content;
-    return out.good();
+    return core::atomicWriteFile(f, content, "笔记").isOk();
 }
 
 } // namespace
