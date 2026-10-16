@@ -916,13 +916,11 @@ public:
     // 任何冲突分支（sql PUT / 笔记 PUT / 删除传播）都经它暂存——清单空着弹
     // 确认框等于让用户在不知道会覆盖什么的情况下二次确认。
     void stashOverwriteListForConflict(
-        const std::vector<gsync::FileChange>& changes) {
+        const std::vector<std::string>& putNoteNames) {
         std::vector<std::string> overwrite{
             std::string(gsync::kRemoteSqlPath) + "（数据库）"};
-        for (const auto& change : changes) {
-            if (change.kind == gsync::FileChange::Kind::Put) {
-                overwrite.push_back(change.path);
-            }
+        for (const auto& name : putNoteNames) {
+            overwrite.push_back(gsync::remoteNotePath(name));
         }
         std::lock_guard<std::mutex> lk(githubSyncMutex_);
         githubSyncStagedOverwriteFiles_ = std::move(overwrite);
@@ -982,11 +980,30 @@ public:
             branchHint = gsync::branchCreatedHint(branch);
         }
 
-        // ③ 笔记变更集先算（纯本地，零网络；决策 #19 + spec F1 内容比对）：
-        // 远端基线 = 上次同步登记（sha + 本地内容 hash 两键）。InSync（登记
-        // hash 与本地一致）不产出——未变笔记不推、不造远端噪音 commit
-        //（T3 审计 finding 4）。基线不含「从未由本机推送过」的远端文件——
-        // 首次接管既有仓库不误删。先算是为了 409 时能把覆盖面列进确认框（F6）。
+        // ③ 远端笔记树（与 pull 同源 listTree）：状态机判 RemoteModified /
+        // Diverged / LocalDeleted-远端也变 必须知道远端 sha——原先只能靠 PUT
+        // 撞 409 事后发现，且本地删除会先静默删掉别人新写的内容。
+        publishGithubSyncProgress("③ 读取远端笔记树…");
+        auto tree = api.listTree(branch);
+        if (tree.isFail()) {
+            summary = "读取远端笔记树失败：" + tree.errorMessage();
+            return false;
+        }
+        const std::string notesDirPrefix = gsync::kRemoteNotesDir;
+        std::map<std::string, std::string> remoteNoteShas;   // 文件名 → 远端 sha
+        for (const auto& entry : tree.value()) {
+            if (entry.path.rfind(notesDirPrefix, 0) != 0 ||
+                entry.path.size() <= notesDirPrefix.size() ||
+                entry.path.compare(entry.path.size() - 3, 3, ".md") != 0) {
+                continue;
+            }
+            remoteNoteShas.emplace(entry.path.substr(notesDirPrefix.size()),
+                                   entry.sha);
+        }
+
+        // ④ 全量判态（纯本地 + 已取到的树；零写入）：每个名字过 classifyNote →
+        // pushActionForState。有任一 Conflict 就先把清单列进确认框并中止——
+        // 不推任何笔记、不动远端（database.sql 也留到冲突判定之后才 PUT）。
         std::map<std::string, gsync::LocalNote> local;
         for (auto& [name, content] : collectLocalNotes()) {
             local.emplace(name,
@@ -998,12 +1015,58 @@ public:
             summary = "读取同步登记失败：" + synced.errorMessage();
             return false;
         }
-        const auto changes =
-            gsync::diffNotesByState(local, synced.value());
+        struct NotePlan {
+            std::string name;
+            gsync::NoteSyncState state;
+            gsync::PushAction action;
+        };
+        std::vector<NotePlan> plans;
+        std::vector<std::string> putNames;   // 覆盖清单用：本地有改动的笔记
+        {
+            std::set<std::string> names;
+            for (const auto& [name, note] : local) {
+                (void)note;
+                names.insert(name);
+            }
+            for (const auto& [name, rec] : synced.value()) {
+                (void)rec;
+                names.insert(name);
+            }
+            for (const auto& name : names) {
+                const auto rec = synced.value().find(name);
+                const auto loc = local.find(name);
+                const bool hasRecord = rec != synced.value().end();
+                const bool localExists = loc != local.end();
+                const bool localHashMatches =
+                    hasRecord && localExists &&
+                    !rec->second.contentHash.empty() &&
+                    rec->second.contentHash == loc->second.hash;
+                const bool remoteExists = remoteNoteShas.count(name) != 0;
+                const bool remoteShaMatches =
+                    hasRecord && remoteExists &&
+                    remoteNoteShas[name] == rec->second.sha;
+                const auto state = gsync::classifyNote(
+                    hasRecord, localExists, localHashMatches, remoteShaMatches);
+                const auto action = gsync::pushActionForState(
+                    state, remoteExists, remoteShaMatches);
+                if (action == gsync::PushAction::Put) putNames.push_back(name);
+                plans.push_back(NotePlan{name, state, action});
+            }
+        }
+        for (const auto& plan : plans) {
+            if (plan.action != gsync::PushAction::Conflict) continue;
+            conflict = true;
+            summary = plan.state == gsync::NoteSyncState::LocalDeleted
+                          ? ("远端笔记 notes/" + plan.name +
+                             " 已被其他设备改动，本地删除未传播（409 冲突）")
+                          : ("笔记 notes/" + plan.name +
+                             " 本地与远端都有改动（409 冲突）");
+            stashOverwriteListForConflict(putNames);
+            return false;
+        }
 
-        // ④ database.sql（sha 作冲突检测：远端已变 → 409；409 时把将被拉取
-        // 覆盖的本地未推文件列进确认框——F6）
-        publishGithubSyncProgress("③ 上传 database.sql…");
+        // ⑤ database.sql（sha 作冲突检测：远端已变 → 409）
+        publishGithubSyncProgress("④ 上传 database.sql…");
         std::string sha;
         if (probe.isOk() && probe.value().exists) sha = probe.value().sha;
         auto put = api.putFile(gsync::kRemoteSqlPath, dump,
@@ -1012,7 +1075,7 @@ public:
             if (put.errorCode() == core::ErrorCode::Conflict) {
                 conflict = true;
                 summary = "远端 database.sql 已被改动（409 冲突）";
-                stashOverwriteListForConflict(changes);
+                stashOverwriteListForConflict(putNames);
             } else {
                 summary = "上传 database.sql 失败：" + put.errorMessage();
             }
@@ -1027,102 +1090,83 @@ public:
             }
         }
 
-        // ⑤ 笔记逐个 PUT / DELETE
-        publishGithubSyncProgress("④ 同步笔记…");
+        // ⑥ 执行（PUT / DELETE），单文件粒度 = 单次远端 commit
+        publishGithubSyncProgress("⑤ 同步笔记…");
         int putCount = 0;
         int delCount = 0;
         int deleteSkipCount = 0;   // 安全栏跳过数（T3 审计 finding 8：进 UI）
-        for (const auto& change : changes) {
-            const std::string name = change.path.substr(
-                std::string(gsync::kRemoteNotesDir).size());
-            if (change.kind == gsync::FileChange::Kind::Put) {
-                // shaIfMatch 取登记 sha：远端没动则不 409；远端被别的设备改过
-                // → 409 → 冲突弹窗路径。登记缺 sha（旧记录/新文件）→ GET 现值
-                // 兜底（保持「本机新增可落盘」语义，不被 422 卡死）。
+        for (const auto& plan : plans) {
+            const std::string path = gsync::remoteNotePath(plan.name);
+            if (plan.action == gsync::PushAction::Put) {
+                // shaIfMatch：LocalModified 用登记 sha（远端动过 → 409，真并发
+                // 检测）；New 或登记缺 sha 用树里的现值（无 → 无 sha 创建）。
                 std::string shaIfMatch;
-                const auto rec = synced.value().find(name);
+                const auto rec = synced.value().find(plan.name);
                 if (rec != synced.value().end() && !rec->second.sha.empty()) {
                     shaIfMatch = rec->second.sha;
-                } else {
-                    auto cur = api.getFile(change.path, branch);
-                    if (cur.isOk() && cur.value().exists) {
-                        shaIfMatch = cur.value().sha;
-                    }
+                } else if (remoteNoteShas.count(plan.name) != 0) {
+                    shaIfMatch = remoteNoteShas[plan.name];
                 }
-                auto r = api.putFile(change.path, change.content,
-                                     "DevDesk sync: " + change.path, shaIfMatch);
+                auto r = api.putFile(path, local.at(plan.name).content,
+                                     "DevDesk sync: " + path, shaIfMatch);
                 if (r.isFail()) {
                     if (r.errorCode() == core::ErrorCode::Conflict) {
+                        // 判态与 PUT 之间远端又变了（竞态）→ 仍走冲突路径
                         conflict = true;
-                        summary = "远端笔记 " + change.path +
-                                  " 已被改动（409 冲突）";
-                        stashOverwriteListForConflict(changes);
+                        summary = "远端笔记 " + path + " 已被改动（409 冲突）";
+                        stashOverwriteListForConflict(putNames);
                     } else {
-                        summary = "上传笔记 " + change.path + " 失败：" +
+                        summary = "上传笔记 " + path + " 失败：" +
                                   r.errorMessage();
                     }
                     return false;
                 }
                 // 登记 PUT 响应的新 sha + 本地内容 hash（hash 是下轮 InSync
-                // 短路的依据）；新 sha 拿不到（响应解析失败）→ 登记空 sha，
-                // hash 仍有效，DELETE 前会重新 GET 现值。
-                const std::string& localHash = local.at(name).hash;
+                // 短路的依据）；新 sha 拿不到（响应解析失败）→ 登记空 sha。
                 if (auto rec = githubSyncStore_->recordSyncedNote(
-                        name, r.value(), localHash);
+                        plan.name, r.value(), local.at(plan.name).hash);
                     rec.isFail()) {
-                    LOG_WARN("Settings: 笔记推送登记失败 " + change.path + ": " +
+                    LOG_WARN("Settings: 笔记推送登记失败 " + path + ": " +
                              rec.errorMessage());
                 }
                 ++putCount;
-            } else {
+                continue;
+            }
+            if (plan.action == gsync::PushAction::Delete) {
                 // 安全栏：登记有而本地读不到 ≠ 本地已删。文件还在磁盘上
                 //（本轮读内容失败等瞬态原因）→ 不删远端、不清登记，下轮再判。
                 std::error_code existsEc;
                 const bool stillThere =
                     std::filesystem::exists(
-                        ::core::paths::markdownDir() / name, existsEc) &&
+                        ::core::paths::markdownDir() / plan.name, existsEc) &&
                     !existsEc;
                 if (stillThere) {
                     LOG_WARN("Settings: 本地文件仍在但未能读取，跳过删除远端 " +
-                             change.path);
+                             path);
                     ++deleteSkipCount;   // T3 审计 finding 8：跳过不能只进日志
                     continue;
                 }
-                // DELETE 需要远端现值 sha：先 GET；远端已没有 = 无需删，只清登记。
-                auto cur = api.getFile(change.path, branch);
-                if (cur.isOk() && cur.value().exists) {
-                    // C6：远端现值与登记 sha 不符 = 别的设备改过这篇 → 不静默删
-                    // 别人新写的内容，走 409 冲突路径让用户裁决（拉取后再推会先
-                    // 把远端内容恢复回来）。登记缺 sha（旧记录）无从比对 → 维持
-                    // 原行为（保守方向由日志与卡片红字兜）。
-                    const auto rec = synced.value().find(name);
-                    const std::string recordedSha =
-                        rec != synced.value().end() ? rec->second.sha
-                                                    : std::string();
-                    if (!recordedSha.empty() &&
-                        cur.value().sha != recordedSha) {
-                        conflict = true;
-                        summary = "远端笔记 " + change.path +
-                                  " 已被其他设备改动，本地删除未传播（409 冲突）";
-                        stashOverwriteListForConflict(changes);
-                        return false;
-                    }
-                    auto r = api.deleteFile(change.path,
-                                            "DevDesk sync: delete " + change.path,
-                                            cur.value().sha);
+                // 远端已无此文件（LocalDeleted 判态里 remoteExists=false）→
+                // 无需 DELETE，只清登记。DELETETE 的 sha 用树里的现值（判态时
+                // 已确认 == 登记 sha，即未被别的设备改过——C6）。
+                if (remoteNoteShas.count(plan.name) != 0) {
+                    auto r = api.deleteFile(path,
+                                            "DevDesk sync: delete " + path,
+                                            remoteNoteShas[plan.name]);
                     if (r.isFail()) {
-                        summary = "删除远端笔记 " + change.path + " 失败：" +
+                        summary = "删除远端笔记 " + path + " 失败：" +
                                   r.errorMessage();
                         return false;
                     }
                 }
-                if (auto f = githubSyncStore_->forgetSyncedNote(name);
+                if (auto f = githubSyncStore_->forgetSyncedNote(plan.name);
                     f.isFail()) {
-                    LOG_WARN("Settings: 笔记删除登记清理失败 " + name + ": " +
-                             f.errorMessage());
+                    LOG_WARN("Settings: 笔记删除登记清理失败 " + plan.name +
+                             ": " + f.errorMessage());
                 }
                 ++delCount;
             }
+            // Skip：InSync（未变）/ RemoteModified（远端领先，交由 pull）
         }
         summary = "已推送 database.sql 与 " + std::to_string(putCount) +
                   " 篇笔记" + (delCount > 0 ? "（删除 " + std::to_string(delCount) +
@@ -1184,11 +1228,14 @@ public:
             summary = "读取笔记登记失败：" + synced.errorMessage();
             return false;
         }
-        std::map<std::string, std::string> syncedShas;
-        for (const auto& [name, rec] : synced.value()) {
-            syncedShas.emplace(name, rec.sha);
+        std::map<std::string, gsync::LocalNote> localNotes;
+        for (auto& [name, content] : collectLocalNotes()) {
+            localNotes.emplace(name,
+                               gsync::LocalNote{std::move(content),
+                                                gsync::contentHash(content)});
         }
-        const auto actions = gsync::pullNoteActions(remoteNotes, syncedShas);
+        const auto actions = gsync::pullNoteActions(
+            remoteNotes, localNotes, synced.value());
         int downloadCount = 0;
         for (const auto& action : actions) {
             if (action.kind == gsync::PullAction::Kind::Download) {

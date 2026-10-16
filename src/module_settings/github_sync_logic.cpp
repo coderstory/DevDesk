@@ -127,17 +127,61 @@ std::vector<FileChange> diffNotesByState(
     return out;
 }
 
+PushAction pushActionForState(NoteSyncState state, bool remoteExists,
+                              bool remoteShaMatches) {
+    switch (state) {
+        case NoteSyncState::InSync:         return PushAction::Skip;
+        case NoteSyncState::New:            return PushAction::Put;
+        case NoteSyncState::LocalModified:  return PushAction::Put;
+        case NoteSyncState::RemoteModified: return PushAction::Skip;  // 远端领先，等 pull
+        case NoteSyncState::Diverged:       return PushAction::Conflict;
+        case NoteSyncState::LocalDeleted:
+            // 远端没动（或无此文件）→ 删除传播；远端被改过 → 冲突，不静默删他人内容
+            if (!remoteExists || remoteShaMatches) return PushAction::Delete;
+            return PushAction::Conflict;
+        case NoteSyncState::RemoteNew:
+            return PushAction::Skip;   // push 枚举域（本地 ∪ 登记）不产生，防御性归 Skip
+    }
+    return PushAction::Skip;
+}
+
+PullDecision pullDecisionForState(NoteSyncState state) {
+    switch (state) {
+        case NoteSyncState::New:
+        case NoteSyncState::RemoteNew:
+        case NoteSyncState::RemoteModified:
+        case NoteSyncState::Diverged:
+            return PullDecision::Download;
+        case NoteSyncState::InSync:
+        case NoteSyncState::LocalModified:   // 远端没变：本地改动保留，push 侧推
+        case NoteSyncState::LocalDeleted:    // 本地删除待传播；远端也变过时 push 走冲突
+            return PullDecision::Skip;
+    }
+    return PullDecision::Skip;
+}
+
 std::vector<PullAction> pullNoteActions(
     const std::map<std::string, std::string>& remoteShas,
-    const std::map<std::string, std::string>& syncedShas) {
+    const std::map<std::string, LocalNote>& local,
+    const std::map<std::string, SyncedNoteRecord>& synced) {
     std::vector<PullAction> out;
     for (const auto& [name, sha] : remoteShas) {
-        const auto it = syncedShas.find(name);
-        if (it != syncedShas.end() && it->second == sha) continue;   // 远端未变
-        out.push_back(PullAction{PullAction::Kind::Download, name});
+        const auto rec = synced.find(name);
+        const auto loc = local.find(name);
+        const bool hasRecord = rec != synced.end();
+        const bool localExists = loc != local.end();
+        const bool localHashMatches = hasRecord && localExists &&
+                                      !rec->second.contentHash.empty() &&
+                                      rec->second.contentHash == loc->second.hash;
+        const bool remoteShaMatches = hasRecord && rec->second.sha == sha;
+        const auto state = classifyNote(hasRecord, localExists,
+                                        localHashMatches, remoteShaMatches);
+        if (pullDecisionForState(state) == PullDecision::Download) {
+            out.push_back(PullAction{PullAction::Kind::Download, name});
+        }
     }
-    for (const auto& [name, sha] : syncedShas) {
-        (void)sha;
+    for (const auto& [name, rec] : synced) {
+        (void)rec;
         if (remoteShas.find(name) != remoteShas.end()) continue;
         out.push_back(PullAction{PullAction::Kind::KeepLocal, name});
     }

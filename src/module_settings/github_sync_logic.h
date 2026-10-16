@@ -34,6 +34,19 @@ enum class NoteSyncState {
 NoteSyncState classifyNote(bool hasRecord, bool localExists,
                            bool localHashMatches, bool remoteShaMatches);
 
+// ── 状态 → 动作（唯一语义源：push/pull 都只经 classifyNote 判态后查这两张表）──
+// push 动作：remoteExists = 远端树里有该名；remoteShaMatches = 远端 sha == 登记 sha。
+enum class PushAction { Skip, Put, Delete, Conflict };
+
+PushAction pushActionForState(NoteSyncState state, bool remoteExists,
+                              bool remoteShaMatches);
+
+// pull 判定：远端名逐个判态；登记有而远端无的（远端已删）不走本表，由调用方
+// 归 KeepLocal + 清登记（保守语义）。
+enum class PullDecision { Download, Skip };
+
+PullDecision pullDecisionForState(NoteSyncState state);
+
 // 本地内容哈希：FNV-1a 64bit → 16 位小写 hex。纯件零依赖（不引 OpenSSL 进 logic），
 // 同内容恒同值 —— 状态判定用内容而非 mtime（spec F1：mtime 跨设备/备份恢复不可靠）。
 std::string contentHash(const std::string& bytes);
@@ -118,14 +131,17 @@ struct PullAction {
     std::string fileName;   // notes/ 下的文件名
 };
 
-// remoteShas = 远端树 notes/*.md 文件名 → sha；syncedShas = 登记名 → 上次同步成功后的远端 sha。
-// Download 只看远端侧：远端 sha 与登记不符（含登记缺失）= 远端变过 → 下载覆盖本地。
-// 本地内容不参与判定：远端没变时本地改动保留（push 侧负责推上去），远端变了本地让位
-//（将被覆盖的清单经 F6 确认框先行展示）。KeepLocal = 登记有而远端树没有 → 远端已删，
-// 本地保留（决策 #19 保守语义：pull 不替远端传播删除）。输出顺序稳定：名序 Download 在前，名序 KeepLocal 在后。
+// remoteShas = 远端树 notes/*.md 文件名 → sha；local = 本地笔记（名 → 内容+hash）；
+// synced = 基线登记。远端名逐个经 classifyNote 判态 → pullDecisionForState：
+// 远端变过（RemoteModified/Diverged）或无基线（New/RemoteNew）→ Download 覆盖本地；
+// InSync/LocalModified（远端没变的本地改动保留，push 侧负责推）与 LocalDeleted
+//（本地已删待传播，远端也变过时由 push 冲突路径让用户裁决）→ Skip。
+// 登记有而远端树没有 = 远端已删 → KeepLocal（决策 #19 保守语义，调用方同时清登记）。
+// 输出顺序稳定：名序 Download 在前，名序 KeepLocal 在后。
 std::vector<PullAction> pullNoteActions(
     const std::map<std::string, std::string>& remoteShas,
-    const std::map<std::string, std::string>& syncedShas);
+    const std::map<std::string, LocalNote>& local,
+    const std::map<std::string, SyncedNoteRecord>& synced);
 
 // 远端笔记文件名 → 远端路径。
 std::string remoteNotePath(const std::string& fileName);

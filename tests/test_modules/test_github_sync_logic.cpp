@@ -153,33 +153,96 @@ REGISTER_TEST(github_sync_exit_push_due,
     return true;
 })
 
+REGISTER_TEST(github_sync_action_tables_from_state,
+              "github_sync 动作表: classifyNote 7 态 → push/pull 动作（唯一语义源）", {
+    using g::NoteSyncState;
+    using g::PushAction;
+    using g::PullDecision;
+    // push：InSync/RemoteModified 不推；New/LocalModified → Put；Diverged → 冲突
+    DOCTEST_CHECK(g::pushActionForState(NoteSyncState::InSync, true, true) ==
+                  PushAction::Skip);
+    DOCTEST_CHECK(g::pushActionForState(NoteSyncState::RemoteModified, true, false) ==
+                  PushAction::Skip);
+    DOCTEST_CHECK(g::pushActionForState(NoteSyncState::New, false, false) ==
+                  PushAction::Put);
+    DOCTEST_CHECK(g::pushActionForState(NoteSyncState::New, true, false) ==
+                  PushAction::Put);
+    DOCTEST_CHECK(g::pushActionForState(NoteSyncState::LocalModified, true, true) ==
+                  PushAction::Put);
+    DOCTEST_CHECK(g::pushActionForState(NoteSyncState::Diverged, true, false) ==
+                  PushAction::Conflict);
+    DOCTEST_CHECK(g::pushActionForState(NoteSyncState::Diverged, false, false) ==
+                  PushAction::Conflict);
+    // LocalDeleted：远端没动/已无 → 删除传播；远端被改过 → 冲突（C6）
+    DOCTEST_CHECK(g::pushActionForState(NoteSyncState::LocalDeleted, true, true) ==
+                  PushAction::Delete);
+    DOCTEST_CHECK(g::pushActionForState(NoteSyncState::LocalDeleted, false, false) ==
+                  PushAction::Delete);
+    DOCTEST_CHECK(g::pushActionForState(NoteSyncState::LocalDeleted, true, false) ==
+                  PushAction::Conflict);
+    // pull：远端变过或无基线 → 下载；远端没变的本地改动与本地删除 → 跳过
+    DOCTEST_CHECK(g::pullDecisionForState(NoteSyncState::New) ==
+                  PullDecision::Download);
+    DOCTEST_CHECK(g::pullDecisionForState(NoteSyncState::RemoteNew) ==
+                  PullDecision::Download);
+    DOCTEST_CHECK(g::pullDecisionForState(NoteSyncState::RemoteModified) ==
+                  PullDecision::Download);
+    DOCTEST_CHECK(g::pullDecisionForState(NoteSyncState::Diverged) ==
+                  PullDecision::Download);
+    DOCTEST_CHECK(g::pullDecisionForState(NoteSyncState::InSync) ==
+                  PullDecision::Skip);
+    DOCTEST_CHECK(g::pullDecisionForState(NoteSyncState::LocalModified) ==
+                  PullDecision::Skip);
+    DOCTEST_CHECK(g::pullDecisionForState(NoteSyncState::LocalDeleted) ==
+                  PullDecision::Skip);
+    return true;
+})
+
 REGISTER_TEST(github_sync_pull_note_actions,
-              "github_sync 拉取动作: 远端 sha 比登记 → 下载；登记有远端无 → 本地保留", {
+              "github_sync 拉取动作: 状态机驱动——远端变过/无基线才下载；登记有远端无 → 本地保留", {
     using Kind = g::PullAction::Kind;
+    using g::LocalNote;
+    using g::SyncedNoteRecord;
+    const std::string hx = g::contentHash("x");
+    // 本地：a 与登记一致（未变）；b 本地改过
+    const std::map<std::string, LocalNote> local{{"a.md", {"x", hx}},
+                                                 {"b.md", {"new", g::contentHash("new")}}};
+    const std::map<std::string, SyncedNoteRecord> synced{
+        {"a.md", {"sa", hx}},                    // InSync（远端未变）
+        {"b.md", {"sb-old", g::contentHash("old")}},  // LocalModified（远端未变）
+        {"c.md", {"sc", hx}},                    // 远端已删 → KeepLocal
+    };
+    // 远端树：a 未变；b 远端也变了（Diverged → 下载）；d 全新（RemoteNew → 下载）
     const std::map<std::string, std::string> remote{{"a.md", "sa"},
-                                                    {"b.md", "sb-new"}};
-    const std::map<std::string, std::string> synced{{"b.md", "sb-old"},
-                                                    {"c.md", "sc"}};
-    const auto actions = g::pullNoteActions(remote, synced);
-    // a：登记无 → 下载；b：远端 sha 变 → 下载；c：登记有远端无 → 保留本地
+                                                    {"b.md", "sb-new"},
+                                                    {"d.md", "sd"}};
+    const auto actions = g::pullNoteActions(remote, local, synced);
     DOCTEST_REQUIRE_EQ(actions.size(), static_cast<size_t>(3));
     DOCTEST_CHECK(actions[0].kind == Kind::Download);
-    DOCTEST_CHECK_EQ(actions[0].fileName, std::string("a.md"));
+    DOCTEST_CHECK_EQ(actions[0].fileName, std::string("b.md"));
     DOCTEST_CHECK(actions[1].kind == Kind::Download);
-    DOCTEST_CHECK_EQ(actions[1].fileName, std::string("b.md"));
+    DOCTEST_CHECK_EQ(actions[1].fileName, std::string("d.md"));
     DOCTEST_CHECK(actions[2].kind == Kind::KeepLocal);
     DOCTEST_CHECK_EQ(actions[2].fileName, std::string("c.md"));
 
-    // 远端 sha 与登记一致 → 不下载（这是「每轮不再全量拉」的判据）
-    const auto quiet = g::pullNoteActions({{"b.md", "sb-old"}}, synced);
-    DOCTEST_REQUIRE_EQ(quiet.size(), static_cast<size_t>(1));
-    DOCTEST_CHECK(quiet[0].kind == Kind::KeepLocal);   // c 的路径；b 无动作
+    // 新设备模拟（审计 C1）：空基线 + 有远端 → 全部下载（不会误判「未变」）
+    const auto fresh = g::pullNoteActions({{"n.md", "s"}}, {}, {});
+    DOCTEST_REQUIRE_EQ(fresh.size(), static_cast<size_t>(1));
+    DOCTEST_CHECK(fresh[0].kind == Kind::Download);
 
-    // 双空 → 空动作集；顺序稳定（下载按名序在前，保留按名序在后）
-    DOCTEST_CHECK(g::pullNoteActions({}, {}).empty());
-    const std::map<std::string, std::string> r2{{"z.md", "s"}, {"a.md", "s"}};
-    const std::map<std::string, std::string> s2{{"m.md", "s"}, {"b.md", "s"}};
-    const auto ordered = g::pullNoteActions(r2, s2);
+    // 本地删除（LocalDeleted）→ skip（待 push 传播；远端也变过时走 push 冲突）
+    const std::map<std::string, LocalNote> localDel{};   // b 本地已删
+    const std::map<std::string, SyncedNoteRecord> syncedDel{
+        {"b.md", {"sb-old", g::contentHash("old")}}};
+    const auto delActions =
+        g::pullNoteActions({{"b.md", "sb-new"}}, localDel, syncedDel);
+    DOCTEST_CHECK(delActions.empty());
+
+    // 双空 → 空；顺序稳定（下载名序在前，保留名序在后）
+    DOCTEST_CHECK(g::pullNoteActions({}, {}, {}).empty());
+    const auto ordered = g::pullNoteActions(
+        {{"z.md", "s"}, {"a.md", "s"}}, {},
+        {{"m.md", {"s", ""}}, {"b.md", {"s", ""}}});
     DOCTEST_REQUIRE_EQ(ordered.size(), static_cast<size_t>(4));
     DOCTEST_CHECK_EQ(ordered[0].fileName, std::string("a.md"));
     DOCTEST_CHECK_EQ(ordered[1].fileName, std::string("z.md"));
