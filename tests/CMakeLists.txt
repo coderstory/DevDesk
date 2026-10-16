@@ -388,6 +388,7 @@ if(DEVDESK_BUILD_LIVE_TOOLS AND UNIX)
             "${CMAKE_BINARY_DIR}")
     # LABELS 只有 live、没有 probe：默认门禁跑 `ctest -L probe`，看不到它。
     set_tests_properties(github_sync_live PROPERTIES LABELS "live")
+endif()
 
 # ==================== 智能体真机全场景验收（**默认不构建**）====================
 # tests/live/agent_live.cpp 驱动进程内 AgentLoop + DirectLlmClient 用**当前激活
