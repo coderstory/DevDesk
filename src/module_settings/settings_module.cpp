@@ -1431,21 +1431,29 @@ public:
         githubSyncStatus_ = githubSyncResultSummary_;
         githubSyncStatusError_ = !githubSyncResultOk_;
         if (githubSyncResultOk_) {
-            // commit 成功 → 清 dirty + 记时刻（节流窗口起点，决策 #14）。
-            githubSyncDirty_ = false;
-            githubSyncLastCommitSec_ = nowSec();
-            githubSyncError_.clear();
-            // F5：同步成功即清「退出时未同步」提示（黄字随下一帧消失）。
-            if (githubSyncUnsyncedNotice_) {
-                githubSyncUnsyncedNotice_ = false;
-                if (githubSyncStore_) {
-                    if (auto r = githubSyncStore_->clearUnsyncedNotice();
-                        r.isFail()) {
-                        LOG_WARN("Settings: 未同步提示清除失败: " +
-                                 r.errorMessage());
+            // A3：清 dirty / 记节流时点 / 清 F5 提示只认「真推送过」的动作——
+            // 测试连接与纯拉取不推本地改动，点了它们不得抹掉未同步语义。
+            const bool pushedToRemote =
+                githubSyncLastAction_ == SyncAction::Push ||
+                githubSyncLastAction_ == SyncAction::PullThenPush ||
+                githubSyncLastAction_ == SyncAction::FirstSync;
+            if (pushedToRemote) {
+                // commit 成功 → 清 dirty + 记时刻（节流窗口起点，决策 #14）。
+                githubSyncDirty_ = false;
+                githubSyncLastCommitSec_ = nowSec();
+                // F5：同步成功即清「退出时未同步」提示（黄字随下一帧消失）。
+                if (githubSyncUnsyncedNotice_) {
+                    githubSyncUnsyncedNotice_ = false;
+                    if (githubSyncStore_) {
+                        if (auto r = githubSyncStore_->clearUnsyncedNotice();
+                            r.isFail()) {
+                            LOG_WARN("Settings: 未同步提示清除失败: " +
+                                     r.errorMessage());
+                        }
                     }
                 }
             }
+            githubSyncError_.clear();
             // 首次方向跑成功 → 落「首次已完成」（repoUrl/branch 变更时清除）。
             if (githubSyncLastAction_ == SyncAction::FirstSync &&
                 githubSyncStore_) {
