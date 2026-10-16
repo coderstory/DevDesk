@@ -3538,17 +3538,18 @@ REGISTER_TEST(settings_github_sync_push_writes_target_configured_branch,
         }
     };
     ScriptedSender rec;
-    // 顺序 = runGithubSyncPush 的请求序：getRepo → probe(database.sql) → listTree
-    // → PUT database.sql → DELETE gone.md → PUT note-a.md（plans 按名字字典序）。
+    // 顺序 = runGithubSyncPush 的请求序：getRepo → listTree（笔记判态与
+    // database.sql 的 sha 同源同一棵树，无独立 probe 请求）→ DELETE gone.md →
+    // PUT note-a.md → PUT database.sql（plans 按名字字典序）。
     rec.plan = {
         {200, R"({"full_name":"devdesk-test/sync-repo","default_branch":"main",)"
               R"("private":true,"permissions":{"push":true}})"},
-        // probe：带 base64 content，避免 getFile 走 raw 直取的第二条请求
-        {200, R"({"sha":"sqlremotesha","content":"eA==","encoding":"base64"})"},
-        {200, R"({"sha":"t0","truncated":false,"tree":[{"path":"notes/gone.md","sha":"gonesha","type":"blob","size":5}]})"},
-        {201, R"({"content":{"sha":"sqlnewsha"}})"},
+        {200, R"({"sha":"t0","truncated":false,"tree":[)"
+              R"({"path":"data/database.sql","sha":"sqlremotesha","type":"blob","size":3},)"
+              R"({"path":"notes/gone.md","sha":"gonesha","type":"blob","size":5}]})"},
         {200, R"({"commit":{"sha":"delsha"}})"},
         {201, R"({"content":{"sha":"notenewsha"}})"},
+        {201, R"({"content":{"sha":"sqlnewsha"}})"},
     };
     struct SenderGuard {
         SenderGuard(platform::github::GithubApi::Sender s) {
@@ -3600,7 +3601,7 @@ REGISTER_TEST(settings_github_sync_push_writes_target_configured_branch,
         std::lock_guard<std::mutex> lk(rec.mu);
         reqs = rec.reqs;
     }
-    DOCTEST_CHECK_MESSAGE(reqs.size() >= 6,
+    DOCTEST_CHECK_MESSAGE(reqs.size() >= 5,
                           "请求数不足（推送未按脚本走完）: " +
                               std::to_string(reqs.size()));
 
