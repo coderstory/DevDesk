@@ -342,6 +342,16 @@ void AgentModule::onStart() {
     // 重入幂等：双 onStart 会重建服务、重复注册工具，清扫还会误伤重入期间新出现的 running run
     if (started_) return;
     started_ = true;
+    // GitHub Sync 拉取会 DROP 重建整个库：订阅导入成功事件，导入线程同步回调里只置
+    // 原子脏标记（不得摸 UI 线程成员），compose 收割置 tasksDirty_ 走既有重查路径。
+    // 闸 = 存活守卫：onStop 先关闸再退订，挡在途 handler。
+    dbImportHandlersEnabled_.store(true, std::memory_order_release);
+    dbImportedSub_ = ::core::event::bus().subscribe(
+        ::core::event::kDbImported, [this](const std::string&) {
+            if (dbImportHandlersEnabled_.load(std::memory_order_acquire)) {
+                dbImportedDirty_.store(true, std::memory_order_release);
+            }
+        });
     core::data::SqliteDb* db = deps_.db ? deps_.db : ::core::appDatabase();
     if (db == nullptr) {
         LOG_WARN("Agent: 数据库尚未注册，跳过服务装配");
@@ -372,6 +382,9 @@ void AgentModule::onStart() {
 void AgentModule::onStop() {
     // 重入幂等：未启动 no-op。顺序：置取消 → join → 清容器 → 注销工具 → 放服务（注销须晚于线程退出）
     if (!started_) return;
+    // 先关原子闸再退订：闸挡在途 handler，退订挡后续 emit。
+    dbImportHandlersEnabled_.store(false, std::memory_order_release);
+    dbImportedSub_ = {};
     {
         std::lock_guard<std::mutex> lock(runsMu_);
         for (auto& r : runs_) {
@@ -1170,6 +1183,10 @@ void AgentModule::renderMessageRow(
 }
 
 void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
+    // 库被 GitHub Sync 导入覆盖 → 任务/运行缓存指向旧行；置脏走既有重查路径。
+    if (dbImportedDirty_.exchange(false, std::memory_order_acq_rel)) {
+        tasksDirty_ = true;
+    }
     const auto& t = ::core::theme::current();
     const auto themeTokens = ::core::theme::componentTokens(t);
     const float pad = t.sizes.spacingXXLarge;

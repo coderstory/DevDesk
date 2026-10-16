@@ -21,6 +21,7 @@
 #include <eui/dsl.h>
 
 #include <algorithm>
+#include <atomic>
 #include <map>
 #include <memory>
 #include <optional>
@@ -41,6 +42,16 @@ public:
         // 重入幂等：double-onStart = no-op（不重跑 attachTools/reloadAll/视图恢复）
         if (started_) return;
         started_ = true;
+        // GitHub Sync 拉取会 DROP 重建整个库：订阅导入成功事件，导入线程同步回调里
+        // 只置原子脏标记（不得摸 UI 线程成员），compose 收割 reloadAll。
+        // 闸 = 存活守卫：onStop 先关闸再退订，挡住在途 handler。
+        dbImportHandlersEnabled_.store(true, std::memory_order_release);
+        dbImportedSub_ = ::core::event::bus().subscribe(
+            ::core::event::kDbImported, [this](const std::string&) {
+                if (dbImportHandlersEnabled_.load(std::memory_order_acquire)) {
+                    dbImportedDirty_.store(true, std::memory_order_release);
+                }
+            });
         auto* db = ::core::appDatabase();
         if (!db) {
             LOG_WARN("Todo: 数据库尚未注册，跳过数据加载");
@@ -63,6 +74,9 @@ public:
     void onStop() override {
         // 重入幂等：未启动的 off = no-op（此路径不该落盘/注销）
         if (!started_) return;
+        // 先关原子闸再退订：闸挡在途 handler，退订挡后续 emit。
+        dbImportHandlersEnabled_.store(false, std::memory_order_release);
+        dbImportedSub_ = {};
         if (viewDirty_) saveViewState();
         // 只注销工具，不 reset service_：agent run 线程可能正执行 todo.* 工具（持 TodoService&），reset = UAF。
         // service_ 交给成员析构（声明序 todoTools_ 在前 → 先析构，引用不悬垂）
@@ -646,6 +660,12 @@ public:
     }
 
     void compose(eui::Ui& page, const eui::Screen& screen) override {
+        // 库被 GitHub Sync 导入覆盖 → 列/任务缓存指向旧行，重查（导入线程只置标记）。
+        if (dbImportedDirty_.exchange(false, std::memory_order_acq_rel)) {
+            reloadAll();
+            LOG_INFO("Todo: 检测到库导入，已重载看板数据");
+        }
+
         consumeNavPayload();
 
         const auto& t = core::theme::current();
@@ -847,6 +867,11 @@ private:
     std::unique_ptr<TodoService> service_;
     // 工具集（引用 service_；声明在前 = 先于 service_ 析构，引用不悬垂）
     std::unique_ptr<TodoTools> todoTools_;
+    // GitHub Sync 导入成功 → 置脏，compose 收割 reloadAll（导入线程只碰原子，不碰 UI 成员）。
+    // 闸 = 存活守卫，onStop 先关闸再退订（token 析构即退订）。
+    std::atomic<bool> dbImportedDirty_{false};
+    std::atomic<bool> dbImportHandlersEnabled_{false};
+    ::core::event::EventBus::Subscription dbImportedSub_;
     bool started_ = false;
     std::vector<Column> columns_;
     std::vector<Task> tasks_;

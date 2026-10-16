@@ -119,6 +119,10 @@ public:
     void setDialogIterDraft(int iter);
     // 测试缝：兜底轻查询已执行次数（节流断言用——同窗口多帧只允许一次轻查询）
     int64_t runFallbackChecksForTest() const { return runFallbackChecks_; }
+    // 测试缝：库导入脏标记是否已置位（compose 收割后复位）
+    bool dbImportedDirtyForTest() const {
+        return dbImportedDirty_.load(std::memory_order_acquire);
+    }
 
     // ---- run 完成通知的 app 级通道（fix round：页面无关） ----
     // 装配层每帧调（app::compose 内）：等价 refreshData 的检测路径，不依赖智能体页可见。
@@ -190,6 +194,13 @@ private:
     // UI 主线程同步回调 → scheduler_->onEvent 轻入队）。RAII：onStop 清空即退订，
     // 不得漏——bus() 单例跨用例/跨生命周期共享（Task 1 concerns ④）
     std::vector<core::event::EventBus::Subscription> eventSubs_;
+
+    // GitHub Sync 导入成功 → 置脏，compose 收割（置 tasksDirty_ 走既有重查路径）。
+    // 导入线程同步回调里只碰这两个原子，不碰 UI 线程成员。闸 = 存活守卫：
+    // onStop 先关闸再退订（退订拦不住 emit 已拷出的在途 handler）。
+    std::atomic<bool> dbImportedDirty_{false};
+    std::atomic<bool> dbImportHandlersEnabled_{false};
+    core::event::EventBus::Subscription dbImportedSub_;
 
     // run 线程表：主线程写；mutex 为纵深防御（现调用点全在主线程）
     std::mutex runsMu_;
