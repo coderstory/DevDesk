@@ -35,7 +35,9 @@ core::Result<std::optional<std::filesystem::path>> latestBackup(
     const std::optional<std::filesystem::path>& exclude = std::nullopt);
 
 // sqlite3_backup 在线备份主库到同目录 <文件名>.backup-<YYYYMMDD-HHMMSS>，滚动保留最近 keepBackups 份。
-// 备份文件落成后按 POSIX 收紧到 0600（内容含凭据页，与主库同保护级别），失败仅 LOG_WARN 不回滚
+// 备份文件落成后按 POSIX 收紧到 0600（内容含凭据页，与主库同保护级别），失败仅 LOG_WARN 不回滚。
+// 产物是自包含库（页头归一为 rollback journal、无 -wal/-shm 伴生），任何只读打开都能读——
+// restoreFromBackup 的校验用的就是只读打开，备份带 WAL 页头会在那里误判
 core::Result<std::filesystem::path> createBackup(
     const std::filesystem::path& dbFile, int keepBackups = 5);
 
