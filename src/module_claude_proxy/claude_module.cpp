@@ -306,13 +306,22 @@ public:
         // QuotaStore，同一 appDatabase）。end 无论成败都发 → 恢复由此触发；
         // startQuotaRefresh 建新 QuotaRefresher（stopAll 后旧实例不可重启）。
         // 订阅 token 必须持有，丢了就退订。handler 在导入线程同步执行。
+        // A4：emit 已把 handler 拷出后才调（退订不拦在途调用）→ handler 先查
+        // 原子闸再动线程，否则关停瞬间的迟到事件会复活 QuotaRefresher。
+        dbImportHandlersEnabled_.store(true, std::memory_order_release);
         ::core::event::EventBus& bus = ::core::event::bus();
         dbImportSubs_.push_back(bus.subscribe(
-            ::core::event::kDbImportBegin,
-            [this](const std::string&) { stopQuotaRefresh(); }));
+            ::core::event::kDbImportBegin, [this](const std::string&) {
+                if (dbImportHandlersEnabled_.load(std::memory_order_acquire)) {
+                    stopQuotaRefresh();
+                }
+            }));
         dbImportSubs_.push_back(bus.subscribe(
-            ::core::event::kDbImportEnd,
-            [this](const std::string&) { startQuotaRefresh(); }));
+            ::core::event::kDbImportEnd, [this](const std::string&) {
+                if (dbImportHandlersEnabled_.load(std::memory_order_acquire)) {
+                    startQuotaRefresh();
+                }
+            }));
     }
 
     // 进页标记缓存脏，下一帧 compose 重查
@@ -321,7 +330,8 @@ public:
     void onStop() override {
         if (!started_) return;   // 重入幂等
         LOG_INFO("Claude 模块停止");
-        // 先退订导入事件再停余量刷新：订阅 handler 触碰本类成员，退订后不再进入。
+        // 先关原子闸再退订再停余量刷新：闸挡住在途 handler，退订挡住后续 emit。
+        dbImportHandlersEnabled_.store(false, std::memory_order_release);
         dbImportSubs_.clear();
         // 先停余量刷新（线程里的 QuotaStore 引用会在成员析构后悬垂）；再注销工具、最后停代理。
         stopQuotaRefresh();
@@ -1006,6 +1016,8 @@ private:
     std::unique_ptr<quota::QuotaRefresher> quotaRefresher_;
     // F3 导入暂停/恢复的订阅 token：token 析构即退订，必须持有到 onStop。
     std::vector<::core::event::EventBus::Subscription> dbImportSubs_;
+    // A4：订阅存活闸（见 onStart 注释）——退订拦不住 emit 已拷出的在途 handler。
+    std::atomic<bool> dbImportHandlersEnabled_{false};
     // 弹窗「测试连接」后台线程 + 结果槽（独立于详情页；UI 线程 join 后才读）
     std::thread quotaTestThread_;
     std::atomic<bool> quotaTestDone_{false};
