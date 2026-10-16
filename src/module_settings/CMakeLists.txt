@@ -5,6 +5,7 @@ add_library(devdesk_module_settings STATIC
     settings_ui_cards.cpp
     app_tools.cpp
     github_sync_config.cpp
+    github_sync_engine.cpp
     github_sync_card.cpp
     github_sync_logic.cpp
     git_error_dialog.cpp

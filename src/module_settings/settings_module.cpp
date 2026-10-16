@@ -1,5 +1,7 @@
 // src/module_settings/settings_module.cpp
 // 设置页模块：Module 实现、生命周期、设置变更动作、日志 tail 与外部状态快照、卡片注册表。
+// GitHub Sync 的编排（push/pull/firstsync/节流驱动面之外的动作执行）在 github_sync_engine，
+// 本文件只留 UI 接线 + 后台线程 + 每帧收割 + 弹窗渲染。
 // 依赖边界：module_* 互不依赖 —— claude 经 core 窄接口、模块开关经 module_toggle_bridge.h。
 // 渲染路径不做 fs 查询：外部状态统一在 refreshExternalState 装载，compose 只读快照。
 
@@ -8,6 +10,7 @@
 #include "settings_ui_cards.h"
 #include "github_sync_card.h"
 #include "github_sync_config.h"
+#include "github_sync_engine.h"
 #include "github_sync_logic.h"
 #include "git_error_dialog.h"
 #include "github_sync_test_seam.h"
@@ -15,19 +18,17 @@
 #include "settings_ui_logic.h"
 
 #include "core/claude_proxy_service.h"
-#include "core/atomic_write.h"
 #include "core/database.h"
 #include "core/event_bus.h"
 #include "core/logging.h"
 #include "core/module_interface.h"
 #include "core/paths.h"
 #include "core/service_locator.h"
-#include "core/sql_dump.h"
 #include "core/theme.h"
 #include "core/tool.h"
 #include "core/component_theme.h"
 #include "platform/file_open.h"
-#include "platform/github_api.h"     // platform::github::GithubApi / TestStep / ApiLogEntry
+#include "platform/github_api.h"     // platform::github::ApiLogEntry（弹窗日志源；GithubApi 由同步引擎持有）
 #include <core/platform/platform.h>   // core::platform::requestUiUpdate（唤醒主循环）
 #include <core/window/window_backend.h>   // core::window::setClipboardText（复制详情）
 #include "platform/system_theme.h"
@@ -54,10 +55,8 @@
 #include <filesystem>
 #include <fstream>
 #include <future>
-#include <map>
 #include <memory>
 #include <mutex>
-#include <sstream>
 #include <string>
 #include <string>
 #include <system_error>
@@ -111,37 +110,11 @@ const CardSpec kCardSpecs[] = {
 // 远端路径常量在 github_sync_logic.h（kRemoteSqlPath / remoteNotePath）。
 // skip 表清单单一来源 = core::sql_dump::defaultSkipTables()，不得本地另抄。
 
-// 同步动作（弹窗「重试」按原动作重跑；PullThenPush = 409 冲突弹窗的主动作；
-// FirstSync / ValidateFirstSync = 首次同步：先跑测试连接三步校验，过了才做首次方向
-// 判定，见 runGithubSyncCheckedFirstSync。两者跑同一条路，差别只在失败呈现——
-// ValidateFirstSync 由启用开关触发、失败不弹窗（用户刚拨开关，弹窗等于打断）；
-// FirstSync 由手动「立即同步」触发、失败弹窗。校验强度必须一致：首次同步要么拉
-// 远端覆盖本地库、要么上传全量，配置未经验证就动数据是不可接受的）。
-enum class SyncAction { None, Push, Pull, Test, PullThenPush, FirstSync, ValidateFirstSync };
-
 // epoch 秒（节流窗口与备份文件名共用）。
 int64_t nowSec() {
     return std::chrono::duration_cast<std::chrono::seconds>(
                std::chrono::system_clock::now().time_since_epoch())
         .count();
-}
-
-// 整文件读回（小文件：database.sql 量级）。失败 → false。
-bool readFileToString(const std::filesystem::path& f, std::string& out) {
-    std::ifstream in(f, std::ios::binary);
-    if (!in) return false;
-    std::ostringstream ss;
-    ss << in.rdbuf();
-    out = ss.str();
-    return true;
-}
-
-// 整文件写入（原子替换）。失败 → false。
-// 必须原子：拉取写笔记文件的同一时刻，UI 线程可能因 kDbImported 正在重读该文件；
-// 截断式直写会让读方拿到半截内容（并被当成 lastSavedText_ 记住）。
-bool writeFileFromString(const std::filesystem::path& f,
-                         const std::string& content) {
-    return core::atomicWriteFile(f, content, "笔记").isOk();
 }
 
 } // namespace
@@ -806,7 +779,37 @@ public:
         const std::string repoUrl = githubSyncCfg_.repoUrl;
         const std::string branch = githubSyncCfg_.branch;
         githubSyncThread_ = std::thread([this, action, repoUrl, token, branch] {
-            runGithubSyncAction(action, repoUrl, token, branch);
+            // 编排已抽进 GithubSyncEngine（依赖注入面见 github_sync_engine.h）：
+            // 引擎不持线程，run() 同步阻塞跑完 → 结果一次性搬进 staged_*，
+            // harvest 的搬运点不变（join 即 happens-before，Result 无需原子）。
+            SyncEngineDeps deps;
+            deps.db = ::core::appDatabase();
+            deps.store = githubSyncStore_.get();
+            deps.nowSec = [] { return nowSec(); };
+            deps.progress = [this](const std::string& text) {
+                publishGithubSyncProgress(text);
+            };
+            deps.aborted = [this] { return syncAborted(); };
+            GithubSyncEngine engine(std::move(deps));
+            const SyncRunResult result =
+                engine.run(action, repoUrl, token, branch);
+            {
+                std::lock_guard<std::mutex> lk(githubSyncMutex_);
+                githubSyncStagedLogs_ = result.logs;
+                githubSyncStagedOk_ = result.ok;
+                githubSyncStagedSummary_ = result.summary;
+                githubSyncStagedConflict_ = result.conflict;
+                githubSyncStagedPublicRepo_ = result.publicRepo;
+                githubSyncStagedBranchHint_ = result.branchHint;
+                githubSyncStagedOverwriteFiles_ = result.overwriteFiles;
+                if (!result.deleteSkipHint.empty()) {
+                    githubSyncStagedDeleteSkipHint_ = result.deleteSkipHint;
+                }
+                if (result.dbImported) {
+                    githubSyncStagedDbImported_.store(
+                        true, std::memory_order_release);
+                }
+            }
             githubSyncDone_.store(true, std::memory_order_release);
             if (!syncAborted()) {
                 // 就绪之后才唤醒（次序反了 UI 抢跑读不到结果）；退出中不唤醒
@@ -816,705 +819,6 @@ public:
         LOG_INFO("Settings: GitHub Sync 后台任务启动（action=" +
                  std::to_string(static_cast<int>(action)) +
                  (manual ? "，手动" : "，自动") + "）");
-    }
-
-    // 后台线程体：platform::github 的唯一调用点。结果暂存 staged_*（锁内），
-    // 由 harvestGithubSync 在 join 后搬到 UI 侧成员。
-    void runGithubSyncAction(SyncAction action, const std::string& repoUrl,
-                             const std::string& token,
-                             const std::string& branch) {
-        if (syncAborted()) return;   // 退出中：不再碰 api/store/db
-        const auto parts = platform::github::GithubApi::parseRepoUrl(repoUrl);
-        std::string summary;
-        bool ok = false;
-        bool conflict = false;
-        bool publicRepo = false;
-        std::string branchHint;
-        if (parts.first.empty() || parts.second.empty()) {
-            summary = "仓库 URL 无法解析（需要 https://github.com/<owner>/<repo>）";
-        } else {
-            platform::github::GithubApi api(token, parts.first, parts.second);
-            switch (action) {
-                case SyncAction::Test: {
-                    // 仓库可见性（public 黄字提醒，不硬拦）
-                    auto repo = api.getRepo();
-                    if (repo.isOk()) publicRepo = repo.value().isPrivate == false;
-                    auto report = api.testConnection(
-                        [this](const platform::github::TestStep& step) {
-                            publishGithubSyncProgress(step.name +
-                                                      (step.ok ? " ✓" : " ✗"));
-                        });
-                    ok = report.ok;
-                    summary = report.summary;
-                    break;
-                }
-                case SyncAction::Push:
-                    ok = runGithubSyncPush(api, branch, summary, conflict,
-                                           branchHint);
-                    break;
-                case SyncAction::Pull:
-                    ok = runGithubSyncPull(api, branch, summary);
-                    break;
-                case SyncAction::PullThenPush: {
-                    std::string pullSummary;
-                    if (!runGithubSyncPull(api, branch, pullSummary)) {
-                        summary = "先拉取失败：" + pullSummary;
-                        break;
-                    }
-                    ok = runGithubSyncPush(api, branch, summary, conflict,
-                                           branchHint);
-                    if (ok) summary = "已拉取远端后再推送：" + summary;
-                    break;
-                }
-                case SyncAction::ValidateFirstSync:
-                case SyncAction::FirstSync:
-                    ok = runGithubSyncCheckedFirstSync(api, branch, summary,
-                                                       conflict, publicRepo,
-                                                       branchHint);
-                    break;
-                case SyncAction::None:
-                    break;
-            }
-            if (summary.empty()) summary = ok ? "完成" : "失败";
-            std::lock_guard<std::mutex> lk(githubSyncMutex_);
-            githubSyncStagedLogs_ = api.recentLog();
-        }
-        if (summary.empty()) summary = ok ? "完成" : "失败";
-        std::lock_guard<std::mutex> lk(githubSyncMutex_);
-        githubSyncStagedOk_ = ok;
-        githubSyncStagedSummary_ = summary;
-        githubSyncStagedConflict_ = conflict;
-        githubSyncStagedPublicRepo_ = publicRepo;
-        githubSyncStagedBranchHint_ = branchHint;
-    }
-
-    // 首次同步的唯一实现（启用开关与手动「立即同步」共用）：先跑测试连接三步
-    // （令牌 / 仓库可推 / 读写探针），过了才做首次方向判定。校验失败时 summary 即
-    // 失败摘要、返回 false，调用方按各自的失败呈现处理（不在这里决定弹窗与否）。
-    bool runGithubSyncCheckedFirstSync(platform::github::GithubApi& api,
-                                       const std::string& branch,
-                                       std::string& summary, bool& conflict,
-                                       bool& publicRepo,
-                                       std::string& branchHint) {
-        auto repo = api.getRepo();
-        if (repo.isOk()) publicRepo = repo.value().isPrivate == false;
-        auto report = api.testConnection(
-            [this](const platform::github::TestStep& step) {
-                publishGithubSyncProgress(step.name + (step.ok ? " ✓" : " ✗"));
-            });
-        if (!report.ok) {
-            summary = report.summary;
-            return false;
-        }
-        std::string firstSummary;
-        if (!runGithubSyncFirstSync(api, branch, firstSummary, conflict,
-                                    branchHint)) {
-            summary = firstSummary;
-            return false;
-        }
-        summary = "校验通过；" + firstSummary;
-        return true;
-    }
-
-    // 首次方向：远端已有 database.sql → 先拉取覆盖（含备份）再推送；
-    // 远端没有 → 首次上传（runGithubSyncPush 内含分支自动创建）。
-    bool runGithubSyncFirstSync(platform::github::GithubApi& api,
-                                const std::string& branch,
-                                std::string& summary, bool& conflict,
-                                std::string& branchHint) {
-        if (syncAborted()) { summary = "同步已中止（退出中）"; return false; }
-        publishGithubSyncProgress("① 探测远端数据…");
-        auto probe = api.getFile(gsync::kRemoteSqlPath, branch);
-        const bool exists = probe.isOk() && probe.value().exists;
-        // getFile 对 404 返回 ok(exists=false) 而非 NotFound 错误（「文件不在」
-        // 是调用方要据以决策的状态，不是错误）——判 missing 只能看 exists 位，
-        // 按错误码判是死代码：空仓首次启用会恒走「远端状态未知」失败分支。
-        const bool missing = probe.isOk() && !probe.value().exists;
-        switch (gsync::firstSyncChoice(exists, missing)) {
-            case gsync::FirstSyncChoice::PullThenPush: {
-                std::string pullSummary;
-                if (!runGithubSyncPull(api, branch, pullSummary)) {
-                    summary = "首次拉取失败：" + pullSummary;
-                    return false;
-                }
-                if (!runGithubSyncPush(api, branch, summary, conflict,
-                                       branchHint)) {
-                    return false;
-                }
-                summary = "已用远端数据覆盖本地并推送：" + summary;
-                return true;
-            }
-            case gsync::FirstSyncChoice::Push: {
-                if (!runGithubSyncPush(api, branch, summary, conflict,
-                                       branchHint)) {
-                    return false;
-                }
-                summary = "首次上传完成：" + summary;
-                return true;
-            }
-            case gsync::FirstSyncChoice::Fail:
-                summary = "探测远端失败：" + (probe.isFail()
-                                                  ? probe.errorMessage()
-                                                  : std::string("远端状态未知"));
-                return false;
-        }
-        summary = "首次同步方向未知";
-        return false;
-    }
-
-    // 409 确认框的覆盖清单 = database.sql + 本轮本地有改动的笔记（Put 集）。
-    // 任何冲突分支（sql PUT / 笔记 PUT / 删除传播）都经它暂存——清单空着弹
-    // 确认框等于让用户在不知道会覆盖什么的情况下二次确认。
-    void stashOverwriteListForConflict(
-        const std::vector<std::string>& putNoteNames) {
-        std::vector<std::string> overwrite{
-            std::string(gsync::kRemoteSqlPath) + "（数据库）"};
-        for (const auto& name : putNoteNames) {
-            overwrite.push_back(gsync::remoteNotePath(name));
-        }
-        std::lock_guard<std::mutex> lk(githubSyncMutex_);
-        githubSyncStagedOverwriteFiles_ = std::move(overwrite);
-    }
-
-    // 推送：dump 全库 + 笔记 → PUT / DELETE（单文件粒度 = 单次 commit）。
-    bool runGithubSyncPush(platform::github::GithubApi& api,
-                           const std::string& branch, std::string& summary,
-                           bool& conflict, std::string& branchHint) {
-        auto* db = ::core::appDatabase();
-        if (db == nullptr) {
-            summary = "数据库未就绪";
-            return false;
-        }
-        // ① 全库 dump
-        if (syncAborted()) { summary = "同步已中止（退出中）"; return false; }
-        publishGithubSyncProgress("① 导出数据库…");
-        const auto dumpFile = ::core::paths::sqlDumpFile();
-        auto exported = ::core::sql_dump::exportToFile(
-            *db, dumpFile, ::core::sql_dump::defaultSkipTables());
-        if (exported.isFail()) {
-            summary = "导出失败：" + exported.errorMessage();
-            return false;
-        }
-        std::string dump;
-        if (!readFileToString(dumpFile, dump)) {
-            summary = "读取导出文件失败";
-            return false;
-        }
-        // 体积上限：PUT 单请求 100MB（base64 ×1.37）→ 原始 ≈73MB，
-        // 超限明确报错而不是让远端拒收 413 后报「HTTP 413」。
-        if (gsync::dumpTooLargeForRemote(dump.size())) {
-            summary = "数据库导出过大，暂不支持同步（原始 " +
-                      std::to_string(dump.size() / (1000 * 1000)) +
-                      " MB，上限约 73 MB；请清理调用日志或待办数据后重试）";
-            LOG_ERROR("Settings: GitHub Sync " + summary);
-            return false;
-        }
-
-        // ② 分支：listTree 404 = 分支不存在 → 以仓库默认分支为基点自动创建。
-        //   判据必须是 listTree 的错误码，不能拿 getFile 探：getFile 对 404 返回
-        //   ok(exists=false) 而非 NotFound 错误，「文件不在」与「分支不在」分不开
-        //   （按 getFile 判的 branchMissing 是死代码，分支自动创建从不触发）。
-        publishGithubSyncProgress("② 校验分支…");
-        if (syncAborted()) { summary = "同步已中止（退出中）"; return false; }
-        auto repo = api.getRepo();
-        if (repo.isFail()) {
-            summary = "读取仓库信息失败：" + repo.errorMessage();
-            return false;
-        }
-        auto tree = api.listTree(branch);
-        if (tree.isFail() && tree.errorCode() == core::ErrorCode::NotFound) {
-            if (syncAborted()) { summary = "同步已中止（退出中）"; return false; }
-            auto created = api.createRef(branch, repo.value().defaultBranch);
-            if (created.isFail()) {
-                summary = "创建分支 " + branch + " 失败：" +
-                          created.errorMessage();
-                return false;
-            }
-            branchHint = gsync::branchCreatedHint(branch);
-            tree = api.listTree(branch);
-        }
-        if (tree.isFail()) {
-            summary = "读取远端笔记树失败：" + tree.errorMessage();
-            return false;
-        }
-        const std::string notesDirPrefix = gsync::kRemoteNotesDir;
-        std::map<std::string, std::string> remoteNoteShas;   // 文件名 → 远端 sha
-        for (const auto& entry : tree.value()) {
-            if (entry.path.rfind(notesDirPrefix, 0) != 0 ||
-                entry.path.size() <= notesDirPrefix.size() ||
-                entry.path.compare(entry.path.size() - 3, 3, ".md") != 0) {
-                continue;
-            }
-            remoteNoteShas.emplace(entry.path.substr(notesDirPrefix.size()),
-                                   entry.sha);
-        }
-
-        // ④ 全量判态（纯本地 + 已取到的树；零写入）：每个名字过 classifyNote →
-        // pushActionForState。有任一 Conflict 就先把清单列进确认框并中止——
-        // 不推任何笔记、不动远端（database.sql 也留到冲突判定之后才 PUT）。
-        std::map<std::string, gsync::LocalNote> local;
-        for (auto& [name, content] : collectLocalNotes()) {
-            local.emplace(name, gsync::makeLocalNote(std::move(content)));
-        }
-        auto synced = githubSyncStore_->syncedNoteRecords();
-        if (synced.isFail()) {
-            summary = "读取同步登记失败：" + synced.errorMessage();
-            return false;
-        }
-        struct NotePlan {
-            std::string name;
-            gsync::NoteSyncState state;
-            gsync::PushAction action;
-        };
-        std::vector<NotePlan> plans;
-        std::vector<std::string> putNames;   // 覆盖清单用：本地有改动的笔记
-        {
-            std::set<std::string> names;
-            for (const auto& [name, note] : local) {
-                (void)note;
-                names.insert(name);
-            }
-            for (const auto& [name, rec] : synced.value()) {
-                (void)rec;
-                names.insert(name);
-            }
-            for (const auto& name : names) {
-                const auto rec = synced.value().find(name);
-                const auto loc = local.find(name);
-                const bool hasRecord = rec != synced.value().end();
-                const bool localExists = loc != local.end();
-                const bool localHashMatches =
-                    hasRecord && localExists &&
-                    !rec->second.contentHash.empty() &&
-                    rec->second.contentHash == loc->second.hash;
-                const bool remoteExists = remoteNoteShas.count(name) != 0;
-                const bool remoteShaMatches =
-                    hasRecord && remoteExists &&
-                    remoteNoteShas[name] == rec->second.sha;
-                const auto state = gsync::classifyNote(
-                    hasRecord, localExists, localHashMatches, remoteShaMatches);
-                const auto action = gsync::pushActionForState(
-                    state, remoteExists, remoteShaMatches);
-                if (action == gsync::PushAction::Put) putNames.push_back(name);
-                plans.push_back(NotePlan{name, state, action});
-            }
-        }
-        for (const auto& plan : plans) {
-            if (plan.action != gsync::PushAction::Conflict) continue;
-            conflict = true;
-            summary = plan.state == gsync::NoteSyncState::LocalDeleted
-                          ? ("远端笔记 notes/" + plan.name +
-                             " 已被其他设备改动，本地删除未传播（409 冲突）")
-                          : ("笔记 notes/" + plan.name +
-                             " 本地与远端都有改动（409 冲突）");
-            // 弹窗「拉取远端后再推」的拉取会把远端内容下载回本地并更新登记
-            // （Diverged 与 LocalDeleted+远端变 都在 pull 的 Download 集里），
-            // 重判 InSync 后本轮推送即可通过——不会原地打转。
-            stashOverwriteListForConflict(putNames);
-            return false;
-        }
-
-        // ⑤ database.sql（sha 作冲突检测：远端已变 → 409）。sha 从②的树里取
-        //（与笔记判态同源同一棵树；getFile 单独探一发是多余的请求）。
-        publishGithubSyncProgress("④ 上传 database.sql…");
-        if (syncAborted()) { summary = "同步已中止（退出中）"; return false; }
-        std::string sha;
-        for (const auto& entry : tree.value()) {
-            if (entry.path == gsync::kRemoteSqlPath) {
-                sha = entry.sha;
-                break;
-            }
-        }
-        auto put = api.putFile(gsync::kRemoteSqlPath, dump,
-                               "DevDesk sync: database.sql", sha, branch);
-        if (put.isFail()) {
-            if (put.errorCode() == core::ErrorCode::Conflict) {
-                conflict = true;
-                summary = "远端 database.sql 已被改动（409 冲突）";
-                stashOverwriteListForConflict(putNames);
-            } else {
-                summary = "上传 database.sql 失败：" + put.errorMessage();
-            }
-            return false;
-        }
-        // 登记 PUT 响应的新 sha：下次拉取据此识别「远端未变」。
-        if (!put.value().empty()) {
-            if (auto rec = githubSyncStore_->recordSyncedSqlSha(put.value());
-                rec.isFail()) {
-                LOG_WARN("Settings: database.sql 登记失败: " +
-                         rec.errorMessage());
-            }
-        }
-
-        // ⑥ 执行（PUT / DELETE），单文件粒度 = 单次远端 commit
-        publishGithubSyncProgress("⑤ 同步笔记…");
-        int putCount = 0;
-        int delCount = 0;
-        int deleteSkipCount = 0;   // 安全栏跳过数（进 UI 提示）
-        for (const auto& plan : plans) {
-            // 退出取消位——每个 PUT/DELETE（含 store 登记写）前查一次
-            if (syncAborted()) { summary = "同步已中止（退出中）"; return false; }
-            const std::string path = gsync::remoteNotePath(plan.name);
-            if (plan.action == gsync::PushAction::Put) {
-                // shaIfMatch：LocalModified 用登记 sha（远端动过 → 409，真并发
-                // 检测）；New 或登记缺 sha 用树里的现值（无 → 无 sha 创建）。
-                std::string shaIfMatch;
-                const auto rec = synced.value().find(plan.name);
-                if (rec != synced.value().end() && !rec->second.sha.empty()) {
-                    shaIfMatch = rec->second.sha;
-                } else if (remoteNoteShas.count(plan.name) != 0) {
-                    shaIfMatch = remoteNoteShas[plan.name];
-                }
-                auto r = api.putFile(path, local.at(plan.name).content,
-                                     "DevDesk sync: " + path, shaIfMatch, branch);
-                if (r.isFail()) {
-                    if (r.errorCode() == core::ErrorCode::Conflict) {
-                        // 判态与 PUT 之间远端又变了（竞态）→ 仍走冲突路径
-                        conflict = true;
-                        summary = "远端笔记 " + path + " 已被改动（409 冲突）";
-                        stashOverwriteListForConflict(putNames);
-                    } else {
-                        summary = "上传笔记 " + path + " 失败：" +
-                                  r.errorMessage();
-                    }
-                    return false;
-                }
-                // 登记 PUT 响应的新 sha + 本地内容 hash（hash 是下轮 InSync
-                // 短路的依据）；新 sha 拿不到（响应解析失败）→ 登记空 sha。
-                if (auto rec = githubSyncStore_->recordSyncedNote(
-                        plan.name, r.value(), local.at(plan.name).hash);
-                    rec.isFail()) {
-                    LOG_WARN("Settings: 笔记推送登记失败 " + path + ": " +
-                             rec.errorMessage());
-                }
-                ++putCount;
-                continue;
-            }
-            if (plan.action == gsync::PushAction::Delete) {
-                // 安全栏：登记有而本地读不到 ≠ 本地已删。文件还在磁盘上
-                //（本轮读内容失败等瞬态原因）→ 不删远端、不清登记，下轮再判。
-                std::error_code existsEc;
-                const bool stillThere =
-                    std::filesystem::exists(
-                        ::core::paths::markdownDir() / plan.name, existsEc) &&
-                    !existsEc;
-                if (stillThere) {
-                    LOG_WARN("Settings: 本地文件仍在但未能读取，跳过删除远端 " +
-                             path);
-                    ++deleteSkipCount;   // 跳过不能只进日志
-                    continue;
-                }
-                // 远端已无此文件（LocalDeleted 判态里 remoteExists=false）→
-                // 无需 DELETE，只清登记。DELETETE 的 sha 用树里的现值（判态时
-                // 已确认 == 登记 sha，即未被别的设备改过——C6）。
-                if (remoteNoteShas.count(plan.name) != 0) {
-                    auto r = api.deleteFile(path,
-                                            "DevDesk sync: delete " + path,
-                                            remoteNoteShas[plan.name], branch);
-                    if (r.isFail()) {
-                        summary = "删除远端笔记 " + path + " 失败：" +
-                                  r.errorMessage();
-                        return false;
-                    }
-                }
-                if (auto f = githubSyncStore_->forgetSyncedNote(plan.name);
-                    f.isFail()) {
-                    LOG_WARN("Settings: 笔记删除登记清理失败 " + plan.name +
-                             ": " + f.errorMessage());
-                }
-                ++delCount;
-            }
-            // Skip：InSync（未变）/ RemoteModified（远端领先，交由 pull）
-        }
-        summary = "已推送 database.sql 与 " + std::to_string(putCount) +
-                  " 篇笔记" + (delCount > 0 ? "（删除 " + std::to_string(delCount) +
-                                              " 篇）" : "");
-        if (deleteSkipCount > 0) {
-            // 安全栏跳过不能只进日志（静默失败面）→ 卡片黄字
-            std::lock_guard<std::mutex> lk(githubSyncMutex_);
-            githubSyncStagedDeleteSkipHint_ =
-                "有 " + std::to_string(deleteSkipCount) +
-                " 篇本地仍在但读取失败的笔记，已跳过远端删除（下轮重试）";
-        }
-        return true;
-    }
-
-    // 拉取（全树列举 + 登记 sha 状态比对）：树列举 → database.sql 按登记 sha 判变 →
-    // 笔记按登记比对下载。远端已删的本地笔记保留（保守语义）；
-    // 远端库未变（树 sha == 登记）→ 跳过导入，本地未推改动不被旧数据覆盖。
-    bool runGithubSyncPull(platform::github::GithubApi& api,
-                           const std::string& branch, std::string& summary) {
-        publishGithubSyncProgress("① 列举远端文件树…");
-        auto tree = api.listTree(branch);
-        if (tree.isFail()) {
-            summary = "列举远端文件树失败：" + tree.errorMessage();
-            return false;
-        }
-        const std::string notesDirPrefix = gsync::kRemoteNotesDir;
-        std::string remoteSqlSha;
-        std::map<std::string, std::string> remoteNotes;   // 文件名 → 远端 sha
-        for (const auto& entry : tree.value()) {
-            if (entry.path == gsync::kRemoteSqlPath) {
-                remoteSqlSha = entry.sha;
-                continue;
-            }
-            if (entry.path.rfind(notesDirPrefix, 0) != 0 ||
-                entry.path.size() <= notesDirPrefix.size() ||
-                entry.path.compare(entry.path.size() - 3, 3, ".md") != 0) {
-                continue;
-            }
-            remoteNotes.emplace(entry.path.substr(notesDirPrefix.size()),
-                                entry.sha);
-        }
-
-        auto* db = ::core::appDatabase();
-        if (db == nullptr) {
-            summary = "数据库未就绪";
-            return false;
-        }
-        if (githubSyncStore_ == nullptr) {
-            summary = "同步存储未就绪";
-            return false;
-        }
-        bool sqlImported = false;
-        std::string notesBackupNameOut;   // 摘要用：库导入发生时的笔记备份目录名
-
-        // ② 笔记动作先算（纯本地，零网络）：拉取覆盖面 = 导入 database.sql 或
-        // 下载笔记任一发生 → 先整目录备份笔记，再动库。
-        auto synced = githubSyncStore_->syncedNoteRecords();
-        if (synced.isFail()) {
-            summary = "读取笔记登记失败：" + synced.errorMessage();
-            return false;
-        }
-        std::map<std::string, gsync::LocalNote> localNotes;
-        for (auto& [name, content] : collectLocalNotes()) {
-            localNotes.emplace(name, gsync::makeLocalNote(std::move(content)));
-        }
-        const auto actions = gsync::pullNoteActions(
-            remoteNotes, localNotes, synced.value());
-        int downloadCount = 0;
-        for (const auto& action : actions) {
-            if (action.kind == gsync::PullAction::Kind::Download) {
-                ++downloadCount;
-            }
-        }
-        auto sqlRec = githubSyncStore_->syncedSqlSha();
-        if (sqlRec.isFail()) {
-            summary = "读取 database.sql 登记失败：" + sqlRec.errorMessage();
-            return false;
-        }
-        const bool sqlImportPlanned =
-            !remoteSqlSha.empty() && sqlRec.value() != remoteSqlSha;
-
-        if (sqlImportPlanned || downloadCount > 0) {
-            if (syncAborted()) { summary = "同步已中止（退出中）"; return false; }
-            // 拉取覆盖前整目录备份笔记（与库备份同目录、独立计数、各保 5 份）。
-            publishGithubSyncProgress("② 备份本地数据…");
-            std::string notesBackupName;
-            auto nb = backupNotesDir(notesBackupName);
-            if (nb.isFail()) {
-                summary = "笔记备份失败，已中止拉取：" + nb.errorMessage();
-                return false;
-            }
-            notesBackupNameOut = notesBackupName;
-            if (sqlImportPlanned) {
-                // 覆盖本地 DB 前必须先备份（备份失败即中止，绝不在无退路时覆盖）。
-                std::string backupName;
-                auto backup = backupLocalDb(*db, backupName);
-                if (backup.isFail()) {
-                    summary = "备份失败，已中止拉取：" + backup.errorMessage();
-                    return false;
-                }
-                publishGithubSyncProgress("③ 下载并导入数据库…");
-                auto remote = api.getFile(gsync::kRemoteSqlPath, branch);
-                if (remote.isFail()) {
-                    summary = "下载 database.sql 失败：" + remote.errorMessage();
-                    return false;
-                }
-                if (!remote.value().exists || remote.value().content.empty()) {
-                    summary = "远端 database.sql 不存在或为空";
-                    return false;
-                }
-                // 经 store 导入——begin/end 事件包住（订阅方暂停/恢复后台
-                // 写者），成功发 imported（全局重载广播）+ PRAGMA 复位。
-                auto imported =
-                    githubSyncStore_->importDatabase(remote.value().content);
-                if (imported.isFail()) {
-                    summary = "导入失败：" + imported.errorMessage();
-                    return false;
-                }
-                // 登记树 sha：下次拉取据此识别「远端未变」。
-                if (auto rec = githubSyncStore_->recordSyncedSqlSha(remoteSqlSha);
-                    rec.isFail()) {
-                    LOG_WARN("Settings: database.sql 登记失败: " +
-                             rec.errorMessage());   // 只影响下轮跳过判定，不算失败
-                }
-                sqlImported = true;
-                // app_config 表被 DROP 重建，本模块缓存指向旧行 → 通知 harvest 重载。
-                githubSyncStagedDbImported_.store(true,
-                                                  std::memory_order_release);
-            }
-        }
-
-        // ③ 笔记：按登记 sha 比对，只下载远端变过的
-        publishGithubSyncProgress("④ 同步笔记…");
-        int dlCount = 0;
-        int keepCount = 0;
-        for (const auto& action : actions) {
-            // 退出取消位——每次下载写盘 / 登记写库前查一次
-            if (syncAborted()) { summary = "同步已中止（退出中）"; return false; }
-            if (action.kind == gsync::PullAction::Kind::KeepLocal) {
-                LOG_INFO("Settings: 远端已删除笔记 " + action.fileName +
-                         "，本地保留（pull 不替远端传播删除）");
-                // 清登记——远端被别设备删掉、本地未改的笔记若留着旧登记，
-                // 下轮 push 按 InSync 短路永不重推（远端永远缺这篇），本地一改
-                // 又带失效 sha PUT → 409/422 死循环。清掉后下轮 push 判 New，
-                // shaIfMatch 取远端树现值（不逐篇 GET；远端无此名 →
-                // 无 sha PUT 重建，local wins）。
-                if (auto f = githubSyncStore_->forgetSyncedNote(action.fileName);
-                    f.isFail()) {
-                    LOG_WARN("Settings: 笔记基线清理失败 " + action.fileName +
-                             ": " + f.errorMessage());
-                }
-                ++keepCount;
-                continue;
-            }
-            auto f = api.getFile(gsync::remoteNotePath(action.fileName), branch);
-            if (f.isFail() || !f.value().exists) {
-                summary = "下载笔记 " + action.fileName + " 失败：" +
-                          (f.isFail() ? f.errorMessage()
-                                      : std::string("远端已不存在"));
-                return false;
-            }
-            if (!writeFileFromString(
-                    ::core::paths::markdownDir() / action.fileName,
-                    f.value().content)) {
-                summary = "写入笔记文件失败：" + action.fileName;
-                return false;
-            }
-            // 登记树 sha + 下载内容的 hash：下次 push 据此 InSync 短路、
-            // 下次 pull 据此跳过未变文件。
-            if (auto rec = githubSyncStore_->recordSyncedNote(
-                    action.fileName, remoteNotes[action.fileName],
-                    gsync::contentHash(f.value().content));
-                rec.isFail()) {
-                LOG_WARN("Settings: 笔记拉取登记失败 " + action.fileName + ": " +
-                         rec.errorMessage());
-            }
-            ++dlCount;
-        }
-        summary = std::string(sqlImported ? "已导入 database.sql"
-                                          : "database.sql 未变，未导入") +
-                  "；下载 " + std::to_string(dlCount) + " 篇笔记" +
-                  (keepCount > 0
-                       ? "（远端已删 " + std::to_string(keepCount) +
-                             " 篇，本地保留）"
-                       : "") +
-                  (!notesBackupNameOut.empty()
-                       ? "（本地备份：" + notesBackupNameOut + "）"
-                       : "");
-        return true;
-    }
-
-    // 备份本地库到 backups/devdesk-<ts>.db（保留最近 5 份）。
-    // 先 wal_checkpoint 再整文件拷贝：WAL 里未回写的页不 checkpoint 会丢。
-    core::Result<void> backupLocalDb(core::data::SqliteDb& db,
-                                     std::string& outName) {
-        const auto dbFile = ::core::paths::sqliteDbFile();
-        const auto dir = ::core::paths::appDataDir() / gsync::kBackupDirName;
-        std::error_code ec;
-        std::filesystem::create_directories(dir, ec);
-        if (ec) {
-            return core::Result<void>::fail(core::ErrorCode::FileWriteFailed,
-                                            "创建备份目录失败：" + ec.message());
-        }
-        auto cp = db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
-        if (cp.isFail()) {
-            LOG_WARN("Settings: wal_checkpoint 失败（继续备份）: " +
-                     cp.errorMessage());
-        }
-        const std::string name = gsync::backupFileName(nowSec());
-        const auto target = dir / name;
-        std::filesystem::copy_file(dbFile, target,
-                                   std::filesystem::copy_options::overwrite_existing,
-                                   ec);
-        if (ec) {
-            return core::Result<void>::fail(core::ErrorCode::FileWriteFailed,
-                                            "拷贝数据库失败：" + ec.message());
-        }
-        gsync::pruneBackups(dir, gsync::kBackupPrefix, gsync::kBackupKeep);
-        outName = name;
-        return core::Result<void>::ok();
-    }
-
-    // 拉取覆盖前整目录备份笔记到 backups/notes-<ts>/（与库备份同目录、
-    // 前缀隔离、独立计数，各保 5 份）。只拷 .md；笔记目录不存在 → 无可备份 = ok。
-    core::Result<void> backupNotesDir(std::string& outName) {
-        const auto srcDir = ::core::paths::markdownDir();
-        std::error_code ec;
-        if (!std::filesystem::is_directory(srcDir, ec)) {
-            return core::Result<void>::ok();
-        }
-        const auto dir = ::core::paths::appDataDir() / gsync::kBackupDirName;
-        std::filesystem::create_directories(dir, ec);
-        if (ec) {
-            return core::Result<void>::fail(core::ErrorCode::FileWriteFailed,
-                                            "创建备份目录失败：" + ec.message());
-        }
-        const std::string name = gsync::notesBackupDirName(nowSec());
-        const auto target = dir / name;
-        std::filesystem::create_directories(target, ec);
-        if (ec) {
-            return core::Result<void>::fail(core::ErrorCode::FileWriteFailed,
-                                            "创建笔记备份目录失败：" +
-                                                ec.message());
-        }
-        for (std::filesystem::directory_iterator it(srcDir, ec), end;
-             it != end; it.increment(ec)) {
-            if (ec) break;
-            std::error_code fec;
-            if (!it->is_regular_file(fec)) continue;
-            const std::string fname = it->path().filename().string();
-            if (fname.size() < 3 ||
-                fname.compare(fname.size() - 3, 3, ".md") != 0) {
-                continue;
-            }
-            std::filesystem::copy_file(
-                it->path(), target / fname,
-                std::filesystem::copy_options::overwrite_existing, ec);
-            if (ec) {
-                return core::Result<void>::fail(
-                    core::ErrorCode::FileWriteFailed,
-                    "拷贝笔记备份失败：" + fname + ": " + ec.message());
-            }
-        }
-        gsync::pruneBackups(dir, gsync::kNotesBackupPrefix, gsync::kBackupKeep,
-                            "");
-        outName = name;
-        return core::Result<void>::ok();
-    }
-
-    // 本地笔记快照（文件名 → 内容）。
-    static std::map<std::string, std::string> collectLocalNotes() {
-        std::map<std::string, std::string> out;
-        std::error_code ec;
-        const auto dir = ::core::paths::markdownDir();
-        if (!std::filesystem::is_directory(dir, ec)) return out;
-        for (std::filesystem::directory_iterator it(dir, ec), end; it != end;
-             it.increment(ec)) {
-            if (ec) break;
-            std::error_code fec;
-            if (!it->is_regular_file(fec)) continue;
-            const std::string name = it->path().filename().string();
-            if (name.size() < 3 || name.compare(name.size() - 3, 3, ".md") != 0) {
-                continue;
-            }
-            std::string content;
-            if (readFileToString(it->path(), content)) {
-                out.emplace(name, std::move(content));
-            }
-        }
-        return out;
     }
 
     // 本地 git 探测：平台差异在 local_git_probe_*.cpp
