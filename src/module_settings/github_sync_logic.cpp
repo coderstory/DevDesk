@@ -1,6 +1,8 @@
 // src/module_settings/github_sync_logic.cpp — 纯件实现（边界见 .h）。
 #include "github_sync_logic.h"
 
+#include "core/logging.h"
+
 #include <algorithm>
 #include <system_error>
 
@@ -68,7 +70,12 @@ int pruneBackups(const std::filesystem::path& dir, const std::string& prefix,
     std::vector<std::filesystem::path> found;
     for (std::filesystem::directory_iterator it(dir, ec), end; it != end;
          it.increment(ec)) {
-        if (ec) break;
+        if (ec) {
+            // 扫描中断 = 见到的条目不完整，保留份数会被算少（静默失败面）
+            LOG_WARN("GithubSync: 扫描备份目录中断 " + dir.string() + ": " +
+                     ec.message());
+            break;
+        }
         const auto& p = it->path();
         const std::string name = p.filename().string();
         if (name.size() <= prefix.size()) continue;
@@ -93,9 +100,13 @@ int pruneBackups(const std::filesystem::path& dir, const std::string& prefix,
     for (int i = 0; i < excess; ++i) {
         // remove_all：文件删自身，目录连内容一起删（笔记备份是目录）
         std::error_code rmEc;
-        if (std::filesystem::remove_all(found[static_cast<size_t>(i)], rmEc) >
-            0) {
+        const auto& victim = found[static_cast<size_t>(i)];
+        if (std::filesystem::remove_all(victim, rmEc) > 0) {
             ++removed;
+        } else if (rmEc) {
+            // 删除失败必须显形（静默失败面）：备份目录会超保留数无限增长而无人察觉
+            LOG_WARN("GithubSync: 滚动删除备份失败 " + victim.string() + ": " +
+                     rmEc.message());
         }
     }
     return removed;
