@@ -136,10 +136,13 @@ public:
 （F6）列出将被覆盖的本地未推文件 → 用户确认
    → 备份：库 → backups/devdesk-<ts>.db；笔记整目录 → backups/notes-<ts>/（各保留 5 份）
    → GET /git/trees/{branch}?recursive=1 取全树（F7）
-   → GET data/database.sql（远端）→ sql_dump::importFromFile 覆盖本地库（F3：导入前后暂停/重载）
+   → GET data/database.sql（远端）→ 比对登记 sha：未变即跳过导入（2026-10-16 T4 实现修订，省一次全库重建）；变了才 sql_dump 导入覆盖本地库（F3：导入前后暂停/重载）
    → GET notes/*.md → 与本地按 sha 状态比对（F1）：新增/更新覆盖、远端已删的本地保留
    → 刷新 UI（模块数据重载）
 ```
+
+**登记键是设备本地状态，永不跨设备（2026-10-16 T4 审计 C1 裁决）**
+F1 的 `github_sync:sha:*` / `hash:*` 登记描述的是「本机与远端的一致性基线」，必须与本机绑定：不得随 dump 导出（实现：登记移入独立表并加入 `defaultSkipTables()`，或导出路径按前缀剔除；两者择一，以测试钉死「导出不含登记键」）。跨设备传播登记会让新设备首拉误判「笔记未变」不下载，继而下轮 push 见「有登记无本地」而删远端笔记（可清空远端）。
 
 **首次启用（初始化）**
 ```
