@@ -364,11 +364,13 @@ core::Result<void> GithubSyncStore::importDatabase(const std::string& sql) {
                      fk.errorMessage());
         }
         // 真读结果行：exec 会丢弃行且 rc 恒 OK = 零校验；PRAGMA integrity_check
-        // 完好时返回一行 "ok"，损坏时返回具体错误行（首行即判据）。
+        // 完好时返回一行 "ok"，损坏时返回具体错误行（首行即判据）。校验未过
+        // 不只记日志——导入返回 fail（报错面 = 卡片红字 + 409/详情弹窗），且
+        // 不广播 imported（不引导各模块重载一个已损坏的库）。
         auto check = db_->prepare("PRAGMA integrity_check");
         if (check.isFail()) {
             LOG_WARN("GithubSync: 导入后 integrity_check 无法执行: " +
-                     check.errorMessage());
+                     check.errorMessage());   // 判不了 = 不阻断（与旧行为同）
         } else {
             auto& st = check.value();
             auto stepped = st.step();
@@ -378,18 +380,19 @@ core::Result<void> GithubSyncStore::importDatabase(const std::string& sql) {
             } else if (stepped.value()) {
                 auto row = st.currentRow();
                 std::string verdict;
-                if (row.isOk()) {
-                    if (!row.value().values.empty()) {
-                        if (auto* v = std::get_if<std::string>(
-                                &row.value().values[0])) {
-                            verdict = *v;
-                        }
+                if (row.isOk() && !row.value().values.empty()) {
+                    if (auto* v =
+                            std::get_if<std::string>(&row.value().values[0])) {
+                        verdict = *v;
                     }
                 }
                 if (verdict != "ok") {
-                    LOG_ERROR("GithubSync: 导入后 integrity_check 未通过: " +
-                              (verdict.empty() ? std::string("（无结果行）")
-                                               : verdict));
+                    ::core::event::bus().emit(::core::event::kDbImportEnd);
+                    return core::Result<void>::fail(
+                        core::ErrorCode::DatabaseCorrupted,
+                        "导入后完整性校验未通过：" +
+                            (verdict.empty() ? std::string("（无结果行）")
+                                             : verdict));
                 }
             }
         }
