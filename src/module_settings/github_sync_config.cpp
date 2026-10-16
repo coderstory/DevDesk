@@ -3,8 +3,10 @@
 #include "github_sync_config.h"
 
 #include "core/app_config.h"
+#include "core/event_bus.h"
 #include "core/logging.h"
 #include "core/result.h"
+#include "core/sql_dump.h"
 #include "platform/json.h"
 #include "platform/keychain.h"
 
@@ -257,6 +259,32 @@ core::Result<void> GithubSyncStore::recordSyncedSqlSha(const std::string& sha) {
     std::lock_guard<std::recursive_mutex> lock(db_->mutex());
     return core::appconfig::set(*db_, std::string(kKeyShaPrefix) + kRemoteSqlRelPath,
                                 jsonString(sha));
+}
+
+core::Result<void> GithubSyncStore::importDatabase(const std::string& sql) {
+    if (db_ == nullptr) {
+        return core::Result<void>::fail(core::ErrorCode::NotFound,
+                                        "应用数据库未就绪");
+    }
+    ::core::event::bus().emit(::core::event::kDbImportBegin);
+    core::Result<void> r = ::core::sql_dump::importFromString(*db_, sql);
+    if (r.isOk()) {
+        std::lock_guard<std::recursive_mutex> lock(db_->mutex());
+        auto fk = db_->exec("PRAGMA foreign_keys=ON");
+        if (fk.isFail()) {
+            LOG_WARN("GithubSync: 导入后 PRAGMA foreign_keys=ON 失败: " +
+                     fk.errorMessage());
+        }
+        auto integrity = db_->exec("PRAGMA integrity_check");
+        if (integrity.isFail()) {
+            LOG_WARN("GithubSync: 导入后 integrity_check 失败: " +
+                     integrity.errorMessage());
+        }
+        ::core::event::bus().emit(::core::event::kDbImported);
+    }
+    // end 无论成败都发：订阅方靠它恢复被暂停的后台任务，不能漏。
+    ::core::event::bus().emit(::core::event::kDbImportEnd);
+    return r;
 }
 
 } // namespace module::settings

@@ -15,7 +15,9 @@
 #include "frame_env.h"
 #include "test_support.h"
 
+#include "core/event_bus.h"
 #include "core/theme.h"
+#include "core/sql_dump.h"
 #include "git_error_dialog.h"
 #include "github_sync_card.h"
 #include "github_sync_config.h"
@@ -578,6 +580,49 @@ REGISTER_TEST(github_sync_store_state_keys,
     auto done3 = store.isFirstSyncDone();
     DOCTEST_REQUIRE(done3.isOk());
     DOCTEST_CHECK(!done3.value());
+    return true;
+})
+
+REGISTER_TEST(github_sync_import_database_events,
+              "github_sync 存储: importDatabase 事件序——begin/end 恒发、imported 仅成功（F3）", {
+    test_support::TestEnv env("gitsync", "importdb");
+    module::settings::GithubSyncStore store(&env.handle());
+    int begin = 0;
+    int end = 0;
+    int imported = 0;
+    auto s1 = ::core::event::bus().subscribe(
+        ::core::event::kDbImportBegin,
+        [&](const std::string&) { ++begin; });
+    auto s2 = ::core::event::bus().subscribe(
+        ::core::event::kDbImportEnd,
+        [&](const std::string&) { ++end; });
+    auto s3 = ::core::event::bus().subscribe(
+        ::core::event::kDbImported,
+        [&](const std::string&) { ++imported; });
+
+    // 造一份合法 dump：建表 + 插行
+    auto* db = &env.handle();
+    DOCTEST_CHECK(db->exec("CREATE TABLE t4s(a INTEGER PRIMARY KEY, b TEXT)").isOk());
+    DOCTEST_CHECK(db->exec("INSERT INTO t4s(a,b) VALUES (1,'x')").isOk());
+    auto dump = ::core::sql_dump::exportToString(*db);
+    DOCTEST_REQUIRE(dump.isOk());
+
+    // 成功路径：begin/end/imported 各一次；数据仍在
+    auto ok = store.importDatabase(dump.value());
+    DOCTEST_REQUIRE(ok.isOk());
+    DOCTEST_CHECK_EQ(begin, 1);
+    DOCTEST_CHECK_EQ(end, 1);
+    DOCTEST_CHECK_EQ(imported, 1);
+
+    // 失败路径：坏 SQL → begin/end 仍发（后台任务必须被恢复），imported 不发，
+    // 库内容保持导入前原样（importFromString 事务原子性）
+    auto bad = store.importDatabase("这不是 SQL");
+    DOCTEST_CHECK(bad.isFail());
+    DOCTEST_CHECK_EQ(begin, 2);
+    DOCTEST_CHECK_EQ(end, 2);
+    DOCTEST_CHECK_EQ(imported, 1);
+    auto rows = db->exec("SELECT 1 FROM t4s");
+    DOCTEST_CHECK(rows.isOk());
     return true;
 })
 

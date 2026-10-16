@@ -1089,12 +1089,10 @@ public:
                     summary = "远端 database.sql 不存在或为空";
                     return false;
                 }
-                const auto dumpFile = ::core::paths::sqlDumpFile();
-                if (!writeFileFromString(dumpFile, remote.value().content)) {
-                    summary = "写入临时文件失败";
-                    return false;
-                }
-                auto imported = ::core::sql_dump::importFromFile(*db, dumpFile);
+                // F3：经 store 导入——begin/end 事件包住（订阅方暂停/恢复后台
+                // 写者），成功发 imported（全局重载广播）+ PRAGMA 复位。
+                auto imported =
+                    githubSyncStore_->importDatabase(remote.value().content);
                 if (imported.isFail()) {
                     summary = "导入失败：" + imported.errorMessage();
                     return false;
@@ -1106,6 +1104,9 @@ public:
                              rec.errorMessage());   // 只影响下轮跳过判定，不算失败
                 }
                 sqlImported = true;
+                // app_config 表被 DROP 重建，本模块缓存指向旧行 → 通知 harvest 重载。
+                githubSyncStagedDbImported_.store(true,
+                                                  std::memory_order_release);
             }
         }
 
@@ -1297,6 +1298,14 @@ public:
             githubSyncProgressPending_.clear();
             githubSyncOverwriteFiles_ = githubSyncStagedOverwriteFiles_;
             githubSyncStagedOverwriteFiles_.clear();
+        }
+        // 导入覆盖过库 → 本模块缓存重载（store 指针仍有效，只重读配置）。
+        if (githubSyncStagedDbImported_.exchange(false,
+                                                 std::memory_order_acq_rel)) {
+            if (githubSyncStore_) {
+                githubSyncCfg_ = githubSyncStore_->load();
+                LOG_INFO("Settings: 库导入后已重载 GitHub Sync 配置缓存");
+            }
         }
         githubSyncStatus_ = githubSyncResultSummary_;
         githubSyncStatusError_ = !githubSyncResultOk_;
@@ -1764,6 +1773,9 @@ private:
     std::string githubSyncStagedBranchHint_;
     // F6：409 时「拉取将覆盖的本地未推文件」清单（后台线程产出 → UI 搬运）。
     std::vector<std::string> githubSyncStagedOverwriteFiles_;
+    // F3：本轮导入成功 → harvest 在 UI 线程重载本模块配置缓存（app_config 被
+    // DROP 重建过）。
+    std::atomic<bool> githubSyncStagedDbImported_{false};
     // 以下成员仅 UI 线程读写（harvest 在 join 后搬运）。
     bool githubSyncRunning_ = false;
     std::string githubSyncProgress_;          // 卡片进度行快照

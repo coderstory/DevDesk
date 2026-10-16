@@ -68,6 +68,14 @@ public:
     core::Result<std::string> syncedSqlSha() const;
     core::Result<void> recordSyncedSqlSha(const std::string& sha);
 
+    // F3：导入远端 dump 覆盖本地库。导入前广播 db.import_begin（订阅方暂停
+    // 后台写者），结束（无论成败）广播 db.import_end（订阅方恢复后台任务）；
+    // 成功再广播 db.imported（全局重载）+ 重执行 PRAGMA foreign_keys=ON 与
+    // integrity_check（dump 的 PRAGMA 是会话级的，恢复值不保证 = 应用不变量 ON）。
+    // 失败回滚由 importFromString 的事务原子性承担（任一句失败整体回滚，
+    // test_sql_dump 的 sql_dump_import_rollback 钉死），不另做内存副本。
+    core::Result<void> importDatabase(const std::string& sql);
+
 private:
     core::data::SqliteDb* db_;
 };

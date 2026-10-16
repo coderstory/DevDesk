@@ -18,6 +18,7 @@
 #include "core/theme.h"
 #include "core/component_theme.h"
 #include "core/database.h"
+#include "core/event_bus.h"
 #include "platform/json.h"
 #include "provider_config.h"
 #include "quota/quota_credential.h"
@@ -301,6 +302,17 @@ public:
         claudeTools_ = std::make_unique<ClaudeTools>(*svc);
         claudeTools_->registerAll();
         startQuotaRefresh();
+        // F3：GitHub Sync 导入覆盖活库期间暂停余量后台刷新（它 60s 一轮写
+        // QuotaStore，同一 appDatabase）。end 无论成败都发 → 恢复由此触发；
+        // startQuotaRefresh 建新 QuotaRefresher（stopAll 后旧实例不可重启）。
+        // 订阅 token 必须持有，丢了就退订。handler 在导入线程同步执行。
+        ::core::event::EventBus& bus = ::core::event::bus();
+        dbImportSubs_.push_back(bus.subscribe(
+            ::core::event::kDbImportBegin,
+            [this](const std::string&) { stopQuotaRefresh(); }));
+        dbImportSubs_.push_back(bus.subscribe(
+            ::core::event::kDbImportEnd,
+            [this](const std::string&) { startQuotaRefresh(); }));
     }
 
     // 进页标记缓存脏，下一帧 compose 重查
@@ -309,6 +321,8 @@ public:
     void onStop() override {
         if (!started_) return;   // 重入幂等
         LOG_INFO("Claude 模块停止");
+        // 先退订导入事件再停余量刷新：订阅 handler 触碰本类成员，退订后不再进入。
+        dbImportSubs_.clear();
         // 先停余量刷新（线程里的 QuotaStore 引用会在成员析构后悬垂）；再注销工具、最后停代理。
         stopQuotaRefresh();
         if (claudeTools_) {
@@ -990,6 +1004,8 @@ private:
     std::unique_ptr<quota::QuotaStore> quotaStore_;
     std::unique_ptr<quota::ProfileCredentialSource> quotaCredentials_;
     std::unique_ptr<quota::QuotaRefresher> quotaRefresher_;
+    // F3 导入暂停/恢复的订阅 token：token 析构即退订，必须持有到 onStop。
+    std::vector<::core::event::EventBus::Subscription> dbImportSubs_;
     // 弹窗「测试连接」后台线程 + 结果槽（独立于详情页；UI 线程 join 后才读）
     std::thread quotaTestThread_;
     std::atomic<bool> quotaTestDone_{false};
