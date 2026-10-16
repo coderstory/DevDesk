@@ -169,7 +169,7 @@ F1 的 `github_sync:sha:*` / `hash:*` 登记描述的是「本机与远端的一
 | 无 git 可用 | 点「配置」按钮时弹一次；改配置时再弹；不阻塞同步 |
 | 本地历史 commit 失败 | 记日志；卡片灰字「本地版本历史：不可用」 |
 
-**安全**：token 只存 keychain（`DevDesk/github` / `token`）与请求 header；日志、详情弹窗、dump 中一律脱敏。密钥列按决策 #8 进入同步 —— 已知代价：密钥进 git 历史、跨平台（macOS 明文 ↔ Windows DPAPI）不可用需重填。
+**安全**：token 存 DB `github_sync_state.token`（2026-10-16 修订，原为 keychain）与请求 header；日志、详情弹窗、dump 中一律脱敏。**该表在 `core::sql_dump::defaultSkipTables()` 内 → token 不入 SQL dump —— 这是「token 不上远端仓」的承重不变量**（全仓唯一 dump 生产者 `github_sync_engine.cpp` 传的就是这份清单；动 skip 清单前必读此处）。密钥列按决策 #8 进入同步 —— 已知代价：密钥进 git 历史、跨平台（macOS 明文 ↔ Windows DPAPI）不可用需重填。
 
 ## 7. 文件面
 

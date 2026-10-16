@@ -20,7 +20,7 @@
 | 8 | 分支 | 用户可自定义远程分支名，默认 `main` |
 | 9 | 备份触发 | 绑定 md 的 commit 机制，commit 时顺手备份；也支持手动触发 |
 | 10 | 目录结构 | `notes/` 子目录放 md 文件，`database.sql` 放根目录 |
-| 11 | Token 存储 | `platform::keychain`：service=`DevDesk/github`，account=`token` |
+| 11 | Token 存储 | **2026-10-16 修订**：DB `github_sync_state.token` 行（`value` 列 NOT NULL），读写经 `credential::protect`/`unprotect`（macOS 恒等明文 + DB 文件 0600；Windows DPAPI）。原决策 = `platform::keychain`（service=`DevDesk/github`，account=`token`），已由 `c003362` 改口径：token 与同步基线同生命周期，且免去钥匙串清理链。**承重不变量**：`github_sync_state` 必须留在 `core::sql_dump::defaultSkipTables()` 内 —— token 由此不入 SQL dump、不上远端仓、不入本地 git 对象 |
 
 ## 架构设计
 
@@ -87,9 +87,12 @@ onStart / 用户点击「同步」
 | `github_sync:branch` | string | 远程分支名，默认 `main` |
 | `github_sync:auto_push` | bool | 是否自动 push（默认 true） |
 
-Token 不存 app_config，走 `platform::keychain`：
-- service = `DevDesk/github`
-- account = `token`
+Token 不存 app_config，存 `github_sync_state` 表的 `token` 行（`value` 列），经 `github_sync_config.cpp` 的 `saveToken` / `loadToken` / `deleteToken` 读写：
+- macOS：`credential::protect` 为恒等（明文入库），安全性靠 DB 文件权限 0600
+- Windows：DPAPI（`CryptProtectData`）
+- `loadToken`：缺行或空值一律 `fail(NotFound)`；**`unprotect` 失败不静默回落**到密文/明文
+- **承重不变量**：`github_sync_state` 留在 `core::sql_dump::defaultSkipTables()` 内，故 token 不入 SQL dump、不上远端仓、不入本地 git 对象（该清单原为防同步基线污染而设，如今兼为凭据闸门）
+- 旧钥匙串条目（`DevDesk/github`/`token`、`claude:*`）：原启动期清理链已删，本机残留处置见待办票（**不写迁移代码**，属既定取舍）
 
 ### Git 操作实现策略
 

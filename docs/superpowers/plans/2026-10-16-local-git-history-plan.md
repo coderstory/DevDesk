@@ -171,7 +171,7 @@
 ### 本票必须继续保证
 - **显式 pathspec 提交**：`git add -- notes/`（可选 `data/database.sql`），**永不** `git add -A` / `git add .`。这是项目自己的纪律（CLAUDE.md 交付流水线「禁 git add -A」），也是这里的**第一道隐私闸**；`.gitignore` 是第二道。
 - **绝不上远端的项**：`.git/` 本身（同步不枚举目录）、`run-settings/*.json`、`claude_settings_snapshot.json`、任何 `*.db*`。
-- **token**：从不落数据根（在 keychain，`platform::keychain` service=`DevDesk/github`）→ 天然不入库。
+- **token**：现落数据根（DB `github_sync_state.token`，2026-10-16 由 keychain 迁移），但该表在 `core::sql_dump::defaultSkipTables()` 内 → 仍不入 dump、不入本地 git 对象。**本票实现若改动 skip 清单，必须保持 `github_sync_state` 在列** —— 否则 macOS 上的明文 token 会进 `.git/objects`（与远端同等暴露）。
 - **若选备选 B（commit dump）**：密钥列（决策 #8）进本地 git 对象 —— **必须在 spec §10 风险表补一行**，并告知用户「本地 `.git/objects` 与远端同等暴露」。**选推荐方案 A 则零新增密钥面**。
 
 ---
