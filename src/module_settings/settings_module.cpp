@@ -689,26 +689,45 @@ public:
     }
 
     // F5 退出补推：dirty 且距上次 commit ≥60s 才推；最多等 5s，到点未完即
-    // 放弃（线程本体由 onStop 的 join 收束，不悬垂），置未同步提示键 →
-    // 下次启动卡片黄字。manual=true 绕开 5 分钟节流（退出补推是一次性的）。
+    // 放弃并置未同步提示键 → 下次启动卡片黄字。manual=true 绕开 5 分钟节流
+    //（退出补推是一次性的）。
+    // 等待/放行逻辑见 waitOrDetachSyncThread；已有任务在飞时也走同一条等待，
+    // 否则 onStop 的无界 join 会把退出拖到整轮推送结束（断网时数十秒~分钟）。
     void runExitSyncPush() {
-        if (!githubSyncCfg_.enabled || !githubSyncDirty_) return;
         if (githubSyncStore_ == nullptr) return;
+        if (githubSyncThread_.joinable()) {
+            // 自动/手动同步在飞：退出不等它跑完（onStop 的 join 也不得等）
+            waitOrDetachSyncThread();
+            return;
+        }
+        if (!githubSyncCfg_.enabled || !githubSyncDirty_) return;
         if (!gsync::exitPushDue(githubSyncLastCommitSec_, nowSec())) return;
-        if (githubSyncThread_.joinable()) return;   // 已有任务在飞：交给 onStop
         LOG_INFO("Settings: 退出补推启动");
         startGithubSyncAction(SyncAction::Push, /*manual=*/true);
-        for (int i = 0; i < 50; ++i) {   // 上限 5s（50 × 100ms）
+        waitOrDetachSyncThread();
+    }
+
+    // 退出路径的等待闸：最多等 5s（50 × 100ms），到点 detach 放行。
+    // detach 在本路径安全——SettingsModule 是进程生命期对象（析构晚于全部
+    // atexit 处理器），appDatabase 堆持有同寿；detach 后
+    // githubSyncThread_.joinable()==false，onStop 的 join 直接跳过，退出不被
+    // 整轮推送阻塞。
+    void waitOrDetachSyncThread() {
+        for (int i = 0; i < 50; ++i) {
             if (githubSyncDone_.load(std::memory_order_acquire)) {
                 LOG_INFO("Settings: 退出补推 5 秒内完成");
-                return;
+                return;   // 已完成：onStop 的 join 瞬间返回
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
-        if (auto r = githubSyncStore_->setUnsyncedNotice(); r.isFail()) {
-            LOG_WARN("Settings: 未同步提示落库失败: " + r.errorMessage());
+        if (githubSyncDirty_) {
+            if (auto r = githubSyncStore_->setUnsyncedNotice(); r.isFail()) {
+                LOG_WARN("Settings: 未同步提示落库失败: " + r.errorMessage());
+            }
         }
-        LOG_WARN("Settings: 退出补推 5 秒内未完成，已放弃等待（下次启动卡片提示）");
+        if (githubSyncThread_.joinable()) githubSyncThread_.detach();
+        LOG_WARN("Settings: 退出补推 5 秒内未完成，已放弃等待并放行线程"
+                 "（下次启动卡片提示）");
     }
 
     // 前置校验失败等 UI 线程内的即时错误：进错误行 + 直接开详情弹窗。
