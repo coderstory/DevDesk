@@ -14,6 +14,7 @@
 #include <memory>
 #include <mutex>
 #include <thread>
+#include <utility>
 #include <vector>
 #include "module_agent/agent_loop.h"
 #include "module_agent/agent_store.h"
@@ -61,7 +62,7 @@ private:
     void residentThreadLoop();
     void eventThreadLoop();
     // 单个事件的路由：listTasks 过滤（enabled + event 型 + events 含 name）→
-    // 任务级冷却（窗口内直接丢弃，不排队不延后）→ dispatchRun
+    // 任务×事件级冷却（同任务不同事件互不压制；窗口内直接丢弃，不排队不延后）→ dispatchRun
     void processEvent(const std::string& name);
     AgentStore& store_;
     AgentLoop& loop_;
@@ -73,7 +74,7 @@ private:
     std::mutex mu_;                                 // 护 runs_ / lastFiredMinute_ / residentQueue_ / eventQueue_ / lastEventFireSec_
     std::condition_variable cv_;                    // 常驻/事件队列有新单 / stopAll 唤醒
     std::map<int64_t, int64_t> lastFiredMinute_;    // taskId → 上次触发的分钟序（now/60）
-    std::map<int64_t, int64_t> lastEventFireSec_;   // taskId → 事件型上次派发的 unix 秒（冷却起点）
+    std::map<std::pair<int64_t, std::string>, int64_t> lastEventFireSec_;   // (taskId, 事件名) → 该组合上次派发的 unix 秒（冷却起点）
     std::vector<std::unique_ptr<ActiveRun>> runs_;  // 派发线程写 / stopAll 与观察面读（mu_ 护）
     std::deque<int64_t> residentQueue_;             // 常驻待跑 taskId（mu_ 护）
     std::deque<std::string> eventQueue_;            // 待路由的事件名（mu_ 护；只存名字，冷却按消费时刻计时）

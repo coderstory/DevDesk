@@ -623,6 +623,45 @@ REGISTER_TEST(event_trigger_cooldown_override_by_config,
     return true;
 })
 
+// 冷却键粒度 = 任务×事件组合（R-5）：同任务订阅两个事件时，事件一触发后、默认 300s
+// 窗口内事件二**仍可派发**。键若退化为 taskId 单键，事件一会压制同任务的事件二——此
+// 用例必红（第二跑永不出现）；修法是键含事件名，逐组合计时
+REGISTER_TEST(event_trigger_cooldown_key_is_task_x_event,
+              "event_trigger: 冷却键=任务×事件——同任务第二事件在默认 300s 窗口内仍派发", {
+    test_support::TestDb tdb("agentsched", "evtcdkey");
+    module::agent::AgentStore store(tdb.handle());
+    MockLlm llm; llm.script = { endTurnResp(), endTurnResp() };
+    module::agent::AgentLoop loop(llm, core::ToolRegistry::instance(), store);
+    int64_t nowSec = 300000;
+    module::agent::Scheduler sched(store, loop, [&nowSec] { return nowSec; });
+    auto taskId = store.createTask("双事件", "g", "event", "default", 5, false,
+                                    R"({"events":["ev.a","ev.b"]})");
+    DOCTEST_REQUIRE(taskId.isOk());
+    // 事件一 → 派发（(task, ev.a) 冷却起点 = nowSec）
+    sched.onEvent("ev.a");
+    DOCTEST_REQUIRE(sched.drainEventQueue().isOk());
+    for (int i = 0; i < 500; ++i) {
+        auto runs = store.listRuns(taskId.value(), 10);
+        if (runs.isOk() && runs.value().size() == 1 &&
+            runs.value()[0].status != "running") break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    DOCTEST_REQUIRE_EQ(store.listRuns(taskId.value(), 10).value().size(), 1u);
+    // +100s（仍在 300s 默认窗口内）事件二到达：不同事件名 → 不受事件一冷却压制
+    nowSec += 100;
+    sched.onEvent("ev.b");
+    DOCTEST_REQUIRE(sched.drainEventQueue().isOk());
+    for (int i = 0; i < 500; ++i) {
+        auto runs = store.listRuns(taskId.value(), 10);
+        if (runs.isOk() && runs.value().size() == 2 &&
+            runs.value()[1].status != "running") break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    DOCTEST_CHECK_EQ(store.listRuns(taskId.value(), 10).value().size(), 2u);
+    sched.stopAll();
+    return true;
+})
+
 // 坏 trigger_config（两者皆缺 / events 空数组 / events 非数组）→ 点名 task id 的
 // WARN + 跳过（不静默）；disabled 的 event 任务不派发。日志捕获同 badcfg 用例
 REGISTER_TEST(event_trigger_bad_config_logs_and_skips,

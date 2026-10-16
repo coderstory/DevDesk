@@ -249,12 +249,13 @@ void Scheduler::processEvent(const std::string& name) {
         const int64_t cooldown =
             cfg.value().cooldownSec > 0 ? cfg.value().cooldownSec
                                        : kDefaultEventCooldownSec;
-        {   // 任务级冷却：窗口内的事件直接丢弃——不排队、不延后（R-5/R-7 硬边界）
+        {   // 任务×事件级冷却：同任务不同事件互不压制；窗口内同组合的事件直接丢弃——不排队、不延后（R-5）
             std::lock_guard<std::mutex> lock(mu_);
-            auto it = lastEventFireSec_.find(t.id);
+            const auto key = std::make_pair(t.id, name);
+            auto it = lastEventFireSec_.find(key);
             if (it != lastEventFireSec_.end() && nowSec - it->second < cooldown)
                 continue;
-            lastEventFireSec_[t.id] = nowSec;   // 冷却起点 = 派发判定通过之时
+            lastEventFireSec_[key] = nowSec;   // 冷却起点 = 派发判定通过之时
         }
         auto fired = dispatchRun(t.id);
         if (fired.isFail())
