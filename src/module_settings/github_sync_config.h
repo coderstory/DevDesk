@@ -44,12 +44,12 @@ public:
     static constexpr const char* kKeychainAccount = "token";
 
     // ── 同步状态键（本机专属表 github_sync_state，键不带前缀；不进 dump / 备份）──
-    // 首次方向（决策 #16）：首次同步成功后置位；repoUrl/branch 变更即清除。
+    // 首次方向：首次同步成功后置位；repoUrl/branch 变更即清除。
     core::Result<bool> isFirstSyncDone() const;
     core::Result<void> setFirstSyncDone();
     core::Result<void> clearFirstSyncDone();
 
-    // 已推送笔记登记（删除传播 + F1 状态机基线）：github_sync_state 表内键
+    // 已推送笔记登记（删除传播 + 状态机基线）：github_sync_state 表内键
     // `sha:notes/<名>` 存远端 sha、`hash:notes/<名>` 存当时本地内容 hash（原样字符串）。
     // 本地无记录的远端笔记不动（保守：首次接管既有仓库时不误删别人的文件）。
     // 注意：这些方法可能从同步后台线程调用，锁内触碰 db_ 句柄。
@@ -68,18 +68,18 @@ public:
     core::Result<std::string> syncedSqlSha() const;
     core::Result<void> recordSyncedSqlSha(const std::string& sha);
 
-    // F5：退出推送未完成的提示（下次启动卡片黄字「有未同步改动」；
+    // 退出推送未完成的提示（下次启动卡片黄字「有未同步改动」；
     // 同步成功即清除）。github_sync_state 表内键 unsynced_notice。
     core::Result<bool> hasUnsyncedNotice() const;
     core::Result<void> setUnsyncedNotice();
     core::Result<void> clearUnsyncedNotice();
 
-    // F3：导入远端 dump 覆盖本地库。导入前广播 db.import_begin（订阅方暂停
+    // 导入远端 dump 覆盖本地库。导入前广播 db.import_begin（订阅方暂停
     // 后台写者），结束（无论成败）广播 db.import_end（订阅方恢复后台任务）；
     // 成功再广播 db.imported（全局重载）+ 重执行 PRAGMA foreign_keys=ON 与
     // integrity_check（dump 的 PRAGMA 是会话级的，恢复值不保证 = 应用不变量 ON）。
-    // 失败回滚由 importFromString 的事务原子性承担（任一句失败整体回滚，
-    // test_sql_dump 的 sql_dump_import_rollback 钉死），不另做内存副本。
+    // 失败回滚由 importFromString 的事务原子性承担（任一句失败整体回滚），
+    // 不另做内存副本。
     core::Result<void> importDatabase(const std::string& sql);
 
 private:

@@ -302,11 +302,11 @@ public:
         claudeTools_ = std::make_unique<ClaudeTools>(*svc);
         claudeTools_->registerAll();
         startQuotaRefresh();
-        // F3：GitHub Sync 导入覆盖活库期间暂停余量后台刷新（它 60s 一轮写
+        // GitHub Sync 导入覆盖活库期间暂停余量后台刷新（它 60s 一轮写
         // QuotaStore，同一 appDatabase）。end 无论成败都发 → 恢复由此触发；
         // startQuotaRefresh 建新 QuotaRefresher（stopAll 后旧实例不可重启）。
         // 订阅 token 必须持有，丢了就退订。handler 在导入线程同步执行。
-        // A4：emit 已把 handler 拷出后才调（退订不拦在途调用）→ handler 先查
+        // emit 已把 handler 拷出后才调（退订不拦在途调用）→ handler 先查
         // 原子闸再动线程，否则关停瞬间的迟到事件会复活 QuotaRefresher。
         dbImportHandlersEnabled_.store(true, std::memory_order_release);
         ::core::event::EventBus& bus = ::core::event::bus();
@@ -1014,9 +1014,9 @@ private:
     std::unique_ptr<quota::QuotaStore> quotaStore_;
     std::unique_ptr<quota::ProfileCredentialSource> quotaCredentials_;
     std::unique_ptr<quota::QuotaRefresher> quotaRefresher_;
-    // F3 导入暂停/恢复的订阅 token：token 析构即退订，必须持有到 onStop。
+    // 导入暂停/恢复的订阅 token：token 析构即退订，必须持有到 onStop。
     std::vector<::core::event::EventBus::Subscription> dbImportSubs_;
-    // A4：订阅存活闸（见 onStart 注释）——退订拦不住 emit 已拷出的在途 handler。
+    // 订阅存活闸（见 onStart 注释）——退订拦不住 emit 已拷出的在途 handler。
     std::atomic<bool> dbImportHandlersEnabled_{false};
     // 弹窗「测试连接」后台线程 + 结果槽（独立于详情页；UI 线程 join 后才读）
     std::thread quotaTestThread_;

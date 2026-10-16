@@ -4,11 +4,13 @@
 #include "doctest.h"
 #include "test_support.h"
 
+#include "core/logging.h"
 #include "github_sync_logic.h"
 
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <sstream>
 #include <string>
 
 namespace g = module::settings::gsync;
@@ -100,6 +102,106 @@ REGISTER_TEST(github_sync_notes_backup_prune,
     return true;
 })
 
+// 权限位可用的平台。Windows 是 ACL 模型，std::filesystem::permissions 造不出 POSIX
+// 拒绝 → 失败档在那边跳过（判据本身仍由 macOS/Linux 侧钉住）。
+bool permBitsApplicable() {
+#if defined(_WIN32)
+    return false;
+#else
+    return true;
+#endif
+}
+
+// 备份滚动删除的**失败档**：remove_all 出错时返回 (uintmax_t)-1（非 0）——按「> 0 即
+// 计数」会把失败计成成功、且错误分支成死代码（WARN 永不打印）。两档都钉：
+// 全失败（一份都没删掉）与部分失败（删掉一份、下一份失败）；WARN 逐次打印，不是只打一次。
+REGISTER_TEST(github_sync_backup_prune_failure_visible,
+              "github_sync 备份滚动删除: 删失败不计数 + WARN 显形（全失败 / 部分失败两档）", {
+    if (!permBitsApplicable()) {
+        DOCTEST_SKIP("Windows 权限模型是 ACL，std::filesystem::permissions 造不出删除拒绝");
+    }
+    namespace fs = std::filesystem;
+    test_support::TempDir logs("gsprunefail_log");
+    const auto logPath = logs.file("prune.log");
+    core::log::addFileOutput(logPath);   // 日志捕获（core::log 无关闭接口，沿用既有做法）
+    auto countWarns = [&] {
+        std::ifstream f(logPath, std::ios::binary);
+        std::ostringstream ss;
+        ss << f.rdbuf();
+        const std::string t = ss.str();
+        size_t n = 0;
+        for (size_t pos = t.find("滚动删除备份失败"); pos != std::string::npos;
+             pos = t.find("滚动删除备份失败", pos + 1)) {
+            ++n;
+        }
+        return n;
+    };
+    const auto readOnly = fs::perms::owner_read | fs::perms::owner_exec;
+    const auto writable = fs::perms::owner_all;
+
+    // 前提（判据本身的地基）：失败时返回 (uintmax_t)-1 且 ec 非空。平台若改了这个
+    // 语义，本断言先红 → 提示生产代码的判据要重审，而不是让失败档悄悄失效。
+    {
+        test_support::TempDir p("gsprunefail_premise");
+        const auto locked = p.path / "locked";
+        fs::create_directories(locked);
+        p.write(locked / "f.md", "x");
+        fs::permissions(p.path, readOnly, fs::perm_options::replace);
+        std::error_code ec;
+        const auto n = fs::remove_all(locked, ec);
+        DOCTEST_CHECK_EQ(n, static_cast<std::uintmax_t>(-1));
+        DOCTEST_CHECK(static_cast<bool>(ec));
+        fs::permissions(p.path, writable, fs::perm_options::replace);
+    }
+    DOCTEST_CHECK_EQ(countWarns(), 0);   // 前置：日志里还没有本判据的行
+
+    // 档 A 部分失败：第一份删得掉；第二份内含 0500 子目录 → 删不掉（不计数）
+    {
+        test_support::TempDir d("gsprunefailA");
+        auto mk = [&](int i, bool lockInner) {
+            const auto dir = d.path / g::notesBackupDirName(1700000000 + i);
+            fs::create_directories(dir);
+            d.write(dir / "a.md", "x");
+            if (lockInner) {
+                const auto inner = dir / "locked";
+                fs::create_directories(inner);
+                d.write(inner / "b.md", "x");
+                fs::permissions(inner, readOnly, fs::perm_options::replace);
+            }
+        };
+        mk(0, false);
+        mk(1, true);
+        mk(2, false);
+        mk(3, false);   // 留 2 份 → 待删 2 份
+
+        const int removed = g::pruneBackups(d.path, g::kNotesBackupPrefix, 2, "");
+        DOCTEST_CHECK_EQ(removed, 1);   // 只算真删掉的那一份
+        DOCTEST_CHECK(!fs::exists(d.path / g::notesBackupDirName(1700000000)));
+        DOCTEST_CHECK(fs::exists(d.path / g::notesBackupDirName(1700000001)));
+        DOCTEST_CHECK_EQ(countWarns(), 1);
+        fs::permissions(d.path / g::notesBackupDirName(1700000001) / "locked",
+                        writable, fs::perm_options::replace);   // 让 TempDir 析构清得掉
+    }
+
+    // 档 B 全失败：父目录只读 → 待删的两份都删不掉（removed 必须为 0，且逐次 WARN）
+    {
+        test_support::TempDir d("gsprunefailB");
+        for (int i = 0; i < 3; ++i) {
+            const auto dir = d.path / g::notesBackupDirName(1700000000 + i);
+            fs::create_directories(dir);
+            d.write(dir / "a.md", "x");
+        }
+        fs::permissions(d.path, readOnly, fs::perm_options::replace);
+        const int removed = g::pruneBackups(d.path, g::kNotesBackupPrefix, 1, "");
+        DOCTEST_CHECK_EQ(removed, 0);   // 全失败：一份都不许计成成功
+        fs::permissions(d.path, writable, fs::perm_options::replace);
+        DOCTEST_CHECK(fs::exists(d.path / g::notesBackupDirName(1700000000)));
+        DOCTEST_CHECK(fs::exists(d.path / g::notesBackupDirName(1700000001)));
+        DOCTEST_CHECK_EQ(countWarns(), 3);   // 1（档 A）+ 2（档 B 两次失败各一条）
+    }
+    return true;
+})
+
 REGISTER_TEST(github_sync_exit_push_due,
               "github_sync 退出推送: dirty 且距上次 commit ≥60s 才推（边界 + 时钟回拨）", {
     DOCTEST_CHECK_EQ(g::kExitPushMinGapSec, static_cast<int64_t>(60));
@@ -109,6 +211,21 @@ REGISTER_TEST(github_sync_exit_push_due,
     DOCTEST_CHECK(g::exitPushDue(1'000'000, 1'000'000 + g::kExitPushMinGapSec));
     // 时钟回拨：不卡死
     DOCTEST_CHECK(g::exitPushDue(1'000'000, 999'990));
+    return true;
+})
+
+REGISTER_TEST(github_sync_auto_push_due,
+              "github_sync 自动推送闸: 启用 + 自动推送开关 + dirty + 节流窗口四者全真才放行", {
+    // 全真 → 放行（从未 commit = 到点）
+    DOCTEST_CHECK(g::autoPushDue(true, true, true, 0, 1'000'000));
+    // 四条件任一为假 → 不放行（含关掉「自动推送」开关）
+    DOCTEST_CHECK(!g::autoPushDue(false, true, true, 0, 1'000'000));
+    DOCTEST_CHECK(!g::autoPushDue(true, false, true, 0, 1'000'000));
+    DOCTEST_CHECK(!g::autoPushDue(true, true, false, 0, 1'000'000));
+    DOCTEST_CHECK(!g::autoPushDue(true, true, true, 1'000'000,
+                                  1'000'000 + g::kCommitThrottleSec - 1));
+    DOCTEST_CHECK(g::autoPushDue(true, true, true, 1'000'000,
+                                 1'000'000 + g::kCommitThrottleSec));
     return true;
 })
 
@@ -188,7 +305,7 @@ REGISTER_TEST(github_sync_pull_note_actions,
     DOCTEST_CHECK(actions[2].kind == Kind::KeepLocal);
     DOCTEST_CHECK_EQ(actions[2].fileName, std::string("c.md"));
 
-    // 新设备模拟（审计 C1）：空基线 + 有远端 → 全部下载（不会误判「未变」）
+    // 新设备模拟：空基线 + 有远端 → 全部下载（不会误判「未变」）
     const auto fresh = g::pullNoteActions({{"n.md", "s"}}, {}, {});
     DOCTEST_REQUIRE_EQ(fresh.size(), static_cast<size_t>(1));
     DOCTEST_CHECK(fresh[0].kind == Kind::Download);
@@ -201,7 +318,7 @@ REGISTER_TEST(github_sync_pull_note_actions,
         g::pullNoteActions({{"b.md", "sb-old"}}, localDel, syncedDel);
     DOCTEST_CHECK(delUnchanged.empty());
 
-    // 死锁路径钉死（复审裁决）：本地已删 + 远端已改。pull 必须下载恢复——
+    // 死锁路径：本地已删 + 远端已改。pull 必须下载恢复——
     // 若 Skip，push 对 LocalDeleted+远端变 判 Conflict 并中止整轮 → 409 弹窗
     // 「拉取后再推」原地打转，所有推送被一篇笔记永久卡死。
     const auto delChanged =

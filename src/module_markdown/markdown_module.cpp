@@ -3463,6 +3463,7 @@ private:
         refreshList();
         showToast("已删除笔记", fs::path(path).filename().string(), false);
         LOG_INFO("已删除笔记: " + path);
+        core::event::bus().emit(core::event::kMdDeleted);
     }
 
     void commitRenameNote() {

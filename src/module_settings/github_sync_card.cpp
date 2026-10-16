@@ -288,7 +288,7 @@ void drawGithubSyncCard(const CardDrawArgs& args) {
         y += roundFs(kStatusH) + roundFs(4.0f);
     }
 
-    // 分支被自动创建提示（决策 #10）
+    // 分支被自动创建提示
     if (!in.githubSyncBranchHint.empty()) {
         ui.text(id + ".branchhint")
             .position(kCardPaddingX, y)
@@ -301,7 +301,7 @@ void drawGithubSyncCard(const CardDrawArgs& args) {
         y += roundFs(kStatusH) + roundFs(4.0f);
     }
 
-    // public 仓黄字提醒（决策 #13：提示不硬拦）
+    // public 仓黄字提醒（提示不硬拦）
     if (in.githubSyncRepoPublic) {
         ui.text(id + ".publicwarn")
             .position(kCardPaddingX, y)
@@ -314,7 +314,7 @@ void drawGithubSyncCard(const CardDrawArgs& args) {
         y += roundFs(kStatusH) + roundFs(4.0f);
     }
 
-    // 本地 git 不可用（决策 #15：灰字，不影响同步）
+    // 本地 git 不可用（灰字，不影响同步）
     if (in.githubSyncLocalGitUnavailable) {
         ui.text(id + ".localgit")
             .position(kCardPaddingX, y)
@@ -327,7 +327,7 @@ void drawGithubSyncCard(const CardDrawArgs& args) {
         y += roundFs(kStatusH) + roundFs(4.0f);
     }
 
-    // 退出推送未完成（F5）：上次退出时有未同步改动 → 黄字提示，同步成功即消失
+    // 退出推送未完成：上次退出时有未同步改动 → 黄字提示，同步成功即消失
     if (in.githubSyncUnsyncedNotice) {
         ui.text(id + ".unsynced")
             .position(kCardPaddingX, y)
@@ -340,7 +340,7 @@ void drawGithubSyncCard(const CardDrawArgs& args) {
         y += roundFs(kStatusH) + roundFs(4.0f);
     }
 
-    // 删远端被安全栏跳过（T3 审计 finding 8）：原先只进日志 → 黄字提示
+    // 删远端被安全栏跳过（本地仍在但读失败）→ 黄字提示
     if (!in.githubSyncDeleteSkipHint.empty()) {
         ui.text(id + ".deleteskip")
             .position(kCardPaddingX, y)

@@ -129,7 +129,7 @@ core::ErrorCode mapStatusToError(int status) {
 
 std::string httpStatusText(int status) {
     switch (status) {
-        case 401: return "认证失败：令牌无效或已过期（HTTP 401）";
+        case 401: return "认证失败：令牌无效或已过期，请检查/更新 PAT（HTTP 401）";
         case 403: return "无权限（HTTP 403）";
         case 404: return "未找到（HTTP 404）";
         case 409: return "冲突：远端 sha 与本地不一致（HTTP 409）";

@@ -24,10 +24,18 @@
 namespace core::event {
 
 // 事件名常量（发布方/订阅方唯一真源；改字符串必须同步改所有 emit/subscribe 点）
+// 待办写路径：每个成功的写操作发一个（「取消完成」与「标记完成」是不同事件）。
+// 订阅方按名精确匹配，新增事件不会惊动既有订阅方。
 inline constexpr const char* kTodoCreated = "todo.created";
+inline constexpr const char* kTodoUpdated = "todo.updated";
+inline constexpr const char* kTodoMoved = "todo.moved";
 inline constexpr const char* kTodoCompleted = "todo.completed";
+inline constexpr const char* kTodoUncompleted = "todo.uncompleted";
+inline constexpr const char* kTodoDeleted = "todo.deleted";
+// 笔记写路径：写盘成功 / 磁盘文件删除成功。
 inline constexpr const char* kMdSaved = "md.saved";
-// 数据库导入（GitHub Sync 拉取覆盖活库，spec F3）：begin/end 包住导入全程，
+inline constexpr const char* kMdDeleted = "md.deleted";
+// 数据库导入（GitHub Sync 拉取覆盖活库）：begin/end 包住导入全程，
 // **end 无论成败都发**（订阅方必须借此恢复被暂停的后台任务）；imported 仅
 // 成功后发，订阅方应丢弃内存缓存重查——表被 DROP 重建过，缓存指向旧行
 // 即悬空数据。emit 在导入线程同步执行：handler 只做线程安全的动作（停启

@@ -11,11 +11,14 @@
 #include "claude_service.h"
 #include "core/claude_proxy_service.h"
 #include "core/database.h"
+#include "core/event_bus.h"
 #include "core/module_interface.h"
 #include "core/paths.h"
 #include "core/service_locator.h"
 #include "core/theme.h"
 #include "core/tool.h"          // ITool / ToolArgs
+#include "github_sync_config.h" // 自动推送开关接线用例（配置夹具）
+#include "github_sync_exit_hook.h" // 退出补推用例（经 free 函数驱动）
 #include "module_pet/pet_config.h"   // pet_config 行键常量
 #include "module_pet/pet_window.h"  // 桌宠开关即时性断言读窗口可见意图
 #include "platform/json.h"      // 读 app.read_settings 的 JSON 出参
@@ -3876,5 +3879,162 @@ REGISTER_TEST(app_read_settings_tool_missing_file_is_defaults_without_write,
 
     std::error_code ec;
     DOCTEST_CHECK_FALSE(std::filesystem::exists(path, ec));
+    return true;
+})
+
+// 「自动推送」开关接线：关掉后**自动**路径不得发起推送，手动按钮不受开关限制。
+// 观察口：仓库 URL 留空时，自动闸一放行就落在本地错误分支（setGithubSyncError
+// 「未配置仓库 URL」）→ 卡片红字行出现即证明「自动推送真被发起」；红字不出现即
+// 证明闸拦住了。该分支不读 keychain、不起线程、不出网，故可作无头判据。
+REGISTER_TEST(settings_github_sync_autopush_switch_gates_auto_path,
+              "settings: 关「自动推送」→ dirty 不自动推、手动「立即同步」照常发起", {
+    test_support::TestEnv env(kCfgPrefix, "gsautopush", true);
+    test_support::ScopedConfigPath cfgEnv(
+        test_support::tempConfigFile(kCfgPrefix, "gsautopush_cfg"));
+    eui::Screen screen{1600.0f, 1000.0f};
+    const char* kErrRow = "settings.card.github_sync.error";
+
+    // 一次「置 dirty → 帧内跑自动闸 → 看卡片有没有红字」的完整往返
+    auto autoPathFiresWhenDirty = [&](bool autoPush) {
+        module::settings::GithubSyncConfig cfg;
+        cfg.enabled = true;
+        cfg.autoPush = autoPush;   // repoUrl 留空
+        module::settings::GithubSyncStore(::core::appDatabase()).save(cfg);
+
+        std::unique_ptr<::core::Module> mod(create_settings_module());
+        mod->onStart();
+        DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 3));
+        ::core::event::bus().emit(::core::event::kMdSaved);   // 笔记写入 → 置 dirty
+
+        eui::Ui ui;
+        ui.begin("gsautopush");
+        mod->compose(ui, screen);   // 帧内跑自动闸（dirty 已置位）
+        ui.end();
+        const bool fired = ui.find(kErrRow) != nullptr;
+
+        if (!fired) {
+            // 闸拦住时才验「手动仍可」：手动按钮不经自动闸 → 红字必须出现
+            const auto* btn = ui.find("settings.card.github_sync.btn.push.bg");
+            DOCTEST_REQUIRE(btn != nullptr);
+            DOCTEST_REQUIRE(btn->onClick != nullptr);
+            btn->onClick();
+            eui::Ui ui2;
+            ui2.begin("gsautopush_manual");
+            mod->compose(ui2, screen);
+            ui2.end();
+            DOCTEST_CHECK(ui2.find(kErrRow) != nullptr);
+        }
+        mod->onStop();
+        return fired;
+    };
+
+    // 关掉开关：dirty 也不自动推；开着（对照）：同一 dirty 立刻发起
+    const bool off = autoPathFiresWhenDirty(false);
+    const bool on = autoPathFiresWhenDirty(true);
+    DOCTEST_CHECK_MESSAGE(!off, "关掉「自动推送」后自动路径仍发起了推送");
+    DOCTEST_CHECK_MESSAGE(on, "开着「自动推送」时自动路径未发起（判据恒假）");
+    return true;
+})
+
+// dirty 触发源：笔记写入/删除 + 待办增删改，每个写路径事件都必须把 GitHub Sync 置
+// dirty（只订一部分 = 那类改动永远不自动同步）。逐个事件名验证，并带无关事件对照
+// ——否则断言退化成「任何事件都置位」。观察口同 autopush 用例：无仓库 URL 时自动闸
+// 一放行就报「未配置仓库 URL」，卡片红字行即「dirty 已置位」的可见证据。
+REGISTER_TEST(settings_github_sync_dirty_from_write_events,
+              "settings: 笔记/待办各写路径事件 → GitHub Sync 置 dirty（带无关事件对照）", {
+    test_support::TestEnv env(kCfgPrefix, "gsdirty", true);
+    test_support::ScopedConfigPath cfgEnv(
+        test_support::tempConfigFile(kCfgPrefix, "gsdirty_cfg"));
+    eui::Screen screen{1600.0f, 1000.0f};
+    const char* kErrRow = "settings.card.github_sync.error";
+
+    // dirty 是闩（置位后不再变、日志也只记首次），故每个事件名用独立模块实例
+    auto dirtyAfter = [&](const char* ev) {
+        module::settings::GithubSyncConfig cfg;
+        cfg.enabled = true;
+        cfg.autoPush = true;   // 自动闸开着：dirty 一置位就发起推送 → 红字可见
+        module::settings::GithubSyncStore(::core::appDatabase()).save(cfg);
+
+        std::unique_ptr<::core::Module> mod(create_settings_module());
+        mod->onStart();
+        DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 3));
+        ::core::event::bus().emit(ev);
+
+        eui::Ui ui;
+        ui.begin("gsdirty");
+        mod->compose(ui, screen);
+        ui.end();
+        const bool dirty = ui.find(kErrRow) != nullptr;
+        mod->onStop();
+        return dirty;
+    };
+
+    DOCTEST_CHECK(dirtyAfter(::core::event::kMdSaved));
+    DOCTEST_CHECK(dirtyAfter(::core::event::kMdDeleted));
+    DOCTEST_CHECK(dirtyAfter(::core::event::kTodoCreated));
+    DOCTEST_CHECK(dirtyAfter(::core::event::kTodoUpdated));
+    DOCTEST_CHECK(dirtyAfter(::core::event::kTodoMoved));
+    DOCTEST_CHECK(dirtyAfter(::core::event::kTodoCompleted));
+    DOCTEST_CHECK(dirtyAfter(::core::event::kTodoUncompleted));
+    DOCTEST_CHECK(dirtyAfter(::core::event::kTodoDeleted));
+    // 对照：本模块没订阅的事件名 → 不置 dirty
+    DOCTEST_CHECK(!dirtyAfter(::core::event::kDbImported));
+    return true;
+})
+
+// 关掉「自动推送」时的退出：不推（尊重用户选择），但必须留下「有未同步改动」信号——
+// 否则退出后既不推也没黄字，用户无从知道改动还没上传。观察口两条：卡片无「未配置仓库
+// URL」红字（= 没发起推送；repoUrl 留空，一旦走推送路径就会本地报错变红）+ 提示键落库。
+REGISTER_TEST(settings_github_sync_exit_push_keeps_unsynced_notice_when_autopush_off,
+              "settings: 关自动推送时退出不推但落「有未同步改动」提示（带无改动对照）", {
+    test_support::TestEnv env(kCfgPrefix, "gsexitnotice", true);
+    test_support::ScopedConfigPath cfgEnv(
+        test_support::tempConfigFile(kCfgPrefix, "gsexitnotice_cfg"));
+    eui::Screen screen{1600.0f, 1000.0f};
+    const char* kErrRow = "settings.card.github_sync.error";
+
+    // 断言宏一律 return false（自制 doctest 的 fail-fast 形态），故 lambda 里不嵌断言，
+    // 把「前置是否成立」一并回传，由调用方判——否则前置失败会退化成恒假断言（假绿）。
+    struct Probe {
+        bool tabOk = false;    // 卡片确实在渲染（否则 pushed 恒假）
+        bool pushed = false;   // 红字 = 真发起了推送
+        bool noticed = false;  // 「有未同步改动」提示已落库
+    };
+    auto runExitAndProbe = [&](bool dirty) -> Probe {
+        module::settings::GithubSyncConfig cfg;
+        cfg.enabled = true;
+        cfg.autoPush = false;   // repoUrl 留空：走推送路径会立刻本地报错 → 红字可见
+        module::settings::GithubSyncStore store(::core::appDatabase());
+        store.save(cfg);
+        store.clearUnsyncedNotice();
+
+        std::unique_ptr<::core::Module> mod(create_settings_module());
+        mod->onStart();
+        const bool tabOk = clickSettingsTab(*mod, screen, 3);
+        if (dirty) ::core::event::bus().emit(::core::event::kMdSaved);
+
+        ::module::settings::runGithubSyncExitPush();   // 生产退出路径（atexit 调的就是它）
+
+        eui::Ui ui;
+        ui.begin("gsexitnotice");
+        mod->compose(ui, screen);
+        ui.end();
+        Probe out;
+        out.tabOk = tabOk;
+        out.pushed = ui.find(kErrRow) != nullptr;
+        const auto notice = store.hasUnsyncedNotice();
+        out.noticed = notice.isOk() && notice.value();
+        mod->onStop();
+        return out;
+    };
+
+    const Probe withDirty = runExitAndProbe(true);
+    DOCTEST_CHECK(withDirty.tabOk);
+    DOCTEST_CHECK(!withDirty.pushed);    // 关掉开关 → 退出不发起推送
+    DOCTEST_CHECK(withDirty.noticed);    // 但「有未同步改动」必须留下
+    const Probe noDirty = runExitAndProbe(false);
+    DOCTEST_CHECK(noDirty.tabOk);
+    DOCTEST_CHECK(!noDirty.pushed);
+    DOCTEST_CHECK(!noDirty.noticed);     // 对照：没改动 → 不留信号（证明上面那条来自 dirty）
     return true;
 })

@@ -1811,7 +1811,7 @@ REGISTER_TEST(agent_run_end_notice_take_semantics,
 // 冷启动盲区兜底：三守卫条件（uiPolling_/tasksDirty_/prevAlive）全假时，外部直写库插入的
 // running run 进不了 prevRunStatuses_（prev 恒空 = 冷启动盲区），其 running→failed 迁移
 // 零通知。兜底 = pollRunEnd 在三条件全假时做低频轻查询（hasRunningRun），发现 running 即
-// refreshData 一次进入正常观测路径。修前本用例红：守卫早退，最终取不到通知。
+// refreshData 一次进入正常观测路径。
 REGISTER_TEST(agent_run_end_fallback_cold_start,
               "agent_ui: 三守卫全假 + 库内新出现 running run → 兜底轻查询触发 refreshData，终态迁移产生通知", {
     test_support::TestDb tdb("agentui", "fallback");

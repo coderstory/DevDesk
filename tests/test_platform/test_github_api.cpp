@@ -190,6 +190,8 @@ REGISTER_TEST(github_no_retry_401, "github: 401 不重试", {
     DOCTEST_CHECK_EQ(res.errorCode(), core::ErrorCode::InvalidApiKey);
     DOCTEST_CHECK_EQ(rec.reqs.size(), static_cast<std::size_t>(1));
     DOCTEST_CHECK(sleeps.empty());
+    // 401 文案必须给出可执行动作（指向 PAT），只报「令牌无效」用户无从下手
+    DOCTEST_CHECK(res.errorMessage().find("PAT") != std::string::npos);
     return true;
 })
 
@@ -261,8 +263,26 @@ REGISTER_TEST(github_backoff_sequence_exhausts_attempts, "github: 全失败时�
     const auto res = api.getAuthenticatedUser();
     DOCTEST_CHECK(res.isFail());
     DOCTEST_CHECK_EQ(res.errorCode(), core::ErrorCode::NetworkUnreachable);
-    DOCTEST_CHECK_EQ(rec.reqs.size(), static_cast<std::size_t>(4));   // attempts = 4
+    DOCTEST_CHECK_EQ(rec.reqs.size(), static_cast<std::size_t>(4));   // 总请求数
     DOCTEST_CHECK_EQ(sleeps, (std::vector<int>{1, 2, 3}));            // 末次不 sleep
+    return true;
+})
+
+// 上一条覆写 policy 只钉住循环语义（总请求数 = attempts）；这条不覆写，钉**默认值**
+// 本身——「重试 3 次，退避 1s/3s/9s」= 首次 + 3 次重试共 4 次请求。默认值若退回 3，
+// 则 9s 档永不被使用，且没有任何用例会红。
+REGISTER_TEST(github_default_policy_three_retries,
+              "github: 默认策略 = 首次 + 3 次重试（退避 1s/3s/9s 全用上）", {
+    Recorder rec;   // 空 plan → 全失败（Recorder 回 failNet）
+    std::vector<int> sleeps;
+    platform::github::GithubApi api("tok", "owner", "repo");
+    wire(api, rec);
+    SleepGuard guard(sleeps);
+
+    const auto res = api.getAuthenticatedUser();
+    DOCTEST_CHECK(res.isFail());
+    DOCTEST_CHECK_EQ(rec.reqs.size(), static_cast<std::size_t>(4));
+    DOCTEST_CHECK_EQ(sleeps, (std::vector<int>{1000, 3000, 9000}));
     return true;
 })
 
@@ -661,7 +681,7 @@ REGISTER_TEST(github_errorcode_conflict_to_string, "github: ErrorCode::Conflict 
     return true;
 })
 
-// ---- 审计补修：createRef 受理后响应丢失 / owner-repo 白名单 ----
+// ---- createRef 受理后响应丢失 / owner-repo 白名单 ----
 
 REGISTER_TEST(github_create_ref_422_already_exists_is_success,
               "github: createRef POST 422 already exists 视为成功（响应丢失重试撞车）", {
@@ -794,7 +814,7 @@ REGISTER_TEST(github_validate_config_owner_repo_charset,
     return true;
 })
 
-// ---- listTree（F7 拉取全树）----
+// ---- listTree（拉取全树）----
 
 REGISTER_TEST(github_list_tree_parses_blobs,
               "github listTree: blob 条目解析（path/sha/size），目录条目排除", {

@@ -251,7 +251,7 @@ void ensureClaudeServiceAssembledImpl(bool autoStart);
             router, gatingConfigSnapshot(), gated,
             prepareClaudeServiceBeforeModules);
 
-        // F5 退出补推：本钩子晚于 armExitHook 注册，atexit LIFO → 先于
+        // 退出补推钩子：本钩子晚于 armExitHook 注册，atexit LIFO → 先于
         // router->stopAll() 跑，此刻模块与数据库都还活着；推不完由
         // settings onStop 的 join 收束（上限 5s 等待见 runExitSyncPush）。
         std::atexit([] { ::module::settings::runGithubSyncExitPush(); });

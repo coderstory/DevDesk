@@ -4168,3 +4168,129 @@ REGISTER_TEST(todo_ui_event_wiring,
     }
     return true;
 })
+
+// 写路径事件补齐：GitHub Sync 的 dirty 触发源要求「待办增删改」每个写路径都发事件
+//（只订 created/completed 时，改标题、换列、删任务都不会触发同步）。
+// headless 走真实 UI 回调链（与 todo_ui_event_wiring 同款）：详情「保存」→ todo.updated、
+// 详情「取消完成」→ todo.uncompleted、右键「移动到」→ todo.moved、删除确认 → todo.deleted。
+REGISTER_TEST(todo_ui_event_wiring_write_paths,
+              "todo_ui: 编辑保存→todo.updated、取消完成→todo.uncompleted、换列→todo.moved、删除→todo.deleted", {
+    TestEnv env;
+    DOCTEST_REQUIRE(env.ready);
+    auto cols = env.svc->listColumns();
+    DOCTEST_REQUIRE(cols.isOk());
+    DOCTEST_REQUIRE(cols.value().size() >= 3u);
+    const int64_t todoCol = cols.value()[0].id;
+    const int64_t doneCol = cols.value()[2].id;   // kind=done
+
+    auto a = env.svc->createTask(todoCol, "写路径任务");
+    DOCTEST_REQUIRE(a.isOk());
+    // 已完成任务：详情里 toggle 走的是「取消完成」分支
+    auto b = env.svc->createTask(todoCol, "已完成任务");
+    DOCTEST_REQUIRE(b.isOk());
+    DOCTEST_REQUIRE(env.svc->completeTask(b.value().id).isOk());
+    DOCTEST_REQUIRE(env.svc->moveTask(b.value().id, doneCol, 0).isOk());
+
+    std::unique_ptr<::core::Module> mod(create_todo_module());
+    mod->onStart();
+
+    int gotUpdated = 0, gotMoved = 0, gotUncompleted = 0, gotDeleted = 0;
+    auto su = ::core::event::bus().subscribe(
+        ::core::event::kTodoUpdated, [&](const std::string&) { ++gotUpdated; });
+    auto sm = ::core::event::bus().subscribe(
+        ::core::event::kTodoMoved, [&](const std::string&) { ++gotMoved; });
+    auto sn = ::core::event::bus().subscribe(
+        ::core::event::kTodoUncompleted,
+        [&](const std::string&) { ++gotUncompleted; });
+    auto sd = ::core::event::bus().subscribe(
+        ::core::event::kTodoDeleted, [&](const std::string&) { ++gotDeleted; });
+
+    // 1) 详情「保存」（标题未改也走完整 updateTask 链路）→ todo.updated
+    {
+        Frame frame(mod.get());
+        const auto* card = frame.ui.find("todo.col.0.card.0.bg");
+        DOCTEST_REQUIRE(card != nullptr);
+        DOCTEST_REQUIRE(card->onClick != nullptr);
+        card->onClick();
+    }
+    {
+        Frame frame(mod.get());
+        const auto* save = frame.ui.find("todo.dialog.detail.save.bg");
+        DOCTEST_REQUIRE(save != nullptr);
+        DOCTEST_REQUIRE(save->onClick != nullptr);
+        save->onClick();
+        DOCTEST_CHECK_EQ(gotUpdated, 1);
+    }
+
+    // 2) 已完成任务详情 toggle = 「取消完成」→ todo.uncompleted（标记完成是另一个事件）
+    {
+        Frame frame(mod.get());
+        const auto* card = frame.ui.find("todo.col.2.card.0.bg");
+        DOCTEST_REQUIRE(card != nullptr);
+        DOCTEST_REQUIRE(card->onClick != nullptr);
+        card->onClick();
+    }
+    {
+        Frame frame(mod.get());
+        const auto* toggle = frame.ui.find("todo.dialog.detail.toggle.bg");
+        DOCTEST_REQUIRE(toggle != nullptr);
+        DOCTEST_REQUIRE(toggle->onClick != nullptr);
+        toggle->onClick();
+        DOCTEST_CHECK_EQ(gotUncompleted, 1);
+    }
+
+    // 3) 右键「移动到「<下一列标题>」」→ todo.moved
+    {
+        Frame frame(mod.get());
+        eui::PointerEvent pe;
+        eui::Rect rect;
+        const auto* card = frame.ui.find("todo.col.0.card.0.bg");
+        DOCTEST_REQUIRE(card != nullptr);
+        card->onContextMenu(pe, rect);
+        frame.refresh();
+        const std::string want = "移动到「" + cols.value()[1].title + "」";
+        bool clicked = false;
+        for (int i = 2; i < 14; ++i) {
+            const auto* item =
+                frame.ui.find("todo.ctx.level.0.item." + std::to_string(i));
+            if (item == nullptr || item->onClick == nullptr) break;
+            const auto* label =
+                frame.ui.find("todo.ctx.level.0.label." + std::to_string(i));
+            if (label != nullptr && label->text == want) {
+                item->onClick();
+                clicked = true;
+                break;
+            }
+        }
+        DOCTEST_REQUIRE_MESSAGE(clicked, "右键菜单里没找到 " + want);
+        DOCTEST_CHECK_EQ(gotMoved, 1);
+    }
+
+    // 4) 详情「删除」→ 确认弹窗「删除」→ todo.deleted（取消路径不发，见 md 侧同款断言）
+    {
+        Frame frame(mod.get());
+        const auto* card = frame.ui.find("todo.col.1.card.0.bg");   // 已移到下一列
+        DOCTEST_REQUIRE(card != nullptr);
+        DOCTEST_REQUIRE(card->onClick != nullptr);
+        card->onClick();
+    }
+    {
+        Frame frame(mod.get());
+        const auto* del = frame.ui.find("todo.dialog.detail.delete.bg");
+        DOCTEST_REQUIRE(del != nullptr);
+        DOCTEST_REQUIRE(del->onClick != nullptr);
+        del->onClick();   // 只弹确认，不直接删
+        DOCTEST_CHECK_EQ(gotDeleted, 0);
+    }
+    {
+        Frame frame(mod.get());
+        const auto* confirm = frame.ui.find("todo.dialog.delcol.confirm.bg");
+        DOCTEST_REQUIRE(confirm != nullptr);
+        DOCTEST_REQUIRE(confirm->onClick != nullptr);
+        confirm->onClick();
+        DOCTEST_CHECK_EQ(gotDeleted, 1);
+    }
+
+    mod->onStop();
+    return true;
+})

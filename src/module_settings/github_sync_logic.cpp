@@ -1,6 +1,8 @@
 // src/module_settings/github_sync_logic.cpp — 纯件实现（边界见 .h）。
 #include "github_sync_logic.h"
 
+#include "core/logging.h"
+
 #include <algorithm>
 #include <system_error>
 
@@ -45,6 +47,12 @@ bool throttleDue(int64_t lastCommitSec, int64_t nowSec) {
     return nowSec - lastCommitSec >= kCommitThrottleSec;
 }
 
+bool autoPushDue(bool enabled, bool autoPush, bool dirty, int64_t lastCommitSec,
+                 int64_t nowSec) {
+    if (!enabled || !autoPush || !dirty) return false;
+    return throttleDue(lastCommitSec, nowSec);
+}
+
 bool exitPushDue(int64_t lastCommitSec, int64_t nowSec) {
     if (lastCommitSec <= 0) return true;
     if (nowSec < lastCommitSec) return true;   // 时钟回拨：视为到点
@@ -62,13 +70,32 @@ std::string notesBackupDirName(int64_t tsSec) {
 int pruneBackups(const std::filesystem::path& dir, const std::string& prefix,
                  int keep, const std::string& suffix) {
     std::error_code ec;
-    if (!std::filesystem::is_directory(dir, ec)) return 0;   // 无目录 = 无备份可删
+    if (!std::filesystem::is_directory(dir, ec)) {
+        // ec 非空 = 判定本身失败（权限 / IO），不是「还没有备份目录」这个正常态
+        if (ec) {
+            LOG_WARN("GithubSync: 备份目录不可判定 " + dir.string() + ": " +
+                     ec.message());
+        }
+        return 0;
+    }
     if (keep < 0) keep = 0;
 
     std::vector<std::filesystem::path> found;
-    for (std::filesystem::directory_iterator it(dir, ec), end; it != end;
-         it.increment(ec)) {
-        if (ec) break;
+    // 构造失败 = 一个条目都没看到（正常态是空目录：it == end 且 ec 为空）
+    std::filesystem::directory_iterator it(dir, ec);
+    if (ec) {
+        LOG_WARN("GithubSync: 打开备份目录失败 " + dir.string() + ": " +
+                 ec.message());
+        return 0;
+    }
+    const std::filesystem::directory_iterator end;
+    for (; it != end; it.increment(ec)) {
+        if (ec) {
+            // 扫描中断 = 见到的条目不完整，保留份数会被算少（静默失败面）
+            LOG_WARN("GithubSync: 扫描备份目录中断 " + dir.string() + ": " +
+                     ec.message());
+            break;
+        }
         const auto& p = it->path();
         const std::string name = p.filename().string();
         if (name.size() <= prefix.size()) continue;
@@ -91,12 +118,18 @@ int pruneBackups(const std::filesystem::path& dir, const std::string& prefix,
     int removed = 0;
     const int excess = static_cast<int>(found.size()) - keep;
     for (int i = 0; i < excess; ++i) {
-        // remove_all：文件删自身，目录连内容一起删（笔记备份是目录）
+        // remove_all：文件删自身，目录连内容一起删（笔记备份是目录）。
+        // 必须先判错误码再判返回值：失败时返回 (uintmax_t)-1（非 0），按返回值判会把
+        // 失败计成成功、且错误分支永不进入（WARN 成死代码、静默失败面复活）。
         std::error_code rmEc;
-        if (std::filesystem::remove_all(found[static_cast<size_t>(i)], rmEc) >
-            0) {
-            ++removed;
+        const auto& victim = found[static_cast<size_t>(i)];
+        const auto n = std::filesystem::remove_all(victim, rmEc);
+        if (rmEc) {
+            LOG_WARN("GithubSync: 滚动删除备份失败 " + victim.string() + ": " +
+                     rmEc.message());
+            continue;   // 失败不计数：计数只认真删掉的份数
         }
+        if (n > 0) ++removed;
     }
     return removed;
 }
