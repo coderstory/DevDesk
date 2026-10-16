@@ -8,9 +8,25 @@
 
 namespace module::settings {
 
-// 探测只做判定、不执行 git 子命令：macOS 直接调 /usr/bin/git 会触发 CLT
+// 测试注入：强制探测结果（-1 = 不覆盖走真探测；0 = 不可用；1 = 可用）。
+// 场景 14「本地 git 不可用」在真机上造不出来——开发机 git 恒可用，只能注入。
+// 与 keychain.h 的 setBackendForTest 同款：仅测试调用，用完复位。
+inline int& localGitProbeOverrideForTest() {
+    static int v = -1;
+    return v;
+}
+
+// 平台实现：探测只做判定、不执行 git 子命令——macOS 直接调 /usr/bin/git 会触发 CLT
 // 安装 GUI（系统弹窗），故 macOS 侧先 xcode-select -p 再查文件存在性；
 // Windows 侧探 PATH + 两个已知安装位置，纯文件系统检查。
-bool localGitAvailable();
+// 业务侧不要直接调，走 localGitAvailable()。
+bool localGitAvailableImpl();
+
+// 实际判定：测试覆盖优先，否则走平台实现。
+inline bool localGitAvailable() {
+    const int forced = localGitProbeOverrideForTest();
+    if (forced >= 0) return forced != 0;
+    return localGitAvailableImpl();
+}
 
 }  // namespace module::settings

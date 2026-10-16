@@ -4,6 +4,7 @@
 // Token 存储在 platform::keychain（service="DevDesk/github", account="token"）。
 #pragma once
 
+#include <cstdlib>
 #include <map>
 #include <string>
 
@@ -12,6 +13,23 @@
 #include "github_sync_logic.h"
 
 namespace module::settings {
+
+// ── 测试注入缝（真机验收用，见 tests/live/github_sync_live.cpp）──
+// 同步层读 token 走真实钥匙串，而 DEVDESK_DATA_ROOT 不隔离钥匙串 → 无头测试
+// 会把测试 token 写进用户真实凭据库。这条缝让测试改由环境变量供 token。
+// **双变量门**：只有 DEVDESK_GITHUB_TEST_MODE=1 在场时才认 DEVDESK_GITHUB_TOKEN，
+// 单有后者（用户环境里可能本来就有同名变量）不改变任何行为 —— 防生产误用。
+inline bool githubTestModeEnabled() {
+    const char* m = std::getenv("DEVDESK_GITHUB_TEST_MODE");
+    return m != nullptr && std::string(m) == "1";
+}
+
+// 注入的 token；门未开或变量缺失 → 空串（= 未注入，走真实钥匙串）。
+inline std::string githubTestToken() {
+    if (!githubTestModeEnabled()) return {};
+    const char* t = std::getenv("DEVDESK_GITHUB_TOKEN");
+    return t == nullptr ? std::string() : std::string(t);
+}
 
 // GitHub Sync 配置
 struct GithubSyncConfig {

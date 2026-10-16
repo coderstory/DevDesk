@@ -37,6 +37,13 @@ std::string contentHash(const std::string& bytes) {
     return out;
 }
 
+LocalNote makeLocalNote(std::string content) {
+    LocalNote note;
+    note.hash = contentHash(content);   // 先算：此刻 content 还没被掏空
+    note.content = std::move(content);
+    return note;
+}
+
 bool dumpTooLargeForRemote(uint64_t rawBytes, uint64_t limitBytes) {
     return rawBytes > limitBytes;
 }
@@ -144,7 +151,12 @@ PushAction pushActionForState(NoteSyncState state, bool remoteExists,
         case NoteSyncState::InSync:         return PushAction::Skip;
         case NoteSyncState::New:            return PushAction::Put;
         case NoteSyncState::LocalModified:  return PushAction::Put;
-        case NoteSyncState::RemoteModified: return PushAction::Skip;  // 远端领先，等 pull
+        case NoteSyncState::RemoteModified:
+            // remoteExists=false = 远端根本没这文件（分支被删重建是典型），不是
+            // 「远端领先」——等 pull 只会白等（pull 对「登记有而远端无」是
+            // KeepLocal+清登记，下轮 push 仍判 New 重传，平白多一轮）。直接重传，
+            // 与 pull 的「远端已删 → 本地保留」语义一致（本地赢）。
+            return remoteExists ? PushAction::Skip : PushAction::Put;
         case NoteSyncState::Diverged:       return PushAction::Conflict;
         case NoteSyncState::LocalDeleted:
             // 远端没动（或无此文件）→ 删除传播；远端被改过 → 冲突，不静默删他人内容

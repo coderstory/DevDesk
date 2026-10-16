@@ -139,6 +139,11 @@ foreach(_f ${_devdesk_cases_on_disk})
     if(_probe_pos EQUAL 0)
         continue()
     endif()
+    # skip live/ dir（真机验收驱动：独立可执行，真网络 + 真凭据，不进 devdesk_tests）
+    string(FIND "${_canon}" "${_devdesk_tests_dir}/live/" _live_pos)
+    if(_live_pos EQUAL 0)
+        continue()
+    endif()
     list(APPEND _devdesk_cases_on_disk_canon "${_canon}")
 endforeach()
 
@@ -329,4 +334,60 @@ if(UNIX)
         COMMAND bash "${CMAKE_SOURCE_DIR}/scripts/run-quota-live-probe.sh"
             "${CMAKE_BINARY_DIR}")
     set_tests_properties(quota_live_probe PROPERTIES LABELS "live")
+endif()
+# ==================== GitHub Sync 真机验收（**默认不构建**）====================
+# tests/live/github_sync_live.cpp 驱动真同步引擎打真 GitHub API：真网络 +
+# 真 PAT + 真远端仓，CI 与离线环境必红 —— 与 quota_live_probe 同一条红线。
+#
+# **为什么它走 CMake 而 quota_live_probe 不走**：那个探针只链 claude_proxy /
+# platform / core / ui_kit，手敲链接命令可行（脚本里那串就是）；本驱动要实例化
+# SettingsModule（UI 模块），必须链 EUI-NEO 静态库 + macOS 系统框架 + freetype /
+# png / md4c / zlib 一整套 vendored 依赖 —— 手敲链接是纯负债。改为**开关门控的
+# CMake 目标**：默认 OFF → 默认构建 / CI / `ctest -L probe` 全都看不到它。
+#
+# 显式入口（两条等价）：
+#     cmake -B build ... -DDEVDESK_BUILD_LIVE_TOOLS=ON && cmake --build build
+#     bash scripts/run-ghsync-live.sh [scenario ...]
+#     (cd build && ctest -L live)
+option(DEVDESK_BUILD_LIVE_TOOLS
+    "构建真机验收驱动（tests/live/；真网络 + 真凭据，默认 OFF）" OFF)
+if(DEVDESK_BUILD_LIVE_TOOLS)
+    # module_toggle_bridge.cpp：settings 模块引用 app::toggle 桥符号
+    # app_sidebar.cpp / app_assembly.cpp：同 module_toggle_sidebar_probe 的理由
+    #（settings_module.cpp 的装配期符号在这些 TU 里）
+    add_executable(github_sync_live
+        live/github_sync_live.cpp
+        ${CMAKE_SOURCE_DIR}/src/module_toggle_bridge.cpp
+        ${CMAKE_SOURCE_DIR}/src/app_sidebar.cpp
+        ${CMAKE_SOURCE_DIR}/src/app_assembly.cpp)
+    target_include_directories(github_sync_live PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/tests
+        ${CMAKE_SOURCE_DIR}/src/module_claude_proxy
+        ${CMAKE_SOURCE_DIR}/src/module_settings
+    )
+    target_link_libraries(github_sync_live PRIVATE
+        devdesk_module_home
+        devdesk_module_markdown
+        devdesk_module_todo
+        devdesk_agent
+        devdesk_module_claude_proxy
+        devdesk_module_settings
+        devdesk_module_about
+        devdesk_module_pet
+    )
+    devdesk_apply_warnings(github_sync_live)
+    if(MSVC)
+        target_link_options(github_sync_live PRIVATE /SUBSYSTEM:CONSOLE)
+    elseif(MINGW)
+        target_link_options(github_sync_live PRIVATE -mconsole)
+    endif()
+
+    if(UNIX)
+        add_test(NAME github_sync_live
+            COMMAND bash "${CMAKE_SOURCE_DIR}/scripts/run-ghsync-live.sh"
+                "${CMAKE_BINARY_DIR}")
+        # LABELS 只有 live、没有 probe：默认门禁跑 `ctest -L probe`，看不到它。
+        set_tests_properties(github_sync_live PROPERTIES LABELS "live")
+    endif()
 endif()

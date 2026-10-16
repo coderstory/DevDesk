@@ -206,6 +206,9 @@ core::Result<void> GithubSyncStore::save(const GithubSyncConfig& cfg) {
 }
 
 core::Result<void> GithubSyncStore::saveToken(const std::string& token) {
+    // 测试模式不落钥匙串：注入 token 由环境变量提供，写进去只会污染用户真实凭据库
+    //（DEVDESK_DATA_ROOT 隔离的是数据根，隔离不了全局钥匙串）。
+    if (githubTestModeEnabled()) return core::Result<void>::ok();
     return platform::keychain::storeSecret(kKeychainService, kKeychainAccount, token);
 }
 
@@ -273,10 +276,16 @@ core::Result<void> GithubSyncStore::forgetSyncedNote(const std::string& fileName
 }
 
 core::Result<std::string> GithubSyncStore::loadToken() {
+    // 测试注入缝优先（见 github_sync_config.h 的 githubTestToken）：门开且变量在场
+    // → 直接用环境变量，不读也不写真实钥匙串。
+    if (auto injected = githubTestToken(); !injected.empty()) {
+        return core::Result<std::string>::ok(std::move(injected));
+    }
     return platform::keychain::loadSecret(kKeychainService, kKeychainAccount);
 }
 
 core::Result<void> GithubSyncStore::deleteToken() {
+    if (githubTestModeEnabled()) return core::Result<void>::ok();
     return platform::keychain::deleteSecret(kKeychainService, kKeychainAccount);
 }
 

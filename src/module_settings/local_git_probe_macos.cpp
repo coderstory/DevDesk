@@ -90,7 +90,7 @@ bool readXcodeSelectPath(std::string& out) {
 // xcode-select 随系统基础系统自带，调用它不会触发 CLT 安装 GUI；会弹 GUI 的
 // 是 /usr/bin/git 这类 shim——所以全程不执行 git，只查文件存在性。
 // 调用方在后台线程跑，本函数自带 3s 上界，可安全反复调用。
-bool localGitAvailable() {
+bool localGitAvailableImpl() {
     std::string root;
     if (!readXcodeSelectPath(root)) return false;
     std::error_code ec;
