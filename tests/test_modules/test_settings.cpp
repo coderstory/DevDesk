@@ -3934,3 +3934,49 @@ REGISTER_TEST(settings_github_sync_autopush_switch_gates_auto_path,
     DOCTEST_CHECK_MESSAGE(on, "开着「自动推送」时自动路径未发起（判据恒假）");
     return true;
 })
+
+// dirty 触发源：笔记写入/删除 + 待办增删改，每个写路径事件都必须把 GitHub Sync 置
+// dirty（只订一部分 = 那类改动永远不自动同步）。逐个事件名验证，并带无关事件对照
+// ——否则断言退化成「任何事件都置位」。观察口同 autopush 用例：无仓库 URL 时自动闸
+// 一放行就报「未配置仓库 URL」，卡片红字行即「dirty 已置位」的可见证据。
+REGISTER_TEST(settings_github_sync_dirty_from_write_events,
+              "settings: 笔记/待办各写路径事件 → GitHub Sync 置 dirty（带无关事件对照）", {
+    test_support::TestEnv env(kCfgPrefix, "gsdirty", true);
+    test_support::ScopedConfigPath cfgEnv(
+        test_support::tempConfigFile(kCfgPrefix, "gsdirty_cfg"));
+    eui::Screen screen{1600.0f, 1000.0f};
+    const char* kErrRow = "settings.card.github_sync.error";
+
+    // dirty 是闩（置位后不再变、日志也只记首次），故每个事件名用独立模块实例
+    auto dirtyAfter = [&](const char* ev) {
+        module::settings::GithubSyncConfig cfg;
+        cfg.enabled = true;
+        cfg.autoPush = true;   // 自动闸开着：dirty 一置位就发起推送 → 红字可见
+        module::settings::GithubSyncStore(::core::appDatabase()).save(cfg);
+
+        std::unique_ptr<::core::Module> mod(create_settings_module());
+        mod->onStart();
+        DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 3));
+        ::core::event::bus().emit(ev);
+
+        eui::Ui ui;
+        ui.begin("gsdirty");
+        mod->compose(ui, screen);
+        ui.end();
+        const bool dirty = ui.find(kErrRow) != nullptr;
+        mod->onStop();
+        return dirty;
+    };
+
+    DOCTEST_CHECK(dirtyAfter(::core::event::kMdSaved));
+    DOCTEST_CHECK(dirtyAfter(::core::event::kMdDeleted));
+    DOCTEST_CHECK(dirtyAfter(::core::event::kTodoCreated));
+    DOCTEST_CHECK(dirtyAfter(::core::event::kTodoUpdated));
+    DOCTEST_CHECK(dirtyAfter(::core::event::kTodoMoved));
+    DOCTEST_CHECK(dirtyAfter(::core::event::kTodoCompleted));
+    DOCTEST_CHECK(dirtyAfter(::core::event::kTodoUncompleted));
+    DOCTEST_CHECK(dirtyAfter(::core::event::kTodoDeleted));
+    // 对照：本模块没订阅的事件名 → 不置 dirty
+    DOCTEST_CHECK(!dirtyAfter(::core::event::kDbImported));
+    return true;
+})

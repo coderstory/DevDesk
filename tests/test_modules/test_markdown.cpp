@@ -2015,6 +2015,11 @@ REGISTER_TEST(md_module_delete_note_ui, "markdown_module: 右键→删除→确�
     std::unique_ptr<::core::Module> mod(create_markdown_module());
     mod->onStart();
 
+    // 删笔记是 GitHub Sync 的 dirty 触发源之一：只有确认删除成功才发 md.deleted
+    int gotDeleted = 0;
+    auto delSub = core::event::bus().subscribe(
+        core::event::kMdDeleted, [&](const std::string&) { ++gotDeleted; });
+
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
@@ -2077,6 +2082,7 @@ REGISTER_TEST(md_module_delete_note_ui, "markdown_module: 右键→删除→确�
     frame("d5");
     DOCTEST_CHECK(fs::exists(env.dir / "a.md"));
     DOCTEST_CHECK(ui.find(kEditorInputId) != nullptr);  // 编辑器未受影响
+    DOCTEST_CHECK_EQ(gotDeleted, 0);                    // 取消路径：没删成，不发事件
 
     // 确认路径：再右键 → 删除 → 确认 → 文件删除、树消失、编辑器清回空态；
     // b.md 不受牵连
@@ -2093,6 +2099,7 @@ REGISTER_TEST(md_module_delete_note_ui, "markdown_module: 右键→删除→确�
     delBtn->onClick();
     DOCTEST_CHECK_FALSE(fs::exists(env.dir / "a.md"));
     DOCTEST_CHECK(fs::exists(env.dir / "b.md"));
+    DOCTEST_CHECK_EQ(gotDeleted, 1);   // 确认删除成功 → md.deleted 恰一次
     frame("d8");
     DOCTEST_CHECK_FALSE(treeHas("a.md"));
     DOCTEST_CHECK(treeHas("b.md"));

@@ -172,16 +172,18 @@ public:
         // xcode-select 卡住启动；配置变更置脏重探。
         githubSyncLocalGitProbeDirty_ = true;
         gExitHookTarget = this;   // 进程退出钩子的目标，onStop 注销
-        // dirty 触发源：笔记写入 + 待办增删改。token 必须存成员，丢了就退订。
-        githubSyncSubs_.push_back(::core::event::bus().subscribe(
-            ::core::event::kMdSaved,
-            [this](const std::string&) { markGithubSyncDirty("md.saved"); }));
-        githubSyncSubs_.push_back(::core::event::bus().subscribe(
-            ::core::event::kTodoCreated,
-            [this](const std::string&) { markGithubSyncDirty("todo.created"); }));
-        githubSyncSubs_.push_back(::core::event::bus().subscribe(
-            ::core::event::kTodoCompleted,
-            [this](const std::string&) { markGithubSyncDirty("todo.completed"); }));
+        // dirty 触发源：笔记写入/删除 + 待办增删改——每个写路径事件都要订上，
+        // 漏一个 = 那类改动永远不自动同步。token 必须存成员，丢了就退订。
+        // 事件名直接作 source：日志里看得出是哪条写路径置的位。
+        for (const char* ev :
+             {::core::event::kMdSaved, ::core::event::kMdDeleted,
+              ::core::event::kTodoCreated, ::core::event::kTodoUpdated,
+              ::core::event::kTodoMoved, ::core::event::kTodoCompleted,
+              ::core::event::kTodoUncompleted, ::core::event::kTodoDeleted}) {
+            githubSyncSubs_.push_back(::core::event::bus().subscribe(
+                ev,
+                [this, ev](const std::string&) { markGithubSyncDirty(ev); }));
+        }
         // 注册 app.read_settings；name 冲突记日志不中断。
         appReadSettingsTool_ =
             makeAppReadSettingsTool(::core::appDatabase());

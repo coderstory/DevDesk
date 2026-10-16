@@ -201,6 +201,7 @@ public:
             return false;
         }
         reloadAll();
+        core::event::bus().emit(core::event::kTodoMoved);
         return true;
     }
 
@@ -223,6 +224,7 @@ public:
             setStatus("取消完成失败：" + r.errorMessage(), true);
             return;
         }
+        core::event::bus().emit(core::event::kTodoUncompleted);
         finishCompletionMove(taskId, "todo");
     }
 
@@ -263,6 +265,7 @@ public:
         }
         setStatus("已删除任务");
         reloadAll();
+        core::event::bus().emit(core::event::kTodoDeleted);
     }
 
     // 返回是否保存成功（详情弹窗先落表单再执行动作，失败要中止动作并保留弹窗）
@@ -275,6 +278,7 @@ public:
         }
         setStatus("已保存");
         reloadAll();
+        core::event::bus().emit(core::event::kTodoUpdated);
         return true;
     }
 
