@@ -273,7 +273,8 @@ REGISTER_TEST(claude_quota_lifecycle_test_connection_then_immediate_stop,
 //
 // 被测行为：end handler 受双闸门控——订阅存活闸（dbImportHandlersEnabled_，onStop 先关再退订）
 // × 功能总开关（quota_bridge::isQuotaFeatureEnabled，默认关）。开关关时导入结束不得复活刷新；
-// 开关开时恢复触发 startQuotaRefresh（幂等，重复 end 不双起）。
+// 开关开时恢复触发 startQuotaRefresh。startQuotaRefresh 的幂等早退（quotaRefresher_ 已在即
+// return）无外部观测量（预填缝对双起/不双起同像，变异实测不可判异），不做行为断言。
 // 观察缝（行为级，非内部布尔）：quotaStore_ 全模块唯一写点是 startQuotaRefresh()（claude_module.cpp）。
 // 余量配置弹窗的供应商预填读 quotaStore_->loadConfig——刷新真的起过 ⇒ 预填种子的 DeepSeek；
 // 没起 / 已被拆 ⇒ 预填落「不配置（关闭余量查询）」。断言只认下拉选中文案，不碰任何成员。
@@ -411,14 +412,16 @@ REGISTER_TEST(claude_quota_gate_import_end_fires_when_switch_on,
     return true;
 })
 
-// ③ 导入中途开开关 + 重复 end：幂等不双起；begin 真 pause → end 真恢复
-REGISTER_TEST(claude_quota_gate_double_end_idempotent_and_pause_resume,
-              "claude quota 总开关: 导入中途开开关→end 幂等不双起；begin 暂停拆 store、end 再起", {
+// ③ 导入中途开开关 + begin/end 往返：end 起刷新、begin 真暂停、end 真恢复。
+// 刻意不做「幂等不双起」断言：预填缝对幂等早退不敏感（删 quotaRefresher_ 守卫预填同像），
+// 双起在本实现里无外部观测量，断了就是恒真假绿——重复 end 只验「不断链仍健康」。
+REGISTER_TEST(claude_quota_gate_pause_resume_cycle_mid_import_toggle,
+              "claude quota 总开关: 导入中途开开关→end 起刷新；begin 真暂停、end 真恢复", {
     ::core::Router router;
     test_support::ScopedAppRouter scopedRouter(&router);
-    test_support::TestEnv env(kDbPrefix, "gateidem", /*registerAppDb=*/true);
+    test_support::TestEnv env(kDbPrefix, "gatecycle", /*registerAppDb=*/true);
     core::data::SqliteDb& sq = env.db->db();
-    const int64_t profileId = insertProfileWithoutCredential(sq, "余量门控-幂等");
+    const int64_t profileId = insertProfileWithoutCredential(sq, "余量门控-往返");
     seedQuotaConfig(sq, profileId);
 
     ScopedQuotaFeatureFlag flag(false);
@@ -440,11 +443,11 @@ REGISTER_TEST(claude_quota_gate_double_end_idempotent_and_pause_resume,
     DOCTEST_REQUIRE_MESSAGE(first == deepseek,
                             "第一次 end 必须起刷新（预填 DeepSeek），实到：" + first);
 
-    // 第二次 end：幂等分支——已有刷新器必须早退，不得双起 / 换装
+    // 重复 end：不断链（刷新器仍可用、预填仍对）。幂等早退本身在此缝不可判异（见上）。
     emitDbImportEnd();
     const std::string second = quotaDialogProviderLabel(router, mod, profileId, 2);
     DOCTEST_CHECK_MESSAGE(second == deepseek,
-                          "重复 end 后刷新器必须仍是同一套（预填不变 DeepSeek），实到：" + second);
+                          "重复 end 后刷新链不得断（预填仍 DeepSeek），实到：" + second);
 
     // begin → end 一整个往返：begin 真拆 store（预填回落「不配置」），end 建新实例再起
     //（stopAll 后旧实例不可重启，startQuotaRefresh 每次建新 QuotaRefresher）

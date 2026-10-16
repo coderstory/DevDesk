@@ -84,6 +84,8 @@ public:
     }
 
     // 同步发布：拷出存活 handler（锁内），锁外逐个调用。无订阅者直接返回。
+    // 派发序 = 订阅序（entries_[name] 的 vector 保序，锁内 push_back 追加）——是保证，不是巧合；
+    // 同名多订阅方按「先订先跑」，claude quota 门控用例靠它把 onStop 插到模块 handler 之前。
     void emit(const std::string& name) {
         std::vector<Handler> live;
         {
