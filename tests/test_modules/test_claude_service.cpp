@@ -895,12 +895,12 @@ REGISTER_TEST(claude_service_create_validation,
 })
 
 REGISTER_TEST(claude_service_test_connection,
-              "claude_service: testConnection 发 GET /v1/models", {
+              "claude_service: testConnection 发 POST /v1/messages（1-token ping）", {
     platform::http::Server upstream("127.0.0.1", 0);
     int hitCount = 0;
     std::string lastPath;
     std::string lastApiKey;
-    upstream.route("GET", "/v1/models",
+    upstream.route("POST", "/v1/messages",
                    [&](const platform::http::RequestCtx& ctx,
                        platform::http::ResponseWriter& w) {
                        ++hitCount;
@@ -932,14 +932,14 @@ REGISTER_TEST(claude_service_test_connection,
     DOCTEST_CHECK_EQ(resp.value().statusCode, 200);
     DOCTEST_CHECK(resp.value().body.find("claude-sonnet-4-5") != std::string::npos);
     DOCTEST_CHECK_EQ(hitCount, 1);
-    DOCTEST_CHECK_EQ(lastPath, std::string("/v1/models"));
+    DOCTEST_CHECK_EQ(lastPath, std::string("/v1/messages"));
     // 上游收到的 x-api-key 是凭据列里的明文
     DOCTEST_CHECK_EQ(lastApiKey, std::string("sk-ant-conn-6666"));
 
     // 上游返回 401 也算 Ok：testConnection 只探测连通性，状态码原样带回给 UI 显示
     upstream.stop();
     platform::http::Server upstream401("127.0.0.1", 0);
-    upstream401.route("GET", "/v1/models",
+    upstream401.route("POST", "/v1/messages",
                       [](const platform::http::RequestCtx&,
                          platform::http::ResponseWriter& w) {
                           w.setStatus(401);
@@ -967,7 +967,7 @@ REGISTER_TEST(claude_service_test_connection_uses_dialect,
     platform::http::Server upstream("127.0.0.1", 0);
     HeaderMap seen;
     int hitCount = 0;
-    upstream.route("GET", ".*",
+    upstream.route("POST", ".*",
                    [&](const platform::http::RequestCtx& ctx,
                        platform::http::ResponseWriter& w) {
                        ++hitCount;
@@ -1041,7 +1041,7 @@ REGISTER_TEST(claude_service_test_connection_dialect_override,
     platform::http::Server upstream("127.0.0.1", 0);
     HeaderMap seen;
     int hitCount = 0;
-    upstream.route("GET", ".*",
+    upstream.route("POST", ".*",
                    [&](const platform::http::RequestCtx& ctx,
                        platform::http::ResponseWriter& w) {
                        ++hitCount;
@@ -3456,7 +3456,7 @@ REGISTER_TEST(claude_pv_unreachable_no_takeover,
 REGISTER_TEST(claude_pv_non_2xx_fails,
               "claude_service: 前置校验③ 上游 401 → fail（无/坏 key 不得起代理）", {
     platform::http::Server upstream401("127.0.0.1", 0);   // 模式照 :994-1010
-    upstream401.route("GET", "/v1/models",
+    upstream401.route("POST", "/v1/messages",
                       [](const platform::http::RequestCtx&,
                          platform::http::ResponseWriter& w) {
                           w.setStatus(401);
@@ -3489,7 +3489,7 @@ REGISTER_TEST(claude_pv_ok_then_start_proxy,
     platform::http::Server upstream("127.0.0.1", 0);       // 模式照 :952-968
     int hitCount = 0;
     std::string lastPath;
-    upstream.route("GET", "/v1/models",
+    upstream.route("POST", "/v1/messages",
                    [&](const platform::http::RequestCtx& ctx,
                        platform::http::ResponseWriter& w) {
                        ++hitCount;
@@ -3512,7 +3512,7 @@ REGISTER_TEST(claude_pv_ok_then_start_proxy,
     auto v = svc.validateProxyPreconditions(2000);
     DOCTEST_CHECK(v.isOk());
     DOCTEST_CHECK_EQ(hitCount, 1);
-    DOCTEST_CHECK_EQ(lastPath, std::string("/v1/models"));
+    DOCTEST_CHECK_EQ(lastPath, std::string("/v1/messages"));
     DOCTEST_CHECK_FALSE(svc.isProxyRunning());   // 校验本身绝不 bind
 
     // 通过后 startProxy 照常，端口 0 = OS 分配
@@ -3536,7 +3536,7 @@ REGISTER_TEST(claude_pv_timeout_honored,
     // 断言是 ok/fail 二值、不测墙钟，10× 余量保证负载抖动下也不误判；收尾 slow.stop() 会 join
     // 上游 worker，故本用例总耗时 ≈1.5s。
     platform::http::Server slow("127.0.0.1", 0);
-    slow.route("GET", "/v1/models",
+    slow.route("POST", "/v1/messages",
                [](const platform::http::RequestCtx&,
                   platform::http::ResponseWriter& w) {
                    std::this_thread::sleep_for(std::chrono::milliseconds(1500));
@@ -3560,5 +3560,104 @@ REGISTER_TEST(claude_pv_timeout_honored,
     DOCTEST_CHECK_FALSE(svc.isProxyRunning());
     slow.stop();
     test_support::cleanupProfileKey(kTestKeychainService, created.value().id);
+    return true;
+})
+
+// -- runProfile 工作目录参数（folder_picker 注入 → workingDir 链路）-------------------
+
+// 一：传入显式工作目录 → LaunchSpec.workingDir 使用该目录（而非 homeDir）
+REGISTER_TEST(claude_run_profile_explicit_working_dir,
+              "claude_service: runProfile 显式 workingDir → LaunchSpec 收到该目录", {
+    test_support::DataRootEnv root(kDbPrefix, "rundir1");
+    test_support::TestDb tdb(kDbPrefix, "rundir1");
+    module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
+
+    TempSyncPaths paths("rundir1", tdb.handle());
+    svc.setSettingsSyncPaths(paths.paths());
+
+    auto a = svc.createProfile("DirRun", "https://api.anthropic.com/",
+                               "sk-ant-rundir-0001", "");
+    DOCTEST_REQUIRE(a.isOk());
+    DOCTEST_REQUIRE(svc.setActiveProfile(a.value().id).isOk());
+
+    int calls = 0;
+    platform::terminal::LaunchSpec got;
+    svc.setTerminalLauncher([&](const platform::terminal::LaunchSpec& s) {
+        ++calls;
+        got = s;
+        return core::Result<void>::ok();
+    });
+
+    const std::string customDir = "/tmp/devdesk-test-workdir";
+    std::string hint;
+    auto r = svc.runProfile(a.value().id, &hint, customDir);
+    DOCTEST_REQUIRE(r.isOk());
+    DOCTEST_CHECK_EQ(calls, 1);
+    // 关键断言：workingDir 已替换为传入目录
+    DOCTEST_CHECK_EQ(got.workingDir, customDir);
+    DOCTEST_CHECK_EQ(got.program, std::string("claude"));
+
+    // 清理临时 settings 文件
+    DOCTEST_REQUIRE_EQ(got.args.size(), static_cast<size_t>(2));
+    std::error_code rmEc;
+    std::filesystem::remove(std::filesystem::path(got.args[1]), rmEc);
+    test_support::cleanupProfileKey(kTestKeychainService, a.value().id);
+    return true;
+})
+
+// 二：不传 workingDir（回退 homeDir 默认值）—— 向后兼容现有调用方
+REGISTER_TEST(claude_run_profile_default_working_dir,
+              "claude_service: runProfile 不传 workingDir → 回退 homeDir", {
+    test_support::DataRootEnv root(kDbPrefix, "rundir2");
+    test_support::TestDb tdb(kDbPrefix, "rundir2");
+    module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
+
+    TempSyncPaths paths("rundir2", tdb.handle());
+    svc.setSettingsSyncPaths(paths.paths());
+
+    auto a = svc.createProfile("DefaultDir", "https://api.anthropic.com/",
+                               "sk-ant-rundir-0002", "");
+    DOCTEST_REQUIRE(a.isOk());
+    DOCTEST_REQUIRE(svc.setActiveProfile(a.value().id).isOk());
+
+    int calls = 0;
+    platform::terminal::LaunchSpec got;
+    svc.setTerminalLauncher([&](const platform::terminal::LaunchSpec& s) {
+        ++calls;
+        got = s;
+        return core::Result<void>::ok();
+    });
+
+    // 不传 workingDir → 应回退到 homeDir()
+    auto r = svc.runProfile(a.value().id, nullptr);
+    DOCTEST_REQUIRE(r.isOk());
+    DOCTEST_CHECK_EQ(calls, 1);
+    DOCTEST_CHECK_EQ(got.workingDir, platform::terminal::homeDir());
+    DOCTEST_CHECK(!got.workingDir.empty());
+
+    // 清理临时 settings
+    DOCTEST_REQUIRE_EQ(got.args.size(), static_cast<size_t>(2));
+    std::error_code rmEc;
+    std::filesystem::remove(std::filesystem::path(got.args[1]), rmEc);
+    test_support::cleanupProfileKey(kTestKeychainService, a.value().id);
+    return true;
+})
+
+// 三：app_config last-dir 键值读写往返 —— claudeRunLastDir 键按既有 app_config 惯例
+REGISTER_TEST(claude_module_last_dir_appconfig_roundtrip,
+              "app_config: claude.run.lastDir 键读写往返（last-dir 记忆）", {
+    test_support::TestDb tdb(kDbPrefix, "lastdir1");
+    // 写
+    const std::string lastDir = "/home/user/projects/my-repo";
+    auto wrote = core::appconfig::set(tdb.handle(), "claude.run.lastDir", lastDir);
+    DOCTEST_CHECK(wrote.isOk());
+    // 读回
+    auto got = core::appconfig::get(tdb.handle(), "claude.run.lastDir");
+    DOCTEST_REQUIRE(got.isOk());
+    DOCTEST_CHECK_EQ(got.value(), lastDir);
+    // 键不存在 → fail
+    auto missing = core::appconfig::get(tdb.handle(), "claude.run.lastDir.NEVER");
+    DOCTEST_CHECK(missing.isFail());
+    DOCTEST_CHECK(missing.errorCode() == core::ErrorCode::NotFound);
     return true;
 })

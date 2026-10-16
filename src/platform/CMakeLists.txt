@@ -12,6 +12,8 @@ add_library(devdesk_platform STATIC
 # 业务代码零平台宏 —— 与 EUI-NEO 后端选择同一模式）
 if(WIN32)
     target_sources(devdesk_platform PRIVATE
+        exec_capture_win.cpp
+        folder_picker_win.cpp           # IFileDialog COM 目录选择（FOS_PICKFOLDERS）
         keychain_win.cpp
         credential_protection_win.cpp  # DPAPI 密文入库（不得降级明文）
         file_open_win.cpp
@@ -21,9 +23,12 @@ if(WIN32)
         terminal_launch_win.cpp
         tray_icon_win.cpp              # 托盘图标走真 .ico（ExtractIconExW 不认 PNG）
         message_box_win.cpp             # 启动期阻塞对话框（损坏还原流程）
+        single_instance_win.cpp        # 单实例互斥：命名 mutex + 事件监听线程
     )
 elseif(APPLE)
     target_sources(devdesk_platform PRIVATE
+        exec_capture_posix.cpp
+        folder_picker_macos.cpp         # osascript choose folder（免 ObjC 链接）
         keychain_macos.cpp
         credential_protection_posix.cpp  # macOS 与 Linux 同实现，共用 _posix
         file_open_macos.cpp
@@ -33,9 +38,12 @@ elseif(APPLE)
         terminal_launch_macos.cpp
         tray_icon_macos.cpp            # 托盘图标走 22×22 template 蒙版（不变）
         message_box_macos.cpp          # osascript display dialog（启动期阻塞对话框）
+        single_instance_macos.cpp      # .app bundle 系统保证单实例，恒 true
     )
 else()
     target_sources(devdesk_platform PRIVATE
+        exec_capture_posix.cpp
+        folder_picker_posix.cpp         # 无 GUI 环境 stub（NotImplemented）
         keychain_posix.cpp
         credential_protection_posix.cpp
         file_open_posix.cpp
@@ -45,6 +53,7 @@ else()
         terminal_launch_posix.cpp
         tray_icon_posix.cpp            # 其它 POSIX 兜底：返回空串（用应用图标）
         message_box_posix.cpp          # 无原生阻塞对话框：诚实降级（LOG + Cancel）
+        single_instance_posix.cpp      # 暂 no-op 恒 true
     )
 endif()
 
@@ -55,12 +64,22 @@ target_include_directories(devdesk_platform PUBLIC
     ${CMAKE_SOURCE_DIR}/3rd/cpp-httplib
 )
 
+# Windows 系统库只在 WIN32 链接：它们必须紧跟 CURL::libcurl 之后（GNU ld 左→右解析，
+# 早位满足不了 libcurl.a 的 Winsock 符号），但 macOS/Linux 没有这些库，无条件链接即
+# CI 链接期炸（ld: library 'ws2_32' not found）。用变量占位保序：WIN32 下展开五个库、
+# 其他平台展开为空（CMake 丢弃空 list 项，不产生空 -l）
+if(WIN32)
+    set(DEVDESK_WIN_SYSTEM_LIBS ws2_32 crypt32 shell32 advapi32 shlwapi)
+endif()
+
 target_link_libraries(devdesk_platform
     PUBLIC
         devdesk_core
         CURL::libcurl
+        # Windows 系统库紧跟 CURL::libcurl 之后：GNU ld 左→右解析，早位满足不了
+        # libcurl.a 的 Winsock 符号——顺序即语义，别把变量占位挪走
+        ${DEVDESK_WIN_SYSTEM_LIBS}
         Threads::Threads
-        # cpp-httplib OpenSSL 支持（可选，定义 CPPHTTPLIB_OPENSSL_SUPPORT 时需要）
         OpenSSL::SSL
         OpenSSL::Crypto
 )
@@ -81,13 +100,10 @@ if(APPLE)
     )
 endif()
 
-# Windows：Winsock2（http_client/http_server 网络）+ Crypt32（TLS 证书链）
-# + Shell32（file_open_win.cpp 的 CommandLineToArgvW）
-# 之前靠 -DCMAKE_CXX_STANDARD_LIBRARIES="-lws2_32 -lcrypt32" 绕过，现烤进构建系统
-# advapi32：system_theme_win.cpp 的 RegGetValueW（跟随系统主题，spec 缩水 A）
-if(WIN32)
-    target_link_libraries(devdesk_platform PUBLIC ws2_32 crypt32 shell32 advapi32)
-endif()
-
+# Windows 系统库：Winsock2（网络）+ Crypt32（TLS 证书链）+ Shell32（file_open_win.cpp
+# CommandLineToArgvW）+ Advapi32（system_theme_win.cpp RegGetValueW，spec 缩水 A）
+# + Shlwapi（folder_picker_win.cpp 路径解析）。统一经上方 WIN32 变量占位
+# ${DEVDESK_WIN_SYSTEM_LIBS} 排在 CURL::libcurl 之后；早位声明会被 CMake 去重保首位
+# ——别在别处再声明 Windows 系统库
 # DevDesk 自己的警告等级（-Werror 只作用于 DevDesk target，不泄漏给第三方）
 devdesk_apply_warnings(devdesk_platform)

@@ -1,4 +1,4 @@
-// AppStatsTool 实现：三表 COUNT(*) 直查。表名与 migrations.h 对齐：
+// AppStatsTool 实现：三表 COUNT(*) 直查。表名与 core/schema.h 对齐：
 // todos←todo_tasks / notes←markdown_index / agentTasks←agent_tasks
 #include "app_stats_tool.h"
 

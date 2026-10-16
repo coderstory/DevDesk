@@ -1,0 +1,94 @@
+{
+  "shard": "core-platform",
+  "lenses": ["cpp20-expert", "architect"],
+  "baseline": "dev branch as of 2026-10-13, post ~319 macOS commits + today's 7 fix/feature branches",
+  "scope": "src/core/** (result/sqlite_db/database/schema/migrations/logging/router/theme/paths/time/app_config/window_layout/service_locator/atomic_write/str_util) + src/platform/** (http_client/http_server/json/keychain/credential_protection/single_instance/terminal_launch/file_*/system_theme/tray_icon/file_watcher/utf8)",
+  "new_code_focus": "core/migrations.{h,cpp} / core/database.cpp migrate() / platform/single_instance_* / platform/terminal_launch_common.h",
+  "architecture_gate_check": {
+    "core_includes_platform": "ZERO (grep confirmed)",
+    "core_includes_eui_runtime": "module_interface.h + theme.h (header-only type bridge, known exception per spec §4.2.1); router.cpp:82 ui.text().build() — already_registered CP-01",
+    "platform_includes_core": "Result/logging/paths/atomic_write/str_util — allowed per architecture",
+    "platform_ifdef_leaks": "ZERO — CP-03 (http_client.cpp:56 _WIN32) resolved: CA strategy now properly split via http_client_ca_win.cpp / http_client_ca_posix.cpp",
+    "platform_file_split_consistency": "Uniform *_win.cpp / *_macos.cpp / *_posix.cpp pattern with CMake target_sources per-platform selection. No cross-contamination."
+  },
+  "resolved_since_sept27_audit": [
+    "CP-03: http_client.cpp platform macro → split into http_client_ca_{win,posix}.cpp",
+    "CP-08: Result::value() now uniform LOG_FATAL+abort (no TU-specific behavior); unsafeValue()/expect() removed; errorMessage() handles default-constructed state",
+    "CP-10a: setSchemaVersion dead API removed",
+    "CP-10b: ended_/ended() dead members removed; end() kept intentionally as compat no-op",
+    "CP-12: system_theme_macos.cpp has real CFPreferences Dark-mode detection (was posix stub that always returned false)",
+    "CP-07 (partial): Database() = delete (was = default); SqliteDb() kept private with open() factory — correct pattern"
+  ],
+  "findings": [
+    {
+      "id": "CP-13",
+      "file": "src/core/schema.h + src/core/migrations.cpp",
+      "line": 0,
+      "lens": "architect",
+      "title": "schema.h 与 migrations.cpp 列集双真相源无自动化一致性守卫",
+      "issue": "schema.h 的 CREATE TABLE 是「新建库形态」（含全部列），migrations.cpp 的 kMigrations[] ALTER TABLE 是「旧库升级路径」（含缺列补齐）。两处各自独立维护：在 schema.h 给 claude_profiles 加一列，必须在 migrations.cpp 里加对应的 ALTER TABLE ADD COLUMN 条目。当前 v1 的列集一致性靠 test_migrations.cpp 手工维护的断言列表看守（`hasColumn(db, \"claude_profiles\", \"new_col\")`），没有编译期或自动化运行时断言能发现「schema.h 加了列但 migrations 漏了 ALTER」——新建库拿到该列，旧库静默缺失。v2/v3 会放大这个窗口：每加一个版本组，不一致的风险面积就多一组 ALTER。迁移测试虽覆盖充分（旧库升级/幂等/部分升级/凭据回填/新库 6 条），但都依赖手工对齐的两份列清单。",
+      "impact": "加一个迁移版本 v2 需编辑 3 处（schema.h CREATE TABLE + migrations.cpp SQL 数组 + Migration 结构体）+ 手工补测试断言。漏一处 = 旧库缺失该列，且因 ALTER 经 PRAGMA table_info 预检，漏掉的 ALTER 连 SQL 错误都不会触发——纯静默缺失。维护成本随版本组线性增长：N 个版本组 = N 倍的双源核对工作。",
+      "severity": "MEDIUM",
+      "already_registered": false,
+      "suggestion": "在 test_migrations 中加一条「schema.h 全部列经迁移后存在」的系统性断言：① 从 schema.h kSql 正则提取各 CREATE TABLE 的列定义；② 对每个 table.column，断言旧库经 applyPending 后 hasColumn 为真。这样加迁移版本时只需在 schema.h 增列、在 migrations.cpp 加 ALTER，测试自动验证一致性，不再靠手工维护两套列清单。"
+    },
+    {
+      "id": "CP-14",
+      "file": "src/platform/single_instance_posix.cpp + src/platform/single_instance_macos.cpp",
+      "line": 1,
+      "lens": "architect",
+      "title": "single_instance_posix.cpp 与 single_instance_macos.cpp 逐字相同——两份文件描述同一个恒 true 空操作",
+      "issue": "macOS 版（single_instance_macos.cpp）: acquireInstanceLock() 恒 true + notifyExistingInstance() 空体，注释写「.app bundle 由系统保证单实例」。POSIX 版（single_instance_posix.cpp）: acquireInstanceLock() 恒 true + notifyExistingInstance() 空体，注释写「暂 no-op」。两份文件内容完全相同，区别仅在文件头注释的一句描述。CMakeLists.txt 的 APPLE 与 else() 分支各自引用不同文件名，但编译出来的符号行为一致。",
+      "impact": "① 将来要给 POSIX 加 flock 实现时，必须同时确认 macOS 路径不受影响——而读两份相同文件的人会反复比对「这两份真的一样吗」；② 若只改 POSIX 版而忘改 macOS 版（或反过来），两平台行为会静默分歧；③ 维护面是实际需要的两倍：两个文件、两条 CMake target_sources 行、两份 git blame。",
+      "severity": "LOW",
+      "already_registered": false,
+      "suggestion": "二选一：① CMakeLists.txt APPLE 分支复用 single_instance_posix.cpp（与 credential_protection_posix.cpp 的复用模式一致）；② 合并成一个 single_instance_stub.cpp，APPLE 和 else() 都引用它。注意 macOS 注释里的「.app bundle 保证」是描述 .app 打包场景的行为，与 stub 实现不矛盾。"
+    },
+    {
+      "id": "CP-15",
+      "file": "src/core/migrations.cpp",
+      "line": 38,
+      "lens": "cpp20-expert",
+      "title": "parseAlter() 的 DDL 解析器不处理 SQLite 引用标识符——格式越界时静默返回空、跳过预检",
+      "issue": "parseAlter() 用纯字符串解析从 ALTER TABLE 语句中提取表名和列名：表名取第一个空格之前的部分（line 48-49 `while (*p && *p != ' ') ++p`），列名取第二个空格之前的部分（line 60）。这不能处理：① SQL 标准双引号标识符 `ALTER TABLE \"my table\" ADD COLUMN ...`——表名被截断为 `\"my`；② SQLite 方括号标识符 `ALTER TABLE [my_table] ADD COLUMN ...`——表名被截断为 `[my_table]`（带括号）。解析失败 → 返回空 AlterTarget → columnExists() 不被调用 → ALTER 直接执行。当前迁移 SQL 不使用引用标识符，所以这段代码正确运行。",
+      "impact": "未来如果有人写了一条使用引用标识符的迁移 SQL（可能由 SQL 生成工具产生），parseAlter 会静默失败，ALTER 直接执行。重复 ALTER 会被 SQLite 自身报错、回滚事务——不会静默损坏数据，但错误信息是「duplicate column」而非「迁移预检失败」，排查方向容易走偏。手动解析器本质上是一个隐式契约：迁移 SQL 必须写成 `ALTER TABLE simple_name ADD COLUMN simple_name ...` 格式。契约未被文档化，靠 parseAlter 的实现隐式定义。",
+      "severity": "LOW",
+      "already_registered": false,
+      "suggestion": "在 migrations.h 或 parseAlter 上方加一行注释说明接受的 SQL 格式约束（「表名/列名必须是不含引号/方括号/空格的简单标识符」）；或在 parseAlter 里加对 `\"` 和 `[` 的处理（增加 ~10 行），让格式约束从契约变成实现能力。当前功能的正确性不受影响——格式约束与现有迁移 SQL 一致，属于防御而非修 bug。"
+    },
+    {
+      "id": "CP-16",
+      "file": "src/platform/terminal_launch_common.h",
+      "line": 11,
+      "lens": "architect",
+      "title": "terminal_launch_common.h 仅为 shellSingleQuote 一个符号引入对 file_open_common.h 的传递依赖",
+      "issue": "terminal_launch_common.h 第 11 行 `#include \"file_open_common.h\"`，第 18 行 `using platform::file_open::shellSingleQuote;`。该 using 声明让 terminal_launch 家族依赖 file_open 家族，仅为一个单引号转义函数（8 行实现）。shellSingleQuote 在 terminal_launch_common.cpp 的 buildMacCommandBody 中使用（line 250-251），也在 terminal_launch_macos.cpp 中使用。两个原本边界清晰的 platform 子族（终端启动 vs 文件打开）通过这个 include 耦合。",
+      "impact": "① 若 file_open_common.h 增加新 include 或新符号，terminal_launch 的编译单元会被动重编译；② shellSingleQuote 的定位模糊——它到底是「文件操作工具」还是「跨平台字符串工具」？当前放在 file_open_common 只是因为 file_open_macos/posix 最先用到它；③ 新增第三个需要 shellSingleQuote 的平台族时，也会同样 include file_open_common.h，耦合网会扩张。",
+      "severity": "LOW",
+      "already_registered": true,
+      "registered_ref": "CP-09（已登记「shellSingleQuote ×2 重复」——当时建议收进 file_open_common.cpp，已落实；本条是同一决策的副作用：收进 file_open_common 后，消费方必须 include 它）",
+      "suggestion": "将 shellSingleQuote 提升到独立的极小工具头（如 platform/shell_quote.h），只含这一个函数。file_open_common.h 和 terminal_launch_common.h 各自 include 它，而非互相依赖。改动极小（新建一个头文件 + 改两个 include），但让依赖方向从「A→B」变成「A→C, B→C」。"
+    },
+    {
+      "id": "CP-17",
+      "file": "src/core/migrations.cpp",
+      "line": 149,
+      "lens": "cpp20-expert",
+      "title": "kMigrations[] 用 C 数组 + sizeof 推导计数——加条目时若末尾留逗号或格式异常，计数静默偏离",
+      "issue": "kMigrations[] 是 constexpr C 数组（line 149-152），kMigrationCount 由 `sizeof(kMigrations)/sizeof(kMigrations[0])` 计算（line 154）。C 数组的 sizeof 算法对元素类型大小敏感：若 Migration 结构体增字段、或有人误写成 `{2, \"desc\", sqls, count,}`（末尾逗号合法但易被当成多了一个元素），计数仍准确——sizeof 不受逗号影响。实际风险极低。更细微的问题：kMigrationV1SqlCount 由 sizeof 推导（line 146-147），但 kMigrationV1Sqls 是 `const char*` 数组——如果在中间插入一条 nullptr（如删除某行后留空），sizeof 会把 nullptr 计入 count，applyPending 中对 `sql[j]` 解引用会传 nullptr 给 isAlterAddColumn（解引用 char* 参数，非 nullptr 解引用——strncmp 传 nullptr 是 UB）。",
+      "impact": "极低。当前迁移 SQL 数组无 nullptr 条目，且 sizeof 推导在该代码风格下是项目通用做法。真正风险仅在手动编辑 SQL 数组时留空行被当成 nullptr——但这是编码纪律问题（加新迁移时复制粘贴一段就行），不是设计缺陷。sizeof 推导比手写 count 常量更不易漂移。",
+      "severity": "LOW",
+      "already_registered": false,
+      "suggestion": "如果将来 kMigrations[] 条目数超过 5，改用 `std::array` 或 `std::vector` — 此时 sizeof 推导的心智成本开始 > 收益。当前 1 个版本组完全可控，不做任何改动。本条仅作记录，供将来版本组增多时参考。"
+    }
+  ],
+  "zero_finding_notes": [
+    "架构守卫全绿：core 零 platform include（grep 零命中）；platform 零 #ifdef 平台宏（09-27 CP-03 已修复——http_client CA 策略已拆成 http_client_ca_{win,posix}.cpp）；platform 分文件模式一致执行（*_win/_macos/_posix 三路、CMake target_sources 三支、零交叉依赖）。",
+    "C++20 系统开发视角逐项复查：SqliteDb 的锁覆盖 bind/prepare/exec/transaction/析构全部在 recursive_mutex 内（09-27 L5 残留已修）；Statement 的 shared_ptr 共享锁/版本号/权限闩避免移动语义悬垂；StreamingResponse 的 cancel/join/背压四路闭环 + deadline 兜底；FileWatcher 句柄生命周期正确；atomic_write 的 tmp+rename 模式已在 core 层统一提供；paths 的 DEVDESK_DATA_ROOT 单点覆盖全部分路径（09-27 CP-04 部分改进）；credential_protection 的函数指针注入缝（Backend）支持测试替换；ServiceLocator 的模板 inline static + 类型擦除 resetForTest 设计干净。",
+    "迁移机制的 PRAGMA table_info 预检 + 逐版本事务 + writeUserVersion 滞后提交模式设计正确；迁移测试覆盖旧库升级/幂等/部分升级/凭据回填/新库 6 条场景，测试质量高于同规模项目。",
+    "terminal_launch_common.cpp 的命令文本拼装集中在一个 TU（223 行），平台实现只负责系统调用（CreateProcessW / NSTask / posix_spawn），这是正确的关注点分离。",
+    "单实例的 Windows 实现（命名互斥量 + 事件监听线程 + OpenEventW 10 次 retry）处理了并发启动竞态，设计合理。macOS/POSIX stub 的恒 true 在对应平台语义下正确（.app bundle 由系统保证 / POSIX 桌面由启动器保证）。",
+    "Result<T> 的取值语义已收敛（value() 统一 LOG_FATAL+abort，valueOr() 安全回退，errorMessage() 处理默认态），09-27 的 unsafeValue/expect 多取值口问题已修复。",
+    "JsonValue 的镜像字段设计（CP-02）在本次审计中未经重新验证——该 finding 涉及 json.cpp 的拷贝/移动构造与 asString/asInt 行为，需要专门的 JSON 层审计来确认是否已经修复。"
+  ]
+}

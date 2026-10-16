@@ -1,0 +1,111 @@
+{
+  "shard": "todo-home-settings",
+  "baseline_sha": "local-master-2026-10-13",
+  "prior_audit": "docs/superpowers/plans/2026-09-27-full-audit-todo-home-settings.json",
+  "resolved_prior_findings": [
+    "THS-03 (todo_view_state atomic write) → SQLite UPSERT，已由配置入库批修",
+    "THS-05 (9 bool popup state) → PopupStack 替代 + openDropdown_ 单 int",
+    "THS-07 (nowEpochSeconds 返回 Result) → 改为 int64_t，8 调用点免了仪式分支",
+    "THS-14 (归档列按标题判) → 已改为 kind='archive'"
+  ],
+  "findings": [
+    {
+      "id": "THS-19",
+      "file": "src/module_todo/todo_ui_dialogs.cpp",
+      "line": 596,
+      "lens": "architect",
+      "title": "详情弹窗「容器高→内容 y 全手动硬编码链」，容器 resize 需逐行复算 15 处",
+      "issue": "drawDetailDialog 的容器高 h=656（今日从 600 调高 +56），弹窗内每个元素的 y 坐标全是字面量：标题 22、各标签 y 58/126/300/364/428、各输入 y 76/144/320/384/448/474/598……一共约 15 处。唯一由容器高派生的只有 btnY=h-58（按钮 bar 底沿），其余 y 值彼此间靠自然排版顺序形成隐式链——例如 描述标签 y=126 = 标题输入底(76+40)+间距(10)。任何一个中间元素高度改变（比如 input 从 40 调到 44），全部下游 y 都要重算，且没有任何编译期/运行期守卫会发现漏改。今天从 600→656 的 +56 就是人为逐行核实的结果，下一次再改同样成本。相比之下同文件逾期弹窗（drawOverdueDialog）用 rowH+maxRows 反推容器高，是「由内向外」的健壮模式。",
+      "impact": "维护代价：每次调容器高、改某个中间元素高度、或增删一行表单字段，都要人工逐行复算下游 y 值。漏改一处 → 元素叠印/错位，编译与测试均不报错，只能肉眼发现。随着表单字段增多（当前 6 组），风险线性上升。",
+      "severity": "HIGH",
+      "already_registered": false,
+      "suggestion": "为每个「标签 + 输入」组定义结构（labelY/inputY/rowH），卡内各组按 y 累计推导而非字面量。逾期弹窗的「由行高反推容器高」做法可作参考模式——至少让 h 变化时各组自动跟随；中期若 EUI-NEO 有 flexbox/auto-layout 组件则迁移。"
+    },
+    {
+      "id": "THS-20",
+      "file": "src/module_settings/settings_module.cpp",
+      "line": 366,
+      "lens": "architect",
+      "title": "设置页 onClick 回调内同步开关 pet 子窗，UI 线程可能卡住等窗创建/销毁",
+      "issue": "四个 pet 相关 onClick 回调（showPetWindow:368、closePetWindow:397、resetPetPosition:362、applyPetSkin:348、applyPetScaleIndex:355）直接同步调用 module_pet_bridge 的桥函数。其中 showPetWindow/closePetWindow 在 pet 侧走 app::openWindow / requestWindowClose（pet_window.cpp:652-728），在 EUI-NEO 的主循环下，窗口创建涉及 GLFW 上下文初始化与首帧调度，阻塞在 onClick 的深层调用栈中会让设置页 UI 整体冻结直到子窗就绪。resetPetPosition 同理——它基于当前工作区+屏幕布局推算坐标，在 onClick 同步路径内阻塞。applyPetSkin 在 skin 目录扫描+帧加载后关旧窗+开新窗（也是 app::openWindow），双窗交接在单个 onClick 内完成。",
+      "impact": "维护代价：任何对 pet bridge 新加回调的开发者都必须意识到「不能在点击处理里调同步窗口操作」，但现有代码已是反例——新人照抄即错。演进代价：将来 pet 窗口创建变慢（比如更多皮肤/帧/skin 目录扫描），UI 冻结从不可感知变成可感知的卡顿，回归面成片。",
+      "severity": "HIGH",
+      "already_registered": true,
+      "registered_ref": "2026-09-27 审计 M1 已登记「settings 经 4 个 extern 自由函数驱动 pet」并已走中立桥 module_pet_bridge.h 修了架构面（include 隔离 + 符号契约），但 M1 未覆盖「同步阻塞 UI 线程」这一面。本条是同一桥的剩余行为面欠账。",
+      "suggestion": "给桥层加一个「快速操作」（读/写配置级 = 同步 OK）vs「窗口操作」（开/关窗/换肤/重置定位 = 必须异步）的 contract 注释；中期：桥接口拆成 Query（同步）与 Command（返回 future/回调），窗口操作走 main 的下一个 event-loop tick 延迟执行（如把 app::openWindow 的调用投递到主循环 idle 队列）。"
+    },
+    {
+      "id": "THS-21",
+      "file": "src/module_settings/settings_ui_logic.h",
+      "line": 177,
+      "lens": "cpp20-expert",
+      "title": "今日新增的日志过滤纯函数（logLineLevel/filterLogTailByLevel）零测试覆盖",
+      "issue": "两个新增 inline 函数 logLineLevel（行 177-197）和 filterLogTailByLevel（行 200-211）是可单测的纯件——输入字符串、输出 Level/Optional/vector，不碰 Ui/DB/文件系统。但 test_settings 或 test_ui 中无任何 REGISTER_TEST 用例覆盖它们。logLineLevel 的 trim 逻辑（行 187-188 左右去空格）是防御 levelToString 对 INFO/WARN 末尾补空格对齐宽度的行为，该行为属于 EUI-NEO/core 的 log 模块，未来若改为不补空格则 trim 无害，但若改为更激进的格式变化（如 [INFO:file:line]），第二个方括号内是「INFO:file:line」而非「INFO 」，当前 token=='INFO' 匹配失败→nullopt→fail-open（行放行），虽安全但丢失了按级别过滤的能力。这一行为也应被测试捕获。",
+      "impact": "维护代价：两个纯函数没有护栏保证正确的输入/输出行为。filterLogTailByLevel 的 fail-open 策略（解析不出即放行）在日志格式漂移时静默变为「不过滤」，用户看到所有级别的日志混在一起但入口仍显示 DEBUG/WARN filter，反馈时只能说「日志卡过滤不生效」，排查耗时。",
+      "severity": "MEDIUM",
+      "already_registered": false,
+      "suggestion": "在 test_settings.cpp 补两条定向用例：① logLineLevel 的 7 种输入格式（正常四档 + 补空格 INFO/WARN + 非法 token + 缺第二方括号）；② filterLogTailByLevel 给定 5 行混合日志，分别验证 DEBUG/INFO/WARN/ERROR 四档过滤结果。同时 test_ui_logic.cpp（若存在）同批覆盖。"
+    },
+    {
+      "id": "THS-22",
+      "file": "src/module_todo/todo_ui_logic.h",
+      "line": 27,
+      "lens": "architect",
+      "title": "8px 网格遵循度约 50%，布局常量混有 8 的整数倍与非整数倍，无一致性判据",
+      "issue": "三个模块的布局常量与 8px 网格的对齐情况——todo: kCardHeight=84（10.5×8）、kCardOrdinalBadgeSize=20（2.5×8）、kCardTitleLineH=18、kCardTitleToChipGap=12、kChipHeight=22、kCardGap=8（对齐）、kColumnHeaderHeight=56（对齐）、kColumnContentInset=16（对齐）、kCardTitleBoxInset=40（对齐）；settings: kAppearanceCardHeight=172（21.5×8）、kEditorFontCardHeight=108（13.5×8）、kLogSettingsCardHeight=148（18.5×8）、kModulesCardHeight=344（对齐）、kPetCardHeight=168（对齐）；home: kHomeChartH 与内部间距分散定义。约一半常量不对齐 8px 网格，且没有任何注释或守卫标记哪个遵循、哪个例外。",
+      "impact": "演进代价：将来任何「统一到 8px 网格」的布局改动能动，会改动 kCardHeight（84→80 或 88）等核心常量，连锁影响卡片内内容组居中算式、拖拽命中几何、probe 的无头断言——由于不对齐的常量与对齐的常量在同一个头中共存且无标注，重构者无法判断哪些是刻意取舍（像素级视觉微调）、哪些是历史疏忽。",
+      "severity": "MEDIUM",
+      "already_registered": false,
+      "suggestion": "短期：在每个非 8px 对齐的 constexpr 上方加 // non-grid 或 // optical-align 注释，使意图显式。中期：spec 确定视觉 token 后，把不符合的常量收敛到最近的 8px 倍或给出设计理由（如「20px 圆 = 视觉最优、不走网格」），并补一条正则守卫（cpp 侧 static_assert 或探针侧断言每个 constexpr 通过 isGridAligned）。"
+    },
+    {
+      "id": "THS-23",
+      "file": "src/module_todo/todo_ui_board.cpp",
+      "line": 32,
+      "lens": "architect",
+      "title": "Todo 页头「560px 对偶」重复 prior M6 模式：contentW-560 连写 3 次，改一处忘另一处 = 右缘错位",
+      "issue": "drawHeader 的注释自陈「右侧动作区 560px = 搜索框(240)+逾期(104)+「+ 列」(72)+「+ 新建任务」(120)+间距」。左侧区域用 contentW-560.0f 写了 3 处（行 42/46/55），右侧用 560.0f 写了 1 处（行 73）。与 prior M6（claude 与 home 的 360/212 对偶）同根：字段宽之和 = 容器宽这种「不变量」以字面量的形式散在 4 行里，改一个字段宽必须同步更新这个和。早在 M6 的 evidence 里 home_module.cpp 已有同类现象，建议「抽 constexpr float kXxxActionsW」。",
+      "impact": "维护代价：同样的欠账在不同模块重复出现——M6 管 claude+home，本条是 todo 的新实例。说明「对偶常量收口」这条纪律并未跨模块推广，新加的 todo header 仍然用手工对偶。加一个搜索框或换一个更大的按钮，漏改 contentW-560 中的任何一处都会让标题区与动作区宽度之和 ≠ contentW，右缘错位且无编译期提醒。",
+      "severity": "MEDIUM",
+      "already_registered": true,
+      "registered_ref": "2026-09-27 审计 M6 已登记 claude+home 两侧「对偶写法字面量对无校验」，但 M6 evidence 不含 todo（当时 header 尚未重构为独立文件）。本条是同一模式在 todo 模块的新实例。",
+      "suggestion": "与 M6 的修法一致：抽 `constexpr float kHeaderActionsW = 560.0f`，左侧全写 `contentW - kHeaderActionsW`；若某个子控件改宽，只改 constants 定义和右侧合计注释。并考虑在 ui_kit 加一条 debug 档断言「contentW == 左区宽+右区宽」当护栏。"
+    },
+    {
+      "id": "THS-24",
+      "file": "src/module_settings/settings_ui_logic.h",
+      "line": 65,
+      "lens": "cpp20-expert",
+      "title": "卡片高为 constexpr float，但卡内 y 坐标混合 roundFs() 与字面量，高度变化时不跟随",
+      "issue": "settings_ui_logic.h 定义了 6 张卡的基准高度（100% 档）：kAppearanceCardHeight=172、kModulesCardHeight=344 等。但这些卡的实际高计算公式是 `roundFs(kXxxCardHeight)`→ 所以 115% 缩放下 172→197.8。然而卡内元素的 y 坐标在设计时基于 100% 档位，部分走 roundFs() 跟随缩放、部分走字面量不跟随（如 kLogLabelX=28、kLogFieldX=124 是字面量，而 logRow1LabelY=roundFs(56) 是派生）。这创建了一个隐性不变量：「卡高=172」→ 内容刚好装进，但 85% 缩放下卡内元素可能溢出（注释自陈「行 y/行高/控件高走 roundFs 派生，85% 档字面值会溢出卡外」——等于是设计时已知的「会溢出」状态，靠肉眼兜底。",
+      "impact": "演进代价：调整某个卡片高度必须同时脑中模拟「该卡的内部 y 坐标链在 85%/100%/115%/130% 四档下是否都不溢出」。这种耦合是单向的（改了卡高要重算内容），但无任何编码期或测试期辅助。已经在看板中作为已知问题存在：注释里明写了「85% 档会溢出」。",
+      "severity": "MEDIUM",
+      "already_registered": false,
+      "suggestion": "每个卡的内部 y 坐标（至少最后一个元素的底沿）收成一个 `cardContentBottomH()` 函数，与 `kXxxCardHeight` 共用一个 `static_assert(cardContentBottomH(1.0f) + kBottomPad <= kXxxCardHeight)` 在 constexpr 上下文中验证 100% 档。溢出已知的档位（85%）显式豁免并标注释。"
+    },
+    {
+      "id": "THS-25",
+      "file": "src/module_home/home_module.cpp",
+      "line": 564,
+      "lens": "architect",
+      "title": "Home compose 仍每帧调 moduleRegistered(ClaudeProxy) 做门控分支，但 quota 缓存与图表绘制是同一帧内的串行查询",
+      "issue": "home_module.cpp:564 在 compose 内调 `moduleRegistered(::core::PageId::ClaudeProxy)` 判定是否画余量卡；通过后才调 `refreshQuotaRows()`。而 refreshQuotaRows 在 seenVersion 未变时零查询早退（:828-829），但 moduleRegistered 本身不缓存其返回值——这是一个 map::count 或 switch 恒量，每帧白白调一次。同时下方 getTodayHourlyTokenTotals（行 592）是 service_ 的 DB 查询，与 refreshQuotaRows（版本未变时）构成「零查询」+「实查询」的混合模式，下一帧版本变了则两者都查。",
+      "impact": "维护代价：门控+缓存+实查询三种模式在同一 compose 块中并存，新增一个需要 DB 的卡片时开发者要在三种模式中选一种抄，却无文档说明选法。演进代价：moduleRegistered 每帧查一次无成本（hash-map O(1)），但与其余缓存策略的模式不一致会让读者追问「为什么这里不用 seenVersion 模式」。微小但分散注意力。",
+      "severity": "LOW",
+      "already_registered": false,
+      "suggestion": "把 moduleRegistered(ClaudeProxy) 结果收成 HomeModule 成员 bool（在 onStart/模块开关回调时更新），compose 只读成员。与 refreshQuotaRows 的 seenVersion 快照一脉相承——render 路径全部只读快照。"
+    },
+    {
+      "id": "THS-26",
+      "file": "src/module_todo/todo_ui_board.cpp",
+      "line": 535,
+      "lens": "cpp20-expert",
+      "title": "序号徽章 opacity 在 5 个子元素上各自重复设置而非在父容器统一设置",
+      "issue": "drawCard 中 cardOpacity（dragging 时 0.45/正常 1.0）在 5 处独立设置：.bg rect（行 448）、.badge rect（行 539）、.badge.text（行 552）、.title text（行 567）、.done icon（行 589）。每个子元素独立写 `.opacity(cardOpacity)`。若将来增加新的卡内子元素（如进度条、附件图标），极易漏加 opacity 导致拖拽时该元素不跟随半透明。结构上 card 组件本身的 opacity 不继承的原因是 EUI-NEO DSL 中 opacity 是每个节点的独立状态，但可以在 card 层叠一个 overlay rect 作为遮罩来统一实现（当前未用此模式）。",
+      "impact": "维护代价：低——当前只有 5 处，肉眼可核。但这是「应在一处表达的视觉状态在 N 处手动复制」的模式标志，与 THS-05 的 9 bool 问题同构。新增卡内元素时忘记加 opacity 的可能后果是拖拽时仅有该元素保持全不透明，视觉不一致。",
+      "severity": "LOW",
+      "already_registered": false,
+      "suggestion": "把卡片内容区整体包一层 stack，opacity 挂在该 stack 上（或交 card 组件的 opacity 属性）。当前 EUI-NEO 的 card 组件若 opacity 能渗透入 content lambda 则直接挂；否则抽 `drawCardContent(...)` 辅助函数，opacity 只在该函数入口设置一次。"
+    }
+  ]
+}

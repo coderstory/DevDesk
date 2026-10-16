@@ -10,6 +10,7 @@
 
 #include <cmath>
 #include <cstddef>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -40,6 +41,10 @@ inline constexpr int kThemeModePresetCount = 3;
 inline constexpr const char* kThemeModePresetLabels[] = {"跟随系统", "浅色",
                                                          "深色"};
 
+// 强调色四档（与 settings_config 的 "clay"/"purple"/"pink"/"blue" 一一对应）
+inline constexpr const char* kAccentPresetValues[] = {"clay", "purple", "pink", "blue"};
+inline constexpr int kAccentPresetCount = 4;
+
 // 编辑器字号档位（px；15 = fontSizeBody token 基准）
 inline constexpr int kEditorFontPresets[] = {13, 15, 17, 20};
 inline constexpr int kEditorFontPresetCount = 4;
@@ -65,10 +70,9 @@ inline constexpr long kLogTailReadWindow = 256 * 1024;  // tail 只读末尾 256
 
 // 卡片高度（唯一来源：注册表卡高与卡内几何同源）
 // 内边距四周 ≥16px，改动须同时满足「内容底沿 + 16」；这些是 100% 档基准，注册表运行期取 roundFs(常量)，卡高与行盒同缩放才不挤出尾行。
-inline constexpr float kAppearanceCardHeight = 172.0f;  // 外观卡（通用；降级提示行底 156 + 16）
+inline constexpr float kAppearanceCardHeight = 248.0f;  // 外观卡（通用；强调色行底 232 + 16）
 inline constexpr float kEditorFontCardHeight = 108.0f;  // 编辑器字号卡（通用）
 inline constexpr float kModulesCardHeight = 344.0f;     // 模块插拔卡（模块）
-inline constexpr float kPetCardHeight = 168.0f;
 inline constexpr float kDirectoryCardHeight = 176.0f;   // 目录卡（模块）
 inline constexpr float kLogSettingsCardHeight = 148.0f; // 日志卡（日志）
 // GitHub Sync 卡（同步）：启用态满高（最坏行序 = 按钮行 + 进度 + 状态 + 分支
@@ -110,10 +114,6 @@ inline constexpr float kDropdownItemChrome = 36.0f;   // 6 × 2 + 24
 inline constexpr float kAsciiWidthEm = 0.62f;
 inline constexpr float kFullWidthEm = 1.0f;
 
-// 皮肤下拉宽度：下限 240（与其余控件同宽），按最长皮肤名放大、上限 420（超出由截断兜底）。
-inline constexpr float kPetSkinFieldMinWidth = 240.0f;
-inline constexpr float kPetSkinFieldMaxWidth = 420.0f;
-
 // 下拉「谁打开着」的单一持有者：一个索引代替 7 个 bool（打开任一项自动关掉先前那个，-1 = 全关）；新增下拉在 Dropdown 加一项即可。
 enum class Dropdown {
     Theme,
@@ -122,8 +122,6 @@ enum class Dropdown {
     Retention,
     LogLevel,
     EditorFont,
-    PetSkin,
-    PetSize,  // 桌宠显示大小三档
 };
 
 inline bool isDropdownOpen(int openIndex, Dropdown d) {
@@ -174,8 +172,41 @@ float estimatedTextWidth(const std::string& text, float fontSize);
 std::string fitControlLabel(const std::string& text, float availableWidth,
                             float fontSize);
 
-// 皮肤下拉宽度：按最长皮肤名估算放大，clamp 到 [kPetSkinFieldMinWidth, kPetSkinFieldMaxWidth]。
-float petSkinFieldWidth(const std::vector<std::string>& skinNames,
-                        float fontSize);
+// 日志行级别解析（纯函数）：从 "[timestamp] [LEVEL] ..." 格式提取第二个方括号内的级别 token，映射到 core::log::Level。levelToString 对 INFO/WARN 末尾补空格对齐宽度，token 需 trim 后再匹配。解析不出返回 nullopt。
+inline std::optional<core::log::Level> logLineLevel(const std::string& line) {
+    size_t first = line.find('[');
+    if (first == std::string::npos) return std::nullopt;
+    size_t second = line.find('[', first + 1);
+    if (second == std::string::npos) return std::nullopt;
+    size_t close = line.find(']', second + 1);
+    if (close == std::string::npos) return std::nullopt;
+
+    std::string token = line.substr(second + 1, close - second - 1);
+    // levelToString 对 INFO/WARN 末尾补空格对齐宽度，需 trim 以防不匹配
+    while (!token.empty() && token.back() == ' ') token.pop_back();
+    while (!token.empty() && token.front() == ' ') token.erase(token.begin());
+
+    if (token == "TRACE") return core::log::Level::Trace;
+    if (token == "DEBUG") return core::log::Level::Debug;
+    if (token == "INFO")  return core::log::Level::Info;
+    if (token == "WARN")  return core::log::Level::Warn;
+    if (token == "ERROR") return core::log::Level::Error;
+    if (token == "FATAL") return core::log::Level::Fatal;
+    return std::nullopt;
+}
+
+// 日志 tail 按最低级别过滤（纯函数）：只保留级别 ≥ minLevel 的行。解析不出级别的行保留不吞（fail-open）——日志视图吞内容比显示杂行危害大；空行与格式异常行因此一律通过。
+inline std::vector<std::string> filterLogTailByLevel(
+    const std::vector<std::string>& lines, core::log::Level minLevel) {
+    std::vector<std::string> out;
+    out.reserve(lines.size());
+    for (const auto& line : lines) {
+        auto lvl = logLineLevel(line);
+        if (!lvl || static_cast<int>(*lvl) >= static_cast<int>(minLevel)) {
+            out.push_back(line);
+        }
+    }
+    return out;
+}
 
 } // namespace module::settings

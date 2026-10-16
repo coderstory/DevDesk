@@ -38,7 +38,6 @@ inline constexpr const char* kModuleIdClaudeProxy = "claude_proxy";
 inline constexpr const char* kModuleIdSettings = "settings";
 // agent：默认关闭（跑 LLM 有成本，用户主动启用）；开启 = 整页注册进 Router。
 inline constexpr const char* kModuleIdAgent = "agent";
-inline constexpr const char* kModuleIdPet = "pet";
 
 // 默认全启用（字段缺失/解析失败回退）
 std::vector<std::string> defaultEnabledModules();
@@ -72,10 +71,15 @@ struct SettingsConfig {
     int logRetentionDays = 30;     // 0 = 永久保留
     // false 时 main 只注册单例、不拉起 8888。
     bool claudeProxyAutoStart = false;
+    // false 时供应商余量整组功能对用户不可见（首页卡隐藏、配置入口消失、后台刷新不启动）。
+    // 默认关闭：用户主动开启才启用余量查询。关闭不删数据库里的配额表/数据/已配供应商引用。
+    bool quotaEnabled = false;
     // Claude 代理监听端口：非法值回落默认 8888；运行中改端口自动 stop→start 重启。
     int proxyPort = kDefaultProxyPort;
     // 窗口效果："off"|"translucent"|"frosted"，未知值收敛 off。
     std::string windowEffect = kWindowEffectOff;
+    // 强调色："clay"|"purple"|"pink"|"blue"
+    std::string accentTheme = "clay";
     // true = 启动恢复 72px 图标栏；运行时切换在 app_sidebar，经 SettingsStore 持久化到这里。
     bool sidebarCollapsed = false;
     // 模块开关：home/settings 恒启用（sanitized 强制补齐）；agent 与 pet 默认关闭。

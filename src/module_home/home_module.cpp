@@ -561,7 +561,8 @@ public:
                 const module::home::quota_card::HomeQuotaBudget quotaBudget =
                     module::home::quota_card::computeHomeQuotaBudget(
                         screen.height, statH, pad, gap);
-                if (moduleRegistered(::core::PageId::ClaudeProxy)) {
+                if (moduleRegistered(::core::PageId::ClaudeProxy) &&
+                    devdesk::quota_bridge::isQuotaFeatureEnabled()) {
                     if (quotaBudget.drawsQuotaCard) {
                     refreshQuotaRows();
                     const std::vector<module::claude::quota::QuotaHomeRow>&

@@ -478,6 +478,9 @@ void drawOverdueDialog(eui::Ui& ui, const eui::Screen& screen,
                     .fontSize(t.sizes.fontSizeSmall)
                     .lineHeight(20.0f)
                     .fontWeight(500)
+                    // 省略号三件套：长任务名截断，不压右侧 列名/截止/逾期天 三列
+                    .maxWidth(w - 300.0f)
+                    .overflow(core::TextOverflow::Ellipsis)
                     .color(t.colors.textPrimary)
                     .build();
                 ui.text(rowId + ".col")
@@ -593,7 +596,7 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
                       const DialogHost& host) {
     const auto themeTokens = core::theme::componentTokens(t);
     const float w = ui_kit::dialogWidthPx(ui_kit::DialogWidth::Wide);
-    const float h = 588.0f;  // 弹窗高；底部操作区 y 随 h-58 上移
+    const float h = 656.0f;  // 弹窗高；底部操作区 y 随 h-58 上移
 
     ui_kit::DialogFrame frame;
     frame.id = "todo.dialog.detail";
@@ -607,45 +610,62 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
     };
 
     ui_kit::drawDialogFrame(ui, screen, frame, themeTokens, [&] {
-            ui_kit::drawDialogTitle(ui, "todo.dialog.detail.title", w, "任务详情",
+            const bool ro = d.detail.readOnly;
+            ui_kit::drawDialogTitle(ui, "todo.dialog.detail.title", w,
+                                    ro ? "任务详情（只读）" : "任务详情",
                                     t.sizes.fontSizeLarge + 2.0f, t.colors.textPrimary,
                                     {.y = 22.0f});
 
+            // 归档时间戳（归档列任务显示）；非归档列不占位
+            if (ro) {
+                const Task* orig = findTask(*host.tasks, d.detail.taskId);
+                if (orig != nullptr && orig->archivedAt.has_value()) {
+                    const std::string archStr =
+                        "归档时间: " + formatArchivedAt(orig->archivedAt.value());
+                    ui_kit::drawDialogText(
+                        ui, "todo.dialog.detail.archived", w, archStr,
+                        t.sizes.fontSizeSmall - 1.0f, t.colors.textTertiary,
+                        {.y = 50.0f, .height = 18.0f, .lineHeight = 18.0f});
+                }
+            }
+
+            const float labelOffsetY = ro ? 18.0f : 0.0f;
+
             ui_kit::drawDialogText(ui, "todo.dialog.detail.tlabel", w, "标题",
                                    t.sizes.fontSizeSmall - 2.0f, t.colors.textTertiary,
-                                   {.y = 58.0f, .width = 80.0f, .height = 16.0f,
+                                   {.y = 58.0f + labelOffsetY, .width = 80.0f, .height = 16.0f,
                                     .lineHeight = 16.0f});
             components::input(ui, "todo.dialog.detail.input.title")
-                .position(28.0f, 76.0f)
+                .position(28.0f, 76.0f + labelOffsetY)
                 .size(w - 56.0f, 40.0f)
                 .value(d.detail.title)
                 .placeholder("任务标题…")
                 .fontSize(t.sizes.fontSizeBody - 1.0f)
                 .theme(themeTokens)
-                .onChange([&d](const std::string& text) { d.detail.title = text; })
+                .onChange(ro ? std::function<void(const std::string&)>{} : [&d](const std::string& text) { d.detail.title = text; })
                 .build();
 
             ui_kit::drawDialogText(ui, "todo.dialog.detail.dlabel", w, "描述",
                                    t.sizes.fontSizeSmall - 2.0f, t.colors.textTertiary,
-                                   {.y = 126.0f, .width = 80.0f, .height = 16.0f,
+                                   {.y = 126.0f + labelOffsetY, .width = 80.0f, .height = 16.0f,
                                     .lineHeight = 16.0f});
             components::input(ui, "todo.dialog.detail.input.desc")
-                .position(28.0f, 144.0f)
-                .size(w - 56.0f, 88.0f)
+                .position(28.0f, 144.0f + labelOffsetY)
+                .size(w - 56.0f, 144.0f)
                 .value(d.detail.description)
                 .placeholder("补充说明…（可多行）")
                 .fontSize(t.sizes.fontSizeSmall)
                 .multiline(true)
                 .scrollbar(true)
                 .theme(themeTokens)
-                .onChange([&d](const std::string& text) {
+                .onChange(ro ? std::function<void(const std::string&)>{} : [&d](const std::string& text) {
                     d.detail.description = text;
                 })
                 .build();
 
             ui_kit::drawDialogText(ui, "todo.dialog.detail.plabel", w, "优先级",
                                    t.sizes.fontSizeSmall - 2.0f, t.colors.textTertiary,
-                                   {.y = 244.0f, .width = 80.0f, .height = 16.0f,
+                                   {.y = 300.0f + labelOffsetY, .width = 80.0f, .height = 16.0f,
                                     .lineHeight = 16.0f});
             const Priority prios[4] = {Priority::None, Priority::Low,
                                        Priority::Medium, Priority::High};
@@ -655,7 +675,7 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
                 // 按钮底色 = 它代表的优先级色（priorityButtonBg：未选中浅 tint、选中 0.55 深 tint，与卡底同源）。
                 // 文字用 textPrimary（textSecondary 浅色档 < WCAG AA 4.5:1）；选中/未选中靠底色深浅 + 边框区分
                 components::button(ui, "todo.dialog.detail.prio." + std::to_string(i))
-                    .position(28.0f + static_cast<float>(i) * (bw + 8.0f), 264.0f)
+                    .position(28.0f + static_cast<float>(i) * (bw + 8.0f), 320.0f + labelOffsetY)
                     .size(bw, 32.0f)
                     .text(priorityLabel(prios[i]))
                     .fontSize(t.sizes.fontSizeSmall - 1.0f)
@@ -668,18 +688,18 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
                     .border(active ? 2.0f : 1.0f,
                             active ? priorityColor(prios[i], t)
                                    : t.colors.borderDefault)
-                    .onClick([&d, i, prios] { d.detail.priority = prios[i]; })
+                    .onClick(ro ? std::function<void()>{} : [&d, i, prios] { d.detail.priority = prios[i]; })
                     .build();
             }
 
             // 截止日期：清除 + datepicker 滚轮选任意日期
             ui_kit::drawDialogText(ui, "todo.dialog.detail.dlabel2", w, "截止日期",
                                    t.sizes.fontSizeSmall - 2.0f, t.colors.textTertiary,
-                                   {.y = 308.0f, .width = 120.0f, .height = 16.0f,
+                                   {.y = 364.0f + labelOffsetY, .width = 120.0f, .height = 16.0f,
                                     .lineHeight = 16.0f});
             const bool hasDue = d.detail.dueAt.has_value();
             components::button(ui, "todo.dialog.detail.due.clear")
-                .position(28.0f, 328.0f)
+                .position(28.0f, 384.0f + labelOffsetY)
                 .size(100.0f, 32.0f)
                 .text(!hasDue ? "未设置" : "清除")
                 .fontSize(t.sizes.fontSizeSmall - 1.0f)
@@ -688,11 +708,11 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
                 .textColor(!hasDue ? t.colors.primaryText : t.colors.textSecondary)
                 .radius(t.sizes.radius)
                 .border(1.0f, !hasDue ? t.colors.primary : t.colors.borderDefault)
-                .onClick([&d] { d.detail.dueAt = std::nullopt; })
+                .onClick(ro ? std::function<void()>{} : [&d] { d.detail.dueAt = std::nullopt; })
                 .build();
             // fa-calendar
             components::button(ui, "todo.dialog.detail.due.pick")
-                .position(136.0f, 328.0f)
+                .position(136.0f, 384.0f + labelOffsetY)
                 .size(180.0f, 32.0f)
                 .text(hasDue ? formatDue(d.detail.dueAt.value()) : "选择日期…")
                 .icon(0xF133)
@@ -702,13 +722,13 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
                 .textColor(hasDue ? t.colors.primaryText : t.colors.textSecondary)
                 .radius(t.sizes.radius)
                 .border(1.0f, hasDue ? t.colors.primary : t.colors.borderDefault)
-                .onClick([&d] { d.popups.open(Popup::DatePick); })
+                .onClick(ro ? std::function<void()>{} : [&d] { d.popups.open(Popup::DatePick); })
                 .build();
 
             // 标签：chip × 删除 + 输入回车添加；保存时走 updateTask 的 JSON 序列化
             ui_kit::drawDialogText(ui, "todo.dialog.detail.taglabel", w, "标签",
                                    t.sizes.fontSizeSmall - 2.0f, t.colors.textTertiary,
-                                   {.y = 372.0f, .width = 120.0f, .height = 16.0f,
+                                   {.y = 428.0f + labelOffsetY, .width = 120.0f, .height = 16.0f,
                                     .lineHeight = 16.0f});
             {
                 float chipX = 28.0f;
@@ -718,18 +738,18 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
                     if (chipX + tw + 22.0f > w - 28.0f) break;
                     const std::string chipId =
                         "todo.dialog.detail.tag." + std::to_string(ti);
-                    drawChip(ui, chipId, chipX, 392.0f, tw, t, d.detail.tags[ti],
+                    drawChip(ui, chipId, chipX, 448.0f + labelOffsetY, tw, t, d.detail.tags[ti],
                              t.colors.info, t.colors.surface);
                     components::button(ui, chipId + ".x")
                         // 删除按钮高 22 与 chip（kChipHeight）同高，y 对齐 chip 顶
-                        .position(chipX + tw + 1.0f, 392.0f)
+                        .position(chipX + tw + 1.0f, 448.0f + labelOffsetY)
                         .size(20.0f, 22.0f)
                         .text("×")
                         .fontSize(t.sizes.fontSizeSmall)
                         .colors(t.colors.surface, t.colors.hover, t.colors.active)
                         .textColor(t.colors.textSecondary)
                         .radius(11.0f)
-                        .onClick([&d, ti] {
+                        .onClick(ro ? std::function<void()>{} : [&d, ti] {
                             if (ti < d.detail.tags.size()) {
                                 d.detail.tags.erase(d.detail.tags.begin() +
                                                     static_cast<long>(ti));
@@ -740,74 +760,91 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
                 }
             }
             components::input(ui, "todo.dialog.detail.tag.input")
-                .position(28.0f, 418.0f)
+                .position(28.0f, 474.0f + labelOffsetY)
                 .size(w - 56.0f, 36.0f)
                 .value(d.detail.tagInput)
-                .placeholder("输入标签，回车添加…")
+                .placeholder(ro ? "（只读）" : "输入标签，回车添加…")
                 .fontSize(t.sizes.fontSizeSmall)
                 .theme(themeTokens)
-                .onChange([&d](const std::string& text) { d.detail.tagInput = text; })
-                .onEnter([&d] { d.detail.addTag(); })
+                .onChange(ro ? std::function<void(const std::string&)>{} : [&d](const std::string& text) { d.detail.tagInput = text; })
+                .onEnter(ro ? std::function<void()>{} : [&d] { d.detail.addTag(); })
                 // Esc=丢弃标签草稿（不关详情弹窗——整窗关断由关闭按钮负责）
-                .onCancel([&d] { d.detail.tagInput.clear(); })
+                .onCancel(ro ? std::function<void()>{} : [&d] { d.detail.tagInput.clear(); })
                 .build();
 
             const float btnY = h - 58.0f;
-            components::button(ui, "todo.dialog.detail.delete")
-                .position(28.0f, btnY)
-                .size(96.0f, 40.0f)
-                .text("删除")
-                .fontSize(t.sizes.fontSizeSmall)
-                .colors(t.colors.surfaceElevated, t.colors.hover, t.colors.active)
-                .textColor(t.colors.error)
-                .radius(t.sizes.radius)
-                .border(1.0f, t.colors.borderDefault)
-                // 与右键菜单删除同路径：先弹确认（Popup::Confirm），不关详情弹窗
-                .onClick([&d] {
-                    d.confirm.openForTask(d.detail.taskId, d.detail.title);
-                    d.popups.open(Popup::Confirm);
-                })
-                .build();
+            if (ro) {
+                // 只读模式：仅「关闭」按钮
+                components::button(ui, "todo.dialog.detail.close")
+                    .position(w - 28.0f - 160.0f, btnY)
+                    .size(160.0f, 40.0f)
+                    .text("关闭")
+                    .fontSize(t.sizes.fontSizeBody - 1.0f)
+                    .colors(t.colors.primary, t.colors.primaryHover, t.colors.primaryPressed)
+                    .textColor(t.colors.onPrimary)
+                    .radius(t.sizes.radius)
+                    .onClick([&d] {
+                        d.popups.close(Popup::Detail);
+                        d.detail.discardArmed = false;
+                    })
+                    .build();
+            } else {
+                components::button(ui, "todo.dialog.detail.delete")
+                    .position(28.0f, btnY)
+                    .size(96.0f, 40.0f)
+                    .text("删除")
+                    .fontSize(t.sizes.fontSizeSmall)
+                    .colors(t.colors.surfaceElevated, t.colors.hover, t.colors.active)
+                    .textColor(t.colors.error)
+                    .radius(t.sizes.radius)
+                    .border(1.0f, t.colors.borderDefault)
+                    // 与右键菜单删除同路径：先弹确认（Popup::Confirm），不关详情弹窗
+                    .onClick([&d] {
+                        d.confirm.openForTask(d.detail.taskId, d.detail.title);
+                        d.popups.open(Popup::Confirm);
+                    })
+                    .build();
 
-            components::button(ui, "todo.dialog.detail.toggle")
-                .position(132.0f, btnY)
-                .size(132.0f, 40.0f)
-                .icon(d.detail.completed ? 0xF021 : 0xF00C)  // fa-arrows-rotate / fa-check
-                .text(d.detail.completed ? "取消完成" : "标记完成")
-                .fontSize(t.sizes.fontSizeSmall)
-                .colors(t.colors.surfaceElevated, t.colors.hover, t.colors.active)
-                .textColor(d.detail.completed ? t.colors.textSecondary : t.colors.success)
-                .iconColor(d.detail.completed ? t.colors.textSecondary
-                                              : t.colors.success)
-                .radius(t.sizes.radius)
-                .border(1.0f, t.colors.borderDefault)
-                .onClick([&d, &host] {
-                    const int64_t taskId = d.detail.taskId;
-                    const bool wasDone = d.detail.completed;
-                    // 先落表单再切完成态（编辑改动不被丢弃）；保存失败保持弹窗
-                    if (!d.detail.save(host)) return;
-                    d.popups.close(Popup::Detail);
-                    d.detail.discardArmed = false;
-                    if (wasDone) host.uncompleteTask(taskId);
-                    else host.completeTask(taskId);
-                })
-                .build();
+                components::button(ui, "todo.dialog.detail.toggle")
+                    .position(132.0f, btnY)
+                    .size(132.0f, 40.0f)
+                    .icon(d.detail.completed ? 0xF021 : 0xF00C)  // fa-arrows-rotate / fa-check
+                    .text(d.detail.completed ? "取消完成" : "标记完成")
+                    .fontSize(t.sizes.fontSizeSmall)
+                    .colors(t.colors.surfaceElevated, t.colors.hover, t.colors.active)
+                    .textColor(d.detail.completed ? t.colors.textSecondary : t.colors.success)
+                    .iconColor(d.detail.completed ? t.colors.textSecondary
+                                                  : t.colors.success)
+                    .radius(t.sizes.radius)
+                    .border(1.0f, t.colors.borderDefault)
+                    .onClick([&d, &host] {
+                        const int64_t taskId = d.detail.taskId;
+                        const bool wasDone = d.detail.completed;
+                        // 先落表单再切完成态（编辑改动不被丢弃）；保存失败保持弹窗
+                        if (!d.detail.save(host)) return;
+                        d.popups.close(Popup::Detail);
+                        d.detail.discardArmed = false;
+                        if (wasDone) host.uncompleteTask(taskId);
+                        else host.completeTask(taskId);
+                    })
+                    .build();
 
-            components::button(ui, "todo.dialog.detail.save")
-                .position(w - 28.0f - 160.0f, btnY)
-                .size(160.0f, 40.0f)
-                .text("保存")
-                .fontSize(t.sizes.fontSizeBody - 1.0f)
-                .colors(t.colors.primary, t.colors.primaryHover, t.colors.primaryPressed)
-                .textColor(t.colors.onPrimary)
-                .radius(t.sizes.radius)
-                .onClick([&d, &host] {
-                    // 表单组装 + 落库统一走 DetailDialog::save；保存失败保持弹窗
-                    if (!d.detail.save(host)) return;
-                    d.popups.close(Popup::Detail);
-                    d.detail.discardArmed = false;
-                })
-                .build();
+                components::button(ui, "todo.dialog.detail.save")
+                    .position(w - 28.0f - 160.0f, btnY)
+                    .size(160.0f, 40.0f)
+                    .text("保存")
+                    .fontSize(t.sizes.fontSizeBody - 1.0f)
+                    .colors(t.colors.primary, t.colors.primaryHover, t.colors.primaryPressed)
+                    .textColor(t.colors.onPrimary)
+                    .radius(t.sizes.radius)
+                    .onClick([&d, &host] {
+                        // 表单组装 + 落库统一走 DetailDialog::save；保存失败保持弹窗
+                        if (!d.detail.save(host)) return;
+                        d.popups.close(Popup::Detail);
+                        d.detail.discardArmed = false;
+                    })
+                    .build();
+            }
     });
 }
 

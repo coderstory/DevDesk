@@ -2,6 +2,8 @@
 // 口径：不写迁移、不兼容旧数据——没有 schema_version 表 / ALTER 序列 / 新库守卫。
 // applySchema 在一个事务里幂等执行全脚本；旧 DB 缺列不检测、不迁移、不兜底。
 // 改 schema 的唯一动作：直接改这份脚本，不追加版本、不写兼容分支。
+// （master 侧 v1-v4 版本化升级中的真实 schema 变更已直接折进本 DDL：todo_tasks
+//  的归档时间戳列一次建对；旧库表重建与桌宠配置数据清理只针对既有库，新库无需对应物。）
 #pragma once
 
 namespace core::schema {
@@ -67,6 +69,7 @@ inline constexpr const char* kSql = R"(
         completed_at INTEGER,
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL,
+        archived_at INTEGER,
         FOREIGN KEY (column_id) REFERENCES todo_columns(id) ON DELETE CASCADE
     );
 
@@ -252,12 +255,12 @@ inline constexpr const char* kSql = R"(
         FOREIGN KEY (run_id) REFERENCES agent_runs(id) ON DELETE CASCADE
     );
 
-    -- JSON 配置文件的唯一落点。config.json / pet_config.json / markdown_view_state.json
+    -- JSON 配置文件的唯一落点。config.json / markdown_view_state.json
     -- / todo_view_state.json / claude_settings_snapshot.json 走本表；run-settings/*.json
     -- 走下面的 claude_run_settings。
     --
     -- **一张通用表，不按配置各建一张**：每份配置一个命名空间前缀（如
-    -- `config.json:` / `pet_config`），前缀之下是它的键。六张表 = 六个真相源，
+    -- `config.json:`），前缀之下是它的键。六张表 = 六个真相源，
     -- 备份/导出/审计都得逐张拼，漏一张丢一份。
     --   value 恒为 TEXT 且**存得住任意字节**：中文 / 空串 / `{}` / `[]` / 含换行 /
     --   超长串都按原样进出（每份配置用自己的结构编码成字符串，见 core/app_config.h）。

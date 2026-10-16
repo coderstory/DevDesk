@@ -25,6 +25,7 @@
 #include "md_line_scanner.h"
 #include "md_live_edit.h"
 #include "md_preview_highlight.h"
+#include "md_note_git.h"
 #include "md_sync_map.h"
 #include "md_tree.h"
 #include "md_view_state.h"
@@ -235,6 +236,14 @@ public:
         }
         refreshList();
         loadViewState();  // 恢复上次的选中笔记 / 视图模式 / 收起目录
+
+        // 笔记目录 git 自动提交：后台启动（异步 init，不阻塞 onStart）
+        if (!noteGit_) {
+            noteGit_ = std::make_unique<NoteGitAutoCommit>(
+                service_->notesDir());
+        }
+        noteGit_->start();
+
         LOG_INFO("Markdown 模块启动，共 " + std::to_string(notes_.size()) + " 篇笔记");
     }
 
@@ -257,6 +266,9 @@ public:
             LOG_ERROR("退出时保存笔记失败，未落盘的编辑已丢失: " + currentPath_ +
                       "（EUI-NEO 暂无退出拦截 API，无法阻断退出）");
         }
+        // 笔记 git 自动提交：析构 join 后台线程（已在 onFileSaved 推进时间戳，
+        // 本 onStop 也会经循环 saveEditor → onFileSaved 触发最后一次 commit）
+        noteGit_.reset();
         started_ = false;
         LOG_INFO("Markdown 模块停止");
     }
@@ -1702,11 +1714,11 @@ private:
                     .step(56.0f)
                     .theme(componentTheme)
                     .offset(liveScrollY_)
-                    // contentKey 用内容 hash + 活动块 stableId：同长度换字符或换块
-                    // 时高度缓存必须失效。
-                    .contentKey("md.live.scroll." + currentPath_ + "." +
-                                std::to_string(previewTextHash_) + "." +
-                                std::to_string(liveActiveBlockStableId()))
+                    // contentKey 不用：实态点击切块会换 key → scrollView 视为全新内容 → 滚动归零。
+                    // 若用 contentKey 带 activeBlockStableId，cache 只在点击帧 miss；不带则
+                    // cache 永久返回旧活动块高度、maxOffset 永误。空字符串走每帧实量，O(blocks)
+                    // 成本可忽略（rebuildSyncMap 同文零成本、仅 estimateHeight 逐块重付）。
+                    // 规则性注释：实时模式点击不得重建编辑器子树 / id 必须稳定，否则滚动重置。
                     .onChange([this](float v) {
                         // 程序化来源（跟随落地 echo）：只记账、不关跟随
                         if (liveProgrammaticScroll_) {
@@ -2309,7 +2321,7 @@ private:
 
                 // 提示行用就地判据而非 newItemParentDir()（后者每帧 WARN 刷屏）
                 const std::string newNoteParent =
-                    dirExistsOnDisk(selectedDir_) ? selectedDir_ : std::string();
+                    dirExistsOnDisk(newItemTargetDir_) ? newItemTargetDir_ : std::string();
                 ui_kit::drawDialogText(ui, "md.dialog.new.hint", w,
                                        "保存到：" +
                                            (newNoteParent.empty()
@@ -2839,10 +2851,10 @@ private:
         }
         syncCurrentMtime();  // 外部修改检测的 mtime 基准
         if (mode_ == ViewMode::Preview) syncPreviewOnEnter_ = true;
-        // 选中态跟到该笔记所在目录：树的目录高亮与「新建落在哪儿」始终一致
-        selectDir(parentDirOf(relPath));
+        // 新建条目的父目录跟随当前打开笔记的所在目录
+        // 选中不级联：文件夹选中标记仅精确匹配，不因打开笔记而上溯选中父目录
+        newItemTargetDir_ = parentDirOf(relPath);
         saveViewState();  // 选中笔记跨会话记忆
-        showToast("已打开", relPath, false);
         LOG_INFO("打开笔记: " + relPath);
     }
 
@@ -2861,6 +2873,7 @@ private:
         collapsedDirs_.insert(st.collapsedDirs.begin(), st.collapsedDirs.end());
         // 目录已被外部删除时不在此校验，由 newItemParentDir 兜底
         selectedDir_ = st.selectedDir;
+        newItemTargetDir_ = selectedDir_;  // 启动时与选中态同步，后续由 openNote / selectDir 分别更新
         if (st.lastPath.empty()) return;
         const bool exists =
             std::any_of(notes_.begin(), notes_.end(),
@@ -2937,6 +2950,10 @@ private:
         lastSavedAt_ = std::time(nullptr);
         syncCurrentMtime();  // 自己写盘后推进 mtime 基准（避免误报外部修改）
         core::event::bus().emit(core::event::kMdSaved);
+        // 写盘成功 → 触发 git 自动提交（节流判定在 onFileSaved 内，<5 分钟不重复）
+        if (noteGit_) {
+            noteGit_->onFileSaved(lastSavedAt_);
+        }
     }
 
     // 文件变化自动感知（5 秒轮询）
@@ -3185,20 +3202,23 @@ private:
         return dir.empty() || allFolders_.count(dir) != 0;
     }
 
-    // 新建条目的父目录 = 当前选中目录；已被外部删除 → 回根目录 + WARN。
-    // "" 既表「选中根目录」也表兜底，区别只在日志。
+    // 新建条目的父目录 = newItemTargetDir_（由点击文件夹 / 打开笔记同步更新）；
+    // 已被外部删除 → 回根目录 + WARN。
+    // "" 既表「根目录」也表兜底，区别只在日志。
     std::string newItemParentDir() const {
-        if (selectedDir_.empty()) return std::string();          // 选中根目录
-        if (dirExistsOnDisk(selectedDir_)) return selectedDir_;  // 选中某层目录
-        LOG_WARN("Markdown: 选中目录已不存在（外部删除？），新建回退到根目录: " +
-                 selectedDir_);
-        return std::string();                                     // 兜底
+        if (newItemTargetDir_.empty()) return std::string();          // 根目录
+        if (dirExistsOnDisk(newItemTargetDir_)) return newItemTargetDir_;
+        LOG_WARN("Markdown: 新建目标目录已不存在（外部删除？），回退到根目录: " +
+                 newItemTargetDir_);
+        return std::string();                                         // 兜底
     }
 
     // 选中目录变化 → 记住 + 落盘（跨会话）
+    // 用户直接点文件夹时视觉选中与功能目标同步更新
     void selectDir(const std::string& dir) {
         if (selectedDir_ == dir) return;
         selectedDir_ = dir;
+        newItemTargetDir_ = dir;
         saveViewState();
     }
 
@@ -3559,6 +3579,7 @@ private:
     static constexpr int64_t kPollIntervalMs = 5000;     // 文件变化轮询周期
 
     std::unique_ptr<MarkdownService> service_;
+    std::unique_ptr<class NoteGitAutoCommit> noteGit_;  // 笔记目录 git 自动提交
     // 引用 service_，onStop 须先注销再放 service
     std::unique_ptr<MarkdownTools> markdownTools_;
     // GitHub Sync 导入成功 → 置脏，compose 收割重载（导入线程只碰原子，不碰 UI 成员）。
@@ -3609,8 +3630,12 @@ private:
     // 磁盘全层目录（POSIX 相对路径，含空目录；树渲染 + 父目录下拉用）
     std::set<std::string> allFolders_;
     // 目录树选中态（POSIX 相对路径；"" = 根目录，是合法值也是初值）。
-    // 新建笔记/文件夹的父目录都从它派生（newItemParentDir）。
+    // 选中不级联：仅由用户直接点击文件夹行更新；打开笔记不上溯选中父目录。
     std::string selectedDir_;
+    // 新建条目的目标目录（POSIX 相对路径；"" = 根目录）。
+    // 由 selectDir（点击文件夹）和 openNote（打开笔记）同步更新。
+    // 跨会话由 selectedDir_ 初始化，其后跟笔记打开实时变化。
+    std::string newItemTargetDir_;
 
     // 生命周期：树行右键菜单 + 删除确认 + 重命名
     bool ctxMenuOpen_ = false;

@@ -37,9 +37,8 @@ target_include_directories(devdesk_module_settings PUBLIC
 # R0 / 审计 D6：本模块**零兄弟模块 include 目录、零兄弟模块库边**。
 #   claude 侧：改经 core 只读服务定位器（core/claude_proxy_service.h 的窄接口，
 #   装配段 main.cpp 注册适配器转发到它持有的 ClaudeService 单例）——不再经
-#   claude_service.h，故删掉原先 PRIVATE 指向 ../module_claude_proxy 的 include；
-#   pet 侧：中立桥头 module_pet_bridge.h 的自由函数（见 settings_module.cpp），
-#   连头都不经模块目录。
+#   claude_service.h，故删掉原先 PRIVATE 指向 ../module_claude_proxy 的 include
+#   （桌宠侧桥头随该模块整模块摘除一并消失）。
 # 两侧都在最终可执行文件链接期解析（DevDesk / devdesk_tests 直接链接全部
 # module_*），module_* 互不依赖铁律保持。
 # R3：settings 是四个页面模块里唯一此前没链接 devdesk_ui_kit 的（无 toast /

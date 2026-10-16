@@ -20,8 +20,10 @@
 #include "platform/http_server.h"
 #include "platform/keychain.h"
 #include "platform/terminal_launch.h"
+#include "platform/folder_picker.h"
 #include "provider_config.h"
 #include "quota/quota_store.h"
+#include "quota_home_bridge.h"  // devdesk::quota_bridge::setQuotaFeatureEnabled
 #include "settings_sync.h"
 
 #include <eui/dsl.h>
@@ -198,6 +200,8 @@ REGISTER_TEST(claude_module_actions_row_alignment,
     screen.height = 1000.0f;
     eui::Ui ui;
     ui.begin("claude_actions_align");
+    // 余量功能默认关，测试侧显式打开以验证按钮渲染
+    devdesk::quota_bridge::setQuotaFeatureEnabled(true);
     mod->compose(ui, screen);
     ui.end();
     ui.layout(screen.width, screen.height);
@@ -281,7 +285,7 @@ REGISTER_TEST(claude_module_test_connection_async,
     TestEnv env;
         // mock 上游挂 500ms 再回 200：点击必须立即返回（不等上游）
     platform::http::Server upstream("127.0.0.1", 0);
-    upstream.route("GET", "/v1/models",
+    upstream.route("POST", "/v1/messages",
                    [](const platform::http::RequestCtx&,
                       platform::http::ResponseWriter& w) {
                        std::this_thread::sleep_for(
@@ -409,7 +413,7 @@ REGISTER_TEST(claude_module_start_proxy_binds_only_at_harvest,
     DOCTEST_REQUIRE(port > 0);
     env.svc->setConfiguredProxyPort(port);
     platform::http::Server upstream("127.0.0.1", 0);
-    upstream.route("GET", "/v1/models",
+    upstream.route("POST", "/v1/messages",
                    [](const platform::http::RequestCtx&,
                       platform::http::ResponseWriter& w) {
                        // 1500ms ≫ 一帧：探测在飞窗口足够长，「startProxy 又回
@@ -1998,7 +2002,7 @@ REGISTER_TEST(claude_module_keyboard_shortcuts,
     // 「可达上游 + 激活 profile」，再把「按一次键」改成「按键 + 收割帧轮询」。
     // 断言面不变：启动后监听在配置端口。
     platform::http::Server upstream("127.0.0.1", 0);
-    upstream.route("GET", "/v1/models",
+    upstream.route("POST", "/v1/messages",
                    [](const platform::http::RequestCtx&,
                       platform::http::ResponseWriter& w) {
                        w.setStatus(200);
@@ -4310,6 +4314,8 @@ REGISTER_TEST(claude_ui_json_fullscreen_discard_semantics,
     return true;
 })
 
+static std::string s_claudeRunPickerDir;  // 假 picker 目标目录（函数指针缝，不能捕获）
+
 // 运行第 7 键（直连形态）
 // 本文件用真实 ClaudeService（setGlobal）：点「运行」前**必须**注入假 launch，
 // 否则测试会真的启动 wt/powershell + claude
@@ -4317,6 +4323,18 @@ REGISTER_TEST(claude_module_run_button_headless,
               "claude_module: 「运行」按钮存在 + 无选中 toast + 假 launch 收到 --settings 参数", {
     TestEnv env;
     test_support::DataRootEnv root(kDbPrefix, "run");
+    // doRun 先弹原生目录选择框：注入假 picker 防真弹窗阻塞套件。
+    // RAII 保证断言失败提前退出也复位，stub 不泄漏进后续用例
+    struct PickerStub {
+        PickerStub(const std::string& d) {
+            s_claudeRunPickerDir = d;
+            platform::folderpicker::setPickerForTest(
+                [](const std::string&, const std::string&) {
+                    return core::Result<std::string>::ok(s_claudeRunPickerDir);
+                });
+        }
+        ~PickerStub() { platform::folderpicker::setPickerForTest(nullptr); }
+    } pickerStub(root.dir);
     std::unique_ptr<::core::Module> mod(create_claude_module());
     eui::Screen screen;
     screen.width = 1600.0f;
@@ -5645,6 +5663,7 @@ REGISTER_TEST(claude_copyconfig_seven_keys_geometry,
     DOCTEST_REQUIRE(env.svc->setActiveProfile(pid).isOk());
     std::unique_ptr<::core::Module> mod(create_claude_module());
     mod->onStart();
+    devdesk::quota_bridge::setQuotaFeatureEnabled(true);
     constexpr float kW = 1262.0f;
     constexpr float kH = 801.0f;
     eui::Ui ui;
@@ -7913,6 +7932,7 @@ REGISTER_TEST(claude_quota_button_always_present,
     screen.width = 1600.0f;
     screen.height = 1000.0f;
     eui::Ui ui;
+    devdesk::quota_bridge::setQuotaFeatureEnabled(true);
     composeQuotaFrame(*mod, ui, screen, "claude_quota_btn");
     DOCTEST_CHECK(ui.find("claude.act.quota") != nullptr);
     DOCTEST_CHECK(ui.find("claude.act.quota.bg") != nullptr);
@@ -7935,6 +7955,7 @@ REGISTER_TEST(claude_quota_dialog_dynamic_field_render,
 
     std::unique_ptr<::core::Module> mod(create_claude_module());
     mod->onStart();   // 生产里 main.cpp 一定先 onStart（余量 store 在那里建）
+    devdesk::quota_bridge::setQuotaFeatureEnabled(true);
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
@@ -8022,6 +8043,7 @@ REGISTER_TEST(claude_quota_dialog_secret_not_echoed,
 
     std::unique_ptr<::core::Module> mod(create_claude_module());
     mod->onStart();   // store 在 onStart 里建；没它读不到已存配置
+    devdesk::quota_bridge::setQuotaFeatureEnabled(true);
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
@@ -8087,6 +8109,7 @@ REGISTER_TEST(claude_quota_dialog_ccswitch_unavailable_message,
 
     std::unique_ptr<::core::Module> mod(create_claude_module());
     mod->onStart();
+    devdesk::quota_bridge::setQuotaFeatureEnabled(true);
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
@@ -8130,6 +8153,7 @@ REGISTER_TEST(claude_quota_dialog_test_connection_reports,
 
     std::unique_ptr<::core::Module> mod(create_claude_module());
     mod->onStart();
+    devdesk::quota_bridge::setQuotaFeatureEnabled(true);
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
@@ -8179,6 +8203,7 @@ REGISTER_TEST(claude_quota_dialog_saves_to_db,
 
     std::unique_ptr<::core::Module> mod(create_claude_module());
     mod->onStart();
+    devdesk::quota_bridge::setQuotaFeatureEnabled(true);
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;

@@ -21,7 +21,7 @@ target_include_directories(devdesk_module_home PUBLIC
 # quota_refresh.cpp），而本库的 target_link_libraries **故意不**链
 # devdesk_module_claude_proxy。两侧都在**最终可执行文件链接期**解析
 #（DevDesk / devdesk_tests / 每个 probe 都同时链接全部 module_* 库），所以
-# 现在能链接上。姿态与 `module_pet_bridge.h` / devdesk_module_settings 完全同款：
+# 现在能链接上。姿态与 devdesk_module_settings 完全同款：
 # **include 层面**零跨模块（经 `src/quota_home_bridge.h` 这个中立头），**链接
 # 层面**依赖最终目标兜住，module_* 互不依赖的铁律保持。
 #

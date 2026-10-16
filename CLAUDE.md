@@ -10,9 +10,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **Todo 看板**：SQLite 存储，多列卡片管理
 - **Claude 配置切换器**：多套 API profile 管理 + 本地 HTTP 代理（带流式转发）
 
-另有**首页仪表盘**（含供应商余量卡）、**设置页**（模块插拔开关）、**关于页**、**智能体页**（module_agent：任务 / 运行 / 工具），以及**桌宠**（module_pet，非 Router 页面模块，无边框置顶透明子窗，默认关闭、经设置页模块开关启用）。
+另有**首页仪表盘**（含供应商余量卡）、**设置页**（模块插拔开关）、**关于页**、**智能体页**（module_agent：任务 / 运行 / 工具）。
 
-> **模块口径以代码为准**：`src/app_registry.h` 的 `kModuleRegistry` 现有 **7 个 Router 页面**（首页 / 笔记 / 待办 / Claude / **智能体** / 设置 / **关于**，枚举序见 `src/core/module_interface.h` 的 `PageId`），**可被模块开关插拔的只有 笔记 / 待办 / Claude / 智能体 / 桌宠 五者**（Home / Settings / About 的 `ModuleEntry` 里模块 id 是 `nullptr`，不可禁用）。`src/` 下有 8 个 `module_*` 目录（多一个不在 Router 里的 `module_pet`）。**本文旧版写"六个模块"是过期口径。**
+> **模块口径以代码为准**：`src/app_registry.h` 的 `kModuleRegistry` 现有 **7 个 Router 页面**（首页 / 笔记 / 待办 / Claude / **智能体** / 设置 / **关于**，枚举序见 `src/core/module_interface.h` 的 `PageId`），**可被模块开关插拔的只有 笔记 / 待办 / Claude / 智能体 四者**（Home / Settings / About 的 `ModuleEntry` 里模块 id 是 `nullptr`，不可禁用）。`src/` 下有 7 个 `module_*` 目录。
 
 目标平台：**macOS 27+**（本机 arm64，当前开发平台，P0-P8 主线在此完成）和 **Windows 11**——**两个平台都是原生支持，不是「移植目标」**（2026-09-29 用户指出并改正，见提交 `5bc5a0a`；本文件旧版把 Windows 写成移植目标是过期口径）。两侧都由 `.github/workflows/ci.yml` 双平台构建 + 测试守着。
 
@@ -97,7 +97,6 @@ EUI-NEO 依赖：`../EUI-NEO/`（同级目录，通过 `EUI_NEO_DIR` cache 变�
 
 ```
 main → 7 个 Router 页面 (home / markdown / todo / claude_proxy / agent / settings / about)
-            │  pet 非 Router 页面模块：main 直接 startPetWindow 接线独立子窗
             ↓
        core (Result / paths / sqlite_db / logging / theme / router)
             ↓
@@ -323,25 +322,9 @@ main → 7 个 Router 页面 (home / markdown / todo / claude_proxy / agent / se
 
 **测试框架注意**：`tests/doctest.h` 是自制迷你框架（`REGISTER_TEST` 宏静态自注册 + `DOCTEST_CHECK/REQUIRE` 断言，fail-fast），**不是真 doctest**——grep `TEST_CASE` 找不到用例、`--list-test-cases` 之类参数会被当作过滤子串属正常。**用例总数以运行输出 `Total:` 为准，不在文档写死**——**当前值见本文「🚦 当前状态」段（带日期与出处）**。二进制名随平台变：macOS 是 `./build/tests/devdesk_tests`，Windows 是 `./build/tests/devdesk_tests.exe`。test_main 支持子串过滤：`./build/tests/devdesk_tests stress` 只跑名字含 "stress" 的用例，`--log` 打开 Debug 级控制台日志。`Total` 与 `Passed` 的差额 = 按平台条件 `DOCTEST_SKIP` 的用例（`test_main.cpp` 的 `Skipped:` 行给出条数），**不是失败**。以下数字均为**历史**快照，只作沿革记录、不再作为当前值引用：646（2026-09-28，Windows 侧波 1 合并后）← 621/619/1（波 1 之前，那条 Failed 是模块隔离守卫的 cwd 缺陷——ccache 把 `__FILE__` 相对化后、从仓库根跑必误报「找不到仓库根」，已由波 1 迁到 `scripts/check-module-isolation.sh` 修复）← 530（2026-09-27）→ 514（同日更早）→ 481（2026-09-24；= 09-23 基线 330 + W6-W9/磨砂全链/供应商配置/桌宠 MVP/Markdown 键盘流等 backlog 波 + 词法器加 JS/Go/Rust/Shell +4 + 挂机穿透功能移除 -1）。
 
-## 🐾 桌宠（module_pet）皮肤资源
-
-内置皮肤包：`assets/pets/`（git 追踪），现内置 **6 个 GitHub 皮肤包**（目录名 = 皮肤名，括号为 `pet.json` frameSize）：
-
-| 皮肤 | frameSize | 皮肤 | frameSize |
-|------|-----------|------|-----------|
-| copilot | 136×168 | kirari | 360×480 |
-| ileina | 192×208 | whale-girl | 328×212 |
-| sakura-chan | 512×512 | whale-maid | 512×512 |
-
-- CMake POST_BUILD `copy_directory`（`CMakeLists.txt:184-188`）把 `assets/pets` 拷到 `build/assets/pets`，从 build 目录启动 DevDesk 即可发现
-- **动态发现，零硬编码注册**：`discoverSkins()`（`src/module_pet/pet_skin.cpp:723`）扫 `skinRootCandidates()`（:702）两根——`petsDir()`（appData）+ `exeDir/assets/pets`，每个含 `pet.json` 的子目录自动入皮肤清单
-- renderer 帧尺寸校验 clamp [16,512]（pet_skin.cpp:559）；程序生成的内置皮肤走 `petsDir()`，不放在 `assets/pets`（CMakeLists 注释）
-
-**皮肤格式**：目录 = `pet.json` + PNG 序列帧；`pet.json` = `{name, frameSize:[w,h], frameRate, license, source, phrases, states:{idle,poked,sleep,typing}}`。
-
 ## 📦 安装程序（2026-09-28）
 
-- **Windows**：Inno Setup `installer/windows/devdesk.iss` —— 用户级安装（`%LOCALAPPDATA%\Programs\DevDesk`，`PrivilegesRequired=lowest`，免管理员）。`:65` `Source: "{#AssetsDir}\*"; DestDir: "{app}\assets"; Flags: recursesubdirs createallsubdirs` 递归拷 assets（含 `assets/pets/`）到安装目录；`.exe` 单独一条（:59，loose 文件非 embed）；`:60-64` 注释：Excludes 排除 17MB `NotoSansSC-VF.ttf`（变量字体 FreeType 加载不稳、当前未启用，运行时字体走 EUI-NEO fallback 链）
+- **Windows**：Inno Setup `installer/windows/devdesk.iss` —— 用户级安装（`%LOCALAPPDATA%\Programs\DevDesk`，`PrivilegesRequired=lowest`，免管理员）。`:65` `Source: "{#AssetsDir}\*"; DestDir: "{app}\assets"; Flags: recursesubdirs createallsubdirs` 递归拷 assets 到安装目录；`.exe` 单独一条（:59，loose 文件非 embed）；`:60-64` 注释：Excludes 排除 17MB `NotoSansSC-VF.ttf`（变量字体 FreeType 加载不稳、当前未启用，运行时字体走 EUI-NEO fallback 链）
 - **打包脚本**：`scripts/package-windows.sh`（Release 构建 + ISCC 三段式探测 + 出 `DevDesk-<ver>-setup.exe`）；macOS：`installer/macos/`（DMG 背景 + 首次运行去隔离 `.command`）+ `scripts/package-macos.sh`
 - spec：`docs/superpowers/specs/2026-09-28-installer-and-dmg-design.md`
 

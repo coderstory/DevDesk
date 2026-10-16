@@ -88,15 +88,4 @@ std::string fitControlLabel(const std::string& text, float availableWidth,
     return out + "\xE2\x80\xA6";  // U+2026 水平省略号
 }
 
-float petSkinFieldWidth(const std::vector<std::string>& skinNames,
-                        float fontSize) {
-    float widest = 0.0f;
-    for (const std::string& name : skinNames) {
-        widest = std::max(widest, estimatedTextWidth(name, fontSize));
-    }
-    const float needed = widest + kDropdownFieldChrome;
-    return std::min(std::max(kPetSkinFieldMinWidth, needed),
-                    kPetSkinFieldMaxWidth);
-}
-
 } // namespace module::settings

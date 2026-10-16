@@ -218,6 +218,60 @@ void drawAppearanceCard(const CardDrawArgs& args) {
                     .clip()
                     .build();
             }
+            // 强调色选择：4 个色卡圆点 + 名称，点击即时更换主色家族
+            const float accentLabelY = hintY + (degraded.empty() ? roundFs(8.0f) : hintH + roundFs(8.0f));
+            const float accentLabelH = roundFs(16.0f);
+            const float accentSwatchSize = roundFs(28.0f);
+            const float accentSwatchGap = roundFs(12.0f);
+            const float accentSwatchY = accentLabelY + accentLabelH + roundFs(6.0f);
+            const float accentNameH = roundFs(12.0f);
+            const float accentNameY = accentSwatchY + accentSwatchSize + roundFs(4.0f);
+
+            struct AccentSwatch { const char* name; eui::Color color; };
+            const AccentSwatch kSwatches[] = {
+                {"Claude 橙", eui::Color("#D97757")},
+                {"雾紫", eui::Color("#71639B")},
+                {"玫瑰粉", eui::Color("#B4567C")},
+                {"QQ 蓝", eui::Color("#12B7F5")},
+            };
+
+            ui.text(id + ".accent.label")
+                .position(28.0f, accentLabelY)
+                .size(200.0f, accentLabelH)
+                .text("主题色")
+                .fontSize(fs(12.0f))
+                .lineHeight(accentLabelH)
+                .color(t.colors.textSecondary)
+                .build();
+
+            int curAccent = static_cast<int>(core::theme::accent());
+            for (int i = 0; i < 4; ++i) {
+                float x = 28.0f + static_cast<float>(i) * (accentSwatchSize + accentSwatchGap);
+                const bool selected = (i == curAccent);
+
+                // 色卡圆点：使用 button 组件以获得 onClick，空文本纯色块 + pill 半径
+                components::button(ui, id + ".accent.sw." + std::to_string(i))
+                    .position(x, accentSwatchY)
+                    .size(accentSwatchSize, accentSwatchSize)
+                    .text("")
+                    .fontSize(fs(10.0f))
+                    .theme(compTheme, /*primary=*/false)
+                    .colors(kSwatches[i].color, kSwatches[i].color, kSwatches[i].color)
+                    .radius(t.sizes.radiusPill)
+                    .border(selected ? 2.0f : 0.0f, t.colors.primary)
+                    .onClick([f = a.applyAccentTheme, idx = i] { f(idx); })
+                    .build();
+                // 色卡名称
+                ui.text(id + ".accent.name." + std::to_string(i))
+                    .position(x - roundFs(6.0f), accentNameY)
+                    .size(accentSwatchSize + roundFs(12.0f), accentNameH)
+                    .text(kSwatches[i].name)
+                    .fontSize(fs(10.0f))
+                    .lineHeight(accentNameH)
+                    .color(selected ? t.colors.textPrimary : t.colors.textTertiary)
+                    .horizontalAlign(eui::HorizontalAlign::Center)
+                    .build();
+            }
         })
         .build();
 }
@@ -302,8 +356,6 @@ void drawModulesCard(const CardDrawArgs& args) {
         {kModuleIdTodo, "Todo 看板", "待办任务管理，多列卡片看板"},
         {kModuleIdClaudeProxy, "Claude 配置切换器",
          "Profile 管理 + 本地代理（关闭后 8888 不再监听）"},
-        {kModuleIdPet, "桌宠",
-         "桌面小宠物：透明置顶小窗，可拖拽/点击互动（默认关闭）"},
         {kModuleIdAgent, "智能体",
          "任务列表 + 手动触发运行（依赖 Claude 代理提供模型通道）"},
     };
@@ -360,141 +412,6 @@ void drawModulesCard(const CardDrawArgs& args) {
                     })
                     .build();
             }
-        })
-        .build();
-}
-
-void drawPetCard(const CardDrawArgs& args) {
-    eui::Ui& ui = args.ui;
-    const std::string& id = args.id;
-    const float w = args.w;
-    const float h = args.h;
-    const core::theme::Tokens& t = args.t;
-    const SettingsCardsIn& in = args.in;
-    const SettingsCardActions& a = args.a;
-    const float pageY = args.pageY;    // 卡顶页面绝对 y（皮肤下拉 openUp 几何）
-    const float screenH = args.screenH;
-
-    // 皮肤清单与当前皮肤名快照由 refreshExternalState 装载，这里只读入参。
-    const auto compTheme = core::theme::componentTokens(t);
-    // 本卡抬到 z40：皮肤下拉弹层向下铺开时越出卡底沿盖住后续目录卡。
-    ui.stack(id)
-        .size(w, h)
-        .zIndex(40)
-        .content([&] {
-            cardTitle(ui, id, t, 16.0f, w - 56.0f, 22.0f, 22.0f, "桌宠");
-            cardDesc(ui, id, t, 40.0f, w - 56.0f, roundFs(16.0f),
-                     "换肤与位置重置即时生效；关闭桌宠立即隐藏、重新开启立即恢复");
-            // 皮肤下拉（列表为空时占位一项，选择被忽略）
-            std::vector<std::string> items = in.petSkins;
-            if (items.empty()) {
-                items.emplace_back("（未发现皮肤）");
-            }
-            int selected = 0;
-            for (size_t i = 0; i < in.petSkins.size(); ++i) {
-                if (in.petSkins[i] == in.petSkinName) {
-                    selected = static_cast<int>(i);
-                    break;
-                }
-            }
-            // 皮肤名超宽时 EUI-NEO text 不折行、画出控件右缘：① 控件宽按最长皮肤名放大（字段与弹层同步）；② 仍放不下的由 fitControlLabel 截断显示（取值仍是原下标）。字段字号不随全局字号缩放。
-            constexpr float kDdFieldFont = 16.0f;
-            const float ddW = petSkinFieldWidth(items, kDdFieldFont);
-            std::vector<std::string> itemLabels;
-            itemLabels.reserve(items.size());
-            for (const std::string& name : items) {
-                itemLabels.push_back(
-                    fitControlLabel(name, ddW - kDropdownFieldChrome,
-                                    kDdFieldFont));
-            }
-            // 行几何随生效字号派生：行 y 与控件高必须在派生池内，否则 85% 档会溢出卡外与目录卡叠印。
-            const float ddH = roundFs(40.0f);        // 下拉/按钮控件高（100% = 40）
-            const float rowLabelH = roundFs(20.0f);  // 行标签盒高（100% = 20）
-            const float skinTop =
-                40.0f + roundFs(16.0f) + roundFs(8.0f);  // 100% = 64
-            const float scaleTop = skinTop + ddH + roundFs(8.0f);  // 100% = 112
-            ui.text(id + ".skin.label")
-                .position(28.0f, skinTop + (ddH - rowLabelH) * 0.5f)
-                .size(72.0f, rowLabelH)
-                .text("皮肤")
-                .fontSize(fs(12.0f))
-                .lineHeight(rowLabelH)
-                .color(t.colors.textSecondary)
-                .build();
-            ui.stack(id + ".skin.ddwrap")
-                .position(104.0f, skinTop)
-                .size(ddW, ddH)
-                .content([&] {
-                    // 皮肤下拉是六处下拉里唯一需补 openUp 防护的：≥3 皮肤时弹层向下越出 scrollView 视口底被 clip。
-                    const bool skinOpenUp = dropdownPopupOverflows(
-                        pageY, skinTop, ddH,
-                        static_cast<int>(items.size()), screenH);
-                    components::dropdown(ui, id + ".skin.dd")
-                        .size(ddW, ddH)
-                        .theme(compTheme)
-                        .items(itemLabels)
-                        .selected(selected)
-                        .openUp(skinOpenUp)
-                        .open(isDropdownOpen(in.openDropdown, Dropdown::PetSkin))
-                        .onOpenChange([f = a.setDropdownOpen](bool v) {
-                            f(Dropdown::PetSkin, v);
-                        })
-                        // 换肤按下标回模块：下标与 items 一一对应，截断只影响显示串。
-                        .onChange([f = a.changePetSkinAt](int idx) { f(idx); })
-                        .build();
-                })
-                .build();
-            // 显示大小三档下拉：档位文案单源在 pet 侧（桥快照），选择经桥切档（写盘 + 热切换）。
-            ui.text(id + ".scale.label")
-                .position(28.0f, scaleTop + (ddH - rowLabelH) * 0.5f)
-                .size(72.0f, rowLabelH)
-                .text("大小")
-                .fontSize(fs(12.0f))
-                .lineHeight(rowLabelH)
-                .color(t.colors.textSecondary)
-                .build();
-            ui.stack(id + ".scale.ddwrap")
-                .position(104.0f, scaleTop)
-                .size(240.0f, ddH)
-                .content([&] {
-                    const bool scaleOpenUp = dropdownPopupOverflows(
-                        pageY, scaleTop, ddH,
-                        static_cast<int>(in.petScaleLabels.size()), screenH);
-                    components::dropdown(ui, id + ".scale.dd")
-                        .size(240.0f, ddH)
-                        .theme(compTheme)
-                        .items(in.petScaleLabels)
-                        .selected(in.petScaleIndex)
-                        .openUp(scaleOpenUp)
-                        .open(isDropdownOpen(in.openDropdown, Dropdown::PetSize))
-                        .onOpenChange([f = a.setDropdownOpen](bool v) {
-                            f(Dropdown::PetSize, v);
-                        })
-                        .onChange([f = a.changePetScaleAt](int idx) { f(idx); })
-                        .build();
-                })
-                .build();
-            components::button(ui, id + ".reset")
-                .position(w - 28.0f - 160.0f, skinTop)
-                .size(160.0f, ddH)
-                .text("位置重置")
-                .fontSize(14.0f)
-                .theme(compTheme, /*primary=*/false)
-                .textColor(t.colors.textPrimary)
-                .border(1.0f, t.colors.borderDefault)
-                .onClick([f = a.resetPetPosition] { f(); })
-                .build();
-            // 显示桌宠：隐藏后的恢复入口（隐藏走右键菜单项）；同排、居「位置重置」左侧 8px。
-            components::button(ui, id + ".show")
-                .position(w - 28.0f - 160.0f - 168.0f, skinTop)
-                .size(160.0f, ddH)
-                .text("显示桌宠")
-                .fontSize(14.0f)
-                .theme(compTheme, /*primary=*/false)
-                .textColor(t.colors.textPrimary)
-                .border(1.0f, t.colors.borderDefault)
-                .onClick([f = a.showPetWindow] { f(); })
-                .build();
         })
         .build();
 }
@@ -905,7 +822,7 @@ void drawLogViewCard(const CardDrawArgs& args) {
                         inner.text(id + ".empty")
                             .position(8.0f, 8.0f)
                             .size(cw - 16.0f, 20.0f)
-                            .text("（暂无日志内容，或日志文件尚未生成）")
+                            .text("（暂无日志内容，或日志文件尚未生成，或均低于所选级别）")
                             .fontSize(fs(12.0f))
                             .lineHeight(20.0f)
                             .color(t.colors.textTertiary)
@@ -923,6 +840,56 @@ void drawLogViewCard(const CardDrawArgs& args) {
                             .color(t.colors.textSecondary)
                             .build();
                     }
+                })
+                .build();
+        })
+        .build();
+}
+
+// 供应商余量功能总开关（单行小卡）。默认关闭；开启后首页余量卡、profile 余量配置入口、
+// 后台刷新线程才激活。关闭不删数据。放置位置：模块 tab，在模块插拔卡下方——余量是功能开关，
+// 与模块开关并列（影响多个模块的 UI 可见面 + 后台行为，但不卸载模块本身）。
+// 卡高固定（不随字号缩放），下缘与模块卡保持标准间距。
+void drawQuotaCard(const CardDrawArgs& args) {
+    eui::Ui& ui = args.ui;
+    const std::string& id = args.id;
+    const float w = args.w;
+    const core::theme::Tokens& t = args.t;
+    const SettingsCardsIn& in = args.in;
+    const SettingsCardActions& a = args.a;
+
+    const auto compTheme = core::theme::componentTokens(t);
+    const float rowH = roundFs(20.0f);
+    ui.stack(id)
+        .size(w, 48.0f)
+        .content([&] {
+            ui.text(id + ".label")
+                .position(28.0f, 4.0f)
+                .size(w - 160.0f, rowH)
+                .text("供应商余量")
+                .fontSize(t.sizes.fontSizeBody - 1.0f)
+                .lineHeight(rowH)
+                .fontWeight(500)
+                .color(t.colors.textPrimary)
+                .build();
+            ui.text(id + ".desc")
+                .position(28.0f, 28.0f)
+                .size(w - 160.0f, roundFs(16.0f))
+                .text("关闭后首页余量卡隐藏、配置入口消失（已存数据保留）；开启即时生效")
+                .fontSize(fs(12.0f))
+                .lineHeight(roundFs(16.0f))
+                .color(t.colors.textTertiary)
+                .build();
+            ui.stack(id + ".sw.wrap")
+                .position(w - 28.0f - 80.0f, 4.0f)
+                .size(80.0f, 32.0f)
+                .content([&] {
+                    components::toggleSwitch(ui, id + ".sw")
+                        .size(80.0f, 32.0f)
+                        .checked(in.cfg.quotaEnabled)
+                        .theme(compTheme)
+                        .onChange([f = a.applyQuotaEnabled](bool v) { f(v); })
+                        .build();
                 })
                 .build();
         })

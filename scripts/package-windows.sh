@@ -102,32 +102,31 @@ BUILD_OUT=$(cmake --build build-release 2>&1) || {
 echo "$BUILD_OUT" | tail -2
 echo "✅ 构建成功"
 
-# assets 必须先 rm -rf 再从源头重拷（EUI-NEO/assets + 仓库 assets/pets）：cmake -E copy_directory
+# assets 必须先 rm -rf 再从源头重拷（EUI-NEO/assets + 仓库 assets 根）：cmake -E copy_directory
 # 只增不删，不清空就会把已删除的资源留在 build-release/assets 里。
 EXE_DIR_POSIX="$(cd build-release && pwd)"
 ASSETS_DIR_POSIX="$EXE_DIR_POSIX/assets"
 rm -rf "$ASSETS_DIR_POSIX"
 cmake -E copy_directory "$EUI_DIR/assets" "$ASSETS_DIR_POSIX"
-cmake -E copy_directory "$PROJECT_DIR/assets/pets" "$ASSETS_DIR_POSIX/pets"
+# DevDesk/assets 根文件（托盘图标 / splash 着色器 / 模板），09-30 后才加入，与 pets 同源幂等
+cmake -E copy_directory "$PROJECT_DIR/assets" "$ASSETS_DIR_POSIX"
 
 # 断言 ①：shaders/shadertoy 非空（字体 / 音乐 / 着色器确实拷进来了）
 if [ -z "$(ls -A "$ASSETS_DIR_POSIX/shaders/shadertoy" 2>/dev/null)" ]; then
   echo "❌ 断言失败：$ASSETS_DIR_POSIX/shaders/shadertoy 为空（assets 未正确拷贝？）" >&2
   exit 1
 fi
-# 断言 ②：assets/pets/README.md 存在 + 每个皮肤子目录含 pet.json。皮肤包随仓库增删，
-# 不要退回「pets 下只能有 README.md」——真实构建树上 POST_BUILD 会拷进全部皮肤。
-if [ ! -f "$ASSETS_DIR_POSIX/pets/README.md" ]; then
-  echo "❌ 断言失败：$ASSETS_DIR_POSIX/pets/README.md 缺失" >&2
+# 断言 ③：DevDesk/assets 根文件（托盘图标 / splash 着色器），09-30 新增，缺则安装版托盘空图标 + splash 回退
+if [ ! -f "$ASSETS_DIR_POSIX/shaders/splash.frag" ]; then
+  echo "❌ 断言失败：$ASSETS_DIR_POSIX/shaders/splash.frag 缺失" >&2
   exit 1
 fi
-for petdir in "$ASSETS_DIR_POSIX/pets"/*/; do
-  if [ ! -f "$petdir/pet.json" ]; then
-    echo "❌ 断言失败：皮肤目录缺 pet.json: $petdir" >&2
-    exit 1
-  fi
-done
-echo "✅ assets 就位（shaders/shadertoy 非空；pets 含 $(ls -d "$ASSETS_DIR_POSIX/pets"/*/ 2>/dev/null | wc -l) 皮肤包）"
+# 断言 ④：托盘图标，缺则安装版任务栏空图标
+if [ ! -f "$ASSETS_DIR_POSIX/tray-icon-win.ico" ]; then
+  echo "❌ 断言失败：$ASSETS_DIR_POSIX/tray-icon-win.ico 缺失" >&2
+  exit 1
+fi
+echo "✅ assets 就位（shaders/shadertoy 非空）"
 
 # ISCC 是原生 Windows 程序：路径要 Windows 形态（Git Bash 的 /d/... 形态可能被拒）
 if command -v cygpath >/dev/null 2>&1; then
