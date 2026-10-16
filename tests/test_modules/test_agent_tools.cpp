@@ -97,28 +97,6 @@ REGISTER_TEST(app_stats_zero_state_and_schema,
 
 namespace {
 
-// fake 代理：本组用例只经 isProxyRunning / proxyPort / resolveModelSlot 三条链路，
-// 其余虚方法为 no-op 桩。
-class FakeProxy : public core::IClaudeProxyService {
-public:
-    bool running = true;
-    int port = 8787;
-
-    bool isProxyRunning() const override { return running; }
-    int proxyPort() const override { return port; }
-    void setConfiguredProxyPort(int) override {}
-    void stopProxy() override {}
-    core::Result<int> startProxy(const std::string&, int) override {
-        return core::Result<int>::fail(core::ErrorCode::Internal, "unused");
-    }
-    bool isClaudeCodeManaged() const override { return false; }
-    std::vector<std::string> lastSyncWarnings() const override { return {}; }
-    std::string settingsFilePath() const override { return {}; }
-    std::optional<std::string> resolveModelSlot(const std::string&) override {
-        return std::string("claude-sonnet-5-5");
-    }
-};
-
 // ToolGuard 不可省：ToolRegistry 是进程级单例、不在 test_main 的 resetCaseGlobals
 // 清单里，用例内显式 unregister 会漏掉 fail-fast 提前 return 的路径。
 struct ToolGuard {
@@ -205,13 +183,13 @@ REGISTER_TEST(tool_registry_list_tools_snapshot,
 REGISTER_TEST(agent_module_registers_own_tool,
               "agent_module: onStart 注册 app.stats、onStop 注销（生命周期）", {
     test_support::TestDb tdb("agenttools", "modtool");
-    FakeProxy proxy;
+    test_support::FakeProfileSource profile;
     ToolGuard statsGuard{"app.stats"};   // 兜底摘除（含 fail-fast 路径）
     core::ToolRegistry::instance().unregisterTool("app.stats");  // 起点干净
 
     module::agent::AgentModule::Deps deps;
     deps.db = &tdb.handle();
-    deps.proxy = &proxy;
+    deps.profileSource = &profile;
     std::unique_ptr<::core::Module> mod(new module::agent::AgentModule(deps));
 
     DOCTEST_CHECK(core::ToolRegistry::instance().find("app.stats").isFail());
@@ -229,7 +207,7 @@ REGISTER_TEST(agent_module_registers_own_tool,
 REGISTER_TEST(agent_module_onstop_cancels_and_joins,
               "agent_module: onStop 取消+join 完成后才注销工具，run 落库 cancelled", {
     test_support::TestDb tdb("agenttools", "modstop");
-    FakeProxy proxy;
+    test_support::FakeProfileSource profile;
     ToolGuard statsGuard{"app.stats"};
     core::ToolRegistry::instance().unregisterTool("app.stats");  // 起点干净
 
@@ -245,11 +223,11 @@ REGISTER_TEST(agent_module_onstop_cancels_and_joins,
     DOCTEST_REQUIRE(created.isOk());
     const int64_t taskId = created.value();
 
-    // Deps 注入：fake 代理 + 脚本化 HTTP。首轮吐 tool_use(test.slow)，次轮 end_turn；
+    // Deps 注入：fake 配置来源 + 脚本化 HTTP。首轮吐 tool_use(test.slow)，次轮 end_turn；
     // teardown 正常时次轮到不了——cancel 在首轮工具执行期间已置位。别当死代码删。
     module::agent::AgentModule::Deps deps;
     deps.db = &tdb.handle();
-    deps.proxy = &proxy;
+    deps.profileSource = &profile;
     int httpCalls = 0;
     deps.http = [&httpCalls](const platform::http::Request&) {
         const int n = ++httpCalls;
@@ -327,7 +305,7 @@ REGISTER_TEST(agent_module_onstop_cancels_and_joins,
 REGISTER_TEST(agent_module_ui_id_contract,
               "agent_module: 最小 UI 元素 id 契约（标题/表单/任务行/启动/状态/详情展开）", {
     test_support::TestDb tdb("agenttools", "modui");
-    FakeProxy proxy;
+    test_support::FakeProfileSource profile;
     ToolGuard statsGuard{"app.stats"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
 
@@ -356,7 +334,7 @@ REGISTER_TEST(agent_module_ui_id_contract,
 
     module::agent::AgentModule::Deps deps;
     deps.db = &tdb.handle();
-    deps.proxy = &proxy;
+    deps.profileSource = &profile;
     std::unique_ptr<::core::Module> mod(new module::agent::AgentModule(deps));
     mod->onStart();
 
@@ -424,10 +402,10 @@ REGISTER_TEST(agent_module_ui_id_contract,
 REGISTER_TEST(agent_module_onstart_reentry_idempotent,
               "agent_module: onStart→onStop→onStart 重入 + 双 onStart/双 onStop no-op", {
     test_support::TestDb tdb("agenttools", "reentry");
-    FakeProxy proxy;
+    test_support::FakeProfileSource profile;
     ToolGuard statsGuard{"app.stats"};
     core::ToolRegistry::instance().unregisterTool("app.stats");  // 起点干净
-    module::agent::AgentModule mod({&tdb.handle(), &proxy, nullptr});
+    module::agent::AgentModule mod({&tdb.handle(), &profile, nullptr});
 
     // 双 onStart 的可观察面（find 之外）：重入幂等 = 不重跑 onStart 体——
     // sweepStaleRuns 会把 running run 清成 failed，二次清扫对「重入期间新出现的
@@ -477,7 +455,7 @@ REGISTER_TEST(agent_module_onstart_reentry_idempotent,
 REGISTER_TEST(agent_module_onstop_stops_scheduler_runs,
               "agent_module: onStop 收口 Scheduler 在跑 run（cancel→join→停线程→注销工具）", {
     test_support::TestDb tdb("agenttools", "schedstop");
-    FakeProxy proxy;
+    test_support::FakeProfileSource profile;
     ToolGuard statsGuard{"app.stats"};
     core::ToolRegistry::instance().unregisterTool("app.stats");   // 起点干净
     core::ToolRegistry::instance().unregisterTool("test.slow");
@@ -494,7 +472,7 @@ REGISTER_TEST(agent_module_onstop_stops_scheduler_runs,
 
     module::agent::AgentModule::Deps deps;
     deps.db = &tdb.handle();
-    deps.proxy = &proxy;
+    deps.profileSource = &profile;
     std::atomic<int64_t> fakeNow{3600 * 24};
     deps.schedulerNow = [&fakeNow] { return fakeNow.load(); };    // 假时钟注入
     int httpCalls = 0;
@@ -526,14 +504,14 @@ REGISTER_TEST(agent_module_onstop_stops_scheduler_runs,
     return true;
 })
 
-// 惰性装配契约：onStart 时代理未装配 → 早退（llm_ / loop_ / scheduler_ 均不建，
+// 惰性装配契约：onStart 时配置来源未装配 → 早退（llm_ / loop_ / scheduler_ 均不建，
 // 工具照常注册）；会话内后置注册服务后由**首次使用路径**（页面帧 / 手动启动）补建。
 // 补建入口必须同时建 scheduler_，否则惰性路径下 cron 永不触发——本用例第二条 REQUIRE
 // 钉的就是这个面。
 REGISTER_TEST(agent_module_lazy_assembly_first_use,
-              "agent_module: 代理后置注册 → 首次使用解析（手动起 run + 惰性补建 Scheduler 跑 cron）", {
+              "agent_module: 配置来源后置注册 → 首次使用解析（手动起 run + 惰性补建 Scheduler 跑 cron）", {
     test_support::TestDb tdb("agenttools", "lazyassembly");
-    FakeProxy proxy;
+    test_support::FakeProfileSource profile;
     ToolGuard statsGuard{"app.stats"};
     core::ToolRegistry::instance().unregisterTool("app.stats");   // 起点干净
 
@@ -546,7 +524,7 @@ REGISTER_TEST(agent_module_lazy_assembly_first_use,
 
     module::agent::AgentModule::Deps deps;
     deps.db = &tdb.handle();
-    deps.proxy = nullptr;   // 起点无服务（test_main 每用例 ServiceLocator::resetForTest）
+    deps.profileSource = nullptr;   // 起点无服务（test_main 每用例 ServiceLocator::resetForTest）
     std::atomic<int64_t> fakeNow{3600 * 24};
     deps.schedulerNow = [&fakeNow] { return fakeNow.load(); };
     deps.http = [](const platform::http::Request&) {
@@ -565,7 +543,7 @@ REGISTER_TEST(agent_module_lazy_assembly_first_use,
     DOCTEST_REQUIRE(before.value().empty());   // 起点确无 run（下面的落行断言非空集恒真）
 
     // 后置注册：模拟会话内用户拨开 claude 模块（不 off→on 本模块）
-    core::ScopedService<core::IClaudeProxyService> late(&proxy);
+    core::ScopedService<core::LlmProfileSource> late(&profile);
 
     const eui::Screen screen{1600.0f, 1000.0f};
     eui::Ui ui;

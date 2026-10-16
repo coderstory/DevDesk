@@ -8,6 +8,7 @@
 
 #include "core/app_config.h"
 #include "core/database.h"
+#include "core/llm_profile_source.h"
 #include "core/router.h"
 #include "platform/json.h"
 #include "platform/keychain.h"
@@ -312,6 +313,27 @@ struct TestDb {
     TestDb& operator=(const TestDb&) = delete;
 
     core::data::SqliteDb& handle() { return db->db(); }
+};
+
+// 智能体直连端点的配置来源替身：默认给一份「能跑通」的激活 profile 快照
+// （default 槽位回落 defaultModel），failWith 非空 = 模拟无激活 profile / 读凭据失败。
+// 注意它与代理运行态无关——这正是「代理不开也能跑」的解耦面，故不提供任何代理开关。
+struct FakeProfileSource : public core::LlmProfileSource {
+    FakeProfileSource() {
+        profile.baseUrl = "https://api.anthropic.com";
+        profile.apiKeyPlain = "sk-test-key";
+        profile.authField = "both";
+        profile.defaultModel = "claude-sonnet-5-5";
+    }
+    core::LlmDirectProfile profile;
+    std::string failWith;
+    core::Result<core::LlmDirectProfile> currentProfile() override {
+        if (!failWith.empty()) {
+            return core::Result<core::LlmDirectProfile>::fail(
+                core::ErrorCode::NoActiveProfile, failWith);
+        }
+        return core::Result<core::LlmDirectProfile>::ok(profile);
+    }
 };
 
 // RAII：SqliteDb::open(":memory:") 的内存库（供不需要 migrate 的纯内存
