@@ -3538,14 +3538,16 @@ REGISTER_TEST(settings_github_sync_push_writes_target_configured_branch,
         }
     };
     ScriptedSender rec;
-    // 顺序 = runGithubSyncPush 的请求序：getRepo → probe(database.sql) → listTree
-    // → PUT database.sql → DELETE gone.md → PUT note-a.md（plans 按名字字典序）。
+    // 顺序 = runGithubSyncPush 的请求序：getRepo → listTree → PUT database.sql
+    // → DELETE gone.md → PUT note-a.md（plans 按名字字典序）。
+    // database.sql 的冲突检测 sha 取自②的树（getFile 单独探一发已删，见 push ⑤
+    // 注释），故树清单里必须带 sql 条目；否则 PUT 不带 sha、断言必红。
     rec.plan = {
         {200, R"({"full_name":"devdesk-test/sync-repo","default_branch":"main",)"
               R"("private":true,"permissions":{"push":true}})"},
-        // probe：带 base64 content，避免 getFile 走 raw 直取的第二条请求
-        {200, R"({"sha":"sqlremotesha","content":"eA==","encoding":"base64"})"},
-        {200, R"({"sha":"t0","truncated":false,"tree":[{"path":"notes/gone.md","sha":"gonesha","type":"blob","size":5}]})"},
+        {200, R"({"sha":"t0","truncated":false,"tree":[)"
+              R"({"path":"notes/gone.md","sha":"gonesha","type":"blob","size":5},)"
+              R"({"path":"data/database.sql","sha":"sqlremotesha","type":"blob","size":3}]})"},
         {201, R"({"content":{"sha":"sqlnewsha"}})"},
         {200, R"({"commit":{"sha":"delsha"}})"},
         {201, R"({"content":{"sha":"notenewsha"}})"},
@@ -3600,7 +3602,7 @@ REGISTER_TEST(settings_github_sync_push_writes_target_configured_branch,
         std::lock_guard<std::mutex> lk(rec.mu);
         reqs = rec.reqs;
     }
-    DOCTEST_CHECK_MESSAGE(reqs.size() >= 6,
+    DOCTEST_CHECK_MESSAGE(reqs.size() >= 5,
                           "请求数不足（推送未按脚本走完）: " +
                               std::to_string(reqs.size()));
 
