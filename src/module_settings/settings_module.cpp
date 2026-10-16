@@ -107,8 +107,9 @@ const CardSpec kCardSpecs[] = {
 // skip 表清单单一来源 = core::sql_dump::defaultSkipTables()，不得本地另抄。
 
 // 同步动作（弹窗「重试」按原动作重跑；PullThenPush = 409 冲突弹窗的主动作；
-// FirstSync = 首次启用的方向判定，见 runGithubSyncFirstSync）。
-enum class SyncAction { None, Push, Pull, Test, PullThenPush, FirstSync };
+// FirstSync = 首次方向判定，见 runGithubSyncFirstSync；
+// ValidateFirstSync = 启用开关打开时的首次同步：先跑测试连接三步，过了才做方向判定）。
+enum class SyncAction { None, Push, Pull, Test, PullThenPush, FirstSync, ValidateFirstSync };
 
 // epoch 秒（节流窗口与备份文件名共用）。
 int64_t nowSec() {
@@ -569,8 +570,8 @@ public:
     }
 
     // 首次方向：启用开关打开且配置齐全时跑一次首次同步
-    //（远端有数据 → 拉取覆盖；没有 → 首次上传）。只跑一次：成功后落
-    // first_sync_done，repoUrl/branch 变更即清除（换仓 = 重新判定方向）。
+    //（先校验连通性，过了才判方向：远端有数据 → 拉取覆盖；没有 → 首次上传）。
+    // 只跑一次：成功后落 first_sync_done，repoUrl/branch 变更即清除（换仓 = 重新判定方向）。
     // 配置不齐（URL/Token 缺）静默跳过——用户手动操作时自会得到明确报错，
     // 不能在拨开关的瞬间弹错误弹窗。
     void maybeStartFirstGithubSync() {
@@ -582,7 +583,7 @@ public:
         const bool hasToken = !githubSyncTokenDraft_.empty() ||
                               GithubSyncStore::loadToken().isOk();
         if (!hasToken) return;
-        startGithubSyncAction(SyncAction::FirstSync, /*manual=*/true);
+        startGithubSyncAction(SyncAction::ValidateFirstSync, /*manual=*/true);
     }
 
     // 目标仓库/分支变了 → 首次方向重新判定（下次启用或手动同步生效）。
@@ -871,6 +872,32 @@ public:
                     ok = runGithubSyncPush(api, branch, summary, conflict,
                                            branchHint);
                     if (ok) summary = "已拉取远端后再推送：" + summary;
+                    break;
+                }
+                case SyncAction::ValidateFirstSync: {
+                    // 启用流程：先跑测试连接三步（令牌 / 仓库可推 / 读写探针），
+                    // 过了才做首次方向判定——首次同步会覆盖本地库或上传全量，配置
+                    // 未经验证就动数据是不可接受的。校验失败：summary 就是失败摘要，
+                    // ok 保持 false（harvest 按「启用流程失败」走卡片红字，不弹窗）。
+                    auto repo = api.getRepo();
+                    if (repo.isOk()) publicRepo = repo.value().isPrivate == false;
+                    auto report = api.testConnection(
+                        [this](const platform::github::TestStep& step) {
+                            publishGithubSyncProgress(step.name +
+                                                      (step.ok ? " ✓" : " ✗"));
+                        });
+                    if (!report.ok) {
+                        summary = report.summary;
+                        break;
+                    }
+                    std::string firstSummary;
+                    if (!runGithubSyncFirstSync(api, branch, firstSummary,
+                                                conflict, branchHint)) {
+                        summary = firstSummary;
+                        break;
+                    }
+                    ok = true;
+                    summary = "校验通过；" + firstSummary;
                     break;
                 }
                 case SyncAction::FirstSync:
@@ -1556,7 +1583,8 @@ public:
             const bool pushedToRemote =
                 githubSyncLastAction_ == SyncAction::Push ||
                 githubSyncLastAction_ == SyncAction::PullThenPush ||
-                githubSyncLastAction_ == SyncAction::FirstSync;
+                githubSyncLastAction_ == SyncAction::FirstSync ||
+                githubSyncLastAction_ == SyncAction::ValidateFirstSync;
             if (pushedToRemote) {
                 // commit 成功 → 清 dirty + 记时刻（节流窗口起点）。
                 githubSyncDirty_ = false;
@@ -1575,7 +1603,8 @@ public:
             }
             githubSyncError_.clear();
             // 首次方向跑成功 → 落「首次已完成」（repoUrl/branch 变更时清除）。
-            if (githubSyncLastAction_ == SyncAction::FirstSync &&
+            if ((githubSyncLastAction_ == SyncAction::FirstSync ||
+                 githubSyncLastAction_ == SyncAction::ValidateFirstSync) &&
                 githubSyncStore_) {
                 if (auto r = githubSyncStore_->setFirstSyncDone(); r.isFail()) {
                     LOG_WARN("Settings: 首次同步标记落库失败: " +
@@ -1596,7 +1625,11 @@ public:
             conflict ? GitErrorDialogVariant::Conflict409
                      : GitErrorDialogVariant::Error;
         // 手动操作失败 → 弹窗；自动同步失败只留卡片红字 + 详情入口。
-        if (githubSyncLastAction_ != SyncAction::None && githubSyncLastManual_) {
+        // 启用流程的校验失败同自动路径（用户刚拨开关，此刻弹窗等于打断）。
+        const bool silentFailure =
+            githubSyncLastAction_ == SyncAction::ValidateFirstSync;
+        if (githubSyncLastAction_ != SyncAction::None && githubSyncLastManual_ &&
+            !silentFailure) {
             githubSyncErrorDialog_.open = true;
         }
         LOG_ERROR("Settings: GitHub Sync 失败: " + githubSyncResultSummary_);
