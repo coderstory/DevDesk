@@ -22,7 +22,6 @@ constexpr const char* kKeyUnsyncedNotice = "github_sync:unsynced_notice";
 constexpr const char* kKeyShaPrefix = "github_sync:sha:";
 constexpr const char* kKeyShaNotesPrefix = "github_sync:sha:notes/";
 constexpr const char* kKeyHashNotesPrefix = "github_sync:hash:notes/";
-constexpr const char* kRemoteSqlRelPath = "data/database.sql";
 
 std::string jsonString(const std::string& v) {
     return platform::json::stringify(platform::json::makeString(v))
@@ -268,7 +267,7 @@ core::Result<void> GithubSyncStore::clearUnsyncedNotice() {
 core::Result<std::string> GithubSyncStore::syncedSqlSha() const {
     if (db_ == nullptr) return core::Result<std::string>::ok(std::string());
     std::lock_guard<std::recursive_mutex> lock(db_->mutex());
-    auto v = core::appconfig::get(*db_, std::string(kKeyShaPrefix) + kRemoteSqlRelPath);
+    auto v = core::appconfig::get(*db_, std::string(kKeyShaPrefix) + gsync::kRemoteSqlPath);
     if (v.isFail()) return core::Result<std::string>::ok(std::string());   // 键缺失 = 无登记
     auto parsed = platform::json::parse(v.value());
     if (parsed.isOk() && parsed.value().isString()) {
@@ -282,7 +281,7 @@ core::Result<void> GithubSyncStore::recordSyncedSqlSha(const std::string& sha) {
         return core::Result<void>::fail(core::ErrorCode::NotFound, "应用数据库未就绪");
     }
     std::lock_guard<std::recursive_mutex> lock(db_->mutex());
-    return core::appconfig::set(*db_, std::string(kKeyShaPrefix) + kRemoteSqlRelPath,
+    return core::appconfig::set(*db_, std::string(kKeyShaPrefix) + gsync::kRemoteSqlPath,
                                 jsonString(sha));
 }
 
