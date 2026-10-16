@@ -231,7 +231,8 @@ core::Result<fs::path> createBackup(const fs::path& dbFile, int keepBackups) {
         // 备份须是自包含库：sqlite3_backup 连页头一起抄，源库是 WAL（主库恒 WAL）时备份
         // 页头仍是 2/2 却没有 -wal——此时只读打开（备份校验口径，见 quickCheckOk 的
         // readOnlyOpen 入参）建不出 -shm，prepare 直接 SQLITE_CANTOPEN，还原校验必失败。
-        // 关连接前把落盘页头归一为 rollback journal；失败只 WARN：文件仍是合法可读库
+        // 关连接前把落盘页头归一为 rollback journal；失败只 WARN 不废备份——代价是这份
+        // 备份只剩读写能开、只读校验过不去（还原会走 failRestore），所以不静默
         char* jmErr = nullptr;
         if (sqlite3_exec(dst.value(), "PRAGMA journal_mode=DELETE;", nullptr, nullptr,
                          &jmErr) != SQLITE_OK) {
@@ -248,10 +249,17 @@ core::Result<fs::path> createBackup(const fs::path& dbFile, int keepBackups) {
             core::ErrorCode::FileWriteFailed,
             "sqlite3_backup 未完成: " + dbFile.string() + " → " + dest.string());
     }
-    // 归一动作会现建 <备份名>-wal/-shm：不是备份的一部分，且名字字典序大于备份本身
-    // （latestBackup/pruneFilesWithPrefix 按前缀匹配名，会把它当成一份更新的备份）
-    fs::remove(fs::path(dest.string() + "-wal"), rmEc);
-    fs::remove(fs::path(dest.string() + "-shm"), rmEc);
+    // 归一动作会现建 <备份名>-wal/-shm：不是备份的一部分，且名字字典序大于备份本身，
+    // 残留会被 latestBackup/pruneFilesWithPrefix（按前缀匹配名）当成一份更新的备份
+    // → 还原必挂，故删不掉不静默
+    for (const char* suffix : {"-wal", "-shm"}) {
+        std::error_code sideEc;
+        fs::remove(fs::path(dest.string() + suffix), sideEc);
+        if (sideEc) {
+            LOG_WARN("备份伴生文件清理失败（会被 latestBackup 误选为最新备份）: " +
+                     dest.string() + suffix + ": " + sideEc.message());
+        }
+    }
     // 备份含凭据页，与主库同保护级别；收紧失败只 WARN——备份已可用，权限降级不应导致备份作废
     if (auto perm = core::fileperms::restrictToOwnerOnly(dest); perm.isFail()) {
         LOG_WARN("备份文件权限收紧失败: " + dest.string() + ": " + perm.errorMessage());
