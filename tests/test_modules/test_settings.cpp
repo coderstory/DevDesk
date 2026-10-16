@@ -18,6 +18,7 @@
 #include "core/theme.h"
 #include "core/tool.h"          // ITool / ToolArgs
 #include "github_sync_config.h" // 自动推送开关接线用例（配置夹具）
+#include "github_sync_exit_hook.h" // 退出补推用例（经 free 函数驱动）
 #include "module_pet/pet_config.h"   // pet_config 行键常量
 #include "module_pet/pet_window.h"  // 桌宠开关即时性断言读窗口可见意图
 #include "platform/json.h"      // 读 app.read_settings 的 JSON 出参
@@ -3978,5 +3979,62 @@ REGISTER_TEST(settings_github_sync_dirty_from_write_events,
     DOCTEST_CHECK(dirtyAfter(::core::event::kTodoDeleted));
     // 对照：本模块没订阅的事件名 → 不置 dirty
     DOCTEST_CHECK(!dirtyAfter(::core::event::kDbImported));
+    return true;
+})
+
+// 关掉「自动推送」时的退出：不推（尊重用户选择），但必须留下「有未同步改动」信号——
+// 否则退出后既不推也没黄字，用户无从知道改动还没上传。观察口两条：卡片无「未配置仓库
+// URL」红字（= 没发起推送；repoUrl 留空，一旦走推送路径就会本地报错变红）+ 提示键落库。
+REGISTER_TEST(settings_github_sync_exit_push_keeps_unsynced_notice_when_autopush_off,
+              "settings: 关自动推送时退出不推但落「有未同步改动」提示（带无改动对照）", {
+    test_support::TestEnv env(kCfgPrefix, "gsexitnotice", true);
+    test_support::ScopedConfigPath cfgEnv(
+        test_support::tempConfigFile(kCfgPrefix, "gsexitnotice_cfg"));
+    eui::Screen screen{1600.0f, 1000.0f};
+    const char* kErrRow = "settings.card.github_sync.error";
+
+    // 断言宏一律 return false（自制 doctest 的 fail-fast 形态），故 lambda 里不嵌断言，
+    // 把「前置是否成立」一并回传，由调用方判——否则前置失败会退化成恒假断言（假绿）。
+    struct Probe {
+        bool tabOk = false;    // 卡片确实在渲染（否则 pushed 恒假）
+        bool pushed = false;   // 红字 = 真发起了推送
+        bool noticed = false;  // 「有未同步改动」提示已落库
+    };
+    auto runExitAndProbe = [&](bool dirty) -> Probe {
+        module::settings::GithubSyncConfig cfg;
+        cfg.enabled = true;
+        cfg.autoPush = false;   // repoUrl 留空：走推送路径会立刻本地报错 → 红字可见
+        module::settings::GithubSyncStore store(::core::appDatabase());
+        store.save(cfg);
+        store.clearUnsyncedNotice();
+
+        std::unique_ptr<::core::Module> mod(create_settings_module());
+        mod->onStart();
+        const bool tabOk = clickSettingsTab(*mod, screen, 3);
+        if (dirty) ::core::event::bus().emit(::core::event::kMdSaved);
+
+        ::module::settings::runGithubSyncExitPush();   // 生产退出路径（atexit 调的就是它）
+
+        eui::Ui ui;
+        ui.begin("gsexitnotice");
+        mod->compose(ui, screen);
+        ui.end();
+        Probe out;
+        out.tabOk = tabOk;
+        out.pushed = ui.find(kErrRow) != nullptr;
+        const auto notice = store.hasUnsyncedNotice();
+        out.noticed = notice.isOk() && notice.value();
+        mod->onStop();
+        return out;
+    };
+
+    const Probe withDirty = runExitAndProbe(true);
+    DOCTEST_CHECK(withDirty.tabOk);
+    DOCTEST_CHECK(!withDirty.pushed);    // 关掉开关 → 退出不发起推送
+    DOCTEST_CHECK(withDirty.noticed);    // 但「有未同步改动」必须留下
+    const Probe noDirty = runExitAndProbe(false);
+    DOCTEST_CHECK(noDirty.tabOk);
+    DOCTEST_CHECK(!noDirty.pushed);
+    DOCTEST_CHECK(!noDirty.noticed);     // 对照：没改动 → 不留信号（证明上面那条来自 dirty）
     return true;
 })

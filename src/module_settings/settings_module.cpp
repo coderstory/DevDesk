@@ -709,6 +709,14 @@ public:
         }
         if (!githubSyncCfg_.enabled || !githubSyncCfg_.autoPush ||
             !githubSyncDirty_) {
+            // 关掉自动推送 = 用户明确选择「只手动推」：不推，但「有改动没上传」这个
+            // 事实必须留信号——否则退出后既不推也没黄字，用户会以为已经同步过了。
+            if (githubSyncCfg_.enabled && !githubSyncCfg_.autoPush &&
+                githubSyncDirty_) {
+                if (auto r = githubSyncStore_->setUnsyncedNotice(); r.isFail()) {
+                    LOG_WARN("Settings: 未同步提示落库失败: " + r.errorMessage());
+                }
+            }
             return;
         }
         if (!gsync::exitPushDue(githubSyncLastCommitSec_, nowSec())) return;
