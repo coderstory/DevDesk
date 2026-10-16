@@ -1,8 +1,8 @@
 // tests/test_modules/test_claude_service.cpp
 // ClaudeService 单测：Profile CRUD / 凭据两段写补偿 / settings.json 反向同步 / 代理前置校验。
 // 跨文件前提：
-//   - 凭据本体只落 claude_profiles.api_key_encrypted，platform::keychain 已不是凭据来源；
-//     生产侧对它的唯一写操作是 cleanupOrphanKeychainEntries 里那次 deleteSecretsNotIn。
+//   - 凭据本体只落 claude_profiles.api_key_encrypted，platform::keychain 已不是凭据来源，
+//     生产侧对它零写操作（残留清理已随旧凭据面一起移除）。
 //   - sidecar（托管键表）是 app_config 表的一行而非文件，故 setSettingsSyncPaths 的 db 必须是已 migrate 的连接。
 //   - Keychain service 名生产走 keychainServiceForDataRoot 按数据根派生；本文件一律显式传固定串，绕开派生。
 //   - 数据库走临时文件（temp_directory_path），Keychain service 固定 "DevDeskTestClaudeService"，不碰生产数据。
@@ -467,113 +467,10 @@ REGISTER_TEST(claude_service_update_db_fail_rolls_back_keychain,
     return true;
 })
 
-// platform/keychain.h 与 platform/credential_protection.h 各提供一组最小注入缝（函数指针表 + 单槽位，默认指真实实现），
+// 「段一写失败」注入走 platform/credential_protection.h 的函数指针表（单槽位，默认指真实实现），
 // 否则「凭据段自身失败」那一支（段一失败 → 回写旧值）根本走不到。
 namespace {
-
-// 假 Keychain：密钥存内存 map（service + 0x1F + account → secret）。
-// store 的失败注入语义是「**先落值、再报失败**」：各平台存储不承诺失败时旧值完好
-// （见 TwoPhaseKeyWrite::writeKey 的注释——失败也可能已破坏旧值），补偿回写正是为这种情形准备的。
-// 反重构：若把假实现改成「失败且不落值」，不补偿也照样读回旧值，下面几条用例全部丧失鉴别力（跑不出 FAIL）。
-struct FakeKeychain {
-    static constexpr const char* kStoreFailSentinel = "INJECT-STORE-FAIL";
-
-    std::map<std::string, std::string> data;
-    std::string lastStoredAccount;  // 最近一次 store 的 account（认领新 profile）
-
-    static std::string keyOf(const std::string& service,
-                             const std::string& account) {
-        return service + '\x1f' + account;
-    }
-    bool has(const std::string& service, const std::string& account) const {
-        return data.find(keyOf(service, account)) != data.end();
-    }
-    std::string get(const std::string& service,
-                    const std::string& account) const {
-        const auto it = data.find(keyOf(service, account));
-        return it == data.end() ? std::string() : it->second;
-    }
-};
-
-// 函数指针表不能带捕获 → 假实现经文件级指针取当前实例（用例内单实例，生命周期由 ScopedFakeKeychain 管）
-FakeKeychain* g_fakeKeychain = nullptr;
-
-core::Result<void> fakeStore(const std::string& service,
-                             const std::string& account,
-                             const std::string& secret) {
-    FakeKeychain& f = *g_fakeKeychain;
-    f.lastStoredAccount = account;
-    f.data[FakeKeychain::keyOf(service, account)] = secret;   // 先落值
-    if (secret.find(FakeKeychain::kStoreFailSentinel) != std::string::npos) {
-        return core::Result<void>::fail(
-            core::ErrorCode::Internal,
-            "注入：storeSecret 失败（值已落盘，模拟失败时旧值已被破坏）");
-    }
-    return core::Result<void>::ok();
-}
-
-core::Result<std::string> fakeLoad(const std::string& service,
-                                   const std::string& account) {
-    FakeKeychain& f = *g_fakeKeychain;
-    const auto it = f.data.find(FakeKeychain::keyOf(service, account));
-    if (it == f.data.end()) {
-        return core::Result<std::string>::fail(core::ErrorCode::NotFound,
-                                               "Keychain item not found");
-    }
-    return core::Result<std::string>::ok(it->second);
-}
-
-core::Result<void> fakeDelete(const std::string& service,
-                              const std::string& account) {
-    FakeKeychain& f = *g_fakeKeychain;
-    f.data.erase(FakeKeychain::keyOf(service, account));
-    return core::Result<void>::ok();   // 不存在也 Ok（幂等，与真实实现同语义）
-}
-
-core::Result<std::vector<std::string>> fakeDeleteNotIn(
-    const std::string& service, const std::vector<std::string>& keepAccounts) {
-    FakeKeychain& f = *g_fakeKeychain;
-    std::vector<std::string> removed;
-    const std::string prefix = service + '\x1f';
-    for (auto it = f.data.begin(); it != f.data.end();) {
-        if (it->first.compare(0, prefix.size(), prefix) == 0) {
-            const std::string account = it->first.substr(prefix.size());
-            bool keep = false;
-            for (const auto& k : keepAccounts) {
-                if (k == account) { keep = true; break; }
-            }
-            if (!keep) {
-                removed.push_back(account);
-                it = f.data.erase(it);
-                continue;
-            }
-        }
-        ++it;
-    }
-    return core::Result<std::vector<std::string>>::ok(std::move(removed));
-}
-
-// RAII：安装假后端，析构恢复真实后端——用例体内 fail-fast（return false）或抛异常都不会把假后端泄漏给后续用例
-struct ScopedFakeKeychain {
-    FakeKeychain fake;
-    platform::keychain::Backend table;
-    const platform::keychain::Backend* prev;
-
-    ScopedFakeKeychain() {
-        g_fakeKeychain = &fake;
-        table = platform::keychain::Backend{&fakeStore, &fakeLoad, &fakeDelete,
-                                            &fakeDeleteNotIn};
-        prev = platform::keychain::setBackendForTest(&table);
-    }
-    ~ScopedFakeKeychain() {
-        platform::keychain::setBackendForTest(prev);
-        g_fakeKeychain = nullptr;
-    }
-    ScopedFakeKeychain(const ScopedFakeKeychain&) = delete;
-    ScopedFakeKeychain& operator=(const ScopedFakeKeychain&) = delete;
-};
-
-// 「段一写失败」的点 = platform::credential::protect / unprotect，形态与 ScopedFakeKeychain 同款（RAII，析构必复位）。
+// 「段一写失败」的点 = platform::credential::protect / unprotect，RAII 槽位注入（析构必复位）。
 core::Result<std::string> failProtect(const std::string&) {
     return core::Result<std::string>::fail(core::ErrorCode::Internal,
                                            "注入：protect 失败");
@@ -767,81 +664,6 @@ REGISTER_TEST(claude_service_delete_profile,
 
 // deleteProfile 只清 DB 凭据列 + 删行。「凭据清理失败时中止 deleteProfile、行保留可重试」这条安全属性由
 // TwoPhaseKeyWrite 在 DB 层结构性保证（profile_repository.cpp：先清三列、失败即 return，行不动）。
-
-REGISTER_TEST(claude_service_orphan_keychain_cleanup,
-              "claude_service: cleanupOrphanKeychainEntries 清孤儿密钥", {
-    test_support::TestDb tdb(kDbPrefix, "orphan");
-    module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
-
-    auto a = svc.createProfile("KeepA", "https://a.example.com",
-                               "sk-ant-keep-aaaa", "m");
-    DOCTEST_REQUIRE(a.isOk());
-    auto b = svc.createProfile("KeepB", "https://b.example.com",
-                               "sk-ant-keep-bbbb", "m");
-    DOCTEST_REQUIRE(b.isOk());
-
-    // 塞一个无对应 profile 的孤儿密钥（凭据迁库前的遗留形态）
-    DOCTEST_REQUIRE(platform::keychain::storeSecret(
-        kTestKeychainService, "claude:999", "sk-ant-orphan").isOk());
-
-    auto r = svc.cleanupOrphanKeychainEntries();
-    DOCTEST_REQUIRE(r.isOk());
-    DOCTEST_CHECK(r.value() >= 1);
-
-    // 孤儿被清，在册 profile 的凭据完好
-    DOCTEST_CHECK(platform::keychain::loadSecret(
-        kTestKeychainService, "claude:999").isFail());
-    auto ka = svc.loadApiKey(a.value().id);
-    DOCTEST_REQUIRE(ka.isOk());
-    DOCTEST_CHECK_EQ(ka.value(), std::string("sk-ant-keep-aaaa"));
-    auto kb = svc.loadApiKey(b.value().id);
-    DOCTEST_REQUIRE(kb.isOk());
-    DOCTEST_CHECK_EQ(kb.value(), std::string("sk-ant-keep-bbbb"));
-
-    // 再跑一次无孤儿可清（幂等）
-    auto again = svc.cleanupOrphanKeychainEntries();
-    DOCTEST_REQUIRE(again.isOk());
-    DOCTEST_CHECK_EQ(again.value(), 0);
-
-    test_support::cleanupProfileKey(kTestKeychainService, a.value().id);
-    test_support::cleanupProfileKey(kTestKeychainService, b.value().id);
-    return true;
-})
-
-// 空数据根 → 零删除。
-// Keychain service 是全局命名空间，隔离弱于数据根；空根实例（测试 / 误设环境变量）启动时库中零 profile →
-// keep 为空集合，而 deleteSecretsNotIn 是「凡不在 keep 里的都删」→ 用户真实密钥被清光。
-// 契约：keep 为空直接跳过清理，连扫描都不发起。
-REGISTER_TEST(claude_cleanup_empty_keep_never_sweeps,
-              "claude_service: P0 空 profile 孤儿清理零删除（护栏①）", {
-    test_support::TestDb tdb(kDbPrefix, "orphanguard");
-    ScopedFakeKeychain kc;
-    module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
-
-    // 假 keychain 扮演用户真实命名空间：profile 密钥 + 一条非 profile 用途的条目
-    DOCTEST_REQUIRE(platform::keychain::storeSecret(
-        kTestKeychainService, "claude:7", "sk-ant-user-real").isOk());
-    DOCTEST_REQUIRE(platform::keychain::storeSecret(
-        kTestKeychainService, "notes:theme", "dark").isOk());
-
-    // 空数据根形态：库中零 profile
-    auto list = svc.listProfiles();
-    DOCTEST_REQUIRE(list.isOk());
-    DOCTEST_CHECK_EQ(static_cast<int>(list.value().size()), 0);
-
-    auto r = svc.cleanupOrphanKeychainEntries();
-    DOCTEST_REQUIRE(r.isOk());
-    DOCTEST_CHECK_EQ(r.value(), 0);   // 零删除
-
-    // 「用户密钥」原样还在（值逐字相同）
-    auto k = platform::keychain::loadSecret(kTestKeychainService, "claude:7");
-    DOCTEST_REQUIRE(k.isOk());
-    DOCTEST_CHECK_EQ(k.value(), std::string("sk-ant-user-real"));
-    auto o = platform::keychain::loadSecret(kTestKeychainService, "notes:theme");
-    DOCTEST_REQUIRE(o.isOk());
-    DOCTEST_CHECK_EQ(o.value(), std::string("dark"));
-    return true;
-})
 
 REGISTER_TEST(claude_keychain_service_for_data_root,
               "claude_service: keychainServiceForDataRoot 派生纯函数", {
@@ -2069,10 +1891,6 @@ REGISTER_TEST(claude_dup_stage2_rollback,
     test_support::TestDb tdb(kDbPrefix, "duprb");
     ClaudeService svc(tdb.handle(), kTestKeychainService);
 
-    // 先归零孤儿基线：清掉同套件其它用例残留在测试 Keychain 命名空间的条目，让下面的孤儿计数只反映本用例。
-    auto orphansBase = svc.cleanupOrphanKeychainEntries();
-    DOCTEST_REQUIRE(orphansBase.isOk());
-
     auto a = svc.createProfile("脏行源", "https://src.example.com",
                                "sk-src-key-0123456789abcdef", "");
     DOCTEST_REQUIRE(a.isOk());
@@ -2089,10 +1907,6 @@ REGISTER_TEST(claude_dup_stage2_rollback,
     auto list = svc.listProfiles();
     DOCTEST_REQUIRE(list.isOk());
     DOCTEST_CHECK_EQ(static_cast<int>(list.value().size()), 1);
-    // 无残留孤儿
-    auto orphansAfter = svc.cleanupOrphanKeychainEntries();
-    DOCTEST_REQUIRE(orphansAfter.isOk());
-    DOCTEST_CHECK_EQ(orphansAfter.value(), 0);
     auto k = svc.loadApiKey(a.value().id);
     DOCTEST_REQUIRE(k.isOk());
     DOCTEST_CHECK_EQ(k.value(), std::string("sk-src-key-0123456789abcdef"));

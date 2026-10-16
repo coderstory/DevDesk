@@ -38,8 +38,8 @@ namespace cq = module::claude::quota;
 
 constexpr const char* kDbPrefix = "devdesk_test_quota_lifecycle_";
 
-// 测试专用 Keychain service 名：显式传它，cleanupOrphanKeychainEntries（onStart 第一步）就绝不碰
-// 用户真实数据根派生的那个命名空间（DEVDESK_DATA_ROOT 并不隔离 Keychain）。
+// 测试专用 Keychain service 名：显式传它，旧凭据回填（backfillCredentialsFromKeychain，
+// onStart）就绝不碰用户真实数据根派生的那个命名空间（DEVDESK_DATA_ROOT 并不隔离 Keychain）。
 constexpr const char* kKeychainService = "DevDeskTestClaudeQuotaLifecycle";
 
 // 测试里选中的供应商：必须是注册表里真实存在的一行（findProvider 命中才会起线程），且必须是

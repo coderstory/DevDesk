@@ -78,7 +78,8 @@ private:
 
 class ProfileRepository {
 public:
-    // db 由调用方确保生命周期；keychainService 只用于启动时的旧 Keychain 残留清理（命名空间生产 / 测试各自派生）
+    // db 由调用方确保生命周期；keychainService 仅用于旧凭据回填（backfillCredentialsFromKeychain）
+    // 的 Keychain 命名空间（命名空间生产 / 测试各自派生）
     explicit ProfileRepository(core::data::SqliteDb& db,
                                std::string keychainService);
 
@@ -118,9 +119,6 @@ public:
     // 复制 Profile：名称加「副本」后缀（重名递增避让，100 次冲突 → fail）；API key 一并复制（源缺失 → fail）；副本不激活；二段补写失败 best-effort 回滚
     core::Result<Profile> duplicateProfile(int64_t srcId);
 
-    // 启动时旧 Keychain 残留清理：清掉本 service 命名空间下剩余 claude:* 条目，返回清理数量。护栏：① 数据根零 profile 整体跳过；② 只清白名单前缀 claude:；③ api_key_encrypted 至少一行真存凭据
-    core::Result<int> cleanupOrphanKeychainEntries();
-
     // 迁移旧 Keychain 凭据入库：查 api_key_encrypted 为空且 keychain_account 列存在的 profile，
     // 逐行读旧 keychain → protect → 写回凭据三列；失败不中断启动（LOG_WARN 后继续下一行）。
     // 仅在旧 keychain_account 列存在时执行（新库跳过，零开销）。成功回填的条目一并更新 hint/check。
@@ -155,7 +153,7 @@ private:
     core::Result<void> requireSharedConfigExists(int64_t id) const;
 
     core::data::SqliteDb& db_;
-    std::string keychainService_;   // 仅用于旧 Keychain 残留清理（见类头不变式）
+    std::string keychainService_;   // 仅用于旧 Keychain 凭据回填（见构造注释）
 };
 
 } // namespace module::claude

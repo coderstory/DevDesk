@@ -7,9 +7,10 @@
 #include "core/logging.h"
 #include "core/result.h"
 #include "core/sql_dump.h"
+#include "platform/credential_protection.h"
 #include "platform/json.h"
-#include "platform/keychain.h"
 
+#include <set>
 #include <variant>
 
 namespace module::settings {
@@ -25,6 +26,8 @@ constexpr const char* kStateFirstSyncDone = "first_sync_done";
 constexpr const char* kStateUnsyncedNotice = "unsynced_notice";
 constexpr const char* kStateShaNotesPrefix = "sha:notes/";
 constexpr const char* kStateHashNotesPrefix = "hash:notes/";
+// Token 行：value = credential::protect 后形态（明文平台 = 明文，靠 DB 文件 0600）。
+constexpr const char* kStateToken = "token";
 
 std::string jsonString(const std::string& v) {
     return platform::json::stringify(platform::json::makeString(v))
@@ -206,10 +209,19 @@ core::Result<void> GithubSyncStore::save(const GithubSyncConfig& cfg) {
 }
 
 core::Result<void> GithubSyncStore::saveToken(const std::string& token) {
-    // 测试模式不落钥匙串：注入 token 由环境变量提供，写进去只会污染用户真实凭据库
-    //（DEVDESK_DATA_ROOT 隔离的是数据根，隔离不了全局钥匙串）。
+    // 测试模式不落库：注入 token 由环境变量提供，写进去只会污染被测库的状态
+    //（与旧钥匙串时代的防污染口径一致，门本身零成本）。
     if (githubTestModeEnabled()) return core::Result<void>::ok();
-    return platform::keychain::storeSecret(kKeychainService, kKeychainAccount, token);
+    if (db_ == nullptr) {
+        return core::Result<void>::fail(
+            core::ErrorCode::NotFound,
+            "应用数据库未就绪，GitHub Sync Token 未保存");
+    }
+    auto stored = platform::credential::protect(token);
+    if (stored.isFail()) return core::Result<void>::fail(stored.errorCode(),
+                                                         stored.errorMessage());
+    std::lock_guard<std::recursive_mutex> lock(db_->mutex());
+    return stateSet(*db_, kStateToken, stored.value());
 }
 
 core::Result<bool> GithubSyncStore::isFirstSyncDone() const {
@@ -277,16 +289,36 @@ core::Result<void> GithubSyncStore::forgetSyncedNote(const std::string& fileName
 
 core::Result<std::string> GithubSyncStore::loadToken() {
     // 测试注入缝优先（见 github_sync_config.h 的 githubTestToken）：门开且变量在场
-    // → 直接用环境变量，不读也不写真实钥匙串。
+    // → 直接用环境变量，不读也不写库。
     if (auto injected = githubTestToken(); !injected.empty()) {
         return core::Result<std::string>::ok(std::move(injected));
     }
-    return platform::keychain::loadSecret(kKeychainService, kKeychainAccount);
+    if (db_ == nullptr) {
+        return core::Result<std::string>::fail(
+            core::ErrorCode::NotFound, "应用数据库未就绪");
+    }
+    std::lock_guard<std::recursive_mutex> lock(db_->mutex());
+    auto stored = stateGet(*db_, kStateToken);
+    if (stored.isFail()) {
+        return core::Result<std::string>::fail(stored.errorCode(),
+                                               stored.errorMessage());
+    }
+    // 缺行 / 空值 = 未保存过 → fail(NotFound)（「没配过」与「读了空串」必须可分辨）
+    if (stored.value().empty()) {
+        return core::Result<std::string>::fail(core::ErrorCode::NotFound,
+                                               "未保存 GitHub Token");
+    }
+    return platform::credential::unprotect(stored.value());
 }
 
 core::Result<void> GithubSyncStore::deleteToken() {
     if (githubTestModeEnabled()) return core::Result<void>::ok();
-    return platform::keychain::deleteSecret(kKeychainService, kKeychainAccount);
+    if (db_ == nullptr) {
+        return core::Result<void>::fail(
+            core::ErrorCode::NotFound, "应用数据库未就绪");
+    }
+    std::lock_guard<std::recursive_mutex> lock(db_->mutex());
+    return stateErase(*db_, kStateToken);
 }
 
 core::Result<std::map<std::string, gsync::SyncedNoteRecord>>

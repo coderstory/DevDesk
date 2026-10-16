@@ -310,7 +310,10 @@ inline constexpr const char* kSql = R"(
     --   再把「登记有而本地无」判成本地删除 → DELETE 清空远端笔记。独立成表才能
     --   从 dump 里整表剔除（app_config 无法只剔前缀）。
     --   key 形如 `sha:notes/<名>` / `hash:notes/<名>` / `sha:data/database.sql` /
-    --   `first_sync_done` / `unsynced_notice`；value 为原样文本（sha/hash/标记）。
+    --   `first_sync_done` / `unsynced_notice` / `token`；value 为原样文本
+    --   （sha/hash/标记）。`token` 行例外：value 是 credential::protect 后形态
+    --   （明文平台 = 明文，靠 DB 文件 0600；Windows = DPAPI hex），凭据不进 dump
+    --   正靠本表整体被剔除这一条。
     CREATE TABLE IF NOT EXISTS github_sync_state (
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL

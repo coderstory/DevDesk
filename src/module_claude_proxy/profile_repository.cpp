@@ -109,29 +109,6 @@ std::string readStoredCredential(core::data::SqliteDb& db, int64_t profileId) {
     return v.isOk() ? v.value() : std::string();
 }
 
-// 凭据列探测（Keychain 残留清理护栏）：判据 = 列可读；列可读但值为空 = 库只是没存密钥，由调用处再判「至少一行有密钥」
-struct CredentialColumnProbe {
-    bool readable = false;     // 新列可读 = 库是本形态建的
-    int64_t rows = 0;          // claude_profiles 行数
-    int64_t rowsWithKey = 0;   // 凭据列非空的行数
-};
-
-CredentialColumnProbe probeCredentialColumn(core::data::SqliteDb& db) {
-    CredentialColumnProbe out;
-    auto prep = db.prepare("SELECT api_key_encrypted FROM claude_profiles");
-    if (prep.isFail()) return out;   // 旧库：no such column → readable 保持 false
-    auto rows = prep.value().fetchAll();
-    if (rows.isFail()) return out;
-    for (const auto& row : rows.value()) {
-        auto v = row.getString("api_key_encrypted");
-        if (v.isFail()) return out;   // 逐行读不到 = 形态不对 → 同样按未迁移处理
-        ++out.rows;
-        if (!v.value().empty()) ++out.rowsWithKey;
-    }
-    out.readable = true;
-    return out;
-}
-
 } // namespace
 
 // 两段写助手
@@ -658,49 +635,6 @@ core::Result<void> ProfileRepository::deleteProfile(int64_t id,
 
     // 停代理策略尾（删的是激活 profile 且代理运行中 → stopProxy 还原 settings.json）留门面，wasActive 经出参回填
     return core::Result<void>::ok();
-}
-
-core::Result<int> ProfileRepository::cleanupOrphanKeychainEntries() {
-    // 一次性的旧 Keychain 残留清理：本命名空间下剩余 claude:* 条目一律清掉，白名单之外的 account 保留不删不计数
-    auto profilesR = listProfiles();
-    if (profilesR.isFail()) {
-        return core::Result<int>::fail(profilesR.errorCode(),
-                                       profilesR.errorMessage());
-    }
-
-    // 误删护栏（优先于一切）：数据根零 profile = 实例还没建过东西，而 Keychain 命名空间隔离弱于数据根 → 整体跳过
-    if (profilesR.value().empty()) {
-        LOG_WARN("跳过清理：当前数据根无 profile，防误删（keychain service=" +
-                 keychainService_ + " 的条目一律保留）");
-        return core::Result<int>::ok(0);
-    }
-
-    // 护栏③：光有 profile 不代表凭据已落库。列可读但没有任何一行存有密钥时同样整体跳过——宁可不清理也不能误删
-    const CredentialColumnProbe probe = probeCredentialColumn(db_);
-    if (!probe.readable) {
-        LOG_WARN("跳过清理：库中没有 api_key_encrypted 列（旧形态库，凭据未迁入库），"
-                 "Keychain 条目一律保留，防误删（keychain service=" +
-                 keychainService_ + "）");
-        return core::Result<int>::ok(0);
-    }
-    if (probe.rowsWithKey == 0) {
-        LOG_WARN("跳过清理：库里 " + std::to_string(probe.rows) +
-                 " 个 profile 都没有存过密钥（凭据未落库），Keychain 条目一律保留，"
-                 "防误删（keychain service=" + keychainService_ + "）");
-        return core::Result<int>::ok(0);
-    }
-
-    // keep 传空是有意选择：走到这里已证明库是本形态且至少一行存着凭据
-    auto delR = platform::keychain::deleteSecretsNotIn(keychainService_, {});
-    if (delR.isFail()) {
-        return core::Result<int>::fail(delR.errorCode(), delR.errorMessage());
-    }
-    const int removed = static_cast<int>(delR.value().size());
-    if (removed > 0) {
-        LOG_INFO("已清理 " + std::to_string(removed) +
-                 " 个旧 Keychain 残留密钥（凭据已迁至数据库，Keychain 不再是来源）");
-    }
-    return core::Result<int>::ok(removed);
 }
 
 core::Result<int> ProfileRepository::backfillCredentialsFromKeychain() {
