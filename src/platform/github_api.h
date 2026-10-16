@@ -22,7 +22,9 @@ struct FileInfo { bool exists = false; std::string content; std::string sha; };
 struct TreeEntry { std::string path; std::string sha; uint64_t size = 0; };
 struct TestStep { std::string name; bool ok = false; int durationMs = 0; std::string detail; };
 struct TestReport { bool ok = false; std::vector<TestStep> steps; std::string summary; };
-struct RetryPolicy { int attempts = 3; std::vector<int> backoffMs{1000, 3000, 9000}; };
+// attempts = 单次调用的**总请求数**（首次 + 重试）：默认 4 = 首次 1 次 + 重试 3 次。
+// backoffMs[i] = 第 i 次重试前的等待（毫秒），表用尽后复用末项；末次请求后不等待。
+struct RetryPolicy { int attempts = 4; std::vector<int> backoffMs{1000, 3000, 9000}; };
 
 class GithubApi {
 public:

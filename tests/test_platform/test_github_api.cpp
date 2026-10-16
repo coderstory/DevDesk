@@ -261,8 +261,26 @@ REGISTER_TEST(github_backoff_sequence_exhausts_attempts, "github: 全失败时�
     const auto res = api.getAuthenticatedUser();
     DOCTEST_CHECK(res.isFail());
     DOCTEST_CHECK_EQ(res.errorCode(), core::ErrorCode::NetworkUnreachable);
-    DOCTEST_CHECK_EQ(rec.reqs.size(), static_cast<std::size_t>(4));   // attempts = 4
+    DOCTEST_CHECK_EQ(rec.reqs.size(), static_cast<std::size_t>(4));   // 总请求数
     DOCTEST_CHECK_EQ(sleeps, (std::vector<int>{1, 2, 3}));            // 末次不 sleep
+    return true;
+})
+
+// 上一条覆写 policy 只钉住循环语义（总请求数 = attempts）；这条不覆写，钉**默认值**
+// 本身——「重试 3 次，退避 1s/3s/9s」= 首次 + 3 次重试共 4 次请求。默认值若退回 3，
+// 则 9s 档永不被使用，且没有任何用例会红。
+REGISTER_TEST(github_default_policy_three_retries,
+              "github: 默认策略 = 首次 + 3 次重试（退避 1s/3s/9s 全用上）", {
+    Recorder rec;   // 空 plan → 全失败（Recorder 回 failNet）
+    std::vector<int> sleeps;
+    platform::github::GithubApi api("tok", "owner", "repo");
+    wire(api, rec);
+    SleepGuard guard(sleeps);
+
+    const auto res = api.getAuthenticatedUser();
+    DOCTEST_CHECK(res.isFail());
+    DOCTEST_CHECK_EQ(rec.reqs.size(), static_cast<std::size_t>(4));
+    DOCTEST_CHECK_EQ(sleeps, (std::vector<int>{1000, 3000, 9000}));
     return true;
 })
 
