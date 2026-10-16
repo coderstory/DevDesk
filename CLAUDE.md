@@ -471,3 +471,17 @@ main → 7 个 Router 页面 (home / markdown / todo / claude_proxy / agent / se
 - **禁批量清理"在飞"的 worktree**：清理前先 `ListAgents` 判活，在飞的绝不碰。判定式必须含"**有提交**"这条：`tip != base && git merge-base --is-ancestor <branch> HEAD`（base 取该 worktree 创建时的**集成分支（`dev`）** tip，可从分支 reflog 的 `branch: Created from` 读）。批量删除**逐条确认**，别一条命令梭哈——`git worktree remove` 在文件被占用时会**半删**（`.git` 没了、目录还在），恢复成本更高。*事故*：只用 `--is-ancestor` 判定时，**在飞 agent 的分支 tip 就是基线提交（尚未提交）也为真** → 三条在干活的 worktree 连同未提交改动一起被删、另两条半残，三条线只能重做（成果默认只在工作区，"无提交"与"已合并"在分支指针上长得一样）。误删后：`ls` 看目录是否残留 → `git worktree repair`；`.git` 已丢则重建同路径同名分支的干净 worktree，再 `SendMessage` 唤醒原 agent 凭其报告重做（transcript 里的清单能省掉重新分析）。
 - **跨仓库改动必须"产补丁 + 非隔离线应用"**：带 `isolation: "worktree"` 的 agent **无法对任何其它仓库执行 git 操作**（`cd <别的仓库> && git …` 与 `git -C <任意路径> …` 一律被隔离守卫拒）→ 建不了别的仓库的 worktree、也提交不了。正确形态：**隔离 agent 产 patch + 验证**（可用文件副本模拟依赖来真跑构建 / 测试）→ **另起一条"非隔离" agent**（不设 `isolation`）把 patch `git apply` 进目标仓库、跑编译、原子 commit、清理副本；非隔离线的 prompt 必须写死"只许改 `<目标仓库>`，禁止碰 DevDesk 文件"。反过来**别让非隔离 agent 碰 DevDesk**（它没有隔离保护，工作目录就是主树）。主会话**不要**替 agent 落文件（含 `git apply`）。*为什么*：DevDesk 与 EUI-NEO 是两个仓库（同级目录、非 submodule），上游能力改造天然跨仓库。
 - **`git merge` 不与 Agent 派单放在同一条消息里并行跑**：主会话 git 操作与派单并行会因 git 锁竞争导致隔离校验失败（实测两条派单被拒、留下两个孤儿 worktree）。
+
+## Agent skills
+
+### Issue tracker
+
+Issues live as local markdown under `.scratch/<feature>/`. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Default five-role vocabulary. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context. See `docs/agents/domain.md`.
