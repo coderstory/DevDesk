@@ -461,6 +461,19 @@ Result<std::vector<AgentRunRow>> AgentStore::listRuns(int64_t taskId, int limit)
 // 任务级 run 聚合：COUNT/SUM/MAX 一条 SQL 出全任务，不拉 run 行进内存。
 // 时长口径 = 单 run (ended-started) 求和，负差钳 0（与 UI 的 runRowText 同口径），
 // running（ended NULL）计 0；last_ended_at = MAX(ended_at)，NULL 自动被 MAX 忽略
+Result<bool> AgentStore::hasRunningRun() {
+    std::lock_guard<std::recursive_mutex> lock(db_.mutex());
+    auto st = db_.prepare("SELECT 1 FROM agent_runs WHERE status='running' LIMIT 1");
+    if (st.isFail()) {
+        return Result<bool>::fail(st.errorCode(), st.errorMessage());
+    }
+    auto step = st.value().step();
+    if (step.isFail()) {
+        return Result<bool>::fail(step.errorCode(), step.errorMessage());
+    }
+    return Result<bool>::ok(step.value());
+}
+
 Result<std::vector<AgentTaskRunSummary>> AgentStore::listTaskRunSummaries() {
     std::lock_guard<std::recursive_mutex> lock(db_.mutex());
     auto st = db_.prepare(

@@ -78,6 +78,9 @@ public:
                                const std::optional<std::string>& toolCallId);
     Result<std::vector<AgentMessageRow>> listMessages(int64_t runId);   // ORDER BY seq
     Result<std::vector<AgentRunRow>> listRuns(int64_t taskId, int limit);
+    // 库内是否存在 running run（EXISTS 语义，单条 SELECT 不拉行）：pollRunEnd 三守卫
+    // 全假时冷启动兜底的唯一探测口——外部直写库插入的 running run 只能靠它发现
+    Result<bool> hasRunningRun();
     // 任务级 run 聚合（COUNT/SUM/MAX 一条 SQL，不拉全表进内存）；配合 writeVersion 做 UI 侧缓存
     Result<std::vector<AgentTaskRunSummary>> listTaskRunSummaries();
     Result<void> sweepStaleRuns();   // running → failed('应用异常退出（悬挂 run）')

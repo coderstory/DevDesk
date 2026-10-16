@@ -84,6 +84,10 @@ inline constexpr CronTemplate kCronTemplates[] = {
 inline constexpr int kCronTemplateCount =
     static_cast<int>(sizeof(kCronTemplates) / sizeof(kCronTemplates[0]));
 
+// 冷启动兜底轮询间隔（秒）：pollRunEnd 三守卫全假时轻查询的节流窗口——外部直写库
+// 插入 running run 后，观测恢复的最大延迟就等于这个值
+inline constexpr int64_t kRunFallbackIntervalSec = 15;
+
 class AgentModule : public ::core::Module {
 public:
     // 依赖注入：测试传 fake；生产工厂传空 Deps，onStart 内回退 appDatabase / ServiceLocator
@@ -113,6 +117,8 @@ public:
     // 测试缝：输入框 onTextInput 只能追加、无法覆盖草稿（赋值把光标置 0），故草稿写入口在此
     void setEditCronDraft(const std::string& cron);
     void setDialogIterDraft(int iter);
+    // 测试缝：兜底轻查询已执行次数（节流断言用——同窗口多帧只允许一次轻查询）
+    int64_t runFallbackChecksForTest() const { return runFallbackChecks_; }
 
     // ---- run 完成通知的 app 级通道（fix round：页面无关） ----
     // 装配层每帧调（app::compose 内）：等价 refreshData 的检测路径，不依赖智能体页可见。
@@ -146,6 +152,8 @@ private:
     void openTaskDetail(int64_t taskId);
     void closeTaskDetail();
     void refreshData();
+    // 冷启动兜底：pollRunEnd 三守卫全假时的低频轻查询探测（节流见 kRunFallbackIntervalSec）
+    void pollRunEndFallback();
     // 任务级 run 汇总缓存：失效判据 = store_->writeVersion()（同 home 余量卡口径）——
     // 版本没变零查询零锁，uiPolling_ 每帧 refreshData 也不重查；版本取查询前快照（查询后
     // 取会漏：读到旧数据却记成新版本，之后永不再查）
@@ -236,6 +244,10 @@ private:
     // 页内直发 toast 已删（页面无关，fix round 裁决）。
     std::map<int64_t, std::string> prevRunStatuses_;   // runId → status
     std::set<int64_t> notifiedRunIds_;
+    // 冷启动兜底轻查询节流：lastRunFallbackSec_ = 上次执行时刻（unix 秒，0 = 从未查过——
+    // 真实时刻不可能为 0）；计数供 runFallbackChecksForTest() 节流断言
+    int64_t lastRunFallbackSec_ = 0;
+    int64_t runFallbackChecks_ = 0;
     // 任务级 run 汇总（详情弹窗汇总行）：writeVersion 缓存；查询失败显形在弹窗内
     std::map<int64_t, AgentTaskRunSummary> runSummaries_;   // taskId → 聚合
     std::string runSummariesError_;

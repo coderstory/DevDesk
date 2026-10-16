@@ -822,7 +822,9 @@ void AgentModule::ensureToolsCache(bool forceReload) {
 // 装配层每帧拉取路径（app::compose 内调用）：迁移检测不依赖智能体页可见性。
 // 守卫：store_ 在 +（uiPolling_ 或 页脏 或 上次观测仍有 running run）。第三个条件
 // 覆盖不经页面启动的 run（直写库/外部进程）：prevRunStatuses_ 有 running 就该继续
-// 轮询到终态，否则迁移永不发生。无 run 在身时零 DB 查询。
+// 轮询到终态，否则迁移永不发生。三条件全假时零常规查询——但那也是冷启动盲区
+// （外部直写库新插入的 running run 永远进不了 prevRunStatuses_），靠低频轻查询兜底
+// （pollRunEndFallback），命中即 refreshData 进入正常观测路径。
 void AgentModule::pollRunEnd() {
     if (store_ == nullptr) return;
     bool prevAlive = false;
@@ -833,7 +835,33 @@ void AgentModule::pollRunEnd() {
             break;
         }
     }
-    if (!uiPolling_ && !tasksDirty_ && !prevAlive) return;
+    if (!uiPolling_ && !tasksDirty_ && !prevAlive) {
+        pollRunEndFallback();
+        return;
+    }
+    refreshData();
+}
+
+// 冷启动兜底：外部直写库插入 running run 时三守卫全假、prevRunStatuses_ 永远观测不到它，
+// 其终态迁移零通知；唯一出路是低频轻查询。节流 = kRunFallbackIntervalSec（时钟走
+// schedulerNow 缝，测试可冻结；unix 秒对 15s 窗口的 NTP 跳变最坏差一个周期，可接受）。
+// 命中即 refreshData 一次——该 run 随即进 prevRunStatuses_，后续帧由 prevAlive 接管走
+// 常规轮询，兜底自动停摆。查询失败 WARN 留痕不吞，下个周期自然重试。
+void AgentModule::pollRunEndFallback() {
+    const int64_t now = deps_.schedulerNow ? deps_.schedulerNow()
+                                           : core::time::nowUnix();
+    if (lastRunFallbackSec_ != 0 && now - lastRunFallbackSec_ < kRunFallbackIntervalSec) {
+        return;
+    }
+    lastRunFallbackSec_ = now;
+    ++runFallbackChecks_;
+    auto r = store_->hasRunningRun();
+    if (r.isFail()) {
+        LOG_WARN("Agent: 兜底轮询轻查询失败: " + r.errorMessage());
+        return;
+    }
+    if (!r.value()) return;
+    LOG_DEBUG("Agent: 兜底轮询发现库内 running run（三守卫全假冷启动盲区）→ 触发 refreshData");
     refreshData();
 }
 
