@@ -1235,6 +1235,15 @@ public:
             if (action.kind == gsync::PullAction::Kind::KeepLocal) {
                 LOG_INFO("Settings: 远端已删除笔记 " + action.fileName +
                          "，本地保留（pull 不替远端传播删除）");
+                // C2：清登记——远端被别设备删掉、本地未改的笔记若留着旧登记，
+                // 下轮 push 按 InSync 短路永不重推（远端永远缺这篇），本地一改
+                // 又带失效 sha PUT → 409/422 死循环。清掉后下轮 push 按 New 走
+                // GET 现值兜底（远端无 → 无 sha PUT 重建，local wins）。
+                if (auto f = githubSyncStore_->forgetSyncedNote(action.fileName);
+                    f.isFail()) {
+                    LOG_WARN("Settings: 笔记基线清理失败 " + action.fileName +
+                             ": " + f.errorMessage());
+                }
                 ++keepCount;
                 continue;
             }
