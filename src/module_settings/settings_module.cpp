@@ -107,8 +107,11 @@ const CardSpec kCardSpecs[] = {
 // skip 表清单单一来源 = core::sql_dump::defaultSkipTables()，不得本地另抄。
 
 // 同步动作（弹窗「重试」按原动作重跑；PullThenPush = 409 冲突弹窗的主动作；
-// FirstSync = 首次方向判定，见 runGithubSyncFirstSync；
-// ValidateFirstSync = 启用开关打开时的首次同步：先跑测试连接三步，过了才做方向判定）。
+// FirstSync / ValidateFirstSync = 首次同步：先跑测试连接三步校验，过了才做首次方向
+// 判定，见 runGithubSyncCheckedFirstSync。两者跑同一条路，差别只在失败呈现——
+// ValidateFirstSync 由启用开关触发、失败不弹窗（用户刚拨开关，弹窗等于打断）；
+// FirstSync 由手动「立即同步」触发、失败弹窗。校验强度必须一致：首次同步要么拉
+// 远端覆盖本地库、要么上传全量，配置未经验证就动数据是不可接受的）。
 enum class SyncAction { None, Push, Pull, Test, PullThenPush, FirstSync, ValidateFirstSync };
 
 // epoch 秒（节流窗口与备份文件名共用）。
@@ -599,7 +602,8 @@ public:
 
     void githubSyncPush() {
         // 换仓/换分支会清 first_sync_done → 手动同步先重跑首次方向判定
-        //（否则用户必须重拨启用开关才有方向判定）。
+        //（否则用户必须重拨启用开关才有方向判定）。FirstSync 内含测试连接三步校验，
+        // 与启用流程同一道闸：首次方向判定会覆盖本地库或上传全量，不能跳过校验。
         if (githubSyncStore_ && !githubSyncCfg_.repoUrl.empty()) {
             auto done = githubSyncStore_->isFirstSyncDone();
             if (done.isOk() && !done.value()) {
@@ -884,35 +888,11 @@ public:
                     if (ok) summary = "已拉取远端后再推送：" + summary;
                     break;
                 }
-                case SyncAction::ValidateFirstSync: {
-                    // 启用流程：先跑测试连接三步（令牌 / 仓库可推 / 读写探针），
-                    // 过了才做首次方向判定——首次同步会覆盖本地库或上传全量，配置
-                    // 未经验证就动数据是不可接受的。校验失败：summary 就是失败摘要，
-                    // ok 保持 false（harvest 按「启用流程失败」走卡片红字，不弹窗）。
-                    auto repo = api.getRepo();
-                    if (repo.isOk()) publicRepo = repo.value().isPrivate == false;
-                    auto report = api.testConnection(
-                        [this](const platform::github::TestStep& step) {
-                            publishGithubSyncProgress(step.name +
-                                                      (step.ok ? " ✓" : " ✗"));
-                        });
-                    if (!report.ok) {
-                        summary = report.summary;
-                        break;
-                    }
-                    std::string firstSummary;
-                    if (!runGithubSyncFirstSync(api, branch, firstSummary,
-                                                conflict, branchHint)) {
-                        summary = firstSummary;
-                        break;
-                    }
-                    ok = true;
-                    summary = "校验通过；" + firstSummary;
-                    break;
-                }
+                case SyncAction::ValidateFirstSync:
                 case SyncAction::FirstSync:
-                    ok = runGithubSyncFirstSync(api, branch, summary, conflict,
-                                                branchHint);
+                    ok = runGithubSyncCheckedFirstSync(api, branch, summary,
+                                                       conflict, publicRepo,
+                                                       branchHint);
                     break;
                 case SyncAction::None:
                     break;
@@ -928,6 +908,34 @@ public:
         githubSyncStagedConflict_ = conflict;
         githubSyncStagedPublicRepo_ = publicRepo;
         githubSyncStagedBranchHint_ = branchHint;
+    }
+
+    // 首次同步的唯一实现（启用开关与手动「立即同步」共用）：先跑测试连接三步
+    // （令牌 / 仓库可推 / 读写探针），过了才做首次方向判定。校验失败时 summary 即
+    // 失败摘要、返回 false，调用方按各自的失败呈现处理（不在这里决定弹窗与否）。
+    bool runGithubSyncCheckedFirstSync(platform::github::GithubApi& api,
+                                       const std::string& branch,
+                                       std::string& summary, bool& conflict,
+                                       bool& publicRepo,
+                                       std::string& branchHint) {
+        auto repo = api.getRepo();
+        if (repo.isOk()) publicRepo = repo.value().isPrivate == false;
+        auto report = api.testConnection(
+            [this](const platform::github::TestStep& step) {
+                publishGithubSyncProgress(step.name + (step.ok ? " ✓" : " ✗"));
+            });
+        if (!report.ok) {
+            summary = report.summary;
+            return false;
+        }
+        std::string firstSummary;
+        if (!runGithubSyncFirstSync(api, branch, firstSummary, conflict,
+                                    branchHint)) {
+            summary = firstSummary;
+            return false;
+        }
+        summary = "校验通过；" + firstSummary;
+        return true;
     }
 
     // 首次方向：远端已有 database.sql → 先拉取覆盖（含备份）再推送；
