@@ -63,6 +63,15 @@
 | a1 dirty 触发源 | `63950b1` | +5 事件常量，笔记删除 + 待办增删改全 emit |
 | a3 启用流程校验 | `8f39a9f` | 新增 `SyncAction::ValidateFirstSync`：三步过了才首同步 |
 
+## 复审再修（2 项，2026-10-16 审计复核后）
+
+| 项 | SHA | 问题 | 修法与证据 |
+|---|---|---|---|
+| 必修 | `2dc3c92` | `pruneBackups` 用 `remove_all(...) > 0` 判成功——失败时返回 `(uintmax_t)-1`（非 0）→ 失败被计成成功、`else if (rmEc)` 成死代码（WARN 永不打印，S2 的 finding 以另一种形态复活） | 先判 `rmEc`（同 `core/db_backup.cpp` 判据）再按返回值计数；`directory_iterator` 构造失败 / `is_directory` 判定出错也不再静默。新用例两档失败（全失败 / 部分失败）+ WARN 逐次计数 + 前提断言（失败返回 -1 且 ec 非空）；**变异验证**：回退判据 → 用例红（`removed != 1`） |
+| 建议 | `b103399` | 退出补推按 autoPush 收口后，关开关 + dirty 退出既不推也不落 F5 提示 → 用户不知道改动没上传 | 早退前补 `enabled && !autoPush && dirty → setUnsyncedNotice()`（不推不等待）；新用例经 `runGithubSyncExitPush()` 驱动，两条观察口 + 无改动对照；**变异验证**：回退 → 用例红（`withDirty.noticed` 假） |
+
+转票（本票不动，已由审计方登记）：dirty 触发源残余（笔记重命名/新建、待办列写路径、`deleteColumn` 级联删任务不置 dirty）；首次启用路径②跳过校验。
+
 ## 验证
 
 ### 复跑（worktree 内）
@@ -71,10 +80,11 @@
 DEVDESK_TEST_TMPDIR=/tmp/devdesk-t5-tmp bash scripts/build-test-run.sh --no-run
 ```
 
-- 结果：`Total: 1426 / Passed: 1420 / Failed: 0`（`Total − Passed` = 6 条按平台 `DOCTEST_SKIP`，非失败）
-- 基线对照：本票开工时同命令 = `1421 / 1415 / 0`；本票新增 5 条用例（`github_sync_auto_push_due` / `github_default_policy_three_retries` / `settings_github_sync_autopush_switch_gates_auto_path` / `settings_github_sync_dirty_from_write_events` / `todo_ui_event_wiring_write_paths`）
+- 结果：`Total: 1428 / Passed: 1422 / Failed: 0`（`Total − Passed` = 6 条按平台 `DOCTEST_SKIP`，非失败）
+- 基线对照：本票开工时同命令 = `1421 / 1415 / 0`；本票新增 7 条用例（`github_sync_auto_push_due` / `github_default_policy_three_retries` / `settings_github_sync_autopush_switch_gates_auto_path` / `settings_github_sync_dirty_from_write_events` / `todo_ui_event_wiring_write_paths` + 复审两条 `github_sync_backup_prune_failure_visible` / `settings_github_sync_exit_push_keeps_unsynced_notice_when_autopush_off`）
 - 静态守卫：6 道守卫自检全过（模块隔离 / 探针跳过登记 / 探针门禁标签 / 余量落库路径 / 余量停机顺序 / Windows 交叉编译 + std-includes 自证非恒真）
-- 定向复跑（改动面）：`--filter todo_ui` 52/52/0 ｜ `markdown_module` 78/78/0 ｜ `settings` 117/117/0 ｜ `github_sync` 27/27/0 ｜ `github`（platform）全绿
+- 定向复跑（改动面）：`--filter todo_ui` 52/52/0 ｜ `markdown_module` 78/78/0 ｜ `settings` 118/118/0 ｜ `github_sync` 28/28/0 ｜ `github`（platform）64/64/0
+- 变异验证（修复类改动的「先红」证据）：`2dc3c92` 与 `b103399` 各自回退一次，对应新用例均红，恢复后均绿
 
 ### 覆盖缺口（诚实清单）
 
