@@ -468,6 +468,12 @@ public:
         const auto& dst = columns_[static_cast<size_t>(target)];
         if (target == from) {
             if (hoverRow < 0) return;  // 搜索态同列拖 = 取消（旧语义）
+            // 归档列内拖拽排序无效化：显示顺序强制 archived_at DESC，不写 position
+            const Column* srcCol =
+                static_cast<size_t>(from) < columns_.size()
+                    ? &columns_[static_cast<size_t>(from)]
+                    : nullptr;
+            if (srcCol != nullptr && srcCol->kind == "archive") return;
             // ownIdx 现算（列数据可能被外部改动，须与当下 tasks_ 一致）
             const auto colTasks = ui::tasksInColumn(tasks_, dst.id);
             int ownIdx = -1;
@@ -487,23 +493,29 @@ public:
             }
             return;
         }
-        const std::string title = dst.title;
         const int newPos = (hoverRow >= 0)
             ? ui::computeInsertPosition(tasks_, dst.id, hoverRow)
             : ui::computeAppendPosition(tasks_, dst.id);
-        if (doMoveTask(taskId, dst.id, newPos)) {
-            setStatus("已移动到「" + title + "」");  // 失败时保留 doMoveTask 的错误提示
-        }
+        // 成功不提示；失败时 doMoveTask 自己的错误 toast 保留
+        doMoveTask(taskId, dst.id, newPos);
     }
 
     // 键盘/菜单共用的上移下移（position 语义见 todo_ui_logic.h）
     void moveTaskByKeyboard(bool up) {
+        // 归档列内禁止 Ctrl+↑/↓ 移动（排序强制 archived_at DESC，位置写入无效）
+        const Task* self = ui::findTask(tasks_, selectedTaskId_);
+        if (self != nullptr) {
+            const Column* taskCol = ui::findColumn(columns_, self->columnId);
+            if (taskCol != nullptr && taskCol->kind == "archive") {
+                setStatus("归档任务按归档时间排序，不支持手动移动", true);
+                return;
+            }
+        }
         const auto mv = ui::computeKeyboardMove(tasks_, selectedTaskId_, up);
         if (!mv) {
             setStatus(up ? "已经在最上面了" : "已经在最下面了");
             return;
         }
-        const Task* self = ui::findTask(tasks_, selectedTaskId_);
         const std::string title = self != nullptr ? self->title : "";
         doMoveTask(selectedTaskId_, mv->columnId, mv->position);
         setStatus((up ? "已上移「" : "已下移「") + title + "」");
@@ -561,6 +573,9 @@ public:
         selectedTaskId_ = task.id;  // 选中态：详情弹窗关闭后保留，供 Ctrl+↑/↓
         saveViewState();
         dialogs_.detail.reset(task);
+        // 归档列卡片详情只读：判据 = 所在列 kind（运行期真相，不靠 archived_at 值）
+        const Column* col = ui::findColumn(columns_, task.columnId);
+        dialogs_.detail.readOnly = (col != nullptr && col->kind == "archive");
         dialogs_.popups.open(ui::Popup::Detail);
     }
 
@@ -633,10 +648,8 @@ public:
             for (const auto& c : columns_) {
                 if (c.id == self->columnId) continue;
                 if (k == 0) {
-                    const std::string title = c.title;
                     doMoveTask(dialogs_.ctx.taskId, c.id,
                                ui::computeAppendPosition(tasks_, c.id));
-                    setStatus("已移动到「" + title + "」");
                     return;
                 }
                 --k;

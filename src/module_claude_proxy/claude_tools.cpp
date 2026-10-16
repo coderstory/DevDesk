@@ -191,9 +191,9 @@ public:
 
     std::string name() const override { return "claude.test_connection"; }
 
-    // 只读探测（GET /v1/models），不改任何本地状态
+    // POST /v1/messages 发 1-token ping（会消耗 1 token），不改任何本地状态
     std::string schemaJson() const override {
-        return R"({"name":"claude.test_connection","description":"对某个 Profile 的上游发一次连通性测试（GET /v1/models，只读）。不传 id 则测当前激活的 Profile","input_schema":{"type":"object","properties":{"id":{"type":"integer","description":"目标 Profile 的 id（可选；缺省 = 当前激活的 Profile）"}},"required":[]}})";
+        return R"({"name":"claude.test_connection","description":"对某个 Profile 的上游发一次连通性测试（POST /v1/messages 发 1-token ping，会消耗 1 token）。不传 id 则测当前激活的 Profile","input_schema":{"type":"object","properties":{"id":{"type":"integer","description":"目标 Profile 的 id（可选；缺省 = 当前激活的 Profile）"}},"required":[]}})";
     }
 
     Result<ToolResult> execute(const ToolArgs& args) override {

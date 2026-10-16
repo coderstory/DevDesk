@@ -79,6 +79,10 @@ public:
     // 启动时清理旧 Keychain 残留（只删 claude:*，护栏：数据根零 profile 整体跳过）。
     core::Result<int> cleanupOrphanKeychainEntries();
 
+    // 迁移旧 Keychain 凭据入库：api_key_encrypted 仍空且 keychain_account 列存在的 profile，
+    // 逐行读旧 Keychain → protect → 写回凭据三列；失败不中断（LOG_WARN 继续）。
+    core::Result<int> backfillCredentialsFromKeychain();
+
     // API key
 
     // 加载明文 API key（发请求时调用，用完即丢弃）。列空 = NotFound；
@@ -146,12 +150,12 @@ public:
     // 代理 server 生命周期
 
     // 代理启动前置校验（无激活 profile 起代理会全量 503）；任一不过 → fail 且零副作用
-    //（不 bind、不接管、不动激活行）：① 有激活且可读的 profile；② GET /v1/models 2xx。
+    //（不 bind、不接管、不动激活行）：① 有激活且可读的 profile；② POST /v1/messages 2xx（1-token ping）。
     // 不得在 UI 线程同步调用。
     core::Result<void> validateProxyPreconditions(
         int probeTimeoutMs = kProxyPreStartProbeTimeoutMs);
 
-    // 前置校验探测超时：只发一个 GET /v1/models，短于 testConnection 的 15s
+    // 前置校验探测超时：只发一个 POST /v1/messages，短于 testConnection 的 15s
     //（校验失败要用户可感知地快）。
     static constexpr int kProxyPreStartProbeTimeoutMs = 2000;
 
@@ -177,7 +181,9 @@ public:
     // 用该 Profile 生成临时 settings 直连，打开新的 Claude Code 会话
     // 不启代理、不切激活、不碰 ~/.claude/settings.json（零全局副作用）；密钥临时明文落盘。
     // id 为 0/不存在/读密钥失败/落盘失败 → fail；hint：非致命提示出参。
-    core::Result<void> runProfile(int64_t id, std::string* hint = nullptr);
+    // workingDir：claude 进程工作目录；空串 = 略过（回退 homeDir() 默认值）。
+    core::Result<void> runProfile(int64_t id, std::string* hint = nullptr,
+                                  const std::string& workingDir = "");
 
     // 终端启动注入点（默认 = platform::terminal::launch）；测试注入假实现断言参数。
     void setTerminalLauncher(

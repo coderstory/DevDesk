@@ -164,7 +164,7 @@ add_subdirectory(src/module_agent)
 add_subdirectory(src/module_claude_proxy)
 add_subdirectory(src/module_settings)
 add_subdirectory(src/module_about)
-add_subdirectory(src/module_pet)
+# module_pet 已于 2026-10-13 整模块摘除（分支 feat/remove-pet-module）
 
 # ---- 覆盖率插桩（2026-10-03 已知欠账落地）：DEVDESK_COVERAGE=ON → llvm source-based 覆盖率 ----
 # 配套 scripts/coverage.sh（独立 build-coverage/ 目录：configure → 只编 devdesk_tests →
@@ -195,7 +195,7 @@ if(DEVDESK_COVERAGE)
         devdesk_module_home devdesk_module_markdown devdesk_module_todo
         devdesk_agent
         devdesk_module_claude_proxy devdesk_module_settings
-        devdesk_module_about devdesk_module_pet)
+        devdesk_module_about)
     foreach(_devdesk_cov_lib IN LISTS DEVDESK_COVERAGE_LIBS)
         if(TARGET ${_devdesk_cov_lib})
             target_compile_options(${_devdesk_cov_lib} PRIVATE
@@ -236,7 +236,6 @@ target_link_libraries(DevDesk PRIVATE
     devdesk_module_claude_proxy
     devdesk_module_settings
     devdesk_module_about
-    devdesk_module_pet
     eui_neo
 )
 target_include_directories(DevDesk PRIVATE
@@ -250,7 +249,6 @@ target_include_directories(DevDesk PRIVATE
     src/module_settings
     src/module_about
     src/module_agent
-    src/module_pet
     ${EUI_NEO_INCLUDE_DIR}
     ${EUI_NEO_DIR}
 )
@@ -269,15 +267,6 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/fonts")
         COMMENT "Copying fonts to build directory"
     )
 endif()
-
-# 桌宠美术皮肤包（assets/pets/<name>/pet.json + 帧 PNG，随仓库分发；程序
-# 生成的内置皮肤走 petsDir()，不在这里）。皮肤根候选含 cwd/assets/pets，
-# 从 build 目录启动 DevDesk 即可发现。assets/pets 入 git，无需守卫。
-add_custom_command(TARGET DevDesk POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_SOURCE_DIR}/assets/pets" "$<TARGET_FILE_DIR:DevDesk>/assets/pets"
-    COMMENT "Copying pet skins to build directory"
-)
 
 # 托盘图标（assets/tray-icon-template.png，2026-09-30 Bug A 修；macOS 侧
 # template 蒙版，Windows 侧品牌 .ico tray-icon-win.ico —— 路径由

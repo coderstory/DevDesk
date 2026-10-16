@@ -89,21 +89,6 @@ std::vector<GatedEntry> buildGatedEntries(
     return gated;
 }
 
-void maybeStartPet(
-    const module::settings::SettingsConfig& cfg,
-    const std::function<module::pet::PetConfig()>& loadPetConfig,
-    const std::function<void(const module::pet::PetConfig&)>& startFn) {
-    if (!module::settings::moduleEnabled(
-            cfg, module::settings::kModuleIdPet)) {
-        LOG_INFO("桌宠已关闭（enabledModules 不含 pet），不开宠物窗口");
-        return;
-    }
-    if (!loadPetConfig || !startFn) {
-        return;  // 回调未注入（测试/异常调用方）：容错不崩
-    }
-    startFn(loadPetConfig());
-}
-
 bool armExitHook() {
     if (g_exitHookArmed) {
         return false;

@@ -812,6 +812,38 @@ REGISTER_TEST(md_list_all_folders,
     return true;
 })
 
+REGISTER_TEST(md_list_folders_hides_git,
+              "MarkdownService: listAllFolders/listTopFolders 不列 .git（自动提交把笔记根建成仓库后，目录树不出仓库内部目录）", {
+    const auto dir = test_support::makeTempDir("devdesk_md_test_", "hidegit");
+    auto db = makeDb();
+    applySchema(db);
+    module::markdown::MarkdownService svc(db, dir);
+
+    DOCTEST_REQUIRE(svc.createFolder("工作").isOk());
+    // .git 结构等价桩（不真跑 git）：顶层 .git + 内部两层（objects 数千文件的缩影）
+    fs::create_directories(dir / ".git" / "objects" / "aa");
+    fs::create_directories(dir / ".git" / "refs");
+    // 嵌套 .git（子目录里另有仓库）同样隐藏
+    fs::create_directories(dir / "工作" / "sub" / ".git" / "hooks");
+
+    auto top = svc.listTopFolders();
+    DOCTEST_REQUIRE(top.isOk());
+    DOCTEST_CHECK_EQ(top.value().size(), static_cast<size_t>(1));
+    DOCTEST_CHECK_EQ(top.value()[0], std::string("工作"));
+
+    auto all = svc.listAllFolders();
+    DOCTEST_REQUIRE(all.isOk());
+    DOCTEST_CHECK_EQ(all.value().size(), static_cast<size_t>(2));
+    DOCTEST_CHECK_EQ(all.value()[0], std::string("工作"));
+    DOCTEST_CHECK_EQ(all.value()[1], std::string("工作/sub"));
+    for (const auto& f : all.value()) {
+        DOCTEST_CHECK(f.find(".git") == std::string::npos);   // 任何一段都不含 .git
+    }
+
+    fs::remove_all(dir);
+    return true;
+})
+
 REGISTER_TEST(md_poll_changed_and_file_mtime,
               "MarkdownService: pollChanged/fileMtime 轮询底座", {
     const auto dir = test_support::makeTempDir("devdesk_md_test_", "poll");

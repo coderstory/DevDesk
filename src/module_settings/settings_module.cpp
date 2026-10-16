@@ -1,6 +1,6 @@
 // src/module_settings/settings_module.cpp
 // 设置页模块：Module 实现、生命周期、设置变更动作、日志 tail 与外部状态快照、卡片注册表。
-// 依赖边界：module_* 互不依赖 —— claude 经 core 窄接口、pet 经 module_pet_bridge.h、模块开关经 module_toggle_bridge.h。
+// 依赖边界：module_* 互不依赖 —— claude 经 core 窄接口、模块开关经 module_toggle_bridge.h。
 // 渲染路径不做 fs 查询：外部状态统一在 refreshExternalState 装载，compose 只读快照。
 
 #include "app_tools.h"
@@ -31,11 +31,11 @@
 #include <core/window/window_backend.h>   // core::window::setClipboardText（复制详情）
 #include "platform/system_theme.h"
 
-// module_pet 解耦桥：settings 不 include module_pet 头，符号在可执行文件链接期解析。
-#include "module_pet_bridge.h"
-
 // 模块开关即时生效桥：函数指针缝 + 默认 no-op，真 handler 由 main.cpp 装配段注入。
 #include "module_toggle_bridge.h"
+
+// 余量开关桥：进程级标记读/写，供 home/claude 等模块零依赖取用。
+#include "quota_home_bridge.h"
 
 #include <ui_kit/metrics.h>
 #include <ui_kit/toast.h>
@@ -49,6 +49,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <exception>
 #include <filesystem>
 #include <fstream>
 #include <future>
@@ -57,6 +58,8 @@
 #include <mutex>
 #include <sstream>
 #include <string>
+#include <string>
+#include <system_error>
 #include <thread>
 #include <vector>
 
@@ -89,8 +92,8 @@ const CardSpec kCardSpecs[] = {
      kEditorFontCardHeight, true, &drawEditorFontCard},
     {kTabModules, "settings.card.modules", nullptr, CardHeightKind::Fixed,
      kModulesCardHeight, false, &drawModulesCard},
-    {kTabModules, "settings.card.pet", kModuleIdPet, CardHeightKind::Fixed,
-     kPetCardHeight, false, &drawPetCard},
+    {kTabModules, "settings.card.quota", nullptr, CardHeightKind::Fixed,
+     48.0f, false, &drawQuotaCard},
     {kTabModules, "settings.card.directory", kModuleIdMarkdown,
      CardHeightKind::Fixed, kDirectoryCardHeight, false, &drawDirectoryCard},
     {kTabModules, "settings.card.proxy", kModuleIdClaudeProxy,
@@ -200,6 +203,16 @@ public:
                       toolReg.errorMessage());
         }
         applyThemeRuntime();
+        // 启动时恢复强调色（load 期写入 cfg_.accentTheme，sanitized 已保证合法值）
+        {
+            ::core::theme::Accent a;
+            if (cfg_.accentTheme == "purple")      a = ::core::theme::Accent::Purple;
+            else if (cfg_.accentTheme == "pink")   a = ::core::theme::Accent::Pink;
+            else if (cfg_.accentTheme == "blue")   a = ::core::theme::Accent::Blue;
+            else                                    a = ::core::theme::Accent::Clay;
+            ::core::theme::setAccent(a);
+        }
+        devdesk::quota_bridge::setQuotaFeatureEnabled(cfg_.quotaEnabled);
         ::core::theme::setFontScale(
             static_cast<float>(cfg_.fontScalePercent) / 100.0f);
         // 编辑器字号经 core::theme 通道传给 markdown（模块隔离）。
@@ -296,6 +309,22 @@ public:
                  ::core::theme::currentThemeName() + "）");
     }
 
+    void applyAccentTheme(int index) {
+        if (index < 0 || index >= kAccentPresetCount) return;
+        cfg_.accentTheme = kAccentPresetValues[index];
+        ::core::theme::Accent a;
+        if (cfg_.accentTheme == "purple")      a = ::core::theme::Accent::Purple;
+        else if (cfg_.accentTheme == "pink")   a = ::core::theme::Accent::Pink;
+        else if (cfg_.accentTheme == "blue")   a = ::core::theme::Accent::Blue;
+        else                                    a = ::core::theme::Accent::Clay;
+        ::core::theme::setAccent(a);
+        persist();
+        // 提示文案不带色名以避免 "clay" 这个内部名对用户无意义
+        const char* names[] = {"Claude 橙", "雾紫", "玫瑰粉", "QQ 蓝"};
+        setStatus(std::string("主题色：") + names[index] + "（即时生效）");
+        LOG_INFO("Settings: 强调色 → " + cfg_.accentTheme);
+    }
+
     void applyFontPreset(int index) {
         if (index < 0 || index >= kFontPresetCount) return;
         cfg_.fontScalePercent = kFontPresets[index];
@@ -373,6 +402,17 @@ public:
                  std::string(on ? "true" : "false"));
     }
 
+    // 供应商余量总开关：即时生效（开 → 启动后台刷新 + 首页卡出现；关 → 停刷新 + 卡隐藏）。
+    // 关闭不删数据库里配额表/数据/已配供应商引用。
+    void applyQuotaEnabled(bool on) {
+        cfg_.quotaEnabled = on;
+        persist();
+        devdesk::quota_bridge::setQuotaFeatureEnabled(on);
+        setStatus(on ? "供应商余量已开启（首页卡片与配置入口即时生效）"
+                     : "供应商余量已关闭（数据保留不删）");
+        LOG_INFO("Settings: quotaEnabled → " + std::string(on ? "true" : "false"));
+    }
+
     // 应用代理端口：重启失败时代理已停、sidecar 已还原，状态栏提示可换端口重试。
     void applyProxyPort() {
         int port = 0;
@@ -443,79 +483,6 @@ public:
         }
     }
 
-    void changePetSkinAt(int idx) {
-        if (idx < 0 || idx >= static_cast<int>(petSkins_.size())) {
-            return;
-        }
-        petSkinName_ = petSkins_[static_cast<size_t>(idx)];
-        ::module::pet::applyPetSkin(petSkinName_);
-    }
-
-    void changePetScaleAt(int idx) {
-        if (idx < 0 || idx >= static_cast<int>(petScaleLabels_.size())) {
-            return;
-        }
-        ::module::pet::applyPetScaleIndex(idx);
-        petScaleIdx_ = idx;
-        LOG_INFO("Settings: 桌宠显示大小 → " +
-                 petScaleLabels_[static_cast<size_t>(idx)]);
-    }
-
-    void resetPetPosition() {
-        ::module::pet::resetPetPosition();
-        setStatus("桌宠位置已重置（主屏右下角）");
-    }
-
-    void showPetWindow() {
-        using Outcome = ::module::pet::PetShowOutcome;
-        switch (::module::pet::showPetWindow()) {
-            case Outcome::Shown:
-                setStatus("已请求显示桌宠");
-                break;
-            case Outcome::AlreadyOpen:
-                showToast("桌宠已在显示中");
-                break;
-            case Outcome::NotAssembled:
-                showToast("已启用，重启 DevDesk 后生效");
-                break;
-            case Outcome::StartFailed:
-                showToast("桌宠启动失败", "皮肤资产不可用，详情见日志",
-                          /*isError=*/true);
-                break;
-        }
-    }
-
-    // 桌宠开关即时可见性：关 → 立即关窗，开 → 立即原位重开（未装配则提示重启生效）。
-    void applyPetModuleVisibility(bool on) {
-        if (!on) {
-            const bool closed = ::module::pet::closePetWindow();
-            setStatus(closed
-                          ? "桌宠已关闭并立即隐藏（重启 DevDesk 后不再装配）"
-                          : "桌宠已关闭（本次会话未开窗；重启 DevDesk 后不再装配）");
-            LOG_INFO(std::string("Settings: 桌宠模块关闭 → ") +
-                     (closed ? "窗口已请求关闭" : "无窗口可关") + "（重启后不再装配）");
-            return;
-        }
-        using Outcome = ::module::pet::PetShowOutcome;
-        switch (::module::pet::showPetWindow()) {
-            case Outcome::Shown:
-            case Outcome::AlreadyOpen:
-                setStatus("桌宠已开启并立即显示");
-                LOG_INFO("Settings: 桌宠模块开启 → 窗口已重新入队开窗");
-                break;
-            case Outcome::NotAssembled:
-                showToast("已启用，重启 DevDesk 后生效");
-                LOG_INFO("Settings: 桌宠模块开启 → 本会话未装配，重启后生效");
-                break;
-            case Outcome::StartFailed:
-                showToast("桌宠启动失败", "皮肤资产不可用，详情见日志",
-                          /*isError=*/true);
-                LOG_ERROR("Settings: 桌宠模块开启 → 开窗失败（皮肤不可用）");
-                break;
-        }
-    }
-
-    // 模块开关：只写 app_config + 经 app::toggle 桥发「开关意图」；桌宠额外做即时窗口同步。
     void applyModuleEnabled(const std::string& moduleId, bool on) {
         auto& v = cfg_.enabledModules;
         auto it = std::find(v.begin(), v.end(), moduleId);
@@ -527,10 +494,6 @@ public:
             return;  // 状态没变（重复点击），不写盘
         }
         persist();
-        if (moduleId == kModuleIdPet) {
-            applyPetModuleVisibility(on);
-            return;
-        }
         app::toggle::onModuleToggled(moduleId, on);   // 即时生效（桥内处理反馈）
         setStatus((on ? "模块已开启：" : "模块已关闭：") + moduleId);
         LOG_INFO("Settings: 模块开关 " + moduleId + " → " +
@@ -1711,7 +1674,6 @@ public:
         const bool claudeOn =
             moduleEnabled(cfg_, kModuleIdClaudeProxy);
         const bool mdOn = moduleEnabled(cfg_, kModuleIdMarkdown);
-        const bool petOn = moduleEnabled(cfg_, kModuleIdPet);
         const auto compTheme = core::theme::componentTokens(t);
 
         ui.column("settings.root")
@@ -1755,8 +1717,7 @@ public:
                     .contentKey("settings.cards.t" +
                                 std::to_string(settingsTab_) + "." +
                                 std::to_string(static_cast<int>(proxyH)) +
-                                (claudeOn ? "C" : "c") + (mdOn ? "M" : "m") +
-                                (petOn ? "P" : "p"))
+                                (claudeOn ? "C" : "c") + (mdOn ? "M" : "m"))
                     .offset(cardsScrollOffset_)
                     .onChange([this](float v) { cardsScrollOffset_ = v; })
                     .content([&](eui::Ui& inner, float contentWidth,
@@ -1792,18 +1753,16 @@ private:
     SettingsCardActions cardActions() {
         SettingsCardActions a;
         a.applyThemeMode = [this](int idx) { applyThemeMode(idx); };
+        a.applyAccentTheme = [this](int idx) { applyAccentTheme(idx); };
         a.applyFontPreset = [this](int idx) { applyFontPreset(idx); };
         a.applyWindowEffect = [this](int idx) { applyWindowEffectPreset(idx); };
         a.applyModuleEnabled = [this](const std::string& moduleId, bool on) {
             applyModuleEnabled(moduleId, on);
         };
         a.setDropdownOpen = [this](Dropdown d, bool v) { setDropdownOpen(d, v); };
-        a.changePetSkinAt = [this](int idx) { changePetSkinAt(idx); };
-        a.changePetScaleAt = [this](int idx) { changePetScaleAt(idx); };
-        a.resetPetPosition = [this] { resetPetPosition(); };
-        a.showPetWindow = [this] { showPetWindow(); };
         a.openNotesDirectory = [this] { openNotesDirectory(); };
         a.applyProxyAutoStart = [this](bool on) { applyAutoStart(on); };
+        a.applyQuotaEnabled = [this](bool on) { applyQuotaEnabled(on); };
         a.applyProxyPort = [this] { applyProxyPort(); };
         a.setProxyPortDraft = [this](const std::string& v) {
             setProxyPortDraft(v);
@@ -1870,14 +1829,16 @@ private:
                         float cardsH, float screenH,
                         const core::theme::Tokens& t, float proxyH,
                         ::core::IClaudeProxyService* svc) {
-        SettingsCardsIn in{cfg_, petSkins_, petSkinName_, proxyPortDraft_,
-                           logTail_, petScaleLabels_};
+        // logTail_ 保持原始不预过滤——过滤在装配期做，切档零额外磁盘 IO、下一帧立即生效；
+        // 若在 readLogTailLines/applyLogTail 里过滤，切到低级别要重读磁盘才能看到更多行。
+        auto filteredLogTail = filterLogTailByLevel(logTail_, parseLogLevel(cfg_.logLevel));
+        SettingsCardsIn in{cfg_, proxyPortDraft_,
+                           filteredLogTail};
         in.logTailVersion = logTailVersion_;
         in.logViewScrollOffset = logViewScrollOffset_;
         in.takeoverManaged = takeoverManaged_;
         in.notesDirExists = notesDirExists_;
         in.openDropdown = openDropdown_;
-        in.petScaleIndex = petScaleIdx_;
         in.proxy = svc;
         // GitHub Sync 快照
         in.githubSyncEnabled = githubSyncCfg_.enabled;
@@ -2062,11 +2023,6 @@ private:
         std::error_code ec;
         notesDirExists_ =
             std::filesystem::exists(::core::paths::markdownDir(), ec) && !ec;
-        petSkins_ = ::module::pet::discoverSkins();
-        petSkinName_ = ::module::pet::currentSkinName();
-        // 显示大小三档：文案 + 当前档下标快照（下拉 items/selected 渲染源）
-        petScaleLabels_ = ::module::pet::petScalePresetLabels();
-        petScaleIdx_ = ::module::pet::currentPetScaleIndex();
         externalStateLoaded_ = true;
     }
 
@@ -2129,10 +2085,6 @@ private:
     std::shared_ptr<core::ITool> appReadSettingsTool_;
     // 当前打开的下拉（7 个 bool 收成一个索引，-1 = 全关）；取值 = static_cast<int>(Dropdown)。
     int openDropdown_ = -1;
-    std::vector<std::string> petSkins_;    // 发现到的皮肤（快照见 refreshExternalState）
-    std::string petSkinName_;              // 当前皮肤名（同上）
-    std::vector<std::string> petScaleLabels_;  // 显示大小三档文案（桥快照）
-    int petScaleIdx_ = 1;                  // 当前显示大小档下标（同上）
     // 代理端口输入草稿：空 = 未编辑（compose 显示 cfg_.proxyPort），应用成功后刷新。
     std::string proxyPortDraft_;
     float cardsScrollOffset_ = 0.0f;      // 卡片区 scrollView 滚动位置

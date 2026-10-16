@@ -12,6 +12,7 @@
 #include "core/sqlite_db.h"
 #include "module_todo/todo_service.h"
 
+#include <ctime>
 #include <filesystem>
 #include <memory>
 #include <string>
@@ -895,5 +896,165 @@ REGISTER_TEST(todo_svc_direct_calls_emit_no_events,
     }
     DOCTEST_CHECK_EQ(gotCreated, 0);    // service 层不是发布点
     DOCTEST_CHECK_EQ(gotCompleted, 0);
+    return true;
+})
+
+REGISTER_TEST(todo_archive_move_into_sets_timestamp,
+              "TodoService: moveTask 进入归档列设置 archived_at",
+              {
+    TestEnv env("archive_into");
+    DOCTEST_REQUIRE(env.ready);
+
+    auto cols = env.svc->listColumns();
+    DOCTEST_REQUIRE(cols.isOk());
+    int64_t archiveId = 0;
+    int64_t todoId = 0;
+    for (const auto& c : cols.value()) {
+        if (c.kind == "archive") archiveId = c.id;
+        if (c.kind == "todo") todoId = c.id;
+    }
+    DOCTEST_REQUIRE(archiveId > 0);
+    DOCTEST_REQUIRE(todoId > 0);
+
+    auto t = env.svc->createTask(todoId, "归档测试任务");
+    DOCTEST_REQUIRE(t.isOk());
+    int64_t taskId = t.value().id;
+
+    // 验证初始 archivedAt 为空
+    auto tasksBefore = env.svc->listTasks(todoId);
+    DOCTEST_REQUIRE(tasksBefore.isOk());
+    DOCTEST_REQUIRE(!tasksBefore.value().empty());
+    DOCTEST_CHECK(!tasksBefore.value()[0].archivedAt.has_value());
+
+    // 移动到归档列
+    auto mv = env.svc->moveTask(taskId, archiveId, 0);
+    DOCTEST_CHECK(mv.isOk());
+
+    auto tasksAfter = env.svc->listTasks(archiveId);
+    DOCTEST_REQUIRE(tasksAfter.isOk());
+    DOCTEST_REQUIRE(!tasksAfter.value().empty());
+    DOCTEST_CHECK(tasksAfter.value()[0].archivedAt.has_value());
+    // 时间戳应在最近 5 秒内
+    int64_t now = static_cast<int64_t>(std::time(nullptr));
+    DOCTEST_CHECK(tasksAfter.value()[0].archivedAt.value() >= now - 5);
+    DOCTEST_CHECK(tasksAfter.value()[0].archivedAt.value() <= now + 5);
+    return true;
+})
+
+REGISTER_TEST(todo_archive_move_out_clears_timestamp,
+              "TodoService: moveTask 离开归档列清除 archived_at",
+              {
+    TestEnv env("archive_out");
+    DOCTEST_REQUIRE(env.ready);
+
+    auto cols = env.svc->listColumns();
+    DOCTEST_REQUIRE(cols.isOk());
+    int64_t archiveId = 0;
+    int64_t todoId = 0;
+    for (const auto& c : cols.value()) {
+        if (c.kind == "archive") archiveId = c.id;
+        if (c.kind == "todo") todoId = c.id;
+    }
+    DOCTEST_REQUIRE(archiveId > 0);
+    DOCTEST_REQUIRE(todoId > 0);
+
+    // 直接在归档列建任务（模拟老数据回填路径）
+    auto t = env.svc->createTask(archiveId, "归档后移出");
+    DOCTEST_REQUIRE(t.isOk());
+    int64_t taskId = t.value().id;
+
+    // 移到归档列再移出：先进归档触发时间戳
+    auto mv1 = env.svc->moveTask(taskId, archiveId, 0);
+    DOCTEST_CHECK(mv1.isOk());
+
+    // 再移出到待办列
+    auto mv2 = env.svc->moveTask(taskId, todoId, 0);
+    DOCTEST_CHECK(mv2.isOk());
+
+    auto tasksAfter = env.svc->listTasks(todoId);
+    DOCTEST_REQUIRE(tasksAfter.isOk());
+    bool found = false;
+    for (const auto& task : tasksAfter.value()) {
+        if (task.id == taskId) {
+            DOCTEST_CHECK(!task.archivedAt.has_value());
+            found = true;
+        }
+    }
+    DOCTEST_CHECK(found);
+    return true;
+})
+
+REGISTER_TEST(todo_archive_non_archive_move_preserves_null,
+              "TodoService: 非归档列间移动不置 archived_at",
+              {
+    TestEnv env("archive_null");
+    DOCTEST_REQUIRE(env.ready);
+
+    auto cols = env.svc->listColumns();
+    DOCTEST_REQUIRE(cols.isOk());
+    int64_t todoId = 0;
+    int64_t progressId = 0;  // kind=NULL 的列（「进行中」）
+    for (const auto& c : cols.value()) {
+        if (c.kind == "todo") todoId = c.id;
+        if (c.kind.empty() && c.title == "进行中") progressId = c.id;
+    }
+    DOCTEST_REQUIRE(todoId > 0);
+    DOCTEST_REQUIRE(progressId > 0);
+
+    auto t = env.svc->createTask(todoId, "普通移动");
+    DOCTEST_REQUIRE(t.isOk());
+    int64_t taskId = t.value().id;
+
+    auto mv = env.svc->moveTask(taskId, progressId, 0);
+    DOCTEST_CHECK(mv.isOk());
+
+    auto tasksAfter = env.svc->listTasks(progressId);
+    DOCTEST_REQUIRE(tasksAfter.isOk());
+    bool found = false;
+    for (const auto& task : tasksAfter.value()) {
+        if (task.id == taskId) {
+            DOCTEST_CHECK(!task.archivedAt.has_value());
+            found = true;
+        }
+    }
+    DOCTEST_CHECK(found);
+    return true;
+})
+
+REGISTER_TEST(todo_archive_sql_includes_column,
+              "TodoService: listTasks/listAllTasks/search/listOverdue 结果含 archivedAt",
+              {
+    TestEnv env("archive_col");
+    DOCTEST_REQUIRE(env.ready);
+
+    auto cols = env.svc->listColumns();
+    DOCTEST_REQUIRE(cols.isOk());
+    int64_t todoId = 0;
+    for (const auto& c : cols.value()) {
+        if (c.kind == "todo") { todoId = c.id; break; }
+    }
+    DOCTEST_REQUIRE(todoId > 0);
+
+    auto t = env.svc->createTask(todoId, "列字段");
+    DOCTEST_REQUIRE(t.isOk());
+
+    // archivedAt 初始为 nullopt，不是「列不存在」
+    auto tasks = env.svc->listTasks(todoId);
+    DOCTEST_REQUIRE(tasks.isOk());
+    DOCTEST_REQUIRE(!tasks.value().empty());
+    DOCTEST_CHECK(!tasks.value()[0].archivedAt.has_value());
+
+    // 全量、搜索、逾期也都返回
+    auto all = env.svc->listAllTasks();
+    DOCTEST_REQUIRE(all.isOk());
+    DOCTEST_CHECK(all.value().size() >= 1);
+
+    auto sr = env.svc->search("列字段");
+    DOCTEST_REQUIRE(sr.isOk());
+    DOCTEST_CHECK(sr.value().size() >= 1);
+
+    // 逾期（不过滤到 0 至少不崩）
+    auto ov = env.svc->listOverdue();
+    DOCTEST_CHECK(ov.isOk());
     return true;
 })

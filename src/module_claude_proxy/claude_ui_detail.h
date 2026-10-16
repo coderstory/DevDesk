@@ -40,6 +40,8 @@ struct DetailView {
     std::vector<std::pair<std::string, std::string>> extraSettingsKeys;
     std::string extraSettingsNote;
     // 没有 bodyH 字段：行数预算一律用 contentBottom（真实裁剪下沿）。
+    // 余量功能总开关：false 时不渲染「余量查询」按钮入口
+    bool quotaEnabled = false;
 };
 
 // 生效来源短标签（compose 装配与 pane 共用的单一来源）：三类来源 → 中文标签

@@ -28,6 +28,12 @@ constexpr float kCardHeight = 84.0f;
 constexpr float kCardGap = 8.0f;
 constexpr float kColumnHeaderHeight = 56.0f;
 
+// 序号徽章（每列独立 1..n，纯渲染期计算）。正圆 24px，卡左缘 12px 内缩、8px gap 接标题
+constexpr float kCardOrdinalBadgeSize = 24.0f;
+constexpr float kCardOrdinalBadgeGap = 8.0f;
+// 徽章 + 间距占用的水平宽度（标题等右侧内容的减量）
+constexpr float kCardOrdinalBadgeHoriz = kCardOrdinalBadgeSize + kCardOrdinalBadgeGap;
+
 // 列内容区水平内边距（16px 网格）。卡左缘 = 列内容左缘 + 本常量，卡宽/占位条宽同源
 constexpr float kColumnContentInset = 16.0f;
 
@@ -285,8 +291,12 @@ inline eui::Color priorityColor(Priority p, const core::theme::Tokens& t) {
     return t.colors.*kColorFields[idx <= static_cast<size_t>(Priority::High) ? idx : 0];
 }
 
-// 优先级色底：卡底与详情弹窗优先级按钮底的唯一色源（priorityColor 色表 + 强度表 + priorityTintBg 算式）
-inline constexpr float kPriorityTintStrength[] = {0.12f, 0.16f, 0.22f, 0.30f};
+// 优先级色底：卡底与详情弹窗优先级按钮底的唯一色源（priorityColor 色表 + 强度表 + priorityTintBg 算式）。
+// 强度表在旧值 {0.12,0.16,0.22,0.30} 上两轮上调：第一轮 {0.12,0.22,0.27,0.30}（提单中档可区分性），
+// 第二轮 {0.18,0.30,0.38,0.42}（用户 2026-10-13 要求更鲜艳，None 档 0.12→0.18 由列色淡染接管后按需调）。
+// 档间单调递增：None<Low<Medium<High。High 档（红 #CF2D56）保持与上两档同增幅（+0.04），
+// 其视觉强度较高，等量 tint 比前三档的蓝/橙基色更"跳"，再加大反喧宾夺主。
+inline constexpr float kPriorityTintStrength[] = {0.18f, 0.30f, 0.38f, 0.42f};
 static_assert(std::size(kPriorityTintStrength) ==
               static_cast<size_t>(Priority::High) + 1);
 
@@ -304,11 +314,16 @@ inline eui::Color priorityTintBg(Priority p, const core::theme::Tokens& t,
     return eui::mixColor(base, priorityColor(p, t), strength);
 }
 
-// ① 看板卡底：None 不加 tint，低/中/高按强度表混；优先级色相与 hover/active 反馈叠加而非互相覆盖
+// ① 看板卡底：None 走列色淡染 0.12——列区分列（待办=clay橙、进行中=amber、已完成=sage、
+// 归档=warm-gray，归档天然灰契合只读气质）；低/中/高按强度表混优先级原生色（优先级语义覆盖列染）。
+// columnColor=nullopt 时退 base 原色（列无色/无头测试等场景）。色相与 hover/active 反馈叠加而非互相覆盖
 inline eui::Color priorityCardBg(Priority p, const core::theme::Tokens& t,
-                                 const eui::Color& base) {
-    return priorityTintBg(p, t, base,
-                          p == Priority::None ? 0.0f : priorityTintStrength(p));
+                                 const eui::Color& base,
+                                 const std::optional<eui::Color>& columnColor = std::nullopt) {
+    if (p == Priority::None) {
+        return columnColor.has_value() ? eui::mixColor(base, *columnColor, 0.12f) : base;
+    }
+    return priorityTintBg(p, t, base, priorityTintStrength(p));
 }
 
 // ② 按钮选中档强度：不取 1.0 实色——实色底配单一前景 token 总有一档掉到 4.5:1 以下；0.55 深 tint 四档均 ≥ 6.0:1
@@ -352,6 +367,19 @@ inline const Column* findColumn(const std::vector<Column>& columns, int64_t id) 
     return nullptr;
 }
 
+// epoch 秒 → "YYYY-MM-DD HH:MM:SS"（24h 制，本地时区）；<=0 返回空串
+inline std::string formatArchivedAt(int64_t epoch) {
+    if (epoch <= 0) return {};
+    std::time_t tt = static_cast<std::time_t>(epoch);
+    std::tm tmv{};
+    core::time::localTime(tt, &tmv);
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "%04d-%02d-%02d %02d:%02d:%02d",
+                  tmv.tm_year + 1900, tmv.tm_mon + 1, tmv.tm_mday,
+                  tmv.tm_hour, tmv.tm_min, tmv.tm_sec);
+    return std::string(buf);
+}
+
 // 列内任务（按 position 升序）；看板列内容与删除确认弹窗共用
 inline std::vector<const Task*> tasksInColumn(const std::vector<Task>& tasks,
                                               int64_t columnId) {
@@ -361,6 +389,23 @@ inline std::vector<const Task*> tasksInColumn(const std::vector<Task>& tasks,
     }
     std::sort(out.begin(), out.end(), [](const Task* a, const Task* b) {
         return a->position < b->position;
+    });
+    return out;
+}
+
+// 归档列任务（按 archived_at 倒序，最近归档的在最上面；同刻并列时 position 兜底）
+// 非归档列用 tasksInColumn（按 position 升序）。手动 position 写入对归档列仍可发生但显示忽略。
+inline std::vector<const Task*> tasksInArchiveColumn(const std::vector<Task>& tasks,
+                                                      int64_t columnId) {
+    std::vector<const Task*> out;
+    for (const auto& t : tasks) {
+        if (t.columnId == columnId) out.push_back(&t);
+    }
+    std::sort(out.begin(), out.end(), [](const Task* a, const Task* b) {
+        const auto aVal = a->archivedAt.value_or(0);
+        const auto bVal = b->archivedAt.value_or(0);
+        if (aVal != bVal) return aVal > bVal;  // 最近的在最上面 → DESC
+        return a->position < b->position;      // 同刻并列靠 position 兜底
     });
     return out;
 }

@@ -13,6 +13,7 @@ add_executable(devdesk_tests
     test_core/test_sql_dump.cpp
     test_core/test_theme.cpp
     test_core/test_theme_fontscale.cpp
+    test_core/test_theme_accents.cpp
     test_core/test_router.cpp
     test_core/test_schema.cpp
     test_core/test_app_config.cpp
@@ -35,9 +36,11 @@ add_executable(devdesk_tests
     test_platform/test_terminal_launch.cpp
     test_platform/test_file_watcher.cpp
     test_platform/test_tray_icon.cpp
+    test_platform/test_single_instance.cpp
     test_modules/test_markdown.cpp
     test_modules/test_markdown_service.cpp
     test_modules/test_markdown_tools.cpp
+    test_modules/test_md_note_git.cpp
     test_modules/test_md_highlight.cpp
     test_modules/test_md_keyword_highlight.cpp
     test_modules/test_md_file_open.cpp
@@ -95,7 +98,6 @@ add_executable(devdesk_tests
     test_modules/test_module_icons.cpp
     test_modules/test_font_em_layout.cpp
     test_modules/test_module_gating.cpp
-    test_modules/test_pet.cpp
     test_modules/test_menu_beautify.cpp
     test_modules/test_tray_dynamic.cpp
     test_modules/test_theme_hierarchy.cpp
@@ -196,7 +198,6 @@ target_link_libraries(devdesk_tests PRIVATE
     devdesk_module_claude_proxy
     devdesk_module_settings
     devdesk_module_about
-    devdesk_module_pet
 )
 
 # 确保 doctest.h 可被 #include "doctest.h" 找到
@@ -250,7 +251,6 @@ foreach(_probe_source ${_devdesk_probe_sources})
         devdesk_module_claude_proxy
         devdesk_module_settings
         devdesk_module_about
-        devdesk_module_pet
     )
     # probe_harness.h 的帧捕获段（--screenshot）要 <png.h> 编码 PNG：libpng 由
     # EUI-NEO vendored（1.6.43，简化 API png_image_write_to_file 自带 deflate），

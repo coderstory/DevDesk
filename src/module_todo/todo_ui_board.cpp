@@ -12,6 +12,7 @@
 #include <components/scrollview.h>
 
 #include <algorithm>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -275,6 +276,13 @@ void drawColumnContent(eui::Ui& ui, const std::string& id, const Column& col,
     colTasks = filterBySearch(colTasks, v.searchMatchIds, !v.searchQuery.empty());
     // 归档列语义走 kind；按标题判会在重命名后失效
     const bool isArchive = (col.kind == "archive");
+    // 归档列排序强制按 archived_at DESC（最近的在最上面），忽略手动 position——列内拖拽排序无效化
+    auto archiveTasks = isArchive ? tasksInArchiveColumn(v.tasks, col.id) : std::vector<const Task*>{};
+    auto archiveFiltered = isArchive
+        ? filterBySearch(archiveTasks, v.searchMatchIds, !v.searchQuery.empty())
+        : std::vector<const Task*>{};
+    const auto& renderTasks = isArchive ? archiveFiltered : colTasks;
+    const size_t taskCount = renderTasks.size();
 
     // 列头右键热区。纯命中区必须显式给全透明：Rect 默认不透明白色，深色主题会刷白
     ui.rect(id + ".head")
@@ -303,10 +311,13 @@ void drawColumnContent(eui::Ui& ui, const std::string& id, const Column& col,
         .position(colDot.has_value() ? 34.0f : 16.0f, 16.0f)
         // 右侧留到 width-88：给 ✎ 重命名（width-70 起）和 + 加任务（width-36 起）两个按钮
         .size(width - 88.0f - (colDot.has_value() ? 18.0f : 0.0f), 20.0f)
-        .text(col.title + " (" + std::to_string(colTasks.size()) + ")")
+        .text(col.title + " (" + std::to_string(taskCount) + ")")
         .fontSize(t.sizes.fontSizeBody)
         .lineHeight(20.0f)
         .fontWeight(600)
+        // 省略号三件套：列名 + 计数超宽时截断，不压右侧 ✎/+ 按钮
+        .maxWidth(width - 88.0f - (colDot.has_value() ? 18.0f : 0.0f))
+        .overflow(core::TextOverflow::Ellipsis)
         .color(t.colors.textPrimary)
         .build();
 
@@ -333,7 +344,7 @@ void drawColumnContent(eui::Ui& ui, const std::string& id, const Column& col,
         .onClick([cb = v.act.addTaskToColumn, col] { cb(col.id); })
         .build();
 
-    if (colTasks.empty()) {
+    if (taskCount == 0) {
         // 空列无滚动容器，占位条直接画在列内容层首卡位（内容高 0，滚动恒 0）
         if (v.dragActive && v.dragHoverColumn == static_cast<int>(colIndex) &&
             v.dragHoverRow >= 0) {
@@ -370,7 +381,7 @@ void drawColumnContent(eui::Ui& ui, const std::string& id, const Column& col,
                 .gap(kCardGap)
                 .step(60.0f)
                 .theme(componentTheme)
-                .contentKey(id + ".scroll." + std::to_string(colTasks.size()))
+                .contentKey(id + ".scroll." + std::to_string(taskCount))
                 .offset(columnScrollOffset(v.columns, v.columnScrolls, colIndex))
                 .onChange([cb = v.act.columnScrollChanged, colIndex](float value) {
                     cb(colIndex, value);
@@ -387,7 +398,7 @@ void drawColumnContent(eui::Ui& ui, const std::string& id, const Column& col,
                                       (kCardHeight + kCardGap) - kCardGap);
                         drawDropBar(inner, barY, cardW);
                     }
-                    for (size_t i = 0; i < colTasks.size(); ++i) {
+                    for (size_t i = 0; i < taskCount; ++i) {
                         const std::string cardId =
                             id + ".card." + std::to_string(i);
                         // wrap 占满内容宽（流式子元素，position 无效），卡在 wrap 内按 inset 落位
@@ -396,7 +407,7 @@ void drawColumnContent(eui::Ui& ui, const std::string& id, const Column& col,
                             .content([&] {
                                 drawCard(inner, cardId, kColumnContentInset,
                                          0.0f, cardW, t,
-                                         *colTasks[i],
+                                         *renderTasks[i],
                                          static_cast<int>(colIndex),
                                          static_cast<int>(v.columns.size()),
                                          static_cast<int>(i), v, plate);
@@ -432,13 +443,21 @@ void drawCard(eui::Ui& ui, const std::string& id, float x, float y, float width,
         .border(0.0f, t.colors.borderDefault)  // 边框职责已移到内部交互层
         .content([&] {
 
+    // 交互层（卡内首层）：优先级直接改卡底色，hover/active 同走该算式；边框与底色独立，选中态不被盖掉
+    // 列色淡染：None 优先级按所在列色 0.12 混底，列区分列（优先级语义优先于列染）
+    const auto colTint = colIndex >= 0 &&
+        static_cast<size_t>(colIndex) < v.columns.size()
+            ? columnDotColor(v.columns[static_cast<size_t>(colIndex)].color)
+            : std::optional<eui::Color>{};
+    const auto cardBase = t.colors.surface;
+    const auto cardHover = t.colors.hover;
+    const auto cardActive = t.colors.active;
     ui.rect(id + ".bg")
         .position(0.0f, y)
         .size(width, kCardHeight)
-    // 交互层（卡内首层）：优先级直接改卡底色，hover/active 同走该算式；边框与底色独立，选中态不被盖掉
-        .states(priorityCardBg(task.priority, t, t.colors.surface),
-                priorityCardBg(task.priority, t, t.colors.hover),
-                priorityCardBg(task.priority, t, t.colors.active))
+        .states(priorityCardBg(task.priority, t, cardBase, colTint),
+                priorityCardBg(task.priority, t, cardHover, colTint),
+                priorityCardBg(task.priority, t, cardActive, colTint))
         .border(selected ? 2.0f : 1.0f,
                 selected ? t.colors.primary : t.colors.borderDefault)
         // hover/按下颜色过渡（0.1s OutQuad；拖拽半透明 opacity 不在掩码里）
@@ -490,6 +509,20 @@ void drawCard(eui::Ui& ui, const std::string& id, float x, float y, float width,
     }
 
     // tags chip（前 2 个 + 超出 +N；完整编辑在详情弹窗）
+    // 归档列卡片显示归档时间戳（muted textTertiary，pill 形）
+    const bool showArchivedChip = colIndex >= 0 &&
+        static_cast<size_t>(colIndex) < v.columns.size() &&
+        v.columns[static_cast<size_t>(colIndex)].kind == "archive" &&
+        task.archivedAt.has_value();
+    if (showArchivedChip) {
+        const std::string archText = formatArchivedAt(task.archivedAt.value());
+        const float archW = chipWidth(archText);
+        const float avail = std::max(0.0f, width - 12.0f - chipX);
+        if (archW <= avail) {
+            pendingChips.push_back({id + ".archived", archW, archText,
+                                    t.colors.textTertiary});
+        }
+    }
     if (!task.tags.empty()) {
         size_t shown = 0;
         for (size_t ti = 0; ti < task.tags.size() && shown < 2; ++ti) {
@@ -516,15 +549,68 @@ void drawCard(eui::Ui& ui, const std::string& id, float x, float y, float width,
     const float groupTop = cardContentGroupTop(chipRow);
     const float chipY = y + groupTop + kCardTitleLineH + kCardTitleToChipGap;
 
+    // 序号徽章：每列独立 1..n，纯渲染期计算
+    const bool badgeMuted = colIndex >= 0 &&
+        static_cast<size_t>(colIndex) < v.columns.size() &&
+        (v.columns[static_cast<size_t>(colIndex)].kind == "done" ||
+         v.columns[static_cast<size_t>(colIndex)].kind == "archive");
+    const eui::Color badgeBg =
+        badgeMuted ? t.colors.surface : t.colors.surfaceElevated;
+    // 数字中性色：颜色全交给彩环——pink 浅色档 3.6:1 不够 12px 小字 WCAG AA，
+    // 数字染彩会破可读性；环色独立承载徽章身份。done/archive 列照旧降档
+    const eui::Color badgeText =
+        badgeMuted ? t.colors.textTertiary : t.colors.textSecondary;
+    const bool overflow = cardIndex >= 99;
+    const std::string ordinalText =
+        overflow ? "99+" : std::to_string(cardIndex + 1);
+    const float badgeFontSize = overflow ? 11.0f : 12.0f;
+    // 六色池按 task.id 稳定哈希伪随机——视觉随机 + 跨帧/跨重启不变，禁止逐帧真随机（会闪变）。
+    // 不含 error/primary：error 语义因列独立、primary 主色保留给品牌焦点
+    static const eui::Color core::theme::ColorTokens::*kBadgeRingColors[] = {
+        &core::theme::ColorTokens::purple, &core::theme::ColorTokens::pink,
+        &core::theme::ColorTokens::blue,  &core::theme::ColorTokens::info,
+        &core::theme::ColorTokens::success, &core::theme::ColorTokens::warning,
+    };
+    const size_t colorIdx = static_cast<size_t>(task.id) * 2654435761u % 6;
+    const eui::Color ringColor = t.colors.*kBadgeRingColors[colorIdx];
+    // 正圆底：与 18px 标题行垂直居中（24-18=6 → 上偏 3）
+    ui.rect(id + ".badge")
+        .position(12.0f, y + groupTop - 3.0f)
+        .size(kCardOrdinalBadgeSize, kCardOrdinalBadgeSize)
+        .color(badgeBg)
+        .radius(kCardOrdinalBadgeSize / 2.0f)
+        .border(2.0f, ringColor)
+        .opacity(cardOpacity)
+        .build();
+    // 数字（EUI-NEO verticalAlign::Center 补偿基线偏移，不靠目测）
+    ui.text(id + ".badge.text")
+        .position(12.0f, y + groupTop - 3.0f)
+        .size(kCardOrdinalBadgeSize, kCardOrdinalBadgeSize)
+        .text(ordinalText)
+        .fontSize(badgeFontSize)
+        .lineHeight(kCardOrdinalBadgeSize)
+        .horizontalAlign(eui::HorizontalAlign::Center)
+        .verticalAlign(eui::VerticalAlign::Center)
+        .color(badgeText)
+        .fontWeight(600)
+        .opacity(cardOpacity)
+        .build();
+
     // 标题水平居中 = 框对称化（总留白 80、右缘让开完成角标区）+ horizontalAlign Center
+    // 徽章占用 kCardOrdinalBadgeHoriz（24+8=32px），标题可用宽度相应缩减。
+    // 省略号需 overflow==Ellipsis && maxWidth>0 && !wrap 三件套；右缘角标约束不变——
+    // maxWidth 与 size 同宽，已计入完成角标区 [W-36, W-12] 让位
     ui.text(id + ".title")
         .position(kCardTitleBoxInset, y + groupTop)
-        .size(width - 2.0f * kCardTitleBoxInset, kCardTitleLineH)
+        .size(width - 2.0f * kCardTitleBoxInset - kCardOrdinalBadgeHoriz,
+              kCardTitleLineH)
         .text(task.title)
         .fontSize(t.sizes.fontSizeBody - 1.0f)
         .lineHeight(kCardTitleLineH)
         .fontWeight(500)
         .horizontalAlign(eui::HorizontalAlign::Center)
+        .maxWidth(width - 2.0f * kCardTitleBoxInset - kCardOrdinalBadgeHoriz)
+        .overflow(core::TextOverflow::Ellipsis)
         .color(t.colors.textPrimary)
         .opacity(done ? 0.6f : cardOpacity)
         .build();
@@ -586,15 +672,23 @@ void drawDragGhost(eui::Ui& ui, const core::theme::Tokens& t,
                 .padding(0.0f)
                 .border(0.0f, t.colors.borderDefault)
                 .content([&] {
-            // 底 + 2px primary 描边（同真卡选中态）；底色同走 priorityCardBg，否则拖到一半优先级指示消失
+            // 底 + 2px primary 描边（同真卡选中态）；底色同走 priorityCardBg，否则拖到一半优先级指示消失。
+            // 列色淡染：同 drawCard——None 优先级按所在列色区分（拖印副本延续列身份）
+                    const auto* ghostCol = findColumn(v.columns, task->columnId);
+                    const auto ghostColTint = ghostCol
+                        ? columnDotColor(ghostCol->color)
+                        : std::optional<eui::Color>{};
                     ui.rect("todo.dragghost.bg")
                         .position(0.0f, 0.0f)
                         .size(w, kCardHeight)
-                        .color(priorityCardBg(task->priority, t, t.colors.surface))
+                        .color(priorityCardBg(task->priority, t, t.colors.surface,
+                                              ghostColTint))
                         .border(2.0f, t.colors.primary)
                         .radius(t.sizes.radius)
                         .build();
-                    // 标题同真卡居中形态（副本不画 chips = 无 chip 卡：独占整卡居中）
+                    // 标题同真卡居中形态（副本不画 chips = 无 chip 卡：独占整卡居中）。
+                    // 省略号三件套同真卡；副本无序号徽章，不减 kCardOrdinalBadgeHoriz——
+                    // 缺了长标题会从副本卡两侧溢出（居中对齐两侧一起冒）
                     ui.text("todo.dragghost.title")
                         .position(kCardTitleBoxInset, cardContentGroupTop(false))
                         .size(w - 2.0f * kCardTitleBoxInset, kCardTitleLineH)
@@ -603,6 +697,8 @@ void drawDragGhost(eui::Ui& ui, const core::theme::Tokens& t,
                         .lineHeight(kCardTitleLineH)
                         .fontWeight(500)
                         .horizontalAlign(eui::HorizontalAlign::Center)
+                        .maxWidth(w - 2.0f * kCardTitleBoxInset)
+                        .overflow(core::TextOverflow::Ellipsis)
                         .color(t.colors.textPrimary)
                         .build();
                 })

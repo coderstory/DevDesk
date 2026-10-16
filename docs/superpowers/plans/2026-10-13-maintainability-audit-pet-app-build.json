@@ -1,0 +1,105 @@
+{
+  "shard": "pet-app-build",
+  "baseline_sha": "HEAD",
+  "audit_date": "2026-10-13",
+  "scope": "pet皮肤发现/渲染/桥接 + app装配层(single_instance接线) + ui_kit(metrics.h Wide 560→640) + 构建体系(Wno-error白名单/平台文件选择/脚本重复段/跨仓库耦合)",
+  "resolved_from_previous": [
+    {"id": "PAB-05", "status": "RESOLVED", "note": "气泡调度已抽成 petBubbleSchedule 纯函数(pet_bubble.h)，petCompose 不再内联调度概率"},
+    {"id": "PAB-07", "status": "RESOLVED", "note": "pet_config::save 走 SQLite appconfig::set，不再 trunc 原地写文件；文件级原子写已消除"},
+    {"id": "PAB-08", "status": "RESOLVED", "note": "pet_skin.cpp 从 745 行缩至 212 行；generateRobotSkin/generateGhostSkin/自研PNG编码器/Canvas光栅器已全部删除；ensureDefaultSkin 改为从 assets/pets/robot/ 加载随包资产"},
+    {"id": "PAB-10", "status": "RESOLVED", "note": "CompilerWarnings.cmake:28 已改全档 -Werror(不再按 Debug/Release 分支)，注释写明 2026-09-28 PAB-10"},
+    {"id": "PAB-12", "status": "RESOLVED", "note": "pet_window.cpp:63-66 已改用 std::mt19937 + std::random_device 播种，pickPetPhrase 用 uniform_int_distribution"}
+  ],
+  "partially_resolved_from_previous": [
+    {"id": "PAB-02", "status": "PARTIAL", "note": "ModuleSet 已改为 vector<GatedEntry>；但 kModuleRegistry 仍是 constexpr 定长数组，主模块新增仍需改 5+ 处(表行/factory声明/CMake add_subdirectory+target_link_libraries/include目录/main.cpp moduleForPage switch)"},
+    {"id": "PAB-03", "status": "PARTIAL", "note": "executeTrayAction 已改为先调 dispatchTrayNavigation(pageForTrayAction → navigateFromTray)；但 main.cpp:329 trayNavAvailableFromConfig 依然存在且无测"},
+    {"id": "PAB-09", "status": "PARTIAL", "note": "pet_window.cpp「穿透」残留注释已清理(文件头/右键菜单顺序/PetUiState)；app_sidebar.cpp:275 侧边栏宽度注释 260→208 已修；test_menu_beautify.cpp 用例标题/断言数尚未核实是否已修正"}
+  ],
+  "findings": [
+    {
+      "id": "PAB-14",
+      "file": "src/platform/single_instance_macos.cpp",
+      "line": 8,
+      "lens": "architect",
+      "title": "macOS 单实例实现恒 true 使开发构建无互斥保护——裸二进制运行时两进程同时持锁",
+      "issue": "single_instance_macos.cpp:8 的 acquireInstanceLock() 恒返回 true，注释称「.app bundle 由系统保证单实例」。但开发阶段 DevDesk 直接从 build/ 目录运行裸二进制（非 .app bundle），此时 macOS 不提供系统级单实例保证 —— 两个 ./build/DevDesk 进程可同时运行，都认为自己是最先实例。notifyExistingInstance() 也是 no-op，二次运行无法唤起已有窗口。同时 SQLite 数据库被两个进程共享打开（WAL 模式只缓解读并发，写冲突仍会发生——两个实例各自 migrate/写 app_config/记调用日志）。",
+      "impact": "开发期误开多实例 → SQLite 写冲突（SQLITE_BUSY/locked）→ 表现可能是「配置保存失败」「调用日志丢失」「迁移报错」等间歇性问题，难复现、难排查。该实现只在通过 .app bundle 启动时正确（生产/测试安装路径），但开发日常、CI、worktree 构建产物全都是裸二进制。",
+      "severity": "HIGH",
+      "already_registered": false,
+      "suggestion": "macOS 实现与 POSIX 实现不应相同：macOS 应增加 Unix domain socket 或 POSIX flock 后备——仅在 NSBundle 检测确认运行在 .app bundle 内时才恒 true；否则走与 Windows 同构的 IPC 单实例锁（lockf/flock + socket 通知）。短期可先在「非 .app bundle」时打印 LOG_WARN '多实例风险：当前非 .app bundle 启动，无法阻止重复运行' 至少出声。"
+    },
+    {
+      "id": "PAB-15",
+      "file": "src/main.cpp",
+      "line": 426,
+      "lens": "architect",
+      "title": "single_instance 挂载点依赖 dslAppConfig 函数内 static 初始化顺序——无显式护栏保证'在任何副作用之前执行'",
+      "issue": "main.cpp:425-430 的 acquireInstanceLock()+std::exit(0) 正确放在 dslAppConfig() 函数体内、在所有 static 初始化（themeRestored/config/initialized）之前。但这一顺序完全依赖 C++ 同一函数内 static 局部变量初始化顺序（标准保证的规则），没有显式的编译期或运行期断言来锁死「单实例检查必须先于 DB 打开/日志写盘/窗口创建」。如果后续有人把 dslAppConfig 拆成多个辅助函数、或把 static 初始化提升为独立调用，入口检查可能被不经意地挪到 DB::open 之后——DB 创建后 std::exit 退出会留下未正确关闭的 SQLite 文件（WAL/SHM 残留）。",
+      "impact": "历史上 W2/W3 两次启动顺序事故都属同一类：注释承诺的顺序被重构打破，而零测试、零编译期护栏。这次 single_instance 是同类模式的再现——注释（:425）是唯一的契约载体。DSL 框架的 dslAppConfig() 签名契约只要求返回 DslAppConfig，不保证函数体内发生的事情顺序——这是 DevDesk 自己对框架函数体内部的约定，框架本身不知情。",
+      "severity": "MEDIUM",
+      "already_registered": false,
+      "suggestion": "在 main.cpp 顶部（#include 之后、匿名命名空间之前）加一条简单的 static_assert 风格的编译期检查不可行（static 初始化顺序是运行期概念）。退而求其次：(1) 在 setupLogging() 和 openAppDatabase() 开头各加一句 LOG_FATAL_IF 检查「单实例已失败则不得走到这里」(需暴露一个 bool g_lockAcquired)，即使 acquireInstanceLock 晚于 openAppDatabase 也只是断言挂掉而非静默继续；(2) 或把 acquireInstanceLock 从 dslAppConfig 移到 main 函数（如果 EUI-NEO 暴露了 pre-app-config 钩子），使阅读者从 main 入口就看见这条防护。"
+    },
+    {
+      "id": "PAB-22",
+      "file": "cmake/Dependencies.cmake",
+      "line": 106,
+      "lens": "architect",
+      "title": "CURL 静态链接依赖闭包为手写 15 库清单——MSYS2 更新 curl 依赖链时静默断链",
+      "issue": "Dependencies.cmake:106-119 硬编码了 libcurl 静态链接的 15 个传递依赖库名（ssh2/nghttp2/ngtcp2/nghttp3/psl/idn2/brotlidec/brotlicommon/zstd/unistring/iconv/z + 5 个 Windows 系统库）。注释（:99-104）称「与 pkg-config --static --libs libcurl 对齐」，但这是手动维护的对齐——MSYS2 升级 curl 增加新依赖（如近期 curl 8.x 引入的 nghttp3/ngtcp2）时，本列表不会自动更新。链接失败只表现为 undefined reference，排查者要从符号名反推缺哪个库再手动补进列表。:130 行注释「缺了再按链接报错补」承认了这种被动维护模式。",
+      "impact": "Windows CI 的首次构建依赖 MSYS2 的 curl 版本；MSYS2 滚动更新后新增依赖会导致 CI 突然红灯（链接失败），修复需要人肉推导缺失库名。MacOS 侧走 Homebrew 的 curl（动态链接 .dylib），不受此影响——两平台维护不对称。",
+      "severity": "MEDIUM",
+      "already_registered": false,
+      "suggestion": "CMake 3.20+ 的 pkg_check_modules 支持 IMPORTED_TARGET 模式：`pkg_check_modules(CURL_STATIC IMPORTED_TARGET libcurl)` 后直接 link PkgConfig::CURL_STATIC —— 闭包由 pkg-config 维护而非手写清单。当前 CMake 最低版本 3.14，需升到 3.20。升 CMake 最低版本是侵入性改动（需评估 CI runner/开发者机器 CMake 版本），短期可在 foreach 循环末尾加 `message(WARNING ...)` 对缺失库显式提示。"
+    },
+    {
+      "id": "PAB-16",
+      "file": "scripts/build-test-run.sh",
+      "line": 75,
+      "lens": "cpp20-expert",
+      "title": "Windows 工具链 PATH 硬编码开发者本机路径——换机/换用户必改脚本",
+      "issue": "build-test-run.sh:75 硬编码 `/d/software/cmake/cmake-4.3.3-windows-x86_64/bin:/d/software/ninja:/c/msys64/mingw64/bin`，package-windows.sh:54 同样硬编码。macOS 侧（:78-81）更健壮：只在 /opt/homebrew/bin 目录存在且不在 PATH 时才前置。Windows 侧的硬编码假设 cmake/ninja 装在 D: 盘指定目录、MSYS2 在 C:\\msys64——换一台机器、换一个用户安装路径就会失效。CI workflow 在调用脚本前设了 PATH，所以 CI 不受影响；但新开发者 checkout 后直接跑脚本会因找不到 cmake 而失败。",
+      "impact": "降低新开发者上手体验（首个命令就失败）；且 cmake 版本号 4.3.3 写死在路径里，升级 cmake 后路径变更需同步修改脚本。与 Dependencies.cmake 的「从编译器路径推导 MinGW 根」的设计方向相反（那里是自动推导、这里是硬编码）。",
+      "severity": "LOW",
+      "already_registered": false,
+      "suggestion": "Windows 侧也改为探测式：`command -v cmake` 先检查 PATH，没有再尝试固定位置；或注册表读取 MSYS2 安装路径（`/proc/registry/HKEY_LOCAL_MACHINE/SOFTWARE/...`）。版本号从路径中移除（用 `cmake --version` 验证 >= 3.14 即可）。短期可在脚本顶部加 `command -v cmake >/dev/null || export PATH=...` 使 PATH 已有 cmake 时不覆盖。"
+    },
+    {
+      "id": "PAB-18",
+      "file": "src/platform/single_instance_win.cpp",
+      "line": 42,
+      "lens": "cpp20-expert",
+      "title": "监听线程 listenerLoop 永不退出——g_listenerRunning 置 false 路径不存在",
+      "issue": "single_instance_win.cpp:42 的 `while (g_listenerRunning.load(...))` 循环中，g_listenerRunning 在 acquireInstanceLock:77 被设为 true，但全仓无任何代码将其置 false。注释（:43-44）自陈「当前永不置 false，仅在进程退出时自然终止」。std::thread 对象 g_listenerThread 是全局变量，进程退出时其析构函数在全局析构阶段运行——如果线程仍在 wait，std::thread 析构会调用 std::terminate（joinable 线程析构为 UB/terminate）。当前靠进程退出时 OS 回收线程避免了这个问题（进程终止先于全局析构），但如果有人加 releaseInstanceLock() 并尝试 join 线程，会发现没有干净的退出信号。",
+      "impact": "当前实践无害（进程退出时 OS 回收线程），但代码结构暗示「有运行标志可以优雅退出」而实际上不存在该路径——未来任何依赖 g_listenerRunning 的扩展（如应用退出前停监听）都会触发未定义行为。",
+      "severity": "LOW",
+      "already_registered": false,
+      "suggestion": "在进程退出路径（如 armExitHook/runExitHook）中设置 g_listenerRunning=false + SetEvent 唤醒线程 + g_listenerThread.join()，或把 g_listenerThread.detach() 并在注释中明确「永不 join，生命周期由 OS 管理」。短期：在 g_listenerThread 声明处加注释「线程永不 join，进程退出时由 OS 回收——不能加 join()」，消除误导。"
+    },
+    {
+      "id": "PAB-21",
+      "file": "src/ui_kit/metrics.h",
+      "line": 32,
+      "lens": "cpp20-expert",
+      "title": "DialogWidth::Wide 560→640 无视觉回归护栏——三个消费者布局正确性只能肉眼验证",
+      "issue": "metrics.h:32 DialogWidth::Wide 从 560 改为 640，影响三条消费路径：claude_ui_ccswitch.cpp:250（ccswitch 弹窗）、todo_ui_dialogs.cpp:415（todo 详情弹窗）、todo_ui_dialogs.cpp:595（todo 逾期弹窗）。三条路径各自有硬编码的按钮宽计算（dialog_form.cpp:70 buttonWidth = (dialogWidth - 56 - 12) * 0.5），随 dialogWidth 自动缩放——按钮几何正确。但弹窗内容（文本折行、表单行剩余空间）的视觉合理性只能靠人眼确认；现有测试只断言弹窗「出现/可关闭」，不断言内容不越界、不挤压、不溢出。",
+      "impact": "加宽弹窗后，原来刚好放得下的内容现在有 80px 额外空间——这通常无害但可能露出「原来被压缩才显正常的布局」（如左对齐文本右边有大片空白、表单行未利用新增宽度）。反过来如果未来需要缩窄（如 640→500），文本折行变化可能导致某行溢出或截断。每次调整都是纯视觉赌注。",
+      "severity": "LOW",
+      "already_registered": false,
+      "suggestion": "在 dialog_form.h 加一条 constexpr float kMinContentWidth（如 320）和编译期 static_assert(dialogWidthPx(Wide) - kDialogBodyInsetX >= kMinContentWidth) 保证弹窗变窄不会挤压内容到不可用。probe 或无头测试可补「弹窗宽 >= 内容区最小需求」的几何断言（不验证视觉美观，只验证功能可用）。"
+    },
+    {
+      "id": "PAB-17",
+      "file": "scripts/package-windows.sh",
+      "line": 59,
+      "lens": "architect",
+      "title": "EUI-NEO 路径解析在两脚本间逐字重复——build-test-run.sh 与 package-windows.sh 须同步维护",
+      "issue": "package-windows.sh:59-81 与 build-test-run.sh:167-188 的 EUI-NEO 三段式解析（EUI_NEO_DIR 环境变量 → 同级 ../EUI-NEO → git 主工作树同级）是完全相同的一整段代码。package-windows.sh:61-62 的注释自陈「下面这整段与 build-test-run.sh 的同名解析重复：抽公共库时两处必须一起改」。",
+      "impact": "PAB-01 已登记此问题（2026-09-27），至今未抽出公共脚本。每增加一个用到 EUI-NEO 的脚本（如 package-macos.sh）都需要再抄一次。如果解析逻辑变化（如新的候选路径探测），漏改任何一个脚本都会导致该脚本在 worktree 中失败——而 worktree 恰好是本仓库最常用的开发模式。",
+      "severity": "LOW",
+      "already_registered": true,
+      "registered_ref": "PAB-01 (2026-09-27 expert-audit.md 未编号但同主题；2026-09-27-full-audit-pet-app-build.json PAB-01 已登记同一重复段)",
+      "suggestion": "抽到 scripts/_eui_resolve.sh，build-test-run.sh 与 package-windows.sh 各自 source。公共脚本只做路径解析（输出 EUI_DIR 绝对路径到 stdout），不设副作用。"
+    }
+  ]
+}

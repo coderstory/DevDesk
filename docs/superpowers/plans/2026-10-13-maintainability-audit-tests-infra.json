@@ -1,0 +1,214 @@
+{
+  "shard": "tests-infra",
+  "baseline": "2026-10-13 local master (312 macOS commits + 7 branch commits)",
+  "scope": "tests/**, scripts/**, test scaffold, probe system, mini doctest framework, build scripts maintainability",
+  "method": "只读静态取证：grep/Read 源码 + 引文对照；未跑构建/测试/app。涉及运行行为的推演结论均标'推演'。",
+  "findings": [
+    {
+      "id": "TI-21",
+      "severity": "HIGH",
+      "lens": "architect",
+      "title": "test_keychain.cpp 零数据根隔离——直接访问真实用户 keychain 目录",
+      "evidence": [
+        {"file": "tests/test_platform/test_keychain.cpp", "line": 327, "symbol": "core::paths::appDataDir() / \"keychain\" / service"},
+        {"file": "tests/test_platform/test_keychain.cpp", "line": 364, "symbol": "同文件另一处直接读写真实 keychain 目录文件"},
+        {"file": "tests/test_platform/test_keychain.cpp", "note": "全文件 grep DataRootEnv/DEVDESK_DATA_ROOT 零命中"},
+        {"file": "tests/test_support.h", "line": 226, "symbol": "DataRootEnv — 已有现成隔离夹具，test_keychain.cpp 未用"},
+        {"file": "src/core/paths.cpp", "line": 33, "symbol": "appDataDir() → dataRootOverride() 空时 → platformDefaultAppDataDir() → 真实用户数据根"}
+      ],
+      "impact": "worktree 上下文里跑 test_keychain 全量 → 写真实用户的 ~/Library/Application Support/DevDesk/keychain/ 目录。被多个 worktree 并发写时产生目录级竞态（delete/create/exists 时序互相踩）；主应用正在运行时 keychain 文件可能被锁。推演这正是 worktree 测试'19 处 Database::open failed'的根因之一——keychain 零隔离导致平台默认根下的 devdesk.db 数据根目录被多个 worktree/主应用竞争，SQLite 的 WAL 文件获取排他锁失败 = 'Database::open failed'。修复方向：每条 keychain 用例体首行加 DataRootEnv，把 keychain 写路径收进临时根。",
+      "suggested_fix": "每条 keychain 用例体首行加 `test_support::DataRootEnv dre(\"keychain\", \"<tag>\");`（或更省：在 test_main.cpp 重置段对全部用例统一设 DEVDESK_DATA_ROOT 指向临时根）。",
+      "already_registered": false
+    },
+    {
+      "id": "TI-22",
+      "severity": "HIGH",
+      "lens": "cpp20-expert",
+      "title": "数据根隔离缺失的波及面：test_credential_protection / test_claude_quota_lifecycle 等同样零隔离",
+      "evidence": [
+        {"file": "tests/test_platform/test_keychain.cpp", "note": "零 DataRootEnv（TI-21）"},
+        {"file": "tests/test_platform/test_credential_protection.cpp", "note": "grep appDataDir/DEVDESK_DATA_ROOT 零命中，同样零隔离"},
+        {"file": "tests/test_modules/test_claude_quota_lifecycle.cpp", "line": 39, "symbol": "注释自陈'用户真实数据根派生的那个命名空间（DEVDESK_DATA_ROOT 并不隔离 Keychain）'——明知隔离缺口但未修复"},
+        {"file": "tests/test_modules/test_settings.cpp", "line": 869, "symbol": "test_temp::tempPath() 手造 dir（不用 TempDir）→ 手动创建/清理 → 失败路径可能残留"},
+        {"file": "tests/test_modules/test_claude_quota_lifecycle.cpp", "note": "QuotaStore 内部可能经 appDatabase() 取连接 → 未注册 appDatabase 时取到 nullptr → 静默吞操作或段错误"},
+        {"file": "tests/test_modules/test_claude.cpp", "note": "test_claude_quota_lifecycle.cpp 使用 test_support.h 但未注册 appDatabase（ScopedConfigPath 或 DataRootEnv），而 quota 模块经 appDatabase() 取连接"},
+        {"file": "src/core/database.cpp", "line": 91, "symbol": "appDatabase() 返回 atomic<SqliteDb*>——未注册时 = nullptr"}
+      ],
+      "impact": "不止 keychain——quota 余量落库守卫红（用户报告）的链是：quota 测试体内调 refreshMetrics → 内部经 appDatabase() 取连接 → 未注册时拿到 nullptr → SQL 操作在 nullptr 上崩溃或返 Result::fail。proof: appDatabase() 是 atomic 加载，默认 nullptr（database.cpp:84）。除非测试体内显式构造 ScopedConfigPath / DataRootEnv 并注册，否则任何经 appDatabase() 的 service/模块操作全在 nullptr 上跑——包括 quota lifecycle、claude credential 相关用例。修复：和 TI-21 同类，把全局数据库隔离在 test_main.cpp 入口统一做。",
+      "suggested_fix": "在 test_main.cpp 的 resetCaseGlobals() 入口统一调用 DataRootEnv（或在 main 启动时设 DEVDESK_DATA_ROOT 指向临时根），消除逐个用例捡漏的模式——与现有 '14 进程级全局手工登记清单' 同构：统一做比逐条补更可靠。短期至少给 test_keychain / test_credential_protection 补 DataRootEnv。",
+      "already_registered": false
+    },
+    {
+      "id": "TI-23",
+      "severity": "MEDIUM",
+      "lens": "cpp20-expert",
+      "title": "test_single_instance.cpp 的 callable 用例恒真断言——零回归价值",
+      "evidence": [
+        {"file": "tests/test_platform/test_single_instance.cpp", "line": 22, "symbol": "DOCTEST_CHECK(true) — 永远通过，从不失败"},
+        {"file": "tests/test_platform/test_single_instance.cpp", "line": 19, "symbol": "注释自陈'不调真实 acquireInstanceLock，只验证头文件接口存在、链接通过'"},
+        {"file": "tests/test_platform/test_single_instance.cpp", "line": 21, "symbol": "macOS/POSIX 实现恒 true，等价已覆盖——但 CHECK(true) 不等于'链接验证'"}
+      ],
+      "impact": "链接验证的正确做法是编译期检查（include + 编译通过本身就是链接验证）而不是运行时 CHECK(true)。该用例无法检测 single_instance.h 中新增函数的签名变化（只 include 头文件，不调任何函数），也无法检测“该文件被误删出 CMakeLists.txt”（编译期会发现）。唯一价值是让 REGISTER_TEST 计数 +1。改法：至少调一个不产生进程级副作用的查询函数（如 getInstanceLockName 之类，当前 API 没有纯查询），或直接删掉该用例——链接正确性由编译成功保证。",
+      "suggested_fix": "删掉 single_instance_callable 用例，或改为调头文件中的编译时断言（static_assert）。链接由编译成功保证。",
+      "already_registered": false
+    },
+    {
+      "id": "TI-24",
+      "severity": "MEDIUM",
+      "lens": "architect",
+      "title": "package-windows.sh 与 build-test-run.sh EUI-NEO 路径解析完全重复——改一侧忘另一侧必然漂移",
+      "evidence": [
+        {"file": "scripts/package-windows.sh", "line": 62, "symbol": "注释自陈'下面这整段与 build-test-run.sh 的同名解析重复：抽公共库时两处必须一起改'"},
+        {"file": "scripts/package-windows.sh", "line": 63, "symbol": "EUI_DIR 三档解析（EUI_NEO_DIR→同级→主工作树反推）"},
+        {"file": "scripts/build-test-run.sh", "note": "同款三档解析（约在第 120-145 行）"}
+      ],
+      "impact": "当前两个脚本的三档解析文本完全一致（64-81 行 vs build-test-run.sh 对应段），但任何一处的修复/改进都可能只改一边——两段解析代码的维护者正是两条脚本各自的拥有者。改动时无人看另一边（'我的心智模型里只有我改的这个脚本'），结果是同一场景两条门禁给出不同的 EUI-NEO 目录。修复：抽出 scripts/resolve-eui-neo.sh 共享库（与 ccache-env.sh 同模式，source 即可），两脚本各自 source 它，消除漂移。",
+      "suggested_fix": "抽 scripts/resolve-eui-neo.sh：环境变量读取 + 同级路径探测 + worktree 主工作树反推 → 打印解析结果或导出 EUI_DIR。build-test-run.sh 与 package-windows.sh 各自 source 它。",
+      "already_registered": false
+    },
+    {
+      "id": "TI-25",
+      "severity": "MEDIUM",
+      "lens": "architect",
+      "title": "mini doctest 框架无测试发现/列表机制——要找测试名只能 grep 源码",
+      "evidence": [
+        {"file": "tests/doctest.h", "line": 148, "symbol": "REGISTER_TEST — 注册进 registry() vector，名字是描述字符串"},
+        {"file": "tests/test_main.cpp", "line": 161, "symbol": "filter 按 t.first.find(filter) 做子串匹配，无 --list-tests 支持"},
+        {"file": "tests/test_main.cpp", "line": 160, "symbol": "用法注释写'只跑描述里含该子串的测试'——无内置--list"},
+        {"file": "tests/doctest.h", "line": 73, "symbol": "registry() 返回 static std::vector，已存全量名字，加 --list 只需遍历打印即可"}
+      ],
+      "impact": "新增用例时无法通过./devdesk_tests --list 确认注册成功。文档里'用例总数以运行输出为准'是对的，但'哪些名字被注册了'同样需要发现渠道——当前只能 grep -c REGISTER_TEST（计数）+ 逐个 GREP test_name（确认）。上一条审计 TIN-12 的'用例总数写死'问题正是这个缺口的症状：没有--list，数字只能从文档/静态计数两套矛盾源各自推断。修复成本极低：在 filter 之前加 --list 分支，遍历 registry() 打印 t.first。",
+      "suggested_fix": "test_main.cpp main() 加 arg == \"--list\" 分支 → 遍历 registry() 打印全量名字（带序号）+ 总数，然后退出。5 行改动。",
+      "already_registered": false
+    },
+    {
+      "id": "TI-26",
+      "severity": "MEDIUM",
+      "lens": "cpp20-expert",
+      "title": "test_single_instance.cpp 平台宏泄漏进测试——#if defined(_WIN32) 在测试代码中分叉行为",
+      "evidence": [
+        {"file": "tests/test_platform/test_single_instance.cpp", "line": 11, "symbol": "#if defined(_WIN32) — 非 Windows 平台整个文件只有一个 DOCTEST_CHECK(true)"},
+        {"file": "tests/test_platform/test_single_instance.cpp", "line": 26, "symbol": "CreateMutexW 测试体被 #if defined(_WIN32) 全包——macOS 上该用例不存在"},
+        {"file": "tests/test_platform/test_single_instance.cpp", "note": "single_instance_callable 用例（CHECK(true)）macOS 上被保留——但注释说'macOS/POSIX 实现恒 true，等价已覆盖'：错误把'所有平台都跑同一个 trivially true 断言'说成覆盖"}
+      ],
+      "impact": "macOS 开发者新增 single_instance 功能时，不会看到 Windows 专有的 CreateMutexW 测试（IDE 展开 #if defined(_WIN32) 相对不直观），也无法在 macOS 上验证同名互斥量语义——但这个语义正是该模块的核心行为。与项目铁律'平台适配代码必须接口隔离'一致：测试侧平台宏虽然不出现在 src/ 里，但分叉了测试覆盖面的平台分布。修复方向：把 WIN32 专属测试体内调用重构为 free function（如 namespace platform { bool testMutexSemantics(); }），测试侧零 #ifdef，函数本体在 *_win.cpp / *_posix.cpp 里分平台实现——POSIX 返回 true（posix 互斥量语义不由同一路径测试），测试侧恒注册用例。",
+      "suggested_fix": "把 CreateMutexW 语义测试移进 single_instance_win.cpp 的 testMutexSemantics 函数——测试侧零平台宏，只调 testMutexSemantics()，POSIX 返回 true（不验证但不静默）。",
+      "already_registered": false
+    },
+    {
+      "id": "TI-27",
+      "severity": "MEDIUM",
+      "lens": "architect",
+      "title": "test_settings.cpp takeover 测试手造临时目录——不走 TempDir 夹具，可能残留",
+      "evidence": [
+        {"file": "tests/test_modules/test_settings.cpp", "line": 867, "symbol": "test_temp::tempPath(...) 然后手动 fs::remove_all + create_directories"},
+        {"file": "tests/test_modules/test_settings.cpp", "line": 958, "symbol": "手动 fs::remove_all 在用例末尾——fail-fast 提前 return 时跳过清理"},
+        {"file": "tests/test_modules/test_settings.cpp", "line": 969, "symbol": "第二处同款手造目录（settings_takeover_warn_unmanaged）"},
+        {"file": "tests/test_support.h", "line": 96, "symbol": "TempDir RAII 已存在——构造清残骸+建目录，析构删整棵"},
+        {"file": "tests/test_support.h", "line": 226, "symbol": "DataRootEnv 同时提供临时目录 + 数据根覆盖——更适合本用例（接管路径经 setSettingsSyncPaths 手工指定，但模块 onStart 可能触及其他路径）"}
+      ],
+      "impact": "用例体内 DOCTEST_REQUIRE 失败时直接 return false → 绕过末尾的 fs::remove_all → 临时目录残骸留在 %TEMP% 下。doctest.h 注释已写明 fail-fast 语义（断言失败即 return false），这两个用例正是它的牺牲品。修复：换成 TempDir RAII——析构 100% 清理，与 test_support.h 其它用例同构。",
+      "suggested_fix": "把 settings_takeover_status (line 865-960) 和 settings_takeover_warn_unmanaged (line 966 起) 的 dir 换成 test_support::TempDir，dir / \"db.sqlite\" 换成 tmp.file(\"db.sqlite\")。同时加 DataRootEnv 隔离模块 onStart 可能触发的其他路径。",
+      "already_registered": false
+    },
+    {
+      "id": "TI-28",
+      "severity": "LOW",
+      "lens": "architect",
+      "title": "test_migrations.cpp 的 createOldDb helper 用 test_support::tempDbPath 但路径在函数作用域外手动管理",
+      "evidence": [
+        {"file": "tests/test_core/test_migrations.cpp", "line": 123, "symbol": "createOldDb() — 手动 fs::remove + SqliteDb::open + 建表 + 返回路径 string"},
+        {"file": "tests/test_core/test_migrations.cpp", "line": 166, "symbol": "调用方 migration 用例用完手动 fs::remove"},
+        {"file": "tests/test_support.h", "line": 285, "symbol": "TestDb RAII 已存在——构造自动开库+migrate，析构自动清文件+伴生(-wal/-shm)"},
+        {"file": "tests/test_core/test_migrations.cpp", "line": 128, "symbol": "createOldDb 打开库后没关闭——返回的 SqliteDb 在 dbR 析构时关（scope-end），但路径 string 先返回了"}
+      ],
+      "impact": "createOldDb 开了 SqliteDb 手动建旧表+插数据，然后返回路径 string 让调用方用 Database::open 重开——这是两层 open，中间夹着数据库关闭的竞态窗口（SqliteDb 析构 → WAL checkpoint → Database::open 重开）。虽然同一个进程内通常 OK，但 createOldDb 的 dbR 在 scope-end 析构时，被打开的 SQLite 句柄还开着 WAL 文件——而调用方马上 Database::open 同一个文件，可能撞到 WAL-index 重建的竞态。最坏情况：migrations_old_db_upgrade 里 createOldDb 返回的 path 指向的文件在 Database::open 时已有残留 WAL，SQLite 的 WAL checkpoint 被跳过 → 迁移行一行都没恢复。修复：createOldDb 在返回前显式 close 库（dbR->~SqliteDb()）并删 -wal/-shm 伴生（如 TestDb 析构所做），让 Database::open 从干净起始态打开。次要改进：dbR 返回值检查（line 129 检查 isOk 但对 handle 未约束）。",
+      "suggested_fix": "createOldDb 返回前加：① SqliteDb 显式析构（关闭句柄）；② fs::remove(path + \"-wal\") + fs::remove(path + \"-shm\") 清 WAL 伴生文件——与 TestDb 析构同款做法。",
+      "already_registered": false
+    },
+    {
+      "id": "TI-29",
+      "severity": "LOW",
+      "lens": "cpp20-expert",
+      "title": "test_support.h 中 tempDbPath 用 static counter 维持唯一性但注释说'由 pid + 进程内序号兜底'——两套唯一性机制并存易混淆",
+      "evidence": [
+        {"file": "tests/test_support.h", "line": 215, "symbol": "tempDbPath: static int counter = 0; ++counter; 路径 = test_temp::tempPath(prefix + tag + '_' + counter + \".db\")"},
+        {"file": "tests/doctest.h", "line": 125, "symbol": "test_temp::tempPath: static atomic<unsigned long long> seq + processId() 两套唯一性"},
+        {"file": "tests/test_support.h", "line": 214, "symbol": "注释'路径唯一性由 test_temp::tempPath 的 pid + 进程内序号兜底'——而 tempDbPath 自己又叠了一层 counter"}
+      ],
+      "impact": "tempDbPath 的 counter 和 test_temp::tempPath 的 atomic seq 各有一套自增器——两次自增时值互不依赖（counter 只影响 db 文件内的排序，但不参与 pid+seq 的唯一性）。这是无害的重复计数器，但未来维护者可能困惑'这 counter 到底要干什么'，甚至可能有人把 counter 当成唯一性来源而删掉 tempPath 的 seq 那一层。老代码之所以留 counter，可能纯为输出路径的可读性（让同进程的 db 文件按调用顺序编号而非总顺序）。建议注释里写明白'counter 只用于可读性，不是唯一性来源；唯一性由 tempPath 的 pid+seq 保证'。",
+      "suggested_fix": "注释明确 counter 只为可读性（非唯一性来源），唯一性由 tempPath 的 pid+atomic seq 两层保证。另可考虑去掉 tempDbPath 的 counter，让 tempPath 的全局 seq 同时承担排序。",
+      "already_registered": false
+    },
+    {
+      "id": "TI-30",
+      "severity": "LOW",
+      "lens": "architect",
+      "title": "check-module-isolation.sh 的 --self-test 会创建真实临时 worktree 验证——对仓库的写入操作可能被并发 git 操作干扰",
+      "evidence": [
+        {"file": "scripts/check-module-isolation.sh", "line": 36, "symbol": "注释'--self-test 造坏输入证明本守卫不是恒绿，并用真实仓库树做底'"},
+        {"file": "scripts/check-module-isolation.sh", "note": "--self-test 需要复制仓库文件 + 变异文件内容 → 产生磁盘写入与额外的 git 操作"},
+        {"file": "scripts/check-module-isolation.sh", "line": 44, "symbol": "SELF_TEST=0 默认关闭，只在显式调用时触发——默认安全"}
+      ],
+      "impact": "--self-test 只在显式调用时触发（不是脚本默认行为），“临时 worktree”确切说是“仓库外拷贝树”（--root 指向副本）而非 git worktree add，不会产生 .claude/worktrees/ 残留。bash 层的 cp+rm 操作不和 git 冲突。本项风险极低——记录更多是为“这一层抽象是对的”的审计确认。",
+      "suggested_fix": "无改动。确认 --self-test 的副本树创建与清理是脚本局部操作，不影响主仓库。在脚本注释头写明'不创建 git worktree，不发起 git 写操作'。",
+      "already_registered": false
+    },
+    {
+      "id": "TI-31",
+      "severity": "LOW",
+      "lens": "cpp20-expert",
+      "title": "test_todo_ui.cpp r5_pure_helpers 搬运了匿名空间纯函数——但 chipWidth/chipHeight 的 4.8/6.6 估宽系数没留任何“为什么是这些数”的注释",
+      "evidence": [
+        {"file": "tests/test_modules/test_todo_ui.cpp", "line": 4067, "symbol": "ui::chipWidth 注释'字号 10→12 后每字节估值同比放大 ×1.2（5.5→6.6 / 4→4.8）'"},
+        {"file": "tests/test_modules/test_todo_ui.cpp", "line": 4071, "symbol": "CHECK_EQ(chipWidth(''), 20.0f) — 20 的注释'基础 20（左右各 10px 留白）不变'"},
+        {"file": "tests/test_modules/test_todo_ui.cpp", "line": 4072, "symbol": "CHECK_EQ(chipWidth('ab'), 20.0f + 6.6f + 6.6f) — 6.6 是 ASCII 宽度/字节"},
+        {"file": "tests/test_modules/test_todo_ui.cpp", "line": 4073, "symbol": "CHECK_EQ(chipWidth('中'), 20.0f + 4.8f*3) — 汉字 UTF-8=3 字节 ×4.8=14.4"}
+      ],
+      "impact": "这些系数在 ui_kit 真实渲染中对应字体度量，修改字辈/字号/字体后必须同步修改。当前注释说明'字号 10→12 后每字节估值同比放大 ×1.2'（5.5→6.6, 4→4.8），但没说'5.5 和 4 是原字号 10 下的 ASCII/CJK 每字节像素宽测量值'——未来改字号时可能只改系数不改注释，反之亦然。测试锁住的是期望值（写死），改代码常量时测试会红，但缺乏对'系数从哪里推导'的溯源。建议在 chipWidth 实现侧加一行注释说明原测量方法与字辈依赖。",
+      "suggested_fix": "chipWidth 实现侧加溯源注释：'字号 10 下实测微软雅黑 ASCII 字宽 5.5px/byte、CJK 4px/byte；字号 12 = ×1.2 = 6.6/4.8。修改字体/字号后重测并更新两处值。'",
+      "already_registered": false
+    },
+    {
+      "id": "TI-32",
+      "severity": "LOW",
+      "lens": "architect",
+      "title": "test_settings.cpp log 过滤三用例质量优秀——断言密度高、fail-open 语义被锁住——但空输入/全滤空的边界转化仍需变异性验证",
+      "evidence": [
+        {"file": "tests/test_modules/test_settings.cpp", "line": 3882, "symbol": "settings_log_tail_level_parse — 6 档标准行 + 3 档解析失败 + 2 档边界（空串/格式异常）"},
+        {"file": "tests/test_modules/test_settings.cpp", "line": 3906, "symbol": "settings_log_tail_level_filter — 5 档级别过滤 + 无级别行 fail-open（保留）"},
+        {"file": "tests/test_modules/test_settings.cpp", "line": 3947, "symbol": "settings_log_tail_level_filter_empty — 空输入/全滤空/fail-open garbage 行保留"},
+        {"file": "tests/test_modules/test_settings.cpp", "line": 3901, "symbol": "[a] [DEBUG] functional — 第一个方括号格式不对但能解析——锁住 fail-open 行为"},
+        {"file": "tests/test_modules/test_settings.cpp", "line": 3960, "symbol": "纯 garbage 行→全部保留(fail-open)——这个语义是刻意设计还是脚本默认？无对应注释"}
+      ],
+      "impact": "断言质量很高：正常/异常/边界三类覆盖完整，滤空与 fail-open 的语义被数值锁住（不是文字描述里的'我认为会的'）。唯一缺口：filterLogTailByLevel 的 fail-open 语义（无级别行一律保留）是代码实现决定的，但产品需求上是否应该保留 garbage 行？当前注释只描述了实现行为，没有说'这是有意设计，因为用户可能想看自己的自定义 JSON 日志行'之类理由。如果未来有人把 fail-open 改成 fail-closed（无级别行也滤掉），这个用例会转红——但红是预期的（回归检测），而修复者看不到理由。建议在 filter 实现侧加注释说明 fail-open 的设计理由。",
+      "suggested_fix": "filterLogTailByLevel 实现侧加注释：'无级别行（空行/garbage/自定义格式）一律保留 = fail-open：用户可能贴了第三方日志、自定义 JSON 行，滤掉会让'只看 Error'功能丢失上下文。'",
+      "already_registered": false
+    },
+    {
+      "id": "TI-33",
+      "severity": "LOW",
+      "lens": "cp20-expert",
+      "title": "test_migrations.cpp 凭据回填用例结论包含矛盾——COLUMN ALTER 被 ALTER TABLE 手动加列绕过，不测试真实 migration 路径",
+      "evidence": [
+        {"file": "tests/test_core/test_migrations.cpp", "line": 385, "symbol": "migrations_credential_backfill: 手动 ALTER TABLE ADD COLUMN api_key_encrypted 然后插行"},
+        {"file": "tests/test_core/test_migrations.cpp", "line": 425, "symbol": "随后 Database::open → applySchema + applyPending → 断言'凭据列仍是空（没有真的 Keychain 文件）'"},
+        {"file": "tests/test_core/test_migrations.cpp", "line": 385, "symbol": "注释自陈'先手动补上 api_key_encrypted 列（这段没本质依赖库的 applySchema）' → 绕过 migration 的 ADD COLUMN 逻辑"}
+      ],
+      "impact": "该用例要测试的是：旧形态库有 keychain_account 列+空 api_key_encrypted → 迁移应把 keychain_account 里的凭据读出来 -> protect -> 写入 api_key_encrypted。但用例手动加了 api_key_encrypted 列再插行（人工跳过了 migration 的 ALTER TABLE ADD COLUMN 这一步），导致 migration 的 IF NOT EXISTS 预检跳过该列。这测试的是'列已补全 + 有 keychain_account → migration 应尝试读 keychain 回填'——但'列不在 + 有 keychain_account → migration 应 ALTER ADD + 回填'这条真实路径被绕过了。用例名'凭据回填'的意图是对的，但测试路径不完整。",
+      "suggested_fix": "拆为两个用例：(a) 列不存在 + 有 keychain_account → migration 补列 + 回填（当前被绕过的路径）；(b) 列已存在（手动 ALTER） → migration 跳过 ALTER 但仍回填（当前路径）。或重排 createOldClaudeProfilesTable 使其不含 api_key_encrypted 列，让 Database::open → applyPending 真做 ALTER ADD + 回填两条。",
+      "already_registered": false
+    }
+  ],
+  "summary": {
+    "total": 13,
+    "severity": {"HIGH": 2, "MEDIUM": 5, "LOW": 6},
+    "new_regressions": 0,
+    "worktree_anomaly_conclusion": "根因推演：test_keychain.cpp 零 DEVDESK_DATA_ROOT 隔离直接读写真实用户数据目录——worktree 并发测试与主应用竞争 keychain 目录文件，SQLite 排他锁竞争导致 Database::open failed。波及面含 test_credential_protection.cpp（同类零隔离）+ test_claude_quota_lifecycle.cpp（appDatabase() 未注册 = nullptr）。修复方向：在 test_main.cpp 入口对全部用例统一设 DEVDESK_DATA_ROOT 指向进程级临时根——消除逐个捡漏模式，与现有 14 项 resetCaseGlobals 全局重置清单同构。",
+    "top3": [
+      "TI-21 (HIGH): test_keychain.cpp 零数据根隔离——直接读写真实用户 keychain 目录，worktree 并发测试时与主应用竞争 SQLite 排他锁 = Database::open failed。",
+      "TI-22 (HIGH): test_credential_protection/quota_lifecycle 同样零隔离，appDatabase()=nullptr 时模块内部静默段错误。",
+      "TI-23 (MEDIUM): test_single_instance.cpp 的 single_instance_callable 恒真断言（CHECK(true)）——零回归价值，链接验证由编译成功保证。"
+    ]
+  }
+}

@@ -34,6 +34,7 @@ struct Task {
     std::vector<std::string> tags;       // 来自 JSON 数组
     int position;
     std::optional<int64_t> completedAt;  // Unix 秒；std::nullopt = 未完成
+    std::optional<int64_t> archivedAt;   // Unix 秒；std::nullopt = 未归档（进归档列时置当前时间戳，出归档列置 NULL）
 };
 
 class TodoService {

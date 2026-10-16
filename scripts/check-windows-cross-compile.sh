@@ -109,6 +109,8 @@ CXX="$(find_toolchain || true)"
 # **GCC 专属**名，clang 见到报 -Wunknown-warning-option、在 -Werror 下直接把构建打死；
 # llvm-mingw 的 g++ 驱动是 clang，所以这里绝不能带上它们。
 # -Wno-error=missing-field-initializers 两个前端都认，保留。
+# 反向同理：clang 独有诊断也按前端条件追加（当前一条：unused-but-set-global，
+# llvm-mingw clang 23 对 single_instance_win.cpp 刻意长持句柄的误报，2026-10-14）。
 CXXFLAGS=(
     -std=c++20
     -D_WIN32_WINNT=0x0A00 -DWINVER=0x0A00
@@ -117,6 +119,12 @@ CXXFLAGS=(
     -Wno-error=missing-field-initializers
     -fsyntax-only
 )
+
+# 前端探测放 CXXFLAGS 构造之后：clang 才追加它独有的 -Wno-error= 名，GCC 不发该
+# 诊断、什么都不加（依赖 GCC 对未知 -Wno-* 的宽容不是干净做法）。
+if [ -n "$CXX" ] && "$CXX" --version 2>/dev/null | grep -qi clang; then
+    CXXFLAGS+=(-Wno-error=unused-but-set-global)
+fi
 
 # include 路径：与 CMake 里给 DevDesk / devdesk_tests 的那套一致（顶层
 # target_include_directories(DevDesk PRIVATE …) + devdesk_add_eui_includes）。
@@ -127,7 +135,7 @@ build_incs() {
           -I "${ROOT}/src/module_home" -I "${ROOT}/src/module_markdown"
           -I "${ROOT}/src/module_todo" -I "${ROOT}/src/module_claude_proxy"
           -I "${ROOT}/src/module_settings" -I "${ROOT}/src/module_about"
-          -I "${ROOT}/src/module_pet" -I "${ROOT}/tests")
+          -I "${ROOT}/tests")
     if [ -n "$EUI_DIR" ]; then
         INCS+=(-I "${EUI_DIR}/include" -I "${EUI_DIR}"
                -I "${EUI_DIR}/3rd/yyjson-0.12.0/src" -I "${EUI_DIR}/3rd/md4c/src")

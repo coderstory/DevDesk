@@ -22,7 +22,7 @@
 #include "core/paths.h"
 #include "core/router.h"
 #include "core/service_locator.h"
-#include "platform/http_server.h"  // 前置校验用例的 mock 上游（200 /v1/models）
+#include "platform/http_server.h"  // 前置校验用例的 mock 上游（200 POST /v1/messages）
 
 #include <eui/dsl.h>
 
@@ -131,14 +131,6 @@ module::settings::SettingsConfig markdownOnlyConfig() {
     cfg.enabledModules.push_back(module::settings::kModuleIdHome);
     cfg.enabledModules.push_back(module::settings::kModuleIdMarkdown);
     cfg.enabledModules.push_back(module::settings::kModuleIdSettings);
-    return cfg;
-}
-
-// 全启用 + pet（SettingsConfig 默认 = 除 pet 外全启用；桌宠默认不在清单，
-// maybeStartPet 的「开」态配置要显式补上）
-module::settings::SettingsConfig petOnConfig() {
-    module::settings::SettingsConfig cfg;
-    cfg.enabledModules.push_back(module::settings::kModuleIdPet);
     return cfg;
 }
 
@@ -631,51 +623,6 @@ REGISTER_TEST(assembly_navigate_from_tray_unregistered_toast_copy,
     return true;
 })
 
-// maybeStartPet 门控两态
-
-REGISTER_TEST(assembly_maybe_start_pet_gated,
-              "assembly: maybeStartPet —— 开则 loadPetConfig+startFn 收透传 config / 关则双不调", {
-    module::pet::PetConfig expected;
-    expected.skinName = "neo_plus";
-    expected.x = 42;
-    expected.y = -7;
-    int loadCalls = 0;
-    int startCalls = 0;
-    module::pet::PetConfig received;
-
-    // 开（enabledModules 含 "pet"）：loadPetConfig 返回值原样透传 startFn
-    app::assembly::maybeStartPet(
-        petOnConfig(),
-        [&] {
-            ++loadCalls;
-            return expected;
-        },
-        [&](const module::pet::PetConfig& cfg) {
-            ++startCalls;
-            received = cfg;
-        });
-    DOCTEST_CHECK_EQ(loadCalls, 1);
-    DOCTEST_CHECK_EQ(startCalls, 1);
-    DOCTEST_CHECK_EQ(received.skinName, expected.skinName);
-    DOCTEST_CHECK_EQ(received.x, expected.x);
-    DOCTEST_CHECK_EQ(received.y, expected.y);
-
-    // 关（默认配置不含 pet）：startFn **与** loadPetConfig 都不被调——短
-    // 路径证门控谓词同源（同一 moduleEnabled(kModuleIdPet)、同一 cfg 参数）
-    loadCalls = 0;
-    startCalls = 0;
-    app::assembly::maybeStartPet(
-        allOnConfig(),
-        [&] {
-            ++loadCalls;
-            return expected;
-        },
-        [&](const module::pet::PetConfig&) { ++startCalls; });
-    DOCTEST_CHECK_EQ(loadCalls, 0);
-    DOCTEST_CHECK_EQ(startCalls, 0);
-    return true;
-})
-
 // 活门控（live-toggle）dispatchModuleToggle：计数桩 + 查找缝
 // ModuleLookup 是裸函数指针（无捕获约束）→ 桩与计数只能走文件级静态、自由函数直接引用。
 // 用例开头回厂计数与 toast 状态（进程级，fail-fast 提前 return 也不污染后续用例）。
@@ -942,7 +889,7 @@ REGISTER_TEST(assembly_dispatch_claude_lazy_assemble_autostart,
     // 并种下激活 profile。在**空 profile store** 上断言「代理已起」是错的方向——那正是事故
     // 语义（空库那条用例钉的就是这一侧）。
     platform::http::Server upstream("127.0.0.1", 0);
-    upstream.route("GET", "/v1/models",
+    upstream.route("POST", "/v1/messages",
                    [](const platform::http::RequestCtx&,
                       platform::http::ResponseWriter& w) {
                        w.setStatus(200);

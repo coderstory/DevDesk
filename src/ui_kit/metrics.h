@@ -17,7 +17,7 @@ inline constexpr float kNavItemH = 40.0f;
 enum class DialogWidth {
     Compact,    // 420 —— claude 删除确认
     Standard,   // 460 —— todo 全部 / markdown 全部
-    Wide,       // 560 —— todo 详情 / 逾期
+    Wide,       // 640 —— todo 详情 / 逾期
     ExtraWide,  // 720 —— claude 调用记录
     Form,       // 760 —— claude Profile 表单
 };
@@ -29,7 +29,7 @@ inline float dialogWidthPx(DialogWidth width) {
         case DialogWidth::Standard:
             return 460.0f;
         case DialogWidth::Wide:
-            return 560.0f;
+            return 640.0f;
         case DialogWidth::ExtraWide:
             return 720.0f;
         case DialogWidth::Form:

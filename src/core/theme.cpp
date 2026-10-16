@@ -33,6 +33,9 @@ namespace {
         c.warning = eui::Color("#C29243");
         c.error = eui::Color("#CF2D56");
         c.info = eui::Color("#6A9BCC");
+        c.purple = eui::Color("#A18FC8");
+        c.pink = eui::Color("#DE8FB4");
+        c.blue = eui::Color("#12B7F5");
 
         auto& s = t.sizes;
         s.spacing = 8.0f;
@@ -81,6 +84,9 @@ namespace {
         c.warning = eui::Color("#9A6B30");
         c.error = eui::Color("#B82850");
         c.info = eui::Color("#4A7AAB");
+        c.purple = eui::Color("#71639B");
+        c.pink = eui::Color("#C05E86");
+        c.blue = eui::Color("#12B7F5");
 
         auto& s = t.sizes;
         s.spacing = 8.0f;
@@ -103,6 +109,72 @@ namespace {
 
     Tokens g_current = darkTokens();
 
+    Accent g_accent = Accent::Clay;
+
+    void applyAccentPrimary(Tokens& t, Accent a) {
+        if (a == Accent::Clay) return;
+        auto& c = t.colors;
+        if (t.isDark) {
+            switch (a) {
+            case Accent::Purple:
+                c.primary = eui::Color("#A18FC8");
+                c.primaryHover = eui::Color("#A998CC");
+                c.primaryPressed = eui::Color("#8E7EB0");
+                c.primarySoftBg = eui::Color("#322E34");
+                c.primaryText = eui::Color("#A18FC8");
+                c.onPrimary = eui::Color("#FFFFFF");
+                break;
+            case Accent::Pink:
+                c.primary = eui::Color("#DE8FB4");
+                c.primaryHover = eui::Color("#E198BA");
+                c.primaryPressed = eui::Color("#C37E9E");
+                c.primarySoftBg = eui::Color("#392E32");
+                c.primaryText = eui::Color("#DE8FB4");
+                c.onPrimary = eui::Color("#FFFFFF");
+                break;
+            case Accent::Blue:
+                c.primary = eui::Color("#12B7F5");
+                c.primaryHover = eui::Color("#25BDF6");
+                c.primaryPressed = eui::Color("#10A1D8");
+                c.primarySoftBg = eui::Color("#213035");
+                c.primaryText = eui::Color("#12B7F5");
+                c.onPrimary = eui::Color("#1A1816");
+                break;
+            case Accent::Clay:
+                break;
+            }
+        } else {
+            switch (a) {
+            case Accent::Purple:
+                c.primary = eui::Color("#71639B");
+                c.primaryHover = eui::Color("#7C6FA3");
+                c.primaryPressed = eui::Color("#635788");
+                c.primarySoftBg = eui::Color("#E5E1E2");
+                c.primaryText = eui::Color("#5A4F7C");
+                c.onPrimary = eui::Color("#FFFFFF");
+                break;
+            case Accent::Pink:
+                c.primary = eui::Color("#B4567C");
+                c.primaryHover = eui::Color("#BA6486");
+                c.primaryPressed = eui::Color("#9E4C6D");
+                c.primarySoftBg = eui::Color("#EDDFDF");
+                c.primaryText = eui::Color("#904563");
+                c.onPrimary = eui::Color("#FFFFFF");
+                break;
+            case Accent::Blue:
+                c.primary = eui::Color("#12B7F5");
+                c.primaryHover = eui::Color("#25BDF6");
+                c.primaryPressed = eui::Color("#10A1D8");
+                c.primarySoftBg = eui::Color("#DEECED");
+                c.primaryText = eui::Color("#0B6E93");
+                c.onPrimary = eui::Color("#1A1816");
+                break;
+            case Accent::Clay:
+                break;
+            }
+        }
+    }
+
     // 全局字号缩放（默认 1.0）；setDark/setLight 重建 token 后统一施加
     float g_fontScale = 1.0f;
 
@@ -120,6 +192,7 @@ namespace {
     // 按当前 isDark + g_fontScale 重建全局 token（单一来源，避免缩放叠加）
     void rebuild() {
         g_current = g_current.isDark ? darkTokens() : lightTokens();
+        applyAccentPrimary(g_current, g_accent);
         applyFontScale(g_current);
     }
 
@@ -140,12 +213,14 @@ const Tokens& current() { return g_current; }
 
 void setDark() {
     g_current = darkTokens();
+    applyAccentPrimary(g_current, g_accent);
     applyFontScale(g_current);
     notifyThemeChanged(true);
 }
 
 void setLight() {
     g_current = lightTokens();
+    applyAccentPrimary(g_current, g_accent);
     applyFontScale(g_current);
     notifyThemeChanged(false);
 }
@@ -172,5 +247,14 @@ float editorFontSize() { return g_editorFontSize; }
 std::string currentThemeName() {
     return g_current.isDark ? "Dark" : "Light";
 }
+
+void setAccent(Accent a) {
+    if (g_accent == a) return;
+    g_accent = a;
+    rebuild();
+    notifyThemeChanged(g_current.isDark);
+}
+
+Accent accent() { return g_accent; }
 
 } // namespace core::theme

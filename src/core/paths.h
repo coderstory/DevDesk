@@ -33,10 +33,6 @@ core::Result<void> ensureDataRootGitignore();
 // Markdown 笔记根目录。覆盖优先级：DEVDESK_NOTES_DIR > DEVDESK_DATA_ROOT（<根>/notes）> 平台默认根
 std::filesystem::path markdownDir();
 
-// 桌宠皮肤根目录（皮肤 = <petsDir>/<皮肤名>/pet.json + 帧序列）。覆盖优先级：DEVDESK_PETS_DIR >
-// DEVDESK_DATA_ROOT（<根>/pets）> 平台默认根；「能从哪儿发现」在 module_pet 的 skinRootCandidates()
-std::filesystem::path petsDir();
-
 // 日志目录
 std::filesystem::path logsDir();
 

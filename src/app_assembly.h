@@ -7,8 +7,6 @@
 #include "core/module_interface.h"
 #include "core/router.h"
 #include "core/tray_menu_spec.h"
-#include "module_pet/pet_config.h"
-#include "module_pet/pet_window.h"
 #include "settings_config.h"
 
 #include <cstddef>
@@ -42,11 +40,8 @@ std::vector<::core::PageId> assembleAndStart(
     ::core::Router& router, const module::settings::SettingsConfig& cfg,
     const std::vector<GatedEntry>& modules, const PreStartHook& preStart);
 
-// 桌宠门控开窗：cfg 含 kModuleIdPet 才 loadPetConfig() 并调 startFn(config)；只承诺门控两态
-void maybeStartPet(
-    const module::settings::SettingsConfig& cfg,
-    const std::function<module::pet::PetConfig()>& loadPetConfig,
-    const std::function<void(const module::pet::PetConfig&)>& startFn);
+// 导航到托盘指定页；模块未注册时唤起主窗 + toast 解释后仍落到首页（不静默回退）
+void navigateFromTray(::core::Router* router, ::core::PageId page);
 
 // EUI-NEO 无 onExit：关窗与托盘 Exit 汇合于同一 return；须在全部模块静态对象构造完成后调用
 //（LIFO：stopAll 时模块仍活着，onStop 可还原 settings.json）

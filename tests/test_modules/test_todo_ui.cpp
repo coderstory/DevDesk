@@ -1175,10 +1175,10 @@ REGISTER_TEST(todo_ui_card_text_centered,
         const float cardCX = cardBg->frame.x + cardBg->frame.width / 2.0f;
         const float cardCY = cardBg->frame.y + cardBg->frame.height / 2.0f;
 
-        // 水平：主文本（标题）框中心 = 卡中心（≤1px），字形居中机制位在位
+        // 水平：主文本（标题）框中心 = 卡中心 − 徽章占用半宽（kCardOrdinalBadgeHoriz/2=16）
         DOCTEST_CHECK_EQ(title->horizontalAlign, eui::HorizontalAlign::Center);
         DOCTEST_CHECK(std::abs((title->frame.x + title->frame.width / 2.0f) -
-                               cardCX) <= 1.0f);
+                               (cardCX - ::module::todo::ui::kCardOrdinalBadgeHoriz / 2.0f)) <= 1.0f);
         // 水平让位（kCardTitleBoxInset = 40）：标题框右缘必须让开完成角标区间
         // [w-36, w-12]（drawCard 的 .done 角标 x = width-36），否则标题文字压角标
         DOCTEST_CHECK(title->frame.x + title->frame.width <=
@@ -1703,7 +1703,7 @@ REGISTER_TEST(todo_ui_drag_follow_ghost,
         const auto& t = core::theme::current();
         DOCTEST_CHECK(colorNear(
             ghostBg->color,
-            eui::mixColor(t.colors.surface, t.colors.error, 0.30f)));
+            eui::mixColor(t.colors.surface, t.colors.error, 0.42f)));
     }
     // 跟手期间源列原卡照旧半透明 + 源列调暗（门控关系未反：被调暗的是原卡
     // 与源列，副本全亮跟手）
@@ -2891,7 +2891,7 @@ REGISTER_TEST(todo_ui_priority_card_tint,
         DOCTEST_REQUIRE(env.svc->updateTask(t2).isOk());
     }
     // 期望值独立写死在用例里（不引用被测常量表）：改强度表/色源即红
-    const float kStrength[4] = {0.00f, 0.16f, 0.22f, 0.30f};
+    const float kStrength[4] = {0.00f, 0.30f, 0.38f, 0.42f};
 
     std::unique_ptr<::core::Module> mod(create_todo_module());
     mod->onStart();
@@ -2934,8 +2934,9 @@ REGISTER_TEST(todo_ui_priority_card_tint,
                           0.02f);
         }
     }
-    // 判据 b'：低优先级「不刺眼」= 与 surface 的色差落在浅档；高优先级看得出
-    DOCTEST_CHECK(maxChannelDelta(lowBg->color, t.colors.surface) <= 32.0f / 255.0f);
+    // 判据 b'：低优先级配色色泽鲜艳后仍不刺眼（72/255，用户 2026-10-13 要求更鲜艳，'不刺眼'阈值同步上调）；
+    // 高优先级看得出（≥45/255 保持不变——High 档相对增幅与上两档一致）
+    DOCTEST_CHECK(maxChannelDelta(lowBg->color, t.colors.surface) <= 72.0f / 255.0f);
     DOCTEST_CHECK(maxChannelDelta(highBg->color, t.colors.surface) >= 45.0f / 255.0f);
 
     // 判据 c：hover / active 与优先级底色**叠加**（不被中性态色顶掉），
@@ -2967,7 +2968,7 @@ REGISTER_TEST(todo_ui_priority_card_tint,
         // 选中不改变优先级底色（边框与底色两通道独立）
         DOCTEST_CHECK(colorNear(
             sel->color,
-            eui::mixColor(t.colors.surface, t.colors.error, 0.30f)));
+            eui::mixColor(t.colors.surface, t.colors.error, 0.42f)));
     }
 
     // 判据 d：底色改了，卡片文字对比度不掉（WCAG AA 4.5:1）
@@ -2985,7 +2986,7 @@ REGISTER_TEST(todo_ui_priority_card_tint,
     DOCTEST_REQUIRE(lHigh != nullptr);
     DOCTEST_CHECK(colorNear(lNone->color, tl.colors.surface));
     DOCTEST_CHECK(colorNear(
-        lHigh->color, eui::mixColor(tl.colors.surface, tl.colors.error, 0.30f)));
+        lHigh->color, eui::mixColor(tl.colors.surface, tl.colors.error, 0.42f)));
     DOCTEST_CHECK(!colorNear(lNone->color, lHigh->color, 0.01f));
     DOCTEST_CHECK(contrastRatio(lNone->color, tl.colors.textPrimary) >= 4.5f);
     DOCTEST_CHECK(contrastRatio(lHigh->color, tl.colors.textPrimary) >= 4.5f);
@@ -3021,7 +3022,7 @@ REGISTER_TEST(todo_ui_priority_button_tint,
     // 期望值独立写死（改色源 / 改强度表 / 改选中档强度即红）
     const eui::Color kPrio[4] = {t.colors.textTertiary, t.colors.info,
                                  t.colors.warning, t.colors.error};
-    const float kUnsel[4] = {0.12f, 0.16f, 0.22f, 0.30f};
+    const float kUnsel[4] = {0.18f, 0.30f, 0.38f, 0.42f};
     const float kPicked = 0.55f;
 
     Frame f1(mod.get());
@@ -4516,6 +4517,180 @@ REGISTER_TEST(todo_ui_event_wiring_columns,
         DOCTEST_REQUIRE(cols.isOk());
         DOCTEST_REQUIRE(cols.value()[0].color.has_value());
         DOCTEST_CHECK_EQ(*cols.value()[0].color, std::string("claude-clay"));
+    }
+
+    mod->onStop();
+    return true;
+})
+
+
+REGISTER_TEST(todo_archive_format,
+              "Todo UI: formatArchivedAt 按 YYYY-MM-DD HH:MM:SS 输出",
+              {
+    using namespace module::todo;
+    // 用固定 epoch 验证格式（2026-10-13 12:30:45 UTC+8 = 2026-10-13 12:30:45 本地）
+    // epoch = 2026-10-13T04:30:45Z = 1792331445
+    const int64_t epoch = 1792331445;
+    const std::string s = ui::formatArchivedAt(epoch);
+    // 主断言：19 字符 "YYYY-MM-DD HH:MM:SS"
+    DOCTEST_CHECK_EQ(s.size(), 19u);
+    // 前 4 位年份
+    DOCTEST_CHECK(s[0] == '2' && s[1] == '0');
+    // 第 5 位 '-'
+    DOCTEST_CHECK_EQ(s[4], '-');
+    // 第 8 位 '-'
+    DOCTEST_CHECK_EQ(s[7], '-');
+    // 第 11 位 ' '
+    DOCTEST_CHECK_EQ(s[10], ' ');
+    // 0 入参返回空
+    DOCTEST_CHECK(ui::formatArchivedAt(0).empty());
+    DOCTEST_CHECK(ui::formatArchivedAt(-1).empty());
+    return true;
+})
+
+REGISTER_TEST(todo_archive_tasks_in_column_sort,
+              "Todo UI: tasksInArchiveColumn 按 archived_at DESC 排序",
+              {
+    using namespace module::todo;
+    std::vector<Task> tasks;
+    Task a; a.id = 1; a.columnId = 10; a.archivedAt = 100; a.position = 2;
+    Task b; b.id = 2; b.columnId = 10; b.archivedAt = 300; b.position = 1;
+    Task c; c.id = 3; c.columnId = 10; c.archivedAt = 300; c.position = 0;
+    // c 与 b 同 archivedAt，position 小的在前 (0 < 1)
+    Task d; d.id = 4; d.columnId = 10; d.archivedAt = std::nullopt; d.position = 3;
+    Task e; e.id = 5; e.columnId = 20; e.archivedAt = 500; e.position = 0;  // 不同列
+    tasks = {a, b, c, d, e};
+
+    auto result = ui::tasksInArchiveColumn(tasks, 10);
+    DOCTEST_CHECK_EQ(result.size(), 4u);
+    // 300 (b, then c), then 100 (a), then nullopt (d) → 300 treated as 0
+    // wait: nullopt → value_or(0) = 0. 300 > 100 > 0.
+    // So: b(300, pos=1) = c(300, pos=0), then a(100), then d(0)
+    DOCTEST_CHECK_EQ(result[0]->id, 3);  // archivedAt=300, pos=0
+    DOCTEST_CHECK_EQ(result[1]->id, 2);  // archivedAt=300, pos=1
+    DOCTEST_CHECK_EQ(result[2]->id, 1);  // archivedAt=100
+    DOCTEST_CHECK_EQ(result[3]->id, 4);  // archivedAt=nullopt→0
+    return true;
+})
+
+// 列头 / 真卡 / 拖拽副本三处标题省略号三件套（overflow==Ellipsis && maxWidth>0 && !wrap）
+REGISTER_TEST(todo_ui_title_ellipsis,
+              "todo_ui: 列头+真卡+拖拽副本标题省略号三件套（headless）", {
+    TestEnv env;
+    DOCTEST_REQUIRE(env.ready);
+    auto list = env.svc->listColumns();
+    DOCTEST_REQUIRE(list.isOk());
+    DOCTEST_REQUIRE(!list.value().empty());
+    const int64_t col0 = list.value()[0].id;
+
+    DOCTEST_REQUIRE(env.svc->renameColumn(col0, std::string(60, 'X')).isOk());
+    auto t = env.svc->createTask(col0, std::string(120, 'A'));
+    DOCTEST_REQUIRE(t.isOk());
+
+    std::unique_ptr<::core::Module> mod(create_todo_module());
+    mod->onStart();
+
+    eui::Ui ui;
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    auto composeLayout = [&]() {
+        ui.begin("todo_ellipsis_frame");
+        mod->compose(ui, screen);
+        ui.end();
+        ui.layout(screen);
+    };
+    auto boundsOf = [](const core::dsl::Element* e) {
+        return eui::Rect{e->frame.x, e->frame.y, e->frame.width, e->frame.height};
+    };
+    // inline ellipsis check (DOCTEST macros use early-return from test fn, cannot
+    // be in a lambda without tripping -Wreturn-type in -Werror builds)
+    auto checkEllipsis = [](const core::dsl::Element* el) -> bool {
+        return el != nullptr && el->overflow == core::TextOverflow::Ellipsis &&
+               el->maxWidth > 0.0f;
+    };
+
+    composeLayout();
+
+    // 列头标题
+    {
+        const auto* el = ui.find("todo.col.0.title");
+        DOCTEST_REQUIRE(el != nullptr);
+        DOCTEST_CHECK_EQ(el->overflow, core::TextOverflow::Ellipsis);
+        DOCTEST_CHECK(el->maxWidth > 0.0f);
+    }
+
+    // 真卡标题（拖前）
+    const auto* cardTitle = ui.find("todo.col.0.card.0.title");
+    DOCTEST_REQUIRE(cardTitle != nullptr);
+    DOCTEST_CHECK_EQ(cardTitle->text, std::string(120, 'A'));
+    DOCTEST_CHECK(checkEllipsis(cardTitle));
+
+    // 拖拽 → 副本出现
+    const auto* card = ui.find("todo.col.0.card.0.bg");
+    DOCTEST_REQUIRE(card != nullptr);
+    const eui::Rect cardBounds = boundsOf(card);
+    eui::PointerEvent pe;
+    card->onPress(pe, cardBounds);
+    core::dsl::DragEvent ev;
+    ev.x = cardBounds.x + 100.0f;
+    ev.y = cardBounds.y + 50.0f;
+    ev.totalX = 100.0;
+    ev.totalY = 50.0;
+    card->onDrag(ev);
+    composeLayout();
+
+    const auto* ghost = ui.find("todo.dragghost");
+    DOCTEST_REQUIRE(ghost != nullptr);
+    {
+        const auto* el = ui.find("todo.dragghost.title");
+        DOCTEST_REQUIRE(el != nullptr);
+        DOCTEST_CHECK_EQ(el->overflow, core::TextOverflow::Ellipsis);
+        DOCTEST_CHECK(el->maxWidth > 0.0f);
+    }
+
+    mod->onStop();
+    return true;
+})
+
+// 逾期弹窗行标题省略号三件套
+REGISTER_TEST(todo_ui_overdue_row_ellipsis,
+              "todo_ui: 逾期弹窗行标题省略号三件套（headless）", {
+    TestEnv env;
+    DOCTEST_REQUIRE(env.ready);
+    auto list = env.svc->listColumns();
+    DOCTEST_REQUIRE(list.isOk());
+    DOCTEST_REQUIRE(!list.value().empty());
+    const int64_t todoCol = list.value()[0].id;
+
+    auto ov = env.svc->createTask(todoCol, std::string(120, 'B'));
+    DOCTEST_REQUIRE(ov.isOk());
+    const int64_t now = static_cast<int64_t>(std::time(nullptr));
+    {
+        module::todo::Task t = ov.value();
+        std::tm dueTm{};
+        core::time::localTime(now, &dueTm);
+        dueTm.tm_hour = 12;
+        dueTm.tm_min = 0;
+        dueTm.tm_sec = 0;
+        t.dueAt = std::mktime(&dueTm) - 2 * 86400;
+        DOCTEST_REQUIRE(env.svc->updateTask(t).isOk());
+    }
+
+    std::unique_ptr<::core::Module> mod(create_todo_module());
+    mod->onStart();
+
+    {
+        Frame frame(mod.get());
+        const auto* btn = frame.ui.find("todo.btn.overdue.bg");
+        DOCTEST_REQUIRE(btn != nullptr);
+        DOCTEST_REQUIRE(btn->onClick != nullptr);
+        btn->onClick();
+        frame.refresh();
+        const auto* el = frame.ui.find("todo.dialog.overdue.row.0.title");
+        DOCTEST_REQUIRE(el != nullptr);
+        DOCTEST_CHECK_EQ(el->overflow, core::TextOverflow::Ellipsis);
+        DOCTEST_CHECK(el->maxWidth > 0.0f);
     }
 
     mod->onStop();

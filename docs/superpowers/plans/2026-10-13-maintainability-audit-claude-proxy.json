@@ -1,0 +1,134 @@
+{
+  "shard": "claude-proxy",
+  "baseline": "local master (post-R10 extraction + ProfileRepository split + TwoPhaseKeyWrite + model_slots.h X-macro)",
+  "scope": "src/module_claude_proxy/** (profile_repository / claude_service / quota/ / proxy_router / streaming_proxy / provider_config / settings_sync / ccsswitch_import / claude_ui_*)",
+  "prior_audit_resolved": [
+    "CPX-04 (hot-switch stale key cleanup) — settings_sync.cpp:444 now deletes keys no longer in managed set",
+    "CPX-08 (9 places to add model slot) — model_slots.h X-macro table is single source; all consumers derive from kModelSlotMetas",
+    "CPX-10 (proxy_router dual resolution path) — both paths now call resolveProfile()",
+    "CPX-11 (two JSON scanners) — json_scan.h created, shared by streaming_proxy + upstream_dialect",
+    "CPX-13 (no dialect override on Profile) — Profile.dialectOverride field exists, takes precedence over host inference",
+    "CPX-07 (Keychain+DB two-phase write inconsistency) — TwoPhaseKeyWrite class with compensate() handles both phases atomically"
+  ],
+  "prior_audit_still_unresolved": [
+    "CPX-02: syncTakeOver returns Result<void> but syncRestore is still void; startProxy discards results (see CPX-22 below)",
+    "CPX-09: env_var_hints.h 256 keys vs knownOfficialEnvKeys derived from kEnvAliases — two sources still, though now dynamic",
+    "CPX-12: managed key set for overlay conflict detection is built from buildProxyEnv output — partially dynamic but extra_env keys still not in detection",
+    "CPX-15: settings_sync::takeOver(const Profile& profile, ...) — IO layer still takes full service-layer data model"
+  ],
+  "findings": [
+    {
+      "id": "CPX-16",
+      "file": "src/module_claude_proxy/profile_repository.cpp",
+      "line": 0,
+      "lens": "architect",
+      "title": "ProfileRepository 1221行，内含四组独立关注点：Profile CRUD、SharedConfig CRUD、Keychain 迁移/清理（backfillCredentialsFromKeychain + cleanupOrphanKeychainEntries）、TwoPhaseKeyWrite 两段写助手",
+      "issue": "R10 提取把 DB 段从 ClaudeService 抽出来是正确的，但 ProfileRepository 自身膨胀到 1221 行，四种职责只有 one-line 注释与命名空间分隔，无类型级边界。反向同步的 loadApiKey 与列表的 listProfiles、createProfile 的 9 参数签名、duplicateProfile 的二段补写回滚，全挤在同一类里。TwoPhaseKeyWrite 虽是独立类型但在同一文件内，消费方 include profile_repository.h 即拖进全部四组依赖（OpenSSL SHA / platform::keychain / upstream_dialect / credential_protection）。",
+      "impact": "维护成本：给 Profile 加一列（如最近新增 dialectOverride / fallbackProfileId / authField）要改 rowToProfile 的列清单、INSERT 的 VALUES、UPDATE 的 SET 列表、createProfile 的 Result 回填字段、duplicateProfile 的二段补写——五处在同一文件内但不在一处，漏改编译不报错（如 createProfile 的 RETURNING 回填缺 extraSettingsJson 导致补写时丢失字段）；演进代价：Keychain 过渡代码（backfill/cleanup）完成使命后想删，却与 CRUD 主线混在同一文件/同一类，删前要逐一判断哪些调用方仍依赖。",
+      "severity": "MEDIUM",
+      "already_registered": false,
+      "suggestion": "拆 ProfileRepository 为三层：(1) ProfileCrud — 纯行映射 + CRUD + TwoPhaseKeyWrite；(2) SharedConfigCrud — 独立的小类（已有独立方法体，可直拆）；(3) KeychainTransition — backfill + cleanup 作为启动期一次性调用独立类，可在旧库占比归零后整类删除。头文件按层拆分但 CMake 仍在同一 static lib，不新增链接依赖。"
+    },
+    {
+      "id": "CPX-17",
+      "file": "src/module_claude_proxy/claude_service.cpp",
+      "line": 0,
+      "lens": "architect",
+      "title": "门面 ClaudeService（886行）仍承担「编排决策」与「纯转发」的混写：deleteProfile 决定是否停代理、updateProfile 决定是否 re-takeover、createProfile 决定是否 auto-activate、duplicateProfile 决定是否回滚——全部内联在门面方法体内",
+      "issue": "R10 拆分把 ProfileRepository 和 ProxyRuntime 抽出去了，但仍留在 ClaudeService 里的方法是「薄转发 + if-else 决策尾」的形态。例如 deleteProfile 先调 profileRepository_.deleteProfile，再根据 wasActive 判断调 stopProxy。这种编排正确但把所有决策类型集中在同一个类：createProfile 经 activateIfNoneActive 时调 setActiveProfile（内含 reverse-sync + DB 事务 + re-takeover），这条链的中间状态全活在 ClaudeService 的 switchMutex_ / lastSyncWarnings_ 等成员里。",
+      "impact": "演进代价：想给 deleteProfile 加「只在代理未运行时弹确认」需要传 UI 回调进方法，但 ClaudeService 作为单例不能持有 UI 引用；想给 updateProfile 加「变化事务日志」需要新增存储依赖，但门面已持有 db_ / profileRepository_ / proxyRuntime_ / settingsTakeover_ / callLogStore_ / terminalLauncher_ 六项，再加即继续堆。",
+      "severity": "MEDIUM",
+      "already_registered": true,
+      "suggestion": "CPX-01 既已注册，不再重复上报。本条聚焦门面层「编排逻辑」的抽离：deleteProfile / updateProfile 的策略尾（停代理 / re-takeover）抽成独立策略函数（如 applyProfileChangeSideEffects），门面只负责组合：先调 repo → 再调策略。"
+    },
+    {
+      "id": "CPX-18",
+      "file": "src/module_claude_proxy/quota/opencode_go_provider.cpp",
+      "line": 95,
+      "lens": "cpp20-expert",
+      "title": "四个 quota provider 各自实现 URL host 匹配/域名标签边界判定/大小写规范化，实现同构但语义微差：opencode_go 有 splitUrl+isOpencodeAiHost、deepseek 有 hostOf+hostMatches、volcano 和 minimax 各自另有一套",
+      "issue": "opencode_go_provider.cpp:90-125 的 UrlParts + splitUrl + isOpencodeAiHost，与 deepseek_provider.cpp:32-54 的 hostOf + hostMatches，都是「剥 prot://userinfo@host:port → 标签边界后缀匹配」。minimax_cn 和 volcano 大概率还有第三、四套。同一模块内的同构逻辑有四份实现：① trim/stripTrailingSlash 已有 3-4 份（profile_repository / claude_service / proxy_router / provider_config）；② URL host 提取也有 3 份（deepseek hostOf、opencode UrlParts、upstream_dialect 的 isOpencodeHost）。",
+      "impact": "维护成本：修正 host 匹配的边界 bug（如「不剥离 IPv6 [] 括号」「不处理 punycode」）要改 N 处且每处实现的变量名/中间步骤不同，git grep 找不全；如果上游 opencode.ai 加一个子域名变体，不知该改两处（splitUrl 的 isOpencodeAiHost + upstream_dialect 的 isOpencodeHost）还是三处。",
+      "severity": "LOW",
+      "already_registered": false,
+      "suggestion": "在 quota/ 内抽一个共用的小头文件（如 quota_url_match.h），提供两个纯函数：extractHost(url) → 小写 host（去 scheme/userinfo/port/path）+ isHostSuffixMatch(host, domain) → 标签边界匹配。四个 provider 改为调用它们。upstream_dialect 的 isOpencodeHost 可与此共用（不违反模块隔离：同模块内）。"
+    },
+    {
+      "id": "CPX-19",
+      "file": "src/module_claude_proxy/settings_sync.h",
+      "line": 61,
+      "lens": "architect",
+      "title": "settings_sync::takeOver(const Profile& profile, ...) 仍依赖完整 Profile 结构体，而实际只用了 modelsConfigJson / model / extraEnvJson / extraSettingsJson / dialectOverride / authField —— IO 层不应 import service 层数据模型",
+      "issue": "settings_sync.h:61 声明 takeOver(const Profile& profile, int proxyPort, const Paths& paths)。为实现此声明，settings_sync.h 需要前向声明 struct Profile（第17行），但 settings_sync.cpp 实际 include 的是 profile_repository.h 透出了整个 Profile / SharedConfig / TwoPhaseKeyWrite。两件事同时发生：(1) IO 协议层依赖 DB 行模型的所有字段；(2) 任何 Profile 字段变更都会触发 settings_sync 重新编译，即使该字段与接管无关（如 apiKeyHint / isActive / createdAt / fallbackProfileId）。",
+      "impact": "维护成本：给 Profile 加一个与接管无关的字段（如最近新增的 fallbackProfileId）→ settings_sync.cpp 重编译 → CI 全量重编模块。这与 CPX-15（09-27 审计已注册）是同一问题，本次 audit 确认仍未解决。",
+      "severity": "LOW",
+      "already_registered": true,
+      "suggestion": "CPX-15 已注册。替代入参：一个小视图结构（如 TakeOverView），只含接管所需的 6 个字段 + extraSettingsJson，Profile → TakeOverView 的转换放在门面（claude_service.cpp 的 syncTakeOver 私方法内）。"
+    },
+    {
+      "id": "CPX-20",
+      "file": "src/module_claude_proxy/profile_repository.cpp",
+      "line": 706,
+      "lens": "cpp20-expert",
+      "title": "backfillCredentialsFromKeychain（迁移旧 Keychain 凭据入库）与 cleanupOrphanKeychainEntries（清理 Keychain 残留）是过渡性一次性操作，永久驻留在 ProfileRepository 类中，增加主路径的认知负担",
+      "issue": "backfillCredentialsFromKeychain 只在启动时调用一次，运行期永不触发（迁移过的库 keychain_account 列不存在，直接 early return）。cleanupOrphanKeychainEntries 同样是一次性清理。两者共占约 130 行（706-791），且各自引入四层护栏判断（列存在检查 / 数据根零行跳过 / 凭据列无值跳过 / 白名单前缀过滤）——这些护栏的正确性只在「第一次迁移时」有意义，运行期永远 true 跳走。",
+      "impact": "维护成本：ProfileRepository 的阅读者必须先理解「这两段代码为什么存在、什么时候执行」，然后才能回到 CRUD 主线。若 Keychain 过渡代码有 bug（如 cleanup 的白名单前缀被误改），只有在极少数「从未迁移过的新安装」上才会暴露，日常开发/测试/CI 全绿。演进代价：未来想删这两段，删之前要确认「所有用户都已迁移」——但没有迁移完成率的统计机制，只能保守保留。",
+      "severity": "LOW",
+      "already_registered": false,
+      "suggestion": "将 backfill + cleanup 抽成独立的启动期类 KeychainMigration，持有 ProfileRepository 引用只做迁移读。或至少挪到 profile_repository.cpp 的独立命名空间，在类外声明。当某版本判定「所有用户皆已迁移」后可整文件删。"
+    },
+    {
+      "id": "CPX-21",
+      "file": "src/module_claude_proxy/quota/quota_provider.h",
+      "line": 81,
+      "lens": "cpp20-expert",
+      "title": "加第五家 quota provider 的代价：实现 QuotaProvider 子类 + 在 quota_registry.cpp 的 kQuotaProviders 表加一行（含 include provider 头）→ 3处改动，抽象一致性良好",
+      "issue": "QuotaProvider 的虚接口（id / displayName / fields / matchesBaseUrl / fetch）四条纯虚 + 工厂函数 + 注册表显式行，加一家新 provider 只需：(1) 写一个 .cpp（200-700行）；(2) 在 quota_registry.cpp include + 表里加一行。无注册表自发现机制（CHANGELOG 明说是刻意设计：静态库不拉未引用的 TU），但也意味着只有 kQuotaProviders 表是真相源，不存在多源漂移。QuotaCredentialSource 的注入缝（HttpSendFn + ProviderResolver）让测试完全不走真实网络。",
+      "impact": "积极的维护态：抽象一致性高于多数同类项目。加第五家的代价确定性地在 3 处（新文件 + registry include + 表行），无隐式依赖。",
+      "severity": "LOW",
+      "already_registered": false,
+      "suggestion": "无结构性建议。provider 自身的一致性（URL 匹配见 CPX-18）是唯一应统一的地方。可考虑加一个 quota/provider_template.cpp 作为新 provider 的起手模板，包含注释标注「这六处必须改」。"
+    },
+    {
+      "id": "CPX-22",
+      "file": "src/module_claude_proxy/claude_service.h",
+      "line": 251,
+      "lens": "architect",
+      "title": "syncTakeOver 返回 Result<void>、syncRestore 返回 void——两种失败语义不一致：前者可被调用方判错，后者只能靠日志",
+      "issue": "CPX-02（09-27 审计）指出的「接管/还原返回 void」问题上，syncTakeOver 已改为 Result<void>（h:251），syncRestore 仍是 void（h:252）。startProxy 调用 syncTakeOver 后检查结果了吗？需看 claude_service.cpp 实现——若未检查，Result<void> 的改造就是「签名改了但调用方仍丢弃」。",
+      "impact": "维护：本应可判错的还原路径仍在静默吞错误，与同模块 Profile CRUD 的 Result 纪律对比鲜明。",
+      "severity": "LOW",
+      "already_registered": true,
+      "suggestion": "CPX-02 已注册。最小改法：syncRestore 改为 Result<void>（内部已有 SyncResult.error），stopProxy() 在还原失败时至少 LOG_ERROR 而非 WARN。"
+    },
+    {
+      "id": "CPX-23",
+      "file": "src/module_claude_proxy/ccswitch_import.h",
+      "line": 0,
+      "lens": "architect",
+      "title": "ccswitch_import 的读侧（ccswitch_source.h）与映射侧（纯函数 mapCcSwitchProviderToProfile）分离良好，但读侧与 quota/ccswitch_source 共享了 ccswitch_sqlite.h 脚手架",
+      "issue": "ccswitch_import.cpp 使用 quota/ccswitch_source.h + quota/ccswitch_sqlite.h 读 cc-switch 库；quota/ccswitch_source.cpp 自身也使用同一套脚手架。两者「读同一库、做不同用途」的形态正确：导入侧只做纯映射，余量侧做引用解析。但 ccswitch_sqlite.h 作为私有脚手架被两个消费者 include，无头注释说明「这是内部脚手架，只应被 ccsswitch_source.cpp 与 ccsswitch_import.cpp 消费」——缺少契约注释，后来者可能把它当公共 API。",
+      "impact": "低：当前结构正确，缺的只是注释契约。脚手架暴露出去后，加字段可能破坏不知情的第三方。",
+      "severity": "LOW",
+      "already_registered": false,
+      "suggestion": "ccswitch_sqlite.h 头部加一行：「私有脚手架：仅 ccsswitch_source.cpp / ccsswitch_import.cpp 可 include；不构成模块公共 API」。"
+    },
+    {
+      "id": "CPX-24",
+      "file": "src/module_claude_proxy/provider_config.cpp",
+      "line": 0,
+      "lens": "cpp20-expert",
+      "title": "provider_config.cpp 1011行，是模块内「纯函数层」最重的单文件：模型槽位序列化/反序列化、env 别名、extra_settings JSON 校验、buildProxyEnv 全量 env 构造、托管键全集构建——六组独立主题挤在同一文件",
+      "issue": "文件内按注释分节但无文件级边界：models_config 的序列化/反序列化（~200行）、extra_env 的序列化/反序列化/别名（~150行）、buildProxyEnv（~100行）、托管键检测（~50行）、extra_settings_json 校验（~100行）——全部在一个 1011 行的 .cpp 里。文件名 provider_config 暗示「配置」但实际上只是「纯函数层」，与真正的配置存储（claude_profiles 表 / ProfileRepository）不在同一文件。",
+      "impact": "维护：修改 env 别名要在一千行的文件里找对位置；新增一个模型槽位虽然表已由 X-macro 集中（model_slots.h），但 buildProxyEnv 的 SlotEnv 行、extra_env 处理逻辑、托管键检测全在这个文件里，找对修改点的成本仍在。",
+      "severity": "LOW",
+      "already_registered": false,
+      "suggestion": "按主题拆文件：models_config.cpp（槽位序列化/反序列化/1M标记）、env_config.cpp（extra_env 别名/键检测 + buildProxyEnv）。保留 provider_config.h 作为聚合头 include 两者，不改变调用方。"
+    }
+  ],
+  "credits": {
+    "model_slots_h": "X-macro 表的设计是本次审计中最优的架构决策：加槽位只改一行，所有消费方经 kModelSlotMetas 与 kModelSlotCount 派生，编译期 guard 守住成员数与表行数一致。该模式应在 env_var_hints 与托管键检测处复用。",
+    "quota_provider_interface": "QuotaProvider 抽象是四家供应商一致性的核心：虚接口包含 id/displayName/fields/matchesBaseUrl/fetch 五条，注册表显式声明，fetch 入参含 HttpSendFn + ProviderConfig → 可全量单测零真实网络。加第五家只需一处接口实现 + 注册表一行。",
+    "two_phase_key_write": "TwoPhaseKeyWrite 是 profile_repository 内设计最严谨的类型：capture/fail 补偿/旧存储形态原样回写三段都在一个类型内，updateProfile/deleteProfile/duplicateProfile 三处复用同一套语义。"
+  }
+}

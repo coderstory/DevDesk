@@ -1,16 +1,9 @@
 // tests/test_modules/test_menu_beautify.cpp
-// 菜单结构测试（headless，真机圆角/主题/图标属视觉点验）：托盘 spec、桌宠右键菜单项、
+// 菜单结构测试（headless，真机圆角/主题/图标属视觉点验）：托盘 spec、
 // path→动作选择数学、退出二段确认、styledMenu 纯函数、showStyledMenu 降级守卫。
-// 跨文件前提：
-//   - petContextMenuItems 与 petMenuActionForPath 是同一条链：前者产出的扁平下标即后者
-//     吃的 path 下标，改一侧必须同改另一侧，否则点击落到别的动作。
-//   - styledMenuFlatten 产出的 row.path 是同一套下标，showStyledMenu 按它回调。
-//   - showStyledMenu 返回 false = 开不了 styled 菜单，调用方改走原生托盘菜单
-//     （main.cpp 的 onTrayMenu 据此回落 nativeTrayMenuItems）。
 #include "doctest.h"
 
 #include "core/tray_menu_spec.h"
-#include "module_pet/pet_window.h"
 
 #include <components/styledmenu.h>
 
@@ -33,84 +26,7 @@ REGISTER_TEST(menuBeautifyTraySpecStructure,
     return true;
 });
 
-REGISTER_TEST(menuBeautifyPetMenuItemsWithSkins, "menu: 桌宠菜单含换肤子组（5 顶层项）", {
-    const std::vector<std::string> skins = {"duck", "slime", "robot"};
-    const auto items = module::pet::petContextMenuItems(skins);
-    DOCTEST_REQUIRE_EQ(items.size(), static_cast<size_t>(5));
-    DOCTEST_CHECK_EQ(items[0].text, std::string("换肤"));
-    DOCTEST_REQUIRE_EQ(items[0].children.size(), static_cast<size_t>(3));
-    DOCTEST_CHECK_EQ(items[0].children[2].text, std::string("robot"));
-    DOCTEST_CHECK(items[1].text.find("位置重置") != std::string::npos);
-    DOCTEST_CHECK(items[2].text.find("隐藏桌宠") != std::string::npos);
-    DOCTEST_CHECK_EQ(items[3].text, std::string("-"));
-    DOCTEST_CHECK_EQ(items[4].text, std::string("退出 DevDesk"));
-    return true;
-});
-
-REGISTER_TEST(menuBeautifyPetMenuItemsWithoutSkins, "menu: 桌宠菜单无皮肤时 4 顶层项", {
-    const auto items = module::pet::petContextMenuItems(std::vector<std::string>());
-    DOCTEST_REQUIRE_EQ(items.size(), static_cast<size_t>(4));
-    DOCTEST_CHECK(items[0].text.find("位置重置") != std::string::npos);
-    DOCTEST_CHECK(items[1].text.find("隐藏桌宠") != std::string::npos);
-    DOCTEST_CHECK_EQ(items[2].text, std::string("-"));
-    DOCTEST_CHECK_EQ(items[3].text, std::string("退出 DevDesk"));
-    return true;
-});
-
 // path 下标随换肤子组有无整体偏移；分隔线也占一个下标，故退出项在「隐藏」之后隔 2 位
-REGISTER_TEST(menuBeautifyPetActionPathsWithSkins, "menu: path→动作（有换肤子组，下标偏移）", {
-    int skinIndex = -1;
-    DOCTEST_CHECK(module::pet::petMenuActionForPath(std::vector<int>{0}, 3, skinIndex) ==
-                  module::pet::PetMenuAction::None);
-    DOCTEST_CHECK(module::pet::petMenuActionForPath(std::vector<int>{0, 2}, 3, skinIndex) ==
-                  module::pet::PetMenuAction::Skin);
-    DOCTEST_CHECK_EQ(skinIndex, 2);
-    skinIndex = -1;
-    DOCTEST_CHECK(module::pet::petMenuActionForPath(std::vector<int>{0, 3}, 3, skinIndex) ==
-                  module::pet::PetMenuAction::None);
-    DOCTEST_CHECK(module::pet::petMenuActionForPath(std::vector<int>{1}, 3, skinIndex) ==
-                  module::pet::PetMenuAction::ResetPosition);
-    DOCTEST_CHECK(module::pet::petMenuActionForPath(std::vector<int>{2}, 3, skinIndex) ==
-                  module::pet::PetMenuAction::Hide);
-    DOCTEST_CHECK(module::pet::petMenuActionForPath(std::vector<int>{3}, 3, skinIndex) ==
-                  module::pet::PetMenuAction::None);
-    DOCTEST_CHECK(module::pet::petMenuActionForPath(std::vector<int>{4}, 3, skinIndex) ==
-                  module::pet::PetMenuAction::Exit);
-    DOCTEST_CHECK(module::pet::petMenuActionForPath(std::vector<int>(), 3, skinIndex) ==
-                  module::pet::PetMenuAction::None);
-    // 只有换肤组接受二层路径，Hide 等顶层项没有子项
-    DOCTEST_CHECK(module::pet::petMenuActionForPath(std::vector<int>{1, 0}, 3, skinIndex) ==
-                  module::pet::PetMenuAction::None);
-    return true;
-});
-
-REGISTER_TEST(menuBeautifyPetActionPathsWithoutSkins, "menu: path→动作（无换肤子组，下标回移）", {
-    int skinIndex = -1;
-    DOCTEST_CHECK(module::pet::petMenuActionForPath(std::vector<int>{0}, 0, skinIndex) ==
-                  module::pet::PetMenuAction::ResetPosition);
-    DOCTEST_CHECK(module::pet::petMenuActionForPath(std::vector<int>{1}, 0, skinIndex) ==
-                  module::pet::PetMenuAction::Hide);
-    DOCTEST_CHECK(module::pet::petMenuActionForPath(std::vector<int>{2}, 0, skinIndex) ==
-                  module::pet::PetMenuAction::None);
-    DOCTEST_CHECK(module::pet::petMenuActionForPath(std::vector<int>{3}, 0, skinIndex) ==
-                  module::pet::PetMenuAction::Exit);
-    DOCTEST_CHECK(module::pet::petMenuActionForPath(std::vector<int>{9}, 0, skinIndex) ==
-                  module::pet::PetMenuAction::None);
-    return true;
-});
-
-REGISTER_TEST(menuBeautifyPetExitConfirmKept, "menu: 退出二段确认结构与仅确认退语义保持", {
-    const auto confirm = module::pet::petExitConfirmItems();
-    DOCTEST_REQUIRE_EQ(confirm.size(), static_cast<size_t>(4));
-    DOCTEST_CHECK(confirm[0].disabled);
-    DOCTEST_CHECK_EQ(confirm[1].text, std::string("-"));
-    DOCTEST_CHECK_EQ(confirm[2].text, std::string("确认退出"));
-    DOCTEST_CHECK_EQ(confirm[3].text, std::string("取消"));
-    DOCTEST_CHECK(module::pet::petExitConfirmChosen(std::vector<int>{2}));
-    DOCTEST_CHECK(!module::pet::petExitConfirmChosen(std::vector<int>{3}));
-    DOCTEST_CHECK(!module::pet::petExitConfirmChosen(std::vector<int>()));
-    return true;
-});
 
 static std::vector<components::StyledMenuItem> menuBeautifySampleMenu() {
     std::vector<components::StyledMenuItem> out;
@@ -210,37 +126,6 @@ REGISTER_TEST(menuBeautifyStyledFullExpandedCount, "menu: styled 全展开预留
     return true;
 });
 
-REGISTER_TEST(menuBeautifyStyledFoldedPetMenuSelectable, "menu: 折叠态桌宠式菜单仍可选（不降级原生）", {
-    std::vector<components::StyledMenuItem> items = menuBeautifyFoldableSkinMenu();
-    items.push_back(components::StyledMenuItem("位置重置"));
-    items.push_back(components::StyledMenuItem("隐藏桌宠"));
-    components::StyledMenuItem sep;
-    sep.text = "-";
-    items.push_back(std::move(sep));
-    items.push_back(components::StyledMenuItem("退出 DevDesk"));
-    const auto rows = components::styledMenuFlatten(items);
-    DOCTEST_REQUIRE_EQ(rows.size(), static_cast<size_t>(5));
-    // 折叠组头不占可选行，但只要还剩顶层可选行就 >0，不触发降级
-    DOCTEST_CHECK(components::styledMenuSelectableCount(rows) > static_cast<size_t>(0));
-    DOCTEST_CHECK_EQ(components::styledMenuSelectableCount(rows), static_cast<size_t>(3));
-    return true;
-});
-
-REGISTER_TEST(menuBeautifyPetActionPathFoldIndependent, "menu: path→动作与折叠态无关（组头None/子项Skin）", {
-    // path 基于原始 items 向量下标，与运行期折叠/展开态无关：无论 flatten 是否列出子行，
-    // 组头 {0} 都映射 None、子项 {0,j} 都映射 Skin。
-    int skinIndex = -1;
-    DOCTEST_CHECK(module::pet::petMenuActionForPath(std::vector<int>{0}, 2, skinIndex) ==
-                  module::pet::PetMenuAction::None);
-    DOCTEST_CHECK(module::pet::petMenuActionForPath(std::vector<int>{0, 0}, 2, skinIndex) ==
-                  module::pet::PetMenuAction::Skin);
-    DOCTEST_CHECK_EQ(skinIndex, 0);
-    DOCTEST_CHECK(module::pet::petMenuActionForPath(std::vector<int>{0, 1}, 2, skinIndex) ==
-                  module::pet::PetMenuAction::Skin);
-    DOCTEST_CHECK_EQ(skinIndex, 1);
-    return true;
-});
-
 REGISTER_TEST(menuBeautifyStyledPanelHeight, "menu: styled 面板高度行数和+分隔线+inset", {
     const auto rows = components::styledMenuFlatten(menuBeautifySampleMenu());
     components::StyledMenuStyle style;
@@ -297,3 +182,4 @@ REGISTER_TEST(menuBeautifyStyledShowParamGuard, "menu: styled 空项/无可选�
     DOCTEST_CHECK_EQ(selected, -1);
     return true;
 });
+

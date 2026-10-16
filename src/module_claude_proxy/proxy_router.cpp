@@ -488,11 +488,7 @@ void ProxyRouter::handleStreamingRequest(
     // 流式转发完成（4xx/5xx 上游状态码原样记录，pet 侧分类文案）
     service_.recordProxyEvent(upstreamStatus);
 
-    LOG_INFO("流式代理 " + method + " " + path + " -> " +
-             std::to_string(upstreamStatus) + " (profile=" +
-             std::to_string(servingProfile.id) +
-             (servingProfile.id != profile.id ? " [failover]" : "") +
-             ", content-type=" + contentType + ")");
+    // 成功不记：代理流量大，每请求一条 INFO 会刷屏；失败路径各有独立 LOG_WARN
 }
 
 } // namespace module::claude

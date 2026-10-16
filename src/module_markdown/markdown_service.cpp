@@ -1281,6 +1281,9 @@ core::Result<std::vector<std::string>> MarkdownService::listTopFolders() const {
         if (ec) break;
         std::error_code dec;
         if (it->is_directory(dec) && !dec) {
+            // .git 不进目录树：自动提交把笔记根初始化成 git 仓库后，仓库内部
+            // 目录（objects/refs/…）对用户是纯噪音
+            if (it->path().filename() == ".git") continue;
             out.push_back(it->path().filename().generic_string());
         }
     }
@@ -1301,10 +1304,18 @@ core::Result<std::vector<std::string>> MarkdownService::listAllFolders() const {
         if (ec) break;
         std::error_code dec;
         if (!it->is_directory(dec) || dec) continue;
+        // .git 整棵不进目录树也不枚举（自动提交把笔记根初始化成 git 仓库后，仓库
+        // 内部目录 objects/refs/… 对用户是纯噪音且数量大）：命中即关递归，嵌套
+        // 在子目录里的 .git 同样隐藏
+        if (it->path().filename() == ".git") {
+            it.disable_recursion_pending();
+            continue;
+        }
         // 相对路径统一 POSIX 形态（与索引里的笔记路径同构，可直接比对前缀）
         const auto rel = fs::relative(it->path(), notesDir_, dec);
         if (dec || rel.empty()) continue;
-        out.push_back(rel.generic_string());
+        const std::string relPosix = rel.generic_string();
+        out.push_back(relPosix);
     }
     std::sort(out.begin(), out.end());
     return core::Result<std::vector<std::string>>::ok(std::move(out));

@@ -62,7 +62,6 @@ constexpr const char* kRequiredGitignoreLines[] = {
     "run-settings/",                  // 每会话临时 settings（含明文 API key）
     "claude_settings_snapshot.json",  // 接管前 settings.json 原 env 快照（可能含真 token）
     "logs/",                          // 日志（含 profile 名与路径）
-    "pets/",                          // 桌宠皮肤（混了用户自加皮肤，属本机资产）
     "!/.gitignore",                   // 放行自身（数据根本身要能进 git）
 };
 
@@ -136,14 +135,6 @@ fs::path markdownDir() {
     return appDataDir() / "notes";
 }
 
-fs::path petsDir() {
-    // 覆盖优先级：DEVDESK_PETS_DIR > DEVDESK_DATA_ROOT > 平台默认根
-    if (const char* env = std::getenv("DEVDESK_PETS_DIR")) {
-        return fs::path(env);
-    }
-    return appDataDir() / "pets";
-}
-
 fs::path logsDir() {
     return appDataDir() / "logs";
 }
@@ -161,7 +152,7 @@ fs::path claudeConfigDirOverride() {
 
 void ensureDirectoriesExist() {
     std::error_code ec;
-    for (const auto& dir : {appDataDir(), markdownDir(), logsDir(), petsDir()}) {
+    for (const auto& dir : {appDataDir(), markdownDir(), logsDir()}) {
         fs::create_directories(dir, ec);
         if (ec) {
             LOG_WARN("创建目录失败: " + dir.string() + " (" + ec.message() + ")");

@@ -59,6 +59,12 @@ if(MINGW AND EXISTS "${DEVDESK_MINGW_ROOT}/lib")
             endif()
         endif()
 
+        # ws2_32/crypt32 追加进标准库集（标准库块在链接行最末、位于 libcurl.a 之后）：
+        #   GNU ld 左→右解析，curl 静态链的 Winsock 符号要求 -lws2_32 在其后；
+        #   CMake 链接项去重保首位，走 target_link_libraries 无论放哪都会被早位出现抢走。
+        #   append 不覆盖默认集（gdi32/user32 等保留）——这是当年 -D 覆盖事故（T2）的正解形态。
+        set(CMAKE_CXX_STANDARD_LIBRARIES "${CMAKE_CXX_STANDARD_LIBRARIES} -lws2_32 -lcrypt32 -lssl -lcrypto")
+
         # OpenSSL：静态模式（FindOpenSSL 把查找后缀收窄到 .a，
         # 并给 OpenSSL::SSL/Crypto 自动补 ws2_32/crypt32 接口依赖）
         if(NOT DEFINED OPENSSL_USE_STATIC_LIBS)
