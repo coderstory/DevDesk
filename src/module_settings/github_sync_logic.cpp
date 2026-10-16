@@ -105,28 +105,6 @@ std::string remoteNotePath(const std::string& fileName) {
     return std::string(kRemoteNotesDir) + fileName;
 }
 
-std::vector<FileChange> diffNotesByState(
-    const std::map<std::string, LocalNote>& local,
-    const std::map<std::string, SyncedNoteRecord>& synced) {
-    std::vector<FileChange> out;
-    for (const auto& [name, note] : local) {
-        const auto it = synced.find(name);
-        if (it != synced.end() && !it->second.contentHash.empty() &&
-            it->second.contentHash == note.hash) {
-            continue;   // InSync：登记 hash 与本地一致 → 不推
-        }
-        out.push_back(FileChange{FileChange::Kind::Put, remoteNotePath(name),
-                                 note.content});
-    }
-    for (const auto& [name, rec] : synced) {
-        (void)rec;
-        if (local.find(name) != local.end()) continue;
-        out.push_back(FileChange{FileChange::Kind::Delete, remoteNotePath(name),
-                                 {}});
-    }
-    return out;
-}
-
 PushAction pushActionForState(NoteSyncState state, bool remoteExists,
                               bool remoteShaMatches) {
     switch (state) {

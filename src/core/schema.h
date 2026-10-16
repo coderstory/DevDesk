@@ -297,8 +297,10 @@ inline constexpr const char* kSql = R"(
         settings_json TEXT NOT NULL DEFAULT ''
     );
 
-    -- GitHub Sync 同步基线（本机专属状态）。**绝不离开本机**：在
-    -- core::sql_dump::defaultSkipTables() 里被排除，dump / 备份都不含本表。
+    -- GitHub Sync 同步基线（本机专属状态）。在 core::sql_dump::defaultSkipTables()
+    -- 里被排除 → **SQL dump 不含本表**（dump 是跨设备传输面，基线不得随它走）。
+    -- 本地备份是整库文件拷贝（db_backup），含本表且应当含：备份回滚要连基线一起
+    -- 回到备份时刻，否则恢复后全部笔记被误判为本地新增。
     --   为什么必须独立于 app_config：dump 会整体跨设备转移，基线（上次同步
     --   成功后的远端 sha + 本地内容 hash、首次方向标记、未同步提示）若随 dump
     --   落到新设备，新设备会拿**别人写的** sha/hash 做比对——判「未变」跳过下载，

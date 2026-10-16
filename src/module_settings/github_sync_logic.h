@@ -96,16 +96,6 @@ std::string notesBackupDirName(int64_t tsSec);
 int pruneBackups(const std::filesystem::path& dir, const std::string& prefix,
                  int keep, const std::string& suffix = ".db");
 
-// ── 变更集（决策 #19 + spec F1）──
-// 笔记同步的变更集：Put = 本地新增/修改；Delete = 本地已删 → 删远端同路径。
-// 重命名天然表达为「删旧 + 建新」。
-struct FileChange {
-    enum class Kind { Put, Delete };
-    Kind kind = Kind::Put;
-    std::string path;     // 远端路径（notes/<name>）
-    std::string content;  // 仅 Put 有值
-};
-
 // 本地笔记快照条目：内容 + 其 contentHash（调用方算好传入，logic 不读盘）。
 struct LocalNote {
     std::string content;
@@ -118,14 +108,6 @@ struct SyncedNoteRecord {
     std::string sha;
     std::string contentHash;
 };
-
-// push 用变更集：InSync（登记有 && 本地 hash==登记 hash）不产出——未变笔记不推、
-// 不造远端噪音 commit（T3 审计 finding 4）。登记无 → Put(New)；hash 不符 →
-// Put(LocalModified)；登记有而本地无 → Delete(调用方仍守「文件还在盘上不删」安全栏)。
-// 输出顺序稳定（先按文件名字典序 Put，再按文件名字典序 Delete），便于断言与日志。
-std::vector<FileChange> diffNotesByState(
-    const std::map<std::string, LocalNote>& local,
-    const std::map<std::string, SyncedNoteRecord>& synced);
 
 // ── pull 侧动作（F7 笔记拉取）──
 struct PullAction {

@@ -68,47 +68,6 @@ REGISTER_TEST(github_sync_dump_size_limit,
     return true;
 })
 
-REGISTER_TEST(github_sync_diff_notes_by_state,
-              "github_sync 推送变更集: InSync 不产出；New/LocalModified → Put；LocalDeleted → Delete", {
-    using g::LocalNote;
-    using g::SyncedNoteRecord;
-    using FC = g::FileChange;
-    const std::map<std::string, LocalNote> local{
-        {"insync.md", {"A", g::contentHash("A")}},
-        {"mod.md", {"A2", g::contentHash("A2")}},
-        {"new.md", {"N", g::contentHash("N")}},
-    };
-    const std::map<std::string, SyncedNoteRecord> synced{
-        // insync：登记 hash 与本地一致 → 不产出（每轮不再为未变笔记造远端 commit）
-        {"insync.md", {"sha-1", g::contentHash("A")}},
-        // mod：登记 hash 与本地不符 → Put（本地改过）
-        {"mod.md", {"sha-2", g::contentHash("A-old")}},
-        // gone：登记有而本地无 → Delete（删除传播）
-        {"gone.md", {"sha-3", g::contentHash("G")}},
-    };
-    const auto changes = g::diffNotesByState(local, synced);
-    DOCTEST_REQUIRE_EQ(changes.size(), static_cast<size_t>(3));
-    // 顺序稳定：名序 Put 在前，名序 Delete 在后
-    DOCTEST_CHECK(changes[0].kind == FC::Kind::Put);
-    DOCTEST_CHECK_EQ(changes[0].path, std::string("notes/mod.md"));
-    DOCTEST_CHECK_EQ(changes[0].content, std::string("A2"));
-    DOCTEST_CHECK(changes[1].kind == FC::Kind::Put);
-    DOCTEST_CHECK_EQ(changes[1].path, std::string("notes/new.md"));
-    DOCTEST_CHECK(changes[2].kind == FC::Kind::Delete);
-    DOCTEST_CHECK_EQ(changes[2].path, std::string("notes/gone.md"));
-
-    // 全 InSync → 空变更集（T3 审计 finding 4 的核心判据：只推变更）
-    const std::map<std::string, LocalNote> same{{"x.md", {"X", g::contentHash("X")}}};
-    const std::map<std::string, SyncedNoteRecord> recX{{"x.md", {"s", g::contentHash("X")}}};
-    DOCTEST_CHECK(g::diffNotesByState(same, recX).empty());
-    // 登记缺 hash（T3 时代旧记录）→ 视为本地改动 → Put（宁可多推一次，不漏推）
-    const std::map<std::string, SyncedNoteRecord> noHash{{"x.md", {"s", std::string()}}};
-    const auto legacy = g::diffNotesByState(same, noHash);
-    DOCTEST_REQUIRE_EQ(legacy.size(), static_cast<size_t>(1));
-    DOCTEST_CHECK(legacy[0].kind == FC::Kind::Put);
-    return true;
-})
-
 REGISTER_TEST(github_sync_notes_backup_prune,
               "github_sync 逻辑: 笔记备份目录名 + 目录型 prune（与库备份前缀隔离、独立计数）", {
     DOCTEST_CHECK_EQ(g::notesBackupDirName(1700000000),
