@@ -145,7 +145,7 @@ PushAction pushActionForState(NoteSyncState state, bool remoteExists,
     return PushAction::Skip;
 }
 
-PullDecision pullDecisionForState(NoteSyncState state) {
+PullDecision pullDecisionForState(NoteSyncState state, bool remoteShaMatches) {
     switch (state) {
         case NoteSyncState::New:
         case NoteSyncState::RemoteNew:
@@ -154,8 +154,12 @@ PullDecision pullDecisionForState(NoteSyncState state) {
             return PullDecision::Download;
         case NoteSyncState::InSync:
         case NoteSyncState::LocalModified:   // 远端没变：本地改动保留，push 侧推
-        case NoteSyncState::LocalDeleted:    // 本地删除待传播；远端也变过时 push 走冲突
             return PullDecision::Skip;
+        case NoteSyncState::LocalDeleted:
+            // 远端没动 → 本地删除待 push 传播；远端也变过 → 下载恢复（死锁闭环
+            // 的断点：恢复并更新登记后重判 InSync，push 不再撞 Conflict）。
+            return remoteShaMatches ? PullDecision::Skip
+                                    : PullDecision::Download;
     }
     return PullDecision::Skip;
 }
@@ -176,7 +180,8 @@ std::vector<PullAction> pullNoteActions(
         const bool remoteShaMatches = hasRecord && rec->second.sha == sha;
         const auto state = classifyNote(hasRecord, localExists,
                                         localHashMatches, remoteShaMatches);
-        if (pullDecisionForState(state) == PullDecision::Download) {
+        if (pullDecisionForState(state, remoteShaMatches) ==
+            PullDecision::Download) {
             out.push_back(PullAction{PullAction::Kind::Download, name});
         }
     }

@@ -181,20 +181,24 @@ REGISTER_TEST(github_sync_action_tables_from_state,
     DOCTEST_CHECK(g::pushActionForState(NoteSyncState::LocalDeleted, true, false) ==
                   PushAction::Conflict);
     // pull：远端变过或无基线 → 下载；远端没变的本地改动与本地删除 → 跳过
-    DOCTEST_CHECK(g::pullDecisionForState(NoteSyncState::New) ==
+    DOCTEST_CHECK(g::pullDecisionForState(NoteSyncState::New, false) ==
                   PullDecision::Download);
-    DOCTEST_CHECK(g::pullDecisionForState(NoteSyncState::RemoteNew) ==
+    DOCTEST_CHECK(g::pullDecisionForState(NoteSyncState::RemoteNew, false) ==
                   PullDecision::Download);
-    DOCTEST_CHECK(g::pullDecisionForState(NoteSyncState::RemoteModified) ==
+    DOCTEST_CHECK(g::pullDecisionForState(NoteSyncState::RemoteModified, false) ==
                   PullDecision::Download);
-    DOCTEST_CHECK(g::pullDecisionForState(NoteSyncState::Diverged) ==
+    DOCTEST_CHECK(g::pullDecisionForState(NoteSyncState::Diverged, false) ==
                   PullDecision::Download);
-    DOCTEST_CHECK(g::pullDecisionForState(NoteSyncState::InSync) ==
+    DOCTEST_CHECK(g::pullDecisionForState(NoteSyncState::InSync, false) ==
                   PullDecision::Skip);
-    DOCTEST_CHECK(g::pullDecisionForState(NoteSyncState::LocalModified) ==
+    DOCTEST_CHECK(g::pullDecisionForState(NoteSyncState::LocalModified, true) ==
                   PullDecision::Skip);
-    DOCTEST_CHECK(g::pullDecisionForState(NoteSyncState::LocalDeleted) ==
+    // LocalDeleted：远端没动 → Skip（本地删除待 push 传播）；
+    // 远端也变过 → Download（不让位就丢远端新内容，且 push 会永远 409 死锁）
+    DOCTEST_CHECK(g::pullDecisionForState(NoteSyncState::LocalDeleted, true) ==
                   PullDecision::Skip);
+    DOCTEST_CHECK(g::pullDecisionForState(NoteSyncState::LocalDeleted, false) ==
+                  PullDecision::Download);
     return true;
 })
 
@@ -230,13 +234,39 @@ REGISTER_TEST(github_sync_pull_note_actions,
     DOCTEST_REQUIRE_EQ(fresh.size(), static_cast<size_t>(1));
     DOCTEST_CHECK(fresh[0].kind == Kind::Download);
 
-    // 本地删除（LocalDeleted）→ skip（待 push 传播；远端也变过时走 push 冲突）
-    const std::map<std::string, LocalNote> localDel{};   // b 本地已删
+    // 本地删除（LocalDeleted）+ 远端未变 → skip（待 push 传播）
+    const std::map<std::string, LocalNote> localDel{};
     const std::map<std::string, SyncedNoteRecord> syncedDel{
         {"b.md", {"sb-old", g::contentHash("old")}}};
-    const auto delActions =
+    const auto delUnchanged =
+        g::pullNoteActions({{"b.md", "sb-old"}}, localDel, syncedDel);
+    DOCTEST_CHECK(delUnchanged.empty());
+
+    // 死锁路径钉死（复审裁决）：本地已删 + 远端已改。pull 必须下载恢复——
+    // 若 Skip，push 对 LocalDeleted+远端变 判 Conflict 并中止整轮 → 409 弹窗
+    // 「拉取后再推」原地打转，所有推送被一篇笔记永久卡死。
+    const auto delChanged =
         g::pullNoteActions({{"b.md", "sb-new"}}, localDel, syncedDel);
-    DOCTEST_CHECK(delActions.empty());
+    DOCTEST_REQUIRE_EQ(delChanged.size(), static_cast<size_t>(1));
+    DOCTEST_CHECK(delChanged[0].kind == Kind::Download);
+    DOCTEST_CHECK_EQ(delChanged[0].fileName, std::string("b.md"));
+
+    // 下载恢复后的下一轮：本地内容 = 远端内容、登记已被下载路径更新为
+    // (树 sha, 内容 hash) → 重判 InSync，push 不再 Conflict（闭环断开）
+    const std::string remoteContent = "restored";
+    const std::map<std::string, LocalNote> localAfter{
+        {"b.md", {remoteContent, g::contentHash(remoteContent)}}};
+    const std::map<std::string, SyncedNoteRecord> syncedAfter{
+        {"b.md", {"sb-new", g::contentHash(remoteContent)}}};
+    const auto stateAfter = g::classifyNote(
+        /*hasRecord=*/true, /*localExists=*/true,
+        /*localHashMatches=*/true, /*remoteShaMatches=*/true);
+    DOCTEST_CHECK(stateAfter == g::NoteSyncState::InSync);
+    DOCTEST_CHECK(g::pushActionForState(stateAfter, true, true) ==
+                  g::PushAction::Skip);
+    DOCTEST_CHECK(g::pullNoteActions({{"b.md", "sb-new"}}, localAfter,
+                                     syncedAfter)
+                      .empty());
 
     // 双空 → 空；顺序稳定（下载名序在前，保留名序在后）
     DOCTEST_CHECK(g::pullNoteActions({}, {}, {}).empty());

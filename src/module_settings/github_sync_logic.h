@@ -41,11 +41,14 @@ enum class PushAction { Skip, Put, Delete, Conflict };
 PushAction pushActionForState(NoteSyncState state, bool remoteExists,
                               bool remoteShaMatches);
 
-// pull 判定：远端名逐个判态；登记有而远端无的（远端已删）不走本表，由调用方
-// 归 KeepLocal + 清登记（保守语义）。
+// pull 判定：远端名逐个判态。remoteShaMatches = 远端 sha == 登记 sha（对
+// LocalDeleted 是判据的关键输入：远端没动 → Skip 待 push 传播；远端也变过 →
+// Download 恢复本地——不让位会丢远端新内容，且 push 对「本地删+远端改」判
+// Conflict 并中止整轮，409 弹窗「拉取后再推」会原地打转成永久死锁）。
+// 登记有而远端无的（远端已删）不走本表，由调用方归 KeepLocal + 清登记。
 enum class PullDecision { Download, Skip };
 
-PullDecision pullDecisionForState(NoteSyncState state);
+PullDecision pullDecisionForState(NoteSyncState state, bool remoteShaMatches);
 
 // 本地内容哈希：FNV-1a 64bit → 16 位小写 hex。纯件零依赖（不引 OpenSSL 进 logic），
 // 同内容恒同值 —— 状态判定用内容而非 mtime（spec F1：mtime 跨设备/备份恢复不可靠）。

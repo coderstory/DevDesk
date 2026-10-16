@@ -1061,6 +1061,9 @@ public:
                              " 已被其他设备改动，本地删除未传播（409 冲突）")
                           : ("笔记 notes/" + plan.name +
                              " 本地与远端都有改动（409 冲突）");
+            // 弹窗「拉取远端后再推」的拉取会把远端内容下载回本地并更新登记
+            // （Diverged 与 LocalDeleted+远端变 都在 pull 的 Download 集里），
+            // 重判 InSync 后本轮推送即可通过——不会原地打转。
             stashOverwriteListForConflict(putNames);
             return false;
         }
@@ -1309,8 +1312,9 @@ public:
                          "，本地保留（pull 不替远端传播删除）");
                 // C2：清登记——远端被别设备删掉、本地未改的笔记若留着旧登记，
                 // 下轮 push 按 InSync 短路永不重推（远端永远缺这篇），本地一改
-                // 又带失效 sha PUT → 409/422 死循环。清掉后下轮 push 按 New 走
-                // GET 现值兜底（远端无 → 无 sha PUT 重建，local wins）。
+                // 又带失效 sha PUT → 409/422 死循环。清掉后下轮 push 判 New，
+                // shaIfMatch 取远端树现值（C5 后不再逐篇 GET；远端无此名 →
+                // 无 sha PUT 重建，local wins）。
                 if (auto f = githubSyncStore_->forgetSyncedNote(action.fileName);
                     f.isFail()) {
                     LOG_WARN("Settings: 笔记基线清理失败 " + action.fileName +
