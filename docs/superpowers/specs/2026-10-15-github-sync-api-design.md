@@ -87,7 +87,7 @@ struct RepoInfo  { std::string fullName, defaultBranch; bool canPush = false; bo
 struct FileInfo  { bool exists = false; std::string content, sha; };
 struct TestStep  { std::string name; bool ok = false; int durationMs = 0; std::string detail; };
 struct TestReport{ bool ok = false; std::vector<TestStep> steps; std::string summary; };
-struct RetryPolicy { int attempts = 3; std::vector<int> backoffMs{1000, 3000, 9000}; };
+struct RetryPolicy { int attempts = 4; std::vector<int> backoffMs{1000, 3000, 9000}; };  // attempts = 总请求数：首次 + 3 次重试（与决策 #4 对齐，2026-10-16 T5 review 修订；原写 3 会让第 3 档退避永不使用）
 
 class GithubApi {
 public:
