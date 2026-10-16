@@ -190,6 +190,8 @@ REGISTER_TEST(github_no_retry_401, "github: 401 不重试", {
     DOCTEST_CHECK_EQ(res.errorCode(), core::ErrorCode::InvalidApiKey);
     DOCTEST_CHECK_EQ(rec.reqs.size(), static_cast<std::size_t>(1));
     DOCTEST_CHECK(sleeps.empty());
+    // 401 文案必须给出可执行动作（指向 PAT），只报「令牌无效」用户无从下手
+    DOCTEST_CHECK(res.errorMessage().find("PAT") != std::string::npos);
     return true;
 })
 
