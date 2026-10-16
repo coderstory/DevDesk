@@ -18,6 +18,7 @@ constexpr const char* kKeyRepoUrl = "github_sync:repo_url";
 constexpr const char* kKeyBranch = "github_sync:branch";
 constexpr const char* kKeyAutoPush = "github_sync:auto_push";
 constexpr const char* kKeyFirstSyncDone = "github_sync:first_sync_done";
+constexpr const char* kKeyUnsyncedNotice = "github_sync:unsynced_notice";
 constexpr const char* kKeyShaPrefix = "github_sync:sha:";
 constexpr const char* kKeyShaNotesPrefix = "github_sync:sha:notes/";
 constexpr const char* kKeyHashNotesPrefix = "github_sync:hash:notes/";
@@ -115,6 +116,7 @@ core::Result<void> GithubSyncStore::save(const GithubSyncConfig& cfg) {
             if (e.key.rfind(kKeyShaPrefix, 0) == 0) continue;
             if (e.key.rfind("github_sync:hash:", 0) == 0) continue;
             if (e.key == kKeyFirstSyncDone) continue;
+            if (e.key == kKeyUnsyncedNotice) continue;
             drop.push_back(e.key);
         }
         for (const auto& key : drop) {
@@ -238,6 +240,29 @@ GithubSyncStore::syncedNoteRecords() const {
     }
     return core::Result<std::map<std::string, gsync::SyncedNoteRecord>>::ok(
         std::move(out));
+}
+
+core::Result<bool> GithubSyncStore::hasUnsyncedNotice() const {
+    if (db_ == nullptr) return core::Result<bool>::ok(false);
+    std::lock_guard<std::recursive_mutex> lock(db_->mutex());
+    auto v = core::appconfig::get(*db_, kKeyUnsyncedNotice);
+    if (v.isFail()) return core::Result<bool>::ok(false);   // 键缺失 = 无提示
+    return core::Result<bool>::ok(v.value() == "true");
+}
+
+core::Result<void> GithubSyncStore::setUnsyncedNotice() {
+    if (db_ == nullptr) {
+        return core::Result<void>::fail(core::ErrorCode::NotFound,
+                                        "应用数据库未就绪");
+    }
+    std::lock_guard<std::recursive_mutex> lock(db_->mutex());
+    return core::appconfig::set(*db_, kKeyUnsyncedNotice, "true");
+}
+
+core::Result<void> GithubSyncStore::clearUnsyncedNotice() {
+    if (db_ == nullptr) return core::Result<void>::ok();
+    std::lock_guard<std::recursive_mutex> lock(db_->mutex());
+    return core::appconfig::erase(*db_, kKeyUnsyncedNotice);
 }
 
 core::Result<std::string> GithubSyncStore::syncedSqlSha() const {

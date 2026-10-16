@@ -354,12 +354,41 @@ REGISTER_TEST(github_error_detail_format,
     return true;
 })
 
+REGISTER_TEST(github_sync_store_unsynced_notice,
+              "github_sync 存储: 未同步提示键往返（F5）+ save() 保留", {
+    test_support::TestEnv env("gitsync", "notice");
+    module::settings::GithubSyncStore store(&env.handle());
+
+    auto has0 = store.hasUnsyncedNotice();
+    DOCTEST_REQUIRE(has0.isOk());
+    DOCTEST_CHECK(!has0.value());   // 默认无
+    DOCTEST_CHECK(store.setUnsyncedNotice().isOk());
+    auto has1 = store.hasUnsyncedNotice();
+    DOCTEST_REQUIRE(has1.isOk());
+    DOCTEST_CHECK(has1.value());
+    // 配置保存不得清掉提示键
+    module::settings::GithubSyncConfig cfg;
+    cfg.enabled = true;
+    DOCTEST_CHECK(store.save(cfg).isOk());
+    auto has2 = store.hasUnsyncedNotice();
+    DOCTEST_REQUIRE(has2.isOk());
+    DOCTEST_CHECK(has2.value());
+    // 同步成功后清除
+    DOCTEST_CHECK(store.clearUnsyncedNotice().isOk());
+    auto has3 = store.hasUnsyncedNotice();
+    DOCTEST_REQUIRE(has3.isOk());
+    DOCTEST_CHECK(!has3.value());
+    return true;
+})
+
 REGISTER_TEST(github_sync_card_info_rows,
-              "github_sync 卡片: public 提醒 / 分支提示 / 本地 git 灰字（带对照）", {
+              "github_sync 卡片: public 提醒 / 分支提示 / 本地 git 灰字 / 未同步黄字 / 删跳过黄字（带对照）", {
     CardFixture fx;
     fx.in.githubSyncRepoPublic = true;
     fx.in.githubSyncBranchHint = "分支 main 不存在，已按仓库默认分支自动创建";
     fx.in.githubSyncLocalGitUnavailable = true;
+    fx.in.githubSyncUnsyncedNotice = true;
+    fx.in.githubSyncDeleteSkipHint = "有 1 篇本地仍在但读取失败的笔记，已跳过远端删除（下轮重试）";
     test_support::HeadlessFrame f("githubsynccardinfo");
     DOCTEST_CHECK(f.frame([&](eui::Ui& ui) {
         fx.draw(ui);
@@ -372,10 +401,16 @@ REGISTER_TEST(github_sync_card_info_rows,
         const auto* git = ui.find(std::string(kCardId) + ".localgit");
         DOCTEST_REQUIRE(git != nullptr);
         DOCTEST_CHECK_EQ(git->text, std::string("本地版本历史：不可用"));
+        const auto* uns = ui.find(std::string(kCardId) + ".unsynced");
+        DOCTEST_REQUIRE(uns != nullptr);
+        DOCTEST_CHECK(uns->text.find("未同步") != std::string::npos);
+        const auto* skip = ui.find(std::string(kCardId) + ".deleteskip");
+        DOCTEST_REQUIRE(skip != nullptr);
+        DOCTEST_CHECK(skip->text.find("跳过远端删除") != std::string::npos);
         return true;
     }));
 
-    // 对照组：三个标志全 false → 三行都不画（否则上面可能只是「恒画」）
+    // 对照组：五个标志全 false/空 → 五行都不画（否则上面可能只是「恒画」）
     CardFixture clean;
     test_support::HeadlessFrame fc("githubsynccardinfoclean");
     DOCTEST_CHECK(fc.frame([&](eui::Ui& ui) {
@@ -383,6 +418,8 @@ REGISTER_TEST(github_sync_card_info_rows,
         DOCTEST_CHECK(ui.find(std::string(kCardId) + ".publicwarn") == nullptr);
         DOCTEST_CHECK(ui.find(std::string(kCardId) + ".branchhint") == nullptr);
         DOCTEST_CHECK(ui.find(std::string(kCardId) + ".localgit") == nullptr);
+        DOCTEST_CHECK(ui.find(std::string(kCardId) + ".unsynced") == nullptr);
+        DOCTEST_CHECK(ui.find(std::string(kCardId) + ".deleteskip") == nullptr);
         return true;
     }));
     return true;

@@ -68,6 +68,12 @@ public:
     core::Result<std::string> syncedSqlSha() const;
     core::Result<void> recordSyncedSqlSha(const std::string& sha);
 
+    // F5：退出推送未完成的提示（下次启动卡片黄字「有未同步改动」；
+    // 同步成功即清除）。键 github_sync:unsynced_notice。
+    core::Result<bool> hasUnsyncedNotice() const;
+    core::Result<void> setUnsyncedNotice();
+    core::Result<void> clearUnsyncedNotice();
+
     // F3：导入远端 dump 覆盖本地库。导入前广播 db.import_begin（订阅方暂停
     // 后台写者），结束（无论成败）广播 db.import_end（订阅方恢复后台任务）；
     // 成功再广播 db.imported（全局重载）+ 重执行 PRAGMA foreign_keys=ON 与

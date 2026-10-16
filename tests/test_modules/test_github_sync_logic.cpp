@@ -141,6 +141,18 @@ REGISTER_TEST(github_sync_notes_backup_prune,
     return true;
 })
 
+REGISTER_TEST(github_sync_exit_push_due,
+              "github_sync 退出推送: dirty 且距上次 commit ≥60s 才推（边界 + 时钟回拨）", {
+    DOCTEST_CHECK_EQ(g::kExitPushMinGapSec, static_cast<int64_t>(60));
+    // 从未 commit → 到点；窗口内 → 不到点；恰 60s → 到点
+    DOCTEST_CHECK(g::exitPushDue(0, 1'000'000));
+    DOCTEST_CHECK(!g::exitPushDue(1'000'000, 1'000'000 + g::kExitPushMinGapSec - 1));
+    DOCTEST_CHECK(g::exitPushDue(1'000'000, 1'000'000 + g::kExitPushMinGapSec));
+    // 时钟回拨：不卡死
+    DOCTEST_CHECK(g::exitPushDue(1'000'000, 999'990));
+    return true;
+})
+
 REGISTER_TEST(github_sync_pull_note_actions,
               "github_sync 拉取动作: 远端 sha 比登记 → 下载；登记有远端无 → 本地保留", {
     using Kind = g::PullAction::Kind;

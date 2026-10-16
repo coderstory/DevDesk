@@ -53,6 +53,13 @@ inline constexpr int64_t kCommitThrottleSec = 5 * 60;
 // 距上次 commit 是否已过节流窗口。lastCommitSec <= 0（从未 commit）→ 到点。
 bool throttleDue(int64_t lastCommitSec, int64_t nowSec);
 
+// ── 退出推送（spec F5）──
+// dirty 且距上次 commit ≥ 60s 才在退出时补推：刚同步过的退出不必再推
+//（改动已在远端），退出前的窗口期改动等下轮自动同步。
+inline constexpr int64_t kExitPushMinGapSec = 60;
+
+bool exitPushDue(int64_t lastCommitSec, int64_t nowSec);
+
 // ── 备份（决策 #11 / F6）──
 // 备份目录名（数据根下；该目录不进同步）。
 inline constexpr const char* kBackupDirName = "backups";

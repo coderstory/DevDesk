@@ -138,8 +138,21 @@ bool writeFileFromString(const std::filesystem::path& f,
 
 } // namespace
 
+class SettingsModule;
+
+namespace {
+// 退出钩子目标（F5）：onStart 挂上、onStop/析构摘掉；main 的 atexit 经
+// runGithubSyncExitPush 间接调用（见 github_sync_exit_hook.h 的注册序约定）。
+SettingsModule* gExitHookTarget = nullptr;
+}  // namespace
+
 class SettingsModule : public ::core::Module {
 public:
+    // 退出钩子目标兜底摘除：用例/异常路径下 onStop 未跑时，atexit 不得打到悬垂指针。
+    ~SettingsModule() override {
+        if (gExitHookTarget == this) gExitHookTarget = nullptr;
+    }
+
     ::core::PageId pageId() const override { return ::core::PageId::Settings; }
     std::string displayName() const override { return "设置"; }
     std::string shortName() const override { return "设置"; }
@@ -150,8 +163,15 @@ public:
         cfg_ = store_->load();
         githubSyncStore_ = std::make_unique<GithubSyncStore>(::core::appDatabase());
         githubSyncCfg_ = githubSyncStore_->load();
-        // 本地 git 探测（决策 #15）：结果只驱动卡片灰字，不阻塞同步。
-        githubSyncLocalGitUnavailable_ = !localGitAvailable();
+        // F5：上次退出推送未完成 → 卡片黄字「有未同步改动」，同步成功即清。
+        if (auto notice = githubSyncStore_->hasUnsyncedNotice();
+            notice.isOk() && notice.value()) {
+            githubSyncUnsyncedNotice_ = true;
+        }
+        // 本地 git 探测（决策 #15 / F8）：后台线程 + 结果缓存，UI 线程不因
+        // xcode-select 卡住启动；配置变更置脏重探。
+        githubSyncLocalGitProbeDirty_ = true;
+        gExitHookTarget = this;   // 进程退出钩子（F5）的目标，onStop 注销
         // dirty 触发源（决策 #20）：笔记写入 + 待办增删改。token 必须存成员，丢了就退订。
         githubSyncSubs_.push_back(::core::event::bus().subscribe(
             ::core::event::kMdSaved,
@@ -192,6 +212,12 @@ public:
     void onStop() override {
         // 先收后台线程再放资源：GitHub Sync 线程体捕获 this，join 前释放任何成员都会悬垂。
         if (githubSyncThread_.joinable()) githubSyncThread_.join();
+        // 本地 git 探测在途的 future 也捕获 this → 等它收束（探测本身有 3s 超时上界）。
+        if (githubSyncLocalGitProbeFuture_.valid()) {
+            githubSyncLocalGitProbeFuture_.wait();
+            githubSyncLocalGitProbeFuture_ = {};
+        }
+        if (gExitHookTarget == this) gExitHookTarget = nullptr;
         // 退订 dirty 事件（token 析构即退订；不清会留下悬垂 this 的 handler）。
         githubSyncSubs_.clear();
         // 先注销工具再释放（registry find() 返回 shared_ptr keep-alive，在跑 run 不会悬垂）。
@@ -566,7 +592,20 @@ public:
         }
     }
 
-    void githubSyncPush() { startGithubSyncAction(SyncAction::Push, true); }
+    void githubSyncPush() {
+        // 换仓/换分支会清 first_sync_done → 手动同步先重跑首次方向判定
+        //（T3 审计 finding 9：否则用户必须重拨启用开关才有方向判定）。
+        if (githubSyncStore_ && !githubSyncCfg_.repoUrl.empty()) {
+            auto done = githubSyncStore_->isFirstSyncDone();
+            if (done.isOk() && !done.value()) {
+                LOG_INFO("Settings: 首次方向标记缺失（换仓/换分支或首次启用），"
+                         "手动同步改跑 FirstSync");
+                startGithubSyncAction(SyncAction::FirstSync, /*manual=*/true);
+                return;
+            }
+        }
+        startGithubSyncAction(SyncAction::Push, true);
+    }
 
     void githubSyncPull() { startGithubSyncAction(SyncAction::Pull, true); }
 
@@ -618,10 +657,58 @@ public:
 
     // 无 git 警告（决策 #15）：用户改配置时提示一次，不阻塞同步、不在启动/失败时弹。
     void maybeWarnNoLocalGit() {
-        if (!githubSyncLocalGitUnavailable_ || githubSyncNoGitWarned_) return;
+        if (githubSyncLocalGitProbe_.load(std::memory_order_acquire) != 0 ||
+            githubSyncNoGitWarned_) {
+            return;   // 探测未回（-1）/ 可用（1）/ 已警告过 → 不弹
+        }
         githubSyncNoGitWarned_ = true;
         showToast("本地未检测到 git",
                   "同步仍可用，但没有本地版本历史（远端 + 本地备份兜底）", false);
+    }
+
+    // 本地 git 探测（F8）：后台线程跑 + 结果缓存，UI 线程零阻塞；配置变更
+    // （仓库/分支/Token）置脏 → 下一帧重探，会话内装好 git 灰字会消失。
+    // 探测自身带超时上界（平台实现层），在途 future 由 onStop 收束。
+    void maybeRefreshLocalGitProbe() {
+        if (githubSyncLocalGitProbeFuture_.valid()) {
+            if (githubSyncLocalGitProbeFuture_.wait_for(
+                    std::chrono::seconds(0)) != std::future_status::ready) {
+                return;   // 在途
+            }
+            githubSyncLocalGitProbeFuture_ = {};   // 就绪即回收，避免 valid() 恒真
+            return;
+        }
+        if (!githubSyncLocalGitProbeDirty_) return;
+        githubSyncLocalGitProbeDirty_ = false;
+        githubSyncLocalGitProbeFuture_ = std::async(std::launch::async, [this] {
+            const bool available = localGitAvailable();
+            githubSyncLocalGitProbe_.store(available ? 1 : 0,
+                                           std::memory_order_release);
+            core::platform::requestUiUpdate();
+        });
+    }
+
+    // F5 退出补推：dirty 且距上次 commit ≥60s 才推；最多等 5s，到点未完即
+    // 放弃（线程本体由 onStop 的 join 收束，不悬垂），置未同步提示键 →
+    // 下次启动卡片黄字。manual=true 绕开 5 分钟节流（退出补推是一次性的）。
+    void runExitSyncPush() {
+        if (!githubSyncCfg_.enabled || !githubSyncDirty_) return;
+        if (githubSyncStore_ == nullptr) return;
+        if (!gsync::exitPushDue(githubSyncLastCommitSec_, nowSec())) return;
+        if (githubSyncThread_.joinable()) return;   // 已有任务在飞：交给 onStop
+        LOG_INFO("Settings: 退出补推启动");
+        startGithubSyncAction(SyncAction::Push, /*manual=*/true);
+        for (int i = 0; i < 50; ++i) {   // 上限 5s（50 × 100ms）
+            if (githubSyncDone_.load(std::memory_order_acquire)) {
+                LOG_INFO("Settings: 退出补推 5 秒内完成");
+                return;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+        if (auto r = githubSyncStore_->setUnsyncedNotice(); r.isFail()) {
+            LOG_WARN("Settings: 未同步提示落库失败: " + r.errorMessage());
+        }
+        LOG_WARN("Settings: 退出补推 5 秒内未完成，已放弃等待（下次启动卡片提示）");
     }
 
     // 前置校验失败等 UI 线程内的即时错误：进错误行 + 直接开详情弹窗。
@@ -677,8 +764,10 @@ public:
         {
             std::lock_guard<std::mutex> lk(githubSyncMutex_);
             githubSyncStagedOverwriteFiles_.clear();
+            githubSyncStagedDeleteSkipHint_.clear();
         }
         githubSyncOverwriteFiles_.clear();
+        githubSyncDeleteSkipHint_.clear();
         publishGithubSyncProgress("① 准备中…");
         githubSyncProgress_ = "① 准备中…";
 
@@ -915,6 +1004,7 @@ public:
         publishGithubSyncProgress("④ 同步笔记…");
         int putCount = 0;
         int delCount = 0;
+        int deleteSkipCount = 0;   // 安全栏跳过数（T3 审计 finding 8：进 UI）
         for (const auto& change : changes) {
             const std::string name = change.path.substr(
                 std::string(gsync::kRemoteNotesDir).size());
@@ -967,6 +1057,7 @@ public:
                 if (stillThere) {
                     LOG_WARN("Settings: 本地文件仍在但未能读取，跳过删除远端 " +
                              change.path);
+                    ++deleteSkipCount;   // T3 审计 finding 8：跳过不能只进日志
                     continue;
                 }
                 // DELETE 需要远端现值 sha：先 GET；远端已没有 = 无需删，只清登记。
@@ -992,6 +1083,13 @@ public:
         summary = "已推送 database.sql 与 " + std::to_string(putCount) +
                   " 篇笔记" + (delCount > 0 ? "（删除 " + std::to_string(delCount) +
                                               " 篇）" : "");
+        if (deleteSkipCount > 0) {
+            // T3 审计 finding 8：安全栏跳过原先只进日志（静默失败面）→ 卡片黄字
+            std::lock_guard<std::mutex> lk(githubSyncMutex_);
+            githubSyncStagedDeleteSkipHint_ =
+                "有 " + std::to_string(deleteSkipCount) +
+                " 篇本地仍在但读取失败的笔记，已跳过远端删除（下轮重试）";
+        }
         return true;
     }
 
@@ -1298,6 +1396,10 @@ public:
             githubSyncProgressPending_.clear();
             githubSyncOverwriteFiles_ = githubSyncStagedOverwriteFiles_;
             githubSyncStagedOverwriteFiles_.clear();
+            if (!githubSyncStagedDeleteSkipHint_.empty()) {
+                githubSyncDeleteSkipHint_ = githubSyncStagedDeleteSkipHint_;
+                githubSyncStagedDeleteSkipHint_.clear();
+            }
         }
         // 导入覆盖过库 → 本模块缓存重载（store 指针仍有效，只重读配置）。
         if (githubSyncStagedDbImported_.exchange(false,
@@ -1314,6 +1416,17 @@ public:
             githubSyncDirty_ = false;
             githubSyncLastCommitSec_ = nowSec();
             githubSyncError_.clear();
+            // F5：同步成功即清「退出时未同步」提示（黄字随下一帧消失）。
+            if (githubSyncUnsyncedNotice_) {
+                githubSyncUnsyncedNotice_ = false;
+                if (githubSyncStore_) {
+                    if (auto r = githubSyncStore_->clearUnsyncedNotice();
+                        r.isFail()) {
+                        LOG_WARN("Settings: 未同步提示清除失败: " +
+                                 r.errorMessage());
+                    }
+                }
+            }
             // 首次方向跑成功 → 落「首次已完成」（repoUrl/branch 变更时清除）。
             if (githubSyncLastAction_ == SyncAction::FirstSync &&
                 githubSyncStore_) {
@@ -1372,6 +1485,8 @@ public:
         harvestGithubSync();
         // 自动同步判定（dirty + 节流窗口）；手动按钮不走这里。
         maybeAutoGithubSync();
+        // 本地 git 探测收割/重探（F8）：非阻塞，结果驱动卡片灰字。
+        maybeRefreshLocalGitProbe();
         const float pad = t.sizes.spacingXXLarge;
         const float contentW = screen.width - pad * 2.0f;
 
@@ -1508,15 +1623,18 @@ private:
         a.applyGithubSyncRepoUrl = [this](const std::string& url) {
             githubSyncCfg_.repoUrl = url;
             clearGithubSyncFirstSyncFlag("repoUrl");
+            githubSyncLocalGitProbeDirty_ = true;   // F8：配置变更 → 探测失效
             maybeWarnNoLocalGit();
         };
         a.applyGithubSyncBranch = [this](const std::string& branch) {
             githubSyncCfg_.branch = branch;
             clearGithubSyncFirstSyncFlag("branch");
+            githubSyncLocalGitProbeDirty_ = true;
             maybeWarnNoLocalGit();
         };
         a.setGithubSyncTokenDraft = [this](const std::string& token) {
             githubSyncTokenDraft_ = token;
+            githubSyncLocalGitProbeDirty_ = true;
             maybeWarnNoLocalGit();
         };
         a.applyGithubSyncAutoPush = [this](bool on) {
@@ -1576,7 +1694,10 @@ private:
         in.githubSyncError = githubSyncError_;
         in.githubSyncRepoPublic = githubSyncRepoPublic_;
         in.githubSyncBranchHint = githubSyncBranchHint_;
-        in.githubSyncLocalGitUnavailable = githubSyncLocalGitUnavailable_;
+        in.githubSyncLocalGitUnavailable =
+            githubSyncLocalGitProbe_.load(std::memory_order_acquire) == 0;
+        in.githubSyncUnsyncedNotice = githubSyncUnsyncedNotice_;
+        in.githubSyncDeleteSkipHint = githubSyncDeleteSkipHint_;
         const SettingsCardActions a = cardActions();
         const float gapY = t.sizes.spacingLarge;
         float cardY = 0.0f;
@@ -1776,6 +1897,8 @@ private:
     // F3：本轮导入成功 → harvest 在 UI 线程重载本模块配置缓存（app_config 被
     // DROP 重建过）。
     std::atomic<bool> githubSyncStagedDbImported_{false};
+    // T3 审计 finding 8：删除传播安全栏跳过（本地仍在但读失败）的 UI 提示。
+    std::string githubSyncStagedDeleteSkipHint_;
     // 以下成员仅 UI 线程读写（harvest 在 join 后搬运）。
     bool githubSyncRunning_ = false;
     std::string githubSyncProgress_;          // 卡片进度行快照
@@ -1792,8 +1915,13 @@ private:
     bool githubSyncRepoPublic_ = false;     // 测试连接发现 public 仓 → 黄字提醒
     std::string githubSyncBranchHint_;      // 分支被自动创建提示
     std::vector<std::string> githubSyncOverwriteFiles_;  // F6 确认框覆盖清单（UI 侧）
-    bool githubSyncLocalGitUnavailable_ = false;  // 本地 git 探测结果
+    // 本地 git 探测（F8）：-1 未知/在途、0 不可用、1 可用（后台线程原子写）。
+    std::atomic<int> githubSyncLocalGitProbe_{-1};
+    std::future<void> githubSyncLocalGitProbeFuture_;  // 在途探测（仅 UI 线程碰）
+    bool githubSyncLocalGitProbeDirty_ = false;        // 首探 + 配置变更置位
     bool githubSyncNoGitWarned_ = false;    // 无 git 警告只弹一次（改配置时触发）
+    bool githubSyncUnsyncedNotice_ = false;  // F5：退出时未推完 → 卡片黄字
+    std::string githubSyncDeleteSkipHint_;   // T3 finding 8：删远端跳过提示（UI 侧）
     // EventBus 订阅 token 必须持有：token 析构即退订（丢弃 = 订阅立刻失效）。
     std::vector<::core::event::EventBus::Subscription> githubSyncSubs_;
     // app.read_settings 工具：onStart 注册 / onStop 注销；与注册表同寿（注销对未注册名是 no-op）。
@@ -1826,6 +1954,14 @@ private:
 };
 
 } // namespace module::settings
+
+namespace module::settings {
+
+void runGithubSyncExitPush() {
+    if (gExitHookTarget != nullptr) gExitHookTarget->runExitSyncPush();
+}
+
+}  // namespace module::settings
 
 extern "C" ::core::Module* create_settings_module() {
     return new module::settings::SettingsModule();

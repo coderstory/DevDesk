@@ -45,6 +45,12 @@ bool throttleDue(int64_t lastCommitSec, int64_t nowSec) {
     return nowSec - lastCommitSec >= kCommitThrottleSec;
 }
 
+bool exitPushDue(int64_t lastCommitSec, int64_t nowSec) {
+    if (lastCommitSec <= 0) return true;
+    if (nowSec < lastCommitSec) return true;   // 时钟回拨：视为到点
+    return nowSec - lastCommitSec >= kExitPushMinGapSec;
+}
+
 std::string backupFileName(int64_t tsSec) {
     return std::string(kBackupPrefix) + std::to_string(tsSec) + ".db";
 }

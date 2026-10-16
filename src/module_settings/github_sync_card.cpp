@@ -324,6 +324,32 @@ void drawGithubSyncCard(const CardDrawArgs& args) {
             .lineHeight(roundFs(kStatusH))
             .color(t.colors.textTertiary)
             .build();
+        y += roundFs(kStatusH) + roundFs(4.0f);
+    }
+
+    // 退出推送未完成（F5）：上次退出时有未同步改动 → 黄字提示，同步成功即消失
+    if (in.githubSyncUnsyncedNotice) {
+        ui.text(id + ".unsynced")
+            .position(kCardPaddingX, y)
+            .size(w - kCardPaddingX * 2, roundFs(kStatusH))
+            .text("有未同步改动（上次退出时未能推送，建议点「立即同步」）")
+            .fontSize(fs(11.0f))
+            .lineHeight(roundFs(kStatusH))
+            .color(t.colors.warning)
+            .build();
+        y += roundFs(kStatusH) + roundFs(4.0f);
+    }
+
+    // 删远端被安全栏跳过（T3 审计 finding 8）：原先只进日志 → 黄字提示
+    if (!in.githubSyncDeleteSkipHint.empty()) {
+        ui.text(id + ".deleteskip")
+            .position(kCardPaddingX, y)
+            .size(w - kCardPaddingX * 2, roundFs(kStatusH))
+            .text(in.githubSyncDeleteSkipHint)
+            .fontSize(fs(11.0f))
+            .lineHeight(roundFs(kStatusH))
+            .color(t.colors.warning)
+            .build();
     }
 }
 
