@@ -6,6 +6,7 @@
 #include <array>
 #include <atomic>
 #include <cstdint>
+#include <ctime>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -54,6 +55,19 @@ std::vector<int64_t> detectRunEndNotifications(
     const std::map<int64_t, std::string>& prevStatus,
     const std::map<int64_t, std::string>& nowStatus,
     const std::set<int64_t>& notifiedRunIds);
+
+// 时长秒 → 紧凑中文（0秒 / 45秒 / 2分13秒 / 1时23分 / 2天3时；负值按 0，与 runRowText 同口径）
+std::string formatRunDurationText(int64_t seconds);
+
+// 本地日历时刻 → 「yyyy-MM-dd HH:mm」。入参取 core::time::localTime 产物，测试传固定
+// tm 保时区无关
+std::string formatRunResultTimeText(const std::tm& local);
+
+// 详情弹窗汇总行文案：「共 N 次 · 成功率 P%（ok/N）· 总耗时 <时长> · 最近结果 <时间>」。
+// lastTimeText 由调用方生成（时间依赖本地时区）：有 lastEndedAt 传 formatRunResultTimeText
+// 产物，无则传「—」；totalRuns=0 时百分比按 0（正常不走到——无 run 的任务不渲染汇总行）
+std::string formatTaskRunSummaryText(const AgentTaskRunSummary& summary,
+                                     const std::string& lastTimeText);
 
 // 任务弹窗定时分支的常用 cron 模板表：文案与表达式成对，选中即回填 editCron_。
 // 表内容是产品文案不是代码结构，加条目只改这里；表达式必须能过 parseCron。
@@ -132,6 +146,10 @@ private:
     void openTaskDetail(int64_t taskId);
     void closeTaskDetail();
     void refreshData();
+    // 任务级 run 汇总缓存：失效判据 = store_->writeVersion()（同 home 余量卡口径）——
+    // 版本没变零查询零锁，uiPolling_ 每帧 refreshData 也不重查；版本取查询前快照（查询后
+    // 取会漏：读到旧数据却记成新版本，之后永不再查）
+    void refreshRunSummaries();
     void reapFinishedRuns();
     // 单条消息展开/收起（seq 定位，切 run 即清）
     void toggleMessageExpanded(int64_t seq);
@@ -218,6 +236,11 @@ private:
     // 页内直发 toast 已删（页面无关，fix round 裁决）。
     std::map<int64_t, std::string> prevRunStatuses_;   // runId → status
     std::set<int64_t> notifiedRunIds_;
+    // 任务级 run 汇总（详情弹窗汇总行）：writeVersion 缓存；查询失败显形在弹窗内
+    std::map<int64_t, AgentTaskRunSummary> runSummaries_;   // taskId → 聚合
+    std::string runSummariesError_;
+    uint64_t runSummariesSeenVersion_ = 0;
+    bool runSummariesSeenVersionValid_ = false;   // false = 从未查过（首查强制）
     // 待发通知队列（title, message）：迁移检测置入，takeRunEndNotice 取走即清。
     // 同帧多个迁移按 runId 升序入队；app 通道 toast 单实例，后发顶替先发（接受）。
     std::vector<std::pair<std::string, std::string>> pendingNotices_;

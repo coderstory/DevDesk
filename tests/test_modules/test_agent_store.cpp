@@ -243,6 +243,70 @@ REGISTER_TEST(agent_store_list_runs_tie_breaks_by_id,
     return true;
 })
 
+// 任务级 run 聚合：总数含未结束 run、成功率只认 completed、时长负差钳 0（与 runRowText
+// 同口径）、全未结束 → lastEndedAt 空、无 run 的任务不在结果里。
+// started_at/ended_at 用直接 SQL 钉死——finishRun 写墙钟，钉不住就断言不出确定时长。
+REGISTER_TEST(agent_store_list_task_run_summaries,
+              "agent_store: listTaskRunSummaries 任务级聚合（总数/成功/总时长/最近结果）", {
+    test_support::TestDb tdb("agentstore", "summ");
+    module::agent::AgentStore store(tdb.handle());
+    auto a = store.createTask("A", "g", "manual", "default", 10, false);
+    auto b = store.createTask("B", "g", "manual", "default", 10, false);
+    auto c = store.createTask("C", "g", "manual", "default", 10, false);
+    DOCTEST_REQUIRE(a.isOk() && b.isOk() && c.isOk());
+    // 返 bool：doctest REQUIRE 宏含 return，不能放进 lambda 内（-Wreturn-type）
+    auto pin = [&](int64_t runId, int64_t started,
+                   std::optional<int64_t> ended) -> bool {
+        std::string sql = "UPDATE agent_runs SET started_at=" +
+                          std::to_string(started) + ", ended_at=" +
+                          (ended ? std::to_string(*ended) : std::string("NULL")) +
+                          " WHERE id=" + std::to_string(runId);
+        return tdb.handle().exec(sql).isOk();
+    };
+    // A：completed 60s + failed（ended<started，钳 0s）+ running（无 ended_at）
+    auto a1 = store.startRun(a.value());
+    DOCTEST_REQUIRE(a1.isOk());
+    DOCTEST_REQUIRE(store.finishRun(a1.value(), "completed", 1, std::nullopt,
+                                    std::nullopt, std::nullopt).isOk());
+    pin(a1.value(), 1000, int64_t(1060));
+    auto a2 = store.startRun(a.value());
+    DOCTEST_REQUIRE(a2.isOk());
+    DOCTEST_REQUIRE(store.finishRun(a2.value(), "failed", 2, std::nullopt,
+                                    std::nullopt, std::nullopt).isOk());
+    pin(a2.value(), 1100, int64_t(1090));   // 时钟回拨
+    auto a3 = store.startRun(a.value());
+    DOCTEST_REQUIRE(a3.isOk());
+    pin(a3.value(), 1200, std::nullopt);    // 还在跑
+    // B：一条 completed 60s
+    auto b1 = store.startRun(b.value());
+    DOCTEST_REQUIRE(b1.isOk());
+    DOCTEST_REQUIRE(store.finishRun(b1.value(), "completed", 1, std::nullopt,
+                                    std::nullopt, std::nullopt).isOk());
+    pin(b1.value(), 2000, int64_t(2060));
+    // C：无 run
+
+    auto sums = store.listTaskRunSummaries();
+    DOCTEST_REQUIRE(sums.isOk());
+    DOCTEST_REQUIRE_EQ(sums.value().size(), 2u);   // C 无 run 不在结果里
+    const module::agent::AgentTaskRunSummary* sa = nullptr;
+    const module::agent::AgentTaskRunSummary* sb = nullptr;
+    for (const auto& s : sums.value()) {
+        if (s.taskId == a.value()) sa = &s;
+        if (s.taskId == b.value()) sb = &s;
+    }
+    DOCTEST_REQUIRE_MESSAGE(sa != nullptr && sb != nullptr, "聚合行缺任务 A/B");
+    DOCTEST_CHECK_EQ(sa->totalRuns, 3);
+    DOCTEST_CHECK_EQ(sa->okRuns, 1);
+    DOCTEST_CHECK_EQ(sa->totalSeconds, 60);        // 60 + 回拨钳 0 + running 0
+    DOCTEST_REQUIRE(sa->lastEndedAt.has_value());
+    DOCTEST_CHECK_EQ(*sa->lastEndedAt, 1090);      // MAX 忽略 NULL（running）；回拨 run 的 ended_at 仍参与 MAX
+    DOCTEST_CHECK_EQ(sb->totalRuns, 1);
+    DOCTEST_CHECK_EQ(sb->okRuns, 1);
+    DOCTEST_CHECK_EQ(sb->totalSeconds, 60);
+    DOCTEST_CHECK_EQ(*sb->lastEndedAt, 2060);
+    return true;
+})
+
 // 本组钉住「store 行 ↔ TriggerConfig 结构」的往返与坏配置的可判定性：
 // 编解码散在多处时谁都不能保证自己那份和别处同口径——这里以「encode 出来的字符串经
 // createTask 落库、getTask 读出、decode 回来的结构必须逐字段相等」把两端钉在一起。

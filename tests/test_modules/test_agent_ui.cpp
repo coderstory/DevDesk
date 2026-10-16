@@ -41,6 +41,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <ctime>
 #include <map>
 #include <memory>
 #include <optional>
@@ -2388,6 +2389,180 @@ REGISTER_TEST(agent_ui_dialog_geometry_context_note_within_bounds,
     DOCTEST_CHECK_MESSAGE(nearPx(metaRow->frame.y, panel->frame.y + 224.0f),
                           "元信息行 y 应恒为面板顶 +224（新字段不得挤动），实测 " +
                               std::to_string(metaRow->frame.y));
+
+    mod.onStop();
+    return true;
+})
+
+// ---- 任务级 run 汇总（详情弹窗汇总行）：纯函数三件 + 弹窗接线 ----
+
+REGISTER_TEST(agent_format_run_duration_text,
+              "agent_summary: 时长秒 → 紧凑中文（负值钳 0 / 无零秒尾 / 天时进位）", {
+    using module::agent::formatRunDurationText;
+    DOCTEST_CHECK_EQ(formatRunDurationText(0), std::string("0秒"));
+    DOCTEST_CHECK_EQ(formatRunDurationText(45), std::string("45秒"));
+    DOCTEST_CHECK_EQ(formatRunDurationText(60), std::string("1分"));
+    DOCTEST_CHECK_EQ(formatRunDurationText(133), std::string("2分13秒"));
+    DOCTEST_CHECK_EQ(formatRunDurationText(3600), std::string("1时"));
+    DOCTEST_CHECK_EQ(formatRunDurationText(4980), std::string("1时23分"));
+    DOCTEST_CHECK_EQ(formatRunDurationText(90000), std::string("1天1时"));
+    DOCTEST_CHECK_EQ(formatRunDurationText(-5), std::string("0秒"));   // 时钟回拨
+    return true;
+})
+
+REGISTER_TEST(agent_format_run_result_time_text,
+              "agent_summary: 本地 tm → 「yyyy-MM-dd HH:mm」零填充", {
+    std::tm local{};
+    local.tm_year = 2026 - 1900;
+    local.tm_mon = 9;    // 10 月
+    local.tm_mday = 16;
+    local.tm_hour = 14;
+    local.tm_min = 5;
+    DOCTEST_CHECK_EQ(module::agent::formatRunResultTimeText(local),
+                     std::string("2026-10-16 14:05"));
+    return true;
+})
+
+REGISTER_TEST(agent_format_task_run_summary_text,
+              "agent_summary: 汇总行文案（总数/整数百分比成功率/总耗时/最近结果）", {
+    module::agent::AgentTaskRunSummary s;
+    s.taskId = 1;
+    s.totalRuns = 3;
+    s.okRuns = 2;
+    s.totalSeconds = 100;
+    DOCTEST_CHECK_EQ(module::agent::formatTaskRunSummaryText(s, "2026-10-16 14:30"),
+                     std::string("共 3 次 · 成功率 66%（2/3）· 总耗时 1分40秒 · "
+                                 "最近结果 2026-10-16 14:30"));
+    // 全部未结束：时间占位「—」
+    DOCTEST_CHECK_EQ(module::agent::formatTaskRunSummaryText(s, "—"),
+                     std::string("共 3 次 · 成功率 66%（2/3）· 总耗时 1分40秒 · "
+                                 "最近结果 —"));
+    return true;
+})
+
+// 弹窗接线：有 run 的任务渲染汇总行（数据钉死 → 数值判据）+ 汇总行把下方区块整体
+// 下移 18（runs.title 122 / runlist 144），无 run 的任务不渲染且几何回到 104/126
+REGISTER_TEST(agent_ui_detail_dialog_run_summary,
+              "agent_ui: 详情弹窗任务级汇总行（总数/成功率/总耗时/最近结果）+ 汇总行下移几何 + 无 run 不渲染", {
+    test_support::TestDb tdb("agentui", "summary");
+    FakeProxy proxy;
+    ToolGuard statsGuard{"app.stats"};
+    core::ToolRegistry::instance().unregisterTool("app.stats");
+    module::agent::AgentStore store(tdb.handle());
+    auto with = store.createTask("有汇总", "g", "schedule", "default", 10, false,
+                                 R"({"cron":"0 9 * * *"})");
+    auto without = store.createTask("无汇总", "g", "manual", "default", 10, false);
+    DOCTEST_REQUIRE(with.isOk() && without.isOk());
+    const std::string tid = std::to_string(with.value());
+    const std::string nid = std::to_string(without.value());
+    // 返 bool：doctest REQUIRE 宏含 return，不能放进 lambda 内（-Wreturn-type）
+    auto pin = [&](int64_t runId, int64_t started, int64_t ended) -> bool {
+        return tdb.handle()
+            .exec("UPDATE agent_runs SET started_at=" + std::to_string(started) +
+                  ", ended_at=" + std::to_string(ended) +
+                  " WHERE id=" + std::to_string(runId))
+            .isOk();
+    };
+    // 2 成功 1 失败，总时长 60+30+10=100s → 成功率 66%
+    for (const auto& [status, dur] :
+         {std::pair{"completed", std::make_pair(int64_t(1000), int64_t(1060))},
+          std::pair{"failed", std::make_pair(int64_t(1100), int64_t(1130))},
+          std::pair{"completed", std::make_pair(int64_t(1200), int64_t(1210))}}) {
+        auto r = store.startRun(with.value());
+        DOCTEST_REQUIRE(r.isOk());
+        DOCTEST_REQUIRE(store.finishRun(r.value(), status, 1, std::nullopt,
+                                        std::nullopt, std::nullopt).isOk());
+        DOCTEST_REQUIRE(pin(r.value(), dur.first, dur.second));
+    }
+
+    module::agent::AgentModule::Deps deps;
+    deps.db = &tdb.handle();
+    deps.proxy = &proxy;
+    module::agent::AgentModule mod(deps);
+    mod.onStart();
+
+    eui::Ui ui;
+    composeTo(ui, mod, kScreen, "agent_ui_sum1");
+    DOCTEST_REQUIRE_MESSAGE(clickId(ui, "agent.task." + tid + ".detail"),
+                            "任务行缺 agent.task.<id>.detail");
+    eui::Ui ui2;
+    composeTo(ui2, mod, kScreen, "agent_ui_sum2");
+    const auto* summary = ui2.find("agent.dialog.detail.summary");
+    DOCTEST_REQUIRE_MESSAGE(summary != nullptr, "详情弹窗缺任务级汇总行");
+    DOCTEST_CHECK_MESSAGE(summary->text.find("共 3 次") != std::string::npos,
+                          "汇总行缺 run 总数，实测：" + summary->text);
+    DOCTEST_CHECK(summary->text.find("成功率 66%（2/3）") != std::string::npos);
+    DOCTEST_CHECK(summary->text.find("总耗时 1分40秒") != std::string::npos);
+    DOCTEST_CHECK(summary->text.find("最近结果 ") != std::string::npos);
+    // 汇总行占 y=100..118：下方区块整体 +18（runs.title 104→122 / runlist 126→144）
+    const auto* panel = ui2.find("agent.dialog.detail.panel");
+    const auto* runsTitle = ui2.find("agent.dialog.detail.runs.title");
+    const auto* runlist = ui2.find("agent.dialog.detail.runlist");
+    DOCTEST_REQUIRE(panel != nullptr && runsTitle != nullptr && runlist != nullptr);
+    DOCTEST_CHECK_MESSAGE(
+        nearPx(runsTitle->frame.y, panel->frame.y + 122.0f),
+        "有汇总时 runs.title 应在面板顶 +122，实测 " +
+            std::to_string(runsTitle->frame.y - panel->frame.y));
+    DOCTEST_CHECK_MESSAGE(
+        nearPx(runlist->frame.y, panel->frame.y + 144.0f),
+        "有汇总时 runlist 应在面板顶 +144，实测 " +
+            std::to_string(runlist->frame.y - panel->frame.y));
+
+    // 无 run 的任务：无汇总行、几何回到原位（104/126）
+    DOCTEST_REQUIRE(clickId(ui2, "agent.dialog.detail.close"));
+    eui::Ui ui3;
+    composeTo(ui3, mod, kScreen, "agent_ui_sum3");
+    DOCTEST_REQUIRE(clickId(ui3, "agent.task." + nid + ".detail"));
+    eui::Ui ui4;
+    composeTo(ui4, mod, kScreen, "agent_ui_sum4");
+    DOCTEST_CHECK_MESSAGE(ui4.find("agent.dialog.detail.summary") == nullptr,
+                          "无 run 的任务不应渲染汇总行");
+    const auto* panel4 = ui4.find("agent.dialog.detail.panel");
+    const auto* runsTitle4 = ui4.find("agent.dialog.detail.runs.title");
+    DOCTEST_REQUIRE(panel4 != nullptr && runsTitle4 != nullptr);
+    DOCTEST_CHECK_MESSAGE(
+        nearPx(runsTitle4->frame.y, panel4->frame.y + 104.0f),
+        "无汇总时 runs.title 应在面板顶 +104（原几何），实测 " +
+            std::to_string(runsTitle4->frame.y - panel4->frame.y));
+
+    mod.onStop();
+    return true;
+})
+
+// 汇总查询失败必须显形（静默失败面）：run 汇总行改显「运行汇总读取失败」
+REGISTER_TEST(agent_ui_detail_summary_error_visible,
+              "agent_ui: run 汇总查询失败 → 弹窗内显形错误行（不静默）", {
+    test_support::TestDb tdb("agentui", "sumerr");
+    FakeProxy proxy;
+    ToolGuard statsGuard{"app.stats"};
+    core::ToolRegistry::instance().unregisterTool("app.stats");
+    module::agent::AgentStore store(tdb.handle());
+    auto created = store.createTask("汇总失败", "g", "manual", "default", 10, false);
+    DOCTEST_REQUIRE(created.isOk());
+    const std::string tid = std::to_string(created.value());
+    auto r = store.startRun(created.value());
+    DOCTEST_REQUIRE(r.isOk());
+    DOCTEST_REQUIRE(store.finishRun(r.value(), "completed", 1, std::nullopt,
+                                    std::nullopt, std::nullopt).isOk());
+
+    module::agent::AgentModule::Deps deps;
+    deps.db = &tdb.handle();
+    deps.proxy = &proxy;
+    module::agent::AgentModule mod(deps);
+    mod.onStart();
+
+    eui::Ui ui;
+    composeTo(ui, mod, kScreen, "agent_ui_serr1");
+    // 摘掉聚合源表：writeVersion 被这次写 bump，下一次 refreshData 的汇总查询必失败
+    DOCTEST_REQUIRE(tdb.handle().exec("DROP TABLE agent_runs").isOk());
+    DOCTEST_REQUIRE(clickId(ui, "agent.task." + tid + ".detail"));
+    eui::Ui ui2;
+    composeTo(ui2, mod, kScreen, "agent_ui_serr2");
+    const auto* summary = ui2.find("agent.dialog.detail.summary");
+    DOCTEST_REQUIRE_MESSAGE(summary != nullptr,
+                            "汇总查询失败没有任何可见反馈（静默路径）");
+    DOCTEST_CHECK_MESSAGE(summary->text.find("运行汇总读取失败") != std::string::npos,
+                          "汇总失败应显形，实测：" + summary->text);
 
     mod.onStop();
     return true;

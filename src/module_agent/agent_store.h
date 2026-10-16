@@ -34,6 +34,14 @@ struct AgentMessageRow {
     std::string role, contentJson;
     std::optional<std::string> toolCallId;
 };
+// 任务级 run 聚合（详情弹窗汇总行）：一条 GROUP BY 出全部任务，无 run 的任务不在结果里
+struct AgentTaskRunSummary {
+    int64_t taskId = 0;
+    int64_t totalRuns = 0;                 // 含 running/cancelled/limited
+    int64_t okRuns = 0;                    // 仅 status='completed'
+    int64_t totalSeconds = 0;              // Σ 单 run 时长（ended-started，负差钳 0，running 计 0）
+    std::optional<int64_t> lastEndedAt;    // MAX(ended_at)；全部未结束 → nullopt
+};
 
 class AgentStore {
 public:
@@ -70,7 +78,11 @@ public:
                                const std::optional<std::string>& toolCallId);
     Result<std::vector<AgentMessageRow>> listMessages(int64_t runId);   // ORDER BY seq
     Result<std::vector<AgentRunRow>> listRuns(int64_t taskId, int limit);
+    // 任务级 run 聚合（COUNT/SUM/MAX 一条 SQL，不拉全表进内存）；配合 writeVersion 做 UI 侧缓存
+    Result<std::vector<AgentTaskRunSummary>> listTaskRunSummaries();
     Result<void> sweepStaleRuns();   // running → failed('应用异常退出（悬挂 run）')
+    // UI 侧 version 缓存判脏（读侧 acquire load，无锁不查库；透传 db_ 的写版本号）
+    uint64_t writeVersion() const { return db_.writeVersion(); }
     // 追加文本到 context_note：锁内读-拼-裁-写单事务；超 4096 字节从头丢最旧至 UTF-8 边界；
     // 空串 no-op；taskId 不存在 → NotFound
     Result<void> appendContextNote(int64_t taskId, const std::string& text);
