@@ -32,6 +32,7 @@
 - `createBackup(dbFile, keep=5)`：`sqlite3_backup` 在线备份（step(-1) 循环 + BUSY/LOCKED 重试），失败删半成品；成功后按 POSIX 收紧 0600（内容含凭据页，与主库同保护级别），收紧失败仅 LOG_WARN 不回滚。
 - `performStartupBackupOnce(dbFile)`：进程级 `std::atomic<bool>` 闩，首调备份、非首调 `ok(nullopt)` 跳过；失败 fail 由调用方 LOG_ERROR 后继续启动。
 - `restoreFromBackup(dbFile, backup)`：删主库旧 `-wal/-shm` → rename 主库为 `.corrupt-<ts>` → 拷贝备份 → 清除落盘文件的只读位（copy 会连只读属性一起拷来）→ quick_check 校验（只读打开）；任一步失败把隔离文件改回原名复原现场（绝不让用户两头落空）。corrupt 滚动只留最近 1 份。
+- **不变量：备份产物必须自包含（2026-10-16 落地补齐）** —— 备份文件连同页头一起独立可读：`createBackup` 关连接前把 dst 归一为 rollback journal（`PRAGMA journal_mode=DELETE`）并清掉归一过程现建的 `-wal/-shm`，否则主库恒 WAL 时备份页头写 2/2（WAL）却无伴生文件，只读校验必 `SQLITE_CANTOPEN`——修复前所有备份都还原不回来（`b330bdb`）。`latestBackup`/prune 不得把伴生残留当备份（删除失败须 LOG_WARN 显形）。
 - `pruneFilesWithPrefix(dir, prefix, keep)`：文件名字典序 = 时间戳时间序，滚动删旧。
 - `resetStartupBackupLatchForTests()`：测试缝，生产禁调。
 
