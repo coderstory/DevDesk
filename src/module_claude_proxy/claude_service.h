@@ -76,9 +76,6 @@ public:
     // 删激活 profile 且代理运行中 → 成功后 stopProxy()；proxyStopped 出参供 UI toast。
     core::Result<void> deleteProfile(int64_t id, bool* proxyStopped = nullptr);
 
-    // 启动时清理旧 Keychain 残留（只删 claude:*，护栏：数据根零 profile 整体跳过）。
-    core::Result<int> cleanupOrphanKeychainEntries();
-
     // 迁移旧 Keychain 凭据入库：api_key_encrypted 仍空且 keychain_account 列存在的 profile，
     // 逐行读旧 Keychain → protect → 写回凭据三列；失败不中断（LOG_WARN 继续）。
     core::Result<int> backfillCredentialsFromKeychain();
@@ -276,9 +273,8 @@ private:
 
     core::data::SqliteDb& db_;
     CallLogStore callLogStore_;
-    // claude_profiles 行 + SharedConfig + Keychain 条目的唯一持久化入口
+    // claude_profiles 行 + SharedConfig 的唯一持久化入口
     ProfileRepository profileRepository_;
-    std::string keychainService_;   // 仅用于旧 Keychain 残留清理
 
     // settings.json 接管/还原协议侧；门面只留编排与转发。
     SettingsTakeOver settingsTakeover_;

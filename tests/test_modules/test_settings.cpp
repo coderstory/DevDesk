@@ -20,8 +20,8 @@
 #include "github_sync_config.h" // 自动推送开关接线用例（配置夹具）
 #include "github_sync_exit_hook.h" // 退出补推用例（经 free 函数驱动）
 #include "platform/github_api.h" // 推送分支定向用例：静态默认发送器注入面
+#include "platform/credential_protection.h" // Token 落库形态断言（storesPlaintext）
 #include "platform/json.h"      // 读 app.read_settings 的 JSON 出参
-#include "platform/keychain.h"
 #include "platform/system_theme.h"
 #include "quota_home_bridge.h"  // isQuotaFeatureEnabled / setQuotaFeatureEnabled
 
@@ -1022,8 +1022,6 @@ REGISTER_TEST(settings_takeover_status_row,
 
     mod->onStop();
     module::claude::ClaudeService::setGlobal(nullptr);
-    platform::keychain::deleteSecret(
-        "DevDeskTestTakeover", "claude:" + std::to_string(pr.value().id));
     fs::remove_all(dir, ec);
     return true;
 })
@@ -1093,8 +1091,6 @@ REGISTER_TEST(settings_takeover_warn_unmanaged,
     svc.stopProxy();
     mod->onStop();
     module::claude::ClaudeService::setGlobal(nullptr);
-    platform::keychain::deleteSecret(
-        "DevDeskTestWarnUnmanaged", "claude:" + std::to_string(pr.value().id));
     fs::remove_all(dir, ec);
     return true;
 })
@@ -3238,6 +3234,53 @@ REGISTER_TEST(app_read_settings_tool_missing_file_is_defaults_without_write,
 
     std::error_code ec;
     DOCTEST_CHECK_FALSE(std::filesystem::exists(path, ec));
+    return true;
+})
+
+// Token 持久化落 github_sync_state（本机专属表，不进 dump）。存的是 credential::protect
+// 后形态，读回必须还原明文；未存过 = fail(NotFound)（hasToken 判据依赖 fail，不是空串）。
+REGISTER_TEST(settings_github_token_db_roundtrip,
+              "settings: GitHub Sync Token 落库往返 + 未存过 NotFound + 删除", {
+    test_support::TestEnv env(kCfgPrefix, "gstoken", true);
+    module::settings::GithubSyncStore store(::core::appDatabase());
+
+    auto none = store.loadToken();
+    DOCTEST_CHECK(none.isFail());
+
+    const std::string tok = "ghp_roundtrip_token_0123456789abcdef";
+    DOCTEST_REQUIRE(store.saveToken(tok).isOk());
+    auto back = store.loadToken();
+    DOCTEST_REQUIRE(back.isOk());
+    DOCTEST_CHECK_EQ(back.value(), tok);
+
+    // 行里确实是 protect 后形态：明文平台 = 原文；加密平台不得出现明文
+    {
+        auto* db = ::core::appDatabase();
+        std::lock_guard<std::recursive_mutex> lk(db->mutex());
+        auto prep = db->prepare("SELECT value FROM github_sync_state WHERE key = 'token'");
+        DOCTEST_REQUIRE(prep.isOk());
+        auto& st = prep.value();
+        auto step = st.step();
+        DOCTEST_REQUIRE(step.isOk());
+        DOCTEST_REQUIRE(step.value());
+        auto row = st.currentRow();
+        DOCTEST_REQUIRE(row.isOk());
+        auto stored = row.value().getString("value");
+        DOCTEST_REQUIRE(stored.isOk());
+        if (!platform::credential::storesPlaintext()) {
+            DOCTEST_CHECK(stored.value().find(tok) == std::string::npos);
+        }
+    }
+
+    // 同键覆盖写：upsert 不报错、读回是新值
+    DOCTEST_REQUIRE(store.saveToken("ghp_second_token").isOk());
+    auto again = store.loadToken();
+    DOCTEST_REQUIRE(again.isOk());
+    DOCTEST_CHECK_EQ(again.value(), std::string("ghp_second_token"));
+
+    // 删除后回到「未存过」态
+    DOCTEST_REQUIRE(store.deleteToken().isOk());
+    DOCTEST_CHECK(store.loadToken().isFail());
     return true;
 })
 

@@ -299,14 +299,11 @@ public:
         }
         // 首次装载必须同步（onStart 非渲染路径）：compose 恒读快照，异步首刷会闪空帧
         applyDataRefresh(state_.list, runDataRefresh(svc, true, true));
-        // 凭据回填先于残留清理：回填把旧 Keychain 凭据迁入库，清理随后清空已迁移的旧文件
+        // 旧凭据回填：老库的 Keychain 凭据迁进 api_key_encrypted（新库无 keychain_account
+        // 列 → 零 Keychain 触达，启动路径其余环节不碰钥匙串）
         auto backfill = svc->backfillCredentialsFromKeychain();
         if (backfill.isFail()) {
             LOG_WARN("onStart: 凭据回填失败 - " + backfill.errorMessage());
-        }
-        auto orphan = svc->cleanupOrphanKeychainEntries();
-        if (orphan.isFail()) {
-            LOG_WARN("onStart: 旧 Keychain 残留清理失败 - " + orphan.errorMessage());
         }
         // 代理默认不启动：由 main.cpp 按设置门控或用户手动启动
         if (svc->isProxyRunning()) {

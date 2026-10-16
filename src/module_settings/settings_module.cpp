@@ -564,7 +564,7 @@ public:
         auto done = githubSyncStore_->isFirstSyncDone();
         if (done.isOk() && done.value()) return;
         const bool hasToken = !githubSyncTokenDraft_.empty() ||
-                              GithubSyncStore::loadToken().isOk();
+                              githubSyncStore_->loadToken().isOk();
         if (!hasToken) return;
         startGithubSyncAction(SyncAction::ValidateFirstSync, /*manual=*/true);
     }
@@ -767,19 +767,19 @@ public:
             return;
         }
         std::string token = githubSyncTokenDraft_;
-        if (token.empty()) {
-            auto t = GithubSyncStore::loadToken();
+        if (token.empty() && githubSyncStore_) {
+            auto t = githubSyncStore_->loadToken();
             if (t.isOk()) token = t.value();
         }
         if (token.empty()) {
             setGithubSyncError("未配置 Token（请在上方填写后再操作）");
             return;
         }
-        // 用户在本次会话里填过 Token → 落 keychain（下次启动仍可用）。
-        if (!githubSyncTokenDraft_.empty()) {
-            auto saved = GithubSyncStore::saveToken(githubSyncTokenDraft_);
+        // 用户在本次会话里填过 Token → 落库（下次启动仍可用）。
+        if (!githubSyncTokenDraft_.empty() && githubSyncStore_) {
+            auto saved = githubSyncStore_->saveToken(githubSyncTokenDraft_);
             if (saved.isFail()) {
-                LOG_WARN("Settings: GitHub Sync Token 落 keychain 失败: " +
+                LOG_WARN("Settings: GitHub Sync Token 落库失败: " +
                          saved.errorMessage());
             }
         }

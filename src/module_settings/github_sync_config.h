@@ -1,7 +1,8 @@
 // src/module_settings/github_sync_config.h
 // GitHub Sync 配置模型 + 持久化（settings 模块内部）。
 // 配置存储在 app_config 表中，键前缀 "github_sync:"。
-// Token 存储在 platform::keychain（service="DevDesk/github", account="token"）。
+// Token 存在本机专属表 github_sync_state（行 key="token"，value = credential::protect
+// 后形态；不进 dump，见 schema.h）。存储零钥匙串触达。
 #pragma once
 
 #include <cstdlib>
@@ -15,8 +16,9 @@
 namespace module::settings {
 
 // ── 测试注入缝（真机验收用，见 tests/live/github_sync_live.cpp）──
-// 同步层读 token 走真实钥匙串，而 DEVDESK_DATA_ROOT 不隔离钥匙串 → 无头测试
-// 会把测试 token 写进用户真实凭据库。这条缝让测试改由环境变量供 token。
+// 同步层读 token 走数据库，而测试的 DEVDESK_DATA_ROOT 已隔离数据库 → 写入不会
+// 污染用户真实数据。但真机验收仍可能想在库里无 token 时注入：这条缝让测试改由
+// 环境变量供 token。
 // **双变量门**：只有 DEVDESK_GITHUB_TEST_MODE=1 在场时才认 DEVDESK_GITHUB_TOKEN，
 // 单有后者（用户环境里可能本来就有同名变量）不改变任何行为 —— 防生产误用。
 inline bool githubTestModeEnabled() {
@@ -24,7 +26,7 @@ inline bool githubTestModeEnabled() {
     return m != nullptr && std::string(m) == "1";
 }
 
-// 注入的 token；门未开或变量缺失 → 空串（= 未注入，走真实钥匙串）。
+// 注入的 token；门未开或变量缺失 → 空串（= 未注入，走数据库）。
 inline std::string githubTestToken() {
     if (!githubTestModeEnabled()) return {};
     const char* t = std::getenv("DEVDESK_GITHUB_TOKEN");
@@ -50,16 +52,12 @@ public:
     // 保存配置
     core::Result<void> save(const GithubSyncConfig& cfg);
 
-    // 保存 Token 到系统凭据库
-    static core::Result<void> saveToken(const std::string& token);
-    // 读取 Token
-    static core::Result<std::string> loadToken();
-    // 删除 Token
-    static core::Result<void> deleteToken();
-
-    // Keychain service/account
-    static constexpr const char* kKeychainService = "DevDesk/github";
-    static constexpr const char* kKeychainAccount = "token";
+    // Token 三件套：存取删都落在 github_sync_state 的 token 行（protect 后形态）。
+    // 测试注入缝见 githubTestToken / githubTestModeEnabled（saveToken / loadToken 各自先过缝）。
+    core::Result<void> saveToken(const std::string& token);
+    // 未存过 / 已删除 → fail(NotFound)，与「读了空串」可分辨（hasToken 判据靠它）
+    core::Result<std::string> loadToken();
+    core::Result<void> deleteToken();
 
     // ── 同步状态键（本机专属表 github_sync_state，键不带前缀；不进 dump / 备份）──
     // 首次方向：首次同步成功后置位；repoUrl/branch 变更即清除。

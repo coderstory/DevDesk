@@ -98,8 +98,6 @@ ClaudeService::ClaudeService(core::data::SqliteDb& db,
       callLogStore_(db),
       profileRepository_(db, keychainService.empty() ? resolveKeychainService()
                                                      : keychainService),
-      keychainService_(keychainService.empty() ? resolveKeychainService()
-                                               : keychainService),
       proxyRuntime_(*this) {}
 
 // 全局单例指针（析构要在它身上摘牌）
@@ -198,11 +196,6 @@ core::Result<void> ClaudeService::deleteProfile(int64_t id, bool* proxyStopped) 
         if (proxyStopped) *proxyStopped = true;
     }
     return core::Result<void>::ok();
-}
-
-core::Result<int> ClaudeService::cleanupOrphanKeychainEntries() {
-    // 残留清理实现在 ProfileRepository
-    return profileRepository_.cleanupOrphanKeychainEntries();
 }
 
 core::Result<int> ClaudeService::backfillCredentialsFromKeychain() {
