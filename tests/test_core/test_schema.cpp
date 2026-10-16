@@ -95,7 +95,7 @@ REGISTER_TEST(schema_creates_all_tables,
             }
         }
 
-                // 8 个索引（含 1 个部分唯一索引 + 1 个带 WHERE 的到期索引 + agent 2 个 + run-settings 1 个）
+                // 9 个索引（含 1 个部分唯一索引 + 3 个带 WHERE 的部分索引 + agent 3 个 + run-settings 1 个）
         auto indexes = listObjects(r.value().db(), "index");
         std::set<std::string> expectedIndexes{
             "idx_tasks_column",
@@ -105,6 +105,8 @@ REGISTER_TEST(schema_creates_all_tables,
             "idx_call_logs_profile",
             "idx_agent_runs_task",
             "idx_agent_messages_run",
+            // agent_runs 按 status 的部分索引：只收 running 行（轮询 + 启动清扫）
+            "idx_agent_runs_running",
             // 直连会话记录按写入时刻倒序取最近
             "idx_run_settings_written",
         };
