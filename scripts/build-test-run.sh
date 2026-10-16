@@ -439,6 +439,12 @@ fi
 # 3. 测试（直接跑 devdesk_tests：输出格式稳定，Total/Passed/Failed 必有）
 if [ "$RUN_TEST" = "1" ]; then
   echo "── 测试 ──"
+  # DEVDESK_TEST_TMPDIR 未设时默认导出绝对路径：tests/doctest.h 的兜底是相对 cwd 的
+  # "build/testtmp"，而 test_claude_service 断言 run-settings 路径 is_absolute() —— 相对
+  # 基目录会让该用例随调用方式红绿不定。与 build 目录同根；用户已设则不覆盖。
+  if [ -z "${DEVDESK_TEST_TMPDIR:-}" ]; then
+    export DEVDESK_TEST_TMPDIR="$BUILD_DIR_ABS/testtmp"
+  fi
   TEST_OUT=$("$TEST_BIN" $FILTER 2>&1) || true
   # 全绿时 grep 无命中 → 管道码 1，pipefail 下必须 || true 兜住（红绿判定在下面 Failed: 0）
   FAIL_LINES=$(echo "$TEST_OUT" | grep -E "\[FAIL\]|^FAIL \[" | head -20) || true
