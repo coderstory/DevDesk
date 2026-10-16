@@ -12,7 +12,7 @@
 
 **非目标**：GitLab / Gitee / 自建 git 远程；实时协同；冲突自动合并（三栏 IDEA 风格弹窗不在本批，见 §9）。
 
-## 2. 决策表（拷问产出，20 条）
+## 2. 决策表（拷问产出 20 条；2026-10-16 真机验收回写续 #21–#23）
 
 | # | 决策 | 说明 |
 |---|---|---|
@@ -36,6 +36,9 @@
 | 18 | 远端布局 | `notes/*.md` + `data/database.sql` |
 | 19 | 删除传播 | 本地删除笔记 → 同步时 `DELETE` 远端同路径；重命名 = 删旧 + 建新 |
 | 20 | dirty 触发源 | 仅**笔记写入/删除 + 待办增删改**标记 dirty；其他配置变更不主动触发，但随下次 dump 一并同步 |
+| 21 | 推送分支定向（2026-10-16 真机回写） | `putFile`/`deleteFile` 签名增 `branch` 形参：推送三路（database.sql PUT / 笔记 PUT / 删除 DELETE）全传配置分支——修「配置非默认分支时读 A 写 B、写全落仓库默认分支」。`branch` 空串 = 写仓库默认分支（**软契约**：API 不校验，调用方负责显式传配置分支；`deleteFile` 的 `branch` 为必传位置参数，无默认值）。出处：真机矩阵票分支定向写修复（`worktree-agent-ghsync-live` `e8d0dc9`）+ branchfix 票 `ebf815c` |
+| 22 | getFile 404 语义（2026-10-16 真机回写） | platform 层 `getFile` 对 404 返回 `ok(exists=false)` 而**非 NotFound 错误**（§4 状态码映射的 404→NotFound 对 `getFile` 不适用）；FirstSync 远端 missing / branchMissing 判定改用 `exists` 位与 `listTree` 404。空仓首次启用、同步分支不存在时自动建分支依赖此语义（原 404→NotFound 判定为死代码：空仓首启恒失败、自动建分支从不触发）。出处：真机矩阵票修复 3 |
+| 23 | 推进状态机 RemoteModified 分支（2026-10-16 真机回写） | `pushActionForState`：RemoteModified 且远端文件不存在（`remoteExists=false`）→ **Put**（原 Skip 会使分支被删重建后笔记永不回传；与 pull「远端已删→本地保留」构成双向最终一致）。出处：真机矩阵票修复 4 |
 
 ## 2.1 审计补正（实现前必读，2026-10-15 审计）
 
@@ -95,10 +98,13 @@ public:
     core::Result<RepoInfo>    getRepo();
     core::Result<std::string> getAuthenticatedUser();
     core::Result<FileInfo>    getFile(const std::string& path, const std::string& ref = "");
+    // putFile/deleteFile 增 branch 形参（2026-10-16 真机回写，决策 #21）：空串 = 仓库默认分支（软契约）；
+    // deleteFile 的 branch 必传；推送三路（database.sql / 笔记 / 删除）全传配置分支。
     core::Result<std::string> putFile(const std::string& path, const std::string& content,
-                                      const std::string& message, const std::string& shaIfMatch = "");
+                                      const std::string& message, const std::string& shaIfMatch = "",
+                                      const std::string& branch = "");
     core::Result<void>        deleteFile(const std::string& path, const std::string& message,
-                                         const std::string& shaIfMatch);
+                                         const std::string& shaIfMatch, const std::string& branch);
     core::Result<void>        createRef(const std::string& branch, const std::string& fromBranch);
     core::Result<void>        deleteRef(const std::string& branch);
     TestReport                testConnection(std::function<void(const TestStep&)> onStep = {});
@@ -111,7 +117,7 @@ public:
 
 - 认证：`Authorization: Bearer <token>` + `Accept: application/vnd.github+json` + `X-GitHub-Api-Version: 2022-11-28`。token 只进 header。
 - 内容编码：base64（OpenSSL `EVP_EncodeBlock` / `EVP_DecodeBlock`）；`getFile` 响应 >1MB 时改 `Accept: application/vnd.github.raw` 直取。
-- 状态码映射：401→认证失败；403→无权限（`x-ratelimit-remaining: 0` 视为限流）；404→NotFound；**409→新增 `ErrorCode::Conflict`**（远端 sha 与 `shaIfMatch` 不符）；422→ValidationError。
+- 状态码映射：401→认证失败；403→无权限（`x-ratelimit-remaining: 0` 视为限流）；404→NotFound（**修订（2026-10-16 真机回写，决策 #22）**：`getFile` 例外——404 返回 `ok(exists=false)`，不报错）；**409→新增 `ErrorCode::Conflict`**（远端 sha 与 `shaIfMatch` 不符）；422→ValidationError。
 - 可测性：发送器（`std::function<core::Result<platform::http::Response>(const platform::http::Request&)>`）与 sleep 均可注入，默认走真实实现。
 
 ## 5. 数据流

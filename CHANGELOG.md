@@ -6,6 +6,13 @@
 
 > **当前基线（2026-09-24，master @ 817af80）**：用例 **407**（`grep REGISTER_TEST` 口径，本会话 324 → 407；全绿与否以主会话终验为准）。各波次条目内的测试数为该波时点事实，不代表当前总数；波次按合并时间倒序排列。
 
+## [未发布]
+
+- feat(agent)：智能体 LLM 直连解耦——run 经激活 profile 直连端点，代理未开也能跑（详见下方 `[AgentDirectLlm]` 段）。
+- merge：master 并入 dev——桌宠摘除定案、migration 折为单份 DDL（审计放行 `47b31e0`）。
+- feat(github-sync)：真机 15 场景验收 15/15 通过，验收抓出并修 4 处引擎缺陷（报告 `docs/superpowers/plans/2026-10-16-ghsync-live-acceptance.md`，随矩阵票合入）。
+- fix(github-sync)：推送分支参数修复——`putFile`/`deleteFile` 增 `branch` 形参，database.sql / 笔记 / 删除三路推送全传配置分支（`ebf815c`）。
+
 ## [AgentDirectLlm] 2026-10-16 —— 智能体与代理解耦：直连端点
 
 - feat(agent)：**智能体跑 run 不再经本地代理**——新增 `DirectLlmClient`（`src/module_agent/direct_llm_client.{h,cpp}`，实现 `core::LlmEndpoint`）：按**激活 profile**（baseUrl / API key / authField / models_config / 上游方言）直发 `POST {baseUrl}/v1/messages`；槽位用 `model_slots.h` + profile 的 models_config 自解析，**代理没开也能跑**。删除旧 `LlmClient`（经代理实现）与其单测——代理路径不再保留，需要时从 git 历史找回。
