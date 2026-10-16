@@ -3484,6 +3484,9 @@ REGISTER_TEST(settings_log_tail_level_filter_empty, "settings: log_tail_level �
     auto rG = filterLogTailByLevel(garbage, Level::Error);
     DOCTEST_CHECK_EQ(rG.size(), 3u);
 
+    return true;
+})
+
 // 推送分支定向（审计 finding 4 回归钉）：PUT/DELETE 的 body 必须带配置分支
 //（branch 字段），与拉取（?ref= / listTree）同一分支——不传 = Contents API 落
 // 仓库默认分支，推拉分叉。离线：setDefaultSender 静态注入假发送器，模块真跑
