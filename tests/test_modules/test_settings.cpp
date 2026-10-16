@@ -19,6 +19,7 @@
 #include "core/tool.h"          // ITool / ToolArgs
 #include "github_sync_config.h" // 自动推送开关接线用例（配置夹具）
 #include "github_sync_exit_hook.h" // 退出补推用例（经 free 函数驱动）
+#include "platform/github_api.h" // 推送分支定向用例：静态默认发送器注入面
 #include "module_pet/pet_config.h"   // pet_config 行键常量
 #include "module_pet/pet_window.h"  // 桌宠开关即时性断言读窗口可见意图
 #include "platform/json.h"      // 读 app.read_settings 的 JSON 出参
@@ -4039,5 +4040,180 @@ REGISTER_TEST(settings_github_sync_exit_push_keeps_unsynced_notice_when_autopush
     DOCTEST_CHECK(noDirty.tabOk);
     DOCTEST_CHECK(!noDirty.pushed);
     DOCTEST_CHECK(!noDirty.noticed);     // 对照：没改动 → 不留信号（证明上面那条来自 dirty）
+    return true;
+})
+
+// 推送分支定向（审计 finding 4 回归钉）：PUT/DELETE 的 body 必须带配置分支
+//（branch 字段），与拉取（?ref= / listTree）同一分支——不传 = Contents API 落
+// 仓库默认分支，推拉分叉。离线：setDefaultSender 静态注入假发送器，模块真跑
+// 推送路径（真按钮 → 后台线程 → onStop join 后断言录到的请求）。
+// 前置 REQUIRE 全部在点击之前（线程未起，fail-fast 安全）；点击后只用非致命 CHECK。
+REGISTER_TEST(settings_github_sync_push_writes_target_configured_branch,
+              "github_sync: 推送 PUT/DELETE 全部定向配置分支（非默认分支）", {
+    test_support::TestEnv env(kCfgPrefix, "gsbranch", true);
+    test_support::ScopedConfigPath cfgEnv(
+        test_support::tempConfigFile(kCfgPrefix, "gsbranch_cfg"));
+    eui::Screen screen{1600.0f, 1000.0f};
+
+    // 笔记夹具：本地一篇（New → Put）+ 登记有而本地无（LocalDeleted → Delete 传播）
+    const auto notesDir = test_support::makeTempDir("devdesk_test_notes_", "gsbranch");
+    test_support::ScopedEnv notesEnv("DEVDESK_NOTES_DIR", notesDir.string());
+    {
+        std::ofstream(notesDir / "note-a.md", std::ios::binary) << "本地新增";
+    }
+
+    module::settings::GithubSyncConfig cfg;
+    cfg.enabled = true;
+    cfg.repoUrl = "https://github.com/devdesk-test/sync-repo";
+    cfg.branch = "sync-branch";   // 刻意 ≠ 默认分支 main：错落默认分支立刻显形
+    cfg.autoPush = false;
+    module::settings::GithubSyncStore store(::core::appDatabase());
+    DOCTEST_REQUIRE(store.save(cfg).isOk());
+    DOCTEST_REQUIRE(store.setFirstSyncDone().isOk());   // 手动同步直走 Push 不跑 FirstSync
+    // Delete 传播：登记 sha 与远端树一致（gonesha）→ LocalDeleted 且远端未变
+    DOCTEST_REQUIRE(store.recordSyncedNote("gone.md", "gonesha", "0deadbeef").isOk());
+
+    // 假发送器：按序回放脚本化响应；模块在后台线程里自建 api 实例，靠
+    // setDefaultSender（静态）注入——实例级 setSender 够不着那个实例。
+    struct ScriptedSender {
+        std::mutex mu;
+        std::vector<platform::http::Request> reqs;
+        std::vector<platform::http::Response> plan;
+        core::Result<platform::http::Response> operator()(
+            const platform::http::Request& r) {
+            platform::http::Response resp;
+            {
+                std::lock_guard<std::mutex> lk(mu);
+                reqs.push_back(r);
+                if (!plan.empty()) {
+                    resp = reqs.size() <= plan.size() ? plan[reqs.size() - 1]
+                                                      : plan.back();
+                }
+            }
+            return core::Result<platform::http::Response>::ok(std::move(resp));
+        }
+    };
+    ScriptedSender rec;
+    // 顺序 = runGithubSyncPush 的请求序：getRepo → probe(database.sql) → listTree
+    // → PUT database.sql → DELETE gone.md → PUT note-a.md（plans 按名字字典序）。
+    rec.plan = {
+        {200, R"({"full_name":"devdesk-test/sync-repo","default_branch":"main",)"
+              R"("private":true,"permissions":{"push":true}})"},
+        // probe：带 base64 content，避免 getFile 走 raw 直取的第二条请求
+        {200, R"({"sha":"sqlremotesha","content":"eA==","encoding":"base64"})"},
+        {200, R"({"sha":"t0","truncated":false,"tree":[{"path":"notes/gone.md","sha":"gonesha","type":"blob","size":5}]})"},
+        {201, R"({"content":{"sha":"sqlnewsha"}})"},
+        {200, R"({"commit":{"sha":"delsha"}})"},
+        {201, R"({"content":{"sha":"notenewsha"}})"},
+    };
+    struct SenderGuard {
+        SenderGuard(platform::github::GithubApi::Sender s) {
+            platform::github::GithubApi::setDefaultSender(std::move(s));
+        }
+        ~SenderGuard() { platform::github::GithubApi::setDefaultSender(nullptr); }
+        SenderGuard(const SenderGuard&) = delete;
+        SenderGuard& operator=(const SenderGuard&) = delete;
+    } senderGuard(
+        [&rec](const platform::http::Request& r) { return rec(r); });
+
+    std::unique_ptr<::core::Module> mod(create_settings_module());
+    mod->onStart();
+    DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 3));
+
+    // Token 草稿经卡片真输入框注入（不碰 keychain）
+    eui::Ui ui;
+    ui.begin("gsbranch");
+    mod->compose(ui, screen);
+    ui.end();
+    auto* tokenInput = ui.find("settings.card.github_sync.token.input.hit");
+    DOCTEST_REQUIRE(tokenInput != nullptr);
+    DOCTEST_REQUIRE(tokenInput->onTextInput != nullptr);
+    eui::TextInputEvent tok;
+    tok.text = "test-token";
+    tokenInput->onTextInput(tok);
+
+    auto* pushBtn = ui.find("settings.card.github_sync.btn.push.bg");
+    DOCTEST_REQUIRE(pushBtn != nullptr);
+    DOCTEST_REQUIRE(pushBtn->onClick != nullptr);
+
+    pushBtn->onClick();   // 起后台推送线程
+    // 轮询帧直到后台线程完成（compose 每帧 harvest → 按钮解禁），再 onStop join
+    for (int i = 0; i < 40; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        eui::Ui w;
+        w.begin("gsbranch_wait");
+        mod->compose(w, screen);
+        w.end();
+        const auto* b = w.find("settings.card.github_sync.btn.push.bg");
+        std::lock_guard<std::mutex> lk(rec.mu);
+        if (b != nullptr && !b->disabled && rec.reqs.size() >= 4) break;
+    }
+    mod->onStop();        // join；此后无 REQUIRE，全部非致命 CHECK
+
+
+    std::vector<platform::http::Request> reqs;
+    {
+        std::lock_guard<std::mutex> lk(rec.mu);
+        reqs = rec.reqs;
+    }
+    DOCTEST_CHECK_MESSAGE(reqs.size() >= 6,
+                          "请求数不足（推送未按脚本走完）: " +
+                              std::to_string(reqs.size()));
+
+    std::vector<const platform::http::Request*> puts;
+    std::vector<const platform::http::Request*> dels;
+    for (const auto& r : reqs) {
+        if (r.method == "PUT") puts.push_back(&r);
+        if (r.method == "DELETE") dels.push_back(&r);
+    }
+    DOCTEST_CHECK_MESSAGE(puts.size() == 2,
+                          "PUT 数应为 2（database.sql + note-a.md），实际 " +
+                              std::to_string(puts.size()));
+    DOCTEST_CHECK_MESSAGE(dels.size() == 1,
+                          "DELETE 数应为 1（gone.md），实际 " +
+                              std::to_string(dels.size()));
+
+    // 核心断言：每条写请求 body 都带 branch=sync-branch（缺 = 落默认分支）
+    for (const auto* p : puts) {
+        DOCTEST_CHECK_MESSAGE(
+            p->body.find("\"branch\":\"sync-branch\"") != std::string::npos,
+            "PUT " + p->url + " body 缺 branch=sync-branch: " + p->body);
+    }
+    for (const auto* d : dels) {
+        DOCTEST_CHECK_MESSAGE(
+            d->body.find("\"branch\":\"sync-branch\"") != std::string::npos,
+            "DELETE " + d->url + " body 缺 branch=sync-branch: " + d->body);
+    }
+    // 写入对象核对：database.sql / notes/gone.md / notes/note-a.md
+    bool sawSqlPut = false;
+    bool sawNotePut = false;
+    bool sawGoneDel = false;
+    for (const auto* p : puts) {
+        if (p->url.find("/contents/data/database.sql") != std::string::npos) {
+            sawSqlPut = true;
+            DOCTEST_CHECK_MESSAGE(
+                p->body.find("\"sha\":\"sqlremotesha\"") != std::string::npos,
+                "database.sql PUT 缺冲突检测 sha: " + p->body);
+        }
+        if (p->url.find("/contents/notes/note-a.md") != std::string::npos) {
+            sawNotePut = true;
+        }
+    }
+    if (!dels.empty()) {
+        sawGoneDel = dels[0]->url.find("/contents/notes/gone.md") !=
+                     std::string::npos;
+    }
+    DOCTEST_CHECK_MESSAGE(sawSqlPut, "未 PUT database.sql");
+    DOCTEST_CHECK_MESSAGE(sawNotePut, "未 PUT notes/note-a.md");
+    DOCTEST_CHECK_MESSAGE(sawGoneDel, "未 DELETE notes/gone.md");
+
+    // 拉取侧基线：contents GET 的 ref 必须也是配置分支（防「两边都退回默认分支」假绿）
+    for (const auto& r : reqs) {
+        if (r.method == "GET" && r.url.find("/contents/") != std::string::npos) {
+            DOCTEST_CHECK_MESSAGE(r.url.find("ref=sync-branch") !=
+                                      std::string::npos,
+                                  "contents GET ref 非配置分支: " + r.url);
+        }
+    }
     return true;
 })

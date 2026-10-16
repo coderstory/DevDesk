@@ -261,15 +261,27 @@ std::string maskQuery(std::string out) {
 
 // ---- 构造与注入点 ----
 
+namespace {
+// 静态默认发送器（setDefaultSender 的存储）：构造时读一次。空 = 真实 send。
+GithubApi::Sender& defaultSender() {
+    static GithubApi::Sender sender;
+    return sender;
+}
+} // namespace
+
 GithubApi::GithubApi(std::string token, std::string owner, std::string repo, RetryPolicy policy)
     : token_(std::move(token)),
       owner_(std::move(owner)),
       repo_(std::move(repo)),
       policy_(std::move(policy)),
-      sender_(platform::http::send) {}
+      sender_(defaultSender() ? defaultSender() : Sender(platform::http::send)) {}
 
 void GithubApi::setSender(Sender sender) {
     sender_ = sender ? std::move(sender) : Sender(platform::http::send);
+}
+
+void GithubApi::setDefaultSender(Sender sender) {
+    defaultSender() = std::move(sender);
 }
 
 core::Result<void> GithubApi::validateConfig() const {
@@ -626,10 +638,14 @@ core::Result<std::string> GithubApi::putFile(const std::string& path, const std:
 }
 
 core::Result<void> GithubApi::deleteFile(const std::string& path, const std::string& message,
-                                         const std::string& shaIfMatch) {
+                                         const std::string& shaIfMatch,
+                                         const std::string& branch) {
     pj::JsonObject body;
     body.set("message", pj::makeString(message));
     body.set("sha", pj::makeString(shaIfMatch));
+    // 与 putFile 同一契约：body 的 branch 字段定向分支（空 = 仓库默认分支）。
+    // 删除是破坏性操作，调用方必须显式传分支（签名无默认值）。
+    if (!branch.empty()) body.set("branch", pj::makeString(branch));
     const core::Result<std::string> text = pj::stringify(pj::JsonValue(body));
     if (text.isFail()) {
         return core::Result<void>::fail(core::ErrorCode::Internal, "构造请求体失败");

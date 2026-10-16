@@ -1147,8 +1147,10 @@ public:
         if (syncAborted()) { summary = "同步已中止（退出中）"; return false; }
         std::string sha;
         if (probe.isOk() && probe.value().exists) sha = probe.value().sha;
+        // branch 必传：与拉取（getFile/listTree 的 ref）同一配置分支；不传 =
+        // Contents API 写仓库默认分支，推拉分叉（审计 finding 4）。
         auto put = api.putFile(gsync::kRemoteSqlPath, dump,
-                               "DevDesk sync: database.sql", sha);
+                               "DevDesk sync: database.sql", sha, branch);
         if (put.isFail()) {
             if (put.errorCode() == core::ErrorCode::Conflict) {
                 conflict = true;
@@ -1188,7 +1190,8 @@ public:
                     shaIfMatch = remoteNoteShas[plan.name];
                 }
                 auto r = api.putFile(path, local.at(plan.name).content,
-                                     "DevDesk sync: " + path, shaIfMatch);
+                                     "DevDesk sync: " + path, shaIfMatch,
+                                     branch);
                 if (r.isFail()) {
                     if (r.errorCode() == core::ErrorCode::Conflict) {
                         // 判态与 PUT 之间远端又变了（竞态）→ 仍走冲突路径
@@ -1232,7 +1235,7 @@ public:
                 if (remoteNoteShas.count(plan.name) != 0) {
                     auto r = api.deleteFile(path,
                                             "DevDesk sync: delete " + path,
-                                            remoteNoteShas[plan.name]);
+                                            remoteNoteShas[plan.name], branch);
                     if (r.isFail()) {
                         summary = "删除远端笔记 " + path + " 失败：" +
                                   r.errorMessage();
