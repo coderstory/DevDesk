@@ -89,17 +89,21 @@ std::string remoteNotePath(const std::string& fileName) {
     return std::string(kRemoteNotesDir) + fileName;
 }
 
-std::vector<FileChange> diffNotes(
-    const std::map<std::string, std::string>& local,
-    const std::set<std::string>& remote) {
+std::vector<FileChange> diffNotesByState(
+    const std::map<std::string, LocalNote>& local,
+    const std::map<std::string, SyncedNoteRecord>& synced) {
     std::vector<FileChange> out;
-    // 新增 / 修改（本地有 → 一律 PUT；内容是否变化由调用方按 sha 判定，这里不做内容比较）
-    for (const auto& [name, content] : local) {
+    for (const auto& [name, note] : local) {
+        const auto it = synced.find(name);
+        if (it != synced.end() && !it->second.contentHash.empty() &&
+            it->second.contentHash == note.hash) {
+            continue;   // InSync：登记 hash 与本地一致 → 不推
+        }
         out.push_back(FileChange{FileChange::Kind::Put, remoteNotePath(name),
-                                 content});
+                                 note.content});
     }
-    // 删除传播：远端有、本地没有 → DELETE
-    for (const auto& name : remote) {
+    for (const auto& [name, rec] : synced) {
+        (void)rec;
         if (local.find(name) != local.end()) continue;
         out.push_back(FileChange{FileChange::Kind::Delete, remoteNotePath(name),
                                  {}});

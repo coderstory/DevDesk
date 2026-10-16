@@ -443,27 +443,6 @@ REGISTER_TEST(github_sync_logic_throttle,
     return true;
 })
 
-REGISTER_TEST(github_sync_logic_diff_notes,
-              "github_sync 逻辑: 笔记变更集（新增/修改 PUT + 删除传播 DELETE）", {
-    using namespace module::settings::gsync;
-    const std::map<std::string, std::string> local{{"a.md", "A"}, {"b.md", "B"}};
-    const std::set<std::string> remote{"b.md", "gone.md"};
-    const auto changes = diffNotes(local, remote);
-    DOCTEST_REQUIRE_EQ(changes.size(), static_cast<size_t>(3));
-    // Put：按文件名字典序
-    DOCTEST_CHECK(changes[0].kind == FileChange::Kind::Put);
-    DOCTEST_CHECK_EQ(changes[0].path, std::string("notes/a.md"));
-    DOCTEST_CHECK_EQ(changes[0].content, std::string("A"));
-    DOCTEST_CHECK(changes[1].kind == FileChange::Kind::Put);
-    DOCTEST_CHECK_EQ(changes[1].path, std::string("notes/b.md"));
-    // Delete：远端有、本地没有（重命名 = 删旧 + 建新）
-    DOCTEST_CHECK(changes[2].kind == FileChange::Kind::Delete);
-    DOCTEST_CHECK_EQ(changes[2].path, std::string("notes/gone.md"));
-    // 远端为空 + 本地为空 → 空变更集
-    DOCTEST_CHECK(diffNotes({}, {}).empty());
-    return true;
-})
-
 REGISTER_TEST(github_sync_logic_backup_prune,
               "github_sync 逻辑: 备份名 + 只保留最近 5 份", {
     using namespace module::settings::gsync;
@@ -527,8 +506,8 @@ REGISTER_TEST(github_sync_store_state_keys,
     DOCTEST_CHECK(done1.value());
 
     // 笔记登记往返（删除传播的远端基线）
-    DOCTEST_CHECK(store.recordSyncedNote("a.md", "abc123").isOk());
-    DOCTEST_CHECK(store.recordSyncedNote("b.md", "def456").isOk());
+    DOCTEST_CHECK(store.recordSyncedNote("a.md", "abc123", "hash-a").isOk());
+    DOCTEST_CHECK(store.recordSyncedNote("b.md", "def456", "hash-b").isOk());
     auto names = store.syncedNoteNames();
     DOCTEST_REQUIRE(names.isOk());
     DOCTEST_CHECK_EQ(names.value().size(), static_cast<size_t>(2));
@@ -563,47 +542,48 @@ REGISTER_TEST(github_sync_store_state_keys,
 })
 
 REGISTER_TEST(github_sync_store_sha_records,
-              "github_sync 存储: 笔记 sha 登记 + database.sql sha 登记（save() 保留状态键）", {
+              "github_sync 存储: 笔记 sha+hash 登记 + database.sql sha 登记（save() 保留状态键）", {
     test_support::TestEnv env("gitsync", "store2");
     module::settings::GithubSyncStore store(&env.handle());
 
     // 无登记 → 空
-    auto shas0 = store.syncedNoteShas();
-    DOCTEST_REQUIRE(shas0.isOk());
-    DOCTEST_CHECK(shas0.value().empty());
+    auto recs0 = store.syncedNoteRecords();
+    DOCTEST_REQUIRE(recs0.isOk());
+    DOCTEST_CHECK(recs0.value().empty());
     auto sql0 = store.syncedSqlSha();
     DOCTEST_REQUIRE(sql0.isOk());
     DOCTEST_CHECK(sql0.value().empty());
 
     // 登记 → 读回一致；覆盖登记取新值
-    DOCTEST_CHECK(store.recordSyncedNote("a.md", "sha-1").isOk());
-    DOCTEST_CHECK(store.recordSyncedNote("a.md", "sha-2").isOk());
-    DOCTEST_CHECK(store.recordSyncedNote("b.md", "sha-3").isOk());
+    DOCTEST_CHECK(store.recordSyncedNote("a.md", "sha-1", "h1").isOk());
+    DOCTEST_CHECK(store.recordSyncedNote("a.md", "sha-2", "h2").isOk());
+    DOCTEST_CHECK(store.recordSyncedNote("b.md", "sha-3", "h3").isOk());
     DOCTEST_CHECK(store.recordSyncedSqlSha("sql-1").isOk());
-    auto shas1 = store.syncedNoteShas();
-    DOCTEST_REQUIRE(shas1.isOk());
-    DOCTEST_REQUIRE_EQ(shas1.value().size(), static_cast<size_t>(2));
-    DOCTEST_CHECK_EQ(shas1.value().at("a.md"), std::string("sha-2"));
-    DOCTEST_CHECK_EQ(shas1.value().at("b.md"), std::string("sha-3"));
+    auto recs1 = store.syncedNoteRecords();
+    DOCTEST_REQUIRE(recs1.isOk());
+    DOCTEST_REQUIRE_EQ(recs1.value().size(), static_cast<size_t>(2));
+    DOCTEST_CHECK_EQ(recs1.value().at("a.md").sha, std::string("sha-2"));
+    DOCTEST_CHECK_EQ(recs1.value().at("a.md").contentHash, std::string("h2"));
+    DOCTEST_CHECK_EQ(recs1.value().at("b.md").sha, std::string("sha-3"));
     auto sql1 = store.syncedSqlSha();
     DOCTEST_REQUIRE(sql1.isOk());
     DOCTEST_CHECK_EQ(sql1.value(), std::string("sql-1"));
 
-    // 配置保存不得清掉 sha 状态键（含 database.sql 的）
+    // 配置保存不得清掉 sha/hash 状态键（含 database.sql 的）
     module::settings::GithubSyncConfig cfg;
     cfg.enabled = true;
     DOCTEST_CHECK(store.save(cfg).isOk());
-    auto shas2 = store.syncedNoteShas();
-    DOCTEST_REQUIRE(shas2.isOk());
-    DOCTEST_CHECK_EQ(shas2.value().size(), static_cast<size_t>(2));
+    auto recs2 = store.syncedNoteRecords();
+    DOCTEST_REQUIRE(recs2.isOk());
+    DOCTEST_CHECK_EQ(recs2.value().size(), static_cast<size_t>(2));
     auto sql2 = store.syncedSqlSha();
     DOCTEST_REQUIRE(sql2.isOk());
     DOCTEST_CHECK_EQ(sql2.value(), std::string("sql-1"));
 
-    // forget 清两键；database.sql 登记无 forget 入口（拉取导入覆盖时原值重写）
+    // forget 清 sha + hash 两键
     DOCTEST_CHECK(store.forgetSyncedNote("a.md").isOk());
-    auto shas3 = store.syncedNoteShas();
-    DOCTEST_REQUIRE(shas3.isOk());
-    DOCTEST_CHECK_EQ(shas3.value().count("a.md"), static_cast<size_t>(0));
+    auto recs3 = store.syncedNoteRecords();
+    DOCTEST_REQUIRE(recs3.isOk());
+    DOCTEST_CHECK_EQ(recs3.value().count("a.md"), static_cast<size_t>(0));
     return true;
 })

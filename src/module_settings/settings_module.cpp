@@ -868,48 +868,77 @@ public:
             }
             return false;
         }
+        // 登记 PUT 响应的新 sha（F1 状态键）：下次拉取据此识别「远端未变」。
+        if (!put.value().empty()) {
+            if (auto rec = githubSyncStore_->recordSyncedSqlSha(put.value());
+                rec.isFail()) {
+                LOG_WARN("Settings: database.sql 登记失败: " +
+                         rec.errorMessage());
+            }
+        }
 
-        // ④ 笔记变更集（决策 #19 删除传播）：远端基线 = 上次推送登记
-        //（github_sync:sha:notes/*），本地有 → PUT，登记有而本地无 → DELETE。
+        // ④ 笔记变更集（决策 #19 删除传播 + spec F1 内容比对）：远端基线 =
+        // 上次同步登记（sha + 本地内容 hash 两键）。InSync（登记 hash 与本地
+        // 一致）不产出——未变笔记不推、不造远端噪音 commit（T3 审计 finding 4）。
         // 基线不含「从未由本机推送过」的远端文件——首次接管既有仓库不误删。
         publishGithubSyncProgress("④ 同步笔记…");
-        const auto local = collectLocalNotes();
-        auto synced = githubSyncStore_->syncedNoteNames();
+        std::map<std::string, gsync::LocalNote> local;
+        for (auto& [name, content] : collectLocalNotes()) {
+            local.emplace(name,
+                          gsync::LocalNote{std::move(content),
+                                           gsync::contentHash(content)});
+        }
+        auto synced = githubSyncStore_->syncedNoteRecords();
         if (synced.isFail()) {
             summary = "读取同步登记失败：" + synced.errorMessage();
             return false;
         }
-        const auto changes = gsync::diffNotes(local, synced.value());
+        const auto changes =
+            gsync::diffNotesByState(local, synced.value());
         int putCount = 0;
         int delCount = 0;
         for (const auto& change : changes) {
+            const std::string name = change.path.substr(
+                std::string(gsync::kRemoteNotesDir).size());
             if (change.kind == gsync::FileChange::Kind::Put) {
-                auto cur = api.getFile(change.path, branch);
-                const std::string curSha =
-                    (cur.isOk() && cur.value().exists) ? cur.value().sha
-                                                       : std::string();
+                // shaIfMatch 取登记 sha：远端没动则不 409；远端被别的设备改过
+                // → 409 → 冲突弹窗路径。登记缺 sha（旧记录/新文件）→ GET 现值
+                // 兜底（保持「本机新增可落盘」语义，不被 422 卡死）。
+                std::string shaIfMatch;
+                const auto rec = synced.value().find(name);
+                if (rec != synced.value().end() && !rec->second.sha.empty()) {
+                    shaIfMatch = rec->second.sha;
+                } else {
+                    auto cur = api.getFile(change.path, branch);
+                    if (cur.isOk() && cur.value().exists) {
+                        shaIfMatch = cur.value().sha;
+                    }
+                }
                 auto r = api.putFile(change.path, change.content,
-                                     "DevDesk sync: " + change.path, curSha);
+                                     "DevDesk sync: " + change.path, shaIfMatch);
                 if (r.isFail()) {
-                    summary = "上传笔记 " + change.path + " 失败：" +
-                              r.errorMessage();
+                    if (r.errorCode() == core::ErrorCode::Conflict) {
+                        conflict = true;
+                        summary = "远端笔记 " + change.path +
+                                  " 已被改动（409 冲突）";
+                    } else {
+                        summary = "上传笔记 " + change.path + " 失败：" +
+                                  r.errorMessage();
+                    }
                     return false;
                 }
-                // 登记远端 sha（PUT 成功 = 远端 sha 已变；拿不到新 sha 就存占位，
-                // 下轮 DELETE 前会重新 GET 现值，占位只影响登记精度不影响正确性）。
-                const std::string sha = r.isOk() ? r.value() : std::string("put");
+                // 登记 PUT 响应的新 sha + 本地内容 hash（hash 是下轮 InSync
+                // 短路的依据）；新 sha 拿不到（响应解析失败）→ 登记空 sha，
+                // hash 仍有效，DELETE 前会重新 GET 现值。
+                const std::string& localHash = local.at(name).hash;
                 if (auto rec = githubSyncStore_->recordSyncedNote(
-                        change.path.substr(
-                            std::string(gsync::kRemoteNotesDir).size()),
-                        sha);
+                        name, r.value(), localHash);
                     rec.isFail()) {
                     LOG_WARN("Settings: 笔记推送登记失败 " + change.path + ": " +
                              rec.errorMessage());
                 }
                 ++putCount;
             } else {
-                const std::string name = change.path.substr(
-                    std::string(gsync::kRemoteNotesDir).size());
                 // 安全栏：登记有而本地读不到 ≠ 本地已删。文件还在磁盘上
                 //（本轮读内容失败等瞬态原因）→ 不删远端、不清登记，下轮再判。
                 std::error_code existsEc;
@@ -1039,12 +1068,16 @@ public:
 
         // ③ 笔记：按登记 sha 比对，只下载远端变过的
         publishGithubSyncProgress("④ 同步笔记…");
-        auto syncedShas = githubSyncStore_->syncedNoteShas();
-        if (syncedShas.isFail()) {
-            summary = "读取笔记登记失败：" + syncedShas.errorMessage();
+        auto synced = githubSyncStore_->syncedNoteRecords();
+        if (synced.isFail()) {
+            summary = "读取笔记登记失败：" + synced.errorMessage();
             return false;
         }
-        const auto actions = gsync::pullNoteActions(remoteNotes, syncedShas.value());
+        std::map<std::string, std::string> syncedShas;
+        for (const auto& [name, rec] : synced.value()) {
+            syncedShas.emplace(name, rec.sha);
+        }
+        const auto actions = gsync::pullNoteActions(remoteNotes, syncedShas);
         int dlCount = 0;
         int keepCount = 0;
         for (const auto& action : actions) {
@@ -1067,8 +1100,11 @@ public:
                 summary = "写入笔记文件失败：" + action.fileName;
                 return false;
             }
+            // 登记树 sha + 下载内容的 hash：下次 push 据此 InSync 短路、
+            // 下次 pull 据此跳过未变文件。
             if (auto rec = githubSyncStore_->recordSyncedNote(
-                    action.fileName, remoteNotes[action.fileName]);
+                    action.fileName, remoteNotes[action.fileName],
+                    gsync::contentHash(f.value().content));
                 rec.isFail()) {
                 LOG_WARN("Settings: 笔记拉取登记失败 " + action.fileName + ": " +
                          rec.errorMessage());
