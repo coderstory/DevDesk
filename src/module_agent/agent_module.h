@@ -22,14 +22,14 @@
 #include "core/theme.h"
 #include "core/tool.h"
 #include "module_agent/agent_store.h"
-#include "module_agent/llm_client.h"
+#include "module_agent/direct_llm_client.h"
 #include "module_agent/scheduler.h"
 #include "module_agent/tool_info.h"
 
 #include <components/theme.h>
 
 namespace core {
-class IClaudeProxyService;
+class LlmProfileSource;
 }
 
 namespace module::agent {
@@ -41,9 +41,10 @@ class AgentLoop;
 bool hasLiveRun(const std::map<int64_t, AgentRunRow>& latestRuns,
                 const std::set<int64_t>& orphanedRunIds);
 
-// 错误行「去 Claude 页」引导的判定：仅两类 LLM 预检错误为 true——
-// 「代理未启」（llm_client.cpp:56）/「无法解析模型槽位」（llm_client.cpp:63），均按前缀匹配。
-// 其余错误（网络 / 落库 / 读库）一律 false。前缀与两处文案原文刻意钉死：文案一变，
+// 错误行「去 Claude 页」引导的判定：仅「配置不可用」类错误为 true——
+// 前缀 = direct_llm_client.cpp 的 kConfigErrorPrefix（无激活 profile / 未配 Base URL /
+// 未配 API Key / 槽位未配置，四者都由该客户端产出），按前缀匹配。
+// 其余错误（网络 / 上游 4xx / 落库 / 读库）一律 false。前缀刻意钉死：文案一变，
 // 测试（test_agent_ui.cpp predicate 用例）即红，防文案漂移后引导静默失效。
 bool needsClaudePageHint(const std::string& errorText);
 
@@ -93,9 +94,10 @@ public:
     // 依赖注入：测试传 fake；生产工厂传空 Deps，onStart 内回退 appDatabase / ServiceLocator
     struct Deps {
         core::data::SqliteDb* db = nullptr;
-        core::IClaudeProxyService* proxy = nullptr;
+        // 直连配置来源（nullptr = onStart/首次使用时经 ServiceLocator 解析）
+        core::LlmProfileSource* profileSource = nullptr;
         // HTTP 缝（nullptr = 生产 platform::http::send；测试注入假发送）
-        LlmClient::HttpFn http;
+        DirectLlmClient::HttpFn http;
         // unix 秒时钟缝（nullptr = 生产真实系统时间；测试注入假时钟驱动 cron 判定）
         Scheduler::NowFn schedulerNow;
     };
@@ -141,7 +143,7 @@ private:
         std::atomic<bool> done{false};
     };
 
-    // 惰性装配单入口：首次使用时解析 IClaudeProxyService 并建 llm_/loop_/scheduler_；幂等
+    // 惰性装配单入口：首次使用时解析 LlmProfileSource 并建 llm_/loop_/scheduler_；幂等
     void ensureLlm();
     void startTask(int64_t taskId);
     // 任务弹窗（新建/编辑共用表单）：cron 非法 → 弹窗内报错、不落库、不关窗
@@ -184,7 +186,7 @@ private:
 
     Deps deps_;
     std::unique_ptr<AgentStore> store_;
-    std::unique_ptr<LlmClient> llm_;
+    std::unique_ptr<DirectLlmClient> llm_;
     std::unique_ptr<AgentLoop> loop_;
     // 声明序契约：scheduler_ 必须在 loop_/llm_/store_ 之后——逆序析构下 Scheduler
     // 先亡，其 run 线程 join 期间被引用的 loop_/store_ 仍存活
@@ -270,7 +272,7 @@ private:
 
     // 重入幂等守卫：double-onStart = no-op（防重复注册工具 / 重建服务）；未启动的 off = no-op
     bool started_ = false;
-    // 「无代理服务」WARN 去重（惰性解析会从每帧 compose 触发）
+    // 「无配置来源」WARN 去重（惰性解析会从每帧 compose 触发）
     bool llmMissingWarned_ = false;
 };
 

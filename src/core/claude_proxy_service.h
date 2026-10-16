@@ -31,9 +31,6 @@ public:
     // 接管实际使用的 settings.json 路径（未注入 = 空串）；给 string 不把 filesystem::path 摆进接口
     virtual std::string settingsFilePath() const = 0;
 
-    // Agent 模型槽位解析：返回激活 profile 的 slot 槽位 model id，"def"/"default" 等价，
-    // default 未配置回落 profile.model；无激活 profile/未配置/空 → nullopt
-    virtual std::optional<std::string> resolveModelSlot(const std::string& slot) = 0;
 };
 
 // 适配器：进程内单例（static T* global()）→ 上面的接口；core 不 include module_* 头，T 由实例化点提供。
@@ -95,11 +92,6 @@ public:
         return svc->settingsSyncPaths().settingsFile.string();
     }
 
-    std::optional<std::string> resolveModelSlot(const std::string& slot) override {
-        T* svc = T::global();
-        if (svc == nullptr) return std::nullopt;
-        return svc->resolveModelSlot(slot);
-    }
 };
 
 } // namespace core

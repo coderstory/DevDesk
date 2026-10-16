@@ -115,11 +115,6 @@ public:
     // 任一失败 / id==0 → nullopt（proxy_router 原样回错）。只换一跳；纯读不改状态。
     std::optional<Profile> resolveFallbackProfile(const Profile& profile);
 
-    // 模型槽位解析
-    // 激活 profile 的 models_config 里 slot → 实际 model id；"def"/"default" 等价；
-    // 无激活 / 槽位空 / 未知键 → nullopt，default 槽位额外回落 profile.model。
-    std::optional<std::string> resolveModelSlot(const std::string& slot);
-
     // 连通性测试
 
     core::Result<platform::http::Response> testConnection(const Profile& profile);
