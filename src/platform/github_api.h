@@ -43,15 +43,17 @@ public:
     core::Result<FileInfo> getFile(const std::string& path, const std::string& ref = "");
     // GET /git/trees/{branch}?recursive=1 全树（含子目录）。响应带 truncated=true
     // → fail 不补取分页子树（dump+notes 仓库极小，截断实不可达；真出现时明确报错优于静默漏文件）。
+    // 404 → NotFound 错误：调用方用它区分「分支不存在」与「分支存在但内容空」。
     core::Result<std::vector<TreeEntry>> listTree(const std::string& branch);
-    // branch 为空 = 写默认分支；非空 = 定向写该分支（Contents API 的 PUT 用 body 的
-    // branch 字段，GET 才用 ?ref= 查询参数）。putFileOnBranch 是它的分支专用别名。
+    // branch 为空 = 仓库默认分支（Contents API 不带 branch 字段即默认分支）；
+    // 非空 = 定向写该分支（PUT/DELETE 用 body.branch 定向，GET 才用 ?ref= 查询参数）。
+    // 同步引擎必须显式传配置分支：漏传 = 读配置分支、写默认分支，非默认分支配置下内容落错分支。
+    // putFileOnBranch 是它的分支专用别名。
     core::Result<std::string> putFile(const std::string& path, const std::string& content,
-                                      const std::string& message,
-                                      const std::string& shaIfMatch = "",
+                                      const std::string& message, const std::string& shaIfMatch = "",
                                       const std::string& branch = "");
     core::Result<void> deleteFile(const std::string& path, const std::string& message,
-                                  const std::string& shaIfMatch);
+                                  const std::string& shaIfMatch, const std::string& branch = "");
     // git refs：测试连接用（建临时分支 → 写探针 → 删分支）。fromBranch = 基点分支（取其 HEAD sha）。
     core::Result<void> createRef(const std::string& branch, const std::string& fromBranch);
     core::Result<void> deleteRef(const std::string& branch);

@@ -58,6 +58,23 @@ REGISTER_TEST(github_sync_content_hash_fnv1a,
     return true;
 })
 
+// 变异判据：把 makeLocalNote 改回 LocalNote{std::move(content), contentHash(content)}
+// 这条必红 —— 聚合初始化按序初始化成员，hash 会在 content 被掏空后才算，
+// 登记进基线的就是 hash("")（= 空串基值），localHashMatches 恒真 → 本地改动被判
+// InSync 静默不推（真机 push-conflict 场景抓到的就是它）。
+REGISTER_TEST(github_sync_make_local_note_hash_before_move,
+              "github_sync makeLocalNote: hash 在 content 被移动前算好", {
+    g::LocalNote note = g::makeLocalNote("LOCAL-A\n");
+    DOCTEST_CHECK_EQ(note.content, std::string("LOCAL-A\n"));
+    DOCTEST_CHECK_EQ(note.hash, g::contentHash("LOCAL-A\n"));
+    // 非空内容不得退化成空串基值（hash("") = cbf29ce484222325）
+    DOCTEST_CHECK(note.hash != std::string("cbf29ce484222325"));
+    // 空内容合法：hash 恰为基值
+    DOCTEST_CHECK_EQ(g::makeLocalNote("").hash,
+                     std::string("cbf29ce484222325"));
+    return true;
+})
+
 REGISTER_TEST(github_sync_dump_size_limit,
               "github_sync 体积上限: F9 原始体积超限判定（边界 + 注入小上限）", {
     DOCTEST_CHECK_EQ(g::kMaxDumpRawBytes, static_cast<uint64_t>(73'000'000));
@@ -239,6 +256,9 @@ REGISTER_TEST(github_sync_action_tables_from_state,
                   PushAction::Skip);
     DOCTEST_CHECK(g::pushActionForState(NoteSyncState::RemoteModified, true, false) ==
                   PushAction::Skip);
+    // RemoteModified 且远端根本没这文件（分支被删重建）→ 直接重传，不白等 pull
+    DOCTEST_CHECK(g::pushActionForState(NoteSyncState::RemoteModified, false, false) ==
+                  PushAction::Put);
     DOCTEST_CHECK(g::pushActionForState(NoteSyncState::New, false, false) ==
                   PushAction::Put);
     DOCTEST_CHECK(g::pushActionForState(NoteSyncState::New, true, false) ==

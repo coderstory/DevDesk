@@ -107,6 +107,12 @@ struct LocalNote {
     std::string hash;   // contentHash(content)
 };
 
+// LocalNote 构造的唯一入口：hash 必须在 content 被移动前算好。聚合初始化按序
+// 初始化成员，`LocalNote{std::move(content), contentHash(content)}` 会把
+// hash("") 登记进基线（实测 = FNV 空串基值 cbf29ce484222325）→ localHashMatches
+// 恒真 → 本地改动被判 InSync 静默不推。调用方一律走本函数，不再手写这个顺序。
+LocalNote makeLocalNote(std::string content);
+
 // 同步登记条目（app_config 两键合成）：上次同步成功后的远端 sha + 当时本地内容 hash。
 // hash 为空 = 该登记只有 sha 没有内容 hash → 按本地改动处理（宁可重推一次，不漏推）。
 struct SyncedNoteRecord {

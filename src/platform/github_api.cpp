@@ -595,7 +595,7 @@ core::Result<std::string> GithubApi::putFile(const std::string& path, const std:
     body.set("message", pj::makeString(message));
     body.set("content", pj::makeString(base64Encode(content)));
     // Contents API 的 PUT 用 body 里的 branch 字段定向分支（GET 才用 ?ref= 查询参数）；
-    // 空 = 不指定 = 写仓库默认分支。
+    // 空串 = 不带该字段 = 仓库默认分支。
     if (!branch.empty()) body.set("branch", pj::makeString(branch));
     if (!shaIfMatch.empty()) body.set("sha", pj::makeString(shaIfMatch));
     const core::Result<std::string> text = pj::stringify(pj::JsonValue(body));
@@ -626,10 +626,13 @@ core::Result<std::string> GithubApi::putFile(const std::string& path, const std:
 }
 
 core::Result<void> GithubApi::deleteFile(const std::string& path, const std::string& message,
-                                         const std::string& shaIfMatch) {
+                                         const std::string& shaIfMatch,
+                                         const std::string& branch) {
     pj::JsonObject body;
     body.set("message", pj::makeString(message));
     body.set("sha", pj::makeString(shaIfMatch));
+    // 空 branch = 不带该字段 = 仓库默认分支（与 putFile 同语义）。
+    if (!branch.empty()) body.set("branch", pj::makeString(branch));
     const core::Result<std::string> text = pj::stringify(pj::JsonValue(body));
     if (text.isFail()) {
         return core::Result<void>::fail(core::ErrorCode::Internal, "构造请求体失败");

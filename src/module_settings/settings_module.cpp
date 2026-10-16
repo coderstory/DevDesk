@@ -10,6 +10,7 @@
 #include "github_sync_config.h"
 #include "github_sync_logic.h"
 #include "git_error_dialog.h"
+#include "github_sync_test_seam.h"
 #include "local_git_probe.h"
 #include "settings_ui_logic.h"
 
@@ -151,6 +152,11 @@ namespace {
 // 退出钩子目标：onStart 挂上、onStop/析构摘掉；main 的 atexit 经
 // runGithubSyncExitPush 间接调用（见 github_sync_exit_hook.h 的注册序约定）。
 SettingsModule* gExitHookTarget = nullptr;
+
+// 测试缝目标（见 github_sync_test_seam.h）：与 gExitHookTarget 同款生命周期，
+// 但刻意分开两个指针——退出钩子在真实运行时也活跃，测试缝只在测试门开时用，
+// 混用一个指针会让「谁把目标清空」变得不可分辨。
+SettingsModule* gSyncTestTarget = nullptr;
 }  // namespace
 
 class SettingsModule : public ::core::Module {
@@ -158,12 +164,19 @@ public:
     // 退出钩子目标兜底摘除：用例/异常路径下 onStop 未跑时，atexit 不得打到悬垂指针。
     ~SettingsModule() override {
         if (gExitHookTarget == this) gExitHookTarget = nullptr;
+        if (gSyncTestTarget == this) gSyncTestTarget = nullptr;
     }
 
     ::core::PageId pageId() const override { return ::core::PageId::Settings; }
     std::string displayName() const override { return "设置"; }
     std::string shortName() const override { return "设置"; }
     std::string iconGlyph() const override { return eui::utf8(0xF013); }  // fa-gear
+
+    // ── 测试缝（见 github_sync_test_seam.h；只有该头的自由函数经 gSyncTestTarget 调它）──
+    // 公开是因为自由函数不是友元；不构成生产 API——门禁未开时自由函数根本不转发。
+    GithubSyncTestResult runGithubSyncForTest(GithubSyncTestAction action,
+                                              bool manual, int timeoutMs);
+    int runLocalGitProbeForTest();
 
     void onStart() override {
         store_ = std::make_unique<SettingsStore>(::core::appDatabase());
@@ -179,6 +192,7 @@ public:
         // xcode-select 卡住启动；配置变更置脏重探。
         githubSyncLocalGitProbeDirty_ = true;
         gExitHookTarget = this;   // 进程退出钩子的目标，onStop 注销
+        gSyncTestTarget = this;   // 测试缝目标（见 github_sync_test_seam.h），onStop 注销
         // dirty 触发源：笔记写入/新建/重命名/删除 + 待办增删改 + 待办列增删改重排改色——
         // 每个写路径事件都要订上，漏一个 = 那类改动永远不自动同步。token 必须存成员，
         // 丢了就退订。事件名直接作 source：日志里看得出是哪条写路径置的位。
@@ -239,6 +253,7 @@ public:
             githubSyncLocalGitProbeFuture_ = {};
         }
         if (gExitHookTarget == this) gExitHookTarget = nullptr;
+        if (gSyncTestTarget == this) gSyncTestTarget = nullptr;
         // 退订 dirty 事件（token 析构即退订；不清会留下悬垂 this 的 handler）。
         githubSyncSubs_.clear();
         // 先注销工具再释放（registry find() 返回 shared_ptr keep-alive，在跑 run 不会悬垂）。
@@ -911,8 +926,10 @@ public:
         publishGithubSyncProgress("① 探测远端数据…");
         auto probe = api.getFile(gsync::kRemoteSqlPath, branch);
         const bool exists = probe.isOk() && probe.value().exists;
-        const bool missing =
-            probe.isFail() && probe.errorCode() == core::ErrorCode::NotFound;
+        // getFile 对 404 返回 ok(exists=false) 而非 NotFound 错误（「文件不在」
+        // 是调用方要据以决策的状态，不是错误）——判 missing 只能看 exists 位，
+        // 按错误码判是死代码：空仓首次启用会恒走「远端状态未知」失败分支。
+        const bool missing = probe.isOk() && !probe.value().exists;
         switch (gsync::firstSyncChoice(exists, missing)) {
             case gsync::FirstSyncChoice::PullThenPush: {
                 std::string pullSummary;
@@ -993,7 +1010,10 @@ public:
             return false;
         }
 
-        // ② 分支：不存在则以仓库默认分支为基点自动创建。
+        // ② 分支：listTree 404 = 分支不存在 → 以仓库默认分支为基点自动创建。
+        //   判据必须是 listTree 的错误码，不能拿 getFile 探：getFile 对 404 返回
+        //   ok(exists=false) 而非 NotFound 错误，「文件不在」与「分支不在」分不开
+        //   （按 getFile 判的 branchMissing 是死代码，分支自动创建从不触发）。
         publishGithubSyncProgress("② 校验分支…");
         if (syncAborted()) { summary = "同步已中止（退出中）"; return false; }
         auto repo = api.getRepo();
@@ -1001,27 +1021,18 @@ public:
             summary = "读取仓库信息失败：" + repo.errorMessage();
             return false;
         }
-        auto probe = api.getFile(gsync::kRemoteSqlPath, branch);
-        const bool branchMissing =
-            probe.isFail() && probe.errorCode() == core::ErrorCode::NotFound;
-        if (branchMissing) {
+        auto tree = api.listTree(branch);
+        if (tree.isFail() && tree.errorCode() == core::ErrorCode::NotFound) {
             if (syncAborted()) { summary = "同步已中止（退出中）"; return false; }
-            auto created =
-                api.createRef(branch, repo.value().defaultBranch);
+            auto created = api.createRef(branch, repo.value().defaultBranch);
             if (created.isFail()) {
                 summary = "创建分支 " + branch + " 失败：" +
                           created.errorMessage();
                 return false;
             }
             branchHint = gsync::branchCreatedHint(branch);
+            tree = api.listTree(branch);
         }
-
-        // ③ 远端笔记树（与 pull 同源 listTree）：状态机判 RemoteModified /
-        // Diverged / LocalDeleted-远端也变 必须知道远端 sha——只靠 PUT 撞 409
-        // 事后发现不够：本地删除会先静默删掉别人新写的内容。
-        publishGithubSyncProgress("③ 读取远端笔记树…");
-        if (syncAborted()) { summary = "同步已中止（退出中）"; return false; }
-        auto tree = api.listTree(branch);
         if (tree.isFail()) {
             summary = "读取远端笔记树失败：" + tree.errorMessage();
             return false;
@@ -1043,9 +1054,7 @@ public:
         // 不推任何笔记、不动远端（database.sql 也留到冲突判定之后才 PUT）。
         std::map<std::string, gsync::LocalNote> local;
         for (auto& [name, content] : collectLocalNotes()) {
-            local.emplace(name,
-                          gsync::LocalNote{std::move(content),
-                                           gsync::contentHash(content)});
+            local.emplace(name, gsync::makeLocalNote(std::move(content)));
         }
         auto synced = githubSyncStore_->syncedNoteRecords();
         if (synced.isFail()) {
@@ -1105,13 +1114,19 @@ public:
             return false;
         }
 
-        // ⑤ database.sql（sha 作冲突检测：远端已变 → 409）
+        // ⑤ database.sql（sha 作冲突检测：远端已变 → 409）。sha 从②的树里取
+        //（与笔记判态同源同一棵树；getFile 单独探一发是多余的请求）。
         publishGithubSyncProgress("④ 上传 database.sql…");
         if (syncAborted()) { summary = "同步已中止（退出中）"; return false; }
         std::string sha;
-        if (probe.isOk() && probe.value().exists) sha = probe.value().sha;
+        for (const auto& entry : tree.value()) {
+            if (entry.path == gsync::kRemoteSqlPath) {
+                sha = entry.sha;
+                break;
+            }
+        }
         auto put = api.putFile(gsync::kRemoteSqlPath, dump,
-                               "DevDesk sync: database.sql", sha);
+                               "DevDesk sync: database.sql", sha, branch);
         if (put.isFail()) {
             if (put.errorCode() == core::ErrorCode::Conflict) {
                 conflict = true;
@@ -1151,7 +1166,7 @@ public:
                     shaIfMatch = remoteNoteShas[plan.name];
                 }
                 auto r = api.putFile(path, local.at(plan.name).content,
-                                     "DevDesk sync: " + path, shaIfMatch);
+                                     "DevDesk sync: " + path, shaIfMatch, branch);
                 if (r.isFail()) {
                     if (r.errorCode() == core::ErrorCode::Conflict) {
                         // 判态与 PUT 之间远端又变了（竞态）→ 仍走冲突路径
@@ -1195,7 +1210,7 @@ public:
                 if (remoteNoteShas.count(plan.name) != 0) {
                     auto r = api.deleteFile(path,
                                             "DevDesk sync: delete " + path,
-                                            remoteNoteShas[plan.name]);
+                                            remoteNoteShas[plan.name], branch);
                     if (r.isFail()) {
                         summary = "删除远端笔记 " + path + " 失败：" +
                                   r.errorMessage();
@@ -1273,9 +1288,7 @@ public:
         }
         std::map<std::string, gsync::LocalNote> localNotes;
         for (auto& [name, content] : collectLocalNotes()) {
-            localNotes.emplace(name,
-                               gsync::LocalNote{std::move(content),
-                                                gsync::contentHash(content)});
+            localNotes.emplace(name, gsync::makeLocalNote(std::move(content)));
         }
         const auto actions = gsync::pullNoteActions(
             remoteNotes, localNotes, synced.value());
@@ -1549,8 +1562,11 @@ public:
             }
         }
         // 导入覆盖过库 → 本模块缓存重载（store 指针仍有效，只重读配置）。
-        if (githubSyncStagedDbImported_.exchange(false,
-                                                 std::memory_order_acq_rel)) {
+        const bool dbImportedThisRun =
+            githubSyncStagedDbImported_.exchange(false, std::memory_order_acq_rel);
+        githubSyncLastConflict_ = conflict;
+        githubSyncLastDbImported_ = dbImportedThisRun;
+        if (dbImportedThisRun) {
             if (githubSyncStore_) {
                 githubSyncCfg_ = githubSyncStore_->load();
                 LOG_INFO("Settings: 库导入后已重载 GitHub Sync 配置缓存");
@@ -2063,6 +2079,10 @@ private:
     std::vector<platform::github::ApiLogEntry> githubSyncLogs_;  // 弹窗日志源
     std::string githubSyncResultSummary_;
     bool githubSyncResultOk_ = false;
+    // 上一轮完成的动作是否走了 409 冲突 / 是否导入过远端库：harvest 从 staged 搬来
+    //（conflict 原本只进弹窗 variant、dbImported 原本被 exchange 消费掉，测试缝读不到）。
+    bool githubSyncLastConflict_ = false;
+    bool githubSyncLastDbImported_ = false;
     SyncAction githubSyncLastAction_ = SyncAction::None;  // 弹窗「重试」按原动作重跑
     bool githubSyncLastManual_ = false;   // 手动失败才弹窗；自动失败只留卡片红字
     GitErrorDialogState githubSyncErrorDialog_;
@@ -2109,6 +2129,74 @@ private:
 } // namespace module::settings
 
 namespace module::settings {
+
+// ── 测试缝实现（见 github_sync_test_seam.h）──
+GithubSyncTestResult SettingsModule::runGithubSyncForTest(
+    GithubSyncTestAction action, bool manual, int timeoutMs) {
+    GithubSyncTestResult out;
+    // 先收掉上一轮残留：结果成员是「最近一次 harvest 的产物」，不清会把旧值当本轮。
+    harvestGithubSync();
+    githubSyncLastConflict_ = false;
+    githubSyncLastDbImported_ = false;
+    SyncAction a = SyncAction::None;
+    switch (action) {
+        case GithubSyncTestAction::Push: a = SyncAction::Push; break;
+        case GithubSyncTestAction::Pull: a = SyncAction::Pull; break;
+        case GithubSyncTestAction::PullThenPush: a = SyncAction::PullThenPush; break;
+        case GithubSyncTestAction::FirstSync: a = SyncAction::FirstSync; break;
+        case GithubSyncTestAction::ValidateFirstSync:
+            a = SyncAction::ValidateFirstSync;
+            break;
+        case GithubSyncTestAction::Test: a = SyncAction::Test; break;
+    }
+    startGithubSyncAction(a, manual);
+    // 启动被拒（无 URL / 无 token / 线程在飞）：running 与 done 都假 → 不空等。
+    if (!githubSyncRunning_ && !githubSyncDone_.load(std::memory_order_acquire)) {
+        out.summary = githubSyncError_;
+        return out;
+    }
+    const auto deadline = std::chrono::steady_clock::now() +
+                          std::chrono::milliseconds(timeoutMs);
+    while (!githubSyncDone_.load(std::memory_order_acquire)) {
+        if (std::chrono::steady_clock::now() >= deadline) return out;  // ran=false
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    harvestGithubSync();   // join + 搬 staged → UI 侧成员，之后读结果安全
+    out.ran = true;
+    out.ok = githubSyncResultOk_;
+    out.summary = githubSyncResultSummary_;
+    out.error = githubSyncError_;
+    out.conflict = githubSyncLastConflict_;
+    out.dbImported = githubSyncLastDbImported_;
+    out.overwriteFiles = githubSyncOverwriteFiles_;
+    out.branchHint = githubSyncBranchHint_;
+    return out;
+}
+
+int SettingsModule::runLocalGitProbeForTest() {
+    // 探测平时由 compose 每帧调起，无头驱动没有帧 → 显式触发并等 future 收束
+    //（平台实现自带 3s 上界，wait() 不会无限挂）。
+    githubSyncLocalGitProbeDirty_ = true;
+    maybeRefreshLocalGitProbe();
+    if (githubSyncLocalGitProbeFuture_.valid()) {
+        githubSyncLocalGitProbeFuture_.wait();
+        githubSyncLocalGitProbeFuture_ = {};
+    }
+    return githubSyncLocalGitProbe_.load(std::memory_order_acquire);
+}
+
+bool githubSyncTestSeamAvailable() { return githubTestModeEnabled(); }
+
+GithubSyncTestResult githubSyncRunForTest(GithubSyncTestAction action,
+                                          bool manual, int timeoutMs) {
+    if (!githubSyncTestSeamAvailable() || gSyncTestTarget == nullptr) return {};
+    return gSyncTestTarget->runGithubSyncForTest(action, manual, timeoutMs);
+}
+
+int githubSyncLocalGitProbeForTest() {
+    if (!githubSyncTestSeamAvailable() || gSyncTestTarget == nullptr) return -1;
+    return gSyncTestTarget->runLocalGitProbeForTest();
+}
 
 void runGithubSyncExitPush() {
     if (gExitHookTarget != nullptr) gExitHookTarget->runExitSyncPush();
