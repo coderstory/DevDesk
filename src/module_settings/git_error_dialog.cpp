@@ -107,7 +107,7 @@ void drawGitErrorDialog(eui::Ui& ui, const eui::Screen& screen,
             {.y = kSummaryY, .height = kSummaryH, .lineHeight = roundFs(20.0f),
              .wrap = true});
 
-        // 409 二次确认武装后，提示行改成覆盖警告（同一行位，不撑高弹窗）。
+        // 409 二次确认武装后，此行渲染覆盖警告（同一行位，不撑高弹窗）。
         const bool armed = conflict && st.conflictConfirmArmed;
         ui_kit::drawDialogText(
             ui, std::string(kDialogId) + ".hint", w,
@@ -128,7 +128,7 @@ void drawGitErrorDialog(eui::Ui& ui, const eui::Screen& screen,
             })
             .content([&](eui::Ui& inner, float contentWidth, float) {
                 const float rowH = roundFs(kLogRowH);
-                // F6：409 且清单非空 → 列表头渲染「将被覆盖的本地未推文件」，
+                // 409 且清单非空 → 列表头渲染「将被覆盖的本地未推文件」，
                 // 用户二次确认前看得见具体会丢什么（清单随日志区一起滚动）。
                 if (conflict && !in.overwriteFiles.empty()) {
                     inner.text(std::string(kDialogId) + ".logs.overwrite.header")

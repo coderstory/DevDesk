@@ -18,7 +18,7 @@ namespace platform::github {
 
 struct RepoInfo { std::string fullName, defaultBranch; bool canPush = false; bool isPrivate = false; };
 struct FileInfo { bool exists = false; std::string content; std::string sha; };
-// git/trees 条目（F7 拉取全树）。type=blob 才有 size；目录条目 size 恒 0。
+// git/trees 条目（拉取全树）。type=blob 才有 size；目录条目 size 恒 0。
 struct TreeEntry { std::string path; std::string sha; uint64_t size = 0; };
 struct TestStep { std::string name; bool ok = false; int durationMs = 0; std::string detail; };
 struct TestReport { bool ok = false; std::vector<TestStep> steps; std::string summary; };
@@ -39,7 +39,7 @@ public:
     core::Result<RepoInfo> getRepo();
     core::Result<std::string> getAuthenticatedUser();                 // GET /user → login
     core::Result<FileInfo> getFile(const std::string& path, const std::string& ref = "");
-    // F7：GET /git/trees/{branch}?recursive=1 全树（含子目录）。响应带 truncated=true
+    // GET /git/trees/{branch}?recursive=1 全树（含子目录）。响应带 truncated=true
     // → fail 不补取分页子树（dump+notes 仓库极小，截断实不可达；真出现时明确报错优于静默漏文件）。
     core::Result<std::vector<TreeEntry>> listTree(const std::string& branch);
     core::Result<std::string> putFile(const std::string& path, const std::string& content,

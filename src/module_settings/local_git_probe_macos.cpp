@@ -17,7 +17,7 @@ namespace module::settings {
 
 namespace {
 
-// 子进程读取上限（F8）：popen 没有超时原语，xcode-select 若卡住（系统弹窗 /
+// 子进程读取上限：popen 没有超时原语，xcode-select 若卡住（系统弹窗 /
 // CLT 安装态异常）会无限期挂住调用线程——探测挪到后台线程仍会泄漏一个卡死
 // 线程且 future 永不就绪。这里 fork/exec + 非阻塞读 + 截止时间，到点 SIGKILL
 // 收尸，保证探测恒有上界。
@@ -89,7 +89,7 @@ bool readXcodeSelectPath(std::string& out) {
 
 // xcode-select 随系统基础系统自带，调用它不会触发 CLT 安装 GUI；会弹 GUI 的
 // 是 /usr/bin/git 这类 shim——所以全程不执行 git，只查文件存在性。
-// 调用方在后台线程跑（F8），本函数自带 3s 上界，可安全反复调用。
+// 调用方在后台线程跑，本函数自带 3s 上界，可安全反复调用。
 bool localGitAvailable() {
     std::string root;
     if (!readXcodeSelectPath(root)) return false;

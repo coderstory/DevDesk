@@ -661,7 +661,7 @@ REGISTER_TEST(github_errorcode_conflict_to_string, "github: ErrorCode::Conflict 
     return true;
 })
 
-// ---- 审计补修：createRef 受理后响应丢失 / owner-repo 白名单 ----
+// ---- createRef 受理后响应丢失 / owner-repo 白名单 ----
 
 REGISTER_TEST(github_create_ref_422_already_exists_is_success,
               "github: createRef POST 422 already exists 视为成功（响应丢失重试撞车）", {
@@ -794,7 +794,7 @@ REGISTER_TEST(github_validate_config_owner_repo_charset,
     return true;
 })
 
-// ---- listTree（F7 拉取全树）----
+// ---- listTree（拉取全树）----
 
 REGISTER_TEST(github_list_tree_parses_blobs,
               "github listTree: blob 条目解析（path/sha/size），目录条目排除", {

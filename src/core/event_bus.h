@@ -27,7 +27,7 @@ namespace core::event {
 inline constexpr const char* kTodoCreated = "todo.created";
 inline constexpr const char* kTodoCompleted = "todo.completed";
 inline constexpr const char* kMdSaved = "md.saved";
-// 数据库导入（GitHub Sync 拉取覆盖活库，spec F3）：begin/end 包住导入全程，
+// 数据库导入（GitHub Sync 拉取覆盖活库）：begin/end 包住导入全程，
 // **end 无论成败都发**（订阅方必须借此恢复被暂停的后台任务）；imported 仅
 // 成功后发，订阅方应丢弃内存缓存重查——表被 DROP 重建过，缓存指向旧行
 // 即悬空数据。emit 在导入线程同步执行：handler 只做线程安全的动作（停启

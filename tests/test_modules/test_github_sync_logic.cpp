@@ -188,7 +188,7 @@ REGISTER_TEST(github_sync_pull_note_actions,
     DOCTEST_CHECK(actions[2].kind == Kind::KeepLocal);
     DOCTEST_CHECK_EQ(actions[2].fileName, std::string("c.md"));
 
-    // 新设备模拟（审计 C1）：空基线 + 有远端 → 全部下载（不会误判「未变」）
+    // 新设备模拟：空基线 + 有远端 → 全部下载（不会误判「未变」）
     const auto fresh = g::pullNoteActions({{"n.md", "s"}}, {}, {});
     DOCTEST_REQUIRE_EQ(fresh.size(), static_cast<size_t>(1));
     DOCTEST_CHECK(fresh[0].kind == Kind::Download);
@@ -201,7 +201,7 @@ REGISTER_TEST(github_sync_pull_note_actions,
         g::pullNoteActions({{"b.md", "sb-old"}}, localDel, syncedDel);
     DOCTEST_CHECK(delUnchanged.empty());
 
-    // 死锁路径钉死（复审裁决）：本地已删 + 远端已改。pull 必须下载恢复——
+    // 死锁路径：本地已删 + 远端已改。pull 必须下载恢复——
     // 若 Skip，push 对 LocalDeleted+远端变 判 Conflict 并中止整轮 → 409 弹窗
     // 「拉取后再推」原地打转，所有推送被一篇笔记永久卡死。
     const auto delChanged =

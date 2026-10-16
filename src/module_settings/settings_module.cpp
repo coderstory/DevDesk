@@ -141,7 +141,7 @@ bool writeFileFromString(const std::filesystem::path& f,
 class SettingsModule;
 
 namespace {
-// 退出钩子目标（F5）：onStart 挂上、onStop/析构摘掉；main 的 atexit 经
+// 退出钩子目标：onStart 挂上、onStop/析构摘掉；main 的 atexit 经
 // runGithubSyncExitPush 间接调用（见 github_sync_exit_hook.h 的注册序约定）。
 SettingsModule* gExitHookTarget = nullptr;
 }  // namespace
@@ -163,16 +163,16 @@ public:
         cfg_ = store_->load();
         githubSyncStore_ = std::make_unique<GithubSyncStore>(::core::appDatabase());
         githubSyncCfg_ = githubSyncStore_->load();
-        // F5：上次退出推送未完成 → 卡片黄字「有未同步改动」，同步成功即清。
+        // 上次退出推送未完成 → 卡片黄字「有未同步改动」，同步成功即清。
         if (auto notice = githubSyncStore_->hasUnsyncedNotice();
             notice.isOk() && notice.value()) {
             githubSyncUnsyncedNotice_ = true;
         }
-        // 本地 git 探测（决策 #15 / F8）：后台线程 + 结果缓存，UI 线程不因
+        // 本地 git 探测：后台线程 + 结果缓存，UI 线程不因
         // xcode-select 卡住启动；配置变更置脏重探。
         githubSyncLocalGitProbeDirty_ = true;
-        gExitHookTarget = this;   // 进程退出钩子（F5）的目标，onStop 注销
-        // dirty 触发源（决策 #20）：笔记写入 + 待办增删改。token 必须存成员，丢了就退订。
+        gExitHookTarget = this;   // 进程退出钩子的目标，onStop 注销
+        // dirty 触发源：笔记写入 + 待办增删改。token 必须存成员，丢了就退订。
         githubSyncSubs_.push_back(::core::event::bus().subscribe(
             ::core::event::kMdSaved,
             [this](const std::string&) { markGithubSyncDirty("md.saved"); }));
@@ -566,7 +566,7 @@ public:
         if (on) maybeStartFirstGithubSync();
     }
 
-    // 首次方向（决策 #16）：启用开关打开且配置齐全时跑一次首次同步
+    // 首次方向：启用开关打开且配置齐全时跑一次首次同步
     //（远端有数据 → 拉取覆盖；没有 → 首次上传）。只跑一次：成功后落
     // first_sync_done，repoUrl/branch 变更即清除（换仓 = 重新判定方向）。
     // 配置不齐（URL/Token 缺）静默跳过——用户手动操作时自会得到明确报错，
@@ -594,7 +594,7 @@ public:
 
     void githubSyncPush() {
         // 换仓/换分支会清 first_sync_done → 手动同步先重跑首次方向判定
-        //（T3 审计 finding 9：否则用户必须重拨启用开关才有方向判定）。
+        //（否则用户必须重拨启用开关才有方向判定）。
         if (githubSyncStore_ && !githubSyncCfg_.repoUrl.empty()) {
             auto done = githubSyncStore_->isFirstSyncDone();
             if (done.isOk() && !done.value()) {
@@ -640,7 +640,7 @@ public:
         showToast("已复制详情");
     }
 
-    // 自动同步判定（决策 #14/#20）：dirty 且过 5 分钟窗口才自动推；手动绕开。
+    // 自动同步判定：dirty 且过 5 分钟窗口才自动推；手动绕开。
     void maybeAutoGithubSync() {
         if (!githubSyncCfg_.enabled || !githubSyncDirty_) return;
         if (githubSyncThread_.joinable()) return;
@@ -648,14 +648,14 @@ public:
         startGithubSyncAction(SyncAction::Push, /*manual=*/false);
     }
 
-    // dirty 触发源（决策 #20）：笔记写入 + 待办增删改。其他配置变更不主动触发。
+    // dirty 触发源：笔记写入 + 待办增删改。其他配置变更不主动触发。
     void markGithubSyncDirty(const char* source) {
         if (githubSyncDirty_) return;
         githubSyncDirty_ = true;
         LOG_INFO(std::string("Settings: GitHub Sync 置 dirty（来源=") + source + "）");
     }
 
-    // 无 git 警告（决策 #15）：用户改配置时提示一次，不阻塞同步、不在启动/失败时弹。
+    // 无 git 警告：用户改配置时提示一次，不阻塞同步、不在启动/失败时弹。
     void maybeWarnNoLocalGit() {
         if (githubSyncLocalGitProbe_.load(std::memory_order_acquire) != 0 ||
             githubSyncNoGitWarned_) {
@@ -666,7 +666,7 @@ public:
                   "同步仍可用，但没有本地版本历史（远端 + 本地备份兜底）", false);
     }
 
-    // 本地 git 探测（F8）：后台线程跑 + 结果缓存，UI 线程零阻塞；配置变更
+    // 本地 git 探测：后台线程跑 + 结果缓存，UI 线程零阻塞；配置变更
     // （仓库/分支/Token）置脏 → 下一帧重探，会话内装好 git 灰字会消失。
     // 探测自身带超时上界（平台实现层），在途 future 由 onStop 收束。
     void maybeRefreshLocalGitProbe() {
@@ -688,7 +688,7 @@ public:
         });
     }
 
-    // F5 退出补推：dirty 且距上次 commit ≥60s 才推；最多等 5s，到点未完即
+    // 退出补推：dirty 且距上次 commit ≥60s 才推；最多等 5s，到点未完即
     // 放弃并置未同步提示键 → 下次启动卡片黄字。manual=true 绕开 5 分钟节流
     //（退出补推是一次性的）。
     // 等待/放行逻辑见 waitOrDetachSyncThread；已有任务在飞时也走同一条等待，
@@ -707,7 +707,7 @@ public:
         waitOrDetachSyncThread();
     }
 
-    // A1 复审：线程侧取消判据（退出闸置位后，各阶段边界尽快收束）。
+    // 线程侧取消判据（退出闸置位后，各阶段边界尽快收束）。
     bool syncAborted() const {
         return githubSyncAbortRequested_.load(std::memory_order_acquire);
     }
@@ -760,7 +760,7 @@ public:
             setGithubSyncError("未配置仓库 URL");
             return;
         }
-        // 节流（决策 #14）：自动同步 5 分钟内最多一次；手动「立即同步」绕开（#17）。
+        // 节流：自动同步 5 分钟内最多一次；手动「立即同步」绕开。
         if (!manual && !gsync::throttleDue(githubSyncLastCommitSec_, nowSec())) {
             return;
         }
@@ -834,7 +834,7 @@ public:
             platform::github::GithubApi api(token, parts.first, parts.second);
             switch (action) {
                 case SyncAction::Test: {
-                    // 仓库可见性（决策 #13：public 黄字提醒，不硬拦）
+                    // 仓库可见性（public 黄字提醒，不硬拦）
                     auto repo = api.getRepo();
                     if (repo.isOk()) publicRepo = repo.value().isPrivate == false;
                     auto report = api.testConnection(
@@ -884,7 +884,7 @@ public:
         githubSyncStagedBranchHint_ = branchHint;
     }
 
-    // 首次方向（决策 #16）：远端已有 database.sql → 先拉取覆盖（含备份）再推送；
+    // 首次方向：远端已有 database.sql → 先拉取覆盖（含备份）再推送；
     // 远端没有 → 首次上传（runGithubSyncPush 内含分支自动创建）。
     bool runGithubSyncFirstSync(platform::github::GithubApi& api,
                                 const std::string& branch,
@@ -928,7 +928,7 @@ public:
         return false;
     }
 
-    // C3：409 确认框的覆盖清单 = database.sql + 本轮本地有改动的笔记（Put 集）。
+    // 409 确认框的覆盖清单 = database.sql + 本轮本地有改动的笔记（Put 集）。
     // 任何冲突分支（sql PUT / 笔记 PUT / 删除传播）都经它暂存——清单空着弹
     // 确认框等于让用户在不知道会覆盖什么的情况下二次确认。
     void stashOverwriteListForConflict(
@@ -966,7 +966,7 @@ public:
             summary = "读取导出文件失败";
             return false;
         }
-        // 体积上限（spec F9）：PUT 单请求 100MB（base64 ×1.37）→ 原始 ≈73MB，
+        // 体积上限：PUT 单请求 100MB（base64 ×1.37）→ 原始 ≈73MB，
         // 超限明确报错而不是让远端拒收 413 后报「HTTP 413」。
         if (gsync::dumpTooLargeForRemote(dump.size())) {
             summary = "数据库导出过大，暂不支持同步（原始 " +
@@ -976,7 +976,7 @@ public:
             return false;
         }
 
-        // ② 分支：不存在则以仓库默认分支为基点自动创建（决策 #10/#16）。
+        // ② 分支：不存在则以仓库默认分支为基点自动创建。
         publishGithubSyncProgress("② 校验分支…");
         if (syncAborted()) { summary = "同步已中止（退出中）"; return false; }
         auto repo = api.getRepo();
@@ -1000,8 +1000,8 @@ public:
         }
 
         // ③ 远端笔记树（与 pull 同源 listTree）：状态机判 RemoteModified /
-        // Diverged / LocalDeleted-远端也变 必须知道远端 sha——原先只能靠 PUT
-        // 撞 409 事后发现，且本地删除会先静默删掉别人新写的内容。
+        // Diverged / LocalDeleted-远端也变 必须知道远端 sha——只靠 PUT 撞 409
+        // 事后发现不够：本地删除会先静默删掉别人新写的内容。
         publishGithubSyncProgress("③ 读取远端笔记树…");
         if (syncAborted()) { summary = "同步已中止（退出中）"; return false; }
         auto tree = api.listTree(branch);
@@ -1105,7 +1105,7 @@ public:
             }
             return false;
         }
-        // 登记 PUT 响应的新 sha（F1 状态键）：下次拉取据此识别「远端未变」。
+        // 登记 PUT 响应的新 sha：下次拉取据此识别「远端未变」。
         if (!put.value().empty()) {
             if (auto rec = githubSyncStore_->recordSyncedSqlSha(put.value());
                 rec.isFail()) {
@@ -1118,9 +1118,9 @@ public:
         publishGithubSyncProgress("⑤ 同步笔记…");
         int putCount = 0;
         int delCount = 0;
-        int deleteSkipCount = 0;   // 安全栏跳过数（T3 审计 finding 8：进 UI）
+        int deleteSkipCount = 0;   // 安全栏跳过数（进 UI 提示）
         for (const auto& plan : plans) {
-            // A1 复审：退出取消位——每个 PUT/DELETE（含 store 登记写）前查一次
+            // 退出取消位——每个 PUT/DELETE（含 store 登记写）前查一次
             if (syncAborted()) { summary = "同步已中止（退出中）"; return false; }
             const std::string path = gsync::remoteNotePath(plan.name);
             if (plan.action == gsync::PushAction::Put) {
@@ -1169,7 +1169,7 @@ public:
                 if (stillThere) {
                     LOG_WARN("Settings: 本地文件仍在但未能读取，跳过删除远端 " +
                              path);
-                    ++deleteSkipCount;   // T3 审计 finding 8：跳过不能只进日志
+                    ++deleteSkipCount;   // 跳过不能只进日志
                     continue;
                 }
                 // 远端已无此文件（LocalDeleted 判态里 remoteExists=false）→
@@ -1198,7 +1198,7 @@ public:
                   " 篇笔记" + (delCount > 0 ? "（删除 " + std::to_string(delCount) +
                                               " 篇）" : "");
         if (deleteSkipCount > 0) {
-            // T3 审计 finding 8：安全栏跳过原先只进日志（静默失败面）→ 卡片黄字
+            // 安全栏跳过不能只进日志（静默失败面）→ 卡片黄字
             std::lock_guard<std::mutex> lk(githubSyncMutex_);
             githubSyncStagedDeleteSkipHint_ =
                 "有 " + std::to_string(deleteSkipCount) +
@@ -1207,8 +1207,8 @@ public:
         return true;
     }
 
-    // 拉取（F7 全树 + F1 sha 状态比对）：树列举 → database.sql 按登记 sha 判变 →
-    // 笔记按登记比对下载。远端已删的本地笔记保留（决策 #19 保守语义）；
+    // 拉取（全树列举 + 登记 sha 状态比对）：树列举 → database.sql 按登记 sha 判变 →
+    // 笔记按登记比对下载。远端已删的本地笔记保留（保守语义）；
     // 远端库未变（树 sha == 登记）→ 跳过导入，本地未推改动不被旧数据覆盖。
     bool runGithubSyncPull(platform::github::GithubApi& api,
                            const std::string& branch, std::string& summary) {
@@ -1248,7 +1248,7 @@ public:
         std::string notesBackupNameOut;   // 摘要用：库导入发生时的笔记备份目录名
 
         // ② 笔记动作先算（纯本地，零网络）：拉取覆盖面 = 导入 database.sql 或
-        // 下载笔记任一发生 → 先整目录备份笔记（F6），再动库。
+        // 下载笔记任一发生 → 先整目录备份笔记，再动库。
         auto synced = githubSyncStore_->syncedNoteRecords();
         if (synced.isFail()) {
             summary = "读取笔记登记失败：" + synced.errorMessage();
@@ -1278,7 +1278,7 @@ public:
 
         if (sqlImportPlanned || downloadCount > 0) {
             if (syncAborted()) { summary = "同步已中止（退出中）"; return false; }
-            // F6：拉取覆盖前整目录备份笔记（与库备份同目录、独立计数、各保 5 份）。
+            // 拉取覆盖前整目录备份笔记（与库备份同目录、独立计数、各保 5 份）。
             publishGithubSyncProgress("② 备份本地数据…");
             std::string notesBackupName;
             auto nb = backupNotesDir(notesBackupName);
@@ -1305,7 +1305,7 @@ public:
                     summary = "远端 database.sql 不存在或为空";
                     return false;
                 }
-                // F3：经 store 导入——begin/end 事件包住（订阅方暂停/恢复后台
+                // 经 store 导入——begin/end 事件包住（订阅方暂停/恢复后台
                 // 写者），成功发 imported（全局重载广播）+ PRAGMA 复位。
                 auto imported =
                     githubSyncStore_->importDatabase(remote.value().content);
@@ -1331,15 +1331,15 @@ public:
         int dlCount = 0;
         int keepCount = 0;
         for (const auto& action : actions) {
-            // A1 复审：退出取消位——每次下载写盘 / 登记写库前查一次
+            // 退出取消位——每次下载写盘 / 登记写库前查一次
             if (syncAborted()) { summary = "同步已中止（退出中）"; return false; }
             if (action.kind == gsync::PullAction::Kind::KeepLocal) {
                 LOG_INFO("Settings: 远端已删除笔记 " + action.fileName +
                          "，本地保留（pull 不替远端传播删除）");
-                // C2：清登记——远端被别设备删掉、本地未改的笔记若留着旧登记，
+                // 清登记——远端被别设备删掉、本地未改的笔记若留着旧登记，
                 // 下轮 push 按 InSync 短路永不重推（远端永远缺这篇），本地一改
                 // 又带失效 sha PUT → 409/422 死循环。清掉后下轮 push 判 New，
-                // shaIfMatch 取远端树现值（C5 后不再逐篇 GET；远端无此名 →
+                // shaIfMatch 取远端树现值（不逐篇 GET；远端无此名 →
                 // 无 sha PUT 重建，local wins）。
                 if (auto f = githubSyncStore_->forgetSyncedNote(action.fileName);
                     f.isFail()) {
@@ -1386,7 +1386,7 @@ public:
         return true;
     }
 
-    // 备份本地库到 backups/devdesk-<ts>.db（保留最近 5 份，决策 #11）。
+    // 备份本地库到 backups/devdesk-<ts>.db（保留最近 5 份）。
     // 先 wal_checkpoint 再整文件拷贝：WAL 里未回写的页不 checkpoint 会丢。
     core::Result<void> backupLocalDb(core::data::SqliteDb& db,
                                      std::string& outName) {
@@ -1417,7 +1417,7 @@ public:
         return core::Result<void>::ok();
     }
 
-    // F6：拉取覆盖前整目录备份笔记到 backups/notes-<ts>/（与库备份同目录、
+    // 拉取覆盖前整目录备份笔记到 backups/notes-<ts>/（与库备份同目录、
     // 前缀隔离、独立计数，各保 5 份）。只拷 .md；笔记目录不存在 → 无可备份 = ok。
     core::Result<void> backupNotesDir(std::string& outName) {
         const auto srcDir = ::core::paths::markdownDir();
@@ -1487,7 +1487,7 @@ public:
         return out;
     }
 
-    // 本地 git 探测（决策 #15 / 审计 F8）：平台差异在 local_git_probe_*.cpp
+    // 本地 git 探测：平台差异在 local_git_probe_*.cpp
     //（macOS 直接调 /usr/bin/git 会弹 CLT 安装 GUI，故按平台拆、只查不执行）。
 
     // 后台线程写阶段文案（UI 每帧消费）。
@@ -1542,17 +1542,17 @@ public:
         githubSyncStatus_ = githubSyncResultSummary_;
         githubSyncStatusError_ = !githubSyncResultOk_;
         if (githubSyncResultOk_) {
-            // A3：清 dirty / 记节流时点 / 清 F5 提示只认「真推送过」的动作——
+            // 清 dirty / 记节流时点 / 清退出未同步提示只认「真推送过」的动作——
             // 测试连接与纯拉取不推本地改动，点了它们不得抹掉未同步语义。
             const bool pushedToRemote =
                 githubSyncLastAction_ == SyncAction::Push ||
                 githubSyncLastAction_ == SyncAction::PullThenPush ||
                 githubSyncLastAction_ == SyncAction::FirstSync;
             if (pushedToRemote) {
-                // commit 成功 → 清 dirty + 记时刻（节流窗口起点，决策 #14）。
+                // commit 成功 → 清 dirty + 记时刻（节流窗口起点）。
                 githubSyncDirty_ = false;
                 githubSyncLastCommitSec_ = nowSec();
-                // F5：同步成功即清「退出时未同步」提示（黄字随下一帧消失）。
+                // 同步成功即清「退出时未同步」提示（黄字随下一帧消失）。
                 if (githubSyncUnsyncedNotice_) {
                     githubSyncUnsyncedNotice_ = false;
                     if (githubSyncStore_) {
@@ -1586,7 +1586,7 @@ public:
         githubSyncErrorDialog_.variant =
             conflict ? GitErrorDialogVariant::Conflict409
                      : GitErrorDialogVariant::Error;
-        // 手动操作失败 → 弹窗；自动同步失败只留卡片红字 + 详情入口（决策 #6）。
+        // 手动操作失败 → 弹窗；自动同步失败只留卡片红字 + 详情入口。
         if (githubSyncLastAction_ != SyncAction::None && githubSyncLastManual_) {
             githubSyncErrorDialog_.open = true;
         }
@@ -1623,7 +1623,7 @@ public:
         harvestGithubSync();
         // 自动同步判定（dirty + 节流窗口）；手动按钮不走这里。
         maybeAutoGithubSync();
-        // 本地 git 探测收割/重探（F8）：非阻塞，结果驱动卡片灰字。
+        // 本地 git 探测收割/重探：非阻塞，结果驱动卡片灰字。
         maybeRefreshLocalGitProbe();
         const float pad = t.sizes.spacingXXLarge;
         const float contentW = screen.width - pad * 2.0f;
@@ -1761,7 +1761,7 @@ private:
         a.applyGithubSyncRepoUrl = [this](const std::string& url) {
             githubSyncCfg_.repoUrl = url;
             clearGithubSyncFirstSyncFlag("repoUrl");
-            githubSyncLocalGitProbeDirty_ = true;   // F8：配置变更 → 探测失效
+            githubSyncLocalGitProbeDirty_ = true;   // 配置变更 → 探测失效
             maybeWarnNoLocalGit();
         };
         a.applyGithubSyncBranch = [this](const std::string& branch) {
@@ -2030,15 +2030,15 @@ private:
     bool githubSyncStagedConflict_ = false;
     bool githubSyncStagedPublicRepo_ = false;
     std::string githubSyncStagedBranchHint_;
-    // F6：409 时「拉取将覆盖的本地未推文件」清单（后台线程产出 → UI 搬运）。
+    // 409 时「拉取将覆盖的本地未推文件」清单（后台线程产出 → UI 搬运）。
     std::vector<std::string> githubSyncStagedOverwriteFiles_;
-    // F3：本轮导入成功 → harvest 在 UI 线程重载本模块配置缓存（app_config 被
+    // 本轮导入成功 → harvest 在 UI 线程重载本模块配置缓存（app_config 被
     // DROP 重建过）。
     std::atomic<bool> githubSyncStagedDbImported_{false};
-    // A1 复审：退出取消位。退出闸超时前先置位——同步线程在每个阶段边界与
+    // 退出取消位。退出闸超时前先置位——同步线程在每个阶段边界与
     // 笔记循环体内查它，尽快收束（碰 store_/db/stateSet/requestUiUpdate 前）。
     std::atomic<bool> githubSyncAbortRequested_{false};
-    // T3 审计 finding 8：删除传播安全栏跳过（本地仍在但读失败）的 UI 提示。
+    // 删除传播安全栏跳过（本地仍在但读失败）的 UI 提示。
     std::string githubSyncStagedDeleteSkipHint_;
     // 以下成员仅 UI 线程读写（harvest 在 join 后搬运）。
     bool githubSyncRunning_ = false;
@@ -2050,19 +2050,19 @@ private:
     SyncAction githubSyncLastAction_ = SyncAction::None;  // 弹窗「重试」按原动作重跑
     bool githubSyncLastManual_ = false;   // 手动失败才弹窗；自动失败只留卡片红字
     GitErrorDialogState githubSyncErrorDialog_;
-    // 编排状态（决策 #10/#13/#14/#15/#20）
+    // 编排状态
     bool githubSyncDirty_ = false;          // 笔记写入 / 待办增删改
     int64_t githubSyncLastCommitSec_ = 0;   // 上次 commit 时刻（节流窗口起点）
     bool githubSyncRepoPublic_ = false;     // 测试连接发现 public 仓 → 黄字提醒
     std::string githubSyncBranchHint_;      // 分支被自动创建提示
-    std::vector<std::string> githubSyncOverwriteFiles_;  // F6 确认框覆盖清单（UI 侧）
-    // 本地 git 探测（F8）：-1 未知/在途、0 不可用、1 可用（后台线程原子写）。
+    std::vector<std::string> githubSyncOverwriteFiles_;  // 确认框覆盖清单（UI 侧）
+    // 本地 git 探测：-1 未知/在途、0 不可用、1 可用（后台线程原子写）。
     std::atomic<int> githubSyncLocalGitProbe_{-1};
     std::future<void> githubSyncLocalGitProbeFuture_;  // 在途探测（仅 UI 线程碰）
     bool githubSyncLocalGitProbeDirty_ = false;        // 首探 + 配置变更置位
     bool githubSyncNoGitWarned_ = false;    // 无 git 警告只弹一次（改配置时触发）
-    bool githubSyncUnsyncedNotice_ = false;  // F5：退出时未推完 → 卡片黄字
-    std::string githubSyncDeleteSkipHint_;   // T3 finding 8：删远端跳过提示（UI 侧）
+    bool githubSyncUnsyncedNotice_ = false;  // 退出时未推完 → 卡片黄字
+    std::string githubSyncDeleteSkipHint_;   // 删远端跳过提示（UI 侧）
     // EventBus 订阅 token 必须持有：token 析构即退订（丢弃 = 订阅立刻失效）。
     std::vector<::core::event::EventBus::Subscription> githubSyncSubs_;
     // app.read_settings 工具：onStart 注册 / onStop 注销；与注册表同寿（注销对未注册名是 no-op）。

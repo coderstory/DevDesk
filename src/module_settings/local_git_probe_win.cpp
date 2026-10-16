@@ -19,7 +19,7 @@ std::string envOrNull(const char* name) {
 } // namespace
 
 // 纯文件系统检查，不 spawn 进程：探 PATH 各目录下的 git.exe，再探两个
-// 已知安装位置（Git for Windows 默认路径，见审计 F8）。
+// 已知安装位置（Git for Windows 默认路径）。
 // PATH 以 ';' 分隔（Windows 盘符里的 ':' 不是分隔符，按 ';' 切不会切碎 C:\）。
 bool localGitAvailable() {
     std::vector<std::string> dirs;

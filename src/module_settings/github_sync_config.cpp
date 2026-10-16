@@ -288,7 +288,7 @@ GithubSyncStore::syncedNoteRecords() const {
             std::move(out));
     }
     std::lock_guard<std::recursive_mutex> lock(db_->mutex());
-    // sha 键定成员集合；hash 键就地补值（缺 hash = 旧记录，保持空串）
+    // sha 键定成员集合；hash 键就地补值（缺 hash 键 = 保持空串）
     auto shas = stateListPrefix(*db_, kStateShaNotesPrefix);
     if (shas.isFail()) {
         return core::Result<std::map<std::string, gsync::SyncedNoteRecord>>::fail(

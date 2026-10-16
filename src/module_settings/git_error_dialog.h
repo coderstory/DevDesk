@@ -17,7 +17,7 @@
 
 namespace module::settings {
 
-// 弹窗变体：普通失败 / 409 冲突（决策 #7：动作 = 拉取远端后再推，**二次确认**）。
+// 弹窗变体：普通失败 / 409 冲突（动作 = 拉取远端后再推，**二次确认**）。
 enum class GitErrorDialogVariant {
     Error,        // 标题「同步失败详情」，主按钮「重试」
     Conflict409,  // 标题「同步冲突（409）」，主按钮「拉取远端后再推」+ 二次确认
@@ -37,7 +37,7 @@ struct GitErrorDialogIn {
     std::string summary;  // 中文错误摘要（上半部）
     // 日志源：每次绘制时调用取当前快照（模块侧持日志，弹窗不缓存）。
     std::function<std::vector<platform::github::ApiLogEntry>()> logs;
-    // F6：409 变体下「拉取覆盖将覆盖掉的本地未推文件」清单（远端路径）。
+    // 409 变体下「拉取覆盖将覆盖掉的本地未推文件」清单（远端路径）。
     // 非空且变体为 Conflict409 → 日志列表上方渲染清单；空 = 不画。
     std::vector<std::string> overwriteFiles;
 };

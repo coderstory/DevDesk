@@ -83,7 +83,7 @@ REGISTER_TEST(sql_dump_skip_defaults, "SqlDump: defaultSkipTables 固定为 call
     DOCTEST_CHECK_EQ(tables[0], std::string("claude_call_logs"));
     DOCTEST_CHECK_EQ(tables[1], std::string("claude_run_settings"));
     // 同步基线（本机专属）必须整表排除：随 dump 跨设备 = 新设备拿别人写的
-    // 比对基线 → 误判未变跳过下载 → 进而删远端笔记（审计 C1）
+    // 比对基线 → 误判未变跳过下载 → 进而删远端笔记
     DOCTEST_CHECK_EQ(tables[2], std::string("github_sync_state"));
     return true;
 })
@@ -224,7 +224,7 @@ REGISTER_TEST(sql_dump_import_rollback, "SqlDump: 导入中途一句失败整体
     return true;
 })
 
-// ---- 同步基线（github_sync_state）必须留在本机（审计 C1）----
+// ---- 同步基线（github_sync_state）必须留在本机 ----
 
 REGISTER_TEST(sql_dump_excludes_sync_baseline,
               "SqlDump: 导出不含同步基线（github_sync_state 整表排除，带在库对照）", {
