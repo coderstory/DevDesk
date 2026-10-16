@@ -3970,6 +3970,8 @@ REGISTER_TEST(settings_github_sync_dirty_from_write_events,
     };
 
     DOCTEST_CHECK(dirtyAfter(::core::event::kMdSaved));
+    DOCTEST_CHECK(dirtyAfter(::core::event::kMdCreated));
+    DOCTEST_CHECK(dirtyAfter(::core::event::kMdRenamed));
     DOCTEST_CHECK(dirtyAfter(::core::event::kMdDeleted));
     DOCTEST_CHECK(dirtyAfter(::core::event::kTodoCreated));
     DOCTEST_CHECK(dirtyAfter(::core::event::kTodoUpdated));
@@ -3977,6 +3979,7 @@ REGISTER_TEST(settings_github_sync_dirty_from_write_events,
     DOCTEST_CHECK(dirtyAfter(::core::event::kTodoCompleted));
     DOCTEST_CHECK(dirtyAfter(::core::event::kTodoUncompleted));
     DOCTEST_CHECK(dirtyAfter(::core::event::kTodoDeleted));
+    DOCTEST_CHECK(dirtyAfter(::core::event::kTodoColumnChanged));
     // 对照：本模块没订阅的事件名 → 不置 dirty
     DOCTEST_CHECK(!dirtyAfter(::core::event::kDbImported));
     return true;

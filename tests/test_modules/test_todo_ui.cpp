@@ -4294,3 +4294,170 @@ REGISTER_TEST(todo_ui_event_wiring_write_paths,
     mod->onStop();
     return true;
 })
+
+// 列写路径事件补齐：建列 / 改列名 / 移列 / 删列都改待办数据，GitHub Sync 的 dirty
+// 触发源必须覆盖。最高风险 = 删除列：外键 CASCADE 连带删掉列下全部任务，不置 dirty
+// 则任务从看板消失而同步端毫不知情。
+// 列操作共用 todo.column_changed（没有订阅方需要区分这五种列改动，见 core/event_bus.h）。
+REGISTER_TEST(todo_ui_event_wiring_columns,
+              "todo_ui: 建列/改列名/移列/删列→todo.column_changed（删列级联任务也置位）", {
+    TestEnv env;
+    DOCTEST_REQUIRE(env.ready);
+
+    // 待删列由 service 直接建（不经 UI，免与下面的计数混）：列下挂一个任务验级联
+    auto doomed = env.svc->createColumn("级联列");
+    DOCTEST_REQUIRE(doomed.isOk());
+    const int64_t doomedId = doomed.value().id;
+    DOCTEST_REQUIRE(env.svc->createTask(doomedId, "随列消失的任务").isOk());
+
+    auto cols0 = env.svc->listColumns();
+    DOCTEST_REQUIRE(cols0.isOk());
+    DOCTEST_REQUIRE_EQ(cols0.value().size(), static_cast<size_t>(5));  // 4 默认 + 级联列
+    DOCTEST_REQUIRE_EQ(cols0.value()[4].id, doomedId);                 // createColumn 追加在末位
+
+    std::unique_ptr<::core::Module> mod(create_todo_module());
+    mod->onStart();
+
+    int gotColumn = 0;
+    auto sc = ::core::event::bus().subscribe(
+        ::core::event::kTodoColumnChanged, [&](const std::string&) { ++gotColumn; });
+
+    // 1) 「+ 列」→ 命名弹窗 → 确认 → doCreateColumn 成功分支发布
+    {
+        Frame frame(mod.get());
+        const auto* add = frame.ui.find("todo.btn.addcol.bg");
+        DOCTEST_REQUIRE(add != nullptr);
+        DOCTEST_REQUIRE(add->onClick != nullptr);
+        add->onClick();
+    }
+    {
+        Frame frame(mod.get());
+        const auto* hit = frame.ui.find("todo.dialog.newcol.input.hit");
+        DOCTEST_REQUIRE(hit != nullptr);
+        DOCTEST_REQUIRE(hit->onTextInput != nullptr);
+        eui::TextInputEvent t;
+        t.text = "事件列";
+        hit->onTextInput(t);
+    }
+    {
+        Frame frame(mod.get());
+        const auto* conf = frame.ui.find("todo.dialog.newcol.confirm.bg");
+        DOCTEST_REQUIRE(conf != nullptr);
+        DOCTEST_REQUIRE(conf->onClick != nullptr);
+        conf->onClick();
+        DOCTEST_CHECK_EQ(gotColumn, 1);
+    }
+    {
+        auto cols = env.svc->listColumns();
+        DOCTEST_REQUIRE(cols.isOk());
+        DOCTEST_REQUIRE_EQ(cols.value().size(), static_cast<size_t>(6));
+        DOCTEST_CHECK_EQ(cols.value()[5].title, std::string("事件列"));
+    }
+
+    // 2) 列头右键 →「重命名列」→ 弹窗改名 → 确认 → doRenameColumn 成功分支发布
+    {
+        Frame frame(mod.get());
+        eui::PointerEvent pe;
+        eui::Rect rect;
+        const auto* head = frame.ui.find("todo.col.0.head");
+        DOCTEST_REQUIRE(head != nullptr);
+        DOCTEST_REQUIRE(head->onContextMenu != nullptr);
+        head->onContextMenu(pe, rect);
+        frame.refresh();
+        const auto* label = frame.ui.find("todo.ctx.level.0.label.0");
+        DOCTEST_REQUIRE(label != nullptr);
+        DOCTEST_CHECK_EQ(label->text, std::string("重命名列"));
+        const auto* item = frame.ui.find("todo.ctx.level.0.item.0");
+        DOCTEST_REQUIRE(item != nullptr);
+        DOCTEST_REQUIRE(item->onClick != nullptr);
+        item->onClick();
+    }
+    {
+        Frame frame(mod.get());
+        // 弹窗预填原列名且光标在开头：直接打字会插在原名前 → 先全选再输入 = 整段替换
+        auto& st = frame.ui.state<components::input_detail::InputModel::InputState>(
+            "todo.dialog.rename.input");
+        st.cursor = st.selectionStart = 0;
+        st.selectionEnd = static_cast<int>(st.text.size());
+        const auto* hit = frame.ui.find("todo.dialog.rename.input.hit");
+        DOCTEST_REQUIRE(hit != nullptr);
+        DOCTEST_REQUIRE(hit->onTextInput != nullptr);
+        eui::TextInputEvent t;
+        t.text = "改名列";
+        hit->onTextInput(t);
+    }
+    {
+        Frame frame(mod.get());
+        const auto* conf = frame.ui.find("todo.dialog.rename.confirm.bg");
+        DOCTEST_REQUIRE(conf != nullptr);
+        DOCTEST_REQUIRE(conf->onClick != nullptr);
+        conf->onClick();
+        DOCTEST_CHECK_EQ(gotColumn, 2);
+    }
+    {
+        auto cols = env.svc->listColumns();
+        DOCTEST_REQUIRE(cols.isOk());
+        DOCTEST_CHECK_EQ(cols.value()[0].title, std::string("改名列"));  // 真改名了，不是插字
+    }
+
+    // 3) 列头右键 →「左移列」→ doShiftColumn 成功分支发布
+    //（下标 1 左移确有交换；下标 0 左移是 no-op，走「已经在最左边了」分支不发事件）
+    {
+        Frame frame(mod.get());
+        eui::PointerEvent pe;
+        eui::Rect rect;
+        const auto* head = frame.ui.find("todo.col.1.head");
+        DOCTEST_REQUIRE(head != nullptr);
+        DOCTEST_REQUIRE(head->onContextMenu != nullptr);
+        head->onContextMenu(pe, rect);
+        frame.refresh();
+        const auto* label = frame.ui.find("todo.ctx.level.0.label.1");
+        DOCTEST_REQUIRE(label != nullptr);
+        DOCTEST_CHECK_EQ(label->text, std::string("左移列"));
+        const auto* item = frame.ui.find("todo.ctx.level.0.item.1");
+        DOCTEST_REQUIRE(item != nullptr);
+        DOCTEST_REQUIRE(item->onClick != nullptr);
+        item->onClick();
+        DOCTEST_CHECK_EQ(gotColumn, 3);
+    }
+
+    // 4) 列头右键 →「删除列」→ 确认弹窗 → 确认 → doDeleteColumn 发布，级联任务一并消失
+    {
+        Frame frame(mod.get());
+        eui::PointerEvent pe;
+        eui::Rect rect;
+        const auto* head = frame.ui.find("todo.col.4.head");  // 级联列（左移只动下标 0/1）
+        DOCTEST_REQUIRE(head != nullptr);
+        DOCTEST_REQUIRE(head->onContextMenu != nullptr);
+        head->onContextMenu(pe, rect);
+        frame.refresh();
+        const auto* label = frame.ui.find("todo.ctx.level.0.label.4");
+        DOCTEST_REQUIRE(label != nullptr);
+        DOCTEST_CHECK_EQ(label->text, std::string("删除列"));
+        const auto* item = frame.ui.find("todo.ctx.level.0.item.4");
+        DOCTEST_REQUIRE(item != nullptr);
+        DOCTEST_REQUIRE(item->onClick != nullptr);
+        item->onClick();
+        frame.refresh();
+        const auto* confirm = frame.ui.find("todo.dialog.delcol.confirm.bg");
+        DOCTEST_REQUIRE(confirm != nullptr);
+        DOCTEST_REQUIRE(confirm->onClick != nullptr);
+        confirm->onClick();
+        DOCTEST_CHECK_EQ(gotColumn, 4);
+    }
+    {
+        auto cols = env.svc->listColumns();
+        DOCTEST_REQUIRE(cols.isOk());
+        bool gone = true;
+        for (const auto& c : cols.value()) {
+            if (c.id == doomedId) gone = false;
+        }
+        DOCTEST_CHECK(gone);
+        auto ts = env.svc->listTasks(doomedId);
+        DOCTEST_REQUIRE(ts.isOk());
+        DOCTEST_CHECK_EQ(ts.value().size(), static_cast<size_t>(0));  // CASCADE 连带删掉
+    }
+
+    mod->onStop();
+    return true;
+})
