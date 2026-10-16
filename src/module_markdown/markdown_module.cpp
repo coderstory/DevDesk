@@ -2660,21 +2660,18 @@ private:
     }
 
     // 收割「库被 GitHub Sync 导入覆盖」标记（compose 主线程）：库表被 DROP 重建，
-    // notes_/allFolders_ 指向旧行 → 重查列表。当前笔记也须从磁盘重读——否则旧编辑器
-    // 缓冲会在 Ctrl+S 时把刚拉下来的内容盖回去；有未保存编辑不静默丢弃（同磁盘轮询口径）。
+    // notes_/allFolders_ 指向旧行 → 重查列表。
+    // 当前笔记不在本函数里无条件重载——库被导入但该笔记文件没被 pull 时磁盘内容没变，
+    // 无条件重载会弹假冲突，用户点「重载磁盘版本」还会用未变内容覆盖缓冲、静默丢未保存
+    // 编辑。改走 checkCurrentNoteOnDisk()：只在 fileMtime > lastKnownMtime_（磁盘真变过）
+    // 时才重载或弹冲突，与 5 秒磁盘轮询同一口径。
     void harvestDbImport() {
-        if (!dbImportedDirty_.exchange(false, std::memory_order_acq_rel)) return;
+        // 早退必须在 exchange 之前：DB 未就绪时不能把脏标记消费掉丢弃。
         if (!service_) return;
+        if (!dbImportedDirty_.exchange(false, std::memory_order_acq_rel)) return;
         refreshList();
-        if (!currentPath_.empty()) {
-            if (editorDirty_) {
-                conflictOpen_ = true;
-            } else {
-                reloadCurrentNote(/*silent=*/true);
-            }
-        }
-        LOG_INFO("Markdown: 检测到库导入，已重载笔记列表" +
-                 std::string(currentPath_.empty() ? "" : "与当前笔记"));
+        checkCurrentNoteOnDisk();
+        LOG_INFO("Markdown: 检测到库导入，已重载笔记列表");
     }
 
     void refreshList() {
@@ -2894,7 +2891,10 @@ private:
 
     // 有未落盘改动时写回文件 + 索引（每帧调用，自带防抖）；
     // 保存失败走指数退避，避免 dirty 期间每帧重试打失败 IO/日志。
+    // conflictOpen_ 时不写：磁盘版本已变（外部修改 / 库导入拉回新内容），此刻落盘
+    // 就是用本地旧缓冲盖掉刚 pull 下来的内容——等用户在冲突弹窗里选完再写。
     void flushEditorIfIdle() {
+        if (conflictOpen_) return;
         if (!editorDirty_) return;
         const auto now = std::chrono::steady_clock::now();
         const auto idleMs = std::chrono::duration_cast<std::chrono::milliseconds>(
