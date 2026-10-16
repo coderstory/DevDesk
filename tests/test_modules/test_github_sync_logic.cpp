@@ -2,10 +2,13 @@
 // GitHub Sync 编排纯件单测：状态机 / 内容哈希 / 体积上限 / 变更集 / 备份名。
 // 零模块实例化、零网络、零 DB（github_sync_logic.h 的边界承诺）。
 #include "doctest.h"
+#include "test_support.h"
 
 #include "github_sync_logic.h"
 
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
 #include <string>
 
 namespace g = module::settings::gsync;
@@ -103,6 +106,38 @@ REGISTER_TEST(github_sync_diff_notes_by_state,
     const auto legacy = g::diffNotesByState(same, noHash);
     DOCTEST_REQUIRE_EQ(legacy.size(), static_cast<size_t>(1));
     DOCTEST_CHECK(legacy[0].kind == FC::Kind::Put);
+    return true;
+})
+
+REGISTER_TEST(github_sync_notes_backup_prune,
+              "github_sync 逻辑: 笔记备份目录名 + 目录型 prune（与库备份前缀隔离、独立计数）", {
+    DOCTEST_CHECK_EQ(g::notesBackupDirName(1700000000),
+                     std::string("notes-1700000000"));
+    test_support::TempDir d("gsnotesbk");
+    for (int i = 0; i < 7; ++i) {
+        const auto dir = d.path / g::notesBackupDirName(1700000000 + i);
+        std::filesystem::create_directories(dir);
+        std::ofstream o(dir / "a.md", std::ios::binary | std::ios::trunc);
+        o << "x";
+    }
+    // 混入库备份（不同前缀，不得被 notes prune 波及）与无关文件
+    std::ofstream(d.path / "devdesk-1700000000.db", std::ios::binary | std::ios::trunc)
+        << "x";
+    std::ofstream(d.path / "notes.md", std::ios::binary | std::ios::trunc) << "x";
+
+    const int removed = g::pruneBackups(d.path, g::kNotesBackupPrefix,
+                                        g::kBackupKeep, "");
+    DOCTEST_CHECK_EQ(removed, 2);   // 7 - 5
+    // 前缀隔离：库备份与无关文件健在
+    DOCTEST_CHECK(std::filesystem::exists(d.path / "devdesk-1700000000.db"));
+    DOCTEST_CHECK(std::filesystem::exists(d.path / "notes.md"));
+    // 最旧两份目录被删，最新五份健在且内容仍在
+    DOCTEST_CHECK(!std::filesystem::exists(d.path / g::notesBackupDirName(1700000000)));
+    DOCTEST_CHECK(!std::filesystem::exists(d.path / g::notesBackupDirName(1700000001)));
+    DOCTEST_CHECK(std::filesystem::is_directory(
+        d.path / g::notesBackupDirName(1700000006)));
+    DOCTEST_CHECK(std::filesystem::exists(
+        d.path / g::notesBackupDirName(1700000006) / "a.md"));
     return true;
 })
 

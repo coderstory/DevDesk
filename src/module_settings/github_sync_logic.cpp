@@ -49,8 +49,12 @@ std::string backupFileName(int64_t tsSec) {
     return std::string(kBackupPrefix) + std::to_string(tsSec) + ".db";
 }
 
+std::string notesBackupDirName(int64_t tsSec) {
+    return std::string(kNotesBackupPrefix) + std::to_string(tsSec);
+}
+
 int pruneBackups(const std::filesystem::path& dir, const std::string& prefix,
-                 int keep) {
+                 int keep, const std::string& suffix) {
     std::error_code ec;
     if (!std::filesystem::is_directory(dir, ec)) return 0;   // 无目录 = 无备份可删
     if (keep < 0) keep = 0;
@@ -63,12 +67,16 @@ int pruneBackups(const std::filesystem::path& dir, const std::string& prefix,
         const std::string name = p.filename().string();
         if (name.size() <= prefix.size()) continue;
         if (name.compare(0, prefix.size(), prefix) != 0) continue;
-        if (name.size() < 3 || name.compare(name.size() - 3, 3, ".db") != 0) {
-            continue;
+        if (!suffix.empty()) {
+            if (name.size() < suffix.size() ||
+                name.compare(name.size() - suffix.size(), suffix.size(),
+                             suffix) != 0) {
+                continue;
+            }
         }
         found.push_back(p);
     }
-    // 名字序 = 时间序（devdesk-<epoch>.db 定宽前缀后即时间戳）；同名宽度不同也不影响相对序
+    // 名字序 = 时间序（<prefix><epoch> 定宽前缀后即时间戳）；同名宽度不同也不影响相对序
     std::sort(found.begin(), found.end(),
               [](const std::filesystem::path& a,
                  const std::filesystem::path& b) {
@@ -77,8 +85,10 @@ int pruneBackups(const std::filesystem::path& dir, const std::string& prefix,
     int removed = 0;
     const int excess = static_cast<int>(found.size()) - keep;
     for (int i = 0; i < excess; ++i) {
+        // remove_all：文件删自身，目录连内容一起删（笔记备份是目录）
         std::error_code rmEc;
-        if (std::filesystem::remove(found[static_cast<size_t>(i)], rmEc)) {
+        if (std::filesystem::remove_all(found[static_cast<size_t>(i)], rmEc) >
+            0) {
             ++removed;
         }
     }

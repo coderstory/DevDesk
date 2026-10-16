@@ -128,6 +128,28 @@ void drawGitErrorDialog(eui::Ui& ui, const eui::Screen& screen,
             })
             .content([&](eui::Ui& inner, float contentWidth, float) {
                 const float rowH = roundFs(kLogRowH);
+                // F6：409 且清单非空 → 列表头渲染「将被覆盖的本地未推文件」，
+                // 用户二次确认前看得见具体会丢什么（清单随日志区一起滚动）。
+                if (conflict && !in.overwriteFiles.empty()) {
+                    inner.text(std::string(kDialogId) + ".logs.overwrite.header")
+                        .size(contentWidth, rowH)
+                        .text("拉取将覆盖以下本地未推改动：")
+                        .fontSize(fs(12.0f))
+                        .lineHeight(rowH)
+                        .fontWeight(600)
+                        .color(t.colors.warning)
+                        .build();
+                    for (size_t i = 0; i < in.overwriteFiles.size(); ++i) {
+                        inner.text(std::string(kDialogId) + ".logs.overwrite." +
+                                   std::to_string(i) + ".text")
+                            .size(contentWidth, rowH)
+                            .text("  " + in.overwriteFiles[i])
+                            .fontSize(fs(12.0f))
+                            .lineHeight(rowH)
+                            .color(t.colors.textSecondary)
+                            .build();
+                    }
+                }
                 if (logs.empty()) {
                     inner.text(std::string(kDialogId) + ".logs.empty")
                         .size(contentWidth, rowH)

@@ -429,6 +429,46 @@ REGISTER_TEST(github_error_dialog_conflict_variant,
     return true;
 })
 
+REGISTER_TEST(github_error_dialog_conflict_overwrite_list,
+              "github_sync 409 弹窗: 列出将被覆盖的本地未推文件清单（F6，带空清单对照）", {
+    DialogFixture fx;
+    fx.st.open = true;
+    fx.st.variant = ms::GitErrorDialogVariant::Conflict409;
+    fx.in.overwriteFiles = {"data/database.sql", "notes/a.md"};
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+
+    test_support::HeadlessFrame f("githubsyncdlgovw");
+    DOCTEST_CHECK(f.frame([&](eui::Ui& ui) {
+        fx.draw(ui, screen);
+        const auto* hd =
+            ui.find(std::string(kDlgId) + ".logs.overwrite.header");
+        DOCTEST_REQUIRE(hd != nullptr);
+        DOCTEST_CHECK(hd->text.find("覆盖") != std::string::npos);
+        const auto* r0 = ui.find(std::string(kDlgId) + ".logs.overwrite.0.text");
+        DOCTEST_REQUIRE(r0 != nullptr);
+        DOCTEST_CHECK(r0->text.find("database.sql") != std::string::npos);
+        const auto* r1 = ui.find(std::string(kDlgId) + ".logs.overwrite.1.text");
+        DOCTEST_REQUIRE(r1 != nullptr);
+        DOCTEST_CHECK(r1->text.find("a.md") != std::string::npos);
+        return true;
+    }));
+
+    // 对照：无清单（非 409 场景或本机无未推改动）→ 清单区不画
+    DialogFixture clean;
+    clean.st.open = true;
+    clean.st.variant = ms::GitErrorDialogVariant::Conflict409;
+    test_support::HeadlessFrame fc("githubsyncdlgovwclean");
+    DOCTEST_CHECK(fc.frame([&](eui::Ui& ui) {
+        clean.draw(ui, screen);
+        DOCTEST_CHECK(ui.find(std::string(kDlgId) +
+                              ".logs.overwrite.header") == nullptr);
+        return true;
+    }));
+    return true;
+})
+
 REGISTER_TEST(github_sync_logic_throttle,
               "github_sync 逻辑: 5 分钟节流窗口 + 手动绕开", {
     using namespace module::settings::gsync;

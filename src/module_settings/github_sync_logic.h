@@ -53,19 +53,25 @@ inline constexpr int64_t kCommitThrottleSec = 5 * 60;
 // 距上次 commit 是否已过节流窗口。lastCommitSec <= 0（从未 commit）→ 到点。
 bool throttleDue(int64_t lastCommitSec, int64_t nowSec);
 
-// ── 备份（决策 #11）──
+// ── 备份（决策 #11 / F6）──
 // 备份目录名（数据根下；该目录不进同步）。
 inline constexpr const char* kBackupDirName = "backups";
 inline constexpr const char* kBackupPrefix = "devdesk-";
+// 笔记备份目录前缀（F6：拉取覆盖前整目录备份；与库备份同目录、前缀隔离、独立计数）。
+inline constexpr const char* kNotesBackupPrefix = "notes-";
 inline constexpr int kBackupKeep = 5;
 
 // 备份文件名 `devdesk-<ts>.db`（ts = epoch 秒）。
 std::string backupFileName(int64_t tsSec);
 
+// 笔记备份目录名 `notes-<ts>`（ts = epoch 秒）。
+std::string notesBackupDirName(int64_t tsSec);
+
 // 保留最近 keep 份（按文件名时间序 = 名字序），返回删除数。
-// 只处理 <prefix>* 且以 .db 结尾的文件；目录不存在 → 0（不是错误）。
+// 只处理 <prefix>* 且以 suffix 结尾的条目（suffix 空串 = 只要前缀匹配即可，
+// 文件与目录都算，目录走 remove_all）；目录不存在 → 0（不是错误）。
 int pruneBackups(const std::filesystem::path& dir, const std::string& prefix,
-                 int keep);
+                 int keep, const std::string& suffix = ".db");
 
 // ── 变更集（决策 #19 + spec F1）──
 // 笔记同步的变更集：Put = 本地新增/修改；Delete = 本地已删 → 删远端同路径。
