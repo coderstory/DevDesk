@@ -27,6 +27,7 @@
 
 #include "app_sidebar.h"
 #include "core/claude_proxy_service.h"
+#include "core/event_bus.h"
 #include "core/module_interface.h"
 #include "core/router.h"
 #include "core/theme.h"
@@ -214,6 +215,46 @@ REGISTER_TEST(agent_ui_compose_skeleton,
 
     // 空库无任务行（fresh 库首个任务 id = 1）
     DOCTEST_CHECK(ui.find("agent.task.1") == nullptr);
+
+    mod.onStop();
+    return true;
+})
+
+REGISTER_TEST(agent_ui_db_import_reloads_tasks,
+              "agent_ui: db.imported 置脏 → compose 重载任务列表", {
+    test_support::TestDb tdb("agentui", "dbimport");
+    FakeProxy proxy;
+    ToolGuard statsGuard{"app.stats"};
+    core::ToolRegistry::instance().unregisterTool("app.stats");
+    module::agent::AgentModule::Deps deps;
+    deps.db = &tdb.handle();
+    deps.proxy = &proxy;
+    module::agent::AgentModule mod(deps);
+    mod.onStart();
+
+    eui::Ui ui;
+    composeTo(ui, mod, kScreen, "agent_ui_dbimport1");
+    DOCTEST_REQUIRE(ui.find("agent.empty") != nullptr);   // 空库空态
+    DOCTEST_CHECK(!mod.dbImportedDirtyForTest());
+
+    // 模拟远端库导入：库里多出一条任务，但**不发任何事件**（缓存应保持旧值）
+    module::agent::AgentStore store(tdb.handle());
+    auto created = store.createTask("导入任务", "g", "manual", "default", 10, false);
+    DOCTEST_REQUIRE(created.isOk());
+    const std::string tid = std::to_string(created.value());
+
+    eui::Ui ui2;
+    composeTo(ui2, mod, kScreen, "agent_ui_dbimport2");
+    DOCTEST_CHECK(ui2.find("agent.task." + tid) == nullptr);   // 对照：未广播 → 仍旧
+
+    ::core::event::bus().emit(::core::event::kDbImported);
+    DOCTEST_CHECK(mod.dbImportedDirtyForTest());   // handler 已置原子脏标记
+
+    eui::Ui ui3;
+    composeTo(ui3, mod, kScreen, "agent_ui_dbimport3");
+    DOCTEST_CHECK(ui3.find("agent.task." + tid) != nullptr);   // 广播后重载可见
+    DOCTEST_CHECK(ui3.find("agent.task." + tid + ".title") != nullptr);
+    DOCTEST_CHECK(!mod.dbImportedDirtyForTest());   // compose 已收割清标记
 
     mod.onStop();
     return true;
