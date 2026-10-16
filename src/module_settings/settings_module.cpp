@@ -707,12 +707,20 @@ public:
         waitOrDetachSyncThread();
     }
 
+    // A1 复审：线程侧取消判据（退出闸置位后，各阶段边界尽快收束）。
+    bool syncAborted() const {
+        return githubSyncAbortRequested_.load(std::memory_order_acquire);
+    }
+
     // 退出路径的等待闸：最多等 5s（50 × 100ms），到点 detach 放行。
     // detach 在本路径安全——SettingsModule 是进程生命期对象（析构晚于全部
     // atexit 处理器），appDatabase 堆持有同寿；detach 后
     // githubSyncThread_.joinable()==false，onStop 的 join 直接跳过，退出不被
     // 整轮推送阻塞。
     void waitOrDetachSyncThread() {
+        // 先置取消位再等：线程在下一个阶段边界收束，多数情况下 5s 内自然完成，
+        // 无需走到 detach。
+        githubSyncAbortRequested_.store(true, std::memory_order_release);
         for (int i = 0; i < 50; ++i) {
             if (githubSyncDone_.load(std::memory_order_acquire)) {
                 LOG_INFO("Settings: 退出补推 5 秒内完成");
@@ -775,6 +783,7 @@ public:
         githubSyncLastAction_ = action;
         githubSyncLastManual_ = manual;
         githubSyncRunning_ = true;
+        githubSyncAbortRequested_.store(false, std::memory_order_release);
         githubSyncError_.clear();
         githubSyncStatus_.clear();
         githubSyncStatusError_ = false;
@@ -795,7 +804,10 @@ public:
         githubSyncThread_ = std::thread([this, action, repoUrl, token, branch] {
             runGithubSyncAction(action, repoUrl, token, branch);
             githubSyncDone_.store(true, std::memory_order_release);
-            core::platform::requestUiUpdate();   // 就绪之后才唤醒（次序反了 UI 抢跑读不到结果）
+            if (!syncAborted()) {
+                // 就绪之后才唤醒（次序反了 UI 抢跑读不到结果）；退出中不唤醒
+                core::platform::requestUiUpdate();
+            }
         });
         LOG_INFO("Settings: GitHub Sync 后台任务启动（action=" +
                  std::to_string(static_cast<int>(action)) +
@@ -807,6 +819,7 @@ public:
     void runGithubSyncAction(SyncAction action, const std::string& repoUrl,
                              const std::string& token,
                              const std::string& branch) {
+        if (syncAborted()) return;   // 退出中：不再碰 api/store/db
         const auto parts = platform::github::GithubApi::parseRepoUrl(repoUrl);
         std::string summary;
         bool ok = false;
@@ -875,6 +888,7 @@ public:
                                 const std::string& branch,
                                 std::string& summary, bool& conflict,
                                 std::string& branchHint) {
+        if (syncAborted()) { summary = "同步已中止（退出中）"; return false; }
         publishGithubSyncProgress("① 探测远端数据…");
         auto probe = api.getFile(gsync::kRemoteSqlPath, branch);
         const bool exists = probe.isOk() && probe.value().exists;
@@ -936,6 +950,7 @@ public:
             return false;
         }
         // ① 全库 dump
+        if (syncAborted()) { summary = "同步已中止（退出中）"; return false; }
         publishGithubSyncProgress("① 导出数据库…");
         const auto dumpFile = ::core::paths::sqlDumpFile();
         auto exported = ::core::sql_dump::exportToFile(
@@ -1099,6 +1114,8 @@ public:
         int delCount = 0;
         int deleteSkipCount = 0;   // 安全栏跳过数（T3 审计 finding 8：进 UI）
         for (const auto& plan : plans) {
+            // A1 复审：退出取消位——每个 PUT/DELETE（含 store 登记写）前查一次
+            if (syncAborted()) { summary = "同步已中止（退出中）"; return false; }
             const std::string path = gsync::remoteNotePath(plan.name);
             if (plan.action == gsync::PushAction::Put) {
                 // shaIfMatch：LocalModified 用登记 sha（远端动过 → 409，真并发
@@ -1254,6 +1271,7 @@ public:
             !remoteSqlSha.empty() && sqlRec.value() != remoteSqlSha;
 
         if (sqlImportPlanned || downloadCount > 0) {
+            if (syncAborted()) { summary = "同步已中止（退出中）"; return false; }
             // F6：拉取覆盖前整目录备份笔记（与库备份同目录、独立计数、各保 5 份）。
             publishGithubSyncProgress("② 备份本地数据…");
             std::string notesBackupName;
@@ -1307,6 +1325,8 @@ public:
         int dlCount = 0;
         int keepCount = 0;
         for (const auto& action : actions) {
+            // A1 复审：退出取消位——每次下载写盘 / 登记写库前查一次
+            if (syncAborted()) { summary = "同步已中止（退出中）"; return false; }
             if (action.kind == gsync::PullAction::Kind::KeepLocal) {
                 LOG_INFO("Settings: 远端已删除笔记 " + action.fileName +
                          "，本地保留（pull 不替远端传播删除）");
@@ -2009,6 +2029,9 @@ private:
     // F3：本轮导入成功 → harvest 在 UI 线程重载本模块配置缓存（app_config 被
     // DROP 重建过）。
     std::atomic<bool> githubSyncStagedDbImported_{false};
+    // A1 复审：退出取消位。退出闸超时前先置位——同步线程在每个阶段边界与
+    // 笔记循环体内查它，尽快收束（碰 store_/db/stateSet/requestUiUpdate 前）。
+    std::atomic<bool> githubSyncAbortRequested_{false};
     // T3 审计 finding 8：删除传播安全栏跳过（本地仍在但读失败）的 UI 提示。
     std::string githubSyncStagedDeleteSkipHint_;
     // 以下成员仅 UI 线程读写（harvest 在 join 后搬运）。
