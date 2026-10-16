@@ -912,6 +912,22 @@ public:
         return false;
     }
 
+    // C3：409 确认框的覆盖清单 = database.sql + 本轮本地有改动的笔记（Put 集）。
+    // 任何冲突分支（sql PUT / 笔记 PUT / 删除传播）都经它暂存——清单空着弹
+    // 确认框等于让用户在不知道会覆盖什么的情况下二次确认。
+    void stashOverwriteListForConflict(
+        const std::vector<gsync::FileChange>& changes) {
+        std::vector<std::string> overwrite{
+            std::string(gsync::kRemoteSqlPath) + "（数据库）"};
+        for (const auto& change : changes) {
+            if (change.kind == gsync::FileChange::Kind::Put) {
+                overwrite.push_back(change.path);
+            }
+        }
+        std::lock_guard<std::mutex> lk(githubSyncMutex_);
+        githubSyncStagedOverwriteFiles_ = std::move(overwrite);
+    }
+
     // 推送：dump 全库 + 笔记 → PUT / DELETE（单文件粒度 = 单次 commit）。
     bool runGithubSyncPush(platform::github::GithubApi& api,
                            const std::string& branch, std::string& summary,
@@ -996,15 +1012,7 @@ public:
             if (put.errorCode() == core::ErrorCode::Conflict) {
                 conflict = true;
                 summary = "远端 database.sql 已被改动（409 冲突）";
-                std::vector<std::string> overwrite{
-                    std::string(gsync::kRemoteSqlPath) + "（数据库）"};
-                for (const auto& change : changes) {
-                    if (change.kind == gsync::FileChange::Kind::Put) {
-                        overwrite.push_back(change.path);
-                    }
-                }
-                std::lock_guard<std::mutex> lk(githubSyncMutex_);
-                githubSyncStagedOverwriteFiles_ = std::move(overwrite);
+                stashOverwriteListForConflict(changes);
             } else {
                 summary = "上传 database.sql 失败：" + put.errorMessage();
             }
@@ -1048,6 +1056,7 @@ public:
                         conflict = true;
                         summary = "远端笔记 " + change.path +
                                   " 已被改动（409 冲突）";
+                        stashOverwriteListForConflict(changes);
                     } else {
                         summary = "上传笔记 " + change.path + " 失败：" +
                                   r.errorMessage();
@@ -1095,6 +1104,7 @@ public:
                         conflict = true;
                         summary = "远端笔记 " + change.path +
                                   " 已被其他设备改动，本地删除未传播（409 冲突）";
+                        stashOverwriteListForConflict(changes);
                         return false;
                     }
                     auto r = api.deleteFile(change.path,
