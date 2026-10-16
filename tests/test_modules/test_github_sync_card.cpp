@@ -43,11 +43,8 @@ constexpr const char* kDlgId = "settings.github.err";
 // 卡片夹具：只读入参 + 注入回调全部本文件构造（零真网、零真线程）。
 struct CardFixture {
     ms::SettingsConfig cfg;
-    std::vector<std::string> petSkins;
-    std::string petSkinName;
     std::string proxyPortDraft;
     std::vector<std::string> logTail;
-    std::vector<std::string> petScaleLabels;
     ms::SettingsCardsIn in;
     ms::SettingsCardActions a;
     int testClicks = 0;
@@ -56,8 +53,7 @@ struct CardFixture {
     int detailClicks = 0;
 
     CardFixture()
-        : in{cfg, petSkins, petSkinName, proxyPortDraft, logTail,
-             petScaleLabels} {
+        : in{cfg, proxyPortDraft, logTail} {
         in.githubSyncEnabled = true;   // 未启用时卡片早退，按钮根本不画
         a.githubSyncTestConnection = [this] { ++testClicks; };
         a.githubSyncPush = [this] { ++pushClicks; };
