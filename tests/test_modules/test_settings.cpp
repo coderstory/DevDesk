@@ -3539,17 +3539,17 @@ REGISTER_TEST(settings_github_sync_push_writes_target_configured_branch,
     };
     ScriptedSender rec;
     // 顺序 = runGithubSyncPush 的请求序：getRepo → listTree（笔记判态与
-    // database.sql 的 sha 同源同一棵树，无独立 probe 请求）→ DELETE gone.md →
-    // PUT note-a.md → PUT database.sql（plans 按名字字典序）。
+    // database.sql 的 sha 同源同一棵树，无独立 probe 请求）→ PUT database.sql
+    //（步④，先于笔记）→ DELETE gone.md → PUT note-a.md（步⑤，plans 按名字字典序）。
     rec.plan = {
         {200, R"({"full_name":"devdesk-test/sync-repo","default_branch":"main",)"
               R"("private":true,"permissions":{"push":true}})"},
         {200, R"({"sha":"t0","truncated":false,"tree":[)"
               R"({"path":"data/database.sql","sha":"sqlremotesha","type":"blob","size":3},)"
               R"({"path":"notes/gone.md","sha":"gonesha","type":"blob","size":5}]})"},
+        {201, R"({"content":{"sha":"sqlnewsha"}})"},
         {200, R"({"commit":{"sha":"delsha"}})"},
         {201, R"({"content":{"sha":"notenewsha"}})"},
-        {201, R"({"content":{"sha":"sqlnewsha"}})"},
     };
     struct SenderGuard {
         SenderGuard(platform::github::GithubApi::Sender s) {
