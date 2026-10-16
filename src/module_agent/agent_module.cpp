@@ -75,6 +75,42 @@ std::vector<int64_t> detectRunEndNotifications(
     return toNotify;   // map 迭代升序，无需再排
 }
 
+std::string formatRunDurationText(int64_t seconds) {
+    if (seconds < 0) seconds = 0;   // 时钟回拨防御：不显示负时长（与 runRowText 同口径）
+    const int64_t days = seconds / 86400;
+    const int64_t hours = (seconds % 86400) / 3600;
+    const int64_t mins = (seconds % 3600) / 60;
+    const int64_t secs = seconds % 60;
+    if (days > 0) return std::to_string(days) + "天" + std::to_string(hours) + "时";
+    if (hours > 0) {
+        return std::to_string(hours) + "时" +
+               (mins > 0 ? std::to_string(mins) + "分" : "");
+    }
+    if (mins > 0) {
+        return std::to_string(mins) + "分" +
+               (secs > 0 ? std::to_string(secs) + "秒" : "");
+    }
+    return std::to_string(secs) + "秒";
+}
+
+std::string formatRunResultTimeText(const std::tm& local) {
+    char buf[24];
+    std::snprintf(buf, sizeof(buf), "%04d-%02d-%02d %02d:%02d",
+                  local.tm_year + 1900, local.tm_mon + 1, local.tm_mday,
+                  local.tm_hour, local.tm_min);
+    return buf;
+}
+
+std::string formatTaskRunSummaryText(const AgentTaskRunSummary& summary,
+                                     const std::string& lastTimeText) {
+    const int64_t total = summary.totalRuns;
+    const int64_t pct = total > 0 ? (summary.okRuns * 100) / total : 0;
+    return "共 " + std::to_string(total) + " 次 · 成功率 " + std::to_string(pct) +
+           "%（" + std::to_string(summary.okRuns) + "/" + std::to_string(total) +
+           "）· 总耗时 " + formatRunDurationText(summary.totalSeconds) +
+           " · 最近结果 " + lastTimeText;
+}
+
 namespace {
 
 // run 状态 → 中文展示；未知态显示「—」
@@ -363,6 +399,9 @@ void AgentModule::onStop() {
     tasks_.clear();
     latestRuns_.clear();
     taskRuns_.clear();
+    runSummaries_.clear();
+    runSummariesError_.clear();
+    runSummariesSeenVersionValid_ = false;
     detailMessages_.clear();
     detailTaskId_.reset();
     detailTaskRow_.reset();
@@ -807,9 +846,32 @@ AgentModule::takeRunEndNotice() {
     pendingNotices_.erase(pendingNotices_.begin());
     return notice;
 }
+// 任务级 run 汇总缓存（writeVersion 判脏，同 home 余量卡口径）：版本没变零查询零锁；
+// 失败不静默——错误文案留在 runSummariesError_，详情弹窗汇总行显形
+void AgentModule::refreshRunSummaries() {
+    if (store_ == nullptr) return;
+    const uint64_t ver = store_->writeVersion();
+    if (runSummariesSeenVersionValid_ && runSummariesSeenVersion_ == ver) return;
+    auto r = store_->listTaskRunSummaries();
+    if (r.isOk()) {
+        runSummaries_.clear();
+        for (auto& s : r.value()) {
+            runSummaries_[s.taskId] = std::move(s);
+        }
+        runSummariesError_.clear();
+    } else {
+        runSummaries_.clear();
+        runSummariesError_ = r.errorMessage();
+        LOG_ERROR("Agent: 任务 run 汇总读取失败: " + r.errorMessage());
+    }
+    runSummariesSeenVersion_ = ver;
+    runSummariesSeenVersionValid_ = true;
+}
+
 // 重查任务/最近 run/详情消息；触发：tasksDirty_ 或 uiPolling_。判停：run 线程全 done 且库内无 running
 void AgentModule::refreshData() {
     tasksDirty_ = false;
+    refreshRunSummaries();
     tasks_.clear();
     latestRuns_.clear();
     taskRuns_.clear();
@@ -1767,8 +1829,40 @@ void AgentModule::composeTaskDetailDialog(
         const auto runsIt = taskRuns_.find(*detailTaskId_);
         const std::vector<AgentRunRow>* runs =
             runsIt != taskRuns_.end() ? &runsIt->second : nullptr;
+        // 任务级汇总行（数据已在 refreshRunSummaries 缓存）：有 run 或查询失败才渲染，
+        // 占 y=100..118，下方区块整体下移 18；无 run 的任务不渲染、几何保持原值
+        const auto sumIt = runSummaries_.find(*detailTaskId_);
+        const bool hasSummary =
+            sumIt != runSummaries_.end() || !runSummariesError_.empty();
+        const float runsTitleY = hasSummary ? 122.0f : 104.0f;
+        if (hasSummary) {
+            std::string summaryText;
+            if (!runSummariesError_.empty()) {
+                summaryText = "运行汇总读取失败：" + runSummariesError_;
+            } else {
+                std::string lastTimeText = "—";
+                if (sumIt->second.lastEndedAt) {
+                    std::tm local{};
+                    core::time::localTime(
+                        static_cast<std::time_t>(*sumIt->second.lastEndedAt),
+                        &local);
+                    lastTimeText = formatRunResultTimeText(local);
+                }
+                summaryText = formatTaskRunSummaryText(sumIt->second, lastTimeText);
+            }
+            ui.text("agent.dialog.detail.summary")
+                .position(x0, 100.0f)
+                .size(innerW, 18.0f)
+                .text(summaryText)
+                .fontSize(12.0f)
+                .lineHeight(18.0f)
+                .wrap(false)
+                .color(runSummariesError_.empty() ? t.colors.textSecondary
+                                                  : t.colors.error)
+                .build();
+        }
         ui.text("agent.dialog.detail.runs.title")
-            .position(x0, 104.0f)
+            .position(x0, runsTitleY)
             .size(innerW, 18.0f)
             .text(runs != nullptr && !runs->empty()
                       ? "运行记录（最近 " + std::to_string(runs->size()) + " 次）"
@@ -1798,7 +1892,7 @@ void AgentModule::composeTaskDetailDialog(
             }
             runsH = childrenH + 4.0f * static_cast<float>(childCount - 1);
             ui.column("agent.dialog.detail.runlist")
-                .position(x0, 126.0f)
+                .position(x0, runsTitleY + 22.0f)
                 .size(innerW, runsH)
                 .gap(4.0f)
                 .content([&] {
@@ -1852,7 +1946,7 @@ void AgentModule::composeTaskDetailDialog(
                 .build();
         } else {
             ui.text("agent.dialog.detail.runlist.empty")
-                .position(x0, 126.0f)
+                .position(x0, runsTitleY + 22.0f)
                 .size(innerW, 18.0f)
                 .text("（还没有运行记录）")
                 .fontSize(12.0f)
@@ -1862,7 +1956,7 @@ void AgentModule::composeTaskDetailDialog(
         }
 
         // ③ 消息流：scrollView 内滚。最终 assistant 文本块默认展开，其余默认折叠
-        const float msgsTitleY = 134.0f + runsH;
+        const float msgsTitleY = runsTitleY + 30.0f + runsH;
         ui.text("agent.dialog.detail.msgs.title")
             .position(x0, msgsTitleY)
             .size(innerW, 18.0f)

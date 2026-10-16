@@ -458,6 +458,60 @@ Result<std::vector<AgentRunRow>> AgentStore::listRuns(int64_t taskId, int limit)
     return Result<std::vector<AgentRunRow>>::ok(std::move(out));
 }
 
+// 任务级 run 聚合：COUNT/SUM/MAX 一条 SQL 出全任务，不拉 run 行进内存。
+// 时长口径 = 单 run (ended-started) 求和，负差钳 0（与 UI 的 runRowText 同口径），
+// running（ended NULL）计 0；last_ended_at = MAX(ended_at)，NULL 自动被 MAX 忽略
+Result<std::vector<AgentTaskRunSummary>> AgentStore::listTaskRunSummaries() {
+    std::lock_guard<std::recursive_mutex> lock(db_.mutex());
+    auto st = db_.prepare(
+        "SELECT task_id,"
+        " COUNT(*) AS total_runs,"
+        " SUM(status='completed') AS ok_runs,"
+        " SUM(CASE WHEN ended_at IS NULL THEN 0"
+        "          WHEN ended_at - started_at > 0 THEN ended_at - started_at"
+        "          ELSE 0 END) AS total_seconds,"
+        " MAX(ended_at) AS last_ended_at"
+        " FROM agent_runs GROUP BY task_id ORDER BY task_id");
+    if (st.isFail()) {
+        return Result<std::vector<AgentTaskRunSummary>>::fail(st.errorCode(),
+                                                              st.errorMessage());
+    }
+    auto rows = st.value().fetchAll();
+    if (rows.isFail()) {
+        return Result<std::vector<AgentTaskRunSummary>>::fail(rows.errorCode(),
+                                                              rows.errorMessage());
+    }
+    std::vector<AgentTaskRunSummary> out;
+    out.reserve(rows.value().size());
+    for (const auto& row : rows.value()) {
+        AgentTaskRunSummary s;
+        if (auto e = rowInt(row, "task_id", s.taskId)) {
+            return Result<std::vector<AgentTaskRunSummary>>::fail(e->first, e->second);
+        }
+        if (auto e = rowInt(row, "total_runs", s.totalRuns)) {
+            return Result<std::vector<AgentTaskRunSummary>>::fail(e->first, e->second);
+        }
+        if (auto e = rowInt(row, "ok_runs", s.okRuns)) {
+            return Result<std::vector<AgentTaskRunSummary>>::fail(e->first, e->second);
+        }
+        if (auto e = rowInt(row, "total_seconds", s.totalSeconds)) {
+            return Result<std::vector<AgentTaskRunSummary>>::fail(e->first, e->second);
+        }
+        if (row.isNull("last_ended_at")) {
+            s.lastEndedAt = std::nullopt;
+        } else {
+            int64_t v = 0;
+            if (auto e = rowInt(row, "last_ended_at", v)) {
+                return Result<std::vector<AgentTaskRunSummary>>::fail(e->first,
+                                                                      e->second);
+            }
+            s.lastEndedAt = v;
+        }
+        out.push_back(std::move(s));
+    }
+    return Result<std::vector<AgentTaskRunSummary>>::ok(std::move(out));
+}
+
 Result<void> AgentStore::sweepStaleRuns() {
     std::lock_guard<std::recursive_mutex> lock(db_.mutex());
     auto st = db_.prepare(
