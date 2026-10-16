@@ -83,6 +83,22 @@ std::vector<FileChange> diffNotes(
     const std::map<std::string, std::string>& local,
     const std::set<std::string>& remote);
 
+// ── pull 侧动作（F7 笔记拉取）──
+struct PullAction {
+    enum class Kind { Download, KeepLocal };
+    Kind kind = Kind::Download;
+    std::string fileName;   // notes/ 下的文件名
+};
+
+// remoteShas = 远端树 notes/*.md 文件名 → sha；syncedShas = 登记名 → 上次同步成功后的远端 sha。
+// Download 只看远端侧：远端 sha 与登记不符（含登记缺失）= 远端变过 → 下载覆盖本地。
+// 本地内容不参与判定：远端没变时本地改动保留（push 侧负责推上去），远端变了本地让位
+//（将被覆盖的清单经 F6 确认框先行展示）。KeepLocal = 登记有而远端树没有 → 远端已删，
+// 本地保留（决策 #19 保守语义：pull 不替远端传播删除）。输出顺序稳定：名序 Download 在前，名序 KeepLocal 在后。
+std::vector<PullAction> pullNoteActions(
+    const std::map<std::string, std::string>& remoteShas,
+    const std::map<std::string, std::string>& syncedShas);
+
 // 远端笔记文件名 → 远端路径。
 std::string remoteNotePath(const std::string& fileName);
 

@@ -948,44 +948,141 @@ public:
         return true;
     }
 
-    // 拉取：备份本地库 → 覆盖导入（决策 #11）。
+    // 拉取（F7 全树 + F1 sha 状态比对）：树列举 → database.sql 按登记 sha 判变 →
+    // 笔记按登记比对下载。远端已删的本地笔记保留（决策 #19 保守语义）；
+    // 远端库未变（树 sha == 登记）→ 跳过导入，本地未推改动不被旧数据覆盖。
     bool runGithubSyncPull(platform::github::GithubApi& api,
                            const std::string& branch, std::string& summary) {
-        publishGithubSyncProgress("① 下载 database.sql…");
-        auto remote = api.getFile(gsync::kRemoteSqlPath, branch);
-        if (remote.isFail()) {
-            summary = "下载失败：" + remote.errorMessage();
+        publishGithubSyncProgress("① 列举远端文件树…");
+        auto tree = api.listTree(branch);
+        if (tree.isFail()) {
+            summary = "列举远端文件树失败：" + tree.errorMessage();
             return false;
         }
-        if (!remote.value().exists || remote.value().content.empty()) {
-            summary = "远端 database.sql 不存在或为空";
-            return false;
+        const std::string notesDirPrefix = gsync::kRemoteNotesDir;
+        std::string remoteSqlSha;
+        std::map<std::string, std::string> remoteNotes;   // 文件名 → 远端 sha
+        for (const auto& entry : tree.value()) {
+            if (entry.path == gsync::kRemoteSqlPath) {
+                remoteSqlSha = entry.sha;
+                continue;
+            }
+            if (entry.path.rfind(notesDirPrefix, 0) != 0 ||
+                entry.path.size() <= notesDirPrefix.size() ||
+                entry.path.compare(entry.path.size() - 3, 3, ".md") != 0) {
+                continue;
+            }
+            remoteNotes.emplace(entry.path.substr(notesDirPrefix.size()),
+                                entry.sha);
         }
+
         auto* db = ::core::appDatabase();
         if (db == nullptr) {
             summary = "数据库未就绪";
             return false;
         }
-        // 覆盖本地 DB 前必须先备份（备份失败即中止，绝不在无退路时覆盖）。
-        publishGithubSyncProgress("② 备份本地数据库…");
+        if (githubSyncStore_ == nullptr) {
+            summary = "同步存储未就绪";
+            return false;
+        }
+
+        // ② database.sql：远端无此文件 → 不导入；sha 与登记一致 → 跳过导入。
+        bool sqlImported = false;
         std::string backupName;
-        auto backup = backupLocalDb(*db, backupName);
-        if (backup.isFail()) {
-            summary = "备份失败，已中止拉取：" + backup.errorMessage();
+        if (!remoteSqlSha.empty()) {
+            auto sqlRec = githubSyncStore_->syncedSqlSha();
+            if (sqlRec.isFail()) {
+                summary = "读取 database.sql 登记失败：" + sqlRec.errorMessage();
+                return false;
+            }
+            if (sqlRec.value() == remoteSqlSha) {
+                LOG_INFO("Settings: 远端 database.sql 未变（sha 一致），跳过导入");
+            } else {
+                // 覆盖本地 DB 前必须先备份（备份失败即中止，绝不在无退路时覆盖）。
+                publishGithubSyncProgress("② 备份本地数据库…");
+                auto backup = backupLocalDb(*db, backupName);
+                if (backup.isFail()) {
+                    summary = "备份失败，已中止拉取：" + backup.errorMessage();
+                    return false;
+                }
+                publishGithubSyncProgress("③ 下载并导入数据库…");
+                auto remote = api.getFile(gsync::kRemoteSqlPath, branch);
+                if (remote.isFail()) {
+                    summary = "下载 database.sql 失败：" + remote.errorMessage();
+                    return false;
+                }
+                if (!remote.value().exists || remote.value().content.empty()) {
+                    summary = "远端 database.sql 不存在或为空";
+                    return false;
+                }
+                const auto dumpFile = ::core::paths::sqlDumpFile();
+                if (!writeFileFromString(dumpFile, remote.value().content)) {
+                    summary = "写入临时文件失败";
+                    return false;
+                }
+                auto imported = ::core::sql_dump::importFromFile(*db, dumpFile);
+                if (imported.isFail()) {
+                    summary = "导入失败：" + imported.errorMessage();
+                    return false;
+                }
+                // 登记树 sha：下次拉取据此识别「远端未变」。
+                if (auto rec = githubSyncStore_->recordSyncedSqlSha(remoteSqlSha);
+                    rec.isFail()) {
+                    LOG_WARN("Settings: database.sql 登记失败: " +
+                             rec.errorMessage());   // 只影响下轮跳过判定，不算失败
+                }
+                sqlImported = true;
+            }
+        } else {
+            LOG_INFO("Settings: 远端无 database.sql，跳过数据库导入");
+        }
+
+        // ③ 笔记：按登记 sha 比对，只下载远端变过的
+        publishGithubSyncProgress("④ 同步笔记…");
+        auto syncedShas = githubSyncStore_->syncedNoteShas();
+        if (syncedShas.isFail()) {
+            summary = "读取笔记登记失败：" + syncedShas.errorMessage();
             return false;
         }
-        const auto dumpFile = ::core::paths::sqlDumpFile();
-        if (!writeFileFromString(dumpFile, remote.value().content)) {
-            summary = "写入临时文件失败";
-            return false;
+        const auto actions = gsync::pullNoteActions(remoteNotes, syncedShas.value());
+        int dlCount = 0;
+        int keepCount = 0;
+        for (const auto& action : actions) {
+            if (action.kind == gsync::PullAction::Kind::KeepLocal) {
+                LOG_INFO("Settings: 远端已删除笔记 " + action.fileName +
+                         "，本地保留（pull 不替远端传播删除）");
+                ++keepCount;
+                continue;
+            }
+            auto f = api.getFile(gsync::remoteNotePath(action.fileName), branch);
+            if (f.isFail() || !f.value().exists) {
+                summary = "下载笔记 " + action.fileName + " 失败：" +
+                          (f.isFail() ? f.errorMessage()
+                                      : std::string("远端已不存在"));
+                return false;
+            }
+            if (!writeFileFromString(
+                    ::core::paths::markdownDir() / action.fileName,
+                    f.value().content)) {
+                summary = "写入笔记文件失败：" + action.fileName;
+                return false;
+            }
+            if (auto rec = githubSyncStore_->recordSyncedNote(
+                    action.fileName, remoteNotes[action.fileName]);
+                rec.isFail()) {
+                LOG_WARN("Settings: 笔记拉取登记失败 " + action.fileName + ": " +
+                         rec.errorMessage());
+            }
+            ++dlCount;
         }
-        publishGithubSyncProgress("③ 导入数据库…");
-        auto imported = ::core::sql_dump::importFromFile(*db, dumpFile);
-        if (imported.isFail()) {
-            summary = "导入失败：" + imported.errorMessage();
-            return false;
-        }
-        summary = "已拉取并导入 database.sql（本地备份：" + backupName + "）";
+        summary = std::string(sqlImported ? "已导入 database.sql"
+                                          : "database.sql 未变，未导入") +
+                  "；下载 " + std::to_string(dlCount) + " 篇笔记" +
+                  (keepCount > 0
+                       ? "（远端已删 " + std::to_string(keepCount) +
+                             " 篇，本地保留）"
+                       : "") +
+                  (!backupName.empty() ? "（本地备份：" + backupName + "）" : "");
         return true;
     }
 

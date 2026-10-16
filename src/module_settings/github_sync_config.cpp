@@ -18,6 +18,7 @@ constexpr const char* kKeyAutoPush = "github_sync:auto_push";
 constexpr const char* kKeyFirstSyncDone = "github_sync:first_sync_done";
 constexpr const char* kKeyShaPrefix = "github_sync:sha:";
 constexpr const char* kKeyShaNotesPrefix = "github_sync:sha:notes/";
+constexpr const char* kRemoteSqlRelPath = "data/database.sql";
 
 std::string jsonString(const std::string& v) {
     return platform::json::stringify(platform::json::makeString(v))
@@ -186,6 +187,47 @@ core::Result<std::string> GithubSyncStore::loadToken() {
 
 core::Result<void> GithubSyncStore::deleteToken() {
     return platform::keychain::deleteSecret(kKeychainService, kKeychainAccount);
+}
+
+core::Result<std::map<std::string, std::string>>
+GithubSyncStore::syncedNoteShas() const {
+    std::map<std::string, std::string> out;
+    if (db_ == nullptr) return core::Result<std::map<std::string, std::string>>::ok(std::move(out));
+    std::lock_guard<std::recursive_mutex> lock(db_->mutex());
+    auto rows = core::appconfig::listWithPrefix(*db_, kKeyShaNotesPrefix);
+    if (rows.isFail()) {
+        return core::Result<std::map<std::string, std::string>>::fail(rows.errorCode(),
+                                                                      rows.errorMessage());
+    }
+    for (const auto& e : rows.value()) {
+        auto v = platform::json::parse(e.value);
+        if (v.isOk() && v.value().isString()) {
+            out.emplace(e.key.substr(std::string(kKeyShaNotesPrefix).size()),
+                        v.value().asString());
+        }
+    }
+    return core::Result<std::map<std::string, std::string>>::ok(std::move(out));
+}
+
+core::Result<std::string> GithubSyncStore::syncedSqlSha() const {
+    if (db_ == nullptr) return core::Result<std::string>::ok(std::string());
+    std::lock_guard<std::recursive_mutex> lock(db_->mutex());
+    auto v = core::appconfig::get(*db_, std::string(kKeyShaPrefix) + kRemoteSqlRelPath);
+    if (v.isFail()) return core::Result<std::string>::ok(std::string());   // 键缺失 = 无登记
+    auto parsed = platform::json::parse(v.value());
+    if (parsed.isOk() && parsed.value().isString()) {
+        return core::Result<std::string>::ok(parsed.value().asString());
+    }
+    return core::Result<std::string>::ok(v.value());
+}
+
+core::Result<void> GithubSyncStore::recordSyncedSqlSha(const std::string& sha) {
+    if (db_ == nullptr) {
+        return core::Result<void>::fail(core::ErrorCode::NotFound, "应用数据库未就绪");
+    }
+    std::lock_guard<std::recursive_mutex> lock(db_->mutex());
+    return core::appconfig::set(*db_, std::string(kKeyShaPrefix) + kRemoteSqlRelPath,
+                                jsonString(sha));
 }
 
 } // namespace module::settings

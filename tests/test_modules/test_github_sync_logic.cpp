@@ -64,3 +64,38 @@ REGISTER_TEST(github_sync_dump_size_limit,
     DOCTEST_CHECK(g::dumpTooLargeForRemote(g::kMaxDumpRawBytes + 1));
     return true;
 })
+
+REGISTER_TEST(github_sync_pull_note_actions,
+              "github_sync 拉取动作: 远端 sha 比登记 → 下载；登记有远端无 → 本地保留", {
+    using Kind = g::PullAction::Kind;
+    const std::map<std::string, std::string> remote{{"a.md", "sa"},
+                                                    {"b.md", "sb-new"}};
+    const std::map<std::string, std::string> synced{{"b.md", "sb-old"},
+                                                    {"c.md", "sc"}};
+    const auto actions = g::pullNoteActions(remote, synced);
+    // a：登记无 → 下载；b：远端 sha 变 → 下载；c：登记有远端无 → 保留本地
+    DOCTEST_REQUIRE_EQ(actions.size(), static_cast<size_t>(3));
+    DOCTEST_CHECK(actions[0].kind == Kind::Download);
+    DOCTEST_CHECK_EQ(actions[0].fileName, std::string("a.md"));
+    DOCTEST_CHECK(actions[1].kind == Kind::Download);
+    DOCTEST_CHECK_EQ(actions[1].fileName, std::string("b.md"));
+    DOCTEST_CHECK(actions[2].kind == Kind::KeepLocal);
+    DOCTEST_CHECK_EQ(actions[2].fileName, std::string("c.md"));
+
+    // 远端 sha 与登记一致 → 不下载（这是「每轮不再全量拉」的判据）
+    const auto quiet = g::pullNoteActions({{"b.md", "sb-old"}}, synced);
+    DOCTEST_REQUIRE_EQ(quiet.size(), static_cast<size_t>(1));
+    DOCTEST_CHECK(quiet[0].kind == Kind::KeepLocal);   // c 的路径；b 无动作
+
+    // 双空 → 空动作集；顺序稳定（下载按名序在前，保留按名序在后）
+    DOCTEST_CHECK(g::pullNoteActions({}, {}).empty());
+    const std::map<std::string, std::string> r2{{"z.md", "s"}, {"a.md", "s"}};
+    const std::map<std::string, std::string> s2{{"m.md", "s"}, {"b.md", "s"}};
+    const auto ordered = g::pullNoteActions(r2, s2);
+    DOCTEST_REQUIRE_EQ(ordered.size(), static_cast<size_t>(4));
+    DOCTEST_CHECK_EQ(ordered[0].fileName, std::string("a.md"));
+    DOCTEST_CHECK_EQ(ordered[1].fileName, std::string("z.md"));
+    DOCTEST_CHECK_EQ(ordered[2].fileName, std::string("b.md"));
+    DOCTEST_CHECK_EQ(ordered[3].fileName, std::string("m.md"));
+    return true;
+})

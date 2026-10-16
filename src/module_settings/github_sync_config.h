@@ -4,6 +4,7 @@
 // Token 存储在 platform::keychain（service="DevDesk/github", account="token"）。
 #pragma once
 
+#include <map>
 #include <set>
 #include <string>
 
@@ -56,6 +57,15 @@ public:
     core::Result<void> recordSyncedNote(const std::string& fileName,
                                         const std::string& sha);
     core::Result<void> forgetSyncedNote(const std::string& fileName);
+
+    // 笔记名 → 登记的远端 sha（F1 拉取比对用）。无登记 → 空表。
+    core::Result<std::map<std::string, std::string>> syncedNoteShas() const;
+
+    // database.sql 的远端 sha 登记：键 `github_sync:sha:data/database.sql`。
+    // 拉取导入成功后登记；远端树 sha 与登记相等 → 远端库未变，跳过导入
+    //（本地未推改动不被旧数据覆盖）。空串 = 无登记（首次/远端无此文件）。
+    core::Result<std::string> syncedSqlSha() const;
+    core::Result<void> recordSyncedSqlSha(const std::string& sha);
 
 private:
     core::data::SqliteDb* db_;

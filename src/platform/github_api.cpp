@@ -537,6 +537,56 @@ core::Result<FileInfo> GithubApi::getFile(const std::string& path, const std::st
     return core::Result<FileInfo>::ok(std::move(info));
 }
 
+core::Result<std::vector<TreeEntry>> GithubApi::listTree(const std::string& branch) {
+    // branch 按值编码：可含 '/'（feature/x），不转义会改变 refs 路径层级
+    const std::string url = std::string(kApiBase) + "/repos/" + owner_ + "/" + repo_ +
+                            "/git/trees/" + percentEncodeValue(branch) + "?recursive=1";
+    const Attempt a = doRequest("GET", url, "", kAcceptJson);
+    if (a.localError) {
+        return core::Result<std::vector<TreeEntry>>::fail(a.errorCode, a.errorMessage);
+    }
+    if (a.networkError) {
+        return core::Result<std::vector<TreeEntry>>::fail(core::ErrorCode::NetworkUnreachable,
+                                                          "网络错误：" + a.errorMessage);
+    }
+    if (a.resp.statusCode != 200) {
+        return core::Result<std::vector<TreeEntry>>::fail(mapStatusToError(a.resp.statusCode),
+                                                          httpStatusText(a.resp.statusCode));
+    }
+    const core::Result<pj::JsonValue> parsed = pj::parse(a.resp.body);
+    if (parsed.isFail() || !parsed.value().isObject()) {
+        return core::Result<std::vector<TreeEntry>>::fail(core::ErrorCode::JsonParseError,
+                                                          "解析文件树失败");
+    }
+    const pj::JsonValue root = parsed.value();
+    if (jsonBoolField(root, "truncated", false)) {
+        return core::Result<std::vector<TreeEntry>>::fail(
+            core::ErrorCode::HttpError,
+            "远端文件树过大被截断（truncated=true），暂不支持分页补取");
+    }
+    const pj::JsonValue tree = root.asObject().get("tree");
+    if (!tree.isArray()) {
+        return core::Result<std::vector<TreeEntry>>::fail(core::ErrorCode::JsonParseError,
+                                                          "文件树响应缺少 tree 数组");
+    }
+    std::vector<TreeEntry> out;
+    const int n = tree.size();
+    out.reserve(static_cast<size_t>(n));
+    for (int i = 0; i < n; ++i) {
+        const pj::JsonValue item = tree[i];
+        if (!item.isObject()) continue;
+        if (jsonStringField(item, "type") != "blob") continue;   // 目录/子模块条目跳过
+        TreeEntry e;
+        e.path = jsonStringField(item, "path");
+        e.sha = jsonStringField(item, "sha");
+        if (e.path.empty() || e.sha.empty()) continue;
+        const pj::JsonValue size = item.asObject().get("size");
+        if (size.isNumber()) e.size = static_cast<uint64_t>(size.asInt());
+        out.push_back(std::move(e));
+    }
+    return core::Result<std::vector<TreeEntry>>::ok(std::move(out));
+}
+
 core::Result<std::string> GithubApi::putFile(const std::string& path, const std::string& content,
                                              const std::string& message,
                                              const std::string& shaIfMatch) {

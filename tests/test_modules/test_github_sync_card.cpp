@@ -561,3 +561,49 @@ REGISTER_TEST(github_sync_store_state_keys,
     DOCTEST_CHECK(!done3.value());
     return true;
 })
+
+REGISTER_TEST(github_sync_store_sha_records,
+              "github_sync 存储: 笔记 sha 登记 + database.sql sha 登记（save() 保留状态键）", {
+    test_support::TestEnv env("gitsync", "store2");
+    module::settings::GithubSyncStore store(&env.handle());
+
+    // 无登记 → 空
+    auto shas0 = store.syncedNoteShas();
+    DOCTEST_REQUIRE(shas0.isOk());
+    DOCTEST_CHECK(shas0.value().empty());
+    auto sql0 = store.syncedSqlSha();
+    DOCTEST_REQUIRE(sql0.isOk());
+    DOCTEST_CHECK(sql0.value().empty());
+
+    // 登记 → 读回一致；覆盖登记取新值
+    DOCTEST_CHECK(store.recordSyncedNote("a.md", "sha-1").isOk());
+    DOCTEST_CHECK(store.recordSyncedNote("a.md", "sha-2").isOk());
+    DOCTEST_CHECK(store.recordSyncedNote("b.md", "sha-3").isOk());
+    DOCTEST_CHECK(store.recordSyncedSqlSha("sql-1").isOk());
+    auto shas1 = store.syncedNoteShas();
+    DOCTEST_REQUIRE(shas1.isOk());
+    DOCTEST_REQUIRE_EQ(shas1.value().size(), static_cast<size_t>(2));
+    DOCTEST_CHECK_EQ(shas1.value().at("a.md"), std::string("sha-2"));
+    DOCTEST_CHECK_EQ(shas1.value().at("b.md"), std::string("sha-3"));
+    auto sql1 = store.syncedSqlSha();
+    DOCTEST_REQUIRE(sql1.isOk());
+    DOCTEST_CHECK_EQ(sql1.value(), std::string("sql-1"));
+
+    // 配置保存不得清掉 sha 状态键（含 database.sql 的）
+    module::settings::GithubSyncConfig cfg;
+    cfg.enabled = true;
+    DOCTEST_CHECK(store.save(cfg).isOk());
+    auto shas2 = store.syncedNoteShas();
+    DOCTEST_REQUIRE(shas2.isOk());
+    DOCTEST_CHECK_EQ(shas2.value().size(), static_cast<size_t>(2));
+    auto sql2 = store.syncedSqlSha();
+    DOCTEST_REQUIRE(sql2.isOk());
+    DOCTEST_CHECK_EQ(sql2.value(), std::string("sql-1"));
+
+    // forget 清两键；database.sql 登记无 forget 入口（拉取导入覆盖时原值重写）
+    DOCTEST_CHECK(store.forgetSyncedNote("a.md").isOk());
+    auto shas3 = store.syncedNoteShas();
+    DOCTEST_REQUIRE(shas3.isOk());
+    DOCTEST_CHECK_EQ(shas3.value().count("a.md"), static_cast<size_t>(0));
+    return true;
+})

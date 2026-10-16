@@ -107,6 +107,23 @@ std::vector<FileChange> diffNotes(
     return out;
 }
 
+std::vector<PullAction> pullNoteActions(
+    const std::map<std::string, std::string>& remoteShas,
+    const std::map<std::string, std::string>& syncedShas) {
+    std::vector<PullAction> out;
+    for (const auto& [name, sha] : remoteShas) {
+        const auto it = syncedShas.find(name);
+        if (it != syncedShas.end() && it->second == sha) continue;   // 远端未变
+        out.push_back(PullAction{PullAction::Kind::Download, name});
+    }
+    for (const auto& [name, sha] : syncedShas) {
+        (void)sha;
+        if (remoteShas.find(name) != remoteShas.end()) continue;
+        out.push_back(PullAction{PullAction::Kind::KeepLocal, name});
+    }
+    return out;
+}
+
 FirstSyncChoice firstSyncChoice(bool sqlExists, bool sqlMissing) {
     if (sqlExists) return FirstSyncChoice::PullThenPush;
     if (sqlMissing) return FirstSyncChoice::Push;
