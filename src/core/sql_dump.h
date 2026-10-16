@@ -13,7 +13,9 @@
 
 namespace core::sql_dump {
 
-// 默认不进备份的表（GitHub Sync 固定用它）：调用日志量大、运行设置属机器本地运行态。
+// 默认不进备份的表（GitHub Sync 固定用它）：调用日志量大、运行设置与同步基线
+// 属机器本地状态（github_sync_state 随 dump 跨设备转移会污染新设备的比对基线，
+// 见 schema.h 该表注释）。
 // 消费方（github_sync_logic）必须取本函数返回值，不得另抄一份清单（两份必漂移）。
 const std::vector<std::string>& defaultSkipTables();
 

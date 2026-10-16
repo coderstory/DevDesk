@@ -17,15 +17,95 @@ constexpr const char* kKeyEnabled = "github_sync:enabled";
 constexpr const char* kKeyRepoUrl = "github_sync:repo_url";
 constexpr const char* kKeyBranch = "github_sync:branch";
 constexpr const char* kKeyAutoPush = "github_sync:auto_push";
-constexpr const char* kKeyFirstSyncDone = "github_sync:first_sync_done";
-constexpr const char* kKeyUnsyncedNotice = "github_sync:unsynced_notice";
-constexpr const char* kKeyShaPrefix = "github_sync:sha:";
-constexpr const char* kKeyShaNotesPrefix = "github_sync:sha:notes/";
-constexpr const char* kKeyHashNotesPrefix = "github_sync:hash:notes/";
+// 同步基线的表内键（本机专属状态表 github_sync_state，不进 dump / 备份——
+// 见 schema.h 与 core::sql_dump::defaultSkipTables()）。
+constexpr const char* kStateFirstSyncDone = "first_sync_done";
+constexpr const char* kStateUnsyncedNotice = "unsynced_notice";
+constexpr const char* kStateShaNotesPrefix = "sha:notes/";
+constexpr const char* kStateHashNotesPrefix = "hash:notes/";
 
 std::string jsonString(const std::string& v) {
     return platform::json::stringify(platform::json::makeString(v))
         .valueOr("\"\"");
+}
+
+// 以下四个状态访问器都在调用方已持 db 锁的前提下用（store 方法统一先加锁）。
+core::Result<std::string> stateGet(core::data::SqliteDb& db,
+                                   const std::string& key) {
+    auto stmt = db.prepare("SELECT value FROM github_sync_state WHERE key = ?");
+    if (stmt.isFail()) return core::Result<std::string>::fail(stmt.errorCode(), stmt.errorMessage());
+    auto& st = stmt.value();
+    if (auto b = st.bind(1, key); b.isFail()) {
+        return core::Result<std::string>::fail(b.errorCode(), b.errorMessage());
+    }
+    auto stepped = st.step();
+    if (stepped.isFail()) {
+        return core::Result<std::string>::fail(stepped.errorCode(), stepped.errorMessage());
+    }
+    if (!stepped.value()) return core::Result<std::string>::ok(std::string());  // 缺行 = 空
+    auto row = st.currentRow();
+    if (row.isFail()) return core::Result<std::string>::fail(row.errorCode(), row.errorMessage());
+    auto value = row.value().getString("value");
+    if (value.isFail()) {
+        return core::Result<std::string>::fail(value.errorCode(), value.errorMessage());
+    }
+    return core::Result<std::string>::ok(value.value());
+}
+
+core::Result<void> stateSet(core::data::SqliteDb& db, const std::string& key,
+                            const std::string& value) {
+    auto stmt = db.prepare(
+        "INSERT INTO github_sync_state(key, value) VALUES(?, ?) "
+        "ON CONFLICT(key) DO UPDATE SET value = excluded.value");
+    if (stmt.isFail()) return core::Result<void>::fail(stmt.errorCode(), stmt.errorMessage());
+    auto& st = stmt.value();
+    if (auto b = st.bind(1, key); b.isFail()) return b;
+    if (auto b = st.bind(2, value); b.isFail()) return b;
+    auto stepped = st.step();
+    if (stepped.isFail()) return core::Result<void>::fail(stepped.errorCode(), stepped.errorMessage());
+    return core::Result<void>::ok();
+}
+
+core::Result<void> stateErase(core::data::SqliteDb& db, const std::string& key) {
+    auto stmt = db.prepare("DELETE FROM github_sync_state WHERE key = ?");
+    if (stmt.isFail()) return core::Result<void>::fail(stmt.errorCode(), stmt.errorMessage());
+    auto& st = stmt.value();
+    if (auto b = st.bind(1, key); b.isFail()) return b;
+    auto stepped = st.step();
+    if (stepped.isFail()) return core::Result<void>::fail(stepped.errorCode(), stepped.errorMessage());
+    return core::Result<void>::ok();
+}
+
+core::Result<std::vector<std::pair<std::string, std::string>>> stateListPrefix(
+    core::data::SqliteDb& db, const std::string& prefix) {
+    std::vector<std::pair<std::string, std::string>> out;
+    auto stmt = db.prepare(
+        "SELECT key, value FROM github_sync_state WHERE key LIKE ? || '%'");
+    if (stmt.isFail()) {
+        return core::Result<std::vector<std::pair<std::string, std::string>>>::fail(
+            stmt.errorCode(), stmt.errorMessage());
+    }
+    auto& st = stmt.value();
+    if (auto b = st.bind(1, prefix); b.isFail()) {
+        return core::Result<std::vector<std::pair<std::string, std::string>>>::fail(
+            b.errorCode(), b.errorMessage());
+    }
+    auto rows = st.fetchAll();
+    if (rows.isFail()) {
+        return core::Result<std::vector<std::pair<std::string, std::string>>>::fail(
+            rows.errorCode(), rows.errorMessage());
+    }
+    for (const auto& row : rows.value()) {
+        auto k = row.getString("key");
+        auto v = row.getString("value");
+        if (k.isFail() || v.isFail()) {
+            return core::Result<std::vector<std::pair<std::string, std::string>>>::fail(
+                core::ErrorCode::Internal, "github_sync_state 行读取失败");
+        }
+        out.emplace_back(k.value(), v.value());
+    }
+    return core::Result<std::vector<std::pair<std::string, std::string>>>::ok(
+        std::move(out));
 }
 } // namespace
 
@@ -98,8 +178,9 @@ core::Result<void> GithubSyncStore::save(const GithubSyncConfig& cfg) {
         auto wrote = core::appconfig::setMany(*db_, entries);
         if (wrote.isFail()) return wrote;
 
-        // 只清本函数写过的 4 个配置键；sha:/hash:（同步登记）与
-        // first_sync_done 是同步状态，config 保存绝不能清它们。
+        // 只留本函数写过的 4 个配置键：同步基线已迁 github_sync_state 表
+        //（本机专属、不进 dump），app_config 里残留的 github_sync:* 旧键
+        //（历史基线）一并清掉。
         std::vector<std::string> drop;
         auto rows = core::appconfig::listWithPrefix(*db_, "github_sync:");
         if (rows.isFail()) {
@@ -112,10 +193,6 @@ core::Result<void> GithubSyncStore::save(const GithubSyncConfig& cfg) {
                                      e.key == kKeyBranch ||
                                      e.key == kKeyAutoPush;
             if (isConfigKey) continue;
-            if (e.key.rfind(kKeyShaPrefix, 0) == 0) continue;
-            if (e.key.rfind("github_sync:hash:", 0) == 0) continue;
-            if (e.key == kKeyFirstSyncDone) continue;
-            if (e.key == kKeyUnsyncedNotice) continue;
             drop.push_back(e.key);
         }
         for (const auto& key : drop) {
@@ -133,8 +210,8 @@ core::Result<void> GithubSyncStore::saveToken(const std::string& token) {
 core::Result<bool> GithubSyncStore::isFirstSyncDone() const {
     if (db_ == nullptr) return core::Result<bool>::ok(false);
     std::lock_guard<std::recursive_mutex> lock(db_->mutex());
-    auto v = core::appconfig::get(*db_, kKeyFirstSyncDone);
-    if (v.isFail()) return core::Result<bool>::ok(false);   // 键缺失 = 未做过
+    auto v = stateGet(*db_, kStateFirstSyncDone);
+    if (v.isFail()) return core::Result<bool>::ok(false);   // 读取失败 = 按未做过
     return core::Result<bool>::ok(v.value() == "true");
 }
 
@@ -144,26 +221,28 @@ core::Result<void> GithubSyncStore::setFirstSyncDone() {
                                         "应用数据库未就绪");
     }
     std::lock_guard<std::recursive_mutex> lock(db_->mutex());
-    return core::appconfig::set(*db_, kKeyFirstSyncDone, "true");
+    return stateSet(*db_, kStateFirstSyncDone, "true");
 }
 
 core::Result<void> GithubSyncStore::clearFirstSyncDone() {
     if (db_ == nullptr) return core::Result<void>::ok();
     std::lock_guard<std::recursive_mutex> lock(db_->mutex());
-    return core::appconfig::erase(*db_, kKeyFirstSyncDone);
+    return stateErase(*db_, kStateFirstSyncDone);
 }
 
 core::Result<std::set<std::string>> GithubSyncStore::syncedNoteNames() const {
     std::set<std::string> names;
     if (db_ == nullptr) return core::Result<std::set<std::string>>::ok(names);
     std::lock_guard<std::recursive_mutex> lock(db_->mutex());
-    auto rows = core::appconfig::listWithPrefix(*db_, kKeyShaNotesPrefix);
+    auto rows = stateListPrefix(*db_, kStateShaNotesPrefix);
     if (rows.isFail()) {
         return core::Result<std::set<std::string>>::fail(rows.errorCode(),
                                                          rows.errorMessage());
     }
-    for (const auto& e : rows.value()) {
-        names.insert(e.key.substr(std::string(kKeyShaNotesPrefix).size()));
+    const size_t prefixLen = std::string(kStateShaNotesPrefix).size();
+    for (const auto& [key, value] : rows.value()) {
+        (void)value;
+        names.insert(key.substr(prefixLen));
     }
     return core::Result<std::set<std::string>>::ok(std::move(names));
 }
@@ -176,21 +255,17 @@ core::Result<void> GithubSyncStore::recordSyncedNote(const std::string& fileName
                                         "应用数据库未就绪");
     }
     std::lock_guard<std::recursive_mutex> lock(db_->mutex());
-    auto wrote = core::appconfig::set(
-        *db_, std::string(kKeyShaNotesPrefix) + fileName, jsonString(sha));
+    auto wrote = stateSet(*db_, std::string(kStateShaNotesPrefix) + fileName, sha);
     if (wrote.isFail()) return wrote;
-    return core::appconfig::set(
-        *db_, std::string(kKeyHashNotesPrefix) + fileName,
-        jsonString(contentHash));
+    return stateSet(*db_, std::string(kStateHashNotesPrefix) + fileName,
+                    contentHash);
 }
 
 core::Result<void> GithubSyncStore::forgetSyncedNote(const std::string& fileName) {
     if (db_ == nullptr) return core::Result<void>::ok();
     std::lock_guard<std::recursive_mutex> lock(db_->mutex());
-    auto a = core::appconfig::erase(*db_,
-                                    std::string(kKeyShaNotesPrefix) + fileName);
-    auto b = core::appconfig::erase(
-        *db_, std::string(kKeyHashNotesPrefix) + fileName);
+    auto a = stateErase(*db_, std::string(kStateShaNotesPrefix) + fileName);
+    auto b = stateErase(*db_, std::string(kStateHashNotesPrefix) + fileName);
     if (a.isFail()) return a;
     return b;
 }
@@ -211,31 +286,25 @@ GithubSyncStore::syncedNoteRecords() const {
             std::move(out));
     }
     std::lock_guard<std::recursive_mutex> lock(db_->mutex());
-    // sha 键定成员集合；hash 键就地补值（缺 hash = T3 时代旧记录，保持空串）
-    auto shas = core::appconfig::listWithPrefix(*db_, kKeyShaNotesPrefix);
+    // sha 键定成员集合；hash 键就地补值（缺 hash = 旧记录，保持空串）
+    auto shas = stateListPrefix(*db_, kStateShaNotesPrefix);
     if (shas.isFail()) {
         return core::Result<std::map<std::string, gsync::SyncedNoteRecord>>::fail(
             shas.errorCode(), shas.errorMessage());
     }
-    for (const auto& e : shas.value()) {
-        auto v = platform::json::parse(e.value);
-        if (v.isOk() && v.value().isString()) {
-            out[e.key.substr(std::string(kKeyShaNotesPrefix).size())].sha =
-                v.value().asString();
-        }
+    const size_t shaPrefixLen = std::string(kStateShaNotesPrefix).size();
+    for (const auto& [key, value] : shas.value()) {
+        out[key.substr(shaPrefixLen)].sha = value;
     }
-    auto hashes = core::appconfig::listWithPrefix(*db_, kKeyHashNotesPrefix);
+    auto hashes = stateListPrefix(*db_, kStateHashNotesPrefix);
     if (hashes.isFail()) {
         return core::Result<std::map<std::string, gsync::SyncedNoteRecord>>::fail(
             hashes.errorCode(), hashes.errorMessage());
     }
-    for (const auto& e : hashes.value()) {
-        auto v = platform::json::parse(e.value);
-        const std::string name =
-            e.key.substr(std::string(kKeyHashNotesPrefix).size());
-        if (v.isOk() && v.value().isString() && out.count(name) != 0) {
-            out[name].contentHash = v.value().asString();
-        }
+    const size_t hashPrefixLen = std::string(kStateHashNotesPrefix).size();
+    for (const auto& [key, value] : hashes.value()) {
+        const std::string name = key.substr(hashPrefixLen);
+        if (out.count(name) != 0) out[name].contentHash = value;
     }
     return core::Result<std::map<std::string, gsync::SyncedNoteRecord>>::ok(
         std::move(out));
@@ -244,8 +313,8 @@ GithubSyncStore::syncedNoteRecords() const {
 core::Result<bool> GithubSyncStore::hasUnsyncedNotice() const {
     if (db_ == nullptr) return core::Result<bool>::ok(false);
     std::lock_guard<std::recursive_mutex> lock(db_->mutex());
-    auto v = core::appconfig::get(*db_, kKeyUnsyncedNotice);
-    if (v.isFail()) return core::Result<bool>::ok(false);   // 键缺失 = 无提示
+    auto v = stateGet(*db_, kStateUnsyncedNotice);
+    if (v.isFail()) return core::Result<bool>::ok(false);   // 读取失败 = 无提示
     return core::Result<bool>::ok(v.value() == "true");
 }
 
@@ -255,25 +324,19 @@ core::Result<void> GithubSyncStore::setUnsyncedNotice() {
                                         "应用数据库未就绪");
     }
     std::lock_guard<std::recursive_mutex> lock(db_->mutex());
-    return core::appconfig::set(*db_, kKeyUnsyncedNotice, "true");
+    return stateSet(*db_, kStateUnsyncedNotice, "true");
 }
 
 core::Result<void> GithubSyncStore::clearUnsyncedNotice() {
     if (db_ == nullptr) return core::Result<void>::ok();
     std::lock_guard<std::recursive_mutex> lock(db_->mutex());
-    return core::appconfig::erase(*db_, kKeyUnsyncedNotice);
+    return stateErase(*db_, kStateUnsyncedNotice);
 }
 
 core::Result<std::string> GithubSyncStore::syncedSqlSha() const {
     if (db_ == nullptr) return core::Result<std::string>::ok(std::string());
     std::lock_guard<std::recursive_mutex> lock(db_->mutex());
-    auto v = core::appconfig::get(*db_, std::string(kKeyShaPrefix) + gsync::kRemoteSqlPath);
-    if (v.isFail()) return core::Result<std::string>::ok(std::string());   // 键缺失 = 无登记
-    auto parsed = platform::json::parse(v.value());
-    if (parsed.isOk() && parsed.value().isString()) {
-        return core::Result<std::string>::ok(parsed.value().asString());
-    }
-    return core::Result<std::string>::ok(v.value());
+    return stateGet(*db_, std::string("sha:") + gsync::kRemoteSqlPath);
 }
 
 core::Result<void> GithubSyncStore::recordSyncedSqlSha(const std::string& sha) {
@@ -281,8 +344,7 @@ core::Result<void> GithubSyncStore::recordSyncedSqlSha(const std::string& sha) {
         return core::Result<void>::fail(core::ErrorCode::NotFound, "应用数据库未就绪");
     }
     std::lock_guard<std::recursive_mutex> lock(db_->mutex());
-    return core::appconfig::set(*db_, std::string(kKeyShaPrefix) + gsync::kRemoteSqlPath,
-                                jsonString(sha));
+    return stateSet(*db_, std::string("sha:") + gsync::kRemoteSqlPath, sha);
 }
 
 core::Result<void> GithubSyncStore::importDatabase(const std::string& sql) {

@@ -297,6 +297,20 @@ inline constexpr const char* kSql = R"(
         settings_json TEXT NOT NULL DEFAULT ''
     );
 
+    -- GitHub Sync 同步基线（本机专属状态）。**绝不离开本机**：在
+    -- core::sql_dump::defaultSkipTables() 里被排除，dump / 备份都不含本表。
+    --   为什么必须独立于 app_config：dump 会整体跨设备转移，基线（上次同步
+    --   成功后的远端 sha + 本地内容 hash、首次方向标记、未同步提示）若随 dump
+    --   落到新设备，新设备会拿**别人写的** sha/hash 做比对——判「未变」跳过下载，
+    --   再把「登记有而本地无」判成本地删除 → DELETE 清空远端笔记。独立成表才能
+    --   从 dump 里整表剔除（app_config 无法只剔前缀）。
+    --   key 形如 `sha:notes/<名>` / `hash:notes/<名>` / `sha:data/database.sql` /
+    --   `first_sync_done` / `unsynced_notice`；value 为原样文本（sha/hash/标记）。
+    CREATE TABLE IF NOT EXISTS github_sync_state (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+    );
+
     -- 索引
     CREATE INDEX IF NOT EXISTS idx_tasks_column
         ON todo_tasks(column_id, position);
