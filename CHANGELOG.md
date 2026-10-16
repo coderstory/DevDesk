@@ -6,6 +6,14 @@
 
 > **当前基线（2026-09-24，master @ 817af80）**：用例 **407**（`grep REGISTER_TEST` 口径，本会话 324 → 407；全绿与否以主会话终验为准）。各波次条目内的测试数为该波时点事实，不代表当前总数；波次按合并时间倒序排列。
 
+## [AgentDirectLlm] 2026-10-16 —— 智能体与代理解耦：直连端点
+
+- feat(agent)：**智能体跑 run 不再经本地代理**——新增 `DirectLlmClient`（`src/module_agent/direct_llm_client.{h,cpp}`，实现 `core::LlmEndpoint`）：按**激活 profile**（baseUrl / API key / authField / models_config / 上游方言）直发 `POST {baseUrl}/v1/messages`；槽位用 `model_slots.h` + profile 的 models_config 自解析，**代理没开也能跑**。删除旧 `LlmClient`（经代理实现）与其单测——代理路径不再保留，需要时从 git 历史找回。
+- feat(core)：新增 `src/core/llm_profile_source.h`（`LlmDirectProfile` 快照 + `LlmProfileSource` 抽象）：core 只见纯数据与接口，代理运行态不进 agent 的依赖面；装配层 `main.cpp` 注册 `ClaudeDirectProfileSource` 适配器（激活 profile + `loadApiKey` 读 DB 加密列，明文 key 只活在内存，不落盘 / 不进日志）。
+- fix(agent,ui)：页内错误行 / 详情弹窗的「去 Claude 页」引导改为按「LLM 配置不可用：」前缀匹配（无激活 profile / 未配 Base URL / 未配 API Key / 槽位未配置四类；旧「代理未启」错误随解耦不再存在）。
+- test(agent)：新增 `test_direct_llm_client.cpp` 七条契约（请求组装 / 槽位解析 / authField 三态 / 四类配置错误不发包 / 401+网络错分类 / opencode 方言 / **解耦硬证据**：无 ClaudeService 单例且无 IClaudeProxyService 注册时仍能组请求走到 HTTP 发送缝）；agent 既有用例的 fake 代理全量换成 `test_support::FakeProfileSource`。
+- 已知边界：① 直连暂无 failover（代理路径的备用 profile 单跳重试未随迁）；② opencode 方言判定在 `upstream_dialect.h`（代理转发）与 `direct_llm_client.cpp`（agent 直连）两处各持一份最小复刻（模块隔离下不可互 include），新增方言需两处同步。
+
 ## [M2-Agent] 2026-10-02 —— 智能体二期：资源上限 / 单一闸 / Scheduler / 8 新工具 / 任务与运行 UI
 
 - feat(agent)：**资源上限落地**——单次运行墙钟预算 `min(迭代 × 60s, 30min)` + 200K token 上限，由 **AgentLoop 检查点**强制（Scheduler 等触发路径经 loop 组合传递，全覆盖）；超限当轮的 assistant 消息**仍然入库**，只是不再发下一次请求。
