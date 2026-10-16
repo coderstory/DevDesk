@@ -90,18 +90,12 @@ void drawGithubSyncCard(const CardDrawArgs& args) {
         .lineHeight(labelH)
         .color(t.colors.textSecondary)
         .build();
-    // switch 无 position（EUI-NEO SwitchBuilder 只吃 flow）→ 套一层定位 stack 放到标签右侧。
-    ui.stack(id + ".enabled.sw.wrap")
+    components::toggleSwitch(ui, id + ".enabled.sw")
         .position(fieldStartX, y + (rowH - 20.0f) * 0.5f)
         .size(kSwitchW, 20.0f)
-        .content([&] {
-            components::toggleSwitch(ui, id + ".enabled.sw")
-                .size(kSwitchW, 20.0f)
-                .checked(in.githubSyncEnabled)
-                .theme(compTheme)
-                .onChange([f = a.applyGithubSyncEnabled](bool v) { f(v); })
-                .build();
-        })
+        .checked(in.githubSyncEnabled)
+        .theme(compTheme)
+        .onChange([f = a.applyGithubSyncEnabled](bool v) { f(v); })
         .build();
     y += rowH + roundFs(kRowGap);
 
@@ -180,17 +174,12 @@ void drawGithubSyncCard(const CardDrawArgs& args) {
         .lineHeight(labelH)
         .color(t.colors.textSecondary)
         .build();
-    ui.stack(id + ".autopush.sw.wrap")
+    components::toggleSwitch(ui, id + ".autopush.sw")
         .position(fieldStartX, y + (rowH - 20.0f) * 0.5f)
         .size(kSwitchW, 20.0f)
-        .content([&] {
-            components::toggleSwitch(ui, id + ".autopush.sw")
-                .size(kSwitchW, 20.0f)
-                .checked(in.githubSyncAutoPush)
-                .theme(compTheme)
-                .onChange([f = a.applyGithubSyncAutoPush](bool v) { f(v); })
-                .build();
-        })
+        .checked(in.githubSyncAutoPush)
+        .theme(compTheme)
+        .onChange([f = a.applyGithubSyncAutoPush](bool v) { f(v); })
         .build();
 
     // 操作按钮（右对齐，三个并排：立即同步 / 测试连接 / 拉取）；运行中三个一律禁用。

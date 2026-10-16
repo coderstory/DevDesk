@@ -395,20 +395,14 @@ void drawModulesCard(const CardDrawArgs& args) {
                     .lineHeight(rowDescH)
                     .color(t.colors.textTertiary)
                     .build();
-                // SwitchBuilder 无 position，套 stack 定位
-                ui.stack(id + ".sw.wrap." + suffix)
+                components::toggleSwitch(ui, id + ".sw." + suffix)
                     .position(w - 28.0f - 80.0f, rowY - 2.0f)
                     .size(80.0f, 32.0f)
-                    .content([&] {
-                        components::toggleSwitch(ui, id + ".sw." + suffix)
-                            .size(80.0f, 32.0f)
-                            .checked(moduleEnabled(in.cfg, meta.moduleId))
-                            .theme(compTheme)
-                            .onChange([f = a.applyModuleEnabled,
-                                       mid = meta.moduleId](bool v) {
-                                f(mid, v);
-                            })
-                            .build();
+                    .checked(moduleEnabled(in.cfg, meta.moduleId))
+                    .theme(compTheme)
+                    .onChange([f = a.applyModuleEnabled,
+                               mid = meta.moduleId](bool v) {
+                        f(mid, v);
                     })
                     .build();
             }
@@ -530,21 +524,16 @@ void drawProxyCard(const CardDrawArgs& args) {
 
             cardTitle(ui, id, t, 16.0f, 240.0f, 22.0f, 22.0f, "Claude 代理");
 
-            // 随应用启动代理（默认关）放卡片右上（SwitchBuilder 无 position，套 stack 定位）。
+            // 随应用启动代理（默认关）放卡片右上。
             const auto compTheme = core::theme::componentTokens(t);
-            ui.stack(id + ".autostart.wrap")
+            components::toggleSwitch(ui, id + ".autostart")
                 .position(w - 28.0f - 240.0f, 12.0f)
                 .size(240.0f, 28.0f)
-                .content([&] {
-                    components::toggleSwitch(ui, id + ".autostart")
-                        .size(240.0f, 28.0f)
-                        .text("随应用启动代理")
-                        .fontSize(fs(13.0f))
-                        .checked(in.cfg.claudeProxyAutoStart)
-                        .theme(compTheme)
-                        .onChange([f = a.applyProxyAutoStart](bool v) { f(v); })
-                        .build();
-                })
+                .text("随应用启动代理")
+                .fontSize(fs(13.0f))
+                .checked(in.cfg.claudeProxyAutoStart)
+                .theme(compTheme)
+                .onChange([f = a.applyProxyAutoStart](bool v) { f(v); })
                 .build();
 
             cardDesc(ui, id, t, 40.0f, w - 56.0f, descH,
@@ -880,17 +869,12 @@ void drawQuotaCard(const CardDrawArgs& args) {
                 .lineHeight(roundFs(16.0f))
                 .color(t.colors.textTertiary)
                 .build();
-            ui.stack(id + ".sw.wrap")
+            components::toggleSwitch(ui, id + ".sw")
                 .position(w - 28.0f - 80.0f, 4.0f)
                 .size(80.0f, 32.0f)
-                .content([&] {
-                    components::toggleSwitch(ui, id + ".sw")
-                        .size(80.0f, 32.0f)
-                        .checked(in.cfg.quotaEnabled)
-                        .theme(compTheme)
-                        .onChange([f = a.applyQuotaEnabled](bool v) { f(v); })
-                        .build();
-                })
+                .checked(in.cfg.quotaEnabled)
+                .theme(compTheme)
+                .onChange([f = a.applyQuotaEnabled](bool v) { f(v); })
                 .build();
         })
         .build();

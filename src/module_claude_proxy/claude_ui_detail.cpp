@@ -225,7 +225,7 @@ float drawDetailModels(eui::Ui& ui, float x0, float y0, float w,
             .overflow(core::TextOverflow::Ellipsis)
             .clip()
             .color(filled ? t.colors.textPrimary : t.colors.textTertiary).build();
-        // 「1M」开关（不支持/空 base → 不传 onChange）；组件无 .position，包 stack 定位
+        // 「1M」开关（不支持/空 base → 不传 onChange）
         const bool oneMEnabled = meta.supportsOneM && filled;
         const bool oneMChecked = meta.supportsOneM && hasOneMMarker(slot.model);
         const int64_t shownId = shown != nullptr ? shown->id : 0;
@@ -237,20 +237,15 @@ float drawDetailModels(eui::Ui& ui, float x0, float y0, float w,
                           cb(shownId, slotIndex, on);
                       })
                 : std::function<void(bool)>();
-        ui.stack("claude.slot.onem." + idx + ".wrap")
+        components::toggleSwitch(ui, "claude.slot.onem." + idx)
             .position(x0 + w - kOneMColW - 4.0f, sy)
             .size(kOneMColW, 32.0f)
-            .content([&] {
-                components::toggleSwitch(ui, "claude.slot.onem." + idx)
-                    .size(kOneMColW, 32.0f)
-                    .checked(oneMChecked)
-                    .text("1M")
-                    .fontSize(11.0f)
-                    .trackSize(30.0f, 16.0f)
-                    .style(oneMEnabled ? oneMStyle : oneMDisabledStyle)
-                    .onChange(onOneM)
-                    .build();
-            })
+            .checked(oneMChecked)
+            .text("1M")
+            .fontSize(11.0f)
+            .trackSize(30.0f, 16.0f)
+            .style(oneMEnabled ? oneMStyle : oneMDisabledStyle)
+            .onChange(onOneM)
             .build();
         ++slotIdx;
         sy += 38.0f;
