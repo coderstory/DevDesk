@@ -317,44 +317,6 @@ std::optional<Profile> ClaudeService::resolveFallbackProfile(
     return fb;
 }
 
-std::optional<std::string> ClaudeService::resolveModelSlot(
-    const std::string& slot) {
-    auto profileR = profileRepository_.getActiveProfile();
-    if (profileR.isFail()) {
-        return std::nullopt;   // 无激活 profile → 无可解析（常见路径）
-    }
-    Profile profile = std::move(profileR).value();
-
-    // "def" 是 "default" 的别名；表行 jsonKey 就是 "default"，先归一再查表
-    const std::string key = (slot == "def") ? "default" : slot;
-
-    // default 槽：models_config 未配置或解析失败时回落 profile.model。
-    if (key == "default") {
-        if (!profile.modelsConfigJson.empty()) {
-            auto cfgR = parseModelsConfig(profile.modelsConfigJson);
-            if (cfgR.isOk() && !cfgR.value().def.model.empty()) {
-                return cfgR.value().def.model;
-            }
-        }
-        if (profile.model.empty()) return std::nullopt;
-        return profile.model;
-    }
-
-    if (profile.modelsConfigJson.empty()) return std::nullopt;
-    auto cfgR = parseModelsConfig(profile.modelsConfigJson);
-    if (cfgR.isFail()) return std::nullopt;
-    const ModelsConfig& cfg = cfgR.value();
-    // 槽位键 ↔ 成员映射唯一真相源 = provider_config.h 的 DEVDESK_MODEL_SLOT_LIST（遍历派生，不手写分支）
-    for (const ModelSlotMeta& meta : modelSlotTable()) {
-        if (key == meta.jsonKey) {
-            const std::string& model = (cfg.*(meta.slot)).model;
-            if (model.empty()) return std::nullopt;
-            return model;
-        }
-    }
-    return std::nullopt;   // 未知槽位键
-}
-
 core::Result<platform::http::Response>
 ClaudeService::probeProfile(const Profile& profile, int timeoutMs) {
     // 无 key 也允许：UI 可用未授权请求触发 401 作验证

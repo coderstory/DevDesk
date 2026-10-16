@@ -3318,60 +3318,6 @@ REGISTER_TEST(claude_build_direct_env_slots_extra_env_and_managed_override,
     return true;
 })
 
-// resolveModelSlot：激活 profile 的槽位键 → 实际 model id（LlmClient 消费）。
-// 三态返回：解析到 → 字符串；槽位未配 / model 为空 / 键未知 → nullopt（调用方据此回落默认模型）。
-REGISTER_TEST(claude_service_resolve_model_slot,
-              "claude_service: resolveModelSlot 解析激活 profile 槽位", {
-    using namespace module::claude;
-    // 反重构：这里必须用 TestDb 而不是 InMemoryDb——claude_profiles 由 migrate 建表，
-    // InMemoryDb 是无迁移裸库，profile CRUD 会因缺表失败。
-    test_support::TestDb tdb(kDbPrefix, "resolve_slot");
-    ClaudeService svc(tdb.handle(), kTestKeychainService);
-
-    // 无激活 profile（新库新 service，未 setActive）→ nullopt
-    DOCTEST_CHECK(!svc.resolveModelSlot("default").has_value());
-    DOCTEST_CHECK(!svc.resolveModelSlot("sonnet").has_value());
-
-    auto p = svc.createProfile("R", "https://api.anthropic.com", "sk-test",
-                               "claude-sonnet-4-5");
-    DOCTEST_REQUIRE(p.isOk());
-    DOCTEST_REQUIRE(svc.setActiveProfile(p.value().id).isOk());
-
-    // 无 models_config → default 槽位回落 profile.model（旧列是 default 槽位的 fallback）
-    DOCTEST_CHECK(svc.resolveModelSlot("default").value_or("") ==
-                  "claude-sonnet-4-5");
-    DOCTEST_CHECK(!svc.resolveModelSlot("sonnet").has_value());
-
-    Profile pa = p.value();
-    pa.modelsConfigJson =
-        R"({"default": {"model": "m-default"},)"
-        R"("sonnet": {"model": "m-s"},)"
-        R"("haiku": {"model": "m-h"},)"
-        R"("subagent": {"model": "m-sub"}})";
-    DOCTEST_REQUIRE(svc.updateProfile(pa).isOk());
-
-    // default / def 等价，取 def 槽位
-    DOCTEST_CHECK(svc.resolveModelSlot("default").value_or("") == "m-default");
-    DOCTEST_CHECK(svc.resolveModelSlot("def").value_or("") == "m-default");
-    // haiku 独立断言（与 opus 互换须变红，防止槽位映射整体错位）
-    DOCTEST_CHECK(svc.resolveModelSlot("sonnet").value_or("") == "m-s");
-    DOCTEST_CHECK(svc.resolveModelSlot("haiku").value_or("") == "m-h");
-    DOCTEST_CHECK(svc.resolveModelSlot("subagent").value_or("") == "m-sub");
-    // 表内但未配置的槽位 → nullopt
-    DOCTEST_CHECK(!svc.resolveModelSlot("opus").has_value());
-    // 表内但 model 为空串 → nullopt
-    {
-        Profile pe = p.value();
-        pe.modelsConfigJson = R"({"fable": {"model": "", "name": ""}})";
-        DOCTEST_REQUIRE(svc.updateProfile(pe).isOk());
-        DOCTEST_CHECK(!svc.resolveModelSlot("fable").has_value());
-    }
-    DOCTEST_CHECK(!svc.resolveModelSlot("no-such-slot").has_value());
-
-    test_support::cleanupProfileKey(kTestKeychainService, p.value().id);
-    return true;
-})
-
 // 惰性装配反转 atexit LIFO：main.cpp 的 getClaudeService() 持有 static unique_ptr<ClaudeService>，
 // 惰性装配路径下它构造在 armExitHook 注册之后 → 退出时析构先于 exit hook，hook 里的模块 onStop
 // （claude_module.cpp 的 ClaudeService::global() 分支）读到的是已析构对象。

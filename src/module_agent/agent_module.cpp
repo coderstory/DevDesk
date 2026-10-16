@@ -54,10 +54,8 @@ bool hasLiveRun(const std::map<int64_t, AgentRunRow>& latestRuns,
 }
 
 bool needsClaudePageHint(const std::string& errorText) {
-    // 前缀必须与 llm_client.cpp:56 / :63 原文逐字一致（见头文件注释）
-    if (errorText.rfind("代理未启", 0) == 0) return true;
-    if (errorText.rfind("无法解析模型槽位", 0) == 0) return true;
-    return false;
+    // 前缀必须与 direct_llm_client.cpp 的 kConfigErrorPrefix 原文逐字一致（见头文件注释）
+    return errorText.rfind("LLM 配置不可用", 0) == 0;
 }
 
 std::vector<int64_t> detectRunEndNotifications(
@@ -251,7 +249,7 @@ constexpr float kPageHeaderH = 40.0f;
 constexpr float kNewTaskBtnW = 140.0f;
 constexpr float kTaskRowH = 44.0f;
 constexpr float kPageErrorH = 16.0f;
-// 页内错误行下的「去 Claude 页」引导行高（仅两类 LLM 预检错误渲染）
+// 页内错误行下的「去 Claude 页」引导行高（仅「LLM 配置不可用」类错误渲染）
 constexpr float kPageHintH = 16.0f;
 
 // 任务弹窗几何（cron 与触发同行、仅「定时」渲染、弹窗高度不变）
@@ -452,22 +450,23 @@ void AgentModule::reapFinishedRuns() {
 void AgentModule::ensureLlm() {
     if (loop_ != nullptr) return;       // 已就绪（llm_/loop_/scheduler_ 三者同生共死）
     if (store_ == nullptr) return;
-    core::IClaudeProxyService* proxy = deps_.proxy;
-    if (proxy == nullptr) {
+    // 只解析配置来源（激活 profile），不碰代理运行态：代理开不开与智能体能不能跑无关
+    core::LlmProfileSource* source = deps_.profileSource;
+    if (source == nullptr) {
         auto located =
-            ::core::ServiceLocator::requireService<::core::IClaudeProxyService>();
-        if (located.isOk()) proxy = located.value();
+            ::core::ServiceLocator::requireService<::core::LlmProfileSource>();
+        if (located.isOk()) source = located.value();
     }
-    if (proxy == nullptr) {
+    if (source == nullptr) {
         // 每段「无服务」只提示一次——本函数被页面帧调用，不节流会刷屏
         if (!llmMissingWarned_) {
             llmMissingWarned_ = true;
-            LOG_WARN("Agent: 代理服务未装配，LLM 通道不可用"
+            LOG_WARN("Agent: Claude 配置来源未装配，LLM 通道不可用"
                      "（请在设置页开启 Claude 模块后重试）");
         }
         return;
     }
-    llm_ = std::make_unique<LlmClient>(*proxy, deps_.http);
+    llm_ = std::make_unique<DirectLlmClient>(*source, deps_.http);
     loop_ = std::make_unique<AgentLoop>(*llm_, ::core::ToolRegistry::instance(),
                                         *store_, AgentLoop::NowMsFn{},
                                         [this](int64_t runId, std::string reason) {
@@ -497,7 +496,7 @@ void AgentModule::ensureLlm() {
 }
 
 void AgentModule::startTask(int64_t taskId) {
-    ensureLlm();   // 首次使用路径：会话内拨开的代理服务在此解析
+    ensureLlm();   // 首次使用路径：会话内装配的配置来源在此解析
     if (store_ == nullptr || loop_ == nullptr) {
         LOG_WARN("Agent: 服务未就绪（数据库 / LLM 通道），无法启动任务");
         return;
@@ -942,9 +941,10 @@ void AgentModule::refreshData() {
         }
         taskRuns_[task.id] = std::move(list);
     }
-    // 两类 LLM 预检错误（代理未启 / 槽位解析失败）同步到页内错误行：run 线程失败只
-    // LOG_ERROR，不落 pageError_，弹窗外将零可见出口。仅 pageError_ 为空时同步（用户
-    // 动作的错误优先），且只认 needsClaudePageHint 的两类错误——普通失败不上页内错误行。
+    // 配置不可用类错误（无激活 profile / 未配 Base URL / 未配 API Key / 槽位未配置）
+    // 同步到页内错误行：run 线程失败只 LOG_ERROR，不落 pageError_，弹窗外将零可见出口。
+    // 仅 pageError_ 为空时同步（用户动作的错误优先），且只认 needsClaudePageHint 那一类
+    // 前缀——普通失败（网络 / 上游 4xx）不上页内错误行。
     if (pageError_.empty()) {
         for (const auto& [taskId, run] : latestRuns_) {
             (void)taskId;
@@ -1255,7 +1255,7 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                     .verticalAlign(eui::VerticalAlign::Center)
                     .color(t.colors.error)
                     .build();
-                // 「去 Claude 页」引导：仅两类 LLM 预检错误渲染（needsClaudePageHint 前缀钉死）
+                // 「去 Claude 页」引导：仅「LLM 配置不可用」类错误渲染（needsClaudePageHint 前缀钉死）
                 if (hasPageHint) {
                     ui.text("agent.page.error.hint")
                         .size(contentW, kPageHintH)
@@ -1928,7 +1928,7 @@ void AgentModule::composeTaskDetailDialog(
                 if (run.error && !run.error->empty()) {
                     ++childCount;
                     childrenH += 16.0f;
-                    // 「去 Claude 页」引导行：仅两类 LLM 预检错误渲染，与下方渲染条件一致
+                    // 「去 Claude 页」引导行：仅「LLM 配置不可用」类错误渲染，与下方渲染条件一致
                     if (needsClaudePageHint(*run.error)) {
                         ++childCount;
                         childrenH += 16.0f;
@@ -1973,7 +1973,7 @@ void AgentModule::composeTaskDetailDialog(
                                 .wrap(false)
                                 .color(t.colors.error)
                                 .build();
-                            // 「去 Claude 页」引导：仅两类 LLM 预检错误渲染（needsClaudePageHint 前缀钉死）
+                            // 「去 Claude 页」引导：仅「LLM 配置不可用」类错误渲染（needsClaudePageHint 前缀钉死）
                             if (needsClaudePageHint(*run.error)) {
                                 ui.text(runRowId + ".err.hint")
                                     .size(innerW, 16.0f)

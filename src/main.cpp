@@ -8,6 +8,7 @@
 #include "core/component_theme.h"
 #include "core/database.h"
 #include "core/db_backup.h"
+#include "core/llm_profile_source.h"
 #include "core/logging.h"
 #include "core/module_interface.h"
 #include "core/paths.h"
@@ -292,6 +293,47 @@ claudeProxyProvider() {
     return provider;
 }
 
+// 直连配置来源适配器：ClaudeService 激活 profile → core::LlmDirectProfile（智能体直连用）。
+// 与代理运行态无关——代理没起也照样能取到配置。明文 key 经 loadApiKey 读 DB 加密列，
+// 只在本进程内存里活一次请求：不落盘、不进日志、不进 commit。
+class ClaudeDirectProfileSource final : public ::core::LlmProfileSource {
+public:
+    ::core::Result<::core::LlmDirectProfile> currentProfile() override {
+        ::module::claude::ClaudeService* svc =
+            ::module::claude::ClaudeService::global();
+        if (svc == nullptr) {
+            return ::core::Result<::core::LlmDirectProfile>::fail(
+                ::core::ErrorCode::NoActiveProfile,
+                "Claude 配置服务未装配（请在设置页开启 Claude 模块）");
+        }
+        auto active = svc->getActiveProfile();
+        if (active.isFail()) {
+            return ::core::Result<::core::LlmDirectProfile>::fail(
+                active.errorCode(), active.errorMessage());
+        }
+        const ::module::claude::Profile& p = active.value();
+        auto key = svc->loadApiKey(p.id);
+        if (key.isFail()) {
+            return ::core::Result<::core::LlmDirectProfile>::fail(
+                key.errorCode(), "读取 API Key 失败：" + key.errorMessage());
+        }
+        ::core::LlmDirectProfile out;
+        out.baseUrl = p.baseUrl;
+        out.apiKeyPlain = key.value();
+        out.authField = p.authField;
+        out.modelsConfigJson = p.modelsConfigJson;
+        out.defaultModel = p.model;
+        out.dialectOverride = p.dialectOverride;
+        return ::core::Result<::core::LlmDirectProfile>::ok(std::move(out));
+    }
+};
+
+// 单例适配器（进程级 static）：ServiceLocator 只存指针，注册/注销由 ClaudeService 生命周期决定
+::core::LlmProfileSource& claudeProfileSource() {
+    static ClaudeDirectProfileSource source;
+    return source;
+}
+
 // 与进程同寿的堆持有：exit hook（stopAll → syncRestore 还原 settings.json）须看到活着的服务
 ::module::claude::ClaudeService* getClaudeService() {
     // 故意泄漏：unique_ptr 对象在堆上，永不释放
@@ -306,6 +348,7 @@ claudeProxyProvider() {
         // 与 setGlobal 成对：单例已创建 ⟺ 定位器可解析；模块关闭时不调用 → 定位器未注册
         ::core::ServiceLocator::set<::core::IClaudeProxyService>(
             &claudeProxyProvider());
+        ::core::ServiceLocator::set<::core::LlmProfileSource>(&claudeProfileSource());
     }
     return holder->get();
 }

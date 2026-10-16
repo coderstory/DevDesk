@@ -7,8 +7,8 @@
 //   A. 任务弹窗：触发方式=定时 → cron 输入真实键入 → 模板下拉展开，
 //      断言「下次触发：」预览行文案 + 弹层可见性 + L2 z 碰撞扫描；
 //      --shot-task <path> 落 PNG。
-//   B. 详情弹窗：种子库给一条 failed run（错误文案 = needsClaudePageHint 两类
-//      之一「代理未启…」）+ 一条带 text 块的 assistant 消息，断言
+//   B. 详情弹窗：种子库给一条 failed run（错误文案 = needsClaudePageHint 的
+//      「LLM 配置不可用…」类）+ 一条带 text 块的 assistant 消息，断言
 //      runlist.<i>.err、runlist.<i>.err.hint（去 Claude 页 →）、
 //      msgs.copyfinal chip 三者同时在场；--shot-detail <path> 落 PNG。
 //
@@ -17,7 +17,7 @@
 //
 // 数据种子走真 AgentStore 落库口（createTask/startRun/appendMessage/finishRun），
 // 不绕过产品代码写表——图的身份可查（哪条 run、哪个错误文案渲染出来的）。
-// 错误文案与 llm_client.cpp:56 原文逐字一致（needsClaudePageHint 前缀钉死契约）。
+// 错误文案与 direct_llm_client.cpp 的 kConfigErrorPrefix 逐字一致（前缀钉死契约）。
 //
 // 运行：agent_dialog_probe.exe [--shot-task <png>] [--shot-detail <png>]
 // 不带构图开关 = 纯断言门禁（ctest -L probe 跑的就是这条）；构图开关失败 =
@@ -27,7 +27,6 @@
 #include <eui/detail/dsl_app_impl.h>  // app:: 层内联实现自给（链接需要，同 settings probe）
 #include "test_support.h"
 
-#include "core/claude_proxy_service.h"
 #include "core/module_interface.h"
 #include "module_agent/agent_module.h"
 #include "module_agent/agent_store.h"
@@ -49,28 +48,6 @@ void compose(eui::Ui&, const eui::Screen&) {}
 }  // namespace app
 
 namespace {
-
-// 测试用 fake 代理服务（与 test_agent_ui.cpp 同款；渲染路径只读
-// isProxyRunning/resolveModelSlot）
-class FakeProxy : public core::IClaudeProxyService {
-public:
-    bool running = true;
-    int port = 8787;
-
-    bool isProxyRunning() const override { return running; }
-    int proxyPort() const override { return port; }
-    void setConfiguredProxyPort(int) override {}
-    void stopProxy() override {}
-    core::Result<int> startProxy(const std::string&, int) override {
-        return core::Result<int>::fail(core::ErrorCode::Internal, "unused");
-    }
-    bool isClaudeCodeManaged() const override { return false; }
-    std::vector<std::string> lastSyncWarnings() const override { return {}; }
-    std::string settingsFilePath() const override { return {}; }
-    std::optional<std::string> resolveModelSlot(const std::string&) override {
-        return std::string("claude-sonnet-5-5");
-    }
-};
 
 bool floatEq(float a, float b) { return std::fabs(a - b) < 0.5f; }
 
@@ -97,11 +74,11 @@ int main(int argc, char* argv[]) {
     }
 
     test_support::TestDb tdb("aprobe_", "agentdlg");
-    FakeProxy proxy;
+    test_support::FakeProfileSource profile;
 
     // 种子（真 AgentStore 落库口）：1 个手动任务 + 1 条 failed run。
-    // 错误文案与 llm_client.cpp:56「代理未启，请先在 Claude 页启动代理」逐字
-    // 一致——needsClaudePageHint 按前缀「代理未启」钉死，文案一变引导即消失。
+    // 错误文案与 direct_llm_client.cpp 的 kConfigErrorPrefix 逐字一致——
+    // needsClaudePageHint 按前缀「LLM 配置不可用」钉死，文案一变引导即消失。
     int64_t taskId = 0;
     int64_t runId = 0;
     {
@@ -133,12 +110,14 @@ int main(int argc, char* argv[]) {
             R"([{"type":"text","text":"今日完成：全量回归 1301 用例，5 失败均为已知 keychain/DPAPI 环境问题；模块隔离守卫通过。"}])",
             std::nullopt);
         store.finishRun(runId, "failed", 1, std::nullopt, std::nullopt,
-                        std::string("代理未启，请先在 Claude 页启动代理"));
+                        std::string("LLM 配置不可用：没有激活的 Claude profile，"
+                                    "请在 DevDesk 的 Claude 页选中 Profile 并点击"
+                                    "「启用」"));
     }
 
     module::agent::AgentModule::Deps deps;
     deps.db = &tdb.handle();
-    deps.proxy = &proxy;
+    deps.profileSource = &profile;
     module::agent::AgentModule mod(deps);
     mod.onStart();
 
@@ -321,14 +300,14 @@ int main(int argc, char* argv[]) {
             passed = false;
         }
 
-        // 错误行 + 引导行（文案钉死：错误=代理未启前缀 → 引导「去 Claude 页 →」）
+        // 错误行 + 引导行（文案钉死：错误=「LLM 配置不可用」前缀 → 引导「去 Claude 页 →」）
         const std::string errId = "agent.dialog.detail.runlist.0.err";
         const auto* errRow = findElement(errId);
         if (errRow == nullptr) {
             std::cerr << "agent_dialog_probe: 错误行 '" << errId
                       << "' 缺失（failed run 的 error 未渲染）\n";
             passed = false;
-        } else if (errRow->text.rfind("错误：代理未启", 0) != 0) {
+        } else if (errRow->text.rfind("错误：LLM 配置不可用", 0) != 0) {
             std::cerr << "agent_dialog_probe: 错误行文案不是种子错误原文（实测 '"
                       << errRow->text << "'）\n";
             passed = false;

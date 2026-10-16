@@ -26,7 +26,6 @@
 #include "test_support.h"
 
 #include "app_sidebar.h"
-#include "core/claude_proxy_service.h"
 #include "core/event_bus.h"
 #include "core/module_interface.h"
 #include "core/router.h"
@@ -51,27 +50,6 @@
 #include <vector>
 
 namespace {
-
-// 测试用 fake 代理服务
-class FakeProxy : public core::IClaudeProxyService {
-public:
-    bool running = true;
-    int port = 8787;
-
-    bool isProxyRunning() const override { return running; }
-    int proxyPort() const override { return port; }
-    void setConfiguredProxyPort(int) override {}
-    void stopProxy() override {}
-    core::Result<int> startProxy(const std::string&, int) override {
-        return core::Result<int>::fail(core::ErrorCode::Internal, "unused");
-    }
-    bool isClaudeCodeManaged() const override { return false; }
-    std::vector<std::string> lastSyncWarnings() const override { return {}; }
-    std::string settingsFilePath() const override { return {}; }
-    std::optional<std::string> resolveModelSlot(const std::string&) override {
-        return std::string("claude-sonnet-5-5");
-    }
-};
 
 // RAII：用例退出（含 fail-fast 提前 return 路径）时把 app.stats 从进程级
 // 注册表摘除（ToolRegistry 不在 resetCaseGlobals 清单里）
@@ -165,12 +143,12 @@ bool openDetailDialog(eui::Ui& ui, module::agent::AgentModule& mod,
 REGISTER_TEST(agent_ui_compose_skeleton,
               "agent_ui: 空库页面骨架（列表是 scrollView / 旧页内表单节点已删 / 弹窗未开不渲染）", {
     test_support::TestDb tdb("agentui", "skeleton");
-    FakeProxy proxy;
+    test_support::FakeProfileSource profile;
     ToolGuard statsGuard{"app.stats"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
     module::agent::AgentModule::Deps deps;
     deps.db = &tdb.handle();
-    deps.proxy = &proxy;
+    deps.profileSource = &profile;
     module::agent::AgentModule mod(deps);
     mod.onStart();
 
@@ -223,12 +201,12 @@ REGISTER_TEST(agent_ui_compose_skeleton,
 REGISTER_TEST(agent_ui_db_import_reloads_tasks,
               "agent_ui: db.imported 置脏 → compose 重载任务列表", {
     test_support::TestDb tdb("agentui", "dbimport");
-    FakeProxy proxy;
+    test_support::FakeProfileSource profile;
     ToolGuard statsGuard{"app.stats"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
     module::agent::AgentModule::Deps deps;
     deps.db = &tdb.handle();
-    deps.proxy = &proxy;
+    deps.profileSource = &profile;
     module::agent::AgentModule mod(deps);
     mod.onStart();
 
@@ -263,13 +241,13 @@ REGISTER_TEST(agent_ui_db_import_reloads_tasks,
 REGISTER_TEST(agent_ui_new_task_dialog_fields,
               "agent_ui: 点「+ 新建任务」→ 弹窗全字段存在；cron 仅触发方式=定时 时渲染", {
     test_support::TestDb tdb("agentui", "dialogfields");
-    FakeProxy proxy;
+    test_support::FakeProfileSource profile;
     ToolGuard statsGuard{"app.stats"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
 
     module::agent::AgentModule::Deps deps;
     deps.db = &tdb.handle();
-    deps.proxy = &proxy;
+    deps.profileSource = &profile;
     module::agent::AgentModule mod(deps);
     mod.onStart();
 
@@ -318,13 +296,13 @@ REGISTER_TEST(agent_ui_new_task_dialog_fields,
 REGISTER_TEST(agent_ui_dialog_create_task_persists_fields,
               "agent_ui: 弹窗新建保存 → 落库行 trigger/slot/iter/destructive 与表单取值一致 + 弹窗关闭", {
     test_support::TestDb tdb("agentui", "dlgsave");
-    FakeProxy proxy;
+    test_support::FakeProfileSource profile;
     ToolGuard statsGuard{"app.stats"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
 
     module::agent::AgentModule::Deps deps;
     deps.db = &tdb.handle();
-    deps.proxy = &proxy;
+    deps.profileSource = &profile;
     module::agent::AgentModule mod(deps);
     mod.onStart();
     module::agent::AgentStore store(tdb.handle());
@@ -382,13 +360,13 @@ REGISTER_TEST(agent_ui_dialog_create_task_persists_fields,
 REGISTER_TEST(agent_ui_dialog_save_rejects_bad_cron,
               "agent_ui: 非法 cron 保存被拒（弹窗内报错 / 不落库 / 弹窗不关）", {
     test_support::TestDb tdb("agentui", "badcron");
-    FakeProxy proxy;
+    test_support::FakeProfileSource profile;
     ToolGuard statsGuard{"app.stats"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
 
     module::agent::AgentModule::Deps deps;
     deps.db = &tdb.handle();
-    deps.proxy = &proxy;
+    deps.profileSource = &profile;
     module::agent::AgentModule mod(deps);
     mod.onStart();
     module::agent::AgentStore store(tdb.handle());
@@ -424,13 +402,13 @@ REGISTER_TEST(agent_ui_dialog_save_rejects_bad_cron,
 REGISTER_TEST(agent_ui_dialog_cancel_close_backdrop_esc,
               "agent_ui: 取消 / ✕ / 点遮罩 / Esc 四条关闭路径都不落库", {
     test_support::TestDb tdb("agentui", "dlgclose");
-    FakeProxy proxy;
+    test_support::FakeProfileSource profile;
     ToolGuard statsGuard{"app.stats"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
 
     module::agent::AgentModule::Deps deps;
     deps.db = &tdb.handle();
-    deps.proxy = &proxy;
+    deps.profileSource = &profile;
     module::agent::AgentModule mod(deps);
     mod.onStart();
     module::agent::AgentStore store(tdb.handle());
@@ -495,7 +473,7 @@ REGISTER_TEST(agent_ui_dialog_cancel_close_backdrop_esc,
 REGISTER_TEST(agent_ui_edit_dialog_prefills_and_updates,
               "agent_ui: 行内「编辑」→ 弹窗预填（goal/cron/slot/iter 与库一致）→ 保存走 updateTask", {
     test_support::TestDb tdb("agentui", "dlgedit");
-    FakeProxy proxy;
+    test_support::FakeProfileSource profile;
     ToolGuard statsGuard{"app.stats"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
     module::agent::AgentStore store(tdb.handle());
@@ -506,7 +484,7 @@ REGISTER_TEST(agent_ui_edit_dialog_prefills_and_updates,
 
     module::agent::AgentModule::Deps deps;
     deps.db = &tdb.handle();
-    deps.proxy = &proxy;
+    deps.profileSource = &profile;
     module::agent::AgentModule mod(deps);
     mod.onStart();
 
@@ -567,7 +545,7 @@ REGISTER_TEST(agent_ui_edit_dialog_prefills_and_updates,
 REGISTER_TEST(agent_ui_run_button_opens_detail_dialog,
               "agent_ui: 点「启动」→ 详情弹窗立即打开；跑完最终 assistant 回复默认展开可见", {
     test_support::TestDb tdb("agentui", "runopens");
-    FakeProxy proxy;
+    test_support::FakeProfileSource profile;
     ToolGuard statsGuard{"app.stats"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
 
@@ -579,7 +557,7 @@ REGISTER_TEST(agent_ui_run_button_opens_detail_dialog,
 
     module::agent::AgentModule::Deps deps;
     deps.db = &tdb.handle();
-    deps.proxy = &proxy;
+    deps.profileSource = &profile;
     deps.http = [](const platform::http::Request&) {
         platform::http::Response res;
         res.statusCode = 200;
@@ -641,7 +619,7 @@ REGISTER_TEST(agent_ui_run_button_opens_detail_dialog,
 REGISTER_TEST(agent_ui_detail_dialog_shows_config_runs_messages,
               "agent_ui: 详情弹窗配置摘要 + run 列表倒序/最近高亮 + 消息默认展开态（最终回复展开、其余折叠）", {
     test_support::TestDb tdb("agentui", "detaildlg");
-    FakeProxy proxy;
+    test_support::FakeProfileSource profile;
     ToolGuard statsGuard{"app.stats"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
     module::agent::AgentStore store(tdb.handle());
@@ -685,7 +663,7 @@ REGISTER_TEST(agent_ui_detail_dialog_shows_config_runs_messages,
 
     module::agent::AgentModule::Deps deps;
     deps.db = &tdb.handle();
-    deps.proxy = &proxy;
+    deps.profileSource = &profile;
     module::agent::AgentModule mod(deps);
     mod.onStart();
 
@@ -745,7 +723,7 @@ REGISTER_TEST(agent_ui_detail_dialog_shows_config_runs_messages,
 REGISTER_TEST(agent_ui_detail_message_toggle_and_copy,
               "agent_ui: 详情弹窗内消息展开→tool_use chip + tool_result 全文 + 高度增大 + 复制 chip", {
     test_support::TestDb tdb("agentui", "msgtoggle");
-    FakeProxy proxy;
+    test_support::FakeProfileSource profile;
     ToolGuard statsGuard{"app.stats"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
     module::agent::AgentStore store(tdb.handle());
@@ -777,7 +755,7 @@ REGISTER_TEST(agent_ui_detail_message_toggle_and_copy,
 
     module::agent::AgentModule::Deps deps;
     deps.db = &tdb.handle();
-    deps.proxy = &proxy;
+    deps.profileSource = &profile;
     module::agent::AgentModule mod(deps);
     mod.onStart();
     const std::string base = "agent.dialog.detail";
@@ -831,7 +809,7 @@ REGISTER_TEST(agent_ui_detail_message_toggle_and_copy,
 REGISTER_TEST(agent_ui_detail_copy_final_reply_chip,
                "agent_ui: 详情弹窗「消息（N）」标题行复制回复 chip（tool 收尾取最后 assistant / 无回复不渲染）", {
     test_support::TestDb tdb("agentui", "copyfinal");
-    FakeProxy proxy;
+    test_support::FakeProfileSource profile;
     ToolGuard statsGuard{"app.stats"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
     module::agent::AgentStore store(tdb.handle());
@@ -875,7 +853,7 @@ REGISTER_TEST(agent_ui_detail_copy_final_reply_chip,
 
     module::agent::AgentModule::Deps deps;
     deps.db = &tdb.handle();
-    deps.proxy = &proxy;
+    deps.profileSource = &profile;
     module::agent::AgentModule mod(deps);
     mod.onStart();
 
@@ -929,7 +907,7 @@ REGISTER_TEST(agent_ui_detail_copy_final_reply_chip,
 REGISTER_TEST(agent_ui_detail_dialog_close_and_reopen,
               "agent_ui: 关详情弹窗不改任务列表；重开回到最近一次 run", {
     test_support::TestDb tdb("agentui", "detailreopen");
-    FakeProxy proxy;
+    test_support::FakeProfileSource profile;
     ToolGuard statsGuard{"app.stats"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
     module::agent::AgentStore store(tdb.handle());
@@ -958,7 +936,7 @@ REGISTER_TEST(agent_ui_detail_dialog_close_and_reopen,
 
     module::agent::AgentModule::Deps deps;
     deps.db = &tdb.handle();
-    deps.proxy = &proxy;
+    deps.profileSource = &profile;
     module::agent::AgentModule mod(deps);
     mod.onStart();
     const std::string base = "agent.dialog.detail";
@@ -1000,7 +978,7 @@ REGISTER_TEST(agent_ui_detail_dialog_close_and_reopen,
 REGISTER_TEST(agent_ui_detail_runlist_error_rows_no_overlap,
               "agent_ui: 详情弹窗 3 条 error 的 run 列表不压消息标题（runsH 必须计入 error 行的 gap；回退即红）", {
     test_support::TestDb tdb("agentui", "errrows");
-    FakeProxy proxy;
+    test_support::FakeProfileSource profile;
     ToolGuard statsGuard{"app.stats"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
     module::agent::AgentStore store(tdb.handle());
@@ -1019,7 +997,7 @@ REGISTER_TEST(agent_ui_detail_runlist_error_rows_no_overlap,
 
     module::agent::AgentModule::Deps deps;
     deps.db = &tdb.handle();
-    deps.proxy = &proxy;
+    deps.profileSource = &profile;
     module::agent::AgentModule mod(deps);
     mod.onStart();
 
@@ -1059,7 +1037,7 @@ REGISTER_TEST(agent_ui_detail_runlist_error_rows_no_overlap,
 REGISTER_TEST(agent_ui_edit_read_failure_shows_page_error,
               "agent_ui: 点「编辑」读库失败（陈旧缓存）→ 页内错误行可见、弹窗不开、下次成功动作清除", {
     test_support::TestDb tdb("agentui", "editerr");
-    FakeProxy proxy;
+    test_support::FakeProfileSource profile;
     ToolGuard statsGuard{"app.stats"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
     module::agent::AgentStore store(tdb.handle());
@@ -1069,7 +1047,7 @@ REGISTER_TEST(agent_ui_edit_read_failure_shows_page_error,
 
     module::agent::AgentModule::Deps deps;
     deps.db = &tdb.handle();
-    deps.proxy = &proxy;
+    deps.profileSource = &profile;
     module::agent::AgentModule mod(deps);
     mod.onStart();
 
@@ -1110,13 +1088,13 @@ REGISTER_TEST(agent_ui_edit_read_failure_shows_page_error,
 REGISTER_TEST(agent_ui_tools_section_toggle,
               "agent_ui: 可用工具区块收起默认→展开列出注册表全部工具（名称+描述+参数）", {
     test_support::TestDb tdb("agentui", "tools");
-    FakeProxy proxy;
+    test_support::FakeProfileSource profile;
     ToolGuard statsGuard{"app.stats"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
 
     module::agent::AgentModule::Deps deps;
     deps.db = &tdb.handle();
-    deps.proxy = &proxy;
+    deps.profileSource = &profile;
     module::agent::AgentModule mod(deps);
     mod.onStart();   // 注册 app.stats → 注册表恰 1 个（测试环境干净起点）
 
@@ -1174,7 +1152,7 @@ REGISTER_TEST(agent_ui_tools_section_toggle,
 REGISTER_TEST(agent_ui_dialog_geometry_design_size_and_budget,
               "agent_ui: 任务弹窗几何——设计尺寸 760x500 / 行底 ≤ 按钮行顶 / 超长目标与超长任务名不挤位 / 下拉展开态全在屏内", {
     test_support::TestDb tdb("agentui", "dlggeom");
-    FakeProxy proxy;
+    test_support::FakeProfileSource profile;
     ToolGuard statsGuard{"app.stats"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
     module::agent::AgentStore store(tdb.handle());
@@ -1192,7 +1170,7 @@ REGISTER_TEST(agent_ui_dialog_geometry_design_size_and_budget,
 
     module::agent::AgentModule::Deps deps;
     deps.db = &tdb.handle();
-    deps.proxy = &proxy;
+    deps.profileSource = &profile;
     module::agent::AgentModule mod(deps);
     mod.onStart();
 
@@ -1351,7 +1329,7 @@ REGISTER_TEST(agent_ui_dialog_geometry_design_size_and_budget,
 REGISTER_TEST(agent_ui_detail_dialog_geometry_and_empty_state,
               "agent_ui: 详情弹窗设计尺寸 760x660 / 消息区底 ≤ 面板底 / 空态占位垂直居中", {
     test_support::TestDb tdb("agentui", "dgeom");
-    FakeProxy proxy;
+    test_support::FakeProfileSource profile;
     ToolGuard statsGuard{"app.stats"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
     module::agent::AgentStore store(tdb.handle());
@@ -1375,7 +1353,7 @@ REGISTER_TEST(agent_ui_detail_dialog_geometry_and_empty_state,
 
     module::agent::AgentModule::Deps deps;
     deps.db = &tdb.handle();
-    deps.proxy = &proxy;
+    deps.profileSource = &profile;
     module::agent::AgentModule mod(deps);
     mod.onStart();
 
@@ -1431,13 +1409,13 @@ REGISTER_TEST(agent_ui_detail_dialog_geometry_and_empty_state,
 REGISTER_TEST(agent_ui_sidebar_registers_agent,
               "agent_ui: 真 app::compose 侧边栏出现「智能体」项（Router 注册 AgentModule）", {
     test_support::TestDb tdb("agentui", "sidebar");
-    FakeProxy proxy;
+    test_support::FakeProfileSource profile;
     ToolGuard statsGuard{"app.stats"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
 
     module::agent::AgentModule::Deps deps;
     deps.db = &tdb.handle();
-    deps.proxy = &proxy;
+    deps.profileSource = &profile;
     module::agent::AgentModule mod(deps);
     mod.onStart();
 
@@ -1468,7 +1446,7 @@ REGISTER_TEST(agent_ui_sidebar_registers_agent,
 REGISTER_TEST(agent_ui_resident_enqueue_starts_run,
               "agent_ui: 常驻任务行的「入队」按钮经 Scheduler 真派发起 run（落 completed）", {
     test_support::TestDb tdb("agentui", "enqueue");
-    FakeProxy proxy;
+    test_support::FakeProfileSource profile;
     ToolGuard statsGuard{"app.stats"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
     module::agent::AgentStore store(tdb.handle());
@@ -1479,7 +1457,7 @@ REGISTER_TEST(agent_ui_resident_enqueue_starts_run,
 
     module::agent::AgentModule::Deps deps;
     deps.db = &tdb.handle();
-    deps.proxy = &proxy;
+    deps.profileSource = &profile;
     deps.http = [](const platform::http::Request&) {
         platform::http::Response res;
         res.statusCode = 200;
@@ -1617,7 +1595,7 @@ REGISTER_TEST(agent_run_end_notify_transition_rules,
 REGISTER_TEST(agent_ui_run_failed_shows_toast,
               "agent_ui: run 失败 → 通知入队（failed 必响，标题含失败、正文含任务名）", {
     test_support::TestDb tdb("agentui", "failtoast");
-    FakeProxy proxy;
+    test_support::FakeProfileSource profile;
     ToolGuard statsGuard{"app.stats"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
     module::agent::AgentStore store(tdb.handle());
@@ -1628,7 +1606,7 @@ REGISTER_TEST(agent_ui_run_failed_shows_toast,
 
     module::agent::AgentModule::Deps deps;
     deps.db = &tdb.handle();
-    deps.proxy = &proxy;
+    deps.profileSource = &profile;
     deps.http = [](const platform::http::Request&) {
         // 拖慢失败返回：保证轮询帧先观测到 running（否则首帧即终态 → 无迁移、无通知）
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -1672,7 +1650,7 @@ REGISTER_TEST(agent_ui_run_failed_shows_toast,
 REGISTER_TEST(agent_ui_run_completed_silent_no_toast,
               "agent_ui: run 成功 → 不产生 run 结束通知（completed 静默）", {
     test_support::TestDb tdb("agentui", "silentok");
-    FakeProxy proxy;
+    test_support::FakeProfileSource profile;
     ToolGuard statsGuard{"app.stats"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
     module::agent::AgentStore store(tdb.handle());
@@ -1683,7 +1661,7 @@ REGISTER_TEST(agent_ui_run_completed_silent_no_toast,
 
     module::agent::AgentModule::Deps deps;
     deps.db = &tdb.handle();
-    deps.proxy = &proxy;
+    deps.profileSource = &profile;
     deps.http = [](const platform::http::Request&) {
         platform::http::Response res;
         res.statusCode = 200;
@@ -1736,7 +1714,7 @@ REGISTER_TEST(agent_ui_run_completed_silent_no_toast,
 REGISTER_TEST(agent_run_end_notice_app_channel_off_page,
               "agent_ui: run 失败迁移在非智能体页时经装配层拉取路径弹 app.notice（跨页可见）", {
     test_support::TestDb tdb("agentui", "appchan");
-    FakeProxy proxy;
+    test_support::FakeProfileSource profile;
     ToolGuard statsGuard{"app.stats"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
     module::agent::AgentStore store(tdb.handle());
@@ -1747,7 +1725,7 @@ REGISTER_TEST(agent_run_end_notice_app_channel_off_page,
 
     module::agent::AgentModule::Deps deps;
     deps.db = &tdb.handle();
-    deps.proxy = &proxy;
+    deps.profileSource = &profile;
     deps.http = [](const platform::http::Request&) {
         // 拖慢失败返回：保证轮询帧先观测到 running（否则首帧即终态 → 无迁移、无通知）
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -1941,12 +1919,12 @@ REGISTER_TEST(agent_run_end_fallback_throttle,
 REGISTER_TEST(agent_ui_cron_template_dropdown_and_preview,
               "agent_ui: 定时分支模板下拉（≥4 条）选中回填 cron / 预览行随 editCron 即时更新（合法显下次触发、非法显校验、无匹配显一年内）/ 弹窗高不变", {
     test_support::TestDb tdb("agentui", "crontpl");
-    FakeProxy proxy;
+    test_support::FakeProfileSource profile;
     ToolGuard statsGuard{"app.stats"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
     module::agent::AgentModule::Deps deps;
     deps.db = &tdb.handle();
-    deps.proxy = &proxy;
+    deps.profileSource = &profile;
     module::agent::AgentModule mod(deps);
     mod.onStart();
 
@@ -2057,26 +2035,32 @@ private:
     core::PageId page_;
 };
 
-// 两类错误原文常量：与 llm_client.cpp:56 / :63 逐字一致（文案一变本组用例即红——
-// 前缀匹配刻意脆弱，防文案漂移后引导静默失效）
-const char* const kProxyNotRunningErr =
-    "代理未启，请先在 Claude 页启动代理";
+// 配置不可用类错误原文常量：与 direct_llm_client.cpp 的 kConfigErrorPrefix 逐字一致
+// （文案一变本组用例即红——前缀匹配刻意脆弱，防文案漂移后引导静默失效）
+const char* const kNoProfileErr =
+    "LLM 配置不可用：没有激活的 Claude profile，请在 DevDesk 的 Claude 页选中 "
+    "Profile 并点击「启用」";
 const char* const kSlotResolveErr =
-    "无法解析模型槽位「default」（无激活 profile 或槽位未配置）";
+    "LLM 配置不可用：无法解析模型槽位「default」（该槽位未配置模型，请在 Claude 页补全）";
 
 REGISTER_TEST(agent_needs_claude_page_hint_predicate,
-              "agent: needsClaudePageHint 前缀匹配两类 LLM 预检错误原文，其余一律 false", {
+              "agent: needsClaudePageHint 前缀匹配「LLM 配置不可用」类错误原文，其余一律 false", {
     using module::agent::needsClaudePageHint;
-    // 正例：llm_client.cpp:56 / :63 原文钉死
-    DOCTEST_CHECK(needsClaudePageHint(kProxyNotRunningErr));
+    // 正例：direct_llm_client.cpp 的四类配置错误（无激活 profile / 未配 Base URL /
+    // 未配 API Key / 槽位未配置）共用同一前缀
+    DOCTEST_CHECK(needsClaudePageHint(kNoProfileErr));
     DOCTEST_CHECK(needsClaudePageHint(kSlotResolveErr));
+    DOCTEST_CHECK(needsClaudePageHint(
+        "LLM 配置不可用：激活 profile 未配置 Base URL，请在 Claude 页补全"));
+    DOCTEST_CHECK(needsClaudePageHint(
+        "LLM 配置不可用：激活 profile 未配置 API Key，请在 Claude 页补全"));
     // 同前缀 + 追加后缀仍匹配（错误行拼接 / 重试提示等）
     DOCTEST_CHECK(needsClaudePageHint(
-        std::string(kProxyNotRunningErr) + "（已重试 3 次）"));
+        std::string(kNoProfileErr) + "（已重试 3 次）"));
     DOCTEST_CHECK(needsClaudePageHint(
         std::string(kSlotResolveErr) + "，请检查配置"));
-    // 负例：不含两前缀的普通错误一律 false（「代理未启动」以「代理未启」开头，
-    // 属前缀匹配的正当命中——它是 app 级 toast 标题，不经错误行，不构成误配面）
+    // 负例：不含该前缀的普通错误一律 false（代理运行态错误已不在此列——
+    // 智能体直连，代理开不开与它无关）
     DOCTEST_CHECK(!needsClaudePageHint(""));
     DOCTEST_CHECK(!needsClaudePageHint("错误文案 1"));
     DOCTEST_CHECK(!needsClaudePageHint("读取任务失败：库锁"));
@@ -2087,20 +2071,20 @@ REGISTER_TEST(agent_needs_claude_page_hint_predicate,
 })
 
 REGISTER_TEST(agent_ui_detail_error_hint_navigates_to_claude,
-              "agent_ui: 详情弹窗两类错误行下出现「去 Claude 页」可点引导，点击跳转 Claude 页", {
+              "agent_ui: 详情弹窗「LLM 配置不可用」错误行下出现「去 Claude 页」可点引导，点击跳转 Claude 页", {
     test_support::TestDb tdb("agentui", "errhint");
-    FakeProxy proxy;
+    test_support::FakeProfileSource profile;
     ToolGuard statsGuard{"app.stats"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
     module::agent::AgentStore store(tdb.handle());
     auto created = store.createTask("错误引导任务", "g", "manual", "default", 10, false);
     DOCTEST_REQUIRE(created.isOk());
     const std::string tid = std::to_string(created.value());
-    // 两条 run 分别落两类错误原文（runlist 按时间倒序：runlist.1 在前 = 最新）
+    // 两条 run 分别落两类配置不可用错误原文（runlist 按时间倒序：runlist.1 在前 = 最新）
     auto r1 = store.startRun(created.value());
     DOCTEST_REQUIRE(r1.isOk());
     DOCTEST_REQUIRE(store.finishRun(r1.value(), "failed", 1, int64_t(10),
-                                    int64_t(1), kProxyNotRunningErr).isOk());
+                                    int64_t(1), kNoProfileErr).isOk());
     auto r2 = store.startRun(created.value());
     DOCTEST_REQUIRE(r2.isOk());
     DOCTEST_REQUIRE(store.finishRun(r2.value(), "failed", 1, int64_t(10),
@@ -2108,7 +2092,7 @@ REGISTER_TEST(agent_ui_detail_error_hint_navigates_to_claude,
 
     module::agent::AgentModule::Deps deps;
     deps.db = &tdb.handle();
-    deps.proxy = &proxy;
+    deps.profileSource = &profile;
     module::agent::AgentModule mod(deps);
     mod.onStart();
 
@@ -2164,9 +2148,9 @@ REGISTER_TEST(agent_ui_detail_error_hint_navigates_to_claude,
 })
 
 REGISTER_TEST(agent_ui_detail_error_hint_only_two_classes,
-              "agent_ui: 其它错误（网络/落库/普通文案）不渲染「去 Claude 页」引导", {
+              "agent_ui: 其它错误（网络/上游 4xx/落库/普通文案）不渲染「去 Claude 页」引导", {
     test_support::TestDb tdb("agentui", "errhintneg");
-    FakeProxy proxy;
+    test_support::FakeProfileSource profile;
     ToolGuard statsGuard{"app.stats"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
     module::agent::AgentStore store(tdb.handle());
@@ -2174,6 +2158,7 @@ REGISTER_TEST(agent_ui_detail_error_hint_only_two_classes,
     DOCTEST_REQUIRE(created.isOk());
     const std::string tid = std::to_string(created.value());
     const std::string otherErrs[] = {
+        "上游 HTTP 401: {\"error\":\"invalid_api_key\"}",
         "请求失败：connection refused",
         "落库 agent_messages 失败：disk full",
         "错误文案 0",
@@ -2187,7 +2172,7 @@ REGISTER_TEST(agent_ui_detail_error_hint_only_two_classes,
 
     module::agent::AgentModule::Deps deps;
     deps.db = &tdb.handle();
-    deps.proxy = &proxy;
+    deps.profileSource = &profile;
     module::agent::AgentModule mod(deps);
     mod.onStart();
 
@@ -2196,11 +2181,11 @@ REGISTER_TEST(agent_ui_detail_error_hint_only_two_classes,
     DOCTEST_REQUIRE(openDetailDialog(ui, mod, tid));
     eui::Ui ui2;
     composeTo(ui2, mod, kScreen, "agent_ui_hintneg2");
-    for (int i = 0; i < 3; ++i) {
+    for (int i = 0; i < 4; ++i) {
         const std::string hintId =
             "agent.dialog.detail.runlist." + std::to_string(i) + ".err.hint";
         DOCTEST_CHECK_MESSAGE(ui2.find(hintId) == nullptr,
-                              "非两类错误渲染了引导: " + hintId);
+                              "非配置不可用类错误渲染了引导: " + hintId);
         const std::string errId =
             "agent.dialog.detail.runlist." + std::to_string(i) + ".err";
         DOCTEST_CHECK(ui2.find(errId) != nullptr);   // 错误行本身仍在
@@ -2211,16 +2196,16 @@ REGISTER_TEST(agent_ui_detail_error_hint_only_two_classes,
 })
 
 REGISTER_TEST(agent_ui_page_error_hint_navigates_to_claude,
-              "agent_ui: 页内错误行同两类错误 → 同样「去 Claude 页」引导（弹窗外路径）", {
+              "agent_ui: 页内错误行同属「LLM 配置不可用」→ 同样「去 Claude 页」引导（弹窗外路径）", {
     test_support::TestDb tdb("agentui", "pagehint");
-    FakeProxy proxy;
+    test_support::FakeProfileSource profile;
     ToolGuard statsGuard{"app.stats"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
     module::agent::AgentStore store(tdb.handle());
     auto created = store.createTask("页内引导任务", "g", "manual", "default", 10, false);
     DOCTEST_REQUIRE(created.isOk());
     const std::string tid = std::to_string(created.value());
-    // 两类错误各一条 run（同一任务，最新在前）
+    // 配置不可用类错误两条 run（同一任务，最新在前）
     auto r1 = store.startRun(created.value());
     DOCTEST_REQUIRE(r1.isOk());
     DOCTEST_REQUIRE(store.finishRun(r1.value(), "failed", 1, int64_t(10),
@@ -2228,11 +2213,11 @@ REGISTER_TEST(agent_ui_page_error_hint_navigates_to_claude,
     auto r2 = store.startRun(created.value());
     DOCTEST_REQUIRE(r2.isOk());
     DOCTEST_REQUIRE(store.finishRun(r2.value(), "limited", 1, int64_t(10),
-                                    int64_t(1), kProxyNotRunningErr).isOk());
+                                    int64_t(1), kNoProfileErr).isOk());
 
     module::agent::AgentModule::Deps deps;
     deps.db = &tdb.handle();
-    deps.proxy = &proxy;
+    deps.profileSource = &profile;
     module::agent::AgentModule mod(deps);
     mod.onStart();
 
@@ -2240,8 +2225,8 @@ REGISTER_TEST(agent_ui_page_error_hint_navigates_to_claude,
     composeTo(ui, mod, kScreen, "agent_ui_pagehint1");
     const auto* pageErr = ui.find("agent.page.error");
     DOCTEST_REQUIRE_MESSAGE(pageErr != nullptr,
-                            "run 两类错误未同步到页内错误行（弹窗外零可见出口）");
-    DOCTEST_CHECK(pageErr->text.find("代理未启") == 0);
+                            "run 的配置不可用错误未同步到页内错误行（弹窗外零可见出口）");
+    DOCTEST_CHECK(pageErr->text.rfind("LLM 配置不可用", 0) == 0);
     const auto* hint = ui.find("agent.page.error.hint");
     DOCTEST_REQUIRE_MESSAGE(hint != nullptr, "页内错误行下缺「去 Claude 页」引导");
     DOCTEST_CHECK_MESSAGE(hint->text.find("去 Claude 页") != std::string::npos,
@@ -2276,9 +2261,9 @@ REGISTER_TEST(agent_ui_page_error_hint_navigates_to_claude,
 })
 
 REGISTER_TEST(agent_ui_page_error_no_hint_other_errors,
-              "agent_ui: 页内错误行非两类错误（读库失败/普通 run 失败）不渲染引导", {
+              "agent_ui: 页内错误行非「LLM 配置不可用」类（读库失败/普通 run 失败）不渲染引导", {
     test_support::TestDb tdb("agentui", "pagehintneg");
-    FakeProxy proxy;
+    test_support::FakeProfileSource profile;
     ToolGuard statsGuard{"app.stats"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
     module::agent::AgentStore store(tdb.handle());
@@ -2292,11 +2277,11 @@ REGISTER_TEST(agent_ui_page_error_no_hint_other_errors,
 
     module::agent::AgentModule::Deps deps;
     deps.db = &tdb.handle();
-    deps.proxy = &proxy;
+    deps.profileSource = &profile;
     module::agent::AgentModule mod(deps);
     mod.onStart();
 
-    // 普通 run 失败不同步页内错误行（非两类错误）
+    // 普通 run 失败不同步页内错误行（非配置不可用类错误）
     eui::Ui ui;
     composeTo(ui, mod, kScreen, "agent_ui_pagehintneg1");
     DOCTEST_CHECK(ui.find("agent.page.error") == nullptr);
@@ -2319,13 +2304,13 @@ REGISTER_TEST(agent_ui_page_error_no_hint_other_errors,
 REGISTER_TEST(agent_ui_new_task_context_note_and_autonote,
               "agent_ui: 新建弹窗含执行记忆多行输入 + 自动记录开关（默认开）→ 保存后读回一致", {
     test_support::TestDb tdb("agentui", "notecreate");
-    FakeProxy proxy;
+    test_support::FakeProfileSource profile;
     ToolGuard statsGuard{"app.stats"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
 
     module::agent::AgentModule::Deps deps;
     deps.db = &tdb.handle();
-    deps.proxy = &proxy;
+    deps.profileSource = &profile;
     module::agent::AgentModule mod(deps);
     mod.onStart();
     module::agent::AgentStore store(tdb.handle());
@@ -2395,7 +2380,7 @@ REGISTER_TEST(agent_ui_new_task_context_note_and_autonote,
 REGISTER_TEST(agent_ui_edit_dialog_prefills_context_note,
               "agent_ui: 编辑弹窗从库行回填 contextNote + autoNote；修改保存后读回更新值", {
     test_support::TestDb tdb("agentui", "noteedit");
-    FakeProxy proxy;
+    test_support::FakeProfileSource profile;
     ToolGuard statsGuard{"app.stats"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
     module::agent::AgentStore store(tdb.handle());
@@ -2406,7 +2391,7 @@ REGISTER_TEST(agent_ui_edit_dialog_prefills_context_note,
 
     module::agent::AgentModule::Deps deps;
     deps.db = &tdb.handle();
-    deps.proxy = &proxy;
+    deps.profileSource = &profile;
     module::agent::AgentModule mod(deps);
     mod.onStart();
 
@@ -2465,13 +2450,13 @@ REGISTER_TEST(agent_ui_edit_dialog_prefills_context_note,
 REGISTER_TEST(agent_ui_dialog_geometry_context_note_within_bounds,
               "agent_ui: 新字段（执行记忆/自动记录）不越弹窗边界 + 行底 ≤ 按钮行顶", {
     test_support::TestDb tdb("agentui", "notegeom");
-    FakeProxy proxy;
+    test_support::FakeProfileSource profile;
     ToolGuard statsGuard{"app.stats"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
 
     module::agent::AgentModule::Deps deps;
     deps.db = &tdb.handle();
-    deps.proxy = &proxy;
+    deps.profileSource = &profile;
     module::agent::AgentModule mod(deps);
     mod.onStart();
 
@@ -2572,7 +2557,7 @@ REGISTER_TEST(agent_format_task_run_summary_text,
 REGISTER_TEST(agent_ui_detail_dialog_run_summary,
               "agent_ui: 详情弹窗任务级汇总行（总数/成功率/总耗时/最近结果）+ 汇总行下移几何 + 无 run 不渲染", {
     test_support::TestDb tdb("agentui", "summary");
-    FakeProxy proxy;
+    test_support::FakeProfileSource profile;
     ToolGuard statsGuard{"app.stats"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
     module::agent::AgentStore store(tdb.handle());
@@ -2604,7 +2589,7 @@ REGISTER_TEST(agent_ui_detail_dialog_run_summary,
 
     module::agent::AgentModule::Deps deps;
     deps.db = &tdb.handle();
-    deps.proxy = &proxy;
+    deps.profileSource = &profile;
     module::agent::AgentModule mod(deps);
     mod.onStart();
 
@@ -2660,7 +2645,7 @@ REGISTER_TEST(agent_ui_detail_dialog_run_summary,
 REGISTER_TEST(agent_ui_detail_summary_error_visible,
               "agent_ui: run 汇总查询失败 → 弹窗内显形错误行（不静默）", {
     test_support::TestDb tdb("agentui", "sumerr");
-    FakeProxy proxy;
+    test_support::FakeProfileSource profile;
     ToolGuard statsGuard{"app.stats"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
     module::agent::AgentStore store(tdb.handle());
@@ -2674,7 +2659,7 @@ REGISTER_TEST(agent_ui_detail_summary_error_visible,
 
     module::agent::AgentModule::Deps deps;
     deps.db = &tdb.handle();
-    deps.proxy = &proxy;
+    deps.profileSource = &profile;
     module::agent::AgentModule mod(deps);
     mod.onStart();
 

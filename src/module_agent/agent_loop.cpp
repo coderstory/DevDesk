@@ -208,7 +208,7 @@ Result<int64_t> AgentLoop::run(const AgentTask& task,
         if (task.autoNote && !task.contextNote.empty()) {
             systemPrompt = "\n\n[任务上下文记忆]\n" + task.contextNote;
         }
-        // 槽位→真实 model id 由 LlmClient 解析
+        // 槽位→真实 model id 由端点实现解析
         auto resp = llm_.send(messages, toolsJson, systemPrompt, task.modelSlot);
         if (resp.isFail()) {
             status = "failed";
