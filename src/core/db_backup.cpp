@@ -227,6 +227,19 @@ core::Result<fs::path> createBackup(const fs::path& dbFile, int keepBackups) {
     }
     const int finishRc = sqlite3_backup_finish(bk);
     const bool done = rc == SQLITE_DONE && finishRc == SQLITE_OK;
+    if (done) {
+        // 备份须是自包含库：sqlite3_backup 连页头一起抄，源库是 WAL（主库恒 WAL）时备份
+        // 页头仍是 2/2 却没有 -wal——此时只读打开（备份校验口径，见 quickCheckOk 的
+        // readOnlyOpen 入参）建不出 -shm，prepare 直接 SQLITE_CANTOPEN，还原校验必失败。
+        // 关连接前把落盘页头归一为 rollback journal；失败只 WARN：文件仍是合法可读库
+        char* jmErr = nullptr;
+        if (sqlite3_exec(dst.value(), "PRAGMA journal_mode=DELETE;", nullptr, nullptr,
+                         &jmErr) != SQLITE_OK) {
+            LOG_WARN("备份库 journal_mode 归一失败（该备份可能过不了只读校验）: " +
+                     dest.string() + ": " + (jmErr ? jmErr : "unknown error"));
+        }
+        sqlite3_free(jmErr);
+    }
     sqlite3_close(dst.value());
     sqlite3_close(src.value());
     if (!done) {
@@ -235,7 +248,10 @@ core::Result<fs::path> createBackup(const fs::path& dbFile, int keepBackups) {
             core::ErrorCode::FileWriteFailed,
             "sqlite3_backup 未完成: " + dbFile.string() + " → " + dest.string());
     }
-
+    // 归一动作会现建 <备份名>-wal/-shm：不是备份的一部分，且名字字典序大于备份本身
+    // （latestBackup/pruneFilesWithPrefix 按前缀匹配名，会把它当成一份更新的备份）
+    fs::remove(fs::path(dest.string() + "-wal"), rmEc);
+    fs::remove(fs::path(dest.string() + "-shm"), rmEc);
     // 备份含凭据页，与主库同保护级别；收紧失败只 WARN——备份已可用，权限降级不应导致备份作废
     if (auto perm = core::fileperms::restrictToOwnerOnly(dest); perm.isFail()) {
         LOG_WARN("备份文件权限收紧失败: " + dest.string() + ": " + perm.errorMessage());
