@@ -3539,7 +3539,8 @@ REGISTER_TEST(settings_github_sync_push_writes_target_configured_branch,
     };
     ScriptedSender rec;
     // 顺序 = runGithubSyncPush 的请求序：getRepo → listTree（笔记判态与
-    // database.sql 的 sha 同源同一棵树，无独立 probe 请求）→ PUT database.sql
+    // database.sql 的冲突检测 sha 同源同一棵树，无独立 probe 请求；树清单必须
+    // 带 sql 条目，否则 PUT 不带 sha、断言必红）→ PUT database.sql
     //（步④，先于笔记）→ DELETE gone.md → PUT note-a.md（步⑤，plans 按名字字典序）。
     rec.plan = {
         {200, R"({"full_name":"devdesk-test/sync-repo","default_branch":"main",)"
