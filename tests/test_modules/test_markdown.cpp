@@ -7531,3 +7531,112 @@ REGISTER_TEST(md_module_event_wiring,
     mod->onStop();
     return true;
 })
+// 新建 / 重命名笔记也是 GitHub Sync 的 dirty 触发源：两个写路径都要发事件
+//（只订 md.saved 时，新建与重命名都不会触发同步）。
+// 对照：新建弹窗里输入一个已存在的名字 = 直接打开旧笔记、没写盘 → 不发 md.created。
+REGISTER_TEST(md_module_create_rename_event_wiring,
+              "markdown_module: 新建→md.created、重命名→md.renamed；已存在名直接打开不发（headless）", {
+    test_support::MdHeadlessEnv env(kDirPrefix, "crev", kDbName);
+    DOCTEST_REQUIRE(env.db != nullptr);
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "旧笔记.md", "# 旧\n"));
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+
+    int gotCreated = 0, gotRenamed = 0;
+    auto cSub = core::event::bus().subscribe(
+        core::event::kMdCreated, [&](const std::string&) { ++gotCreated; });
+    auto rSub = core::event::bus().subscribe(
+        core::event::kMdRenamed, [&](const std::string&) { ++gotRenamed; });
+
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    eui::Ui ui;
+    auto frame = [&](const char* page) {
+        ui.begin(page);
+        mod->compose(ui, screen);
+        ui.end();
+    };
+    const auto clickId = [&](const std::string& id) -> bool {
+        const auto* el = ui.find(id);
+        if (el == nullptr || el->onClick == nullptr) return false;
+        el->onClick();
+        return true;
+    };
+    const auto typeId = [&](const std::string& id, const std::string& text) -> bool {
+        const auto* hit = ui.find(id + ".hit");
+        if (hit == nullptr || hit->onTextInput == nullptr) return false;
+        core::TextInputEvent ev;
+        ev.text = text;
+        hit->onTextInput(ev);
+        return true;
+    };
+    auto findRow = [&](const std::string& name) -> core::dsl::Element* {
+        for (int i = 0; i < 8; ++i) {
+            const auto* nm = ui.find("md.tree.node." + std::to_string(i) + ".name");
+            if (nm != nullptr && nm->text == name) {
+                return ui.find("md.tree.node." + std::to_string(i) + ".row");
+            }
+        }
+        return nullptr;
+    };
+
+    frame("cr1");
+
+    // ① 新建弹窗输入已存在的名字 → 直接打开旧笔记，没写盘 → 不发 md.created
+    DOCTEST_REQUIRE(clickId("md.tree.new.bg"));
+    frame("cr2");
+    DOCTEST_REQUIRE(typeId("md.dialog.new.input", "旧笔记"));
+    frame("cr3");
+    DOCTEST_REQUIRE(clickId("md.dialog.new.confirm.bg"));
+    frame("cr4");
+    DOCTEST_CHECK_EQ(gotCreated, 0);
+
+    // ② 真新建 → 落盘成功 → md.created 恰一次
+    DOCTEST_REQUIRE(clickId("md.tree.new.bg"));
+    frame("cr5");
+    DOCTEST_REQUIRE(typeId("md.dialog.new.input", "新笔记"));
+    frame("cr6");
+    DOCTEST_REQUIRE(clickId("md.dialog.new.confirm.bg"));
+    frame("cr7");
+    DOCTEST_CHECK(fs::is_regular_file(env.dir / "新笔记.md"));
+    DOCTEST_CHECK_EQ(gotCreated, 1);
+
+    // ③ 树行右键 →「重命名」→ 弹窗改名 → 确认 → md.renamed 恰一次
+    frame("cr8");
+    auto* row = findRow("新笔记.md");
+    DOCTEST_REQUIRE(row != nullptr);
+    DOCTEST_REQUIRE(row->onContextMenu != nullptr);
+    eui::PointerEvent pe;
+    pe.x = 150.0;
+    pe.y = 230.0;
+    row->onContextMenu(pe, eui::Rect{});
+    frame("cr9");
+    const auto* rnLabel = ui.find("md.ctx.level.0.label.0");
+    DOCTEST_REQUIRE(rnLabel != nullptr);
+    DOCTEST_CHECK_EQ(rnLabel->text, std::string("重命名"));
+    DOCTEST_REQUIRE(clickId("md.ctx.level.0.item.0"));
+    frame("cr10");
+    {
+        // 弹窗预填原路径且光标在开头：直接打字会插在路径前 → 先全选再输入 = 整段替换
+        auto& st = ui.state<components::input_detail::InputModel::InputState>(
+            "md.dialog.rename.input");
+        st.cursor = st.selectionStart = 0;
+        st.selectionEnd = static_cast<int>(st.text.size());
+        const auto* hit = ui.find("md.dialog.rename.input.hit");
+        DOCTEST_REQUIRE(hit != nullptr);
+        DOCTEST_REQUIRE(hit->onTextInput != nullptr);
+        core::TextInputEvent ev;
+        ev.text = "改名后";
+        hit->onTextInput(ev);
+    }
+    frame("cr11");
+    DOCTEST_REQUIRE(clickId("md.dialog.rename.confirm.bg"));
+    frame("cr12");
+    DOCTEST_CHECK(fs::is_regular_file(env.dir / "改名后.md"));
+    DOCTEST_CHECK_EQ(gotRenamed, 1);
+
+    mod->onStop();
+    return true;
+})

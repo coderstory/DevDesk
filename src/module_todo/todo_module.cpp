@@ -189,6 +189,7 @@ public:
         }
         setStatus("已创建列「" + title + "」");
         reloadAll();
+        core::event::bus().emit(core::event::kTodoColumnChanged);
         return "";
     }
 
@@ -292,6 +293,7 @@ public:
         }
         setStatus("已重命名列");
         reloadAll();
+        core::event::bus().emit(core::event::kTodoColumnChanged);
         return "";
     }
 
@@ -304,6 +306,7 @@ public:
         }
         setStatus("已删除列（含其下全部任务）");
         reloadAll();
+        core::event::bus().emit(core::event::kTodoColumnChanged);
     }
 
     void doSetColumnColor(int64_t id, const std::string& token) {
@@ -315,6 +318,7 @@ public:
         }
         setStatus("已更新列颜色");
         reloadAll();
+        core::event::bus().emit(core::event::kTodoColumnChanged);
     }
 
     // dir = -1 左移 / +1 右移（交换相邻列后整体重排 position）
@@ -340,6 +344,7 @@ public:
             return;
         }
         reloadAll();
+        core::event::bus().emit(core::event::kTodoColumnChanged);
     }
 
     // 智能体工具集：service 与 tools 生命周期成对（service_ 存在 ⇒ todoTools_ 存在且已注册）；

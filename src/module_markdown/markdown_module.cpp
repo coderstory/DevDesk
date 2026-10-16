@@ -3134,6 +3134,7 @@ private:
         // openNote 守卫失败（未保存改动阻塞切换）时不聚焦。
         if (currentPath_ == relPath) ui.requestFocus(kEditorInputHitId);
         LOG_INFO("新建笔记: " + relPath);
+        core::event::bus().emit(core::event::kMdCreated);
     }
 
     // 新建文件夹（左栏「+ 文件夹」入口）
@@ -3514,6 +3515,7 @@ private:
         refreshList();
         showToast("已重命名", newPath, false);
         LOG_INFO("重命名笔记: " + oldPath + " → " + newPath);
+        core::event::bus().emit(core::event::kMdRenamed);
     }
 
 

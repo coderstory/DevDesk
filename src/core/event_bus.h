@@ -32,9 +32,15 @@ inline constexpr const char* kTodoMoved = "todo.moved";
 inline constexpr const char* kTodoCompleted = "todo.completed";
 inline constexpr const char* kTodoUncompleted = "todo.uncompleted";
 inline constexpr const char* kTodoDeleted = "todo.deleted";
-// 笔记写路径：写盘成功 / 磁盘文件删除成功。
+// 待办列写路径：新建 / 重命名 / 删除 / 重排 / 改色共用一个事件名——没有订阅方需要区分
+// 这五种列改动，它们对同步是同一件事（列变了）。删除列会级联删掉其下全部任务，
+// 故它同时也是「任务数据变更」的触发源，不得因为它不叫 todo.deleted 就漏订。
+inline constexpr const char* kTodoColumnChanged = "todo.column_changed";
+// 笔记写路径：写盘成功 / 磁盘文件删除成功 / 新建成功 / 重命名成功。
 inline constexpr const char* kMdSaved = "md.saved";
 inline constexpr const char* kMdDeleted = "md.deleted";
+inline constexpr const char* kMdCreated = "md.created";
+inline constexpr const char* kMdRenamed = "md.renamed";
 // 数据库导入（GitHub Sync 拉取覆盖活库）：begin/end 包住导入全程，
 // **end 无论成败都发**（订阅方必须借此恢复被暂停的后台任务）；imported 仅
 // 成功后发，订阅方应丢弃内存缓存重查——表被 DROP 重建过，缓存指向旧行
