@@ -7,7 +7,9 @@
 #   - 一次性仓（破坏性场景：删仓 / 垃圾库）：coderstory/devdesk-sync-test-destroy
 #
 # 凭据红线（与 tools/quota_live_probe.cpp 同级）：
-#   token 只进 Authorization 头，**绝不** echo / 写文件 / 进日志 / 进 argv；
+#   token 只进 Authorization 头，**绝不** echo / 进日志 / 进 argv；唯一落盘是
+#   0600 的临时头文件（curl -H @文件 读它，EXIT trap 即删）——直接
+#   -H "Authorization: Bearer …" 会把 token 摆进 curl 的 argv，全机 ps 可见。
 #   本脚本不 `set -x`。来源：$DEVDESK_GITHUB_TOKEN，缺失则回落到 0600 的
 #   /tmp/devdesk-gh-test.pat。
 #
@@ -46,7 +48,12 @@ fi
 # 403（次级限流）/ 429 / 5xx 重试：真机脚本在几秒内连发多次 contents 变更，
 # GitHub 的 secondary rate limit 会间歇性拒绝 —— 不重试会把瞬态当夹具缺陷。
 TMPBODY="$(mktemp -t ghsync-body.XXXXXX)"
-trap 'rm -f "${TMPBODY}"' EXIT
+# token 经 -H @文件 传给 curl（文件内容即头行）：-H "Authorization: Bearer …" 会把
+# token 摆进 curl 的 argv，全机 ps 可见 —— 与脚本头「绝不进 argv」的自述矛盾。
+TMPHDR="$(mktemp -t ghsync-hdr.XXXXXX)"
+chmod 600 "${TMPHDR}"
+trap 'rm -f "${TMPBODY}" "${TMPHDR}"' EXIT
+printf 'Authorization: Bearer %s\n' "${TOKEN}" > "${TMPHDR}"
 CODE=""
 
 req() {  # req <method> <path> [jsonFile]
@@ -54,7 +61,7 @@ req() {  # req <method> <path> [jsonFile]
     local attempt try_code
     for attempt in 1 2 3 4; do
         local args=(-s -o "${TMPBODY}" -w '%{http_code}' -X "${method}"
-                    -H "Authorization: Bearer ${TOKEN}"
+                    -H "@${TMPHDR}"
                     -H "Accept: application/vnd.github+json"
                     -H "X-GitHub-Api-Version: 2022-11-28")
         if [ -n "${data}" ]; then

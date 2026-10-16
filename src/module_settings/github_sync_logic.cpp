@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <system_error>
+#include <utility>
 
 namespace module::settings::gsync {
 

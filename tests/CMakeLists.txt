@@ -351,7 +351,12 @@ endif()
 #     (cd build && ctest -L live)
 option(DEVDESK_BUILD_LIVE_TOOLS
     "构建真机验收驱动（tests/live/；真网络 + 真凭据，默认 OFF）" OFF)
-if(DEVDESK_BUILD_LIVE_TOOLS)
+if(DEVDESK_BUILD_LIVE_TOOLS AND UNIX)
+    # **整体（目标 + ctest 条目）都在 if(UNIX) 里**，不只是 add_test：受编集合
+    # 解析器按 if(WIN32)/if(UNIX) 划 Windows 编译面，块里有裸 add_executable 时
+    # github_sync_live.cpp 被视作 Windows 必编 → CI Windows job 必红（驱动用
+    # popen/sys/wait.h，Windows 无此物）。驱动是 macOS/Linux 真机验收工具，
+    # Windows 侧没有「编译了但跑不了」的中间态。
     # module_toggle_bridge.cpp：settings 模块引用 app::toggle 桥符号
     # app_sidebar.cpp / app_assembly.cpp：同 module_toggle_sidebar_probe 的理由
     #（settings_module.cpp 的装配期符号在这些 TU 里）
@@ -377,17 +382,10 @@ if(DEVDESK_BUILD_LIVE_TOOLS)
         devdesk_module_pet
     )
     devdesk_apply_warnings(github_sync_live)
-    if(MSVC)
-        target_link_options(github_sync_live PRIVATE /SUBSYSTEM:CONSOLE)
-    elseif(MINGW)
-        target_link_options(github_sync_live PRIVATE -mconsole)
-    endif()
 
-    if(UNIX)
-        add_test(NAME github_sync_live
-            COMMAND bash "${CMAKE_SOURCE_DIR}/scripts/run-ghsync-live.sh"
-                "${CMAKE_BINARY_DIR}")
-        # LABELS 只有 live、没有 probe：默认门禁跑 `ctest -L probe`，看不到它。
-        set_tests_properties(github_sync_live PROPERTIES LABELS "live")
-    endif()
+    add_test(NAME github_sync_live
+        COMMAND bash "${CMAKE_SOURCE_DIR}/scripts/run-ghsync-live.sh"
+            "${CMAKE_BINARY_DIR}")
+    # LABELS 只有 live、没有 probe：默认门禁跑 `ctest -L probe`，看不到它。
+    set_tests_properties(github_sync_live PROPERTIES LABELS "live")
 endif()
