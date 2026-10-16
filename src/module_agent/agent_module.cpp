@@ -1608,22 +1608,16 @@ void AgentModule::composeTaskDialog(
             const float evW = innerW - (evX - x0);
             const float itemW = (evW - kDialogGap * 2.0f) / 3.0f;
             for (int i = 0; i < kEventCount; ++i) {
-                // SwitchBuilder 无 position，套 stack 定位（destructive 同款）
-                ui.stack("agent.dialog.task.event.wrap." + std::to_string(i))
+                components::toggleSwitch(
+                    ui, "agent.dialog.task.event." + std::to_string(i))
                     .position(evX + static_cast<float>(i) * (itemW + kDialogGap),
                               triggerY)
-                    .size(itemW, kDialogRowH)
-                    .content([&] {
-                        components::toggleSwitch(
-                            ui, "agent.dialog.task.event." + std::to_string(i))
-                            .size(itemW, 32.0f)
-                            .text(kEventLabels[i])
-                            .checked(editEvents_[i])
-                            .fontSize(12.0f)
-                            .theme(themeTokens)
-                            .onChange([this, i](bool v) { editEvents_[i] = v; })
-                            .build();
-                    })
+                    .size(itemW, 32.0f)
+                    .text(kEventLabels[i])
+                    .checked(editEvents_[i])
+                    .fontSize(12.0f)
+                    .theme(themeTokens)
+                    .onChange([this, i](bool v) { editEvents_[i] = v; })
                     .build();
             }
         }
@@ -1724,22 +1718,17 @@ void AgentModule::composeTaskDialog(
             .onChange([this](const std::string& v) { editIter_ = parseIterInput(v); })
             .onCancel([this] { closeTaskDialog(); })
             .build();
-        // 用 switch 而非 checkbox（-Werror 下有未使用变量告警）；SwitchBuilder 无 position，包一层 stack 定位
+        // 用 switch 而非 checkbox（-Werror 下有未使用变量告警）
         const float switchX = iterX + 100.0f + kDialogGap;
         const float switchW = innerW - (switchX - x0);
-        ui.stack("agent.dialog.task.destructive.wrap")
+        components::toggleSwitch(ui, "agent.dialog.task.destructive")
             .position(switchX, metaY)
-            .size(switchW, kDialogRowH)
-            .content([&] {
-                components::toggleSwitch(ui, "agent.dialog.task.destructive")
-                    .size(switchW, 32.0f)
-                    .text("允许破坏性操作")
-                    .checked(editDestructive_)
-                    .fontSize(12.0f)
-                    .theme(themeTokens)
-                    .onChange([this](bool v) { editDestructive_ = v; })
-                    .build();
-            })
+            .size(switchW, 32.0f)
+            .text("允许破坏性操作")
+            .checked(editDestructive_)
+            .fontSize(12.0f)
+            .theme(themeTokens)
+            .onChange([this](bool v) { editDestructive_ = v; })
             .build();
 
         // 执行记忆：多行文本输入（与 goal 同款 multiline + scrollbar），
@@ -1763,19 +1752,14 @@ void AgentModule::composeTaskDialog(
         // 自动记录开关：结束后把最后一条 assistant 回复追加进 context note
         const float autoY = 356.0f;
         const float autoSwitchW = innerW - kDialogLabelW - kDialogGap;
-        ui.stack("agent.dialog.task.autonote.wrap")
+        components::toggleSwitch(ui, "agent.dialog.task.autonote")
             .position(x0 + kDialogLabelW + kDialogGap, autoY)
-            .size(autoSwitchW, kDialogRowH)
-            .content([&] {
-                components::toggleSwitch(ui, "agent.dialog.task.autonote")
-                    .size(autoSwitchW, 32.0f)
-                    .text("结束后自动记录回复")
-                    .checked(editAutoNote_)
-                    .fontSize(12.0f)
-                    .theme(themeTokens)
-                    .onChange([this](bool v) { editAutoNote_ = v; })
-                    .build();
-            })
+            .size(autoSwitchW, 32.0f)
+            .text("结束后自动记录回复")
+            .checked(editAutoNote_)
+            .fontSize(12.0f)
+            .theme(themeTokens)
+            .onChange([this](bool v) { editAutoNote_ = v; })
             .build();
 
         // 校验 / 保存错误（有错才渲染，弹窗不关）

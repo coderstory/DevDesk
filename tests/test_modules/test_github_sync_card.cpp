@@ -25,9 +25,11 @@
 #include "platform/github_api.h"
 #include "settings_config.h"
 #include "settings_ui_cards.h"
+#include "settings_ui_logic.h"
 
 #include <eui/dsl.h>
 
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -197,6 +199,35 @@ REGISTER_TEST(github_sync_card_progress_row,
         DOCTEST_CHECK(ui.find(std::string(kCardId) + ".progress") == nullptr);
         return true;
     }));
+    return true;
+})
+
+REGISTER_TEST(github_sync_card_switch_position,
+              "github_sync 卡片: 两开关直接定位（x 对齐输入列、行盒垂直居中）且无包裹 stack 残留", {
+    CardFixture fx;
+    eui::Ui ui;
+    fx.draw(ui);
+    ui.layout(1600.0f, 1000.0f);   // frame 断言必须真 layout
+    const auto* en = ui.find(std::string(kCardId) + ".enabled.sw");
+    const auto* ap = ui.find(std::string(kCardId) + ".autopush.sw");
+    DOCTEST_REQUIRE(en != nullptr);
+    DOCTEST_REQUIRE(ap != nullptr);
+    // 换算期望（与 drawGithubSyncCard 行进公式同构）：
+    // x = 内边距 28 + 标签列 64 + 12；y = 16 + 标题 24 + 2 + 描述 18 + 10
+    //   + 行盒垂直居中 (36 − 20)/2；行进距 = 36 + 8，自动推送 = 启用行 + URL/分支/Token
+    //   共 4 个行距之后
+    const float rowH = ms::roundFs(36.0f);
+    const float switchY0 = 16.0f + ms::roundFs(24.0f) + ms::roundFs(2.0f) +
+                           ms::roundFs(18.0f) + ms::roundFs(10.0f) +
+                           (rowH - 20.0f) * 0.5f;
+    const float advance = rowH + ms::roundFs(8.0f);
+    DOCTEST_CHECK(std::fabs(en->frame.x - 104.0f) < 0.5f);
+    DOCTEST_CHECK(std::fabs(en->frame.y - switchY0) < 0.5f);
+    DOCTEST_CHECK(std::fabs(ap->frame.x - 104.0f) < 0.5f);
+    DOCTEST_CHECK(std::fabs(ap->frame.y - (switchY0 + advance * 4.0f)) < 0.5f);
+    // 负断言对照组 = 上面两个「开关存在」：wrap 包裹节点拆除后不得再出现在树里
+    DOCTEST_CHECK(ui.find(std::string(kCardId) + ".enabled.sw.wrap") == nullptr);
+    DOCTEST_CHECK(ui.find(std::string(kCardId) + ".autopush.sw.wrap") == nullptr);
     return true;
 })
 

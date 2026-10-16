@@ -1199,7 +1199,7 @@ REGISTER_TEST(agent_ui_dialog_geometry_design_size_and_budget,
     DOCTEST_CHECK_MESSAGE(goal->frame.height >= 90.0f,
                           "编辑弹窗 goal 输入应 ≥90px，实测 " +
                               std::to_string(goal->frame.height));
-    const auto* metaRow = ui2.find("agent.dialog.task.destructive.wrap");
+    const auto* metaRow = ui2.find("agent.dialog.task.destructive");
     const auto* saveBtn = ui2.find("agent.dialog.task.save");
     DOCTEST_REQUIRE_MESSAGE(metaRow != nullptr, "元信息行（破坏性开关）缺失");
     DOCTEST_REQUIRE_MESSAGE(saveBtn != nullptr, "保存按钮缺失");
@@ -1273,7 +1273,7 @@ REGISTER_TEST(agent_ui_dialog_geometry_design_size_and_budget,
     // 下方行 y 变化，下面那条行位置恒等的断言正是钉这一点
     DOCTEST_CHECK_MESSAGE(popup->frame.y + popup->frame.height > metaYBefore,
                           "弹层应向下覆盖元信息行（覆盖层语义变了？）");
-    const auto* metaAfter = ui2b.find("agent.dialog.task.destructive.wrap");
+    const auto* metaAfter = ui2b.find("agent.dialog.task.destructive");
     DOCTEST_REQUIRE(metaAfter != nullptr);
     DOCTEST_CHECK_MESSAGE(nearPx(metaAfter->frame.y, metaYBefore),
                           "下拉展开挤动了下方行：展开前 " +
@@ -1961,7 +1961,7 @@ REGISTER_TEST(agent_ui_cron_template_dropdown_and_preview,
     DOCTEST_CHECK_MESSAGE(nearPx(panel3->frame.height, 500.0f),
                           "任务弹窗高应恒为 500，实测 " +
                               std::to_string(panel3->frame.height));
-    const auto* metaRow3 = ui3.find("agent.dialog.task.destructive.wrap");
+    const auto* metaRow3 = ui3.find("agent.dialog.task.destructive");
     DOCTEST_REQUIRE(metaRow3 != nullptr);
     DOCTEST_CHECK_MESSAGE(nearPx(metaRow3->frame.y, panel3->frame.y + 224.0f),
                           "meta 行 y 应恒为面板顶 +224，实测 " +
@@ -1983,7 +1983,7 @@ REGISTER_TEST(agent_ui_cron_template_dropdown_and_preview,
     // 预览行落在 cron 行与 meta 行之间（原 gap 内）
     const auto* cronRow4 = ui4.find("agent.dialog.task.cron");
     DOCTEST_REQUIRE(cronRow4 != nullptr);
-    const auto* metaRow4 = ui4.find("agent.dialog.task.destructive.wrap");
+    const auto* metaRow4 = ui4.find("agent.dialog.task.destructive");
     DOCTEST_REQUIRE(metaRow4 != nullptr);
     DOCTEST_CHECK_MESSAGE(
         preview4->frame.y >= cronRow4->frame.y + cronRow4->frame.height - 0.5f,
@@ -2485,7 +2485,7 @@ REGISTER_TEST(agent_ui_dialog_geometry_context_note_within_bounds,
                           "自动记录开关跑出弹窗外");
 
     // 行底（自动记录）≤ 按钮行顶
-    const auto* autoWrap = ui2.find("agent.dialog.task.autonote.wrap");
+    const auto* autoWrap = ui2.find("agent.dialog.task.autonote");
     const auto* saveBtn = ui2.find("agent.dialog.task.save");
     DOCTEST_REQUIRE(autoWrap != nullptr);
     DOCTEST_REQUIRE(saveBtn != nullptr);
@@ -2496,7 +2496,7 @@ REGISTER_TEST(agent_ui_dialog_geometry_context_note_within_bounds,
             " 压到按钮行顶 " + std::to_string(saveBtn->frame.y));
 
     // 元信息行 y 仍然恒等面板顶 +224（新字段在它下面，不动它）
-    const auto* metaRow = ui2.find("agent.dialog.task.destructive.wrap");
+    const auto* metaRow = ui2.find("agent.dialog.task.destructive");
     DOCTEST_REQUIRE(metaRow != nullptr);
     DOCTEST_CHECK_MESSAGE(nearPx(metaRow->frame.y, panel->frame.y + 224.0f),
                           "元信息行 y 应恒为面板顶 +224（新字段不得挤动），实测 " +
