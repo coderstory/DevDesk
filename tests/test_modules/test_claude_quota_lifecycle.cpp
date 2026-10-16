@@ -19,6 +19,8 @@
 #include "core/router.h"
 #include "quota_home_bridge.h"  // devdesk::quota_bridge::setQuotaFeatureEnabled
 #include "quota/quota_store.h"
+#include "core/event_bus.h"       // kDbImportBegin / kDbImportEnd 注入
+#include "quota/quota_dialog_config.h"  // quotaProviderOptions（下拉预填文案单点）
 
 #include <eui/dsl.h>
 
@@ -264,5 +266,249 @@ REGISTER_TEST(claude_quota_lifecycle_test_connection_then_immediate_stop,
 
     // 恒真断言：只为失败时留下本用例的名字，崩溃本身由框架报告（走到这里即未 terminate）
     DOCTEST_CHECK_MESSAGE(true, "三轮「点【测试连接】→ 立刻 onStop → 析构」未崩溃");
+    return true;
+})
+
+// ─── db.import 暂停/恢复 × 余量功能总开关门控（claude_module onStart 的 kDbImport* 订阅段） ───
+//
+// 被测行为：end handler 受双闸门控——订阅存活闸（dbImportHandlersEnabled_，onStop 先关再退订）
+// × 功能总开关（quota_bridge::isQuotaFeatureEnabled，默认关）。开关关时导入结束不得复活刷新；
+// 开关开时恢复触发 startQuotaRefresh（幂等，重复 end 不双起）。
+// 观察缝（行为级，非内部布尔）：quotaStore_ 全模块唯一写点是 startQuotaRefresh()（claude_module.cpp）。
+// 余量配置弹窗的供应商预填读 quotaStore_->loadConfig——刷新真的起过 ⇒ 预填种子的 DeepSeek；
+// 没起 / 已被拆 ⇒ 预填落「不配置（关闭余量查询）」。断言只认下拉选中文案，不碰任何成员。
+// 事件注入复用 test_github_sync_card 的 store 层事件序（begin → end，end 无论成败都发）。
+namespace {
+
+// emit 同步派发：返回时全部 handler 已跑完，可直接观察副作用
+void emitDbImportBegin() { ::core::event::bus().emit(::core::event::kDbImportBegin); }
+void emitDbImportEnd() { ::core::event::bus().emit(::core::event::kDbImportEnd); }
+
+std::string quotaProviderDisplayName(const std::string& id) {
+    for (const cq::QuotaProviderOption& o : cq::quotaProviderOptions()) {
+        if (o.id == id) return o.displayName;
+    }
+    return {};
+}
+
+// RAII：总开关设为指定值，出作用域恢复**进入前值**（方向不限，防开关值跨用例泄漏）。
+// 不能手写还原：DOCTEST_* 宏自带 `return false;`，断言早退时还原行执行不到。
+struct ScopedQuotaFeatureFlag {
+    bool prev;
+    explicit ScopedQuotaFeatureFlag(bool v)
+        : prev(devdesk::quota_bridge::isQuotaFeatureEnabled()) {
+        devdesk::quota_bridge::setQuotaFeatureEnabled(v);
+    }
+    void set(bool v) { devdesk::quota_bridge::setQuotaFeatureEnabled(v); }
+    ~ScopedQuotaFeatureFlag() { devdesk::quota_bridge::setQuotaFeatureEnabled(prev); }
+    ScopedQuotaFeatureFlag(const ScopedQuotaFeatureFlag&) = delete;
+    ScopedQuotaFeatureFlag& operator=(const ScopedQuotaFeatureFlag&) = delete;
+};
+
+// RAII：离开用例前必 onStop。开关开的 end 路径会起真 QuotaRefresher 后台线程（线程持有
+// appDatabase 引用），TestEnv 析构会先注销 appDatabase——线程不先收就是悬垂。onStop 幂等，
+// 且持 unique_ptr 指针：用例内 reset() 后析构自动跳过。
+struct ScopedModuleStop {
+    std::unique_ptr<::core::Module>* mod;
+    explicit ScopedModuleStop(std::unique_ptr<::core::Module>* m) : mod(m) {}
+    ~ScopedModuleStop() {
+        if (mod != nullptr && mod->get() != nullptr) (*mod)->onStop();
+    }
+    ScopedModuleStop(const ScopedModuleStop&) = delete;
+    ScopedModuleStop& operator=(const ScopedModuleStop&) = delete;
+};
+
+// 走生产路径打开余量配置弹窗（Router 负载 → compose 消费 → openQuotaDialog），返回供应商
+// 下拉的当前选中文案。返回空串 = 弹窗没打开（观察缝失效，调用方 REQUIRE 收口）。
+std::string quotaDialogProviderLabel(::core::Router& router,
+                                     std::unique_ptr<::core::Module>& mod,
+                                     int64_t profileId, int seq) {
+    router.registerModule(mod.get());
+    router.navigateTo(::core::PageId::ClaudeProxy,
+                      "action:quota_config:" + std::to_string(profileId));
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1400.0f;
+    eui::Ui ui;
+    composeFrame(*mod, ui, screen,
+                 ("quota_gate_label_" + std::to_string(seq)).c_str());
+    const auto* panel = ui.find("claude.dialog.quota.panel");
+    if (panel == nullptr || panel->opacity <= 0.5f) return std::string();
+    const auto* label = ui.find("claude.dialog.quota.provider.dd.label");
+    return label != nullptr ? label->text : std::string();
+}
+
+}  // namespace
+
+// ① 总开关关（生产默认态）：db.import_end 不复活刷新
+REGISTER_TEST(claude_quota_gate_import_end_blocked_when_switch_off,
+              "claude quota 总开关: 开关关→db.import_end 不复活刷新（门控兜底）", {
+    ::core::Router router;
+    test_support::ScopedAppRouter scopedRouter(&router);
+    test_support::TestEnv env(kDbPrefix, "gateoff", /*registerAppDb=*/true);
+    core::data::SqliteDb& sq = env.db->db();
+    const int64_t profileId = insertProfileWithoutCredential(sq, "余量门控-关");
+    seedQuotaConfig(sq, profileId);
+
+    ScopedQuotaFeatureFlag quotaOff(false);
+    module::claude::ClaudeService svc(sq, kKeychainService);
+    ScopedGlobalClaudeService globalSvc(svc);
+    std::unique_ptr<::core::Module> mod(create_claude_module());
+    ScopedModuleStop stopAtExit(&mod);
+    mod->onStart();
+
+    emitDbImportBegin();
+    emitDbImportEnd();
+
+    const std::string none = quotaProviderDisplayName("");
+    DOCTEST_REQUIRE(!none.empty());
+    const std::string label = quotaDialogProviderLabel(router, mod, profileId, 1);
+    DOCTEST_REQUIRE_MESSAGE(!label.empty(),
+                            "余量弹窗未打开：观察缝失效（Router 负载路径断了），本用例测不到门控");
+    DOCTEST_CHECK_MESSAGE(label == none,
+                          "开关关时 db.import_end 不得启动余量刷新（quotaStore_ 不存在 → "
+                          "预填应为「不配置」），实到：" + label);
+    return true;
+})
+
+// ② 总开关开：同一事件触发恢复（startQuotaRefresh 路径被真走到）
+REGISTER_TEST(claude_quota_gate_import_end_fires_when_switch_on,
+              "claude quota 总开关: 开关开→db.import_end 触发余量刷新恢复", {
+    ::core::Router router;
+    test_support::ScopedAppRouter scopedRouter(&router);
+    test_support::TestEnv env(kDbPrefix, "gateon", /*registerAppDb=*/true);
+    core::data::SqliteDb& sq = env.db->db();
+    const int64_t profileId = insertProfileWithoutCredential(sq, "余量门控-开");
+    seedQuotaConfig(sq, profileId);
+
+    ScopedQuotaFeatureFlag flag(false);   // onStart 时保持关：起不起只能归因给 end 事件
+    module::claude::ClaudeService svc(sq, kKeychainService);
+    ScopedGlobalClaudeService globalSvc(svc);
+    std::unique_ptr<::core::Module> mod(create_claude_module());
+    ScopedModuleStop stopAtExit(&mod);
+    mod->onStart();
+
+    const std::string none = quotaProviderDisplayName("");
+    const std::string deepseek = quotaProviderDisplayName("deepseek");
+    DOCTEST_REQUIRE(!none.empty());
+    DOCTEST_REQUIRE(!deepseek.empty());
+
+    // 对照基线：开关还关，同样的 end 事件必须不起
+    emitDbImportEnd();
+    const std::string before = quotaDialogProviderLabel(router, mod, profileId, 1);
+    DOCTEST_REQUIRE_MESSAGE(before == none,
+                            "开关关时 end 事件不应起刷新（基线被破，后续断言失去归因），实到：" + before);
+
+    // 用户在导入进行中打开总开关 → 下一次 end 恢复刷新
+    flag.set(true);
+    emitDbImportBegin();   // 暂停（此时本就没起，no-op）
+    emitDbImportEnd();
+    const std::string after = quotaDialogProviderLabel(router, mod, profileId, 2);
+    DOCTEST_REQUIRE_MESSAGE(!after.empty(), "余量弹窗未打开：观察缝失效");
+    DOCTEST_CHECK_MESSAGE(after == deepseek,
+                          "开关开后 db.import_end 必须触发 startQuotaRefresh（quotaStore_ 建立 → "
+                          "预填 DeepSeek），实到：" + after);
+    return true;
+})
+
+// ③ 导入中途开开关 + 重复 end：幂等不双起；begin 真 pause → end 真恢复
+REGISTER_TEST(claude_quota_gate_double_end_idempotent_and_pause_resume,
+              "claude quota 总开关: 导入中途开开关→end 幂等不双起；begin 暂停拆 store、end 再起", {
+    ::core::Router router;
+    test_support::ScopedAppRouter scopedRouter(&router);
+    test_support::TestEnv env(kDbPrefix, "gateidem", /*registerAppDb=*/true);
+    core::data::SqliteDb& sq = env.db->db();
+    const int64_t profileId = insertProfileWithoutCredential(sq, "余量门控-幂等");
+    seedQuotaConfig(sq, profileId);
+
+    ScopedQuotaFeatureFlag flag(false);
+    module::claude::ClaudeService svc(sq, kKeychainService);
+    ScopedGlobalClaudeService globalSvc(svc);
+    std::unique_ptr<::core::Module> mod(create_claude_module());
+    ScopedModuleStop stopAtExit(&mod);
+    mod->onStart();
+
+    const std::string none = quotaProviderDisplayName("");
+    const std::string deepseek = quotaProviderDisplayName("deepseek");
+    DOCTEST_REQUIRE(!none.empty());
+    DOCTEST_REQUIRE(!deepseek.empty());
+
+    emitDbImportBegin();       // 导入开始（暂停：本就没起，no-op）
+    flag.set(true);            // 导入中途开开关
+    emitDbImportEnd();         // 第一次 end：起刷新
+    const std::string first = quotaDialogProviderLabel(router, mod, profileId, 1);
+    DOCTEST_REQUIRE_MESSAGE(first == deepseek,
+                            "第一次 end 必须起刷新（预填 DeepSeek），实到：" + first);
+
+    // 第二次 end：幂等分支——已有刷新器必须早退，不得双起 / 换装
+    emitDbImportEnd();
+    const std::string second = quotaDialogProviderLabel(router, mod, profileId, 2);
+    DOCTEST_CHECK_MESSAGE(second == deepseek,
+                          "重复 end 后刷新器必须仍是同一套（预填不变 DeepSeek），实到：" + second);
+
+    // begin → end 一整个往返：begin 真拆 store（预填回落「不配置」），end 建新实例再起
+    //（stopAll 后旧实例不可重启，startQuotaRefresh 每次建新 QuotaRefresher）
+    emitDbImportBegin();
+    const std::string paused = quotaDialogProviderLabel(router, mod, profileId, 3);
+    DOCTEST_CHECK_MESSAGE(paused == none,
+                          "begin 暂停必须真拆刷新器（quotaStore_ reset → 预填回落「不配置」），实到：" + paused);
+    emitDbImportEnd();
+    const std::string resumed = quotaDialogProviderLabel(router, mod, profileId, 4);
+    DOCTEST_CHECK_MESSAGE(resumed == deepseek,
+                          "恢复 end 必须能重新装起刷新器（新 QuotaRefresher → 预填 DeepSeek），实到：" + resumed);
+    return true;
+})
+
+// ④ onStop 后迟到 end：原子闸挡住在途 handler；退订后再发 = no-op；析构无悬空
+REGISTER_TEST(claude_quota_gate_late_event_after_on_stop,
+              "claude quota 总开关: onStop 后迟到 db.import_end 被原子闸挡住不复活刷新", {
+    ::core::Router router;
+    test_support::ScopedAppRouter scopedRouter(&router);
+    test_support::TestEnv env(kDbPrefix, "gatestop", /*registerAppDb=*/true);
+    core::data::SqliteDb& sq = env.db->db();
+    const int64_t profileId = insertProfileWithoutCredential(sq, "余量门控-急停");
+    seedQuotaConfig(sq, profileId);
+
+    ScopedQuotaFeatureFlag on(true);
+    module::claude::ClaudeService svc(sq, kKeychainService);
+    ScopedGlobalClaudeService globalSvc(svc);
+    std::unique_ptr<::core::Module> mod(create_claude_module());
+    ScopedModuleStop stopAtExit(&mod);
+
+    // 先于 onStart 订阅：emit 按订阅序拷出 handler，观察者先跑 → 在观察者里 onStop。
+    // 模块自己的 end handler 已被拷出（在途），随后执行——正是「先关原子闸再退订」要挡的
+    // 迟到事件；闸若失效，它会复活刷新器（可从预填观测）。
+    auto stopInsideEmit = ::core::event::bus().subscribe(
+        ::core::event::kDbImportEnd,
+        [&mod](const std::string&) { mod->onStop(); });
+    (void)stopInsideEmit;
+    mod->onStart();
+
+    const std::string none = quotaProviderDisplayName("");
+    const std::string deepseek = quotaProviderDisplayName("deepseek");
+    DOCTEST_REQUIRE(!none.empty());
+    DOCTEST_REQUIRE(!deepseek.empty());
+
+    // 基线：开关开 + onStart ⇒ 刷新已起（预填 DeepSeek）。没有这条，「不复活」断言是空转。
+    const std::string base = quotaDialogProviderLabel(router, mod, profileId, 1);
+    DOCTEST_REQUIRE_MESSAGE(base == deepseek,
+                            "基线：开关开时 onStart 必须起余量刷新（预填 DeepSeek），实到：" + base);
+
+    // 事件到达：观察者先 onStop（关闸 + 退订 + 拆刷新器），模块在途 handler 随后到——必须被闸挡住。
+    emitDbImportEnd();
+    const std::string afterStop = quotaDialogProviderLabel(router, mod, profileId, 2);
+    DOCTEST_REQUIRE_MESSAGE(!afterStop.empty(), "余量弹窗未打开：观察缝失效");
+    DOCTEST_CHECK_MESSAGE(afterStop == none,
+                          "onStop 后到达的 end 不得复活刷新（闸关闭 → 不建 quotaStore_，"
+                          "预填应回落「不配置」），实到：" + afterStop);
+
+    // 退订后再发：无订阅者 = no-op；模块对象仍在也不得复活
+    emitDbImportEnd();
+    const std::string afterUnsub = quotaDialogProviderLabel(router, mod, profileId, 3);
+    DOCTEST_CHECK_MESSAGE(afterUnsub == none,
+                          "退订后的 end 不得复活刷新，实到：" + afterUnsub);
+
+    mod.reset();   // 析构兜底：刷新器若被复活且没收干净，这里 std::terminate（崩溃即断言）
+    DOCTEST_CHECK_MESSAGE(true, "onStop 后迟到事件 + 析构全程未崩溃（无悬空线程）");
     return true;
 })
