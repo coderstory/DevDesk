@@ -10,6 +10,8 @@
 #include "platform/json.h"
 #include "platform/keychain.h"
 
+#include <variant>
+
 namespace module::settings {
 
 namespace {
@@ -361,10 +363,35 @@ core::Result<void> GithubSyncStore::importDatabase(const std::string& sql) {
             LOG_WARN("GithubSync: 导入后 PRAGMA foreign_keys=ON 失败: " +
                      fk.errorMessage());
         }
-        auto integrity = db_->exec("PRAGMA integrity_check");
-        if (integrity.isFail()) {
-            LOG_WARN("GithubSync: 导入后 integrity_check 失败: " +
-                     integrity.errorMessage());
+        // 真读结果行：exec 会丢弃行且 rc 恒 OK = 零校验；PRAGMA integrity_check
+        // 完好时返回一行 "ok"，损坏时返回具体错误行（首行即判据）。
+        auto check = db_->prepare("PRAGMA integrity_check");
+        if (check.isFail()) {
+            LOG_WARN("GithubSync: 导入后 integrity_check 无法执行: " +
+                     check.errorMessage());
+        } else {
+            auto& st = check.value();
+            auto stepped = st.step();
+            if (stepped.isFail()) {
+                LOG_WARN("GithubSync: 导入后 integrity_check 执行失败: " +
+                         stepped.errorMessage());
+            } else if (stepped.value()) {
+                auto row = st.currentRow();
+                std::string verdict;
+                if (row.isOk()) {
+                    if (!row.value().values.empty()) {
+                        if (auto* v = std::get_if<std::string>(
+                                &row.value().values[0])) {
+                            verdict = *v;
+                        }
+                    }
+                }
+                if (verdict != "ok") {
+                    LOG_ERROR("GithubSync: 导入后 integrity_check 未通过: " +
+                              (verdict.empty() ? std::string("（无结果行）")
+                                               : verdict));
+                }
+            }
         }
         ::core::event::bus().emit(::core::event::kDbImported);
     }
