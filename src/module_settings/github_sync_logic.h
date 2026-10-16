@@ -69,6 +69,11 @@ inline constexpr int64_t kCommitThrottleSec = 5 * 60;
 // 距上次 commit 是否已过节流窗口。lastCommitSec <= 0（从未 commit）→ 到点。
 bool throttleDue(int64_t lastCommitSec, int64_t nowSec);
 
+// 自动推送闸：启用 + 自动推送开关 + dirty + 过节流窗口，四者全真才放行。
+// 手动「立即同步」与「测试连接」都不查本闸（用户显式动作，开关与窗口都不拦）。
+bool autoPushDue(bool enabled, bool autoPush, bool dirty, int64_t lastCommitSec,
+                 int64_t nowSec);
+
 // ── 退出推送 ──
 // dirty 且距上次 commit ≥ 60s 才在退出时补推：刚同步过的退出不必再推
 //（改动已在远端），退出前的窗口期改动等下轮自动同步。

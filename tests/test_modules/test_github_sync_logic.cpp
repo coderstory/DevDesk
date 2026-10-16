@@ -112,6 +112,21 @@ REGISTER_TEST(github_sync_exit_push_due,
     return true;
 })
 
+REGISTER_TEST(github_sync_auto_push_due,
+              "github_sync 自动推送闸: 启用 + 自动推送开关 + dirty + 节流窗口四者全真才放行", {
+    // 全真 → 放行（从未 commit = 到点）
+    DOCTEST_CHECK(g::autoPushDue(true, true, true, 0, 1'000'000));
+    // 四条件任一为假 → 不放行（含关掉「自动推送」开关）
+    DOCTEST_CHECK(!g::autoPushDue(false, true, true, 0, 1'000'000));
+    DOCTEST_CHECK(!g::autoPushDue(true, false, true, 0, 1'000'000));
+    DOCTEST_CHECK(!g::autoPushDue(true, true, false, 0, 1'000'000));
+    DOCTEST_CHECK(!g::autoPushDue(true, true, true, 1'000'000,
+                                  1'000'000 + g::kCommitThrottleSec - 1));
+    DOCTEST_CHECK(g::autoPushDue(true, true, true, 1'000'000,
+                                 1'000'000 + g::kCommitThrottleSec));
+    return true;
+})
+
 REGISTER_TEST(github_sync_action_tables_from_state,
               "github_sync 动作表: classifyNote 7 态 → push/pull 动作（唯一语义源）", {
     using g::NoteSyncState;

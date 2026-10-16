@@ -47,6 +47,12 @@ bool throttleDue(int64_t lastCommitSec, int64_t nowSec) {
     return nowSec - lastCommitSec >= kCommitThrottleSec;
 }
 
+bool autoPushDue(bool enabled, bool autoPush, bool dirty, int64_t lastCommitSec,
+                 int64_t nowSec) {
+    if (!enabled || !autoPush || !dirty) return false;
+    return throttleDue(lastCommitSec, nowSec);
+}
+
 bool exitPushDue(int64_t lastCommitSec, int64_t nowSec) {
     if (lastCommitSec <= 0) return true;
     if (nowSec < lastCommitSec) return true;   // 时钟回拨：视为到点

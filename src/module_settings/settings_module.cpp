@@ -640,11 +640,15 @@ public:
         showToast("已复制详情");
     }
 
-    // 自动同步判定：dirty 且过 5 分钟窗口才自动推；手动绕开。
+    // 自动同步判定：过 gsync::autoPushDue 才推（启用 + 自动推送开关 + dirty +
+    // 节流窗口）；手动「立即同步」不走本函数，故不受开关与窗口限制。
     void maybeAutoGithubSync() {
-        if (!githubSyncCfg_.enabled || !githubSyncDirty_) return;
+        if (!gsync::autoPushDue(githubSyncCfg_.enabled, githubSyncCfg_.autoPush,
+                                githubSyncDirty_, githubSyncLastCommitSec_,
+                                nowSec())) {
+            return;
+        }
         if (githubSyncThread_.joinable()) return;
-        if (!gsync::throttleDue(githubSyncLastCommitSec_, nowSec())) return;
         startGithubSyncAction(SyncAction::Push, /*manual=*/false);
     }
 
@@ -688,9 +692,9 @@ public:
         });
     }
 
-    // 退出补推：dirty 且距上次 commit ≥60s 才推；最多等 5s，到点未完即
-    // 放弃并置未同步提示键 → 下次启动卡片黄字。manual=true 绕开 5 分钟节流
-    //（退出补推是一次性的）。
+    // 退出补推：dirty 且距上次 commit ≥60s 且自动推送开关开着才推；最多等 5s，
+    // 到点未完即放弃并置未同步提示键 → 下次启动卡片黄字。manual=true 绕开 5 分钟
+    // 节流（退出补推是一次性的）。
     // 等待/放行逻辑见 waitOrDetachSyncThread；已有任务在飞时也走同一条等待，
     // 否则 onStop 的无界 join 会把退出拖到整轮推送结束（断网时数十秒~分钟）。
     void runExitSyncPush() {
@@ -700,7 +704,10 @@ public:
             waitOrDetachSyncThread();
             return;
         }
-        if (!githubSyncCfg_.enabled || !githubSyncDirty_) return;
+        if (!githubSyncCfg_.enabled || !githubSyncCfg_.autoPush ||
+            !githubSyncDirty_) {
+            return;
+        }
         if (!gsync::exitPushDue(githubSyncLastCommitSec_, nowSec())) return;
         LOG_INFO("Settings: 退出补推启动");
         startGithubSyncAction(SyncAction::Push, /*manual=*/true);
