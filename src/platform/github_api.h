@@ -36,6 +36,10 @@ public:
     // 注入点（测试用）：发送器默认真实 send；退避 sleep 默认 std::this_thread::sleep_for，
     // 传 nullptr 复位。均为**静态**，用例结束必须复位，否则污染同进程后续用例。
     void setSender(Sender sender);
+    // 静态默认发送器：构造时的初值，供测试注入**模块内部自建**的 api 实例
+    //（runGithubSyncAction 里 new 的实例拿不到实例级 setSender）。传 nullptr 复位
+    // 为真实 send；实例级 setSender 仍可覆盖。用例结束必须复位，同 setSleepFunction。
+    static void setDefaultSender(Sender sender);
     static void setSleepFunction(std::function<void(int)> fn);
 
     core::Result<RepoInfo> getRepo();
@@ -52,8 +56,10 @@ public:
     core::Result<std::string> putFile(const std::string& path, const std::string& content,
                                       const std::string& message, const std::string& shaIfMatch = "",
                                       const std::string& branch = "");
+    // branch 语义与 putFile 一致（body 的 branch 字段，空 = 默认分支）；删除是
+    // 破坏性操作，branch 必传（无默认值）——调用方必须显式决定落在哪个分支。
     core::Result<void> deleteFile(const std::string& path, const std::string& message,
-                                  const std::string& shaIfMatch, const std::string& branch = "");
+                                  const std::string& shaIfMatch, const std::string& branch);
     // git refs：测试连接用（建临时分支 → 写探针 → 删分支）。fromBranch = 基点分支（取其 HEAD sha）。
     core::Result<void> createRef(const std::string& branch, const std::string& fromBranch);
     core::Result<void> deleteRef(const std::string& branch);
