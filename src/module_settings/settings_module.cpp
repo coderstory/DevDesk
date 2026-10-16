@@ -822,6 +822,15 @@ public:
             summary = "读取导出文件失败";
             return false;
         }
+        // 体积上限（spec F9）：PUT 单请求 100MB（base64 ×1.37）→ 原始 ≈73MB，
+        // 超限明确报错而不是让远端拒收 413 后报「HTTP 413」。
+        if (gsync::dumpTooLargeForRemote(dump.size())) {
+            summary = "数据库导出过大，暂不支持同步（原始 " +
+                      std::to_string(dump.size() / (1000 * 1000)) +
+                      " MB，上限约 73 MB；请清理调用日志或待办数据后重试）";
+            LOG_ERROR("Settings: GitHub Sync " + summary);
+            return false;
+        }
 
         // ② 分支：不存在则以仓库默认分支为基点自动创建（决策 #10/#16）。
         publishGithubSyncProgress("② 校验分支…");

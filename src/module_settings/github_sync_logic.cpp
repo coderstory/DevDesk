@@ -35,6 +35,10 @@ std::string contentHash(const std::string& bytes) {
     return out;
 }
 
+bool dumpTooLargeForRemote(uint64_t rawBytes, uint64_t limitBytes) {
+    return rawBytes > limitBytes;
+}
+
 bool throttleDue(int64_t lastCommitSec, int64_t nowSec) {
     if (lastCommitSec <= 0) return true;   // 从未 commit → 到点
     if (nowSec < lastCommitSec) return true;  // 时钟回拨：不把用户锁死在窗口里

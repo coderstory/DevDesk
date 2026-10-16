@@ -52,3 +52,15 @@ REGISTER_TEST(github_sync_content_hash_fnv1a,
     DOCTEST_CHECK_EQ(g::contentHash("abc").size(), static_cast<size_t>(16));
     return true;
 })
+
+REGISTER_TEST(github_sync_dump_size_limit,
+              "github_sync 体积上限: F9 原始体积超限判定（边界 + 注入小上限）", {
+    DOCTEST_CHECK_EQ(g::kMaxDumpRawBytes, static_cast<uint64_t>(73'000'000));
+    // 注入小上限：恰等于上限不超（100MB 请求含 base64 膨胀余量），+1 即超
+    DOCTEST_CHECK(!g::dumpTooLargeForRemote(100, 100));
+    DOCTEST_CHECK(g::dumpTooLargeForRemote(101, 100));
+    // 默认上限形态：73,000,000 之下不拦，之上拦
+    DOCTEST_CHECK(!g::dumpTooLargeForRemote(g::kMaxDumpRawBytes));
+    DOCTEST_CHECK(g::dumpTooLargeForRemote(g::kMaxDumpRawBytes + 1));
+    return true;
+})

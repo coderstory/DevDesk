@@ -38,6 +38,14 @@ NoteSyncState classifyNote(bool hasRecord, bool localExists,
 // 同内容恒同值 —— 状态判定用内容而非 mtime（spec F1：mtime 跨设备/备份恢复不可靠）。
 std::string contentHash(const std::string& bytes);
 
+// ── 上传体积上限（spec F9）──
+// Contents API PUT 单请求上限 100MB，base64 后体积 ×1.37 → 原始上限 ≈73MB
+//（取十进制保守值）。不做分块：超限明确报错，等用户手动清理数据库。
+inline constexpr uint64_t kMaxDumpRawBytes = 73'000'000;
+
+bool dumpTooLargeForRemote(uint64_t rawBytes,
+                           uint64_t limitBytes = kMaxDumpRawBytes);
+
 // ── commit 节流（决策 #14 / #17）──
 // 自动同步 5 分钟内最多一次；手动「立即同步」绕开窗口（调用方传 manual=true）。
 inline constexpr int64_t kCommitThrottleSec = 5 * 60;
