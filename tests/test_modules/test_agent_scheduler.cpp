@@ -708,3 +708,35 @@ REGISTER_TEST(event_trigger_bad_config_logs_and_skips,
     sched.stopAll();
     return true;
 })
+
+// ---- 事件线程真起（共享 cv_ 丢唤醒的离线守卫）----
+// 上面的事件用例全走 drainEventQueue 直调：不起事件线程，覆盖不到「等待线程被
+// 唤醒」这一段。本用例 start() 起真线程——常驻 + 事件两个等待者共用同一把 cv_，
+// onEvent 的通知摇中错误等待者（谓词假、重睡）时事件滞留队列、永不消费。每轮
+// onEvent 后有界轮询 eventQueueSize()==0 断言抽干。零 LLM：库里无任务，
+// processEvent 的 listTasks 为空，dispatchRun 永不触达 MockLlm；零 store 写。
+// notify_one 形态下每轮约 50% 红，20 轮全绿 ≈ 1-0.5^20。
+REGISTER_TEST(event_trigger_real_thread_wakeup_not_lost,
+              "event_trigger: 真事件线程抽干 onEvent×20（共享 cv_ 丢唤醒回归守卫，零 LLM）", {
+    test_support::TestDb tdb("agentsched", "evtwake");
+    module::agent::AgentStore store(tdb.handle());
+    MockLlm llm;   // 空 script：本用例任何 send 都说明事件被误派发了
+    module::agent::AgentLoop loop(llm, core::ToolRegistry::instance(), store);
+    module::agent::Scheduler sched(store, loop, {});
+    sched.start();                                           // 常驻 + 事件两个等待线程真起
+    for (int round = 0; round < 20; ++round) {
+        sched.onEvent("todo.created");
+        bool drained = false;
+        for (int i = 0; i < 400 && !drained; ++i) {          // 有界轮询（2s 上限）
+            drained = sched.eventQueueSize() == 0;
+            if (!drained) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        DOCTEST_CHECK_MESSAGE(drained,
+                              "第 " + std::to_string(round) +
+                                  " 轮事件 2s 未被事件线程抽干（共享 cv_ 丢唤醒）");
+        if (!drained) break;
+    }
+    DOCTEST_CHECK_EQ(llm.sentMessages.size(), 0u);           // 零 LLM：只入队不派发
+    sched.stopAll();
+    return true;
+})
