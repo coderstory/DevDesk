@@ -713,10 +713,12 @@ public:
     }
 
     // 退出路径的等待闸：最多等 5s（50 × 100ms），到点 detach 放行。
-    // detach 在本路径安全——SettingsModule 是进程生命期对象（析构晚于全部
-    // atexit 处理器），appDatabase 堆持有同寿；detach 后
-    // githubSyncThread_.joinable()==false，onStop 的 join 直接跳过，退出不被
-    // 整轮推送阻塞。
+    // detach 后仍有窗口：SettingsModule 与 appDatabase 都是函数局部 static，析构
+    // 晚于本 atexit 钩子但仍在退出过程中 → 残留下限 = 取消位把窗口压到「一次网络
+    // 调用 + 一个阶段边界」；残余风险 = 退出瞬间线程撞 static 析构（表现为退出期
+    // 崩溃，SQLite 事务性保证不脏库）。彻底方案是同步线程挂进程生命期持有（未做）。
+    // detach 后 githubSyncThread_.joinable()==false，onStop 的 join 直接跳过，退出
+    // 不被整轮推送阻塞。
     void waitOrDetachSyncThread() {
         // 先置取消位再等：线程在下一个阶段边界收束，多数情况下 5s 内自然完成，
         // 无需走到 detach。
@@ -976,6 +978,7 @@ public:
 
         // ② 分支：不存在则以仓库默认分支为基点自动创建（决策 #10/#16）。
         publishGithubSyncProgress("② 校验分支…");
+        if (syncAborted()) { summary = "同步已中止（退出中）"; return false; }
         auto repo = api.getRepo();
         if (repo.isFail()) {
             summary = "读取仓库信息失败：" + repo.errorMessage();
@@ -985,6 +988,7 @@ public:
         const bool branchMissing =
             probe.isFail() && probe.errorCode() == core::ErrorCode::NotFound;
         if (branchMissing) {
+            if (syncAborted()) { summary = "同步已中止（退出中）"; return false; }
             auto created =
                 api.createRef(branch, repo.value().defaultBranch);
             if (created.isFail()) {
@@ -999,6 +1003,7 @@ public:
         // Diverged / LocalDeleted-远端也变 必须知道远端 sha——原先只能靠 PUT
         // 撞 409 事后发现，且本地删除会先静默删掉别人新写的内容。
         publishGithubSyncProgress("③ 读取远端笔记树…");
+        if (syncAborted()) { summary = "同步已中止（退出中）"; return false; }
         auto tree = api.listTree(branch);
         if (tree.isFail()) {
             summary = "读取远端笔记树失败：" + tree.errorMessage();
@@ -1085,6 +1090,7 @@ public:
 
         // ⑤ database.sql（sha 作冲突检测：远端已变 → 409）
         publishGithubSyncProgress("④ 上传 database.sql…");
+        if (syncAborted()) { summary = "同步已中止（退出中）"; return false; }
         std::string sha;
         if (probe.isOk() && probe.value().exists) sha = probe.value().sha;
         auto put = api.putFile(gsync::kRemoteSqlPath, dump,
