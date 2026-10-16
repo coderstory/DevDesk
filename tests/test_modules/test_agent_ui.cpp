@@ -1808,6 +1808,92 @@ REGISTER_TEST(agent_run_end_notice_take_semantics,
     return true;
 })
 
+// 冷启动盲区兜底：三守卫条件（uiPolling_/tasksDirty_/prevAlive）全假时，外部直写库插入的
+// running run 进不了 prevRunStatuses_（prev 恒空 = 冷启动盲区），其 running→failed 迁移
+// 零通知。兜底 = pollRunEnd 在三条件全假时做低频轻查询（hasRunningRun），发现 running 即
+// refreshData 一次进入正常观测路径。修前本用例红：守卫早退，最终取不到通知。
+REGISTER_TEST(agent_run_end_fallback_cold_start,
+              "agent_ui: 三守卫全假 + 库内新出现 running run → 兜底轻查询触发 refreshData，终态迁移产生通知", {
+    test_support::TestDb tdb("agentui", "fallback");
+    ToolGuard statsGuard{"app.stats"};
+    core::ToolRegistry::instance().unregisterTool("app.stats");
+    module::agent::AgentStore store(tdb.handle());
+    auto taskId = store.createTask("兜底盲区任务", "直接回复完成，不调用任何工具",
+                                    "manual", "default", 10, false);
+    DOCTEST_REQUIRE(taskId.isOk());
+
+    module::agent::AgentModule::Deps deps;
+    deps.db = &tdb.handle();
+    module::agent::AgentModule mod(deps);
+    mod.onStart();
+
+    // 排干 onStart 的 tasksDirty_：此后 uiPolling_/tasksDirty_/prevRunStatuses_ 全空，
+    // 三守卫条件全假 —— 外部直写库 run 的冷启动盲区成立
+    mod.pollRunEnd();
+    DOCTEST_CHECK(!mod.takeRunEndNotice().has_value());
+
+    // 外部直写库插入 running run（不经页面、不经模块，模块侧三条件仍全假）
+    auto runId = store.startRun(taskId.value());
+    DOCTEST_REQUIRE(runId.isOk());
+
+    // 兜底帧：轻查询发现 running → refreshData 一次，prevRunStatuses_ 捕获 running
+    mod.pollRunEnd();
+
+    // 外部把 run 直写成终态；下一帧走正常观测路径（prevAlive）必须给出迁移通知
+    DOCTEST_REQUIRE(store.finishRun(runId.value(), "failed", 1,
+                                    std::optional<int64_t>{},
+                                    std::optional<int64_t>{},
+                                    "fallback probe").isOk());
+    mod.pollRunEnd();
+    const auto notice = mod.takeRunEndNotice();
+    DOCTEST_REQUIRE_MESSAGE(notice.has_value(),
+                            "冷启动盲区未兜底：外部直写库 run 结束后无通知");
+    DOCTEST_CHECK_MESSAGE(notice->first.find("失败") != std::string::npos,
+                          "通知标题不含「失败」，实测: " + notice->first);
+    DOCTEST_CHECK_MESSAGE(notice->second.find("兜底盲区任务") != std::string::npos,
+                          "通知正文不含任务名，实测: " + notice->second);
+
+    mod.onStop();
+    return true;
+})
+
+// 兜底轻查询节流：兜底路径每帧都会走到（三守卫全假期间），轻查询若不节流就退化成
+// 每帧一条 SQL（锁竞争回潮）。时钟走 schedulerNow 缝冻结，断言同 15s 窗口内多帧只
+// 执行一次轻查询、跨窗口才允许第二次（runFallbackChecksForTest 计数）。
+REGISTER_TEST(agent_run_end_fallback_throttle,
+              "agent_ui: 兜底轻查询 15s 节流——同窗口多帧只查一次，跨窗口再查", {
+    test_support::TestDb tdb("agentui", "fbthrottle");
+    ToolGuard statsGuard{"app.stats"};
+    core::ToolRegistry::instance().unregisterTool("app.stats");
+    module::agent::AgentStore store(tdb.handle());
+    auto taskId = store.createTask("节流任务", "直接回复完成，不调用任何工具",
+                                    "manual", "default", 10, false);
+    DOCTEST_REQUIRE(taskId.isOk());
+
+    int64_t clockSec = 5000;
+    module::agent::AgentModule::Deps deps;
+    deps.db = &tdb.handle();
+    deps.schedulerNow = [&clockSec] { return clockSec; };
+    module::agent::AgentModule mod(deps);
+    mod.onStart();
+    mod.pollRunEnd();   // 排干 onStart 的 tasksDirty_（走常规路径，不计兜底查询）
+
+    // 库内无 running run：兜底路径每帧都走到，但节流窗口内只允许一次轻查询
+    mod.pollRunEnd();
+    DOCTEST_CHECK_EQ(mod.runFallbackChecksForTest(), 1);
+    mod.pollRunEnd();
+    mod.pollRunEnd();
+    DOCTEST_CHECK_EQ(mod.runFallbackChecksForTest(), 1);   // 同窗口不再查
+    clockSec = 5000 + 16;                                   // 跨过 15s 窗口
+    mod.pollRunEnd();
+    DOCTEST_CHECK_EQ(mod.runFallbackChecksForTest(), 2);
+    // 全程无 running run、无迁移 → 不得产生任何通知
+    DOCTEST_CHECK(!mod.takeRunEndNotice().has_value());
+
+    mod.onStop();
+    return true;
+})
+
 // Task 2：定时分支模板下拉 + 下次触发预览。布局契约：模板 dropdown 与预览行
 // 不得改变弹窗总高（面板仍 500、meta 行仍 +224），预览行只能落在 cron 行与
 // meta 行之间的原 gap 内。
