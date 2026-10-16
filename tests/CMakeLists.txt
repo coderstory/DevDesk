@@ -380,7 +380,6 @@ if(DEVDESK_BUILD_LIVE_TOOLS AND UNIX)
         devdesk_module_claude_proxy
         devdesk_module_settings
         devdesk_module_about
-        devdesk_module_pet
     )
     devdesk_apply_warnings(github_sync_live)
 
@@ -389,4 +388,42 @@ if(DEVDESK_BUILD_LIVE_TOOLS AND UNIX)
             "${CMAKE_BINARY_DIR}")
     # LABELS 只有 live、没有 probe：默认门禁跑 `ctest -L probe`，看不到它。
     set_tests_properties(github_sync_live PROPERTIES LABELS "live")
+
+# ==================== 智能体真机全场景验收（**默认不构建**）====================
+# tests/live/agent_live.cpp 驱动进程内 AgentLoop + DirectLlmClient 用**当前激活
+# profile 的真 key** 发真 LLM 请求跑场景矩阵 A-I —— 真网络 + 真凭据，CI 与离线
+# 环境必红，与 quota_live_probe 同一条红线。
+#
+# **为什么整段包 DEVDESK_BUILD_LIVE_TOOLS && UNIX 双门**：目标链接 todo / markdown /
+# claude_proxy / settings / agent 五个模块库，默认 OFF → 默认构建 / CI / Windows
+# 受编集合全都看不到它（矩阵票审计教训：live 类目标不受门控会进 Windows 编译炸 CI）。
+#
+# 显式入口（两条等价）：
+#     cmake -B build ... -DDEVDESK_BUILD_LIVE_TOOLS=ON && cmake --build build --target agent_live
+#     bash scripts/run-agent-live.sh [scenario ...]
+#     (cd build && ctest -L live)
+if(DEVDESK_BUILD_LIVE_TOOLS AND UNIX)
+    # module_toggle_bridge.cpp：settings 模块引用 app::toggle 桥符号
+    #（与 devdesk_tests 同款理由，见该目标注释）
+    add_executable(agent_live
+        live/agent_live.cpp
+        ${CMAKE_SOURCE_DIR}/src/module_toggle_bridge.cpp)
+    # module_claude_proxy / module_settings：claude_tools.h / app_tools.h 的同级头
+    target_include_directories(agent_live PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/src/module_claude_proxy
+        ${CMAKE_SOURCE_DIR}/src/module_settings)
+    target_link_libraries(agent_live PRIVATE
+        devdesk_module_todo
+        devdesk_module_markdown
+        devdesk_module_claude_proxy
+        devdesk_module_settings
+        devdesk_agent)
+    devdesk_apply_warnings(agent_live)
+
+    add_test(NAME agent_live
+        COMMAND bash "${CMAKE_SOURCE_DIR}/scripts/run-agent-live.sh"
+            "${CMAKE_BINARY_DIR}")
+    # LABELS 只有 live、没有 probe：默认门禁跑 `ctest -L probe`，看不到它。
+    set_tests_properties(agent_live PROPERTIES LABELS "live")
 endif()
