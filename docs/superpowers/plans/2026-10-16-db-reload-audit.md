@@ -1,19 +1,24 @@
 # 审计：`db.imported` 订阅重载（markdown / todo / agent 三模块）
 
-- 对象：分支 `worktree-agent-db-reload`（worktree `/Users/coderstory/dev/gui/DevDesk/.claude/worktrees/agent-db-reload`，基 `c7694aa`），3 提交
+- 对象：分支 `worktree-agent-db-reload`（worktree `/Users/coderstory/dev/gui/DevDesk/.claude/worktrees/agent-db-reload`，基 `c7694aa`），**5 提交**
   - `dbba921` fix(markdown): 订阅 db.imported 重载笔记列表与当前文档
   - `7387849` fix(todo): 订阅 db.imported 重载看板列与任务
   - `9d9396c` fix(agent): 订阅 db.imported 置脏重载任务与运行列表
+  - `89d9cde` fix(markdown): 导入收割按磁盘 mtime 判定 + 冲突期不自动保存（审计 F1a/F1b/F4）
+  - `68de02a` fix(settings): 拉取写笔记文件改原子写，避免读方拿到截断内容（审计 F2）
 - 审计者：独立只读 agent（非实现者），2026-10-16
-- 手段：`git diff c7694aa..HEAD` 逐 hunk 精读（7 文件 +215/−0）+ 三模块 harvest 调用链常驻调用方核对（`router.cpp` 生命周期 / `settings_module.cpp` 同步序 / `event_bus.h` 派发契约 / `flushEditorIfIdle` 保存链）+ worktree 定向与全量复跑 + `ctest -L probe`
+- 手段：`git diff c7694aa..HEAD` 逐 hunk 精读（8 文件 +220/−5）+ 三模块 harvest 调用链常驻调用方核对（`router.cpp` 生命周期 / `settings_module.cpp` 同步序 / `event_bus.h` 派发契约 / `flushEditorIfIdle` 保存链 / `atomic_write_{posix,win}.cpp` 原子性）+ worktree 定向与全量复跑 + `ctest -L probe`
 - 本审计为只读：**未执行变异回退**（本任务唯一写动作 = 落盘本文件），变异结论基于用例内**永久对照帧**的结构推断，已在下文标明
 
-## 裁决：**放行（附 2 项建议修复）**
+## 裁决：**可合并**
 
-功能正确、线程模型成立、模块隔离与提交卫生干净、三用例内容级且带对照帧。放行不阻塞；但 **F1 / F2 两项建议在合并前顺手修**（各 1 行～数行），它们是本改动**声称要解决的同一类风险**在另一条路径上的残留。
+> **复查更新（2026-10-16 晚）**：实现方已落 T4 四修 —— `89d9cde`（F1a/F1b/F4）+ `68de02a`（F2）。四项均**已修**，复跑全绿，**裁决从「放行（附建议修复）」升为「可合并」**。详见文末「复查（T4 四修）」段。
+
+首轮结论（保留存档）：功能正确、线程模型成立、模块隔离与提交卫生干净、三用例内容级且带对照帧。首轮放行不阻塞，但 **F1 / F2 两项建议在合并前顺手修**（各 1 行～数行），它们是本改动**声称要解决的同一类风险**在另一条路径上的残留。→ 该两项及 F4 已于 `89d9cde` / `68de02a` 修复。
 
 | # | 严重度 | 位置 | 问题 | 建议 |
 |---|---|---|---|---|
+| — | — | — | **下表 `file:line` 为首轮（3 提交时）行号；F1a/F1b/F4/F2 修复后的行号见文末「复查（T4 四修）」段** | — |
 | **F1** | **中** | `src/module_markdown/markdown_module.cpp:2665-2676` + `:2897-2909` + `:266/:268` | harvest **不判 mtime**，只要 `currentPath_` 非空就动当前笔记 → (a) 库里导入但该笔记文件未被 pull 时也弹「文件已被外部修改」**假冲突**，用户点「重载磁盘版本」会用未变的磁盘内容**替换缓冲、静默丢弃未保存编辑**；(b) `flushEditorIfIdle()` 排在 harvest **之后**且**不看 `conflictOpen_`**，`kAutoSaveDelayMs = 400`（`:3557`）→ 用户停键 400ms 即有未保存编辑时，同帧内先弹冲突、紧接着自动保存把本地旧缓冲写回磁盘，**把刚 pull 的内容盖掉**——正是 commit 声称解决的风险 | ① harvest 对当前笔记先比 `service_->fileMtime(currentPath_) > lastKnownMtime_`（复用 `checkCurrentNoteOnDisk:2990` 的口径），命中才走冲突/重载分支；② `flushEditorIfIdle()` 首行加 `if (conflictOpen_) return;`（一行，对既有磁盘冲突路径同样正确） |
 | **F2** | **中低** | `src/module_markdown/markdown_module.cpp:2673` ← `src/module_settings/settings_module.cpp:1357`（广播）vs `:1405`（写笔记文件） | 同步序是「**先** DB 导入并广播 `kDbImported`、**后**才下载写 `notes/*.md`」（step ② 在 step ③ 之前），而 harvest 在 UI 线程下一帧就跑 → 当前笔记可能读到**导入前**内容并 `syncCurrentMtime()` 记下旧 mtime，只能靠 5s 磁盘轮询（`:2945`）补，列表刷新对、当前笔记「立即重载」的目标没达成。另 `writeFileFromString`（`settings_module.cpp:132-138`）是 `ios::trunc` 直写、**非原子**（无 temp+rename），harvest 若落在写窗口内会读到截断文件并把它当 `lastSavedText_`（`editorDirty_` 置 false），此后 Ctrl+S 会把截断内容写回 | ① sync 侧把笔记写盘挪到 DB 导入**之前**，或改 temp+rename 原子写；② harvest 侧按 mtime 判定（与 F1① 同一条修即可同时缓解） |
 | **F3** | 低 | `src/module_markdown/markdown_module.cpp:2666-2667` | `exchange` 先于 `if (!service_)`：onStart 里订阅（`:210`）在 service_ 装配之前，DB 未就绪时到达的 `db.imported` 脏标记被消费后丢弃，之后 service_ 就绪也不会补一次重载 | 把 `if (!service_) return;` 提到 `exchange` 之前（或 service_ 就绪时补置脏）。影响面小（onStart 成功路径 service_ 必存在） |
@@ -98,6 +103,54 @@
 | `9d9396c` | `src/module_agent/agent_module.cpp` + `agent_module.h` + `tests/test_modules/test_agent_ui.cpp` | 无 |
 
 `git diff c7694aa..HEAD --stat` = 7 文件 +215/−0：**纯新增、零删除**，无 spec / backlog / CLAUDE.md / 无关重构 / 格式噪声。worktree `git status --porcelain` 干净、HEAD 停在 `9d9396c`（复跑对象即被审提交）。三提交各只动本模块 + 对应测试，**零跨模块夹带**。✅
+
+## 复查（T4 四修）— `89d9cde` + `68de02a`，2026-10-16
+
+**裁决更新：可合并。**
+
+| 项 | 结论 | 一句话 |
+|---|---|---|
+| F1a harvest 改调 `checkCurrentNoteOnDisk()` | ✅ 已修，副作用**可接受**（附 1 条低危） | 见下 |
+| F1b `flushEditorIfIdle` 冲突期不写 | ✅ 已修（原 finding 范围内）；三条**显式**保存路径仍不查，判非阻塞 | 见下 |
+| F4 `service_` 早退提前 | ✅ 已修 | 见下 |
+| F2 改 `core::atomicWriteFile` | ✅ 已修；**且审计行号本来就对**（`settings_module.cpp` 非 markdown） | 见下 |
+| 复跑 | ✅ markdown 94/94、settings 118/118、github_sync 28/28、`db.import` 3/3 | 见下 |
+
+### F1a — `markdown_module.cpp:2668-2675` ✅
+
+`harvestDbImport` 现在只做 `refreshList()` + `checkCurrentNoteOnDisk()`（`:2968`），不再无条件重载当前笔记。`checkCurrentNoteOnDisk` 首行 `if (currentPath_.empty() || conflictOpen_) return;`，两条分支：`m.isFail()` → 「文件已删」；`m.value() > lastKnownMtime_` → dirty 弹冲突 / 干净静默重载。**F1a 的两条残留（假冲突丢编辑、无条件 reload 的假 toast + 光标/撤销基线复位）都消除**：库导入但文件未 pull 时 `mtime` 不变 → 不进任何分支。✓
+
+**副作用（「文件已删」分支）评估 — 可接受。** `service_->fileMtime` 走 `fileMtimeEpoch`（`markdown_service.cpp:92-99`）→ `fs::last_write_time`，**直接 stat 真实文件系统，不查 DB 索引** → 库导入本身**不会**触发该分支（导入不动磁盘文件）。只有在文件**真的**不在磁盘时才弹「笔记已被删除」并清 `currentPath_`/缓冲 + `saveViewState()`——此时该行为**正确，且优于旧行为**（旧行为会一直留着一个已删笔记的陈旧缓冲）。**判可接受。**
+
+**残余低危（非阻塞，建议后续加固）**：Windows 的 `detail::replaceFile` 是 `remove(target)` + `rename(tmp,target)`（`atomic_write_win.cpp:24-31`；POSIX 是单次 `rename`，`atomic_write_posix.cpp:33-38`，无窗口）→ 目标在微秒级窗口内**不存在**。harvest 若精确落在该窗口，`fileMtime` 失败 → 走「文件已删」分支 → `editorDirty_` 为假时**清空缓冲 + 落一份「无笔记打开」的视图状态 + 假 toast**。概率极低（需 UI 帧落在 remove→rename 的微秒窗口；每 DB 导入只采样一次，而同码路径的 5s 轮询本来就在持续采样，本改动只多一个采样点）。**建议**：`m.isFail()` 分支里补一次确认（`fs::exists` 复检或二次 stat）再执行破坏性清理。
+
+### F1b — `markdown_module.cpp:2896-2897` ✅
+
+`flushEditorIfIdle()` 首行 `if (conflictOpen_) return;`，且 harvest 在 compose 中排在其前（`:266` harvest → `:268` flush）→ 冲突置位后**同帧**的 400ms 自动保存**确实**被挡住。原 finding（400ms 静默自动保存把本地旧缓冲写回、盖掉刚 pull 的内容）**已堵住**。✓
+
+- **残余（非阻塞、记录备查）**：`saveEditor()` 另有三条**显式**调用路径不查 `conflictOpen_`——Ctrl+S（`:2561`）、切换笔记前保存（`openNote:2807`）、退出重试（`onStop:252`）。三者均属用户显式意图或退出路径，不是本 finding 所指的静默后台保存，**按范围判「已修」**。
+- **残余（信息）**：冲突判定 `fileMtime > lastKnownMtime_` 用 `fileMtimeEpoch` 的**秒**粒度（`markdown_service.cpp:96-98`）；若 pull 写入与 `lastKnownMtime_` 落在同一秒则不置位、自动保存继续。秒粒度是既有口径（5s 轮询同款），非本次引入。
+
+### F4 — `markdown_module.cpp:2669-2670` ✅
+
+`if (!service_) return;` 已提到 `dbImportedDirty_.exchange(...)` **之前**；DB 未就绪时脏标记不再被消费丢弃，service_ 就绪后下一帧照常收割。✓
+
+### F2 — `settings_module.cpp:135-138` ✅
+
+- **行号澄清：审计原文本来就对。** F2 行里 `writeFileFromString` 标的是 `settings_module.cpp:132-138`、调用点 `settings_module.cpp:1405`；行首的 `markdown_module.cpp:2673` 是 **harvest 调用点**，不是该函数位置。实现方「审计原文把该函数记在 `markdown_module.cpp`」的注记**不成立**，无需更正——结论一致（markdown 模块内确无 `ofstream`，笔记写路径早已走 `atomicWriteFile`）。
+- **原子性是否真消除截断窗口**：**POSIX 是**（单次 `rename`，读方要么旧要么新，无截断、无 ENOENT）；**Windows 不是完全**——`remove` + `rename` 消除了「读到半截内容」，但换来目标短暂不存在（即上条 F1a 残余）。故「harvest 读到截断文件并把它当 `lastSavedText_` 记住」在**两平台均已消除**，Windows 侧换成 ENOENT（低危，同 F1a 建议）。
+- **附带影响（信息）**：原子写会在被监听的笔记目录产生 `<name>.md.devdesk-tmp` 的创建 + rename 两个事件；`onWatchEvent` 对「已不存在的非 .md 路径」置 credit（`markdown_service.cpp:160-162`）→ 拉取后多一轮 `rescan`。但 `MarkdownService::write`（`:656`/`:706`）本就同款，**非新行为类别**。
+- 落盘权限随 `atomicWriteFile` 统一到 0600，与笔记写路径一致。✓
+
+### 复跑（`DEVDESK_TEST_TMPDIR` 绝对路径，重编后）
+
+| 组 | 结果 |
+|---|---|
+| `--filter markdown` | `Total 94 / Passed 94 / Failed 0` |
+| `--filter settings`（`68de02a` 触及本模块，补跑） | `Total 118 / Passed 118 / Failed 0` |
+| `--filter github_sync` | `Total 28 / Passed 28 / Failed 0` |
+| `--filter "db.import"` | `Total 3 / Passed 3 / Failed 0` |
+| 全量（`DEVDESK_TEST_TMPDIR=/tmp/devdesk-audit-dbreload2`） | `Total 1433 / Passed 1427 / Failed 0 / Skipped 6` |
 
 ## 附：本审计未做的事
 
