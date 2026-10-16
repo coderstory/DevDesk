@@ -269,6 +269,36 @@ REGISTER_TEST(todo_ui_compose_and_context_menu,
     return true;
 })
 
+REGISTER_TEST(todo_ui_db_import_reloads_board,
+              "todo_ui: db.imported 后 compose 重载看板数据（headless）", {
+    TestEnv env;
+    DOCTEST_REQUIRE(env.ready);
+
+    std::unique_ptr<::core::Module> mod(create_todo_module());
+    mod->onStart();
+
+    Frame frame(mod.get());
+    DOCTEST_REQUIRE(frame.ui.find("todo.col.0.head") != nullptr);   // 默认第 0 列 = 待办
+    DOCTEST_CHECK(frame.ui.find("todo.col.0.card.0.bg") == nullptr);  // 初始空列
+
+    // 模拟远端库导入：库里多出一条任务，但**不发任何事件**（列/任务缓存应保持旧值）
+    auto cols = env.svc->listColumns();
+    DOCTEST_REQUIRE(cols.isOk());
+    DOCTEST_REQUIRE(!cols.value().empty());
+    auto created = env.svc->createTask(cols.value()[0].id, "导入任务");
+    DOCTEST_REQUIRE(created.isOk());
+
+    frame.refresh();
+    DOCTEST_CHECK(frame.ui.find("todo.col.0.card.0.bg") == nullptr);  // 对照：未广播 → 仍旧
+
+    ::core::event::bus().emit(::core::event::kDbImported);
+    frame.refresh();
+    DOCTEST_CHECK(frame.ui.find("todo.col.0.card.0.bg") != nullptr);  // 广播后重载可见
+
+    mod->onStop();
+    return true;
+})
+
 REGISTER_TEST(todo_ui_keyboard_move,
               "todo_ui: 点击选中 + Ctrl+↑/↓ 键盘移动落库（headless）", {
     TestEnv env;
