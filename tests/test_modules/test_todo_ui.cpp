@@ -4295,12 +4295,12 @@ REGISTER_TEST(todo_ui_event_wiring_write_paths,
     return true;
 })
 
-// 列写路径事件补齐：建列 / 改列名 / 移列 / 删列都改待办数据，GitHub Sync 的 dirty
-// 触发源必须覆盖。最高风险 = 删除列：外键 CASCADE 连带删掉列下全部任务，不置 dirty
+// 列写路径事件补齐：建列 / 改列名 / 移列 / 改色 / 删列五条都改待办数据，GitHub Sync 的
+// dirty 触发源必须覆盖。最高风险 = 删除列：外键 CASCADE 连带删掉列下全部任务，不置 dirty
 // 则任务从看板消失而同步端毫不知情。
 // 列操作共用 todo.column_changed（没有订阅方需要区分这五种列改动，见 core/event_bus.h）。
 REGISTER_TEST(todo_ui_event_wiring_columns,
-              "todo_ui: 建列/改列名/移列/删列→todo.column_changed（删列级联任务也置位）", {
+              "todo_ui: 建列/改列名/移列/改色/删列→todo.column_changed（删列级联任务也置位）", {
     TestEnv env;
     DOCTEST_REQUIRE(env.ready);
 
@@ -4456,6 +4456,36 @@ REGISTER_TEST(todo_ui_event_wiring_columns,
         auto ts = env.svc->listTasks(doomedId);
         DOCTEST_REQUIRE(ts.isOk());
         DOCTEST_CHECK_EQ(ts.value().size(), static_cast<size_t>(0));  // CASCADE 连带删掉
+    }
+
+    // 5) 列头右键 →「改色」子选 → doSetColumnColor 成功分支发布
+    //（改色只写 color 列、不动列与任务结构，故单独走一条，别被「列没变」骗过去）
+    {
+        Frame frame(mod.get());
+        eui::PointerEvent pe;
+        eui::Rect rect;
+        const auto* head = frame.ui.find("todo.col.0.head");
+        DOCTEST_REQUIRE(head != nullptr);
+        DOCTEST_REQUIRE(head->onContextMenu != nullptr);
+        head->onContextMenu(pe, rect);
+        frame.refresh();
+        const auto* colorItem = frame.ui.find("todo.ctx.level.0.item.3");
+        DOCTEST_REQUIRE(colorItem != nullptr);
+        DOCTEST_REQUIRE(colorItem->onClick != nullptr);
+        colorItem->onClick();   // 打开改色子菜单（主菜单不关）
+        frame.refresh();
+        const auto* preset0 = frame.ui.find("todo.ctx.level.1.item.0");
+        DOCTEST_REQUIRE(preset0 != nullptr);
+        DOCTEST_REQUIRE(preset0->onClick != nullptr);
+        preset0->onClick();
+        DOCTEST_CHECK_EQ(gotColumn, 5);
+    }
+    {
+        // 真落库（事件不是空发）：下标 0 那列的颜色已变成预设 0 = claude-clay
+        auto cols = env.svc->listColumns();
+        DOCTEST_REQUIRE(cols.isOk());
+        DOCTEST_REQUIRE(cols.value()[0].color.has_value());
+        DOCTEST_CHECK_EQ(*cols.value()[0].color, std::string("claude-clay"));
     }
 
     mod->onStop();
