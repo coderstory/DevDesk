@@ -56,9 +56,6 @@ std::filesystem::path claudeConfigDirOverride();
 std::filesystem::path claudeManagedSettingsFile();
 
 // GitHub Sync 相关路径
-// Git 仓库根目录 = appDataDir()（数据根即 git 仓库根）
-std::filesystem::path gitRepoDir();
-
 // SQL dump 文件路径（仓库根目录下的 database.sql）
 std::filesystem::path sqlDumpFile();
 

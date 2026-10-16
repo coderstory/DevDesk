@@ -22,7 +22,10 @@ namespace core::sql_dump {
 
 const std::vector<std::string>& defaultSkipTables() {
     static const std::vector<std::string> kTables = {
-        "claude_call_logs", "claude_run_settings"};
+        "claude_call_logs", "claude_run_settings",
+        // 同步基线（sha/hash/首次方向/未同步提示）是本机专属状态：随 dump 跨设备
+        // 转移会让新设备拿别人写的基线比对 → 误判未变跳过下载 → 进而删远端笔记。
+        "github_sync_state"};
     return kTables;
 }
 

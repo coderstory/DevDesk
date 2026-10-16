@@ -169,10 +169,6 @@ void ensureDirectoriesExist() {
     }
 }
 
-fs::path gitRepoDir() {
-    return appDataDir();
-}
-
 fs::path sqlDumpFile() {
     return appDataDir() / "database.sql";
 }

@@ -22,6 +22,7 @@
 #include "module_toggle_bridge.h"
 #include "platform/message_box.h"
 #include "platform/tray_icon.h"
+#include "github_sync_exit_hook.h"
 #include "settings_config.h"
 
 #include <components/styledmenu.h>
@@ -249,6 +250,11 @@ void ensureClaudeServiceAssembledImpl(bool autoStart);
         app::assembly::assembleAndStart(
             router, gatingConfigSnapshot(), gated,
             prepareClaudeServiceBeforeModules);
+
+        // F5 退出补推：本钩子晚于 armExitHook 注册，atexit LIFO → 先于
+        // router->stopAll() 跑，此刻模块与数据库都还活着；推不完由
+        // settings onStop 的 join 收束（上限 5s 等待见 runExitSyncPush）。
+        std::atexit([] { ::module::settings::runGithubSyncExitPush(); });
 
         app::assembly::dispatchFileOpen(
             &router, app::assembly::pendingOpenFilePath(),

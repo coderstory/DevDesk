@@ -793,3 +793,76 @@ REGISTER_TEST(github_validate_config_owner_repo_charset,
     DOCTEST_CHECK_EQ(rec.reqs.size(), static_cast<std::size_t>(1));
     return true;
 })
+
+// ---- listTree（F7 拉取全树）----
+
+REGISTER_TEST(github_list_tree_parses_blobs,
+              "github listTree: blob 条目解析（path/sha/size），目录条目排除", {
+    Recorder rec;
+    rec.plan.push_back(okResp(200, R"({
+        "sha": "rootsha",
+        "truncated": false,
+        "tree": [
+          {"path":"notes","mode":"040000","type":"tree","sha":"t1"},
+          {"path":"notes/a.md","mode":"100644","type":"blob","sha":"sa","size":3},
+          {"path":"notes/b.md","mode":"100644","type":"blob","sha":"sb","size":0},
+          {"path":"data/database.sql","mode":"100644","type":"blob","sha":"sc","size":123}
+        ]
+    })"));
+
+    std::vector<int> sleeps;
+    platform::github::GithubApi api("tok", "owner", "repo",
+                                    platform::github::RetryPolicy{1, {}});
+    wire(api, rec);
+    SleepGuard guard(sleeps);
+
+    const auto res = api.listTree("main");
+    DOCTEST_REQUIRE(res.isOk());
+    DOCTEST_REQUIRE_EQ(res.value().size(), static_cast<std::size_t>(3));  // tree 目录排除
+    // 顺序 = 响应树序（调用方自行筛选，不做路径重排）
+    DOCTEST_CHECK_EQ(res.value()[0].path, std::string("notes/a.md"));
+    DOCTEST_CHECK_EQ(res.value()[0].sha, std::string("sa"));
+    DOCTEST_CHECK_EQ(res.value()[0].size, static_cast<uint64_t>(3));
+    DOCTEST_CHECK_EQ(res.value()[2].path, std::string("data/database.sql"));
+    DOCTEST_CHECK_EQ(res.value()[2].sha, std::string("sc"));
+    DOCTEST_CHECK_EQ(res.value()[2].size, static_cast<uint64_t>(123));
+    // 递归 + 分支进 URL，branch 含斜杠按值转义
+    DOCTEST_REQUIRE_EQ(rec.reqs.size(), static_cast<std::size_t>(1));
+    DOCTEST_CHECK(rec.reqs[0].url.find("/git/trees/main?recursive=1") !=
+                  std::string::npos);
+    return true;
+})
+
+REGISTER_TEST(github_list_tree_truncated_fails,
+              "github listTree: 远端树被截断 → 明确失败（不做分页子树补取）", {
+    Recorder rec;
+    rec.plan.push_back(okResp(200, R"({"sha":"r","truncated":true,"tree":[{"path":"a.md","mode":"100644","type":"blob","sha":"s1","size":1}]})"));
+
+    std::vector<int> sleeps;
+    platform::github::GithubApi api("tok", "owner", "repo",
+                                    platform::github::RetryPolicy{1, {}});
+    wire(api, rec);
+    SleepGuard guard(sleeps);
+
+    const auto res = api.listTree("main");
+    DOCTEST_CHECK(res.isFail());
+    DOCTEST_CHECK(res.errorMessage().find("截断") != std::string::npos);
+    return true;
+})
+
+REGISTER_TEST(github_list_tree_404_fails_not_found,
+              "github listTree: 分支不存在 → NotFound（由调用方走分支创建路径）", {
+    Recorder rec;
+    rec.plan.push_back(okResp(404, R"({"message":"Not Found"})"));
+
+    std::vector<int> sleeps;
+    platform::github::GithubApi api("tok", "owner", "repo",
+                                    platform::github::RetryPolicy{1, {}});
+    wire(api, rec);
+    SleepGuard guard(sleeps);
+
+    const auto res = api.listTree("nope");
+    DOCTEST_CHECK(res.isFail());
+    DOCTEST_CHECK_EQ(res.errorCode(), core::ErrorCode::NotFound);
+    return true;
+})

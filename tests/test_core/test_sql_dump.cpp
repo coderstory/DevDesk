@@ -28,6 +28,7 @@ bool makeSourceDb(core::data::SqliteDb& db) {
         CREATE TABLE profile_quota_config (provider_id TEXT PRIMARY KEY, models_config TEXT NOT NULL DEFAULT '');
         CREATE TABLE claude_call_logs (id INTEGER PRIMARY KEY, model TEXT);
         CREATE TABLE claude_run_settings (k TEXT PRIMARY KEY, v TEXT NOT NULL);
+        CREATE TABLE github_sync_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
         CREATE VIRTUAL TABLE markdown_fts USING fts5(title, body);
         CREATE INDEX idx_runs_task ON agent_runs(task_id);
         CREATE UNIQUE INDEX idx_tasks_title ON agent_tasks(title);
@@ -42,6 +43,7 @@ bool makeSourceDb(core::data::SqliteDb& db) {
         INSERT INTO profile_quota_config(provider_id, models_config) VALUES ('p1', '[{"model":"m"}]');
         INSERT INTO claude_call_logs(id, model) VALUES (1, 'skip-me');
         INSERT INTO claude_run_settings(k, v) VALUES ('k1', 'v1');
+        INSERT INTO github_sync_state(key, value) VALUES ('sha:notes/a.md', 'baseline-secret-sha'), ('first_sync_done', 'true');
         INSERT INTO markdown_fts(rowid, title, body) VALUES (1, 'note one', 'hello world'), (2, 'note two', 'second doc');
     )";
     return db.exec(schema).isOk() && db.exec(rows).isOk();
@@ -75,11 +77,14 @@ bool queryCount(core::data::SqliteDb& db, const char* table, int64_t* out) {
 
 } // namespace
 
-REGISTER_TEST(sql_dump_skip_defaults, "SqlDump: defaultSkipTables 固定为 call_logs + run_settings", {
+REGISTER_TEST(sql_dump_skip_defaults, "SqlDump: defaultSkipTables 固定为 call_logs + run_settings + github_sync_state", {
     const auto& tables = core::sql_dump::defaultSkipTables();
-    DOCTEST_CHECK_EQ(tables.size(), static_cast<size_t>(2));
+    DOCTEST_CHECK_EQ(tables.size(), static_cast<size_t>(3));
     DOCTEST_CHECK_EQ(tables[0], std::string("claude_call_logs"));
     DOCTEST_CHECK_EQ(tables[1], std::string("claude_run_settings"));
+    // 同步基线（本机专属）必须整表排除：随 dump 跨设备 = 新设备拿别人写的
+    // 比对基线 → 误判未变跳过下载 → 进而删远端笔记（审计 C1）
+    DOCTEST_CHECK_EQ(tables[2], std::string("github_sync_state"));
     return true;
 })
 
@@ -216,5 +221,64 @@ REGISTER_TEST(sql_dump_import_rollback, "SqlDump: 导入中途一句失败整体
     auto after = core::sql_dump::exportToString(db.value(), core::sql_dump::defaultSkipTables());
     DOCTEST_REQUIRE(after.isOk());
     DOCTEST_CHECK_EQ(stripTimestampLine(before.value()), stripTimestampLine(after.value()));
+    return true;
+})
+
+// ---- 同步基线（github_sync_state）必须留在本机（审计 C1）----
+
+REGISTER_TEST(sql_dump_excludes_sync_baseline,
+              "SqlDump: 导出不含同步基线（github_sync_state 整表排除，带在库对照）", {
+    auto opened = core::data::SqliteDb::open(":memory:");
+    DOCTEST_REQUIRE(opened.isOk());
+    auto& db = opened.value();
+    DOCTEST_REQUIRE(makeSourceDb(db));
+
+    auto dumped = core::sql_dump::exportToString(
+        db, core::sql_dump::defaultSkipTables());
+    DOCTEST_REQUIRE(dumped.isOk());
+    const std::string& dump = dumped.value();
+    // 表名与行值都不进 dump：基线 sha / 首次方向标记随 dump 转移 = 新设备
+    // 拿别人写的基线比对 → 误判未变跳过下载 → 进而删远端笔记
+    DOCTEST_CHECK(dump.find("github_sync_state") == std::string::npos);
+    DOCTEST_CHECK(dump.find("baseline-secret-sha") == std::string::npos);
+    DOCTEST_CHECK(dump.find("first_sync_done") == std::string::npos);
+    // 对照组：同库的普通表在 dump 里（证明上面的 find 不是恒假）
+    DOCTEST_CHECK(dump.find("agent_tasks") != std::string::npos);
+    return true;
+})
+
+REGISTER_TEST(sql_dump_import_keeps_local_sync_baseline,
+              "SqlDump: 新设备导入远端 dump 后本机同步基线原样存活（审计 C1）", {
+    // 设备 A：AB 各自的基线不同；A 的基线不得随 dump 落到 B
+    auto openedA = core::data::SqliteDb::open(":memory:");
+    DOCTEST_REQUIRE(openedA.isOk());
+    DOCTEST_REQUIRE(makeSourceDb(openedA.value()));
+    auto dumpedA = core::sql_dump::exportToString(
+        openedA.value(), core::sql_dump::defaultSkipTables());
+    DOCTEST_REQUIRE(dumpedA.isOk());
+
+    auto openedB = core::data::SqliteDb::open(":memory:");
+    DOCTEST_REQUIRE(openedB.isOk());
+    auto& b = openedB.value();
+    DOCTEST_REQUIRE(makeSourceDb(b));
+    DOCTEST_CHECK(b.exec("UPDATE github_sync_state SET value='b-own-sha' "
+                         "WHERE key='sha:notes/a.md'")
+                      .isOk());
+
+    auto imported = core::sql_dump::importFromString(b, dumpedA.value());
+    DOCTEST_REQUIRE(imported.isOk());
+
+    // B 自己的基线原样存活：既没被 A 的 dump 覆盖，也没被 DROP 重建清空
+    auto pr = b.prepare(
+        "SELECT value FROM github_sync_state WHERE key='sha:notes/a.md'");
+    DOCTEST_REQUIRE(pr.isOk());
+    auto stepped = pr.value().step();
+    DOCTEST_REQUIRE(stepped.isOk());
+    DOCTEST_REQUIRE(stepped.value());   // 行还在（未被清空）
+    auto row = pr.value().currentRow();
+    DOCTEST_REQUIRE(row.isOk());
+    auto value = row.value().getString("value");
+    DOCTEST_REQUIRE(value.isOk());
+    DOCTEST_CHECK_EQ(value.value(), std::string("b-own-sha"));
     return true;
 })

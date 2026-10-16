@@ -13,7 +13,6 @@ add_library(devdesk_core STATIC
     atomic_write.cpp
     tool.cpp
     sql_dump.cpp                        # SQLite 导出/导入（GitHub Sync 用）
-    git_sync_service.cpp                # Git 操作（popen → git add/commit/push/pull/fetch）
 )
 
 # 平台适配实现按平台选择编译（接口隔离：头文件平台无关，实现 *_win/_macos/_posix，

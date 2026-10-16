@@ -49,6 +49,8 @@ struct SettingsCardsIn {
     bool githubSyncRepoPublic = false;   // 仓库是 public → 黄字提醒（不硬拦）
     std::string githubSyncBranchHint;    // 分支被自动创建时的提示（决策 #10）
     bool githubSyncLocalGitUnavailable = false;  // 本地 git 不可用 → 灰字
+    bool githubSyncUnsyncedNotice = false;       // 退出推送未完成 → 黄字（F5）
+    std::string githubSyncDeleteSkipHint;        // 删远端跳过提示 → 黄字（T3 F8）
 };
 
 // 卡片回写模块的回调（compose 每帧装配；lambda 只捕获 this → SBO 无堆分配）

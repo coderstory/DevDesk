@@ -15,7 +15,9 @@
 #include "frame_env.h"
 #include "test_support.h"
 
+#include "core/event_bus.h"
 #include "core/theme.h"
+#include "core/sql_dump.h"
 #include "git_error_dialog.h"
 #include "github_sync_card.h"
 #include "github_sync_config.h"
@@ -352,12 +354,41 @@ REGISTER_TEST(github_error_detail_format,
     return true;
 })
 
+REGISTER_TEST(github_sync_store_unsynced_notice,
+              "github_sync 存储: 未同步提示键往返（F5）+ save() 保留", {
+    test_support::TestEnv env("gitsync", "notice");
+    module::settings::GithubSyncStore store(&env.handle());
+
+    auto has0 = store.hasUnsyncedNotice();
+    DOCTEST_REQUIRE(has0.isOk());
+    DOCTEST_CHECK(!has0.value());   // 默认无
+    DOCTEST_CHECK(store.setUnsyncedNotice().isOk());
+    auto has1 = store.hasUnsyncedNotice();
+    DOCTEST_REQUIRE(has1.isOk());
+    DOCTEST_CHECK(has1.value());
+    // 配置保存不得清掉提示键
+    module::settings::GithubSyncConfig cfg;
+    cfg.enabled = true;
+    DOCTEST_CHECK(store.save(cfg).isOk());
+    auto has2 = store.hasUnsyncedNotice();
+    DOCTEST_REQUIRE(has2.isOk());
+    DOCTEST_CHECK(has2.value());
+    // 同步成功后清除
+    DOCTEST_CHECK(store.clearUnsyncedNotice().isOk());
+    auto has3 = store.hasUnsyncedNotice();
+    DOCTEST_REQUIRE(has3.isOk());
+    DOCTEST_CHECK(!has3.value());
+    return true;
+})
+
 REGISTER_TEST(github_sync_card_info_rows,
-              "github_sync 卡片: public 提醒 / 分支提示 / 本地 git 灰字（带对照）", {
+              "github_sync 卡片: public 提醒 / 分支提示 / 本地 git 灰字 / 未同步黄字 / 删跳过黄字（带对照）", {
     CardFixture fx;
     fx.in.githubSyncRepoPublic = true;
     fx.in.githubSyncBranchHint = "分支 main 不存在，已按仓库默认分支自动创建";
     fx.in.githubSyncLocalGitUnavailable = true;
+    fx.in.githubSyncUnsyncedNotice = true;
+    fx.in.githubSyncDeleteSkipHint = "有 1 篇本地仍在但读取失败的笔记，已跳过远端删除（下轮重试）";
     test_support::HeadlessFrame f("githubsynccardinfo");
     DOCTEST_CHECK(f.frame([&](eui::Ui& ui) {
         fx.draw(ui);
@@ -370,10 +401,16 @@ REGISTER_TEST(github_sync_card_info_rows,
         const auto* git = ui.find(std::string(kCardId) + ".localgit");
         DOCTEST_REQUIRE(git != nullptr);
         DOCTEST_CHECK_EQ(git->text, std::string("本地版本历史：不可用"));
+        const auto* uns = ui.find(std::string(kCardId) + ".unsynced");
+        DOCTEST_REQUIRE(uns != nullptr);
+        DOCTEST_CHECK(uns->text.find("未同步") != std::string::npos);
+        const auto* skip = ui.find(std::string(kCardId) + ".deleteskip");
+        DOCTEST_REQUIRE(skip != nullptr);
+        DOCTEST_CHECK(skip->text.find("跳过远端删除") != std::string::npos);
         return true;
     }));
 
-    // 对照组：三个标志全 false → 三行都不画（否则上面可能只是「恒画」）
+    // 对照组：五个标志全 false/空 → 五行都不画（否则上面可能只是「恒画」）
     CardFixture clean;
     test_support::HeadlessFrame fc("githubsynccardinfoclean");
     DOCTEST_CHECK(fc.frame([&](eui::Ui& ui) {
@@ -381,6 +418,8 @@ REGISTER_TEST(github_sync_card_info_rows,
         DOCTEST_CHECK(ui.find(std::string(kCardId) + ".publicwarn") == nullptr);
         DOCTEST_CHECK(ui.find(std::string(kCardId) + ".branchhint") == nullptr);
         DOCTEST_CHECK(ui.find(std::string(kCardId) + ".localgit") == nullptr);
+        DOCTEST_CHECK(ui.find(std::string(kCardId) + ".unsynced") == nullptr);
+        DOCTEST_CHECK(ui.find(std::string(kCardId) + ".deleteskip") == nullptr);
         return true;
     }));
     return true;
@@ -429,6 +468,46 @@ REGISTER_TEST(github_error_dialog_conflict_variant,
     return true;
 })
 
+REGISTER_TEST(github_error_dialog_conflict_overwrite_list,
+              "github_sync 409 弹窗: 列出将被覆盖的本地未推文件清单（F6，带空清单对照）", {
+    DialogFixture fx;
+    fx.st.open = true;
+    fx.st.variant = ms::GitErrorDialogVariant::Conflict409;
+    fx.in.overwriteFiles = {"data/database.sql", "notes/a.md"};
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+
+    test_support::HeadlessFrame f("githubsyncdlgovw");
+    DOCTEST_CHECK(f.frame([&](eui::Ui& ui) {
+        fx.draw(ui, screen);
+        const auto* hd =
+            ui.find(std::string(kDlgId) + ".logs.overwrite.header");
+        DOCTEST_REQUIRE(hd != nullptr);
+        DOCTEST_CHECK(hd->text.find("覆盖") != std::string::npos);
+        const auto* r0 = ui.find(std::string(kDlgId) + ".logs.overwrite.0.text");
+        DOCTEST_REQUIRE(r0 != nullptr);
+        DOCTEST_CHECK(r0->text.find("database.sql") != std::string::npos);
+        const auto* r1 = ui.find(std::string(kDlgId) + ".logs.overwrite.1.text");
+        DOCTEST_REQUIRE(r1 != nullptr);
+        DOCTEST_CHECK(r1->text.find("a.md") != std::string::npos);
+        return true;
+    }));
+
+    // 对照：无清单（非 409 场景或本机无未推改动）→ 清单区不画
+    DialogFixture clean;
+    clean.st.open = true;
+    clean.st.variant = ms::GitErrorDialogVariant::Conflict409;
+    test_support::HeadlessFrame fc("githubsyncdlgovwclean");
+    DOCTEST_CHECK(fc.frame([&](eui::Ui& ui) {
+        clean.draw(ui, screen);
+        DOCTEST_CHECK(ui.find(std::string(kDlgId) +
+                              ".logs.overwrite.header") == nullptr);
+        return true;
+    }));
+    return true;
+})
+
 REGISTER_TEST(github_sync_logic_throttle,
               "github_sync 逻辑: 5 分钟节流窗口 + 手动绕开", {
     using namespace module::settings::gsync;
@@ -440,27 +519,6 @@ REGISTER_TEST(github_sync_logic_throttle,
     // 时钟回拨 → 不把用户锁死在窗口里
     DOCTEST_CHECK(throttleDue(1'000'000, 999'000));
     DOCTEST_CHECK_EQ(kCommitThrottleSec, static_cast<int64_t>(300));
-    return true;
-})
-
-REGISTER_TEST(github_sync_logic_diff_notes,
-              "github_sync 逻辑: 笔记变更集（新增/修改 PUT + 删除传播 DELETE）", {
-    using namespace module::settings::gsync;
-    const std::map<std::string, std::string> local{{"a.md", "A"}, {"b.md", "B"}};
-    const std::set<std::string> remote{"b.md", "gone.md"};
-    const auto changes = diffNotes(local, remote);
-    DOCTEST_REQUIRE_EQ(changes.size(), static_cast<size_t>(3));
-    // Put：按文件名字典序
-    DOCTEST_CHECK(changes[0].kind == FileChange::Kind::Put);
-    DOCTEST_CHECK_EQ(changes[0].path, std::string("notes/a.md"));
-    DOCTEST_CHECK_EQ(changes[0].content, std::string("A"));
-    DOCTEST_CHECK(changes[1].kind == FileChange::Kind::Put);
-    DOCTEST_CHECK_EQ(changes[1].path, std::string("notes/b.md"));
-    // Delete：远端有、本地没有（重命名 = 删旧 + 建新）
-    DOCTEST_CHECK(changes[2].kind == FileChange::Kind::Delete);
-    DOCTEST_CHECK_EQ(changes[2].path, std::string("notes/gone.md"));
-    // 远端为空 + 本地为空 → 空变更集
-    DOCTEST_CHECK(diffNotes({}, {}).empty());
     return true;
 })
 
@@ -527,8 +585,8 @@ REGISTER_TEST(github_sync_store_state_keys,
     DOCTEST_CHECK(done1.value());
 
     // 笔记登记往返（删除传播的远端基线）
-    DOCTEST_CHECK(store.recordSyncedNote("a.md", "abc123").isOk());
-    DOCTEST_CHECK(store.recordSyncedNote("b.md", "def456").isOk());
+    DOCTEST_CHECK(store.recordSyncedNote("a.md", "abc123", "hash-a").isOk());
+    DOCTEST_CHECK(store.recordSyncedNote("b.md", "def456", "hash-b").isOk());
     auto names = store.syncedNoteNames();
     DOCTEST_REQUIRE(names.isOk());
     DOCTEST_CHECK_EQ(names.value().size(), static_cast<size_t>(2));
@@ -559,5 +617,95 @@ REGISTER_TEST(github_sync_store_state_keys,
     auto done3 = store.isFirstSyncDone();
     DOCTEST_REQUIRE(done3.isOk());
     DOCTEST_CHECK(!done3.value());
+    return true;
+})
+
+REGISTER_TEST(github_sync_import_database_events,
+              "github_sync 存储: importDatabase 事件序——begin/end 恒发、imported 仅成功（F3）", {
+    test_support::TestEnv env("gitsync", "importdb");
+    module::settings::GithubSyncStore store(&env.handle());
+    int begin = 0;
+    int end = 0;
+    int imported = 0;
+    auto s1 = ::core::event::bus().subscribe(
+        ::core::event::kDbImportBegin,
+        [&](const std::string&) { ++begin; });
+    auto s2 = ::core::event::bus().subscribe(
+        ::core::event::kDbImportEnd,
+        [&](const std::string&) { ++end; });
+    auto s3 = ::core::event::bus().subscribe(
+        ::core::event::kDbImported,
+        [&](const std::string&) { ++imported; });
+
+    // 造一份合法 dump：建表 + 插行
+    auto* db = &env.handle();
+    DOCTEST_CHECK(db->exec("CREATE TABLE t4s(a INTEGER PRIMARY KEY, b TEXT)").isOk());
+    DOCTEST_CHECK(db->exec("INSERT INTO t4s(a,b) VALUES (1,'x')").isOk());
+    auto dump = ::core::sql_dump::exportToString(*db);
+    DOCTEST_REQUIRE(dump.isOk());
+
+    // 成功路径：begin/end/imported 各一次；数据仍在
+    auto ok = store.importDatabase(dump.value());
+    DOCTEST_REQUIRE(ok.isOk());
+    DOCTEST_CHECK_EQ(begin, 1);
+    DOCTEST_CHECK_EQ(end, 1);
+    DOCTEST_CHECK_EQ(imported, 1);
+
+    // 失败路径：坏 SQL → begin/end 仍发（后台任务必须被恢复），imported 不发，
+    // 库内容保持导入前原样（importFromString 事务原子性）
+    auto bad = store.importDatabase("这不是 SQL");
+    DOCTEST_CHECK(bad.isFail());
+    DOCTEST_CHECK_EQ(begin, 2);
+    DOCTEST_CHECK_EQ(end, 2);
+    DOCTEST_CHECK_EQ(imported, 1);
+    auto rows = db->exec("SELECT 1 FROM t4s");
+    DOCTEST_CHECK(rows.isOk());
+    return true;
+})
+
+REGISTER_TEST(github_sync_store_sha_records,
+              "github_sync 存储: 笔记 sha+hash 登记 + database.sql sha 登记（save() 保留状态键）", {
+    test_support::TestEnv env("gitsync", "store2");
+    module::settings::GithubSyncStore store(&env.handle());
+
+    // 无登记 → 空
+    auto recs0 = store.syncedNoteRecords();
+    DOCTEST_REQUIRE(recs0.isOk());
+    DOCTEST_CHECK(recs0.value().empty());
+    auto sql0 = store.syncedSqlSha();
+    DOCTEST_REQUIRE(sql0.isOk());
+    DOCTEST_CHECK(sql0.value().empty());
+
+    // 登记 → 读回一致；覆盖登记取新值
+    DOCTEST_CHECK(store.recordSyncedNote("a.md", "sha-1", "h1").isOk());
+    DOCTEST_CHECK(store.recordSyncedNote("a.md", "sha-2", "h2").isOk());
+    DOCTEST_CHECK(store.recordSyncedNote("b.md", "sha-3", "h3").isOk());
+    DOCTEST_CHECK(store.recordSyncedSqlSha("sql-1").isOk());
+    auto recs1 = store.syncedNoteRecords();
+    DOCTEST_REQUIRE(recs1.isOk());
+    DOCTEST_REQUIRE_EQ(recs1.value().size(), static_cast<size_t>(2));
+    DOCTEST_CHECK_EQ(recs1.value().at("a.md").sha, std::string("sha-2"));
+    DOCTEST_CHECK_EQ(recs1.value().at("a.md").contentHash, std::string("h2"));
+    DOCTEST_CHECK_EQ(recs1.value().at("b.md").sha, std::string("sha-3"));
+    auto sql1 = store.syncedSqlSha();
+    DOCTEST_REQUIRE(sql1.isOk());
+    DOCTEST_CHECK_EQ(sql1.value(), std::string("sql-1"));
+
+    // 配置保存不得清掉 sha/hash 状态键（含 database.sql 的）
+    module::settings::GithubSyncConfig cfg;
+    cfg.enabled = true;
+    DOCTEST_CHECK(store.save(cfg).isOk());
+    auto recs2 = store.syncedNoteRecords();
+    DOCTEST_REQUIRE(recs2.isOk());
+    DOCTEST_CHECK_EQ(recs2.value().size(), static_cast<size_t>(2));
+    auto sql2 = store.syncedSqlSha();
+    DOCTEST_REQUIRE(sql2.isOk());
+    DOCTEST_CHECK_EQ(sql2.value(), std::string("sql-1"));
+
+    // forget 清 sha + hash 两键
+    DOCTEST_CHECK(store.forgetSyncedNote("a.md").isOk());
+    auto recs3 = store.syncedNoteRecords();
+    DOCTEST_REQUIRE(recs3.isOk());
+    DOCTEST_CHECK_EQ(recs3.value().count("a.md"), static_cast<size_t>(0));
     return true;
 })

@@ -37,6 +37,9 @@ struct GitErrorDialogIn {
     std::string summary;  // 中文错误摘要（上半部）
     // 日志源：每次绘制时调用取当前快照（模块侧持日志，弹窗不缓存）。
     std::function<std::vector<platform::github::ApiLogEntry>()> logs;
+    // F6：409 变体下「拉取覆盖将覆盖掉的本地未推文件」清单（远端路径）。
+    // 非空且变体为 Conflict409 → 日志列表上方渲染清单；空 = 不画。
+    std::vector<std::string> overwriteFiles;
 };
 
 // 弹窗回调（compose 每帧装配；只捕获 this 的 lambda）
