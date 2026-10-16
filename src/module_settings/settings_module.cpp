@@ -1082,6 +1082,21 @@ public:
                 // DELETE 需要远端现值 sha：先 GET；远端已没有 = 无需删，只清登记。
                 auto cur = api.getFile(change.path, branch);
                 if (cur.isOk() && cur.value().exists) {
+                    // C6：远端现值与登记 sha 不符 = 别的设备改过这篇 → 不静默删
+                    // 别人新写的内容，走 409 冲突路径让用户裁决（拉取后再推会先
+                    // 把远端内容恢复回来）。登记缺 sha（旧记录）无从比对 → 维持
+                    // 原行为（保守方向由日志与卡片红字兜）。
+                    const auto rec = synced.value().find(name);
+                    const std::string recordedSha =
+                        rec != synced.value().end() ? rec->second.sha
+                                                    : std::string();
+                    if (!recordedSha.empty() &&
+                        cur.value().sha != recordedSha) {
+                        conflict = true;
+                        summary = "远端笔记 " + change.path +
+                                  " 已被其他设备改动，本地删除未传播（409 冲突）";
+                        return false;
+                    }
                     auto r = api.deleteFile(change.path,
                                             "DevDesk sync: delete " + change.path,
                                             cur.value().sha);
