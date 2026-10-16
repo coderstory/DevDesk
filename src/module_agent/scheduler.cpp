@@ -64,7 +64,9 @@ void Scheduler::enqueueResident(int64_t taskId) {
         if (stopFlag_.load()) return;   // 已停：不再接单
         residentQueue_.push_back(taskId);
     }
-    cv_.notify_one();
+    // 必须 notify_all：常驻/事件两个等待者共用 cv_，notify_one 摇中错误等待者时
+    // （它谓词为假、回去重睡）真正有新单的队列就丢了唤醒——事件型任务永不起跑
+    cv_.notify_all();
 }
 
 void Scheduler::stopAll() {
@@ -113,7 +115,8 @@ void Scheduler::onEvent(const std::string& name) {
         if (stopFlag_.load()) return;   // 已停：不再接单
         eventQueue_.push_back(name);
     }
-    cv_.notify_one();
+    // 同 enqueueResident：共用 cv_ 时 notify_one 会摇错等待者（事件丢失），必须 notify_all
+    cv_.notify_all();
 }
 
 void Scheduler::reapDone() {
