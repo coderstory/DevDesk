@@ -44,8 +44,12 @@ public:
     // GET /git/trees/{branch}?recursive=1 全树（含子目录）。响应带 truncated=true
     // → fail 不补取分页子树（dump+notes 仓库极小，截断实不可达；真出现时明确报错优于静默漏文件）。
     core::Result<std::vector<TreeEntry>> listTree(const std::string& branch);
+    // branch 为空 = 写默认分支；非空 = 定向写该分支（Contents API 的 PUT 用 body 的
+    // branch 字段，GET 才用 ?ref= 查询参数）。putFileOnBranch 是它的分支专用别名。
     core::Result<std::string> putFile(const std::string& path, const std::string& content,
-                                      const std::string& message, const std::string& shaIfMatch = "");
+                                      const std::string& message,
+                                      const std::string& shaIfMatch = "",
+                                      const std::string& branch = "");
     core::Result<void> deleteFile(const std::string& path, const std::string& message,
                                   const std::string& shaIfMatch);
     // git refs：测试连接用（建临时分支 → 写探针 → 删分支）。fromBranch = 基点分支（取其 HEAD sha）。
@@ -72,7 +76,8 @@ private:
     // 带重试/退避的发送：仅网络类传输错误 / 5xx / 429（及限流态 403）重试；每次尝试都进环形日志。
     Attempt doRequest(const std::string& method, const std::string& url,
                       const std::string& body, const std::string& accept);
-    // 分支定向 PUT：公开 putFile 不含 branch 参数，testConnection 的临时分支探针走这里。
+    // 分支定向 PUT 的具名入口：testConnection 的临时分支探针走这里，语义比
+    // putFile(..., sha, branch) 的位置参数更清楚。实现即 putFile，无独立逻辑。
     core::Result<std::string> putFileOnBranch(const std::string& path, const std::string& content,
                                               const std::string& message,
                                               const std::string& shaIfMatch,

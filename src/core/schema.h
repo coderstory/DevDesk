@@ -334,6 +334,15 @@ inline constexpr const char* kSql = R"(
     CREATE INDEX IF NOT EXISTS idx_agent_messages_run
         ON agent_messages(run_id, seq);
 
+    -- 按 status 过滤的全库只有两处，且都钉死 'running'：冷启动兜底轮询
+    -- （AgentStore::hasRunningRun 的 SELECT 1 … LIMIT 1）与启动清扫（把上次异常退出
+    -- 遗留的 running 改 failed）。部分索引只收 running 行（常态 0~1 条），agent_runs
+    -- 一行一次运行、只增不删（仅随任务级联删），全列索引会跟着它无限长。
+    -- 查询侧写 `status='running'` 才命中：planner 靠「WHERE 蕴含索引 WHERE」匹配，
+    -- 写成 `status != 'x'` / 参数化 status 都退化成全表扫。
+    CREATE INDEX IF NOT EXISTS idx_agent_runs_running
+        ON agent_runs(status) WHERE status='running';
+
     -- 直连会话记录：按写入时刻倒序取最近（run_key 已有 UNIQUE 索引）
     CREATE INDEX IF NOT EXISTS idx_run_settings_written
         ON claude_run_settings(written_at DESC);
