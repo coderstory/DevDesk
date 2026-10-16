@@ -45,6 +45,7 @@
 #include <components/toast.h>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -201,6 +202,17 @@ public:
     void onStart() override {
         if (started_) return;
         started_ = true;
+        // GitHub Sync 拉取会 DROP 重建整个库：订阅导入成功事件，导入线程同步回调里
+        // 只置原子脏标记（不得摸 UI 线程成员），compose 收割重载。
+        // 闸 = 存活守卫：onStop 先关闸再退订，挡住在途 handler（emit 已把 handler
+        // 拷出后才调用，退订拦不住在途那一发）。
+        dbImportHandlersEnabled_.store(true, std::memory_order_release);
+        dbImportedSub_ = ::core::event::bus().subscribe(
+            ::core::event::kDbImported, [this](const std::string&) {
+                if (dbImportHandlersEnabled_.load(std::memory_order_acquire)) {
+                    dbImportedDirty_.store(true, std::memory_order_release);
+                }
+            });
         auto* db = ::core::appDatabase();
         if (db == nullptr) {
             LOG_WARN("Markdown 模块启动：appDatabase() 为空，跳过真实索引");
@@ -228,6 +240,9 @@ public:
 
     void onStop() override {
         if (!started_) return;
+        // 先关原子闸再退订：闸挡在途 handler，退订挡后续 emit。
+        dbImportHandlersEnabled_.store(false, std::memory_order_release);
+        dbImportedSub_ = {};
         if (markdownTools_) {
             markdownTools_->unregisterAll();
             markdownTools_.reset();
@@ -248,6 +263,8 @@ public:
 
 
     void compose(eui::Ui& ui, const eui::Screen& screen) override {
+        harvestDbImport();
+
         flushEditorIfIdle();
 
         pollDiskChangesIfDue();
@@ -2642,6 +2659,24 @@ private:
         LOG_WARN("Markdown: 未识别的跳转负载: " + payload);
     }
 
+    // 收割「库被 GitHub Sync 导入覆盖」标记（compose 主线程）：库表被 DROP 重建，
+    // notes_/allFolders_ 指向旧行 → 重查列表。当前笔记也须从磁盘重读——否则旧编辑器
+    // 缓冲会在 Ctrl+S 时把刚拉下来的内容盖回去；有未保存编辑不静默丢弃（同磁盘轮询口径）。
+    void harvestDbImport() {
+        if (!dbImportedDirty_.exchange(false, std::memory_order_acq_rel)) return;
+        if (!service_) return;
+        refreshList();
+        if (!currentPath_.empty()) {
+            if (editorDirty_) {
+                conflictOpen_ = true;
+            } else {
+                reloadCurrentNote(/*silent=*/true);
+            }
+        }
+        LOG_INFO("Markdown: 检测到库导入，已重载笔记列表" +
+                 std::string(currentPath_.empty() ? "" : "与当前笔记"));
+    }
+
     void refreshList() {
         if (!service_) {
             notes_.clear();
@@ -3526,6 +3561,11 @@ private:
     std::unique_ptr<MarkdownService> service_;
     // 引用 service_，onStop 须先注销再放 service
     std::unique_ptr<MarkdownTools> markdownTools_;
+    // GitHub Sync 导入成功 → 置脏，compose 收割重载（导入线程只碰原子，不碰 UI 成员）。
+    // 闸 = 存活守卫，onStop 先关闸再退订（token 析构即退订）。
+    std::atomic<bool> dbImportedDirty_{false};
+    std::atomic<bool> dbImportHandlersEnabled_{false};
+    ::core::event::EventBus::Subscription dbImportedSub_;
     // 重入幂等守卫：double-onStart / double-onStop / 未启动的 off = no-op
     bool started_ = false;
     // 未创建 = 不持久化，saveViewState 静默跳过

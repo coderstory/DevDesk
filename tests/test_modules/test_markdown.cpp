@@ -423,6 +423,57 @@ REGISTER_TEST(md_module_compose_no_service, "markdown_module: 无服务 compose 
 
 // 2. 有数据时：文件打开→大纲→跳转→三态循环 全链路（headless）
 
+// GitHub Sync 拉取导入远端库（表被 DROP 重建）后必须重载笔记列表缓存，否则用户看到旧列表。
+// 观测口 = 目录树行（notes_ 缓存 → buildTreeRows）。对照帧证明「不广播就不刷新」，
+// 排除 compose 本来就会重查的可能。
+REGISTER_TEST(md_module_db_import_reloads_list,
+              "markdown_module: db.imported 后 compose 重载笔记列表（headless）", {
+    test_support::MdHeadlessEnv env(kDirPrefix, "dbimport", kDbName);
+    DOCTEST_REQUIRE(env.db != nullptr);
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "a.md", "# A\n正文\n"));
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+
+    eui::Screen screen{1600.0f, 1000.0f};
+    eui::Ui ui;
+    auto frame = [&](const char* page) {
+        ui.begin(page);
+        mod->compose(ui, screen);
+        ui.end();
+    };
+    auto treeHasNote = [&](const std::string& name) {
+        for (int i = 0; i < 64; ++i) {
+            const auto* n =
+                ui.find("md.tree.node." + std::to_string(i) + ".name");
+            if (n == nullptr) break;
+            if (n->text == name) return true;
+        }
+        return false;
+    };
+
+    // 首帧顺带消费 watcher credit / 建立 5s 轮询基准（此后同用例内不再轮询）
+    frame("di1");
+    DOCTEST_CHECK(treeHasNote("a.md"));
+
+    // 模拟远端库导入：索引多出一行。刻意不动文件系统——磁盘变化会被 watcher/轮询
+    // 抢先刷新（掩掉本改动），只有 db.imported 事件能驱动这次重载。
+    auto ins = env.db->db().exec(
+        "INSERT INTO markdown_index (path, title, size_bytes, modified_at, created_at) "
+        "VALUES ('imported.md', '导入笔记', 10, 9999999999, 9999999999)");
+    DOCTEST_REQUIRE(ins.isOk());
+
+    frame("di2");
+    DOCTEST_CHECK(!treeHasNote("imported.md"));   // 对照：未广播 → 仍旧列表
+
+    ::core::event::bus().emit(::core::event::kDbImported);
+    frame("di3");
+    DOCTEST_CHECK(treeHasNote("imported.md"));    // 广播后重载可见
+
+    mod->onStop();
+    return true;
+})
+
 REGISTER_TEST(md_module_compose_phase1, "markdown_module: Phase 1 三态/大纲/状态栏 compose（headless）", {
     const std::string text = "# 标题一\n正文一\n\n## 标题二\n正文二\n";
     test_support::MdHeadlessEnv env(kDirPrefix, "phase1", kDbName);
