@@ -52,7 +52,8 @@ std::filesystem::path claudeConfigDirOverride();
 std::filesystem::path claudeManagedSettingsFile();
 
 // GitHub Sync 相关路径
-// SQL dump 文件路径（仓库根目录下的 database.sql）
+// SQL dump 文件路径（**数据根目录**下的 database.sql，即 `~/DevDesk/database.sql`；
+// 不是同步仓库根目录 —— 仓库里那份由导入/导出方自己决定放哪）
 std::filesystem::path sqlDumpFile();
 
 // 确保所有目录存在
