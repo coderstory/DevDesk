@@ -1009,11 +1009,15 @@ void AgentModule::refreshData() {
     // 同步到页内错误行：run 线程失败只 LOG_ERROR，不落 pageError_，弹窗外将零可见出口。
     // 仅 pageError_ 为空时同步（用户动作的错误优先），且只认 needsClaudePageHint 那一类
     // 前缀——普通失败（网络 / 上游 4xx）不上页内错误行。
+    // pageErrorRunId_ 命中即跳过：那条 run 的错误用户已经看过（并被清除），同一份旧错误
+    // 不回弹；有别的任务/新 run 的错，循环照常接着找（不是「遇错即停」）。
     if (pageError_.empty()) {
         for (const auto& [taskId, run] : latestRuns_) {
             (void)taskId;
+            if (run.id == pageErrorRunId_) continue;
             if (run.error && needsClaudePageHint(*run.error)) {
                 pageError_ = *run.error;
+                pageErrorRunId_ = run.id;
                 break;
             }
         }

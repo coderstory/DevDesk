@@ -2318,6 +2318,67 @@ REGISTER_TEST(agent_ui_page_error_hint_navigates_to_claude,
     return true;
 })
 
+// Task 4 补：页内错误行「已展示过的 run 不再回弹」——用户用成功动作清掉错误行后，
+// 只要那条 run 还是任务的最近一次 run，后续 refreshData（启停/事件/轮询任一触发）
+// 不得把同一份旧错误重新顶回来（旧行为：轮询见 pageError_ 为空即重新同步，粘到有新
+// run 为止）。判据三段：①首帧出现；②清除 + **触发一次 refreshData** 后仍为空；
+// ③真来了新 run 的失败 → 必须重新出现（防「一律静默」把诊断出口也修死）。
+// ②必须带触发条件：只清不刷新时 refreshData 根本不跑（既有用例的绿灯是巧合），
+// 回弹只在「清除 + 任一刷新触发」同时成立时发生。
+REGISTER_TEST(agent_ui_page_error_no_rebound_until_new_run,
+              "agent_ui: 页内错误行已展示的 run 不回弹（清除后刷新仍空；新 run 失败要重现）", {
+    test_support::TestDb tdb("agentui", "pagenorebound");
+    test_support::FakeProfileSource profile;
+    ToolGuard statsGuard{"app.stats"};
+    core::ToolRegistry::instance().unregisterTool("app.stats");
+    module::agent::AgentStore store(tdb.handle());
+    auto created = store.createTask("回弹检查任务", "g", "manual", "default", 10, false);
+    DOCTEST_REQUIRE(created.isOk());
+    const std::string tid = std::to_string(created.value());
+    auto r1 = store.startRun(created.value());
+    DOCTEST_REQUIRE(r1.isOk());
+    DOCTEST_REQUIRE(store.finishRun(r1.value(), "failed", 1, int64_t(10),
+                                    int64_t(1), kNoProfileErr).isOk());
+
+    module::agent::AgentModule::Deps deps;
+    deps.db = &tdb.handle();
+    deps.profileSource = &profile;
+    module::agent::AgentModule mod(deps);
+    mod.onStart();
+
+    // ① 首帧：run 的配置不可用错误同步到页内错误行（既有行为，别修坏）
+    eui::Ui ui1;
+    composeTo(ui1, mod, kScreen, "agent_ui_pagenorebound1");
+    DOCTEST_REQUIRE_MESSAGE(ui1.find("agent.page.error") != nullptr,
+                            "首帧页内错误行缺失（同步路径被修坏）");
+
+    // ② 用户清除 + 触发刷新：启停成功会清错误行并置 tasksDirty_，下一帧必进
+    //    refreshData —— 旧行为下同一份旧错误就在这里回弹。
+    DOCTEST_REQUIRE_MESSAGE(clickId(ui1, "agent.task." + tid + ".toggle"),
+                            "启停 chip 缺失");
+    eui::Ui ui2;
+    composeTo(ui2, mod, kScreen, "agent_ui_pagenorebound2");
+    DOCTEST_CHECK_MESSAGE(ui2.find("agent.page.error") == nullptr,
+                          "清除后旧 run 的错误回弹（同一条 run 被重复同步）");
+
+    // ③ 任务真跑了新一次且又失败 → 新错误必须重新出现（否则是「一律静默」）
+    auto r2 = store.startRun(created.value());
+    DOCTEST_REQUIRE(r2.isOk());
+    DOCTEST_REQUIRE(store.finishRun(r2.value(), "failed", 1, int64_t(10),
+                                    int64_t(1), kNoProfileErr).isOk());
+    DOCTEST_REQUIRE_MESSAGE(clickId(ui2, "agent.task." + tid + ".toggle"),
+                            "启停 chip 缺失（第二段）");
+    eui::Ui ui3;
+    composeTo(ui3, mod, kScreen, "agent_ui_pagenorebound3");
+    const auto* again = ui3.find("agent.page.error");
+    DOCTEST_REQUIRE_MESSAGE(again != nullptr,
+                            "新 run 的失败没有重新出现在页内错误行（诊断出口被误静默）");
+    DOCTEST_CHECK(again->text.find("LLM 配置不可用") != std::string::npos);
+
+    mod.onStop();
+    return true;
+})
+
 REGISTER_TEST(agent_ui_page_error_no_hint_other_errors,
               "agent_ui: 页内错误行非「LLM 配置不可用」类（读库失败/普通 run 失败）不渲染引导", {
     test_support::TestDb tdb("agentui", "pagehintneg");

@@ -266,6 +266,13 @@ private:
     bool cronPreviewIsError_ = false;   // 预览行配色：错误色 vs 次要文本色
     // 页内错误行：弹窗之外动作失败唯一可见出口（弹窗内走 editError_）；下一次成功动作清
     std::string pageError_;
+    // 已同步到页内错误行的 runId（0 = 无）。用来阻断**回弹**：用户清掉错误行后，只要
+    // 那条 run 还是任务的最近一次 run，后续 refreshData 不得把同一份旧错误重新顶回来
+    //（旧行为：见 pageError_ 为空即重新同步，粘到有新 run 为止）。
+    // 单个 id 足够、且不随会话增长：latestRuns_ 每任务只留最近一条 run，被清掉的那条
+    // 必是它所在任务的最新一条；任务再跑 → 新 runId ≠ 本值 → 新错误照常可见。
+    // 清零时机 = 模块构造（onStop 不清：换页回来也不该再弹用户已看过的旧错误）。
+    int64_t pageErrorRunId_ = 0;
     bool tasksDirty_ = false;   // onStart/onPageEnter/写操作置位 → 下帧重查
     bool uiPolling_ = false;    // 有 run 期间每帧跟进状态/消息，全终止后停
 
