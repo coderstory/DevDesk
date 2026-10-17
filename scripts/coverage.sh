@@ -179,7 +179,7 @@ PY
 }
 
 if [ "$REPORT_ONLY" = "1" ]; then
-  echo "── 汇总（report-only，数据 = 已有 $PROFDATA）──"
+  echo "── 汇总（report-only，数据 = 已有 ${PROFDATA}）──"
   generate_report
   exit 0
 fi
@@ -231,7 +231,7 @@ if [ -f "$BUILD_DIR/CMakeCache.txt" ]; then
   fi
 fi
 if [ ! -f "$BUILD_DIR/build.ninja" ]; then
-  echo "── configure（DEVDESK_COVERAGE=ON → $BUILD_DIR）──"
+  echo "── configure（DEVDESK_COVERAGE=ON → ${BUILD_DIR}）──"
   CONF_OUT=$(cmake -B "$BUILD_DIR" -G Ninja -DCMAKE_BUILD_TYPE=Debug \
     -DDEVDESK_COVERAGE=ON \
     -DEUI_NEO_DIR="$EUI_DIR" \
@@ -267,7 +267,7 @@ COV_TEST_STATS=$(echo "$TEST_OUT" | grep -E "^(Total|Passed|Failed):" | tr '\n' 
 echo "$COV_TEST_STATS"
 echo ""
 if ! echo "$TEST_OUT" | grep -q "Failed: 0"; then
-  echo "❌ 测试有失败——覆盖率基线必须建立在全绿之上，中止（完整输出跑: $TEST_BIN）" >&2
+  echo "❌ 测试有失败——覆盖率基线必须建立在全绿之上，中止（完整输出跑: ${TEST_BIN}）" >&2
   exit 1
 fi
 echo "✅ 测试全绿"
@@ -284,4 +284,4 @@ echo "✅ $PROFDATA"
 
 echo "── 汇总 ──"
 generate_report
-echo "（分层表: $SUMMARY_TXT ；全表明细: $REPORT_TXT ；原始 JSON: $EXPORT_JSON）"
+echo "（分层表: $SUMMARY_TXT ；全表明细: $REPORT_TXT ；原始 JSON: ${EXPORT_JSON}）"

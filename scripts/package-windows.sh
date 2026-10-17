@@ -21,7 +21,7 @@ if [ -n "${ISCC:-}" ]; then
   if [ -f "$ISCC" ] || command -v "$ISCC" >/dev/null 2>&1; then
     ISCC_BIN="$ISCC"
   else
-    echo "⚠ \$ISCC 已设置但找不到（$ISCC），继续按默认路径探测" >&2
+    echo "⚠ \$ISCC 已设置但找不到（${ISCC}），继续按默认路径探测" >&2
   fi
 fi
 if [ -z "$ISCC_BIN" ]; then
@@ -159,7 +159,7 @@ echo "$ISCC_OUT" | tail -3
 # .iss 里的 OutputDir=out 相对 .iss 所在目录解析，不是相对仓库根。
 SETUP_EXE="installer/windows/out/DevDesk-$APP_VERSION-setup.exe"
 if [ ! -f "$SETUP_EXE" ]; then
-  echo "❌ 未按预期产出 $SETUP_EXE（检查 .iss 的 OutputDir 解析位置）" >&2
+  echo "❌ 未按预期产出 ${SETUP_EXE}（检查 .iss 的 OutputDir 解析位置）" >&2
   exit 1
 fi
-echo "✅ 安装包：$PROJECT_DIR/$SETUP_EXE（$(du -h "$SETUP_EXE" | cut -f1)）"
+echo "✅ 安装包：$PROJECT_DIR/${SETUP_EXE}（$(du -h "$SETUP_EXE" | cut -f1)）"

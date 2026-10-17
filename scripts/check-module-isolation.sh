@@ -2,7 +2,7 @@
 # scripts/check-module-isolation.sh
 # 模块隔离静态守卫：module_* 之间不得互相依赖。
 #
-# 本脚本全程绝对路径、不读 $PWD、脚本内不 cd —— **不要**改成相对路径、也不要依赖
+# 本脚本全程绝对路径、不读 ${PWD}、脚本内不 cd —— **不要**改成相对路径、也不要依赖
 # 调用者的 cwd。历史原因：守卫原先编在 tests/test_modules/test_settings.cpp 里靠
 # __FILE__ 上溯找仓库根，而 ccache 会把 __FILE__ 改写成相对路径，cwd = 仓库根时
 # 该候选退化成裸相对路径并误命中 → 报「找不到仓库根」→ 全量必红。
@@ -109,7 +109,7 @@ if [ "$SELF_TEST" -eq 1 ]; then
         if [ "$rc" -eq 1 ]; then
             echo "  ✅ 坏树 [$1]：红 —— $2"
         else
-            echo "  ❌ 坏树 [$1]：退出码 $rc（期望恰好 1 = 违规）—— $2"
+            echo "  ❌ 坏树 [$1]：退出码 ${rc}（期望恰好 1 = 违规）—— $2"
             fail=1
         fi
     }
@@ -123,7 +123,7 @@ if [ "$SELF_TEST" -eq 1 ]; then
         if [ "$rc" -eq 0 ]; then
             echo "  ✅ 树 [$1]：绿 —— $2"
         else
-            echo "  ❌ 树 [$1]：退出码 $rc（期望 0）—— $2"
+            echo "  ❌ 树 [$1]：退出码 ${rc}（期望 0）—— $2"
             fail=1
         fi
     }

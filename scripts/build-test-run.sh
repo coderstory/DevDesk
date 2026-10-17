@@ -67,7 +67,7 @@ case "$(uname -s)" in
   Darwin)               DEVDESK_OS="darwin" ;;
   *)                    DEVDESK_OS="linux" ;;
 esac
-# 可执行文件名后缀：Windows 带 .exe，macOS/Linux 无扩展名。全脚本统一走 $EXE_SUFFIX，勿再写死。
+# 可执行文件名后缀：Windows 带 .exe，macOS/Linux 无扩展名。全脚本统一走 ${EXE_SUFFIX}，勿再写死。
 EXE_SUFFIX=""
 if [ "$DEVDESK_OS" = "windows" ]; then EXE_SUFFIX=".exe"; fi
 
@@ -387,7 +387,7 @@ list_dynamic_deps() {
   esac
 }
 if [ "$DEVDESK_OS" = "windows" ]; then
-# ↓↓ Windows 分支：断言逐字保留，含缩进也故意不重排；只把写死的 .exe 换成 $EXE_SUFFIX、写死的 build/ 换成 $BUILD_DIR ↓↓
+# ↓↓ Windows 分支：断言逐字保留，含缩进也故意不重排；只把写死的 .exe 换成 ${EXE_SUFFIX}、写死的 build/ 换成 $BUILD_DIR ↓↓
 if [ ! -f $BUILD_DIR/DevDesk$EXE_SUFFIX ]; then
   echo "⚠ 发布形态守卫跳过：$BUILD_DIR/DevDesk$EXE_SUFFIX 不存在"
 elif ! command -v objdump >/dev/null 2>&1; then
@@ -584,7 +584,7 @@ fi
 
 # 3b-1. 模块隔离静态守卫（纯静态检查，--no-test 也跑）。守卫必须住在独立脚本里，不能编进
 # test_settings.cpp 靠 __FILE__ 上溯仓库根：ccache 把 __FILE__ 相对化后 cwd=仓库根必误报
-# 「找不到仓库根」。脚本自身不读 $PWD、全程绝对路径。失败 exit 1，不静默绿。
+# 「找不到仓库根」。脚本自身不读 ${PWD}、全程绝对路径。失败 exit 1，不静默绿。
 echo "── 模块隔离守卫 ──"
 # 路径用「相对仓库根」而非 $(dirname "$0")：本脚本开头已 cd 到仓库根，且 $0 可能是裸
 # 文件名（从 scripts/ 内调用的形态），那种形态下 dirname "$0" 会解析错目录。相对根的写法

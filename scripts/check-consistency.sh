@@ -93,7 +93,7 @@ if [ ! -f "$HTML_FILE" ]; then
     [ "$CPP_ONLY" = true ] || { err "HTML demo 不存在: $HTML_FILE"; exit 1; }
 fi
 if [ ! -f "$CPP_BIN" ]; then
-    [ "$HTML_ONLY" = true ] || { err "C++ binary 不存在: $CPP_BIN（先构建：cmake --build build）"; exit 1; }
+    [ "$HTML_ONLY" = true ] || { err "C++ binary 不存在: ${CPP_BIN}（先构建：cmake --build build）"; exit 1; }
 fi
 [ -f "$DOCS_FILE" ] && log "历史分析文档（可能过期）: $DOCS_FILE"
 
@@ -154,7 +154,7 @@ PYEOF
     fi
 fi
 
-# 生成的 .ps1 / .py 写在 $TMP_DIR（mktemp -d）里，不往仓库落临时文件。
+# 生成的 .ps1 / .py 写在 ${TMP_DIR}（mktemp -d）里，不往仓库落临时文件。
 write_shot_ps1() {
     # 注意：ps1 保持纯 ASCII —— Windows PowerShell 5.1 读无 BOM 的 UTF-8 .ps1
     # 会按 ANSI(GBK) 解码，非 ASCII 字符串会变乱码/报错
@@ -362,8 +362,8 @@ if [ "$HTML_ONLY" = false ]; then
                 CPP_RESULT="$CPP_RESULT · 疑似全黑（亮度 ${BRIGHT}）"
             fi
         else
-            warn "PowerShell 截屏失败（rc=$SHOT_RC）—— 回退 Pillow 合成"
-            if synth_fallback; then CPP_RESULT="Pillow 合成（截屏失败 rc=$SHOT_RC）"; else CPP_RESULT="未产出（截屏失败且无 Pillow）"; fi
+            warn "PowerShell 截屏失败（rc=${SHOT_RC}）—— 回退 Pillow 合成"
+            if synth_fallback; then CPP_RESULT="Pillow 合成（截屏失败 rc=${SHOT_RC}）"; else CPP_RESULT="未产出（截屏失败且无 Pillow）"; fi
         fi
         log "清理 DevDesk 进程..."
         taskkill -F -IM DevDesk.exe >/dev/null 2>&1 || true
@@ -379,6 +379,6 @@ echo "───── 本次各步骤结果 ─────"
 printf '  HTML 截图 : %s\n' "$HTML_RESULT"
 printf '  C++  截图 : %s\n' "$CPP_RESULT"
 if [ -f "$DOCS_FILE" ]; then
-    log "历史对比分析: $DOCS_FILE（其结论可能是旧快照，以本次实况与最新 spec 为准）"
+    log "历史对比分析: ${DOCS_FILE}（其结论可能是旧快照，以本次实况与最新 spec 为准）"
 fi
 ok "完成"

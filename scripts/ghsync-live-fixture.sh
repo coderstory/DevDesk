@@ -10,7 +10,7 @@
 #   token 只进 Authorization 头，**绝不** echo / 进日志 / 进 argv；唯一落盘是
 #   0600 的临时头文件（curl -H @文件 读它，EXIT trap 即删）——直接
 #   -H "Authorization: Bearer …" 会把 token 摆进 curl 的 argv，全机 ps 可见。
-#   本脚本不 `set -x`。来源：$DEVDESK_GITHUB_TOKEN，缺失则回落到 0600 的
+#   本脚本不 `set -x`。来源：${DEVDESK_GITHUB_TOKEN}，缺失则回落到 0600 的
 #   /tmp/devdesk-gh-test.pat。
 #
 # 用法：

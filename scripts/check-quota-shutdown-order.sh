@@ -291,7 +291,7 @@ fi
 violations="$(check_order "$ROOT")"
 rc=$?
 if [ "$rc" -eq 2 ]; then
-    echo "❌ 余量停机顺序守卫：环境错（$rc）"
+    echo "❌ 余量停机顺序守卫：环境错（${rc}）"
     exit 2
 fi
 if [ "$rc" -ne 0 ]; then

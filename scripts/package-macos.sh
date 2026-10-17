@@ -40,7 +40,7 @@ fi
 # -D 会覆盖已 configure 的树，所以打包必须显式写 -DCMAKE_BUILD_TYPE=Release —— 直接对着开发用的
 # Debug build/ 跑会把整棵树重配成 Release 并触发全量重编；要保住 Debug 树就用 DEVDESK_BUILD_DIR
 # 指到另一棵树（如 build-release）。
-echo "── configure（Release，构建目录 $BUILD_DIR）──"
+echo "── configure（Release，构建目录 ${BUILD_DIR}）──"
 cmake -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE=Release
 echo "── 构建 ──"
 cmake --build "$BUILD_DIR" --parallel "${DEVDESK_JOBS:-3}" 2>&1 | tail -5
@@ -120,4 +120,4 @@ if [ ! -f "$DMG" ]; then
   echo "❌ 未按预期产出 $DMG" >&2
   exit 1
 fi
-echo "✅ DMG：$PROJECT_DIR/$DMG（$(du -h "$DMG" | cut -f1)）"
+echo "✅ DMG：$PROJECT_DIR/${DMG}（$(du -h "$DMG" | cut -f1)）"
