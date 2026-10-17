@@ -54,7 +54,7 @@ APP_VERSION="$(sed -n 's/^CMAKE_PROJECT_VERSION:[A-Za-z]*=\(.*\)$/\1/p' "$BUILD_
 if [ -n "$APP_VERSION" ] \
     && plutil -replace CFBundleVersion -string "$APP_VERSION" "$PLIST" \
     && plutil -replace CFBundleShortVersionString -string "$APP_VERSION" "$PLIST"; then
-    echo "✅ 版本号: $APP_VERSION（已写入打包产物 Info.plist）"
+    echo "✅ 版本号: ${APP_VERSION}（已写入打包产物 Info.plist）"
 else
     echo "⚠️  版本号未替换：读不到 $BUILD_DIR/CMakeCache.txt 的 CMAKE_PROJECT_VERSION，" >&2
     echo "    或 plutil 写入失败 —— .app 将报 Info.plist 里的占位值 0.1.0" >&2
@@ -77,7 +77,7 @@ ICON_PAD_HELPER="$PROJECT_DIR/doc/scripts/pad_icon_canvas.py"
 ICON_PYTHON="${DEVDESK_PYTHON:-python3}"
 if [ -f "$ICON_SRC_ICNS" ]; then
     cp "$ICON_SRC_ICNS" "$ICON_OUT"
-    echo "✅ 图标: $ICON_SRC_ICNS（已入库 .icns）"
+    echo "✅ 图标: ${ICON_SRC_ICNS}（已入库 .icns）"
 elif [ -f "$ICON_SRC_PNG" ] && command -v sips >/dev/null 2>&1 && command -v iconutil >/dev/null 2>&1; then
     # 目录名必须以 .iconset 结尾，否则 iconutil 报 "Invalid Iconset." 拒绝打包
     ICONSET_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/DevDesk-appicon.XXXXXX")"
@@ -94,7 +94,7 @@ elif [ -f "$ICON_SRC_PNG" ] && command -v sips >/dev/null 2>&1 && command -v ico
         ICON_RESIZE_SRC="$ICON_MASTER"
         echo "ℹ️  图标已补画布留白（内容 82%，Dock 里与其他应用等大）"
     else
-        echo "⚠️  图标未补画布留白（缺 python3/Pillow 或 $ICON_PAD_HELPER）——" >&2
+        echo "⚠️  图标未补画布留白（缺 python3/Pillow 或 ${ICON_PAD_HELPER}）——" >&2
         echo "    Dock 里 DevDesk 图标会比别的应用显得大；装上 Pillow 后重跑本脚本即可" >&2
     fi
     # 标准 iconset 10 档（16/32/128/256/512 各一张 + 各自 @2x）；源图不足 1024 时大档
@@ -115,14 +115,14 @@ icon_512x512.png 512
 icon_512x512@2x.png 1024
 ICONSET_SIZES
     if [ "$ICON_FAIL" = "0" ] && iconutil -c icns -o "$ICON_OUT" "$ICONSET_DIR" 2>/dev/null; then
-        echo "✅ 图标: $ICON_OUT（由 $ICON_SRC_PNG 现生成）"
+        echo "✅ 图标: ${ICON_OUT}（由 $ICON_SRC_PNG 现生成）"
     else
         rm -f "$ICON_OUT"
         echo "⚠️  图标生成失败（sips/iconutil），.app 将显示通用图标" >&2
     fi
     rm -rf "$ICONSET_ROOT"
 else
-    echo "⚠️  找不到图标源（$ICON_SRC_ICNS / $ICON_SRC_PNG），.app 将显示通用图标" >&2
+    echo "⚠️  找不到图标源（$ICON_SRC_ICNS / ${ICON_SRC_PNG}），.app 将显示通用图标" >&2
 fi
 
 # 复制 assets 到 Contents/MacOS/assets（与 Contents/MacOS/DevDesk 同级，
