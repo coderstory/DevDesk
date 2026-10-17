@@ -17,7 +17,8 @@ core::Result<void> atomicWriteFile(const std::filesystem::path& target,
                                    const std::string& label = "文件");
 
 // 覆盖式替换（平台适配实现，CMake 按平台选源）：把 tmp 移到 target，已存在时按平台语义覆盖；
-// 失败填 ec。Windows 先 remove 再 rename；POSIX 单次 rename（原子替换无窗口期）。仅供 atomicWriteFile 调用
+// 失败填 ec。两侧都是**一步替换**、无「目标不存在」窗口：POSIX = rename；Windows =
+// MoveFileExW(MOVEFILE_REPLACE_EXISTING)。仅供 atomicWriteFile 调用
 namespace detail {
 
 void replaceFile(const std::filesystem::path& tmp,
