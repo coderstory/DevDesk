@@ -106,10 +106,17 @@ std::vector<MessageBlock> decodeMessageBlocks(const std::string& contentJson) {
         const std::string type = strField(obj, "type");
         if (type == "text") {
             pj::JsonValue text = obj.get("text");
-            blocks.push_back(MessageBlock{
-                MessageBlock::Type::Text,
-                text.isString() ? text.asString() : rawOf(text), std::string(),
-                false});
+            // 缺字段 / 显式 null → 正文留空。rawOf(null) 会 stringify 出字面量
+            // "null"，在气泡里就是可见污染；非字符串「怪值」（数字/对象）才走
+            // 原文保留（decode 容错契约：不丢内容）。
+            std::string body;
+            if (text.isString()) {
+                body = text.asString();
+            } else if (!text.isNull()) {
+                body = rawOf(text);
+            }
+            blocks.push_back(MessageBlock{MessageBlock::Type::Text,
+                                          std::move(body), std::string(), false});
         } else if (type == "tool_use") {
             MessageBlock b;
             b.type = MessageBlock::Type::ToolUse;

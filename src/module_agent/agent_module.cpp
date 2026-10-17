@@ -1742,10 +1742,7 @@ void AgentModule::composeTaskDialog(
                 .placeholder("分 时 日 月 周，例如 0 9 * * 1-5")
                 .fontSize(t.sizes.fontSizeBody)
                 .theme(themeTokens)
-                .onChange([this](const std::string& v) {
-                    editCron_ = v;
-                    refreshCronPreview();
-                })
+                .onChange([this](const std::string& v) { setEditCronDraft(v); })
                 .onCancel([this] { closeTaskDialog(); })
                 .build();
             ui.stack("agent.dialog.task.cron.template.wrap")

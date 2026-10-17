@@ -51,6 +51,25 @@ REGISTER_TEST(msg_blocks_text_block,
     return true;
 })
 
+REGISTER_TEST(msg_blocks_text_block_missing_field_is_empty,
+              "msg_blocks: text 块缺 text 字段/null → 空正文（不混入字面量 \"null\"）", {
+    auto missing = module::agent::decodeMessageBlocks(R"([{"type":"text"}])");
+    DOCTEST_REQUIRE(missing.size() == 1);
+    DOCTEST_CHECK(missing[0].type == MessageType::Text);
+    DOCTEST_CHECK_MESSAGE(missing[0].text.empty(),
+                          "缺字段的 text 块正文应为空，实测: " + missing[0].text);
+    auto nulled =
+        module::agent::decodeMessageBlocks(R"([{"type":"text","text":null}])");
+    DOCTEST_REQUIRE(nulled.size() == 1);
+    DOCTEST_CHECK_MESSAGE(nulled[0].text.empty(),
+                          "null text 块正文应为空，实测: " + nulled[0].text);
+    // 非字符串「怪值」仍保留原文（decode 容错契约：不丢内容）
+    auto weird = module::agent::decodeMessageBlocks(R"([{"type":"text","text":42}])");
+    DOCTEST_REQUIRE(weird.size() == 1);
+    DOCTEST_CHECK_EQ(weird[0].text, std::string("42"));
+    return true;
+})
+
 REGISTER_TEST(msg_blocks_mixed_tool_use_and_result,
               "msg_blocks: assistant 混合块 text+tool_use 提取工具名与 input", {
     auto blocks = module::agent::decodeMessageBlocks(
