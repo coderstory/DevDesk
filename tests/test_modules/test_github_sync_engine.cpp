@@ -656,6 +656,33 @@ REGISTER_TEST(gsync_engine_pull_imports_changed_sql,
     return true;
 })
 
+// 导入失败路径：报错必须**点到回滚点** —— 备份已在盘上（② 步先行于覆盖），摘要要
+// 带上库备份名，用户不必翻日志找文件名。为什么这条比普通「报错了」重要：导入失败
+// 分两种 —— 导入期失败是单事务整体回滚（库没动，见 sql_dump::importFromString），
+// 但 integrity_check 失败发生在**导入已提交之后**（库已换新），退路就只有这份备份
+//（口径回写见 specs/2026-10-15-github-sync-api-design.md F3 修订）。
+REGISTER_TEST(gsync_engine_pull_import_failure_names_backup,
+              "gsync 引擎: pull 导入失败→摘要带「导入失败」+ 库备份名（回滚点不靠翻日志）", {
+    EngineFixture fx;
+    DOCTEST_REQUIRE(fx.store.recordSyncedSqlSha("sql-old").isOk());
+    fx.seedTree({{"data/database.sql", "sql-new"}});
+    fx.gh.routes.push_back({"GET", "/contents/data/database.sql",
+                            {okResp(200, fileJson("sql-new", "NOT SQL AT ALL;"))}});
+
+    const SyncRunResult r = fx.engine().pull(*fx.makeApi(), "trunk");
+
+    DOCTEST_CHECK_MESSAGE(!r.ok, "坏 SQL 却报成功，summary=" + r.summary);
+    DOCTEST_CHECK_MESSAGE(r.summary.rfind("导入失败：", 0) == 0,
+                          "失败摘要未以「导入失败：」开头，实测: " + r.summary);
+    DOCTEST_CHECK_MESSAGE(
+        r.summary.find("devdesk-1700000000.db") != std::string::npos,
+        "失败摘要未点名库备份（回滚点），实测: " + r.summary);
+    // 点名之外还要真在盘上（不是只写了名字）
+    DOCTEST_CHECK(std::filesystem::exists(fx.appDataDir() / "backups" /
+                                          "devdesk-1700000000.db"));
+    return true;
+})
+
 REGISTER_TEST(gsync_engine_pull_skips_unchanged_sql,
               "gsync 引擎: pull 库未变→跳过导入（零下载请求、无备份、dbImported=false）", {
     EngineFixture fx;

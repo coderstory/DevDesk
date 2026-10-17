@@ -659,7 +659,14 @@ SyncRunResult GithubSyncEngine::pull(platform::github::GithubApi& api,
             auto imported =
                 deps_.store->importDatabase(remote.value().content);
             if (imported.isFail()) {
-                out.summary = "导入失败：" + imported.errorMessage();
+                // 报错要点到**回滚点**：导入期失败是单事务整体回滚（库没动，见
+                // sql_dump::importFromString），但 integrity_check 失败发生在导入
+                // 已提交之后（库已换新）—— 两种情形此刻的退路都是 ② 步刚落盘的这份
+                // 库备份，摘要实名给出（与成功摘要同口径：不让用户翻日志或翻
+                // backups/ 目录猜文件名）。不报笔记备份：笔记同步（④ 步）还没跑，
+                // 它此刻不是回滚点，报出来是噪音。
+                out.summary = "导入失败：" + imported.errorMessage() +
+                              backupClauseText(dbBackupNameOut, std::string());
                 return out;
             }
             // 登记树 sha：下次拉取据此识别「远端未变」。

@@ -52,6 +52,8 @@
   1. **toast 方案**：用 EUI-NEO 既有 toast（单实例限制：连续多条通知会互相顶替，接受并注明）；零上游改动。
   2. **上游补齐方案**：按 EUI-NEO 上游优先政策（CLAUDE.md「EUI-NEO 上游贡献政策」），先在 `../EUI-NEO` 加系统通知 API（Windows `ToastNotificationManager` / macOS `NSUserNotification` 系），提交流程照政策（example + 文档 + DevDesk 验证），DevDesk 侧再接线。
   - 决策依据：系统通知的优势是「窗口最小化/不在前台也能看见」——这是 ① 的核心诉求；toast 只有窗口可见时才有意义。**若上游补齐成本可控，优先系统通知**；但这是实现期判断，不是本计划的既定结论。
+  - **结论（2026-10-18 回写）：走形态 1 —— toast，且落地为「应用级」toast，不推上游补系统通知 API。** 落地面：`AgentModule::pendingNotices_` 队列（`agent_module.h:140`）由装配层取走后发 `app::showAppNotice`（`app_sidebar.cpp:56`，跨页可见）；**页内直发 toast 已在 fix round 裁决删除** —— 通知与页面无关（用户在别的页、开着别的弹窗时也须可见），且页内 toast 与页面自身 toast 共单实例会互顶。不推上游的理由：桌面通知要 macOS（`UNUserNotificationCenter` 系，含授权流程）与 Windows（`ToastNotificationManager`，含 AUMID/开始菜单快捷方式）两套原生桥，成本 ≫ 收益 —— run 只在 app 进程活着时产生通知，而 app 活着时窗口/任务栏已是可见面，系统级通知的增量只剩「窗口最小化且任务栏被遮挡」这一窄场景；上游无具体消费需求时先行造 API 也违背「有真实能力缺口才动上游」的前提（CLAUDE.md §EUI-NEO 上游贡献政策）。同 runId 只通知一次：`notifiedRunIds_` + `pruneNotifiedRunIds`（防集合随会话无界增长）。判据：`test_agent_ui.cpp` 迁移检测用例（completed 静默 / failed 必响 / 不重复）+ `pruneNotifiedRunIds` 用例；通知不经页内元素渲染，故无「通知元素存在性 probe」。
+  - **残留边界（如实登记）**：app 未启动时不存在 run，故没有「退出后也要响」的形态问题；外部直写库插入 run 的冷启动盲区是另一条 backlog 条目（pollRunEnd 守卫三条件），与形态无关。
 
 **验收:**
 - [ ] failed/limited 的 run 结束后，用户不看智能体页也能感知（核实结论为系统通知时：窗口最小化可见；为 toast 时：窗口前台可见）。
@@ -59,10 +61,10 @@
 - [ ] 同一 runId 不重复通知。
 - [ ] 测试：迁移检测纯逻辑用例（completed 静默 / failed 必响 / 不重复）绿；probe 或无头断言覆盖通知元素存在性。
 
-- [ ] **Step 1: 核实通知形态**（查 `../EUI-NEO` + `docs/EUI-NEO-CAPABILITIES.md`，结论写提交说明）
-- [ ] **Step 2: 写失败测试**（迁移检测：上轮 running 本轮 completed → 不通知；上轮 running 本轮 failed → 通知一次；同 runId 二次迁移 → 不再通知）
-- [ ] **Step 3: 红 → 实现 → 绿**
-- [ ] **Step 4: 通知本体接线（按 Step 1 结论）**；若走上游：EUI-NEO 分支先行、DevDesk 侧接线在后
+- [x] **Step 1: 核实通知形态**（结论见上「结论」块：应用级 toast，不推上游）
+- [x] **Step 2: 写失败测试**（迁移检测：上轮 running 本轮 completed → 不通知；上轮 running 本轮 failed → 通知一次；同 runId 二次迁移 → 不再通知）
+- [x] **Step 3: 红 → 实现 → 绿**
+- [x] **Step 4: 通知本体接线**（按 Step 1 结论：应用级 toast；零上游改动，EUI-NEO 侧未动）
 
 ---
 
