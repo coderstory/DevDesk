@@ -6,6 +6,8 @@
 // 覆盖 T4 审计点过的：失败语义（c57bdff 的引擎输入面）、LocalDeleted 远端未变
 // →Skip / 远端变→Download（56bafe7 死锁闭环）、RemoteModified 远端无文件→Put、
 // branch 全链显式传递、409 冲突中止、删除安全栏、备份先行于覆盖、aborted 收束。
+// 另加 >1MB 笔记的端到端往返（.scratch/sync-product-gaps/issues/03 ①）：推送侧
+// 整篇 base64 进 Contents API PUT、拉取侧元数据 + Accept raw 二跳直取原文。
 //
 // 描述统一以 "gsync" 开头：--filter gsync 即本文件全量（与 github_sync 纯件/
 // 卡片用例、settings 黑盒用例互不重叠）。
@@ -16,11 +18,16 @@
 #include "github_sync_engine.h"
 #include "github_sync_logic.h"
 #include "platform/github_api.h"
+#include "platform/json.h"
 
 #include <algorithm>
+#include <array>
+#include <cctype>
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <string>
 #include <utility>
 #include <vector>
@@ -69,7 +76,27 @@ struct Recorded {
     std::string method;
     std::string url;
     std::string body;
+    // 请求头一并录下：>1MB 拉取的 raw 二跳只有 Accept 头能区分（URL 与元数据跳完全相同），
+    // 不录头就只能靠响应体反推，那是在断言假发送器自己的路由字段（恒真）。
+    std::map<std::string, std::string> headers;
 };
+
+// 大小写不敏感取头（GithubApi 写的是 "Accept"；不赌拼写大小写）。
+std::string headerOf(const Recorded& r, const std::string& key) {
+    for (const auto& [k, v] : r.headers) {
+        if (k.size() != key.size()) continue;
+        bool same = true;
+        for (std::size_t i = 0; i < k.size(); ++i) {
+            const char a = static_cast<char>(
+                std::tolower(static_cast<unsigned char>(k[i])));
+            const char b = static_cast<char>(
+                std::tolower(static_cast<unsigned char>(key[i])));
+            if (a != b) { same = false; break; }
+        }
+        if (same) return v;
+    }
+    return std::string();
+}
 
 // 按 (method + url 子串) 路由的假发送器：命中即回放该路由队首响应（多条时
 // 逐条弹出，最后一条常驻）；多个路由同时命中取 urlPart 最长者（"/git/ref/heads"
@@ -86,7 +113,7 @@ struct FakeGithub {
     std::vector<Route> routes;
 
     Res send(const platform::http::Request& r) {
-        reqs.push_back({r.method, r.url, r.body});
+        reqs.push_back({r.method, r.url, r.body, r.headers});
         Route* best = nullptr;
         for (auto& route : routes) {
             if (route.method != r.method) continue;
@@ -152,6 +179,73 @@ void writeNote(const std::filesystem::path& dir, const std::string& name,
                const std::string& content) {
     std::filesystem::create_directories(dir);
     std::ofstream(dir / name, std::ios::binary) << content;
+}
+
+// 测试内联 base64 解码（b64() 的逆）：>1MB 用例要对**真实发出的请求体**做逐字节比对，
+// 只断长度区分不了「整篇正确」与「中段错位 / 尾部丢 '=' 填充」。查表一次建好，
+// 1.4MB 的输入走线性扫描（逐字符 find 在 Debug 下太慢）。
+int b64Index(unsigned char c) {
+    static const std::array<int, 256> kTable = [] {
+        std::array<int, 256> t{};
+        t.fill(-1);
+        const std::string a =
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        for (int i = 0; i < 64; ++i) {
+            t[static_cast<unsigned char>(a[static_cast<std::size_t>(i)])] = i;
+        }
+        return t;
+    }();
+    return kTable[c];
+}
+
+std::string b64Decode(const std::string& in) {
+    std::string out;
+    out.reserve(in.size() / 4 * 3);
+    int buf = 0;
+    int bits = 0;
+    for (const char ch : in) {
+        if (ch == '=' || ch == '\n' || ch == '\r' || ch == ' ') continue;
+        const int v = b64Index(static_cast<unsigned char>(ch));
+        if (v < 0) return std::string();   // 非法字符 = 解码失败（调用方按空串断言不上即红）
+        buf = (buf << 6) | v;
+        bits += 6;
+        if (bits >= 8) {
+            bits -= 8;
+            out.push_back(static_cast<char>((buf >> bits) & 0xFF));
+        }
+    }
+    return out;
+}
+
+// >1MB 大笔记（sync-03 ① ）：首 / 中 / 尾三处不同标记的确定性内容。只断长度的话
+//「尾部截断」与「中段错位」都能蒙混过关（长度相同 ≠ 字节相同），故三处都要比。
+constexpr char kHugeHead[] = "HEAD<大笔记往返>";
+constexpr char kHugeMid[] = "MID<大笔记往返>";
+constexpr char kHugeTail[] = "TAIL<大笔记往返>";
+
+std::string makeHugeNote(std::size_t bytes) {
+    std::string out;
+    out.reserve(bytes + 64);
+    out += kHugeHead;
+    while (out.size() < bytes) out += "0123456789abcdef";
+    out.resize(bytes);   // 精确到 bytes：非 3 的倍数顺带覆盖 base64 尾部的 '=' 填充
+    out.replace(bytes / 2, sizeof(kHugeMid) - 1, kHugeMid);
+    out.replace(bytes - (sizeof(kHugeTail) - 1), sizeof(kHugeTail) - 1, kHugeTail);
+    return out;
+}
+
+// 大笔记内容自检：长度 + 首/中/尾逐字节一致。刻意不用 `==` 断言整串——失败时 doctest 会把
+// 两边 1.4MB 全打进输出；分段比对既能定位（头/中/尾 分别红），输出又只有一行。
+// 返回 bool 是断言宏的形状要求（DOCTEST_CHECK* 内部 `return false`，不能用在 void 函数里）。
+bool checkHugeNote(const std::string& got, std::size_t bytes) {
+    DOCTEST_CHECK_EQ(got.size(), bytes);
+    if (got.size() != bytes) return false;   // 长度不符时按位比对无意义
+    DOCTEST_CHECK_EQ(got.compare(0, sizeof(kHugeHead) - 1, kHugeHead), 0);
+    DOCTEST_CHECK_EQ(got.compare(bytes / 2, sizeof(kHugeMid) - 1, kHugeMid), 0);
+    DOCTEST_CHECK_EQ(got.compare(bytes - (sizeof(kHugeTail) - 1),
+                                 sizeof(kHugeTail) - 1, kHugeTail),
+                     0);
+    return true;
 }
 
 // 引擎夹具：临时库 + 临时目录 + 假时钟 + 假发送器；引擎零全局注册，
@@ -875,6 +969,130 @@ REGISTER_TEST(gsync_engine_failure_semantics_throttle_input,
             if (e.statusCode == 500) saw500 = true;
         }
         DOCTEST_CHECK(saw500);
+    }
+    return true;
+})
+
+// ── >1MB 笔记端到端往返（.scratch/sync-product-gaps/issues/03 ① ）──
+
+REGISTER_TEST(
+    gsync_engine_huge_note_roundtrip_push_then_pull,
+    "gsync 引擎: >1MB 笔记端到端往返（push 整篇 base64 → 异设备 pull raw 直取，逐字节一致）", {
+    // 两端各钉一处已合入的分叉：
+    //   推送侧 —— 引擎本身没有 1MB 分叉、也没有单篇笔记体积闸：整篇 base64 进
+    //             Contents API PUT 的 JSON 体（只有 database.sql 有 73MB 闸）；
+    //   拉取侧 —— Contents API 对 1–100MB 文件不回 base64 正文（encoding="none"），
+    //             API 层改用 Accept: application/vnd.github.raw 二跳直取原文，
+    //             sha 仍取第一跳元数据。
+    // 判据落在**真实请求**（假发送器录下的 method/url/headers/body）与**真实落盘内容**上；
+    // 假发送器自己的路由字段（routes/plan）一概不断言（那是恒真）。
+    // 阈值取十进制 1.4e6（> 1MiB = 1048576）：确保走的是 >1MB 口径，而非边界态。
+    constexpr std::size_t kBytes = 1400 * 1000;
+    const std::string note = makeHugeNote(kBytes);
+    DOCTEST_REQUIRE(note.size() > 1024u * 1024u);
+
+    // ── 设备 A：推送（本地有、远端空树 → New→Put）──
+    std::string pushedBytes;   // 真实发上去的字节：设备 B 的「远端原文」就用它
+    {
+        EngineFixture fx;
+        writeNote(fx.notesDir(), "big.md", note);
+        fx.seedTree({});
+        fx.gh.routes.push_back({"PUT", "/contents/data/database.sql",
+                                {okResp(201, R"({"content":{"sha":"sqlsha"}})")}});
+        fx.gh.routes.push_back({"PUT", "/contents/notes/big.md",
+                                {okResp(201, R"({"content":{"sha":"bigsha"}})")}});
+        fx.seedRepo();
+
+        const SyncRunResult r = fx.engine().push(*fx.makeApi(), "trunk");
+
+        DOCTEST_CHECK_MESSAGE(r.ok, "summary=" + r.summary);
+        DOCTEST_CHECK_EQ(r.summary, std::string("已推送 database.sql 与 1 篇笔记"));
+        // 形态：恰好一条 PUT notes/big.md，体是 JSON（Content-Type + branch 显式）
+        DOCTEST_REQUIRE_EQ(fx.gh.count("PUT", "/contents/notes/big.md"), 1);
+        DOCTEST_REQUIRE_EQ(fx.gh.count("DELETE", "/contents/"), 0);
+        std::string putBody;
+        for (const auto& req : fx.gh.reqs) {
+            if (req.method != "PUT") continue;
+            if (req.url.find("/contents/notes/big.md") == std::string::npos) continue;
+            putBody = req.body;
+            DOCTEST_CHECK_EQ(headerOf(req, "Content-Type"),
+                             std::string("application/json"));
+            DOCTEST_CHECK(req.body.find("\"branch\":\"trunk\"") != std::string::npos);
+        }
+        DOCTEST_REQUIRE(!putBody.empty());
+        const auto parsed = platform::json::parse(putBody);
+        DOCTEST_REQUIRE(parsed.isOk());
+        const platform::json::JsonValue content =
+            parsed.value().asObject().get("content");
+        DOCTEST_REQUIRE(content.isString());
+        pushedBytes = b64Decode(content.asString());
+        // 无截断：请求体里解出来的整篇与本地原文件逐字节一致（长度 + 首/中/尾三处）
+        DOCTEST_CHECK_MESSAGE(checkHugeNote(pushedBytes, kBytes),
+                              "推送请求体解码后 != 本地整篇");
+        DOCTEST_CHECK_EQ(g::contentHash(pushedBytes), g::contentHash(note));
+        // 引擎侧无「单篇笔记闸」的可观测面：1.4MB 全文进了请求体（base64 后更大）；
+        // 真有 1MB 闸只会是「跳过该篇 / 整轮失败」，而这里 PUT 成功且体量 > 原文
+        DOCTEST_CHECK(putBody.size() > note.size());
+        // 登记面：sha 取 PUT 响应，hash 是**整篇**的（截断会让下轮判态误短路）
+        auto records = fx.store.syncedNoteRecords();
+        DOCTEST_REQUIRE(records.isOk());
+        DOCTEST_REQUIRE(records.value().count("big.md") == 1);
+        DOCTEST_CHECK_EQ(records.value().at("big.md").sha, std::string("bigsha"));
+        DOCTEST_CHECK_EQ(records.value().at("big.md").contentHash,
+                         g::contentHash(note));
+    }
+
+    // ── 设备 B：拉取（空笔记目录 + 空登记 = 新设备，远端有该篇 → Download）──
+    {
+        EngineFixture fx;
+        fx.seedTree({{"notes/big.md", "bigsha"}});
+        // 一跳（Accept: json）回元数据：encoding="none" + content 空（GitHub 对
+        // 1–100MB 文件的响应形态）；二跳（Accept: raw）才回原文。路由 plan 两条：
+        // 首条弹出、末条常驻，两条 GET 各得其所。
+        fx.gh.routes.push_back(
+            {"GET", "/contents/notes/big.md",
+             {okResp(200,
+                     R"({"sha":"bigsha","size":1400000,"encoding":"none","content":""})"),
+              okResp(200, pushedBytes)}});
+
+        const SyncRunResult r = fx.engine().pull(*fx.makeApi(), "trunk");
+
+        DOCTEST_CHECK_MESSAGE(r.ok, "summary=" + r.summary);
+        DOCTEST_CHECK(r.summary.find("下载 1 篇笔记") != std::string::npos);
+        // 请求序即语义：先元数据（拿 sha）再 raw 直取（拿原文）；两跳都必须显式带分支
+        //（URL 与元数据跳完全相同，区分只能靠 Accept 头——所以假发送器连头一起录）
+        std::vector<Recorded> gets;
+        for (const auto& req : fx.gh.reqs) {
+            if (req.method == "GET" &&
+                req.url.find("/contents/notes/big.md") != std::string::npos) {
+                gets.push_back(req);
+            }
+        }
+        DOCTEST_REQUIRE_EQ(gets.size(), static_cast<std::size_t>(2));
+        DOCTEST_CHECK_EQ(headerOf(gets[0], "Accept"),
+                         std::string("application/vnd.github+json"));
+        DOCTEST_CHECK_EQ(headerOf(gets[1], "Accept"),
+                         std::string("application/vnd.github.raw"));
+        DOCTEST_CHECK(gets[0].url.find("ref=trunk") != std::string::npos);
+        DOCTEST_CHECK(gets[1].url.find("ref=trunk") != std::string::npos);
+        // 落盘：真实文件长度 + 逐字节 == 设备 A 发上去的那篇（往返闭合）
+        const auto onDiskPath = fx.notesDir() / "big.md";
+        std::error_code ec;
+        DOCTEST_REQUIRE(std::filesystem::exists(onDiskPath, ec));
+        DOCTEST_CHECK_EQ(
+            static_cast<std::size_t>(std::filesystem::file_size(onDiskPath, ec)),
+            kBytes);
+        const std::string onDisk = fx.tmp.read(onDiskPath);
+        DOCTEST_CHECK_MESSAGE(checkHugeNote(onDisk, kBytes),
+                              "落盘内容 != 推送上去的整篇");
+        DOCTEST_CHECK_EQ(g::contentHash(onDisk), g::contentHash(note));
+        // 登记面：树 sha + 整篇 hash（下次 push 据此 InSync 短路）
+        auto records = fx.store.syncedNoteRecords();
+        DOCTEST_REQUIRE(records.isOk());
+        DOCTEST_REQUIRE(records.value().count("big.md") == 1);
+        DOCTEST_CHECK_EQ(records.value().at("big.md").sha, std::string("bigsha"));
+        DOCTEST_CHECK_EQ(records.value().at("big.md").contentHash,
+                         g::contentHash(note));
     }
     return true;
 })
