@@ -22,6 +22,7 @@
 #include "module_markdown/md_tree.h"
 #include "module_markdown/md_view_state.h"
 #include "module_markdown/md_ids.h"
+#include "module_markdown/markdown_module_test_seam.h"   // 轮询周期注入（假红根因见用例）
 
 using module::markdown::kEditorInputId;
 
@@ -452,12 +453,18 @@ REGISTER_TEST(md_module_db_import_reloads_list,
         return false;
     };
 
-    // 首帧顺带消费 watcher credit / 建立 5s 轮询基准（此后同用例内不再轮询）
+    // 测试缝：轮询周期调到 1 小时 ——「本用例窗口内不发生磁盘轮询」从**墙钟假设**
+    // 变成保证。原注释写「首帧建立 5s 轮询基准，此后同用例内不再轮询」：负载下
+    // >5s 卡顿会让轮询闯进窗口，rescan 把下面手工插入的幽灵行剪掉 → 假红
+    //（机理的确定性复现见 md_module_poll_seam_is_live）。首帧仍会消费 watcher
+    // credit —— credit 路径不受周期节流（hasWatchCredit() 短路）。
+    module::markdown::mdSetPollIntervalMsForTest(mod.get(), 3600 * 1000);
     frame("di1");
     DOCTEST_CHECK(treeHasNote("a.md"));
 
     // 模拟远端库导入：索引多出一行。刻意不动文件系统——磁盘变化会被 watcher/轮询
-    // 抢先刷新（掩掉本改动），只有 db.imported 事件能驱动这次重载。
+    // 抢先刷新（掩掉本改动），只有 db.imported 事件能驱动这次重载。轮询已调走，
+    // 这条窗口里只剩事件一条路径。
     auto ins = env.db->db().exec(
         "INSERT INTO markdown_index (path, title, size_bytes, modified_at, created_at) "
         "VALUES ('imported.md', '导入笔记', 10, 9999999999, 9999999999)");
@@ -469,6 +476,63 @@ REGISTER_TEST(md_module_db_import_reloads_list,
     ::core::event::bus().emit(::core::event::kDbImported);
     frame("di3");
     DOCTEST_CHECK(treeHasNote("imported.md"));    // 广播后重载可见
+
+    mod->onStop();
+    return true;
+})
+
+// 轮询缝自证（防「缝是空操作」）：把周期压到 1ms → 手工插入的幽灵索引行
+//（磁盘上无此文件）必被下一帧轮询的 rescan 剪掉 —— 这正是既有导入用例在负载下
+// 假红的机理，此处确定性复现。与 md_module_db_import_reloads_list 的「周期调到
+// 1 小时 → 行留着」构成**相反**期望：缝一旦失效（no-op / 节流不读该值），必有一条红。
+REGISTER_TEST(md_module_poll_seam_is_live,
+              "markdown_module: 轮询缝自证（1ms → 幽灵索引行被 rescan 剪掉；1 小时 → 留着）", {
+    test_support::MdHeadlessEnv env(kDirPrefix, "mdpollseam", kDbName);
+    DOCTEST_REQUIRE(env.db != nullptr);
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "a.md", "# A\n正文\n"));
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+    eui::Screen screen{1600.0f, 1000.0f};
+    eui::Ui ui;
+    auto frame = [&](const char* page) {
+        ui.begin(page);
+        mod->compose(ui, screen);
+        ui.end();
+    };
+    // 幽灵行计数口：直接查 markdown_index（不经过树/缓存，判据只盯 rescan 剪枝）
+    auto phantomRows = [&]() -> int {
+        auto prep = env.db->db().prepare(
+            "SELECT COUNT(*) AS n FROM markdown_index WHERE path = 'imported.md'");
+        if (prep.isFail()) return -1;
+        auto rows = prep.value().fetchAll();
+        if (rows.isFail() || rows.value().empty()) return -1;
+        auto v = rows.value()[0].getInt64("n");
+        return v.isOk() ? static_cast<int>(v.value()) : -1;
+    };
+    auto insertPhantom = [&]() {
+        return env.db->db()
+            .exec("INSERT INTO markdown_index "
+                  "(path, title, size_bytes, modified_at, created_at) "
+                  "VALUES ('imported.md', '幽灵', 10, 9999999999, 9999999999)")
+            .isOk();
+    };
+
+    // ① 周期 1 小时：轮询不可能到期 → 幽灵行留着（= 导入用例的确定性前提）
+    module::markdown::mdSetPollIntervalMsForTest(mod.get(), 3600 * 1000);
+    frame("ps1");
+    DOCTEST_REQUIRE(insertPhantom());
+    DOCTEST_REQUIRE(phantomRows() == 1);
+    frame("ps2");
+    DOCTEST_CHECK_MESSAGE(phantomRows() == 1,
+                          "周期 1 小时仍发生了轮询（缝没生效，导入用例的假红根因还在）");
+
+    // ② 周期 1ms：下一帧必到期 → rescan 以磁盘为准 → 幽灵行被剪掉
+    module::markdown::mdSetPollIntervalMsForTest(mod.get(), 1);
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));   // 越过 1ms 节流门
+    frame("ps3");
+    DOCTEST_CHECK_MESSAGE(phantomRows() == 0,
+                          "周期 1ms 未触发轮询 rescan（缝没生效）");
 
     mod->onStop();
     return true;

@@ -16,6 +16,7 @@
 #include <ui_kit/metrics.h>
 #include <ui_kit/toast.h>
 #include "markdown_service.h"
+#include "markdown_module_test_seam.h"
 #include "markdown_tools.h"
 #include "md_block_model.h"
 #include "md_block_interact.h"
@@ -198,6 +199,10 @@ public:
     std::string displayName() const override { return "Markdown 笔记本"; }
     std::string shortName() const override { return "笔记"; }
     std::string iconGlyph() const override { return eui::utf8(0xF044); }  // fa-pen-to-square
+
+    // 测试缝（声明与理由见 markdown_module_test_seam.h）：只给「注入轮询周期」这一项
+    // 开私有访问，不给测试留后门集合。
+    friend void mdSetPollIntervalMsForTest(::core::Module* mod, int64_t ms);
 
 
     void onStart() override {
@@ -2989,7 +2994,7 @@ private:
         const auto now = std::chrono::steady_clock::now();
         const auto sinceMs = std::chrono::duration_cast<std::chrono::milliseconds>(
                                  now - lastPollAt_).count();
-        if (!service_->hasWatchCredit() && sinceMs < kPollIntervalMs) return;
+        if (!service_->hasWatchCredit() && sinceMs < pollIntervalMs_) return;
         lastPollAt_ = now;
 
         // 1) 目录级轻量比对：有差异才做全量 rescan
@@ -3601,7 +3606,7 @@ private:
 
     static constexpr int64_t kAutoSaveDelayMs = 400;
     static constexpr int64_t kMaxSaveBackoffMs = 60000;  // 保存失败退避封顶
-    static constexpr int64_t kPollIntervalMs = 5000;     // 文件变化轮询周期
+    static constexpr int64_t kPollIntervalMs = 5000;     // 文件变化轮询周期（默认值）
 
     std::unique_ptr<MarkdownService> service_;
     std::unique_ptr<class NoteGitAutoCommit> noteGit_;  // 笔记目录 git 自动提交
@@ -3739,6 +3744,8 @@ private:
     int64_t lastKnownMtime_ = 0;                      // 当前笔记已知磁盘 mtime（-1=已删除）
     bool conflictOpen_ = false;                       // 外部修改冲突 toast（action 二选一）
     std::chrono::steady_clock::time_point lastPollAt_{};  // 轮询节流基准
+    // 轮询节流周期（默认 5s；测试缝可注入，见 markdown_module_test_seam.h）
+    int64_t pollIntervalMs_ = kPollIntervalMs;
 
     // 标签状态
     std::vector<std::string> currentTags_;  // 当前打开笔记的标签
@@ -3759,6 +3766,14 @@ private:
     // 预览代码块高亮（CodeFence 块自绘的脏块缓存）
     MdPreviewCodeCache previewCodeCache_;
 };
+
+// 测试缝实现（声明与理由见 markdown_module_test_seam.h）。唯一消费方是
+// tests/test_modules/test_markdown.cpp，入口是 create_markdown_module()，故
+// static_cast 安全 —— 该缝不对外承诺接受任意 core::Module*。
+void mdSetPollIntervalMsForTest(::core::Module* mod, int64_t ms) {
+    if (mod == nullptr || ms <= 0) return;
+    static_cast<MarkdownModule*>(mod)->pollIntervalMs_ = ms;
+}
 
 } // namespace module::markdown
 
