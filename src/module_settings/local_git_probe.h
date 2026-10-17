@@ -22,6 +22,23 @@ inline int& localGitProbeOverrideForTest() {
 // 业务侧不要直接调，走 localGitAvailable()。
 bool localGitAvailableImpl();
 
+// 「排空子进程管道」的每圈决策（平台无关的优先级规则，macOS 实现消费；
+// 判据 tests/test_modules/test_local_git_probe.cpp）。优先级：
+//   ① 子进程已退出且已见 EOF → Done（东西收全了，杀一个死进程无意义）；
+//   ② 子进程**还活着**且已过截止时间 → Timeout（调用方 SIGKILL 收尸）；
+//   ③ 其余 → ReadMore。
+// ②是这条规则的全部意义：deadline 检查曾被写在「读到数据 → continue」之后 ——
+// 子进程持续输出时循环永不查表（3s 上界名存实亡、探测线程卡死）。**判据 ①** 就是
+// 那种病态输入；改本函数等于改超时语义，先看判据。
+enum class PipeDrainStep { ReadMore, Done, Timeout };
+
+inline PipeDrainStep pipeDrainStep(bool childExited, bool sawEof,
+                                   bool pastDeadline) {
+    if (childExited && sawEof) return PipeDrainStep::Done;
+    if (!childExited && pastDeadline) return PipeDrainStep::Timeout;
+    return PipeDrainStep::ReadMore;
+}
+
 // 实际判定：测试覆盖优先，否则走平台实现。
 inline bool localGitAvailable() {
     const int forced = localGitProbeOverrideForTest();
