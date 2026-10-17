@@ -2379,6 +2379,68 @@ REGISTER_TEST(agent_ui_page_error_no_rebound_until_new_run,
     return true;
 })
 
+// Task 4 剩余项（「多任务同错时取 map 迭序第一条、不可复现」）—— 把语义钉死，
+// 使它可复现、可回归：① 多个任务各有「配置不可用」类错误时，页内错误行取
+// **taskId 最小者**（`latestRuns_` 是 `std::map<int64_t, ...>`，迭序确定 = 升序，
+// 不是随机）；② 用户清掉后同步循环**接着找别的任务**的错（不是「遇错即停」），
+// 另一个任务的错误顶上来；③ 两条都展示过 → 不再循环回第一条（`pageErrorRunId_`
+// 逐个记住已展示的 run）。
+REGISTER_TEST(agent_ui_page_error_multi_task_order,
+              "agent_ui: 页内错误行多任务语义（取 taskId 最小者 / 清除后下一个顶上 / 不循环）", {
+    test_support::TestDb tdb("agentui", "pagemulti");
+    test_support::FakeProfileSource profile;
+    ToolGuard statsGuard{"app.stats"};
+    core::ToolRegistry::instance().unregisterTool("app.stats");
+    module::agent::AgentStore store(tdb.handle());
+    // 两个任务 + 两条**文案不同**的配置不可用错误：可据文案分辨当前展示的是哪一条。
+    auto ta = store.createTask("多任务 A", "g", "manual", "default", 10, false);
+    DOCTEST_REQUIRE(ta.isOk());
+    auto tb = store.createTask("多任务 B", "g", "manual", "default", 10, false);
+    DOCTEST_REQUIRE(tb.isOk());
+    auto ra = store.startRun(ta.value());
+    DOCTEST_REQUIRE(ra.isOk());
+    DOCTEST_REQUIRE(store.finishRun(ra.value(), "failed", 1, int64_t(10),
+                                    int64_t(1), kNoProfileErr).isOk());
+    auto rb = store.startRun(tb.value());
+    DOCTEST_REQUIRE(rb.isOk());
+    DOCTEST_REQUIRE(store.finishRun(rb.value(), "failed", 1, int64_t(10),
+                                    int64_t(1), kSlotResolveErr).isOk());
+
+    module::agent::AgentModule::Deps deps;
+    deps.db = &tdb.handle();
+    deps.profileSource = &profile;
+    module::agent::AgentModule mod(deps);
+    mod.onStart();
+
+    // ① 首帧：取 taskId 最小（A）的错
+    eui::Ui ui1;
+    composeTo(ui1, mod, kScreen, "agent_ui_pagemulti1");
+    const auto* err1 = ui1.find("agent.page.error");
+    DOCTEST_REQUIRE(err1 != nullptr);
+    DOCTEST_CHECK_MESSAGE(err1->text.find(kNoProfileErr) != std::string::npos,
+                          "首帧未取 taskId 最小者的错误，实测: " + err1->text);
+
+    // ② 清除 + 触发一次 refreshData（启停成功）→ 同步循环接着找 → B 的错顶上
+    DOCTEST_REQUIRE(clickId(ui1, "agent.task." + std::to_string(ta.value()) + ".toggle"));
+    eui::Ui ui2;
+    composeTo(ui2, mod, kScreen, "agent_ui_pagemulti2");
+    const auto* err2 = ui2.find("agent.page.error");
+    DOCTEST_REQUIRE_MESSAGE(err2 != nullptr,
+                            "清除后未接着报另一个任务的错（遇错即停？）");
+    DOCTEST_CHECK_MESSAGE(err2->text.find(kSlotResolveErr) != std::string::npos,
+                          "顶上来的不是 B 任务的错误，实测: " + err2->text);
+
+    // ③ 再清一次 + 再刷新：两条都已展示过 → 错误行保持空（不循环回 A）
+    DOCTEST_REQUIRE(clickId(ui2, "agent.task." + std::to_string(ta.value()) + ".toggle"));
+    eui::Ui ui3;
+    composeTo(ui3, mod, kScreen, "agent_ui_pagemulti3");
+    DOCTEST_CHECK_MESSAGE(ui3.find("agent.page.error") == nullptr,
+                          "两条已展示过的错误循环回了（回弹 / 兜圈）");
+
+    mod.onStop();
+    return true;
+})
+
 REGISTER_TEST(agent_ui_page_error_no_hint_other_errors,
               "agent_ui: 页内错误行非「LLM 配置不可用」类（读库失败/普通 run 失败）不渲染引导", {
     test_support::TestDb tdb("agentui", "pagehintneg");
