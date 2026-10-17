@@ -287,3 +287,19 @@ REGISTER_TEST(paths_default_root_no_legacy_touch,
                      std::string("# old note"));
     return true;
 })
+
+// 测试基建不变量：临时文件基目录必须是**绝对路径**。
+// 为什么值得单独立一条：有断言依赖它（test_claude_service 的 run-settings 路径
+// `is_absolute()`），而兜底路径曾经是相对 cwd 的 "build/testtmp" —— 同一份用例于是
+// 「走脚本全绿、直接跑二进制恒红」，而门禁失败提示教的**恰好**是「直接跑二进制」，
+// 一次误导就够浪费半小时。注入（DEVDESK_TEST_TMPDIR）与兜底两条路都必须绝对。
+REGISTER_TEST(test_infra_temp_base_dir_is_absolute,
+              "test_infra: 临时基目录恒为绝对路径（注入/兜底两条路都查）", {
+    DOCTEST_CHECK(test_temp::tempBaseDir().is_absolute());
+    // 注入值被**原样采用**（不静默改写）：这条一起钉住，读者才知道「绝对」这份契约
+    // 为什么落在这里 —— 相对值只可能是注入方给的，兜底侧负责自己补绝对。
+    if (const char* env = std::getenv("DEVDESK_TEST_TMPDIR"); env && *env) {
+        DOCTEST_CHECK_EQ(test_temp::tempBaseDir().string(), std::string(env));
+    }
+    return true;
+})

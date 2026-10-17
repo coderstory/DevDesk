@@ -123,17 +123,25 @@ inline long processId() {
 #endif
 }
 
-// 临时文件基目录：可用环境变量 DEVDESK_TEST_TMPDIR 注入；默认 "build/testtmp"
-// （相对 cwd——build-test-run.sh 从仓库根跑测试，即 <repo>/build/testtmp；从别处
-// 直接调测试二进制时落在其 cwd 下的 build/testtmp）。刻意不依赖系统 %TEMP%/TMPDIR：
-// 受限执行环境（沙箱 ec=13）对用户临时目录写入被拒，整套测试无法原地跑。
-// 进程内缓存一次；目录不存在则按需创建。
+// 临时文件基目录：可用环境变量 DEVDESK_TEST_TMPDIR 注入；默认 <repo>/build/testtmp。
+// 注入值**原样采用**，兜底侧自己补**绝对**（对 cwd 取 absolute）——基目录必须绝对：有断言
+// 依赖它（test_claude_service 的 run-settings 路径 is_absolute()），相对值会让同一份用例
+// 随调用方式红绿不定，而门禁的失败提示教的**正是**「直接跑二进制」（判据见 test_paths.cpp
+// 的 test_infra 用例）。
+// 刻意不依赖系统 %TEMP%/TMPDIR：受限执行环境（沙箱 ec=13）对用户临时目录写入被拒，
+// 整套测试无法原地跑。进程内缓存一次；目录不存在则按需创建。
 inline const std::filesystem::path& tempBaseDir() {
     static const std::filesystem::path base = [] {
         if (const char* env = std::getenv("DEVDESK_TEST_TMPDIR"); env && *env) {
             return std::filesystem::path(env);
         }
-        return std::filesystem::path("build") / "testtmp";
+        // absolute() 失败（极罕见：cwd 不可读）退回相对值 = 原行为，不静默换目录，
+        // 后续文件读写自会以可见错误暴露。
+        std::error_code ec;
+        const std::filesystem::path rel =
+            std::filesystem::path("build") / "testtmp";
+        const auto abs = std::filesystem::absolute(rel, ec);
+        return ec ? rel : abs;
     }();
     static const bool created = [] {
         std::error_code ec;
