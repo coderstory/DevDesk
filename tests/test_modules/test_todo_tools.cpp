@@ -215,6 +215,28 @@ REGISTER_TEST(todo_tools_create_attributes_one_shot,
     DOCTEST_CHECK_FALSE(b.description.has_value());
     DOCTEST_CHECK(b.priority == module::todo::Priority::None);
     DOCTEST_CHECK_FALSE(b.dueAt.has_value());
+
+    // description 显式 null：create 没有旧值可「清空」，该分支语义 = 不给（不报错、也不写 "null"）
+    auto nullDesc = runTool("todo.create", R"({"title":"空描述","description":null})");
+    DOCTEST_REQUIRE(nullDesc.isOk());
+    DOCTEST_CHECK_FALSE(nullDesc.value().isError);
+    auto all3 = env.svc->listAllTasks();
+    DOCTEST_REQUIRE(all3.isOk());
+    DOCTEST_REQUIRE_EQ(all3.value().size(), 3u);
+    DOCTEST_CHECK_FALSE(all3.value()[2].description.has_value());
+
+    // 三态里的中间态：只给 priority，description/dueAt 必须各自保持默认空 ——
+    // 三个属性是**各自独立可选**，不能因为给了一个就连带把别的写成缺省值（那样叫数据污染）
+    auto partial = runTool("todo.create", R"({"title":"只带优先级","priority":1})");
+    DOCTEST_REQUIRE(partial.isOk());
+    DOCTEST_CHECK_FALSE(partial.value().isError);
+    auto all4 = env.svc->listAllTasks();
+    DOCTEST_REQUIRE(all4.isOk());
+    DOCTEST_REQUIRE_EQ(all4.value().size(), 4u);
+    const auto& p = all4.value()[3];
+    DOCTEST_CHECK(p.priority == module::todo::Priority::Low);
+    DOCTEST_CHECK_FALSE(p.description.has_value());
+    DOCTEST_CHECK_FALSE(p.dueAt.has_value());
     return true;
 })
 
