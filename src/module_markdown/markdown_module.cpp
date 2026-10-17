@@ -2763,6 +2763,18 @@ private:
         LOG_INFO("标签筛选: " + (tagFilter_.empty() ? "(无)" : tagFilter_));
     }
 
+    // 标签写的**单一出口**：成功即发 md.tags_changed。标签只落 DB 两张表
+    // （markdown_tags / markdown_note_tags，都在整库 dump 里）而**不碰笔记文件**，
+    // 所以 md.saved 兜不住「只加/删标签」这类改动 —— 必须自有一条事件。
+    // 加/删两个 UI 入口都走这里；将来新增第三个入口若绕过本函数直调
+    // service_->setTags，同步侧就会漏掉那类改动（见 settings_module 订阅清单的注释：
+    // 漏订一个 = 那类改动永远不自动同步）。调用方保证 currentPath_ 非空。
+    core::Result<void> writeTags(const std::vector<std::string>& tags) {
+        auto r = service_->setTags(currentPath_, tags);
+        if (r.isOk()) core::event::bus().emit(core::event::kMdTagsChanged);
+        return r;
+    }
+
     // 「＋」/回车：给当前笔记加标签
     void commitAddTag() {
         if (!service_ || currentPath_.empty()) return;
@@ -2782,7 +2794,7 @@ private:
             if (existing == name) return;  // 已有，不重复
         }
         currentTags_.push_back(name);
-        auto r = service_->setTags(currentPath_, currentTags_);
+        auto r = writeTags(currentTags_);
         if (r.isFail()) {
             currentTags_.pop_back();
             LOG_ERROR("添加标签失败 " + name + ": " + r.errorMessage());
@@ -2802,7 +2814,7 @@ private:
             if (tg != name) next.push_back(tg);
         }
         if (next.size() == currentTags_.size()) return;
-        auto r = service_->setTags(currentPath_, next);
+        auto r = writeTags(next);
         if (r.isFail()) {
             LOG_ERROR("删除标签失败 " + name + ": " + r.errorMessage());
             showToast("删除标签失败", r.errorMessage(), true);

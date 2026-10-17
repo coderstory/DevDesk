@@ -172,6 +172,7 @@ public:
         for (const char* ev :
              {::core::event::kMdSaved, ::core::event::kMdCreated,
               ::core::event::kMdRenamed, ::core::event::kMdDeleted,
+              ::core::event::kMdTagsChanged,
               ::core::event::kTodoCreated, ::core::event::kTodoUpdated,
               ::core::event::kTodoMoved, ::core::event::kTodoCompleted,
               ::core::event::kTodoUncompleted, ::core::event::kTodoDeleted,

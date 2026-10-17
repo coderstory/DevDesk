@@ -3382,6 +3382,8 @@ REGISTER_TEST(settings_github_sync_dirty_from_write_events,
     DOCTEST_CHECK(dirtyAfter(::core::event::kTodoUncompleted));
     DOCTEST_CHECK(dirtyAfter(::core::event::kTodoDeleted));
     DOCTEST_CHECK(dirtyAfter(::core::event::kTodoColumnChanged));
+    // 标签写路径（加/删标签）——标签只落 DB、不碰笔记文件，md.saved 兜不住
+    DOCTEST_CHECK(dirtyAfter(::core::event::kMdTagsChanged));
     // 对照：本模块没订阅的事件名 → 不置 dirty
     DOCTEST_CHECK(!dirtyAfter(::core::event::kDbImported));
     return true;

@@ -7781,3 +7781,77 @@ REGISTER_TEST(md_module_create_rename_event_wiring,
     mod->onStop();
     return true;
 })
+
+// 标签写路径也是 GitHub Sync 的 dirty 触发源：标签落 DB 两张表（markdown_tags /
+// markdown_note_tags，都在整库 dump 里），而且**不碰笔记文件** —— 只订 md.saved 的
+// 订阅方兜不住「只加/删标签」的改动，故必须自有一条事件。两处 UI 入口（＋ 提交 /
+// chip ×）都要发。对照：只在输入框打字、没提交 = 不是写路径 → 不许发。
+REGISTER_TEST(md_module_tag_change_event_wiring,
+              "markdown_module: 加标签/删标签各发一次 md.tags_changed；只打字不发（headless）", {
+    test_support::MdHeadlessEnv env(kDirPrefix, "tagev", kDbName);
+    DOCTEST_REQUIRE(env.db != nullptr);
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "note.md", "# A\n"));
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+
+    int gotTags = 0;
+    auto sub = core::event::bus().subscribe(
+        core::event::kMdTagsChanged, [&](const std::string&) { ++gotTags; });
+
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    eui::Ui ui;
+    auto frame = [&](const char* page) {
+        ui.begin(page);
+        mod->compose(ui, screen);
+        ui.end();
+    };
+    auto findFileRow = [&](const std::string& name) -> const core::dsl::Element* {
+        for (int i = 0; i < 6; ++i) {
+            const auto* nm = ui.find("md.tree.node." + std::to_string(i) + ".name");
+            if (nm != nullptr && nm->text == name) {
+                return ui.find("md.tree.node." + std::to_string(i) + ".row");
+            }
+        }
+        return nullptr;
+    };
+
+    frame("te1");
+    const auto* fileRow = findFileRow("note.md");
+    DOCTEST_REQUIRE(fileRow != nullptr);
+    DOCTEST_REQUIRE(fileRow->onClick != nullptr);
+    fileRow->onClick();
+    frame("te2");
+
+    // 对照：只在输入框打字（未提交）= 没碰 DB → 不发
+    const auto* addInput = ui.find("md.tags.add.hit");
+    DOCTEST_REQUIRE(addInput != nullptr);
+    DOCTEST_REQUIRE(addInput->onTextInput != nullptr);
+    core::TextInputEvent tie;
+    tie.text = "工作";
+    addInput->onTextInput(tie);
+    frame("te3");
+    DOCTEST_CHECK_EQ(gotTags, 0);
+
+    // ① 「＋」提交 → 真写标签表 → 恰一次
+    const auto* addBtn = ui.find("md.tags.addbtn.bg");
+    DOCTEST_REQUIRE(addBtn != nullptr);
+    DOCTEST_REQUIRE(addBtn->onClick != nullptr);
+    addBtn->onClick();
+    frame("te4");
+    DOCTEST_CHECK_EQ(gotTags, 1);
+    DOCTEST_CHECK(ui.find("md.tags.chip.0.name") != nullptr);
+
+    // ② chip × 删除 → 再恰一次（累计 2；删除也是写路径，漏发同样会漏同步）
+    const auto* del = ui.find("md.tags.chip.0.del");
+    DOCTEST_REQUIRE(del != nullptr);
+    DOCTEST_REQUIRE(del->onClick != nullptr);
+    del->onClick();
+    frame("te5");
+    DOCTEST_CHECK_EQ(gotTags, 2);
+
+    mod->onStop();
+    return true;
+})

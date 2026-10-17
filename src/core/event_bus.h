@@ -41,6 +41,10 @@ inline constexpr const char* kMdSaved = "md.saved";
 inline constexpr const char* kMdDeleted = "md.deleted";
 inline constexpr const char* kMdCreated = "md.created";
 inline constexpr const char* kMdRenamed = "md.renamed";
+// 笔记标签写路径（加/删标签）：标签落 DB 两张表（markdown_tags / markdown_note_tags），
+// 它们都在整库 dump 里、又**不碰笔记文件** → md.saved 兜不住「只改标签」的改动，必须自
+// 有一条（订阅方漏订 = 那类改动永远不自动同步，见 settings_module 订阅清单的注释）。
+inline constexpr const char* kMdTagsChanged = "md.tags_changed";
 // 数据库导入（GitHub Sync 拉取覆盖活库）：begin/end 包住导入全程，
 // **end 无论成败都发**（订阅方必须借此恢复被暂停的后台任务）；imported 仅
 // 成功后发，订阅方应丢弃内存缓存重查——表被 DROP 重建过，缓存指向旧行
