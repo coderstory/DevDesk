@@ -91,6 +91,72 @@ REGISTER_TEST(event_trigger_cfg_decode_rules,
     return true;
 })
 
+// 限次语义（max_runs）往返 + 「缺省 = 不限次数」的向后兼容对照：旧配置串（没有该键）
+// 解码后 maxRuns = nullopt，语义与今天逐字节一致；encode 侧不限次数不写该键——这是
+// 「重复任务不回归」的结构保证（旧行没键 → 永远解不出上限 → Scheduler 恒派发）
+REGISTER_TEST(event_trigger_cfg_max_runs_roundtrip,
+              "trigger_config: max_runs 往返；未设置时不写该键（旧串逐字节不变）", {
+    TriggerConfig once;
+    once.cron = "0 18 * * *";
+    once.maxRuns = 1;
+    auto onceText = encodeTriggerConfig(once);
+    DOCTEST_REQUIRE(onceText.isOk());
+    auto onceDec = decodeTriggerConfig(onceText.value());
+    DOCTEST_REQUIRE(onceDec.isOk());
+    DOCTEST_REQUIRE(onceDec.value().maxRuns.has_value());
+    DOCTEST_CHECK_EQ(*onceDec.value().maxRuns, 1);
+    DOCTEST_CHECK_EQ(onceDec.value().cron, std::string("0 18 * * *"));
+
+    // 旧配置串（无 max_runs）：decode 放行且 maxRuns 缺席 = 不限次数（今天的行为）
+    auto legacy = decodeTriggerConfig(R"({"cron":"0 18 * * *"})");
+    DOCTEST_REQUIRE(legacy.isOk());
+    DOCTEST_CHECK_FALSE(legacy.value().maxRuns.has_value());
+    // 不限次数的 encode 产物 = 没有新键的今日字节（旧串写回后仍是旧串）
+    TriggerConfig unlimited;
+    unlimited.cron = "0 18 * * *";
+    auto unlimitedText = encodeTriggerConfig(unlimited);
+    DOCTEST_REQUIRE(unlimitedText.isOk());
+    DOCTEST_CHECK_EQ(unlimitedText.value(), std::string(R"({"cron":"0 18 * * *"})"));
+    // 事件型同样可带上限（「下次保存笔记时跑一次」）
+    TriggerConfig ev;
+    ev.events = {"md.saved"};
+    ev.maxRuns = 2;
+    auto evText = encodeTriggerConfig(ev);
+    DOCTEST_REQUIRE(evText.isOk());
+    auto evDec = decodeTriggerConfig(evText.value());
+    DOCTEST_REQUIRE(evDec.isOk());
+    DOCTEST_REQUIRE(evDec.value().maxRuns.has_value());
+    DOCTEST_CHECK_EQ(*evDec.value().maxRuns, 2);
+    DOCTEST_CHECK_EQ(evDec.value().events.size(), 1u);
+    return true;
+})
+
+// 坏 max_runs 一律 fail、不许静默当「不限次数」：静默会让「只跑一次」的配置悄悄变回
+// 永久重复任务（正是本单要消灭的失败模式）。判据与 cooldown_sec 同形（类型）+ 正整数
+// （0 / 负数 / 超上限都不是合法上限）
+REGISTER_TEST(event_trigger_cfg_max_runs_rejects_bad_values,
+              "trigger_config: max_runs 非正整数/超上限 → decode fail（不静默当不限次数）", {
+    DOCTEST_CHECK(decodeTriggerConfig(R"({"cron":"* * * * *","max_runs":0})").isFail());
+    DOCTEST_CHECK(decodeTriggerConfig(R"({"cron":"* * * * *","max_runs":-1})").isFail());
+    DOCTEST_CHECK(decodeTriggerConfig(R"({"cron":"* * * * *","max_runs":"1"})").isFail());
+    DOCTEST_CHECK(decodeTriggerConfig(R"({"cron":"* * * * *","max_runs":true})").isFail());
+    DOCTEST_CHECK(decodeTriggerConfig(R"({"cron":"* * * * *","max_runs":null})").isFail());
+    // 上限寄存器（kMaxRunsUpperBound）：防手改库塞超大值让每次扫描拉爆 listRuns
+    DOCTEST_CHECK(
+        decodeTriggerConfig(R"({"cron":"* * * * *","max_runs":1001})").isFail());
+    DOCTEST_CHECK(
+        decodeTriggerConfig(R"({"events":["md.saved"],"max_runs":1001})").isFail());
+    // 边界绿：1 与上限本身都合法
+    DOCTEST_CHECK(decodeTriggerConfig(R"({"cron":"* * * * *","max_runs":1})").isOk());
+    DOCTEST_CHECK(decodeTriggerConfig(R"({"cron":"* * * * *","max_runs":1000})").isOk());
+    // 错误信息非空（Scheduler / UI 把它拼进点名 task id 的 WARN 与配置异常徽章）
+    auto bad = decodeTriggerConfig(R"({"cron":"* * * * *","max_runs":0})");
+    DOCTEST_CHECK(bad.isFail());
+    DOCTEST_CHECK(!bad.errorMessage().empty());
+    DOCTEST_CHECK(bad.errorMessage().find("max_runs") != std::string::npos);
+    return true;
+})
+
 // encode 侧防线：cron 与 events 两者皆空 → fail（防「encode 出 {} 再 decode fail」
 // 的死配置静默落库）
 REGISTER_TEST(event_trigger_cfg_encode_rejects_empty,

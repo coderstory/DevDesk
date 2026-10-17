@@ -6,10 +6,12 @@
 //   页面   agent.page / agent.page.header / agent.title / agent.page.newTask /
 //          agent.tools.*（可用工具区块）/ agent.tasklist（scrollView）+.content /
 //          agent.task.<id>（.title / .status / .detail / .edit / .toggle /
+//          [.limit 仅限次任务] / [.warn 配置异常] /
 //          [.enqueue 仅常驻] / .run）/ run 结束通知（Task 1；fix round 起经 takeRunEndNotice 走 app 级通道）
 //   任务弹窗 agent.dialog.task.*（新建 / 编辑共用）：
-//          .goal（多行）/ .trigger / .cron（仅定时）/ .slot / .iter /
-//          .destructive / .cancel / .save / .close / .error（有错才渲染）
+//          .goal（多行）/ .trigger / .cron（仅定时）/ .limit（仅定时·事件，行为开关行的
+//          "只跑一次"）/
+//          .slot / .iter / .destructive / .cancel / .save / .close / .error（有错才渲染）
 //   详情弹窗 agent.dialog.detail.*：.info / .runlist.<i>[.err] / .msgscroll /
 //          .msg.<i>[.badge / .toggle / .preview / .blk.<j>[.out]] / .close
 //   旧页内表单（agent.form.* / agent.edit.*）与页内详情展开区已删除——本文件用
@@ -28,6 +30,7 @@
 #include "app_sidebar.h"
 #include "core/event_bus.h"
 #include "core/module_interface.h"
+#include "core/render/text.h"   // 开关标签盒容纳断言（真实字体测量）
 #include "core/router.h"
 #include "core/theme.h"
 #include "core/tool.h"
@@ -2762,6 +2765,247 @@ REGISTER_TEST(agent_ui_task_config_problem_badge,
     DOCTEST_CHECK_MESSAGE(info->text.find("触发配置异常") != std::string::npos,
                           "详情摘要未给出配置异常原因，实测：" + info->text);
     DOCTEST_CHECK(info->text.find("cron") != std::string::npos);
+
+    mod.onStop();
+    return true;
+})
+
+// ---- 限次 / 一次性任务（max_runs）的 UI 面：行为开关行开关 + 列表徽章 + 详情摘要（02）----
+// 语义：开关勾上 = trigger_config 里写 max_runs=1（「只跑一次」），不勾 = 不写该键
+//（旧行为：恒循环）。开关只对 schedule / event 渲染——manual / resident 的
+// trigger_config 不被 Scheduler 消费，给它们写上限 = 写完就骗人的死配置
+
+REGISTER_TEST(agent_ui_dialog_once_only_toggle_persists_and_roundtrips,
+              "agent_ui: 「只跑一次」开关 → 落库 max_runs=1；编辑回填勾选且原样回写", {
+    test_support::TestDb tdb("agentui", "onceonly");
+    test_support::FakeProfileSource profile;
+    ToolGuard statsGuard{"app.stats"};
+    core::ToolRegistry::instance().unregisterTool("app.stats");
+
+    module::agent::AgentModule::Deps deps;
+    deps.db = &tdb.handle();
+    deps.profileSource = &profile;
+    module::agent::AgentModule mod(deps);
+    mod.onStart();
+    module::agent::AgentStore store(tdb.handle());
+
+    eui::Ui ui;
+    DOCTEST_REQUIRE(openNewTaskDialog(ui, mod, "agent_ui_once1"));
+    eui::Ui ui2;
+    composeTo(ui2, mod, kScreen, "agent_ui_once2");
+    auto* goalHit = ui2.find("agent.dialog.task.goal.hit");
+    DOCTEST_REQUIRE(goalHit != nullptr);
+    typeInto(goalHit, "18 点提醒一次");
+    // 默认触发方式 = 手动（不消费 trigger_config）→ 开关不许渲染
+    DOCTEST_CHECK_MESSAGE(ui2.find("agent.dialog.task.limit") == nullptr,
+                          "手动触发不该渲染「只跑一次」开关（写了也没人消费）");
+    // 切事件型 → 开关出现（事件型同样能配一次性：下次保存笔记时跑一次）
+    DOCTEST_REQUIRE(callDropdownChange(ui2, "agent.dialog.task.trigger", 3));
+    eui::Ui ui2b;
+    composeTo(ui2b, mod, kScreen, "agent_ui_once2b");
+    DOCTEST_CHECK_MESSAGE(ui2b.find("agent.dialog.task.limit") != nullptr,
+                          "事件触发缺「只跑一次」开关");
+    // 切定时 → 开关在 + 文案是大白话（不是 max_runs 术语）
+    DOCTEST_REQUIRE(callDropdownChange(ui2b, "agent.dialog.task.trigger", 1));
+    eui::Ui ui3;
+    composeTo(ui3, mod, kScreen, "agent_ui_once3");
+    const auto* limitLabel = ui3.find("agent.dialog.task.limit.label");
+    DOCTEST_REQUIRE_MESSAGE(limitLabel != nullptr, "「只跑一次」开关缺文案");
+    DOCTEST_CHECK_EQ(limitLabel->text, std::string("只跑一次"));
+    mod.setEditCronDraft("0 18 * * *");
+    DOCTEST_REQUIRE_MESSAGE(clickId(ui3, "agent.dialog.task.limit.hit"),
+                            "「只跑一次」开关命中面缺失");
+
+    eui::Ui ui4;
+    composeTo(ui4, mod, kScreen, "agent_ui_once4");
+    DOCTEST_REQUIRE_MESSAGE(clickId(ui4, "agent.dialog.task.save.bg"), "保存按钮缺失");
+
+    auto tasks = store.listTasks();
+    DOCTEST_REQUIRE(tasks.isOk());
+    DOCTEST_REQUIRE_EQ(tasks.value().size(), static_cast<size_t>(1));
+    const auto& row = tasks.value()[0];
+    DOCTEST_CHECK_EQ(row.triggerConfig,
+                     std::string(R"({"cron":"0 18 * * *","max_runs":1})"));
+
+    // 再开编辑：开关回填勾选（knob 在右端）+ 保存不改写配置（预填→原样回写的往返）
+    eui::Ui ui5;
+    composeTo(ui5, mod, kScreen, "agent_ui_once5");
+    DOCTEST_REQUIRE(clickId(ui5, "agent.task." + std::to_string(row.id) + ".edit"));
+    eui::Ui ui6;
+    composeTo(ui6, mod, kScreen, "agent_ui_once6");
+    const auto* knob = ui6.find("agent.dialog.task.limit.knob");
+    const auto* track = ui6.find("agent.dialog.task.limit.track");
+    DOCTEST_REQUIRE_MESSAGE(knob != nullptr && track != nullptr,
+                            "编辑态「只跑一次」开关缺失");
+    DOCTEST_CHECK_MESSAGE(knob->frame.x > track->frame.x + 1.0f,
+                          "max_runs=1 的任务编辑态开关未勾选：knob.x=" +
+                              std::to_string(knob->frame.x) +
+                              " track.x=" + std::to_string(track->frame.x));
+    DOCTEST_REQUIRE(clickId(ui6, "agent.dialog.task.save.bg"));
+    auto again = store.getTask(row.id);
+    DOCTEST_REQUIRE(again.isOk());
+    DOCTEST_CHECK_EQ(again.value().triggerConfig, row.triggerConfig);
+
+    mod.onStop();
+    return true;
+})
+
+REGISTER_TEST(agent_ui_task_run_limit_badge_and_detail_text,
+              "agent_ui: 限次任务（max_runs）列表徽章 + 详情摘要写明跑完自动停用；不限次任务零噪音", {
+    test_support::TestDb tdb("agentui", "limitbadge");
+    test_support::FakeProfileSource profile;
+    ToolGuard statsGuard{"app.stats"};
+    core::ToolRegistry::instance().unregisterTool("app.stats");
+    module::agent::AgentStore store(tdb.handle());
+    auto once = store.createTask("只跑一次", "g", "schedule", "default", 10, false,
+                                 R"({"cron":"0 18 * * *","max_runs":1})");
+    auto twice = store.createTask("跑两次", "g", "event", "default", 10, false,
+                                  R"({"events":["md.saved"],"max_runs":2})");
+    auto plain = store.createTask("普通任务", "g", "schedule", "default", 10, false,
+                                  R"({"cron":"0 9 * * *"})");
+    // 对照组：manual 不消费 trigger_config（Scheduler 两条过滤都不含它）→ 不挂徽章
+    auto manualLimited = store.createTask("手动限量", "g", "manual", "default", 10,
+                                          false, R"({"cron":"0 9 * * *","max_runs":1})");
+    DOCTEST_REQUIRE(once.isOk() && twice.isOk() && plain.isOk() && manualLimited.isOk());
+    const std::string tidOnce = std::to_string(once.value());
+
+    module::agent::AgentModule::Deps deps;
+    deps.db = &tdb.handle();
+    deps.profileSource = &profile;
+    module::agent::AgentModule mod(deps);
+    mod.onStart();
+
+    eui::Ui ui;
+    composeTo(ui, mod, kScreen, "agent_ui_limitbadge1");
+
+    const auto* badgeOnce = ui.find("agent.task." + tidOnce + ".limit");
+    DOCTEST_REQUIRE_MESSAGE(badgeOnce != nullptr, "限次任务在列表上无徽章（看不出是一次性）");
+    DOCTEST_CHECK_EQ(badgeOnce->text, std::string("一次性"));
+    const auto* badgeTwice =
+        ui.find("agent.task." + std::to_string(twice.value()) + ".limit");
+    DOCTEST_REQUIRE_MESSAGE(badgeTwice != nullptr, "max_runs=2 的任务无徽章");
+    DOCTEST_CHECK_EQ(badgeTwice->text, std::string("限2次"));
+    // 徽章落在行内、不压标题 / 状态列（宽度预算算错即红）
+    const auto* row = ui.find("agent.task." + tidOnce);
+    const auto* title = ui.find("agent.task." + tidOnce + ".title");
+    const auto* status = ui.find("agent.task." + tidOnce + ".status");
+    DOCTEST_REQUIRE(row != nullptr && title != nullptr && status != nullptr);
+    DOCTEST_CHECK_MESSAGE(frameContained(*row, *badgeOnce), "徽章跑到任务行外");
+    DOCTEST_CHECK_MESSAGE(title->frame.x + title->frame.width <= badgeOnce->frame.x + 0.5f,
+                          "标题与徽章重叠");
+    DOCTEST_CHECK_MESSAGE(badgeOnce->frame.x + badgeOnce->frame.width <=
+                              status->frame.x + 0.5f,
+                          "徽章与状态列重叠");
+    // 对照组零噪音
+    for (int64_t id : {plain.value(), manualLimited.value()}) {
+        DOCTEST_CHECK_MESSAGE(
+            ui.find("agent.task." + std::to_string(id) + ".limit") == nullptr,
+            "不限次任务 " + std::to_string(id) + " 被挂了限次徽章（噪音）");
+    }
+
+    // 详情摘要：上限语义与失败口径落在这里（徽章只有 3 字）
+    DOCTEST_REQUIRE_MESSAGE(openDetailDialog(ui, mod, tidOnce), "任务行缺详情 chip");
+    eui::Ui ui2;
+    composeTo(ui2, mod, kScreen, "agent_ui_limitbadge2");
+    const auto* info = ui2.find("agent.dialog.detail.info");
+    DOCTEST_REQUIRE_MESSAGE(info != nullptr, "详情弹窗缺配置摘要");
+    DOCTEST_CHECK_MESSAGE(info->text.find("次数上限：只跑一次") != std::string::npos,
+                          "详情摘要未写明限次语义，实测：" + info->text);
+    DOCTEST_CHECK(info->text.find("跑完自动停用") != std::string::npos);
+
+    mod.onStop();
+    return true;
+})
+
+// 布局预算（行为开关行）：开关标签盒 = width − 66（EUI-NEO switch.h：labelX = track 46
+// + gap 10，左右 inset 各 10），开关对标签没有省略号、只有 Clip —— 宽度给少就是静默裁剪。
+// 本用例不看手写常量：直接量「渲染出来的 label 盒宽 ≥ 该节点自己文案的实测字宽」
+//（真实字体测量，与 test_font_em_layout.cpp 同口径），源码改盒宽忘了文案预算即红。
+// 覆盖面：行为开关行（「允许破坏性操作」+「只跑一次」）与事件分支的三个事件开关。
+REGISTER_TEST(agent_ui_dialog_switch_labels_fit_boxes,
+              "agent_ui: max_runs 开关「只跑一次」/「允许破坏性操作」/三个事件开关的标签盒容得下各自文案（静默裁剪回归守卫）", {
+    test_support::TestDb tdb("agentui", "labelfit");
+    test_support::FakeProfileSource profile;
+    ToolGuard statsGuard{"app.stats"};
+    core::ToolRegistry::instance().unregisterTool("app.stats");
+
+    module::agent::AgentModule::Deps deps;
+    deps.db = &tdb.handle();
+    deps.profileSource = &profile;
+    module::agent::AgentModule mod(deps);
+    mod.onStart();
+
+    // 标签盒容纳检查：盒宽取自 composeTaskDialog 渲染出的 label 节点 frame，
+    // 字宽用真实字体测量
+    auto labelFitProblem = [](eui::Ui& u, const std::string& id) -> std::string {
+        const auto* label = u.find(id + ".label");
+        if (label == nullptr) return "缺节点 " + id + ".label";
+        const float need =
+            core::TextPrimitive::measureTextWidth(label->text, "", 12.0f, 400);
+        if (label->frame.width + 0.5f < need) {
+            return id + ".label 盒宽 " + std::to_string(label->frame.width) +
+                   " < 字宽 " + std::to_string(need) + "（'" + label->text +
+                   "' 会被静默裁剪）";
+        }
+        return {};
+    };
+
+    eui::Ui ui;
+    DOCTEST_REQUIRE(openNewTaskDialog(ui, mod, "agent_ui_labelfit1"));
+
+    // ① 定时分支：行为开关行（破坏性 + 只跑一次）两个开关的标签盒
+    eui::Ui ui2;
+    composeTo(ui2, mod, kScreen, "agent_ui_labelfit2");
+    DOCTEST_REQUIRE(callDropdownChange(ui2, "agent.dialog.task.trigger", 1));
+    eui::Ui ui3;
+    composeTo(ui3, mod, kScreen, "agent_ui_labelfit3");
+    const std::string destructiveProblem =
+        labelFitProblem(ui3, "agent.dialog.task.destructive");
+    DOCTEST_CHECK_MESSAGE(destructiveProblem.empty(), destructiveProblem);
+    const std::string limitProblem = labelFitProblem(ui3, "agent.dialog.task.limit");
+    DOCTEST_CHECK_MESSAGE(limitProblem.empty(), limitProblem);
+
+    // ② 两个开关同排、不重叠，且「只跑一次」右缘与 goal 输入右缘同一条竖线
+    //（弹窗内容列右边界）
+    const auto* destructive = ui3.find("agent.dialog.task.destructive");
+    const auto* limit = ui3.find("agent.dialog.task.limit");
+    const auto* goal = ui3.find("agent.dialog.task.goal");
+    DOCTEST_REQUIRE_MESSAGE(
+        destructive != nullptr && limit != nullptr && goal != nullptr,
+        "行为开关行 / goal 输入节点缺失");
+    DOCTEST_CHECK_MESSAGE(nearPx(destructive->frame.y, limit->frame.y),
+                          "「只跑一次」不在行为开关行（y 不一致）");
+    DOCTEST_CHECK_MESSAGE(
+        destructive->frame.x + destructive->frame.width <= limit->frame.x + 0.5f,
+        "「只跑一次」与「允许破坏性操作」重叠：破坏性右缘 " +
+            std::to_string(destructive->frame.x + destructive->frame.width) +
+            " > 限次左缘 " + std::to_string(limit->frame.x));
+    DOCTEST_CHECK_MESSAGE(
+        nearPx(limit->frame.x + limit->frame.width,
+               goal->frame.x + goal->frame.width),
+        "「只跑一次」未与 goal 输入右缘对齐：限次右缘 " +
+            std::to_string(limit->frame.x + limit->frame.width) + " goal 右缘 " +
+            std::to_string(goal->frame.x + goal->frame.width));
+
+    // ③ 事件分支：三个事件开关同排，各自的标签盒也要容得下自己的文案
+    DOCTEST_REQUIRE(callDropdownChange(ui3, "agent.dialog.task.trigger", 3));
+    eui::Ui ui4;
+    composeTo(ui4, mod, kScreen, "agent_ui_labelfit4");
+    for (int i = 0; i < 3; ++i) {
+        const std::string eventId = "agent.dialog.task.event." + std::to_string(i);
+        const std::string problem = labelFitProblem(ui4, eventId);
+        DOCTEST_CHECK_MESSAGE(problem.empty(), problem);
+    }
+    const std::string limitProblemEvent =
+        labelFitProblem(ui4, "agent.dialog.task.limit");
+    DOCTEST_CHECK_MESSAGE(limitProblemEvent.empty(), limitProblemEvent);
+
+    // ④ 手动不渲染：给不消费 trigger_config 的任务显示开关等于假承诺
+    DOCTEST_REQUIRE(callDropdownChange(ui4, "agent.dialog.task.trigger", 0));
+    eui::Ui ui5;
+    composeTo(ui5, mod, kScreen, "agent_ui_labelfit5");
+    DOCTEST_CHECK_MESSAGE(ui5.find("agent.dialog.task.limit") == nullptr,
+                          "手动触发渲染了「只跑一次」开关（写了也没人消费）");
 
     mod.onStop();
     return true;

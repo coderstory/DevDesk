@@ -6,7 +6,9 @@
 // 把两张弹窗驱动到目标状态：
 //   A. 任务弹窗：触发方式=定时 → cron 输入真实键入 → 模板下拉展开，
 //      断言「下次触发：」预览行文案 + 弹层可见性 + L2 z 碰撞扫描；
-//      --shot-task <path> 落 PNG。
+//      --shot-task <path> 落 PNG（弹层展开态——审阅弹层 z 序用）；
+//      --shot-task-plain <path> 在开弹层前落 PNG（无覆盖帧——行为开关行
+//      「允许破坏性操作 / 只跑一次」不被模板弹层盖住，审阅开关本身用）。
 //   B. 详情弹窗：种子库给一条 failed run（错误文案 = needsClaudePageHint 的
 //      「LLM 配置不可用…」类）+ 一条带 text 块的 assistant 消息，断言
 //      runlist.<i>.err、runlist.<i>.err.hint（去 Claude 页 →）、
@@ -19,7 +21,8 @@
 // 不绕过产品代码写表——图的身份可查（哪条 run、哪个错误文案渲染出来的）。
 // 错误文案与 direct_llm_client.cpp 的 kConfigErrorPrefix 逐字一致（前缀钉死契约）。
 //
-// 运行：agent_dialog_probe.exe [--shot-task <png>] [--shot-detail <png>]
+// 运行：agent_dialog_probe.exe [--shot-task <png>] [--shot-task-plain <png>]
+//                    [--shot-detail <png>]
 // 不带构图开关 = 纯断言门禁（ctest -L probe 跑的就是这条）；构图开关失败 =
 // 退出码非零（视觉证据链缺失不能当通过，probe_harness 契约）。
 
@@ -55,12 +58,14 @@ bool floatEq(float a, float b) { return std::fabs(a - b) < 0.5f; }
 
 int main(int argc, char* argv[]) {
     auto args = probe::parseProbeArgs(argc, argv);
-    // 本探针私有两个构图开关（parseProbeArgs 未知参数忽略，这里自己收）
-    std::string shotTask, shotDetail;
+    // 本探针私有构图开关（parseProbeArgs 未知参数忽略，这里自己收）
+    std::string shotTask, shotTaskPlain, shotDetail;
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
         if (arg == "--shot-task" && i + 1 < argc) {
             shotTask = argv[++i];
+        } else if (arg == "--shot-task-plain" && i + 1 < argc) {
+            shotTaskPlain = argv[++i];
         } else if (arg == "--shot-detail" && i + 1 < argc) {
             shotDetail = argv[++i];
         }
@@ -76,13 +81,24 @@ int main(int argc, char* argv[]) {
     test_support::TestDb tdb("aprobe_", "agentdlg");
     test_support::FakeProfileSource profile;
 
-    // 种子（真 AgentStore 落库口）：1 个手动任务 + 1 条 failed run。
-    // 错误文案与 direct_llm_client.cpp 的 kConfigErrorPrefix 逐字一致——
-    // needsClaudePageHint 按前缀「LLM 配置不可用」钉死，文案一变引导即消失。
+    // 种子（真 AgentStore 落库口）：1 个手动任务 + 1 条 failed run + 1 个
+    // max_runs=1 的定时任务（列表行「一次性」徽章的审阅帧来源，不派发——probe
+    // 只渲染不跑调度）。错误文案与 direct_llm_client.cpp 的 kConfigErrorPrefix
+    // 逐字一致——needsClaudePageHint 按前缀「LLM 配置不可用」钉死，文案一变引导即消失。
     int64_t taskId = 0;
     int64_t runId = 0;
     {
         module::agent::AgentStore store(tdb.handle());
+        auto once = store.createTask("日报推送（只跑一次）", "把今日进展推送到笔记",
+                                     "schedule", "default", 10, false,
+                                     R"({"cron":"0 18 * * *","max_runs":1})");
+        if (once.isFail()) {
+            std::cerr << "agent_dialog_probe: 种子（限次任务）createTask 失败: "
+                      << once.errorMessage() << "\n";
+            core::window::destroyWindow(window);
+            probe::terminateWindowBackend();
+            return 3;
+        }
         auto t = store.createTask("日报助手", "整理今日进展并输出日报",
                                   "manual", "sonnet", 10, /*allowDestructive=*/false);
         if (t.isFail()) {
@@ -219,6 +235,16 @@ int main(int argc, char* argv[]) {
                          "「下次触发：…」（实测 '"
                       << (preview != nullptr ? preview->text : std::string("<无>"))
                       << "'）\n";
+            passed = false;
+        }
+    }
+
+    // 构图 A0：任务弹窗无弹层帧（弹层还没开——行为开关行的「只跑一次」可见）。
+    // 与 A 的分工：A 审弹层 z 序，A0 审开关行本体（模态遮挡下看不见的就落这里）
+    if (!shotTaskPlain.empty()) {
+        if (!probe::captureFramePng(window, runtime, shotTaskPlain)) {
+            std::cerr << "agent_dialog_probe: --shot-task-plain 落图失败: "
+                      << shotTaskPlain << "\n";
             passed = false;
         }
     }

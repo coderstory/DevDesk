@@ -216,6 +216,10 @@ private:
     // 任务级「配置异常」缓存（taskId → 原因，仅非空入表）：纯函数判定（trigger_config.h，
     // 与 Scheduler 同源）。在 refreshData 里随任务列表算一次——不在每帧渲染里反复解析 JSON
     std::map<int64_t, std::string> taskTriggerProblems_;
+    // 限次任务缓存（taskId → max_runs，仅 schedule / event 型入表；2026-10-17 加）：
+    // 列表徽章与详情摘要的展示依据，同样随 refreshData 算一次。manual / resident 不入表
+    // ——它们的 trigger_config 不被 Scheduler 消费，挂「一次性」徽章等于骗人
+    std::map<int64_t, int> taskRunLimits_;
     // 详情弹窗 run 列表（每任务最近 5 次，refreshData 装载）
     std::map<int64_t, std::vector<AgentRunRow>> taskRuns_;
     std::optional<int64_t> detailTaskId_;           // 非空 = 弹窗打开
@@ -239,6 +243,10 @@ private:
     int editTriggerIdx_ = 0;      // 0=手动 1=定时 2=常驻 3=事件（kTriggerKeys 下标）
     int editIter_ = 10;
     bool editDestructive_ = false;
+    // 运行次数上限草稿（0 = 不限次数，缺省；>0 = 最多 N 次）。UI 目前只提供 1
+    //（「只跑一次」开关），但草稿是整数：手改库/将来放开 N 次时编辑态能原样回写，
+    // 不会被开关压回 1（往返不丢数据）
+    int editMaxRuns_ = 0;
     std::string editContextNote_;
     bool editAutoNote_ = true;
     // 「事件」分支的勾选态（与 agent_module.cpp 的 kEventNames 一一对应；仅主线程）

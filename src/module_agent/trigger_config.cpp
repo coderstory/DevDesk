@@ -14,6 +14,7 @@ namespace pj = platform::json;
 constexpr const char* kCronKey = "cron";
 constexpr const char* kEventsKey = "events";
 constexpr const char* kCooldownKey = "cooldown_sec";
+constexpr const char* kMaxRunsKey = "max_runs";
 
 } // namespace
 
@@ -27,6 +28,9 @@ core::Result<std::string> encodeTriggerConfig(const TriggerConfig& cfg) {
     if (!cfg.cron.empty()) o.set(kCronKey, pj::makeString(cfg.cron));
     if (!cfg.events.empty()) o.set(kEventsKey, pj::makeStringArray(cfg.events));
     if (cfg.cooldownSec > 0) o.set(kCooldownKey, pj::makeInt(cfg.cooldownSec));
+    // 不限次数（缺省 / nullopt / 非正值）不写该键：产物与加键之前逐字节相同，
+    // 旧配置与旧用例（钉住 `{"cron":"…"}` 原文）都不会因本键变化
+    if (cfg.maxRuns && *cfg.maxRuns > 0) o.set(kMaxRunsKey, pj::makeInt(*cfg.maxRuns));
     auto text = pj::stringify(pj::JsonValue(std::move(o)));
     if (text.isFail()) {
         return core::Result<std::string>::fail(
@@ -111,6 +115,19 @@ core::Result<TriggerConfig> decodeTriggerConfig(const std::string& json) {
                 "trigger_config 的 cooldown_sec 字段不是数字");
         }
         cfg.cooldownSec = static_cast<int>(cd.asInt());
+    }
+    if (obj.has(kMaxRunsKey)) {
+        auto mr = obj.get(kMaxRunsKey);
+        // 严格：坏值一律 fail 而不是当「不限次数」——静默降级会让「只跑一次」的配置
+        // 悄悄变回永久重复任务（本键存在的唯一目的就是别反复跑）。上限寄存器防手改库
+        // 塞超大值：Scheduler 按上限做 listRuns(LIMIT maxRuns)，无上限则每次扫描拉爆内存
+        if (!mr.isNumber() || mr.asInt() < 1 || mr.asInt() > kMaxRunsUpperBound) {
+            return core::Result<TriggerConfig>::fail(
+                core::ErrorCode::ValidationError,
+                "trigger_config 的 max_runs 字段须为 1.." +
+                    std::to_string(kMaxRunsUpperBound) + " 的整数");
+        }
+        cfg.maxRuns = static_cast<int>(mr.asInt());
     }
     if (!any) {
         return core::Result<TriggerConfig>::fail(

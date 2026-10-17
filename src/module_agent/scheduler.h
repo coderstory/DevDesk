@@ -2,7 +2,8 @@
 //（事件源 = core::event::EventBus，订阅接线在 AgentModule 装配层）；「同 task 不并发」
 // 的闸在 AgentLoop::run，本类只做「起线程 + 等收尾」的薄 spawn。契约：① 成员声明顺序
 //——Scheduler 必须声明在 loop_/llm_/store_ 之后（逆序析构下先亡）；② stopAll 可重复
-// 但不支持并发调用。
+// 但不支持并发调用；③ 限次任务（trigger_config 的 max_runs）达上限后由本类置停用，
+// 本条不只是判断——它改库（2026-10-17 加，见 runBudgetExhausted）。
 #pragma once
 #include <atomic>
 #include <condition_variable>
@@ -18,6 +19,7 @@
 #include <vector>
 #include "module_agent/agent_loop.h"
 #include "module_agent/agent_store.h"
+#include "module_agent/trigger_config.h"
 
 namespace module::agent {
 class AgentLoop;
@@ -57,6 +59,13 @@ private:
         std::atomic<int64_t> runId{0};  // loop_.run 返回；0 = 未起（撞闸/起跑失败）
     };
     core::Result<void> dispatchRun(int64_t taskId);  // 薄 spawn 包装：闸在 AgentLoop::run 内
+    // 限次 / 一次性任务的额度判定（tickNow / processEvent 的唯一共用闸）。
+    // maxRuns 缺省（nullopt）= 不限次数：零查询、零行为变化（旧配置恒循环不回归）。
+    // 配了上限时数 agent_runs 里该任务已「起过跑」的 run（含 running/failed/cancelled/
+    // limited——记账单位是起过跑而不是跑成功，见 02 单的失败语义），达上限即
+    // setTaskEnabled(false) 置停用（复用既有启停入口，不直写 SQL）并拒绝本次派发。
+    // 返回 true = 本路不得派发（额度已耗尽，或计数读库失败——宁可不跑也不超跑）
+    bool runBudgetExhausted(const AgentTaskRow& task, const TriggerConfig& cfg);
     void reapDone();
     void tickThreadLoop();
     void residentThreadLoop();

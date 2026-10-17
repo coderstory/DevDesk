@@ -315,6 +315,20 @@ std::string cronTextOf(const AgentTaskRow& task) {
     return {};
 }
 
+// 限次语义的两种文案（UI 与详情摘要共用同一份口径，防两处措辞漂移）：
+//   徽章 = 列表行里 4 字内的短标记；正文 = 详情摘要里的完整说明
+// 用「大白话」而不是 max_runs 术语 —— 用户看到的是「只跑一次」不是「上限 1 次」。
+// N > 1 只可能来自手改库 / 将来放开 N 次的 UI：文案跟着 N 走，不与「只跑一次」混
+std::string runLimitBadge(int maxRuns) {
+    if (maxRuns <= 1) return "一次性";
+    return "限" + std::to_string(maxRuns) + "次";
+}
+
+std::string runLimitText(int maxRuns) {
+    if (maxRuns <= 1) return "只跑一次";
+    return "最多 " + std::to_string(maxRuns) + " 次";
+}
+
 std::string trimCopy(const std::string& s) {
     const auto isSpace = [](unsigned char c) {
         return c == ' ' || c == '\t' || c == '\r' || c == '\n';
@@ -579,6 +593,7 @@ void AgentModule::openNewTaskDialog() {
     editContextNote_.clear();
     editAutoNote_ = true;
     editEvents_ = {};
+    editMaxRuns_ = 0;   // 新建缺省 = 不限次数（与旧任务同语义：恒循环）
     editTriggerIdx_ = 0;
     editError_.clear();
     editTriggerOpen_ = false;
@@ -657,11 +672,21 @@ void AgentModule::openTaskEditor(int64_t taskId) {
     editContextNote_ = r.contextNote;
     editAutoNote_ = (r.autoNote != 0);
     editTriggerIdx_ = triggerIndexOf(r.triggerType);
+    // 限次草稿回填：只有 schedule / event 消费 trigger_config 的 max_runs（manual /
+    // resident 恒 0——给不消费该列的任务显示「只跑一次」等于骗人）。坏配置按 0（不限次）
+    // 显示：解码失败的点名 WARN 归 cronTextOf（schedule）/ 下面的分支（event），
+    // 同一份配置只报一次
+    editMaxRuns_ = 0;
+    if (r.triggerType == "schedule") {
+        auto cfg = decodeTriggerConfig(r.triggerConfig);
+        if (cfg.isOk() && cfg.value().maxRuns) editMaxRuns_ = *cfg.value().maxRuns;
+    }
     // 「事件」分支回填：按 decode 结果逐项勾选；坏配置不静默（与 cronTextOf 同口径）
     editEvents_ = {};
     if (r.triggerType == "event") {
         auto cfg = decodeTriggerConfig(r.triggerConfig);
         if (cfg.isOk()) {
+            if (cfg.value().maxRuns) editMaxRuns_ = *cfg.value().maxRuns;
             for (int i = 0; i < kEventCount; ++i) {
                 const std::string name = kEventNames[i];
                 if (std::find(cfg.value().events.begin(), cfg.value().events.end(),
@@ -706,6 +731,7 @@ void AgentModule::saveTaskDialog() {
         // 编码唯一落点 = trigger_config.h；不手拼 JSON（字符集一变就得逐个改）
         TriggerConfig cfg;
         cfg.cron = cron;
+        if (editMaxRuns_ > 0) cfg.maxRuns = editMaxRuns_;   // 0 = 不限次数 → 不写该键
         auto encoded = encodeTriggerConfig(cfg);
         if (encoded.isFail()) {
             editError_ = "保存失败：" + encoded.errorMessage();
@@ -723,6 +749,7 @@ void AgentModule::saveTaskDialog() {
             editError_ = "事件触发需至少勾选一个事件";
             return;
         }
+        if (editMaxRuns_ > 0) cfg.maxRuns = editMaxRuns_;   // 事件型同样可配一次性
         auto encoded = encodeTriggerConfig(cfg);
         if (encoded.isFail()) {
             editError_ = "保存失败：" + encoded.errorMessage();
@@ -862,6 +889,9 @@ void AgentModule::pollRunEnd() {
 // schedulerNow 缝，测试可冻结；unix 秒对 15s 窗口的 NTP 跳变最坏差一个周期，可接受）。
 // 命中即 refreshData 一次——该 run 随即进 prevRunStatuses_，后续帧由 prevAlive 接管走
 // 常规轮询，兜底自动停摆。查询失败 WARN 留痕不吞，下个周期自然重试。
+// 已知洞（登记于 backlog，不修）：起止**都落在两个检查点之间**的短命外部 run
+// （寿命 < kRunFallbackIntervalSec）两头都没被观测到，仍零通知——要彻底关掉它得让外部
+// 直写库的一方也发事件，成本大于收益。
 void AgentModule::pollRunEndFallback() {
     const int64_t now = deps_.schedulerNow ? deps_.schedulerNow()
                                            : core::time::nowUnix();
@@ -932,6 +962,17 @@ void AgentModule::refreshData() {
         std::string problem =
             triggerConfigProblem(task.triggerType, task.triggerConfig);
         if (!problem.empty()) taskTriggerProblems_[task.id] = std::move(problem);
+    }
+    // 限次缓存（列表徽章 / 详情摘要的展示依据）：只认 schedule / event —— manual /
+    // resident 的 trigger_config 不被 Scheduler 消费，挂了「一次性」也是永不生效的假承诺。
+    // 坏配置不进表（decode 失败 → 0），那种任务已经有「配置异常」徽章，不该再挂限次标记
+    taskRunLimits_.clear();
+    for (const auto& task : tasks_) {
+        if (task.triggerType != "schedule" && task.triggerType != "event") continue;
+        auto cfg = decodeTriggerConfig(task.triggerConfig);
+        if (cfg.isOk() && cfg.value().maxRuns && *cfg.value().maxRuns > 0) {
+            taskRunLimits_[task.id] = *cfg.value().maxRuns;
+        }
     }
     for (const auto& task : tasks_) {
         auto runs = store_->listRuns(task.id, kRunListLimit);
@@ -1447,12 +1488,16 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                         const bool hasProblem =
                             taskTriggerProblems_.find(task.id) !=
                             taskTriggerProblems_.end();
+                        const auto limitIt = taskRunLimits_.find(task.id);
+                        const bool limited = limitIt != taskRunLimits_.end();
                         const float rowGap = 12.0f;
-                        const int childCount =
-                            6 + (resident ? 1 : 0) + (hasProblem ? 1 : 0);
+                        const int childCount = 6 + (resident ? 1 : 0) +
+                                               (hasProblem ? 1 : 0) +
+                                               (limited ? 1 : 0);
                         const float fixedW = 80.0f + 48.0f * 3.0f + 72.0f +
                                              (resident ? 56.0f : 0.0f) +
-                                             (hasProblem ? kTaskWarnW : 0.0f);
+                                             (hasProblem ? kTaskWarnW : 0.0f) +
+                                             (limited ? kTaskWarnW : 0.0f);
                         const float titleW =
                             cw - fixedW - rowGap * static_cast<float>(childCount - 1);
                         // 点行本体开详情弹窗（子元素先于父行命中，各自独立消费点击）
@@ -1481,6 +1526,16 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                                         .fontSize(12.0f)
                                         .lineHeight(20.0f)
                                         .color(t.colors.error)
+                                        .build();
+                                }
+                                // 限次标记：看得出「这是一次性任务」（跑满会自动停用）
+                                if (limited) {
+                                    inner.text(id + ".limit")
+                                        .size(kTaskWarnW, 20.0f)
+                                        .text(runLimitBadge(limitIt->second))
+                                        .fontSize(12.0f)
+                                        .lineHeight(20.0f)
+                                        .color(t.colors.textTertiary)
                                         .build();
                                 }
                                 inner.text(id + ".status")
@@ -1610,7 +1665,10 @@ void AgentModule::composeTaskDialog(
             .build();
 
         const float fieldX = x0 + kDialogLabelW + kDialogGap;
-        const float ddW = 140.0f;
+        // 触发 / 槽位下拉宽度。140 → 116：为行为开关行右端的「只跑一次」开关腾位
+        // （触发行没有余量——塞在那里会把 cron 提示词挤到截断）。两个下拉最长标签
+        // = 4 字（「子代理」48px @16px），字段标签盒 = ddW − 48 = 68 仍富余
+        const float ddW = 116.0f;
         const float triggerY = 172.0f;
         fieldCaption(ui, "agent.dialog.task.trigger.caption", "触发方式", x0,
                      triggerY, kDialogLabelW, kDialogRowH, t.colors.textSecondary);
@@ -1750,15 +1808,44 @@ void AgentModule::composeTaskDialog(
         // 用 switch 而非 checkbox（-Werror 下有未使用变量告警）
         const float switchX = iterX + 100.0f + kDialogGap;
         const float switchW = innerW - (switchX - x0);
+        // 「只跑一次」开关：与「允许破坏性操作」同排（行为开关行）右端。为什么不进触发行：
+        // cron 行宽度预算已被 cron 输入 + 模板下拉占满，塞进去只能把 cron 提示词挤截断。
+        // 只对 schedule / event 渲染：manual / resident 的 trigger_config 不被 Scheduler
+        // 消费，给不消费该列的任务显示开关等于假承诺。文案随草稿 N 走（手改库的 N>1
+        // 不显示成「只跑一次」）。标签盒 = limitW − 66（switch.h: labelX 56 + inset 10），
+        // 116 − 66 = 50 ≥ 实测「只跑一次」@12 = 48（test_agent_ui 有标签盒容纳断言钉住）
+        const bool supportsRunLimit = isSchedule || isEvent;
+        const float limitW = 116.0f;
+        const float destructiveW =
+            supportsRunLimit ? switchW - limitW - kDialogGap : switchW;
         components::toggleSwitch(ui, "agent.dialog.task.destructive")
             .position(switchX, metaY)
-            .size(switchW, 32.0f)
+            .size(destructiveW, 32.0f)
             .text("允许破坏性操作")
             .checked(editDestructive_)
             .fontSize(12.0f)
             .theme(themeTokens)
             .onChange([this](bool v) { editDestructive_ = v; })
             .build();
+        if (supportsRunLimit) {
+            components::toggleSwitch(ui, "agent.dialog.task.limit")
+                .position(switchX + destructiveW + kDialogGap, metaY)
+                .size(limitW, 32.0f)
+                .text(runLimitText(editMaxRuns_ > 0 ? editMaxRuns_ : 1))
+                .checked(editMaxRuns_ > 0)
+                .fontSize(12.0f)
+                .theme(themeTokens)
+                .onChange([this](bool v) {
+                    // 关掉 → 不限次数（不写该键）；打开 → 至多回落到 1（手改库的 N>1 被
+                    // 关掉再打开后回到 1——用户显式动作，接受）
+                    if (!v) {
+                        editMaxRuns_ = 0;
+                    } else if (editMaxRuns_ < 1) {
+                        editMaxRuns_ = 1;
+                    }
+                })
+                .build();
+        }
 
         // 执行记忆：多行文本输入（与 goal 同款 multiline + scrollbar），
         // 用于 agent 运行时注入 system prompt；编辑态从 AgentTaskRow 回填
@@ -1866,6 +1953,14 @@ void AgentModule::composeTaskDetailDialog(
             if (task.triggerType == "schedule") {
                 const std::string cron = cronTextOf(task);
                 info += " · cron：" + (cron.empty() ? "（未设置）" : cron);
+            }
+            // 限次/一次性语义（02）：完整说明落这里（列表徽章只放得下 3 字）。口径与
+            // Scheduler::runBudgetExhausted 同源（同一份 trigger_config 解码）；失败也算
+            // 跑过，故承诺写成「跑完自动停用」而不是「跑到成功为止」
+            const auto limitIt = taskRunLimits_.find(task.id);
+            if (limitIt != taskRunLimits_.end()) {
+                info += " · 次数上限：" + runLimitText(limitIt->second) +
+                        "（跑完自动停用）";
             }
             info += " · 槽位：" + task.modelSlot;
             info += " · 迭代上限：" + std::to_string(task.maxIterations);

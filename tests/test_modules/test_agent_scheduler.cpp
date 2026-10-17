@@ -740,3 +740,206 @@ REGISTER_TEST(event_trigger_real_thread_wakeup_not_lost,
     sched.stopAll();
     return true;
 })
+
+// ---- 限次 / 一次性任务（max_runs = trigger_config 里的可选上限键）----
+// 语义（缺省不限，保持今日「恒循环」）：派发前数 agent_runs 里该任务已起过跑的 run，
+// 达上限 → 不派发 + setTaskEnabled(false) 置停用。计数含 running/failed/cancelled/
+// limited ——记账单位是「起过跑」而不是「跑成功」（用户要的是「别再反复跑」）。
+// 驱动方式与上方用例同构：假时钟 + tickNow / drainEventQueue 直调，零墙钟零网络。
+
+namespace {
+// 有界等「该任务恰有 n 行 run 且全部落终态」：run 线程异步，终态断言必须等定局
+bool waitRunsSettled(module::agent::AgentStore& store, int64_t taskId, size_t n) {
+    for (int i = 0; i < 500; ++i) {
+        auto runs = store.listRuns(taskId, 20);
+        if (runs.isOk() && runs.value().size() == n) {
+            bool settled = true;
+            for (const auto& r : runs.value())
+                settled = settled && r.status != "running";
+            if (settled) return true;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    return false;
+}
+} // namespace
+
+// 判据 ① + ③：上限 1 的任务跑完一次后不再派发、并被置停用；此后每分钟扫描都不再起跑。
+// 同分钟那次 tick 是关键：同分钟防重也会「不派发」，但它**不置停用**——enabled 转 false
+// 才是额度判定生效的证据（防「防重顶替成停用」的误判）
+REGISTER_TEST(scheduler_max_runs_once_disables_and_stops_dispatch,
+              "scheduler: max_runs=1 —— 首跑后置停用；此后各分钟不再派发（停用不占 run 队列）", {
+    test_support::TestDb tdb("agentsched", "maxruns1");
+    module::agent::AgentStore store(tdb.handle());
+    MockLlm llm; llm.script = { endTurnResp(), endTurnResp() };   // 第二跑若发生必被抓
+    module::agent::AgentLoop loop(llm, core::ToolRegistry::instance(), store);
+    int64_t nowSec = 3600 * 24;
+    module::agent::Scheduler sched(store, loop, [&nowSec] { return nowSec; });
+    auto taskId = store.createTask("只跑一次", "g", "schedule", "default", 5, false,
+                                   R"({"cron":"* * * * *","max_runs":1})");
+    DOCTEST_REQUIRE(taskId.isOk());
+
+    // 日志是自动停用对用户的可见通道（列表徽章之外唯一）
+    const auto logPath = test_temp::tempPath("devdesk_test_sched_maxruns.log");
+    std::error_code ec;
+    std::filesystem::remove(logPath, ec);
+    core::log::addFileOutput(logPath);
+
+    DOCTEST_REQUIRE(sched.tickNow().isOk());
+    DOCTEST_REQUIRE_MESSAGE(waitRunsSettled(store, taskId.value(), 1u),
+                            "首跑未落终态（有界等待超时）");
+    auto afterFirst = store.getTask(taskId.value());
+    DOCTEST_REQUIRE(afterFirst.isOk());
+    DOCTEST_CHECK(afterFirst.value().enabled);               // 首跑期间仍启用（跑完才停）
+
+    DOCTEST_REQUIRE(sched.tickNow().isOk());                 // 同分钟：额度判定应置停用
+    auto afterSecond = store.getTask(taskId.value());
+    DOCTEST_REQUIRE(afterSecond.isOk());
+    DOCTEST_CHECK_FALSE(afterSecond.value().enabled);        // 自动停用
+    DOCTEST_CHECK_EQ(store.listRuns(taskId.value(), 20).value().size(), 1u);
+
+    // 停用后：后续每分钟照常扫描，但不再派发（判据 ③）
+    nowSec += 61;
+    DOCTEST_REQUIRE(sched.tickNow().isOk());
+    nowSec += 61;
+    DOCTEST_REQUIRE(sched.tickNow().isOk());
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    DOCTEST_CHECK_EQ(sched.activeRunCount(), 0u);
+    DOCTEST_CHECK_EQ(store.listRuns(taskId.value(), 20).value().size(), 1u);
+    sched.stopAll();
+
+    std::ifstream in(logPath, std::ios::binary);
+    std::ostringstream oss;
+    oss << in.rdbuf();
+    const std::string logText = oss.str();
+    DOCTEST_CHECK_MESSAGE(logText.find("自动停用") != std::string::npos, logText);
+    DOCTEST_CHECK(logText.find(std::to_string(taskId.value())) != std::string::npos);
+    return true;
+})
+
+// 对照组（防「一刀切把所有任务停用」）：旧配置串（无 max_runs）跨三分钟照旧反复派发、
+// 且永不被自动停用——旧行没有该键 → decode 恒不解出上限 → Scheduler 恒派发
+REGISTER_TEST(scheduler_max_runs_unlimited_keeps_repeating,
+              "scheduler: 无 max_runs（旧配置串）—— 连续三分钟反复派发且不被停用", {
+    test_support::TestDb tdb("agentsched", "maxruns0");
+    module::agent::AgentStore store(tdb.handle());
+    MockLlm llm; llm.script = { endTurnResp(), endTurnResp(), endTurnResp() };
+    module::agent::AgentLoop loop(llm, core::ToolRegistry::instance(), store);
+    int64_t nowSec = 3600 * 24;
+    module::agent::Scheduler sched(store, loop, [&nowSec] { return nowSec; });
+    auto taskId = store.createTask("每分钟", "g", "schedule", "default", 5, false,
+                                   R"({"cron":"* * * * *"})");
+    DOCTEST_REQUIRE(taskId.isOk());
+    for (size_t n = 1; n <= 3; ++n) {
+        DOCTEST_REQUIRE(sched.tickNow().isOk());
+        DOCTEST_REQUIRE_MESSAGE(waitRunsSettled(store, taskId.value(), n),
+                                "第 " + std::to_string(n) + " 跑未落终态");
+        auto row = store.getTask(taskId.value());
+        DOCTEST_REQUIRE(row.isOk());
+        DOCTEST_CHECK_MESSAGE(row.value().enabled, "无上限任务被误停用（第 " +
+                                                       std::to_string(n) + " 跑后）");
+        nowSec += 61;
+    }
+    sched.stopAll();
+    return true;
+})
+
+// 上限 N>1 的半程语义：额度未满照常派发（第 2 跑真的起），第三次扫描才置停用。
+// 只按 max_runs 做了「上限裁剪样式」的实现（例如把 2 当 1）会在这里红
+REGISTER_TEST(scheduler_max_runs_two_runs_then_disables,
+              "scheduler: max_runs=2 —— 第 2 跑照常派发，第 3 次扫描置停用不再派发", {
+    test_support::TestDb tdb("agentsched", "maxruns2");
+    module::agent::AgentStore store(tdb.handle());
+    MockLlm llm; llm.script = { endTurnResp(), endTurnResp(), endTurnResp() };
+    module::agent::AgentLoop loop(llm, core::ToolRegistry::instance(), store);
+    int64_t nowSec = 3600 * 24;
+    module::agent::Scheduler sched(store, loop, [&nowSec] { return nowSec; });
+    auto taskId = store.createTask("跑两次", "g", "schedule", "default", 5, false,
+                                   R"({"cron":"* * * * *","max_runs":2})");
+    DOCTEST_REQUIRE(taskId.isOk());
+    DOCTEST_REQUIRE(sched.tickNow().isOk());
+    DOCTEST_REQUIRE_MESSAGE(waitRunsSettled(store, taskId.value(), 1u), "首跑未落终态");
+    nowSec += 61;
+    DOCTEST_REQUIRE(sched.tickNow().isOk());                 // 额度剩 1 → 照常派发
+    DOCTEST_REQUIRE_MESSAGE(waitRunsSettled(store, taskId.value(), 2u),
+                            "第 2 跑未发生（额度未满却停发）");
+    auto afterTwo = store.getTask(taskId.value());
+    DOCTEST_REQUIRE(afterTwo.isOk());
+    DOCTEST_CHECK(afterTwo.value().enabled);                 // 满额前不停用
+    nowSec += 61;
+    DOCTEST_REQUIRE(sched.tickNow().isOk());                 // 满额 → 置停用 + 不派发
+    auto afterThree = store.getTask(taskId.value());
+    DOCTEST_REQUIRE(afterThree.isOk());
+    DOCTEST_CHECK_FALSE(afterThree.value().enabled);
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    DOCTEST_CHECK_EQ(store.listRuns(taskId.value(), 20).value().size(), 2u);
+    sched.stopAll();
+    return true;
+})
+
+// 失败语义的钉子：首跑失败也算用掉额度（记账单位 = 起过跑）。若改成「只数 completed」，
+// 失败的一次性任务会每分钟重试到成功为止，最坏情况无限消耗 LLM 配额——正是本单要消灭的
+REGISTER_TEST(scheduler_max_runs_failed_run_counts_toward_limit,
+              "scheduler: max_runs=1 —— 首跑 failed 也算用掉额度（不重试到成功）", {
+    test_support::TestDb tdb("agentsched", "maxrunsfail");
+    module::agent::AgentStore store(tdb.handle());
+    MockLlm llm;                                             // 空 script：send 必失败
+    module::agent::AgentLoop loop(llm, core::ToolRegistry::instance(), store);
+    int64_t nowSec = 3600 * 24;
+    module::agent::Scheduler sched(store, loop, [&nowSec] { return nowSec; });
+    auto taskId = store.createTask("失败也算", "g", "schedule", "default", 5, false,
+                                   R"({"cron":"* * * * *","max_runs":1})");
+    DOCTEST_REQUIRE(taskId.isOk());
+    DOCTEST_REQUIRE(sched.tickNow().isOk());
+    DOCTEST_REQUIRE_MESSAGE(waitRunsSettled(store, taskId.value(), 1u), "首跑未落终态");
+    auto first = store.listRuns(taskId.value(), 20);
+    DOCTEST_REQUIRE(first.isOk());
+    DOCTEST_REQUIRE_EQ(first.value().size(), 1u);
+    DOCTEST_REQUIRE_EQ(first.value()[0].status, std::string("failed"));
+    nowSec += 61;
+    DOCTEST_REQUIRE(sched.tickNow().isOk());
+    auto row = store.getTask(taskId.value());
+    DOCTEST_REQUIRE(row.isOk());
+    DOCTEST_CHECK_FALSE(row.value().enabled);                // 失败也把额度用掉了
+    DOCTEST_CHECK_EQ(store.listRuns(taskId.value(), 20).value().size(), 1u);
+    sched.stopAll();
+    return true;
+})
+
+// 事件型同一语义（票面明说 cron/事件触发恒为循环）：首跑后置停用、后续事件不再派发。
+// 事件型没有周期扫描——唯一的「下一次调度扫描」就是下一次事件到达，故额度判定放在
+// events 比对之前（不匹配的事件也会把已耗尽的一次性任务置停用，但绝不派发任何 run）
+REGISTER_TEST(event_trigger_max_runs_once_disables_and_stops_dispatch,
+              "event_trigger: max_runs=1 —— 事件首跑后置停用；后续事件（含不匹配）不再派发", {
+    test_support::TestDb tdb("agentsched", "evtmaxruns");
+    module::agent::AgentStore store(tdb.handle());
+    MockLlm llm; llm.script = { endTurnResp(), endTurnResp() };   // 第二跑若发生必被抓
+    module::agent::AgentLoop loop(llm, core::ToolRegistry::instance(), store);
+    module::agent::Scheduler sched(store, loop, {});
+    auto taskId = store.createTask("事件一次", "g", "event", "default", 5, false,
+                                   R"({"events":["todo.created"],"max_runs":1})");
+    DOCTEST_REQUIRE(taskId.isOk());
+    sched.onEvent("todo.created");
+    DOCTEST_REQUIRE(sched.drainEventQueue().isOk());
+    DOCTEST_REQUIRE_MESSAGE(waitRunsSettled(store, taskId.value(), 1u),
+                            "事件首跑未落终态");
+    // 事件型无周期扫描：此刻还没人做额度判定，任务仍是启用态（下次事件到达才停用）
+    auto afterFirst = store.getTask(taskId.value());
+    DOCTEST_REQUIRE(afterFirst.isOk());
+    DOCTEST_CHECK(afterFirst.value().enabled);
+
+    sched.onEvent("md.saved");                               // 不匹配本任务的事件
+    DOCTEST_REQUIRE(sched.drainEventQueue().isOk());
+    auto afterUnrelated = store.getTask(taskId.value());
+    DOCTEST_REQUIRE(afterUnrelated.isOk());
+    DOCTEST_CHECK_FALSE(afterUnrelated.value().enabled);     // 额度耗尽 → 扫描即停用
+    DOCTEST_CHECK_EQ(store.listRuns(taskId.value(), 20).value().size(), 1u);
+
+    sched.onEvent("todo.created");                           // 匹配事件也不再有 run（已停用）
+    DOCTEST_REQUIRE(sched.drainEventQueue().isOk());
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    DOCTEST_CHECK_EQ(sched.activeRunCount(), 0u);
+    DOCTEST_CHECK_EQ(store.listRuns(taskId.value(), 20).value().size(), 1u);
+    sched.stopAll();
+    return true;
+})

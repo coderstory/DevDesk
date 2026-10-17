@@ -3,6 +3,7 @@
 // 点名 task id 的 WARN + 跳过
 #pragma once
 
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -18,15 +19,28 @@ inline constexpr int kDefaultEventCooldownSec = 300;
 // 两者可共存于同一份 JSON（decode 各取所需），但业务上 saveTaskDialog 只按所选
 // trigger_type 写其一。cooldown_sec 仅对 event 型有意义（>0 才编码；0 = 未设置，
 // 消费方回退 kDefaultEventCooldownSec）
+//
+// max_runs（可选，2026-10-17 加）是「限次 / 一次性」语义的唯一真源：正整数 = 该任务
+// 派发满 N 次后由 Scheduler 自动停用；缺省（nullopt）= 不限次数，即今天「cron/事件
+// 匹配即恒循环」的行为。选整数字段而不是 once 布尔：`只跑一次` = 上限 1，将来放开
+// 「最多跑 N 次」不用加键、不用迁移（decode 忽略未知键的向后兼容只保旧的、不保新的）。
+// 加这个键**零 schema 变更**：它落在既有 trigger_config 列的 JSON 文本里，旧行没有该
+// 键 → decode 出 nullopt → 行为与今天逐字节一致，故不需要迁移 / 回填 / 兼容分支。
+// 消费方只有 Scheduler（schedule / event 两条派发路径）；manual / resident 不消费该键。
+inline constexpr int kMaxRunsUpperBound = 1000;   // 上限寄存器，见 decode 规则
+
 struct TriggerConfig {
     std::string cron;   // cron 原文；语义校验归 cron.h 的 parseCron
     std::vector<std::string> events;   // 事件名（core::event::kTodoCreated 等）
     int cooldownSec = 0;               // 冷却秒数；0 = 未设置（消费方填默认）
+    // 运行次数上限；nullopt = 不限次数（缺省，旧配置串的语义）
+    std::optional<int> maxRuns;
 };
 
 // 编码：cron / events 至少其一非空才允许（两者皆空的配置 = 任务静默永不触发，encode
-// 侧直接 fail 而不是产出 `{}`）；cooldown_sec > 0 才写入。经 platform::json 生成，
-// 失败返回 fail 而不回落空串
+// 侧直接 fail 而不是产出 `{}`）；cooldown_sec > 0 才写入；maxRuns 有值（>0）才写入——
+// 不限次数的产物必须与加该键之前逐字节相同（既有用例已钉住 `{"cron":"…"}` 原文）。
+// 经 platform::json 生成，失败返回 fail 而不回落空串
 core::Result<std::string> encodeTriggerConfig(const TriggerConfig& cfg);
 
 // 任务级「配置异常」判定：输入任务的 triggerType 与 trigger_config 原始串，返回人类
@@ -42,7 +56,9 @@ std::string triggerConfigProblem(const std::string& triggerType,
 // 解码规则（schedule 型零回归）：'' / 坏 JSON / 非对象 → fail；对象须至少含
 // 「非空字符串 cron」或「非空 events 字符串数组」之一，两者皆缺 → fail；
 // cron 键存在但类型不符/为空 → fail；events 键存在但非数组/含非字符串元素/
-// 空数组 → fail；cooldown_sec 键存在但非数字 → fail。多余键忽略（向后兼容）。
+// 空数组 → fail；cooldown_sec 键存在但非数字 → fail；max_runs 键存在但非数字 /
+// < 1 / > kMaxRunsUpperBound → fail（宁可不认也不静默当「不限次数」——静默会把
+// 「只跑一次」悄悄变回永久重复任务）。多余键忽略（向后兼容）。
 // task id 由调用方在 WARN 里补
 core::Result<TriggerConfig> decodeTriggerConfig(const std::string& json);
 

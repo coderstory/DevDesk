@@ -213,6 +213,39 @@ void Scheduler::eventThreadLoop() {
     }
 }
 
+// 限次额度闸（契约见 scheduler.h）。放在两条派发路径的**派发前**：
+//   schedule 型 → tickNow 的 cronMatches **之前**：每分钟扫描都会重判，于是「跑满即
+//     停」的停用最迟在下一分钟落地；若放到 cronMatches 之后，「每天 18:00 只跑一次」
+//     的任务会一直显示启用状态直到第二天 18:00 才被停用（用户看不见停）
+//   event 型 → processEvent 的 events 比对之前：事件型没有周期扫描，下一次事件到达是
+//     唯一的调度扫描机会，无论该事件匹不匹配都把额度耗尽的任务置停用（只改启停列，
+//     绝不因此派发任何 run）
+bool Scheduler::runBudgetExhausted(const AgentTaskRow& task, const TriggerConfig& cfg) {
+    if (!cfg.maxRuns || *cfg.maxRuns < 1) return false;   // 不限次数：旧配置的老路径
+    // 计数源 = agent_runs 的既有查询：LIMIT=maxRuns，返回行数 == maxRuns 即「至少跑过
+    // maxRuns 次」（< maxRuns 时返回实际条数）。上限已在 decode 里钳到 kMaxRunsUpperBound，
+    // 故 LIMIT 不会拉爆内存。重启后计数仍在库里 —— 不需要任何内存态，也就没有「重启
+    // 后额度复位」的回归面
+    auto runs = store_.listRuns(task.id, *cfg.maxRuns);
+    if (runs.isFail()) {
+        // 读不出一律不派发：配置了上限的任务宁可本分钟不跑，也不能在不知额度的情况下超跑
+        LOG_WARN("Scheduler: 任务 " + std::to_string(task.id) +
+                 " 的运行次数读取失败，本次不派发：" + runs.errorMessage());
+        return true;
+    }
+    if (static_cast<int>(runs.value().size()) < *cfg.maxRuns) return false;
+    auto off = store_.setTaskEnabled(task.id, false);
+    if (off.isFail()) {
+        // 置停用失败：本路仍不派发（额度判定已经成立），下一分钟/下一个事件会重试写库
+        LOG_WARN("Scheduler: 任务 " + std::to_string(task.id) +
+                 " 已达运行次数上限，但置停用失败：" + off.errorMessage());
+        return true;
+    }
+    LOG_INFO("Scheduler: 任务 " + std::to_string(task.id) + " 已达运行次数上限 " +
+             std::to_string(*cfg.maxRuns) + "，自动停用（不再派发）");
+    return true;
+}
+
 core::Result<void> Scheduler::drainEventQueue() {
     reapDone();
     std::deque<std::string> pending;
@@ -248,6 +281,9 @@ void Scheduler::processEvent(const std::string& name) {
                 break;
             }
         }
+        // 额度判定在匹配之前：一次性事件任务跑满后，下一次事件到达（哪怕不匹配）即
+        // 置停用——事件型没有周期扫描，这是唯一的扫描机会；它只改启停列不派发 run
+        if (runBudgetExhausted(t, cfg.value())) continue;
         if (!match) continue;
         const int64_t cooldown =
             cfg.value().cooldownSec > 0 ? cfg.value().cooldownSec
@@ -295,6 +331,10 @@ core::Result<void> Scheduler::tickNow() {
             continue;
         }
         if (!cronMatches(expr.value(), local)) continue;
+        // 额度判定在 cronMatches 之后（坏 cron 仍走上面的点名 WARN，不许被额度闸提前
+        // continue 掉而静默）、同分钟防重之前：每分钟扫描都重判，跑满即停用最迟下一分钟
+        // 落地；相对防重在前的另一重意义——同分钟那次 tick 也会把满额任务置停用
+        if (runBudgetExhausted(t, cfg.value())) continue;
         {   // 同分钟防重（lastFiredMinute）
             std::lock_guard<std::mutex> lock(mu_);
             if (lastFiredMinute_[t.id] == minute) continue;
