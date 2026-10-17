@@ -171,6 +171,86 @@ REGISTER_TEST(todo_tools_create_default_first_column,
 })
 
 
+// 属性面（票面 01）：description/priority/dueAt 必须能在**一次 todo.create** 里落库，
+// 不再需要「先建后 todo.update」二跳 —— 二跳失败会留下「有标题、无属性」的半成品，
+// 而用户看到的仍是「任务已创建」的成功语义。
+// 断言落在**回读的真实任务**上而不只是工具返回的 JSON：返回体正确但库里没写进去，
+// 正是二跳方案最典型的失败形态，只断 JSON 抓不到。
+REGISTER_TEST(todo_tools_create_attributes_one_shot,
+              "todo.create: attributes 一次调用带 description/priority/dueAt 真落库 + 只给标题对照", {
+    ToolEnv env("create_attrs");
+    DOCTEST_REQUIRE(env.ready);
+    env.tools->registerAll();
+
+    // 三态齐全：一趟调用即可产出带属性的任务
+    auto r = runTool("todo.create",
+                     R"({"title":"带属性","description":"说明","priority":3,"dueAt":1800000000})");
+    DOCTEST_REQUIRE(r.isOk());
+    DOCTEST_CHECK_FALSE(r.value().isError);
+
+    auto all = env.svc->listAllTasks();
+    DOCTEST_REQUIRE(all.isOk());
+    DOCTEST_REQUIRE_EQ(all.value().size(), 1u);
+    const auto& t = all.value()[0];
+    DOCTEST_CHECK_EQ(t.title, std::string("带属性"));
+    DOCTEST_REQUIRE(t.description.has_value());
+    DOCTEST_CHECK_EQ(t.description.value(), std::string("说明"));
+    DOCTEST_CHECK(t.priority == module::todo::Priority::High);
+    DOCTEST_REQUIRE(t.dueAt.has_value());
+    DOCTEST_CHECK_EQ(t.dueAt.value(), static_cast<int64_t>(1800000000));
+    // 工具返回体的 id 必须就是刚落库那条（LLM 靠它继续操作）
+    auto parsed = platform::json::parse(r.value().contentJson);
+    DOCTEST_REQUIRE(parsed.isOk());
+    DOCTEST_CHECK_EQ(parsed.value().asObject().get("id").asInt(), t.id);
+
+    // 对照组：只给 title 仍然建得成，且属性留默认空（新路径不许把最小用法弄坏）
+    auto bare = runTool("todo.create", R"({"title":"纯标题"})");
+    DOCTEST_REQUIRE(bare.isOk());
+    DOCTEST_CHECK_FALSE(bare.value().isError);
+    auto all2 = env.svc->listAllTasks();
+    DOCTEST_REQUIRE(all2.isOk());
+    DOCTEST_REQUIRE_EQ(all2.value().size(), 2u);
+    const auto& b = all2.value()[1];
+    DOCTEST_CHECK_EQ(b.title, std::string("纯标题"));
+    DOCTEST_CHECK_FALSE(b.description.has_value());
+    DOCTEST_CHECK(b.priority == module::todo::Priority::None);
+    DOCTEST_CHECK_FALSE(b.dueAt.has_value());
+    return true;
+})
+
+
+// 属性面的校验失败必须「报错 + 不落库」：哪怕标题合法，也不能留下半成品
+// （票面要消灭的正是「有标题、无属性」且 UI 不提示的形态）。
+REGISTER_TEST(todo_tools_create_attributes_invalid_no_side_effect,
+              "todo.create: attributes 非法 priority/dueAt、幽灵列 → isError 且一条都不建", {
+    ToolEnv env("create_attrs_bad");
+    DOCTEST_REQUIRE(env.ready);
+    env.tools->registerAll();
+
+    // 优先级越界 → isError（与 todo.update 的值域 0-3 一致）
+    auto badPri = runTool("todo.create", R"({"title":"x","priority":9})");
+    DOCTEST_REQUIRE(badPri.isOk());
+    DOCTEST_CHECK(badPri.value().isError);
+    DOCTEST_CHECK(badPri.value().contentJson.find("优先级") != std::string::npos);
+
+    // dueAt 类型不对 → isError（不静默当作未设置）
+    auto badDue = runTool("todo.create", R"({"title":"x","dueAt":"明天"})");
+    DOCTEST_REQUIRE(badDue.isOk());
+    DOCTEST_CHECK(badDue.value().isError);
+
+    // 既有语义不回归：幽灵列 → isError，且不静默造悬空任务（带属性时同样不落库）
+    auto ghostCol = runTool("todo.create",
+                            R"({"title":"x","columnId":999999,"priority":2})");
+    DOCTEST_REQUIRE(ghostCol.isOk());
+    DOCTEST_CHECK(ghostCol.value().isError);
+
+    auto all = env.svc->listAllTasks();
+    DOCTEST_REQUIRE(all.isOk());
+    DOCTEST_CHECK_EQ(all.value().size(), 0u);  // 三次失败一条都没落库
+    return true;
+})
+
+
 REGISTER_TEST(todo_tools_update_overlays_fields,
               "todo.update: 提供的字段更新、未提供的保持 + 不存在 id 报错", {
     ToolEnv env("update");

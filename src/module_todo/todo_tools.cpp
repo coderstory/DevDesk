@@ -2,6 +2,8 @@
 // 出参：数组用「逐元素 stringify + 文本拼接 + parse 校验」组装（platform::json 无数组追加 API）。
 // todo.update 必须先取旧任务叠加新值再回写（updateTask 是整字段 UPDATE，否则未提供字段被清空）；
 // 对不存在的 id 服务层多为静默 no-op → 工具先查存在性，把「目标不存在」作为 isError 回喂，不给假成功。
+// todo.create 的 description/priority/dueAt 走服务层带属性重载：属性与标题同一条 INSERT 一次落库，
+// 不走「先建后 todo.update」二跳（二跳失败会留下有标题、无属性的半成品，而用户看到的是成功）。
 #include "todo_tools.h"
 
 #include "core/logging.h"
@@ -102,6 +104,51 @@ Result<Task> findTask(TodoService& svc, int64_t id) {
                               "任务不存在: id=" + std::to_string(id));
 }
 
+// todo.create 的扩展属性解析（description / priority / dueAt → NewTaskAttributes）。
+// 与 todo.update 的同名字段**语义对齐（同值域、同错误文案）但实现刻意不共用**：update 的解析
+// 是在旧 Task 上叠加，必须区分「未提供 = 保持原值」与「显式 null = 清空」；create 没有旧值可
+// 叠加，显式 null 等价于「不给」。共用会把 update 的叠加语义拖进来（见文件头 :3-4 的警告）。
+// 非法值一律报错而不静默回落缺省：静默会让「要设优先级」变成「属性丢了还报成功」。
+Result<void> parseCreateAttributes(const pj::JsonObject& in, NewTaskAttributes& out) {
+    if (in.has("description")) {
+        pj::JsonValue v = in.get("description");
+        if (v.isNull()) {
+            out.description = std::nullopt;  // create 无旧值，null == 不给
+        } else if (v.isString()) {
+            out.description = v.asString();
+        } else {
+            return Result<void>::fail(core::ErrorCode::ValidationError,
+                                      "参数 description 必须是字符串或 null");
+        }
+    }
+    if (in.has("priority")) {
+        pj::JsonValue v = in.get("priority");
+        if (!v.isNumber()) {
+            return Result<void>::fail(core::ErrorCode::ValidationError,
+                                      "参数 priority 必须是整数");
+        }
+        const int64_t p = v.asInt();
+        if (p < 0 || p > 3) {
+            return Result<void>::fail(
+                core::ErrorCode::ValidationError,
+                "参数 priority 取值 0-3 的优先级（0=无 1=低 2=中 3=高）");
+        }
+        out.priority = static_cast<Priority>(p);
+    }
+    if (in.has("dueAt")) {
+        pj::JsonValue v = in.get("dueAt");
+        if (v.isNull()) {
+            out.dueAt = std::nullopt;  // create 无旧值，null == 不给
+        } else if (v.isNumber()) {
+            out.dueAt = v.asInt();
+        } else {
+            return Result<void>::fail(core::ErrorCode::ValidationError,
+                                      "参数 dueAt 必须是整数或 null");
+        }
+    }
+    return Result<void>::ok();
+}
+
 // 列存在性检查（防 create/move 把任务挂到幽灵列上）
 bool columnExists(TodoService& svc, int64_t columnId, std::string* err) {
     auto cols = svc.listColumns();
@@ -174,7 +221,7 @@ public:
     std::string name() const override { return "todo.create"; }
 
     std::string schemaJson() const override {
-        return R"({"name":"todo.create","description":"新建待办任务（缺省建到第一列）","input_schema":{"type":"object","properties":{"title":{"type":"string","description":"任务标题（必填）"},"columnId":{"type":"integer","description":"目标列 id，缺省=第一列"}},"required":["title"]}})";
+        return R"({"name":"todo.create","description":"新建待办任务（缺省建到第一列）；描述/优先级/截止时间可在同一次调用里一起给","input_schema":{"type":"object","properties":{"title":{"type":"string","description":"任务标题（必填）"},"columnId":{"type":"integer","description":"目标列 id，缺省=第一列"},"description":{"type":"string","description":"任务描述（可选）"},"priority":{"type":"integer","description":"0=无 1=低 2=中 3=高（可选，缺省 0）"},"dueAt":{"type":"integer","description":"截止时间 Unix 秒（可选）"}},"required":["title"]}})";
     }
 
     Result<ToolResult> execute(const ToolArgs& args) override {
@@ -184,6 +231,12 @@ public:
         const std::string title = strField(argsObj.value(), "title");
         if (title.empty()) {
             return toolError("任务标题不能为空（必填字段 title）");
+        }
+
+        // 内容属性：纯参数校验（不碰库），非法即拒 → 后面一次真实落库要么全成要么不建
+        NewTaskAttributes attrs;
+        if (auto parsed = parseCreateAttributes(argsObj.value(), attrs); parsed.isFail()) {
+            return toolError(parsed.errorMessage());
         }
 
         // 目标列：显式 columnId > 第一列
@@ -205,7 +258,7 @@ public:
             columnId = cols.value().front().id;
         }
 
-        auto created = svc_.createTask(columnId, title);
+        auto created = svc_.createTask(columnId, title, attrs);
         if (created.isFail()) {
             return toolError("新建任务失败: " + created.errorMessage());
         }

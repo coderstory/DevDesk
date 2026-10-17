@@ -37,6 +37,17 @@ struct Task {
     std::optional<int64_t> archivedAt;   // Unix 秒；std::nullopt = 未归档（进归档列时置当前时间戳，出归档列置 NULL）
 };
 
+// 新建任务时可一次给定的内容属性（std::nullopt = 不设置）。
+// 为什么单独成型而不是给 createTask 堆三个默认形参：属性是一个整体（「带上属性建任务」
+// 只有一种语义），成组传递让调用点自解释，也避免 future 加字段时再改签名。
+// 只放内容字段：column/position 由 createTask 入参决定，completedAt/archivedAt 归
+// completeTask/moveTask 管，tags 暂无入参（本票未要求，不要顺手加）。
+struct NewTaskAttributes {
+    std::optional<std::string> description;
+    Priority priority = Priority::None;
+    std::optional<int64_t> dueAt;  // Unix 秒
+};
+
 class TodoService {
 public:
     explicit TodoService(core::data::SqliteDb& db);
@@ -65,8 +76,13 @@ public:
     // 列出所有任务（按 column_id, position ASC）
     core::Result<std::vector<Task>> listAllTasks();
 
-    // 新建任务（追加到列末尾）
+    // 新建任务（追加到列末尾）—— 只给标题的既有入口，签名与语义都不动
     core::Result<Task> createTask(int64_t columnId, const std::string& title);
+
+    // 新建任务 + 内容属性：属性与标题走同一条 INSERT 一次落库，天然没有「任务建成了但
+    // 属性还在半路」的中间态（二跳 update 的失败形态，见票面 01）
+    core::Result<Task> createTask(int64_t columnId, const std::string& title,
+                                  const NewTaskAttributes& attrs);
 
     // 整字段更新（只改内容字段；改列 / 改序一律走 moveTask）（id 必须已存在）
     core::Result<void> updateTask(const Task& task);

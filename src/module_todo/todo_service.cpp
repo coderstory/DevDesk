@@ -418,6 +418,12 @@ core::Result<std::vector<Task>> TodoService::listAllTasks() {
 }
 
 core::Result<Task> TodoService::createTask(int64_t columnId, const std::string& title) {
+    // 旧入口 = 属性全不设置；委托到带属性重载，杜绝第二份 INSERT 实现漂移
+    return createTask(columnId, title, NewTaskAttributes{});
+}
+
+core::Result<Task> TodoService::createTask(int64_t columnId, const std::string& title,
+                                           const NewTaskAttributes& attrs) {
     auto nextPosResult = nextTaskPosition(columnId);
     if (nextPosResult.isFail()) {
         return core::Result<Task>::fail(nextPosResult.errorCode(), nextPosResult.errorMessage());
@@ -429,7 +435,7 @@ core::Result<Task> TodoService::createTask(int64_t columnId, const std::string& 
     auto prep = db_.prepare(
         "INSERT INTO todo_tasks "
         "(column_id, title, description, priority, due_at, tags, position, completed_at, created_at, updated_at) "
-        "VALUES (?, ?, NULL, 0, NULL, '[]', ?, NULL, ?, ?) RETURNING id");
+        "VALUES (?, ?, ?, ?, ?, '[]', ?, NULL, ?, ?) RETURNING id");
     if (prep.isFail()) {
         return core::Result<Task>::fail(prep.errorCode(), prep.errorMessage());
     }
@@ -440,13 +446,36 @@ core::Result<Task> TodoService::createTask(int64_t columnId, const std::string& 
     if (auto r = stmt.bind(2, title); r.isFail()) {
         return core::Result<Task>::fail(r.errorCode(), r.errorMessage());
     }
-    if (auto r = stmt.bind(3, static_cast<int64_t>(pos)); r.isFail()) {
+    // description / priority / due_at 与标题同一条 INSERT：属性在这条语句里要么全落要么全不落，
+    // 不存在「标题已入库、属性还在等第二次写」的中间态（票面 01 要消灭的正是它）
+    if (attrs.description.has_value()) {
+        if (auto r = stmt.bind(3, attrs.description.value()); r.isFail()) {
+            return core::Result<Task>::fail(r.errorCode(), r.errorMessage());
+        }
+    } else {
+        if (auto r = stmt.bind(3, nullptr); r.isFail()) {
+            return core::Result<Task>::fail(r.errorCode(), r.errorMessage());
+        }
+    }
+    if (auto r = stmt.bind(4, static_cast<int64_t>(attrs.priority)); r.isFail()) {
         return core::Result<Task>::fail(r.errorCode(), r.errorMessage());
     }
-    if (auto r = stmt.bind(4, now); r.isFail()) {
+    if (attrs.dueAt.has_value()) {
+        if (auto r = stmt.bind(5, attrs.dueAt.value()); r.isFail()) {
+            return core::Result<Task>::fail(r.errorCode(), r.errorMessage());
+        }
+    } else {
+        if (auto r = stmt.bind(5, nullptr); r.isFail()) {
+            return core::Result<Task>::fail(r.errorCode(), r.errorMessage());
+        }
+    }
+    if (auto r = stmt.bind(6, static_cast<int64_t>(pos)); r.isFail()) {
         return core::Result<Task>::fail(r.errorCode(), r.errorMessage());
     }
-    if (auto r = stmt.bind(5, now); r.isFail()) {
+    if (auto r = stmt.bind(7, now); r.isFail()) {
+        return core::Result<Task>::fail(r.errorCode(), r.errorMessage());
+    }
+    if (auto r = stmt.bind(8, now); r.isFail()) {
         return core::Result<Task>::fail(r.errorCode(), r.errorMessage());
     }
     auto stepResult = stmt.step();
@@ -478,8 +507,10 @@ core::Result<Task> TodoService::createTask(int64_t columnId, const std::string& 
     t.id = idVal.value();
     t.columnId = columnId;
     t.title = title;
+    t.description = attrs.description;  // 回传值 = 刚落库的值，调用点无需再查一次
+    t.priority = attrs.priority;
+    t.dueAt = attrs.dueAt;
     t.position = pos;
-    t.priority = Priority::None;
     t.tags = {};
     return core::Result<Task>::ok(std::move(t));
 }

@@ -214,6 +214,53 @@ REGISTER_TEST(todo_svc_create_list_tasks,
     return true;
 })
 
+// 属性面入口（票面 01 的根因）：createTask 签名里没有 description/priority/dueAt，工具只能
+// 「先建后 todo.update」二跳。带属性重载必须把三字段写进同一条 INSERT，且旧两参入口语义不变。
+REGISTER_TEST(todo_svc_create_task_with_attributes,
+              "TodoService: createTask attributes 一次落库 description/priority/dueAt + 旧入口仍全空", {
+    TestEnv env("create_task_attrs");
+    DOCTEST_REQUIRE(env.ready);
+
+    auto list = env.svc->listColumns();
+    DOCTEST_REQUIRE(list.isOk());
+    const int64_t colId = list.value()[0].id;
+
+    module::todo::NewTaskAttributes attrs;
+    attrs.description = std::string("详细说明");
+    attrs.priority = module::todo::Priority::Medium;
+    attrs.dueAt = static_cast<int64_t>(1800000000);
+    auto t = env.svc->createTask(colId, "带属性", attrs);
+    DOCTEST_REQUIRE(t.isOk());
+    // 返回值就是落库值（调用点不必再查一次库）
+    DOCTEST_CHECK_EQ(t.value().columnId, colId);
+    DOCTEST_REQUIRE(t.value().description.has_value());
+    DOCTEST_CHECK_EQ(t.value().description.value(), std::string("详细说明"));
+    DOCTEST_CHECK(t.value().priority == module::todo::Priority::Medium);
+    DOCTEST_REQUIRE(t.value().dueAt.has_value());
+    DOCTEST_CHECK_EQ(t.value().dueAt.value(), static_cast<int64_t>(1800000000));
+
+    // 回读仍一致（返回值不是内存里随手拼的假象）
+    auto tasks = env.svc->listTasks(colId);
+    DOCTEST_REQUIRE(tasks.isOk());
+    DOCTEST_REQUIRE_EQ(tasks.value().size(), 1u);
+    DOCTEST_REQUIRE(tasks.value()[0].description.has_value());
+    DOCTEST_CHECK_EQ(tasks.value()[0].description.value(), std::string("详细说明"));
+    DOCTEST_CHECK(tasks.value()[0].priority == module::todo::Priority::Medium);
+    DOCTEST_REQUIRE(tasks.value()[0].dueAt.has_value());
+    DOCTEST_CHECK_EQ(tasks.value()[0].dueAt.value(), static_cast<int64_t>(1800000000));
+
+    // 旧两参入口（UI doCreateTask / 工具 / 测试三类调用点）语义不变：属性全空
+    auto bare = env.svc->createTask(colId, "纯标题");
+    DOCTEST_REQUIRE(bare.isOk());
+    auto tasks2 = env.svc->listTasks(colId);
+    DOCTEST_REQUIRE(tasks2.isOk());
+    DOCTEST_REQUIRE_EQ(tasks2.value().size(), 2u);
+    DOCTEST_CHECK_FALSE(tasks2.value()[1].description.has_value());
+    DOCTEST_CHECK(tasks2.value()[1].priority == module::todo::Priority::None);
+    DOCTEST_CHECK_FALSE(tasks2.value()[1].dueAt.has_value());
+    return true;
+})
+
 REGISTER_TEST(todo_svc_move_task,
               "TodoService: moveTask 跨列 + 同列 + position 重排",
               {
