@@ -1,8 +1,9 @@
 # 01 · 401（token 失效）无定向引导
 
-Status: `needs-triage`
+Status: `needs-triage`（**实现已完成，待复核关票**）
 建议优先级: 高
 来源: handoff §3.C「S9」+ 2026-10-17 静态复核
+实现: 已完成 `d5c8147`（2026-10-17）；待 D 类真机走查确认 401 时确实出现定向引导
 
 ## 现象
 
@@ -33,3 +34,14 @@ token 失效（401）时走**通用错误弹窗**（标题「同步失败详情�
 ## 验收判据（待定稿）
 
 401 时用户从弹窗一步到达「更新 Token」的操作面；409 与普通失败的行为不回归；API 层 401 文案断言仍绿。
+
+## Comments
+
+- **2026-10-17 实现完成（`d5c8147`）** —— 采用「修复方向 1」的轻量版：
+  - `git_error_dialog.h` 新增 `GitErrorDialogVariant::AuthFailed` + 纯函数 `variantForSyncFailure(logs, conflict)`；判据取**请求日志状态码 401**（`SyncRunResult` 不带错误码，`ApiLogEntry.statusCode` 是 UI 层唯一可靠信号，胜过匹配摘要文案），优先级 `409 > 401 > 通用`，空日志（未观察到任何请求）→ 通用
+  - 弹窗：标题「认证失败（Token 无效或已过期）」/ 主按钮「去更新 Token」；401 下主按钮**不触发通用重试**（重试只会再吃一次 401）
+  - `settings_module.cpp` 失败分支改用该纯函数；`updateToken` = 关弹窗送回卡片 + toast「请在上方 Token 输入框更新后重新同步」
+  - TDD 轨迹：先红（401 决策 + 绘制分支两条断言按预期失败，**对照组全绿**证明缝行为保持）→ 实现 → 定点转绿 `2/2` → 全量门禁 `1439/1433/0` + probe 7/7
+  - 测试落点：`tests/test_modules/test_github_sync_card.cpp` 的 `github_error_dialog_auth_variant_decision`（纯函数；含「非 401」「空日志」「409 优先」「混合日志」四组对照）与 `github_error_dialog_auth_variant`（绘制 + 点击分派；含通用变体对照）
+  - **未做**：没有「高亮/聚焦 Token 输入框」——卡片未暴露聚焦 API、设置页无 scrollTo；当前是关弹窗回到卡片（Token 框就在卡片顶部）+ 一句提示。若走查认为引导不够强，另开子票。
+  - **验证边界**：模块接线（失败路径调用纯函数、`updateToken` 的实际动作）无 UI 注入级测试 → 待 D 类真机走查确认。
