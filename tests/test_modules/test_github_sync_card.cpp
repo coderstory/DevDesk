@@ -301,6 +301,38 @@ REGISTER_TEST(github_sync_card_disclosure_text,
     return true;
 })
 
+// 公开仓警告行与描述行必须**同口径**：描述行已改说「整库快照」，警告行若还说
+// 「笔记、待办与密钥」，则最需要看清泄露面的用户（public 仓）看到的是被窄化的载荷。
+// 本用例钉住这条一致性——改回旧口径 / 加新载荷面却漏改警告行都会红。
+REGISTER_TEST(github_sync_card_public_warn_same_scope_as_disclosure,
+              "github_sync 卡片: 公开仓警告明写整库快照（与披露文案同口径）+ 非公开仓不画该行", {
+    CardFixture pub;
+    pub.in.githubSyncRepoPublic = true;
+    test_support::HeadlessFrame fPub("githubsynccardwarnpub");
+    DOCTEST_CHECK(fPub.frame([&](eui::Ui& ui) {
+        pub.draw(ui);
+        const auto* warn = ui.find(std::string(kCardId) + ".publicwarn");
+        DOCTEST_REQUIRE(warn != nullptr);
+        // 对照组：节点真有文案 —— 否则下面「找不到旧口径」可能只是空串恒真
+        DOCTEST_CHECK(!warn->text.empty());
+        DOCTEST_CHECK(warn->text.find("快照") != std::string::npos);
+        // 旧口径把载荷说成「笔记、待办」= sync-02 要消灭的窄化形态
+        DOCTEST_CHECK(warn->text.find("笔记、待办") == std::string::npos);
+        DOCTEST_CHECK(warn->text.find("公开可见") != std::string::npos);
+        return true;
+    }));
+
+    // 对照组（反向）：非公开仓不画这一行 —— 防「无条件恒画」把警告变成噪音
+    CardFixture priv;
+    test_support::HeadlessFrame fPriv("githubsynccardwarnpriv");
+    DOCTEST_CHECK(fPriv.frame([&](eui::Ui& ui) {
+        priv.draw(ui);
+        DOCTEST_CHECK(ui.find(std::string(kCardId) + ".publicwarn") == nullptr);
+        return true;
+    }));
+    return true;
+})
+
 REGISTER_TEST(github_error_dialog_content,
               "github_sync 错误弹窗: 摘要 + 日志条目 + 三按钮 + 注入回调", {
     DialogFixture fx;

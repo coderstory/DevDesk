@@ -322,12 +322,13 @@ void drawGithubSyncCard(const CardDrawArgs& args) {
         y += roundFs(kStatusH) + roundFs(4.0f);
     }
 
-    // public 仓黄字提醒（提示不硬拦）
+    // public 仓黄字提醒（提示不硬拦）。口径必须与上方描述行同源：同步载荷是**整库快照**
+    // 而不只是「笔记、待办」——旧口径把载荷窄化，用户按它做决策就会错判泄露面（sync-02）。
     if (in.githubSyncRepoPublic) {
         ui.text(id + ".publicwarn")
             .position(kCardPaddingX, y)
             .size(w - kCardPaddingX * 2, roundFs(kStatusH))
-            .text("仓库为公开（public）：笔记、待办与密钥将公开可见")
+            .text("仓库为公开（public）：笔记、整库快照与其中的密钥将公开可见")
             .fontSize(fs(11.0f))
             .lineHeight(roundFs(kStatusH))
             .color(t.colors.warning)
