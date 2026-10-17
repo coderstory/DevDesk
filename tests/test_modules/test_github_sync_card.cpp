@@ -796,7 +796,7 @@ REGISTER_TEST(github_sync_store_state_keys,
     // 笔记登记往返（删除传播的远端基线）
     DOCTEST_CHECK(store.recordSyncedNote("a.md", "abc123", "hash-a").isOk());
     DOCTEST_CHECK(store.recordSyncedNote("b.md", "def456", "hash-b").isOk());
-    auto names = store.syncedNoteNames();
+    auto names = store.syncedNoteRecords();
     DOCTEST_REQUIRE(names.isOk());
     DOCTEST_CHECK_EQ(names.value().size(), static_cast<size_t>(2));
     DOCTEST_CHECK(names.value().count("a.md") == 1);
@@ -812,13 +812,13 @@ REGISTER_TEST(github_sync_store_state_keys,
     auto done2 = store.isFirstSyncDone();
     DOCTEST_REQUIRE(done2.isOk());
     DOCTEST_CHECK(done2.value());
-    auto names2 = store.syncedNoteNames();
+    auto names2 = store.syncedNoteRecords();
     DOCTEST_REQUIRE(names2.isOk());
     DOCTEST_CHECK_EQ(names2.value().size(), static_cast<size_t>(2));
 
     // 清除语义
     DOCTEST_CHECK(store.forgetSyncedNote("a.md").isOk());
-    auto names3 = store.syncedNoteNames();
+    auto names3 = store.syncedNoteRecords();
     DOCTEST_REQUIRE(names3.isOk());
     DOCTEST_CHECK_EQ(names3.value().size(), static_cast<size_t>(1));
     DOCTEST_CHECK(names3.value().count("b.md") == 1);

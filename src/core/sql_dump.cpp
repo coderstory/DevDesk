@@ -12,7 +12,6 @@
 #include <vector>
 
 #include "atomic_write.h"
-#include "fs_text.h"
 #include "logging.h"
 #include "result.h"
 
@@ -328,7 +327,6 @@ core::Result<void> exportToFile(
 core::Result<void> importFromString(
     core::data::SqliteDb& db,
     const std::string& sql) {
-
     // 导入期间临时关外键：dump 的 DDL/INSERT 按表名字典序，子表行（agent_runs 对
     // agent_tasks 一类）可能先于父表行落库，open() 恒置 foreign_keys=ON 会当场拒收；
     // 结束后恢复原值。PRAGMA 在事务内是 no-op，必须在 BEGIN 之外设 → 不进 transaction。
@@ -353,25 +351,6 @@ core::Result<void> importFromString(
 
     db.exec(std::string("PRAGMA foreign_keys = ") + (fkWas ? "ON;" : "OFF;"));
     return result;
-}
-
-core::Result<void> importFromFile(
-    core::data::SqliteDb& db,
-    const std::filesystem::path& file) {
-
-    bool readFailed = false;
-    std::string sql = core::readTextFile(file, &readFailed);
-    if (readFailed) {
-        return core::Result<void>::fail(
-            core::ErrorCode::FileReadFailed,
-            "无法读取 SQL dump 文件: " + file.string());
-    }
-    if (sql.empty()) {
-        return core::Result<void>::fail(
-            core::ErrorCode::FileReadFailed,
-            "SQL dump 文件为空: " + file.string());
-    }
-    return importFromString(db, sql);
 }
 
 } // namespace core::sql_dump

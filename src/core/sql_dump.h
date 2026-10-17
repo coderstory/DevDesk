@@ -44,9 +44,4 @@ core::Result<void> importFromString(
     core::data::SqliteDb& db,
     const std::string& sql);
 
-// 从文件导入。
-core::Result<void> importFromFile(
-    core::data::SqliteDb& db,
-    const std::filesystem::path& file);
-
 } // namespace core::sql_dump

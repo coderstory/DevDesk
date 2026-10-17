@@ -69,7 +69,6 @@ public:
     // `sha:notes/<名>` 存远端 sha、`hash:notes/<名>` 存当时本地内容 hash（原样字符串）。
     // 本地无记录的远端笔记不动（保守：首次接管既有仓库时不误删别人的文件）。
     // 注意：这些方法可能从同步后台线程调用，锁内触碰 db_ 句柄。
-    core::Result<std::set<std::string>> syncedNoteNames() const;
     core::Result<std::map<std::string, gsync::SyncedNoteRecord>>
     syncedNoteRecords() const;
     core::Result<void> recordSyncedNote(const std::string& fileName,

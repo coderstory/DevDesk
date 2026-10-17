@@ -144,6 +144,24 @@ REGISTER_TEST(cron_next_match_table,
         DOCTEST_REQUIRE(r.isOk());
         DOCTEST_CHECK(sameMinute(r.value(), expectLocalOf(2026, 10, 9, 9, 0)));
     }
+    // ③c 边界：fromSec **恰落在**命中分钟（10:15:00 配 */15）→ 该分钟不算，取下一命中
+    //    （10:30）；命中分钟内的任意秒（10:15:30）按同一规则 → 也是 10:30。
+    //    语义 = 「严格晚于 fromSec 所在分钟」的下一命中（实现自 fromSec/60 + 1 起扫）。
+    //    这条盯的是「秒级抖动不该改变答案」：UI 的「下次运行」与调度 tick 都吃这个口径。
+    {
+        auto parsed = module::agent::parseCron("*/15 * * * *");
+        DOCTEST_REQUIRE(parsed.isOk());
+        auto onBoundary = module::agent::nextCronMatch(
+            parsed.value(), localSecOf(2026, 10, 9, 10, 15));
+        DOCTEST_REQUIRE(onBoundary.isOk());
+        DOCTEST_CHECK(
+            sameMinute(onBoundary.value(), expectLocalOf(2026, 10, 9, 10, 30)));
+        auto midMinute = module::agent::nextCronMatch(
+            parsed.value(), localSecOf(2026, 10, 9, 10, 15) + 30);
+        DOCTEST_REQUIRE(midMinute.isOk());
+        DOCTEST_CHECK(
+            sameMinute(midMinute.value(), expectLocalOf(2026, 10, 9, 10, 30)));
+    }
     // ④ 无匹配到顶：2 月 31 日永不命中 → fail(ValidationError) 且不死循环
     {
         auto parsed = module::agent::parseCron(exprs[4]);

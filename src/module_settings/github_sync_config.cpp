@@ -10,7 +10,6 @@
 #include "platform/credential_protection.h"
 #include "platform/json.h"
 
-#include <set>
 #include <variant>
 
 namespace module::settings {
@@ -245,23 +244,6 @@ core::Result<void> GithubSyncStore::clearFirstSyncDone() {
     if (db_ == nullptr) return core::Result<void>::ok();
     std::lock_guard<std::recursive_mutex> lock(db_->mutex());
     return stateErase(*db_, kStateFirstSyncDone);
-}
-
-core::Result<std::set<std::string>> GithubSyncStore::syncedNoteNames() const {
-    std::set<std::string> names;
-    if (db_ == nullptr) return core::Result<std::set<std::string>>::ok(names);
-    std::lock_guard<std::recursive_mutex> lock(db_->mutex());
-    auto rows = stateListPrefix(*db_, kStateShaNotesPrefix);
-    if (rows.isFail()) {
-        return core::Result<std::set<std::string>>::fail(rows.errorCode(),
-                                                         rows.errorMessage());
-    }
-    const size_t prefixLen = std::string(kStateShaNotesPrefix).size();
-    for (const auto& [key, value] : rows.value()) {
-        (void)value;
-        names.insert(key.substr(prefixLen));
-    }
-    return core::Result<std::set<std::string>>::ok(std::move(names));
 }
 
 core::Result<void> GithubSyncStore::recordSyncedNote(const std::string& fileName,
