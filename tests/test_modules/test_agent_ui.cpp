@@ -1963,6 +1963,16 @@ REGISTER_TEST(agent_ui_cron_template_dropdown_and_preview,
     module::agent::AgentModule mod(deps);
     mod.onStart();
 
+    // 配色通道断言用（eui::Color 无 operator==）：逐分量比。
+    const auto sameColor = [](const eui::Color& a, const eui::Color& b) {
+        return a.r == b.r && a.g == b.g && a.b == b.b && a.a == b.a;
+    };
+    // 非恒真自证：错误色与次要文本色必须不同 —— 两值相等时下面所有配色断言都是空转。
+    DOCTEST_CHECK_MESSAGE(
+        !sameColor(::core::theme::current().colors.error,
+                   ::core::theme::current().colors.textTertiary),
+        "错误色与次要文本色不得相同，否则配色断言恒真");
+
     eui::Ui ui1;
     DOCTEST_REQUIRE(openNewTaskDialog(ui1, mod, "agent_ui_crontpl1"));
     eui::Ui ui2;
@@ -2015,6 +2025,12 @@ REGISTER_TEST(agent_ui_cron_template_dropdown_and_preview,
     DOCTEST_REQUIRE_MESSAGE(preview4 != nullptr, "合法 cron 未渲染预览行");
     DOCTEST_CHECK_MESSAGE(preview4->text.rfind("下次触发：", 0) == 0,
                           "预览行应以「下次触发：」开头，实测: " + preview4->text);
+    // 配色通道（T4 审计缺口）：合法 cron 的预览行是**次要文本色**、不是错误色 ——
+    // 只断文案时「合法表达式被误染错误色」会静默漏过。
+    DOCTEST_CHECK_MESSAGE(
+        sameColor(preview4->textColor,
+                  ::core::theme::current().colors.textTertiary),
+        "合法 cron 预览行应为次要文本色");
     // 预览行落在 cron 行与 meta 行之间（原 gap 内）
     const auto* cronRow4 = ui4.find("agent.dialog.task.cron");
     DOCTEST_REQUIRE(cronRow4 != nullptr);
@@ -2038,6 +2054,9 @@ REGISTER_TEST(agent_ui_cron_template_dropdown_and_preview,
     DOCTEST_CHECK_MESSAGE(preview5->text.find("cron 表达式非法") !=
                               std::string::npos,
                           "非法 cron 预览应显校验文案，实测: " + preview5->text);
+    DOCTEST_CHECK_MESSAGE(
+        sameColor(preview5->textColor, ::core::theme::current().colors.error),
+        "非法 cron 预览行应为错误色");
 
     // ⑤ 无匹配（2 月 31 日）→ 预览显「一年内无触发时间」
     mod.setEditCronDraft("0 9 31 2 *");
@@ -2047,6 +2066,10 @@ REGISTER_TEST(agent_ui_cron_template_dropdown_and_preview,
     DOCTEST_REQUIRE_MESSAGE(preview6 != nullptr, "无匹配 cron 未渲染预览行");
     DOCTEST_CHECK_MESSAGE(preview6->text == "一年内无触发时间",
                           "无匹配预览文案错误，实测: " + preview6->text);
+    // 「无匹配」与「非法」走同一错误色通道（两条 error 分支各断一次，防只修一半）。
+    DOCTEST_CHECK_MESSAGE(
+        sameColor(preview6->textColor, ::core::theme::current().colors.error),
+        "无匹配 cron 预览行应为错误色");
 
     mod.onStop();
     return true;
