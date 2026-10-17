@@ -8,6 +8,7 @@
 
 #include <core/component_theme.h>
 #include <core/paths.h>
+#include <core/sql_dump.h>
 
 #include <eui/app.h>
 #include <eui/dsl.h>
@@ -41,6 +42,36 @@ inline constexpr float kBtnGapX = 8.0f;
 
 } // namespace
 
+// ── 同步内容披露（自由函数，便于单测；见 github_sync_card.h）──
+// 背景：卡片描述行是用户唯一的知情点，而实际载荷是**整库 SQL dump**（唯一生产者
+// github_sync_engine.cpp 调 exportToFile(..., defaultSkipTables())）。旧文案只承诺
+// 「笔记和待办」，与实现口径不符 → 这里是「什么上去了、什么没上去」的披露。
+
+std::string disclosureLabelFor(const std::string& tableName) {
+    // 只翻译 defaultSkipTables() 会出现的表；未知表名原样返回，不编造标签。
+    if (tableName == "claude_call_logs") return "调用日志";
+    if (tableName == "claude_run_settings") return "运行设置";
+    // token 就存在 github_sync_state（列 token）；该表在 skip 清单内 → 标签里把
+    // 「Token」明写出来，即「token 不上云」这条口径与实现绑定（改 skip 清单会经
+    // 防漂移用例提醒）。
+    if (tableName == "github_sync_state") return "Token 与同步状态";
+    return tableName;
+}
+
+std::string githubSyncDisclosureText() {
+    // 「不上传」清单由 skip 清单**单一来源**驱动：core::sql_dump::defaultSkipTables()
+    // 一变，本文案跟着变，杜绝文案与实现两张皮（防漂移用例是兜底闸）。
+    std::string out = "同步笔记与整库数据库快照到 GitHub 私有仓库；不上传：";
+    bool first = true;
+    for (const auto& table : ::core::sql_dump::defaultSkipTables()) {
+        if (!first) out += "、";
+        out += disclosureLabelFor(table);
+        first = false;
+    }
+    out += "。";
+    return out;
+}
+
 void drawGithubSyncCard(const CardDrawArgs& args) {
     eui::Ui& ui = args.ui;
     const std::string& id = args.id;
@@ -66,11 +97,12 @@ void drawGithubSyncCard(const CardDrawArgs& args) {
         .build();
     y += roundFs(kTitleH) + roundFs(2.0f);
 
-    // 描述行
+    // 描述行：披露实际载荷（整库快照 + 不上传清单，由 skip 清单驱动），不再只承诺
+    // 「笔记和待办」。单行固定高（kDescH），故文案靠压缩措辞控制长度、不改布局。
     ui.text(id + ".desc")
         .position(kCardPaddingX, y)
         .size(w - kCardPaddingX * 2, roundFs(kDescH))
-        .text("将笔记和待办数据同步到 GitHub 私有仓库，实现多设备同步。")
+        .text(githubSyncDisclosureText())
         .fontSize(fs(12.0f))
         .lineHeight(roundFs(kDescH))
         .color(t.colors.textTertiary)

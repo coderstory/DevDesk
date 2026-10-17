@@ -264,6 +264,43 @@ REGISTER_TEST(github_sync_card_error_row_and_detail_button,
     return true;
 })
 
+REGISTER_TEST(github_sync_card_disclosure_text,
+              "github_sync 卡片: 描述行披露整库快照 + 不上传清单由 skip 清单驱动（防漂移）", {
+    const std::string text = ms::githubSyncDisclosureText();
+
+    // (a) 不再只承诺「笔记和待办」：必须点明整库快照（这正是本票的隐私知情缺口）
+    DOCTEST_CHECK(text.find("快照") != std::string::npos);
+    // 对照组：确实列了会同步的内容——否则上面「找不到标签」可能只是空串恒真
+    DOCTEST_CHECK(text.find("笔记") != std::string::npos);
+    // (c) 目标仓库性质
+    DOCTEST_CHECK(text.find("私有仓库") != std::string::npos);
+
+    // (b) 防漂移闸：defaultSkipTables() 里每一张表都必须有中文标签，且该标签出现在
+    // 披露文案里。以后给 skip 清单加表却没补 disclosureLabelFor() → 本断言必红；
+    // 若文案改为本地硬抄表名、与 skip 清单脱钩 → 第二句也会红。
+    for (const auto& table : ::core::sql_dump::defaultSkipTables()) {
+        const std::string label = ms::disclosureLabelFor(table);
+        DOCTEST_CHECK_MESSAGE(label != table, table);
+        DOCTEST_CHECK_MESSAGE(text.find(label) != std::string::npos, table);
+    }
+
+    // 未知表名原样返回（不编造标签）
+    DOCTEST_CHECK_EQ(ms::disclosureLabelFor("no_such_table"),
+                     std::string("no_such_table"));
+
+    // 绘制层：卡片描述行（<id>.desc）渲染的就是这份披露文案——别只测函数漏了绘制层
+    CardFixture fx;
+    test_support::HeadlessFrame f("githubsynccarddisc");
+    DOCTEST_CHECK(f.frame([&](eui::Ui& ui) {
+        fx.draw(ui);
+        const auto* desc = ui.find(std::string(kCardId) + ".desc");
+        DOCTEST_REQUIRE(desc != nullptr);
+        DOCTEST_CHECK_EQ(desc->text, text);
+        return true;
+    }));
+    return true;
+})
+
 REGISTER_TEST(github_error_dialog_content,
               "github_sync 错误弹窗: 摘要 + 日志条目 + 三按钮 + 注入回调", {
     DialogFixture fx;
