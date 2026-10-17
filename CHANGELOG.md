@@ -12,6 +12,15 @@
 - merge：master 并入 dev——桌宠摘除定案、migration 折为单份 DDL（审计放行 `47b31e0`）。
 - feat(github-sync)：真机 15 场景验收 15/15 通过，验收抓出并修 4 处引擎缺陷（报告 `docs/superpowers/plans/2026-10-16-ghsync-live-acceptance.md`，随矩阵票合入）。
 - fix(github-sync)：推送分支参数修复——`putFile`/`deleteFile` 增 `branch` 形参，database.sql / 笔记 / 删除三路推送全传配置分支（`ebf815c`）。
+- feat(agent)：**任务「只跑一次」次数上限**（`trigger_config.max_runs`，跑满自动停用 `acdfa11`）+ **限次额度闸移到 `cronMatches` 之前**（跑满即停每分钟可见，不再等下次匹配 `6e58716`）+ **配置异常任务在列表挂可见标记**（消灭 Scheduler 静默跳过 `bb92b7d`）。
+- fix(agent)：**页内错误行不再粘滞回弹**——用户清除后同一份旧错误不被轮询顶回来；实现为「已展示 runId 集合 + 按任务数剪枝」，多任务各错时逐个展示、不兜圈（`7165f6e` + `c8f5989`）；`message_blocks` text 块缺 `text` 字段不再渲染字面量 `"null"`（`f83b26e`）；已通知 runId 集合随窗口收敛，消灭模块内唯一无界容器（`b48f70c`）。
+- feat(todo)：`todo.create` 一次调用可带 description/priority/dueAt（消灭建任务二跳 `b398e3c`）。
+- fix(github-sync)：**嵌套笔记（子目录）三处口径对齐**——收集递归 + 相对名（Windows 不漂反斜杠）/ 落盘前建父目录 / 备份保留子目录结构（`548b0e4`）；**拉取摘要点名库备份名** + 409 覆盖清单 50 行闸（`5a803be`）；**导入失败摘要点名回滚点**（`fb31ae2`，口径修订见 spec F3）；公开仓警告行与披露文案同口径（`8230fcb`）。
+- fix(settings)：macOS git 探测每圈都查 deadline（持续输出的子进程不再绕过 3s 上界 `31dd9fe`）。
+- fix(markdown)：**冲突未决时显式保存兑现选择**——Ctrl+S / 切笔记 / 退出模块落盘成功即等价于「保留本地」并收掉冲突 toast（否则其「重载磁盘版本」会把刚保存的内容再丢掉）；自动链路仍不越权落盘，退出时未决冲突补 WARN 留痕（`03505df`）。
+- fix(core)：**Windows 原子替换改一步 `MoveFileExW`**（消除「目标短暂不存在」窗口，`1c5fbb7`；真机行为待 CI，本机验证 = 交叉编译守卫；POSIX `rename` 语义本来就无此窗口）。
+- test：`>1MB` 笔记端到端往返（`6b10975`）；todo.create 三态分支（`0280bde`）；cron「命中分钟」边界与预览配色通道断言（`4fa83dd` + `75a796e`）；库导入收割当前笔记三分支（`c27dd16`）；markdown 轮询周期可注入测试缝 + 缝自证（`3b372cc`，根治 db.imported 用例的负载假红）。
+- docs：github-sync spec F3 回滚口径修订（单事务 ⇒ 导入期失败已整体回滚；备份留盘 + 失败摘要点名回滚点；不做自动恢复及其理由）；M3 规划 Task 1 通知形态结论（**应用级 toast**，不推上游补系统通知 API）；backlog 四点十二/四点十三两批登记与二十余条销账。
 
 ## [AgentDirectLlm] 2026-10-16 —— 智能体与代理解耦：直连端点
 
