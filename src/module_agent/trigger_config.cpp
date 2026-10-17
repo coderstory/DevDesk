@@ -3,6 +3,7 @@
 
 #include <utility>
 
+#include "module_agent/cron.h"
 #include "platform/json.h"
 
 namespace module::agent {
@@ -33,6 +34,30 @@ core::Result<std::string> encodeTriggerConfig(const TriggerConfig& cfg) {
             "trigger_config 序列化失败: " + text.errorMessage());
     }
     return core::Result<std::string>::ok(text.value());
+}
+
+// 任务级「配置异常」判定（契约见 trigger_config.h）：判据必须与 Scheduler 的跳过分支
+// 一一对应——多一条会误报正常任务，少一条会漏掉「UI 说没事、Scheduler 每跑必跳过」
+std::string triggerConfigProblem(const std::string& triggerType,
+                                 const std::string& triggerConfig) {
+    // 第一道过滤与 Scheduler 同口径：只有 event / schedule 消费 trigger_config
+    //（processEvent / tickNow 都是「enabled && triggerType == …」），manual / resident
+    // 的该列是历史残留，不许挂标记
+    if (triggerType != "event" && triggerType != "schedule") return {};
+    auto cfg = decodeTriggerConfig(triggerConfig);
+    if (cfg.isFail()) return "触发配置无法解析：" + cfg.errorMessage();
+    if (triggerType == "schedule") {
+        // decode 能过 ≠ 能触发：tickNow 在 decode 之后还有第二道 parseCron
+        auto expr = parseCron(cfg.value().cron);
+        if (expr.isFail()) return "cron 表达式非法：" + expr.errorMessage();
+        return {};
+    }
+    if (cfg.value().events.empty()) {
+        // 事件型但一个事件都没配（decode 放行 cron-only 配置，这是它的镜像）：processEvent
+        // 逐项比对恒不命中 → 永不触发
+        return "事件触发未配置任何事件（永不触发）";
+    }
+    return {};
 }
 
 core::Result<TriggerConfig> decodeTriggerConfig(const std::string& json) {

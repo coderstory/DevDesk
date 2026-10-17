@@ -100,3 +100,53 @@ REGISTER_TEST(event_trigger_cfg_encode_rejects_empty,
     DOCTEST_CHECK(encodeTriggerConfig(emptyCron).isFail());
     return true;
 })
+
+// 任务级「配置异常」判定的红侧：三类「配置根本解不出来 / 永远不触发」必须产出非空
+// 描述（它们的共同点是 Scheduler 每跑必跳过，而任务在列表里长得和正常任务一样）。
+// 判定须与 Scheduler 同源：这里的每一条都对应 tickNow / processEvent 里的一处跳过。
+REGISTER_TEST(event_trigger_cfg_problem_broken_configs,
+              "trigger_config: 配置异常判定——事件型解析失败 / cron 型解析失败 / cron 表达式非法", {
+    using module::agent::triggerConfigProblem;
+    // ① 事件型：trigger_config 是坏 JSON（Scheduler::processEvent 的 decode 失败路径）
+    const std::string evBad = triggerConfigProblem("event", "{不是 JSON");
+    DOCTEST_CHECK_MESSAGE(!evBad.empty(), "事件型坏 JSON 未产出问题描述");
+    DOCTEST_CHECK(evBad.find("解析") != std::string::npos);
+    // decode 能过但内容非法（events 空数组）→ processEvent 逐项比对恒不命中 → 永不触发
+    DOCTEST_CHECK(!triggerConfigProblem("event", R"({"events":[]})").empty());
+    // ② cron 型：decode 直接失败（与 tickNow 第一道 decode 失败同一处）
+    const std::string schBad = triggerConfigProblem("schedule", "not json at all");
+    DOCTEST_CHECK_MESSAGE(!schBad.empty(), "cron 型坏 JSON 未产出问题描述");
+    // ③ cron 型：decode 能过、表达式非法（tickNow 的第二道 parseCron 失败）
+    const std::string cronBad =
+        triggerConfigProblem("schedule", R"({"cron":"0 9 * * 8"})");
+    DOCTEST_CHECK_MESSAGE(!cronBad.empty(), "非法 cron 表达式未产出问题描述");
+    DOCTEST_CHECK(cronBad.find("cron") != std::string::npos);
+    // ④ schedule 型但配置里只有 events：decode 过、cron 为空 → parseCron("") 失败，
+    //    与 tickNow 同判（同一份配置在调度器那里每跑必跳过）
+    DOCTEST_CHECK(
+        !triggerConfigProblem("schedule", R"({"events":["todo.created"]})").empty());
+    return true;
+})
+
+// 任务级「配置异常」判定的绿侧（对照组，防「凡有配置都报异常」的恒真断言）：
+// 合法配置与不消费 trigger_config 的触发类型一律空描述 = 正常路径零噪音。
+REGISTER_TEST(event_trigger_cfg_problem_clean_controls,
+              "trigger_config: 合法 event / 合法 cron / manual·resident → 无问题描述", {
+    using module::agent::triggerConfigProblem;
+    DOCTEST_CHECK(triggerConfigProblem("event", R"({"events":["todo.created"]})").empty());
+    DOCTEST_CHECK(
+        triggerConfigProblem("event", R"({"events":["todo.created"],"cooldown_sec":60})")
+            .empty());
+    DOCTEST_CHECK(triggerConfigProblem("schedule", R"({"cron":"0 9 * * 1-5"})").empty());
+    DOCTEST_CHECK(triggerConfigProblem("schedule", R"({"cron":"* * * * *"})").empty());
+    // manual / resident 不消费 trigger_config（Scheduler 的 enable+triggerType 过滤
+    // 都不含它们）→ 库里的残留串/空串都不许挂徽章
+    DOCTEST_CHECK(triggerConfigProblem("manual", "").empty());
+    DOCTEST_CHECK(triggerConfigProblem("resident", "{坏 JSON").empty());
+    // 同源反向题：event 型只比 events（processEvent 不碰 cron），配置里塞了非法 cron
+    // 也不该算问题——否则 UI 说异常、Scheduler 照常触发，正是本单要消灭的分裂反面
+    DOCTEST_CHECK(
+        triggerConfigProblem("event", R"({"events":["md.saved"],"cron":"0 9 * * 99"})")
+            .empty());
+    return true;
+})

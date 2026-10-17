@@ -2679,3 +2679,90 @@ REGISTER_TEST(agent_ui_detail_summary_error_visible,
     mod.onStop();
     return true;
 })
+
+// 任务列表「配置异常」徽章：坏配置任务在列表里必须显形——Scheduler 每跑必跳过
+//（scheduler.cpp 的 decode / parseCron 失败分支），而用户看到的却是「任务配好了，
+// 什么都没发生」。三类坏配置各落一行；对照组（合法 cron / 合法事件 / manual）
+// 一个标记都不许有（正常路径零噪音）；原因落详情弹窗配置摘要（徽章只有 4 字）。
+REGISTER_TEST(agent_ui_task_config_problem_badge,
+              "agent_ui: 任务列表配置异常徽章——坏配置显形 / 正常配置零噪音 / 详情给原因", {
+    test_support::TestDb tdb("agentui", "cfgbadge");
+    test_support::FakeProfileSource profile;
+    ToolGuard statsGuard{"app.stats"};
+    core::ToolRegistry::instance().unregisterTool("app.stats");
+    module::agent::AgentStore store(tdb.handle());
+    // 坏配置三条（store 直种不校验，模拟旧数据/手工改库）：cron 表达式非法 /
+    // cron 型坏 JSON / 事件型配置解出来但永不可能命中
+    auto badCron = store.createTask("坏 cron", "g", "schedule", "default", 10, false,
+                                    R"({"cron":"0 9 * * 8"})");
+    auto badJson = store.createTask("坏 JSON", "g", "schedule", "default", 10, false,
+                                    "{不是 JSON");
+    auto badEvent = store.createTask("坏事件", "g", "event", "default", 10, false,
+                                     R"({"events":[]})");
+    // 对照组三条：合法 cron / 合法事件 / manual（manual 不消费 trigger_config）
+    auto okCron = store.createTask("正常 cron", "g", "schedule", "default", 10, false,
+                                   R"({"cron":"0 9 * * 1-5"})");
+    auto okEvent = store.createTask("正常事件", "g", "event", "default", 10, false,
+                                    R"({"events":["todo.created"]})");
+    auto okManual = store.createTask("手动任务", "g", "manual", "default", 10, false);
+    DOCTEST_REQUIRE(badCron.isOk() && badJson.isOk() && badEvent.isOk() &&
+                    okCron.isOk() && okEvent.isOk() && okManual.isOk());
+    const std::string tidBadCron = std::to_string(badCron.value());
+    const std::string tidBadJson = std::to_string(badJson.value());
+    const std::string tidBadEvent = std::to_string(badEvent.value());
+
+    module::agent::AgentModule::Deps deps;
+    deps.db = &tdb.handle();
+    deps.profileSource = &profile;
+    module::agent::AgentModule mod(deps);
+    mod.onStart();
+
+    eui::Ui ui;
+    composeTo(ui, mod, kScreen, "agent_ui_cfgbadge1");
+
+    // ① 三类坏配置都必须在列表里有可见标记
+    for (const std::string& tid : {tidBadCron, tidBadJson, tidBadEvent}) {
+        const auto* warn = ui.find("agent.task." + tid + ".warn");
+        DOCTEST_REQUIRE_MESSAGE(warn != nullptr,
+                                "配置异常任务 " + tid + " 在列表上无标记（静默失败）");
+        DOCTEST_CHECK_MESSAGE(warn->text == "配置异常",
+                              "徽章文案应为「配置异常」，实测：" + warn->text);
+        // 徽章要落在行内、不与标题/状态重叠（宽度预算算错即红）
+        const auto* row = ui.find("agent.task." + tid);
+        const auto* title = ui.find("agent.task." + tid + ".title");
+        const auto* status = ui.find("agent.task." + tid + ".status");
+        DOCTEST_REQUIRE(row != nullptr && title != nullptr && status != nullptr);
+        DOCTEST_CHECK_MESSAGE(frameContained(*row, *warn), "徽章跑到任务行外");
+        DOCTEST_CHECK_MESSAGE(
+            title->frame.x + title->frame.width <= warn->frame.x + 0.5f,
+            "标题与徽章重叠：标题右缘 " +
+                std::to_string(title->frame.x + title->frame.width) +
+                " > 徽章左缘 " + std::to_string(warn->frame.x));
+        DOCTEST_CHECK_MESSAGE(warn->frame.x + warn->frame.width <= status->frame.x + 0.5f,
+                              "徽章与状态列重叠");
+        // 徽章配色须与正文不同（否则等于没标记）
+        DOCTEST_CHECK(warn->textColor.r != title->textColor.r ||
+                      warn->textColor.g != title->textColor.g ||
+                      warn->textColor.b != title->textColor.b);
+    }
+    // ② 对照组：正常配置/不消费 trigger_config 的任务一个标记都不许有
+    for (int64_t id : {okCron.value(), okEvent.value(), okManual.value()}) {
+        DOCTEST_CHECK_MESSAGE(
+            ui.find("agent.task." + std::to_string(id) + ".warn") == nullptr,
+            "正常任务 " + std::to_string(id) + " 被挂了配置异常标记（噪音）");
+    }
+
+    // ③ 原因进详情弹窗配置摘要（徽章文案只有 4 字，原因落这里）
+    DOCTEST_REQUIRE_MESSAGE(openDetailDialog(ui, mod, tidBadCron),
+                            "任务行缺详情 chip");
+    eui::Ui ui2;
+    composeTo(ui2, mod, kScreen, "agent_ui_cfgbadge2");
+    const auto* info = ui2.find("agent.dialog.detail.info");
+    DOCTEST_REQUIRE_MESSAGE(info != nullptr, "详情弹窗缺配置摘要");
+    DOCTEST_CHECK_MESSAGE(info->text.find("触发配置异常") != std::string::npos,
+                          "详情摘要未给出配置异常原因，实测：" + info->text);
+    DOCTEST_CHECK(info->text.find("cron") != std::string::npos);
+
+    mod.onStop();
+    return true;
+})

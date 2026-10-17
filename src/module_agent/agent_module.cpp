@@ -248,6 +248,9 @@ constexpr int kEventCount = 3;
 constexpr float kPageHeaderH = 40.0f;
 constexpr float kNewTaskBtnW = 140.0f;
 constexpr float kTaskRowH = 44.0f;
+// 任务行「配置异常」标记宽：4 个 CJK 字 @12px = 48，留 8 余量（文案再长就换行/截断，
+// 原因全文在详情弹窗配置摘要里）
+constexpr float kTaskWarnW = 56.0f;
 constexpr float kPageErrorH = 16.0f;
 // 页内错误行下的「去 Claude 页」引导行高（仅「LLM 配置不可用」类错误渲染）
 constexpr float kPageHintH = 16.0f;
@@ -921,6 +924,15 @@ void AgentModule::refreshData() {
     } else {
         tasks_ = std::move(t).value();
     }
+    // 配置异常缓存：Scheduler 每跑必跳过的坏配置任务（scheduler.cpp 的 decode / parseCron
+    // 失败分支），在列表上必须与正常任务可区分——「任务配好了，什么都没发生」是最坏的
+    // 失败模式。判定是纯函数、与 Scheduler 同源；随本次重查算一次，不在渲染里反复解析
+    taskTriggerProblems_.clear();
+    for (const auto& task : tasks_) {
+        std::string problem =
+            triggerConfigProblem(task.triggerType, task.triggerConfig);
+        if (!problem.empty()) taskTriggerProblems_[task.id] = std::move(problem);
+    }
     for (const auto& task : tasks_) {
         auto runs = store_->listRuns(task.id, kRunListLimit);
         if (runs.isFail()) {
@@ -1429,12 +1441,18 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                         if (it != latestRuns_.end()) {
                             status = runStatusText(it->second.status);
                         }
-                        // 宽度分配：状态 80 / 详情·编辑·启停 各 48 / [入队 56] / 启动 72；childCount 须与实际子元素数一致
+                        // 宽度分配：状态 80 / 详情·编辑·启停 各 48 / [入队 56] / 启动 72 /
+                        // [配置异常 56]；childCount 须与实际子元素数一致
                         const bool resident = task.triggerType == "resident";
+                        const bool hasProblem =
+                            taskTriggerProblems_.find(task.id) !=
+                            taskTriggerProblems_.end();
                         const float rowGap = 12.0f;
-                        const int childCount = 6 + (resident ? 1 : 0);
+                        const int childCount =
+                            6 + (resident ? 1 : 0) + (hasProblem ? 1 : 0);
                         const float fixedW = 80.0f + 48.0f * 3.0f + 72.0f +
-                                             (resident ? 56.0f : 0.0f);
+                                             (resident ? 56.0f : 0.0f) +
+                                             (hasProblem ? kTaskWarnW : 0.0f);
                         const float titleW =
                             cw - fixedW - rowGap * static_cast<float>(childCount - 1);
                         // 点行本体开详情弹窗（子元素先于父行命中，各自独立消费点击）
@@ -1454,6 +1472,17 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                                     .lineHeight(20.0f)
                                     .color(t.colors.textPrimary)
                                     .build();
+                                // 配置异常标记：Scheduler 每跑必跳过的任务在这里必须显形
+                                //（点行本体开详情，原因在配置摘要里；标记不消费点击）
+                                if (hasProblem) {
+                                    inner.text(id + ".warn")
+                                        .size(kTaskWarnW, 20.0f)
+                                        .text("配置异常")
+                                        .fontSize(12.0f)
+                                        .lineHeight(20.0f)
+                                        .color(t.colors.error)
+                                        .build();
+                                }
                                 inner.text(id + ".status")
                                     .size(80.0f, 20.0f)
                                     .text(status)
@@ -1841,6 +1870,11 @@ void AgentModule::composeTaskDetailDialog(
             info += " · 槽位：" + task.modelSlot;
             info += " · 迭代上限：" + std::to_string(task.maxIterations);
             info += task.allowDestructive ? " · 破坏性：允许" : " · 破坏性：禁止";
+            // 列表徽章只有 4 字，原因全文落这里（同一个纯函数判定，同一个缓存快照）
+            const auto problemIt = taskTriggerProblems_.find(task.id);
+            if (problemIt != taskTriggerProblems_.end()) {
+                info += " · 触发配置异常：" + problemIt->second;
+            }
         } else {
             info = "（任务信息读取失败）";
         }

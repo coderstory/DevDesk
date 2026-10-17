@@ -213,6 +213,9 @@ private:
     // compose 数据缓存（仅主线程读写）
     std::vector<AgentTaskRow> tasks_;
     std::map<int64_t, AgentRunRow> latestRuns_;     // taskId → 最近一次 run
+    // 任务级「配置异常」缓存（taskId → 原因，仅非空入表）：纯函数判定（trigger_config.h，
+    // 与 Scheduler 同源）。在 refreshData 里随任务列表算一次——不在每帧渲染里反复解析 JSON
+    std::map<int64_t, std::string> taskTriggerProblems_;
     // 详情弹窗 run 列表（每任务最近 5 次，refreshData 装载）
     std::map<int64_t, std::vector<AgentRunRow>> taskRuns_;
     std::optional<int64_t> detailTaskId_;           // 非空 = 弹窗打开
