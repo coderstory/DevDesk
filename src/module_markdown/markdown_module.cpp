@@ -256,7 +256,14 @@ public:
             markdownTools_->unregisterAll();
             markdownTools_.reset();
         }
-        // 退出前落盘：无退出拦截 API，只能同步有限重试 + 日志兜底
+        // 退出前落盘：无退出拦截 API，只能同步有限重试 + 日志兜底。
+        // 退出时冲突未决（toast 随页面消失、没有让用户选择的时机）：只能按「保留本地」
+        // 落盘 —— 未保存的键入不可恢复，外部版本可从笔记 git 历史 / 远端找回，所以这个
+        // 默认方向是安全侧；但不能静默，WARN 留痕（saveEditor 成功时会顺带 resolve）。
+        if (editorDirty_ && conflictOpen_) {
+            LOG_WARN("Markdown: 退出模块时存在未决冲突，按「保留本地」落盘（外部版本可在笔记 git 历史 / 远端找回）: " +
+                     currentPath_);
+        }
         for (int attempt = 0; attempt < 3 && editorDirty_; ++attempt) {
             saveEditor();
             if (!editorDirty_) break;
@@ -2961,6 +2968,12 @@ private:
         saveBackoffMs_ = 0;
         lastSavedAt_ = std::time(nullptr);
         syncCurrentMtime();  // 自己写盘后推进 mtime 基准（避免误报外部修改）
+        // 写盘成功 = 本地版本已在磁盘上 —— 若冲突 toast 还开着，它的另一半答案
+        //（「重载磁盘版本」）会把刚保存的内容再丢掉，选项与现实不符：此刻等价于用户
+        // 选了「保留本地」（✕ 关闭那条），立刻收掉。自动链路（flushEditorIfIdle）
+        // 在 conflictOpen_ 时根本不写，所以只有显式保存路径（Ctrl+S / 切换笔记 /
+        // 退出模块）会走到这里 —— 外部版本仍可从笔记 git 历史 / 远端找回。
+        if (conflictOpen_) resolveConflict(false);
         core::event::bus().emit(core::event::kMdSaved);
         // 写盘成功 → 触发 git 自动提交（节流判定在 onFileSaved 内，<5 分钟不重复）
         if (noteGit_) {

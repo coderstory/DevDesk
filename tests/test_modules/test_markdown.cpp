@@ -6794,6 +6794,66 @@ REGISTER_TEST(md_module_md01_reload_conflict_toast,
     return true;
 })
 
+// MD-01 姊妹：冲突 toast 开着时按 Ctrl+S（显式保存路径之一）。
+// 语义：本地内容落盘 = 「保留本地」已经被选了 —— toast 必须立刻收掉，否则它挂着的
+// 「重载磁盘版本」会把刚保存的内容再丢掉（选项与现实不符）。同时钉住冲突未决期间
+// 自动链路**不落盘**（既有 flushEditorIfIdle guard 的契约），只有显式保存才落盘。
+REGISTER_TEST(md_module_conflict_ctrl_s_resolves_keep_local,
+              "markdown_module: 冲突 toast 开着时 Ctrl+S → 本地落盘 + toast 收起（= 保留本地）", {
+    const std::string oldDoc = "alpha\n\nbravo\n\ncharlie\n";
+    const std::string newDoc = "seed line one\n\nalpha\n\nbravo\n\ncharlie\n";
+    test_support::MdHeadlessEnv env(kDirPrefix, "mdctrls", kDbName);
+    DOCTEST_REQUIRE(env.db != nullptr);
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "note.md", oldDoc));
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    test_support::HeadlessFrame e("mdctrls");
+    auto frame = [&](void) { e.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
+
+    frame();
+    DOCTEST_REQUIRE(openFirstNote(*e.ui));
+    frame();
+    DOCTEST_REQUIRE(e.ui->find(kEditorInputId) != nullptr);
+
+    // 外写盘（前置版本 + 未来 mtime）→ 编辑自旋到冲突 toast（与 MD-01 同一条路径）
+    DOCTEST_REQUIRE(md01WriteExternal(env.dir / "note.md", newDoc));
+    bool toastSeen = false;
+    for (int attempt = 0; attempt < 10 && !toastSeen; ++attempt) {
+        e.ui->state<MdInputState>(kEditorInputId).cursor = 0;
+        DOCTEST_REQUIRE(typeIntoEditor(*e.ui, "Z"));
+        frame();
+        toastSeen = e.ui->find("md.toast.action.hit") != nullptr;
+        if (!toastSeen) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(150));
+        }
+    }
+    DOCTEST_REQUIRE_MESSAGE(toastSeen, "冲突 toast 未弹出：外部写盘未被检测到");
+    const std::string localText = e.ui->state<MdInputState>(kEditorInputId).text;
+    DOCTEST_REQUIRE(localText != newDoc);   // 本地确有未保存改动（Z 编辑）
+
+    // 冲突未决期间自动链路不落盘：磁盘仍是外部版本（既有 guard 的契约）
+    std::string onDisk;
+    DOCTEST_REQUIRE(readFileBytes(env.dir / "note.md", &onDisk));
+    DOCTEST_CHECK_MESSAGE(onDisk == newDoc,
+                          "冲突未决时自动保存仍写了盘（conflictOpen_ guard 失效）");
+
+    // Ctrl+S：显式保存 → 本地版本落盘
+    DOCTEST_REQUIRE(mod->onKeyEvent(test_support::pressShortcut(eui::InputKey::S)));
+    frame();
+    DOCTEST_REQUIRE(readFileBytes(env.dir / "note.md", &onDisk));
+    DOCTEST_CHECK_EQ(onDisk, localText);
+    DOCTEST_CHECK_MESSAGE(
+        e.ui->find("md.toast.action.hit") == nullptr,
+        "Ctrl+S 已按本地落盘，冲突 toast 仍开着（其「重载磁盘版本」会把刚存的内容丢掉）");
+
+    mod->onStop();
+    return true;
+})
+
 // 用例 7：捕获越界竞态（冲突路径）
 // 构造「输入 onChange 当帧收缩 blocks + 冲突重载」：活动块 = 块 2，选中其文本首
 // 字节（块间空行）删除 → 3 块合并成 2 块，liveActiveBlock_ 保持陈旧值 2（越界态）
