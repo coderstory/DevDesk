@@ -226,7 +226,7 @@ REGISTER_TEST(agent_loop_happy_path_tool_then_end, "agent_loop: tool_use→工�
     DOCTEST_CHECK_EQ(runs.value()[0].iterations, 2);
     DOCTEST_CHECK_EQ(runs.value()[0].inputTokens.value_or(0), 20);  // 10+10 累计
     DOCTEST_CHECK_EQ(runs.value()[0].outputTokens.value_or(0), 10);
-    // model 原样传 task.modelSlot（槽位→model id 由 LlmClient 解析，loop 不解析）
+    // model 原样传 task.modelSlot（槽位→实际 model id 由直连客户端 DirectLlmClient 解析，loop 不解析）
     DOCTEST_REQUIRE_EQ(fx.llm.sentModels.size(), 2u);
     for (const auto& m : fx.llm.sentModels) {
         DOCTEST_CHECK_EQ(m, std::string(task.modelSlot));
@@ -712,7 +712,7 @@ REGISTER_TEST(agent_loop_context_note_injected, "agent_loop: contextNote 非空 
     return true;
 })
 
-// contextNote 空串 → system prompt 为空串（llm_client 侧不发 system 字段）
+// contextNote 空串 → system prompt 为空串（直连客户端侧不发 system 字段）
 REGISTER_TEST(agent_loop_context_note_empty_not_injected, "agent_loop: contextNote 空串 → system prompt 为空", {
     Fixture fx;
     AgentTask task;
