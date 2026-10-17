@@ -6854,6 +6854,73 @@ REGISTER_TEST(md_module_conflict_ctrl_s_resolves_keep_local,
     return true;
 })
 
+// F3 登记项：库导入（GitHub Sync DROP 重建库后）harvest 的「当前笔记重读 / 冲突」
+// 分支零覆盖 —— 既有导入用例都没打开笔记（`checkCurrentNoteOnDisk` 在 currentPath_
+// 空时早退，分支从未执行）。补三面（走导入触发，与 5 秒轮询同口径）：
+//   ① 导入但该笔记磁盘没变 → 不重载、不弹冲突（设计取舍：无条件重载会弹假冲突，
+//      用户在假冲突里点「重载磁盘版本」还会用未变内容盖掉未保存编辑）；
+//   ② 磁盘变了 + 本地干净 → 静默重载（编辑器换成磁盘版本）；
+//   ③ 磁盘又变 + 本地脏 → 冲突 toast（action =「重载磁盘版本」）。
+REGISTER_TEST(md_module_db_import_harvests_current_note,
+              "markdown_module: kDbImported 收割当前笔记（未变不弹假冲突 / 干净静默重载 / 脏弹冲突）", {
+    const std::string doc0 = "alpha\n\nbravo\n\ncharlie\n";
+    const std::string doc1 = "one\n\nalpha\n\nbravo\n\ncharlie\n";
+    const std::string doc2 = "two\n\none\n\nalpha\n\nbravo\n\ncharlie\n";
+    test_support::MdHeadlessEnv env(kDirPrefix, "mdimportharv", kDbName);
+    DOCTEST_REQUIRE(env.db != nullptr);
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "note.md", doc0));
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    test_support::HeadlessFrame e("mdimportharv");
+    auto frame = [&](void) { e.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
+
+    frame();
+    DOCTEST_REQUIRE(openFirstNote(*e.ui));
+    frame();
+    DOCTEST_REQUIRE(e.ui->find(kEditorInputId) != nullptr);
+    DOCTEST_CHECK_EQ(e.ui->state<MdInputState>(kEditorInputId).text, doc0);
+
+    // ① 导入广播但磁盘没变 → 文本原样、不弹冲突、**也不发生重载**
+    //（重载 toast 是「发生了重载」的可见证据；无条件重载读的虽是未变内容，文本反而
+    // 相同，只断文本抓不到它）
+    ::core::event::bus().emit(::core::event::kDbImported);
+    frame();
+    DOCTEST_CHECK_EQ(e.ui->state<MdInputState>(kEditorInputId).text, doc0);
+    DOCTEST_CHECK_MESSAGE(e.ui->find("md.toast.action.hit") == nullptr,
+                          "磁盘没变却弹了冲突（假冲突）");
+    const auto* toastTitle1 = e.ui->find("md.toast.title");
+    DOCTEST_CHECK_MESSAGE(toastTitle1 == nullptr ||
+                              toastTitle1->text.find("自动重载") == std::string::npos,
+                          "磁盘没变却发生了重载（假重载）");
+
+    // ② 磁盘变了 + 本地干净 → 静默重载（以「已自动重载」toast 为证）
+    DOCTEST_REQUIRE(md01WriteExternal(env.dir / "note.md", doc1));
+    ::core::event::bus().emit(::core::event::kDbImported);
+    frame();
+    DOCTEST_CHECK_EQ(e.ui->state<MdInputState>(kEditorInputId).text, doc1);
+    DOCTEST_CHECK(e.ui->find("md.toast.action.hit") == nullptr);
+    const auto* toastTitle2 = e.ui->find("md.toast.title");
+    DOCTEST_REQUIRE(toastTitle2 != nullptr);
+    DOCTEST_CHECK_MESSAGE(toastTitle2->text.find("自动重载") != std::string::npos,
+                          "磁盘变了 + 本地干净，未走静默重载（缺重载 toast），实测: " +
+                              toastTitle2->text);
+
+    // ③ 磁盘又变 + 本地脏（键入 1 字符，未过 400ms 自动保存防抖）→ 冲突 toast
+    DOCTEST_REQUIRE(typeIntoEditor(*e.ui, "Q"));
+    DOCTEST_REQUIRE(md01WriteExternal(env.dir / "note.md", doc2));
+    ::core::event::bus().emit(::core::event::kDbImported);
+    frame();
+    DOCTEST_CHECK_MESSAGE(e.ui->find("md.toast.action.hit") != nullptr,
+                          "本地脏 + 磁盘变，导入触发未弹冲突 toast");
+
+    mod->onStop();
+    return true;
+})
+
 // 用例 7：捕获越界竞态（冲突路径）
 // 构造「输入 onChange 当帧收缩 blocks + 冲突重载」：活动块 = 块 2，选中其文本首
 // 字节（块间空行）删除 → 3 块合并成 2 块，liveActiveBlock_ 保持陈旧值 2（越界态）
