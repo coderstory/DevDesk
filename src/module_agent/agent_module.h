@@ -57,6 +57,12 @@ std::vector<int64_t> detectRunEndNotifications(
     const std::map<int64_t, std::string>& nowStatus,
     const std::set<int64_t>& notifiedRunIds);
 
+// notifiedRunIds 的收敛：只留窗口（本轮 runId→status 快照）内的 id。
+// 该集合只增不减是本模块唯一的无界容器（每次 run 结束 +1、会话内不释放）；窗口外 id
+// 不会再被观测到（快照只取最近 N 条 run，更老的 run 回不来），剔除不改通知语义。
+void pruneNotifiedRunIds(const std::map<int64_t, std::string>& window,
+                         std::set<int64_t>& notifiedRunIds);
+
 // 时长秒 → 紧凑中文（0秒 / 45秒 / 2分13秒 / 1时23分 / 2天3时；负值按 0，与 runRowText 同口径）
 std::string formatRunDurationText(int64_t seconds);
 

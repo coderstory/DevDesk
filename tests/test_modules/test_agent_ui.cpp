@@ -1595,6 +1595,38 @@ REGISTER_TEST(agent_run_end_notify_transition_rules,
     return true;
 })
 
+// Task 1 续（T5 审计小项）：已通知集合（notifiedRunIds_）只增不减 —— 每次 run 结束 +1、
+// 会话内永不释放，是本模块唯一的无界容器。窗口外 id 不会再被观测到（快照只取最近 N 条
+// run，更老的 run 不可能回到窗口），故每轮把不在窗口内的 id 剔掉即可，通知语义不变。
+// 红证据（实现前）：本例引用尚不存在的 pruneNotifiedRunIds → 编译期红（缺 API）。
+REGISTER_TEST(agent_run_end_notify_prune_keeps_window_only,
+              "agent: 已通知集合随窗口收敛（窗口内保留 / 窗口外剔除 / 空窗口清空）", {
+    // 窗口 {7,9}、集合 {1,7,9,42} → 只留 7、9
+    {
+        std::set<int64_t> notified = {1, 7, 9, 42};
+        module::agent::pruneNotifiedRunIds({{7, "completed"}, {9, "failed"}},
+                                           notified);
+        DOCTEST_CHECK_EQ(notified.size(), 2u);
+        DOCTEST_CHECK(notified.count(7) == 1u);
+        DOCTEST_CHECK(notified.count(9) == 1u);
+        DOCTEST_CHECK(notified.count(1) == 0u);
+        DOCTEST_CHECK(notified.count(42) == 0u);
+    }
+    // 空窗口 → 全清（不是「无窗口信息就保留全部」）
+    {
+        std::set<int64_t> notified = {1, 2, 3};
+        module::agent::pruneNotifiedRunIds({}, notified);
+        DOCTEST_CHECK(notified.empty());
+    }
+    // 空集合 → 不崩
+    {
+        std::set<int64_t> notified;
+        module::agent::pruneNotifiedRunIds({{5, "failed"}}, notified);
+        DOCTEST_CHECK(notified.empty());
+    }
+    return true;
+})
+
 REGISTER_TEST(agent_ui_run_failed_shows_toast,
               "agent_ui: run 失败 → 通知入队（failed 必响，标题含失败、正文含任务名）", {
     test_support::TestDb tdb("agentui", "failtoast");

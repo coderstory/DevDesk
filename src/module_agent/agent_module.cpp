@@ -73,6 +73,17 @@ std::vector<int64_t> detectRunEndNotifications(
     return toNotify;   // map 迭代升序，无需再排
 }
 
+void pruneNotifiedRunIds(const std::map<int64_t, std::string>& window,
+                         std::set<int64_t>& notifiedRunIds) {
+    for (auto it = notifiedRunIds.begin(); it != notifiedRunIds.end();) {
+        if (window.count(*it) == 0) {
+            it = notifiedRunIds.erase(it);   // 掉出窗口：不会再被观测到
+        } else {
+            ++it;
+        }
+    }
+}
+
 std::string formatRunDurationText(int64_t seconds) {
     if (seconds < 0) seconds = 0;   // 时钟回拨防御：不显示负时长（与 runRowText 同口径）
     const int64_t days = seconds / 86400;
@@ -1040,6 +1051,9 @@ void AgentModule::refreshData() {
             notifiedRunIds_.insert(runId);
         }
         prevRunStatuses_ = std::move(nowStatus);
+        // 去重集随窗口收敛：否则它是本模块唯一只增不减的容器（会话内不释放）。
+        // 放在快照交接之后——此时 prevRunStatuses_ 就是本轮窗口。
+        pruneNotifiedRunIds(prevRunStatuses_, notifiedRunIds_);
     }
     if (detailTaskId_) {
         detailMessages_.clear();
