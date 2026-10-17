@@ -216,15 +216,23 @@ add_subdirectory(tests)
 add_executable(DevDesk src/main.cpp src/app_sidebar.cpp src/app_assembly.cpp
     src/module_toggle_bridge.cpp)
 devdesk_apply_warnings(DevDesk)
-eui_neo_configure_app(DevDesk)
+eui_neo_configure_app(DevDesk KEEP_EXCEPTIONS_RTTI)
 
 # EUI-NEO 曾给非 Debug 的 app target 强加 -Os（eui_apply_compile_options），
 # 该 -Os 在 MSYS2 GCC 16.2 下踩中 C4 ABI 缺口：-Os 时 GCC 对 std::string 移动
 # 构造发出新式 C4 引用（constexpr 构造的压缩 mangling），而 libstdc++.a 只提供
 # C1/C2 定义 → Release 链接 undefined reference。上游 U8 已改：eui_neo_configure_app
 # 传 NO_SIZE_OPT，不再向消费者 app target 强加优化级别（EUI-NEO rev 3d231be），
-# DevDesk 侧摘 -Os 的 workaround 于 2026-09-27 随之删除（此处不再需要改写编译选项；
-# EUI 的 -fno-exceptions/-fno-rtti 仍由其 genex 提供，未受影响）。
+# DevDesk 侧摘 -Os 的 workaround 于 2026-09-27 随之删除（此处不再需要改写编译选项）。
+#
+# 同类问题的第二个实例（2026-10-17 修）：eui_apply_compile_options 还把「框架自身
+# 不用异常/RTTI」的策略**无条件**加进消费者 app target（NO_SIZE_OPT 只免 -Os）。
+# DevDesk 有 24 处 catch（多为 std::filesystem / std::thread 的 std::system_error，
+# 属必须捕获）与 1 处 dynamic_cast<AgentModule*> → 非 Debug 直接无法编译：
+#   event_bus.h:108     error: cannot use 'try' with exceptions disabled
+#   app_sidebar.cpp:245 error: use of dynamic_cast requires -frtti
+# 上游已加豁免开关：此处传 KEEP_EXCEPTIONS_RTTI 保留宿主语言能力。**EUI-NEO 自己的
+# target 仍带 -fno-exceptions/-fno-rtti，策略未放宽**（只停止外溢给消费者）。
 target_link_libraries(DevDesk PRIVATE
     devdesk_core
     devdesk_platform
