@@ -72,6 +72,20 @@ void mergeSubResult(SyncRunResult& dst, SyncRunResult src) {
     if (dst.deleteSkipHint.empty()) dst.deleteSkipHint = std::move(src.deleteSkipHint);
 }
 
+// 拉取摘要的备份段：库备份（只有导入 database.sql 时才有）与笔记备份名**分别点名**，
+// 两者都空则整段不出现（不留空括号）。为什么两个都要报：两类备份同放 backups/ 同一
+// 目录，摘要里只报笔记名会让用户以为库没备份 —— 真出事时不知道该拿哪份文件回滚。
+std::string backupClauseText(const std::string& dbName, const std::string& notesName) {
+    if (dbName.empty() && notesName.empty()) return {};
+    std::string s = "（本地备份：";
+    if (!dbName.empty()) {
+        s += "库 " + dbName;
+        if (!notesName.empty()) s += "、";
+    }
+    if (!notesName.empty()) s += "笔记 " + notesName;
+    return s + "）";
+}
+
 } // namespace
 
 GithubSyncEngine::GithubSyncEngine(SyncEngineDeps deps) : deps_(std::move(deps)) {}
@@ -582,6 +596,7 @@ SyncRunResult GithubSyncEngine::pull(platform::github::GithubApi& api,
     }
     bool sqlImported = false;
     std::string notesBackupNameOut;   // 摘要用：库导入发生时的笔记备份目录名
+    std::string dbBackupNameOut;      // 摘要用：覆盖本地库前落盘的库备份文件名
 
     // ② 笔记动作先算（纯本地，零网络）：拉取覆盖面 = 导入 database.sql 或
     // 下载笔记任一发生 → 先整目录备份笔记，再动库。
@@ -623,8 +638,8 @@ SyncRunResult GithubSyncEngine::pull(platform::github::GithubApi& api,
         notesBackupNameOut = notesBackupName;
         if (sqlImportPlanned) {
             // 覆盖本地 DB 前必须先备份（备份失败即中止，绝不在无退路时覆盖）。
-            std::string backupName;
-            auto backup = backupLocalDb(*db, backupName);
+            // 出参名进摘要：用户要能从摘要直达 backups/ 里那份可回滚的文件。
+            auto backup = backupLocalDb(*db, dbBackupNameOut);
             if (backup.isFail()) {
                 out.summary = "备份失败，已中止拉取：" + backup.errorMessage();
                 return out;
@@ -713,9 +728,7 @@ SyncRunResult GithubSyncEngine::pull(platform::github::GithubApi& api,
                        ? "（远端已删 " + std::to_string(keepCount) +
                              " 篇，本地保留）"
                        : "") +
-                  (!notesBackupNameOut.empty()
-                       ? "（本地备份：" + notesBackupNameOut + "）"
-                       : "");
+                  backupClauseText(dbBackupNameOut, notesBackupNameOut);
     out.ok = true;
     return out;
 }

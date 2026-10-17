@@ -632,9 +632,13 @@ REGISTER_TEST(gsync_engine_pull_imports_changed_sql,
 
     DOCTEST_CHECK_MESSAGE(r.ok, "summary=" + r.summary);
     DOCTEST_CHECK(r.dbImported);
+    // 摘要必须同时点名**两个**备份：笔记目录名 + 「覆盖本地库前」落盘的那份库文件名。
+    // 只报笔记备份会让用户以为库没备份 —— backups/ 里两种备份同目录混放，真出事时
+    // 不知道该拿哪一份回滚（这正是本用例从「只报 notes-…」改判的口径）。
     DOCTEST_CHECK_EQ(
         r.summary,
-        std::string("已导入 database.sql；下载 0 篇笔记（本地备份：notes-1700000000）"));
+        std::string("已导入 database.sql；下载 0 篇笔记（本地备份：库 "
+                    "devdesk-1700000000.db、笔记 notes-1700000000）"));
     auto sqlSha = fx.store.syncedSqlSha();
     DOCTEST_REQUIRE(sqlSha.isOk());
     DOCTEST_CHECK_EQ(sqlSha.value(), std::string("sql-new"));
@@ -685,6 +689,11 @@ REGISTER_TEST(gsync_engine_pull_remote_note_changed_downloads,
     DOCTEST_CHECK_MESSAGE(r.ok, "summary=" + r.summary);
     DOCTEST_CHECK(!r.dbImported);
     DOCTEST_CHECK(r.summary.find("下载 1 篇笔记") != std::string::npos);
+    // 对照组（与 gsync_engine_pull_imports_changed_sql 互证）：只下笔记、没导库 →
+    // 摘要只点名笔记备份，**不出现**库备份名 ——「库 …」那段只在真的备份过库时才有
+    //（防「不分情形恒拼库名」的过度修复）。
+    DOCTEST_CHECK(r.summary.find("notes-1700000000") != std::string::npos);
+    DOCTEST_CHECK(r.summary.find("devdesk-") == std::string::npos);
     DOCTEST_CHECK_EQ(fx.tmp.read(fx.notesDir() / "b.md"),
                      std::string("REMOTE\n"));
     auto records = fx.store.syncedNoteRecords();

@@ -667,6 +667,56 @@ REGISTER_TEST(github_error_dialog_conflict_overwrite_list,
     return true;
 })
 
+// 清单上限：本地未推改动可能有成千上万条（远端长期没推 / 首次拉取），而 scrollView 的
+// content 每帧重建 —— 逐条建节点是无界每帧成本，上万行直接把 UI 卡死。只列前 50 条 +
+// 一行「其余 N 个」：信息不丢（用户知道总量，不会以为「就这么点」）。
+// 判据两半：截断侧（60 条 → 前 50 在、第 51 条起不在、其余行报 10）+ 边界内对照
+//（恰好 50 条 → 全列、无其余行，防「不分情形恒拼提示行」的过度修复）。
+REGISTER_TEST(github_error_dialog_conflict_overwrite_list_capped,
+              "github_sync 409 弹窗: 覆盖清单超 50 条只列前 50 + 其余计数行（边界内 50 条对照）", {
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+
+    DialogFixture fx;
+    fx.st.open = true;
+    fx.st.variant = ms::GitErrorDialogVariant::Conflict409;
+    for (int i = 0; i < 60; ++i) {
+        fx.in.overwriteFiles.push_back("notes/n" + std::to_string(i) + ".md");
+    }
+    test_support::HeadlessFrame f("githubsyncdlgovwcap");
+    DOCTEST_CHECK(f.frame([&](eui::Ui& ui) {
+        fx.draw(ui, screen);
+        DOCTEST_CHECK(ui.find(std::string(kDlgId) +
+                              ".logs.overwrite.49.text") != nullptr);
+        DOCTEST_CHECK(ui.find(std::string(kDlgId) +
+                              ".logs.overwrite.50.text") == nullptr);
+        const auto* more =
+            ui.find(std::string(kDlgId) + ".logs.overwrite.more");
+        DOCTEST_REQUIRE(more != nullptr);
+        DOCTEST_CHECK(more->text.find("10") != std::string::npos);
+        return true;
+    }));
+
+    // 对照（边界内）：恰好 50 条 → 全列、无「其余」行
+    DialogFixture fx50;
+    fx50.st.open = true;
+    fx50.st.variant = ms::GitErrorDialogVariant::Conflict409;
+    for (int i = 0; i < 50; ++i) {
+        fx50.in.overwriteFiles.push_back("notes/n" + std::to_string(i) + ".md");
+    }
+    test_support::HeadlessFrame f50("githubsyncdlgovw50");
+    DOCTEST_CHECK(f50.frame([&](eui::Ui& ui) {
+        fx50.draw(ui, screen);
+        DOCTEST_CHECK(ui.find(std::string(kDlgId) +
+                              ".logs.overwrite.49.text") != nullptr);
+        DOCTEST_CHECK(ui.find(std::string(kDlgId) +
+                              ".logs.overwrite.more") == nullptr);
+        return true;
+    }));
+    return true;
+})
+
 REGISTER_TEST(github_sync_logic_throttle,
               "github_sync 逻辑: 5 分钟节流窗口 + 手动绕开", {
     using namespace module::settings::gsync;

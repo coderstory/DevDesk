@@ -11,6 +11,7 @@
 #include <ui_kit/dialog_form.h>
 #include <ui_kit/metrics.h>
 
+#include <algorithm>
 #include <string>
 
 namespace module::settings {
@@ -27,6 +28,9 @@ constexpr float kHintY = 110.0f;
 constexpr float kLogsY = 132.0f;
 constexpr float kLogsH = 248.0f;
 constexpr float kLogRowH = 30.0f;
+// 覆盖清单最多列出的行数：本地未推改动无上界（首次拉取可上万条），而 scrollView 的
+// content 每帧重建 —— 无上限就是无界每帧成本。截断处另画一行「其余 N 个」（见渲染处）。
+constexpr size_t kMaxOverwriteRows = 50;
 constexpr float kDetailY = 408.0f;
 constexpr float kDetailH = 76.0f;
 constexpr float kBtnRowOffsetY = 60.0f;  // 按钮行底距弹窗底（与 dialog_form 同口径）
@@ -152,7 +156,9 @@ void drawGitErrorDialog(eui::Ui& ui, const eui::Screen& screen,
                         .fontWeight(600)
                         .color(t.colors.warning)
                         .build();
-                    for (size_t i = 0; i < in.overwriteFiles.size(); ++i) {
+                    const size_t shown =
+                        std::min(in.overwriteFiles.size(), kMaxOverwriteRows);
+                    for (size_t i = 0; i < shown; ++i) {
                         inner.text(std::string(kDialogId) + ".logs.overwrite." +
                                    std::to_string(i) + ".text")
                             .size(contentWidth, rowH)
@@ -160,6 +166,18 @@ void drawGitErrorDialog(eui::Ui& ui, const eui::Screen& screen,
                             .fontSize(fs(12.0f))
                             .lineHeight(rowH)
                             .color(t.colors.textSecondary)
+                            .build();
+                    }
+                    if (in.overwriteFiles.size() > shown) {
+                        const size_t rest = in.overwriteFiles.size() - shown;
+                        inner.text(std::string(kDialogId) + ".logs.overwrite.more")
+                            .size(contentWidth, rowH)
+                            .text("  …以及其余 " + std::to_string(rest) +
+                                  " 个文件（上面只列前 " + std::to_string(shown) +
+                                  " 个）")
+                            .fontSize(fs(12.0f))
+                            .lineHeight(rowH)
+                            .color(t.colors.textTertiary)
                             .build();
                     }
                 }
