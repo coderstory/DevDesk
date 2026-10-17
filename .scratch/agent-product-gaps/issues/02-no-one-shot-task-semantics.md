@@ -86,3 +86,11 @@ Status: `needs-triage`
 1. 票面修复方向 1 写「需动表结构与 scheduler」——scheduler 半边对；**表结构半边不必要**：键落在既有 `trigger_config` JSON 文本里，零 schema 变更（这正是本单选的路线，见上）。
 2. 票面验收判据三条全达成：①「指定时间跑一次即自动停用」= 开关 + `max_runs=1`（定点用例 + 探针审阅帧）；②「重复任务行为不回归」= 未配键零查询零行为差异 + 三分钟对照组；③「停用后不再占 run 队列」= 两条派发路径在派发前就被过滤/置停用，停用不影响已起 run 的正常收尾。
 3. 票面证据说 `AgentTask` 结构无 `enabled` / 一次性标记——准确（`agent_loop.h` 的 `AgentTask` 确实没有）；但**库表侧 `agent_tasks.enabled` 列存在且 Scheduler 已按它过滤**（`scheduler.cpp:268/331`），本单正是复用它做「自动停用」的那一半，没有新增启停面。
+
+### 复核补正（主会话，2026-10-17）：额度闸位置修正 —— 注释与代码曾相反
+
+`acdfa11` 的实现把 schedule 路的额度判定放在 `cronMatches` **之后**（上面 Comments 里也这么记录），但同一提交里 `scheduler.cpp` 的额度闸块注释写的是**之前**，理由正是「放到 `cronMatches` 之后 → 『每天 18:00 只跑一次』的任务会一直显示启用直到第二天 18:00 才被停用（用户看不见停）」。注释与代码相反，而实际行为就是注释担心的那一种：跑满后要等到下一次 cron 匹配才置停用。
+
+已修（`6e58716`）：闸移到**两条点名 WARN 之后、`cronMatches` 之前** —— 坏 `trigger_config` / 坏 cron 逐条 WARN 不被额度闸提前 `continue` 掉（原放置理由仍然成立），同时判定与本分钟是否匹配无关（每分钟重判，跑满即停 ≤1 分钟就在库里可见，与契约注释一致）。不限次数的旧配置走 `runBudgetExhausted` 首行的 `return false`，零查询零行为差异。
+
+判据：`tests/test_modules/test_agent_scheduler.cpp` 的 `scheduler_max_runs_disables_on_non_matching_minute`（先红后绿——改动前红在 `!(afterOffMinute.value().enabled)`；cron 用**本机本地时刻**拼装，用例不依赖运行机器时区）。回归：本单 `--filter max_runs` 定点 10 条仍 10/10。
