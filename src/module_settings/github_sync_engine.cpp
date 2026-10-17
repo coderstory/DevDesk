@@ -704,9 +704,15 @@ SyncRunResult GithubSyncEngine::pull(platform::github::GithubApi& api,
                                       : std::string("远端已不存在"));
             return out;
         }
-        if (!writeFileFromString(
-                notesDir() / action.fileName,
-                f.value().content)) {
+        // 嵌套笔记（远端可含子目录）：落盘前按需建父目录。失败即整拉取中止是有意
+        // 为之（宁可停也不留半个状态），但**不该因为缺一个目录就中止** —— 建目录
+        // 是这一次写入的必要步骤，不是用户的先决条件。
+        const auto target = notesDir() / action.fileName;
+        std::error_code mkEc;
+        if (target.has_parent_path()) {
+            std::filesystem::create_directories(target.parent_path(), mkEc);
+        }
+        if (mkEc || !writeFileFromString(target, f.value().content)) {
             out.summary = "写入笔记文件失败：" + action.fileName;
             return out;
         }
@@ -765,7 +771,9 @@ core::Result<void> GithubSyncEngine::backupLocalDb(core::data::SqliteDb& db,
 }
 
 // 拉取覆盖前整目录备份笔记到 backups/notes-<ts>/（与库备份同目录、
-// 前缀隔离、独立计数，各保 5 份）。只拷 .md；笔记目录不存在 → 无可备份 = ok。
+// 前缀隔离、独立计数，各保 5 份）。**递归**拷贝 .md 并保留子目录结构（子目录笔记
+// 也在回滚点里 —— pull 的删除传播按登记名删，嵌套笔记一旦被登记就会真删）；
+// 笔记目录不存在 → 无可备份 = ok。
 core::Result<void> GithubSyncEngine::backupNotesDir(std::string& outName) {
     const auto srcDir = notesDir();
     std::error_code ec;
@@ -786,18 +794,31 @@ core::Result<void> GithubSyncEngine::backupNotesDir(std::string& outName) {
                                         "创建笔记备份目录失败：" +
                                             ec.message());
     }
-    for (std::filesystem::directory_iterator it(srcDir, ec), end;
+    for (std::filesystem::recursive_directory_iterator it(
+             srcDir, std::filesystem::directory_options::skip_permission_denied,
+             ec),
+         end;
          it != end; it.increment(ec)) {
         if (ec) break;
         std::error_code fec;
         if (!it->is_regular_file(fec)) continue;
-        const std::string fname = it->path().filename().string();
+        const auto rel = std::filesystem::relative(it->path(), srcDir, fec);
+        if (fec || rel.empty()) continue;
+        const std::string fname = rel.generic_string();
         if (fname.size() < 3 ||
             fname.compare(fname.size() - 3, 3, ".md") != 0) {
             continue;
         }
+        const auto dst = target / rel;
+        std::filesystem::create_directories(dst.parent_path(), ec);
+        if (ec) {
+            return core::Result<void>::fail(
+                core::ErrorCode::FileWriteFailed,
+                "创建笔记备份子目录失败：" + dst.parent_path().string() +
+                    ": " + ec.message());
+        }
         std::filesystem::copy_file(
-            it->path(), target / fname,
+            it->path(), dst,
             std::filesystem::copy_options::overwrite_existing, ec);
         if (ec) {
             return core::Result<void>::fail(
@@ -811,18 +832,27 @@ core::Result<void> GithubSyncEngine::backupNotesDir(std::string& outName) {
     return core::Result<void>::ok();
 }
 
-// 本地笔记快照（文件名 → 内容）。
+// 本地笔记快照（**相对**笔记目录的路径名 → 内容），递归收集。
+// 为什么相对名：远端名 = 树路径去掉 `notes/` 前缀（见 push 的 remoteNoteShas 构造），
+// 嵌套笔记在远端就是 `notes/sub/a.md` → 名字必须是 `sub/a.md`。`filename()` 单层收集
+// 会让子目录笔记对同步完全隐身（用户以为「同步成功」却从未上传），且 Windows 上
+// `generic_string()` 保证分隔符是 '/'、反斜杠不会漂进远端路径。
 std::map<std::string, std::string> GithubSyncEngine::collectLocalNotes() const {
     std::map<std::string, std::string> out;
     std::error_code ec;
     const auto dir = notesDir();
     if (!std::filesystem::is_directory(dir, ec)) return out;
-    for (std::filesystem::directory_iterator it(dir, ec), end; it != end;
-         it.increment(ec)) {
+    for (std::filesystem::recursive_directory_iterator it(
+             dir, std::filesystem::directory_options::skip_permission_denied,
+             ec),
+         end;
+         it != end; it.increment(ec)) {
         if (ec) break;
         std::error_code fec;
         if (!it->is_regular_file(fec)) continue;
-        const std::string name = it->path().filename().string();
+        const auto rel = std::filesystem::relative(it->path(), dir, fec);
+        if (fec || rel.empty()) continue;
+        const std::string name = rel.generic_string();
         if (name.size() < 3 || name.compare(name.size() - 3, 3, ".md") != 0) {
             continue;
         }

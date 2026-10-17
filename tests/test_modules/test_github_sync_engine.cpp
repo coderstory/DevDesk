@@ -708,6 +708,84 @@ REGISTER_TEST(gsync_engine_pull_remote_note_changed_downloads,
     return true;
 })
 
+// ── 嵌套笔记（子目录）三处口径必须一致 ──
+// 笔记目录允许子目录：markdown 索引侧本就**递归**扫描（markdown_service.cpp 的
+// recursive_directory_iterator），所以 `notes/sub/a.md` 是用户真能拥有的合法笔记
+//（手放进子目录 / 外部编辑器创建）。改判前 Sync 侧三处都是单层或不建父目录：
+// ①收集（push）单层 → 子目录笔记对同步**完全隐身**，用户以为「同步成功」但它们
+// 从未上传；②备份（拉取前「整目录备份」）单层 → 注释说的整目录是假的，子目录笔记
+// 不在回滚点里；③落盘（pull）不建父目录 → 远端有嵌套笔记时整个拉取中止。
+// 三条用例各盯一处，都是「用户可见的静默缺口」，不是风格问题。
+REGISTER_TEST(gsync_engine_push_collects_nested_note,
+              "gsync 引擎: push 递归收集子目录笔记（sub/a.md → 远端 notes/sub/a.md）", {
+    EngineFixture fx;
+    writeNote(fx.notesDir() / "sub", "a.md", "NESTED\n");
+    fx.seedTree({});
+    fx.gh.routes.push_back({"PUT", "/contents/data/database.sql",
+                            {okResp(201, R"({"content":{"sha":"sqlnewsha"}})")}});
+    fx.gh.routes.push_back({"PUT", "/contents/notes/sub/a.md",
+                            {okResp(201, R"({"content":{"sha":"nestedsha"}})")}});
+
+    fx.seedRepo();
+    const SyncRunResult r = fx.engine().push(*fx.makeApi(), "trunk");
+
+    DOCTEST_CHECK_MESSAGE(r.ok, "summary=" + r.summary);
+    DOCTEST_CHECK_EQ(r.summary, std::string("已推送 database.sql 与 1 篇笔记"));
+    DOCTEST_CHECK_EQ(fx.gh.count("PUT", "/contents/notes/sub/a.md"), 1);
+    // 登记名是**相对**笔记目录的 '/'-分隔路径：与远端名口径一致（远端名 = 树路径
+    // 去掉 `notes/` 前缀）。用 filename() 单层收集会漏掉这条，且 Windows 上反斜杠
+    // 会漂进远端路径。
+    auto records = fx.store.syncedNoteRecords();
+    DOCTEST_REQUIRE(records.isOk());
+    DOCTEST_CHECK(records.value().count("sub/a.md") == 1u);
+    return true;
+})
+
+REGISTER_TEST(gsync_engine_pull_writes_nested_note,
+              "gsync 引擎: pull 远端子目录笔记可落盘（按需建父目录，不再整拉取中止）", {
+    EngineFixture fx;
+    fx.seedTree({{"notes/sub/a.md", "nested-new"}});
+    fx.gh.routes.push_back({"GET", "/contents/notes/sub/a.md",
+                            {okResp(200, fileJson("nested-new", "NESTED\n"))}});
+
+    const SyncRunResult r = fx.engine().pull(*fx.makeApi(), "trunk");
+
+    // 改判前：写 notes/sub/a.md 时父目录不存在 → 整个 pull 以
+    // 「写入笔记文件失败：sub/a.md」中止（一篇嵌套笔记能挡住整次拉取）。
+    DOCTEST_CHECK_MESSAGE(r.ok, "summary=" + r.summary);
+    DOCTEST_CHECK_EQ(fx.tmp.read(fx.notesDir() / "sub" / "a.md"),
+                     std::string("NESTED\n"));
+    auto records = fx.store.syncedNoteRecords();
+    DOCTEST_REQUIRE(records.isOk());
+    DOCTEST_CHECK_EQ(records.value().at("sub/a.md").sha,
+                     std::string("nested-new"));
+    return true;
+})
+
+REGISTER_TEST(gsync_engine_notes_backup_includes_nested,
+              "gsync 引擎: 拉取前笔记备份含子目录（notes/sub/a.md → backups/notes-<ts>/sub/a.md）", {
+    EngineFixture fx;
+    DOCTEST_REQUIRE(fx.store.recordSyncedNote("b.md", "b-old",
+                                              g::contentHash("B\n"))
+                        .isOk());
+    writeNote(fx.notesDir(), "b.md", "B\n");
+    writeNote(fx.notesDir() / "sub", "a.md", "NESTED-OLD\n");
+    fx.seedTree({{"notes/b.md", "b-new"}});
+    fx.gh.routes.push_back({"GET", "/contents/notes/b.md",
+                            {okResp(200, fileJson("b-new", "REMOTE\n"))}});
+
+    const SyncRunResult r = fx.engine().pull(*fx.makeApi(), "trunk");
+
+    DOCTEST_CHECK_MESSAGE(r.ok, "summary=" + r.summary);
+    const auto backupDir = fx.appDataDir() / "backups" / "notes-1700000000";
+    DOCTEST_CHECK(std::filesystem::exists(backupDir / "b.md"));
+    // 改判前：备份只拷顶层 → 子目录笔记不在回滚点里，而 pull 的删除传播
+    //（一旦嵌套笔记也被登记）会真删它们。
+    DOCTEST_CHECK_EQ(fx.tmp.read(backupDir / "sub" / "a.md"),
+                     std::string("NESTED-OLD\n"));
+    return true;
+})
+
 REGISTER_TEST(gsync_engine_pull_local_deleted_both_branches,
               "gsync 引擎: pull 本地删双分支（远端未变→Skip 待传播；远端变→Download 恢复，56bafe7）", {
     // 分支 A：远端未变（sha==登记）→ Skip：不下载、登记保留、本地保持已删
