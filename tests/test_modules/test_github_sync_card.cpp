@@ -90,6 +90,7 @@ struct DialogFixture {
     int retryClicks = 0;
     int closeClicks = 0;
     int pullThenPushClicks = 0;
+    int updateTokenClicks = 0;
 
     DialogFixture() {
         auto e1 = makeEntry("GET", "https://api.github.com/repos/u/r", 401, 123);
@@ -107,6 +108,7 @@ struct DialogFixture {
         a.copyDetail = [this](const std::string& t) { copied = t; };
         a.retry = [this] { ++retryClicks; };
         a.pullThenPush = [this] { ++pullThenPushClicks; };
+        a.updateToken = [this] { ++updateTokenClicks; };
         a.close = [this] { ++closeClicks; };
         a.selectLog = [this](int i) { st.selectedLogIndex = i; };
         a.logScrolled = [this](float v) { st.logScrollOffset = v; };
@@ -492,6 +494,67 @@ REGISTER_TEST(github_error_dialog_conflict_variant,
     }));
     DOCTEST_CHECK_EQ(fx.pullThenPushClicks, 1);
     DOCTEST_CHECK(!fx.st.conflictConfirmArmed);   // 触发后解除武装
+    return true;
+})
+
+REGISTER_TEST(github_error_dialog_auth_variant_decision,
+              "github_sync 失败分类: 401 → 定向引导；409 优先；非 401/空日志 → 通用（带对照）", {
+    const auto auth = makeEntry("GET", "https://api.github.com/repos/u/r", 401, 10);
+    const auto ok200 = makeEntry("GET", "https://api.github.com/repos/u/r", 200, 10);
+    const auto err500 = makeEntry("PUT", "https://api.github.com/repos/u/r/contents/x", 500, 10);
+    using V = ms::GitErrorDialogVariant;
+    const std::vector<platform::github::ApiLogEntry> none;
+
+    DOCTEST_CHECK(ms::variantForSyncFailure({auth}, false) == V::AuthFailed);
+    // 对照组：非 401 不得被判成认证失败（否则就是"凡失败皆引导"）
+    DOCTEST_CHECK(ms::variantForSyncFailure({ok200}, false) == V::Error);
+    DOCTEST_CHECK(ms::variantForSyncFailure({err500}, false) == V::Error);
+    // 空日志（未观察到任何请求）→ 通用
+    DOCTEST_CHECK(ms::variantForSyncFailure(none, false) == V::Error);
+    // 混合日志：只要有一条 401 即算认证失败
+    DOCTEST_CHECK(ms::variantForSyncFailure({ok200, auth}, false) == V::AuthFailed);
+    // 409 优先于 401：同现时维持既有冲突语义（不回归）
+    DOCTEST_CHECK(ms::variantForSyncFailure({auth}, true) == V::Conflict409);
+    return true;
+})
+
+REGISTER_TEST(github_error_dialog_auth_variant,
+              "github_sync 401 弹窗: 标题/主按钮走定向引导，且不触发通用重试（带通用变体对照）", {
+    DialogFixture fx;
+    fx.st.open = true;
+    fx.st.variant = ms::GitErrorDialogVariant::AuthFailed;
+    fx.in.summary = "推送失败：HTTP 401（Token 无效或已过期）";
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+
+    test_support::HeadlessFrame f("githubsyncdlgauth");
+    DOCTEST_CHECK(f.frame([&](eui::Ui& ui) {
+        fx.draw(ui, screen);
+        const auto* title = ui.find(std::string(kDlgId) + ".title");
+        DOCTEST_REQUIRE(title != nullptr);
+        DOCTEST_CHECK(title->text.find("认证失败") != std::string::npos);
+        const auto* label = ui.find(std::string(kDlgId) + ".btn.retry.text");
+        DOCTEST_REQUIRE(label != nullptr);
+        DOCTEST_CHECK_EQ(label->text, std::string("去更新 Token"));
+        ui.find(std::string(kDlgId) + ".btn.retry.bg")->onClick();
+        return true;
+    }));
+    DOCTEST_CHECK_EQ(fx.updateTokenClicks, 1);   // 主按钮走定向引导
+    DOCTEST_CHECK_EQ(fx.retryClicks, 0);         // 不是通用重试
+
+    // 对照组：通用变体下同一位仍是「重试」——证明上面断言的是变体分支而非恒真
+    fx.st.variant = ms::GitErrorDialogVariant::Error;
+    DOCTEST_CHECK(f.frame([&](eui::Ui& ui) {
+        fx.draw(ui, screen);
+        const auto* title = ui.find(std::string(kDlgId) + ".title");
+        DOCTEST_REQUIRE(title != nullptr);
+        DOCTEST_CHECK(title->text.find("认证失败") == std::string::npos);
+        const auto* label = ui.find(std::string(kDlgId) + ".btn.retry.text");
+        DOCTEST_REQUIRE(label != nullptr);
+        DOCTEST_CHECK_EQ(label->text, std::string("重试"));
+        return true;
+    }));
     return true;
 })
 

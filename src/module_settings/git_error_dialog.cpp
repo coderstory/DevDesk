@@ -56,6 +56,15 @@ std::string formatGitLogDetail(const platform::github::ApiLogEntry& e) {
     return {};
 }
 
+GitErrorDialogVariant variantForSyncFailure(
+    const std::vector<platform::github::ApiLogEntry>& logs, bool conflict) {
+    if (conflict) return GitErrorDialogVariant::Conflict409;
+    for (const auto& e : logs) {
+        if (e.statusCode == 401) return GitErrorDialogVariant::AuthFailed;
+    }
+    return GitErrorDialogVariant::Error;
+}
+
 std::string formatGitErrorDetail(
     const std::string& summary,
     const std::vector<platform::github::ApiLogEntry>& logs) {
@@ -96,9 +105,13 @@ void drawGitErrorDialog(eui::Ui& ui, const eui::Screen& screen,
     ui_kit::drawDialogFrame(ui, screen, frame, themeTokens, [&] {
         const bool conflict =
             st.variant == GitErrorDialogVariant::Conflict409;
+        const bool authFailed =
+            st.variant == GitErrorDialogVariant::AuthFailed;
         ui_kit::drawDialogTitle(
             ui, std::string(kDialogId) + ".title", w,
-            conflict ? "同步冲突（409）" : "同步失败详情",
+            conflict ? "同步冲突（409）"
+                     : (authFailed ? "认证失败（Token 无效或已过期）"
+                                   : "同步失败详情"),
             t.sizes.fontSizeLarge + 2.0f, t.colors.textPrimary);
 
         ui_kit::drawDialogText(
@@ -212,7 +225,7 @@ void drawGitErrorDialog(eui::Ui& ui, const eui::Screen& screen,
             conflict
                 ? (st.conflictConfirmArmed ? "确认：用远端覆盖并推送"
                                            : "拉取远端后再推")
-                : "重试";
+                : (authFailed ? "去更新 Token" : "重试");
 
         components::button(ui, std::string(kDialogId) + ".btn.retry")
             .position(ui_kit::kDialogInsetX, btnY)
@@ -222,7 +235,8 @@ void drawGitErrorDialog(eui::Ui& ui, const eui::Screen& screen,
             .theme(themeTokens, /*primary=*/true)
             .radius(t.sizes.radius)
             // 409 = 二次确认：第一下只武装，第二下才真拉取覆盖并推送。
-            .onClick([sp = &st, fRetry = a.retry, fPull = a.pullThenPush] {
+            .onClick([sp = &st, fRetry = a.retry, fPull = a.pullThenPush,
+                      fUpdateToken = a.updateToken] {
                 if (sp->variant == GitErrorDialogVariant::Conflict409) {
                     if (!sp->conflictConfirmArmed) {
                         sp->conflictConfirmArmed = true;
@@ -230,6 +244,12 @@ void drawGitErrorDialog(eui::Ui& ui, const eui::Screen& screen,
                     }
                     sp->conflictConfirmArmed = false;
                     if (fPull) fPull();
+                    return;
+                }
+                // 401 定向引导：不做通用重试（重试只会再吃一次 401），
+                // 直接领用户去更新 Token。
+                if (sp->variant == GitErrorDialogVariant::AuthFailed) {
+                    if (fUpdateToken) fUpdateToken();
                     return;
                 }
                 if (fRetry) fRetry();

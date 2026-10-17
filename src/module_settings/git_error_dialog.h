@@ -17,10 +17,12 @@
 
 namespace module::settings {
 
-// 弹窗变体：普通失败 / 409 冲突（动作 = 拉取远端后再推，**二次确认**）。
+// 弹窗变体：普通失败 / 409 冲突（动作 = 拉取远端后再推，**二次确认**）/
+// 401 认证失败（动作 = 去更新 Token，定向引导而非通用重试）。
 enum class GitErrorDialogVariant {
     Error,        // 标题「同步失败详情」，主按钮「重试」
     Conflict409,  // 标题「同步冲突（409）」，主按钮「拉取远端后再推」+ 二次确认
+    AuthFailed,   // 标题「认证失败（Token 失效）」，主按钮「去更新 Token」
 };
 
 // 弹窗状态（模块持有；drawGitErrorDialog 只读入参 + 经回调写回）
@@ -46,11 +48,20 @@ struct GitErrorDialogIn {
 struct GitErrorDialogActions {
     std::function<void()> retry;       // Error 变体主按钮：重试
     std::function<void()> pullThenPush;  // Conflict409 变体主按钮（二次确认后触发）
+    std::function<void()> updateToken;    // AuthFailed 变体主按钮：去更新 Token（定向引导）
     std::function<void()> close;                          // 关闭
     std::function<void(const std::string&)> copyDetail;   // 复制详情（文本由弹窗拼好）
     std::function<void(int)> selectLog;                   // 选中日志条目
     std::function<void(float)> logScrolled;               // 日志列表滚动
 };
+
+// 失败类别 → 弹窗变体（纯函数，可离线单测；调用方 = settings_module 的失败分支）。
+// 优先级：409 冲突 > 401 认证失败 > 通用失败。
+// 判据取自**请求日志的状态码**：SyncRunResult 不携带错误码，而每条被记录的请求都带
+// statusCode（401 = 令牌失效）——这是 UI 层唯一可靠信号，胜过匹配摘要文案（文案会变、
+// 会本地化）。空日志（未观察到任何请求）→ 通用失败。
+GitErrorDialogVariant variantForSyncFailure(
+    const std::vector<platform::github::ApiLogEntry>& logs, bool conflict);
 
 // 日志行文案：`方法 URL 状态码 耗时`（无状态码 = 网络错误）。
 std::string formatGitLogRowLine(const platform::github::ApiLogEntry& e);

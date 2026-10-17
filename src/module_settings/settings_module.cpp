@@ -922,9 +922,10 @@ public:
         githubSyncLastCommitSec_ = nowSec();
         githubSyncErrorDialog_.selectedLogIndex = 0;
         githubSyncErrorDialog_.conflictConfirmArmed = false;
+        // 变体判定抽在 git_error_dialog 的纯函数里（可离线单测）：409 走冲突变体、
+        // 401 走定向引导、其余通用。判据 = 请求日志状态码（SyncRunResult 不带错误码）。
         githubSyncErrorDialog_.variant =
-            conflict ? GitErrorDialogVariant::Conflict409
-                     : GitErrorDialogVariant::Error;
+            variantForSyncFailure(githubSyncLogs_, conflict);
         // 手动操作失败 → 弹窗；自动同步失败只留卡片红字 + 详情入口。
         // 启用流程的校验失败同自动路径（用户刚拨开关，此刻弹窗等于打断）。
         const bool silentFailure =
@@ -947,6 +948,13 @@ public:
         GitErrorDialogActions a;
         a.retry = [this] { retryGithubSync(); };
         a.pullThenPush = [this] { githubSyncPullThenPush(); };
+        a.updateToken = [this] {
+            // 401 定向引导：关弹窗把用户送回卡片（Token 输入框就在卡片顶部），
+            // 并给一句可执行的下一步。不动 githubSyncError_ —— 401 红字要留着，
+            // 用户更新 Token 后点同步会自然覆盖它。
+            closeGithubSyncErrorDialog();
+            showToast("请在上方 Token 输入框更新后重新同步");
+        };
         a.close = [this] { closeGithubSyncErrorDialog(); };
         a.copyDetail = [this](const std::string& text) {
             copyGithubSyncDetail(text);
