@@ -16,6 +16,7 @@
 #include "module_agent/scheduler.h"
 #include "core/llm_endpoint.h"
 #include "core/logging.h"
+#include "core/time.h"
 #include "core/tool.h"
 #include <algorithm>
 #include <atomic>
@@ -940,6 +941,49 @@ REGISTER_TEST(event_trigger_max_runs_once_disables_and_stops_dispatch,
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
     DOCTEST_CHECK_EQ(sched.activeRunCount(), 0u);
     DOCTEST_CHECK_EQ(store.listRuns(taskId.value(), 20).value().size(), 1u);
+    sched.stopAll();
+    return true;
+})
+
+// schedule 型的额度判定必须**与 cron 是否匹配无关**：每分钟都重判，跑满即停（≤1 分钟
+// 就在库里可见）。否则「每天 18:00 只跑一次」的任务跑完后会一直显示「启用」直到第二天
+// 18:00 才被停用 —— 用户看不见停，与 scheduler.cpp 额度闸块注释写的契约相反。
+// 只把闸放在 cronMatches **之后**的实现会在这里红：不匹配的分钟永远走不到额度判定。
+REGISTER_TEST(scheduler_max_runs_disables_on_non_matching_minute,
+              "scheduler: 一次性任务跑满后，cron 不匹配的分钟也会被置停用（≤1 分钟可见）", {
+    test_support::TestDb tdb("agentsched", "maxrunsoff");
+    module::agent::AgentStore store(tdb.handle());
+    MockLlm llm; llm.script = { endTurnResp() };   // 不匹配的分钟若仍派发必被抓（脚本为空会红）
+    module::agent::AgentLoop loop(llm, core::ToolRegistry::instance(), store);
+    int64_t nowSec = 3600 * 24;
+    module::agent::Scheduler sched(store, loop, [&nowSec] { return nowSec; });
+
+    // 用**本机本地时刻**拼「每天这一分钟」的 cron：用例不依赖运行机器的时区设置
+    std::tm local{};
+    core::time::localTime(static_cast<std::time_t>(nowSec), &local);
+    const std::string cron = std::to_string(local.tm_min) + " " +
+                             std::to_string(local.tm_hour) + " * * *";
+    auto taskId = store.createTask("每天一次", "g", "schedule", "default", 5, false,
+                                   "{\"cron\":\"" + cron + "\",\"max_runs\":1}");
+    DOCTEST_REQUIRE(taskId.isOk());
+
+    // 匹配分钟：派发首跑（= 额度用尽），当分钟仍是启用态
+    DOCTEST_REQUIRE(sched.tickNow().isOk());
+    DOCTEST_REQUIRE_MESSAGE(waitRunsSettled(store, taskId.value(), 1u),
+                            "首跑未落终态");
+    auto afterFirst = store.getTask(taskId.value());
+    DOCTEST_REQUIRE(afterFirst.isOk());
+    DOCTEST_CHECK(afterFirst.value().enabled);
+
+    // 5 分钟后（同一天、cron 不匹配）：额度判定照跑 → 置停用，且不肯多派一发
+    nowSec += 5 * 60;
+    DOCTEST_REQUIRE(sched.tickNow().isOk());
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    auto afterOffMinute = store.getTask(taskId.value());
+    DOCTEST_REQUIRE(afterOffMinute.isOk());
+    DOCTEST_CHECK_FALSE(afterOffMinute.value().enabled);
+    DOCTEST_CHECK_EQ(store.listRuns(taskId.value(), 20).value().size(), 1u);
+    DOCTEST_CHECK_EQ(sched.activeRunCount(), 0u);
     sched.stopAll();
     return true;
 })

@@ -214,9 +214,13 @@ void Scheduler::eventThreadLoop() {
 }
 
 // 限次额度闸（契约见 scheduler.h）。放在两条派发路径的**派发前**：
-//   schedule 型 → tickNow 的 cronMatches **之前**：每分钟扫描都会重判，于是「跑满即
-//     停」的停用最迟在下一分钟落地；若放到 cronMatches 之后，「每天 18:00 只跑一次」
-//     的任务会一直显示启用状态直到第二天 18:00 才被停用（用户看不见停）
+//   schedule 型 → tickNow 的 cronMatches **之前**、坏配置/坏 cron 两条点名 WARN **之后**
+//     （WARN 在前：静默失败面不许被额度闸提前 continue 掉而消失）。判定与本分钟是否
+//     匹配无关 —— 每分钟扫描都重判，于是「跑满即停」的停用最迟在下一分钟落地；若放到
+//     cronMatches 之后，「每天 18:00 只跑一次」的任务会一直显示启用状态直到第二天
+//     18:00 才被停用（用户看不见停）。
+//     判据：tests/test_modules/test_agent_scheduler.cpp 的
+//     `scheduler_max_runs_disables_on_non_matching_minute`
 //   event 型 → processEvent 的 events 比对之前：事件型没有周期扫描，下一次事件到达是
 //     唯一的调度扫描机会，无论该事件匹不匹配都把额度耗尽的任务置停用（只改启停列，
 //     绝不因此派发任何 run）
@@ -330,11 +334,12 @@ core::Result<void> Scheduler::tickNow() {
                      expr.errorMessage());
             continue;
         }
-        if (!cronMatches(expr.value(), local)) continue;
-        // 额度判定在 cronMatches 之后（坏 cron 仍走上面的点名 WARN，不许被额度闸提前
-        // continue 掉而静默）、同分钟防重之前：每分钟扫描都重判，跑满即停用最迟下一分钟
-        // 落地；相对防重在前的另一重意义——同分钟那次 tick 也会把满额任务置停用
+        // 额度判定在坏配置/坏 cron 两条点名 WARN **之后**（静默失败面不许被额度闸提前
+        // continue 掉）、cronMatches **之前**：判定与本分钟是否匹配无关，每分钟扫描都
+        // 重判，跑满即停用最迟下一分钟落地。相对同分钟防重在前的另一重意义——同分钟那次
+        // tick 也会把满额任务置停用。
         if (runBudgetExhausted(t, cfg.value())) continue;
+        if (!cronMatches(expr.value(), local)) continue;
         {   // 同分钟防重（lastFiredMinute）
             std::lock_guard<std::mutex> lock(mu_);
             if (lastFiredMinute_[t.id] == minute) continue;
