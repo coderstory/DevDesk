@@ -8,6 +8,7 @@
 
 ## [未发布]
 
+- feat(agent): 新增微博热榜解析——纯 JSON 解析函数（`hot_parse`）：过滤广告/无排名项、按 `realpos` 重排 1-based rank、`#` 与中文按 UTF-8 percent-encode 构造搜索链接，坏响应返回带路径的中文错误；`takeTopN` 供后续 `hot.list` 工具截取 top10。
 - feat(agent): 新增闹钟（once）触发类型与表单——触发方式选「闹钟」后可填本地 `YYYY-MM-DD HH:MM`（严格校验格式 / 日期有效性 / 夏令时不存在时刻 / 必须晚于当前时间），预览「将在 … 提醒（需应用运行；错过不补）」，保存只写 `trigger_config.once_at`（不写 cron / events / max_runs）；编辑按 `once_at` 回填，坏配置留空并点名异常、不回落成手动。
 - feat(agent): 新增 app.notify 通知工具——向系统通知层提交 title/body/sound/id，成功只代表系统受理；系统通知失败时在工作线程安全入队降级为应用内 toast；启动后首帧（splash 结束、窗口可见）请求一次 macOS 授权。
 - build(macos): 统一 ad-hoc 签名并校验——新增 `scripts/sign-macos-app.sh`（`--force --sign - --identifier com.devdesk.app` + `codesign --verify --strict`，不加 `--deep` / hardened runtime）；`build-app.sh`、`package-macos.sh`（构建树 + DMG 暂存副本）、`build-test-run.sh --install` 三条路径均在资源写完后签名，修掉 `.app`「Info.plist 未绑定 / Sealed Resources=none」导致本地通知拿不到 bundle 身份的问题。
