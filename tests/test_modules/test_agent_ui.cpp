@@ -5,9 +5,11 @@
 // 跨文件前提（节点 id 契约，agent_module.cpp 侧为准）：
 //   页面   agent.page / agent.page.header / agent.title / agent.page.newTask /
 //          agent.tools.*（可用工具区块）/ agent.tasklist（scrollView）+.content /
-//          agent.task.<id>（.title / .status / .detail / .edit / .toggle / .delete /
-//          [.limit 仅限次任务] / [.warn 配置异常] /
-//          [.enqueue 仅常驻] / .run）/ run 结束通知（Task 1；fix round 起经 takeRunEndNotice 走 app 级通道）
+//          agent.task.<id>（.title / .status / .status.dot / .detail / .edit /
+//          .toggle / .delete / [.limit 仅限次任务] / [.warn 配置异常] /
+//          [.off 仅停用] / [.enqueue 仅常驻] / .run / .bg（行 hover 命中层）/
+//          run 结束通知（Task 1；fix round 起经 takeRunEndNotice 走 app 级通道）/
+//          失败迁移同帧发 OS 系统通知（id 前缀 agent-run-，成功/取消零发送）
 //   删除确认弹窗 agent.dialog.delete.*：.title / .msg / .cancel / .confirm（zIndex 1100，
 //          取消/遮罩/Esc 均不删；确认才走 store 级联删）
 //   任务弹窗 agent.dialog.task.*（新建 / 编辑共用）：
@@ -4360,6 +4362,143 @@ REGISTER_TEST(agent_ui_delete_task_disabled_while_running,
                             "run 终态后删除入口应恢复");
     // 收尾：确认删除，不留悬挂确认态
     DOCTEST_REQUIRE(clickId(ui4, "agent.dialog.delete.confirm.bg"));
+    mod.onStop();
+    return true;
+})
+
+// 列表状态视觉批：状态圆点（几何 + 色 token 双断言）、停用行标题置灰 + 已停用
+// 徽章、运行中启动钮禁用（防双起）、行 hover 命中层。全部数值断言；配色断言带
+// 非恒真自证（三色两两不同），防止 token 改成同值时配色检查空转。
+REGISTER_TEST(agent_ui_task_list_status_visuals,
+              "agent_ui: 列表状态视觉——failed 圆点 8px error 色 / 成功 success / 停用行标题 0.45 置灰加已停用徽章 / running 启动钮禁用文案切换 / 行 bg hover 层", {
+    test_support::TestDb tdb("agentui", "listvis");
+    test_support::FakeProfileSource profile;
+    ToolGuard statsGuard{"app.stats", "app.notify"};
+    core::ToolRegistry::instance().unregisterTool("app.stats");
+    core::ToolRegistry::instance().unregisterTool("app.notify");
+    module::agent::AgentStore store(tdb.handle());
+    auto okId = store.createTask("成功任务", "g", "manual", "default", 10, false);
+    auto failId = store.createTask("失败任务", "g", "manual", "default", 10, false);
+    auto idleId =
+        store.createTask("没跑过任务", "g", "manual", "default", 10, false);
+    auto offId = store.createTask("停用任务", "g", "manual", "default", 10, false);
+    DOCTEST_REQUIRE(okId.isOk());
+    DOCTEST_REQUIRE(failId.isOk());
+    DOCTEST_REQUIRE(idleId.isOk());
+    DOCTEST_REQUIRE(offId.isOk());
+    const std::string okTid = std::to_string(okId.value());
+    const std::string failTid = std::to_string(failId.value());
+    const std::string idleTid = std::to_string(idleId.value());
+    const std::string offTid = std::to_string(offId.value());
+    DOCTEST_REQUIRE(store.finishRun(store.startRun(okId.value()).value(),
+                                    "completed", 1, 1, 1, std::nullopt)
+                        .isOk());
+    DOCTEST_REQUIRE(store.finishRun(store.startRun(failId.value()).value(),
+                                    "failed", 1, 1, 1, std::nullopt)
+                        .isOk());
+    DOCTEST_REQUIRE(store.setTaskEnabled(offId.value(), false).isOk());
+
+    module::agent::AgentModule::Deps deps;
+    deps.db = &tdb.handle();
+    deps.profileSource = &profile;
+    deps.http = [](const platform::http::Request&) {
+        platform::http::Response res;
+        res.statusCode = 200;
+        res.body = R"({"id":"m1","stop_reason":"end_turn","content":[)"
+                   R"({"type":"text","text":"done"}],)"
+                   R"("usage":{"input_tokens":1,"output_tokens":1}})";
+        return core::Result<platform::http::Response>::ok(res);
+    };
+    module::agent::AgentModule mod(deps);
+    mod.onStart();
+
+    // 配色通道断言用（eui::Color 无 operator==）：逐分量比
+    const auto sameColor = [](const eui::Color& a, const eui::Color& b) {
+        return a.r == b.r && a.g == b.g && a.b == b.b && a.a == b.a;
+    };
+    // 非恒真自证：error/success/textTertiary 两两不同，否则下面配色断言空转
+    DOCTEST_CHECK(!sameColor(core::theme::current().colors.error,
+                             core::theme::current().colors.success));
+    DOCTEST_CHECK(!sameColor(core::theme::current().colors.error,
+                             core::theme::current().colors.textTertiary));
+
+    eui::Ui ui;
+    composeTo(ui, mod, kScreen, "agent_ui_listvis1");
+
+    // 圆点：8x8 + 全圆角，色随终态映射；中文文字仍在（可访问性双通道）。
+    // 断言宏是 fail-fast（return false），不能收进辅助 lambda——用表驱动循环摊开
+    struct DotCase {
+        std::string tid;
+        eui::Color want;
+        const char* statusText;
+    };
+    const DotCase dotCases[] = {
+        {failTid, core::theme::current().colors.error, "失败"},
+        {okTid, core::theme::current().colors.success, "成功"},
+        {idleTid, core::theme::current().colors.textTertiary, "—"},
+    };
+    for (const auto& dc : dotCases) {
+        const auto* dot = ui.find("agent.task." + dc.tid + ".status.dot");
+        DOCTEST_CHECK_MESSAGE(dot != nullptr, "状态圆点未渲染: " + dc.tid);
+        DOCTEST_CHECK(nearPx(dot->frame.width, 8.0f));
+        DOCTEST_CHECK(nearPx(dot->frame.height, 8.0f));
+        DOCTEST_CHECK(nearPx(dot->radius, 8.0f));
+        DOCTEST_CHECK_MESSAGE(sameColor(dot->color, dc.want),
+                              "圆点色不符: " + dc.tid);
+        const auto* st = ui.find("agent.task." + dc.tid + ".status");
+        DOCTEST_CHECK(st != nullptr);
+        DOCTEST_CHECK(st->text.find(dc.statusText) != std::string::npos);
+    }
+
+    // 停用行：标题 alpha 0.45 + 「已停用」徽章；启用行两者皆无且标题不置灰
+    const auto* offTitle = ui.find("agent.task." + offTid + ".title");
+    DOCTEST_REQUIRE(offTitle != nullptr);
+    DOCTEST_CHECK_MESSAGE(std::fabs(offTitle->textColor.a - 0.45f) < 0.02f,
+                          "停用行标题未按 0.45 置灰");
+    const auto* offBadge = ui.find("agent.task." + offTid + ".off");
+    DOCTEST_REQUIRE(offBadge != nullptr);
+    DOCTEST_CHECK_EQ(offBadge->text, std::string("已停用"));
+    DOCTEST_CHECK(ui.find("agent.task." + idleTid + ".off") == nullptr);
+    const auto* idleTitle = ui.find("agent.task." + idleTid + ".title");
+    DOCTEST_REQUIRE(idleTitle != nullptr);
+    DOCTEST_CHECK(idleTitle->textColor.a > 0.9f);
+
+    // 行 hover 命中层：bg rect 带状态色（hover = 主题 hover token）且承接点击
+    const auto* rowBg = ui.find("agent.task." + idleTid + ".bg");
+    DOCTEST_REQUIRE(rowBg != nullptr);
+    DOCTEST_CHECK(rowBg->hasStateColors);
+    DOCTEST_CHECK(sameColor(rowBg->hoverColor, core::theme::current().colors.hover));
+    DOCTEST_CHECK(rowBg->onClick != nullptr);
+
+    // 运行中：启动钮禁用 + 文案「运行中…」；同帧对照（没在跑的任务可用）证明
+    // disabled 位来自运行判定而非 loop 未装配。终态后恢复「启动」可点。
+    auto runId = store.startRun(idleId.value());
+    DOCTEST_REQUIRE(runId.isOk());
+    mod.pollRunEnd();   // DB 直写 running 行进 latestRuns_（装配层等价路径）
+    eui::Ui ui2;
+    composeTo(ui2, mod, kScreen, "agent_ui_listvis2");
+    const auto* runBg = ui2.find("agent.task." + idleTid + ".run.bg");
+    DOCTEST_REQUIRE(runBg != nullptr);
+    DOCTEST_CHECK_MESSAGE(runBg->disabled, "运行中任务的启动钮未禁用");
+    const auto* runText = ui2.find("agent.task." + idleTid + ".run.text");
+    DOCTEST_REQUIRE(runText != nullptr);
+    DOCTEST_CHECK(runText->text.find("运行中") != std::string::npos);
+    const auto* okRunBg = ui2.find("agent.task." + okTid + ".run.bg");
+    DOCTEST_REQUIRE(okRunBg != nullptr);
+    DOCTEST_CHECK_FALSE(okRunBg->disabled);
+    DOCTEST_REQUIRE(store.finishRun(runId.value(), "completed", 1, 1, 1,
+                                    std::nullopt)
+                        .isOk());
+    mod.pollRunEnd();
+    eui::Ui ui3;
+    composeTo(ui3, mod, kScreen, "agent_ui_listvis3");
+    const auto* runBg2 = ui3.find("agent.task." + idleTid + ".run.bg");
+    DOCTEST_REQUIRE(runBg2 != nullptr);
+    DOCTEST_CHECK_FALSE(runBg2->disabled);
+    const auto* runText2 = ui3.find("agent.task." + idleTid + ".run.text");
+    DOCTEST_REQUIRE(runText2 != nullptr);
+    DOCTEST_CHECK_EQ(runText2->text, std::string("启动"));
+
     mod.onStop();
     return true;
 })

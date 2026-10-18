@@ -136,6 +136,19 @@ std::string runStatusText(const std::string& status) {
     return "—";
 }
 
+// 列表状态圆点色：只映射既有 theme token，不新造色。completed=success /
+// failed=error / limited=warning / running=info；cancelled 与从未运行共用
+// tertiary（中性灰 =「无需行动」态，不与四个语义色抢注意力）。点 + 中文文字
+// 并存，不只靠色（可访问性双通道）。
+eui::Color statusDotColor(const std::string& status,
+                          const ::core::theme::Tokens& t) {
+    if (status == "completed") return t.colors.success;
+    if (status == "failed") return t.colors.error;
+    if (status == "limited") return t.colors.warning;
+    if (status == "running") return t.colors.info;
+    return t.colors.textTertiary;
+}
+
 std::string runRowText(const AgentRunRow& run) {
     std::string s = runStatusText(run.status);
     if (run.endedAt) {
@@ -1748,13 +1761,22 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                         const std::string id =
                             "agent.task." + std::to_string(task.id);
                         std::string status = "—";
+                        eui::Color statusColor = t.colors.textTertiary;
                         auto it = latestRuns_.find(task.id);
                         if (it != latestRuns_.end()) {
                             status = runStatusText(it->second.status);
+                            statusColor = statusDotColor(it->second.status, t);
                         }
-                        // 宽度分配：状态 80 / 详情·编辑·启停·删除 各 48 / [入队 56] /
-                        // 启动 72 / [配置异常 56]；childCount 须与实际子元素数一致
+                        // 运行中禁再启动（防双起 run）：startTask 的并发闸只
+                        // LOG 静默返回，按钮态必须先于点击反映真实可用性
+                        const bool runStarted =
+                            it != latestRuns_.end() &&
+                            it->second.status == "running";
+                        // 宽度分配：状态 80（圆点 8 + gap 12 + 文字 60）/
+                        // 详情·编辑·启停·删除 各 48 / [入队 56] / 启动 72 /
+                        // [配置异常·已停用 各 56]；childCount 须与实际子元素数一致
                         const bool resident = task.triggerType == "resident";
+                        const bool taskOff = !task.enabled;
                         const bool hasProblem =
                             taskTriggerProblems_.find(task.id) !=
                             taskTriggerProblems_.end();
@@ -1763,35 +1785,49 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                         // 运行中禁删（E1）：DB running 行或在跑 ActiveRun 任一即算——删除必须
                         // 「确认即终局」，先停后删会把破坏性动作拆成难收口的中间态
                         const bool runBusy =
-                            isTaskRunActive(task.id) ||
-                            (latestRuns_.find(task.id) != latestRuns_.end() &&
-                             latestRuns_[task.id].status == "running");
+                            isTaskRunActive(task.id) || runStarted;
                         const float rowGap = 12.0f;
-                        const int childCount = 7 + (resident ? 1 : 0) +
+                        const int childCount = 8 + (resident ? 1 : 0) +
                                                (hasProblem ? 1 : 0) +
-                                               (limited ? 1 : 0);
+                                               (limited ? 1 : 0) +
+                                               (taskOff ? 1 : 0);
                         const float fixedW = 80.0f + 48.0f * 4.0f + 72.0f +
                                              (resident ? 56.0f : 0.0f) +
                                              (hasProblem ? kTaskWarnW : 0.0f) +
-                                             (limited ? kTaskWarnW : 0.0f);
+                                             (limited ? kTaskWarnW : 0.0f) +
+                                             (taskOff ? kTaskWarnW : 0.0f);
                         const float titleW =
                             cw - fixedW - rowGap * static_cast<float>(childCount - 1);
-                        // 点行本体开详情弹窗（子元素先于父行命中，各自独立消费点击）
-                        inner.row(id)
+                        // 行 = 两个同尺寸层叠在 stack 里：底层 bg rect 承担 hover
+                        // 反馈与「点行开详情」命中（容器 row 不画自身背景），上层
+                        // row 只做布局；非交互的 row 不拦指针，子 chip 各自消费点击
+                        inner.stack(id)
+                            .size(cw, kTaskRowH)
+                            .content([&] {
+                                inner.rect(id + ".bg")
+                                    .size(cw, kTaskRowH)
+                                    .states(eui::Color{0.0f, 0.0f, 0.0f, 0.0f},
+                                            t.colors.hover,
+                                            eui::Color{0.0f, 0.0f, 0.0f, 0.0f})
+                                    .radius(t.sizes.radiusSmall)
+                                    .onClick([this, taskId = task.id] {
+                                        openTaskDetail(taskId);
+                                    })
+                                    .build();
+                                inner.row(id + ".row")
                             .size(cw, kTaskRowH)
                             .alignItems(eui::Align::CENTER)
                             .gap(rowGap)
-                            .interactive(true)
-                            .onClick([this, taskId = task.id] {
-                                openTaskDetail(taskId);
-                            })
                             .content([&] {
                                 inner.text(id + ".title")
                                     .size(titleW, 20.0f)
                                     .text(task.name)
                                     .fontSize(t.sizes.fontSizeBody)
                                     .lineHeight(20.0f)
-                                    .color(t.colors.textPrimary)
+                                    .color(taskOff
+                                               ? components::theme::withOpacity(
+                                                     t.colors.textPrimary, 0.45f)
+                                               : t.colors.textPrimary)
                                     .build();
                                 // 配置异常标记：Scheduler 每跑必跳过的任务在这里必须显形
                                 //（点行本体开详情，原因在配置摘要里；标记不消费点击）
@@ -1814,8 +1850,23 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                                         .color(t.colors.textTertiary)
                                         .build();
                                 }
+                                // 已停用徽章：与标题置灰双通道并存（启用后两者同消）
+                                if (taskOff) {
+                                    inner.text(id + ".off")
+                                        .size(kTaskWarnW, 20.0f)
+                                        .text("已停用")
+                                        .fontSize(12.0f)
+                                        .lineHeight(20.0f)
+                                        .color(t.colors.textTertiary)
+                                        .build();
+                                }
+                                inner.rect(id + ".status.dot")
+                                    .size(8.0f, 8.0f)
+                                    .radius(8.0f)
+                                    .color(statusColor)
+                                    .build();
                                 inner.text(id + ".status")
-                                    .size(80.0f, 20.0f)
+                                    .size(60.0f, 20.0f)
                                     .text(status)
                                     .fontSize(12.0f)
                                     .lineHeight(20.0f)
@@ -1860,9 +1911,9 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                                 }
                                 components::button(inner, id + ".run")
                                     .size(72.0f, 32.0f)
-                                    .text("启动")
+                                    .text(runStarted ? "运行中…" : "启动")
                                     .theme(themeTokens)
-                                    .disabled(loop_ == nullptr)
+                                    .disabled(loop_ == nullptr || runStarted)
                                     .onClick([this, taskId = task.id] {
                                         startTask(taskId);
                                         // 启动 run 后立即开详情弹窗，随 uiPolling_ 实时更新
@@ -1870,6 +1921,8 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                                     })
                                     .build();
                             })
+                            .build();
+                            })   // stack content
                             .build();
                     }
                 })
