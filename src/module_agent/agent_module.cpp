@@ -306,6 +306,12 @@ constexpr float kDraftChipY = 20.0f;   // 底 52 ≤ goal 行顶 64，不压表�
 
 constexpr float kDetailDialogH = 660.0f;
 
+// 详情弹窗标题行「停止」chip（C1）：长文案把「当前轮结束后生效」说在点击前（协作式取消
+// 的诚实口径）；几何同 aichip——标题行内绝对定位，y+32 底 52 ≤ info 行顶 60，不压内容
+constexpr float kStopChipW = 176.0f;
+constexpr float kStopChipH = 32.0f;
+constexpr float kStopChipY = 20.0f;
+
 // 契约：详情弹窗展示最近 5 次 run
 constexpr int kRunListLimit = 5;
 
@@ -544,6 +550,37 @@ void AgentModule::reapFinishedRuns() {
             ++it;
         }
     }
+}
+
+AgentModule::ActiveRun* AgentModule::activeRunFor(int64_t taskId) {
+    std::lock_guard<std::mutex> lock(runsMu_);
+    for (auto& r : runs_) {
+        if (r->taskId == taskId && !r->done.load(std::memory_order_acquire)) {
+            return r.get();
+        }
+    }
+    return nullptr;
+}
+
+void AgentModule::requestStopRun(int64_t taskId) {
+    ActiveRun* run = activeRunFor(taskId);
+    if (run == nullptr) {
+        LOG_WARN("Agent: 停止请求落空（任务 " + std::to_string(taskId) +
+                 " 无在跑 run），忽略");
+        return;
+    }
+    run->cancel.store(true, std::memory_order_release);
+    LOG_INFO("Agent: 已请求停止任务 " + std::to_string(taskId) +
+             " 的 run（当前轮结束后生效）");
+}
+
+bool AgentModule::isTaskRunActive(int64_t taskId) {
+    return activeRunFor(taskId) != nullptr;
+}
+
+bool AgentModule::isStopRequested(int64_t taskId) {
+    ActiveRun* run = activeRunFor(taskId);
+    return run != nullptr && run->cancel.load(std::memory_order_acquire);
 }
 
 // 惰性装配单入口：启动时 claude 关、会话内拨开无须重载本模块。幂等：loop_ 非空即返回；
@@ -1693,19 +1730,25 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                         if (it != latestRuns_.end()) {
                             status = runStatusText(it->second.status);
                         }
-                        // 宽度分配：状态 80 / 详情·编辑·启停 各 48 / [入队 56] / 启动 72 /
-                        // [配置异常 56]；childCount 须与实际子元素数一致
+                        // 宽度分配：状态 80 / 详情·编辑·启停·删除 各 48 / [入队 56] /
+                        // 启动 72 / [配置异常 56]；childCount 须与实际子元素数一致
                         const bool resident = task.triggerType == "resident";
                         const bool hasProblem =
                             taskTriggerProblems_.find(task.id) !=
                             taskTriggerProblems_.end();
                         const auto limitIt = taskRunLimits_.find(task.id);
                         const bool limited = limitIt != taskRunLimits_.end();
+                        // 运行中禁删（E1）：DB running 行或在跑 ActiveRun 任一即算——删除必须
+                        // 「确认即终局」，先停后删会把破坏性动作拆成难收口的中间态
+                        const bool runBusy =
+                            isTaskRunActive(task.id) ||
+                            (latestRuns_.find(task.id) != latestRuns_.end() &&
+                             latestRuns_[task.id].status == "running");
                         const float rowGap = 12.0f;
-                        const int childCount = 6 + (resident ? 1 : 0) +
+                        const int childCount = 7 + (resident ? 1 : 0) +
                                                (hasProblem ? 1 : 0) +
                                                (limited ? 1 : 0);
-                        const float fixedW = 80.0f + 48.0f * 3.0f + 72.0f +
+                        const float fixedW = 80.0f + 48.0f * 4.0f + 72.0f +
                                              (resident ? 56.0f : 0.0f) +
                                              (hasProblem ? kTaskWarnW : 0.0f) +
                                              (limited ? kTaskWarnW : 0.0f);
@@ -1772,6 +1815,13 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                                            themeTokens, [this, taskCopy = task] {
                                                toggleTaskEnabled(taskCopy);
                                            });
+                                actionChip(inner, id + ".delete", "删除", 48.0f,
+                                           /*primary=*/false, /*enabled=*/!runBusy,
+                                           themeTokens,
+                                           [this, taskId = task.id, busy = runBusy] {
+                                               if (busy) return;   // 禁用态点击无效果（与入队 chip 同守卫法）
+                                               deleteConfirmTaskId_ = taskId;
+                                           });
                                 if (resident) {
                                     // Scheduler 未装配时置灰；入队跑手动子任务
                                     actionChip(inner, id + ".enqueue", "入队", 56.0f,
@@ -1813,6 +1863,9 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
     }
     if (detailTaskId_) {
         composeTaskDetailDialog(ui, screen, t, themeTokens);
+    }
+    if (deleteConfirmTaskId_) {
+        composeDeleteConfirmDialog(ui, screen, t, themeTokens);
     }
 }
 
@@ -2443,6 +2496,77 @@ void AgentModule::applyDraftPrefill(const TaskDraftResult& res) {
     draftWarnings_ = joinCnList(warn);
 }
 
+// 任务删除确认弹窗（E1）：仿 claude 删除确认（Compact 420 / 标题 / 红字正文 / 按钮对）。
+// 取消/遮罩/Esc 任一路径只关弹窗不动库；确认才走 performDeleteTask
+void AgentModule::composeDeleteConfirmDialog(
+    ::eui::Ui& ui, const ::eui::Screen& screen, const ::core::theme::Tokens& t,
+    const components::theme::ThemeColorTokens& themeTokens) {
+    const float w = ui_kit::dialogWidthPx(ui_kit::DialogWidth::Compact);
+    const float h = 190.0f;
+
+    ui_kit::DialogFrame frame;
+    frame.id = "agent.dialog.delete";
+    frame.width = ui_kit::DialogWidth::Compact;
+    frame.height = h;
+    frame.open = deleteConfirmTaskId_.has_value();
+    frame.zIndex = 1100;   // 叠在任务/详情弹窗（默认 1000）之上，同草稿子弹窗
+    frame.onOpenChange = [this](bool v) {
+        if (!v) deleteConfirmTaskId_.reset();
+    };
+
+    ui_kit::drawDialogFrame(ui, screen, frame, themeTokens, [&] {
+        if (!deleteConfirmTaskId_) return;
+        // 名字现查 tasks_：待删任务已不存在（他处删了）时如实显示读取失败
+        std::string name = "（读取失败）";
+        for (const auto& task : tasks_) {
+            if (task.id == *deleteConfirmTaskId_) {
+                name = task.name;
+                break;
+            }
+        }
+        ui_kit::drawDialogTitle(ui, "agent.dialog.delete.title", w, "确认删除？",
+                                20.0f, t.colors.textPrimary);
+        ui_kit::drawDialogText(
+            ui, "agent.dialog.delete.msg", w,
+            "将删除任务「" + name + "」及其全部运行记录，不可恢复。",
+            t.sizes.fontSizeSmall, t.colors.error,
+            {.y = 58.0f, .height = 60.0f, .lineHeight = 20.0f, .wrap = true});
+
+        ui_kit::DialogButtonSpec cancel;
+        cancel.label = "取消";
+        cancel.fontSize = 14.0f;
+        cancel.style = ui_kit::DialogButtonStyle::Secondary;
+        cancel.onClick = [this] { deleteConfirmTaskId_.reset(); };
+        ui_kit::DialogButtonSpec confirm;
+        confirm.label = "确认删除";
+        confirm.fontSize = 14.0f;
+        confirm.style = ui_kit::DialogButtonStyle::Danger;
+        confirm.onClick = [this] {
+            if (deleteConfirmTaskId_) performDeleteTask(*deleteConfirmTaskId_);
+        };
+        ui_kit::drawDialogButtons(ui, "agent.dialog.delete", w, h, cancel, confirm,
+                                  t, themeTokens);
+    });
+}
+
+// 确认后的真删除（E1）：store 单事务级联清 runs/messages；关确认弹窗与可能开着的详情
+// 弹窗（详情正显示被删任务时留着会渲染空数据），刷列表。失败置页级错误行不吞
+void AgentModule::performDeleteTask(int64_t taskId) {
+    deleteConfirmTaskId_.reset();
+    if (store_ == nullptr) return;
+    auto r = store_->deleteTask(taskId);
+    if (r.isFail()) {
+        pageError_ = "删除任务失败：" + r.errorMessage();
+        LOG_WARN("Agent: 删除任务失败（task " + std::to_string(taskId) +
+                 "）: " + r.errorMessage());
+        return;
+    }
+    if (detailTaskId_ == taskId) closeTaskDetail();
+    pageError_.clear();
+    tasksDirty_ = true;
+    LOG_INFO("Agent: 任务 " + std::to_string(taskId) + " 已删除（含全部运行记录）");
+}
+
 // 详情弹窗：配置摘要 / run 列表 / 消息流三段，数据来自模块缓存（run 进行中实时更新）
 void AgentModule::composeTaskDetailDialog(
     ::eui::Ui& ui, const ::eui::Screen& screen, const ::core::theme::Tokens& t,
@@ -2476,6 +2600,26 @@ void AgentModule::composeTaskDetailDialog(
             .color(t.colors.textTertiary)
             .onClick([this] { closeTaskDetail(); })
             .build();
+
+        // 「停止」chip（C1）：只在有在跑 run 时渲染——无 ActiveRun 可置位的 run（含崩溃
+        // 遗留的 DB running 行）没有可停止对象，渲染入口等于骗点击。点击后切「停止中」
+        // 禁用（cancel 位幂等，禁用只为给点击一个反馈，防 A5 型「点了没反应反复点」）
+        if (isTaskRunActive(*detailTaskId_)) {
+            const bool stopping = isStopRequested(*detailTaskId_);
+            ui.stack("agent.dialog.detail.stop.wrap")
+                .position(w - 56.0f - kDialogGap - kStopChipW, kStopChipY)
+                .size(kStopChipW, kStopChipH)
+                .content([&] {
+                    actionChip(ui, "agent.dialog.detail.stop",
+                               stopping ? "停止中 · 当前轮结束后生效"
+                                        : "停止 · 当前轮结束后生效",
+                               kStopChipW, /*primary=*/false, /*enabled=*/!stopping,
+                               themeTokens, [this, taskId = *detailTaskId_] {
+                                   requestStopRun(taskId);
+                               });
+                })
+                .build();
+        }
 
         std::string info;
         if (detailTaskRow_) {
@@ -2729,6 +2873,10 @@ void AgentModule::composeTaskDetailDialog(
 bool AgentModule::onKeyEvent(const ::eui::KeyEvent& event) {
     if (!event.isDown()) return false;
     if (event.key != eui::InputKey::Escape) return false;
+    if (deleteConfirmTaskId_) {
+        deleteConfirmTaskId_.reset();   // 确认弹窗是最上层：Esc 只关它，不碰底下弹窗
+        return true;
+    }
     if (detailTaskId_) {
         closeTaskDetail();
         return true;

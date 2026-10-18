@@ -135,6 +135,16 @@ public:
         return dbImportedDirty_.load(std::memory_order_acquire);
     }
 
+    // ---- run 停止入口（C1）与运行态查询 ----
+    // 协作式取消：只置 ActiveRun::cancel，当前迭代收尾后才生效（in-flight LLM 请求不中断，
+    // 迭代边界检查在 agent_loop，用户取消优先于超限判定）。无在跑 run 时仅 LOG 落空，
+    // 不崩、不新建 run——幂等
+    void requestStopRun(int64_t taskId);
+    // 任务是否有在跑 ActiveRun（未 done）：详情弹窗停止钮的渲染条件、列表删除禁用判据之一
+    bool isTaskRunActive(int64_t taskId);
+    // 在跑 run 是否已被请求停止：停止钮点击后的反馈态（「停止中」）断言面
+    bool isStopRequested(int64_t taskId);
+
     // ---- run 完成通知的 app 级通道（fix round：页面无关） ----
     // 装配层每帧调（app::compose 内）：等价 refreshData 的检测路径，不依赖智能体页可见。
     // 离开智能体页后 AgentModule::compose 不跑，迁移检测的唯一驱动就是这里。
@@ -221,6 +231,14 @@ private:
                             const components::theme::ThemeColorTokens& themeTokens);
     void openDraftDialog();
     void closeDraftDialog();
+    // 任务删除确认弹窗（E1，破坏性操作必须确认）：叠在任务/详情弹窗上（zIndex 1100）；
+    // 取消/遮罩/Esc 任一路径都不动库，确认才走 performDeleteTask
+    void composeDeleteConfirmDialog(
+        ::eui::Ui& ui, const ::eui::Screen& screen, const ::core::theme::Tokens& t,
+        const components::theme::ThemeColorTokens& themeTokens);
+    // 确认后的真删除：store 单事务级联清 runs/messages → 刷列表、关可能开着的详情弹窗；
+    // 失败置页级错误行（不吞）
+    void performDeleteTask(int64_t taskId);
     // 点「生成」：主线程校验输入 → 起后台线程 requestTaskDraft + parseTaskDraft。
     // 生成中重复点击被挡（按钮禁用 + 这里再挡一道）；结果由 reapDraftJob 回收。
     void startDraftGeneration();
@@ -258,6 +276,9 @@ private:
     std::atomic<bool> dbImportHandlersEnabled_{false};
     core::event::EventBus::Subscription dbImportedSub_;
 
+    // 查任务的在跑 ActiveRun（未 done）；无则 nullptr。主线程调用面（compose / 事件回调）；
+    // runsMu_ 为纵深防御，与 onStop/startTask 同一把
+    ActiveRun* activeRunFor(int64_t taskId);
     // run 线程表：主线程写；mutex 为纵深防御（现调用点全在主线程）
     std::mutex runsMu_;
     std::vector<std::unique_ptr<ActiveRun>> runs_;
@@ -292,6 +313,8 @@ private:
     bool toolsCacheLoaded_ = false;
     // 任务弹窗：taskDialogOpen_ 控开关，editingTaskId_ 非空 = 编辑态，字段两态共用
     bool taskDialogOpen_ = false;
+    // 任务删除确认弹窗（E1）：非空 = 确认弹窗开着，值 = 待删任务 id（名字由 tasks_ 现查）
+    std::optional<int64_t> deleteConfirmTaskId_;
     std::optional<int64_t> editingTaskId_;
     std::string editGoal_, editCron_, editSlot_, editError_;
     // 闹钟时间草稿（严格 YYYY-MM-DD HH:MM，本地时区）。只在 trigger_type=once 时消费；
