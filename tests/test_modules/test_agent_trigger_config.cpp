@@ -219,3 +219,144 @@ REGISTER_TEST(event_trigger_cfg_problem_clean_controls,
             .empty());
     return true;
 })
+
+// once_at 往返：Unix 秒原值进出，产物只含 once_at（不写 cron/events/max_runs/cooldown），
+// 上下界本身也必须是合法值（边界寄存器与 decode 同口径）
+REGISTER_TEST(event_trigger_cfg_once_at_roundtrip,
+              "trigger_config: once_at encode/decode 往返（值不变、上下界合法）", {
+    TriggerConfig cfg;
+    cfg.onceAt = 1767225600LL;   // 2026-01-01 00:00:00 UTC
+    auto encoded = encodeTriggerConfig(cfg);
+    DOCTEST_REQUIRE(encoded.isOk());
+    auto parsed = platform::json::parse(encoded.value());
+    DOCTEST_REQUIRE(parsed.isOk());
+    DOCTEST_REQUIRE(parsed.value().isObject());
+    const platform::json::JsonObject obj = parsed.value().asObject();
+    DOCTEST_CHECK(obj.has("once_at"));
+    DOCTEST_CHECK_FALSE(obj.has("cron"));
+    DOCTEST_CHECK_FALSE(obj.has("events"));
+    DOCTEST_CHECK_FALSE(obj.has("max_runs"));
+    DOCTEST_CHECK_FALSE(obj.has("cooldown_sec"));
+
+    auto decoded = decodeTriggerConfig(encoded.value());
+    DOCTEST_REQUIRE(decoded.isOk());
+    DOCTEST_REQUIRE(decoded.value().onceAt.has_value());
+    DOCTEST_CHECK_EQ(*decoded.value().onceAt, 1767225600LL);
+    DOCTEST_CHECK(decoded.value().cron.empty());
+    DOCTEST_CHECK(decoded.value().events.empty());
+    DOCTEST_CHECK_FALSE(decoded.value().maxRuns.has_value());
+
+    // 下界 1 与上界 kOnceAtUpperBound 都是合法值
+    TriggerConfig lo;
+    lo.onceAt = 1;
+    auto loText = encodeTriggerConfig(lo);
+    DOCTEST_REQUIRE(loText.isOk());
+    auto loDec = decodeTriggerConfig(loText.value());
+    DOCTEST_REQUIRE(loDec.isOk());
+    DOCTEST_REQUIRE(loDec.value().onceAt.has_value());
+    DOCTEST_CHECK_EQ(*loDec.value().onceAt, 1LL);
+
+    TriggerConfig hi;
+    hi.onceAt = module::agent::kOnceAtUpperBound;
+    auto hiText = encodeTriggerConfig(hi);
+    DOCTEST_REQUIRE(hiText.isOk());
+    auto hiDec = decodeTriggerConfig(hiText.value());
+    DOCTEST_REQUIRE(hiDec.isOk());
+    DOCTEST_REQUIRE(hiDec.value().onceAt.has_value());
+    DOCTEST_CHECK_EQ(*hiDec.value().onceAt, module::agent::kOnceAtUpperBound);
+    return true;
+})
+
+// once_at 与 cron / events 互斥（encode 侧）：同时配置会让「一次性」与「重复」两个
+// 语义同时成立，直接 fail 而不是产出取决于消费方读取顺序的配置
+REGISTER_TEST(event_trigger_cfg_once_at_encode_rejects_mixed,
+              "trigger_config: encode 拒绝 once_at 与 cron/events 同时出现", {
+    TriggerConfig cronOnce;
+    cronOnce.cron = "0 9 * * *";
+    cronOnce.onceAt = 1767225600LL;
+    auto cronOnceText = encodeTriggerConfig(cronOnce);
+    DOCTEST_CHECK(cronOnceText.isFail());
+    DOCTEST_CHECK(cronOnceText.errorMessage().find("once_at") != std::string::npos);
+
+    TriggerConfig eventsOnce;
+    eventsOnce.events = {"md.saved"};
+    eventsOnce.onceAt = 1767225600LL;
+    auto eventsOnceText = encodeTriggerConfig(eventsOnce);
+    DOCTEST_CHECK(eventsOnceText.isFail());
+    DOCTEST_CHECK(eventsOnceText.errorMessage().find("once_at") != std::string::npos);
+    return true;
+})
+
+// decode 侧互斥：两种重复载荷分别与 once_at 共存都必须 fail（错误信息点名 once_at）
+REGISTER_TEST(event_trigger_cfg_once_at_decode_rejects_mixed,
+              "trigger_config: decode 拒绝 once_at + cron / once_at + events", {
+    auto cronOnce = decodeTriggerConfig(
+        R"({"cron":"0 9 * * *","once_at":1767225600})");
+    DOCTEST_CHECK(cronOnce.isFail());
+    DOCTEST_CHECK(cronOnce.errorMessage().find("once_at") != std::string::npos);
+
+    auto eventsOnce = decodeTriggerConfig(
+        R"({"events":["md.saved"],"once_at":1767225600})");
+    DOCTEST_CHECK(eventsOnce.isFail());
+    DOCTEST_CHECK(eventsOnce.errorMessage().find("once_at") != std::string::npos);
+    return true;
+})
+
+// once_at 坏值：0 / 负数 / 小数 / 字符串 / 布尔 / null / 超上限 / 毫秒单位。
+// 严格整数字面量——带小数点的 `123.0` 也拒绝（platform::json 走 Double 分支，
+// 不能把 123.0 静默截成 123，否则「小数」与「单位写错」都失去可判定性）
+REGISTER_TEST(event_trigger_cfg_once_at_rejects_bad_values,
+              "trigger_config: once_at 非正整数/小数/非数字/超上限 → decode fail", {
+    DOCTEST_CHECK(decodeTriggerConfig(R"({"once_at":0})").isFail());
+    DOCTEST_CHECK(decodeTriggerConfig(R"({"once_at":-1})").isFail());
+    DOCTEST_CHECK(decodeTriggerConfig(R"({"once_at":1.5})").isFail());
+    DOCTEST_CHECK(decodeTriggerConfig(R"({"once_at":123.0})").isFail());
+    DOCTEST_CHECK(decodeTriggerConfig(R"({"once_at":"1767225600"})").isFail());
+    DOCTEST_CHECK(decodeTriggerConfig(R"({"once_at":true})").isFail());
+    DOCTEST_CHECK(decodeTriggerConfig(R"({"once_at":null})").isFail());
+    // 超上限 1 秒 + 典型「毫秒当秒」值（2026 年约 1.7e12）
+    DOCTEST_CHECK(decodeTriggerConfig(R"({"once_at":4102444801})").isFail());
+    DOCTEST_CHECK(decodeTriggerConfig(R"({"once_at":1767225600000})").isFail());
+    // 错误信息非空且点名 once_at（Scheduler / UI 拼进 WARN 与配置异常徽章）
+    auto bad = decodeTriggerConfig(R"({"once_at":0})");
+    DOCTEST_CHECK(bad.isFail());
+    DOCTEST_CHECK(!bad.errorMessage().empty());
+    DOCTEST_CHECK(bad.errorMessage().find("once_at") != std::string::npos);
+    return true;
+})
+
+// 任务级「配置异常」判定的 once 侧：合法 once 零噪音；带 cron/events、缺 once_at、
+// 非法 once_at 都必须有具体描述。manual / resident / daily 仍不消费该列。
+REGISTER_TEST(event_trigger_cfg_once_problem,
+              "trigger_config: once 型配置异常判定——合法空、带 cron/events/缺 once_at 非空", {
+    using module::agent::triggerConfigProblem;
+    // 绿：合法 once（含可选的 max_runs）零噪音
+    DOCTEST_CHECK(triggerConfigProblem("once", R"({"once_at":1767225600})").empty());
+    DOCTEST_CHECK(
+        triggerConfigProblem("once", R"({"once_at":1767225600,"max_runs":1})").empty());
+    // 红：cron-only / events-only 给 once → 明确「不支持 cron/events」
+    const std::string cronCase = triggerConfigProblem("once", R"({"cron":"0 9 * * *"})");
+    DOCTEST_CHECK_MESSAGE(!cronCase.empty(), "once 型带 cron 未产出问题描述");
+    DOCTEST_CHECK(cronCase.find("cron") != std::string::npos);
+    const std::string eventsCase = triggerConfigProblem("once", R"({"events":["md.saved"]})");
+    DOCTEST_CHECK_MESSAGE(!eventsCase.empty(), "once 型带 events 未产出问题描述");
+    DOCTEST_CHECK(eventsCase.find("events") != std::string::npos);
+    // 红：配置里没有可消费载荷 → decode 直接失败（缺 once_at 的最直接形态）
+    const std::string missing = triggerConfigProblem("once", R"({"max_runs":1})");
+    DOCTEST_CHECK_MESSAGE(!missing.empty(), "once 型缺 once_at 未产出问题描述");
+    DOCTEST_CHECK(missing.find("解析") != std::string::npos);
+    // 红：once_at + cron 同时存在 → decode 的互斥错误
+    const std::string mixed =
+        triggerConfigProblem("once", R"({"cron":"0 9 * * *","once_at":1767225600})");
+    DOCTEST_CHECK_MESSAGE(!mixed.empty(), "once 型 once_at+cron 未产出问题描述");
+    DOCTEST_CHECK(mixed.find("once_at") != std::string::npos);
+    // 红：非法 once_at
+    const std::string badOnce = triggerConfigProblem("once", R"({"once_at":0})");
+    DOCTEST_CHECK_MESSAGE(!badOnce.empty(), "once 型非法 once_at 未产出问题描述");
+    DOCTEST_CHECK(badOnce.find("once_at") != std::string::npos);
+    // 不消费 trigger_config 的类型：残留 once 载荷也不许挂徽章
+    DOCTEST_CHECK(triggerConfigProblem("manual", R"({"once_at":1767225600})").empty());
+    DOCTEST_CHECK(triggerConfigProblem("resident", R"({"once_at":0})").empty());
+    DOCTEST_CHECK(triggerConfigProblem("daily", R"({"once_at":1767225600})").empty());
+    return true;
+})

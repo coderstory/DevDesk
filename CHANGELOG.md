@@ -8,6 +8,7 @@
 
 ## [未发布]
 
+- feat(agent)：`trigger_config` 支持 `once_at` 一次性触发载荷（Unix 秒，与 `cron`/`events` 互斥；仅编解码与校验，Scheduler / UI 后续接入）。
 - feat(agent)：**新增「每天」触发**——不指定时刻，本地当天首次调度跑一次，当天不重复、跨天恢复；判定以 `agent_runs` 为唯一事实源（重启不重复），不消费 `trigger_config`。
 - feat(agent)：**system prompt 注入当前本地时间**（`当前本地时间：YYYY-MM-DD HH:MM`）——模型没有时钟，日期类任务由宿主给日期，不让模型自行推算/猜测。
 - feat(agent)：智能体 LLM 直连解耦——run 经激活 profile 直连端点，代理未开也能跑（详见下方 `[AgentDirectLlm]` 段）。
