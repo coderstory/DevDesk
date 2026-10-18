@@ -61,6 +61,7 @@ add_executable(devdesk_tests
     test_modules/test_agent_loop.cpp
     test_modules/test_agent_tools.cpp
     test_modules/test_hot_parse.cpp
+    test_modules/test_hot_tool.cpp
     test_modules/test_notify_tool.cpp
     test_modules/test_message_blocks.cpp
     test_modules/test_agent_ui.cpp

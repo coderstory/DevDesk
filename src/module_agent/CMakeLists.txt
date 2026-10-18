@@ -3,6 +3,7 @@ add_library(devdesk_agent STATIC
     cron.cpp
     trigger_config.cpp
     hot_parse.cpp
+    hot_tool.cpp
     message_blocks.cpp
     tool_info.cpp
     agent_loop.cpp

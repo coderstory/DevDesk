@@ -8,6 +8,7 @@
 
 ## [未发布]
 
+- feat(agent): 新增 hot.list 热榜工具——四源串行降级（微博热搜 → 微博热榜 → 百度 → 今日头条），单源 8s / 总预算 20s；进程内 fresh 缓存 300s、最小请求间隔 60s、全部失败时 1800s 内 stale 缓存降级；失败返回 `isError` + `attempts`/`retryable`，不伪装空榜成功；`fetchedAt` 为本地 `YYYY-MM-DD HH:MM:SS`；`fetcher`/`now` 可注入，单测不联网。
 - feat(agent): 新增百度/头条/微博备用热榜解析——`hot_parse` 扩展 `HotSource` 枚举与 `parseHotList` 分发：百度 PC 按 `component=hotList` 选卡（忽略 `topContent`）并按 `index` 重排；今日头条忽略 `fixed_top_data` 按数组顺序排名、长 URL 原样保留；微博 `hot_band` 复用 `side/hotSearch` 的广告过滤/`word_scheme`/`realpos` 规则（忽略 `hotgov`）；热度统一走字符串/JSON number → 非负 int64 安全转换，坏结构返回带源名与字段路径的中文错误。仅解析，HTTP/降级/缓存/工具注册后续接入。
 - feat(agent): 新增微博热榜解析——纯 JSON 解析函数（`hot_parse`）：过滤广告/无排名项、按 `realpos` 重排 1-based rank、`#` 与中文按 UTF-8 percent-encode 构造搜索链接，坏响应返回带路径的中文错误；`takeTopN` 供后续 `hot.list` 工具截取 top10。
 - feat(agent): 新增闹钟（once）触发类型与表单——触发方式选「闹钟」后可填本地 `YYYY-MM-DD HH:MM`（严格校验格式 / 日期有效性 / 夏令时不存在时刻 / 必须晚于当前时间），预览「将在 … 提醒（需应用运行；错过不补）」，保存只写 `trigger_config.once_at`（不写 cron / events / max_runs）；编辑按 `once_at` 回填，坏配置留空并点名异常、不回落成手动。
