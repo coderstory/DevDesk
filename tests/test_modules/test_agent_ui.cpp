@@ -22,7 +22,13 @@
 //   AI 草稿子弹窗 agent.dialog.task.draft.*（叠在任务弹窗上，zIndex 1100，T7b）：
 //          .input（多行）/ .generate / .dismiss / .close / .caption /
 //          .notice / .warnings（生成完成才渲染）/ .error（失败 / 校验错才渲染）
-//   详情弹窗 agent.dialog.detail.*：.info / .runlist.<i>[.err] / .msgscroll /
+//   详情弹窗 agent.dialog.detail.*（布局壳，2026-10-18 重设计 P1）：
+//          .summary.last/.next/.stats（各 .label/.value，常驻三卡）/
+//          .config.header（.title/.hint/.toggle/.hit，浮层字段在 P3）/
+//          .runlist（.title/.count/.scroll | .empty）+ .runlist.<i>[.err[.hint]] /
+//          .detail（右栏/tab1 根）内 .msgs.title / .msgs.copyfinal / .msgscroll 或
+//          .detail.scroll（矮宽屏/窄屏整栏滚）/ .empty /
+//          .nav（窄屏 segmented，.hit.<i>/.label.<i>）/
 //          .msg.<i>[.badge / .toggle / .preview / .blk.<j>[.out]] / .close /
 //          .stop[.wrap]（运行中才渲染；点击后切「停止中」禁用，C1 协作式取消）
 //   旧页内表单（agent.form.* / agent.edit.*）与页内详情展开区已删除——本文件用
@@ -790,8 +796,9 @@ REGISTER_TEST(agent_ui_once_detail_shows_alarm_label_and_time,
     DOCTEST_REQUIRE(openDetailDialog(ui, mod, std::to_string(created.value())));
     eui::Ui ui2;
     composeTo(ui2, mod, kScreen, "agent_ui_oncedetail2");
-    const auto* info = ui2.find("agent.dialog.detail.info");
-    DOCTEST_REQUIRE_MESSAGE(info != nullptr, "详情弹窗缺配置摘要");
+    // 配置摘要迁到配置头 hint（.info 已退休）；闹钟文案在配置浮层落地（P3）前仍住 hint
+    const auto* info = ui2.find("agent.dialog.detail.config.header.hint");
+    DOCTEST_REQUIRE_MESSAGE(info != nullptr, "详情弹窗缺配置头摘要 hint");
     DOCTEST_CHECK_MESSAGE(info->text.find("触发：闹钟") != std::string::npos,
                           "详情摘要未显示「闹钟」：" + info->text);
     DOCTEST_CHECK_MESSAGE(info->text.find("闹钟时间：" + timeText) !=
@@ -1070,7 +1077,9 @@ REGISTER_TEST(agent_ui_run_button_opens_detail_dialog,
     composeTo(ui2, mod, kScreen, "agent_ui_run2");
     DOCTEST_REQUIRE_MESSAGE(ui2.find("agent.dialog.detail") != nullptr,
                             "点启动后未立即打开详情弹窗");
-    DOCTEST_CHECK(ui2.find("agent.dialog.detail.info") != nullptr);
+    DOCTEST_CHECK_MESSAGE(ui2.find("agent.dialog.detail.info") == nullptr,
+                          ".info 已退休（配置摘要迁 config.header.hint），不得回潮");
+    DOCTEST_CHECK(ui2.find("agent.dialog.detail.config.header.hint") != nullptr);
 
     // 有界轮询（10ms 步进 ≤5s）+ 每轮 recompose 跟进刷新（弹窗随刷新周期更新）
     bool completed = false;
@@ -1166,8 +1175,10 @@ REGISTER_TEST(agent_ui_detail_dialog_shows_config_runs_messages,
     composeTo(ui2, mod, kScreen, "agent_ui_dd2");
 
     // 配置摘要与编辑弹窗同源，都走 getTask
-    const auto* info = ui2.find("agent.dialog.detail.info");
-    DOCTEST_REQUIRE_MESSAGE(info != nullptr, "详情弹窗缺配置摘要 agent.dialog.detail.info");
+    // 配置摘要 = 配置头 hint（与编辑弹窗同源，都走 getTask；.info 已退休）
+    const auto* info = ui2.find("agent.dialog.detail.config.header.hint");
+    DOCTEST_REQUIRE_MESSAGE(info != nullptr,
+                            "详情弹窗缺配置头摘要 agent.dialog.detail.config.header.hint");
     DOCTEST_CHECK(info->text.find("把逾期的待办全部完成") != std::string::npos);
     DOCTEST_CHECK(info->text.find("定时") != std::string::npos);   // 触发方式显示中文标签
     DOCTEST_CHECK(info->text.find("0 9 * * 1-5") != std::string::npos);
@@ -1503,22 +1514,20 @@ REGISTER_TEST(agent_ui_detail_runlist_error_rows_no_overlap,
     composeTo(ui2, mod, kScreen, "agent_ui_err2");
 
     const auto* panel = ui2.find("agent.dialog.detail.panel");
-    const auto* msgsTitle = ui2.find("agent.dialog.detail.msgs.title");
+    const auto* runlistBox = ui2.find("agent.dialog.detail.runlist");
     const auto* lastErr = ui2.find("agent.dialog.detail.runlist.2.err");
-    DOCTEST_REQUIRE_MESSAGE(panel != nullptr && msgsTitle != nullptr,
-                            "面板/消息标题缺失");
+    DOCTEST_REQUIRE_MESSAGE(panel != nullptr && runlistBox != nullptr,
+                            "面板/时间线容器缺失");
     DOCTEST_REQUIRE_MESSAGE(lastErr != nullptr, "第 3 条 error 行缺失");
-    // runsH 必须计入 error 行与其上方状态行之间的 gap，否则最后一个 error 行会压到消息标题上
-    DOCTEST_CHECK_MESSAGE(
-        lastErr->frame.y + lastErr->frame.height <= msgsTitle->frame.y + 0.5f,
-        "error 行压到消息标题：error 底 " +
-            std::to_string(lastErr->frame.y + lastErr->frame.height) +
-            " > 标题顶 " + std::to_string(msgsTitle->frame.y));
-    // 整段也不得越出面板底
+    // 时间线在独立滚动容器里后，行间互不重叠是同一契约（error 行是 scroll 子元素，
+    // gap 漏算依旧会让行互相压）；行不再与右栏消息标题竞争，只对本容器负责
     DOCTEST_CHECK_MESSAGE(
         lastErr->frame.y + lastErr->frame.height <=
-            panel->frame.y + panel->frame.height,
-        "error 行溢出弹窗面板底");
+            runlistBox->frame.y + runlistBox->frame.height + 0.5f,
+        "error 行越出时间线容器：error 底 " +
+            std::to_string(lastErr->frame.y + lastErr->frame.height) +
+            " > 容器底 " +
+            std::to_string(runlistBox->frame.y + runlistBox->frame.height));
     const auto* err0 = ui2.find("agent.dialog.detail.runlist.0.err");
     const auto* err1 = ui2.find("agent.dialog.detail.runlist.1.err");
     DOCTEST_REQUIRE(err0 != nullptr && err1 != nullptr);
@@ -1882,20 +1891,35 @@ REGISTER_TEST(agent_ui_detail_dialog_geometry_and_empty_state,
     const auto* scroll = ui2.find("agent.dialog.detail.msgscroll");
     DOCTEST_REQUIRE(scroll != nullptr);
     DOCTEST_CHECK(scroll->frame.height > 0.0f);
+    // 消息区底距面板底 ≥24（新版面底边距；+0.5 容差与 nearPx 同口径）
     DOCTEST_CHECK_MESSAGE(
         scroll->frame.y + scroll->frame.height <=
-            panel->frame.y + panel->frame.height - 19.5f,
+            panel->frame.y + panel->frame.height - 23.5f,
         "消息滚动区溢出面板底：底 " +
             std::to_string(scroll->frame.y + scroll->frame.height) + " 面板底 " +
             std::to_string(panel->frame.y + panel->frame.height));
-    const auto* runsTitle = ui2.find("agent.dialog.detail.runs.title");
+    // 左右分栏：左栏（时间线）与右栏（消息）顶对齐、左右相接不重叠、双双收在面板内
     const auto* runlist = ui2.find("agent.dialog.detail.runlist");
-    const auto* msgsTitle = ui2.find("agent.dialog.detail.msgs.title");
-    DOCTEST_REQUIRE(runsTitle != nullptr && runlist != nullptr &&
-                    msgsTitle != nullptr);
+    const auto* detailCol = ui2.find("agent.dialog.detail.detail");
+    const auto* runlistTitle = ui2.find("agent.dialog.detail.runlist.title");
+    DOCTEST_REQUIRE(runlist != nullptr && detailCol != nullptr &&
+                    runlistTitle != nullptr);
+    DOCTEST_CHECK(runlistTitle->text == "执行记录");
     DOCTEST_CHECK_MESSAGE(
-        runlist->frame.y + runlist->frame.height <= msgsTitle->frame.y + 0.5f,
-        "run 列表压到消息标题");
+        runlist->frame.x + runlist->frame.width <= detailCol->frame.x + 0.5f,
+        "时间线栏压到右栏：左栏右缘 " +
+            std::to_string(runlist->frame.x + runlist->frame.width) +
+            " > 右栏左缘 " + std::to_string(detailCol->frame.x));
+    DOCTEST_CHECK_MESSAGE(nearPx(runlist->frame.y, detailCol->frame.y),
+                          "左右栏顶未对齐");
+    DOCTEST_CHECK_MESSAGE(
+        runlist->frame.y + runlist->frame.height <=
+            panel->frame.y + panel->frame.height - 23.5f,
+        "时间线栏溢出面板底");
+    DOCTEST_CHECK_MESSAGE(
+        detailCol->frame.y + detailCol->frame.height <=
+            panel->frame.y + panel->frame.height - 23.5f,
+        "右栏溢出面板底");
 
     // 无消息：走 .empty 分支，占位文本垂直居中
     DOCTEST_REQUIRE(clickId(ui2, "agent.dialog.detail.close"));
@@ -2760,18 +2784,18 @@ REGISTER_TEST(agent_ui_detail_error_hint_navigates_to_claude,
         DOCTEST_REQUIRE_MESSAGE(hint->onClick != nullptr,
                                  "引导元素不可点（缺 onClick）");
     }
-    // 引导行与错误行不重叠（childrenH 同步的证据：hint 也是子元素）
+    // 引导行与错误行不重叠（hint 也是 scroll 内容的子元素）；左栏内不越容器
     const auto* err0 = ui2.find("agent.dialog.detail.runlist.0.err");
     const auto* hint0 = ui2.find("agent.dialog.detail.runlist.0.err.hint");
-    const auto* msgsTitle = ui2.find("agent.dialog.detail.msgs.title");
-    const auto* panel = ui2.find("agent.dialog.detail.panel");
-    DOCTEST_REQUIRE(err0 != nullptr && hint0 != nullptr && msgsTitle != nullptr &&
-                    panel != nullptr);
+    const auto* runlistBox = ui2.find("agent.dialog.detail.runlist");
+    DOCTEST_REQUIRE(err0 != nullptr && hint0 != nullptr && runlistBox != nullptr);
     DOCTEST_CHECK(err0->frame.y + err0->frame.height <= hint0->frame.y + 0.5f);
-    DOCTEST_CHECK(hint0->frame.y + hint0->frame.height <=
-                  msgsTitle->frame.y + 0.5f);
-    DOCTEST_CHECK(hint0->frame.y + hint0->frame.height <=
-                  panel->frame.y + panel->frame.height);
+    DOCTEST_CHECK_MESSAGE(
+        hint0->frame.y + hint0->frame.height <=
+            runlistBox->frame.y + runlistBox->frame.height,
+        "引导行越出时间线容器：hint 底 " +
+            std::to_string(hint0->frame.y + hint0->frame.height) + " 容器底 " +
+            std::to_string(runlistBox->frame.y + runlistBox->frame.height));
 
     // 点击引导 → Router 切 Claude 页（须 ClaudeProxy 已注册，否则回退 Home）
     ::core::Router router;
@@ -3329,10 +3353,11 @@ REGISTER_TEST(agent_format_task_run_summary_text,
     return true;
 })
 
-// 弹窗接线：有 run 的任务渲染汇总行（数据钉死 → 数值判据）+ 汇总行把下方区块整体
-// 下移 18（runs.title 122 / runlist 144），无 run 的任务不渲染且几何回到 104/126
+// 弹窗接线（布局壳版）：摘要三卡常驻（无 run 也渲染），摘要/配置头/主区按布局公式
+// 排列（panel 内坐标：summaryY=60、configY=149、mainY=201、mainH=435、左栏 282 宽）。
+// 旧「汇总行文本 + 有无 run 两种几何」口径随三卡容器化作废；卡片真实数值由 P2 接管
 REGISTER_TEST(agent_ui_detail_dialog_run_summary,
-              "agent_ui: 详情弹窗任务级汇总行（总数/成功率/总耗时/最近结果）+ 汇总行下移几何 + 无 run 不渲染", {
+              "agent_ui: 详情弹窗摘要三卡常驻 + 摘要/配置/主区按布局公式排列（无 run 几何不变）", {
     test_support::TestDb tdb("agentui", "summary");
     test_support::FakeProfileSource profile;
     ToolGuard statsGuard{"app.stats", "app.notify"};
@@ -3345,24 +3370,13 @@ REGISTER_TEST(agent_ui_detail_dialog_run_summary,
     DOCTEST_REQUIRE(with.isOk() && without.isOk());
     const std::string tid = std::to_string(with.value());
     const std::string nid = std::to_string(without.value());
-    // 返 bool：doctest REQUIRE 宏含 return，不能放进 lambda 内（-Wreturn-type）
-    auto pin = [&](int64_t runId, int64_t started, int64_t ended) -> bool {
-        return tdb.handle()
-            .exec("UPDATE agent_runs SET started_at=" + std::to_string(started) +
-                  ", ended_at=" + std::to_string(ended) +
-                  " WHERE id=" + std::to_string(runId))
-            .isOk();
-    };
-    // 2 成功 1 失败，总时长 60+30+10=100s → 成功率 66%
-    for (const auto& [status, dur] :
-         {std::pair{"completed", std::make_pair(int64_t(1000), int64_t(1060))},
-          std::pair{"failed", std::make_pair(int64_t(1100), int64_t(1130))},
-          std::pair{"completed", std::make_pair(int64_t(1200), int64_t(1210))}}) {
+    for (int i = 0; i < 3; ++i) {
         auto r = store.startRun(with.value());
         DOCTEST_REQUIRE(r.isOk());
-        DOCTEST_REQUIRE(store.finishRun(r.value(), status, 1, std::nullopt,
-                                        std::nullopt, std::nullopt).isOk());
-        DOCTEST_REQUIRE(pin(r.value(), dur.first, dur.second));
+        DOCTEST_REQUIRE(store.finishRun(r.value(), i == 1 ? "failed" : "completed",
+                                        1, std::nullopt, std::nullopt,
+                                        std::nullopt)
+                            .isOk());
     }
 
     module::agent::AgentModule::Deps deps;
@@ -3377,49 +3391,89 @@ REGISTER_TEST(agent_ui_detail_dialog_run_summary,
                             "任务行缺 agent.task.<id>.detail");
     eui::Ui ui2;
     composeTo(ui2, mod, kScreen, "agent_ui_sum2");
-    const auto* summary = ui2.find("agent.dialog.detail.summary");
-    DOCTEST_REQUIRE_MESSAGE(summary != nullptr, "详情弹窗缺任务级汇总行");
-    DOCTEST_CHECK_MESSAGE(summary->text.find("共 3 次") != std::string::npos,
-                          "汇总行缺 run 总数，实测：" + summary->text);
-    DOCTEST_CHECK(summary->text.find("成功率 66%（2/3）") != std::string::npos);
-    DOCTEST_CHECK(summary->text.find("总耗时 1分40秒") != std::string::npos);
-    DOCTEST_CHECK(summary->text.find("最近结果 ") != std::string::npos);
-    // 汇总行占 y=100..118：下方区块整体 +18（runs.title 104→122 / runlist 126→144）
+    // 三卡常驻：标签在位（值是占位，真实数据 P2 接管）
+    const auto* lastCard = ui2.find("agent.dialog.detail.summary.last");
+    const auto* nextCard = ui2.find("agent.dialog.detail.summary.next");
+    const auto* statsCard = ui2.find("agent.dialog.detail.summary.stats");
+    DOCTEST_REQUIRE_MESSAGE(lastCard != nullptr && nextCard != nullptr &&
+                                statsCard != nullptr,
+                            "详情弹窗缺摘要三卡");
+    const auto* lastLabel = ui2.find("agent.dialog.detail.summary.last.label");
+    DOCTEST_REQUIRE(lastLabel != nullptr);
+    DOCTEST_CHECK(lastLabel->text == "最近一次");
+    const auto* statsLabel = ui2.find("agent.dialog.detail.summary.stats.label");
+    DOCTEST_REQUIRE(statsLabel != nullptr);
+    DOCTEST_CHECK(statsLabel->text == "近 7 天");
+    // 布局公式（宽屏 760×660）：summaryY=60 / configY=149 / mainY=201 /
+    // mainH=435 / leftW=282（bottom 收在面板底 -24 内）
     const auto* panel = ui2.find("agent.dialog.detail.panel");
-    const auto* runsTitle = ui2.find("agent.dialog.detail.runs.title");
+    const auto* header = ui2.find("agent.dialog.detail.config.header");
     const auto* runlist = ui2.find("agent.dialog.detail.runlist");
-    DOCTEST_REQUIRE(panel != nullptr && runsTitle != nullptr && runlist != nullptr);
+    const auto* detailCol = ui2.find("agent.dialog.detail.detail");
+    DOCTEST_REQUIRE(panel != nullptr && header != nullptr &&
+                    runlist != nullptr && detailCol != nullptr);
+    DOCTEST_CHECK_MESSAGE(nearPx(lastCard->frame.y - panel->frame.y, 60.0f),
+                          "摘要卡应钉面板顶 +60，实测 " +
+                              std::to_string(lastCard->frame.y - panel->frame.y));
+    DOCTEST_CHECK_MESSAGE(nearPx(lastCard->frame.height, 81.0f),
+                          "宽屏摘要卡高应 81，实测 " +
+                              std::to_string(lastCard->frame.height));
     DOCTEST_CHECK_MESSAGE(
-        nearPx(runsTitle->frame.y, panel->frame.y + 122.0f),
-        "有汇总时 runs.title 应在面板顶 +122，实测 " +
-            std::to_string(runsTitle->frame.y - panel->frame.y));
+        nearPx(header->frame.y - panel->frame.y, 149.0f),
+        "配置头应在面板顶 +149（摘要底 +8），实测 " +
+            std::to_string(header->frame.y - panel->frame.y));
+    DOCTEST_CHECK_MESSAGE(nearPx(header->frame.height, 40.0f),
+                          "配置头高应 40，实测 " +
+                              std::to_string(header->frame.height));
     DOCTEST_CHECK_MESSAGE(
-        nearPx(runlist->frame.y, panel->frame.y + 144.0f),
-        "有汇总时 runlist 应在面板顶 +144，实测 " +
+        nearPx(runlist->frame.y - panel->frame.y, 201.0f),
+        "主区应在面板顶 +201（配置底 +12），实测 " +
             std::to_string(runlist->frame.y - panel->frame.y));
+    DOCTEST_CHECK_MESSAGE(
+        runlist->frame.y + runlist->frame.height <=
+            panel->frame.y + panel->frame.height - 23.5f,
+        "主区溢出面板底（底边距应收 24）");
+    DOCTEST_CHECK_MESSAGE(nearPx(runlist->frame.width, 282.0f),
+                          "时间线栏宽应 282（innerW 704 × 0.40 上取），实测 " +
+                              std::to_string(runlist->frame.width));
+    DOCTEST_CHECK_MESSAGE(
+        nearPx(detailCol->frame.x - panel->frame.x - 28.0f, 302.0f),
+        "右栏左缘应在 x0+282+20，实测 " +
+            std::to_string(detailCol->frame.x - panel->frame.x - 28.0f));
+    DOCTEST_CHECK_MESSAGE(nearPx(detailCol->frame.width, 402.0f),
+                          "右栏宽应 402，实测 " +
+                              std::to_string(detailCol->frame.width));
 
-    // 无 run 的任务：无汇总行、几何回到原位（104/126）
+    // 无 run 的任务：三卡照常渲染（空态文案），几何与有 run 完全一致（不再下移）
     DOCTEST_REQUIRE(clickId(ui2, "agent.dialog.detail.close"));
     eui::Ui ui3;
     composeTo(ui3, mod, kScreen, "agent_ui_sum3");
     DOCTEST_REQUIRE(clickId(ui3, "agent.task." + nid + ".detail"));
     eui::Ui ui4;
     composeTo(ui4, mod, kScreen, "agent_ui_sum4");
-    DOCTEST_CHECK_MESSAGE(ui4.find("agent.dialog.detail.summary") == nullptr,
-                          "无 run 的任务不应渲染汇总行");
+    const auto* last4 = ui4.find("agent.dialog.detail.summary.last");
+    const auto* lastValue4 = ui4.find("agent.dialog.detail.summary.last.value");
+    const auto* statsValue4 =
+        ui4.find("agent.dialog.detail.summary.stats.value");
+    DOCTEST_REQUIRE_MESSAGE(last4 != nullptr && lastValue4 != nullptr &&
+                                statsValue4 != nullptr,
+                            "无 run 任务的三卡缺席（摘要卡必须常驻）");
+    DOCTEST_CHECK(lastValue4->text == "从未执行");
+    DOCTEST_CHECK(statsValue4->text == "近 7 天暂无执行");
     const auto* panel4 = ui4.find("agent.dialog.detail.panel");
-    const auto* runsTitle4 = ui4.find("agent.dialog.detail.runs.title");
-    DOCTEST_REQUIRE(panel4 != nullptr && runsTitle4 != nullptr);
+    const auto* runlist4 = ui4.find("agent.dialog.detail.runlist");
+    DOCTEST_REQUIRE_MESSAGE(panel4 != nullptr && runlist4 != nullptr,
+                            "无 run 任务缺面板/主区");
     DOCTEST_CHECK_MESSAGE(
-        nearPx(runsTitle4->frame.y, panel4->frame.y + 104.0f),
-        "无汇总时 runs.title 应在面板顶 +104（原几何），实测 " +
-            std::to_string(runsTitle4->frame.y - panel4->frame.y));
+        nearPx(runlist4->frame.y - panel4->frame.y, 201.0f),
+        "无 run 任务主区几何应与有 run 一致（+201），实测 " +
+            std::to_string(runlist4->frame.y - panel4->frame.y));
 
     mod.onStop();
     return true;
 })
 
-// 汇总查询失败必须显形（静默失败面）：run 汇总行改显「运行汇总读取失败」
+// 汇总查询失败必须显形（静默失败面）：摘要卡 last/stats 值转「读取失败」
 REGISTER_TEST(agent_ui_detail_summary_error_visible,
               "agent_ui: run 汇总查询失败 → 弹窗内显形错误行（不静默）", {
     test_support::TestDb tdb("agentui", "sumerr");
@@ -3449,11 +3503,220 @@ REGISTER_TEST(agent_ui_detail_summary_error_visible,
     DOCTEST_REQUIRE(clickId(ui, "agent.task." + tid + ".detail"));
     eui::Ui ui2;
     composeTo(ui2, mod, kScreen, "agent_ui_serr2");
-    const auto* summary = ui2.find("agent.dialog.detail.summary");
-    DOCTEST_REQUIRE_MESSAGE(summary != nullptr,
+    // 汇总失败显形（spec 边界表）：last/stats 卡值转「读取失败」，不静默
+    const auto* lastValue = ui2.find("agent.dialog.detail.summary.last.value");
+    const auto* statsValue = ui2.find("agent.dialog.detail.summary.stats.value");
+    DOCTEST_REQUIRE_MESSAGE(lastValue != nullptr && statsValue != nullptr,
                             "汇总查询失败没有任何可见反馈（静默路径）");
-    DOCTEST_CHECK_MESSAGE(summary->text.find("运行汇总读取失败") != std::string::npos,
-                          "汇总失败应显形，实测：" + summary->text);
+    DOCTEST_CHECK_MESSAGE(lastValue->text == "读取失败",
+                          "last 卡值应显「读取失败」，实测：" + lastValue->text);
+    DOCTEST_CHECK_MESSAGE(statsValue->text == "读取失败",
+                          "stats 卡值应显「读取失败」，实测：" +
+                              statsValue->text);
+
+    mod.onStop();
+    return true;
+})
+
+// ---- 布局壳三尺寸（spec §16 验收前三条；钳制口径 = 上游 overlay token 复算）----
+// 三个无头用例各钉一档：宽屏默认（760×660）/ 窄屏（700×560）/ 宽屏矮（900×600）
+
+REGISTER_TEST(agent_ui_detail_shell_wide_default,
+              "agent_ui: 布局壳 760×660——宽屏分栏、无 nav、msgscroll 在场、summaryH=81", {
+    test_support::TestDb tdb("agentui", "shellwide");
+    test_support::FakeProfileSource profile;
+    ToolGuard statsGuard{"app.stats", "app.notify"};
+    core::ToolRegistry::instance().unregisterTool("app.stats");
+    core::ToolRegistry::instance().unregisterTool("app.notify");
+    module::agent::AgentStore store(tdb.handle());
+    auto created = store.createTask("宽屏壳", "g", "manual", "default", 10, false);
+    DOCTEST_REQUIRE(created.isOk());
+    auto r = store.startRun(created.value());
+    DOCTEST_REQUIRE(r.isOk());
+    // 种一条消息：msgscroll 只在有消息时渲染，档位断言要有真实内容才有判别力
+    DOCTEST_REQUIRE(store.appendMessage(r.value(), 0, "user",
+                                        R"([{"type":"text","text":"你好"}])",
+                                        std::nullopt)
+                        .isOk());
+    DOCTEST_REQUIRE(store.finishRun(r.value(), "completed", 1, std::nullopt,
+                                    std::nullopt, std::nullopt).isOk());
+
+    module::agent::AgentModule::Deps deps;
+    deps.db = &tdb.handle();
+    deps.profileSource = &profile;
+    module::agent::AgentModule mod(deps);
+    mod.onStart();
+
+    eui::Ui ui;
+    composeTo(ui, mod, kScreen, "agent_ui_shellw1");
+    DOCTEST_REQUIRE(openDetailDialog(ui, mod, std::to_string(created.value())));
+    eui::Ui ui2;
+    composeTo(ui2, mod, kScreen, "agent_ui_shellw2");
+
+    // 1600×1000 视口不触发钳制：panel = 设计尺寸 760×660
+    const auto* panel = ui2.find("agent.dialog.detail.panel");
+    DOCTEST_REQUIRE(panel != nullptr);
+    DOCTEST_CHECK_MESSAGE(nearPx(panel->frame.width, 760.0f) &&
+                              nearPx(panel->frame.height, 660.0f),
+                          "宽屏默认应为设计尺寸 760×660，实测 " +
+                              std::to_string(panel->frame.width) + "×" +
+                              std::to_string(panel->frame.height));
+    // 宽屏档：无 nav、无 detail.scroll、msgscroll 在场
+    DOCTEST_CHECK_MESSAGE(ui2.find("agent.dialog.detail.nav") == nullptr,
+                          "宽屏不应渲染窄屏 nav");
+    DOCTEST_CHECK_MESSAGE(ui2.find("agent.dialog.detail.detail.scroll") == nullptr,
+                          "宽屏正常高不应整栏滚动（应 msgscroll 模式）");
+    DOCTEST_CHECK(ui2.find("agent.dialog.detail.msgscroll") != nullptr);
+    const auto* lastCard = ui2.find("agent.dialog.detail.summary.last");
+    DOCTEST_REQUIRE(lastCard != nullptr);
+    DOCTEST_CHECK_MESSAGE(nearPx(lastCard->frame.height, 81.0f),
+                          "宽屏摘要卡高应 81");
+    // 配置头常驻 + hint 非空（读取失败时才允许为失败文案）
+    const auto* hint = ui2.find("agent.dialog.detail.config.header.hint");
+    DOCTEST_REQUIRE(hint != nullptr);
+    DOCTEST_CHECK(!hint->text.empty());
+
+    mod.onStop();
+    return true;
+})
+
+REGISTER_TEST(agent_ui_detail_shell_narrow_tabs,
+              "agent_ui: 布局壳 700×560——panel 652×512、单列 nav 两 tab、无左右分栏", {
+    test_support::TestDb tdb("agentui", "shellnarrow");
+    test_support::FakeProfileSource profile;
+    ToolGuard statsGuard{"app.stats", "app.notify"};
+    core::ToolRegistry::instance().unregisterTool("app.stats");
+    core::ToolRegistry::instance().unregisterTool("app.notify");
+    module::agent::AgentStore store(tdb.handle());
+    auto created = store.createTask("窄屏壳", "g", "manual", "default", 10, false);
+    DOCTEST_REQUIRE(created.isOk());
+    auto r = store.startRun(created.value());
+    DOCTEST_REQUIRE(r.isOk());
+    DOCTEST_REQUIRE(store.finishRun(r.value(), "completed", 1, std::nullopt,
+                                    std::nullopt, std::nullopt).isOk());
+
+    module::agent::AgentModule::Deps deps;
+    deps.db = &tdb.handle();
+    deps.profileSource = &profile;
+    module::agent::AgentModule mod(deps);
+    mod.onStart();
+
+    // 700−48=652 / 560−48=512（钳制走上游 overlay token 同一公式）
+    const eui::Screen screen{700.0f, 560.0f};
+    eui::Ui ui;
+    composeTo(ui, mod, screen, "agent_ui_shelln1");
+    DOCTEST_REQUIRE(openDetailDialog(ui, mod, std::to_string(created.value())));
+    eui::Ui ui2;
+    composeTo(ui2, mod, screen, "agent_ui_shelln2");
+
+    const auto* panel = ui2.find("agent.dialog.detail.panel");
+    DOCTEST_REQUIRE(panel != nullptr);
+    DOCTEST_CHECK_MESSAGE(nearPx(panel->frame.width, 652.0f) &&
+                              nearPx(panel->frame.height, 512.0f),
+                          "窄屏面板应钳到 652×512，实测 " +
+                              std::to_string(panel->frame.width) + "×" +
+                              std::to_string(panel->frame.height));
+    // 单列：nav 在场，主内容全宽（= innerW 596），无右栏
+    const auto* nav = ui2.find("agent.dialog.detail.nav");
+    DOCTEST_REQUIRE_MESSAGE(nav != nullptr, "窄屏缺 segmented nav");
+    DOCTEST_CHECK(ui2.find("agent.dialog.detail.nav.hit.0") != nullptr);
+    DOCTEST_CHECK(ui2.find("agent.dialog.detail.nav.hit.1") != nullptr);
+    const auto* label1 = ui2.find("agent.dialog.detail.nav.label.1");
+    DOCTEST_REQUIRE(label1 != nullptr);
+    DOCTEST_CHECK(label1->text == "运行详情");
+    // 紧凑档（h<600）：summaryH=116 → configY=184 / navY=232 / contentY=272
+    const auto* header = ui2.find("agent.dialog.detail.config.header");
+    const auto* runlist = ui2.find("agent.dialog.detail.runlist");
+    DOCTEST_REQUIRE(header != nullptr && runlist != nullptr);
+    DOCTEST_CHECK_MESSAGE(nearPx(header->frame.y - panel->frame.y, 184.0f),
+                          "紧凑档配置头应 +184，实测 " +
+                              std::to_string(header->frame.y - panel->frame.y));
+    DOCTEST_CHECK_MESSAGE(nearPx(nav->frame.y - panel->frame.y, 232.0f),
+                          "紧凑档 nav 应 +232，实测 " +
+                              std::to_string(nav->frame.y - panel->frame.y));
+    DOCTEST_CHECK_MESSAGE(
+        nearPx(runlist->frame.x - panel->frame.x, 28.0f) &&
+            nearPx(runlist->frame.width, 596.0f),
+        "窄屏主内容应单列全宽（x0=28、宽 596），实测 x=" +
+            std::to_string(runlist->frame.x - panel->frame.x) + " 宽 " +
+            std::to_string(runlist->frame.width));
+    DOCTEST_CHECK_MESSAGE(
+        nearPx(runlist->frame.y - panel->frame.y, 272.0f),
+        "紧凑档内容应 +272，实测 " +
+            std::to_string(runlist->frame.y - panel->frame.y));
+    DOCTEST_CHECK_MESSAGE(runlist->frame.y + runlist->frame.height <=
+                              panel->frame.y + panel->frame.height + 0.5f,
+                          "窄屏内容溢出面板底");
+    // tab 0：无右栏、无 msgscroll
+    DOCTEST_CHECK(ui2.find("agent.dialog.detail.detail") == nullptr);
+    DOCTEST_CHECK(ui2.find("agent.dialog.detail.msgscroll") == nullptr);
+
+    // 切 tab 1：详情列上桌（整栏滚），时间线退场
+    DOCTEST_REQUIRE(clickId(ui2, "agent.dialog.detail.nav.hit.1"));
+    eui::Ui ui3;
+    composeTo(ui3, mod, screen, "agent_ui_shelln3");
+    DOCTEST_REQUIRE_MESSAGE(ui3.find("agent.dialog.detail.detail") != nullptr,
+                            "切「运行详情」tab 后右栏未上桌");
+    DOCTEST_CHECK(ui3.find("agent.dialog.detail.runlist") == nullptr);
+
+    mod.onStop();
+    return true;
+})
+
+REGISTER_TEST(agent_ui_detail_shell_short_wide_scroll,
+              "agent_ui: 布局壳 900×600——panel 760×552、宽屏矮走 .detail.scroll 整栏滚、无 .msgscroll", {
+    test_support::TestDb tdb("agentui", "shellshort");
+    test_support::FakeProfileSource profile;
+    ToolGuard statsGuard{"app.stats", "app.notify"};
+    core::ToolRegistry::instance().unregisterTool("app.stats");
+    core::ToolRegistry::instance().unregisterTool("app.notify");
+    module::agent::AgentStore store(tdb.handle());
+    auto created = store.createTask("矮屏壳", "g", "manual", "default", 10, false);
+    DOCTEST_REQUIRE(created.isOk());
+    auto r = store.startRun(created.value());
+    DOCTEST_REQUIRE(r.isOk());
+    // 种消息：.msgscroll 缺席的断言只有在「有消息可滚」时才有判别力
+    DOCTEST_REQUIRE(store.appendMessage(r.value(), 0, "user",
+                                        R"([{"type":"text","text":"你好"}])",
+                                        std::nullopt)
+                        .isOk());
+    DOCTEST_REQUIRE(store.finishRun(r.value(), "completed", 1, std::nullopt,
+                                    std::nullopt, std::nullopt).isOk());
+
+    module::agent::AgentModule::Deps deps;
+    deps.db = &tdb.handle();
+    deps.profileSource = &profile;
+    module::agent::AgentModule mod(deps);
+    mod.onStart();
+
+    // 900−48=852 → 宽钳 760；600−48=552 → 高 552（宽屏但矮）
+    const eui::Screen screen{900.0f, 600.0f};
+    eui::Ui ui;
+    composeTo(ui, mod, screen, "agent_ui_shells1");
+    DOCTEST_REQUIRE(openDetailDialog(ui, mod, std::to_string(created.value())));
+    eui::Ui ui2;
+    composeTo(ui2, mod, screen, "agent_ui_shells2");
+
+    const auto* panel = ui2.find("agent.dialog.detail.panel");
+    DOCTEST_REQUIRE(panel != nullptr);
+    DOCTEST_CHECK_MESSAGE(nearPx(panel->frame.width, 760.0f) &&
+                              nearPx(panel->frame.height, 552.0f),
+                          "矮宽屏面板应 760×552，实测 " +
+                              std::to_string(panel->frame.width) + "×" +
+                              std::to_string(panel->frame.height));
+    // 仍是宽屏分栏（左右栏都在），但右栏整栏滚：.detail.scroll 在、.msgscroll 无
+    DOCTEST_CHECK(ui2.find("agent.dialog.detail.runlist") != nullptr);
+    const auto* detailScroll =
+        ui2.find("agent.dialog.detail.detail.scroll");
+    DOCTEST_REQUIRE_MESSAGE(detailScroll != nullptr,
+                            "宽屏矮未走 .detail.scroll 整栏滚动");
+    DOCTEST_CHECK_MESSAGE(ui2.find("agent.dialog.detail.msgscroll") == nullptr,
+                          "宽屏矮不应再建 .msgscroll（嵌套滚动）");
+    DOCTEST_CHECK(ui2.find("agent.dialog.detail.nav") == nullptr);
+    DOCTEST_CHECK_MESSAGE(
+        detailScroll->frame.y + detailScroll->frame.height <=
+            panel->frame.y + panel->frame.height - 23.5f,
+        "整栏滚动区溢出面板底");
 
     mod.onStop();
     return true;
@@ -3537,8 +3800,8 @@ REGISTER_TEST(agent_ui_task_config_problem_badge,
                             "任务行缺详情 chip");
     eui::Ui ui2;
     composeTo(ui2, mod, kScreen, "agent_ui_cfgbadge2");
-    const auto* info = ui2.find("agent.dialog.detail.info");
-    DOCTEST_REQUIRE_MESSAGE(info != nullptr, "详情弹窗缺配置摘要");
+    const auto* info = ui2.find("agent.dialog.detail.config.header.hint");
+    DOCTEST_REQUIRE_MESSAGE(info != nullptr, "详情弹窗缺配置头摘要 hint");
     DOCTEST_CHECK_MESSAGE(info->text.find("触发配置异常") != std::string::npos,
                           "详情摘要未给出配置异常原因，实测：" + info->text);
     DOCTEST_CHECK(info->text.find("cron") != std::string::npos);
@@ -3686,8 +3949,8 @@ REGISTER_TEST(agent_ui_task_run_limit_badge_and_detail_text,
     DOCTEST_REQUIRE_MESSAGE(openDetailDialog(ui, mod, tidOnce), "任务行缺详情 chip");
     eui::Ui ui2;
     composeTo(ui2, mod, kScreen, "agent_ui_limitbadge2");
-    const auto* info = ui2.find("agent.dialog.detail.info");
-    DOCTEST_REQUIRE_MESSAGE(info != nullptr, "详情弹窗缺配置摘要");
+    const auto* info = ui2.find("agent.dialog.detail.config.header.hint");
+    DOCTEST_REQUIRE_MESSAGE(info != nullptr, "详情弹窗缺配置头摘要 hint");
     DOCTEST_CHECK_MESSAGE(info->text.find("次数上限：只跑一次") != std::string::npos,
                           "详情摘要未写明限次语义，实测：" + info->text);
     DOCTEST_CHECK(info->text.find("跑完自动停用") != std::string::npos);

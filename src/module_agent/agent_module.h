@@ -307,6 +307,10 @@ private:
     std::optional<int64_t> autoExpandedSeq_;
     // scrollView contentKey 版本号：展开/收起改变内容高，bump 触发重测（MeasureCache 按 key 缓存）
     uint64_t msgScrollVersion_ = 0;
+    // 详情弹窗窄屏 tab（0=执行记录 1=运行详情；宽屏恒 0 不消费）。点时间线行自动切 1
+    int detailTab_ = 0;
+    // 详情弹窗配置头开合（P1 只有状态位：覆盖式浮层 .config.scrim/.popover 在 P3 渲染）
+    bool configOpen_ = false;
     // 「可用工具」区块：收起默认，头部点击展开
     bool toolsOpen_ = false;
     std::vector<ToolInfo> toolsCache_;      // 注册表快照（惰性装载）

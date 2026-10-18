@@ -397,7 +397,8 @@ REGISTER_TEST(agent_module_ui_id_contract,
         mod->compose(ui2, screen);
         ui2.end();
         DOCTEST_CHECK(ui2.find("agent.dialog.detail") != nullptr);
-        DOCTEST_CHECK(ui2.find("agent.dialog.detail.info") != nullptr);
+        DOCTEST_CHECK(ui2.find("agent.dialog.detail.config.header.hint") !=
+                      nullptr);
         DOCTEST_CHECK(ui2.find("agent.dialog.detail.msgscroll") != nullptr);
         // msg.<i> 是容器元素：role 在 .badge、预览文本在 .preview
         const auto* badge0 = ui2.find("agent.dialog.detail.msg.0.badge");

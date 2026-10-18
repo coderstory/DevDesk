@@ -6,6 +6,7 @@
 #include "agent_module.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <ctime>
 #include <functional>
@@ -16,6 +17,7 @@
 #include <components/dropdown.h>
 #include <components/input.h>
 #include <components/scrollview.h>
+#include <components/segmented.h>
 #include <components/switch.h>
 #include <core/window/window_backend.h>
 #include <core/platform/platform.h>
@@ -412,6 +414,16 @@ std::string runLimitText(int maxRuns) {
 // formatOnceAtText / defaultOnceAtText / onceTextOf）已搬至 task_draft_parse.h：
 // 草稿解析层（task_draft.cpp）需要同一份闹钟校验，留在本文件私有会造成
 // 「模型草稿说合法、UI 说非法」的双真源。搬移是行为等价的，判定规则与文案逐字未改。
+
+// 弹窗实际宽/高的单边复算：镜像 EUI-NEO components/dialog.h build() 的钳制公式
+// min(requested, max(0, screen − spacing.overlay))。DevDesk 拿不到 dialog 实际尺寸
+//（drawDialogFrame 无回读），排版前用同一公式复算。overlayInset 必须从
+// ThemeColorTokens.metrics.spacing.overlay 读（上游 token 改值时自动跟随），
+// 禁写死字面量；若上游改的是公式本身而非 token，此处需同步
+float detailDialogActualExtent(float requested, float screenExtent,
+                               float overlayInset) {
+    return std::min(requested, std::max(0.0f, screenExtent - overlayInset));
+}
 
 } // namespace
 
@@ -1027,7 +1039,8 @@ void AgentModule::toggleTaskEnabled(const AgentTaskRow& task) {
     tasksDirty_ = true;
 }
 
-// 打开详情弹窗：每开一次回到「最近一次 run」（selectedRunId_ 清空，refreshData 回落首条）
+// 打开详情弹窗：每开一次回到「最近一次 run」（selectedRunId_ 清空，refreshData 回落首条）。
+// 布局态一并清零（窄屏回 tab 0、配置头收起），弹窗不记忆上一次的分支状态
 void AgentModule::openTaskDetail(int64_t taskId) {
     detailTaskId_ = taskId;
     selectedRunId_.reset();
@@ -1035,6 +1048,8 @@ void AgentModule::openTaskDetail(int64_t taskId) {
     // 消息展开态按 seq 定位且只在 run 内有意义：换任务即清
     expandedMsgSeqs_.clear();
     autoExpandedSeq_.reset();
+    detailTab_ = 0;
+    configOpen_ = false;
     ++msgScrollVersion_;
     tasksDirty_ = true;
 }
@@ -1047,6 +1062,8 @@ void AgentModule::closeTaskDetail() {
     detailMessages_.clear();
     expandedMsgSeqs_.clear();
     autoExpandedSeq_.reset();
+    detailTab_ = 0;
+    configOpen_ = false;
     ++msgScrollVersion_;
 }
 
@@ -2684,14 +2701,48 @@ void AgentModule::performDeleteTask(int64_t taskId) {
     LOG_INFO("Agent: 任务 " + std::to_string(taskId) + " 已删除（含全部运行记录）");
 }
 
-// 详情弹窗：配置摘要 / run 列表 / 消息流三段，数据来自模块缓存（run 进行中实时更新）
+// 详情弹窗布局壳：摘要三卡（常驻）→ 配置头 → 主区（宽屏左右分栏 / 窄屏单列 tab）。
+// 所有区域坐标从实际钳制后的 w/h 推导（纯函数镜像上游钳制公式），禁用屏幕绝对坐标；
+// 摘要真实数据 / run 详情块 / 配置浮层 / 消息折叠由 P2/P3 接管
 void AgentModule::composeTaskDetailDialog(
     ::eui::Ui& ui, const ::eui::Screen& screen, const ::core::theme::Tokens& t,
     const components::theme::ThemeColorTokens& themeTokens) {
-    const float w = ui_kit::dialogWidthPx(ui_kit::DialogWidth::Form);
-    const float h = std::min(kDetailDialogH, screen.height - 40.0f);
-    const float innerW = w - ui_kit::kDialogBodyInsetX;
+    const float overlayInset = themeTokens.metrics.spacing.overlay;
+    const float w = detailDialogActualExtent(
+        ui_kit::dialogWidthPx(ui_kit::DialogWidth::Form), screen.width,
+        overlayInset);
+    const float h =
+        detailDialogActualExtent(kDetailDialogH, screen.height, overlayInset);
+    const float innerW = std::max(0.0f, w - ui_kit::kDialogBodyInsetX);
     const float x0 = ui_kit::kDialogInsetX;
+
+    // 文本高度全部由缩放后字号派生（fontScale 只缩 fontSize，行高按比例重算）
+    const float fsS = t.sizes.fontSizeSmall;
+    const float fsB = t.sizes.fontSizeBody;
+    const float lhS = static_cast<float>(std::lround(fsS * 1.4f));
+    const float lhB = static_cast<float>(std::lround(fsB * 1.4f));
+
+    // 响应式档位：宽 ≥680 且高 ≥520 分栏；否则单列 tab。矮宽屏（h<600）右栏整栏滚动
+    const bool wide = w >= 680.0f && h >= 520.0f;
+
+    // 区域划分（面板内坐标）
+    const float summaryY = 60.0f;
+    const float summaryH = wide
+                               ? std::max(81.0f, 2.0f * 10.0f + lhS + lhB + lhS + 4.0f)
+                               : (h < 600.0f ? 116.0f : 122.0f);
+    const float configY = summaryY + summaryH + 8.0f;
+    const float configH = std::max(40.0f, lhS + 20.0f);
+    const float mainY = configY + configH + 12.0f;
+    const float mainH = std::max(56.0f, h - mainY - 24.0f);
+    const float leftW = static_cast<float>(
+        std::clamp(std::lround(innerW * 0.40f), 240L, 282L));
+    const float rightX = x0 + leftW + 20.0f;
+    const float rightW = std::max(0.0f, innerW - leftW - 20.0f);
+    const float navH = h < 600.0f ? std::max(32.0f, lhS + 8.0f)
+                                  : std::max(36.0f, lhS + 12.0f);
+    const float navY = configY + configH + 8.0f;
+    const float contentY = navY + navH + 8.0f;
+    const float contentH = std::max(56.0f, h - contentY - 24.0f);
 
     ui_kit::DialogFrame frame;
     frame.id = "agent.dialog.detail";
@@ -2738,250 +2789,458 @@ void AgentModule::composeTaskDetailDialog(
                 .build();
         }
 
-        std::string info;
-        if (detailTaskRow_) {
-            const AgentTaskRow& task = *detailTaskRow_;
-            info = "目标：" + task.goal;
-            info += " · 触发：" + triggerLabelOf(task.triggerType);
-            if (task.triggerType == "schedule") {
-                const std::string cron = cronTextOf(task);
-                info += " · cron：" + (cron.empty() ? "（未设置）" : cron);
-            } else if (task.triggerType == "once") {
-                // 闹钟摘要：标签 + 本地时刻（配置异常由下方 triggerConfigProblem 补原因；
-                // 完整详情重设计留给 T4c2）
-                const std::string onceText = onceTextOf(task);
-                info += " · 闹钟时间：" +
-                        (onceText.empty() ? "（未设置）" : onceText);
-            }
-            // 限次/一次性语义（02）：完整说明落这里（列表徽章只放得下 3 字）。口径与
-            // Scheduler::runBudgetExhausted 同源（同一份 trigger_config 解码）；失败也算
-            // 跑过，故承诺写成「跑完自动停用」而不是「跑到成功为止」
-            const auto limitIt = taskRunLimits_.find(task.id);
-            if (limitIt != taskRunLimits_.end()) {
-                info += " · 次数上限：" + runLimitText(limitIt->second) +
-                        "（跑完自动停用）";
-            }
-            info += " · 槽位：" + task.modelSlot;
-            info += " · 迭代上限：" + std::to_string(task.maxIterations);
-            info += task.allowDestructive ? " · 破坏性：允许" : " · 破坏性：禁止";
-            // 列表徽章只有 4 字，原因全文落这里（同一个纯函数判定，同一个缓存快照）
-            const auto problemIt = taskTriggerProblems_.find(task.id);
-            if (problemIt != taskTriggerProblems_.end()) {
-                info += " · 触发配置异常：" + problemIt->second;
-            }
-        } else {
-            info = "（任务信息读取失败）";
-        }
-        ui.text("agent.dialog.detail.info")
-            .position(x0, 60.0f)
-            .size(innerW, 36.0f)
-            .text(info)
-            .fontSize(12.0f)
-            .lineHeight(18.0f)
-            .wrap(true)
-            .maxWidth(innerW)
-            .color(t.colors.textSecondary)
-            .build();
-
         const auto runsIt = taskRuns_.find(*detailTaskId_);
         const std::vector<AgentRunRow>* runs =
             runsIt != taskRuns_.end() ? &runsIt->second : nullptr;
-        // 任务级汇总行（数据已在 refreshRunSummaries 缓存）：有 run 或查询失败才渲染，
-        // 占 y=100..118，下方区块整体下移 18；无 run 的任务不渲染、几何保持原值
-        const auto sumIt = runSummaries_.find(*detailTaskId_);
-        const bool hasSummary =
-            sumIt != runSummaries_.end() || !runSummariesError_.empty();
-        const float runsTitleY = hasSummary ? 122.0f : 104.0f;
-        if (hasSummary) {
-            std::string summaryText;
-            if (!runSummariesError_.empty()) {
-                summaryText = "运行汇总读取失败：" + runSummariesError_;
-            } else {
-                std::string lastTimeText = "—";
-                if (sumIt->second.lastEndedAt) {
-                    std::tm local{};
-                    core::time::localTime(
-                        static_cast<std::time_t>(*sumIt->second.lastEndedAt),
-                        &local);
-                    lastTimeText = formatRunResultTimeText(local);
-                }
-                summaryText = formatTaskRunSummaryText(sumIt->second, lastTimeText);
-            }
-            ui.text("agent.dialog.detail.summary")
-                .position(x0, 100.0f)
-                .size(innerW, 18.0f)
-                .text(summaryText)
-                .fontSize(12.0f)
-                .lineHeight(18.0f)
-                .wrap(false)
-                .color(runSummariesError_.empty() ? t.colors.textSecondary
-                                                  : t.colors.error)
-                .build();
-        }
-        ui.text("agent.dialog.detail.runs.title")
-            .position(x0, runsTitleY)
-            .size(innerW, 18.0f)
-            .text(runs != nullptr && !runs->empty()
-                      ? "运行记录（最近 " + std::to_string(runs->size()) + " 次）"
-                      : "运行记录")
-            .fontSize(12.0f)
-            .lineHeight(18.0f)
-            .fontWeight(600)
-            .color(t.colors.textPrimary)
-            .build();
-        float runsH = 18.0f;
-        if (runs != nullptr && !runs->empty()) {
-            // gap 数 = 子元素数 - 1：error 行与 hint 行都是子元素，漏算会让消息标题压到上者
-            float childrenH = 0.0f;
-            int childCount = 0;
-            for (const auto& run : *runs) {
-                ++childCount;
-                childrenH += 18.0f;
-                if (run.error && !run.error->empty()) {
-                    ++childCount;
-                    childrenH += 16.0f;
-                    // 「去 Claude 页」引导行：仅「LLM 配置不可用」类错误渲染，与下方渲染条件一致
-                    if (needsClaudePageHint(*run.error)) {
-                        ++childCount;
-                        childrenH += 16.0f;
-                    }
-                }
-            }
-            runsH = childrenH + 4.0f * static_cast<float>(childCount - 1);
-            ui.column("agent.dialog.detail.runlist")
-                .position(x0, runsTitleY + 22.0f)
-                .size(innerW, runsH)
-                .gap(4.0f)
+        const bool hasRuns = runs != nullptr && !runs->empty();
+
+        // —— 摘要三卡（常驻；无 run 也渲染空态）——
+        // P1 布局壳：值取空态/占位文案，真实「最近一次/下一次/近 7 天」数据由 P2 接管。
+        // 汇总查询失败必须显形（静默失败面）：last/stats 值转「读取失败」error 色
+        const bool summaryFailed = !runSummariesError_.empty();
+        const std::string lastValue =
+            summaryFailed ? "读取失败" : (hasRuns ? "—" : "从未执行");
+        const std::string statsValue =
+            summaryFailed ? "读取失败" : (hasRuns ? "—" : "近 7 天暂无执行");
+        constexpr float kCardPad = 10.0f;
+        auto summaryCard = [&](const std::string& id, float cx, float cy, float cw,
+                               float ch, const char* label,
+                               const std::string& value, bool errorTone,
+                               bool withSub) {
+            ui.stack(id)
+                .position(cx, cy)
+                .size(cw, ch)
                 .content([&] {
-                    for (size_t i = 0; i < runs->size(); ++i) {
-                        const std::string runRowId =
-                            "agent.dialog.detail.runlist." + std::to_string(i);
-                        const AgentRunRow& run = (*runs)[i];
-                        const bool highlighted =
-                            selectedRunId_ && *selectedRunId_ == run.id;
-                        ui.text(runRowId)
-                            .size(innerW, 18.0f)
-                            .text(runRowText(run))
-                            .fontSize(12.0f)
-                            .lineHeight(18.0f)
-                            .wrap(false)
-                            .color(highlighted ? t.colors.primary
-                                               : t.colors.textSecondary)
-                            .onClick([this, runId = run.id] {
-                                selectedRunId_ = runId;
-                                // seq 只在 run 内唯一：切 run 清消息展开态
-                                expandedMsgSeqs_.clear();
-                                autoExpandedSeq_.reset();
-                                ++msgScrollVersion_;
-                                tasksDirty_ = true;
-                            })
+                    ui.rect(id + ".bg")
+                        .size(cw, ch)
+                        .color(t.colors.surfaceElevated)
+                        .radius(t.sizes.radius)
+                        .border(1.0f, t.colors.borderDefault)
+                        .build();
+                    ui.text(id + ".label")
+                        .position(kCardPad, kCardPad)
+                        .size(std::max(0.0f, cw - 2.0f * kCardPad), lhS)
+                        .text(label)
+                        .fontSize(fsS)
+                        .lineHeight(lhS)
+                        .color(t.colors.textTertiary)
+                        .build();
+                    ui.text(id + ".value")
+                        .position(kCardPad, kCardPad + lhS)
+                        .size(std::max(0.0f, cw - 2.0f * kCardPad), lhB)
+                        .text(value)
+                        .fontSize(fsB)
+                        .lineHeight(lhB)
+                        .color(errorTone ? t.colors.error : t.colors.textPrimary)
+                        .build();
+                    // 副值只宽屏画：窄屏两行卡高装不下第三行（卡高与 §6 的 122/116 耦合）
+                    if (withSub) {
+                        ui.text(id + ".sub")
+                            .position(kCardPad, kCardPad + lhS + lhB)
+                            .size(std::max(0.0f, cw - 2.0f * kCardPad), lhS)
+                            .text("—")
+                            .fontSize(fsS)
+                            .lineHeight(lhS)
+                            .color(t.colors.textTertiary)
                             .build();
-                        if (run.error && !run.error->empty()) {
-                            ui.text(runRowId + ".err")
-                                .size(innerW, 16.0f)
-                                .text("错误：" + *run.error)
-                                .fontSize(11.0f)
-                                .lineHeight(16.0f)
-                                .wrap(false)
-                                .color(t.colors.error)
-                                .build();
-                            // 「去 Claude 页」引导：仅「LLM 配置不可用」类错误渲染（needsClaudePageHint 前缀钉死）
-                            if (needsClaudePageHint(*run.error)) {
-                                ui.text(runRowId + ".err.hint")
-                                    .size(innerW, 16.0f)
-                                    .text("去 Claude 页 →")
-                                    .fontSize(11.0f)
-                                    .lineHeight(16.0f)
-                                    .wrap(false)
-                                    .color(t.colors.primary)
-                                    .onClick([] { navigateToClaudePage(); })
-                                    .build();
-                            }
-                        }
                     }
                 })
                 .build();
+        };
+        constexpr float kCardGap = 8.0f;
+        if (wide) {
+            const float cardW = std::max(0.0f, (innerW - 2.0f * kCardGap) / 3.0f);
+            summaryCard("agent.dialog.detail.summary.last", x0, summaryY, cardW,
+                        summaryH, "最近一次", lastValue, summaryFailed, true);
+            summaryCard("agent.dialog.detail.summary.next", x0 + cardW + kCardGap,
+                        summaryY, cardW, summaryH, "下一次", "—", false, true);
+            summaryCard("agent.dialog.detail.summary.stats",
+                        x0 + 2.0f * (cardW + kCardGap), summaryY, cardW, summaryH,
+                        "近 7 天", statsValue, summaryFailed, true);
         } else {
-            ui.text("agent.dialog.detail.runlist.empty")
-                .position(x0, runsTitleY + 22.0f)
-                .size(innerW, 18.0f)
-                .text("（还没有运行记录）")
-                .fontSize(12.0f)
-                .lineHeight(18.0f)
-                .color(t.colors.textTertiary)
-                .build();
+            const float rowH = (summaryH - kCardGap) / 2.0f;
+            const float halfW = std::max(0.0f, (innerW - kCardGap) / 2.0f);
+            summaryCard("agent.dialog.detail.summary.last", x0, summaryY, halfW,
+                        rowH, "最近一次", lastValue, summaryFailed, false);
+            summaryCard("agent.dialog.detail.summary.next", x0 + halfW + kCardGap,
+                        summaryY, halfW, rowH, "下一次", "—", false, false);
+            summaryCard("agent.dialog.detail.summary.stats", x0,
+                        summaryY + rowH + kCardGap, innerW, rowH, "近 7 天",
+                        statsValue, summaryFailed, false);
         }
 
-        // ③ 消息流：scrollView 内滚。最终 assistant 文本块默认展开，其余默认折叠
-        const float msgsTitleY = runsTitleY + 30.0f + runsH;
-        ui.text("agent.dialog.detail.msgs.title")
-            .position(x0, msgsTitleY)
-            .size(innerW, 18.0f)
-            .text("消息（" + std::to_string(detailMessages_.size()) + "）")
-            .fontSize(12.0f)
-            .lineHeight(18.0f)
-            .fontWeight(600)
-            .color(t.colors.textPrimary)
-            .build();
-        // 「复制回复」：一键复制 run 最终回复全文（最后一条 assistant 的全部 text 块，
-        // 见 finalAssistantText）。空串（run 刚起 / 全 tool_use）不渲染。
-        // 几何：chip 高 32 比标题行 18 高，y 上移 7 与标题文本带居中对齐（destructive
-        // switch 同款 wrap 定位法——actionChip 自身不带 position）
-        const std::string finalText = finalAssistantText(detailMessages_);
-        if (!finalText.empty()) {
-            constexpr float kCopyFinalChipW = 76.0f;
-            const float chipX = x0 + innerW - kCopyFinalChipW;
-            const float chipY = msgsTitleY - 7.0f;
-            ui.stack("agent.dialog.detail.msgs.copyfinal.wrap")
-                .position(chipX, chipY)
-                .size(kCopyFinalChipW, 32.0f)
-                .content([&] {
-                    actionChip(ui, "agent.dialog.detail.msgs.copyfinal",
-                               "复制回复", kCopyFinalChipW, /*primary=*/true,
-                               /*enabled=*/true, themeTokens, [text = finalText] {
-                                   // setClipboardText 返回 void 无法校验 → LOG 留痕
-                                   core::window::setClipboardText(text);
-                                   LOG_INFO("Agent: 已复制最终回复 " +
-                                            std::to_string(text.size()) +
-                                            " 字节到剪贴板");
-                               });
-                })
-                .build();
-        }
-        const float scrollY = msgsTitleY + 22.0f;
-        const float availH = std::max(kMsgAreaMinH, h - scrollY - 24.0f);
-        const float scrollH = std::min(
-            estimateMessagesAreaHeight(detailMessages_, expandedMsgSeqs_, innerW,
-                                       18.0f, kMsgAreaMinH, kMsgAreaMaxH),
-            availH);
-        if (detailMessages_.empty()) {
-            ui.text("agent.dialog.detail.empty")
-                .position(x0, scrollY)
-                .size(innerW, scrollH)
-                .text("（选中的 run 还没有消息）")
-                .fontSize(12.0f)
-                .lineHeight(18.0f)
-                // 盒高 ≠ 行高，不给 verticalAlign 会顶在上缘
-                .verticalAlign(eui::VerticalAlign::Center)
-                .color(t.colors.textTertiary)
-                .build();
+        // —— 配置头（常驻）：P1 只画头行；点击开合的覆盖式浮层（.config.scrim /
+        // .config.popover）在 P3 ——
+        // hint 文本沿用退休 .info 的摘要内容（配置浮层字段落地前信息不能凭空消失），
+        // P3 浮层落地后按 spec 收缩为「触发 · cron · 模型 · 迭代」，其余迁入浮层字段
+        std::string configHint;
+        if (detailTaskRow_) {
+            const AgentTaskRow& task = *detailTaskRow_;
+            configHint = "目标：" + task.goal;
+            configHint += " · 触发：" + triggerLabelOf(task.triggerType);
+            if (task.triggerType == "schedule") {
+                const std::string cron = cronTextOf(task);
+                configHint += " · cron：" + (cron.empty() ? "（未设置）" : cron);
+            } else if (task.triggerType == "once") {
+                // 闹钟摘要：标签 + 本地时刻（配置异常原因在行尾追加，与旧 .info 同口径）
+                const std::string onceText = onceTextOf(task);
+                configHint += " · 闹钟时间：" +
+                              (onceText.empty() ? "（未设置）" : onceText);
+            }
+            // 限次/一次性语义：完整说明落这里（列表徽章只放得下 3 字）。口径与
+            // Scheduler::runBudgetExhausted 同源；失败也算跑过，故承诺写「跑完自动停用」
+            const auto limitIt = taskRunLimits_.find(task.id);
+            if (limitIt != taskRunLimits_.end()) {
+                configHint += " · 次数上限：" + runLimitText(limitIt->second) +
+                              "（跑完自动停用）";
+            }
+            configHint += " · 槽位：" + task.modelSlot;
+            configHint += " · 迭代上限：" + std::to_string(task.maxIterations);
+            configHint +=
+                task.allowDestructive ? " · 破坏性：允许" : " · 破坏性：禁止";
+            const auto problemIt = taskTriggerProblems_.find(task.id);
+            if (problemIt != taskTriggerProblems_.end()) {
+                configHint += " · 触发配置异常：" + problemIt->second;
+            }
         } else {
-            components::scrollView(ui, "agent.dialog.detail.msgscroll")
-                .position(x0, scrollY)
-                .size(innerW, scrollH)
-                .gap(kMsgRowGap)
-                .step(18.0f)
-                .theme(themeTokens)
-                .contentKey("agent.dialog.detail.msgscroll.v" +
-                            std::to_string(msgScrollVersion_) + ".n" +
-                            std::to_string(detailMessages_.size()))
-                .content([&](eui::Ui& inner, float cw, float) {
-                    for (size_t i = 0; i < detailMessages_.size(); ++i) {
-                        renderMessageRow(inner, cw, "agent.dialog.detail", i,
-                                         detailMessages_[i], t, themeTokens);
+            configHint = "任务信息读取失败";
+        }
+        constexpr float kConfigTitleW = 64.0f;   // 「任务配置」4 CJK @15
+        constexpr float kConfigToggleW = 40.0f;  // 「展开/收起」2 CJK @13 + 余量
+        ui.stack("agent.dialog.detail.config.header")
+            .position(x0, configY)
+            .size(innerW, configH)
+            .content([&] {
+                ui.rect("agent.dialog.detail.config.header.bg")
+                    .size(innerW, configH)
+                    .color(t.colors.surfaceElevated)
+                    .radius(t.sizes.radius)
+                    .border(1.0f, t.colors.borderDefault)
+                    .build();
+                ui.text("agent.dialog.detail.config.header.title")
+                    .position(kCardPad, (configH - lhB) * 0.5f)
+                    .size(kConfigTitleW, lhB)
+                    .text("任务配置")
+                    .fontSize(fsB)
+                    .lineHeight(lhB)
+                    .fontWeight(600)
+                    .color(t.colors.textPrimary)
+                    .build();
+                ui.text("agent.dialog.detail.config.header.hint")
+                    .position(kCardPad + kConfigTitleW + kDialogGap,
+                              (configH - lhS) * 0.5f)
+                    .size(std::max(0.0f, innerW - kCardPad - kConfigTitleW -
+                                        kConfigToggleW - 2.0f * kDialogGap),
+                          lhS)
+                    .text(configHint)
+                    .fontSize(fsS)
+                    .lineHeight(lhS)
+                    .wrap(false)
+                    .maxWidth(std::max(
+                        0.0f, innerW - kCardPad - kConfigTitleW -
+                                  kConfigToggleW - 2.0f * kDialogGap))
+                    .color(t.colors.textSecondary)
+                    .build();
+                ui.text("agent.dialog.detail.config.header.toggle")
+                    .position(innerW - kCardPad - kConfigToggleW,
+                              (configH - lhS) * 0.5f)
+                    .size(kConfigToggleW, lhS)
+                    .text(configOpen_ ? "收起" : "展开")
+                    .fontSize(fsS)
+                    .lineHeight(lhS)
+                    .horizontalAlign(eui::HorizontalAlign::Right)
+                    .color(t.colors.primary)
+                    .build();
+                // 整行命中面最后画（盖在文本上收点击）；P1 只切状态位，浮层 P3 渲染
+                ui.rect("agent.dialog.detail.config.header.hit")
+                    .size(innerW, configH)
+                    .states(eui::Color{0.0f, 0.0f, 0.0f, 0.0f},
+                            eui::Color{0.0f, 0.0f, 0.0f, 0.0f},
+                            eui::Color{0.0f, 0.0f, 0.0f, 0.0f})
+                    .onClick([this] { configOpen_ = !configOpen_; })
+                    .build();
+            })
+            .build();
+
+        // —— 时间线（宽屏左栏 / 窄屏 tab 0）：.runlist.title + .runlist.scroll 骨架 ——
+        // 行渲染沿用单行 runRowText + .err/.err.hint（容器化 bg/dot/time/status 在 P2）
+        auto composeRunlist = [&](float rx, float ry, float rw, float rh) {
+            const float titleH = std::max(22.0f, lhB);
+            ui.stack("agent.dialog.detail.runlist")
+                .position(rx, ry)
+                .size(rw, rh)
+                .content([&] {
+                    ui.text("agent.dialog.detail.runlist.title")
+                        .position(0.0f, 0.0f)
+                        .size(std::max(0.0f, rw - 90.0f), titleH)
+                        .text("执行记录")
+                        .fontSize(fsB)
+                        .lineHeight(lhB)
+                        .fontWeight(600)
+                        .color(t.colors.textPrimary)
+                        .build();
+                    ui.text("agent.dialog.detail.runlist.count")
+                        .position(0.0f, 0.0f)
+                        .size(rw, titleH)
+                        .text(hasRuns ? "最近 " + std::to_string(runs->size()) +
+                                            " 次"
+                                      : std::string())
+                        .fontSize(fsS)
+                        .lineHeight(lhB)
+                        .horizontalAlign(eui::HorizontalAlign::Right)
+                        .color(t.colors.textTertiary)
+                        .build();
+                    if (!hasRuns) {
+                        ui.text("agent.dialog.detail.runlist.empty")
+                            .position(0.0f, titleH + 8.0f)
+                            .size(rw, std::max(lhS, rh - titleH - 8.0f))
+                            .text("从未执行")
+                            .fontSize(fsS)
+                            .lineHeight(lhS)
+                            .verticalAlign(eui::VerticalAlign::Center)
+                            .color(t.colors.textTertiary)
+                            .build();
+                        return;
                     }
+                    components::scrollView(ui,
+                                           "agent.dialog.detail.runlist.scroll")
+                        .position(0.0f, titleH + 8.0f)
+                        .size(rw, std::max(0.0f, rh - titleH - 8.0f))
+                        .gap(4.0f)
+                        .step(18.0f)
+                        .theme(themeTokens)
+                        .contentKey("agent.dialog.detail.runlist.scroll.v" +
+                                    std::to_string(msgScrollVersion_) + ".n" +
+                                    std::to_string(runs->size()) + ".w" +
+                                    std::to_string(static_cast<int>(rw)))
+                        .content([&](eui::Ui& inner, float cw, float) {
+                            for (size_t i = 0; i < runs->size(); ++i) {
+                                const std::string runRowId =
+                                    "agent.dialog.detail.runlist." +
+                                    std::to_string(i);
+                                const AgentRunRow& run = (*runs)[i];
+                                const bool highlighted =
+                                    selectedRunId_ && *selectedRunId_ == run.id;
+                                inner.text(runRowId)
+                                    .size(cw, 18.0f)
+                                    .text(runRowText(run))
+                                    .fontSize(12.0f)
+                                    .lineHeight(18.0f)
+                                    .wrap(false)
+                                    .color(highlighted ? t.colors.primary
+                                                       : t.colors.textSecondary)
+                                    .onClick([this, runId = run.id] {
+                                        selectedRunId_ = runId;
+                                        // seq 只在 run 内唯一：切 run 清消息展开态；
+                                        // 窄屏点行自动切「运行详情」tab、收起配置头
+                                        expandedMsgSeqs_.clear();
+                                        autoExpandedSeq_.reset();
+                                        detailTab_ = 1;
+                                        configOpen_ = false;
+                                        ++msgScrollVersion_;
+                                        tasksDirty_ = true;
+                                    })
+                                    .build();
+                                if (run.error && !run.error->empty()) {
+                                    inner.text(runRowId + ".err")
+                                        .size(cw, 16.0f)
+                                        .text("错误：" + *run.error)
+                                        .fontSize(11.0f)
+                                        .lineHeight(16.0f)
+                                        .wrap(false)
+                                        .color(t.colors.error)
+                                        .build();
+                                    // 「去 Claude 页」引导：仅「LLM 配置不可用」类
+                                    // 错误渲染（needsClaudePageHint 前缀钉死）
+                                    if (needsClaudePageHint(*run.error)) {
+                                        inner.text(runRowId + ".err.hint")
+                                            .size(cw, 16.0f)
+                                            .text("去 Claude 页 →")
+                                            .fontSize(11.0f)
+                                            .lineHeight(16.0f)
+                                            .wrap(false)
+                                            .color(t.colors.primary)
+                                            .onClick(
+                                                [] { navigateToClaudePage(); })
+                                            .build();
+                                    }
+                                }
+                            }
+                        })
+                        .build();
                 })
                 .build();
+        };
+
+        // —— 右栏 / 窄屏 tab 1：消息区骨架（.detail.status/.meta/.schedule/.error 在
+        // P3 落地后插到消息区之前）——
+        // 宽屏正常高：消息标题固定 + .msgscroll 独立滚；矮宽屏 / 窄屏 / 右栏余高不足
+        // 96：.detail.scroll 整栏滚（不建 .msgscroll，避免嵌套滚动）
+        constexpr float kMsgsTitleH = 32.0f;
+        constexpr float kCopyFinalChipW = 76.0f;
+        auto composeDetailColumn = [&](float dx, float dy, float dw, float dh) {
+            const std::string finalText = finalAssistantText(detailMessages_);
+            const bool hasCopyFinal = !finalText.empty();
+            // detailTopH 在 P1 为 0（P3 的状态/元信息块落地后从这里扣），消息标题行
+            // 之下的余高 < 96 就降级整栏滚，不硬压消息区
+            const bool fixedMsgArea =
+                wide && h >= 600.0f && (dh - 12.0f) >= 96.0f;
+            // 标题行 + 复制 chip（flow 排）：固定态包在绝对定位 stack 里，滚动态
+            // 直接进 .detail.scroll 内容列
+            auto msgsHeaderRow = [&](eui::Ui& inner, float cw) {
+                inner.row("agent.dialog.detail.msgs.head")
+                    .size(cw, kMsgsTitleH)
+                    .content([&] {
+                        inner.text("agent.dialog.detail.msgs.title")
+                            .size(hasCopyFinal
+                                      ? std::max(0.0f, cw - kCopyFinalChipW)
+                                      : cw,
+                                  kMsgsTitleH)
+                            .text("消息（" +
+                                  std::to_string(detailMessages_.size()) + "）")
+                            .fontSize(fsB)
+                            .lineHeight(lhB)
+                            .fontWeight(600)
+                            .verticalAlign(eui::VerticalAlign::Center)
+                            .color(t.colors.textPrimary)
+                            .build();
+                        // 「复制回复」：一键复制 run 最终回复全文（最后一条 assistant
+                        // 的全部 text 块，见 finalAssistantText）。空串不渲染
+                        if (hasCopyFinal) {
+                            inner.stack(
+                                "agent.dialog.detail.msgs.copyfinal.wrap")
+                                .size(kCopyFinalChipW, kMsgsTitleH)
+                                .content([&] {
+                                    actionChip(
+                                        inner,
+                                        "agent.dialog.detail.msgs.copyfinal",
+                                        "复制回复", kCopyFinalChipW,
+                                        /*primary=*/true, /*enabled=*/true,
+                                        themeTokens, [text = finalText] {
+                                            // setClipboardText 返回 void 无法校验
+                                            // → LOG 留痕
+                                            core::window::setClipboardText(text);
+                                            LOG_INFO("Agent: 已复制最终回复 " +
+                                                     std::to_string(text.size()) +
+                                                     " 字节到剪贴板");
+                                        });
+                                })
+                                .build();
+                        }
+                    })
+                    .build();
+            };
+            ui.stack("agent.dialog.detail.detail")
+                .position(dx, dy)
+                .size(dw, dh)
+                .content([&] {
+                    if (fixedMsgArea) {
+                        ui.stack("agent.dialog.detail.msgs.head.wrap")
+                            .size(dw, kMsgsTitleH)
+                            .content(
+                                [&] { msgsHeaderRow(ui, dw); })
+                            .build();
+                        if (detailMessages_.empty()) {
+                            ui.text("agent.dialog.detail.empty")
+                                .position(0.0f, kMsgsTitleH)
+                                .size(dw, std::max(0.0f, dh - kMsgsTitleH))
+                                .text("（选中的 run 还没有消息）")
+                                .fontSize(fsS)
+                                .lineHeight(lhS)
+                                // 盒高 ≠ 行高，不给 verticalAlign 会顶在上缘
+                                .verticalAlign(eui::VerticalAlign::Center)
+                                .color(t.colors.textTertiary)
+                                .build();
+                        } else {
+                            components::scrollView(
+                                ui, "agent.dialog.detail.msgscroll")
+                                .position(0.0f, kMsgsTitleH)
+                                .size(dw, std::max(0.0f, dh - kMsgsTitleH))
+                                .gap(kMsgRowGap)
+                                .step(18.0f)
+                                .theme(themeTokens)
+                                .contentKey("agent.dialog.detail.msgscroll.v" +
+                                            std::to_string(msgScrollVersion_) +
+                                            ".n" +
+                                            std::to_string(
+                                                detailMessages_.size()) +
+                                            ".w" +
+                                            std::to_string(static_cast<int>(dw)))
+                                .content([&](eui::Ui& inner, float cw, float) {
+                                    for (size_t i = 0;
+                                         i < detailMessages_.size(); ++i) {
+                                        renderMessageRow(inner, cw,
+                                                         "agent.dialog.detail",
+                                                         i, detailMessages_[i],
+                                                         t, themeTokens);
+                                    }
+                                })
+                                .build();
+                        }
+                        return;
+                    }
+                    components::scrollView(ui,
+                                           "agent.dialog.detail.detail.scroll")
+                        .size(dw, dh)
+                        .gap(kMsgRowGap)
+                        .step(18.0f)
+                        .theme(themeTokens)
+                        .contentKey("agent.dialog.detail.detail.scroll.v" +
+                                    std::to_string(msgScrollVersion_) + ".n" +
+                                    std::to_string(detailMessages_.size()) +
+                                    ".w" + std::to_string(static_cast<int>(dw)))
+                        .content([&](eui::Ui& inner, float cw, float) {
+                            msgsHeaderRow(inner, cw);
+                            if (detailMessages_.empty()) {
+                                inner.text("agent.dialog.detail.empty")
+                                    .size(cw,
+                                          std::clamp(dh - kMsgsTitleH,
+                                                     kMsgAreaMinH,
+                                                     kMsgAreaMaxH))
+                                    .text("（选中的 run 还没有消息）")
+                                    .fontSize(fsS)
+                                    .lineHeight(lhS)
+                                    .verticalAlign(eui::VerticalAlign::Center)
+                                    .color(t.colors.textTertiary)
+                                    .build();
+                                return;
+                            }
+                            for (size_t i = 0; i < detailMessages_.size(); ++i) {
+                                renderMessageRow(inner, cw, "agent.dialog.detail",
+                                                 i, detailMessages_[i], t,
+                                                 themeTokens);
+                            }
+                        })
+                        .build();
+                })
+                .build();
+        };
+
+        if (wide) {
+            composeRunlist(x0, mainY, leftW, mainH);
+            composeDetailColumn(rightX, mainY, rightW, mainH);
+        } else {
+            // 窄屏单列：摘要 → 配置头 → segmented（两 tab）→ 当前 tab 内容。
+            // segmented 组件不暴露 position，包一层 wrap stack 落位
+            ui.stack("agent.dialog.detail.nav.wrap")
+                .position(x0, navY)
+                .size(innerW, navH)
+                .content([&] {
+                    components::segmented(ui, "agent.dialog.detail.nav")
+                        .size(innerW, navH)
+                        .items({"执行记录", "运行详情"})
+                        .selected(detailTab_)
+                        .fontSize(fsS)
+                        .theme(themeTokens)
+                        .onChange([this](int index) { detailTab_ = index; })
+                        .build();
+                })
+                .build();
+            if (detailTab_ == 0) {
+                composeRunlist(x0, contentY, innerW, contentH);
+            } else {
+                composeDetailColumn(x0, contentY, innerW, contentH);
+            }
         }
     });
 }
