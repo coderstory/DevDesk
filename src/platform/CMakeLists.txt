@@ -1,4 +1,5 @@
 add_library(devdesk_platform STATIC
+    notification.h                      # 平台通知抽象（实现按平台选择）
     http_client.cpp
     http_server.cpp
     json.cpp
@@ -24,6 +25,7 @@ if(WIN32)
         tray_icon_win.cpp              # 托盘图标走真 .ico（ExtractIconExW 不认 PNG）
         message_box_win.cpp             # 启动期阻塞对话框（损坏还原流程）
         single_instance_win.cpp        # 单实例互斥：命名 mutex + 事件监听线程
+        notification_win.cpp           # 系统通知 stub（真实托盘/Toast 待接入）
     )
 elseif(APPLE)
     target_sources(devdesk_platform PRIVATE
@@ -39,6 +41,7 @@ elseif(APPLE)
         tray_icon_macos.cpp            # 托盘图标走 22×22 template 蒙版（不变）
         message_box_macos.cpp          # osascript display dialog（启动期阻塞对话框）
         single_instance_macos.cpp      # .app bundle 系统保证单实例，恒 true
+        notification_macos.mm          # UNUserNotificationCenter（ARC，见下方编译选项）
     )
 else()
     target_sources(devdesk_platform PRIVATE
@@ -54,6 +57,7 @@ else()
         tray_icon_posix.cpp            # 其它 POSIX 兜底：返回空串（用应用图标）
         message_box_posix.cpp          # 无原生阻塞对话框：诚实降级（LOG + Cancel）
         single_instance_posix.cpp      # 暂 no-op 恒 true
+        notification_posix.cpp         # 无原生通知后端：诚实 NotImplemented
     )
 endif()
 
@@ -93,11 +97,20 @@ target_compile_definitions(devdesk_platform PUBLIC
 # 实现读 NSGlobalDomain AppleInterfaceStyle 用；两者都只在 APPLE 分支链接）
 # CoreServices：file_watcher_macos.cpp 的 FSEvents（FSEventStreamCreate 等）
 if(APPLE)
+    # UNUserNotificationCenter 在 UserNotifications.framework；REQUIRED 让 SDK 缺框架时
+    # configure 期直接失败，而不是链接期才报未定义符号。
+    find_library(USER_NOTIFICATIONS_FRAMEWORK UserNotifications REQUIRED)
     target_link_libraries(devdesk_platform PUBLIC
         "-framework Security"
         "-framework CoreFoundation"
         "-framework CoreServices"
+        ${USER_NOTIFICATIONS_FRAMEWORK}
     )
+
+    # notification_macos.mm 单独开 ARC：只影响该源文件，不给整个 target 打开
+    #（其它 .cpp 不受影响；ObjC 内存管理在 ObjC 文件内自洽）。
+    set_source_files_properties(notification_macos.mm PROPERTIES
+        COMPILE_OPTIONS "-fobjc-arc")
 endif()
 
 # Windows 系统库：Winsock2（网络）+ Crypt32（TLS 证书链）+ Shell32（file_open_win.cpp

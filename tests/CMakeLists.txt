@@ -37,6 +37,7 @@ add_executable(devdesk_tests
     test_platform/test_file_watcher.cpp
     test_platform/test_tray_icon.cpp
     test_platform/test_single_instance.cpp
+    test_platform/test_notification.cpp
     test_modules/test_markdown.cpp
     test_modules/test_markdown_service.cpp
     test_modules/test_markdown_tools.cpp

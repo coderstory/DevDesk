@@ -14,6 +14,12 @@ else()
 endif()
 project(DevDesk VERSION ${DEVDESK_VERSION} LANGUAGES C CXX)
 
+if(APPLE)
+  # notification_macos.mm 需要 ObjC++。EUI-NEO 子项目自己启用过 OBJCXX，但 DevDesk
+  # 不能依赖子项目的副作用（子目录顺序/配置变化都会让 .mm 失去正确语言识别）。
+  enable_language(OBJCXX)
+endif()
+
 if(WIN32)
   # httplib 0.58+ 要求 Win10+（头内 #error + CreateFile2 需要 _WIN32_WINNT>=0x0A00）。
   # MSYS2 MinGW 默认值偏低；本项目 Windows 门槛本就是 Win10+，全局统一定义

@@ -8,6 +8,7 @@
 
 ## [未发布]
 
+- feat(platform)：新增通知接口与 macOS 实现——`platform::notify` 抽象 + `UNUserNotificationCenter` 后端（前台 banner/list/sound、授权状态缓存、裸二进制 `.app` bundle guard）；Windows/其它 POSIX 暂为诚实 stub，测试可用 fake backend 注入。
 - feat(agent)：Scheduler 支持 once 一次性触发（错过不补）——到点窗口内派发一次即停用，已响过以 `agent_runs` 判定（重启不重响），窗口外只记 INFO 不补跑；坏配置/缺 `once_at` 点名 task id WARN。
 - feat(agent)：`trigger_config` 支持 `once_at` 一次性触发载荷（Unix 秒，与 `cron`/`events` 互斥；仅编解码与校验，Scheduler / UI 后续接入）。
 - feat(agent)：**新增「每天」触发**——不指定时刻，本地当天首次调度跑一次，当天不重复、跨天恢复；判定以 `agent_runs` 为唯一事实源（重启不重复），不消费 `trigger_config`。

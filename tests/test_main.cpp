@@ -12,6 +12,7 @@
 #include "core/service_locator.h"
 #include "core/theme.h"
 #include "module_toggle_bridge.h"
+#include "platform/notification.h"
 #include "quota_home_bridge.h"
 #include "ui_kit/splash.h"
 #include <algorithm>
@@ -68,6 +69,7 @@ void setEnvVar(const char* key, const std::string& value) {
 //  13. 启动 splash 测试缝      无头进程禁 splash（2.3s 时序不适用） ← ui_kit/splash.h
 //  14. 模块开关桥 handler      两条桥的注入槽（模块开关 + claude 惰性装配）← module_toggle_bridge.h
 //  15. 余量功能总开关桥        devdesk::quota_bridge 的函数局部 static flag ← quota_home_bridge.h
+//  16. 系统通知后端注入槽      platform::notify 的进程级 Backend 槽 ← platform/notification.h
 //
 // 同口径纪律：**进程级单例一律永不析构**——服务/注册表/统计状态这类「与进程同寿」
 // 的对象不得写成「函数局部 static」。首次构造晚于 armExitHook 时，atexit 的 LIFO
@@ -148,6 +150,10 @@ void resetCaseGlobals() {
     // static atomic——用例体内 setQuotaFeatureEnabled(true) 后 fail-fast 提前返回不会
     // 还原，后续用例会在「开关开」的污染态里跑。出厂态 = false。
     ::devdesk::quota_bridge::setQuotaFeatureEnabled(false);
+    // 16) 系统通知后端注入槽（platform/notification.h）：用例体内
+    // setBackendForTest(&栈上 fake) 后 fail-fast 会跳过尾部复位，槽位里的悬垂指针
+    // 会让后续用例崩溃。出厂态 = 默认平台后端（macOS guard / Windows stub）。
+    ::platform::notify::resetBackendForTest();
 }
 
 // 结果先收集、循环结束后统一批量输出：全量 800+ 例时逐条 std::endl 强 flush 是
