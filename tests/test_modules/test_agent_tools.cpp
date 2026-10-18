@@ -24,6 +24,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <initializer_list>
 #include <memory>
 #include <optional>
 #include <string>
@@ -100,15 +101,19 @@ namespace {
 // ToolGuard 不可省：ToolRegistry 是进程级单例、不在 test_main 的 resetCaseGlobals
 // 清单里，用例内显式 unregister 会漏掉 fail-fast 提前 return 的路径。
 struct ToolGuard {
-    std::string name;
-    ~ToolGuard() { core::ToolRegistry::instance().unregisterTool(name); }
+    std::vector<std::string> names;
+    ToolGuard(std::initializer_list<std::string> toolNames) : names(toolNames) {}
+    ~ToolGuard() {
+        for (const auto& name : names) {
+            core::ToolRegistry::instance().unregisterTool(name);
+        }
+    }
 };
 
 // 慢工具：execute 睡 300ms（本组用例唯一允许的长睡——模拟真实工具耗时），
-// 醒来后记录那一刻 app.stats 是否仍在注册表。teardown 顺序探针：正确顺序
-// （cancel → join → clear → unregister）下，工具执行期间 onStop 还阻塞在
-// join，app.stats 必然尚未注销；若实现把 unregister 提到 join 前，本探针
-// 记到 false。
+// 醒来后记录那一刻 app.stats / app.notify 是否仍在注册表。teardown 顺序探针：
+// 正确顺序（cancel → join → clear → unregister）下，工具执行期间 onStop 还阻塞在
+// join，两个自带工具必然尚未注销；若实现把 unregister 提到 join 前，本探针记到 false。
 class SlowTool : public core::ITool {
 public:
     std::string name() const override { return "test.slow"; }
@@ -118,6 +123,8 @@ public:
         std::this_thread::sleep_for(std::chrono::milliseconds(300));
         sawAppStatsRegistered =
             core::ToolRegistry::instance().find("app.stats").isOk();
+        sawAppNotifyRegistered =
+            core::ToolRegistry::instance().find("app.notify").isOk();
         endMs = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now().time_since_epoch()).count();
         return core::Result<core::ToolResult>::ok(
@@ -125,6 +132,7 @@ public:
     }
     std::atomic<int> calls{0};
     std::atomic<bool> sawAppStatsRegistered{false};
+    std::atomic<bool> sawAppNotifyRegistered{false};
     std::atomic<long long> endMs{0};  // execute 返回时刻（steady_clock 自 epoch 毫秒）
 };
 
@@ -181,11 +189,12 @@ REGISTER_TEST(tool_registry_list_tools_snapshot,
 })
 
 REGISTER_TEST(agent_module_registers_own_tool,
-              "agent_module: onStart 注册 app.stats、onStop 注销（生命周期）", {
+              "agent_module: onStart 注册 app.stats/app.notify、onStop 注销（生命周期）", {
     test_support::TestDb tdb("agenttools", "modtool");
     test_support::FakeProfileSource profile;
-    ToolGuard statsGuard{"app.stats"};   // 兜底摘除（含 fail-fast 路径）
-    core::ToolRegistry::instance().unregisterTool("app.stats");  // 起点干净
+    ToolGuard statsGuard{{"app.stats", "app.notify"}};   // 兜底摘除（含 fail-fast 路径）
+    core::ToolRegistry::instance().unregisterTool("app.stats");
+    core::ToolRegistry::instance().unregisterTool("app.notify");  // 起点干净
 
     module::agent::AgentModule::Deps deps;
     deps.db = &tdb.handle();
@@ -193,14 +202,20 @@ REGISTER_TEST(agent_module_registers_own_tool,
     std::unique_ptr<::core::Module> mod(new module::agent::AgentModule(deps));
 
     DOCTEST_CHECK(core::ToolRegistry::instance().find("app.stats").isFail());
+    DOCTEST_CHECK(core::ToolRegistry::instance().find("app.notify").isFail());
     mod->onStart();
     auto found = core::ToolRegistry::instance().find("app.stats");
     DOCTEST_REQUIRE(found.isOk());
     DOCTEST_CHECK_EQ(found.value()->name(), std::string("app.stats"));
     DOCTEST_CHECK_FALSE(found.value()->isDestructive());
+    auto notify = core::ToolRegistry::instance().find("app.notify");
+    DOCTEST_REQUIRE(notify.isOk());
+    DOCTEST_CHECK_EQ(notify.value()->name(), std::string("app.notify"));
+    DOCTEST_CHECK_FALSE(notify.value()->isDestructive());
 
     mod->onStop();
     DOCTEST_CHECK(core::ToolRegistry::instance().find("app.stats").isFail());
+    DOCTEST_CHECK(core::ToolRegistry::instance().find("app.notify").isFail());
     return true;
 })
 
@@ -208,8 +223,9 @@ REGISTER_TEST(agent_module_onstop_cancels_and_joins,
               "agent_module: onStop 取消+join 完成后才注销工具，run 落库 cancelled", {
     test_support::TestDb tdb("agenttools", "modstop");
     test_support::FakeProfileSource profile;
-    ToolGuard statsGuard{"app.stats"};
-    core::ToolRegistry::instance().unregisterTool("app.stats");  // 起点干净
+    ToolGuard statsGuard{{"app.stats", "app.notify"}};
+    core::ToolRegistry::instance().unregisterTool("app.stats");
+    core::ToolRegistry::instance().unregisterTool("app.notify");  // 起点干净
 
     // 慢工具挂进注册表（mock 响应点名调用它；RAII 摘除）
     auto slow = std::make_shared<SlowTool>();
@@ -245,6 +261,7 @@ REGISTER_TEST(agent_module_onstop_cancels_and_joins,
     std::unique_ptr<::core::Module> mod(new module::agent::AgentModule(deps));
     mod->onStart();
     DOCTEST_REQUIRE(core::ToolRegistry::instance().find("app.stats").isOk());
+    DOCTEST_REQUIRE(core::ToolRegistry::instance().find("app.notify").isOk());
 
     // compose 出任务行后点「启动」——手动触发路径就是 compose 的 onClick 回调
     {
@@ -299,6 +316,8 @@ REGISTER_TEST(agent_module_onstop_cancels_and_joins,
     // teardown 顺序：unregister 发生在 join 之后，提前注销则此处记 false
     DOCTEST_CHECK_MESSAGE(tool->sawAppStatsRegistered.load(),
                           "工具执行期间 app.stats 已被注销（unregister 未等 join）");
+    DOCTEST_CHECK_MESSAGE(tool->sawAppNotifyRegistered.load(),
+                          "工具执行期间 app.notify 已被注销（unregister 未等 join）");
     return true;
 })
 
@@ -306,8 +325,9 @@ REGISTER_TEST(agent_module_ui_id_contract,
               "agent_module: 最小 UI 元素 id 契约（标题/表单/任务行/启动/状态/详情展开）", {
     test_support::TestDb tdb("agenttools", "modui");
     test_support::FakeProfileSource profile;
-    ToolGuard statsGuard{"app.stats"};
+    ToolGuard statsGuard{{"app.stats", "app.notify"}};
     core::ToolRegistry::instance().unregisterTool("app.stats");
+    core::ToolRegistry::instance().unregisterTool("app.notify");
 
     module::agent::AgentStore store(tdb.handle());
     auto created = store.createTask("整理逾期", "把逾期待办全部完成",
@@ -403,8 +423,9 @@ REGISTER_TEST(agent_module_onstart_reentry_idempotent,
               "agent_module: onStart→onStop→onStart 重入 + 双 onStart/双 onStop no-op", {
     test_support::TestDb tdb("agenttools", "reentry");
     test_support::FakeProfileSource profile;
-    ToolGuard statsGuard{"app.stats"};
-    core::ToolRegistry::instance().unregisterTool("app.stats");  // 起点干净
+    ToolGuard statsGuard{{"app.stats", "app.notify"}};
+    core::ToolRegistry::instance().unregisterTool("app.stats");
+    core::ToolRegistry::instance().unregisterTool("app.notify");  // 起点干净
     module::agent::AgentModule mod({&tdb.handle(), &profile, nullptr});
 
     // 双 onStart 的可观察面（find 之外）：重入幂等 = 不重跑 onStart 体——
@@ -431,20 +452,25 @@ REGISTER_TEST(agent_module_onstart_reentry_idempotent,
 
     mod.onStart();
     DOCTEST_CHECK(core::ToolRegistry::instance().find("app.stats").isOk());
+    DOCTEST_CHECK(core::ToolRegistry::instance().find("app.notify").isOk());
     DOCTEST_CHECK_EQ(runningCount(), 0);   // 首次 onStart 清扫：种下的悬挂 run 已清
 
     DOCTEST_REQUIRE(store.startRun(taskId).isOk());   // 双 onStart 前再种一条
     mod.onStart();   // 双 onStart：no-op（不重复注册、不重建成员、不重跑清扫）
     DOCTEST_CHECK(core::ToolRegistry::instance().find("app.stats").isOk());
+    DOCTEST_CHECK(core::ToolRegistry::instance().find("app.notify").isOk());
     DOCTEST_CHECK_EQ(runningCount(), 1);   // ← 回退守卫即红：二次清扫会把它清成 failed
 
     mod.onStop();
     DOCTEST_CHECK(core::ToolRegistry::instance().find("app.stats").isFail());
+    DOCTEST_CHECK(core::ToolRegistry::instance().find("app.notify").isFail());
     mod.onStop();    // 双 onStop：no-op
     mod.onStart();   // off→on 循环：工具恢复
     DOCTEST_CHECK(core::ToolRegistry::instance().find("app.stats").isOk());
+    DOCTEST_CHECK(core::ToolRegistry::instance().find("app.notify").isOk());
     mod.onStop();
     DOCTEST_CHECK(core::ToolRegistry::instance().find("app.stats").isFail());
+    DOCTEST_CHECK(core::ToolRegistry::instance().find("app.notify").isFail());
     return true;
 })
 
@@ -456,8 +482,9 @@ REGISTER_TEST(agent_module_onstop_stops_scheduler_runs,
               "agent_module: onStop 收口 Scheduler 在跑 run（cancel→join→停线程→注销工具）", {
     test_support::TestDb tdb("agenttools", "schedstop");
     test_support::FakeProfileSource profile;
-    ToolGuard statsGuard{"app.stats"};
-    core::ToolRegistry::instance().unregisterTool("app.stats");   // 起点干净
+    ToolGuard statsGuard{{"app.stats", "app.notify"}};
+    core::ToolRegistry::instance().unregisterTool("app.stats");
+    core::ToolRegistry::instance().unregisterTool("app.notify");   // 起点干净
     core::ToolRegistry::instance().unregisterTool("test.slow");
     auto slow = std::make_shared<SlowTool>();
     SlowTool* tool = slow.get();
@@ -495,6 +522,7 @@ REGISTER_TEST(agent_module_onstop_stops_scheduler_runs,
 
     mod->onStop();                       // 阻塞到 cancel+join+停线程完成
     DOCTEST_CHECK(core::ToolRegistry::instance().find("app.stats").isFail());
+    DOCTEST_CHECK(core::ToolRegistry::instance().find("app.notify").isFail());
     DOCTEST_CHECK_EQ(tool->calls.load(), 1);   // onStop 后不再被调
     DOCTEST_CHECK_EQ(httpCalls, 1);            // join 真等到了 run 收尾，收尾后无新请求
     auto runs = store.listRuns(taskId, 10);
@@ -512,8 +540,9 @@ REGISTER_TEST(agent_module_lazy_assembly_first_use,
               "agent_module: 配置来源后置注册 → 首次使用解析（手动起 run + 惰性补建 Scheduler 跑 cron）", {
     test_support::TestDb tdb("agenttools", "lazyassembly");
     test_support::FakeProfileSource profile;
-    ToolGuard statsGuard{"app.stats"};
-    core::ToolRegistry::instance().unregisterTool("app.stats");   // 起点干净
+    ToolGuard statsGuard{{"app.stats", "app.notify"}};
+    core::ToolRegistry::instance().unregisterTool("app.stats");
+    core::ToolRegistry::instance().unregisterTool("app.notify");   // 起点干净
 
     module::agent::AgentStore store(tdb.handle());
     auto manual = store.createTask("手动", "直接回复完成", "manual", "default", 10, false);
@@ -538,6 +567,7 @@ REGISTER_TEST(agent_module_lazy_assembly_first_use,
     std::unique_ptr<::core::Module> mod(new module::agent::AgentModule(deps));
     mod->onStart();   // 早退分支：LLM 通道未建，自带工具照常注册
     DOCTEST_REQUIRE(core::ToolRegistry::instance().find("app.stats").isOk());
+    DOCTEST_REQUIRE(core::ToolRegistry::instance().find("app.notify").isOk());
     auto before = store.listRuns(manual.value(), 10);
     DOCTEST_REQUIRE(before.isOk());
     DOCTEST_REQUIRE(before.value().empty());   // 起点确无 run（下面的落行断言非空集恒真）

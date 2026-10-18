@@ -7,6 +7,7 @@ add_library(devdesk_agent STATIC
     agent_loop.cpp
     scheduler.cpp
     app_stats_tool.cpp
+    app_notify_tool.cpp
     direct_llm_client.cpp
     agent_module.cpp
 )

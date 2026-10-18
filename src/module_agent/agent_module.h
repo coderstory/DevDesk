@@ -166,6 +166,9 @@ private:
     void refreshData();
     // 冷启动兜底：pollRunEnd 三守卫全假时的低频轻查询探测（节流见 kRunFallbackIntervalSec）
     void pollRunEndFallback();
+    // 系统通知授权：Module 接口没有「窗口可见」回调，由 pollRunEnd（app::compose 在 splash
+    // 结束后每帧调用）触发一次；重复调用由成员闸挡住，不重复弹授权框。
+    void requestNotificationAuthorizationOnce();
     // 任务级 run 汇总缓存：失效判据 = store_->writeVersion()（同 home 余量卡口径）——
     // 版本没变零查询零锁，uiPolling_ 每帧 refreshData 也不重查；版本取查询前快照（查询后
     // 取会漏：读到旧数据却记成新版本，之后永不再查）
@@ -198,6 +201,9 @@ private:
     // 先亡，其 run 线程 join 期间被引用的 loop_/store_ 仍存活
     std::unique_ptr<Scheduler> scheduler_;
     std::shared_ptr<::core::ITool> statsTool_;
+    // app.notify：构造函数注入 fallback（工作线程 → pendingNotices_ 线程安全入队）。
+    // onStop 在 run 线程 join 之后注销/reset，避免工具回调碰到已析构的 this。
+    std::shared_ptr<::core::ITool> notifyTool_;
     // 事件触发的 EventBus 订阅 token（ensureLlm 建 scheduler_ 时订阅三事件，emit 在
     // UI 主线程同步回调 → scheduler_->onEvent 轻入队）。RAII：onStop 清空即退订，
     // 不得漏——bus() 单例跨用例/跨生命周期共享（Task 1 concerns ④）
@@ -295,7 +301,13 @@ private:
     bool runSummariesSeenVersionValid_ = false;   // false = 从未查过（首查强制）
     // 待发通知队列（title, message）：迁移检测置入，takeRunEndNotice 取走即清。
     // 同帧多个迁移按 runId 升序入队；app 通道 toast 单实例，后发顶替先发（接受）。
+    // 生产者有两个线程：UI 线程（run-end 迁移）+ AgentLoop 工作线程（app.notify 失败
+    // 降级），故读写都必须持锁；锁内只碰队列，不回调外部代码。
+    std::mutex pendingNoticesMu_;
     std::vector<std::pair<std::string, std::string>> pendingNotices_;
+
+    // 通知授权只请求一次（跨 onStop/onStart 也不重复弹框；系统对已决定状态本就幂等）
+    bool notificationAuthorizationRequested_ = false;
 
     // 重入幂等守卫：double-onStart = no-op（防重复注册工具 / 重建服务）；未启动的 off = no-op
     bool started_ = false;

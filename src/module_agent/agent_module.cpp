@@ -32,7 +32,9 @@
 #include "core/service_locator.h"
 #include "core/theme.h"
 #include "core/time.h"
+#include "platform/notification.h"
 #include "module_agent/agent_loop.h"
+#include "module_agent/app_notify_tool.h"
 #include "module_agent/app_stats_tool.h"
 #include "module_agent/cron.h"
 #include "module_agent/message_blocks.h"
@@ -410,6 +412,17 @@ void AgentModule::onStart() {
         LOG_ERROR("Agent: app.stats 注册失败: " + reg.errorMessage());
     }
 
+    // app.notify 的系统通知失败降级：AgentLoop 工作线程调用，只做线程安全入队，
+    // 由装配层每帧 takeRunEndNotice() 取走后经 app::showAppNotice 发 toast（不碰 UI）。
+    notifyTool_ = std::make_shared<NotifyTool>([this](std::string text) {
+        std::lock_guard<std::mutex> lock(pendingNoticesMu_);
+        pendingNotices_.emplace_back("应用内提醒", std::move(text));
+    });
+    auto regNotify = ::core::ToolRegistry::instance().registerTool(notifyTool_);
+    if (regNotify.isFail()) {
+        LOG_ERROR("Agent: app.notify 注册失败: " + regNotify.errorMessage());
+    }
+
     tasksDirty_ = true;
     LOG_INFO("Agent 模块启动");
 }
@@ -437,11 +450,13 @@ void AgentModule::onStop() {
     // Scheduler 收口：先退订事件（断 emit→onEvent 入队源），再 stopAll 停派发源并收在跑 run
     eventSubs_.clear();
     if (scheduler_) scheduler_->stopAll();
+    ::core::ToolRegistry::instance().unregisterTool("app.notify");
     ::core::ToolRegistry::instance().unregisterTool("app.stats");
     loop_.reset();
     llm_.reset();
     store_.reset();
     scheduler_.reset();
+    notifyTool_.reset();
     statsTool_.reset();
     llmMissingWarned_ = false;
     tasks_.clear();
@@ -881,6 +896,16 @@ void AgentModule::ensureToolsCache(bool forceReload) {
     toolsCacheLoaded_ = true;
 }
 
+// 授权弹窗时机：Module::onStart 在窗口可见之前（Router::startAll 于装配期执行），
+// 直接放 onStart 会让 macOS 授权框在无前台窗口时出现。pollRunEnd 是 app::compose 在
+// splash 结束后每帧调用的现有启动通道，此时窗口已可见；因此授权请求挂在这里。
+// 只请求一次：成员闸跨 onStop/onStart 保留（系统对已决定状态本就幂等）。
+void AgentModule::requestNotificationAuthorizationOnce() {
+    if (notificationAuthorizationRequested_) return;
+    notificationAuthorizationRequested_ = true;
+    platform::notify::requestAuthorization();
+}
+
 // 装配层每帧拉取路径（app::compose 内调用）：迁移检测不依赖智能体页可见性。
 // 守卫：store_ 在 +（uiPolling_ 或 页脏 或 上次观测仍有 running run）。第三个条件
 // 覆盖不经页面启动的 run（直写库/外部进程）：prevRunStatuses_ 有 running 就该继续
@@ -888,6 +913,7 @@ void AgentModule::ensureToolsCache(bool forceReload) {
 // （外部直写库新插入的 running run 永远进不了 prevRunStatuses_），靠低频轻查询兜底
 // （pollRunEndFallback），命中即 refreshData 进入正常观测路径。
 void AgentModule::pollRunEnd() {
+    requestNotificationAuthorizationOnce();
     if (store_ == nullptr) return;
     bool prevAlive = false;
     for (const auto& [id, st] : prevRunStatuses_) {
@@ -934,6 +960,7 @@ void AgentModule::pollRunEndFallback() {
 // app::showAppNotice（app 级 toast，跨页可见）。
 std::optional<std::pair<std::string, std::string>>
 AgentModule::takeRunEndNotice() {
+    std::lock_guard<std::mutex> lock(pendingNoticesMu_);
     if (pendingNotices_.empty()) return std::nullopt;
     auto notice = std::move(pendingNotices_.front());
     pendingNotices_.erase(pendingNotices_.begin());
@@ -1077,9 +1104,12 @@ void AgentModule::refreshData() {
             }
             if (taskName.empty()) taskName = "任务 " + std::to_string(runId);
             const std::string& st = nowStatus[runId];
-            pendingNotices_.emplace_back(
-                st == "failed" ? "智能体任务失败" : "智能体任务受限",
-                "「" + taskName + "」运行结束（" + runStatusText(st) + "）");
+            {
+                std::lock_guard<std::mutex> lock(pendingNoticesMu_);
+                pendingNotices_.emplace_back(
+                    st == "failed" ? "智能体任务失败" : "智能体任务受限",
+                    "「" + taskName + "」运行结束（" + runStatusText(st) + "）");
+            }
             notifiedRunIds_.insert(runId);
         }
         prevRunStatuses_ = std::move(nowStatus);
