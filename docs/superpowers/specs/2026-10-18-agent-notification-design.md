@@ -907,7 +907,7 @@ void WinBackend::initialize() {}
 | `notification_backend_seam_restores_default` | 注入/恢复/`resetForTest` 不悬垂。 |
 | `notification_initialize_idempotent` | 连续调两次不重复初始化（fake 计数）。 |
 
-### 10.2 工具测试（新增 `tests/test_modules/test_app_notify_tool.cpp`）
+### 10.2 工具测试（新增 `tests/test_modules/test_notify_tool.cpp`）
 
 | 用例 | 覆盖 |
 |---|---|
@@ -933,7 +933,7 @@ void WinBackend::initialize() {}
 | `tests/test_modules/test_agent_ui.cpp` 工具区 | `registered` 从 1 变 2；`agent.tools.card.0.name` 由 `app.stats` 变 `app.notify`（字典序），card.1 是 `app.stats`；建议改成「两张卡名字集合 == {app.notify, app.stats}」，避免顺序脆断。 |
 | `tests/live/agent_live.cpp` | 若该场景直接开 `AgentModule`，收尾补 `unregisterTool("app.notify")`（live 不进默认门禁，但别留污染）。 |
 | `tests/test_main.cpp` | 已调 `resetBackendForTest()`；改为 `resetForTest()`（清限速/去重/时钟）。 |
-| `tests/CMakeLists.txt` | 新增 `test_modules/test_app_notify_tool.cpp`；TIN-10 漏登记检查会守住。 |
+| `tests/CMakeLists.txt` | 新增 `test_modules/test_notify_tool.cpp`；TIN-10 漏登记检查会守住。 |
 
 **ToolGuard 推荐写法**（减少 41 处重复）：
 
@@ -994,8 +994,8 @@ ToolGuard statsGuard{{"app.stats", "app.notify"}};
 # macOS 单测（平台层）
 bash scripts/build-test-run.sh --filter notification
 
-# 工具/模块
-bash scripts/build-test-run.sh --filter app_notify
+# 工具/模块（自制框架按用例中文描述子串过滤；描述前缀为「app.notify:」，下划线串过滤不到）
+bash scripts/build-test-run.sh --filter app.notify
 bash scripts/build-test-run.sh --filter agent_module
 bash scripts/build-test-run.sh --filter agent_ui
 bash scripts/build-test-run.sh --filter agent_tools
@@ -1019,7 +1019,7 @@ Windows 侧对应：
 
 ```powershell
 bash scripts/build-test-run.sh --filter notification
-bash scripts/build-test-run.sh --filter app_notify
+bash scripts/build-test-run.sh --filter app.notify
 ```
 
 ---
@@ -1118,7 +1118,7 @@ bash scripts/build-test-run.sh --filter app_notify
     `enqueueFallbackNotice`/`takeFallbackNotice`、onStart/onStop；
   - `src/module_agent/CMakeLists.txt`：加入 `app_notify_tool.cpp`；
   - `src/app_sidebar.cpp`：drain fallback；
-  - 新增 `tests/test_modules/test_app_notify_tool.cpp`；
+  - 新增 `tests/test_modules/test_notify_tool.cpp`；
   - 更新 `test_agent_tools.cpp`、`test_agent_ui.cpp`、`tests/CMakeLists.txt`。
 - **依赖**：T1b；Windows 真实路径依赖 T1c（没有 T1c 时工具仍可用，Windows 全部 fallback）。
 - **步骤**：
@@ -1128,7 +1128,7 @@ bash scripts/build-test-run.sh --filter app_notify
   4. 更新工具卡断言与 ToolGuard。
   5. 单测。
 - **验收**：
-  - `--filter app_notify` 绿；
+  - `--filter app.notify` 绿；
   - `--filter agent_module` / `agent_ui` / `agent_tools` 绿；
   - `rg 'app\.notify' src` 显示仅工具/注册/测试预期位置；
   - `check-module-isolation.sh` 绿；
@@ -1198,7 +1198,7 @@ bash scripts/build-test-run.sh --filter app_notify
 
 | 编号 | 决策点 | 选项 | 推荐 |
 |---|---|---|---|
-| D-1 | macOS 授权弹窗时机 | A. 首次启动（`initialize()` 自动请求）；B. 首次调用 `app.notify` 时请求 | **A**（当前草案方向；用户第一次启动就知道有通知能力；但会打断启动） |
+| D-1 | macOS 授权弹窗时机 | A. 首次启动（`initialize()` 自动请求）；B. 首次调用 `app.notify` 时请求 | **A**（当前草案方向；用户第一次启动就知道有通知能力；但会打断启动）。**实施勘误（2026-10-18）**：实际落地为「splash 后首帧请求」，比启动期更优，理由与现状见 §13.1 `src/main.cpp` 行 |
 | D-2 | Windows 11 临时横幅 | A. 接受（v1）；B. 改用 WinRT Toast（AUMID + 快捷方式 + 安装器改造） | **A**（成本/收益） |
 | D-3 | 点击通知行为 | A. 仅激活 app；B. 路由到智能体页/任务详情 | **A**（v1；B 需要 userInfo 路由 + Router 跨模块协调） |
 | D-4 | ad-hoc 签名/Gatekeeper | A. 接受首次去隔离；B. 做 Developer ID + 公证 | **A**（本地/小范围分发；B 是发布工程） |
@@ -1228,7 +1228,7 @@ bash scripts/build-test-run.sh --filter app_notify
 | `src/module_agent/agent_module.cpp` | 改：注册/注销、enqueue |
 | `src/module_agent/CMakeLists.txt` | 改：加入工具源 |
 | `src/app_sidebar.cpp` | 改：drain fallback |
-| `src/main.cpp` | 改：启动调用 `platform::notify::initialize()` |
+| `src/main.cpp` | **未动（实施勘误 2026-10-18）**：授权请求不在启动期，由 `AgentModule::requestNotificationAuthorizationOnce()` 挂 `pollRunEnd()`（splash 后首帧的 app::compose 现有通道）调 `platform::notify::requestAuthorization()`，成员闸只请求一次。决策记录：首帧时点更优——`Module::onStart` 在窗口可见前执行（Router::startAll 装配期），启动期弹授权框会出现在无前台窗口时（§13.4.1 预判成真）；首帧窗口已可见且请求异步幂等，D-1 选 A 的「首启即告知」意图不受影响，并消除「打断启动」缺点。附注：`initialize()` 因此全仓零调用，其 DidBecomeActive 授权缓存重置 observer 缺位（运行中改系统设置会读到陈旧缓存直至重启），已知边缘待拍板 |
 | `EUI-NEO/core/platform/tray_bridge.h` | 改：新增 Windows C API |
 | `EUI-NEO/core/platform/tray_bridge.c` | 改：message-only window + 气泡 |
 | `scripts/sign-macos-app.sh` | 新增 |
@@ -1236,7 +1236,7 @@ bash scripts/build-test-run.sh --filter app_notify
 | `scripts/package-macos.sh` | 改：调用签名 |
 | `scripts/build-test-run.sh` | 改：`--install` 调用签名 + 验证 |
 | `tests/test_platform/test_notification.cpp` | 改：新用例 |
-| `tests/test_modules/test_app_notify_tool.cpp` | 新增 |
+| `tests/test_modules/test_notify_tool.cpp` | 新增 |
 | `tests/test_modules/test_agent_tools.cpp` | 改：双工具生命周期 |
 | `tests/test_modules/test_agent_ui.cpp` | 改：ToolGuard/工具卡 |
 | `tests/CMakeLists.txt` | 改：登记新用例 |
