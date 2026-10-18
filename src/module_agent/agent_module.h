@@ -22,6 +22,7 @@
 #include "core/theme.h"
 #include "core/tool.h"
 #include "module_agent/agent_store.h"
+#include "module_agent/agent_time_text.h"
 #include "module_agent/direct_llm_client.h"
 #include "module_agent/scheduler.h"
 #include "module_agent/task_draft.h"
@@ -64,18 +65,9 @@ std::vector<int64_t> detectRunEndNotifications(
 void pruneNotifiedRunIds(const std::map<int64_t, std::string>& window,
                          std::set<int64_t>& notifiedRunIds);
 
-// 时长秒 → 紧凑中文（0秒 / 45秒 / 2分13秒 / 1时23分 / 2天3时；负值按 0，与 runRowText 同口径）
-std::string formatRunDurationText(int64_t seconds);
-
-// 本地日历时刻 → 「yyyy-MM-dd HH:mm」。入参取 core::time::localTime 产物，测试传固定
-// tm 保时区无关
-std::string formatRunResultTimeText(const std::tm& local);
-
-// 详情弹窗汇总行文案：「共 N 次 · 成功率 P%（ok/N）· 总耗时 <时长> · 最近结果 <时间>」。
-// lastTimeText 由调用方生成（时间依赖本地时区）：有 lastEndedAt 传 formatRunResultTimeText
-// 产物，无则传「—」；totalRuns=0 时百分比按 0（正常不走到——无 run 的任务不渲染汇总行）
-std::string formatTaskRunSummaryText(const AgentTaskRunSummary& summary,
-                                     const std::string& lastTimeText);
+// 时长秒 → 紧凑中文 / 状态中文 / 各时间格式化已迁 module_agent/agent_time_text.h
+//（详情弹窗 P2，spec §11；本头文件不再声明时间文案 helper）。
+// 旧 formatRunResultTimeText / formatTaskRunSummaryText 已随「汇总行文本」退休。
 
 // 任务弹窗定时分支的常用 cron 模板表：文案与表达式成对，选中即回填 editCron_。
 // 表内容是产品文案不是代码结构，加条目只改这里；表达式必须能过 parseCron。
@@ -202,10 +194,13 @@ private:
     // 系统通知授权：Module 接口没有「窗口可见」回调，由 pollRunEnd（app::compose 在 splash
     // 结束后每帧调用）触发一次；重复调用由成员闸挡住，不重复弹授权框。
     void requestNotificationAuthorizationOnce();
-    // 任务级 run 汇总缓存：失效判据 = store_->writeVersion()（同 home 余量卡口径）——
-    // 版本没变零查询零锁，uiPolling_ 每帧 refreshData 也不重查；版本取查询前快照（查询后
-    // 取会漏：读到旧数据却记成新版本，之后永不再查）
+    // 任务级 run 汇总缓存：失效判据 = writeVersion + 7d 窗口起点（同 home 余量卡口径——
+    // 版本没变零查询零锁，uiPolling_ 每帧 refreshData 也不重查；版本取查询前快照）
     void refreshRunSummaries();
+    // 「下一次」/「计划 vs 实际」缓存：键判等早退，禁在 compose 逐帧回扫 cron（§8.4/§8.5）
+    void updateNextRunCache(const AgentTaskRow& task, const AgentRunRow* latest,
+                            int64_t nowSec);
+    void updateDetailPlanCache(const AgentTaskRow& task, const AgentRunRow& run);
     void reapFinishedRuns();
     // 单条消息展开/收起（seq 定位，切 run 即清）
     void toggleMessageExpanded(int64_t seq);
@@ -381,11 +376,25 @@ private:
     // 真实时刻不可能为 0）；计数供 runFallbackChecksForTest() 节流断言
     int64_t lastRunFallbackSec_ = 0;
     int64_t runFallbackChecks_ = 0;
-    // 任务级 run 汇总（详情弹窗汇总行）：writeVersion 缓存；查询失败显形在弹窗内
+    // 任务级 run 汇总（详情弹窗摘要三卡）：writeVersion + 7d 窗口双键缓存；查询失败显形
     std::map<int64_t, AgentTaskRunSummary> runSummaries_;   // taskId → 聚合
     std::string runSummariesError_;
     uint64_t runSummariesSeenVersion_ = 0;
     bool runSummariesSeenVersionValid_ = false;   // false = 从未查过（首查强制）
+    int64_t runSummariesSeenWindowStart_ = -1;    // 缓存键另一半：跨天无写入也必须重查
+    // 详情弹窗「计划 vs 实际」缓存（previousCronMatch 禁逐帧回扫，spec §8.4）：
+    // 键 = taskId+runId+startedAt+triggerType+triggerConfig，键不变零重算
+    std::optional<RunPlanInfo> detailPlan_;
+    std::string detailPlanKey_;
+    // 详情弹窗「下一次」缓存（nextCronMatch 同禁逐帧回扫，spec §8.5）：
+    // 键 = now 分钟 + taskId + 最近 run id/status；manual/event 等无回扫路径也走键判等
+    std::optional<NextRunInfo> nextRunText_;
+    int64_t nextRunMinute_ = -1;
+    int64_t nextRunTaskId_ = 0;
+    int64_t nextRunLatestRunId_ = 0;
+    std::string nextRunLatestStatus_;
+    // 详情消息读取失败显形（spec §10：红字「消息读取失败：…」，标题保留、不展示旧消息）
+    std::string detailMessagesError_;
     // 待发通知队列（title, message）：迁移检测置入，takeRunEndNotice 取走即清。
     // 同帧多个迁移按 runId 升序入队；app 通道 toast 单实例，后发顶替先发（接受）。
     // 生产者有两个线程：UI 线程（run-end 迁移）+ AgentLoop 工作线程（app.notify 失败

@@ -487,6 +487,9 @@ ui_kit::ToastState toast_;                // agent.detail.toast
 - `core::theme::setFontScale` 只缩放 `SizeTokens.fontSize*`，间距/圆角不缩放（现有契约）。
 - 详情布局必须用缩放后的 `t.sizes.fontSize*` 派生所有文本高度：
   - 摘要高度：`max(81, 2*10 + lhS + lhB + lhS + 4)`（摘要卡 pad=10，1.0 时正好 81）；窄屏两行再加一行 `lhS + 8`。
+    > **勘误（2026-10-19，P2 执行时裁决）**：本行窄屏公式的推算值 107 与 §6 的
+    > `summaryH = 116/122` 冲突——**§6 为准（122/116）**，本行「窄屏两行再加一行
+    > `lhS + 8`」按笔误处理，不据此实现。
   - 配置头：`max(40, lhS + 20)`。
   - 导航：`max(36, lhS + 12)`（紧凑再减 4）。
   - 时间线行：`max(52, lhS + 34)`；带错误再加 `lhS + 4`。

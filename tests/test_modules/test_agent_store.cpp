@@ -9,11 +9,13 @@
 #include "test_support.h"
 #include "module_agent/agent_loop.h"
 #include "module_agent/agent_store.h"
+#include "module_agent/agent_time_text.h"
 #include "module_agent/trigger_config.h"
 #include "core/llm_endpoint.h"
 #include "core/tool.h"
 #include "platform/json.h"
 #include <atomic>
+#include <ctime>
 #include <string>
 
 namespace {
@@ -337,7 +339,11 @@ REGISTER_TEST(agent_store_list_task_run_summaries,
     pin(b1.value(), 2000, int64_t(2060));
     // C：无 run
 
-    auto sums = store.listTaskRunSummaries();
+    // 窗口起点取真实 7d：钉死的 1970 年 run 全部落窗外，all-time 字段不变、
+    // 7d 三字段必须为 0（7d 口径见 agent_store_run_summaries_7d 用例）
+    const int64_t windowStart = static_cast<int64_t>(
+        module::agent::sevenDayWindowStart(std::time(nullptr)));
+    auto sums = store.listTaskRunSummaries(windowStart);
     DOCTEST_REQUIRE(sums.isOk());
     DOCTEST_REQUIRE_EQ(sums.value().size(), 2u);   // C 无 run 不在结果里
     const module::agent::AgentTaskRunSummary* sa = nullptr;
@@ -356,6 +362,84 @@ REGISTER_TEST(agent_store_list_task_run_summaries,
     DOCTEST_CHECK_EQ(sb->okRuns, 1);
     DOCTEST_CHECK_EQ(sb->totalSeconds, 60);
     DOCTEST_CHECK_EQ(*sb->lastEndedAt, 2060);
+    // 窗外（1970）run 不进 7d 计数
+    DOCTEST_CHECK_EQ(sa->okRuns7d, 0);
+    DOCTEST_CHECK_EQ(sa->failedRuns7d, 0);
+    DOCTEST_CHECK_EQ(sa->limitedRuns7d, 0);
+    DOCTEST_CHECK_EQ(sb->okRuns7d, 0);
+    return true;
+})
+
+// 7d 窗口口径（spec §8.2/§12.5）：成功=completed、失败=failed+limited（limited
+// 另给子计数）、cancelled/running 不计入；8 天前的 completed 落窗外。
+// 夹具一律相对当前时间（now-1h/2h/1d/8d）——1970 钉死的旧夹具在 7d 窗口下全落空。
+REGISTER_TEST(agent_store_run_summaries_7d,
+              "agent_store: listTaskRunSummaries 7d 窗口（completed/failed/limited 计数、8天前排除）", {
+    test_support::TestDb tdb("agentstore", "summ7d");
+    module::agent::AgentStore store(tdb.handle());
+    auto a = store.createTask("A", "g", "manual", "default", 10, false);
+    DOCTEST_REQUIRE(a.isOk());
+    const int64_t now = static_cast<int64_t>(std::time(nullptr));
+    auto pin = [&](int64_t runId, int64_t started, int64_t ended) -> bool {
+        return tdb.handle()
+            .exec("UPDATE agent_runs SET started_at=" + std::to_string(started) +
+                  ", ended_at=" + std::to_string(ended) +
+                  " WHERE id=" + std::to_string(runId))
+            .isOk();
+    };
+    struct Seed { const char* status; int64_t started; int64_t ended; };
+    const Seed seeds[] = {
+        {"completed", now - 3600, now - 3500},        // 1h 前：成功
+        {"limited", now - 2 * 3600, now - 3400},      // 2h 前：受限（失败且子计数）
+        {"failed", now - 86400, now - 86000},         // 1 天前：失败
+        {"cancelled", now - 2 * 86400, now - 172000}, // 2 天前：cancelled 不计入
+        {"completed", now - 8 * 86400, now - 863000}, // 8 天前：窗外
+    };
+    for (const auto& s : seeds) {
+        auto r = store.startRun(a.value());
+        DOCTEST_REQUIRE(r.isOk());
+        DOCTEST_REQUIRE(
+            store.finishRun(r.value(), s.status, 1, std::nullopt, std::nullopt,
+                            std::nullopt)
+                .isOk());
+        DOCTEST_REQUIRE(pin(r.value(), s.started, s.ended));
+    }
+    const int64_t windowStart = static_cast<int64_t>(
+        module::agent::sevenDayWindowStart(static_cast<std::time_t>(now)));
+    auto sums = store.listTaskRunSummaries(windowStart);
+    DOCTEST_REQUIRE(sums.isOk());
+    DOCTEST_REQUIRE_EQ(sums.value().size(), 1u);
+    const auto& s = sums.value()[0];
+    DOCTEST_CHECK_EQ(s.taskId, a.value());
+    DOCTEST_CHECK_EQ(s.okRuns7d, 1);
+    DOCTEST_CHECK_EQ(s.failedRuns7d, 2);
+    DOCTEST_CHECK_EQ(s.limitedRuns7d, 1);
+    // all-time 字段不受窗口影响（cancelled 也进 total）
+    DOCTEST_CHECK_EQ(s.totalRuns, 5);
+    DOCTEST_CHECK_EQ(s.okRuns, 2);
+    return true;
+})
+
+// 消息时间戳（spec §8.3）：appendMessage 已写 created_at，SELECT 补列后必须读回。
+// UPDATE 把列钉成确定值——appendMessage 写的是墙钟，钉不住就没法断言。
+REGISTER_TEST(agent_store_list_messages_created_at,
+              "agent_store: listMessages 读回 created_at（钉值 12345）", {
+    test_support::TestDb tdb("agentstore", "msgtime");
+    module::agent::AgentStore store(tdb.handle());
+    auto t = store.createTask("t", "g", "manual", "default", 10, false);
+    DOCTEST_REQUIRE(t.isOk());
+    auto run = store.startRun(t.value());
+    DOCTEST_REQUIRE(run.isOk());
+    DOCTEST_REQUIRE(store.appendMessage(run.value(), 0, "user",
+                                        R"([{"type":"text","text":"你好"}])",
+                                        std::nullopt)
+                        .isOk());
+    DOCTEST_REQUIRE(
+        tdb.handle().exec("UPDATE agent_messages SET created_at=12345").isOk());
+    auto msgs = store.listMessages(run.value());
+    DOCTEST_REQUIRE(msgs.isOk());
+    DOCTEST_REQUIRE_EQ(msgs.value().size(), 1u);
+    DOCTEST_CHECK_EQ(msgs.value()[0].createdAt, 12345);
     return true;
 })
 

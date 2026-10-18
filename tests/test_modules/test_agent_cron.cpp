@@ -8,6 +8,8 @@
 #include "module_agent/cron.h"
 #include <ctime>
 
+#include "core/time.h"
+
 namespace {
 std::tm tmOf(int min, int hour, int mday, int mon1to12, int wday) {
     std::tm t{};
@@ -172,6 +174,86 @@ REGISTER_TEST(cron_next_match_table,
         DOCTEST_CHECK_MESSAGE(r.errorMessage().find("一年内无触发时间") !=
                                   std::string::npos,
                               "错误文案应含「一年内无触发时间」，实得: " +
+                                  r.errorMessage());
+    }
+    return true;
+})
+
+// previousCronMatch（详情弹窗「计划 vs 实际」对照，spec §12.3）：与 nextCronMatch
+// 的边界差是**包含 fromSec 所在分钟**——run 在 09:00:30 启动，0 9 * * * 应算 09:00 计划。
+// 期望值用 expectLocalOf 构造（与被测函数同一时区口径），不写死日期字符串。
+REGISTER_TEST(agent_cron_previous_match,
+              "cron: previousCronMatch 含当前分钟/回扫跨天/周过滤/无匹配到顶 fail", {
+    using module::agent::parseCron;
+    using module::agent::previousCronMatch;
+    // ① 含 fromSec 所在分钟：09:00:30 → 计划 09:00；秒级抖动不改变答案
+    {
+        auto parsed = parseCron("0 9 * * *");
+        DOCTEST_REQUIRE(parsed.isOk());
+        auto inMinute = previousCronMatch(parsed.value(),
+                                          localSecOf(2026, 10, 9, 9, 0) + 30);
+        DOCTEST_REQUIRE(inMinute.isOk());
+        DOCTEST_CHECK(
+            sameMinute(inMinute.value(), expectLocalOf(2026, 10, 9, 9, 0)));
+        auto midMinute = previousCronMatch(parsed.value(),
+                                           localSecOf(2026, 10, 9, 9, 0) + 59);
+        DOCTEST_REQUIRE(midMinute.isOk());
+        DOCTEST_CHECK(
+            sameMinute(midMinute.value(), expectLocalOf(2026, 10, 9, 9, 0)));
+    }
+    // ② 跨天回扫：10-09 08:00 → 最近命中是 10-08 09:00
+    {
+        auto parsed = parseCron("0 9 * * *");
+        DOCTEST_REQUIRE(parsed.isOk());
+        auto r =
+            previousCronMatch(parsed.value(), localSecOf(2026, 10, 9, 8, 0));
+        DOCTEST_REQUIRE(r.isOk());
+        DOCTEST_CHECK(sameMinute(r.value(), expectLocalOf(2026, 10, 8, 9, 0)));
+    }
+    // ③ DOW 过滤：0 9 * * 1-5，from = 周六 10:00 → 最近命中是周五 09:00
+    //（2026-10-10 是周六；期望用同一 mktime 本地口径构造）
+    {
+        auto parsed = parseCron("0 9 * * 1-5");
+        DOCTEST_REQUIRE(parsed.isOk());
+        auto r =
+            previousCronMatch(parsed.value(), localSecOf(2026, 10, 10, 10, 0));
+        DOCTEST_REQUIRE(r.isOk());
+        const std::time_t friday = [] {
+            std::tm t{};
+            core::time::localTime(localSecOf(2026, 10, 10, 10, 0), &t);
+            t.tm_mday -= 1;   // 周五
+            t.tm_hour = 9;
+            t.tm_min = 0;
+            t.tm_sec = 0;
+            t.tm_isdst = -1;
+            return std::mktime(&t);
+        }();
+        std::tm fridayLocal{};
+        core::time::localTime(friday, &fridayLocal);
+        DOCTEST_CHECK(sameMinute(r.value(), fridayLocal));
+        DOCTEST_CHECK(r.value().tm_wday >= 1 && r.value().tm_wday <= 5);
+    }
+    // ④ 全通配：返回 fromSec 所在分钟本身
+    {
+        auto parsed = parseCron("* * * * *");
+        DOCTEST_REQUIRE(parsed.isOk());
+        const std::time_t from = localSecOf(2026, 10, 9, 10, 7) + 20;
+        auto r = previousCronMatch(parsed.value(), from);
+        DOCTEST_REQUIRE(r.isOk());
+        std::tm fromLocal{};
+        core::time::localTime(from, &fromLocal);
+        DOCTEST_CHECK(sameMinute(r.value(), fromLocal));
+    }
+    // ⑤ 无匹配到顶：2 月 31 日 → fail(ValidationError, "一年内无匹配时间")
+    {
+        auto parsed = parseCron("0 0 31 2 *");
+        DOCTEST_REQUIRE(parsed.isOk());
+        auto r = previousCronMatch(parsed.value(), localSecOf(2026, 10, 9, 10, 0));
+        DOCTEST_REQUIRE(r.isFail());
+        DOCTEST_CHECK_EQ(r.errorCode(), core::ErrorCode::ValidationError);
+        DOCTEST_CHECK_MESSAGE(r.errorMessage().find("一年内无匹配时间") !=
+                                  std::string::npos,
+                              "错误文案应含「一年内无匹配时间」，实得: " +
                                   r.errorMessage());
     }
     return true;

@@ -356,6 +356,56 @@ int main(int argc, char* argv[]) {
                          "（finalAssistantText 为空？）\n";
             passed = false;
         }
+
+        // P2：时间线行三列 + 摘要三卡 + 右栏详情块（spec §12.4 P2 子集）
+        const auto* rowTime = findElement("agent.dialog.detail.runlist.0.time");
+        if (rowTime == nullptr) {
+            std::cerr << "agent_dialog_probe: '.runlist.0.time' 缺失"
+                         "（时间线行未容器化？）\n";
+            passed = false;
+        } else if (rowTime->text.size() != 14 || rowTime->text[2] != '-' ||
+                   rowTime->text[5] != ' ') {
+            std::cerr << "agent_dialog_probe: .runlist.0.time 应为 MM-DD HH:MM:SS"
+                         "（14 字符），实测 '"
+                      << rowTime->text << "'\n";
+            passed = false;
+        }
+        const auto* rowStatus = findElement("agent.dialog.detail.runlist.0.status");
+        if (rowStatus == nullptr || rowStatus->text.empty()) {
+            std::cerr << "agent_dialog_probe: '.runlist.0.status' 缺失/为空\n";
+            passed = false;
+        }
+        for (const char* sid : {"agent.dialog.detail.summary.last.value",
+                                "agent.dialog.detail.summary.next.value",
+                                "agent.dialog.detail.summary.stats.value"}) {
+            const auto* node = findElement(sid);
+            if (node == nullptr || node->text.empty()) {
+                std::cerr << "agent_dialog_probe: '" << sid
+                          << "' 缺失/为空（摘要三卡真数据未接线？）\n";
+                passed = false;
+            }
+        }
+        const auto* detailStatus =
+            findElement("agent.dialog.detail.detail.status.text");
+        if (detailStatus == nullptr || detailStatus->text != "失败") {
+            std::cerr << "agent_dialog_probe: .detail.status.text 应为「失败」"
+                         "（种子 run 状态一致），实测 '"
+                      << (detailStatus != nullptr ? detailStatus->text : "<缺失>")
+                      << "'\n";
+            passed = false;
+        }
+        const auto* errFull = findElement("agent.dialog.detail.detail.error.text");
+        if (errFull == nullptr) {
+            std::cerr << "agent_dialog_probe: '.detail.error.text' 缺失\n";
+            passed = false;
+        } else if (errFull->text.find("LLM 配置不可用") == std::string::npos) {
+            std::cerr << "agent_dialog_probe: .detail.error.text 未含种子错误原文\n";
+            passed = false;
+        }
+        if (findElement("agent.dialog.detail.detail.error.scroll") == nullptr) {
+            std::cerr << "agent_dialog_probe: '.detail.error.scroll' 缺失\n";
+            passed = false;
+        }
     }
 
     // 构图 B：详情弹窗稳定帧（错误行 + 引导 + chip 同帧在场，断言已把过关）

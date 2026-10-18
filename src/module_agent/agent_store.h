@@ -33,14 +33,21 @@ struct AgentMessageRow {
     int64_t seq = 0;
     std::string role, contentJson;
     std::optional<std::string> toolCallId;
+    int64_t createdAt = 0;   // agent_messages.created_at（NOT NULL；appendMessage 已写列，
+                             // 无迁移；旧库异常行读 0 → 消息头时间显示「—」）
 };
-// 任务级 run 聚合（详情弹窗汇总行）：一条 GROUP BY 出全部任务，无 run 的任务不在结果里
+// 任务级 run 聚合（详情弹窗摘要三卡）：一条 GROUP BY 出全部任务，无 run 的任务不在结果里
 struct AgentTaskRunSummary {
     int64_t taskId = 0;
     int64_t totalRuns = 0;                 // 含 running/cancelled/limited
     int64_t okRuns = 0;                    // 仅 status='completed'
     int64_t totalSeconds = 0;              // Σ 单 run 时长（ended-started，负差钳 0，running 计 0）
     std::optional<int64_t> lastEndedAt;    // MAX(ended_at)；全部未结束 → nullopt
+    // 近 7 天窗口（started_at >= windowStartSec；D9 口径：成功=completed，
+    // 失败=failed+limited，limited 另给子计数；cancelled/running 不计入）
+    int64_t okRuns7d = 0;
+    int64_t failedRuns7d = 0;
+    int64_t limitedRuns7d = 0;             // failedRuns7d 的子集
 };
 
 class AgentStore {
@@ -84,8 +91,11 @@ public:
     // 库内是否存在 running run（EXISTS 语义，单条 SELECT 不拉行）：pollRunEnd 三守卫
     // 全假时冷启动兜底的唯一探测口——外部直写库插入的 running run 只能靠它发现
     Result<bool> hasRunningRun();
-    // 任务级 run 聚合（COUNT/SUM/MAX 一条 SQL，不拉全表进内存）；配合 writeVersion 做 UI 侧缓存
-    Result<std::vector<AgentTaskRunSummary>> listTaskRunSummaries();
+    // 任务级 run 聚合（COUNT/SUM 一条 SQL，不拉全表进内存）；配合 writeVersion 做 UI 侧
+    // 缓存。windowStartSec = 近 7 天窗口起点（started_at >= 窗口才算 7d 三字段），
+    // 三个窗口占位绑定同一值（bindAll 只支持位置参数）
+    Result<std::vector<AgentTaskRunSummary>> listTaskRunSummaries(
+        int64_t windowStartSec);
     Result<void> sweepStaleRuns();   // running → failed('应用异常退出（悬挂 run）')
     // UI 侧 version 缓存判脏（读侧 acquire load，无锁不查库；透传 db_ 的写版本号）
     uint64_t writeVersion() const { return db_.writeVersion(); }

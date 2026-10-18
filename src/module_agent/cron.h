@@ -30,4 +30,11 @@ bool cronMatches(const CronExpr& c, const std::tm& local);
 // 纯函数：不读真时钟，fromSec 全由调用方注入；仅时区转换经 core::time::localTime
 // （逐分钟调用，语义与 Scheduler 逐 tick 判定一致，DST 缺失的小时同样被跳过）。
 core::Result<std::tm> nextCronMatch(const CronExpr& c, std::time_t fromSec);
+
+// fromSec 所在分钟（含）起向前逐分钟回扫的最近一次命中（「计划 vs 实际」对照用，
+// spec §8.4）：run 在 09:00:30 启动、cron `0 9 * * *` 应算 09:00 计划——**包含
+// fromSec 所在分钟**，与 nextCronMatch 的边界相反。上限 366*1440 分钟，到顶
+// fail(ValidationError, "一年内无匹配时间")。纯函数：fromSec 由调用方注入；
+// 时区转换只走 core::time::localTime。
+core::Result<std::tm> previousCronMatch(const CronExpr& c, std::time_t fromSec);
 } // namespace module::agent
