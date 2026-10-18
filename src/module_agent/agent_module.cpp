@@ -1251,6 +1251,8 @@ void AgentModule::refreshData() {
     // 只看 latestRuns_ 即可：刚结束的 run 必是其任务的最近一次 run，不会漏迁移。
     // 通知不在此直发 toast：入 pendingNotices_ 队列，由装配层每帧 takeRunEndNotice()
     // 取走后发 app 级 toast（app::showAppNotice，跨页可见）——页面无关（fix round）。
+    // 失败/受限另有系统通知通道（下方 send）：toast 4.5s 即逝，定时任务失败恰恰
+    // 发生在人不在应用前的场景，OS 通道才接得住；成功仍走全静默，两通道都不发。
     {
         std::map<int64_t, std::string> nowStatus;
         for (const auto& [taskId, run] : latestRuns_) {
@@ -1278,6 +1280,26 @@ void AgentModule::refreshData() {
                 pendingNotices_.emplace_back(
                     st == "failed" ? "智能体任务失败" : "智能体任务受限",
                     "「" + taskName + "」运行结束（" + runStatusText(st) + "）");
+            }
+            // 系统通知同发：send 非阻塞、受理≠展示（Focus/勿扰可能静默抑制），
+            // 未受理只 LOG 不重试；「同一 runId 只发一次」由 notifiedRunIds_ 保证。
+            // 稳定 id 复用系统端替换语义（同 id 重发更新旧通知而非堆叠）。
+            {
+                platform::notify::Notification n;
+                n.id = "agent-run-" + std::to_string(runId);
+                n.title = st == "failed" ? "智能体任务失败" : "智能体任务受限";
+                n.body =
+                    "「" + taskName + "」运行结束（" + runStatusText(st) + "）";
+                n.level = platform::notify::Level::Error;
+                auto receipt = platform::notify::send(n);
+                if (receipt.isFail() || receipt.value().status !=
+                                            platform::notify::Status::Accepted) {
+                    LOG_DEBUG(
+                        "Agent: 系统通知未受理 id=" + n.id + ": " +
+                        (receipt.isOk() ? platform::notify::statusToString(
+                                              receipt.value().status)
+                                        : receipt.errorMessage()));
+                }
             }
             notifiedRunIds_.insert(runId);
         }

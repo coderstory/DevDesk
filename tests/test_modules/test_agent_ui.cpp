@@ -46,6 +46,7 @@
 #include "module_agent/agent_store.h"
 #include "module_agent/trigger_config.h"
 #include "platform/http_client.h"
+#include "platform/notification.h"
 
 #include <components/input.h>   // InputState：读回弹窗内输入框真实文本（预填判据）
 #include <eui/dsl.h>
@@ -80,6 +81,29 @@ struct ToolGuard {
 using InputState = components::input_detail::InputModel::InputState;
 
 const eui::Screen kScreen{1600.0f, 1000.0f};
+
+// 系统通知 spy 后端：记录 send 调用（id/body/level），授权恒放行。供 OS 通道
+// 断言（失败迁移必达恰 1 次 / 成功零调用）注入；用例结束必须
+// setBackendForTest(nullptr) + resetForTest() 复位，否则污染后续用例。
+struct OsNotifySpy : platform::notify::Backend {
+    std::atomic<int> sendCalls{0};
+    std::string lastId;
+    std::string lastBody;
+    int lastLevel = -1;
+    core::Result<platform::notify::Status> send(
+        const platform::notify::Notification& n) override {
+        sendCalls.fetch_add(1, std::memory_order_relaxed);
+        lastId = n.id;
+        lastBody = n.body;
+        lastLevel = static_cast<int>(n.level);
+        return core::Result<platform::notify::Status>::ok(
+            platform::notify::Status::Accepted);
+    }
+    platform::notify::Authorization authorizationStatus() override {
+        return platform::notify::Authorization::Authorized;
+    }
+    void requestAuthorization() override {}
+};
 
 // 裸 Ui compose 一帧 + 显式 layout（元素 frame 需显式布局）
 void composeTo(eui::Ui& ui, module::agent::AgentModule& mod,
@@ -2187,6 +2211,10 @@ REGISTER_TEST(agent_ui_run_completed_silent_no_toast,
         return core::Result<platform::http::Response>::ok(res);
     };
     module::agent::AgentModule mod(deps);
+    // 成功静默的 OS 通道面：completed 迁移对系统通知也必须零打扰（spy 恒零调用）
+    platform::notify::resetForTest();
+    OsNotifySpy spy;
+    platform::notify::setBackendForTest(&spy);
     mod.onStart();
 
     eui::Ui ui;
@@ -2217,6 +2245,76 @@ REGISTER_TEST(agent_ui_run_completed_silent_no_toast,
                           "completed 迁移不该产生通知，实测: " +
                               (notice.has_value() ? notice->first
                                                   : std::string("<无>")));
+    DOCTEST_CHECK_EQ(spy.sendCalls.load(), 0);
+    platform::notify::setBackendForTest(nullptr);
+    platform::notify::resetForTest();
+
+    mod.onStop();
+    return true;
+})
+
+// 系统通知通道（失败/受限迁移面）：入队应用内 toast 的同时必须向 OS 发通知——
+// 稳定 id 前缀 agent-run-、body 含任务名、level=Error；同一 runId 恰发一次。
+// 成功侧零调用由 agent_ui_run_completed_silent_no_toast 的 spy 断言钉住。
+REGISTER_TEST(agent_ui_run_failed_sends_system_notification,
+              "agent_ui: run 失败 → OS 系统通知恰一次（id 前缀 agent-run-、正文含任务名、level=Error）", {
+    test_support::TestDb tdb("agentui", "sysnotify");
+    test_support::FakeProfileSource profile;
+    ToolGuard statsGuard{"app.stats", "app.notify"};
+    core::ToolRegistry::instance().unregisterTool("app.stats");
+    core::ToolRegistry::instance().unregisterTool("app.notify");
+    module::agent::AgentStore store(tdb.handle());
+    auto taskId = store.createTask("会失败的任务", "直接回复完成，不调用任何工具",
+                                    "manual", "default", 10, false);
+    DOCTEST_REQUIRE(taskId.isOk());
+    const std::string tid = std::to_string(taskId.value());
+
+    module::agent::AgentModule::Deps deps;
+    deps.db = &tdb.handle();
+    deps.profileSource = &profile;
+    deps.http = [](const platform::http::Request&) {
+        // 拖慢失败返回：保证轮询帧先观测到 running（否则首帧即终态 → 无迁移）
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        return core::Result<platform::http::Response>::fail(
+            core::ErrorCode::Internal, "connection refused");
+    };
+    module::agent::AgentModule mod(deps);
+    platform::notify::resetForTest();
+    OsNotifySpy spy;
+    platform::notify::setBackendForTest(&spy);
+    mod.onStart();
+
+    eui::Ui ui;
+    composeTo(ui, mod, kScreen, "agent_ui_sysnotify1");
+    DOCTEST_REQUIRE_MESSAGE(clickId(ui, "agent.task." + tid + ".run.bg"),
+                            "启动按钮未渲染/不可点");
+
+    // 有界轮询至迁移帧（通知入队 = 系统通知同帧已发），再补帧确认不重发
+    bool noticed = false;
+    eui::Ui ui2;
+    for (int i = 0; i < 500; ++i) {
+        composeTo(ui2, mod, kScreen, "agent_ui_sysnotify_poll");
+        if (mod.takeRunEndNotice().has_value()) {
+            noticed = true;
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    DOCTEST_REQUIRE_MESSAGE(noticed, "run 失败后 5s 内未产生 run 结束通知");
+    DOCTEST_CHECK_EQ(spy.sendCalls.load(), 1);
+    DOCTEST_CHECK_MESSAGE(spy.lastId.rfind("agent-run-", 0) == 0,
+                          "系统通知 id 无 agent-run- 前缀，实测: " + spy.lastId);
+    DOCTEST_CHECK_MESSAGE(spy.lastBody.find("会失败的任务") != std::string::npos,
+                          "系统通知正文不含任务名，实测: " + spy.lastBody);
+    DOCTEST_CHECK_EQ(spy.lastLevel,
+                     static_cast<int>(platform::notify::Level::Error));
+    for (int i = 0; i < 3; ++i) {
+        composeTo(ui2, mod, kScreen, "agent_ui_sysnotify_tail");
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    DOCTEST_CHECK_EQ(spy.sendCalls.load(), 1);
+    platform::notify::setBackendForTest(nullptr);
+    platform::notify::resetForTest();
 
     mod.onStop();
     return true;
