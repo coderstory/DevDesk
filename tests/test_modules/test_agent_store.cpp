@@ -71,6 +71,58 @@ REGISTER_TEST(agent_store_sweep_stale_runs, "agent_store: sweep 把遗留 runnin
     return true;
 })
 
+// deleteTask 级联：任务 + 两个 run（一终态一悬挂）+ 各自消息一并消失；他任务数据零波及；
+// 不存在的 id → NotFound 且三表零变化（事务回滚路径）
+REGISTER_TEST(agent_store_delete_task_cascades_runs_messages,
+              "agent_store: deleteTask 级联清 runs/messages，NotFound 三表零变化", {
+    test_support::TestDb tdb("agentstore", "del");
+    module::agent::AgentStore store(tdb.handle());
+    auto taskId = store.createTask("待删任务", "g", "manual", "default", 10, false);
+    DOCTEST_REQUIRE(taskId.isOk());
+    auto keepId = store.createTask("保留任务", "g", "manual", "default", 10, false);
+    DOCTEST_REQUIRE(keepId.isOk());
+    auto run1 = store.startRun(taskId.value());
+    DOCTEST_REQUIRE(run1.isOk());
+    DOCTEST_REQUIRE(store.appendMessage(run1.value(), 0, "user",
+                                        R"([{"type":"text","text":"hi"}])",
+                                        std::nullopt).isOk());
+    DOCTEST_REQUIRE(
+        store.finishRun(run1.value(), "completed", 2, 10, 5, std::nullopt).isOk());
+    auto run2 = store.startRun(taskId.value());   // 悬挂 run（不 finish，模拟进行中）
+    DOCTEST_REQUIRE(run2.isOk());
+    DOCTEST_REQUIRE(store.appendMessage(run2.value(), 0, "assistant",
+                                        R"([{"type":"text","text":"x"}])",
+                                        std::nullopt).isOk());
+    auto keepRun = store.startRun(keepId.value());
+    DOCTEST_REQUIRE(keepRun.isOk());
+
+    DOCTEST_REQUIRE(store.deleteTask(taskId.value()).isOk());
+    auto tasks = store.listTasks();
+    DOCTEST_REQUIRE(tasks.isOk());
+    DOCTEST_CHECK_EQ(tasks.value().size(), 1u);
+    DOCTEST_CHECK_EQ(tasks.value()[0].id, keepId.value());
+    DOCTEST_CHECK(store.getTask(taskId.value()).isFail());
+    auto runsGone = store.listRuns(taskId.value(), 10);
+    DOCTEST_REQUIRE(runsGone.isOk());
+    DOCTEST_CHECK(runsGone.value().empty());
+    auto msgsGone = store.listMessages(run1.value());
+    DOCTEST_REQUIRE(msgsGone.isOk());
+    DOCTEST_CHECK(msgsGone.value().empty());
+    // 他任务零波及：保留任务的 run 原样
+    auto keepRuns = store.listRuns(keepId.value(), 10);
+    DOCTEST_REQUIRE(keepRuns.isOk());
+    DOCTEST_CHECK_EQ(keepRuns.value().size(), 1u);
+    DOCTEST_CHECK_EQ(keepRuns.value()[0].id, keepRun.value());
+
+    auto missing = store.deleteTask(999999);
+    DOCTEST_REQUIRE(missing.isFail());
+    DOCTEST_CHECK(missing.errorCode() == core::ErrorCode::NotFound);
+    auto tasksAfter = store.listTasks();
+    DOCTEST_REQUIRE(tasksAfter.isOk());
+    DOCTEST_CHECK_EQ(tasksAfter.value().size(), 1u);
+    return true;
+})
+
 // listTasks 的 9 列逐列还原：列名与 SELECT 拼写漂移是编译期看不见的错
 // （只在运行期表现为 Result::fail(NotFound)），任务列表 UI 直接吃它。
 // 入参取有区分度的值（modelSlot=sonnet / maxIterations=7 / allowDestructive=true），

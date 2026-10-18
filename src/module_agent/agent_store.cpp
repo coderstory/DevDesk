@@ -254,6 +254,59 @@ Result<void> AgentStore::setTaskEnabled(int64_t id, bool enabled) {
     return Result<void>::ok();
 }
 
+// 删任务并清全部运行痕迹：单事务显式 DELETE messages → runs → tasks（顺序子→父，
+// 显式删不依赖 FK CASCADE——pragma 状态不属于本层契约）；id 不存在 → NotFound，
+// 事务整体 ROLLBACK 前两条 DELETE 一并撤销。全程持 db_ 锁 + 事务内重入同锁
+Result<void> AgentStore::deleteTask(int64_t id) {
+    std::lock_guard<std::recursive_mutex> lock(db_.mutex());
+    return db_.transaction([&]() -> Result<void> {
+        auto msgStmt = db_.prepare(
+            "DELETE FROM agent_messages WHERE run_id IN"
+            " (SELECT id FROM agent_runs WHERE task_id=?)");
+        if (msgStmt.isFail()) {
+            return Result<void>::fail(msgStmt.errorCode(), msgStmt.errorMessage());
+        }
+        auto okMsg = bindAll(msgStmt.value(), id);
+        if (okMsg.isFail()) {
+            return Result<void>::fail(okMsg.errorCode(), okMsg.errorMessage());
+        }
+        auto stepMsg = msgStmt.value().step();
+        if (stepMsg.isFail()) {
+            return Result<void>::fail(stepMsg.errorCode(), stepMsg.errorMessage());
+        }
+        auto runStmt = db_.prepare("DELETE FROM agent_runs WHERE task_id=?");
+        if (runStmt.isFail()) {
+            return Result<void>::fail(runStmt.errorCode(), runStmt.errorMessage());
+        }
+        auto okRun = bindAll(runStmt.value(), id);
+        if (okRun.isFail()) {
+            return Result<void>::fail(okRun.errorCode(), okRun.errorMessage());
+        }
+        auto stepRun = runStmt.value().step();
+        if (stepRun.isFail()) {
+            return Result<void>::fail(stepRun.errorCode(), stepRun.errorMessage());
+        }
+        auto taskStmt = db_.prepare("DELETE FROM agent_tasks WHERE id=?");
+        if (taskStmt.isFail()) {
+            return Result<void>::fail(taskStmt.errorCode(), taskStmt.errorMessage());
+        }
+        auto okTask = bindAll(taskStmt.value(), id);
+        if (okTask.isFail()) {
+            return Result<void>::fail(okTask.errorCode(), okTask.errorMessage());
+        }
+        auto stepTask = taskStmt.value().step();
+        if (stepTask.isFail()) {
+            return Result<void>::fail(stepTask.errorCode(), stepTask.errorMessage());
+        }
+        // 同 setTaskEnabled：id 不存在 → fail(NotFound)，事务回滚保证三表零变化
+        if (sqlite3_changes(db_.handle()) == 0) {
+            return Result<void>::fail(ErrorCode::NotFound,
+                                      "任务不存在：id=" + std::to_string(id));
+        }
+        return Result<void>::ok();
+    });
+}
+
 Result<void> AgentStore::finishRun(int64_t runId, const std::string& status,
                                    int iterations,
                                    std::optional<int64_t> inputTokens,

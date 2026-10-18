@@ -5,9 +5,11 @@
 // 跨文件前提（节点 id 契约，agent_module.cpp 侧为准）：
 //   页面   agent.page / agent.page.header / agent.title / agent.page.newTask /
 //          agent.tools.*（可用工具区块）/ agent.tasklist（scrollView）+.content /
-//          agent.task.<id>（.title / .status / .detail / .edit / .toggle /
+//          agent.task.<id>（.title / .status / .detail / .edit / .toggle / .delete /
 //          [.limit 仅限次任务] / [.warn 配置异常] /
 //          [.enqueue 仅常驻] / .run）/ run 结束通知（Task 1；fix round 起经 takeRunEndNotice 走 app 级通道）
+//   删除确认弹窗 agent.dialog.delete.*：.title / .msg / .cancel / .confirm（zIndex 1100，
+//          取消/遮罩/Esc 均不删；确认才走 store 级联删）
 //   任务弹窗 agent.dialog.task.*（新建 / 编辑共用）：
 //          .goal（多行）/ .trigger / .cron（仅定时）/ .once（仅闹钟，本地时间输入）/
 //          .limit（仅定时·事件，行为开关行的"只跑一次"）/
@@ -4140,6 +4142,125 @@ REGISTER_TEST(agent_ui_draft_close_discards_inflight_result,
     DOCTEST_REQUIRE(tasks.isOk());
     DOCTEST_CHECK_EQ(tasks.value().size(), static_cast<size_t>(0));
 
+    mod.onStop();
+    return true;
+})
+
+// E1 删除流：chip → 确认弹窗（文案含任务名与不可恢复）→ 取消零变化 → 再开确认 →
+// 确认后列表与库都不含该任务，他任务零波及
+REGISTER_TEST(agent_ui_delete_task_confirm_flow,
+              "agent_ui: 删除 chip → 确认弹窗；取消不删，确认删净且不伤及他任务", {
+    test_support::TestDb tdb("agentui", "deleteflow");
+    test_support::FakeProfileSource profile;
+    ToolGuard statsGuard{"app.stats", "app.notify"};
+    core::ToolRegistry::instance().unregisterTool("app.stats");
+    core::ToolRegistry::instance().unregisterTool("app.notify");
+    module::agent::AgentStore store(tdb.handle());
+    auto t1 = store.createTask("建错的任务", "g", "manual", "default", 10, false);
+    DOCTEST_REQUIRE(t1.isOk());
+    const std::string tid = std::to_string(t1.value());
+    auto t2 = store.createTask("要保留的任务", "g", "manual", "default", 10, false);
+    DOCTEST_REQUIRE(t2.isOk());
+    const std::string keepId = std::to_string(t2.value());
+    module::agent::AgentModule::Deps deps;
+    deps.db = &tdb.handle();
+    deps.profileSource = &profile;
+    module::agent::AgentModule mod(deps);
+    mod.onStart();
+
+    eui::Ui ui;
+    composeTo(ui, mod, kScreen, "agent_ui_del1");
+    DOCTEST_REQUIRE_MESSAGE(clickId(ui, "agent.task." + tid + ".delete.bg"),
+                            "删除 chip 未渲染/不可点");
+
+    eui::Ui ui2;
+    composeTo(ui2, mod, kScreen, "agent_ui_del2");
+    const auto* msg = ui2.find("agent.dialog.delete.msg");
+    DOCTEST_REQUIRE_MESSAGE(msg != nullptr, "点删除后确认弹窗未出现");
+    DOCTEST_CHECK_MESSAGE(msg->text.find("建错的任务") != std::string::npos,
+                          "确认文案不含任务名: " + msg->text);
+    DOCTEST_CHECK(msg->text.find("不可恢复") != std::string::npos);
+
+    // 取消路径：弹窗关、列表与库零变化
+    DOCTEST_REQUIRE_MESSAGE(clickId(ui2, "agent.dialog.delete.cancel.bg"),
+                            "取消按钮未渲染");
+    eui::Ui ui3;
+    composeTo(ui3, mod, kScreen, "agent_ui_del3");
+    DOCTEST_CHECK(ui3.find("agent.dialog.delete.msg") == nullptr);
+    DOCTEST_CHECK_MESSAGE(ui3.find("agent.task." + tid + ".title") != nullptr,
+                          "取消后任务不应被删");
+    auto tasks = store.listTasks();
+    DOCTEST_REQUIRE(tasks.isOk());
+    DOCTEST_CHECK_EQ(tasks.value().size(), 2u);
+
+    // 确认路径：任务从列表与库消失，保留任务原样
+    DOCTEST_REQUIRE(clickId(ui3, "agent.task." + tid + ".delete.bg"));
+    eui::Ui ui4;
+    composeTo(ui4, mod, kScreen, "agent_ui_del4");
+    DOCTEST_REQUIRE_MESSAGE(clickId(ui4, "agent.dialog.delete.confirm.bg"),
+                            "确认删除按钮未渲染");
+    eui::Ui ui5;
+    composeTo(ui5, mod, kScreen, "agent_ui_del5");
+    DOCTEST_CHECK_MESSAGE(ui5.find("agent.task." + tid + ".title") == nullptr,
+                          "确认后任务仍在列表");
+    DOCTEST_CHECK(ui5.find("agent.task." + keepId + ".title") != nullptr);
+    tasks = store.listTasks();
+    DOCTEST_REQUIRE(tasks.isOk());
+    DOCTEST_CHECK_EQ(tasks.value().size(), 1u);
+    DOCTEST_CHECK_EQ(tasks.value()[0].id, t2.value());
+
+    mod.onStop();
+    return true;
+})
+
+// E1 运行中禁删：DB 有 running run 时删除 chip 点击不开确认弹窗（守卫在 lambda 内，
+// chip 本身仍挂 onClick）；run 终态后入口恢复
+REGISTER_TEST(agent_ui_delete_task_disabled_while_running,
+              "agent_ui: running 任务的删除点击不弹确认，终态后恢复可删", {
+    test_support::TestDb tdb("agentui", "delerun");
+    test_support::FakeProfileSource profile;
+    ToolGuard statsGuard{"app.stats", "app.notify"};
+    core::ToolRegistry::instance().unregisterTool("app.stats");
+    core::ToolRegistry::instance().unregisterTool("app.notify");
+    module::agent::AgentStore store(tdb.handle());
+    auto created = store.createTask("在跑任务", "g", "manual", "default", 10, false);
+    DOCTEST_REQUIRE(created.isOk());
+    const std::string tid = std::to_string(created.value());
+    module::agent::AgentModule::Deps deps;
+    deps.db = &tdb.handle();
+    deps.profileSource = &profile;
+    module::agent::AgentModule mod(deps);
+    mod.onStart();
+    // 种子必须在 onStart 之后：onStart 的 sweepStaleRuns 会把遗留 running 行清成 failed，
+    // 先种后启等于白种
+    auto runId = store.startRun(created.value());   // 库内 running，模拟进行中
+    DOCTEST_REQUIRE(runId.isOk());
+
+    eui::Ui ui;
+    composeTo(ui, mod, kScreen, "agent_ui_delerun1");
+    const auto* status = ui.find("agent.task." + tid + ".status");
+    DOCTEST_REQUIRE(status != nullptr);
+    DOCTEST_CHECK(status->text.find("运行中") != std::string::npos);
+    DOCTEST_REQUIRE(clickId(ui, "agent.task." + tid + ".delete.bg"));
+    eui::Ui ui2;
+    composeTo(ui2, mod, kScreen, "agent_ui_delerun2");
+    DOCTEST_CHECK_MESSAGE(ui2.find("agent.dialog.delete.msg") == nullptr,
+                          "running 任务点删除不应弹出确认");
+
+    DOCTEST_REQUIRE(store.finishRun(runId.value(), "completed", 1, 1, 1,
+                                    std::nullopt).isOk());
+    // 装配层等价路径：tasksDirty_/uiPolling_ 均假后，DB 直写终态靠 pollRunEnd 的
+    // prevAlive 守卫驱动 refreshData（既有用例同款，2325 行起多处先例）
+    mod.pollRunEnd();
+    eui::Ui ui3;
+    composeTo(ui3, mod, kScreen, "agent_ui_delerun3");
+    DOCTEST_REQUIRE(clickId(ui3, "agent.task." + tid + ".delete.bg"));
+    eui::Ui ui4;
+    composeTo(ui4, mod, kScreen, "agent_ui_delerun4");
+    DOCTEST_REQUIRE_MESSAGE(ui4.find("agent.dialog.delete.msg") != nullptr,
+                            "run 终态后删除入口应恢复");
+    // 收尾：确认删除，不留悬挂确认态
+    DOCTEST_REQUIRE(clickId(ui4, "agent.dialog.delete.confirm.bg"));
     mod.onStop();
     return true;
 })

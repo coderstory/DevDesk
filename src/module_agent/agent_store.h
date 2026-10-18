@@ -68,6 +68,9 @@ public:
                             const std::string& contextNote = "",
                             int autoNote = 1);
     Result<void> setTaskEnabled(int64_t id, bool enabled);   // 不存在 → NotFound
+    // 删任务并清全部运行痕迹：单事务三条显式 DELETE（messages 按 runs 子查询 → runs →
+    // tasks），不把级联押在 FK CASCADE 的 pragma 状态上；id 不存在 → NotFound 且三表零变化
+    Result<void> deleteTask(int64_t id);
     Result<void> finishRun(int64_t runId, const std::string& status,
                            int iterations,
                            std::optional<int64_t> inputTokens,
