@@ -200,46 +200,71 @@ void MarkdownModule::onStart() {
 
 ---
 
-## 生产环境分发（可选）
+## 代码签名与分发
 
-个人项目无需代码签名。但要正式分发到其他 Mac，需要：
+### 1. 本机开发 / 个人分发：ad-hoc 签名（已接入）
 
-### 1. 代码签名（ad-hoc 或 Developer ID）
+DevDesk 的 `.app` 必须打 ad-hoc 签名：链接器自动生成的签名与 `Info.plist` 的
+`CFBundleIdentifier` 不一致（`Identifier=DevDesk`、`Info.plist=not bound`），
+`codesign --verify --strict` 会直接失败；系统通知等按 bundle 身份识别应用的能力也依赖它。
 
-```bash
-# Ad-hoc（个人测试，仅本机）
-codesign --deep --sign - DevDesk.app
-
-# Developer ID（Gatekeeper 信任，需要 Apple Developer 账号）
-codesign --deep --sign "Developer ID Application: Your Name (TEAMID)" DevDesk.app
-
-# 验证签名
-codesign -dv DevDesk.app
-```
-
-### 2. 公证（Notarization）
+统一入口：
 
 ```bash
-# 打包 zip
-ditto -c -k --keepParent DevDesk.app DevDesk.zip
-
-# 上传 Apple 公证服务
-xcrun notarytool submit DevDesk.zip \
-    --apple-id "you@example.com" \
-    --team-id "TEAMID" \
-    --password "app-specific-password"
-
-# Staple 公证票据
-xcrun stapler staple DevDesk.app
+bash scripts/sign-macos-app.sh build/DevDesk.app
 ```
 
-### 3. DMG 打包
+脚本实际执行：
 
 ```bash
-hdiutil create -volname DevDesk -srcfolder DevDesk.app -ov -format UDZO DevDesk.dmg
+codesign --force --sign - --identifier com.devdesk.app <path-to-.app>
+codesign --verify --strict --verbose=4 <path-to-.app>
 ```
 
-详细流程参见 Apple 官方文档 [Distributing your Mac apps](https://developer.apple.com/distribute/)。
+- 固定 `--identifier com.devdesk.app`，与 `Info.plist` 的 `CFBundleIdentifier` 一致。
+- **不加 `--deep`**：当前 bundle 没有嵌套 framework/dylib，只签 bundle 根；Apple 也不推荐
+  递归签名，将来真引入框架时应逐个显式签。
+- **不加 `--options runtime`**：hardened runtime 的 library validation 会拒绝加载 bundle 外、
+  未签名的动态库。本机依赖 Homebrew OpenSSL（如
+  `/opt/homebrew/opt/openssl@3/lib/libssl.3.dylib`、`libcrypto.3.dylib`），加上 hardened
+  runtime 会让 app 启动即失败。本机 ad-hoc 自用不做硬化运行时/公证。
+
+**签名必须是 bundle 的最后一次写入**：`codesign` 会把 Info.plist、Resources、assets 等
+全部封进 `_CodeSignature/CodeResources`；签名后再改 Info.plist 版本号、换图标或补拷
+assets，封条就会失效，`codesign --verify --strict` 随即报错。三条路径已按此顺序接入：
+
+| 路径 | 签名位置 |
+|---|---|
+| `platform/macos/build-app.sh` | Info.plist 版本、图标、assets 全部就位之后，`lsregister` 之前；调用方若还要补拷资源可置 `DEVDESK_SKIP_SIGN=1`，自行在最后一次写入后签 |
+| `scripts/package-macos.sh` | 构建树内补拷 assets 之后重签；拷进 DMG 暂存目录后再对副本签一次 |
+| `scripts/build-test-run.sh --install` | 补拷 assets、版本/二进制断言之后、`ditto` 到 `/Applications` 之前；装完再 `codesign --verify --strict` |
+
+验证：
+
+```bash
+codesign --verify --strict --verbose=4 build/DevDesk.app
+codesign -dv --verbose=4 build/DevDesk.app 2>&1 | grep '^Identifier='
+# 期望：Identifier=com.devdesk.app
+```
+
+ad-hoc 签名**不满足 Gatekeeper**（`spctl` 仍会拒绝，首次运行仍需去隔离）；它只保证
+bundle 身份自洽。每次重建签名都会变，macOS 可能因此重复询问通知/钥匙串授权，属已知限制。
+
+### 2. 打包 DMG
+
+```bash
+bash scripts/package-macos.sh
+```
+
+脚本内部会重新组装 `.app`、补拷 assets、签名，再对 DMG 暂存副本签一次；不要手敲
+`hdiutil` 绕过它。
+
+### 3. 正式分发（可选，当前未接入）
+
+要把 app 分发给其他 Mac，需要 Apple Developer ID 签名 + 公证；并且必须先把 Homebrew
+OpenSSL 等第三方动态库收进 `.app` 内逐个签名，否则 hardened runtime 的 library
+validation 会拒绝加载。本仓库当前只实现 ad-hoc 路径，正式分发前需另做打包工程；
+流程见 Apple 官方文档 [Distributing your Mac apps](https://developer.apple.com/distribute/)。
 
 ---
 
