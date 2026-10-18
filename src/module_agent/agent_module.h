@@ -24,6 +24,7 @@
 #include "module_agent/agent_store.h"
 #include "module_agent/direct_llm_client.h"
 #include "module_agent/scheduler.h"
+#include "module_agent/task_draft.h"
 #include "module_agent/tool_info.h"
 
 #include <components/theme.h>
@@ -151,6 +152,24 @@ private:
         std::atomic<bool> done{false};
     };
 
+    // 一次 AI 草稿生成（T7b）：worker 只触碰自己的 done 原子与下方槽位字段
+    //（done release 前 / reap acquire 后构成 happens-before，槽位字段不加锁）。
+    // 请求不可中断（DirectLlmClient 不加 SendOptions，已定案）：「取消」= 弹窗关闭
+    // 把 epoch 失效，请求自然跑完后结果在 reap 处丢弃。onStop join 先于 llm_.reset()。
+    struct DraftJob {
+        std::string input;      // 用户一句话（值拷贝，worker 不摸 UI 草稿成员）
+        std::string modelSlot;  // 发起时的槽位键（值拷贝，防主线程并发改 editSlot_）
+        int epoch = 0;          // 发起时的会话代次；收割时不匹配 = 弹窗曾关闭/已重开，结果丢弃
+        std::thread thread;
+        std::atomic<bool> done{false};
+        bool ok = false;          // requestTaskDraft + parseTaskDraft 双双成功
+        std::string errorText;    // !ok 时的失败原因（给子弹窗错误行）
+        TaskDraftResult parsed;   // ok 时的解析+校验结果
+    };
+    // 子弹窗阶段：Idle = 待输入；Generating = 请求在途；Done = 已预填（notice 行可见）；
+    // Failed = 错误行可见。全部仅主线程读写（worker 只写 DraftJob 槽位）。
+    enum class DraftPhase { Idle, Generating, Done, Failed };
+
     // 惰性装配单入口：首次使用时解析 LlmProfileSource 并建 llm_/loop_/scheduler_；幂等
     void ensureLlm();
     void startTask(int64_t taskId);
@@ -196,6 +215,21 @@ private:
     void composeTaskDetailDialog(
         ::eui::Ui& ui, const ::eui::Screen& screen, const ::core::theme::Tokens& t,
         const components::theme::ThemeColorTokens& themeTokens);
+    // AI 草稿子弹窗（叠加在任务弹窗之上，zIndex 1100；只在任务弹窗打开时可达）
+    void composeDraftDialog(::eui::Ui& ui, const ::eui::Screen& screen,
+                            const ::core::theme::Tokens& t,
+                            const components::theme::ThemeColorTokens& themeTokens);
+    void openDraftDialog();
+    void closeDraftDialog();
+    // 点「生成」：主线程校验输入 → 起后台线程 requestTaskDraft + parseTaskDraft。
+    // 生成中重复点击被挡（按钮禁用 + 这里再挡一道）；结果由 reapDraftJob 回收。
+    void startDraftGeneration();
+    // 主线程收割已完成的生成线程：join → 预填表单 / 写错误行 / 丢弃过期结果。
+    // compose 每帧调用（worker 置 done 后 requestUiUpdate 主动要帧，不等用户输入）。
+    void reapDraftJob();
+    // 把校验过的草稿填进表单：只填模型给出的可信字段（goalFilled / triggerFilled /
+    // 非空 contextNote）；触发不可信时一字不动。结果永不落库——保存仍是用户动作。
+    void applyDraftPrefill(const TaskDraftResult& res);
 
     Deps deps_;
     std::unique_ptr<AgentStore> store_;
@@ -277,6 +311,17 @@ private:
     bool editTriggerOpen_ = false;   // 触发类型下拉开合（UI 态）
     bool editSlotOpen_ = false;      // 模型槽位下拉弹层开合
     bool editCronTemplateOpen_ = false;   // cron 模板下拉弹层开合
+    // AI 草稿子弹窗态（全部仅主线程）：draftInput_ 跨开合保留（用户的话不因关窗丢失）；
+    // 关闭子弹窗即 bump draftEpoch_（在途结果将作废），重开按 draftJob_ 存活如实显示生成中
+    bool draftDialogOpen_ = false;
+    std::string draftInput_;
+    DraftPhase draftPhase_ = DraftPhase::Idle;
+    std::string draftNotice_;    // Done：已预填字段摘要（+「请检查后点保存」）
+    std::string draftWarnings_;  // Done：降级警告 + needsUserInput（空 = 不渲染）
+    std::string draftError_;     // Failed：失败原因 / 输入校验错误（空 = 不渲染）
+    std::mutex draftMu_;                        // 保护 draftJob_ 槽位本身的换入换出
+    std::unique_ptr<DraftJob> draftJob_;        // 非空 = 有生成在途或待收割
+    int draftEpoch_ = 0;                        // 会话代次（仅主线程写）
     // 预览行文案（空 = 不渲染）。合法 →「下次触发：<yyyy-MM-dd HH:mm>」；
     // 非法 → 校验文案（前置于保存期报错）；无匹配 →「一年内无触发时间」。
     std::string cronPreview_;

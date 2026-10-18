@@ -135,16 +135,6 @@ std::vector<std::string> dottedTokens(const std::string& text) {
     return found;
 }
 
-// 注册表快照 → 工具名列表（供 prompt 列出可用工具）。不新增 ToolRegistry::listNames()：
-// 那会把「注册表返回 shared_ptr」这一层约定泄漏成第二个列举口，两处以后会漂。
-std::vector<std::string> registeredToolNames() {
-    std::vector<std::string> names;
-    for (const auto& tool : core::ToolRegistry::instance().listTools()) {
-        if (tool) names.push_back(tool->name());
-    }
-    return names;
-}
-
 std::string joinComma(const std::vector<std::string>& v) {
     std::string out;
     for (size_t i = 0; i < v.size(); ++i) {
@@ -166,6 +156,17 @@ std::string encodeAndVerify(const TriggerConfig& cfg, const std::string& trigger
 }
 
 } // namespace
+
+// 注册表快照 → 工具名列表（task_draft 内部拼 prompt 用；T7b UI 层也用它喂
+// parseTaskDraft 的 knownToolNames）。不新增 ToolRegistry::listNames()：
+// 那会把「注册表返回 shared_ptr」这一层约定泄漏成第二个列举口，两处以后会漂。
+std::vector<std::string> registeredToolNames() {
+    std::vector<std::string> names;
+    for (const auto& tool : core::ToolRegistry::instance().listTools()) {
+        if (tool) names.push_back(tool->name());
+    }
+    return names;
+}
 
 std::string buildTaskDraftSystemPrompt(std::time_t now,
                                        const std::vector<std::string>& toolNames) {
