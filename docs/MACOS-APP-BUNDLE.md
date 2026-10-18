@@ -214,16 +214,28 @@ DevDesk 的 `.app` 必须打 ad-hoc 签名：链接器自动生成的签名与 `
 bash scripts/sign-macos-app.sh build/DevDesk.app
 ```
 
-脚本实际执行：
+脚本实际执行（三步）：
 
 ```bash
+# ① 预签嵌套代码：Contents/MacOS/ 下除主可执行外的常规文件（assets 字体/shader/图标等）
+find <app>/Contents/MacOS -type f ! -name DevDesk -exec codesign --force --sign - {} +
+# ② 签 bundle 外层
 codesign --force --sign - --identifier com.devdesk.app <path-to-.app>
+# ③ 严格校验
 codesign --verify --strict --verbose=4 <path-to-.app>
 ```
 
 - 固定 `--identifier com.devdesk.app`，与 `Info.plist` 的 `CFBundleIdentifier` 一致。
-- **不加 `--deep`**：当前 bundle 没有嵌套 framework/dylib，只签 bundle 根；Apple 也不推荐
-  递归签名，将来真引入框架时应逐个显式签。
+- **嵌套代码必须显式预签（2026-10-18 起）**：Darwin 27 的 codesign 把 `Contents/MacOS/`
+  下的**所有常规文件**按嵌套代码对待——assets 数据文件（otf 字体、shader）哪怕只是
+  「可执行文件旁边的资源」，外层签完 `codesign --verify --strict` 也会逐个报
+  `unsigned subcomponent`（实测：先报 otf、补一个文件后再报 frag）。所以脚本先逐个
+  ad-hoc 预签 `MacOS/` 下常规文件，再签外层。`Resources/` 下的文件按资源哈希封进
+  CodeResources，无此要求。
+- **仍不加 `--deep`**：逐个显式签（上面第 ① 步）比递归一把梭可控——只扫 `MacOS/`，
+  不会把 `Resources/` 里的东西也误当代码签；将来引入真框架同样逐个显式签。要澄清的
+  既有口径：hardened runtime 那条约束禁的是 `--options runtime`（library validation），
+  与 `--deep` 是两件独立的事——但既然显式预签已解决问题，没有理由引入 `--deep`。
 - **不加 `--options runtime`**：hardened runtime 的 library validation 会拒绝加载 bundle 外、
   未签名的动态库。本机依赖 Homebrew OpenSSL（如
   `/opt/homebrew/opt/openssl@3/lib/libssl.3.dylib`、`libcrypto.3.dylib`），加上 hardened
