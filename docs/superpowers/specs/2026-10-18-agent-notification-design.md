@@ -1,17 +1,22 @@
 # 智能体系统通知（`app.notify`）与平台通知层 — 设计文档
 
 - 日期：2026-10-18
-- 状态：草案（待用户拍板，未实施）
+- 状态：已实施（T1a–T1e 已提交，真机 UAT 未做；2026-10-18 晚与代码对齐）
 - 分支：`dev`
 - 关联决策：`docs/superpowers/specs/2026-10-agent-roadmap-decisions.md` §2（M3 通知形态）
 - 关联代码：`src/platform/notification.h`、`src/platform/notification_macos.mm`、`src/platform/notification_win.cpp`、`src/platform/notification_posix.cpp`、`src/module_agent/agent_module.*`、`src/app_sidebar.cpp`
 - 关联上游：`EUI-NEO/core/platform/tray_bridge.{h,c}`、`EUI-NEO/3rd/tray/tray.h`
 
-> **只读调研结论**：本文不修改任何源码。工作区当前已存在一组**未提交**的通知层草案
+> **修订注记（2026-10-18 晚与代码对齐）**：原「未提交」草案已全部提交，本文各处状态表述改为
+> 实际提交（对应关系见 §11 编号对齐表）；§8.5.2 签名示例改为与实际 `scripts/sign-macos-app.sh`
+> 一致。设计决策（§0 结论、§5 API 目标态、§12 拍板项）未改动。
+
+> **只读调研结论**：本文不修改任何源码。写作时工作区存在一组**未提交**的通知层草案
 > （`notification.h` / `notification_macos.mm` / `notification_win.cpp` stub /
 > `notification_posix.cpp` / `test_notification.cpp` 及 CMake 接线），macOS 真实路径已跑通
-> 到「系统受理」层，Windows 仍是诚实 stub。本文把它记为 **T1a 基线**，在其上设计
-> `app.notify` 与 Windows 真实后端，不把已有工作当成不存在。
+> 到「系统受理」层，Windows 当时仍是诚实 stub。该草案已于 2026-10-18 晚作为 **T1a 基线**
+> 提交（`2fe9c03`）。本文在其上设计 `app.notify` 与 Windows 真实后端，不把已有工作当成
+> 不存在。
 
 ---
 
@@ -113,7 +118,7 @@ run-end 迁移检测不是同一条链路。因此新增 `app.notify` 工具是�
 
 ---
 
-## 3. 现状盘点（2026-10-18，工作区未提交）
+## 3. 现状盘点（2026-10-18 草案时点；草案当晚已提交为 `2fe9c03`，下表为该时点快照）
 
 ### 3.1 已存在的通知草案（T1a 基线）
 
@@ -686,30 +691,27 @@ completionHandler(UNNotificationPresentationOptionBanner |
 - 系统通知/TCC 以 bundle 身份为键；签名不合法会导致授权行为不稳定（每次重建都可能重新询问）。
 - 目标不是通过 Gatekeeper（需要 Developer ID + notarization），而是让 bundle 身份自洽。
 
-#### 8.5.2 新增 `scripts/sign-macos-app.sh`
+#### 8.5.2 `scripts/sign-macos-app.sh`（已随 `0979707` 落地）
 
 ```bash
 #!/usr/bin/env bash
 set -euo pipefail
 
 APP="${1:?usage: sign-macos-app.sh <path/to/DevDesk.app>}"
-if [ ! -d "$APP" ]; then
-  echo "❌ 不是 .app bundle: $APP" >&2
-  exit 1
-fi
 
 # 只签 bundle 根：DevDesk 没有嵌套 framework/dylib，不需要 --deep。
 # 不用 --options runtime：本机 ad-hoc 分发不做硬化运行时/公证。
+# --identifier 固定为 Info.plist 的 CFBundleIdentifier，避免按可执行名推导成 "DevDesk"。
 codesign --force --sign - --identifier com.devdesk.app "$APP"
-codesign --verify --strict "$APP"
+codesign --verify --strict --verbose=4 "$APP"
 
-IDENT="$(codesign -dv --verbose=2 "$APP" 2>&1 | sed -n 's/^Identifier=//p' | head -1)"
-if [ "$IDENT" != "com.devdesk.app" ]; then
-  echo "❌ 签名 identifier 不是 com.devdesk.app: $IDENT" >&2
-  exit 1
-fi
-echo "✅ ad-hoc 重签完成: $APP（Identifier=com.devdesk.app）"
+echo "✅ 签名有效：${APP}（Identifier=com.devdesk.app，ad-hoc）"
 ```
+
+> 与实际脚本一致（2026-10-18 晚对齐）：草案示例原有的「签后提取 `Identifier` 再断言」一段
+> **实际脚本未采用**——identifier 在签名时已由 `--identifier` 固定，校验以
+> `codesign --verify --strict` 为准。参数个数 / `.app` 识别 / 非 macOS / codesign 缺失等
+> 出声失败守卫见 `scripts/sign-macos-app.sh` 全文。
 
 #### 8.5.3 调用点（顺序即语义）
 
@@ -1026,8 +1028,23 @@ bash scripts/build-test-run.sh --filter app_notify
 
 > 每个阶段独立提交、独立回滚。T1a 是工作区已有草案，建议先单独收口，避免和后续
 > 接口演进混在一个提交里。
+>
+> **编号对齐（2026-10-18 晚与代码对齐）**：T1a–T1f 是本文草案期的私有阶段编号；实际实施
+> 不按这套编号进账，而是逐提交记录在 git log 与 `CHANGELOG.md` `[未发布]` 段；总账
+> `docs/superpowers/plans/2026-09-22-backlog.md` 另以 T1c2 → T1d → T1e2 → T4c 指代两份
+> spec（通知 + 详情弹窗）的实施顺序。查实施进度以 git log / CHANGELOG 为准，勿拿本文
+> 编号到其它文档对号。对应关系：
+>
+> | 本文阶段 | 实际提交 |
+> |---|---|
+> | T1a 基线收口 | `2fe9c03` |
+> | T1b facade 收口 | 无对应提交——未单独实施，后续阶段基于 T1a 草案接口（`Result<void>`）演进 |
+> | T1c Windows 真实后端 | EUI-NEO `93eb7b9` + DevDesk `3150c67` |
+> | T1d `app.notify` 工具 + 降级队列 | `a30fb0c` |
+> | T1e macOS 签名/打包接线 | `0979707` |
+> | T1f 文档收口 | `8271d2a`（真机 UAT 未做） |
 
-### T1a — 现有草案收口（基线，已完成待提交）
+### T1a — 现有草案收口（基线，已提交 `2fe9c03`）
 
 - **范围**：`notification.h` + macOS 后端 + Windows/POSIX stub + `test_notification.cpp`
   + CMake 接线 + `resetCaseGlobals`。
@@ -1036,7 +1053,7 @@ bash scripts/build-test-run.sh --filter app_notify
   - `bash scripts/build-test-run.sh --filter notification` 绿；
   - 裸测试进程不崩；
   - `git status` 只包含通知相关文件。
-- **回滚**：删除/还原这批未提交文件即可（不影响其它模块）。
+- **回滚**：`git revert 2fe9c03` 即可（不影响其它模块）。
 - **备注**：如果用户不希望保留 `Result<void>` 草案接口，可直接进入 T1b 并在同一提交里
   完成签名收敛；但建议先让 T1a 可独立编译/测试。
 
@@ -1175,7 +1192,7 @@ bash scripts/build-test-run.sh --filter app_notify
 | R-9 | 模型刷通知 | 打扰用户 | 全局 3 burst/1 每秒 + 2s 去重；仍建议在工具描述里写「不要高频」。 |
 | R-10 | 通知内容含敏感信息 | 泄露到通知中心/锁屏 | 工具描述警告；不写日志；用户可在系统设置关闭。 |
 | R-11 | fallback toast 在窗口隐藏时不可见 | 最后兜底也失效 | 文档声明；不强制弹窗/抢焦点（避免更糟体验）。 |
-| R-12 | 现有未提交草案被覆盖 | 丢失用户工作 | T1a 先收口；T1b 明确列出接口演进；不在本文实施。 |
+| R-12 | 现有未提交草案被覆盖 —— **已消除**（草案已提交 `2fe9c03`，改动走 git 跟踪） | 丢失用户工作 | 已随 T1a 收口化解。 |
 
 ### 12.2 需要用户拍板
 
