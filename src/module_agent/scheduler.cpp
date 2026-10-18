@@ -352,6 +352,77 @@ core::Result<void> Scheduler::tickNow() {
                 LOG_INFO("Scheduler: 每日任务 " + std::to_string(t.id) + " 当天首次派发");
             continue;
         }
+        // 一次性型（「到点只响一次」）：once_at 是绝对 Unix 秒。判定顺序 = 坏配置 →
+        // 未到点 → 已响过 → 已错过 → 到点窗口。错过窗口（once_at+60s 之后）绝不补跑：
+        // app 关闭 / 系统睡眠跨过窗口只落一条 INFO + 自动停用，下一次 tick 不会补发。
+        if (t.triggerType == "once") {
+            auto cfg = decodeTriggerConfig(t.triggerConfig);
+            if (cfg.isFail()) {
+                LOG_WARN("Scheduler: 任务 " + std::to_string(t.id) +
+                         " 的 trigger_config 无法解析，本分钟跳过不派发：" +
+                         cfg.errorMessage());
+                continue;
+            }
+            if (!cfg.value().onceAt) {
+                LOG_WARN("Scheduler: 任务 " + std::to_string(t.id) +
+                         " 是一次性触发，但 trigger_config 缺少 once_at，本分钟跳过不派发");
+                continue;
+            }
+            const int64_t onceAt = *cfg.value().onceAt;
+            if (nowSec < onceAt) continue;   // 未到点
+            // 已响过判定以 agent_runs 为唯一事实源（跨重启成立）：最近一条 run 的
+            // started_at >= once_at → 这一响已经发生过，置停用防止重启后同分钟内重响。
+            auto runs = store_.listRuns(t.id, 1);
+            if (runs.isFail()) {
+                // 读不出一律不派发：宁可不响，也不能在坏库上重复响
+                LOG_WARN("Scheduler: 任务 " + std::to_string(t.id) +
+                         " 的一次性触发「已响过」判定读取失败，本分钟不派发：" +
+                         runs.errorMessage());
+                continue;
+            }
+            if (!runs.value().empty() && runs.value()[0].startedAt >= onceAt) {
+                auto off = store_.setTaskEnabled(t.id, false);
+                if (off.isFail())
+                    LOG_WARN("Scheduler: 任务 " + std::to_string(t.id) +
+                             " 的一次性触发已响过，但置停用失败：" + off.errorMessage());
+                else
+                    LOG_INFO("Scheduler: 任务 " + std::to_string(t.id) +
+                             " 的一次性触发已响过，自动停用");
+                continue;
+            }
+            if (nowSec >= onceAt + 60) {
+                // 已错过：窗口外不补跑。即便停用写库失败也不再派发（本路直接 continue），
+                // 下一分钟会再次走到这里并重试写库。
+                LOG_INFO("Scheduler: 任务 " + std::to_string(t.id) +
+                         " 的一次性触发已错过（once_at=" + std::to_string(onceAt) +
+                         "），错过不补跑，自动停用");
+                auto off = store_.setTaskEnabled(t.id, false);
+                if (off.isFail())
+                    LOG_WARN("Scheduler: 任务 " + std::to_string(t.id) +
+                             " 已错过一次性触发，但置停用失败：" + off.errorMessage());
+                continue;
+            }
+            {   // 到点窗口 [once_at, once_at+60) 内：同分钟防重后派发
+                std::lock_guard<std::mutex> lock(mu_);
+                if (lastFiredMinute_[t.id] == minute) continue;
+                lastFiredMinute_[t.id] = minute;
+            }
+            auto fired = dispatchRun(t.id);
+            if (fired.isFail()) {
+                // 线程创建失败：从未起跑，不置停用——窗口内下一分钟可重试
+                LOG_WARN("Scheduler: 一次性任务派发失败 task=" + std::to_string(t.id) +
+                         ": " + fired.errorMessage());
+                continue;
+            }
+            LOG_INFO("Scheduler: 一次性任务 " + std::to_string(t.id) + " 到点派发");
+            // 派发成功即停用（一次性）。停用失败只 WARN：下一分钟「已响过」判定会兜底
+            auto off = store_.setTaskEnabled(t.id, false);
+            if (off.isFail())
+                LOG_WARN("Scheduler: 任务 " + std::to_string(t.id) +
+                         " 一次性触发派发后置停用失败（下一分钟按已响过判定补齐）：" +
+                         off.errorMessage());
+            continue;
+        }
         if (t.triggerType != "schedule") continue;
         // trigger_config 解析唯一落点 = trigger_config.h；坏配置不静默 continue——点名 task id 的 WARN 是用户唯一可见通道
         auto cfg = decodeTriggerConfig(t.triggerConfig);

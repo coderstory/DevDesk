@@ -32,7 +32,9 @@ public:
     ~Scheduler();                       // 兜底 stopAll（幂等）
     void start();                       // 起 tick 轮询线程 + 常驻 worker 线程（各自幂等守卫）
     void stopAll();                     // 停派发线程（tick/常驻）→ cancel 全部在跑 run → join（幂等）
-    // 每次扫 enabled 且 schedule 的任务：cron 匹配 + 同分钟防重 → 派发。公开供测试直调
+    // 每次扫 enabled 的 schedule / daily / once 任务：schedule 走 cron 匹配，
+    // daily 走本地当天首次，once 走到点窗口（有且仅有一次，错过不补）；同分钟防重后
+    // 派发。公开供测试直调
     core::Result<void> tickNow();
     size_t activeRunCount();            // 测试观察面：runs_ 容器条目数（含已收尾未 reap 的）
     // 常驻 worker 手动入队。pop 即 spawn、不等上一跑结束；同 task 连发两单由 AgentLoop 单闸拒绝

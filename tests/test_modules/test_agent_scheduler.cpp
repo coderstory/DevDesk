@@ -139,6 +139,20 @@ size_t countStatus(const std::vector<AgentRunRow>& rows, const std::string& stat
         [&status](const AgentRunRow& r) { return r.status == status; }));
 }
 
+// 有界等待指定任务的 run 行落终态（数量 >= want 且无 running）。agent_runs 由 run
+// 线程用真实系统时钟落库——注入的 nowSec 只驱动 Scheduler 的触发判定，不驱动落库。
+bool waitFinishedRuns(AgentStore& store, int64_t taskId, size_t want) {
+    for (int i = 0; i < 500; ++i) {
+        auto runs = store.listRuns(taskId, 10);
+        if (runs.isOk() && runs.value().size() >= want &&
+            std::all_of(runs.value().begin(), runs.value().end(),
+                        [](const AgentRunRow& r) { return r.status != "running"; }))
+            return true;
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    return false;
+}
+
 // 跨路径用例自持的 manual 线程：用例提前 return（断言失败）时也必须 cancel + join，
 // 否则栈上 joinable 的 std::thread 析构即 std::terminate。
 class ManualJoinGuard {
@@ -326,6 +340,191 @@ REGISTER_TEST(scheduler_bad_trigger_config_logs_and_skips,
     oss << in.rdbuf();
     const std::string logText = oss.str();
     for (const auto& t : {bad, empty, badJson, nonObj}) {
+        DOCTEST_CHECK_MESSAGE(
+            logText.find("任务 " + std::to_string(t.value())) != std::string::npos,
+            logText);
+        DOCTEST_CHECK(logText.find("trigger_config") != std::string::npos);
+    }
+    return true;
+})
+
+// once（一次性闹钟）：未到 once_at 一律不派发，任务保持启用。
+// 时间基准取真实现在附近：agent_runs.started_at 由 AgentStore 用真实系统时钟落库。
+REGISTER_TEST(scheduler_once_does_not_fire_before_once_at,
+              "scheduler: once 未到点 → 不派发、任务仍启用", {
+    test_support::TestDb tdb("agentsched", "onceearly");
+    module::agent::AgentStore store(tdb.handle());
+    MockLlm llm; llm.script = { endTurnResp() };
+    module::agent::AgentLoop loop(llm, core::ToolRegistry::instance(), store);
+
+    const int64_t realNow = static_cast<int64_t>(std::time(nullptr));
+    const int64_t onceAt = realNow + 300;
+    int64_t nowSec = onceAt - 60;   // 提前一分钟
+    module::agent::Scheduler sched(store, loop, [&nowSec] { return nowSec; });
+    auto taskId = store.createTask("一次性", "g", "once", "default", 5, false,
+                                   "{\"once_at\":" + std::to_string(onceAt) + "}");
+    DOCTEST_REQUIRE(taskId.isOk());
+
+    DOCTEST_REQUIRE(sched.tickNow().isOk());
+    std::this_thread::sleep_for(std::chrono::milliseconds(80));
+    DOCTEST_CHECK_EQ(sched.activeRunCount(), 0u);
+    DOCTEST_CHECK(store.listRuns(taskId.value(), 10).value().empty());
+    auto task = store.getTask(taskId.value());
+    DOCTEST_REQUIRE(task.isOk());
+    DOCTEST_CHECK(task.value().enabled);
+    sched.stopAll();
+    return true;
+})
+
+// 到点窗口 [once_at, once_at+60)：派发一次后立即置停用（一次性）；同一分钟再 tick
+// 不重复。停用后即使重新启用，同分钟防重（lastFiredMinute_）仍挡住第二次。
+REGISTER_TEST(scheduler_once_fires_once_in_window_and_disables,
+              "scheduler: once 到点派发一次 → 停用；同分钟不重复", {
+    test_support::TestDb tdb("agentsched", "oncefire");
+    module::agent::AgentStore store(tdb.handle());
+    MockLlm llm; llm.script = { endTurnResp() };
+    module::agent::AgentLoop loop(llm, core::ToolRegistry::instance(), store);
+
+    const int64_t realNow = static_cast<int64_t>(std::time(nullptr));
+    const int64_t onceAt = realNow - 30;   // 真实过去 30 秒：run 行的真实 started_at 必 >= once_at
+    int64_t nowSec = onceAt + 5;           // 到点后 5 秒，仍在 60 秒窗口内
+    module::agent::Scheduler sched(store, loop, [&nowSec] { return nowSec; });
+    auto taskId = store.createTask("一次性", "g", "once", "default", 5, false,
+                                   "{\"once_at\":" + std::to_string(onceAt) + "}");
+    DOCTEST_REQUIRE(taskId.isOk());
+
+    DOCTEST_REQUIRE(sched.tickNow().isOk());
+    DOCTEST_REQUIRE(waitFinishedRuns(store, taskId.value(), 1));
+    DOCTEST_CHECK_EQ(store.listRuns(taskId.value(), 10).value().size(), 1u);
+    auto task = store.getTask(taskId.value());
+    DOCTEST_REQUIRE(task.isOk());
+    DOCTEST_CHECK(!task.value().enabled);   // 派发成功即停用
+
+    // 同一分钟再 tick：不重复
+    DOCTEST_REQUIRE(sched.tickNow().isOk());
+    std::this_thread::sleep_for(std::chrono::milliseconds(80));
+    DOCTEST_CHECK_EQ(store.listRuns(taskId.value(), 10).value().size(), 1u);
+
+    // 重新启用后再 tick（仍同一分钟）：证明 lastFiredMinute_ 也在挡，而不只靠 enabled
+    DOCTEST_REQUIRE(store.setTaskEnabled(taskId.value(), true).isOk());
+    DOCTEST_REQUIRE(sched.tickNow().isOk());
+    std::this_thread::sleep_for(std::chrono::milliseconds(80));
+    DOCTEST_CHECK_EQ(store.listRuns(taskId.value(), 10).value().size(), 1u);
+
+    sched.stopAll();
+    return true;
+})
+
+// 错过窗口（now >= once_at + 60）：绝不补跑，任务停用，INFO 日志说明「已错过 / 不补」。
+REGISTER_TEST(scheduler_once_missed_window_logs_and_disables,
+              "scheduler: once 已错过 → 不派发、停用、日志含「已错过/不补」", {
+    test_support::TestDb tdb("agentsched", "oncemiss");
+    module::agent::AgentStore store(tdb.handle());
+    MockLlm llm; llm.script = { endTurnResp() };
+    module::agent::AgentLoop loop(llm, core::ToolRegistry::instance(), store);
+
+    const int64_t realNow = static_cast<int64_t>(std::time(nullptr));
+    const int64_t onceAt = realNow - 180;
+    int64_t nowSec = onceAt + 120;   // 窗口外 60 秒
+    module::agent::Scheduler sched(store, loop, [&nowSec] { return nowSec; });
+    auto taskId = store.createTask("一次性", "g", "once", "default", 5, false,
+                                   "{\"once_at\":" + std::to_string(onceAt) + "}");
+    DOCTEST_REQUIRE(taskId.isOk());
+
+    const auto logPath = test_temp::tempPath("devdesk_test_sched_once_missed.log");
+    std::error_code ec;
+    std::filesystem::remove(logPath, ec);
+    core::log::addFileOutput(logPath);
+
+    DOCTEST_REQUIRE(sched.tickNow().isOk());
+    std::this_thread::sleep_for(std::chrono::milliseconds(80));
+    DOCTEST_CHECK_EQ(sched.activeRunCount(), 0u);
+    DOCTEST_CHECK(store.listRuns(taskId.value(), 10).value().empty());
+    auto task = store.getTask(taskId.value());
+    DOCTEST_REQUIRE(task.isOk());
+    DOCTEST_CHECK(!task.value().enabled);
+    sched.stopAll();
+
+    std::ifstream in(logPath, std::ios::binary);
+    std::ostringstream oss;
+    oss << in.rdbuf();
+    const std::string logText = oss.str();
+    DOCTEST_CHECK_MESSAGE(logText.find("任务 " + std::to_string(taskId.value())) !=
+                              std::string::npos, logText);
+    DOCTEST_CHECK_MESSAGE(logText.find("已错过") != std::string::npos, logText);
+    DOCTEST_CHECK_MESSAGE(logText.find("不补") != std::string::npos, logText);
+    return true;
+})
+
+// 重启场景：库里已有一条 started_at >= once_at 的 run（上一进程响过），同一分钟窗口内
+// 重启后 tick 不得重响；判定读 agent_runs，并把任务置停用。
+REGISTER_TEST(scheduler_once_already_fired_before_restart_does_not_refire,
+              "scheduler: once 重启前已响过 → 窗口内不重响、任务停用", {
+    test_support::TestDb tdb("agentsched", "oncerestart");
+    module::agent::AgentStore store(tdb.handle());
+    MockLlm llm; llm.script = { endTurnResp() };
+    module::agent::AgentLoop loop(llm, core::ToolRegistry::instance(), store);
+
+    const int64_t realNow = static_cast<int64_t>(std::time(nullptr));
+    const int64_t onceAt = realNow - 60;
+    int64_t nowSec = onceAt + 30;   // 仍在到点窗口内
+    module::agent::Scheduler sched(store, loop, [&nowSec] { return nowSec; });
+    auto taskId = store.createTask("一次性", "g", "once", "default", 5, false,
+                                   "{\"once_at\":" + std::to_string(onceAt) + "}");
+    DOCTEST_REQUIRE(taskId.isOk());
+    auto runId = store.startRun(taskId.value());   // 模拟上一进程已起跑的 run 行
+    DOCTEST_REQUIRE(runId.isOk());
+    DOCTEST_REQUIRE(store.finishRun(runId.value(), "completed", 0, std::nullopt,
+                                    std::nullopt, std::nullopt)
+                        .isOk());
+
+    DOCTEST_REQUIRE(sched.tickNow().isOk());
+    std::this_thread::sleep_for(std::chrono::milliseconds(80));
+    DOCTEST_CHECK_EQ(sched.activeRunCount(), 0u);
+    DOCTEST_CHECK_EQ(store.listRuns(taskId.value(), 10).value().size(), 1u);
+    auto task = store.getTask(taskId.value());
+    DOCTEST_REQUIRE(task.isOk());
+    DOCTEST_CHECK(!task.value().enabled);
+    sched.stopAll();
+    return true;
+})
+
+// once 型坏配置：空串 / 坏 JSON / 合法 cron 但缺 once_at → 不崩、不派发，WARN 点名
+// task id（与 schedule 坏配置同口径）。
+REGISTER_TEST(scheduler_once_bad_config_logs_and_skips,
+              "scheduler: once 坏配置/缺 once_at → LOG_WARN 点名 task id 后跳过", {
+    test_support::TestDb tdb("agentsched", "oncebadcfg");
+    module::agent::AgentStore store(tdb.handle());
+    MockLlm llm; llm.script = { endTurnResp() };
+    module::agent::AgentLoop loop(llm, core::ToolRegistry::instance(), store);
+    module::agent::Scheduler sched(store, loop, [] { return int64_t(3600 * 24); });
+
+    auto empty = store.createTask("空配置", "g", "once", "default", 5, false);
+    DOCTEST_REQUIRE(empty.isOk());
+    auto badJson = store.createTask("非JSON", "g", "once", "default", 5, false,
+                                    "{ not json !!!");
+    DOCTEST_REQUIRE(badJson.isOk());
+    auto cronOnly = store.createTask("缺 once_at", "g", "once", "default", 5, false,
+                                     R"({"cron":"* * * * *"})");
+    DOCTEST_REQUIRE(cronOnly.isOk());
+
+    const auto logPath = test_temp::tempPath("devdesk_test_sched_once_badcfg.log");
+    std::error_code ec;
+    std::filesystem::remove(logPath, ec);
+    core::log::addFileOutput(logPath);
+
+    DOCTEST_REQUIRE(sched.tickNow().isOk());
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    DOCTEST_CHECK_EQ(sched.activeRunCount(), 0u);
+    for (const auto& t : {empty, badJson, cronOnly})
+        DOCTEST_CHECK(store.listRuns(t.value(), 10).value().empty());
+    sched.stopAll();
+
+    std::ifstream in(logPath, std::ios::binary);
+    std::ostringstream oss;
+    oss << in.rdbuf();
+    const std::string logText = oss.str();
+    for (const auto& t : {empty, badJson, cronOnly}) {
         DOCTEST_CHECK_MESSAGE(
             logText.find("任务 " + std::to_string(t.value())) != std::string::npos,
             logText);
