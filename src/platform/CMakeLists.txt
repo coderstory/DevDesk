@@ -1,5 +1,6 @@
 add_library(devdesk_platform STATIC
     notification.h                      # 平台通知抽象（实现按平台选择）
+    notification.cpp                    # facade：清洗/截断/去重/限速（平台无关，全平台编译）
     http_client.cpp
     http_server.cpp
     json.cpp

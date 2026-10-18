@@ -1,9 +1,5 @@
-// AppNotifyTool 实现：参数校验 → platform::notify::send → 失败降级 app toast。
-// 返回契约（回喂 LLM）：
-//   * 成功：{"ok":true,"accepted":true,"note":"已提交系统通知，是否展示取决于系统设置"}
-//   * 降级成功：{"ok":true,"fallback":"app","warning":"系统通知不可用，已改为应用内提示"}
-//   * 参数错误 / 降级也失败：Result ok + isError=true + {"error":"<中文>"}
-// Result::fail 只留给编程不变量破坏（自有字面量序列化失败）。
+// AppNotifyTool 实现：参数校验 → platform::notify::send → Receipt 状态映射（spec §7.4）。
+// 限速/去重/截断全在平台 facade；本文件只做参数校验、状态映射与降级入队。
 #include "app_notify_tool.h"
 
 #include "platform/json.h"
@@ -92,6 +88,49 @@ Result<std::string> requiredString(const pj::JsonObject& args, const char* key,
     return Result<std::string>::ok(std::move(text));
 }
 
+// 环境类失败（NotBundled/PermissionDenied/NotDetermined/BackendUnavailable）：
+// 降级为应用内提示。fallback 在工作线程执行，只允许线程安全入队；它抛异常也按
+//「降级失败」处理，不把异常泄给 AgentLoop。
+Result<ToolResult> fallbackOrError(const platform::notify::Receipt& receipt,
+                                   const std::string& fallbackText,
+                                   const NotifyTool::FallbackFn& fallback) {
+    const char* reason = platform::notify::statusToString(receipt.status);
+    // facade 对每个 status 都填了中文 detail；这里只做空串防御。
+    const std::string detail = receipt.detail.empty()
+                                   ? platform::notify::statusToString(receipt.status)
+                                   : receipt.detail;
+
+    if (fallback) {
+        bool fallbackDone = false;
+        std::string fallbackError;
+        try {
+            fallback(fallbackText);
+            fallbackDone = true;
+        } catch (const std::exception& error) {
+            fallbackError = error.what();
+        } catch (...) {
+            fallbackError = "未知异常";
+        }
+        if (fallbackDone) {
+            pj::JsonObject out;
+            out.set("status", pj::makeString("fallback"));
+            out.set("deliveredVia", pj::makeString("app_toast"));
+            out.set("reason", pj::makeString(reason));
+            out.set("detail", pj::makeString(detail));
+            out.set("id", pj::makeString(receipt.effectiveId));
+            return toolJson(std::move(out));
+        }
+        std::string message = "系统通知不可用: " + detail;
+        message += "；应用内提示也失败";
+        if (!fallbackError.empty()) {
+            message += ": " + fallbackError;
+        }
+        return toolError(message);
+    }
+
+    return toolError("系统通知不可用: " + detail + "；未配置应用内提示降级");
+}
+
 } // namespace
 
 NotifyTool::NotifyTool(FallbackFn fallback) : fallback_(std::move(fallback)) {}
@@ -99,7 +138,7 @@ NotifyTool::NotifyTool(FallbackFn fallback) : fallback_(std::move(fallback)) {}
 std::string NotifyTool::name() const { return "app.notify"; }
 
 std::string NotifyTool::schemaJson() const {
-    return R"({"name":"app.notify","description":"向用户发送系统通知，用于逾期待办提醒、闹钟到点提醒；不要滥用。","input_schema":{"type":"object","properties":{"title":{"type":"string","description":"通知标题，必填，单行简短"},"body":{"type":"string","description":"通知正文，必填"},"sound":{"type":"boolean","description":"是否播放提示音，默认 true"},"id":{"type":"string","description":"可选稳定标识；macOS 用于替换同一 id 的通知，Windows 忽略"}},"required":["title","body"],"additionalProperties":false}})";
+    return R"({"name":"app.notify","description":"向用户发送系统通知，用于逾期待办提醒、闹钟到点提醒；不要滥用。","input_schema":{"type":"object","properties":{"title":{"type":"string","description":"通知标题，必填，单行简短"},"body":{"type":"string","description":"通知正文，必填"},"sound":{"type":"boolean","description":"是否播放提示音，默认 true"},"id":{"type":"string","description":"可选稳定标识；相同 id + 内容在 2 秒内去重；相同 id 会替换 macOS 中未展示/已展示的同 id 通知"}},"required":["title","body"],"additionalProperties":false}})";
 }
 
 Result<ToolResult> NotifyTool::execute(const ToolArgs& args) {
@@ -143,47 +182,43 @@ Result<ToolResult> NotifyTool::execute(const ToolArgs& args) {
     notification.sound = sound;
 
     auto sent = platform::notify::send(notification);
-    if (sent.isOk()) {
-        pj::JsonObject out;
-        out.set("ok", pj::makeBool(true));
-        out.set("accepted", pj::makeBool(true));
-        out.set("note", pj::makeString("已提交系统通知，是否展示取决于系统设置"));
-        return toolJson(std::move(out));
+    // Result::fail 只发生在参数非法（清洗后为空）或 facade 内部错误：不降级，
+    // 直接回喂错误（失败矩阵 #1/#2 的「降级=无」）。
+    if (sent.isFail()) {
+        return toolError(sent.errorMessage());
     }
+    const platform::notify::Receipt& receipt = sent.value();
 
-    // 系统通知失败 → 降级应用内提示。fallback 在工作线程执行，只允许线程安全入队；
-    // 它抛异常也按「降级失败」处理，不把异常泄给 AgentLoop。
-    bool fallbackDone = false;
-    std::string fallbackError;
-    if (fallback_) {
-        try {
-            fallback_(notification.title + "：" + notification.body);
-            fallbackDone = true;
-        } catch (const std::exception& error) {
-            fallbackError = error.what();
-        } catch (...) {
-            fallbackError = "未知异常";
+    switch (receipt.status) {
+        case platform::notify::Status::Accepted: {
+            pj::JsonObject out;
+            out.set("status", pj::makeString("accepted"));
+            out.set("deliveredVia", pj::makeString("system"));
+            out.set("id", pj::makeString(receipt.effectiveId));
+            out.set("truncated", pj::makeBool(receipt.titleTruncated ||
+                                              receipt.bodyTruncated));
+            return toolJson(std::move(out));
         }
+        case platform::notify::Status::Deduped: {
+            pj::JsonObject out;
+            out.set("status", pj::makeString("deduped"));
+            out.set("deliveredVia", pj::makeString("none"));
+            out.set("id", pj::makeString(receipt.effectiveId));
+            return toolJson(std::move(out));
+        }
+        case platform::notify::Status::RateLimited: {
+            pj::JsonObject out;
+            out.set("status", pj::makeString("rate_limited"));
+            out.set("deliveredVia", pj::makeString("none"));
+            out.set("retryAfterMs", pj::makeInt(receipt.retryAfterMs));
+            return toolJson(std::move(out));
+        }
+        default:
+            // NotBundled / PermissionDenied / NotDetermined / BackendUnavailable
+            // → 应用内提示降级。
+            return fallbackOrError(
+                receipt, notification.title + "：" + notification.body, fallback_);
     }
-
-    if (fallbackDone) {
-        pj::JsonObject out;
-        out.set("ok", pj::makeBool(true));
-        out.set("fallback", pj::makeString("app"));
-        out.set("warning",
-                pj::makeString("系统通知不可用，已改为应用内提示"));
-        return toolJson(std::move(out));
-    }
-
-    std::string message = "系统通知发送失败: " + sent.errorMessage();
-    if (!fallback_) {
-        message += "；未配置应用内提示降级";
-    } else if (fallbackError.empty()) {
-        message += "；应用内提示也失败";
-    } else {
-        message += "；应用内提示也失败: " + fallbackError;
-    }
-    return toolError(message);
 }
 
 } // namespace module::agent
