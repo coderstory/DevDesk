@@ -8,7 +8,11 @@
 
 ## [未发布]
 
-<!-- 待补：E1+C1 UX -->
+- feat(agent)：任务删除——`AgentStore::deleteTask` 单事务级联删（messages←runs→tasks，不依赖 FK pragma）+ 行内「删除」chip（运行中禁删）+ 确认弹窗（红字「不可恢复」+ Danger 确认钮），建错/一次性任务不再是只能禁用的僵尸行（`d3d1cd5`）。
+- feat(agent)：运行停止入口——详情弹窗「停止 · 当前轮结束后生效」chip 置 ActiveRun cancel 位（协作式取消，用户取消优先于超限判定），点击后切「停止中」禁用防反复点；非运行态不渲染、落空调用不产生新 run（`d3ec079`）。
+- feat(agent)：run 失败/受限补发 OS 系统通知——应用内 toast 4.5s 之外同步走 `platform::notify::send`（稳定 id 前缀 `agent-run-`、level=Error，定时任务失败恰恰发生在人不在应用前）；成功/取消保持双通道静默（`agent_ui_run_completed_silent_no_toast` 契约原样保留并加 spy 后端零调用断言）；新用例钉失败迁移恰发一次（id 前缀/正文含任务名/level）+ 补帧不重发（`6576e64`）。
+- feat(agent)：任务列表状态视觉批——状态列 8px 彩色圆点（success/error/warning/info 语义映射，cancelled/从未运行=tertiary，点+中文文字双通道）；停用行标题 0.45 置灰 +「已停用」徽章；运行中任务启动钮禁用文案切「运行中…」（防双起，终态恢复）；行 hover 命中层（stack 双层 bg rect，容器不画背景）；数值断言钉几何/色 token/alpha/disabled 位（`59ee216`）。
+- feat(agent)：任务表单语义提示批——六类触发各一行「怎么填」提示（「每天」隐藏语义显形：当天首次打开后的首个调度周期、需应用保持运行；定时/闹钟预览行优先、同槽互斥）；meta 行提示讲迭代跑满以「受限」结束不再重试 + 破坏性操作=允许删除文件等高危工具、不勾则被拒；几何走现成 12px 缝槽位，弹窗高度与各行位置不动（`e3834a3`）。
 
 - feat(agent): app.notify 暴露 level 参数——schema enum 四值（info/success/warning/error，缺省 Info），未知值/类型错走工具错误、不静默降级成 Info；透传 `platform::notify::Notification.level`（Receipt/Level 接口已在 `e0f5d82` 落地，本提交只接工具层）；用例改钉 level 契约——schema 四值序 / 缺省 Info / 显式传值透传 / 非法值与类型错报错且后端零调用（`e70ef7b`）。
 - fix(scripts): build-test-run.sh 带值参数接力吃错值——`for arg in "$@"` 的迭代列表在循环入口只展开一次，循环内 shift 动不到列表，带值 flag（--verify-app-str / --filter）每轮只前进一格、吃进前一个 flag 名（`--no-run --install --verify-app-str hot.list` 解析成 VERIFY_APP_STR=--install）；改 while $# + 内层 shift 吃值 + 循环尾 shift 吃 flag 名，两顺序实测均取到值，无 --install 仍只警告不硬失败（`e560770`）。
