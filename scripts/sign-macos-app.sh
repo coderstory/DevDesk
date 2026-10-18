@@ -25,8 +25,13 @@
 #
 # 为什么**不加** --deep：
 #   --deep 会递归给嵌套的框架/插件套用同一签名参数，既慢又容易签错（Apple 已不推荐）。
-#   当前 bundle 没有嵌套框架，只签主可执行 + 封资源即可；以后真的引入框架时，应逐个
-#   显式签名，而不是用 --deep 一把梭。
+#   嵌套代码确实存在且必须签——Darwin 27 的 codesign 把 Contents/MacOS/ 下的**所有常规
+#   文件**（含 assets 数据文件：字体/shader/图标）按嵌套代码对待，外层签完
+#   --verify --strict 会逐个报 "unsigned subcomponent"。处理方式是下面这段显式预签：
+#   逐个 ad-hoc 签 MacOS/ 下的常规文件，再签 bundle 外层——与既定口径一致
+#   （引入嵌套代码就逐个显式签，不用 --deep 一把梭；--deep 与否和 hardened runtime
+#   是两件独立的事，禁的始终是 --options runtime：library validation 会拒 bundle 外
+#   的 Homebrew OpenSSL，见上一段）。
 set -euo pipefail
 
 usage() {
@@ -77,6 +82,26 @@ if ! command -v codesign >/dev/null 2>&1; then
   echo "❌ 找不到 codesign（应随 Xcode Command Line Tools 提供）" >&2
   echo "   安装：xcode-select --install" >&2
   exit 1
+fi
+
+echo "── 预签嵌套代码（Contents/MacOS 下常规文件）──"
+# MacOS/ 下除主可执行外的一切常规文件（assets 字体/shader/图标等）都是嵌套代码，
+# 不签则外层 --verify --strict 报 "unsigned subcomponent"。逐个显式 ad-hoc 签。
+# 主可执行必须留给外层 bundle 签名去签：直接签它会让 codesign 走 bundle 感知重封，
+# 此时其余嵌套文件若还没签完就报 "code object is not signed at all"（实测踩过）。
+# 只扫 MacOS/：Resources 下的文件按资源哈希封进 CodeResources，不需要也不应该签。
+EXE_NAME="$(plutil -extract CFBundleExecutable raw "$APP/Contents/Info.plist" 2>/dev/null || echo DevDesk)"
+NESTED_SIGN_FAILED=0
+while IFS= read -r -d '' nested; do
+    [ "$(basename "$nested")" = "$EXE_NAME" ] && continue
+    if ! codesign --force --sign - "$nested" >/dev/null; then
+        echo "❌ 嵌套代码预签失败：$nested" >&2
+        NESTED_SIGN_FAILED=1
+    fi
+done < <(find "$APP/Contents/MacOS" -type f -print0)
+if [ "$NESTED_SIGN_FAILED" != "0" ]; then
+    echo "❌ 存在预签失败的嵌套文件，中止（外层签名必然过不了严格校验）" >&2
+    exit 1
 fi
 
 echo "── 签名（ad-hoc）: $APP ──"
