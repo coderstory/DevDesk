@@ -135,9 +135,15 @@ public:
         return dbImportedDirty_.load(std::memory_order_acquire);
     }
 
-    // ---- 运行态查询 ----
-    // 任务是否有在跑 ActiveRun（未 done）：运行中禁删（E1）的判据之一
+    // ---- run 停止入口（C1）与运行态查询 ----
+    // 协作式取消：只置 ActiveRun::cancel，当前迭代收尾后才生效（in-flight LLM 请求不中断，
+    // 迭代边界检查在 agent_loop，用户取消优先于超限判定）。无在跑 run 时仅 LOG 落空，
+    // 不崩、不新建 run——幂等
+    void requestStopRun(int64_t taskId);
+    // 任务是否有在跑 ActiveRun（未 done）：详情弹窗停止钮的渲染条件、列表删除禁用判据之一
     bool isTaskRunActive(int64_t taskId);
+    // 在跑 run 是否已被请求停止：停止钮点击后的反馈态（「停止中」）断言面
+    bool isStopRequested(int64_t taskId);
 
     // ---- run 完成通知的 app 级通道（fix round：页面无关） ----
     // 装配层每帧调（app::compose 内）：等价 refreshData 的检测路径，不依赖智能体页可见。

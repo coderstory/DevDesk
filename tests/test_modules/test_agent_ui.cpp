@@ -19,7 +19,8 @@
 //          .input（多行）/ .generate / .dismiss / .close / .caption /
 //          .notice / .warnings（生成完成才渲染）/ .error（失败 / 校验错才渲染）
 //   详情弹窗 agent.dialog.detail.*：.info / .runlist.<i>[.err] / .msgscroll /
-//          .msg.<i>[.badge / .toggle / .preview / .blk.<j>[.out]] / .close
+//          .msg.<i>[.badge / .toggle / .preview / .blk.<j>[.out]] / .close /
+//          .stop[.wrap]（运行中才渲染；点击后切「停止中」禁用，C1 协作式取消）
 //   旧页内表单（agent.form.* / agent.edit.*）与页内详情展开区已删除——本文件用
 //   「节点不存在」把它们钉死，防回潮。
 //
@@ -4261,6 +4262,133 @@ REGISTER_TEST(agent_ui_delete_task_disabled_while_running,
                             "run 终态后删除入口应恢复");
     // 收尾：确认删除，不留悬挂确认态
     DOCTEST_REQUIRE(clickId(ui4, "agent.dialog.delete.confirm.bg"));
+    mod.onStop();
+    return true;
+})
+
+// C1 停止流：运行中渲染停止钮 → 点击置 cancel 位（isStopRequested 可断言）→
+// 钮切「停止中」禁用 → 放行后 run 在迭代边界收尾 cancelled → 列表「已取消」
+REGISTER_TEST(agent_ui_stop_button_cancel_flow,
+              "agent_ui: 运行中停止钮可见可点，点击后 cancel 位与反馈态可断言，终态 cancelled", {
+    test_support::TestDb tdb("agentui", "stopflow");
+    test_support::FakeProfileSource profile;
+    ToolGuard statsGuard{"app.stats", "app.notify"};
+    core::ToolRegistry::instance().unregisterTool("app.stats");
+    core::ToolRegistry::instance().unregisterTool("app.notify");
+    module::agent::AgentStore store(tdb.handle());
+    auto created = store.createTask("慢任务", "直接回复完成，不调用任何工具",
+                                    "manual", "default", 10, false);
+    DOCTEST_REQUIRE(created.isOk());
+    const std::string tid = std::to_string(created.value());
+
+    // 阻塞桩：首个 LLM 请求卡住直到放行（模拟 in-flight 迭代），上限 5s 防挂死。
+    // 响应必须是 tool_use（app.stats）而不是 end_turn——cancel 只在迭代边界（下轮 send
+    // 前）被查，end_turn 单轮 run 会在 send 返回后直接 completed break，永远吃不到 cancel
+    std::atomic<bool> releaseGate{false};
+    module::agent::AgentModule::Deps deps;
+    deps.db = &tdb.handle();
+    deps.profileSource = &profile;
+    deps.http = [&releaseGate](const platform::http::Request&) {
+        for (int i = 0; i < 500 && !releaseGate.load(std::memory_order_acquire);
+             ++i) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        platform::http::Response res;
+        res.statusCode = 200;
+        res.body = R"({"id":"m1","stop_reason":"tool_use","content":[)"
+                   R"({"type":"tool_use","id":"t1","name":"app.stats","input":{}}],)"
+                   R"("usage":{"input_tokens":1,"output_tokens":1}})";
+        return core::Result<platform::http::Response>::ok(res);
+    };
+    module::agent::AgentModule mod(deps);
+    mod.onStart();
+
+    eui::Ui ui;
+    composeTo(ui, mod, kScreen, "agent_ui_stop1");
+    DOCTEST_REQUIRE(clickId(ui, "agent.task." + tid + ".run.bg"));
+
+    // 运行中（在跑 ActiveRun 已同步注册）：详情弹窗标题行应出现停止钮
+    bool stopVisible = false;
+    eui::Ui ui2;
+    for (int i = 0; i < 100 && !stopVisible; ++i) {
+        composeTo(ui2, mod, kScreen, "agent_ui_stop_poll");
+        stopVisible = ui2.find("agent.dialog.detail.stop.bg") != nullptr;
+        if (!stopVisible) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    DOCTEST_REQUIRE_MESSAGE(stopVisible, "运行中详情弹窗未渲染停止钮");
+
+    // 点击停止：cancel 位经模块观测面可断言；钮切「停止中」并禁用
+    DOCTEST_REQUIRE(clickId(ui2, "agent.dialog.detail.stop.bg"));
+    DOCTEST_CHECK_MESSAGE(mod.isStopRequested(created.value()),
+                          "点击停止后 cancel 位未置");
+    eui::Ui ui3;
+    composeTo(ui3, mod, kScreen, "agent_ui_stop_after");
+    const auto* stopBtn = ui3.find("agent.dialog.detail.stop");
+    DOCTEST_REQUIRE(stopBtn != nullptr);
+    DOCTEST_CHECK_MESSAGE(stopBtn->text.find("停止中") != std::string::npos,
+                          "点击后未切「停止中」反馈态，实测: " + stopBtn->text);
+    DOCTEST_CHECK_MESSAGE(stopBtn->text.find("当前轮结束后生效") != std::string::npos,
+                          "停止钮文案缺生效时机说明");
+
+    // 放行 → 当前轮跑完 → 迭代边界取消优先于超限判定 → cancelled 落库
+    releaseGate.store(true, std::memory_order_release);
+    bool cancelled = false;
+    eui::Ui ui4;
+    for (int i = 0; i < 500 && !cancelled; ++i) {
+        composeTo(ui4, mod, kScreen, "agent_ui_stop_term");
+        auto runs = store.listRuns(created.value(), 1);
+        if (runs.isOk() && !runs.value().empty() &&
+            runs.value().front().status == "cancelled") {
+            cancelled = true;
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    DOCTEST_REQUIRE_MESSAGE(cancelled, "放行后 5s 内 run 未落库 cancelled");
+
+    // 列表状态列「已取消」
+    eui::Ui ui5;
+    composeTo(ui5, mod, kScreen, "agent_ui_stop_list");
+    const auto* status = ui5.find("agent.task." + tid + ".status");
+    DOCTEST_REQUIRE(status != nullptr);
+    DOCTEST_CHECK(status->text.find("已取消") != std::string::npos);
+
+    mod.onStop();
+    return true;
+})
+
+// C1 非运行态：详情弹窗无停止钮（无 ActiveRun 可置位，渲染入口等于骗点击）；
+// 无在跑 run 时 requestStopRun 落空不崩、不产生新 run
+REGISTER_TEST(agent_ui_stop_button_absent_when_idle,
+              "agent_ui: 非运行态详情无停止钮；无 run 时 requestStopRun 落空不崩", {
+    test_support::TestDb tdb("agentui", "stopidle");
+    test_support::FakeProfileSource profile;
+    ToolGuard statsGuard{"app.stats", "app.notify"};
+    core::ToolRegistry::instance().unregisterTool("app.stats");
+    core::ToolRegistry::instance().unregisterTool("app.notify");
+    module::agent::AgentStore store(tdb.handle());
+    auto created = store.createTask("空闲任务", "g", "manual", "default", 10, false);
+    DOCTEST_REQUIRE(created.isOk());
+    const std::string tid = std::to_string(created.value());
+    module::agent::AgentModule::Deps deps;
+    deps.db = &tdb.handle();
+    deps.profileSource = &profile;
+    module::agent::AgentModule mod(deps);
+    mod.onStart();
+
+    eui::Ui ui;
+    composeTo(ui, mod, kScreen, "agent_ui_stopidle1");
+    DOCTEST_REQUIRE(openDetailDialog(ui, mod, tid));
+    eui::Ui ui2;
+    composeTo(ui2, mod, kScreen, "agent_ui_stopidle2");
+    DOCTEST_CHECK_MESSAGE(ui2.find("agent.dialog.detail.stop.bg") == nullptr,
+                          "非运行态不应渲染停止钮");
+
+    mod.requestStopRun(created.value());   // 无 run：LOG 落空，不崩
+    auto runs = store.listRuns(created.value(), 10);
+    DOCTEST_REQUIRE(runs.isOk());
+    DOCTEST_CHECK(runs.value().empty());   // 未产生新 run
+
     mod.onStop();
     return true;
 })

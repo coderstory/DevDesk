@@ -306,6 +306,12 @@ constexpr float kDraftChipY = 20.0f;   // 底 52 ≤ goal 行顶 64，不压表�
 
 constexpr float kDetailDialogH = 660.0f;
 
+// 详情弹窗标题行「停止」chip（C1）：长文案把「当前轮结束后生效」说在点击前（协作式取消
+// 的诚实口径）；几何同 aichip——标题行内绝对定位，y+32 底 52 ≤ info 行顶 60，不压内容
+constexpr float kStopChipW = 176.0f;
+constexpr float kStopChipH = 32.0f;
+constexpr float kStopChipY = 20.0f;
+
 // 契约：详情弹窗展示最近 5 次 run
 constexpr int kRunListLimit = 5;
 
@@ -556,8 +562,25 @@ AgentModule::ActiveRun* AgentModule::activeRunFor(int64_t taskId) {
     return nullptr;
 }
 
+void AgentModule::requestStopRun(int64_t taskId) {
+    ActiveRun* run = activeRunFor(taskId);
+    if (run == nullptr) {
+        LOG_WARN("Agent: 停止请求落空（任务 " + std::to_string(taskId) +
+                 " 无在跑 run），忽略");
+        return;
+    }
+    run->cancel.store(true, std::memory_order_release);
+    LOG_INFO("Agent: 已请求停止任务 " + std::to_string(taskId) +
+             " 的 run（当前轮结束后生效）");
+}
+
 bool AgentModule::isTaskRunActive(int64_t taskId) {
     return activeRunFor(taskId) != nullptr;
+}
+
+bool AgentModule::isStopRequested(int64_t taskId) {
+    ActiveRun* run = activeRunFor(taskId);
+    return run != nullptr && run->cancel.load(std::memory_order_acquire);
 }
 
 // 惰性装配单入口：启动时 claude 关、会话内拨开无须重载本模块。幂等：loop_ 非空即返回；
@@ -2577,6 +2600,26 @@ void AgentModule::composeTaskDetailDialog(
             .color(t.colors.textTertiary)
             .onClick([this] { closeTaskDetail(); })
             .build();
+
+        // 「停止」chip（C1）：只在有在跑 run 时渲染——无 ActiveRun 可置位的 run（含崩溃
+        // 遗留的 DB running 行）没有可停止对象，渲染入口等于骗点击。点击后切「停止中」
+        // 禁用（cancel 位幂等，禁用只为给点击一个反馈，防 A5 型「点了没反应反复点」）
+        if (isTaskRunActive(*detailTaskId_)) {
+            const bool stopping = isStopRequested(*detailTaskId_);
+            ui.stack("agent.dialog.detail.stop.wrap")
+                .position(w - 56.0f - kDialogGap - kStopChipW, kStopChipY)
+                .size(kStopChipW, kStopChipH)
+                .content([&] {
+                    actionChip(ui, "agent.dialog.detail.stop",
+                               stopping ? "停止中 · 当前轮结束后生效"
+                                        : "停止 · 当前轮结束后生效",
+                               kStopChipW, /*primary=*/false, /*enabled=*/!stopping,
+                               themeTokens, [this, taskId = *detailTaskId_] {
+                                   requestStopRun(taskId);
+                               });
+                })
+                .build();
+        }
 
         std::string info;
         if (detailTaskRow_) {
