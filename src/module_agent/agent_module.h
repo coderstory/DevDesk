@@ -208,6 +208,10 @@ private:
     // app.notify：构造函数注入 fallback（工作线程 → pendingNotices_ 线程安全入队）。
     // onStop 在 run 线程 join 之后注销/reset，避免工具回调碰到已析构的 this。
     std::shared_ptr<::core::ITool> notifyTool_;
+    // hot.list：默认构造（defaultHotFetcher/defaultNow，生产走 platform::http + 系统时钟），
+    // 缓存与限频在工具实例内自持，模块零附加状态。非破坏性只读工具，onStop 与其余
+    // 自带工具同批注销。
+    std::shared_ptr<::core::ITool> hotTool_;
     // 事件触发的 EventBus 订阅 token（ensureLlm 建 scheduler_ 时订阅三事件，emit 在
     // UI 主线程同步回调 → scheduler_->onEvent 轻入队）。RAII：onStop 清空即退订，
     // 不得漏——bus() 单例跨用例/跨生命周期共享（Task 1 concerns ④）

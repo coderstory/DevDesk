@@ -1549,15 +1549,16 @@ REGISTER_TEST(agent_ui_tools_section_toggle,
               "agent_ui: 可用工具区块收起默认→展开列出注册表全部工具（名称+描述+参数）", {
     test_support::TestDb tdb("agentui", "tools");
     test_support::FakeProfileSource profile;
-    ToolGuard statsGuard{"app.stats", "app.notify"};
+    ToolGuard statsGuard{"app.stats", "app.notify", "hot.list"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
     core::ToolRegistry::instance().unregisterTool("app.notify");
+    core::ToolRegistry::instance().unregisterTool("hot.list");
 
     module::agent::AgentModule::Deps deps;
     deps.db = &tdb.handle();
     deps.profileSource = &profile;
     module::agent::AgentModule mod(deps);
-    mod.onStart();   // 注册 app.notify / app.stats（测试环境干净起点）
+    mod.onStart();   // 注册 app.notify / app.stats / hot.list（测试环境干净起点）
 
     const size_t registered =
         core::ToolRegistry::instance().listTools().size();
@@ -1596,6 +1597,10 @@ REGISTER_TEST(agent_ui_tools_section_toggle,
     const auto* name1 = ui2.find("agent.tools.card.1.name");
     DOCTEST_REQUIRE(name1 != nullptr);
     DOCTEST_CHECK_EQ(name1->text, std::string("app.stats"));
+    // 注册 hot.list 后第三张卡（map 序：app.notify < app.stats < hot.list）
+    const auto* name2 = ui2.find("agent.tools.card.2.name");
+    DOCTEST_REQUIRE(name2 != nullptr);
+    DOCTEST_CHECK_EQ(name2->text, std::string("hot.list"));
     const auto* params0 = ui2.find("agent.tools.card.0.params");
     DOCTEST_REQUIRE(params0 != nullptr);
     DOCTEST_CHECK(params0->text.find("参数：") != std::string::npos);

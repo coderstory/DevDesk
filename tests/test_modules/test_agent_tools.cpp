@@ -192,9 +192,10 @@ REGISTER_TEST(agent_module_registers_own_tool,
               "agent_module: onStart 注册 app.stats/app.notify、onStop 注销（生命周期）", {
     test_support::TestDb tdb("agenttools", "modtool");
     test_support::FakeProfileSource profile;
-    ToolGuard statsGuard{"app.stats", "app.notify"};   // 兜底摘除（含 fail-fast 路径）
+    ToolGuard statsGuard{"app.stats", "app.notify", "hot.list"};   // 兜底摘除（含 fail-fast 路径）
     core::ToolRegistry::instance().unregisterTool("app.stats");
     core::ToolRegistry::instance().unregisterTool("app.notify");  // 起点干净
+    core::ToolRegistry::instance().unregisterTool("hot.list");
 
     module::agent::AgentModule::Deps deps;
     deps.db = &tdb.handle();
@@ -223,9 +224,10 @@ REGISTER_TEST(agent_module_onstop_cancels_and_joins,
               "agent_module: onStop 取消+join 完成后才注销工具，run 落库 cancelled", {
     test_support::TestDb tdb("agenttools", "modstop");
     test_support::FakeProfileSource profile;
-    ToolGuard statsGuard{"app.stats", "app.notify"};
+    ToolGuard statsGuard{"app.stats", "app.notify", "hot.list"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
     core::ToolRegistry::instance().unregisterTool("app.notify");  // 起点干净
+    core::ToolRegistry::instance().unregisterTool("hot.list");
 
     // 慢工具挂进注册表（mock 响应点名调用它；RAII 摘除）
     auto slow = std::make_shared<SlowTool>();
@@ -325,9 +327,10 @@ REGISTER_TEST(agent_module_ui_id_contract,
               "agent_module: 最小 UI 元素 id 契约（标题/表单/任务行/启动/状态/详情展开）", {
     test_support::TestDb tdb("agenttools", "modui");
     test_support::FakeProfileSource profile;
-    ToolGuard statsGuard{"app.stats", "app.notify"};
+    ToolGuard statsGuard{"app.stats", "app.notify", "hot.list"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
     core::ToolRegistry::instance().unregisterTool("app.notify");
+    core::ToolRegistry::instance().unregisterTool("hot.list");
 
     module::agent::AgentStore store(tdb.handle());
     auto created = store.createTask("整理逾期", "把逾期待办全部完成",
@@ -423,9 +426,10 @@ REGISTER_TEST(agent_module_onstart_reentry_idempotent,
               "agent_module: onStart→onStop→onStart 重入 + 双 onStart/双 onStop no-op", {
     test_support::TestDb tdb("agenttools", "reentry");
     test_support::FakeProfileSource profile;
-    ToolGuard statsGuard{"app.stats", "app.notify"};
+    ToolGuard statsGuard{"app.stats", "app.notify", "hot.list"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
     core::ToolRegistry::instance().unregisterTool("app.notify");  // 起点干净
+    core::ToolRegistry::instance().unregisterTool("hot.list");
     module::agent::AgentModule mod({&tdb.handle(), &profile, nullptr});
 
     // 双 onStart 的可观察面（find 之外）：重入幂等 = 不重跑 onStart 体——
@@ -482,9 +486,10 @@ REGISTER_TEST(agent_module_onstop_stops_scheduler_runs,
               "agent_module: onStop 收口 Scheduler 在跑 run（cancel→join→停线程→注销工具）", {
     test_support::TestDb tdb("agenttools", "schedstop");
     test_support::FakeProfileSource profile;
-    ToolGuard statsGuard{"app.stats", "app.notify"};
+    ToolGuard statsGuard{"app.stats", "app.notify", "hot.list"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
     core::ToolRegistry::instance().unregisterTool("app.notify");   // 起点干净
+    core::ToolRegistry::instance().unregisterTool("hot.list");
     core::ToolRegistry::instance().unregisterTool("test.slow");
     auto slow = std::make_shared<SlowTool>();
     SlowTool* tool = slow.get();
@@ -540,9 +545,10 @@ REGISTER_TEST(agent_module_lazy_assembly_first_use,
               "agent_module: 配置来源后置注册 → 首次使用解析（手动起 run + 惰性补建 Scheduler 跑 cron）", {
     test_support::TestDb tdb("agenttools", "lazyassembly");
     test_support::FakeProfileSource profile;
-    ToolGuard statsGuard{"app.stats", "app.notify"};
+    ToolGuard statsGuard{"app.stats", "app.notify", "hot.list"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
     core::ToolRegistry::instance().unregisterTool("app.notify");   // 起点干净
+    core::ToolRegistry::instance().unregisterTool("hot.list");
 
     module::agent::AgentStore store(tdb.handle());
     auto manual = store.createTask("手动", "直接回复完成", "manual", "default", 10, false);
@@ -602,5 +608,85 @@ REGISTER_TEST(agent_module_lazy_assembly_first_use,
     DOCTEST_REQUIRE_MESSAGE(waitCompleted(scheduled.value()),
                             "惰性路径下 cron 未被派发（scheduler_ 未在同一入口补建？）");
     mod->onStop();
+    return true;
+})
+
+// hot.list 注册进模块工具表（T3c2）：与 app.stats/app.notify 同一注册/注销口径。
+// 非破坏性只读工具（isDestructive 默认 false）；AgentLoop 的工具表白名单经
+// allSchemasJson 动态收集，注册进注册表即自动进 prompt，零硬编码。
+REGISTER_TEST(agent_module_registers_hot_list,
+              "agent_module: onStart 注册 hot.list（非破坏性）、onStop 注销（生命周期）", {
+    test_support::TestDb tdb("agenttools", "modhot");
+    test_support::FakeProfileSource profile;
+    ToolGuard statsGuard{"app.stats", "app.notify", "hot.list"};
+    core::ToolRegistry::instance().unregisterTool("app.stats");
+    core::ToolRegistry::instance().unregisterTool("app.notify");
+    core::ToolRegistry::instance().unregisterTool("hot.list");   // 起点干净
+
+    module::agent::AgentModule::Deps deps;
+    deps.db = &tdb.handle();
+    deps.profileSource = &profile;
+    std::unique_ptr<::core::Module> mod(new module::agent::AgentModule(deps));
+
+    DOCTEST_CHECK(core::ToolRegistry::instance().find("hot.list").isFail());
+    mod->onStart();
+    auto found = core::ToolRegistry::instance().find("hot.list");
+    DOCTEST_REQUIRE(found.isOk());
+    DOCTEST_CHECK_EQ(found.value()->name(), std::string("hot.list"));
+    DOCTEST_CHECK_FALSE(found.value()->isDestructive());   // 拉热榜无不可逆副作用
+
+    mod->onStop();
+    DOCTEST_CHECK(core::ToolRegistry::instance().find("hot.list").isFail());
+    return true;
+})
+
+REGISTER_TEST(agent_module_hot_list_reentry_idempotent,
+              "agent_module: hot.list 随 onStart→onStop→onStart 循环恢复，双 onStart/双 onStop no-op", {
+    test_support::TestDb tdb("agenttools", "hotreentry");
+    test_support::FakeProfileSource profile;
+    ToolGuard statsGuard{"app.stats", "app.notify", "hot.list"};
+    core::ToolRegistry::instance().unregisterTool("app.stats");
+    core::ToolRegistry::instance().unregisterTool("app.notify");
+    core::ToolRegistry::instance().unregisterTool("hot.list");   // 起点干净
+    module::agent::AgentModule mod({&tdb.handle(), &profile, nullptr});
+
+    mod.onStart();
+    DOCTEST_CHECK(core::ToolRegistry::instance().find("hot.list").isOk());
+    mod.onStart();   // 双 onStart：no-op（started_ 闸，不重复注册）
+    DOCTEST_CHECK(core::ToolRegistry::instance().find("hot.list").isOk());
+
+    mod.onStop();
+    DOCTEST_CHECK(core::ToolRegistry::instance().find("hot.list").isFail());
+    mod.onStop();    // 双 onStop：no-op
+    mod.onStart();   // off→on 循环：工具恢复
+    DOCTEST_CHECK(core::ToolRegistry::instance().find("hot.list").isOk());
+    mod.onStop();
+    DOCTEST_CHECK(core::ToolRegistry::instance().find("hot.list").isFail());
+    return true;
+})
+
+REGISTER_TEST(agent_module_hot_list_in_all_schemas,
+              "agent_module: hot.list 注册后进入 allSchemasJson（AgentLoop 工具表动态收集，零硬编码）", {
+    test_support::TestDb tdb("agenttools", "hotschema");
+    test_support::FakeProfileSource profile;
+    ToolGuard statsGuard{"app.stats", "app.notify", "hot.list"};
+    core::ToolRegistry::instance().unregisterTool("app.stats");
+    core::ToolRegistry::instance().unregisterTool("app.notify");
+    core::ToolRegistry::instance().unregisterTool("hot.list");   // 起点干净
+    module::agent::AgentModule mod({&tdb.handle(), &profile, nullptr});
+
+    const std::string schemasBefore =
+        core::ToolRegistry::instance().allSchemasJson();
+    mod.onStart();
+    const std::string schemas =
+        core::ToolRegistry::instance().allSchemasJson();
+    DOCTEST_CHECK_MESSAGE(schemas.find("hot.list") != std::string::npos,
+                          "allSchemasJson 未收录 hot.list");
+    DOCTEST_CHECK_MESSAGE(schemasBefore.find("hot.list") == std::string::npos,
+                          "起点注册表已含 hot.list（前置清理失效）");
+    mod.onStop();
+    DOCTEST_CHECK(core::ToolRegistry::instance()
+                      .allSchemasJson()
+                      .find("hot.list") == std::string::npos);
     return true;
 })

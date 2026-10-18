@@ -37,6 +37,7 @@
 #include "module_agent/app_notify_tool.h"
 #include "module_agent/app_stats_tool.h"
 #include "module_agent/cron.h"
+#include "module_agent/hot_tool.h"
 #include "module_agent/message_blocks.h"
 #include "module_agent/task_draft_parse.h"
 #include "module_agent/tool_info.h"
@@ -424,6 +425,14 @@ void AgentModule::onStart() {
         LOG_ERROR("Agent: app.notify 注册失败: " + regNotify.errorMessage());
     }
 
+    // hot.list：热榜聚合。默认构造 = 生产 fetcher/now；缓存与限频自持，无需模块状态。
+    // 注册失败只留痕不中断，与 stats/notify 同口径。
+    hotTool_ = std::make_shared<HotListTool>();
+    auto regHot = ::core::ToolRegistry::instance().registerTool(hotTool_);
+    if (regHot.isFail()) {
+        LOG_ERROR("Agent: hot.list 注册失败: " + regHot.errorMessage());
+    }
+
     tasksDirty_ = true;
     LOG_INFO("Agent 模块启动");
 }
@@ -452,12 +461,14 @@ void AgentModule::onStop() {
     eventSubs_.clear();
     if (scheduler_) scheduler_->stopAll();
     ::core::ToolRegistry::instance().unregisterTool("app.notify");
+    ::core::ToolRegistry::instance().unregisterTool("hot.list");
     ::core::ToolRegistry::instance().unregisterTool("app.stats");
     loop_.reset();
     llm_.reset();
     store_.reset();
     scheduler_.reset();
     notifyTool_.reset();
+    hotTool_.reset();
     statsTool_.reset();
     llmMissingWarned_ = false;
     tasks_.clear();
