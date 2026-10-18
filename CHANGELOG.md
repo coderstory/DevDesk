@@ -8,6 +8,10 @@
 
 ## [未发布]
 
+- feat(agent): hot.list 注册进智能体工具表——onStart 与 app.stats/app.notify 同批注册（默认构造 = 生产 fetcher/now：platform::http + 系统时钟，缓存与限频在工具实例内自持），onStop 在 run 线程 join 之后同批注销；非破坏性只读工具，AgentLoop 工具表白名单经 allSchemasJson 动态收集，prompt 零硬编码；测试 = agent 工具生命周期 3 新用例 + 工具卡组钉第三张卡（`437334f`）。
+- feat(agent): AI 自然语言生成任务草稿（纯逻辑层，无 UI / 无 DB 接线）——`TaskDraft` 草稿结构 + `buildTaskDraftSystemPrompt`（含当前时间与六类触发说明）/ `parseTaskDraft`（字段级校验，单项失败一律降级 + warnings、绝不整体失败，fail 仅留给「连一个 JSON 对象都解析不出」；`triggerConfig` 恒为合法可落库组合，`allowDestructive`/`maxIterations` 刻意不采纳——破坏性授权只能用户亲手开）+ `requestTaskDraft`；27 条单测（`dee9540`）。
+- test: ToolGuard 双层花括号 UB 修复——`statsGuard{{"a", "b"}}` 外层单元素向 `std::string` 列表初始化命中 `basic_string(迭代器对)` 构造，两条字面量指针相减为负 → size_t 下溢 → length_error；是否抛出取决于 .rodata 字面量布局（033d7db 产物下不抛 = 守卫清理失效、被用例内显式 unregisterTool 兜住的批量假绿 1537/1531/0），dee9540 新增编译单元翻转布局后 53 用例批量红；53 处调用点去一层花括号修复，断言零改动，修复后全量 1564/1558/0（`2750e51`）。
+
 - feat(agent): 新增 hot.list 热榜工具——四源串行降级（微博热搜 → 微博热榜 → 百度 → 今日头条），单源 8s / 总预算 20s；进程内 fresh 缓存 300s、最小请求间隔 60s、全部失败时 1800s 内 stale 缓存降级；失败返回 `isError` + `attempts`/`retryable`，不伪装空榜成功；`fetchedAt` 为本地 `YYYY-MM-DD HH:MM:SS`；`fetcher`/`now` 可注入，单测不联网。
 - feat(agent): 新增百度/头条/微博备用热榜解析——`hot_parse` 扩展 `HotSource` 枚举与 `parseHotList` 分发：百度 PC 按 `component=hotList` 选卡（忽略 `topContent`）并按 `index` 重排；今日头条忽略 `fixed_top_data` 按数组顺序排名、长 URL 原样保留；微博 `hot_band` 复用 `side/hotSearch` 的广告过滤/`word_scheme`/`realpos` 规则（忽略 `hotgov`）；热度统一走字符串/JSON number → 非负 int64 安全转换，坏结构返回带源名与字段路径的中文错误。仅解析，HTTP/降级/缓存/工具注册后续接入。
 - feat(agent): 新增微博热榜解析——纯 JSON 解析函数（`hot_parse`）：过滤广告/无排名项、按 `realpos` 重排 1-based rank、`#` 与中文按 UTF-8 percent-encode 构造搜索链接，坏响应返回带路径的中文错误；`takeTopN` 供后续 `hot.list` 工具截取 top10。
