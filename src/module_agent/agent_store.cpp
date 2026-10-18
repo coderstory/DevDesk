@@ -389,8 +389,8 @@ Result<void> AgentStore::appendMessage(int64_t runId, int64_t seq, const std::st
 Result<std::vector<AgentMessageRow>> AgentStore::listMessages(int64_t runId) {
     std::lock_guard<std::recursive_mutex> lock(db_.mutex());
     auto st = db_.prepare(
-        "SELECT seq,role,content_json,tool_call_id FROM agent_messages"
-        " WHERE run_id=? ORDER BY seq");
+        "SELECT seq,role,content_json,tool_call_id,created_at"
+        " FROM agent_messages WHERE run_id=? ORDER BY seq");
     if (st.isFail()) {
         return Result<std::vector<AgentMessageRow>>::fail(st.errorCode(), st.errorMessage());
     }
@@ -413,6 +413,9 @@ Result<std::vector<AgentMessageRow>> AgentStore::listMessages(int64_t runId) {
             return Result<std::vector<AgentMessageRow>>::fail(e->first, e->second);
         }
         if (auto e = rowStr(row, "content_json", m.contentJson)) {
+            return Result<std::vector<AgentMessageRow>>::fail(e->first, e->second);
+        }
+        if (auto e = rowInt(row, "created_at", m.createdAt)) {
             return Result<std::vector<AgentMessageRow>>::fail(e->first, e->second);
         }
         if (row.isNull("tool_call_id")) {
@@ -527,7 +530,8 @@ Result<bool> AgentStore::hasRunningRun() {
     return Result<bool>::ok(step.value());
 }
 
-Result<std::vector<AgentTaskRunSummary>> AgentStore::listTaskRunSummaries() {
+Result<std::vector<AgentTaskRunSummary>> AgentStore::listTaskRunSummaries(
+    int64_t windowStartSec) {
     std::lock_guard<std::recursive_mutex> lock(db_.mutex());
     auto st = db_.prepare(
         "SELECT task_id,"
@@ -536,13 +540,25 @@ Result<std::vector<AgentTaskRunSummary>> AgentStore::listTaskRunSummaries() {
         " SUM(CASE WHEN ended_at IS NULL THEN 0"
         "          WHEN ended_at - started_at > 0 THEN ended_at - started_at"
         "          ELSE 0 END) AS total_seconds,"
-        " MAX(ended_at) AS last_ended_at"
+        " MAX(ended_at) AS last_ended_at,"
+        " SUM(CASE WHEN started_at >= ?1 AND status='completed' THEN 1"
+        "          ELSE 0 END) AS ok_runs_7d,"
+        " SUM(CASE WHEN started_at >= ?1 AND status IN ('failed','limited')"
+        "          THEN 1 ELSE 0 END) AS failed_runs_7d,"
+        " SUM(CASE WHEN started_at >= ?1 AND status='limited' THEN 1"
+        "          ELSE 0 END) AS limited_runs_7d"
         " FROM agent_runs GROUP BY task_id ORDER BY task_id");
     if (st.isFail()) {
         return Result<std::vector<AgentTaskRunSummary>>::fail(st.errorCode(),
                                                               st.errorMessage());
     }
-    auto rows = st.value().fetchAll();
+    // 三个窗口占位绑同一值（?1 复用 = 一处绑定；sqlite 参数序号从 1 起）
+    auto& s0 = st.value();
+    if (auto r = s0.bind(1, windowStartSec); r.isFail()) {
+        return Result<std::vector<AgentTaskRunSummary>>::fail(r.errorCode(),
+                                                              r.errorMessage());
+    }
+    auto rows = s0.fetchAll();
     if (rows.isFail()) {
         return Result<std::vector<AgentTaskRunSummary>>::fail(rows.errorCode(),
                                                               rows.errorMessage());
@@ -561,6 +577,15 @@ Result<std::vector<AgentTaskRunSummary>> AgentStore::listTaskRunSummaries() {
             return Result<std::vector<AgentTaskRunSummary>>::fail(e->first, e->second);
         }
         if (auto e = rowInt(row, "total_seconds", s.totalSeconds)) {
+            return Result<std::vector<AgentTaskRunSummary>>::fail(e->first, e->second);
+        }
+        if (auto e = rowInt(row, "ok_runs_7d", s.okRuns7d)) {
+            return Result<std::vector<AgentTaskRunSummary>>::fail(e->first, e->second);
+        }
+        if (auto e = rowInt(row, "failed_runs_7d", s.failedRuns7d)) {
+            return Result<std::vector<AgentTaskRunSummary>>::fail(e->first, e->second);
+        }
+        if (auto e = rowInt(row, "limited_runs_7d", s.limitedRuns7d)) {
             return Result<std::vector<AgentTaskRunSummary>>::fail(e->first, e->second);
         }
         if (row.isNull("last_ended_at")) {

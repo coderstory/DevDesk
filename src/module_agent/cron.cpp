@@ -164,4 +164,23 @@ core::Result<std::tm> nextCronMatch(const CronExpr& c, std::time_t fromSec) {
                                        "一年内无触发时间");
 }
 
+core::Result<std::tm> previousCronMatch(const CronExpr& c, std::time_t fromSec) {
+    // 与 nextCronMatch 的边界差：**包含** fromSec 所在分钟——run 在 09:00:30 启动，
+    // cron `0 9 * * *` 的计划时刻应算 09:00（「计划 vs 实际」对照口径，spec §8.4）。
+    // 向前逐分钟回扫，上限同 366*1440 分钟；到顶（或越过 1970 纪元下界）fail。
+    // 纯函数：不读真时钟，fromSec 由调用方注入；时区转换只走 core::time::localTime。
+    constexpr int64_t kMaxSteps = 366LL * 1440;
+    const int64_t fromMinute = static_cast<int64_t>(fromSec) / 60;
+    for (int64_t step = 0; step < kMaxSteps; ++step) {
+        const int64_t minute = fromMinute - step;
+        if (minute < 0) break;   // 纪元前：不可能有合法匹配
+        const std::time_t t = static_cast<std::time_t>(minute * 60);
+        std::tm local{};
+        core::time::localTime(t, &local);   // tm_wday 同步填充（cronMatches 依赖）
+        if (cronMatches(c, local)) return core::Result<std::tm>::ok(local);
+    }
+    return core::Result<std::tm>::fail(core::ErrorCode::ValidationError,
+                                       "一年内无匹配时间");
+}
+
 } // namespace module::agent

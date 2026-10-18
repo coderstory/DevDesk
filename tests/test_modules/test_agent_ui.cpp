@@ -54,6 +54,7 @@
 #include "core/tool.h"
 #include "module_agent/agent_module.h"
 #include "module_agent/agent_store.h"
+#include "module_agent/agent_time_text.h"
 #include "module_agent/trigger_config.h"
 #include "platform/http_client.h"
 #include "platform/notification.h"
@@ -1101,8 +1102,8 @@ REGISTER_TEST(agent_ui_run_button_opens_detail_dialog,
     const auto* status = ui4.find("agent.task." + tid + ".status");
     DOCTEST_REQUIRE(status != nullptr);
     DOCTEST_CHECK(status->text.find("成功") != std::string::npos);
-    const auto* run0 = ui4.find("agent.dialog.detail.runlist.0");
-    DOCTEST_REQUIRE_MESSAGE(run0 != nullptr, "详情弹窗缺 run 列表行");
+    const auto* run0 = ui4.find("agent.dialog.detail.runlist.0.status");
+    DOCTEST_REQUIRE_MESSAGE(run0 != nullptr, "详情弹窗缺 run 列表行状态");
     DOCTEST_CHECK(run0->text.find("成功") != std::string::npos);
     // 最终 assistant 文本块默认展开 = 回复无需任何点击即可见
     const auto* finalBlk = ui4.find("agent.dialog.detail.msg.1.blk.0");
@@ -1186,24 +1187,31 @@ REGISTER_TEST(agent_ui_detail_dialog_shows_config_runs_messages,
     DOCTEST_CHECK(info->text.find("迭代上限：20") != std::string::npos);
     DOCTEST_CHECK(info->text.find("破坏性：允许") != std::string::npos);
 
-    // run 列表：倒序（最近一次在前）+ 最近一次高亮（颜色须与次新不同）
+    // run 列表：倒序（最近一次在前）+ 行容器三列（.time/.status/.duration）+
+    // 最近一次 .bg 选中底高亮（P2 容器化：文本在子节点）
     const auto* run0 = ui2.find("agent.dialog.detail.runlist.0");
     const auto* run1 = ui2.find("agent.dialog.detail.runlist.1");
     DOCTEST_REQUIRE_MESSAGE(run0 != nullptr && run1 != nullptr,
-                            "详情弹窗缺 run 列表行");
-    DOCTEST_CHECK_MESSAGE(run0->text.find("成功") != std::string::npos,
-                          "runlist.0 应为最近一次 run（completed→成功），实测：" +
-                              run0->text);
-    DOCTEST_CHECK(run0->text.find("token —") != std::string::npos);
-    DOCTEST_CHECK(run1->text.find("受限") != std::string::npos);
-    DOCTEST_CHECK(run1->text.find("205000") != std::string::npos);
+                            "详情弹窗缺 run 列表行容器");
+    const auto* run0Status = ui2.find("agent.dialog.detail.runlist.0.status");
+    const auto* run1Status = ui2.find("agent.dialog.detail.runlist.1.status");
+    DOCTEST_REQUIRE_MESSAGE(run0Status != nullptr && run1Status != nullptr,
+                            "runlist 行缺 .status 子节点");
+    DOCTEST_CHECK_EQ(run0Status->text, std::string("成功"));
+    DOCTEST_CHECK_EQ(run1Status->text, std::string("受限"));
+    // 时间列钉 §11.1 格式：MM-DD HH:MM:SS（14 字符）
+    const auto* run0Time = ui2.find("agent.dialog.detail.runlist.0.time");
+    DOCTEST_REQUIRE_MESSAGE(run0Time != nullptr, "runlist 行缺 .time 子节点");
+    DOCTEST_CHECK_EQ(run0Time->text.size(), static_cast<size_t>(14));
+    DOCTEST_CHECK(run0Time->text[2] == '-' && run0Time->text[5] == ' ');
+    const auto* run0Bg = ui2.find("agent.dialog.detail.runlist.0.bg");
+    const auto* run1Bg = ui2.find("agent.dialog.detail.runlist.1.bg");
+    DOCTEST_REQUIRE(run0Bg != nullptr && run1Bg != nullptr);
+    DOCTEST_CHECK_MESSAGE(run0Bg->color.a > run1Bg->color.a,
+                          "最近一次 run 未高亮（选中 .bg 应为 primarySoftBg）");
     const auto* errRow = ui2.find("agent.dialog.detail.runlist.1.err");
     DOCTEST_REQUIRE(errRow != nullptr);
     DOCTEST_CHECK(errRow->text.find("200K") != std::string::npos);
-    DOCTEST_CHECK_MESSAGE(run0->textColor.r != run1->textColor.r ||
-                              run0->textColor.g != run1->textColor.g ||
-                              run0->textColor.b != run1->textColor.b,
-                          "最近一次 run 未高亮（与次新行同色）");
 
     // 消息流：最终 assistant 文本块默认展开；其余（用户 / 工具消息）默认折叠
     DOCTEST_REQUIRE(ui2.find("agent.dialog.detail.msgscroll") != nullptr);
@@ -1217,6 +1225,31 @@ REGISTER_TEST(agent_ui_detail_dialog_shows_config_runs_messages,
     DOCTEST_CHECK(ui2.find("agent.dialog.detail.msg.0.blk.0") == nullptr);
     // tool_result 消息默认折叠
     DOCTEST_CHECK(ui2.find("agent.dialog.detail.msg.2.blk.0.out") == nullptr);
+
+    // token 断言迁右栏（spec §12.2）：点选旧 run（runlist.1 = limited，
+    // 190000+15000=205000）→ .detail.meta 读千分位 token；无 token run 显示「—」
+    DOCTEST_REQUIRE(clickId(ui2, "agent.dialog.detail.runlist.1.bg"));
+    eui::Ui ui3;
+    composeTo(ui3, mod, kScreen, "agent_ui_dd3");
+    const auto* inputV = ui3.find("agent.dialog.detail.detail.meta.input.value");
+    const auto* outputV = ui3.find("agent.dialog.detail.detail.meta.output.value");
+    const auto* iterV = ui3.find("agent.dialog.detail.detail.meta.iterations.value");
+    DOCTEST_REQUIRE_MESSAGE(inputV != nullptr && outputV != nullptr &&
+                                iterV != nullptr,
+                            "右栏缺 .detail.meta token/迭代行");
+    DOCTEST_CHECK_EQ(inputV->text, std::string("190,000"));
+    DOCTEST_CHECK_EQ(outputV->text, std::string("15,000"));
+    DOCTEST_CHECK_EQ(iterV->text, std::string("7"));
+    const auto* errFull = ui3.find("agent.dialog.detail.detail.error.text");
+    DOCTEST_REQUIRE_MESSAGE(errFull != nullptr, "失败 run 缺 .detail.error.text");
+    DOCTEST_CHECK(errFull->text.find("token 累计超上限 200K") != std::string::npos);
+    // 切回最近一次（无 token run）：输入/输出转「—」
+    DOCTEST_REQUIRE(clickId(ui3, "agent.dialog.detail.runlist.0.bg"));
+    eui::Ui ui4;
+    composeTo(ui4, mod, kScreen, "agent_ui_dd4");
+    const auto* inputBack = ui4.find("agent.dialog.detail.detail.meta.input.value");
+    DOCTEST_REQUIRE(inputBack != nullptr);
+    DOCTEST_CHECK_EQ(inputBack->text, std::string("—"));
 
     mod.onStop();
     return true;
@@ -1452,8 +1485,8 @@ REGISTER_TEST(agent_ui_detail_dialog_close_and_reopen,
     eui::Ui ui2;
     composeTo(ui2, mod, kScreen, "agent_ui_ro2");
     DOCTEST_REQUIRE(ui2.find(base + ".msg.1.blk.0") != nullptr);
-    // 显式点选旧 run（runlist.1 = limited）
-    DOCTEST_REQUIRE(clickId(ui2, base + ".runlist.1"));
+    // 显式点选旧 run（runlist.1 = limited；容器化后点击落 .bg）
+    DOCTEST_REQUIRE(clickId(ui2, base + ".runlist.1.bg"));
     eui::Ui ui3;
     composeTo(ui3, mod, kScreen, "agent_ui_ro3");
     const auto* oldPreview = ui3.find(base + ".msg.0.preview");
@@ -3323,35 +3356,9 @@ REGISTER_TEST(agent_format_run_duration_text,
     return true;
 })
 
-REGISTER_TEST(agent_format_run_result_time_text,
-              "agent_summary: 本地 tm → 「yyyy-MM-dd HH:mm」零填充", {
-    std::tm local{};
-    local.tm_year = 2026 - 1900;
-    local.tm_mon = 9;    // 10 月
-    local.tm_mday = 16;
-    local.tm_hour = 14;
-    local.tm_min = 5;
-    DOCTEST_CHECK_EQ(module::agent::formatRunResultTimeText(local),
-                     std::string("2026-10-16 14:05"));
-    return true;
-})
-
-REGISTER_TEST(agent_format_task_run_summary_text,
-              "agent_summary: 汇总行文案（总数/整数百分比成功率/总耗时/最近结果）", {
-    module::agent::AgentTaskRunSummary s;
-    s.taskId = 1;
-    s.totalRuns = 3;
-    s.okRuns = 2;
-    s.totalSeconds = 100;
-    DOCTEST_CHECK_EQ(module::agent::formatTaskRunSummaryText(s, "2026-10-16 14:30"),
-                     std::string("共 3 次 · 成功率 66%（2/3）· 总耗时 1分40秒 · "
-                                 "最近结果 2026-10-16 14:30"));
-    // 全部未结束：时间占位「—」
-    DOCTEST_CHECK_EQ(module::agent::formatTaskRunSummaryText(s, "—"),
-                     std::string("共 3 次 · 成功率 66%（2/3）· 总耗时 1分40秒 · "
-                                 "最近结果 —"));
-    return true;
-})
+// formatRunDurationText 的直测保留在 agent_time_text_formats（test_agent_time_text.cpp，
+// 文案契约含「0秒」回拨钳不变）；formatRunResultTimeText / formatTaskRunSummaryText
+// 已随「汇总行文本」退休，旧直测一并删除（spec §11/§12.2）。
 
 // 弹窗接线（布局壳版）：摘要三卡常驻（无 run 也渲染），摘要/配置头/主区按布局公式
 // 排列（panel 内坐标：summaryY=60、configY=149、mainY=201、mainH=435、左栏 282 宽）。
@@ -3404,6 +3411,29 @@ REGISTER_TEST(agent_ui_detail_dialog_run_summary,
     const auto* statsLabel = ui2.find("agent.dialog.detail.summary.stats.label");
     DOCTEST_REQUIRE(statsLabel != nullptr);
     DOCTEST_CHECK(statsLabel->text == "近 7 天");
+    // P2：三卡真数据——7d 窗口内 3 run（2 成功 1 失败）；最近一次 = 第 3 条
+    // completed；schedule 任务下一次给具体时间（今天/明天 09:00，不钉死哪天）
+    const auto* lastValue = ui2.find("agent.dialog.detail.summary.last.value");
+    const auto* nextValue = ui2.find("agent.dialog.detail.summary.next.value");
+    const auto* statsValue = ui2.find("agent.dialog.detail.summary.stats.value");
+    DOCTEST_REQUIRE_MESSAGE(lastValue != nullptr && nextValue != nullptr &&
+                                statsValue != nullptr,
+                            "摘要三卡缺 .value 节点");
+    DOCTEST_CHECK(lastValue->text.find("成功") != std::string::npos);
+    DOCTEST_CHECK_MESSAGE(statsValue->text == "成功 2 · 失败 1",
+                          "7d 统计应显「成功 2 · 失败 1」，实测: " +
+                              statsValue->text);
+    const auto* statsSub = ui2.find("agent.dialog.detail.summary.stats.sub");
+    DOCTEST_REQUIRE(statsSub != nullptr);
+    DOCTEST_CHECK(statsSub->text.find("其中受限 0") != std::string::npos);
+    DOCTEST_CHECK(statsSub->text.find("66%") != std::string::npos);   // 2/3 整数截断
+    DOCTEST_CHECK_MESSAGE(!nextValue->text.empty() && nextValue->text != "—",
+                          "schedule 任务「下一次」应给具体时间，实测: " +
+                              nextValue->text);
+    DOCTEST_CHECK(nextValue->text.find("09:00") != std::string::npos);
+    const auto* nextSub = ui2.find("agent.dialog.detail.summary.next.sub");
+    DOCTEST_REQUIRE(nextSub != nullptr);
+    DOCTEST_CHECK(nextSub->text.find("定时") != std::string::npos);
     // 布局公式（宽屏 760×660）：summaryY=60 / configY=149 / mainY=201 /
     // mainH=435 / leftW=282（bottom 收在面板底 -24 内）
     const auto* panel = ui2.find("agent.dialog.detail.panel");
@@ -4982,6 +5012,266 @@ REGISTER_TEST(agent_ui_stop_button_absent_when_idle,
     auto runs = store.listRuns(created.value(), 10);
     DOCTEST_REQUIRE(runs.isOk());
     DOCTEST_CHECK(runs.value().empty());   // 未产生新 run
+
+    mod.onStop();
+    return true;
+})
+
+// ---- P2 时间线 / run 详情 / 摘要真数据（spec §12.3；几何断言沿用三尺寸壳）----
+
+// 本地「相对 now 的第 dayDelta 天的 HH:MM:SS」epoch（DST 日不按 86400 硬减，
+// 与 agent_time_text 的边界口径一致）
+namespace {
+std::time_t uiDayAt(std::time_t now, int dayDelta, int hour, int min, int sec) {
+    std::tm t{};
+    core::time::localTime(now, &t);
+    t.tm_mday += dayDelta;
+    t.tm_hour = hour;
+    t.tm_min = min;
+    t.tm_sec = sec;
+    t.tm_isdst = -1;
+    return std::mktime(&t);
+}
+} // namespace
+
+REGISTER_TEST(agent_ui_detail_timeline_day_groups,
+              "agent_ui: 时间线按天分组（今天/昨天/更早）+ 20 条上限 .runlist.note", {
+    test_support::TestDb tdb("agentui", "daygroups");
+    test_support::FakeProfileSource profile;
+    ToolGuard statsGuard{"app.stats", "app.notify"};
+    core::ToolRegistry::instance().unregisterTool("app.stats");
+    core::ToolRegistry::instance().unregisterTool("app.notify");
+    module::agent::AgentStore store(tdb.handle());
+    auto a = store.createTask("分组任务", "g", "manual", "default", 10, false);
+    auto b = store.createTask("封顶任务", "g", "manual", "default", 10, false);
+    DOCTEST_REQUIRE(a.isOk() && b.isOk());
+    const std::time_t now = core::time::nowUnix();
+    auto pin = [&](int64_t runId, std::time_t started) -> bool {
+        return tdb.handle()
+            .exec("UPDATE agent_runs SET started_at=" +
+                  std::to_string(static_cast<int64_t>(started)) +
+                  ", ended_at=" +
+                  std::to_string(static_cast<int64_t>(started) + 30) +
+                  " WHERE id=" + std::to_string(runId))
+            .isOk();
+    };
+    // A：今天 / 昨天 / 8 天前各一条 → 3 个分组
+    for (std::time_t at : {uiDayAt(now, 0, 9, 0, 0), uiDayAt(now, -1, 9, 0, 0),
+                           uiDayAt(now, -8, 9, 0, 0)}) {
+        auto r = store.startRun(a.value());
+        DOCTEST_REQUIRE(r.isOk());
+        DOCTEST_REQUIRE(store.finishRun(r.value(), "completed", 1, std::nullopt,
+                                        std::nullopt, std::nullopt)
+                            .isOk());
+        DOCTEST_REQUIRE(pin(r.value(), at));
+    }
+    // B：20 条全今天 → 触顶 note
+    for (int i = 0; i < 20; ++i) {
+        auto r = store.startRun(b.value());
+        DOCTEST_REQUIRE(r.isOk());
+        DOCTEST_REQUIRE(store.finishRun(r.value(), "completed", 1, std::nullopt,
+                                        std::nullopt, std::nullopt)
+                            .isOk());
+        DOCTEST_REQUIRE(pin(r.value(), now - i));
+    }
+
+    module::agent::AgentModule::Deps deps;
+    deps.db = &tdb.handle();
+    deps.profileSource = &profile;
+    module::agent::AgentModule mod(deps);
+    mod.onStart();
+
+    eui::Ui ui;
+    composeTo(ui, mod, kScreen, "agent_ui_dg1");
+    DOCTEST_REQUIRE(openDetailDialog(ui, mod, std::to_string(a.value())));
+    eui::Ui ui2;
+    composeTo(ui2, mod, kScreen, "agent_ui_dg2");
+    const auto* day0 = ui2.find("agent.dialog.detail.runlist.day.0");
+    const auto* day1 = ui2.find("agent.dialog.detail.runlist.day.1");
+    const auto* day2 = ui2.find("agent.dialog.detail.runlist.day.2");
+    DOCTEST_REQUIRE_MESSAGE(day0 != nullptr && day1 != nullptr && day2 != nullptr,
+                            "3 个日期分组头缺失");
+    DOCTEST_CHECK(day0->text == "今天");
+    DOCTEST_CHECK(day1->text == "昨天");
+    // 更早的分组 = YYYY-MM-DD（10 字符、含两个 '-'；不断言具体日期防跨零点/时区红）
+    DOCTEST_CHECK_EQ(day2->text.size(), static_cast<size_t>(10));
+    DOCTEST_CHECK(day2->text != "今天" && day2->text != "昨天");
+    DOCTEST_CHECK(ui2.find("agent.dialog.detail.runlist.day.3") == nullptr);
+    DOCTEST_CHECK(ui2.find("agent.dialog.detail.runlist.note") == nullptr);
+
+    // B：20 条 → .runlist.19 在场、.runlist.20 无、note 显形
+    DOCTEST_REQUIRE(clickId(ui2, "agent.dialog.detail.close"));
+    eui::Ui ui3;
+    composeTo(ui3, mod, kScreen, "agent_ui_dg3");
+    DOCTEST_REQUIRE(openDetailDialog(ui3, mod, std::to_string(b.value())));
+    eui::Ui ui4;
+    composeTo(ui4, mod, kScreen, "agent_ui_dg4");
+    DOCTEST_CHECK(ui4.find("agent.dialog.detail.runlist.19") != nullptr);
+    DOCTEST_CHECK(ui4.find("agent.dialog.detail.runlist.20") == nullptr);
+    const auto* note = ui4.find("agent.dialog.detail.runlist.note");
+    DOCTEST_REQUIRE_MESSAGE(note != nullptr, "20 条上限缺 .runlist.note");
+    DOCTEST_CHECK(note->text == "仅显示最近 20 次");
+
+    mod.onStop();
+    return true;
+})
+
+REGISTER_TEST(agent_ui_detail_timeline_select_narrow,
+              "agent_ui: 窄屏点 .runlist.<i>.bg 选中旧 run 并自动切「运行详情」tab", {
+    test_support::TestDb tdb("agentui", "tlsel");
+    test_support::FakeProfileSource profile;
+    ToolGuard statsGuard{"app.stats", "app.notify"};
+    core::ToolRegistry::instance().unregisterTool("app.stats");
+    core::ToolRegistry::instance().unregisterTool("app.notify");
+    module::agent::AgentStore store(tdb.handle());
+    auto created = store.createTask("选择任务", "g", "manual", "default", 10, false);
+    DOCTEST_REQUIRE(created.isOk());
+    auto r1 = store.startRun(created.value());
+    DOCTEST_REQUIRE(r1.isOk());
+    DOCTEST_REQUIRE(store.finishRun(r1.value(), "failed", 3, std::nullopt,
+                                    std::nullopt, std::string("旧 run 错误"))
+                        .isOk());
+    auto r2 = store.startRun(created.value());
+    DOCTEST_REQUIRE(r2.isOk());
+    DOCTEST_REQUIRE(store.finishRun(r2.value(), "completed", 1, std::nullopt,
+                                    std::nullopt, std::nullopt).isOk());
+
+    module::agent::AgentModule::Deps deps;
+    deps.db = &tdb.handle();
+    deps.profileSource = &profile;
+    module::agent::AgentModule mod(deps);
+    mod.onStart();
+
+    const eui::Screen screen{700.0f, 560.0f};   // 窄屏：tab 0 默认
+    eui::Ui ui;
+    composeTo(ui, mod, screen, "agent_ui_tls1");
+    DOCTEST_REQUIRE(openDetailDialog(ui, mod, std::to_string(created.value())));
+    eui::Ui ui2;
+    composeTo(ui2, mod, screen, "agent_ui_tls2");
+    DOCTEST_REQUIRE_MESSAGE(ui2.find("agent.dialog.detail.runlist.title") != nullptr,
+                            "窄屏默认 tab 0 应显示时间线");
+    // 点旧 run（runlist.1 = failed）→ 选中 + 自动切 tab 1
+    DOCTEST_REQUIRE(clickId(ui2, "agent.dialog.detail.runlist.1.bg"));
+    eui::Ui ui3;
+    composeTo(ui3, mod, screen, "agent_ui_tls3");
+    DOCTEST_CHECK_MESSAGE(ui3.find("agent.dialog.detail.runlist.title") == nullptr,
+                          "点行后应自动切「运行详情」（tab 0 内容退场）");
+    const auto* statusText = ui3.find("agent.dialog.detail.detail.status.text");
+    DOCTEST_REQUIRE_MESSAGE(statusText != nullptr, "tab 1 缺 .detail.status.text");
+    DOCTEST_CHECK_EQ(statusText->text, std::string("失败"));
+    const auto* runIdText = ui3.find("agent.dialog.detail.detail.id");
+    DOCTEST_REQUIRE(runIdText != nullptr);
+    DOCTEST_CHECK_EQ(runIdText->text,
+                     "#" + std::to_string(r1.value()));
+    const auto* verdict = ui3.find("agent.dialog.detail.detail.schedule.verdict");
+    DOCTEST_REQUIRE(verdict != nullptr);
+    DOCTEST_CHECK_EQ(verdict->text, std::string("无计划对照"));   // manual 无计划
+
+    mod.onStop();
+    return true;
+})
+
+REGISTER_TEST(agent_ui_detail_schedule_vs_actual,
+              "agent_ui: 定时任务 run 详情「计划 vs 实际」= 按时（前一日 09:00 计划 +30s）", {
+    test_support::TestDb tdb("agentui", "schedact");
+    test_support::FakeProfileSource profile;
+    ToolGuard statsGuard{"app.stats", "app.notify"};
+    core::ToolRegistry::instance().unregisterTool("app.stats");
+    core::ToolRegistry::instance().unregisterTool("app.notify");
+    module::agent::AgentStore store(tdb.handle());
+    auto created = store.createTask("定时对照", "g", "schedule", "default", 10,
+                                    false, R"({"cron":"0 9 * * *"})");
+    DOCTEST_REQUIRE(created.isOk());
+    auto r = store.startRun(created.value());
+    DOCTEST_REQUIRE(r.isOk());
+    DOCTEST_REQUIRE(store.finishRun(r.value(), "completed", 2, std::nullopt,
+                                    std::nullopt, std::nullopt).isOk());
+    // 钉 started_at = 昨天 09:00:30 本地（含当前分钟口径 → 计划 09:00，差 30s = 按时）
+    const std::time_t plan =
+        uiDayAt(core::time::nowUnix(), -1, 9, 0, 0) + 30;
+    DOCTEST_REQUIRE(tdb.handle()
+                        .exec("UPDATE agent_runs SET started_at=" +
+                              std::to_string(static_cast<int64_t>(plan)) +
+                              ", ended_at=" +
+                              std::to_string(static_cast<int64_t>(plan) + 60) +
+                              " WHERE id=" + std::to_string(r.value()))
+                        .isOk());
+
+    module::agent::AgentModule::Deps deps;
+    deps.db = &tdb.handle();
+    deps.profileSource = &profile;
+    module::agent::AgentModule mod(deps);
+    mod.onStart();
+
+    eui::Ui ui;
+    composeTo(ui, mod, kScreen, "agent_ui_sa1");
+    DOCTEST_REQUIRE(openDetailDialog(ui, mod, std::to_string(created.value())));
+    eui::Ui ui2;
+    composeTo(ui2, mod, kScreen, "agent_ui_sa2");
+    const auto* planText = ui2.find("agent.dialog.detail.detail.schedule.plan");
+    const auto* actualText = ui2.find("agent.dialog.detail.detail.schedule.actual");
+    const auto* verdict = ui2.find("agent.dialog.detail.detail.schedule.verdict");
+    DOCTEST_REQUIRE_MESSAGE(planText != nullptr && actualText != nullptr &&
+                                verdict != nullptr,
+                            "右栏缺 .detail.schedule 三节点");
+    DOCTEST_CHECK(planText->text.find("计划") == 0);
+    DOCTEST_CHECK(planText->text.find("09:00") != std::string::npos);
+    DOCTEST_CHECK(actualText->text.find("实际") == 0);
+    DOCTEST_CHECK_EQ(verdict->text, std::string("按时"));
+
+    mod.onStop();
+    return true;
+})
+
+REGISTER_TEST(agent_ui_detail_error_scroll,
+              "agent_ui: 长错误全文进 .detail.error.scroll（wrap 不截断）+ 余高不足降级整栏滚", {
+    test_support::TestDb tdb("agentui", "errscroll");
+    test_support::FakeProfileSource profile;
+    ToolGuard statsGuard{"app.stats", "app.notify"};
+    core::ToolRegistry::instance().unregisterTool("app.stats");
+    core::ToolRegistry::instance().unregisterTool("app.notify");
+    module::agent::AgentStore store(tdb.handle());
+    auto created = store.createTask("长错误任务", "g", "manual", "default", 10, false);
+    DOCTEST_REQUIRE(created.isOk());
+    auto r = store.startRun(created.value());
+    DOCTEST_REQUIRE(r.isOk());
+    const std::string longErr(2000, 'E');
+    DOCTEST_REQUIRE(store.finishRun(r.value(), "failed", 1, std::nullopt,
+                                    std::nullopt, longErr)
+                        .isOk());
+
+    module::agent::AgentModule::Deps deps;
+    deps.db = &tdb.handle();
+    deps.profileSource = &profile;
+    module::agent::AgentModule mod(deps);
+    mod.onStart();
+
+    eui::Ui ui;
+    composeTo(ui, mod, kScreen, "agent_ui_es1");
+    DOCTEST_REQUIRE(openDetailDialog(ui, mod, std::to_string(created.value())));
+    eui::Ui ui2;
+    composeTo(ui2, mod, kScreen, "agent_ui_es2");
+    const auto* errText = ui2.find("agent.dialog.detail.detail.error.text");
+    const auto* errScroll = ui2.find("agent.dialog.detail.detail.error.scroll");
+    DOCTEST_REQUIRE_MESSAGE(errText != nullptr && errScroll != nullptr,
+                            "长错误缺 .detail.error.scroll/.text");
+    // 全文不截断（2000 字节原文逐字在场）
+    DOCTEST_CHECK_EQ(errText->text.size(), longErr.size());
+    const auto* panel = ui2.find("agent.dialog.detail.panel");
+    DOCTEST_REQUIRE(panel != nullptr);
+    DOCTEST_CHECK_MESSAGE(frameContained(*panel, *errScroll),
+                          "错误滚动区越出面板：scroll(x=" +
+                              std::to_string(errScroll->frame.x) + ",y=" +
+                              std::to_string(errScroll->frame.y) + ",w=" +
+                              std::to_string(errScroll->frame.width) + ",h=" +
+                              std::to_string(errScroll->frame.height) +
+                              ") panel(x=" + std::to_string(panel->frame.x) +
+                              ",y=" + std::to_string(panel->frame.y) +
+                              ",w=" + std::to_string(panel->frame.width) +
+                              ",h=" + std::to_string(panel->frame.height) + ")");
+    // 详情块占掉预算后消息余高 < 96 → 整栏滚降级（不建 .msgscroll，spec §6.3）
+    DOCTEST_CHECK(ui2.find("agent.dialog.detail.msgscroll") == nullptr);
+    DOCTEST_CHECK(ui2.find("agent.dialog.detail.detail.scroll") != nullptr);
 
     mod.onStop();
     return true;
