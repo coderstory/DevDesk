@@ -201,7 +201,7 @@ REGISTER_TEST(agent_ui_compose_skeleton,
               "agent_ui: 空库页面骨架（列表是 scrollView / 旧页内表单节点已删 / 弹窗未开不渲染）", {
     test_support::TestDb tdb("agentui", "skeleton");
     test_support::FakeProfileSource profile;
-    ToolGuard statsGuard{{"app.stats", "app.notify"}};
+    ToolGuard statsGuard{"app.stats", "app.notify"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
     core::ToolRegistry::instance().unregisterTool("app.notify");
     module::agent::AgentModule::Deps deps;
@@ -260,7 +260,7 @@ REGISTER_TEST(agent_ui_db_import_reloads_tasks,
               "agent_ui: db.imported 置脏 → compose 重载任务列表", {
     test_support::TestDb tdb("agentui", "dbimport");
     test_support::FakeProfileSource profile;
-    ToolGuard statsGuard{{"app.stats", "app.notify"}};
+    ToolGuard statsGuard{"app.stats", "app.notify"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
     core::ToolRegistry::instance().unregisterTool("app.notify");
     module::agent::AgentModule::Deps deps;
@@ -301,7 +301,7 @@ REGISTER_TEST(agent_ui_new_task_dialog_fields,
               "agent_ui: 点「+ 新建任务」→ 弹窗全字段存在；cron 仅触发方式=定时 时渲染", {
     test_support::TestDb tdb("agentui", "dialogfields");
     test_support::FakeProfileSource profile;
-    ToolGuard statsGuard{{"app.stats", "app.notify"}};
+    ToolGuard statsGuard{"app.stats", "app.notify"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
     core::ToolRegistry::instance().unregisterTool("app.notify");
 
@@ -357,7 +357,7 @@ REGISTER_TEST(agent_ui_dialog_create_task_persists_fields,
               "agent_ui: 弹窗新建保存 → 落库行 trigger/slot/iter/destructive 与表单取值一致 + 弹窗关闭", {
     test_support::TestDb tdb("agentui", "dlgsave");
     test_support::FakeProfileSource profile;
-    ToolGuard statsGuard{{"app.stats", "app.notify"}};
+    ToolGuard statsGuard{"app.stats", "app.notify"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
     core::ToolRegistry::instance().unregisterTool("app.notify");
 
@@ -423,7 +423,7 @@ REGISTER_TEST(agent_ui_daily_trigger_saves_without_time,
               "agent_ui: 触发方式=每天 → 不渲染 cron、落库 trigger_type=daily 且无配置", {
     test_support::TestDb tdb("agentui", "dailysave");
     test_support::FakeProfileSource profile;
-    ToolGuard statsGuard{{"app.stats", "app.notify"}};
+    ToolGuard statsGuard{"app.stats", "app.notify"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
     core::ToolRegistry::instance().unregisterTool("app.notify");
 
@@ -472,7 +472,7 @@ REGISTER_TEST(agent_ui_once_trigger_form_and_save,
               "agent_ui: 触发方式=闹钟 → 只渲染时间输入；合法未来时间落库 once_at", {
     test_support::TestDb tdb("agentui", "oncesave");
     test_support::FakeProfileSource profile;
-    ToolGuard statsGuard{{"app.stats", "app.notify"}};
+    ToolGuard statsGuard{"app.stats", "app.notify"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
     core::ToolRegistry::instance().unregisterTool("app.notify");
 
@@ -553,7 +553,7 @@ REGISTER_TEST(agent_ui_once_edit_prefills_and_roundtrips,
               "agent_ui: 闹钟任务编辑 → 时间输入预填；不改时间保存 once_at 不变", {
     test_support::TestDb tdb("agentui", "onceedit");
     test_support::FakeProfileSource profile;
-    ToolGuard statsGuard{{"app.stats", "app.notify"}};
+    ToolGuard statsGuard{"app.stats", "app.notify"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
     core::ToolRegistry::instance().unregisterTool("app.notify");
     module::agent::AgentStore store(tdb.handle());
@@ -609,7 +609,7 @@ REGISTER_TEST(agent_ui_once_rejects_bad_and_past_time,
               "agent_ui: 闹钟非法格式 / 超范围 / 过去时间 → 弹窗报错且不落库", {
     test_support::TestDb tdb("agentui", "oncebad");
     test_support::FakeProfileSource profile;
-    ToolGuard statsGuard{{"app.stats", "app.notify"}};
+    ToolGuard statsGuard{"app.stats", "app.notify"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
     core::ToolRegistry::instance().unregisterTool("app.notify");
 
@@ -671,7 +671,7 @@ REGISTER_TEST(agent_ui_once_switch_type_clears_payload,
               "agent_ui: 定时↔闹钟切换保存 → 不残留对方的 trigger_config 载荷", {
     test_support::TestDb tdb("agentui", "onceswitch");
     test_support::FakeProfileSource profile;
-    ToolGuard statsGuard{{"app.stats", "app.notify"}};
+    ToolGuard statsGuard{"app.stats", "app.notify"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
     core::ToolRegistry::instance().unregisterTool("app.notify");
 
@@ -732,7 +732,7 @@ REGISTER_TEST(agent_ui_once_detail_shows_alarm_label_and_time,
               "agent_ui: 闹钟任务详情摘要显示「闹钟」标签与本地时间", {
     test_support::TestDb tdb("agentui", "oncedetail");
     test_support::FakeProfileSource profile;
-    ToolGuard statsGuard{{"app.stats", "app.notify"}};
+    ToolGuard statsGuard{"app.stats", "app.notify"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
     core::ToolRegistry::instance().unregisterTool("app.notify");
     module::agent::AgentStore store(tdb.handle());
@@ -772,7 +772,7 @@ REGISTER_TEST(agent_ui_once_edit_bad_config_shows_problem_without_fallback,
               "agent_ui: 闹钟坏配置编辑 → 输入留空 + 配置异常，不回落成手动", {
     test_support::TestDb tdb("agentui", "oncebadcfg");
     test_support::FakeProfileSource profile;
-    ToolGuard statsGuard{{"app.stats", "app.notify"}};
+    ToolGuard statsGuard{"app.stats", "app.notify"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
     core::ToolRegistry::instance().unregisterTool("app.notify");
     module::agent::AgentStore store(tdb.handle());
@@ -811,7 +811,7 @@ REGISTER_TEST(agent_ui_dialog_save_rejects_bad_cron,
               "agent_ui: 非法 cron 保存被拒（弹窗内报错 / 不落库 / 弹窗不关）", {
     test_support::TestDb tdb("agentui", "badcron");
     test_support::FakeProfileSource profile;
-    ToolGuard statsGuard{{"app.stats", "app.notify"}};
+    ToolGuard statsGuard{"app.stats", "app.notify"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
     core::ToolRegistry::instance().unregisterTool("app.notify");
 
@@ -854,7 +854,7 @@ REGISTER_TEST(agent_ui_dialog_cancel_close_backdrop_esc,
               "agent_ui: 取消 / ✕ / 点遮罩 / Esc 四条关闭路径都不落库", {
     test_support::TestDb tdb("agentui", "dlgclose");
     test_support::FakeProfileSource profile;
-    ToolGuard statsGuard{{"app.stats", "app.notify"}};
+    ToolGuard statsGuard{"app.stats", "app.notify"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
     core::ToolRegistry::instance().unregisterTool("app.notify");
 
@@ -926,7 +926,7 @@ REGISTER_TEST(agent_ui_edit_dialog_prefills_and_updates,
               "agent_ui: 行内「编辑」→ 弹窗预填（goal/cron/slot/iter 与库一致）→ 保存走 updateTask", {
     test_support::TestDb tdb("agentui", "dlgedit");
     test_support::FakeProfileSource profile;
-    ToolGuard statsGuard{{"app.stats", "app.notify"}};
+    ToolGuard statsGuard{"app.stats", "app.notify"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
     core::ToolRegistry::instance().unregisterTool("app.notify");
     module::agent::AgentStore store(tdb.handle());
@@ -999,7 +999,7 @@ REGISTER_TEST(agent_ui_run_button_opens_detail_dialog,
               "agent_ui: 点「启动」→ 详情弹窗立即打开；跑完最终 assistant 回复默认展开可见", {
     test_support::TestDb tdb("agentui", "runopens");
     test_support::FakeProfileSource profile;
-    ToolGuard statsGuard{{"app.stats", "app.notify"}};
+    ToolGuard statsGuard{"app.stats", "app.notify"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
     core::ToolRegistry::instance().unregisterTool("app.notify");
 
@@ -1074,7 +1074,7 @@ REGISTER_TEST(agent_ui_detail_dialog_shows_config_runs_messages,
               "agent_ui: 详情弹窗配置摘要 + run 列表倒序/最近高亮 + 消息默认展开态（最终回复展开、其余折叠）", {
     test_support::TestDb tdb("agentui", "detaildlg");
     test_support::FakeProfileSource profile;
-    ToolGuard statsGuard{{"app.stats", "app.notify"}};
+    ToolGuard statsGuard{"app.stats", "app.notify"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
     core::ToolRegistry::instance().unregisterTool("app.notify");
     module::agent::AgentStore store(tdb.handle());
@@ -1179,7 +1179,7 @@ REGISTER_TEST(agent_ui_detail_message_toggle_and_copy,
               "agent_ui: 详情弹窗内消息展开→tool_use chip + tool_result 全文 + 高度增大 + 复制 chip", {
     test_support::TestDb tdb("agentui", "msgtoggle");
     test_support::FakeProfileSource profile;
-    ToolGuard statsGuard{{"app.stats", "app.notify"}};
+    ToolGuard statsGuard{"app.stats", "app.notify"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
     core::ToolRegistry::instance().unregisterTool("app.notify");
     module::agent::AgentStore store(tdb.handle());
@@ -1266,7 +1266,7 @@ REGISTER_TEST(agent_ui_detail_copy_final_reply_chip,
                "agent_ui: 详情弹窗「消息（N）」标题行复制回复 chip（tool 收尾取最后 assistant / 无回复不渲染）", {
     test_support::TestDb tdb("agentui", "copyfinal");
     test_support::FakeProfileSource profile;
-    ToolGuard statsGuard{{"app.stats", "app.notify"}};
+    ToolGuard statsGuard{"app.stats", "app.notify"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
     core::ToolRegistry::instance().unregisterTool("app.notify");
     module::agent::AgentStore store(tdb.handle());
@@ -1365,7 +1365,7 @@ REGISTER_TEST(agent_ui_detail_dialog_close_and_reopen,
               "agent_ui: 关详情弹窗不改任务列表；重开回到最近一次 run", {
     test_support::TestDb tdb("agentui", "detailreopen");
     test_support::FakeProfileSource profile;
-    ToolGuard statsGuard{{"app.stats", "app.notify"}};
+    ToolGuard statsGuard{"app.stats", "app.notify"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
     core::ToolRegistry::instance().unregisterTool("app.notify");
     module::agent::AgentStore store(tdb.handle());
@@ -1437,7 +1437,7 @@ REGISTER_TEST(agent_ui_detail_runlist_error_rows_no_overlap,
               "agent_ui: 详情弹窗 3 条 error 的 run 列表不压消息标题（runsH 必须计入 error 行的 gap；回退即红）", {
     test_support::TestDb tdb("agentui", "errrows");
     test_support::FakeProfileSource profile;
-    ToolGuard statsGuard{{"app.stats", "app.notify"}};
+    ToolGuard statsGuard{"app.stats", "app.notify"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
     core::ToolRegistry::instance().unregisterTool("app.notify");
     module::agent::AgentStore store(tdb.handle());
@@ -1497,7 +1497,7 @@ REGISTER_TEST(agent_ui_edit_read_failure_shows_page_error,
               "agent_ui: 点「编辑」读库失败（陈旧缓存）→ 页内错误行可见、弹窗不开、下次成功动作清除", {
     test_support::TestDb tdb("agentui", "editerr");
     test_support::FakeProfileSource profile;
-    ToolGuard statsGuard{{"app.stats", "app.notify"}};
+    ToolGuard statsGuard{"app.stats", "app.notify"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
     core::ToolRegistry::instance().unregisterTool("app.notify");
     module::agent::AgentStore store(tdb.handle());
@@ -1549,7 +1549,7 @@ REGISTER_TEST(agent_ui_tools_section_toggle,
               "agent_ui: 可用工具区块收起默认→展开列出注册表全部工具（名称+描述+参数）", {
     test_support::TestDb tdb("agentui", "tools");
     test_support::FakeProfileSource profile;
-    ToolGuard statsGuard{{"app.stats", "app.notify"}};
+    ToolGuard statsGuard{"app.stats", "app.notify"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
     core::ToolRegistry::instance().unregisterTool("app.notify");
 
@@ -1618,7 +1618,7 @@ REGISTER_TEST(agent_ui_dialog_geometry_design_size_and_budget,
               "agent_ui: 任务弹窗几何——设计尺寸 760x500 / 行底 ≤ 按钮行顶 / 超长目标与超长任务名不挤位 / 下拉展开态全在屏内", {
     test_support::TestDb tdb("agentui", "dlggeom");
     test_support::FakeProfileSource profile;
-    ToolGuard statsGuard{{"app.stats", "app.notify"}};
+    ToolGuard statsGuard{"app.stats", "app.notify"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
     core::ToolRegistry::instance().unregisterTool("app.notify");
     module::agent::AgentStore store(tdb.handle());
@@ -1796,7 +1796,7 @@ REGISTER_TEST(agent_ui_detail_dialog_geometry_and_empty_state,
               "agent_ui: 详情弹窗设计尺寸 760x660 / 消息区底 ≤ 面板底 / 空态占位垂直居中", {
     test_support::TestDb tdb("agentui", "dgeom");
     test_support::FakeProfileSource profile;
-    ToolGuard statsGuard{{"app.stats", "app.notify"}};
+    ToolGuard statsGuard{"app.stats", "app.notify"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
     core::ToolRegistry::instance().unregisterTool("app.notify");
     module::agent::AgentStore store(tdb.handle());
@@ -1877,7 +1877,7 @@ REGISTER_TEST(agent_ui_sidebar_registers_agent,
               "agent_ui: 真 app::compose 侧边栏出现「智能体」项（Router 注册 AgentModule）", {
     test_support::TestDb tdb("agentui", "sidebar");
     test_support::FakeProfileSource profile;
-    ToolGuard statsGuard{{"app.stats", "app.notify"}};
+    ToolGuard statsGuard{"app.stats", "app.notify"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
     core::ToolRegistry::instance().unregisterTool("app.notify");
 
@@ -1915,7 +1915,7 @@ REGISTER_TEST(agent_ui_resident_enqueue_starts_run,
               "agent_ui: 常驻任务行的「入队」按钮经 Scheduler 真派发起 run（落 completed）", {
     test_support::TestDb tdb("agentui", "enqueue");
     test_support::FakeProfileSource profile;
-    ToolGuard statsGuard{{"app.stats", "app.notify"}};
+    ToolGuard statsGuard{"app.stats", "app.notify"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
     core::ToolRegistry::instance().unregisterTool("app.notify");
     module::agent::AgentStore store(tdb.handle());
@@ -2097,7 +2097,7 @@ REGISTER_TEST(agent_ui_run_failed_shows_toast,
               "agent_ui: run 失败 → 通知入队（failed 必响，标题含失败、正文含任务名）", {
     test_support::TestDb tdb("agentui", "failtoast");
     test_support::FakeProfileSource profile;
-    ToolGuard statsGuard{{"app.stats", "app.notify"}};
+    ToolGuard statsGuard{"app.stats", "app.notify"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
     core::ToolRegistry::instance().unregisterTool("app.notify");
     module::agent::AgentStore store(tdb.handle());
@@ -2153,7 +2153,7 @@ REGISTER_TEST(agent_ui_run_completed_silent_no_toast,
               "agent_ui: run 成功 → 不产生 run 结束通知（completed 静默）", {
     test_support::TestDb tdb("agentui", "silentok");
     test_support::FakeProfileSource profile;
-    ToolGuard statsGuard{{"app.stats", "app.notify"}};
+    ToolGuard statsGuard{"app.stats", "app.notify"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
     core::ToolRegistry::instance().unregisterTool("app.notify");
     module::agent::AgentStore store(tdb.handle());
@@ -2218,7 +2218,7 @@ REGISTER_TEST(agent_run_end_notice_app_channel_off_page,
               "agent_ui: run 失败迁移在非智能体页时经装配层拉取路径弹 app.notice（跨页可见）", {
     test_support::TestDb tdb("agentui", "appchan");
     test_support::FakeProfileSource profile;
-    ToolGuard statsGuard{{"app.stats", "app.notify"}};
+    ToolGuard statsGuard{"app.stats", "app.notify"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
     core::ToolRegistry::instance().unregisterTool("app.notify");
     module::agent::AgentStore store(tdb.handle());
@@ -2338,7 +2338,7 @@ REGISTER_TEST(agent_run_end_notice_take_semantics,
 REGISTER_TEST(agent_run_end_fallback_cold_start,
               "agent_ui: 三守卫全假 + 库内新出现 running run → 兜底轻查询触发 refreshData，终态迁移产生通知", {
     test_support::TestDb tdb("agentui", "fallback");
-    ToolGuard statsGuard{{"app.stats", "app.notify"}};
+    ToolGuard statsGuard{"app.stats", "app.notify"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
     core::ToolRegistry::instance().unregisterTool("app.notify");
     module::agent::AgentStore store(tdb.handle());
@@ -2387,7 +2387,7 @@ REGISTER_TEST(agent_run_end_fallback_cold_start,
 REGISTER_TEST(agent_run_end_fallback_throttle,
               "agent_ui: 兜底轻查询 15s 节流——同窗口多帧只查一次，跨窗口再查", {
     test_support::TestDb tdb("agentui", "fbthrottle");
-    ToolGuard statsGuard{{"app.stats", "app.notify"}};
+    ToolGuard statsGuard{"app.stats", "app.notify"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
     core::ToolRegistry::instance().unregisterTool("app.notify");
     module::agent::AgentStore store(tdb.handle());
@@ -2426,7 +2426,7 @@ REGISTER_TEST(agent_ui_cron_template_dropdown_and_preview,
               "agent_ui: 定时分支模板下拉（≥4 条）选中回填 cron / 预览行随 editCron 即时更新（合法显下次触发、非法显校验、无匹配显一年内）/ 弹窗高不变", {
     test_support::TestDb tdb("agentui", "crontpl");
     test_support::FakeProfileSource profile;
-    ToolGuard statsGuard{{"app.stats", "app.notify"}};
+    ToolGuard statsGuard{"app.stats", "app.notify"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
     core::ToolRegistry::instance().unregisterTool("app.notify");
     module::agent::AgentModule::Deps deps;
@@ -2604,7 +2604,7 @@ REGISTER_TEST(agent_ui_detail_error_hint_navigates_to_claude,
               "agent_ui: 详情弹窗「LLM 配置不可用」错误行下出现「去 Claude 页」可点引导，点击跳转 Claude 页", {
     test_support::TestDb tdb("agentui", "errhint");
     test_support::FakeProfileSource profile;
-    ToolGuard statsGuard{{"app.stats", "app.notify"}};
+    ToolGuard statsGuard{"app.stats", "app.notify"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
     core::ToolRegistry::instance().unregisterTool("app.notify");
     module::agent::AgentStore store(tdb.handle());
@@ -2682,7 +2682,7 @@ REGISTER_TEST(agent_ui_detail_error_hint_only_two_classes,
               "agent_ui: 其它错误（网络/上游 4xx/落库/普通文案）不渲染「去 Claude 页」引导", {
     test_support::TestDb tdb("agentui", "errhintneg");
     test_support::FakeProfileSource profile;
-    ToolGuard statsGuard{{"app.stats", "app.notify"}};
+    ToolGuard statsGuard{"app.stats", "app.notify"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
     core::ToolRegistry::instance().unregisterTool("app.notify");
     module::agent::AgentStore store(tdb.handle());
@@ -2731,7 +2731,7 @@ REGISTER_TEST(agent_ui_page_error_hint_navigates_to_claude,
               "agent_ui: 页内错误行同属「LLM 配置不可用」→ 同样「去 Claude 页」引导（弹窗外路径）", {
     test_support::TestDb tdb("agentui", "pagehint");
     test_support::FakeProfileSource profile;
-    ToolGuard statsGuard{{"app.stats", "app.notify"}};
+    ToolGuard statsGuard{"app.stats", "app.notify"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
     core::ToolRegistry::instance().unregisterTool("app.notify");
     module::agent::AgentStore store(tdb.handle());
@@ -2804,7 +2804,7 @@ REGISTER_TEST(agent_ui_page_error_no_rebound_until_new_run,
               "agent_ui: 页内错误行已展示的 run 不回弹（清除后刷新仍空；新 run 失败要重现）", {
     test_support::TestDb tdb("agentui", "pagenorebound");
     test_support::FakeProfileSource profile;
-    ToolGuard statsGuard{{"app.stats", "app.notify"}};
+    ToolGuard statsGuard{"app.stats", "app.notify"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
     core::ToolRegistry::instance().unregisterTool("app.notify");
     module::agent::AgentStore store(tdb.handle());
@@ -2865,7 +2865,7 @@ REGISTER_TEST(agent_ui_page_error_multi_task_order,
               "agent_ui: 页内错误行多任务语义（取 taskId 最小者 / 清除后下一个顶上 / 不循环）", {
     test_support::TestDb tdb("agentui", "pagemulti");
     test_support::FakeProfileSource profile;
-    ToolGuard statsGuard{{"app.stats", "app.notify"}};
+    ToolGuard statsGuard{"app.stats", "app.notify"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
     core::ToolRegistry::instance().unregisterTool("app.notify");
     module::agent::AgentStore store(tdb.handle());
@@ -2922,7 +2922,7 @@ REGISTER_TEST(agent_ui_page_error_no_hint_other_errors,
               "agent_ui: 页内错误行非「LLM 配置不可用」类（读库失败/普通 run 失败）不渲染引导", {
     test_support::TestDb tdb("agentui", "pagehintneg");
     test_support::FakeProfileSource profile;
-    ToolGuard statsGuard{{"app.stats", "app.notify"}};
+    ToolGuard statsGuard{"app.stats", "app.notify"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
     core::ToolRegistry::instance().unregisterTool("app.notify");
     module::agent::AgentStore store(tdb.handle());
@@ -2964,7 +2964,7 @@ REGISTER_TEST(agent_ui_new_task_context_note_and_autonote,
               "agent_ui: 新建弹窗含执行记忆多行输入 + 自动记录开关（默认开）→ 保存后读回一致", {
     test_support::TestDb tdb("agentui", "notecreate");
     test_support::FakeProfileSource profile;
-    ToolGuard statsGuard{{"app.stats", "app.notify"}};
+    ToolGuard statsGuard{"app.stats", "app.notify"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
     core::ToolRegistry::instance().unregisterTool("app.notify");
 
@@ -3041,7 +3041,7 @@ REGISTER_TEST(agent_ui_edit_dialog_prefills_context_note,
               "agent_ui: 编辑弹窗从库行回填 contextNote + autoNote；修改保存后读回更新值", {
     test_support::TestDb tdb("agentui", "noteedit");
     test_support::FakeProfileSource profile;
-    ToolGuard statsGuard{{"app.stats", "app.notify"}};
+    ToolGuard statsGuard{"app.stats", "app.notify"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
     core::ToolRegistry::instance().unregisterTool("app.notify");
     module::agent::AgentStore store(tdb.handle());
@@ -3112,7 +3112,7 @@ REGISTER_TEST(agent_ui_dialog_geometry_context_note_within_bounds,
               "agent_ui: 新字段（执行记忆/自动记录）不越弹窗边界 + 行底 ≤ 按钮行顶", {
     test_support::TestDb tdb("agentui", "notegeom");
     test_support::FakeProfileSource profile;
-    ToolGuard statsGuard{{"app.stats", "app.notify"}};
+    ToolGuard statsGuard{"app.stats", "app.notify"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
     core::ToolRegistry::instance().unregisterTool("app.notify");
 
@@ -3220,7 +3220,7 @@ REGISTER_TEST(agent_ui_detail_dialog_run_summary,
               "agent_ui: 详情弹窗任务级汇总行（总数/成功率/总耗时/最近结果）+ 汇总行下移几何 + 无 run 不渲染", {
     test_support::TestDb tdb("agentui", "summary");
     test_support::FakeProfileSource profile;
-    ToolGuard statsGuard{{"app.stats", "app.notify"}};
+    ToolGuard statsGuard{"app.stats", "app.notify"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
     core::ToolRegistry::instance().unregisterTool("app.notify");
     module::agent::AgentStore store(tdb.handle());
@@ -3309,7 +3309,7 @@ REGISTER_TEST(agent_ui_detail_summary_error_visible,
               "agent_ui: run 汇总查询失败 → 弹窗内显形错误行（不静默）", {
     test_support::TestDb tdb("agentui", "sumerr");
     test_support::FakeProfileSource profile;
-    ToolGuard statsGuard{{"app.stats", "app.notify"}};
+    ToolGuard statsGuard{"app.stats", "app.notify"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
     core::ToolRegistry::instance().unregisterTool("app.notify");
     module::agent::AgentStore store(tdb.handle());
@@ -3352,7 +3352,7 @@ REGISTER_TEST(agent_ui_task_config_problem_badge,
               "agent_ui: 任务列表配置异常徽章——坏配置显形 / 正常配置零噪音 / 详情给原因", {
     test_support::TestDb tdb("agentui", "cfgbadge");
     test_support::FakeProfileSource profile;
-    ToolGuard statsGuard{{"app.stats", "app.notify"}};
+    ToolGuard statsGuard{"app.stats", "app.notify"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
     core::ToolRegistry::instance().unregisterTool("app.notify");
     module::agent::AgentStore store(tdb.handle());
@@ -3441,7 +3441,7 @@ REGISTER_TEST(agent_ui_dialog_once_only_toggle_persists_and_roundtrips,
               "agent_ui: 「只跑一次」开关 → 落库 max_runs=1；编辑回填勾选且原样回写", {
     test_support::TestDb tdb("agentui", "onceonly");
     test_support::FakeProfileSource profile;
-    ToolGuard statsGuard{{"app.stats", "app.notify"}};
+    ToolGuard statsGuard{"app.stats", "app.notify"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
     core::ToolRegistry::instance().unregisterTool("app.notify");
 
@@ -3517,7 +3517,7 @@ REGISTER_TEST(agent_ui_task_run_limit_badge_and_detail_text,
               "agent_ui: 限次任务（max_runs）列表徽章 + 详情摘要写明跑完自动停用；不限次任务零噪音", {
     test_support::TestDb tdb("agentui", "limitbadge");
     test_support::FakeProfileSource profile;
-    ToolGuard statsGuard{{"app.stats", "app.notify"}};
+    ToolGuard statsGuard{"app.stats", "app.notify"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
     core::ToolRegistry::instance().unregisterTool("app.notify");
     module::agent::AgentStore store(tdb.handle());
@@ -3590,7 +3590,7 @@ REGISTER_TEST(agent_ui_dialog_switch_labels_fit_boxes,
               "agent_ui: max_runs 开关「只跑一次」/「允许破坏性操作」/三个事件开关的标签盒容得下各自文案（静默裁剪回归守卫）", {
     test_support::TestDb tdb("agentui", "labelfit");
     test_support::FakeProfileSource profile;
-    ToolGuard statsGuard{{"app.stats", "app.notify"}};
+    ToolGuard statsGuard{"app.stats", "app.notify"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
     core::ToolRegistry::instance().unregisterTool("app.notify");
 

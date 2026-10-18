@@ -192,7 +192,7 @@ REGISTER_TEST(agent_module_registers_own_tool,
               "agent_module: onStart 注册 app.stats/app.notify、onStop 注销（生命周期）", {
     test_support::TestDb tdb("agenttools", "modtool");
     test_support::FakeProfileSource profile;
-    ToolGuard statsGuard{{"app.stats", "app.notify"}};   // 兜底摘除（含 fail-fast 路径）
+    ToolGuard statsGuard{"app.stats", "app.notify"};   // 兜底摘除（含 fail-fast 路径）
     core::ToolRegistry::instance().unregisterTool("app.stats");
     core::ToolRegistry::instance().unregisterTool("app.notify");  // 起点干净
 
@@ -223,7 +223,7 @@ REGISTER_TEST(agent_module_onstop_cancels_and_joins,
               "agent_module: onStop 取消+join 完成后才注销工具，run 落库 cancelled", {
     test_support::TestDb tdb("agenttools", "modstop");
     test_support::FakeProfileSource profile;
-    ToolGuard statsGuard{{"app.stats", "app.notify"}};
+    ToolGuard statsGuard{"app.stats", "app.notify"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
     core::ToolRegistry::instance().unregisterTool("app.notify");  // 起点干净
 
@@ -325,7 +325,7 @@ REGISTER_TEST(agent_module_ui_id_contract,
               "agent_module: 最小 UI 元素 id 契约（标题/表单/任务行/启动/状态/详情展开）", {
     test_support::TestDb tdb("agenttools", "modui");
     test_support::FakeProfileSource profile;
-    ToolGuard statsGuard{{"app.stats", "app.notify"}};
+    ToolGuard statsGuard{"app.stats", "app.notify"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
     core::ToolRegistry::instance().unregisterTool("app.notify");
 
@@ -423,7 +423,7 @@ REGISTER_TEST(agent_module_onstart_reentry_idempotent,
               "agent_module: onStart→onStop→onStart 重入 + 双 onStart/双 onStop no-op", {
     test_support::TestDb tdb("agenttools", "reentry");
     test_support::FakeProfileSource profile;
-    ToolGuard statsGuard{{"app.stats", "app.notify"}};
+    ToolGuard statsGuard{"app.stats", "app.notify"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
     core::ToolRegistry::instance().unregisterTool("app.notify");  // 起点干净
     module::agent::AgentModule mod({&tdb.handle(), &profile, nullptr});
@@ -482,7 +482,7 @@ REGISTER_TEST(agent_module_onstop_stops_scheduler_runs,
               "agent_module: onStop 收口 Scheduler 在跑 run（cancel→join→停线程→注销工具）", {
     test_support::TestDb tdb("agenttools", "schedstop");
     test_support::FakeProfileSource profile;
-    ToolGuard statsGuard{{"app.stats", "app.notify"}};
+    ToolGuard statsGuard{"app.stats", "app.notify"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
     core::ToolRegistry::instance().unregisterTool("app.notify");   // 起点干净
     core::ToolRegistry::instance().unregisterTool("test.slow");
@@ -540,7 +540,7 @@ REGISTER_TEST(agent_module_lazy_assembly_first_use,
               "agent_module: 配置来源后置注册 → 首次使用解析（手动起 run + 惰性补建 Scheduler 跑 cron）", {
     test_support::TestDb tdb("agenttools", "lazyassembly");
     test_support::FakeProfileSource profile;
-    ToolGuard statsGuard{{"app.stats", "app.notify"}};
+    ToolGuard statsGuard{"app.stats", "app.notify"};
     core::ToolRegistry::instance().unregisterTool("app.stats");
     core::ToolRegistry::instance().unregisterTool("app.notify");   // 起点干净
 
