@@ -9,8 +9,8 @@
 //          [.limit 仅限次任务] / [.warn 配置异常] /
 //          [.enqueue 仅常驻] / .run）/ run 结束通知（Task 1；fix round 起经 takeRunEndNotice 走 app 级通道）
 //   任务弹窗 agent.dialog.task.*（新建 / 编辑共用）：
-//          .goal（多行）/ .trigger / .cron（仅定时）/ .limit（仅定时·事件，行为开关行的
-//          "只跑一次"）/
+//          .goal（多行）/ .trigger / .cron（仅定时）/ .once（仅闹钟，本地时间输入）/
+//          .limit（仅定时·事件，行为开关行的"只跑一次"）/
 //          .slot / .iter / .destructive / .cancel / .save / .close / .error（有错才渲染）
 //   详情弹窗 agent.dialog.detail.*：.info / .runlist.<i>[.err] / .msgscroll /
 //          .msg.<i>[.badge / .toggle / .preview / .blk.<j>[.out]] / .close
@@ -33,9 +33,11 @@
 #include "core/render/text.h"   // 开关标签盒容纳断言（真实字体测量）
 #include "core/router.h"
 #include "core/theme.h"
+#include "core/time.h"
 #include "core/tool.h"
 #include "module_agent/agent_module.h"
 #include "module_agent/agent_store.h"
+#include "module_agent/trigger_config.h"
 #include "platform/http_client.h"
 
 #include <components/input.h>   // InputState：读回弹窗内输入框真实文本（预填判据）
@@ -145,6 +147,52 @@ bool openNewTaskDialog(eui::Ui& ui, module::agent::AgentModule& mod,
 bool openDetailDialog(eui::Ui& ui, module::agent::AgentModule& mod,
                       const std::string& tid) {
     return clickId(ui, "agent.task." + tid + ".detail");
+}
+
+// 本地「今天 + dayOffset 的 12:00」：选中午避开夏令时凌晨跳变，任何时区都必然存在。
+// 返回归一化后的 tm（mktime 会改写字段，先算再取一次 localtime，避免 DST 日期错位）
+std::tm localNoonTm(int dayOffset) {
+    std::tm nowLocal{};
+    core::time::localTime(core::time::nowUnix(), &nowLocal);
+    nowLocal.tm_mday += dayOffset;
+    nowLocal.tm_hour = 12;
+    nowLocal.tm_min = 0;
+    nowLocal.tm_sec = 0;
+    nowLocal.tm_isdst = -1;
+    const std::time_t t = std::mktime(&nowLocal);
+    std::tm normalized{};
+    core::time::localTime(t, &normalized);
+    return normalized;
+}
+
+std::string formatLocalMinute(const std::tm& local) {
+    char buf[32];
+    std::strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M", &local);
+    return buf;
+}
+
+int64_t epochOfLocal(const std::tm& local) {
+    std::tm copy = local;
+    copy.tm_isdst = -1;
+    return static_cast<int64_t>(std::mktime(&copy));
+}
+
+std::string onceConfig(int64_t epoch) {
+    return R"({"once_at":)" + std::to_string(epoch) + "}";
+}
+
+// 任务弹窗公共前奏：开新建 → 输入目标（真实 input 事件路径）。bool 返回供
+// DOCTEST_REQUIRE 在调用点判停（doctest 宏会 return，不能在 void 辅助函数里用）
+bool openNewTaskWithGoal(eui::Ui& ui, module::agent::AgentModule& mod,
+                         const std::string& pagePrefix,
+                         const std::string& goal) {
+    if (!openNewTaskDialog(ui, mod, (pagePrefix + "a").c_str())) return false;
+    eui::Ui ui2;
+    composeTo(ui2, mod, kScreen, (pagePrefix + "b").c_str());
+    auto* goalHit = ui2.find("agent.dialog.task.goal.hit");
+    if (goalHit == nullptr) return false;
+    typeInto(goalHit, goal);
+    return true;
 }
 
 } // namespace
@@ -413,6 +461,347 @@ REGISTER_TEST(agent_ui_daily_trigger_saves_without_time,
     DOCTEST_CHECK_EQ(row.goal, std::string("每天生成晨会待办"));
     DOCTEST_CHECK_EQ(row.triggerType, std::string("daily"));
     DOCTEST_CHECK(row.triggerConfig.empty());
+
+    mod.onStop();
+    return true;
+})
+
+// ---- 闹钟（once / once_at）表单：新建 / 回填 / 校验 / 切换 / 详情摘要 ----
+
+REGISTER_TEST(agent_ui_once_trigger_form_and_save,
+              "agent_ui: 触发方式=闹钟 → 只渲染时间输入；合法未来时间落库 once_at", {
+    test_support::TestDb tdb("agentui", "oncesave");
+    test_support::FakeProfileSource profile;
+    ToolGuard statsGuard{{"app.stats", "app.notify"}};
+    core::ToolRegistry::instance().unregisterTool("app.stats");
+    core::ToolRegistry::instance().unregisterTool("app.notify");
+
+    module::agent::AgentModule::Deps deps;
+    deps.db = &tdb.handle();
+    deps.profileSource = &profile;
+    module::agent::AgentModule mod(deps);
+    mod.onStart();
+    module::agent::AgentStore store(tdb.handle());
+
+    eui::Ui ui;
+    DOCTEST_REQUIRE(openNewTaskWithGoal(ui, mod, "agent_ui_oncenew", "明天中午提醒"));
+    eui::Ui ui2;
+    composeTo(ui2, mod, kScreen, "agent_ui_oncenew.c");
+    // 类型集合 = 6（once 追加在末尾，既有下标 0..4 不动）
+    DOCTEST_REQUIRE_MESSAGE(ui2.find("agent.dialog.task.trigger.item.5") != nullptr,
+                            "触发方式下拉缺「闹钟」（item.5）");
+    DOCTEST_CHECK(ui2.find("agent.dialog.task.trigger.item.6") == nullptr);
+
+    DOCTEST_REQUIRE(callDropdownChange(ui2, "agent.dialog.task.trigger", 5));
+    eui::Ui ui3;
+    composeTo(ui3, mod, kScreen, "agent_ui_oncenew.d");
+    DOCTEST_CHECK_MESSAGE(ui3.find("agent.dialog.task.once") != nullptr,
+                          "闹钟分支缺时间输入 agent.dialog.task.once");
+    DOCTEST_CHECK(ui3.find("agent.dialog.task.once.caption") != nullptr);
+    DOCTEST_CHECK(ui3.find("agent.dialog.task.once.preview") != nullptr);
+    DOCTEST_CHECK_MESSAGE(ui3.find("agent.dialog.task.cron") == nullptr,
+                          "闹钟分支不应渲染 cron 输入");
+    DOCTEST_CHECK(ui3.find("agent.dialog.task.event.0") == nullptr);
+    DOCTEST_CHECK_MESSAGE(ui3.find("agent.dialog.task.limit") == nullptr,
+                          "闹钟天然只跑一次，不应渲染 max_runs 开关");
+    DOCTEST_CHECK_MESSAGE(!inputText(ui3, "agent.dialog.task.once").empty(),
+                          "闹钟新建缺省应为「现在 + 1 小时」");
+    const auto* defaultPreview = ui3.find("agent.dialog.task.once.preview");
+    DOCTEST_REQUIRE_MESSAGE(defaultPreview != nullptr, "闹钟缺省值缺预览行");
+    DOCTEST_CHECK_MESSAGE(defaultPreview->text.rfind("将在 ", 0) == 0,
+                          "闹钟缺省值不是合法未来时间：" + defaultPreview->text);
+
+    const std::tm tomorrowNoon = localNoonTm(1);
+    const std::string timeText = formatLocalMinute(tomorrowNoon);
+    const int64_t expectedEpoch = epochOfLocal(tomorrowNoon);
+    mod.setEditOnceDraft(timeText);
+    eui::Ui ui4;
+    composeTo(ui4, mod, kScreen, "agent_ui_oncenew.e");
+    const auto* preview = ui4.find("agent.dialog.task.once.preview");
+    DOCTEST_REQUIRE_MESSAGE(preview != nullptr, "合法闹钟时间缺预览行");
+    DOCTEST_CHECK_MESSAGE(preview->text.find("将在 " + timeText) != std::string::npos,
+                          "预览文案未回显规范化时间：" + preview->text);
+    DOCTEST_CHECK(preview->text.find("错过不补") != std::string::npos);
+    DOCTEST_REQUIRE(clickId(ui4, "agent.dialog.task.save.bg"));
+
+    auto tasks = store.listTasks();
+    DOCTEST_REQUIRE(tasks.isOk());
+    DOCTEST_REQUIRE_EQ(tasks.value().size(), static_cast<size_t>(1));
+    const auto& row = tasks.value()[0];
+    DOCTEST_CHECK_EQ(row.goal, std::string("明天中午提醒"));
+    DOCTEST_CHECK_EQ(row.triggerType, std::string("once"));
+    DOCTEST_CHECK_MESSAGE(row.triggerConfig.find("cron") == std::string::npos,
+                          "闹钟配置残留 cron：" + row.triggerConfig);
+    DOCTEST_CHECK_MESSAGE(row.triggerConfig.find("events") == std::string::npos,
+                          "闹钟配置残留 events：" + row.triggerConfig);
+    DOCTEST_CHECK_MESSAGE(row.triggerConfig.find("max_runs") == std::string::npos,
+                          "闹钟不应写入 max_runs：" + row.triggerConfig);
+    auto cfg = module::agent::decodeTriggerConfig(row.triggerConfig);
+    DOCTEST_REQUIRE_MESSAGE(cfg.isOk(), "闹钟 trigger_config 无法解析：" +
+                                            cfg.errorMessage());
+    DOCTEST_REQUIRE(cfg.value().onceAt.has_value());
+    DOCTEST_CHECK_EQ(*cfg.value().onceAt, expectedEpoch);
+    DOCTEST_CHECK(!cfg.value().maxRuns.has_value());
+    DOCTEST_CHECK(cfg.value().cron.empty());
+    DOCTEST_CHECK(cfg.value().events.empty());
+
+    mod.onStop();
+    return true;
+})
+
+REGISTER_TEST(agent_ui_once_edit_prefills_and_roundtrips,
+              "agent_ui: 闹钟任务编辑 → 时间输入预填；不改时间保存 once_at 不变", {
+    test_support::TestDb tdb("agentui", "onceedit");
+    test_support::FakeProfileSource profile;
+    ToolGuard statsGuard{{"app.stats", "app.notify"}};
+    core::ToolRegistry::instance().unregisterTool("app.stats");
+    core::ToolRegistry::instance().unregisterTool("app.notify");
+    module::agent::AgentStore store(tdb.handle());
+
+    const std::tm tomorrowNoon = localNoonTm(1);
+    const std::string timeText = formatLocalMinute(tomorrowNoon);
+    const int64_t expectedEpoch = epochOfLocal(tomorrowNoon);
+    auto created = store.createTask("明天中午提醒", "明天中午提醒", "once", "sonnet",
+                                    20, true, onceConfig(expectedEpoch),
+                                    "闹钟上下文", 0);
+    DOCTEST_REQUIRE(created.isOk());
+    const std::string tid = std::to_string(created.value());
+
+    module::agent::AgentModule::Deps deps;
+    deps.db = &tdb.handle();
+    deps.profileSource = &profile;
+    module::agent::AgentModule mod(deps);
+    mod.onStart();
+
+    eui::Ui ui;
+    composeTo(ui, mod, kScreen, "agent_ui_onceedit1");
+    DOCTEST_REQUIRE_MESSAGE(clickId(ui, "agent.task." + tid + ".edit"),
+                            "闹钟任务行缺编辑入口");
+    eui::Ui ui2;
+    composeTo(ui2, mod, kScreen, "agent_ui_onceedit2");
+    DOCTEST_REQUIRE_MESSAGE(ui2.find("agent.dialog.task.once") != nullptr,
+                            "编辑闹钟任务未渲染时间输入");
+    DOCTEST_CHECK_EQ(inputText(ui2, "agent.dialog.task.once"), timeText);
+    DOCTEST_CHECK_EQ(inputText(ui2, "agent.dialog.task.goal"),
+                     std::string("明天中午提醒"));
+    DOCTEST_CHECK(ui2.find("agent.dialog.task.cron") == nullptr);
+    DOCTEST_CHECK(ui2.find("agent.dialog.task.error") == nullptr);
+
+    DOCTEST_REQUIRE(clickId(ui2, "agent.dialog.task.save.bg"));
+    auto updated = store.getTask(created.value());
+    DOCTEST_REQUIRE(updated.isOk());
+    DOCTEST_CHECK_EQ(updated.value().id, created.value());
+    DOCTEST_CHECK_EQ(updated.value().name, std::string("明天中午提醒"));
+    DOCTEST_CHECK_EQ(updated.value().goal, std::string("明天中午提醒"));
+    DOCTEST_CHECK_EQ(updated.value().triggerType, std::string("once"));
+    DOCTEST_CHECK_EQ(updated.value().triggerConfig, onceConfig(expectedEpoch));
+    DOCTEST_CHECK_EQ(updated.value().modelSlot, std::string("sonnet"));
+    DOCTEST_CHECK_EQ(updated.value().maxIterations, 20);
+    DOCTEST_CHECK(updated.value().allowDestructive);
+    DOCTEST_CHECK_EQ(updated.value().contextNote, std::string("闹钟上下文"));
+    DOCTEST_CHECK_EQ(updated.value().autoNote, 0);
+
+    mod.onStop();
+    return true;
+})
+
+REGISTER_TEST(agent_ui_once_rejects_bad_and_past_time,
+              "agent_ui: 闹钟非法格式 / 超范围 / 过去时间 → 弹窗报错且不落库", {
+    test_support::TestDb tdb("agentui", "oncebad");
+    test_support::FakeProfileSource profile;
+    ToolGuard statsGuard{{"app.stats", "app.notify"}};
+    core::ToolRegistry::instance().unregisterTool("app.stats");
+    core::ToolRegistry::instance().unregisterTool("app.notify");
+
+    module::agent::AgentModule::Deps deps;
+    deps.db = &tdb.handle();
+    deps.profileSource = &profile;
+    module::agent::AgentModule mod(deps);
+    mod.onStart();
+    module::agent::AgentStore store(tdb.handle());
+
+    eui::Ui ui;
+    DOCTEST_REQUIRE(openNewTaskWithGoal(ui, mod, "agent_ui_oncebad", "非法闹钟任务"));
+    eui::Ui ui2;
+    composeTo(ui2, mod, kScreen, "agent_ui_oncebad.c");
+    DOCTEST_REQUIRE(callDropdownChange(ui2, "agent.dialog.task.trigger", 5));
+
+    int frameNo = 0;
+    // Lambda 里不能用 DOCTEST_*（宏失败时 return false，会与 lambda 返回类型冲突）
+    auto rejectionError = [&](const std::string& text) -> std::string {
+        mod.setEditOnceDraft(text);
+        const std::string pid = "agent_ui_oncebad.s" + std::to_string(++frameNo);
+        eui::Ui frame;
+        composeTo(frame, mod, kScreen, pid.c_str());
+        if (!clickId(frame, "agent.dialog.task.save.bg")) return "<保存按钮缺失>";
+        eui::Ui after;
+        composeTo(after, mod, kScreen, (pid + ".after").c_str());
+        const auto* err = after.find("agent.dialog.task.error");
+        if (err == nullptr) return "<无错误行>";
+        if (after.find("agent.dialog.task.once") == nullptr) {
+            return "<弹窗被关闭>";
+        }
+        return err->text;
+    };
+
+    const std::string formatErr = rejectionError("abc");
+    DOCTEST_CHECK_MESSAGE(formatErr.find("格式") != std::string::npos,
+                          "abc 错误文案：" + formatErr);
+    const std::string rangeErr = rejectionError("2026-13-40 99:99");
+    DOCTEST_CHECK_MESSAGE(rangeErr.find("超出范围") != std::string::npos,
+                          "超范围错误文案：" + rangeErr);
+    // mktime 会把 2 月 30 日归一化成 3 月 2 日——归一化逐字段比对必须拦住
+    const std::string invalidDateErr = rejectionError("2026-02-30 12:00");
+    DOCTEST_CHECK_MESSAGE(invalidDateErr.find("不存在") != std::string::npos,
+                          "2026-02-30 错误文案：" + invalidDateErr);
+    const std::string pastErr =
+        rejectionError(formatLocalMinute(localNoonTm(-1)));
+    DOCTEST_CHECK_MESSAGE(pastErr.find("晚于当前时间") != std::string::npos,
+                          "过去时间错误文案：" + pastErr);
+
+    auto tasks = store.listTasks();
+    DOCTEST_REQUIRE(tasks.isOk());
+    DOCTEST_CHECK_EQ(tasks.value().size(), static_cast<size_t>(0));
+
+    mod.onStop();
+    return true;
+})
+
+REGISTER_TEST(agent_ui_once_switch_type_clears_payload,
+              "agent_ui: 定时↔闹钟切换保存 → 不残留对方的 trigger_config 载荷", {
+    test_support::TestDb tdb("agentui", "onceswitch");
+    test_support::FakeProfileSource profile;
+    ToolGuard statsGuard{{"app.stats", "app.notify"}};
+    core::ToolRegistry::instance().unregisterTool("app.stats");
+    core::ToolRegistry::instance().unregisterTool("app.notify");
+
+    module::agent::AgentModule::Deps deps;
+    deps.db = &tdb.handle();
+    deps.profileSource = &profile;
+    module::agent::AgentModule mod(deps);
+    mod.onStart();
+    module::agent::AgentStore store(tdb.handle());
+
+    const std::tm tomorrowNoon = localNoonTm(1);
+    const int64_t expectedEpoch = epochOfLocal(tomorrowNoon);
+
+    eui::Ui ui;
+    DOCTEST_REQUIRE(openNewTaskWithGoal(ui, mod, "agent_ui_onceswitch", "切换类型任务"));
+    eui::Ui ui2;
+    composeTo(ui2, mod, kScreen, "agent_ui_onceswitch.c");
+    DOCTEST_REQUIRE(callDropdownChange(ui2, "agent.dialog.task.trigger", 1));
+    mod.setEditCronDraft("0 9 * * *");
+    eui::Ui ui3;
+    composeTo(ui3, mod, kScreen, "agent_ui_onceswitch.d");
+    DOCTEST_REQUIRE(callDropdownChange(ui3, "agent.dialog.task.trigger", 5));
+    mod.setEditOnceDraft(formatLocalMinute(tomorrowNoon));
+    eui::Ui ui4;
+    composeTo(ui4, mod, kScreen, "agent_ui_onceswitch.e");
+    DOCTEST_REQUIRE(clickId(ui4, "agent.dialog.task.save.bg"));
+
+    auto tasks = store.listTasks();
+    DOCTEST_REQUIRE(tasks.isOk());
+    DOCTEST_REQUIRE_EQ(tasks.value().size(), static_cast<size_t>(1));
+    const auto& row = tasks.value()[0];
+    DOCTEST_CHECK_EQ(row.triggerConfig, onceConfig(expectedEpoch));
+    DOCTEST_CHECK(row.triggerConfig.find("cron") == std::string::npos);
+
+    // 反向：编辑闹钟 → 切回定时 → 保存只写 cron，once_at 不残留
+    eui::Ui ui5;
+    composeTo(ui5, mod, kScreen, "agent_ui_onceswitch.f");
+    DOCTEST_REQUIRE(clickId(ui5, "agent.task." + std::to_string(row.id) + ".edit"));
+    eui::Ui ui6;
+    composeTo(ui6, mod, kScreen, "agent_ui_onceswitch.g");
+    DOCTEST_REQUIRE(callDropdownChange(ui6, "agent.dialog.task.trigger", 1));
+    eui::Ui ui7;
+    composeTo(ui7, mod, kScreen, "agent_ui_onceswitch.h");
+    mod.setEditCronDraft("30 8 * * 1");
+    DOCTEST_REQUIRE(clickId(ui7, "agent.dialog.task.save.bg"));
+
+    auto updated = store.getTask(row.id);
+    DOCTEST_REQUIRE(updated.isOk());
+    DOCTEST_CHECK_EQ(updated.value().triggerType, std::string("schedule"));
+    DOCTEST_CHECK_EQ(updated.value().triggerConfig, std::string(R"({"cron":"30 8 * * 1"})"));
+    DOCTEST_CHECK(updated.value().triggerConfig.find("once_at") == std::string::npos);
+
+    mod.onStop();
+    return true;
+})
+
+REGISTER_TEST(agent_ui_once_detail_shows_alarm_label_and_time,
+              "agent_ui: 闹钟任务详情摘要显示「闹钟」标签与本地时间", {
+    test_support::TestDb tdb("agentui", "oncedetail");
+    test_support::FakeProfileSource profile;
+    ToolGuard statsGuard{{"app.stats", "app.notify"}};
+    core::ToolRegistry::instance().unregisterTool("app.stats");
+    core::ToolRegistry::instance().unregisterTool("app.notify");
+    module::agent::AgentStore store(tdb.handle());
+
+    const std::tm tomorrowNoon = localNoonTm(1);
+    const std::string timeText = formatLocalMinute(tomorrowNoon);
+    auto created = store.createTask("闹钟任务", "闹钟摘要", "once", "default", 10,
+                                    false, onceConfig(epochOfLocal(tomorrowNoon)));
+    DOCTEST_REQUIRE(created.isOk());
+
+    module::agent::AgentModule::Deps deps;
+    deps.db = &tdb.handle();
+    deps.profileSource = &profile;
+    module::agent::AgentModule mod(deps);
+    mod.onStart();
+
+    eui::Ui ui;
+    composeTo(ui, mod, kScreen, "agent_ui_oncedetail1");
+    DOCTEST_REQUIRE(openDetailDialog(ui, mod, std::to_string(created.value())));
+    eui::Ui ui2;
+    composeTo(ui2, mod, kScreen, "agent_ui_oncedetail2");
+    const auto* info = ui2.find("agent.dialog.detail.info");
+    DOCTEST_REQUIRE_MESSAGE(info != nullptr, "详情弹窗缺配置摘要");
+    DOCTEST_CHECK_MESSAGE(info->text.find("触发：闹钟") != std::string::npos,
+                          "详情摘要未显示「闹钟」：" + info->text);
+    DOCTEST_CHECK_MESSAGE(info->text.find("闹钟时间：" + timeText) !=
+                              std::string::npos,
+                          "详情摘要未显示闹钟本地时间：" + info->text);
+    DOCTEST_CHECK_MESSAGE(info->text.find("cron") == std::string::npos,
+                          "闹钟详情不应出现 cron：" + info->text);
+
+    mod.onStop();
+    return true;
+})
+
+REGISTER_TEST(agent_ui_once_edit_bad_config_shows_problem_without_fallback,
+              "agent_ui: 闹钟坏配置编辑 → 输入留空 + 配置异常，不回落成手动", {
+    test_support::TestDb tdb("agentui", "oncebadcfg");
+    test_support::FakeProfileSource profile;
+    ToolGuard statsGuard{{"app.stats", "app.notify"}};
+    core::ToolRegistry::instance().unregisterTool("app.stats");
+    core::ToolRegistry::instance().unregisterTool("app.notify");
+    module::agent::AgentStore store(tdb.handle());
+
+    // decode 能过但缺 once_at：一次性类型 + cron 载荷（语义分裂，列表也会挂配置异常）
+    auto created = store.createTask("坏闹钟", "坏闹钟目标", "once", "default", 10,
+                                    false, R"({"cron":"0 9 * * *"})");
+    DOCTEST_REQUIRE(created.isOk());
+
+    module::agent::AgentModule::Deps deps;
+    deps.db = &tdb.handle();
+    deps.profileSource = &profile;
+    module::agent::AgentModule mod(deps);
+    mod.onStart();
+
+    eui::Ui ui;
+    composeTo(ui, mod, kScreen, "agent_ui_oncebadcfg1");
+    DOCTEST_REQUIRE(clickId(ui,
+                            "agent.task." + std::to_string(created.value()) + ".edit"));
+    eui::Ui ui2;
+    composeTo(ui2, mod, kScreen, "agent_ui_oncebadcfg2");
+    // 触发方式仍是闹钟（有 once 时间输入 = 未回落手动；回落手动不会有该节点）
+    DOCTEST_REQUIRE_MESSAGE(ui2.find("agent.dialog.task.once") != nullptr,
+                            "坏配置编辑回落成了其它触发类型");
+    DOCTEST_CHECK(inputText(ui2, "agent.dialog.task.once").empty());
+    const auto* err = ui2.find("agent.dialog.task.error");
+    DOCTEST_REQUIRE_MESSAGE(err != nullptr, "坏闹钟配置编辑未显示配置异常");
+    DOCTEST_CHECK_MESSAGE(err->text.find("触发配置异常") != std::string::npos,
+                          "配置异常文案缺失：" + err->text);
 
     mod.onStop();
     return true;
@@ -1338,8 +1727,8 @@ REGISTER_TEST(agent_ui_dialog_geometry_design_size_and_budget,
     DOCTEST_REQUIRE(popupHitOpen != nullptr);
     DOCTEST_CHECK_FALSE(popupHitOpen->disabled);
     // 展开态几何：最后一项完整在屏内。该断言只有在上面那对开档属性成立时才有意义
-    const auto* lastItem = ui2b.find("agent.dialog.task.trigger.item.2");
-    DOCTEST_REQUIRE_MESSAGE(lastItem != nullptr, "下拉最后一项（常驻）缺失");
+    const auto* lastItem = ui2b.find("agent.dialog.task.trigger.item.5");
+    DOCTEST_REQUIRE_MESSAGE(lastItem != nullptr, "下拉最后一项（闹钟）缺失");
     DOCTEST_CHECK(lastItem->frame.width > 0.0f && lastItem->frame.height > 0.0f);
     DOCTEST_CHECK_MESSAGE(
         lastItem->frame.y >= -0.5f &&

@@ -124,6 +124,8 @@ public:
 
     // 测试缝：输入框 onTextInput 只能追加、无法覆盖草稿（赋值把光标置 0），故草稿写入口在此
     void setEditCronDraft(const std::string& cron);
+    // 闹钟时间草稿（YYYY-MM-DD HH:MM，本地时区）：与 cron 同款测试缝
+    void setEditOnceDraft(const std::string& text);
     void setDialogIterDraft(int iter);
     // 测试缝：兜底轻查询已执行次数（节流断言用——同窗口多帧只允许一次轻查询）
     int64_t runFallbackChecksForTest() const { return runFallbackChecks_; }
@@ -160,6 +162,8 @@ private:
     void toggleTaskEnabled(const AgentTaskRow& task);
     // 定时分支预览行：editCron_ 每变（模板回填 / 手改 / 编辑回填）后重算
     void refreshCronPreview();
+    // 闹钟分支预览行：editOnceAtText_ 每变 / 切到闹钟类型后重算
+    void refreshOncePreview();
     // 详情弹窗
     void openTaskDetail(int64_t taskId);
     void closeTaskDetail();
@@ -252,7 +256,10 @@ private:
     bool taskDialogOpen_ = false;
     std::optional<int64_t> editingTaskId_;
     std::string editGoal_, editCron_, editSlot_, editError_;
-    int editTriggerIdx_ = 0;      // 0=手动 1=定时 2=常驻 3=事件（kTriggerKeys 下标）
+    // 闹钟时间草稿（严格 YYYY-MM-DD HH:MM，本地时区）。只在 trigger_type=once 时消费；
+    // 其它类型保留草稿但不落库（切换类型后原样切回不丢用户输入）
+    std::string editOnceAtText_;
+    int editTriggerIdx_ = 0;      // 0=手动 1=定时 2=常驻 3=事件 4=每天 5=闹钟（kTriggerKeys 下标）
     int editIter_ = 10;
     bool editDestructive_ = false;
     // 运行次数上限草稿（0 = 不限次数，缺省；>0 = 最多 N 次）。UI 目前只提供 1
@@ -270,6 +277,10 @@ private:
     // 非法 → 校验文案（前置于保存期报错）；无匹配 →「一年内无触发时间」。
     std::string cronPreview_;
     bool cronPreviewIsError_ = false;   // 预览行配色：错误色 vs 次要文本色
+    // 闹钟分支预览行：合法 →「将在 <yyyy-MM-dd HH:mm> 提醒（需应用运行；错过不补）」；
+    // 非法 / 过去 → 错误文案（红色）。与 cronPreview_ 互斥渲染（同一行几何）
+    std::string oncePreview_;
+    bool oncePreviewIsError_ = false;
     // 页内错误行：弹窗之外动作失败唯一可见出口（弹窗内走 editError_）；下一次成功动作清
     std::string pageError_;
     // 已同步到页内错误行的 runId 集合。用来阻断**回弹**：用户清掉错误行后，只要那些

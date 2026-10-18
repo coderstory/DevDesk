@@ -245,11 +245,16 @@ constexpr int kModelSlotCount = static_cast<int>(
     sizeof(kModelSlotKeys) / sizeof(kModelSlotKeys[0]));
 
 // daily = 每天（不指定时刻）：当天首次打开后的第一个调度周期跑一次，见 Scheduler::tickNow
-constexpr const char* kTriggerKeys[] = {"manual", "schedule", "resident", "event", "daily"};
-constexpr const char* kTriggerLabels[] = {"手动", "定时", "常驻", "事件", "每天"};
-constexpr int kTriggerCount = 5;
+// once = 闹钟（一次性绝对时刻，trigger_config.once_at）：到点派发一次后自动停用
+// 新类型一律追加在末尾：既有下标是编辑回填 / 测试断言的契约，插队会改写历史任务的类型
+constexpr const char* kTriggerKeys[] = {"manual",   "schedule", "resident",
+                                        "event",    "daily",    "once"};
+constexpr const char* kTriggerLabels[] = {"手动", "定时", "常驻",
+                                          "事件", "每天", "闹钟"};
+constexpr int kTriggerCount = 6;
 constexpr int kTriggerScheduleIdx = 1;
 constexpr int kTriggerEventIdx = 3;
+constexpr int kTriggerOnceIdx = 5;
 
 // 事件触发可选事件表：名字 = core::event 常量（唯一真源），label 是表单文案。
 // 顺序即 editEvents_ 下标——两表必须同长，加事件只改这里 + editEvents_ 容量
@@ -359,6 +364,112 @@ std::string trimCopy(const std::string& s) {
     while (b < e && isSpace(static_cast<unsigned char>(s[b]))) ++b;
     while (e > b && isSpace(static_cast<unsigned char>(s[e - 1]))) --e;
     return s.substr(b, e - b);
+}
+
+bool isAsciiDigit(char c) { return c >= '0' && c <= '9'; }
+
+int digitsAt(const std::string& s, size_t pos, size_t count) {
+    int value = 0;
+    for (size_t i = 0; i < count; ++i) {
+        value = value * 10 + (s[pos + i] - '0');
+    }
+    return value;
+}
+
+// 严格解析闹钟时间「YYYY-MM-DD HH:MM」（本地时区，24 小时制）。
+// 校验分三层：字面形状 → 字段范围 → mktime 归一化后必须与输入逐字段一致。
+// 第三层专门拦「2026-02-30」和夏令时跳变不存在的本地时刻（mktime 会把它们悄悄
+// 归一化到别的日期/时刻；只看 epoch 范围会把脏输入当合法值存进库）。
+// 不抛异常：格式/范围/不存在/越界统一返回 Result fail。
+core::Result<int64_t> parseOnceAtLocalText(const std::string& text) {
+    const std::string s = trimCopy(text);
+    if (s.size() != 16 || s[4] != '-' || s[7] != '-' || s[10] != ' ' ||
+        s[13] != ':') {
+        return core::Result<int64_t>::fail(
+            core::ErrorCode::ValidationError,
+            "闹钟时间格式应为 YYYY-MM-DD HH:MM");
+    }
+    for (size_t i : {0, 1, 2, 3, 5, 6, 8, 9, 11, 12, 14, 15}) {
+        if (!isAsciiDigit(s[i])) {
+            return core::Result<int64_t>::fail(
+                core::ErrorCode::ValidationError,
+                "闹钟时间格式应为 YYYY-MM-DD HH:MM");
+        }
+    }
+    const int year = digitsAt(s, 0, 4);
+    const int month = digitsAt(s, 5, 2);
+    const int day = digitsAt(s, 8, 2);
+    const int hour = digitsAt(s, 11, 2);
+    const int minute = digitsAt(s, 14, 2);
+    if (year < 1 || year > 9999 || month < 1 || month > 12 || day < 1 ||
+        day > 31 || hour < 0 || hour > 23 || minute < 0 || minute > 59) {
+        return core::Result<int64_t>::fail(
+            core::ErrorCode::ValidationError,
+            "闹钟时间的年月日或时分超出范围");
+    }
+    std::tm local{};
+    local.tm_year = year - 1900;
+    local.tm_mon = month - 1;
+    local.tm_mday = day;
+    local.tm_hour = hour;
+    local.tm_min = minute;
+    local.tm_sec = 0;
+    local.tm_isdst = -1;   // 让 mktime 按目标日期判定夏令时
+    const std::time_t t = std::mktime(&local);
+    if (t == static_cast<std::time_t>(-1)) {
+        return core::Result<int64_t>::fail(
+            core::ErrorCode::ValidationError, "闹钟时间无效（无法转换为本地时刻）");
+    }
+    if (local.tm_year + 1900 != year || local.tm_mon + 1 != month ||
+        local.tm_mday != day || local.tm_hour != hour ||
+        local.tm_min != minute) {
+        return core::Result<int64_t>::fail(
+            core::ErrorCode::ValidationError,
+            "闹钟时间在本地时区不存在（日期无效或夏令时跳变）");
+    }
+    const int64_t epoch = static_cast<int64_t>(t);
+    if (epoch < 1 || epoch > kOnceAtUpperBound) {
+        return core::Result<int64_t>::fail(
+            core::ErrorCode::ValidationError,
+            "闹钟时间超出支持范围（1970-01-01 至 2100-01-01）");
+    }
+    return core::Result<int64_t>::ok(epoch);
+}
+
+// epoch → 本地「YYYY-MM-DD HH:MM」；走 core::time::localTime（Windows localtime_s /
+// POSIX localtime_r），不在业务代码里写平台分支
+std::string formatOnceAtText(int64_t epoch) {
+    std::tm local{};
+    core::time::localTime(static_cast<std::time_t>(epoch), &local);
+    char buf[32];
+    const std::size_t n =
+        std::strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M", &local);
+    return n == 0 ? std::string() : std::string(buf, n);
+}
+
+// 新建闹钟缺省：现在 + 1 小时，分钟精度（秒在文本里本就不显示，保存时也按 :00 解析）
+std::string defaultOnceAtText() {
+    std::tm local{};
+    core::time::localTime(core::time::nowUnix() + 3600, &local);
+    char buf[32];
+    const std::size_t n =
+        std::strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M", &local);
+    return n == 0 ? std::string() : std::string(buf, n);
+}
+
+// once_at 的展示文本（详情摘要）；解析失败返回空串并留痕——非空配置必须显形
+std::string onceTextOf(const AgentTaskRow& task) {
+    auto cfg = decodeTriggerConfig(task.triggerConfig);
+    if (cfg.isOk() && cfg.value().onceAt) {
+        return formatOnceAtText(*cfg.value().onceAt);
+    }
+    if (!task.triggerConfig.empty()) {
+        LOG_WARN("Agent: 任务 " + std::to_string(task.id) +
+                 " 的 trigger_config 无法取出 once_at（详情摘要留空）：" +
+                 (cfg.isFail() ? cfg.errorMessage()
+                               : std::string("缺少 once_at 字段")));
+    }
+    return {};
 }
 
 } // namespace
@@ -630,11 +741,13 @@ void AgentModule::openNewTaskDialog() {
     editEvents_ = {};
     editMaxRuns_ = 0;   // 新建缺省 = 不限次数（与旧任务同语义：恒循环）
     editTriggerIdx_ = 0;
+    editOnceAtText_ = defaultOnceAtText();   // 切到「闹钟」时就有可用缺省，不逼用户从零拼格式
     editError_.clear();
     editTriggerOpen_ = false;
     editSlotOpen_ = false;
     editCronTemplateOpen_ = false;
     refreshCronPreview();
+    refreshOncePreview();
 }
 
 // 关闭任务弹窗（多条路径共用）：不落库、不碰任务列表，只退弹窗态与草稿
@@ -650,6 +763,11 @@ void AgentModule::closeTaskDialog() {
 void AgentModule::setEditCronDraft(const std::string& cron) {
     editCron_ = cron;
     refreshCronPreview();
+}
+
+void AgentModule::setEditOnceDraft(const std::string& text) {
+    editOnceAtText_ = text;
+    refreshOncePreview();
 }
 
 void AgentModule::setDialogIterDraft(int iter) {
@@ -686,6 +804,34 @@ void AgentModule::refreshCronPreview() {
     cronPreview_ = buf;
 }
 
+// 闹钟预览：合法未来时刻 → 常态文案；格式非法 / 归一化失败 / 已过去 → 红字
+//（与保存同一份解析函数，预览说能存就一定存得进去）
+void AgentModule::refreshOncePreview() {
+    oncePreview_.clear();
+    oncePreviewIsError_ = false;
+    if (editTriggerIdx_ != kTriggerOnceIdx) return;
+    const std::string text = trimCopy(editOnceAtText_);
+    if (text.empty()) {
+        oncePreview_ = "请填写闹钟时间（YYYY-MM-DD HH:MM）";
+        oncePreviewIsError_ = true;
+        return;
+    }
+    auto parsed = parseOnceAtLocalText(text);
+    if (parsed.isFail()) {
+        oncePreview_ = parsed.errorMessage();
+        oncePreviewIsError_ = true;
+        return;
+    }
+    const int64_t now = static_cast<int64_t>(core::time::nowUnix());
+    if (parsed.value() <= now) {
+        oncePreview_ = "闹钟时间必须晚于当前时间";
+        oncePreviewIsError_ = true;
+        return;
+    }
+    oncePreview_ =
+        "将在 " + formatOnceAtText(parsed.value()) + " 提醒（需应用运行；错过不补）";
+}
+
 // 编辑态：字段以库为准回填（tasks_ 可能滞后，故直接 getTask）；读库失败 → 页内错误行
 void AgentModule::openTaskEditor(int64_t taskId) {
     if (store_ == nullptr) return;
@@ -701,12 +847,30 @@ void AgentModule::openTaskEditor(int64_t taskId) {
     editingTaskId_ = r.id;
     editGoal_ = r.goal;
     editCron_ = cronTextOf(r);
+    editOnceAtText_.clear();
     editSlot_ = r.modelSlot;
     editIter_ = r.maxIterations;
     editDestructive_ = r.allowDestructive;
     editContextNote_ = r.contextNote;
     editAutoNote_ = (r.autoNote != 0);
     editTriggerIdx_ = triggerIndexOf(r.triggerType);
+    // 「闹钟」分支回填：按 once_at 格式化成同一份 YYYY-MM-DD HH:MM 文本；坏配置
+    // 留空 + 弹窗内点名异常，绝不回落到「手动」（回落会让一次保存把类型改写成手动）。
+    // triggerConfigProblem 与列表「配置异常」同源，坏配置的原因两处口径一致。
+    std::string onceProblem;
+    if (r.triggerType == "once") {
+        auto cfg = decodeTriggerConfig(r.triggerConfig);
+        if (cfg.isOk() && cfg.value().onceAt) {
+            editOnceAtText_ = formatOnceAtText(*cfg.value().onceAt);
+        } else {
+            std::string problem =
+                triggerConfigProblem(r.triggerType, r.triggerConfig);
+            if (problem.empty()) problem = "缺少 once_at（闹钟不会触发）";
+            onceProblem = "触发配置异常：" + problem;
+            LOG_WARN("Agent: 任务 " + std::to_string(r.id) +
+                     " 的闹钟配置无法回填（输入框留空）：" + problem);
+        }
+    }
     // 限次草稿回填：只有 schedule / event 消费 trigger_config 的 max_runs（manual /
     // resident 恒 0——给不消费该列的任务显示「只跑一次」等于骗人）。坏配置按 0（不限次）
     // 显示：解码失败的点名 WARN 归 cronTextOf（schedule）/ 下面的分支（event），
@@ -736,10 +900,12 @@ void AgentModule::openTaskEditor(int64_t taskId) {
         }
     }
     editError_.clear();
+    if (!onceProblem.empty()) editError_ = onceProblem;
     editTriggerOpen_ = false;
     editSlotOpen_ = false;
     editCronTemplateOpen_ = false;
     refreshCronPreview();
+    refreshOncePreview();
 }
 
 // 保存任务弹窗（新建/编辑同一路径）：定时先 parseCron 校验、事件校验 events 至少
@@ -785,6 +951,28 @@ void AgentModule::saveTaskDialog() {
             return;
         }
         if (editMaxRuns_ > 0) cfg.maxRuns = editMaxRuns_;   // 事件型同样可配一次性
+        auto encoded = encodeTriggerConfig(cfg);
+        if (encoded.isFail()) {
+            editError_ = "保存失败：" + encoded.errorMessage();
+            LOG_ERROR("Agent: 触发配置编码失败: " + encoded.errorMessage());
+            return;
+        }
+        triggerConfig = encoded.value();
+    } else if (triggerType == std::string("once")) {
+        // 闹钟：严格本地时间解析 + 必须晚于现在（Scheduler 对错过窗口不补发，
+        // 存一个过去时刻等于建了个永不触发的任务）。不写 cron / events / max_runs：
+        // once_at 本身就是「只跑一次」，多余字段只会让 encode 的互斥校验失败。
+        auto parsed = parseOnceAtLocalText(editOnceAtText_);
+        if (parsed.isFail()) {
+            editError_ = parsed.errorMessage();
+            return;
+        }
+        if (parsed.value() <= static_cast<int64_t>(core::time::nowUnix())) {
+            editError_ = "闹钟时间必须晚于当前时间";
+            return;
+        }
+        TriggerConfig cfg;
+        cfg.onceAt = parsed.value();
         auto encoded = encodeTriggerConfig(cfg);
         if (encoded.isFail()) {
             editError_ = "保存失败：" + encoded.errorMessage();
@@ -1688,6 +1876,7 @@ void AgentModule::composeTaskDialog(
     const float x0 = ui_kit::kDialogInsetX;
     const bool isSchedule = editTriggerIdx_ == kTriggerScheduleIdx;
     const bool isEvent = editTriggerIdx_ == kTriggerEventIdx;
+    const bool isOnce = editTriggerIdx_ == kTriggerOnceIdx;
     const bool isEdit = editingTaskId_.has_value();
 
     ui_kit::DialogFrame frame;
@@ -1760,7 +1949,16 @@ void AgentModule::composeTaskDialog(
                     .selected(editTriggerIdx_)
                     .open(editTriggerOpen_)
                     .onOpenChange([this](bool v) { editTriggerOpen_ = v; })
-                    .onChange([this](int idx) { editTriggerIdx_ = idx; })
+                    .onChange([this](int idx) {
+                        editTriggerIdx_ = idx;
+                        // 预览行随类型切换重算：切到闹钟立即显示缺省时间是否合法
+                        //（不重算的话预览行还停在上一个类型的文案 / 空白）
+                        if (idx == kTriggerOnceIdx) {
+                            refreshOncePreview();
+                        } else if (idx == kTriggerScheduleIdx) {
+                            refreshCronPreview();
+                        }
+                    })
                     .build();
             })
             .build();
@@ -1838,6 +2036,32 @@ void AgentModule::composeTaskDialog(
                 ui, "agent.dialog.task.cron.preview", w, cronPreview_,
                 t.sizes.fontSizeSmall - 1.0f,
                 cronPreviewIsError_ ? t.colors.error : t.colors.textTertiary,
+                {.x = x0, .y = 212.0f, .height = 12.0f, .lineHeight = 12.0f,
+                 .skipIfEmpty = true});
+        }
+        if (isOnce) {
+            // 闹钟分支占用与 cron 同一行 / 同一预览行：不新增行，几何契约不变。
+            // 只写一个绝对时刻——cron / 事件勾选 / max_runs 全部不渲染（once_at 与
+            // 重复载荷在 encode 层互斥，表单不提供制造坏配置的入口）
+            const float onceLabelX = fieldX + ddW + kDialogGap;
+            const float onceX = onceLabelX + kDialogLabelW + kDialogGap;
+            fieldCaption(ui, "agent.dialog.task.once.caption", "闹钟时间",
+                         onceLabelX, triggerY, kDialogLabelW, kDialogRowH,
+                         t.colors.textSecondary);
+            components::input(ui, "agent.dialog.task.once")
+                .position(onceX, triggerY)
+                .size(innerW - (onceX - x0), kDialogRowH)
+                .value(editOnceAtText_)
+                .placeholder("YYYY-MM-DD HH:MM（本地时间，24 小时制）")
+                .fontSize(t.sizes.fontSizeBody)
+                .theme(themeTokens)
+                .onChange([this](const std::string& v) { setEditOnceDraft(v); })
+                .onCancel([this] { closeTaskDialog(); })
+                .build();
+            ui_kit::drawDialogText(
+                ui, "agent.dialog.task.once.preview", w, oncePreview_,
+                t.sizes.fontSizeSmall - 1.0f,
+                oncePreviewIsError_ ? t.colors.error : t.colors.textTertiary,
                 {.x = x0, .y = 212.0f, .height = 12.0f, .lineHeight = 12.0f,
                  .skipIfEmpty = true});
         }
@@ -2026,6 +2250,12 @@ void AgentModule::composeTaskDetailDialog(
             if (task.triggerType == "schedule") {
                 const std::string cron = cronTextOf(task);
                 info += " · cron：" + (cron.empty() ? "（未设置）" : cron);
+            } else if (task.triggerType == "once") {
+                // 闹钟摘要：标签 + 本地时刻（配置异常由下方 triggerConfigProblem 补原因；
+                // 完整详情重设计留给 T4c2）
+                const std::string onceText = onceTextOf(task);
+                info += " · 闹钟时间：" +
+                        (onceText.empty() ? "（未设置）" : onceText);
             }
             // 限次/一次性语义（02）：完整说明落这里（列表徽章只放得下 3 字）。口径与
             // Scheduler::runBudgetExhausted 同源（同一份 trigger_config 解码）；失败也算
