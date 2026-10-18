@@ -1,10 +1,11 @@
 cmake_minimum_required(VERSION 3.14)
 
-# ---- 构建版本号（2026-09-28 about 页设计）：VERSION 文件 x.y.z ----
-# VERSION 不入 git（.gitignore），每机器各自递增；首次 configure 缺则自动
-# 创建 "0.1.0"。每次构建由 add_custom_target(bump_version ALL) 自增（见文件尾），
-# 新值经 CMAKE_CONFIGURE_DEPENDS 在下一个 configure 拾取（本次构建显示当前版本、
-# 下个构建得到 +1 后的版本）。
+# ---- 构建版本号：VERSION 文件 x.y.z ----
+# VERSION 不入 git（.gitignore），只在首次 configure 自动创建 "0.1.0"、此后仅手工改。
+# 每次构建的自增计数在 build 目录本地的 VERSION.build（add_custom_target(bump_version
+# ALL)，见文件尾）。构建期绝不能写源树 VERSION：它注册在 CMAKE_CONFIGURE_DEPENDS
+#（本文件下方），构建期写入 = 下一个构建必触发 cmake regen，且 project(VERSION)
+# 变化改动 DEVDESK_VERSION define、把 121 个 TU 拖进全量重编（ninja -d explain 实证）。
 if(EXISTS "${CMAKE_SOURCE_DIR}/VERSION")
     file(READ "${CMAKE_SOURCE_DIR}/VERSION" DEVDESK_VERSION)
     string(STRIP "${DEVDESK_VERSION}" DEVDESK_VERSION)
@@ -27,7 +28,7 @@ if(WIN32)
   add_compile_definitions(_WIN32_WINNT=0x0A00 WINVER=0x0A00)
 endif()
 
-# VERSION 文件变更（bump_version 写入）→ 自动重新 configure
+# VERSION 文件变更（手工编辑）→ 自动重新 configure；构建期不写本文件（见文件头）
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/VERSION")
 
 set(CMAKE_CXX_STANDARD 20)
@@ -312,14 +313,16 @@ add_custom_command(TARGET DevDesk POST_BUILD
     COMMENT "Copying splash shader to build directory"
 )
 
-# 构建版本自增（2026-09-28 about 页设计）：每次 cmake --build 都跑 bump-version
-# 脚本把 VERSION 文件 +1（不用 PRE_BUILD——Ninja 下 PRE_BUILD = PRE_LINK，仅目标
-# 重链时跑；ALL 保证每次构建都执行）。VERSION 经 CMAKE_CONFIGURE_DEPENDS 注册，
-# 写入的新版本在下一个 configure 拾取：本次构建显示当前版本、下个构建 +1。
-# 放 DevDesk target 之后定义（不依赖它的产物，仅保证与构建同拍）。
+# 构建版本自增（2026-09-28 about 页设计）：每次 cmake --build 都把 build 目录本地的
+# VERSION.build +1（不用 PRE_BUILD——Ninja 下 PRE_BUILD = PRE_LINK，仅目标重链时跑；
+# ALL 保证每次构建都执行）。计数文件只落 build 目录，绝不写源树 VERSION——
+# VERSION 注册在 CMAKE_CONFIGURE_DEPENDS（见文件头），构建期写入 = 每次构建后
+# 下一个构建必 regen + 121 TU 全量重编。DEVDESK_VERSION define 取 configure 期的
+# PROJECT_VERSION；VERSION.build 当前无 UI 消费方，保留计数供后续按需接线。
 add_custom_target(bump_version ALL
     COMMAND ${CMAKE_COMMAND}
-        -D VERSION_FILE="${CMAKE_SOURCE_DIR}/VERSION"
+        -D VERSION_FILE="${CMAKE_BINARY_DIR}/VERSION.build"
+        -D VERSION_SEED="${PROJECT_VERSION}"
         -P "${CMAKE_SOURCE_DIR}/cmake/bump-version.cmake"
     COMMENT "Bumping build version"
 )
