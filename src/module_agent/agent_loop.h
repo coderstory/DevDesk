@@ -2,6 +2,7 @@
 #pragma once
 #include <atomic>
 #include <cstdint>
+#include <ctime>
 #include <functional>
 #include <string>
 #include <vector>
@@ -12,6 +13,11 @@
 namespace module::agent {
 
 using core::Result;
+
+// 运行时注入的「当前本地时间」行（YYYY-MM-DD HH:MM）。模型没有时钟：日期类任务
+// （如「{年-月-日} 晨会」）必须由宿主给出「今天」，不能让模型自行推算/猜测。
+// 纯函数，now 由调用方注入（测试可钉住具体日期）。
+std::string currentTimePromptLine(std::time_t nowSec);
 
 struct AgentTask {
     int64_t id = 0;

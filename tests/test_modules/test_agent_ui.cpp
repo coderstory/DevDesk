@@ -360,6 +360,53 @@ REGISTER_TEST(agent_ui_dialog_create_task_persists_fields,
     return true;
 })
 
+// 「每天」= 不指定时刻：表单不渲染 cron；保存落 trigger_type=daily 且 trigger_config 为空
+REGISTER_TEST(agent_ui_daily_trigger_saves_without_time,
+              "agent_ui: 触发方式=每天 → 不渲染 cron、落库 trigger_type=daily 且无配置", {
+    test_support::TestDb tdb("agentui", "dailysave");
+    test_support::FakeProfileSource profile;
+    ToolGuard statsGuard{"app.stats"};
+    core::ToolRegistry::instance().unregisterTool("app.stats");
+
+    module::agent::AgentModule::Deps deps;
+    deps.db = &tdb.handle();
+    deps.profileSource = &profile;
+    module::agent::AgentModule mod(deps);
+    mod.onStart();
+    module::agent::AgentStore store(tdb.handle());
+
+    eui::Ui ui;
+    DOCTEST_REQUIRE(openNewTaskDialog(ui, mod, "agent_ui_daily1"));
+    eui::Ui ui2;
+    composeTo(ui2, mod, kScreen, "agent_ui_daily2");
+
+    auto* goalHit = ui2.find("agent.dialog.task.goal.hit");
+    DOCTEST_REQUIRE(goalHit != nullptr);
+    DOCTEST_REQUIRE(goalHit->onTextInput != nullptr);
+    typeInto(goalHit, "每天生成晨会待办");
+
+    // 第 5 项 = 每天（索引 4）；该模式不写 cron
+    DOCTEST_REQUIRE_MESSAGE(callDropdownChange(ui2, "agent.dialog.task.trigger", 4),
+                            "agent.dialog.task.trigger.item.4 不存在");
+    eui::Ui ui3;
+    composeTo(ui3, mod, kScreen, "agent_ui_daily3");
+    DOCTEST_CHECK_MESSAGE(ui3.find("agent.dialog.task.cron") == nullptr,
+                          "触发方式=每天 时不应渲染 cron 输入");
+    DOCTEST_REQUIRE_MESSAGE(clickId(ui3, "agent.dialog.task.save.bg"),
+                            "保存按钮 agent.dialog.task.save.bg 缺失");
+
+    auto tasks = store.listTasks();
+    DOCTEST_REQUIRE(tasks.isOk());
+    DOCTEST_REQUIRE_EQ(tasks.value().size(), static_cast<size_t>(1));
+    const auto& row = tasks.value()[0];
+    DOCTEST_CHECK_EQ(row.goal, std::string("每天生成晨会待办"));
+    DOCTEST_CHECK_EQ(row.triggerType, std::string("daily"));
+    DOCTEST_CHECK(row.triggerConfig.empty());
+
+    mod.onStop();
+    return true;
+})
+
 REGISTER_TEST(agent_ui_dialog_save_rejects_bad_cron,
               "agent_ui: 非法 cron 保存被拒（弹窗内报错 / 不落库 / 弹窗不关）", {
     test_support::TestDb tdb("agentui", "badcron");
@@ -681,7 +728,7 @@ REGISTER_TEST(agent_ui_detail_dialog_shows_config_runs_messages,
     const auto* info = ui2.find("agent.dialog.detail.info");
     DOCTEST_REQUIRE_MESSAGE(info != nullptr, "详情弹窗缺配置摘要 agent.dialog.detail.info");
     DOCTEST_CHECK(info->text.find("把逾期的待办全部完成") != std::string::npos);
-    DOCTEST_CHECK(info->text.find("schedule") != std::string::npos);
+    DOCTEST_CHECK(info->text.find("定时") != std::string::npos);   // 触发方式显示中文标签
     DOCTEST_CHECK(info->text.find("0 9 * * 1-5") != std::string::npos);
     DOCTEST_CHECK(info->text.find("sonnet") != std::string::npos);
     DOCTEST_CHECK(info->text.find("迭代上限：20") != std::string::npos);

@@ -712,8 +712,26 @@ REGISTER_TEST(agent_loop_context_note_injected, "agent_loop: contextNote 非空 
     return true;
 })
 
-// contextNote 空串 → system prompt 为空串（直连客户端侧不发 system 字段）
-REGISTER_TEST(agent_loop_context_note_empty_not_injected, "agent_loop: contextNote 空串 → system prompt 为空", {
+// 当前时间行：本地时区格式化为 YYYY-MM-DD HH:MM（宿主给日期，模型只拼字符串；
+// 模型没有时钟，自行推算必错）。纯函数、注入 now，跨时区不漂。
+REGISTER_TEST(agent_loop_current_time_prompt_line,
+              "agent_loop: 当前时间行按本地时区格式化为 YYYY-MM-DD HH:MM", {
+    std::tm tm{};
+    tm.tm_year = 2026 - 1900;
+    tm.tm_mon = 10 - 1;
+    tm.tm_mday = 18;
+    tm.tm_hour = 9;
+    tm.tm_min = 5;
+    tm.tm_sec = 0;
+    tm.tm_isdst = -1;
+    const std::time_t t = std::mktime(&tm);
+    DOCTEST_CHECK_EQ(currentTimePromptLine(t),
+                     std::string("当前本地时间：2026-10-18 09:05"));
+    return true;
+})
+
+// contextNote 空串 → system prompt 仍含「当前时间行」（模型没有时钟），但不含任务记忆
+REGISTER_TEST(agent_loop_context_note_empty_not_injected, "agent_loop: contextNote 空串 → 只注入当前时间行", {
     Fixture fx;
     AgentTask task;
     DOCTEST_REQUIRE(setupTask(fx, task, "打招呼", 10, false));
@@ -724,12 +742,13 @@ REGISTER_TEST(agent_loop_context_note_empty_not_injected, "agent_loop: contextNo
     auto runId = fx.loop.run(task, cancel);
     DOCTEST_REQUIRE(runId.isOk());
     DOCTEST_REQUIRE_EQ(fx.llm.sentSystemPrompts.size(), 1u);
-    DOCTEST_CHECK(fx.llm.sentSystemPrompts[0].empty());
+    DOCTEST_CHECK(fx.llm.sentSystemPrompts[0].find("当前本地时间：") != std::string::npos);
+    DOCTEST_CHECK(fx.llm.sentSystemPrompts[0].find("[任务上下文记忆]") == std::string::npos);
     return true;
 })
 
-// autoNote=false → 即使 contextNote 非空也不注入
-REGISTER_TEST(agent_loop_autonote_off_not_injected, "agent_loop: autoNote=false → system prompt 为空（不注入）", {
+// autoNote=false → 即使 contextNote 非空也不注入任务记忆（当前时间行仍在）
+REGISTER_TEST(agent_loop_autonote_off_not_injected, "agent_loop: autoNote=false → 不注入任务记忆（时间行仍在）", {
     Fixture fx;
     AgentTask task;
     DOCTEST_REQUIRE(setupTask(fx, task, "打招呼", 10, false));
@@ -740,7 +759,8 @@ REGISTER_TEST(agent_loop_autonote_off_not_injected, "agent_loop: autoNote=false 
     auto runId = fx.loop.run(task, cancel);
     DOCTEST_REQUIRE(runId.isOk());
     DOCTEST_REQUIRE_EQ(fx.llm.sentSystemPrompts.size(), 1u);
-    DOCTEST_CHECK(fx.llm.sentSystemPrompts[0].empty());
+    DOCTEST_CHECK(fx.llm.sentSystemPrompts[0].find("[任务上下文记忆]") == std::string::npos);
+    DOCTEST_CHECK(fx.llm.sentSystemPrompts[0].find("当前本地时间：") != std::string::npos);
     return true;
 })
 

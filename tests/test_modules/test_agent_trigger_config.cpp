@@ -197,7 +197,7 @@ REGISTER_TEST(event_trigger_cfg_problem_broken_configs,
 // 任务级「配置异常」判定的绿侧（对照组，防「凡有配置都报异常」的恒真断言）：
 // 合法配置与不消费 trigger_config 的触发类型一律空描述 = 正常路径零噪音。
 REGISTER_TEST(event_trigger_cfg_problem_clean_controls,
-              "trigger_config: 合法 event / 合法 cron / manual·resident → 无问题描述", {
+              "trigger_config: 合法 event / 合法 cron / manual·resident·daily → 无问题描述", {
     using module::agent::triggerConfigProblem;
     DOCTEST_CHECK(triggerConfigProblem("event", R"({"events":["todo.created"]})").empty());
     DOCTEST_CHECK(
@@ -209,6 +209,9 @@ REGISTER_TEST(event_trigger_cfg_problem_clean_controls,
     // 都不含它们）→ 库里的残留串/空串都不许挂徽章
     DOCTEST_CHECK(triggerConfigProblem("manual", "").empty());
     DOCTEST_CHECK(triggerConfigProblem("resident", "{坏 JSON").empty());
+    // daily（每天，不指定时刻）同样不消费 trigger_config，残留串不许挂徽章
+    DOCTEST_CHECK(triggerConfigProblem("daily", "").empty());
+    DOCTEST_CHECK(triggerConfigProblem("daily", "{坏 JSON").empty());
     // 同源反向题：event 型只比 events（processEvent 不碰 cron），配置里塞了非法 cron
     // 也不该算问题——否则 UI 说异常、Scheduler 照常触发，正是本单要消灭的分裂反面
     DOCTEST_CHECK(

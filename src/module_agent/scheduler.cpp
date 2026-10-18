@@ -26,6 +26,21 @@ int64_t systemNowSec() {
     return static_cast<int64_t>(std::time(nullptr));
 }
 
+// 每日型（trigger_type == "daily"）是否已在「本地当天」跑过。agent_runs 是唯一事实源：
+// 重启 app 不重复、跨天自动恢复。按本地日期字段比较而不是 86400 秒窗口——夏令时
+// 23/25 小时的日子也不会漂。读库失败按「已跑过」处理：宁可不派发，也不在坏库上
+// 每分钟刷一条 run。
+bool ranOnLocalDay(AgentStore& store, int64_t taskId, int64_t nowSec) {
+    auto runs = store.listRuns(taskId, 1);
+    if (runs.isFail()) return true;
+    if (runs.value().empty()) return false;
+    std::tm nowLocal{};
+    std::tm runLocal{};
+    core::time::localTime(static_cast<std::time_t>(nowSec), &nowLocal);
+    core::time::localTime(static_cast<std::time_t>(runs.value()[0].startedAt), &runLocal);
+    return nowLocal.tm_year == runLocal.tm_year && nowLocal.tm_yday == runLocal.tm_yday;
+}
+
 } // namespace
 
 Scheduler::Scheduler(AgentStore& store, AgentLoop& loop, NowFn now)
@@ -317,7 +332,27 @@ core::Result<void> Scheduler::tickNow() {
     std::tm local{};
     core::time::localTime(static_cast<std::time_t>(nowSec), &local);   // tm_wday 同步填充
     for (const auto& t : tasks.value()) {
-        if (!t.enabled || t.triggerType != "schedule") continue;
+        if (!t.enabled) continue;
+        // 每日型（「每天」）：不指定时刻——当天第一次 tick（= 每日首次打开后的第一个
+        // 调度周期）派发一次，之后当天不再派发。app 整日未打开则当天不跑（与 spec
+        // §5.1「错过的触发不补跑」同口径）；判定看 agent_runs，跨重启不重复。
+        if (t.triggerType == "daily") {
+            if (ranOnLocalDay(store_, t.id, nowSec)) continue;
+            {   // 同分钟防重（lastFiredMinute）：tick 每分钟一次，dispatch 后 run 行由
+                // 工作线程落库，下一分钟必然可见；同一分钟的重复扫描直接挡住
+                std::lock_guard<std::mutex> lock(mu_);
+                if (lastFiredMinute_[t.id] == minute) continue;
+                lastFiredMinute_[t.id] = minute;
+            }
+            auto fired = dispatchRun(t.id);
+            if (fired.isFail())
+                LOG_WARN("Scheduler: 每日任务派发失败 task=" + std::to_string(t.id) + ": " +
+                         fired.errorMessage());
+            else
+                LOG_INFO("Scheduler: 每日任务 " + std::to_string(t.id) + " 当天首次派发");
+            continue;
+        }
+        if (t.triggerType != "schedule") continue;
         // trigger_config 解析唯一落点 = trigger_config.h；坏配置不静默 continue——点名 task id 的 WARN 是用户唯一可见通道
         auto cfg = decodeTriggerConfig(t.triggerConfig);
         if (cfg.isFail()) {

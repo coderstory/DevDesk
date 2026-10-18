@@ -8,6 +8,8 @@
 
 ## [未发布]
 
+- feat(agent)：**新增「每天」触发**——不指定时刻，本地当天首次调度跑一次，当天不重复、跨天恢复；判定以 `agent_runs` 为唯一事实源（重启不重复），不消费 `trigger_config`。
+- feat(agent)：**system prompt 注入当前本地时间**（`当前本地时间：YYYY-MM-DD HH:MM`）——模型没有时钟，日期类任务由宿主给日期，不让模型自行推算/猜测。
 - feat(agent)：智能体 LLM 直连解耦——run 经激活 profile 直连端点，代理未开也能跑（详见下方 `[AgentDirectLlm]` 段）。
 - merge：master 并入 dev——桌宠摘除定案、migration 折为单份 DDL（审计放行 `47b31e0`）。
 - feat(github-sync)：真机 15 场景验收 15/15 通过，验收抓出并修 4 处引擎缺陷（报告 `docs/superpowers/plans/2026-10-16-ghsync-live-acceptance.md`，随矩阵票合入）。

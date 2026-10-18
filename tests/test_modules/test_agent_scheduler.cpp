@@ -226,6 +226,64 @@ REGISTER_TEST(scheduler_tick_skips_disabled_manual_and_bad_cron,
     return true;
 })
 
+// 「每天」触发 = 不指定时刻：本地当天第一次 tick 派发一次，当天后续 tick 不重复；
+// 跨天后第一次 tick 恢复。判定读 agent_runs（跨重启也成立），不是内存标记。
+// 时间基准取真实今天：agent_runs.started_at 由 AgentStore 用系统时钟落库，只有
+// 「当天 / 次日」这种日历日边界断言才不受真实时钟的时/分影响。
+REGISTER_TEST(scheduler_daily_runs_once_on_first_tick_of_local_day,
+              "scheduler: 每天触发 → 本地当天首次 tick 跑一次、当天不重复、次日恢复", {
+    test_support::TestDb tdb("agentsched", "daily");
+    module::agent::AgentStore store(tdb.handle());
+    MockLlm llm; llm.script = { endTurnResp(), endTurnResp() };
+    module::agent::AgentLoop loop(llm, core::ToolRegistry::instance(), store);
+
+    const int64_t realNow = static_cast<int64_t>(std::time(nullptr));
+    std::tm base{};
+    core::time::localTime(static_cast<std::time_t>(realNow), &base);
+    auto atLocal = [](std::tm t, int hour, int minute) {
+        t.tm_hour = hour;
+        t.tm_min = minute;
+        t.tm_sec = 0;
+        t.tm_isdst = -1;   // mktime 归一（月末/年末/夏令时都交给 libc）
+        return static_cast<int64_t>(std::mktime(&t));
+    };
+    int64_t nowSec = atLocal(base, 10, 0);
+    module::agent::Scheduler sched(store, loop, [&nowSec] { return nowSec; });
+    auto taskId = store.createTask("每天", "g", "daily", "default", 5, false);
+    DOCTEST_REQUIRE(taskId.isOk());
+
+    auto waitFinishedRuns = [&](size_t want) {
+        for (int i = 0; i < 500; ++i) {
+            auto runs = store.listRuns(taskId.value(), 10);
+            if (runs.isOk() && runs.value().size() >= want &&
+                std::all_of(runs.value().begin(), runs.value().end(),
+                            [](const AgentRunRow& r) { return r.status != "running"; }))
+                return true;
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        return false;
+    };
+
+    DOCTEST_REQUIRE(sched.tickNow().isOk());
+    DOCTEST_CHECK(waitFinishedRuns(1));
+    DOCTEST_CHECK_EQ(store.listRuns(taskId.value(), 10).value().size(), 1u);
+
+    nowSec += 61;   // 当天下一分钟：已有当天 run → 不再派发
+    DOCTEST_REQUIRE(sched.tickNow().isOk());
+    std::this_thread::sleep_for(std::chrono::milliseconds(80));
+    DOCTEST_CHECK_EQ(store.listRuns(taskId.value(), 10).value().size(), 1u);
+
+    std::tm nextDay = base;
+    nextDay.tm_mday += 1;   // 次日（mktime 归一）
+    nowSec = atLocal(nextDay, 0, 5);
+    DOCTEST_REQUIRE(sched.tickNow().isOk());
+    DOCTEST_CHECK(waitFinishedRuns(2));
+    DOCTEST_CHECK_EQ(store.listRuns(taskId.value(), 10).value().size(), 2u);
+
+    sched.stopAll();
+    return true;
+})
+
 // 坏 trigger_config 曾是**静默** continue：用户看到任务在列表里存在、永不触发、
 // 没有任何提示（UI 用同一份 JSON 渲染，两边对「配置是否有效」的判断还会各自漂移）。
 // 契约：解码失败 = 一条带 task id 的 LOG_WARN + 本分钟不派发。

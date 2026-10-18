@@ -19,6 +19,17 @@
 #include "platform/utf8.h"
 
 namespace module::agent {
+
+std::string currentTimePromptLine(std::time_t nowSec) {
+    std::tm local{};
+    core::time::localTime(nowSec, &local);
+    char buf[64];
+    std::snprintf(buf, sizeof(buf), "当前本地时间：%04d-%02d-%02d %02d:%02d",
+                  local.tm_year + 1900, local.tm_mon + 1, local.tm_mday,
+                  local.tm_hour, local.tm_min);
+    return std::string(buf);
+}
+
 namespace {
 
 // max_iterations 硬上限 50（loop 内 clamp，不只靠 UI 钮制）
@@ -203,10 +214,11 @@ Result<int64_t> AgentLoop::run(const AgentTask& task,
             error = "达到迭代上限 " + std::to_string(iterations);
             break;
         }
-        // system prompt：context note 非空且 autoNote 开时注入任务记忆；空串 = 不发 system 字段
-        std::string systemPrompt;
+        // system prompt：始终带「当前本地时间」（模型没有时钟，日期类任务靠宿主给日期）；
+        // context note 非空且 autoNote 开时再追加任务记忆
+        std::string systemPrompt = currentTimePromptLine(std::time(nullptr));
         if (task.autoNote && !task.contextNote.empty()) {
-            systemPrompt = "\n\n[任务上下文记忆]\n" + task.contextNote;
+            systemPrompt += "\n\n[任务上下文记忆]\n" + task.contextNote;
         }
         // 槽位→真实 model id 由端点实现解析
         auto resp = llm_.send(messages, toolsJson, systemPrompt, task.modelSlot);

@@ -242,9 +242,10 @@ constexpr const char* kModelSlotLabels[] = {
 constexpr int kModelSlotCount = static_cast<int>(
     sizeof(kModelSlotKeys) / sizeof(kModelSlotKeys[0]));
 
-constexpr const char* kTriggerKeys[] = {"manual", "schedule", "resident", "event"};
-constexpr const char* kTriggerLabels[] = {"手动", "定时", "常驻", "事件"};
-constexpr int kTriggerCount = 4;
+// daily = 每天（不指定时刻）：当天首次打开后的第一个调度周期跑一次，见 Scheduler::tickNow
+constexpr const char* kTriggerKeys[] = {"manual", "schedule", "resident", "event", "daily"};
+constexpr const char* kTriggerLabels[] = {"手动", "定时", "常驻", "事件", "每天"};
+constexpr int kTriggerCount = 5;
 constexpr int kTriggerScheduleIdx = 1;
 constexpr int kTriggerEventIdx = 3;
 
@@ -292,6 +293,14 @@ int triggerIndexOf(const std::string& triggerType) {
         if (triggerType == kTriggerKeys[i]) return i;
     }
     return 0;   // 未知触发类型 → 显示「手动」，保存时按当前下拉值归一
+}
+
+// 展示用文案：已知类型给中文标签，未知类型原样回显（不伪装成「手动」）
+std::string triggerLabelOf(const std::string& triggerType) {
+    for (int i = 0; i < kTriggerCount; ++i) {
+        if (triggerType == kTriggerKeys[i]) return kTriggerLabels[i];
+    }
+    return triggerType;
 }
 
 int slotIndexOf(const std::string& slotKey) {
@@ -1983,7 +1992,7 @@ void AgentModule::composeTaskDetailDialog(
         if (detailTaskRow_) {
             const AgentTaskRow& task = *detailTaskRow_;
             info = "目标：" + task.goal;
-            info += " · 触发：" + task.triggerType;
+            info += " · 触发：" + triggerLabelOf(task.triggerType);
             if (task.triggerType == "schedule") {
                 const std::string cron = cronTextOf(task);
                 info += " · cron：" + (cron.empty() ? "（未设置）" : cron);
