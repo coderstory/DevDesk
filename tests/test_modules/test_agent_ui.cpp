@@ -11,7 +11,11 @@
 //   任务弹窗 agent.dialog.task.*（新建 / 编辑共用）：
 //          .goal（多行）/ .trigger / .cron（仅定时）/ .once（仅闹钟，本地时间输入）/
 //          .limit（仅定时·事件，行为开关行的"只跑一次"）/
-//          .slot / .iter / .destructive / .cancel / .save / .close / .error（有错才渲染）
+//          .slot / .iter / .destructive / .cancel / .save / .close / .error（有错才渲染）/
+//          .aichip（标题行「AI 生成草稿」chip，T7b）
+//   AI 草稿子弹窗 agent.dialog.task.draft.*（叠在任务弹窗上，zIndex 1100，T7b）：
+//          .input（多行）/ .generate / .dismiss / .close / .caption /
+//          .notice / .warnings（生成完成才渲染）/ .error（失败 / 校验错才渲染）
 //   详情弹窗 agent.dialog.detail.*：.info / .runlist.<i>[.err] / .msgscroll /
 //          .msg.<i>[.badge / .toggle / .preview / .blk.<j>[.out]] / .close
 //   旧页内表单（agent.form.* / agent.edit.*）与页内详情展开区已删除——本文件用
@@ -43,6 +47,7 @@
 #include <components/input.h>   // InputState：读回弹窗内输入框真实文本（预填判据）
 #include <eui/dsl.h>
 
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -3676,6 +3681,464 @@ REGISTER_TEST(agent_ui_dialog_switch_labels_fit_boxes,
     composeTo(ui5, mod, kScreen, "agent_ui_labelfit5");
     DOCTEST_CHECK_MESSAGE(ui5.find("agent.dialog.task.limit") == nullptr,
                           "手动触发渲染了「只跑一次」开关（写了也没人消费）");
+
+    mod.onStop();
+    return true;
+})
+
+// ---- T7b：AI 草稿 chip + 子弹窗（输入 / 异步生成 / 预填 / 降级警告）----
+//
+// 异步用例口径：worker 完成只置原子并 requestUiUpdate；无头测试的帧必须自己驱动，
+// 轮询循环里每帧新建命名 Ui（eui::Ui 不做赋值复用），settle 后再补一帧取断言面。
+// 所有 mock 响应体 = Anthropic content[0].text 包草稿 JSON（转义交给 stringify）。
+
+namespace {
+
+std::string draftResponseBody(const std::string& draftJson) {
+    auto escaped = platform::json::stringify(platform::json::makeString(draftJson));
+    if (escaped.isFail()) return "{}";
+    return "{\"id\":\"m1\",\"stop_reason\":\"end_turn\",\"content\":[{"
+           "\"type\":\"text\",\"text\":" +
+           escaped.value() +
+           "}],\"usage\":{\"input_tokens\":1,\"output_tokens\":1}}";
+}
+
+} // namespace
+
+REGISTER_TEST(agent_ui_draft_chip_and_subdialog_lifecycle,
+              "agent_ui_draft: 标题行 chip 几何（不压 goal 行 / 不压 ✕）/ 子弹窗开合"
+              "（chip·✕·遮罩·Esc 先子后父）/ 外层 500 高不动", {
+    test_support::TestDb tdb("agentui", "draftlife");
+    test_support::FakeProfileSource profile;
+    ToolGuard statsGuard{"app.stats", "app.notify"};
+    core::ToolRegistry::instance().unregisterTool("app.stats");
+    core::ToolRegistry::instance().unregisterTool("app.notify");
+
+    module::agent::AgentModule::Deps deps;
+    deps.db = &tdb.handle();
+    deps.profileSource = &profile;
+    module::agent::AgentModule mod(deps);
+    mod.onStart();
+
+    eui::Ui uiA;
+    composeTo(uiA, mod, kScreen, "agent_ui_dfl0");
+    DOCTEST_REQUIRE(clickId(uiA, "agent.page.newTask.bg"));
+    eui::Ui uiB;
+    composeTo(uiB, mod, kScreen, "agent_ui_dfl1");
+
+    // 外层几何契约：500 高原样（T7b 只在标题行加 chip，不新增行）
+    const auto* panel = uiB.find("agent.dialog.task.panel");
+    DOCTEST_REQUIRE(panel != nullptr);
+    DOCTEST_CHECK_MESSAGE(nearPx(panel->frame.height, 500.0f),
+                          "任务弹窗高应恒为 500，实测 " +
+                              std::to_string(panel->frame.height));
+
+    // chip 存在 + 几何：面板内、底 ≤ goal 行顶（面板内 y=64）、右缘 ≤ ✕ 左缘
+    const auto* chipBg = uiB.find("agent.dialog.task.aichip.bg");
+    DOCTEST_REQUIRE(chipBg != nullptr);
+    DOCTEST_CHECK_MESSAGE(frameContained(*panel, *chipBg),
+                          "AI chip 跑出弹窗面板");
+    DOCTEST_CHECK_MESSAGE(
+        chipBg->frame.y + chipBg->frame.height <= panel->frame.y + 64.0f + 0.5f,
+        "AI chip 底 " + std::to_string(chipBg->frame.y + chipBg->frame.height) +
+            " 压到任务目标行顶 " + std::to_string(panel->frame.y + 64.0f));
+    const auto* closeBtn = uiB.find("agent.dialog.task.close");
+    DOCTEST_REQUIRE(closeBtn != nullptr);
+    DOCTEST_CHECK_MESSAGE(chipBg->frame.x + chipBg->frame.width <=
+                              closeBtn->frame.x + 0.5f,
+                          "AI chip 右缘压到 ✕ 关闭钮");
+
+    // ① 点 chip 开子弹窗：320 高、输入框/按钮行都在面板内、外层仍在
+    DOCTEST_REQUIRE(clickId(uiB, "agent.dialog.task.aichip.bg"));
+    eui::Ui uiC;
+    composeTo(uiC, mod, kScreen, "agent_ui_dfl2");
+    const auto* dpanel = uiC.find("agent.dialog.task.draft.panel");
+    DOCTEST_REQUIRE(dpanel != nullptr);
+    DOCTEST_CHECK_MESSAGE(nearPx(dpanel->frame.height, 320.0f),
+                          "AI 草稿子弹窗高应恒为 320，实测 " +
+                              std::to_string(dpanel->frame.height));
+    const auto* dinput = uiC.find("agent.dialog.task.draft.input");
+    const auto* genBtn = uiC.find("agent.dialog.task.draft.generate");
+    const auto* dismissBtn = uiC.find("agent.dialog.task.draft.dismiss");
+    DOCTEST_REQUIRE(dinput != nullptr);
+    DOCTEST_REQUIRE(genBtn != nullptr);
+    DOCTEST_REQUIRE(dismissBtn != nullptr);
+    DOCTEST_CHECK_MESSAGE(frameContained(*dpanel, *dinput),
+                          "草稿输入框跑出子弹窗");
+    DOCTEST_CHECK_MESSAGE(frameContained(*dpanel, *genBtn) &&
+                              frameContained(*dpanel, *dismissBtn),
+                          "按钮行跑出子弹窗");
+    DOCTEST_CHECK_MESSAGE(
+        genBtn->frame.y + genBtn->frame.height <= dpanel->frame.y + 248.0f + 0.5f,
+        "按钮行底压到结果行顶（面板内 248）");
+    DOCTEST_CHECK(uiC.find("agent.dialog.task.panel") != nullptr);
+
+    // ② ✕ 关子弹窗（外层保留）
+    DOCTEST_REQUIRE(clickId(uiC, "agent.dialog.task.draft.close"));
+    eui::Ui uiD;
+    composeTo(uiD, mod, kScreen, "agent_ui_dfl3");
+    DOCTEST_CHECK(uiD.find("agent.dialog.task.draft.panel") == nullptr);
+    DOCTEST_CHECK(uiD.find("agent.dialog.task.panel") != nullptr);
+
+    // ③ 重开 + Esc：先关子弹窗，再一次 Esc 才关外层
+    DOCTEST_REQUIRE(clickId(uiD, "agent.dialog.task.aichip.bg"));
+    eui::Ui uiE;
+    composeTo(uiE, mod, kScreen, "agent_ui_dfl4");
+    DOCTEST_REQUIRE(uiE.find("agent.dialog.task.draft.panel") != nullptr);
+    eui::KeyEvent esc;
+    esc.key = eui::InputKey::Escape;
+    esc.action = eui::KeyAction::Press;
+    DOCTEST_CHECK(mod.onKeyEvent(esc));
+    eui::Ui uiF;
+    composeTo(uiF, mod, kScreen, "agent_ui_dfl5");
+    DOCTEST_CHECK(uiF.find("agent.dialog.task.draft.panel") == nullptr);
+    DOCTEST_CHECK(uiF.find("agent.dialog.task.panel") != nullptr);
+    DOCTEST_CHECK(mod.onKeyEvent(esc));
+    eui::Ui uiG;
+    composeTo(uiG, mod, kScreen, "agent_ui_dfl6");
+    DOCTEST_CHECK(uiG.find("agent.dialog.task.panel") == nullptr);
+
+    // ④ 遮罩点击关子弹窗（dialog 组件 backdrop onClick → onOpenChange(false)）
+    DOCTEST_REQUIRE(clickId(uiG, "agent.page.newTask.bg"));
+    eui::Ui uiH;
+    composeTo(uiH, mod, kScreen, "agent_ui_dfl7");
+    DOCTEST_REQUIRE(clickId(uiH, "agent.dialog.task.aichip.bg"));
+    eui::Ui uiI;
+    composeTo(uiI, mod, kScreen, "agent_ui_dfl8");
+    DOCTEST_REQUIRE_MESSAGE(
+        clickId(uiI, "agent.dialog.task.draft.backdrop"),
+        "子弹窗遮罩 agent.dialog.task.draft.backdrop 缺失");
+    eui::Ui uiJ;
+    composeTo(uiJ, mod, kScreen, "agent_ui_dfl9");
+    DOCTEST_CHECK(uiJ.find("agent.dialog.task.draft.panel") == nullptr);
+    DOCTEST_CHECK(uiJ.find("agent.dialog.task.panel") != nullptr);
+
+    mod.onStop();
+    return true;
+})
+
+REGISTER_TEST(agent_ui_draft_async_prefill_no_autosave,
+              "agent_ui_draft: 异步生成回主线程预填（goal/cron/触发/记忆）/ 完成"
+              "提示行 / 永不自动落库", {
+    test_support::TestDb tdb("agentui", "draftprefill");
+    test_support::FakeProfileSource profile;
+    ToolGuard statsGuard{"app.stats", "app.notify"};
+    core::ToolRegistry::instance().unregisterTool("app.stats");
+    core::ToolRegistry::instance().unregisterTool("app.notify");
+
+    const std::string draftJson =
+        R"({"goal":"每天 8 点整理热榜并发通知","contextNote":"只处理 top3",)"
+        R"("triggerType":"schedule","cron":"0 8 * * *","events":[],)"
+        R"("onceLocal":"","maxIterations":10,"allowDestructive":false,)"
+        R"("needsUserInput":[]})";
+    const std::string body = draftResponseBody(draftJson);
+    module::agent::AgentModule::Deps deps;
+    deps.db = &tdb.handle();
+    deps.profileSource = &profile;
+    deps.http = [body](const platform::http::Request&) {
+        platform::http::Response res;
+        res.statusCode = 200;
+        res.body = body;
+        return core::Result<platform::http::Response>::ok(res);
+    };
+    module::agent::AgentModule mod(deps);
+    mod.onStart();
+
+    eui::Ui uiA;
+    composeTo(uiA, mod, kScreen, "agent_ui_dpf0");
+    DOCTEST_REQUIRE(clickId(uiA, "agent.page.newTask.bg"));
+    eui::Ui uiB;
+    composeTo(uiB, mod, kScreen, "agent_ui_dpf1");
+    DOCTEST_REQUIRE(clickId(uiB, "agent.dialog.task.aichip.bg"));
+    eui::Ui uiC;
+    composeTo(uiC, mod, kScreen, "agent_ui_dpf2");
+    auto* hit = uiC.find("agent.dialog.task.draft.input.hit");
+    DOCTEST_REQUIRE(hit != nullptr);
+    typeInto(hit, "每天早上八点看一下热榜，有大新闻就通知我");
+    DOCTEST_REQUIRE(clickId(uiC, "agent.dialog.task.draft.generate.bg"));
+
+    // 轮询驱动主线程收割（worker 完成即置位，上限 ~2s）
+    bool settled = false;
+    for (int i = 0; i < 400 && !settled; ++i) {
+        eui::Ui frame;
+        composeTo(frame, mod, kScreen, "agent_ui_dpf3");
+        settled = frame.find("agent.dialog.task.draft.notice") != nullptr ||
+                  frame.find("agent.dialog.task.draft.error") != nullptr;
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    DOCTEST_REQUIRE_MESSAGE(settled, "生成在 2s 内未回到主线程（reap 未收割）");
+    eui::Ui u;
+    composeTo(u, mod, kScreen, "agent_ui_dpf4");
+
+    // 预填：只填模型给出的可信字段，回 UI 线程后的表单可读回
+    DOCTEST_CHECK_EQ(inputText(u, "agent.dialog.task.goal"),
+                     std::string("每天 8 点整理热榜并发通知"));
+    DOCTEST_CHECK_EQ(inputText(u, "agent.dialog.task.cron"),
+                     std::string("0 8 * * *"));
+    DOCTEST_CHECK_EQ(inputText(u, "agent.dialog.task.note"),
+                     std::string("只处理 top3"));
+    const auto* trigLabel = u.find("agent.dialog.task.trigger.label");
+    DOCTEST_REQUIRE(trigLabel != nullptr);
+    DOCTEST_CHECK_EQ(trigLabel->text, std::string("定时"));
+    // 完成提示行 + 无警告/错误行；子弹窗与外层都保持打开（生成不关窗）
+    const auto* notice = u.find("agent.dialog.task.draft.notice");
+    DOCTEST_REQUIRE(notice != nullptr);
+    DOCTEST_CHECK(notice->text.find("已预填表单") != std::string::npos);
+    DOCTEST_CHECK(notice->text.find("定时") != std::string::npos);
+    DOCTEST_CHECK(u.find("agent.dialog.task.draft.warnings") == nullptr);
+    DOCTEST_CHECK(u.find("agent.dialog.task.draft.error") == nullptr);
+    DOCTEST_CHECK(u.find("agent.dialog.task.draft.panel") != nullptr);
+    DOCTEST_CHECK(u.find("agent.dialog.task.panel") != nullptr);
+
+    // 生成结果永不自动保存：库里一个任务都没有，保存仍是用户动作
+    module::agent::AgentStore store(tdb.handle());
+    auto tasks = store.listTasks();
+    DOCTEST_REQUIRE(tasks.isOk());
+    DOCTEST_CHECK_EQ(tasks.value().size(), static_cast<size_t>(0));
+
+    mod.onStop();
+    return true;
+})
+
+REGISTER_TEST(agent_ui_draft_degrade_warning_no_trigger_takeover,
+              "agent_ui_draft: 触发载荷校验失败降级为警告（cron 非法）——表单触发"
+              "不被接管、goal 照常预填、警告行可见、不落库", {
+    test_support::TestDb tdb("agentui", "draftwarn");
+    test_support::FakeProfileSource profile;
+    ToolGuard statsGuard{"app.stats", "app.notify"};
+    core::ToolRegistry::instance().unregisterTool("app.stats");
+    core::ToolRegistry::instance().unregisterTool("app.notify");
+
+    const std::string draftJson =
+        R"({"goal":"整理逾期待办","contextNote":"",)"
+        R"("triggerType":"schedule","cron":"完全不是 cron","events":[],)"
+        R"("onceLocal":"","maxIterations":10,"allowDestructive":false,)"
+        R"("needsUserInput":[]})";
+    const std::string body = draftResponseBody(draftJson);
+    module::agent::AgentModule::Deps deps;
+    deps.db = &tdb.handle();
+    deps.profileSource = &profile;
+    deps.http = [body](const platform::http::Request&) {
+        platform::http::Response res;
+        res.statusCode = 200;
+        res.body = body;
+        return core::Result<platform::http::Response>::ok(res);
+    };
+    module::agent::AgentModule mod(deps);
+    mod.onStart();
+
+    eui::Ui uiA;
+    composeTo(uiA, mod, kScreen, "agent_ui_dwr0");
+    DOCTEST_REQUIRE(clickId(uiA, "agent.page.newTask.bg"));
+    eui::Ui uiB;
+    composeTo(uiB, mod, kScreen, "agent_ui_dwr1");
+    // 先手动选「定时」：模型载荷不可信时不得把它改掉 / 也不得回填坏 cron
+    DOCTEST_REQUIRE(callDropdownChange(uiB, "agent.dialog.task.trigger", 1));
+    DOCTEST_REQUIRE(clickId(uiB, "agent.dialog.task.aichip.bg"));
+    eui::Ui uiC;
+    composeTo(uiC, mod, kScreen, "agent_ui_dwr2");
+    auto* hit = uiC.find("agent.dialog.task.draft.input.hit");
+    DOCTEST_REQUIRE(hit != nullptr);
+    typeInto(hit, "每天整理一次逾期待办");
+    DOCTEST_REQUIRE(clickId(uiC, "agent.dialog.task.draft.generate.bg"));
+
+    bool settled = false;
+    for (int i = 0; i < 400 && !settled; ++i) {
+        eui::Ui frame;
+        composeTo(frame, mod, kScreen, "agent_ui_dwr3");
+        settled = frame.find("agent.dialog.task.draft.notice") != nullptr ||
+                  frame.find("agent.dialog.task.draft.error") != nullptr;
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    DOCTEST_REQUIRE_MESSAGE(settled, "生成在 2s 内未回到主线程（reap 未收割）");
+    eui::Ui u;
+    composeTo(u, mod, kScreen, "agent_ui_dwr4");
+
+    // goal 预填成功；触发不被接管：仍是用户选的「定时」，坏 cron 一字不回填
+    DOCTEST_CHECK_EQ(inputText(u, "agent.dialog.task.goal"),
+                     std::string("整理逾期待办"));
+    const auto* trigLabel = u.find("agent.dialog.task.trigger.label");
+    DOCTEST_REQUIRE(trigLabel != nullptr);
+    DOCTEST_CHECK_EQ(trigLabel->text, std::string("定时"));
+    DOCTEST_CHECK(inputText(u, "agent.dialog.task.cron").empty());
+    // 降级警告可见（不 block 整体）；完成提示行也在
+    const auto* warn = u.find("agent.dialog.task.draft.warnings");
+    DOCTEST_REQUIRE(warn != nullptr);
+    DOCTEST_CHECK(warn->text.find("cron") != std::string::npos);
+    const auto* notice = u.find("agent.dialog.task.draft.notice");
+    DOCTEST_REQUIRE(notice != nullptr);
+    DOCTEST_CHECK(notice->text.find("已预填表单") != std::string::npos);
+
+    module::agent::AgentStore store(tdb.handle());
+    auto tasks = store.listTasks();
+    DOCTEST_REQUIRE(tasks.isOk());
+    DOCTEST_CHECK_EQ(tasks.value().size(), static_cast<size_t>(0));
+
+    mod.onStop();
+    return true;
+})
+
+REGISTER_TEST(agent_ui_draft_error_paths,
+              "agent_ui_draft: 空输入不发包 / 上游 500 → 错误行呈现、表单不动、不落库", {
+    test_support::TestDb tdb("agentui", "drafterr");
+    test_support::FakeProfileSource profile;
+    ToolGuard statsGuard{"app.stats", "app.notify"};
+    core::ToolRegistry::instance().unregisterTool("app.stats");
+    core::ToolRegistry::instance().unregisterTool("app.notify");
+
+    int calls = 0;
+    module::agent::AgentModule::Deps deps;
+    deps.db = &tdb.handle();
+    deps.profileSource = &profile;
+    deps.http = [&calls](const platform::http::Request&) {
+        ++calls;
+        platform::http::Response res;
+        res.statusCode = 500;
+        res.body = "boom";
+        return core::Result<platform::http::Response>::ok(res);
+    };
+    module::agent::AgentModule mod(deps);
+    mod.onStart();
+
+    eui::Ui uiA;
+    composeTo(uiA, mod, kScreen, "agent_ui_der0");
+    DOCTEST_REQUIRE(clickId(uiA, "agent.page.newTask.bg"));
+    eui::Ui uiB;
+    composeTo(uiB, mod, kScreen, "agent_ui_der1");
+    DOCTEST_REQUIRE(clickId(uiB, "agent.dialog.task.aichip.bg"));
+    eui::Ui uiC;
+    composeTo(uiC, mod, kScreen, "agent_ui_der2");
+
+    // ① 空输入：校验错误行，一个包都不发（不起线程）
+    DOCTEST_REQUIRE(clickId(uiC, "agent.dialog.task.draft.generate.bg"));
+    eui::Ui uiD;
+    composeTo(uiD, mod, kScreen, "agent_ui_der3");
+    const auto* err = uiD.find("agent.dialog.task.draft.error");
+    DOCTEST_REQUIRE(err != nullptr);
+    DOCTEST_CHECK(err->text.find("一句话") != std::string::npos);
+    DOCTEST_CHECK_EQ(calls, 0);
+
+    // ② 上游 500：请求失败 → 错误行、无预填、不落库
+    auto* hit = uiD.find("agent.dialog.task.draft.input.hit");
+    DOCTEST_REQUIRE(hit != nullptr);
+    typeInto(hit, "每天整理逾期待办");
+    DOCTEST_REQUIRE(clickId(uiD, "agent.dialog.task.draft.generate.bg"));
+    bool settled = false;
+    for (int i = 0; i < 400 && !settled; ++i) {
+        eui::Ui frame;
+        composeTo(frame, mod, kScreen, "agent_ui_der4");
+        settled = frame.find("agent.dialog.task.draft.notice") != nullptr ||
+                  frame.find("agent.dialog.task.draft.error") != nullptr;
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    DOCTEST_REQUIRE_MESSAGE(settled, "失败结果在 2s 内未回到主线程");
+    eui::Ui u;
+    composeTo(u, mod, kScreen, "agent_ui_der5");
+    DOCTEST_CHECK(u.find("agent.dialog.task.draft.error") != nullptr);
+    DOCTEST_CHECK(u.find("agent.dialog.task.draft.notice") == nullptr);
+    DOCTEST_CHECK(inputText(u, "agent.dialog.task.goal").empty());
+    DOCTEST_CHECK(calls >= 1);
+
+    module::agent::AgentStore store(tdb.handle());
+    auto tasks = store.listTasks();
+    DOCTEST_REQUIRE(tasks.isOk());
+    DOCTEST_CHECK_EQ(tasks.value().size(), static_cast<size_t>(0));
+
+    mod.onStop();
+    return true;
+})
+
+REGISTER_TEST(agent_ui_draft_close_discards_inflight_result,
+              "agent_ui_draft: 生成中关子弹窗 → 请求不杀、结果按 epoch 作废，"
+              "表单一字不动、重开可见「已作废」提示 / 生成中按钮文案", {
+    test_support::TestDb tdb("agentui", "draftdiscard");
+    test_support::FakeProfileSource profile;
+    ToolGuard statsGuard{"app.stats", "app.notify"};
+    core::ToolRegistry::instance().unregisterTool("app.stats");
+    core::ToolRegistry::instance().unregisterTool("app.notify");
+
+    // 闸门 mock：压住响应直到测试放行（5s 自愈上限防任何路径挂死）
+    std::atomic<bool> release{false};
+    const std::string draftJson =
+        R"({"goal":"不该被预填的目标","contextNote":"",)"
+        R"("triggerType":"manual","cron":"","events":[],"onceLocal":"",)"
+        R"("maxIterations":10,"allowDestructive":false,"needsUserInput":[]})";
+    const std::string body = draftResponseBody(draftJson);
+    module::agent::AgentModule::Deps deps;
+    deps.db = &tdb.handle();
+    deps.profileSource = &profile;
+    deps.http = [&release, body](const platform::http::Request&) {
+        auto t0 = std::chrono::steady_clock::now();
+        while (!release.load() &&
+               std::chrono::steady_clock::now() - t0 < std::chrono::seconds(5)) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+        platform::http::Response res;
+        res.statusCode = 200;
+        res.body = body;
+        return core::Result<platform::http::Response>::ok(res);
+    };
+    module::agent::AgentModule mod(deps);
+    mod.onStart();
+
+    eui::Ui uiA;
+    composeTo(uiA, mod, kScreen, "agent_ui_ddc0");
+    DOCTEST_REQUIRE(clickId(uiA, "agent.page.newTask.bg"));
+    eui::Ui uiB;
+    composeTo(uiB, mod, kScreen, "agent_ui_ddc1");
+    DOCTEST_REQUIRE(clickId(uiB, "agent.dialog.task.aichip.bg"));
+    eui::Ui uiC;
+    composeTo(uiC, mod, kScreen, "agent_ui_ddc2");
+    auto* hit = uiC.find("agent.dialog.task.draft.input.hit");
+    DOCTEST_REQUIRE(hit != nullptr);
+    typeInto(hit, "随便描述一句");
+    DOCTEST_REQUIRE(clickId(uiC, "agent.dialog.task.draft.generate.bg"));
+
+    // 生成在途（被闸压住，此处无竞态）：按钮呈生成中态
+    eui::Ui uiGen;
+    composeTo(uiGen, mod, kScreen, "agent_ui_ddc3");
+    const auto* genText = uiGen.find("agent.dialog.task.draft.generate.text");
+    DOCTEST_REQUIRE(genText != nullptr);
+    DOCTEST_CHECK_EQ(genText->text, std::string("生成中…"));
+
+    // 在途时关掉子弹窗 → epoch 作废；放行闸门让请求自然跑完（请求不被杀）
+    DOCTEST_REQUIRE(clickId(uiGen, "agent.dialog.task.draft.close"));
+    release.store(true);
+
+    // 持续 compose 驱动主线程收割；重开子弹窗验证「已作废」而不是预填
+    bool discarded = false;
+    for (int i = 0; i < 400 && !discarded; ++i) {
+        eui::Ui frame;
+        composeTo(frame, mod, kScreen, "agent_ui_ddc4");
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        if (frame.find("agent.dialog.task.draft.panel") != nullptr) {
+            continue;   // 理论不走（已关）；防御
+        }
+        DOCTEST_REQUIRE(clickId(frame, "agent.dialog.task.aichip.bg"));
+        eui::Ui opened;
+        composeTo(opened, mod, kScreen, "agent_ui_ddc5");
+        const auto* err = opened.find("agent.dialog.task.draft.error");
+        if (err != nullptr && err->text.find("作废") != std::string::npos) {
+            discarded = true;
+        } else if (err == nullptr) {
+            // 还没收割完，关掉继续等下一轮
+            clickId(opened, "agent.dialog.task.draft.close");
+        }
+    }
+    DOCTEST_REQUIRE_MESSAGE(discarded, "作废提示在 2s 内未出现");
+
+    // 最终断言面：重开一次取稳定帧——表单一字未动、无完成提示、不落库
+    eui::Ui uPre;
+    composeTo(uPre, mod, kScreen, "agent_ui_ddc6");
+    DOCTEST_REQUIRE(clickId(uPre, "agent.dialog.task.aichip.bg"));
+    eui::Ui u;
+    composeTo(u, mod, kScreen, "agent_ui_ddc7");
+    DOCTEST_CHECK(inputText(u, "agent.dialog.task.goal").empty());
+    DOCTEST_CHECK(u.find("agent.dialog.task.draft.notice") == nullptr);
+    module::agent::AgentStore store(tdb.handle());
+    auto tasks = store.listTasks();
+    DOCTEST_REQUIRE(tasks.isOk());
+    DOCTEST_CHECK_EQ(tasks.value().size(), static_cast<size_t>(0));
 
     mod.onStop();
     return true;

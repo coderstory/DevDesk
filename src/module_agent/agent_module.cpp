@@ -189,6 +189,16 @@ void actionChip(::eui::Ui& ui, const std::string& id, const std::string& label,
         .build();
 }
 
+// 顿号连接（预填摘要用；空表 = 空串）
+std::string joinCnList(const std::vector<std::string>& parts) {
+    std::string out;
+    for (size_t i = 0; i < parts.size(); ++i) {
+        if (i > 0) out += "、";
+        out += parts[i];
+    }
+    return out;
+}
+
 // 「去 Claude 页」引导的跳转动作：Router 未装配时仅 LOG_WARN（测试 compose 无 router 不崩）
 void navigateToClaudePage() {
     auto* router = ::core::appRouter();
@@ -284,6 +294,16 @@ constexpr float kTaskDialogH = 500.0f;
 constexpr float kGoalInputH = 96.0f;
 constexpr float kContextNoteH = 72.0f;
 
+// AI 草稿子弹窗几何（Standard 460 宽；y 均为本弹窗面板内坐标，与任务弹窗互不影响
+// ——外层 500 高 / metaY=224 契约靠「不往外层里塞行」守住，chip 是标题行内绝对定位）
+constexpr float kDraftDialogH = 320.0f;
+constexpr float kDraftInputH = 88.0f;
+constexpr float kDraftGenH = 36.0f;
+// 标题行「AI 生成草稿」chip：右缘距 ✕（w-56）一个 gap；高 32 与 actionChip 同款
+constexpr float kDraftChipW = 96.0f;
+constexpr float kDraftChipH = 32.0f;
+constexpr float kDraftChipY = 20.0f;   // 底 52 ≤ goal 行顶 64，不压表单
+
 constexpr float kDetailDialogH = 660.0f;
 
 // 契约：详情弹窗展示最近 5 次 run
@@ -375,6 +395,11 @@ AgentModule::~AgentModule() {
     for (auto& r : runs_) {
         if (r->thread.joinable()) r->thread.join();
     }
+    // AI 草稿线程同理先收（unique_ptr 析构遇 joinable thread 会 terminate）
+    if (draftJob_) {
+        if (draftJob_->thread.joinable()) draftJob_->thread.join();
+        draftJob_.reset();
+    }
 }
 
 void AgentModule::onStart() {
@@ -457,6 +482,18 @@ void AgentModule::onStop() {
         std::lock_guard<std::mutex> lock(runsMu_);
         runs_.clear();
     }
+    // AI 草稿生成线程：请求不可中断，join 等自然结束（DirectLlmClient 120s 超时兜底）。
+    // join 必须先于 llm_.reset()——worker 持有 *llm_（同 runs_ 的「全 join 再放服务」序）
+    if (draftJob_) {
+        if (draftJob_->thread.joinable()) draftJob_->thread.join();
+        draftJob_.reset();
+    }
+    draftDialogOpen_ = false;
+    draftPhase_ = DraftPhase::Idle;
+    draftInput_.clear();
+    draftNotice_.clear();
+    draftWarnings_.clear();
+    draftError_.clear();
     // Scheduler 收口：先退订事件（断 emit→onEvent 入队源），再 stopAll 停派发源并收在跑 run
     eventSubs_.clear();
     if (scheduler_) scheduler_->stopAll();
@@ -632,6 +669,8 @@ void AgentModule::openNewTaskDialog() {
     taskDialogOpen_ = true;
     pageError_.clear();
     editingTaskId_.reset();
+    closeDraftDialog();   // AI 草稿会话随弹窗重置（在途结果一并作废）
+    draftInput_.clear();
     editGoal_.clear();
     editCron_.clear();
     editSlot_ = kModelSlotKeys[0];
@@ -660,6 +699,7 @@ void AgentModule::closeTaskDialog() {
     editTriggerOpen_ = false;
     editSlotOpen_ = false;
     editCronTemplateOpen_ = false;
+    closeDraftDialog();   // 子弹窗随外层一起退（在途结果一并作废）
 }
 
 void AgentModule::setEditCronDraft(const std::string& cron) {
@@ -747,6 +787,8 @@ void AgentModule::openTaskEditor(int64_t taskId) {
     pageError_.clear();
     taskDialogOpen_ = true;
     editingTaskId_ = r.id;
+    closeDraftDialog();   // AI 草稿会话随弹窗重置（在途结果一并作废）
+    draftInput_.clear();
     editGoal_ = r.goal;
     editCron_ = cronTextOf(r);
     editOnceAtText_.clear();
@@ -1402,6 +1444,9 @@ void AgentModule::renderMessageRow(
 }
 
 void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
+    // AI 草稿生成收割：worker 置 done 后 requestUiUpdate 主动要帧，这里每帧先收
+    //（join 已完成线程 → 预填 / 报错 / 丢弃过期结果），再画 UI。
+    reapDraftJob();
     // 库被 GitHub Sync 导入覆盖 → 任务/运行缓存指向旧行；置脏走既有重查路径。
     if (dbImportedDirty_.exchange(false, std::memory_order_acq_rel)) {
         tasksDirty_ = true;
@@ -1763,6 +1808,9 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
     if (taskDialogOpen_) {
         composeTaskDialog(ui, screen, t, themeTokens);
     }
+    if (taskDialogOpen_ && draftDialogOpen_) {
+        composeDraftDialog(ui, screen, t, themeTokens);
+    }
     if (detailTaskId_) {
         composeTaskDetailDialog(ui, screen, t, themeTokens);
     }
@@ -1807,6 +1855,19 @@ void AgentModule::composeTaskDialog(
             .verticalAlign(eui::VerticalAlign::Center)
             .color(t.colors.textTertiary)
             .onClick([this] { closeTaskDialog(); })
+            .build();
+
+        // 「AI 生成草稿」chip（T7b）：标题行内绝对定位，右缘让一个 gap 给 ✕；
+        // pill 形（actionChip 的 overlay 圆角）+ 主品牌底（primary=true）。点开
+        // 子弹窗，不在外层新增任何行——kTaskDialogH / metaY=224 几何契约不受影响
+        ui.stack("agent.dialog.task.aichip.wrap")
+            .position(w - 56.0f - kDialogGap - kDraftChipW, kDraftChipY)
+            .size(kDraftChipW, kDraftChipH)
+            .content([&] {
+                actionChip(ui, "agent.dialog.task.aichip", "AI 生成草稿",
+                           kDraftChipW, /*primary=*/true, /*enabled=*/true,
+                           themeTokens, [this] { openDraftDialog(); });
+            })
             .build();
 
         ui.text("agent.dialog.task.goal.caption")
@@ -2110,6 +2171,278 @@ void AgentModule::composeTaskDialog(
     });
 }
 
+// ---- AI 草稿子弹窗（T7b）----
+//
+// 异步时序：主线程 startDraftGeneration 起 worker（requestTaskDraft → parseTaskDraft →
+// 写槽位 → done.release → requestUiUpdate 要帧）；主线程 compose 每帧 reapDraftJob
+//（done.acquire → join → 预填/报错/丢弃）。worker 全程不摸 UI 成员（输入/槽位值拷贝）；
+// onStop join 先于 llm_.reset()；关闭子弹窗只 bump epoch 作废结果，请求不杀
+//（DirectLlmClient 无取消口，已定案不动）。
+
+void AgentModule::composeDraftDialog(
+    ::eui::Ui& ui, const ::eui::Screen& screen, const ::core::theme::Tokens& t,
+    const components::theme::ThemeColorTokens& themeTokens) {
+    const float w = ui_kit::dialogWidthPx(ui_kit::DialogWidth::Standard);
+    const float h = kDraftDialogH;
+    const float x0 = ui_kit::kDialogInsetX;
+    const float innerW = w - ui_kit::kDialogBodyInsetX;
+    const bool generating = draftPhase_ == DraftPhase::Generating;
+
+    ui_kit::DialogFrame frame;
+    frame.id = "agent.dialog.task.draft";
+    frame.width = ui_kit::DialogWidth::Standard;
+    frame.height = h;
+    frame.open = draftDialogOpen_;
+    frame.zIndex = 1100;   // 叠在任务弹窗（组件默认 1000）之上；遮罩同时挡住外层
+    frame.onOpenChange = [this](bool v) {
+        if (!v) closeDraftDialog();
+    };
+
+    ui_kit::drawDialogFrame(ui, screen, frame, themeTokens, [&] {
+        if (!draftDialogOpen_) return;
+        ui_kit::drawDialogTitle(ui, "agent.dialog.task.draft.title", w,
+                                "AI 生成草稿", t.sizes.fontSizeLarge,
+                                t.colors.textPrimary);
+
+        // ✕ 关闭（与遮罩 / Esc / 「关闭」按钮同一路径）
+        ui.text("agent.dialog.task.draft.close")
+            .position(w - 56.0f, 22.0f)
+            .size(28.0f, 28.0f)
+            .text("✕")
+            .fontSize(14.0f)
+            .lineHeight(28.0f)
+            .horizontalAlign(eui::HorizontalAlign::Center)
+            .verticalAlign(eui::VerticalAlign::Center)
+            .color(t.colors.textTertiary)
+            .onClick([this] { closeDraftDialog(); })
+            .build();
+
+        ui_kit::drawDialogText(
+            ui, "agent.dialog.task.draft.caption", w,
+            "用一句话描述这个任务，AI 生成表单草稿；结果只预填，保存仍由你确认",
+            t.sizes.fontSizeSmall, t.colors.textSecondary,
+            {.x = x0, .y = 64.0f, .height = 18.0f, .lineHeight = 18.0f});
+
+        components::input(ui, "agent.dialog.task.draft.input")
+            .position(x0, 92.0f)
+            .size(innerW, kDraftInputH)
+            .value(draftInput_)
+            .placeholder("例如：每天早上 8 点看一下热榜，有大新闻就通知我")
+            .fontSize(t.sizes.fontSizeBody)
+            .multiline(true)
+            .scrollbar(true)
+            .theme(themeTokens)
+            .onChange([this](const std::string& v) { draftInput_ = v; })
+            .onCancel([this] { closeDraftDialog(); })   // 输入框内 Esc = 关子弹窗
+            .build();
+
+        const float btnY = 196.0f;
+        components::button(ui, "agent.dialog.task.draft.generate")
+            .position(x0, btnY)
+            .size(110.0f, kDraftGenH)
+            .text(generating ? "生成中…" : "生成草稿")
+            .fontSize(t.sizes.fontSizeBody - 1.0f)
+            .theme(themeTokens, true)
+            .textColor(t.colors.onPrimary)
+            .radius(t.sizes.radius)
+            .disabled(generating)
+            .onClick([this] { startDraftGeneration(); })
+            .build();
+        components::button(ui, "agent.dialog.task.draft.dismiss")
+            .position(x0 + 110.0f + kDialogGap, btnY)
+            .size(110.0f, kDraftGenH)
+            .text("关闭")
+            .fontSize(t.sizes.fontSizeBody - 1.0f)
+            .theme(themeTokens, false)
+            .textColor(t.colors.textPrimary)
+            .radius(t.sizes.radius)
+            .border(1.0f, t.colors.borderDefault)
+            .onClick([this] { closeDraftDialog(); })
+            .build();
+
+        // 结果行（Done → notice+warnings；Failed → error；同一槽位互斥渲染）
+        ui_kit::drawDialogText(ui, "agent.dialog.task.draft.notice", w, draftNotice_,
+                               t.sizes.fontSizeSmall, t.colors.textSecondary,
+                               {.x = x0, .y = 248.0f, .height = 18.0f,
+                                .lineHeight = 18.0f, .skipIfEmpty = true});
+        ui_kit::drawDialogText(ui, "agent.dialog.task.draft.warnings", w,
+                               draftWarnings_, t.sizes.fontSizeSmall - 1.0f,
+                               t.colors.warning,
+                               {.x = x0, .y = 268.0f, .height = 44.0f,
+                                .lineHeight = 16.0f, .wrap = true,
+                                .skipIfEmpty = true});
+        ui_kit::drawDialogText(ui, "agent.dialog.task.draft.error", w, draftError_,
+                               t.sizes.fontSizeSmall, t.colors.error,
+                               {.x = x0, .y = 248.0f, .height = 18.0f,
+                                .lineHeight = 18.0f, .skipIfEmpty = true});
+    });
+}
+
+void AgentModule::openDraftDialog() {
+    draftDialogOpen_ = true;
+    std::lock_guard<std::mutex> lock(draftMu_);
+    if (draftJob_ != nullptr &&
+        !draftJob_->done.load(std::memory_order_acquire)) {
+        draftPhase_ = DraftPhase::Generating;   // 请求在途：如实显示生成中
+    } else if (draftPhase_ == DraftPhase::Generating) {
+        draftPhase_ = DraftPhase::Idle;         // 状态陈旧（job 已被收走）
+    }
+    // Done/Failed 的提示行保留到下次生成前——重开还能看到上次结果说明
+}
+
+void AgentModule::closeDraftDialog() {
+    if (!draftDialogOpen_) return;
+    draftDialogOpen_ = false;
+    // 关闭 = 作废未收割的结果：epoch bump 后 reap 走丢弃分支（请求本身不杀）。
+    // Generating 阶段位保留：重开如实显示生成中，跑完在 reap 丢弃后回 Idle + 错误行点名
+    ++draftEpoch_;
+    if (draftPhase_ != DraftPhase::Generating) {
+        draftPhase_ = DraftPhase::Idle;
+    }
+    draftNotice_.clear();
+    draftWarnings_.clear();
+    draftError_.clear();
+}
+
+void AgentModule::startDraftGeneration() {
+    if (draftJob_ != nullptr) return;   // 生成中重复点击（按钮已禁用，再挡一道）
+    const std::string text = trimCopy(draftInput_);
+    if (text.empty()) {
+        draftPhase_ = DraftPhase::Failed;
+        draftNotice_.clear();
+        draftWarnings_.clear();
+        draftError_ = "请先用一句话描述任务";
+        return;
+    }
+    ensureLlm();
+    if (llm_ == nullptr) {
+        draftPhase_ = DraftPhase::Failed;
+        draftNotice_.clear();
+        draftWarnings_.clear();
+        draftError_ = "LLM 配置不可用：请在设置页配置 Claude 后重试";
+        return;
+    }
+    // 防御：先收上一个已完成未收割的 job（正常路径 compose 每帧已收），仍占用则退
+    reapDraftJob();
+    if (draftJob_ != nullptr) {
+        draftPhase_ = DraftPhase::Failed;
+        draftError_ = "上一次请求仍在进行，请稍候";
+        return;
+    }
+    ++draftEpoch_;
+    auto job = std::make_unique<DraftJob>();
+    job->input = text;
+    job->modelSlot = editSlot_;
+    job->epoch = draftEpoch_;
+    DraftJob* raw = job.get();
+    {
+        std::lock_guard<std::mutex> lock(draftMu_);
+        draftJob_ = std::move(job);
+    }
+    draftPhase_ = DraftPhase::Generating;
+    draftNotice_.clear();
+    draftWarnings_.clear();
+    draftError_.clear();
+    try {
+        raw->thread = std::thread([this, raw] {
+            const std::time_t now = deps_.schedulerNow ? deps_.schedulerNow()
+                                                       : core::time::nowUnix();
+            auto resp = requestTaskDraft(*llm_, raw->input, now, raw->modelSlot);
+            if (resp.isFail()) {
+                raw->errorText = resp.errorMessage();
+            } else {
+                auto parsed =
+                    parseTaskDraft(resp.value(), registeredToolNames());
+                if (parsed.isOk()) {
+                    raw->parsed = std::move(parsed.value());
+                    raw->ok = true;
+                } else {
+                    // 连 JSON 都没有：给不出可编辑骨架，按失败呈报（parse 契约）
+                    raw->errorText = parsed.errorMessage();
+                }
+            }
+            raw->done.store(true, std::memory_order_release);
+            // 事件驱动的帧循环不主动重绘，完成即要帧（startTask 同款先例）
+            ::core::platform::requestUiUpdate();
+        });
+    } catch (const std::system_error& e) {
+        // 线程创建失败：槽位归还（线程未启动，无需 join），阶段回失败
+        std::lock_guard<std::mutex> lock(draftMu_);
+        draftJob_.reset();
+        draftPhase_ = DraftPhase::Failed;
+        draftError_ = "生成线程创建失败";
+        LOG_ERROR(std::string("Agent: AI 草稿线程创建失败: ") + e.what());
+    }
+}
+
+void AgentModule::reapDraftJob() {
+    std::unique_ptr<DraftJob> job;
+    {
+        std::lock_guard<std::mutex> lock(draftMu_);
+        if (draftJob_ == nullptr ||
+            !draftJob_->done.load(std::memory_order_acquire)) {
+            return;
+        }
+        job = std::move(draftJob_);
+    }
+    if (job->thread.joinable()) job->thread.join();
+    if (!job->ok) {
+        draftPhase_ = DraftPhase::Failed;
+        draftError_ = job->errorText;
+        return;
+    }
+    if (job->epoch != draftEpoch_) {
+        // 弹窗曾关闭 / 已重开生成：结果按约丢弃，不改表单一个字节
+        draftPhase_ = DraftPhase::Idle;
+        draftError_ = "上次生成已作废（子弹窗曾关闭），请重新生成";
+        return;
+    }
+    applyDraftPrefill(job->parsed);
+    draftPhase_ = DraftPhase::Done;
+}
+
+void AgentModule::applyDraftPrefill(const TaskDraftResult& res) {
+    std::vector<std::string> filled;
+    if (res.goalFilled && !res.draft.goal.empty()) {
+        editGoal_ = res.draft.goal;
+        filled.emplace_back("任务目标");
+    }
+    if (!res.draft.contextNote.empty()) {
+        editContextNote_ = res.draft.contextNote;
+        filled.emplace_back("执行记忆");
+    }
+    // 触发只有「类型 + 载荷都过校验」才采信；不可信时一字不动（含用户已选的类型）
+    if (res.triggerFilled) {
+        const int idx = triggerIndexOf(res.draft.triggerType);
+        editTriggerIdx_ = idx;
+        filled.emplace_back(std::string("触发方式（") + kTriggerLabels[idx] + "）");
+        const auto cfg = decodeTriggerConfig(res.draft.triggerConfig);
+        if (idx == kTriggerScheduleIdx && cfg.isOk()) {
+            setEditCronDraft(cfg.value().cron);
+            if (cfg.value().maxRuns) editMaxRuns_ = *cfg.value().maxRuns;
+        } else if (idx == kTriggerEventIdx && cfg.isOk()) {
+            editEvents_ = {};
+            for (int i = 0; i < kEventCount; ++i) {
+                if (std::find(cfg.value().events.begin(), cfg.value().events.end(),
+                              std::string(kEventNames[i])) !=
+                    cfg.value().events.end()) {
+                    editEvents_[i] = true;
+                }
+            }
+            if (cfg.value().maxRuns) editMaxRuns_ = *cfg.value().maxRuns;
+        } else if (idx == kTriggerOnceIdx && cfg.isOk() && cfg.value().onceAt) {
+            setEditOnceDraft(formatOnceAtText(*cfg.value().onceAt));
+        }
+    }
+    draftNotice_ = filled.empty()
+                       ? std::string("模型没有给出可预填的字段，请手填或换个说法重试")
+                       : "已预填表单：" + joinCnList(filled) + "；请检查后自己点「保存」";
+    // 降级警告 + 模型自报的待补项 → 子弹窗警告行（不 block，用户可见哪些没吃进去）
+    std::vector<std::string> warn = res.draft.warnings;
+    for (const auto& ask : res.needsUserInput) warn.push_back(ask);
+    draftWarnings_ = joinCnList(warn);
+}
+
 // 详情弹窗：配置摘要 / run 列表 / 消息流三段，数据来自模块缓存（run 进行中实时更新）
 void AgentModule::composeTaskDetailDialog(
     ::eui::Ui& ui, const ::eui::Screen& screen, const ::core::theme::Tokens& t,
@@ -2398,6 +2731,10 @@ bool AgentModule::onKeyEvent(const ::eui::KeyEvent& event) {
     if (event.key != eui::InputKey::Escape) return false;
     if (detailTaskId_) {
         closeTaskDetail();
+        return true;
+    }
+    if (taskDialogOpen_ && draftDialogOpen_) {
+        closeDraftDialog();   // Esc 关最上层：先子弹窗，外层留待下一次 Esc
         return true;
     }
     if (taskDialogOpen_) {

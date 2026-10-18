@@ -78,4 +78,9 @@ core::Result<std::string> requestTaskDraft(core::LlmEndpoint& llm,
                                            std::time_t now,
                                            const std::string& modelSlot);
 
+// 注册表快照 → 工具名列表（T7b UI 层喂 parseTaskDraft 的 knownToolNames 用）。
+// 与 buildTaskDraftSystemPrompt 内部取名同源——不新增 ToolRegistry::listNames()：
+// 那会把「注册表返回 shared_ptr」这一层约定泄漏成第二个列举口，两处以后会漂。
+std::vector<std::string> registeredToolNames();
+
 } // namespace module::agent
