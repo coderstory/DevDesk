@@ -4,6 +4,8 @@
 // 对不存在的 id 服务层多为静默 no-op → 工具先查存在性，把「目标不存在」作为 isError 回喂，不给假成功。
 // todo.create 的 description/priority/dueAt 走服务层带属性重载：属性与标题同一条 INSERT 一次落库，
 // 不走「先建后 todo.update」二跳（二跳失败会留下有标题、无属性的半成品，而用户看到的是成功）。
+// todo.list 的 overdue=true 直接委托服务层 listOverdue()（与 Todo 页逾期弹窗同口径），
+// 与 completed=true 互斥；工具层不复制逾期比较逻辑。
 #include "todo_tools.h"
 
 #include "core/logging.h"
@@ -170,7 +172,7 @@ public:
     std::string name() const override { return "todo.list"; }
 
     std::string schemaJson() const override {
-        return R"({"name":"todo.list","description":"列出全部待办任务（含 id/标题/列/优先级/完成态）","input_schema":{"type":"object","properties":{"completed":{"type":"boolean","description":"true=只看已完成，false=只看未完成，缺省=全部"}}}})";
+        return R"({"name":"todo.list","description":"列出待办任务（含 id/标题/列/优先级/完成态）；可按完成态或逾期过滤","input_schema":{"type":"object","properties":{"completed":{"type":"boolean","description":"true=只看已完成，false=只看未完成，缺省=全部"},"overdue":{"type":"boolean","description":"true=只看已逾期任务（截止时间早于当前时间且未完成，与 Todo 页逾期弹窗口径一致）；completed=true 时不可用（互斥）；缺省/false=不按逾期过滤"}}}})";
     }
 
     Result<ToolResult> execute(const ToolArgs& args) override {
@@ -184,7 +186,25 @@ public:
             completed = c.asBool();
         }
 
-        auto tasks = svc_.listAllTasks();
+        std::optional<bool> overdue;
+        if (argsObj.value().has("overdue")) {
+            pj::JsonValue o = argsObj.value().get("overdue");
+            if (!o.isBool()) return toolError("参数 overdue 必须是布尔值");
+            overdue = o.asBool();
+        }
+
+        // 逾期集合本身只含未完成任务，与 completed=true 语义直接矛盾：
+        // 返回错误让调用方纠正，而不是静默给空列表（LLM 会把空列表误读成「没有逾期」）。
+        if (completed.value_or(false) && overdue.value_or(false)) {
+            return toolError(
+                "参数冲突：completed 与 overdue 不能同时为 true"
+                "（逾期任务本身即未完成）");
+        }
+
+        // 逾期口径直接复用服务层 listOverdue()（core/overdue.h 唯一真源），
+        // 与 Todo 页逾期弹窗保持一致，工具层不另写比较逻辑。
+        auto tasks = overdue.value_or(false) ? svc_.listOverdue()
+                                             : svc_.listAllTasks();
         if (tasks.isFail()) {
             return toolError("读取任务失败: " + tasks.errorMessage());
         }

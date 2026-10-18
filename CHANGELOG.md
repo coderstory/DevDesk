@@ -17,6 +17,7 @@
 - feat(agent)：**任务「只跑一次」次数上限**（`trigger_config.max_runs`，跑满自动停用 `acdfa11`）+ **限次额度闸移到 `cronMatches` 之前**（跑满即停每分钟可见，不再等下次匹配 `6e58716`）+ **配置异常任务在列表挂可见标记**（消灭 Scheduler 静默跳过 `bb92b7d`）。
 - fix(agent)：**页内错误行不再粘滞回弹**——用户清除后同一份旧错误不被轮询顶回来；实现为「已展示 runId 集合 + 按任务数剪枝」，多任务各错时逐个展示、不兜圈（`7165f6e` + `c8f5989`）；`message_blocks` text 块缺 `text` 字段不再渲染字面量 `"null"`（`f83b26e`）；已通知 runId 集合随窗口收敛，消灭模块内唯一无界容器（`b48f70c`）。
 - feat(todo)：`todo.create` 一次调用可带 description/priority/dueAt（消灭建任务二跳 `b398e3c`）。
+- feat(todo)：`todo.list` 支持 `overdue` 逾期过滤——直接复用 `TodoService::listOverdue()`（与 Todo 页逾期弹窗同口径）；`completed=true` 与之互斥，返回工具错误而非空列表。
 - fix(github-sync)：**嵌套笔记（子目录）三处口径对齐**——收集递归 + 相对名（Windows 不漂反斜杠）/ 落盘前建父目录 / 备份保留子目录结构（`548b0e4`）；**拉取摘要点名库备份名** + 409 覆盖清单 50 行闸（`5a803be`）；**导入失败摘要点名回滚点**（`fb31ae2`，口径修订见 spec F3）；公开仓警告行与披露文案同口径（`8230fcb`）。
 - fix(settings)：macOS git 探测每圈都查 deadline（持续输出的子进程不再绕过 3s 上界 `31dd9fe`）。
 - fix(markdown)：**冲突未决时显式保存兑现选择**——Ctrl+S / 切笔记 / 退出模块落盘成功即等价于「保留本地」并收掉冲突 toast（否则其「重载磁盘版本」会把刚保存的内容再丢掉）；自动链路仍不越权落盘，退出时未决冲突补 WARN 留痕（`03505df`）。

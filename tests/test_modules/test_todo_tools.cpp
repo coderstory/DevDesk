@@ -127,6 +127,132 @@ REGISTER_TEST(todo_tools_list_empty_then_seeded,
 })
 
 
+// todo.list 的 overdue 过滤：口径与 Todo 页逾期弹窗必须一致（直接复用
+// TodoService::listOverdue），因此用例同时锁工具层结果与服务层实际行为。
+// 边界：用远期/过去 epoch 常数，不依赖真实时钟（服务层无时钟注入点）。
+REGISTER_TEST(todo_tools_list_overdue_filter,
+              "todo.list: overdue=true 只返回逾期未完成；未来/已完成/无截止不命中；completed 冲突报错", {
+    ToolEnv env("list_overdue");
+    DOCTEST_REQUIRE(env.ready);
+    env.tools->registerAll();
+
+    auto cols = env.svc->listColumns();
+    DOCTEST_REQUIRE(cols.isOk());
+    DOCTEST_REQUIRE(!cols.value().empty());
+    const int64_t colId = cols.value().front().id;
+
+    // dueAt 是 Unix 秒：past = 2001 年，future = 2286 年
+    const int64_t past = 1000000000;
+    const int64_t future = 9999999999;
+
+    module::todo::NewTaskAttributes pastDue;
+    pastDue.dueAt = past;
+
+    auto t1 = env.svc->createTask(colId, "过期未完成", pastDue);
+    DOCTEST_REQUIRE(t1.isOk());
+
+    // 未来截止 → 不命中
+    auto t2 = env.svc->createTask(colId, "未来截止");
+    DOCTEST_REQUIRE(t2.isOk());
+    module::todo::Task u2 = t2.value();
+    u2.dueAt = future;
+    DOCTEST_REQUIRE(env.svc->updateTask(u2).isOk());
+
+    // 已完成但已过期 → 不命中
+    auto t3 = env.svc->createTask(colId, "过期已完成", pastDue);
+    DOCTEST_REQUIRE(t3.isOk());
+    DOCTEST_REQUIRE(env.svc->completeTask(t3.value().id).isOk());
+
+    // 无 dueAt → 不命中
+    auto t4 = env.svc->createTask(colId, "无截止");
+    DOCTEST_REQUIRE(t4.isOk());
+
+    auto r = runTool("todo.list", R"({"overdue":true})");
+    DOCTEST_REQUIRE(r.isOk());
+    DOCTEST_CHECK_FALSE(r.value().isError);
+    auto parsed = platform::json::parse(r.value().contentJson);
+    DOCTEST_REQUIRE(parsed.isOk());
+    auto tasks = parsed.value().asObject().get("tasks");
+    DOCTEST_REQUIRE(tasks.isArray());
+    DOCTEST_CHECK_EQ(tasks.size(), 1);
+    DOCTEST_CHECK(r.value().contentJson.find("过期未完成") != std::string::npos);
+    DOCTEST_CHECK(r.value().contentJson.find("未来截止") == std::string::npos);
+    DOCTEST_CHECK(r.value().contentJson.find("过期已完成") == std::string::npos);
+    DOCTEST_CHECK(r.value().contentJson.find("无截止") == std::string::npos);
+    // 出参形状不变：dueAt 仍是原始 epoch，completedAt 仍是 null
+    DOCTEST_CHECK(r.value().contentJson.find("\"dueAt\":1000000000") !=
+                  std::string::npos);
+    DOCTEST_CHECK(r.value().contentJson.find("\"completedAt\":null") !=
+                  std::string::npos);
+
+    // 缺省 / overdue=false → 与旧行为完全一致（4 条全返回，含逾期与非逾期）
+    auto all = runTool("todo.list", "{}");
+    DOCTEST_REQUIRE(all.isOk());
+    DOCTEST_CHECK_FALSE(all.value().isError);
+    auto allParsed = platform::json::parse(all.value().contentJson);
+    DOCTEST_REQUIRE(allParsed.isOk());
+    DOCTEST_CHECK_EQ(allParsed.value().asObject().get("tasks").size(), 4);
+
+    auto explicitFalse = runTool("todo.list", R"({"overdue":false})");
+    DOCTEST_REQUIRE(explicitFalse.isOk());
+    DOCTEST_CHECK_FALSE(explicitFalse.value().isError);
+    DOCTEST_CHECK_EQ(explicitFalse.value().contentJson, all.value().contentJson);
+
+    // completed=false + overdue=true 允许：逾期集合本身即未完成
+    auto incompleteOnly = runTool("todo.list", R"({"completed":false,"overdue":true})");
+    DOCTEST_REQUIRE(incompleteOnly.isOk());
+    DOCTEST_CHECK_FALSE(incompleteOnly.value().isError);
+    DOCTEST_CHECK_EQ(incompleteOnly.value().contentJson, r.value().contentJson);
+
+    // completed=true + overdue=true 是参数冲突 → 工具错误，不是空列表
+    auto conflict = runTool("todo.list", R"({"completed":true,"overdue":true})");
+    DOCTEST_REQUIRE(conflict.isOk());
+    DOCTEST_CHECK(conflict.value().isError);
+    DOCTEST_CHECK(conflict.value().contentJson.find("冲突") != std::string::npos);
+    DOCTEST_CHECK(conflict.value().contentJson.find("逾期") != std::string::npos);
+
+    // 类型错误同样回喂中文说明
+    auto badType = runTool("todo.list", R"({"overdue":"yes"})");
+    DOCTEST_REQUIRE(badType.isOk());
+    DOCTEST_CHECK(badType.value().isError);
+    DOCTEST_CHECK(badType.value().contentJson.find("overdue") != std::string::npos);
+
+    // 归档任务：listOverdue() 现有 SQL 只看 due_at / completed_at，不看 archived_at，
+    // 所以「已归档 + 已逾期 + 未完成」当前仍会返回。本票明确沿用服务层语义
+    // （不改 Todo 页弹窗口径），这里断言实际行为，防止将来误以为工具层过滤了归档。
+    int64_t archiveColId = -1;
+    for (const auto& c : cols.value()) {
+        if (c.kind == "archive") archiveColId = c.id;
+    }
+    DOCTEST_REQUIRE(archiveColId >= 0);
+    auto archived = env.svc->createTask(colId, "归档逾期", pastDue);
+    DOCTEST_REQUIRE(archived.isOk());
+    DOCTEST_REQUIRE(
+        env.svc->moveTask(archived.value().id, archiveColId, 0).isOk());
+
+    auto svcOverdue = env.svc->listOverdue();
+    DOCTEST_REQUIRE(svcOverdue.isOk());
+    DOCTEST_CHECK_EQ(svcOverdue.value().size(), 2u);  // 含归档任务
+
+    auto withArchived = runTool("todo.list", R"({"overdue":true})");
+    DOCTEST_REQUIRE(withArchived.isOk());
+    DOCTEST_CHECK_FALSE(withArchived.value().isError);
+    auto archivedParsed = platform::json::parse(withArchived.value().contentJson);
+    DOCTEST_REQUIRE(archivedParsed.isOk());
+    DOCTEST_CHECK_EQ(archivedParsed.value().asObject().get("tasks").size(), 2);
+    DOCTEST_CHECK(withArchived.value().contentJson.find("归档逾期") !=
+                  std::string::npos);
+
+    // schema 宣传新参数
+    auto found = core::ToolRegistry::instance().find("todo.list");
+    DOCTEST_REQUIRE(found.isOk());
+    const std::string schema = found.value()->schemaJson();
+    DOCTEST_CHECK(schema.find("\"overdue\"") != std::string::npos);
+    DOCTEST_CHECK(schema.find("互斥") != std::string::npos);
+    return true;
+})
+
+
 REGISTER_TEST(todo_tools_create_default_first_column,
               "todo.create: 缺省列=第一列，service 真实落库 + 返回新 id", {
     ToolEnv env("create");
