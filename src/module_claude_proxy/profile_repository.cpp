@@ -687,12 +687,18 @@ core::Result<int> ProfileRepository::backfillCredentialsFromKeychain() {
         // （"DevDesk-<hash>"）；Windows 旧版实际用纯 "DevDesk" 存（keychain/DevDesk/claude%3A<id>.key），
         // 派生空间 miss 时必须回退旧名——否则老用户的密钥永远「找不到」，凭据静默丢失（2026-10-14 实证）。
         auto secretR = platform::keychain::loadSecret(keychainService_, account);
+        std::string primaryError;
         if (secretR.isFail()) {
+            // 回退旧名是 Windows 旧版形态；但**不能丢掉派生空间的原始错误**——
+            // 否则「授权被拒」会被旧名的 not found 覆盖，日志再次说谎
+            //（2026-10-18 实证：派生空间 errSecAuthFailed 被旧名 NotFound 掩盖）。
+            primaryError = secretR.errorMessage();
             secretR = platform::keychain::loadSecret("DevDesk", account);
         }
         if (secretR.isFail()) {
             LOG_WARN("凭据回填：id=" + std::to_string(id) +
-                     " Keychain 读取失败（跳过）: " + secretR.errorMessage());
+                     " Keychain 读取失败（跳过）: 派生空间=" + primaryError +
+                     "；旧名=" + secretR.errorMessage());
             continue;
         }
         if (secretR.value().empty()) {
