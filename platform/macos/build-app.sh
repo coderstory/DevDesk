@@ -11,6 +11,9 @@
 #   scripts/package-macos.sh 把它绝对化后透传（见该脚本 §2 注释）。
 #   DEVDESK_SKIP_LSREGISTER=1 —— 跳过 LaunchServices 注册（打包/DMG 流程用，
 #   默认不设 = 保持既有行为）
+#   DEVDESK_SKIP_SIGN=1 —— 跳过本脚本末尾的签名步骤。只给「组装后还会补拷资源、需要自己
+#   在最后统一签名」的调用方用（当前是 scripts/build-test-run.sh --install，为了保住它
+#   签名前的 sha256 防陈旧断言）；默认不设 = 组装完就签。
 #
 # 产出：$BUILD_DIR/DevDesk.app，其中
 #   * Info.plist 的 CFBundleVersion / CFBundleShortVersionString 由构建目录
@@ -139,6 +142,18 @@ if [ -d "$BUILD_DIR/assets" ]; then
     echo "✅ 资源: $APP_DIR/Contents/MacOS/assets"
 else
     echo "⚠️  未找到 $BUILD_DIR/assets，跳过资源拷贝（先构建 DevDesk 目标生成 assets）" >&2
+fi
+
+# 签名：bundle 组装的**最后一次写入**。到这里二进制、Info.plist 版本号、图标、assets 都已
+# 就位，签完就不能再动 bundle 里任何文件（否则封条失效）。注意：package-macos.sh 和
+# --install 路径在本脚本之后还会补拷 assets，它们必须在自己的写操作完成后再签一次。
+if [ "${DEVDESK_SKIP_SIGN:-0}" = "1" ]; then
+    echo "⏭️  跳过签名（DEVDESK_SKIP_SIGN=1）——调用方必须在所有资源写完后自行签名"
+else
+    if ! bash "$PROJECT_DIR/scripts/sign-macos-app.sh" "$APP_DIR"; then
+        echo "❌ ad-hoc 签名失败：$APP_DIR" >&2
+        exit 1
+    fi
 fi
 
 # 注册到 LaunchServices（让 Finder 立即看到文件关联）

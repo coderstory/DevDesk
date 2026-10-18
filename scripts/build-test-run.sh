@@ -696,11 +696,14 @@ echo "✅ 守卫自检全过（${_GUARD_SELF_COUNT} 道守卫的自检均好树�
 #   ③ 版本号：单一源 = 构建目录 CMakeCache.txt 的 CMAKE_PROJECT_VERSION（同
 #      package-macos.sh §5）；build-app.sh 已把它写进产物 Info.plist，这里断言产物里确实
 #      是它 —— Info.plist 也是「旧壳」会露馅的地方，与二进制同属交付物。
-#   ④ 防陈旧断言 A：bundle 内二进制 == 本次构建产物。
-#   ⑤ 覆盖安装（整包替换）。
-#   ⑥ 防陈旧断言 B（核心交付物）：**已安装**二进制 == 本次构建产物，不一致硬失败并打印
-#      两边 mtime/sha。断言 B 是唯一能证明「用户接下来跑的就是这次编出来的」的检查；断言 A
-#      只证明 bundle 组对了，证明不了装到 /Applications 的那份对。
+#   ④ 防陈旧断言 A：bundle 内二进制 == 本次构建产物（签名前比对，签名会改写 Mach-O 的
+#      嵌入签名，签后 sha256 必然不同）。
+#   ⑤ 签名（ad-hoc）：build-app.sh 组装 + 补拷 assets 之后，bundle 内容已全部就位。签名
+#      必须是最后一次写入，且必须在 ditto 之前 —— 装到 /Applications 的副本才带有效签名。
+#   ⑥ 覆盖安装（整包替换）。
+#   ⑦ 防陈旧断言 B（核心交付物）：**已安装**二进制 == 本次签名后的 bundle 二进制，不一致
+#      硬失败并打印两边 mtime/sha。断言 B 是唯一能证明「用户接下来跑的就是这次编出来的 signed
+#      产物」的检查；断言 A 只证明 bundle 组对了，证明不了装到 /Applications 的那份对。
 if [ "$INSTALL" = "1" ]; then
   INSTALL_DIR="${DEVDESK_INSTALL_DIR:-/Applications/DevDesk.app}"
 # 安装目标必是绝对路径：下面要 rm -rf 它，相对路径会随 cwd 漂移，风险不值得省一行
@@ -730,7 +733,10 @@ if [ "$INSTALL" = "1" ]; then
     echo "✅ 防陈旧断言（${label}）：sha256 ${sha_exp:0:12}… 与本次构建产物一致"
   }
 
-  DEVDESK_BUILD_DIR="$BUILD_DIR_ABS" DEVDESK_SKIP_LSREGISTER=1 bash platform/macos/build-app.sh
+  # DEVDESK_SKIP_SIGN=1：本路径在 build-app.sh 之后还要补拷 assets，签名必须放到最后一次
+  # 写入之后（下面的 ⑤）；这里先跳过，才能在签名前做「bundle 二进制 == 裸构建产物」断言。
+  DEVDESK_BUILD_DIR="$BUILD_DIR_ABS" DEVDESK_SKIP_LSREGISTER=1 DEVDESK_SKIP_SIGN=1 \
+    bash platform/macos/build-app.sh
   APP_DIR="$BUILD_DIR_ABS/DevDesk.app"
   MACOS_DIR="$APP_DIR/Contents/MacOS"
   if [ ! -x "$MACOS_DIR/DevDesk" ]; then
@@ -763,9 +769,14 @@ if [ "$INSTALL" = "1" ]; then
   fi
   echo "✅ 版本 ${APP_VERSION}（bundle Info.plist 与本次构建一致）"
 
-  assert_fresh_binary "$BUILD_DIR/DevDesk" "$MACOS_DIR/DevDesk" "bundle 内二进制"
+  assert_fresh_binary "$BUILD_DIR/DevDesk" "$MACOS_DIR/DevDesk" "bundle 内二进制（签名前）"
 
-  # ⑤ 覆盖安装（整包替换）。ditto 是 macOS 原生的 bundle 拷贝（比 cp -R 更忠实于 bundle 结构）
+  # ⑤ 签名（ad-hoc）：资源已全部就位（build-app.sh 组装 + 上面补拷 assets），签名是 bundle
+  #    的最后一次写入。必须在 ditto 之前 —— 装到 /Applications 的副本才会带有效签名。
+  #    不加 --deep / hardened runtime 的原因见 scripts/sign-macos-app.sh 头注释。
+  bash scripts/sign-macos-app.sh "$APP_DIR"
+
+  # ⑥ 覆盖安装（整包替换）。ditto 是 macOS 原生的 bundle 拷贝（比 cp -R 更忠实于 bundle 结构）
   # 运行中的实例**只警告不杀**：本脚本按规则严禁按进程名杀（会杀掉用户 / 别的 agent 的实例），
   # 按路径杀也只覆盖本 build 目录的产物；这里命中说明用户自己开着 /Applications 的实例，
   # 杀掉会丢他未保存的内容 —— 提示他自己退出重启。
@@ -780,7 +791,17 @@ if [ "$INSTALL" = "1" ]; then
     exit 1
   fi
 
-  assert_fresh_binary "$BUILD_DIR/DevDesk" "$INSTALL_DIR/Contents/MacOS/DevDesk" "已安装二进制"
+  # 签名会改写 Mach-O 的嵌入签名（CodeDirectory 含资源封条），bundle 内二进制不再与裸
+  # build/DevDesk 逐字节相同 —— 这是签名的必然结果，不是陈旧。断言 A 已在签名前证明 bundle
+  # 来自本次构建；这里改为验证装到 /Applications 的副本与刚签名的 bundle 逐字节一致。
+  assert_fresh_binary "$MACOS_DIR/DevDesk" "$INSTALL_DIR/Contents/MacOS/DevDesk" "已安装二进制（签名后）"
+
+  if ! codesign --verify --strict --verbose=4 "$INSTALL_DIR"; then
+    echo "❌ 已安装副本签名校验失败：$INSTALL_DIR" >&2
+    echo "   ditto 应保留 bundle 内容与签名；失败说明安装副本不完整，不要启动它。" >&2
+    exit 1
+  fi
+  echo "✅ 已安装副本签名有效"
 
   if [ ! -d "$INSTALL_DIR/Contents/MacOS/assets" ]; then
     echo "❌ 安装后缺 $INSTALL_DIR/Contents/MacOS/assets（EUI-NEO 按「exe 旁」找资源，缺了会退化）" >&2

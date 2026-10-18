@@ -8,6 +8,7 @@
 
 ## [未发布]
 
+- build(macos): 统一 ad-hoc 签名并校验——新增 `scripts/sign-macos-app.sh`（`--force --sign - --identifier com.devdesk.app` + `codesign --verify --strict`，不加 `--deep` / hardened runtime）；`build-app.sh`、`package-macos.sh`（构建树 + DMG 暂存副本）、`build-test-run.sh --install` 三条路径均在资源写完后签名，修掉 `.app`「Info.plist 未绑定 / Sealed Resources=none」导致本地通知拿不到 bundle 身份的问题。
 - feat(platform)：新增通知接口与 macOS 实现——`platform::notify` 抽象 + `UNUserNotificationCenter` 后端（前台 banner/list/sound、授权状态缓存、裸二进制 `.app` bundle guard）；Windows/其它 POSIX 暂为诚实 stub，测试可用 fake backend 注入。
 - feat(agent)：Scheduler 支持 once 一次性触发（错过不补）——到点窗口内派发一次即停用，已响过以 `agent_runs` 判定（重启不重响），窗口外只记 INFO 不补跑；坏配置/缺 `once_at` 点名 task id WARN。
 - feat(agent)：`trigger_config` 支持 `once_at` 一次性触发载荷（Unix 秒，与 `cron`/`events` 互斥；仅编解码与校验，Scheduler / UI 后续接入）。

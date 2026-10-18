@@ -67,6 +67,10 @@ if [ -z "$(ls -A "$MACOS_DIR/assets/shaders/shadertoy" 2>/dev/null)" ]; then
 fi
 echo "✅ assets 就位（Contents/MacOS/assets）"
 
+# 签名：build-app.sh 组装时已签过，但上面 rm -rf + copy_directory 补拷 assets 让封条失效了。
+# 必须在所有 bundle 写操作之后重签，签名才是最后一步（见 scripts/sign-macos-app.sh 头注释）。
+bash scripts/sign-macos-app.sh "$APP_DIR"
+
 # 版本号单一源 = 顶层 CMakeLists.txt 的 project(DevDesk VERSION ...)，configure 后落到
 # CMakeCache.txt 的 CMAKE_PROJECT_VERSION。不要在别处再写一份版本号。
 APP_VERSION="$(sed -n 's/^CMAKE_PROJECT_VERSION:[A-Za-z]*=\(.*\)$/\1/p' "$BUILD_DIR/CMakeCache.txt" | head -1 | tr -d '\r')"
@@ -84,6 +88,9 @@ STAGE="installer/macos/out/dmg-stage"
 rm -rf "$STAGE"
 mkdir -p "$STAGE"
 cp -R "$APP_DIR" "$STAGE/DevDesk.app"
+# 暂存副本再签一次：不依赖 cp -R 是否完整保留签名元数据，确保进 DMG 的那份就是签名有效的
+# 字节。DMG 里不能再出现「构建树里签过、拷进来却验不过」的副本。
+bash scripts/sign-macos-app.sh "$STAGE/DevDesk.app"
 cp "installer/macos/首次运行（去隔离）.command" "$STAGE/"
 cp "installer/macos/安装说明.txt" "$STAGE/"
 # 本仓不保留可执行位（git ls-files -s scripts/ 全 100644）→ 暂存时补 chmod 并断言，
