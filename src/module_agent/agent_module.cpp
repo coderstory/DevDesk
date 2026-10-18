@@ -38,6 +38,7 @@
 #include "module_agent/app_stats_tool.h"
 #include "module_agent/cron.h"
 #include "module_agent/message_blocks.h"
+#include "module_agent/task_draft_parse.h"
 #include "module_agent/tool_info.h"
 #include "module_agent/trigger_config.h"
 
@@ -356,121 +357,10 @@ std::string runLimitText(int maxRuns) {
     return "最多 " + std::to_string(maxRuns) + " 次";
 }
 
-std::string trimCopy(const std::string& s) {
-    const auto isSpace = [](unsigned char c) {
-        return c == ' ' || c == '\t' || c == '\r' || c == '\n';
-    };
-    size_t b = 0, e = s.size();
-    while (b < e && isSpace(static_cast<unsigned char>(s[b]))) ++b;
-    while (e > b && isSpace(static_cast<unsigned char>(s[e - 1]))) --e;
-    return s.substr(b, e - b);
-}
-
-bool isAsciiDigit(char c) { return c >= '0' && c <= '9'; }
-
-int digitsAt(const std::string& s, size_t pos, size_t count) {
-    int value = 0;
-    for (size_t i = 0; i < count; ++i) {
-        value = value * 10 + (s[pos + i] - '0');
-    }
-    return value;
-}
-
-// 严格解析闹钟时间「YYYY-MM-DD HH:MM」（本地时区，24 小时制）。
-// 校验分三层：字面形状 → 字段范围 → mktime 归一化后必须与输入逐字段一致。
-// 第三层专门拦「2026-02-30」和夏令时跳变不存在的本地时刻（mktime 会把它们悄悄
-// 归一化到别的日期/时刻；只看 epoch 范围会把脏输入当合法值存进库）。
-// 不抛异常：格式/范围/不存在/越界统一返回 Result fail。
-core::Result<int64_t> parseOnceAtLocalText(const std::string& text) {
-    const std::string s = trimCopy(text);
-    if (s.size() != 16 || s[4] != '-' || s[7] != '-' || s[10] != ' ' ||
-        s[13] != ':') {
-        return core::Result<int64_t>::fail(
-            core::ErrorCode::ValidationError,
-            "闹钟时间格式应为 YYYY-MM-DD HH:MM");
-    }
-    for (size_t i : {0, 1, 2, 3, 5, 6, 8, 9, 11, 12, 14, 15}) {
-        if (!isAsciiDigit(s[i])) {
-            return core::Result<int64_t>::fail(
-                core::ErrorCode::ValidationError,
-                "闹钟时间格式应为 YYYY-MM-DD HH:MM");
-        }
-    }
-    const int year = digitsAt(s, 0, 4);
-    const int month = digitsAt(s, 5, 2);
-    const int day = digitsAt(s, 8, 2);
-    const int hour = digitsAt(s, 11, 2);
-    const int minute = digitsAt(s, 14, 2);
-    if (year < 1 || year > 9999 || month < 1 || month > 12 || day < 1 ||
-        day > 31 || hour < 0 || hour > 23 || minute < 0 || minute > 59) {
-        return core::Result<int64_t>::fail(
-            core::ErrorCode::ValidationError,
-            "闹钟时间的年月日或时分超出范围");
-    }
-    std::tm local{};
-    local.tm_year = year - 1900;
-    local.tm_mon = month - 1;
-    local.tm_mday = day;
-    local.tm_hour = hour;
-    local.tm_min = minute;
-    local.tm_sec = 0;
-    local.tm_isdst = -1;   // 让 mktime 按目标日期判定夏令时
-    const std::time_t t = std::mktime(&local);
-    if (t == static_cast<std::time_t>(-1)) {
-        return core::Result<int64_t>::fail(
-            core::ErrorCode::ValidationError, "闹钟时间无效（无法转换为本地时刻）");
-    }
-    if (local.tm_year + 1900 != year || local.tm_mon + 1 != month ||
-        local.tm_mday != day || local.tm_hour != hour ||
-        local.tm_min != minute) {
-        return core::Result<int64_t>::fail(
-            core::ErrorCode::ValidationError,
-            "闹钟时间在本地时区不存在（日期无效或夏令时跳变）");
-    }
-    const int64_t epoch = static_cast<int64_t>(t);
-    if (epoch < 1 || epoch > kOnceAtUpperBound) {
-        return core::Result<int64_t>::fail(
-            core::ErrorCode::ValidationError,
-            "闹钟时间超出支持范围（1970-01-01 至 2100-01-01）");
-    }
-    return core::Result<int64_t>::ok(epoch);
-}
-
-// epoch → 本地「YYYY-MM-DD HH:MM」；走 core::time::localTime（Windows localtime_s /
-// POSIX localtime_r），不在业务代码里写平台分支
-std::string formatOnceAtText(int64_t epoch) {
-    std::tm local{};
-    core::time::localTime(static_cast<std::time_t>(epoch), &local);
-    char buf[32];
-    const std::size_t n =
-        std::strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M", &local);
-    return n == 0 ? std::string() : std::string(buf, n);
-}
-
-// 新建闹钟缺省：现在 + 1 小时，分钟精度（秒在文本里本就不显示，保存时也按 :00 解析）
-std::string defaultOnceAtText() {
-    std::tm local{};
-    core::time::localTime(core::time::nowUnix() + 3600, &local);
-    char buf[32];
-    const std::size_t n =
-        std::strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M", &local);
-    return n == 0 ? std::string() : std::string(buf, n);
-}
-
-// once_at 的展示文本（详情摘要）；解析失败返回空串并留痕——非空配置必须显形
-std::string onceTextOf(const AgentTaskRow& task) {
-    auto cfg = decodeTriggerConfig(task.triggerConfig);
-    if (cfg.isOk() && cfg.value().onceAt) {
-        return formatOnceAtText(*cfg.value().onceAt);
-    }
-    if (!task.triggerConfig.empty()) {
-        LOG_WARN("Agent: 任务 " + std::to_string(task.id) +
-                 " 的 trigger_config 无法取出 once_at（详情摘要留空）：" +
-                 (cfg.isFail() ? cfg.errorMessage()
-                               : std::string("缺少 once_at 字段")));
-    }
-    return {};
-}
+// 闹钟时间文本 ↔ epoch 的纯函数集（trimCopy / parseOnceAtLocalText /
+// formatOnceAtText / defaultOnceAtText / onceTextOf）已搬至 task_draft_parse.h：
+// 草稿解析层（task_draft.cpp）需要同一份闹钟校验，留在本文件私有会造成
+// 「模型草稿说合法、UI 说非法」的双真源。搬移是行为等价的，判定规则与文案逐字未改。
 
 } // namespace
 
@@ -741,7 +631,8 @@ void AgentModule::openNewTaskDialog() {
     editEvents_ = {};
     editMaxRuns_ = 0;   // 新建缺省 = 不限次数（与旧任务同语义：恒循环）
     editTriggerIdx_ = 0;
-    editOnceAtText_ = defaultOnceAtText();   // 切到「闹钟」时就有可用缺省，不逼用户从零拼格式
+    editOnceAtText_ = defaultOnceAtText(
+        static_cast<int64_t>(core::time::nowUnix()));   // 切到「闹钟」时就有可用缺省，不逼用户从零拼格式
     editError_.clear();
     editTriggerOpen_ = false;
     editSlotOpen_ = false;

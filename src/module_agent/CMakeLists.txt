@@ -11,6 +11,7 @@ add_library(devdesk_agent STATIC
     app_stats_tool.cpp
     app_notify_tool.cpp
     direct_llm_client.cpp
+    task_draft.cpp
     agent_module.cpp
 )
 

@@ -59,6 +59,7 @@ add_executable(devdesk_tests
     test_modules/test_agent_trigger_config.cpp
     test_modules/test_agent_scheduler.cpp
     test_modules/test_agent_loop.cpp
+    test_modules/test_agent_draft.cpp
     test_modules/test_agent_tools.cpp
     test_modules/test_hot_parse.cpp
     test_modules/test_hot_tool.cpp
