@@ -8,6 +8,7 @@
 
 ## [未发布]
 
+- feat(platform): 通知后端设计欠账落地（spec §5/C-4/D-7-A）——`platform::notify` 接口从草案 `Result<void>` 升级为 `Result<Receipt>`：新增 `Status` 七态（accepted/deduped/rate_limited/not_bundled/permission_denied/not_determined/backend_unavailable）、`Level` 四级、授权 `Unknown` 态、`initialize()` 幂等入口与假时钟测试缝（`resetForTest` 一并清去重/限速/时钟/后端槽）；facade（新增 `notification.cpp`，全平台编译）按 spec 值实现 UTF-8 清洗、63/255 UTF-16 unit 截断（代理对不切开）、FNV-1a 派生 id、2s/64 条去重窗口、3 突发+1/s 令牌桶，mutex 护全部状态、后端调用在锁外；`app.notify` 工具透传 Receipt——输出 JSON 升级为 status/deliveredVia/id/truncated/retryAfterMs/reason，去重与限速不再误触应用内降级（fallback 零调用）。
 - feat(agent): hot.list 注册进智能体工具表——onStart 与 app.stats/app.notify 同批注册（默认构造 = 生产 fetcher/now：platform::http + 系统时钟，缓存与限频在工具实例内自持），onStop 在 run 线程 join 之后同批注销；非破坏性只读工具，AgentLoop 工具表白名单经 allSchemasJson 动态收集，prompt 零硬编码；测试 = agent 工具生命周期 3 新用例 + 工具卡组钉第三张卡（`437334f`）。
 - feat(agent): AI 自然语言生成任务草稿（纯逻辑层，无 UI / 无 DB 接线）——`TaskDraft` 草稿结构 + `buildTaskDraftSystemPrompt`（含当前时间与六类触发说明）/ `parseTaskDraft`（字段级校验，单项失败一律降级 + warnings、绝不整体失败，fail 仅留给「连一个 JSON 对象都解析不出」；`triggerConfig` 恒为合法可落库组合，`allowDestructive`/`maxIterations` 刻意不采纳——破坏性授权只能用户亲手开）+ `requestTaskDraft`；27 条单测（`dee9540`）。
 - test: ToolGuard 双层花括号 UB 修复——`statsGuard{{"a", "b"}}` 外层单元素向 `std::string` 列表初始化命中 `basic_string(迭代器对)` 构造，两条字面量指针相减为负 → size_t 下溢 → length_error；是否抛出取决于 .rodata 字面量布局（033d7db 产物下不抛 = 守卫清理失效、被用例内显式 unregisterTool 兜住的批量假绿 1537/1531/0），dee9540 新增编译单元翻转布局后 53 用例批量红；53 处调用点去一层花括号修复，断言零改动，修复后全量 1564/1558/0（`2750e51`）。

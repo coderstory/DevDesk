@@ -152,8 +152,9 @@ void resetCaseGlobals() {
     ::devdesk::quota_bridge::setQuotaFeatureEnabled(false);
     // 16) 系统通知后端注入槽（platform/notification.h）：用例体内
     // setBackendForTest(&栈上 fake) 后 fail-fast 会跳过尾部复位，槽位里的悬垂指针
-    // 会让后续用例崩溃。出厂态 = 默认平台后端（macOS guard / Windows stub）。
-    ::platform::notify::resetBackendForTest();
+    // 会让后续用例崩溃；去重/限速/时钟覆盖同样会串味到后续用例。resetForTest
+    // 一次清全部（后端槽 + 去重缓存 + 令牌桶 + 时钟 + initialize 幂等标记）。
+    ::platform::notify::resetForTest();
 }
 
 // 结果先收集、循环结束后统一批量输出：全量 800+ 例时逐条 std::endl 强 flush 是
