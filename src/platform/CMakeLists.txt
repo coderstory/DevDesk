@@ -25,7 +25,7 @@ if(WIN32)
         tray_icon_win.cpp              # 托盘图标走真 .ico（ExtractIconExW 不认 PNG）
         message_box_win.cpp             # 启动期阻塞对话框（损坏还原流程）
         single_instance_win.cpp        # 单实例互斥：命名 mutex + 事件监听线程
-        notification_win.cpp           # 系统通知 stub（真实托盘/Toast 待接入）
+        notification_win.cpp           # 系统通知：EUI-NEO 托盘通知（Shell_NotifyIconW NIF_INFO）
     )
 elseif(APPLE)
     target_sources(devdesk_platform PRIVATE

@@ -1,5 +1,5 @@
 // src/platform/notification.h
-// 平台系统通知抽象（macOS UNUserNotificationCenter / Windows 托盘待接入 / 其它 POSIX 不支持）
+// 平台系统通知抽象（macOS UNUserNotificationCenter / Windows 托盘通知 / 其它 POSIX 不支持）
 //
 // 契约要点（调用方与后续工具层都要按这条理解，别把 ok 当成「用户看到了」）：
 //   * send() 返回成功**只代表系统受理了请求**（macOS 是 addNotificationRequest 入队成功），
@@ -25,7 +25,7 @@ struct Notification {
     bool sound = true;
 };
 
-// 与 UNUserNotificationCenter 的授权三态对齐；Windows 后端当前恒 NotDetermined。
+// 与 UNUserNotificationCenter 的授权三态对齐；Windows 无应用级授权，后端恒 Authorized。
 enum class Authorization { NotDetermined, Denied, Authorized };
 
 // 平台后端接口。虚析构 + 纯虚方法：测试可整对象替换（见下方 setBackendForTest）。
