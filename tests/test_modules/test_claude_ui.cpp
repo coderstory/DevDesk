@@ -10,6 +10,7 @@
 #include "claude_service.h"
 #include "claude_ui_logic.h"
 #include "claude_ui_quota.h"      // 余量查询弹窗绘制 + 几何纯函数
+#include "core/app_config.h"
 #include "core/database.h"
 #include "platform/json.h"
 #include "core/input/input_types.h"
@@ -8263,5 +8264,56 @@ REGISTER_TEST(claude_quota_dialog_geometry_no_overflow,
     // 按钮行恒在弹窗底 60 处（与 ui_kit::drawDialogButtons 同款）
     DOCTEST_CHECK(std::fabs(g0.buttonsY - (g0.height - 60.0f)) < 0.01f);
     DOCTEST_CHECK(std::fabs(g2.buttonsY - (g2.height - 60.0f)) < 0.01f);
+    return true;
+})
+
+// 旧库（有 keychain_account 列 + 待回填行）启动时的钥匙串回填**只允许尝试一次**：
+// ad-hoc 签名下钥匙串授权每次重装都会失效（macOS 会弹「请输入钥匙串密码」），
+// 若每次启动都重试，用户永远清不掉这个框（2026-10-18 实证：id=4 是激活 profile，
+// 密钥只在钥匙串里）。判据：①首启确实读取 ②一次性标记落库 ③二次启动零额外读取。
+REGISTER_TEST(claude_keychain_backfill_one_shot,
+              "claude_module: 旧凭据回填只尝试一次（二次启动零钥匙串触达）", {
+    TestEnv env;
+    // 还原旧库形态：新 DDL 已无该列，手工补回 + 一行「密文列空、指向钥匙串」的 profile
+    DOCTEST_REQUIRE(env.handle().exec(
+        "ALTER TABLE claude_profiles ADD COLUMN keychain_account TEXT").isOk());
+    DOCTEST_REQUIRE(env.handle().exec(
+        "INSERT INTO claude_profiles "
+        "(name, base_url, api_key_hint, api_key_check, model, created_at, updated_at, "
+        "keychain_account) VALUES ('legacy', 'https://example.invalid', 'hint', '', "
+        "'m', 0, 0, 'claude:legacy')").isOk());
+
+    // 假钥匙串：只记账，恒答「没有这条」（真实现会让测试机弹授权框）
+    static int loads = 0;
+    loads = 0;
+    platform::keychain::Backend fake = platform::keychain::defaultBackend();
+    fake.loadSecret = [](const std::string&, const std::string&)
+        -> core::Result<std::string> {
+        ++loads;
+        return core::Result<std::string>::fail(core::ErrorCode::NotFound,
+                                               "Keychain item not found");
+    };
+    const platform::keychain::Backend* prev =
+        platform::keychain::setBackendForTest(&fake);
+
+    {
+        std::unique_ptr<::core::Module> mod(create_claude_module());
+        mod->onStart();
+        mod->onStop();
+    }
+    DOCTEST_CHECK(loads >= 1);   // ①首启确实试过（派生命名空间 + 旧名回退）
+    const int afterFirst = loads;
+    auto done = core::appconfig::get(env.handle(), "claude.keychain_backfill_done");
+    DOCTEST_CHECK(done.isOk());
+    DOCTEST_CHECK_EQ(done.isOk() ? done.value() : std::string(), std::string("1"));
+
+    {
+        std::unique_ptr<::core::Module> mod(create_claude_module());
+        mod->onStart();
+        mod->onStop();
+    }
+    DOCTEST_CHECK_EQ(loads, afterFirst);   // ③二次启动零钥匙串触达
+
+    platform::keychain::setBackendForTest(prev);
     return true;
 })

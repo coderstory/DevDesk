@@ -1,6 +1,7 @@
 // ProfileRepository 实现：策略尾（停代理 / 接管 / 激活时机）留在门面，本类只做 DB 段
 #include "profile_repository.h"
 
+#include "core/app_config.h"
 #include "core/logging.h"
 #include "core/time.h"
 #include "platform/credential_protection.h"
@@ -648,6 +649,17 @@ core::Result<int> ProfileRepository::backfillCredentialsFromKeychain() {
         }
     }
 
+    // 一次性门：这是 2026-10-14 之前旧库的迁移路径，只允许首次启动尝试一次。
+    // 钥匙串授权在 ad-hoc 签名下每次重装都会失效（macOS 弹「请输入钥匙串密码」），
+    // 每次启动重试 = 用户永远清不掉该框（2026-10-18 实证）。失败也置位：旧条目
+    // 仍在钥匙串里，用户可手动重配，不再自动重试。
+    constexpr const char* kBackfillDoneKey = "claude.keychain_backfill_done";
+    auto done = core::appconfig::get(db_, kBackfillDoneKey);
+    if (done.isOk() && done.value() == "1") {
+        LOG_DEBUG("凭据回填跳过：一次性迁移已执行过");
+        return core::Result<int>::ok(0);
+    }
+
     // 查待回填行：api_key_encrypted 仍为空但 keychain_account 有值
     auto prep = db_.prepare(
         "SELECT id, keychain_account FROM claude_profiles "
@@ -701,7 +713,7 @@ core::Result<int> ProfileRepository::backfillCredentialsFromKeychain() {
 
         auto up = db_.prepare(
             "UPDATE claude_profiles SET api_key_encrypted = ?, api_key_hint = ?, "
-            "api_key_check = ?, updated_at = ? WHERE id = ?");
+            "api_key_check = ?, keychain_account = NULL, updated_at = ? WHERE id = ?");
         if (up.isFail()) {
             LOG_WARN("凭据回填：id=" + std::to_string(id) +
                      " UPDATE 准备失败（跳过）: " + up.errorMessage());
@@ -725,6 +737,12 @@ core::Result<int> ProfileRepository::backfillCredentialsFromKeychain() {
 
     if (backfilled > 0) {
         LOG_INFO("凭据回填完成：共回填 " + std::to_string(backfilled) + " 个 profile");
+    }
+    // 无论成败都置位（一次性语义）。写入失败只记日志：下次启动会再试一次，
+    // 属可接受退化，不会变成每次启动必然重试。
+    auto mark = core::appconfig::set(db_, kBackfillDoneKey, "1");
+    if (mark.isFail()) {
+        LOG_WARN("凭据回填：一次性标记写入失败 - " + mark.errorMessage());
     }
     return core::Result<int>::ok(backfilled);
 }

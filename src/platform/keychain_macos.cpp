@@ -109,8 +109,18 @@ core::Result<std::string> realLoadSecret(const std::string& service,
 
     if (status != errSecSuccess) {
         if (itemRef) CFRelease(itemRef);
-        return core::Result<std::string>::fail(core::ErrorCode::NotFound,
-            "Keychain item not found");
+        // 只有 errSecItemNotFound 才是「没有这条」。授权被拒 / 用户取消
+        // （errSecAuthFailed / errSecUserCanceled）若也报 NotFound，会把「弹了框
+        // 但你没允许」伪装成「没有旧条目」——回填于是每次启动重试、每次都再弹一次
+        //（2026-10-18 实证：macOS 每次都提示输入钥匙串密码）。
+        if (status == errSecItemNotFound) {
+            return core::Result<std::string>::fail(core::ErrorCode::NotFound,
+                                                   "Keychain item not found");
+        }
+        return core::Result<std::string>::fail(
+            core::ErrorCode::Internal,
+            "Keychain 读取失败（OSStatus " + std::to_string(status) +
+                "；授权被拒/用户取消也会走到这里）");
     }
 
     std::string result(static_cast<char*>(data), length);
