@@ -16,7 +16,9 @@
 //          .goal（多行）/ .trigger / .cron（仅定时）/ .once（仅闹钟，本地时间输入）/
 //          .limit（仅定时·事件，行为开关行的"只跑一次"）/
 //          .slot / .iter / .destructive / .cancel / .save / .close / .error（有错才渲染）/
-//          .aichip（标题行「AI 生成草稿」chip，T7b）
+//          .aichip（标题行「AI 生成草稿」chip，T7b）/
+//          .trigger.hint（触发语义提示，定时/闹钟预览非空时让位）/
+//          .meta.hint（迭代上限后果 + 破坏性操作说明，恒渲染）
 //   AI 草稿子弹窗 agent.dialog.task.draft.*（叠在任务弹窗上，zIndex 1100，T7b）：
 //          .input（多行）/ .generate / .dismiss / .close / .caption /
 //          .notice / .warnings（生成完成才渲染）/ .error（失败 / 校验错才渲染）
@@ -4498,6 +4500,98 @@ REGISTER_TEST(agent_ui_task_list_status_visuals,
     const auto* runText2 = ui3.find("agent.task." + idleTid + ".run.text");
     DOCTEST_REQUIRE(runText2 != nullptr);
     DOCTEST_CHECK_EQ(runText2->text, std::string("启动"));
+
+    mod.onStop();
+    return true;
+})
+
+// 表单语义提示批：六类触发各一行「怎么填」提示（定时/闹钟的预览行优先占槽，
+// 预览为空才轮到提示）；meta 行一行讲迭代上限后果（受限终态）与破坏性开关
+// 后果（高危工具）。文案断言 = id 契约存在性 + 关键词语义点。
+REGISTER_TEST(agent_ui_task_dialog_semantic_hints,
+              "agent_ui: 表单语义提示——手动提示非空 / 每天提示含「应用」/ 定时空 cron 提示含 cron、填了预览接管 / meta 行提示含受限与高危", {
+    test_support::TestDb tdb("agentui", "hints");
+    test_support::FakeProfileSource profile;
+    ToolGuard statsGuard{"app.stats", "app.notify"};
+    core::ToolRegistry::instance().unregisterTool("app.stats");
+    core::ToolRegistry::instance().unregisterTool("app.notify");
+    module::agent::AgentStore store(tdb.handle());
+    module::agent::AgentModule::Deps deps;
+    deps.db = &tdb.handle();
+    deps.profileSource = &profile;
+    module::agent::AgentModule mod(deps);
+    mod.onStart();
+
+    // 默认「手动」：提示行存在且讲清「点启动才跑」。
+    // openNewTaskDialog 是先 compose 后点击——弹窗节点要再 compose 一帧才可见
+    eui::Ui ui;
+    DOCTEST_REQUIRE(openNewTaskDialog(ui, mod, "agent_ui_hints1"));
+    eui::Ui ui1b;
+    composeTo(ui1b, mod, kScreen, "agent_ui_hints1b");
+    const auto* manual = ui1b.find("agent.dialog.task.trigger.hint");
+    DOCTEST_REQUIRE(manual != nullptr);
+    DOCTEST_CHECK(manual->text.find("启动") != std::string::npos);
+    // meta 行提示：迭代后果（受限终态）+ 破坏性开关后果（高危工具），两个
+    // 关键词缺一不可
+    const auto* meta = ui1b.find("agent.dialog.task.meta.hint");
+    DOCTEST_REQUIRE(meta != nullptr);
+    DOCTEST_CHECK(meta->text.find("受限") != std::string::npos);
+    DOCTEST_CHECK(meta->text.find("高危") != std::string::npos);
+    DOCTEST_CHECK(meta->text.size() > 20);   // 非恒真自证：两关键词确有正文承载
+
+    // 「每天」：隐藏语义必须点名「应用」——防按「固定时刻闹钟」直觉误读
+    eui::Ui ui2;
+    DOCTEST_REQUIRE(openNewTaskDialog(ui2, mod, "agent_ui_hints2"));
+    DOCTEST_REQUIRE(callDropdownChange(ui2, "agent.dialog.task.trigger", 4));
+    eui::Ui ui2b;
+    composeTo(ui2b, mod, kScreen, "agent_ui_hints2b");
+    const auto* daily = ui2b.find("agent.dialog.task.trigger.hint");
+    DOCTEST_REQUIRE(daily != nullptr);
+    DOCTEST_CHECK(daily->text.find("应用") != std::string::npos);
+
+    // 「定时」cron 空：预览未占用槽 → 提示讲 cron 怎么填
+    eui::Ui ui3;
+    DOCTEST_REQUIRE(openNewTaskDialog(ui3, mod, "agent_ui_hints3"));
+    DOCTEST_REQUIRE(callDropdownChange(ui3, "agent.dialog.task.trigger", 1));
+    eui::Ui ui3b;
+    composeTo(ui3b, mod, kScreen, "agent_ui_hints3b");
+    const auto* sched = ui3b.find("agent.dialog.task.trigger.hint");
+    DOCTEST_REQUIRE(sched != nullptr);
+    DOCTEST_CHECK(sched->text.find("cron") != std::string::npos);
+
+    // 「定时」填了合法 cron：预览行接管槽位，提示行退场（同槽互斥不叠加）
+    mod.setEditCronDraft("0 9 * * 1-5");
+    eui::Ui ui4;
+    composeTo(ui4, mod, kScreen, "agent_ui_hints4");
+    DOCTEST_CHECK(ui4.find("agent.dialog.task.trigger.hint") == nullptr);
+    DOCTEST_CHECK(ui4.find("agent.dialog.task.cron.preview") != nullptr);
+
+    // 「常驻」「事件」：提示非空且点出关键动作 / 关键词
+    eui::Ui ui5;
+    DOCTEST_REQUIRE(openNewTaskDialog(ui5, mod, "agent_ui_hints5"));
+    DOCTEST_REQUIRE(callDropdownChange(ui5, "agent.dialog.task.trigger", 2));
+    eui::Ui ui5b;
+    composeTo(ui5b, mod, kScreen, "agent_ui_hints5b");
+    const auto* resident = ui5b.find("agent.dialog.task.trigger.hint");
+    DOCTEST_REQUIRE(resident != nullptr);
+    DOCTEST_CHECK(resident->text.find("入队") != std::string::npos);
+    eui::Ui ui6;
+    DOCTEST_REQUIRE(openNewTaskDialog(ui6, mod, "agent_ui_hints6"));
+    DOCTEST_REQUIRE(callDropdownChange(ui6, "agent.dialog.task.trigger", 3));
+    eui::Ui ui6b;
+    composeTo(ui6b, mod, kScreen, "agent_ui_hints6b");
+    const auto* event = ui6b.find("agent.dialog.task.trigger.hint");
+    DOCTEST_REQUIRE(event != nullptr);
+    DOCTEST_CHECK(!event->text.empty());
+
+    // 「闹钟」：默认缺省时刻让预览行非空 → 提示让位（不与预览叠加）
+    eui::Ui ui7;
+    DOCTEST_REQUIRE(openNewTaskDialog(ui7, mod, "agent_ui_hints7"));
+    DOCTEST_REQUIRE(callDropdownChange(ui7, "agent.dialog.task.trigger", 5));
+    eui::Ui ui7b;
+    composeTo(ui7b, mod, kScreen, "agent_ui_hints7b");
+    DOCTEST_CHECK(ui7b.find("agent.dialog.task.trigger.hint") == nullptr);
+    DOCTEST_CHECK(ui7b.find("agent.dialog.task.once.preview") != nullptr);
 
     mod.onStop();
     return true;

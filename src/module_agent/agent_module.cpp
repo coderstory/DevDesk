@@ -277,6 +277,17 @@ constexpr const char* kTriggerKeys[] = {"manual",   "schedule", "resident",
 constexpr const char* kTriggerLabels[] = {"手动", "定时", "常驻",
                                           "事件", "每天", "闹钟"};
 constexpr int kTriggerCount = 6;
+// 六类触发的表单语义提示：与 kTriggerLabels 同下标，一行讲清「这是什么/怎么填」。
+// 「每天」的隐藏语义（首次打开后的首个调度周期，不是固定时刻）必须写明，否则
+// 新用户按直觉理解成闹钟；定时/闹钟两类的 y=212 槽平时被预览行占用（预览是
+// 已算出的下次触发/错误，信息量更大），预览为空时才轮到本提示。
+constexpr const char* kTriggerHints[] = {
+    "手动：只在你点「启动」时运行，不自动调度",
+    "定时：按 cron 周期自动运行（分 时 日 月 周），需应用保持开启",
+    "常驻：不自动运行，点列表「入队」立即执行一轮，适合值守类任务",
+    "事件：勾选的待办/笔记事件发生时自动运行",
+    "每天：当天首次打开应用后的首个调度周期运行一次（需应用保持运行）",
+    "闹钟：到指定时刻运行一次后自动停用，错过不补"};
 constexpr int kTriggerScheduleIdx = 1;
 constexpr int kTriggerEventIdx = 3;
 constexpr int kTriggerOnceIdx = 5;
@@ -1957,6 +1968,19 @@ void AgentModule::composeTaskDialog(
     const bool isOnce = editTriggerIdx_ == kTriggerOnceIdx;
     const bool isEdit = editingTaskId_.has_value();
 
+    // 触发提示文案：compose 时派生（纯字符串选择，无状态可失步）。定时/闹钟的
+    // 预览行非空时让位（下方 trigger.hint 与对应 preview 互斥渲染，同一槽位
+    // 同一时刻只有一个信息源）
+    std::string triggerHint;
+    if (isSchedule) {
+        triggerHint =
+            cronPreview_.empty() ? kTriggerHints[kTriggerScheduleIdx] : "";
+    } else if (isOnce) {
+        triggerHint = oncePreview_.empty() ? kTriggerHints[kTriggerOnceIdx] : "";
+    } else if (editTriggerIdx_ >= 0 && editTriggerIdx_ < kTriggerCount) {
+        triggerHint = kTriggerHints[editTriggerIdx_];
+    }
+
     ui_kit::DialogFrame frame;
     frame.id = "agent.dialog.task";
     frame.width = ui_kit::DialogWidth::Form;
@@ -2157,6 +2181,14 @@ void AgentModule::composeTaskDialog(
                  .skipIfEmpty = true});
         }
 
+        // 触发语义提示行：占触发行与 meta 行之间的 12px 缝（cron/闹钟预览行同款
+        // 打法，弹窗高度与各行位置不动）；与预览行互斥渲染，见上方 triggerHint 派生
+        ui_kit::drawDialogText(ui, "agent.dialog.task.trigger.hint", w,
+                               triggerHint, t.sizes.fontSizeSmall - 1.0f,
+                               t.colors.textTertiary,
+                               {.x = x0, .y = 212.0f, .height = 12.0f,
+                                .lineHeight = 12.0f, .skipIfEmpty = true});
+
         const float metaY = 224.0f;
         const float iterLabelX = fieldX + ddW + kDialogGap;
         const float iterX = iterLabelX + kDialogLabelW + kDialogGap;
@@ -2234,6 +2266,16 @@ void AgentModule::composeTaskDialog(
                 })
                 .build();
         }
+
+        // meta 行提示：占 meta 行与执行记忆行之间的 12px 缝（触发提示同款打法，
+        // 不动任何行位置）。迭代上限讲清「跑满会怎样」（受限终态的直接前因），
+        // 破坏性开关讲清「勾了会发生什么/不勾会怎样」
+        ui_kit::drawDialogText(
+            ui, "agent.dialog.task.meta.hint", w,
+            "迭代＝单次运行的最多轮数，跑满以「受限」结束、不再重试；"
+            "破坏性操作＝允许删除文件等高危工具，不勾则被拒",
+            t.sizes.fontSizeSmall - 1.0f, t.colors.textTertiary,
+            {.x = x0, .y = 264.0f, .height = 12.0f, .lineHeight = 12.0f});
 
         // 执行记忆：多行文本输入（与 goal 同款 multiline + scrollbar），
         // 用于 agent 运行时注入 system prompt；编辑态从 AgentTaskRow 回填
