@@ -1,15 +1,27 @@
 # cmake/bump-version.cmake
-# 构建版本号自增脚本（2026-09-28 about 页设计 D-01/D-03）：
-#   VERSION 文件（x.y.z，每段 0-9）在每次构建时 +1：
-#     z 满 10 进 y，y 满 10 进 x，x 满 10 饱和 9.9.9（不退回 9.0.0）。
-#   独立可测：不依赖任何外部变量，只读 VERSION_FILE 指定路径的文件并写回。
+# 构建版本号自增脚本：VERSION_FILE（x.y.z，每段 0-9）每次调用 +1：
+#   z 满 10 进 y，y 满 10 进 x，x 满 10 饱和 9.9.9（不退回 9.0.0）。
+#   文件不存在时用 VERSION_SEED 播种（写初值、不自增），下个构建起 +1。
+#   独立可测：不依赖任何外部变量，只读写 VERSION_FILE 指定的文件。
 # 调用：
-#   cmake -D VERSION_FILE=<path> -P cmake/bump-version.cmake
-# 被顶层 add_custom_target(bump_version ALL) 于每次 cmake --build 时执行；
-# VERSION 经 CMAKE_CONFIGURE_DEPENDS 注册，bump 后的新值在下一个 configure
-# 拾取（本次构建显示当前版本、下个构建得到 +1 后的版本）。
+#   cmake -D VERSION_FILE=<path> -D VERSION_SEED=<x.y.z> -P cmake/bump-version.cmake
+# 被顶层 add_custom_target(bump_version ALL) 于每次 cmake --build 时执行，
+# 计数文件是 build 目录本地的 VERSION.build。
+# 反重构警告：调用方绝不能把 VERSION_FILE 指回源树 VERSION——源树 VERSION 注册在
+# CMAKE_CONFIGURE_DEPENDS，构建期写入会让下一个构建必触发 cmake regen，且
+# project(VERSION) 变化改动 DEVDESK_VERSION define、把 121 个 TU 拖进全量重编
+#（ninja -d explain 实证：output build.ninja older than most recent input .../VERSION）。
 if(NOT DEFINED VERSION_FILE)
     message(FATAL_ERROR "bump-version.cmake: 缺少 -D VERSION_FILE=<path> 参数")
+endif()
+
+# 首个构建：文件不存在 → 用种子写初值，不自增（+1 从第二个构建开始）
+if(NOT EXISTS "${VERSION_FILE}")
+    if(NOT DEFINED VERSION_SEED)
+        message(FATAL_ERROR "bump-version.cmake: VERSION_FILE 不存在且缺 -D VERSION_SEED=<x.y.z>")
+    endif()
+    file(WRITE "${VERSION_FILE}" "${VERSION_SEED}")
+    return()
 endif()
 
 file(READ "${VERSION_FILE}" VER)
