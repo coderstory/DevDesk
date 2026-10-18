@@ -8,6 +8,7 @@
 
 ## [未发布]
 
+- guard(scripts): Windows 交叉编译守卫复验本批全绿（d954cab，279 commit）——受编集合 238 文件（CMakeLists WIN32 分支解析，含本批新增 `notification_win.cpp` / `message_box_win.cpp` / `github_api.cpp` 与全部共享文件）**0 编译错误**，无需修复；配套 `check-std-includes.sh` 438 文件 0 违规、守卫 `--self-test` 通过（非恒真）；另以 macOS SDK curl 头拷入私有目录作 `DEVDESK_XCOMPILE_CURL_INCLUDE`，把 curl 依赖 4 文件（`http_client.cpp` / `http_client_ca_win.cpp` / `test_proxy_router.cpp` / `test_http_server.cpp`）从「缺头跳过」补成真编，本机盲区清零（SDK 整目录直接 `-I` 会毒化 libc++ C 头搜索序，必须只拷 `curl/` 子树）；边界照旧如实声明：本机 clang+libc++ ≠ CI 的 GCC+libstdc++，GCC 专属诊断本机验不到。
 - feat(agent)：任务删除——`AgentStore::deleteTask` 单事务级联删（messages←runs→tasks，不依赖 FK pragma）+ 行内「删除」chip（运行中禁删）+ 确认弹窗（红字「不可恢复」+ Danger 确认钮），建错/一次性任务不再是只能禁用的僵尸行（`d3d1cd5`）。
 - feat(agent)：运行停止入口——详情弹窗「停止 · 当前轮结束后生效」chip 置 ActiveRun cancel 位（协作式取消，用户取消优先于超限判定），点击后切「停止中」禁用防反复点；非运行态不渲染、落空调用不产生新 run（`d3ec079`）。
 - feat(agent)：run 失败/受限补发 OS 系统通知——应用内 toast 4.5s 之外同步走 `platform::notify::send`（稳定 id 前缀 `agent-run-`、level=Error，定时任务失败恰恰发生在人不在应用前）；成功/取消保持双通道静默（`agent_ui_run_completed_silent_no_toast` 契约原样保留并加 spy 后端零调用断言）；新用例钉失败迁移恰发一次（id 前缀/正文含任务名/level）+ 补帧不重发（`6576e64`）。
