@@ -125,17 +125,21 @@ fi
 # 两种，写错在 configure 前就报错（免得 CMake 静默按空类型构建）。
 BUILD_TYPE="${DEVDESK_BUILD_TYPE:-Debug}"
 CLEAN=0; RUN_TEST=1; RUN_APP=1; INSTALL=0; FILTER=""; VERIFY_APP_STR=""
-for arg in "$@"; do
-  case "$arg" in
+# 取值 flag 用「内层 shift 吃值 + 循环尾 shift 吃 flag 名」——不能在 for arg in "$@" 里
+# shift：for 的迭代列表在循环入口展开一次，shift 只动位置参数不动列表，每轮只前进一个，
+# 带值 flag 会错位一格吃进前一个 flag（曾把 --verify-app-str 的值解析成 --install）。
+while [ $# -gt 0 ]; do
+  case "$1" in
     --clean)    CLEAN=1 ;;
     --release)  BUILD_TYPE="Release" ;;
     --no-test)  RUN_TEST=0 ;;
     --no-run)   RUN_APP=0 ;;
     --install)  INSTALL=1 ;;
-    --filter)   shift; FILTER="$1" ;;
+    --filter)   shift; FILTER="${1:-}" ;;
     --verify-app-str) shift; VERIFY_APP_STR="${1:-}" ;;
-    *)          FILTER="$arg" ;;   # 裸词当 filter
+    *)          FILTER="$1" ;;   # 裸词当 filter
   esac
+  shift
 done
 # --verify-app-str 只在 --install 之后有东西可验。给了它却没给 --install = 出声提示
 # （不硬失败：本次构建/测试还有它自己的目的），但绝不静默——静默等于「以为验过」。
