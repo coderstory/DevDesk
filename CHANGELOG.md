@@ -21,6 +21,7 @@
 - fix(core)：**Windows 原子替换改一步 `MoveFileExW`**（消除「目标短暂不存在」窗口，`1c5fbb7`；真机行为待 CI，本机验证 = 交叉编译守卫；POSIX `rename` 语义本来就无此窗口）。
 - test：`>1MB` 笔记端到端往返（`6b10975`）；todo.create 三态分支（`0280bde`）；cron「命中分钟」边界与预览配色通道断言（`4fa83dd` + `75a796e`）；库导入收割当前笔记三分支（`c27dd16`）；markdown 轮询周期可注入测试缝 + 缝自证（`3b372cc`，根治 db.imported 用例的负载假红）。
 - fix(scripts)：**bash 3.2 兼容** —— 「变量紧跟全角字符」补花括号（`"$V（"` 会把全角括号首字节并进变量名：开了 `set -u` 的脚本直接 `unbound variable` 崩、没开的**静默丢值**）。本次门禁实测抓到 `check-consistency.sh` 自 `6365a68` 起就因此假红（exit 1 = 前置缺失，实际是崩在打印行），装机输出 `✅ 版本号: ??已写入打包产物 Info.plist）` 也是同根；全仓 9 个脚本 27 处一并修（`a6ed265` + `008f9c2`）。
+- fix(claude)：**macOS 启动不再反复弹「请输入钥匙串密码」**——旧凭据回填改为一次性（`app_config` 键 `claude.keychain_backfill_done`，失败也置位；成功即清空 legacy `keychain_account` 列）；`keychain_macos` 只有 `errSecItemNotFound` 报 NotFound，授权被拒/用户取消改报 Internal 并带 OSStatus（此前一律伪装成「条目不存在」→ 每次启动重试、每次再弹一次）。判据 `claude_module: 旧凭据回填只尝试一次（二次启动零钥匙串触达）`（`74110de`）。
 - docs：github-sync spec F3 回滚口径修订（单事务 ⇒ 导入期失败已整体回滚；备份留盘 + 失败摘要点名回滚点；不做自动恢复及其理由）；M3 规划 Task 1 通知形态结论（**应用级 toast**，不推上游补系统通知 API）；backlog 四点十二/四点十三两批登记与二十余条销账。
 
 ## [AgentDirectLlm] 2026-10-16 —— 智能体与代理解耦：直连端点
