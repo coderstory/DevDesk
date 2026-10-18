@@ -138,7 +138,7 @@ NotifyTool::NotifyTool(FallbackFn fallback) : fallback_(std::move(fallback)) {}
 std::string NotifyTool::name() const { return "app.notify"; }
 
 std::string NotifyTool::schemaJson() const {
-    return R"({"name":"app.notify","description":"向用户发送系统通知，用于逾期待办提醒、闹钟到点提醒；不要滥用。","input_schema":{"type":"object","properties":{"title":{"type":"string","description":"通知标题，必填，单行简短"},"body":{"type":"string","description":"通知正文，必填"},"sound":{"type":"boolean","description":"是否播放提示音，默认 true"},"id":{"type":"string","description":"可选稳定标识；相同 id + 内容在 2 秒内去重；相同 id 会替换 macOS 中未展示/已展示的同 id 通知"}},"required":["title","body"],"additionalProperties":false}})";
+    return R"({"name":"app.notify","description":"向用户发送系统通知，用于逾期待办提醒、闹钟到点提醒；不要滥用。","input_schema":{"type":"object","properties":{"title":{"type":"string","description":"通知标题，必填，单行简短"},"body":{"type":"string","description":"通知正文，必填"},"sound":{"type":"boolean","description":"是否播放提示音，默认 true"},"level":{"type":"string","enum":["info","success","warning","error"],"description":"通知级别，默认 info"},"id":{"type":"string","description":"可选稳定标识；相同 id + 内容在 2 秒内去重；相同 id 会替换 macOS 中未展示/已展示的同 id 通知"}},"required":["title","body"],"additionalProperties":false}})";
 }
 
 Result<ToolResult> NotifyTool::execute(const ToolArgs& args) {
@@ -175,11 +175,34 @@ Result<ToolResult> NotifyTool::execute(const ToolArgs& args) {
         id = value.asString();
     }
 
+    // level：缺省 Info；未知值报工具错误，不静默降级成 Info（spec §7.3）。
+    platform::notify::Level level = platform::notify::Level::Info;
+    if (input.has("level")) {
+        pj::JsonValue value = input.get("level");
+        if (!value.isString()) {
+            return toolError("参数 level 必须是字符串");
+        }
+        const std::string text = value.asString();
+        if (text == "info") {
+            level = platform::notify::Level::Info;
+        } else if (text == "success") {
+            level = platform::notify::Level::Success;
+        } else if (text == "warning") {
+            level = platform::notify::Level::Warning;
+        } else if (text == "error") {
+            level = platform::notify::Level::Error;
+        } else {
+            return toolError("参数 level 非法: " + text +
+                             "（只支持 info / success / warning / error）");
+        }
+    }
+
     platform::notify::Notification notification;
     notification.id = std::move(id);
     notification.title = title.value();
     notification.body = body.value();
     notification.sound = sound;
+    notification.level = level;
 
     auto sent = platform::notify::send(notification);
     // Result::fail 只发生在参数非法（清洗后为空）或 facade 内部错误：不降级，

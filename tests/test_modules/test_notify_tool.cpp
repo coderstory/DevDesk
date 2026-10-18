@@ -4,7 +4,8 @@
 //   2) 去重 / 限速 → deliveredVia=none，fallback 零调用（不算失败）；
 //   3) 截断标志透传（truncated=true）；
 //   4) 环境失败（Denied/NotDetermined/后端不可用）→ fallback 入队 + reason 映射；
-//   5) 缺字段 / 空串 / 类型错 / 坏 JSON → isError=true，后端零调用。
+//   5) 缺字段 / 空串 / 类型错 / 坏 JSON → isError=true，后端零调用；
+//   6) level 缺省 Info / 显式透传 / 非法值报错不触后端（spec §7.2/§7.3）。
 // 三态断言在草案 Result<void> 接口下无法表达（无 Receipt）——即「无实现必红」。
 #include "doctest.h"
 
@@ -86,6 +87,53 @@ REGISTER_TEST(app_notify_success_forwards_fields,
     DOCTEST_CHECK_EQ(fake.lastNotification.body, std::string("「交周报」已逾期 2 天"));
     DOCTEST_CHECK_EQ(fake.lastNotification.sound, false);
     DOCTEST_CHECK_EQ(fake.lastNotification.id, std::string("todo-42"));
+    DOCTEST_CHECK(fake.lastNotification.level ==
+                  platform::notify::Level::Info);   // 缺省 level = info
+    return true;
+})
+
+REGISTER_TEST(app_notify_level_contract,
+              "app.notify: level 显式传值透传 / 非法值与类型错报错且后端零调用", {
+    ResetGuard guard;
+    FakeBackend fake;
+    platform::notify::setBackendForTest(&fake);
+
+    module::agent::NotifyTool tool;
+
+    auto ok1 = tool.execute(core::ToolArgs{
+        R"({"title":"打包完成","body":"v1.2.3 已上传","level":"success"})"});
+    DOCTEST_REQUIRE(ok1.isOk());
+    DOCTEST_CHECK_FALSE(ok1.value().isError);
+    DOCTEST_CHECK(fake.lastNotification.level ==
+                  platform::notify::Level::Success);
+
+    auto ok2 = tool.execute(core::ToolArgs{
+        R"({"title":"磁盘告警","body":"剩余 5%","level":"warning"})"});
+    DOCTEST_REQUIRE(ok2.isOk());
+    DOCTEST_CHECK_FALSE(ok2.value().isError);
+    DOCTEST_CHECK(fake.lastNotification.level ==
+                  platform::notify::Level::Warning);
+
+    auto ok3 = tool.execute(core::ToolArgs{
+        R"({"title":"同步失败","body":"重试 3 次未果","level":"error"})"});
+    DOCTEST_REQUIRE(ok3.isOk());
+    DOCTEST_CHECK_FALSE(ok3.value().isError);
+    DOCTEST_CHECK(fake.lastNotification.level == platform::notify::Level::Error);
+    DOCTEST_CHECK_EQ(fake.sendCalls, 3);
+
+    // 非法值 → 工具错误（spec §7.3：不静默降级成 info），后端零调用
+    auto invalid = tool.execute(core::ToolArgs{
+        R"({"title":"t","body":"b","level":"urgent"})"});
+    DOCTEST_REQUIRE(invalid.isOk());
+    DOCTEST_CHECK(invalid.value().isError);
+    DOCTEST_CHECK_EQ(fake.sendCalls, 3);
+
+    // 类型错：level 非字符串 → 工具错误，后端零调用
+    auto wrongType = tool.execute(core::ToolArgs{
+        R"({"title":"t","body":"b","level":1})"});
+    DOCTEST_REQUIRE(wrongType.isOk());
+    DOCTEST_CHECK(wrongType.value().isError);
+    DOCTEST_CHECK_EQ(fake.sendCalls, 3);
     return true;
 })
 
@@ -418,6 +466,16 @@ REGISTER_TEST(app_notify_schema_required_and_not_destructive,
     DOCTEST_CHECK(properties.has("body"));
     DOCTEST_CHECK(properties.has("sound"));
     DOCTEST_CHECK(properties.has("id"));
-    DOCTEST_CHECK_FALSE(properties.has("level"));   // 本工具固定 Info，不暴露级别
+    // level 契约（spec §7.2/§7.3）：可选 string enum，四值序固定
+    DOCTEST_CHECK(properties.has("level"));
+    auto levelSchema = properties.get("level").asObject();
+    DOCTEST_CHECK_EQ(levelSchema.get("type").asString(), std::string("string"));
+    auto levelEnum = levelSchema.get("enum");
+    DOCTEST_REQUIRE(levelEnum.isArray());
+    DOCTEST_CHECK_EQ(levelEnum.size(), 4);
+    DOCTEST_CHECK_EQ(levelEnum[0].asString(), std::string("info"));
+    DOCTEST_CHECK_EQ(levelEnum[1].asString(), std::string("success"));
+    DOCTEST_CHECK_EQ(levelEnum[2].asString(), std::string("warning"));
+    DOCTEST_CHECK_EQ(levelEnum[3].asString(), std::string("error"));
     return true;
 })
