@@ -2,7 +2,7 @@
 # DevDesk 一体化脚本：杀旧进程 → 增量构建 → 测试 → 启动 app
 # 输出固定结构（阶段标题 + ✅/❌ 结果行）：构建正常只打尾部、失败才打错误摘要；测试只打
 # [FAIL] 行 + Total/Passed/Failed 统计。
-# 用法：./scripts/build-test-run.sh [--clean] [--release] [--no-test] [--no-run] [--install] [--filter 关键词]
+# 用法：./scripts/build-test-run.sh [--clean] [--release] [--no-test] [--no-run] [--install] [--filter 关键词] [--verify-app-str 字符串]
 #   --clean       全量重建（rm -rf <构建目录> 重新 configure；默认增量）
 #   --release     Release 构建（默认 Debug）。构建目录随之切到 build-release/，
 #                 与 Debug 的 build/ 互不覆盖
@@ -13,6 +13,10 @@
 #                 「安装（--install）」段）。非 macOS 上给这个开关 = 硬失败，不静默忽略。
 #   --filter X    只跑描述含 X 的测试用例（透传给 devdesk_tests；注意中文关键词经
 #                 Git Bash 传参可能有编码问题，建议用 ASCII 词）
+#   --verify-app-str S   仅 --install 后生效（macOS）：装完对已装二进制
+#                 `LC_ALL=C grep -a -c S`，0 命中 = 装的包不含该特征（= 旧包 / 构建未含
+#                 本次修复）→ exit 1。sha 断言只证明「装的是本次产物」；本参数补上
+#                 「本次产物里确实包含某次修复」那一半。不带 --install 时出声提示、不生效。
 # 环境变量：DEVDESK_JOBS 并发编译单元数（默认 3，多 worktree 并发时的封顶）；
 #           DEVDESK_BUILD_TYPE 构建类型（默认 Debug；--release 等价于 Release）；
 #           DEVDESK_BUILD_DIR 构建目录（默认按构建类型选：Debug=build/、
@@ -120,7 +124,7 @@ fi
 # 构建类型：默认 Debug；--release 或 DEVDESK_BUILD_TYPE 切别的类型。只认 Debug / Release
 # 两种，写错在 configure 前就报错（免得 CMake 静默按空类型构建）。
 BUILD_TYPE="${DEVDESK_BUILD_TYPE:-Debug}"
-CLEAN=0; RUN_TEST=1; RUN_APP=1; INSTALL=0; FILTER=""
+CLEAN=0; RUN_TEST=1; RUN_APP=1; INSTALL=0; FILTER=""; VERIFY_APP_STR=""
 for arg in "$@"; do
   case "$arg" in
     --clean)    CLEAN=1 ;;
@@ -129,9 +133,15 @@ for arg in "$@"; do
     --no-run)   RUN_APP=0 ;;
     --install)  INSTALL=1 ;;
     --filter)   shift; FILTER="$1" ;;
+    --verify-app-str) shift; VERIFY_APP_STR="${1:-}" ;;
     *)          FILTER="$arg" ;;   # 裸词当 filter
   esac
 done
+# --verify-app-str 只在 --install 之后有东西可验。给了它却没给 --install = 出声提示
+# （不硬失败：本次构建/测试还有它自己的目的），但绝不静默——静默等于「以为验过」。
+if [ -n "$VERIFY_APP_STR" ] && [ "$INSTALL" != "1" ]; then
+  echo "⚠ --verify-app-str 只在 --install 流程里生效：本次未带 --install，特征串验不会跑" >&2
+fi
 case "$BUILD_TYPE" in
   Debug|Release) ;;
   *) echo "❌ 未知构建类型 '$BUILD_TYPE'（只支持 Debug / Release；注意大小写）" >&2; exit 1 ;;
@@ -445,18 +455,26 @@ if [ "$RUN_TEST" = "1" ]; then
   if [ -z "${DEVDESK_TEST_TMPDIR:-}" ]; then
     export DEVDESK_TEST_TMPDIR="$BUILD_DIR_ABS/testtmp"
   fi
-  TEST_OUT=$("$TEST_BIN" $FILTER 2>&1) || true
-  # 全绿时 grep 无命中 → 管道码 1，pipefail 下必须 || true 兜住（红绿判定在下面 Failed: 0）
+  # 退出码优先（修假绿洞）：devdesk_tests 退出码 0=全绿 / 1=有失败 / 2=过滤词 0 命中
+  # （test_main.cpp 对 0 命中显式打 [ERROR] 并退出 2 防假绿）。曾用 `|| true` 吞退出码 +
+  # grep "Failed: 0" 判绿：0 命中时二进制已报错退出，这里仍打「✅ 测试全绿」——门禁
+  # 红变绿是最危险的形态。现在：退出码非 0 一律红；grep 只作数字/文案提取，不参与红绿判定。
+  TEST_RC=0
+  TEST_OUT=$("$TEST_BIN" $FILTER 2>&1) || TEST_RC=$?
+  # 全绿时 grep 无命中 → 管道码 1，pipefail 下必须 || true 兜住（以下 grep 均仅显示用）
   FAIL_LINES=$(echo "$TEST_OUT" | grep -E "\[FAIL\]|^FAIL \[" | head -20) || true
   if [ -n "$FAIL_LINES" ]; then echo "$FAIL_LINES"; fi
   echo "$TEST_OUT" | grep -E "^(Total|Passed|Failed):" | tr '\n' ' ' || true
   echo ""
-  if echo "$TEST_OUT" | grep -q "Failed: 0"; then
-    echo "✅ 测试全绿"
-  else
-    echo "❌ 测试有失败（上方为 FAIL 摘要；要看完整输出跑: ${TEST_BIN}）"
+  if [ "$TEST_RC" -ne 0 ]; then
+    if [ "$TEST_RC" -eq 2 ]; then
+      echo "❌ 过滤词未命中任何用例（0 条用例 ≠ 全绿；过滤词: ${FILTER:-<空>}）"
+    else
+      echo "❌ 测试有失败（退出码 $TEST_RC；上方为 FAIL 摘要；要看完整输出跑: ${TEST_BIN}）"
+    fi
     exit 1
   fi
+  echo "✅ 测试全绿"
 fi
 
 # 3a. UI probe（无头渲染几何 / 结构断言；与 doctest 是两条独立门禁）。
@@ -647,7 +665,16 @@ if ! bash scripts/check-std-includes.sh; then
   exit 1
 fi
 
-# 3b-7. 守卫自检。这一段跑的**不是**代码，是上面那些守卫**自己** —— 它回答的是前面所有段
+# 3b-7. ToolGuard 双层花括号守卫（纯静态检查，--no-test 也跑）。`ToolGuard g{{"a","b"}}`
+# 外层初始化列表单元素 → 命中 std::string 迭代器对构造 UB，红绿随 .rodata 字面量布局
+# 翻转（2750e51 修的 53 用例批量红）。同类写法再被写出必须在门禁就红，不等链接布局翻脸。
+echo "── ToolGuard 双层花括号守卫 ──"
+if ! bash scripts/check-toolguard-braces.sh; then
+  echo "❌ ToolGuard 双层花括号守卫失败（tests/ 下有 Guard具名对象 + {{；正确写法单层 {\"a\", \"b\"}）"
+  exit 1
+fi
+
+# 3b-8. 守卫自检。这一段跑的**不是**代码，是上面那些守卫**自己** —— 它回答的是前面所有段
 # 都回答不了的问题：「这些守卫现在还活着吗？」
 # 必须接进链里的理由：这几道守卫都带 --self-test，不接进链就全是手动点的 —— 某道守卫被改
 # 坏、或判据退化成恒真，**CI 永远发现不了**，而门禁日志看上去全绿。这是「契约和守卫都声称
@@ -659,14 +686,15 @@ fi
 # 本段**故意放在所有真守卫之后**：代码真的有问题时先报代码问题，别让自检噪音盖住它。
 echo "── 守卫自检（验证上面各守卫自己没坏，非你的代码问题）──"
 SELF_TEST_FAIL=0
-# 自检计数随开关动态：链内 6 道 +（DEVDESK_EUI_API_CHECK=1 时）check-eui-neo-version
-_GUARD_SELF_COUNT=6
+# 自检计数随开关动态：链内 7 道 +（DEVDESK_EUI_API_CHECK=1 时）check-eui-neo-version
+_GUARD_SELF_COUNT=7
 for _guard in check-module-isolation \
                check-quota-write-paths \
                check-quota-shutdown-order \
                check-probe-gate-labels \
                check-probe-skip-gate \
-               check-std-includes; do
+               check-std-includes \
+               check-toolguard-braces; do
   if ! bash "scripts/${_guard}.sh" --self-test; then
     echo "❌ 守卫自检失败：scripts/${_guard}.sh --self-test —— 这是**守卫自己**坏了（判据退化成恒真或变异没生效），不是代码问题" >&2
     SELF_TEST_FAIL=1
@@ -806,6 +834,18 @@ if [ "$INSTALL" = "1" ]; then
   if [ ! -d "$INSTALL_DIR/Contents/MacOS/assets" ]; then
     echo "❌ 安装后缺 $INSTALL_DIR/Contents/MacOS/assets（EUI-NEO 按「exe 旁」找资源，缺了会退化）" >&2
     exit 1
+  fi
+  # ⑧ 特征串后置验（可选，--verify-app-str）。sha 断言证明「装的是本次构建产物」，
+  #    但证明不了「本次构建产物里确实包含某次修复」——构建吃了旧缓存 / 旧源时 sha 一致
+  #    照样是旧代码。特征串 0 命中 = 装的包不含该特征 = 旧包，硬失败。
+  #    grep -a 把二进制按文本扫；-c 无命中时打印 0 且退出码 1，`|| HITS=0` 兜退出码。
+  if [ -n "$VERIFY_APP_STR" ]; then
+    HITS="$(LC_ALL=C grep -a -c -- "$VERIFY_APP_STR" "$INSTALL_DIR/Contents/MacOS/DevDesk")" || HITS=0
+    if [ "$HITS" -eq 0 ]; then
+      echo "❌ 装的包不含特征串「${VERIFY_APP_STR}」（LC_ALL=C grep -a 命中 0 行）＝ 旧包/未含本次修复，不许当装好" >&2
+      exit 1
+    fi
+    echo "✅ 特征串后置验：已装二进制命中 ${HITS} 行「${VERIFY_APP_STR}」"
   fi
   echo "✅ 已安装：${INSTALL_DIR}（版本 ${APP_VERSION}，二进制与 $BUILD_DIR/DevDesk 逐字节一致）"
 fi

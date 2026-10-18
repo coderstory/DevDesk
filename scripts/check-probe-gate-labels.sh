@@ -49,6 +49,7 @@ REGISTERED_GUARDS=(
     "scripts/check-std-includes.sh"            # std 符号缺显式 include（跨标准库无关的静态判据）
     "scripts/check-quota-shutdown-order.sh"    # 余量链停机顺序（join → refresher → credentials → store）
     "scripts/check-eui-neo-version.sh"         # EUI-NEO 版本前置（跨仓库版本不匹配伪装成指错文件的编译错误）
+    "scripts/check-toolguard-braces.sh"        # ToolGuard 双层花括号（string 迭代器对构造 UB）
 )
 
 if [ ! -f "$TESTS_CMAKE" ]; then
