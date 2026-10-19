@@ -215,10 +215,9 @@ core::Result<core::LlmResponse> DirectLlmClient::send(
                           "」（该槽位未配置模型，请在 Claude 页补全）");
     }
     std::string modelId = id.value();
+    // [1M] 是客户端侧 1M 上下文标记，网关一律不认此后缀——漏剥即 model null（星锐/百炼实测）
+    modelId = stripOneMSuffix(modelId);
     const bool opencode = isOpencodeZen(profile);
-    if (opencode) {
-        modelId = stripOneMSuffix(modelId);   // 该网关不认本地 1M 标记
-    }
 
     // 3. 组请求体：每条 contentJson parse 成数组再套 role，逐条 stringify 拼数组
     std::vector<std::string> messageTexts;

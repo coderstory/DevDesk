@@ -233,7 +233,7 @@ REGISTER_TEST(direct_llm_client_upstream_status_and_network_errors,
 })
 
 REGISTER_TEST(direct_llm_client_opencode_dialect,
-              "direct_llm_client: opencode 方言（x-opencode-session + 剥 [1M]）；override 可覆盖 host 推断", {
+              "direct_llm_client: opencode 方言（x-opencode-session）+ [1M] 全网关剥；override 可覆盖 host 推断", {
     const auto sendOnce = [](test_support::FakeProfileSource& profile,
                              Capture& cap) {
         module::agent::DirectLlmClient client(profile, cap.fn());
@@ -260,7 +260,7 @@ REGISTER_TEST(direct_llm_client_opencode_dialect,
         DOCTEST_REQUIRE(sendOnce(profile, cap).isOk());
         DOCTEST_CHECK_EQ(cap.req.headers.count("x-opencode-session"), size_t(1));
     }
-    // 显式覆盖成 anthropic_default：opencode host 也不加会话头、不剥标记
+    // 显式覆盖成 anthropic_default：opencode host 也不加会话头；但 [1M] 网关一律剥
     {
         test_support::FakeProfileSource profile;
         profile.profile.baseUrl = "https://zen.opencode.ai";
@@ -269,16 +269,28 @@ REGISTER_TEST(direct_llm_client_opencode_dialect,
         Capture cap;
         DOCTEST_REQUIRE(sendOnce(profile, cap).isOk());
         DOCTEST_CHECK_EQ(cap.req.headers.count("x-opencode-session"), size_t(0));
-        DOCTEST_CHECK(cap.req.body.find("[1M]") != std::string::npos);
+        DOCTEST_CHECK(cap.req.body.find("[1M]") == std::string::npos);
     }
-    // 非 opencode 的通用网关：无会话头，模型名原样（[1M] 不剥）
+    // 非 opencode 的通用网关：无会话头，但 [1M] 网关一律剥
     {
         test_support::FakeProfileSource profile;
         profile.profile.defaultModel = "claude-sonnet-4-5[1M]";
         Capture cap;
         DOCTEST_REQUIRE(sendOnce(profile, cap).isOk());
         DOCTEST_CHECK_EQ(cap.req.headers.count("x-opencode-session"), size_t(0));
-        DOCTEST_CHECK(cap.req.body.find("[1M]") != std::string::npos);
+        DOCTEST_CHECK(cap.req.body.find("[1M]") == std::string::npos);
+    }
+    // 非 opencode profile + 槽位值带 [1M] → 发出的请求体 model 不含 [1M] 且前缀完整
+    {
+        test_support::FakeProfileSource profile;
+        profile.profile.baseUrl = "https://codingxrui.geely-test.com/bailian/anthropic";
+        profile.profile.defaultModel = "bailian/qwen3.8-max[1M]";
+        Capture cap;
+        DOCTEST_REQUIRE(sendOnce(profile, cap).isOk());
+        DOCTEST_CHECK_EQ(cap.req.headers.count("x-opencode-session"), size_t(0));
+        DOCTEST_CHECK(cap.req.body.find("[1M]") == std::string::npos);
+        DOCTEST_CHECK(cap.req.body.find(
+            "\"model\":\"bailian/qwen3.8-max\"") != std::string::npos);
     }
     return true;
 })
