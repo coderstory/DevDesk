@@ -20,6 +20,11 @@ add_library(devdesk_ui_kit STATIC
     selection_bar.cpp
     wtab.cpp
     wswitch.cpp
+    # W2d 新增（§4.10/§4.12）：微信式轻提示 + 空状态 helper。新组件并存：
+    # 既有通知式 toast 保留不动（§4.10「两种 toast 并存」）；新反馈点调
+    # light_toast，空列表/无搜索结果调 empty_state。
+    light_toast.cpp
+    empty_state.cpp
 )
 
 devdesk_apply_warnings(devdesk_ui_kit)
