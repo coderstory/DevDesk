@@ -98,7 +98,19 @@ bool checkPageIcon(::core::Module* (*factory)(), const char* elId,
 REGISTER_TEST(module_icons_page_emoji_replaced,
               "module_icons: 三模块页内 emoji 已换 FA 图标元素", {
     if (!checkPageIcon(create_home_module, "home.btn.refresh.icon", 0xF021)) return false;
-    if (!checkPageIcon(create_home_module, "home.btn.settings.icon", 0xF013)) return false;
+    // W9: 右上「设置」按钮已移除（与侧边栏入口重复），反证元素不存在
+    {
+        std::unique_ptr<::core::Module> mod(create_home_module());
+        eui::Screen screen;
+        screen.width = 1600.0f;
+        screen.height = 1000.0f;
+        eui::Ui ui;
+        ui.begin("probe_home_no_settings");
+        mod->compose(ui, screen);
+        ui.end();
+        if (ui.find("home.btn.settings") != nullptr) return false;
+        if (ui.find("home.btn.settings.icon") != nullptr) return false;
+    }
     if (!checkPageIcon(create_home_module, "home.act.claude.icon", 0xF46D)) return false;
     if (!checkPageIcon(create_claude_module, "claude.btn.proxy.icon", 0xF04B)) return false;
     if (!checkPageIcon(create_claude_module, "claude.guide.icon", 0xF05A)) return false;

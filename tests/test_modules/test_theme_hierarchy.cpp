@@ -212,8 +212,8 @@ REGISTER_TEST(theme_hierarchy_home,
     const auto checkFrame = [&](Frame& frame,
                                 const core::theme::Tokens& t) -> bool {
         DOCTEST_CHECK(frame.absent("home.pagebg"));
-        // 统计卡 = 浮动卡片 → surface，不得跟风改米色
-        DOCTEST_CHECK(frame.colorIs("home.stat.tokens.bg", t.colors.surface));
+        // W9: 统计卡换微信白底（wechat.cardBg #FFFFFF），不再用暖色 surface
+        DOCTEST_CHECK(frame.colorIs("home.stat.tokens.bg", t.colors.wechat.cardBg));
         return true;
     };
 
