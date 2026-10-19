@@ -382,13 +382,24 @@ int treeRowIndex(eui::Ui& ui, const std::string& displayName, bool folder) {
     return -1;
 }
 
-// 目录行是否处于选中态（底色 == primarySoftBg）
+// 目录行是否处于选中态（W8：底色 == wechat.selectedBg #E5E5E5）
 bool folderRowSelected(eui::Ui& ui, const std::string& displayName) {
     const int i = treeRowIndex(ui, displayName, /*folder=*/true);
     if (i < 0) return false;
     const auto* row = ui.find("md.tree.node." + std::to_string(i) + ".row");
     return row != nullptr &&
-           colorEq(row->color, core::theme::current().colors.primarySoftBg);
+           colorEq(row->color, core::theme::current().colors.wechat.selectedBg);
+}
+
+// W8：标签添加从独立按钮改为输入框内置（回车提交）。
+// 给指定 input 派发 Enter 键（触发 onEnter → commitAddTag）。
+bool pressEnterOnInput(eui::Ui& ui, const std::string& inputId) {
+    const auto* hit = ui.find(inputId + ".hit");
+    if (hit == nullptr || !hit->onKeyEvent) return false;
+    eui::KeyEvent ev;
+    ev.key = eui::InputKey::Enter;
+    ev.action = eui::KeyAction::Press;
+    return hit->onKeyEvent(ev);
 }
 
 } // namespace
@@ -959,15 +970,16 @@ REGISTER_TEST(md_module_new_folder, "markdown_module: W9 新建文件夹入口�
     const auto* nfHint = ui.find("md.dialog.new.hint");
     DOCTEST_REQUIRE(nfHint != nullptr);
     DOCTEST_CHECK(nfHint->text.find("根目录") != std::string::npos);
-    // 选中态可视：根目录行底色 = primarySoftBg（选中色），刚建好的「工作」行回底色
+    // 选中态可视：根目录行底色 = wechat.selectedBg（W8 选中色 #E5E5E5），刚建好的「工作」行回底色
     const auto* rootRowNow = ui.find("md.tree.node.0.row");
     const auto* workRowNow = ui.find("md.tree.node.2.row");
     DOCTEST_REQUIRE(rootRowNow != nullptr);
     DOCTEST_REQUIRE(workRowNow != nullptr);
+    // W8：选中态底色改 wechat.selectedBg（#E5E5E5）
     const auto& treeColors = core::theme::current().colors;
-    DOCTEST_CHECK(colorEq(rootRowNow->color, treeColors.primarySoftBg));
-    DOCTEST_CHECK(colorEq(rootRowNow->color, treeColors.primarySoftBg) &&
-                  !colorEq(workRowNow->color, treeColors.primarySoftBg));
+    DOCTEST_CHECK(colorEq(rootRowNow->color, treeColors.wechat.selectedBg));
+    DOCTEST_CHECK(colorEq(rootRowNow->color, treeColors.wechat.selectedBg) &&
+                  !colorEq(workRowNow->color, treeColors.wechat.selectedBg));
     const auto* noteBtn = ui.find("md.tree.new.bg");
     DOCTEST_REQUIRE(noteBtn != nullptr);
     noteBtn->onClick();
@@ -1211,7 +1223,7 @@ REGISTER_TEST(md_module_new_folder_parent,
 
 // 2b4b''. 目录树选中态 → 新建笔记落在选中目录
 // 逐档钉死（不只测根——「永远落在根目录」正是报障点）：
-//   ① 初始选中 = 根目录行（默认值），行底色 = primarySoftBg；
+//   ① 初始选中 = 根目录行（默认值），行底色 = wechat.selectedBg；
 //   ② 点**二级目录**行 → 选中态 == 工作/周会 → 新建笔记落盘 工作/周会/xxx.md
 //      （不是根、也不是父目录 工作）；
 //   ③ 点**一级目录**行 → 新建笔记落 工作/xxx.md；
@@ -1760,7 +1772,7 @@ REGISTER_TEST(md_module_split_layout, "markdown_module: W9 双栏三列铺满 co
     const float contentW = screen.width - pad * 2.0f;
     const float gap = 16.0f;
     DOCTEST_CHECK_EQ(tree->frame.x, pad);
-    DOCTEST_CHECK_EQ(tree->frame.width, 240.0f);
+    DOCTEST_CHECK_EQ(tree->frame.width, 220.0f);  // D-12 校准 220px
     DOCTEST_CHECK_EQ(editor->frame.width, preview->frame.width);
     const float total = tree->frame.width + editor->frame.width +
                         preview->frame.width + gap * 2.0f;
@@ -1792,7 +1804,7 @@ REGISTER_TEST(md_tree_column_layout_semantics,
     ui.layout(screen.width, screen.height);
 
     const float pad = 40.0f;        // spacingXXLarge
-    const float sideW = 240.0f;     // 左栏树宽
+    const float sideW = 220.0f;     // 左栏树宽（D-12 校准）
     const float gap = 16.0f;
     const float contentW = screen.width - pad * 2.0f;
 
@@ -1969,10 +1981,8 @@ REGISTER_TEST(md_module_tags_ui, "markdown_module: 标签 chip 行 + 左栏标�
     tie.text = "工作";
     addInput->onTextInput(tie);
     frame("tg3");
-    const auto* addBtn = ui.find("md.tags.addbtn.bg");
-    DOCTEST_REQUIRE(addBtn != nullptr);
-    DOCTEST_REQUIRE(addBtn->onClick != nullptr);
-    addBtn->onClick();
+    // W8：标签添加改为输入框内置（回车提交），不再有独立 addbtn 按钮。
+    DOCTEST_REQUIRE(pressEnterOnInput(ui, "md.tags.add"));
     frame("tg4");
 
     // 编辑器 chip 出现；左栏筛选区出现同名 chip（带笔记数）
@@ -2088,10 +2098,8 @@ REGISTER_TEST(md_chip_and_outline_text_centered,
     tie.text = "工作";
     addHit->onTextInput(tie);
     frame("cc3");
-    const auto* addBtn = ui.find("md.tags.addbtn.bg");
-    DOCTEST_REQUIRE(addBtn != nullptr);
-    DOCTEST_REQUIRE(addBtn->onClick != nullptr);
-    addBtn->onClick();
+    // W8：标签添加改为输入框内置（回车提交）。
+    DOCTEST_REQUIRE(pressEnterOnInput(ui, "md.tags.add"));
     frame("cc4");
 
     // 编辑器顶栏 chip：名称 + ×（两处底框：chip 底 / 删除热区）
@@ -2473,14 +2481,14 @@ REGISTER_TEST(md_module_subtitle_static, "markdown_module: subtitle 静态快捷
     };
     frame("f1");
 
-        // subtitle 含快捷键提示（键盘流 + Ctrl+Shift+P 四态都是真实能力），
-    // 不再携带笔记数/操作结果
+        // W8：快捷键说明已收进「?」帮助图标（§5.4），subtitle 只留短提示。
+    // 断言帮助入口存在 + 短提示关键词（Ctrl+Shift+P 仍在）。
     const auto* sub = ui.find("md.subtitle");
     DOCTEST_REQUIRE(sub != nullptr);
     DOCTEST_CHECK(sub->text.find("Ctrl+Shift+P") != std::string::npos);
-    DOCTEST_CHECK(sub->text.find("Ctrl+B/I/K") != std::string::npos);
-    DOCTEST_CHECK(sub->text.find("Tab") != std::string::npos);
-    DOCTEST_CHECK(sub->text.find("Enter") != std::string::npos);
+    DOCTEST_CHECK(sub->text.find("?") != std::string::npos);
+    DOCTEST_CHECK(sub->text.find("Ctrl+B/I/K") == std::string::npos);  // 长文本已收
+    DOCTEST_CHECK(ui.find("md.help.icon") != nullptr);  // 帮助图标存在
     DOCTEST_CHECK(sub->text.find("篇笔记") == std::string::npos);
     const std::string staticSub = sub->text;
 
@@ -2626,7 +2634,7 @@ REGISTER_TEST(md_module_esc_cancel_dialogs,
     DOCTEST_CHECK(pressEsc(ui, "md.tags.add"));
     frame("ec14");
         // 草稿清空 → 输入框回 placeholder；标签未被提交
-    DOCTEST_CHECK_EQ(ui.find("md.tags.add.text")->text, std::string("＋ 标签"));
+    DOCTEST_CHECK_EQ(ui.find("md.tags.add.text")->text, std::string("添加标签"));
     DOCTEST_CHECK(ui.find("md.tags.chip.0.name") == nullptr);
 
     mod->onStop();
@@ -3581,11 +3589,13 @@ REGISTER_TEST(md_module_live_mode_skeleton,
 
     // segmented 视觉顺序 = 编辑 | 实时 | 双栏 | 预览（枚举值是 0/1/2/3 = 编辑/
     // 双栏/预览/实时，故顺序必须经映射表，不能按枚举值排）
-    DOCTEST_REQUIRE(ui.find("md.mode.label.0") != nullptr);
-    DOCTEST_CHECK_EQ(ui.find("md.mode.label.0")->text, std::string("编辑"));
-    DOCTEST_CHECK_EQ(ui.find("md.mode.label.1")->text, std::string("实时"));
-    DOCTEST_CHECK_EQ(ui.find("md.mode.label.2")->text, std::string("双栏"));
-    DOCTEST_CHECK_EQ(ui.find("md.mode.label.3")->text, std::string("预览"));
+    // W8：视图切换改为 WTab（§4.2），id 从 md.mode.label.N → md.mode.N.text。
+    // 标签逐字不变：编辑 | 实时 | 双栏 | 预览。
+    DOCTEST_REQUIRE(ui.find("md.mode.0.text") != nullptr);
+    DOCTEST_CHECK_EQ(ui.find("md.mode.0.text")->text, std::string("编辑"));
+    DOCTEST_CHECK_EQ(ui.find("md.mode.1.text")->text, std::string("实时"));
+    DOCTEST_CHECK_EQ(ui.find("md.mode.2.text")->text, std::string("双栏"));
+    DOCTEST_CHECK_EQ(ui.find("md.mode.3.text")->text, std::string("预览"));
 
     eui::KeyEvent p = test_support::pressShortcut(eui::InputKey::P, /*shift=*/true);
 
@@ -3626,8 +3636,8 @@ REGISTER_TEST(md_module_live_mode_skeleton,
     DOCTEST_CHECK(ui.find("md.live.scroll") == nullptr);
     DOCTEST_CHECK(ui.find("md.preview.scroll") == nullptr);
 
-    // segmented 点击走逆映射（不是 static_cast）：第 2 段 = 实时，不是双栏
-    const auto* segLive = ui.find("md.mode.hit.1");
+    // WTab 点击走逆映射（不是 static_cast）：第 2 段 = 实时，不是双栏
+    const auto* segLive = ui.find("md.mode.1.hit");
     DOCTEST_REQUIRE(segLive != nullptr);
     DOCTEST_REQUIRE(segLive->onClick != nullptr);
     segLive->onClick();
@@ -4276,7 +4286,7 @@ REGISTER_TEST(md_module_text_column_chrome_shared,
         ui.layout(screen.width, screen.height);
     };
     const float pad = 40.0f;
-    const float sideW = 240.0f;
+    const float sideW = 220.0f;  // D-12 校准
     const float gap = 16.0f;
 
     // (1) 空态（未选笔记）：提示条 + 状态栏，chip 行不画
@@ -7299,7 +7309,7 @@ REGISTER_TEST(md_module_live_tag_bar,
     frame();
     DOCTEST_REQUIRE(e.ui->find("md.live.scroll") != nullptr);
 
-    // ① 实时态正文列顶的标签 chip 行仍在（共享列壳）：添加输入 + ＋按钮
+    // ① 实时态正文列顶的标签 chip 行仍在（共享列壳）：添加输入（回车提交）
     const auto* addInput = e.ui->find("md.tags.add.hit");
     DOCTEST_REQUIRE(addInput != nullptr);
     DOCTEST_REQUIRE(addInput->onTextInput != nullptr);
@@ -7307,10 +7317,8 @@ REGISTER_TEST(md_module_live_tag_bar,
     tie.text = "工作";
     addInput->onTextInput(tie);
     frame();
-    const auto* addBtn = e.ui->find("md.tags.addbtn.bg");
-    DOCTEST_REQUIRE(addBtn != nullptr);
-    DOCTEST_REQUIRE(addBtn->onClick != nullptr);
-    addBtn->onClick();
+    // W8：标签添加改为输入框内置（回车提交）。
+    DOCTEST_REQUIRE(pressEnterOnInput(*e.ui, "md.tags.add"));
     frame();
 
     // ② chip 上屏 + 左栏筛选区同名 chip（与编辑态同一套逻辑）
@@ -8026,11 +8034,8 @@ REGISTER_TEST(md_module_tag_change_event_wiring,
     frame("te3");
     DOCTEST_CHECK_EQ(gotTags, 0);
 
-    // ① 「＋」提交 → 真写标签表 → 恰一次
-    const auto* addBtn = ui.find("md.tags.addbtn.bg");
-    DOCTEST_REQUIRE(addBtn != nullptr);
-    DOCTEST_REQUIRE(addBtn->onClick != nullptr);
-    addBtn->onClick();
+    // ① 回车提交 → 真写标签表 → 恰一次（W8：输入框内置，不再有独立按钮）
+    DOCTEST_REQUIRE(pressEnterOnInput(ui, "md.tags.add"));
     frame("te4");
     DOCTEST_CHECK_EQ(gotTags, 1);
     DOCTEST_CHECK(ui.find("md.tags.chip.0.name") != nullptr);

@@ -12,9 +12,11 @@
 #include "core/component_theme.h"
 #include "core/event_bus.h"
 #include "core/time.h"
+#include <ui_kit/button.h>
 #include <ui_kit/dialog_form.h>
 #include <ui_kit/metrics.h>
 #include <ui_kit/toast.h>
+#include <ui_kit/wtab.h>
 #include "markdown_service.h"
 #include "markdown_module_test_seam.h"
 #include "markdown_tools.h"
@@ -74,6 +76,8 @@ constexpr float kTreeRowHeight = 32.0f;
 constexpr float kTreeArrowFontSize = 18.0f;
 
 // 单行树条目：整行包一层 stack —— position() 只在 stack 内生效，流式子元素会被静默忽略。
+// W8：选中态改 wechat 风格（§4.3）——浅灰底 #E5E5E5 + 左 2px 绿竖线。
+// 搜索命中时高亮关键词（§3.2.4 补充项）。
 void drawFileTreeItem(eui::Ui& ui,
                       const std::string& id,
                       float width,
@@ -84,18 +88,28 @@ void drawFileTreeItem(eui::Ui& ui,
                       float indent,
                       std::function<void()> onClick,
                       std::function<void(const eui::PointerEvent&, const eui::Rect&)>
-                          onContextMenu = {}) {
+                          onContextMenu = {},
+                      const std::string& highlight = {}) {
+    const auto& wc = t.colors.wechat;
     ui.stack(id)
         .size(width, kTreeRowHeight)
         .content([&] {
             ui.rect(id + ".row")
                 .size(width, kTreeRowHeight)
-                .radius(t.sizes.radiusSmall)
-                .color(active ? t.colors.primarySoftBg : t.colors.background)
-                .hoverColor(t.colors.hover)
+                .color(active ? wc.selectedBg : wc.cardBg)
+                .hoverColor(wc.dividerSecondary)
+                .radius(t.sizes.radiusWeChat)
                 .onClick(std::move(onClick))
                 .onContextMenu(std::move(onContextMenu))
                 .build();
+            // 选中态左 2px 绿竖线（§4.3）
+            if (active) {
+                ui.rect(id + ".accent")
+                    .position(indent, 0.0f)
+                    .size(2.0f, kTreeRowHeight)
+                    .color(wc.primary)
+                    .build();
+            }
             ui.text(id + ".icon")
                 .position(12.0f + indent, 0.0f)
                 .size(20.0f, kTreeRowHeight)
@@ -103,18 +117,44 @@ void drawFileTreeItem(eui::Ui& ui,
                 .fontSize(t.sizes.fontSizeSmall)
                 .lineHeight(kTreeRowHeight)
                 .verticalAlign(eui::VerticalAlign::Center)
-                .color(t.colors.textSecondary)
+                .color(active ? wc.primary : wc.textTertiary)
                 .build();
-            ui.text(id + ".name")
+            // 文件名：搜索命中时高亮关键词段（wechat.primary 着色）
+            auto nameBuilder = ui.text(id + ".name")
                 .position(36.0f + indent, 0.0f)
                 .size(std::max(0.0f, width - 48.0f - indent), kTreeRowHeight)
                 .text(name)
                 .fontSize(t.sizes.fontSizeSmall)
                 .lineHeight(kTreeRowHeight)
                 .verticalAlign(eui::VerticalAlign::Center)
-                .color(active ? t.colors.primaryText : t.colors.textPrimary)
-                .fontWeight(active ? 700 : 400)
-                .build();
+                .color(active ? wc.textPrimary : wc.textPrimary)
+                .fontWeight(active ? 700 : 400);
+            if (!highlight.empty()) {
+                std::vector<core::TextRun> runs;
+                size_t pos = 0;
+                while (pos < name.size()) {
+                    size_t hit = name.find(highlight, pos);
+                    if (hit == std::string::npos) break;
+                    if (hit > pos) {
+                        runs.push_back({static_cast<int>(pos),
+                                        static_cast<int>(hit),
+                                        wc.textPrimary});
+                    }
+                    runs.push_back({static_cast<int>(hit),
+                                    static_cast<int>(hit + highlight.size()),
+                                    wc.primary});
+                    pos = hit + highlight.size();
+                }
+                if (!runs.empty() && pos < name.size()) {
+                    runs.push_back({static_cast<int>(pos),
+                                    static_cast<int>(name.size()),
+                                    wc.textPrimary});
+                }
+                if (!runs.empty()) {
+                    nameBuilder.runs(std::move(runs));
+                }
+            }
+            nameBuilder.build();
         })
         .build();
 }
@@ -322,7 +362,7 @@ public:
         const float pad = t.sizes.spacingXXLarge; // 40
         const float contentW = screen.width - pad * 2.0f;
         const float contentH = screen.height - pad * 2.0f;
-        const float sideW = 240.0f;
+        const float sideW = 220.0f;  // D-12 校准：中栏文件树宽 220px（spec §3.6）
         const float gap = t.sizes.spacingLarge;
         const float midW = (contentW - sideW - gap * 2.0f) / 2.0f;
         const float bodyH = contentH - ui_kit::kHeaderH - t.sizes.spacingLarge;
@@ -378,8 +418,7 @@ private:
             core::theme::componentTokens(t);
         const std::string subtitle =
             service_
-                ? "Ctrl+Shift+P 切换视图 · Ctrl+B/I/K 格式 · Tab 缩进/表格跳格 · "
-                  "Enter 续列表 · 右键条目/编辑器更多操作"
+                ? "Ctrl+Shift+P 切换视图 · 按 ? 查看快捷键"
                 : "尚未初始化笔记目录";
 
         ui.row("md.header")
@@ -398,7 +437,7 @@ private:
                             .fontSize(t.sizes.fontSizeTitle)
                             .lineHeight(32.0f)
                             .fontWeight(700)
-                            .color(t.colors.textPrimary)
+                            .color(t.colors.wechat.textPrimary)
                             .build();
                         // subtitle 包 clip 栈：内层省略号管排版宽，栈 .clip() 兜底绘制范围
                         const float subW = contentW - actionsW - segW;
@@ -411,7 +450,7 @@ private:
                                     .text(subtitle)
                                     .fontSize(t.sizes.fontSizeSmall)
                                     .lineHeight(18.0f)
-                                    .color(t.colors.textSecondary)
+                                    .color(t.colors.wechat.textSecondary)
                                     .maxWidth(subW)
                                     .overflow(core::TextOverflow::Ellipsis)
                                     .build();
@@ -420,14 +459,25 @@ private:
                     })
                     .build();
 
-                components::segmented(ui, "md.mode")
+                // 微信风格 Tab（§4.2）：2px 绿下划线激活、灰字未激活。
+                // 保 md.mode 作 wrapper stack id（ui.find("md.mode") 仍绿）；
+                // 子 Tab id = md.mode.0..3，hit/text/underline 按 wtab 约定。
+                // 标签逐字「编辑/实时/双栏/预览」不变（modeOrderIndex 逆映射）。
+                const float tabW = segW / 4.0f;
+                ui.stack("md.mode")
                     .size(segW, 36.0f)
-                    .items({"编辑", "实时", "双栏", "预览"})
-                    .selected(modeOrderIndex(mode_))
-                    .fontSize(t.sizes.fontSizeSmall)
-                    .theme(componentTheme)
-                    .onChange([this](int index) {
-                        setMode(modeFromOrderIndex(index));
+                    .content([&] {
+                        for (int i = 0; i < 4; ++i) {
+                            ui_kit::wtab(
+                                ui,
+                                std::string("md.mode.") + std::to_string(i),
+                                std::vector<std::string>{"编辑", "实时", "双栏",
+                                                         "预览"}[i],
+                                modeOrderIndex(mode_) == i,
+                                static_cast<float>(i) * tabW, 0.0f, tabW,
+                                36.0f, t,
+                                [this, i] { setMode(modeFromOrderIndex(i)); });
+                        }
                     })
                     .build();
 
@@ -437,6 +487,17 @@ private:
                     .alignItems(eui::Align::CENTER)
                     .gap(t.sizes.spacingSmall)
                     .content([&] {
+                        // 快捷键帮助入口（§5.4）：「?」图标，待 EUI tooltip 绑定后
+                        // hover 弹快捷键面板。0xF059 = fa-circle-question 占位。
+                        ui.text("md.help.icon")
+                            .size(24.0f, 24.0f)
+                            .icon(0xF059)
+                            .fontSize(16.0f)
+                            .lineHeight(24.0f)
+                            .verticalAlign(eui::VerticalAlign::Center)
+                            .color(t.colors.wechat.textSecondary)
+                            .build();
+
                         components::toggleSwitch(ui, "md.outline.toggle")
                             .size(112.0f, 36.0f)
                             .checked(outlineOpen_)
@@ -446,13 +507,16 @@ private:
                             .onChange([this](bool v) { outlineOpen_ = v; })
                             .build();
 
+                        // 微信绿主按钮（§4.1 Primary）：wechat 令牌填充 + 白字。
+                        // 用 componentTokensWeChat 给 button 组件绿底；row 布局定位不受 ui_kit::button position 干扰。
+                        const auto wechatTheme = core::theme::componentTokensWeChat(t);
                         components::button(ui, "md.btn.new")
-                            .size(124.0f, 40.0f)
+                            .size(124.0f, 36.0f)
                             .text("+ 新建笔记")
                             .fontSize(t.sizes.fontSizeBody)
-                            .theme(componentTheme, true)
-                            .textColor(t.colors.onPrimary)
-                            .radius(t.sizes.radius)
+                            .theme(wechatTheme, true)
+                            .textColor(t.colors.wechat.onPrimary)
+                            .radius(t.sizes.radiusWeChat)
                             .onClick([this] { openNewNoteDialog(); })
                             .build();
                     })
@@ -499,16 +563,23 @@ private:
         // 单 stack 列 = bg rect + 绝对定位内容；bg 与 stack 两侧尺寸必须精确重合，
         // 测试 md_tree_column_layout_semantics 锁定（错位会静默溢出）。
         ui.stack("md.tree").size(sideW, bodyH).content([&] {
+            // 白底面板（§4.14：wechat.cardBg #FFFFFF）+ 右侧 1px 分割线（§4.7）。
+            // 去圆角/去 border：flat 白卡，右分割线单独画。
             ui.rect("md.tree.bg")
                 .size(sideW, bodyH)
-                .color(t.colors.background)
-                .radius(t.sizes.radiusLarge)
-                .border(1.0f, t.colors.borderDefault)
+                .color(t.colors.wechat.cardBg)
                 .build();
-            // 搜索框：真实调用 FTS5。input 无前缀图标槽 → 浮层 icon + 加大 inset 让位
+            ui.rect("md.tree.divider")
+                .position(sideW - 1.0f, 0.0f)
+                .size(1.0f, bodyH)
+                .color(t.colors.wechat.dividerPrimary)
+                .build();
+            // 搜索框 + 右侧两个图标按钮（§3.3.3：新建按钮上移到搜索框右侧）。
+            // 搜索框窄至留 60px 给两个 28px 图标按钮 + 4px 间距。
+            const float searchW = sideW - 92.0f;  // 12 左 + 8 gap + 60 btns + 12 右
             components::input(ui, "md.search")
                 .position(12.0f, 12.0f)
-                .size(sideW - 24.0f, 36.0f)
+                .size(searchW, 36.0f)
                 .value(searchQuery_)
                 .placeholder("搜索笔记…")
                 .fontSize(t.sizes.fontSizeSmall)
@@ -525,7 +596,60 @@ private:
                 .icon(0xF002)  // fa-magnifying-glass
                 .fontSize(12.0f)
                 .lineHeight(16.0f)
-                .color(t.colors.textTertiary)
+                .color(t.colors.wechat.textTertiary)
+                .build();
+            // 清空按钮（补充项 §3.2.4）：搜索非空时显示「×」，点击清空。
+            if (!searchQuery_.empty()) {
+                ui.rect("md.search.clear")
+                    .position(12.0f + searchW - 28.0f, 12.0f)
+                    .size(28.0f, 36.0f)
+                    .color(eui::Color{0.0f, 0.0f, 0.0f, 0.0f})
+                    .hoverColor(t.colors.wechat.dividerSecondary)
+                    .onClick([this] {
+                        searchQuery_.clear();
+                        refreshList();
+                    })
+                    .build();
+                ui.text("md.search.clear.icon")
+                    .position(12.0f + searchW - 28.0f, 12.0f)
+                    .size(28.0f, 36.0f)
+                    .text("×")
+                    .fontSize(14.0f)
+                    .lineHeight(36.0f)
+                    .horizontalAlign(eui::HorizontalAlign::Center)
+                    .verticalAlign(eui::VerticalAlign::Center)
+                    .color(t.colors.wechat.textTertiary)
+                    .build();
+            }
+            // +笔记 / +文件夹 图标按钮（从面板底部上移到搜索框右侧，§3.3.3）
+            // 0xF067 = fa-plus；onClick 接原回调不变。
+            const float btnX0 = sideW - 72.0f;
+            const float btnX1 = sideW - 40.0f;
+            components::button(ui, "md.tree.new")
+                .position(btnX0, 12.0f)
+                .size(28.0f, 36.0f)
+                .text("+")
+                .fontSize(t.sizes.fontSizeBody)
+                .theme(componentTheme, false)
+                .textColor(t.colors.wechat.textSecondary)
+                .radius(t.sizes.radiusWeChat)
+                .onClick([this] { openNewNoteDialog(); })
+                .build();
+            components::button(ui, "md.tree.newfolder")
+                .position(btnX1, 12.0f)
+                .size(28.0f, 36.0f)
+                .text("📁")
+                .fontSize(12.0f)
+                .theme(componentTheme, false)
+                .textColor(t.colors.wechat.textSecondary)
+                .radius(t.sizes.radiusWeChat)
+                .onClick([this] {
+                    newFolderOpen_ = true;
+                    newFolderName_.clear();
+                    newFolderError_.clear();
+                    newFolderParentDir_ = newItemParentDir();
+                    newFolderParentOpen_ = false;
+                })
                 .build();
 
             const float tagY = 56.0f;
@@ -538,7 +662,7 @@ private:
                     .fontSize(10.0f)
                     .lineHeight(14.0f)
                     .fontWeight(700)
-                    .color(t.colors.textTertiary)
+                    .color(t.colors.wechat.textTertiary)
                     .build();
                 const float fs = 11.0f;
                 const float rowH = 24.0f;
@@ -563,9 +687,9 @@ private:
                         .content([&] {
                             ui.rect(id + ".bg")
                                 .size(chipW, rowH)
-                                .color(active ? t.colors.primary : t.colors.hover)
-                                .hoverColor(t.colors.primarySoftBg)
-                                .radius(t.sizes.radiusPill)
+                                .color(active ? t.colors.wechat.primary : t.colors.wechat.dividerSecondary)
+                                .hoverColor(t.colors.wechat.selectedBg)
+                                .radius(t.sizes.radiusWeChat)
                                 .onClick([this, name = tc.name] {
                                     toggleTagFilter(name);
                                 })
@@ -579,8 +703,8 @@ private:
                                 .horizontalAlign(eui::HorizontalAlign::Center)
                                 // 文本盒 == 胶囊高，须显式垂直居中（缺它墨迹从行框顶起排）
                                 .verticalAlign(eui::VerticalAlign::Center)
-                                .color(active ? t.colors.onPrimary
-                                              : t.colors.textSecondary)
+                                .color(active ? t.colors.wechat.onPrimary
+                                              : t.colors.wechat.textSecondary)
                                 .build();
                         })
                         .build();
@@ -591,7 +715,8 @@ private:
 
             // 搜索时树展平为命中文件列表；空搜索 = 二级目录树
             const float listY = 60.0f + tagAreaH;
-            const float listH = std::max(0.0f, bodyH - listY - 60.0f);
+            // 新建按钮已上移到搜索框右侧，底部不再预留按钮区——只留 16px 底 padding。
+            const float listH = std::max(0.0f, bodyH - listY - 16.0f);
 
             if (!listError_.empty()) {
                 ui.text("md.tree.error")
@@ -602,7 +727,7 @@ private:
                     .fontSize(t.sizes.fontSizeSmall)
                     .lineHeight(18.0f)
                     .wrap()
-                    .color(t.colors.error)
+                    .color(t.colors.wechat.warningRed)
                     .build();
             } else if (notes_.empty()) {
                 if (searchQuery_.empty() && tagFilter_.empty()) {
@@ -612,11 +737,11 @@ private:
                         ui.text("md.tree.empty")
                             .position(36.0f, listY + 40.0f)
                             .size(sideW - 48.0f, 40.0f)
-                            .text("还没有笔记\n点下面「+ 笔记」开始")
+                            .text("还没有笔记\n点右上角 + 开始")
                             .fontSize(t.sizes.fontSizeSmall)
                             .lineHeight(18.0f)
                             .wrap()
-                            .color(t.colors.textTertiary)
+                            .color(t.colors.wechat.textTertiary)
                             .build();
                     }
                 } else {
@@ -627,7 +752,7 @@ private:
                         .fontSize(t.sizes.fontSizeSmall)
                         .lineHeight(18.0f)
                         .wrap()
-                        .color(t.colors.textTertiary)
+                        .color(t.colors.wechat.textTertiary)
                         .build();
                 }
             } else if (!searchQuery_.empty()) {
@@ -635,38 +760,7 @@ private:
             } else {
                 drawTreeList(ui, listY, listH, sideW, t, componentTheme);
             }
-
-            const float newBtnY = bodyH - 52.0f;
-            const float btnW = (sideW - 24.0f - 8.0f) / 2.0f;
-            components::button(ui, "md.tree.new")
-                .position(12.0f, newBtnY)
-                .size(btnW, 36.0f)
-                .text("+ 笔记")
-                .fontSize(t.sizes.fontSizeSmall)
-                .theme(componentTheme, false)
-                .textColor(t.colors.textPrimary)
-                .radius(t.sizes.radius)
-                .border(1.0f, t.colors.borderDefault)
-                .onClick([this] { openNewNoteDialog(); })
-                .build();
-            components::button(ui, "md.tree.newfolder")
-                .position(12.0f + btnW + 8.0f, newBtnY)
-                .size(btnW, 36.0f)
-                .text("+ 文件夹")
-                .fontSize(t.sizes.fontSizeSmall)
-                .theme(componentTheme, false)
-                .textColor(t.colors.textPrimary)
-                .radius(t.sizes.radius)
-                .border(1.0f, t.colors.borderDefault)
-                .onClick([this] {
-                    newFolderOpen_ = true;
-                    newFolderName_.clear();
-                    newFolderError_.clear();
-                    // 上级目录默认 = 当前选中目录；已被外部删除才回落根目录
-                    newFolderParentDir_ = newItemParentDir();
-                    newFolderParentOpen_ = false;
-                })
-                .build();
+            // +笔记/+文件夹 已上移到搜索框右侧（见上方），底部不再有按钮。
         }).build();
     }
 
@@ -703,7 +797,7 @@ private:
                                      [this, path](const eui::PointerEvent& ev,
                                                   const eui::Rect&) {
                                          openFileContextMenu(path, ev);
-                                     });
+                                     }, searchQuery_);
                 }
             })
             .build();
@@ -749,12 +843,20 @@ private:
                             .content([&] {
                                 inner.rect(id + ".row")
                                     .size(w, kTreeRowHeight)
-                                    .color(selected ? t.colors.primarySoftBg
-                                                    : t.colors.background)
-                                    .hoverColor(t.colors.hover)
-                                    .radius(t.sizes.radiusSmall)
+                                    .color(selected ? t.colors.wechat.selectedBg
+                                                    : t.colors.wechat.cardBg)
+                                    .hoverColor(t.colors.wechat.dividerSecondary)
+                                    .radius(t.sizes.radiusWeChat)
                                     .onClick([this, dir = r.relPath] { selectDir(dir); })
                                     .build();
+                                // 选中态左 2px 绿竖线（§4.3）
+                                if (selected) {
+                                    inner.rect(id + ".accent")
+                                        .position(indent, 0.0f)
+                                        .size(2.0f, kTreeRowHeight)
+                                        .color(t.colors.wechat.primary)
+                                        .build();
+                                }
                                 // 展开/收起命中区（叠在行体之上，命中取最上层）
                                 inner.rect(id + ".toggle")
                                     .position(indent, 0.0f)
@@ -776,7 +878,7 @@ private:
                                     .fontSize(kTreeArrowFontSize)
                                     .lineHeight(kTreeRowHeight)
                                     .verticalAlign(eui::VerticalAlign::Center)
-                                    .color(t.colors.textTertiary)
+                                    .color(t.colors.wechat.textTertiary)
                                     .build();
                                 inner.text(id + ".ficon")
                                     .position(26.0f + indent, 0.0f)
@@ -785,8 +887,8 @@ private:
                                     .fontSize(t.sizes.fontSizeSmall)
                                     .lineHeight(kTreeRowHeight)
                                     .verticalAlign(eui::VerticalAlign::Center)
-                                    .color(selected ? t.colors.primary
-                                                    : t.colors.textTertiary)
+                                    .color(selected ? t.colors.wechat.primary
+                                                    : t.colors.wechat.textTertiary)
                                     .build();
                                 inner.text(id + ".name")
                                     .position(46.0f + indent, 0.0f)
@@ -796,8 +898,8 @@ private:
                                     .fontSize(t.sizes.fontSizeSmall)
                                     .lineHeight(kTreeRowHeight)
                                     .verticalAlign(eui::VerticalAlign::Center)
-                                    .color(selected ? t.colors.primaryText
-                                                    : t.colors.textPrimary)
+                                    .color(selected ? t.colors.wechat.textPrimary
+                                                    : t.colors.wechat.textPrimary)
                                     .fontWeight(700)
                                     .build();
                             })
@@ -958,7 +1060,12 @@ private:
                               const components::theme::ThemeColorTokens& componentTheme,
                               Body&& body) {
         ui.stack(columnId).size(midW, bodyH).content([&] {
-            // 不铺列底：输入组件自带 surface 底 + 边框 + 焦点阴影，叠壳底会成双层卡
+            // 右区底色 = wechat.pageBg（§4.14：浅灰底 #F7F7F7，白卡浮于其上）。
+            // 旧「不铺列底」已废：D-12 强制内容区底为浅灰，编辑器/预览白卡浮起。
+            ui.rect(columnId + ".bg")
+                .size(midW, bodyH)
+                .color(t.colors.wechat.pageBg)
+                .build();
             if (currentPath_.empty()) {
                 ui.text(columnId + ".hint")
                     .position(24.0f, 50.0f)
@@ -966,7 +1073,7 @@ private:
                     .text("从左栏选一篇笔记开始编辑")
                     .fontSize(t.sizes.fontSizeBody)
                     .lineHeight(20.0f)
-                    .color(t.colors.textTertiary)
+                    .color(t.colors.wechat.textTertiary)
                     .build();
                 drawStatusBar(ui, 0.0f, bodyH - 22.0f, midW, t);
                 return;
@@ -974,6 +1081,8 @@ private:
 
             float colX = kTextColumnInsetX;
             float colW = midW - kTextColumnInsetX * 2.0f;
+            // TODO(面包屑)：展示 currentPath_ 路径（§3.2.4 补充项，签认可划）。
+            // 数据链待核——审计未覆盖路径读取链，暂不硬做。
             drawTagBar(ui, colX, colW, t, componentTheme);
             const float colY = 48.0f;  // 16 顶距 + 24 chip 行 + 8 间距
             const float colH = std::max(0.0f, bodyH - colY - 22.0f - 8.0f);
@@ -1138,12 +1247,15 @@ private:
         }
     }
 
-    // 标签 chip 行（显示 + 添加输入 + × 删除）。溢出直接截断，不换行/不滚动。
+    // 标签 chip 行（显示 + × 删除）+ 内置添加输入（回车提交）。溢出直接截断。
+    // W8：标签添加从红点加号改为输入框内置（§3.3.4），移除独立 addbtn 按钮。
+    // chip 样式：浅灰底 + 标签绿字（wechat 令牌）。
     void drawTagBar(eui::Ui& ui,
                     float x,
                     float w,
                     const core::theme::Tokens& t,
                     const components::theme::ThemeColorTokens& componentTheme) {
+        const auto& wc = t.colors.wechat;
         const float y = 16.0f;
         const float h = 24.0f;
         const float fs = 11.0f;
@@ -1159,8 +1271,8 @@ private:
                 .content([&] {
                     ui.rect(id + ".bg")
                         .size(chipW, h)
-                        .color(t.colors.primarySoftBg)
-                        .radius(t.sizes.radiusPill)
+                        .color(wc.dividerSecondary)
+                        .radius(t.sizes.radiusWeChat)
                         .build();
                     ui.text(id + ".name")
                         .position(10.0f, 0.0f)
@@ -1170,16 +1282,16 @@ private:
                         .lineHeight(h)
                         // 文本盒 == 胶囊高，须显式垂直居中（缺它 ink 从行框顶沿起排 → 字偏上）
                         .verticalAlign(eui::VerticalAlign::Center)
-                        .color(t.colors.primaryText)
+                        .color(wc.primary)
                         .fontWeight(600)
                         .build();
                     // × 删除热区（底色同 chip 不额外可见）
                     ui.rect(id + ".del")
                         .position(chipW - 24.0f, 0.0f)
                         .size(24.0f, h)
-                        .color(t.colors.primarySoftBg)
-                        .hoverColor(t.colors.hover)
-                        .radius(t.sizes.radiusPill)
+                        .color(wc.dividerSecondary)
+                        .hoverColor(wc.selectedBg)
+                        .radius(t.sizes.radiusWeChat)
                         .onClick([this, name] { removeTag(name); })
                         .build();
                     ui.text(id + ".x")
@@ -1191,20 +1303,21 @@ private:
                         .horizontalAlign(eui::HorizontalAlign::Center)
                         // 文本盒 == 热区高，须显式垂直居中
                         .verticalAlign(eui::VerticalAlign::Center)
-                        .color(t.colors.primaryText)
+                        .color(wc.primary)
                         .build();
                 })
                 .build();
             cx += chipW + 6.0f;
         }
-        // 添加输入 + 「＋」按钮（回车或点击都提交）
-        const float inW = 92.0f;
-        if (cx + inW + 30.0f <= x + w) {
+        // 内置添加输入（§3.3.4：从红点加号改为输入框内置「添加标签」入口）。
+        // 回车提交（onEnter 已接 commitAddTag）；移除独立 addbtn 按钮。
+        const float inW = 120.0f;
+        if (cx + inW <= x + w) {
             components::input(ui, "md.tags.add")
                 .position(cx, y)
                 .size(inW, h)
                 .value(tagInput_)
-                .placeholder("＋ 标签")
+                .placeholder("添加标签")
                 .fontSize(fs)
                 .inset(8.0f)
                 .theme(componentTheme)
@@ -1212,41 +1325,30 @@ private:
                 .onEnter([this] { commitAddTag(); })
                 .onCancel([this] { tagInput_.clear(); })
                 .build();
-            components::button(ui, "md.tags.addbtn")
-                .position(cx + inW + 4.0f, y)
-                .size(26.0f, h)
-                .text("＋")
-                .fontSize(fs)
-                .theme(componentTheme, true)
-                .textColor(t.colors.onPrimary)
-                .radius(t.sizes.radiusPill)
-                .onClick([this] { commitAddTag(); })
-                .build();
         }
     }
 
-    // 底部状态栏：左 = 文件名 + 保存状态（● / ✓ HH:MM），右 = 行:列 · N 字。
+    // 底部状态栏（§3.3.4）：12px 浅灰右对齐，字数 + 保存状态。
     void drawStatusBar(eui::Ui& ui, float x, float y, float w, const core::theme::Tokens& t) {
         ui.rect("md.status.bg")
             .position(x, y)
             .size(w, 22.0f)
-            .color(t.colors.background)
-            .radius(t.sizes.radiusSmall)
+            .color(t.colors.wechat.cardBg)
             .build();
 
         std::string left = "未选择笔记";
-        eui::Color leftColor = t.colors.textTertiary;
+        eui::Color leftColor = t.colors.wechat.textTertiary;
         if (!currentPath_.empty()) {
             const std::string name = fs::path(currentPath_).filename().string();
             if (saveFailed_) {
                 left = name + "  ✕ 保存失败，自动重试中";
-                leftColor = t.colors.error;
+                leftColor = t.colors.wechat.warningRed;
             } else if (editorDirty_) {
                 left = name + "  ● 未保存";
-                leftColor = t.colors.warning;
+                leftColor = t.colors.warning;  // 保留橙黄语义色（wechat 无对应槽）
             } else {
                 left = name + "  ✓ 已保存 " + formatSaveTime(lastSavedAt_);
-                leftColor = t.colors.success;
+                leftColor = t.colors.wechat.primary;  // 保存成功 = 绿
             }
         }
         // 左框右缘 = 右串左缘留 24px 间距
@@ -1310,7 +1412,7 @@ private:
             .horizontalAlign(eui::HorizontalAlign::Right)
             // 文本盒 == 状态栏底高，须显式垂直居中
             .verticalAlign(eui::VerticalAlign::Center)
-            .color(t.colors.textTertiary)
+            .color(t.colors.wechat.textTertiary)
             .build();
     }
 
@@ -1324,13 +1426,11 @@ private:
                            float gap) {
         (void)gap;
         ui.stack("md.preview").size(midW, bodyH).content([&] {
+            // W8：移除渐变（§8 #4 禁大面积渐变），改为 flat wechat.pageBg 底色。
+            // 预览白卡浮于 pageBg 之上（§4.14）。
             ui.rect("md.preview.bg")
                 .size(midW, bodyH)
-                .color(t.colors.background)
-                .gradient(t.colors.surface, t.colors.surfaceElevated,
-                          core::GradientDirection::Vertical)
-                .radius(t.sizes.radiusLarge)
-                .border(1.0f, t.colors.borderDefault)
+                .color(t.colors.wechat.pageBg)
                 .build();
 
             float pvX = 20.0f;
@@ -1350,7 +1450,7 @@ private:
                     .text("选择笔记后在这里看到渲染结果")
                     .fontSize(t.sizes.fontSizeBody)
                     .lineHeight(20.0f)
-                    .color(t.colors.textTertiary)
+                    .color(t.colors.wechat.textTertiary)
                     .build();
                 return;
             }

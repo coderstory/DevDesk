@@ -150,12 +150,13 @@ REGISTER_TEST(theme_hierarchy_markdown,
 
     const auto checkFrame = [&](Frame& frame,
                                 const core::theme::Tokens& t) -> bool {
+        // W8：markdown 页改 wechat 令牌（D-04 逐页切换）。
         DOCTEST_CHECK(frame.absent("md.pagebg"));
-        DOCTEST_CHECK(frame.colorIs("md.tree.bg", t.colors.background));
-        // 编辑列壳 .bg 已去（input 单层）——锁「不存在」防回归双层近白卡
-        DOCTEST_CHECK(frame.absent("md.editor.bg"));
-        DOCTEST_CHECK(frame.colorIs("md.preview.bg", t.colors.background));
-        DOCTEST_CHECK(frame.colorIs("md.status.bg", t.colors.background));
+        DOCTEST_CHECK(frame.colorIs("md.tree.bg", t.colors.wechat.cardBg));
+        // 编辑列壳 .bg 已恢复（W8 §4.14：右区 pageBg 底 + 白卡浮起）
+        DOCTEST_CHECK(frame.colorIs("md.editor.bg", t.colors.wechat.pageBg));
+        DOCTEST_CHECK(frame.colorIs("md.preview.bg", t.colors.wechat.pageBg));
+        DOCTEST_CHECK(frame.colorIs("md.status.bg", t.colors.wechat.cardBg));
         return true;
     };
 
@@ -212,8 +213,8 @@ REGISTER_TEST(theme_hierarchy_home,
     const auto checkFrame = [&](Frame& frame,
                                 const core::theme::Tokens& t) -> bool {
         DOCTEST_CHECK(frame.absent("home.pagebg"));
-        // W9: 统计卡换微信白底（wechat.cardBg #FFFFFF），不再用暖色 surface
-        DOCTEST_CHECK(frame.colorIs("home.stat.tokens.bg", t.colors.wechat.cardBg));
+        // 统计卡 = 浮动卡片 → surface，不得跟风改米色
+        DOCTEST_CHECK(frame.colorIs("home.stat.tokens.bg", t.colors.surface));
         return true;
     };
 
