@@ -368,10 +368,9 @@ struct FlowResult {
 
 int main(int argc, char* argv[]) {
     // scratch 数据根必须最先设：core::paths（日志文件等）随它走，不碰用户真实根
-    char rootBuf[128];
-    std::snprintf(rootBuf, sizeof(rootBuf), "/tmp/devdesk_agent_e2e_root_%d",
-                  static_cast<int>(getpid()));
-    const std::filesystem::path scratchRoot(rootBuf);
+    const std::filesystem::path scratchRoot =
+        std::filesystem::temp_directory_path() /
+        ("devdesk_agent_e2e_root_" + std::to_string(static_cast<int>(getpid())));
     std::error_code ec;
     std::filesystem::create_directories(scratchRoot, ec);
     test_support::setEnvVar("DEVDESK_DATA_ROOT", scratchRoot.string().c_str());
@@ -427,11 +426,10 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // F2 的 scratch 笔记目录（库在 /tmp 临时路径，不与笔记目录嵌套——FileWatcher 契约）
-    char notesBuf[128];
-    std::snprintf(notesBuf, sizeof(notesBuf),
-                  "/tmp/devdesk_agent_e2e_notes_%d", static_cast<int>(getpid()));
-    const std::filesystem::path notesDir(notesBuf);
+    // F2 的 scratch 笔记目录（库在临时路径，不与笔记目录嵌套——FileWatcher 契约）
+    const std::filesystem::path notesDir =
+        std::filesystem::temp_directory_path() /
+        ("devdesk_agent_e2e_notes_" + std::to_string(static_cast<int>(getpid())));
     std::filesystem::create_directories(notesDir, ec);
     module::markdown::MarkdownService mdSvc(db, notesDir);
 
@@ -922,7 +920,7 @@ int main(int argc, char* argv[]) {
     core::releaseInputQueue(window);
     core::window::destroyWindow(window);
     probe::terminateWindowBackend();
-    // scratch 根/笔记目录留 /tmp 供排查（临时目录系统自清），不进用户数据根
+    // scratch 根/笔记目录留临时目录供排查（系统自清），不进用户数据根
     if (!passed) {
         std::cerr << "FAIL\n";
     } else {
