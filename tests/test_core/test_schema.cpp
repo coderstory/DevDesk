@@ -748,3 +748,129 @@ REGISTER_TEST(schema_quota_tables_columns,
     std::filesystem::remove(path, ec);
     return true;
 })
+
+// ── agent 补列迁移（2026-10-19 context_note 报障修复） ──
+
+REGISTER_TEST(schema_migrate_agent_columns_from_old_schema,
+    "schema: migrate_agent_columns 老库缺列补全（context_note/auto_note 补齐，旧数据行保留）", {
+    auto path = test_support::tempDbPath(kDbPrefix, "mig_old");
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+
+    // 阶段 1：造一个"老库"——agent_tasks 只有旧列（缺 context_note / auto_note）
+    {
+        auto r = core::Database::open(path);
+        DOCTEST_REQUIRE(r.isOk());
+        auto& db = r.value().db();
+
+        // 确认新库已有 context_note / auto_note
+        auto colsBefore = columnDefs(db, "agent_tasks");
+        bool hasCtxNote = false, hasAutoNote = false;
+        for (const auto& c : colsBefore) {
+            if (c.find("context_note:") == 0) hasCtxNote = true;
+            if (c.find("auto_note:") == 0) hasAutoNote = true;
+        }
+        DOCTEST_CHECK(hasCtxNote);
+        DOCTEST_CHECK(hasAutoNote);
+
+        // 重建 agent_tasks 为旧结构（无 context_note, auto_note）
+        DOCTEST_REQUIRE(db.exec("DROP TABLE agent_tasks").isOk());
+        DOCTEST_REQUIRE(db.exec(
+            "CREATE TABLE agent_tasks ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            "name TEXT NOT NULL,"
+            "goal TEXT NOT NULL,"
+            "trigger_type TEXT NOT NULL,"
+            "trigger_config TEXT NOT NULL DEFAULT '',"
+            "model_slot TEXT NOT NULL DEFAULT 'default',"
+            "max_iterations INTEGER NOT NULL DEFAULT 10,"
+            "allow_destructive INTEGER NOT NULL DEFAULT 0,"
+            "enabled INTEGER NOT NULL DEFAULT 1,"
+            "created_at INTEGER NOT NULL,"
+            "updated_at INTEGER NOT NULL)").isOk());
+
+        // 旧表确认缺列
+        auto colsMid = columnDefs(db, "agent_tasks");
+        for (const auto& c : colsMid) {
+            DOCTEST_CHECK(c.find("context_note:") != 0);
+            DOCTEST_CHECK(c.find("auto_note:") != 0);
+        }
+
+        // 塞一条旧结构数据（用旧列集合）
+        DOCTEST_REQUIRE(db.exec(
+            "INSERT INTO agent_tasks (name, goal, trigger_type, created_at, updated_at) "
+            "VALUES ('old-task', 'old-goal', 'manual', 100, 200)").isOk());
+    } // 关闭库，让下次 open 走完整 migrate 路径
+
+    // 阶段 2：重新 open（走 applySchema + addMissingAgentColumns）
+    {
+        auto r = core::Database::open(path);
+        DOCTEST_REQUIRE(r.isOk());
+        auto& db = r.value().db();
+
+        // 列已补齐
+        auto colsAfter = columnDefs(db, "agent_tasks");
+        bool foundCtx = false, foundAuto = false;
+        for (const auto& c : colsAfter) {
+            if (c.find("context_note:TEXT:1:''") == 0) foundCtx = true;
+            if (c.find("auto_note:INTEGER:1:1") == 0) foundAuto = true;
+        }
+        DOCTEST_CHECK(foundCtx);
+        DOCTEST_CHECK(foundAuto);
+
+        // 旧数据行保留
+        auto q = db.prepare("SELECT name, goal, context_note, auto_note FROM agent_tasks WHERE name='old-task'");
+        DOCTEST_REQUIRE(q.isOk());
+        auto rows = q.value().fetchAll();
+        DOCTEST_REQUIRE(rows.isOk());
+        DOCTEST_REQUIRE_EQ(rows.value().size(), 1u);
+        const auto& row = rows.value()[0];
+        DOCTEST_CHECK_EQ(row.getString("name").valueOr("?"), std::string("old-task"));
+        DOCTEST_CHECK_EQ(row.getString("goal").valueOr("?"), std::string("old-goal"));
+        // 新列取默认值：空串 / 1
+        DOCTEST_CHECK_EQ(row.getInt64("auto_note").valueOr(-1), 1);
+        DOCTEST_CHECK_EQ(row.getString("context_note").valueOr("?"), std::string(""));
+    }
+
+    std::filesystem::remove(path, ec);
+    return true;
+})
+
+REGISTER_TEST(schema_migrate_agent_columns_idempotent,
+    "schema: migrate_agent_columns 幂等——新库连跑两次不报错、列定义不变", {
+    auto path = test_support::tempDbPath(kDbPrefix, "mig_idem");
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+
+    // 第一次：记录列集
+    std::vector<std::string> firstTasks, firstRuns, firstMsgs;
+    {
+        auto r = core::Database::open(path);
+        DOCTEST_REQUIRE(r.isOk());
+        firstTasks = columnDefs(r.value().db(), "agent_tasks");
+        firstRuns  = columnDefs(r.value().db(), "agent_runs");
+        firstMsgs  = columnDefs(r.value().db(), "agent_messages");
+    }
+
+    // 第二次：仅 migrate（不重新 open，同连接第二次调）
+    {
+        auto r = core::Database::open(path);
+        DOCTEST_REQUIRE(r.isOk());
+        // 第二次 migrate 幂等、不报错
+        DOCTEST_REQUIRE(r.value().migrate().isOk());
+        DOCTEST_REQUIRE(r.value().migrate().isOk()); // 第三次确认
+
+        auto& db = r.value().db();
+        auto t2 = columnDefs(db, "agent_tasks");
+        auto r2 = columnDefs(db, "agent_runs");
+        auto m2 = columnDefs(db, "agent_messages");
+
+        // 列集与首次完全一致（幂等不增不减）
+        DOCTEST_CHECK_EQ(t2, firstTasks);
+        DOCTEST_CHECK_EQ(r2, firstRuns);
+        DOCTEST_CHECK_EQ(m2, firstMsgs);
+    }
+
+    std::filesystem::remove(path, ec);
+    return true;
+})

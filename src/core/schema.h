@@ -1,10 +1,18 @@
 // DevDesk 数据库当前完整 schema（单份、无版本、无历史包袱）
-// 口径：不写迁移、不兼容旧数据——没有 schema_version 表 / ALTER 序列 / 新库守卫。
-// applySchema 在一个事务里幂等执行全脚本；旧 DB 缺列不检测、不迁移、不兜底。
+// 口径：不写版本化迁移链——没有 schema_version 表 / 顺序 ALTER 序列 / 新库守卫。
+// applySchema 在一个事务里幂等执行全脚本。
 // 改 schema 的唯一动作：直接改这份脚本，不追加版本、不写兼容分支。
 // （master 侧 v1-v4 版本化升级中的真实 schema 变更已直接折进本 DDL：todo_tasks
 //  的归档时间戳列一次建对；旧库表重建与桌宠配置数据清理只针对既有库，新库无需对应物。）
+//
+// **补列迁移**（addMissingAgentColumns）：CREATE IF NOT EXISTS 对已存在表跳过，
+// 老库永远缺新列（2026-10-19 context_note 报障根因）。本函数在 applySchema 之后对
+// agent 三表逐列 PRAGMA table_info 补缺，幂等——新库不炸、老库不丢数据。
 #pragma once
+
+#include "result.h"
+
+namespace core::data { class SqliteDb; }
 
 namespace core::schema {
 
@@ -369,5 +377,10 @@ inline constexpr const char* kSql = R"(
     )
     WHERE NOT EXISTS (SELECT 1 FROM todo_columns);
 )";
+
+// 补列迁移：对 agent 三表的已有行逐列与当前 DDL 对齐，缺列补 ALTER TABLE ADD COLUMN。
+// 幂等（列已存在则跳过）；表不存在则无操作（IF NOT EXISTS 已在 applySchema 里建全）。
+// 为什么不能靠 CREATE IF NOT EXISTS：IF NOT EXISTS 对已存在表跳过，加列只影响新库（本 bug 根因）。
+core::Result<void> addMissingAgentColumns(core::data::SqliteDb& db);
 
 } // namespace core::schema

@@ -45,6 +45,13 @@ core::Result<void> Database::migrate() {
         LOG_ERROR("Database schema 应用失败: " + r.errorMessage());
         return r;
     }
+    // 补列迁移：CREATE IF NOT EXISTS 对已存在表跳过，老库缺新列（2026-10-19
+    // agent_tasks 缺 context_note/auto_none → 智能体任务创建报障的根因）
+    auto colMig = core::schema::addMissingAgentColumns(db_);
+    if (colMig.isFail()) {
+        LOG_ERROR("agent 表列对齐失败: " + colMig.errorMessage());
+        return colMig;
+    }
     return core::Result<void>::ok();
 }
 

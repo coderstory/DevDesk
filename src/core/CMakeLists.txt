@@ -1,5 +1,6 @@
 add_library(devdesk_core STATIC
     result.cpp
+    schema.cpp
     paths.cpp
     sqlite_db.cpp
     logging.cpp
