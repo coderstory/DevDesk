@@ -95,19 +95,20 @@ REGISTER_TEST(ui_kit_light_toast_auto_dismiss_after_1_5s,
     ui_kit::resetLightToastForTests();
     const auto& t = core::theme::current();
     eui::Ui ui;
-    ui.begin("w02d_lt_dismiss");
-    // 首次触发：内部 set open=true, startTime=now
+    // 第 1 帧：首次触发，open=true，bg 渲染（前提：toast 真渲染了，否则后续 nullptr 无判别力）
+    ui.begin("w02d_lt_dismiss_f1");
     ui_kit::showLightToast(ui, "lt", "已复制", 100.0f, 100.0f, t);
+    ui.end();
+    DOCTEST_CHECK(ui.find("lt.bg") != nullptr);
     // 经 seam 改 startTime 到 2 秒前，模拟时间流逝（> 1.5s 阈值）
     ui_kit::lightToastStateForTests().startTime =
         std::chrono::steady_clock::now() - std::chrono::seconds(2);
-    // 再次调用同 message：函数内部应判 elapsed>=1.5s 并 open=false
+    // 第 2 帧：begin 清树；showLightToast 判 elapsed>=1.5s→open=false→early return 不建 bg
+    ui.begin("w02d_lt_dismiss_f2");
     ui_kit::showLightToast(ui, "lt", "已复制", 100.0f, 100.0f, t);
     ui.end();
-
-    // bg 不应渲染（find 返回 nullptr——open=false 时函数 early return 不建节点）
-    const auto* bg = ui.find("lt.bg");
-    DOCTEST_CHECK(bg == nullptr);
+    DOCTEST_CHECK(ui.find("lt.bg") == nullptr);  // 第 2 帧无 bg（dismiss 生效）
+    DOCTEST_CHECK(!ui_kit::lightToastStateForTests().open);  // open=false（dismiss 逻辑）
     return true;
 })
 
