@@ -71,6 +71,8 @@ add_executable(devdesk_tests
     test_modules/test_direct_llm_client.cpp
     test_modules/test_todo_ui.cpp
     test_modules/test_ui_modern.cpp
+    # W2b（§4.1/§4.15）：四级按钮 + FormRow helper 无头断言（色值/几何/尺寸统一）
+    test_modules/test_ui_kit_button.cpp
     test_modules/test_view_state.cpp
     test_modules/test_claude.cpp
     test_modules/test_claude_service.cpp
