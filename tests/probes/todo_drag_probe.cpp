@@ -70,7 +70,9 @@ int main(int argc, char* argv[]) {
         probe::terminateWindowBackend();
         return 3;
     }
-    const int64_t col0Id = c0->id, col1Id = c1->id, col2Id = c2->id;
+    const int64_t col0Id = c0.value().id;
+    const int64_t col1Id = c1.value().id;
+    const int64_t col2Id = c2.value().id;
 
     auto tA = svc.createTask(col0Id, "任务A");
     auto tB = svc.createTask(col0Id, "任务B");
@@ -83,8 +85,10 @@ int main(int argc, char* argv[]) {
         probe::terminateWindowBackend();
         return 3;
     }
-    const int64_t taskAId = tA->id, taskBId = tB->id;
-    const int64_t taskDId = tD->id, taskEId = tE->id;
+    const int64_t taskAId = tA.value().id;
+    (void)tB;  // 种子完整性：三卡都在 col0，任务 B/C 不单测但共存
+    const int64_t taskDId = tD.value().id;
+    const int64_t taskEId = tE.value().id;
 
     // ---- Start module ----
     std::unique_ptr<::core::Module> mod(create_todo_module());
@@ -379,7 +383,7 @@ int main(int argc, char* argv[]) {
             std::cerr << "R4 ERR: 无法创建测试卡\n";
             passed = false;
         } else {
-            int64_t newId = tNew->id;
+            int64_t newId = tNew.value().id;
             tdb.handle().exec(
                 "UPDATE todo_columns SET kind = '' WHERE id = " +
                 std::to_string(col2Id));
@@ -388,7 +392,7 @@ int main(int argc, char* argv[]) {
             composeFrame();
 
             // 找 col0 末尾卡
-            const auto* lastEl = nullptr;
+            const core::dsl::Element* lastEl = nullptr;
             for (int i = 0; i < 10; ++i) {
                 std::string cid =
                     "todo.col.0.card." + std::to_string(i) + ".bg";
@@ -454,8 +458,8 @@ int main(int argc, char* argv[]) {
             auto col =
                 svc.createColumn("列" + std::to_string(i + 1));
             if (col.isOk()) {
-                if (i == 0) newCol0Id = col->id;
-                svc.createTask(col->id,
+                if (i == 0) newCol0Id = col.value().id;
+                svc.createTask(col.value().id,
                                 "窄列卡" + std::to_string(i + 1));
             }
         }
