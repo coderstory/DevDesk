@@ -1175,10 +1175,10 @@ REGISTER_TEST(todo_ui_card_text_centered,
         const float cardCX = cardBg->frame.x + cardBg->frame.width / 2.0f;
         const float cardCY = cardBg->frame.y + cardBg->frame.height / 2.0f;
 
-        // 水平：主文本（标题）框中心 = 卡中心 − 徽章占用半宽（kCardOrdinalBadgeHoriz/2=16）
+        // 水平：主文本（标题）框中心 = 卡中心（序号徽章已移除，标题可用全宽居中）
         DOCTEST_CHECK_EQ(title->horizontalAlign, eui::HorizontalAlign::Center);
         DOCTEST_CHECK(std::abs((title->frame.x + title->frame.width / 2.0f) -
-                               (cardCX - ::module::todo::ui::kCardOrdinalBadgeHoriz / 2.0f)) <= 1.0f);
+                               cardCX) <= 1.0f);
         // 水平让位（kCardTitleBoxInset = 40）：标题框右缘必须让开完成角标区间
         // [w-36, w-12]（drawCard 的 .done 角标 x = width-36），否则标题文字压角标
         DOCTEST_CHECK(title->frame.x + title->frame.width <=
@@ -2243,12 +2243,16 @@ REGISTER_TEST(todo_ui_dark_no_white_rects,
     DOCTEST_REQUIRE(head != nullptr);
     DOCTEST_CHECK_EQ(head->color.a, 0.0f);
 
-    // 全树兜底：深色主题下不允许任何不透明近白 Rect
+    // 全树兜底：深色主题下不允许任何不透明近白 Rect（微信列背景 pageBg 例外：§4.14 有意浅灰底）
     std::vector<const core::dsl::Element*> whites;
     for (const auto& root : frame.ui.roots()) {
         collectOpaqueWhiteRects(root.get(), &whites);
     }
     for (const auto* el : whites) {
+        // 微信风格列背景 = wechat.pageBg (#F7F7F7) 在深色主题下有意浅灰（W6 §4.14 白卡浮起于浅灰底）
+        if (el->id.find("todo.col.") != std::string::npos &&
+            el->id.find(".bg") != std::string::npos &&
+            el->id.find(".card.") == std::string::npos) continue;
         // 失败时直接输出元素 id，一眼定位
         DOCTEST_CHECK_MESSAGE(false, ("意外的不透明白 Rect: " + el->id).c_str());
     }
@@ -2951,9 +2955,9 @@ REGISTER_TEST(todo_ui_priority_card_tint,
         DOCTEST_CHECK(maxChannelDelta(cards[i]->hoverColor, cards[i]->color) >
                       0.02f);
     }
-    // 判据 c'：选中态边框仍在（2px primary 只在选中卡上；未被底色盖住）
+    // 判据 c'：选中态不再走粗边框（§4.3 移除原红色粗边框）；选中 = 左竖线 + 浅灰底
     DOCTEST_CHECK_EQ(noneBg->border.width, 1.0f);
-    DOCTEST_CHECK(colorNear(highBg->border.color, t.colors.borderDefault));
+    DOCTEST_CHECK(colorNear(highBg->border.color, t.colors.wechat.dividerPrimary));
     {
         Frame f2(mod.get());
         const auto* card = f2.ui.find("todo.col.4.card.3.bg");
@@ -2963,12 +2967,15 @@ REGISTER_TEST(todo_ui_priority_card_tint,
         Frame f3(mod.get());
         const auto* sel = f3.ui.find("todo.col.4.card.3.bg");
         DOCTEST_REQUIRE(sel != nullptr);
-        DOCTEST_CHECK_EQ(sel->border.width, 2.0f);
-        DOCTEST_CHECK(colorNear(sel->border.color, t.colors.primary));
-        // 选中不改变优先级底色（边框与底色两通道独立）
+        // 选中态边框 = 统一 1px 分割线（不再 2px primary）
+        DOCTEST_CHECK_EQ(sel->border.width, 1.0f);
+        DOCTEST_CHECK(colorNear(sel->border.color, t.colors.wechat.dividerPrimary));
+        // 选中态左竖线存在（§4.3 2px 微信绿竖线）
+        DOCTEST_CHECK(f3.ui.find("todo.col.4.card.3.selbar") != nullptr);
+        // 选中态底色 = wechat.selectedBg 基底 + 优先级 tint（底色与优先级两通道独立）
         DOCTEST_CHECK(colorNear(
             sel->color,
-            eui::mixColor(t.colors.surface, t.colors.error, 0.42f)));
+            eui::mixColor(t.colors.wechat.selectedBg, t.colors.error, 0.42f)));
     }
 
     // 判据 d：底色改了，卡片文字对比度不掉（WCAG AA 4.5:1）
