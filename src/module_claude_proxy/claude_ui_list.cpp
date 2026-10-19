@@ -142,22 +142,32 @@ void drawProfileCard(eui::Ui& ui,
                      ProfileListState& st) {
     const float h = 96.0f;
     const bool selected = (p.id == st.selectedId_);
-    const eui::Color borderColor = (p.isActive || selected)
-        ? t.colors.primary : t.colors.borderDefault;
-    const float borderW = p.isActive ? 2.0f : 1.0f;
-    const eui::Color bg = p.isActive ? t.colors.primarySoftBg : t.colors.surface;
+    // §5 Profile 选中态：浅灰 wechat.selectedBg + 2px wechat.primary 左竖线
+    //（SelectionBar 语义；selection_bar.h 自带 text，不适合多元素行，故内联）。
+    // isActive 不再染底色/边框——由「当前选中」绿色徽标传达；原橙色粗边框移除（§4.3 禁止项）。
+    const eui::Color bgNormal = selected
+        ? t.colors.wechat.selectedBg
+        : eui::Color{0.0f, 0.0f, 0.0f, 0.0f};  // 未选中透明，显列底 pageBg
 
     ui.rect(id + ".bg")
         .position(0.0f, y)
         .size(width, h)
-        .states(bg, t.colors.hover, t.colors.active)
-        // 行 hover/选中颜色过渡：bg 与 border 同帧目标跳变也走动画
+        .states(bgNormal, t.colors.wechat.dividerSecondary,
+                t.colors.wechat.selectedBg)
+        // 行 hover/选中颜色过渡
         .transition(core::Transition::make(0.1f, core::Ease::OutQuad))
-        .animate(core::AnimProperty::Color | core::AnimProperty::Border)
-        .radius(t.sizes.radiusLarge)
-        .border(borderW, borderColor)
+        .animate(core::AnimProperty::Color)
+        .radius(t.sizes.radiusSmall)
         .onClick([sp = &st, pid = p.id] { sp->selectedId_ = pid; })
         .build();
+    // 左 2px wechat.primary 竖线（仅选中时）
+    if (selected) {
+        ui.rect(id + ".sel.accent")
+            .position(0.0f, y)
+            .size(2.0f, h)
+            .color(t.colors.wechat.primary)
+            .build();
+    }
 
     // 头像：按 profile id 稳定派生的圆 + 1.5px 同色系包边；垂直居中由 (h - 头像径) 推导
     const float avatarSize = 40.0f;
@@ -193,29 +203,30 @@ void drawProfileCard(eui::Ui& ui,
         .position(64.0f, y + 18.0f)
         .size(width - 64.0f, 20.0f)
         .text(p.name)
-        .fontSize(t.sizes.fontSizeBody)
+        .fontSize(14.0f)
         .lineHeight(20.0f)
         .fontWeight(600)
-        .color(t.colors.textPrimary)
+        .color(t.colors.wechat.textPrimary)
         .build();
 
     if (p.isActive) {
+        // §5「当前选中」绿色小圆角标签（胶囊加宽：4 全角字 fontSize 9 放不进 48px）
         ui.rect(id + ".active.bg")
-            .position(width - 60.0f, y + 16.0f)
-            .size(48.0f, 20.0f)
-            .color(t.colors.primary)
+            .position(width - 76.0f, y + 16.0f)
+            .size(64.0f, 20.0f)
+            .color(t.colors.wechat.primary)
             .radius(t.sizes.radiusPill)
             .build();
         // 胶囊文字须显式垂直居中：runtime 只在 verticalAlign=Center 时把 ink 中心对齐到 frame 中心，否则从行框顶沿起排
         ui.text(id + ".active.text")
-            .position(width - 60.0f, y + 16.0f)
-            .size(48.0f, 20.0f)
-            .text("ACTIVE")
+            .position(width - 76.0f, y + 16.0f)
+            .size(64.0f, 20.0f)
+            .text("当前选中")
             .fontSize(9.0f)
             .lineHeight(20.0f)
             .horizontalAlign(eui::HorizontalAlign::Center)
             .verticalAlign(eui::VerticalAlign::Center)
-            .color(t.colors.onPrimary)
+            .color(t.colors.wechat.onPrimary)
             .fontWeight(700)
             .build();
     }
@@ -225,9 +236,9 @@ void drawProfileCard(eui::Ui& ui,
         .position(64.0f, y + 44.0f)
         .size(width - 64.0f, 14.0f)
         .text(p.baseUrl)
-        .fontSize(11.0f)
+        .fontSize(12.0f)
         .lineHeight(14.0f)
-        .color(t.colors.textTertiary)
+        .color(t.colors.wechat.textTertiary)
         .build();
 
     // 绑定共享片段的卡片角标「共享」：服务层保证无悬空 id（删片段同事务解绑），sharedConfigId != 0 即可判定
@@ -235,9 +246,9 @@ void drawProfileCard(eui::Ui& ui,
         ui.rect(id + ".shared.badge")
             .position(width - 60.0f, y + 42.0f)
             .size(48.0f, 16.0f)
-            .color(t.colors.surfaceElevated)
+            .color(t.colors.wechat.dividerSecondary)
             .radius(t.sizes.radiusPill)
-            .border(1.0f, t.colors.borderDefault)
+            .border(1.0f, t.colors.wechat.dividerPrimary)
             .build();
         ui.text(id + ".shared.badge.text")
             .position(width - 60.0f, y + 42.0f)
@@ -247,7 +258,7 @@ void drawProfileCard(eui::Ui& ui,
             .lineHeight(16.0f)
             .horizontalAlign(eui::HorizontalAlign::Center)
             .verticalAlign(eui::VerticalAlign::Center)
-            .color(t.colors.textTertiary)
+            .color(t.colors.wechat.textTertiary)
             .build();
     }
 
@@ -259,7 +270,7 @@ void drawProfileCard(eui::Ui& ui,
                   effectiveModelsConfig(p.modelsConfigJson).def.model))
         .fontSize(11.0f)
         .lineHeight(14.0f)
-        .color(t.colors.textSecondary)
+        .color(t.colors.wechat.textSecondary)
         .build();
 }
 
@@ -291,12 +302,13 @@ void drawClaudeHeader(eui::Ui& ui, float contentW, float headerH,
                                 .fontSize(t.sizes.fontSizeTitle)
                                 .lineHeight(32.0f)
                                 .fontWeight(700)
-                                .color(t.colors.textPrimary)
+                                .color(t.colors.wechat.textPrimary)
                                 .build();
 
+                            // §5 灰圆点「已停止」/ 绿圆点「运行中」（wechat 令牌，isProxyRunning 内存态）
                             const eui::Color dotColor = proxyRunning
-                                ? t.colors.success
-                                : t.colors.textTertiary;
+                                ? t.colors.wechat.primary
+                                : t.colors.wechat.textTertiary;
                             const std::string statusText = proxyRunning
                                 ? std::string("运行中 ") + portStr
                                 : std::string("已停止");
@@ -310,24 +322,31 @@ void drawClaudeHeader(eui::Ui& ui, float contentW, float headerH,
                                 .text(statusText)
                                 .fontSize(t.sizes.fontSizeSmall)
                                 .lineHeight(18.0f)
-                                .color(proxyRunning ? t.colors.success
-                                                    : t.colors.textTertiary)
+                                .color(proxyRunning ? t.colors.wechat.primary
+                                                    : t.colors.wechat.textTertiary)
                                 .fontWeight(500)
+                                .build();
+                            // §5 页面说明长文本收帮助图标（0xF059 占位；EUI tooltip 待绑定）
+                            ui.text("claude.title.help")
+                                .size(16.0f, 18.0f)
+                                .icon(0xF059)
+                                .fontSize(t.sizes.fontSizeSmall)
+                                .lineHeight(18.0f)
+                                .color(t.colors.wechat.textTertiary)
                                 .build();
                         })
                         .build();
 
-                    // 代理未运行时不显示假地址，改为可操作的提示
+                    // §5 页面仅保留一句话摘要（长说明收帮助图标；claude.subtitle 测试无命中）
                     const std::string subtitle = proxyRunning
-                        ? (std::string("管理多套 Claude API 配置 · 本地代理 http://127.0.0.1") +
-                           portStr)
-                        : std::string("管理多套 Claude API 配置 · 代理已停止，点右上角启动");
+                        ? std::string("本地代理运行中，管理多套 Claude API 配置")
+                        : std::string("管理多套 Claude API 配置");
                     ui.text("claude.subtitle")
                         .size(contentW - kHeaderActionsW, 16.0f)
                         .text(subtitle)
                         .fontSize(t.sizes.fontSizeSmall)
                         .lineHeight(16.0f)
-                        .color(t.colors.textSecondary)
+                        .color(t.colors.wechat.textSecondary)
                         .build();
                 })
                 .build();
@@ -338,17 +357,24 @@ void drawClaudeHeader(eui::Ui& ui, float contentW, float headerH,
                 .alignItems(eui::Align::CENTER)
                 .gap(t.sizes.spacingSmall)
                 .content([&] {
+                    // §5「启动代理」微信绿主按钮（§4.1 Primary 绿填充+白字；运行态=Secondary 浅灰「停止代理」），无边框
+                    const bool stopped = !proxyRunning;
                     components::button(ui, "claude.btn.proxy")
                         .size(110.0f, 40.0f)
                         .text(proxyRunning ? "停止代理" : "启动代理")
                         .icon(proxyRunning ? 0xF04C : 0xF04B)  // fa-pause / fa-play
                         .fontSize(t.sizes.fontSizeSmall)
-                        .colors(t.colors.surfaceElevated, t.colors.hover,
-                                t.colors.active)
-                        .textColor(t.colors.textSecondary)
-                        .iconColor(t.colors.textSecondary)
-                        .radius(t.sizes.radius)
-                        .border(1.0f, t.colors.borderDefault)
+                        .colors(stopped ? t.colors.wechat.primary
+                                        : t.colors.wechat.secondaryButtonBg,
+                                stopped ? t.colors.wechat.primaryHover
+                                        : t.colors.wechat.dividerSecondary,
+                                stopped ? t.colors.wechat.primaryPressed
+                                        : t.colors.wechat.dividerSecondary)
+                        .textColor(stopped ? t.colors.wechat.onPrimary
+                                           : t.colors.wechat.textPrimary)
+                        .iconColor(stopped ? t.colors.wechat.onPrimary
+                                           : t.colors.wechat.textPrimary)
+                        .radius(t.sizes.radiusWeChat)
                         .onClick([onToggleProxy] { onToggleProxy(); })
                         .build();
                 })
@@ -370,7 +396,7 @@ void drawClaudeGuideBar(eui::Ui& ui, float contentW,
                 .icon(0xF05A)  // fa-circle-info
                 .fontSize(t.sizes.fontSizeSmall)
                 .lineHeight(18.0f)
-                .color(t.colors.textSecondary)
+                .color(t.colors.wechat.textSecondary)
                 .build();
             ui.text("claude.guide.takeover")
                 .size(contentW - 20.0f, 18.0f)
@@ -379,7 +405,7 @@ void drawClaudeGuideBar(eui::Ui& ui, float contentW,
                       " 指向本地代理），停止代理时自动还原")
                 .fontSize(t.sizes.fontSizeSmall)
                 .lineHeight(18.0f)
-                .color(t.colors.textSecondary)
+                .color(t.colors.wechat.textSecondary)
                 .build();
         })
         .build();
@@ -400,9 +426,10 @@ void drawProfileListPanel(eui::Ui& ui, float leftW, float bodyH,
         .content([&] {
             ui.rect("claude.profiles.bg")
                 .size(leftW, bodyH)
-                .color(t.colors.background)
+                // §4.14 列底浅灰底（wechat.pageBg），白卡浮起；边框一级分割线
+                .color(t.colors.wechat.pageBg)
                 .radius(t.sizes.radiusLarge)
-                .border(1.0f, t.colors.borderDefault)
+                .border(1.0f, t.colors.wechat.dividerPrimary)
                 .build();
         })
         .build();
@@ -418,7 +445,7 @@ void drawProfileListPanel(eui::Ui& ui, float leftW, float bodyH,
                 .fontSize(t.sizes.fontSizeBody)
                 .lineHeight(20.0f)
                 .fontWeight(600)
-                .color(t.colors.textPrimary)
+                .color(t.colors.wechat.textPrimary)
                 .build();
 
             const float cardY0 = kListTopY;
@@ -460,7 +487,7 @@ void drawProfileListPanel(eui::Ui& ui, float leftW, float bodyH,
                     .text("暂无 Profile，点击下方按钮新建")
                     .fontSize(12.0f)
                     .lineHeight(20.0f)
-                    .color(t.colors.textTertiary)
+                    .color(t.colors.wechat.textTertiary)
                     .build();
                 ui.stack("claude.shared.block")
                     .position(20.0f, sharedBlockTop)
@@ -556,16 +583,17 @@ void drawProfileListPanel(eui::Ui& ui, float leftW, float bodyH,
             // 底部三键等分（新建 / 导入当前配置 / 从 cc-switch 导入），12px 间距
             const float btnW = (leftW - 40.0f - 24.0f) * (1.0f / 3.0f);
             const float btnGap = 12.0f;
+            // §5 列表底部按钮=Secondary 浅灰次按钮（§4.1：#F2F2F2 底 + 深灰字 + 6px 圆角，无边框）
             components::button(ui, "claude.profiles.new")
                 .position(20.0f, bottomButtonRowY(bodyH))
                 .size(btnW, 40.0f)
                 .text("+ 新建 Profile")
                 .fontSize(t.sizes.fontSizeSmall)
-                .colors(t.colors.surfaceElevated, t.colors.hover,
-                        t.colors.active)
-                .textColor(t.colors.textPrimary)
-                .radius(t.sizes.radius)
-                .border(1.0f, t.colors.borderDefault)
+                .colors(t.colors.wechat.secondaryButtonBg,
+                        t.colors.wechat.dividerSecondary,
+                        t.colors.wechat.dividerSecondary)
+                .textColor(t.colors.wechat.textPrimary)
+                .radius(t.sizes.radiusWeChat)
                 .onClick([onNew = actions.onNewProfile] { onNew(); })
                 .build();
             components::button(ui, "claude.profiles.import")
@@ -574,12 +602,12 @@ void drawProfileListPanel(eui::Ui& ui, float leftW, float bodyH,
                 .text("导入当前配置")
                 .icon(0xF019)  // fa-download
                 .fontSize(t.sizes.fontSizeSmall)
-                .colors(t.colors.surfaceElevated, t.colors.hover,
-                        t.colors.active)
-                .textColor(t.colors.textPrimary)
-                .iconColor(t.colors.textPrimary)
-                .radius(t.sizes.radius)
-                .border(1.0f, t.colors.borderDefault)
+                .colors(t.colors.wechat.secondaryButtonBg,
+                        t.colors.wechat.dividerSecondary,
+                        t.colors.wechat.dividerSecondary)
+                .textColor(t.colors.wechat.textPrimary)
+                .iconColor(t.colors.wechat.textPrimary)
+                .radius(t.sizes.radiusWeChat)
                 .onClick([onImport = actions.onImportCurrent] { onImport(); })
                 .build();
             components::button(ui, "claude.profiles.import.ccswitch")
@@ -588,11 +616,11 @@ void drawProfileListPanel(eui::Ui& ui, float leftW, float bodyH,
                 .size(btnW, 40.0f)
                 .text("从 cc-switch 导入")
                 .fontSize(t.sizes.fontSizeSmall)
-                .colors(t.colors.surfaceElevated, t.colors.hover,
-                        t.colors.active)
-                .textColor(t.colors.textPrimary)
-                .radius(t.sizes.radius)
-                .border(1.0f, t.colors.borderDefault)
+                .colors(t.colors.wechat.secondaryButtonBg,
+                        t.colors.wechat.dividerSecondary,
+                        t.colors.wechat.dividerSecondary)
+                .textColor(t.colors.wechat.textPrimary)
+                .radius(t.sizes.radiusWeChat)
                 .onClick([onImportCc = actions.onImportCcSwitch] {
                     if (onImportCc) onImportCc();
                 })
@@ -616,7 +644,7 @@ void drawSharedConfigBlock(eui::Ui& ui, float width, float blockH,
         .fontSize(13.0f)
         .lineHeight(20.0f)
         .fontWeight(600)
-        .color(t.colors.textPrimary)
+        .color(t.colors.wechat.textPrimary)
         .build();
 
     const float contentTop = kSharedHeaderBottom;
@@ -640,11 +668,12 @@ void drawSharedConfigBlock(eui::Ui& ui, float width, float blockH,
             .color(t.colors.error)
             .build();
     } else if (sharedConfigs.empty()) {
+        // §5 空状态引导新建（empty_state.h 语义内联）
         ui.text("claude.shared.empty")
             .position(0.0f, contentTop).size(width, kSharedInfoH)
             .text("暂无片段，点击下方新建")
             .fontSize(11.0f).lineHeight(kSharedInfoH)
-            .color(t.colors.textTertiary)
+            .color(t.colors.wechat.textTertiary)
             .build();
     } else {
         // 片段卡片：name + 键数；点击开编辑弹窗，装不下时块内滚
@@ -670,10 +699,11 @@ void drawSharedConfigBlock(eui::Ui& ui, float width, float blockH,
                             inner.rect(cid + ".bg")
                                 .position(0.0f, 0.0f)
                                 .size(contentWidth, kSharedCardH)
-                                .states(t.colors.surface, t.colors.hover,
-                                        t.colors.active)
-                                .radius(t.sizes.radiusLarge)
-                                .border(1.0f, t.colors.borderDefault)
+                                .states(t.colors.wechat.cardBg,
+                                        t.colors.wechat.dividerSecondary,
+                                        t.colors.wechat.selectedBg)
+                                .radius(t.sizes.radiusWeChat)
+                                .border(1.0f, t.colors.wechat.dividerPrimary)
                                 .onClick([onEdit = actions.requestEditShared, sc] {
                                     onEdit(sc);   // 按值拷贝（sc 引用 compose 局部副本，跨帧悬垂）
                                 })
@@ -684,7 +714,7 @@ void drawSharedConfigBlock(eui::Ui& ui, float width, float blockH,
                                 .text(sc.name)
                                 .fontSize(13.0f).lineHeight(20.0f)
                                 .fontWeight(600)
-                                .color(t.colors.textPrimary)
+                                .color(t.colors.wechat.textPrimary)
                                 .build();
                             inner.text(cid + ".keys")
                                 .position(16.0f, 32.0f)
@@ -693,7 +723,7 @@ void drawSharedConfigBlock(eui::Ui& ui, float width, float blockH,
                                           ? std::string("高级属性 JSON 预设（未配置）")
                                           : std::string("高级属性 JSON 预设 · 绑定它的 Profile 写入时覆盖同名键"))
                                 .fontSize(11.0f).lineHeight(14.0f)
-                                .color(t.colors.textSecondary)
+                                .color(t.colors.wechat.textSecondary)
                                 .build();
                         })
                         .build();
@@ -707,10 +737,11 @@ void drawSharedConfigBlock(eui::Ui& ui, float width, float blockH,
         .size(width, kSharedBtnH)
         .text("+ 新建片段")
         .fontSize(t.sizes.fontSizeSmall)
-        .colors(t.colors.surfaceElevated, t.colors.hover, t.colors.active)
-        .textColor(t.colors.textPrimary)
-        .radius(t.sizes.radius)
-        .border(1.0f, t.colors.borderDefault)
+        .colors(t.colors.wechat.secondaryButtonBg,
+                t.colors.wechat.dividerSecondary,
+                t.colors.wechat.dividerSecondary)
+        .textColor(t.colors.wechat.textPrimary)
+        .radius(t.sizes.radiusWeChat)
         .onClick([onNew = actions.onNewShared] { onNew(); })
         .build();
 }
