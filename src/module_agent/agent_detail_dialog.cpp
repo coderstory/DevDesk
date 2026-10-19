@@ -322,7 +322,6 @@ void AgentModule::composeTaskDetailDialog(
                     .size(innerW, configH)
                     .color(t.colors.surfaceElevated)
                     .radius(t.sizes.radius)
-                    .border(1.0f, t.colors.borderDefault)
                     .build();
                 ui.text("agent.dialog.detail.config.header.title")
                     .position(kCardPad, (configH - lhB) * 0.5f)
