@@ -17,6 +17,7 @@
 #include "github_sync_config.h"
 #include "github_sync_engine.h"
 #include "github_sync_logic.h"
+#include "core/event_bus.h"
 #include "platform/github_api.h"
 #include "platform/json.h"
 
@@ -1211,5 +1212,181 @@ REGISTER_TEST(
         DOCTEST_CHECK_EQ(records.value().at("big.md").contentHash,
                          g::contentHash(note));
     }
+    return true;
+})
+
+// ── 全链场景（S-21）：拉取覆盖本地库整链 ──
+// 引擎逻辑已分段单测覆盖（push/pull/firstsync），但「拉取 → DROP 重建整库 →
+// markdown/todo/agent 三模块经 db_imported 事件重载缓存 → 未保存编辑不丢」的
+// 整链从未串起来跑过（场景地图总览第 2 高危，docs/superpowers/plans/
+// 2026-10-19-feature-scenario-map.md §1）。本节补全链正向与反向（损坏/中断/下载失败）
+// —— 事件面用 bus().subscribe() 钉住 kDbImportBegin→End→Imported 的收发序，
+// 数据面在临时库上断言旧表消失 / 新表落库 / 备份在盘。
+// 描述以 "ghsync_full_chain" 开头：--filter ghsync 即全量 ghsync 引擎用例。
+
+REGISTER_TEST(ghsync_full_chain_pull_success_replaces_db_and_fires_events,
+              "gsync 全链正: pull 换库→事件链(begin→imported→end)+备份+旧表全替换+笔记落盘", {
+    EngineFixture fx;
+    // 本地库预置旧表（有数据）
+    DOCTEST_REQUIRE(fx.tdb.handle().exec("CREATE TABLE llc(_i INT PRIMARY KEY, "
+                                          "_v TEXT); INSERT INTO llc VALUES(1,'old')")
+                        .isOk());
+    DOCTEST_REQUIRE(fx.store.recordSyncedSqlSha("sql-old").isOk());
+    // 本地有一篇笔记（模拟「已打开的编辑中笔记」——拉取不丢它因为远端没有同名)
+    writeNote(fx.notesDir(), "draft.md", "UNSAVED EDIT\n");
+
+    // 远端：新 sql（表名不同、数据不同）+ 新笔记 b.md
+    fx.seedTree({{"data/database.sql", "sql-new"}, {"notes/b.md", "b-new"}});
+    fx.gh.routes.push_back(
+        {"GET", "/contents/data/database.sql",
+         {okResp(200,
+                 fileJson("sql-new",
+                          "PRAGMA foreign_keys=OFF;\n\nBEGIN TRANSACTION;\n\n"
+                          "DROP TABLE IF EXISTS \"llc\";\n"
+                          "CREATE TABLE \"rnc\"(id INTEGER PRIMARY KEY, val TEXT);\n"
+                          "INSERT INTO \"rnc\" VALUES(1,'imported');\n"
+                          "INSERT INTO \"rnc\" VALUES(2,'full_chain');\n\n"
+                          "COMMIT;\nPRAGMA foreign_keys=ON;\n"))}});
+    fx.gh.routes.push_back({"GET", "/contents/notes/b.md",
+                            {okResp(200, fileJson("b-new", "NOTE_B\n"))}});
+
+    // 事件总线订阅（三个事件计数：异步接口用计数当同步判定）
+    int beginN = 0, endN = 0, importedN = 0;
+    auto s1 = ::core::event::bus().subscribe(
+        ::core::event::kDbImportBegin, [&](const std::string&) { ++beginN; });
+    auto s2 = ::core::event::bus().subscribe(
+        ::core::event::kDbImportEnd, [&](const std::string&) { ++endN; });
+    auto s3 = ::core::event::bus().subscribe(
+        ::core::event::kDbImported, [&](const std::string&) { ++importedN; });
+
+    const SyncRunResult r = fx.engine().pull(*fx.makeApi(), "trunk");
+
+    DOCTEST_CHECK_MESSAGE(r.ok, "summary=" + r.summary);
+    DOCTEST_CHECK(r.dbImported);
+    // 事件链：begin→imported→end 各一次
+    DOCTEST_CHECK_EQ(beginN, 1);
+    DOCTEST_CHECK_EQ(importedN, 1);
+    DOCTEST_CHECK_EQ(endN, 1);
+    // 库重建：旧表消失（SELECT 不到 → exec fail）
+    DOCTEST_CHECK_MESSAGE(
+        fx.tdb.handle().exec("SELECT 1 FROM llc").isFail(),
+        "旧表 llc 应在导入后被 DROP，实测 SELECT 仍成功");
+    // 新表可读：INSERT 一行验证 schema 正确、SELECT 可执行
+    DOCTEST_CHECK(fx.tdb.handle().exec(
+        "INSERT INTO rnc(id,val) VALUES(99,'test_verify')").isOk());
+    auto probe = fx.tdb.handle().exec("SELECT val FROM rnc WHERE id=1");
+    DOCTEST_REQUIRE_MESSAGE(probe.isOk(),
+                            "新表 rnc SELECT 失败: 导入后表未建出或列 val 缺失");
+    // 备份在盘（库备份 + 笔记目录备份）
+    DOCTEST_CHECK(std::filesystem::exists(fx.appDataDir() / "backups" /
+                                          "devdesk-1700000000.db"));
+    DOCTEST_CHECK(std::filesystem::exists(fx.appDataDir() / "backups" /
+                                          "notes-1700000000"));
+    // 笔记远端文件落盘
+    DOCTEST_CHECK_EQ(fx.tmp.read(fx.notesDir() / "b.md"),
+                     std::string("NOTE_B\n"));
+    // 本地独有笔记不动（模拟「未保存编辑不丢」——引擎层：远端无同名即不下载不删）
+    DOCTEST_CHECK(std::filesystem::exists(fx.notesDir() / "draft.md"));
+    DOCTEST_CHECK_EQ(fx.tmp.read(fx.notesDir() / "draft.md"),
+                     std::string("UNSAVED EDIT\n"));
+    return true;
+})
+
+REGISTER_TEST(ghsync_full_chain_pull_truncated_dump_rolls_back_no_half_db,
+              "gsync 全链反: 截断 dump(DROP+CREATE+INSERT 后跟垃圾)→事务回滚不留半库", {
+    EngineFixture fx;
+    // 本地库有旧表（后续验证「库未被碰过」）
+    DOCTEST_REQUIRE(fx.tdb.handle().exec(
+        "CREATE TABLE survive(id INTEGER PRIMARY KEY, val TEXT); "
+        "INSERT INTO survive VALUES(1,'alive')").isOk());
+    DOCTEST_REQUIRE(fx.store.recordSyncedSqlSha("sql-old").isOk());
+
+    // 远端 dump：合法 DDL+DML 后面接 **非法 SQL**（模拟网络截断/远端损坏）
+    fx.seedTree({{"data/database.sql", "sql-bad"}});
+    fx.gh.routes.push_back(
+        {"GET", "/contents/data/database.sql",
+         {okResp(200,
+                 fileJson("sql-bad",
+                          // 前段：合法 dump（含事务外壳，in-band 的 BEGIN/COMMIT 被剥掉
+                          // 后用外层 transaction 重新包）——合法段包含 DROP survive 表
+                          "PRAGMA foreign_keys=OFF;\n\nBEGIN TRANSACTION;\n\n"
+                          "DROP TABLE IF EXISTS \"survive\";\n"
+                          "CREATE TABLE \"survive\"(id INTEGER PRIMARY KEY, val TEXT);\n"
+                          "INSERT INTO \"survive\" VALUES(1,'overwritten');\n\n"
+                          "COMMIT;\nPRAGMA foreign_keys=ON;\n"
+                          // 后段：非法 SQL —— 与合法段落在同一外层 transaction，
+                          // exec 失败 → 整件事务 ROLLBACK，上面的 DROP 也一并撤销
+                          "\nCORRUPTED_GARBAGE_NOT_SQL!!!;\n"))}});
+
+    int beginN = 0, endN = 0, importedN = 0;
+    auto s1 = ::core::event::bus().subscribe(
+        ::core::event::kDbImportBegin, [&](const std::string&) { ++beginN; });
+    auto s2 = ::core::event::bus().subscribe(
+        ::core::event::kDbImportEnd, [&](const std::string&) { ++endN; });
+    auto s3 = ::core::event::bus().subscribe(
+        ::core::event::kDbImported, [&](const std::string&) { ++importedN; });
+
+    const SyncRunResult r = fx.engine().pull(*fx.makeApi(), "trunk");
+
+    // 反向判据：拉取失败
+    DOCTEST_CHECK_MESSAGE(!r.ok, "截断 dump 不应报成功。summary=" + r.summary);
+    DOCTEST_CHECK_MESSAGE(!r.dbImported,
+                          "截断 dump 不应设 dbImported=true（库未换）");
+    // 事件链：begin+end 各一次，imported 零次——导入失败后只发 end 不收 imported
+    DOCTEST_CHECK_EQ(beginN, 1);
+    DOCTEST_CHECK_EQ(endN, 1);
+    DOCTEST_CHECK_EQ(importedN, 0);
+    // 不留半库：旧表 survive 仍在且数据原样
+    auto sel = fx.tdb.handle().exec("SELECT val FROM survive");
+    DOCTEST_REQUIRE_MESSAGE(sel.isOk(),
+                            "旧表 survive 不应消失（事务回滚），实测 SELECT 失败");
+    // 错误摘要点名备份（回滚点不靠翻日志）
+    DOCTEST_CHECK_MESSAGE(
+        r.summary.rfind("导入失败：", 0) == 0,
+        "失败摘要应以「导入失败：」开头，实测: " + r.summary);
+    DOCTEST_CHECK_MESSAGE(
+        r.summary.find("devdesk-1700000000.db") != std::string::npos,
+        "失败摘要应点名库备份，实测: " + r.summary);
+    // 备份真在盘上
+    DOCTEST_CHECK(std::filesystem::exists(fx.appDataDir() / "backups" /
+                                          "devdesk-1700000000.db"));
+    return true;
+})
+
+REGISTER_TEST(ghsync_full_chain_pull_sql_download_fails_graceful,
+              "gsync 全链反: 下载 database.sql 失败(500)→报错+库不动+备份在盘", {
+    EngineFixture fx;
+    DOCTEST_REQUIRE(fx.tdb.handle().exec(
+        "CREATE TABLE keep(id INTEGER PRIMARY KEY, val TEXT); "
+        "INSERT INTO keep VALUES(1,'safe')").isOk());
+    DOCTEST_REQUIRE(fx.store.recordSyncedSqlSha("sql-old").isOk());
+
+    // 远端树有 database.sql（sha 与登记不同 → 触发导入分支）
+    fx.seedTree({{"data/database.sql", "sql-new"}});
+    // 下载阶段返回 500（模拟 GitHub 服务端错误）
+    fx.gh.routes.push_back({"GET", "/contents/data/database.sql",
+                            {okResp(500, R"({"message":"Server Error"})")}});
+
+    const SyncRunResult r = fx.engine().pull(*fx.makeApi(), "trunk");
+
+    DOCTEST_CHECK_MESSAGE(!r.ok, "下载 500 不应报成功。summary=" + r.summary);
+    DOCTEST_CHECK_MESSAGE(!r.dbImported, "下载失败不应设 dbImported=true");
+    // 摘要直接点名下载阶段（不伪装成导入失败）
+    DOCTEST_CHECK_MESSAGE(
+        r.summary.rfind("下载 database.sql 失败：", 0) == 0,
+        "失败摘要应以「下载 database.sql 失败：」开头，实测: " + r.summary);
+    // 库未碰：旧表数据仍在
+    auto sel = fx.tdb.handle().exec("SELECT val FROM keep");
+    DOCTEST_REQUIRE_MESSAGE(sel.isOk(),
+                            "下载失败不应动库。实测 SELECT keep 失败");
+    // 备份（② 步先于 ③ 下载）在盘——用户可据此手动回滚
+    DOCTEST_CHECK(std::filesystem::exists(fx.appDataDir() / "backups" /
+                                          "devdesk-1700000000.db"));
+    // 请求日志可审计：含 500 条目（弹窗详情可见）
+    bool saw500 = false;
+    for (const auto& e : r.logs) {
+        if (e.statusCode == 500) { saw500 = true; break; }
+    }
+    DOCTEST_CHECK_MESSAGE(saw500, "请求日志应含 500 条目（弹窗详情可审计）");
     return true;
 })
