@@ -13,6 +13,15 @@
 //      「LLM 配置不可用…」类）+ 一条带 text 块的 assistant 消息，断言
 //      runlist.<i>.err、runlist.<i>.err.hint（去 Claude 页 →）、
 //      msgs.copyfinal chip 三者同时在场；--shot-detail <path> 落 PNG。
+//   C. AI 草稿子弹窗双层 z 序（G5，ui-test-gap-map）：任务弹窗之上叠开
+//      「AI 生成草稿」子弹窗，断言层级契约——子弹窗根 zIndex 严格大于外层、
+//      遮罩全屏启用、L2 z 碰撞扫描；失败态（空输入校验错 / 生成中 / 请求失败）
+//      逐态复扫；遮罩命中序用行为证明（点外层暴露区必关子弹窗而非穿透）；
+//      子弹窗关闭后外层任务弹窗完好。--shot-draft <path> 落双层稳定帧，
+//      --shot-draft-error <path> 落校验错误态帧。
+//      判据形态：两张弹窗各自是 compose 顶层根（无公共祖先），assertDrawnAbove
+//      不适用；「子弹窗在上」= 根 zIndex 数值契约（roots 参与 z 稳定排序，
+//      等值时退化为 DOM 序——这正是要钉死的脆弱点）+ 遮罩点击穿透行为证明。
 //
 // 无头用例与真窗口探针的分工契约见 test_agent_ui.cpp 文件头——本文件就是它说的
 // 「真窗口几何 + 真命中分发的探针侧」。
@@ -20,9 +29,12 @@
 // 数据种子走真 AgentStore 落库口（createTask/startRun/appendMessage/finishRun），
 // 不绕过产品代码写表——图的身份可查（哪条 run、哪个错误文案渲染出来的）。
 // 错误文案与 direct_llm_client.cpp 的 kConfigErrorPrefix 逐字一致（前缀钉死契约）。
+// C 段的 LLM 通道指向本机拒连端口（127.0.0.1:9，FakeProfileSource.baseUrl 改写），
+// 生成 worker 秒败且**绝不出真网**。
 //
 // 运行：agent_dialog_probe.exe [--shot-task <png>] [--shot-task-plain <png>]
-//                    [--shot-detail <png>]
+//                    [--shot-detail <png>] [--shot-draft <png>]
+//                    [--shot-draft-error <png>]
 // 不带构图开关 = 纯断言门禁（ctest -L probe 跑的就是这条）；构图开关失败 =
 // 退出码非零（视觉证据链缺失不能当通过，probe_harness 契约）。
 
@@ -34,10 +46,12 @@
 #include "module_agent/agent_module.h"
 #include "module_agent/agent_store.h"
 
+#include <chrono>
 #include <cmath>
 #include <iostream>
 #include <memory>
 #include <string>
+#include <thread>
 
 // app:: 层实现随 dsl_app_impl.h 自给（同 settings_dropdown_z_probe：探针不建
 // 应用级 UI，compose 走 probe::composeModuleFrame 直接驱动 runtime）
@@ -59,7 +73,7 @@ bool floatEq(float a, float b) { return std::fabs(a - b) < 0.5f; }
 int main(int argc, char* argv[]) {
     auto args = probe::parseProbeArgs(argc, argv);
     // 本探针私有构图开关（parseProbeArgs 未知参数忽略，这里自己收）
-    std::string shotTask, shotTaskPlain, shotDetail;
+    std::string shotTask, shotTaskPlain, shotDetail, shotDraft, shotDraftError;
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
         if (arg == "--shot-task" && i + 1 < argc) {
@@ -68,6 +82,10 @@ int main(int argc, char* argv[]) {
             shotTaskPlain = argv[++i];
         } else if (arg == "--shot-detail" && i + 1 < argc) {
             shotDetail = argv[++i];
+        } else if (arg == "--shot-draft" && i + 1 < argc) {
+            shotDraft = argv[++i];
+        } else if (arg == "--shot-draft-error" && i + 1 < argc) {
+            shotDraftError = argv[++i];
         }
     }
 
@@ -80,6 +98,10 @@ int main(int argc, char* argv[]) {
 
     test_support::TestDb tdb("aprobe_", "agentdlg");
     test_support::FakeProfileSource profile;
+    // C 段会真点「生成草稿」→ startDraftGeneration 起 worker 发 LLM 请求。
+    // baseUrl 改写成本机拒连端口：worker 秒败、零真网流量（默认的
+    // api.anthropic.com 会让探针打真外网——绝不允许）。不得绑 8888（本会话推理链路）。
+    profile.profile.baseUrl = "http://127.0.0.1:9";
 
     // 种子（真 AgentStore 落库口）：1 个手动任务 + 1 条 failed run + 1 个
     // max_runs=1 的定时任务（列表行「一次性」徽章的审阅帧来源，不派发——probe
@@ -235,6 +257,212 @@ int main(int argc, char* argv[]) {
                          "「下次触发：…」（实测 '"
                       << (preview != nullptr ? preview->text : std::string("<无>"))
                       << "'）\n";
+            passed = false;
+        }
+    }
+
+    // ---------- C. AI 草稿子弹窗双层 z 序（G5） ----------
+    // 前置：任务弹窗开着（A 段已切定时 + cron 预览）。子弹窗关闭后外层保持
+    // 完好，A 段后续的模板下拉交互即外层可交互的活性证明。
+    {
+        const auto* chip = findElement("agent.dialog.task.aichip.chip");
+        if (chip == nullptr) {
+            std::cerr << "agent_dialog_probe: AI 草稿 chip 缺失\n";
+            passed = false;
+        } else {
+            clickElement(*chip);
+            composeFrame();
+            for (int i = 0; i < 24; ++i) probe::pollOnce(window, runtime);
+            composeFrame();  // 开窗过渡动画收敛后再断言（半透明帧只存在于过渡期）
+        }
+        const auto* draftRoot = findElement("agent.dialog.task.draft");
+        const auto* draftPanel = findElement("agent.dialog.task.draft.panel");
+        const auto* draftBackdrop = findElement("agent.dialog.task.draft.backdrop");
+        const auto* taskRoot = findElement("agent.dialog.task");
+        const auto* taskPanel = findElement("agent.dialog.task.panel");
+        if (draftRoot == nullptr || draftPanel == nullptr ||
+            draftBackdrop == nullptr || taskRoot == nullptr ||
+            taskPanel == nullptr) {
+            std::cerr << "agent_dialog_probe: 双层弹窗元素缺失（draft "
+                         "root/panel/backdrop、task root/panel）\n";
+            passed = false;
+        } else {
+            // 子弹窗在上：根 zIndex 严格大于外层（roots 参与 z 稳定排序；
+            // 等值时排序退化为 DOM 序，靠 compose 先后侥幸在上——正是要钉死的点）
+            if (draftRoot->zIndex <= taskRoot->zIndex) {
+                std::cerr << "agent_dialog_probe: 草稿子弹窗根 zIndex("
+                          << draftRoot->zIndex << ") 未严格大于任务弹窗根("
+                          << taskRoot->zIndex << ")\n";
+                passed = false;
+            }
+            if (!floatEq(draftPanel->opacity, 1.0f)) {
+                std::cerr << "agent_dialog_probe: 草稿面板 opacity="
+                          << draftPanel->opacity << "（期望收敛到 1.0）\n";
+                passed = false;
+            }
+            // 遮罩：全屏、启用、不透明（挡外层命中的实体）
+            if (draftBackdrop->disabled || !floatEq(draftBackdrop->opacity, 1.0f) ||
+                draftBackdrop->frame.x > 0.5f || draftBackdrop->frame.y > 0.5f ||
+                draftBackdrop->frame.x + draftBackdrop->frame.width < w - 0.5f ||
+                draftBackdrop->frame.y + draftBackdrop->frame.height < h - 0.5f) {
+                std::cerr << "agent_dialog_probe: 草稿遮罩未全屏启用（disabled="
+                          << draftBackdrop->disabled
+                          << " opacity=" << draftBackdrop->opacity << " frame="
+                          << draftBackdrop->frame.x << ","
+                          << draftBackdrop->frame.y << " "
+                          << draftBackdrop->frame.width << "x"
+                          << draftBackdrop->frame.height << "）\n";
+                passed = false;
+            }
+            // 外层面板不被误禁用/隐没——拦截靠 z 序，不靠禁用外层
+            if (taskPanel->disabled || !floatEq(taskPanel->opacity, 1.0f)) {
+                std::cerr << "agent_dialog_probe: 外层任务面板被误禁用/隐没"
+                             "（disabled="
+                          << taskPanel->disabled << "）\n";
+                passed = false;
+            }
+            if (!probe::assertNoEqualZOverlap(*ui, "agent.dialog.task.draft")) {
+                std::cerr << "agent_dialog_probe: 双层弹窗 L2 z 碰撞扫描失败\n";
+                passed = false;
+            }
+        }
+
+        // 构图 C1：双层弹窗稳定帧
+        if (!shotDraft.empty() &&
+            !probe::captureFramePng(window, runtime, shotDraft)) {
+            std::cerr << "agent_dialog_probe: --shot-draft 落图失败: "
+                      << shotDraft << "\n";
+            passed = false;
+        }
+
+        // 失败态 1：空输入校验错（同步路径，零线程，确定性）
+        {
+            const auto* gen = findElement("agent.dialog.task.draft.generate");
+            if (gen == nullptr) {
+                std::cerr << "agent_dialog_probe: 生成按钮缺失\n";
+                passed = false;
+            } else {
+                clickElement(*gen);
+                composeFrame();
+                const auto* err = findElement("agent.dialog.task.draft.error");
+                if (err == nullptr || err->text != "请先用一句话描述任务") {
+                    std::cerr << "agent_dialog_probe: 空输入校验错误行缺失或"
+                                 "文案漂移（实测 '"
+                              << (err != nullptr ? err->text : std::string("<无>"))
+                              << "'）\n";
+                    passed = false;
+                }
+                if (!probe::assertNoEqualZOverlap(*ui,
+                                                  "agent.dialog.task.draft")) {
+                    std::cerr << "agent_dialog_probe: 校验错误态 L2 z 碰撞扫描"
+                                 "失败\n";
+                    passed = false;
+                }
+            }
+        }
+
+        // 构图 C2：校验错误行在场的失败态帧
+        if (!shotDraftError.empty() &&
+            !probe::captureFramePng(window, runtime, shotDraftError)) {
+            std::cerr << "agent_dialog_probe: --shot-draft-error 落图失败: "
+                      << shotDraftError << "\n";
+            passed = false;
+        }
+
+        // 失败态 2 + 3：生成中（真 worker 在途）→ 请求失败错误行。
+        // LLM 通道已指向本机拒连端口（见 profile.baseUrl），worker 秒败。
+        {
+            const auto* inputHit = findElement("agent.dialog.task.draft.input.hit");
+            if (inputHit == nullptr) {
+                std::cerr << "agent_dialog_probe: 草稿输入框 hit 区缺失\n";
+                passed = false;
+            } else {
+                clickElement(*inputHit);
+                composeFrame();
+                probe::queueText(window, runtime, "把逾期的待办全部完成");
+                composeFrame();
+            }
+            const auto* gen = findElement("agent.dialog.task.draft.generate");
+            if (gen != nullptr) {
+                clickElement(*gen);
+                // 同帧 compose 呈现生成中态：worker 从 spawn 到失败至少一次
+                // curl 建连（ms 级），update→compose 间距 µs 级，收不到割
+                composeFrame();
+                const auto* genBusy =
+                    findElement("agent.dialog.task.draft.generate.bg");
+                const auto* genLabel =
+                    findElement("agent.dialog.task.draft.generate.text");
+                // button 组件的 disabled 落在 .bg、文案落在 .text（根节点两者皆无）
+                if (genBusy == nullptr || !genBusy->disabled || genLabel == nullptr ||
+                    genLabel->text != "生成中…") {
+                    std::cerr << "agent_dialog_probe: 生成中态未呈现（bg.disabled="
+                              << (genBusy != nullptr ? genBusy->disabled : false)
+                              << " label='"
+                              << (genLabel != nullptr ? genLabel->text : "<无>")
+                              << "'）\n";
+                    passed = false;
+                }
+                if (!probe::assertNoEqualZOverlap(*ui,
+                                                  "agent.dialog.task.draft")) {
+                    std::cerr << "agent_dialog_probe: 生成中态 L2 z 碰撞扫描"
+                                 "失败\n";
+                    passed = false;
+                }
+                // 等 worker 失败被收割（本机拒连 <100ms 量级；上限 ~2s）
+                bool failedShown = false;
+                for (int i = 0; i < 200 && !failedShown; ++i) {
+                    composeFrame();
+                    const auto* err = findElement("agent.dialog.task.draft.error");
+                    failedShown = err != nullptr && !err->text.empty();
+                    if (!failedShown) {
+                        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                    }
+                }
+                const auto* err = findElement("agent.dialog.task.draft.error");
+                if (err == nullptr || err->text.empty()) {
+                    std::cerr << "agent_dialog_probe: 请求失败错误行未出现"
+                                 "（拒连端口也该失败——环境异常？）\n";
+                    passed = false;
+                }
+                if (!probe::assertNoEqualZOverlap(*ui,
+                                                  "agent.dialog.task.draft")) {
+                    std::cerr << "agent_dialog_probe: 请求失败态 L2 z 碰撞扫描"
+                                 "失败\n";
+                    passed = false;
+                }
+            }
+        }
+
+        // 遮罩命中序（行为证明）：任务弹窗「取消」钮暴露在草稿面板之下方
+        // （几何不重叠）。点它必须命中草稿遮罩 → 只关子弹窗；若穿透到外层
+        // 按钮，任务弹窗会被误关——两种错各给一条独立断言。
+        {
+            const auto* cancel = findElement("agent.dialog.task.cancel");
+            if (cancel == nullptr) {
+                std::cerr << "agent_dialog_probe: 任务弹窗取消钮缺失"
+                             "（遮罩命中序无从验证）\n";
+                passed = false;
+            } else {
+                clickElement(*cancel);
+                composeFrame();
+                if (findElement("agent.dialog.task.draft") != nullptr) {
+                    std::cerr << "agent_dialog_probe: 点外层暴露区未关草稿"
+                                 "子弹窗（遮罩命中序破损：点击穿透）\n";
+                    passed = false;
+                }
+                if (findElement("agent.dialog.task") == nullptr) {
+                    std::cerr << "agent_dialog_probe: 遮罩点击误关了外层"
+                                 "任务弹窗\n";
+                    passed = false;
+                }
+            }
+        }
+        // 外层完好：子弹窗关闭后任务弹窗面板仍在且可见
+        const auto* taskPanelAfter = findElement("agent.dialog.task.panel");
+        if (taskPanelAfter == nullptr ||
+            !floatEq(taskPanelAfter->opacity, 1.0f)) {
+            std::cerr << "agent_dialog_probe: 子弹窗关闭后外层任务弹窗面板"
+                         "缺失/不可见\n";
             passed = false;
         }
     }
