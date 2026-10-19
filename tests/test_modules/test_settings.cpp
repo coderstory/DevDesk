@@ -2941,9 +2941,14 @@ REGISTER_TEST(settings_card_registry_order,
         DOCTEST_CHECK_MESSAGE(t0 == wantGeneral, "通用 tab 实测：" + join(t0));
         DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 1));
         const std::vector<std::string> wantModulesAll = {
+            "settings.card.modules.grouptitle",
             "settings.card.modules",
             "settings.card.quota",
+            "settings.card.directory.groupdivider",
+            "settings.card.directory.grouptitle",
             "settings.card.directory",
+            "settings.card.proxy.groupdivider",
+            "settings.card.proxy.grouptitle",
             "settings.card.proxy"};
         const auto t1 = cardIdsOf(*mod, screen);
         DOCTEST_CHECK_MESSAGE(t1 == wantModulesAll, "模块 tab（全开） 实测：" + join(t1));
