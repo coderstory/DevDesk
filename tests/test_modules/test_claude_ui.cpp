@@ -6165,10 +6165,10 @@ REGISTER_TEST(claude_profile_active_badge_centered,
     const std::string sharedBadge = pillProblem(
         "claude.profile.0.shared.badge.text", "claude.profile.0.shared.badge");
     DOCTEST_CHECK_MESSAGE(sharedBadge.empty(), sharedBadge);
-    // 胶囊几何/位置不变（ACTIVE 48×20 在卡片右上角）
+    // 胶囊几何：§5 加宽后「当前选中」64×20 在卡片右上角（原 ACTIVE 48×20 放不下 4 全角字）
     const auto* abg = ui.find("claude.profile.0.active.bg");
     DOCTEST_REQUIRE(abg != nullptr);
-    DOCTEST_CHECK_EQ(abg->frame.width, 48.0f);
+    DOCTEST_CHECK_EQ(abg->frame.width, 64.0f);
     DOCTEST_CHECK_EQ(abg->frame.height, 20.0f);
 
     mod->onStop();
