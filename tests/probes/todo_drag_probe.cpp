@@ -152,6 +152,30 @@ int main(int argc, char* argv[]) {
         composeFrame();
     };
 
+    // 稳帧：首帧 compose 有时未完全填充 scrollView 内容（EUI-NEO
+    // compose 期过后 scrollView 才建子元素——再调一帧确保树完整）
+    composeFrame();
+    composeFrame();
+
+    // 自检：确认种子数据在 DOM 中可见（诊断用）
+    {
+        const auto* rootEl = findEl("todo.root");
+        const auto* col0El = findEl("todo.col.0");
+        const auto* card0El = findEl("todo.col.0.card.0.bg");
+        const auto* col1El = findEl("todo.col.1");
+        if (rootEl == nullptr || col0El == nullptr ||
+            card0El == nullptr || col1El == nullptr) {
+            std::cerr << "todo_drag_probe: 种子初始化诊断——"
+                      << "todo.root=" << (rootEl != nullptr ? "有" : "缺")
+                      << " col0=" << (col0El != nullptr ? "有" : "缺")
+                      << " card0.bg=" << (card0El != nullptr ? "有" : "缺")
+                      << " col1=" << (col1El != nullptr ? "有" : "缺") << "\n";
+        } else {
+            std::cout << "todo_drag_probe: 种子 DOM 自检通过"
+                         "（root/col0/card0/col1 全部在场）\n";
+        }
+    }
+
     // ==================== F1: 跨列拖拽 col0→col1 ====================
     {
         composeFrame();
