@@ -32,17 +32,17 @@ void composeTo(eui::Ui& ui, AgentModule& mod, const eui::Screen& screen,
 
 bool nearPx(float a, float b) { return std::fabs(a - b) <= 0.5f; }
 
-// 打开某任务的详情弹窗（点列表行「详情」chip），返回是否点开
-bool openDetailDialog(eui::Ui& ui, AgentModule& mod,
-                      const std::string& tid) {
-    return clickId(ui, "agent.task." + tid + ".detail");
-}
-
 bool clickId(eui::Ui& ui, const std::string& id) {
     auto* el = ui.find(id);
     if (el == nullptr) return false;
     el->onClick();
     return true;
+}
+
+// 打开某任务的详情弹窗（点列表行「详情」chip），返回是否点开
+bool openDetailDialog(eui::Ui& ui, AgentModule& mod,
+                      const std::string& tid) {
+    return clickId(ui, "agent.task." + tid + ".detail");
 }
 
 // ---------- 三尺寸 test ----------
