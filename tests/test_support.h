@@ -685,4 +685,14 @@ inline bool processCanWriteFiles() {
         }                                                       \
     } while (0)
 
+// POSIX fs::permissions(…, perm_options::remove) 可阻止文件读取从而注入
+// 失败路径；Windows NTFS 不支持 deny owner 读——依赖此注入的测试需跳过
+inline bool platformSupportsPermissionsInjection() {
+#ifdef _WIN32
+    return false;
+#else
+    return true;
+#endif
+}
+
 } // namespace test_support
