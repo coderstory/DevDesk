@@ -399,15 +399,25 @@ REGISTER_TEST(agent_module_ui_id_contract,
         DOCTEST_CHECK(ui2.find("agent.dialog.detail") != nullptr);
         DOCTEST_CHECK(ui2.find("agent.dialog.detail.config.header.hint") !=
                       nullptr);
-        DOCTEST_CHECK(ui2.find("agent.dialog.detail.msgscroll") != nullptr);
+        // 消息区默认折叠（D6）：先点 .msgs.toggle 再看消息行
+        DOCTEST_CHECK(ui2.find("agent.dialog.detail.msgscroll") == nullptr);
+        const auto* msgsToggle = ui2.find("agent.dialog.detail.msgs.toggle");
+        DOCTEST_REQUIRE(msgsToggle != nullptr);
+        DOCTEST_REQUIRE(msgsToggle->onClick != nullptr);
+        msgsToggle->onClick();
+        eui::Ui ui2b;
+        ui2b.begin("agent_ui2b");
+        mod->compose(ui2b, screen);
+        ui2b.end();
+        DOCTEST_CHECK(ui2b.find("agent.dialog.detail.msgscroll") != nullptr);
         // msg.<i> 是容器元素：role 在 .badge、预览文本在 .preview
-        const auto* badge0 = ui2.find("agent.dialog.detail.msg.0.badge");
+        const auto* badge0 = ui2b.find("agent.dialog.detail.msg.0.badge");
         DOCTEST_REQUIRE(badge0 != nullptr);
         DOCTEST_CHECK(badge0->text == std::string("用户"));
-        const auto* preview0 = ui2.find("agent.dialog.detail.msg.0.preview");
+        const auto* preview0 = ui2b.find("agent.dialog.detail.msg.0.preview");
         DOCTEST_REQUIRE(preview0 != nullptr);
         DOCTEST_CHECK(preview0->text.find("把逾期待办全部完成") != std::string::npos);
-        const auto* closeBtn = ui2.find("agent.dialog.detail.close");
+        const auto* closeBtn = ui2b.find("agent.dialog.detail.close");
         DOCTEST_REQUIRE(closeBtn != nullptr);
         DOCTEST_REQUIRE(closeBtn->onClick != nullptr);
         closeBtn->onClick();

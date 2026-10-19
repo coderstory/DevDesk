@@ -226,15 +226,16 @@ REGISTER_TEST(msg_blocks_height_estimator_monotonic_and_clamped,
               "msg_blocks: 展开高度随内容单调不减；区域高钳在 [min,max]", {
     using namespace module::agent;
     const float w = 400.0f;
-    // 单调：同宽下更长的文本 → 高度不减
-    float h1 = estimateTextBlockHeight("短文本", w, 12.0f, 18.0f);
+    // 单调：同宽下更长的文本 → 高度不减（字号参数按 §9.2 消息口径 13/20）
+    float h1 = estimateTextBlockHeight("短文本", w, 13.0f, 20.0f);
     std::string longText(2000, 'a');
-    float h2 = estimateTextBlockHeight(longText, w, 12.0f, 18.0f);
+    float h2 = estimateTextBlockHeight(longText, w, 13.0f, 20.0f);
     DOCTEST_CHECK(h2 > h1);
-    DOCTEST_CHECK(h1 >= 18.0f);  // 至少一行
+    DOCTEST_CHECK(h1 >= 20.0f);  // 至少一行
 
     // 消息高：内容超一行的消息展开 > 收起。单行消息展开与收起同高才是正确语义
-    // （没有更多内容可展示），故这里必须用会换行的长内容来钉
+    // （没有更多内容可展示），故这里必须用会换行的长内容来钉。
+    // 字号参数走 13/20（§9.2 消息口径，替代旧 12/18）
     const float narrowW = 200.0f;
     module::agent::AgentMessageRow row;
     row.seq = 0;
@@ -242,9 +243,9 @@ REGISTER_TEST(msg_blocks_height_estimator_monotonic_and_clamped,
     row.contentJson =
         R"([{"type":"text","text":")" + std::string(200, 'a') + R"("}])";
     float hCollapsed =
-        estimateMessageHeight(row, /*expanded=*/false, narrowW, 18.0f);
+        estimateMessageHeight(row, /*expanded=*/false, narrowW, 13.0f, 20.0f);
     float hExpanded =
-        estimateMessageHeight(row, /*expanded=*/true, narrowW, 18.0f);
+        estimateMessageHeight(row, /*expanded=*/true, narrowW, 13.0f, 20.0f);
     DOCTEST_CHECK(hExpanded > hCollapsed);
     // 单行消息：展开与收起同高（没有更多内容可展示）
     module::agent::AgentMessageRow oneLiner;
@@ -252,9 +253,9 @@ REGISTER_TEST(msg_blocks_height_estimator_monotonic_and_clamped,
     oneLiner.role = "user";
     oneLiner.contentJson = R"([{"type":"text","text":"hello"}])";
     DOCTEST_CHECK_EQ(estimateMessageHeight(oneLiner, /*expanded=*/true, w,
-                                           18.0f),
+                                           13.0f, 20.0f),
                      estimateMessageHeight(oneLiner, /*expanded=*/false, w,
-                                           18.0f));
+                                           13.0f, 20.0f));
 
     // 区域高：钳制生效——再多消息也不超过 maxH
     std::vector<module::agent::AgentMessageRow> many;
@@ -267,14 +268,15 @@ REGISTER_TEST(msg_blocks_height_estimator_monotonic_and_clamped,
     }
     std::set<int64_t> allExpanded;
     for (const auto& m : many) allExpanded.insert(m.seq);
-    float area = estimateMessagesAreaHeight(many, allExpanded, w, 18.0f,
+    float area = estimateMessagesAreaHeight(many, allExpanded, w, 13.0f, 20.0f,
                                             /*minH=*/96.0f, /*maxH=*/520.0f);
     DOCTEST_CHECK(area <= 520.0f + 0.5f);
-    float areaMin = estimateMessagesAreaHeight(many, {}, w, 18.0f,
+    float areaMin = estimateMessagesAreaHeight(many, {}, w, 13.0f, 20.0f,
                                                96.0f, 520.0f);
     DOCTEST_CHECK(areaMin >= 96.0f - 0.5f);
     // 空消息列表 → minH
-    float areaEmpty = estimateMessagesAreaHeight({}, {}, w, 18.0f, 96.0f, 520.0f);
+    float areaEmpty =
+        estimateMessagesAreaHeight({}, {}, w, 13.0f, 20.0f, 96.0f, 520.0f);
     DOCTEST_CHECK(areaEmpty <= 96.0f + 0.5f);
     return true;
 })
@@ -313,8 +315,8 @@ REGISTER_TEST(msg_blocks_tool_info_malformed_schema,
 REGISTER_TEST(msg_blocks_height_matches_text_measurement,
               "msg_blocks: 估算高度 == TextPrimitive::measureTextSize 行数×lineHeight（真测量口径）", {
     using namespace module::agent;
-    const float fs = 12.0f;
-    const float lh = 18.0f;
+    const float fs = 13.0f;
+    const float lh = 20.0f;
     // 宽字形串（m/w/W/@）/ base64 段 / 大写段：0.55em 启发式会显著低估的样本
     const std::vector<std::pair<std::string, float>> cases = {
         {std::string(80, 'm'), 200.0f},

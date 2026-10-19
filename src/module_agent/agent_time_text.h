@@ -31,6 +31,10 @@ std::string localDayLabel(int64_t sec, int64_t nowSec);
 // 刚刚 / N 分钟前 / N 小时前 / N 天前（只做辅助展示，不替代绝对时间）
 std::string relativeTimeText(int64_t sec, int64_t nowSec);
 
+// 消息头时间（spec §8.3）：createdAt<=0 → 「—」（旧库异常行不崩）；
+// 与参照时刻（选中 run 的 startedAt）同一本地日 → HH:MM:SS，跨日 → MM-DD HH:MM:SS
+std::string messageTimeText(int64_t createdAtSec, int64_t refSec);
+
 // 时长秒 → 紧凑中文（0秒 / 45秒 / 2分13秒 / 1时23分 / 2天3时；负值按 0）
 std::string formatRunDurationText(int64_t seconds);
 
