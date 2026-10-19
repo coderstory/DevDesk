@@ -273,14 +273,29 @@ private:
     std::atomic<bool> dbImportHandlersEnabled_{false};
     core::event::EventBus::Subscription dbImportedSub_;
 
-    // 查任务的在跑 ActiveRun（未 done）；无则 nullptr。主线程调用面（compose / 事件回调）；
-    // runsMu_ 为纵深防御，与 onStop/startTask 同一把
-    ActiveRun* activeRunFor(int64_t taskId);
+    // 任务是否有在跑 ActiveRun（未 done）。锁内判定、不外泄指针：ActiveRun 生命周期归
+    // runs_（erase 即亡），裸指针逃出 runsMu_ 后再解引用就是 use-after-free——
+    // 停止/查询面一律「锁内找到、锁内用完」，不把 ActiveRun* 带出锁边界
+    bool hasActiveRun(int64_t taskId);
+    // 收割已完成的 OS 通知发送线程（M2）：只收 done 的（join 立即返回，不堵帧）；
+    // 在飞的留下帧再收。仅主线程调用（pollRunEnd 每帧；onStop/析构走全量 drain join）
+    void reapNotifySends();
     // run 线程表：主线程写；mutex 为纵深防御（现调用点全在主线程）
     std::mutex runsMu_;
     std::vector<std::unique_ptr<ActiveRun>> runs_;
     // 收尾写库失败的 runId（FinishFailureFn 回报，run 线程写）；判停必须排除，与 runs_ 同用 runsMu_
     std::set<int64_t> orphanedRunIds_;
+
+    // 一次 OS 系统通知的后台发送（M2）：send 的授权检查在 macOS 未决期可阻塞 ≤1s，
+    // 不得在 UI 主线程直调。worker 只摸值拷贝的 Notification 与自己的 done 原子，
+    // 不碰任何模块成员；join 纪律同 T7b DraftJob——reap 只收 done 的，onStop/析构
+    // 全量 join（先于成员析构，不用 detach，不留退出期悬垂线程）
+    struct NotifySend {
+        std::thread thread;
+        std::atomic<bool> done{false};
+    };
+    std::mutex notifySendsMu_;
+    std::vector<std::unique_ptr<NotifySend>> notifySends_;
 
     // compose 数据缓存（仅主线程读写）
     std::vector<AgentTaskRow> tasks_;

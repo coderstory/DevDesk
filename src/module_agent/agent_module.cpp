@@ -388,6 +388,10 @@ AgentModule::~AgentModule() {
         if (draftJob_->thread.joinable()) draftJob_->thread.join();
         draftJob_.reset();
     }
+    // OS 通知发送线程同口径收尾（onStop 漏调时的兜底，同款 terminate 风险）
+    for (auto& item : notifySends_) {
+        if (item->thread.joinable()) item->thread.join();
+    }
 }
 
 void AgentModule::onStart() {
@@ -476,6 +480,18 @@ void AgentModule::onStop() {
         if (draftJob_->thread.joinable()) draftJob_->thread.join();
         draftJob_.reset();
     }
+    // OS 通知发送线程收尾：等在飞的 send 结束（一次性，最坏 ≈ 后端阻塞上限），
+    // 不留线程越过本函数——unique_ptr 析构遇 joinable thread 会 terminate
+    {
+        std::vector<std::unique_ptr<NotifySend>> pending;
+        {
+            std::lock_guard<std::mutex> lock(notifySendsMu_);
+            pending.swap(notifySends_);
+        }
+        for (auto& item : pending) {
+            if (item->thread.joinable()) item->thread.join();
+        }
+    }
     draftDialogOpen_ = false;
     draftPhase_ = DraftPhase::Idle;
     draftInput_.clear();
@@ -530,48 +546,84 @@ void AgentModule::onPageEnter() {
     tasksDirty_ = true;
 }
 
-// 收割已结束的 run：join 后摘除，避免「同 task 不并发」判定被已完成 run 误伤。仅主线程调用
+// 收割已结束的 run：摘除后 join，避免「同 task 不并发」判定被已完成 run 误伤。仅主线程调用。
+// join 在锁外（与 onStop 同纪律）：锁内摘出、锁外 join——join 耗时期间不该堵死
+// hasActiveRun/isTaskRunActive 等并发访问者
 void AgentModule::reapFinishedRuns() {
-    std::lock_guard<std::mutex> lock(runsMu_);
-    for (auto it = runs_.begin(); it != runs_.end();) {
-        if ((*it)->done.load()) {
-            if ((*it)->thread.joinable()) (*it)->thread.join();
-            it = runs_.erase(it);
-        } else {
-            ++it;
+    std::vector<std::unique_ptr<ActiveRun>> finished;
+    {
+        std::lock_guard<std::mutex> lock(runsMu_);
+        for (auto it = runs_.begin(); it != runs_.end();) {
+            if ((*it)->done.load()) {
+                finished.push_back(std::move(*it));
+                it = runs_.erase(it);
+            } else {
+                ++it;
+            }
         }
+    }
+    for (auto& run : finished) {
+        if (run->thread.joinable()) run->thread.join();
     }
 }
 
-AgentModule::ActiveRun* AgentModule::activeRunFor(int64_t taskId) {
+bool AgentModule::hasActiveRun(int64_t taskId) {
     std::lock_guard<std::mutex> lock(runsMu_);
     for (auto& r : runs_) {
         if (r->taskId == taskId && !r->done.load(std::memory_order_acquire)) {
-            return r.get();
+            return true;
         }
     }
-    return nullptr;
+    return false;
 }
 
+// 锁内置位：ActiveRun 指针不出 runsMu_（erase 与解引用之间无锁隔断即 use-after-free）
 void AgentModule::requestStopRun(int64_t taskId) {
-    ActiveRun* run = activeRunFor(taskId);
-    if (run == nullptr) {
-        LOG_WARN("Agent: 停止请求落空（任务 " + std::to_string(taskId) +
-                 " 无在跑 run），忽略");
-        return;
+    std::lock_guard<std::mutex> lock(runsMu_);
+    for (auto& r : runs_) {
+        if (r->taskId == taskId && !r->done.load(std::memory_order_acquire)) {
+            r->cancel.store(true, std::memory_order_release);
+            LOG_INFO("Agent: 已请求停止任务 " + std::to_string(taskId) +
+                     " 的 run（当前轮结束后生效）");
+            return;
+        }
     }
-    run->cancel.store(true, std::memory_order_release);
-    LOG_INFO("Agent: 已请求停止任务 " + std::to_string(taskId) +
-             " 的 run（当前轮结束后生效）");
+    LOG_WARN("Agent: 停止请求落空（任务 " + std::to_string(taskId) +
+             " 无在跑 run），忽略");
 }
 
 bool AgentModule::isTaskRunActive(int64_t taskId) {
-    return activeRunFor(taskId) != nullptr;
+    return hasActiveRun(taskId);
 }
 
 bool AgentModule::isStopRequested(int64_t taskId) {
-    ActiveRun* run = activeRunFor(taskId);
-    return run != nullptr && run->cancel.load(std::memory_order_acquire);
+    std::lock_guard<std::mutex> lock(runsMu_);
+    for (auto& r : runs_) {
+        if (r->taskId == taskId && !r->done.load(std::memory_order_acquire)) {
+            return r->cancel.load(std::memory_order_acquire);
+        }
+    }
+    return false;
+}
+
+// OS 通知发送线程收割：锁内摘出 done 的、锁外 join（join 立即返回，不堵帧）。
+// 在飞的留在表里下帧再收；onStop/析构才等在飞的（一次性，换来无 detach 的退出期安全）
+void AgentModule::reapNotifySends() {
+    std::vector<std::unique_ptr<NotifySend>> finished;
+    {
+        std::lock_guard<std::mutex> lock(notifySendsMu_);
+        for (auto it = notifySends_.begin(); it != notifySends_.end();) {
+            if ((*it)->done.load(std::memory_order_acquire)) {
+                finished.push_back(std::move(*it));
+                it = notifySends_.erase(it);
+            } else {
+                ++it;
+            }
+        }
+    }
+    for (auto& item : finished) {
+        if (item->thread.joinable()) item->thread.join();
+    }
 }
 
 // 惰性装配单入口：启动时 claude 关、会话内拨开无须重载本模块。幂等：loop_ 非空即返回；
@@ -1120,6 +1172,7 @@ void AgentModule::requestNotificationAuthorizationOnce() {
 // （pollRunEndFallback），命中即 refreshData 进入正常观测路径。
 void AgentModule::pollRunEnd() {
     requestNotificationAuthorizationOnce();
+    reapNotifySends();
     if (store_ == nullptr) return;
     bool prevAlive = false;
     for (const auto& [id, st] : prevRunStatuses_) {
@@ -1338,30 +1391,50 @@ void AgentModule::refreshData() {
             }
             if (taskName.empty()) taskName = "任务 " + std::to_string(runId);
             const std::string& st = nowStatus[runId];
+            // 同一通知的两种投递（app toast + OS 通知）共用一份文案，改文案只改这里
+            const std::string title =
+                st == "failed" ? "智能体任务失败" : "智能体任务受限";
+            const std::string body =
+                "「" + taskName + "」运行结束（" + runStatusText(st) + "）";
             {
                 std::lock_guard<std::mutex> lock(pendingNoticesMu_);
-                pendingNotices_.emplace_back(
-                    st == "failed" ? "智能体任务失败" : "智能体任务受限",
-                    "「" + taskName + "」运行结束（" + runStatusText(st) + "）");
+                pendingNotices_.emplace_back(title, body);
             }
-            // 系统通知同发：send 非阻塞、受理≠展示（Focus/勿扰可能静默抑制），
-            // 未受理只 LOG 不重试；「同一 runId 只发一次」由 notifiedRunIds_ 保证。
+            // 系统通知同发：受理≠展示（Focus/勿扰可能静默抑制），未受理只 LOG 不重试；
+            // 「同一 runId 只发一次」由 notifiedRunIds_ 保证（入队侧，仍在主线程）。
             // 稳定 id 复用系统端替换语义（同 id 重发更新旧通知而非堆叠）。
+            // send 挪后台线程：facade 的授权检查在 macOS 未决期可阻塞 ≤1s（平台后端
+            // 文件头自警），不得占 UI 主线程。fire-and-forget + NotifySend 线程表：
+            // onStop/析构全量 join（T7b 纪律），不用 detach。线程创建失败只 LOG 丢弃
+            //——通知是 best-effort，与「未受理不重试」同口径
             {
                 platform::notify::Notification n;
                 n.id = "agent-run-" + std::to_string(runId);
-                n.title = st == "failed" ? "智能体任务失败" : "智能体任务受限";
-                n.body =
-                    "「" + taskName + "」运行结束（" + runStatusText(st) + "）";
+                n.title = title;
+                n.body = body;
                 n.level = platform::notify::Level::Error;
-                auto receipt = platform::notify::send(n);
-                if (receipt.isFail() || receipt.value().status !=
-                                            platform::notify::Status::Accepted) {
-                    LOG_DEBUG(
-                        "Agent: 系统通知未受理 id=" + n.id + ": " +
-                        (receipt.isOk() ? platform::notify::statusToString(
-                                              receipt.value().status)
-                                        : receipt.errorMessage()));
+                auto item = std::make_unique<NotifySend>();
+                NotifySend* raw = item.get();
+                try {
+                    raw->thread = std::thread([raw, n = std::move(n)]() mutable {
+                        auto receipt = platform::notify::send(n);
+                        if (receipt.isFail() ||
+                            receipt.value().status !=
+                                platform::notify::Status::Accepted) {
+                            LOG_DEBUG(
+                                "Agent: 系统通知未受理 id=" + n.id + ": " +
+                                (receipt.isOk()
+                                     ? platform::notify::statusToString(
+                                           receipt.value().status)
+                                     : receipt.errorMessage()));
+                        }
+                        raw->done.store(true, std::memory_order_release);
+                    });
+                    std::lock_guard<std::mutex> lock(notifySendsMu_);
+                    notifySends_.push_back(std::move(item));
+                } catch (const std::system_error& e) {
+                    LOG_ERROR("Agent: 系统通知发送线程创建失败（通知丢弃）: " +
+                              std::string(e.what()));
                 }
             }
             notifiedRunIds_.insert(runId);
@@ -2562,7 +2635,11 @@ void AgentModule::closeDraftDialog() {
 }
 
 void AgentModule::startDraftGeneration() {
-    if (draftJob_ != nullptr) return;   // 生成中重复点击（按钮已禁用，再挡一道）
+    {
+        // 槽位读与其他调用点同一把 draftMu_（锁口径统一：不留半锁半裸的成员）
+        std::lock_guard<std::mutex> lock(draftMu_);
+        if (draftJob_ != nullptr) return;   // 生成中重复点击（按钮已禁用，再挡一道）
+    }
     const std::string text = trimCopy(draftInput_);
     if (text.empty()) {
         draftPhase_ = DraftPhase::Failed;
@@ -2581,10 +2658,13 @@ void AgentModule::startDraftGeneration() {
     }
     // 防御：先收上一个已完成未收割的 job（正常路径 compose 每帧已收），仍占用则退
     reapDraftJob();
-    if (draftJob_ != nullptr) {
-        draftPhase_ = DraftPhase::Failed;
-        draftError_ = "上一次请求仍在进行，请稍候";
-        return;
+    {
+        std::lock_guard<std::mutex> lock(draftMu_);
+        if (draftJob_ != nullptr) {
+            draftPhase_ = DraftPhase::Failed;
+            draftError_ = "上一次请求仍在进行，请稍候";
+            return;
+        }
     }
     ++draftEpoch_;
     auto job = std::make_unique<DraftJob>();
@@ -2758,6 +2838,23 @@ void AgentModule::composeDeleteConfirmDialog(
 void AgentModule::performDeleteTask(int64_t taskId) {
     deleteConfirmTaskId_.reset();
     if (store_ == nullptr) return;
+    // E1 二道闸（确认时刻复查）：删除 chip 的禁用态与点击闭包的 busy 都是渲染帧快照，
+    // 「弹窗开着 → 确认点击」之间 run 可能已起（scheduler/事件派发不挑时机）。判据与
+    // 列表 runBusy 同口径：DB running 行 || 在跑 ActiveRun 任一即挡——scheduler 起的
+    // run 不进 runs_，但同样经 store 落 running 行，照挡。scheduler 派发线程不触本闸
+    // 读的任何状态（runs_ 走 runsMu_、latestRuns_ 仅主线程），无跨线程读面
+    {
+        const auto latest = latestRuns_.find(taskId);
+        const bool runBusy =
+            isTaskRunActive(taskId) ||
+            (latest != latestRuns_.end() && latest->second.status == "running");
+        if (runBusy) {
+            pageError_ = "任务正在运行，请先停止后再删除";
+            LOG_WARN("Agent: 删除被拒绝（任务 " + std::to_string(taskId) +
+                     " 有在跑 run）");
+            return;
+        }
+    }
     auto r = store_->deleteTask(taskId);
     if (r.isFail()) {
         pageError_ = "删除任务失败：" + r.errorMessage();

@@ -99,20 +99,24 @@ using InputState = components::input_detail::InputModel::InputState;
 
 const eui::Screen kScreen{1600.0f, 1000.0f};
 
-// 系统通知 spy 后端：记录 send 调用（id/body/level），授权恒放行。供 OS 通道
-// 断言（失败迁移必达恰 1 次 / 成功零调用）注入；用例结束必须
-// setBackendForTest(nullptr) + resetForTest() 复位，否则污染后续用例。
+// 系统通知 spy 后端：记录 send 调用（id/body/level + 发送线程），授权恒放行。供 OS 通道
+// 断言（失败迁移必达恰 1 次 / 成功零调用 / 发送不在主线程——M2 后台化）注入；
+// 用例结束必须 setBackendForTest(nullptr) + resetForTest() 复位，否则污染后续用例。
+// 发送可能在后台线程落地（M2）：lastId/lastBody/lastLevel/senderId 的写在 fetch_add
+// 之前，测试侧以 acquire 读 sendCalls 拿到 happens-before 后再读，无数据竞争。
 struct OsNotifySpy : platform::notify::Backend {
     std::atomic<int> sendCalls{0};
     std::string lastId;
     std::string lastBody;
     int lastLevel = -1;
+    std::thread::id senderId{};
     core::Result<platform::notify::Status> send(
         const platform::notify::Notification& n) override {
-        sendCalls.fetch_add(1, std::memory_order_relaxed);
         lastId = n.id;
         lastBody = n.body;
         lastLevel = static_cast<int>(n.level);
+        senderId = std::this_thread::get_id();
+        sendCalls.fetch_add(1, std::memory_order_release);
         return core::Result<platform::notify::Status>::ok(
             platform::notify::Status::Accepted);
     }
@@ -2679,6 +2683,15 @@ REGISTER_TEST(agent_ui_run_failed_sends_system_notification,
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
     DOCTEST_REQUIRE_MESSAGE(noticed, "run 失败后 5s 内未产生 run 结束通知");
+    // M2：OS 发送已挪后台线程，落地异步——有界等待后取 acquire 配对再读 spy 字段
+    bool osSent = false;
+    for (int i = 0; i < 500 && !osSent; ++i) {
+        osSent = spy.sendCalls.load(std::memory_order_acquire) >= 1;
+        if (!osSent) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    DOCTEST_REQUIRE_MESSAGE(osSent, "OS 系统通知后台发送 5s 内未落地");
+    DOCTEST_CHECK_MESSAGE(spy.senderId != std::this_thread::get_id(),
+                          "OS 系统通知在 UI 主线程发送（M2 后台化未生效）");
     DOCTEST_CHECK_EQ(spy.sendCalls.load(), 1);
     DOCTEST_CHECK_MESSAGE(spy.lastId.rfind("agent-run-", 0) == 0,
                           "系统通知 id 无 agent-run- 前缀，实测: " + spy.lastId);
@@ -2693,6 +2706,77 @@ REGISTER_TEST(agent_ui_run_failed_sends_system_notification,
     DOCTEST_CHECK_EQ(spy.sendCalls.load(), 1);
     platform::notify::setBackendForTest(nullptr);
     platform::notify::resetForTest();
+
+    mod.onStop();
+    return true;
+})
+
+// E1 二道闸（L5）：删除确认是「渲染时快照 + 确认时执行」，两帧之间 run 可能已起
+//（scheduler/事件派发不挑时机，起跑以 DB running 行为证——scheduler 起的 run 不进
+// 模块 runs_，但同样落 running 行）。确认删除必须再查一次：running 行在册 → 拒删，
+// 任务与 run 记录原样保留。红证据：闸缺席时确认直通 store 级联删，任务消失必红。
+REGISTER_TEST(agent_ui_delete_confirm_second_gate_blocks_running,
+              "agent_ui: 确认弹窗开着期间起了 run（DB running 行）→ 确认删除被二道闸拒绝", {
+    test_support::TestDb tdb("agentui", "delgate");
+    test_support::FakeProfileSource profile;
+    ToolGuard statsGuard{"app.stats", "app.notify"};
+    core::ToolRegistry::instance().unregisterTool("app.stats");
+    core::ToolRegistry::instance().unregisterTool("app.notify");
+    module::agent::AgentStore store(tdb.handle());
+    auto taskId = store.createTask("门闸任务", "直接回复完成，不调用任何工具",
+                                    "manual", "default", 10, false);
+    DOCTEST_REQUIRE(taskId.isOk());
+    const std::string tid = std::to_string(taskId.value());
+
+    module::agent::AgentModule::Deps deps;
+    deps.db = &tdb.handle();
+    deps.profileSource = &profile;
+    deps.http = [](const platform::http::Request&) {
+        platform::http::Response res;
+        res.statusCode = 200;
+        res.body = R"({"id":"m1","stop_reason":"end_turn","content":[)"
+                    R"({"type":"text","text":"done"}],)"
+                    R"({"type":"text","text":"done"}])"
+                    R"(,"usage":{"input_tokens":1,"output_tokens":1}})";
+        return core::Result<platform::http::Response>::ok(res);
+    };
+    module::agent::AgentModule mod(deps);
+    mod.onStart();
+
+    // 帧 1：任务列表渲染（无 running 行，删除 chip 可点）→ 点删除，确认弹窗开
+    eui::Ui ui;
+    composeTo(ui, mod, kScreen, "agent_ui_delgate1");
+    DOCTEST_REQUIRE_MESSAGE(clickId(ui, "agent.task." + tid + ".delete.bg"),
+                            "删除 chip 未渲染/不可点");
+    // 弹窗开着 → 起跑（scheduler 同款落库路径：store 直插 running run 行）
+    auto runId = store.startRun(taskId.value());
+    DOCTEST_REQUIRE_MESSAGE(runId.isOk(), "running run 行插入失败");
+    // 下一帧装配层拉取（app::compose 每帧调 pollRunEnd）：out-of-band 起跑的观测
+    // 路径 = 兜底轻查询命中 → refreshData 把 running 行带进 latestRuns_。不跑它，
+    // 帧 2 的页内 compose 因 tasksDirty_/uiPolling_ 全假不刷新，闸读到的还是空缓存
+    mod.pollRunEnd();
+    // 帧 2：确认弹窗渲染（latestRuns_ 已含 running 行）
+    eui::Ui ui2;
+    composeTo(ui2, mod, kScreen, "agent_ui_delgate2");
+    DOCTEST_REQUIRE_MESSAGE(clickId(ui2, "agent.dialog.delete.confirm.bg"),
+                            "确认删除按钮未渲染");
+    // 二道闸生效：任务与 run 记录原样保留
+    auto tasks = store.listTasks();
+    DOCTEST_REQUIRE(tasks.isOk());
+    bool found = false;
+    for (const auto& t : tasks.value()) {
+        if (t.id == taskId.value()) found = true;
+    }
+    DOCTEST_CHECK_MESSAGE(found,
+                          "running 行在册时确认删除仍删掉了任务（二道闸未生效）");
+    auto runs = store.listRuns(taskId.value(), 10);
+    DOCTEST_REQUIRE(runs.isOk());
+    DOCTEST_CHECK_EQ(runs.value().size(), static_cast<size_t>(1));
+    // 确认弹窗已关（performDeleteTask 无论准驳都先收确认态）
+    eui::Ui ui3;
+    composeTo(ui3, mod, kScreen, "agent_ui_delgate3");
+    DOCTEST_CHECK_MESSAGE(ui3.find("agent.dialog.delete") == nullptr,
+                          "删除确认弹窗未关闭");
 
     mod.onStop();
     return true;
