@@ -81,6 +81,8 @@ void setEnvVar(const char* key, const std::string& value) {
 // 这个基线而不是硬编码 Info——硬编码会把 --log 的 Debug 在第一个用例前冲掉，
 // 命令行开关（文档承诺「打开 Debug 级控制台日志」）静默失效。
 core::log::Level g_logLevelBaseline = core::log::Level::Info;
+// 每用例的测试数据根（resetCaseGlobals 建、用例体跑完后主循环删）；空 = 未建或已清。
+std::filesystem::path g_testDataRoot;
 
 void resetCaseGlobals() {
     // 1) core::theme：默认深色 / 编辑器字号 15 / 缩放 1.0（与 theme.h 契约一致）。
@@ -123,6 +125,7 @@ void resetCaseGlobals() {
         std::error_code ec;
         std::filesystem::create_directories(testDataRoot, ec);
         setEnvVar("DEVDESK_DATA_ROOT", testDataRoot.string());
+        g_testDataRoot = testDataRoot;   // 记下供主循环末尾清理（见 main()）
     }
     setEnvVar("DEVDESK_NOTES_DIR", "");
     setEnvVar("DEVDESK_PETS_DIR", "");
@@ -240,6 +243,18 @@ int main(int argc, char** argv) {
         } else {
             results.push_back({t.first, "FAIL", ms, errMsg});
             ++failed;
+        }
+        // 清理上一条用例的数据根（resetCaseGlobals 在上一轮建、本轮起点被覆写——旧根已在
+        // DEVDESK_DATA_ROOT 外不可达，不在此删即为永久残留）。句柄未放时 remove_all 非零
+        // 但不抛，stderr 留一行提示即可（审计 C 项）。
+        if (!g_testDataRoot.empty()) {
+            std::error_code ec;
+            std::filesystem::remove_all(g_testDataRoot, ec);
+            if (ec) {
+                std::cerr << "[cleanup] 测试数据根残留 " << g_testDataRoot.string()
+                          << ": " << ec.message() << std::endl;
+            }
+            g_testDataRoot.clear();
         }
         // 进度点：每 50 例打一个点到 stderr（不 flush，仅通知还在跑）
         if (total % 50 == 0) {

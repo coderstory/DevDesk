@@ -146,7 +146,7 @@ REGISTER_TEST(notes_git_integration_init, "notes_git: 临时目录 git init 后 
 REGISTER_TEST(notes_git_integration_commit, "notes_git: 写盘 → git add -A → git commit 产生提交", {
     SKIP_IF_WRITE_BLOCKED();  // Windows 安全限制沿进程树传给 git 子进程
     if (!gitSubprocessWorks()) {
-        return true;  // git 子进程无法完成 commit（MSYS2 信令对象受限），静默跳过
+        DOCTEST_SKIP("MSYS2 git 子进程在 CreateProcessW 下信令对象受限（NTSTATUS 0xC0000022），无法完成 commit");
     }
     test_support::TempDir tmp("notes_git_commit");
     // init
@@ -211,7 +211,7 @@ REGISTER_TEST(notes_git_integration_commit, "notes_git: 写盘 → git add -A �
 REGISTER_TEST(notes_git_integration_nothing_to_commit, "notes_git: 无变化 commit 返回 1（正常态）", {
     SKIP_IF_WRITE_BLOCKED();  // Windows 安全限制沿进程树传给 git 子进程
     if (!gitSubprocessWorks()) {
-        return true;  // git 子进程无法完成 commit，静默跳过
+        DOCTEST_SKIP("MSYS2 git 子进程在 CreateProcessW 下信令对象受限（NTSTATUS 0xC0000022），无法完成 commit");
     }
     test_support::TempDir tmp("notes_git_nonew");
     int rc = runGit(tmp.path, {"git", "init"});

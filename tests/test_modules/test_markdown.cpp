@@ -8102,7 +8102,7 @@ static bool platformSupportsWriteFailureInjection() {
 REGISTER_TEST(md_module_statusbar_save_error,
               "markdown_module: 状态栏保存失败态 ✕ 自动重试文案/错误色/磁盘未写（headless）", {
     if (!platformSupportsWriteFailureInjection()) {
-        return true;  // 平台不支持目录权限注入，跳过失败态验证
+        DOCTEST_SKIP("NTFS 目录只读不阻止子文件创建——无法注入 O_CREAT = EACCES 失败路径");
     }
     const std::string doc = "alpha\n\nbravo\n";
     test_support::MdHeadlessEnv env(kDirPrefix, "saveerr", kDbName);

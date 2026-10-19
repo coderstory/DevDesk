@@ -452,7 +452,7 @@ REGISTER_TEST(gsync_engine_push_delete_propagation,
 REGISTER_TEST(gsync_engine_push_delete_safety_skip,
               "gsync 引擎: push 删除安全栏（本地仍在但读失败→不删远端+黄字提示，T4 A5）", {
     if (!test_support::platformSupportsPermissionsInjection()) {
-        return true;  // NTFS 不支持 permissions::remove 禁读，注入无效
+        DOCTEST_SKIP("NTFS 不支持 fs::permissions remove 阻止 owner 读——无法构造「本地文件存在但读失败」安全栏前提");
     }
     EngineFixture fx;
     DOCTEST_REQUIRE(
