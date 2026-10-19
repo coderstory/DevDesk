@@ -1,8 +1,9 @@
 // src/ui_kit/splash.h
-// 启动 splash：全屏极光波 shadertoy + logo + 假进度条。归属 ui_kit 因需 EUI-NEO 运行时
+// 启动 splash：WeChat-minimal（D-11 反转，2026-10-19）——全屏浅灰底(wechat.pageBg)
+// + 居中 logo + 底部绿色细进度条(wechat.primary)。归属 ui_kit 因需 EUI-NEO 运行时
 // 能力，且 app 层与 module_* 可复用；core / platform 不得反向依赖。
 //
-// 时序（首帧起算）：0.0-2.0s 极光波 + 进度 0→100%；2.0-2.3s 整体淡出；2.3s 后永久关闭。
+// 时序（首帧起算）：0.0-2.0s 进度 0→100%；2.0-2.3s 整体淡出；2.3s 后永久关闭。
 #pragma once
 
 #include <eui/dsl.h>

@@ -1,14 +1,16 @@
 // src/ui_kit/splash.cpp
-// 启动 splash 绘制：全屏极光波 shadertoy（assets/shaders/splash.frag）+ logo + 副标题 + 假进度条。
-// shader 方言 = EUI-NEO shadertoy 图元；同一份 .frag 在 macOS / Windows 通用，零平台宏。
+// 启动 splash：WeChat-minimal（D-11 反转，2026-10-19）——
+// 全屏浅灰底(wechat.pageBg #F7F7F7) + 居中 logo + 底部绿色细进度条(wechat.primary #07C160)。
+// 时序：0.0-2.0s 进度 0→100%；2.0-2.3s 整体 opacity 1→0 淡出；2.3s 后 drawSplashIfNeeded 恒返 false。
+//
+// D-11 反转：去除极光波 shadertoy 渐变（§8 禁项 #4：大面积渐变背景），改 WeChat-minimal
+// 与整改后基调协调；颜色全部走 W1 wechat 令牌，禁硬编码色字面量（W0.5 清单 W-W1~W-W3 + #15-#17）。
 #include <ui_kit/splash.h>
 
 #include <core/logging.h>
 #include <core/theme.h>
 
 #include <eui/dsl_app.h>   // app::requestUpdate（splash 期间每帧驱动重绘）
-#include <eui/platform.h>  // eui::platform::resolveResourcePath
-#include <eui/types.h>     // eui::ShaderToyGraph / ShaderToyError
 
 #include <algorithm>
 #include <chrono>
@@ -18,17 +20,13 @@ namespace ui_kit {
 namespace {
 
 // 时序常量（与 splash.h 注释一致）
-constexpr float kDurationSec = 2.0f;  // 极光波动画 + 进度 0→100%
+constexpr float kDurationSec = 2.0f;  // 进度 0→100%
 constexpr float kFadeOutSec = 0.3f;   // 整体淡出
 
 struct SplashState {
     bool active = true;
     bool startSet = false;
     std::chrono::steady_clock::time_point start;
-    bool graphLoaded = false;
-    eui::ShaderToyGraph graph;
-    // onCompileError（首帧 render 时才可达）置位 → 下一帧 compose 起垫深色兜底底色
-    bool shaderFailed = false;
 };
 
 SplashState& splashState() {
@@ -48,7 +46,7 @@ bool drawSplashIfNeeded(eui::Ui& ui, const eui::Screen& screen) {
     if (!state.startSet) {
         state.startSet = true;
         state.start = now;
-        LOG_INFO("启动 splash 开始（极光波，2.0s + 0.3s 淡出）");
+        LOG_INFO("启动 splash 开始（WeChat-minimal，2.0s 进度 + 0.3s 淡出）");
     }
     const float elapsed =
         std::chrono::duration<float>(now - state.start).count();
@@ -64,53 +62,29 @@ bool drawSplashIfNeeded(eui::Ui& ui, const eui::Screen& screen) {
         opacity = 1.0f - (elapsed - kDurationSec) / kFadeOutSec;
     }
 
-    // shader graph 首次加载；resolveResourcePath 解析不到时回退相对路径（从 build 目录启动即命中）。
-    if (!state.graphLoaded) {
-        state.graphLoaded = true;
-        std::string fragPath =
-            eui::platform::resolveResourcePath("assets/shaders/splash.frag");
-        if (fragPath.empty()) fragPath = "assets/shaders/splash.frag";
-        state.graph.addPass("image", fragPath, "");
-    }
+    const auto& t = ::core::theme::current();
+    const auto& wc = t.colors.wechat;
 
-    // shader 编译失败兜底：EUI-NEO 图元编译失败时不画任何东西，浅色主题近白底会露出、
-    // 白字 logo 不可读。故置位后从下一帧起垫一层不透明深色底（画在 shadertoy 之前，正常时被盖住）。
-    if (state.shaderFailed) {
-        ui.rect("splash.fallback.bg")
-            .position(0.0f, 0.0f)
-            .size(screen.width, screen.height)
-            .color(eui::Color{0.02f, 0.10f, 0.20f, 1.0f})
-            .opacity(opacity)
-            .build();
-    }
-
-    // 全屏极光波，淡出期随整体 opacity 一起透明。
-    ui.shadertoy("splash.shader")
+    // 全屏浅灰底（wechat.pageBg #F7F7F7）——D-11 反转：替代原极光波 shadertoy 渐变。
+    ui.rect("splash.bg")
         .position(0.0f, 0.0f)
         .size(screen.width, screen.height)
-        .graph(state.graph)
-        .resolutionScale(1.0f)
-        .timeScale(1.0f)
+        .color(wc.pageBg)
         .opacity(opacity)
-        .onCompileError([](const eui::ShaderToyError& error) {
-            splashState().shaderFailed = true;
-            LOG_WARN("splash shader 编译失败: " + error.message + " [" +
-                     error.sourcePath + ":" + std::to_string(error.line) + "]");
-        })
         .build();
 
-    const auto& t = ::core::theme::current();
+    // 居中 logo：fa-laptop-code 图标 + "DevDesk" 文字
     const float cx = screen.width * 0.5f;
     const float cy = screen.height * 0.5f;
     constexpr float kLogoH = 60.0f;
     constexpr float kSubH = 26.0f;
     constexpr float kBarW = 240.0f;
-    constexpr float kBarH = 5.0f;
+    constexpr float kBarH = 3.0f;  // 微信克制：细进度条
     const float logoY = cy - kLogoH - 44.0f;
     const float subY = cy - kSubH - 10.0f;
     const float barY = cy + 90.0f;
 
-    // logo：fa-laptop-code 图标 + "DevDesk"（与侧边栏 brand 同款组合）
+    // logo 图标：wechat.primary（绿 #07C160）；浅灰底上绿图标达图形 AA 3:1。
     ui.text("splash.logo.icon")
         .position(cx - 108.0f, logoY)
         .size(44.0f, kLogoH)
@@ -118,9 +92,10 @@ bool drawSplashIfNeeded(eui::Ui& ui, const eui::Screen& screen) {
         .fontSize(40.0f)
         .horizontalAlign(eui::HorizontalAlign::Center)
         .verticalAlign(eui::VerticalAlign::Center)
-        .color(t.colors.primary)
+        .color(wc.primary)
         .opacity(opacity)
         .build();
+    // logo 文字：wechat.textPrimary（#1A1A1A）；原 W-W1 白色字面量(splash.cpp:131) → 深字（浅灰底可读）。
     ui.text("splash.logo")
         .position(cx - 56.0f, logoY)
         .size(280.0f, kLogoH)
@@ -128,11 +103,11 @@ bool drawSplashIfNeeded(eui::Ui& ui, const eui::Screen& screen) {
         .fontSize(44.0f)
         .fontWeight(700)
         .verticalAlign(eui::VerticalAlign::Center)
-        .color(eui::Color{1.0f, 1.0f, 1.0f, 1.0f})  // 白色文字（深蓝底可读）
+        .color(wc.textPrimary)
         .opacity(opacity)
         .build();
 
-    // 副标题
+    // 副标题：wechat.textSecondary（#666666）；原 W-W2 白色字面量(splash.cpp:143) → 二级灰。
     ui.text("splash.subtitle")
         .position(cx - kBarW, subY)
         .size(kBarW * 2.0f, kSubH)
@@ -140,25 +115,25 @@ bool drawSplashIfNeeded(eui::Ui& ui, const eui::Screen& screen) {
         .fontSize(17.0f)
         .horizontalAlign(eui::HorizontalAlign::Center)
         .verticalAlign(eui::VerticalAlign::Center)
-        .color(eui::Color{1.0f, 1.0f, 1.0f, 1.0f})  // 白色副标题
+        .color(wc.textSecondary)
         .opacity(opacity)
         .build();
 
-    // 假进度条：0→100% 对齐 2.0s（模块加载在 compose 前已完成，真进度无意义）。
+    // 底部细进度条：wechat.primary 填充 + cardBg 轨道。
+    // 原 W-W3 白色 10% 透明轨道(splash.cpp:152) → wechat.cardBg（#FFFFFF，浅灰底上微可见）。
+    // 高度 3px（微信克制）；进度 0→100% over 2.0s（模块加载在 compose 前已完成，真进度无意义）。
     const float barX = cx - kBarW * 0.5f;
     ui.rect("splash.progress.bg")
         .position(barX, barY)
         .size(kBarW, kBarH)
-        .color(eui::Color{1.0f, 1.0f, 1.0f, 0.10f})
+        .color(wc.cardBg)
         .radius(kBarH * 0.5f)
         .opacity(opacity)
         .build();
     ui.rect("splash.progress.fill")
         .position(barX, barY)
         .size(kBarW * progress, kBarH)
-        .gradient(eui::Color{0.04f, 0.42f, 1.0f, 1.0f},
-                  eui::Color{0.13f, 0.69f, 0.44f, 1.0f},
-                  eui::GradientDirection::Horizontal)
+        .color(wc.primary)
         .radius(kBarH * 0.5f)
         .opacity(opacity)
         .build();
