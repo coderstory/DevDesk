@@ -23,8 +23,22 @@
 #include <iostream>
 #include <string>
 #include <vector>
+#include <csignal>
+#include <cstdio>
+#include <cstdlib>
 
 namespace {
+
+// 诊断：segfault 时打印当前测试名（const char* 指针赋值纳秒级，不改时序；cerr endl flush 会掩竞态）
+volatile const char* g_currentTest = "";
+extern "C" void segvHandler(int) {
+    const char* t = g_currentTest;
+    std::fputs("SEGFAULT in test: ", stderr);
+    std::fputs(t ? t : "(null)", stderr);
+    std::fputc('\n', stderr);
+    std::fflush(stderr);
+    std::_Exit(139);
+}
 
 // 环境变量通道：Windows 传空串即删除变量；POSIX 空串走 unsetenv
 void setEnvVar(const char* key, const std::string& value) {
@@ -191,6 +205,8 @@ struct CaseResult {
 //   --log    → 打开控制台日志 + Debug 级别（排查流式/代理问题时用）
 int main(int argc, char** argv) {
     using Clock = std::chrono::steady_clock;
+    std::signal(SIGSEGV, segvHandler);
+    std::signal(SIGABRT, segvHandler);
     int passed = 0, failed = 0, skipped = 0, total = 0;
     std::string filter;
     for (int i = 1; i < argc; ++i) {
@@ -218,6 +234,7 @@ int main(int argc, char** argv) {
         // 不炸掉整个套件——运行器必须继续跑完剩余用例，否则隔离失败会掩盖后续问题。
         try {
             resetCaseGlobals();
+            g_currentTest = t.first.c_str();
             ok = t.second();
         } catch (const std::exception& e) {
             ok = false;
