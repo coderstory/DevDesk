@@ -220,7 +220,8 @@ float estimateTextBlockHeight(const std::string& text, float contentW,
 }
 
 float estimateMessageHeight(const AgentMessageRow& msg, bool expanded,
-                            float contentW, float lineHeight) {
+                            float contentW, float fontSize,
+                            float lineHeight) {
     float h = kMsgHeaderH + kMsgGap;
     if (!expanded) {
         return h + lineHeight;   // 预览单行
@@ -235,16 +236,16 @@ float estimateMessageHeight(const AgentMessageRow& msg, bool expanded,
         switch (b.type) {
             case MessageBlock::Type::Text:
             case MessageBlock::Type::Plain:
-                h += estimateTextBlockHeight(b.text, contentW, 12.0f,
+                h += estimateTextBlockHeight(b.text, contentW, fontSize,
                                              lineHeight);
                 break;
             case MessageBlock::Type::ToolUse:
-                h += kMsgHeaderH;   // 「🔧 name + 摘要」单行
+                h += lineHeight;    // 「工具 · name + 摘要」单行文本
                 break;
             case MessageBlock::Type::ToolResult:
                 h += lineHeight;    // 「工具输出」标签行
                 h += kMsgGap;       // 标签行与输出文本之间的列间距
-                h += estimateTextBlockHeight(b.text, contentW, 12.0f,
+                h += estimateTextBlockHeight(b.text, contentW, fontSize,
                                              lineHeight);
                 break;
         }
@@ -254,13 +255,14 @@ float estimateMessageHeight(const AgentMessageRow& msg, bool expanded,
 
 float estimateMessagesAreaHeight(const std::vector<AgentMessageRow>& msgs,
                                  const std::set<int64_t>& expandedSeqs,
-                                 float contentW, float lineHeight,
-                                 float minH, float maxH) {
+                                 float contentW, float fontSize,
+                                 float lineHeight, float minH, float maxH) {
     float total = 0.0f;
     for (size_t i = 0; i < msgs.size(); ++i) {
         if (i > 0) total += kMsgRowGap;   // 条间行距 = scrollView 的 gap（同源）
         const bool expanded = expandedSeqs.count(msgs[i].seq) > 0;
-        total += estimateMessageHeight(msgs[i], expanded, contentW, lineHeight);
+        total += estimateMessageHeight(msgs[i], expanded, contentW, fontSize,
+                                       lineHeight);
     }
     if (msgs.empty()) total = minH;
     return std::clamp(total, minH, maxH);

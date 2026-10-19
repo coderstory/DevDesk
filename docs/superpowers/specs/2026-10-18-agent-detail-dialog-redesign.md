@@ -267,7 +267,7 @@ popoverMaxH = actualH - popoverY - 24
 | `.detail.error.text` | 错误全文文本，`wrap(true)` |
 | `agent.dialog.detail.msgs` | 消息区根 |
 | `.msgs.toggle` | 「展开」/「收起」 |
-| `.msgs.count` | 「消息（N）」 |
+| `.msgs.count` | 「消息（N）」。<br>**注记（2026-10-19，P3 执行时裁决）**：P1 已把计数并入 `.msgs.title` 文本（「消息（N）」一体渲染）且既有用例钉 `.msgs.title`——不另立 `.msgs.count` 节点，本行按「由 `.msgs.title` 承载」实现 |
 | `.msgs.body` | 展开后的消息容器 |
 | `.msgs.error` | 消息读取失败 |
 | `.msgs.hint` | 折叠态提示「展开查看完整链路」 |
@@ -493,6 +493,9 @@ ui_kit::ToastState toast_;                // agent.detail.toast
   - 配置头：`max(40, lhS + 20)`。
   - 导航：`max(36, lhS + 12)`（紧凑再减 4）。
   - 时间线行：`max(52, lhS + 34)`；带错误再加 `lhS + 4`。
+    > **勘误（2026-10-19，P3 执行时裁决）**：「带错误再加 `lhS + 4`」（=22）与 §9.3
+    > 的行高档 52/68/84（err/hint 各 +16）差 2px（推算 74≠68）——**§9.3 为准**，
+    > err/hint 各 +16（`rowErrH = max(16, lhS - 2)` @1.0），本行按笔误处理，不据此实现。
   - 卡片/详情块高度全部由文本高度累加，不写死 18/20 的行高。
 - 若摘要/配置头加总超过 `actualH * 0.55`，摘要进入「紧凑文本」：隐藏 `.summary.*.sub`，主值单行，卡片高收缩到 `lhB + 2*pad`；保证主区至少 56 高。
 - `fontScale` 变化后滚动内容 key 要变，避免 MeasureCache 复用旧高度。

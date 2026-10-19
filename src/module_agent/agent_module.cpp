@@ -24,6 +24,7 @@
 #include <eui/dsl.h>
 #include <ui_kit/dialog_form.h>
 #include <ui_kit/metrics.h>
+#include <ui_kit/toast.h>
 
 #include "model_slots.h"
 
@@ -109,11 +110,12 @@ eui::Color statusDotColor(const std::string& status,
     return t.colors.textTertiary;
 }
 
-// 行内动作 chip：契约要求 id 落在可见文本上，故手搓两层——<id>.bg 为命中面、文本穿透
+// 行内动作 chip：契约要求 id 落在可见文本上，故手搓两层——<id>.bg 为命中面、文本穿透。
+// fontSize 缺省 12（任务列表等既有站点不变）；详情弹窗按 spec §9.2 传 fsS，高度仍 32
 void actionChip(::eui::Ui& ui, const std::string& id, const std::string& label,
                 float width, bool primary, bool enabled,
                 const components::theme::ThemeColorTokens& tokens,
-                std::function<void()> onClick) {
+                std::function<void()> onClick, float fontSize = 12.0f) {
     constexpr float kChipH = 32.0f;
     const ::core::Color base = primary ? tokens.primary : tokens.surface;
     ::core::Color textColor =
@@ -133,7 +135,7 @@ void actionChip(::eui::Ui& ui, const std::string& id, const std::string& label,
             ui.text(id)
                 .size(width, kChipH)
                 .text(label)
-                .fontSize(12.0f)
+                .fontSize(fontSize)
                 .lineHeight(20.0f)
                 .horizontalAlign(eui::HorizontalAlign::Center)
                 .verticalAlign(eui::VerticalAlign::Center)
@@ -1006,6 +1008,7 @@ void AgentModule::openTaskDetail(int64_t taskId) {
     autoExpandedSeq_.reset();
     detailTab_ = 0;
     configOpen_ = false;
+    messagesOpen_ = false;
     ++msgScrollVersion_;
     tasksDirty_ = true;
 }
@@ -1023,6 +1026,7 @@ void AgentModule::closeTaskDetail() {
     autoExpandedSeq_.reset();
     detailTab_ = 0;
     configOpen_ = false;
+    messagesOpen_ = false;
     ++msgScrollVersion_;
 }
 
@@ -1428,8 +1432,9 @@ void AgentModule::refreshData() {
             detailPlan_.reset();
             detailPlanKey_.clear();
         }
-        // 装载后套默认展开态（进行中的 run 新落 assistant 文本会成为新展开目标）
-        applyDefaultMessageExpansion();
+        // 装载后套默认展开态——只在消息区展开时（P3 起 messagesOpen_ 是「展开态内
+        // 规则」；折叠态消息不渲染，展开集动了也没意义）
+        if (messagesOpen_) applyDefaultMessageExpansion();
     } else {
         detailTaskRow_.reset();
     }
@@ -1453,19 +1458,24 @@ void AgentModule::refreshData() {
     }
 }
 
-// 消息行渲染：.head（徽章 + 展开/收起 + 复制 chip）、收起态 .preview、展开态逐块 .blk.<j>；
-// text 块 maxWidth 必须显式给（measureTextSize 只认 element.maxWidth）
+// 消息行渲染：.head（徽章 + 时间 + 展开/收起 + 复制 chip，头高 24）、收起态 .preview、
+// 展开态逐块 .blk.<j>；正文/预览/工具输出统一 fsS/20（spec §9.2），text 块 maxWidth
+// 必须显式给（measureTextSize 只认 element.maxWidth）
 void AgentModule::renderMessageRow(
     ::eui::Ui& inner, float cw, const std::string& prefix, size_t index,
-    const AgentMessageRow& msg, const ::core::theme::Tokens& t,
+    const AgentMessageRow& msg, int64_t refSec, const ::core::theme::Tokens& t,
     const components::theme::ThemeColorTokens& tokens) {
-    (void)t;
+    const float fsS = t.sizes.fontSizeSmall;
+    // §9.2 消息行高下限 20：fontScale <1 时 lhS 派生值会更小，钳回 20 防拥挤
+    const float msgLh = std::max(fsS * 1.4f, 20.0f);
     const std::string mid = prefix + ".msg." + std::to_string(index);
     const bool expanded = expandedMsgSeqs_.count(msg.seq) > 0;
-    const float boxH = estimateMessageHeight(msg, expanded, cw, 18.0f);
+    const float boxH = estimateMessageHeight(msg, expanded, cw, fsS, msgLh);
     const std::vector<MessageBlock> blocks =
         decodeMessageBlocks(msg.contentJson);
     const std::string badge = messageRoleBadge(msg);
+    constexpr float kMsgBadgeW = 44.0f;   // 2 CJK @13 + 余量
+    constexpr float kMsgTimeW = 110.0f;   // MM-DD HH:MM:SS（14 字符）@13 ≈ 96
 
     inner.column(mid)
         .size(cw, boxH)
@@ -1477,39 +1487,51 @@ void AgentModule::renderMessageRow(
                 .alignItems(eui::Align::CENTER)
                 .content([&] {
                     inner.text(mid + ".badge")
-                        .size(44.0f, 20.0f)
+                        .size(kMsgBadgeW, 20.0f)
                         .text(badge)
-                        .fontSize(11.0f)
+                        .fontSize(fsS)
                         .lineHeight(20.0f)
                         .fontWeight(600)
                         .color(badge == "工具" ? tokens.primary
                                               : t.colors.textSecondary)
+                        .build();
+                    // 头行顺序 §10：badge → time → toggle → copy（copy 仅展开态）
+                    inner.text(mid + ".time")
+                        .size(kMsgTimeW, 20.0f)
+                        .text(messageTimeText(msg.createdAt, refSec))
+                        .fontSize(fsS)
+                        .lineHeight(20.0f)
+                        .wrap(false)
+                        .maxWidth(kMsgTimeW)
+                        .color(t.colors.textTertiary)
                         .build();
                     actionChip(inner, mid + ".toggle",
                                expanded ? "收起" : "展开", 48.0f,
                                /*primary=*/false, /*enabled=*/true, tokens,
                                [this, seq = msg.seq] {
                                    toggleMessageExpanded(seq);
-                               });
+                               }, fsS);
                     if (expanded) {
                         actionChip(inner, mid + ".copy", "复制", 48.0f,
                                    /*primary=*/false, /*enabled=*/true, tokens,
-                                   [text = messagePlainText(blocks)] {
+                                   [this, text = messagePlainText(blocks)] {
                                        // setClipboardText 返回 void 无法校验 → LOG 留痕
                                        core::window::setClipboardText(text);
                                        LOG_INFO("Agent: 已复制消息全文 " +
                                                 std::to_string(text.size()) +
                                                 " 字节到剪贴板");
-                                   });
+                                       toast_.show("已复制",
+                                                   "消息全文已复制到剪贴板");
+                                   }, fsS);
                     }
                 })
                 .build();
             if (!expanded) {
                 inner.text(mid + ".preview")
-                    .size(cw, 18.0f)
+                    .size(cw, msgLh)
                     .text(messagePreview(msg))
-                    .fontSize(12.0f)
-                    .lineHeight(18.0f)
+                    .fontSize(fsS)
+                    .lineHeight(msgLh)
 .wrap(false)
                     .color(t.colors.textSecondary)
                     .onClick([this, seq = msg.seq] {
@@ -1520,10 +1542,10 @@ void AgentModule::renderMessageRow(
             }
             if (blocks.empty()) {
                 inner.text(mid + ".blk.empty")
-                    .size(cw, 18.0f)
+                    .size(cw, msgLh)
                     .text("（空消息）")
-                    .fontSize(12.0f)
-                    .lineHeight(18.0f)
+                    .fontSize(fsS)
+                    .lineHeight(msgLh)
                     .color(t.colors.textTertiary)
                     .build();
                 return;
@@ -1535,11 +1557,11 @@ void AgentModule::renderMessageRow(
                     case MessageBlock::Type::Text:
                     case MessageBlock::Type::Plain: {
                         inner.text(bid)
-                            .size(cw, estimateTextBlockHeight(b.text, cw, 12.0f,
-                                                              18.0f))
+                            .size(cw, estimateTextBlockHeight(b.text, cw, fsS,
+                                                              msgLh))
                             .text(b.text)
-                            .fontSize(12.0f)
-                            .lineHeight(18.0f)
+                            .fontSize(fsS)
+                            .lineHeight(msgLh)
                             .wrap(true)
                             .maxWidth(cw)
                             .color(b.type == MessageBlock::Type::Plain
@@ -1550,10 +1572,10 @@ void AgentModule::renderMessageRow(
                     }
                     case MessageBlock::Type::ToolUse: {
                         inner.text(bid)
-                            .size(cw, kMsgHeaderH)
-                            .text("🔧 " + b.toolName + "  " +
+                            .size(cw, 20.0f)
+                            .text("工具 · " + b.toolName + "  " +
                                   toolArgsSummary(b.text, 120))
-                            .fontSize(12.0f)
+                            .fontSize(fsS)
                             .lineHeight(20.0f)
                             .wrap(false)
                             .color(tokens.primary)
@@ -1562,19 +1584,19 @@ void AgentModule::renderMessageRow(
                     }
                     case MessageBlock::Type::ToolResult: {
                         inner.text(bid)
-                            .size(cw, 18.0f)
+                            .size(cw, msgLh)
                             .text(b.isError ? "工具输出（错误）" : "工具输出")
-                            .fontSize(11.0f)
-                            .lineHeight(18.0f)
+                            .fontSize(fsS)
+                            .lineHeight(msgLh)
                             .color(b.isError ? t.colors.error
                                              : t.colors.textTertiary)
                             .build();
                         inner.text(bid + ".out")
-                            .size(cw, estimateTextBlockHeight(b.text, cw, 12.0f,
-                                                              18.0f))
+                            .size(cw, estimateTextBlockHeight(b.text, cw, fsS,
+                                                              msgLh))
                             .text(b.text)
-                            .fontSize(12.0f)
-                            .lineHeight(18.0f)
+                            .fontSize(fsS)
+                            .lineHeight(msgLh)
                             .wrap(true)
                             .maxWidth(cw)
                             .color(b.isError ? t.colors.error
@@ -2015,6 +2037,9 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
     if (deleteConfirmTaskId_) {
         composeDeleteConfirmDialog(ui, screen, t, themeTokens);
     }
+    // 页级复制 toast 最后画（spec §7.3：z 1100 > dialog 1000，盖在弹窗之上）；
+    // 每帧无条件调用，显隐由 toast_.open 控制
+    ui_kit::drawToast(ui, screen, "agent.detail.toast", toast_, themeTokens);
 }
 
 // 任务弹窗：新建/编辑共用同一张表单；关闭态在内容回调内 return——内容节点即开合状态
@@ -2746,9 +2771,9 @@ void AgentModule::performDeleteTask(int64_t taskId) {
     LOG_INFO("Agent: 任务 " + std::to_string(taskId) + " 已删除（含全部运行记录）");
 }
 
-// 详情弹窗布局壳：摘要三卡（常驻）→ 配置头 → 主区（宽屏左右分栏 / 窄屏单列 tab）。
-// 所有区域坐标从实际钳制后的 w/h 推导（纯函数镜像上游钳制公式），禁用屏幕绝对坐标；
-// 摘要真实数据 / run 详情块 / 配置浮层 / 消息折叠由 P2/P3 接管
+// 详情弹窗布局壳：摘要三卡（常驻）→ 配置头（+覆盖式配置浮层）→ 主区（宽屏左右分栏 /
+// 窄屏单列 tab）。所有区域坐标从实际钳制后的 w/h 推导（纯函数镜像上游钳制公式），
+// 禁用屏幕绝对坐标；消息区默认折叠（messagesOpen_），复制反馈走页级 toast
 void AgentModule::composeTaskDetailDialog(
     ::eui::Ui& ui, const ::eui::Screen& screen, const ::core::theme::Tokens& t,
     const components::theme::ThemeColorTokens& themeTokens) {
@@ -2829,7 +2854,7 @@ void AgentModule::composeTaskDetailDialog(
                                kStopChipW, /*primary=*/false, /*enabled=*/!stopping,
                                themeTokens, [this, taskId = *detailTaskId_] {
                                    requestStopRun(taskId);
-                               });
+                               }, fsS);
                 })
                 .build();
         }
@@ -2985,39 +3010,24 @@ void AgentModule::composeTaskDetailDialog(
                         statsSub, t.colors.textTertiary);
         }
 
-        // —— 配置头（常驻）：P1 只画头行；点击开合的覆盖式浮层（.config.scrim /
-        // .config.popover）在 P3 ——
-        // hint 文本沿用退休 .info 的摘要内容（配置浮层字段落地前信息不能凭空消失），
-        // P3 浮层落地后按 spec 收缩为「触发 · cron · 模型 · 迭代」，其余迁入浮层字段
+        // —— 配置头（常驻）+ 覆盖式浮层（spec §6.4/§7.2，P3 落地）——
+        // hint 是折叠态摘要：触发 · cron（闹钟任务为闹钟时间）· 模型 · 迭代；
+        // 目标/限次/破坏性/异常/执行记忆全在浮层字段（点开看全量，信息不丢）
         std::string configHint;
         if (detailTaskRow_) {
             const AgentTaskRow& task = *detailTaskRow_;
-            configHint = "目标：" + task.goal;
-            configHint += " · 触发：" + triggerLabelOf(task.triggerType);
+            configHint = "触发：" + triggerLabelOf(task.triggerType);
             if (task.triggerType == "schedule") {
                 const std::string cron = cronTextOf(task);
                 configHint += " · cron：" + (cron.empty() ? "（未设置）" : cron);
             } else if (task.triggerType == "once") {
-                // 闹钟摘要：标签 + 本地时刻（配置异常原因在行尾追加，与旧 .info 同口径）
+                // 闹钟时间 = once 型的「定时」等价物，留在折叠摘要
                 const std::string onceText = onceTextOf(task);
                 configHint += " · 闹钟时间：" +
                               (onceText.empty() ? "（未设置）" : onceText);
             }
-            // 限次/一次性语义：完整说明落这里（列表徽章只放得下 3 字）。口径与
-            // Scheduler::runBudgetExhausted 同源；失败也算跑过，故承诺写「跑完自动停用」
-            const auto limitIt = taskRunLimits_.find(task.id);
-            if (limitIt != taskRunLimits_.end()) {
-                configHint += " · 次数上限：" + runLimitText(limitIt->second) +
-                              "（跑完自动停用）";
-            }
-            configHint += " · 槽位：" + task.modelSlot;
-            configHint += " · 迭代上限：" + std::to_string(task.maxIterations);
-            configHint +=
-                task.allowDestructive ? " · 破坏性：允许" : " · 破坏性：禁止";
-            const auto problemIt = taskTriggerProblems_.find(task.id);
-            if (problemIt != taskTriggerProblems_.end()) {
-                configHint += " · 触发配置异常：" + problemIt->second;
-            }
+            configHint += " · 模型：" + task.modelSlot;
+            configHint += " · 迭代：" + std::to_string(task.maxIterations);
         } else {
             configHint = "任务信息读取失败";
         }
@@ -3213,10 +3223,12 @@ void AgentModule::composeTaskDetailDialog(
                                             .onClick([this, runId = run.id] {
                                                 selectedRunId_ = runId;
                                                 // seq 只在 run 内唯一：切 run 清
-                                                // 消息展开态；窄屏点行自动切
-                                                // 「运行详情」tab、收起配置头
+                                                // 消息展开态并收回消息区（§6.2）；
+                                                // 窄屏点行自动切「运行详情」tab、
+                                                // 收起配置头
                                                 expandedMsgSeqs_.clear();
                                                 autoExpandedSeq_.reset();
+                                                messagesOpen_ = false;
                                                 detailTab_ = 1;
                                                 configOpen_ = false;
                                                 ++msgScrollVersion_;
@@ -3381,17 +3393,19 @@ void AgentModule::composeTaskDetailDialog(
                 selRun != nullptr && wide && h >= 600.0f &&
                 (dh - detailTopH - kMsgsTitleH - 12.0f) >= 96.0f;
 
-            // 标题行 + 复制 chip（flow 排）：固定态包在绝对定位 stack 里，滚动态
-            // 直接进 .detail.scroll 内容列
+            // 标题行 + 复制 chip + 区级开合 chip（flow 排）：固定态包在绝对定位
+            // stack 里，滚动态直接进 .detail.scroll 内容列。copyfinal 与 toggle 都
+            // 常驻标题行（折叠态 copyfinal 仍可见，spec §12.1）
+            constexpr float kMsgsToggleW = 48.0f;
             auto msgsHeaderRow = [&](eui::Ui& inner, float cw) {
+                const float chipsW =
+                    (hasCopyFinal ? kCopyFinalChipW + 8.0f : 0.0f) +
+                    kMsgsToggleW;
                 inner.row("agent.dialog.detail.msgs.head")
                     .size(cw, kMsgsTitleH)
                     .content([&] {
                         inner.text("agent.dialog.detail.msgs.title")
-                            .size(hasCopyFinal
-                                      ? std::max(0.0f, cw - kCopyFinalChipW)
-                                      : cw,
-                                  kMsgsTitleH)
+                            .size(std::max(0.0f, cw - chipsW), kMsgsTitleH)
                             .text("消息（" +
                                   std::to_string(detailMessages_.size()) + "）")
                             .fontSize(fsB)
@@ -3412,17 +3426,39 @@ void AgentModule::composeTaskDetailDialog(
                                         "agent.dialog.detail.msgs.copyfinal",
                                         "复制回复", kCopyFinalChipW,
                                         /*primary=*/true, /*enabled=*/true,
-                                        themeTokens, [text = finalText] {
+                                        themeTokens, [this, text = finalText] {
                                             // setClipboardText 返回 void 无法校验
-                                            // → LOG 留痕
+                                            // → LOG 留痕；反馈走页级 toast（D13）
                                             core::window::setClipboardText(text);
                                             LOG_INFO("Agent: 已复制最终回复 " +
                                                      std::to_string(text.size()) +
                                                      " 字节到剪贴板");
-                                        });
+                                            toast_.show("已复制",
+                                                        "最终回复已复制到剪贴板");
+                                        }, fsS);
                                 })
                                 .build();
                         }
+                        // 区级开合（D6 默认折叠）：展开时「最终 assistant 默认展开」
+                        // 规则生效（applyDefaultMessageExpansion 降级为展开态内规则）
+                        inner.stack("agent.dialog.detail.msgs.toggle.wrap")
+                            .size(kMsgsToggleW, kMsgsTitleH)
+                            .content([&] {
+                                actionChip(
+                                    inner, "agent.dialog.detail.msgs.toggle",
+                                    messagesOpen_ ? "收起" : "展开",
+                                    kMsgsToggleW,
+                                    /*primary=*/false, /*enabled=*/true,
+                                    themeTokens,
+                                    [this] {
+                                        messagesOpen_ = !messagesOpen_;
+                                        if (messagesOpen_) {
+                                            applyDefaultMessageExpansion();
+                                        }
+                                        ++msgScrollVersion_;   // 内容高变了 → scrollView 重测
+                                    }, fsS);
+                            })
+                            .build();
                     })
                     .build();
             };
@@ -3686,6 +3722,20 @@ void AgentModule::composeTaskDetailDialog(
                                 .build();
                             return;
                         }
+                        if (!messagesOpen_) {
+                            // 折叠态（D6）：只给占位提示，不建 .msgscroll（spec
+                            // §12.3 反向断言钉「默认无 msgscroll」）
+                            ui.text("agent.dialog.detail.msgs.hint")
+                                .position(0.0f, yMsg)
+                                .size(dw, std::max(0.0f, dh - yMsg))
+                                .text("展开查看完整链路")
+                                .fontSize(fsS)
+                                .lineHeight(lhS)
+                                .verticalAlign(eui::VerticalAlign::Center)
+                                .color(t.colors.textTertiary)
+                                .build();
+                            return;
+                        }
                         components::scrollView(
                             ui, "agent.dialog.detail.msgscroll")
                             .position(0.0f, yMsg)
@@ -3698,6 +3748,11 @@ void AgentModule::composeTaskDetailDialog(
                                         ".n" +
                                         std::to_string(
                                             detailMessages_.size()) +
+                                        ".o" +
+                                        std::to_string(messagesOpen_ ? 1 : 0) +
+                                        ".x" +
+                                        std::to_string(
+                                            expandedMsgSeqs_.size()) +
                                         ".e" +
                                         std::to_string(
                                             detailMessagesError_.size()) +
@@ -3709,7 +3764,8 @@ void AgentModule::composeTaskDetailDialog(
                                     renderMessageRow(inner, cw,
                                                      "agent.dialog.detail",
                                                      i, detailMessages_[i],
-                                                     t, themeTokens);
+                                                     selRun->startedAt, t,
+                                                     themeTokens);
                                 }
                             })
                             .build();
@@ -3724,6 +3780,10 @@ void AgentModule::composeTaskDetailDialog(
                         .contentKey("agent.dialog.detail.detail.scroll.v" +
                                     std::to_string(msgScrollVersion_) + ".n" +
                                     std::to_string(detailMessages_.size()) +
+                                    ".o" +
+                                    std::to_string(messagesOpen_ ? 1 : 0) +
+                                    ".x" +
+                                    std::to_string(expandedMsgSeqs_.size()) +
                                     ".e" +
                                     std::to_string(
                                         detailMessagesError_.size()) +
@@ -3765,9 +3825,20 @@ void AgentModule::composeTaskDetailDialog(
                                     .build();
                                 return;
                             }
+                            if (!messagesOpen_) {
+                                inner.text("agent.dialog.detail.msgs.hint")
+                                    .size(cw, lhS)
+                                    .text("展开查看完整链路")
+                                    .fontSize(fsS)
+                                    .lineHeight(lhS)
+                                    .color(t.colors.textTertiary)
+                                    .build();
+                                return;
+                            }
                             for (size_t i = 0; i < detailMessages_.size(); ++i) {
                                 renderMessageRow(inner, cw, "agent.dialog.detail",
-                                                 i, detailMessages_[i], t,
+                                                 i, detailMessages_[i],
+                                                 selRun->startedAt, t,
                                                  themeTokens);
                             }
                         })
@@ -3801,6 +3872,192 @@ void AgentModule::composeTaskDetailDialog(
             } else {
                 composeDetailColumn(x0, contentY, innerW, contentH);
             }
+        }
+
+        // —— 配置浮层（spec §6.4，P3）：先画 scrim 再画 popover，盖在主区上。
+        // 两者是弹窗内容内的相对层（z19/z20），不改变 dialog 自身 z=1000；
+        // 浮层不改变主区几何——关闭后主区原位（测试钉「开合前后 runlist y 不变」）
+        if (configOpen_) {
+            constexpr float kFieldLabelW = 64.0f;   // §9.3 配置标签宽
+            constexpr float kFieldGap = 10.0f;      // §9.3 配置字段行距
+            const float scrimY = configY + configH;
+            const float popoverY = scrimY + 4.0f;
+            const float popoverMaxH = std::max(0.0f, h - popoverY - 24.0f);
+            // 字段值宽 = 浮层内宽 − 左右 pad − 标签 − gap（wrap 字段按它估高）
+            const float valueX = kCardPad + kFieldLabelW + 6.0f;
+            const float valueW =
+                std::max(0.0f, innerW - 2.0f * kCardPad - kFieldLabelW - 6.0f);
+            const AgentTaskRow* cfgTask =
+                detailTaskRow_ ? &*detailTaskRow_ : nullptr;
+            // 字段表（§7.2）：读取失败/缺数据显「—」，不造假；problem 无异常不渲染
+            struct CfgField {
+                const char* id;
+                const char* label;
+                std::string value;
+                bool wrap;
+                bool error;
+            };
+            std::vector<CfgField> fields;
+            auto taskValue = [&](const std::string& v) {
+                return cfgTask != nullptr ? v : std::string("—");
+            };
+            fields.push_back({"goal", "目标",
+                              taskValue(cfgTask ? cfgTask->goal : std::string()),
+                              true, false});
+            fields.push_back({"trigger", "触发",
+                              taskValue(cfgTask
+                                            ? triggerLabelOf(cfgTask->triggerType)
+                                            : std::string()),
+                              false, false});
+            std::string scheduleV = "—";
+            if (cfgTask != nullptr) {
+                if (cfgTask->triggerType == "schedule") {
+                    const std::string cron = cronTextOf(*cfgTask);
+                    scheduleV = cron.empty() ? "（未设置）" : cron;
+                } else if (cfgTask->triggerType == "once") {
+                    const std::string onceText = onceTextOf(*cfgTask);
+                    scheduleV = onceText.empty() ? "（未设置）" : onceText;
+                }
+            }
+            fields.push_back({"schedule", "定时", scheduleV, false, false});
+            fields.push_back({"model", "模型槽位",
+                              taskValue(cfgTask ? cfgTask->modelSlot
+                                                : std::string()),
+                              false, false});
+            fields.push_back({"iterations", "迭代上限",
+                              taskValue(cfgTask
+                                            ? std::to_string(cfgTask->maxIterations)
+                                            : std::string()),
+                              false, false});
+            fields.push_back({"destructive", "破坏性",
+                              taskValue(cfgTask
+                                            ? std::string(cfgTask->allowDestructive
+                                                              ? "允许"
+                                                              : "禁止")
+                                            : std::string()),
+                              false, false});
+            std::string limitV = "不限次数";
+            if (cfgTask != nullptr) {
+                // 限次语义口径与列表徽章同源：失败也算跑过，承诺写「跑完自动停用」
+                const auto limitIt = taskRunLimits_.find(cfgTask->id);
+                if (limitIt != taskRunLimits_.end()) {
+                    limitV = runLimitText(limitIt->second) + "（跑完自动停用）";
+                }
+            } else {
+                limitV = "—";
+            }
+            fields.push_back({"limit", "次数上限", limitV, false, false});
+            if (cfgTask != nullptr) {
+                const auto problemIt = taskTriggerProblems_.find(cfgTask->id);
+                if (problemIt != taskTriggerProblems_.end()) {
+                    fields.push_back({"problem", "配置异常", problemIt->second,
+                                      true, true});
+                }
+            }
+            fields.push_back({"context", "执行记忆",
+                              taskValue(cfgTask && !cfgTask->contextNote.empty()
+                                            ? cfgTask->contextNote
+                                            : std::string()),
+                              true, false});
+            // 内容高估算（§6.4 min(内容高, popoverMaxH)；真实超高由 scrollView 内滚）
+            float contentH = 0.0f;
+            for (const auto& f : fields) {
+                contentH +=
+                    (f.wrap ? estimateTextBlockHeight(f.value, valueW, fsS, lhS)
+                            : lhS) +
+                    kFieldGap;
+            }
+            contentH -= kFieldGap;
+            const float kPopoverPad = 12.0f;   // §9.3 卡片内边距
+            const float scrollH =
+                std::min(std::max(0.0f, contentH),
+                         std::max(0.0f, popoverMaxH - 2.0f * kPopoverPad));
+            const float popoverH = scrollH + 2.0f * kPopoverPad;
+            const std::string cfgBase = "agent.dialog.detail.config";
+            ui.rect(cfgBase + ".scrim")
+                .position(x0, scrimY)
+                .size(innerW, std::max(0.0f, h - scrimY))
+                .color(components::theme::withOpacity(t.colors.textPrimary,
+                                                      0.08f))
+                .zIndex(19)
+                .onClick([this] { configOpen_ = false; })
+                .build();
+            ui.stack(cfgBase + ".popover")
+                .position(x0, popoverY)
+                .size(innerW, popoverH)
+                .zIndex(20)
+                .content([&] {
+                    ui.rect(cfgBase + ".popover.bg")
+                        .size(innerW, popoverH)
+                        .color(t.colors.surfaceElevated)
+                        .radius(t.sizes.radius)
+                        .border(1.0f, t.colors.borderDefault)
+                        .build();
+                    components::scrollView(ui, cfgBase + ".popover.scroll")
+                        .position(kPopoverPad, kPopoverPad)
+                        .size(std::max(0.0f, innerW - 2.0f * kPopoverPad),
+                              scrollH)
+                        .step(18.0f)
+                        .theme(themeTokens)
+                        .contentKey(
+                            cfgBase + ".popover.scroll.v" +
+                            std::to_string(cfgTask ? cfgTask->goal.size() : 0) +
+                            "." +
+                            std::to_string(cfgTask ? cfgTask->contextNote.size()
+                                                   : 0) +
+                            "." +
+                            (cfgTask ? cfgTask->triggerType : std::string()) +
+                            "." +
+                            (cfgTask ? cfgTask->triggerConfig : std::string()) +
+                            ".p" +
+                            std::to_string([&] {
+                                if (cfgTask == nullptr) return size_t{0};
+                                const auto it =
+                                    taskTriggerProblems_.find(cfgTask->id);
+                                return it != taskTriggerProblems_.end()
+                                           ? it->second.size()
+                                           : size_t{0};
+                            }()) +
+                            ".f" + std::to_string(fsS))
+                        .content([&](eui::Ui& f, float fw, float) {
+                            for (const auto& fld : fields) {
+                                const std::string base =
+                                    cfgBase + ".body." + fld.id;
+                                const float valueH =
+                                    fld.wrap
+                                        ? estimateTextBlockHeight(
+                                              fld.value, valueW, fsS, lhS)
+                                        : lhS;
+                                const float valW =
+                                    std::max(0.0f, fw - (valueX - kPopoverPad));
+                                f.row(base)
+                                    .size(fw, valueH)
+                                    .content([&] {
+                                        f.text(base + ".label")
+                                            .size(kFieldLabelW, lhS)
+                                            .text(fld.label)
+                                            .fontSize(fsS)
+                                            .lineHeight(lhS)
+                                            .color(t.colors.textTertiary)
+                                            .build();
+                                        f.text(base + ".value")
+                                            .size(valW, valueH)
+                                            .text(fld.value)
+                                            .fontSize(fsS)
+                                            .lineHeight(lhS)
+                                            .wrap(fld.wrap)
+                                            .maxWidth(valW)
+                                            .color(fld.error
+                                                       ? t.colors.error
+                                                       : t.colors.textPrimary)
+                                            .build();
+                                    })
+                                    .build();
+                            }
+                        })
+                        .build();
+                })
+                .build();
         }
     });
 }

@@ -116,6 +116,15 @@ std::string relativeTimeText(int64_t sec, int64_t nowSec) {
     return std::to_string(delta / 86400) + " 天前";
 }
 
+std::string messageTimeText(int64_t createdAtSec, int64_t refSec) {
+    if (createdAtSec <= 0) return "—";   // 旧库/异常行读 0：显「—」不猜时间
+    // 同日判断走「本地日 00:00 epoch 相等」，与 localDayLabel 的日界同源
+    if (refSec > 0 && startOfLocalDay(createdAtSec) == startOfLocalDay(refSec)) {
+        return formatLocalClock(createdAtSec);
+    }
+    return formatLocalShortDateTime(createdAtSec);
+}
+
 std::string formatRunDurationText(int64_t seconds) {
     if (seconds < 0) seconds = 0;   // 时钟回拨防御：不显示负时长
     const int64_t days = seconds / 86400;

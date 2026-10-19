@@ -131,6 +131,30 @@ REGISTER_TEST(agent_time_text_seven_day_window,
     return true;
 })
 
+REGISTER_TEST(agent_time_text_message_time,
+              "agent_time_text: 消息头时间——同日 HH:MM:SS / 跨日 MM-DD HH:MM:SS / 0 显「—」", {
+    using namespace module::agent;
+    // 参照 = 选中 run 的 startedAt（固定本地时刻）
+    const std::time_t ref = epochOf(2026, 10, 18, 9, 30, 0);
+    // 同一本地日（凌晨早于参照）：只给时钟
+    const std::time_t sameDay = epochOf(2026, 10, 18, 0, 5, 7);
+    DOCTEST_CHECK_EQ(messageTimeText(sameDay, ref), std::string("00:05:07"));
+    // 同日午後：同上口径
+    const std::time_t laterSameDay = epochOf(2026, 10, 18, 23, 59, 59);
+    DOCTEST_CHECK_EQ(messageTimeText(laterSameDay, ref),
+                     std::string("23:59:59"));
+    // 跨日：带月日
+    const std::time_t prevDay = epochOf(2026, 10, 17, 22, 1, 2);
+    DOCTEST_CHECK_EQ(messageTimeText(prevDay, ref),
+                     std::string("10-17 22:01:02"));
+    // 参照为 0（无 run 上下文）：退全格式，不崩
+    DOCTEST_CHECK_EQ(messageTimeText(prevDay, 0),
+                     std::string("10-17 22:01:02"));
+    // 旧库/异常行 createdAt=0：显「—」
+    DOCTEST_CHECK_EQ(messageTimeText(0, ref), std::string("—"));
+    return true;
+})
+
 REGISTER_TEST(agent_ui_next_run_semantics_pure,
               "agent_time_text: describeNextRun 手动/事件/常驻不造假时间 + 停用/异常显形", {
     using namespace module::agent;

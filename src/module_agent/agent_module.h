@@ -29,6 +29,7 @@
 #include "module_agent/tool_info.h"
 
 #include <components/theme.h>
+#include <ui_kit/toast.h>
 
 namespace core {
 class LlmProfileSource;
@@ -208,10 +209,11 @@ private:
     void applyDefaultMessageExpansion();
     // 「可用工具」注册表快照：惰性装载，每次展开强制重装（反映模块启停变化）
     void ensureToolsCache(bool forceReload);
-    // 单条消息行渲染：徽章头行 + 收起预览 / 展开块级全文（prefix = 宿主节点前缀）
+    // 单条消息行渲染：徽章头行（徽章+时间+展开/复制 chip）+ 收起预览 / 展开块级全文
+    //（prefix = 宿主节点前缀；refSec = 选中 run 的 startedAt，消息时间同日/跨日口径的参照）
     void renderMessageRow(::eui::Ui& inner, float cw, const std::string& prefix,
                           size_t index, const AgentMessageRow& msg,
-                          const ::core::theme::Tokens& t,
+                          int64_t refSec, const ::core::theme::Tokens& t,
                           const components::theme::ThemeColorTokens& tokens);
     // 两张弹窗的绘制（关闭态不建内容节点）
     void composeTaskDialog(::eui::Ui& ui, const ::eui::Screen& screen,
@@ -304,8 +306,13 @@ private:
     uint64_t msgScrollVersion_ = 0;
     // 详情弹窗窄屏 tab（0=执行记录 1=运行详情；宽屏恒 0 不消费）。点时间线行自动切 1
     int detailTab_ = 0;
-    // 详情弹窗配置头开合（P1 只有状态位：覆盖式浮层 .config.scrim/.popover 在 P3 渲染）
+    // 详情弹窗配置头开合（覆盖式浮层 .config.scrim/.popover 随本位渲染，P3 起）
     bool configOpen_ = false;
+    // 消息区开合（D6 默认折叠）：false 只画标题行 + `.msgs.hint`，不建 .msgscroll/
+    // .msgs.body；展开时 applyDefaultMessageExpansion 降级为「展开态内规则」
+    bool messagesOpen_ = false;
+    // 页级复制 toast（spec D13，`agent.detail.toast`）：compose() 尾部最后绘制
+    ui_kit::ToastState toast_;
     // 「可用工具」区块：收起默认，头部点击展开
     bool toolsOpen_ = false;
     std::vector<ToolInfo> toolsCache_;      // 注册表快照（惰性装载）

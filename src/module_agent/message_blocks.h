@@ -53,18 +53,19 @@ std::string toolArgsSummary(const std::string& inputJson, size_t maxBytes);
 float estimateTextBlockHeight(const std::string& text, float contentW,
                               float fontSize, float lineHeight);
 
-// 单条消息高：collapsed = 头 + 预览 1 行；expanded = 头 + Σ 各块高 + 块间距
+// 单条消息高：collapsed = 头(24) + 预览 1 行；expanded = 头 + Σ 各块高 + 块间距。
+// fontSize/lineHeight 必传（13/20 口径）——不再写死 12/18，fontScale 派生值由调用方给
 float estimateMessageHeight(const AgentMessageRow& msg, bool expanded,
-                            float contentW, float lineHeight);
+                            float contentW, float fontSize, float lineHeight);
 
 // 消息区建议外高：clamp(Σ消息高 + 条间 gap, minH, maxH)；真实内容高由 scrollView 自测
 float estimateMessagesAreaHeight(const std::vector<AgentMessageRow>& msgs,
                                  const std::set<int64_t>& expandedSeqs,
-                                 float contentW, float lineHeight,
-                                 float minH, float maxH);
+                                 float contentW, float fontSize,
+                                 float lineHeight, float minH, float maxH);
 
-// 消息内列间距（头行→内容、块→块），与 renderMessageRow 的 gap 同源
-constexpr float kMsgHeaderH = 20.0f;
+// 消息头行高（§10 头高 24）。tool_use chip 行不复用它——那是普通文本行（lineHeight）
+constexpr float kMsgHeaderH = 24.0f;
 constexpr float kMsgGap = 4.0f;
 // 消息间行距，与 compose 里 msgscroll 的 gap 同源（列内 4、条间 6）
 constexpr float kMsgRowGap = 6.0f;
