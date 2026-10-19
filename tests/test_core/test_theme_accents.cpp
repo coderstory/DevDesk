@@ -207,3 +207,25 @@ REGISTER_TEST(theme_accent_select_pink_light, "theme accent: Pink light exact he
     core::theme::setAccent(core::theme::Accent::Clay);
     return true;
 })
+
+// 微信色板对比度护栏（D-10）：如实记录 WeChat 品牌绿低对比权衡，不调既有 accent 护栏
+// WeChat #07C160 绿作按钮底白字实测 2.385、作链接文字 on 白 2.385，均低于 WCAG AA 4.5（正文）/ 图形 AA 3.0；
+// 这是 WeChat 品牌色权衡（v1.0 用户给定基线），D-10 要求如实上报用户定夺、不许改护栏放水。
+// 本测试钉实际区间（值漂移即红），既有 purple/pink ≥3.0、blue [1.9,2.7] 护栏完全不动。
+REGISTER_TEST(theme_wechat_contrast, "theme wechat: contrast actual-range (D-10 report-not-fudge)", {
+    core::theme::setLight();
+    const auto& w = core::theme::current().colors.wechat;
+    // 正文文字 on 卡片白底：高对比，应达 WCAG AA 4.5（textPrimary #1A1A1A 实测 17.40，textSecondary #666666 实测 5.74）
+    DOCTEST_CHECK(wcagContrast(w.textPrimary, w.cardBg) >= 4.5);
+    DOCTEST_CHECK(wcagContrast(w.textSecondary, w.cardBg) >= 4.5);
+    // 主色绿 #07C160 上白字（按钮场景）：WeChat 品牌绿，实测 2.385 < AA，钉区间不强行过
+    double onPrimaryCR = wcagContrast(w.onPrimary, w.primary);
+    DOCTEST_CHECK(onPrimaryCR >= 1.8);
+    DOCTEST_CHECK(onPrimaryCR <= 2.5);
+    // 主色绿作链接 on 白：实测同 2.385（与 onPrimary 同色对，对比度对称），钉区间（D-10 待用户定夺是否接受/加深）
+    double linkOnWhite = wcagContrast(w.primary, w.cardBg);
+    DOCTEST_CHECK(linkOnWhite >= 1.8);
+    DOCTEST_CHECK(linkOnWhite <= 2.5);
+    core::theme::setDark();
+    return true;
+})
