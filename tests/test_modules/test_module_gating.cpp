@@ -15,6 +15,7 @@
 
 #include <eui/dsl.h>
 
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -307,5 +308,109 @@ REGISTER_TEST(gating_home_all_on_unchanged, "gating: 全注册时 Home 与现状
         DOCTEST_CHECK(ui.find(id) != nullptr);
     }
     DOCTEST_CHECK(ui.find("home.stats.alloff") == nullptr);
+    return true;
+})
+
+// G4 补缺（docs/superpowers/plans/2026-10-19-ui-test-gap-map.md）：home.actions 与
+// 模块注册态的**联动**——既有用例只断按钮在场/缺席，这里钉三档收缩几何：
+//   ① 全注册：三按钮等宽，行宽 = 3×单宽 + 2×16（actGap = spacingLarge，等分口径）；
+//   ② 只剩 markdown：幸存按钮独占整行（宽 = 3×①单宽 + 32，按剩余数量均分加宽）；
+//   ③ 全关：home.actions 整行元素不存在（不是空行占位）。
+// contentW 两次 compose 间不变（同 screen 尺寸同代码路径），①②可互推。
+REGISTER_TEST(gating_home_actions_row_collapse,
+              "gating: Home 快捷按钮联动收缩（均分加宽）/ 全关整行隐藏", {
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    float w3 = 0.0f;  // ① 的单按钮宽（跨档复算 contentW 用）
+
+    // ① 全注册：三按钮等分一行
+    {
+        ::core::Router router;
+        StubModule home(::core::PageId::Home, "home");
+        StubModule markdown(::core::PageId::Markdown, "markdown");
+        StubModule todo(::core::PageId::Todo, "todo");
+        StubModule claude(::core::PageId::ClaudeProxy, "claude");
+        StubModule settings(::core::PageId::Settings, "settings");
+        router.registerModule(&home);
+        router.registerModule(&markdown);
+        router.registerModule(&todo);
+        router.registerModule(&claude);
+        router.registerModule(&settings);
+        test_support::ScopedAppRouter scoped(&router);
+
+        std::unique_ptr<::core::Module> mod(create_home_module());
+        eui::Ui ui;
+        ui.begin("act_all3");
+        mod->compose(ui, screen);
+        ui.end();
+        ui.layout(screen.width, screen.height);
+
+        const auto* row = ui.find("home.actions");
+        DOCTEST_REQUIRE(row != nullptr);
+        const auto* note = ui.find("home.act.newnote");
+        const auto* td = ui.find("home.act.newtodo");
+        const auto* cl = ui.find("home.act.claude");
+        DOCTEST_REQUIRE(note != nullptr);
+        DOCTEST_REQUIRE(td != nullptr);
+        DOCTEST_REQUIRE(cl != nullptr);
+        w3 = note->frame.width;
+        DOCTEST_CHECK(w3 > 0.0f);
+        DOCTEST_CHECK(std::fabs(td->frame.width - w3) < 0.5f);
+        DOCTEST_CHECK(std::fabs(cl->frame.width - w3) < 0.5f);
+        DOCTEST_CHECK(std::fabs(row->frame.width - (3.0f * w3 + 32.0f)) < 1.0f);
+    }
+
+    // ② 只剩 markdown：newnote 独占整行，兄弟按钮消失
+    {
+        ::core::Router router;
+        StubModule home(::core::PageId::Home, "home");
+        StubModule markdown(::core::PageId::Markdown, "markdown");
+        StubModule settings(::core::PageId::Settings, "settings");
+        router.registerModule(&home);
+        router.registerModule(&markdown);
+        router.registerModule(&settings);
+        test_support::ScopedAppRouter scoped(&router);
+
+        std::unique_ptr<::core::Module> mod(create_home_module());
+        eui::Ui ui;
+        ui.begin("act_md_only");
+        mod->compose(ui, screen);
+        ui.end();
+        ui.layout(screen.width, screen.height);
+
+        const auto* row = ui.find("home.actions");
+        DOCTEST_REQUIRE(row != nullptr);
+        const auto* note = ui.find("home.act.newnote");
+        DOCTEST_REQUIRE(note != nullptr);
+        DOCTEST_REQUIRE_MESSAGE(
+            std::fabs(note->frame.width - (3.0f * w3 + 32.0f)) < 1.0f,
+            "关掉兄弟模块后按钮未按剩余数量均分加宽: " +
+                std::to_string(note->frame.width) + " vs 期望 " +
+                std::to_string(3.0f * w3 + 32.0f));
+        DOCTEST_CHECK(ui.find("home.act.newtodo") == nullptr);
+        DOCTEST_CHECK(ui.find("home.act.claude") == nullptr);
+    }
+
+    // ③ 全关：整行隐藏
+    {
+        ::core::Router router;
+        StubModule home(::core::PageId::Home, "home");
+        StubModule settings(::core::PageId::Settings, "settings");
+        router.registerModule(&home);
+        router.registerModule(&settings);
+        test_support::ScopedAppRouter scoped(&router);
+
+        std::unique_ptr<::core::Module> mod(create_home_module());
+        eui::Ui ui;
+        ui.begin("act_none");
+        mod->compose(ui, screen);
+        ui.end();
+
+        DOCTEST_CHECK(ui.find("home.actions") == nullptr);
+        DOCTEST_CHECK(ui.find("home.act.newnote") == nullptr);
+        DOCTEST_CHECK(ui.find("home.act.newtodo") == nullptr);
+        DOCTEST_CHECK(ui.find("home.act.claude") == nullptr);
+    }
     return true;
 })
