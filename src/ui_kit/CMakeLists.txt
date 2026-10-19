@@ -15,11 +15,11 @@ add_library(devdesk_ui_kit STATIC
     # 既有 button 调用不动，W5-W10 逐页切换调新组件。
     button.cpp
     form_row.cpp
-    # W2c 新增（§4.3/§4.2/§4.4）：选中态 / Tab / 开关 helper。新组件并存，
-    # 既有选中态/Tab/开关调用不动，W3 nav / W4 settings 逐页切换调新组件。
-    selection_bar.cpp
-    wtab.cpp
-    wswitch.cpp
+    # W2d 新增（§4.10/§4.12）：微信式轻提示 + 空状态 helper。新组件并存：
+    # 既有通知式 toast 保留不动（§4.10「两种 toast 并存」）；新反馈点调
+    # light_toast，空列表/无搜索结果调 empty_state。
+    light_toast.cpp
+    empty_state.cpp
 )
 
 devdesk_apply_warnings(devdesk_ui_kit)
