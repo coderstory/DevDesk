@@ -1059,7 +1059,6 @@ REGISTER_TEST(uiAboutLayout,
     const float footerY = screen.height - t.sizes.spacingXXLarge - kFooterH;
     const float cardY = t.sizes.spacingXXLarge;
     const float valueX = kCardPadX + kLabelW + t.sizes.spacing;
-    const float valueW = kCardW - valueX - kCardPadX - 20.0f;
     ui.begin("about_layout");
     mod->compose(ui, screen);
     ui.end();
@@ -1121,13 +1120,13 @@ REGISTER_TEST(uiAboutLayout,
             DOCTEST_REQUIRE(label != nullptr);
             DOCTEST_REQUIRE(value != nullptr);
             DOCTEST_CHECK_MESSAGE(nearPx(label->frame.x, cardX + kCardPadX),
-                                  px("about.card.label." + std::to_string(i), label));
+                                  px(("about.card.label." + std::to_string(i)).c_str(), label));
             DOCTEST_CHECK_MESSAGE(nearPx(label->frame.y, rowY),
-                                  px("about.card.label." + std::to_string(i), label));
+                                  px(("about.card.label." + std::to_string(i)).c_str(), label));
             DOCTEST_CHECK_MESSAGE(nearPx(value->frame.x, cardX + valueX),
-                                  px("about.card.value." + std::to_string(i), value));
+                                  px(("about.card.value." + std::to_string(i)).c_str(), value));
             DOCTEST_CHECK_MESSAGE(nearPx(value->frame.y, rowY),
-                                  px("about.card.value." + std::to_string(i), value));
+                                  px(("about.card.value." + std::to_string(i)).c_str(), value));
             if (i > 0) {
                 const auto* div = ui.find("about.card.divider." + std::to_string(i));
                 DOCTEST_REQUIRE(div != nullptr);
@@ -1254,7 +1253,7 @@ REGISTER_TEST(uiAboutGlow,
     {
         const auto* bg = ui.find("about.bg");
         DOCTEST_REQUIRE(bg != nullptr);
-        DOCTEST_CHECK(bg->gradient == nullptr);
+        DOCTEST_CHECK(!bg->gradient.enabled);
     }
 
     mod->onStop();
