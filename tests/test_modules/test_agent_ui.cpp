@@ -2013,7 +2013,7 @@ REGISTER_TEST(agent_ui_tools_section_toggle,
 // 下拉展开态全在屏内）：「弹窗不超出视口」被 dialog 组件自身的 clamp 兜住，恒真。
 
 REGISTER_TEST(agent_ui_dialog_geometry_design_size_and_budget,
-              "agent_ui: 任务弹窗几何——设计尺寸 760x500 / 行底 ≤ 按钮行顶 / 超长目标与超长任务名不挤位 / 下拉展开态全在屏内", {
+              "agent_ui: 任务弹窗几何——设计尺寸 760x620 / 行底 ≤ 按钮行顶 / 超长目标与超长任务名不挤位 / 下拉展开态全在屏内", {
     test_support::TestDb tdb("agentui", "dlggeom");
     test_support::FakeProfileSource profile;
     ToolGuard statsGuard{"app.stats", "app.notify"};
@@ -2074,8 +2074,8 @@ REGISTER_TEST(agent_ui_dialog_geometry_design_size_and_budget,
             " 压到按钮行顶 " + std::to_string(saveBtn->frame.y));
     DOCTEST_CHECK_MESSAGE(
         saveBtn->frame.y + saveBtn->frame.height <=
-            panel->frame.y + panel->frame.height - 19.5f,
-        "按钮行溢出面板底（底边距应收 20）");
+            panel->frame.y + panel->frame.height - 7.5f,
+        "按钮行溢出面板底（底边距应收 8，btnY=h-48）");
     DOCTEST_CHECK(nearPx(saveBtn->frame.height, 40.0f));
     // 超长目标不挤动输入框自身几何（宽 = 面板内宽 704 - 标签 72 - 间距 12 = 620、高 = 设计 96）。
     // 不要改用「读回 InputState 的文本长度」当判据：那是只读输入框模型，只能验「值没丢」，
@@ -2109,6 +2109,10 @@ REGISTER_TEST(agent_ui_dialog_geometry_design_size_and_budget,
     DOCTEST_CHECK(popupHitClosed->disabled);
 
     const float metaYBefore = metaRow->frame.y;
+    // §8 四组重构后 destructive 在 y=518（高危选项组），弹层够不到；改钉弹层覆盖最近的下方行（slot）
+    const auto* slotBefore = ui2.find("agent.dialog.task.slot.wrap");
+    DOCTEST_REQUIRE_MESSAGE(slotBefore != nullptr, "模型槽位行缺失");
+    const float slotYBefore = slotBefore->frame.y;
     DOCTEST_REQUIRE_MESSAGE(clickId(ui2, "agent.dialog.task.trigger.field"),
                             "触发方式下拉字段命中面缺失");
     eui::Ui ui2b;
@@ -2133,14 +2137,22 @@ REGISTER_TEST(agent_ui_dialog_geometry_design_size_and_budget,
             lastItem->frame.y + lastItem->frame.height <= kScreen.height + 0.5f,
         "下拉最后一项跑出屏外: y=" + std::to_string(lastItem->frame.y) +
             " 底=" + std::to_string(lastItem->frame.y + lastItem->frame.height));
-    // 弹层是覆盖层：展开时盖住下方元信息行是有意行为，不可改成挤动布局——挤动会让
+    // 弹层是覆盖层：展开时盖住下方 slot 行是有意行为，不可改成挤动布局——挤动会让
     // 下方行 y 变化，下面那条行位置恒等的断言正是钉这一点
-    DOCTEST_CHECK_MESSAGE(popup->frame.y + popup->frame.height > metaYBefore,
-                          "弹层应向下覆盖元信息行（覆盖层语义变了？）");
+    // （§8 四组重构后 destructive 移到 y=518，弹层够不到；改钉最近的 slot 行 y=262）
+    DOCTEST_CHECK_MESSAGE(popup->frame.y + popup->frame.height > slotYBefore,
+                          "弹层应向下覆盖模型槽位行（覆盖层语义变了？）");
+    const auto* slotAfter = ui2b.find("agent.dialog.task.slot.wrap");
+    DOCTEST_REQUIRE(slotAfter != nullptr);
+    DOCTEST_CHECK_MESSAGE(nearPx(slotAfter->frame.y, slotYBefore),
+                          "下拉展开挤动了模型槽位行：展开前 " +
+                              std::to_string(slotYBefore) + " 展开后 " +
+                              std::to_string(slotAfter->frame.y));
+    // destructive 行（高危选项组）也不被挤动
     const auto* metaAfter = ui2b.find("agent.dialog.task.destructive");
     DOCTEST_REQUIRE(metaAfter != nullptr);
     DOCTEST_CHECK_MESSAGE(nearPx(metaAfter->frame.y, metaYBefore),
-                          "下拉展开挤动了下方行：展开前 " +
+                          "下拉展开挤动了破坏性开关行：展开前 " +
                               std::to_string(metaYBefore) + " 展开后 " +
                               std::to_string(metaAfter->frame.y));
     DOCTEST_REQUIRE(clickId(ui2b, "agent.dialog.task.trigger.field"));
@@ -4478,12 +4490,15 @@ REGISTER_TEST(agent_ui_dialog_switch_labels_fit_boxes,
     DOCTEST_REQUIRE_MESSAGE(
         destructive != nullptr && limit != nullptr && goal != nullptr,
         "破坏性开关 / 只跑一次 / goal 输入节点缺失");
-    DOCTEST_CHECK_MESSAGE(destructive->frame.y >= 490.0f,
-                          "破坏性开关应在高危选项组（y≥490），实测 y=" +
-                              std::to_string(destructive->frame.y));
-    DOCTEST_CHECK_MESSAGE(limit->frame.y < 490.0f,
-                          "只跑一次应在高级配置组（y<490），实测 y=" +
-                              std::to_string(limit->frame.y));
+    const auto* panel3 = ui3.find("agent.dialog.task.panel");
+    DOCTEST_REQUIRE_MESSAGE(panel3 != nullptr, "任务弹窗面板缺失");
+    // y 断言用面板相对坐标（绝对 y 含 panel 居中偏移，阈值 490 是面板局部值）
+    DOCTEST_CHECK_MESSAGE(destructive->frame.y - panel3->frame.y >= 490.0f,
+                          "破坏性开关应在高危选项组（面板局部 y≥490），实测 y=" +
+                              std::to_string(destructive->frame.y - panel3->frame.y));
+    DOCTEST_CHECK_MESSAGE(limit->frame.y - panel3->frame.y < 490.0f,
+                          "只跑一次应在高级配置组（面板局部 y<490），实测 y=" +
+                              std::to_string(limit->frame.y - panel3->frame.y));
     DOCTEST_CHECK_MESSAGE(
         nearPx(limit->frame.x + limit->frame.width,
                goal->frame.x + goal->frame.width),
