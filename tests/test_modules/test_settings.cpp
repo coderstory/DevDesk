@@ -88,7 +88,7 @@ bool clickSettingsTab(::core::Module& mod, const eui::Screen& screen,
     ui.begin("settings_tab_click");
     mod.compose(ui, screen);
     ui.end();
-    const auto* hit = ui.find("settings.tabs.hit." + std::to_string(tab));
+    const auto* hit = ui.find("settings.tabs." + std::to_string(tab) + ".hit");
     if (hit == nullptr || hit->onClick == nullptr) return false;
     hit->onClick();
     return true;
@@ -632,9 +632,9 @@ REGISTER_TEST(settings_module_compose_renders, "settings: module compose builds 
     };
 
     frame("smoke");
-    DOCTEST_CHECK(ui.find("settings.tabs.hit.0") != nullptr);
-    DOCTEST_CHECK(ui.find("settings.tabs.hit.1") != nullptr);
-    DOCTEST_CHECK(ui.find("settings.tabs.hit.2") != nullptr);
+    DOCTEST_CHECK(ui.find("settings.tabs.0.hit") != nullptr);
+    DOCTEST_CHECK(ui.find("settings.tabs.1.hit") != nullptr);
+    DOCTEST_CHECK(ui.find("settings.tabs.2.hit") != nullptr);
     DOCTEST_CHECK(ui.find("settings.cards.scroll") != nullptr);
     // 通用 tab：外观卡 + 编辑器字号卡
     DOCTEST_CHECK(ui.find("settings.card.appearance") != nullptr);
@@ -1379,21 +1379,19 @@ REGISTER_TEST(settings_effect_dropdown_fits_min_window,
     ui.layout(screen.width, screen.height);
 
     const auto* card = ui.find("settings.card.appearance");
-    const auto* themeDd = ui.find("settings.card.appearance.theme.ddwrap");
     const auto* font = ui.find("settings.card.appearance.font.ddwrap");
     const auto* effect = ui.find("settings.card.appearance.effect.ddwrap");
     DOCTEST_REQUIRE(card != nullptr);
-    DOCTEST_REQUIRE(themeDd != nullptr);
     DOCTEST_REQUIRE(font != nullptr);
     DOCTEST_REQUIRE(effect != nullptr);
+    // 主题选择器已删除（D-12/E3）；字号/效果改 FormRow 排列——同一 control x（label 110px + gap）
     // 效果下拉右缘收在卡内（设计右缘留白 28，断言留 ≥20 容差）
     DOCTEST_CHECK(effect->frame.x + effect->frame.width <=
                   card->frame.x + card->frame.width - 20.0f);
-    // 字号下拉不与主题模式下拉重叠、效果下拉不与字号下拉重叠
-    DOCTEST_CHECK(font->frame.x >= themeDd->frame.x + themeDd->frame.width);
-    DOCTEST_CHECK(effect->frame.x >= font->frame.x + font->frame.width);
+    // 字号与效果在同一 FormRow 列（同 control x），不再左右并排
+    DOCTEST_CHECK_EQ(font->frame.x, effect->frame.x);
 
-    // 宽窗 1600：保持既有位置（字号 380 / 效果 680 相对卡原点）
+    // 宽窗 1600：FormRow 排列下 control x 固定（formX=28 + label 110 + gap 8 = 146）
     eui::Screen wide;
     wide.width = 1340.0f;
     wide.height = 1000.0f;
@@ -1407,8 +1405,9 @@ REGISTER_TEST(settings_effect_dropdown_fits_min_window,
     DOCTEST_REQUIRE(wideFont != nullptr);
     DOCTEST_REQUIRE(wideEffect != nullptr);
     DOCTEST_REQUIRE(wideCard != nullptr);
-    DOCTEST_CHECK_EQ(wideFont->frame.x - wideCard->frame.x, 380.0f);
-    DOCTEST_CHECK_EQ(wideEffect->frame.x - wideCard->frame.x, 680.0f);
+    // FormRow control x = card.x + 28(formX) + 110(label) + 8(gap) = card.x + 146
+    DOCTEST_CHECK_EQ(wideFont->frame.x - wideCard->frame.x, 146.0f);
+    DOCTEST_CHECK_EQ(wideEffect->frame.x - wideCard->frame.x, 146.0f);
 
     mod->onStop();
     ::core::theme::setDark();
@@ -1599,7 +1598,6 @@ REGISTER_TEST(settings_card_rows_scale_derived,
     const std::vector<CardRows> kCards = {
         {0, "settings.card.appearance",
          {"settings.card.appearance.title", "settings.card.appearance.desc",
-          "settings.card.appearance.theme.label",
           "settings.card.appearance.font.label",
           "settings.card.appearance.effect.label"}},
         {0, "settings.card.editor",
@@ -1724,10 +1722,7 @@ REGISTER_TEST(settings_card_rows_scale_derived,
                 err = pin("appearance.desc 高",
                           heightOf("settings.card.appearance.desc"),
                           at(15.0f, 18.0f, 23.0f));
-            if (err.empty())
-                err = pin("appearance.theme.label 高",
-                          heightOf("settings.card.appearance.theme.label"),
-                          at(14.0f, 16.0f, 21.0f));
+            // appearance.theme.label 随主题选择器删除（D-12/E3）移除
             if (err.empty())
                 err = pin("editor.hint 高", heightOf("settings.card.editor.hint"),
                           at(15.0f, 18.0f, 23.0f));
@@ -1881,8 +1876,9 @@ REGISTER_TEST(settings_appearance_dropdown_popup_above_following_cards,
     ui.end();
     ui.layout(screen.width, screen.height);
 
+    // 主题选择器删除（D-12/E3）后改用字号下拉弹层验证 z 序
     const auto* popup =
-        ui.find("settings.card.appearance.theme.dd.popup");
+        ui.find("settings.card.appearance.font.dd.popup");
     const auto* appearanceCard = ui.find("settings.card.appearance");
     const auto* editorCard = ui.find("settings.card.editor");
     DOCTEST_REQUIRE(popup != nullptr);
@@ -2181,34 +2177,7 @@ REGISTER_TEST(settings_theme_auto_follows_platform,
     return true;
 })
 
-REGISTER_TEST(settings_theme_mode_dropdown_click_persists,
-              "settings: 主题模式下拉存在且点「深色」落盘（替代旧双按钮，spec缩水 A headless）", {
-    test_support::TestEnv env(kCfgPrefix, "thdmm", true);
-    test_support::ScopedConfigPath cfgEnv(test_support::tempConfigFile(kCfgPrefix, "thdmm_cfg"));
-    std::unique_ptr<::core::Module> mod(create_settings_module());
-    mod->onStart();
-    eui::Screen screen;
-    screen.width = 1600.0f;
-    screen.height = 1000.0f;
-    eui::Ui ui;
-    ui.begin("thdmm");
-    mod->compose(ui, screen);
-    ui.end();
-
-    DOCTEST_CHECK(ui.find("settings.card.appearance.theme.dd") != nullptr);
-        // 点第 3 项（深色，索引 2）
-    DOCTEST_CHECK(ui.find("settings.card.appearance.theme.dark") == nullptr);
-    DOCTEST_CHECK(ui.find("settings.card.appearance.theme.light") == nullptr);
-
-        // → 即时持久化 themeMode=dark + theme 同步
-    const auto* itemDark = ui.find("settings.card.appearance.theme.dd.item.2");
-    DOCTEST_REQUIRE(itemDark != nullptr);
-    DOCTEST_REQUIRE(itemDark->onClick != nullptr);
-    itemDark->onClick();
-    mod->onStop();
-    ::core::theme::setDark();
-    return true;
-})
+// 主题模式下拉测试已随主题选择器删除（D-12/E3 去功能例外）移除——WeChat 皮肤即主题、暗色延后 D-04。
 
 // 编辑器字号可配（SettingsConfig + settings UI + 通道写入）
 
@@ -2700,8 +2669,9 @@ REGISTER_TEST(settings_dropdown_single_holder,
         ui.end();
     };
     // 两个下拉同在「通用」tab 的外观卡（默认 tab，无需切换）
-    const std::string themeDd = "settings.card.appearance.theme.dd";
+    // 主题选择器删除后改用字号 + 窗口效果两个下拉（D-12/E3）
     const std::string fontDd = "settings.card.appearance.font.dd";
+    const std::string effectDd = "settings.card.appearance.effect.dd";
     // 展开态 = 弹层 opacity（EUI-NEO dropdown 收起时 opacity 0，元素仍在树上）
     auto popupOpacity = [&](const std::string& dd) -> float {
         const auto* p = ui.find(dd + ".popup");
@@ -2721,26 +2691,26 @@ REGISTER_TEST(settings_dropdown_single_holder,
     };
 
     frame("dd0");
-    DOCTEST_CHECK_EQ(popupOpacity(themeDd), 0.0f);
     DOCTEST_CHECK_EQ(popupOpacity(fontDd), 0.0f);
+    DOCTEST_CHECK_EQ(popupOpacity(effectDd), 0.0f);
     DOCTEST_CHECK(!mod->onKeyEvent(escPress()));
 
-    // 1) 开主题下拉 → 只有它展开
-    DOCTEST_REQUIRE(clickField(themeDd));
-    frame("dd1");
-    DOCTEST_CHECK_EQ(popupOpacity(themeDd), 1.0f);
-    DOCTEST_CHECK_EQ(popupOpacity(fontDd), 0.0f);
-
-    // 2) 再开字号下拉 → 主题自动关（唯一持有者：同时最多一个展开）
+    // 1) 开字号下拉 → 只有它展开
     DOCTEST_REQUIRE(clickField(fontDd));
-    frame("dd2");
+    frame("dd1");
     DOCTEST_CHECK_EQ(popupOpacity(fontDd), 1.0f);
-    DOCTEST_CHECK_EQ(popupOpacity(themeDd), 0.0f);
+    DOCTEST_CHECK_EQ(popupOpacity(effectDd), 0.0f);
+
+    // 2) 再开效果下拉 → 字号自动关（唯一持有者：同时最多一个展开）
+    DOCTEST_REQUIRE(clickField(effectDd));
+    frame("dd2");
+    DOCTEST_CHECK_EQ(popupOpacity(effectDd), 1.0f);
+    DOCTEST_CHECK_EQ(popupOpacity(fontDd), 0.0f);
 
     // 3) Esc 关当前项；再按一次（已全关）不消费
     DOCTEST_CHECK(mod->onKeyEvent(escPress()));
     frame("dd3");
-    DOCTEST_CHECK_EQ(popupOpacity(fontDd), 0.0f);
+    DOCTEST_CHECK_EQ(popupOpacity(effectDd), 0.0f);
     DOCTEST_CHECK(!mod->onKeyEvent(escPress()));
 
     mod->onStop();
