@@ -28,100 +28,21 @@
 #include "module_agent/agent_time_text.h"
 #include "module_agent/message_blocks.h"
 #include "module_agent/trigger_config.h"
+#include "module_agent/agent_ui_shared.h"
 
 namespace module::agent {
 
 namespace {
 
-// === 本 TU 所需的常量与 helper，原在 agent_module.cpp 匿名命名空间 ===
-
-// 详情弹窗高（与 composeTaskDialog 复用的布局常量从匿名空间复制）
+// 详情弹窗独有常量（停止 chip 几何 / 消息区高钳制——仅 composeTaskDetailDialog 消费）
 constexpr float kDetailDialogH = 660.0f;
 constexpr float kStopChipW = 176.0f;
 constexpr float kStopChipH = 32.0f;
 constexpr float kStopChipY = 20.0f;
-constexpr int kDetailRunListLimit = 20;
 constexpr float kMsgAreaMinH = 96.0f;
 constexpr float kMsgAreaMaxH = 520.0f;
-constexpr float kDialogGap = 12.0f;
-constexpr float kDialogLabelW = 72.0f;
-constexpr float kDialogRowH = 40.0f;
 
-// 列表状态圆点色
-eui::Color statusDotColor(const std::string& status,
-                          const ::core::theme::Tokens& t) {
-    if (status == "completed") return t.colors.success;
-    if (status == "failed") return t.colors.error;
-    if (status == "limited") return t.colors.warning;
-    if (status == "running") return t.colors.info;
-    return t.colors.textTertiary;
-}
-
-// 行内动作 chip
-void actionChip(::eui::Ui& ui, const std::string& id, const std::string& label,
-                float width, bool primary, bool enabled,
-                const components::theme::ThemeColorTokens& tokens,
-                std::function<void()> onClick, float fontSize = 12.0f) {
-    constexpr float kChipH = 32.0f;
-    const ::core::Color base = primary ? tokens.primary : tokens.surface;
-    ::core::Color textColor =
-        primary ? ::core::Color{0.94f, 0.97f, 1.0f, 1.0f} : tokens.text;
-    if (!enabled) textColor = components::theme::withOpacity(textColor, 0.40f);
-    ui.stack(id + ".chip")
-        .size(width, kChipH)
-        .content([&] {
-            ui.rect(id + ".bg")
-                .size(width, kChipH)
-                .states(base, components::theme::buttonHover(tokens, base),
-                        components::theme::buttonPressed(tokens, base))
-                .radius(tokens.metrics.radius.overlay)
-                .border(components::theme::buttonBorder(tokens, primary))
-                .onClick(onClick)
-                .build();
-            ui.text(id)
-                .size(width, kChipH)
-                .text(label)
-                .fontSize(fontSize)
-                .lineHeight(20.0f)
-                .horizontalAlign(eui::HorizontalAlign::Center)
-                .verticalAlign(eui::VerticalAlign::Center)
-                .color(textColor)
-                .hitTestMode(::core::dsl::HitTestMode::None)
-                .onClick(onClick)
-                .build();
-        })
-        .build();
-}
-
-
-// 「去 Claude 页」引导
-void navigateToClaudePage() {
-    auto* router = ::core::appRouter();
-    if (router == nullptr) {
-        LOG_WARN("Agent: 跳转 Claude 页失败——Router 未装配");
-        return;
-    }
-    router->navigateTo(::core::PageId::ClaudeProxy);
-}
-
-// trigger_config 的 cron 原文
-std::string cronTextOf(const AgentTaskRow& task) {
-    auto cfg = decodeTriggerConfig(task.triggerConfig);
-    if (cfg.isOk()) return cfg.value().cron;
-    if (!task.triggerConfig.empty()) {
-        LOG_WARN("Agent: 任务 " + std::to_string(task.id) +
-                 " 的 trigger_config 无法解析（编辑表单按空 cron 显示）：" +
-                 cfg.errorMessage());
-    }
-    return {};
-}
-
-std::string runLimitText(int maxRuns) {
-    if (maxRuns <= 1) return "只跑一次";
-    return "最多 " + std::to_string(maxRuns) + " 次";
-}
-
-// 弹窗实际宽/高的单边复算
+// 弹窗实际宽/高的单边复算——仅本 TU 使用（composeTaskDetailDialog）
 float detailDialogActualExtent(float requested, float screenExtent,
                                float overlayInset) {
     return std::min(requested, std::max(0.0f, screenExtent - overlayInset));

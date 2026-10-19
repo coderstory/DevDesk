@@ -46,6 +46,7 @@
 #include "module_agent/task_draft_parse.h"
 #include "module_agent/tool_info.h"
 #include "module_agent/trigger_config.h"
+#include "module_agent/agent_ui_shared.h"
 
 namespace module::agent {
 
@@ -92,70 +93,11 @@ void pruneNotifiedRunIds(const std::map<int64_t, std::string>& window,
     }
 }
 
-// 时长/状态/时间文案 helper 已迁 module_agent/agent_time_text.{h,cpp}（详情弹窗 P2，
-// spec §11）：本文件保留列表侧的状态色映射与「去 Claude 页」判定，不再各自拼时间文案。
+// 共享 UI helper（状态色/actionChip/导航/cronText/runLimitText/弹窗布局常量）
+// 收在 module_agent/agent_ui_shared.h，与本 TU 的 agent_detail_dialog.cpp 共用真源。
+// 本匿名空间保留本 TU 独有的助手。
 
 namespace {
-
-// 列表状态圆点色：只映射既有 theme token，不新造色。completed=success /
-// failed=error / limited=warning / running=info；cancelled 与从未运行共用
-// tertiary（中性灰 =「无需行动」态，不与四个语义色抢注意力）。点 + 中文文字
-// 并存，不只靠色（可访问性双通道）。
-eui::Color statusDotColor(const std::string& status,
-                          const ::core::theme::Tokens& t) {
-    if (status == "completed") return t.colors.success;
-    if (status == "failed") return t.colors.error;
-    if (status == "limited") return t.colors.warning;
-    if (status == "running") return t.colors.info;
-    return t.colors.textTertiary;
-}
-
-// 行内动作 chip：契约要求 id 落在可见文本上，故手搓两层——<id>.bg 为命中面、文本穿透。
-// fontSize 缺省 12（任务列表等既有站点不变）；详情弹窗按 spec §9.2 传 fsS，高度仍 32
-void actionChip(::eui::Ui& ui, const std::string& id, const std::string& label,
-                float width, bool primary, bool enabled,
-                const components::theme::ThemeColorTokens& tokens,
-                std::function<void()> onClick, float fontSize = 12.0f) {
-    constexpr float kChipH = 32.0f;
-    const ::core::Color base = primary ? tokens.primary : tokens.surface;
-    ::core::Color textColor =
-        primary ? ::core::Color{0.94f, 0.97f, 1.0f, 1.0f} : tokens.text;
-    if (!enabled) textColor = components::theme::withOpacity(textColor, 0.40f);
-    ui.stack(id + ".chip")
-        .size(width, kChipH)
-        .content([&] {
-            ui.rect(id + ".bg")
-                .size(width, kChipH)
-                .states(base, components::theme::buttonHover(tokens, base),
-                        components::theme::buttonPressed(tokens, base))
-                .radius(tokens.metrics.radius.overlay)
-                .border(components::theme::buttonBorder(tokens, primary))
-                .onClick(onClick)
-                .build();
-            ui.text(id)
-                .size(width, kChipH)
-                .text(label)
-                .fontSize(fontSize)
-                .lineHeight(20.0f)
-                .horizontalAlign(eui::HorizontalAlign::Center)
-                .verticalAlign(eui::VerticalAlign::Center)
-                .color(textColor)
-                .hitTestMode(::core::dsl::HitTestMode::None)
-                .onClick(onClick)
-                .build();
-        })
-        .build();
-}
-
-// 「去 Claude 页」引导的跳转动作：Router 未装配时仅 LOG_WARN（测试 compose 无 router 不崩）
-void navigateToClaudePage() {
-    auto* router = ::core::appRouter();
-    if (router == nullptr) {
-        LOG_WARN("Agent: 跳转 Claude 页失败——Router 未装配");
-        return;
-    }
-    router->navigateTo(::core::PageId::ClaudeProxy);
-}
 
 // 弹窗字段标签：显式垂直居中（光靠 lineHeight 不居中）+ 显式定位；id 用 .caption 避开 dropdown 的 .label
 void fieldCaption(::eui::Ui& ui, const std::string& id, const std::string& text,
@@ -215,9 +157,7 @@ constexpr float kPageErrorH = 16.0f;
 constexpr float kPageHintH = 16.0f;
 
 // 任务弹窗几何（cron 与触发同行、仅「定时」渲染、弹窗高度不变）
-constexpr float kDialogRowH = 40.0f;
-constexpr float kDialogLabelW = 72.0f;
-constexpr float kDialogGap = 12.0f;
+// kDialogGap/kDialogLabelW/kDialogRowH 已收进 agent_ui_shared.h（与详情弹窗共用真源）
 constexpr float kTaskDialogH = 500.0f;
 constexpr float kGoalInputH = 96.0f;
 constexpr float kContextNoteH = 72.0f;
@@ -232,23 +172,9 @@ constexpr float kDraftChipW = 96.0f;
 constexpr float kDraftChipH = 32.0f;
 constexpr float kDraftChipY = 20.0f;   // 底 52 ≤ goal 行顶 64，不压表单
 
-constexpr float kDetailDialogH = 660.0f;
-
-// 详情弹窗标题行「停止」chip（C1）：长文案把「当前轮结束后生效」说在点击前（协作式取消
-// 的诚实口径）；几何同 aichip——标题行内绝对定位，y+32 底 52 ≤ info 行顶 60，不压内容
-constexpr float kStopChipW = 176.0f;
-constexpr float kStopChipH = 32.0f;
-constexpr float kStopChipY = 20.0f;
-
-// 契约：详情弹窗展示最近 5 次 run
-// 任务列表每任务只查最近 1 条（列表状态/通知足够，spec §8.6 D8）；
-// 详情任务单独查 20 条（时间线，spec D8）
+// 任务列表每任务只查最近 1 条（列表状态/通知足够，spec §8.6 D8）。
+// kDetailRunListLimit（=20）在 agent_ui_shared.h——列表查询与详情 UI 共用同一上限
 constexpr int kRunListLimit = 1;
-constexpr int kDetailRunListLimit = 20;
-
-// run 日志消息区外高钳制在 [kMsgAreaMinH, kMsgAreaMaxH]，超出由 scrollView 内滚
-constexpr float kMsgAreaMinH = 96.0f;
-constexpr float kMsgAreaMaxH = 520.0f;
 
 constexpr float kToolsHeaderH = 28.0f;
 constexpr float kToolCardH = 44.0f;
@@ -274,30 +200,13 @@ int parseIterInput(const std::string& text) {
     return any ? value : 0;
 }
 
-// trigger_config 的 cron 原文（只读展示）；解析失败显示空串，但非空配置必须留痕
-std::string cronTextOf(const AgentTaskRow& task) {
-    auto cfg = decodeTriggerConfig(task.triggerConfig);
-    if (cfg.isOk()) return cfg.value().cron;
-    if (!task.triggerConfig.empty()) {
-        LOG_WARN("Agent: 任务 " + std::to_string(task.id) +
-                 " 的 trigger_config 无法解析（编辑表单按空 cron 显示）：" +
-                 cfg.errorMessage());
-    }
-    return {};
-}
-
-// 限次语义的两种文案（UI 与详情摘要共用同一份口径，防两处措辞漂移）：
-//   徽章 = 列表行里 4 字内的短标记；正文 = 详情摘要里的完整说明
-// 用「大白话」而不是 max_runs 术语 —— 用户看到的是「只跑一次」不是「上限 1 次」。
-// N > 1 只可能来自手改库 / 将来放开 N 次的 UI：文案跟着 N 走，不与「只跑一次」混
+// 限次徽章文案（列表行内短标记，4 字以内）。
+// runLimitText 在 agent_ui_shared.h——详情摘要与任务弹窗共用。
+// 用「大白话」而不是 max_runs 术语——用户看到的是「一次性」不是「上限 1 次」。
+// N > 1 只可能来自手改库 / 将来放开 N 次的 UI：文案跟着 N 走，不与「一次性」混
 std::string runLimitBadge(int maxRuns) {
     if (maxRuns <= 1) return "一次性";
     return "限" + std::to_string(maxRuns) + "次";
-}
-
-std::string runLimitText(int maxRuns) {
-    if (maxRuns <= 1) return "只跑一次";
-    return "最多 " + std::to_string(maxRuns) + " 次";
 }
 
 // 闹钟时间文本 ↔ epoch 的纯函数集（trimCopy / parseOnceAtLocalText /
