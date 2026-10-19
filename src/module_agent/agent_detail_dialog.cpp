@@ -357,7 +357,9 @@ void AgentModule::composeTaskDetailDialog(
                     .horizontalAlign(eui::HorizontalAlign::Right)
                     .color(t.colors.primary)
                     .build();
-                // 整行命中面最后画（盖在文本上收点击）；P1 只切状态位，浮层 P3 渲染
+                // 整行命中面最后画（盖在文本上收点击）；P1 只切状态位，浮层 P3 渲染。
+                // 三态全透明（alpha=0）= 透明命中面语义常量，非可主题化色（W1 无透明
+                // 槽位→保留+注释，同 W3 app_sidebar 处理口径）
                 ui.rect("agent.dialog.detail.config.header.hit")
                     .size(innerW, configH)
                     .states(eui::Color{0.0f, 0.0f, 0.0f, 0.0f},
@@ -490,7 +492,9 @@ void AgentModule::composeTaskDetailDialog(
                                 inner.stack(runRowId)
                                     .size(cw, rowH)
                                     .content([&] {
-                                        // .bg = 命中面 + 选中底（未选中透明，hover 微亮）
+                                        // .bg = 命中面 + 选中底（未选中透明，hover 微亮）。
+                                        // 未选中态 alpha=0 = 透明底语义常量，非可主题化色
+                                        //（W1 无透明槽位→保留+注释）
                                         inner.rect(runRowId + ".bg")
                                             .size(cw, rowH)
                                             .radius(t.sizes.radiusSmall)
@@ -1074,7 +1078,8 @@ void AgentModule::composeTaskDetailDialog(
                         .content([&](eui::Ui& inner, float cw, float) {
                             drawDetailBlocks(inner, cw, 0.0f);
                             // 详情块 → 消息标题的定位间隔（flow 布局无绝对 y，
-                            // 用透明占位撑出标题行高）
+                            // 用透明占位撑出标题行高）。alpha=0 = 透明占位语义常量，
+                            // 非可主题化色（W1 无透明槽位→保留+注释）
                             inner.rect("agent.dialog.detail.detail.scroll.gap")
                                 .size(cw, kMsgsTitleH)
                                 .color(eui::Color{0.0f, 0.0f, 0.0f, 0.0f})

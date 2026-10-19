@@ -442,9 +442,9 @@ REGISTER_TEST(agent_ui_dialog_create_task_persists_fields,
     DOCTEST_REQUIRE(callDropdownChange(ui3, "agent.dialog.task.slot", 2));
     // 迭代上限 = 7（非默认 10）
     mod.setDialogIterDraft(7);
-    // 破坏性 = true（switch 默认 false，点一下取反）
-    DOCTEST_REQUIRE_MESSAGE(clickId(ui3, "agent.dialog.task.destructive.hit"),
-                            "破坏性开关命中面缺失");
+    // 破坏性 = true（wswitch 的 clickable = .track，原 .hit 随 toggleSwitch 换 wswitch 改名）
+    DOCTEST_REQUIRE_MESSAGE(clickId(ui3, "agent.dialog.task.destructive.track"),
+                            "破坏性开关 track 缺失");
 
     eui::Ui ui4;
     composeTo(ui4, mod, kScreen, "agent_ui_save4");
@@ -2050,8 +2050,8 @@ REGISTER_TEST(agent_ui_dialog_geometry_design_size_and_budget,
     DOCTEST_CHECK_MESSAGE(nearPx(panel->frame.width, 760.0f),
                           "任务弹窗宽应为设计值 760，实测 " +
                               std::to_string(panel->frame.width));
-    DOCTEST_CHECK_MESSAGE(nearPx(panel->frame.height, 500.0f),
-                          "任务弹窗高应为设计值 500，实测 " +
+    DOCTEST_CHECK_MESSAGE(nearPx(panel->frame.height, 620.0f),
+                          "任务弹窗高应为设计值 620，实测 " +
                               std::to_string(panel->frame.height));
     DOCTEST_CHECK(panel->frame.x >= -0.5f && panel->frame.y >= -0.5f &&
                   panel->frame.x + panel->frame.width <= kScreen.width + 0.5f &&
@@ -2086,8 +2086,8 @@ REGISTER_TEST(agent_ui_dialog_geometry_design_size_and_budget,
     DOCTEST_CHECK_MESSAGE(nearPx(goal->frame.height, 96.0f),
                           "goal 输入框高应恒为 96，实测 " +
                               std::to_string(goal->frame.height));
-    DOCTEST_CHECK_MESSAGE(nearPx(metaRow->frame.y, panel->frame.y + 224.0f),
-                          "元信息行 y 应恒为面板顶 +224，实测 " +
+    DOCTEST_CHECK_MESSAGE(nearPx(metaRow->frame.y, panel->frame.y + 518.0f),
+                          "元信息行 y 应恒为面板顶 +518（§8 四组重构后高危选项组），实测 " +
                               std::to_string(metaRow->frame.y));
 
     // ③ 下拉展开态
@@ -2993,7 +2993,7 @@ REGISTER_TEST(agent_run_end_fallback_throttle,
 })
 
 // Task 2：定时分支模板下拉 + 下次触发预览。布局契约：模板 dropdown 与预览行
-// 不得改变弹窗总高（面板仍 500、meta 行仍 +224），预览行只能落在 cron 行与
+// 不得改变弹窗总高（面板仍 620、高危选项组 y=518（§8 四组重构）），预览行只能落在 cron 行与
 // meta 行之间的原 gap 内。
 REGISTER_TEST(agent_ui_cron_template_dropdown_and_preview,
               "agent_ui: 定时分支模板下拉（≥4 条）选中回填 cron / 预览行随 editCron 即时更新（合法显下次触发、非法显校验、无匹配显一年内）/ 弹窗高不变", {
@@ -3045,16 +3045,16 @@ REGISTER_TEST(agent_ui_cron_template_dropdown_and_preview,
                          std::string(module::agent::kCronTemplates[i].label));
     }
 
-    // ② 布局契约：面板高仍 500；meta 行仍 +224（模板下拉/预览行未挤动布局）
+    // ② 布局契约：面板高仍 620；高危选项组 y=518（模板下拉/预览行未挤动布局）
     const auto* panel3 = ui3.find("agent.dialog.task.panel");
     DOCTEST_REQUIRE(panel3 != nullptr);
-    DOCTEST_CHECK_MESSAGE(nearPx(panel3->frame.height, 500.0f),
-                          "任务弹窗高应恒为 500，实测 " +
+    DOCTEST_CHECK_MESSAGE(nearPx(panel3->frame.height, 620.0f),
+                          "任务弹窗高应恒为 620，实测 " +
                               std::to_string(panel3->frame.height));
     const auto* metaRow3 = ui3.find("agent.dialog.task.destructive");
     DOCTEST_REQUIRE(metaRow3 != nullptr);
-    DOCTEST_CHECK_MESSAGE(nearPx(metaRow3->frame.y, panel3->frame.y + 224.0f),
-                          "meta 行 y 应恒为面板顶 +224，实测 " +
+    DOCTEST_CHECK_MESSAGE(nearPx(metaRow3->frame.y, panel3->frame.y + 518.0f),
+                          "meta 行 y 应恒为面板顶 +518（§8 四组重构后），实测 " +
                               std::to_string(metaRow3->frame.y));
     // cron 为空 → 预览行不渲染（skipIfEmpty）
     DOCTEST_CHECK(ui3.find("agent.dialog.task.cron.preview") == nullptr);
@@ -3702,9 +3702,9 @@ REGISTER_TEST(agent_ui_dialog_geometry_context_note_within_bounds,
 
     const auto* panel = ui2.find("agent.dialog.task.panel");
     DOCTEST_REQUIRE(panel != nullptr);
-    // 弹窗高 = 设计值 500（M4 从 400 提升到 500 以容纳新字段）
-    DOCTEST_CHECK_MESSAGE(nearPx(panel->frame.height, 500.0f),
-                          "任务弹窗高应为设计值 500，实测 " +
+    // 弹窗高 = 设计值 620（§8 四组重构：原 500 + 4 分组标题 + slot 独立行）
+    DOCTEST_CHECK_MESSAGE(nearPx(panel->frame.height, 620.0f),
+                          "任务弹窗高应为设计值 620，实测 " +
                               std::to_string(panel->frame.height));
 
     // 执行记忆多行输入在面板内
@@ -3730,11 +3730,11 @@ REGISTER_TEST(agent_ui_dialog_geometry_context_note_within_bounds,
             std::to_string(autoWrap->frame.y + autoWrap->frame.height) +
             " 压到按钮行顶 " + std::to_string(saveBtn->frame.y));
 
-    // 元信息行 y 仍然恒等面板顶 +224（新字段在它下面，不动它）
+    // 高危选项组 y 仍然恒等面板顶 +518（新字段在它下面，不动它）
     const auto* metaRow = ui2.find("agent.dialog.task.destructive");
     DOCTEST_REQUIRE(metaRow != nullptr);
-    DOCTEST_CHECK_MESSAGE(nearPx(metaRow->frame.y, panel->frame.y + 224.0f),
-                          "元信息行 y 应恒为面板顶 +224（新字段不得挤动），实测 " +
+    DOCTEST_CHECK_MESSAGE(nearPx(metaRow->frame.y, panel->frame.y + 518.0f),
+                          "元信息行 y 应恒为面板顶 +518（§8 四组重构后高危选项组）（新字段不得挤动），实测 " +
                               std::to_string(metaRow->frame.y));
 
     mod.onStop();
@@ -4458,7 +4458,7 @@ REGISTER_TEST(agent_ui_dialog_switch_labels_fit_boxes,
     eui::Ui ui;
     DOCTEST_REQUIRE(openNewTaskDialog(ui, mod, "agent_ui_labelfit1"));
 
-    // ① 定时分支：行为开关行（破坏性 + 只跑一次）两个开关的标签盒
+    // ① 定时分支：「允许破坏性操作」（高危选项组）+「只跑一次」（高级配置组）标签盒
     eui::Ui ui2;
     composeTo(ui2, mod, kScreen, "agent_ui_labelfit2");
     DOCTEST_REQUIRE(callDropdownChange(ui2, "agent.dialog.task.trigger", 1));
@@ -4470,21 +4470,20 @@ REGISTER_TEST(agent_ui_dialog_switch_labels_fit_boxes,
     const std::string limitProblem = labelFitProblem(ui3, "agent.dialog.task.limit");
     DOCTEST_CHECK_MESSAGE(limitProblem.empty(), limitProblem);
 
-    // ② 两个开关同排、不重叠，且「只跑一次」右缘与 goal 输入右缘同一条竖线
-    //（弹窗内容列右边界）
+    // ② §8 四组重构后破坏性在「高危选项」组（y≥490）、只跑一次在「高级配置」组（y<490）；
+    // 「只跑一次」右缘与 goal 输入右缘同一条竖线（弹窗内容列右边界）
     const auto* destructive = ui3.find("agent.dialog.task.destructive");
     const auto* limit = ui3.find("agent.dialog.task.limit");
     const auto* goal = ui3.find("agent.dialog.task.goal");
     DOCTEST_REQUIRE_MESSAGE(
         destructive != nullptr && limit != nullptr && goal != nullptr,
-        "行为开关行 / goal 输入节点缺失");
-    DOCTEST_CHECK_MESSAGE(nearPx(destructive->frame.y, limit->frame.y),
-                          "「只跑一次」不在行为开关行（y 不一致）");
-    DOCTEST_CHECK_MESSAGE(
-        destructive->frame.x + destructive->frame.width <= limit->frame.x + 0.5f,
-        "「只跑一次」与「允许破坏性操作」重叠：破坏性右缘 " +
-            std::to_string(destructive->frame.x + destructive->frame.width) +
-            " > 限次左缘 " + std::to_string(limit->frame.x));
+        "破坏性开关 / 只跑一次 / goal 输入节点缺失");
+    DOCTEST_CHECK_MESSAGE(destructive->frame.y >= 490.0f,
+                          "破坏性开关应在高危选项组（y≥490），实测 y=" +
+                              std::to_string(destructive->frame.y));
+    DOCTEST_CHECK_MESSAGE(limit->frame.y < 490.0f,
+                          "只跑一次应在高级配置组（y<490），实测 y=" +
+                              std::to_string(limit->frame.y));
     DOCTEST_CHECK_MESSAGE(
         nearPx(limit->frame.x + limit->frame.width,
                goal->frame.x + goal->frame.width),
@@ -4537,7 +4536,7 @@ std::string draftResponseBody(const std::string& draftJson) {
 
 REGISTER_TEST(agent_ui_draft_chip_and_subdialog_lifecycle,
               "agent_ui_draft: 标题行 chip 几何（不压 goal 行 / 不压 ✕）/ 子弹窗开合"
-              "（chip·✕·遮罩·Esc 先子后父）/ 外层 500 高不动", {
+              "（chip·✕·遮罩·Esc 先子后父）/ 外层 620 高（§8 四组重构）", {
     test_support::TestDb tdb("agentui", "draftlife");
     test_support::FakeProfileSource profile;
     ToolGuard statsGuard{"app.stats", "app.notify"};
@@ -4556,11 +4555,11 @@ REGISTER_TEST(agent_ui_draft_chip_and_subdialog_lifecycle,
     eui::Ui uiB;
     composeTo(uiB, mod, kScreen, "agent_ui_dfl1");
 
-    // 外层几何契约：500 高原样（T7b 只在标题行加 chip，不新增行）
+    // 外层几何契约：§8 四组重构后 620 高（原 500 + 4 分组标题 + slot 独立行）
     const auto* panel = uiB.find("agent.dialog.task.panel");
     DOCTEST_REQUIRE(panel != nullptr);
-    DOCTEST_CHECK_MESSAGE(nearPx(panel->frame.height, 500.0f),
-                          "任务弹窗高应恒为 500，实测 " +
+    DOCTEST_CHECK_MESSAGE(nearPx(panel->frame.height, 620.0f),
+                          "任务弹窗高应恒为 620，实测 " +
                               std::to_string(panel->frame.height));
 
     // chip 存在 + 几何：面板内、底 ≤ goal 行顶（面板内 y=64）、右缘 ≤ ✕ 左缘

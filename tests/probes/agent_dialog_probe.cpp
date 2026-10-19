@@ -265,9 +265,10 @@ int main(int argc, char* argv[]) {
     // 前置：任务弹窗开着（A 段已切定时 + cron 预览）。子弹窗关闭后外层保持
     // 完好，A 段后续的模板下拉交互即外层可交互的活性证明。
     {
-        const auto* chip = findElement("agent.dialog.task.aichip.chip");
+        // §8 item 7：AI 草稿改 ui_kit::button Text 级，clickable = .bg（原 actionChip .chip 不存在）
+        const auto* chip = findElement("agent.dialog.task.aichip.bg");
         if (chip == nullptr) {
-            std::cerr << "agent_dialog_probe: AI 草稿 chip 缺失\n";
+            std::cerr << "agent_dialog_probe: AI 草稿按钮 .bg 缺失\n";
             passed = false;
         } else {
             clickElement(*chip);
