@@ -15,6 +15,11 @@ add_library(devdesk_ui_kit STATIC
     # 既有 button 调用不动，W5-W10 逐页切换调新组件。
     button.cpp
     form_row.cpp
+    # W2c 新增（§4.3/§4.2/§4.4）：选中态 / Tab / 开关 helper。新组件并存，
+    # 既有选中态/Tab/开关调用不动，W3 nav / W4 settings 逐页切换调新组件。
+    selection_bar.cpp
+    wtab.cpp
+    wswitch.cpp
 )
 
 devdesk_apply_warnings(devdesk_ui_kit)
