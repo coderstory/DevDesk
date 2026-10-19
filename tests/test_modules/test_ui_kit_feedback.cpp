@@ -36,6 +36,7 @@ int toHexByte(float v) { return static_cast<int>(std::round(v * 255.0f)); }
 // 违反即整条 toast 视觉与微信基线脱节）。
 REGISTER_TEST(ui_kit_light_toast_black_translucent_bg,
               "ui_kit lightToast: bg=黑半透明(0,0,0,0.7) + radius=6 首次触发", {
+    ui_kit::resetLightToastForTests();  // 防单实例 state 跨测试用例泄漏
     const auto& t = core::theme::current();
     eui::Ui ui;
     ui.begin("w02d_lt_black");
@@ -48,8 +49,8 @@ REGISTER_TEST(ui_kit_light_toast_black_translucent_bg,
     DOCTEST_CHECK_EQ(toHexByte(bg->color.r), 0x00);
     DOCTEST_CHECK_EQ(toHexByte(bg->color.g), 0x00);
     DOCTEST_CHECK_EQ(toHexByte(bg->color.b), 0x00);
-    // alpha 0.7 ≈ 178/255
-    DOCTEST_CHECK_EQ(toHexByte(bg->color.a), 178);
+    // alpha 0.7 → std::round(0.7×255)=std::round(178.5)=179（std::round 半远离零）
+    DOCTEST_CHECK_EQ(toHexByte(bg->color.a), 179);
     // 圆角 = radiusWeChat (6px，§3.2 D-12 统一)
     DOCTEST_CHECK_EQ(bg->radius, t.sizes.radiusWeChat);
     DOCTEST_CHECK_EQ(bg->radius, 6.0f);
@@ -62,6 +63,7 @@ REGISTER_TEST(ui_kit_light_toast_black_translucent_bg,
 // 在 wechat 令牌里是主色上的前景色，黑底白字同义复用）。
 REGISTER_TEST(ui_kit_light_toast_white_text_on_primary,
               "ui_kit lightToast: text color=wechat.onPrimary(#FFFFFF) + fontSize=14", {
+    ui_kit::resetLightToastForTests();  // 防单实例 state 跨测试用例泄漏
     const auto& t = core::theme::current();
     eui::Ui ui;
     ui.begin("w02d_lt_white");
@@ -85,19 +87,21 @@ REGISTER_TEST(ui_kit_light_toast_white_text_on_primary,
 // 内部判 elapsed >= 1.5s 关闭，bg 节点不再渲染。
 // 事故：轻提示永不消失致遮挡 UI（§4.10 spec 钉「1.5s 自动消失」；违反即用户
 // 被永久挡住底层操作）。
-// mock 方式：经 ui.state<LightToastState>(id+".state") 直接改 startTime——
-// light_toast.h 明示 state id = `<id>.state` 供测试访问。
+// mock 方式：经 ui_kit::lightToastStateForTests() 直接改 startTime——
+// light_toast.cpp 用 function-local static state（见 header 注释），测试经 seam
+// 访问同一份 state（不依赖 ui.state<T> 的跨 TU COMDAT fold 行为）。
 REGISTER_TEST(ui_kit_light_toast_auto_dismiss_after_1_5s,
               "ui_kit lightToast: elapsed>=1.5s 后不渲染（自动消失）", {
+    ui_kit::resetLightToastForTests();
     const auto& t = core::theme::current();
     eui::Ui ui;
     ui.begin("w02d_lt_dismiss");
     // 首次触发：内部 set open=true, startTime=now
     ui_kit::showLightToast(ui, "lt", "已复制", 100.0f, 100.0f, t);
-    // 手动把 startTime 推到 2 秒前，模拟时间流逝（> 1.5s 阈值）
-    auto& s = ui.state<ui_kit::LightToastState>("lt.state");
-    s.startTime = std::chrono::steady_clock::now() - std::chrono::seconds(2);
-    // 再次调用同 id 同 message：函数内部应判 elapsed>=1.5s 并 open=false
+    // 经 seam 改 startTime 到 2 秒前，模拟时间流逝（> 1.5s 阈值）
+    ui_kit::lightToastStateForTests().startTime =
+        std::chrono::steady_clock::now() - std::chrono::seconds(2);
+    // 再次调用同 message：函数内部应判 elapsed>=1.5s 并 open=false
     ui_kit::showLightToast(ui, "lt", "已复制", 100.0f, 100.0f, t);
     ui.end();
 
@@ -113,6 +117,7 @@ REGISTER_TEST(ui_kit_light_toast_auto_dismiss_after_1_5s,
 // 复制后立即保存，只看到「已复制」而看不到「保存成功」）。
 REGISTER_TEST(ui_kit_light_toast_new_message_overrides,
               "ui_kit lightToast: 同 id 新 message 覆盖旧 message", {
+    ui_kit::resetLightToastForTests();
     const auto& t = core::theme::current();
     eui::Ui ui;
     ui.begin("w02d_lt_override");
