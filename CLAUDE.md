@@ -241,6 +241,7 @@ main → 7 个 Router 页面 (home / markdown / todo / claude_proxy / agent / se
 - **CI 存在且是双平台**：`.github/workflows/ci.yml` —— `push dev` / `PR → dev·master` 触发；macOS job = `xcode-27` runner + Homebrew，Windows job = `windows-2025` + MSYS2 MinGW64。两个 job 都跑 `scripts/build-test-run.sh --release --no-run`。**别再说"仓库没有 CI"**——`docs/superpowers/plans/2026-09-28-platform-adaptation-audit.md` 里"仓库无 `.github/`"的断言写于当时，早已不成立。
 - **CI 不编 probe 二进制**（2026-10-03 起）：workflow env `DEVDESK_BUILD_PROBES=0` → probe 可执行不编译、不注册进 ctest（runner 无 GUI 会话，probe 测试本来就全跳过，编它们纯浪费），probe 门禁段与读 configure 产物的探针跳过登记守卫在 OFF 时显式跳过打 ⏭；**单测全量与全部静态守卫在 CI 照跑**，probe 真门禁靠本地（默认 ON 照常构建 + `ctest -L probe` 三态判定）+ headless 几何断言单测在 CI 照跑。
 - **probe 从 12 个收到 4 个**（2026-10-03 轻量化，分支 `refactor/lightweight`）：删掉 8 个与无头单测逐条重复的 probe（其中 2 个还被刻意设计成「当前必红」当 TODO 清单用，红灯混在门禁里会淹没真信号）。留下 4 个各有独占判据：`home_probes`（quota 真数据落图，是 `quota_live_probe --dump` 的唯一下游）/ `screenshot_probe`（帧捕获能力自测）/ `settings_dropdown_z_probe`（只有真窗口能测 z 序）/ `module_toggle_sidebar_probe`（唯一真点击派发栈）。ctest 侧 6 条（4 + `screenshot_probe_screenshot_switch` + `home_probes_min_window`）。
+  > **2026-10-19 起按「所有业务场景必须实际跑起来」新标准**：轻量化删掉的 8 个 probe 所在面须以业务流程 probe 回补。
 - **🔴 CI 红灯根因已修复并合并进 dev、但未复验**（截至 2026-10-03，口径为「已修、待复验确认」，**不得宣称 CI 已绿**）：
   - 最后一次**全绿** = **2026-10-01**（run `36849232387`）——那是修复前的历史基线，不是本次修复后的状态。
   - **Windows 编译失败的根因已修**：`test_claude_quota.cpp:453` 的 `-Wfree-nonheap-object` 判红经 2026-10-03 实测证伪为 GCC 误报（详见下方「已交付」WinWarn 批），按既定政策进 `-Wno-error=` 白名单（仍打印、不静默）；`-Wformat-truncation` 两处缓冲 16→36。已在 dev（merge `dd5cc1e`）。
@@ -346,6 +347,9 @@ main → 7 个 Router 页面 (home / markdown / todo / claude_proxy / agent / se
 - **未读 spec = 未开始**
 - **未 commit = 未持久化**
 - **不要假设 EUI-NEO 能力** — 不确定时去 `../EUI-NEO/` 源码 grep
+- **按场景写测试**：每条用例对应一个具体业务场景、注明防的具体事故（场景 = 用户从什么状态来、在什么环境做什么；防 = 改动回退或场景条件变化时会红）。「覆盖 XX 函数」不是测试目的。
+- **所有业务场景必须实际跑起来**：验证金字塔 = 纯逻辑单测（守重构）< 无头几何 < **真窗口 probe（真点击 / 键盘 / 拖拽 / 渲染）** < 真网 live < 真机 UAT。交付主流程至少到 probe 层、涉网关到 live 层。无头单测绿不算「实际跑过」。
+- **测试绿 ≠ 可用，数字不报给用户**：向用户交付时报三行——哪些场景实际跑了 / 结果 / 哪些没跑到（明写"未验证"）。
 
 ---
 
@@ -420,6 +424,7 @@ main → 7 个 Router 页面 (home / markdown / todo / claude_proxy / agent / se
   - **覆盖率口径（工具已就位：`scripts/coverage.sh`，2026-10-03 落地 `1a3de0b`）**：`bash scripts/coverage.sh` 全流程跑出分层行覆盖表——独立 `build-coverage/` 目录，插桩只覆盖 DevDesk 库层（core / platform / ui_kit / module_*，含 agent），EUI-NEO 与测试/探针/app 源码不插桩（CMake 开关 `DEVDESK_COVERAGE`，默认 OFF、正常构建零变化；测试 Failed 非 0 即中止，不出假基线）。**引用覆盖率数字只认该脚本全流程输出**（spec §12.3 目标：核心工具类 ≥90% / Service ≥80% / Platform ≥70%），不手算、不拿部分跑当基线；首批基线（2026-10-03，dev `99a9aef`）：DevDesk 合计 87.1%，core 79.5%（未达标）/ platform 81.2% / pet 40.0%（各模块最低）——数字会漂移，以脚本最新输出为准。Windows（MinGW GCC）的 gcovr 路线与 CI 接入仍是欠账。工具之外三条口径继续有效：① 新增 / 修改的行为必须有断言，没有断言的改动视为未完成；② 修复类改动必须有"用例在修复前会红、修复后会绿"的证据——回退一次修复跑出红，或用变异验证等价地证明断言非恒真；恒真断言即假绿，须重写；③ 涉及几何 / 布局的改动必须有数值断言，不接受"看起来对"。
 - 通过判据：定向用例全绿（报告贴出 `Total / Passed / Failed` 行且 `Failed: 0`）；涉及可见 UI 的改动有 probe 覆盖且 `ctest -L probe` 全绿；修复类改动有"先红后绿"（或变异验证）证据；几何 / 布局改动有数值断言；**凡改动涉及可见 UI 的，实现者必须交付前自己启动 app、打开窗口、截图看效果**（断言能证明"几何数值对"，证明不了"看起来对"）——可复制做法：① 用**独立的 `DEVDESK_DATA_ROOT`** 启动自己 worktree 的构建产物（**不得用用户真实数据根、不得碰 `/Applications/DevDesk.app`**）；② `screencapture -x <file>` 截图（屏幕录制权限已授，实测可用）；③ 需要点击 / 移动鼠标驱动界面时用 `cliclick`（`/opt/homebrew/bin/cliclick`，坐标是**点** = 物理像素 ÷ 2；**AppleScript `click at` 对本 app 无效，别用**）；④ **已知坑**：`screencapture` 对 OpenGL 窗口**可能抓到导航前的旧帧**——移动鼠标触发重绘后再拍第二张、取后一张，报告里要说明是否遇到；⑤ **⚠️ 严禁 `pkill -f DevDesk`**——多个 agent 可能同时在跑 app（还有用户自己在用的实例），按名杀会互相杀并杀掉用户的 app，**只按自己启动的 PID 杀**。*为什么*：2026-09-28 的真实事故——标题栏无底色、详情面板 60% 空白、卡片缺边距、侧边栏边距改错层次，**全都是用户肉眼先发现、我们事后才验证的**。
 - 不过怎么办：任何一项红 → 回阶段 1 / 阶段 3 修；发现恒真断言 → 重写断言（不许把断言删掉了事）。
+  - **交付前三问**（2026-10-19 定，真机 UAT 三连爆教训——全量 1632 条测试全绿的当天，用户真机 UAT 连爆：老库缺 `context_note` 列建不了任务、星锐网关拒 `[1M]` 模型名草稿失败、Windows 字体度量致弹窗叠字）：发任何包 / 宣布完成前必答——① 存量数据升级路径验过吗（老库场景用例 / 真实库副本实测）② 真实外网 / 网关验过吗（方言断言 + live）③ 目标平台真机验过吗（probe 真窗口 + 用户 UAT）。答不上写进"未验证"栏，不许沉默。
 
 **阶段 5：合并与发布**
 
@@ -428,6 +433,7 @@ main → 7 个 Router 页面 (home / markdown / todo / claude_proxy / agent / se
 - 通过判据：`dev` 上有本次改动的 merge commit（报告给出 merge sha），且合并后重建通过、已覆盖安装到 `/Applications/DevDesk.app`。**没合并 = 没交付。**
 - 不过怎么办：合并后构建 / 测试红 → 不得交付（回退或修复后重走本阶段）。
 - *为什么（今天的血教训）*：实现了、测试也绿了，但没合进 master，用户在新功能上验证的还是旧代码，得出"还是没效果"；另一次是安装的还是修复前的版本，用户同样在旧代码上验证新功能。
+- **修复合并 ≠ 交付**（2026-10-19 定）：新包打出来放用户桌面 + 用户真机 UAT 通过才算完。用户手里的包未更新时，对他来说修复不存在（0.4.3 事故实证：修复已在 dev 且已 push，用户装的旧包照样炸）。
 
 **阶段 6：真机验收**
 
