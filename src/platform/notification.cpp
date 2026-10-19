@@ -355,6 +355,11 @@ core::Result<Receipt> send(const Notification& notification) {
         g_tokens -= 1.0;
 
         g_dedupe[key] = now;
+        // order 每键至多一个条目：过期重建路径会在 order 里留下旧键位，重插前先摘除，
+        // 否则容量驱逐从 front 弹到旧键位时会把新 map 条目提前抹掉（残留位再弹成空操作）
+        const auto stale =
+            std::remove(g_dedupeOrder.begin(), g_dedupeOrder.end(), key);
+        g_dedupeOrder.erase(stale, g_dedupeOrder.end());
         g_dedupeOrder.push_back(key);
         while (g_dedupeOrder.size() > kDedupeCapacity) {
             g_dedupe.erase(g_dedupeOrder.front());

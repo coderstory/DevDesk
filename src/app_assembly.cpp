@@ -7,6 +7,7 @@
 #include "module_markdown/md_file_open.h"
 #include "module_toggle_bridge.h"
 #include "platform/file_open.h"
+#include "platform/notification.h"
 #include "settings_config.h"
 
 #include <eui/dsl.h>
@@ -67,6 +68,12 @@ std::vector<::core::PageId> assembleAndStart(
     for (const auto& entry : modules) {
         registerOne(entry.module);
     }
+
+    // 通知授权预热（装配点一次性）：主线程 initialize——macOS 安装 DidBecomeActive
+    // 缓存重置观察者 + 异步查询授权（NotDetermined 时主队列发起授权请求），并填掉
+    // 授权缓存，后续 send 的授权检查走缓存、不再有 ≤1s 同步查询。必须早于任何模块
+    // 可发通知（startAll 之前）；幂等，Windows/POSIX no-op
+    platform::notify::initialize();
 
     router.startAll();
 

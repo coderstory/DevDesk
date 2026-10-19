@@ -23,6 +23,7 @@
 #include "core/router.h"
 #include "core/service_locator.h"
 #include "platform/http_server.h"  // 前置校验用例的 mock 上游（200 POST /v1/messages）
+#include "platform/notification.h" // M1 接线用例（initialize spy）
 
 #include <eui/dsl.h>
 
@@ -1035,5 +1036,60 @@ REGISTER_TEST(assembly_dispatch_claude_toggle_blocked_by_preconditions,
     DOCTEST_CHECK(app::appNoticeVisible());
     DOCTEST_CHECK(app::appNoticeTitle() == std::string("代理未启动"));
     DOCTEST_CHECK(app::appNoticeMessage().find("前置校验未通过") != std::string::npos);
+    return true;
+})
+
+namespace {
+
+// 通知 initialize 接线 spy（M1）：只数 initialize 下发次数
+struct InitSpyBackend : platform::notify::Backend {
+    int initializeCalls = 0;
+    void initialize() override { ++initializeCalls; }
+    core::Result<platform::notify::Status> send(
+        const platform::notify::Notification&) override {
+        return core::Result<platform::notify::Status>::ok(
+            platform::notify::Status::Accepted);
+    }
+    platform::notify::Authorization authorizationStatus() override {
+        return platform::notify::Authorization::Authorized;
+    }
+    void requestAuthorization() override {}
+};
+
+} // namespace
+
+// M1 装配接线：assembleAndStart 必须在 startAll 之前调一次 notify::initialize
+//（macOS 授权预热 + DidBecomeActive 缓存重置观察者都挂在它身上，不接线即死代码）。
+// 红证据：装配层不调 initialize 时 initializeCalls 恒 0，首断言必红。
+// 幂等面：同进程第二次装配，facade 的 g_initialized 闩保证不重复下发。
+REGISTER_TEST(assembly_wires_notification_initialize_once,
+              "assembly: assembleAndStart 恰调一次 notify::initialize（M1 接线 + 幂等不重复）", {
+    test_support::ScopedAppRouter scoped;
+    platform::notify::resetForTest();   // 清 g_initialized 幂等闩（先前用例可能已置位）
+    InitSpyBackend spy;
+    platform::notify::setBackendForTest(&spy);
+
+    {
+        ::core::Router router;
+        StubModules mods;
+        const auto order = app::assembly::assembleAndStart(
+            router, allToolsOffConfig(), mods.homeSettingsOnly(),
+            app::assembly::PreStartHook{});
+        DOCTEST_REQUIRE_EQ(order.size(), static_cast<size_t>(2));
+        DOCTEST_CHECK_EQ(spy.initializeCalls, 1);
+    }
+    {
+        // 同进程第二次装配：initialize 不重复（幂等闩在 facade，装配层无自行去重责任）
+        ::core::Router router2;
+        StubModules mods2;
+        const auto order2 = app::assembly::assembleAndStart(
+            router2, allToolsOffConfig(), mods2.homeSettingsOnly(),
+            app::assembly::PreStartHook{});
+        DOCTEST_REQUIRE_EQ(order2.size(), static_cast<size_t>(2));
+        DOCTEST_CHECK_EQ(spy.initializeCalls, 1);
+    }
+
+    platform::notify::setBackendForTest(nullptr);
+    platform::notify::resetForTest();
     return true;
 })

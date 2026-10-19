@@ -333,6 +333,42 @@ REGISTER_TEST(notify_dedupe_expires,
     return true;
 })
 
+// 过期重建路径回归网（L4）：同键过期后重发 → 窗口内再发仍 Deduped。钉住重插路径——
+// order 表每键至多一个条目的不变式若被破坏（残留陈旧键位），这里最先碎。
+// 注：「陈旧 order 键位导致容量驱逐提前抹掉活条目」的症状经公共 API 不可构造——
+// 令牌桶（3 突发 + 1 条/秒）使 2s 窗口内至多 ~5 个 order 条目，而驱逐需 >64 条，
+// 任何被驱逐条目必然早已出窗；该面属结构不变式，由本用例 + 代码内摘除逻辑共同守。
+REGISTER_TEST(notify_dedupe_expired_rebuild_still_dedupes,
+              "notify: 同键过期重发（重建）后，2s 窗口内再发仍 deduped 且后端不再调", {
+    ResetGuard guard;
+    FakeBackend fake;
+    FakeClock clock;
+    clock.install();
+    platform::notify::setBackendForTest(&fake);
+
+    Notification notification;
+    notification.id = "dup-rebuild";
+    notification.title = "标题";
+    notification.body = "正文";
+    auto first = platform::notify::send(notification);
+    DOCTEST_REQUIRE(first.isOk());
+    DOCTEST_CHECK(first.value().status == Status::Accepted);
+
+    // 过期 → 重建（erase + 重插路径）
+    clock.advance(2100);
+    auto rebuild = platform::notify::send(notification);
+    DOCTEST_REQUIRE(rebuild.isOk());
+    DOCTEST_CHECK(rebuild.value().status == Status::Accepted);
+
+    // 重建后窗口内再发 → 仍去重（后端零调用增量）
+    const int sentBefore = fake.sendCalls;
+    auto within = platform::notify::send(notification);
+    DOCTEST_REQUIRE(within.isOk());
+    DOCTEST_CHECK(within.value().status == Status::Deduped);
+    DOCTEST_CHECK_EQ(fake.sendCalls, sentBefore);
+    return true;
+})
+
 REGISTER_TEST(notify_dedupe_different_content,
               "notify: 同 id 不同内容不误去重", {
     ResetGuard guard;
