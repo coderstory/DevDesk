@@ -333,7 +333,6 @@ void drawModulesCard(const CardDrawArgs& args) {
          "任务列表 + 手动触发运行（依赖 Claude 代理提供模型通道）"},
     };
     constexpr int kToggleCount = static_cast<int>(sizeof(kToggleable) / sizeof(kToggleable[0]));
-    const auto compTheme = core::theme::componentTokens(t);
     ui.stack(id)
         .size(w, h)
         .content([&] {
@@ -391,8 +390,6 @@ void drawDirectoryCard(const CardDrawArgs& args) {
     const SettingsCardsIn& in = args.in;
     const SettingsCardActions& a = args.a;
 
-    // .colors() 单独用会让 ButtonStyle 落默认深色主题；补 .theme(compTheme) 后边框/阴影/文字随主题，.colors() 仍覆盖三态底色。
-    const auto compTheme = core::theme::componentTokens(t);
     ui.stack(id)
         .size(w, h)
         .content([&] {
@@ -809,7 +806,6 @@ void drawQuotaCard(const CardDrawArgs& args) {
     const SettingsCardsIn& in = args.in;
     const SettingsCardActions& a = args.a;
 
-    const auto compTheme = core::theme::componentTokens(t);
     const float rowH = roundFs(20.0f);
     ui.stack(id)
         .size(w, 48.0f)
