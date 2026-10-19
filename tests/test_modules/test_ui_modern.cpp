@@ -1001,7 +1001,8 @@ REGISTER_TEST(uiModernMdPreviewGradient,
         ui.end();
         const auto* bg = ui.find("md.preview.bg");
         DOCTEST_REQUIRE(bg != nullptr);
-        DOCTEST_CHECK(bg->gradient.enabled);
+        // W8：渐变已移除（§8 #4 禁大面积渐变），改为 flat pageBg。
+        DOCTEST_CHECK(!bg->gradient.enabled);
         mod->onStop();
     }
     return true;
