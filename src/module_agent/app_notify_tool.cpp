@@ -4,6 +4,7 @@
 
 #include "platform/json.h"
 #include "platform/notification.h"
+#include "task_draft_parse.h"
 
 #include <exception>
 #include <string>
@@ -17,18 +18,6 @@ using core::Result;
 using core::ToolArgs;
 using core::ToolResult;
 namespace pj = platform::json;
-
-// 只裁 ASCII 空白（与 agent_module.cpp 的 trimCopy 同口径）；全角空格不当作空白。
-std::string trimAscii(const std::string& text) {
-    const auto isSpace = [](unsigned char c) {
-        return c == ' ' || c == '\t' || c == '\r' || c == '\n';
-    };
-    size_t begin = 0;
-    size_t end = text.size();
-    while (begin < end && isSpace(static_cast<unsigned char>(text[begin]))) ++begin;
-    while (end > begin && isSpace(static_cast<unsigned char>(text[end - 1]))) --end;
-    return text.substr(begin, end - begin);
-}
 
 Result<ToolResult> toolError(const std::string& message) {
     pj::JsonObject err;
@@ -79,7 +68,7 @@ Result<std::string> requiredString(const pj::JsonObject& args, const char* key,
             core::ErrorCode::ValidationError,
             std::string("参数 ") + key + " 必须是字符串");
     }
-    std::string text = trimAscii(value.asString());
+    std::string text = trimCopy(value.asString());   // 模块内 trim 单真源（task_draft_parse.h）
     if (text.empty()) {
         return Result<std::string>::fail(
             core::ErrorCode::ValidationError,

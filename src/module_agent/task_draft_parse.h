@@ -15,8 +15,10 @@
 // **「本地时刻」语义**：所有 epoch ↔ 文本换算都按**运行机器的本地时区**，文本里不含
 // 时区/偏移字段。闹钟语义就是「我本地墙钟的 8 点」，跨时区迁移不在本层处理。
 //
-// **同名副本不合并**：app_notify_tool.cpp 有一份刻意重复的私有 trimCopy（模块间互不
-// include，见 scripts/check-module-isolation.sh 的断言 C），那一份**刻意不动**。
+// **trim 单一真源**：本文件的 trimCopy 是模块内唯一 ASCII trim 实现——
+// app_notify_tool.cpp 直接 include 本头文件复用（同模块，无隔离守卫问题）；
+// platform/notification.cpp 另有一份私有 trimAscii，那是 platform 层边界（跨层共享
+// 得新建 core 字符串工具头，不值），刻意不合并。
 #pragma once
 
 #include <cstdint>
@@ -32,8 +34,8 @@
 
 namespace module::agent {
 
-// ASCII 空白裁剪：只认 ' ' / '\t' / '\r' / '\n'，与 app_notify_tool.cpp 的私有副本
-// 同口径；全角空格不算空白（中文文案里出现的 U+3000 不该被静默吃掉）。
+// ASCII 空白裁剪（模块内唯一真源，app_notify_tool.cpp 复用此处）：只认
+// ' ' / '\t' / '\r' / '\n'；全角空格不算空白（中文文案里出现的 U+3000 不该被静默吃掉）。
 inline std::string trimCopy(const std::string& s) {
     const auto isSpace = [](unsigned char c) {
         return c == ' ' || c == '\t' || c == '\r' || c == '\n';
