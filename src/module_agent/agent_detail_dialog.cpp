@@ -42,7 +42,12 @@ constexpr float kStopChipY = 20.0f;
 constexpr float kMsgAreaMinH = 96.0f;
 constexpr float kMsgAreaMaxH = 520.0f;
 
-// 弹窗实际宽/高的单边复算——仅本 TU 使用（composeTaskDetailDialog）
+// 弹窗实际宽/高的单边复算——仅本 TU 使用（composeTaskDetailDialog）。
+// 公式与 EUI-NEO components/dialog.h:81-82 的钳制逻辑对齐：
+//   width  = min(width_,  screenWidth_  - metrics_.spacing.overlay)
+//   height = min(height_, screenHeight_ - metrics_.spacing.overlay)
+// overlayInset 取 themeTokens.metrics.spacing.overlay（默认 48.0f，定义在
+// EUI-NEO components/theme.h:47），DevDesk 不硬编码同一值——读上游 true source。
 float detailDialogActualExtent(float requested, float screenExtent,
                                float overlayInset) {
     return std::min(requested, std::max(0.0f, screenExtent - overlayInset));
@@ -75,13 +80,14 @@ void AgentModule::composeTaskDetailDialog(
     const float summaryY = 60.0f;
     const float summaryH = wide
                                ? std::max(81.0f, 2.0f * 10.0f + lhS + lhB + lhS + 4.0f)
-                               : (h < 600.0f ? 116.0f : 122.0f);
+                               : (3.0f * std::max(48.0f, 2.0f * 10.0f + lhS + lhB) +
+                                  2.0f * 8.0f);
     const float configY = summaryY + summaryH + 8.0f;
     const float configH = std::max(40.0f, lhS + 20.0f);
     const float mainY = configY + configH + 12.0f;
     const float mainH = std::max(56.0f, h - mainY - 24.0f);
     const float leftW = static_cast<float>(
-        std::clamp(std::lround(innerW * 0.40f), 240L, 282L));
+        std::clamp(std::lround(innerW * 0.42f), 300L, 360L));
     const float rightX = x0 + leftW + 20.0f;
     const float rightW = std::max(0.0f, innerW - leftW - 20.0f);
     const float navH = h < 600.0f ? std::max(32.0f, lhS + 8.0f)
@@ -215,7 +221,6 @@ void AgentModule::composeTaskDetailDialog(
                         .size(cw, ch)
                         .color(t.colors.surfaceElevated)
                         .radius(t.sizes.radius)
-                        .border(1.0f, t.colors.borderDefault)
                         .build();
                     ui.text(id + ".label")
                         .position(kCardPad, kCardPad)
@@ -269,19 +274,19 @@ void AgentModule::composeTaskDetailDialog(
                         summaryFailed ? t.colors.error : t.colors.textPrimary,
                         statsSub, t.colors.textTertiary);
         } else {
-            const float rowH = (summaryH - kCardGap) / 2.0f;
-            const float halfW = std::max(0.0f, (innerW - kCardGap) / 2.0f);
-            summaryCard("agent.dialog.detail.summary.last", x0, summaryY, halfW,
+            const float rowH = (summaryH - 2.0f * kCardGap) / 3.0f;
+            summaryCard("agent.dialog.detail.summary.last", x0, summaryY, innerW,
                         rowH, "最近一次", lastValue, lastValueColor, lastSub,
                         t.colors.textTertiary);
-            summaryCard("agent.dialog.detail.summary.next", x0 + halfW + kCardGap,
-                        summaryY, halfW, rowH, "下一次", nextInfo.value,
+            summaryCard("agent.dialog.detail.summary.next", x0,
+                        summaryY + rowH + kCardGap, innerW, rowH, "下一次",
+                        nextInfo.value,
                         toneColor(nextInfo.tone, t.colors.textPrimary),
                         nextInfo.detail,
                         toneColor(nextInfo.tone, t.colors.textTertiary));
             summaryCard("agent.dialog.detail.summary.stats", x0,
-                        summaryY + rowH + kCardGap, innerW, rowH, "近 7 天",
-                        statsValue,
+                        summaryY + 2.0f * (rowH + kCardGap), innerW, rowH,
+                        "近 7 天", statsValue,
                         summaryFailed ? t.colors.error : t.colors.textPrimary,
                         statsSub, t.colors.textTertiary);
         }
@@ -557,6 +562,7 @@ void AgentModule::composeTaskDetailDialog(
                                             .text(durationText)
                                             .fontSize(fsS)
                                             .lineHeight(lhS)
+                                            .horizontalAlign(eui::HorizontalAlign::Right)
                                             .wrap(false)
                                             .maxWidth(std::max(
                                                 0.0f, cw - durationX - kRowInnerX))
