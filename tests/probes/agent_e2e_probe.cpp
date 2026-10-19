@@ -371,8 +371,15 @@ int main(int argc, char* argv[]) {
     const std::filesystem::path scratchRoot =
         std::filesystem::temp_directory_path() /
         ("devdesk_agent_e2e_root_" + std::to_string(static_cast<int>(getpid())));
+    const std::filesystem::path notesDir =
+        std::filesystem::temp_directory_path() /
+        ("devdesk_agent_e2e_notes_" + std::to_string(static_cast<int>(getpid())));
     std::error_code ec;
+    // 清上次残留（probe 启动时 remove_all 再重建，避免累积；目录名带 pid 天然区分）
+    std::filesystem::remove_all(scratchRoot, ec);
+    std::filesystem::remove_all(notesDir, ec);
     std::filesystem::create_directories(scratchRoot, ec);
+    std::filesystem::create_directories(notesDir, ec);
     test_support::setEnvVar("DEVDESK_DATA_ROOT", scratchRoot.string().c_str());
 
     const auto args = probe::parseProbeArgs(argc, argv);
@@ -426,11 +433,8 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // F2 的 scratch 笔记目录（库在临时路径，不与笔记目录嵌套——FileWatcher 契约）
-    const std::filesystem::path notesDir =
-        std::filesystem::temp_directory_path() /
-        ("devdesk_agent_e2e_notes_" + std::to_string(static_cast<int>(getpid())));
-    std::filesystem::create_directories(notesDir, ec);
+    // F2 的 scratch 笔记目录（库在临时路径，不与笔记目录嵌套——FileWatcher 契约；
+    // 已在 probe 启动时 remove_all + 重建，此处不再定义）
     module::markdown::MarkdownService mdSvc(db, notesDir);
 
     // 种子任务 F1/F2（daily，当天首 tick 即派发）与 F3/F5（manual）
@@ -895,6 +899,21 @@ int main(int argc, char* argv[]) {
         }
     }
 
+    // 失败透传：把所有 run 的 error 字段原文打到 stderr，排查不再依赖 scratch 考古
+    {
+        std::vector<int64_t> allTaskIds = {idF1, idF2, idF3, idF4, idF5};
+        for (int64_t tid : allTaskIds) {
+            if (tid == 0) continue;
+            auto runs = probeStore.listRuns(tid, 1);
+            if (runs.isFail() || runs.value().empty()) continue;
+            const auto& run = runs.value()[0];
+            if (run.error.has_value() && !run.error->empty()) {
+                std::cerr << "agent_e2e_probe: run<" << run.id << "> error 原文: "
+                          << truncateForLog(run.error.value(), 500) << "\n";
+            }
+        }
+    }
+
     // ---------- 结论表 ----------
     const auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
                                std::chrono::steady_clock::now() - tStart)
@@ -920,7 +939,9 @@ int main(int argc, char* argv[]) {
     core::releaseInputQueue(window);
     core::window::destroyWindow(window);
     probe::terminateWindowBackend();
-    // scratch 根/笔记目录留临时目录供排查（系统自清），不进用户数据根
+    // scratch 根/笔记目录保留供排查（下次运行前自清），不进用户数据根
+    std::cerr << "agent_e2e_probe: scratch 保留于 " << scratchRoot.string()
+              << "（下次运行前自清）\n";
     if (!passed) {
         std::cerr << "FAIL\n";
     } else {
