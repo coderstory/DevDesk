@@ -73,6 +73,9 @@ add_executable(devdesk_tests
     test_modules/test_ui_modern.cpp
     # W2b（§4.1/§4.15）：四级按钮 + FormRow helper 无头断言（色值/几何/尺寸统一）
     test_modules/test_ui_kit_button.cpp
+    # W2c（§4.3/§4.2/§4.4）：选中态 / Tab / 开关 helper 无头断言
+    #（绿竖线/绿下划线/绿轨道三件套 + 灰态防回归）
+    test_modules/test_ui_kit_selection.cpp
     test_modules/test_view_state.cpp
     test_modules/test_claude.cpp
     test_modules/test_claude_service.cpp
