@@ -270,9 +270,11 @@ int main(int argc, char* argv[]) {
     }
     const float homeY = homeHit->frame.y;
 
-    // 2) on → 下一帧条目出现，y = 前一条目下一格（itemH 40 + gap 4 = 44）。
+    // 2) on → 下一帧条目出现，y = 前一条目下一格 + 组间 divider（W3 §4.8）。
     // 注册序 = home, settings, agent；registerModule 按 PageId 序插入，故 Agent(4)
-    // 在 Settings(5) 之前，侧边栏序 Home, Agent, Settings → Settings 是 Agent 的下一格。
+    // 在 Settings(5) 之前，侧边栏序 Home, Agent, [groupdiv], Settings。
+    // Agent(work) → Settings(system) 间画 groupdiv（1px + gap 4 = 5px），故
+    // Settings.y = Agent.y + itemH40 + gap4 + divider1 + gap4 = Agent.y + 49。
     app::assembly::dispatchModuleToggle(module::settings::kModuleIdAgent, true,
                                         router, &lookupForProbe);
     composeFrame();
@@ -283,10 +285,10 @@ int main(int argc, char* argv[]) {
     check(agentHit != nullptr, "on 后：Agent 条目应出现");
     check(settingsHit != nullptr, "on 后：Settings 条目应存在（y 锚）");
     if (agentHit != nullptr && settingsHit != nullptr) {
-        check(nearEq(settingsHit->frame.y, agentHit->frame.y + 44.0f),
+        check(nearEq(settingsHit->frame.y, agentHit->frame.y + 49.0f),
               "Settings 条目 y=" + std::to_string(settingsHit->frame.y) +
-                  " 期望 " + std::to_string(agentHit->frame.y + 44.0f) +
-                  "（Agent 下一格——Agent 在 Settings 之前）");
+                  " 期望 " + std::to_string(agentHit->frame.y + 49.0f) +
+                  "（Agent 下一格 + 组间 divider 5px——Agent(work) 在 Settings(system) 之前）");
         check(ui->find("app.sidebar.item.Agent.label") != nullptr,
               "展开态 Agent label 应存在");
     }
@@ -315,6 +317,11 @@ int main(int argc, char* argv[]) {
     check(ui != nullptr &&
               countId(*ui, "app.sidebar.item.Agent.hit") == 1,
           "重复 on：Agent 条目应恰好 1 份（幂等注册，不产生重复条目）");
+
+    // 退出前落一张「当前状态图」（--screenshot <路径>）
+    // 通用看图口：跑一次 module_toggle_sidebar_probe 就能拿到此刻侧栏长什么样。
+    // 不传该开关时 captureIfRequested 立刻返回（零开销 / 不写文件）。
+    probe::captureIfRequested(args, window, runtime, &passed);
 
     // 收尾顺序：模块 onStop → runtime → 窗口 → 后端
     settings->onStop();

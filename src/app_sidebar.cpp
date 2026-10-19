@@ -10,6 +10,7 @@
 #include "module_agent/agent_module.h"
 #include "settings_config.h"
 #include <ui_kit/metrics.h>
+#include <ui_kit/selection_bar.h>  // W3：SelectionBar 选中态 helper（§4.3）
 #include <ui_kit/splash.h>
 #include <ui_kit/toast.h>
 
@@ -79,6 +80,12 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
     if (!router) return;
 
     const auto& t = ::core::theme::current();
+    // 微信色令牌快捷引用（W1 新增槽位，§2.1）；新旧并存，W3 侧栏逐页切换到此
+    const auto& wc = t.colors.wechat;
+    // W0.5：透明语义常量（非可主题化色，W0.5 误标为待清理字面量）。
+    // 用途：inactive hit 底 + toggle 底 + active 遮让 SelectionBar（让 SelectionBar 盖底）。
+    // 不抽到 theme.h 的 wechat.transparent 槽位（W3 不动 theme.h），保留为局部语义常量。
+    const eui::Color kTransparent{0.0f, 0.0f, 0.0f, 0.0f};
     const bool collapsed = g_sidebarCollapsed;
     const float kWidth = sidebarWidth();
 
@@ -105,12 +112,19 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
     ui.stack("app.sidebar")
         .size(kWidth, screen.height)
         .content([&] {
-            // 底色 = 主窗口 clearColor（随主题/效果档跟随），不自铺不透明底以在半透/磨砂档透出效果
+            // 侧栏底色：微绿灰（D-12 E1，§4.8 sidebarBgTinted #E8F0EC），z 序在最底，
+            // divider/brand/nav/toggle 都在其上。原"不自铺底以透出磨砂效果"的口径作废——
+            // §4.8 明示侧栏要自己的微绿灰底（仅染侧栏，不动页面区/白卡）。
+            ui.rect("app.sidebar.bg")
+                .size(kWidth, screen.height)
+                .color(wc.sidebarBgTinted)
+                .build();
+            // 右缘分割线：wechat.dividerPrimary（§4.7 一级 #E5E5E5，原 borderMuted 暖系）
             ui.rect("app.sidebar.divider")
                 .position(kWidth - 1.0f, 0.0f)
                 .size(1.0f, screen.height)
-                .color(t.colors.borderMuted)
-                .radius(t.sizes.radius)
+                .color(wc.dividerPrimary)
+                .radius(t.sizes.radiusWeChat)
                 .build();
 
             // brand 行：展开 = logo + "DevDesk" 横排，折叠 = 只显示居中 logo；两态共用 topPad 防跳动
@@ -122,7 +136,7 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                     .fontSize(t.sizes.fontSizePage)
                     .horizontalAlign(eui::HorizontalAlign::Center)
                     .verticalAlign(eui::VerticalAlign::Center)
-                    .color(t.colors.primary)
+                    .color(wc.primary)
                     .build();
             } else {
                 ui.text("app.sidebar.brand.logo")
@@ -132,7 +146,7 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                     .fontSize(t.sizes.fontSizePage)
                     .horizontalAlign(eui::HorizontalAlign::Center)
                     .verticalAlign(eui::VerticalAlign::Center)
-                    .color(t.colors.primary)
+                    .color(wc.primary)
                     .build();
                 ui.text("app.sidebar.brand")
                     .position(padX + kIconW + 8.0f, topPad)
@@ -141,30 +155,47 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                     .fontSize(t.sizes.fontSizePage)
                     .fontWeight(700)
                     .verticalAlign(eui::VerticalAlign::Center)
-                    .color(t.colors.textPrimary)
+                    .color(wc.textPrimary)
                     .build();
             }
 
             float y = topPad + kBrandH + kBrandNavGap;
-            for (auto* m : router->modules()) {
-                if (!m) continue;
+
+            // 导航项渲染：提取为 lambda（work/system 两组共用，避免重复代码）。
+            // active 态视觉走 SelectionBar（§4.3：2px 左绿竖线 + selectedBg + textPrimary），
+            // hit 区透明+onClick 承担点击；inactive 透出侧栏底，hover 浅灰反馈。
+            auto renderNavItem = [&](::core::Module* m) {
                 const ::core::PageId page = m->pageId();
                 const bool active = (page == router->currentPage());
                 const std::string id =
                     std::string("app.sidebar.item.") +
                     ::core::pageIdToString(page);
 
-                // 命中区 + 悬停反馈；折叠态命中区 = 72-16×2 = 40 宽（图标 28 居中在内）
+                // 命中区：normal 透明（active 时 SelectionBar 盖底；inactive 透出侧栏底）；
+                // hover/pressed：active 透明（不遮 SelectionBar），inactive 浅灰/深灰
                 ui.rect(id + ".hit")
                     .position(padX, y)
                     .size(kWidth - padX * 2.0f, itemH)
-                    .states(active ? t.colors.primarySoftBg
-                                   : eui::Color{0.0f, 0.0f, 0.0f, 0.0f},
-                            t.colors.hover, t.colors.active)
-                    .radius(t.sizes.radius)
+                    .states(kTransparent,
+                            active ? kTransparent : wc.dividerSecondary,
+                            active ? kTransparent : wc.selectedBg)
+                    .radius(t.sizes.radiusWeChat)
                     .onClick([router, page] { router->navigateTo(page); })
                     .build();
-                // 图标与文字分两个元素：Icon 字体（FontAwesome）不能和正文字体混排在一个 Text 里
+
+                // active 态叠 SelectionBar（§4.3：2px 左绿竖线 + selectedBg + 文字）。
+                // 展开态传 displayName：文字被 icon+label 遮盖（视觉无影响，z 序 SelectionBar
+                // 在前、icon/label 在后盖之）；折叠态传空串避免文字溢出（图标居中无文字空间）
+                if (active) {
+                    const std::string selLabel =
+                        collapsed ? std::string{} : m->displayName();
+                    ui_kit::selectionBar(ui, id + ".sel", selLabel,
+                                         padX, y, kWidth - padX * 2.0f, itemH, t);
+                }
+
+                // 图标与文字分两个元素：Icon 字体（FontAwesome）不能和正文字体混排在一个 Text 里。
+                // 图标：active=wechat.primary（§4.8 "图标同步变绿"），inactive=wechat.textSecondary。
+                // 标签：active=wechat.textPrimary（§4.3 "深灰文字 #1A1A1A"），inactive=wechat.textSecondary。
                 if (collapsed) {
                     ui.text(id + ".icon")
                         .position((kWidth - kIconW) * 0.5f, y)
@@ -173,8 +204,7 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                         .fontSize(t.sizes.fontSizeBody)
                         .horizontalAlign(eui::HorizontalAlign::Center)
                         .verticalAlign(eui::VerticalAlign::Center)
-                        .color(active ? t.colors.primary
-                                      : t.colors.textSecondary)
+                        .color(active ? wc.primary : wc.textSecondary)
                         .build();
                 } else {
                     ui.text(id + ".icon")
@@ -183,8 +213,7 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                         .icon(m->iconGlyph())
                         .fontSize(t.sizes.fontSizeBody)
                         .verticalAlign(eui::VerticalAlign::Center)
-                        .color(active ? t.colors.primary
-                                      : t.colors.textSecondary)
+                        .color(active ? wc.primary : wc.textSecondary)
                         .build();
                     ui.text(id + ".label")
                         .position(padX + kItemInset + kIconW, y)
@@ -193,15 +222,46 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                         .text(m->displayName())
                         .fontSize(t.sizes.fontSizeBody)
                         .verticalAlign(eui::VerticalAlign::Center)
-                        .color(active ? t.colors.primary
-                                      : t.colors.textSecondary)
+                        .color(active ? wc.textPrimary : wc.textSecondary)
                         .build();
                 }
 
                 y += itemH + gap;
+            };
+
+            // 分两组（§4.8）：work（Home/Markdown/Todo/ClaudeProxy/Agent）→ system（Settings/About）。
+            // 按 PageId 枚举分类，不依赖 modules() 顺序；router 按 PageId 序注册，天然 work 在前。
+            // 组间画 app.sidebar.groupdiv（wechat.dividerPrimary #E5E5E5，宽=kWidth-2*padX，高 1px）。
+            auto isSystemGroup = [](::core::PageId page) {
+                return page == ::core::PageId::Settings ||
+                       page == ::core::PageId::About;
+            };
+
+            bool groupDividerDrawn = false;
+            bool sawWork = false;
+            for (auto* m : router->modules()) {
+                if (!m) continue;
+                const ::core::PageId page = m->pageId();
+                const bool isSystem = isSystemGroup(page);
+
+                // work → system 首次切换时画组间 divider（仅当两组都非空：sawWork && isSystem）
+                if (!groupDividerDrawn && sawWork && isSystem) {
+                    ui.rect("app.sidebar.groupdiv")
+                        .position(padX, y)
+                        .size(kWidth - padX * 2.0f, 1.0f)
+                        .color(wc.dividerPrimary)
+                        .build();
+                    y += 1.0f + gap;  // divider 高 1px + 标准 gap 到下一项
+                    groupDividerDrawn = true;
+                }
+                if (!isSystem) sawWork = true;
+
+                renderNavItem(m);
             }
 
-            // 折叠开关（底部固定）：展开态 fa-angles-left、折叠态 fa-bars；展开左对齐、折叠居中
+            // 折叠开关（底部固定）：展开态 fa-angles-left、折叠态 fa-bars；展开左对齐、折叠居中。
+            // toggle 底色透明（W0.5：kTransparent 语义常量，非可主题化色）；
+            // hover/active 走 wechat.dividerSecondary/wechat.selectedBg；radius→radiusWeChat（D-12 E2 统一 6）
             constexpr float kToggleSize = 36.0f;
             const float toggleY = screen.height - 56.0f;
             const float toggleX =
@@ -209,9 +269,8 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
             ui.rect("app.sidebar.toggle")
                 .position(toggleX, toggleY)
                 .size(kToggleSize, kToggleSize)
-                .states(eui::Color{0.0f, 0.0f, 0.0f, 0.0f}, t.colors.hover,
-                        t.colors.active)
-                .radius(t.sizes.radius)
+                .states(kTransparent, wc.dividerSecondary, wc.selectedBg)
+                .radius(t.sizes.radiusWeChat)
                 .onClick([] {
                     setSidebarCollapsed(!sidebarCollapsed(), true);
                 })
@@ -223,7 +282,7 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                 .fontSize(t.sizes.fontSizeBody)
                 .horizontalAlign(eui::HorizontalAlign::Center)
                 .verticalAlign(eui::VerticalAlign::Center)
-                .color(t.colors.textSecondary)
+                .color(wc.textSecondary)
                 .build();
         })
         .build();

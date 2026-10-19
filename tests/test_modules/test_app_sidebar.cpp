@@ -475,3 +475,92 @@ REGISTER_TEST(sidebar_re_register_lands_table_order,
     app::setSidebarCollapsed(false);  // 还原，不污染后续用例
     return true;
 })
+
+// W3 导航壳整改：侧栏底色 + work/system 分组 + 组间 divider + active SelectionBar。
+// 钉 §4.8 几何契约：work 组在前、system 组在后、组间 divider 在两组之间（仅当两组都非空）。
+// 钉 §4.3 active 态视觉：SelectionBar 三件套（.sel.bg/.sel.accent/.sel.text）渲染在 active 项。
+REGISTER_TEST(sidebar_w3_grouping_and_selectionbar,
+              "sidebar: W3 分组(work/system) + 组间 divider + active SelectionBar (sec 4.8 + 4.3)", {
+    app::setSidebarCollapsed(false);
+    RecordingModule home(::core::PageId::Home, "首页");
+    RecordingModule settings(::core::PageId::Settings, "设置");
+    RecordingModule about(::core::PageId::About, "关于");
+    ::core::Router router;
+    router.registerModule(&home);
+    router.registerModule(&settings);
+    router.registerModule(&about);
+    test_support::ScopedAppRouter scoped(&router);
+    router.navigateTo(::core::PageId::Home);  // 让 Home = active，验证 SelectionBar 渲染
+
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    eui::Ui ui;
+    ui.begin("sidebar_w3_grouping");
+    app::compose(ui, screen);
+    ui.end();
+
+    // 侧栏底色块存在（§4.8 D-12 E1：sidebarBgTinted 微绿灰）
+    DOCTEST_CHECK(ui.find("app.sidebar.bg") != nullptr);
+
+    // Home（work 组、active）在 y=100；active 项应有 SelectionBar 三件套（§4.3）
+    const auto* homeHit = ui.find("app.sidebar.item.Home.hit");
+    DOCTEST_REQUIRE(homeHit != nullptr);
+    DOCTEST_CHECK(floatEq(homeHit->y, 100.0f));
+    DOCTEST_CHECK(ui.find("app.sidebar.item.Home.sel.bg") != nullptr);
+    DOCTEST_CHECK(ui.find("app.sidebar.item.Home.sel.accent") != nullptr);
+    DOCTEST_CHECK(ui.find("app.sidebar.item.Home.sel.text") != nullptr);
+
+    // 组间 divider 在 Home 之下（y=144 = 100 + itemH40 + gap4）
+    const auto* groupdiv = ui.find("app.sidebar.groupdiv");
+    DOCTEST_REQUIRE(groupdiv != nullptr);
+    DOCTEST_CHECK(floatEq(groupdiv->y, 144.0f));
+
+    // Settings（system 组）在 divider 之下（y=149 = 144 + divider1 + gap4）
+    const auto* settingsHit = ui.find("app.sidebar.item.Settings.hit");
+    DOCTEST_REQUIRE(settingsHit != nullptr);
+    DOCTEST_CHECK(floatEq(settingsHit->y, 149.0f));
+
+    // About 在 Settings 之下（y=193 = 149 + itemH40 + gap4）
+    const auto* aboutHit = ui.find("app.sidebar.item.About.hit");
+    DOCTEST_REQUIRE(aboutHit != nullptr);
+    DOCTEST_CHECK(floatEq(aboutHit->y, 193.0f));
+
+    // Settings/About 是 inactive，不应有 SelectionBar（W3：active 才叠 SelectionBar）
+    DOCTEST_CHECK(ui.find("app.sidebar.item.Settings.sel.bg") == nullptr);
+    DOCTEST_CHECK(ui.find("app.sidebar.item.About.sel.bg") == nullptr);
+
+    // 标签文本逐字断言（纪律：分组不换标签字面；test_app_sidebar.cpp:232/:371 文本断言不动）
+    DOCTEST_CHECK(ui.find("app.sidebar.item.Settings.label")->text == "设置");
+    DOCTEST_CHECK(ui.find("app.sidebar.item.About.label")->text == "关于");
+    DOCTEST_CHECK(ui.find("app.sidebar.item.Home.label")->text == "首页");
+
+    app::setSidebarCollapsed(false);  // 还原，不污染后续用例
+    return true;
+})
+
+// W3：work-only 组无 divider（现有 Home+Markdown 测试隐式覆盖，但显式断言 groupdiv 不存在更稳）
+REGISTER_TEST(sidebar_w3_no_divider_when_only_work,
+              "sidebar: W3 仅 work 组时无 groupdiv（sec 4.8 分组仅两组都非空才画）", {
+    app::setSidebarCollapsed(false);
+    RecordingModule home(::core::PageId::Home, "首页");
+    RecordingModule md(::core::PageId::Markdown, "笔记");
+    ::core::Router router = makeStubRouter(home, md);
+    test_support::ScopedAppRouter scoped(&router);
+
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    eui::Ui ui;
+    ui.begin("sidebar_w3_no_divider");
+    app::compose(ui, screen);
+    ui.end();
+
+    // 无 system 组项 → 不应画 groupdiv
+    DOCTEST_CHECK(ui.find("app.sidebar.groupdiv") == nullptr);
+    // Markdown.y 仍是 144（不被 divider 推走）
+    DOCTEST_CHECK(floatEq(ui.find("app.sidebar.item.Markdown.hit")->y, 144.0f));
+
+    app::setSidebarCollapsed(false);
+    return true;
+})
