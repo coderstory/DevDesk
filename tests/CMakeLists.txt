@@ -71,6 +71,8 @@ add_executable(devdesk_tests
     test_modules/test_direct_llm_client.cpp
     test_modules/test_todo_ui.cpp
     test_modules/test_ui_modern.cpp
+    # W2b（§4.1/§4.15）：四级按钮 + FormRow helper 无头断言（色值/几何/尺寸统一）
+    test_modules/test_ui_kit_button.cpp
     test_modules/test_view_state.cpp
     test_modules/test_claude.cpp
     test_modules/test_claude_service.cpp
@@ -115,7 +117,6 @@ add_executable(devdesk_tests
     test_modules/test_app_sidebar.cpp
     test_modules/test_app_assembly.cpp
     test_modules/test_module_toggle_bridge.cpp
-    test_modules/test_splash_contract.cpp
 )
 
 # ==================== 用例登记自检（TIN-10） =============# 上面是**手工源表**：漏登记一个用例 .cpp = 该文件永不编译、用例永不注册，

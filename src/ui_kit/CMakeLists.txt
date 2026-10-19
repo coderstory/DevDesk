@@ -11,6 +11,10 @@ add_library(devdesk_ui_kit STATIC
     dialog_form.cpp
     card.cpp
     splash.cpp
+    # W2b 新增（§4.1/§4.15）：四级按钮 helper + 表单栅格 helper。新组件并存，
+    # 既有 button 调用不动，W5-W10 逐页切换调新组件。
+    button.cpp
+    form_row.cpp
 )
 
 devdesk_apply_warnings(devdesk_ui_kit)
