@@ -49,7 +49,7 @@ REGISTER_TEST(splash_api_signature, "splash.h: API 签名保 drawSplashIfNeeded 
     DOCTEST_CHECK(!src.empty());
     DOCTEST_CHECK(contains(src,
                    "bool drawSplashIfNeeded(eui::Ui& ui, const eui::Screen& screen);"));
-    DOCTEST_CHECK(contains(src, "void setSplashDisabledForTests(bool disabled);"));
+    DOCTEST_CHECK(contains(src, "void setSplashDisabledForTests(bool disabled)"));
     return true;
 })
 
