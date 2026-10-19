@@ -1,23 +1,21 @@
-// 关于页独立模块：纯 compose 页，只读静态信息 + 构建期注入常量，
-// 无 onStart/onStop/storage，不依赖任何 module_*。平台/架构由 CMake 配置期注入宏，本文件只消费。
+// 关于页独立模块：微信风格关于页（W10 整改）。
+// 居中纯白卡片 + 信息列表两列 + Git commit/版本绿色文字 + 复制功能 + 版权 footer。
+// 渐变光晕装饰已移除（about_anim.h 保留空壳）。无 onStart/onStop/storage。
+// 平台/架构由 CMake 配置期注入宏，本文件只消费。
 #include "core/component_theme.h"
 #include "core/logging.h"
 #include "core/module_interface.h"
-#include "core/paths.h"
 #include "core/theme.h"
+#include "core/window/window_backend.h"  // core::window::setClipboardText（复制）
 
-#include "platform/file_open.h"
-
-#include "about_anim.h"
-
-#include <ui_kit/card.h>
+#include <ui_kit/button.h>      // ui_kit::button Secondary（复制全部信息）
+#include <ui_kit/light_toast.h>  // showLightToast（复制成功 toast）
 
 #include <eui/dsl.h>
 
-#include <components/button.h>
-
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <string>
@@ -78,100 +76,30 @@ std::string aboutCppLine() {
     return "C++11";
 }
 
+// 「复制全部信息」文本：拼全部版本/commit/依赖信息到一段文本。
+std::string buildAllInfoText() {
+    std::string text;
+    text += "DevDesk " + aboutVersionLine() + "\n";
+    text += "Git commit: " + std::string(DEVDESK_GIT_REV) + "\n";
+    text += "构建时间: " + aboutBuildLine() + "\n";
+    text += "编译器: " + std::string(DEVDESK_COMPILER) + "\n";
+    text += "平台: " + aboutPlatformLine() + "\n";
+    text += "C++ 标准: " + aboutCppLine() + "\n";
+    text += "GUI 框架: EUI-NEO (OpenGL)\n";
+    text += "EUI-NEO: " + aboutEuiNeoLine() + "\n";
+    text += "数据库: SQLite 3 + FTS5\n";
+    text += "HTTP: libcurl (静态链接)\n";
+    text += "TLS: OpenSSL 3.x (静态链接)\n";
+    text += "字体: FreeType + FontAwesome 7";
+    return text;
+}
+
+// 信息行：左标签 + 右内容。highlight=true → 绿色文字 + 可复制（wechat.primary）。
 struct AboutRow {
-    const char* label;   // 13px textTertiary 左
-    std::string value;   // 13px 右对齐
-    bool hash = false;   // true → 短 hash / rev 等标识符用主色
+    const char* label;
+    std::string value;
+    bool highlight = false;
 };
-
-// 卡片底板走 ui_kit::cardFrame（与设置页同一视觉语言）。行高 = 卡高算式的一项。
-void aboutCard(eui::Ui& ui, const std::string& id, const core::theme::Tokens& t,
-               float x, float y, float w, float h, unsigned int iconCode,
-               const char* title, const AboutRow* rows, int rowCount) {
-    constexpr float padX = 28.0f;
-    constexpr float kPadY = 24.0f;   // 上下留白（卡高算式的一项，勿单改）
-    constexpr float kTitleRowH = 28.0f;
-    constexpr float kRowH = 28.0f;   // 信息行行高（卡高算式的一项，勿单改）
-    ui.stack(id)
-        .position(x, y)
-        .size(w, h)
-        .content([&] {
-            ui_kit::cardFrame(ui, id, w, h, t);
-            ui.text(id + ".icon")
-                .position(padX, kPadY + 2.0f)   // 图标与标题行同基线（+2 居中）
-                .size(20.0f, 20.0f)
-                .icon(iconCode)
-                .fontSize(18.0f)
-                .color(t.colors.textSecondary)
-                .build();
-            ui.text(id + ".title")
-                .position(padX + 24.0f, kPadY)
-                .size(w - padX * 2.0f - 24.0f, 22.0f)
-                .text(title)
-                .fontSize(t.sizes.fontSizeLarge)
-                .lineHeight(22.0f)
-                .fontWeight(600)
-                .color(t.colors.textPrimary)
-                .build();
-            const float rowTop = kPadY + kTitleRowH;
-            for (int i = 0; i < rowCount; ++i) {
-                const float rowY = rowTop + static_cast<float>(i) * kRowH;
-                ui.text(id + ".label." + std::to_string(i))
-                    .position(padX, rowY)
-                    .size(110.0f, kRowH)
-                    .text(rows[i].label)
-                    .fontSize(t.sizes.fontSizeSmall)
-                    .lineHeight(kRowH)
-                    .color(t.colors.textTertiary)
-                    .build();
-                ui.text(id + ".value." + std::to_string(i))
-                    .position(padX, rowY)
-                    .size(w - padX * 2.0f, kRowH)
-                    .text(rows[i].value)
-                    .fontSize(t.sizes.fontSizeSmall)
-                    .lineHeight(kRowH)
-                    .horizontalAlign(eui::HorizontalAlign::Right)
-                    .color(rows[i].hash ? t.colors.primary
-                                        : t.colors.textPrimary)
-                    .build();
-            }
-        })
-        .build();
-}
-
-// 备用「打开」按钮；[[maybe_unused]] 防 -Werror=unused-function（GCC 对匿名命名空间未用函数告警）
-[[maybe_unused]] void openDirectoryButton(eui::Ui& ui, const std::string& id,
-                         const core::theme::Tokens& t, float x, float y,
-                         const std::string& path) {
-    const auto compTheme = core::theme::componentTokens(t);
-    components::button(ui, id)
-        .position(x, y)
-        .size(72.0f, 30.0f)
-        .text("打开")
-        .fontSize(t.sizes.fontSizeSmall)
-        .theme(compTheme, /*primary=*/false)
-        .colors(t.colors.surfaceElevated, t.colors.hover, t.colors.active)
-        .textColor(t.colors.textPrimary)
-        .radius(t.sizes.radiusSmall)
-        .border(1.0f, t.colors.borderDefault)
-        .onClick([path] {
-            auto r = ::platform::file_open::openDirectory(path);
-            if (!r.isOk()) {
-                LOG_ERROR("About: openDirectory 失败 " + path + ": " +
-                          r.errorMessage());
-            }
-        })
-        .build();
-}
-
-// 动态光晕背景：光斑 + 利萨如漂移 + 呼吸 + 聚光扫过带 + 霓虹边；休眠由 awake() 单点开关控制。
-// 驱动 onTimer 30fps（光晕要一直动，但不必每帧重绘）。
-
-// 主题两色线性插值（theme 运行期可切换，故在 compose 时现算）
-eui::Color mixThemeColor(const eui::Color& a, const eui::Color& b, float t) {
-    return {a.r + (b.r - a.r) * t, a.g + (b.g - a.g) * t,
-            a.b + (b.b - a.b) * t, a.a + (b.a - a.a) * t};
-}
 
 } // namespace
 
@@ -180,172 +108,223 @@ public:
     ::core::PageId pageId() const override { return ::core::PageId::About; }
     std::string displayName() const override { return "关于"; }
     std::string shortName() const override { return "关于"; }
-    std::string iconGlyph() const override { return eui::utf8(0xF05A); }  // fa-circle-info
+    std::string iconGlyph() const override { return eui::utf8(0xF05A); }
 
     void compose(eui::Ui& ui, const eui::Screen& screen) override {
         const auto& t = core::theme::current();
+        const auto& wc = t.colors.wechat;
 
-        // 页面不铺底色（主窗 clearColor 透出）；本层透明承载，作背景装饰不拦交互。
-        AboutAnimState& anim = ui.state<AboutAnimState>("about.anim");
-        if (!anim.initialized) {
-            initGlowLayer(anim);
-        }
-        auto bg = ui.rect("about.bg");
-        bg.position(0.0f, 0.0f)
+        // —— 页面底色：wechat.pageBg #F7F7F7（§4.14 面板灰底）——
+        ui.rect("about.bg")
+            .position(0.0f, 0.0f)
             .size(screen.width, screen.height)
-            .color(eui::Color{0.0f, 0.0f, 0.0f, 0.0f})
-            .cursor(eui::CursorShape::Arrow)
-            .onMove([&anim](const eui::PointerEvent&, const eui::Rect&) {
-                anim.wakeHold = 0.0f;  // 指针移动唤醒 / 续期
-            });
-        if (anim.awake()) {
-            // 30fps 节拍推进；空闲超时后不再挂此回调 → 运行时零合成零重绘
-            bg.onTimer(AboutAnimState::kFrameSeconds,
-                       [&anim] { anim.step(AboutAnimState::kFrameSeconds); });
-        }
-        bg.build();
+            .color(wc.pageBg)
+            .build();
 
-        // 光斑：同心圆叠层（半径递增 / alpha 递减）伪造径向渐变，色只用 primary + 暖琥珀。
-        const eui::Color amber = t.colors.warning;
-        for (int i = 0; i < AboutAnimState::kBlobCount; ++i) {
-            const GlowBlob& blob = anim.blobs[static_cast<std::size_t>(i)];
-            float cx = 0.0f, cy = 0.0f;
-            blobCenter(anim, i, screen.width, screen.height, cx, cy);
-            const float breath = blobBreath(anim, i);  // 1 ± 0.35
-            const eui::Color base = mixThemeColor(t.colors.primary, amber,
-                                                  blob.colorMix);
-            for (int k = 0; k < AboutAnimState::kLayersPerBlob; ++k) {
-                const float radius = blobLayerRadius(blob.radius, k);
-                eui::Color layer = base;
-                layer.a = blobLayerAlpha(k) * breath;
-                auto element = ui.rect("about.glow." + std::to_string(i) + "." +
-                                       std::to_string(k));
-                element.position(cx - radius, cy - radius)
-                    .size(radius * 2.0f, radius * 2.0f)
-                    .radius(radius)
-                    .color(layer);
-                if (k == AboutAnimState::kLayersPerBlob - 1) {
-                    // 最外圈霓虹边：primary@0.35 的 shadow 提亮轮廓（不影响本层填充 alpha）。
-                    eui::Color halo = base;
-                    halo.a = AboutAnimState::kNeonShadowAlpha;
-                    element.shadow(AboutAnimState::kNeonShadowBlur, 0.0f, 0.0f,
-                                   halo);
-                } else {
-                    // 内层柔边：同色 shadow（offset 0）抹平离散叠层的同心圆台阶。
-                    eui::Color halo = base;
-                    halo.a = layer.a * AboutAnimState::kLayerSoftAlphaScale;
-                    element.shadow(AboutAnimState::kLayerSoftBlur, 0.0f, 0.0f,
-                                   halo);
-                }
-                element.build();
-            }
+        // —— 卡片几何常量 ——
+        constexpr float kCardW = 520.0f;
+        constexpr float kCardPadX = 24.0f;
+        constexpr float kCardPadTop = 32.0f;
+        constexpr float kCardPadBottom = 32.0f;
+        constexpr float kIconSize = 48.0f;
+        constexpr float kIconGap = 8.0f;
+        constexpr float kTitleH = 24.0f;
+        constexpr float kTitleGap = 20.0f;
+        constexpr float kRowH = 36.0f;
+        constexpr int kRowCount = 6;
+        constexpr float kButtonGap = 20.0f;
+        constexpr float kButtonH = 34.0f;  // ui_kit::kButtonHeight
+        constexpr float kButtonW = 160.0f;
+        constexpr float kFooterH = 20.0f;
+        constexpr float kFooterGap = 16.0f;  // 卡底→页脚间距
+        constexpr float kLabelW = 120.0f;
+
+        // 卡高 = 上留白 + 图标 + 图标间距 + 标题 + 标题间距 + 6 行 + 按钮间距 + 按钮 + 下留白
+        const float cardH = kCardPadTop + kIconSize + kIconGap + kTitleH +
+                            kTitleGap + kRowCount * kRowH + kButtonGap +
+                            kButtonH + kCardPadBottom;
+
+        // 居中：x = (screen.w - cardW) / 2
+        const float cardX = std::max(0.0f, (screen.width - kCardW) / 2.0f);
+
+        // 页脚贴页面底部（spacingXXLarge padding）
+        const float footerY = screen.height - t.sizes.spacingXXLarge - kFooterH;
+
+        // 卡片顶贴：默认 spacingXXLarge；极矮窗下 clamp 到不与页脚重叠
+        float cardY = t.sizes.spacingXXLarge;
+        if (cardY + cardH + kFooterGap > footerY) {
+            cardY = std::max(0.0f, footerY - kFooterGap - cardH);
         }
-        // 聚光扫过带：两半拼出对称梯形 alpha 剖面（无硬边），14s 从左扫到右一轮。
-        {
-            const float left = sweepLeft(anim, screen.width);
-            constexpr float halfW = AboutAnimState::kSweepWidth * 0.5f;
-            const float bandH = screen.height * AboutAnimState::kSweepHeightFactor;
-            const float bandY = (screen.height - bandH) * 0.5f;
-            eui::Color fade = t.colors.primary;
-            fade.a = 0.0f;
-            eui::Color peak = t.colors.primary;
-            peak.a = AboutAnimState::kSweepAlpha;
-            eui::Color halo = t.colors.primary;
-            halo.a = AboutAnimState::kSweepShadowAlpha;
-            for (int half = 0; half < AboutAnimState::kSweepHalves; ++half) {
-                const bool leading = half == 1;  // 后半：峰值 → 0（行进前缘渐隐）
-                ui.rect("about.sweep." + std::to_string(half))
-                    .position(left + halfW * static_cast<float>(half), bandY)
-                    .size(halfW, bandH)
-                    .radius(halfW)
-                    .gradient(leading ? peak : fade, leading ? fade : peak,
-                              core::GradientDirection::Horizontal)
-                    .rotate(AboutAnimState::kSweepTiltRad)
-                    .shadow(AboutAnimState::kSweepShadowBlur, 0.0f, 0.0f, halo)
+
+        // —— 居中纯白卡片：wechat.cardBg #FFFFFF + radiusWeChat 6px + dividerPrimary 边框 ——
+        ui.stack("about.card")
+            .position(cardX, cardY)
+            .size(kCardW, cardH)
+            .content([&] {
+                // 卡片背景
+                ui.rect("about.card.bg")
+                    .position(0.0f, 0.0f)
+                    .size(kCardW, cardH)
+                    .color(wc.cardBg)
+                    .radius(t.sizes.radiusWeChat)
+                    .border(1.0f, wc.dividerPrimary)
                     .build();
+
+                // —— 卡片顶部：DevDesk 图标 + 应用名称，居中 ——
+                // TODO: 待真实 DevDesk logo 资产（当前用 FontAwesome 0xF5LC fa-laptop-code 占位）
+                float y = kCardPadTop;
+                ui.text("about.card.icon")
+                    .position((kCardW - kIconSize) / 2.0f, y)
+                    .size(kIconSize, kIconSize)
+                    .icon(0xF5FC)  // fa-laptop-code（待真实 logo 资产）
+                    .fontSize(kIconSize)
+                    .color(wc.primary)
+                    .build();
+                y += kIconSize + kIconGap;
+
+                ui.text("about.card.title")
+                    .position(0.0f, y)
+                    .size(kCardW, kTitleH)
+                    .text("DevDesk")
+                    .fontSize(t.sizes.fontSizeLarge)
+                    .lineHeight(kTitleH)
+                    .fontWeight(700)
+                    .color(wc.textPrimary)
+                    .horizontalAlign(eui::HorizontalAlign::Center)
+                    .build();
+                y += kTitleH + kTitleGap;
+
+                // —— 信息列表：两列对齐 + 分割线 ——
+                // 左标签定宽 120px wechat.textSecondary；右内容左对齐 wechat.textPrimary
+                const AboutRow rows[] = {
+                    {"版本", aboutVersionLine(), true},
+                    {"Git commit", DEVDESK_GIT_REV, true},
+                    {"构建时间", aboutBuildLine(), false},
+                    {"编译器", DEVDESK_COMPILER, false},
+                    {"平台", aboutPlatformLine(), false},
+                    {"C++ 标准", aboutCppLine(), false},
+                };
+
+                const float valueX = kCardPadX + kLabelW + t.sizes.spacing;
+                // 留 20px 给 highlight 行的复制图标；非 highlight 行右端多 20px 空白（不影响左对齐）
+                const float valueW = kCardW - valueX - kCardPadX - 20.0f;
+
+                for (int i = 0; i < kRowCount; ++i) {
+                    const float rowY = y + static_cast<float>(i) * kRowH;
+
+                    // 分割线（行间，非首行上方；§4.7 二级分割线 #EDEDED）
+                    if (i > 0) {
+                        ui.rect("about.card.divider." + std::to_string(i))
+                            .position(kCardPadX, rowY - 0.5f)
+                            .size(kCardW - kCardPadX * 2.0f, 1.0f)
+                            .color(wc.dividerSecondary)
+                            .build();
+                    }
+
+                    // 左标签
+                    ui.text("about.card.label." + std::to_string(i))
+                        .position(kCardPadX, rowY)
+                        .size(kLabelW, kRowH)
+                        .text(rows[i].label)
+                        .fontSize(t.sizes.fontSizeSmall)
+                        .lineHeight(kRowH)
+                        .color(wc.textSecondary)
+                        .build();
+
+                    // 右内容（highlight → 绿色 wechat.primary）
+                    ui.text("about.card.value." + std::to_string(i))
+                        .position(valueX, rowY)
+                        .size(valueW, kRowH)
+                        .text(rows[i].value)
+                        .fontSize(t.sizes.fontSizeSmall)
+                        .lineHeight(kRowH)
+                        .color(rows[i].highlight ? wc.primary : wc.textPrimary)
+                        .build();
+
+                    // 复制图标（highlight 行；EUI 无 onEnter/onLeave → 始终可见）
+                    if (rows[i].highlight) {
+                        constexpr float kCopyIconSize = 16.0f;
+                        const float iconX = valueX + valueW + 4.0f;
+                        const float iconY = rowY + (kRowH - kCopyIconSize) / 2.0f;
+                        ui.text("about.card.copy." + std::to_string(i))
+                            .position(iconX, iconY)
+                            .size(kCopyIconSize, kCopyIconSize)
+                            .icon(0xF0C5)  // fa-copy
+                            .fontSize(kCopyIconSize)
+                            .color(wc.textTertiary)
+                            .build();
+
+                        // 透明 hit 区：点击复制该行值
+                        std::string copyText = rows[i].value;
+                        ui.rect("about.card.hit." + std::to_string(i))
+                            .position(kCardPadX, rowY)
+                            .size(kCardW - kCardPadX * 2.0f, kRowH)
+                            .color(eui::Color{0.0f, 0.0f, 0.0f, 0.0f})
+                            .cursor(eui::CursorShape::Hand)
+                            .onClick([this, copyText] {
+                                ::core::window::setClipboardText(copyText);
+                                triggerToast("已复制");
+                                LOG_INFO("About: 已复制 " + copyText);
+                            })
+                            .build();
+                    }
+                }
+                y += kRowCount * kRowH + kButtonGap;
+
+                // —— 「复制全部信息」浅灰次按钮（§4.1 Secondary 级），居中 ——
+                const float btnX = (kCardW - kButtonW) / 2.0f;
+                ui_kit::ButtonOptions opts;
+                opts.onClick = [this] {
+                    ::core::window::setClipboardText(buildAllInfoText());
+                    triggerToast("已复制全部信息");
+                    LOG_INFO("About: 已复制全部信息");
+                };
+                ui_kit::button(ui, "about.card.copyall", "复制全部信息",
+                               ui_kit::ButtonLevel::Secondary,
+                               btnX, y, kButtonW, kButtonH, t, opts);
+
+                // TODO: 开源许可证模块（补充项，签认可划；依赖清单待取全，暂不硬做）
+            })
+            .build();
+
+        // —— 版权声明：12px 三级灰 wechat.textTertiary #999999，居中页面最底部 ——
+        ui.text("about.footer")
+            .position(0.0f, footerY)
+            .size(screen.width, kFooterH)
+            .text("© 2026 DevDesk")
+            .fontSize(12.0f)  // spec §3.7.4：版权 12px（theme 无 12px token，用字面量）
+            .lineHeight(kFooterH)
+            .color(wc.textTertiary)
+            .horizontalAlign(eui::HorizontalAlign::Center)
+            .build();
+
+        // —— 复制成功 toast：微信式轻提示（§4.10），居中 ——
+        // toast 机制：onClick 设 toastActive_=true + toastMsg_；compose 每帧调 showLightToast。
+        // toastActive_=true 时传 toastMsg_ 触发/续渲；1.5s 后 elapsed >= duration → toastActive_=false
+        // → 下一帧传 "" 重置 state（s.message 变化 → 触发但 message.empty → 不渲染）。
+        // EUI 无 onEnter/onLeave，hover 复制图标改为始终可见（W10 已知限制）。
+        const std::string& toastMsg = toastActive_ ? toastMsg_ : std::string{};
+        ui_kit::showLightToast(ui, "about.toast", toastMsg,
+                               screen.width * 0.5f, screen.height * 0.5f, t);
+        if (toastActive_) {
+            const float elapsed =
+                std::chrono::duration<float>(
+                    std::chrono::steady_clock::now() - toastStart_).count();
+            if (elapsed >= ui_kit::kLightToastDurationSec) {
+                toastActive_ = false;
             }
         }
+    }
 
-        // 居中 900px 主内容区（窄窗不滚动）：按最小窗宽 1330 减侧边栏 208 推得页面宽 1122，居中不溢出
-        constexpr float kAboutContentW = 900.0f;
-        const float x = std::max(0.0f, (screen.width - kAboutContentW) / 2.0f);
-        constexpr float cardGap = 8.0f;
-        // 单张卡高 = 上留白 24 + 标题行 28 + 6 行 × 28 + 下留白 24 = 244。
-        constexpr float cardH = 24.0f + 28.0f + 6.0f * 28.0f + 24.0f;
-        // hero 间距与标题行高：提为常量仅为把内容块总高写成算式
-        constexpr float heroGap = 8.0f;
-        constexpr float heroTitleH = 40.0f;
-        constexpr float footerH = 20.0f;
+private:
+    bool toastActive_ = false;
+    std::string toastMsg_;
+    std::chrono::steady_clock::time_point toastStart_{};
 
-        // topPad = 极矮窗兜底起点（下方 max 护栏）；正常窗口起笔点是反推值、恒大于它
-        const float topPad = t.sizes.spacingXXLarge;
-        // hero 图标 = 56（装饰尺寸，不在字号规范内；再大 em 盒余量小、有裁切风险）
-        const float heroIcon = t.sizes.spacingXXLarge + t.sizes.spacingLarge;
-        // 内容块整体贴页脚上方，起点反推 y = 页脚顶 − 一档间距 − 内容块总高；
-        // max(topPad, …) 护栏：极矮窗装不下时退回顶部对齐
-        const float contentH = heroIcon + heroGap + heroTitleH +
-                               t.sizes.spacingXLarge + cardH + cardGap + cardH;
-        const float footerTop = screen.height - t.sizes.spacingXXLarge - footerH;
-        float y = std::max(topPad, footerTop - t.sizes.spacingXLarge - contentH);
-        ui.text("about.hero.icon")
-            .position(x + (kAboutContentW - heroIcon) / 2.0f, y)
-            .size(heroIcon, heroIcon)
-            .icon(0xF5FC)  // fa-laptop-code（侧边栏 logo 同款）
-            .fontSize(heroIcon)
-            .color(t.colors.primary)
-            .build();
-        y += heroIcon + heroGap;
-        ui.text("about.hero.title")
-            .position(x, y)
-            .size(kAboutContentW, heroTitleH)
-            .text("DevDesk")
-            .fontSize(t.sizes.fontSizePage)
-            .lineHeight(heroTitleH)
-            .fontWeight(700)
-            .color(t.colors.textPrimary)
-            .horizontalAlign(eui::HorizontalAlign::Center)
-            .build();
-        y += heroTitleH + t.sizes.spacingXLarge;
-
-        // 两卡占满内容区宽、等高 cardH，上下堆叠，起始 y 由 contentH 反推（贴底对齐）。
-        const float cardW = kAboutContentW;
-
-        // 卡 1：应用信息
-        const AboutRow infoRows[] = {
-            {"版本", aboutVersionLine(), false},
-            {"Git commit", DEVDESK_GIT_REV, true},
-            {"构建时间", aboutBuildLine(), false},
-            {"编译器", DEVDESK_COMPILER, false},
-            {"平台", aboutPlatformLine(), false},
-            {"C++ 标准", aboutCppLine(), false},
-        };
-        aboutCard(ui, "about.card.app", t, x, y, cardW, cardH,
-                  0xF05A /* fa-circle-info */, "应用信息", infoRows, 6);
-
-        // 卡 2：依赖与框架
-        const AboutRow depsRows[] = {
-            {"GUI 框架", "EUI-NEO (OpenGL)", false},
-            {"EUI-NEO", aboutEuiNeoLine(), true},
-            {"数据库", "SQLite 3 + FTS5", false},
-            {"HTTP", "libcurl (静态链接)", false},
-            {"TLS", "OpenSSL 3.x (静态链接)", false},
-            {"字体", "FreeType + FontAwesome 7", false},
-        };
-        aboutCard(ui, "about.card.deps", t, x, y + cardH + cardGap, cardW, cardH,
-                  0xF5FD /* fa-layer-group */, "依赖与框架", depsRows, 6);
-
-        // 页脚贴页面底部；max() 护栏：极矮窗下 footer 不与卡片重叠。
-        const float cardsBottom = y + cardH + cardGap + cardH;
-        const float footerY = std::max(cardsBottom + cardGap, footerTop);
-        ui.text("about.footer")
-            .position(x, footerY)
-            .size(kAboutContentW, footerH)
-            .text("© 2026 DevDesk")
-            .fontSize(t.sizes.fontSizeSmall)
-            .lineHeight(footerH)
-            .color(t.colors.textTertiary)
-            .horizontalAlign(eui::HorizontalAlign::Center)
-            .build();
+    void triggerToast(const std::string& msg) {
+        toastMsg_ = msg;
+        toastActive_ = true;
+        toastStart_ = std::chrono::steady_clock::now();
     }
 };
 
