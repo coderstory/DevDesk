@@ -174,10 +174,11 @@ int main(int argc, char* argv[]) {
     // 1) 首帧 compose（通用 tab 为默认页）
     composeFrame();
     // 2) 切到外观 tab：真命中点 tab hit 区 → onChange(0)
+    // WTab（§4.2）hit id = settings.tabs.N.hit（W4 改动）
     const core::dsl::Element* tabHit =
-        ui != nullptr ? ui->find("settings.tabs.hit.0") : nullptr;
+        ui != nullptr ? ui->find("settings.tabs.0.hit") : nullptr;
     if (tabHit == nullptr) {
-        std::cerr << "settings_dropdown_z_probe: tab 'settings.tabs.hit.0' "
+        std::cerr << "settings_dropdown_z_probe: tab 'settings.tabs.0.hit' "
                      "not found\n";
         passed = false;
     } else {

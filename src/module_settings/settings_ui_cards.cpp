@@ -17,6 +17,10 @@
 #include <components/scrollview.h>
 #include <components/switch.h>
 
+#include <ui_kit/button.h>
+#include <ui_kit/form_row.h>
+#include <ui_kit/wswitch.h>
+
 #include <algorithm>
 #include <filesystem>
 #include <string>
@@ -26,11 +30,7 @@ namespace module::settings {
 
 namespace {
 
-int themeModeIndex(const std::string& mode) {
-    if (mode == kThemeModeLight) return 1;
-    if (mode == kThemeModeDark) return 2;
-    return 0;  // auto
-}
+// themeModeIndex 已随主题选择器删除（D-12/E3）移除——WeChat 皮肤即主题。
 
 int windowEffectIndex(const std::string& mode) {
     if (mode == kWindowEffectTranslucent) return 1;
@@ -87,14 +87,11 @@ void drawAppearanceCard(const CardDrawArgs& args) {
     const SettingsCardActions& a = args.a;
 
     const auto compTheme = core::theme::componentTokens(t);
-    // 行几何随生效字号派生（roundFs 口径见 settings_ui_logic.h）；18 = 标题顶字面锚，40 = 下拉控件高。
+    // 行几何随生效字号派生（roundFs 口径见 settings_ui_logic.h）；18 = 标题顶字面锚。
+    // 主题选择器删除后字号/效果改 FormRow 排列，行高与日志卡同口径（logFieldHeight=36）。
     const float titleH = roundFs(24.0f);
     const float descY = 18.0f + titleH + roundFs(2.0f);
     const float descH = roundFs(18.0f);
-    const float labelY = descY + descH + roundFs(10.0f);
-    const float labelH = roundFs(16.0f);
-    const float ddY = labelY + labelH + roundFs(6.0f);
-    const float hintY = ddY + 40.0f + roundFs(6.0f);
     const float hintH = roundFs(16.0f);
     ui.stack(id)
         .size(w, h)
@@ -104,101 +101,77 @@ void drawAppearanceCard(const CardDrawArgs& args) {
             cardDesc(ui, id, t, descY, w - 56.0f, descH,
                      "主题与窗口底色即时生效；字号缩放全局生效");
 
-            ui.text(id + ".theme.label")
-                .position(28.0f, labelY)
-                .size(200.0f, labelH)
-                .text("主题")
-                .fontSize(fs(12.0f))
-                .lineHeight(labelH)
-                .color(t.colors.textSecondary)
-                .build();
-            ui.stack(id + ".theme.ddwrap")
-                .position(28.0f, ddY)
-                .size(240.0f, 40.0f)
-                .content([&] {
-                    components::dropdown(ui, id + ".theme.dd")
-                        .size(240.0f, 40.0f)
-                        .theme(compTheme)
-                        .items(std::vector<std::string>(
-                            kThemeModePresetLabels,
-                            kThemeModePresetLabels + kThemeModePresetCount))
-                        .selected(themeModeIndex(in.cfg.themeMode))
-                        .open(isDropdownOpen(in.openDropdown, Dropdown::Theme))
-                        .onOpenChange([f = a.setDropdownOpen](bool v) {
-                            f(Dropdown::Theme, v);
-                        })
-                        .onChange([f = a.applyThemeMode](int idx) { f(idx); })
-                        .build();
-                })
-                .build();
+            // 主题选择器已删除（D-12/E3 去功能例外——WeChat 皮肤即主题、暗色延后 D-04）。
+            // 字号缩放（§6 item 3 确认在通用 tab）+ 窗口效果用 FormRow 排列（§6 item 5）。
+            const float rowH = logFieldHeight();  // 36px（与日志卡同口径）
+            const float fontRowY = descY + descH + roundFs(6.0f);
+            const float effectRowY = fontRowY + rowH + roundFs(6.0f);
+            const float formX = 28.0f;
+            const float formW = w - 56.0f;  // 卡内左右各 28 padding
 
-            // 字号缩放 + 窗口效果两列，右缘自适应：窄窗右对齐收进卡内，避免最小窗溢出。
-            const float effectX = std::min(680.0f, w - 28.0f - 240.0f);
-            const float fontX = std::min(380.0f, effectX - 240.0f - 28.0f);
-            ui.text(id + ".font.label")
-                .position(fontX, labelY)
-                .size(240.0f, labelH)
-                .text("字号缩放（正文基准 15px）")
-                .fontSize(fs(12.0f))
-                .lineHeight(labelH)
-                .color(t.colors.textSecondary)
-                .build();
-            ui.stack(id + ".font.ddwrap")
-                .position(fontX, ddY)
-                .size(240.0f, 40.0f)
-                .content([&] {
-                    components::dropdown(ui, id + ".font.dd")
-                        .size(240.0f, 40.0f)
-                        .theme(compTheme)
-                        .items(std::vector<std::string>(
-                            kFontPresetLabels,
-                            kFontPresetLabels + kFontPresetCount))
-                        .selected(nearestIndex(in.cfg.fontScalePercent,
-                                               kFontPresets, kFontPresetCount))
-                        .open(isDropdownOpen(in.openDropdown, Dropdown::Font))
-                        .onOpenChange([f = a.setDropdownOpen](bool v) {
-                            f(Dropdown::Font, v);
+            // 字号缩放 FormRow：label 110px + dropdown control
+            ui_kit::formRow(ui, id + ".font", "字号缩放", formX, fontRowY,
+                            formW, rowH,
+                [&](eui::Ui& ui, float cx, float cy, float cw, float ch) {
+                    const float ddW = std::min(240.0f, cw);
+                    ui.stack(id + ".font.ddwrap")
+                        .position(cx, cy)
+                        .size(ddW, ch)
+                        .content([&] {
+                            components::dropdown(ui, id + ".font.dd")
+                                .size(ddW, ch)
+                                .theme(compTheme)
+                                .items(std::vector<std::string>(
+                                    kFontPresetLabels,
+                                    kFontPresetLabels + kFontPresetCount))
+                                .selected(nearestIndex(in.cfg.fontScalePercent,
+                                                       kFontPresets, kFontPresetCount))
+                                .open(isDropdownOpen(in.openDropdown, Dropdown::Font))
+                                .onOpenChange([f = a.setDropdownOpen](bool v) {
+                                    f(Dropdown::Font, v);
+                                })
+                                .onChange([f = a.applyFontPreset](int idx) { f(idx); })
+                                .build();
                         })
-                        .onChange([f = a.applyFontPreset](int idx) { f(idx); })
                         .build();
-                })
-                .build();
+                }, t);
 
-            ui.text(id + ".effect.label")
-                .position(effectX, labelY)
-                .size(240.0f, labelH)
-                .text("窗口效果")
-                .fontSize(fs(12.0f))
-                .lineHeight(labelH)
-                .color(t.colors.textSecondary)
-                .build();
-            ui.stack(id + ".effect.ddwrap")
-                .position(effectX, ddY)
-                .size(240.0f, 40.0f)
-                .content([&] {
-                    components::dropdown(ui, id + ".effect.dd")
-                        .size(240.0f, 40.0f)
-                        .theme(compTheme)
-                        .items(std::vector<std::string>(
-                            kWindowEffectPresetLabels,
-                            kWindowEffectPresetLabels +
-                                kWindowEffectPresetCount))
-                        .selected(windowEffectIndex(in.cfg.windowEffect))
-                        .open(isDropdownOpen(in.openDropdown, Dropdown::Effect))
-                        .onOpenChange([f = a.setDropdownOpen](bool v) {
-                            f(Dropdown::Effect, v);
+            // 窗口效果 FormRow
+            ui_kit::formRow(ui, id + ".effect", "窗口效果", formX, effectRowY,
+                            formW, rowH,
+                [&](eui::Ui& ui, float cx, float cy, float cw, float ch) {
+                    const float ddW = std::min(240.0f, cw);
+                    ui.stack(id + ".effect.ddwrap")
+                        .position(cx, cy)
+                        .size(ddW, ch)
+                        .content([&] {
+                            components::dropdown(ui, id + ".effect.dd")
+                                .size(ddW, ch)
+                                .theme(compTheme)
+                                .items(std::vector<std::string>(
+                                    kWindowEffectPresetLabels,
+                                    kWindowEffectPresetLabels +
+                                        kWindowEffectPresetCount))
+                                .selected(windowEffectIndex(in.cfg.windowEffect))
+                                .open(isDropdownOpen(in.openDropdown, Dropdown::Effect))
+                                .onOpenChange([f = a.setDropdownOpen](bool v) {
+                                    f(Dropdown::Effect, v);
+                                })
+                                .onChange([f = a.applyWindowEffect](int idx) { f(idx); })
+                                .build();
                         })
-                        .onChange([f = a.applyWindowEffect](int idx) { f(idx); })
                         .build();
-                })
-                .build();
+                }, t);
+
+            // 降级提示 y（条件渲染——仅窗口效果不支持时显示）
+            const float hintY = effectRowY + rowH + roundFs(6.0f);
             const std::string degraded = windowEffectDegradedHint(
                 in.cfg.windowEffect, app::activeWindowEffect());
             if (!degraded.empty()) {
-                const float hintW = w - effectX - 16.0f - 28.0f;
+                const float hintW = w - formX - 16.0f - 28.0f;
                 // 图标 / 文字拆两个元素（FA 图标字体通道）
                 ui.text(id + ".effect.hint.icon")
-                    .position(effectX, hintY)
+                    .position(formX, hintY)
                     .size(14.0f, hintH)
                     .icon(0xF071)  // fa-triangle-exclamation
                     .fontSize(fs(11.0f))
@@ -206,7 +179,7 @@ void drawAppearanceCard(const CardDrawArgs& args) {
                     .color(t.colors.warning)
                     .build();
                 ui.text(id + ".effect.hint")
-                    .position(effectX + 16.0f, hintY)
+                    .position(formX + 16.0f, hintY)
                     .size(hintW, hintH)
                     .text(degraded)
                     .fontSize(fs(11.0f))
@@ -395,16 +368,15 @@ void drawModulesCard(const CardDrawArgs& args) {
                     .lineHeight(rowDescH)
                     .color(t.colors.textTertiary)
                     .build();
-                components::toggleSwitch(ui, id + ".sw." + suffix)
-                    .position(w - 28.0f - 80.0f, rowY - 2.0f)
-                    .size(80.0f, 32.0f)
-                    .checked(moduleEnabled(in.cfg, meta.moduleId))
-                    .theme(compTheme)
-                    .onChange([f = a.applyModuleEnabled,
-                               mid = meta.moduleId](bool v) {
+                // 开关换微信绿 wswitch（§6 item 7）：绿轨道+白滑块（§4.4）。
+                // wswitch 的 clickable 元素 id = <id>.track（probe 按 .track 定位）。
+                ui_kit::wswitch(ui, id + ".sw." + suffix,
+                    moduleEnabled(in.cfg, meta.moduleId),
+                    w - 28.0f - 80.0f, rowY - 2.0f, 80.0f, 32.0f, t,
+                    [f = a.applyModuleEnabled,
+                     mid = meta.moduleId](bool v) {
                         f(mid, v);
-                    })
-                    .build();
+                    });
             }
         })
         .build();
@@ -431,12 +403,12 @@ void drawDirectoryCard(const CardDrawArgs& args) {
                 ::core::paths::markdownDir();
             const bool exists = in.notesDirExists;
             const float dirBtnW = 110.0f;
+            // 路径只读灰底（§6 item 9）：wechat.dividerSecondary 底
             ui.rect(id + ".path.bg")
                 .position(28.0f, 46.0f)
                 .size(w - 56.0f - dirBtnW - 12.0f, 34.0f)
-                .color(t.colors.surfaceElevated)
-                .radius(t.sizes.radiusSmall)
-                .border(1.0f, t.colors.borderMuted)
+                .color(t.colors.wechat.dividerSecondary)
+                .radius(t.sizes.radiusWeChat)
                 .build();
             ui.text(id + ".path.value")
                 .position(40.0f, 46.0f)
@@ -444,31 +416,21 @@ void drawDirectoryCard(const CardDrawArgs& args) {
                 .text(mdDir.string() + (exists ? "" : "（尚未创建）"))
                 .fontSize(fs(13.0f))
                 .verticalAlign(eui::VerticalAlign::Center)
-                .color(t.colors.textSecondary)
+                .color(t.colors.wechat.textSecondary)
                 .build();
-            components::button(ui, id + ".open")
-                .position(w - 28.0f - dirBtnW, 46.0f)
-                .size(dirBtnW, 34.0f)
-                .text("打开目录")
-                .icon(0xF07C)  // fa-folder-open
-                .fontSize(fs(13.0f))
-                .theme(compTheme, /*primary=*/false)
-                .colors(t.colors.surfaceElevated, t.colors.hover,
-                        t.colors.active)
-                .textColor(t.colors.textPrimary)
-                .radius(t.sizes.radiusSmall)
-                .border(1.0f, t.colors.borderDefault)
-                .onClick([f = a.openNotesDirectory] { f(); })
-                .build();
-            // 提示行：14px 盒 + fs(11) 文本的墨迹在 130% 档会越盒，故盒高派生。
+            // 「打开目录」浅灰次按钮（§6 item 9）：ui_kit::button Secondary 级
+            ui_kit::button(ui, id + ".open", "打开目录",
+                ui_kit::ButtonLevel::Secondary,
+                w - 28.0f - dirBtnW, 46.0f, dirBtnW, 34.0f, t,
+                {.onClick = [f = a.openNotesDirectory] { f(); }});
+            // 说明小字（§6 item 9）：wechat.textTertiary
             ui.text(id + ".hint")
                 .position(28.0f, 86.0f)
                 .size(w - 56.0f, roundFs(14.0f))
-                .text("修改笔记目录属于后续功能，当前仅展示（可用「打开目录」"
-                      "定位后迁移笔记）")
+                .text("目录暂不支持修改，打开后可手动迁移文件")
                 .fontSize(fs(11.0f))
                 .lineHeight(roundFs(14.0f))
-                .color(t.colors.textTertiary)
+                .color(t.colors.wechat.textTertiary)
                 .build();
 
             // 数据根忽略规则路径：凭据在 devdesk.db（WAL 伴生件会复制凭据页）且数据根要进 git——本行只展示，让用户看见是哪份规则在挡 git add。
@@ -854,12 +816,30 @@ void drawQuotaCard(const CardDrawArgs& args) {
         .content([&] {
             ui.text(id + ".label")
                 .position(28.0f, 4.0f)
-                .size(w - 160.0f, rowH)
+                .size(104.0f, rowH)
                 .text("供应商余量")
                 .fontSize(t.sizes.fontSizeBody - 1.0f)
                 .lineHeight(rowH)
                 .fontWeight(500)
                 .color(t.colors.textPrimary)
+                .build();
+            // 「实验功能」灰色小字标注（§6 item 8）：wechat.textTertiary
+            ui.text(id + ".experimental")
+                .position(136.0f, 4.0f)
+                .size(72.0f, rowH)
+                .text("实验功能")
+                .fontSize(fs(11.0f))
+                .lineHeight(rowH)
+                .color(t.colors.wechat.textTertiary)
+                .build();
+            // 问号图标（§6 item 10）：0xF059 fa-circle-question，hover tooltip 待定
+            ui.text(id + ".help.icon")
+                .position(212.0f, 4.0f)
+                .size(16.0f, rowH)
+                .icon(0xF059)
+                .fontSize(fs(11.0f))
+                .lineHeight(rowH)
+                .color(t.colors.wechat.textTertiary)
                 .build();
             ui.text(id + ".desc")
                 .position(28.0f, 28.0f)
@@ -869,13 +849,11 @@ void drawQuotaCard(const CardDrawArgs& args) {
                 .lineHeight(roundFs(16.0f))
                 .color(t.colors.textTertiary)
                 .build();
-            components::toggleSwitch(ui, id + ".sw")
-                .position(w - 28.0f - 80.0f, 4.0f)
-                .size(80.0f, 32.0f)
-                .checked(in.cfg.quotaEnabled)
-                .theme(compTheme)
-                .onChange([f = a.applyQuotaEnabled](bool v) { f(v); })
-                .build();
+            // 开关换微信绿 wswitch（§6 item 7）
+            ui_kit::wswitch(ui, id + ".sw",
+                in.cfg.quotaEnabled,
+                w - 28.0f - 80.0f, 4.0f, 80.0f, 32.0f, t,
+                [f = a.applyQuotaEnabled](bool v) { f(v); });
         })
         .build();
 }

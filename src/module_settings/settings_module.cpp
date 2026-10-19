@@ -41,6 +41,7 @@
 
 #include <ui_kit/metrics.h>
 #include <ui_kit/toast.h>
+#include <ui_kit/wtab.h>
 
 #include <eui/dsl.h>
 
@@ -1012,31 +1013,40 @@ public:
             .content([&] {
                 drawHeader(ui, contentW, headerH, t);
 
-                // tab 栏：components::tabs 无 .position，套定位 stack。
+                // tab 栏：微信风格 WTab（§4.2），2px 绿下划线激活、间距收紧（D-12）。
+                // 4 Tab 顺序 + 标签不动（kSettingTabLabels）；hit area id = settings.tabs.N.hit（测试按此点击）。
                 ui.stack("settings.tabs.wrap")
                     .size(contentW, tabH)
                     .content([&] {
-                        components::tabs(ui, "settings.tabs")
-                            .size(contentW, tabH)
-                            .items(std::vector<std::string>(
-                                kSettingTabLabels,
-                                kSettingTabLabels + kSettingTabCount))
-                            .selected(settingsTab_)
-                            .fontSize(t.sizes.fontSizeSmall)
-                            .theme(compTheme)
-                            .onChange([this](int idx) {
-                                settingsTab_ = idx;
-                                if (idx == kTabLog) logTailDirty_ = true;
-                                if (idx == kTabModules) refreshExternalState();
-                            })
-                            .build();
+                        const float tabW =
+                            contentW / static_cast<float>(kSettingTabCount);
+                        for (int i = 0; i < kSettingTabCount; ++i) {
+                            const float tabX =
+                                static_cast<float>(i) * tabW;
+                            ui_kit::wtab(
+                                ui,
+                                std::string("settings.tabs.") +
+                                    std::to_string(i),
+                                kSettingTabLabels[i], settingsTab_ == i,
+                                tabX, 0.0f, tabW, tabH, t,
+                                [this, i]() {
+                                    settingsTab_ = i;
+                                    if (i == kTabLog) logTailDirty_ = true;
+                                    if (i == kTabModules)
+                                        refreshExternalState();
+                                });
+                        }
                     })
                     .build();
 
                 // 当前 tab 的卡区仍套 scrollView（4+ 卡总高可超小窗口可视高）。
                 const float cardsTopY = pad + headerH +
                     t.sizes.spacingLarge + tabH + t.sizes.spacingLarge;
-                const float cardsH = screen.height - cardsTopY - pad;
+                // 底部提示行（§6 item 11）：12px 三级灰居中「所有设置即时生效…」
+                const float bottomHintH = roundFs(20.0f);
+                const float cardsH =
+                    screen.height - cardsTopY - pad - bottomHintH -
+                    t.sizes.spacingLarge;
                 components::scrollView(ui, "settings.cards.scroll")
                     .size(contentW, cardsH)
                     .gap(t.sizes.spacingLarge)
@@ -1055,6 +1065,16 @@ public:
                         drawCardRegion(inner, contentWidth, cardsTopY, cardsH,
                                        screen.height, t, proxyH, svc);
                     })
+                    .build();
+
+                // 底部生效提示（§6 item 11）：12px wechat.textTertiary 居中
+                ui.text("settings.bottom.hint")
+                    .size(contentW, bottomHintH)
+                    .text("所有设置即时生效，自动保存到本地数据库")
+                    .fontSize(fs(12.0f))
+                    .lineHeight(bottomHintH)
+                    .horizontalAlign(eui::HorizontalAlign::Center)
+                    .color(t.colors.wechat.textTertiary)
                     .build();
             })
             .build();
@@ -1189,6 +1209,7 @@ private:
         const SettingsCardActions a = cardActions();
         const float gapY = t.sizes.spacingLarge;
         float cardY = 0.0f;
+        bool firstInTab = true;  // 首卡前不加组间分隔线
         // 越界 tab（不可达）回落通用页
         const int tab = (settingsTab_ >= 0 && settingsTab_ < kSettingTabCount)
                             ? settingsTab_
@@ -1198,6 +1219,37 @@ private:
             if (spec.gate != nullptr && !moduleEnabled(cfg_, spec.gate)) {
                 continue;  // 模块关 → 整卡隐藏（不显示故障态）
             }
+            // 分组标题（§6 item 4）+ 组间分隔线（§6 item 6）：
+            // 「功能模块」「存储配置」「其他设置」仅模块 tab 有；其他 tab 卡自带标题不分组。
+            const char* groupTitle = nullptr;
+            const std::string specId(spec.id);
+            if (specId == "settings.card.modules")
+                groupTitle = "功能模块";
+            else if (specId == "settings.card.directory")
+                groupTitle = "存储配置";
+            else if (specId == "settings.card.proxy")
+                groupTitle = "其他设置";
+            if (groupTitle != nullptr) {
+                if (!firstInTab) {
+                    // 组间分隔线：wechat.dividerPrimary（#E5E5E5）
+                    ui.rect(std::string(spec.id) + ".groupdivider")
+                        .size(contentWidth, 1.0f)
+                        .color(t.colors.wechat.dividerPrimary)
+                        .build();
+                    cardY += 1.0f + gapY;
+                }
+                const float titleH = roundFs(20.0f);
+                ui.text(std::string(spec.id) + ".grouptitle")
+                    .size(contentWidth, titleH)
+                    .text(groupTitle)
+                    .fontSize(fs(14.0f))
+                    .lineHeight(titleH)
+                    .fontWeight(700)
+                    .color(t.colors.wechat.textPrimary)
+                    .build();
+                cardY += titleH + gapY;
+            }
+            firstInTab = false;
             const float h =
                 cardHeight(spec, proxyH, cardsH - cardY, githubSyncCfg_.enabled);
             CardDrawArgs args{ui, spec.id, contentWidth, h, t,
