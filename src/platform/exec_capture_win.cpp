@@ -5,6 +5,7 @@
 #include <windows.h>
 
 #include <cstdlib>
+#include <iostream>
 #include <string>
 #include <system_error>
 #include <vector>
@@ -94,21 +95,33 @@ int execCapture(const std::string& workingDir,
     }
     const std::wstring dir = utf8ToWide(workingDir);
 
+    // 管道捕获 stderr（note_git 等需要诊断 git 退出原因的场景）
+    HANDLE hRead = nullptr, hWrite = nullptr;
+    SECURITY_ATTRIBUTES sa{};
+    sa.nLength = sizeof(sa);
+    sa.bInheritHandle = TRUE;
+    if (!CreatePipe(&hRead, &hWrite, &sa, 0)) {
+        hRead = hWrite = nullptr;
+    }
+
     STARTUPINFOW si{};
     si.cb = sizeof(si);
-    si.dwFlags = STARTF_USESTDHANDLES;  // 我们不用管道 → 不设句柄，子进程继承空句柄
+    si.dwFlags = STARTF_USESTDHANDLES;
+    si.hStdError = hWrite;
     PROCESS_INFORMATION pi{};
 
     const BOOL ok = CreateProcessW(
         exe.empty() ? nullptr : exe.c_str(),
         cmdBuf.data(),
-        nullptr, nullptr, FALSE,
-        CREATE_NO_WINDOW,  // 不弹控制台
+        nullptr, nullptr, TRUE,  // inherit handles
+        CREATE_NO_WINDOW,
         nullptr,
         dir.empty() ? nullptr : dir.c_str(),
         &si, &pi);
 
+    if (hWrite) { CloseHandle(hWrite); hWrite = nullptr; }  // 父进程端写入句柄先关，否则 ReadFile 永不返回
     if (ok == FALSE) {
+        if (hRead) CloseHandle(hRead);
         return -1;  // 启动失败
     }
 
@@ -118,6 +131,26 @@ int execCapture(const std::string& workingDir,
     DWORD exitCode = 1;
     GetExitCodeProcess(pi.hProcess, &exitCode);
 
+    // 非零退出时读取 stderr 管道输出助诊
+    if (exitCode != 0 && hRead) {
+        char buf[1024]{};
+        DWORD n = 0;
+        if (PeekNamedPipe(hRead, nullptr, 0, nullptr, &n, nullptr) && n > 0) {
+            DWORD toRead = (n < sizeof(buf) - 1) ? n : (sizeof(buf) - 1);
+            ReadFile(hRead, buf, toRead, &n, nullptr);
+            std::string dbg(buf, n);
+            std::cerr << "[execCapture stderr] " << dbg << std::endl;
+        }
+        std::string argsDbg;
+        for (const auto& a : args) {
+            if (!argsDbg.empty()) argsDbg += ' ';
+            argsDbg += a;
+        }
+        std::cerr << "[execCapture] exit=" << exitCode << " cmd=" << argsDbg
+                  << " cwd=" << workingDir << std::endl;
+    }
+
+    if (hRead) CloseHandle(hRead);
     CloseHandle(pi.hThread);
     CloseHandle(pi.hProcess);
 
