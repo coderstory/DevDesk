@@ -29,8 +29,8 @@ function(devdesk_apply_warnings target_name)
         # 顺序在后才能覆盖 -Wall/-Wextra 触发的该类警告
         target_compile_options(${target_name} PRIVATE -Wno-unused-parameter)
         # EUI-NEO 头文件（theme.h/markdown.h 的聚合初始化）会触发该警告，
-        # 属第三方代码：降级为非致命，DevDesk 自己的新增告警仍可见
-        target_compile_options(${target_name} PRIVATE -Wno-error=missing-field-initializers)
+        # 属第三方代码：完全静默（EUI-NEO 端暂未覆盖所有字段初始化器）
+        target_compile_options(${target_name} PRIVATE -Wno-error=missing-field-initializers -Wno-missing-field-initializers)
         # 以下五条是 Release 档（-O3）才出现的 GCC 误报，源头都不在 DevDesk 代码里，
         # 只降级为非致命（仍打印、不静默），理由逐条写死；且只对 GNU 生效——
         # 这些告警名是 GCC 专属（Clang 不认 `-Wstringop-overflow` 等，会以

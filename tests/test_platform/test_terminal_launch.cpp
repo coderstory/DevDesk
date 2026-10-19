@@ -8,6 +8,7 @@
 //   ③ 平台失败路径：posix 返回 NotImplemented（仅非 Windows/非 Apple 平台编译，
 //      本机不验证）。
 #include "doctest.h"
+#include "test_support.h"
 
 #include "platform/terminal_launch.h"
 #include "platform/terminal_launch_common.h"
@@ -227,6 +228,8 @@ REGISTER_TEST(terminal_launch_bodies_with_settings_args,
 
 REGISTER_TEST(terminal_launch_sweep_run_settings_24h,
               "terminal_launch: sweepStaleRunSettingsFiles 只删 24h 前的 run-* 文件", {
+    SKIP_IF_WRITE_BLOCKED();  // 安全策略限制跨树目录创建
+
     const std::filesystem::path dir =
         std::filesystem::temp_directory_path() /
         ("devdesk_test_run_settings_sweep_" +
@@ -234,6 +237,9 @@ REGISTER_TEST(terminal_launch_sweep_run_settings_24h,
     std::error_code ec;
     std::filesystem::remove_all(dir, ec);
     std::filesystem::create_directories(dir, ec);
+    if (ec) {
+        DOCTEST_SKIP("创建临时目录失败（安全策略限制）");
+    }
     DOCTEST_REQUIRE(std::filesystem::is_directory(dir));
 
     const auto touch = [&](const std::string& name, std::chrono::hours age) {

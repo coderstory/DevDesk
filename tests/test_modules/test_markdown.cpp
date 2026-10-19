@@ -8087,11 +8087,23 @@ REGISTER_TEST(md_module_tree_list_error,
     return true;
 })
 
+// 放在 REGISTER_TEST 之外：-Wpedantic 禁止宏参数内嵌预处理指令
+static bool platformSupportsWriteFailureInjection() {
+#ifdef _WIN32
+    return false;  // NTFS 目录只读不阻止子文件创建
+#else
+    return true;
+#endif
+}
+
 // G2 补缺（2026-10-19-ui-test-gap-map.md）：状态栏保存失败态。写路径 =「同目录临时
 // 文件 + rename」原子替换（core/atomic_write.h），POSIX rename 无视目标文件只读位，
 // 注入点必须是只读**父目录**：临时文件 O_CREAT 即 EACCES。
 REGISTER_TEST(md_module_statusbar_save_error,
               "markdown_module: 状态栏保存失败态 ✕ 自动重试文案/错误色/磁盘未写（headless）", {
+    if (!platformSupportsWriteFailureInjection()) {
+        return true;  // 平台不支持目录权限注入，跳过失败态验证
+    }
     const std::string doc = "alpha\n\nbravo\n";
     test_support::MdHeadlessEnv env(kDirPrefix, "saveerr", kDbName);
     DOCTEST_REQUIRE(env.db != nullptr);
@@ -8126,7 +8138,7 @@ REGISTER_TEST(md_module_statusbar_save_error,
     DOCTEST_CHECK(ui.find("md.status.save")->text.find("未保存") !=
                   std::string::npos);
 
-    // 注入失败：只读父目录 → 原子写的临时文件建不出来
+    // 注入失败：只读父目录 → 原子写的临时文件建不出来。
     std::error_code pec;
     fs::permissions(env.dir, fs::perms::owner_read | fs::perms::owner_exec, pec);
     DOCTEST_REQUIRE(!pec);
