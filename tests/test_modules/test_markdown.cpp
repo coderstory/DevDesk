@@ -8046,3 +8046,117 @@ REGISTER_TEST(md_module_tag_change_event_wiring,
     mod->onStop();
     return true;
 })
+
+// G1 补缺（docs/superpowers/plans/2026-10-19-ui-test-gap-map.md）：树列表加载失败态。
+// listError_ 的唯一来源 = refreshList 里 listAll 的 SELECT 打在 markdown_index 上；
+// GitHub Sync 导入 DROP 重建库的窗口期就是「表不存在」形态，用 DROP TABLE 注入同一
+// 错误路径（MarkdownService 是具体类，失败注入走真库故障，不引虚接口）。
+REGISTER_TEST(md_module_tree_list_error,
+              "markdown_module: 树列表加载失败态 md.tree.error 文案/错误色/布局（headless）", {
+    test_support::MdHeadlessEnv env(kDirPrefix, "listerr", kDbName);
+    DOCTEST_REQUIRE(env.db != nullptr);
+    // 空库直接 DROP（无子表引用行，FK 不拦）：onStart 首次 refreshList 即置 listError_
+    DOCTEST_REQUIRE(env.db->db().exec("DROP TABLE markdown_index").isOk());
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    eui::Ui ui;
+    ui.begin("listerr");
+    mod->compose(ui, screen);
+    ui.end();
+    ui.layout(screen.width, screen.height);
+
+    // 失败态可见信号：错误行在场 + 自动重试承诺 + 错误色 + 布局不塌
+    const auto* err = ui.find("md.tree.error");
+    DOCTEST_REQUIRE(err != nullptr);
+    DOCTEST_CHECK(err->text.find("列表加载失败") != std::string::npos);
+    DOCTEST_CHECK(err->text.find("每 5 秒自动重试") != std::string::npos);
+    // 文本元素：TextBuilder::color() 落在 textColor（element->color 是底色字段）
+    DOCTEST_CHECK(colorEq(err->textColor, core::theme::current().colors.error));
+    DOCTEST_CHECK(err->frame.width > 0.0f);
+    DOCTEST_CHECK(err->frame.height > 0.0f);
+    // 失败态顶掉空态与树（分支互斥：不拿旧数据/空态伪装正常）
+    DOCTEST_CHECK(ui.find("md.tree.empty") == nullptr);
+    DOCTEST_CHECK(ui.find("md.tree.node.0.name") == nullptr);
+
+    mod->onStop();
+    return true;
+})
+
+// G2 补缺（2026-10-19-ui-test-gap-map.md）：状态栏保存失败态。写路径 =「同目录临时
+// 文件 + rename」原子替换（core/atomic_write.h），POSIX rename 无视目标文件只读位，
+// 注入点必须是只读**父目录**：临时文件 O_CREAT 即 EACCES。
+REGISTER_TEST(md_module_statusbar_save_error,
+              "markdown_module: 状态栏保存失败态 ✕ 自动重试文案/错误色/磁盘未写（headless）", {
+    const std::string doc = "alpha\n\nbravo\n";
+    test_support::MdHeadlessEnv env(kDirPrefix, "saveerr", kDbName);
+    DOCTEST_REQUIRE(env.db != nullptr);
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "note.md", doc));
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    eui::Ui ui;
+    auto frame = [&](const char* page) {
+        ui.begin(page);
+        mod->compose(ui, screen);
+        ui.end();
+    };
+
+    // 基线：已打开、无失败态
+    frame("se1");
+    DOCTEST_REQUIRE(openFirstNote(ui));
+    frame("se2");
+    DOCTEST_REQUIRE(ui.find(kEditorInputId) != nullptr);
+    const auto* base = ui.find("md.status.save");
+    DOCTEST_REQUIRE(base != nullptr);
+    DOCTEST_CHECK(base->text.find("note.md") != std::string::npos);
+    DOCTEST_CHECK(base->text.find("保存失败") == std::string::npos);
+
+    // 打脏：显式保存在 400ms 防抖内完成，自动链路不抢跑
+    DOCTEST_REQUIRE(typeIntoEditor(ui, "Z"));
+    frame("se3");
+    DOCTEST_CHECK(ui.find("md.status.save")->text.find("未保存") !=
+                  std::string::npos);
+
+    // 注入失败：只读父目录 → 原子写的临时文件建不出来
+    std::error_code pec;
+    fs::permissions(env.dir, fs::perms::owner_read | fs::perms::owner_exec, pec);
+    DOCTEST_REQUIRE(!pec);
+
+    // Ctrl+S 显式保存 → service_->write 失败 → saveFailed_
+    DOCTEST_REQUIRE(mod->onKeyEvent(test_support::pressShortcut(eui::InputKey::S)));
+    frame("se4");
+    // 文本元素走流式排布，frame 须跑真实 layout 才有值
+    ui.layout(screen.width, screen.height);
+
+    // 磁盘未被写入（失败态的前提：内容仍是原稿）
+    std::string onDisk;
+    DOCTEST_REQUIRE(readFileBytes(env.dir / "note.md", &onDisk));
+    DOCTEST_CHECK_EQ(onDisk, doc);
+
+    // 失败态可见信号：✕ + 自动重试承诺 + 错误色 + 不塌；且盖过未保存/已保存两态
+    const auto* save = ui.find("md.status.save");
+    DOCTEST_REQUIRE(save != nullptr);
+    DOCTEST_CHECK(save->text.find("✕ 保存失败，自动重试中") != std::string::npos);
+    DOCTEST_CHECK(save->text.find("note.md") != std::string::npos);
+    DOCTEST_CHECK(save->text.find("未保存") == std::string::npos);
+    DOCTEST_CHECK(save->text.find("已保存") == std::string::npos);
+    // 文本元素：TextBuilder::color() 落在 textColor（element->color 是底色字段）
+    DOCTEST_CHECK(colorEq(save->textColor, core::theme::current().colors.error));
+    DOCTEST_CHECK(save->frame.width > 0.0f);
+
+    // 还原目录权限，RAII 夹具才能清理
+    fs::permissions(env.dir, fs::perms::owner_all, pec);
+    DOCTEST_REQUIRE(!pec);
+
+    mod->onStop();
+    return true;
+})
