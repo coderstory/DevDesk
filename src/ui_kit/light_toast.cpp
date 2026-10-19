@@ -22,11 +22,19 @@ constexpr float kLightToastPadX = 16.0f;
 constexpr float kLightToastCharWidthEstimate = 10.0f;
 constexpr float kLightToastFontSize = 14.0f;          // §3.3 主文字
 
+// 单实例 state（function-local static，仿 splash.cpp:32-35 的 splashState() 模式）。
+// C++ 标准保证持久（单线程 UI 线程下安全）。不依赖 ui.state<T> 的链接器 COMDAT
+// fold 行为（见 light_toast.h 注释）。
+LightToastState& lightToastState() {
+    static LightToastState state;
+    return state;
+}
+
 } // namespace
 
 void showLightToast(eui::Ui& ui, const std::string& id, const std::string& message,
                     float cx, float cy, const core::theme::Tokens& t) {
-    LightToastState& s = ui.state<LightToastState>(id + ".state");
+    LightToastState& s = lightToastState();
     const auto now = std::chrono::steady_clock::now();
 
     // 新 message 触发：覆盖前一条，重新计时（单实例无队列，符合「轻提示」语义）
@@ -78,6 +86,18 @@ void showLightToast(eui::Ui& ui, const std::string& id, const std::string& messa
                 .build();
         })
         .build();
+}
+
+// —— 测试 seam（见 light_toast.h 注释）——
+void resetLightToastForTests() {
+    LightToastState& s = lightToastState();
+    s.open = false;
+    s.message.clear();
+    s.startTime = std::chrono::steady_clock::time_point{};
+}
+
+LightToastState& lightToastStateForTests() {
+    return lightToastState();
 }
 
 } // namespace ui_kit
