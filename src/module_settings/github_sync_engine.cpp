@@ -648,10 +648,12 @@ SyncRunResult GithubSyncEngine::pull(platform::github::GithubApi& api,
             auto remote = api.getFile(gsync::kRemoteSqlPath, branch);
             if (remote.isFail()) {
                 out.summary = "下载 database.sql 失败：" + remote.errorMessage();
+                out.logs = api.recentLog();
                 return out;
             }
             if (!remote.value().exists || remote.value().content.empty()) {
                 out.summary = "远端 database.sql 不存在或为空";
+                out.logs = api.recentLog();
                 return out;
             }
             // 经 store 导入——begin/end 事件包住（订阅方暂停/恢复后台
@@ -743,6 +745,7 @@ SyncRunResult GithubSyncEngine::pull(platform::github::GithubApi& api,
                        : "") +
                   backupClauseText(dbBackupNameOut, notesBackupNameOut);
     out.ok = true;
+    out.logs = api.recentLog();
     return out;
 }
 
