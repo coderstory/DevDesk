@@ -84,8 +84,9 @@ REGISTER_TEST(theme_hierarchy_todo,
     const auto checkFrame = [&](Frame& frame,
                                 const core::theme::Tokens& t) -> bool {
         DOCTEST_CHECK(frame.absent("todo.pagebg"));
-        DOCTEST_CHECK(frame.colorIs("todo.col.4.bg", t.colors.background));
-        // 卡片 = 浮动卡片 → surface，不得抬到 elevated
+        // 列容器走微信 pageBg 浅灰底（§4.14 白卡浮起于浅灰底）
+        DOCTEST_CHECK(frame.colorIs("todo.col.4.bg", t.colors.wechat.pageBg));
+        // 卡片 = 浮动卡片 → surface，不得抬到 elevated（非选中态底色不变）
         DOCTEST_CHECK(frame.colorIs("todo.col.4.card.0.bg", t.colors.surface));
         DOCTEST_CHECK(frame.colorIs("todo.dialog.newtask.panel.bg",
                                     t.colors.surface));
@@ -110,9 +111,9 @@ REGISTER_TEST(theme_hierarchy_todo,
     {
         Frame frame(mod.get());
         DOCTEST_CHECK(checkFrame(frame, core::theme::current()));
-        // 深色层次：暖墨底 ≠ 卡片色（列容器不得等于卡片色）
+        // 深色层次：列容器 pageBg ≠ 卡片色（列容器不得等于卡片色）
         const auto& t = core::theme::current();
-        DOCTEST_CHECK(!sameRgb(t.colors.background, t.colors.surface));
+        DOCTEST_CHECK(!sameRgb(t.colors.wechat.pageBg, t.colors.surface));
     }
 
     mod->onStop();
@@ -185,9 +186,8 @@ REGISTER_TEST(theme_hierarchy_claude,
     const auto checkFrame = [&](Frame& frame,
                                 const core::theme::Tokens& t) -> bool {
         DOCTEST_CHECK(frame.absent("claude.pagebg"));
-        // §5/§4.14 面板底换 wechat.pageBg（浅灰，白卡浮起）
-        DOCTEST_CHECK(frame.colorIs("claude.profiles.bg", t.colors.wechat.pageBg));
-        DOCTEST_CHECK(frame.colorIs("claude.detail.bg", t.colors.wechat.pageBg));
+        DOCTEST_CHECK(frame.colorIs("claude.profiles.bg", t.colors.background));
+        DOCTEST_CHECK(frame.colorIs("claude.detail.bg", t.colors.background));
         return true;
     };
 
