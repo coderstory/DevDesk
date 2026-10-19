@@ -73,6 +73,10 @@ add_executable(devdesk_tests
     test_modules/test_ui_modern.cpp
     # W2b（§4.1/§4.15）：四级按钮 + FormRow helper 无头断言（色值/几何/尺寸统一）
     test_modules/test_ui_kit_button.cpp
+    # W2d（§4.10/§4.12/§4.9）：微信式轻提示 + EmptyState + 问号字形验证无头断言
+    #（黑半透明 bg alpha / 白字 onPrimary / 1.5s 自动消失 / 空状态就近按钮 /
+    # 0xF059 问号字形绑定 fontFamily=Icon）。
+    test_modules/test_ui_kit_feedback.cpp
     test_modules/test_view_state.cpp
     test_modules/test_claude.cpp
     test_modules/test_claude_service.cpp
