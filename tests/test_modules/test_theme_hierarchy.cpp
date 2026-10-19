@@ -186,8 +186,9 @@ REGISTER_TEST(theme_hierarchy_claude,
     const auto checkFrame = [&](Frame& frame,
                                 const core::theme::Tokens& t) -> bool {
         DOCTEST_CHECK(frame.absent("claude.pagebg"));
-        DOCTEST_CHECK(frame.colorIs("claude.profiles.bg", t.colors.background));
-        DOCTEST_CHECK(frame.colorIs("claude.detail.bg", t.colors.background));
+        // §5/§4.14 面板底换 wechat.pageBg（浅灰，白卡浮起）
+        DOCTEST_CHECK(frame.colorIs("claude.profiles.bg", t.colors.wechat.pageBg));
+        DOCTEST_CHECK(frame.colorIs("claude.detail.bg", t.colors.wechat.pageBg));
         return true;
     };
 
