@@ -37,4 +37,24 @@ void replaceFile(const std::filesystem::path& tmp,
     std::filesystem::rename(tmp, target, ec);
 }
 
+bool writeBinaryFile(const std::filesystem::path& path, const std::string& content,
+                     std::error_code& ec) {
+    ec.clear();
+    const std::string raw = path.string();
+    const int fd = ::open(raw.c_str(), O_CREAT | O_WRONLY | O_TRUNC,
+                          S_IRUSR | S_IWUSR);
+    if (fd < 0) {
+        ec = std::error_code(errno, std::generic_category());
+        return false;
+    }
+    ssize_t n = ::write(fd, content.data(), content.size());
+    ::close(fd);
+    if (n < 0 || static_cast<size_t>(n) != content.size()) {
+        ec = std::error_code(errno, std::generic_category());
+        return false;
+    }
+    ec.clear();
+    return true;
+}
+
 } // namespace core::detail

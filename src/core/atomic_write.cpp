@@ -1,7 +1,5 @@
 #include "atomic_write.h"
 
-#include <fstream>
-
 namespace core {
 
 core::Result<void> atomicWriteFile(const std::filesystem::path& target,
@@ -11,24 +9,18 @@ core::Result<void> atomicWriteFile(const std::filesystem::path& target,
     tmp += ".devdesk-tmp";
     {
         // 权限先就位再打开写句柄：POSIX 权限位在 open(O_CREAT) 时定死，事后 chmod 追不回已开的 fd
-        std::error_code permEc;
-        if (!detail::prepareRestrictedFile(tmp, permEc)) {
+        std::error_code ec;
+        if (!detail::prepareRestrictedFile(tmp, ec)) {
             return core::Result<void>::fail(
                 core::ErrorCode::Internal,
-                label + "临时文件创建失败 " + tmp.string() + ": " + permEc.message());
+                label + "临时文件创建失败 " + tmp.string() + ": " + ec.message());
         }
-        std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
-        if (!f) {
-            return core::Result<void>::fail(core::ErrorCode::Internal,
-                                            label + "写入失败: " + tmp.string());
-        }
-        f << content;
-        f.close();
-        if (!f) {
+        if (!detail::writeBinaryFile(tmp, content, ec)) {
             std::error_code rmEc;
             std::filesystem::remove(tmp, rmEc);
             return core::Result<void>::fail(
-                core::ErrorCode::Internal, label + "写入未完成: " + tmp.string());
+                core::ErrorCode::Internal,
+                label + "写入失败 " + tmp.string() + ": " + ec.message());
         }
     }
     // 覆盖式替换：平台语义差异收在 detail::replaceFile 的两个平台实现里，此处只判成败

@@ -30,6 +30,11 @@ void replaceFile(const std::filesystem::path& tmp,
 // 再复用。Windows 是 ACL 模型（NTFS 继承默认已收紧），只固定「先建后写」次序。存在即 false 并填 ec
 bool prepareRestrictedFile(const std::filesystem::path& tmp, std::error_code& ec);
 
+// 将 content 二进制写入 path（覆盖已存在文件，不存在则新建）。调用方保证父目录已存在。
+// 失败填 ec 并返回 false
+bool writeBinaryFile(const std::filesystem::path& path, const std::string& content,
+                     std::error_code& ec);
+
 } // namespace detail
 
 } // namespace core
