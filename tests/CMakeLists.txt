@@ -115,6 +115,7 @@ add_executable(devdesk_tests
     test_modules/test_app_sidebar.cpp
     test_modules/test_app_assembly.cpp
     test_modules/test_module_toggle_bridge.cpp
+    test_modules/test_splash_contract.cpp
 )
 
 # ==================== 用例登记自检（TIN-10） =============# 上面是**手工源表**：漏登记一个用例 .cpp = 该文件永不编译、用例永不注册，
