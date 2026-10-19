@@ -8081,7 +8081,8 @@ REGISTER_TEST(md_module_tree_list_error,
     DOCTEST_CHECK(err->text.find("列表加载失败") != std::string::npos);
     DOCTEST_CHECK(err->text.find("每 5 秒自动重试") != std::string::npos);
     // 文本元素：TextBuilder::color() 落在 textColor（element->color 是底色字段）
-    DOCTEST_CHECK(colorEq(err->textColor, core::theme::current().colors.error));
+    // W8：错误色改走 wechat 令牌 warningRed（#FA5151），不再用 colors.error
+    DOCTEST_CHECK(colorEq(err->textColor, core::theme::current().colors.wechat.warningRed));
     DOCTEST_CHECK(err->frame.width > 0.0f);
     DOCTEST_CHECK(err->frame.height > 0.0f);
     // 失败态顶掉空态与树（分支互斥：不拿旧数据/空态伪装正常）
