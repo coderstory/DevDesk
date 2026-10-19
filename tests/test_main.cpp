@@ -111,6 +111,19 @@ void resetCaseGlobals() {
     // （只影响是否往控制台打印，不影响用例隔离）。
     ::core::log::setLevel(g_logLevelBaseline);
     // 7) 路径环境变量：一律拉回「未设置」出厂态。
+    // DEVDESK_DATA_ROOT 定向到构建树内临时目录：Windows 安全策略（受控文件夹访问等）
+    // 会封掉进程对 %USERPROFILE% 等树外路径的写操作，树内写则不受限。统一走树内根
+    // 既配好隔离也绕过平台安全限制。
+    // Windows _putenv_s 传空串是「置空值」不是说「删除变量」——空串写入环境块但
+    // getenv 读到空串不会走 appDataDir 的 env 分支（dataRootOverride 判 *env != '\0'），
+    // 最终回退到 platformDefaultAppDataDir() = USERPROFILE/DevDesk —— 这正好是我们
+    // 要避开的。所以必须传一个非空路径。构建树内 temp 目录来承载测试专用数据根。
+    {
+        const auto testDataRoot = test_temp::tempPath("test_data");
+        std::error_code ec;
+        std::filesystem::create_directories(testDataRoot, ec);
+        setEnvVar("DEVDESK_DATA_ROOT", testDataRoot.string());
+    }
     setEnvVar("DEVDESK_NOTES_DIR", "");
     setEnvVar("DEVDESK_PETS_DIR", "");
     setEnvVar("DEVDESK_CLAUDE_CONFIG_DIR", "");

@@ -658,4 +658,31 @@ inline core::KeyEvent pressShortcut(core::InputKey key, bool shift = false) {
     return e;
 }
 
+// 一次性写探针：进程首次调用时测试能否写临时文件（走 test_temp::tempPath 的
+// 平台临时目录），缓存结果供 SKIP_IF_WRITE_BLOCKED 宏复用
+inline bool processCanWriteFiles() {
+    static int cached = -1;  // -1=未测, 0=不能, 1=能
+    if (cached >= 0) return cached == 1;
+    try {
+        const auto tmpPath = test_temp::tempPath("devdesk_write_probe");
+        std::ofstream f(tmpPath, std::ios::binary);
+        std::cerr << "[TS] processCanWriteFiles: path=" << tmpPath.string() << " ok=" << (bool)f << std::endl;
+        if (f) { f << "ok"; f.close(); cached = 1; }
+        else { cached = 0; }
+    } catch (const std::exception& e) {
+        std::cerr << "[TS] processCanWriteFiles: exception: " << e.what() << std::endl;
+        cached = 0;
+    } catch (...) {
+        cached = 0;
+    }
+    return cached == 1;
+}
+
+#define SKIP_IF_WRITE_BLOCKED()                                 \
+    do {                                                        \
+        if (!::test_support::processCanWriteFiles()) {          \
+            DOCTEST_SKIP("Windows 安全策略封了本进程写文件能力");   \
+        }                                                       \
+    } while (0)
+
 } // namespace test_support

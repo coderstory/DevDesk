@@ -68,7 +68,11 @@ bool allDataPathsUnder(const std::filesystem::path& root) {
 REGISTER_TEST(paths_app_data_dir, "paths: appDataDir not empty", {
     auto p = core::paths::appDataDir();
     DOCTEST_CHECK_FALSE(p.empty());
-    DOCTEST_CHECK(p.string().find("DevDesk") != std::string::npos);
+    // DEVDESK_DATA_ROOT 覆盖时路径不含 "DevDesk"（测试隔离根在构建树内），
+    // 只断言非空即可（不落盘环境可能把值改写成 temp 路径）
+    if (!std::getenv("DEVDESK_DATA_ROOT")) {
+        DOCTEST_CHECK(p.string().find("DevDesk") != std::string::npos);
+    }
     return true;
 })
 

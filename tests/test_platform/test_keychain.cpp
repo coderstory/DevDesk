@@ -1,9 +1,11 @@
 #include "doctest.h"
+#include "test_support.h"
 #include "platform/keychain.h"
 
 #include <core/paths.h>
 
 #include <filesystem>
+#include <fstream>
 #include <set>
 #include <string>
 #include <system_error>
@@ -33,6 +35,7 @@
 
 REGISTER_TEST(keychain_store_load, "keychain: store and load", {
     SKIP_ON_MACOS_KEYCHAIN();   // 会写入真实钥匙串 → macOS 跳过
+    SKIP_IF_WRITE_BLOCKED();    // Windows 安全策略（受控文件夹访问等）会封进程写文件能力
 
     const std::string service = "DevDeskTest";
     const std::string account = "test_account";
@@ -99,6 +102,7 @@ REGISTER_TEST(keychain_blank_identity_no_wildcard,
 REGISTER_TEST(keychain_delete_secrets_not_in,
               "keychain: deleteSecretsNotIn 只留 keep 集合", {
     SKIP_ON_MACOS_KEYCHAIN();   // 写 3 条 + 枚举整库 → macOS 跳过
+    SKIP_IF_WRITE_BLOCKED();    // Windows 安全策略下进程写文件受限
 
     const std::string service = "DevDeskTestOrphan";
     // 三个密钥：keep 两个，孤儿一个
@@ -311,6 +315,7 @@ REGISTER_TEST(keychain_macos_scan_enumerate_failure_propagates,
 // claude_1.key：后写的覆盖先写的。新编码（%XX 转义）下必须落两个不同文件。
 REGISTER_TEST(keychain_account_names_do_not_fold,
               "keychain: 折叠 account 落不同文件且互不覆盖", {
+    SKIP_IF_WRITE_BLOCKED();    // Windows 安全策略下进程写件受限
     const std::string service = "DevDeskTestKeychainEncode";
     const std::string colon = "claude:1";
     const std::string slash = "claude/1";   // 旧规则下与 claude:1 同文件
@@ -350,6 +355,7 @@ REGISTER_TEST(keychain_account_names_do_not_fold,
 // 两侧都清（否则 load 会经回退把已删的密钥读回来）。
 REGISTER_TEST(keychain_legacy_naming_still_readable,
               "keychain: 旧命名文件仍可读且不被孤儿清理误删", {
+    SKIP_IF_WRITE_BLOCKED();    // Windows 安全策略下进程写件受限
     const std::string service = "DevDeskTestKeychainLegacy";
     const std::string account = "legacy:probe";   // 旧规则名 = legacy_probe
 
