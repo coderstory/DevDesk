@@ -374,7 +374,7 @@ int main(int argc, char* argv[]) {
     const std::filesystem::path scratchRoot(rootBuf);
     std::error_code ec;
     std::filesystem::create_directories(scratchRoot, ec);
-    setenv("DEVDESK_DATA_ROOT", scratchRoot.string().c_str(), 1);
+    test_support::setEnvVar("DEVDESK_DATA_ROOT", scratchRoot.string().c_str());
 
     const auto args = probe::parseProbeArgs(argc, argv);
     if (!probe::initializeWindowBackend()) return 1;
