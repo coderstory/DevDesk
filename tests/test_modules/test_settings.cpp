@@ -2973,6 +2973,7 @@ REGISTER_TEST(settings_card_registry_order,
         mod->onStart();
         DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 1));
         const std::vector<std::string> wantModulesGated = {
+            "settings.card.modules.grouptitle",
             "settings.card.modules",
             "settings.card.quota"};
         const auto g1 = cardIdsOf(*mod, screen);
