@@ -30,7 +30,7 @@
 namespace {
 
 // 诊断：segfault 时打印当前测试名（const char* 指针赋值纳秒级，不改时序；cerr endl flush 会掩竞态）
-volatile const char* g_currentTest = "";
+const char* g_currentTest = "";
 extern "C" void segvHandler(int) {
     const char* t = g_currentTest;
     std::fputs("SEGFAULT in test: ", stderr);
