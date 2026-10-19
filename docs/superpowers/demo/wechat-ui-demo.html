@@ -1,0 +1,1925 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>DevDesk 微信风格 UI Demo</title>
+<style>
+/* ===== 全局色彩令牌（v1.0 §2.1 / 规范 §2.1）===== */
+:root{
+  --primary:#07C160;        /* 微信绿 主色 */
+  --danger:#FA5151;         /* 警示红 */
+  --link:#576B95;           /* 链接蓝 */
+  --pageBg:#F7F7F7;         /* 页面背景 */
+  --surface:#FFFFFF;        /* 卡片/内容区背景 */
+  --divider1:#E5E5E5;       /* 一级分割线 / 选中背景 */
+  --divider2:#EDEDED;       /* 二级分割线 / hover 背景 */
+  --text1:#1A1A1A;          /* 一级文字 */
+  --text2:#666666;          /* 二级文字 */
+  --text3:#999999;          /* 三级文字 */
+  --hoverBg:#EDEDED;        /* hover 背景 */
+  --selectBg:#E5E5E5;       /* 选中背景 */
+  --btnSecBg:#F2F2F2;       /* 次按钮底 */
+  --shadowCard:0 1px 2px rgba(0,0,0,0.04);
+  --shadowDialog:0 8px 24px rgba(0,0,0,0.12);
+  --shadowMenu:0 4px 12px rgba(0,0,0,0.10);
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+html{zoom:1.25;-moz-transform:scale(1.25);-moz-transform-origin:top left;}
+html,body{height:100%;width:100%;overflow:hidden;}
+body{
+  font-family:"Microsoft YaHei","微软雅黑",-apple-system,"PingFang SC",sans-serif;
+  font-size:14px;color:var(--text1);background:var(--pageBg);
+  overflow:hidden;user-select:none;-webkit-font-smoothing:antialiased;
+}
+button{font-family:inherit;cursor:pointer;border:none;outline:none;}
+input,textarea,select{font-family:inherit;outline:none;}
+ul,li{list-style:none;}
+
+/* ===== 通用按钮四级（规范 §4.1）===== */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;
+  padding:0 14px;height:32px;font-size:14px;border-radius:6px;
+  transition:background .15s,opacity .15s;white-space:nowrap;line-height:1;}
+.btn-primary{background:var(--primary);color:#fff;}
+.btn-primary:hover{background:#06AD56;}
+.btn-primary:disabled{background:#9EDFB6;cursor:not-allowed;}
+.btn-sec{background:var(--btnSecBg);color:var(--text1);}
+.btn-sec:hover{background:#E5E5E5;}
+.btn-text{background:transparent;color:var(--primary);padding:0 8px;height:28px;font-size:14px;display:inline-flex;align-items:center;gap:4px;}
+.btn-text:hover{background:var(--hoverBg);border-radius:6px;}
+.btn-text.gray{color:var(--text2);}
+.btn-danger{background:var(--danger);color:#fff;}
+.btn-danger:hover{background:#E54545;}
+
+/* ===== 输入框（规范 §4.6）===== */
+.input,.textarea,.select{background:var(--surface);border:1px solid var(--divider1);
+  border-radius:6px;padding:6px 10px;font-size:14px;color:var(--text1);
+  transition:border-color .15s;width:100%;}
+.input:focus,.textarea:focus,.select:focus{border-color:var(--primary);}
+.input.readonly{background:var(--btnSecBg);color:var(--text2);cursor:not-allowed;}
+.textarea{resize:vertical;min-height:64px;line-height:1.5;}
+
+/* ===== 开关（规范 §4.4）===== */
+.switch{width:36px;height:20px;background:#C2C2C2;border-radius:6px;
+  position:relative;cursor:pointer;transition:background .15s;flex-shrink:0;}
+.switch::after{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;
+  background:#fff;border-radius:50%;transition:left .15s;box-shadow:0 1px 2px rgba(0,0,0,0.2);}
+.switch.on{background:var(--primary);}
+.switch.on::after{left:18px;}
+
+/* ===== Tab（规范 §4.2）===== */
+.tabs{display:flex;border-bottom:1px solid var(--divider2);gap:24px;}
+.tab{padding:8px 0;font-size:14px;color:var(--text2);cursor:pointer;
+  position:relative;transition:color .15s;}
+.tab:hover{color:var(--text1);}
+.tab.active{color:var(--text1);}
+.tab.active::after{content:"";position:absolute;left:0;right:0;bottom:-1px;
+  height:2px;background:var(--primary);}
+
+/* ===== 卡片（规范 §4.5）===== */
+.card{background:var(--surface);border-radius:6px;box-shadow:var(--shadowCard);}
+
+/* ===== Tooltip（规范 §4.9）===== */
+.tooltip-wrap{position:relative;display:inline-flex;align-items:center;}
+.tooltip-wrap .tip{position:absolute;bottom:calc(100% + 6px);left:50%;transform:translateX(-50%);
+  background:#fff;color:var(--text1);font-size:12px;padding:6px 10px;border-radius:6px;
+  box-shadow:var(--shadowMenu);white-space:nowrap;display:none;z-index:9999;pointer-events:none;}
+.tooltip-wrap:hover .tip{display:block;}
+.tooltip-wrap .tip::after{content:"";position:absolute;top:100%;left:50%;transform:translateX(-50%);
+  border:4px solid transparent;border-top-color:#fff;}
+
+/* ===== 主框架 ===== */
+.app{display:flex;height:100%;width:100%;overflow:hidden;}
+/* 侧边栏（规范 §4.8 + #18 微染绿）*/
+.sidebar{width:200px;background:#E8F0EC;border-right:1px solid var(--divider2);
+  display:flex;flex-direction:column;flex-shrink:0;overflow:hidden;}
+.sidebar-logo{height:48px;display:flex;align-items:center;padding:0 16px;
+  font-size:15px;font-weight:600;color:var(--text1);border-bottom:1px solid var(--divider2);}
+.sidebar-logo .dot{width:22px;height:22px;background:transparent;border-radius:6px;
+  margin-right:8px;display:inline-flex;align-items:center;justify-content:center;overflow:hidden;}
+  .sidebar-logo .dot svg{width:22px;height:22px;}
+.nav-group{padding:8px 0;}
+.nav-group+.nav-group{border-top:1px solid var(--divider2);}
+.nav-group-title{font-size:11px;color:var(--text3);padding:6px 16px 2px;}
+.nav-item{display:flex;align-items:center;height:36px;padding:0 16px;cursor:pointer;
+  color:var(--text2);font-size:14px;position:relative;transition:background .15s,color .15s;gap:10px;}
+.nav-item:hover{background:var(--hoverBg);color:var(--text1);}
+.nav-item.active{background:var(--selectBg);color:var(--text1);}
+.nav-item.active::before{content:"";position:absolute;left:0;top:0;bottom:0;width:2px;background:var(--primary);}
+.nav-item .icon{width:18px;text-align:center;font-size:15px;flex-shrink:0;}
+.nav-item.active .icon{color:var(--primary);}
+
+/* 主内容区 */
+.main{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:0;}
+.content{flex:1;overflow:auto;background:var(--pageBg);min-height:0;}
+.page{display:none;padding:12px;}
+.page.active{display:block;}
+
+/* 页面顶部标题栏 */
+.page-header{display:flex;align-items:center;justify-content:space-between;
+  margin-bottom:12px;flex-wrap:wrap;gap:8px;}
+.page-title{font-size:16px;font-weight:600;color:var(--text1);}
+.page-title .date{font-size:11px;color:var(--text3);font-weight:normal;margin-left:8px;}
+.page-actions{display:flex;gap:8px;align-items:center;}
+
+/* ===== Toast（规范 §4.10）===== */
+.toast{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);
+  background:rgba(0,0,0,0.78);color:#fff;padding:10px 18px;border-radius:6px;
+  font-size:13px;z-index:10000;pointer-events:none;opacity:0;transition:opacity .15s;}
+.toast.show{opacity:1;}
+
+/* ===== 右键菜单（规范 §4.11）===== */
+.ctx-menu{position:fixed;background:var(--surface);border-radius:6px;
+  box-shadow:var(--shadowMenu);padding:6px 0;min-width:160px;z-index:9000;display:none;font-size:13px;}
+.ctx-item{padding:6px 16px;cursor:pointer;color:var(--text1);position:relative;}
+.ctx-item:hover{background:var(--hoverBg);}
+.ctx-item.danger{color:var(--danger);}
+.ctx-sep{height:1px;background:var(--divider2);margin:4px 0;}
+.ctx-sub-arrow{position:absolute;right:10px;top:50%;transform:translateY(-50%);color:var(--text3);}
+.ctx-submenu{position:absolute;left:100%;top:-6px;background:var(--surface);
+  border-radius:6px;box-shadow:var(--shadowMenu);padding:6px 0;min-width:120px;display:none;}
+.ctx-item:hover>.ctx-submenu{display:block;}
+.ctx-color-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;padding:6px 10px;}
+.ctx-color-cell{width:18px;height:18px;border-radius:6px;cursor:pointer;}
+
+/* ===== 弹窗（规范 §4.5 + §3.1 弹窗内边距 24）===== */
+.dialog-mask{position:fixed;inset:0;background:rgba(0,0,0,0.32);z-index:8000;
+  display:none;align-items:center;justify-content:center;}
+.dialog-mask.show{display:flex;}
+.dialog{background:var(--surface);border-radius:6px;box-shadow:var(--shadowDialog);
+  width:min(620px,94vw);max-height:88vh;display:flex;flex-direction:column;}
+.dialog.wide{width:min(1040px,96vw);}
+.dialog.narrow{width:min(400px,92vw);}
+.dialog.fullscreen{width:94vw;height:88vh;}
+.dialog-header{display:flex;align-items:center;justify-content:space-between;
+  padding:12px 20px;border-bottom:1px solid var(--divider2);}
+.dialog-title{font-size:15px;font-weight:600;color:var(--text1);}
+.dialog-close{width:24px;height:24px;display:flex;align-items:center;justify-content:center;
+  cursor:pointer;color:var(--text3);border-radius:6px;font-size:16px;}
+.dialog-close:hover{background:var(--hoverBg);color:var(--text1);}
+.dialog-body{padding:16px 20px;overflow:auto;flex:1;}
+.dialog-footer{padding:10px 20px;border-top:1px solid var(--divider2);
+  display:flex;justify-content:flex-end;gap:8px;align-items:center;}
+
+/* 表单分组 */
+.form-group{margin-bottom:16px;}
+.form-group:last-child{margin-bottom:0;}
+.form-group-title{font-size:13px;font-weight:600;color:var(--text1);margin-bottom:8px;
+  display:flex;align-items:center;gap:6px;}
+.form-group-title.danger{color:var(--danger);}
+.form-row{display:flex;align-items:center;margin-bottom:8px;gap:10px;}
+.form-row:last-child{margin-bottom:0;}
+.form-label{width:110px;font-size:13px;color:var(--text2);flex-shrink:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.form-label.required::after{content:"*";color:var(--danger);margin-left:2px;}
+.form-control{flex:1;}
+.form-hint{font-size:12px;color:var(--text3);margin-top:4px;}
+.form-error{font-size:12px;color:var(--danger);margin-top:4px;display:none;}
+.form-error.show{display:block;}
+.form-row.danger-on .form-label,.form-row.danger-on .form-control{color:var(--danger);}
+.form-two-col{display:grid;grid-template-columns:1fr 1fr;gap:16px;}
+.form-two-col .form-group{margin-bottom:0;}
+
+/* ===== Splash 启动动画（微信极简）===== */
+.splash{position:fixed;inset:0;z-index:11000;background:#F7F7F7;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;
+  transition:opacity .3s;}
+.splash.hide{opacity:0;pointer-events:none;}
+.splash-logo{width:72px;height:72px;margin-bottom:16px;z-index:1;display:flex;align-items:center;justify-content:center;}
+.splash-logo svg{width:72px;height:72px;}
+.splash-name{font-size:20px;font-weight:600;color:var(--text1);z-index:1;margin-bottom:32px;}
+.splash-bar{width:180px;height:2px;background:var(--divider2);border-radius:6px;overflow:hidden;z-index:1;}
+.splash-bar-fill{height:100%;width:0;background:var(--primary);transition:width .15s;border-radius:6px;}
+.splash-version{font-size:12px;color:var(--text3);margin-top:14px;z-index:1;}
+
+/* ===== 托盘区 ===== */
+.tray{position:fixed;right:12px;bottom:12px;width:32px;height:32px;
+  background:var(--surface);border-radius:6px;box-shadow:0 2px 8px rgba(0,0,0,0.15);
+  display:flex;align-items:center;justify-content:center;cursor:pointer;z-index:6000;
+  color:var(--text2);border:1px solid var(--divider2);}
+.tray:hover{background:var(--hoverBg);}
+.tray svg{width:18px;height:18px;}
+
+/* ===== 首页 ===== */
+.stat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;margin-bottom:12px;}
+.stat-card{background:var(--surface);border-radius:6px;padding:12px;box-shadow:var(--shadowCard);}
+.stat-num{font-size:16px;font-weight:600;color:var(--text1);margin-bottom:2px;}
+.stat-label{font-size:11px;color:var(--text3);}
+.chart-card{background:var(--surface);border-radius:6px;padding:12px;box-shadow:var(--shadowCard);margin-bottom:12px;}
+.chart-title{font-size:13px;color:var(--text1);font-weight:500;margin-bottom:10px;}
+.chart-empty{text-align:center;color:var(--text3);font-size:13px;padding:24px 0;}
+.home-actions{display:flex;gap:8px;}
+.home-actions .btn-primary{min-width:120px;}
+
+/* ===== Markdown ===== */
+.md-wrap{display:flex;flex:1;gap:0;min-height:0;overflow:hidden;}
+.md-tree{width:220px;background:var(--surface);border-right:1px solid var(--divider2);
+  display:flex;flex-direction:column;min-width:0;overflow:hidden;}
+.md-tree-search{padding:10px;border-bottom:1px solid var(--divider2);display:flex;gap:6px;align-items:center;}
+.md-tree-search .input{padding-left:28px;}
+.md-tree-search-wrap{position:relative;flex:1;}
+.md-tree-search-wrap .icon{position:absolute;left:8px;top:50%;transform:translateY(-50%);color:var(--text3);font-size:13px;}
+.md-tree-search-clear{position:absolute;right:8px;top:50%;transform:translateY(-50%);
+  color:var(--text3);cursor:pointer;font-size:14px;display:none;}
+.md-tree-search-clear:hover{color:var(--text1);}
+.md-tree-list{flex:1;overflow:auto;padding:6px 0;}
+.tree-item{display:flex;align-items:center;height:28px;padding:0 12px;cursor:pointer;
+  font-size:13px;color:var(--text1);position:relative;gap:6px;}
+.tree-item:hover{background:var(--hoverBg);}
+.tree-item.active{background:var(--selectBg);}
+.tree-item.active::before{content:"";position:absolute;left:0;top:0;bottom:0;width:2px;background:var(--primary);}
+.tree-item .icon{font-size:14px;color:var(--text2);}
+.tree-item .name{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.breadcrumb{font-size:12px;color:var(--text3);padding:8px 16px;border-bottom:1px solid var(--divider2);background:var(--surface);}
+.breadcrumb span{color:var(--text2);}
+.md-editor{flex:1;background:var(--pageBg);display:flex;flex-direction:column;min-width:0;overflow:hidden;}
+.md-tabs{display:flex;align-items:center;justify-content:space-between;padding:0 16px;border-bottom:1px solid var(--divider2);background:var(--surface);flex-shrink:0;}
+.md-editor-title{padding:8px 16px;border-bottom:1px solid var(--divider2);background:var(--surface);}
+.md-editor-title .input{font-size:15px;font-weight:500;border:none;padding:4px 0;background:transparent;}
+.md-editor-body{flex:1;padding:12px 16px;overflow:auto;background:var(--surface);}
+.md-editor-body textarea{width:100%;height:100%;border:none;resize:none;font-size:13px;line-height:1.7;background:transparent;}
+.md-tags{padding:6px 16px;border-top:1px solid var(--divider2);display:flex;gap:6px;align-items:center;flex-wrap:wrap;background:var(--surface);flex-shrink:0;}
+.md-tag{background:#E8F7EE;color:var(--primary);font-size:11px;padding:2px 8px;border-radius:6px;}
+.md-tag-add{background:var(--btnSecBg);border-radius:6px;padding:2px 8px;font-size:11px;color:var(--text2);cursor:pointer;}
+.md-status{padding:4px 16px;border-top:1px solid var(--divider2);font-size:11px;color:var(--text3);
+  text-align:right;background:var(--surface);flex-shrink:0;}
+
+/* ===== Todo ===== */
+.todo-toolbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;gap:12px;flex-wrap:wrap;}
+.todo-toolbar-left{display:flex;gap:8px;align-items:center;}
+.todo-toolbar-right{display:flex;gap:8px;align-items:center;}
+.todo-overdue-badge{background:var(--danger);color:#fff;font-size:12px;padding:2px 8px;border-radius:6px;cursor:pointer;display:flex;align-items:center;gap:4px;}
+.todo-overdue-badge:hover{background:#E54545;}
+.board{display:flex;gap:10px;overflow-x:auto;padding-bottom:6px;flex:1;align-items:flex-start;}
+.column{width:230px;background:var(--btnSecBg);border-radius:6px;flex-shrink:0;display:flex;flex-direction:column;max-height:100%;overflow:hidden;}
+.column.archive-col{opacity:0.85;}
+.column-header{padding:8px 10px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--divider2);flex-shrink:0;}
+.column-title{font-size:13px;font-weight:500;color:var(--text1);display:flex;align-items:center;gap:5px;}
+.column-color-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0;}
+.column-count{font-size:11px;color:var(--text3);background:var(--divider2);border-radius:6px;padding:0 6px;min-width:16px;text-align:center;line-height:14px;height:14px;}
+.column-actions{display:flex;gap:2px;}
+.column-actions .icon-btn{width:22px;height:22px;display:flex;align-items:center;justify-content:center;
+  color:var(--text3);cursor:pointer;border-radius:6px;}
+.column-actions .icon-btn:hover{background:var(--hoverBg);color:var(--text1);}
+.column-cards{flex:1;padding:6px;display:flex;flex-direction:column;gap:5px;overflow-y:auto;min-height:60px;}
+.todo-card{background:var(--surface);border-radius:6px;padding:10px 12px;cursor:pointer;
+  position:relative;box-shadow:0 1px 1px rgba(0,0,0,0.06);transition:box-shadow .12s,background .12s;border:1px solid transparent;}
+.todo-card:hover{background:#FAFAFA;box-shadow:0 2px 4px rgba(0,0,0,0.08);border-color:var(--divider2);}
+.todo-card.selected{background:var(--selectBg);box-shadow:none;border-color:transparent;}
+.todo-card.selected::before{content:"";position:absolute;left:0;top:6px;bottom:6px;width:3px;background:var(--primary);border-radius:0 2px 2px 0;}
+.todo-card.overdue{border-color:#FCE4E4;}
+.todo-card.overdue::before{content:"";position:absolute;left:0;top:6px;bottom:6px;width:3px;background:var(--danger);border-radius:0 2px 2px 0;}
+.todo-card.overdue .todo-title{color:var(--danger);}
+.todo-card.archived{opacity:0.6;}
+.todo-card.archived .todo-title,.todo-card.archived .todo-meta{color:var(--text3);}
+.todo-title{font-size:13px;color:var(--text1);margin-bottom:6px;line-height:1.4;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500;display:flex;align-items:center;gap:6px;}
+.todo-priority-dot{width:6px;height:6px;border-radius:50%;flex-shrink:0;}
+.todo-priority-dot.high{background:var(--danger);}
+.todo-priority-dot.mid{background:var(--text3);}
+.todo-priority-dot.low{background:var(--primary);}
+.todo-meta{display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text3);flex-wrap:wrap;}
+.todo-priority{font-size:11px;color:var(--text3);font-weight:normal;}
+.todo-priority.high{color:var(--danger);}
+.todo-priority.mid{color:var(--text2);}
+.todo-priority.low{color:var(--primary);}
+.todo-due{display:inline-flex;align-items:center;gap:3px;color:var(--text2);}
+.todo-card.overdue .todo-due{color:var(--danger);}
+.todo-due .svg-icon{width:11px;height:11px;}
+.todo-due .svg-icon svg{width:11px;height:11px;}
+.todo-chip{background:var(--divider2);color:var(--text2);padding:1px 5px;border-radius:6px;font-size:10px;}
+.column-empty{text-align:center;color:var(--text3);font-size:12px;padding:20px 0;}
+.column-empty .add-btn{color:var(--primary);cursor:pointer;display:block;margin-top:8px;font-size:13px;}
+
+/* ===== Claude 切换器 ===== */
+.claude-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;}
+.proxy-status{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--text2);}
+.status-dot{width:8px;height:8px;border-radius:50%;background:var(--text3);}
+.status-dot.running{background:var(--primary);}
+.claude-wrap{display:flex;gap:0;flex:1;min-height:0;overflow:hidden;}
+.claude-list{width:280px;background:var(--surface);border-right:1px solid var(--divider2);display:flex;flex-direction:column;min-width:0;overflow:hidden;}
+.claude-list-header{padding:10px 12px;border-bottom:1px solid var(--divider2);display:flex;justify-content:space-between;align-items:center;}
+.claude-list-items{flex:1;overflow:auto;}
+.claude-item{display:flex;align-items:center;padding:10px 12px;cursor:pointer;position:relative;gap:10px;}
+.claude-item:hover{background:var(--hoverBg);}
+.claude-item.active{background:var(--selectBg);}
+.claude-item.active::before{content:"";position:absolute;left:0;top:0;bottom:0;width:2px;background:var(--primary);}
+.claude-item .avatar{width:32px;height:32px;background:var(--primary);border-radius:6px;
+  display:flex;align-items:center;justify-content:center;color:#fff;font-size:13px;font-weight:500;}
+.claude-item .info{flex:1;min-width:0;}
+.claude-item .name{font-size:14px;color:var(--text1);font-weight:500;}
+.claude-item .url{font-size:11px;color:var(--text3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.claude-item .active-tag{background:#E8F7EE;color:var(--primary);font-size:11px;padding:2px 6px;border-radius:6px;}
+.claude-list-footer{padding:10px 12px;border-top:1px solid var(--divider2);display:flex;gap:8px;}
+.claude-detail{flex:1;background:var(--pageBg);overflow:auto;padding:16px;min-width:0;}
+.detail-tabs{display:flex;gap:24px;border-bottom:1px solid var(--divider2);margin-bottom:16px;background:var(--surface);border-radius:6px 8px 0 0;padding:0 16px;}
+.detail-tab-content{background:var(--surface);border-radius:0 0 8px 8px;padding:16px;min-height:200px;}
+.claude-actions{display:flex;gap:8px;margin-top:16px;align-items:center;}
+.claude-actions .btn-text{margin-left:auto;}
+.shared-section{margin-top:24px;}
+.shared-list{background:var(--surface);border-radius:6px;padding:12px;}
+.shared-item{padding:10px;border-bottom:1px solid var(--divider2);display:flex;justify-content:space-between;align-items:center;}
+.shared-item:last-child{border-bottom:none;}
+.shared-empty{text-align:center;color:var(--text3);font-size:13px;padding:20px;}
+
+/* ===== 设置页 ===== */
+.settings-tabs{background:var(--surface);border-radius:6px;padding:0 16px;margin-bottom:16px;}
+.settings-body{background:var(--surface);border-radius:6px;padding:16px 24px;}
+.settings-group{margin-bottom:24px;}
+.settings-group:last-child{margin-bottom:0;}
+.settings-group-title{font-size:14px;color:var(--text1);font-weight:600;margin-bottom:12px;padding-bottom:8px;border-bottom:1px solid var(--divider2);}
+.settings-row{display:flex;align-items:center;justify-content:space-between;padding:10px 0;}
+.settings-row .label{font-size:14px;color:var(--text1);}
+.settings-row .desc{font-size:12px;color:var(--text3);margin-top:2px;}
+.settings-row .label .term-help{display:inline-block;width:14px;height:14px;border-radius:50%;
+  border:1px solid var(--text3);color:var(--text3);font-size:10px;text-align:center;line-height:12px;
+  margin-left:4px;cursor:help;}
+.settings-footer{text-align:center;font-size:12px;color:var(--text3);padding:12px;}
+
+/* ===== 关于页 ===== */
+.about-wrap{display:flex;align-items:center;justify-content:center;min-height:100%;padding:24px;overflow:auto;}
+.about-card{background:var(--surface);border-radius:6px;padding:32px 40px;width:560px;box-shadow:var(--shadowCard);}
+.about-logo{width:72px;height:72px;margin:0 auto 12px;display:flex;align-items:center;justify-content:center;}
+.about-logo svg{width:72px;height:72px;}
+  display:flex;align-items:center;justify-content:center;color:#fff;font-size:24px;font-weight:bold;}
+.about-name{text-align:center;font-size:18px;font-weight:600;margin-bottom:20px;}
+.about-info-row{display:flex;border-bottom:1px solid var(--divider2);padding:10px 0;font-size:13px;}
+.about-info-row:last-child{border-bottom:none;}
+.about-info-label{width:140px;color:var(--text2);}
+.about-info-value{flex:1;color:var(--text1);}
+.about-info-value.green{color:var(--primary);cursor:pointer;position:relative;}
+.about-info-value.green:hover .copy-icon{display:inline-block;}
+.copy-icon{display:none;margin-left:6px;color:var(--text2);font-size:12px;}
+.about-buttons{text-align:center;margin-top:20px;}
+.about-copyright{text-align:center;font-size:12px;color:var(--text3);margin-top:24px;}
+
+/* ===== 智能体 / 任务列表 ===== */
+.agent-tasks{background:var(--surface);border-radius:6px;padding:8px;overflow-y:auto;flex:1;min-height:0;}
+.agent-task-row{display:flex;align-items:center;padding:8px 10px;border-bottom:1px solid var(--divider2);cursor:pointer;gap:8px;flex-shrink:0;}
+.agent-task-row:hover{background:var(--hoverBg);}
+.agent-task-row:last-child{border-bottom:none;}
+.agent-task-name{flex:1;font-size:13px;color:var(--text1);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.agent-task-meta{font-size:11px;color:var(--text3);white-space:nowrap;}
+
+/* 高危分组开关 */
+.danger-group{border:1px solid #FCE4E4;border-radius:6px;padding:12px;background:#FFFBFB;}
+.danger-group.open{border-color:var(--danger);background:#FFF5F5;}
+.warning-icon{color:var(--danger);margin-left:4px;}
+
+/* 调用记录表格 */
+.calls-table{width:100%;border-collapse:collapse;font-size:13px;}
+.calls-table th{background:var(--btnSecBg);padding:8px 10px;text-align:left;font-weight:500;color:var(--text2);font-size:12px;}
+.calls-table td{padding:8px 10px;border-bottom:1px solid var(--divider2);}
+.calls-table .status-200{color:var(--primary);}
+.calls-table .status-4xx,.calls-table .status-5xx{color:var(--danger);}
+.pager{display:flex;justify-content:flex-end;gap:6px;margin-top:12px;align-items:center;font-size:12px;color:var(--text3);}
+.pager .btn{height:28px;padding:0 10px;font-size:12px;}
+
+/* 滚动条 */
+::-webkit-scrollbar{width:8px;height:8px;}
+::-webkit-scrollbar-thumb{background:#D5D5D5;border-radius:6px;}
+::-webkit-scrollbar-thumb:hover{background:#BFBFBF;}
+::-webkit-scrollbar-track{background:transparent;}
+
+/* SVG 图标 */
+.svg-icon{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;flex-shrink:0;}
+.svg-icon svg{width:18px;height:18px;display:block;}
+.nav-item .svg-icon svg{width:16px;height:16px;}
+.md-tree-search-wrap .svg-icon svg{width:14px;height:14px;}
+.md-tree-search-wrap .svg-icon{width:14px;height:14px;}
+.tree-item .svg-icon{width:14px;height:14px;}
+.tree-item .svg-icon svg{width:14px;height:14px;}
+.column-actions .svg-icon{width:16px;height:16px;}
+.column-actions .svg-icon svg{width:14px;height:14px;}
+.btn .svg-icon svg{width:14px;height:14px;}
+.btn .svg-icon{width:14px;height:14px;}
+.about-info-value .copy-icon.svg-icon{width:14px;height:14px;display:none;}
+.dialog-close.svg-icon{cursor:pointer;color:var(--text3);}
+.dialog-close.svg-icon:hover{color:var(--text1);}
+.tray .svg-icon svg{width:14px;height:14px;}
+.icon-btn .svg-icon svg{width:14px;height:14px;}
+
+</style>
+</head>
+<body>
+
+<!-- Splash 启动动画（微信极简） -->
+<div class="splash" id="splash">
+  <div class="splash-logo"></div>
+  <div class="splash-name">DevDesk</div>
+  <div class="splash-bar"><div class="splash-bar-fill" id="splashFill"></div></div>
+  <div class="splash-version">v0.4.3 · 启动中</div>
+</div>
+
+<!-- App 主框架 -->
+<div class="app" id="app" style="opacity:0;">
+  <!-- 侧边栏 -->
+  <aside class="sidebar">
+    <div class="sidebar-logo"><span class="dot">D</span>DevDesk</div>
+    <div class="nav-group">
+      <div class="nav-group-title">工作区</div>
+      <div class="nav-item active" data-page="home"><span class="icon" id="navHome"></span>首页</div>
+      <div class="nav-item" data-page="markdown"><span class="icon" id="navMd"></span>Markdown 笔记本</div>
+      <div class="nav-item" data-page="todo"><span class="icon" id="navTodo"></span>Todo 看板</div>
+      <div class="nav-item" data-page="claude"><span class="icon" id="navClaude"></span>Claude 切换器</div>
+      <div class="nav-item" data-page="agent"><span class="icon" id="navAgent"></span>智能体</div>
+    </div>
+    <div class="nav-group">
+      <div class="nav-group-title">系统</div>
+      <div class="nav-item" data-page="settings"><span class="icon" id="navSettings"></span>设置</div>
+      <div class="nav-item" data-page="about"><span class="icon" id="navAbout"></span>关于</div>
+    </div>
+  </aside>
+
+  <!-- 主内容 -->
+  <div class="main">
+    <div class="content" id="content">
+      <!-- 各页内容在此渲染 -->
+    </div>
+  </div>
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+<!-- 右键菜单容器 -->
+<div id="ctxRoot"></div>
+
+<!-- 弹窗容器 -->
+<div id="dialogRoot"></div>
+
+<!-- 托盘 -->
+<div class="tray" id="tray" title="DevDesk 托盘">▼</div>
+
+<script>
+// ========== 全局状态 ==========
+const state = {
+  proxyRunning:false,
+  currentProfileId:'p1',
+  profiles:[
+    {id:'p1',name:'方舟 GLM-5.3',url:'https://ai-gateway-office.zeekrlife.com/fangzhou/anthropic',model:'glm-5.3',oneM:false,active:true,key:'sk-***masked***'},
+    {id:'p2',name:'百炼 DeepSeek-V4',url:'https://ai-gateway-office.zeekrlife.com/bailian/anthropic',model:'deepseek-v4-pro',oneM:true,active:false,key:'sk-***masked***'},
+    {id:'p3',name:'本地 cc-switch',url:'http://127.0.0.1:15721',model:'glm-5.2',oneM:false,active:false,key:'PROXY_MANAGED'},
+  ],
+  tasks:[
+    {id:'t1',name:'每日推送车型汇总报告',col:'c1',priority:'high',due:'今日 18:00',archived:false,tags:['推送','报表']},
+    {id:'t2',name:'清洗历史归档数据',col:'c1',priority:'mid',due:'明日',archived:false,tags:['清洗']},
+    {id:'t3',name:'同步车牌主数据到 UAT',col:'c2',priority:'high',due:'逾期 2 天',archived:false,tags:['同步']},
+    {id:'t4',name:'修复 OAuth 回调 401',col:'c2',priority:'high',due:'今日 22:00',archived:false,tags:['OAuth']},
+    {id:'t5',name:'导出 09 月工单报表',col:'c4',priority:'low',due:'--',archived:true,tags:['报表'],archivedAt:'2026-10-15'},
+  ],
+  columns:[
+    {id:'c1',name:'待办',color:'#07C160'},
+    {id:'c2',name:'进行中',color:'#576B95'},
+    {id:'c3',name:'已完成',color:'#999999'},
+    {id:'c4',name:'归档',color:'#999999',kind:'archive'},
+  ],
+  mdFiles:[
+    {type:'folder',name:'周报',children:[
+      {type:'file',name:'2026-W42 周报.md'},
+      {type:'file',name:'2026-W41 周报.md'},
+    ]},
+    {type:'folder',name:'方案',children:[
+      {type:'file',name:'devdesk-design.md'},
+      {type:'file',name:'wechat-ui-design.md'},
+    ]},
+    {type:'file',name:'README.md'},
+    {type:'file',name:'会议纪要-1019.md'},
+  ],
+  selectedMd:'README.md',
+  mdView:'edit',
+  selectedTodo:'t1',
+  selectedSettingsTab:'general',
+  selectedClaudeTab:'info',
+  zCounter:8000,
+};
+
+// ========== Toast ==========
+function showToast(msg){
+  const t=document.getElementById('toast');
+  t.textContent=msg;t.classList.add('show');
+  clearTimeout(t._timer);
+  t._timer=setTimeout(()=>t.classList.remove('show'),1500);
+}
+
+// ========== 页面切换 ==========
+const pages = {};  // name -> html string
+
+function switchPage(name){
+  document.querySelectorAll('.nav-item').forEach(n=>n.classList.toggle('active',n.dataset.page===name));
+  const content=document.getElementById('content');
+  // 始终重建以反映最新 state（tab 切换/数据变更后需要刷新）
+  pages[name]=buildPage(name);
+  content.innerHTML=pages[name];
+  bindPage(name);
+}
+
+function renderHTML(name, html){
+  pages[name]=html;
+}
+
+// ========== 弹窗系统 ==========
+function openDialog(html, opts={}){
+  const root=document.getElementById('dialogRoot');
+  const mask=document.createElement('div');
+  mask.className='dialog-mask show';
+  if(opts.wide) mask.classList.add('wide');
+  const z=++state.zCounter;
+  mask.style.zIndex=z;
+  mask.innerHTML=`<div class="dialog ${opts.size||''}">${html}</div>`;
+  mask.addEventListener('click',e=>{
+    if(e.target===mask && opts.dismissable!==false) closeDialogMask(mask);
+  });
+  root.appendChild(mask);
+  return mask;
+}
+function closeDialogMask(mask){
+  if(mask) mask.remove();
+}
+function closeTopDialog(){
+  const root=document.getElementById('dialogRoot');
+  const last=root.querySelector('.dialog-mask:last-child');
+  if(last) last.remove();
+}
+
+// ========== 右键菜单 ==========
+function showCtxMenu(items, x, y, opts={}){
+  const root=document.getElementById('ctxRoot');
+  // 关掉旧菜单
+  root.innerHTML='';
+  const menu=document.createElement('div');
+  menu.className='ctx-menu';
+  menu.style.left=Math.min(x,window.innerWidth-180)+'px';
+  menu.style.top=Math.min(y,window.innerHeight-200)+'px';
+  menu.style.display='block';
+  menu.style.zIndex=++state.zCounter;
+  items.forEach(it=>{
+    if(it.sep){
+      const s=document.createElement('div');s.className='ctx-sep';menu.appendChild(s);return;
+    }
+    const item=document.createElement('div');
+    item.className='ctx-item'+(it.danger?' danger':'');
+    if(it.sub){
+      item.innerHTML=`<span>${it.label}</span><span class="ctx-sub-arrow">▸</span>`;
+      const sub=document.createElement('div');
+      sub.className='ctx-submenu';
+      if(typeof it.sub==='string' && it.sub.startsWith('color-grid:')){
+        const colors=it.sub.split(':')[1].split(',');
+        const grid=document.createElement('div');
+        grid.className='ctx-color-grid';
+        colors.forEach(c=>{
+          const cell=document.createElement('div');
+          cell.className='ctx-color-cell';
+          cell.style.background=c;
+          cell.onclick=(e)=>{e.stopPropagation();it.onSelect(c);hideCtxMenu();};
+          grid.appendChild(cell);
+        });
+        sub.appendChild(grid);
+      }else{
+        it.sub.forEach(s=>{const si=document.createElement('div');si.className='ctx-item';si.textContent=s.label;si.onclick=()=>{s.onClick();hideCtxMenu();};sub.appendChild(si);});
+      }
+      item.appendChild(sub);
+    }else{
+      item.textContent=it.label;
+      item.onclick=()=>{it.onClick&&it.onClick();hideCtxMenu();};
+    }
+    menu.appendChild(item);
+  });
+  root.appendChild(menu);
+  setTimeout(()=>document.addEventListener('mousedown',hideCtxMenuOnce,{once:true}),0);
+}
+function hideCtxMenu(){
+  document.getElementById('ctxRoot').innerHTML='';
+}
+function hideCtxMenuOnce(e){
+  if(!e.target.closest('.ctx-menu')) hideCtxMenu();
+}
+
+// ========== 开关切换 ==========
+function toggleSwitch(el){
+  el.classList.toggle('on');
+  return el.classList.contains('on');
+}
+
+// ========== Splash 启动 ==========
+function runSplash(){
+  const splash=document.getElementById('splash');
+  const fill=document.getElementById('splashFill');
+  let p=0;
+  const t=setInterval(()=>{
+    p+=Math.random()*18+8;
+    if(p>=100){p=100;clearInterval(t);
+      fill.style.width='100%';
+      setTimeout(()=>{
+        splash.classList.add('hide');
+        document.getElementById('app').style.opacity='1';
+        setTimeout(()=>splash.remove(),400);
+      },300);
+    }
+    fill.style.width=p+'%';
+  },220);
+}
+
+// ========== 启动 ==========
+window.addEventListener('DOMContentLoaded',()=>{
+  // 填充导航图标
+  document.getElementById('navHome').innerHTML=ICONS.home;
+  document.getElementById('navMd').innerHTML=ICONS.md;
+  document.getElementById('navTodo').innerHTML=ICONS.todo;
+  document.getElementById('navClaude').innerHTML=ICONS.claude;
+  document.getElementById('navAgent').innerHTML=ICONS.agent;
+  document.getElementById('navSettings').innerHTML=ICONS.settings;
+  document.getElementById('navAbout').innerHTML=ICONS.about;
+  document.getElementById('tray').innerHTML=ICONS.tray;
+  // 填充真实 DevDesk 图标
+  document.querySelectorAll('.sidebar-logo .dot').forEach(el=>{el.innerHTML=DEVDESK_ICON;});
+  document.querySelectorAll('.about-logo').forEach(el=>{el.innerHTML=DEVDESK_ICON;});
+  document.querySelectorAll('.splash-logo').forEach(el=>{el.innerHTML=DEVDESK_ICON;});
+  // 预渲染首页避免空白
+  switchPage('home');
+  runSplash();
+  // 绑定左侧导航点击
+  document.querySelectorAll('.nav-item').forEach(n=>{
+    n.addEventListener('click',()=>switchPage(n.dataset.page));
+  });
+  document.getElementById('app').addEventListener('click',noop);
+  document.getElementById('tray').addEventListener('click',trayClick);
+  document.addEventListener('keydown',e=>{
+    if(e.key==='Escape') closeTopDialog();
+  });
+});
+
+function noop(){}
+
+// ========== SVG 图标集（无外部依赖）==========
+const ICONS={
+  home:'<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 7L8 2.5L13.5 7V13a.5.5 0 01-.5.5H3a.5.5 0 01-.5-.5V7z"/><path d="M6 13.5V9h4v4.5"/></svg>',
+  md:'<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="2.5" width="12" height="11" rx="1.5"/><path d="M4.5 10V6l2 2.5L8.5 6v4"/><path d="M10.5 6v4m0-2l1.5 2m-1.5-2l1.5-2"/></svg>',
+  todo:'<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="2.5" width="11" height="11" rx="1.5"/><path d="M5 8l2 2 4-4"/></svg>',
+  claude:'<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 1.5L14 5v6L8 14.5L2 11V5z"/><circle cx="8" cy="8" r="2"/></svg>',
+  agent:'<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="5" width="8" height="7" rx="1.5"/><path d="M8 2.5V5M2.5 8.5h1.5M12 8.5h1.5"/><circle cx="6" cy="8.5" r="0.8" fill="currentColor"/><circle cx="10" cy="8.5" r="0.8" fill="currentColor"/><path d="M6 11h4"/></svg>',
+  settings:'<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="2.2"/><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.5 3.5l1.4 1.4M11.1 11.1l1.4 1.4M3.5 12.5l1.4-1.4M11.1 4.9l1.4-1.4"/></svg>',
+  about:'<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6.5"/><path d="M8 7v4.5"/><circle cx="8" cy="4.5" r="0.5" fill="currentColor"/></svg>',
+  folder:'<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M1.5 4.5a1 1 0 011-1H6l1.5 1.6h6a1 1 0 011 1v6a1 1 0 01-1 1H2.5a1 1 0 01-1-1V4.5z"/></svg>',
+  file:'<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 1.5h6.5L13 5v9a.5.5 0 01-.5.5h-9A.5.5 0 013 14V2a.5.5 0 01.5-.5z"/><path d="M9.5 1.5V5H13"/></svg>',
+  calendar:'<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="12" height="11" rx="1.5"/><path d="M5 1.5v3M11 1.5v3M2 6.5h12"/></svg>',
+  search:'<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5L14 14"/></svg>',
+  refresh:'<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M13.5 4.5a5.5 5.5 0 00-9.5-1.5L2 5"/><path d="M2 2v3h3"/><path d="M2.5 11.5a5.5 5.5 0 009.5 1.5L14 11"/><path d="M14 14v-3h-3"/></svg>',
+  plus:'<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M8 3v10M3 8h10"/></svg>',
+  close:'<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M4 4l8 8M12 4l-8 8"/></svg>',
+  edit:'<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M11 2l3 3-8.5 8.5L2 14.5l1-3.5z"/><path d="M9.5 3.5l3 3"/></svg>',
+  play:'<svg viewBox="0 0 16 16" fill="currentColor"><path d="M4 2.5v11l9-5.5z"/></svg>',
+  copy:'<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="5" width="9" height="9" rx="1"/><path d="M2 11V2.5a.5.5 0 01.5-.5H11"/></svg>',
+  tray:'<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M1.5 9h13v3.5a1 1 0 01-1 1H2.5a1 1 0 01-1-1V9z"/><path d="M4 9l1-4h6l1 4"/></svg>',
+  gear:'<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="2"/><path d="M8 1.5v1.8M8 12.7v1.8M1.5 8h1.8M12.7 8h1.8M3.4 3.4l1.3 1.3M11.3 11.3l1.3 1.3M3.4 12.6l1.3-1.3M11.3 4.7l1.3-1.3"/></svg>',
+  chart:'<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2 13.5h12M3 13.5V8m3 5.5V5m3 8.5V9m3 4.5V6"/></svg>',
+  expand:'<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 6V2.5H6M13.5 6V2.5H10M2.5 10v3.5H6M13.5 10v3.5H10"/></svg>',
+  eye:'<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M1.5 8s2.5-4.5 6.5-4.5S14.5 8 14.5 8s-2.5 4.5-6.5 4.5S1.5 8 1.5 8z"/><circle cx="8" cy="8" r="1.8"/></svg>',
+  eyeOff:'<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M1.5 8s2.5-4.5 6.5-4.5c1.2 0 2.3.3 3.2.8M14.5 8s-.8 1.4-2 2.6M3 3l10 10"/><path d="M6 6.5a2 2 0 002.5 2.5"/></svg>',
+  warning:'<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M8 1.5L14.5 13H1.5z"/><path d="M8 6v3"/><circle cx="8" cy="11.5" r="0.5" fill="currentColor"/></svg>',
+  sparkle:'<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M8 1.5L9.5 6L14 8L9.5 10L8 14.5L6.5 10L2 8L6.5 6z"/></svg>',
+  overlay:'<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="1.5" y="2.5" width="9" height="9" rx="1"/><rect x="5.5" y="6.5" width="9" height="7" rx="1" fill="var(--surface)"/></svg>',
+};
+const DEVDESK_ICON=`<svg version="1.1" xmlns="http://www.w3.org/2000/svg" style="display: block;" viewBox="0 0 2048 1998" width="1440" height="1405" preserveAspectRatio="none">
+<path transform="translate(0,0)" fill="rgb(254,254,254)" d="M 698.197 2.39424 C 701.192 2.00413 707.61 2.09071 710.863 2.07548 L 1158.76 2.1668 L 1359.04 3.38152 C 1380.91 3.60596 1403.67 3.00441 1425.38 3.55067 C 1495.37 5.27718 1565.2 11.1707 1634.5 21.2 C 1678.95 27.8044 1711.34 33.8375 1754.61 47.2603 C 2030.62 132.881 2045.22 408.821 2045.86 656.077 L 2045.91 1190.01 L 2044.63 1361.33 C 2043.4 1525.6 2041.42 1720.65 1921.66 1848.84 C 1786.51 1993.49 1535.59 1996.19 1350.5 1995.93 L 842.256 1995.94 C 768.386 1995.96 694.236 1997.18 620.497 1994.37 C 606.599 1993.84 592.141 1994.88 578.298 1994.13 C 437.533 1986.47 289.248 1977.75 171.914 1890.06 C 73.1773 1815.81 30.0821 1698.21 16.0017 1579.21 C 6.77592 1501.23 5.29514 1425.61 3.57561 1347.2 C 1.59742 1224.33 1.10734 1101.44 2.10549 978.555 C 1.10801 870.724 1.95966 762.884 4.66005 655.082 C 5.06708 631.986 4.61432 608.665 5.13366 585.655 C 6.02885 539.482 8.93658 493.37 13.8486 447.451 C 23.3871 353.916 43.521 253.584 103.347 177.893 C 123.077 152.932 152.783 123.274 178.395 104.677 C 235.879 62.9362 306.694 40.365 375.815 27.3391 C 466.384 10.1283 559.915 6.74549 651.905 3.5511 C 666.634 3.03961 681.887 4.42732 696.634 2.59644 L 698.197 2.39424 z"/>
+<path transform="translate(0,0)" fill="rgb(72,103,218)" d="M 697.325 132.5 C 699.674 132.442 702.024 132.396 704.374 132.362 C 759.574 131.896 814.777 131.739 869.979 131.893 L 1120.09 131.861 C 1227.36 131.992 1337.33 129.879 1443.85 135.592 C 1568.12 143.504 1709.01 147.669 1802.96 241.059 C 1861.89 299.643 1886.45 362.435 1897.13 443.668 C 1907.34 521.274 1908.43 597.546 1909.55 675.575 C 1910.28 758.049 1910.32 840.527 1909.67 923.001 L 1909.55 1200.17 C 1908.91 1286.94 1910.83 1373.8 1905.16 1460.5 C 1902.62 1504.22 1899.25 1548.81 1889.75 1591.6 C 1872.63 1668.76 1824.27 1749.3 1755.6 1791.28 C 1640.02 1861.94 1484.32 1861.86 1352.87 1863.57 C 1209.77 1866.06 1064.49 1863.13 921.114 1864.06 C 815.777 1864.94 703.925 1864.27 599.8 1861.28 C 408.89 1855.79 219.948 1820.19 162.553 1609.56 C 150.393 1564.93 146.525 1530.62 142.874 1484.41 C 139.799 1440.78 137.943 1397.07 137.309 1353.34 C 134.914 1204.2 137.158 1051.15 136.889 901.514 C 136.096 803.34 136.773 705.161 138.92 607.008 C 142.799 481.253 144.272 346.581 237.439 250.613 C 264.078 222.636 295.774 199.958 330.853 183.778 C 428.354 138.582 588.539 134.13 697.325 132.5 z"/>
+<path transform="translate(0,0)" fill="rgb(0,17,63)" d="M 1368.79 476.434 C 1461.85 470.588 1558.05 501.77 1628.32 563.558 C 1689.58 618.143 1726.42 694.989 1730.62 776.931 C 1733.57 831.112 1723.49 885.209 1701.2 934.685 C 1644.79 1063.22 1527.07 1150.41 1391.53 1180.86 C 1366.46 1186.54 1341.08 1190.7 1315.52 1193.31 C 1255.27 1198.89 1209.41 1194.91 1152.02 1221.6 C 1081.1 1254.59 1059.76 1305.47 1010.78 1359.01 C 918.995 1459.34 809.937 1510.99 675.569 1518.89 C 578.568 1520.54 488.704 1496.04 415.218 1431.71 C 269.173 1303.85 284.342 1090.7 410.004 954.966 C 491.96 866.44 588.147 815.421 708.495 799.907 C 755.889 793.798 801.439 794.939 848.516 788.762 C 897.581 782.338 952.73 748.485 983.576 709.777 C 1005.36 682.442 1024.56 655.725 1048.33 629.291 C 1130.37 537.483 1245.81 482.419 1368.79 476.434 z"/>
+<path transform="translate(0,0)" fill="rgb(254,254,254)" d="M 483.54 1158.46 C 536.551 1153.42 583.648 1192.21 588.867 1245.21 C 594.086 1298.2 555.461 1345.43 502.486 1350.84 C 449.25 1356.27 401.734 1317.41 396.489 1264.15 C 391.244 1210.9 430.267 1163.52 483.54 1158.46 z"/>
+<path transform="translate(0,0)" fill="rgb(0,17,63)" d="M 514.477 1199.23 C 537.109 1195.49 558.462 1210.88 562.075 1233.53 C 565.687 1256.18 550.18 1277.45 527.508 1280.94 C 505.013 1284.4 483.949 1269.04 480.365 1246.56 C 476.78 1224.09 492.022 1202.94 514.477 1199.23 z"/>
+<path transform="translate(0,0)" fill="rgb(254,254,254)" d="M 673.278 1060.11 C 725.68 1051.89 774.846 1087.64 783.183 1140.02 C 791.52 1192.4 755.882 1241.65 703.517 1250.11 C 650.984 1258.59 601.545 1222.81 593.181 1170.26 C 584.817 1117.71 620.707 1068.35 673.278 1060.11 z"/>
+<path transform="translate(0,0)" fill="rgb(0,17,63)" d="M 709.64 1099.95 C 731.119 1094.87 752.671 1108.08 757.901 1129.52 C 763.13 1150.96 750.078 1172.6 728.673 1177.99 C 707.054 1183.42 685.145 1170.21 679.863 1148.55 C 674.581 1126.89 687.947 1105.08 709.64 1099.95 z"/>
+<path transform="translate(0,0)" fill="rgb(254,254,254)" d="M 1542.17 621.288 C 1593.8 618.871 1637.65 658.682 1640.22 710.302 C 1642.78 761.921 1603.1 805.888 1551.49 808.608 C 1499.66 811.338 1455.47 771.455 1452.9 719.621 C 1450.32 667.786 1490.33 623.714 1542.17 621.288 z"/>
+<path transform="translate(0,0)" fill="rgb(0,17,63)" d="M 1510.92 690.017 C 1532.7 685.988 1553.59 700.46 1557.48 722.264 C 1561.36 744.068 1546.75 764.866 1524.93 768.608 C 1503.3 772.315 1482.74 757.871 1478.89 736.269 C 1475.04 714.668 1489.34 694.009 1510.92 690.017 z"/>
+<path transform="translate(0,0)" fill="rgb(254,254,254)" d="M 1349.95 720.121 C 1401.28 715.468 1446.65 753.353 1451.22 804.692 C 1455.79 856.031 1417.84 901.336 1366.49 905.826 C 1315.26 910.307 1270.08 872.453 1265.52 821.229 C 1260.95 770.006 1298.74 724.764 1349.95 720.121 z"/>
+<path transform="translate(0,0)" fill="rgb(0,17,63)" d="M 1324.65 787.622 C 1338.91 785.687 1353.1 791.568 1361.82 803.018 C 1370.53 814.468 1372.41 829.719 1366.74 842.944 C 1361.08 856.17 1348.74 865.327 1334.44 866.917 C 1312.7 869.335 1293.05 853.817 1290.37 832.105 C 1287.69 810.393 1302.97 790.564 1324.65 787.622 z"/>
+<path transform="translate(0,0)" fill="rgb(72,103,218)" d="M 797.256 927.202 C 838.982 924.952 844.278 968.112 807.668 983.036 C 769.146 985.376 759.633 942.129 797.256 927.202 z"/>
+<path transform="translate(0,0)" fill="rgb(0,17,63)" d="M 785.843 959.291 C 786.413 917.602 845.589 949.726 810.608 970.138 C 801.335 970.589 798.793 970.362 790.34 967.536 L 785.843 959.291 z"/>
+<path transform="translate(0,0)" fill="rgb(33,39,21)" d="M 785.843 959.291 C 793.19 956.201 794.592 949.739 799.736 948.383 C 808.673 953.049 802.761 965.937 810.608 970.138 C 801.335 970.589 798.793 970.362 790.34 967.536 L 785.843 959.291 z"/>
+<path transform="translate(0,0)" fill="rgb(72,103,218)" d="M 1123.3 641.103 C 1152.36 639.481 1157.9 676.978 1128.77 689.113 C 1099.05 689.374 1094.36 651.88 1123.3 641.103 z"/>
+<path transform="translate(0,0)" fill="rgb(33,39,21)" d="M 1113.13 668.647 C 1112.48 656.966 1121.51 647.52 1133.55 653.014 C 1142.12 661.148 1141.54 668.777 1133.54 677.238 C 1122.9 679.473 1117.71 678.78 1113.13 668.647 z"/>
+<path transform="translate(0,0)" fill="rgb(1,2,34)" d="M 1133.55 653.014 C 1142.12 661.148 1141.54 668.777 1133.54 677.238 C 1126.66 673.807 1129.76 670.331 1126.86 663.507 C 1127.98 657.286 1128.53 656.677 1133.55 653.014 z"/>
+<path transform="translate(0,0)" fill="rgb(0,17,63)" d="M 1113.13 668.647 C 1112.48 656.966 1121.51 647.52 1133.55 653.014 C 1128.53 656.677 1127.98 657.286 1126.86 663.507 C 1124.19 660.304 1125.19 660.443 1122.12 660.111 C 1118.24 661.914 1115.99 665.294 1113.13 668.647 z"/>
+<path transform="translate(0,0)" fill="rgb(72,103,218)" d="M 470.674 1412.49 C 472.73 1404.57 475.59 1396.91 483.044 1392.26 C 487.685 1389.33 493.34 1388.46 498.645 1389.88 C 513.619 1393.86 521.324 1414.03 510.574 1425.44 C 501.558 1445.28 472.435 1438.86 470.674 1412.49 z"/>
+<path transform="translate(0,0)" fill="rgb(76,93,149)" d="M 470.674 1412.49 C 474.833 1414.71 475.093 1414.63 479.909 1414.94 L 480.86 1416.45 C 483.761 1427.38 490.76 1427.25 500.683 1425.14 L 506.3 1418.44 C 505.806 1421.63 505.13 1424.59 505.32 1427.78 C 508.842 1427.32 507.749 1426.2 510.574 1425.44 C 501.558 1445.28 472.435 1438.86 470.674 1412.49 z"/>
+<path transform="translate(0,0)" fill="rgb(33,39,21)" d="M 480.86 1416.45 C 482.612 1413.58 485.156 1409.68 488.558 1408.89 C 492.448 1409.79 491.528 1409.94 494.817 1413.56 C 495.296 1417.27 495.301 1420.82 497.556 1423.7 L 500.683 1425.14 C 490.76 1427.25 483.761 1427.38 480.86 1416.45 z"/>
+<path transform="translate(0,0)" fill="rgb(1,2,34)" d="M 500.88 1400.99 C 506.988 1407.71 507.288 1409.42 506.3 1418.44 L 500.683 1425.14 L 497.556 1423.7 C 495.301 1420.82 495.296 1417.27 494.817 1413.56 C 494.92 1406.06 495.021 1405.7 500.88 1400.99 z"/>
+<path transform="translate(0,0)" fill="rgb(0,17,63)" d="M 479.909 1414.94 C 480.175 1403.83 489.696 1395.94 500.88 1400.99 C 495.021 1405.7 494.92 1406.06 494.817 1413.56 C 491.528 1409.94 492.448 1409.79 488.558 1408.89 C 485.156 1409.68 482.612 1413.58 480.86 1416.45 L 479.909 1414.94 z"/>
+<path transform="translate(0,0)" fill="rgb(72,103,218)" d="M 1055.36 1060.94 C 1056.72 1052.74 1058.97 1045.99 1066.06 1040.84 C 1070.87 1037.29 1076.96 1035.95 1082.82 1037.17 C 1088.81 1038.45 1094.01 1042.17 1097.15 1047.43 C 1100.73 1053.53 1100.45 1062.03 1097.42 1068.29 C 1091.75 1083.36 1077.56 1088.93 1064.06 1079.32 C 1057.52 1074.92 1056.13 1068.27 1055.36 1060.94 z"/>
+<path transform="translate(0,0)" fill="rgb(76,93,149)" d="M 1055.36 1060.94 L 1059.77 1062.19 C 1061.92 1060.75 1061.76 1060.44 1062.92 1058.03 C 1063.97 1058.92 1063.66 1058.37 1063.93 1059.64 L 1065.17 1064.73 C 1069.55 1073.67 1074.64 1074.6 1084.16 1072.77 C 1076.83 1085.12 1074.87 1077.54 1064.06 1079.32 C 1057.52 1074.92 1056.13 1068.27 1055.36 1060.94 z"/>
+<path transform="translate(0,0)" fill="rgb(33,39,21)" d="M 1065.17 1064.73 C 1067.69 1061.27 1069.44 1058.11 1073.07 1055.99 C 1077.01 1055.91 1075.5 1055.6 1079.18 1058.35 L 1079.37 1059.32 C 1080.19 1063.69 1079.55 1067.84 1081.33 1070.41 C 1083.49 1071.21 1083.91 1071.42 1086.16 1071.77 L 1084.16 1072.77 C 1074.64 1074.6 1069.55 1073.67 1065.17 1064.73 z"/>
+<path transform="translate(0,0)" fill="rgb(1,2,34)" d="M 1079.18 1058.35 C 1080.17 1052.58 1081.01 1051.04 1086.35 1049.11 C 1091.85 1055.8 1091.21 1057.08 1091.23 1065.74 C 1088.59 1068.11 1088.13 1068.94 1086.16 1071.77 C 1083.91 1071.42 1083.49 1071.21 1081.33 1070.41 C 1079.55 1067.84 1080.19 1063.69 1079.37 1059.32 L 1079.18 1058.35 z"/>
+<path transform="translate(0,0)" fill="rgb(0,17,63)" d="M 1063.93 1059.64 C 1071.15 1051.69 1070.82 1040.87 1086.35 1049.11 C 1081.01 1051.04 1080.17 1052.58 1079.18 1058.35 C 1075.5 1055.6 1077.01 1055.91 1073.07 1055.99 C 1069.44 1058.11 1067.69 1061.27 1065.17 1064.73 L 1063.93 1059.64 z"/>
+<path transform="translate(0,0)" fill="rgb(72,103,218)" d="M 1672.11 791.887 C 1679.17 750.657 1732.78 783.142 1701.46 804.059 C 1688.44 811.242 1676.67 805.675 1672.11 791.887 z"/>
+<path transform="translate(0,0)" fill="rgb(76,93,149)" d="M 1680.46 792.312 C 1683.31 790.443 1684.99 789.205 1687.65 787.071 C 1691.34 786.48 1689.53 786.234 1693.15 788.525 C 1693.33 793.721 1692.63 795.616 1697.53 798.186 L 1699.3 797.862 C 1700.01 799.913 1700.7 802.032 1701.46 804.059 C 1688.44 811.242 1676.67 805.675 1672.11 791.887 C 1673.99 790.797 1676.29 790.313 1678.45 789.675 L 1680.01 791.163 L 1680.46 792.312 z"/>
+<path transform="translate(0,0)" fill="rgb(33,39,21)" d="M 1680.46 792.312 C 1683.31 790.443 1684.99 789.205 1687.65 787.071 C 1691.34 786.48 1689.53 786.234 1693.15 788.525 C 1693.33 793.721 1692.63 795.616 1697.53 798.186 C 1690.95 800.694 1683.72 798.786 1680.46 792.312 z"/>
+<path transform="translate(0,0)" fill="rgb(0,17,63)" d="M 1680.01 791.163 C 1681.16 778.702 1693.37 776.495 1702.78 784.625 C 1696.85 784.208 1697.01 783.52 1693.15 788.525 C 1689.53 786.234 1691.34 786.48 1687.65 787.071 C 1684.99 789.205 1683.31 790.443 1680.46 792.312 L 1680.01 791.163 z"/>
+<path transform="translate(0,0)" fill="rgb(1,2,34)" d="M 1693.15 788.525 C 1697.01 783.52 1696.85 784.208 1702.78 784.625 C 1704.02 791.26 1703.44 792.568 1699.3 797.862 L 1697.53 798.186 C 1692.63 795.616 1693.33 793.721 1693.15 788.525 z"/>
+<path transform="translate(0,0)" fill="rgb(76,93,149)" d="M 879.543 1249.06 C 888.119 1248.34 910.743 1251.04 914.396 1260.02 C 913.746 1264.32 913.703 1263.23 910.663 1267.16 C 902.731 1267.72 880.446 1262.62 876.491 1254.91 C 876.733 1251.21 876.529 1252.47 879.543 1249.06 z"/>
+<path transform="translate(0,0)" fill="rgb(76,93,149)" d="M 946.822 1264.81 C 955.03 1266.19 975.599 1269.61 978.281 1278.48 C 977.291 1282.96 977.431 1281.71 973.968 1285.6 C 965.452 1284.05 943.151 1280.43 941.574 1271.17 C 942.453 1267.87 944.151 1267.01 946.822 1264.81 z"/>
+<path transform="translate(0,0)" fill="rgb(76,93,149)" d="M 940.719 1215.59 C 943.687 1216.43 947.208 1217.25 947.694 1220.84 C 949.091 1231.16 942.145 1245.34 937.186 1253.96 C 919.175 1251.3 935.008 1223.46 940.719 1215.59 z"/>
+<path transform="translate(0,0)" fill="rgb(76,93,149)" d="M 920.009 1279.45 C 922.584 1280.33 922.579 1280.52 924.765 1282.23 C 929.286 1290.99 920.241 1311.65 913.923 1318.43 C 911.254 1317.81 912.069 1317.97 909.622 1316.34 C 904.759 1308.36 914.381 1285.86 920.009 1279.45 z"/>
+<path transform="translate(0,0)" fill="rgb(76,93,149)" d="M 1496.32 1066.69 C 1503.22 1067.78 1510.73 1068.98 1515.67 1073.76 C 1516.85 1077.36 1516.64 1075.98 1515.03 1080.3 C 1508.38 1079.2 1500.27 1077.78 1495.47 1073.18 C 1494.53 1069.51 1494.7 1070.85 1496.32 1066.69 z"/>
+<path transform="translate(0,0)" fill="rgb(76,93,149)" d="M 518.32 1002.54 C 524.973 1004.16 533.33 1005.09 537.408 1010.27 C 537.93 1014 537.909 1012.66 535.853 1016.59 C 529.53 1014.91 520.554 1013.6 516.64 1008.76 C 516.256 1005.01 516.217 1006.37 518.32 1002.54 z"/>
+<path transform="translate(0,0)" fill="rgb(76,93,149)" d="M 477.042 993.045 C 484.299 992.438 492.62 993.272 498.494 997.85 C 500.223 1001.43 499.891 999.897 498.749 1004.49 C 491.398 1004.6 477.078 1002.23 477.042 993.045 z"/>
+<path transform="translate(0,0)" fill="rgb(76,93,149)" d="M 1201.3 863.662 C 1205.73 863.86 1217.6 865.98 1220.68 869.78 C 1222.8 872.385 1221.74 873.579 1220.96 876.72 C 1214.71 876.28 1205.97 874.147 1201.08 869.969 C 1199.81 866.563 1200.11 867.823 1201.3 863.662 z"/>
+<path transform="translate(0,0)" fill="rgb(76,93,149)" d="M 1163.01 853.007 L 1164.58 853.17 C 1170.78 853.866 1179.48 854.552 1183.3 859.446 C 1183.79 862.966 1183.72 861.755 1181.71 865.51 C 1175.7 864.937 1165.99 862.485 1161.68 857.975 C 1161.12 854.625 1160.89 856.265 1163.01 853.007 z"/>
+<path transform="translate(0,0)" fill="rgb(76,93,149)" d="M 1455.93 1056.9 C 1462.95 1056.48 1471.54 1057.43 1477.17 1061.93 C 1478.82 1065.42 1478.59 1063.87 1477.19 1068.32 C 1470.82 1068.77 1454.29 1066.09 1455.93 1056.9 z"/>
+<path transform="translate(0,0)" fill="rgb(76,93,149)" d="M 515.279 971.267 C 525.021 974.972 516.599 990.42 512.937 996.475 C 503.349 990.326 511.356 979.161 515.279 971.267 z"/>
+<path transform="translate(0,0)" fill="rgb(76,93,149)" d="M 1199.75 831.809 C 1208.82 836.505 1200.53 851.537 1196.54 857.776 L 1193.29 853.804 C 1191.19 845.566 1195.55 838.952 1199.75 831.809 z"/>
+<path transform="translate(0,0)" fill="rgb(76,93,149)" d="M 1493.67 1035.26 C 1503.51 1039.11 1495.32 1052.76 1492.05 1059.83 C 1488.76 1059.52 1488.24 1057.98 1487.01 1055.48 C 1487.02 1047.61 1490.26 1042.32 1493.67 1035.26 z"/>
+<path transform="translate(0,0)" fill="rgb(76,93,149)" d="M 1187.15 872.495 C 1195.26 877.468 1187.72 892.573 1183.34 898.171 C 1181.34 896.479 1180.68 896.631 1180.32 894.625 C 1179.24 888.699 1183.96 877.281 1187.15 872.495 z"/>
+<path transform="translate(0,0)" fill="rgb(76,93,149)" d="M 1481.01 1076.44 L 1483.07 1077 C 1488.43 1082.25 1481.73 1096.55 1477.85 1101.56 C 1476.33 1100.32 1475.11 1099.86 1474.76 1098.32 C 1473.42 1092.5 1478.19 1081.42 1481.01 1076.44 z"/>
+<path transform="translate(0,0)" fill="rgb(76,93,149)" d="M 502.362 1012.17 C 511.856 1015.34 503.439 1030.81 500.23 1036.93 C 490.79 1035.92 500.116 1017.2 502.362 1012.17 z"/>
+<path transform="translate(0,0)" fill="rgb(76,93,149)" d="M 1387.04 518.283 C 1392.43 517.665 1398.95 517.906 1402.04 522.78 C 1396.34 525.323 1390.62 523.033 1387.04 518.283 z"/>
+<path transform="translate(0,0)" fill="rgb(76,93,149)" d="M 1411.09 524.137 C 1416.55 523.448 1423.94 523.111 1424.66 529.805 C 1419.24 529.27 1413.57 529.268 1411.09 524.137 z"/>
+<\/svg>`;
+function svgIcon(name,cls){
+  return `<span class="svg-icon ${cls||''}">${ICONS[name]||''}</span>`;
+}
+
+// 托盘菜单
+function trayClick(e){
+  e.stopPropagation();
+  showCtxMenu([
+    {label:'显示主窗口',onClick:()=>{showToast('已显示主窗口');}},
+    {sep:true},
+    {label:'退出 DevDesk',danger:true,onClick:()=>{showToast('退出（demo 不真退出）');}},
+  ],e.clientX,e.clientY);
+}
+
+// ============= 页面构造函数（后面追加）=============
+function buildPage(name){return (pageBuilders[name]||(()=>`<div class="page">未实现：${name}</div>`))();}
+const pageBuilders={};
+
+// ============= 弹窗构造函数（后面追加）=============
+const dialogBuilders={};
+
+// ============= 页面构造 ==============
+// —— 首页 ——
+pageBuilders.home=function(){
+  const today=new Date();
+  const dateStr=`${today.getFullYear()}年${today.getMonth()+1}月${today.getDate()}日`;
+  return `
+<div class="page active">
+  <div class="page-header">
+    <div class="page-title">工作台<span class="date">${dateStr}</span></div>
+    <div class="page-actions">
+      <button class="btn btn-text gray" onclick="showToast('数据已刷新')"><span class="svg-icon">${ICONS.refresh}</span>刷新</button>
+    </div>
+  </div>
+  <div class="stat-grid">
+    <div class="stat-card"><div class="stat-num">128</div><div class="stat-label">笔记总数</div></div>
+    <div class="stat-card"><div class="stat-num">42</div><div class="stat-label">待办任务</div></div>
+    <div class="stat-card"><div class="stat-num">3</div><div class="stat-label">Profile 数</div></div>
+    <div class="stat-card"><div class="stat-num">--</div><div class="stat-label">今日 API 调用</div></div>
+    <div class="stat-card" style="cursor:pointer;" onclick="openQuotaDialog()"><div class="stat-num">¥ 18.42</div><div class="stat-label">本月余量（点击配置）</div></div>
+  </div>
+  <div class="chart-card">
+    <div class="chart-title">API 调用趋势</div>
+    <div class="chart-empty">今日暂无 API 调用</div>
+  </div>
+  <div class="home-actions">
+    <button class="btn btn-primary" onclick="switchPage('markdown');setTimeout(openMdNewDialog,100)">+ 新建笔记</button>
+    <button class="btn btn-sec" onclick="switchPage('todo');setTimeout(openTodoNewTaskDialog,100)">+ 新建任务</button>
+    <button class="btn btn-sec" onclick="switchPage('claude')">切换 Claude Profile</button>
+  </div>
+</div>`;
+};
+
+// —— Markdown 笔记本 ——
+pageBuilders.markdown=function(){
+  const tree=state.mdFiles;
+  function renderTree(items,depth){
+    return items.map(it=>{
+      const pad='padding-left:'+(12+depth*14)+'px;';
+      if(it.type==='folder'){
+        return `<div class="tree-item" style="${pad}"><span class="icon svg-icon">${ICONS.folder}</span><span class="name">${it.name}</span></div>${renderTree(it.children,depth+1)}`;
+      }
+      const active=it.name===state.selectedMd?'active':'';
+      return `<div class="tree-item ${active}" data-md="${it.name}" style="${pad}" onclick="selectMd('${it.name}')" oncontextmenu="mdFileCtx(event,'${it.name}')"><span class="icon svg-icon">${ICONS.file}</span><span class="name">${it.name}</span></div>`;
+    }).join('');
+  }
+  return `
+<div class="page active" style="padding:0;display:flex;flex-direction:column;height:100%;overflow:hidden;">
+  <div class="breadcrumb" id="mdBreadcrumb">笔记 / <span>${state.selectedMd||'未选择'}</span></div>
+  <div class="md-wrap" style="height:auto;flex:1;min-height:0;overflow:hidden;">
+    <div class="md-tree">
+      <div class="md-tree-search">
+        <div class="md-tree-search-wrap">
+          <span class="icon svg-icon">${ICONS.search}</span>
+          <input class="input" id="mdSearch" placeholder="搜索笔记..." oninput="onMdSearch(this)">
+          <span class="md-tree-search-clear" id="mdClear" onclick="clearMdSearch()">×</span>
+        </div>
+      </div>
+      <div style="padding:6px 8px;display:flex;gap:4px;border-bottom:1px solid var(--divider2);">
+        <button class="btn btn-text" style="height:24px;font-size:12px;padding:0 6px;display:flex;align-items:center;gap:3px;" onclick="openMdNewDialog()"><span class="svg-icon">${ICONS.plus}</span>笔记</button>
+        <button class="btn btn-text" style="height:24px;font-size:12px;padding:0 6px;display:flex;align-items:center;gap:3px;" onclick="openMdNewFolderDialog()"><span class="svg-icon">${ICONS.plus}</span>文件夹</button>
+      </div>
+      <div class="md-tree-list" id="mdTreeList">${renderTree(tree,0)}</div>
+    </div>
+    <div class="md-editor">
+      <div class="md-tabs">
+        <div class="tabs" style="border:none;gap:20px;">
+          <div class="tab ${state.mdView==='edit'?'active':''}" onclick="setMdView('edit')">编辑</div>
+          <div class="tab ${state.mdView==='live'?'active':''}" onclick="setMdView('live')">实时</div>
+          <div class="tab ${state.mdView==='dual'?'active':''}" onclick="setMdView('dual')">双栏</div>
+          <div class="tab ${state.mdView==='preview'?'active':''}" onclick="setMdView('preview')">预览</div>
+        </div>
+        <div style="display:flex;gap:8px;">
+          <button class="btn btn-primary" onclick="openMdNewDialog()">+ 新建笔记</button>
+          <span class="tooltip-wrap" style="cursor:help;">?<span class="tip">快捷键：Ctrl+N 新建 / Ctrl+F 搜索 / Ctrl+B 加粗 / Ctrl+I 斜体</span></span>
+        </div>
+      </div>
+      <div class="md-editor-title"><input class="input" value="${state.selectedMd||'未命名'}"></div>
+      <div class="md-editor-body" oncontextmenu="mdEditorCtx(event)">
+        <textarea placeholder="在这里开始编写 Markdown..."># ${state.selectedMd||'未命名'}
+
+这是 DevDesk Markdown 笔记本的演示内容。
+
+## 标题示例
+- 列表项 1
+- 列表项 2
+
+**粗体** *斜体* \`代码\`</textarea>
+      </div>
+      <div class="md-tags">
+        <span class="md-tag">设计</span>
+        <span class="md-tag">UI</span>
+        <span class="md-tag-add" onclick="showToast('添加标签')">+ 标签</span>
+      </div>
+      <div class="md-status">字数: 128 · 已自动保存 · ${new Date().toLocaleTimeString('zh-CN')}</div>
+    </div>
+  </div>
+</div>`;
+};
+
+// —— Todo 看板 ——
+pageBuilders.todo=function(){
+  const overdue=state.tasks.filter(t=>t.due&&t.due.includes('逾期')).length;
+  return `
+<div class="page active" style="display:flex;flex-direction:column;height:100%;overflow:hidden;">
+  <div class="todo-toolbar">
+    <div class="todo-toolbar-left">
+      <input class="input" style="width:220px;" placeholder="搜索任务标题..." oninput="showToast('搜索：'+this.value)">
+    </div>
+    <div class="todo-toolbar-right">
+      <div class="todo-overdue-badge" onclick="openTodoOverdueDialog()">逾期 ${overdue}</div>
+      <button class="btn btn-text gray" onclick="openTodoNewColDialog()">+ 列</button>
+      <button class="btn btn-primary" onclick="openTodoNewTaskDialog()">+ 新建任务</button>
+    </div>
+  </div>
+  <div class="board">
+    ${state.columns.map(col=>{
+      const cards=state.tasks.filter(t=>t.col===col.id);
+      const isArchive=col.kind==='archive';
+      return `<div class="column ${isArchive?'archive-col':''}">
+        <div class="column-header">
+          <div class="column-title"><span class="column-color-dot" style="background:${col.color}"></span>${col.name}<span class="column-count">${cards.length}</span></div>
+          <div class="column-actions">
+            ${isArchive?'':`<div class="icon-btn" onclick="openTodoNewTaskDialog('${col.id}')" title="添加任务"><span class="svg-icon">${ICONS.plus}</span></div>
+            <div class="icon-btn" onclick="openTodoRenameColDialog('${col.id}')" title="重命名"><span class="svg-icon">${ICONS.edit}</span></div>`}
+          </div>
+        </div>
+        <div class="column-cards" oncontextmenu="todoColCtx(event,'${col.id}')">
+          ${cards.length===0?`<div class="column-empty">${isArchive?'归档的任务在这里':'暂无任务'}${isArchive?'':'<span class="add-btn" onclick="openTodoNewTaskDialog(\''+col.id+'\')">+ 添加任务</span>'}</div>`:''}
+          ${cards.map(t=>{
+            const cls=[t.id===state.selectedTodo?'selected':'',t.due&&t.due.includes('逾期')?'overdue':'',t.archived?'archived':''].join(' ');
+            const pri={high:'高',mid:'中',low:'低'}[t.priority]||'中';
+            return `<div class="todo-card ${cls}" onclick="${isArchive?'openTodoDetailDialog(\''+t.id+'\')':'selectTodo(\''+t.id+'\')'}" oncontextmenu="${isArchive?'':'todoCardCtx(event,\''+t.id+'\')'}">
+              <div class="todo-title"><span class="todo-priority-dot ${t.priority}"></span>${t.name}</div>
+              <div class="todo-meta">
+                ${isArchive?'':`<span class="todo-priority ${t.priority}">${pri}优先级</span>`}
+                ${t.due&&t.due!=='--'&&!isArchive?`<span class="todo-due"><span class="svg-icon">${ICONS.calendar}</span>${t.due}</span>`:''}
+                ${t.archivedAt?`<span class="todo-chip">归档于 ${t.archivedAt}</span>`:''}
+                ${t.tags.map(tg=>`<span class="todo-chip">#${tg}</span>`).join('')}
+              </div>
+            </div>`;
+          }).join('')}
+        </div>
+      </div>`;
+    }).join('')}
+  </div>
+</div>`;
+};
+
+// —— Claude 切换器 ——
+pageBuilders.claude=function(){
+  const activeProfile=state.profiles.find(p=>p.id===state.currentProfileId)||state.profiles[0];
+  return `
+<div class="page active" style="display:flex;flex-direction:column;height:100%;overflow:hidden;">
+  <div class="claude-top" style="padding-right:4px;">
+    <div class="page-title">Claude 切换器</div>
+    <div style="display:flex;gap:12px;align-items:center;">
+      <div class="proxy-status">
+        <span class="status-dot ${state.proxyRunning?'running':''}"></span>${state.proxyRunning?'运行中':'已停止'}
+      </div>
+      <button class="btn btn-primary" onclick="toggleProxy()" style="margin-right:8px;">${state.proxyRunning?'停止代理':'启动代理'}</button>
+    </div>
+  </div>
+  <div class="claude-wrap">
+    <div class="claude-list">
+      <div class="claude-list-header">
+        <span style="font-size:14px;font-weight:500;color:var(--text1);">Profile 列表</span>
+      </div>
+      <div class="claude-list-items">
+        ${state.profiles.map(p=>`
+          <div class="claude-item ${p.id===state.currentProfileId?'active':''}" onclick="selectProfile('${p.id}')" oncontextmenu="claudeProfileCtx(event,'${p.id}')">
+            <div class="avatar">${p.name.charAt(0)}</div>
+            <div class="info">
+              <div class="name">${p.name}</div>
+              <div class="url">${p.url}</div>
+            </div>
+            ${p.id===state.currentProfileId?'<span class="active-tag">当前选中</span>':''}
+          </div>
+        `).join('')}
+      </div>
+      <div class="claude-list-footer">
+        <button class="btn btn-sec" style="flex:1;" onclick="openProfileFormDialog()">+ 新建 Profile</button>
+        <button class="btn btn-sec" onclick="openCcswitchDialog()">从 cc-switch 导入</button>
+      </div>
+    </div>
+    <div class="claude-detail">
+      <div class="detail-tabs">
+        <div class="tab ${state.selectedClaudeTab==='info'?'active':''}" onclick="setClaudeTab('info')">基础信息</div>
+        <div class="tab ${state.selectedClaudeTab==='models'?'active':''}" onclick="setClaudeTab('models')">模型映射</div>
+        <div class="tab ${state.selectedClaudeTab==='env'?'active':''}" onclick="setClaudeTab('env')">环境变量</div>
+        <div class="tab ${state.selectedClaudeTab==='advanced'?'active':''}" onclick="setClaudeTab('advanced')">高级配置</div>
+        <div class="tab ${state.selectedClaudeTab==='calls'?'active':''}" onclick="setClaudeTab('calls')">最近调用</div>
+      </div>
+      <div class="detail-tab-content" id="claudeDetailContent">
+        ${renderClaudeTab(state.selectedClaudeTab,activeProfile)}
+      </div>
+      <div class="claude-actions">
+        <button class="btn btn-primary" onclick="showToast('已启用 Profile：${activeProfile.name}')">启用</button>
+        <button class="btn btn-sec" onclick="showToast('连通性测试中...')">测试连通</button>
+        <button class="btn btn-sec" onclick="openProfileFormDialog('${activeProfile.id}')">编辑</button>
+        <button class="btn btn-sec" onclick="openQuotaDialog()">余量查询</button>
+        <button class="btn btn-text" onclick="showToast('开始运行任务...')">▶ 运行</button>
+      </div>
+      <div class="shared-section">
+        <div style="font-size:14px;font-weight:500;margin-bottom:8px;">共享配置片段</div>
+        <div class="shared-list">
+          <div class="shared-item">
+            <div><div style="font-size:13px;">通用 system prompt 片段</div><div style="font-size:11px;color:var(--text3);">JSON · 412 字节</div></div>
+            <button class="btn btn-text" onclick="openSharedDialog()">编辑</button>
+          </div>
+          <div class="shared-item">
+            <div><div style="font-size:13px;">错误处理共享片段</div><div style="font-size:11px;color:var(--text3);">JSON · 256 字节</div></div>
+            <button class="btn btn-text" onclick="openSharedDialog()">编辑</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>`;
+};
+
+function renderClaudeTab(tab,p){
+  if(tab==='info'){
+    return `<div class="about-info-row"><div class="about-info-label">名称</div><div class="about-info-value">${p.name}</div></div>
+    <div class="about-info-row"><div class="about-info-label">Base URL</div><div class="about-info-value">${p.url}</div></div>
+    <div class="about-info-row"><div class="about-info-label">默认模型</div><div class="about-info-value">${p.model}</div></div>
+    <div class="about-info-row"><div class="about-info-label">API Key</div><div class="about-info-value">${p.key}</div></div>
+    <div class="about-info-row"><div class="about-info-label">1M 上下文</div><div class="about-info-value">${p.oneM?'已启用':'未启用'} <span class="tooltip-wrap" style="margin-left:4px;">?<span class="tip">上下文窗口 1M tokens：用于处理超长上下文输入</span></span></div></div>`;
+  }
+  if(tab==='models'){
+    return `<div class="settings-row"><div class="label">claude-3-5-sonnet</div><div class="switch on" onclick="toggleSwitch(this)"></div></div>
+    <div class="settings-row"><div class="label">claude-3-5-haiku</div><div class="switch on" onclick="toggleSwitch(this)"></div></div>
+    <div class="settings-row"><div class="label">${p.model} <span class="tooltip-wrap">?<span class="tip">主供应商当前模型</span></span></div><div class="switch on" onclick="toggleSwitch(this)"></div></div>
+    <div class="settings-row"><div class="label">deepseek-v4-pro</div><div class="switch" onclick="toggleSwitch(this)"></div></div>`;
+  }
+  if(tab==='env'){
+    return `<div class="form-row"><div class="form-label">ANTHROPIC_AUTH_TOKEN</div><input class="input" value="${p.key}"></div>
+    <div class="form-row"><div class="form-label">ANTHROPIC_BASE_URL</div><input class="input" value="${p.url}"></div>
+    <div class="form-row"><div class="form-label">HTTP_PROXY</div><input class="input" placeholder="未设置"></div>
+    <div class="form-hint">环境变量在代理启动时注入 Claude Code 进程</div>`;
+  }
+  if(tab==='advanced'){
+    return `<div class="form-row"><div class="form-label">失败回退 Profile</div><select class="select"><option>无</option><option>方舟 GLM-5.3</option><option>百炼 DeepSeek-V4</option></select></div>
+    <div class="form-row"><div class="form-label">流式转发</div><div class="switch on" onclick="toggleSwitch(this)"></div></div>
+    <div class="form-row"><div class="form-label">自动重连</div><div class="switch on" onclick="toggleSwitch(this)"></div></div>`;
+  }
+  if(tab==='calls'){
+    return `<table class="calls-table">
+      <thead><tr><th>时间</th><th>模型</th><th>状态</th><th>耗时</th><th>Token</th></tr></thead>
+      <tbody>
+        <tr><td>10:42:15</td><td>glm-5.3</td><td class="status-200">200</td><td>1.2s</td><td>1.2k → 580</td></tr>
+        <tr><td>10:38:02</td><td>glm-5.3</td><td class="status-200">200</td><td>0.8s</td><td>920 → 420</td></tr>
+        <tr><td>10:21:44</td><td>deepseek-v4</td><td class="status-4xx">429</td><td>—</td><td>—</td></tr>
+        <tr><td>09:58:11</td><td>glm-5.3</td><td class="status-200">200</td><td>2.1s</td><td>1.8k → 920</td></tr>
+      </tbody>
+    </table>
+    <div class="pager">
+      <span>共 38 条</span>
+      <button class="btn btn-sec">上一页</button>
+      <span>1 / 4</span>
+      <button class="btn btn-sec">下一页</button>
+      <button class="btn btn-text" onclick="openCallsDialog()">查看全部 →</button>
+    </div>`;
+  }
+  return '';
+}
+
+// —— 智能体（agent）页 ——
+pageBuilders.agent=function(){
+  return `
+<div class="page active" style="display:flex;flex-direction:column;height:100%;overflow:hidden;">
+  <div class="page-header">
+    <div class="page-title">智能体任务</div>
+    <div class="page-actions">
+      <button class="btn btn-primary" onclick="openAgentNewTaskDialog()">+ 新建任务</button>
+    </div>
+  </div>
+  <div class="agent-tasks">
+    ${state.tasks.filter(t=>!t.archived).map((t,i)=>`
+      <div class="agent-task-row">
+        <div class="agent-task-name" onclick="openAgentDetailDialog('${t.id}')">${i+1}. ${t.name}</div>
+        <div class="agent-task-meta">
+          ${t.due?t.due+' · ':''}${{high:'高优',mid:'中优',low:'低优'}[t.priority]||''} · ${t.tags[0]||'任务'}
+        </div>
+        <div style="display:flex;gap:6px;margin-left:12px;">
+          <button class="btn btn-text" onclick="openAgentNewTaskDialog('${t.id}')">编辑</button>
+          <button class="btn btn-text" onclick="openAgentDetailDialog('${t.id}')">详情</button>
+          <button class="btn btn-text" style="color:var(--danger);" onclick="openAgentDeleteDialog('${t.id}')">删除</button>
+        </div>
+      </div>
+    `).join('')}
+    ${state.tasks.filter(t=>!t.archived).length===0?'<div class="chart-empty">暂无智能体任务</div>':''}
+  </div>
+</div>`;
+};;
+
+// —— 设置页 ——
+pageBuilders.settings=function(){
+  return `
+<div class="page active">
+  <div class="settings-tabs">
+    <div class="tabs" style="border:none;gap:28px;">
+      <div class="tab ${state.selectedSettingsTab==='general'?'active':''}" onclick="setSettingsTab('general')">通用</div>
+      <div class="tab ${state.selectedSettingsTab==='modules'?'active':''}" onclick="setSettingsTab('modules')">模块</div>
+      <div class="tab ${state.selectedSettingsTab==='logs'?'active':''}" onclick="setSettingsTab('logs')">日志</div>
+      <div class="tab ${state.selectedSettingsTab==='sync'?'active':''}" onclick="setSettingsTab('sync')">同步</div>
+    </div>
+  </div>
+  <div class="settings-body" id="settingsBody">${renderSettingsTab(state.selectedSettingsTab)}</div>
+  <div class="settings-footer">所有设置即时生效，自动保存到本地数据库</div>
+</div>`;
+};
+function renderSettingsTab(tab){
+  if(tab==='general'){
+    return `<div class="settings-group">
+      <div class="settings-group-title">功能模块</div>
+      <div class="settings-row"><div><div class="label">Markdown 笔记本</div><div class="desc">本地文件 + SQLite FTS5 全文搜索</div></div><div class="switch on" onclick="toggleSwitch(this)"></div></div>
+      <div class="settings-row"><div><div class="label">Todo 看板</div><div class="desc">多列卡片任务管理</div></div><div class="switch on" onclick="toggleSwitch(this)"></div></div>
+      <div class="settings-row"><div><div class="label">Claude 切换器</div><div class="desc">多 Profile + 本地代理</div></div><div class="switch on" onclick="toggleSwitch(this)"></div></div>
+      <div class="settings-row"><div><div class="label">智能体</div><div class="desc">自动化任务调度</div></div><div class="switch on" onclick="toggleSwitch(this)"></div></div>
+    </div>
+    <div class="settings-group">
+      <div class="settings-group-title">显示</div>
+      <div class="settings-row"><div class="label">字号缩放</div><select class="select" style="width:120px;"><option>100%</option><option>110%</option><option>90%</option><option>125%</option></select></div>
+      <div class="settings-row"><div class="label">编辑器字号</div><select class="select" style="width:120px;"><option>13px</option><option>14px</option><option>15px</option><option>16px</option></select></div>
+    </div>
+    <div class="settings-group">
+      <div class="settings-group-title">存储配置</div>
+      <div class="settings-row">
+        <div><div class="label">Markdown 笔记目录</div><div class="desc">目录暂不支持修改，打开后可手动迁移文件</div></div>
+        <div style="display:flex;gap:6px;align-items:center;">
+          <input class="input readonly" style="width:280px;" value="D:/project/gui/DevDesk/notes" readonly>
+          <button class="btn btn-sec" onclick="showToast('已打开目录')">打开目录</button>
+        </div>
+      </div>
+      <div class="settings-row"><div><div class="label">SQLite 数据库 <span class="tooltip-wrap term-help">?<span class="tip">SQLite：嵌入式关系数据库，存储任务/Profile 等结构化数据</span></span></div></div><input class="input readonly" style="width:280px;" value="~/.devdesk/devdesk.db" readonly></div>
+    </div>`;
+  }
+  if(tab==='modules'){
+    return `<div class="settings-group">
+      <div class="settings-group-title">Markdown 笔记本</div>
+      <div class="settings-row"><div class="label">默认视图</div><select class="select" style="width:120px;"><option>编辑</option><option>实时</option><option>双栏</option><option>预览</option></select></div>
+      <div class="settings-row"><div class="label">自动保存</div><div class="switch on" onclick="toggleSwitch(this)"></div></div>
+    </div>
+    <div class="settings-group">
+      <div class="settings-group-title">Todo 看板</div>
+      <div class="settings-row"><div class="label">默认列颜色</div><select class="select" style="width:120px;"><option>微信绿</option><option>蓝灰</option><option>灰</option></select></div>
+      <div class="settings-row"><div class="label">拖拽确认</div><div class="switch" onclick="toggleSwitch(this)"></div></div>
+    </div>
+    <div class="settings-group">
+      <div class="settings-group-title">Claude 切换器</div>
+      <div class="settings-row"><div class="label">代理端口</div><input class="input" style="width:100px;" value="8888"></div>
+      <div class="settings-row"><div class="label">流式转发</div><div class="switch on" onclick="toggleSwitch(this)"></div></div>
+    </div>`;
+  }
+  if(tab==='logs'){
+    const logLines=[
+      '[2026-10-19 20:32:15] INFO  智能体任务「每日推送车型汇总报告」执行完成，耗时 1.8s',
+      '[2026-10-19 20:32:14] INFO  Claude 代理转发请求 → glm-5.3，Token: 1.2k → 580',
+      '[2026-10-19 20:30:02] INFO  Todo 看板数据已自动保存到 SQLite',
+      '[2026-10-19 20:28:45] WARN  Profile「百炼 DeepSeek-V4」API Key 已过期，请更新',
+      '[2026-10-19 20:25:11] INFO  Markdown 笔记「wechat-ui-design.md」已自动保存',
+      '[2026-10-19 20:22:33] INFO  供应商余量刷新完成（方舟 GLM-5.3：¥ 18.42）',
+      '[2026-10-19 20:20:01] INFO  Claude 代理启动，监听端口 8888',
+      '[2026-10-19 20:19:58] DEBUG SQLite WAL checkpoint: 0 pages',
+      '[2026-10-19 20:15:42] INFO  应用启动完成，加载 4 个模块',
+      '[2026-10-19 20:15:41] DEBUG 配置加载：app_config 表读取 12 条记录',
+      '[2026-10-19 20:15:40] INFO  SQLite 数据库已打开：~/.devdesk/devdesk.db',
+      '[2026-10-19 20:15:38] INFO  EUI-NEO 框架初始化完成（rev cbd0b48）',
+      '[2026-10-19 20:15:37] DEBUG GL context: OpenGL 4.6, 2x DPI',
+      '[2026-10-19 20:15:36] INFO  DevDesk v0.4.3 启动中…',
+    ];
+    return `<div class="settings-group">
+      <div class="settings-group-title">日志设置</div>
+      <div class="settings-row"><div class="label">日志保留</div><select class="select" style="width:140px;"><option>永久</option><option>7 天</option><option>30 天</option><option>90 天</option><option>180 天</option><option>365 天</option></select></div>
+      <div class="settings-row"><div class="label">日志级别</div><select class="select" style="width:120px;"><option>DEBUG</option><option selected>INFO</option><option>WARN</option><option>ERROR</option></select></div>
+      <div class="form-hint" style="margin-left:110px;">日志文件存储在 ~/.devdesk/logs/ 目录下</div>
+      <div class="form-hint" style="margin-left:110px;">选择 DEBUG 级别会显著增加日志量</div>
+    </div>
+    <div class="settings-group">
+      <div class="settings-group-title" style="display:flex;align-items:center;justify-content:space-between;">
+        <span>运行日志（末尾 500 行）</span>
+        <button class="btn btn-sec" style="height:26px;font-size:12px;padding:0 10px;" onclick="showToast('日志已刷新')"><span class="svg-icon">${ICONS.refresh}</span>刷新</button>
+      </div>
+      <div style="background:#1A1A1A;border-radius:6px;padding:10px 12px;max-height:280px;overflow-y:auto;font-family:Consolas,'Courier New',monospace;font-size:12px;line-height:1.6;">
+        ${logLines.map(l=>{
+          const cls=l.includes('ERROR')?'color:#FA5151':l.includes('WARN')?'color:#B8860B':l.includes('DEBUG')?'color:#999999':'color:#07C160';
+          return `<div style="${cls}">${l}</div>`;
+        }).join('')}
+      </div>
+      <div class="form-hint" style="margin-top:6px;">共 ${logLines.length} 行 · 点击刷新获取最新日志</div>
+    </div>`;
+  }
+  if(tab==='sync'){
+    return `<div class="settings-group">
+      <div class="settings-group-title">GitHub 同步</div>
+      <div class="settings-row">
+        <div><div class="label">启用 GitHub 同步</div><div class="desc">将本地笔记、Todo、Profile 数据同步到 GitHub 仓库（含完整历史记录）</div></div>
+        <div class="switch on" onclick="toggleSwitch(this)"></div>
+      </div>
+      <div class="settings-row"><div class="label">仓库 URL</div><input class="input" style="width:300px;" value="https://github.com/e-Yunfei.Qian/devdesk-data.git"></div>
+      <div class="settings-row"><div class="label">分支</div><input class="input" style="width:160px;" value="main"></div>
+      <div class="settings-row"><div class="label">Token</div><div style="position:relative;flex:1;max-width:300px;"><input class="input" type="password" value="ghp_***masked***" style="padding-right:32px;"><span class="svg-icon" style="position:absolute;right:6px;top:50%;transform:translateY(-50%);cursor:pointer;color:var(--text3);width:20px;height:20px;" onclick="const i=this.previousElementSibling;i.type=i.type==='password'?'text':'password';this.innerHTML=i.type==='password'?ICONS.eye:ICONS.eyeOff;">${ICONS.eye}</span></div></div>
+      <div class="settings-row"><div class="label">自动推送</div><div class="switch on" onclick="toggleSwitch(this)"></div></div>
+      <div class="settings-row" style="gap:8px;">
+        <button class="btn btn-primary" onclick="showToast('同步中…')">立即同步</button>
+        <button class="btn btn-sec" onclick="showToast('连接测试通过')">测试连接</button>
+        <button class="btn btn-sec" onclick="showToast('拉取完成')">拉取</button>
+      </div>
+      <div class="form-hint" style="margin-left:110px;color:var(--primary);">① 准备中… 正在收集本地变更</div>
+      <div class="form-hint" style="margin-left:110px;">同步内容：Markdown 笔记文件 + SQLite 数据库快照 + Profile 配置（API Key 不含）</div>
+      <div class="form-hint" style="margin-left:110px;">⚠ 仓库需设为 public 才能被其他设备拉取；private 仓库仅本机可访问</div>
+      <div class="form-hint" style="margin-left:110px;">本机 git 不可用时同步功能将禁用，请确保 git 已安装并加入 PATH</div>
+    </div>
+    <div class="settings-group">
+      <div class="settings-group-title">供应商余量同步</div>
+      <div class="settings-row"><div class="label">自动刷新</div><div class="switch on" onclick="toggleSwitch(this)"></div></div>
+      <div class="settings-row"><div class="label">刷新间隔</div><select class="select" style="width:120px;"><option>5 分钟</option><option>15 分钟</option><option>1 小时</option></select></div>
+      <div class="form-hint" style="margin-left:110px;">实验功能：供应商 API 限流可能导致刷新失败</div>
+    </div>`;
+  }
+  return '';
+}
+
+// —— 关于页 ——
+pageBuilders.about=function(){
+  return `
+<div class="page active">
+  <div class="about-wrap">
+    <div class="about-card">
+      <div class="about-logo">${DEVDESK_ICON}</div>
+      <div class="about-name">DevDesk</div>
+      <div class="about-info-row"><div class="about-info-label">版本</div><div class="about-info-value green" onclick="copyText('v0.4.3')">v0.4.3 <span class="copy-icon">⧉</span></div></div>
+      <div class="about-info-row"><div class="about-info-label">Git Commit</div><div class="about-info-value green" onclick="copyText('ca40ff2f8')">ca40ff2f8 <span class="copy-icon">⧉</span></div></div>
+      <div class="about-info-row"><div class="about-info-label">构建时间</div><div class="about-info-value">2026-10-19 14:32</div></div>
+      <div class="about-info-row"><div class="about-info-label">平台</div><div class="about-info-value">Windows 11 (MinGW64)</div></div>
+      <div class="about-info-row"><div class="about-info-label">EUI-NEO 版本</div><div class="about-info-value">cbd0b48</div></div>
+      <div class="about-info-row"><div class="about-info-label">SQLite</div><div class="about-info-value">3.45.1 (FTS5)</div></div>
+      <div class="about-info-row"><div class="about-info-label">开源许可证</div><div class="about-info-value"><a href="#" style="color:var(--link);">查看依赖与协议列表</a></div></div>
+      <div class="about-buttons">
+        <button class="btn btn-sec" onclick="showToast('已复制全部信息');copyText('DevDesk v0.4.3 / ca40ff2f8 / 2026-10-19')">复制全部信息</button>
+      </div>
+      <div class="about-copyright">© 2026 DevDesk 开发团队 · MIT 许可证</div>
+    </div>
+  </div>
+</div>`;
+}
+
+// ============= 页面事件绑定（函数集合）=============
+function bindPage(name){
+  // 点击事件均用 inline onclick，bind 仅做必要初始化
+  return;
+}
+
+// —— Markdown ——
+function selectMd(name){state.selectedMd=name;switchPage('markdown');}
+function setMdView(v){state.mdView=v;switchPage('markdown');}
+function onMdSearch(el){
+  const v=el.value;
+  const clear=document.getElementById('mdClear');
+  clear.style.display=v?'block':'none';
+  // 关键词高亮（简单版：仅过滤树）
+  document.querySelectorAll('#mdTreeList .tree-item').forEach(it=>{
+    const name=it.querySelector('.name').textContent;
+    const match=!v||name.includes(v);
+    it.style.display=match?'flex':'none';
+    if(match&&v){
+      const re=new RegExp('('+v.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+')','g');
+      it.querySelector('.name').innerHTML=name.replace(re,'<mark style="background:#FFF3CD;color:#000;">$1</mark>');
+    }else{
+      it.querySelector('.name').textContent=name;
+    }
+  });
+}
+function clearMdSearch(){const el=document.getElementById('mdSearch');el.value='';onMdSearch(el);}
+
+// —— Todo ——
+function selectTodo(id){state.selectedTodo=id;switchPage('todo');}
+
+// —— Claude ——
+function selectProfile(id){state.currentProfileId=id;switchPage('claude');}
+function setClaudeTab(t){state.selectedClaudeTab=t;switchPage('claude');}
+function toggleProxy(){state.proxyRunning=!state.proxyRunning;switchPage('claude');showToast(state.proxyRunning?'代理已启动':'代理已停止');}
+
+// —— 设置 ——
+function setSettingsTab(t){state.selectedSettingsTab=t;switchPage('settings');}
+
+// —— 通用 ——
+function copyText(text){
+  try{navigator.clipboard&&navigator.clipboard.writeText(text);}catch(e){}
+  showToast('已复制：'+text);
+}
+
+// ============= 右键菜单（6 处）=============
+// 1. Markdown 文件行右键
+function mdFileCtx(e,name){
+  e.preventDefault();e.stopPropagation();
+  showCtxMenu([
+    {label:'重命名',onClick:()=>openMdRenameDialog(name)},
+    {label:'删除笔记',danger:true,onClick:()=>openMdDeleteDialog(name)},
+  ],e.clientX,e.clientY);
+}
+// 2. Markdown 编辑器右键（插入表格级联）
+function mdEditorCtx(e){
+  e.preventDefault();e.stopPropagation();
+  const sub=[];
+  for(let r=1;r<=6;r++){
+    for(let c=1;c<=8;c++){
+      sub.push({label:`${r} 行 × ${c} 列`,onClick:()=>showToast(`已插入 ${r}×${c} 表格`)});
+    }
+  }
+  // 子菜单太大改用列表
+  const rowSubs=[];
+  for(let r=1;r<=6;r++){
+    const cols=[];
+    for(let c=1;c<=8;c++){
+      cols.push({label:`${c} 列`,onClick:()=>showToast(`已插入 ${r}×${c} 表格`)});
+    }
+    rowSubs.push({label:`${r} 行`,sub:cols});
+  }
+  showCtxMenu([{label:'插入表格',sub:rowSubs}],e.clientX,e.clientY);
+}
+// 3. Todo 卡片右键
+function todoCardCtx(e,id){
+  e.preventDefault();e.stopPropagation();
+  const cols=state.columns.map(c=>({label:`移动到「${c.name}」`,onClick:()=>{const t=state.tasks.find(x=>x.id===id);if(t){t.col=c.id;switchPage('todo');}showToast('已移动')}}));
+  showCtxMenu([
+    {label:'编辑',onClick:()=>openTodoDetailDialog(id)},
+    {label:'上移',onClick:()=>showToast('已上移')},
+    {label:'下移',onClick:()=>showToast('已下移')},
+    {sep:true},
+    {label:'移动到某列…',sub:cols},
+    {sep:true},
+    {label:'删除',danger:true,onClick:()=>openTodoDeleteDialog(id)},
+  ],e.clientX,e.clientY);
+}
+// 4. Todo 列头右键
+function todoColCtx(e,colId){
+  e.preventDefault();e.stopPropagation();
+  const colors=['#07C160','#576B95','#FA5151','#7B61FF','#9B59B6','#3498DB','#16A085','#999999'];
+  showCtxMenu([
+    {label:'重命名',onClick:()=>openTodoRenameColDialog(colId)},
+    {label:'左移',onClick:()=>showToast('已左移')},
+    {label:'右移',onClick:()=>showToast('已右移')},
+    {sep:true},
+    {label:'改色',sub:'color-grid:'+colors.join(','),onSelect:(c)=>{const col=state.columns.find(x=>x.id===colId);if(col){col.color=c;switchPage('todo');}showToast('已改色 '+c)}},
+    {sep:true},
+    {label:'删除列',danger:true,onClick:()=>openTodoDeleteColDialog(colId)},
+  ],e.clientX,e.clientY);
+}
+// 5. Claude Profile 右键
+function claudeProfileCtx(e,id){
+  e.preventDefault();e.stopPropagation();
+  showCtxMenu([
+    {label:'编辑',onClick:()=>openProfileFormDialog(id)},
+    {label:'建副本',onClick:()=>showToast('已创建副本')},
+    {label:'复制配置',onClick:()=>{copyText(JSON.stringify(state.profiles.find(p=>p.id===id),null,2))}},
+    {sep:true},
+    {label:'删除',danger:true,onClick:()=>openProfileDeleteDialog(id)},
+    {sep:true},
+    {label:'设为当前',onClick:()=>{selectProfile(id);showToast('已设为当前 Profile')}},
+  ],e.clientX,e.clientY);
+}
+
+// ============= 弹窗构造（23 个，splash 已在初始动画做）=============
+
+// 通用弹窗外壳
+function dialogShell(title,bodyHTML,footerHTML,size){
+  return `<div class="dialog-header">
+    <div class="dialog-title">${title}</div>
+    <div class="dialog-close" onclick="closeTopDialog()">×</div>
+  </div>
+  <div class="dialog-body">${bodyHTML}</div>
+  ${footerHTML?`<div class="dialog-footer">${footerHTML}</div>`:''}`;
+}
+
+// ===== Agent 弹窗（5 个）=====
+
+// #1 新建/编辑任务弹窗（按 v1.0 §3.8 专属重构：四组纵向）
+function openAgentNewTaskDialog(taskId){
+  const t=taskId?state.tasks.find(x=>x.id===taskId):null;
+  const goal=t?t.name:'';
+  const body=`
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+      <div class="form-group-title" style="margin-bottom:0;">任务目标<span style="color:var(--danger);font-size:12px;margin-left:4px;">*</span></div>
+      <button class="btn btn-text" onclick="openAgentDraftDialog()"><span class="svg-icon">${ICONS.sparkle}</span>AI 生成草稿</button>
+    </div>
+    <textarea class="textarea" id="agentGoal" style="min-height:56px;" placeholder="例如：每日 18:00 推送车型汇总报告给指定频道" oninput="validateAgentForm()">${goal}</textarea>
+    <div class="form-error" id="agentGoalErr">任务目标不能为空</div>
+    <div class="form-two-col" style="margin-top:12px;">
+      <div class="form-group">
+        <div class="form-group-title">基础配置</div>
+        <div class="form-row"><div class="form-label">触发方式</div><div class="form-control"><select class="select"><option>定时 Cron</option><option>手动触发</option><option>事件触发</option></select></div></div>
+        <div class="form-row"><div class="form-label">Cron 表达式</div><div class="form-control"><input class="input" value="0 18 * * *"></div></div>
+        <div class="form-row"><div class="form-label">模型槽位<span class="tooltip-wrap">?<span class="tip">任务调用 LLM 时使用的具体模型别名</span></span></div><div class="form-control"><select class="select"><option>glm-5.3</option><option>deepseek-v4-pro</option><option>glm-5.2</option></select></div></div>
+      </div>
+      <div class="form-group">
+        <div class="form-group-title">高级配置</div>
+        <div class="form-row"><div class="form-label">迭代上限<span class="tooltip-wrap">?<span class="tip">单次任务最多允许 LLM 进行多少轮工具调用</span></span></div><div class="form-control"><input class="input" type="number" value="7"></div></div>
+        <div class="form-row" style="align-items:flex-start;"><div class="form-label" style="padding-top:6px;">执行记忆<span class="tooltip-wrap">?<span class="tip">注入到 system prompt 中供该任务复用的上下文片段</span></span></div><div class="form-control"><textarea class="textarea" style="min-height:48px;" placeholder="注意使用 JSON 严格格式输出..."></textarea></div></div>
+      </div>
+    </div>
+    <div class="form-group" style="margin-top:12px;">
+      <div class="form-group-title danger" id="dangerTitle">高危选项</div>
+      <div class="danger-group" id="dangerBox">
+        <div class="form-row" id="dangerRow" style="margin-bottom:0;">
+          <div class="form-label" style="white-space:nowrap;">允许破坏性操作<span class="tooltip-wrap">?<span class="tip">允许 LLM 执行删除文件、写数据库等不可逆动作；启用后请评估风险</span></span></div>
+          <div class="form-control"><div class="switch" id="dangerSwitch" onclick="toggleDangerGroup()"></div></div>
+        </div>
+      </div>
+    </div>
+  `;
+  const footer=`
+    <button class="btn btn-sec" onclick="closeTopDialog()">取消</button>
+    <button class="btn btn-primary" id="agentSaveBtn" onclick="saveAgentTask()" disabled>保存</button>
+  `;
+  openDialog(dialogShell(t?'编辑任务':'新建任务',body,footer,'wide'),{wide:true});
+  // 让 AI 草稿按钮位置正确
+  setTimeout(()=>{
+    const db=document.querySelector('.dialog.wide');
+    if(db){db.style.position='relative';}
+  },0);
+}
+function validateAgentForm(){
+  const v=document.getElementById('agentGoal').value.trim();
+  const btn=document.getElementById('agentSaveBtn');
+  const err=document.getElementById('agentGoalErr');
+  if(!v){btn.disabled=true;err.classList.add('show');}
+  else{btn.disabled=false;err.classList.remove('show');}
+}
+function toggleDangerGroup(){
+  const sw=document.getElementById('dangerSwitch');
+  const on=toggleSwitch(sw);
+  const box=document.getElementById('dangerBox');
+  const title=document.getElementById('dangerTitle');
+  const row=document.getElementById('dangerRow');
+  if(on){box.classList.add('open');title.innerHTML='高危选项 <span class="warning-icon svg-icon">'+ICONS.warning+'</span>';row.classList.add('danger-on');}
+  else{box.classList.remove('open');title.innerHTML='高危选项';row.classList.remove('danger-on');}
+}
+function saveAgentTask(){
+  const v=document.getElementById('agentGoal').value.trim();
+  if(!v){showToast('任务目标不能为空');return;}
+  state.tasks.unshift({id:'t'+Date.now(),name:v,col:'c1',priority:'mid',due:'今日',archived:false,tags:[]});
+  closeTopDialog();showToast('任务已保存');
+  if(document.querySelector('.nav-item.active').dataset.page==='agent'||document.querySelector('.nav-item.active').dataset.page==='todo') switchPage(document.querySelector('.nav-item.active').dataset.page);
+}
+
+// #2 AI 生成草稿子弹窗（叠层 z 高）
+function openAgentDraftDialog(){
+  const body=`
+    <div class="form-group">
+      <div class="form-group-title">用一句话描述任务目标</div>
+      <textarea class="textarea" id="draftInput" placeholder="例如：每天傍晚自动汇总车型增量并推送到飞书群"></textarea>
+    </div>
+    <div class="form-hint">AI 将基于该描述生成完整任务配置草稿，包括触发方式、模型选择与执行记忆建议。</div>
+  `;
+  const footer=`
+    <button class="btn btn-sec" onclick="closeTopDialog()">取消</button>
+    <button class="btn btn-primary" onclick="applyDraft()">生成并填入</button>
+  `;
+  openDialog(dialogShell('AI 生成草稿',body,footer,'narrow'),{size:'narrow'});
+}
+function applyDraft(){
+  const v=document.getElementById('draftInput').value.trim();
+  if(!v){showToast('请输入描述');return;}
+  closeTopDialog();
+  // 回填到父弹窗
+  setTimeout(()=>{
+    const goal=document.getElementById('agentGoal');
+    if(goal){goal.value=v+'（AI 草稿）';validateAgentForm();}
+    showToast('已回填到任务目标');
+  },50);
+}
+
+// #3 任务详情
+function openAgentDetailDialog(taskId){
+  const t=state.tasks.find(x=>x.id===taskId)||state.tasks[0];
+  const body=`
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:12px;">
+      <div class="stat-card" style="padding:10px;"><div class="stat-num" style="font-size:16px;">3</div><div class="stat-label">总运行次数</div></div>
+      <div class="stat-card" style="padding:10px;"><div class="stat-num" style="font-size:16px;">1.2k</div><div class="stat-label">Token 平均</div></div>
+      <div class="stat-card" style="padding:10px;"><div class="stat-num" style="font-size:16px;">2.1s</div><div class="stat-label">平均耗时</div></div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:0 24px;margin-bottom:12px;">
+      <div class="about-info-row" style="padding:6px 0;"><div class="about-info-label">任务名</div><div class="about-info-value">${t.name}</div></div>
+      <div class="about-info-row" style="padding:6px 0;"><div class="about-info-label">触发方式</div><div class="about-info-value">Cron · 0 18 * * *</div></div>
+      <div class="about-info-row" style="padding:6px 0;"><div class="about-info-label">模型槽位</div><div class="about-info-value">glm-5.3</div></div>
+      <div class="about-info-row" style="padding:6px 0;"><div class="about-info-label">迭代上限</div><div class="about-info-value">7</div></div>
+      <div class="about-info-row" style="padding:6px 0;"><div class="about-info-label">破坏性操作</div><div class="about-info-value">禁止</div></div>
+    </div>
+    <div style="display:flex;gap:8px;margin-bottom:12px;">
+      <button class="btn btn-text" onclick="openAgentConfigOverlay()"><span class="svg-icon">${ICONS.overlay}</span>任务配置覆盖</button>
+      <button class="btn btn-text" onclick="showToast('开始运行...')">▶ 立即运行</button>
+    </div>
+    <div style="font-size:13px;font-weight:600;margin-bottom:6px;">执行记录</div>
+    <table class="calls-table">
+      <thead><tr><th>时间</th><th>状态</th><th>耗时</th><th>Token</th></tr></thead>
+      <tbody>
+        <tr><td>10-19 18:00</td><td class="status-200">成功</td><td>1.8s</td><td>1.2k → 580</td></tr>
+        <tr><td>10-18 18:00</td><td class="status-200">成功</td><td>2.1s</td><td>1.4k → 620</td></tr>
+      </tbody>
+    </table>
+  `;
+  const footer=`
+    <button class="btn btn-sec" onclick="closeTopDialog()">关闭</button>
+  `;
+  openDialog(dialogShell('任务详情',body,footer,'wide'),{wide:true});
+}
+
+// #4 任务配置覆盖浮层（叠在详情弹窗内）
+function openAgentConfigOverlay(){
+  const body=`
+    <div class="form-group">
+      <div class="form-group-title">任务目标</div>
+      <textarea class="textarea" placeholder="覆盖默认任务目标..."></textarea>
+    </div>
+    <div class="form-group">
+      <div class="form-group-title">限次</div>
+      <input class="input" type="number" value="7">
+      <div class="form-hint">0 表示使用任务默认值</div>
+    </div>
+    <div class="form-group">
+      <div class="form-group-title">破坏性</div>
+      <div class="form-row"><div class="form-label">允许破坏性操作</div><div class="switch" onclick="toggleSwitch(this)"></div></div>
+    </div>
+    <div class="form-group">
+      <div class="form-group-title">异常处理</div>
+      <select class="select"><option>重试 3 次</option><option>立即失败</option><option>降级继续</option></select>
+    </div>
+    <div class="form-group">
+      <div class="form-group-title">执行记忆</div>
+      <textarea class="textarea" placeholder="覆盖默认执行记忆..."></textarea>
+    </div>
+  `;
+  const footer=`
+    <button class="btn btn-sec" onclick="closeTopDialog()">取消</button>
+    <button class="btn btn-primary" onclick="closeTopDialog();showToast('配置已覆盖')">应用</button>
+  `;
+  openDialog(dialogShell('任务配置覆盖',body,footer,'narrow'),{size:'narrow'});
+}
+
+// #5 删除任务确认
+function openAgentDeleteDialog(taskId){
+  const t=state.tasks.find(x=>x.id===taskId);
+  const body=`<div style="text-align:center;font-size:14px;color:var(--text1);padding:20px 0;">确认删除任务「<b>${t?t.name:'该任务'}</b>」？此操作不可恢复。</div>`;
+  const footer=`
+    <button class="btn btn-sec" onclick="closeTopDialog()">取消</button>
+    <button class="btn btn-danger" onclick="closeTopDialog();showToast('已删除')">删除</button>
+  `;
+  openDialog(dialogShell('删除任务',body,footer,'narrow'),{size:'narrow'});
+}
+
+// ===== Todo 弹窗（6 个）=====
+
+// #6 新建任务
+function openTodoNewTaskDialog(colId){
+  const cols=state.columns.map(c=>`<option value="${c.id}" ${c.id===colId?'selected':''}>${c.name}</option>`).join('');
+  const body=`
+    <div class="form-group">
+      <div class="form-row"><div class="form-label">所在列</div><div class="form-control"><select class="select" id="newTaskCol">${cols}</select></div></div>
+      <div class="form-row"><div class="form-label required">任务标题</div><div class="form-control"><input class="input" id="newTaskTitle" placeholder="输入任务标题..." oninput="validateTodoNewTask()"></div></div>
+      <div class="form-row"><div class="form-label">优先级</div><div class="form-control"><select class="select"><option value="low">低</option><option value="mid" selected>中</option><option value="high">高</option></select></div></div>
+      <div class="form-row"><div class="form-label">截止时间</div><div class="form-control"><input class="input" type="datetime-local"></div></div>
+      <div class="form-row"><div class="form-label">标签</div><div class="form-control"><input class="input" placeholder="多个标签用逗号分隔"></div></div>
+    </div>
+  `;
+  const footer=`
+    <button class="btn btn-sec" onclick="closeTopDialog()">取消</button>
+    <button class="btn btn-primary" id="todoNewTaskSave" onclick="saveTodoNewTask()" disabled>保存</button>
+  `;
+  openDialog(dialogShell('新建任务',body,footer,'narrow'),{size:'narrow'});
+}
+function validateTodoNewTask(){
+  const v=document.getElementById('newTaskTitle').value.trim();
+  document.getElementById('todoNewTaskSave').disabled=!v;
+}
+function saveTodoNewTask(){
+  const col=document.getElementById('newTaskCol').value;
+  const title=document.getElementById('newTaskTitle').value.trim();
+  if(!title){showToast('标题不能为空');return;}
+  state.tasks.unshift({id:'t'+Date.now(),name:title,col,priority:'mid',due:'今日',archived:false,tags:[]});
+  closeTopDialog();showToast('任务已创建');
+  if(document.querySelector('.nav-item.active').dataset.page==='todo') switchPage('todo');
+}
+
+// #7 新建列
+function openTodoNewColDialog(){
+  const body=`<div class="form-group"><div class="form-row"><div class="form-label required">列名</div><div class="form-control"><input class="input" id="newColName" placeholder="如：待办" oninput="validateTodoNewCol()"></div></div></div>`;
+  const footer=`
+    <button class="btn btn-sec" onclick="closeTopDialog()">取消</button>
+    <button class="btn btn-primary" id="todoNewColSave" onclick="saveTodoNewCol()" disabled>保存</button>
+  `;
+  openDialog(dialogShell('新建列',body,footer,'narrow'),{size:'narrow'});
+}
+function validateTodoNewCol(){document.getElementById('todoNewColSave').disabled=!document.getElementById('newColName').value.trim();}
+function saveTodoNewCol(){
+  const n=document.getElementById('newColName').value.trim();
+  if(!n)return;
+  state.columns.push({id:'c'+Date.now(),name:n,color:'#07C160'});
+  closeTopDialog();showToast('已新建列');
+  if(document.querySelector('.nav-item.active').dataset.page==='todo') switchPage('todo');
+}
+
+// #8 重命名列
+function openTodoRenameColDialog(colId){
+  const col=state.columns.find(c=>c.id===colId);
+  const body=`<div class="form-group"><div class="form-row"><div class="form-label required">列名</div><div class="form-control"><input class="input" id="renameColName" value="${col?col.name:''}"></div></div></div>`;
+  const footer=`
+    <button class="btn btn-sec" onclick="closeTopDialog()">取消</button>
+    <button class="btn btn-primary" onclick="saveRenameCol('${colId}')">保存</button>
+  `;
+  openDialog(dialogShell('重命名列',body,footer,'narrow'),{size:'narrow'});
+}
+function saveRenameCol(colId){
+  const n=document.getElementById('renameColName').value.trim();
+  if(!n)return;
+  const col=state.columns.find(c=>c.id===colId);
+  if(col){col.name=n;closeTopDialog();showToast('已重命名');
+    if(document.querySelector('.nav-item.active').dataset.page==='todo') switchPage('todo');}
+}
+
+// #9 删除任务/列确认
+function openTodoDeleteDialog(taskId){
+  const t=state.tasks.find(x=>x.id===taskId);
+  const body=`<div style="text-align:center;font-size:14px;padding:20px 0;">确认删除任务「<b>${t?t.name:''}</b>」？此操作不可恢复。</div>`;
+  const footer=`
+    <button class="btn btn-sec" onclick="closeTopDialog()">取消</button>
+    <button class="btn btn-danger" onclick="deleteTodoTask('${taskId}')">删除</button>
+  `;
+  openDialog(dialogShell('删除任务',body,footer,'narrow'),{size:'narrow'});
+}
+function deleteTodoTask(id){
+  state.tasks=state.tasks.filter(t=>t.id!==id);
+  closeTopDialog();showToast('已删除');
+  if(document.querySelector('.nav-item.active').dataset.page==='todo') switchPage('todo');
+}
+function openTodoDeleteColDialog(colId){
+  const col=state.columns.find(c=>c.id===colId);
+  const body=`<div style="text-align:center;font-size:14px;padding:20px 0;">确认删除列「<b>${col?col.name:''}</b>」？列内任务将一并删除，此操作不可恢复。</div>`;
+  const footer=`
+    <button class="btn btn-sec" onclick="closeTopDialog()">取消</button>
+    <button class="btn btn-danger" onclick="deleteTodoCol('${colId}')">删除</button>
+  `;
+  openDialog(dialogShell('删除列',body,footer,'narrow'),{size:'narrow'});
+}
+function deleteTodoCol(id){
+  state.columns=state.columns.filter(c=>c.id!==id);
+  state.tasks=state.tasks.filter(t=>t.col!==id);
+  closeTopDialog();showToast('已删除列');
+  if(document.querySelector('.nav-item.active').dataset.page==='todo') switchPage('todo');
+}
+
+// #10 逾期任务清单
+function openTodoOverdueDialog(){
+  const overdue=state.tasks.filter(t=>t.due&&t.due.includes('逾期'));
+  const body=`
+    <div style="font-size:13px;color:var(--text2);margin-bottom:12px;">共 ${overdue.length} 条逾期任务</div>
+    <div>
+      ${overdue.length===0?'<div class="chart-empty">暂无逾期任务</div>':
+      overdue.map(t=>`<div class="todo-card overdue" style="margin-bottom:6px;cursor:pointer;" onclick="closeTopDialog();openTodoDetailDialog('${t.id}')">
+        <div class="todo-title">${t.name}</div>
+        <div class="todo-meta"><span class="todo-priority ${t.priority}">${{high:'高',mid:'中',low:'低'}[t.priority]}优先级</span><span class="todo-due"><span class="svg-icon">${ICONS.calendar}</span>${t.due}</span></div>
+      </div>`).join('')}
+    </div>
+  `;
+  const footer=`<button class="btn btn-sec" onclick="closeTopDialog()">关闭</button>`;
+  openDialog(dialogShell('逾期任务（'+overdue.length+'）',body,footer,'narrow'),{size:'narrow'});
+}
+
+// #11 任务详情
+function openTodoDetailDialog(taskId){
+  const t=state.tasks.find(x=>x.id===taskId)||state.tasks[0];
+  const archived=t.archived;
+  const tagsChips=t.tags.map(tg=>`<span class="md-tag" style="display:inline-flex;align-items:center;gap:3px;">${tg}<span style="cursor:pointer;color:var(--text3);" onclick="this.parentElement.remove()">×</span></span>`).join('');
+  const body=`
+    <div class="form-two-col">
+      <div class="form-group">
+        <div class="form-row"><div class="form-label required">标题</div><div class="form-control"><input class="input" value="${t.name}" ${archived?'readonly':''}></div></div>
+        <div class="form-row"><div class="form-label">优先级</div><div class="form-control"><select class="select" ${archived?'disabled':''}><option value="low" ${t.priority==='low'?'selected':''}>低</option><option value="mid" ${t.priority==='mid'?'selected':''}>中</option><option value="high" ${t.priority==='high'?'selected':''}>高</option></select></div></div>
+        <div class="form-row" style="align-items:flex-start;"><div class="form-label" style="padding-top:6px;">标签</div><div class="form-control">
+          <div style="display:flex;flex-wrap:wrap;gap:4px;padding:6px;border:1px solid var(--divider1);border-radius:6px;min-height:34px;background:var(--surface);">
+            ${tagsChips}
+            <input style="border:none;outline:none;flex:1;min-width:60px;font-size:13px;" placeholder="${archived?'':'输入标签回车添加...'}" ${archived?'readonly':''} onkeydown="if(event.key==='Enter'&&this.value.trim()){event.preventDefault();this.parentElement.insertAdjacentHTML('beforeend','<span class=&quot;md-tag&quot; style=&quot;display:inline-flex;align-items:center;gap:3px;&quot;>'+this.value.trim()+'<span style=&quot;cursor:pointer;color:var(--text3);&quot; onclick=&quot;this.parentElement.remove()&quot;>×</span></span>');this.value='';}">
+          </div>
+        </div></div>
+      </div>
+      <div class="form-group">
+        <div class="form-row"><div class="form-label">截止</div><div class="form-control"><input class="input" type="date" value="2026-10-19" ${archived?'readonly':''}></div></div>
+        <div class="form-row" style="align-items:flex-start;"><div class="form-label" style="padding-top:6px;">描述</div><div class="form-control"><textarea class="textarea" style="min-height:48px;" placeholder="任务描述..." ${archived?'readonly':''}>${t.name} 的详细描述...</textarea></div></div>
+      </div>
+    </div>
+  `;
+  const footer=`
+    ${archived?'<span style="font-size:12px;color:var(--text3);">已归档，只读模式</span>':'<span style="flex:1;"></span>'}
+    <button class="btn btn-sec" onclick="closeTopDialog()">取消</button>
+    ${archived?'':'<button class="btn btn-primary" onclick="closeTopDialog();showToast(\'已保存\')">保存</button>'}
+  `;
+  openDialog(dialogShell('任务详情'+(archived?'（只读）':''),body,footer,'narrow'));
+}
+
+// ===== Markdown 弹窗（4 个）=====
+
+// #12 新建笔记
+function openMdNewDialog(){
+  const body=`<div class="form-group"><div class="form-row"><div class="form-label required">笔记名</div><div class="form-control"><input class="input" id="newMdName" placeholder="未命名.md" oninput="validateMdNew()"></div></div></div>`;
+  const footer=`
+    <button class="btn btn-sec" onclick="closeTopDialog()">取消</button>
+    <button class="btn btn-primary" id="mdNewSave" onclick="saveMdNew()" disabled>创建</button>
+  `;
+  openDialog(dialogShell('新建笔记',body,footer,'narrow'),{size:'narrow'});
+}
+function validateMdNew(){document.getElementById('mdNewSave').disabled=!document.getElementById('newMdName').value.trim();}
+function saveMdNew(){
+  const n=document.getElementById('newMdName').value.trim();
+  if(!n)return;
+  state.mdFiles.push({type:'file',name:n.endsWith('.md')?n:n+'.md'});
+  closeTopDialog();showToast('已创建');
+  if(document.querySelector('.nav-item.active').dataset.page==='markdown') switchPage('markdown');
+}
+
+// #13 新建文件夹
+function openMdNewFolderDialog(){
+  const body=`<div class="form-group"><div class="form-row"><div class="form-label">父目录</div><div class="form-control"><select class="select"><option>/（根）</option>${state.mdFiles.filter(f=>f.type==='folder').map(f=>`<option>${f.name}</option>`).join('')}</select></div></div>
+    <div class="form-row"><div class="form-label required">文件夹名</div><div class="form-control"><input class="input" id="newFolderName" oninput="validateMdNewFolder()"></div></div></div>`;
+  const footer=`
+    <button class="btn btn-sec" onclick="closeTopDialog()">取消</button>
+    <button class="btn btn-primary" id="mdNewFolderSave" onclick="saveMdNewFolder()" disabled>创建</button>
+  `;
+  openDialog(dialogShell('新建文件夹',body,footer,'narrow'),{size:'narrow'});
+}
+function validateMdNewFolder(){document.getElementById('mdNewFolderSave').disabled=!document.getElementById('newFolderName').value.trim();}
+function saveMdNewFolder(){
+  const n=document.getElementById('newFolderName').value.trim();
+  if(!n)return;
+  state.mdFiles.push({type:'folder',name:n,children:[]});
+  closeTopDialog();showToast('已创建文件夹');
+  if(document.querySelector('.nav-item.active').dataset.page==='markdown') switchPage('markdown');
+}
+
+// #14 删除笔记确认
+function openMdDeleteDialog(name){
+  const body=`<div style="text-align:center;font-size:14px;padding:20px 0;">确认删除笔记「<b>${name}</b>」？文件将从磁盘移除，此操作不可恢复。</div>`;
+  const footer=`
+    <button class="btn btn-sec" onclick="closeTopDialog()">取消</button>
+    <button class="btn btn-danger" onclick="deleteMd('${name}')">删除</button>
+  `;
+  openDialog(dialogShell('删除笔记',body,footer,'narrow'),{size:'narrow'});
+}
+function deleteMd(name){
+  state.mdFiles=state.mdFiles.filter(f=>f.name!==name);
+  // 递归删除子项
+  state.mdFiles.forEach(f=>{if(f.type==='folder'&&f.children){f.children=f.children.filter(c=>c.name!==name);}});
+  closeTopDialog();showToast('已删除');
+  if(document.querySelector('.nav-item.active').dataset.page==='markdown') switchPage('markdown');
+}
+
+// #15 重命名笔记
+function openMdRenameDialog(name){
+  const body=`<div class="form-group"><div class="form-row"><div class="form-label required">新名称</div><div class="form-control"><input class="input" id="renameMdName" value="${name}"></div></div></div>`;
+  const footer=`
+    <button class="btn btn-sec" onclick="closeTopDialog()">取消</button>
+    <button class="btn btn-primary" onclick="renameMd('${name}')">重命名</button>
+  `;
+  openDialog(dialogShell('重命名笔记',body,footer,'narrow'),{size:'narrow'});
+}
+function renameMd(oldName){
+  const n=document.getElementById('renameMdName').value.trim();
+  if(!n)return;
+  const find=f=>{if(f.name===oldName&&f.type==='file')f.name=n;if(f.children)f.children.forEach(find);};
+  state.mdFiles.forEach(find);
+  closeTopDialog();showToast('已重命名');
+  if(document.querySelector('.nav-item.active').dataset.page==='markdown') switchPage('markdown');
+}
+
+// ===== Claude 弹窗（7 个：Profile 表单 + 删除 + 共享片段 + 片段删除 + 调用记录 + 余量 + cc-switch + JSON 全屏层）=====
+
+// #16 新建/编辑 Profile 表单
+function openProfileFormDialog(profileId){
+  const p=profileId?state.profiles.find(x=>x.id===profileId):{name:'',url:'',model:'',oneM:false,key:''};
+  const body=`
+    <div class="form-group">
+      <div class="form-group-title">基础信息</div>
+      <div class="form-row"><div class="form-label required">名称</div><div class="form-control"><input class="input" id="pfName" value="${p.name}" placeholder="如：方舟 GLM-5.3"></div></div>
+      <div class="form-row"><div class="form-label required">Base URL</div><div class="form-control"><input class="input" id="pfUrl" value="${p.url}" placeholder="https://..."></div></div>
+      <div class="form-row"><div class="form-label">默认模型</div><div class="form-control"><input class="input" id="pfModel" value="${p.model}" placeholder="如 glm-5.3"></div></div>
+      <div class="form-row"><div class="form-label">API Key</div><div class="form-control" style="position:relative;">
+        <input class="input" id="pfKey" type="password" value="${p.key}" placeholder="sk-..." style="padding-right:32px;">
+        <span id="pfKeyEye" class="svg-icon" style="position:absolute;right:6px;top:50%;transform:translateY(-50%);cursor:pointer;color:var(--text3);width:20px;height:20px;" onclick="togglePfKeyEye()">${ICONS.eye}</span>
+      </div></div>
+      <div class="form-row"><div class="form-label">1M 上下文 <span class="tooltip-wrap">?<span class="tip">1M tokens：上下文窗口扩展到 1M，适用于长文档处理</span></span></div><div class="form-control"><div class="switch ${p.oneM?'on':''}" id="pfOneM" onclick="toggleSwitch(this)"></div></div></div>
+    </div>
+    <div class="form-group">
+      <div class="form-group-title">高级配置（JSON）</div>
+      <textarea class="textarea" style="font-family:Consolas,monospace;font-size:12px;" placeholder='{"timeout":30000,"retry":3}'>${p.id?JSON.stringify({timeout:30000,retry:3,failover:'p2'},null,2):''}</textarea>
+      <div style="margin-top:8px;"><button class="btn btn-text" onclick="openJsonFullScreen()"><span class="svg-icon">${ICONS.expand}</span>全屏编辑</button></div>
+    </div>
+  `;
+  const footer=`
+    <button class="btn btn-sec" onclick="closeTopDialog()">取消</button>
+    <button class="btn btn-primary" onclick="saveProfile('${profileId||''}')">保存</button>
+  `;
+  openDialog(dialogShell(profileId?'编辑 Profile':'新建 Profile',body,footer,'wide'),{wide:true});
+}
+function saveProfile(id){
+  const name=document.getElementById('pfName').value.trim();
+  const url=document.getElementById('pfUrl').value.trim();
+  if(!name||!url){showToast('名称和 URL 不能为空');return;}
+  if(id){
+    const p=state.profiles.find(x=>x.id===id);
+    if(p){p.name=name;p.url=url;p.model=document.getElementById('pfModel').value;p.oneM=document.getElementById('pfOneM').classList.contains('on');}
+  }else{
+    state.profiles.push({id:'p'+Date.now(),name,url,model:document.getElementById('pfModel').value||'glm-5.3',oneM:document.getElementById('pfOneM').classList.contains('on'),active:false,key:document.getElementById('pfKey').value});
+  }
+  closeTopDialog();showToast('已保存');
+  if(document.querySelector('.nav-item.active').dataset.page==='claude') switchPage('claude');
+}
+function togglePfKeyEye(){
+  const inp=document.getElementById('pfKey');
+  const eye=document.getElementById('pfKeyEye');
+  if(inp.type==='password'){inp.type='text';eye.innerHTML=ICONS.eyeOff;}
+  else{inp.type='password';eye.innerHTML=ICONS.eye;}
+}
+
+// #17 Profile 删除确认
+function openProfileDeleteDialog(id){
+  const p=state.profiles.find(x=>x.id===id);
+  const body=`<div style="text-align:center;font-size:14px;padding:20px 0;">确认删除 Profile「<b>${p?p.name:''}</b>」？相关 API Key 与缓存调用记录将一并清除，此操作不可恢复。</div>`;
+  const footer=`
+    <button class="btn btn-sec" onclick="closeTopDialog()">取消</button>
+    <button class="btn btn-danger" onclick="deleteProfile('${id}')">删除</button>
+  `;
+  openDialog(dialogShell('删除 Profile',body,footer,'narrow'),{size:'narrow'});
+}
+function deleteProfile(id){
+  state.profiles=state.profiles.filter(p=>p.id!==id);
+  if(state.currentProfileId===id)state.currentProfileId=state.profiles[0]?.id;
+  closeTopDialog();showToast('已删除');
+  if(document.querySelector('.nav-item.active').dataset.page==='claude') switchPage('claude');
+}
+
+// #18 共享配置片段
+function openSharedDialog(){
+  const body=`
+    <div class="form-group">
+      <div class="form-row"><div class="form-label required">片段名</div><div class="form-control"><input class="input" value="通用 system prompt 片段"></div></div>
+      <div class="form-row"><div class="form-label">JSON 内容</div><div class="form-control"><textarea class="textarea" style="font-family:Consolas,monospace;font-size:12px;min-height:160px;">{
+  "system": "你是 DevDesk 的辅助助手，回答要简洁专业。",
+  "max_tokens": 4096
+}</textarea></div></div>
+    </div>
+  `;
+  const footer=`
+    <button class="btn btn-text" style="margin-right:auto;color:var(--danger);" onclick="openSharedDeleteDialog()">删除片段</button>
+    <button class="btn btn-sec" onclick="closeTopDialog()">取消</button>
+    <button class="btn btn-primary" onclick="closeTopDialog();showToast('已保存片段')">保存</button>
+  `;
+  openDialog(dialogShell('共享配置片段',body,footer,'narrow'),{size:'narrow'});
+}
+
+// #19 片段删除确认（叠层）
+function openSharedDeleteDialog(){
+  const body=`<div style="text-align:center;font-size:14px;padding:20px 0;">确认删除片段「<b>通用 system prompt 片段</b>」？</div>`;
+  const footer=`
+    <button class="btn btn-sec" onclick="closeTopDialog()">取消</button>
+    <button class="btn btn-danger" onclick="closeTopDialog();showToast('已删除片段')">删除</button>
+  `;
+  openDialog(dialogShell('删除片段',body,footer,'narrow'),{size:'narrow'});
+}
+
+// #20 调用记录
+function openCallsDialog(){
+  const body=`
+    <div style="display:flex;gap:8px;margin-bottom:12px;align-items:center;">
+      <input class="input" style="flex:1;" placeholder="搜索 message / trace_id...">
+      <select class="select" style="width:100px;"><option>全部状态</option><option>200</option><option>4xx</option><option>5xx</option></select>
+      <button class="btn btn-sec">查询</button>
+    </div>
+    <table class="calls-table">
+      <thead><tr><th>时间</th><th>模型</th><th>状态</th><th>Token</th><th>耗时</th></tr></thead>
+      <tbody>
+        ${Array.from({length:8}).map((_,i)=>{
+          const status=Math.random()>0.15?'200':(Math.random()>0.5?'429':'500');
+          const cls=status==='200'?'status-200':(status.startsWith('4')?'status-4xx':'status-5xx');
+          return `<tr><td>10-${19-i} ${10+i}:42:15</td><td>glm-5.3</td><td class="${cls}">${status}</td><td>${1+Math.floor(Math.random()*3)}.${Math.floor(Math.random()*9)}k → ${Math.floor(Math.random()*999)}</td><td>${(0.5+Math.random()*2).toFixed(1)}s</td></tr>`;
+        }).join('')}
+      </tbody>
+    </table>
+    <div class="pager">
+      <span>共 38 条</span>
+      <button class="btn btn-sec">上一页</button>
+      <span>1 / 4</span>
+      <button class="btn btn-sec">下一页</button>
+    </div>
+  `;
+  const footer=`<button class="btn btn-sec" onclick="closeTopDialog()">关闭</button>`;
+  openDialog(dialogShell('调用记录',body,footer,'wide'),{wide:true});
+}
+
+// #21 余量查询配置
+function openQuotaDialog(){
+  const body=`
+    <div class="form-group">
+      <div class="form-group-title">供应商配置</div>
+      <div class="form-row"><div class="form-label">供应商</div><div class="form-control"><select class="select"><option>方舟</option><option>百炼</option><option>DeepSeek</option><option>火山</option></select></div></div>
+      <div class="form-row"><div class="form-label">API 地址</div><div class="form-control"><input class="input" value="https://ai-gateway-office.zeekrlife.com/fangzhou/quota"></div></div>
+      <div class="form-row"><div class="form-label">API Key</div><div class="form-control"><input class="input" type="password" value="sk-***masked***"></div></div>
+      <div class="form-row"><div class="form-label">刷新间隔</div><div class="form-control"><select class="select"><option>5 分钟</option><option>15 分钟</option><option>1 小时</option></select></div></div>
+    </div>
+    <div class="form-hint">配置后将在首页余量卡片与设置页展示实时余量。实验功能。</div>
+  `;
+  const footer=`
+    <button class="btn btn-sec" onclick="closeTopDialog()">取消</button>
+    <button class="btn btn-text" onclick="showToast('测试中...')">测试连接</button>
+    <button class="btn btn-primary" onclick="closeTopDialog();showToast('已保存')">保存</button>
+  `;
+  openDialog(dialogShell('余量查询配置',body,footer,'narrow'),{size:'narrow'});
+}
+
+// #22 cc-switch 导入
+function openCcswitchDialog(){
+  const body=`
+    <div class="form-hint" style="margin-bottom:12px;">从本地 cc-switch 配置导入 Profile，勾选要导入的项。</div>
+    <div style="max-height:300px;overflow:auto;">
+      ${['方舟 GLM-5.3','百炼 DeepSeek-V4','本地代理','测试 Profile A','测试 Profile B'].map((n,i)=>`
+        <div class="settings-row" style="border-bottom:1px solid var(--divider2);">
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+            <input type="checkbox" ${i<2?'checked':''}>
+            <div><div class="label">${n}</div><div class="desc">来源：~/.claude/cc-switch.db</div></div>
+          </label>
+        </div>
+      `).join('')}
+    </div>
+  `;
+  const footer=`
+    <button class="btn btn-sec" onclick="closeTopDialog()">取消</button>
+    <button class="btn btn-primary" onclick="closeTopDialog();showToast('已导入 2 个 Profile')">导入</button>
+  `;
+  openDialog(dialogShell('从 cc-switch 导入',body,footer,'narrow'),{size:'narrow'});
+}
+
+// #23 高级设置 JSON 全屏覆盖层（z=1050）
+function openJsonFullScreen(){
+  const body=`
+    <div style="display:flex;flex-direction:column;height:100%;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+        <span style="font-size:13px;color:var(--text2);">全屏编辑高级配置 JSON · 按 Esc 放弃</span>
+        <button class="btn btn-text" onclick="closeTopDialog();showToast('已格式化')">格式化</button>
+      </div>
+      <textarea class="textarea" style="flex:1;font-family:Consolas,monospace;font-size:13px;min-height:400px;">{
+  "timeout": 30000,
+  "retry": 3,
+  "failover_profile_id": "p2",
+  "stream": true,
+  "auto_reconnect": true,
+  "upstream_dialect": "anthropic"
+}</textarea>
+    </div>
+  `;
+  const footer=`
+    <button class="btn btn-sec" onclick="closeTopDialog()">放弃</button>
+    <button class="btn btn-primary" onclick="closeTopDialog();showToast('已应用 JSON')">应用</button>
+  `;
+  openDialog(dialogShell('高级配置 JSON',body,footer,'wide'),{size:'fullscreen'});
+}
+
+// Splash 后自动跳首页（DOMContentLoaded 已做，此处保留兜底）
+window.addEventListener('load',()=>{if(document.getElementById('content').innerHTML.trim()==='')switchPage('home');});
+
+
+
+</script>
+</body>
+</html>
