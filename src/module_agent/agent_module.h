@@ -26,6 +26,7 @@
 #include "module_agent/direct_llm_client.h"
 #include "module_agent/scheduler.h"
 #include "module_agent/task_draft.h"
+#include "module_agent/task_draft_job.h"
 #include "module_agent/tool_info.h"
 
 #include <components/theme.h>
@@ -154,24 +155,6 @@ private:
         std::atomic<bool> cancel{false};
         std::atomic<bool> done{false};
     };
-
-    // 一次 AI 草稿生成（T7b）：worker 只触碰自己的 done 原子与下方槽位字段
-    //（done release 前 / reap acquire 后构成 happens-before，槽位字段不加锁）。
-    // 请求不可中断（DirectLlmClient 不加 SendOptions，已定案）：「取消」= 弹窗关闭
-    // 把 epoch 失效，请求自然跑完后结果在 reap 处丢弃。onStop join 先于 llm_.reset()。
-    struct DraftJob {
-        std::string input;      // 用户一句话（值拷贝，worker 不摸 UI 草稿成员）
-        std::string modelSlot;  // 发起时的槽位键（值拷贝，防主线程并发改 editSlot_）
-        int epoch = 0;          // 发起时的会话代次；收割时不匹配 = 弹窗曾关闭/已重开，结果丢弃
-        std::thread thread;
-        std::atomic<bool> done{false};
-        bool ok = false;          // requestTaskDraft + parseTaskDraft 双双成功
-        std::string errorText;    // !ok 时的失败原因（给子弹窗错误行）
-        TaskDraftResult parsed;   // ok 时的解析+校验结果
-    };
-    // 子弹窗阶段：Idle = 待输入；Generating = 请求在途；Done = 已预填（notice 行可见）；
-    // Failed = 错误行可见。全部仅主线程读写（worker 只写 DraftJob 槽位）。
-    enum class DraftPhase { Idle, Generating, Done, Failed };
 
     // 惰性装配单入口：首次使用时解析 LlmProfileSource 并建 llm_/loop_/scheduler_；幂等
     void ensureLlm();

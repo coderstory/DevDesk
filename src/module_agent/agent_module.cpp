@@ -147,16 +147,6 @@ void actionChip(::eui::Ui& ui, const std::string& id, const std::string& label,
         .build();
 }
 
-// 顿号连接（预填摘要用；空表 = 空串）
-std::string joinCnList(const std::vector<std::string>& parts) {
-    std::string out;
-    for (size_t i = 0; i < parts.size(); ++i) {
-        if (i > 0) out += "、";
-        out += parts[i];
-    }
-    return out;
-}
-
 // 「去 Claude 页」引导的跳转动作：Router 未装配时仅 LOG_WARN（测试 compose 无 router 不崩）
 void navigateToClaudePage() {
     auto* router = ::core::appRouter();
@@ -214,37 +204,6 @@ constexpr const char* kModelSlotLabels[] = {
 constexpr int kModelSlotCount = static_cast<int>(
     sizeof(kModelSlotKeys) / sizeof(kModelSlotKeys[0]));
 
-// daily = 每天（不指定时刻）：当天首次打开后的第一个调度周期跑一次，见 Scheduler::tickNow
-// once = 闹钟（一次性绝对时刻，trigger_config.once_at）：到点派发一次后自动停用
-// 新类型一律追加在末尾：既有下标是编辑回填 / 测试断言的契约，插队会改写历史任务的类型
-constexpr const char* kTriggerKeys[] = {"manual",   "schedule", "resident",
-                                        "event",    "daily",    "once"};
-constexpr const char* kTriggerLabels[] = {"手动", "定时", "常驻",
-                                          "事件", "每天", "闹钟"};
-constexpr int kTriggerCount = 6;
-// 六类触发的表单语义提示：与 kTriggerLabels 同下标，一行讲清「这是什么/怎么填」。
-// 「每天」的隐藏语义（首次打开后的首个调度周期，不是固定时刻）必须写明，否则
-// 新用户按直觉理解成闹钟；定时/闹钟两类的 y=212 槽平时被预览行占用（预览是
-// 已算出的下次触发/错误，信息量更大），预览为空时才轮到本提示。
-constexpr const char* kTriggerHints[] = {
-    "手动：只在你点「启动」时运行，不自动调度",
-    "定时：按 cron 周期自动运行（分 时 日 月 周），需应用保持开启",
-    "常驻：不自动运行，点列表「入队」立即执行一轮，适合值守类任务",
-    "事件：勾选的待办/笔记事件发生时自动运行",
-    "每天：当天首次打开应用后的首个调度周期运行一次（需应用保持运行）",
-    "闹钟：到指定时刻运行一次后自动停用，错过不补"};
-constexpr int kTriggerScheduleIdx = 1;
-constexpr int kTriggerEventIdx = 3;
-constexpr int kTriggerOnceIdx = 5;
-
-// 事件触发可选事件表：名字 = core::event 常量（唯一真源），label 是表单文案。
-// 顺序即 editEvents_ 下标——两表必须同长，加事件只改这里 + editEvents_ 容量
-constexpr const char* kEventNames[] = {
-    ::core::event::kTodoCreated, ::core::event::kTodoCompleted,
-    ::core::event::kMdSaved};
-constexpr const char* kEventLabels[] = {"新建待办", "完成待办", "保存笔记"};
-constexpr int kEventCount = 3;
-
 constexpr float kPageHeaderH = 40.0f;
 constexpr float kNewTaskBtnW = 140.0f;
 constexpr float kTaskRowH = 44.0f;
@@ -294,21 +253,6 @@ constexpr float kMsgAreaMaxH = 520.0f;
 constexpr float kToolsHeaderH = 28.0f;
 constexpr float kToolCardH = 44.0f;
 constexpr float kToolsListMaxH = 240.0f;
-
-int triggerIndexOf(const std::string& triggerType) {
-    for (int i = 0; i < kTriggerCount; ++i) {
-        if (triggerType == kTriggerKeys[i]) return i;
-    }
-    return 0;   // 未知触发类型 → 显示「手动」，保存时按当前下拉值归一
-}
-
-// 展示用文案：已知类型给中文标签，未知类型原样回显（不伪装成「手动」）
-std::string triggerLabelOf(const std::string& triggerType) {
-    for (int i = 0; i < kTriggerCount; ++i) {
-        if (triggerType == kTriggerKeys[i]) return kTriggerLabels[i];
-    }
-    return triggerType;
-}
 
 int slotIndexOf(const std::string& slotKey) {
     for (int i = 0; i < kModelSlotCount; ++i) {
@@ -2634,151 +2578,6 @@ void AgentModule::closeDraftDialog() {
     draftError_.clear();
 }
 
-void AgentModule::startDraftGeneration() {
-    {
-        // 槽位读与其他调用点同一把 draftMu_（锁口径统一：不留半锁半裸的成员）
-        std::lock_guard<std::mutex> lock(draftMu_);
-        if (draftJob_ != nullptr) return;   // 生成中重复点击（按钮已禁用，再挡一道）
-    }
-    const std::string text = trimCopy(draftInput_);
-    if (text.empty()) {
-        draftPhase_ = DraftPhase::Failed;
-        draftNotice_.clear();
-        draftWarnings_.clear();
-        draftError_ = "请先用一句话描述任务";
-        return;
-    }
-    ensureLlm();
-    if (llm_ == nullptr) {
-        draftPhase_ = DraftPhase::Failed;
-        draftNotice_.clear();
-        draftWarnings_.clear();
-        draftError_ = "LLM 配置不可用：请在设置页配置 Claude 后重试";
-        return;
-    }
-    // 防御：先收上一个已完成未收割的 job（正常路径 compose 每帧已收），仍占用则退
-    reapDraftJob();
-    {
-        std::lock_guard<std::mutex> lock(draftMu_);
-        if (draftJob_ != nullptr) {
-            draftPhase_ = DraftPhase::Failed;
-            draftError_ = "上一次请求仍在进行，请稍候";
-            return;
-        }
-    }
-    ++draftEpoch_;
-    auto job = std::make_unique<DraftJob>();
-    job->input = text;
-    job->modelSlot = editSlot_;
-    job->epoch = draftEpoch_;
-    DraftJob* raw = job.get();
-    {
-        std::lock_guard<std::mutex> lock(draftMu_);
-        draftJob_ = std::move(job);
-    }
-    draftPhase_ = DraftPhase::Generating;
-    draftNotice_.clear();
-    draftWarnings_.clear();
-    draftError_.clear();
-    try {
-        raw->thread = std::thread([this, raw] {
-            const std::time_t now = deps_.schedulerNow ? deps_.schedulerNow()
-                                                       : core::time::nowUnix();
-            auto resp = requestTaskDraft(*llm_, raw->input, now, raw->modelSlot);
-            if (resp.isFail()) {
-                raw->errorText = resp.errorMessage();
-            } else {
-                auto parsed =
-                    parseTaskDraft(resp.value(), registeredToolNames());
-                if (parsed.isOk()) {
-                    raw->parsed = std::move(parsed.value());
-                    raw->ok = true;
-                } else {
-                    // 连 JSON 都没有：给不出可编辑骨架，按失败呈报（parse 契约）
-                    raw->errorText = parsed.errorMessage();
-                }
-            }
-            raw->done.store(true, std::memory_order_release);
-            // 事件驱动的帧循环不主动重绘，完成即要帧（startTask 同款先例）
-            ::core::platform::requestUiUpdate();
-        });
-    } catch (const std::system_error& e) {
-        // 线程创建失败：槽位归还（线程未启动，无需 join），阶段回失败
-        std::lock_guard<std::mutex> lock(draftMu_);
-        draftJob_.reset();
-        draftPhase_ = DraftPhase::Failed;
-        draftError_ = "生成线程创建失败";
-        LOG_ERROR(std::string("Agent: AI 草稿线程创建失败: ") + e.what());
-    }
-}
-
-void AgentModule::reapDraftJob() {
-    std::unique_ptr<DraftJob> job;
-    {
-        std::lock_guard<std::mutex> lock(draftMu_);
-        if (draftJob_ == nullptr ||
-            !draftJob_->done.load(std::memory_order_acquire)) {
-            return;
-        }
-        job = std::move(draftJob_);
-    }
-    if (job->thread.joinable()) job->thread.join();
-    if (!job->ok) {
-        draftPhase_ = DraftPhase::Failed;
-        draftError_ = job->errorText;
-        return;
-    }
-    if (job->epoch != draftEpoch_) {
-        // 弹窗曾关闭 / 已重开生成：结果按约丢弃，不改表单一个字节
-        draftPhase_ = DraftPhase::Idle;
-        draftError_ = "上次生成已作废（子弹窗曾关闭），请重新生成";
-        return;
-    }
-    applyDraftPrefill(job->parsed);
-    draftPhase_ = DraftPhase::Done;
-}
-
-void AgentModule::applyDraftPrefill(const TaskDraftResult& res) {
-    std::vector<std::string> filled;
-    if (res.goalFilled && !res.draft.goal.empty()) {
-        editGoal_ = res.draft.goal;
-        filled.emplace_back("任务目标");
-    }
-    if (!res.draft.contextNote.empty()) {
-        editContextNote_ = res.draft.contextNote;
-        filled.emplace_back("执行记忆");
-    }
-    // 触发只有「类型 + 载荷都过校验」才采信；不可信时一字不动（含用户已选的类型）
-    if (res.triggerFilled) {
-        const int idx = triggerIndexOf(res.draft.triggerType);
-        editTriggerIdx_ = idx;
-        filled.emplace_back(std::string("触发方式（") + kTriggerLabels[idx] + "）");
-        const auto cfg = decodeTriggerConfig(res.draft.triggerConfig);
-        if (idx == kTriggerScheduleIdx && cfg.isOk()) {
-            setEditCronDraft(cfg.value().cron);
-            if (cfg.value().maxRuns) editMaxRuns_ = *cfg.value().maxRuns;
-        } else if (idx == kTriggerEventIdx && cfg.isOk()) {
-            editEvents_ = {};
-            for (int i = 0; i < kEventCount; ++i) {
-                if (std::find(cfg.value().events.begin(), cfg.value().events.end(),
-                              std::string(kEventNames[i])) !=
-                    cfg.value().events.end()) {
-                    editEvents_[i] = true;
-                }
-            }
-            if (cfg.value().maxRuns) editMaxRuns_ = *cfg.value().maxRuns;
-        } else if (idx == kTriggerOnceIdx && cfg.isOk() && cfg.value().onceAt) {
-            setEditOnceDraft(formatOnceAtText(*cfg.value().onceAt));
-        }
-    }
-    draftNotice_ = filled.empty()
-                       ? std::string("模型没有给出可预填的字段，请手填或换个说法重试")
-                       : "已预填表单：" + joinCnList(filled) + "；请检查后自己点「保存」";
-    // 降级警告 + 模型自报的待补项 → 子弹窗警告行（不 block，用户可见哪些没吃进去）
-    std::vector<std::string> warn = res.draft.warnings;
-    for (const auto& ask : res.needsUserInput) warn.push_back(ask);
-    draftWarnings_ = joinCnList(warn);
-}
 
 // 任务删除确认弹窗（E1）：仿 claude 删除确认（Compact 420 / 标题 / 红字正文 / 按钮对）。
 // 取消/遮罩/Esc 任一路径只关弹窗不动库；确认才走 performDeleteTask
