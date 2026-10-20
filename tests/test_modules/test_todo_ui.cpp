@@ -476,6 +476,120 @@ REGISTER_TEST(todo_ui_column_ops_and_datepicker,
     return true;
 })
 
+// datepicker「默认当天」（UAT5 任务 F）。防两个事故：
+//   ① 无 due 的卡打开滚轮停今天，但不滚直接「确定」什么也不发生——组件确定按钮只在
+//     「滚轮草稿 ≠ .date() 提交值」时回调 onChange，本层首帧喂锚点、后续帧喂哨兵
+//     （drawDatePicker），回退哨兵机制则「打开即确定==today」断言红；
+//   ② 第二次打开滚轮停在上一次会话的位置而非本卡锚点——组件草稿 active 后不再吃
+//     .date()，靠会话首帧 releaseStateScope 清旧草稿，回退则「滚轮回锚点」断言红。
+REGISTER_TEST(todo_ui_datepicker_default_today,
+              "todo_ui: datepicker 默认当天——打开即确定==today；二次打开滚轮回本卡锚点", {
+    TestEnv env;
+    DOCTEST_REQUIRE(env.ready);
+    auto col = env.svc->createColumn("日期默认列");
+    DOCTEST_REQUIRE(col.isOk());
+    auto noDue = env.svc->createTask(col.value().id, "无截止卡");
+    DOCTEST_REQUIRE(noDue.isOk());
+    auto farDue = env.svc->createTask(col.value().id, "远期截止卡");
+    DOCTEST_REQUIRE(farDue.isOk());
+    {
+        module::todo::Task t2 = farDue.value();
+        t2.dueAt = module::todo::ui::ymdToEpoch(2027, 3, 15);
+        DOCTEST_REQUIRE(env.svc->updateTask(t2).isOk());
+    }
+
+    std::unique_ptr<::core::Module> mod(create_todo_module());
+    mod->onStart();
+
+    const std::time_t openedAt = std::time(nullptr);
+    int expY = 0, expM = 0, expD = 0;
+    {
+        std::tm tmv{};
+        core::time::localTime(openedAt, &tmv);
+        expY = tmv.tm_year + 1900;
+        expM = tmv.tm_mon + 1;
+        expD = tmv.tm_mday;
+    }
+    const std::string expDay = std::to_string(expD);
+    const std::string expYear = std::to_string(expY);
+    char expectedDue[16];
+    std::snprintf(expectedDue, sizeof(expectedDue), "%02d-%02d", expM, expD);
+
+    // ① 无 due：打开 → 滚轮停今天 → 不滚直接确定 → 表单 due = 今天
+    {
+        Frame frame(mod.get());
+        const auto* card = frame.ui.find("todo.col.4.card.0.bg");
+        DOCTEST_REQUIRE(card != nullptr);
+        DOCTEST_REQUIRE(card->onClick != nullptr);
+        card->onClick();   // 打开详情
+        frame.refresh();
+        auto* pick = frame.ui.find("todo.dialog.detail.due.pick.bg");
+        DOCTEST_REQUIRE(pick != nullptr);
+        DOCTEST_REQUIRE(pick->onClick != nullptr);
+        pick->onClick();   // 打开 datepicker（首帧喂锚点=今天）
+        frame.refresh();   // 第 2 帧：哨兵提交值就位
+        const auto* dayItem = frame.ui.find("todo.datepicker.column.1.item.2");
+        const auto* yearItem = frame.ui.find("todo.datepicker.column.2.item.2");
+        DOCTEST_REQUIRE(dayItem != nullptr);
+        DOCTEST_REQUIRE(yearItem != nullptr);
+        DOCTEST_CHECK_EQ(dayItem->text, expDay);    // 滚轮默认停今天
+        DOCTEST_CHECK_EQ(yearItem->text, expYear);
+        auto* done = frame.ui.find("todo.datepicker.done.bg");
+        DOCTEST_REQUIRE(done != nullptr);
+        DOCTEST_REQUIRE(done->onClick != nullptr);
+        done->onClick();   // 不滚直接确定 → onChange(今天)
+        frame.refresh();
+        DOCTEST_CHECK(frame.ui.find("todo.datepicker.panel") == nullptr);   // 确定即关
+        const auto* pickText = frame.ui.find("todo.dialog.detail.due.pick.text");
+        DOCTEST_REQUIRE(pickText != nullptr);
+        DOCTEST_CHECK_EQ(pickText->text, std::string(expectedDue));   // 表单 due=今天
+    }
+
+    // ② 二次打开回锚点：先看远期卡（滚轮停 2027-03-15）→ 遮罩关 → 再开无截止卡，
+    //    滚轮必须回今天——不清旧草稿则会停在 15/2027（本断言红）
+    {
+        Frame frame(mod.get());
+        const auto* farCard = frame.ui.find("todo.col.4.card.1.bg");
+        DOCTEST_REQUIRE(farCard != nullptr);
+        DOCTEST_REQUIRE(farCard->onClick != nullptr);
+        farCard->onClick();
+        frame.refresh();
+        auto* pick = frame.ui.find("todo.dialog.detail.due.pick.bg");
+        DOCTEST_REQUIRE(pick != nullptr);
+        pick->onClick();
+        frame.refresh();   // 远期卡首帧：滚轮吃锚点 2027-03-15
+        const auto* dayItem = frame.ui.find("todo.datepicker.column.1.item.2");
+        DOCTEST_REQUIRE(dayItem != nullptr);
+        DOCTEST_CHECK_EQ(dayItem->text, std::string("15"));
+        auto* backdrop = frame.ui.find("todo.datepicker.backdrop");
+        DOCTEST_REQUIRE(backdrop != nullptr);
+        DOCTEST_REQUIRE(backdrop->onClick != nullptr);
+        backdrop->onClick();   // 遮罩关（不设值）
+        frame.refresh();      // 关闭帧：帧计数归零
+        DOCTEST_CHECK(frame.ui.find("todo.datepicker.panel") == nullptr);
+
+        // 切到无截止卡：详情仍在（同一弹窗实例换任务需先关后开——直接开第二张卡）
+        const auto* noCard = frame.ui.find("todo.col.4.card.0.bg");
+        DOCTEST_REQUIRE(noCard != nullptr);
+        DOCTEST_REQUIRE(noCard->onClick != nullptr);
+        noCard->onClick();
+        frame.refresh();
+        pick = frame.ui.find("todo.dialog.detail.due.pick.bg");
+        DOCTEST_REQUIRE(pick != nullptr);
+        pick->onClick();
+        frame.refresh();   // 新会话首帧：releaseStateScope 清旧草稿 + 喂今天锚点
+        const auto* dayItem2 = frame.ui.find("todo.datepicker.column.1.item.2");
+        const auto* yearItem2 = frame.ui.find("todo.datepicker.column.2.item.2");
+        DOCTEST_REQUIRE(dayItem2 != nullptr);
+        DOCTEST_REQUIRE(yearItem2 != nullptr);
+        DOCTEST_CHECK_EQ(dayItem2->text, expDay);   // 不停在上一会话的 15 号
+        DOCTEST_CHECK_EQ(yearItem2->text, expYear);
+    }
+
+    mod->onStop();
+    return true;
+})
+
 // computeAppendPosition
 
 REGISTER_TEST(todo_ui_append_position,

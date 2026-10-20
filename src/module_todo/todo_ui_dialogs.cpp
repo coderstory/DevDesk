@@ -382,16 +382,38 @@ void drawConfirmDeleteDialog(eui::Ui& ui, const eui::Screen& screen,
     });
 }
 
-// 截止日期选择（datepicker 滚轮，可选任意日期）
+// 截止日期选择（datepicker 滚轮，可选任意日期）。
+// 「默认当天」机制（UAT5，不动 EUI-NEO 组件、只动本包装层）：
+// ① 组件滚轮草稿只在「未激活」时才吃 .date() 提交值（syncDraft 守卫），而本层关闭态
+//   根本不建组件 → 草稿 active 恒 true、第二次打开滚轮停在上一次位置而非本卡锚点。
+//   → 每个打开会话首帧 releaseStateScope 放掉旧草稿，滚轮按锚点（有 due 用 due、
+//   无 due 用当天）重新初始化。
+// ② 组件「确定」只在「滚轮草稿 ≠ 提交值」时回调 onChange——首帧喂锚点后直接确定
+//   永远不回调（无 due 的卡就此设不上「今天」）。→ 首帧喂锚点，后续帧喂 1900 哨兵
+//   提交值（滚轮草稿在打开期间不被 syncDraft 重置，哨兵不进显示），使「打开不滚
+//   直接确定」也回调 onChange(滚轮当前值)=当天/原值。
+// 帧计数在「关闭态每帧」归零——Esc/确定/遮罩/任何 popups.close 路径全覆盖。
 void drawDatePicker(eui::Ui& ui, const eui::Screen& screen,
                     const core::theme::Tokens& t, DialogSet& d,
                     const DialogHost& host) {
     (void)host;
-    if (!d.popups.isOpen(Popup::DatePick)) return;
+    if (!d.popups.isOpen(Popup::DatePick)) {
+        d.datePickDrawn = 0;
+        return;
+    }
     const auto themeTokens = core::theme::componentTokensWeChat(t);
     int year = 0, month = 0, day = 0;
     if (!epochToYmd(d.detail.dueAt.value_or(0), year, month, day)) {
         epochToYmd(static_cast<int64_t>(std::time(nullptr)), year, month, day);
+    }
+    const bool firstFrame = d.datePickDrawn == 0;
+    ++d.datePickDrawn;
+    if (firstFrame) {
+        ui.releaseStateScope("todo.datepicker.draft");
+    } else {
+        year = 1900;   // 哨兵提交值：合法日期（.date() clamp 不炸）且真实任务
+        month = 1;     // 永远选不到 1900-01-01 →「确定」必回调 onChange
+        day = 1;
     }
     components::datePicker(ui, "todo.datepicker")
         .open(true)

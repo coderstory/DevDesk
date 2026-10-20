@@ -215,6 +215,11 @@ struct DialogSet {
     DetailDialog detail;
     ContextMenuState ctx;
     OverdueDialog overdue;
+    // datepicker 本次打开已绘制的帧数（UAT5「默认当天」机制，详见 drawDatePicker）：
+    // 首帧喂锚点日期初始化滚轮 + 放掉上一会话草稿，后续帧喂哨兵提交值——组件的
+    // 「确定」只在「滚轮草稿 ≠ 提交值」时回调 onChange，不喂哨兵则「打开不滚直接
+    // 确定」永远不回调。关闭态每帧归零（Esc/确定/遮罩全路径覆盖）。
+    int datePickDrawn = 0;
 };
 
 // 绘制（自由函数；状态显式入参，定义在 todo_ui_dialogs.cpp）
