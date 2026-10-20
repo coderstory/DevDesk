@@ -8382,6 +8382,7 @@ REGISTER_TEST(claude_profile_card_url_ellipsis,
         DOCTEST_CHECK_EQ(url->overflow, core::TextOverflow::Ellipsis);
         DOCTEST_CHECK(url->frame.x + url->frame.width <=
                       card->frame.x + card->frame.width + 0.5f);
+        return true;  // 宏含 return false，lambda 落尾须补 true（否则 bool 推导落空）
     };
     // 默认窗（左栏触上限 460）与 320 档窄窗（contentW 820 → 左栏贴下限）
     assertUrlInCard(1600.0f, "url_wide");

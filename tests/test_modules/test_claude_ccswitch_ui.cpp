@@ -228,6 +228,41 @@ REGISTER_TEST(claude_ccswitch_ui_skeleton_contract,
     DOCTEST_REQUIRE(cancel != nullptr);
     DOCTEST_CHECK_EQ(cancel->text, std::string("关闭"));
 
+    //（UAT5 米黄收尾）候选行卡/勾选指示/文字四档 WeChat 色锁（默认全选帧）：
+    // 选中行 selectedBg 浅灰底 + dividerPrimary 灰边；cb.box wechat.primary 绿圈
+    // （radius = D/2 = 10 → 20px 圆，Profile 选中同款）+ 白 fa-check；文字四档
+    // name/textPrimary · url/textTertiary · model/textSecondary · skip/warningRed。
+    // 反向锁死暖橙 surface / legacy primary / legacy error（先例同 shared_dialog 批）。
+    {
+        const auto* selRowBg = ui2.find("claude.dialog.ccswitch.row.1.bg");
+        DOCTEST_REQUIRE(selRowBg != nullptr);
+        DOCTEST_CHECK(sameColor(selRowBg->color, wc.wechat.selectedBg));
+        DOCTEST_CHECK(!sameColor(selRowBg->color, wc.surface));   // 反向：暖米行底
+        DOCTEST_CHECK(sameColor(selRowBg->border.color, wc.wechat.dividerPrimary));
+        const auto* selBox = ui2.find("claude.dialog.ccswitch.row.1.cb.box");
+        DOCTEST_REQUIRE(selBox != nullptr);
+        DOCTEST_CHECK(sameColor(selBox->color, wc.wechat.primary));  // 绿圈白勾
+        DOCTEST_CHECK(!sameColor(selBox->color, wc.primary));       // 反向：legacy 橙
+        DOCTEST_CHECK_EQ(selBox->radius, 10.0f);  // 20px 圆：radius == kBoxSize/2
+        DOCTEST_CHECK(sameColor(selBox->border.color, wc.wechat.primary));
+        const auto* selMark = ui2.find("claude.dialog.ccswitch.row.1.cb.mark");
+        DOCTEST_REQUIRE(selMark != nullptr);
+        DOCTEST_CHECK(sameColor(selMark->textColor, wc.wechat.onPrimary));
+        const auto* selName = ui2.find("claude.dialog.ccswitch.row.1.name");
+        DOCTEST_REQUIRE(selName != nullptr);
+        DOCTEST_CHECK(sameColor(selName->textColor, wc.wechat.textPrimary));
+        const auto* selUrl = ui2.find("claude.dialog.ccswitch.row.1.url");
+        DOCTEST_REQUIRE(selUrl != nullptr);
+        DOCTEST_CHECK(sameColor(selUrl->textColor, wc.wechat.textTertiary));
+        const auto* selModel = ui2.find("claude.dialog.ccswitch.row.1.model");
+        DOCTEST_REQUIRE(selModel != nullptr);
+        DOCTEST_CHECK(sameColor(selModel->textColor, wc.wechat.textSecondary));
+        const auto* failSkip = ui2.find("claude.dialog.ccswitch.row.0.skip");
+        DOCTEST_REQUIRE(failSkip != nullptr);
+        DOCTEST_CHECK(sameColor(failSkip->textColor, wc.wechat.warningRed));
+        DOCTEST_CHECK(!sameColor(failSkip->textColor, wc.error));  // 反向：legacy 红
+    }
+
     // 行渲染：name + app_type · base_url；选中行有勾标；codex 行不存在
     const auto* badName = ui2.find("claude.dialog.ccswitch.row.0.name");
     DOCTEST_REQUIRE(badName != nullptr);
@@ -260,6 +295,21 @@ REGISTER_TEST(claude_ccswitch_ui_skeleton_contract,
     DOCTEST_REQUIRE(confirm3 != nullptr);
     DOCTEST_CHECK_EQ(confirm3->text, std::string("导入选中(2)"));
     DOCTEST_CHECK(ui3.find("claude.dialog.ccswitch.row.1.cb.mark") == nullptr);
+    //（UAT5 米黄收尾）未选中行色锁：bg == cardBg 白底灰边；cb.box 白圈灰边空圈
+    //（20px 圆不缩水）；反向锁死暖橙 surface / legacy borderDefault。
+    {
+        const auto* unRowBg = ui3.find("claude.dialog.ccswitch.row.1.bg");
+        DOCTEST_REQUIRE(unRowBg != nullptr);
+        DOCTEST_CHECK(sameColor(unRowBg->color, wc.wechat.cardBg));
+        DOCTEST_CHECK(!sameColor(unRowBg->color, wc.surface));    // 反向：暖米行底
+        const auto* unBox = ui3.find("claude.dialog.ccswitch.row.1.cb.box");
+        DOCTEST_REQUIRE(unBox != nullptr);
+        DOCTEST_CHECK(sameColor(unBox->color, wc.wechat.cardBg));  // 白圈
+        DOCTEST_CHECK(!sameColor(unBox->color, wc.surface));
+        DOCTEST_CHECK_EQ(unBox->radius, 10.0f);  // 未选中同 20px 圆
+        DOCTEST_CHECK(sameColor(unBox->border.color, wc.wechat.dividerPrimary));
+        DOCTEST_CHECK(!sameColor(unBox->border.color, wc.borderDefault));
+    }
     // 翻回（后续用例不受此态影响；本用例到此为止）
     DOCTEST_REQUIRE(clickById(ui3, "claude.dialog.ccswitch.row.1.hit"));
     eui::Ui ui4;

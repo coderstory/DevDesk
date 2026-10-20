@@ -35,44 +35,50 @@ constexpr float kResultH = 18.0f;
 constexpr float kButtonsBottomGap = 60.0f; // 底部按钮行（drawDialogButtons 写死 h-60）
 
 // 候选行可见字段（**密钥不显示**）：name + base_url + model。映射失败行画红色
-// skipReason 并画成禁用勾选 + 灰文（导入选中也只会进「跳过」结果）。
+// skipReason（行本身仍可勾，勾了导入也只会进「跳过」结果）。
 void drawCandidateRow(eui::Ui& ui, const core::theme::Tokens& t,
                       const components::theme::ThemeColorTokens& themeTokens,
                       const std::string& baseId, float rowW,
                       const CcSwitchImportRow& row,
                       const CcSwitchImportMapping& m, bool selected) {
-    // 行底卡（与 Profile 卡片同款 surface + border，但更扁）
+    // 行底卡（UAT5 米黄收尾）：WeChat cardBg 白底灰边；选中 selectedBg 浅灰——
+    // 与 Profile 列表选中态同语义（底色 + 绿圈白勾双指示，不加左竖线）。
     ui.rect(baseId + ".bg")
         .position(0.0f, 0.0f)
         .size(rowW, kRowPitch - 8.0f)
-        .color(t.colors.surface)
+        .color(selected ? t.colors.wechat.selectedBg : t.colors.wechat.cardBg)
         .radius(t.sizes.radiusLarge)
-        .border(1.0f, t.colors.borderDefault)
+        .border(1.0f, t.colors.wechat.dividerPrimary)
         .build();
-    // 勾选指示（手绘：rect 框 + 选中时 primary 底 + fa-check 字标）；不引
+    // 勾选指示（UAT5 米黄收尾）：照 Profile 选中同款 20px「绿圈白勾」——
+    // wechat.primary 圆 + 白 fa-check；未选中 = cardBg 白圈灰边空圈。不引
     // components::checkbox（其头在 -Werror 下有 unused-variable 告警）。指示器纯视觉。
-    constexpr float kBoxSize = 18.0f;
+    constexpr float kBoxSize = 20.0f;
     const float boxY = (kRowPitch - 8.0f - kBoxSize) * 0.5f;
     ui.rect(baseId + ".cb.box")
         .position(12.0f, boxY)
         .size(kBoxSize, kBoxSize)
-        .color(selected ? t.colors.primary : t.colors.surface)
-        .radius(4.0f)
-        .border(1.0f, selected ? t.colors.primary : t.colors.borderDefault)
+        .color(selected ? t.colors.wechat.primary : t.colors.wechat.cardBg)
+        .radius(kBoxSize * 0.5f)
+        .border(1.0f,
+                selected ? t.colors.wechat.primary
+                         : t.colors.wechat.dividerPrimary)
         .build();
     if (selected) {
         ui.text(baseId + ".cb.mark")
-            .position(12.0f, boxY - 1.0f)
+            .position(12.0f, boxY)
             .size(kBoxSize, kBoxSize)
             .icon(0xF00C)  // fa-check
             .fontSize(11.0f)
             .lineHeight(kBoxSize)
             .horizontalAlign(eui::HorizontalAlign::Center)
             .verticalAlign(eui::VerticalAlign::Center)
-            .color(t.colors.onPrimary)
+            .color(t.colors.wechat.onPrimary)
             .build();
     }
     // 名称（粗）+ base_url（mono 小字）+ model（小字）。**密钥一律不画**。
+    // 文字四档（UAT5 米黄收尾）：name=textPrimary / url=textTertiary /
+    // model=textSecondary / skip 红=warningRed，全走 wechat 档。
     const float textX = 44.0f;
     const float textW = rowW - textX - 12.0f;
     ui.text(baseId + ".name")
@@ -82,7 +88,7 @@ void drawCandidateRow(eui::Ui& ui, const core::theme::Tokens& t,
         .fontSize(13.0f)
         .lineHeight(18.0f)
         .fontWeight(600)
-        .color(t.colors.textPrimary)
+        .color(t.colors.wechat.textPrimary)
         .build();
     ui.text(baseId + ".url")
         .position(textX, 26.0f)
@@ -91,7 +97,7 @@ void drawCandidateRow(eui::Ui& ui, const core::theme::Tokens& t,
               (m.ok ? m.baseUrl : std::string("—")))
         .fontSize(11.0f)
         .lineHeight(14.0f)
-        .color(t.colors.textTertiary)
+        .color(t.colors.wechat.textTertiary)
         .build();
     if (m.ok && !m.model.empty()) {
         ui.text(baseId + ".model")
@@ -100,7 +106,7 @@ void drawCandidateRow(eui::Ui& ui, const core::theme::Tokens& t,
             .text("model: " + m.model)
             .fontSize(11.0f)
             .lineHeight(12.0f)
-            .color(t.colors.textSecondary)
+            .color(t.colors.wechat.textSecondary)
             .build();
     }
     // 映射失败的行：右侧红字 skipReason（不阻断勾选，但导入选中时只会进「跳过」结果）
@@ -111,7 +117,7 @@ void drawCandidateRow(eui::Ui& ui, const core::theme::Tokens& t,
             .text("跳过：" + m.skipReason)
             .fontSize(11.0f)
             .lineHeight(12.0f)
-            .color(t.colors.error)
+            .color(t.colors.wechat.warningRed)
             .build();
     }
 }
