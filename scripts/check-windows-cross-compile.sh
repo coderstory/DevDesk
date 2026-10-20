@@ -151,6 +151,12 @@ build_incs() {
 # 第三条是 worktree 唯一能用的路径：worktree 里没有同级 ../EUI-NEO，要靠
 # git-common-dir 反推主工作树（只写 `${ROOT}/../EUI-NEO` 的话，worktree 下
 # 恒定找不到，EUI 相关文件会被整片记成「编不到」）。
+# rev-parse --git-common-dir 的返回形态：主工作树 = 相对路径（`.git`，须锚定到
+# ROOT 才能用）；链接 worktree = 绝对路径，Windows 上是 `D:/...` 盘符形式——
+# 它不以 `/` 开头，判绝对路径时必须连盘符一起认，否则被误判成相对路径拼成
+# `${ROOT}/D:/...`，一切无同级 EUI-NEO 的 worktree（盘符根 / .claude/worktrees/
+# 下）恒定找不到 EUI-NEO，120 个 TU 被记成「编不过」的假红。同级其它脚本
+# （build-test-run / coverage / package-windows）直接用原始值不判形态，没这坑。
 find_eui() {
     local c common main_root
     for c in "$EUI_NEO_DIR_ARG" "${EUI_NEO_DIR:-}"; do
@@ -161,7 +167,12 @@ find_eui() {
     done
     common="$(git -C "$ROOT" rev-parse --git-common-dir 2>/dev/null || true)"
     if [ -n "$common" ]; then
-        case "$common" in /*) ;; *) common="${ROOT}/${common}" ;; esac
+        # /* = POSIX 绝对路径；[A-Za-z]:[/\\]* = Windows 盘符绝对路径。两者原样可用，
+        # 只有相对形态（主工作树的 `.git`）才需要锚定到 ROOT。
+        case "$common" in
+            /*|[A-Za-z]:[/\\]*) ;;
+            *) common="${ROOT}/${common}" ;;
+        esac
         main_root="$(cd "$common/.." 2>/dev/null && pwd || true)"
         if [ -n "$main_root" ] && [ -f "${main_root}/../EUI-NEO/CMakeLists.txt" ]; then
             (cd "${main_root}/../EUI-NEO" && pwd); return 0
@@ -200,6 +211,15 @@ find_curl() {
 }
 
 EUI_DIR="$(find_eui || true)"
+if [ -z "$EUI_DIR" ]; then
+    # EUI-NEO 是必选依赖，不适用「头找不到就跳过 + 登记」的第三方豁免：src/tests
+    # 绝大多数 TU 都 include eui/*.h，缺它继续编只会把整片文件记成「编不过」，
+    # 产出长得像代码回归的假红。按文件头退出码口径走 2 = 环境错，绝不装成代码错。
+    echo "❌ 找不到 EUI-NEO —— 环境错（退出 2），不是源码编不过。" >&2
+    echo "   探测顺序：--eui-neo 参数 → \$EUI_NEO_DIR → 同级 ../EUI-NEO → git 主工作树同级" >&2
+    echo "   显式指定后重跑：bash scripts/check-windows-cross-compile.sh --eui-neo <EUI-NEO 路径>" >&2
+    exit 2
+fi
 SQLITE_INC="$(find_sqlite || true)"
 OPENSSL_INC="$(find_openssl || true)"
 CURL_INC="$(find_curl || true)"
@@ -213,12 +233,13 @@ DEV_VERSION="0.1.0"
 build_incs
 
 # MISSING_HDRS = 本机根本拿不到的 <hdr>，编译失败只因这些头时判跳过、不判失败。
-# EUI-NEO 或第三方再增新依赖头时要同步这里，否则对应文件会被误判成编不过。
+# 只登记**可选**第三方（curl/sqlite/openssl，装了自动纳入）；EUI-NEO 走上面的
+# exit 2，不在这里——必选依赖缺了要报环境错，不能当「跳过」混过门禁。
+# 第三方再增新依赖头时要同步这里，否则对应文件会被误判成编不过。
 MISSING_HDRS=""
 [ -z "$CURL_INC" ] && MISSING_HDRS="${MISSING_HDRS} curl/curl.h"
 [ -z "$SQLITE_INC" ] && MISSING_HDRS="${MISSING_HDRS} sqlite3.h"
 [ -z "$OPENSSL_INC" ] && MISSING_HDRS="${MISSING_HDRS} openssl/opensslv.h"
-[ -z "$EUI_DIR" ] && MISSING_HDRS="${MISSING_HDRS} eui/dsl.h"
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
