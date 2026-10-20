@@ -16,10 +16,8 @@
 
 namespace module::settings {
 
-// 设置页页头高（UAT5 头部小文本删除后自共享 64 收紧）：标题行盒 34 + 6 呼吸空隙。
-// 不沿用 ui_kit::kHeaderH（64 是 todo 看板/markdown 大纲共用的表头口径，
-// 改它会波及兄弟模块；设置页标题独占页头，64 会在标题下方留 30px 空洞）。
-inline constexpr float kSettingsHeaderH = 40.0f;
+// 设置页页头高：UAT5 全局顶部收紧后共享常量 ui_kit::kHeaderH 已收至 40（标题行盒
+// 34 + 6 呼吸空隙），与设置页专用档同值——kSettingsHeaderH 已删除并入共享源，不再双源。
 
 // 字号缩放档位（%）
 inline constexpr int kFontPresets[] = {85, 100, 115, 130};

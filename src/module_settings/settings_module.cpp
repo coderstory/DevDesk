@@ -36,6 +36,7 @@
 #include "module_toggle_bridge.h"
 
 #include <ui_kit/columns.h>
+#include <ui_kit/metrics.h>  // kHeaderH（页头行高；kSettingsHeaderH 已并入共享源）
 #include <ui_kit/toast.h>
 #include <ui_kit/wtab.h>
 
@@ -963,9 +964,9 @@ public:
 
         // 页面底色 = 主窗口 clearColor，不自铺不透明底。
 
-        // UAT5：页头小字行删除后不再用共享 64（kHeaderH），改本页专用收紧档——
-        // cardsTopY 公式不变，起点随 headerH 收紧（100% 档 40+40+16+40+16=152）。
-        const float headerH = kSettingsHeaderH;
+        // UAT5 全局顶部收紧：共享 kHeaderH 已 64→40（本页先行档并入共享源，
+        // kSettingsHeaderH 删除）。cardsTopY 公式不变（100% 档 40+40+16+40+16=152）。
+        const float headerH = ui_kit::kHeaderH;
         const float tabH = kSettingsTabHeight;
         // 日志 tail 读盘在后台线程，渲染恒读快照 → 切 tab / 首帧不闪空。
         if (settingsTab_ == kTabLog) {

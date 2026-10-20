@@ -7,8 +7,9 @@
 
 namespace ui_kit {
 
-// 表头行高：四模块表头一律 64（todo 看板顶边 / markdown 大纲几何自它推导）。
-inline constexpr float kHeaderH = 64.0f;
+// 页头行高：各模块页头一律 40（UAT5 全局顶部收紧：todo 看板顶边 / markdown
+// 大纲几何自它推导；settings 页头同档——kSettingsHeaderH 已并入本常量，不再双源）。
+inline constexpr float kHeaderH = 40.0f;
 
 // 侧边栏导航项高：命中区 / 图标 / 文字三处高度与逐项步进共用。
 inline constexpr float kNavItemH = 40.0f;

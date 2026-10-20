@@ -44,35 +44,36 @@ void drawHeader(eui::Ui& ui, float contentW, float headerH, float bodyH,
                 .size(contentW - 560.0f, headerH)
                 .gap(2.0f)
                 .content([&] {
+                    // UAT5 全局顶部收紧：headerH 64→40，标题行 24 + 副题 14 叠满（字号不动）
                     ui.text("todo.h1")
-                        .size(contentW - 560.0f, 32.0f)
+                        .size(contentW - 560.0f, 24.0f)
                         .text("Todo 看板")
                         .fontSize(t.sizes.fontSizeTitle)
-                        .lineHeight(32.0f)
+                        .lineHeight(24.0f)
                         .fontWeight(700)
                         .color(t.colors.wechat.textPrimary)
                         .build();
                     // subtitle 收敛为短提示「点击卡片查看详情」；长操作说明（Ctrl+↑/↓、右键、拖拽）收进帮助图标，
                     // 待 EUI tooltip 能力落地后接浮层。保「点击卡片查看详情」关键词（test_todo_ui.cpp:2145-2147 逐字断言）
                     ui.stack("todo.subtitle.clip")
-                        .size(contentW - 560.0f, 18.0f)
+                        .size(contentW - 560.0f, 14.0f)
                         .clip()
                         .content([&] {
                             ui.text("todo.subtitle")
-                                .size(contentW - 560.0f - 22.0f, 18.0f)
+                                .size(contentW - 560.0f - 22.0f, 14.0f)
                                 .text("点击卡片查看详情")
                                 .fontSize(t.sizes.fontSizeSmall)
-                                .lineHeight(18.0f)
+                                .lineHeight(14.0f)
                                 .maxWidth(contentW - 560.0f - 22.0f)
                                 .overflow(core::TextOverflow::Ellipsis)
                                 .color(t.colors.wechat.textSecondary)
                                 .build();
                             ui.text("todo.subtitle.help")
-                                .position(contentW - 560.0f - 18.0f, 1.0f)
-                                .size(16.0f, 16.0f)
+                                .position(contentW - 560.0f - 16.0f, 0.0f)
+                                .size(14.0f, 14.0f)
                                 .icon(0xF059)  // fa-question-circle（操作说明待 EUI tooltip 接浮层）
                                 .fontSize(12.0f)
-                                .lineHeight(16.0f)
+                                .lineHeight(14.0f)
                                 .color(t.colors.wechat.textTertiary)
                                 .build();
                         })
