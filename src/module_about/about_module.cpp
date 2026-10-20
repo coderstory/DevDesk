@@ -7,6 +7,7 @@
 #include "core/module_interface.h"
 #include "core/theme.h"
 #include "core/window/window_backend.h"  // core::window::setClipboardText（复制）
+#include "core/window_effect_state.h"    // 页底 alpha 按窗口效果档位（UAT2 B 批）
 
 #include <ui_kit/button.h>      // ui_kit::button Secondary（复制全部信息）
 #include <ui_kit/light_toast.h>  // showLightToast（复制成功 toast）
@@ -115,22 +116,27 @@ public:
         const auto& wc = t.colors.wechat;
 
         // —— 页面底色：wechat.pageBg #F7F7F7（§4.14 面板灰底）——
+        // UAT2 B 批：tint 的 alpha 随窗口效果档位（core::window_effect_state 单值，
+        // 写口 = settings applyWindowVisuals）——磨砂 0.15 透 Acrylic backdrop、半透 0.5、
+        // off 实色 1.0；off 档与原 opaque 铺底视觉等价。
         ui.rect("about.bg")
             .position(0.0f, 0.0f)
             .size(screen.width, screen.height)
-            .color(wc.pageBg)
+            .color(eui::Color{wc.pageBg.r, wc.pageBg.g, wc.pageBg.b,
+                              ::core::window_effect_state::surfaceAlpha(
+                                  ::core::window_effect_state::current())})
             .build();
 
-        // —— 卡片几何常量 ——
-        constexpr float kCardW = 520.0f;
-        constexpr float kCardPadX = 24.0f;
-        constexpr float kCardPadTop = 32.0f;
-        constexpr float kCardPadBottom = 32.0f;
-        constexpr float kIconSize = 48.0f;
+        // —— 卡片几何常量（UAT2 B 批放大：卡 520→580 / pad 24·32→32·40 / 图标 48→56 / 行高 36→40）——
+        constexpr float kCardW = 580.0f;
+        constexpr float kCardPadX = 32.0f;
+        constexpr float kCardPadTop = 40.0f;
+        constexpr float kCardPadBottom = 40.0f;
+        constexpr float kIconSize = 56.0f;
         constexpr float kIconGap = 8.0f;
         constexpr float kTitleH = 24.0f;
         constexpr float kTitleGap = 20.0f;
-        constexpr float kRowH = 36.0f;
+        constexpr float kRowH = 40.0f;
         constexpr int kRowCount = 6;
         constexpr float kButtonGap = 20.0f;
         constexpr float kButtonH = 34.0f;  // ui_kit::kButtonHeight

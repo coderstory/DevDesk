@@ -316,12 +316,13 @@ foreach(_probe_source ${_devdesk_probe_sources})
         set_tests_properties(${_probe_name}_screenshot_switch
             PROPERTIES SKIP_RETURN_CODE 77)
     endif()
-    # home 的短窗尺寸档（2026-10-03 final 批；同日口径核定：真实设计最小窗是
-    # 1330×845 逻辑（main.cpp:529-530 kMinWindowLogical*），1200×720 是 spec
-    # 早期过期值——本档刻意**低于**一切真实下限，作守护性深档）。默认那条按
+    # home 的短窗尺寸档（2026-10-03 final 批；设计最小窗 2026-10-20 UAT2 收窄为
+    # 1280×800 逻辑（main.cpp:487-488 kMinWindowLogical*），1200×720 是 spec
+    # 早期过期值——本档刻意**低于**一切真实下限（最低真实档 = Windows@125%
+    # 有效 778），作守护性深档）。默认那条按
     # 1200×1000 跑，而「矮窗下余量卡画不画」在 1000 高的旧实现也画 → 只跑
-    # 默认档恒真。组 K 的多档无头 compose 让每条注册档都覆盖 845/805/700 三档
-    # 真实/守护高度；本条额外保留「真实窗口 + 真实滚动管线」在 720 下的整跑。
+    # 默认档恒真。组 K 的多档无头 compose 让每条注册档都覆盖 845 刀口/800 设计/
+    # 778 Windows 有效/700 守护四档真实/合成高度；本条额外保留「真实窗口 + 真实滚动管线」在 720 下的整跑。
     if(_probe_name STREQUAL "home_probes")
         add_test(NAME ${_probe_name}_min_window
             COMMAND ${_probe_name} --size 1200x720)

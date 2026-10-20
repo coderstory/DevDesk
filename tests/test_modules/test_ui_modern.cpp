@@ -25,6 +25,7 @@
 #include "core/sqlite_db.h"
 #include "core/ui_geometry.h"
 #include "core/window_layout.h"  // 最小窗尺寸经同一函数推导（about 页最小窗复核）
+#include "core/window_effect_state.h"  // about 页底 alpha 按窗口效果档位（UAT2 B 批）
 // W10: about_anim.h 已清空为空壳，不再 include（光晕移除）
 #include "module_claude_proxy/claude_service.h"
 #include "module_home/home_service.h"
@@ -1011,15 +1012,16 @@ REGISTER_TEST(uiModernMdPreviewGradient,
 // about 页布局：内容区加宽 / 顶部留白 / 删 hero 重复三行 / 卡片上下堆叠 /
 // footer 贴页面底部。只钉可客观断言的部分；观感留人工确认。页面宽 = 窗口宽 −
 // 侧边栏（app_sidebar.cpp pageContentWidth，展开 208）。最小窗尺寸不手写：由
-// core::window_layout::minWindowSizeForWorkArea 推导（手写的 845 已失义——
-// macOS 工作区 833 点会把最小窗高钳到 805）。
+// core::window_layout::minWindowSizeForWorkArea 推导（设计值换档后手写屏高
+// 不再代表任何真实档，恒经同一函数取值）。
 namespace {
 // 与 main.cpp 同一条决策链的最小窗尺寸（macOS 档：工作区 1470×833 点、
-// windowScaleForPoint 恒 1.0、外框 {0,28}）→ {1330, 805}。显式传参而非取本机
-// 实时工作区：测试要确定性，且这一档正是「用户机器上最小窗能缩到多大」的真实值。
+// windowScaleForPoint 恒 1.0、外框 {0,28}）→ {1280, 800}（设计 800 ≤ 工作区可用
+// 805，本机档不再钳；1280×800 既是设计最小窗也是 macOS 实际可缩下限）。显式传参
+// 而非取本机实时工作区：测试要确定性，且这一档正是「用户机器上最小窗能缩到多大」的真实值。
 core::window_layout::WindowSize minWindowForMacWorkArea() {
     return core::window_layout::minWindowSizeForWorkArea(
-        core::window_layout::InitialWindowRequest{1600, 1000, 1330, 845},
+        core::window_layout::InitialWindowRequest{1600, 1000, 1280, 800},
         core::window_layout::WorkArea{0, 0, 1470, 833}, 1.0f,
         core::window_layout::FrameInsets{0, 28});
 }
@@ -1029,20 +1031,22 @@ bool nearPx(float a, float b) { return std::abs(a - b) <= 0.5f; }
 }  // namespace
 
 REGISTER_TEST(uiAboutLayout,
-              "about: W10 微信风格—居中白卡 520 / 信息列表两列 / 复制按钮 / 版权 footer / 极矮窗 clamp", {
+              "about: W10 微信风格—居中白卡 580 / 信息列表两列 / 复制按钮 / 版权 footer / 极矮窗 clamp", {
     std::unique_ptr<::core::Module> mod(create_about_module());
     DOCTEST_REQUIRE(mod != nullptr);
     mod->onStart();
     const auto& t = ::core::theme::current();
-    constexpr float kCardW = 520.0f;
-    constexpr float kCardPadX = 24.0f;
-    constexpr float kCardPadTop = 32.0f;
-    constexpr float kCardPadBottom = 32.0f;
-    constexpr float kIconSize = 48.0f;
+    // 与 about_module.cpp 同值镜像（UAT2 B 批放大：520→580 / pad 24·32→32·40 /
+    // 图标 48→56 / 行高 36→40）——两边漂移时本用例红
+    constexpr float kCardW = 580.0f;
+    constexpr float kCardPadX = 32.0f;
+    constexpr float kCardPadTop = 40.0f;
+    constexpr float kCardPadBottom = 40.0f;
+    constexpr float kIconSize = 56.0f;
     constexpr float kIconGap = 8.0f;
     constexpr float kTitleH = 24.0f;
     constexpr float kTitleGap = 20.0f;
-    constexpr float kRowH = 36.0f;
+    constexpr float kRowH = 40.0f;
     constexpr int kRowCount = 6;
     constexpr float kButtonGap = 20.0f;
     constexpr float kButtonH = 34.0f;
@@ -1184,8 +1188,11 @@ REGISTER_TEST(uiAboutLayout,
         DOCTEST_CHECK(c->frame.y + c->frame.height + kFooterGap <= footer->frame.y);
     }
     {
+        // 极矮窗 clamp 档：卡放大后 cardH=482，屏高取 550 使「cardY 钳到 0」与
+        // 「卡底不压 footer」（footerY=490）双成立（旧 500 屏高下 482 卡必然压
+        // footer，两断言不可兼得，随卡上调）
         eui::Ui tiny;
-        eui::Screen tinyScreen{1200.0f, 500.0f};
+        eui::Screen tinyScreen{1200.0f, 550.0f};
         tiny.begin("about_layout_tiny");
         mod->compose(tiny, tinyScreen);
         tiny.end();
@@ -1239,7 +1246,8 @@ REGISTER_TEST(uiAboutGlow,
 
     // 反证⑤：about.anim state 不存在（about_anim.h 已清空为空壳）
 
-    // 反证⑥：about.bg 颜色 = wechat.pageBg（非透明）
+    // 反证⑥：about.bg 颜色 RGB = wechat.pageBg（RGB 不随效果档位变；档位 alpha
+    // 的行为断言见 uiAboutPageBgEffectAlpha）
     {
         const auto& t = ::core::theme::current();
         const auto* bg = ui.find("about.bg");
@@ -1256,6 +1264,58 @@ REGISTER_TEST(uiAboutGlow,
         DOCTEST_CHECK(!bg->gradient.enabled);
     }
 
+    mod->onStop();
+    return true;
+})
+
+// UAT2 B 批：about 页底 alpha 随窗口效果档位（core::window_effect_state 单值）——
+// 磨砂 0.15 透 backdrop / off 实色 1.0；RGB 恒 pageBg 不随档位变。档位本用例内
+// 显式设定（进程级单值，与执行顺序无关），尾档复位 off 不污染后续用例。
+REGISTER_TEST(uiAboutPageBgEffectAlpha,
+              "about: 页底 alpha 随窗口效果档位（UAT2：磨砂 0.15 / off 1.0；RGB 恒 pageBg）", {
+    std::unique_ptr<::core::Module> mod(create_about_module());
+    DOCTEST_REQUIRE(mod != nullptr);
+    mod->onStart();
+    const auto& t = ::core::theme::current();
+    const auto& wc = t.colors.wechat;
+
+    core::window_effect_state::setCurrent("frosted");
+    {
+        eui::Ui ui;
+        eui::Screen screen{1392.0f, 1000.0f};
+        ui.begin("about_bg_alpha_frosted");
+        mod->compose(ui, screen);
+        ui.end();
+        const auto* bg = ui.find("about.bg");
+        DOCTEST_REQUIRE(bg != nullptr);
+        DOCTEST_CHECK(std::abs(bg->color.a - 0.15f) < 1e-3f);
+        DOCTEST_CHECK(std::abs(bg->color.r - wc.pageBg.r) < 1e-3f);
+        DOCTEST_CHECK(std::abs(bg->color.g - wc.pageBg.g) < 1e-3f);
+        DOCTEST_CHECK(std::abs(bg->color.b - wc.pageBg.b) < 1e-3f);
+    }
+    core::window_effect_state::setCurrent("translucent");
+    {
+        eui::Ui ui;
+        eui::Screen screen{1392.0f, 1000.0f};
+        ui.begin("about_bg_alpha_translucent");
+        mod->compose(ui, screen);
+        ui.end();
+        const auto* bg = ui.find("about.bg");
+        DOCTEST_REQUIRE(bg != nullptr);
+        DOCTEST_CHECK(std::abs(bg->color.a - 0.5f) < 1e-3f);
+    }
+    // 尾档 = off：复位 + 验证实色
+    core::window_effect_state::setCurrent("off");
+    {
+        eui::Ui ui;
+        eui::Screen screen{1392.0f, 1000.0f};
+        ui.begin("about_bg_alpha_off");
+        mod->compose(ui, screen);
+        ui.end();
+        const auto* bg = ui.find("about.bg");
+        DOCTEST_REQUIRE(bg != nullptr);
+        DOCTEST_CHECK(std::abs(bg->color.a - 1.0f) < 1e-3f);
+    }
     mod->onStop();
     return true;
 })
