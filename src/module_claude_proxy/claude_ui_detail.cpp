@@ -182,10 +182,12 @@ float drawDetailModels(eui::Ui& ui, float x0, float y0, float w,
     constexpr float kOneMColW = 76.0f;
     const components::SwitchStyle oneMStyle(core::theme::componentTokensWeChat(t));
     components::SwitchStyle oneMDisabledStyle = oneMStyle;
-    // 禁用态灰：轨道/标签走 textDisabled，滑块走 surfaceElevated，与「关」态可辨
+    // 禁用态灰：轨道/标签走 textDisabled（更深的灰轨道承担「禁用」语义），滑块
+    // 走 WeChat cardBg 白（与启用态白 knob 同源），与「关」态轨道色可辨；
+    //（UAT5 米黄清理：原 knob surfaceElevated 暖米 → WeChat cardBg）
     oneMDisabledStyle.off = t.colors.textDisabled;
     oneMDisabledStyle.on = t.colors.textDisabled;
-    oneMDisabledStyle.knob = t.colors.surfaceElevated;
+    oneMDisabledStyle.knob = t.colors.wechat.cardBg;
     oneMDisabledStyle.text = t.colors.textDisabled;
     float sy = y0;
     // §5「1M」tooltip：hover 显示「上下文窗口 1M tokens」。TooltipBuilder 需 bounds/

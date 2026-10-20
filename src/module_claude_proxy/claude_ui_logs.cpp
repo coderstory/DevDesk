@@ -343,15 +343,18 @@ void drawCallsDialog(eui::Ui& ui, const eui::Screen& screen,
                 1, (st.callsTotalMatches_ + kCallsPageSize - 1) / kCallsPageSize);
             const bool hasNext =
                 (st.callsPage_ + 1) * kCallsPageSize < st.callsTotalMatches_;
+            //（UAT5 米黄清理：底部翻页/关闭整组 surfaceElevated → WeChat Secondary 白底灰边）
             components::button(ui, "claude.dialog.calls.prev")
                 .position(28.0f, h - 60.0f)
                 .size(88.0f, 40.0f)
                 .text("← 上一页")
                 .fontSize(14.0f)
-                .colors(t.colors.surfaceElevated, t.colors.hover, t.colors.active)
-                .textColor(t.colors.textPrimary)
-                .radius(t.sizes.radius)
-                .border(1.0f, t.colors.borderDefault)
+                .colors(t.colors.wechat.secondaryButtonBg,
+                        t.colors.wechat.dividerSecondary,
+                        t.colors.wechat.dividerSecondary)
+                .textColor(t.colors.wechat.textPrimary)
+                .radius(t.sizes.radiusWeChat)
+                .border(1.0f, t.colors.wechat.dividerPrimary)
                 .disabled(st.callsPage_ == 0)
                 .onClick([sp = &st] {
                     if (sp->callsPage_ == 0) return;
@@ -365,10 +368,12 @@ void drawCallsDialog(eui::Ui& ui, const eui::Screen& screen,
                 .size(88.0f, 40.0f)
                 .text("下一页 →")
                 .fontSize(14.0f)
-                .colors(t.colors.surfaceElevated, t.colors.hover, t.colors.active)
-                .textColor(t.colors.textPrimary)
-                .radius(t.sizes.radius)
-                .border(1.0f, t.colors.borderDefault)
+                .colors(t.colors.wechat.secondaryButtonBg,
+                        t.colors.wechat.dividerSecondary,
+                        t.colors.wechat.dividerSecondary)
+                .textColor(t.colors.wechat.textPrimary)
+                .radius(t.sizes.radiusWeChat)
+                .border(1.0f, t.colors.wechat.dividerPrimary)
                 .disabled(!hasNext)
                 .onClick([sp = &st] {
                     if ((sp->callsPage_ + 1) * kCallsPageSize >= sp->callsTotalMatches_) return;
@@ -393,10 +398,12 @@ void drawCallsDialog(eui::Ui& ui, const eui::Screen& screen,
                 .size(120.0f, 40.0f)
                 .text("关闭")
                 .fontSize(14.0f)
-                .colors(t.colors.surfaceElevated, t.colors.hover, t.colors.active)
-                .textColor(t.colors.textPrimary)
-                .radius(t.sizes.radius)
-                .border(1.0f, t.colors.borderDefault)
+                .colors(t.colors.wechat.secondaryButtonBg,
+                        t.colors.wechat.dividerSecondary,
+                        t.colors.wechat.dividerSecondary)
+                .textColor(t.colors.wechat.textPrimary)
+                .radius(t.sizes.radiusWeChat)
+                .border(1.0f, t.colors.wechat.dividerPrimary)
                 .onClick([sp = &st] { sp->callsDialogOpen_ = false; })
                 .build();
     });

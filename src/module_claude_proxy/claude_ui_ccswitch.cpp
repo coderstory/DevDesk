@@ -290,11 +290,13 @@ void drawCcSwitchImportDialog(eui::Ui& ui, const eui::Screen& screen,
                 .size(120.0f, kSelectAllH)
                 .text(allSelected ? "取消全选" : "全选")
                 .fontSize(t.sizes.fontSizeSmall)
-                .colors(t.colors.surfaceElevated, t.colors.hover,
-                        t.colors.active)
-                .textColor(t.colors.textPrimary)
-                .radius(t.sizes.radius)
-                .border(1.0f, t.colors.borderDefault)
+                //（UAT5 米黄清理：surfaceElevated 暖橙 → WeChat Secondary 白底灰边）
+                .colors(t.colors.wechat.secondaryButtonBg,
+                        t.colors.wechat.dividerSecondary,
+                        t.colors.wechat.dividerSecondary)
+                .textColor(t.colors.wechat.textPrimary)
+                .radius(t.sizes.radiusWeChat)
+                .border(1.0f, t.colors.wechat.dividerPrimary)
                 .onClick([sp = &st]() {
                     const bool anySelected =
                         std::any_of(sp->selected_.begin(),

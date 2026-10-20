@@ -1380,13 +1380,16 @@ void drawSharedConfigDialog(eui::Ui& ui, const eui::Screen& screen,
             })
             .onCancel([sp = &s] { sp->open_ = false; })   // Esc=取消（同表单各输入框）
             .build();
+        //（UAT5 米黄清理：surfaceElevated 暖橙 → WeChat Secondary 白底灰边，同表单高级页格式化钮）
         components::button(ui, "claude.dialog.shared.json.format")
             .position(28.0f, 324.0f).size(110.0f, 32.0f)
             .text("格式化").fontSize(12.0f)
-            .colors(t.colors.surfaceElevated, t.colors.hover, t.colors.active)
-            .textColor(t.colors.textPrimary)
-            .radius(t.sizes.radiusSmall)
-            .border(1.0f, t.colors.borderDefault)
+            .colors(t.colors.wechat.secondaryButtonBg,
+                    t.colors.wechat.dividerSecondary,
+                    t.colors.wechat.dividerSecondary)
+            .textColor(t.colors.wechat.textPrimary)
+            .radius(t.sizes.radiusWeChat)
+            .border(1.0f, t.colors.wechat.dividerPrimary)
             .onClick([sp = &s] {
                 sp->error_.clear();
                 if (sp->extraSettingsJson_.empty()) return;
@@ -1412,16 +1415,18 @@ void drawSharedConfigDialog(eui::Ui& ui, const eui::Screen& screen,
         }
 
         // 底部按钮：编辑态删除/取消/保存，新建态取消/创建；删除另开确认弹窗（同事务解绑绑定 Profile）
+        //（UAT5 米黄清理：整组换 WeChat——Secondary 白底灰边 / Primary 绿，同表单弹窗先例）
         const float py = h - 60.0f;
         if (isEdit) {
             components::button(ui, "claude.dialog.shared.delete")
                 .position(28.0f, py).size(88.0f, 40.0f)
                 .text("删除").fontSize(14.0f)
-                .colors(t.colors.surfaceElevated, t.colors.hover,
-                        t.colors.active)
+                .colors(t.colors.wechat.secondaryButtonBg,
+                        t.colors.wechat.dividerSecondary,
+                        t.colors.wechat.dividerSecondary)
                 .textColor(t.colors.error)
-                .radius(t.sizes.radius)
-                .border(1.0f, t.colors.borderDefault)
+                .radius(t.sizes.radiusWeChat)
+                .border(1.0f, t.colors.wechat.dividerPrimary)
                 .onClick([sp = &s] {
                     sp->deleteConfirmId_ = sp->editId_;
                     sp->deleteConfirmName_ = sp->name_;
@@ -1436,19 +1441,21 @@ void drawSharedConfigDialog(eui::Ui& ui, const eui::Screen& screen,
         components::button(ui, "claude.dialog.shared.cancel")
             .position(cancelX, py).size(pairW, 40.0f)
             .text("取消").fontSize(14.0f)
-            .colors(t.colors.surfaceElevated, t.colors.hover, t.colors.active)
-            .textColor(t.colors.textPrimary)
-            .radius(t.sizes.radius)
-            .border(1.0f, t.colors.borderDefault)
+            .colors(t.colors.wechat.secondaryButtonBg,
+                    t.colors.wechat.dividerSecondary,
+                    t.colors.wechat.dividerSecondary)
+            .textColor(t.colors.wechat.textPrimary)
+            .radius(t.sizes.radiusWeChat)
+            .border(1.0f, t.colors.wechat.dividerPrimary)
             .onClick([sp = &s] { sp->open_ = false; })
             .build();
         components::button(ui, "claude.dialog.shared.confirm")
             .position(confirmX, py).size(pairW, 40.0f)
             .text(isEdit ? "保存" : "创建").fontSize(14.0f)
-            .colors(t.colors.primary, t.colors.primaryHover,
-                    t.colors.primaryPressed)
-            .textColor(t.colors.onPrimary)
-            .radius(t.sizes.radius)
+            .colors(t.colors.wechat.primary, t.colors.wechat.primaryHover,
+                    t.colors.wechat.primaryPressed)
+            .textColor(t.colors.wechat.onPrimary)
+            .radius(t.sizes.radiusWeChat)
             .onClick([sp = &s, hooks] { submitSharedForm(*sp, hooks); })
             .build();
     });
