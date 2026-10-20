@@ -86,10 +86,11 @@ REGISTER_TEST(theme_hierarchy_todo,
         DOCTEST_CHECK(frame.absent("todo.pagebg"));
         // 列容器走微信 pageBg 浅灰底（§4.14 白卡浮起于浅灰底）
         DOCTEST_CHECK(frame.colorIs("todo.col.4.bg", t.colors.wechat.pageBg));
-        // 卡片 = 浮动卡片 → surface，不得抬到 elevated（非选中态底色不变）
-        DOCTEST_CHECK(frame.colorIs("todo.col.4.card.0.bg", t.colors.surface));
+        // 卡片 = 微信白卡 → wechat.cardBg（D批米黄迁移 surface→cardBg；D-04 dark-WeChat 延后深浅同值）
+        DOCTEST_CHECK(frame.colorIs("todo.col.4.card.0.bg", t.colors.wechat.cardBg));
+        // 弹窗骨架 = componentTokensWeChat 的 surface 槽 = wechat.cardBg（popup 根治批迁移）
         DOCTEST_CHECK(frame.colorIs("todo.dialog.newtask.panel.bg",
-                                    t.colors.surface));
+                                    t.colors.wechat.cardBg));
         return true;
     };
 
@@ -104,7 +105,7 @@ REGISTER_TEST(theme_hierarchy_todo,
         addBtn->onClick();
         frame.refresh();
         DOCTEST_CHECK(frame.colorIs("todo.dialog.newtask.panel.bg",
-                                    core::theme::current().colors.surface));
+                                    core::theme::current().colors.wechat.cardBg));
     }
 
     core::theme::setDark();

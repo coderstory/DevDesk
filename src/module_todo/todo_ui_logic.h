@@ -279,24 +279,28 @@ inline const char* priorityLabel(Priority p) {
 }
 
 inline eui::Color priorityColor(Priority p, const core::theme::Tokens& t) {
-    // 存 ColorTokens 成员指针而非色值：色值随主题运行期解析，不缓存首帧主题色。下标 = Priority 值域，越界走 [0]
-    static constexpr eui::Color core::theme::ColorTokens::*kColorFields[] = {
-        &core::theme::ColorTokens::textTertiary,  // None
-        &core::theme::ColorTokens::info,          // Low
-        &core::theme::ColorTokens::warning,       // Medium
-        &core::theme::ColorTokens::error,         // High
+    // 存 WeChatColors 成员指针而非色值：色值随主题运行期解析，不缓存首帧主题色。下标 = Priority 值域，越界走 [0]
+    // UAT2 D批重做（用户：微信不是绿的吗，四个类型没一个绿，颜色淡灰蒙蒙）：
+    // None=中性灰 / Low=微信绿 / Medium=链接蓝 / High=警示红，覆盖 2026-10-13 的 info/warning/error 鲜艳轮。
+    // None 档仅显色场景用；卡底 tint 路径 None 不经本表（priorityCardBg 走列色淡染/原底早退）
+    static constexpr eui::Color core::theme::ColorTokens::WeChatColors::*kColorFields[] = {
+        &core::theme::ColorTokens::WeChatColors::textTertiary,  // None 中性灰 #999999
+        &core::theme::ColorTokens::WeChatColors::primary,       // Low 微信绿 #07C160
+        &core::theme::ColorTokens::WeChatColors::linkBlue,      // Medium 链接蓝 #576B95
+        &core::theme::ColorTokens::WeChatColors::warningRed,    // High 警示红 #FA5151
     };
     static_assert(std::size(kColorFields) == static_cast<size_t>(Priority::High) + 1);
     const size_t idx = static_cast<size_t>(p);
-    return t.colors.*kColorFields[idx <= static_cast<size_t>(Priority::High) ? idx : 0];
+    return t.colors.wechat.*kColorFields[idx <= static_cast<size_t>(Priority::High) ? idx : 0];
 }
 
 // 优先级色底：卡底与详情弹窗优先级按钮底的唯一色源（priorityColor 色表 + 强度表 + priorityTintBg 算式）。
-// 强度表在旧值 {0.12,0.16,0.22,0.30} 上两轮上调：第一轮 {0.12,0.22,0.27,0.30}（提单中档可区分性），
-// 第二轮 {0.18,0.30,0.38,0.42}（用户 2026-10-13 要求更鲜艳，None 档 0.12→0.18 由列色淡染接管后按需调）。
-// 档间单调递增：None<Low<Medium<High。High 档（红 #CF2D56）保持与上两档同增幅（+0.04），
-// 其视觉强度较高，等量 tint 比前三档的蓝/橙基色更"跳"，再加大反喧宾夺主。
-inline constexpr float kPriorityTintStrength[] = {0.18f, 0.30f, 0.38f, 0.42f};
+// 强度表三轮上调：第一轮 {0.12,0.16,0.22,0.30}→{0.12,0.22,0.27,0.30}（提单中档可区分性）；
+// 第二轮 {0.18,0.30,0.38,0.42}（用户 2026-10-13 要求更鲜艳，None 档由列色淡染接管后按需调）；
+// 第三轮（UAT2 D批）{0.20,0.40,0.50,0.55}——色源换 WeChat 板（绿/蓝/红）后用户评「颜色淡灰蒙蒙」，
+// 按档整体提强度破灰蒙感，UAT2 覆盖 2026-10-13 的鲜艳轮调。
+// 档间单调递增：None<Low<Medium<High。None 档仅按钮底使用（卡底 None 走列色淡染/原底，不经本表）。
+inline constexpr float kPriorityTintStrength[] = {0.20f, 0.40f, 0.50f, 0.55f};
 static_assert(std::size(kPriorityTintStrength) ==
               static_cast<size_t>(Priority::High) + 1);
 
@@ -326,10 +330,11 @@ inline eui::Color priorityCardBg(Priority p, const core::theme::Tokens& t,
     return priorityTintBg(p, t, base, priorityTintStrength(p));
 }
 
-// ② 按钮选中档强度：不取 1.0 实色——实色底配单一前景 token 总有一档掉到 4.5:1 以下；0.55 深 tint 四档均 ≥ 6.0:1
+// ② 按钮选中档强度：不取 1.0 实色——实色底配单一前景 token 总有一档掉到 4.5:1 以下；0.55 深 tint 四档均 ≥ 6.0:1。
+// D批提强度后 High 未选中档 0.55 与本选中档重合：High 选中/未选中底色同深，区分仅靠边框（2px 该档色 vs 1px 默认）
 inline constexpr float kPriorityButtonPickedStrength = 0.55f;
 
-// ② 按钮底：「无」也是可选项须有自己的底色，None 档取 0.12（近中性灰）；base 由调用方给三态基色
+// ② 按钮底：「无」也是可选项须有自己的底色，None 档取强度表 0.20（近中性灰）；base 由调用方给三态基色
 inline eui::Color priorityButtonBg(Priority p, const core::theme::Tokens& t,
                                    bool picked, const eui::Color& base) {
     return priorityTintBg(p, t, base,
