@@ -17,6 +17,7 @@ constexpr const char* kKeyLastPath = "lastPath";
 constexpr const char* kKeyMode = "mode";
 constexpr const char* kKeyCollapsedDirs = "collapsedDirs";
 constexpr const char* kKeySelectedDir = "selectedDir";
+constexpr const char* kKeyTreePanelCollapsed = "treePanelCollapsed";
 constexpr int kMaxMode = 3;  // ViewMode::Live（0=Edit 1=Split 2=Preview 3=Live）
 
 // 路径穿越守卫：笔记路径一律 POSIX 相对路径，含 ".." 段即拒
@@ -42,6 +43,8 @@ MarkdownViewState MarkdownViewStateStore::sanitized(
     if (st.selectedDir.empty() || !hasTraversal(st.selectedDir)) {
         out.selectedDir = st.selectedDir;
     }
+    // bool 无非法域（UAT2 F批面板折叠态），原样透传；缺键走默认 false
+    out.treePanelCollapsed = st.treePanelCollapsed;
     return out;
 }
 
@@ -90,6 +93,10 @@ core::Result<MarkdownViewState> MarkdownViewStateStore::loadChecked() const {
     if (obj.has(kKeySelectedDir) && obj.get(kKeySelectedDir).isString()) {
         st.selectedDir = obj.get(kKeySelectedDir).asString();
     }
+    if (obj.has(kKeyTreePanelCollapsed) &&
+        obj.get(kKeyTreePanelCollapsed).isBool()) {
+        st.treePanelCollapsed = obj.get(kKeyTreePanelCollapsed).asBool();
+    }
     return core::Result<MarkdownViewState>::ok(sanitized(st));
 }
 
@@ -117,6 +124,8 @@ core::Result<void> MarkdownViewStateStore::save(
     obj.set(kKeyMode, platform::json::makeInt(st.mode));
     obj.set(kKeyCollapsedDirs, platform::json::makeStringArray(st.collapsedDirs));
     obj.set(kKeySelectedDir, platform::json::makeString(st.selectedDir));
+    obj.set(kKeyTreePanelCollapsed,
+            platform::json::makeBool(st.treePanelCollapsed));
 
     auto text = platform::json::stringify(
         platform::json::JsonValue(obj), /*pretty=*/true);

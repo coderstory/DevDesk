@@ -731,7 +731,7 @@ REGISTER_TEST(md_module_compose_tree, "markdown_module: W8 目录树展开收起
 //      frame 中心 y == 所在 item 行（.row）中心 y（±0.5）；
 //   b. frame.y 无半像素；
 //   c. x 方向同层级统一：同 kind + 同 depth 的所有行 x 完全相同；
-//   d. 箭头字号 ∈ [fontSizeSmall×1.25, fontSizeSmall×1.4] 且 < 行高（不溢出）；
+//   d. 箭头字号 ∈ [kTreeFontSize×1.25, kTreeFontSize×1.45] 且 < 行高（不溢出）；
 //   e. 每个行内文本都挂 VerticalAlign::Center——渲染锚点用 frame 中线
 //      （runtime_render.h），没有它「frame 中心 == 行中心」也换不来视觉居中。
 REGISTER_TEST(md_tree_row_geometry,
@@ -765,13 +765,13 @@ REGISTER_TEST(md_tree_row_geometry,
                             {"md.tree.node.4", true},  {"md.tree.node.5", false}};
     const char* kFolderParts[] = {".arrow", ".ficon", ".name"};
     const char* kFileParts[] = {".icon", ".name"};
-    const float kRowH = 32.0f;  // kTreeRowHeight（markdown_module.cpp 同名常量）
+    const float kRowH = 36.0f;  // kTreeRowHeight（markdown_module.cpp 同名常量，F批 32→36）
 
     for (const RowSpec& spec : rows) {
         const std::string base = spec.id;
         const auto* row = ui.find(base + ".row");
         DOCTEST_REQUIRE_MESSAGE(row != nullptr, base + ".row 不存在");
-        DOCTEST_CHECK_MESSAGE(row->frame.height == kRowH, base + ".row 高度 != 32");
+        DOCTEST_CHECK_MESSAGE(row->frame.height == kRowH, base + ".row 高度 != 36");
         const float rowCenterY = row->frame.y + row->frame.height * 0.5f;
         const char* const* parts = spec.folder ? kFolderParts : kFileParts;
         const size_t partCount = spec.folder ? 3u : 2u;
@@ -814,17 +814,17 @@ REGISTER_TEST(md_tree_row_geometry,
     DOCTEST_REQUIRE(ficon0 != nullptr);
     DOCTEST_CHECK(arrow0->frame.x + arrow0->frame.width <= ficon0->frame.x);
 
-    // d. 箭头字号：一档放大（fontSizeSmall 13 × 1.385 ≈ 18，落在 1.25~1.4 倍区间），
-    //    且 < 行高不溢出
+    // d. 箭头字号：一档放大（kTreeFontSize 14 × 1.43 ≈ 20，落在 1.25~1.45 倍区间），
+    //    且 < 行高不溢出（F批：13/18 → 14/20）
     const auto* arrow = ui.find("md.tree.node.2.arrow");
     const auto* label = ui.find("md.tree.node.2.name");
     DOCTEST_REQUIRE(arrow != nullptr);
     DOCTEST_REQUIRE(label != nullptr);
     const float arrowFontSize = arrow->fontSize;  // 跨帧读值：重开帧后旧 Element* 失效
-    DOCTEST_CHECK_EQ(arrowFontSize, 18.0f);       // 锁定的常量值
-    DOCTEST_CHECK_MESSAGE(arrowFontSize >= 13.0f * 1.25f && arrowFontSize <= 13.0f * 1.4f,
+    DOCTEST_CHECK_EQ(arrowFontSize, 20.0f);       // 锁定的常量值
+    DOCTEST_CHECK_MESSAGE(arrowFontSize >= 14.0f * 1.25f && arrowFontSize <= 14.0f * 1.45f,
                           "箭头 fontSize=" + std::to_string(arrowFontSize) +
-                              " 不在 [16.25, 18.2]");
+                              " 不在 [17.5, 20.3]");
     DOCTEST_CHECK(arrowFontSize > label->fontSize);  // 确实比行内正文大
     DOCTEST_CHECK(arrowFontSize < kRowH);            // 不溢出 item 行高
     DOCTEST_CHECK_EQ(arrowFontSize, ui.find("md.tree.node.4.arrow")->fontSize);
@@ -838,6 +838,9 @@ REGISTER_TEST(md_tree_row_geometry,
     DOCTEST_REQUIRE(rootToggle->onClick != nullptr);
     // 箭头命中区落在行体之上（命中测试取最后声明的匹配兄弟 → 点箭头不会选中）
     DOCTEST_CHECK(rootToggle->frame.x < rootRow->frame.x + rootRow->frame.width);
+    // UAT2 F批：命中区 26→46（箭头+文件夹图标整区可点）。宽度止于名称区起点
+    //（46+indent）——命中取最上层，再宽会把行体 selectDir（点名称选中）整个吞掉。
+    DOCTEST_CHECK_EQ(rootToggle->frame.width, 46.0f);
     const eui::Color rowColorBefore = rootRow->color;
     rootToggle->onClick();
     ui.begin("treegeom2");
@@ -852,6 +855,68 @@ REGISTER_TEST(md_tree_row_geometry,
     const auto* rootRowAfter = ui.find("md.tree.node.0.row");
     DOCTEST_REQUIRE(rootRowAfter != nullptr);
     DOCTEST_CHECK(colorEq(rootRowAfter->color, rowColorBefore));
+
+    mod->onStop();
+    return true;
+})
+
+// 2b2'''. UAT2 F批：目录树面板可折叠（16px 细边 ↔ 240 展开）+ 跨会话持久化。
+// 反事故：无头 onClick 直调绕过命中测试，几何宽度断言（240/16）才是「真折叠」
+// 的证据；持久化双向——启动前写死 true 验 loadViewState 恢复（首帧即 16px），
+// onClick 后 store 直读验 saveViewState 落盘。
+REGISTER_TEST(md_tree_panel_collapse,
+              "markdown_module: 目录树面板折叠 16px/展开 240 + 持久化（headless）", {
+    test_support::MdHeadlessEnv env(kDirPrefix, "panelfold", kDbName);
+    DOCTEST_REQUIRE(env.db != nullptr);
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "a.md", "# A\n"));
+
+    // 启动前把折叠态写进 app_config（模拟上次会话收起后退出）
+    DOCTEST_REQUIRE(test_support::writeRawConfigRow(
+        &env.db->db(), module::markdown::kMarkdownViewStateKey,
+        "{\"mode\": 0, \"collapsedDirs\": [], \"treePanelCollapsed\": true}"));
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    eui::Ui ui;
+    auto frame = [&](const char* page) {
+        ui.begin(page);
+        mod->compose(ui, screen);
+        ui.end();
+        ui.layout(screen.width, screen.height);
+    };
+
+    // 帧1：loadViewState 读回折叠态 → 首帧即 16px 细边；内容全隐，只剩展开键
+    frame("pf1");
+    DOCTEST_CHECK_EQ(ui.find("md.tree.bg")->frame.width, 16.0f);
+    DOCTEST_CHECK(ui.find("md.search") == nullptr);
+    DOCTEST_CHECK(ui.find("md.tree.node.0.name") == nullptr);
+    DOCTEST_REQUIRE(ui.find("md.tree.expand.bg") != nullptr);
+    DOCTEST_REQUIRE(ui.find("md.tree.expand.bg")->onClick != nullptr);
+
+    // 帧2：点展开键（fa-bars）→ 树回来（240）；折叠态清零落盘
+    ui.find("md.tree.expand.bg")->onClick();
+    frame("pf2");
+    DOCTEST_CHECK_EQ(ui.find("md.tree.bg")->frame.width, 240.0f);
+    DOCTEST_CHECK(ui.find("md.search") != nullptr);
+    DOCTEST_CHECK(ui.find("md.tree.expand.bg") == nullptr);
+    DOCTEST_CHECK_EQ(
+        module::markdown::MarkdownViewStateStore(&env.db->db()).load().treePanelCollapsed,
+        false);
+
+    // 帧3：点折叠键（搜索框行右缘 fa-angles-left）→ 收成 16px；折叠态落盘
+    DOCTEST_REQUIRE(ui.find("md.tree.collapse.bg") != nullptr);
+    DOCTEST_REQUIRE(ui.find("md.tree.collapse.bg")->onClick != nullptr);
+    ui.find("md.tree.collapse.bg")->onClick();
+    frame("pf3");
+    DOCTEST_CHECK_EQ(ui.find("md.tree.bg")->frame.width, 16.0f);
+    DOCTEST_CHECK(ui.find("md.search") == nullptr);
+    DOCTEST_CHECK_EQ(
+        module::markdown::MarkdownViewStateStore(&env.db->db()).load().treePanelCollapsed,
+        true);
 
     mod->onStop();
     return true;
@@ -1772,7 +1837,7 @@ REGISTER_TEST(md_module_split_layout, "markdown_module: W9 双栏三列铺满 co
     const float contentW = screen.width - pad * 2.0f;
     const float gap = 16.0f;
     DOCTEST_CHECK_EQ(tree->frame.x, pad);
-    DOCTEST_CHECK_EQ(tree->frame.width, 220.0f);  // D-12 校准 220px
+    DOCTEST_CHECK_EQ(tree->frame.width, 240.0f);  // UAT2 F批：220→240
     DOCTEST_CHECK_EQ(editor->frame.width, preview->frame.width);
     const float total = tree->frame.width + editor->frame.width +
                         preview->frame.width + gap * 2.0f;
@@ -1804,7 +1869,7 @@ REGISTER_TEST(md_tree_column_layout_semantics,
     ui.layout(screen.width, screen.height);
 
     const float pad = 40.0f;        // spacingXXLarge
-    const float sideW = 220.0f;     // 左栏树宽（D-12 校准）
+    const float sideW = 240.0f;     // 左栏树宽（UAT2 F批：220→240）
     const float gap = 16.0f;
     const float contentW = screen.width - pad * 2.0f;
 
@@ -1819,11 +1884,11 @@ REGISTER_TEST(md_tree_column_layout_semantics,
     DOCTEST_CHECK_EQ(treeBg->frame.width, tree->frame.width);
     DOCTEST_CHECK_EQ(treeBg->frame.height, tree->frame.height);
 
-    // 绝对定位内容 = 相对 stack 内容区坐标（搜索框 .position(12,12)）
+    // 绝对定位内容 = 相对 stack 内容区坐标（搜索框 .position(16,16)，F批 padding 12→16）
     const auto* search = ui.find("md.search");
     DOCTEST_REQUIRE(search != nullptr);
-    DOCTEST_CHECK_EQ(search->frame.x, tree->frame.x + 12.0f);
-    DOCTEST_CHECK_EQ(search->frame.y, tree->frame.y + 12.0f);
+    DOCTEST_CHECK_EQ(search->frame.x, tree->frame.x + 16.0f);
+    DOCTEST_CHECK_EQ(search->frame.y, tree->frame.y + 16.0f);
 
         // 编辑态（默认）：编辑器列只占一个流式槽位
     // 占位 → 整列右移一个 sideW、右缘溢出）。右缘必须精确贴 contentW 右边界
@@ -3649,9 +3714,10 @@ REGISTER_TEST(md_module_live_mode_skeleton,
     return true;
 })
 
-// 持久化：mode=3（实时）通过净化与存读往返；旧值 0-2 语义不变；越界回落 0
+// 持久化：mode=3（实时）通过净化与存读往返；旧值 0-2 语义不变；越界回落 0；
+// 面板折叠 bool（UAT2 F批）透传 + 旧格式缺键默认展开
 REGISTER_TEST(md_view_state_mode_live,
-              "markdown: 视图状态 mode 3（实时）通过净化 + 0-2 旧语义不变", {
+              "markdown: 视图状态 mode 3（实时）通过净化 + 0-2 旧语义不变 + 面板折叠往返", {
     using module::markdown::MarkdownViewState;
     using module::markdown::MarkdownViewStateStore;
     // 视图状态落 app_config 表的一行，故本用例持一份已 migrate 的临时库。
@@ -3667,6 +3733,8 @@ REGISTER_TEST(md_view_state_mode_live,
         const MarkdownViewState loaded = MarkdownViewStateStore(&db).load();
         DOCTEST_CHECK_EQ(loaded.mode, m);
         DOCTEST_CHECK_EQ(loaded.lastPath, std::string("old.md"));
+        // F批：旧格式无 treePanelCollapsed 键 → 默认展开，免迁移
+        DOCTEST_CHECK_EQ(loaded.treePanelCollapsed, false);
     }
 
     // mode=3（Live）在合法域内：净化保留 + 存读往返
@@ -3678,6 +3746,18 @@ REGISTER_TEST(md_view_state_mode_live,
         DOCTEST_CHECK(store.save(live).isOk());
     }
     DOCTEST_CHECK_EQ(MarkdownViewStateStore(&db).load().mode, 3);
+
+    // UAT2 F批：面板折叠 bool 无非法域——sanitized 透传 + 存读往返
+    MarkdownViewState folded;
+    folded.treePanelCollapsed = true;
+    DOCTEST_CHECK_EQ(
+        MarkdownViewStateStore::sanitized(folded).treePanelCollapsed, true);
+    {
+        MarkdownViewStateStore store(&db);
+        DOCTEST_CHECK(store.save(folded).isOk());
+    }
+    DOCTEST_CHECK_EQ(MarkdownViewStateStore(&db).load().treePanelCollapsed,
+                     true);
 
     // 越界回落 0（新域上界为 3）
     MarkdownViewState over;
@@ -4286,7 +4366,7 @@ REGISTER_TEST(md_module_text_column_chrome_shared,
         ui.layout(screen.width, screen.height);
     };
     const float pad = 40.0f;
-    const float sideW = 220.0f;  // D-12 校准
+    const float sideW = 240.0f;  // UAT2 F批：220→240
     const float gap = 16.0f;
 
     // (1) 空态（未选笔记）：提示条 + 状态栏，chip 行不画

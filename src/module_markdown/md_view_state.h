@@ -14,7 +14,8 @@ namespace module::markdown {
 // 默认 app_config 键名
 inline constexpr const char* kMarkdownViewStateKey = "markdown_view_state";
 
-// 用户重启后恢复的四项：选中笔记 / 四态视图 / 收起的目录 / 目录树选中目录。
+// 用户重启后恢复的五项：选中笔记 / 四态视图 / 收起的目录 / 目录树选中目录 /
+// 面板折叠态（UAT2 F批）。
 struct MarkdownViewState {
     std::string lastPath;                    // 打开的笔记（POSIX 相对路径，空 = 无）
     // ViewMode：0=Edit 1=Split 2=Preview 3=Live（越界 → 0；Live 为追加，免迁移）。
@@ -23,6 +24,9 @@ struct MarkdownViewState {
     // 目录树的当前选中目录（POSIX 相对路径；"" = 根目录行，合法值）。新建条目父
     // 目录由它派生，故须跨会话记住，否则重启后新条目又散回根目录。
     std::string selectedDir;
+    // 目录树面板是否折叠（true = 16px 细边）。bool 无非法域，sanitized() 原样
+    // 透传；旧格式缺该键 = 默认展开（false），免迁移。
+    bool treePanelCollapsed = false;
 };
 
 // 视图状态读写（不抛异常；键缺失 / 值损坏回退默认值）。db 允许为 nullptr，
