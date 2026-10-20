@@ -323,7 +323,8 @@ public:
                  "px（core::theme 全局通道）");
     }
 
-    // 窗口效果三档切换：即时生效；系统不支持时 compose 每帧回查显示降级提示行。
+    // 窗口效果三档切换：即时生效；系统不支持时自动降级（UAT3 #10 起降级提示行
+    // 不再显示，行为静默但档位照常落）。
     void applyWindowEffectPreset(int index) {
         if (index < 0 || index >= kWindowEffectPresetCount) return;
         cfg_.windowEffect = kWindowEffectPresets[index];
@@ -713,10 +714,21 @@ public:
         LOG_WARN("Settings: GitHub Sync " + msg);
     }
 
-    // 发起一个后台同步动作。三按钮在运行中已禁用，这里的 joinable 判定是兜底。
+    // 发起一个后台同步动作。三按钮在运行中已禁用，这里的 joinable 判定是兜底；
+    // 但失败弹窗「重试」不在按钮禁用面内（弹窗按钮恒可点）——已有同步在飞时必须
+    // 给反馈（G 批遗留：静默返回被用户当「重试点了没反应」），自动路径保持静默。
+    // runExitSyncPush 不受影响：joinable 时它先走 waitOrDetachSyncThread 早退，
+    // 不会进入本分支（atexit 阶段弹 toast 也无人可见）。
     void startGithubSyncAction(SyncAction action, bool manual) {
         harvestGithubSync();
-        if (githubSyncThread_.joinable()) return;
+        if (githubSyncThread_.joinable()) {
+            if (manual) {
+                showToast("已有同步在进行中", "请等待本轮同步结束后再操作");
+                LOG_INFO("Settings: GitHub Sync 已有任务在飞，忽略手动请求（action=" +
+                         std::to_string(static_cast<int>(action)) + "）");
+            }
+            return;
+        }
         if (githubSyncCfg_.repoUrl.empty()) {
             setGithubSyncError("未配置仓库 URL");
             return;
