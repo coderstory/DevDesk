@@ -1143,12 +1143,14 @@ REGISTER_TEST(settings_window_effect_param_mapping, "settings: 档位→alpha/ba
     namespace ms = module::settings;
     using WE = core::platform::WindowEffect;
 
-    // 两处 alpha 各自独立：clearColor（内容区纱）off=1.0 / translucent=0.80 /
+    // 两处 alpha 各自独立：clearColor（内容区纱）off=1.0 / translucent=0.82 /
     // frosted=0.15 / 未知→1.0；窗口背景色（标题栏底）1.0 / 0.85 / 0.65 / 未知→1.0。
-    // 两处不可取同一个值。UAT2 B 批折中：translucent 0.60/0.90 → 0.80/0.85
-    // （「太高」两读，先降透出量，用户可再调）。
+    // 两处不可取同一个值。UAT2 B 批（「太高」第一轮）0.60/0.90 → 0.80/0.85；
+    // UAT3 C1 批（round3 用户仍嫌透）内容 0.80 → 0.82，标题栏 0.85 保持
+    //（拍板口径：内容 ~0.82、标题栏带可略高；自绘标题栏后 Windows 无系统标题栏，
+    // 标题栏 alpha 只作用于 macOS）。
     DOCTEST_CHECK(ms::windowEffectAlpha(ms::kWindowEffectOff) == 1.0f);
-    DOCTEST_CHECK(ms::windowEffectAlpha(ms::kWindowEffectTranslucent) == 0.80f);
+    DOCTEST_CHECK(ms::windowEffectAlpha(ms::kWindowEffectTranslucent) == 0.82f);
     DOCTEST_CHECK(ms::windowEffectAlpha(ms::kWindowEffectFrosted) == 0.15f);
     DOCTEST_CHECK(ms::windowEffectAlpha("bogus") == 1.0f);
     DOCTEST_CHECK(ms::windowEffectTitleBarAlpha(ms::kWindowEffectOff) == 1.0f);
@@ -1190,9 +1192,9 @@ REGISTER_TEST(settings_window_effect_param_mapping, "settings: 档位→alpha/ba
                       ms::kWindowEffectTranslucent) == 0.5f);
     core::window_effect_state::setActiveTierProvider(nullptr);  // 尾态复位
 
-    // 半透档目标带 **236–244**（黑壁纸），两端是实机标定值不是随手取的。
-    // UAT2 折中 0.80/0.85 → 250×(1−0.15×0.20) = 242.5 落在带内上缘侧。这条同时锁
-    // 常量与目标：任一 alpha 再往 0.90 走 → 246.25 出上界；回到 0.60 → 235 出下界。
+    // 半透档目标带 **236–244**（黑壁纸），两端是 UAT2 实机标定值不是随手取的。
+    // UAT3 C1 批 0.82/0.85 → 250×(1−0.18×0.15) = 243.25，贴带上缘——用户连续两轮
+    // 要求更实（0.80→0.82 仍在标定带内）；再往 0.90 走 → 246.25 出上界，须先重标定。
     const float translucentOverBlack =
         250.0f * ms::windowEffectThemeOpacity(ms::kWindowEffectTranslucent);
     DOCTEST_CHECK(translucentOverBlack >= 236.0f);
@@ -1200,8 +1202,8 @@ REGISTER_TEST(settings_window_effect_param_mapping, "settings: 档位→alpha/ba
     DOCTEST_CHECK(translucentOverBlack < 250.0f);
     // 关闭档：实色，黑壁纸下恒 250
     DOCTEST_CHECK(250.0f * ms::windowEffectThemeOpacity(ms::kWindowEffectOff) == 250.0f);
-    // 半透档标题栏 vs 内容区差：UAT2 折中后 250×(0.97−0.85) = 30（原 0.60/0.90 时代
-    // 的 ≤20 紧约束按新值放宽到 ≤35；差再往外走即出目标带）
+    // 半透档标题栏 vs 内容区差：UAT3 后 250×(0.973−0.85) ≈ 30.75（原 0.60/0.90 时代
+    // 的 ≤20 紧约束按折中值放宽到 ≤35；差再往外走即出目标带）
     const float translucentBar = 250.0f * ms::windowEffectTitleBarAlpha(ms::kWindowEffectTranslucent);
     DOCTEST_CHECK(std::abs(translucentOverBlack - translucentBar) <= 35.0f);
 
@@ -1253,10 +1255,10 @@ REGISTER_TEST(settings_window_effect_apply_visuals, "settings: applyWindowVisual
     namespace ms = module::settings;
     using WE = core::platform::WindowEffect;
 
-    // 半透档：clearColor alpha=0.80 + backdrop 请求 None（显式关）；档位单值同步写 core
+    // 半透档：clearColor alpha=0.82 + backdrop 请求 None（显式关）；档位单值同步写 core
     ms::applyWindowVisuals(ms::kWindowEffectTranslucent);
     DOCTEST_CHECK(core::window_effect_state::current() == ms::kWindowEffectTranslucent);
-    DOCTEST_CHECK(app::currentClearColor().a == 0.80f);
+    DOCTEST_CHECK(app::currentClearColor().a == 0.82f);
     DOCTEST_CHECK(app::currentWindowEffect() == WE::None);
     // 标题栏底**独立** alpha（显式 customColor，覆盖 EUI-NEO 按 clearColor 推导的做法）
     {
