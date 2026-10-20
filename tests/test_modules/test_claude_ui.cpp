@@ -2729,15 +2729,14 @@ REGISTER_TEST(claude_ui_form_auth_field_dropdown_exists,
     return true;
 })
 
-// UAT3 弹窗双列批：基础页「名称 | 认证字段」同排双列的几何钉值。
-// 防的事故：认证字段回退独占一行（x=28、y=314）→ 右列 x/同行 y 断言红；
-// 名称/认证还原全宽 704 → 列宽 344 断言红；基础页弹高回 600 → 面板高断言红。
-// 高度按 tab 取值是刻意设计：模型/env/高级配置三页既有内容深至 y≈480-516，
-// 全局改 532 会把它们压进按钮带（472 起）——高级配置页仍 600 也一并钉住。
-REGISTER_TEST(claude_ui_form_basic_two_column_geometry,
-              "claude_module: 基础页「名称|认证」同排双列几何 + 弹高 532（其余 tab 仍 600）", {
+// UAT5 弹窗单列回退批：基础页「名称」「认证字段」改回全宽纵排（UAT3 双列被用户
+// 推翻）+ 四 tab 弹高统一 600（cols2 的 532 偏离致切 tab 跳变）。
+// 防的事故：名称/认证回退同排双列（右列 x=388）→ 纵排 y 断言红；任一 tab 弹高
+// 回 532 → 恒高断言红；切 tab 往返高度变化 → 恒定断言红。
+REGISTER_TEST(claude_ui_form_basic_single_column_geometry,
+              "claude_module: 基础页名称/认证全宽纵排 + 四 tab 弹高恒 600", {
     TestEnv env;
-    auto a = env.svc->createProfile("双列几何", "https://geo.example.com",
+    auto a = env.svc->createProfile("单列几何", "https://geo.example.com",
                                     "sk-ant-geo-0001", "");
     DOCTEST_REQUIRE(a.isOk());
 
@@ -2774,33 +2773,38 @@ REGISTER_TEST(claude_ui_form_basic_two_column_geometry,
         const float px = panel->frame.x;
         const float py = panel->frame.y;
 
-        // 弹窗尺寸：760 宽 × 532 高（基础页双列紧凑高度）
+        // 弹窗尺寸：760 宽 × 600 高（UAT5：四 tab 恒高，基础页不再 532）
         DOCTEST_CHECK(floatEq(panel->frame.width, 760.0f));
-        DOCTEST_CHECK(floatEq(panel->frame.height, 532.0f));
+        DOCTEST_CHECK(floatEq(panel->frame.height, 600.0f));
 
-        // 双列：左列 x=28 / 右列 x = 28+344+16 = 388；两标签同排 y=104
+        // 单列纵排：名称行在认证行上方（y=104 < 314）；两标签同 x=28
         const auto* nameLabel = ui.find("claude.form.basic.name.label");
         const auto* authLabel = ui.find("claude.form.basic.authfield.label");
         DOCTEST_REQUIRE(nameLabel != nullptr);
         DOCTEST_REQUIRE(authLabel != nullptr);
         DOCTEST_CHECK(floatEq(nameLabel->frame.x - px, 28.0f));
-        DOCTEST_CHECK(floatEq(authLabel->frame.x - px, 388.0f));
-        DOCTEST_CHECK(floatEq(authLabel->frame.y, nameLabel->frame.y));
         DOCTEST_CHECK(floatEq(nameLabel->frame.y - py, 104.0f));
+        DOCTEST_CHECK(floatEq(authLabel->frame.x - px, 28.0f));
+        DOCTEST_CHECK(floatEq(authLabel->frame.y - py, 314.0f));
+        DOCTEST_CHECK(authLabel->frame.y > nameLabel->frame.y);
 
-        // 名称输入 / 认证下拉：各占列宽 344、同排 y=122
+        // 名称输入 / 认证下拉：全宽 704（= 760-56），右缘 == 内容右缘
         const auto* nameInput = ui.find("claude.dialog.form.name");
         const auto* ddwrap = ui.find("claude.form.basic.authfield.ddwrap");
         DOCTEST_REQUIRE(nameInput != nullptr);
         DOCTEST_REQUIRE(ddwrap != nullptr);
         DOCTEST_CHECK(floatEq(nameInput->frame.x - px, 28.0f));
-        DOCTEST_CHECK(floatEq(nameInput->frame.width, 344.0f));
-        DOCTEST_CHECK(floatEq(ddwrap->frame.x - px, 388.0f));
-        DOCTEST_CHECK(floatEq(ddwrap->frame.width, 344.0f));
-        DOCTEST_CHECK(floatEq(ddwrap->frame.y, nameInput->frame.y));
+        DOCTEST_CHECK(floatEq(nameInput->frame.width, 704.0f));
+        DOCTEST_CHECK(floatEq(ddwrap->frame.x - px, 28.0f));
+        DOCTEST_CHECK(floatEq(ddwrap->frame.width, 704.0f));
         DOCTEST_CHECK(floatEq(nameInput->frame.y - py, 122.0f));
+        DOCTEST_CHECK(floatEq(ddwrap->frame.y - py, 332.0f));
+        DOCTEST_CHECK(nameInput->frame.x + nameInput->frame.width <=
+                      px + 760.0f - 28.0f + 0.5f);
+        DOCTEST_CHECK(ddwrap->frame.x + ddwrap->frame.width <=
+                      px + 760.0f - 28.0f + 0.5f);
 
-        // Base URL / API Key 值长保留全宽：704 = 760-56
+        // Base URL / API Key 全宽不动：704
         const auto* urlInput = ui.find("claude.dialog.form.url");
         const auto* keyInput = ui.find("claude.dialog.form.key");
         DOCTEST_REQUIRE(urlInput != nullptr);
@@ -2808,21 +2812,39 @@ REGISTER_TEST(claude_ui_form_basic_two_column_geometry,
         DOCTEST_CHECK(floatEq(urlInput->frame.width, 704.0f));
         DOCTEST_CHECK(floatEq(keyInput->frame.width, 704.0f));
 
-        // 认证 hint 收在右列内：x = 388+76 = 464，右缘 ≤ 760-28
+        // 认证 hint 随标签行（x=104 起、全宽余量）
         const auto* authHint = ui.find("claude.form.basic.authfield.hint");
         DOCTEST_REQUIRE(authHint != nullptr);
-        DOCTEST_CHECK(floatEq(authHint->frame.x - px, 464.0f));
+        DOCTEST_CHECK(floatEq(authHint->frame.x - px, 104.0f));
         DOCTEST_CHECK(authHint->frame.x - px + authHint->frame.width <= 732.0f);
     }
-    // 高级配置页（tab 3）内容深至 y≈496，须保持 600：全局改小即压按钮带
+    // 四 tab 弹高全 600：逐 tab 切过去断高度（532 回潮 / 按页取值都红）
+    for (int tab = 1; tab <= 3; ++tab) {
+        {
+            eui::Ui ui;
+            compose(ui, "claude_geo_tab");
+            const std::string hit =
+                std::string("claude.form.tabs.hit.") + std::to_string(tab);
+            DOCTEST_CHECK(click(ui, hit));
+        }
+        {
+            eui::Ui ui;
+            compose(ui, "claude_geo_h");
+            ui.layout(screen.width, screen.height);
+            const auto* panel = ui.find("claude.dialog.form.panel");
+            DOCTEST_REQUIRE(panel != nullptr);
+            DOCTEST_CHECK(floatEq(panel->frame.height, 600.0f));
+        }
+    }
+    // 切回基础页（tab 0）往返：高度恒定（用户口径「切 tab 不跳变」）
     {
         eui::Ui ui;
-        compose(ui, "claude_geo3");
-        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.3"));
+        compose(ui, "claude_geo_back");
+        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.0"));
     }
     {
         eui::Ui ui;
-        compose(ui, "claude_geo4");
+        compose(ui, "claude_geo_back_h");
         ui.layout(screen.width, screen.height);
         const auto* panel = ui.find("claude.dialog.form.panel");
         DOCTEST_REQUIRE(panel != nullptr);
@@ -4632,15 +4654,37 @@ REGISTER_TEST(claude_module_shared_block_and_card,
                                : node->text;
     };
 
-    // 区块元素存在（滚动容器尾部 + 新建按钮）
+    // 默认折叠态（UAT5）：列表区不渲染，只留一行小节头（标题+计数 / 勾箭 /
+    // 「+」钮）；「+」新建入口常驻折叠头右缘（原区块底整宽「新建片段」钮已删）
     {
         eui::Ui ui;
         compose(ui);
         DOCTEST_CHECK(ui.find("claude.shared.block") != nullptr);
         DOCTEST_CHECK(ui.find("claude.shared.title") != nullptr);
+        DOCTEST_CHECK_EQ(textOf(ui, "claude.shared.title"),
+                         std::string("共享配置片段 · 2"));
+        DOCTEST_CHECK(ui.find("claude.shared.header.toggle") != nullptr);
+        DOCTEST_CHECK(ui.find("claude.shared.header.chevron") != nullptr);
+        DOCTEST_CHECK(ui.find("claude.shared.header.add") != nullptr);
+        DOCTEST_CHECK(ui.find("claude.shared.new") == nullptr);
+        // 列表区整段不渲染（滚动容器 / 卡片 / 空态文案都不在）
+        DOCTEST_CHECK(ui.find("claude.shared.scroll") == nullptr);
+        DOCTEST_CHECK(ui.find("claude.shared.card.0.name") == nullptr);
+        DOCTEST_CHECK(ui.find("claude.shared.empty") == nullptr);
+    }
+    // 点头行 → 展开：卡片在场、内容与折叠改前一致；「+」钮两态都在
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK(click(ui, "claude.shared.header.toggle"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui);
         DOCTEST_CHECK(ui.find("claude.shared.card.0.name") != nullptr);
         DOCTEST_CHECK(ui.find("claude.shared.card.1.name") != nullptr);
-        DOCTEST_CHECK(ui.find("claude.shared.new") != nullptr);
+        DOCTEST_CHECK(ui.find("claude.shared.scroll") != nullptr);
+        DOCTEST_CHECK(ui.find("claude.shared.header.add") != nullptr);
         DOCTEST_CHECK_EQ(textOf(ui, "claude.shared.card.0.name"),
                          std::string("片段A"));
         DOCTEST_CHECK_EQ(textOf(ui, "claude.shared.card.1.name"),
@@ -4680,6 +4724,21 @@ REGISTER_TEST(claude_module_shared_block_and_card,
         const auto* panel = ui.find("claude.dialog.shared.panel");
         DOCTEST_REQUIRE(panel != nullptr);
         DOCTEST_CHECK_EQ(panel->opacity, 0.0f);
+    }
+    // 切换往返：再点头行收起 → 卡片不在、小节头与「+」入口仍在（收起不丢入口）
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK(click(ui, "claude.shared.header.toggle"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK(ui.find("claude.shared.card.0.name") == nullptr);
+        DOCTEST_CHECK(ui.find("claude.shared.card.1.name") == nullptr);
+        DOCTEST_CHECK(ui.find("claude.shared.title") != nullptr);
+        DOCTEST_CHECK(ui.find("claude.shared.header.add") != nullptr);
+        DOCTEST_CHECK(ui.find("claude.shared.header.add.bg") != nullptr);
     }
 
     mod->onStop();
@@ -4722,11 +4781,11 @@ REGISTER_TEST(claude_module_shared_editor_create,
         return true;
     };
 
-    // 点「+ 新建片段」→ 弹窗开（新建态无删除键）
+    // 点头行「+」钮（折叠头常驻入口）→ 弹窗开（新建态无删除键）
     {
         eui::Ui ui;
         compose(ui);
-        DOCTEST_CHECK(click(ui, "claude.shared.new.bg"));
+        DOCTEST_CHECK(click(ui, "claude.shared.header.add.bg"));
     }
     {
         eui::Ui ui;
@@ -5093,11 +5152,11 @@ REGISTER_TEST(claude_module_shared_esc_chain_and_gating,
     };
 
     // 1) 开共享片段编辑弹窗（新建态）→ Ctrl+N 被门控不消费（不得重置表单），
-    //    Esc 关闭它（序链 = 画在最上层、最先关）
+    //    Esc 关闭它（序链 = 画在最上层、最先关）。「+」钮在折叠头也常驻，直接点。
     {
         eui::Ui ui;
         compose(ui);
-        DOCTEST_CHECK(click(ui, "claude.shared.new.bg"));
+        DOCTEST_CHECK(click(ui, "claude.shared.header.add.bg"));
     }
     {
         eui::Ui ui;
@@ -5119,6 +5178,12 @@ REGISTER_TEST(claude_module_shared_esc_chain_and_gating,
         DOCTEST_CHECK_EQ(formPanel->opacity, 0.0f);   // 未误开 profile 表单
     }
     // 2) 删除确认弹窗（编辑态开「删除」）在最顶层：Esc 先关确认、编辑器还开着
+    //（片段卡默认收起，先点头行展开——折叠默认态断言见 shared_block_and_card）
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK(click(ui, "claude.shared.header.toggle"));
+    }
     {
         eui::Ui ui;
         compose(ui);
@@ -5203,6 +5268,12 @@ REGISTER_TEST(claude_module_shared_delete_unbinds,
     };
 
     // 开编辑 → 删除 → 确认 → toast 含「2 个 Profile 已解绑」
+    //（片段卡默认收起，先展开再点卡）
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK(click(ui, "claude.shared.header.toggle"));
+    }
     {
         eui::Ui ui;
         compose(ui);
@@ -6737,13 +6808,15 @@ REGISTER_TEST(claude_env_tab_no_overlap_and_model_keys_hidden,
     return true;
 })
 
-// 组 B P4：共享配置区块钉面板底 + 「+ 新建片段」恒可点
+// 组 B P4：共享配置区块钉面板底 + 头行「+」钮恒可点（UAT5 可折叠后口径更新）
 // 区块底必须锚定：listH 若按 clamp(scrollH − sharedH − 12, min(96, scrollH), scrollH)
 // 算，96px 保底一生效（≈5 个片段起）区块就被推下去 → ≥6 个按钮被底部按钮压住
-// 点不到、≥8 个被整页 clip。现在区块底锚定 = 底部按钮行上沿 − 12，高度取
+// 点不到、≥8 个被整页 clip。区块底锚定 = 底部按钮行上沿 − 12，高度取
 // min(自然高, 不侵占列表保底视口)，卡片在区块内部滚。
+// UAT5：默认收起一行头（30）、「+」圆钮常驻头行右缘两态可点；原区块底整宽
+// 「新建片段」尾部钮已删——「+ 钉区块底」断言随之换成「头行钮在块内 + 恒可点」。
 REGISTER_TEST(claude_shared_block_bottom_anchored,
-              "claude_module: 共享配置区块钉面板底 + 新建片段恒可点（8 片段）", {
+              "claude_module: 共享配置区块钉面板底（折叠/展开）+ 头行 + 钮恒可点（8 片段）", {
     TestEnv env;
     std::vector<int64_t> scIds;
     for (int i = 0; i < 8; ++i) {
@@ -6764,34 +6837,58 @@ REGISTER_TEST(claude_shared_block_bottom_anchored,
     std::unique_ptr<::core::Module> mod(create_claude_module());
     mod->onStart();
 
-    // 尺寸矩阵：真实 macOS 尺寸 + 默认 + 最小窗 + 高窗，逐档断言同一条不变量
+    // 尺寸矩阵（折叠默认态）：真实 macOS 尺寸 + 默认 + 最小窗 + 高窗，逐档断言
+    // 同一条不变量——区块贴底锚定 + 「+」入口常驻折叠头右缘恒可点（UAT5：区块
+    // 底部整宽「新建片段」钮已删，按钮改为头行 26px 圆钮，不再钉区块底）
     for (float h : {801.0f, 1000.0f, 720.0f, 1200.0f}) {
         eui::Ui ui;
         composeAtSize(mod.get(), ui, "claude_shared_anchor", 1262.0f, h);
         const auto* block = ui.find("claude.shared.block");
-        const auto* newBtn = ui.find("claude.shared.new");
+        const auto* addBtn = ui.find("claude.shared.header.add");
         const auto* bottomBtn = ui.find("claude.profiles.new");
         const auto* panel = ui.find("claude.profiles");
         DOCTEST_REQUIRE(block != nullptr);
-        DOCTEST_REQUIRE(newBtn != nullptr);
+        DOCTEST_REQUIRE(addBtn != nullptr);
         DOCTEST_REQUIRE(bottomBtn != nullptr);
         DOCTEST_REQUIRE(panel != nullptr);
         const float blockBottom = block->frame.y + block->frame.height;
-        const float btnBottom = newBtn->frame.y + newBtn->frame.height;
-        // 「+ 新建片段」是区块的固定尾部 → 区块底 == 按钮底
-        DOCTEST_CHECK(std::fabs(btnBottom - blockBottom) <= 0.5f);
-        // 贴底锚点：区块底 = 底部按钮行上沿 − 12（不随片段数变）
+        // 折叠态区块 = 一行头（30 高）
+        DOCTEST_CHECK(std::fabs(block->frame.height - 30.0f) <= 0.5f);
+        // 贴底锚点：区块底 = 底部按钮行上沿 − 12（不随片段数/折叠态变）
         DOCTEST_CHECK(std::fabs(blockBottom - (bottomBtn->frame.y - 12.0f)) <= 0.5f);
         // 面板内（不越出容器底）
         DOCTEST_CHECK(blockBottom <= panel->frame.y + panel->frame.height + 0.5f);
-        // 可点：按钮的命中层（.bg，button 组件契约）在，且按钮有实际高度
-        const auto* newHit = ui.find("claude.shared.new.bg");
-        DOCTEST_REQUIRE(newHit != nullptr);
-        DOCTEST_REQUIRE(newHit->onClick != nullptr);
-        DOCTEST_CHECK(btnBottom > newBtn->frame.y);
+        // 「+」钮在折叠头内（不越块）、可点（.bg 命中层，button 组件契约）
+        DOCTEST_CHECK(addBtn->frame.y >= block->frame.y - 0.5f);
+        DOCTEST_CHECK(addBtn->frame.y + addBtn->frame.height <=
+                      blockBottom + 0.5f);
+        const auto* addHit = ui.find("claude.shared.header.add.bg");
+        DOCTEST_REQUIRE(addHit != nullptr);
+        DOCTEST_REQUIRE(addHit->onClick != nullptr);
     }
 
-    // 装不下时卡片仍可点开编辑（块内滚，不牺牲可达性）
+    // 展开态同一锚点矩阵（展开自然高 158 = 头行 30 + 2 行卡框架 128）
+    {
+        eui::Ui ui;
+        composeAtSize(mod.get(), ui, "claude_shared_anchor", 1262.0f, 801.0f);
+        DOCTEST_CHECK(clickById(ui, "claude.shared.header.toggle"));
+    }
+    for (float h : {801.0f, 1000.0f, 720.0f, 1200.0f}) {
+        eui::Ui ui;
+        composeAtSize(mod.get(), ui, "claude_shared_anchor", 1262.0f, h);
+        const auto* block = ui.find("claude.shared.block");
+        const auto* bottomBtn = ui.find("claude.profiles.new");
+        const auto* addBtn = ui.find("claude.shared.header.add");
+        DOCTEST_REQUIRE(block != nullptr);
+        DOCTEST_REQUIRE(bottomBtn != nullptr);
+        DOCTEST_REQUIRE(addBtn != nullptr);
+        const float blockBottom = block->frame.y + block->frame.height;
+        DOCTEST_CHECK(std::fabs(block->frame.height - 158.0f) <= 0.5f);
+        DOCTEST_CHECK(std::fabs(blockBottom - (bottomBtn->frame.y - 12.0f)) <= 0.5f);
+        DOCTEST_CHECK(ui.find("claude.shared.header.add.bg") != nullptr);
+    }
+
+    // 装不下时卡片仍可点开编辑（块内滚，不牺牲可达性；展开态）
     {
         eui::Ui ui;
         composeAtSize(mod.get(), ui, "claude_shared_anchor", 1262.0f, 801.0f);
@@ -6861,20 +6958,21 @@ REGISTER_TEST(claude_shared_block_bottom_anchored,
 
 // 共享配置片段列表限高 2 条 + 块内滚
 // 改前区块自然高随条目数涨（固定部分 + N×(卡 56+行距 8)，≤4 条不触
-// sharedBlockMaxH 上界）→ 每加一个片段左列整列重排。现在条目区恒 2 整行
+// sharedBlockMaxH 上界）→ 每加一个片段左列整列重排。展开态条目区恒 2 整行
 //（128 = 2×64）：
-//   · 区块高恒 204（76 固定 + 128 条目框架），0/1/2/3 条全同 —— 空态 / 1 条按
-//     框架留白不收缩（左列 Profile 列表视口 listH 由区块高推出，恒高 → 整列
-//     不跳）
+//   · 展开态区块高恒 158（UAT5 头行 30 + 128 条目框架；原底部整宽新建钮删除后
+//     204 → 158），0/1/2/3 条全同 —— 空态 / 1 条按框架留白不收缩（左列
+//     Profile 列表视口 listH 由区块高推出，恒高 → 整列不跳）
 //   · 恰 2 条：内容高 == 视口 → scrollMaxOffset == 0，不出滚动条（用户口径
 //     「超过才滚」）
 //   · ≥3 条：scrollView 存在、可视区恰 2 条、第 3 条在视口外，滚一行（64）
 //     后进入视口
-// 数值 204/128/64 对应 claude_ui_list.cpp 匿名命名空间的
-// kSharedFixedH/kSharedCardsH（该组常量 cpp 私有；此处写字面量 = 双向漂移
+// UAT5 默认折叠：首帧只有 30 头行，先点头行展开再断展开几何。
+// 数值 30/158/128/64 对应 claude_ui_list.cpp 匿名命名空间的
+// kSharedHeaderBottom/kSharedCardsH（该组常量 cpp 私有；此处写字面量 = 双向漂移
 // 哨兵：源常量变了此处红，逼两边同步改）
 REGISTER_TEST(claude_shared_list_cap_two_cards,
-              "claude_module: 共享配置片段列表限高 2 条（超出滚动，空/1 条留白）", {
+              "claude_module: 共享配置片段列表限高 2 条（折叠默认/展开留白/超出滚动）", {
     for (int count = 0; count <= 3; ++count) {
         TestEnv env;
         auto p = env.svc->createProfile("占位", "https://cap.example.com",
@@ -6887,6 +6985,21 @@ REGISTER_TEST(claude_shared_list_cap_two_cards,
         }
         std::unique_ptr<::core::Module> mod(create_claude_module());
         mod->onStart();
+
+        // ⓪ 默认折叠：一行头、无列表区（不论条数）
+        {
+            eui::Ui ui;
+            composeAtSize(mod.get(), ui, "claude_shared_cap0", 1600.0f, 1000.0f);
+            const auto* block = ui.find("claude.shared.block");
+            DOCTEST_REQUIRE(block != nullptr);
+            DOCTEST_CHECK(std::fabs(block->frame.height - 30.0f) <= 0.5f);
+            DOCTEST_CHECK(ui.find("claude.shared.scroll") == nullptr);
+            DOCTEST_CHECK(ui.find("claude.shared.card.0.bg") == nullptr);
+            DOCTEST_CHECK(ui.find("claude.shared.empty") == nullptr);
+            DOCTEST_CHECK(ui.find("claude.shared.header.add.bg") != nullptr);
+            DOCTEST_CHECK(clickById(ui, "claude.shared.header.toggle"));
+        }
+
         eui::Ui ui;
         composeAtSize(mod.get(), ui, "claude_shared_cap", 1600.0f, 1000.0f);
 
@@ -6895,15 +7008,18 @@ REGISTER_TEST(claude_shared_list_cap_two_cards,
         DOCTEST_REQUIRE(block != nullptr);
         DOCTEST_REQUIRE(newBtn != nullptr);
 
-    // ① 区块高恒 204，与条目数无关（改回随条目数涨
-        DOCTEST_CHECK(std::fabs(block->frame.height - 204.0f) <= 0.5f);
+    // ① 展开态区块高恒 158，与条目数无关（改回随条目数涨/底部钮回魂都红）
+        DOCTEST_CHECK(std::fabs(block->frame.height - 158.0f) <= 0.5f);
         // ② 不溢出：区块底 ≤ 底部按钮行上沿（钉底锚点）
         DOCTEST_CHECK(block->frame.y + block->frame.height <=
                       newBtn->frame.y + 0.5f);
 
         if (count == 0) {
             // ③ 空态：提示行画在框架顶部，无条目 → 无 scrollView（留白不收缩）
-            DOCTEST_CHECK(ui.find("claude.shared.empty") != nullptr);
+            const auto* emptyText = ui.find("claude.shared.empty");
+            DOCTEST_REQUIRE(emptyText != nullptr);
+            // 「+」入口已上移头行 → 空态口径同步指向右上
+            DOCTEST_CHECK(emptyText->text.find("右上 +") != std::string::npos);
             DOCTEST_CHECK(ui.find("claude.shared.scroll") == nullptr);
         } else {
             const auto* sc = ui.find("claude.shared.scroll");
@@ -7612,7 +7728,7 @@ REGISTER_TEST(claude_shared_dialog_json_roundtrip,
     {
         eui::Ui ui;
         compose(ui);
-        DOCTEST_CHECK(click(ui, "claude.shared.new.bg"));
+        DOCTEST_CHECK(click(ui, "claude.shared.header.add.bg"));
     }
     {
         eui::Ui ui;
@@ -7624,6 +7740,12 @@ REGISTER_TEST(claude_shared_dialog_json_roundtrip,
     }
     // 保存是异步刷新（H2）：写库同步、快照收割异步——轮询必须等**渲染快照**
         //（DB 第 1 轮即真 = 等的是写库而非快照，Windows CI 快照竞态 flaky
+    // 片段区默认收起（UAT5）：先展开，卡片才会进渲染树（cardReady 轮询依赖）
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK(click(ui, "claude.shared.header.toggle"));
+    }
     bool saved = false;
     bool cardReady = false;   // 快照收割完成：片段卡已进渲染树（下一步 click 依赖）
     for (int i = 0; i < 300 && !(saved && cardReady); ++i) {
@@ -7729,7 +7851,7 @@ REGISTER_TEST(claude_shared_dialog_json_roundtrip,
     {
         eui::Ui ui;
         compose(ui);
-        DOCTEST_CHECK(click(ui, "claude.shared.new.bg"));
+        DOCTEST_CHECK(click(ui, "claude.shared.header.add.bg"));
     }
     {
         eui::Ui ui;
@@ -8115,5 +8237,378 @@ REGISTER_TEST(claude_module_left_pane_adaptive_width,
                                   " < 350（审计下限）");
     }
     mod->onStop();
+    return true;
+})
+
+// ── UAT5 批：Profile 卡选中「绿圈白勾」/ URL 省略号 / 表单与详情米黄清零 / 未激活徽章删除 ──
+
+// UAT5：列表选中态改绿圈白勾——旧 2px 左竖线删（唯一选中指示），未选卡不画圈，
+// 点另一卡勾圈跟随移动；选中底色浅灰 selectedBg 保留。
+REGISTER_TEST(claude_profile_selection_check_badge,
+              "claude_module: 选中卡绿圈白勾徽标（未选不画/跟随切换/左竖线已删）", {
+    TestEnv env;
+    auto a = env.svc->createProfile("勾圈A", "https://a.example.com",
+                                    "sk-ant-chk-0001", "");
+    DOCTEST_REQUIRE(a.isOk());
+    auto b = env.svc->createProfile("勾圈B", "https://b.example.com",
+                                    "sk-ant-chk-0002", "");
+    DOCTEST_REQUIRE(b.isOk());
+
+    std::unique_ptr<::core::Module> mod(create_claude_module());
+    eui::Screen screen{1600.0f, 1000.0f};
+    auto compose = [&](eui::Ui& ui, const char* tag) {
+        ui.begin(tag);
+        mod->compose(ui, screen);
+        ui.end();
+    };
+    auto click = [](eui::Ui& ui, const std::string& id) -> bool {
+        const auto* node = ui.find(id);
+        if (node == nullptr || node->onClick == nullptr) {
+            std::cerr << "missing clickable: " << id << std::endl;
+            return false;
+        }
+        node->onClick();
+        return true;
+    };
+    auto sameColor = [](const eui::Color& x, const eui::Color& y) {
+        return std::fabs(x.r - y.r) < 0.01f && std::fabs(x.g - y.g) < 0.01f &&
+               std::fabs(x.b - y.b) < 0.01f;
+    };
+    const auto& t = core::theme::current();
+
+    // 初帧：无显式选中 → 两卡都不画勾圈；旧左竖线已删
+    {
+        eui::Ui ui;
+        compose(ui, "chk_init");
+        DOCTEST_CHECK(ui.find("claude.profile.0.check") == nullptr);
+        DOCTEST_CHECK(ui.find("claude.profile.1.check") == nullptr);
+        DOCTEST_CHECK(ui.find("claude.profile.0.sel.accent") == nullptr);
+        DOCTEST_CHECK(ui.find("claude.profile.1.sel.accent") == nullptr);
+    }
+    // 点卡 0 → 勾圈落卡 0（绿圈 + 白勾字色 + 浅灰选中底）；卡 1 无圈
+    {
+        eui::Ui ui;
+        compose(ui, "chk_click0");
+        DOCTEST_CHECK(click(ui, "claude.profile.0.bg"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "chk_on0");
+        ui.layout(screen.width, screen.height);  // frame 需显式布局
+        const auto* c0 = ui.find("claude.profile.0.check");
+        const auto* i0 = ui.find("claude.profile.0.check.icon");
+        const auto* bg0 = ui.find("claude.profile.0.bg");
+        DOCTEST_REQUIRE(c0 != nullptr);
+        DOCTEST_REQUIRE(i0 != nullptr);
+        DOCTEST_REQUIRE(bg0 != nullptr);
+        DOCTEST_CHECK(sameColor(c0->color, t.colors.wechat.primary));
+        DOCTEST_CHECK(sameColor(i0->color, t.colors.wechat.onPrimary));
+        DOCTEST_CHECK(sameColor(bg0->color, t.colors.wechat.selectedBg));
+        // 圈在卡右缘垂直居中带（96 高卡的 y+38..y+58），不越卡右缘
+        DOCTEST_CHECK(c0->frame.y >= bg0->frame.y + 37.0f);
+        DOCTEST_CHECK(c0->frame.y + c0->frame.height <=
+                      bg0->frame.y + bg0->frame.height - 37.0f + 0.5f);
+        DOCTEST_CHECK(c0->frame.x + c0->frame.width <=
+                      bg0->frame.x + bg0->frame.width + 0.5f);
+        DOCTEST_CHECK(ui.find("claude.profile.1.check") == nullptr);
+    }
+    // 点卡 1 → 勾圈跟随移动（卡 0 失圈、卡 1 得圈）
+    {
+        eui::Ui ui;
+        compose(ui, "chk_click1");
+        DOCTEST_CHECK(click(ui, "claude.profile.1.bg"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "chk_on1");
+        const auto* c1 = ui.find("claude.profile.1.check");
+        DOCTEST_REQUIRE(c1 != nullptr);
+        DOCTEST_CHECK(sameColor(c1->color, t.colors.wechat.primary));
+        DOCTEST_CHECK(ui.find("claude.profile.0.check") == nullptr);
+    }
+
+    mod->onStop();
+    cleanupProfileKey(kTestKeychainService, a.value().id);
+    cleanupProfileKey(kTestKeychainService, b.value().id);
+    return true;
+})
+
+// UAT5：卡内 URL 单行省略号截断——真机长 URL 曾溢出卡片外（EUI 文本默认不裁
+// ink）；须显式 Ellipsis + maxWidth 卡内宽，窄窗 320 档左栏下同样截住。
+REGISTER_TEST(claude_profile_card_url_ellipsis,
+              "claude_module: 卡内 URL Ellipsis 截断（长 URL 不外溢，含窄窗档）", {
+    TestEnv env;
+    const std::string longUrl =
+        "https://" + std::string(28, 'a') +
+        ".extra-long-gateway-subdomain.example.com/api/v1/messages"
+        "?beta=true&tracking=1&more=query";
+    auto a = env.svc->createProfile("长址", longUrl, "sk-ant-url-0001", "");
+    DOCTEST_REQUIRE(a.isOk());
+
+    std::unique_ptr<::core::Module> mod(create_claude_module());
+    mod->onStart();
+    auto assertUrlInCard = [&](float winW, const char* tag) {
+        eui::Screen screen{winW, 1000.0f};
+        eui::Ui ui;
+        ui.begin(tag);
+        mod->compose(ui, screen);
+        ui.end();
+        ui.layout(screen.width, screen.height);
+        const auto* url = ui.find("claude.profile.0.url");
+        const auto* card = ui.find("claude.profile.0.bg");
+        DOCTEST_REQUIRE(url != nullptr);
+        DOCTEST_REQUIRE(card != nullptr);
+        DOCTEST_CHECK_EQ(url->overflow, core::TextOverflow::Ellipsis);
+        DOCTEST_CHECK(url->frame.x + url->frame.width <=
+                      card->frame.x + card->frame.width + 0.5f);
+    };
+    // 默认窗（左栏触上限 460）与 320 档窄窗（contentW 820 → 左栏贴下限）
+    assertUrlInCard(1600.0f, "url_wide");
+    assertUrlInCard(900.0f, "url_narrow");
+
+    mod->onStop();
+    cleanupProfileKey(kTestKeychainService, a.value().id);
+    return true;
+})
+
+// UAT5 米黄清理：表单 env/高级配置 tab 与全屏编辑覆盖层的输入面/按钮全量换
+// WeChat 令牌——输入底 == wechat.cardBg、工具钮 == wechat.secondaryButtonBg、
+// 主动作 == wechat.primary；反向断言锁死暖橙 surfaceElevated/legacy primary。
+REGISTER_TEST(claude_form_wechat_colors,
+              "claude_module: 表单/全屏编辑输入面与按钮 WeChat 令牌锁死（反暖橙）", {
+    TestEnv env;
+    std::unique_ptr<::core::Module> mod(create_claude_module());
+    eui::Screen screen{1600.0f, 1000.0f};
+    auto compose = [&](eui::Ui& ui, const char* tag) {
+        ui.begin(tag);
+        mod->compose(ui, screen);
+        ui.end();
+    };
+    auto click = [](eui::Ui& ui, const std::string& id) -> bool {
+        const auto* node = ui.find(id);
+        if (node == nullptr || node->onClick == nullptr) {
+            std::cerr << "missing clickable: " << id << std::endl;
+            return false;
+        }
+        node->onClick();
+        return true;
+    };
+    // 按值取色（缺席节点回透明色，配合 REQUIRE 在场断言使用）
+    auto colorOf = [](eui::Ui& ui, const std::string& id) -> eui::Color {
+        const auto* node = ui.find(id);
+        return node == nullptr ? eui::Color{0.0f, 0.0f, 0.0f, 0.0f}
+                               : node->color;
+    };
+    auto sameColor = [](const eui::Color& x, const eui::Color& y) {
+        return std::fabs(x.r - y.r) < 0.01f && std::fabs(x.g - y.g) < 0.01f &&
+               std::fabs(x.b - y.b) < 0.01f;
+    };
+    const auto& t = core::theme::current();
+    const eui::Color warmSurface = t.colors.surfaceElevated;
+    const eui::Color warmPrimary = t.colors.primary;
+
+    // 开新建表单 → env 页加一行变量
+    {
+        eui::Ui ui;
+        compose(ui, "wc_open");
+        DOCTEST_CHECK(click(ui, "claude.profiles.new.bg"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "wc_tab2");
+        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.2"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "wc_env_addrow");
+        DOCTEST_CHECK(click(ui, "claude.form.env.add.bg"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "wc_env");
+        DOCTEST_REQUIRE(ui.find("claude.form.env.row.0.key.hit") != nullptr);
+        DOCTEST_REQUIRE(ui.find("claude.form.import.text.hit") != nullptr);
+        // env 页：键/值输入底 == wechat 白系；删除/添加/解析钮 == WeChat Secondary
+        DOCTEST_CHECK(sameColor(colorOf(ui, "claude.form.env.row.0.key.hit"),
+                                t.colors.wechat.cardBg));
+        DOCTEST_CHECK(sameColor(colorOf(ui, "claude.form.env.row.0.value.hit"),
+                                t.colors.wechat.cardBg));
+        DOCTEST_CHECK(sameColor(colorOf(ui, "claude.form.env.row.0.del.bg"),
+                                t.colors.wechat.secondaryButtonBg));
+        DOCTEST_CHECK(sameColor(colorOf(ui, "claude.form.env.add.bg"),
+                                t.colors.wechat.secondaryButtonBg));
+        DOCTEST_CHECK(sameColor(colorOf(ui, "claude.form.import.parse.bg"),
+                                t.colors.wechat.secondaryButtonBg));
+        DOCTEST_CHECK(sameColor(colorOf(ui, "claude.form.import.text.hit"),
+                                t.colors.wechat.cardBg));
+        // 导入区标题同步「从 CC」口径
+        const auto* importLabel = ui.find("claude.form.import.label");
+        DOCTEST_REQUIRE(importLabel != nullptr);
+        DOCTEST_CHECK(importLabel->text.find("从 CC / settings.json") !=
+                      std::string::npos);
+        // 反向：输入面/工具钮不得命中暖橙
+        DOCTEST_CHECK(!sameColor(colorOf(ui, "claude.form.env.row.0.key.hit"),
+                                 warmSurface));
+        DOCTEST_CHECK(!sameColor(colorOf(ui, "claude.form.env.add.bg"),
+                                 warmSurface));
+    }
+    // 高级配置页：JSON 输入底 + 格式化/全屏编辑钮（用户点名的两颗米黄钮）
+    {
+        eui::Ui ui;
+        compose(ui, "wc_tab3");
+        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.3"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "wc_adv");
+        DOCTEST_REQUIRE(ui.find("claude.form.advanced.json.hit") != nullptr);
+        DOCTEST_CHECK(sameColor(colorOf(ui, "claude.form.advanced.json.hit"),
+                                t.colors.wechat.cardBg));
+        DOCTEST_CHECK(sameColor(
+            colorOf(ui, "claude.form.advanced.json.format.bg"),
+            t.colors.wechat.secondaryButtonBg));
+        DOCTEST_CHECK(sameColor(colorOf(ui, "claude.form.advanced.json.fs.bg"),
+                                t.colors.wechat.secondaryButtonBg));
+        DOCTEST_CHECK(!sameColor(
+            colorOf(ui, "claude.form.advanced.json.format.bg"), warmSurface));
+        // 进全屏编辑
+        DOCTEST_CHECK(click(ui, "claude.form.advanced.json.fs.bg"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "wc_jsonfs");
+        DOCTEST_REQUIRE(ui.find("claude.jsonfs.editor.hit") != nullptr);
+        // 全屏编辑视图：整页底 pageBg、编辑器底白系、保存绿主钮、格式化/放弃 Secondary
+        DOCTEST_CHECK(sameColor(colorOf(ui, "claude.jsonfs.bg"),
+                                t.colors.wechat.pageBg));
+        DOCTEST_CHECK(sameColor(colorOf(ui, "claude.jsonfs.editor.hit"),
+                                t.colors.wechat.cardBg));
+        DOCTEST_CHECK(sameColor(colorOf(ui, "claude.jsonfs.apply.bg"),
+                                t.colors.wechat.primary));
+        DOCTEST_CHECK(sameColor(colorOf(ui, "claude.jsonfs.format.bg"),
+                                t.colors.wechat.secondaryButtonBg));
+        DOCTEST_CHECK(sameColor(colorOf(ui, "claude.jsonfs.discard.bg"),
+                                t.colors.wechat.secondaryButtonBg));
+        DOCTEST_CHECK(!sameColor(colorOf(ui, "claude.jsonfs.bg"), warmSurface));
+        DOCTEST_CHECK(!sameColor(colorOf(ui, "claude.jsonfs.apply.bg"),
+                                 warmPrimary));
+    }
+
+    mod->onStop();
+    return true;
+})
+
+// UAT5 米黄清理（详情页三 pane）+「未激活」徽章删除锁：环境变量行底 / 高级配置
+// 字段底 / 最近调用「查看全部」钮全量 WeChat 化；非激活 Profile 的详情不再挂
+// 「未激活」徽章（选中语义已由列表绿圈白勾承担）。
+REGISTER_TEST(claude_detail_wechat_and_no_inactive_badge,
+              "claude_module: 详情 env/高级/最近调用面 WeChat 化 + 未激活徽章已删", {
+    TestEnv env;
+    auto a = env.svc->createProfile("激活站", "https://act.example.com",
+                                    "sk-ant-dt-0001", "");
+    DOCTEST_REQUIRE(a.isOk());
+    // 非激活第二站：详情选中它时旧实现会挂「未激活」徽章
+    module::claude::Profile b = env.svc
+        ->createProfile("未激活站", "https://idle.example.com",
+                        "sk-ant-dt-0002", "")
+        .value();
+    b.extraEnvJson = R"({"MY_DT_KEY":"v1"})";
+    DOCTEST_REQUIRE(env.svc->updateProfile(b).isOk());
+    // 最近调用一条（「查看全部」钮入树）
+    module::claude::ClaudeService::CallLogEntry e;
+    e.profileId = a.value().id;
+    e.method = "POST";
+    e.path = "/v1/messages";
+    e.statusCode = 200;
+    e.error = "";
+    e.latencyMs = 88;
+    e.startedAt = std::time(nullptr);
+    DOCTEST_REQUIRE(env.svc->logCall(e).isOk());
+
+    std::unique_ptr<::core::Module> mod(create_claude_module());
+    eui::Screen screen{1600.0f, 1000.0f};
+    auto compose = [&](eui::Ui& ui, const char* tag) {
+        ui.begin(tag);
+        mod->compose(ui, screen);
+        ui.end();
+    };
+    auto click = [](eui::Ui& ui, const std::string& id) -> bool {
+        const auto* node = ui.find(id);
+        if (node == nullptr || node->onClick == nullptr) {
+            std::cerr << "missing clickable: " << id << std::endl;
+            return false;
+        }
+        node->onClick();
+        return true;
+    };
+    auto sameColor = [](const eui::Color& x, const eui::Color& y) {
+        return std::fabs(x.r - y.r) < 0.01f && std::fabs(x.g - y.g) < 0.01f &&
+               std::fabs(x.b - y.b) < 0.01f;
+    };
+    const auto& t = core::theme::current();
+
+    // 选中非激活站（卡 1）→ 详情跟随展示它
+    {
+        eui::Ui ui;
+        compose(ui, "dt_sel");
+        DOCTEST_CHECK(click(ui, "claude.profile.1.bg"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "dt_basic");
+        // 「未激活」徽章已删：节点不在（名称值在场证明详情真的画了）
+        DOCTEST_CHECK(ui.find("claude.field.name.inactive") == nullptr);
+        DOCTEST_CHECK(ui.find("claude.field.name.inactive.bg") == nullptr);
+        DOCTEST_CHECK(ui.find("claude.field.name.value") != nullptr);
+    }
+    // 环境变量 pane：行底 == wechat.cardBg（原暖橙 surfaceElevated 行）
+    {
+        eui::Ui ui;
+        compose(ui, "dt_tab2");
+        DOCTEST_CHECK(click(ui, "claude.detail.tabs.hit.2"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "dt_env");
+        const auto* rowBg = ui.find("claude.env.row.bg.0");
+        DOCTEST_REQUIRE(rowBg != nullptr);
+        DOCTEST_CHECK(sameColor(rowBg->color, t.colors.wechat.cardBg));
+        DOCTEST_CHECK(!sameColor(rowBg->color, t.colors.surfaceElevated));
+    }
+    // 高级配置 pane：生效方言/备用 Profile 字段底 == cardBg
+    {
+        eui::Ui ui;
+        compose(ui, "dt_tab3");
+        DOCTEST_CHECK(click(ui, "claude.detail.tabs.hit.3"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "dt_adv");
+        const auto* dialectBg = ui.find("claude.field.dialect.bg");
+        const auto* fbBg = ui.find("claude.field.fallback.bg");
+        DOCTEST_REQUIRE(dialectBg != nullptr);
+        DOCTEST_REQUIRE(fbBg != nullptr);
+        DOCTEST_CHECK(sameColor(dialectBg->color, t.colors.wechat.cardBg));
+        DOCTEST_CHECK(sameColor(fbBg->color, t.colors.wechat.cardBg));
+    }
+    // 最近调用 pane：「查看全部」钮底 == WeChat Secondary
+    {
+        eui::Ui ui;
+        compose(ui, "dt_tab4");
+        DOCTEST_CHECK(click(ui, "claude.detail.tabs.hit.4"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "dt_calls");
+        const auto* viewall = ui.find("claude.calls.viewall.hit");
+        DOCTEST_REQUIRE(viewall != nullptr);
+        DOCTEST_CHECK(sameColor(viewall->color,
+                                t.colors.wechat.secondaryButtonBg));
+        DOCTEST_CHECK(!sameColor(viewall->color, t.colors.surfaceElevated));
+    }
+
+    mod->onStop();
+    cleanupProfileKey(kTestKeychainService, a.value().id);
+    cleanupProfileKey(kTestKeychainService, b.id);
     return true;
 })

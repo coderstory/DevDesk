@@ -199,7 +199,7 @@ REGISTER_TEST(claude_ccswitch_ui_skeleton_contract,
     // 骨架 id 契约（改节点 id 即红）
     const auto* title = ui2.find("claude.dialog.ccswitch.title");
     DOCTEST_REQUIRE(title != nullptr);
-    DOCTEST_CHECK_EQ(title->text, std::string("从 cc-switch 导入"));
+    DOCTEST_CHECK_EQ(title->text, std::string("从 CC 导入"));  // UAT5 文案缩短口径
     const auto* desc = ui2.find("claude.dialog.ccswitch.desc");
     DOCTEST_REQUIRE(desc != nullptr);
     DOCTEST_CHECK(desc->text.find("只读读取") != std::string::npos);

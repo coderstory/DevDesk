@@ -69,6 +69,9 @@ struct ProfileListState {
     float sharedScrollOffset_ = 0.0f;
     // 上一帧的片段集签名：一变就把 sharedScrollOffset_ 归零（初值必不撞 → 首帧归零一次）。
     size_t sharedScrollKey_ = static_cast<size_t>(-1);
+    // 共享片段区块折叠态（UAT5 用户拍板：默认收起，点头行展开；会话内内存 bool，
+    // claude 模块无 view-state 落盘机制 → 未持久化，跨会话回默认收起）
+    bool sharedBlockCollapsed_ = true;
     // 引导条一次性标记（会话内代理从未启动过才显示；内存态）
     bool proxyEverSeen_ = false;
     // 列表右键菜单：目标 profile id（0 = 无）+ 锚点（页面坐标）+ 开合标志

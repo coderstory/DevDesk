@@ -34,8 +34,8 @@ void drawClaudeGuideBar(eui::Ui& ui, float contentW,
 // 左栏列表的回调（compose 每帧装配）
 struct ProfileListActions {
     std::function<void()> onNewProfile;      // 「+ 新建 Profile」
-    std::function<void()> onImportCurrent;   // 「导入当前配置」
-    std::function<void()> onImportCcSwitch;  // 「从 cc-switch 导入」
+    std::function<void()> onImportCurrent;   // 「导入配置」（UAT5 文案缩短）
+    std::function<void()> onImportCcSwitch;  // 「从 CC 导入」（UAT5 文案缩短）
     // 右键菜单动作：菜单是这些动作的唯一 UI 入口
     std::function<void(const Profile&)> requestEdit;              // 编辑
     std::function<void(int64_t)> requestDuplicate;                // 建副本
@@ -60,8 +60,10 @@ void drawProfileListPanel(eui::Ui& ui, float leftW, float bodyH,
                           const std::string& sharedConfigsError,
                           const ProfileListActions& actions);
 
-// 共享配置区块：钉面板底、恒高（blockH 由调用方按 sharedBlockH(bodyH) 传入）；
-// 片段装不下时块内滚。st：块内滚动偏移读写目标（集签名变化时归零）。id: claude.shared.*
+// 共享配置区块（UAT5 可折叠）：钉面板底；默认收起一行头（st.sharedBlockCollapsed_），
+// 点头行/勾箭钮展开；「+」圆钮两态常驻头右缘（新建片段唯一入口）。
+// blockH 由调用方按 sharedBlockH(bodyH, collapsed) 传入；片段装不下时块内滚。
+// st：折叠态 + 块内滚动偏移读写目标（集签名变化时归零）。id: claude.shared.*
 void drawSharedConfigBlock(eui::Ui& ui, float width, float blockH,
                            const core::theme::Tokens& t,
                            const components::theme::ThemeColorTokens& themeTokens,

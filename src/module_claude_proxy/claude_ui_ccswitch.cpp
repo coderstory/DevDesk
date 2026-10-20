@@ -258,11 +258,11 @@ void drawCcSwitchImportDialog(eui::Ui& ui, const eui::Screen& screen,
 
     ui_kit::drawDialogFrame(ui, screen, frame, themeTokens, [&] {
         ui_kit::drawDialogTitle(ui, "claude.dialog.ccswitch.title", w,
-                                "从 cc-switch 导入", 20.0f, t.colors.textPrimary,
+                                "从 CC 导入", 20.0f, t.colors.textPrimary,
                                 {.y = kTitleY, .height = kTitleH, .lineHeight = kTitleH});
         ui_kit::drawDialogText(
             ui, "claude.dialog.ccswitch.desc", w,
-            "从 cc-switch 库（~/.cc-switch/cc-switch.db）只读读取 Claude / "
+            "从 CC 库（~/.cc-switch/cc-switch.db）只读读取 Claude / "
             "Claude Desktop 供应商，勾选后导入。密钥经既有加密管线入库，"
             "不在弹窗里显示。",
             12.0f, t.colors.textSecondary,
@@ -277,7 +277,7 @@ void drawCcSwitchImportDialog(eui::Ui& ui, const eui::Screen& screen,
         } else if (st.rows_.empty()) {
             ui_kit::drawDialogText(
                 ui, "claude.dialog.ccswitch.empty", w,
-                "cc-switch 里没有 Claude / Claude Desktop 供应商，无内容可导入",
+                "CC 里没有 Claude / Claude Desktop 供应商，无内容可导入",
                 13.0f, t.colors.textTertiary,
                 {.y = kListTopY, .height = 40.0f, .lineHeight = 20.0f});
         } else {
