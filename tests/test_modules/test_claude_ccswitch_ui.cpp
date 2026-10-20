@@ -24,6 +24,7 @@
 
 #include <sqlite3.h>
 
+#include <cmath>
 #include <filesystem>
 #include <memory>
 #include <string>
@@ -210,6 +211,16 @@ REGISTER_TEST(claude_ccswitch_ui_skeleton_contract,
     const auto* selall = ui2.find("claude.dialog.ccswitch.selall.text");
     DOCTEST_REQUIRE(selall != nullptr);
     DOCTEST_CHECK_EQ(selall->text, std::string("取消全选"));
+    //（UAT5 米黄收尾）全选钮底 == WeChat Secondary 白底灰边；反向锁死暖橙 surfaceElevated
+    const auto* selallBg = ui2.find("claude.dialog.ccswitch.selall.bg");
+    DOCTEST_REQUIRE(selallBg != nullptr);
+    const auto& wc = core::theme::current().colors;
+    auto sameColor = [](const eui::Color& x, const eui::Color& y) {
+        return std::fabs(x.r - y.r) < 0.01f && std::fabs(x.g - y.g) < 0.01f &&
+               std::fabs(x.b - y.b) < 0.01f;
+    };
+    DOCTEST_CHECK(sameColor(selallBg->color, wc.wechat.secondaryButtonBg));
+    DOCTEST_CHECK(!sameColor(selallBg->color, wc.surfaceElevated));
     const auto* confirm = ui2.find("claude.dialog.ccswitch.confirm.text");
     DOCTEST_REQUIRE(confirm != nullptr);
     DOCTEST_CHECK_EQ(confirm->text, std::string("导入选中(3)"));

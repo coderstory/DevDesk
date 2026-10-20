@@ -8003,6 +8003,15 @@ REGISTER_TEST(claude_ui_model_one_m_switch,
             trackHaiku->color.b == trackDef->color.b &&
             trackHaiku->color.a == trackDef->color.a;
         DOCTEST_CHECK_FALSE(sameColor);
+        //（UAT5 米黄收尾）禁用 knob 换 WeChat 白（cardBg，与启用态白 knob 同源），
+        // 不再走暖橙 surfaceElevated；「禁用」语义仍由 textDisabled 深灰轨道承担
+        const auto& wc = core::theme::current().colors;
+        DOCTEST_CHECK(knobHaiku->color.r == wc.wechat.cardBg.r &&
+                      knobHaiku->color.g == wc.wechat.cardBg.g &&
+                      knobHaiku->color.b == wc.wechat.cardBg.b);
+        DOCTEST_CHECK(!(knobHaiku->color.r == wc.surfaceElevated.r &&
+                        knobHaiku->color.g == wc.surfaceElevated.g &&
+                        knobHaiku->color.b == wc.surfaceElevated.b));
         // 显示层剥标记：1M 由复选框表达，名字不重复带
         // [1m] 照剥；haiku 槽位不支持但串尾 [1M] 同样剥（剥除是无条件显示
         // 语义，勾态才看双重条件）。存储值原样（下方落库断言仍带标记）
@@ -8605,10 +8614,111 @@ REGISTER_TEST(claude_detail_wechat_and_no_inactive_badge,
         DOCTEST_CHECK(sameColor(viewall->color,
                                 t.colors.wechat.secondaryButtonBg));
         DOCTEST_CHECK(!sameColor(viewall->color, t.colors.surfaceElevated));
+        // 点「查看全部」开调用记录弹窗（UAT5 米黄收尾：底部三钮也要过色锁）
+        DOCTEST_CHECK(click(ui, "claude.calls.viewall.hit"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "dt_calls_dlg");
+        // 翻页/关闭三钮 == WeChat Secondary 白底灰边；反向锁死暖橙 surfaceElevated
+        const auto* prevBg = ui.find("claude.dialog.calls.prev.bg");
+        const auto* nextBg = ui.find("claude.dialog.calls.next.bg");
+        const auto* closeBg = ui.find("claude.dialog.calls.close.bg");
+        DOCTEST_REQUIRE(prevBg != nullptr);
+        DOCTEST_REQUIRE(nextBg != nullptr);
+        DOCTEST_REQUIRE(closeBg != nullptr);
+        DOCTEST_CHECK(sameColor(prevBg->color, t.colors.wechat.secondaryButtonBg));
+        DOCTEST_CHECK(sameColor(nextBg->color, t.colors.wechat.secondaryButtonBg));
+        DOCTEST_CHECK(sameColor(closeBg->color, t.colors.wechat.secondaryButtonBg));
+        DOCTEST_CHECK(!sameColor(closeBg->color, t.colors.surfaceElevated));
     }
 
     mod->onStop();
     cleanupProfileKey(kTestKeychainService, a.value().id);
     cleanupProfileKey(kTestKeychainService, b.id);
+    return true;
+})
+
+// UAT5 米黄收尾（共享片段编辑弹窗）：JSON 格式化 + 底部删除/取消全量换 WeChat
+// Secondary 白底灰边，保存主钮换 WeChat Primary 绿；反向锁死暖橙 surfaceElevated /
+// legacy primary（先例同 claude_form_wechat_colors）。
+REGISTER_TEST(claude_shared_dialog_wechat_colors,
+              "claude_module: 共享片段编辑弹窗四钮 WeChat 令牌锁死（反暖橙）", {
+    TestEnv env;
+    auto f1 = env.svc->createSharedConfig("片段A", R"({"MY_A":"1"})");
+    DOCTEST_REQUIRE(f1.isOk());
+    auto f2 = env.svc->createSharedConfig("片段B", R"({"MY_B":"2"})");
+    DOCTEST_REQUIRE(f2.isOk());
+    // 至少一个 profile 才走「同滚动容器」主路径（同 shared_block_and_card 夹具）
+    auto p = env.svc->createProfile("占位", "https://p.example.com",
+                                    "sk-ant-sdlg-0001", "");
+    DOCTEST_REQUIRE(p.isOk());
+
+    std::unique_ptr<::core::Module> mod(create_claude_module());
+    eui::Screen screen{1600.0f, 1000.0f};
+    auto compose = [&](eui::Ui& ui, const char* tag) {
+        ui.begin(tag);
+        mod->compose(ui, screen);
+        ui.end();
+    };
+    auto click = [](eui::Ui& ui, const std::string& id) -> bool {
+        const auto* node = ui.find(id);
+        if (node == nullptr || node->onClick == nullptr) {
+            std::cerr << "missing clickable: " << id << std::endl;
+            return false;
+        }
+        node->onClick();
+        return true;
+    };
+    auto colorOf = [](eui::Ui& ui, const std::string& id) -> eui::Color {
+        const auto* node = ui.find(id);
+        return node == nullptr ? eui::Color{0.0f, 0.0f, 0.0f, 0.0f}
+                               : node->color;
+    };
+    auto sameColor = [](const eui::Color& x, const eui::Color& y) {
+        return std::fabs(x.r - y.r) < 0.01f && std::fabs(x.g - y.g) < 0.01f &&
+               std::fabs(x.b - y.b) < 0.01f;
+    };
+    const auto& t = core::theme::current();
+
+    // 折叠头展开 → 点片段B 卡开编辑弹窗（编辑态四钮全在场，含删除）
+    {
+        eui::Ui ui;
+        compose(ui, "sh_wc_open1");
+        DOCTEST_CHECK(click(ui, "claude.shared.header.toggle"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "sh_wc_open2");
+        DOCTEST_CHECK(click(ui, "claude.shared.card.1.bg"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "sh_wc_dlg");
+        DOCTEST_REQUIRE(ui.find("claude.dialog.shared.panel") != nullptr);
+        // 格式化/删除/取消 == WeChat Secondary；保存 == WeChat Primary 绿
+        DOCTEST_CHECK(sameColor(
+            colorOf(ui, "claude.dialog.shared.json.format.bg"),
+            t.colors.wechat.secondaryButtonBg));
+        DOCTEST_CHECK(sameColor(colorOf(ui, "claude.dialog.shared.delete.bg"),
+                                t.colors.wechat.secondaryButtonBg));
+        DOCTEST_CHECK(sameColor(colorOf(ui, "claude.dialog.shared.cancel.bg"),
+                                t.colors.wechat.secondaryButtonBg));
+        DOCTEST_CHECK(sameColor(colorOf(ui, "claude.dialog.shared.confirm.bg"),
+                                t.colors.wechat.primary));
+        // 反向：不得命中暖橙 surfaceElevated / legacy primary
+        DOCTEST_CHECK(!sameColor(
+            colorOf(ui, "claude.dialog.shared.json.format.bg"),
+            t.colors.surfaceElevated));
+        DOCTEST_CHECK(!sameColor(
+            colorOf(ui, "claude.dialog.shared.cancel.bg"),
+            t.colors.surfaceElevated));
+        DOCTEST_CHECK(!sameColor(
+            colorOf(ui, "claude.dialog.shared.confirm.bg"),
+            t.colors.primary));
+    }
+
+    mod->onStop();
+    cleanupProfileKey(kTestKeychainService, p.value().id);
     return true;
 })
