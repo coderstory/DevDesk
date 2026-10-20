@@ -205,31 +205,101 @@ REGISTER_TEST(github_sync_card_progress_row,
 })
 
 REGISTER_TEST(github_sync_card_switch_position,
-              "github_sync 卡片: 两开关直接定位（x 对齐输入列、行盒垂直居中）且无包裹 stack 残留", {
+              "github_sync 卡片: 双列三行布局定位（开关行/URL 行/输入行 + 双列 x）且无包裹 stack 残留", {
     CardFixture fx;
     eui::Ui ui;
     fx.draw(ui);
     ui.layout(1600.0f, 1000.0f);   // frame 断言必须真 layout
     const auto* en = ui.find(std::string(kCardId) + ".enabled.sw");
     const auto* ap = ui.find(std::string(kCardId) + ".autopush.sw");
+    const auto* url = ui.find(std::string(kCardId) + ".url.input");
+    const auto* br = ui.find(std::string(kCardId) + ".branch.input");
+    const auto* tk = ui.find(std::string(kCardId) + ".token.input");
+    const auto* push = ui.find(std::string(kCardId) + ".btn.push.bg");
     DOCTEST_REQUIRE(en != nullptr);
     DOCTEST_REQUIRE(ap != nullptr);
-    // 换算期望（与 drawGithubSyncCard 行进公式同构；E 批统一迁 FormRow）：
-    // x = 内边距 28 + 标签列 110 + 8（FormRow 定宽 label）；y = 16 + 标题 22 + 2 +
-    //   描述 16 + 12（内容起 68）+ 行盒垂直居中 (36 − 20)/2；
-    //   行进距 = 36 + 8，自动推送 = 启用行 + URL/分支/Token 共 4 个行距之后
+    DOCTEST_REQUIRE(url != nullptr);
+    DOCTEST_REQUIRE(br != nullptr);
+    DOCTEST_REQUIRE(tk != nullptr);
+    DOCTEST_REQUIRE(push != nullptr);
+    // 换算期望（与 drawGithubSyncCard 行进公式同构；UAT2 双列：5 行纵排 → 3 行）：
+    //   内容起 y = 16 + 标题 22 + 2 + 描述 16 + 12 = 68；行进距 = 行盒 36 + 8。
+    //   双列几何：formW = 卡宽 1520 − 内边距 56 = 1464；colGap = roundFs(8) = 8；
+    //   colW = (1464 − 8)/2 = 728；右列 x = 28 + 728 + 8 = 764；
+    //   控件 x = 列 x + 标签 110 + 8（FormRow 定宽 label）；开关行盒内垂直居中
+    //   (36 − 20)/2。三行 = 开关行（启用|自动推送）→ URL 全宽行（输入+三按钮）→
+    //   输入行（分支|Token）。
     const float rowH = ms::roundFs(36.0f);
-    const float switchY0 = 16.0f + ms::roundFs(22.0f) + ms::roundFs(2.0f) +
-                           ms::roundFs(16.0f) + ms::roundFs(12.0f) +
-                           (rowH - 20.0f) * 0.5f;
+    const float rowY0 = 16.0f + ms::roundFs(22.0f) + ms::roundFs(2.0f) +
+                        ms::roundFs(16.0f) + ms::roundFs(12.0f);
     const float advance = rowH + ms::roundFs(8.0f);
-    DOCTEST_CHECK(std::fabs(en->frame.x - 146.0f) < 0.5f);
-    DOCTEST_CHECK(std::fabs(en->frame.y - switchY0) < 0.5f);
-    DOCTEST_CHECK(std::fabs(ap->frame.x - 146.0f) < 0.5f);
-    DOCTEST_CHECK(std::fabs(ap->frame.y - (switchY0 + advance * 4.0f)) < 0.5f);
-    // 负断言对照组 = 上面两个「开关存在」：wrap 包裹节点拆除后不得再出现在树里
+    const float switchDy = (rowH - 20.0f) * 0.5f;
+    const float formW = 1520.0f - 28.0f * 2.0f;
+    const float colGap = ms::roundFs(8.0f);
+    const float colW = (formW - colGap) * 0.5f;
+    const float col2X = 28.0f + colW + colGap;      // 右列 x = 764
+    const float ctrlDx = 110.0f + 8.0f;              // FormRow 定宽 label + 间距
+    // 第一行（双列开关行）：启用左列 x=146、自动推送右列 x=882，同一 y
+    DOCTEST_CHECK(std::fabs(en->frame.x - (28.0f + ctrlDx)) < 0.5f);
+    DOCTEST_CHECK(std::fabs(en->frame.y - (rowY0 + switchDy)) < 0.5f);
+    DOCTEST_CHECK(std::fabs(ap->frame.x - (col2X + ctrlDx)) < 0.5f);
+    DOCTEST_CHECK(std::fabs(ap->frame.y - (rowY0 + switchDy)) < 0.5f);
+    // 第二行（URL 全宽行）：输入贴标签列 x=146；按钮组右缘对齐卡右内边距（原与
+    // 自动推送同行的三按钮迁来本行右段）
+    DOCTEST_CHECK(std::fabs(url->frame.x - (28.0f + ctrlDx)) < 0.5f);
+    DOCTEST_CHECK(std::fabs(url->frame.y - (rowY0 + advance)) < 0.5f);
+    const float btnTotalW = 120.0f + 100.0f + 80.0f + 8.0f * 2.0f;
+    DOCTEST_CHECK(std::fabs(push->frame.x - (1520.0f - 28.0f - btnTotalW)) < 0.5f);
+    DOCTEST_CHECK(std::fabs(push->frame.y - (rowY0 + advance)) < 0.5f);
+    // 第三行（双列输入行）：分支左列 x=146、Token 右列 x=882，同一 y
+    DOCTEST_CHECK(std::fabs(br->frame.x - (28.0f + ctrlDx)) < 0.5f);
+    DOCTEST_CHECK(std::fabs(br->frame.y - (rowY0 + advance * 2.0f)) < 0.5f);
+    DOCTEST_CHECK(std::fabs(tk->frame.x - (col2X + ctrlDx)) < 0.5f);
+    DOCTEST_CHECK(std::fabs(tk->frame.y - (rowY0 + advance * 2.0f)) < 0.5f);
+    // Token 半宽可行性钉子：双列后输入宽上限仍是 kFieldW 320（列内 control 区富余
+    // ≥450px，未触缩）——显示截断/编辑滚动由 EUI 单行输入承担，不失功能
+    DOCTEST_CHECK(std::fabs(tk->frame.width - 320.0f) < 0.5f);
+    // 负断言对照组 = 上面「存在」断言：wrap 包裹节点拆除后不得再出现在树里
     DOCTEST_CHECK(ui.find(std::string(kCardId) + ".enabled.sw.wrap") == nullptr);
     DOCTEST_CHECK(ui.find(std::string(kCardId) + ".autopush.sw.wrap") == nullptr);
+    return true;
+})
+
+// 门控保持（UAT2 双列后语义不变）：未启用时自动推送/URL/分支/Token/按钮全部
+// 不画。自动推送与启用同排双列后，门控从「早退后整行不画」改为显式条件渲染——
+// 本用例钉住该条件不回退（丢掉 if 会让折叠态冒出半行表单）。
+REGISTER_TEST(github_sync_card_disabled_gate,
+              "github_sync 卡片: 未启用时自动推送/URL/分支/Token/按钮不画（启用对照）", {
+    CardFixture off;
+    off.in.githubSyncEnabled = false;
+    test_support::HeadlessFrame f("githubsynccardgateoff");
+    DOCTEST_CHECK(f.frame([&](eui::Ui& ui) {
+        off.draw(ui);
+        // 折叠态唯一表单行 = 启用开关
+        DOCTEST_CHECK(ui.find(std::string(kCardId) + ".enabled.sw") != nullptr);
+        for (const char* suffix :
+             {".autopush.sw", ".url.input", ".branch.input", ".token.input",
+              ".btn.push.bg", ".btn.test.bg", ".btn.pull.bg"}) {
+            DOCTEST_CHECK_MESSAGE(ui.find(std::string(kCardId) + suffix) ==
+                                      nullptr,
+                                  suffix);
+        }
+        return true;
+    }));
+
+    // 对照组：启用后 7 个节点全部在——否则上面「不存在」可能只是「啥都没画」恒真
+    CardFixture on;
+    test_support::HeadlessFrame fon("githubsynccardgateon");
+    DOCTEST_CHECK(fon.frame([&](eui::Ui& ui) {
+        on.draw(ui);
+        for (const char* suffix :
+             {".enabled.sw", ".autopush.sw", ".url.input", ".branch.input",
+              ".token.input", ".btn.push.bg", ".btn.test.bg", ".btn.pull.bg"}) {
+            DOCTEST_CHECK_MESSAGE(
+                ui.find(std::string(kCardId) + suffix) != nullptr, suffix);
+        }
+        return true;
+    }));
     return true;
 })
 
