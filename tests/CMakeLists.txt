@@ -80,6 +80,9 @@ add_executable(devdesk_tests
     #（黑半透明 bg alpha / 白字 onPrimary / 1.5s 自动消失 / 空状态就近按钮 /
     # 0xF059 问号字形绑定 fontFamily=Icon）。
     test_modules/test_ui_kit_feedback.cpp
+    # 图标批（2026-10-20 C 方案终端窗 >_）：品牌几何 logo helper 契约
+    #（结构 id / 归一化几何与位图资产同源 / 档位缩放线性 / opacity 透传）
+    test_modules/test_logo_helper.cpp
     test_modules/test_view_state.cpp
     test_modules/test_claude.cpp
     test_modules/test_claude_service.cpp
