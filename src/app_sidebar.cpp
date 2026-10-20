@@ -17,6 +17,10 @@
 
 #include <eui/types.h>
 
+#include <functional>
+#include <optional>
+#include <utility>
+
 namespace app {
 
 namespace {
@@ -26,6 +30,13 @@ bool g_sidebarCollapsed = false;
 
 // 应用级 toast 通知：托盘失效入口点击的解释反馈。调用方写状态，compose 顶层每帧读状态绘制
 ui_kit::ToastState g_appNotice;
+
+// 自绘标题栏布局开关的测试钉住缝（nullopt = 跟平台能力走，见 customTitlebarActive）
+std::optional<bool> g_titlebarModeOverride;
+
+// 关闭钮 hover 态：EUI-NEO .onHover 回调写、compose 读。红底需要图标色随 hover 翻白，
+// 而 .states() 只能给 rect 上色——关闭叉是独立 text 元素，色值须在此跨帧传递
+bool g_closeButtonHovered = false;
 
 } // namespace
 
@@ -72,6 +83,129 @@ std::string appNoticeMessage() { return g_appNotice.open ? g_appNotice.body : st
 
 float pageContentWidth(float windowWidth) {
     return windowWidth - sidebarWidth();
+}
+
+// ---- 自绘标题栏（UAT3 D-R3-1）----
+
+float titlebarHeight() {
+    return 40.0f;
+}
+
+bool customTitlebarActive() {
+    if (g_titlebarModeOverride.has_value()) {
+        return *g_titlebarModeOverride;
+    }
+    return customWindowChromeSupported();
+}
+
+void setCustomTitlebarMode(std::optional<bool> mode) {
+    g_titlebarModeOverride = std::move(mode);
+}
+
+// 窗口钮热区：右缘三钮（关/最大化/最小），每钮 46×标题条高
+constexpr float kWindowButtonW = 46.0f;
+
+bool titlebarCaptionHit(const CaptionHitQuery& query) {
+    // 拖拽区 = 标题条带内、右缘三钮热区左侧之外（logo/品牌文本区可拖）。
+    // 标题条贴边处的八向 resize 热区在 EUI-NEO 层优先于本回调，此处不管边缘
+    if (!customTitlebarActive()) {
+        return false;
+    }
+    if (query.y < 0.0f || query.y >= titlebarHeight()) {
+        return false;
+    }
+    if (query.x < 0.0f || query.x > query.width) {
+        return false;
+    }
+    return query.x < query.width - kWindowButtonW * 3.0f;
+}
+
+// 自绘标题条：左 logo+品牌文本、右三钮；不铺底色——半透/磨砂的 clearColor +
+// DWM backdrop 直接透到标题条区（D-R3-1 的落点：undecorated 后窗口效果铺满全窗）。
+// wechat 风格：灰字灰 hover；关闭钮 hover 红（theme warningRed #FA5151）+ 白叉
+void drawTitlebar(eui::Ui& ui, const eui::Screen& screen) {
+    const auto& t = ::core::theme::current();
+    const auto& wc = t.colors.wechat;
+    const eui::Color kTransparent{0.0f, 0.0f, 0.0f, 0.0f};
+    const float h = titlebarHeight();
+
+    // 单钮 = 透明 hit rect（hover/pressed 换底色）+ 居中图标 text
+    const auto drawWindowButton = [&](const char* idSuffix, float bx,
+                                      unsigned int glyph, bool redHover,
+                                      const std::function<void()>& action) {
+        const std::string id = std::string("app.titlebar.") + idSuffix;
+        if (redHover) {
+            ui.rect(id + ".hit")
+                .position(bx, 0.0f)
+                .size(kWindowButtonW, h)
+                .states(kTransparent, wc.warningRed, wc.warningRed)
+                .onHover([](bool hovered) { g_closeButtonHovered = hovered; })
+                .onClick(action)
+                .build();
+        } else {
+            ui.rect(id + ".hit")
+                .position(bx, 0.0f)
+                .size(kWindowButtonW, h)
+                .states(kTransparent, wc.dividerSecondary, wc.selectedBg)
+                .onClick(action)
+                .build();
+        }
+        ui.text(id + ".icon")
+            .position(bx, 0.0f)
+            .size(kWindowButtonW, h)
+            .icon(eui::utf8(glyph))
+            .fontSize(12.0f)
+            .horizontalAlign(eui::HorizontalAlign::Center)
+            .verticalAlign(eui::VerticalAlign::Center)
+            .color(redHover && g_closeButtonHovered
+                       ? eui::Color{1.0f, 1.0f, 1.0f, 1.0f}
+                       : wc.textSecondary)
+            .build();
+    };
+
+    ui.stack("app.titlebar")
+        .position(0.0f, 0.0f)
+        .size(screen.width, h)
+        .content([&] {
+            // 左：logo 图标 + 品牌文本（与折叠态侧栏 logo 同款 glyph）
+            ui.text("app.titlebar.logo")
+                .position(16.0f, 0.0f)
+                .size(28.0f, h)
+                .icon(eui::utf8(0xF5FC))  // fa-laptop-code
+                .fontSize(t.sizes.fontSizeBody)
+                .horizontalAlign(eui::HorizontalAlign::Center)
+                .verticalAlign(eui::VerticalAlign::Center)
+                .color(wc.primary)
+                .build();
+            ui.text("app.titlebar.brand")
+                .position(16.0f + 28.0f + 8.0f, 0.0f)
+                .size(160.0f, h)
+                .text("DevDesk")
+                .fontSize(t.sizes.fontSizeBody)
+                .fontWeight(700)
+                .verticalAlign(eui::VerticalAlign::Center)
+                .color(wc.textPrimary)
+                .build();
+
+            // 右：三钮从右往左 = 关闭 / 最大化（还原图标随窗口态切换）/ 最小化
+            const bool maximized = mainWindowMaximized();
+            drawWindowButton("close", screen.width - kWindowButtonW * 1.0f,
+                             0xF00D,  // fa-xmark
+                             /*redHover=*/true, [] { closeMainWindow(); });
+            drawWindowButton("maximize", screen.width - kWindowButtonW * 2.0f,
+                             maximized ? 0xF2D3 : 0xF2D2,  // fa-window-restore / -maximize
+                             /*redHover=*/false, [maximized] {
+                                 if (maximized) {
+                                     restoreMainWindow();
+                                 } else {
+                                     maximizeMainWindow();
+                                 }
+                             });
+            drawWindowButton("minimize", screen.width - kWindowButtonW * 3.0f,
+                             0xF2D1,  // fa-window-minimize
+                             /*redHover=*/false, [] { iconifyMainWindow(); });
+        })
+        .build();
 }
 
 // 常驻侧边栏：row(侧边栏, 页面内容)，列出 Router 全部已注册模块，当前页高亮，点击 navigateTo。
@@ -134,37 +268,18 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                 .radius(t.sizes.radiusWeChat)
                 .build();
 
-            // brand 行：展开 = logo + "DevDesk" 横排，折叠 = 只显示居中 logo；两态共用 topPad 防跳动
-            if (collapsed) {
-                ui.text("app.sidebar.brand")
-                    .position(0.0f, topPad)
-                    .size(kWidth, kBrandH)
-                    .icon(eui::utf8(0xF5FC))  // fa-laptop-code logo
-                    .fontSize(t.sizes.fontSizePage)
-                    .horizontalAlign(eui::HorizontalAlign::Center)
-                    .verticalAlign(eui::VerticalAlign::Center)
-                    .color(wc.primary)
-                    .build();
-            } else {
-                ui.text("app.sidebar.brand.logo")
-                    .position(padX, topPad)
-                    .size(kIconW, kBrandH)
-                    .icon(eui::utf8(0xF5FC))  // fa-laptop-code logo
-                    .fontSize(t.sizes.fontSizePage)
-                    .horizontalAlign(eui::HorizontalAlign::Center)
-                    .verticalAlign(eui::VerticalAlign::Center)
-                    .color(wc.primary)
-                    .build();
-                ui.text("app.sidebar.brand")
-                    .position(padX + kIconW + 8.0f, topPad)
-                    .size(kWidth - padX * 2.0f - kIconW - 8.0f, kBrandH)
-                    .text("DevDesk")
-                    .fontSize(t.sizes.fontSizePage)
-                    .fontWeight(700)
-                    .verticalAlign(eui::VerticalAlign::Center)
-                    .color(wc.textPrimary)
-                    .build();
-            }
+            // brand 行（UAT3 #9）：折叠/展开两态统一为居中 logo（icon 模式下 text 存
+            // glyph 的 UTF-8 串）；品牌文本由自绘标题栏承载（app.titlebar.brand）。
+            // 行高/topPad/间距保持防跳动
+            ui.text("app.sidebar.brand")
+                .position(0.0f, topPad)
+                .size(kWidth, kBrandH)
+                .icon(eui::utf8(0xF5FC))  // fa-laptop-code logo
+                .fontSize(t.sizes.fontSizePage)
+                .horizontalAlign(eui::HorizontalAlign::Center)
+                .verticalAlign(eui::VerticalAlign::Center)
+                .color(wc.primary)
+                .build();
 
             float y = topPad + kBrandH + kBrandNavGap;
 
@@ -325,21 +440,33 @@ void compose(eui::Ui& ui, const eui::Screen& screen) {
         return true;
     }();
     (void)scaleLogged;
-    // 布局 row(常驻侧边栏, 页面内容)：侧边栏宽随折叠态 208/72，页面区拿剩余宽度
+    // 布局（UAT3 D-R3-1 自绘标题栏占位）：Windows 自绘壳 → 顶层先画 40px 标题条，
+    // 根布局下移、侧边栏与页面内容同起点（页面顶与侧栏顶对齐）；macOS 保系统标题栏
+    // → 零占位，几何与旧版一致。bodyScreen/根布局/页面区三处高度同源，不允许各算各的
+    const bool chrome = customTitlebarActive();
+    const float bodyTop = chrome ? titlebarHeight() : 0.0f;
+    if (chrome) {
+        drawTitlebar(ui, screen);
+    }
+    eui::Screen bodyScreen;
+    bodyScreen.width = screen.width;
+    bodyScreen.height = screen.height - bodyTop;
+    bodyScreen.scale = screen.scale;
     ui.row("app.root")
-        .size(screen.width, screen.height)
+        .position(0.0f, bodyTop)
+        .size(screen.width, bodyScreen.height)
         .content([&] {
-            drawSidebar(ui, screen);
+            drawSidebar(ui, bodyScreen);
             const float pageW = pageContentWidth(screen.width);
             // 页面区原点 x = 侧边栏实际占宽；模块把窗口坐标指针位置换算成页面坐标时经 Router 取本值
             router->setPageOriginX(sidebarWidth());
             ui.stack("app.page")
-                .size(pageW, screen.height)
+                .size(pageW, bodyScreen.height)
                 .clip()
                 .content([&] {
                     eui::Screen pageScreen;
                     pageScreen.width = pageW;
-                    pageScreen.height = screen.height;
+                    pageScreen.height = bodyScreen.height;
                     // 手搓 Screen 不填 scale 会退化成 1.0，页面内坐标换算与框架三处不同源
                     pageScreen.scale = screen.scale;
                     router->compose(ui, pageScreen);
