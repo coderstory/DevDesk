@@ -673,7 +673,7 @@ REGISTER_TEST(todo_ui_newtask_dialog_plan_a,
         f.refresh();
         DOCTEST_CHECK_EQ(f.ui.find("todo.dialog.newtask.panel")->opacity, 0.0f);
 
-        auto tasks = env.svc->listTasks(col.value().id);
+        auto tasks = env.svc->listAllTasks();   // addTaskClicked→columns_.front()=待办(id=1)，非测试创建的列
         DOCTEST_REQUIRE(tasks.isOk());
         DOCTEST_REQUIRE_EQ(tasks.value().size(), static_cast<size_t>(1));
         const module::todo::Task& row = tasks.value()[0];

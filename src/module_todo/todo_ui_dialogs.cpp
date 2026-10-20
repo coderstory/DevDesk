@@ -17,8 +17,6 @@
 #include <components/dialog.h>
 #include <components/input.h>
 
-#include <iostream>
-
 #include <ctime>
 #include <map>
 #include <string>
@@ -179,7 +177,6 @@ int64_t dayShiftEpoch(int dayOffset) {
 // 方案 A 富创建：描述/优先级/截止随标题一次落库（NewTaskAttributes），标签建成
 // 后由模块侧补一次 update（见 DialogHost::createTask 注释）。
 void NewTaskDialog::submit(PopupStack& popups, const DialogHost& host) {
-    std::cerr << "DIAG:submit_called col=" << columnId << " title=" << title << " desc=" << description << " prio=" << static_cast<int>(priority) << " tags=" << tags.size() << std::endl;
     const int64_t col = columnId;
     const std::string text = title;
     NewTaskAttributes attrs;
