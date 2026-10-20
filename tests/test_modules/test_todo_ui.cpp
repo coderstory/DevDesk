@@ -4621,6 +4621,34 @@ REGISTER_TEST(todo_archive_tasks_in_column_sort,
     return true;
 })
 
+// UAT3 反馈：归档卡标题文字用黑色，不再灰色（透明度压暗保留区分）
+REGISTER_TEST(todo_ui_archive_card_title_color,
+              "todo_ui: 归档卡标题文字色 = wechat.textPrimary（黑，非灰）", {
+    TestEnv env;
+    DOCTEST_REQUIRE(env.ready);
+    // 从种子列里找到归档列：kind == "archive"
+    auto cols = env.svc->listColumns();
+    DOCTEST_REQUIRE(cols.isOk());
+    int64_t archiveColId = -1;
+    for (const auto& c : cols.value()) {
+        if (c.kind == "archive") { archiveColId = c.id; break; }
+    }
+    DOCTEST_REQUIRE(archiveColId > 0);
+    auto t = env.svc->createTask(archiveColId, "归档标题应是黑色");
+    DOCTEST_REQUIRE(t.isOk());
+
+    std::unique_ptr<::core::Module> mod(create_todo_module());
+    mod->onStart();
+
+    Frame frame(mod.get());
+    const auto* el = frame.ui.find("todo.col.3.card.0.title");
+    DOCTEST_REQUIRE(el != nullptr);
+    const auto& tm = core::theme::current();
+    DOCTEST_CHECK_EQ(el->color, tm.colors.wechat.textPrimary);
+    mod->onStop();
+    return true;
+})
+
 // 列头 / 真卡 / 拖拽副本三处标题省略号三件套（overflow==Ellipsis && maxWidth>0 && !wrap）
 REGISTER_TEST(todo_ui_title_ellipsis,
               "todo_ui: 列头+真卡+拖拽副本标题省略号三件套（headless）", {

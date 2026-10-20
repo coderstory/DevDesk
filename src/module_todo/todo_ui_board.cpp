@@ -613,7 +613,7 @@ void drawCard(eui::Ui& ui, const std::string& id, float x, float y, float width,
         .maxWidth(width - 2.0f * kCardTitleBoxInset)
         .overflow(core::TextOverflow::Ellipsis)
         // 逾期标题红（§4）；归档标题三级灰（§4）；常规标题走主题一级文字
-        .color(isArchiveCard ? t.colors.wechat.textTertiary
+        .color(isArchiveCard ? t.colors.wechat.textPrimary
                              : (overdue ? t.colors.wechat.warningRed
                                         : t.colors.textPrimary))
         .opacity(done ? 0.6f : finalCardOpacity)
