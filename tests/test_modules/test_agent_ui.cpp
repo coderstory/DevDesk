@@ -1270,7 +1270,7 @@ REGISTER_TEST(agent_ui_detail_dialog_shows_config_runs_messages,
     const auto* run1Bg = ui2.find("agent.dialog.detail.runlist.1.bg");
     DOCTEST_REQUIRE(run0Bg != nullptr && run1Bg != nullptr);
     DOCTEST_CHECK_MESSAGE(run0Bg->color.a > run1Bg->color.a,
-                          "最近一次 run 未高亮（选中 .bg 应为 primarySoftBg）");
+                          "最近一次 run 未高亮（选中 .bg 应为 wechat.selectedBg）");
     const auto* errRow = ui2.find("agent.dialog.detail.runlist.1.err");
     DOCTEST_REQUIRE(errRow != nullptr);
     DOCTEST_CHECK(errRow->text.find("200K") != std::string::npos);
