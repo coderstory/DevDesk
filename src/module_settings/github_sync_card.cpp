@@ -31,12 +31,14 @@ namespace {
 // desc y=40/h=16、内容起 y=68，label+control 行迁 ui_kit::formRow（label 110）。
 // UAT2 双列布局：5 行纵排 → 3 行——开关行（启用|自动推送）、URL 全宽行（输入 +
 // 三操作按钮）、输入行（分支|Token）；卡高 460 → 372（见 settings_ui_logic.h）。
+// UAT4 撑满 + 去门控：①输入宽不再设 kFieldW 320 上限——分支/Token 填满所在列
+// 控制区、URL 拉满到按钮组（btnAreaX−12，窄窗自动让位）；②开关钉所在列右缘；
+// ③未启用不再隐藏字段，改置灰禁用（启用开关本身始终可点）。
 inline constexpr float kCardPaddingX = 28.0f;
 inline constexpr float kTitleH = 22.0f;
 inline constexpr float kDescH = 16.0f;
 inline constexpr float kRowH = 36.0f;
 inline constexpr float kRowGap = 8.0f;
-inline constexpr float kFieldW = 320.0f;
 inline constexpr float kBtnW = 120.0f;
 inline constexpr float kBtnSmallW = 80.0f;
 inline constexpr float kBtnTestW = 100.0f;
@@ -44,6 +46,12 @@ inline constexpr float kDetailBtnW = 64.0f;
 inline constexpr float kSwitchW = 44.0f;
 inline constexpr float kStatusH = 20.0f;
 inline constexpr float kBtnGapX = 8.0f;
+// 禁用态档位（UAT4 去门控用）：Input/Switch 组件没有自带 .disabled()，借 DSL
+// element 级 disabled（子树不参与命中/聚焦，见 runtime_input.h 的 disabledTree
+// 传递）+ 子树 opacity（Stack 的 opacity 级联整棵子树，见 runtime_instances.h
+// renderTransform）实现置灰禁用。0.55 对齐 Button 禁用态文字 40% 透明的既有
+// 先例（components/button.h disabledTextColor），整树调暗取略轻档。
+inline constexpr float kDisabledOpacity = 0.55f;
 
 } // namespace
 
@@ -123,60 +131,79 @@ void drawGithubSyncCard(const CardDrawArgs& args) {
     const float colW = (formW - colGap) * 0.5f;
     const float col2X = kCardPaddingX + colW + colGap;   // 右列 x
 
-    // 第一行（双列开关行）：启用（左列）| 自动推送（右列）。右列仅启用态渲染——
-    // 旧版「未启用 → 早退后整行不画」的门控语义，双列配对后由本条件原样承接。
+    // 第一行（双列开关行）：启用（左列）| 自动推送（右列）。UAT4 撑满：两开关钉
+    // 各自所在列右缘（列内右对齐，行内容横跨整列）。UAT4 去门控：两行开关均
+    // 无条件渲染，不再按启用态隐藏右列；未启用时自动推送整行经 lock 包装层
+    // 置灰禁用（disabled 子树不可命中/不可聚焦 + 子树 opacity 调暗）。启用
+    // 开关本身不加 lock——始终可点，是重新启用的入口。
     ui_kit::formRow(ui, id + ".enabled", "启用", kCardPaddingX, y, colW, rowH,
-        [&](eui::Ui& ui, float cx, float cy, float /*cw*/, float ch) {
+        [&](eui::Ui& ui, float cx, float cy, float cw, float ch) {
             components::toggleSwitch(ui, id + ".enabled.sw")
-                .position(cx, cy + (ch - 20.0f) * 0.5f)
+                .position(cx + cw - kSwitchW, cy + (ch - 20.0f) * 0.5f)
                 .size(kSwitchW, 20.0f)
                 .checked(in.githubSyncEnabled)
                 .theme(compTheme)
                 .onChange([f = a.applyGithubSyncEnabled](bool v) { f(v); })
                 .build();
         }, t);
-    if (in.githubSyncEnabled) {
-        ui_kit::formRow(ui, id + ".autopush", "自动推送", col2X, y, colW, rowH,
-            [&](eui::Ui& ui, float cx, float cy, float /*cw*/, float ch) {
-                components::toggleSwitch(ui, id + ".autopush.sw")
-                    .position(cx, cy + (ch - 20.0f) * 0.5f)
-                    .size(kSwitchW, 20.0f)
-                    .checked(in.githubSyncAutoPush)
-                    .theme(compTheme)
-                    .onChange([f = a.applyGithubSyncAutoPush](bool v) { f(v); })
-                    .build();
-            }, t);
-    }
+    ui.stack(id + ".autopush.lock")
+        .position(0.0f, 0.0f)
+        .disabled(!in.githubSyncEnabled)
+        .opacity(in.githubSyncEnabled ? 1.0f : kDisabledOpacity)
+        .content([&] {
+            ui_kit::formRow(ui, id + ".autopush", "自动推送", col2X, y, colW,
+                           rowH,
+                [&](eui::Ui& ui, float cx, float cy, float cw, float ch) {
+                    components::toggleSwitch(ui, id + ".autopush.sw")
+                        .position(cx + cw - kSwitchW,
+                                  cy + (ch - 20.0f) * 0.5f)
+                        .size(kSwitchW, 20.0f)
+                        .checked(in.githubSyncAutoPush)
+                        .theme(compTheme)
+                        .onChange([f = a.applyGithubSyncAutoPush](bool v) { f(v); })
+                        .build();
+                }, t);
+        })
+        .build();
     y += rowH + roundFs(kRowGap);
 
-    if (!in.githubSyncEnabled) {
-        // 未启用：不显示后续表单（自动推送右列已在上面按启用态隐藏）
-        return;
-    }
+    // （UAT4 去门控）旧版「未启用 → 早退不画后续表单」已废除：下面 URL/分支/
+    // Token/按钮全部无条件渲染，未启用时各行经 lock 包装层、按钮经 disabled
+    // 呈禁用态——字段一览可见，用户先看清配置再决定是否启用。
 
-    // 操作按钮（右对齐，三个并排：立即同步 / 测试连接 / 拉取）；运行中三个一律禁用。
-    // 提前算 btnAreaX，供 URL 输入框让位用。
+    // 操作按钮（右对齐，三个并排：立即同步 / 测试连接 / 拉取）；运行中或未启用
+    // （UAT4 去门控后的禁用态）三个一律禁用。提前算 btnAreaX，供 URL 输入宽用。
     const float btnTotalW =
         kBtnW + kBtnTestW + kBtnSmallW + kBtnGapX * 2.0f;
     const float btnAreaX = w - kCardPaddingX - btnTotalW;
 
     // 第二行（URL 全宽行）：仓库 URL 输入 + 三个操作按钮（右缘对齐）。
-    // UAT3：窄窗（contentW≤712）时输入宽上限 kFieldW 320 与按钮组重叠 98px，
-    // 加 btnAreaX 让位：inputW = min(kFieldW, cw, btnAreaX − cx − 12gap)。
-    ui_kit::formRow(ui, id + ".url", "仓库 URL", kCardPaddingX, y, formW, rowH,
-        [&](eui::Ui& ui, float cx, float cy, float cw, float ch) {
-            const float inputW = std::min({kFieldW, cw,
-                std::max(0.0f, btnAreaX - cx - 12.0f)});
-            components::input(ui, id + ".url.input")
-                .position(cx, cy)
-                .size(inputW, ch)
-                .placeholder("https://github.com/user/repo.git")
-                .value(in.githubSyncRepoUrl)
-                .fontSize(t.sizes.fontSizeSmall)
-                .theme(compTheme)
-                .onChange([f = a.applyGithubSyncRepoUrl](const std::string& v) { f(v); })
-                .build();
-        }, t);
+    // UAT4 撑满：输入宽拉满到按钮组 = btnAreaX − 输入x − 12（12px 间距），
+    // 不再受 320 上限；同一公式内禀承接 UAT3 窄窗让位——712 最小窗自动收窄
+    // 到 210、不与按钮组重叠（H1 不回归），max(0,·) 兜负值为下限保护。
+    // 未启用时整行经 lock 包装层置灰禁用（输入不可聚焦 = 不可编辑）。
+    ui.stack(id + ".url.lock")
+        .position(0.0f, 0.0f)
+        .disabled(!in.githubSyncEnabled)
+        .opacity(in.githubSyncEnabled ? 1.0f : kDisabledOpacity)
+        .content([&] {
+            ui_kit::formRow(ui, id + ".url", "仓库 URL", kCardPaddingX, y,
+                           formW, rowH,
+                [&](eui::Ui& ui, float cx, float cy, float /*cw*/, float ch) {
+                    const float inputW =
+                        std::max(0.0f, btnAreaX - cx - 12.0f);
+                    components::input(ui, id + ".url.input")
+                        .position(cx, cy)
+                        .size(inputW, ch)
+                        .placeholder("https://github.com/user/repo.git")
+                        .value(in.githubSyncRepoUrl)
+                        .fontSize(t.sizes.fontSizeSmall)
+                        .theme(compTheme)
+                        .onChange([f = a.applyGithubSyncRepoUrl](const std::string& v) { f(v); })
+                        .build();
+                }, t);
+        })
+        .build();
 
     // 按钮组（btnAreaX 已在上面算好）
     components::button(ui, id + ".btn.push")
@@ -186,7 +213,7 @@ void drawGithubSyncCard(const CardDrawArgs& args) {
         .fontSize(fs(12.0f))
         .theme(compTheme, /*primary=*/true)
         .radius(t.sizes.radiusSmall)
-        .disabled(in.githubSyncRunning)
+        .disabled(!in.githubSyncEnabled || in.githubSyncRunning)
         .onClick([f = a.githubSyncPush] { f(); })
         .build();
     components::button(ui, id + ".btn.test")
@@ -199,7 +226,7 @@ void drawGithubSyncCard(const CardDrawArgs& args) {
         .textColor(t.colors.textPrimary)
         .radius(t.sizes.radiusSmall)
         .border(1.0f, t.colors.borderDefault)
-        .disabled(in.githubSyncRunning)
+        .disabled(!in.githubSyncEnabled || in.githubSyncRunning)
         .onClick([f = a.githubSyncTestConnection] { f(); })
         .build();
     components::button(ui, id + ".btn.pull")
@@ -212,39 +239,54 @@ void drawGithubSyncCard(const CardDrawArgs& args) {
         .textColor(t.colors.textPrimary)
         .radius(t.sizes.radiusSmall)
         .border(1.0f, t.colors.borderDefault)
-        .disabled(in.githubSyncRunning)
+        .disabled(!in.githubSyncEnabled || in.githubSyncRunning)
         .onClick([f = a.githubSyncPull] { f(); })
         .build();
     y += rowH + roundFs(kRowGap);
 
-    // 第三行（双列输入行）：分支（左列）| Token（右列）。Token 值 40+ 字符：列内
-    // control 区最小窗宽 1280 下仍 ≥450px，输入宽上限 kFieldW 320 与旧全宽行相同
-    // ——值显示截断可接受，编辑滚动由 EUI 单行输入的光标跟随滚动（InputModel::
-    // syncScroll）承担，不失功能。
-    ui_kit::formRow(ui, id + ".branch", "分支", kCardPaddingX, y, colW, rowH,
-        [&](eui::Ui& ui, float cx, float cy, float cw, float ch) {
-            components::input(ui, id + ".branch.input")
-                .position(cx, cy)
-                .size(std::min(kFieldW, cw), ch)
-                .placeholder("main")
-                .value(in.githubSyncBranch)
-                .fontSize(t.sizes.fontSizeSmall)
-                .theme(compTheme)
-                .onChange([f = a.applyGithubSyncBranch](const std::string& v) { f(v); })
-                .build();
-        }, t);
-    ui_kit::formRow(ui, id + ".token", "Token", col2X, y, colW, rowH,
-        [&](eui::Ui& ui, float cx, float cy, float cw, float ch) {
-            components::input(ui, id + ".token.input")
-                .position(cx, cy)
-                .size(std::min(kFieldW, cw), ch)
-                .placeholder("ghp_xxxxxxxxxxxxxxxxxxxx")
-                .value(in.githubSyncTokenDraft)
-                .fontSize(t.sizes.fontSizeSmall)
-                .theme(compTheme)
-                .onChange([f = a.setGithubSyncTokenDraft](const std::string& v) { f(v); })
-                .build();
-        }, t);
+    // 第三行（双列输入行）：分支（左列）| Token（右列）。UAT4 撑满：输入宽 =
+    // 所在列控制区宽（列宽 − label 110 − 间距 8），不再设 320 上限——宽窗下
+    // Token 值 40+ 字符全宽可见；编辑滚动仍由 EUI 单行输入的光标跟随滚动
+    // （InputModel::syncScroll）承担。未启用时两行各经 lock 包装层置灰禁用。
+    ui.stack(id + ".branch.lock")
+        .position(0.0f, 0.0f)
+        .disabled(!in.githubSyncEnabled)
+        .opacity(in.githubSyncEnabled ? 1.0f : kDisabledOpacity)
+        .content([&] {
+            ui_kit::formRow(ui, id + ".branch", "分支", kCardPaddingX, y,
+                           colW, rowH,
+                [&](eui::Ui& ui, float cx, float cy, float cw, float ch) {
+                    components::input(ui, id + ".branch.input")
+                        .position(cx, cy)
+                        .size(cw, ch)
+                        .placeholder("main")
+                        .value(in.githubSyncBranch)
+                        .fontSize(t.sizes.fontSizeSmall)
+                        .theme(compTheme)
+                        .onChange([f = a.applyGithubSyncBranch](const std::string& v) { f(v); })
+                        .build();
+                }, t);
+        })
+        .build();
+    ui.stack(id + ".token.lock")
+        .position(0.0f, 0.0f)
+        .disabled(!in.githubSyncEnabled)
+        .opacity(in.githubSyncEnabled ? 1.0f : kDisabledOpacity)
+        .content([&] {
+            ui_kit::formRow(ui, id + ".token", "Token", col2X, y, colW, rowH,
+                [&](eui::Ui& ui, float cx, float cy, float cw, float ch) {
+                    components::input(ui, id + ".token.input")
+                        .position(cx, cy)
+                        .size(cw, ch)
+                        .placeholder("ghp_xxxxxxxxxxxxxxxxxxxx")
+                        .value(in.githubSyncTokenDraft)
+                        .fontSize(t.sizes.fontSizeSmall)
+                        .theme(compTheme)
+                        .onChange([f = a.setGithubSyncTokenDraft](const std::string& v) { f(v); })
+                        .build();
+                }, t);
+        })
+        .build();
     y += rowH + roundFs(kRowGap);
 
     // 进度行（运行中：阶段文案）
