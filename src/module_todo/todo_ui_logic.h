@@ -330,9 +330,10 @@ inline eui::Color priorityCardBg(Priority p, const core::theme::Tokens& t,
     return priorityTintBg(p, t, base, priorityTintStrength(p));
 }
 
-// ② 按钮选中档强度：不取 1.0 实色——实色底配单一前景 token 总有一档掉到 4.5:1 以下；0.55 深 tint 四档均 ≥ 6.0:1。
-// D批提强度后 High 未选中档 0.55 与本选中档重合：High 选中/未选中底色同深，区分仅靠边框（2px 该档色 vs 1px 默认）
-inline constexpr float kPriorityButtonPickedStrength = 0.55f;
+// ② 按钮选中档强度：不取 1.0 实色——实色底配单一前景 token 总有一档掉到 4.5:1 以下；0.65 深 tint 四档均 ≥ 5.9:1。
+// UAT2 收口（D批后 High 未选中顶档 0.55 与本选中档重合、两态仅靠边框区分）：选中档提 0.65 与强度表
+// 顶档 0.55 拉开——High 选中/未选中底色可辨，边框（2px 该档色 vs 1px 默认）退为辅助反馈
+inline constexpr float kPriorityButtonPickedStrength = 0.65f;
 
 // ② 按钮底：「无」也是可选项须有自己的底色，None 档取强度表 0.20（近中性灰）；base 由调用方给三态基色
 inline eui::Color priorityButtonBg(Priority p, const core::theme::Tokens& t,

@@ -673,9 +673,9 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
             for (int i = 0; i < 4; ++i) {
                 const bool active = (d.detail.priority == prios[i]);
                 const float bw = 100.0f;
-                // 按钮底色 = 它代表的优先级色（priorityButtonBg：未选中按强度表 tint、选中 0.55 深 tint，与卡底同源）。
+                // 按钮底色 = 它代表的优先级色（priorityButtonBg：未选中按强度表 tint、选中 0.65 深 tint，与卡底同源）。
                 // 文字用 textPrimary（textSecondary 浅色档 < WCAG AA 4.5:1）；选中/未选中靠底色深浅 + 边框区分
-                // （D批提强度后 High 未选中 0.55 与选中档重合，High 档区分仅靠边框）；三态基色随米黄迁移走 wechat 次按钮梯度
+                // （UAT2 收口把选中档提 0.65，与 High 未选中顶档 0.55 拉开、四档两态底色均可辨）；三态基色随米黄迁移走 wechat 次按钮梯度
                 components::button(ui, "todo.dialog.detail.prio." + std::to_string(i))
                     .position(28.0f + static_cast<float>(i) * (bw + 8.0f), 320.0f + labelOffsetY)
                     .size(bw, 32.0f)
@@ -712,7 +712,8 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
                         t.colors.wechat.dividerSecondary, t.colors.wechat.selectedBg)
                 .textColor(!hasDue ? t.colors.wechat.primary : t.colors.textSecondary)
                 .radius(t.sizes.radius)
-                .border(1.0f, !hasDue ? t.colors.primary : t.colors.borderDefault)
+                .border(1.0f, !hasDue ? t.colors.wechat.primary
+                                     : t.colors.wechat.dividerPrimary)
                 .onClick(ro ? std::function<void()>{} : [&d] { d.detail.dueAt = std::nullopt; })
                 .build();
             // fa-calendar
@@ -727,7 +728,8 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
                         t.colors.wechat.dividerSecondary, t.colors.wechat.selectedBg)
                 .textColor(hasDue ? t.colors.wechat.primary : t.colors.textSecondary)
                 .radius(t.sizes.radius)
-                .border(1.0f, hasDue ? t.colors.primary : t.colors.borderDefault)
+                .border(1.0f, hasDue ? t.colors.wechat.primary
+                                     : t.colors.wechat.dividerPrimary)
                 .onClick(ro ? std::function<void()>{} : [&d] { d.popups.open(Popup::DatePick); })
                 .build();
 
@@ -847,7 +849,8 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
                     .size(160.0f, 40.0f)
                     .text("保存")
                     .fontSize(t.sizes.fontSizeBody - 1.0f)
-                    .colors(t.colors.primary, t.colors.primaryHover, t.colors.primaryPressed)
+                    .colors(t.colors.wechat.primary, t.colors.wechat.primaryHover,
+                            t.colors.wechat.primaryPressed)
                     .textColor(t.colors.onPrimary)
                     .radius(t.sizes.radius)
                     .onClick([&d, &host] {
