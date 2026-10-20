@@ -753,7 +753,7 @@ REGISTER_TEST(settings_log_dropdown_popup_stays_in_window, "settings: log dropdo
     DOCTEST_REQUIRE(popup != nullptr);
     DOCTEST_CHECK(popup->frame.y >= 0.0f);
     DOCTEST_CHECK(popup->frame.y + popup->frame.height <= screen.height);
-    DOCTEST_CHECK(popup->frame.y + popup->frame.height <= field->frame.y);
+    DOCTEST_CHECK(popup->frame.y >= field->frame.y + field->frame.height);   // UAT5：屏高 496 后保留下拉改为向下展
     // 级别下拉（UAT3 双列同排后 openUp 阈值随行 y 116→68）：短窗默认向下仍收在窗内
     const auto* levelField = ui.find("settings.card.log.level.dd.field");
     const auto* levelPopup = ui.find("settings.card.log.level.dd.popup");
