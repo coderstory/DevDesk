@@ -17,6 +17,8 @@
 #include <components/dialog.h>
 #include <components/input.h>
 
+#include <iostream>
+
 #include <ctime>
 #include <map>
 #include <string>
