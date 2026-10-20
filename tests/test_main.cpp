@@ -13,7 +13,6 @@
 #include "core/theme.h"
 #include "module_toggle_bridge.h"
 #include "platform/notification.h"
-#include "quota_home_bridge.h"
 #include "ui_kit/splash.h"
 #include <algorithm>
 #include <chrono>
@@ -82,8 +81,7 @@ void setEnvVar(const char* key, const std::string& value) {
 //  12. 退出接线已挂门          armExitHook 幂等记账位回厂      ← app_assembly.h
 //  13. 启动 splash 测试缝      无头进程禁 splash（2.3s 时序不适用） ← ui_kit/splash.h
 //  14. 模块开关桥 handler      两条桥的注入槽（模块开关 + claude 惰性装配）← module_toggle_bridge.h
-//  15. 余量功能总开关桥        devdesk::quota_bridge 的函数局部 static flag ← quota_home_bridge.h
-//  16. 系统通知后端注入槽      platform::notify 的进程级 Backend 槽 ← platform/notification.h
+//  15. 系统通知后端注入槽      platform::notify 的进程级 Backend 槽 ← platform/notification.h
 //
 // 同口径纪律：**进程级单例一律永不析构**——服务/注册表/统计状态这类「与进程同寿」
 // 的对象不得写成「函数局部 static」。首次构造晚于 armExitHook 时，atexit 的 LIFO
@@ -176,11 +174,7 @@ void resetCaseGlobals() {
     // 用例的 handler。出厂态 = 两条都是 nullptr（默认 no-op + LOG_WARN）。
     ::app::toggle::setToggleHandler(nullptr);
     ::app::toggle::setClaudeAssemblyHandler(nullptr);
-    // 15) 余量功能总开关桥（quota_home_bridge.h）：devdesk::quota_bridge 的函数局部
-    // static atomic——用例体内 setQuotaFeatureEnabled(true) 后 fail-fast 提前返回不会
-    // 还原，后续用例会在「开关开」的污染态里跑。出厂态 = false。
-    ::devdesk::quota_bridge::setQuotaFeatureEnabled(false);
-    // 16) 系统通知后端注入槽（platform/notification.h）：用例体内
+    // 15) 系统通知后端注入槽（platform/notification.h）：用例体内
     // setBackendForTest(&栈上 fake) 后 fail-fast 会跳过尾部复位，槽位里的悬垂指针
     // 会让后续用例崩溃；去重/限速/时钟覆盖同样会串味到后续用例。resetForTest
     // 一次清全部（后端槽 + 去重缓存 + 令牌桶 + 时钟 + initialize 幂等标记）。

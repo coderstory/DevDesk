@@ -16,7 +16,6 @@
 #include "core/logging.h"
 #include "module_claude_proxy/ccswitch_import.h"
 #include "module_claude_proxy/claude_ui_ccswitch.h"   // 编排层入口（透出 claude_service.h）
-#include "quota/ccswitch_source.h"
 
 #include <sqlite3.h>
 

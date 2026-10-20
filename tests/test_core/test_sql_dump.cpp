@@ -4,7 +4,7 @@
 // 夹具 schema 特意摆出三条会真炸的形态：FK 子表（agent_runs）按表名字典序先于父表
 // （agent_tasks）落库（导不关外键 = 导入必败）；AFTER INSERT 触发器写另一张被导出的表
 // audit_log（触发器若被挪回 INSERT 之前建，回环比对必红——audit_log 多出点火行）；
-// 名字带 _config 的真实业务表 profile_quota_config（影子表若按子串误判 = 静默从备份消失）。
+// 名字带 _config 的真实业务表 app_config（影子表若按子串误判 = 静默从备份消失）。
 #include "doctest.h"
 
 #include "core/sql_dump.h"
@@ -25,7 +25,7 @@ bool makeSourceDb(core::data::SqliteDb& db) {
         CREATE TABLE agent_runs (id INTEGER PRIMARY KEY, task_id INTEGER NOT NULL REFERENCES agent_tasks(id), status TEXT);
         CREATE TABLE audit_log (id INTEGER PRIMARY KEY AUTOINCREMENT, note TEXT NOT NULL);
         CREATE TABLE tags_unique (name TEXT NOT NULL UNIQUE);
-        CREATE TABLE profile_quota_config (provider_id TEXT PRIMARY KEY, models_config TEXT NOT NULL DEFAULT '');
+        CREATE TABLE app_config (k TEXT PRIMARY KEY, v TEXT NOT NULL DEFAULT '');
         CREATE TABLE claude_call_logs (id INTEGER PRIMARY KEY, model TEXT);
         CREATE TABLE claude_run_settings (k TEXT PRIMARY KEY, v TEXT NOT NULL);
         CREATE TABLE github_sync_state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
@@ -40,7 +40,7 @@ bool makeSourceDb(core::data::SqliteDb& db) {
         INSERT INTO audit_log(note) VALUES ('seed-a');
         INSERT INTO agent_runs(id, task_id, status) VALUES (10, 1, 'ok'), (11, 2, NULL);
         INSERT INTO tags_unique(name) VALUES ('alpha');
-        INSERT INTO profile_quota_config(provider_id, models_config) VALUES ('p1', '[{"model":"m"}]');
+        INSERT INTO app_config(k, v) VALUES ('p1', '[{"model":"m"}]');
         INSERT INTO claude_call_logs(id, model) VALUES (1, 'skip-me');
         INSERT INTO claude_run_settings(k, v) VALUES ('k1', 'v1');
         INSERT INTO github_sync_state(key, value) VALUES ('sha:notes/a.md', 'baseline-secret-sha'), ('first_sync_done', 'true');
@@ -121,9 +121,9 @@ REGISTER_TEST(sql_dump_export_contents, "SqlDump: 导出含索引/触发器/PRAG
     // FTS 虚表本体要导
     DOCTEST_CHECK(s.find("CREATE VIRTUAL TABLE markdown_fts USING fts5(title, body)") != std::string::npos);
 
-    // 影子表判定回归锚：真实业务表 profile_quota_config 名字带 _config，不能被误判成影子表
-    DOCTEST_CHECK_MESSAGE(s.find("-- Table: profile_quota_config") != std::string::npos,
-                          "profile_quota_config 被影子表误判排除");
+    // 影子表判定回归锚：真实业务表 app_config 名字带 _config，不能被误判成影子表
+    DOCTEST_CHECK_MESSAGE(s.find("-- Table: app_config") != std::string::npos,
+                          "app_config 被影子表误判排除");
 
     // 段顺序：索引 DDL 在 INSERT 之前，触发器 DDL 在 INSERT 之后
     const auto indexPos = s.find("-- Index: idx_runs_task");

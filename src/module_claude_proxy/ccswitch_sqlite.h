@@ -1,4 +1,4 @@
-// src/module_claude_proxy/quota/ccswitch_sqlite.h
+// src/module_claude_proxy/ccswitch_sqlite.h
 // cc-switch 只读库读取的共用脚手架（RAII / 探列 / 文本列 / 只读打开），被 ccswitch_source.cpp 与 ccswitch_import.cpp 共用。
 // 只读硬约束见 ccswitch_source.h（恒 SQLITE_OPEN_READONLY，不建表、不写 schema、不动 -wal/-shm）。
 #pragma once
@@ -15,7 +15,7 @@
 
 #include "ccswitch_source.h"  // kCcSwitchOpenFlags / ccSwitchDbPath（同目录相对）
 
-namespace module::claude::quota::ccswitch_sqlite {
+namespace module::claude::ccswitch_sqlite {
 
 // 撞上 cc-switch 的写锁时短暂等待，别一上来就报失败。
 inline constexpr int kBusyTimeoutMs = 2000;
@@ -94,7 +94,8 @@ inline OpenStatus openReadOnly(DbHandle& db, std::string* reason,
     // 不含 CREATE：绝不把库建出来
     sqlite3* raw = nullptr;
     const int openCode =
-        sqlite3_open_v2(path.c_str(), &raw, kCcSwitchOpenFlags, nullptr);
+        sqlite3_open_v2(path.c_str(), &raw,
+                        ccswitch::kCcSwitchOpenFlags, nullptr);
     db.reset(raw);
     if (openCode != SQLITE_OK) {
         // 失败时句柄可能是 nullptr，sqliteError 对两者都安全
@@ -115,4 +116,4 @@ inline ListT makeUnavailable(StatusT status, std::string reason) {
     return out;
 }
 
-}  // namespace module::claude::quota::ccswitch_sqlite
+}  // namespace module::claude::ccswitch_sqlite

@@ -169,7 +169,7 @@ std::set<std::string> listVirtualTables(sqlite3* handle) {
 }
 
 // FTS5 影子表 = 表名恰为某个 VIRTUAL TABLE 名加五个影子后缀之一。
-// 不能按「名字含 _config 等」子串判：真实业务表 profile_quota_config 会被误判成
+// 不能按「名字含 _config 等」子串判：真实业务表 app_config 会被误判成
 // 影子表，从备份里静默消失。后缀清单与 FTS5 模块落表名一致，别按记忆改写。
 bool isFtsShadowName(const std::string& name,
                      const std::set<std::string>& virtualTables) {

@@ -9,9 +9,7 @@
 #include "core/proxy_stats.h"
 #include "core/router.h"
 #include "core/theme.h"
-#include "home_quota_card.h"
 #include "home_service.h"
-#include "quota_home_bridge.h"
 
 #include <eui/dsl.h>
 
@@ -33,6 +31,12 @@
 namespace module::home {
 
 namespace {
+
+// 首页「今日 token 图表卡」的固定标称高度。首页各块高度全部固定（欢迎区 72 /
+// 统计网格 statH / 图表卡本值 / 快捷按钮行 44），页面装不下时不做任何压缩——
+// 溢出由整页外层 home.scroll（scrollView）出滚动条吸收，最小窗（1000×640）也
+// 不丢内容。
+constexpr float kHomeChartH = 260.0f;
 
 // 渲染单个统计卡片（card 组件，点击整卡跳转）。numberColor/badgeColor 非空覆盖默认配色；
 // timerSeconds > 0 挂 0 尺寸 onTimer 定期重绘；chart 非空叠加迷你图表；onTick 为该 timer 回调。
@@ -229,10 +233,6 @@ public:
 
     void onStop() override {
         service_.reset();
-        // 余量快照作废：停机后新连接 writeVersion 从 0 起，旧快照 seenVersion 恰好相等会拿旧行画新卡
-        quotaRows_.clear();
-        quotaErr_.clear();
-        quotaSeenVersionValid_ = false;
         LOG_INFO("Home 模块停止");
     }
 
@@ -528,35 +528,6 @@ public:
                     .build();
                 }
 
-                // 供应商余量（独立全宽区块）。数据来自只读库中立桥 quota_home_bridge.h；首页不发 HTTP，
-                // 后台刷新由 claude_module 的 QuotaRefresher 负责，[刷新] 只写请求信号；claude_proxy 关闭 → 整卡隐藏。
-                // 高度预算由纯函数 computeHomeQuotaBudget 统一算（与下方图表卡共用，矮窗下图表要让位）。
-                const module::home::quota_card::HomeQuotaBudget quotaBudget =
-                    module::home::quota_card::computeHomeQuotaBudget(
-                        screen.height, statH, pad, gap);
-                if (moduleRegistered(::core::PageId::ClaudeProxy) &&
-                    devdesk::quota_bridge::isQuotaFeatureEnabled()) {
-                    if (quotaBudget.drawsQuotaCard) {
-                    refreshQuotaRows();
-                    const std::vector<module::claude::quota::QuotaHomeRow>&
-                        quotaRows = quotaRows_;
-                    module::home::quota_card::Hooks hooks;
-                    hooks.refreshAll = [] {
-                        module::claude::quota::
-                            requestQuotaImmediateRefresh();
-                    };
-                    hooks.openConfig = [this](int64_t profileId) {
-                        navigateTo(::core::PageId::ClaudeProxy,
-                                   "action:quota_config:" +
-                                       std::to_string(profileId));
-                    };
-                    hooks.loadError = quotaErr_;
-                    module::home::quota_card::drawQuotaCard(
-                        ui, t, contentW, quotaRows, hooks,
-                        quotaBudget.quotaBodyHeight);
-                    }  // 窗口够高才画（见上）
-                }
-
                 // 今日 Token 用量分布：纵轴 = 该小时 output_tokens 合计；x 轴只画「第一个有数据的小时」
                 // ..「最后一个」闭区间；整天无数据 → 空态。
                 // 不用 components::barChart：它把纵值硬编码成 [0,1] 百分比语义，喂 token 合计会被夹成满格，
@@ -581,11 +552,8 @@ public:
                     for (size_t i = 0; i < barCount; ++i) {
                         peak = std::max(peak, hourly[range.first + i]);
                     }
-                    // 图表卡高度：窗口宽裕时取 kHomeChartH；矮窗下按 computeHomeQuotaBudget 压缩，最矮 kHomeChartMinH。
-                    const float chartCardH =
-                        quotaBudget.chartHeight > 0.0f
-                            ? quotaBudget.chartHeight
-                            : module::home::quota_card::kHomeChartH;
+                    // 图表卡高度：固定标称高；矮窗装不下时整页由外层 home.scroll 吸收溢出。
+                    const float chartCardH = kHomeChartH;
                     const float chartWrapH = chartCardH - 48.0f - 16.0f;  // 196
                     components::card(ui, "home.api.chart")
                         .size(contentW, chartCardH)
@@ -791,35 +759,6 @@ public:
 private:
     static constexpr int kRecentNoteLimit = 5;
 
-    // 余量快照缓存：compose 不持 db.mutex() 跑真 SQL——后台 QuotaRefresher 正在写这两张表，撞锁会阻塞 UI 帧。
-    // 失效判据 = db.writeVersion()：compose 每帧只做一次 acquire load（不取锁不查库），版本没变就复用快照；
-    // 首帧 seenVersionValid_ 初始 false 强制查一次。
-    void refreshQuotaRows() {
-        auto* qdb = ::core::appDatabase();
-        if (qdb == nullptr) {
-            quotaRows_.clear();
-            quotaErr_ = "数据库未初始化（appDatabase 为空）";
-            return;
-        }
-        const uint64_t ver = qdb->writeVersion();
-        if (quotaSeenVersionValid_ && quotaSeenVersion_ == ver) {
-            return;   // 数据没变 → 复用快照（本帧零查询、零锁）
-        }
-        // 版本取查询前的快照：查询后取会漏（读到旧数据却记成新版本，之后永不再查）。
-        auto qr = module::claude::quota::listQuotaHomeRows(*qdb);
-        if (qr.isOk()) {
-            quotaRows_ = std::move(qr.value());
-            quotaErr_.clear();
-        } else {
-            // 不静默：查询失败会在卡上显形（不是「暂无 profile」）。
-            quotaRows_.clear();
-            quotaErr_ = qr.errorMessage();
-            LOG_ERROR("Home 余量卡读取失败: " + quotaErr_);
-        }
-        quotaSeenVersion_ = ver;
-        quotaSeenVersionValid_ = true;
-    }
-
     // ① 的取数结果（空态/失败态靠 hasValue + lastRateError_ 区分）。
     using LastCallRate = module::home::LastCallRate;
 
@@ -834,11 +773,6 @@ private:
     }
 
     std::unique_ptr<HomeService> service_;
-    // 快照与版本号由本模块实例持有，不放全局：多实例与「换库重开」都不会互相污染。
-    std::vector<module::claude::quota::QuotaHomeRow> quotaRows_;
-    std::string quotaErr_;
-    uint64_t quotaSeenVersion_ = 0;
-    bool quotaSeenVersionValid_ = false;   // false = 从未查过（首帧强制查）
     DashboardStats stats_;
     bool statsLoaded_ = false;
     std::string statsError_;

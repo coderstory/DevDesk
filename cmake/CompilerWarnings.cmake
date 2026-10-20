@@ -53,10 +53,9 @@ function(devdesk_apply_warnings target_name)
         #    vendor 文件保持原样）。
         # ⑤ -Wfree-nonheap-object：libstdc++ bits/new_allocator.h:183
         #    （`operator delete(__p, __n)`，经 vector::~vector → _M_deallocate 内联进来）
-        #    在 tests/test_modules/test_claude_quota.cpp:453
-        #    （claude_quota_fields_empty_is_legal）报「called on pointer '__result'
-        #    with nonzero offset 72」。**误报，已实测排除真实非法释放**（2026-10-03）：
-        #    - 72 = sizeof(ProviderField)（两个 std::string + bool，实测 72），
+        #    在一条按值返回 fields() 的测试用例（:453）报「called on pointer
+        #    '__result' with nonzero offset 72」。**误报，已实测排除真实非法释放**（2026-10-03）：
+        #    - 72 = 被诊断结构的 sizeof（两个 std::string + bool，实测 72），
         #      即 GCC 沿 `__result + 72` 的指针算术累加出来的偏移，不是可疑魔数；
         #    - 用**完全相同**的编译命令加 `-fno-exceptions` 重编该 TU，告警消失且 .o
         #      正常产出 → 被诊断的 operator delete **只存在于异常清理 CFG**上；

@@ -52,6 +52,12 @@ core::Result<void> Database::migrate() {
         LOG_ERROR("agent 表列对齐失败: " + colMig.errorMessage());
         return colMig;
     }
+    // 遗留表清理：已摘除功能的两张表老库里还在，启动即幂等 DROP（见 schema.h 契约）
+    auto drop = core::schema::dropRemovedTables(db_);
+    if (drop.isFail()) {
+        LOG_ERROR("遗留表清理失败: " + drop.errorMessage());
+        return drop;
+    }
     return core::Result<void>::ok();
 }
 

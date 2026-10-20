@@ -24,7 +24,6 @@
 #include "platform/credential_protection.h" // Token 落库形态断言（storesPlaintext）
 #include "platform/json.h"      // 读 app.read_settings 的 JSON 出参
 #include "platform/system_theme.h"
-#include "quota_home_bridge.h"  // isQuotaFeatureEnabled / setQuotaFeatureEnabled
 
 #include <eui/app.h>
 #include <eui/detail/dsl_app_impl.h>
@@ -298,73 +297,6 @@ REGISTER_TEST(settings_proxy_autostart_default_off, "settings: claudeProxyAutoSt
             ::core::appDatabase(), module::settings::SettingsStore::keyNamespace(), R"({"theme": "light", "logRetentionDays": 30})"));
     }
     DOCTEST_CHECK_FALSE(store.load().claudeProxyAutoStart);
-    removeQuietly(path);
-    return true;
-})
-
-REGISTER_TEST(settings_quota_switch_default_off, "settings quota_switch: quotaEnabled 默认 false + 读写往返", {
-    // 配置落 app_config 表，生产代码经 core::appDatabase() 取连接；未注册则 save 一律失败。
-    test_support::TestEnv cfgDbEnv(kCfgPrefix, "cfg", true);
-    const auto path = test_support::tempConfigFile(kCfgPrefix, "quota");
-    removeQuietly(path);
-    module::settings::SettingsStore store(::core::appDatabase());
-
-    // 默认 false
-    DOCTEST_CHECK_FALSE(store.load().quotaEnabled);
-
-    // 开 → 持久化 → 读回 true
-    module::settings::SettingsConfig cfg;
-    cfg.quotaEnabled = true;
-    DOCTEST_REQUIRE(store.save(cfg).isOk());
-    DOCTEST_CHECK(store.load().quotaEnabled);
-
-    // 存量配置无该键 → 保持默认 false（兜底）
-    {
-        DOCTEST_REQUIRE(test_support::seedConfigJsonRows(
-            ::core::appDatabase(), module::settings::SettingsStore::keyNamespace(),
-            R"({"theme": "light", "logRetentionDays": 7})"));
-    }
-    DOCTEST_CHECK_FALSE(store.load().quotaEnabled);
-    removeQuietly(path);
-    return true;
-})
-
-REGISTER_TEST(settings_quota_switch_bridge_flag, "settings quota_switch: bridge 标记默认 false + 设置后即时同步", {
-    test_support::TestEnv cfgDbEnv(kCfgPrefix, "cfg");
-    const auto path = test_support::tempConfigFile(kCfgPrefix, "bridgeflag");
-    removeQuietly(path);
-
-    // 默认 false
-    DOCTEST_CHECK_FALSE(devdesk::quota_bridge::isQuotaFeatureEnabled());
-
-    // 开启 bridge
-    devdesk::quota_bridge::setQuotaFeatureEnabled(true);
-    DOCTEST_CHECK(devdesk::quota_bridge::isQuotaFeatureEnabled());
-
-    // 关闭 bridge
-    devdesk::quota_bridge::setQuotaFeatureEnabled(false);
-    DOCTEST_CHECK_FALSE(devdesk::quota_bridge::isQuotaFeatureEnabled());
-
-    removeQuietly(path);
-    return true;
-})
-
-REGISTER_TEST(settings_quota_switch_data_preserved, "settings quota_switch: 关闭后数据保留（库里的 quota 行不删）", {
-    // 验证语义：setQuotaFeatureEnabled(false) 不触发任何数据库写操作。
-    // 本用例只测 setQuotaFeatureEnabled(false) 把标记切回 false 即可——数据保留由架构保证
-    //（bridge 只管进程级 atomic bool，不碰数据库；quota 表由 QuotaStore 独立维护）。
-    test_support::TestEnv cfgDbEnv(kCfgPrefix, "cfg");
-    const auto path = test_support::tempConfigFile(kCfgPrefix, "datakeep");
-    removeQuietly(path);
-
-    // 先设为 true
-    devdesk::quota_bridge::setQuotaFeatureEnabled(true);
-    DOCTEST_CHECK(devdesk::quota_bridge::isQuotaFeatureEnabled());
-
-    // 关闭：标记切回 false，数据库不受影响（bridge 无 write 路径）
-    devdesk::quota_bridge::setQuotaFeatureEnabled(false);
-    DOCTEST_CHECK_FALSE(devdesk::quota_bridge::isQuotaFeatureEnabled());
-
     removeQuietly(path);
     return true;
 })
@@ -2991,7 +2923,6 @@ REGISTER_TEST(settings_card_registry_order,
         const std::vector<std::string> wantModulesAll = {
             "settings.card.modules.grouptitle",
             "settings.card.modules",
-            "settings.card.quota",
             "settings.card.directory.groupdivider",
             "settings.card.directory.grouptitle",
             "settings.card.directory",
@@ -3022,8 +2953,7 @@ REGISTER_TEST(settings_card_registry_order,
         DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 1));
         const std::vector<std::string> wantModulesGated = {
             "settings.card.modules.grouptitle",
-            "settings.card.modules",
-            "settings.card.quota"};
+            "settings.card.modules"};
         const auto g1 = cardIdsOf(*mod, screen);
         DOCTEST_CHECK_MESSAGE(g1 == wantModulesGated, "模块 tab（门控全关） 实测：" + join(g1));
         DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 0));
@@ -3045,7 +2975,7 @@ REGISTER_TEST(settings_card_registry_order,
 // 页面渐变底本身也已删，页面级反断言在 test_ui_modern.cpp
 // uiModernSettingsBodyGradientRemoved（settings.body.gradient / .bg 必须都不存在）。
 REGISTER_TEST(settings_cards_no_outer_cardframe,
-              "settings: 8 卡无外层 cardFrame——内容直接铺页面底（两档主题）", {
+              "settings: 7 卡无外层 cardFrame——内容直接铺页面底（两档主题）", {
     test_support::TestEnv env(kCfgPrefix, "noframe", true);
     test_support::ScopedConfigPath cfgEnv(
         test_support::tempConfigFile(kCfgPrefix, "noframe_cfg"));
@@ -3062,12 +2992,11 @@ REGISTER_TEST(settings_cards_no_outer_cardframe,
 
     // 卡 root stack id（内容锚）+ cardFrame 若加回会出现的 bg id（cardFrame 在 (0,0)
     // 铺的矩形，id = <stack>.bg）。顺序 = 注册表序
-    const int kTabOf[] = {0, 0, 1, 1, 1, 1, 2, 2};
+    const int kTabOf[] = {0, 0, 1, 1, 1, 2, 2};
     const char* const kStackIds[] = {
         "settings.card.appearance",
         "settings.card.editor",
         "settings.card.modules",
-        "settings.card.quota",
         "settings.card.directory",
         "settings.card.proxy",
         "settings.card.log",
@@ -3077,7 +3006,6 @@ REGISTER_TEST(settings_cards_no_outer_cardframe,
         "settings.card.appearance.bg",
         "settings.card.editor.bg",
         "settings.card.modules.bg",
-        "settings.card.quota.bg",
         "settings.card.directory.bg",
         "settings.card.proxy.bg",
         "settings.card.log.bg",
@@ -3091,7 +3019,7 @@ REGISTER_TEST(settings_cards_no_outer_cardframe,
             ::core::theme::setLight();
         }
         int lastTab = -1;
-        for (size_t i = 0; i < 8; ++i) {
+        for (size_t i = 0; i < 7; ++i) {
             if (kTabOf[i] != lastTab) {
                 lastTab = kTabOf[i];
                 DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, lastTab));

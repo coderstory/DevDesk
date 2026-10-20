@@ -30,7 +30,6 @@ constexpr const char* kKeyWindowEffect = "windowEffect";
 constexpr const char* kKeyEnabledModules = "enabledModules";
 constexpr const char* kKeySidebarCollapsed = "sidebarCollapsed";
 constexpr const char* kKeyAccentTheme = "accentTheme";
-constexpr const char* kKeyQuotaEnabled = "quotaEnabled";
 
 // 合法模块 ID 清单（sanitized 过滤未知项；与 kModuleId* 一一对应）
 const char* const kKnownModuleIds[] = {
@@ -390,12 +389,6 @@ core::Result<SettingsConfig> SettingsStore::loadChecked() const {
             v.errorCode(), v.errorMessage());
         if (v.value().isBool()) cfg.sidebarCollapsed = v.value().asBool();
     }
-    if (auto raw = readRow(kKeyQuotaEnabled); raw.isOk()) {
-        auto v = parseRow(configKey(kKeyQuotaEnabled), raw.value());
-        if (v.isFail()) return core::Result<SettingsConfig>::fail(
-            v.errorCode(), v.errorMessage());
-        if (v.value().isBool()) cfg.quotaEnabled = v.value().asBool();
-    }
     if (auto raw = readRow(kKeyAccentTheme); raw.isOk()) {
         auto v = parseRow(configKey(kKeyAccentTheme), raw.value());
         if (v.isFail()) return core::Result<SettingsConfig>::fail(
@@ -450,7 +443,6 @@ core::Result<void> SettingsStore::save(const SettingsConfig& cfgRaw) const {
         {kKeyWindowEffect, platform::json::makeString(cfg.windowEffect)},
         {kKeySidebarCollapsed, platform::json::makeBool(cfg.sidebarCollapsed)},
         {kKeyAccentTheme, platform::json::makeString(cfg.accentTheme)},
-        {kKeyQuotaEnabled, platform::json::makeBool(cfg.quotaEnabled)},
         {kKeyEnabledModules,
          platform::json::makeStringArray(cfg.enabledModules)},
     };

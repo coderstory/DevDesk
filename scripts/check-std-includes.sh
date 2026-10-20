@@ -5,12 +5,12 @@
 # 为什么这道门禁必须静态、「编一遍」不够：缺 include 在本机和交叉链上都不会炸 ——
 # macOS libc++ 与 llvm-mingw 的 libc++ 都经 `core/sqlite_db.h` → <map> →
 # <__node_handle> → <optional> 把 std::optional 传递带进来（clang -H 实测到的链条），
-# 而 CI 的 MSYS2 libstdc++ 不带（quota_store.cpp:43 就是在 CI 上炸的）。只要标准库
+# 而 CI 的 MSYS2 libstdc++ 不带（某共享 cpp 缺 <optional> 就是在 CI 上炸的真实先例）。只要标准库
 # 自己还在传递包含，任何编译型门禁都抓不到这一类 bug。本门禁改用与标准库无关的判据：
 # 本文件直接写了 std::X，而能声明它的头既不在本文件、也不在本文件直接 include 的
 # 本项目头文件里 → 报红。
 #
-# 跨文件不变量：`quota_store.cpp` 是**共享文件**（Windows CI 编它），而
+# 跨文件不变量：模块目录下的共享 cpp 是 **共享文件**（Windows CI 编它），而
 # check-windows-cross-compile.sh 的早期版本只编 `*_win.cpp` —— 共享文件的缺 include
 # 只有 Windows CI 那台编译器会报，所以「本机绿」在这道门禁上没有任何证据力。
 #
@@ -671,8 +671,8 @@ function dirpart(p,   k, arr, n, i, out) {
     return out
 }
 # 解析 `#include "x.h"`：先按 includer 所在目录，再按 src/、tests/ 根，最后才
-# 退化到同名匹配。⚠ 同名替换必须放**最后**——放前面会把 "quota_store.h" 换成
-#   仓库相对全路径，再拼目录就变成 "…/quota/src/…/quota/quota_store.h"，永远解析不到。
+# 退化到同名匹配。⚠ 同名替换必须放**最后**——放前面会把同名头换成
+#   仓库相对全路径，再拼目录就永远解析不到（目录被重复拼进路径）。
 function resolve_quoted(from, g,   orig, d, c) {
     orig = g
     d = dirpart(from)
@@ -777,7 +777,7 @@ FNR == 1 {
     delete SELF_QUO
     delete USED          # ⚠ 漏了这一行 → USED 跨文件累积，前面文件已见过的符号
                          #   在本文件里被当成"见过了"跳过 → NS 越小、漏报越多。
-                         #   实测：quota_store.cpp 单跑 9 条，排在第 130 位后变 0 条。
+                         #   实测：单文件跑能报 9 条、排在第 130 位后变 0 条。
                          #   「同一个门禁跑全树和跑单文件结论不同"就是它。
     NU = 0; NS = 0
     delete SYM; delete USING; delete USINGLINE
@@ -970,8 +970,8 @@ fi
 
 if [ "$SELF_TEST" -eq 1 ]; then
     ok=0
-    echo "  探针文件：src/module_claude_proxy/quota/quota_store.cpp"
-    PROBE_REL="src/module_claude_proxy/quota/quota_store.cpp"
+    echo "  探针文件：src/module_claude_proxy/claude_tools.cpp"
+    PROBE_REL="src/module_claude_proxy/claude_tools.cpp"
 
     # 好树：真实源码必须 0 违规（证明"绿"是真绿）。
     if OUT="$(run_gate "$FILES" 2>/dev/null)"; then
@@ -1040,7 +1040,7 @@ if [ "$SELF_TEST" -eq 1 ]; then
 
     # 坏树 D（判据②的反证）：符号只经**实现细节**传递才可见 → 必须红。只给 <map> 不给
     # <optional> —— libc++ 经 __node_handle 带进来、libstdc++ 不带的那一类，正是
-    # quota_store.cpp 炸 CI 的成因；守卫若是恒绿的假绿守卫，这条会绿。
+    # 共享文件在 CI 上炸的成因；守卫若是恒绿的假绿守卫，这条会绿。
     mkdir -p "$TMP/badD"
     printf '#include "dummy_provider.h"\n#include <map>\nnamespace {\nstd::optional<int> bad_probe_map_chain = {};\n}\n' \
         > "$TMP/badD/probe.cpp"

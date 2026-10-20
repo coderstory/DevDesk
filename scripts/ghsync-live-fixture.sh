@@ -6,7 +6,7 @@
 #   - 主仓（可写、非破坏性场景）：coderstory/devdesk-sync-test
 #   - 一次性仓（破坏性场景：删仓 / 垃圾库）：coderstory/devdesk-sync-test-destroy
 #
-# 凭据红线（与 tools/quota_live_probe.cpp 同级）：
+# 凭据红线：
 #   token 只进 Authorization 头，**绝不** echo / 进日志 / 进 argv；唯一落盘是
 #   0600 的临时头文件（curl -H @文件 读它，EXIT trap 即删）——直接
 #   -H "Authorization: Bearer …" 会把 token 摆进 curl 的 argv，全机 ps 可见。

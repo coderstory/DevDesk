@@ -5,7 +5,6 @@
 #include "claude_service.h"
 #include "ccswitch_import.h"
 #include "provider_config.h"
-#include "quota/quota_dialog_config.h"
 
 #include <chrono>
 #include <cstdint>
@@ -191,10 +190,6 @@ struct LogsState {
     std::future<void> callsWorker_;
 };
 
-// 余量查询配置弹窗（独立状态：带后台查询「测试连接」，复用会污染表单状态；
-// 必须接入 anyDialogOpen 门控与 closeTopmostDialog Esc 序链最顶层）
-using quota::QuotaDialogState;
-
 struct ClaudeUiState {
     ProfileListState list;
     DetailState detail;
@@ -203,7 +198,6 @@ struct ClaudeUiState {
     CcSwitchImportDialogState ccswitchImport;  // 从 cc-switch 导入弹窗
     ImportState import;
     LogsState logs;
-    QuotaDialogState quota;           // 余量查询配置弹窗
 };
 
 // 数据缓存的后台刷新：compose 每帧只做「搬已就绪结果进快照 + 发下一次刷新意图」两件无 IO 的事；SQLite 查询全在后台（同步查会与代理 worker 争锁）。失败保持脏、按节流窗口重试。

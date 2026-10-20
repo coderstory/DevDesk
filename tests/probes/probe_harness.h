@@ -236,13 +236,9 @@ struct ProbeArgs {
     // 空 = 不建渲染后端、不渲染、不写文件、不改退出码。
     std::string screenshotPath;
     // --screenshot-seeded <路径>：**中途**状态点落图（与 screenshotPath 相互独立、
-    // 可同时给）。探针收尾前常做破坏性收尾断言（清空余量表再断言），退出点那张图拍到
-    // 的是收尾后的空态；本开关让探针能在「数据还在」的中途点另拍一张。空 = 零开销。
+    // 可同时给）。探针收尾前常做破坏性收尾断言（清库再断言），退出点那张图拍到的
+    // 是收尾后的空态；本开关让探针能在「数据还在」的中途点另拍一张。空 = 零开销。
     std::string screenshotSeedPath;
-    // --quota-fixture <路径>：**home_probes 专用**（其余 probe 忽略）。让余量卡种子改用
-    // 一份真机落下的 JSON（quota_live_probe --dump 的产物），从而「真网络 → 真落库 →
-    // 真渲染 → 真落图」这条链能被一次跑通。空 = 用离线假种子（门禁跑的就是这条）。
-    std::string quotaFixturePath;
 };
 
 inline int parseLeadingInt(const std::string& text, int fallback) {
@@ -257,7 +253,7 @@ inline int parseLeadingInt(const std::string& text, int fallback) {
 }
 
 /// 解析 --frames N / --size WxH / --manual / --screenshot <路径> /
-/// --screenshot-seeded <路径> / --quota-fixture <路径>；未知参数忽略。
+/// --screenshot-seeded <路径>；未知参数忽略。
 inline ProbeArgs parseProbeArgs(int argc, char* argv[]) {
     ProbeArgs args;
     for (int i = 1; i < argc; ++i) {
@@ -275,8 +271,6 @@ inline ProbeArgs parseProbeArgs(int argc, char* argv[]) {
             args.screenshotPath = argv[++i];
         } else if (arg == "--screenshot-seeded" && i + 1 < argc) {
             args.screenshotSeedPath = argv[++i];
-        } else if (arg == "--quota-fixture" && i + 1 < argc) {
-            args.quotaFixturePath = argv[++i];
         } else if (arg == "--manual") {
             args.manual = true;
         }

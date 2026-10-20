@@ -5,9 +5,9 @@
 # ── 受编集合（本门禁最容易被"改进"坏的地方）──────────────────────────
 # 受编集合 = **从 CMakeLists.txt 解析出来的、WIN32 分支下真正参与构建的源文件**。
 # **不要退回只编 `*_win.cpp`，也不要改成手写清单**：Windows CI 编的是**整棵树**，
-# `quota_*` / `claude_service.cpp` / `home_service.cpp` 这些**共享文件**它全编。
-# 真实事故：`src/module_claude_proxy/quota/quota_store.cpp` 缺 `#include <optional>`，
-# 那是共享文件，只编 *_win.cpp 的门禁压根看不见，红得毫无预警。手写清单也必然随
+# `claude_service.cpp` / `home_service.cpp` 这些**共享文件**它全编。
+# 真实事故：共享 cpp 缺 `#include <optional>`，只编 *_win.cpp 的门禁压根看不见，
+# 红得毫无预警。手写清单也必然随
 # 新文件漂移，漂了就是又一次静默盲区。
 #
 # ── 解析规则（解析器本身也要能被检查，见下面的交叉校验）──────────────
