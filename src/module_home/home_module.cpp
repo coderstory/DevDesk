@@ -34,23 +34,6 @@ namespace module::home {
 
 namespace {
 
-// 数字字号随位数收缩：700 字重数字 ≈0.60em/位，可用宽不足时降号（下限 24 档），上限 base
-// W9: 数字改固定 18px（fontSizeLarge），本函数暂留供未来恢复自适应时复用
-[[maybe_unused]] float statNumberFont(float base, int digits, float availWidth, float scale) {
-    if (digits <= 0) return base;
-    const float want =
-        std::floor(availWidth / (0.60f * static_cast<float>(digits)) / scale);
-    return std::clamp(want * scale, 24.0f * scale, base);
-}
-
-[[maybe_unused]] int digitCount(const std::string& text) {
-    int n = 0;
-    for (char c : text) {
-        if (c >= '0' && c <= '9') ++n;
-    }
-    return n;
-}
-
 // 渲染单个统计卡片（card 组件，点击整卡跳转）。numberColor/badgeColor 非空覆盖默认配色；
 // timerSeconds > 0 挂 0 尺寸 onTimer 定期重绘；chart 非空叠加迷你图表；onTick 为该 timer 回调。
 // 卡内容四周统一 16px 内边距（显式 .padding 替代组件默认 20）
@@ -100,15 +83,15 @@ void drawStatCard(eui::Ui& ui,
                     // 卡内文字：坐标相对 card content 原点（已含 16 inset）
                     ui.text(id + ".label")
                         .position(0.0f, 16.0f * s)
-                        .size(cw, 16.0f * s)
+                        .size(cw, 18.0f * s)
                         .text(label)
-                        .fontSize(t.sizes.fontSizeSmall - 1.0f)
-                        .lineHeight(16.0f * s)
+                        .fontSize(t.sizes.fontSizeSmall + 1.0f)
+                        .lineHeight(18.0f * s)
                         .horizontalAlign(eui::HorizontalAlign::Center)
                         .color(t.colors.wechat.textTertiary)  // W9 三级灰 #999999
                         .build();
-                    // W9 微信风格：数字 18px 深灰 #1A1A1A（§2 数据卡片规格）
-                    const float numberSize = t.sizes.fontSizeLarge;
+                    // UAT2 覆盖 W9：数字 22px（fontSizeLarge+4）深灰 #1A1A1A，更醒目
+                    const float numberSize = t.sizes.fontSizeLarge + 4.0f;
                     ui.text(id + ".number")
                         .position(0.0f, 32.0f * s)
                         .size(cw, 56.0f * s)
@@ -126,7 +109,7 @@ void drawStatCard(eui::Ui& ui,
                         .position(0.0f, height - 48.0f)
                         .size(cw, 16.0f)
                         .text(badge)
-                        .fontSize(t.sizes.fontSizeSmall - 2.0f)
+                        .fontSize(t.sizes.fontSizeSmall)
                         .lineHeight(16.0f)
                         .horizontalAlign(eui::HorizontalAlign::Center)
                         .color(badgeColor ? *badgeColor
@@ -362,18 +345,18 @@ public:
                             .alignItems(eui::Align::CENTER)
                             .gap(t.sizes.spacingSmall)
                             .content([&] {
-                                // W9 刷新按钮改浅灰文字按钮：透明底 + 灰字 + 无边框
+                                // UAT2 覆盖 W9：刷新按钮对齐底部次按钮——
+                                // secondaryButtonBg 底 + textPrimary 字（不再透明底浮空）
                                 components::button(ui, "home.btn.refresh")
                                     .size(100.0f, 40.0f)
                                     .text("刷新")
                                     .icon(0xF021)  // fa-arrows-rotate
                                     .fontSize(t.sizes.fontSizeBody - 1.0f)
-                                    .colors(components::theme::color(0.0f, 0.0f,
-                                                                    0.0f, 0.0f),
+                                    .colors(t.colors.wechat.secondaryButtonBg,
                                             t.colors.wechat.dividerSecondary,
                                             t.colors.wechat.dividerSecondary)
-                                    .textColor(t.colors.wechat.textTertiary)
-                                    .iconColor(t.colors.wechat.textTertiary)
+                                    .textColor(t.colors.wechat.textPrimary)
+                                    .iconColor(t.colors.wechat.textPrimary)
                                     .radius(t.sizes.radiusWeChat)
                                     .onClick([this] { refreshStats(); })
                                     .build();
@@ -742,36 +725,25 @@ public:
                         .build();
                 }
 
-                // 快捷操作按钮组：目标模块关闭 → 按钮隐藏；W9 主次不等宽。
+                // 快捷操作按钮组：目标模块关闭 → 按钮隐藏；UAT2 覆盖改等宽。
                 int actCount = 0;
                 for (const auto& btn : kActionButtons) {
                     if (moduleRegistered(btn.module)) ++actCount;
                 }
                 if (actCount > 0) {
                 const float actGap = t.sizes.spacingLarge; // 16
-                // W9 主次不等宽：新建笔记权重 1.5（最宽），其余 1.0
-                float actWeightSum = 0.0f;
-                for (const auto& btn : kActionButtons) {
-                    if (moduleRegistered(btn.module)) {
-                        actWeightSum += (btn.kind == ActionKind::NewNote)
-                                            ? 1.5f
-                                            : 1.0f;
-                    }
-                }
+                // UAT2 覆盖 W9 主次不等宽：三按钮权重全 1.0（actWeightSum=actCount）
                 ui.row("home.actions")
                     .size(contentW, 44.0f)
                     .gap(actGap)
                     .content([&] {
-                        // W9 微信风格：新建笔记绿主按钮（最宽），其余浅灰次按钮（无边框）
+                        // W9 微信风格：新建笔记绿主按钮，其余浅灰次按钮（无边框）；UAT2 起等宽
                         for (const auto& btn : kActionButtons) {
                             if (!moduleRegistered(btn.module)) continue;
-                            const float btnWeight =
-                                (btn.kind == ActionKind::NewNote) ? 1.5f
-                                                                  : 1.0f;
                             const float actW =
                                 (contentW -
-                                 actGap * static_cast<float>(actCount - 1)) *
-                                btnWeight / actWeightSum;
+                                 actGap * static_cast<float>(actCount - 1)) /
+                                static_cast<float>(actCount);
                             auto builder = components::button(
                                 ui, actionButtonElementId(btn.kind));
                             builder.size(actW, 44.0f)

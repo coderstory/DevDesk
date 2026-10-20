@@ -49,9 +49,9 @@ REGISTER_TEST(font_em_semantics_active, "font-em: measured width follows CSS em 
 REGISTER_TEST(home_stat_card_text_fits, "font-em: home stat card text fits fixed card", {
     const auto& t = core::theme::current();
     core::theme::setFontScale(1.0f);  // 100% 是本文件的复核基准；测完由后续用例各自复位
-    const float labelSize = t.sizes.fontSizeSmall - 1.0f;   // 12
-    const float badgeSize = t.sizes.fontSizeSmall - 2.0f;   // 11
-    const float numberSize = t.sizes.fontSizeDisplay;       // 48
+    const float labelSize = t.sizes.fontSizeSmall + 1.0f;   // 14（UAT2 卡片字大）
+    const float badgeSize = t.sizes.fontSizeSmall;          // 13（UAT2 卡片字大）
+    const float numberSize = t.sizes.fontSizeLarge + 4.0f;  // 22（UAT2 卡片字大）
 
     // 标签取最长文案
     DOCTEST_CHECK(textW("Token 速率 (tok/s)", labelSize) <= kHomeStatTextW);

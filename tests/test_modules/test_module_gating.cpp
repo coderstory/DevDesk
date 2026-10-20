@@ -313,18 +313,18 @@ REGISTER_TEST(gating_home_all_on_unchanged, "gating: 全注册时 Home 与现状
 
 // G4 补缺（docs/superpowers/plans/2026-10-19-ui-test-gap-map.md）：home.actions 与
 // 模块注册态的**联动**——既有用例只断按钮在场/缺席，这里钉三档收缩几何：
-//   ① 全注册：三按钮不等宽（W9：新建笔记权重 1.5 最宽，其余 1.0），行宽 = contentW；
+//   ① 全注册：三按钮等宽（UAT2 覆盖 W9 不等宽：权重全 1.0），行宽 = contentW；
 //   ② 只剩 markdown：幸存按钮独占整行（宽 = ①行宽 = contentW，权重归一）；
 //   ③ 全关：home.actions 整行元素不存在（不是空行占位）。
 // contentW 两次 compose 间不变（同 screen 尺寸同代码路径），①②可互推。
 REGISTER_TEST(gating_home_actions_row_collapse,
-              "gating: Home 快捷按钮联动收缩（不等宽 新建笔记最宽）/ 全关整行隐藏", {
+              "gating: Home 快捷按钮联动收缩（等宽）/ 全关整行隐藏", {
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
     float rowW = 0.0f;  // ① 行宽（= contentW，跨档复算用）
 
-    // ① 全注册：三按钮不等宽（W9：新建笔记权重 1.5 最宽，其余 1.0）
+    // ① 全注册：三按钮等宽（UAT2 覆盖 W9 不等宽：权重全 1.0）
     {
         ::core::Router router;
         StubModule home(::core::PageId::Home, "home");
@@ -356,13 +356,9 @@ REGISTER_TEST(gating_home_actions_row_collapse,
         DOCTEST_REQUIRE(cl != nullptr);
         rowW = row->frame.width;  // = contentW
         DOCTEST_CHECK(rowW > 0.0f);
-        // W9 不等宽：新建笔记权重 1.5 > 其余 1.0
-        DOCTEST_CHECK(note->frame.width > td->frame.width);
-        DOCTEST_CHECK(note->frame.width > cl->frame.width);
-        // newtodo == claude（同权重 1.0）
-        DOCTEST_CHECK(std::fabs(td->frame.width - cl->frame.width) < 0.5f);
-        // newnote == 1.5 × newtodo（权重比 1.5:1.0）
-        DOCTEST_CHECK(std::fabs(note->frame.width - 1.5f * td->frame.width) < 1.0f);
+        // UAT2 覆盖 W9：三按钮等宽（权重全 1.0），newnote == newtodo == claude
+        DOCTEST_CHECK(std::fabs(td->frame.width - note->frame.width) < 0.5f);
+        DOCTEST_CHECK(std::fabs(cl->frame.width - note->frame.width) < 0.5f);
         // 行宽 = 三按钮宽 + 2×16 gap
         DOCTEST_CHECK(std::fabs(row->frame.width -
                                 (note->frame.width + td->frame.width +
