@@ -3007,8 +3007,8 @@ REGISTER_TEST(agent_run_end_fallback_throttle,
 })
 
 // Task 2：定时分支模板下拉 + 下次触发预览。布局契约：模板 dropdown 与预览行
-// 不得改变弹窗总高（面板仍 620、高危选项组 y=518（§8 四组重构）），预览行只能落在 cron 行与
-// meta 行之间的原 gap 内。
+// 不得改变弹窗总高（UAT5 重设计后面板 680、安全组破坏性行 y=548），预览行只能落在
+// cron 行与 meta 行之间的原 gap 内。
 REGISTER_TEST(agent_ui_cron_template_dropdown_and_preview,
               "agent_ui: 定时分支模板下拉（≥4 条）选中回填 cron / 预览行随 editCron 即时更新（合法显下次触发、非法显校验、无匹配显一年内）/ 弹窗高不变", {
     test_support::TestDb tdb("agentui", "crontpl");
@@ -3744,11 +3744,11 @@ REGISTER_TEST(agent_ui_dialog_geometry_context_note_within_bounds,
             std::to_string(autoWrap->frame.y + autoWrap->frame.height) +
             " 压到按钮行顶 " + std::to_string(saveBtn->frame.y));
 
-    // 高危选项组 y 仍然恒等面板顶 +518（新字段在它下面，不动它）
+    // 安全组破坏性行 y 恒等面板顶 +548（UAT5 重设计后；新字段不得挤动它）
     const auto* metaRow = ui2.find("agent.dialog.task.destructive");
     DOCTEST_REQUIRE(metaRow != nullptr);
-    DOCTEST_CHECK_MESSAGE(nearPx(metaRow->frame.y, panel->frame.y + 518.0f),
-                          "元信息行 y 应恒为面板顶 +518（§8 四组重构后高危选项组）（新字段不得挤动），实测 " +
+    DOCTEST_CHECK_MESSAGE(nearPx(metaRow->frame.y, panel->frame.y + 548.0f),
+                          "破坏性行 y 应恒为面板顶 +548（UAT5 重设计后安全组）（新字段不得挤动），实测 " +
                               std::to_string(metaRow->frame.y));
 
     mod.onStop();
