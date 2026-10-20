@@ -143,6 +143,10 @@ REGISTER_TEST(sidebar_toggle_persists,
 
 REGISTER_TEST(sidebar_collapsed_compose,
               "sidebar: 折叠态 72px、label 隐藏、图标居中、tooltip、内容区 +136", {
+    // UAT3 D-R3-1：compose 几何断言必须确定性，不随测试运行平台漂移——本文件
+    // 既有用例一律钉「系统标题栏路径」（customTitlebarActive=false = macOS 实际
+    // 运行态、几何与旧版一致）；自绘标题栏路径由 sidebar_custom_titlebar_compose 钉 true 专测。
+    app::setCustomTitlebarMode(false);
     app::setSidebarCollapsed(true);  // 空落盘路径：不能动真实用户配置
     RecordingModule home(::core::PageId::Home, "首页");
     RecordingModule md(::core::PageId::Markdown, "笔记");
@@ -195,11 +199,13 @@ REGISTER_TEST(sidebar_collapsed_compose,
     DOCTEST_CHECK(floatEq(RecordingModule::lastScreenHeight, 1000.0f));
 
     app::setSidebarCollapsed(false);  // 复位进程级全局态
+    app::setCustomTitlebarMode(std::nullopt);  // 复位：跟平台走
     return true;
 })
 
 REGISTER_TEST(sidebar_expanded_compose,
-              "sidebar: 展开态 208px、label/icon 现状不变、tooltip 无、内容区 -208", {
+              "sidebar: 展开态 208px、brand 只留居中 logo、内容区 -208", {
+    app::setCustomTitlebarMode(false);
     app::setSidebarCollapsed(false);
     RecordingModule home(::core::PageId::Home, "首页");
     RecordingModule md(::core::PageId::Markdown, "笔记");
@@ -218,14 +224,13 @@ REGISTER_TEST(sidebar_expanded_compose,
     DOCTEST_CHECK(sidebar != nullptr);
     DOCTEST_CHECK(floatEq(sidebar->width.value, 208.0f));
 
-    // brand 文字不变，logo 图标在文字左侧
-    DOCTEST_CHECK(ui.find("app.sidebar.brand")->text == "DevDesk");
-    const auto* logo = ui.find("app.sidebar.brand.logo");
-    DOCTEST_CHECK(logo != nullptr);
-    DOCTEST_CHECK(floatEq(logo->x, 16.0f));  // padX
-    // logo 与品牌文字同 y = spacingXXLarge(40)，与折叠态一致
-    DOCTEST_CHECK(floatEq(logo->y, 40.0f));
-    DOCTEST_CHECK(floatEq(ui.find("app.sidebar.brand")->y, 40.0f));
+    // UAT3 #9：brand 行展开态 = 折叠态同款居中 logo（icon 模式 text 存 glyph 串），
+    // 「DevDesk」文本改由自绘标题栏承载（app.titlebar.brand）；品牌行 y=40 防跳动
+    const auto* brand = ui.find("app.sidebar.brand");
+    DOCTEST_CHECK(brand != nullptr);
+    DOCTEST_CHECK(brand->text == eui::utf8(0xF5FC));  // fa-laptop-code logo
+    DOCTEST_CHECK(floatEq(brand->y, 40.0f));
+    DOCTEST_CHECK(ui.find("app.sidebar.brand.logo") == nullptr);  // 旧展开态 logo 子元素已并
     // 导航列表整体下移到 40 + 32 + 28
     DOCTEST_CHECK(floatEq(ui.find("app.sidebar.item.Home.hit")->y, 100.0f));
     const auto* label = ui.find("app.sidebar.item.Home.label");
@@ -239,17 +244,21 @@ REGISTER_TEST(sidebar_expanded_compose,
     DOCTEST_CHECK(floatEq(ui.find("app.sidebar.toggle")->x, 16.0f));  // 开关左对齐 padX
     DOCTEST_CHECK(floatEq(app::pageContentWidth(1600.0f), 1392.0f));
     DOCTEST_CHECK(floatEq(RecordingModule::lastScreenWidth, 1392.0f));
+
+    app::setCustomTitlebarMode(std::nullopt);  // 复位：跟平台走
     return true;
 })
 
 // 顶部留白只能作用于侧边栏**自己子树内部**。改留白位置的三种典型错误：
-//   ① 把整页往下推 / 动窗口内容几何 —— ① 组断言立刻红
+//   ① 把整页往下推 / 动窗口内容几何 —— ① 组断言立刻红（自绘标题栏路径的占位
+//      属例外：那条路径由 sidebar_custom_titlebar_compose 专测，本用例钉 false）
 //   ② 让侧边栏容器或分隔线不铺满整高 —— ② 组断言立刻红
 //   ③ 给侧边栏加局部不透明底后忘了覆盖顶部留白区，露出"半透档透出桌面"的带
 //      —— 侧边栏当前**没有**自己的底（底色 = 主窗口 clearColor）才天然免疫，
 //      今后加底时必须连带处理留白区
 REGISTER_TEST(sidebar_top_padding_stays_inside_sidebar,
               "sidebar: 顶部留白只在侧边栏内部（页面几何不变 + 无透明带）", {
+    app::setCustomTitlebarMode(false);
     app::setSidebarCollapsed(false);
     RecordingModule home(::core::PageId::Home, "首页");
     RecordingModule md(::core::PageId::Markdown, "笔记");
@@ -294,11 +303,14 @@ REGISTER_TEST(sidebar_top_padding_stays_inside_sidebar,
     DOCTEST_CHECK(floatEq(space, 40.0f));
     DOCTEST_CHECK(floatEq(brand->frame.y, space));
     DOCTEST_CHECK(brand->frame.y >= sidebar->frame.y);
+
+    app::setCustomTitlebarMode(std::nullopt);  // 复位：跟平台走
     return true;
 })
 
 REGISTER_TEST(sidebar_compose_writes_page_origin,
               "sidebar: compose 每帧写入页面区原点 x（展开 208 / 折叠 72）", {
+    app::setCustomTitlebarMode(false);
     RecordingModule home(::core::PageId::Home, "首页");
     RecordingModule md(::core::PageId::Markdown, "笔记");
     ::core::Router router = makeStubRouter(home, md);
@@ -334,6 +346,7 @@ REGISTER_TEST(sidebar_compose_writes_page_origin,
     DOCTEST_CHECK(floatEq(fresh.pageOriginX(), 0.0f));
 
     app::setSidebarCollapsed(false);  // 复位进程级全局态
+    app::setCustomTitlebarMode(std::nullopt);  // 复位：跟平台走
     return true;
 })
 
@@ -342,6 +355,7 @@ REGISTER_TEST(sidebar_compose_writes_page_origin,
 // （条目 y 由 compose 循环变量决定，天然重排；置顶的 Home 条目尤其不许动）。
 REGISTER_TEST(sidebar_live_toggle_reflects_registration,
               "sidebar: 注册/反注册后 compose 当帧反映（活门控）", {
+    app::setCustomTitlebarMode(false);
     app::setSidebarCollapsed(false);
     RecordingModule home(::core::PageId::Home, "首页");
     RecordingModule md(::core::PageId::Markdown, "笔记");
@@ -407,6 +421,7 @@ REGISTER_TEST(sidebar_live_toggle_reflects_registration,
         DOCTEST_CHECK(floatEq(homeHit->y, 100.0f));
         DOCTEST_CHECK(floatEq(mdHit->y, 144.0f));
     }
+    app::setCustomTitlebarMode(std::nullopt);  // 复位：跟平台走
     return true;
 })
 
@@ -416,6 +431,7 @@ REGISTER_TEST(sidebar_live_toggle_reflects_registration,
 // 上一个用例注册序恰好等于表序，两序无差，测不出这个区别。
 REGISTER_TEST(sidebar_re_register_lands_table_order,
               "sidebar: Agent 先注册、Home/Markdown 后注册 → compose 序仍表序（Agent y=188 回末位）", {
+    app::setCustomTitlebarMode(false);
     app::setSidebarCollapsed(false);
     RecordingModule agent(::core::PageId::Agent, "智能体");
     RecordingModule home(::core::PageId::Home, "首页");
@@ -474,6 +490,7 @@ REGISTER_TEST(sidebar_re_register_lands_table_order,
         DOCTEST_CHECK(floatEq(homeHit->y, 100.0f));
     }
     app::setSidebarCollapsed(false);  // 还原，不污染后续用例
+    app::setCustomTitlebarMode(std::nullopt);  // 复位：跟平台走
     return true;
 })
 
@@ -482,6 +499,7 @@ REGISTER_TEST(sidebar_re_register_lands_table_order,
 // 钉 §4.3 active 态视觉：SelectionBar 三件套（.sel.bg/.sel.accent/.sel.text）渲染在 active 项。
 REGISTER_TEST(sidebar_w3_grouping_and_selectionbar,
               "sidebar: W3 分组(work/system) + 组间 divider + active SelectionBar (sec 4.8 + 4.3)", {
+    app::setCustomTitlebarMode(false);
     app::setSidebarCollapsed(false);
     RecordingModule home(::core::PageId::Home, "首页");
     RecordingModule settings(::core::PageId::Settings, "设置");
@@ -585,12 +603,14 @@ REGISTER_TEST(sidebar_w3_grouping_and_selectionbar,
     DOCTEST_CHECK(ui.find("app.sidebar.item.Home.label")->text == "首页");
 
     app::setSidebarCollapsed(false);  // 还原，不污染后续用例
+    app::setCustomTitlebarMode(std::nullopt);  // 复位：跟平台走
     return true;
 })
 
 // W3：work-only 组无 divider（现有 Home+Markdown 测试隐式覆盖，但显式断言 groupdiv 不存在更稳）
 REGISTER_TEST(sidebar_w3_no_divider_when_only_work,
               "sidebar: W3 仅 work 组时无 groupdiv（sec 4.8 分组仅两组都非空才画）", {
+    app::setCustomTitlebarMode(false);
     app::setSidebarCollapsed(false);
     RecordingModule home(::core::PageId::Home, "首页");
     RecordingModule md(::core::PageId::Markdown, "笔记");
@@ -610,6 +630,83 @@ REGISTER_TEST(sidebar_w3_no_divider_when_only_work,
     // Markdown.y 仍是 144（不被 divider 推走）
     DOCTEST_CHECK(floatEq(ui.find("app.sidebar.item.Markdown.hit")->y, 144.0f));
 
+    app::setSidebarCollapsed(false);
+    app::setCustomTitlebarMode(std::nullopt);  // 复位：跟平台走
+    return true;
+})
+
+// UAT3 D-R3-1 自绘标题栏（钉 customTitlebarActive=true = Windows 自绘壳运行态）：
+// 标题条 40px 占位、根布局与页面内容同起点下移（防标题条盖内容/留缝）、品牌文本由
+// 标题栏承载、三钮热区几何、命中回调逐条。系统标题栏路径（false）由上方既有用例钉住。
+REGISTER_TEST(sidebar_custom_titlebar_compose,
+              "sidebar: 自绘标题栏占位 40px + 标题条元素 + 命中回调 + 页面下移", {
+    app::setCustomTitlebarMode(true);   // 钉自绘壳路径
+    app::setSidebarCollapsed(false);
+    RecordingModule home(::core::PageId::Home, "首页");
+    RecordingModule md(::core::PageId::Markdown, "笔记");
+    ::core::Router router = makeStubRouter(home, md);
+    test_support::ScopedAppRouter scoped(&router);
+
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    eui::Ui ui;
+    ui.begin("sidebar_titlebar");
+    app::compose(ui, screen);
+    ui.end();
+    ui.layout(screen.width, screen.height);  // frame 断言前必须显式排版
+
+    // 标题条：全宽 × 40 高、贴 (0,0)
+    const auto* bar = ui.find("app.titlebar");
+    DOCTEST_REQUIRE(bar != nullptr);
+    DOCTEST_CHECK(floatEq(app::titlebarHeight(), 40.0f));
+    DOCTEST_CHECK(floatEq(bar->width.value, 1600.0f));
+    DOCTEST_CHECK(floatEq(bar->height.value, 40.0f));
+    DOCTEST_CHECK(floatEq(bar->frame.x, 0.0f));
+    DOCTEST_CHECK(floatEq(bar->frame.y, 0.0f));
+
+    // 左：品牌 logo + 文本（UAT3 #9 品牌名由标题栏承载）；右：三钮从右往左
+    // 关闭 / 最大化 / 最小化（每钮 46 宽，wechat 风格）
+    DOCTEST_CHECK(ui.find("app.titlebar.logo") != nullptr);
+    DOCTEST_CHECK(ui.find("app.titlebar.brand")->text == "DevDesk");
+    DOCTEST_CHECK(ui.find("app.titlebar.close.hit") != nullptr);
+    DOCTEST_CHECK(ui.find("app.titlebar.maximize.hit") != nullptr);
+    DOCTEST_CHECK(ui.find("app.titlebar.minimize.hit") != nullptr);
+    DOCTEST_CHECK(floatEq(ui.find("app.titlebar.close.hit")->x, 1600.0f - 46.0f));
+    DOCTEST_CHECK(floatEq(ui.find("app.titlebar.maximize.hit")->x, 1600.0f - 92.0f));
+    DOCTEST_CHECK(floatEq(ui.find("app.titlebar.minimize.hit")->x, 1600.0f - 138.0f));
+
+    // 根布局下移 40：侧栏与页面同起点（页顶对齐侧栏顶）、页面 Screen 高 960
+    const auto* sidebar = ui.find("app.sidebar");
+    const auto* page = ui.find("app.page");
+    DOCTEST_REQUIRE(sidebar != nullptr);
+    DOCTEST_REQUIRE(page != nullptr);
+    DOCTEST_CHECK(floatEq(sidebar->frame.y, 40.0f));
+    DOCTEST_CHECK(floatEq(page->frame.y, 40.0f));
+    DOCTEST_CHECK(floatEq(page->frame.height, 960.0f));
+    DOCTEST_CHECK(floatEq(RecordingModule::lastScreenHeight, 960.0f));
+
+    // 命中回调（窗口客户区逻辑坐标）：标题条左区拖拽；三钮热区不拖拽；标题条下方
+    // 与越界点不拖拽。边缘八向 resize 由 EUI-NEO 层自理，不经本回调
+    DOCTEST_CHECK(app::titlebarCaptionHit({100.0f, 20.0f, 1600.0f, 1000.0f, false}));
+    DOCTEST_CHECK(!app::titlebarCaptionHit({1555.0f, 20.0f, 1600.0f, 1000.0f, false}));
+    DOCTEST_CHECK(!app::titlebarCaptionHit({100.0f, 41.0f, 1600.0f, 1000.0f, false}));
+    DOCTEST_CHECK(!app::titlebarCaptionHit({100.0f, -1.0f, 1600.0f, 1000.0f, false}));
+    DOCTEST_CHECK(!app::titlebarCaptionHit({1601.0f, 20.0f, 1600.0f, 1000.0f, false}));
+
+    // 系统标题栏路径（false）：无标题条元素、回调恒 false（几何由
+    // sidebar_top_padding_stays_inside_sidebar 等既有用例钉，此处不重复断言）
+    app::setCustomTitlebarMode(false);
+    {
+        eui::Ui plain;
+        plain.begin("sidebar_titlebar_off");
+        app::compose(plain, screen);
+        plain.end();
+        DOCTEST_CHECK(plain.find("app.titlebar") == nullptr);
+    }
+    DOCTEST_CHECK(!app::titlebarCaptionHit({100.0f, 20.0f, 1600.0f, 1000.0f, false}));
+
+    app::setCustomTitlebarMode(std::nullopt);  // 复位：跟平台走
     app::setSidebarCollapsed(false);
     return true;
 })
