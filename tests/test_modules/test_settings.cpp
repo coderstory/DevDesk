@@ -571,21 +571,23 @@ REGISTER_TEST(settings_module_compose_renders, "settings: module compose builds 
     DOCTEST_CHECK(ui.find("settings.tabs.1.hit") != nullptr);
     DOCTEST_CHECK(ui.find("settings.tabs.2.hit") != nullptr);
     DOCTEST_CHECK(ui.find("settings.cards.scroll") != nullptr);
-    // 通用 tab：外观卡 + 编辑器字号卡
+    // 通用 tab：外观卡 + 编辑器字号卡 + Claude 代理卡（UAT5 自模块 tab 迁入，
+    // 配对行下方全宽；服务为空时代理卡仍渲染）
     DOCTEST_CHECK(ui.find("settings.card.appearance") != nullptr);
     DOCTEST_CHECK(ui.find("settings.card.appearance.effect.ddwrap") != nullptr);
     DOCTEST_CHECK(ui.find("settings.card.editor.dd") != nullptr);
+    DOCTEST_CHECK(ui.find("settings.card.proxy") != nullptr);
     DOCTEST_CHECK(ui.find("settings.card.modules") == nullptr);
     DOCTEST_CHECK(ui.find("settings.card.log") == nullptr);
     DOCTEST_CHECK(ui.find("settings.card.about") == nullptr);
 
-    // 模块 tab：插拔开关 + 目录 + 代理（服务为空时代理卡仍渲染）
+    // 模块 tab：插拔开关（UAT5 删目录卡、代理卡迁通用 tab 后仅剩本卡）
     DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 1));
     frame("modtab");
     DOCTEST_CHECK(ui.find("settings.card.modules") != nullptr);
     DOCTEST_CHECK(ui.find("settings.card.modules.sw.0") != nullptr);
-    DOCTEST_CHECK(ui.find("settings.card.directory") != nullptr);
-    DOCTEST_CHECK(ui.find("settings.card.proxy") != nullptr);
+    DOCTEST_CHECK(ui.find("settings.card.directory") == nullptr);
+    DOCTEST_CHECK(ui.find("settings.card.proxy") == nullptr);
     DOCTEST_CHECK(ui.find("settings.card.appearance") == nullptr);
 
     // 日志 tab：设置卡（保留天数 + 级别）+ 日志查看卡（tail + 刷新按钮）
@@ -634,12 +636,13 @@ REGISTER_TEST(settings_log_viewer_refresh_button,
     return true;
 })
 
-// 代理端口校验失败反馈（红字状态行 + 下一次输入清除）：设置页无创建弹窗，端口 draft
-// 就地提交；反馈通道对齐 claude formError 语义——校验错误以红字呈现
-//（settings.subtitle 走 colors.error，非 toast），且随下一次输入自动清除。
+// 代理端口校验失败：设置页无创建弹窗，端口 draft 就地提交；非法 draft 提交不得
+// 落盘。UAT5 页头小字（settings.subtitle 状态行）删除后，「红字反馈 + 下一次输入
+// 清除」不再有可见面——status* 退为模块内部状态（清错逻辑保留），本用例收缩为
+// 「非法端口不落盘」+「页头确无 subtitle 残留」两条可断言面。
 
 REGISTER_TEST(settings_port_error_clear_on_input,
-              "settings: 端口校验失败 → 红字状态行 + 下一次输入清除（headless）", {
+              "settings: 端口校验失败 → 不落盘保持默认；页头无 subtitle 行（headless）", {
     test_support::TestEnv env(kCfgPrefix, "portformerr", true);
     test_support::ScopedConfigPath cfgEnv(test_support::tempConfigFile(kCfgPrefix, "portformerr_cfg"));   // 临时 config，不碰真机配置
     std::unique_ptr<::core::Module> mod(create_settings_module());
@@ -647,8 +650,8 @@ REGISTER_TEST(settings_port_error_clear_on_input,
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
-    // Task B tab 化：代理卡在「模块」tab
-    DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 1));
+    // UAT5：代理卡在「通用」tab（自模块 tab 迁入）
+    DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 0));
     eui::Ui ui;
     auto frame = [&](const char* page) {
         ui.begin(page);
@@ -670,23 +673,20 @@ REGISTER_TEST(settings_port_error_clear_on_input,
     DOCTEST_REQUIRE(apply->onClick != nullptr);
     apply->onClick();
     frame("pf3");
-    const auto* sub = ui.find("settings.subtitle");
-    DOCTEST_REQUIRE(sub != nullptr);
-    DOCTEST_CHECK(sub->text.find("端口无效") != std::string::npos);  // 红字校验错误行
     // 非法端口未落盘：proxyPort 仍是默认 8888
     module::settings::SettingsStore store(::core::appDatabase());
     DOCTEST_CHECK_EQ(store.load().proxyPort, 8888);
 
-    // 下一次输入 → 校验错误清除，subtitle 回静态说明
+    // 页头小字行已删（UAT5）：错误态也不得再把 subtitle 节点建回来
+    DOCTEST_CHECK(ui.find("settings.subtitle") == nullptr);
+    // 下一次输入仍走清错逻辑（statusIsError_ 内部态，不再有渲染面也不得崩）
     auto* input2 = ui.find("settings.card.proxy.port.input.hit");
     DOCTEST_REQUIRE(input2 != nullptr);
     eui::TextInputEvent fix;
     fix.text = "9";
     input2->onTextInput(fix);       // onChange → statusIsError_ 清
     frame("pf4");
-    const auto* sub2 = ui.find("settings.subtitle");
-    DOCTEST_REQUIRE(sub2 != nullptr);
-    DOCTEST_CHECK(sub2->text.find("端口无效") == std::string::npos);
+    DOCTEST_CHECK(ui.find("settings.subtitle") == nullptr);
     mod->onStop();
     return true;
 })
@@ -729,12 +729,13 @@ REGISTER_TEST(settings_log_dropdown_popup_stays_in_window, "settings: log dropdo
     std::unique_ptr<::core::Module> mod(create_settings_module());
     mod->onStart();
 
-    // 日志卡位于「日志」tab 顶部（cardsTopY = 40 pad + 64 header + 16 gap + 40 tab
-    // + 16 gap = 176；保留字段底 = 176 + 68 + 36 = 280，+ 8 gap + 弹层 216 = 504）。
-    // 1600×1300 下方空间充足 → 默认 openDown；短窗下 504 > 高 − 16 → 改 openUp。
+    // 日志卡位于「日志」tab 顶部（UAT5 页头小字删除后 cardsTopY = 40 pad +
+    // 40 header + 16 gap + 40 tab + 16 gap = 152；保留字段底 = 152 + 68 + 36 =
+    // 256，+ 8 gap + 4 项弹层 148 = 412）。
     // 卡顶游标只累计本 tab 的卡——全量累加会把这里算错。
-    // UAT3 双列：级别下拉并到保留同排（行 y 116→68），4 项弹层 = 280 + 8 + 148 = 436
-    // ≤ 454（470 − 16）→ 短窗下也保持默认向下展开且收在窗内。
+    // UAT3 双列：级别下拉并到保留同排（行 y 116→68），4 项弹层 = 412
+    // ≤ 454（470 − 16）→ 短窗下也保持默认向下展开且收在窗内（断言按运行时
+    // frame 实测，注释数字随 cardsTopY 公式同步）。
     eui::Screen screen;
     screen.width = 1200.0f;
     screen.height = 470.0f;
@@ -793,29 +794,9 @@ REGISTER_TEST(settings_log_dropdown_popup_stays_in_window, "settings: log dropdo
     return true;
 })
 
-
-REGISTER_TEST(settings_path_text_vertically_centered, "settings: path text vertically centered", {
-    std::unique_ptr<::core::Module> mod(create_settings_module());
-    mod->onStart();
-    eui::Screen screen;
-    screen.width = 1600.0f;
-    screen.height = 1000.0f;
-    // Task B tab 化：代理/目录卡在「模块」tab
-    DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 1));
-    eui::Ui ui;
-    ui.begin("center");
-    mod->compose(ui, screen);
-    ui.end();
-
-    // 目录路径是可见圆角框内的单行文本，必须显式 Center（缺省 Top 会贴框顶）
-    const auto* path = ui.find("settings.card.directory.path.value");
-    DOCTEST_REQUIRE(path != nullptr);
-    DOCTEST_CHECK(path->verticalAlign == eui::VerticalAlign::Center);
-
-    mod->onStop();
-    ::core::theme::setDark();
-    return true;
-})
+// 目录卡（settings_path_text_vertically_centered / gated_directory / ths01 快照刷新
+// 三条用例）已随 UAT5「数据 & 忽略规则卡删除」整卡移除——卡片节点不复存在，
+// 相关断言无从谈起。
 
 // 切换保留档位立即执行一次清理
 
@@ -868,13 +849,8 @@ REGISTER_TEST(settings_retention_change_prunes_immediately, "settings: retention
     DOCTEST_CHECK_EQ(row.value().getInt64("n").value(),
                      static_cast<int64_t>(1));
 
-    // 状态反馈「已清理 2 条」渲染在副标题
-    ui.begin("prune_status");
-    mod->compose(ui, screen);
-    ui.end();
-    const auto* subtitle = ui.find("settings.subtitle");
-    DOCTEST_REQUIRE(subtitle != nullptr);
-    DOCTEST_CHECK(subtitle->text.find("已清理 2 条") != std::string::npos);
+    // 「已清理 2 条」状态反馈原渲染在页头副标题——UAT5 页头小字删除后该回显
+    // 无渲染面（status* 退内部态），清理效果以上面 DB 计数为准。
 
     mod->onStop();
     ::core::theme::setDark();
@@ -923,8 +899,8 @@ REGISTER_TEST(settings_takeover_status_row,
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
-    // Task B tab 化：接管状态行随代理卡在「模块」tab
-    DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 1));
+    // UAT5：接管状态行随代理卡在「通用」tab
+    DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 0));
     // DOCTEST_CHECK 宏内含 return false，不能进返回 string 的 lambda——故用 out 参数收敛
     auto composeTakeoverText = [&](std::string* out) -> bool {
         eui::Ui ui;
@@ -1016,7 +992,7 @@ REGISTER_TEST(settings_takeover_warn_unmanaged,
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
-    DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 1));  // 模块 tab
+    DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 0));  // 通用 tab（UAT5 代理卡迁入）
 
         // 起代理：settings.json 是坏 JSON → 接管失败（写 sidecar 之前中止）
     {
@@ -1305,14 +1281,18 @@ REGISTER_TEST(settings_gated_proxy_card_hidden, "settings: claude 模块关闭 �
     screen.width = 1600.0f;
     screen.height = 1000.0f;
     eui::Ui ui;
-    // Task B tab 化：代理/目录/模块卡在「模块」tab，日志卡在「日志」tab
-    DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 1));
+    // UAT5：代理卡在「通用」tab（gate 语义随卡迁移保留）；模块卡在「模块」tab
+    DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 0));
     ui.begin("gateclaude");
     mod->compose(ui, screen);
     ui.end();
 
     DOCTEST_CHECK(ui.find("settings.card.proxy") == nullptr);  // 整卡隐藏
-    DOCTEST_CHECK(ui.find("settings.card.directory") != nullptr);  // markdown 开
+    DOCTEST_CHECK(ui.find("settings.card.appearance") != nullptr);  // 同 tab 卡不受 gate 影响
+    DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 1));
+    ui.begin("gateclaude_mod");
+    mod->compose(ui, screen);
+    ui.end();
     DOCTEST_CHECK(ui.find("settings.card.modules") != nullptr);
 
     DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 2));
@@ -1325,35 +1305,8 @@ REGISTER_TEST(settings_gated_proxy_card_hidden, "settings: claude 模块关闭 �
     return true;
 })
 
-REGISTER_TEST(settings_gated_directory_card_hidden, "settings: markdown 模块关闭 → 目录卡整卡隐藏", {
-    test_support::TestEnv env(kCfgPrefix, "gatemd", true);
-    test_support::ScopedConfigPath cfgEnv(test_support::tempConfigFile(kCfgPrefix, "gatemd_cfg"));
-    // markdown 关闭（claude 开）
-    module::settings::SettingsConfig cfg;
-    cfg.enabledModules = {module::settings::kModuleIdHome,
-                          module::settings::kModuleIdTodo,
-                          module::settings::kModuleIdClaudeProxy,
-                          module::settings::kModuleIdSettings};
-    DOCTEST_REQUIRE(module::settings::SettingsStore(::core::appDatabase()).save(cfg).isOk());
-
-    std::unique_ptr<::core::Module> mod(create_settings_module());
-    mod->onStart();
-    eui::Screen screen;
-    screen.width = 1600.0f;
-    screen.height = 1000.0f;
-    // Task B tab 化：目录/代理卡在「模块」tab
-    DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 1));
-    eui::Ui ui;
-    ui.begin("gatemd");
-    mod->compose(ui, screen);
-    ui.end();
-
-    DOCTEST_CHECK(ui.find("settings.card.directory") == nullptr);  // 整卡隐藏
-    DOCTEST_CHECK(ui.find("settings.card.proxy") != nullptr);  // claude 开
-    mod->onStop();
-    ::core::theme::setDark();
-    return true;
-})
+// （UAT5 删目录卡）settings_gated_directory_card_hidden 随卡移除：markdown 开关
+// 不再影响设置页卡集，目录卡节点不存在、无「整卡隐藏」可言。
 
 // 效果下拉不超外观卡
 
@@ -1612,20 +1565,17 @@ REGISTER_TEST(settings_card_rows_scale_derived,
         {0, "settings.card.editor",
          {"settings.card.editor.title", "settings.card.editor.hint",
           "settings.card.editor.ddwrap"}},
+        {0, "settings.card.proxy",
+         {"settings.card.proxy.title", "settings.card.proxy.desc",
+          "settings.card.proxy.port.label", "settings.card.proxy.port.hint",
+          "settings.card.proxy.takeover.label",
+          "settings.card.proxy.takeover.value"}},
         {1, "settings.card.modules",
          {"settings.card.modules.title", "settings.card.modules.desc",
           "settings.card.modules.name.0", "settings.card.modules.rowdesc.0",
           "settings.card.modules.name.1", "settings.card.modules.rowdesc.1",
           "settings.card.modules.name.2", "settings.card.modules.rowdesc.2",
           "settings.card.modules.name.3", "settings.card.modules.rowdesc.3"}},
-        
-        {1, "settings.card.directory",
-         {"settings.card.directory.title", "settings.card.directory.hint"}},
-        {1, "settings.card.proxy",
-         {"settings.card.proxy.title", "settings.card.proxy.desc",
-          "settings.card.proxy.port.label", "settings.card.proxy.port.hint",
-          "settings.card.proxy.takeover.label",
-          "settings.card.proxy.takeover.value"}},
         {2, "settings.card.log",
          {"settings.card.log.title", "settings.card.log.label",
           "settings.card.log.hint", "settings.card.log.ddwrap",
@@ -1766,6 +1716,15 @@ REGISTER_TEST(settings_card_rows_scale_derived,
             if (err.empty())
                 err = pin("appearance 卡高", heightOf("settings.card.appearance"),
                           at(156.0f, 184.0f, 239.0f));
+            // 代理卡（UAT5 迁入通用 tab，卡高公式不变）
+            if (err.empty())
+                err = pin("proxy.takeover.label 高",
+                          heightOf("settings.card.proxy.takeover.label"),
+                          at(15.0f, 18.0f, 23.0f));
+            if (err.empty())
+                err = pin("proxy 卡高（无警告）",
+                          heightOf("settings.card.proxy"),
+                          at(124.0f, 138.0f, 168.0f));
         } else if (tab == 1) {
             err = pin("modules.name.0 高",
                       heightOf("settings.card.modules.name.0"),
@@ -1798,14 +1757,6 @@ REGISTER_TEST(settings_card_rows_scale_derived,
             if (err.empty())
                 err = pin("modules 卡高", heightOf("settings.card.modules"),
                           at(168.0f, 198.0f, 257.0f));
-            if (err.empty())
-                err = pin("proxy.takeover.label 高",
-                          heightOf("settings.card.proxy.takeover.label"),
-                          at(15.0f, 18.0f, 23.0f));
-            if (err.empty())
-                err = pin("proxy 卡高（无警告）",
-                          heightOf("settings.card.proxy"),
-                          at(124.0f, 138.0f, 168.0f));
         } else {
     // 日志卡入派生池：UAT3 双列后两行同排（行 y=roundFs(68)、行高=logFieldHeight）、
     // hint 并一行（hintRowBelowY）、卡高 roundFs(144) 三档同缩放
@@ -1874,7 +1825,7 @@ REGISTER_TEST(settings_card_rows_scale_derived,
         }
     }
     // 85% 档（kFontPresets[0]）：E 批统一后行 y/行高同走 roundFs 派生、卡高给足
-    // 富余（如目录卡 216 兜 34 字面行高），字面几何不再溢出卡外
+    // 富余，字面几何不再溢出卡外（UAT5 删目录卡后 34 字面行高的兜底项已不存在）
     {
         FontScaleGuard g{0.85f};
         for (const std::string& problem : runAllTabs(0.85f)) {
@@ -2120,8 +2071,9 @@ REGISTER_TEST(settings_card_pair_column_geometry,
         DOCTEST_CHECK(nearEq(field2->frame.x - field1->frame.x, logCell2X));
     }
 
-    // ⑤ 同步 tab：github_sync 卡高恒 372（UAT4：未启用不再折叠 132——去门控后
-    // 未启用态 7 字段全显示，132 槽位装不下；启用/未启用只差表单可交互性）
+    // ⑤ 同步 tab：github_sync 卡高恒 roundFs(kGithubSyncCardHeight)（UAT4 起不
+    // 按启用态折叠；UAT5 方案 A 三段式后常量改在 settings_ui_logic.h 按最坏行序
+    // 复算，本断言与注册表同源取值、常量一改自动跟随）
     {
         FontScaleGuard g{1.0f};
         eui::Screen screen;
@@ -2159,8 +2111,8 @@ REGISTER_TEST(settings_port_esc_discards_draft,
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
-    // 端口输入在代理卡（「模块」tab）
-    DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 1));
+    // 端口输入在代理卡（UAT5 迁「通用」tab）
+    DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 0));
     eui::Ui ui;
     auto frame = [&](const char* page) {
         ui.begin(page);
@@ -2216,7 +2168,8 @@ REGISTER_TEST(settings_port_esc_discards_draft,
 
 // 设置页 Ctrl+S 保存快捷键（headless）
 // 设置页除端口草稿外全部即时落盘，Ctrl+S 语义 = 提交待决草稿（=「应用」按钮全链路，
-// 含 ClaudeService 端口同步），无待决时显式重写落盘 + 状态行回显。
+// 含 ClaudeService 端口同步），无待决时显式重写落盘（「已保存」回显原在页头副标题，
+// UAT5 页头小字删除后无渲染面，落盘效果以 app_config 行为准）。
 // 服务注册 + 代理启动用于验证代理运行中的 Ctrl+S 分支。
 REGISTER_TEST(settings_ctrl_s_save_shortcut,
               "settings: Ctrl+S 提交端口草稿 / 显式落盘", {
@@ -2230,8 +2183,8 @@ REGISTER_TEST(settings_ctrl_s_save_shortcut,
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
-        // 端口输入 / 重新生成按钮在「模块」tab
-    DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 1));
+        // 端口输入 / 重新生成按钮在「通用」tab（UAT5 代理卡迁入）
+    DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 0));
     eui::Ui ui;
     auto frame = [&](const char* page) {
         ui.begin(page);
@@ -2248,19 +2201,12 @@ REGISTER_TEST(settings_ctrl_s_save_shortcut,
     };
 
     // 1) 无草稿：Ctrl+S → 配置落库（onStart 只读不写，此处才出现行）
-    //    + 状态行回显「设置已保存」
         // 「落盘了没有」看 app_config 的那一行在不在
     DOCTEST_CHECK(test_support::readRawConfigRow(
                       ::core::appDatabase(), "config.json:claudeProxyPort").empty());
     DOCTEST_CHECK(mod->onKeyEvent(ctrlS(eui::KeyAction::Press)));
     DOCTEST_CHECK(!test_support::readRawConfigRow(
                       ::core::appDatabase(), "config.json:claudeProxyPort").empty());
-    frame("css1");
-    {
-        const auto* sub = ui.find("settings.subtitle");
-        DOCTEST_REQUIRE(sub != nullptr);
-        DOCTEST_CHECK(sub->text.find("设置已保存") != std::string::npos);
-    }
     {
         module::settings::SettingsStore store(::core::appDatabase());
         DOCTEST_CHECK_EQ(store.load().proxyPort, 8888);
@@ -2303,12 +2249,6 @@ REGISTER_TEST(settings_ctrl_s_save_shortcut,
         DOCTEST_CHECK_EQ(store.load().proxyPort, 9001);
     }
     DOCTEST_CHECK_EQ(svc.configuredProxyPort(), 9001);
-    frame("css3b");   // 重新 compose，让状态行进树
-    {
-        const auto* sub = ui.find("settings.subtitle");
-        DOCTEST_REQUIRE(sub != nullptr);
-        DOCTEST_CHECK(sub->text.find("代理端口已保存") != std::string::npos);
-    }
     // 4) 代理运行中再按 Ctrl+S：draft 已应用，走显式落盘分支
     auto started = svc.startProxy("127.0.0.1", 0);
     DOCTEST_REQUIRE(started.isOk());
@@ -2727,9 +2667,8 @@ REGISTER_TEST(settings_log_level_effective_visible_and_persistent,
         const auto* label = ui.find("settings.card.log.level.dd.label");
         DOCTEST_REQUIRE(label != nullptr);
         DOCTEST_CHECK_EQ(label->text, std::string("DEBUG（详尽）"));
-        const auto* sub = ui.find("settings.subtitle");
-        DOCTEST_REQUIRE(sub != nullptr);
-        DOCTEST_CHECK_EQ(sub->text, std::string("日志级别：DEBUG（即时生效）"));
+        // 「日志级别：DEBUG（即时生效）」回显原在页头副标题——UAT5 页头小字
+        // 删除后以控件选中态（上面 label 断言）为可见回显面。
     }
 
     // 配置落盘 + (c) 重启（新实例 onStart）恢复持久化档
@@ -2817,79 +2756,10 @@ REGISTER_TEST(settings_h2_log_tail_snapshot,
     ::core::theme::setDark();
     return true;
 })
-// 外部状态只读快照（compose 不做文件系统查询）
-// 接管状态（sidecar stat）、笔记目录存在性（fs::exists）、桌宠皮肤清单
-// （discoverSkins 遍历 + 每皮肤 pet.json stat）读一次存成员，compose 只读快照，
-// 刷新点 = onStart / onPageEnter / 切模块 tab / 打开目录后。本用例验：
-// ① 刷新前快照非空且等于上次值（不闪空、不闪变）；② 刷新入口后取新值；
-// ③ 目录消失 / 出现的边界下不崩、不闪空。
-REGISTER_TEST(settings_ths01_fs_snapshot,
-              "settings: 外部状态快照——刷新前旧值 / 刷新后新值（THS-01）", {
-    test_support::TestEnv env(kCfgPrefix, "ths01", true);
-    test_support::ScopedConfigPath cfgEnv(test_support::tempConfigFile(kCfgPrefix, "ths01_cfg"));
-    // 模块插拔门控：目录卡要渲染
-    module::settings::SettingsConfig cfg;
-    cfg.enabledModules = {module::settings::kModuleIdHome,
-                          module::settings::kModuleIdMarkdown,
-                          module::settings::kModuleIdSettings};
-    DOCTEST_REQUIRE(module::settings::SettingsStore(::core::appDatabase()).save(cfg).isOk());
 
-    const auto notesDir = test_temp::tempPath("devdesk_ths01_notes");
-    std::error_code ec;
-    std::filesystem::remove_all(notesDir, ec);
-    const test_support::ScopedEnv notesEnv("DEVDESK_NOTES_DIR", notesDir.string());
-
-    std::unique_ptr<::core::Module> mod(create_settings_module());
-    mod->onStart();   // 首次装载在启动期（非渲染路径）
-    eui::Screen screen;
-    screen.width = 1600.0f;
-    screen.height = 1000.0f;
-    DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 1));   // 模块 tab
-
-    // 探针：跑一帧 compose，返回目录卡路径文本
-    auto probe = [&]() {
-        eui::Ui ui;
-        ui.begin("settings_ths01_probe");
-        mod->compose(ui, screen);
-        ui.end();
-        ui.layout(screen.width, screen.height);  // scrollView 内容在 layout 期展开
-        const auto* path = ui.find("settings.card.directory.path.value");
-        return path ? path->text : std::string();
-    };
-    auto notCreated = [](const std::string& t) {
-        return t.find("（尚未创建）") != std::string::npos;
-    };
-
-    // ① onStart 快照：笔记目录不存在（标「尚未创建」）
-    const auto initial = probe();
-    DOCTEST_CHECK(!initial.empty());        // 非空（不闪空）
-    DOCTEST_CHECK(notCreated(initial));
-
-    // ② 盘上出现目录，但未到刷新点 → 快照沿用上次值（不闪变）
-    std::filesystem::create_directories(notesDir, ec);
-    DOCTEST_REQUIRE(!ec);
-    const auto stale = probe();
-    DOCTEST_CHECK(notCreated(stale));                  // = 上次值
-
-    // ③ 刷新入口（进页面）→ 快照更新为新值，文本仍非空
-    mod->onPageEnter();
-    const auto refreshed = probe();
-    DOCTEST_CHECK(!refreshed.empty());
-    DOCTEST_CHECK_FALSE(notCreated(refreshed));        // 新值
-
-    // ④ 边界：目录消失 → 刷新前仍显示上次值（不闪空），刷新后回到未创建态
-    std::filesystem::remove_all(notesDir, ec);
-    DOCTEST_CHECK_FALSE(notCreated(probe()));          // 上次值仍在
-    mod->onPageEnter();
-    const auto gone = probe();
-    DOCTEST_CHECK(!gone.empty());
-    DOCTEST_CHECK(notCreated(gone));
-
-    mod->onStop();
-    std::filesystem::remove_all(notesDir, ec);
-    ::core::theme::setDark();
-    return true;
-})
+// （UAT5 删目录卡）settings_ths01_fs_snapshot 随卡移除：笔记目录存在性快照
+//（notesDirExists）的唯一消费者是目录卡，卡删则快照与刷新用例一并删除；
+// 接管状态快照的刷新语义已由 takeover 用例（onPageEnter 刷新点）覆盖。
 
 // 下拉「谁打开着」的唯一持有者（5 个 bool → 1 个索引）
 // ① 打开第二个下拉会自动关掉先前那个（同时最多一个展开）；
@@ -3074,6 +2944,8 @@ REGISTER_TEST(settings_ui_logic_equivalence,
     DOCTEST_CHECK_EQ(ms::kDropdownPopupGap, 8.0f);
     DOCTEST_CHECK_EQ(ms::kWindowBottomMargin, 16.0f);
     DOCTEST_CHECK_EQ(ms::kSettingsTabHeight, 40.0f);
+    // UAT5 页头小字删除：设置页页头自共享 64 收紧为本页专用 40（标题盒 34 + 6）
+    DOCTEST_CHECK_EQ(ms::kSettingsHeaderH, 40.0f);
     DOCTEST_CHECK_EQ(ms::kAppearanceCardHeight, 184.0f);
     // UAT3 多列分栏：编辑器字号卡半宽配对，hint 迁下拉下方第二行
     //（行底 roundFs(68)+roundFs(36)=104，hint 行底 +roundFs(6)+roundFs(16)=126，+16 → 144）
@@ -3081,8 +2953,6 @@ REGISTER_TEST(settings_ui_logic_equivalence,
     // UAT3 多列分栏：模块卡半宽 + 卡内 2×2 格（次行块底 68+roundFs(56)+roundFs(36)=160，
     // +16 → 198 给窄列字号档富余）
     DOCTEST_CHECK_EQ(ms::kModulesCardHeight, 198.0f);
-    // 目录卡内容起 y=68 顺移（gitignore 路径行 y=148 高 34，盒底 182；85% 档 34 字面行高需富余兜底）
-    DOCTEST_CHECK_EQ(ms::kDirectoryCardHeight, 216.0f);
     // UAT3 多列分栏：日志卡两下拉双列同排，hint 并一行下移（行底 104，hint 行底 126，+16 → 144）
     DOCTEST_CHECK_EQ(ms::kLogSettingsCardHeight, 144.0f);
 
@@ -3204,7 +3074,8 @@ REGISTER_TEST(settings_card_registry_order,
         std::unique_ptr<::core::Module> mod(create_settings_module());
         mod->onStart();
         const std::vector<std::string> wantGeneral = {
-            "settings.cards.pair.0"};
+            "settings.cards.pair.0",
+            "settings.card.proxy"};   // UAT5：代理卡迁通用 tab（配对行下方全宽）
         const auto t0 = cardIdsOf(*mod, screen);
         DOCTEST_CHECK_MESSAGE(t0 == wantGeneral, "通用 tab 实测：" + join(t0));
         const auto pairChildren = pairChildIdsOf(*mod, screen, "settings.cards.pair.0");
@@ -3214,14 +3085,9 @@ REGISTER_TEST(settings_card_registry_order,
         DOCTEST_CHECK_MESSAGE(pairChildren == wantPairChildren,
                               "配对行子卡 实测：" + join(pairChildren));
         DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 1));
+        // UAT5：模块 tab 删目录卡、代理卡迁通用 tab 后只剩插拔卡（无组题/分隔线）
         const std::vector<std::string> wantModulesAll = {
-            "settings.card.modules",
-            "settings.card.directory.groupdivider",
-            "settings.card.directory.grouptitle",
-            "settings.card.directory",
-            "settings.card.proxy.groupdivider",
-            "settings.card.proxy.grouptitle",
-            "settings.card.proxy"};
+            "settings.card.modules"};
         const auto t1 = cardIdsOf(*mod, screen);
         DOCTEST_CHECK_MESSAGE(t1 == wantModulesAll, "模块 tab（全开） 实测：" + join(t1));
         DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 2));
@@ -3249,10 +3115,11 @@ REGISTER_TEST(settings_card_registry_order,
         const auto g1 = cardIdsOf(*mod, screen);
         DOCTEST_CHECK_MESSAGE(g1 == wantModulesGated, "模块 tab（门控全关） 实测：" + join(g1));
         DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 0));
+        // claude 关 → 代理卡（已迁通用 tab）随 gate 整卡隐藏，只剩配对行
         const std::vector<std::string> wantGeneralGated = {
             "settings.cards.pair.0"};
         const auto g0 = cardIdsOf(*mod, screen);
-        DOCTEST_CHECK_MESSAGE(g0 == wantGeneralGated, "通用 tab（门控不影响） 实测：" + join(g0));
+        DOCTEST_CHECK_MESSAGE(g0 == wantGeneralGated, "通用 tab（claude 关） 实测：" + join(g0));
         mod->onStop();
     }
     ::core::theme::setDark();
@@ -3266,7 +3133,7 @@ REGISTER_TEST(settings_card_registry_order,
 // 页面渐变底本身也已删，页面级反断言在 test_ui_modern.cpp
 // uiModernSettingsBodyGradientRemoved（settings.body.gradient / .bg 必须都不存在）。
 REGISTER_TEST(settings_cards_no_outer_cardframe,
-              "settings: 7 卡无外层 cardFrame——内容直接铺页面底（两档主题）", {
+              "settings: 6 卡无外层 cardFrame——内容直接铺页面底（两档主题；UAT5 删目录卡后 7→6）", {
     test_support::TestEnv env(kCfgPrefix, "noframe", true);
     test_support::ScopedConfigPath cfgEnv(
         test_support::tempConfigFile(kCfgPrefix, "noframe_cfg"));
@@ -3283,22 +3150,20 @@ REGISTER_TEST(settings_cards_no_outer_cardframe,
 
     // 卡 root stack id（内容锚）+ cardFrame 若加回会出现的 bg id（cardFrame 在 (0,0)
     // 铺的矩形，id = <stack>.bg）。顺序 = 注册表序
-    const int kTabOf[] = {0, 0, 1, 1, 1, 2, 2};
+    const int kTabOf[] = {0, 0, 0, 1, 2, 2};
     const char* const kStackIds[] = {
         "settings.card.appearance",
         "settings.card.editor",
-        "settings.card.modules",
-        "settings.card.directory",
         "settings.card.proxy",
+        "settings.card.modules",
         "settings.card.log",
         "settings.tab.log",
     };
     const char* const kBgIds[] = {
         "settings.card.appearance.bg",
         "settings.card.editor.bg",
-        "settings.card.modules.bg",
-        "settings.card.directory.bg",
         "settings.card.proxy.bg",
+        "settings.card.modules.bg",
         "settings.card.log.bg",
         "settings.tab.log.bg",
     };
@@ -3310,7 +3175,7 @@ REGISTER_TEST(settings_cards_no_outer_cardframe,
             ::core::theme::setLight();
         }
         int lastTab = -1;
-        for (size_t i = 0; i < 7; ++i) {
+        for (size_t i = 0; i < 6; ++i) {
             if (kTabOf[i] != lastTab) {
                 lastTab = kTabOf[i];
                 DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, lastTab));

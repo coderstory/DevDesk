@@ -1,12 +1,12 @@
 // src/module_settings/settings_ui_cards.cpp
-// settings 模块 8 张卡：每个可见区域一个自由函数，吃 CardDrawArgs。元素 event 回调一律按值捕获 std::function——元素树比一帧活得久，捕引用会悬垂。
+// settings 模块 6 张卡（+ GitHub Sync 卡在 github_sync_card.cpp，共 7 卡）：每个可见
+// 区域一个自由函数，吃 CardDrawArgs。元素 event 回调一律按值捕获 std::function——
+// 元素树比一帧活得久，捕引用会悬垂。
 // 卡内容直接铺页面底：关档靠主窗 clearColor 当底，半透/磨砂档露出窗口背景。
+// UAT5：目录卡（数据目录/忽略规则展示）整卡删除，相关 includes 一并清退。
 #include "settings_ui_cards.h"
 
 #include <core/component_theme.h>
-#include <core/paths.h>
-
-#include <platform/file_open.h>
 
 #include <eui/app.h>
 #include <eui/dsl.h>
@@ -17,13 +17,11 @@
 #include <components/scrollview.h>
 #include <components/switch.h>
 
-#include <ui_kit/button.h>
 #include <ui_kit/columns.h>
 #include <ui_kit/form_row.h>
 #include <ui_kit/wswitch.h>
 
 #include <algorithm>
-#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -369,84 +367,6 @@ void drawModulesCard(const CardDrawArgs& args) {
                         f(mid, v);
                     });
             }
-        })
-        .build();
-}
-
-void drawDirectoryCard(const CardDrawArgs& args) {
-    eui::Ui& ui = args.ui;
-    const std::string& id = args.id;
-    const float w = args.w;
-    const float h = args.h;
-    const core::theme::Tokens& t = args.t;
-    const SettingsCardsIn& in = args.in;
-    const SettingsCardActions& a = args.a;
-
-    ui.stack(id)
-        .size(w, h)
-        .content([&] {
-            cardTitle(ui, id, t, 16.0f, w - 56.0f, 22.0f, 22.0f,
-                      "Markdown 笔记目录（只读）");
-
-            const std::filesystem::path mdDir =
-                ::core::paths::markdownDir();
-            const bool exists = in.notesDirExists;
-            const float dirBtnW = 110.0f;
-            // E 批布局统一：内容起始 y=68（无 desc 卡也从 68 起，与 modules 卡同锚）。
-            // 路径只读灰底（§6 item 9）：wechat.dividerSecondary 底
-            ui.rect(id + ".path.bg")
-                .position(28.0f, 68.0f)
-                .size(w - 56.0f - dirBtnW - 12.0f, 34.0f)
-                .color(t.colors.wechat.dividerSecondary)
-                .radius(t.sizes.radiusWeChat)
-                .build();
-            ui.text(id + ".path.value")
-                .position(40.0f, 68.0f)
-                .size(w - 80.0f - dirBtnW - 12.0f, 34.0f)
-                .text(mdDir.string() + (exists ? "" : "（尚未创建）"))
-                .fontSize(fs(13.0f))
-                .verticalAlign(eui::VerticalAlign::Center)
-                .color(t.colors.wechat.textSecondary)
-                .build();
-            // 「打开目录」浅灰次按钮（§6 item 9）：ui_kit::button Secondary 级
-            ui_kit::button(ui, id + ".open", "打开目录",
-                ui_kit::ButtonLevel::Secondary,
-                w - 28.0f - dirBtnW, 68.0f, dirBtnW, 34.0f, t,
-                {.onClick = [f = a.openNotesDirectory] { f(); }});
-            // 说明小字（§6 item 9）：wechat.textTertiary
-            ui.text(id + ".hint")
-                .position(28.0f, 108.0f)
-                .size(w - 56.0f, roundFs(14.0f))
-                .text("目录暂不支持修改，打开后可手动迁移文件")
-                .fontSize(fs(11.0f))
-                .lineHeight(roundFs(14.0f))
-                .color(t.colors.wechat.textTertiary)
-                .build();
-
-            // 数据根忽略规则路径：凭据在 devdesk.db（WAL 伴生件会复制凭据页）且数据根要进 git——本行只展示，让用户看见是哪份规则在挡 git add。
-            ui.text(id + ".gitignore.label")
-                .position(28.0f, 130.0f)
-                .size(w - 56.0f, roundFs(14.0f))
-                .text("数据根忽略规则（防凭据误提交）")
-                .fontSize(fs(11.0f))
-                .lineHeight(roundFs(14.0f))
-                .color(t.colors.textTertiary)
-                .build();
-            ui.rect(id + ".gitignore.path.bg")
-                .position(28.0f, 148.0f)
-                .size(w - 56.0f, 34.0f)
-                .color(t.colors.surfaceElevated)
-                .radius(t.sizes.radiusSmall)
-                .border(1.0f, t.colors.borderMuted)
-                .build();
-            ui.text(id + ".gitignore.path.value")
-                .position(40.0f, 148.0f)
-                .size(w - 80.0f, 34.0f)
-                .text(::core::paths::dataRootGitignoreFile().string())
-                .fontSize(fs(13.0f))
-                .verticalAlign(eui::VerticalAlign::Center)
-                .color(t.colors.textSecondary)
-                .build();
         })
         .build();
 }

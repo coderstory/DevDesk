@@ -16,6 +16,11 @@
 
 namespace module::settings {
 
+// 设置页页头高（UAT5 头部小文本删除后自共享 64 收紧）：标题行盒 34 + 6 呼吸空隙。
+// 不沿用 ui_kit::kHeaderH（64 是 todo 看板/markdown 大纲共用的表头口径，
+// 改它会波及兄弟模块；设置页标题独占页头，64 会在标题下方留 30px 空洞）。
+inline constexpr float kSettingsHeaderH = 40.0f;
+
 // 字号缩放档位（%）
 inline constexpr int kFontPresets[] = {85, 100, 115, 130};
 inline constexpr int kFontPresetCount = 4;
@@ -73,15 +78,17 @@ inline constexpr long kLogTailReadWindow = 256 * 1024;  // tail 只读末尾 256
 inline constexpr float kAppearanceCardHeight = 184.0f;  // 外观卡（通用 | 半宽配对左列；降级提示行底 168 + 16，E 批布局统一后行序不变仍 184）
 inline constexpr float kEditorFontCardHeight = 144.0f;  // 编辑器字号卡（通用 | 半宽配对右列；hint 迁下拉下方第二行后行底 hintRowBelowY(68)+roundFs(16)=126，+16 → 144；85% 档 122 / 130% 档 187）
 inline constexpr float kModulesCardHeight = 198.0f;     // 模块插拔卡（模块 | 全宽卡内 2×2 开关格，UAT4 按用户拍板撑满；次行块底 68+roundFs(56)+roundFs(36)=160，+16 → 198 给字号档富余；85% 档 168 / 130% 档 257）
-inline constexpr float kDirectoryCardHeight = 216.0f;   // 目录卡（模块；内容起 y=68 顺移后 gitignore 行底 182，85% 档 34 字面行高需富余兜底）
 inline constexpr float kLogSettingsCardHeight = 144.0f; // 日志卡（日志；两下拉同排双列，hint 并一行下移后行底 126，+16 → 144；85% 档 122 / 130% 档 187）
-// GitHub Sync 卡（同步）：启用态满高（UAT2 双列布局后最坏行序 = 双列开关行 +
-// URL 全宽行（含三按钮）+ 双列输入行 + 进度 + 错误/状态 + 分支提示 + public 提
-// 醒 + 本地 git 灰字 + 未同步黄字 + 删跳过黄字，内容底沿 364；错误行与进度行互
-// 斥、错误行显示时状态行让位，故 372 包住所有组合——底距 8 与旧 460−452 一致）。
-// UAT4：卡高恒 372 不再按启用态折叠——未启用态也全字段渲染（去门控后 7 字段
-// 全显示），折叠高 132 会把内容画出槽位外（scroll 内容记账偏小）。
-inline constexpr float kGithubSyncCardHeight = 372.0f;
+// GitHub Sync 卡（同步，UAT5 方案 A 三段式）：卡高由最坏行序决定——头部
+//（max(标题 22+2+摘要 16, 开关纵排 24+6+28)=58）+ 分段 12+1+12 + 配置组
+//（组题 16+8 + URL 行 36+8 + 分支|Token 行 36 = 104）+ 分段 25 + 操作行 36 +
+// 8 + 条件信息行 5×(20+4)（分支提示/public/本地 git/未同步/删跳过五条全显的最
+// 坏组合）+ 下边距 16 → 100% 档需高 404（内容底 388 + 边距 16）。开关纵排
+//（24+6+28）与上下边距 16
+// 是字面值不随字号缩放：85% 档内容底 354、130% 档 515，常量取 424 兜最坏档
+//（85% 档 roundFs(424)=360、130% 档 551，均有富余）。卡高恒定不按启用态折叠
+//（UAT4 口径）：未启用态全字段显示，只差表单可交互性。
+inline constexpr float kGithubSyncCardHeight = 424.0f;
 
 // 行盒 / 间距随生效字号派生：行盒 = round(基准 × fontScale)，系数恒包住最坏 CJK 墨迹；字号本体仍走 fs()（不取整）。
 inline float roundFs(float base) {
