@@ -953,6 +953,135 @@ REGISTER_TEST(md_tree_panel_collapse,
     return true;
 })
 
+// 2b2''''''. UAT5 真机/headless 分叉回归锁：树列 lerp 只在 compose 里推进，真机主循环
+// 事件驱动（无输入即 glfwWaitEvents 睡眠），runtime 的 animating 位只认 DSL 管理的动画
+//（onFrame/过渡/GIF/滚动惯性），手搓 treePanelWidth_ lerp 对它不可见 → 折叠点击帧只推进
+// 一步（240→~197）即冻结：面板壳仍 ~240、内容空（<220 不画）、浮钮（>1px）不上屏；其后
+// 每次任意输入（如反复开关大纲）各供一帧，面板再向目标爬一步 → 编辑列 x 逐轮漂移
+//（真机两报同根因）。headless 直泵 compose 40 帧绕过主循环策略，故既有测试恒绿。
+// 修法 = 动画在途挂 1x1 空 onFrame 元素（carousel 同款）让主循环持续出帧至钉住。
+// 本测试锁两侧语义：①在途帧必有泵（缺泵 = 真机必冻结/必漂移）；②收敛帧必卸泵
+//（常驻 = 永不休眠漏功耗）；③真实序列（点击 → 单帧已动 → 逐帧单调收敛 0/240 →
+// 浮钮/头钮回归，反向同）；④收敛态反复开关大纲若干轮，编辑列 x/宽与首轮逐位相等。
+REGISTER_TEST(md_tree_panel_anim_frame_pump,
+              "markdown_module: 树列动画在途挂 onFrame 收敛泵（真机不冻结不漂移）+ 收敛后大纲开关零漂移", {
+    test_support::MdHeadlessEnv env(kDirPrefix, "treepump", kDbName);
+    DOCTEST_REQUIRE(env.db != nullptr);
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "a.md", "# A\n"));
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    eui::Ui ui;
+    int n = 0;
+    auto frame = [&]() {
+        ui.begin("treepump" + std::to_string(n++));
+        mod->compose(ui, screen);
+        ui.end();
+        ui.layout(screen.width, screen.height);
+    };
+    auto treeW = [&]() { return ui.find("md.tree")->frame.width; };
+
+    // 起点：展开态钉 240；收敛态不挂泵（零常驻功耗）
+    frame();
+    DOCTEST_CHECK_EQ(treeW(), 240.0f);
+    DOCTEST_CHECK(ui.find("md.tree.anim.driver") == nullptr);
+    const auto* headCollapse = ui.find("md.tree.collapse.bg");
+    DOCTEST_REQUIRE(headCollapse != nullptr);
+    DOCTEST_REQUIRE(headCollapse->onClick != nullptr);
+
+    // 真实序列：点折叠 → 单帧宽度已向目标移动（不得原地）且在途挂泵
+    headCollapse->onClick();
+    frame();
+    const float w1 = treeW();
+    DOCTEST_CHECK(w1 < 240.0f);
+    DOCTEST_CHECK(w1 > 0.0f);
+    const auto* driver1 = ui.find("md.tree.anim.driver");
+    DOCTEST_REQUIRE(driver1 != nullptr);
+    DOCTEST_REQUIRE(driver1->onFrame != nullptr);
+
+    // 逐帧推进：单调向 0；在途帧泵在场，收敛帧（钉 0）泵卸载；浮展开钮回归
+    float prev = w1;
+    for (int i = 0; i < 40 && treeW() > 0.0f; ++i) {
+        frame();
+        const float w = treeW();
+        DOCTEST_CHECK(w < prev);
+        if (w > 0.0f) {
+            DOCTEST_CHECK(ui.find("md.tree.anim.driver") != nullptr);
+        } else {
+            DOCTEST_CHECK(ui.find("md.tree.anim.driver") == nullptr);
+        }
+        prev = w;
+    }
+    DOCTEST_CHECK_EQ(treeW(), 0.0f);
+    const auto* fab = ui.find("md.tree.expand.btn.bg");
+    DOCTEST_REQUIRE(fab != nullptr);
+    DOCTEST_REQUIRE(fab->onClick != nullptr);
+
+    // 反向真实序列：点浮钮 → 单帧已起步且挂泵 → 逐帧单调收敛 240、泵卸载、头折叠钮回归
+    fab->onClick();
+    frame();
+    const float g1 = treeW();
+    DOCTEST_CHECK(g1 > 0.0f);
+    DOCTEST_CHECK(g1 < 240.0f);
+    DOCTEST_CHECK(ui.find("md.tree.anim.driver") != nullptr);
+    prev = g1;
+    for (int i = 0; i < 40 && treeW() < 240.0f; ++i) {
+        frame();
+        const float w = treeW();
+        DOCTEST_CHECK(w > prev);
+        if (w < 240.0f) {
+            DOCTEST_CHECK(ui.find("md.tree.anim.driver") != nullptr);
+        } else {
+            DOCTEST_CHECK(ui.find("md.tree.anim.driver") == nullptr);
+        }
+        prev = w;
+    }
+    DOCTEST_CHECK_EQ(treeW(), 240.0f);
+    DOCTEST_CHECK(ui.find("md.tree.anim.driver") == nullptr);
+    DOCTEST_CHECK(ui.find("md.tree.collapse.bg") != nullptr);
+    DOCTEST_CHECK(ui.find("md.search") != nullptr);
+
+    // 零漂移锁：收敛态反复开关大纲若干轮——每轮 1 帧（真机每次输入恰供一帧），
+    // 树宽钉 240 不爬、编辑列 x/宽与首轮逐位相等（真机「逐轮漂移」的反向锁）
+    const auto* otoggle = ui.find("md.outline.toggle.hit");
+    DOCTEST_REQUIRE(otoggle != nullptr);
+    DOCTEST_REQUIRE(otoggle->onClick != nullptr);
+    otoggle->onClick();  // 开（首轮基准）
+    frame();
+    DOCTEST_CHECK(ui.find("md.outline.panel.bg") != nullptr);
+    DOCTEST_CHECK(ui.find("md.tree.anim.driver") == nullptr);
+    DOCTEST_CHECK_EQ(treeW(), 240.0f);
+    const auto* ed = ui.find("md.editor");
+    DOCTEST_REQUIRE(ed != nullptr);
+    const float edX = ed->frame.x;
+    const float edW = ed->frame.width;
+    DOCTEST_CHECK_EQ(edX, 40.0f + 240.0f + 16.0f);  // pad + 树宽 + gap（公式锚点）
+    otoggle->onClick();  // 关
+    frame();
+    DOCTEST_CHECK(ui.find("md.outline.panel.bg") == nullptr);
+    DOCTEST_CHECK_EQ(ui.find("md.editor")->frame.x, edX);
+    DOCTEST_CHECK_EQ(ui.find("md.editor")->frame.width, edW);
+    for (int round = 0; round < 3; ++round) {
+        otoggle->onClick();
+        frame();
+        DOCTEST_CHECK_EQ(ui.find("md.editor")->frame.x, edX);
+        DOCTEST_CHECK_EQ(ui.find("md.editor")->frame.width, edW);
+        DOCTEST_CHECK_EQ(treeW(), 240.0f);
+        otoggle->onClick();
+        frame();
+        DOCTEST_CHECK_EQ(ui.find("md.editor")->frame.x, edX);
+        DOCTEST_CHECK_EQ(ui.find("md.editor")->frame.width, edW);
+        DOCTEST_CHECK_EQ(treeW(), 240.0f);
+    }
+
+    mod->onStop();
+    return true;
+})
+
 // 2b2'''''. UAT3 T1（D-R3-1 米黄清除）：md 页主体面 wechat 化回归锁——
 // 树面板/搜索框/编辑输入面/实时输入面/编辑·预览列底/状态栏/大纲浮面板全部
 // 白卡 cardBg + 浅灰 pageBg。反事故：页面变量（compose/drawHeader 的

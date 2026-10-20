@@ -402,6 +402,25 @@ public:
         // UAT3 D-R3-3 b：完全收起后，编辑区左上角常显的圆形展开浮钮
         drawTreeExpandFab(ui, screen, pad, t);
 
+        // UAT5 真机收敛泵：lerp 只在 compose 里推进，而真机主循环是事件驱动——无输入
+        // 即 glfwWaitEvents 睡眠，且 runtime 的 animating 位只认 DSL 管理的动画
+        //（onFrame/过渡/GIF/滚动惯性），本手搓 treePanelWidth_ lerp 对它不可见。
+        // 后果（真机两报同根因）：点折叠/展开 → 点击帧只推进一步（240→~197）即冻结，
+        // 面板壳仍 ~240、内容空（<220 不画）、浮钮（>1px）不上屏；其后每次任意输入
+        //（如反复开关大纲）各供一帧，面板再向目标爬一步 → 编辑列 x 随之逐轮漂移。
+        // headless 直泵 compose 40 帧绕过主循环策略，故既有测试恒绿、真机分叉。
+        // 修法 = carousel 同款模式：动画在途挂 1x1 空 onFrame 元素——runtime 每帧经
+        // updateFrameCallback 回调它并置 animating_/composeRequested_/paintRequested_
+        // → 主循环持续出帧推进 compose 直至钉住；收敛后本元素不再挂载即被剪除，
+        // 循环回睡，零常驻功耗。条件与上方钉住判定互补（<eps 钉住 / >=eps 挂泵），
+        // 不存在「在途无泵」或「收敛常驻泵」的缝隙。
+        if (std::fabs(treeTargetW - treePanelWidth_) >= kTreePanelSnapEps) {
+            ui.stack("md.tree.anim.driver")
+                .size(1.0f, 1.0f)
+                .onFrame([](float) {})
+                .build();
+        }
+
         drawOutlinePanel(ui, screen, t, componentTheme);
 
         drawNewNoteDialog(ui, screen, t, componentTheme);
