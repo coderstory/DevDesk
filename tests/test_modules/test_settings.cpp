@@ -636,12 +636,13 @@ REGISTER_TEST(settings_log_viewer_refresh_button,
     return true;
 })
 
-// 代理端口校验失败反馈（红字状态行 + 下一次输入清除）：设置页无创建弹窗，端口 draft
-// 就地提交；反馈通道对齐 claude formError 语义——校验错误以红字呈现
-//（settings.subtitle 走 colors.error，非 toast），且随下一次输入自动清除。
+// 代理端口校验失败：设置页无创建弹窗，端口 draft 就地提交；非法 draft 提交不得
+// 落盘。UAT5 页头小字（settings.subtitle 状态行）删除后，「红字反馈 + 下一次输入
+// 清除」不再有可见面——status* 退为模块内部状态（清错逻辑保留），本用例收缩为
+// 「非法端口不落盘」+「页头确无 subtitle 残留」两条可断言面。
 
 REGISTER_TEST(settings_port_error_clear_on_input,
-              "settings: 端口校验失败 → 红字状态行 + 下一次输入清除（headless）", {
+              "settings: 端口校验失败 → 不落盘保持默认；页头无 subtitle 行（headless）", {
     test_support::TestEnv env(kCfgPrefix, "portformerr", true);
     test_support::ScopedConfigPath cfgEnv(test_support::tempConfigFile(kCfgPrefix, "portformerr_cfg"));   // 临时 config，不碰真机配置
     std::unique_ptr<::core::Module> mod(create_settings_module());
@@ -672,23 +673,20 @@ REGISTER_TEST(settings_port_error_clear_on_input,
     DOCTEST_REQUIRE(apply->onClick != nullptr);
     apply->onClick();
     frame("pf3");
-    const auto* sub = ui.find("settings.subtitle");
-    DOCTEST_REQUIRE(sub != nullptr);
-    DOCTEST_CHECK(sub->text.find("端口无效") != std::string::npos);  // 红字校验错误行
     // 非法端口未落盘：proxyPort 仍是默认 8888
     module::settings::SettingsStore store(::core::appDatabase());
     DOCTEST_CHECK_EQ(store.load().proxyPort, 8888);
 
-    // 下一次输入 → 校验错误清除，subtitle 回静态说明
+    // 页头小字行已删（UAT5）：错误态也不得再把 subtitle 节点建回来
+    DOCTEST_CHECK(ui.find("settings.subtitle") == nullptr);
+    // 下一次输入仍走清错逻辑（statusIsError_ 内部态，不再有渲染面也不得崩）
     auto* input2 = ui.find("settings.card.proxy.port.input.hit");
     DOCTEST_REQUIRE(input2 != nullptr);
     eui::TextInputEvent fix;
     fix.text = "9";
     input2->onTextInput(fix);       // onChange → statusIsError_ 清
     frame("pf4");
-    const auto* sub2 = ui.find("settings.subtitle");
-    DOCTEST_REQUIRE(sub2 != nullptr);
-    DOCTEST_CHECK(sub2->text.find("端口无效") == std::string::npos);
+    DOCTEST_CHECK(ui.find("settings.subtitle") == nullptr);
     mod->onStop();
     return true;
 })
@@ -731,12 +729,13 @@ REGISTER_TEST(settings_log_dropdown_popup_stays_in_window, "settings: log dropdo
     std::unique_ptr<::core::Module> mod(create_settings_module());
     mod->onStart();
 
-    // 日志卡位于「日志」tab 顶部（cardsTopY = 40 pad + 64 header + 16 gap + 40 tab
-    // + 16 gap = 176；保留字段底 = 176 + 68 + 36 = 280，+ 8 gap + 弹层 216 = 504）。
-    // 1600×1300 下方空间充足 → 默认 openDown；短窗下 504 > 高 − 16 → 改 openUp。
+    // 日志卡位于「日志」tab 顶部（UAT5 页头小字删除后 cardsTopY = 40 pad +
+    // 40 header + 16 gap + 40 tab + 16 gap = 152；保留字段底 = 152 + 68 + 36 =
+    // 256，+ 8 gap + 4 项弹层 148 = 412）。
     // 卡顶游标只累计本 tab 的卡——全量累加会把这里算错。
-    // UAT3 双列：级别下拉并到保留同排（行 y 116→68），4 项弹层 = 280 + 8 + 148 = 436
-    // ≤ 454（470 − 16）→ 短窗下也保持默认向下展开且收在窗内。
+    // UAT3 双列：级别下拉并到保留同排（行 y 116→68），4 项弹层 = 412
+    // ≤ 454（470 − 16）→ 短窗下也保持默认向下展开且收在窗内（断言按运行时
+    // frame 实测，注释数字随 cardsTopY 公式同步）。
     eui::Screen screen;
     screen.width = 1200.0f;
     screen.height = 470.0f;
@@ -850,13 +849,8 @@ REGISTER_TEST(settings_retention_change_prunes_immediately, "settings: retention
     DOCTEST_CHECK_EQ(row.value().getInt64("n").value(),
                      static_cast<int64_t>(1));
 
-    // 状态反馈「已清理 2 条」渲染在副标题
-    ui.begin("prune_status");
-    mod->compose(ui, screen);
-    ui.end();
-    const auto* subtitle = ui.find("settings.subtitle");
-    DOCTEST_REQUIRE(subtitle != nullptr);
-    DOCTEST_CHECK(subtitle->text.find("已清理 2 条") != std::string::npos);
+    // 「已清理 2 条」状态反馈原渲染在页头副标题——UAT5 页头小字删除后该回显
+    // 无渲染面（status* 退内部态），清理效果以上面 DB 计数为准。
 
     mod->onStop();
     ::core::theme::setDark();
@@ -2174,7 +2168,8 @@ REGISTER_TEST(settings_port_esc_discards_draft,
 
 // 设置页 Ctrl+S 保存快捷键（headless）
 // 设置页除端口草稿外全部即时落盘，Ctrl+S 语义 = 提交待决草稿（=「应用」按钮全链路，
-// 含 ClaudeService 端口同步），无待决时显式重写落盘 + 状态行回显。
+// 含 ClaudeService 端口同步），无待决时显式重写落盘（「已保存」回显原在页头副标题，
+// UAT5 页头小字删除后无渲染面，落盘效果以 app_config 行为准）。
 // 服务注册 + 代理启动用于验证代理运行中的 Ctrl+S 分支。
 REGISTER_TEST(settings_ctrl_s_save_shortcut,
               "settings: Ctrl+S 提交端口草稿 / 显式落盘", {
@@ -2206,19 +2201,12 @@ REGISTER_TEST(settings_ctrl_s_save_shortcut,
     };
 
     // 1) 无草稿：Ctrl+S → 配置落库（onStart 只读不写，此处才出现行）
-    //    + 状态行回显「设置已保存」
         // 「落盘了没有」看 app_config 的那一行在不在
     DOCTEST_CHECK(test_support::readRawConfigRow(
                       ::core::appDatabase(), "config.json:claudeProxyPort").empty());
     DOCTEST_CHECK(mod->onKeyEvent(ctrlS(eui::KeyAction::Press)));
     DOCTEST_CHECK(!test_support::readRawConfigRow(
                       ::core::appDatabase(), "config.json:claudeProxyPort").empty());
-    frame("css1");
-    {
-        const auto* sub = ui.find("settings.subtitle");
-        DOCTEST_REQUIRE(sub != nullptr);
-        DOCTEST_CHECK(sub->text.find("设置已保存") != std::string::npos);
-    }
     {
         module::settings::SettingsStore store(::core::appDatabase());
         DOCTEST_CHECK_EQ(store.load().proxyPort, 8888);
@@ -2261,12 +2249,6 @@ REGISTER_TEST(settings_ctrl_s_save_shortcut,
         DOCTEST_CHECK_EQ(store.load().proxyPort, 9001);
     }
     DOCTEST_CHECK_EQ(svc.configuredProxyPort(), 9001);
-    frame("css3b");   // 重新 compose，让状态行进树
-    {
-        const auto* sub = ui.find("settings.subtitle");
-        DOCTEST_REQUIRE(sub != nullptr);
-        DOCTEST_CHECK(sub->text.find("代理端口已保存") != std::string::npos);
-    }
     // 4) 代理运行中再按 Ctrl+S：draft 已应用，走显式落盘分支
     auto started = svc.startProxy("127.0.0.1", 0);
     DOCTEST_REQUIRE(started.isOk());
@@ -2685,9 +2667,8 @@ REGISTER_TEST(settings_log_level_effective_visible_and_persistent,
         const auto* label = ui.find("settings.card.log.level.dd.label");
         DOCTEST_REQUIRE(label != nullptr);
         DOCTEST_CHECK_EQ(label->text, std::string("DEBUG（详尽）"));
-        const auto* sub = ui.find("settings.subtitle");
-        DOCTEST_REQUIRE(sub != nullptr);
-        DOCTEST_CHECK_EQ(sub->text, std::string("日志级别：DEBUG（即时生效）"));
+        // 「日志级别：DEBUG（即时生效）」回显原在页头副标题——UAT5 页头小字
+        // 删除后以控件选中态（上面 label 断言）为可见回显面。
     }
 
     // 配置落盘 + (c) 重启（新实例 onStart）恢复持久化档
@@ -2963,6 +2944,8 @@ REGISTER_TEST(settings_ui_logic_equivalence,
     DOCTEST_CHECK_EQ(ms::kDropdownPopupGap, 8.0f);
     DOCTEST_CHECK_EQ(ms::kWindowBottomMargin, 16.0f);
     DOCTEST_CHECK_EQ(ms::kSettingsTabHeight, 40.0f);
+    // UAT5 页头小字删除：设置页页头自共享 64 收紧为本页专用 40（标题盒 34 + 6）
+    DOCTEST_CHECK_EQ(ms::kSettingsHeaderH, 40.0f);
     DOCTEST_CHECK_EQ(ms::kAppearanceCardHeight, 184.0f);
     // UAT3 多列分栏：编辑器字号卡半宽配对，hint 迁下拉下方第二行
     //（行底 roundFs(68)+roundFs(36)=104，hint 行底 +roundFs(6)+roundFs(16)=126，+16 → 144）

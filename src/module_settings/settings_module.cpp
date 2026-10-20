@@ -36,7 +36,6 @@
 #include "module_toggle_bridge.h"
 
 #include <ui_kit/columns.h>
-#include <ui_kit/metrics.h>
 #include <ui_kit/toast.h>
 #include <ui_kit/wtab.h>
 
@@ -435,7 +434,8 @@ public:
 
     void setProxyPortDraft(const std::string& v) {
         proxyPortDraft_ = v;
-        // 校验错误（红字）随下一次输入清除；成功提示保留到下一次操作。
+        // 校验错误态随下一次输入清除（UAT5 页头小字删除后 status* 仅内部状态，
+        // 无渲染面；清错逻辑保留给后续可能的新反馈通道）。
         if (statusIsError_) {
             statusMessage_.clear();
             statusIsError_ = false;
@@ -963,7 +963,9 @@ public:
 
         // 页面底色 = 主窗口 clearColor，不自铺不透明底。
 
-        const float headerH = ui_kit::kHeaderH;
+        // UAT5：页头小字行删除后不再用共享 64（kHeaderH），改本页专用收紧档——
+        // cardsTopY 公式不变，起点随 headerH 收紧（100% 档 40+40+16+40+16=152）。
+        const float headerH = kSettingsHeaderH;
         const float tabH = kSettingsTabHeight;
         // 日志 tail 读盘在后台线程，渲染恒读快照 → 切 tab / 首帧不闪空。
         if (settingsTab_ == kTabLog) {
@@ -1279,13 +1281,16 @@ private:
 
     void drawHeader(eui::Ui& ui, float contentW, float headerH,
                     const core::theme::Tokens& t) {
+        // UAT5：标题下的说明/状态小字行（settings.subtitle）整行删除——页头只留
+        // 「设置」大标题；headerH 由共享 64 收紧为本页专用 40（不留空洞）。
+        // statusMessage_/statusIsError_ 仍是模块内部状态（端口草稿输入清错逻辑
+        // 读 statusIsError_），但不再有页头渲染面。
         ui.row("settings.header")
             .size(contentW, headerH)
             .alignItems(eui::Align::CENTER)
             .content([&] {
                 ui.column("settings.header.text")
                     .size(contentW, headerH)
-                    .gap(2.0f)
                     .content([&] {
                         ui.text("settings.h1")
                             .size(contentW, 34.0f)
@@ -1294,17 +1299,6 @@ private:
                             .lineHeight(34.0f)
                             .fontWeight(700)
                             .color(t.colors.textPrimary)
-                            .build();
-                        const std::string sub = statusMessage_.empty()
-                            ? "所有变更即时保存到本地数据库 · 左侧侧边栏切换页面"
-                            : statusMessage_;
-                        ui.text("settings.subtitle")
-                            .size(contentW, 20.0f)
-                            .text(sub)
-                            .fontSize(t.sizes.fontSizeSmall)
-                            .lineHeight(20.0f)
-                            .color(statusIsError_ ? t.colors.error
-                                                  : t.colors.textSecondary)
                             .build();
                     })
                     .build();
