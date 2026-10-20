@@ -32,7 +32,7 @@ namespace module::home {
 
 namespace {
 
-// 首页「今日 token 图表卡」的固定标称高度。首页各块高度全部固定（欢迎区 72 /
+// 首页「今日 token 图表卡」的固定标称高度。首页各块高度全部固定（欢迎区 40 /
 // 统计网格 statH / 图表卡本值 / 快捷按钮行 44），页面装不下时不做任何压缩——
 // 溢出由整页外层 home.scroll（scrollView）出滚动条吸收，最小窗（1000×640）也
 // 不丢内容。
@@ -316,28 +316,30 @@ public:
             .padding(pad)
             .gap(gap)
             .content([&] {
+                // UAT5 全局顶部收紧：页头行 72→40（与其他页 kHeaderH=40 同档）——
+                // 标题 24px 加粗（与 todo/markdown/agent 页题同字号）+ 日期 14px 两行叠满。
                 ui.row("home.header")
-                    .size(contentW, 72.0f)
+                    .size(contentW, 40.0f)
                     .alignItems(eui::Align::CENTER)
                     .content([&] {
                         // 标题列宽 = contentW − 右侧按钮组宽（两段和 = contentW，header 行 gap=0）。
                         ui.column("home.greeting")
-                            .size(std::max(280.0f, contentW - kHeaderActionsW), 72.0f)
-                            .gap(6.0f)
+                            .size(std::max(280.0f, contentW - kHeaderActionsW), 40.0f)
+                            .gap(2.0f)
                             .content([&] {
                                 ui.text("home.h1")
-                                    .size(std::max(280.0f, contentW - kHeaderActionsW), 40.0f)
+                                    .size(std::max(280.0f, contentW - kHeaderActionsW), 24.0f)
                                     .text("工作台")
-                                    .fontSize(t.sizes.fontSizePage)
-                                    .lineHeight(40.0f)
+                                    .fontSize(t.sizes.fontSizeTitle)
+                                    .lineHeight(24.0f)
                                     .fontWeight(700)
                                     .color(t.colors.wechat.textPrimary)
                                     .build();
                                 ui.text("home.date")
-                                    .size(std::max(280.0f, contentW - kHeaderActionsW), 18.0f)
+                                    .size(std::max(280.0f, contentW - kHeaderActionsW), 14.0f)
                                     .text("今天是 " + formatTodayCn(now))
                                     .fontSize(t.sizes.fontSizeSmall)
-                                    .lineHeight(18.0f)
+                                    .lineHeight(14.0f)
                                     .color(t.colors.wechat.textSecondary)
                                     .build();
                             })

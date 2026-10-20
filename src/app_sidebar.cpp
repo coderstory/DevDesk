@@ -225,8 +225,9 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
 
     // 顶部留白取页面主区 padding 同档 token（spacingXXLarge=40）：品牌块上缘与页面内容齐平
     const float topPad = t.sizes.spacingXXLarge;
-    // 品牌块高 32（字面值，不用 fontSizePage 运行时值：fontScale 会缩放 fontSize* 而该框不随之变）
-    constexpr float kBrandH = 32.0f;
+    // 品牌块高 56（字面值，不用 fontSizePage 运行时值：fontScale 会缩放 fontSize* 而该框不随之变）
+    // UAT5：logo 36→48 按用户拍板放大，行高 32→56 随之加高（48 瓦在 56 行内居中各留 4px）
+    constexpr float kBrandH = 56.0f;
     // 品牌块 → 导航列表间距 28（无对应 token 档位；token 只有 4/8/16/24/40）
     constexpr float kBrandNavGap = 28.0f;
 
@@ -258,15 +259,15 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
             // logo——C 方案终端窗 >_（ui_kit::drawDevDeskLogo 矢量绘制，几何契约与
             // assets/icon.ico 同源；fa-laptop-code 字形退役）。行元素仍是整行 box
             // (0, topPad, kWidth, kBrandH)：test_app_sidebar 钉的 brand frame.y=40
-            // 防跳动断言与首个导航 y 计算均不动；品牌文本由自绘标题栏承载。
-            // UAT4：logo 28→36 按用户拍板放大；kBrandH=32 与 topPad 刻意不动
-            //（行高/导航起点跳动 = 40+32+28=100 断言全红），36 瓦在 32 行内居中
-            // 垂直溢出 ±2px 落在上下留白里，视觉上仍是行内居中。
+            // 防跳动断言不动；品牌文本由自绘标题栏承载。
+            // UAT5：logo 36→48 按用户拍板放大（「不够大」），行高 32→56 随之加高
+            //（48 瓦在 56 行内居中上下各留 4px，不再溢出），首个导航起点
+            // 40+56+28=124 连锁（test_app_sidebar 各导航 y 断言同步）。
             ui.stack("app.sidebar.brand")
                 .position(0.0f, topPad)
                 .size(kWidth, kBrandH)
                 .content([&] {
-                    constexpr float kLogoSize = 36.0f;  // 侧栏档（展开/折叠同款）
+                    constexpr float kLogoSize = 48.0f;  // 侧栏档（展开/折叠同款）
                     ui_kit::drawDevDeskLogo(
                         ui, "app.sidebar.brand.mark",
                         (kWidth - kLogoSize) * 0.5f, (kBrandH - kLogoSize) * 0.5f,

@@ -31,6 +31,7 @@
 #include <eui/dsl_app.h>
 
 #include <ui_kit/columns.h>  // 双列几何单一来源（UAT3 多列分栏几何断言）
+#include <ui_kit/metrics.h>  // kHeaderH（UAT5 起设置页页头高 = 共享常量，不再双源）
 
 #include <chrono>
 #include <algorithm>
@@ -2944,8 +2945,8 @@ REGISTER_TEST(settings_ui_logic_equivalence,
     DOCTEST_CHECK_EQ(ms::kDropdownPopupGap, 8.0f);
     DOCTEST_CHECK_EQ(ms::kWindowBottomMargin, 16.0f);
     DOCTEST_CHECK_EQ(ms::kSettingsTabHeight, 40.0f);
-    // UAT5 页头小字删除：设置页页头自共享 64 收紧为本页专用 40（标题盒 34 + 6）
-    DOCTEST_CHECK_EQ(ms::kSettingsHeaderH, 40.0f);
+    // UAT5 全局顶部收紧：共享 kHeaderH 64→40，kSettingsHeaderH 已删并入共享源
+    DOCTEST_CHECK_EQ(ui_kit::kHeaderH, 40.0f);
     DOCTEST_CHECK_EQ(ms::kAppearanceCardHeight, 184.0f);
     // UAT3 多列分栏：编辑器字号卡半宽配对，hint 迁下拉下方第二行
     //（行底 roundFs(68)+roundFs(36)=104，hint 行底 +roundFs(6)+roundFs(16)=126，+16 → 144）

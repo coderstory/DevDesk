@@ -464,6 +464,8 @@ private:
                 ? "Ctrl+Shift+P 切换视图 · 按 ? 查看快捷键"
                 : "尚未初始化笔记目录";
 
+        // UAT5 全局顶部收紧：kHeaderH 64→40（共享常量），md.title 内部
+        // 标题行 24 + 副题 14 叠满（字号不动；tab 段 36 / 操作行 40 原高不变）。
         ui.row("md.header")
             .size(contentW, ui_kit::kHeaderH)
             .alignItems(eui::Align::CENTER)
@@ -475,24 +477,24 @@ private:
                     .gap(2.0f)
                     .content([&] {
                         ui.text("md.h1")
-                            .size(contentW - actionsW - segW, 32.0f)
+                            .size(contentW - actionsW - segW, 24.0f)
                             .text("Markdown 笔记本")
                             .fontSize(t.sizes.fontSizeTitle)
-                            .lineHeight(32.0f)
+                            .lineHeight(24.0f)
                             .fontWeight(700)
                             .color(t.colors.wechat.textPrimary)
                             .build();
                         // subtitle 包 clip 栈：内层省略号管排版宽，栈 .clip() 兜底绘制范围
                         const float subW = contentW - actionsW - segW;
                         ui.stack("md.subtitle.clip")
-                            .size(subW, 18.0f)
+                            .size(subW, 14.0f)
                             .clip()
                             .content([&] {
                                 ui.text("md.subtitle")
-                                    .size(subW, 18.0f)
+                                    .size(subW, 14.0f)
                                     .text(subtitle)
                                     .fontSize(t.sizes.fontSizeSmall)
-                                    .lineHeight(18.0f)
+                                    .lineHeight(14.0f)
                                     .color(t.colors.wechat.textSecondary)
                                     .maxWidth(subW)
                                     .overflow(core::TextOverflow::Ellipsis)
