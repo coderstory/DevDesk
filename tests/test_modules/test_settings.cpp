@@ -1962,7 +1962,7 @@ REGISTER_TEST(settings_appearance_dropdown_popup_above_following_cards,
 //     contentW=712 → colW=348；默认窗 1600 → 页宽 1392 → contentW=1312 → colW=648；
 //   ② 配对行：行宽 = contentW、行高 = max(对内卡高)（右卡矮于行高时下方留白不拉伸）；
 //     右卡 x = 左卡 x + colW + 16；
-//   ③ 落单半宽卡（modules）：宽 = colW、仍为内容列直接子元素；
+//   ③ modules 卡（UAT4 按用户拍板全宽撑满，原 cols1 批落单半宽）：宽 = contentW；
 //   ④ 85% / 130% 档「卡高包住内容」：modules（2×2 格）/ editor（hint 下移）/
 //     log（hint 并一行）三卡高随 roundFs 同缩放且内容底不出卡。
 REGISTER_TEST(settings_card_pair_column_geometry,
@@ -2023,7 +2023,7 @@ REGISTER_TEST(settings_card_pair_column_geometry,
         DOCTEST_CHECK(nearEq(appearance->frame.y, pair->frame.y));
         DOCTEST_CHECK(nearEq(editor->frame.y, pair->frame.y));
 
-        // 落单半宽卡：modules 宽 = colW
+        // UAT4：modules 卡按用户拍板改全宽（原 cols1 批落单半宽）——宽 = contentW
         DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 1));
         eui::Ui uiM;
         uiM.begin("pairgeo_modules");
@@ -2032,10 +2032,11 @@ REGISTER_TEST(settings_card_pair_column_geometry,
         uiM.layout(screen.width, screen.height);
         const auto* modulesCard = uiM.find("settings.card.modules");
         DOCTEST_REQUIRE(modulesCard != nullptr);
-        DOCTEST_CHECK_MESSAGE(nearEq(modulesCard->frame.width, colWant),
+        DOCTEST_CHECK_MESSAGE(nearEq(modulesCard->frame.width, contentW),
                               "modules 宽 " +
                                   std::to_string(modulesCard->frame.width) +
-                                  " 期望 " + std::to_string(colWant));
+                                  " 期望 " + std::to_string(contentW));
+        DOCTEST_CHECK(nearEq(modulesCard->frame.x, appearance->frame.x));
     }
 
     // ④ 85% / 130% 档「卡高包住内容」（逐卡：卡高 == roundFs(常量)，尾行/hint 底 ≤ 卡底）
@@ -2117,6 +2118,29 @@ REGISTER_TEST(settings_card_pair_column_geometry,
         ui_kit::columnX(logCard->frame.width - 56.0f, 16.0f, &logCellW,
                         &logCell2X);
         DOCTEST_CHECK(nearEq(field2->frame.x - field1->frame.x, logCell2X));
+    }
+
+    // ⑤ 同步 tab：github_sync 卡高恒 372（UAT4：未启用不再折叠 132——去门控后
+    // 未启用态 7 字段全显示，132 槽位装不下；启用/未启用只差表单可交互性）
+    {
+        FontScaleGuard g{1.0f};
+        eui::Screen screen;
+        screen.width = 1392.0f;
+        screen.height = 1000.0f;
+        DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 3));
+        eui::Ui uiS;
+        uiS.begin("pairgeo_sync");
+        mod->compose(uiS, screen);
+        uiS.end();
+        uiS.layout(screen.width, screen.height);
+        const auto* syncCard = uiS.find("settings.card.github_sync");
+        DOCTEST_REQUIRE(syncCard != nullptr);
+        const float wantH = module::settings::roundFs(
+            module::settings::kGithubSyncCardHeight);
+        DOCTEST_CHECK_MESSAGE(nearEq(syncCard->frame.height, wantH),
+                              "github_sync 卡高 " +
+                                  std::to_string(syncCard->frame.height) +
+                                  " 期望(恒满高) " + std::to_string(wantH));
     }
 
     mod->onStop();

@@ -92,7 +92,7 @@ const CardSpec kCardSpecs[] = {
     {kTabGeneral, "settings.card.editor", nullptr, CardHeightKind::Fixed,
      kEditorFontCardHeight, true, /*half=*/true, &drawEditorFontCard},
     {kTabModules, "settings.card.modules", nullptr, CardHeightKind::Fixed,
-     kModulesCardHeight, false, /*half=*/true, &drawModulesCard},
+     kModulesCardHeight, false, /*half=*/false, &drawModulesCard},
     {kTabModules, "settings.card.directory", kModuleIdMarkdown,
      CardHeightKind::Fixed, kDirectoryCardHeight, false, /*half=*/false,
      &drawDirectoryCard},
@@ -1145,8 +1145,7 @@ private:
     }
 
     // 注册表卡高解析：Fixed = 表内常量；ProxyWarnings = 警告行数推导；FillRemainder = 剩余视口高。
-    static float cardHeight(const CardSpec& spec, float proxyH, float remain,
-                            bool githubSyncEnabled) {
+    static float cardHeight(const CardSpec& spec, float proxyH, float remain) {
         switch (spec.heightKind) {
         case CardHeightKind::Fixed:
             // spec.height 是 100% 档基准，运行期随生效字号放大：卡高不同步放大就会把尾行挤出卡外。
@@ -1156,9 +1155,10 @@ private:
         case CardHeightKind::FillRemainder:
             return std::max(260.0f, remain);
         case CardHeightKind::GithubSync:
-            // 未启用时卡片早退（不画表单）→ 用折叠高，否则留一大片空面板。
-            return roundFs(githubSyncEnabled ? kGithubSyncCardHeight
-                                             : kGithubSyncCollapsedHeight);
+            // 恒满高（UAT4）：未启用态也全字段渲染（折叠高 132 装不下 7 字段，
+            // 内容画出 132 槽位外 = scroll 内容记账偏小）。启用/未启用只差表单
+            // 区是否可交互，不再参与卡高决策。
+            return roundFs(kGithubSyncCardHeight);
         }
         return spec.height;  // 兜底：枚举穷举，仅为满足「所有路径有返回」
     }
@@ -1166,7 +1166,9 @@ private:
     // 遍历注册表画本 tab 的卡。UAT3 多列分栏：单游标改双游标——半宽卡两两成行
     //（行高 = max(对内卡高)，左卡 x=0、右卡 x=colW+gap，包一层全宽 row 作内容列子元素）；
     // 全宽卡独占一行并清掉挂起的半宽游标（落单半宽卡直接作内容列子元素，宽=colW）。
-    // 分组标题/分隔线仅全宽卡触发（模块卡半宽后「功能模块」组题随之隐去，机制本身不动）。
+    // 分组标题/分隔线仅全宽卡触发。UAT4：模块插拔卡按用户拍板改全宽（原 cols1
+    // 批落单半宽），卡内 2×2 开关格随全宽拉开；「功能模块」组题仍不存在，
+    // 落单半宽兜底逻辑保留不动。
     // 纵向游标只累计参与绘制的卡，带下拉的卡需页面绝对 Y（openUp）。
     void drawCardRegion(eui::Ui& ui, float contentWidth, float cardsTopY,
                         float cardsH, float screenH,
@@ -1219,7 +1221,7 @@ private:
         auto flushLoneHalf = [&]() {
             if (pendingHalf == nullptr) return;
             const float h = cardHeight(*pendingHalf, proxyH,
-                                      cardsH - cardY, githubSyncCfg_.enabled);
+                                      cardsH - cardY);
             CardDrawArgs args{ui, pendingHalf->id, colW, h, t,
                               cardsTopY + cardY - cardsScrollOffset_, screenH,
                               in, a};
@@ -1233,9 +1235,9 @@ private:
         auto flushHalfPair = [&](const CardSpec& rightSpec) {
             const CardSpec& leftSpec = *pendingHalf;
             const float hL = cardHeight(leftSpec, proxyH,
-                                        cardsH - cardY, githubSyncCfg_.enabled);
+                                        cardsH - cardY);
             const float hR = cardHeight(rightSpec, proxyH,
-                                        cardsH - cardY, githubSyncCfg_.enabled);
+                                        cardsH - cardY);
             const float rowH = std::max(hL, hR);
             const float rowY = cardY;
             ui.row(std::string("settings.cards.pair.") +
@@ -1303,7 +1305,7 @@ private:
             }
             firstInTab = false;
             const float h =
-                cardHeight(spec, proxyH, cardsH - cardY, githubSyncCfg_.enabled);
+                cardHeight(spec, proxyH, cardsH - cardY);
             CardDrawArgs args{ui, spec.id, contentWidth, h, t,
                               cardsTopY + cardY - cardsScrollOffset_, screenH,
                               in, a};

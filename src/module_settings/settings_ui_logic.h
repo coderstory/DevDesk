@@ -72,16 +72,16 @@ inline constexpr long kLogTailReadWindow = 256 * 1024;  // tail 只读末尾 256
 // 内边距四周 ≥16px，改动须同时满足「内容底沿 + 16」；这些是 100% 档基准，注册表运行期取 roundFs(常量)，卡高与行盒同缩放才不挤出尾行。
 inline constexpr float kAppearanceCardHeight = 184.0f;  // 外观卡（通用 | 半宽配对左列；降级提示行底 168 + 16，E 批布局统一后行序不变仍 184）
 inline constexpr float kEditorFontCardHeight = 144.0f;  // 编辑器字号卡（通用 | 半宽配对右列；hint 迁下拉下方第二行后行底 hintRowBelowY(68)+roundFs(16)=126，+16 → 144；85% 档 122 / 130% 档 187）
-inline constexpr float kModulesCardHeight = 198.0f;     // 模块插拔卡（模块 | 半宽卡内 2×2 开关格；次行块底 68+roundFs(56)+roundFs(36)=160，+16 → 198 给窄列字号档富余；85% 档 168 / 130% 档 257）
+inline constexpr float kModulesCardHeight = 198.0f;     // 模块插拔卡（模块 | 全宽卡内 2×2 开关格，UAT4 按用户拍板撑满；次行块底 68+roundFs(56)+roundFs(36)=160，+16 → 198 给字号档富余；85% 档 168 / 130% 档 257）
 inline constexpr float kDirectoryCardHeight = 216.0f;   // 目录卡（模块；内容起 y=68 顺移后 gitignore 行底 182，85% 档 34 字面行高需富余兜底）
 inline constexpr float kLogSettingsCardHeight = 144.0f; // 日志卡（日志；两下拉同排双列，hint 并一行下移后行底 126，+16 → 144；85% 档 122 / 130% 档 187）
 // GitHub Sync 卡（同步）：启用态满高（UAT2 双列布局后最坏行序 = 双列开关行 +
 // URL 全宽行（含三按钮）+ 双列输入行 + 进度 + 错误/状态 + 分支提示 + public 提
 // 醒 + 本地 git 灰字 + 未同步黄字 + 删跳过黄字，内容底沿 364；错误行与进度行互
 // 斥、错误行显示时状态行让位，故 372 包住所有组合——底距 8 与旧 460−452 一致）。
-// 未启用时卡片早退，改用折叠高。
+// UAT4：卡高恒 372 不再按启用态折叠——未启用态也全字段渲染（去门控后 7 字段
+// 全显示），折叠高 132 会把内容画出槽位外（scroll 内容记账偏小）。
 inline constexpr float kGithubSyncCardHeight = 372.0f;
-inline constexpr float kGithubSyncCollapsedHeight = 132.0f;  // 未启用（标题+描述+开关）
 
 // 行盒 / 间距随生效字号派生：行盒 = round(基准 × fontScale)，系数恒包住最坏 CJK 墨迹；字号本体仍走 fs()（不取整）。
 inline float roundFs(float base) {
@@ -91,7 +91,6 @@ inline float roundFs(float base) {
 // 下拉贴近窗体底边向下展开可能被裁剪，用同一套几何预判、出界则置 openUp 向上；弹层三项必须与 EUI-NEO dropdown 实际渲染一致（主题覆写 metrics 时需同步）。
 // E 批布局统一：label+control 行一律 ui_kit::formRow（label 定宽 110、行高 = logFieldHeight 36、
 // hint 作控件区内行内尾注）；行 y 走 roundFs 派生（85% 档字面值会溢出卡外），水平几何由 formRow 给。
-inline constexpr float kLogFieldWidth = 240.0f;  // 两个下拉同宽（同一列口径）
 inline float logFieldHeight() { return roundFs(36.0f); }  // 两个下拉同高（100% = 36，行高单一来源）
 inline float logRow1LabelY() { return roundFs(68.0f); }   // 行 y（100% = 68，内容起始统一口径；UAT3 双列后保留/级别两行同排共用本锚）
 // 迁 FormRow 后行高即控件高（垂直居中差恒 0），行 y 与控件 y 合一：
