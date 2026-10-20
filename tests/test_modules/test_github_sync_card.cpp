@@ -205,7 +205,7 @@ REGISTER_TEST(github_sync_card_progress_row,
 })
 
 REGISTER_TEST(github_sync_card_switch_position,
-              "github_sync 卡片: 双列三行布局定位（开关行/URL 行/输入行 + 双列 x）且无包裹 stack 残留", {
+              "github_sync 卡片: 双列三行定位（开关钉列右缘/输入撑满列/URL 拉满按钮组）且无包裹 stack 残留", {
     CardFixture fx;
     eui::Ui ui;
     fx.draw(ui);
@@ -222,13 +222,13 @@ REGISTER_TEST(github_sync_card_switch_position,
     DOCTEST_REQUIRE(br != nullptr);
     DOCTEST_REQUIRE(tk != nullptr);
     DOCTEST_REQUIRE(push != nullptr);
-    // 换算期望（与 drawGithubSyncCard 行进公式同构；UAT2 双列：5 行纵排 → 3 行）：
+    // 换算期望（与 drawGithubSyncCard 行进公式同构；UAT2 双列：5 行纵排 → 3 行；
+    // UAT4 撑满：开关钉列右缘、输入填满列控制区、URL 拉满到按钮组）：
     //   内容起 y = 16 + 标题 22 + 2 + 描述 16 + 12 = 68；行进距 = 行盒 36 + 8。
     //   双列几何：formW = 卡宽 1520 − 内边距 56 = 1464；colGap = roundFs(8) = 8；
     //   colW = (1464 − 8)/2 = 728；右列 x = 28 + 728 + 8 = 764；
-    //   控件 x = 列 x + 标签 110 + 8（FormRow 定宽 label）；开关行盒内垂直居中
-    //   (36 − 20)/2。三行 = 开关行（启用|自动推送）→ URL 全宽行（输入+三按钮）→
-    //   输入行（分支|Token）。
+    //   控件 x = 列 x + 标签 110 + 8（FormRow 定宽 label）；列控制区宽 =
+    //   colW − 118 = 610；开关行盒内垂直居中 (36 − 20)/2。
     const float rowH = ms::roundFs(36.0f);
     const float rowY0 = 16.0f + ms::roundFs(22.0f) + ms::roundFs(2.0f) +
                         ms::roundFs(16.0f) + ms::roundFs(12.0f);
@@ -239,26 +239,37 @@ REGISTER_TEST(github_sync_card_switch_position,
     const float colW = (formW - colGap) * 0.5f;
     const float col2X = 28.0f + colW + colGap;      // 右列 x = 764
     const float ctrlDx = 110.0f + 8.0f;              // FormRow 定宽 label + 间距
-    // 第一行（双列开关行）：启用左列 x=146、自动推送右列 x=882，同一 y
-    DOCTEST_CHECK(std::fabs(en->frame.x - (28.0f + ctrlDx)) < 0.5f);
+    const float ctrlW = colW - ctrlDx;               // 列控制区宽 = 610
+    // 第一行（双列开关行）：UAT4 两开关钉各自所在列右缘（列内右对齐）——
+    // 启用右缘 = 左列右缘 28+728（x=712）、自动推送右缘 = 右列右缘 764+728
+    // （x=1448），同一 y；不再贴控件区左缘（列内左对齐已废）
+    DOCTEST_CHECK(std::fabs(en->frame.x - (28.0f + colW - 44.0f)) < 0.5f);
     DOCTEST_CHECK(std::fabs(en->frame.y - (rowY0 + switchDy)) < 0.5f);
-    DOCTEST_CHECK(std::fabs(ap->frame.x - (col2X + ctrlDx)) < 0.5f);
+    DOCTEST_CHECK(std::fabs(ap->frame.x - (col2X + colW - 44.0f)) < 0.5f);
     DOCTEST_CHECK(std::fabs(ap->frame.y - (rowY0 + switchDy)) < 0.5f);
-    // 第二行（URL 全宽行）：输入贴标签列 x=146；按钮组右缘对齐卡右内边距（原与
-    // 自动推送同行的三按钮迁来本行右段）
+    DOCTEST_CHECK(std::fabs(en->frame.x + en->frame.width - (28.0f + colW)) < 0.5f);
+    DOCTEST_CHECK(std::fabs(ap->frame.x + ap->frame.width - (col2X + colW)) < 0.5f);
+    // 第二行（URL 全宽行）：输入贴标签列 x=146；按钮组右缘对齐卡右内边距；
+    // UAT4 撑满——输入右缘拉满到按钮组左缘 −12（无 320 上限）
     DOCTEST_CHECK(std::fabs(url->frame.x - (28.0f + ctrlDx)) < 0.5f);
     DOCTEST_CHECK(std::fabs(url->frame.y - (rowY0 + advance)) < 0.5f);
     const float btnTotalW = 120.0f + 100.0f + 80.0f + 8.0f * 2.0f;
-    DOCTEST_CHECK(std::fabs(push->frame.x - (1520.0f - 28.0f - btnTotalW)) < 0.5f);
+    const float btnAreaX = 1520.0f - 28.0f - btnTotalW;
+    DOCTEST_CHECK(std::fabs(push->frame.x - btnAreaX) < 0.5f);
     DOCTEST_CHECK(std::fabs(push->frame.y - (rowY0 + advance)) < 0.5f);
+    DOCTEST_CHECK(std::fabs(url->frame.x + url->frame.width -
+                            (btnAreaX - 12.0f)) < 0.5f);
     // 第三行（双列输入行）：分支左列 x=146、Token 右列 x=882，同一 y
     DOCTEST_CHECK(std::fabs(br->frame.x - (28.0f + ctrlDx)) < 0.5f);
     DOCTEST_CHECK(std::fabs(br->frame.y - (rowY0 + advance * 2.0f)) < 0.5f);
     DOCTEST_CHECK(std::fabs(tk->frame.x - (col2X + ctrlDx)) < 0.5f);
     DOCTEST_CHECK(std::fabs(tk->frame.y - (rowY0 + advance * 2.0f)) < 0.5f);
-    // Token 半宽可行性钉子：双列后输入宽上限仍是 kFieldW 320（列内 control 区富余
-    // ≥450px，未触缩）——显示截断/编辑滚动由 EUI 单行输入承担，不失功能
-    DOCTEST_CHECK(std::fabs(tk->frame.width - 320.0f) < 0.5f);
+    // 撑满钉子（UAT4）：分支/Token 输入宽 = 所在列控制区宽（colW−118=610），
+    // 右缘 = 所在列右缘（756 / 1492）——320 上限已废，宽窗不再挤在左侧留白
+    DOCTEST_CHECK(std::fabs(br->frame.width - ctrlW) < 0.5f);
+    DOCTEST_CHECK(std::fabs(tk->frame.width - ctrlW) < 0.5f);
+    DOCTEST_CHECK(std::fabs(br->frame.x + br->frame.width - (28.0f + colW)) < 0.5f);
+    DOCTEST_CHECK(std::fabs(tk->frame.x + tk->frame.width - (col2X + colW)) < 0.5f);
     // 负断言对照组 = 上面「存在」断言：wrap 包裹节点拆除后不得再出现在树里
     DOCTEST_CHECK(ui.find(std::string(kCardId) + ".enabled.sw.wrap") == nullptr);
     DOCTEST_CHECK(ui.find(std::string(kCardId) + ".autopush.sw.wrap") == nullptr);
@@ -291,38 +302,140 @@ REGISTER_TEST(github_sync_card_url_input_no_overlap_at_712,
     return true;
 })
 
-// 门控保持（UAT2 双列后语义不变）：未启用时自动推送/URL/分支/Token/按钮全部
-// 不画。自动推送与启用同排双列后，门控从「早退后整行不画」改为显式条件渲染——
-// 本用例钉住该条件不回退（丢掉 if 会让折叠态冒出半行表单）。
-REGISTER_TEST(github_sync_card_disabled_gate,
-              "github_sync 卡片: 未启用时自动推送/URL/分支/Token/按钮不画（启用对照）", {
+// UAT4 撑满三档窗宽校验：712（最小窗）由上面让位用例、1520 由定位用例覆盖，
+// 这里补 1000 / 1312 两档——撑满公式（输入宽 = 列控制区宽 / URL 右缘 =
+// btnAreaX−12）逐档成立，且列间无重叠、不溢出卡缘（右列输入右缘贴卡内容
+// 右缘 kW−28、左列输入右缘不进右列）。回归指向：再加任何「定宽上限」类
+// 约束都会让这两档的红线亮起。
+REGISTER_TEST(github_sync_card_fill_two_widths,
+              "github_sync 卡片: 1000/1312 档输入撑满所在列/URL 拉满按钮组，无重叠无溢出", {
+    for (const float kW : {1000.0f, 1312.0f}) {
+        CardFixture fx;
+        test_support::HeadlessFrame f(
+            "githubsynccardfill" + std::to_string(
+                                       static_cast<int>(kW)));
+        DOCTEST_CHECK(f.frame([&](eui::Ui& ui) {
+            ms::CardDrawArgs args{ui, kCardId, kW, 380.0f,
+                                  core::theme::current(), 0.0f, 1000.0f,
+                                  fx.in, fx.a};
+            ms::drawGithubSyncCard(args);
+            const auto* url = ui.find(std::string(kCardId) + ".url.input");
+            const auto* br = ui.find(std::string(kCardId) + ".branch.input");
+            const auto* tk = ui.find(std::string(kCardId) + ".token.input");
+            const auto* en = ui.find(std::string(kCardId) + ".enabled.sw");
+            const auto* ap = ui.find(std::string(kCardId) + ".autopush.sw");
+            DOCTEST_REQUIRE(url != nullptr);
+            DOCTEST_REQUIRE(br != nullptr);
+            DOCTEST_REQUIRE(tk != nullptr);
+            DOCTEST_REQUIRE(en != nullptr);
+            DOCTEST_REQUIRE(ap != nullptr);
+            // 与源码公式同构：colW=(formW−colGap)/2、控制区宽 = colW−118、
+            // btnAreaX = w−28−（120+100+80+8×2）
+            const float colGap = ms::roundFs(8.0f);
+            const float formW = kW - 28.0f * 2.0f;
+            const float colW = (formW - colGap) * 0.5f;
+            const float col2X = 28.0f + colW + colGap;
+            const float ctrlW = colW - (110.0f + 8.0f);
+            const float btnAreaX =
+                kW - 28.0f - (120.0f + 100.0f + 80.0f + 8.0f * 2.0f);
+            // 撑满：分支/Token 宽 = 列控制区宽；URL 右缘 = btnAreaX − 12；
+            // 开关右缘 = 所在列右缘
+            DOCTEST_CHECK(std::fabs(br->frame.width - ctrlW) < 0.5f);
+            DOCTEST_CHECK(std::fabs(tk->frame.width - ctrlW) < 0.5f);
+            DOCTEST_CHECK(std::fabs(url->frame.x + url->frame.width -
+                                    (btnAreaX - 12.0f)) < 0.5f);
+            DOCTEST_CHECK(std::fabs(en->frame.x + en->frame.width -
+                                    (28.0f + colW)) < 0.5f);
+            DOCTEST_CHECK(std::fabs(ap->frame.x + ap->frame.width -
+                                    (col2X + colW)) < 0.5f);
+            // 无重叠：左列输入右缘不进右列（< col2X）；URL 右缘距按钮组 ≥8
+            //（让位语义在两档宽窗仍内禀成立）
+            DOCTEST_CHECK(br->frame.x + br->frame.width <= col2X);
+            DOCTEST_CHECK(url->frame.x + url->frame.width + 8.0f <= btnAreaX);
+            // 无溢出：右列输入右缘贴卡内容右缘（kW−28）
+            DOCTEST_CHECK(std::fabs(tk->frame.x + tk->frame.width -
+                                    (kW - 28.0f)) < 0.5f);
+            return true;
+        }));
+    }
+    return true;
+})
+
+// UAT4 去门控语义钉子：未启用时表单不再隐藏——自动推送/URL/分支/Token/按钮
+// 全部照常渲染，但呈置灰禁用态（lock 包装层 disabled + opacity 调暗、按钮
+// disabled），启用开关本身不加 lock、始终可点（重新启用的入口）。旧版
+// 「未启用 → 7 节点不画」断言随之反转为「7 节点都在但禁用」，另配
+// 「启用后全部恢复」对照组（禁用解除、opacity 回 1）。
+REGISTER_TEST(github_sync_card_disabled_state,
+              "github_sync 卡片: 未启用时字段全显示但置灰禁用（启用开关始终可点）+ 启用后恢复", {
     CardFixture off;
     off.in.githubSyncEnabled = false;
-    test_support::HeadlessFrame f("githubsynccardgateoff");
+    int enableClicks = 0;
+    bool enableValue = false;
+    off.a.applyGithubSyncEnabled = [&](bool v) {
+        ++enableClicks;
+        enableValue = v;
+    };
+    test_support::HeadlessFrame f("githubsynccardstateoff");
     DOCTEST_CHECK(f.frame([&](eui::Ui& ui) {
         off.draw(ui);
-        // 折叠态唯一表单行 = 启用开关
-        DOCTEST_CHECK(ui.find(std::string(kCardId) + ".enabled.sw") != nullptr);
+        // 7 个字段全部在（旧门控反转：此前未启用时不画）
         for (const char* suffix :
              {".autopush.sw", ".url.input", ".branch.input", ".token.input",
               ".btn.push.bg", ".btn.test.bg", ".btn.pull.bg"}) {
-            DOCTEST_CHECK_MESSAGE(ui.find(std::string(kCardId) + suffix) ==
-                                      nullptr,
+            DOCTEST_CHECK_MESSAGE(
+                ui.find(std::string(kCardId) + suffix) != nullptr, suffix);
+        }
+        // 四行 lock 包装层全部禁用态（disabled 子树不参与命中/聚焦 = 不可编辑）
+        // 且置灰调暗（opacity 0.55，对齐 Button 禁用态 40% 透明先例取略轻档）
+        for (const char* suffix :
+             {".autopush.lock", ".url.lock", ".branch.lock", ".token.lock"}) {
+            const auto* lock = ui.find(std::string(kCardId) + suffix);
+            DOCTEST_REQUIRE_MESSAGE(lock != nullptr, suffix);
+            DOCTEST_CHECK_MESSAGE(lock->disabled, suffix);
+            DOCTEST_CHECK_MESSAGE(std::fabs(lock->opacity - 0.55f) < 0.01f,
                                   suffix);
         }
+        // 三按钮禁用态（disabled = 点击不触发 + 文字自动 40% 置灰）
+        for (const char* suffix :
+             {".btn.push.bg", ".btn.test.bg", ".btn.pull.bg"}) {
+            const auto* b = ui.find(std::string(kCardId) + suffix);
+            DOCTEST_REQUIRE_MESSAGE(b != nullptr, suffix);
+            DOCTEST_CHECK_MESSAGE(b->disabled, suffix);
+        }
+        // 启用开关本身无 lock（对照组 = 上面四个 lock 都在）且始终可点：
+        // 直接调 hit 的 onClick = 拨「启用」，回调收到 true（重新启用请求）
+        const auto* enHit =
+            ui.find(std::string(kCardId) + ".enabled.sw.hit");
+        DOCTEST_REQUIRE(enHit != nullptr);
+        DOCTEST_REQUIRE(enHit->onClick != nullptr);
+        DOCTEST_CHECK(ui.find(std::string(kCardId) + ".enabled.lock") ==
+                      nullptr);
+        enHit->onClick();
         return true;
     }));
+    DOCTEST_CHECK_EQ(enableClicks, 1);
+    DOCTEST_CHECK(enableValue);
 
-    // 对照组：启用后 7 个节点全部在——否则上面「不存在」可能只是「啥都没画」恒真
+    // 对照组：启用后全部恢复——lock 解除（disabled=false、opacity 回 1）、
+    // 按钮可点——否则上面「禁用态」断言可能只是「恒禁用」恒真
     CardFixture on;
-    test_support::HeadlessFrame fon("githubsynccardgateon");
+    test_support::HeadlessFrame fon("githubsynccardstateon");
     DOCTEST_CHECK(fon.frame([&](eui::Ui& ui) {
         on.draw(ui);
         for (const char* suffix :
-             {".enabled.sw", ".autopush.sw", ".url.input", ".branch.input",
-              ".token.input", ".btn.push.bg", ".btn.test.bg", ".btn.pull.bg"}) {
-            DOCTEST_CHECK_MESSAGE(
-                ui.find(std::string(kCardId) + suffix) != nullptr, suffix);
+             {".autopush.lock", ".url.lock", ".branch.lock", ".token.lock"}) {
+            const auto* lock = ui.find(std::string(kCardId) + suffix);
+            DOCTEST_REQUIRE_MESSAGE(lock != nullptr, suffix);
+            DOCTEST_CHECK_MESSAGE(!lock->disabled, suffix);
+            DOCTEST_CHECK_MESSAGE(std::fabs(lock->opacity - 1.0f) < 0.01f,
+                                  suffix);
+        }
+        for (const char* suffix :
+             {".btn.push.bg", ".btn.test.bg", ".btn.pull.bg"}) {
+            const auto* b = ui.find(std::string(kCardId) + suffix);
+            DOCTEST_REQUIRE_MESSAGE(b != nullptr, suffix);
+            DOCTEST_CHECK_MESSAGE(!b->disabled, suffix);
         }
         return true;
     }));
