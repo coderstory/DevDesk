@@ -2510,7 +2510,7 @@ void AgentModule::composeTaskDialog(
                                           : t.colors.wechat.dividerPrimary)
                     .onClick(canSave
                                  ? std::function<void()>{[this] { saveTaskDialog(); }}
-                                 : std::function<void(){})
+                                 : std::function<void()>{})
                     .build();
             }
         })
