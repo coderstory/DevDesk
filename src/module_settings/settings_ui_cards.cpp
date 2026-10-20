@@ -117,7 +117,7 @@ void drawAppearanceCard(const CardDrawArgs& args) {
             ui_kit::formRow(ui, id + ".font", "字号缩放", formX, fontRowY,
                             formW, rowH,
                 [&](eui::Ui& ui, float cx, float cy, float cw, float ch) {
-                    const float ddW = std::min(240.0f, cw);
+                    const float ddW = cw;
                     ui.stack(id + ".font.ddwrap")
                         .position(cx, cy)
                         .size(ddW, ch)
@@ -144,7 +144,7 @@ void drawAppearanceCard(const CardDrawArgs& args) {
             ui_kit::formRow(ui, id + ".effect", "窗口效果", formX, effectRowY,
                             formW, rowH,
                 [&](eui::Ui& ui, float cx, float cy, float cw, float ch) {
-                    const float ddW = std::min(240.0f, cw);
+                    const float ddW = cw;
                     ui.stack(id + ".effect.ddwrap")
                         .position(cx, cy)
                         .size(ddW, ch)
