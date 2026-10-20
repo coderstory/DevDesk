@@ -8071,3 +8071,49 @@ REGISTER_TEST(claude_keychain_backfill_one_shot,
     platform::keychain::setBackendForTest(prev);
     return true;
 })
+
+// UAT4 布局自适应（用户真机反馈：布局应随窗宽伸缩）
+// 左栏 leftW = clamp(contentW×0.39, 320, 460)，替代固定 400。防两件事故：
+//   ① 最小窗 1000（contentW=712）下右栏只剩 296，详情面板放不下；
+//   ② 右栏宽不随窗宽变（默认窗起宽窗大量空白）。
+// 0.39 = 400/1024：默认窗 1312 下与旧固定 400 几何等价（零回归锚）。
+// 四档窗宽复核右栏 ≥350（审计口径）；档间随窗宽单调伸缩。
+REGISTER_TEST(claude_module_left_pane_adaptive_width,
+              "claude_module: 左栏 clamp(0.39,320,460) 自适应 + 四档右栏 ≥350（headless）", {
+    module::claude::ClaudeService::setGlobal(nullptr);
+    std::unique_ptr<::core::Module> mod(create_claude_module());
+    // 模块可见屏宽 = 窗宽 − 侧栏 208（core::windowToCompose 口径，test_router 同源）
+    const struct { float winW; float expLeftW; } kCases[] = {
+        {1000.0f, 320.0f},    // contentW 712 → 277.68 触下限 320；右栏 376
+        {1200.0f, 355.68f},   // contentW 912 → 912×0.39；右栏 540.32
+        {1312.0f, 399.36f},   // contentW 1024 → ≈400（旧固定值）；右栏 608.64
+        {1600.0f, 460.0f},    // contentW 1312 → 511.68 触上限 460；右栏 836
+    };
+    for (const auto& c : kCases) {
+        eui::Screen screen{c.winW - 208.0f, 1000.0f};
+        eui::Ui ui;
+        ui.begin("claude_leftw");
+        mod->compose(ui, screen);
+        ui.end();
+        ui.layout(screen.width, screen.height);
+
+        const auto* left = ui.find("claude.profiles");
+        const auto* right = ui.find("claude.detail");
+        DOCTEST_REQUIRE(left != nullptr);
+        DOCTEST_REQUIRE(right != nullptr);
+        DOCTEST_CHECK_MESSAGE(
+            floatEq(left->frame.width, c.expLeftW),
+            "窗 " + std::to_string(c.winW) + " 左栏宽 " +
+                std::to_string(left->frame.width) + " 期望 " +
+                std::to_string(c.expLeftW));
+        const float contentW = screen.width - 80.0f;   // pad 40×2
+        const float expRightW = contentW - c.expLeftW - 16.0f;   // gap 16
+        DOCTEST_CHECK(floatEq(right->frame.width, expRightW));
+        DOCTEST_CHECK_MESSAGE(right->frame.width >= 350.0f,
+                              "窗 " + std::to_string(c.winW) + " 右栏宽 " +
+                                  std::to_string(right->frame.width) +
+                                  " < 350（审计下限）");
+    }
+    mod->onStop();
+    return true;
+})

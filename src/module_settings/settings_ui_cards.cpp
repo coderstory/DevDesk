@@ -228,7 +228,9 @@ void drawEditorFontCard(const CardDrawArgs& args) {
             ui_kit::formRow(ui, id + ".font", "字号", 28.0f, rowY,
                             w - 56.0f, rowH,
                 [&](eui::Ui& ui, float cx, float cy, float cw, float ch) {
-                    const float ddW = std::min(240.0f, cw);
+                    // UAT4 自适应：下拉填满控件区（替代 min(240,cw) 固定帽）——
+                    // 窄窗 cw 本身已收缩（让位保留），宽窗不再停在 240 留大段空白。
+                    const float ddW = cw;
                     ui.stack(id + ".ddwrap")
                         .position(cx, cy)
                         .size(ddW, ch)
@@ -634,7 +636,9 @@ void drawLogCard(const CardDrawArgs& args) {
             // 左列：日志保留
             ui_kit::formRow(ui, id, "日志保留", innerX, row1Y, colW, rowH,
                 [&](eui::Ui& ui, float cx, float cy, float cw, float ch) {
-                    const float ddW = std::min(kLogFieldWidth, cw);
+                    // UAT4 自适应：下拉填满控件区（kLogFieldWidth 240 固定帽退位）——
+                    // 窄列 cw 已让位收缩，宽窗填满列内可用宽（与同步卡撑满同原则）。
+                    const float ddW = cw;
                     ui.stack(id + ".ddwrap")
                         .position(cx, cy)
                         .size(ddW, ch)
@@ -669,7 +673,8 @@ void drawLogCard(const CardDrawArgs& args) {
             ui_kit::formRow(ui, id + ".level", "日志级别", innerX + col2X,
                             row1Y, colW, rowH,
                 [&](eui::Ui& ui, float cx, float cy, float cw, float ch) {
-                    const float ddW = std::min(kLogFieldWidth, cw);
+                    // UAT4 自适应：同左列——填满控件区，固定帽退位（两下拉同宽口径不变）。
+                    const float ddW = cw;
                     ui.stack(id + ".level.ddwrap")
                         .position(cx, cy)
                         .size(ddW, ch)

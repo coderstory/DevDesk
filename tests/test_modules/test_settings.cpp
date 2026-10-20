@@ -3927,3 +3927,88 @@ REGISTER_TEST(settings_github_sync_push_writes_target_configured_branch,
     }
     return true;
 })
+
+// UAT4 布局自适应（用户真机反馈：布局应随窗宽伸缩）——log 卡 / editor 字号卡
+// 下拉宽窗填满卡内可用宽（240 固定帽退位）。防：宽窗下拉停在 240、卡内右侧
+// 大段空白；同时锁「窄窗让位」语义——控件区本身 <240 时随列收缩不变。
+// 期望链：contentW=屏宽−80；半宽卡 colW=(contentW−16)/2；卡内列 colW=(卡宽−56−16)/2；
+// 控件区 cw=行宽−110(label)−8(gap)。
+REGISTER_TEST(settings_dropdown_fill_available_width,
+              "settings: log/editor 下拉宽窗填满可用宽 + 窄窗让位保留（UAT4）", {
+    test_support::TestEnv env(kCfgPrefix, "ddfill", true);
+    test_support::ScopedConfigPath cfgEnv(
+        test_support::tempConfigFile(kCfgPrefix, "ddfill_cfg"));
+    std::unique_ptr<::core::Module> mod(create_settings_module());
+    mod->onStart();
+    const auto nearEq = [](float a, float b) {
+        return std::abs(a - b) < 0.5f;
+    };
+    const auto ddwrapW = [&](eui::Ui& ui, const char* id) -> float {
+        const auto* e = ui.find(id);
+        return e != nullptr ? e->frame.width : -1.0f;
+    };
+
+    // 宽窗（窗 1600 → 屏宽 1392）：固定帽若未退位会得 240
+    {
+        eui::Screen screen{1392.0f, 1000.0f};
+        DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 0));   // 通用 tab
+        eui::Ui ui;
+        ui.begin("ddfill_wide_general");
+        mod->compose(ui, screen);
+        ui.end();
+        ui.layout(screen.width, screen.height);
+        // editor 半宽卡：colW=(1312−16)/2=648 → 行宽 648−56=592 → cw=592−118=474
+        DOCTEST_CHECK_MESSAGE(
+            nearEq(ddwrapW(ui, "settings.card.editor.ddwrap"), 474.0f),
+            "editor 下拉宽 " +
+                std::to_string(ddwrapW(ui, "settings.card.editor.ddwrap")) +
+                " 期望 474（固定帽退位填满）");
+
+        DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 2));   // 日志 tab
+        ui.begin("ddfill_wide_log");
+        mod->compose(ui, screen);
+        ui.end();
+        ui.layout(screen.width, screen.height);
+        // log 全宽卡：卡内列 colW=(1312−72)/2=620 → cw=620−118=502
+        DOCTEST_CHECK_MESSAGE(
+            nearEq(ddwrapW(ui, "settings.card.log.ddwrap"), 502.0f),
+            "log 下拉宽 " +
+                std::to_string(ddwrapW(ui, "settings.card.log.ddwrap")) +
+                " 期望 502（固定帽退位填满）");
+        // 两下拉同宽口径不变（同一列公式来源）
+        DOCTEST_CHECK(nearEq(ddwrapW(ui, "settings.card.log.level.ddwrap"),
+                             ddwrapW(ui, "settings.card.log.ddwrap")));
+    }
+
+    // 窄窗（窗 1000 → 屏宽 792）：让位保留——控件区随列收缩，无帽值 240 出现
+    {
+        eui::Screen screen{792.0f, 1000.0f};
+        DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 0));
+        eui::Ui ui;
+        ui.begin("ddfill_narrow_general");
+        mod->compose(ui, screen);
+        ui.end();
+        ui.layout(screen.width, screen.height);
+        // editor 半宽卡：colW=(712−16)/2=348 → 行宽 292 → cw=174
+        DOCTEST_CHECK_MESSAGE(
+            nearEq(ddwrapW(ui, "settings.card.editor.ddwrap"), 174.0f),
+            "editor 窄窗下拉宽 " +
+                std::to_string(ddwrapW(ui, "settings.card.editor.ddwrap")) +
+                " 期望 174（窄窗让位收缩不变）");
+
+        DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 2));
+        ui.begin("ddfill_narrow_log");
+        mod->compose(ui, screen);
+        ui.end();
+        ui.layout(screen.width, screen.height);
+        // log 全宽卡：卡内列 colW=(712−72)/2=320 → cw=202
+        DOCTEST_CHECK_MESSAGE(
+            nearEq(ddwrapW(ui, "settings.card.log.ddwrap"), 202.0f),
+            "log 窄窗下拉宽 " +
+                std::to_string(ddwrapW(ui, "settings.card.log.ddwrap")) +
+                " 期望 202（窄窗让位收缩不变）");
+    }
+
+    mod->onStop();
+    return true;
+})
