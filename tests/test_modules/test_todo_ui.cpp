@@ -527,7 +527,8 @@ REGISTER_TEST(todo_ui_datepicker_default_today,
         DOCTEST_REQUIRE(pick != nullptr);
         DOCTEST_REQUIRE(pick->onClick != nullptr);
         pick->onClick();   // 打开 datepicker（首帧喂锚点=今天）
-        frame.refresh();   // 第 2 帧：哨兵提交值就位
+        frame.refresh();   // 第 1 帧：releaseStateScope + 锚点=今天
+        frame.refresh();   // 第 2 帧：哨兵提交值就位（1900-01-01），确保 done 时 onChange 必回调
         const auto* dayItem = frame.ui.find("todo.datepicker.column.1.item.2");
         const auto* yearItem = frame.ui.find("todo.datepicker.column.2.item.2");
         DOCTEST_REQUIRE(dayItem != nullptr);

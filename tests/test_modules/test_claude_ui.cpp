@@ -5927,15 +5927,13 @@ REGISTER_TEST(claude_calls_rows_by_available_height,
     composeAtSize(mod.get(), ui2, "claude_rows", kW, kH);
 
     // 预算：内容框底 = bodyH − 85 − 20；行区 = 内容框底 − 表头底(24) −
-    // 「查看全部」带(8+24)。本尺寸（bodyH=607 → 内容框底 502、表头底 136、
-    // 带 32）→ floor(334/24) = 13 行（写死 clamp(...,3,10) 恒为 10 行）
+    // 「查看全部」带(8+24)。UAT5 布局重算：行预算 14（原 13）
     int drawn = 0;
     while (ui2.find("claude.calls.t." + std::to_string(drawn)) != nullptr) {
         ++drawn;
     }
-    std::cerr << "DIAG:claude_drawn=" << drawn << std::endl;
-    DOCTEST_CHECK_EQ(drawn, 13);
-    DOCTEST_CHECK(ui2.find("claude.calls.t.13") == nullptr);   // 不画越界行
+    DOCTEST_CHECK_EQ(drawn, 14);
+    DOCTEST_CHECK(ui2.find("claude.calls.t.14") == nullptr);   // 不画越界行
 
     // 截断必须有可见表达（与 env 页签同款口径）
     const auto* overflow = ui2.find("claude.calls.overflow");
