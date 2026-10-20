@@ -103,11 +103,12 @@ void setCustomTitlebarMode(std::optional<bool> mode) {
     g_titlebarModeOverride = std::move(mode);
 }
 
-// 窗口钮热区：右缘三钮（关/最大化/最小），每钮 46×标题条高
+// 窗口钮热区：右缘两钮（关/最小），每钮 46×标题条高（UAT4：最大化钮按用户
+// 拍板移除——最大化/还原只留标题栏双击一条路径）
 constexpr float kWindowButtonW = 46.0f;
 
 bool titlebarCaptionHit(const CaptionHitQuery& query) {
-    // 拖拽区 = 标题条带内、右缘三钮热区左侧之外（logo/品牌文本区可拖）。
+    // 拖拽区 = 标题条带内、右缘两钮热区左侧之外（品牌文本区可拖）。
     // 标题条贴边处的八向 resize 热区在 EUI-NEO 层优先于本回调，此处不管边缘
     if (!customTitlebarActive()) {
         return false;
@@ -118,10 +119,10 @@ bool titlebarCaptionHit(const CaptionHitQuery& query) {
     if (query.x < 0.0f || query.x > query.width) {
         return false;
     }
-    return query.x < query.width - kWindowButtonW * 3.0f;
+    return query.x < query.width - kWindowButtonW * 2.0f;
 }
 
-// 自绘标题条：左 logo+品牌文本、右三钮；不铺底色——半透/磨砂的 clearColor +
+// 自绘标题条：左品牌文本、右两钮（关/最小）；不铺底色——半透/磨砂的 clearColor +
 // DWM backdrop 直接透到标题条区（D-R3-1 的落点：undecorated 后窗口效果铺满全窗）。
 // wechat 风格：灰字灰 hover；关闭钮 hover 红（theme warningRed #FA5151）+ 白叉
 void drawTitlebar(eui::Ui& ui, const eui::Screen& screen) {
@@ -168,17 +169,10 @@ void drawTitlebar(eui::Ui& ui, const eui::Screen& screen) {
         .position(0.0f, 0.0f)
         .size(screen.width, h)
         .content([&] {
-            // 左：logo 图标 + 品牌文本（图标批 2026-10-20：与侧栏 brand 同款几何
-            // logo——C 方案终端窗 >_ 矢量绘制替换 fa-laptop-code 字形；视觉锚点
-            // 保持旧 glyph 区中心 x=30 → 20px 瓦左上角 x=20，品牌文本 x=52 不动）
-            {
-                constexpr float kTitleLogoSize = 20.0f;  // 40px 标题条档
-                ui_kit::drawDevDeskLogo(ui, "app.titlebar.logo",
-                                        20.0f, (h - kTitleLogoSize) * 0.5f,
-                                        kTitleLogoSize, wc.primary, wc.cardBg);
-            }
+            // 左：品牌文本（UAT4：标题条 20px logo 按用户拍板移除——品牌图形只留
+            // 侧栏一处；起点对齐侧栏 padX=16，拖拽热区相应左扩）
             ui.text("app.titlebar.brand")
-                .position(16.0f + 28.0f + 8.0f, 0.0f)
+                .position(16.0f, 0.0f)
                 .size(160.0f, h)
                 .text("DevDesk")
                 .fontSize(t.sizes.fontSizeBody)
@@ -187,21 +181,13 @@ void drawTitlebar(eui::Ui& ui, const eui::Screen& screen) {
                 .color(wc.textPrimary)
                 .build();
 
-            // 右：三钮从右往左 = 关闭 / 最大化（还原图标随窗口态切换）/ 最小化
-            const bool maximized = mainWindowMaximized();
+            // 右：两钮从右往左 = 关闭 / 最小化（UAT4：最大化钮移除，标题栏
+            // 双击保留最大化/还原；关闭走 closeMainWindow = 与系统 X 同链，
+            // 托盘模式下隐藏到托盘——EUI-NEO 侧修复）
             drawWindowButton("close", screen.width - kWindowButtonW * 1.0f,
                              0xF00D,  // fa-xmark
                              /*redHover=*/true, [] { closeMainWindow(); });
-            drawWindowButton("maximize", screen.width - kWindowButtonW * 2.0f,
-                             maximized ? 0xF2D3 : 0xF2D2,  // fa-window-restore / -maximize
-                             /*redHover=*/false, [maximized] {
-                                 if (maximized) {
-                                     restoreMainWindow();
-                                 } else {
-                                     maximizeMainWindow();
-                                 }
-                             });
-            drawWindowButton("minimize", screen.width - kWindowButtonW * 3.0f,
+            drawWindowButton("minimize", screen.width - kWindowButtonW * 2.0f,
                              0xF2D1,  // fa-window-minimize
                              /*redHover=*/false, [] { iconifyMainWindow(); });
         })
@@ -273,11 +259,14 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
             // assets/icon.ico 同源；fa-laptop-code 字形退役）。行元素仍是整行 box
             // (0, topPad, kWidth, kBrandH)：test_app_sidebar 钉的 brand frame.y=40
             // 防跳动断言与首个导航 y 计算均不动；品牌文本由自绘标题栏承载。
+            // UAT4：logo 28→36 按用户拍板放大；kBrandH=32 与 topPad 刻意不动
+            //（行高/导航起点跳动 = 40+32+28=100 断言全红），36 瓦在 32 行内居中
+            // 垂直溢出 ±2px 落在上下留白里，视觉上仍是行内居中。
             ui.stack("app.sidebar.brand")
                 .position(0.0f, topPad)
                 .size(kWidth, kBrandH)
                 .content([&] {
-                    constexpr float kLogoSize = 28.0f;  // 侧栏档（展开/折叠同款）
+                    constexpr float kLogoSize = 36.0f;  // 侧栏档（展开/折叠同款）
                     ui_kit::drawDevDeskLogo(
                         ui, "app.sidebar.brand.mark",
                         (kWidth - kLogoSize) * 0.5f, (kBrandH - kLogoSize) * 0.5f,

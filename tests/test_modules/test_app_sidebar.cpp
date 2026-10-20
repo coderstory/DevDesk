@@ -169,14 +169,15 @@ REGISTER_TEST(sidebar_collapsed_compose,
 
     // brand 折叠 = 只显示居中几何 logo（图标批 2026-10-20 起 fa-laptop-code 字形退役，
     // 换 ui_kit::drawDevDeskLogo 矢量瓦，几何契约同 assets/icon.ico）。行 box 仍是
-    // (0, 40, 72, 32)，子元素 .mark 在行内居中：(72-28)/2=22、(32-28)/2=2
+    // (0, 40, 72, 32)；UAT4 logo 28→36 放大，kBrandH=32 刻意不动（行高不跳）——
+    // .mark 在行内居中：(72-36)/2=18、(32-36)/2=-2（36 瓦垂直溢出 ±2px 属预期）
     const auto* collapsedBrand = ui.find("app.sidebar.brand");
     DOCTEST_CHECK(collapsedBrand != nullptr);
     const auto* collapsedMark = ui.find("app.sidebar.brand.mark");
     DOCTEST_CHECK(collapsedMark != nullptr);
-    DOCTEST_CHECK(floatEq(collapsedMark->x, 22.0f));
-    DOCTEST_CHECK(floatEq(collapsedMark->y, 2.0f));
-    DOCTEST_CHECK(floatEq(collapsedMark->width.value, 28.0f));
+    DOCTEST_CHECK(floatEq(collapsedMark->x, 18.0f));
+    DOCTEST_CHECK(floatEq(collapsedMark->y, -2.0f));
+    DOCTEST_CHECK(floatEq(collapsedMark->width.value, 36.0f));
 
     // 顶部留白 = spacingXXLarge(40)，与页面主区上 padding 同档；折叠/展开两态必须同值，
     // 否则切换时 logo 会纵向跳
@@ -232,14 +233,16 @@ REGISTER_TEST(sidebar_expanded_compose,
 
     // UAT3 #9 + 图标批 2026-10-20：brand 行展开态 = 折叠态同款居中几何 logo
     //（.mark 矢量瓦，同 ui_kit::drawDevDeskLogo 契约），「DevDesk」文本改由自绘
-    // 标题栏承载（app.titlebar.brand）；品牌行 y=40 防跳动
+    // 标题栏承载（app.titlebar.brand）；品牌行 y=40 防跳动。UAT4 logo 28→36：
+    // (208-36)/2=86、(32-36)/2=-2（kBrandH 不动防跳动，36 瓦垂直溢出 ±2px 属预期）
     const auto* brand = ui.find("app.sidebar.brand");
     DOCTEST_CHECK(brand != nullptr);
     DOCTEST_CHECK(floatEq(brand->y, 40.0f));
     const auto* mark = ui.find("app.sidebar.brand.mark");
     DOCTEST_CHECK(mark != nullptr);
-    DOCTEST_CHECK(floatEq(mark->x, 90.0f));  // (208-28)/2，行内水平居中
-    DOCTEST_CHECK(floatEq(mark->y, 2.0f));   // (32-28)/2，行内垂直居中
+    DOCTEST_CHECK(floatEq(mark->x, 86.0f));  // (208-36)/2，行内水平居中
+    DOCTEST_CHECK(floatEq(mark->y, -2.0f));  // (32-36)/2，行内垂直居中（行高不跳）
+    DOCTEST_CHECK(floatEq(mark->width.value, 36.0f));
     DOCTEST_CHECK(ui.find("app.sidebar.brand.logo") == nullptr);  // 旧展开态 logo 子元素已并
     // 导航列表整体下移到 40 + 32 + 28
     DOCTEST_CHECK(floatEq(ui.find("app.sidebar.item.Home.hit")->y, 100.0f));
@@ -647,7 +650,7 @@ REGISTER_TEST(sidebar_w3_no_divider_when_only_work,
 
 // UAT3 D-R3-1 自绘标题栏（钉 customTitlebarActive=true = Windows 自绘壳运行态）：
 // 标题条 40px 占位、根布局与页面内容同起点下移（防标题条盖内容/留缝）、品牌文本由
-// 标题栏承载、三钮热区几何、命中回调逐条。系统标题栏路径（false）由上方既有用例钉住。
+// 标题栏承载、两钮热区几何、命中回调逐条。系统标题栏路径（false）由上方既有用例钉住。
 REGISTER_TEST(sidebar_custom_titlebar_compose,
               "sidebar: 自绘标题栏占位 40px + 标题条元素 + 命中回调 + 页面下移", {
     app::setCustomTitlebarMode(true);   // 钉自绘壳路径
@@ -675,18 +678,17 @@ REGISTER_TEST(sidebar_custom_titlebar_compose,
     DOCTEST_CHECK(floatEq(bar->frame.x, 0.0f));
     DOCTEST_CHECK(floatEq(bar->frame.y, 0.0f));
 
-    // 左：品牌 logo + 文本（UAT3 #9 品牌名由标题栏承载；图标批 2026-10-20 起 logo 为
-    // 几何矢量瓦，根 id 不变，.tile 子元素钉住结构）；右：三钮从右往左
-    // 关闭 / 最大化 / 最小化（每钮 46 宽，wechat 风格）
-    DOCTEST_CHECK(ui.find("app.titlebar.logo") != nullptr);
-    DOCTEST_CHECK(ui.find("app.titlebar.logo.tile") != nullptr);
+    // 左：品牌文本（UAT4：标题条 20px logo 移除——logo 元素必须不存在，品牌图形
+    // 只留侧栏一处；文本起点对齐侧栏 padX=16）；右：两钮从右往左
+    // 关闭 / 最小化（每钮 46 宽，wechat 风格；UAT4 最大化钮移除，只留双击路径）
+    DOCTEST_CHECK(ui.find("app.titlebar.logo") == nullptr);
     DOCTEST_CHECK(ui.find("app.titlebar.brand")->text == "DevDesk");
+    DOCTEST_CHECK(floatEq(ui.find("app.titlebar.brand")->x, 16.0f));
     DOCTEST_CHECK(ui.find("app.titlebar.close.hit") != nullptr);
-    DOCTEST_CHECK(ui.find("app.titlebar.maximize.hit") != nullptr);
+    DOCTEST_CHECK(ui.find("app.titlebar.maximize.hit") == nullptr);
     DOCTEST_CHECK(ui.find("app.titlebar.minimize.hit") != nullptr);
     DOCTEST_CHECK(floatEq(ui.find("app.titlebar.close.hit")->x, 1600.0f - 46.0f));
-    DOCTEST_CHECK(floatEq(ui.find("app.titlebar.maximize.hit")->x, 1600.0f - 92.0f));
-    DOCTEST_CHECK(floatEq(ui.find("app.titlebar.minimize.hit")->x, 1600.0f - 138.0f));
+    DOCTEST_CHECK(floatEq(ui.find("app.titlebar.minimize.hit")->x, 1600.0f - 92.0f));
 
     // 根布局下移 40：侧栏与页面同起点（页顶对齐侧栏顶）、页面 Screen 高 960
     const auto* sidebar = ui.find("app.sidebar");
@@ -698,9 +700,12 @@ REGISTER_TEST(sidebar_custom_titlebar_compose,
     DOCTEST_CHECK(floatEq(page->frame.height, 960.0f));
     DOCTEST_CHECK(floatEq(RecordingModule::lastScreenHeight, 960.0f));
 
-    // 命中回调（窗口客户区逻辑坐标）：标题条左区拖拽；三钮热区不拖拽；标题条下方
-    // 与越界点不拖拽。边缘八向 resize 由 EUI-NEO 层自理，不经本回调
+    // 命中回调（窗口客户区逻辑坐标）：标题条左区拖拽；两钮热区（右缘 2×46）不
+    // 拖拽；标题条下方与越界点不拖拽。边缘八向 resize 由 EUI-NEO 层自理，不经本
+    // 回调。UAT4 钮区收窄后边界值随动：1508 = 1600-2×46
     DOCTEST_CHECK(app::titlebarCaptionHit({100.0f, 20.0f, 1600.0f, 1000.0f, false}));
+    DOCTEST_CHECK(app::titlebarCaptionHit({1507.0f, 20.0f, 1600.0f, 1000.0f, false}));
+    DOCTEST_CHECK(!app::titlebarCaptionHit({1508.0f, 20.0f, 1600.0f, 1000.0f, false}));
     DOCTEST_CHECK(!app::titlebarCaptionHit({1555.0f, 20.0f, 1600.0f, 1000.0f, false}));
     DOCTEST_CHECK(!app::titlebarCaptionHit({100.0f, 41.0f, 1600.0f, 1000.0f, false}));
     DOCTEST_CHECK(!app::titlebarCaptionHit({100.0f, -1.0f, 1600.0f, 1000.0f, false}));
