@@ -48,7 +48,7 @@
 18. **磨砂不生效 sidebar/titlebar/about + 生效范围乱**：sidebar(app_sidebar:118-120 #E8F0EC opaque)+titlebar(settings_config:240 customColor, CAPTION_COLOR 无 alpha)+about(about_module:118-121 pageBg opaque)+markdown 子面板+各白卡都 opaque 盖 backdrop。规律：只 clearColor-transparent 的 content 透（home/markdown主/todo/claude/settings 五页）。修：sidebar/about/markdown 子面板/卡片带 alpha（纯UI）；titlebar frosted 档不设 customColor（**需 Win11 真机验证 caption 贯通，不通则走 EUI 上游 DwmExtendFrameIntoClientArea = 超 UI 范围**）。
 
 ### md 目录树（markdown_module.cpp，W8）
-19. **大气+放大+可折叠**：中栏 220→240/行高 32→36/字 13→14（专用常量不改 fontSizeSmall token）/图标 16-20→18-22/搜索框 36→40/gap 0→4/padding 12→16。文件夹折叠**已实现+持久化**但命中区只 26px（"不好用"根因）→ 扩大整行；面板折叠**未实现**→ 新增 treePanelCollapsed_ state+按钮（纯 UI state）。纯UI。
+19. **大气+放大+可折叠**：中栏 220→240/行高 32→36/字 13→14（专用常量不改 fontSizeSmall token）/图标 16-20→18-22/搜索框 36→40/gap 0→4/padding 12→16。文件夹折叠**已实现+持久化**但命中区只 26px（"不好用"根因）→ ~~扩大整行~~。**【2026-10-20 实施偏离记录（wave-2 审计 L-2）】**：实际实现为 46px（名称区起点），非整行——EUI hit-test 取最顶兄弟（runtime_input.h:156/200 逆序命中），整行 toggle 必吞 selectDir，46px 是最宽安全值；后人勿按本文「补齐整行」。面板折叠**未实现**→ 新增 treePanelCollapsed_ state+按钮（纯 UI state）。纯UI。
 
 ### 窗体（main.cpp）
 20. **最小宽高太大**：kMinWindowLogical 1330×845 → 1080p@125% ≈ 1663×1056 几乎全屏。**与 CLAUDE.md 冲突**：CLAUDE.md 明写"1200×720 是 spec 早期过期值"，当前 1330×845。**markdown 三栏在 1080p@125%（864 逻辑）下硬阻塞**：contentW=864−208 侧栏−80pad=576，sideW=220 后剩 340−16gap=324，midW=**170px each**（编辑器不可用）；todo 5 列 colW=96px（挤）；about kCardW 580>576 溢出。建议：**保留 1330×845 或改目标 1280×800**（contentW=712、midW=238 可用）+ 补 markdown/todo 小窗 probe 验证。纯UI。
