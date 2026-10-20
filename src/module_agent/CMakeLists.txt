@@ -11,6 +11,8 @@ add_library(devdesk_agent STATIC
     scheduler.cpp
     app_stats_tool.cpp
     app_notify_tool.cpp
+    app_now_tool.cpp
+    net_fetch_tool.cpp
     direct_llm_client.cpp
     task_draft.cpp
     task_draft_job.cpp
