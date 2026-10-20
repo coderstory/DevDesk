@@ -4455,14 +4455,18 @@ REGISTER_TEST(agent_ui_dialog_switch_labels_fit_boxes,
     mod.onStart();
 
     // 标签盒容纳检查：盒宽取自 composeTaskDialog 渲染出的 label 节点 frame，
-    // 字宽用真实字体测量
+    // 字宽用真实字体测量。UAT5 事件开关改胶囊 chip（components::button）——
+    // 文案在 .text；toggleSwitch 系（limit/destructive）仍在 .label，两形态都查
     auto labelFitProblem = [](eui::Ui& u, const std::string& id) -> std::string {
         const auto* label = u.find(id + ".label");
-        if (label == nullptr) return "缺节点 " + id + ".label";
+        if (label == nullptr) {
+            label = u.find(id + ".text");
+        }
+        if (label == nullptr) return "缺节点 " + id + ".label/.text";
         const float need =
             core::TextPrimitive::measureTextWidth(label->text, "", 12.0f, 400);
         if (label->frame.width + 0.5f < need) {
-            return id + ".label 盒宽 " + std::to_string(label->frame.width) +
+            return id + " 盒宽 " + std::to_string(label->frame.width) +
                    " < 字宽 " + std::to_string(need) + "（'" + label->text +
                    "' 会被静默裁剪）";
         }

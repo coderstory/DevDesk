@@ -2194,14 +2194,19 @@ void AgentModule::composeTaskDialog(
                     .build();
             }
             if (isEvent) {
-                // 监听事件 chips（demo .chip.pri：选中 = 浅绿底绿字胶囊；未选 = 灰底）
-                const float evW = (innerW - kDialogGap * 2.0f) /
+                // 监听事件 chips（demo .chip.pri：选中 = 浅绿底绿字胶囊；未选 = 灰底）；
+                // caption 与 cron/闹钟行同一「标签在左」语言
+                fieldCaption(ui, "agent.dialog.task.event.caption", "监听事件", x0,
+                             168.0f, kDialogLabelW, kDialogRowH,
+                             t.colors.textSecondary);
+                const float evX = x0 + kDialogLabelW;
+                const float evW = (innerW - kDialogLabelW - kDialogGap * 2.0f) /
                                   static_cast<float>(kEventCount);
                 for (int i = 0; i < kEventCount; ++i) {
                     const bool on = editEvents_[i];
                     components::button(ui, "agent.dialog.task.event." +
                                                std::to_string(i))
-                        .position(x0 + static_cast<float>(i) * (evW + kDialogGap),
+                        .position(evX + static_cast<float>(i) * (evW + kDialogGap),
                                   168.0f)
                         .size(evW, 32.0f)
                         .text(kEventLabels[i])
