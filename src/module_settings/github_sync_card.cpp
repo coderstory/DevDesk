@@ -17,6 +17,9 @@
 #include <components/input.h>
 #include <components/switch.h>
 
+#include <ui_kit/form_row.h>
+
+#include <algorithm>
 #include <filesystem>
 #include <string>
 
@@ -24,13 +27,13 @@ namespace module::settings {
 
 namespace {
 
-// 行几何常量（100% 档基准，运行期随 roundFs 缩放）
+// 行几何常量（100% 档基准，运行期随 roundFs 缩放）；E 批统一：标题 16/22、
+// desc y=40/h=16、内容起 y=68，label+control 行迁 ui_kit::formRow（label 110）。
 inline constexpr float kCardPaddingX = 28.0f;
-inline constexpr float kTitleH = 24.0f;
-inline constexpr float kDescH = 18.0f;
+inline constexpr float kTitleH = 22.0f;
+inline constexpr float kDescH = 16.0f;
 inline constexpr float kRowH = 36.0f;
 inline constexpr float kRowGap = 8.0f;
-inline constexpr float kLabelW = 64.0f;
 inline constexpr float kFieldW = 320.0f;
 inline constexpr float kBtnW = 120.0f;
 inline constexpr float kBtnSmallW = 80.0f;
@@ -107,28 +110,22 @@ void drawGithubSyncCard(const CardDrawArgs& args) {
         .lineHeight(roundFs(kDescH))
         .color(t.colors.textTertiary)
         .build();
-    y += roundFs(kDescH) + roundFs(10.0f);
+    y += roundFs(kDescH) + roundFs(12.0f);
 
-    const float fieldStartX = kCardPaddingX + kLabelW + 12.0f;
     const float rowH = roundFs(kRowH);
-    const float labelH = roundFs(kDescH);
+    const float formW = w - kCardPaddingX * 2;
 
-    // 启用开关（第一行）
-    ui.text(id + ".enabled.label")
-        .position(kCardPaddingX, y + (rowH - labelH) * 0.5f)
-        .size(kLabelW, labelH)
-        .text("启用")
-        .fontSize(t.sizes.fontSizeSmall)
-        .lineHeight(labelH)
-        .color(t.colors.textSecondary)
-        .build();
-    components::toggleSwitch(ui, id + ".enabled.sw")
-        .position(fieldStartX, y + (rowH - 20.0f) * 0.5f)
-        .size(kSwitchW, 20.0f)
-        .checked(in.githubSyncEnabled)
-        .theme(compTheme)
-        .onChange([f = a.applyGithubSyncEnabled](bool v) { f(v); })
-        .build();
+    // 启用开关（第一行）：FormRow = label 110 + 开关（control 区内垂直居中）
+    ui_kit::formRow(ui, id + ".enabled", "启用", kCardPaddingX, y, formW, rowH,
+        [&](eui::Ui& ui, float cx, float cy, float /*cw*/, float ch) {
+            components::toggleSwitch(ui, id + ".enabled.sw")
+                .position(cx, cy + (ch - 20.0f) * 0.5f)
+                .size(kSwitchW, 20.0f)
+                .checked(in.githubSyncEnabled)
+                .theme(compTheme)
+                .onChange([f = a.applyGithubSyncEnabled](bool v) { f(v); })
+                .build();
+        }, t);
     y += rowH + roundFs(kRowGap);
 
     if (!in.githubSyncEnabled) {
@@ -136,83 +133,63 @@ void drawGithubSyncCard(const CardDrawArgs& args) {
         return;
     }
 
-    // 仓库 URL 输入
-    ui.text(id + ".url.label")
-        .position(kCardPaddingX, y + (rowH - labelH) * 0.5f)
-        .size(kLabelW, labelH)
-        .text("仓库 URL")
-        .fontSize(t.sizes.fontSizeSmall)
-        .lineHeight(labelH)
-        .color(t.colors.textSecondary)
-        .build();
-    components::input(ui, id + ".url.input")
-        .position(fieldStartX, y)
-        .size(kFieldW, rowH)
-        .placeholder("https://github.com/user/repo.git")
-        .value(in.githubSyncRepoUrl)
-        .fontSize(t.sizes.fontSizeSmall)
-        .theme(compTheme)
-        .onChange([f = a.applyGithubSyncRepoUrl](const std::string& v) { f(v); })
-        .build();
+    // 仓库 URL 输入：FormRow = label 110 + input
+    ui_kit::formRow(ui, id + ".url", "仓库 URL", kCardPaddingX, y, formW, rowH,
+        [&](eui::Ui& ui, float cx, float cy, float cw, float ch) {
+            components::input(ui, id + ".url.input")
+                .position(cx, cy)
+                .size(std::min(kFieldW, cw), ch)
+                .placeholder("https://github.com/user/repo.git")
+                .value(in.githubSyncRepoUrl)
+                .fontSize(t.sizes.fontSizeSmall)
+                .theme(compTheme)
+                .onChange([f = a.applyGithubSyncRepoUrl](const std::string& v) { f(v); })
+                .build();
+        }, t);
     y += rowH + roundFs(kRowGap);
 
-    // 分支输入
-    ui.text(id + ".branch.label")
-        .position(kCardPaddingX, y + (rowH - labelH) * 0.5f)
-        .size(kLabelW, labelH)
-        .text("分支")
-        .fontSize(t.sizes.fontSizeSmall)
-        .lineHeight(labelH)
-        .color(t.colors.textSecondary)
-        .build();
-    components::input(ui, id + ".branch.input")
-        .position(fieldStartX, y)
-        .size(kFieldW, rowH)
-        .placeholder("main")
-        .value(in.githubSyncBranch)
-        .fontSize(t.sizes.fontSizeSmall)
-        .theme(compTheme)
-        .onChange([f = a.applyGithubSyncBranch](const std::string& v) { f(v); })
-        .build();
+    // 分支输入：FormRow = label 110 + input
+    ui_kit::formRow(ui, id + ".branch", "分支", kCardPaddingX, y, formW, rowH,
+        [&](eui::Ui& ui, float cx, float cy, float cw, float ch) {
+            components::input(ui, id + ".branch.input")
+                .position(cx, cy)
+                .size(std::min(kFieldW, cw), ch)
+                .placeholder("main")
+                .value(in.githubSyncBranch)
+                .fontSize(t.sizes.fontSizeSmall)
+                .theme(compTheme)
+                .onChange([f = a.applyGithubSyncBranch](const std::string& v) { f(v); })
+                .build();
+        }, t);
     y += rowH + roundFs(kRowGap);
 
-    // Token 输入
-    ui.text(id + ".token.label")
-        .position(kCardPaddingX, y + (rowH - labelH) * 0.5f)
-        .size(kLabelW, labelH)
-        .text("Token")
-        .fontSize(t.sizes.fontSizeSmall)
-        .lineHeight(labelH)
-        .color(t.colors.textSecondary)
-        .build();
-    components::input(ui, id + ".token.input")
-        .position(fieldStartX, y)
-        .size(kFieldW, rowH)
-        .placeholder("ghp_xxxxxxxxxxxxxxxxxxxx")
-        .value(in.githubSyncTokenDraft)
-        .fontSize(t.sizes.fontSizeSmall)
-        .theme(compTheme)
-        .onChange([f = a.setGithubSyncTokenDraft](const std::string& v) { f(v); })
-        .build();
+    // Token 输入：FormRow = label 110 + input
+    ui_kit::formRow(ui, id + ".token", "Token", kCardPaddingX, y, formW, rowH,
+        [&](eui::Ui& ui, float cx, float cy, float cw, float ch) {
+            components::input(ui, id + ".token.input")
+                .position(cx, cy)
+                .size(std::min(kFieldW, cw), ch)
+                .placeholder("ghp_xxxxxxxxxxxxxxxxxxxx")
+                .value(in.githubSyncTokenDraft)
+                .fontSize(t.sizes.fontSizeSmall)
+                .theme(compTheme)
+                .onChange([f = a.setGithubSyncTokenDraft](const std::string& v) { f(v); })
+                .build();
+        }, t);
     y += rowH + roundFs(kRowGap);
 
-    // 自动 Push 开关 + 操作按钮行
-    const float autoPushLabelY = y + (rowH - labelH) * 0.5f;
-    ui.text(id + ".autopush.label")
-        .position(kCardPaddingX, autoPushLabelY)
-        .size(kLabelW, labelH)
-        .text("自动推送")
-        .fontSize(t.sizes.fontSizeSmall)
-        .lineHeight(labelH)
-        .color(t.colors.textSecondary)
-        .build();
-    components::toggleSwitch(ui, id + ".autopush.sw")
-        .position(fieldStartX, y + (rowH - 20.0f) * 0.5f)
-        .size(kSwitchW, 20.0f)
-        .checked(in.githubSyncAutoPush)
-        .theme(compTheme)
-        .onChange([f = a.applyGithubSyncAutoPush](bool v) { f(v); })
-        .build();
+    // 自动 Push 开关 + 操作按钮行：FormRow = label 110 + 开关（control 区左）+ 三按钮（control 区右缘）
+    ui_kit::formRow(ui, id + ".autopush", "自动推送", kCardPaddingX, y, formW,
+                    rowH,
+        [&](eui::Ui& ui, float cx, float cy, float /*cw*/, float ch) {
+            components::toggleSwitch(ui, id + ".autopush.sw")
+                .position(cx, cy + (ch - 20.0f) * 0.5f)
+                .size(kSwitchW, 20.0f)
+                .checked(in.githubSyncAutoPush)
+                .theme(compTheme)
+                .onChange([f = a.applyGithubSyncAutoPush](bool v) { f(v); })
+                .build();
+        }, t);
 
     // 操作按钮（右对齐，三个并排：立即同步 / 测试连接 / 拉取）；运行中三个一律禁用。
     const float btnTotalW =
