@@ -89,14 +89,18 @@ void drawGithubSyncCard(const CardDrawArgs& args) {
     eui::Ui& ui = args.ui;
     const std::string& id = args.id;
     const float w = args.w;
+    const float h = args.h;
     const core::theme::Tokens& t = args.t;
     const SettingsCardsIn& in = args.in;
     const SettingsCardActions& a = args.a;
 
     const auto compTheme = core::theme::componentTokensWeChat(t);
 
-    // 各行的 y 坐标（从卡顶开始）
-    float y = 16.0f;  // 内边距
+    ui.stack(id)
+        .size(w, h)
+        .content([&] {
+        // 各行的 y 坐标（从卡顶开始）
+        float y = 16.0f;  // 内边距
 
     // 标题行
     ui.text(id + ".title")
@@ -406,6 +410,8 @@ void drawGithubSyncCard(const CardDrawArgs& args) {
             .color(t.colors.warning)
             .build();
     }
+        })
+        .build();
 }
 
 } // namespace module::settings
