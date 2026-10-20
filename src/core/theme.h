@@ -54,6 +54,11 @@ struct ColorTokens {
         eui::Color primary;            // #07C160 主色（按钮底/选中/高亮）
         eui::Color primaryHover;       // #06AE56 主色 hover（spec 未指定则用此派生值）
         eui::Color primaryPressed;     // #059A4C 主色 pressed（派生值）
+        // UAT3 W2-M2：主色作「文字」的达标档——#07C160 落 selectedBg #E5E5E5 仅
+        // 1.89:1（12px 文字 AA 需 4.5:1），加深到 #067036：
+        // on selectedBg 4.93:1 / on cardBg 6.22:1 / on pageBg 5.80:1。
+        // 按钮填充/边框等非文字用途仍用 primary。
+        eui::Color primaryText;        // #067036 主色文字档（浅底上 ≥4.5:1）
         eui::Color onPrimary;          // #FFFFFF 主色上的前景（按钮文字）
         eui::Color warningRed;         // #FA5151 警示/危险/逾期
         eui::Color linkBlue;           // #576B95 链接/可复制文本

@@ -849,6 +849,8 @@ void drawDetailActions(eui::Ui& ui, float x0, float w, float actY,
                         t.colors.wechat.dividerSecondary)
                 .textColor(t.colors.wechat.textPrimary)
                 .radius(t.sizes.radiusWeChat)
+                // 显式 border 0：组件默认 1px border 在次按钮上同样画出灰框（UAT3）
+                .border(0.0f, t.colors.wechat.dividerPrimary)
                 .onClick([f = a.test, warn = a.warn, shownCopy] {
                     if (shownCopy.id == 0) {
                         warn("测试连通失败", "请先新建或选择一个 Profile");
@@ -867,6 +869,8 @@ void drawDetailActions(eui::Ui& ui, float x0, float w, float actY,
                         t.colors.wechat.dividerSecondary)
                 .textColor(t.colors.wechat.textPrimary)
                 .radius(t.sizes.radiusWeChat)
+                // 显式 border 0：同上，消组件默认 1px 灰框（UAT3）
+                .border(0.0f, t.colors.wechat.dividerPrimary)
                 .onClick([f = a.edit, warn = a.warn, shownCopy] {
                     if (shownCopy.id == 0) {
                         warn("编辑失败", "请先新建或选择一个 Profile");
@@ -875,16 +879,20 @@ void drawDetailActions(eui::Ui& ui, float x0, float w, float actY,
                     f(shownCopy);
                 })
                 .build();
-            // 运行 §5 Text 级文字按钮（无背景，wechat.primary 绿字）
+            // 运行 §5 微信绿主按钮（UAT3：用户反馈灰底框——旧 Text 级透明底被组件
+            // 默认 1px border 画出灰框；改为该页核心操作 Primary：绿填充+白字，
+            // 显式 border 0 消默认边框，同 todo_ui_board 0 宽先例）
             components::button(ui, "claude.act.run")
                 .size(actW, 36.0f)
                 .text("运行")
                 .fontSize(t.sizes.fontSizeSmall)
-                .colors(eui::Color{0.0f, 0.0f, 0.0f, 0.0f},
-                        t.colors.wechat.dividerSecondary,
-                        t.colors.wechat.dividerSecondary)
-                .textColor(t.colors.wechat.primary)
+                .colors(t.colors.wechat.primary,
+                        t.colors.wechat.primaryHover,
+                        t.colors.wechat.primaryPressed)
+                .textColor(t.colors.wechat.onPrimary)
+                .iconColor(t.colors.wechat.onPrimary)
                 .radius(t.sizes.radiusWeChat)
+                .border(0.0f, t.colors.wechat.dividerPrimary)
                 .onClick([f = a.run, warn = a.warn, shownId] {
                     if (shownId == 0) {
                         warn("运行失败", "请先选择 Profile");

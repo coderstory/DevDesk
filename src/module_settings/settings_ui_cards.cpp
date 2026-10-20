@@ -295,7 +295,8 @@ void drawModulesCard(const CardDrawArgs& args) {
                      "开关即时生效：关闭后该模块代码不再执行，侧边栏入口与"
                      "页面当帧更新");
 
-            // 开关行行几何随生效字号派生；开关控件（32 高字面组件）随行顶走，相对偏移 -2。
+            // 开关行行几何随生效字号派生；开关控件 44×24（UAT3 由 80×32 收敛），
+            // 在 name+desc 36 高块内垂直居中（相对偏移 +6）。
             const float nameH = roundFs(18.0f);
             const float rowDescDy = nameH + roundFs(2.0f);
             const float rowDescH = roundFs(16.0f);
@@ -323,9 +324,11 @@ void drawModulesCard(const CardDrawArgs& args) {
                     .build();
                 // 开关换微信绿 wswitch（§6 item 7）：绿轨道+白滑块（§4.4）。
                 // wswitch 的 clickable 元素 id = <id>.track（probe 按 .track 定位）。
+                // UAT3：80×32 显示过大 → 44×24（agent_module 详情弹窗同款）；
+                // 行视觉块 = name 18 + 2 + desc 16 = 36 高，24 开关居中偏移 +6
                 ui_kit::wswitch(ui, id + ".sw." + suffix,
                     moduleEnabled(in.cfg, meta.moduleId),
-                    w - 28.0f - 80.0f, rowY - 2.0f, 80.0f, 32.0f, t,
+                    w - 28.0f - 44.0f, rowY + 6.0f, 44.0f, 24.0f, t,
                     [f = a.applyModuleEnabled,
                      mid = meta.moduleId](bool v) {
                         f(mid, v);
@@ -484,15 +487,15 @@ void drawProxyCard(const CardDrawArgs& args) {
                         // Esc=丢弃端口草稿（回落已应用端口，不触发 applyProxyPort）
                         .onCancel([f = a.discardProxyPortDraft] { f(); })
                         .build();
+                    // UAT3 W2-M1：core 橘（#D97757 三态）残留 → 与 github 卡主按钮
+                    //（btn.push「立即同步」）完全同款：componentTokensWeChat 的
+                    // primary=#07C160 绿，不再覆写 colors/textColor
                     components::button(ui, id + ".port.apply")
                         .position(cx + 96.0f + 8.0f, ctrlY)
                         .size(64.0f, inputH)
                         .text("应用")
                         .fontSize(fs(13.0f))
-                        .theme(compTheme)
-                        .colors(t.colors.primary, t.colors.primaryHover,
-                                t.colors.primaryPressed)
-                        .textColor(t.colors.onPrimary)
+                        .theme(compTheme, /*primary=*/true)
                         .radius(t.sizes.radiusSmall)
                         .onClick([f = a.applyProxyPort] { f(); })
                         .build();

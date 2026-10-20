@@ -1031,26 +1031,26 @@ bool nearPx(float a, float b) { return std::abs(a - b) <= 0.5f; }
 }  // namespace
 
 REGISTER_TEST(uiAboutLayout,
-              "about: W10 微信风格—居中白卡 580 / 信息列表两列 / 复制按钮 / 版权 footer / 极矮窗 clamp", {
+              "about: W10 微信风格—居中白卡 760（窄屏自适应）/ 信息列表两列 / 复制按钮 / 版权 footer / 极矮窗 clamp", {
     std::unique_ptr<::core::Module> mod(create_about_module());
     DOCTEST_REQUIRE(mod != nullptr);
     mod->onStart();
     const auto& t = ::core::theme::current();
-    // 与 about_module.cpp 同值镜像（UAT2 B 批放大：520→580 / pad 24·32→32·40 /
-    // 图标 48→56 / 行高 36→40）——两边漂移时本用例红
-    constexpr float kCardW = 580.0f;
-    constexpr float kCardPadX = 32.0f;
-    constexpr float kCardPadTop = 40.0f;
-    constexpr float kCardPadBottom = 40.0f;
-    constexpr float kIconSize = 56.0f;
-    constexpr float kIconGap = 8.0f;
-    constexpr float kTitleH = 24.0f;
-    constexpr float kTitleGap = 20.0f;
-    constexpr float kRowH = 40.0f;
+    // 与 about_module.cpp 同值镜像（UAT3 放大：580→760 / pad 32→48 / 上下 40→60 /
+    // 图标 56→72 / 行高 40→48 / 按钮 160·34→200·40）——两边漂移时本用例红
+    constexpr float kCardW = 760.0f;
+    constexpr float kCardPadX = 48.0f;
+    constexpr float kCardPadTop = 60.0f;
+    constexpr float kCardPadBottom = 60.0f;
+    constexpr float kIconSize = 72.0f;
+    constexpr float kIconGap = 10.0f;
+    constexpr float kTitleH = 30.0f;
+    constexpr float kTitleGap = 28.0f;
+    constexpr float kRowH = 48.0f;
     constexpr int kRowCount = 6;
-    constexpr float kButtonGap = 20.0f;
-    constexpr float kButtonH = 34.0f;
-    constexpr float kButtonW = 160.0f;
+    constexpr float kButtonGap = 28.0f;
+    constexpr float kButtonH = 40.0f;
+    constexpr float kButtonW = 200.0f;
     constexpr float kFooterH = 20.0f;
     constexpr float kFooterGap = 16.0f;
     constexpr float kLabelW = 120.0f;
@@ -1059,7 +1059,12 @@ REGISTER_TEST(uiAboutLayout,
                         kButtonH + kCardPadBottom;
     eui::Ui ui;
     eui::Screen screen{1600.0f, 1000.0f};
-    const float cardX = (screen.width - kCardW) / 2.0f;
+    // 宽度自适应公式镜像（UAT3：窄窗 clamp，与 about_module.cpp 同式）
+    const auto cardWidthAt = [](float screenWidth) {
+        return std::max(560.0f, std::min(kCardW, screenWidth - 2.0f * 24.0f));
+    };
+    const float cardW = cardWidthAt(screen.width);
+    const float cardX = (screen.width - cardW) / 2.0f;
     const float footerY = screen.height - t.sizes.spacingXXLarge - kFooterH;
     const float cardY = t.sizes.spacingXXLarge;
     const float valueX = kCardPadX + kLabelW + t.sizes.spacing;
@@ -1087,19 +1092,19 @@ REGISTER_TEST(uiAboutLayout,
         DOCTEST_REQUIRE(card != nullptr);
         DOCTEST_CHECK_MESSAGE(nearPx(card->frame.x, cardX), px("about.card.x", card));
         DOCTEST_CHECK_MESSAGE(nearPx(card->frame.y, cardY), px("about.card.y", card));
-        DOCTEST_CHECK_MESSAGE(nearPx(card->frame.width, kCardW), px("about.card.w", card));
+        DOCTEST_CHECK_MESSAGE(nearPx(card->frame.width, cardW), px("about.card.w", card));
         DOCTEST_CHECK_MESSAGE(nearPx(card->frame.height, cardH), px("about.card.h", card));
         DOCTEST_CHECK(card->frame.y + card->frame.height + kFooterGap <= footerY);
     }
     {
         const auto* cbg = ui.find("about.card.bg");
         DOCTEST_REQUIRE(cbg != nullptr);
-        DOCTEST_CHECK_MESSAGE(nearPx(cbg->frame.width, kCardW), px("about.card.bg", cbg));
+        DOCTEST_CHECK_MESSAGE(nearPx(cbg->frame.width, cardW), px("about.card.bg", cbg));
     }
     {
         const auto* icon = ui.find("about.card.icon");
         DOCTEST_REQUIRE(icon != nullptr);
-        DOCTEST_CHECK_MESSAGE(nearPx(icon->frame.x, cardX + (kCardW - kIconSize) / 2.0f),
+        DOCTEST_CHECK_MESSAGE(nearPx(icon->frame.x, cardX + (cardW - kIconSize) / 2.0f),
                               px("about.card.icon", icon));
         DOCTEST_CHECK_MESSAGE(nearPx(icon->frame.y, cardY + kCardPadTop),
                               px("about.card.icon", icon));
@@ -1112,7 +1117,7 @@ REGISTER_TEST(uiAboutLayout,
         DOCTEST_CHECK_MESSAGE(nearPx(title->frame.x, cardX), px("about.card.title", title));
         DOCTEST_CHECK_MESSAGE(nearPx(title->frame.y, cardY + kCardPadTop + kIconSize + kIconGap),
                               px("about.card.title", title));
-        DOCTEST_CHECK_MESSAGE(nearPx(title->frame.width, kCardW),
+        DOCTEST_CHECK_MESSAGE(nearPx(title->frame.width, cardW),
                               px("about.card.title", title));
     }
     {
@@ -1152,7 +1157,7 @@ REGISTER_TEST(uiAboutLayout,
                            kTitleGap + kRowCount * kRowH + kButtonGap;
         const auto* btn = ui.find("about.card.copyall");
         DOCTEST_REQUIRE(btn != nullptr);
-        DOCTEST_CHECK_MESSAGE(nearPx(btn->frame.x, cardX + (kCardW - kButtonW) / 2.0f),
+        DOCTEST_CHECK_MESSAGE(nearPx(btn->frame.x, cardX + (cardW - kButtonW) / 2.0f),
                               px("about.card.copyall", btn));
         DOCTEST_CHECK_MESSAGE(nearPx(btn->frame.y, btnY),
                               px("about.card.copyall", btn));
@@ -1180,7 +1185,9 @@ REGISTER_TEST(uiAboutLayout,
         DOCTEST_REQUIRE(c != nullptr);
         DOCTEST_CHECK(c->frame.x >= 0.0f);
         DOCTEST_CHECK(c->frame.x + c->frame.width <= minScreen.width);
-        DOCTEST_CHECK(nearPx(c->frame.x, (minScreen.width - kCardW) / 2.0f));
+        // 窄窗卡宽 clamp 公式镜像（UAT3 宽度自适应）
+        DOCTEST_CHECK(nearPx(c->frame.width, cardWidthAt(minScreen.width)));
+        DOCTEST_CHECK(nearPx(c->frame.x, (minScreen.width - cardWidthAt(minScreen.width)) / 2.0f));
         const auto* footer = mini.find("about.footer");
         DOCTEST_REQUIRE(footer != nullptr);
         DOCTEST_CHECK(nearPx(footer->frame.y + footer->frame.height,
@@ -1188,11 +1195,11 @@ REGISTER_TEST(uiAboutLayout,
         DOCTEST_CHECK(c->frame.y + c->frame.height + kFooterGap <= footer->frame.y);
     }
     {
-        // 极矮窗 clamp 档：卡放大后 cardH=482，屏高取 550 使「cardY 钳到 0」与
-        // 「卡底不压 footer」（footerY=490）双成立（旧 500 屏高下 482 卡必然压
+        // 极矮窗 clamp 档：UAT3 放大后 cardH=616，屏高取 690 使「cardY 钳到 0」与
+        // 「卡底不压 footer」（footerY=630）双成立（旧 550 屏高下 616 卡必然压
         // footer，两断言不可兼得，随卡上调）
         eui::Ui tiny;
-        eui::Screen tinyScreen{1200.0f, 550.0f};
+        eui::Screen tinyScreen{1200.0f, 690.0f};
         tiny.begin("about_layout_tiny");
         mod->compose(tiny, tinyScreen);
         tiny.end();
@@ -1204,6 +1211,27 @@ REGISTER_TEST(uiAboutLayout,
         DOCTEST_CHECK_MESSAGE(nearPx(card->frame.y, 0.0f),
                               px("about.card.tiny", card));
         DOCTEST_CHECK(card->frame.y + card->frame.height <= footer->frame.y);
+    }
+    {
+        // UAT3 窄屏宽度自适应：最小窗宽拟降至 1000（content≈712 < 名义 760），
+        // 卡宽 clamp 到 min(760, 712−48)=664（>560 下限），居中 x=24、不出屏；
+        // 回退成定宽 760 即溢出断言红
+        eui::Ui narrow;
+        eui::Screen narrowScreen{712.0f, 800.0f};
+        narrow.begin("about_layout_narrow");
+        mod->compose(narrow, narrowScreen);
+        narrow.end();
+        narrow.layout(narrowScreen.width, narrowScreen.height);
+        const auto* c = narrow.find("about.card");
+        DOCTEST_REQUIRE(c != nullptr);
+        const float expectW = cardWidthAt(narrowScreen.width);
+        DOCTEST_CHECK_MESSAGE(nearPx(c->frame.width, expectW),
+                              px("about.card.narrow", c));
+        DOCTEST_CHECK(c->frame.x >= 0.0f);
+        DOCTEST_CHECK(c->frame.x + c->frame.width <= narrowScreen.width);
+        DOCTEST_CHECK_MESSAGE(
+            nearPx(c->frame.x, (narrowScreen.width - expectW) / 2.0f),
+            px("about.card.narrow.x", c));
     }
     mod->onStop();
     return true;

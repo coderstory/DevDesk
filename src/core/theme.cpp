@@ -40,6 +40,9 @@ namespace {
         c.wechat.primary = eui::Color("#07C160");
         c.wechat.primaryHover = eui::Color("#06AE56");
         c.wechat.primaryPressed = eui::Color("#059A4C");
+        // 主色文字档（UAT3 W2-M2）：dark 的 wechat.selectedBg 当前同为 #E5E5E5
+        //（dark-WeChat 延后 D-04），故与 light 同值——on #E5E5E5 4.93:1（AA ≥4.5）
+        c.wechat.primaryText = eui::Color("#067036");
         c.wechat.onPrimary = eui::Color("#FFFFFF");
         c.wechat.warningRed = eui::Color("#FA5151");
         c.wechat.linkBlue = eui::Color("#576B95");
@@ -111,6 +114,9 @@ namespace {
         c.wechat.primary = eui::Color("#07C160");
         c.wechat.primaryHover = eui::Color("#06AE56");
         c.wechat.primaryPressed = eui::Color("#059A4C");
+        // 主色文字档（UAT3 W2-M2）：#07C160 落 selectedBg #E5E5E5 仅 1.89:1，
+        // 加深档 #067036——on selectedBg 4.93 / cardBg 6.22 / pageBg 5.80（AA ≥4.5）
+        c.wechat.primaryText = eui::Color("#067036");
         c.wechat.onPrimary = eui::Color("#FFFFFF");
         c.wechat.warningRed = eui::Color("#FA5151");
         c.wechat.linkBlue = eui::Color("#576B95");
