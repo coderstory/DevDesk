@@ -556,12 +556,9 @@ int main(int argc, char* argv[]) {
             probe::queueText(window, runtime, kGoalF4);
             composeFrame();
         }
-        // 触发方式 → 「闹钟」（item.5，kTriggerOnceIdx=5 的表单契约）
-        if (clickById("agent.dialog.task.trigger.field")) {
-            composeFrame();
-            if (!clickById("agent.dialog.task.trigger.item.5")) {
-                std::cerr << "agent_e2e_probe: 触发下拉「闹钟」项未出现\n";
-            }
+        // 触发方式 → 「闹钟」（UAT5 segment 选项钮，kTriggerOnceIdx=5 的表单契约）
+        if (!clickById("agent.dialog.task.trigger.item.5.bg")) {
+            std::cerr << "agent_e2e_probe: 触发 segment「闹钟」项未出现\n";
         }
         // 闹钟时间：输入框只能追加，用产品测试缝 setEditOnceDraft 覆盖写
         mod.setEditOnceDraft(formatOnceDraft(onceAtSec));

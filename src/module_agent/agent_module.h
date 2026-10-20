@@ -321,6 +321,8 @@ private:
     std::optional<int64_t> deleteConfirmTaskId_;
     std::optional<int64_t> editingTaskId_;
     std::string editGoal_, editCron_, editSlot_, editError_;
+    // UAT5 重设计：任务名称独立输入（TaskDef.name 一一对应）；空 = 保存时 deriveTaskName(goal)
+    std::string editName_;
     // 闹钟时间草稿（严格 YYYY-MM-DD HH:MM，本地时区）。只在 trigger_type=once 时消费；
     // 其它类型保留草稿但不落库（切换类型后原样切回不丢用户输入）
     std::string editOnceAtText_;
