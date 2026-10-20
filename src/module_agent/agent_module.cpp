@@ -42,10 +42,12 @@
 #include "module_agent/agent_loop.h"
 #include "module_agent/agent_time_text.h"
 #include "module_agent/app_notify_tool.h"
+#include "module_agent/app_now_tool.h"
 #include "module_agent/app_stats_tool.h"
 #include "module_agent/cron.h"
 #include "module_agent/hot_tool.h"
 #include "module_agent/message_blocks.h"
+#include "module_agent/net_fetch_tool.h"
 #include "module_agent/task_draft_parse.h"
 #include "module_agent/tool_info.h"
 #include "module_agent/trigger_config.h"
@@ -293,6 +295,21 @@ void AgentModule::onStart() {
         LOG_ERROR("Agent: hot.list 注册失败: " + regHot.errorMessage());
     }
 
+    // app.now：本地时间快照。纯读、无状态；注册失败只留痕不中断，同批口径。
+    nowTool_ = makeAppNowTool();
+    auto regNow = ::core::ToolRegistry::instance().registerTool(nowTool_);
+    if (regNow.isFail()) {
+        LOG_ERROR("Agent: app.now 注册失败: " + regNow.errorMessage());
+    }
+
+    // net.fetch：联网 GET 抓取（外部请求，仅 GET，10s 超时；单次调用语义，
+    // 不做重放/并发限制）。非破坏性只读；注册失败只留痕不中断，同批口径。
+    netTool_ = std::make_shared<NetFetchTool>();
+    auto regNet = ::core::ToolRegistry::instance().registerTool(netTool_);
+    if (regNet.isFail()) {
+        LOG_ERROR("Agent: net.fetch 注册失败: " + regNet.errorMessage());
+    }
+
     tasksDirty_ = true;
     LOG_INFO("Agent 模块启动");
 }
@@ -347,6 +364,8 @@ void AgentModule::onStop() {
     ::core::ToolRegistry::instance().unregisterTool("app.notify");
     ::core::ToolRegistry::instance().unregisterTool("hot.list");
     ::core::ToolRegistry::instance().unregisterTool("app.stats");
+    ::core::ToolRegistry::instance().unregisterTool("app.now");
+    ::core::ToolRegistry::instance().unregisterTool("net.fetch");
     loop_.reset();
     llm_.reset();
     store_.reset();
@@ -354,6 +373,8 @@ void AgentModule::onStop() {
     notifyTool_.reset();
     hotTool_.reset();
     statsTool_.reset();
+    nowTool_.reset();
+    netTool_.reset();
     llmMissingWarned_ = false;
     tasks_.clear();
     latestRuns_.clear();
