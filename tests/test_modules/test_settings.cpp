@@ -796,8 +796,8 @@ REGISTER_TEST(settings_log_dropdown_popup_stays_in_window, "settings: log dropdo
     mod->onStart();
 
     // 日志卡位于「日志」tab 顶部（cardsTopY = 40 pad + 64 header + 16 gap + 40 tab
-    // + 16 gap = 176；保留字段底 = 176 + 48 + 36 = 260，+ 8 gap + 弹层 216 = 484）。
-    // 1600×1300 下方空间充足 → 默认 openDown；短窗下 484 > 高 − 16 → 改 openUp。
+    // + 16 gap = 176；保留字段底 = 176 + 68 + 36 = 280，+ 8 gap + 弹层 216 = 504）。
+    // 1600×1300 下方空间充足 → 默认 openDown；短窗下 504 > 高 − 16 → 改 openUp。
     // 卡顶游标只累计本 tab 的卡——全量累加会把这里算错。
     eui::Screen screen;
     screen.width = 1200.0f;
@@ -1513,9 +1513,10 @@ REGISTER_TEST(settings_log_rows_same_column,
                            (field2->frame.y + field2->frame.height * 0.5f)) <
                   0.5f);
 
-    // ③ 标签单行（框高 / 无换行 / 文本放得进框）
+    // ③ 标签单行（框高不越行盒 / 无换行 / 文本放得进框；E 批迁 FormRow 后
+    // label 盒高 = 行高 roundFs(36)，单行约束由文本宽 ≤ 框宽保证）
     for (const core::dsl::Element* label : {label1, label2}) {
-        DOCTEST_CHECK_MESSAGE(label->frame.height <= 20.5f,
+        DOCTEST_CHECK_MESSAGE(label->frame.height <= 36.5f,
                               "标签框高 " + std::to_string(label->frame.height));
         DOCTEST_CHECK_MESSAGE(label->text.find('\n') == std::string::npos,
                               "标签文案含换行：" + label->text);
@@ -1563,9 +1564,10 @@ REGISTER_TEST(settings_fs_derive_pure,
     };
     {
         FontScaleGuard g{1.0f};
-    // 零回归锚：与字面公式（118+16n / 116，+16 下边距）逐值相等
-        DOCTEST_CHECK_EQ(ms::proxyCardHeightFor(0), 132.0f);
-        DOCTEST_CHECK_EQ(ms::proxyCardHeightFor(2), 166.0f);
+    // 零回归锚：E 批统一后字面公式（接管行 y=104；无警告 104+18+16=138，
+        // n 条警告 124+16n+16）
+        DOCTEST_CHECK_EQ(ms::proxyCardHeightFor(0), 138.0f);
+        DOCTEST_CHECK_EQ(ms::proxyCardHeightFor(2), 172.0f);
         DOCTEST_CHECK_EQ(ms::roundFs(16.0f), 16.0f);
         DOCTEST_CHECK_EQ(ms::roundFs(18.0f), 18.0f);
     }
@@ -1574,9 +1576,10 @@ REGISTER_TEST(settings_fs_derive_pure,
         // round(基准×1.3)：16→21 / 18→23 / 2→3 / 16（下边距）→21
         DOCTEST_CHECK_EQ(ms::roundFs(16.0f), 21.0f);
         DOCTEST_CHECK_EQ(ms::roundFs(18.0f), 23.0f);
-        // 无警告 98+23+21=142；2 条警告 (98+23+3)+2×21+21=187
-        DOCTEST_CHECK_EQ(ms::proxyCardHeightFor(0), 142.0f);
-        DOCTEST_CHECK_EQ(ms::proxyCardHeightFor(2), 187.0f);
+        // 端口行 y=40+21+16=77、行高 roundFs(36)=47 → 接管行 y=124；
+        // 无警告 124+23+21=168；2 条警告 (124+23+3)+2×21+21=213
+        DOCTEST_CHECK_EQ(ms::proxyCardHeightFor(0), 168.0f);
+        DOCTEST_CHECK_EQ(ms::proxyCardHeightFor(2), 213.0f);
     }
     return true;
 })
@@ -1730,21 +1733,23 @@ REGISTER_TEST(settings_card_rows_scale_derived,
             return scale < 0.9f ? a85 : (scale > 1.1f ? a130 : a100);
         };
         if (tab == 0) {
+            // E 批统一：标题盒字面 22（与 editor/modules 等卡同款、不随字号缩放），
+            // desc 盒 roundFs(16) 派生
             err = pin("appearance.title 高", heightOf("settings.card.appearance.title"),
-                      at(20.0f, 24.0f, 31.0f));
+                      at(22.0f, 22.0f, 22.0f));
             if (err.empty())
                 err = pin("appearance.desc 高",
                           heightOf("settings.card.appearance.desc"),
-                          at(15.0f, 18.0f, 23.0f));
+                          at(14.0f, 16.0f, 21.0f));
             // appearance.theme.label 随主题选择器删除（D-12/E3）移除
             if (err.empty())
                 err = pin("editor.hint 高", heightOf("settings.card.editor.hint"),
-                          at(15.0f, 18.0f, 23.0f));
+                          at(14.0f, 16.0f, 21.0f));
             if (err.empty())
-                err = pin("editor.ddwrap 行顶（editorFontDdOffsetY=38字面锚+roundFs(4)）",
+                err = pin("editor.ddwrap 行顶（editorFontRowY=roundFs(68)）",
                           yOf("settings.card.editor.ddwrap") -
                               yOf("settings.card.editor"),
-                          at(41.0f, 42.0f, 43.0f));
+                          at(58.0f, 68.0f, 88.0f));
             if (err.empty())
                 err = pin("editor.ddwrap 高（logFieldHeight=roundFs(36)）",
                           heightOf("settings.card.editor.ddwrap"),
@@ -1776,18 +1781,18 @@ REGISTER_TEST(settings_card_rows_scale_derived,
             if (err.empty())
                 err = pin("proxy 卡高（无警告）",
                           heightOf("settings.card.proxy"),
-                          at(127.0f, 132.0f, 142.0f));
+                          at(124.0f, 138.0f, 168.0f));
         } else {
-    // 日志卡入派生池：85% 档字面字段行底沿 96+36=132 > 卡高 roundFs(148)=126 溢出——
-    // 标签盒 / 字段高 / 行 y 随生效字号派生
-            err = pin("log.label 高（logLabelHeight=roundFs(20)）",
+    // 日志卡入派生池：E 批统一迁 FormRow 后行 y=roundFs(68)/roundFs(116)、
+    // 行高=logFieldHeight、卡高 roundFs(170) 三档同缩放
+            err = pin("log.label 高（FormRow label 盒=行高 logFieldHeight）",
                       heightOf("settings.card.log.label"),
-                      at(17.0f, 20.0f, 26.0f));
+                      at(31.0f, 36.0f, 47.0f));
             if (err.empty())
                 err = pin("log.ddwrap 行顶（logDropdownOffsetY）",
                           yOf("settings.card.log.ddwrap") -
                               yOf("settings.card.log"),
-                          at(41.0f, 48.0f, 62.5f));
+                          at(58.0f, 68.0f, 88.0f));
             if (err.empty())
                 err = pin("log.ddwrap 高（logFieldHeight=roundFs(36)）",
                           heightOf("settings.card.log.ddwrap"),
@@ -1796,10 +1801,10 @@ REGISTER_TEST(settings_card_rows_scale_derived,
                 err = pin("log.level.ddwrap 行顶（logLevelOffsetY）",
                           yOf("settings.card.log.level.ddwrap") -
                               yOf("settings.card.log"),
-                          at(81.0f, 96.0f, 124.5f));
+                          at(99.0f, 116.0f, 151.0f));
             if (err.empty())
                 err = pin("log 卡高", heightOf("settings.card.log"),
-                          at(126.0f, 148.0f, 192.0f));
+                          at(145.0f, 170.0f, 221.0f));
         }
         return err;
     };
@@ -1838,7 +1843,8 @@ REGISTER_TEST(settings_card_rows_scale_derived,
             DOCTEST_CHECK_MESSAGE(problem.empty(), problem);
         }
     }
-    // 85% 档（kFontPresets[0]，溢出档）：字面几何在本档溢出卡外（日志卡字段行 132 > 126）
+    // 85% 档（kFontPresets[0]）：E 批统一后行 y/行高同走 roundFs 派生、卡高给足
+    // 富余（如目录卡 216 兜 34 字面行高），字面几何不再溢出卡外
     {
         FontScaleGuard g{0.85f};
         for (const std::string& problem : runAllTabs(0.85f)) {
@@ -2818,7 +2824,7 @@ REGISTER_TEST(settings_ui_logic_equivalence,
     };
     int gridHits = 0;
     for (float top : {0.0f, 100.0f, 176.0f, 400.0f, 984.0f}) {
-        for (float off : {ms::logDropdownOffsetY(), ms::editorFontDdOffsetY(),
+        for (float off : {ms::logDropdownOffsetY(), ms::editorFontRowY(),
                           ms::logLevelOffsetY()}) {
     // 三处下拉高单一来源 logFieldHeight()，fh 轴收敛为 1 档
             for (float fh : {ms::logFieldHeight()}) {
@@ -2844,11 +2850,13 @@ REGISTER_TEST(settings_ui_logic_equivalence,
     DOCTEST_CHECK_EQ(ms::kWindowBottomMargin, 16.0f);
     DOCTEST_CHECK_EQ(ms::kSettingsTabHeight, 40.0f);
     DOCTEST_CHECK_EQ(ms::kAppearanceCardHeight, 184.0f);
-    DOCTEST_CHECK_EQ(ms::kEditorFontCardHeight, 108.0f);
+    // E 批布局统一：编辑器字号卡迁 FormRow（行 y=68、行高 36，行底 104 + 16；85% 档收敛需富余）
+    DOCTEST_CHECK_EQ(ms::kEditorFontCardHeight, 122.0f);
     DOCTEST_CHECK_EQ(ms::kModulesCardHeight, 344.0f);  // 4 行开关（agent 加入）
-    // 目录卡加「数据根忽略规则（.gitignore）」路径行（新行 y=126 高 34，盒底 160 + 16 下边距）
-    DOCTEST_CHECK_EQ(ms::kDirectoryCardHeight, 176.0f);
-    DOCTEST_CHECK_EQ(ms::kLogSettingsCardHeight, 148.0f);
+    // 目录卡内容起 y=68 顺移（gitignore 路径行 y=148 高 34，盒底 182；85% 档 34 字面行高需富余兜底）
+    DOCTEST_CHECK_EQ(ms::kDirectoryCardHeight, 216.0f);
+    // 日志卡迁 FormRow（行2 底 116+36=152，+16 下边距；130% 档行底 198 需 ≥219）
+    DOCTEST_CHECK_EQ(ms::kLogSettingsCardHeight, 170.0f);
 
     // 3) 档位表（值 + 标签，逐项钉死）
     DOCTEST_CHECK_EQ(ms::kFontPresetCount, 4);

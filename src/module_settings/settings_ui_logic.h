@@ -70,13 +70,13 @@ inline constexpr long kLogTailReadWindow = 256 * 1024;  // tail 只读末尾 256
 
 // 卡片高度（唯一来源：注册表卡高与卡内几何同源）
 // 内边距四周 ≥16px，改动须同时满足「内容底沿 + 16」；这些是 100% 档基准，注册表运行期取 roundFs(常量)，卡高与行盒同缩放才不挤出尾行。
-inline constexpr float kAppearanceCardHeight = 184.0f;  // 外观卡（通用；降级提示行底 168 + 16，删强调色选择器后重算）
-inline constexpr float kEditorFontCardHeight = 108.0f;  // 编辑器字号卡（通用）
+inline constexpr float kAppearanceCardHeight = 184.0f;  // 外观卡（通用；降级提示行底 168 + 16，E 批布局统一后行序不变仍 184）
+inline constexpr float kEditorFontCardHeight = 122.0f;  // 编辑器字号卡（通用；FormRow 行底 roundFs(68)+roundFs(36)=104，85% 档行底 89+底距 14 需 ≥104 档卡高）
 inline constexpr float kModulesCardHeight = 344.0f;     // 模块插拔卡（模块）
-inline constexpr float kDirectoryCardHeight = 176.0f;   // 目录卡（模块）
-inline constexpr float kLogSettingsCardHeight = 148.0f; // 日志卡（日志）
+inline constexpr float kDirectoryCardHeight = 216.0f;   // 目录卡（模块；内容起 y=68 顺移后 gitignore 行底 182，85% 档 34 字面行高需富余兜底）
+inline constexpr float kLogSettingsCardHeight = 170.0f; // 日志卡（日志；行2 底 roundFs(116)+roundFs(36)=152，130% 档需 ≥219）
 // GitHub Sync 卡（同步）：启用态满高（最坏行序 = 按钮行 + 进度 + 状态 + 分支
-// 提示 + public 提醒 + 本地 git 灰字，内容底沿 450；错误行与进度行互斥、错误行
+// 提示 + public 提醒 + 本地 git 灰字，内容底沿 452；错误行与进度行互斥、错误行
 // 显示时状态行让位，故 460 包住所有组合）。未启用时卡片早退，改用折叠高。
 inline constexpr float kGithubSyncCardHeight = 460.0f;
 inline constexpr float kGithubSyncCollapsedHeight = 132.0f;  // 未启用（标题+描述+开关）
@@ -87,21 +87,17 @@ inline float roundFs(float base) {
 }
 
 // 下拉贴近窗体底边向下展开可能被裁剪，用同一套几何预判、出界则置 openUp 向上；弹层三项必须与 EUI-NEO dropdown 实际渲染一致（主题覆写 metrics 时需同步）。
-// 日志卡两行「标签列 + 控件列 + 说明列」同列口径（下列常量即单一来源）；行 y / 行高 / 控件高走 roundFs 派生（85% 档字面值会溢出卡外），水平几何保持字面。
-inline constexpr float kLogLabelX = 28.0f;       // 标签列左边缘（卡内 padding）
-inline constexpr float kLogLabelWidth = 84.0f;   // 标签列宽（"日志保留" 4 字 ×12px = 48）
-inline float logLabelHeight() { return roundFs(20.0f); }  // 标签行盒高（100% = 20，单行不折行）
-inline constexpr float kLogFieldX = 124.0f;      // 控件列左边缘 = 28 + 84 + 12（一档间距）
+// E 批布局统一：label+control 行一律 ui_kit::formRow（label 定宽 110、行高 = logFieldHeight 36、
+// hint 作控件区内行内尾注）；行 y 走 roundFs 派生（85% 档字面值会溢出卡外），水平几何由 formRow 给。
 inline constexpr float kLogFieldWidth = 240.0f;  // 两个下拉同宽（同一列口径）
-inline float logFieldHeight() { return roundFs(36.0f); }  // 两个下拉同高（100% = 36）
-inline float logRow1LabelY() { return roundFs(56.0f); }   // 行 1 标签 y（100% = 56，标题行 16..38 之下）
-inline float logRow2LabelY() { return roundFs(104.0f); }  // 行 2 标签 y（100% = 104）
-inline constexpr float kLogHintX = 388.0f;       // 说明列 x = 124 + 240 + 24
-inline float logFieldDy() { return (logLabelHeight() - logFieldHeight()) * 0.5f; }
-inline float logDropdownOffsetY() { return logRow1LabelY() + logFieldDy(); }  // 100% = 48
-inline float logLevelOffsetY() { return logRow2LabelY() + logFieldDy(); }     // 100% = 96
-// 编辑器字号卡内 dropdown y = 字面锚（标题盒底 38）+ 派生间距——整段圆整会在 85% 档越过标题盒底造成行盒叠印。
-inline float editorFontDdOffsetY() { return 38.0f + roundFs(4.0f); }  // 100% = 42
+inline float logFieldHeight() { return roundFs(36.0f); }  // 两个下拉同高（100% = 36，行高单一来源）
+inline float logRow1LabelY() { return roundFs(68.0f); }   // 行 1 y（100% = 68，内容起始统一口径）
+inline float logRow2LabelY() { return roundFs(116.0f); }  // 行 2 y（100% = 116 = 68 + 行 36 + 行距 12）
+// 迁 FormRow 后行高即控件高（垂直居中差恒 0），行 y 与控件 y 合一：
+inline float logDropdownOffsetY() { return logRow1LabelY(); }  // 100% = 68
+inline float logLevelOffsetY() { return logRow2LabelY(); }     // 100% = 116
+// 编辑器字号卡 FormRow 行 y：与日志卡同口径的内容起始锚（100% = 68）。
+inline float editorFontRowY() { return roundFs(68.0f); }  // 100% = 68
 inline constexpr float kDropdownPopupGap = 8.0f;       // 字段底边与弹层间距（spacing.compact）
 inline constexpr float kDropdownItemHeight = 34.0f;    // 单个菜单项高（control.menuItem）
 inline constexpr float kDropdownPopupPadding = 12.0f;  // 弹层上下 padding（spacing.small × 2）
@@ -142,19 +138,27 @@ int nearestIndex(int value, const int* presets, int count);
 // 非 token 的硬编码字号跟随全局缩放（token 字号已在 theme 层缩放，勿再包一层）。
 float fs(float base);
 
-// 代理卡接管 / 警告行几何（drawProxyCard 与 proxyCardHeightFor 单一来源）：接管行 y=98 锚字面控件链，警告行 y 从接管行盒底派生。
+// 代理卡行几何（drawProxyCard 与 proxyCardHeightFor 单一来源）：E 批统一——端口行迁
+// FormRow（行高 = logFieldHeight 36），行 y 从 desc 盒底（40+16）+ gap 12 派生 = 68；
+// 接管行从端口行盒底顺延，警告行从接管行盒底派生。
+inline float proxyPortRowY() {
+    return 40.0f + roundFs(16.0f) + roundFs(12.0f);               // 100% = 68
+}
+inline float proxyTakeoverRowY() {
+    return proxyPortRowY() + logFieldHeight();                    // 100% = 104
+}
 inline float proxyTakeoverRowHeight() { return roundFs(18.0f); }  // 100% = 18
 inline float proxyWarnRowHeight() { return roundFs(16.0f); }      // 100% = 16
 inline float proxyWarnRowTop() {
-    return 98.0f + proxyTakeoverRowHeight() + roundFs(2.0f);      // 100% = 118
+    return proxyTakeoverRowY() + proxyTakeoverRowHeight() + roundFs(2.0f);  // 100% = 124
 }
-// 代理卡高 = 内容底沿 + roundFs(16) 下边距（100% 档：无警告 132 / n 条 118+16n+16）。
+// 代理卡高 = 内容底沿 + roundFs(16) 下边距（100% 档：无警告 138 / n 条 124+16n+16）。
 inline float proxyCardHeightFor(std::size_t warnLines) {
     const float bottom =
         warnLines > 0
             ? proxyWarnRowTop() +
                   static_cast<float>(warnLines) * proxyWarnRowHeight()
-            : 98.0f + proxyTakeoverRowHeight();
+            : proxyTakeoverRowY() + proxyTakeoverRowHeight();
     return bottom + roundFs(16.0f);
 }
 

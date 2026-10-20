@@ -94,7 +94,7 @@ const CardSpec kCardSpecs[] = {
     {kTabModules, "settings.card.modules", nullptr, CardHeightKind::Fixed,
      kModulesCardHeight, false, &drawModulesCard},
     {kTabModules, "settings.card.quota", nullptr, CardHeightKind::Fixed,
-     48.0f, false, &drawQuotaCard},
+     72.0f, false, &drawQuotaCard},
     {kTabModules, "settings.card.directory", kModuleIdMarkdown,
      CardHeightKind::Fixed, kDirectoryCardHeight, false, &drawDirectoryCard},
     {kTabModules, "settings.card.proxy", kModuleIdClaudeProxy,

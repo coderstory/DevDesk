@@ -87,24 +87,22 @@ void drawAppearanceCard(const CardDrawArgs& args) {
     const SettingsCardActions& a = args.a;
 
     const auto compTheme = core::theme::componentTokensWeChat(t);
-    // 行几何随生效字号派生（roundFs 口径见 settings_ui_logic.h）；18 = 标题顶字面锚。
-    // 主题选择器删除后字号/效果改 FormRow 排列，行高与日志卡同口径（logFieldHeight=36）。
-    const float titleH = roundFs(24.0f);
-    const float descY = 18.0f + titleH + roundFs(2.0f);
-    const float descH = roundFs(18.0f);
+    // E 批布局统一：标题 16/22 + desc y=40/h=16 + 内容起始 y=68（全卡统一口径，
+    // roundFs 派生见 settings_ui_logic.h；标题顶 16 = 字面锚）。
+    const float descH = roundFs(16.0f);
     const float hintH = roundFs(16.0f);
     ui.stack(id)
         .size(w, h)
         .zIndex(40)
         .content([&] {
-            cardTitle(ui, id, t, 18.0f, w - 56.0f, titleH, titleH, "外观");
-            cardDesc(ui, id, t, descY, w - 56.0f, descH,
+            cardTitle(ui, id, t, 16.0f, w - 56.0f, 22.0f, 22.0f, "外观");
+            cardDesc(ui, id, t, 40.0f, w - 56.0f, descH,
                      "主题与窗口底色即时生效；字号缩放全局生效");
 
             // 主题选择器已删除（D-12/E3 去功能例外——WeChat 皮肤即主题、暗色延后 D-04）。
             // 字号缩放（§6 item 3 确认在通用 tab）+ 窗口效果用 FormRow 排列（§6 item 5）。
             const float rowH = logFieldHeight();  // 36px（与日志卡同口径）
-            const float fontRowY = descY + descH + roundFs(6.0f);
+            const float fontRowY = 40.0f + descH + roundFs(12.0f);  // 100% = 68
             const float effectRowY = fontRowY + rowH + roundFs(6.0f);
             const float formX = 28.0f;
             const float formW = w - 56.0f;  // 卡内左右各 28 padding
@@ -208,48 +206,58 @@ void drawEditorFontCard(const CardDrawArgs& args) {
     const float screenH = args.screenH;
 
     const auto compTheme = core::theme::componentTokensWeChat(t);
+    // E 批布局统一：裸 dropdown 行迁 FormRow（label 110 + dropdown + hint 行内尾注），
+    // 行 y = editorFontRowY（100% = 68 内容起始口径），行高与日志卡同源（logFieldHeight）。
+    const float rowH = logFieldHeight();
+    const float rowY = editorFontRowY();
+    const float hintH = roundFs(16.0f);
     ui.stack(id)
         .size(w, h)
         .zIndex(30)
         .content([&] {
             cardTitle(ui, id, t, 16.0f, w - 56.0f, 22.0f, 22.0f, "编辑器字号");
-            // 下拉 y/高随生效字号派生（单一来源 editorFontDdOffsetY / logFieldHeight）。
-            ui.stack(id + ".ddwrap")
-                .position(28.0f, editorFontDdOffsetY())
-                .size(150.0f, logFieldHeight())
-                .content([&] {
-                    const bool efontOpenUp = dropdownPopupOverflows(
-                        pageY, editorFontDdOffsetY(), logFieldHeight(),
-                        kEditorFontPresetCount, screenH);
-                    components::dropdown(ui, id + ".dd")
-                        .size(150.0f, logFieldHeight())
-                        .theme(compTheme)
-                        .items(std::vector<std::string>(
-                            kEditorFontPresetLabels,
-                            kEditorFontPresetLabels + kEditorFontPresetCount))
-                        .selected(nearestIndex(in.cfg.editorFontSize,
-                                               kEditorFontPresets,
-                                               kEditorFontPresetCount))
-                        .openUp(efontOpenUp)
-                        .open(isDropdownOpen(in.openDropdown,
-                                             Dropdown::EditorFont))
-                        .onOpenChange([f = a.setDropdownOpen](bool v) {
-                            f(Dropdown::EditorFont, v);
-                        })
-                        .onChange([f = a.applyEditorFontPreset](int idx) {
-                            f(idx);
+            ui_kit::formRow(ui, id + ".font", "字号", 28.0f, rowY,
+                            w - 56.0f, rowH,
+                [&](eui::Ui& ui, float cx, float cy, float cw, float ch) {
+                    const float ddW = std::min(240.0f, cw);
+                    ui.stack(id + ".ddwrap")
+                        .position(cx, cy)
+                        .size(ddW, ch)
+                        .content([&] {
+                            const bool efontOpenUp = dropdownPopupOverflows(
+                                pageY, rowY, rowH,
+                                kEditorFontPresetCount, screenH);
+                            components::dropdown(ui, id + ".dd")
+                                .size(ddW, ch)
+                                .theme(compTheme)
+                                .items(std::vector<std::string>(
+                                    kEditorFontPresetLabels,
+                                    kEditorFontPresetLabels +
+                                        kEditorFontPresetCount))
+                                .selected(nearestIndex(in.cfg.editorFontSize,
+                                                       kEditorFontPresets,
+                                                       kEditorFontPresetCount))
+                                .openUp(efontOpenUp)
+                                .open(isDropdownOpen(in.openDropdown,
+                                                     Dropdown::EditorFont))
+                                .onOpenChange([f = a.setDropdownOpen](bool v) {
+                                    f(Dropdown::EditorFont, v);
+                                })
+                                .onChange([f = a.applyEditorFontPreset](int idx) {
+                                    f(idx);
+                                })
+                                .build();
                         })
                         .build();
-                })
-                .build();
-            ui.text(id + ".hint")
-                .position(190.0f, 48.0f)
-                .size(w - 218.0f, roundFs(18.0f))
-                .text("Markdown 编辑器正文字号；默认 15px（标准）。切换即时生效。")
-                .fontSize(fs(12.0f))
-                .lineHeight(roundFs(18.0f))
-                .color(t.colors.textTertiary)
-                .build();
+                    ui.text(id + ".hint")
+                        .position(cx + ddW + 12.0f, cy + (ch - hintH) * 0.5f)
+                        .size(std::max(0.0f, cw - ddW - 12.0f), hintH)
+                        .text("Markdown 编辑器正文字号；默认 15px（标准）。切换即时生效。")
+                        .fontSize(fs(12.0f))
+                        .lineHeight(hintH)
+                        .color(t.colors.textTertiary)
+                        .build();
+                }, t);
         })
         .build();
 }
@@ -346,15 +354,16 @@ void drawDirectoryCard(const CardDrawArgs& args) {
                 ::core::paths::markdownDir();
             const bool exists = in.notesDirExists;
             const float dirBtnW = 110.0f;
+            // E 批布局统一：内容起始 y=68（无 desc 卡也从 68 起，与 modules 卡同锚）。
             // 路径只读灰底（§6 item 9）：wechat.dividerSecondary 底
             ui.rect(id + ".path.bg")
-                .position(28.0f, 46.0f)
+                .position(28.0f, 68.0f)
                 .size(w - 56.0f - dirBtnW - 12.0f, 34.0f)
                 .color(t.colors.wechat.dividerSecondary)
                 .radius(t.sizes.radiusWeChat)
                 .build();
             ui.text(id + ".path.value")
-                .position(40.0f, 46.0f)
+                .position(40.0f, 68.0f)
                 .size(w - 80.0f - dirBtnW - 12.0f, 34.0f)
                 .text(mdDir.string() + (exists ? "" : "（尚未创建）"))
                 .fontSize(fs(13.0f))
@@ -364,11 +373,11 @@ void drawDirectoryCard(const CardDrawArgs& args) {
             // 「打开目录」浅灰次按钮（§6 item 9）：ui_kit::button Secondary 级
             ui_kit::button(ui, id + ".open", "打开目录",
                 ui_kit::ButtonLevel::Secondary,
-                w - 28.0f - dirBtnW, 46.0f, dirBtnW, 34.0f, t,
+                w - 28.0f - dirBtnW, 68.0f, dirBtnW, 34.0f, t,
                 {.onClick = [f = a.openNotesDirectory] { f(); }});
             // 说明小字（§6 item 9）：wechat.textTertiary
             ui.text(id + ".hint")
-                .position(28.0f, 86.0f)
+                .position(28.0f, 108.0f)
                 .size(w - 56.0f, roundFs(14.0f))
                 .text("目录暂不支持修改，打开后可手动迁移文件")
                 .fontSize(fs(11.0f))
@@ -378,7 +387,7 @@ void drawDirectoryCard(const CardDrawArgs& args) {
 
             // 数据根忽略规则路径：凭据在 devdesk.db（WAL 伴生件会复制凭据页）且数据根要进 git——本行只展示，让用户看见是哪份规则在挡 git add。
             ui.text(id + ".gitignore.label")
-                .position(28.0f, 108.0f)
+                .position(28.0f, 130.0f)
                 .size(w - 56.0f, roundFs(14.0f))
                 .text("数据根忽略规则（防凭据误提交）")
                 .fontSize(fs(11.0f))
@@ -386,14 +395,14 @@ void drawDirectoryCard(const CardDrawArgs& args) {
                 .color(t.colors.textTertiary)
                 .build();
             ui.rect(id + ".gitignore.path.bg")
-                .position(28.0f, 126.0f)
+                .position(28.0f, 148.0f)
                 .size(w - 56.0f, 34.0f)
                 .color(t.colors.surfaceElevated)
                 .radius(t.sizes.radiusSmall)
                 .border(1.0f, t.colors.borderMuted)
                 .build();
             ui.text(id + ".gitignore.path.value")
-                .position(40.0f, 126.0f)
+                .position(40.0f, 148.0f)
                 .size(w - 80.0f, 34.0f)
                 .text(::core::paths::dataRootGitignoreFile().string())
                 .fontSize(fs(13.0f))
@@ -413,9 +422,13 @@ void drawProxyCard(const CardDrawArgs& args) {
     const SettingsCardsIn& in = args.in;
     const SettingsCardActions& a = args.a;
 
-    // 行几何随生效字号派生（helper 见 settings_ui_logic.h）；字面锚 y40/62/98 不缩放，端口标签 lineHeight 28 = 与输入控件垂直居中。
+    // 行几何随生效字号派生（helper 见 settings_ui_logic.h）；E 批统一——标题 16/22、
+    // desc y=40/h=16、端口行迁 FormRow（行 y=68 内容起始口径），接管行从端口行盒底顺延。
     const float descH = roundFs(16.0f);
-    const float portRowH = roundFs(18.0f);
+    const float rowH = logFieldHeight();
+    const float portRowY = proxyPortRowY();
+    const float takeoverY = proxyTakeoverRowY();
+    const float hintH = roundFs(16.0f);
     const float takeoverH = proxyTakeoverRowHeight();
     const float warnY0 = proxyWarnRowTop();
     const float warnH = proxyWarnRowHeight();
@@ -451,53 +464,53 @@ void drawProxyCard(const CardDrawArgs& args) {
             const std::string portText = in.proxyPortDraft.empty()
                 ? std::to_string(in.cfg.proxyPort)
                 : in.proxyPortDraft;
-            ui.text(id + ".port.label")
-                .position(28.0f, 62.0f)
-                .size(72.0f, portRowH)
-                .text("代理端口")
-                .fontSize(fs(12.0f))
-                .lineHeight(28.0f)
-                .color(t.colors.textSecondary)
-                .build();
-            components::input(ui, id + ".port.input")
-                .position(104.0f, 60.0f)
-                .size(96.0f, 28.0f)
-                .value(portText)
-                .placeholder("8888")
-                .fontSize(fs(13.0f))
-                .theme(compTheme)
-                .onChange([f = a.setProxyPortDraft](const std::string& v) {
-                    f(v);
-                })
-                .onEnter([f = a.applyProxyPort] { f(); })
-                // Esc=丢弃端口草稿（回落已应用端口，不触发 applyProxyPort）
-                .onCancel([f = a.discardProxyPortDraft] { f(); })
-                .build();
-            components::button(ui, id + ".port.apply")
-                .position(208.0f, 60.0f)
-                .size(64.0f, 28.0f)
-                .text("应用")
-                .fontSize(fs(13.0f))
-                .theme(compTheme)
-                .colors(t.colors.primary, t.colors.primaryHover,
-                        t.colors.primaryPressed)
-                .textColor(t.colors.onPrimary)
-                .radius(t.sizes.radiusSmall)
-                .onClick([f = a.applyProxyPort] { f(); })
-                .build();
-            ui.text(id + ".port.hint")
-                .position(282.0f, 62.0f)
-                .size(w - 282.0f - 28.0f, portRowH)
-                .text("改后回车或点「应用」；代理运行中自动重启")
-                .fontSize(fs(12.0f))
-                .lineHeight(portRowH)
-                .color(t.colors.textTertiary)
-                .build();
+            // E 批统一：端口行 = FormRow（label 110）+ input/应用按钮/hint 行内尾注。
+            ui_kit::formRow(ui, id + ".port", "代理端口", 28.0f, portRowY,
+                            w - 56.0f, rowH,
+                [&](eui::Ui& ui, float cx, float cy, float cw, float ch) {
+                    const float inputH = 28.0f;
+                    const float ctrlY = cy + (ch - inputH) * 0.5f;
+                    components::input(ui, id + ".port.input")
+                        .position(cx, ctrlY)
+                        .size(96.0f, inputH)
+                        .value(portText)
+                        .placeholder("8888")
+                        .fontSize(fs(13.0f))
+                        .theme(compTheme)
+                        .onChange([f = a.setProxyPortDraft](const std::string& v) {
+                            f(v);
+                        })
+                        .onEnter([f = a.applyProxyPort] { f(); })
+                        // Esc=丢弃端口草稿（回落已应用端口，不触发 applyProxyPort）
+                        .onCancel([f = a.discardProxyPortDraft] { f(); })
+                        .build();
+                    components::button(ui, id + ".port.apply")
+                        .position(cx + 96.0f + 8.0f, ctrlY)
+                        .size(64.0f, inputH)
+                        .text("应用")
+                        .fontSize(fs(13.0f))
+                        .theme(compTheme)
+                        .colors(t.colors.primary, t.colors.primaryHover,
+                                t.colors.primaryPressed)
+                        .textColor(t.colors.onPrimary)
+                        .radius(t.sizes.radiusSmall)
+                        .onClick([f = a.applyProxyPort] { f(); })
+                        .build();
+                    const float hintX = cx + 96.0f + 8.0f + 64.0f + 12.0f;
+                    ui.text(id + ".port.hint")
+                        .position(hintX, cy + (ch - hintH) * 0.5f)
+                        .size(std::max(0.0f, cx + cw - hintX), hintH)
+                        .text("改后回车或点「应用」；代理运行中自动重启")
+                        .fontSize(fs(12.0f))
+                        .lineHeight(hintH)
+                        .color(t.colors.textTertiary)
+                        .build();
+                }, t);
 
             // Claude Code 接管状态：sidecar 是否存在推导，让还原机制对用户可见。
             const bool managed = in.takeoverManaged;
             ui.text(id + ".takeover.label")
-                .position(28.0f, 98.0f)
+                .position(28.0f, takeoverY)
                 .size(150.0f, takeoverH)
                 .text("Claude Code 接管")
                 .fontSize(fs(12.0f))
@@ -508,7 +521,7 @@ void drawProxyCard(const CardDrawArgs& args) {
             const std::string ccPath =
                 svc ? svc->settingsFilePath() : std::string();
             ui.text(id + ".takeover.value")
-                .position(190.0f, 98.0f)
+                .position(190.0f, takeoverY)
                 .size(w - 190.0f - 28.0f, takeoverH)
                 .text(managed
                       ? ("● 已接管 " + ccPath)
@@ -549,7 +562,8 @@ void drawProxyCard(const CardDrawArgs& args) {
         .build();
 }
 
-// 下拉出界则 openUp 向上；两行统一「标签列/控件列/说明列」同列口径（常量见 settings_ui_logic.h）。
+// 下拉出界则 openUp 向上；E 批统一：两行迁 FormRow（label 110 + dropdown + hint 行内尾注），
+// 行 y 单一来源 settings_ui_logic.h（logRow1LabelY/logRow2LabelY，100% = 68/116）。
 void drawLogCard(const CardDrawArgs& args) {
     eui::Ui& ui = args.ui;
     const std::string& id = args.id;
@@ -562,9 +576,11 @@ void drawLogCard(const CardDrawArgs& args) {
     const float screenH = args.screenH;
 
     const auto compTheme = core::theme::componentTokensWeChat(t);
-    const float labelFont = fs(12.0f);
     const float hintFontSize = fs(12.0f);
-    const float hintW = std::max(0.0f, w - kLogHintX - 28.0f);
+    const float rowH = logFieldHeight();
+    const float hintH = roundFs(16.0f);
+    const float row1Y = logRow1LabelY();
+    const float row2Y = logRow2LabelY();
     ui.stack(id)
         .size(w, h)
         .zIndex(30)
@@ -574,94 +590,87 @@ void drawLogCard(const CardDrawArgs& args) {
             // 档位标签（0 = 永久）；存的是原始天数 int，清理任务按值读取
             static const char* kRetentionLabels[] = {
                 "永久保留", "7 天", "30 天", "90 天", "180 天", "365 天"};
-            ui.text(id + ".label")
-                .position(kLogLabelX, logRow1LabelY())
-                .size(kLogLabelWidth, logLabelHeight())
-                .text(fitControlLabel("日志保留", kLogLabelWidth, labelFont))
-                .fontSize(labelFont)
-                .lineHeight(logLabelHeight())
-                .color(t.colors.textSecondary)
-                .build();
-            ui.stack(id + ".ddwrap")
-                .position(kLogFieldX, logDropdownOffsetY())
-                .size(kLogFieldWidth, logFieldHeight())
-                .content([&] {
-                    const bool openUp = dropdownPopupOverflows(
-                        pageY, logDropdownOffsetY(), logFieldHeight(),
-                        kRetentionPresetCount, screenH);
-                    components::dropdown(ui, id + ".dd")
-                        .size(kLogFieldWidth, logFieldHeight())
-                        .theme(compTheme)
-                        .items(std::vector<std::string>(
-                            kRetentionLabels,
-                            kRetentionLabels + kRetentionPresetCount))
-                        .selected(nearestIndex(in.cfg.logRetentionDays,
-                                               kRetentionPresets,
-                                               kRetentionPresetCount))
-                        .open(isDropdownOpen(in.openDropdown,
-                                             Dropdown::Retention))
-                        .openUp(openUp)
-                        .onOpenChange([f = a.setDropdownOpen](bool v) {
-                            f(Dropdown::Retention, v);
-                        })
-                        .onChange([f = a.applyRetentionPreset](int idx) {
-                            f(idx);
+            ui_kit::formRow(ui, id, "日志保留", 28.0f, row1Y, w - 56.0f, rowH,
+                [&](eui::Ui& ui, float cx, float cy, float cw, float ch) {
+                    const float ddW = std::min(kLogFieldWidth, cw);
+                    ui.stack(id + ".ddwrap")
+                        .position(cx, cy)
+                        .size(ddW, ch)
+                        .content([&] {
+                            const bool openUp = dropdownPopupOverflows(
+                                pageY, row1Y, rowH,
+                                kRetentionPresetCount, screenH);
+                            components::dropdown(ui, id + ".dd")
+                                .size(ddW, ch)
+                                .theme(compTheme)
+                                .items(std::vector<std::string>(
+                                    kRetentionLabels,
+                                    kRetentionLabels + kRetentionPresetCount))
+                                .selected(nearestIndex(in.cfg.logRetentionDays,
+                                                       kRetentionPresets,
+                                                       kRetentionPresetCount))
+                                .open(isDropdownOpen(in.openDropdown,
+                                                     Dropdown::Retention))
+                                .openUp(openUp)
+                                .onOpenChange([f = a.setDropdownOpen](bool v) {
+                                    f(Dropdown::Retention, v);
+                                })
+                                .onChange([f = a.applyRetentionPreset](int idx) {
+                                    f(idx);
+                                })
+                                .build();
                         })
                         .build();
-                })
-                .build();
-            ui.text(id + ".hint")
-                .position(kLogHintX, logRow1LabelY())
-                .size(hintW, logLabelHeight())
-                .text("0 = 永久保留；30 天为默认。切换档位立即清理一次。")
-                .fontSize(hintFontSize)
-                .lineHeight(logLabelHeight())
-                .color(t.colors.textTertiary)
-                .build();
+                    ui.text(id + ".hint")
+                        .position(cx + ddW + 12.0f, cy + (ch - hintH) * 0.5f)
+                        .size(std::max(0.0f, cw - ddW - 12.0f), hintH)
+                        .text("0 = 永久保留；30 天为默认。切换档位立即清理一次。")
+                        .fontSize(hintFontSize)
+                        .lineHeight(hintH)
+                        .color(t.colors.textTertiary)
+                        .build();
+                }, t);
 
             // 行 2 日志级别：切档即时 core::log::setLevel（DEBUG 起打详录），重启由 onStart 恢复持久化档。
-            ui.text(id + ".level.label")
-                .position(kLogLabelX, logRow2LabelY())
-                .size(kLogLabelWidth, logLabelHeight())
-                .text(fitControlLabel("日志级别", kLogLabelWidth, labelFont))
-                .fontSize(labelFont)
-                .lineHeight(logLabelHeight())
-                .color(t.colors.textSecondary)
-                .build();
-            ui.stack(id + ".level.ddwrap")
-                .position(kLogFieldX, logLevelOffsetY())
-                .size(kLogFieldWidth, logFieldHeight())
-                .content([&] {
-                    const bool levelOpenUp = dropdownPopupOverflows(
-                        pageY, logLevelOffsetY(), logFieldHeight(),
-                        kLogLevelPresetCount, screenH);
-                    components::dropdown(ui, id + ".level.dd")
-                        .size(kLogFieldWidth, logFieldHeight())
-                        .theme(compTheme)
-                        .items(std::vector<std::string>(
-                            kLogLevelPresetLabels,
-                            kLogLevelPresetLabels + kLogLevelPresetCount))
-                        .selected(logLevelIndex(in.cfg.logLevel))
-                        .openUp(levelOpenUp)
-                        .open(isDropdownOpen(in.openDropdown,
-                                             Dropdown::LogLevel))
-                        .onOpenChange([f = a.setDropdownOpen](bool v) {
-                            f(Dropdown::LogLevel, v);
-                        })
-                        .onChange([f = a.applyLogLevelPreset](int idx) {
-                            f(idx);
+            ui_kit::formRow(ui, id + ".level", "日志级别", 28.0f, row2Y,
+                            w - 56.0f, rowH,
+                [&](eui::Ui& ui, float cx, float cy, float cw, float ch) {
+                    const float ddW = std::min(kLogFieldWidth, cw);
+                    ui.stack(id + ".level.ddwrap")
+                        .position(cx, cy)
+                        .size(ddW, ch)
+                        .content([&] {
+                            const bool levelOpenUp = dropdownPopupOverflows(
+                                pageY, row2Y, rowH,
+                                kLogLevelPresetCount, screenH);
+                            components::dropdown(ui, id + ".level.dd")
+                                .size(ddW, ch)
+                                .theme(compTheme)
+                                .items(std::vector<std::string>(
+                                    kLogLevelPresetLabels,
+                                    kLogLevelPresetLabels + kLogLevelPresetCount))
+                                .selected(logLevelIndex(in.cfg.logLevel))
+                                .openUp(levelOpenUp)
+                                .open(isDropdownOpen(in.openDropdown,
+                                                     Dropdown::LogLevel))
+                                .onOpenChange([f = a.setDropdownOpen](bool v) {
+                                    f(Dropdown::LogLevel, v);
+                                })
+                                .onChange([f = a.applyLogLevelPreset](int idx) {
+                                    f(idx);
+                                })
+                                .build();
                         })
                         .build();
-                })
-                .build();
-            ui.text(id + ".level.hint")
-                .position(kLogHintX, logRow2LabelY())
-                .size(hintW, logLabelHeight())
-                .text("DEBUG 最详尽（排障）；默认 INFO。切档即时生效。")
-                .fontSize(hintFontSize)
-                .lineHeight(logLabelHeight())
-                .color(t.colors.textTertiary)
-                .build();
+                    ui.text(id + ".level.hint")
+                        .position(cx + ddW + 12.0f, cy + (ch - hintH) * 0.5f)
+                        .size(std::max(0.0f, cw - ddW - 12.0f), hintH)
+                        .text("DEBUG 最详尽（排障）；默认 INFO。切档即时生效。")
+                        .fontSize(hintFontSize)
+                        .lineHeight(hintH)
+                        .color(t.colors.textTertiary)
+                        .build();
+                }, t);
         })
         .build();
 }
@@ -740,61 +749,51 @@ void drawLogViewCard(const CardDrawArgs& args) {
         .build();
 }
 
-// 供应商余量功能总开关（单行小卡）。默认关闭；开启后首页余量卡、profile 余量配置入口、
+// 供应商余量功能总开关（两行小卡）。默认关闭；开启后首页余量卡、profile 余量配置入口、
 // 后台刷新线程才激活。关闭不删数据。放置位置：模块 tab，在模块插拔卡下方——余量是功能开关，
 // 与模块开关并列（影响多个模块的 UI 可见面 + 后台行为，但不卸载模块本身）。
-// 卡高固定（不随字号缩放），下缘与模块卡保持标准间距。
+// E 批布局统一：标题走 cardTitle（16/22）+ desc y=40/h=16，卡高从注册表取（args.h）。
 void drawQuotaCard(const CardDrawArgs& args) {
     eui::Ui& ui = args.ui;
     const std::string& id = args.id;
     const float w = args.w;
+    const float h = args.h;
     const core::theme::Tokens& t = args.t;
     const SettingsCardsIn& in = args.in;
     const SettingsCardActions& a = args.a;
 
-    const float rowH = roundFs(20.0f);
+    // 标注 / 问号 icon 在标题行盒（16..38）内垂直居中；开关右缘、跨标题行垂直居中。
+    const float tagH = roundFs(16.0f);
+    const float tagY = 16.0f + (22.0f - tagH) * 0.5f;
     ui.stack(id)
-        .size(w, 48.0f)
+        .size(w, h)
         .content([&] {
-            ui.text(id + ".label")
-                .position(28.0f, 4.0f)
-                .size(104.0f, rowH)
-                .text("供应商余量")
-                .fontSize(t.sizes.fontSizeBody - 1.0f)
-                .lineHeight(rowH)
-                .fontWeight(500)
-                .color(t.colors.textPrimary)
-                .build();
+            cardTitle(ui, id, t, 16.0f, 104.0f, 22.0f, 22.0f, "供应商余量");
             // 「实验功能」灰色小字标注（§6 item 8）：wechat.textTertiary
             ui.text(id + ".experimental")
-                .position(136.0f, 4.0f)
-                .size(72.0f, rowH)
+                .position(136.0f, tagY)
+                .size(72.0f, tagH)
                 .text("实验功能")
                 .fontSize(fs(11.0f))
-                .lineHeight(rowH)
+                .lineHeight(tagH)
                 .color(t.colors.wechat.textTertiary)
                 .build();
             // 问号图标（§6 item 10）：0xF059 fa-circle-question，hover tooltip 待定
             ui.text(id + ".help.icon")
-                .position(212.0f, 4.0f)
-                .size(16.0f, rowH)
+                .position(212.0f, tagY)
+                .size(16.0f, tagH)
                 .icon(0xF059)
                 .fontSize(fs(11.0f))
-                .lineHeight(rowH)
+                .lineHeight(tagH)
                 .color(t.colors.wechat.textTertiary)
                 .build();
-            ui.text(id + ".desc")
-                .position(28.0f, 28.0f)
-                .size(w - 160.0f, roundFs(16.0f))
-                .text("关闭后首页余量卡隐藏、配置入口消失（已存数据保留）；开启即时生效")
-                .fontSize(fs(12.0f))
-                .lineHeight(roundFs(16.0f))
-                .color(t.colors.textTertiary)
-                .build();
+            cardDesc(ui, id, t, 40.0f, w - 160.0f, roundFs(16.0f),
+                     "关闭后首页余量卡隐藏、配置入口消失（已存数据保留）；开启即时生效");
             // 开关换微信绿 wswitch（§6 item 7）
             ui_kit::wswitch(ui, id + ".sw",
                 in.cfg.quotaEnabled,
-                w - 28.0f - 80.0f, 4.0f, 80.0f, 32.0f, t,
+                w - 28.0f - 80.0f, 16.0f + (22.0f - 32.0f) * 0.5f, 80.0f,
+                32.0f, t,
                 [f = a.applyQuotaEnabled](bool v) { f(v); });
         })
         .build();
