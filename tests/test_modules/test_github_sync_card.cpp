@@ -311,14 +311,12 @@ REGISTER_TEST(github_sync_card_fill_two_widths,
               "github_sync 卡片: 1000/1312 档输入撑满所在列/URL 拉满按钮组，无重叠无溢出", {
     for (const float kW : {1000.0f, 1312.0f}) {
         CardFixture fx;
-        test_support::HeadlessFrame f(
-            "githubsynccardfill" + std::to_string(
-                                       static_cast<int>(kW)));
-        DOCTEST_CHECK(f.frame([&](eui::Ui& ui) {
-            ms::CardDrawArgs args{ui, kCardId, kW, 380.0f,
-                                  core::theme::current(), 0.0f, 1000.0f,
-                                  fx.in, fx.a};
-            ms::drawGithubSyncCard(args);
+        eui::Ui ui;
+        ms::CardDrawArgs args{ui, kCardId, kW, 380.0f,
+                              core::theme::current(), 0.0f, 1000.0f,
+                              fx.in, fx.a};
+        ms::drawGithubSyncCard(args);
+        ui.layout(kW, 1000.0f);  // layout 以卡宽为窗宽，保证列宽公式以 kW 为基准
             const auto* url = ui.find(std::string(kCardId) + ".url.input");
             const auto* br = ui.find(std::string(kCardId) + ".branch.input");
             const auto* tk = ui.find(std::string(kCardId) + ".token.input");
@@ -355,8 +353,6 @@ REGISTER_TEST(github_sync_card_fill_two_widths,
             // 无溢出：右列输入右缘贴卡内容右缘（kW−28）
             DOCTEST_CHECK(std::fabs(tk->frame.x + tk->frame.width -
                                     (kW - 28.0f)) < 0.5f);
-            return true;
-        }));
     }
     return true;
 })
