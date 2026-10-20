@@ -1228,26 +1228,24 @@ REGISTER_TEST(settings_window_effect_param_mapping, "settings: 档位→alpha/ba
     return true;
 })
 
-REGISTER_TEST(settings_window_effect_degraded_hint, "settings: 降级提示文案矩阵（纯函数）", {
+REGISTER_TEST(settings_window_effect_degraded_hint, "settings: 降级提示恒空（UAT3 #10 提示行已删）", {
     namespace ms = module::settings;
     using WE = core::platform::WindowEffect;
 
-    // off：任何 active 都视觉等价（alpha=1），永不提示
+    // UAT3 #10（用户拍板删除「当前系统不支持窗口半透/磨砂」提示行）：函数恒返回
+    // 空串——渲染侧（外观卡提示行）按 empty 条件整行不建。自动降级行为不依赖本
+    // 函数（applyWindowVisuals + activeWindowEffect 回写原样保留）。矩阵全组合钉空：
+    // 有人把提示文案加回来时这里红。
     DOCTEST_CHECK(ms::windowEffectDegradedHint(ms::kWindowEffectOff, WE::None).empty());
     DOCTEST_CHECK(ms::windowEffectDegradedHint(ms::kWindowEffectOff, WE::Transparent).empty());
     DOCTEST_CHECK(ms::windowEffectDegradedHint(ms::kWindowEffectOff, WE::Acrylic).empty());
-
-    // translucent：拿不到 Transparent 才提示回退不透明
     DOCTEST_CHECK(ms::windowEffectDegradedHint(ms::kWindowEffectTranslucent, WE::Transparent).empty());
-    const std::string t1 = ms::windowEffectDegradedHint(ms::kWindowEffectTranslucent, WE::None);
-    DOCTEST_CHECK(t1.find("回退为不透明") != std::string::npos);
-
-    // frosted：拿不到 Acrylic 时按实际值提示（Transparent→回退半透，None→回退不透明）
+    DOCTEST_CHECK(ms::windowEffectDegradedHint(ms::kWindowEffectTranslucent, WE::None).empty());
+    DOCTEST_CHECK(ms::windowEffectDegradedHint(ms::kWindowEffectTranslucent, WE::Acrylic).empty());
     DOCTEST_CHECK(ms::windowEffectDegradedHint(ms::kWindowEffectFrosted, WE::Acrylic).empty());
-    const std::string f1 = ms::windowEffectDegradedHint(ms::kWindowEffectFrosted, WE::Transparent);
-    DOCTEST_CHECK(f1.find("回退为半透") != std::string::npos);
-    const std::string f2 = ms::windowEffectDegradedHint(ms::kWindowEffectFrosted, WE::None);
-    DOCTEST_CHECK(f2.find("回退为不透明") != std::string::npos);
+    DOCTEST_CHECK(ms::windowEffectDegradedHint(ms::kWindowEffectFrosted, WE::Transparent).empty());
+    DOCTEST_CHECK(ms::windowEffectDegradedHint(ms::kWindowEffectFrosted, WE::None).empty());
+    DOCTEST_CHECK(ms::windowEffectDegradedHint("bogus", WE::None).empty());
     return true;
 })
 

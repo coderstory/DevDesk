@@ -1,8 +1,6 @@
 // src/module_settings/settings_config.cpp
 #include "settings_config.h"
 
-#include "window_effect_hint.h"
-
 #include <algorithm>
 
 #include <utility>
@@ -211,24 +209,13 @@ core::platform::WindowEffect windowEffectRequest(const std::string& mode) {
 
 std::string windowEffectDegradedHint(const std::string& mode,
                                      core::platform::WindowEffect active) {
-    using core::platform::WindowEffect;
-    if (mode == kWindowEffectTranslucent) {
-        if (active != WindowEffect::Transparent) {
-            return "当前系统不支持窗口半透，已回退为不透明";
-        }
-        return {};
-    }
-    if (mode == kWindowEffectFrosted) {
-        if (active == WindowEffect::Acrylic) {
-            return {};
-        }
-        if (active == WindowEffect::Transparent) {
-            // 降级文案平台化：磨砂的系统版本要求因平台而异，走 window_effect_hint_*.cpp。
-            return frostedDegradedHint();
-        }
-        return "当前系统不支持窗口效果，已回退为不透明";
-    }
-    // off：alpha=1 下任何 active 都视觉等价（透明 hint 开着也不可见）
+    // UAT3 #10（用户拍板删除）：「当前系统不支持窗口半透/磨砂」提示行不再显示——
+    // 恒返回空串，设置页外观卡的提示行按 empty 条件渲染整行不建。自动降级行为原样
+    // 保留：降级判定在 applyWindowVisuals（按请求档落 clearColor/backdrop）与
+    // EUI-NEO 主循环 activeWindowEffect 回写，与提示文案互不依赖。签名保留（调用方
+    // settings_ui_cards.cpp 仍按此取行文案；mode/active 照传，空串即不渲染）。
+    (void)mode;
+    (void)active;
     return {};
 }
 
