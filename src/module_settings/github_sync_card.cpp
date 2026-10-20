@@ -154,15 +154,22 @@ void drawGithubSyncCard(const CardDrawArgs& args) {
         return;
     }
 
-    // 第二行（URL 全宽行）：仓库 URL 输入（URL 很长，保持全宽行；输入宽上限
-    // kFieldW 320，实际只占行左段）+ 三个操作按钮（右缘对齐——原与自动推送同行，
-    // 双列后迁来本行右段；最小窗宽 1280 下输入右缘 ~466 与按钮组左缘 ~856 仍隔
-    // ~390px，无重叠）。
+    // 操作按钮（右对齐，三个并排：立即同步 / 测试连接 / 拉取）；运行中三个一律禁用。
+    // 提前算 btnAreaX，供 URL 输入框让位用。
+    const float btnTotalW =
+        kBtnW + kBtnTestW + kBtnSmallW + kBtnGapX * 2.0f;
+    const float btnAreaX = w - kCardPaddingX - btnTotalW;
+
+    // 第二行（URL 全宽行）：仓库 URL 输入 + 三个操作按钮（右缘对齐）。
+    // UAT3：窄窗（contentW≤712）时输入宽上限 kFieldW 320 与按钮组重叠 98px，
+    // 加 btnAreaX 让位：inputW = min(kFieldW, cw, btnAreaX − cx − 12gap)。
     ui_kit::formRow(ui, id + ".url", "仓库 URL", kCardPaddingX, y, formW, rowH,
         [&](eui::Ui& ui, float cx, float cy, float cw, float ch) {
+            const float inputW = std::min({kFieldW, cw,
+                std::max(0.0f, btnAreaX - cx - 12.0f)});
             components::input(ui, id + ".url.input")
                 .position(cx, cy)
-                .size(std::min(kFieldW, cw), ch)
+                .size(inputW, ch)
                 .placeholder("https://github.com/user/repo.git")
                 .value(in.githubSyncRepoUrl)
                 .fontSize(t.sizes.fontSizeSmall)
@@ -171,10 +178,7 @@ void drawGithubSyncCard(const CardDrawArgs& args) {
                 .build();
         }, t);
 
-    // 操作按钮（右对齐，三个并排：立即同步 / 测试连接 / 拉取）；运行中三个一律禁用。
-    const float btnTotalW =
-        kBtnW + kBtnTestW + kBtnSmallW + kBtnGapX * 2.0f;
-    const float btnAreaX = w - kCardPaddingX - btnTotalW;
+    // 按钮组（btnAreaX 已在上面算好）
     components::button(ui, id + ".btn.push")
         .position(btnAreaX, y)
         .size(kBtnW, rowH)

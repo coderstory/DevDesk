@@ -265,6 +265,32 @@ REGISTER_TEST(github_sync_card_switch_position,
     return true;
 })
 
+REGISTER_TEST(github_sync_card_url_input_no_overlap_at_712,
+              "github_sync 卡片: 窄窗 712 时 URL 输入框与按钮组不重叠（UAT3 H1）", {
+    CardFixture fx;
+    test_support::HeadlessFrame f("githubsynccardurl712");
+    DOCTEST_CHECK(f.frame([&](eui::Ui& ui) {
+        // 712 = 窄窗 contentW（窗 1000 − 侧栏 208 − 内边距 ≈712），直接调
+        // drawGithubSyncCard 用 712 卡宽（旧 CardFixture::draw 写死 1520）
+        const float kW = 712.0f;
+        ms::CardDrawArgs args{ui, kCardId, kW, 380.0f,
+                              core::theme::current(), 0.0f, 1000.0f, fx.in, fx.a};
+        ms::drawGithubSyncCard(args);
+        // 按钮组右缘对齐（同源码公式）
+        const float btnTotalW = 120.0f + 100.0f + 80.0f + 8.0f * 2.0f;
+        const float btnAreaX = kW - 28.0f - btnTotalW;  // 28 = kCardPaddingX
+        const auto* url = ui.find(std::string(kCardId) + ".url.input");
+        DOCTEST_REQUIRE(url != nullptr);
+        // 输入框右缘 ≤ 按钮组左缘 − 8（≥8px 间隙不重叠）
+        const float urlRight = url->frame.x + url->frame.width;
+        DOCTEST_CHECK_MESSAGE(urlRight + 8.0f <= btnAreaX,
+                              std::string("urlRight=") + std::to_string(urlRight) +
+                                  " btnAreaX=" + std::to_string(btnAreaX));
+        return true;
+    }));
+    return true;
+})
+
 // 门控保持（UAT2 双列后语义不变）：未启用时自动推送/URL/分支/Token/按钮全部
 // 不画。自动推送与启用同排双列后，门控从「早退后整行不画」改为显式条件渲染——
 // 本用例钉住该条件不回退（丢掉 if 会让折叠态冒出半行表单）。

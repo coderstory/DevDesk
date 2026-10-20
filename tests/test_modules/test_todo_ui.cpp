@@ -3163,12 +3163,14 @@ REGISTER_TEST(todo_ui_priority_button_tint,
         const auto* clearText = f.ui.find("todo.dialog.detail.due.clear.text");
         DOCTEST_REQUIRE(clearBg != nullptr);
         DOCTEST_REQUIRE(clearText != nullptr);
-        DOCTEST_CHECK(contrastRatio(clearBg->color, clearText->color) >= 4.5f);
+        DOCTEST_CHECK(contrastRatio(clearBg->color,
+                              clearText->textColor) >= 4.5f);
         const auto* pickBg = f.ui.find("todo.dialog.detail.due.pick.bg");
         const auto* pickText = f.ui.find("todo.dialog.detail.due.pick.text");
         DOCTEST_REQUIRE(pickBg != nullptr);
         DOCTEST_REQUIRE(pickText != nullptr);
-        DOCTEST_CHECK(contrastRatio(pickBg->color, pickText->color) >= 4.5f);
+        DOCTEST_CHECK(contrastRatio(pickBg->color,
+                                    pickText->textColor) >= 4.5f);
     }
 
     mod->onStop();
@@ -4751,11 +4753,12 @@ REGISTER_TEST(todo_ui_archive_card_title_color,
     const auto* el = frame.ui.find("todo.col.3.card.0.title");
     DOCTEST_REQUIRE(el != nullptr);
     const auto& tm = core::theme::current();
-    // eui::Color 无 operator==：整色 CHECK_EQ 不可编译，必须逐分量比（同列色点断言口径）
-    DOCTEST_CHECK_EQ(el->color.r, tm.colors.wechat.textPrimary.r);
-    DOCTEST_CHECK_EQ(el->color.g, tm.colors.wechat.textPrimary.g);
-    DOCTEST_CHECK_EQ(el->color.b, tm.colors.wechat.textPrimary.b);
-    DOCTEST_CHECK_EQ(el->color.a, tm.colors.wechat.textPrimary.a);
+    // eui::Color 无 operator==：整色 CHECK_EQ 不可编译；text 元素颜色走 textColor 字段，
+    // 非 color（color 是 rect 的 bg），expect 归档标题 = wechat.textPrimary #1A1A1A
+    DOCTEST_CHECK_EQ(el->textColor.r, tm.colors.wechat.textPrimary.r);
+    DOCTEST_CHECK_EQ(el->textColor.g, tm.colors.wechat.textPrimary.g);
+    DOCTEST_CHECK_EQ(el->textColor.b, tm.colors.wechat.textPrimary.b);
+    DOCTEST_CHECK_EQ(el->textColor.a, tm.colors.wechat.textPrimary.a);
     mod->onStop();
     return true;
 })

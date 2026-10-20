@@ -73,7 +73,7 @@ tools/quota_live_probe.cpp ─→ providers + quota_store                    【
 
 ## 四、守卫面（不同步删必红）
 
-- `check-quota-write-paths.sh` 本体当前 0 违规；构建日志 4 条「违规」是 build-test-run.sh:693-706 守卫自检段 `--self-test` 的**预期红输出**（坏树①2+③1+④1=4 条，:169-249）。删除 = 连删此脚本 + build-test-run.sh:621-627 调用 + :696 自检列表项 + **:694 `_GUARD_SELF_COUNT=7` 改 5**。
+- `check-quota-write-paths.sh` 本体当前 0 违规；构建日志 4 条「违规」是 build-test-run.sh:693-706 守卫自检段 `--self-test` 的**预期红输出**（坏树①2+③1+④1=4 条，:169-249）。删除 = 连删此脚本 + build-test-run.sh:621-627 调用 + :696 自检列表项 + **:694 `_GUARD_SELF_COUNT=7` 改 4**（check-probe-gate-labels.sh 也在自检环同批删，7−3=4）。
 - `check-quota-shutdown-order.sh`：删 build-test-run.sh:641-647 + :697 自检项。
 - `check-probe-gate-labels.sh`：断言「恰好 1 条 add_test(NAME quota_live_probe」→ 删 probe 后必红，同批删（build-test-run.sh:629-635 + :698）。
 - `check-module-isolation.sh` D 段（:326-373）：删除后 home 自洽，断言仍绿但依据消失——按普查处置：断言与依据注释同步清，`src/module_home/CMakeLists.txt:16-31` 大段「不自洽」注释清理。

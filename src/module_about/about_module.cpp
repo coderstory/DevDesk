@@ -11,6 +11,7 @@
 
 #include <ui_kit/button.h>      // ui_kit::button Secondary（复制全部信息）
 #include <ui_kit/light_toast.h>  // showLightToast（复制成功 toast）
+#include <ui_kit/logo.h>          // ui_kit::drawDevDeskLogo（品牌几何 logo）
 
 #include <eui/dsl.h>
 
@@ -147,9 +148,9 @@ public:
         constexpr float kLabelW = 120.0f;
 
         // 卡高 = 上留白 + 图标 + 图标间距 + 标题 + 标题间距 + 6 行 + 按钮间距 + 按钮 + 下留白
-        const float cardH = kCardPadTop + kIconSize + kIconGap + kTitleH +
-                            kTitleGap + kRowCount * kRowH + kButtonGap +
-                            kButtonH + kCardPadBottom;
+        const float cardH_nominal = kCardPadTop + kIconSize + kIconGap + kTitleH +
+                                    kTitleGap + kRowCount * kRowH + kButtonGap +
+                                    kButtonH + kCardPadBottom;
 
         // 宽度自适应（UAT3：最小窗宽拟降至 1000，content≈712 < 名义 760）：
         // 有效卡宽 = min(kCardW, screen.width − 2×24)，下限 560（两侧至少 24px）
@@ -162,10 +163,16 @@ public:
         // 页脚贴页面底部（spacingXXLarge padding）
         const float footerY = screen.height - t.sizes.spacingXXLarge - kFooterH;
 
-        // 卡片顶贴：默认 spacingXXLarge；极矮窗下 clamp 到不与页脚重叠
+        // 卡片顶贴：默认 spacingXXLarge；极矮窗下先推 cardY，仍超则 clamp 卡高
         float cardY = t.sizes.spacingXXLarge;
+        float cardH = cardH_nominal;
         if (cardY + cardH + kFooterGap > footerY) {
             cardY = std::max(0.0f, footerY - kFooterGap - cardH);
+            // UAT3：cardY 已触 0 仍超 footer（窗 640→页高≈600 时 cardH=616 >
+            // footerY=540），clamp cardH 使不叠
+            if (cardY + cardH + kFooterGap > footerY) {
+                cardH = std::max(200.0f, footerY - cardY - kFooterGap);
+            }
         }
 
         // —— 居中纯白卡片：wechat.cardBg #FFFFFF + radiusWeChat 6px + dividerPrimary 边框 ——
@@ -183,15 +190,11 @@ public:
                     .build();
 
                 // —— 卡片顶部：DevDesk 图标 + 应用名称，居中 ——
-                // TODO: 待真实 DevDesk logo 资产（当前用 FontAwesome 0xF5LC fa-laptop-code 占位）
                 float y = kCardPadTop;
-                ui.text("about.card.icon")
-                    .position((cardW - kIconSize) / 2.0f, y)
-                    .size(kIconSize, kIconSize)
-                    .icon(0xF5FC)  // fa-laptop-code（待真实 logo 资产）
-                    .fontSize(kIconSize)
-                    .color(wc.primary)
-                    .build();
+                // C 方案终端窗 >_ 几何 logo 替换 fa-laptop-code 字形（图标批 2026-10-20）
+                ui_kit::drawDevDeskLogo(ui, "about.card.icon",
+                                        (cardW - kIconSize) / 2.0f, y,
+                                        kIconSize, wc.primary, wc.cardBg);
                 y += kIconSize + kIconGap;
 
                 ui.text("about.card.title")
@@ -250,7 +253,7 @@ public:
                         .text(rows[i].value)
                         .fontSize(t.sizes.fontSizeWeChat)  // UAT3 放大：13→16
                         .lineHeight(kRowH)
-                        .color(rows[i].highlight ? wc.primary : wc.textPrimary)
+                        .color(rows[i].highlight ? wc.primaryText : wc.textPrimary)
                         .build();
 
                     // 复制图标（highlight 行；EUI 无 onEnter/onLeave → 始终可见）

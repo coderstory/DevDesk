@@ -381,7 +381,7 @@ void drawColumnContent(eui::Ui& ui, const std::string& id, const Column& col,
                 .fontSize(t.sizes.fontSizeSmall)
                 .colors(t.colors.wechat.pageBg, t.colors.wechat.dividerSecondary,
                         t.colors.wechat.selectedBg)
-                .textColor(t.colors.wechat.primary)
+                .textColor(t.colors.wechat.primaryText)
                 .radius(t.sizes.radiusWeChat)
                 .border(0.0f, t.colors.wechat.dividerPrimary)
                 .onClick([cb = v.act.addTaskToColumn, col] { cb(col.id); })
