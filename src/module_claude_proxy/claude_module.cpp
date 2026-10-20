@@ -73,7 +73,7 @@ public:
         }
         quotaWasEnabled_ = quotaNow;
         const auto& t = core::theme::current();
-        const auto themeTokens = core::theme::componentTokens(t);
+        const auto themeTokens = core::theme::componentTokensWeChat(t);
         const float pad = t.sizes.spacingXXLarge;        // 40
         const float contentW = screen.width - pad * 2.0f;
         const float contentH = screen.height - pad * 2.0f;

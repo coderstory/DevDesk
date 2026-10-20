@@ -193,7 +193,7 @@ float drawDetailModels(eui::Ui& ui, float x0, float y0, float w,
     }
     // 开关列宽 76（轨道 30 + 间隙 + 标签 + 内缩），值列相应收窄；色走 componentTokens。
     constexpr float kOneMColW = 76.0f;
-    const components::SwitchStyle oneMStyle(core::theme::componentTokens(t));
+    const components::SwitchStyle oneMStyle(core::theme::componentTokensWeChat(t));
     components::SwitchStyle oneMDisabledStyle = oneMStyle;
     // 禁用态灰：轨道/标签走 textDisabled，滑块走 surfaceElevated，与「关」态可辨
     oneMDisabledStyle.off = t.colors.textDisabled;

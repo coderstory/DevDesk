@@ -121,6 +121,12 @@ void buildDialogButton(eui::Ui& ui, const std::string& id, float x, float y, flo
                 .radius(t.sizes.radius)
                 .border(1.0f, t.colors.borderDefault);
             break;
+        case DialogButtonStyle::DangerOutlineThemed:
+            button.theme(themeTokens, false)
+                .textColor(t.colors.error)
+                .radius(t.sizes.radius)
+                .border(1.0f, t.colors.borderDefault);
+            break;
     }
     button.onClick(spec.onClick).build();
 }

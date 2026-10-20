@@ -379,7 +379,7 @@ void drawCcSwitchImportDialog(eui::Ui& ui, const eui::Screen& screen,
         ui_kit::DialogButtonSpec cancel;
         cancel.label = "关闭";
         cancel.fontSize = 14.0f;
-        cancel.style = ui_kit::DialogButtonStyle::Secondary;
+        cancel.style = ui_kit::DialogButtonStyle::SecondaryThemed;
         cancel.onClick = [sp = &st] { sp->open_ = false; };
 
         ui_kit::DialogButtonSpec confirm;
@@ -387,7 +387,7 @@ void drawCcSwitchImportDialog(eui::Ui& ui, const eui::Screen& screen,
             std::count(st.selected_.begin(), st.selected_.end(), true));
         confirm.label = "导入选中(" + std::to_string(selCount) + ")";
         confirm.fontSize = 14.0f;
-        confirm.style = ui_kit::DialogButtonStyle::Primary;
+        confirm.style = ui_kit::DialogButtonStyle::PrimaryThemed;
         confirm.onClick = [sp = &st, hooks] {
             // 按钮回调发生在下一帧 compose 之前，拿不到装配参数 → 此处现读
             // ClaudeService::global()->listProfiles() 取现有名单。

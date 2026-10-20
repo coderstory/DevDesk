@@ -1538,7 +1538,7 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
         tasksDirty_ = true;
     }
     const auto& t = ::core::theme::current();
-    const auto themeTokens = ::core::theme::componentTokens(t);
+    const auto themeTokens = ::core::theme::componentTokensWeChat(t);
     const float pad = t.sizes.spacingXXLarge;
     const float contentW = screen.width - pad * 2.0f;
 
@@ -2560,12 +2560,12 @@ void AgentModule::composeDeleteConfirmDialog(
         ui_kit::DialogButtonSpec cancel;
         cancel.label = "取消";
         cancel.fontSize = 14.0f;
-        cancel.style = ui_kit::DialogButtonStyle::Secondary;
+        cancel.style = ui_kit::DialogButtonStyle::SecondaryThemed;
         cancel.onClick = [this] { deleteConfirmTaskId_.reset(); };
         ui_kit::DialogButtonSpec confirm;
         confirm.label = "确认删除";
         confirm.fontSize = 14.0f;
-        confirm.style = ui_kit::DialogButtonStyle::Danger;
+        confirm.style = ui_kit::DialogButtonStyle::DangerThemed;
         confirm.onClick = [this] {
             if (deleteConfirmTaskId_) performDeleteTask(*deleteConfirmTaskId_);
         };

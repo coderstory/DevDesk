@@ -38,7 +38,7 @@ void NewTaskDialog::submit(PopupStack& popups, const DialogHost& host) {
 void drawNewTaskDialog(eui::Ui& ui, const eui::Screen& screen,
                        const core::theme::Tokens& t, DialogSet& d,
                        const DialogHost& host) {
-    const auto themeTokens = core::theme::componentTokens(t);
+    const auto themeTokens = core::theme::componentTokensWeChat(t);
     const float w = ui_kit::dialogWidthPx(ui_kit::DialogWidth::Standard);
     const float h = 230.0f;
 
@@ -87,12 +87,12 @@ void drawNewTaskDialog(eui::Ui& ui, const eui::Screen& screen,
             ui_kit::DialogButtonSpec cancel;
             cancel.label = "取消";
             cancel.fontSize = t.sizes.fontSizeBody - 1.0f;
-            cancel.style = ui_kit::DialogButtonStyle::Secondary;
+            cancel.style = ui_kit::DialogButtonStyle::SecondaryThemed;
             cancel.onClick = [&d] { d.popups.close(Popup::NewTask); };
             ui_kit::DialogButtonSpec confirm;
             confirm.label = "创建";
             confirm.fontSize = t.sizes.fontSizeBody - 1.0f;
-            confirm.style = ui_kit::DialogButtonStyle::Primary;
+            confirm.style = ui_kit::DialogButtonStyle::PrimaryThemed;
             confirm.onClick = [&d, &host] { d.newTask.submit(d.popups, host); };
             ui_kit::drawDialogButtons(ui, "todo.dialog.newtask", w, h, cancel, confirm,
                                       t, themeTokens);
@@ -123,7 +123,7 @@ void NewColumnDialog::submit(PopupStack& popups, const DialogHost& host) {
 void drawNewColumnDialog(eui::Ui& ui, const eui::Screen& screen,
                          const core::theme::Tokens& t, DialogSet& d,
                          const DialogHost& host) {
-    const auto themeTokens = core::theme::componentTokens(t);
+    const auto themeTokens = core::theme::componentTokensWeChat(t);
     const float w = ui_kit::dialogWidthPx(ui_kit::DialogWidth::Standard);
     const float h = 230.0f;
 
@@ -170,12 +170,12 @@ void drawNewColumnDialog(eui::Ui& ui, const eui::Screen& screen,
             ui_kit::DialogButtonSpec cancel;
             cancel.label = "取消";
             cancel.fontSize = t.sizes.fontSizeBody - 1.0f;
-            cancel.style = ui_kit::DialogButtonStyle::Secondary;
+            cancel.style = ui_kit::DialogButtonStyle::SecondaryThemed;
             cancel.onClick = [&d] { d.popups.close(Popup::NewColumn); };
             ui_kit::DialogButtonSpec confirm;
             confirm.label = "创建";
             confirm.fontSize = t.sizes.fontSizeBody - 1.0f;
-            confirm.style = ui_kit::DialogButtonStyle::Primary;
+            confirm.style = ui_kit::DialogButtonStyle::PrimaryThemed;
             confirm.onClick = [&d, &host] { d.newColumn.submit(d.popups, host); };
             ui_kit::drawDialogButtons(ui, "todo.dialog.newcol", w, h, cancel, confirm,
                                       t, themeTokens);
@@ -187,7 +187,7 @@ void drawContextMenu(eui::Ui& ui, const eui::Screen& screen,
                      const core::theme::Tokens& t, DialogSet& d,
                      const DialogHost& host,
                      const std::map<int64_t, float>& columnScrolls) {
-    const auto themeTokens = core::theme::componentTokens(t);
+    const auto themeTokens = core::theme::componentTokensWeChat(t);
     std::vector<components::ContextMenuItem> items;
     if (d.ctx.taskId != 0) {
         const Task* self = findTask(*host.tasks, d.ctx.taskId);
@@ -262,7 +262,7 @@ void RenameDialog::submit(PopupStack& popups, const DialogHost& host) {
 void drawRenameDialog(eui::Ui& ui, const eui::Screen& screen,
                       const core::theme::Tokens& t, DialogSet& d,
                       const DialogHost& host) {
-    const auto themeTokens = core::theme::componentTokens(t);
+    const auto themeTokens = core::theme::componentTokensWeChat(t);
     const float w = ui_kit::dialogWidthPx(ui_kit::DialogWidth::Standard);
     const float h = 210.0f;
 
@@ -301,12 +301,12 @@ void drawRenameDialog(eui::Ui& ui, const eui::Screen& screen,
             ui_kit::DialogButtonSpec cancel;
             cancel.label = "取消";
             cancel.fontSize = t.sizes.fontSizeBody - 1.0f;
-            cancel.style = ui_kit::DialogButtonStyle::Secondary;
+            cancel.style = ui_kit::DialogButtonStyle::SecondaryThemed;
             cancel.onClick = [&d] { d.popups.close(Popup::Rename); };
             ui_kit::DialogButtonSpec confirm;
             confirm.label = "保存";
             confirm.fontSize = t.sizes.fontSizeBody - 1.0f;
-            confirm.style = ui_kit::DialogButtonStyle::Primary;
+            confirm.style = ui_kit::DialogButtonStyle::PrimaryThemed;
             confirm.onClick = [&d, &host] { d.rename.submit(d.popups, host); };
             ui_kit::drawDialogButtons(ui, "todo.dialog.rename", w, h, cancel, confirm,
                                       t, themeTokens);
@@ -333,7 +333,7 @@ void ConfirmDeleteDialog::confirm(DialogSet& d, const DialogHost& host) {
 void drawConfirmDeleteDialog(eui::Ui& ui, const eui::Screen& screen,
                              const core::theme::Tokens& t, DialogSet& d,
                              const DialogHost& host) {
-    const auto themeTokens = core::theme::componentTokens(t);
+    const auto themeTokens = core::theme::componentTokensWeChat(t);
     const float w = ui_kit::dialogWidthPx(ui_kit::DialogWidth::Standard);
     const float h = 200.0f;
     const bool delTask = d.confirm.forTask();
@@ -370,12 +370,12 @@ void drawConfirmDeleteDialog(eui::Ui& ui, const eui::Screen& screen,
             ui_kit::DialogButtonSpec cancel;
             cancel.label = "取消";
             cancel.fontSize = t.sizes.fontSizeBody - 1.0f;
-            cancel.style = ui_kit::DialogButtonStyle::Secondary;
+            cancel.style = ui_kit::DialogButtonStyle::SecondaryThemed;
             cancel.onClick = [&d] { d.popups.close(Popup::Confirm); };
             ui_kit::DialogButtonSpec confirm;
             confirm.label = "删除";
             confirm.fontSize = t.sizes.fontSizeBody - 1.0f;
-            confirm.style = ui_kit::DialogButtonStyle::Danger;
+            confirm.style = ui_kit::DialogButtonStyle::DangerThemed;
             confirm.onClick = [&d, &host] { d.confirm.confirm(d, host); };
             ui_kit::drawDialogButtons(ui, "todo.dialog.delcol", w, h, cancel, confirm,
                                       t, themeTokens);
@@ -388,7 +388,7 @@ void drawDatePicker(eui::Ui& ui, const eui::Screen& screen,
                     const DialogHost& host) {
     (void)host;
     if (!d.popups.isOpen(Popup::DatePick)) return;
-    const auto themeTokens = core::theme::componentTokens(t);
+    const auto themeTokens = core::theme::componentTokensWeChat(t);
     int year = 0, month = 0, day = 0;
     if (!epochToYmd(d.detail.dueAt.value_or(0), year, month, day)) {
         epochToYmd(static_cast<int64_t>(std::time(nullptr)), year, month, day);
@@ -411,7 +411,7 @@ void drawDatePicker(eui::Ui& ui, const eui::Screen& screen,
 void drawOverdueDialog(eui::Ui& ui, const eui::Screen& screen,
                        const core::theme::Tokens& t, DialogSet& d,
                        const DialogHost& host) {
-    const auto themeTokens = core::theme::componentTokens(t);
+    const auto themeTokens = core::theme::componentTokensWeChat(t);
     const float w = ui_kit::dialogWidthPx(ui_kit::DialogWidth::Wide);
     const float rowH = 44.0f;
     constexpr float kMaxDialogH = 640.0f;
@@ -594,7 +594,7 @@ bool DetailDialog::requestClose(PopupStack& popups, const DialogHost& host) {
 void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
                       const core::theme::Tokens& t, DialogSet& d,
                       const DialogHost& host) {
-    const auto themeTokens = core::theme::componentTokens(t);
+    const auto themeTokens = core::theme::componentTokensWeChat(t);
     const float w = ui_kit::dialogWidthPx(ui_kit::DialogWidth::Wide);
     const float h = 656.0f;  // 弹窗高；底部操作区 y 随 h-58 上移
 

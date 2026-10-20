@@ -1071,12 +1071,12 @@ void drawProfileFormDialog(eui::Ui& ui, const eui::Screen& screen,
             ui_kit::DialogButtonSpec cancel;
             cancel.label = "取消";
             cancel.fontSize = 14.0f;
-            cancel.style = ui_kit::DialogButtonStyle::Secondary;
+            cancel.style = ui_kit::DialogButtonStyle::SecondaryThemed;
             cancel.onClick = [fp = &f] { fp->formOpen_ = false; };
             ui_kit::DialogButtonSpec confirm;
             confirm.label = isEdit ? "保存" : "创建";
             confirm.fontSize = 14.0f;
-            confirm.style = ui_kit::DialogButtonStyle::Primary;
+            confirm.style = ui_kit::DialogButtonStyle::PrimaryThemed;
             confirm.onClick = [fp = &f, hooks, scs = &sharedConfigs] {
                 submitForm(*fp, hooks, *scs);
             };
@@ -1214,12 +1214,12 @@ void drawDeleteConfirmDialog(eui::Ui& ui, const eui::Screen& screen,
             ui_kit::DialogButtonSpec cancel;
             cancel.label = "取消";
             cancel.fontSize = 14.0f;
-            cancel.style = ui_kit::DialogButtonStyle::Secondary;
+            cancel.style = ui_kit::DialogButtonStyle::SecondaryThemed;
             cancel.onClick = [fp = &f] { fp->deleteConfirmOpen_ = false; };
             ui_kit::DialogButtonSpec confirm;
             confirm.label = "确认删除";
             confirm.fontSize = 14.0f;
-            confirm.style = ui_kit::DialogButtonStyle::DangerOutline;
+            confirm.style = ui_kit::DialogButtonStyle::DangerOutlineThemed;
             confirm.onClick = [fp = &f, onConfirmDelete] {
                 const int64_t id = fp->deleteTargetId_;
                 fp->deleteConfirmOpen_ = false;
@@ -1462,12 +1462,12 @@ void drawSharedConfigDeleteConfirmDialog(
         ui_kit::DialogButtonSpec cancel;
         cancel.label = "取消";
         cancel.fontSize = 14.0f;
-        cancel.style = ui_kit::DialogButtonStyle::Secondary;
+        cancel.style = ui_kit::DialogButtonStyle::SecondaryThemed;
         cancel.onClick = [sp = &s] { sp->deleteConfirmOpen_ = false; };
         ui_kit::DialogButtonSpec confirm;
         confirm.label = "确认删除";
         confirm.fontSize = 14.0f;
-        confirm.style = ui_kit::DialogButtonStyle::DangerOutline;
+        confirm.style = ui_kit::DialogButtonStyle::DangerOutlineThemed;
         confirm.onClick = [sp = &s, onConfirmDelete] {
             const int64_t id = sp->deleteConfirmId_;
             const std::string name = sp->deleteConfirmName_;

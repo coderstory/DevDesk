@@ -35,7 +35,7 @@ void drawCard(eui::Ui& ui, const std::string& id, float x, float y, float width,
 void drawHeader(eui::Ui& ui, float contentW, float headerH, float bodyH,
                 const core::theme::Tokens& t, const BoardView& v) {
     (void)bodyH;
-    const auto componentTheme = core::theme::componentTokens(t);
+    const auto componentTheme = core::theme::componentTokensWeChat(t);
     ui.row("todo.header")
         .size(contentW, headerH)
         .alignItems(eui::Align::CENTER)
@@ -391,7 +391,7 @@ void drawColumnContent(eui::Ui& ui, const std::string& id, const Column& col,
     }
 
     // 列内滚动（scrollView）；滚动位置按列索引记忆（vector resize 保留旧值）
-    const auto componentTheme = core::theme::componentTokens(t);
+    const auto componentTheme = core::theme::componentTokensWeChat(t);
     // 列内容容器 = 卡片落位淡入载体：opacity 门控 dragActive（跟手中整列 0.6 调暗，松手 0.6→1.0 淡回）
     ui.stack(id + ".cards")
         .position(0.0f, kColumnHeaderHeight)
@@ -463,7 +463,7 @@ void drawCard(eui::Ui& ui, const std::string& id, float x, float y, float width,
         .position(x, y)
         .size(width, kCardHeight)
         .radius(t.sizes.radiusWeChat)
-        .theme(core::theme::componentTokens(t))
+        .theme(core::theme::componentTokensWeChat(t))
         .padding(0.0f)  // 卡内坐标以 content 原点为基准
         .border(0.0f, t.colors.wechat.dividerPrimary)  // 边框职责已移到内部交互层
         .content([&] {
@@ -670,7 +670,7 @@ void drawDragGhost(eui::Ui& ui, const core::theme::Tokens& t,
                 .position(0.0f, 0.0f)
                 .size(w, kCardHeight)
                 .radius(t.sizes.radiusWeChat)
-                .theme(core::theme::componentTokens(t))
+                .theme(core::theme::componentTokensWeChat(t))
                 .padding(0.0f)
                 .border(0.0f, t.colors.wechat.dividerPrimary)
                 .content([&] {
