@@ -1,10 +1,16 @@
 // src/ui_kit/splash.cpp
 // 启动 splash：WeChat-minimal（D-11 反转，2026-10-19）——
-// 全屏浅灰底(wechat.pageBg #F7F7F7) + 居中 logo + 底部绿色细进度条(wechat.primary #07C160)。
+// 全屏微绿底(wechat.sidebarBgTinted #E8F0EC) + 居中深绿 logo(wechat.primaryPressed #059A4C)
+// + 底部深绿细进度条（H 批 2026-10-20：用户反馈"底色纯白没有绿色印染"，见下方对比度核）。
 // 时序：0.0-2.0s 进度 0→100%；2.0-2.3s 整体 opacity 1→0 淡出；2.3s 后 drawSplashIfNeeded 恒返 false。
 //
 // D-11 反转：去除极光波 shadertoy 渐变（§8 禁项 #4：大面积渐变背景），改 WeChat-minimal
 // 与整改后基调协调；颜色全部走 W1 wechat 令牌，禁硬编码色字面量（W0.5 清单 W-W1~W-W3 + #15-#17）。
+//
+// H 批对比度核（WCAG 相对亮度）：wechat.primary #07C160(L=0.390) 在微绿底 #E8F0EC(L=0.855)
+// 上仅 2.06:1，纯白底上限也只 2.39:1——任何浅底都到不了图形 AA 3:1（"更浅绿底"方案数学
+// 不可达），故取方案 b 变体：图标与进度条加深为同族令牌 wechat.primaryPressed
+// #059A4C(L=0.237)，在 #E8F0EC 上 3.16:1 ≥ AA 3:1（D-12 令牌族内取值，未引入新色值）。
 #include <ui_kit/splash.h>
 
 #include <core/logging.h>
@@ -65,11 +71,12 @@ bool drawSplashIfNeeded(eui::Ui& ui, const eui::Screen& screen) {
     const auto& t = ::core::theme::current();
     const auto& wc = t.colors.wechat;
 
-    // 全屏浅灰底（wechat.pageBg #F7F7F7）——D-11 反转：替代原极光波 shadertoy 渐变。
+    // 全屏微绿底（wechat.sidebarBgTinted #E8F0EC）——H 批"绿色印染"：原 wechat.pageBg
+    // #F7F7F7 灰被用户看成纯白，换侧栏同款微绿灰令牌，与主界面基调呼应。
     ui.rect("splash.bg")
         .position(0.0f, 0.0f)
         .size(screen.width, screen.height)
-        .color(wc.pageBg)
+        .color(wc.sidebarBgTinted)
         .opacity(opacity)
         .build();
 
@@ -84,7 +91,9 @@ bool drawSplashIfNeeded(eui::Ui& ui, const eui::Screen& screen) {
     const float subY = cy - kSubH - 10.0f;
     const float barY = cy + 90.0f;
 
-    // logo 图标：wechat.primary（绿 #07C160）；浅灰底上绿图标达图形 AA 3:1。
+    // logo 图标：wechat.primaryPressed（#059A4C，微信绿加深档）——H 批对比度核：原
+    // wechat.primary #07C160 在微绿底上仅 2.06:1（纯白底上限 2.39:1，浅底方案到不了 AA 3:1），
+    // 换同族深绿后 3.16:1 ≥ 图形 AA 3:1。
     ui.text("splash.logo.icon")
         .position(cx - 108.0f, logoY)
         .size(44.0f, kLogoH)
@@ -92,10 +101,10 @@ bool drawSplashIfNeeded(eui::Ui& ui, const eui::Screen& screen) {
         .fontSize(40.0f)
         .horizontalAlign(eui::HorizontalAlign::Center)
         .verticalAlign(eui::VerticalAlign::Center)
-        .color(wc.primary)
+        .color(wc.primaryPressed)
         .opacity(opacity)
         .build();
-    // logo 文字：wechat.textPrimary（#1A1A1A）；原 W-W1 白色字面量(splash.cpp:131) → 深字（浅灰底可读）。
+    // logo 文字：wechat.textPrimary（#1A1A1A）；原 W-W1 白色字面量(splash.cpp:131) → 深字（微绿底上 15.0:1）。
     ui.text("splash.logo")
         .position(cx - 56.0f, logoY)
         .size(280.0f, kLogoH)
@@ -119,8 +128,10 @@ bool drawSplashIfNeeded(eui::Ui& ui, const eui::Screen& screen) {
         .opacity(opacity)
         .build();
 
-    // 底部细进度条：wechat.primary 填充 + cardBg 轨道。
-    // 原 W-W3 白色 10% 透明轨道(splash.cpp:152) → wechat.cardBg（#FFFFFF，浅灰底上微可见）。
+    // 底部细进度条：wechat.primaryPressed 填充 + wechat.cardBg 轨道。
+    // H 批：填充同步加深为 primaryPressed（对微绿底 3.16:1 ≥ AA；原 primary 仅 2.06:1）。
+    // 轨道保持 wechat.cardBg（#FFFFFF）：白轨对微绿底 #E8F0EC 为 1.16:1，较原灰底 #F7F7F7
+    // 上的 1.07:1 可见性不降反升（dividerPrimary #E5E5E5 在新底上仅 1.09:1 反而更弱，故不换）。
     // 高度 3px（微信克制）；进度 0→100% over 2.0s（模块加载在 compose 前已完成，真进度无意义）。
     const float barX = cx - kBarW * 0.5f;
     ui.rect("splash.progress.bg")
@@ -133,7 +144,7 @@ bool drawSplashIfNeeded(eui::Ui& ui, const eui::Screen& screen) {
     ui.rect("splash.progress.fill")
         .position(barX, barY)
         .size(kBarW * progress, kBarH)
-        .color(wc.primary)
+        .color(wc.primaryPressed)
         .radius(kBarH * 0.5f)
         .opacity(opacity)
         .build();
