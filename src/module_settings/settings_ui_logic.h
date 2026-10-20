@@ -70,11 +70,11 @@ inline constexpr long kLogTailReadWindow = 256 * 1024;  // tail 只读末尾 256
 
 // 卡片高度（唯一来源：注册表卡高与卡内几何同源）
 // 内边距四周 ≥16px，改动须同时满足「内容底沿 + 16」；这些是 100% 档基准，注册表运行期取 roundFs(常量)，卡高与行盒同缩放才不挤出尾行。
-inline constexpr float kAppearanceCardHeight = 184.0f;  // 外观卡（通用；降级提示行底 168 + 16，E 批布局统一后行序不变仍 184）
-inline constexpr float kEditorFontCardHeight = 122.0f;  // 编辑器字号卡（通用；FormRow 行底 roundFs(68)+roundFs(36)=104，85% 档行底 89+底距 14 需 ≥104 档卡高）
-inline constexpr float kModulesCardHeight = 344.0f;     // 模块插拔卡（模块）
+inline constexpr float kAppearanceCardHeight = 184.0f;  // 外观卡（通用 | 半宽配对左列；降级提示行底 168 + 16，E 批布局统一后行序不变仍 184）
+inline constexpr float kEditorFontCardHeight = 144.0f;  // 编辑器字号卡（通用 | 半宽配对右列；hint 迁下拉下方第二行后行底 hintRowBelowY(68)+roundFs(16)=126，+16 → 144；85% 档 122 / 130% 档 187）
+inline constexpr float kModulesCardHeight = 198.0f;     // 模块插拔卡（模块 | 半宽卡内 2×2 开关格；次行块底 68+roundFs(56)+roundFs(36)=160，+16 → 198 给窄列字号档富余；85% 档 168 / 130% 档 257）
 inline constexpr float kDirectoryCardHeight = 216.0f;   // 目录卡（模块；内容起 y=68 顺移后 gitignore 行底 182，85% 档 34 字面行高需富余兜底）
-inline constexpr float kLogSettingsCardHeight = 170.0f; // 日志卡（日志；行2 底 roundFs(116)+roundFs(36)=152，130% 档需 ≥219）
+inline constexpr float kLogSettingsCardHeight = 144.0f; // 日志卡（日志；两下拉同排双列，hint 并一行下移后行底 126，+16 → 144；85% 档 122 / 130% 档 187）
 // GitHub Sync 卡（同步）：启用态满高（UAT2 双列布局后最坏行序 = 双列开关行 +
 // URL 全宽行（含三按钮）+ 双列输入行 + 进度 + 错误/状态 + 分支提示 + public 提
 // 醒 + 本地 git 灰字 + 未同步黄字 + 删跳过黄字，内容底沿 364；错误行与进度行互
@@ -93,13 +93,16 @@ inline float roundFs(float base) {
 // hint 作控件区内行内尾注）；行 y 走 roundFs 派生（85% 档字面值会溢出卡外），水平几何由 formRow 给。
 inline constexpr float kLogFieldWidth = 240.0f;  // 两个下拉同宽（同一列口径）
 inline float logFieldHeight() { return roundFs(36.0f); }  // 两个下拉同高（100% = 36，行高单一来源）
-inline float logRow1LabelY() { return roundFs(68.0f); }   // 行 1 y（100% = 68，内容起始统一口径）
-inline float logRow2LabelY() { return roundFs(116.0f); }  // 行 2 y（100% = 116 = 68 + 行 36 + 行距 12）
+inline float logRow1LabelY() { return roundFs(68.0f); }   // 行 y（100% = 68，内容起始统一口径；UAT3 双列后保留/级别两行同排共用本锚）
 // 迁 FormRow 后行高即控件高（垂直居中差恒 0），行 y 与控件 y 合一：
 inline float logDropdownOffsetY() { return logRow1LabelY(); }  // 100% = 68
-inline float logLevelOffsetY() { return logRow2LabelY(); }     // 100% = 116
 // 编辑器字号卡 FormRow 行 y：与日志卡同口径的内容起始锚（100% = 68）。
 inline float editorFontRowY() { return roundFs(68.0f); }  // 100% = 68
+// 行内 hint 迁「控件行下方第二行」的行 y（UAT3 多列分栏：窄列行内尾注放不下）。
+// 编辑器字号卡与日志卡同口径：hint 顶 = 控件行 y + 行高 + 行距（100% = 68+36+6 = 110）。
+inline float hintRowBelowY(float rowY) {
+    return rowY + logFieldHeight() + roundFs(6.0f);
+}
 inline constexpr float kDropdownPopupGap = 8.0f;       // 字段底边与弹层间距（spacing.compact）
 inline constexpr float kDropdownItemHeight = 34.0f;    // 单个菜单项高（control.menuItem）
 inline constexpr float kDropdownPopupPadding = 12.0f;  // 弹层上下 padding（spacing.small × 2）

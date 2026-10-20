@@ -18,6 +18,7 @@
 #include <components/switch.h>
 
 #include <ui_kit/button.h>
+#include <ui_kit/columns.h>
 #include <ui_kit/form_row.h>
 #include <ui_kit/wswitch.h>
 
@@ -62,6 +63,7 @@ void cardTitle(eui::Ui& ui, const std::string& id, const core::theme::Tokens& t,
 }
 
 // 卡描述行：与标题同左缘(28)、同行高口径（lineHeight 恒 = 盒高 h）。
+// UAT3 多列分栏：卡宽可收窄到半宽列，desc 超宽一律省略号兜底（放得下时视觉不变）。
 void cardDesc(eui::Ui& ui, const std::string& id, const core::theme::Tokens& t,
               float y, float w, float h, const std::string& text) {
     ui.text(id + ".desc")
@@ -71,6 +73,10 @@ void cardDesc(eui::Ui& ui, const std::string& id, const core::theme::Tokens& t,
         .fontSize(fs(12.0f))
         .lineHeight(h)
         .color(t.colors.textTertiary)
+        // 单行省略号三件套（wrap 默认 false）：ellipsis 管排版宽、clip 管绘制范围。
+        .maxWidth(w)
+        .overflow(core::TextOverflow::Ellipsis)
+        .clip()
         .build();
 }
 
@@ -194,6 +200,8 @@ void drawAppearanceCard(const CardDrawArgs& args) {
 }
 
 // 档位写 core::theme::editorFontSize 通道；pageY/screenH 用于下拉弹层 openUp 几何估算。
+// UAT3 多列分栏：本卡为半宽配对右列，行内尾注放不下（formW ≈292、控件区仅 ≈174）
+// → hint 迁下拉下方第二行（行 y 单一来源 hintRowBelowY），卡高 122→144。
 void drawEditorFontCard(const CardDrawArgs& args) {
     eui::Ui& ui = args.ui;
     const std::string& id = args.id;
@@ -206,11 +214,12 @@ void drawEditorFontCard(const CardDrawArgs& args) {
     const float screenH = args.screenH;
 
     const auto compTheme = core::theme::componentTokensWeChat(t);
-    // E 批布局统一：裸 dropdown 行迁 FormRow（label 110 + dropdown + hint 行内尾注），
+    // E 批布局统一：裸 dropdown 行迁 FormRow（label 110 + dropdown），
     // 行 y = editorFontRowY（100% = 68 内容起始口径），行高与日志卡同源（logFieldHeight）。
     const float rowH = logFieldHeight();
     const float rowY = editorFontRowY();
     const float hintH = roundFs(16.0f);
+    const float hintY = hintRowBelowY(rowY);
     ui.stack(id)
         .size(w, h)
         .zIndex(30)
@@ -249,20 +258,27 @@ void drawEditorFontCard(const CardDrawArgs& args) {
                                 .build();
                         })
                         .build();
-                    ui.text(id + ".hint")
-                        .position(cx + ddW + 12.0f, cy + (ch - hintH) * 0.5f)
-                        .size(std::max(0.0f, cw - ddW - 12.0f), hintH)
-                        .text("Markdown 编辑器正文字号；默认 15px（标准）。切换即时生效。")
-                        .fontSize(fs(12.0f))
-                        .lineHeight(hintH)
-                        .color(t.colors.textTertiary)
-                        .build();
                 }, t);
+            // hint 第二行：下拉下方全卡宽（窄列超长文案省略号兜底）。
+            const float hintW = w - 56.0f;
+            ui.text(id + ".hint")
+                .position(28.0f, hintY)
+                .size(hintW, hintH)
+                .text("Markdown 编辑器正文字号；默认 15px（标准）。切换即时生效。")
+                .fontSize(fs(12.0f))
+                .lineHeight(hintH)
+                .color(t.colors.textTertiary)
+                .maxWidth(hintW)
+                .overflow(core::TextOverflow::Ellipsis)
+                .clip()
+                .build();
         })
         .build();
 }
 
-// 各模块一行开关；关闭 = 下次启动不注册进 Router。home/settings 恒启用，不提供开关。
+// 各模块一格开关（UAT3 多列分栏：半宽卡 + 卡内 2×2 格）；关闭 = 下次启动不注册进
+// Router。home/settings 恒启用，不提供开关。格内 name/desc 在窄列（最小窗 colW=348）
+// 必然超宽 → 省略号兜底（标准降级，用户拍板接受）。
 void drawModulesCard(const CardDrawArgs& args) {
     eui::Ui& ui = args.ui;
     const std::string& id = args.id;
@@ -295,40 +311,57 @@ void drawModulesCard(const CardDrawArgs& args) {
                      "开关即时生效：关闭后该模块代码不再执行，侧边栏入口与"
                      "页面当帧更新");
 
-            // 开关行行几何随生效字号派生；开关控件 44×24（UAT3 由 80×32 收敛），
-            // 在 name+desc 36 高块内垂直居中（相对偏移 +6）。
+            // 开关 2×2 格：行主序（0/1 同行异列，2/3 次行）；开关控件几何沿用
+            // 44×24（UAT3 由 80×32 收敛口径），在 name+desc 36 高块内垂直居中
+            //（相对偏移 +6）。格宽/右格 x 走 ui_kit::columnX 单一来源（gap 16）。
             const float nameH = roundFs(18.0f);
             const float rowDescDy = nameH + roundFs(2.0f);
             const float rowDescH = roundFs(16.0f);
             const float rowPitch = roundFs(56.0f);
+            const float switchW = 44.0f;
+            const float switchH = 24.0f;
+            const float switchGap = 12.0f;   // 格内文案与右贴开关的间距
+            float cellW = 0.0f;
+            float cell2X = 0.0f;
+            ui_kit::columnX(w - 56.0f, 16.0f, &cellW, &cell2X);
             for (int i = 0; i < kToggleCount; ++i) {
                 const ModuleMeta& meta = kToggleable[i];
-                const float rowY = 68.0f + static_cast<float>(i) * rowPitch;
+                const int col = i % 2;   // 行主序：0/1 同行，2/3 次行
+                const int row = i / 2;
+                const float cellX = 28.0f + (col == 0 ? 0.0f : cell2X);
+                const float rowY = 68.0f + static_cast<float>(row) * rowPitch;
+                const float textW = cellW - switchW - switchGap;
                 const std::string suffix = std::to_string(i);
                 ui.text(id + ".name." + suffix)
-                    .position(28.0f, rowY)
-                    .size(w - 160.0f, nameH)
+                    .position(cellX, rowY)
+                    .size(textW, nameH)
                     .text(meta.name)
                     .fontSize(t.sizes.fontSizeBody - 1.0f)
                     .lineHeight(nameH)
                     .fontWeight(500)
                     .color(t.colors.textPrimary)
+                    .maxWidth(textW)
+                    .overflow(core::TextOverflow::Ellipsis)
+                    .clip()
                     .build();
                 ui.text(id + ".rowdesc." + suffix)
-                    .position(28.0f, rowY + rowDescDy)
-                    .size(w - 160.0f, rowDescH)
+                    .position(cellX, rowY + rowDescDy)
+                    .size(textW, rowDescH)
                     .text(meta.desc)
                     .fontSize(fs(12.0f))
                     .lineHeight(rowDescH)
                     .color(t.colors.textTertiary)
+                    .maxWidth(textW)
+                    .overflow(core::TextOverflow::Ellipsis)
+                    .clip()
                     .build();
                 // 开关换微信绿 wswitch（§6 item 7）：绿轨道+白滑块（§4.4）。
                 // wswitch 的 clickable 元素 id = <id>.track（probe 按 .track 定位）。
                 // UAT3：80×32 显示过大 → 44×24（agent_module 详情弹窗同款）；
-                // 行视觉块 = name 18 + 2 + desc 16 = 36 高，24 开关居中偏移 +6
+                // 格视觉块 = name 18 + 2 + desc 16 = 36 高，24 开关居中偏移 +6。
                 ui_kit::wswitch(ui, id + ".sw." + suffix,
                     moduleEnabled(in.cfg, meta.moduleId),
-                    w - 28.0f - 44.0f, rowY + 6.0f, 44.0f, 24.0f, t,
+                    cellX + cellW - switchW, rowY + 6.0f, switchW, switchH, t,
                     [f = a.applyModuleEnabled,
                      mid = meta.moduleId](bool v) {
                         f(mid, v);
@@ -565,8 +598,9 @@ void drawProxyCard(const CardDrawArgs& args) {
         .build();
 }
 
-// 下拉出界则 openUp 向上；E 批统一：两行迁 FormRow（label 110 + dropdown + hint 行内尾注），
-// 行 y 单一来源 settings_ui_logic.h（logRow1LabelY/logRow2LabelY，100% = 68/116）。
+// 下拉出界则 openUp 向上；UAT3 多列分栏：两行改卡内双列同排（日志保留 | 日志级别，
+// 列几何走 ui_kit::columnX），hint 从行内尾注并一行下移（hintRowBelowY），
+// 卡高 170→144。行 y 单一来源 settings_ui_logic.h（logRow1LabelY，100% = 68）。
 void drawLogCard(const CardDrawArgs& args) {
     eui::Ui& ui = args.ui;
     const std::string& id = args.id;
@@ -582,8 +616,12 @@ void drawLogCard(const CardDrawArgs& args) {
     const float hintFontSize = fs(12.0f);
     const float rowH = logFieldHeight();
     const float hintH = roundFs(16.0f);
-    const float row1Y = logRow1LabelY();
-    const float row2Y = logRow2LabelY();
+    const float row1Y = logRow1LabelY();        // 两下拉同排行锚
+    const float hintY = hintRowBelowY(row1Y);   // hint 并一行（两 hint 同 y）
+    const float innerX = 28.0f;
+    float colW = 0.0f;
+    float col2X = 0.0f;
+    ui_kit::columnX(w - 56.0f, 16.0f, &colW, &col2X);
     ui.stack(id)
         .size(w, h)
         .zIndex(30)
@@ -593,7 +631,8 @@ void drawLogCard(const CardDrawArgs& args) {
             // 档位标签（0 = 永久）；存的是原始天数 int，清理任务按值读取
             static const char* kRetentionLabels[] = {
                 "永久保留", "7 天", "30 天", "90 天", "180 天", "365 天"};
-            ui_kit::formRow(ui, id, "日志保留", 28.0f, row1Y, w - 56.0f, rowH,
+            // 左列：日志保留
+            ui_kit::formRow(ui, id, "日志保留", innerX, row1Y, colW, rowH,
                 [&](eui::Ui& ui, float cx, float cy, float cw, float ch) {
                     const float ddW = std::min(kLogFieldWidth, cw);
                     ui.stack(id + ".ddwrap")
@@ -624,19 +663,11 @@ void drawLogCard(const CardDrawArgs& args) {
                                 .build();
                         })
                         .build();
-                    ui.text(id + ".hint")
-                        .position(cx + ddW + 12.0f, cy + (ch - hintH) * 0.5f)
-                        .size(std::max(0.0f, cw - ddW - 12.0f), hintH)
-                        .text("0 = 永久保留；30 天为默认。切换档位立即清理一次。")
-                        .fontSize(hintFontSize)
-                        .lineHeight(hintH)
-                        .color(t.colors.textTertiary)
-                        .build();
                 }, t);
 
-            // 行 2 日志级别：切档即时 core::log::setLevel（DEBUG 起打详录），重启由 onStart 恢复持久化档。
-            ui_kit::formRow(ui, id + ".level", "日志级别", 28.0f, row2Y,
-                            w - 56.0f, rowH,
+            // 右列：日志级别（切档即时 core::log::setLevel，DEBUG 起打详录；重启由 onStart 恢复持久化档）
+            ui_kit::formRow(ui, id + ".level", "日志级别", innerX + col2X,
+                            row1Y, colW, rowH,
                 [&](eui::Ui& ui, float cx, float cy, float cw, float ch) {
                     const float ddW = std::min(kLogFieldWidth, cw);
                     ui.stack(id + ".level.ddwrap")
@@ -644,7 +675,7 @@ void drawLogCard(const CardDrawArgs& args) {
                         .size(ddW, ch)
                         .content([&] {
                             const bool levelOpenUp = dropdownPopupOverflows(
-                                pageY, row2Y, rowH,
+                                pageY, row1Y, rowH,
                                 kLogLevelPresetCount, screenH);
                             components::dropdown(ui, id + ".level.dd")
                                 .size(ddW, ch)
@@ -665,15 +696,31 @@ void drawLogCard(const CardDrawArgs& args) {
                                 .build();
                         })
                         .build();
-                    ui.text(id + ".level.hint")
-                        .position(cx + ddW + 12.0f, cy + (ch - hintH) * 0.5f)
-                        .size(std::max(0.0f, cw - ddW - 12.0f), hintH)
-                        .text("DEBUG 最详尽（排障）；默认 INFO。切档即时生效。")
-                        .fontSize(hintFontSize)
-                        .lineHeight(hintH)
-                        .color(t.colors.textTertiary)
-                        .build();
                 }, t);
+
+            // hint 并一行下移：各随其列、同一行 y（窄列超宽省略号兜底）。
+            ui.text(id + ".hint")
+                .position(innerX, hintY)
+                .size(colW, hintH)
+                .text("0 = 永久保留；30 天为默认。切换档位立即清理一次。")
+                .fontSize(hintFontSize)
+                .lineHeight(hintH)
+                .color(t.colors.textTertiary)
+                .maxWidth(colW)
+                .overflow(core::TextOverflow::Ellipsis)
+                .clip()
+                .build();
+            ui.text(id + ".level.hint")
+                .position(innerX + col2X, hintY)
+                .size(colW, hintH)
+                .text("DEBUG 最详尽（排障）；默认 INFO。切档即时生效。")
+                .fontSize(hintFontSize)
+                .lineHeight(hintH)
+                .color(t.colors.textTertiary)
+                .maxWidth(colW)
+                .overflow(core::TextOverflow::Ellipsis)
+                .clip()
+                .build();
         })
         .build();
 }

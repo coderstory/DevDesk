@@ -7,6 +7,10 @@
 //     时保持 DOM 序 → DOM 序靠后的元素盖住靠前的。两个下拉的等值 z 因此必须靠
 //     assertDrawnAbove 在 LCA 处判「严格大于」，光靠叶子扫描抓不住。
 //     叶子自身 subtreeMax 常为 0，永不触发）。
+//   - UAT3 多列分栏后外观卡 | 编辑器字号卡经配对 row 成左右兄弟（原先是滚动内容
+//     列的上下兄弟）：开外观字号下拉时弹层虽与右卡几何不交，仍须显式把**右侧邻卡**
+//     纳入 z 判据——assertDrawnAbove(外观卡, 编辑器字号卡) 在 pair row 的 LCA 处
+//     判 40>30 抬层语义未随配对丢失。
 //   - dropdown 关闭态 popup 仍 compose 在树里（opacity=0 隐没），所以「已关闭」
 //     **不得**用存在性断言；判据 = popup 根 opacity==0 或 .popup.hit disabled。
 //   - 弹层链上界需沿祖先链求值（Element 无 parent 指针），harness 内部自建映射。
@@ -91,8 +95,12 @@ int main(int argc, char* argv[]) {
                    element.frame.y + element.frame.height * 0.5f);
     };
 
-    // 开下拉 → 断言（存在 / 可见 / 在窗内 / L2 z 扫描）→ 关下拉 → 断言不可见
-    auto verifyDropdown = [&](const std::string& dropdownId) -> bool {
+    // 开下拉 → 断言（存在 / 可见 / 在窗内 / L2 z 扫描 / 可选右邻卡绘制序）→ 关下拉
+    // → 断言不可见。overlayTopId/overlayBottomId 非空 = 额外断言「含弹层的卡整卡
+    // 盖过右侧邻卡」（UAT3 配对行 LCA 处的兄弟序，弹层几何不相交也须成立）。
+    auto verifyDropdown = [&](const std::string& dropdownId,
+                               const std::string& overlayTopId = "",
+                               const std::string& overlayBottomId = "") -> bool {
         bool ok = true;
         const std::string popupId = dropdownId + ".popup";
         composeFrame();
@@ -140,6 +148,17 @@ int main(int argc, char* argv[]) {
                          "FAILED for '"
                       << popupId << "'\n";
             ok = false;
+        }
+        // 右侧邻卡绘制序（UAT3 配对行）：开弹层的卡在 pair row 兄弟序里必须排在
+        // 右卡之后 = 整卡抬层盖过右侧邻卡（弹层与右卡几何不相交也须成立）。
+        if (!overlayTopId.empty() && !overlayBottomId.empty()) {
+            if (!probe::assertDrawnAbove(*ui, overlayTopId, overlayBottomId)) {
+                std::cerr << "settings_dropdown_z_probe: popup-hosting card '"
+                          << overlayTopId << "' not drawn above right pair "
+                             "neighbor '"
+                          << overlayBottomId << "'\n";
+                ok = false;
+            }
         }
 
         // 关：再点 field → onOpenChange(false) → 弹层留在树中但不可见
@@ -192,8 +211,11 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // 3) 外观卡字号下拉：开 → L2 扫描 → 关
-    passed = verifyDropdown("settings.card.appearance.font.dd") && passed;
+    // 3) 外观卡字号下拉：开 → L2 扫描 + 右侧邻卡绘制序（配对行 z 语义）→ 关
+    passed = verifyDropdown("settings.card.appearance.font.dd",
+                            "settings.card.appearance",
+                            "settings.card.editor") &&
+             passed;
 
     // 4) 编辑器字号下拉：同卡同 tab，当「编辑器字号」目标开 → L2 扫描 → 关
     passed = verifyDropdown("settings.card.editor.dd") && passed;

@@ -36,6 +36,7 @@
 // 模块开关即时生效桥：函数指针缝 + 默认 no-op，真 handler 由 main.cpp 装配段注入。
 #include "module_toggle_bridge.h"
 
+#include <ui_kit/columns.h>
 #include <ui_kit/metrics.h>
 #include <ui_kit/toast.h>
 #include <ui_kit/wtab.h>
@@ -65,7 +66,8 @@ namespace module::settings {
 
 namespace {
 
-// 卡片注册表：每行 = 一张卡（tab / 门控 / 卡高种类 / 是否吃页面几何 / 绘制函数），顺序 = 绘制顺序。
+// 卡片注册表：每行 = 一张卡（tab / 门控 / 卡高种类 / 是否吃页面几何 / 半宽配对 / 绘制函数），
+// 顺序 = 绘制顺序（半宽卡相邻者两两成行，见 drawCardRegion 双游标）。
 enum class CardHeightKind {
     Fixed,
     ProxyWarnings,
@@ -80,26 +82,28 @@ struct CardSpec {
     CardHeightKind heightKind;
     float height;           // Fixed 档生效
     bool pageGeom;          // 下发卡顶页面绝对 y + 屏高（下拉 openUp 几何）
+    bool half;              // 半宽卡：与相邻半宽卡两两成行（双列配对，UAT3 多列分栏）
     void (*draw)(const CardDrawArgs&);
 };
 
 const CardSpec kCardSpecs[] = {
     {kTabGeneral, "settings.card.appearance", nullptr, CardHeightKind::Fixed,
-     kAppearanceCardHeight, false, &drawAppearanceCard},
+     kAppearanceCardHeight, false, /*half=*/true, &drawAppearanceCard},
     {kTabGeneral, "settings.card.editor", nullptr, CardHeightKind::Fixed,
-     kEditorFontCardHeight, true, &drawEditorFontCard},
+     kEditorFontCardHeight, true, /*half=*/true, &drawEditorFontCard},
     {kTabModules, "settings.card.modules", nullptr, CardHeightKind::Fixed,
-     kModulesCardHeight, false, &drawModulesCard},
+     kModulesCardHeight, false, /*half=*/true, &drawModulesCard},
     {kTabModules, "settings.card.directory", kModuleIdMarkdown,
-     CardHeightKind::Fixed, kDirectoryCardHeight, false, &drawDirectoryCard},
+     CardHeightKind::Fixed, kDirectoryCardHeight, false, /*half=*/false,
+     &drawDirectoryCard},
     {kTabModules, "settings.card.proxy", kModuleIdClaudeProxy,
-     CardHeightKind::ProxyWarnings, 0.0f, false, &drawProxyCard},
+     CardHeightKind::ProxyWarnings, 0.0f, false, /*half=*/false, &drawProxyCard},
     {kTabLog, "settings.card.log", nullptr, CardHeightKind::Fixed,
-     kLogSettingsCardHeight, true, &drawLogCard},
+     kLogSettingsCardHeight, true, /*half=*/false, &drawLogCard},
     {kTabLog, "settings.tab.log", nullptr, CardHeightKind::FillRemainder,
-     0.0f, false, &drawLogViewCard},
+     0.0f, false, /*half=*/false, &drawLogViewCard},
     {kTabSync, "settings.card.github_sync", nullptr, CardHeightKind::GithubSync,
-     0.0f, false, &drawGithubSyncCard},
+     0.0f, false, /*half=*/false, &drawGithubSyncCard},
 };
 
 // ── GitHub Sync（纯 API 方案，无 git 依赖）──
@@ -1026,16 +1030,25 @@ public:
                 const float cardsH =
                     screen.height - cardsTopY - pad - bottomHintH -
                     t.sizes.spacingLarge;
+                // 半宽配对列宽桶（.c348 / .c648 …）：换窗宽后列宽变 → 配对行高随
+                // 对内卡高变，内容高缓存必须失效重测（UAT3 多列分栏）。
+                float pairColW = contentW;
+                ui_kit::columnX(contentW, t.sizes.spacingLarge, &pairColW,
+                                nullptr);
                 components::scrollView(ui, "settings.cards.scroll")
                     .size(contentW, cardsH)
                     .gap(t.sizes.spacingLarge)
                     .step(60.0f)
                     .theme(compTheme)
-                    // contentKey 带 tab 索引 + 代理卡高 + 卡片显隐签名：切 tab / 卡片增减时缓存失效重测。
+                    // contentKey 带 tab 索引 + 代理卡高 + 卡片显隐签名 + 列宽桶：
+                    // 切 tab / 卡片增减 / 换窗宽（列宽桶变）时缓存失效重测。
                     .contentKey("settings.cards.t" +
                                 std::to_string(settingsTab_) + "." +
                                 std::to_string(static_cast<int>(proxyH)) +
-                                (claudeOn ? "C" : "c") + (mdOn ? "M" : "m"))
+                                (claudeOn ? "C" : "c") + (mdOn ? "M" : "m") +
+                                ".c" +
+                                std::to_string(static_cast<int>(pairColW +
+                                                               0.5f)))
                     .offset(cardsScrollOffset_)
                     .onChange([this](float v) { cardsScrollOffset_ = v; })
                     .content([&](eui::Ui& inner, float contentWidth,
@@ -1150,7 +1163,11 @@ private:
         return spec.height;  // 兜底：枚举穷举，仅为满足「所有路径有返回」
     }
 
-    // 遍历注册表画本 tab 的卡；纵向游标只累计参与绘制的卡，带下拉的卡需页面绝对 Y（openUp）。
+    // 遍历注册表画本 tab 的卡。UAT3 多列分栏：单游标改双游标——半宽卡两两成行
+    //（行高 = max(对内卡高)，左卡 x=0、右卡 x=colW+gap，包一层全宽 row 作内容列子元素）；
+    // 全宽卡独占一行并清掉挂起的半宽游标（落单半宽卡直接作内容列子元素，宽=colW）。
+    // 分组标题/分隔线仅全宽卡触发（模块卡半宽后「功能模块」组题随之隐去，机制本身不动）。
+    // 纵向游标只累计参与绘制的卡，带下拉的卡需页面绝对 Y（openUp）。
     void drawCardRegion(eui::Ui& ui, float contentWidth, float cardsTopY,
                         float cardsH, float screenH,
                         const core::theme::Tokens& t, float proxyH,
@@ -1191,18 +1208,76 @@ private:
         const int tab = (settingsTab_ >= 0 && settingsTab_ < kSettingTabCount)
                             ? settingsTab_
                             : kTabGeneral;
+        // 半宽配对列几何：列宽/右列 x 单一来源 ui_kit::columnX（gap 与卡间距一致）。
+        float colW = contentWidth;
+        ui_kit::columnX(contentWidth, gapY, &colW, nullptr);
+        int pairSeq = 0;  // 配对行 id 序号（每次绘制从 0 起，帧内稳定可测）
+        // 挂起的半宽卡：等相邻半宽卡成对；全宽卡/收尾时落单冲刷。
+        const CardSpec* pendingHalf = nullptr;
+
+        // 落单半宽卡：直接作内容列子元素（列起始对齐 START → x=0，宽 = colW）。
+        auto flushLoneHalf = [&]() {
+            if (pendingHalf == nullptr) return;
+            const float h = cardHeight(*pendingHalf, proxyH,
+                                      cardsH - cardY, githubSyncCfg_.enabled);
+            CardDrawArgs args{ui, pendingHalf->id, colW, h, t,
+                              cardsTopY + cardY - cardsScrollOffset_, screenH,
+                              in, a};
+            pendingHalf->draw(args);
+            cardY += h + gapY;
+            firstInTab = false;
+            pendingHalf = nullptr;
+        };
+        // 成对半宽卡：包一层全宽 row（行高 = max(对内卡高)，卡各持自身卡高——
+        // 右卡矮于行高时下方自然留白，不拉伸）。对内两卡 pageY 同为行顶（openUp 几何一致）。
+        auto flushHalfPair = [&](const CardSpec& rightSpec) {
+            const CardSpec& leftSpec = *pendingHalf;
+            const float hL = cardHeight(leftSpec, proxyH,
+                                        cardsH - cardY, githubSyncCfg_.enabled);
+            const float hR = cardHeight(rightSpec, proxyH,
+                                        cardsH - cardY, githubSyncCfg_.enabled);
+            const float rowH = std::max(hL, hR);
+            const float rowY = cardY;
+            ui.row(std::string("settings.cards.pair.") +
+                   std::to_string(pairSeq++))
+                .size(contentWidth, rowH)
+                .gap(gapY)
+                .content([&] {
+                    CardDrawArgs left{ui, leftSpec.id, colW, hL, t,
+                                      cardsTopY + rowY - cardsScrollOffset_,
+                                      screenH, in, a};
+                    leftSpec.draw(left);
+                    CardDrawArgs right{ui, rightSpec.id, colW, hR, t,
+                                       cardsTopY + rowY - cardsScrollOffset_,
+                                       screenH, in, a};
+                    rightSpec.draw(right);
+                })
+                .build();
+            cardY = rowY + rowH + gapY;
+            firstInTab = false;
+            pendingHalf = nullptr;
+        };
+
         for (const CardSpec& spec : kCardSpecs) {
             if (spec.tab != tab) continue;
             if (spec.gate != nullptr && !moduleEnabled(cfg_, spec.gate)) {
                 continue;  // 模块关 → 整卡隐藏（不显示故障态）
             }
-            // 分组标题（§6 item 4）+ 组间分隔线（§6 item 6）：
-            // 「功能模块」「存储配置」「其他设置」仅模块 tab 有；其他 tab 卡自带标题不分组。
+            if (spec.half) {
+                if (pendingHalf == nullptr) {
+                    pendingHalf = &spec;   // 等相邻半宽卡成对
+                    continue;
+                }
+                flushHalfPair(spec);
+                continue;
+            }
+            flushLoneHalf();   // 全宽卡先清掉挂起的半宽游标
+            // 分组标题（§6 item 4）+ 组间分隔线（§6 item 6）：仅全宽卡触发
+            //（半宽卡不占组题锚）。「存储配置」「其他设置」仅模块 tab 有；
+            // 其他 tab 卡自带标题不分组。
             const char* groupTitle = nullptr;
             const std::string specId(spec.id);
-            if (specId == "settings.card.modules")
-                groupTitle = "功能模块";
-            else if (specId == "settings.card.directory")
+            if (specId == "settings.card.directory")
                 groupTitle = "存储配置";
             else if (specId == "settings.card.proxy")
                 groupTitle = "其他设置";
@@ -1235,6 +1310,7 @@ private:
             spec.draw(args);
             cardY += h + gapY;
         }
+        flushLoneHalf();   // 收尾：tab 末尾落单的半宽卡
     }
 
     void drawHeader(eui::Ui& ui, float contentW, float headerH,
