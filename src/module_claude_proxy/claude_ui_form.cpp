@@ -410,16 +410,51 @@ void drawFormBasicTab(eui::Ui& ui, float w,
                       const core::theme::Tokens& t,
                       const components::theme::ThemeColorTokens& themeTokens,
                       bool isEdit, FormState& f) {
+    // 「名称 | 认证字段」同排双列（UAT3 弹窗双列批）：colW = (760-56-16)/2 = 344，
+    // 左列 x=28，右列 x = 28+344+16 = 388；Base URL / API Key 值长，保留全宽。
+    constexpr float kColW = 344.0f;
+    constexpr float kCol2X = 388.0f;   // 右列 x = 左列 28 + colW 344 + 列距 16
+
     ui.text("claude.form.basic.name.label")
-        .position(28.0f, 104.0f).size(w - 56.0f, 16.0f)
+        .position(28.0f, 104.0f).size(kColW, 16.0f)
         .text("名称").fontSize(11.0f).lineHeight(16.0f)
         .color(t.colors.textTertiary).build();
     components::input(ui, "claude.dialog.form.name")
-        .position(28.0f, 122.0f).size(w - 56.0f, 40.0f)
+        .position(28.0f, 122.0f).size(kColW, 40.0f)
         .value(f.formName_).placeholder("例如：官方 / 中转 A")
         .fontSize(14.0f).theme(themeTokens)
         .onChange([fp = &f](const std::string& v) { fp->formName_ = v; })
         .onCancel([fp = &f] { fp->formOpen_ = false; })  // Esc=取消（关表单不提交，各输入框统一）
+        .build();
+
+    // 认证字段（鉴权头三态）落右列：标签与灰字说明同行（hint 宽收到右列余量 268），下拉紧随
+    ui.text("claude.form.basic.authfield.label")
+        .position(kCol2X, 104.0f).size(72.0f, 16.0f)
+        .text("认证字段").fontSize(11.0f).lineHeight(16.0f)
+        .color(t.colors.textTertiary).build();
+    ui.text("claude.form.basic.authfield.hint")
+        .position(kCol2X + 76.0f, 104.0f).size(kColW - 76.0f, 16.0f)
+        .text("网关只接受一种鉴权头时切换；默认两种都发")
+        .fontSize(11.0f).lineHeight(16.0f)
+        .color(t.colors.textTertiary).build();
+    ui.stack("claude.form.basic.authfield.ddwrap")
+        .position(kCol2X, 122.0f)
+        .size(kColW, 40.0f)
+        .content([&] {
+            components::dropdown(ui, "claude.dialog.form.authfield.dd")
+                .size(kColW, 40.0f)
+                .theme(themeTokens)
+                .items(std::vector<std::string>(
+                    kAuthFieldLabels, kAuthFieldLabels + kAuthFieldCount))
+                .selected(static_cast<int>(f.formAuthField_))
+                .open(f.formAuthFieldOpen_)
+                .onOpenChange([fp = &f](bool v) { fp->formAuthFieldOpen_ = v; })
+                .onChange([fp = &f](int idx) {
+                    fp->formAuthField_ = static_cast<AuthField>(
+                        std::clamp(idx, 0, kAuthFieldCount - 1));
+                })
+                .build();
+        })
         .build();
 
     ui.text("claude.form.basic.url.label")
@@ -450,49 +485,20 @@ void drawFormBasicTab(eui::Ui& ui, float w,
         .onCancel([fp = &f] { fp->formOpen_ = false; })  // Esc=取消
         .build();
 
-    // 认证字段（鉴权头三态）：标签与灰字说明同行，下拉紧随
-    ui.text("claude.form.basic.authfield.label")
-        .position(28.0f, 314.0f).size(72.0f, 16.0f)
-        .text("认证字段").fontSize(11.0f).lineHeight(16.0f)
-        .color(t.colors.textTertiary).build();
-    ui.text("claude.form.basic.authfield.hint")
-        .position(104.0f, 314.0f).size(w - 132.0f, 16.0f)
-        .text("网关只接受一种鉴权头时切换；默认两种都发")
-        .fontSize(11.0f).lineHeight(16.0f)
-        .color(t.colors.textTertiary).build();
-    ui.stack("claude.form.basic.authfield.ddwrap")
-        .position(28.0f, 332.0f)
-        .size(w - 56.0f, 40.0f)
-        .content([&] {
-            components::dropdown(ui, "claude.dialog.form.authfield.dd")
-                .size(w - 56.0f, 40.0f)
-                .theme(themeTokens)
-                .items(std::vector<std::string>(
-                    kAuthFieldLabels, kAuthFieldLabels + kAuthFieldCount))
-                .selected(static_cast<int>(f.formAuthField_))
-                .open(f.formAuthFieldOpen_)
-                .onOpenChange([fp = &f](bool v) { fp->formAuthFieldOpen_ = v; })
-                .onChange([fp = &f](int idx) {
-                    fp->formAuthField_ = static_cast<AuthField>(
-                        std::clamp(idx, 0, kAuthFieldCount - 1));
-                })
-                .build();
-        })
-        .build();
-
+    // 认证字段上移进首行后，hint/错误/接管警告随之上收（行间距沿用原节奏 8/6/4）
     ui.text("claude.form.basic.hint.icon")
-        .position(28.0f, 380.0f).size(14.0f, 18.0f)
+        .position(28.0f, 310.0f).size(14.0f, 18.0f)
         .icon(0xF05A).fontSize(12.0f).lineHeight(18.0f)
         .color(t.colors.textTertiary).build();
     ui.text("claude.form.basic.hint")
-        .position(46.0f, 380.0f).size(w - 74.0f, 18.0f)
+        .position(46.0f, 310.0f).size(w - 74.0f, 18.0f)
         .text("模型映射、高级 env 和高级配置在另外几个标签页配置")
         .fontSize(12.0f).lineHeight(18.0f)
         .color(t.colors.textTertiary).build();
 
     if (!f.formError_.empty()) {
         ui.text("claude.dialog.form.error")
-            .position(28.0f, 404.0f).size(w - 56.0f, 18.0f)
+            .position(28.0f, 334.0f).size(w - 56.0f, 18.0f)
             .text(f.formError_).fontSize(12.0f).lineHeight(18.0f)
             .color(t.colors.error).build();
     }
@@ -500,11 +506,11 @@ void drawFormBasicTab(eui::Ui& ui, float w,
     // 「导入当前配置」接管态警告（不阻断，仅提示）
     if (!f.formImportWarn_.empty()) {
         ui.text("claude.dialog.form.importwarn.icon")
-            .position(28.0f, 426.0f).size(14.0f, 18.0f)
+            .position(28.0f, 356.0f).size(14.0f, 18.0f)
             .icon(0xF071).fontSize(12.0f).lineHeight(18.0f)
             .color(t.colors.warning).build();
         ui.text("claude.dialog.form.importwarn")
-            .position(46.0f, 426.0f).size(w - 74.0f, 36.0f)
+            .position(46.0f, 356.0f).size(w - 74.0f, 36.0f)
             .text(f.formImportWarn_).fontSize(12.0f).lineHeight(18.0f)
             .color(t.colors.warning).build();
     }
@@ -1017,7 +1023,12 @@ void drawProfileFormDialog(eui::Ui& ui, const eui::Screen& screen,
                            const std::vector<Profile>& profiles,
                            const FormSubmitHooks& hooks) {
     const float w = ui_kit::dialogWidthPx(ui_kit::DialogWidth::Form);
-    const float h = 600.0f;
+    // 「名称 | 认证字段」并进首排双列后基础页收掉一整行：基础页弹高 600→532（-68），
+    // 最底行（接管警告）≈392 与按钮带（h-60=472）之间仍留呼吸区。
+    // 高度按 tab 取值而非全局改小：模型/高级 env/高级配置三页的既有内容低至
+    // y≈480-516（env 页解析按钮 468-500、高级页红字 480-496），全局 532 会让它们
+    // 压进按钮带（472 起）——三页布局不动，保持 600；仅基础页走紧凑 532。
+    const float h = f.formTab_ == 0 ? 532.0f : 600.0f;
     const bool isEdit = (f.formEditId_ != 0);
 
     ui_kit::DialogFrame frame;

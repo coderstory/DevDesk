@@ -101,6 +101,9 @@ module::claude::settings_sync::Paths importPaths(
     return p;
 }
 
+// 浮点几何相等（px 级判等，0.01 容差）——表单双列几何断言用
+bool floatEq(float a, float b) { return std::fabs(a - b) < 0.01f; }
+
 } // namespace
 
 // 0. 纯函数 formatCallTime
@@ -2720,6 +2723,110 @@ REGISTER_TEST(claude_ui_form_auth_field_dropdown_exists,
         const auto* label = ui.find("claude.dialog.form.authfield.dd.label");
         DOCTEST_REQUIRE(label != nullptr);
         DOCTEST_CHECK_EQ(label->text, std::string("双发（默认）"));
+    }
+
+    mod->onStop();
+    return true;
+})
+
+// UAT3 弹窗双列批：基础页「名称 | 认证字段」同排双列的几何钉值。
+// 防的事故：认证字段回退独占一行（x=28、y=314）→ 右列 x/同行 y 断言红；
+// 名称/认证还原全宽 704 → 列宽 344 断言红；基础页弹高回 600 → 面板高断言红。
+// 高度按 tab 取值是刻意设计：模型/env/高级配置三页既有内容深至 y≈480-516，
+// 全局改 532 会把它们压进按钮带（472 起）——高级配置页仍 600 也一并钉住。
+REGISTER_TEST(claude_ui_form_basic_two_column_geometry,
+              "claude_module: 基础页「名称|认证」同排双列几何 + 弹高 532（其余 tab 仍 600）", {
+    TestEnv env;
+    auto a = env.svc->createProfile("双列几何", "https://geo.example.com",
+                                    "sk-ant-geo-0001", "");
+    DOCTEST_REQUIRE(a.isOk());
+
+    std::unique_ptr<::core::Module> mod(create_claude_module());
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    auto compose = [&](eui::Ui& ui, const char* tag) {
+        ui.begin(tag);
+        mod->compose(ui, screen);
+        ui.end();
+    };
+    auto click = [](eui::Ui& ui, const std::string& id) -> bool {
+        const auto* node = ui.find(id);
+        if (node == nullptr || node->onClick == nullptr) {
+            std::cerr << "missing clickable: " << id << std::endl;
+            return false;
+        }
+        node->onClick();
+        return true;
+    };
+
+    {
+        eui::Ui ui;
+        compose(ui, "claude_geo1");
+        DOCTEST_CHECK(click(ui, "claude.profiles.new.bg"));  // 新建表单，默认落基础页
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "claude_geo2");
+        ui.layout(screen.width, screen.height);
+        const auto* panel = ui.find("claude.dialog.form.panel");
+        DOCTEST_REQUIRE(panel != nullptr);
+        const float px = panel->frame.x;
+        const float py = panel->frame.y;
+
+        // 弹窗尺寸：760 宽 × 532 高（基础页双列紧凑高度）
+        DOCTEST_CHECK(floatEq(panel->frame.width, 760.0f));
+        DOCTEST_CHECK(floatEq(panel->frame.height, 532.0f));
+
+        // 双列：左列 x=28 / 右列 x = 28+344+16 = 388；两标签同排 y=104
+        const auto* nameLabel = ui.find("claude.form.basic.name.label");
+        const auto* authLabel = ui.find("claude.form.basic.authfield.label");
+        DOCTEST_REQUIRE(nameLabel != nullptr);
+        DOCTEST_REQUIRE(authLabel != nullptr);
+        DOCTEST_CHECK(floatEq(nameLabel->frame.x - px, 28.0f));
+        DOCTEST_CHECK(floatEq(authLabel->frame.x - px, 388.0f));
+        DOCTEST_CHECK(floatEq(authLabel->frame.y, nameLabel->frame.y));
+        DOCTEST_CHECK(floatEq(nameLabel->frame.y - py, 104.0f));
+
+        // 名称输入 / 认证下拉：各占列宽 344、同排 y=122
+        const auto* nameInput = ui.find("claude.dialog.form.name");
+        const auto* ddwrap = ui.find("claude.form.basic.authfield.ddwrap");
+        DOCTEST_REQUIRE(nameInput != nullptr);
+        DOCTEST_REQUIRE(ddwrap != nullptr);
+        DOCTEST_CHECK(floatEq(nameInput->frame.x - px, 28.0f));
+        DOCTEST_CHECK(floatEq(nameInput->frame.width, 344.0f));
+        DOCTEST_CHECK(floatEq(ddwrap->frame.x - px, 388.0f));
+        DOCTEST_CHECK(floatEq(ddwrap->frame.width, 344.0f));
+        DOCTEST_CHECK(floatEq(ddwrap->frame.y, nameInput->frame.y));
+        DOCTEST_CHECK(floatEq(nameInput->frame.y - py, 122.0f));
+
+        // Base URL / API Key 值长保留全宽：704 = 760-56
+        const auto* urlInput = ui.find("claude.dialog.form.url");
+        const auto* keyInput = ui.find("claude.dialog.form.key");
+        DOCTEST_REQUIRE(urlInput != nullptr);
+        DOCTEST_REQUIRE(keyInput != nullptr);
+        DOCTEST_CHECK(floatEq(urlInput->frame.width, 704.0f));
+        DOCTEST_CHECK(floatEq(keyInput->frame.width, 704.0f));
+
+        // 认证 hint 收在右列内：x = 388+76 = 464，右缘 ≤ 760-28
+        const auto* authHint = ui.find("claude.form.basic.authfield.hint");
+        DOCTEST_REQUIRE(authHint != nullptr);
+        DOCTEST_CHECK(floatEq(authHint->frame.x - px, 464.0f));
+        DOCTEST_CHECK(authHint->frame.x - px + authHint->frame.width <= 732.0f);
+    }
+    // 高级配置页（tab 3）内容深至 y≈496，须保持 600：全局改小即压按钮带
+    {
+        eui::Ui ui;
+        compose(ui, "claude_geo3");
+        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.3"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "claude_geo4");
+        ui.layout(screen.width, screen.height);
+        const auto* panel = ui.find("claude.dialog.form.panel");
+        DOCTEST_REQUIRE(panel != nullptr);
+        DOCTEST_CHECK(floatEq(panel->frame.height, 600.0f));
     }
 
     mod->onStop();
