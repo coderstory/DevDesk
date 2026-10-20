@@ -1,8 +1,9 @@
 // home_probes.cpp — home 模块几何探针。组 A..M，每组一段，各自带判据注释。
 //
-// 运行：home_probes.exe [--frames N] [--size 1200x720]
+// 运行：home_probes.exe [--frames N] [--size 1200x600]
 // 不带 --quota-fixture 时全程离线假种子，可复现、不打任何供应商接口。
-// statW 只随窗**宽**变，所以各组几何在默认 1200x1000 与最小窗 1200x720 下同型。
+// statW 只随窗**宽**变，所以各组几何在默认 1200x1000 与守护短窗 1200x600 下同型
+//（600 < 设计最小窗高 640，UAT3 D-R3-2 起刻意低于一切真实下限作守护性深档）。
 
 #include "probes/probe_harness.h"
 #include "test_support.h"
@@ -654,7 +655,7 @@ int main(int argc, char* argv[]) {
         core::proxy_stats::updateStream(streamId, 20000000);
         core::proxy_stats::updateStream(streamId, 40000000);
         composeFrame();
-        const int kMinWindowW = 1200;  // 最小窗宽：statW 208 → cw 176（判别几何）
+        const int kMinWindowW = 1000;  // 设计最小窗宽（UAT3 D-R3-2，main.cpp kMinWindowLogical）：低于此宽的文本溢出归因窗口过小
         for (const char* cardId : kStatCardIds) {
             for (const char* suffix : {"number", "badge"}) {
                 const std::string elId =
@@ -784,7 +785,7 @@ int main(int argc, char* argv[]) {
             }
             // (d) 余量卡在**当前屏高**确实构建出来了。
             // 本条只在探针实际跑的那个屏高上有判别力——默认 1200×1000 下卡
-            // 本来就画。门禁里另有 home_probes_min_window（--size 1200x720）
+            // 本来就画。门禁里另有 home_probes_min_window（--size 1200x600）
             // 跑更矮的窗，预算纯函数那条另有单测（test_home_quota_card 的
             // home_quota_budget_*），三处合起来才是完整守卫。
             if (card->frame.height <= 0.0f || card->frame.width <= 0.0f) {
@@ -1457,10 +1458,11 @@ int main(int argc, char* argv[]) {
 
     // 组 K：矮窗多档——余量卡在真实最小窗各档都构建
     // 补两处判别力空缺：组 G(d) 只在探针**实际运行**的那档屏高有判别力；
-    // home_probes_min_window 只跑 1200×720，而真实设计最小窗是 1280×800 逻辑
-    // （main.cpp:492-493 kMinWindowLogical*，2026-10-20 UAT2 从 1330×845 收窄）。
-    // 收窄后的真实下限：macOS 工作区可用 805 ≥ 800、不再收缩（有效 = 设计）；
-    // Windows @125% 工作区 1020−47 钳到 973 物理 = 778 逻辑（最低真实档）。
+    // home_probes_min_window 只跑 1200×600，而真实设计最小窗是 1000×640 逻辑
+    // （main.cpp:492-493 kMinWindowLogical*，UAT3 D-R3-2 从 1280×800 收窄）。
+    // 收窄后两平台**均不再钳**：macOS 640 ≤ 805 可用、Windows@125% 640×1.25=800
+    // 物理 ≤ 973 可用——有效下限 = 设计下限（640；旧 Windows 钳制档 778 降为普通
+    // 深压缩尺寸）。
     //
     // 本组用**无头 compose**一跑覆盖四档（同一模块实例在不同 Screen 下各排
     // 一帧）：compose 的 screen 是参数，不必为每档开一条 ctest 条目重跑全组。
@@ -1468,11 +1470,12 @@ int main(int argc, char* argv[]) {
     //   · 845 压缩刀口档（合成档，非最小窗——旧设计值恰在刀口，保留专测 1px
     //     压缩路径）：quotaBody = 845−fixed−kHomeChartH = 95 < 96，靠压缩
     //     图表 1px（260→259）恰好画出卡；
-    //   · 800 设计最小窗 = macOS 有效下限（805 可用 ≥ 800 不钳）：压缩档；
-    //   · 778 Windows@125% 有效下限（min(800×1.25,1020−47)=973 物理 ÷1.25）：
-    //     更深压缩档（图表压到 ~192）；
-    //   · 700 滚动模式档（< fixed+kHomeChartH = 750）：整页出滚动条、图表
-    //     一分不压、卡照画。低于一切真实下限（778），作守护性深档。
+    //   · 778 深压缩档（旧 Windows@125% 有效下限；778 > 750 走压缩路径，
+    //     图表压到 ~192。现高于新设计最小窗 640，作为普通深压缩尺寸保留覆盖）；
+    //   · 640 设计最小窗 = 两平台有效下限（滚动模式档：< fixed+kHomeChartH）：
+    //     整页出滚动条、图表一分不压、卡照画；
+    //   · 600 守护性深档（< 640，低于一切真实下限）：滚动模式，钉「低于下限
+    //     的窗口也不丢内容不崩」。
     // 判据（每档一致）：
     //   K(a) 余量卡节点存在、非零尺寸、且不压统计网格（矮窗整张不画 = 欠账复发）
     //   K(b) 整页滚动容器在场（矮窗可见性依赖它吸收溢出；G 同款 content 节点）
@@ -1489,10 +1492,10 @@ int main(int argc, char* argv[]) {
             const char* label;
         };
         const Tier tiers[] = {
-            {845.0f, "845 压缩刀口档（合成：quotaBody=95<96 压 1px 恰好画卡；现行设计最小窗 1280×800）"},
-            {800.0f, "1280×800 设计最小窗（main.cpp:492-493；macOS 805 可用不钳，= 有效下限）"},
-            {778.0f, "1280×778 Windows 本机有效下限（@125% 钳 973 物理 ÷1.25，深压缩档）"},
-            {700.0f, "1280×700 滚动模式档（< fixed+kHomeChartH，守护性深档）"},
+            {845.0f, "845 压缩刀口档（合成：quotaBody=95<96 压 1px 恰好画卡；现行设计最小窗 1000×640）"},
+            {778.0f, "1000×778 深压缩档（旧 Windows@125% 有效下限；现为普通深压缩尺寸）"},
+            {640.0f, "1000×640 设计最小窗（main.cpp:492-493；两平台均不钳 = 有效下限，滚动模式档）"},
+            {600.0f, "1000×600 守护性深档（< 640 设计下限，滚动模式不丢内容）"},
         };
         // 预算输入与 home_module compose 同源（不另写一套魔法数）：statH =
         // 144×fontScale，pad/gap 取主题 token（组 G(b) 同款口径）。
@@ -1502,7 +1505,7 @@ int main(int argc, char* argv[]) {
         const float kGap = kTheme.sizes.spacingLarge * 1.25f;
         for (const Tier& tier : tiers) {
             eui::Screen tierScreen;
-            tierScreen.width = 1280.0f;
+            tierScreen.width = 1000.0f;
             tierScreen.height = tier.height;
             eui::Ui tierUi;
             tierUi.begin("home_probe_k_" +

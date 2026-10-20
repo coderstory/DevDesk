@@ -1016,12 +1016,12 @@ REGISTER_TEST(uiModernMdPreviewGradient,
 // 不再代表任何真实档，恒经同一函数取值）。
 namespace {
 // 与 main.cpp 同一条决策链的最小窗尺寸（macOS 档：工作区 1470×833 点、
-// windowScaleForPoint 恒 1.0、外框 {0,28}）→ {1280, 800}（设计 800 ≤ 工作区可用
-// 805，本机档不再钳；1280×800 既是设计最小窗也是 macOS 实际可缩下限）。显式传参
+// windowScaleForPoint 恒 1.0、外框 {0,28}）→ {1000, 640}（设计 640 ≤ 工作区可用
+// 805，不钳；UAT3 D-R3-2 起两平台有效下限 = 设计下限）。显式传参
 // 而非取本机实时工作区：测试要确定性，且这一档正是「用户机器上最小窗能缩到多大」的真实值。
 core::window_layout::WindowSize minWindowForMacWorkArea() {
     return core::window_layout::minWindowSizeForWorkArea(
-        core::window_layout::InitialWindowRequest{1600, 1000, 1280, 800},
+        core::window_layout::InitialWindowRequest{1600, 1000, 1000, 640},
         core::window_layout::WorkArea{0, 0, 1470, 833}, 1.0f,
         core::window_layout::FrameInsets{0, 28});
 }

@@ -507,13 +507,14 @@ bool showTrayStyledMenu(int x, int y) {
 // 窗口单位 + 非客户区外框后与工作区比较，放不下则启动即最大化；纯函数在 core::window_layout
 constexpr int kInitialWindowLogicalWidth = 1600;
 constexpr int kInitialWindowLogicalHeight = 1000;
-// 最小窗 1280×800 逻辑（UAT2 从 1330×845 收窄）：1080p@125% 换算 ≈1600×1000 物理，
-// 不再近全屏（旧 1330×845 → 1663×1056，高已超 1020 工作区、最小窗高被钳 973 顶满
-// 屏高；新值宽 1600、客户区高 1000，高仍按工作区钳 973）。不可回落 1200×720（spec
-// 早期废弃值，见 CLAUDE.md）——markdown 三栏在 1280 窗宽下 midW=370 可用
-// （(1280−208−2×40−220−2×16)/2），再窄三栏开始挤。落实仍经工作区钳制。
-constexpr int kMinWindowLogicalWidth = 1280;
-constexpr int kMinWindowLogicalHeight = 800;
+// 最小窗 1000×640 逻辑（UAT3 D-R3-2 从 1280×800 收窄，用户拍板）：两平台工作区均
+// 不再钳制——macOS 640 ≤ 805 可用、Windows@125% 640×1.25=800 物理 ≤ 973 可用，
+// 有效下限 = 设计下限（1280 时代高曾被钳 973 物理）。1000 宽逐页适配核验（C1 批
+// 推算表）：home 5 卡 statW≈126 / todo 5 列 colW≈130（列宽自适应已有下限先例）/
+// md 树折叠后 midW≈340（三栏全展开 220 偏窄，树可折叠）/ settings·claude
+// contentW=712 均可容。落实仍经 minWindowSizeForWorkArea 工作区钳制。
+constexpr int kMinWindowLogicalWidth = 1000;
+constexpr int kMinWindowLogicalHeight = 640;
 
 struct ResolvedWindowSizing {
     core::window_layout::InitialWindowDecision initial;

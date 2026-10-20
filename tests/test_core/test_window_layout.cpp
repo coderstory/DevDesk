@@ -200,34 +200,35 @@ REGISTER_TEST(window_layout_unit_name, "window_layout: 平台窗口单位名（m
 })
 
 // macOS 档（本机实测：工作区 1470×833 点、windowScaleForPoint 恒 1.0、外框 {0,28}）：
-// 设计最小窗 1280×800（UAT2 从 1330×845 收窄）——800 ≤ 工作区可用 805，本机档
-// **不再钳**（旧 845 > 805 是钳制档；钳制行为本身由 below_work_area_paths ① 与
-// Windows 档用例覆盖，此处钉「设计值在真实工作区原样落实」）
+// 设计最小窗 1000×640（UAT3 D-R3-2 从 1280×800 收窄）——640 ≤ 工作区可用 805，本机档
+// **不钳**（旧 845 > 805 曾是钳制档；钳制行为本身由 below_work_area_paths ① 用例覆盖，
+// 此处钉「设计值在真实工作区原样落实」）
 REGISTER_TEST(window_layout_min_window_macos_work_area,
-              "window_layout: macOS 档（工作区 1470×833 点）设计最小窗 800 ≤ 可用 805 不钳", {
+              "window_layout: macOS 档（工作区 1470×833 点）设计最小窗 640 ≤ 可用 805 不钳", {
     const auto min = minWindowSizeForWorkArea(
-        InitialWindowRequest{1600, 1000, 1280, 800}, WorkArea{0, 0, 1470, 833}, 1.0f,
+        InitialWindowRequest{1600, 1000, 1000, 640}, WorkArea{0, 0, 1470, 833}, 1.0f,
         FrameInsets{0, 28});
     DOCTEST_CHECK(min.height <= 805);  //≤ 工作区高 − 标题栏(28)
-    DOCTEST_CHECK_EQ(min.height, 800);          //设计 800 ≤ 833 − 28 = 805，不钳
-    DOCTEST_CHECK_EQ(min.width, 1280);          //宽不钳：1280 ≤ 1470 − 0
+    DOCTEST_CHECK_EQ(min.height, 640);          //设计 640 ≤ 833 − 28 = 805，不钳
+    DOCTEST_CHECK_EQ(min.width, 1000);          //宽不钳：1000 ≤ 1470 − 0
     return true;
 })
 
 // Windows 档（本机实测：工作区 1920×1020 物理 @125%、外框 {18,47}）：
-// 换算后 800 逻辑 = 1000 物理 > 可用 973（1020 − 47），仍按工作区钳到 973。钳后
-// 973 物理 = 778 逻辑，且 973 + 47 = 1020 == 工作区，最小窗外框仍装得进屏
+// UAT3 D-R3-2 后设计最小窗 1000×640 → 换算 1250×800 物理，高 800 ≤ 可用 973
+//（1020 − 47）**不再钳**（旧 1280×800 时代 800 逻辑 = 1000 物理 > 973 被钳 973 =
+// 778 逻辑——钳制路径改由 below_work_area_paths ① 覆盖）。有效下限 = 设计下限
 REGISTER_TEST(window_layout_min_window_windows_work_area,
-              "window_layout: Windows 档（1920×1020 物理 @1.25）换算+按工作区钳，与改动前对照不回归", {
+              "window_layout: Windows 档（1920×1020 物理 @1.25）设计最小窗 1250×800 物理不钳", {
     constexpr FrameInsetsBaseline kWindowsBaseline{14.4f, 37.6f};
     const FrameInsets frame125 = frameInsetsForScale(1.25f, kWindowsBaseline);
     const auto min = minWindowSizeForWorkArea(
-        InitialWindowRequest{1600, 1000, 1280, 800}, WorkArea{0, 0, 1920, 1020}, 1.25f,
+        InitialWindowRequest{1600, 1000, 1000, 640}, WorkArea{0, 0, 1920, 1020}, 1.25f,
         frame125);
-    DOCTEST_CHECK_EQ(min.height, 973);   //min(800×1.25 = 1000, 1020 − 47 = 973)
-    DOCTEST_CHECK_EQ(min.width, 1600);   //1280×1.25 = 1600；1600+18 < 1920 不钳
-    // 不低于设计下限：钳后必须 ≥800 物理，且外框仍装得进工作区
-    DOCTEST_CHECK(min.height > 800);
+    DOCTEST_CHECK_EQ(min.height, 800);   //640×1.25 = 800 ≤ 1020 − 47 = 973，不钳
+    DOCTEST_CHECK_EQ(min.width, 1250);   //1000×1.25 = 1250；1250+18 < 1920 不钳
+    // 不低于设计下限（物理口径），且外框仍装得进工作区
+    DOCTEST_CHECK(min.height >= 800);
     DOCTEST_CHECK(min.height + frame125.height <= 1020);
     DOCTEST_CHECK(min.width + frame125.width <= 1920);
     return true;
