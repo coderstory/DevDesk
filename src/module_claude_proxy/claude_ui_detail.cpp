@@ -55,7 +55,8 @@ float drawDetailBasic(eui::Ui& ui, float x0, float y0, float w,
                       float contentBottom) {
     (void)contentBottom;  // 固定 6 行字段，高度与容器无关
     const Profile* shown = v.shown;
-    // 基础信息 pane：名称 + 未激活徽章 + Base URL + API Key + 接管
+    // 基础信息 pane：名称 + Base URL + API Key + 接管
+    //（UAT5：原「未激活」徽章删除——选中语义已由列表卡绿圈白勾承担，徽章属噪音）
     // 文本必须带 verticalAlign=Center，否则 runtime 从行框顶沿起排不居中；只加对齐，行距/行宽不变。
     ui.text("claude.field.name.label")
         .position(x0, y0).size(w * 0.5f - 8.0f, 14.0f)
@@ -72,20 +73,6 @@ float drawDetailBasic(eui::Ui& ui, float x0, float y0, float w,
         .text(v.nameValue).fontSize(14.0f).lineHeight(24.0f)
         .verticalAlign(eui::VerticalAlign::Center)
         .color(t.colors.wechat.textPrimary).build();
-    if (shown && !shown->isActive) {
-        ui.rect("claude.field.name.inactive.bg")
-            .position(x0 + w * 0.5f - 72.0f, y0 + 4.0f)
-            .size(56.0f, 16.0f).color(t.colors.surfaceElevated)
-            .radius(t.sizes.radiusPill)
-            .border(1.0f, t.colors.warning).build();
-        ui.text("claude.field.name.inactive")
-            .position(x0 + w * 0.5f - 72.0f, y0 + 4.0f)
-            .size(56.0f, 16.0f).text("未激活")
-            .fontSize(10.0f).lineHeight(16.0f)
-            .horizontalAlign(eui::HorizontalAlign::Center)
-            .verticalAlign(eui::VerticalAlign::Center)
-            .color(t.colors.warning).build();
-    }
     const float urlY = y0 + 56.0f;
     ui.text("claude.field.url.label")
         .position(x0, urlY).size(w, 14.0f)
@@ -360,8 +347,9 @@ float drawDetailEnv(eui::Ui& ui, float x0, float y0, float w,
         const float valW = std::max(40.0f, w - keyColW - 48.0f);
         ui.rect(std::string("claude.env.row.bg.") + rid)
             .position(x0, ey).size(w, rowH)
-            .color(t.colors.surfaceElevated).radius(t.sizes.radiusSmall)
-            .border(1.0f, hint ? t.colors.borderMuted : t.colors.error)
+            .color(t.colors.wechat.cardBg).radius(t.sizes.radiusSmall)
+            .border(1.0f, hint ? t.colors.wechat.dividerPrimary
+                               : t.colors.error)
             .build();
         // 行带 1：键名 | 值（同带 Center 对齐）；长文本走省略号 + clip，不换行不撑高。
         ui.text(std::string("claude.env.key.") + rid)
@@ -641,12 +629,15 @@ float drawDetailCallsPane(eui::Ui& ui, float x0, float y0, float w,
         (singleLineDrawn ? kEmptyH + kViewallGap : kViewallGap);
     if (viewY + kViewallH <= contentBottom + 0.5f) {
         // 「查看全部」是自绘按钮（单测定位 claude.calls.viewall.hit 依赖此 id）。
+        //（UAT5 米黄清理：暖橙 surfaceElevated → WeChat Secondary 白底灰边，文字用 primaryText 绿字档）
         ui.rect("claude.calls.viewall.hit")
             .position(x0, viewY)
             .size(w, kViewallH)
-            .states(t.colors.surfaceElevated, t.colors.hover, t.colors.active)
+            .states(t.colors.wechat.secondaryButtonBg,
+                    t.colors.wechat.dividerSecondary,
+                    t.colors.wechat.dividerSecondary)
             .radius(t.sizes.radiusSmall)
-            .border(1.0f, t.colors.borderDefault)
+            .border(1.0f, t.colors.wechat.dividerPrimary)
             .transition(core::Transition::make(0.1f, core::Ease::OutQuad))
             .onClick([oc = openCalls] { oc(); })
             .build();
@@ -658,7 +649,7 @@ float drawDetailCallsPane(eui::Ui& ui, float x0, float y0, float w,
             .lineHeight(kViewallH)
             .horizontalAlign(eui::HorizontalAlign::Center)
             .verticalAlign(eui::VerticalAlign::Center)
-            .color(t.colors.primary)
+            .color(t.colors.wechat.primaryText)
             .build();
         return viewY + kViewallH;
     }
@@ -693,8 +684,8 @@ float drawDetailAdvanced(eui::Ui& ui, float x0, float y0, float w,
         .color(t.colors.textTertiary).build();
     ui.rect("claude.field.dialect.bg")
         .position(x0, y0 + labelGap).size(w, fieldH)
-        .color(t.colors.surfaceElevated).radius(t.sizes.radiusSmall)
-        .border(1.0f, t.colors.borderMuted).build();
+        .color(t.colors.wechat.cardBg).radius(t.sizes.radiusSmall)
+        .border(1.0f, t.colors.wechat.dividerPrimary).build();
     ui.text("claude.field.dialect.value")
         .position(x0 + 12.0f, y0 + labelGap).size(w - 24.0f, fieldH)
         .text(v.dialectText).fontSize(t.sizes.fontSizeSmall).lineHeight(fieldH)
@@ -709,8 +700,8 @@ float drawDetailAdvanced(eui::Ui& ui, float x0, float y0, float w,
         .color(t.colors.textTertiary).build();
     ui.rect("claude.field.fallback.bg")
         .position(x0, fbY + labelGap).size(w, fieldH)
-        .color(t.colors.surfaceElevated).radius(t.sizes.radiusSmall)
-        .border(1.0f, t.colors.borderMuted).build();
+        .color(t.colors.wechat.cardBg).radius(t.sizes.radiusSmall)
+        .border(1.0f, t.colors.wechat.dividerPrimary).build();
     ui.text("claude.field.fallback.value")
         .position(x0 + 12.0f, fbY + labelGap).size(w - 24.0f, fieldH)
         .text(v.fallbackName).fontSize(t.sizes.fontSizeSmall).lineHeight(fieldH)
@@ -754,8 +745,8 @@ float drawDetailAdvanced(eui::Ui& ui, float x0, float y0, float w,
         const std::string idx = std::to_string(i);
         ui.rect("claude.advjson.row.bg." + idx)
             .position(x0, ey).size(w, kKeyRowH)
-            .color(t.colors.surfaceElevated).radius(t.sizes.radiusSmall)
-            .border(1.0f, t.colors.borderMuted).build();
+            .color(t.colors.wechat.cardBg).radius(t.sizes.radiusSmall)
+            .border(1.0f, t.colors.wechat.dividerPrimary).build();
         // 键列单行省略号（显式 maxWidth 是前提）+ clip 兜底；来源列有界枚举，保留 clip。
         ui.text("claude.advjson.row.key." + idx)
             .position(x0 + 12.0f, ey).size(w * 0.4f, kKeyRowH)
