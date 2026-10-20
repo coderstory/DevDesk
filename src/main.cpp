@@ -17,6 +17,7 @@
 #include "core/theme.h"
 #include "core/tray_menu_spec.h"
 #include "core/window_layout.h"
+#include "core/window_effect_state.h"  // M-3：frosted 降级门控的 active 档回查缝注册
 #include "module_home/home_service.h"
 #include "module_toggle_bridge.h"
 #include "platform/message_box.h"
@@ -212,6 +213,25 @@ void prepareClaudeServiceBeforeModules();
 void assembleClaudeServiceNow();
 void ensureClaudeServiceAssembledImpl(bool autoStart);
 
+// M-3（UAT2 一审）桥：EUI-NEO 实际生效档位（app::activeWindowEffect）→
+// core::window_effect_state 的档位串。core 层不可见 eui/app.h，经函数指针缝
+// 注入（下 getRouter 装配段）；surfaceAlpha 用它做 frosted 降级门控——请求
+// 磨砂但系统不支持 Acrylic（< Win11 22621）时 sidebar/about 铺色按 active 档
+// 回安全 alpha，不再近全透。
+std::string activeWindowEffectTier() {
+    using core::platform::WindowEffect;
+    switch (app::activeWindowEffect()) {
+    case WindowEffect::Acrylic:
+    case WindowEffect::Mica:
+    case WindowEffect::MicaAlt:
+        return "frosted";       // backdrop 材质实际生效
+    case WindowEffect::Transparent:
+        return "translucent";   // 透明帧缓冲在透、无 backdrop（降级落点）
+    default:
+        return "off";           // None：实色（降级落点/显式关）
+    }
+}
+
 ::core::Router* getRouter() {
     static ::core::Router router;
     // 模块 static 须先于 armExitHook 构造：atexit LIFO 保证 handler 先于 modules/router 析构
@@ -266,6 +286,8 @@ void ensureClaudeServiceAssembledImpl(bool autoStart);
             });
         // 惰性装配桥：会话内拨 claude 开关 → 装配单例（autoStart 才 startProxy）；目标静态存储期无悬垂
         app::toggle::setClaudeAssemblyHandler(&ensureClaudeServiceAssembledImpl);
+        // M-3：frosted 降级门控的 active 档回查缝（surfaceAlpha 读，桥见上）
+        core::window_effect_state::setActiveTierProvider(&activeWindowEffectTier);
         initialized = true;
     }
     return &router;
@@ -468,8 +490,9 @@ bool showTrayStyledMenu(int x, int y) {
         item.iconCodepoint = s.iconCodepoint;
         items.push_back(std::move(item));
     }
+    // M-2（UAT2 一审）：托盘菜单与五模块 toast/菜单统一 wechat 皮肤
     const components::StyledMenuStyle style(
-        core::theme::componentTokens(core::theme::current()));
+        core::theme::componentTokensWeChat(core::theme::current()));
     return components::showStyledMenu("tray", std::move(items), style,
                                       static_cast<float>(x), static_cast<float>(y),
                                       [spec](const std::vector<int>& path) {
