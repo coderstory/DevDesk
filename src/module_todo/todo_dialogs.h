@@ -66,8 +66,12 @@ struct PopupStack {
 struct DialogHost {
     const std::vector<Column>* columns = nullptr;
     const std::vector<Task>* tasks = nullptr;
-    // 落库动作：返回空串 = 成功，非空 = 弹窗内嵌红字要显示的错误文案
-    std::function<std::string(int64_t, const std::string&)> createTask;
+    // 落库动作：返回空串 = 成功，非空 = 弹窗内嵌红字要显示的错误文案。
+    // UAT5 方案 A 富创建：attrs（描述/优先级/截止）与 createTask 一次 INSERT 落库；
+    // tags 走建成后的 updateTask 补写（service 的 NewTaskAttributes 不收 tags）
+    std::function<std::string(int64_t, const std::string&, const NewTaskAttributes&,
+                              const std::vector<std::string>&)>
+        createTask;
     std::function<std::string(const std::string&)> createColumn;
     std::function<std::string(int64_t, const std::string&)> renameColumn;
     std::function<void(int64_t)> deleteTask;
@@ -87,17 +91,53 @@ struct DialogHost {
 
 struct DialogSet;
 
+// 标签输入回车 → 追加（去空白/去重/空忽略）；NewTaskDialog 与 DetailDialog 共用同一语义
+inline void appendTag(std::vector<std::string>& tags, std::string& input) {
+    std::string tag;
+    for (char c : input) {
+        if (c != ' ' && c != '\t') tag += c;
+    }
+    input.clear();
+    if (tag.empty()) return;
+    for (const auto& existing : tags) {
+        if (existing == tag) return;
+    }
+    tags.push_back(std::move(tag));
+}
+
+// 截止快选档位（方案 A 截止 segment）：0=今天 1=明天 2=自选（datepicker 写回）
+enum class DueChoice { Today = 0, Tomorrow = 1, Custom = 2 };
+
+// datepicker 当前归属弹窗——「选择…」入口在哪个弹窗里，滚轮锚点读谁的表单、
+// 确定写回谁的 dueAt（详情与新建可同时在栈上，不能靠「谁开着」推断）
+enum class DatePickOwner { Detail, NewTask };
+
+// UAT5 方案 A 富创建（demo task-new-dialog-redesign.html）：一次给全
+// 标题/描述/优先级/截止/标签，字段映射现有 Task 数据模型（只填提供的，其余默认）
 struct NewTaskDialog {
     int64_t columnId = 0;
     std::string title;
-    std::string error;  // 内嵌红字（claude formError_ 模式）
+    std::string description;                 // 描述（可选）
+    Priority priority = Priority::None;
+    std::optional<int64_t> dueAt;            // 已选截止；nullopt = 未选（segment 无选中）
+    DueChoice dueChoice = DueChoice::Today;  // 仅当 dueAt 有值时代表选中档
+    std::vector<std::string> tags;
+    std::string tagInput;  // 标签输入框（回车追加，未落库）
+    std::string error;      // 内嵌红字（claude formError_ 模式）
 
-    // 打开时清字段（错误随下一次输入清除）
+    // 打开时清全部字段（错误随下一次输入清除）
     void reset(int64_t column) {
         columnId = column;
         title.clear();
+        description.clear();
+        priority = Priority::None;
+        dueAt = std::nullopt;
+        dueChoice = DueChoice::Today;
+        tags.clear();
+        tagInput.clear();
         error.clear();
     }
+    void addTag() { appendTag(tags, tagInput); }
     // 提交失败（空标题/服务错误）→ 弹窗内嵌红字、弹窗不关；成功 → 关窗。
     void submit(PopupStack& popups, const DialogHost& host);
 };
@@ -167,7 +207,7 @@ struct DetailDialog {
     // 打开时从任务装载全部字段（选中态 + 视图状态落盘在模块侧）
     void reset(const Task& task);
     // 标签输入回车 → 追加（去空白/去重/空忽略；保存时才落库）
-    void addTag();
+    void addTag() { appendTag(tags, tagInput); }
     // 表单与库中任务是否有差异（backdrop 守卫用）；任务不在内存时按不脏处理
     bool dirty(const std::vector<Task>& tasks) const;
     // 表单字段 → Task（含 position 保留；completedAt 取当前完成态）
@@ -215,6 +255,9 @@ struct DialogSet {
     DetailDialog detail;
     ContextMenuState ctx;
     OverdueDialog overdue;
+    // datepicker 归属弹窗（详情「选择日期…」/ 新建「选择…」两个入口都写它）：
+    // 打开时由入口设置；锚点读取与确定写回都按它路由
+    DatePickOwner datePickOwner = DatePickOwner::Detail;
     // datepicker 本次打开已绘制的帧数（UAT5「默认当天」机制，详见 drawDatePicker）：
     // 首帧喂锚点日期初始化滚轮 + 放掉上一会话草稿，后续帧喂哨兵提交值——组件的
     // 「确定」只在「滚轮草稿 ≠ 提交值」时回调 onChange，不喂哨兵则「打开不滚直接
