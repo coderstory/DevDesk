@@ -78,6 +78,12 @@ constexpr float kTreeRowHeight = 36.0f;
 constexpr float kTreeArrowFontSize = 20.0f;
 constexpr float kTreeFontSize = 14.0f;
 
+// UAT3 D-R3-3（目录树折叠重做）：面板宽动画与收起形态常量。
+constexpr float kTreePanelWidth = 240.0f;         // 展开宽（沿用 UAT2 F批 240）
+constexpr float kTreePanelAnimK = 0.18f;          // 每帧向目标靠拢的固定 lerp 系数
+constexpr float kTreePanelSnapEps = 1.0f;         // 距目标 <1px 视为收敛，直接钉住
+constexpr float kTreePanelContentMinW = 220.0f;   // 内容回画门槛（动画中只画面板壳）
+
 // 单行树条目：整行包一层 stack —— position() 只在 stack 内生效，流式子元素会被静默忽略。
 // W8：选中态改 wechat 风格（§4.3）——浅灰底 #E5E5E5 + 左 2px 绿竖线。
 // 搜索命中时高亮关键词（§3.2.4 补充项）。
@@ -345,8 +351,11 @@ public:
         consumeNavPayload();
 
         const auto& t = core::theme::current();
+        // UAT3 T1（D-R3-1 米黄清除）：页面主体皮肤整体切 wechat（与 todo/home 同口径）。
+        // 本变量只喂页面主体（树/编辑/实时/预览/大纲/状态栏链）；popup 作用域
+        // （弹窗/右键菜单/toast）各自就地取 componentTokensWeChat，不经本变量。
         const auto componentTheme =
-            core::theme::componentTokens(t);
+            core::theme::componentTokensWeChat(t);
 
         // 主题名变化 = 换色表 = bump styleRevision 触发全部可视行重高亮
         if (const std::string themeName = core::theme::currentThemeName();
@@ -365,8 +374,15 @@ public:
         const float pad = t.sizes.spacingXXLarge; // 40
         const float contentW = screen.width - pad * 2.0f;
         const float contentH = screen.height - pad * 2.0f;
-        // UAT2 F批：中栏 220→240；可折叠——折叠时留 16px 细边（展开按钮一线入口）
-        const float sideW = treePanelCollapsed_ ? 16.0f : 240.0f;
+        // UAT3 D-R3-3 c：面板宽每帧向目标 lerp（固定系数），距目标 <1px 即钉住；
+        // treePanelCollapsed_（bool）仍为唯一持久化口径，本值启动时按折叠态直接落位。
+        // sideW 取连续值 → midW/列宽随动画平滑过渡，窄窗下不再二值跳变。
+        const float treeTargetW = treePanelCollapsed_ ? 0.0f : kTreePanelWidth;
+        treePanelWidth_ += (treeTargetW - treePanelWidth_) * kTreePanelAnimK;
+        if (std::fabs(treeTargetW - treePanelWidth_) < kTreePanelSnapEps) {
+            treePanelWidth_ = treeTargetW;
+        }
+        const float sideW = treePanelWidth_;
         const float gap = t.sizes.spacingLarge;
         const float midW = (contentW - sideW - gap * 2.0f) / 2.0f;
         const float bodyH = contentH - ui_kit::kHeaderH - t.sizes.spacingLarge;
@@ -382,6 +398,9 @@ public:
                 drawBody(ui, contentW, bodyH, sideW, midW, gap, t, componentTheme);
             })
             .build();
+
+        // UAT3 D-R3-3 b：完全收起后，编辑区左上角常显的圆形展开浮钮
+        drawTreeExpandFab(ui, screen, pad, t);
 
         drawOutlinePanel(ui, screen, t, componentTheme);
 
@@ -418,8 +437,9 @@ private:
                     const core::theme::Tokens& t) {
         (void)contentH;
         (void)bodyH;
+        // UAT3 T1：页面头部控件（大纲开关）随页面主体切 wechat；开关主色 = 微信绿。
         const auto componentTheme =
-            core::theme::componentTokens(t);
+            core::theme::componentTokensWeChat(t);
         const std::string subtitle =
             service_
                 ? "Ctrl+Shift+P 切换视图 · 按 ? 查看快捷键"
@@ -559,6 +579,37 @@ private:
             .build();
     }
 
+    // D-R3-3 b：收起态展开浮钮——面板完全收起（宽 0）后，编辑区左上角常显的
+    // 圆形 28px 微信风格钮（chevron-right = 向右展开）。页面级浮层（zIndex 5，
+    // 低于大纲面板 10 / 弹窗 1000），常驻 id md.tree.expand.btn（含 .bg/.hit 子件）。
+    void drawTreeExpandFab(eui::Ui& ui,
+                           const eui::Screen& screen,
+                           float pad,
+                           const core::theme::Tokens& t) {
+        (void)screen;
+        // 收起动画未收敛（宽 >1px）不画：避免收起途中浮钮与残影同屏。
+        if (treePanelWidth_ > kTreePanelSnapEps) return;
+        // 位置：body 左上角——横跨页边留白/树列空槽缝，右缘轻搭编辑列左缘
+        //（收起后编辑列 x = pad + gap，浮钮右缘 62 < 标签 chip 起点 64，互不压）。
+        const float fabY = pad + ui_kit::kHeaderH + t.sizes.spacingLarge + 8.0f;
+        ui.stack("md.tree.expand")
+            .position(pad - 6.0f, fabY)
+            .size(28.0f, 28.0f)
+            .zIndex(5)
+            .content([&] {
+                components::button(ui, "md.tree.expand.btn")
+                    .size(28.0f, 28.0f)
+                    .icon(0xF054)  // fa-chevron-right
+                    .fontSize(14.0f)
+                    .theme(core::theme::componentTokensWeChat(t), false)
+                    .textColor(t.colors.wechat.textSecondary)
+                    .radius(t.sizes.radiusPill)  // 圆形
+                    .onClick([this] { toggleTreePanel(); })
+                    .build();
+            })
+            .build();
+    }
+
     void drawTreeColumn(eui::Ui& ui,
                         float bodyH,
                         float sideW,
@@ -566,7 +617,10 @@ private:
                         const components::theme::ThemeColorTokens& componentTheme) {
         // 单 stack 列 = bg rect + 绝对定位内容；bg 与 stack 两侧尺寸必须精确重合，
         // 测试 md_tree_column_layout_semantics 锁定（错位会静默溢出）。
+        // D-R3-3 b：完全收起时本列仍以 0 宽占位（保持 md.body 行间隙公式与右缘
+        // 对齐不变），但不画 bg/内容——展开入口移交 drawTreeExpandFab 浮钮。
         ui.stack("md.tree").size(sideW, bodyH).content([&] {
+            if (sideW <= kTreePanelSnapEps) return;
             // 白底面板（§4.14：wechat.cardBg #FFFFFF）+ 右侧 1px 分割线（§4.7）。
             // 去圆角/去 border：flat 白卡，右分割线单独画。
             ui.rect("md.tree.bg")
@@ -578,25 +632,36 @@ private:
                 .size(1.0f, bodyH)
                 .color(t.colors.wechat.dividerPrimary)
                 .build();
-            // 折叠态（UAT2 F批）：只画 16px 细边 + 展开按钮（fa-bars），内容全隐。
-            if (treePanelCollapsed_) {
-                components::button(ui, "md.tree.expand")
-                    .position(0.0f, 16.0f)
-                    .size(16.0f, 36.0f)
-                    .icon(0xF0C9)  // fa-bars
-                    .fontSize(12.0f)
-                    .theme(componentTheme, false)
-                    .textColor(t.colors.wechat.textSecondary)
-                    .radius(t.sizes.radiusWeChat)
-                    .onClick([this] { toggleTreePanel(); })
-                    .build();
-                return;
-            }
-            // 搜索框 + 右侧三个图标按钮（§3.3.3 新建按钮上移；UAT2 F批加折叠键）。
-            // 搜索框窄至留 92px 给三个 28px 图标按钮 + 间距。
-            const float searchW = sideW - 128.0f;  // 16 左 + 4 gap + 92 btns + 16 右
+            // 收起中 / 展开动画未到门槛：只画面板壳（bg/divider），内容不画——
+            // 窄板上搜索框/按钮的固定几何会破版；内容左锚定，展开末段自然滑入。
+            if (treePanelCollapsed_ || sideW < kTreePanelContentMinW) return;
+            // D-R3-3 a：面板头——「目录」标题 + 右缘独立折叠钮（不再塞进搜索框行
+            // 当第三键）。头行 y 8..40；搜索框行随之下移 16→48，标签/列表基准 +32。
+            ui.text("md.tree.head.title")
+                .position(16.0f, 8.0f)
+                .size(sideW - 60.0f, 32.0f)
+                .text("目录")
+                .fontSize(kTreeFontSize)
+                .lineHeight(32.0f)
+                .fontWeight(700)
+                .verticalAlign(eui::VerticalAlign::Center)
+                .color(t.colors.wechat.textPrimary)
+                .build();
+            components::button(ui, "md.tree.collapse")
+                .position(sideW - 44.0f, 10.0f)
+                .size(28.0f, 28.0f)
+                .icon(0xF053)  // fa-chevron-left（收起 = 面板向左收）
+                .fontSize(14.0f)
+                .theme(componentTheme, false)
+                .textColor(t.colors.wechat.textSecondary)
+                .radius(t.sizes.radiusWeChat)
+                .onClick([this] { toggleTreePanel(); })
+                .build();
+            // 搜索框 + 右侧两个图标按钮（折叠键已上移面板头；§3.3.3 新建按钮上移）。
+            // 搜索框窄至留 64px 给两个 28px 图标按钮 + 间距。
+            const float searchW = sideW - 96.0f;  // 16 左 + 4 gap + 60 btns + 16 右
             components::input(ui, "md.search")
-                .position(16.0f, 16.0f)
+                .position(16.0f, 48.0f)
                 .size(searchW, 40.0f)
                 .value(searchQuery_)
                 .placeholder("搜索笔记…")
@@ -609,7 +674,7 @@ private:
                 })
                 .build();
             ui.text("md.search.icon")
-                .position(28.0f, 27.0f)
+                .position(28.0f, 59.0f)
                 .size(18.0f, 18.0f)
                 .icon(0xF002)  // fa-magnifying-glass
                 .fontSize(kTreeFontSize)
@@ -619,7 +684,7 @@ private:
             // 清空按钮（补充项 §3.2.4）：搜索非空时显示「×」，点击清空。
             if (!searchQuery_.empty()) {
                 ui.rect("md.search.clear")
-                    .position(16.0f + searchW - 28.0f, 16.0f)
+                    .position(16.0f + searchW - 28.0f, 48.0f)
                     .size(28.0f, 40.0f)
                     .color(eui::Color{0.0f, 0.0f, 0.0f, 0.0f})
                     .hoverColor(t.colors.wechat.dividerSecondary)
@@ -629,7 +694,7 @@ private:
                     })
                     .build();
                 ui.text("md.search.clear.icon")
-                    .position(16.0f + searchW - 28.0f, 16.0f)
+                    .position(16.0f + searchW - 28.0f, 48.0f)
                     .size(28.0f, 40.0f)
                     .text("×")
                     .fontSize(14.0f)
@@ -640,11 +705,12 @@ private:
                     .build();
             }
             // +笔记 / +文件夹 图标按钮（从面板底部上移到搜索框右侧，§3.3.3）
-            // 0xF067 = fa-plus；onClick 接原回调不变。UAT2 F批：高 36→40、右缘 padding 16。
-            const float btnX0 = sideW - 108.0f;
-            const float btnX1 = sideW - 76.0f;
+            // 0xF067 = fa-plus；onClick 接原回调不变。UAT3 D-R3-3：折叠键上移面板头后
+            // 两键贴右缘（右 padding 16 与左对称），行内不再有第三键。
+            const float btnX0 = sideW - 76.0f;
+            const float btnX1 = sideW - 44.0f;
             components::button(ui, "md.tree.new")
-                .position(btnX0, 16.0f)
+                .position(btnX0, 48.0f)
                 .size(28.0f, 40.0f)
                 .text("+")
                 .fontSize(t.sizes.fontSizeBody)
@@ -654,7 +720,7 @@ private:
                 .onClick([this] { openNewNoteDialog(); })
                 .build();
             components::button(ui, "md.tree.newfolder")
-                .position(btnX1, 16.0f)
+                .position(btnX1, 48.0f)
                 .size(28.0f, 40.0f)
                 .text("📁")
                 .fontSize(12.0f)
@@ -669,21 +735,9 @@ private:
                     newFolderParentOpen_ = false;
                 })
                 .build();
-            // 面板折叠按钮（UAT2 F批）：搜索框行第三键，点击收成 16px 细边。
-            // 图标/状态与 app_sidebar 折叠开关同款（0xF100 = fa-angles-left）。
-            components::button(ui, "md.tree.collapse")
-                .position(sideW - 44.0f, 16.0f)
-                .size(28.0f, 40.0f)
-                .icon(0xF100)  // fa-angles-left
-                .fontSize(t.sizes.fontSizeBody)
-                .theme(componentTheme, false)
-                .textColor(t.colors.wechat.textSecondary)
-                .radius(t.sizes.radiusWeChat)
-                .onClick([this] { toggleTreePanel(); })
-                .build();
 
-            // UAT2 F批：搜索框行高 40（y16..56），标签区下移保持 8px 呼吸
-            const float tagY = 64.0f;
+            // D-R3-3 a：搜索框行高 40（y48..88），标签区下移保持 8px 呼吸
+            const float tagY = 96.0f;
             float tagAreaH = 0.0f;
             if (!allTags_.empty()) {
                 ui.text("md.tags.title")
@@ -746,8 +800,8 @@ private:
             }
 
             // 搜索时树展平为命中文件列表；空搜索 = 二级目录树
-            // UAT2 F批：搜索框行下移后基准 60→68（保持与搜索框底 12px 呼吸）
-            const float listY = 68.0f + tagAreaH;
+            // D-R3-3 a：搜索框行下移后基准 68→100（保持与搜索框底 12px 呼吸）
+            const float listY = 100.0f + tagAreaH;
             // 新建按钮已上移到搜索框右侧，底部不再预留按钮区——只留 16px 底 padding。
             const float listH = std::max(0.0f, bodyH - listY - 16.0f);
 
@@ -980,11 +1034,13 @@ private:
             .size(panelW, panelH)
             .zIndex(10)
             .content([&] {
+                // UAT3 T1：大纲浮面板原为暖橙 surfaceElevated 米色底（米黄根源之一），
+                // 随页面主体整体 wechat 化——白卡底 + 一级分割线边框 + wechat 文字档。
                 ui.rect("md.outline.panel.bg")
                     .size(panelW, panelH)
-                    .color(t.colors.surfaceElevated)
+                    .color(t.colors.wechat.cardBg)
                     .radius(t.sizes.radiusLarge)
-                    .border(1.0f, t.colors.borderDefault)
+                    .border(1.0f, t.colors.wechat.dividerPrimary)
                     .build();
                 ui.text("md.outline.panel.title")
                     .position(16.0f, 10.0f)
@@ -993,7 +1049,7 @@ private:
                     .fontSize(t.sizes.fontSizeBody)
                     .lineHeight(24.0f)
                     .fontWeight(700)
-                    .color(t.colors.textPrimary)
+                    .color(t.colors.wechat.textPrimary)
                     .build();
                 components::button(ui, "md.outline.panel.close")
                     .position(panelW - 44.0f, 8.0f)
@@ -1001,7 +1057,7 @@ private:
                     .text("✕")
                     .fontSize(t.sizes.fontSizeSmall)
                     .theme(componentTheme, false)
-                    .textColor(t.colors.textSecondary)
+                    .textColor(t.colors.wechat.textSecondary)
                     .radius(t.sizes.radius)
                     .onClick([this] { outlineOpen_ = false; })
                     .build();
@@ -1015,7 +1071,7 @@ private:
                         .fontSize(t.sizes.fontSizeSmall)
                         .lineHeight(18.0f)
                         .wrap()
-                        .color(t.colors.textTertiary)
+                        .color(t.colors.wechat.textTertiary)
                         .build();
                     return;
                 }
@@ -1048,11 +1104,13 @@ private:
                             inner.stack(id)
                                 .size(rowW, 30.0f)
                                 .content([&] {
+                                    // UAT3 T1：行底/悬停/文字全部 wechat 化
+                                    //（选中 = 浅灰 selectedBg + 绿字，未选 = 白卡底 + 一级文字）
                                     inner.rect(id + ".row")
                                         .size(rowW, 30.0f)
-                                        .color(current ? t.colors.primarySoftBg
-                                                       : t.colors.surfaceElevated)
-                                        .hoverColor(t.colors.hover)
+                                        .color(current ? t.colors.wechat.selectedBg
+                                                       : t.colors.wechat.cardBg)
+                                        .hoverColor(t.colors.wechat.dividerSecondary)
                                         .radius(t.sizes.radiusSmall)
                                         .onClick([this, i, &ui, componentTheme] {
                                             jumpToHeading(ui, i, componentTheme);
@@ -1068,8 +1126,8 @@ private:
                                         .fontSize(t.sizes.fontSizeSmall)
                                         .lineHeight(30.0f)
                                         .verticalAlign(eui::VerticalAlign::Center)
-                                        .color(current ? t.colors.primaryText
-                                                       : t.colors.textPrimary)
+                                        .color(current ? t.colors.wechat.primary
+                                                       : t.colors.wechat.textPrimary)
                                         .fontWeight(current ? 700 : 400)
                                         .build();
                                 })
@@ -1385,7 +1443,9 @@ private:
                 leftColor = t.colors.wechat.warningRed;
             } else if (editorDirty_) {
                 left = name + "  ● 未保存";
-                leftColor = t.colors.warning;  // 保留橙黄语义色（wechat 无对应槽）
+                // UAT3 T1：未保存圆点改用 wechat 警示红（旧注释称「wechat 无对应槽」
+                // 有误——warningRed #FA5151 即警示档），暖橙黄退出 md 页主体。
+                leftColor = t.colors.wechat.warningRed;
             } else {
                 left = name + "  ✓ 已保存 " + formatSaveTime(lastSavedAt_);
                 leftColor = t.colors.wechat.primary;  // 保存成功 = 绿
@@ -1581,7 +1641,8 @@ private:
         rebuildSyncMap(contentWidth, style);
         const auto& blocks = blockModel_.blocks();
         std::vector<int> activeCodeIds;  // 本帧 CodeFence 块，供缓存回收
-        const eui::Color hoverTint = t.colors.hover;
+        // UAT3 T1：块 hover 底衬随页面主体 wechat 化（浅灰，同 surfaceHover 口径）。
+        const eui::Color hoverTint = t.colors.wechat.dividerSecondary;
         ui.column(prefix + ".blocks")
             .width(contentWidth)
             .gap(style.blockGap)
@@ -3045,6 +3106,8 @@ private:
         }
         collapsedDirs_.insert(st.collapsedDirs.begin(), st.collapsedDirs.end());
         treePanelCollapsed_ = st.treePanelCollapsed;  // UAT2 F批：面板折叠态恢复
+        // D-R3-3 c：启动即按折叠态把动画宽直接钉到目标（无起播动画，首帧即收敛）
+        treePanelWidth_ = treePanelCollapsed_ ? 0.0f : kTreePanelWidth;
         // 目录已被外部删除时不在此校验，由 newItemParentDir 兜底
         selectedDir_ = st.selectedDir;
         newItemTargetDir_ = selectedDir_;  // 启动时与选中态同步，后续由 openNote / selectDir 分别更新
@@ -3903,9 +3966,12 @@ private:
     std::time_t lastSavedAt_ = 0;      // 上次落盘时刻（状态栏 "✓ 已保存 HH:MM"）
 
     std::set<std::string> collapsedDirs_;             // 已收起的一级目录（内存态）
-    // 目录树面板折叠态（UAT2 F批）：true = 16px 细边（只画展开按钮）。
-    // 纯 UI 态（先例 ViewMode/selectedDir），跨会话经 md_view_state 持久化。
+    // 目录树面板折叠态（UAT3 D-R3-3）：true = 完全收起（宽 0，编辑区左上角浮展开钮）。
+    // 纯 UI 态（先例 ViewMode/selectedDir），跨会话经 md_view_state 持久化（仍存 bool）。
     bool treePanelCollapsed_ = false;
+    // 面板当前宽（D-R3-3 c 动画值）：每帧向目标（0 / kTreePanelWidth）lerp，收敛即钉住；
+    // 持久化只存 treePanelCollapsed_，本值启动时按折叠态直接落位（loadViewState）。
+    float treePanelWidth_ = kTreePanelWidth;
     bool outlineOpen_ = false;                        // 大纲浮动面板开关
     int64_t lastKnownMtime_ = 0;                      // 当前笔记已知磁盘 mtime（-1=已删除）
     bool conflictOpen_ = false;                       // 外部修改冲突 toast（action 二选一）
