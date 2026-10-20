@@ -3150,6 +3150,24 @@ REGISTER_TEST(todo_ui_priority_button_tint,
         }
     }
 
+    // 截止区按钮文字对比度（UAT3 W2-M2 防回退）：本卡无 dueAt，「未设置」绿字落
+    // selectedBg #E5E5E5——旧值 #07C160 仅 1.89:1（12px AA 需 4.5:1），文字档换
+    // primaryText #067036（4.93:1）后此处绿；「选择日期…」按钮（secondaryButtonBg
+    // 底 + textSecondary 文字 5.13:1）一并钉住。与优先级按钮同款 ≥4.5:1 断言。
+    {
+        Frame f(mod.get());
+        const auto* clearBg = f.ui.find("todo.dialog.detail.due.clear.bg");
+        const auto* clearText = f.ui.find("todo.dialog.detail.due.clear.text");
+        DOCTEST_REQUIRE(clearBg != nullptr);
+        DOCTEST_REQUIRE(clearText != nullptr);
+        DOCTEST_CHECK(contrastRatio(clearBg->color, clearText->color) >= 4.5f);
+        const auto* pickBg = f.ui.find("todo.dialog.detail.due.pick.bg");
+        const auto* pickText = f.ui.find("todo.dialog.detail.due.pick.text");
+        DOCTEST_REQUIRE(pickBg != nullptr);
+        DOCTEST_REQUIRE(pickText != nullptr);
+        DOCTEST_CHECK(contrastRatio(pickBg->color, pickText->color) >= 4.5f);
+    }
+
     mod->onStop();
     ::core::theme::setDark();  // 恢复默认深色（本用例切了浅色，防污染后续用例）
     return true;

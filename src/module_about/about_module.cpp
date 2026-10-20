@@ -127,20 +127,21 @@ public:
                                   ::core::window_effect_state::current())})
             .build();
 
-        // —— 卡片几何常量（UAT2 B 批放大：卡 520→580 / pad 24·32→32·40 / 图标 48→56 / 行高 36→40）——
-        constexpr float kCardW = 580.0f;
-        constexpr float kCardPadX = 32.0f;
-        constexpr float kCardPadTop = 40.0f;
-        constexpr float kCardPadBottom = 40.0f;
-        constexpr float kIconSize = 56.0f;
-        constexpr float kIconGap = 8.0f;
-        constexpr float kTitleH = 24.0f;
-        constexpr float kTitleGap = 20.0f;
-        constexpr float kRowH = 40.0f;
+        // —— 卡片几何常量（UAT3 放大：卡 580→760 / pad 32→48 / 上下留白 40→60 /
+        //    图标 56→72 / 标题高 24→30 / 行高 40→48 / 按钮 160·34→200·40）——
+        constexpr float kCardW = 760.0f;  // 名义卡宽；窄窗下按 cardW 公式自适应
+        constexpr float kCardPadX = 48.0f;
+        constexpr float kCardPadTop = 60.0f;
+        constexpr float kCardPadBottom = 60.0f;
+        constexpr float kIconSize = 72.0f;
+        constexpr float kIconGap = 10.0f;
+        constexpr float kTitleH = 30.0f;
+        constexpr float kTitleGap = 28.0f;
+        constexpr float kRowH = 48.0f;
         constexpr int kRowCount = 6;
-        constexpr float kButtonGap = 20.0f;
-        constexpr float kButtonH = 34.0f;  // ui_kit::kButtonHeight
-        constexpr float kButtonW = 160.0f;
+        constexpr float kButtonGap = 28.0f;
+        constexpr float kButtonH = 40.0f;
+        constexpr float kButtonW = 200.0f;
         constexpr float kFooterH = 20.0f;
         constexpr float kFooterGap = 16.0f;  // 卡底→页脚间距
         constexpr float kLabelW = 120.0f;
@@ -150,8 +151,13 @@ public:
                             kTitleGap + kRowCount * kRowH + kButtonGap +
                             kButtonH + kCardPadBottom;
 
+        // 宽度自适应（UAT3：最小窗宽拟降至 1000，content≈712 < 名义 760）：
+        // 有效卡宽 = min(kCardW, screen.width − 2×24)，下限 560（两侧至少 24px）
+        const float cardW =
+            std::max(560.0f, std::min(kCardW, screen.width - 2.0f * 24.0f));
+
         // 居中：x = (screen.w - cardW) / 2
-        const float cardX = std::max(0.0f, (screen.width - kCardW) / 2.0f);
+        const float cardX = std::max(0.0f, (screen.width - cardW) / 2.0f);
 
         // 页脚贴页面底部（spacingXXLarge padding）
         const float footerY = screen.height - t.sizes.spacingXXLarge - kFooterH;
@@ -165,12 +171,12 @@ public:
         // —— 居中纯白卡片：wechat.cardBg #FFFFFF + radiusWeChat 6px + dividerPrimary 边框 ——
         ui.stack("about.card")
             .position(cardX, cardY)
-            .size(kCardW, cardH)
+            .size(cardW, cardH)
             .content([&] {
                 // 卡片背景
                 ui.rect("about.card.bg")
                     .position(0.0f, 0.0f)
-                    .size(kCardW, cardH)
+                    .size(cardW, cardH)
                     .color(wc.cardBg)
                     .radius(t.sizes.radiusWeChat)
                     .border(1.0f, wc.dividerPrimary)
@@ -180,7 +186,7 @@ public:
                 // TODO: 待真实 DevDesk logo 资产（当前用 FontAwesome 0xF5LC fa-laptop-code 占位）
                 float y = kCardPadTop;
                 ui.text("about.card.icon")
-                    .position((kCardW - kIconSize) / 2.0f, y)
+                    .position((cardW - kIconSize) / 2.0f, y)
                     .size(kIconSize, kIconSize)
                     .icon(0xF5FC)  // fa-laptop-code（待真实 logo 资产）
                     .fontSize(kIconSize)
@@ -190,9 +196,9 @@ public:
 
                 ui.text("about.card.title")
                     .position(0.0f, y)
-                    .size(kCardW, kTitleH)
+                    .size(cardW, kTitleH)
                     .text("DevDesk")
-                    .fontSize(t.sizes.fontSizeLarge)
+                    .fontSize(t.sizes.fontSizeTitle)
                     .lineHeight(kTitleH)
                     .fontWeight(700)
                     .color(wc.textPrimary)
@@ -213,7 +219,7 @@ public:
 
                 const float valueX = kCardPadX + kLabelW + t.sizes.spacing;
                 // 留 20px 给 highlight 行的复制图标；非 highlight 行右端多 20px 空白（不影响左对齐）
-                const float valueW = kCardW - valueX - kCardPadX - 20.0f;
+                const float valueW = cardW - valueX - kCardPadX - 20.0f;
 
                 for (int i = 0; i < kRowCount; ++i) {
                     const float rowY = y + static_cast<float>(i) * kRowH;
@@ -222,7 +228,7 @@ public:
                     if (i > 0) {
                         ui.rect("about.card.divider." + std::to_string(i))
                             .position(kCardPadX, rowY - 0.5f)
-                            .size(kCardW - kCardPadX * 2.0f, 1.0f)
+                            .size(cardW - kCardPadX * 2.0f, 1.0f)
                             .color(wc.dividerSecondary)
                             .build();
                     }
@@ -232,7 +238,7 @@ public:
                         .position(kCardPadX, rowY)
                         .size(kLabelW, kRowH)
                         .text(rows[i].label)
-                        .fontSize(t.sizes.fontSizeSmall)
+                        .fontSize(t.sizes.fontSizeWeChat)  // UAT3 放大：13→16
                         .lineHeight(kRowH)
                         .color(wc.textSecondary)
                         .build();
@@ -242,7 +248,7 @@ public:
                         .position(valueX, rowY)
                         .size(valueW, kRowH)
                         .text(rows[i].value)
-                        .fontSize(t.sizes.fontSizeSmall)
+                        .fontSize(t.sizes.fontSizeWeChat)  // UAT3 放大：13→16
                         .lineHeight(kRowH)
                         .color(rows[i].highlight ? wc.primary : wc.textPrimary)
                         .build();
@@ -264,7 +270,7 @@ public:
                         std::string copyText = rows[i].value;
                         ui.rect("about.card.hit." + std::to_string(i))
                             .position(kCardPadX, rowY)
-                            .size(kCardW - kCardPadX * 2.0f, kRowH)
+                            .size(cardW - kCardPadX * 2.0f, kRowH)
                             .color(eui::Color{0.0f, 0.0f, 0.0f, 0.0f})
                             .cursor(eui::CursorShape::Hand)
                             .onClick([this, copyText] {
@@ -278,7 +284,7 @@ public:
                 y += kRowCount * kRowH + kButtonGap;
 
                 // —— 「复制全部信息」浅灰次按钮（§4.1 Secondary 级），居中 ——
-                const float btnX = (kCardW - kButtonW) / 2.0f;
+                const float btnX = (cardW - kButtonW) / 2.0f;
                 ui_kit::ButtonOptions opts;
                 opts.onClick = [this] {
                     ::core::window::setClipboardText(buildAllInfoText());

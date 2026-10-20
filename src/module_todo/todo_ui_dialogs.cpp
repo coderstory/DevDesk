@@ -710,7 +710,9 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
                 .colors(!hasDue ? t.colors.wechat.selectedBg
                                 : t.colors.wechat.secondaryButtonBg,
                         t.colors.wechat.dividerSecondary, t.colors.wechat.selectedBg)
-                .textColor(!hasDue ? t.colors.wechat.primary : t.colors.textSecondary)
+                // UAT3 W2-M2：未设置态绿字落 selectedBg #E5E5E5 仅 1.89:1（12px AA 需
+                // 4.5:1）——文字档用 primaryText #067036（4.93:1）；绿边框是装饰不动
+                .textColor(!hasDue ? t.colors.wechat.primaryText : t.colors.textSecondary)
                 .radius(t.sizes.radius)
                 .border(1.0f, !hasDue ? t.colors.wechat.primary
                                      : t.colors.wechat.dividerPrimary)
@@ -726,7 +728,8 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
                 .colors(hasDue ? t.colors.wechat.selectedBg
                                : t.colors.wechat.secondaryButtonBg,
                         t.colors.wechat.dividerSecondary, t.colors.wechat.selectedBg)
-                .textColor(hasDue ? t.colors.wechat.primary : t.colors.textSecondary)
+                // UAT3 W2-M2：已设日期绿字同落 selectedBg——文字档同上换 primaryText
+                .textColor(hasDue ? t.colors.wechat.primaryText : t.colors.textSecondary)
                 .radius(t.sizes.radius)
                 .border(1.0f, hasDue ? t.colors.wechat.primary
                                      : t.colors.wechat.dividerPrimary)
