@@ -73,7 +73,6 @@ inline constexpr long kLogTailReadWindow = 256 * 1024;  // tail 只读末尾 256
 inline constexpr float kAppearanceCardHeight = 184.0f;  // 外观卡（通用 | 半宽配对左列；降级提示行底 168 + 16，E 批布局统一后行序不变仍 184）
 inline constexpr float kEditorFontCardHeight = 144.0f;  // 编辑器字号卡（通用 | 半宽配对右列；hint 迁下拉下方第二行后行底 hintRowBelowY(68)+roundFs(16)=126，+16 → 144；85% 档 122 / 130% 档 187）
 inline constexpr float kModulesCardHeight = 198.0f;     // 模块插拔卡（模块 | 全宽卡内 2×2 开关格，UAT4 按用户拍板撑满；次行块底 68+roundFs(56)+roundFs(36)=160，+16 → 198 给字号档富余；85% 档 168 / 130% 档 257）
-inline constexpr float kDirectoryCardHeight = 216.0f;   // 目录卡（模块；内容起 y=68 顺移后 gitignore 行底 182，85% 档 34 字面行高需富余兜底）
 inline constexpr float kLogSettingsCardHeight = 144.0f; // 日志卡（日志；两下拉同排双列，hint 并一行下移后行底 126，+16 → 144；85% 档 122 / 130% 档 187）
 // GitHub Sync 卡（同步，UAT5 方案 A 三段式）：卡高由最坏行序决定——头部
 //（max(标题 22+2+摘要 16, 开关纵排 24+6+28)=58）+ 分段 12+1+12 + 配置组

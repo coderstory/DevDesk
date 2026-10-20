@@ -27,7 +27,6 @@
 #include "core/theme.h"
 #include "core/tool.h"
 #include "core/component_theme.h"
-#include "platform/file_open.h"
 #include "platform/github_api.h"     // platform::github::ApiLogEntry（弹窗日志源；GithubApi 由同步引擎持有）
 #include <core/platform/platform.h>   // core::platform::requestUiUpdate（唤醒主循环）
 #include <core/window/window_backend.h>   // core::window::setClipboardText（复制详情）
@@ -51,7 +50,6 @@
 #include <atomic>
 #include <chrono>
 #include <exception>
-#include <filesystem>
 #include <fstream>
 #include <future>
 #include <memory>
@@ -97,9 +95,6 @@ const CardSpec kCardSpecs[] = {
      CardHeightKind::ProxyWarnings, 0.0f, false, /*half=*/false, &drawProxyCard},
     {kTabModules, "settings.card.modules", nullptr, CardHeightKind::Fixed,
      kModulesCardHeight, false, /*half=*/false, &drawModulesCard},
-    {kTabModules, "settings.card.directory", kModuleIdMarkdown,
-     CardHeightKind::Fixed, kDirectoryCardHeight, false, /*half=*/false,
-     &drawDirectoryCard},
     {kTabLog, "settings.card.log", nullptr, CardHeightKind::Fixed,
      kLogSettingsCardHeight, true, /*half=*/false, &drawLogCard},
     {kTabLog, "settings.tab.log", nullptr, CardHeightKind::FillRemainder,
@@ -986,9 +981,9 @@ public:
         }
         const float proxyH = proxyCardHeightFor(warnLines);
         // 模块插拔门控：读 cfg_（启动注册状态的来源），拨开关即时预览下次启动的布局。
+        // UAT5 删目录卡后 markdown 开关不再影响设置页卡集，contentKey 只签 claude。
         const bool claudeOn =
             moduleEnabled(cfg_, kModuleIdClaudeProxy);
-        const bool mdOn = moduleEnabled(cfg_, kModuleIdMarkdown);
         const auto compTheme = core::theme::componentTokensWeChat(t);
 
         ui.column("settings.root")
@@ -1047,7 +1042,7 @@ public:
                     .contentKey("settings.cards.t" +
                                 std::to_string(settingsTab_) + "." +
                                 std::to_string(static_cast<int>(proxyH)) +
-                                (claudeOn ? "C" : "c") + (mdOn ? "M" : "m") +
+                                (claudeOn ? "C" : "c") +
                                 ".c" +
                                 std::to_string(static_cast<int>(pairColW +
                                                                0.5f)))
@@ -1102,7 +1097,6 @@ private:
             applyModuleEnabled(moduleId, on);
         };
         a.setDropdownOpen = [this](Dropdown d, bool v) { setDropdownOpen(d, v); };
-        a.openNotesDirectory = [this] { openNotesDirectory(); };
         a.applyProxyAutoStart = [this](bool on) { applyAutoStart(on); };
         a.applyProxyPort = [this] { applyProxyPort(); };
         a.setProxyPortDraft = [this](const std::string& v) {
@@ -1168,9 +1162,9 @@ private:
     // 遍历注册表画本 tab 的卡。UAT3 多列分栏：单游标改双游标——半宽卡两两成行
     //（行高 = max(对内卡高)，左卡 x=0、右卡 x=colW+gap，包一层全宽 row 作内容列子元素）；
     // 全宽卡独占一行并清掉挂起的半宽游标（落单半宽卡直接作内容列子元素，宽=colW）。
-    // 分组标题/分隔线仅全宽卡触发。UAT4：模块插拔卡按用户拍板改全宽（原 cols1
-    // 批落单半宽），卡内 2×2 开关格随全宽拉开；「功能模块」组题仍不存在，
-    // 落单半宽兜底逻辑保留不动。
+    // 分组标题/组间分隔线机制随 UAT5 删目录卡一并拆除（代理卡迁通用 tab 后
+    // 各卡自带标题、无全宽卡再需要组题锚）。UAT4：模块插拔卡按用户拍板改全宽
+    //（原 cols1 批落单半宽），卡内 2×2 开关格随全宽拉开；落单半宽兜底逻辑保留不动。
     // 纵向游标只累计参与绘制的卡，带下拉的卡需页面绝对 Y（openUp）。
     void drawCardRegion(eui::Ui& ui, float contentWidth, float cardsTopY,
                         float cardsH, float screenH,
@@ -1184,7 +1178,6 @@ private:
         in.logTailVersion = logTailVersion_;
         in.logViewScrollOffset = logViewScrollOffset_;
         in.takeoverManaged = takeoverManaged_;
-        in.notesDirExists = notesDirExists_;
         in.openDropdown = openDropdown_;
         in.proxy = svc;
         // GitHub Sync 快照
@@ -1207,7 +1200,6 @@ private:
         const SettingsCardActions a = cardActions();
         const float gapY = t.sizes.spacingLarge;
         float cardY = 0.0f;
-        bool firstInTab = true;  // 首卡前不加组间分隔线
         // 越界 tab（不可达）回落通用页
         const int tab = (settingsTab_ >= 0 && settingsTab_ < kSettingTabCount)
                             ? settingsTab_
@@ -1229,7 +1221,6 @@ private:
                               in, a};
             pendingHalf->draw(args);
             cardY += h + gapY;
-            firstInTab = false;
             pendingHalf = nullptr;
         };
         // 成对半宽卡：包一层全宽 row（行高 = max(对内卡高)，卡各持自身卡高——
@@ -1258,7 +1249,6 @@ private:
                 })
                 .build();
             cardY = rowY + rowH + gapY;
-            firstInTab = false;
             pendingHalf = nullptr;
         };
 
@@ -1276,34 +1266,6 @@ private:
                 continue;
             }
             flushLoneHalf();   // 全宽卡先清掉挂起的半宽游标
-            // 分组标题（§6 item 4）+ 组间分隔线（§6 item 6）：仅全宽卡触发
-            //（半宽卡不占组题锚）。UAT5 代理卡迁「通用」tab 后不再挂组题
-            //（通用 tab 卡自带标题不分组）；「存储配置」仍属模块 tab 目录卡。
-            const char* groupTitle = nullptr;
-            const std::string specId(spec.id);
-            if (specId == "settings.card.directory")
-                groupTitle = "存储配置";
-            if (groupTitle != nullptr) {
-                if (!firstInTab) {
-                    // 组间分隔线：wechat.dividerPrimary（#E5E5E5）
-                    ui.rect(std::string(spec.id) + ".groupdivider")
-                        .size(contentWidth, 1.0f)
-                        .color(t.colors.wechat.dividerPrimary)
-                        .build();
-                    cardY += 1.0f + gapY;
-                }
-                const float titleH = roundFs(20.0f);
-                ui.text(std::string(spec.id) + ".grouptitle")
-                    .size(contentWidth, titleH)
-                    .text(groupTitle)
-                    .fontSize(fs(14.0f))
-                    .lineHeight(titleH)
-                    .fontWeight(700)
-                    .color(t.colors.wechat.textPrimary)
-                    .build();
-                cardY += titleH + gapY;
-            }
-            firstInTab = false;
             const float h =
                 cardHeight(spec, proxyH, cardsH - cardY);
             CardDrawArgs args{ui, spec.id, contentWidth, h, t,
@@ -1348,29 +1310,6 @@ private:
                     .build();
             })
             .build();
-    }
-
-    void openNotesDirectory() {
-        const std::filesystem::path mdDir = ::core::paths::markdownDir();
-        std::error_code ec;
-        std::filesystem::create_directories(mdDir, ec);
-        if (ec) {
-            setStatus("笔记目录创建失败：" + ec.message(), true);
-            LOG_ERROR("Settings: create_directories 失败 " + mdDir.string() +
-                      ": " + ec.message());
-            return;
-        }
-        // 「打开目录」是唯一创建笔记目录的动作——刷新存在性快照。
-        refreshExternalState();
-        auto r = ::platform::file_open::openDirectory(mdDir.string());
-        if (r.isFail()) {
-            setStatus("打开目录失败：" + r.errorMessage(), true);
-            LOG_ERROR("Settings: openDirectory 失败 " + mdDir.string() + ": " +
-                      r.errorMessage());
-            return;
-        }
-        setStatus("已在文件管理器中打开笔记目录");
-        LOG_INFO("Settings: 已打开笔记目录 " + mdDir.string());
     }
 
     // 纯读盘（static → 可后台跑）：只读文件末尾窗口防大日志进内存，滑动裁剪避免 O(n²)。
@@ -1456,9 +1395,6 @@ private:
     void refreshExternalState() {
         auto* svc = claudeProxy();
         takeoverManaged_ = svc && svc->isClaudeCodeManaged();
-        std::error_code ec;
-        notesDirExists_ =
-            std::filesystem::exists(::core::paths::markdownDir(), ec) && !ec;
         externalStateLoaded_ = true;
     }
 
@@ -1538,7 +1474,6 @@ private:
     std::future<void> logTailWorker_;
     bool externalStateLoaded_ = false;    // 首次装载标记（compose 冷启动兜底）
     bool takeoverManaged_ = false;        // Claude Code 接管（sidecar 存在性）
-    bool notesDirExists_ = false;         // Markdown 笔记目录存在性
     float logViewScrollOffset_ = 0.0f;    // 日志查看卡内滚动位置
     std::string statusMessage_;
     bool statusIsError_ = false;
