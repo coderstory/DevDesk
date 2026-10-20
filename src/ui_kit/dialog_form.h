@@ -72,7 +72,7 @@ void drawDialogTitle(eui::Ui& ui, const std::string& id, float dialogWidth,
                      const DialogTitleOptions& options = {});
 
 // 标准按钮对
-// 7 种样式组合逐字复刻（不合并、不近似）；Themed = 走 .theme(themeTokens, primary)。
+// 9 种样式组合逐字复刻（不合并、不近似）；Themed = 走 .theme(themeTokens, primary)。
 enum class DialogButtonStyle {
     Secondary,        // .colors(surfaceElevated/hover/active) + textPrimary + border
     SecondaryThemed,  // .theme(themeTokens,false) + textPrimary + border
@@ -81,6 +81,7 @@ enum class DialogButtonStyle {
     Danger,           // .colors(error,error,error) + onPrimary
     DangerThemed,     // .theme(themeTokens,false) + .colors(error,error,error) + onPrimary
     DangerOutline,    // .colors(surfaceElevated/hover/active) + textColor(error) + border
+    DangerOutlineThemed,  // .theme(themeTokens,false) + textColor(error) + border
 };
 
 struct DialogButtonSpec {

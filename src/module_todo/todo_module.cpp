@@ -724,7 +724,7 @@ public:
         ui::drawDatePicker(page, screen, t, dialogs_, dialogHost_);
         ui::drawRenameDialog(page, screen, t, dialogs_, dialogHost_);
         ui::drawConfirmDeleteDialog(page, screen, t, dialogs_, dialogHost_);
-        drawToast(page, screen, core::theme::componentTokens(t));
+        drawToast(page, screen, core::theme::componentTokensWeChat(t));
     }
 
     // Ctrl/Cmd+↑↓ 上移/下移选中任务（选中 = 最近点击的卡片）。无聚焦元素消费时经 Router 转发到本页

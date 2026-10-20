@@ -80,7 +80,7 @@ void drawGithubSyncCard(const CardDrawArgs& args) {
     const SettingsCardsIn& in = args.in;
     const SettingsCardActions& a = args.a;
 
-    const auto compTheme = core::theme::componentTokens(t);
+    const auto compTheme = core::theme::componentTokensWeChat(t);
 
     // 各行的 y 坐标（从卡顶开始）
     float y = 16.0f;  // 内边距

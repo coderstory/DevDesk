@@ -497,7 +497,7 @@ public:
     void drawToast(eui::Ui& ui, const eui::Screen& screen,
                    const core::theme::Tokens& t) {
         ui_kit::drawToast(ui, screen, "settings.toast", toast_,
-                          core::theme::componentTokens(t),
+                          core::theme::componentTokensWeChat(t),
                           ui_kit::ToastOptions{.okIcon = 0xF058});
     }
 
@@ -988,7 +988,7 @@ public:
         const bool claudeOn =
             moduleEnabled(cfg_, kModuleIdClaudeProxy);
         const bool mdOn = moduleEnabled(cfg_, kModuleIdMarkdown);
-        const auto compTheme = core::theme::componentTokens(t);
+        const auto compTheme = core::theme::componentTokensWeChat(t);
 
         ui.column("settings.root")
             .size(screen.width, screen.height)

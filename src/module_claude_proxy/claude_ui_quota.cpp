@@ -264,12 +264,12 @@ void drawQuotaConfigDialog(eui::Ui& ui, const eui::Screen& screen,
         ui_kit::DialogButtonSpec cancel;
         cancel.label = "取消";
         cancel.fontSize = 14.0f;
-        cancel.style = ui_kit::DialogButtonStyle::Secondary;
+        cancel.style = ui_kit::DialogButtonStyle::SecondaryThemed;
         cancel.onClick = [sp = &st] { sp->open = false; };
         ui_kit::DialogButtonSpec confirm;
         confirm.label = "保存";
         confirm.fontSize = 14.0f;
-        confirm.style = ui_kit::DialogButtonStyle::Primary;
+        confirm.style = ui_kit::DialogButtonStyle::PrimaryThemed;
         confirm.onClick = [h = hooks.save, sp = &st] {
             // 装配失败 → 红字 + **不调 save**（拿一行默认 QuotaConfigRow 去落库
             // = 把「校验没过」写成「配了个空配置」，静默丢用户填的东西）

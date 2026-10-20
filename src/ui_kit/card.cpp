@@ -18,7 +18,7 @@ void cardFrame(eui::Ui& ui, const std::string& id, float w, float h,
         // 阴影 token 与 home 卡同款：settings 卡填充 == 主体底顶色，无阴影时光凭 1px
         // 边框不分层（浅色档整卡隐形）。
         .shadow(components::theme::panelShadow(
-            ::core::theme::componentTokens(t)))
+            ::core::theme::componentTokensWeChat(t)))
         .build();
 }
 

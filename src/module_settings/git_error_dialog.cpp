@@ -90,7 +90,7 @@ void drawGitErrorDialog(eui::Ui& ui, const eui::Screen& screen,
                         const core::theme::Tokens& t, GitErrorDialogState& st,
                         const GitErrorDialogIn& in,
                         const GitErrorDialogActions& a) {
-    const auto themeTokens = core::theme::componentTokens(t);
+    const auto themeTokens = core::theme::componentTokensWeChat(t);
     const float w = ui_kit::dialogWidthPx(ui_kit::DialogWidth::ExtraWide);
     const float bodyW = w - ui_kit::kDialogInsetX * 2.0f;
 

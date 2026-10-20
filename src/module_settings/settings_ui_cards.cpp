@@ -86,7 +86,7 @@ void drawAppearanceCard(const CardDrawArgs& args) {
     const SettingsCardsIn& in = args.in;
     const SettingsCardActions& a = args.a;
 
-    const auto compTheme = core::theme::componentTokens(t);
+    const auto compTheme = core::theme::componentTokensWeChat(t);
     // 行几何随生效字号派生（roundFs 口径见 settings_ui_logic.h）；18 = 标题顶字面锚。
     // 主题选择器删除后字号/效果改 FormRow 排列，行高与日志卡同口径（logFieldHeight=36）。
     const float titleH = roundFs(24.0f);
@@ -207,7 +207,7 @@ void drawEditorFontCard(const CardDrawArgs& args) {
     const float pageY = args.pageY;
     const float screenH = args.screenH;
 
-    const auto compTheme = core::theme::componentTokens(t);
+    const auto compTheme = core::theme::componentTokensWeChat(t);
     ui.stack(id)
         .size(w, h)
         .zIndex(30)
@@ -430,7 +430,7 @@ void drawProxyCard(const CardDrawArgs& args) {
             cardTitle(ui, id, t, 16.0f, 240.0f, 22.0f, 22.0f, "Claude 代理");
 
             // 随应用启动代理（默认关）放卡片右上。
-            const auto compTheme = core::theme::componentTokens(t);
+            const auto compTheme = core::theme::componentTokensWeChat(t);
             components::toggleSwitch(ui, id + ".autostart")
                 .position(w - 28.0f - 240.0f, 12.0f)
                 .size(240.0f, 28.0f)
@@ -561,7 +561,7 @@ void drawLogCard(const CardDrawArgs& args) {
     const float pageY = args.pageY;
     const float screenH = args.screenH;
 
-    const auto compTheme = core::theme::componentTokens(t);
+    const auto compTheme = core::theme::componentTokensWeChat(t);
     const float labelFont = fs(12.0f);
     const float hintFontSize = fs(12.0f);
     const float hintW = std::max(0.0f, w - kLogHintX - 28.0f);
@@ -676,7 +676,7 @@ void drawLogViewCard(const CardDrawArgs& args) {
     const SettingsCardsIn& in = args.in;
     const SettingsCardActions& a = args.a;
 
-    const auto compTheme = core::theme::componentTokens(t);
+    const auto compTheme = core::theme::componentTokensWeChat(t);
     const float lineH = 16.0f;
     ui.stack(id)
         .size(w, h)

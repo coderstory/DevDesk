@@ -2427,7 +2427,7 @@ private:
         frame.open = newNoteOpen_;
         frame.onOpenChange = [this](bool v) { newNoteOpen_ = v; };
 
-        ui_kit::drawDialogFrame(ui, screen, frame, componentTheme, [&] {
+        ui_kit::drawDialogFrame(ui, screen, frame, core::theme::componentTokensWeChat(t), [&] {
                 ui_kit::drawDialogTitle(ui, "md.dialog.new.title", w, "新建笔记",
                                         t.sizes.fontSizeLarge, t.colors.textPrimary);
 
@@ -2476,7 +2476,7 @@ private:
                 confirm.style = ui_kit::DialogButtonStyle::PrimaryThemed;
                 confirm.onClick = [this, &ui] { commitNewNote(ui); };
                 ui_kit::drawDialogButtons(ui, "md.dialog.new", w, h, cancel, confirm, t,
-                                          componentTheme);
+                                          core::theme::componentTokensWeChat(t));
         });
     }
 
@@ -2506,7 +2506,7 @@ private:
             if (!v) newFolderParentOpen_ = false;  // 关弹窗顺手收下拉
         };
 
-        ui_kit::drawDialogFrame(ui, screen, frame, componentTheme, [&] {
+        ui_kit::drawDialogFrame(ui, screen, frame, core::theme::componentTokensWeChat(t), [&] {
                 ui_kit::drawDialogTitle(ui, "md.dialog.newfolder.title", w, "新建文件夹",
                                         t.sizes.fontSizeLarge, t.colors.textPrimary);
 
@@ -2585,7 +2585,7 @@ private:
                 confirm.style = ui_kit::DialogButtonStyle::PrimaryThemed;
                 confirm.onClick = [this] { commitNewFolder(); };
                 ui_kit::drawDialogButtons(ui, "md.dialog.newfolder", w, h, cancel, confirm, t,
-                                          componentTheme);
+                                          core::theme::componentTokensWeChat(t));
         });
     }
 
@@ -3537,7 +3537,7 @@ private:
         frame.open = deleteConfirmOpen_;
         frame.onOpenChange = [this](bool v) { deleteConfirmOpen_ = v; };
 
-        ui_kit::drawDialogFrame(ui, screen, frame, componentTheme, [&] {
+        ui_kit::drawDialogFrame(ui, screen, frame, core::theme::componentTokensWeChat(t), [&] {
                 ui_kit::drawDialogTitle(ui, "md.dialog.del.title", w, "删除笔记",
                                         t.sizes.fontSizeLarge + 2.0f, t.colors.textPrimary);
                 ui_kit::drawDialogText(
@@ -3557,7 +3557,7 @@ private:
                 confirm.style = ui_kit::DialogButtonStyle::DangerThemed;
                 confirm.onClick = [this] { doDeleteNote(); };
                 ui_kit::drawDialogButtons(ui, "md.dialog.del", w, h, cancel, confirm, t,
-                                          componentTheme);
+                                          core::theme::componentTokensWeChat(t));
         });
     }
 
@@ -3576,7 +3576,7 @@ private:
         frame.open = renameOpen_;
         frame.onOpenChange = [this](bool v) { renameOpen_ = v; };
 
-        ui_kit::drawDialogFrame(ui, screen, frame, componentTheme, [&] {
+        ui_kit::drawDialogFrame(ui, screen, frame, core::theme::componentTokensWeChat(t), [&] {
                 ui_kit::drawDialogTitle(ui, "md.dialog.rename.title", w, "重命名笔记",
                                         t.sizes.fontSizeLarge, t.colors.textPrimary);
                 ui_kit::drawDialogText(ui, "md.dialog.rename.hint", w,
@@ -3615,7 +3615,7 @@ private:
                 confirm.style = ui_kit::DialogButtonStyle::PrimaryThemed;
                 confirm.onClick = [this] { commitRenameNote(); };
                 ui_kit::drawDialogButtons(ui, "md.dialog.rename", w, h, cancel, confirm, t,
-                                          componentTheme);
+                                          core::theme::componentTokensWeChat(t));
         });
     }
 
