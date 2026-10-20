@@ -87,3 +87,21 @@ REGISTER_TEST(tray_icon_asset_shipped,
     }
     return true;
 })
+
+// macOS Retina 倍图发货核验（图标批 2026-10-20）：EUI-NEO eui_tray_image 按同名 @2x
+// 命名惯例拾取 <template>@2x.png（EUI-NEO rev 0f7f60b）——模板底图在产物里而倍图
+// 拷贝规则漏登时，Retina 屏静默退回底图上采样（无报错、只是发虚），本断言把
+// 「CMakeLists 托盘拷贝块少了 tray-icon-template@2x.png 这行」变红。
+// 非 Apple 平台恒过（EUI 托盘不走 template 蒙版路径）；平台条件放宏外辅助函数，
+// 理由同上方 expectedExtension（REGISTER_TEST 宏参数内嵌 #if 会红 -Wembedded-directive）。
+#if defined(__APPLE__)
+REGISTER_TEST(tray_icon_retina_sibling_shipped,
+              "tray: macOS template 蒙图的 @2x Retina 倍图在构建产物 assets 下存在", {
+    const std::filesystem::path hit =
+        findShippedAsset("assets/tray-icon-template@2x.png");
+    DOCTEST_CHECK_MESSAGE(!hit.empty(),
+                          "构建产物 assets 下找不到 assets/tray-icon-template@2x.png"
+                          "（检查根 CMakeLists.txt 托盘图标 POST_BUILD 拷贝块）");
+    return true;
+})
+#endif  // defined(__APPLE__)

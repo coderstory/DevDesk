@@ -167,10 +167,16 @@ REGISTER_TEST(sidebar_collapsed_compose,
     DOCTEST_CHECK(floatEq(sidebar->width.value, 72.0f));
     DOCTEST_CHECK(floatEq(ui.find("app.sidebar.divider")->x, 71.0f));
 
-    // brand 折叠 = 只显示 logo 图标，icon 模式下 text 存的是 glyph 的 UTF-8 串
+    // brand 折叠 = 只显示居中几何 logo（图标批 2026-10-20 起 fa-laptop-code 字形退役，
+    // 换 ui_kit::drawDevDeskLogo 矢量瓦，几何契约同 assets/icon.ico）。行 box 仍是
+    // (0, 40, 72, 32)，子元素 .mark 在行内居中：(72-28)/2=22、(32-28)/2=2
     const auto* collapsedBrand = ui.find("app.sidebar.brand");
     DOCTEST_CHECK(collapsedBrand != nullptr);
-    DOCTEST_CHECK(collapsedBrand->text == eui::utf8(0xF5FC));  // fa-laptop-code
+    const auto* collapsedMark = ui.find("app.sidebar.brand.mark");
+    DOCTEST_CHECK(collapsedMark != nullptr);
+    DOCTEST_CHECK(floatEq(collapsedMark->x, 22.0f));
+    DOCTEST_CHECK(floatEq(collapsedMark->y, 2.0f));
+    DOCTEST_CHECK(floatEq(collapsedMark->width.value, 28.0f));
 
     // 顶部留白 = spacingXXLarge(40)，与页面主区上 padding 同档；折叠/展开两态必须同值，
     // 否则切换时 logo 会纵向跳
@@ -224,12 +230,16 @@ REGISTER_TEST(sidebar_expanded_compose,
     DOCTEST_CHECK(sidebar != nullptr);
     DOCTEST_CHECK(floatEq(sidebar->width.value, 208.0f));
 
-    // UAT3 #9：brand 行展开态 = 折叠态同款居中 logo（icon 模式 text 存 glyph 串），
-    // 「DevDesk」文本改由自绘标题栏承载（app.titlebar.brand）；品牌行 y=40 防跳动
+    // UAT3 #9 + 图标批 2026-10-20：brand 行展开态 = 折叠态同款居中几何 logo
+    //（.mark 矢量瓦，同 ui_kit::drawDevDeskLogo 契约），「DevDesk」文本改由自绘
+    // 标题栏承载（app.titlebar.brand）；品牌行 y=40 防跳动
     const auto* brand = ui.find("app.sidebar.brand");
     DOCTEST_CHECK(brand != nullptr);
-    DOCTEST_CHECK(brand->text == eui::utf8(0xF5FC));  // fa-laptop-code logo
     DOCTEST_CHECK(floatEq(brand->y, 40.0f));
+    const auto* mark = ui.find("app.sidebar.brand.mark");
+    DOCTEST_CHECK(mark != nullptr);
+    DOCTEST_CHECK(floatEq(mark->x, 90.0f));  // (208-28)/2，行内水平居中
+    DOCTEST_CHECK(floatEq(mark->y, 2.0f));   // (32-28)/2，行内垂直居中
     DOCTEST_CHECK(ui.find("app.sidebar.brand.logo") == nullptr);  // 旧展开态 logo 子元素已并
     // 导航列表整体下移到 40 + 32 + 28
     DOCTEST_CHECK(floatEq(ui.find("app.sidebar.item.Home.hit")->y, 100.0f));
@@ -665,9 +675,11 @@ REGISTER_TEST(sidebar_custom_titlebar_compose,
     DOCTEST_CHECK(floatEq(bar->frame.x, 0.0f));
     DOCTEST_CHECK(floatEq(bar->frame.y, 0.0f));
 
-    // 左：品牌 logo + 文本（UAT3 #9 品牌名由标题栏承载）；右：三钮从右往左
+    // 左：品牌 logo + 文本（UAT3 #9 品牌名由标题栏承载；图标批 2026-10-20 起 logo 为
+    // 几何矢量瓦，根 id 不变，.tile 子元素钉住结构）；右：三钮从右往左
     // 关闭 / 最大化 / 最小化（每钮 46 宽，wechat 风格）
     DOCTEST_CHECK(ui.find("app.titlebar.logo") != nullptr);
+    DOCTEST_CHECK(ui.find("app.titlebar.logo.tile") != nullptr);
     DOCTEST_CHECK(ui.find("app.titlebar.brand")->text == "DevDesk");
     DOCTEST_CHECK(ui.find("app.titlebar.close.hit") != nullptr);
     DOCTEST_CHECK(ui.find("app.titlebar.maximize.hit") != nullptr);

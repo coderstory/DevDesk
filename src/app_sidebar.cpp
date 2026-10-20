@@ -10,6 +10,7 @@
 #include "core/window_effect_state.h"  // 侧栏底 alpha 按窗口效果档位（UAT2 B 批）
 #include "module_agent/agent_module.h"
 #include "settings_config.h"
+#include <ui_kit/logo.h>  // 图标批 2026-10-20：brand 行/标题栏几何 logo（C 方案终端窗 >_）
 #include <ui_kit/metrics.h>
 #include <ui_kit/selection_bar.h>  // W3：SelectionBar 选中态 helper（§4.3）
 #include <ui_kit/splash.h>
@@ -167,16 +168,15 @@ void drawTitlebar(eui::Ui& ui, const eui::Screen& screen) {
         .position(0.0f, 0.0f)
         .size(screen.width, h)
         .content([&] {
-            // 左：logo 图标 + 品牌文本（与折叠态侧栏 logo 同款 glyph）
-            ui.text("app.titlebar.logo")
-                .position(16.0f, 0.0f)
-                .size(28.0f, h)
-                .icon(eui::utf8(0xF5FC))  // fa-laptop-code
-                .fontSize(t.sizes.fontSizeBody)
-                .horizontalAlign(eui::HorizontalAlign::Center)
-                .verticalAlign(eui::VerticalAlign::Center)
-                .color(wc.primary)
-                .build();
+            // 左：logo 图标 + 品牌文本（图标批 2026-10-20：与侧栏 brand 同款几何
+            // logo——C 方案终端窗 >_ 矢量绘制替换 fa-laptop-code 字形；视觉锚点
+            // 保持旧 glyph 区中心 x=30 → 20px 瓦左上角 x=20，品牌文本 x=52 不动）
+            {
+                constexpr float kTitleLogoSize = 20.0f;  // 40px 标题条档
+                ui_kit::drawDevDeskLogo(ui, "app.titlebar.logo",
+                                        20.0f, (h - kTitleLogoSize) * 0.5f,
+                                        kTitleLogoSize, wc.primary, wc.cardBg);
+            }
             ui.text("app.titlebar.brand")
                 .position(16.0f + 28.0f + 8.0f, 0.0f)
                 .size(160.0f, h)
@@ -268,17 +268,21 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                 .radius(t.sizes.radiusWeChat)
                 .build();
 
-            // brand 行（UAT3 #9）：折叠/展开两态统一为居中 logo（icon 模式下 text 存
-            // glyph 的 UTF-8 串）；品牌文本由自绘标题栏承载（app.titlebar.brand）。
-            // 行高/topPad/间距保持防跳动
-            ui.text("app.sidebar.brand")
+            // brand 行（UAT3 #9 + 图标批 2026-10-20）：折叠/展开两态统一为居中几何
+            // logo——C 方案终端窗 >_（ui_kit::drawDevDeskLogo 矢量绘制，几何契约与
+            // assets/icon.ico 同源；fa-laptop-code 字形退役）。行元素仍是整行 box
+            // (0, topPad, kWidth, kBrandH)：test_app_sidebar 钉的 brand frame.y=40
+            // 防跳动断言与首个导航 y 计算均不动；品牌文本由自绘标题栏承载。
+            ui.stack("app.sidebar.brand")
                 .position(0.0f, topPad)
                 .size(kWidth, kBrandH)
-                .icon(eui::utf8(0xF5FC))  // fa-laptop-code logo
-                .fontSize(t.sizes.fontSizePage)
-                .horizontalAlign(eui::HorizontalAlign::Center)
-                .verticalAlign(eui::VerticalAlign::Center)
-                .color(wc.primary)
+                .content([&] {
+                    constexpr float kLogoSize = 28.0f;  // 侧栏档（展开/折叠同款）
+                    ui_kit::drawDevDeskLogo(
+                        ui, "app.sidebar.brand.mark",
+                        (kWidth - kLogoSize) * 0.5f, (kBrandH - kLogoSize) * 0.5f,
+                        kLogoSize, wc.primary, wc.cardBg);
+                })
                 .build();
 
             float y = topPad + kBrandH + kBrandNavGap;

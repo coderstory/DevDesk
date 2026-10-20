@@ -13,6 +13,8 @@
 // #059A4C(L=0.237)，在 #E8F0EC 上 3.16:1 ≥ AA 3:1（D-12 令牌族内取值，未引入新色值）。
 #include <ui_kit/splash.h>
 
+#include <ui_kit/logo.h>  // 图标批 2026-10-20：居中 logo 换几何绘制（C 方案终端窗 >_）
+
 #include <core/logging.h>
 #include <core/theme.h>
 
@@ -80,7 +82,7 @@ bool drawSplashIfNeeded(eui::Ui& ui, const eui::Screen& screen) {
         .opacity(opacity)
         .build();
 
-    // 居中 logo：fa-laptop-code 图标 + "DevDesk" 文字
+    // 居中 logo：几何图标（C 方案终端窗 >_）+ "DevDesk" 文字
     const float cx = screen.width * 0.5f;
     const float cy = screen.height * 0.5f;
     constexpr float kLogoH = 60.0f;
@@ -91,19 +93,21 @@ bool drawSplashIfNeeded(eui::Ui& ui, const eui::Screen& screen) {
     const float subY = cy - kSubH - 10.0f;
     const float barY = cy + 90.0f;
 
-    // logo 图标：wechat.primaryPressed（#059A4C，微信绿加深档）——H 批对比度核：原
-    // wechat.primary #07C160 在微绿底上仅 2.06:1（纯白底上限 2.39:1，浅底方案到不了 AA 3:1），
-    // 换同族深绿后 3.16:1 ≥ 图形 AA 3:1。
-    ui.text("splash.logo.icon")
-        .position(cx - 108.0f, logoY)
-        .size(44.0f, kLogoH)
-        .icon(eui::utf8(0xF5FC))
-        .fontSize(40.0f)
-        .horizontalAlign(eui::HorizontalAlign::Center)
-        .verticalAlign(eui::VerticalAlign::Center)
-        .color(wc.primaryPressed)
-        .opacity(opacity)
-        .build();
+    // logo 图标（图标批 2026-10-20）：C 方案终端窗 >_ 几何 logo（ui_kit::drawDevDeskLogo
+    // 矢量绘制）替换 fa-laptop-code 字形（0xF5FC 主接线点退役；about 页遗留一处属
+    // 本批红线文件，后续批接 helper）。瓦色 wechat.primaryPressed
+    //（#059A4C，H 批对比档：wechat.primary #07C160 在微绿底仅 2.06:1 破图形 AA，深绿
+    // 3.16:1 ≥ 3:1——契约测试钉 wechat.primaryPressed 令牌落点，进度条填充同源）；
+    // 白窗 cardBg；56px 瓦居中于旧图标区中心 (cx-86, logoY+30)，与「DevDesk」文字
+    //（cx-56 起）保持 2px 间距，布局常量零改动。
+    {
+        constexpr float kSplashLogoSize = 56.0f;
+        ui_kit::drawDevDeskLogo(
+            ui, "splash.logo.icon",
+            cx - 86.0f - kSplashLogoSize * 0.5f,
+            logoY + kLogoH * 0.5f - kSplashLogoSize * 0.5f,
+            kSplashLogoSize, wc.primaryPressed, wc.cardBg, opacity);
+    }
     // logo 文字：wechat.textPrimary（#1A1A1A）；原 W-W1 白色字面量(splash.cpp:131) → 深字（微绿底上 15.0:1）。
     ui.text("splash.logo")
         .position(cx - 56.0f, logoY)

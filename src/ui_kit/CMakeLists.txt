@@ -25,6 +25,10 @@ add_library(devdesk_ui_kit STATIC
     # light_toast，空列表/无搜索结果调 empty_state。
     light_toast.cpp
     empty_state.cpp
+    # 图标批（2026-10-20 C 方案终端窗 >_）：品牌几何 logo 矢量 helper，三消费方
+    # （侧边栏 brand 行 / 自绘标题栏 / 启动 splash）共用；几何契约与
+    # scripts/build_icon_assets.py（= assets/icon.ico 位图版）同源。
+    logo.cpp
 )
 
 devdesk_apply_warnings(devdesk_ui_kit)

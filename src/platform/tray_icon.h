@@ -8,8 +8,10 @@
 namespace platform::tray {
 
 // 返回托盘图标**相对路径**（相对运行目录；命中由 EUI-NEO resolveIconPath 候选链负责）。
-//   macOS: "assets/tray-icon-template.png"（22×22 纯黑+alpha template 蒙版，setTemplate:YES 后系统反色）
-//   Windows: "assets/tray-icon-win.ico"（16/32/48 32bpp BGRA，品牌蓝底圆角 + 深色 ∞）；其他: ico 不可用时返回空串（= 用应用图标，不崩）
+//   macOS: "assets/tray-icon-template.png"（22×22 纯黑+alpha template 蒙版，setTemplate:YES 后系统反色；
+//          EUI-NEO eui_tray_image 按同名 @2x 命名惯例拾取 44×44 Retina 倍图 tray-icon-template@2x.png）
+//   Windows: "assets/tray-icon-win.ico"（2026-10-20 C 方案终端窗 >_ 品牌 .ico，16..256 七档）；其他:
+//          ico 不可用时返回空串（= 用应用图标，不崩）
 std::string defaultIconPath();
 
 } // namespace platform::tray
