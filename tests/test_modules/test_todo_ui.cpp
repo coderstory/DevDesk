@@ -476,6 +476,250 @@ REGISTER_TEST(todo_ui_column_ops_and_datepicker,
     return true;
 })
 
+// datepicker「默认当天」（UAT5 任务 F）。防两个事故：
+//   ① 无 due 的卡打开滚轮停今天，但不滚直接「确定」什么也不发生——组件确定按钮只在
+//     「滚轮草稿 ≠ .date() 提交值」时回调 onChange，本层首帧喂锚点、后续帧喂哨兵
+//     （drawDatePicker），回退哨兵机制则「打开即确定==today」断言红；
+//   ② 第二次打开滚轮停在上一次会话的位置而非本卡锚点——组件草稿 active 后不再吃
+//     .date()，靠会话首帧 releaseStateScope 清旧草稿，回退则「滚轮回锚点」断言红。
+REGISTER_TEST(todo_ui_datepicker_default_today,
+              "todo_ui: datepicker 默认当天——打开即确定==today；二次打开滚轮回本卡锚点", {
+    TestEnv env;
+    DOCTEST_REQUIRE(env.ready);
+    auto col = env.svc->createColumn("日期默认列");
+    DOCTEST_REQUIRE(col.isOk());
+    auto noDue = env.svc->createTask(col.value().id, "无截止卡");
+    DOCTEST_REQUIRE(noDue.isOk());
+    auto farDue = env.svc->createTask(col.value().id, "远期截止卡");
+    DOCTEST_REQUIRE(farDue.isOk());
+    {
+        module::todo::Task t2 = farDue.value();
+        t2.dueAt = module::todo::ui::ymdToEpoch(2027, 3, 15);
+        DOCTEST_REQUIRE(env.svc->updateTask(t2).isOk());
+    }
+
+    std::unique_ptr<::core::Module> mod(create_todo_module());
+    mod->onStart();
+
+    const std::time_t openedAt = std::time(nullptr);
+    int expY = 0, expM = 0, expD = 0;
+    {
+        std::tm tmv{};
+        core::time::localTime(openedAt, &tmv);
+        expY = tmv.tm_year + 1900;
+        expM = tmv.tm_mon + 1;
+        expD = tmv.tm_mday;
+    }
+    const std::string expDay = std::to_string(expD);
+    const std::string expYear = std::to_string(expY);
+    char expectedDue[16];
+    std::snprintf(expectedDue, sizeof(expectedDue), "%02d-%02d", expM, expD);
+
+    // ① 无 due：打开 → 滚轮停今天 → 不滚直接确定 → 表单 due = 今天
+    {
+        Frame frame(mod.get());
+        const auto* card = frame.ui.find("todo.col.4.card.0.bg");
+        DOCTEST_REQUIRE(card != nullptr);
+        DOCTEST_REQUIRE(card->onClick != nullptr);
+        card->onClick();   // 打开详情
+        frame.refresh();
+        auto* pick = frame.ui.find("todo.dialog.detail.due.pick.bg");
+        DOCTEST_REQUIRE(pick != nullptr);
+        DOCTEST_REQUIRE(pick->onClick != nullptr);
+        pick->onClick();   // 打开 datepicker（首帧喂锚点=今天）
+        frame.refresh();   // 第 2 帧：哨兵提交值就位
+        const auto* dayItem = frame.ui.find("todo.datepicker.column.1.item.2");
+        const auto* yearItem = frame.ui.find("todo.datepicker.column.2.item.2");
+        DOCTEST_REQUIRE(dayItem != nullptr);
+        DOCTEST_REQUIRE(yearItem != nullptr);
+        DOCTEST_CHECK_EQ(dayItem->text, expDay);    // 滚轮默认停今天
+        DOCTEST_CHECK_EQ(yearItem->text, expYear);
+        auto* done = frame.ui.find("todo.datepicker.done.bg");
+        DOCTEST_REQUIRE(done != nullptr);
+        DOCTEST_REQUIRE(done->onClick != nullptr);
+        done->onClick();   // 不滚直接确定 → onChange(今天)
+        frame.refresh();
+        DOCTEST_CHECK(frame.ui.find("todo.datepicker.panel") == nullptr);   // 确定即关
+        const auto* pickText = frame.ui.find("todo.dialog.detail.due.pick.text");
+        DOCTEST_REQUIRE(pickText != nullptr);
+        DOCTEST_CHECK_EQ(pickText->text, std::string(expectedDue));   // 表单 due=今天
+    }
+
+    // ② 二次打开回锚点：先看远期卡（滚轮停 2027-03-15）→ 遮罩关 → 再开无截止卡，
+    //    滚轮必须回今天——不清旧草稿则会停在 15/2027（本断言红）
+    {
+        Frame frame(mod.get());
+        const auto* farCard = frame.ui.find("todo.col.4.card.1.bg");
+        DOCTEST_REQUIRE(farCard != nullptr);
+        DOCTEST_REQUIRE(farCard->onClick != nullptr);
+        farCard->onClick();
+        frame.refresh();
+        auto* pick = frame.ui.find("todo.dialog.detail.due.pick.bg");
+        DOCTEST_REQUIRE(pick != nullptr);
+        pick->onClick();
+        frame.refresh();   // 远期卡首帧：滚轮吃锚点 2027-03-15
+        const auto* dayItem = frame.ui.find("todo.datepicker.column.1.item.2");
+        DOCTEST_REQUIRE(dayItem != nullptr);
+        DOCTEST_CHECK_EQ(dayItem->text, std::string("15"));
+        auto* backdrop = frame.ui.find("todo.datepicker.backdrop");
+        DOCTEST_REQUIRE(backdrop != nullptr);
+        DOCTEST_REQUIRE(backdrop->onClick != nullptr);
+        backdrop->onClick();   // 遮罩关（不设值）
+        frame.refresh();      // 关闭帧：帧计数归零
+        DOCTEST_CHECK(frame.ui.find("todo.datepicker.panel") == nullptr);
+
+        // 切到无截止卡：详情仍在（同一弹窗实例换任务需先关后开——直接开第二张卡）
+        const auto* noCard = frame.ui.find("todo.col.4.card.0.bg");
+        DOCTEST_REQUIRE(noCard != nullptr);
+        DOCTEST_REQUIRE(noCard->onClick != nullptr);
+        noCard->onClick();
+        frame.refresh();
+        pick = frame.ui.find("todo.dialog.detail.due.pick.bg");
+        DOCTEST_REQUIRE(pick != nullptr);
+        pick->onClick();
+        frame.refresh();   // 新会话首帧：releaseStateScope 清旧草稿 + 喂今天锚点
+        const auto* dayItem2 = frame.ui.find("todo.datepicker.column.1.item.2");
+        const auto* yearItem2 = frame.ui.find("todo.datepicker.column.2.item.2");
+        DOCTEST_REQUIRE(dayItem2 != nullptr);
+        DOCTEST_REQUIRE(yearItem2 != nullptr);
+        DOCTEST_CHECK_EQ(dayItem2->text, expDay);   // 不停在上一会话的 15 号
+        DOCTEST_CHECK_EQ(yearItem2->text, expYear);
+    }
+
+    mod->onStop();
+    return true;
+})
+
+// 新建任务方案 A 富创建（UAT5 重设计）。防的事故：
+//   ① 弹性宽回退固定档——弹窗宽必须 = max(640, 窗口/2)，窄窗不缩；
+//   ② 描述/优先级/截止/标签字段没走 NewTaskAttributes + 补写链——落库行断言全红；
+//   ③ 截止 segment「再点选中档 = 取消」死路（选了今天就撤不掉）；
+//   ④ 回车直接创建在重排中丢绑（demo 主路径「任务标题，回车直接创建」）。
+REGISTER_TEST(todo_ui_newtask_dialog_plan_a,
+              "todo_ui: 新建任务方案 A——富创建全字段落库 + 弹性宽 + segment 再点取消 + 回车创建", {
+    TestEnv env;
+    DOCTEST_REQUIRE(env.ready);
+    auto col = env.svc->createColumn("富创建列");
+    DOCTEST_REQUIRE(col.isOk());
+
+    std::unique_ptr<::core::Module> mod(create_todo_module());
+    mod->onStart();
+
+    // ① 弹性宽：1600 窗 → 800（半窗）；1100 窗 → 640（窄窗不缩，demo px 是最小档）
+    {
+        Frame f(mod.get());
+        auto* add = f.ui.find("todo.btn.add.bg");
+        DOCTEST_REQUIRE(add != nullptr);
+        DOCTEST_REQUIRE(add->onClick != nullptr);
+        add->onClick();   // 打开新建任务
+        f.refresh();
+        f.ui.layout(1600.0f, 1000.0f);
+        const auto* panel = f.ui.find("todo.dialog.newtask.panel");
+        DOCTEST_REQUIRE(panel != nullptr);
+        DOCTEST_CHECK(floatEq(panel->frame.width, 800.0f));   // max(640, 1600/2)
+        DOCTEST_CHECK(floatEq(panel->frame.height, 470.0f));  // demo 设计高
+
+        Frame g(mod.get(), 1100.0f, 900.0f);   // 弹窗开态跨 Ui 仍在（状态在模块）
+        g.ui.layout(1100.0f, 900.0f);
+        const auto* panel2 = g.ui.find("todo.dialog.newtask.panel");
+        DOCTEST_REQUIRE(panel2 != nullptr);
+        DOCTEST_CHECK(floatEq(panel2->frame.width, 640.0f));
+    }
+
+    // ② 富创建全字段：标题/描述/优先级(中)/截止(明天)/标签(2 个) → 回车创建 → 落库行全对
+    {
+        Frame f(mod.get());   // ① 已把弹窗打开
+        auto* input = f.ui.find("todo.dialog.newtask.input.hit");
+        DOCTEST_REQUIRE(input != nullptr);
+        DOCTEST_REQUIRE(input->onTextInput != nullptr);
+        core::TextInputEvent t1;
+        t1.text = "富创建任务";
+        input->onTextInput(t1);
+        auto* desc = f.ui.find("todo.dialog.newtask.desc.hit");
+        DOCTEST_REQUIRE(desc != nullptr);
+        DOCTEST_REQUIRE(desc->onTextInput != nullptr);
+        core::TextInputEvent t2;
+        t2.text = "补充说明文字";
+        desc->onTextInput(t2);
+        f.refresh();
+        auto* prioMed = f.ui.find("todo.dialog.newtask.prio.2.bg");
+        DOCTEST_REQUIRE(prioMed != nullptr);
+        DOCTEST_REQUIRE(prioMed->onClick != nullptr);
+        prioMed->onClick();   // 优先级 = 中
+        auto* dueTomorrow = f.ui.find("todo.dialog.newtask.due.1.bg");
+        DOCTEST_REQUIRE(dueTomorrow != nullptr);
+        DOCTEST_REQUIRE(dueTomorrow->onClick != nullptr);
+        dueTomorrow->onClick();   // 截止 = 明天
+        auto* tagInput = f.ui.find("todo.dialog.newtask.tag.input.hit");
+        DOCTEST_REQUIRE(tagInput != nullptr);
+        DOCTEST_REQUIRE(tagInput->onTextInput != nullptr);
+        DOCTEST_REQUIRE(tagInput->onKeyEvent != nullptr);
+        core::KeyEvent enter;
+        enter.key = core::InputKey::Enter;
+        enter.action = core::KeyAction::Press;
+        core::TextInputEvent tag1;
+        tag1.text = "深度工作";
+        tagInput->onTextInput(tag1);
+        tagInput->onKeyEvent(enter);
+        f.refresh();
+        DOCTEST_CHECK(f.ui.find("todo.dialog.newtask.tag.0.bg") != nullptr);   // chip 即现
+
+        // 回车直接创建（主输入框 onEnter = 提交）
+        auto* hero = f.ui.find("todo.dialog.newtask.input.hit");
+        DOCTEST_REQUIRE(hero != nullptr);
+        DOCTEST_REQUIRE(hero->onKeyEvent != nullptr);
+        hero->onKeyEvent(enter);
+        f.refresh();
+        DOCTEST_CHECK_EQ(f.ui.find("todo.dialog.newtask.panel")->opacity, 0.0f);
+
+        auto tasks = env.svc->listTasks(col.value().id);
+        DOCTEST_REQUIRE(tasks.isOk());
+        DOCTEST_REQUIRE_EQ(tasks.value().size(), static_cast<size_t>(1));
+        const module::todo::Task& row = tasks.value()[0];
+        DOCTEST_CHECK_EQ(row.title, std::string("富创建任务"));
+        DOCTEST_CHECK_EQ(row.description.value_or(""), std::string("补充说明文字"));
+        DOCTEST_CHECK(row.priority == module::todo::Priority::Medium);
+        DOCTEST_CHECK(row.dueAt.has_value());
+        // 截止=明天按日历日比对（epoch 取整到正午，跨午夜不 flaky）
+        {
+            const std::time_t now = std::time(nullptr);
+            std::tm tmv{};
+            core::time::localTime(now, &tmv);
+            const int64_t tomorrow =
+                module::todo::ui::ymdToEpoch(tmv.tm_year + 1900, tmv.tm_mon + 1,
+                                             tmv.tm_mday + 1);
+            DOCTEST_CHECK_EQ(row.dueAt.value(), tomorrow);
+        }
+        DOCTEST_REQUIRE_EQ(row.tags.size(), static_cast<size_t>(1));
+        DOCTEST_CHECK_EQ(row.tags[0], std::string("深度工作"));
+    }
+
+    // ③ segment「再点选中档 = 取消」：选今天 → due.0 选中；再点 → 回到未选
+    {
+        Frame f(mod.get());
+        auto* add = f.ui.find("todo.btn.add.bg");
+        DOCTEST_REQUIRE(add != nullptr);
+        add->onClick();
+        f.refresh();
+        auto* dueToday = f.ui.find("todo.dialog.newtask.due.0.bg");
+        DOCTEST_REQUIRE(dueToday != nullptr);
+        dueToday->onClick();
+        f.refresh();
+        const auto* on0 = f.ui.find("todo.dialog.newtask.due.0.bg");
+        DOCTEST_REQUIRE(on0 != nullptr);
+        DOCTEST_CHECK(colorNear(on0->color, core::theme::current().colors.wechat.primary));
+        on0->onClick();   // 再点 = 取消
+        f.refresh();
+        const auto* off0 = f.ui.find("todo.dialog.newtask.due.0.bg");
+        DOCTEST_REQUIRE(off0 != nullptr);
+        DOCTEST_CHECK(colorNear(off0->color,
+                                core::theme::current().colors.wechat.pageBg));
+    }
+
+    mod->onStop();
+    return true;
+})
+
 // computeAppendPosition
 
 REGISTER_TEST(todo_ui_append_position,
@@ -3038,12 +3282,15 @@ REGISTER_TEST(todo_ui_priority_card_tint,
     return true;
 })
 
-// 详情弹窗优先级按钮自身带该优先级色底
-// 同源判据：按钮底 = priorityButtonBg（与卡底同一张 priorityColor 表 + 同一张
-// 强度表），未选中 = 强度表 tint / 选中 = 0.65 深 tint（"实色感"；UAT2 收口把
-// 选中档从 0.55 提到 0.65，与 High 未选中顶档 0.55 拉开——四档两态底色均可辨）。
+// 详情弹窗优先级 segment（UAT5 重设计）：四档同一语言——未选 = pageBg 底 +
+// dividerPrimary 边 + textPrimary 字；选中 = 主绿底 + 白字 + 主绿边（档位信息在
+// 文字，不再靠各档 tint 色底）。防的事故：
+//   ① 选中档回退成 UAT2 的各档 tint 色底 → 色值断言红；
+//   ② 未选中底上文字对比度回退（<4.5:1）→ 断言红；
+//   ③ 文案回退成带 ● 前缀的看板卡 priorityLabel → 文案断言红；
+//   ④ 点选不切选中态 / 不互斥 → 循环点选断言红。
 REGISTER_TEST(todo_ui_priority_button_tint,
-              "todo_ui: 详情优先级按钮各自带该档色底（选中/未选中可区分）", {
+              "todo_ui: 详情优先级 segment——选中绿底白字/未选 pageBg 底、文案无点前缀、点选互斥", {
     using module::todo::Priority;
     TestEnv env;
     DOCTEST_REQUIRE(env.ready);
@@ -3052,8 +3299,7 @@ REGISTER_TEST(todo_ui_priority_button_tint,
     auto a = env.svc->createTask(col.value().id, "按钮卡");
     DOCTEST_REQUIRE(a.isOk());
     {
-        // 起始优先级给「高」：详情弹窗打开时 pic.3 是选中态，其余三档是未选中
-        // （默认 None 起始则 prio.0 选中，会把「None 未选中档」的取值问句混淆）
+        // 起始优先级给「高」：详情弹窗打开时 prio.3 是选中态，其余三档是未选中
         module::todo::Task t2 = a.value();
         t2.priority = module::todo::Priority::High;
         DOCTEST_REQUIRE(env.svc->updateTask(t2).isOk());
@@ -3061,18 +3307,15 @@ REGISTER_TEST(todo_ui_priority_button_tint,
 
     std::unique_ptr<::core::Module> mod(create_todo_module());
     mod->onStart();
-    // 切浅色跑：按钮三态基色已迁 wechat.secondaryButtonBg（D批米黄迁移；D-04 dark-WeChat
-    // 延后深色下为浅值），文字对比度断言（vs textPrimary）只在浅色下成立；
-    // 色值断言两侧同用 wechat 令牌，与主题无关
+    // 切浅色跑（wechat 令牌两主题同值，文字对比度断言 vs textPrimary 在浅色下口径最严）
     ::core::theme::setLight();
     const auto& t = core::theme::current();
-    // 期望值独立写死（改色源 / 改强度表 / 改选中档强度即红）。
-    // UAT2 D批：WeChat 板色源（绿/蓝/红）+ 未选中强度 {0.20,0.40,0.50,0.55}；
-    // UAT2 收口：选中档 0.55→0.65（对比度 ≥5.9:1），High 选中（0.65）与未选中（0.55）底色拉开、两态可辨
-    const eui::Color kPrio[4] = {t.colors.wechat.textTertiary, t.colors.wechat.primary,
-                                 t.colors.wechat.linkBlue, t.colors.wechat.warningRed};
-    const float kUnsel[4] = {0.20f, 0.40f, 0.50f, 0.55f};
-    const float kPicked = 0.65f;
+    // 期望值独立写死（改选中档色源 / 未选底 / 文字档即红）
+    const eui::Color kSelBg = t.colors.wechat.primary;        // #07C160
+    const eui::Color kSelText = t.colors.wechat.onPrimary;    // #FFFFFF
+    const eui::Color kUnselBg = t.colors.wechat.pageBg;       // #F7F7F7
+    const eui::Color kUnselText = t.colors.wechat.textPrimary;  // #1A1A1A
+    const char* kLabels[4] = {"无", "低", "中", "高"};
 
     Frame f1(mod.get());
     const auto* card = f1.ui.find("todo.col.4.card.0.bg");
@@ -3080,33 +3323,33 @@ REGISTER_TEST(todo_ui_priority_button_tint,
     DOCTEST_REQUIRE(card->onClick != nullptr);
     card->onClick();  // 打开详情（弹窗状态留在模块侧，后续帧持续渲染）
 
-    // 起始态（任务优先级 = 高）：0/1/2 档未选中、3 档选中
-    eui::Color unsel[4] = {};
-    bool observed[4] = {false, false, false, false};
+    // 起始态（任务优先级 = 高）：0/1/2 档未选、3 档选中；文案无 ● 前缀
     {
         Frame f(mod.get());
         for (int j = 0; j < 3; ++j) {
             const auto* bg = f.ui.find("todo.dialog.detail.prio." +
                                        std::to_string(j) + ".bg");
+            const auto* text = f.ui.find("todo.dialog.detail.prio." +
+                                         std::to_string(j) + ".text");
             DOCTEST_REQUIRE(bg != nullptr);
-            unsel[j] = bg->color;
-            observed[j] = true;
-            DOCTEST_CHECK(colorNear(
-                bg->color, eui::mixColor(t.colors.wechat.secondaryButtonBg, kPrio[j],
-                                         kUnsel[j])));
+            DOCTEST_REQUIRE(text != nullptr);
+            DOCTEST_CHECK(colorNear(bg->color, kUnselBg));
             DOCTEST_CHECK_EQ(bg->border.width, 1.0f);
-            DOCTEST_CHECK(contrastRatio(bg->color, t.colors.textPrimary) >= 4.5f);
+            DOCTEST_CHECK(colorNear(text->textColor, kUnselText));
+            DOCTEST_CHECK(contrastRatio(bg->color, text->textColor) >= 4.5f);
+            DOCTEST_CHECK_EQ(text->text, std::string(kLabels[j]));
         }
-        const auto* picked = f.ui.find("todo.dialog.detail.prio.3.bg");
-        DOCTEST_REQUIRE(picked != nullptr);
-        DOCTEST_CHECK(colorNear(
-            picked->color,
-            eui::mixColor(t.colors.wechat.secondaryButtonBg, kPrio[3], kPicked)));
+        const auto* sel = f.ui.find("todo.dialog.detail.prio.3.bg");
+        const auto* selText = f.ui.find("todo.dialog.detail.prio.3.text");
+        DOCTEST_REQUIRE(sel != nullptr);
+        DOCTEST_REQUIRE(selText != nullptr);
+        DOCTEST_CHECK(colorNear(sel->color, kSelBg));
+        DOCTEST_CHECK(colorNear(selText->textColor, kSelText));
+        DOCTEST_CHECK(colorNear(sel->border.color, t.colors.wechat.primary));
+        DOCTEST_CHECK_EQ(selText->text, std::string("高"));
     }
 
-    // 逐档点选（i = 被点中的那档）：
-    //   选中按钮 = 深一档 tint（0.65）+ 2px 该档色边框 + 与自己的未选中态可区分
-    //   其余三档 = 强度表浅 tint + 1px 边框（四档的未选中变体在循环里全覆盖）
+    // 逐档点选：被点档变绿、其余三档回 pageBg（互斥）
     for (int i = 0; i < 4; ++i) {
         Frame f(mod.get());
         const auto* btn = f.ui.find("todo.dialog.detail.prio." +
@@ -3118,59 +3361,26 @@ REGISTER_TEST(todo_ui_priority_button_tint,
         const auto* sel = g.ui.find("todo.dialog.detail.prio." +
                                     std::to_string(i) + ".bg");
         DOCTEST_REQUIRE(sel != nullptr);
-        DOCTEST_CHECK(colorNear(
-            sel->color,
-            eui::mixColor(t.colors.wechat.secondaryButtonBg, kPrio[i], kPicked)));
-        DOCTEST_CHECK(contrastRatio(sel->color, t.colors.textPrimary) >= 4.5f);
-        DOCTEST_CHECK_EQ(sel->border.width, 2.0f);
-        DOCTEST_CHECK(colorNear(sel->border.color, kPrio[i]));
+        DOCTEST_CHECK(colorNear(sel->color, kSelBg));
         for (int j = 0; j < 4; ++j) {
-            const auto* other = g.ui.find("todo.dialog.detail.prio." +
-                                          std::to_string(j) + ".bg");
-            DOCTEST_REQUIRE(other != nullptr);
             if (j == i) continue;
-            unsel[j] = other->color;
-            observed[j] = true;
-            // 其余按钮底色 == 各自档位的浅 tint（None 档也有自己的强度表 0.20 灰）
-            DOCTEST_CHECK(colorNear(
-                other->color, eui::mixColor(t.colors.wechat.secondaryButtonBg, kPrio[j],
-                                            kUnsel[j])));
-            DOCTEST_CHECK_EQ(other->border.width, 1.0f);
-            // 未选中底色上的文字对比度
-            DOCTEST_CHECK(contrastRatio(other->color, t.colors.textPrimary) >=
-                          4.5f);
-        }
-        // 选中 ≠ 自己的未选中态（同档对比，四档统一断言）。UAT2 收口把选中档提到 0.65：
-        // High 选中（0.65）与未选中（0.55）不再重合——把选中档悄悄降回 ≤0.55 即红
-        DOCTEST_REQUIRE(observed[i]);
-        DOCTEST_CHECK(!colorNear(sel->color, unsel[i], 0.02f));
-        // 不同优先级按钮底色互不相同（四档两两）
-        for (int x = 0; x < 4; ++x) {
-            for (int y = x + 1; y < 4; ++y) {
-                DOCTEST_REQUIRE(observed[x] && observed[y]);
-                DOCTEST_CHECK(maxChannelDelta(unsel[x], unsel[y]) > 0.03f);
-            }
+            const auto* other = g.ui.find("todo.dialog.detail.prio." +
+                                         std::to_string(j) + ".bg");
+            DOCTEST_REQUIRE(other != nullptr);
+            DOCTEST_CHECK(colorNear(other->color, kUnselBg));
         }
     }
 
-    // 截止区按钮文字对比度（UAT3 W2-M2 防回退）：本卡无 dueAt，「未设置」绿字落
-    // selectedBg #E5E5E5——旧值 #07C160 仅 1.89:1（12px AA 需 4.5:1），文字档换
-    // primaryText #067036（4.93:1）后此处绿；「选择日期…」按钮（secondaryButtonBg
-    // 底 + textSecondary 文字 5.13:1）一并钉住。与优先级按钮同款 ≥4.5:1 断言。
+    // 截止 segment（本卡无 dueAt）：单 op「选择日期…」pageBg 底 + textPrimary 字
+    //（≥4.5:1）；无 due 不渲染「清除」op（有 due 才两枚——几何用例钉双枚形态）
     {
         Frame f(mod.get());
-        const auto* clearBg = f.ui.find("todo.dialog.detail.due.clear.bg");
-        const auto* clearText = f.ui.find("todo.dialog.detail.due.clear.text");
-        DOCTEST_REQUIRE(clearBg != nullptr);
-        DOCTEST_REQUIRE(clearText != nullptr);
-        DOCTEST_CHECK(contrastRatio(clearBg->color,
-                              clearText->textColor) >= 4.5f);
         const auto* pickBg = f.ui.find("todo.dialog.detail.due.pick.bg");
         const auto* pickText = f.ui.find("todo.dialog.detail.due.pick.text");
         DOCTEST_REQUIRE(pickBg != nullptr);
         DOCTEST_REQUIRE(pickText != nullptr);
-        DOCTEST_CHECK(contrastRatio(pickBg->color,
-                                    pickText->textColor) >= 4.5f);
+        DOCTEST_CHECK(contrastRatio(pickBg->color, pickText->textColor) >= 4.5f);
+        DOCTEST_CHECK(f.ui.find("todo.dialog.detail.due.clear.bg") == nullptr);
     }
 
     mod->onStop();
@@ -3178,19 +3388,26 @@ REGISTER_TEST(todo_ui_priority_button_tint,
     return true;
 })
 
-// UAT3 弹窗双列批：「优先级 | 截止日期」同排双列的几何钉值。
-// 防的事故：回退单列长条（截止组 y 掉回 364+ 独占一行）→ 标签 y 断言红；
-// 优先级钮还原 100 宽（4×100+3×8=424 顶进右列）→ 钮宽/行右缘断言红；
-// 弹高回 656（底部大片空档）→ 面板高断言红。几何断言走 layout 后的 frame
-// 绝对坐标，再减面板原点换回弹窗内坐标（与 agent 弹窗几何用例同口径）。
+
+// UAT5 详情弹窗重设计几何钉值（弹性宽：1600 窗 → 800 = max(640, 窗口/2)）。
+// 防的事故：① 弹性宽回退固定 640 → 面板宽断言红；② 双列回退单列长条 → 右列 x
+// 断言红；③ segment 选项不按列宽平分 → 钮宽/右缘断言红；④ 底部按钮带（取消|保存）
+// 被删除/移动按钮挤掉 → 保存钮位置断言红。几何断言走 layout 后的 frame 绝对坐标，
+// 再减面板原点换回弹窗内坐标（与 agent 弹窗几何用例同口径）。
 REGISTER_TEST(todo_ui_detail_two_column_geometry,
-              "todo_ui: 详情弹窗「优先级|截止」同排双列几何（右列 x=328 / 钮宽 64 / 弹高 588）", {
+              "todo_ui: 详情弹窗重设计几何——弹性宽 800×600 / 双列 x=408 / segment 平分列宽 / 底部 取消|保存", {
     TestEnv env;
     DOCTEST_REQUIRE(env.ready);
     auto col = env.svc->createColumn("双列列");
     DOCTEST_REQUIRE(col.isOk());
     auto a = env.svc->createTask(col.value().id, "双列卡");
     DOCTEST_REQUIRE(a.isOk());
+    {
+        // 带 due 的卡：截止 segment 走双 op 形态（📅 日期 chip 选中 + 清除）
+        module::todo::Task t2 = a.value();
+        t2.dueAt = module::todo::ui::ymdToEpoch(2027, 3, 15);
+        DOCTEST_REQUIRE(env.svc->updateTask(t2).isOk());
+    }
 
     std::unique_ptr<::core::Module> mod(create_todo_module());
     mod->onStart();
@@ -3199,7 +3416,7 @@ REGISTER_TEST(todo_ui_detail_two_column_geometry,
         const auto* card = f1.ui.find("todo.col.4.card.0.bg");
         DOCTEST_REQUIRE(card != nullptr);
         DOCTEST_REQUIRE(card->onClick != nullptr);
-        card->onClick();  // 打开详情（编辑态：非归档列 labelOffsetY=0，几何即字面量）
+        card->onClick();  // 打开详情（编辑态：非归档列 offY=0，几何即字面量）
     }
 
     Frame f(mod.get());
@@ -3209,56 +3426,110 @@ REGISTER_TEST(todo_ui_detail_two_column_geometry,
     const float px = panel->frame.x;
     const float py = panel->frame.y;
 
-    // 弹窗尺寸：640 宽 × 588 高（双列收行后的紧凑高度）
-    DOCTEST_CHECK(floatEq(panel->frame.width, 640.0f));
-    DOCTEST_CHECK(floatEq(panel->frame.height, 588.0f));
+    // ① 弹窗尺寸：弹性宽 = max(640, 窗口/2) = 800 × 600（demo 详情面板）
+    DOCTEST_CHECK(floatEq(panel->frame.width, 800.0f));
+    DOCTEST_CHECK(floatEq(panel->frame.height, 600.0f));
+    {
+        // 窄窗不缩：1100 窗 → 仍为最小档 640（demo px 是下限）
+        Frame g(mod.get(), 1100.0f, 900.0f);
+        g.ui.layout(1100.0f, 900.0f);
+        const auto* panel2 = g.ui.find("todo.dialog.detail.panel");
+        DOCTEST_REQUIRE(panel2 != nullptr);
+        DOCTEST_CHECK(floatEq(panel2->frame.width, 640.0f));
+    }
 
-    // 双列：左列 x=28；右列 x = 28+284+16 = 328；两标签同排（y 相等）
+    // 几何基准（800 宽）：innerW=744、colW=(744-16)/2=364、右列 x = 28+364+16 = 408
+    const float kColW = 364.0f;
+    const float kCol2X = 408.0f;
+
+    // ② 头部右缘动作 chips（删除 / 标记完成 上移；标题行 y=22）
+    const auto* del = f.ui.find("todo.dialog.detail.delete.bg");
+    const auto* toggle = f.ui.find("todo.dialog.detail.toggle.bg");
+    DOCTEST_REQUIRE(del != nullptr);
+    DOCTEST_REQUIRE(toggle != nullptr);
+    DOCTEST_CHECK(floatEq(del->frame.y - py, 22.0f));
+    DOCTEST_CHECK(floatEq(del->frame.height, 28.0f));
+    DOCTEST_CHECK(floatEq(toggle->frame.x - px, 800.0f - 56.0f - 104.0f));
+    DOCTEST_CHECK(floatEq(toggle->frame.x + toggle->frame.width,
+                          px + 800.0f - 56.0f));   // toggle 右缘 = 内容右缘
+    DOCTEST_CHECK(del->frame.x + del->frame.width <
+                  toggle->frame.x);   // 删除在标记完成左侧
+
+    // ③ 标题大输入（y=76 h44 全宽）+ 描述 textarea（y=150 h72）
+    const auto* titleInput = f.ui.find("todo.dialog.detail.input.title");
+    DOCTEST_REQUIRE(titleInput != nullptr);
+    DOCTEST_CHECK(floatEq(titleInput->frame.x - px, 28.0f));
+    DOCTEST_CHECK(floatEq(titleInput->frame.y - py, 76.0f));
+    DOCTEST_CHECK(floatEq(titleInput->frame.height, 44.0f));
+    DOCTEST_CHECK(floatEq(titleInput->frame.width, 744.0f));
+    const auto* descInput = f.ui.find("todo.dialog.detail.input.desc");
+    DOCTEST_REQUIRE(descInput != nullptr);
+    DOCTEST_CHECK(floatEq(descInput->frame.y - py, 150.0f));
+    DOCTEST_CHECK(floatEq(descInput->frame.height, 72.0f));
+    // demo 重设计：标题无行标签（大输入自明）
+    DOCTEST_CHECK(f.ui.find("todo.dialog.detail.tlabel") == nullptr);
+
+    // ④ 双列标签同排：优先级 x=28 / 截止日期 x=408，y 相等
     const auto* plabel = f.ui.find("todo.dialog.detail.plabel");
     DOCTEST_REQUIRE(plabel != nullptr);
     const auto* dlabel = f.ui.find("todo.dialog.detail.dlabel2");
     DOCTEST_REQUIRE(dlabel != nullptr);
     DOCTEST_CHECK(floatEq(plabel->frame.x - px, 28.0f));
-    DOCTEST_CHECK(floatEq(dlabel->frame.x - px, 328.0f));
+    DOCTEST_CHECK(floatEq(dlabel->frame.x - px, kCol2X));
     DOCTEST_CHECK(floatEq(dlabel->frame.y, plabel->frame.y));
-    DOCTEST_CHECK(floatEq(plabel->frame.y - py, 300.0f));
+    DOCTEST_CHECK(floatEq(plabel->frame.y - py, 234.0f));
 
-    // 优先级 4 钮：x = 28+i×72、宽 64、行 y=320；行总宽 4×64+3×8=280 ≤ colW 284
+    // ⑤ 优先级 segment 4 op 平分列宽：opW = (364-3×6)/4 = 86.5、x = 28+i×92.5、y=254
     for (int i = 0; i < 4; ++i) {
         const auto* bg =
             f.ui.find("todo.dialog.detail.prio." + std::to_string(i) + ".bg");
         DOCTEST_REQUIRE(bg != nullptr);
-        DOCTEST_CHECK(floatEq(bg->frame.x - px, 28.0f + static_cast<float>(i) * 72.0f));
-        DOCTEST_CHECK(floatEq(bg->frame.width, 64.0f));
+        DOCTEST_CHECK(floatEq(bg->frame.x - px,
+                              28.0f + static_cast<float>(i) * 92.5f));
+        DOCTEST_CHECK(floatEq(bg->frame.width, 86.5f));
         DOCTEST_CHECK(floatEq(bg->frame.height, 32.0f));
-        DOCTEST_CHECK(floatEq(bg->frame.y - py, 320.0f));
+        DOCTEST_CHECK(floatEq(bg->frame.y - py, 254.0f));
     }
     const auto* p3 = f.ui.find("todo.dialog.detail.prio.3.bg");
     DOCTEST_REQUIRE(p3 != nullptr);
-    DOCTEST_CHECK(p3->frame.x - px + p3->frame.width <= 312.0f);  // 左列右缘 28+284
+    DOCTEST_CHECK(p3->frame.x - px + p3->frame.width <= 28.0f + kColW + 0.5f);
 
-    // 截止行（右列）：清除 x=328 宽 56 + 日期 x=392 宽 112 = 总宽 176，收在 284 内
-    const auto* clearBg = f.ui.find("todo.dialog.detail.due.clear.bg");
+    // ⑥ 截止 segment 双 op（有 due）：pick x=408 宽 179 + clear x=593 宽 179
+    //   = (364-6)/2；pick 选中（hasDue）显示 📅 03-15
     const auto* pickBg = f.ui.find("todo.dialog.detail.due.pick.bg");
-    DOCTEST_REQUIRE(clearBg != nullptr);
+    const auto* pickText = f.ui.find("todo.dialog.detail.due.pick.text");
+    const auto* clearBg = f.ui.find("todo.dialog.detail.due.clear.bg");
     DOCTEST_REQUIRE(pickBg != nullptr);
-    DOCTEST_CHECK(floatEq(clearBg->frame.x - px, 328.0f));
-    DOCTEST_CHECK(floatEq(clearBg->frame.width, 56.0f));
-    DOCTEST_CHECK(floatEq(pickBg->frame.x - px, 392.0f));
-    DOCTEST_CHECK(floatEq(pickBg->frame.width, 112.0f));
-    DOCTEST_CHECK(floatEq(clearBg->frame.y - py, 320.0f));  // 与优先级钮同行
-    DOCTEST_CHECK(floatEq(pickBg->frame.y - py, 320.0f));
-    DOCTEST_CHECK(pickBg->frame.x - px + pickBg->frame.width <= 612.0f);  // 右列右缘 328+284
+    DOCTEST_REQUIRE(pickText != nullptr);
+    DOCTEST_REQUIRE(clearBg != nullptr);
+    DOCTEST_CHECK(floatEq(pickBg->frame.x - px, kCol2X));
+    DOCTEST_CHECK(floatEq(pickBg->frame.width, 179.0f));
+    DOCTEST_CHECK(floatEq(clearBg->frame.x - px, kCol2X + 179.0f + 6.0f));
+    DOCTEST_CHECK(floatEq(clearBg->frame.width, 179.0f));
+    DOCTEST_CHECK(floatEq(pickBg->frame.y - py, 254.0f));
+    DOCTEST_CHECK(pickText->text.find("03-15") != std::string::npos);
+    DOCTEST_CHECK(clearBg->frame.x - px + clearBg->frame.width <=
+                  kCol2X + kColW + 0.5f);
 
-    // 标签区随之上移：标签输入 y=410（原 474）；底部按钮带 y=h-58=530、底距 18
+    // ⑦ 标签区（无标签）：label y=298、输入行 y=318 h34
     const auto* tagInput = f.ui.find("todo.dialog.detail.tag.input");
     DOCTEST_REQUIRE(tagInput != nullptr);
-    DOCTEST_CHECK(floatEq(tagInput->frame.y - py, 410.0f));
+    DOCTEST_CHECK(floatEq(tagInput->frame.y - py, 318.0f));
+    DOCTEST_CHECK(floatEq(tagInput->frame.height, 34.0f));
+
+    // ⑧ 底部：取消|保存 右对齐（y=542 h34）；保存底 ≤ 面板底-17.5
     const auto* saveBg = f.ui.find("todo.dialog.detail.save.bg");
+    const auto* cancelBg = f.ui.find("todo.dialog.detail.cancel.bg");
     DOCTEST_REQUIRE(saveBg != nullptr);
-    DOCTEST_CHECK(floatEq(saveBg->frame.y - py, 530.0f));
+    DOCTEST_REQUIRE(cancelBg != nullptr);
+    DOCTEST_CHECK(floatEq(saveBg->frame.y - py, 542.0f));
+    DOCTEST_CHECK(floatEq(saveBg->frame.height, 34.0f));
+    DOCTEST_CHECK(floatEq(saveBg->frame.x - px, 800.0f - 56.0f - 96.0f));
+    DOCTEST_CHECK(floatEq(cancelBg->frame.x - px, 800.0f - 56.0f - 96.0f * 2.0f - 8.0f));
     DOCTEST_CHECK(saveBg->frame.y + saveBg->frame.height <=
                   panel->frame.y + panel->frame.height - 17.5f);
+    // 底部不再有 删除/标记完成（上移到头部）
+    DOCTEST_CHECK(f.ui.find("todo.dialog.detail.move.0") == nullptr);
 
     mod->onStop();
     return true;

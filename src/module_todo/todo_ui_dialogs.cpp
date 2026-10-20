@@ -14,6 +14,7 @@
 #include <components/button.h>
 #include <components/contextmenu.h>
 #include <components/datepicker.h>
+#include <components/dialog.h>
 #include <components/input.h>
 
 #include <ctime>
@@ -23,11 +24,166 @@
 
 namespace module::todo::ui {
 
+namespace {
+
+// —— UAT5 弹窗重设计共用小件（视觉基准 = 用户拍板的 demo
+// task-new-dialog-redesign.html，尺寸/圆角/色值照抄；调用方仅限本 TU 的三个弹窗）——
+
+// 弹性宽契约（用户口述定案）：demo 里的 px 是最小档；实际宽 = 按窗口比例放缩
+// ——窗口的一半（clamp 下限 = demo 最小宽，无上限；窄于最小档不缩）。行/列/
+// textarea 由此按 innerW / 双列各半 比例分宽。
+float elasticDialogW(float screenW, float demoMinW) {
+    return std::max(demoMinW, screenW * 0.5f);
+}
+
+// segment 选项钮（demo .seg .op）：未选 = pageBg 底 + dividerPrimary 边 + textPrimary
+// 字；选中 = 主绿底 + 白字（主按钮同语言）。iconCode 0 = 无图标（截止档传
+// 0xF133 fa-calendar——demo 的 📅，test_module_icons 钉住 .icon 节点）。
+// 只读/禁用态 = 调用方传空 onClick
+void drawSegOp(eui::Ui& ui, const std::string& id, float x, float y, float w, float h,
+               const std::string& label, bool on, const core::theme::Tokens& t,
+               std::function<void()> onClick, unsigned iconCode = 0) {
+    auto btn = components::button(ui, id)
+        .position(x, y)
+        .size(w, h)
+        .text(label)
+        .fontSize(t.sizes.fontSizeSmall - 1.0f);   // demo .op 12px
+    if (iconCode != 0) {
+        btn.icon(iconCode);
+    }
+    btn
+        .colors(on ? t.colors.wechat.primary : t.colors.wechat.pageBg,
+                on ? t.colors.wechat.primaryHover : t.colors.wechat.secondaryButtonBg,
+                on ? t.colors.wechat.primaryPressed : t.colors.wechat.selectedBg)
+        .textColor(on ? t.colors.wechat.onPrimary : t.colors.wechat.textPrimary)
+        .radius(8.0f)   // demo .op border-radius:8px
+        .border(1.0f, on ? t.colors.wechat.primary : t.colors.wechat.dividerPrimary)
+        .onClick(std::move(onClick))
+        .build();
+}
+
+// 行标签（demo .lbl：12px 灰）
+void drawFieldLabel(eui::Ui& ui, const std::string& id, float x, float y, float w,
+                    const std::string& text, const core::theme::Tokens& t) {
+    ui.text(id)
+        .position(x, y)
+        .size(w, 16.0f)
+        .text(text)
+        .fontSize(t.sizes.fontSizeSmall - 1.0f)
+        .lineHeight(16.0f)
+        .color(t.colors.textTertiary)
+        .build();
+}
+
+// 弹窗内标签 chip（demo .chip.pri：浅绿底 #E8F7EE + 深绿字 #067036 + 绿边；
+// 右缘内嵌 × 删除钮——整枚是一枚胶囊）。宽 = 文字估宽 + × 槽（22 钮 + 2 缝）。
+void drawDialogChip(eui::Ui& ui, const std::string& id, float x, float y,
+                    const core::theme::Tokens& t, const std::string& text,
+                    std::function<void()> onRemove) {
+    const float textW = chipWidth(text);
+    const float w = textW + 24.0f;
+    const float h = 28.0f;
+    const eui::Color bg = eui::mixColor(t.colors.wechat.cardBg,
+                                        t.colors.wechat.primary, 0.12f);
+    const eui::Color border = eui::mixColor(t.colors.wechat.cardBg,
+                                            t.colors.wechat.primary, 0.24f);
+    ui.rect(id + ".bg")
+        .position(x, y)
+        .size(w, h)
+        .color(bg)
+        .radius(t.sizes.radiusPill)
+        .border(1.0f, border)
+        .build();
+    ui.text(id + ".text")
+        .position(x, y)
+        .size(textW, h)
+        .text(text)
+        .fontSize(t.sizes.fontSizeSmall - 1.0f)
+        .lineHeight(h)
+        .horizontalAlign(eui::HorizontalAlign::Center)
+        .verticalAlign(eui::VerticalAlign::Center)
+        .color(t.colors.wechat.primaryText)
+        .build();
+    components::button(ui, id + ".x")
+        .position(x + textW + 2.0f, y + 3.0f)
+        .size(22.0f, 22.0f)
+        .text("×")
+        .fontSize(t.sizes.fontSizeSmall)
+        .colors(t.colors.wechat.cardBg, t.colors.wechat.secondaryButtonBg,
+                t.colors.wechat.selectedBg)
+        .textColor(t.colors.wechat.primaryText)
+        .radius(11.0f)
+        .onClick(std::move(onRemove))
+        .build();
+}
+
+// 弹窗底部按钮对（demo .btn：高 34 / 圆角 8，右对齐自然宽；取消 = 浅灰描边钮，
+// 确认 = 微信绿主钮）。h = 弹窗高
+void drawDialogFooterButtons(eui::Ui& ui, const std::string& idBase, float w, float h,
+                             const std::string& confirmLabel,
+                             std::function<void()> onCancel,
+                             std::function<void()> onConfirm,
+                             const core::theme::Tokens& t) {
+    const float bw = 96.0f;
+    const float bh = 34.0f;
+    const float y = h - 58.0f;
+    components::button(ui, idBase + ".cancel")
+        .position(w - ui_kit::kDialogBodyInsetX - bw * 2.0f - 8.0f, y)
+        .size(bw, bh)
+        .text("取消")
+        .fontSize(t.sizes.fontSizeSmall)
+        .colors(t.colors.wechat.pageBg, t.colors.wechat.secondaryButtonBg,
+                t.colors.wechat.selectedBg)
+        .textColor(t.colors.wechat.textPrimary)
+        .radius(8.0f)
+        .border(1.0f, t.colors.wechat.dividerPrimary)
+        .onClick(std::move(onCancel))
+        .build();
+    components::button(ui, idBase + ".confirm")
+        .position(w - ui_kit::kDialogBodyInsetX - bw, y)
+        .size(bw, bh)
+        .text(confirmLabel)
+        .fontSize(t.sizes.fontSizeSmall)
+        .colors(t.colors.wechat.primary, t.colors.wechat.primaryHover,
+                t.colors.wechat.primaryPressed)
+        .textColor(t.colors.wechat.onPrimary)
+        .radius(8.0f)
+        .onClick(std::move(onConfirm))
+        .build();
+}
+
+// 优先级 segment 短文案（demo：无/低/中/高——不带看板卡 priorityLabel 的 ● 前缀）
+const char* prioritySegLabel(Priority p) {
+    switch (p) {
+        case Priority::None: return "无";
+        case Priority::Low: return "低";
+        case Priority::Medium: return "中";
+        case Priority::High: return "高";
+    }
+    return "?";
+}
+
+// 今天/明天的本地日历日 epoch（供截止快选；day 溢出由 mktime 归一）
+int64_t dayShiftEpoch(int dayOffset) {
+    std::tm tmv{};
+    const std::time_t now = std::time(nullptr);
+    core::time::localTime(now, &tmv);
+    return ymdToEpoch(tmv.tm_year + 1900, tmv.tm_mon + 1, tmv.tm_mday + dayOffset);
+}
+
+} // namespace
+
 // 提交失败（空标题/服务错误）→ 弹窗内嵌红字、弹窗不关；成功 → 关窗。
+// 方案 A 富创建：描述/优先级/截止随标题一次落库（NewTaskAttributes），标签建成
+// 后由模块侧补一次 update（见 DialogHost::createTask 注释）。
 void NewTaskDialog::submit(PopupStack& popups, const DialogHost& host) {
     const int64_t col = columnId;
     const std::string text = title;
-    const std::string err = host.createTask(col, text);
+    NewTaskAttributes attrs;
+    if (!description.empty()) attrs.description = description;
+    attrs.priority = priority;
+    attrs.dueAt = dueAt;
+    const std::string err = host.createTask(col, text, attrs, tags);
     if (!err.empty()) {
         error = err;
         return;
@@ -35,24 +191,31 @@ void NewTaskDialog::submit(PopupStack& popups, const DialogHost& host) {
     popups.close(Popup::NewTask);
 }
 
+// 方案 A 富创建（UAT5 重设计，demo 最小档 640×470）：
+// 标题大输入（回车直接创建）→ 描述可选 → 优先级|截止 双列 segment → 标签行 →
+// 底部 hint + 取消|创建。元素 id 沿用旧契约（input/confirm/cancel/error），新字段
+// 用 .desc / .prio.N / .due.N / .tag.* 后缀。
 void drawNewTaskDialog(eui::Ui& ui, const eui::Screen& screen,
                        const core::theme::Tokens& t, DialogSet& d,
                        const DialogHost& host) {
     const auto themeTokens = core::theme::componentTokensWeChat(t);
-    const float w = ui_kit::dialogWidthPx(ui_kit::DialogWidth::Standard);
-    const float h = 230.0f;
+    const float w = elasticDialogW(screen.width, 640.0f);
+    const float h = 470.0f;
+    const float innerW = w - ui_kit::kDialogBodyInsetX;   // 弹性：随窗口放缩
+    const float x0 = ui_kit::kDialogInsetX;
 
-    ui_kit::DialogFrame frame;
-    frame.id = "todo.dialog.newtask";
-    frame.width = ui_kit::DialogWidth::Standard;
-    frame.height = h;
-    frame.open = d.popups.isOpen(Popup::NewTask);
-    frame.zIndex = d.popups.zOf(Popup::NewTask);
-    frame.onOpenChange = [&d](bool v) { d.popups.setOpen(Popup::NewTask, v); };
-
-    ui_kit::drawDialogFrame(ui, screen, frame, themeTokens, [&] {
+    // 关闭态也常驻构建（EUI 内建 0.16s 收起过渡依赖节点存在；test_ui_modern 钉住）
+    components::dialog(ui, "todo.dialog.newtask")
+        .open(d.popups.isOpen(Popup::NewTask))
+        .screen(screen.width, screen.height)
+        .size(w, h)
+        .theme(themeTokens)
+        .zIndex(d.popups.zOf(Popup::NewTask))
+        .onOpenChange([&d](bool v) { d.popups.setOpen(Popup::NewTask, v); })
+        .content([&] {
             ui_kit::drawDialogTitle(ui, "todo.dialog.newtask.title", w, "新建任务",
-                                    t.sizes.fontSizeLarge + 2.0f, t.colors.textPrimary);
+                                    t.sizes.fontSizeBody, t.colors.textPrimary,
+                                    {.y = 22.0f, .height = 28.0f, .lineHeight = 28.0f});
 
             std::string colName = "?";
             for (const auto& c : *host.columns) {
@@ -61,14 +224,15 @@ void drawNewTaskDialog(eui::Ui& ui, const eui::Screen& screen,
             ui_kit::drawDialogText(ui, "todo.dialog.newtask.col", w,
                                    "将创建在「" + colName + "」列",
                                    t.sizes.fontSizeSmall - 1.0f, t.colors.textTertiary,
-                                   {.y = 56.0f, .height = 18.0f, .lineHeight = 18.0f});
+                                   {.y = 52.0f, .height = 16.0f, .lineHeight = 16.0f});
 
+            // 标题大输入（demo .titleinput）：回车直接创建
             components::input(ui, "todo.dialog.newtask.input")
-                .position(28.0f, 84.0f)
-                .size(w - 56.0f, 44.0f)
+                .position(x0, 74.0f)
+                .size(innerW, 44.0f)
                 .value(d.newTask.title)
-                .placeholder("任务标题…")
-                .fontSize(t.sizes.fontSizeBody)
+                .placeholder("任务标题，回车直接创建")
+                .fontSize(t.sizes.fontSizeBody + 1.0f)
                 .theme(themeTokens)
                 .onChange([&d](const std::string& text) {
                     d.newTask.title = text;
@@ -78,25 +242,135 @@ void drawNewTaskDialog(eui::Ui& ui, const eui::Screen& screen,
                 .onCancel([&d] { d.popups.close(Popup::NewTask); })
                 .build();
 
+            // 描述（可选）textarea
+            drawFieldLabel(ui, "todo.dialog.newtask.dlabel", x0, 128.0f, 120.0f,
+                           "描述（可选）", t);
+            components::input(ui, "todo.dialog.newtask.desc")
+                .position(x0, 148.0f)
+                .size(innerW, 52.0f)
+                .value(d.newTask.description)
+                .placeholder("补充说明…")
+                .fontSize(t.sizes.fontSizeSmall)
+                .multiline(true)
+                .theme(themeTokens)
+                .onChange([&d](const std::string& text) { d.newTask.description = text; })
+                .build();
+
+            // 优先级 | 截止日期 双列（列宽各半按弹窗宽弹性分）
+            const float colGap = 16.0f;
+            const float colW = (innerW - colGap) * 0.5f;
+            const float col2X = x0 + colW + colGap;
+            drawFieldLabel(ui, "todo.dialog.newtask.plabel", x0, 212.0f, 120.0f,
+                           "优先级", t);
+            drawFieldLabel(ui, "todo.dialog.newtask.duelabel", col2X, 212.0f, 120.0f,
+                           "截止日期", t);
+
+            // 优先级 segment 四选（选中 = 绿底白字；「无」即不设优先级）
+            const Priority prios[4] = {Priority::None, Priority::Low,
+                                       Priority::Medium, Priority::High};
+            {
+                constexpr float kGap = 6.0f;   // demo .seg gap:6px
+                const float opW = (colW - kGap * 3.0f) / 4.0f;
+                for (int i = 0; i < 4; ++i) {
+                    drawSegOp(ui, "todo.dialog.newtask.prio." + std::to_string(i),
+                              x0 + static_cast<float>(i) * (opW + kGap), 232.0f, opW,
+                              32.0f, prioritySegLabel(prios[i]),
+                              d.newTask.priority == prios[i], t,
+                              [&d, p = prios[i]] { d.newTask.priority = p; });
+                }
+            }
+            // 截止 segment 三选：今天/明天/选择…（选择… = datepicker；再点选中档 = 取消）
+            {
+                constexpr float kGap = 6.0f;
+                const float opW = (colW - kGap * 2.0f) / 3.0f;
+                const bool hasDue = d.newTask.dueAt.has_value();
+                drawSegOp(ui, "todo.dialog.newtask.due.0",
+                          col2X, 232.0f, opW, 32.0f, "今天",
+                          hasDue && d.newTask.dueChoice == DueChoice::Today, t,
+                          [&d] {
+                              if (d.newTask.dueAt.has_value() &&
+                                  d.newTask.dueChoice == DueChoice::Today) {
+                                  d.newTask.dueAt = std::nullopt;   // 再点 = 取消
+                              } else {
+                                  d.newTask.dueAt = dayShiftEpoch(0);
+                                  d.newTask.dueChoice = DueChoice::Today;
+                              }
+                          },
+                          0xF133);   // fa-calendar（demo 📅 今天）
+                drawSegOp(ui, "todo.dialog.newtask.due.1",
+                          col2X + opW + kGap, 232.0f, opW, 32.0f, "明天",
+                          hasDue && d.newTask.dueChoice == DueChoice::Tomorrow, t,
+                          [&d] {
+                              if (d.newTask.dueAt.has_value() &&
+                                  d.newTask.dueChoice == DueChoice::Tomorrow) {
+                                  d.newTask.dueAt = std::nullopt;
+                              } else {
+                                  d.newTask.dueAt = dayShiftEpoch(1);
+                                  d.newTask.dueChoice = DueChoice::Tomorrow;
+                              }
+                          });
+                const std::string pickLabel =
+                    hasDue && d.newTask.dueChoice == DueChoice::Custom
+                        ? formatDue(d.newTask.dueAt.value())
+                        : "选择…";
+                drawSegOp(ui, "todo.dialog.newtask.due.2",
+                          col2X + (opW + kGap) * 2.0f, 232.0f, opW, 32.0f, pickLabel,
+                          hasDue && d.newTask.dueChoice == DueChoice::Custom, t,
+                          [&d] {
+                              d.datePickOwner = DatePickOwner::NewTask;
+                              d.popups.open(Popup::DatePick);
+                          });
+            }
+
+            // 标签：已选 chips（单行，放不下截断）+ 添加输入行
+            drawFieldLabel(ui, "todo.dialog.newtask.taglabel", x0, 280.0f, 120.0f,
+                           "标签", t);
+            float chipX = x0;
+            for (size_t ti = 0; ti < d.newTask.tags.size(); ++ti) {
+                const float cw = chipWidth(d.newTask.tags[ti]) + 24.0f;
+                if (chipX + cw > w - x0) break;   // 单行不换行，放不下即截断
+                const std::string cid =
+                    "todo.dialog.newtask.tag." + std::to_string(ti);
+                drawDialogChip(ui, cid, chipX, 300.0f, t, d.newTask.tags[ti],
+                               [&d, ti] {
+                                   if (ti < d.newTask.tags.size()) {
+                                       d.newTask.tags.erase(d.newTask.tags.begin() +
+                                                            static_cast<long>(ti));
+                                   }
+                               });
+                chipX += cw + 8.0f;
+            }
+            const float tagInputY =
+                d.newTask.tags.empty() ? 300.0f : 336.0f;
+            components::input(ui, "todo.dialog.newtask.tag.input")
+                .position(x0, tagInputY)
+                .size(innerW, 34.0f)
+                .value(d.newTask.tagInput)
+                .placeholder("+ 添加标签，回车添加")
+                .fontSize(t.sizes.fontSizeSmall)
+                .theme(themeTokens)
+                .onChange([&d](const std::string& text) { d.newTask.tagInput = text; })
+                .onEnter([&d] { d.newTask.addTag(); })
+                .onCancel([&d] { d.newTask.tagInput.clear(); })
+                .build();
+
             // 内嵌红字错误行（校验/创建失败就地可见，弹窗不关）
             ui_kit::drawDialogText(ui, "todo.dialog.newtask.error", w, d.newTask.error,
                                    t.sizes.fontSizeSmall, t.colors.error,
-                                   {.y = 134.0f, .height = 18.0f, .lineHeight = 18.0f,
+                                   {.y = 380.0f, .height = 16.0f, .lineHeight = 16.0f,
                                     .skipIfEmpty = true});
 
-            ui_kit::DialogButtonSpec cancel;
-            cancel.label = "取消";
-            cancel.fontSize = t.sizes.fontSizeBody - 1.0f;
-            cancel.style = ui_kit::DialogButtonStyle::SecondaryThemed;
-            cancel.onClick = [&d] { d.popups.close(Popup::NewTask); };
-            ui_kit::DialogButtonSpec confirm;
-            confirm.label = "创建";
-            confirm.fontSize = t.sizes.fontSizeBody - 1.0f;
-            confirm.style = ui_kit::DialogButtonStyle::PrimaryThemed;
-            confirm.onClick = [&d, &host] { d.newTask.submit(d.popups, host); };
-            ui_kit::drawDialogButtons(ui, "todo.dialog.newtask", w, h, cancel, confirm,
-                                      t, themeTokens);
-    });
+            // 底部：hint 左 + 取消|创建 右（demo .dlgf）
+            ui_kit::drawDialogText(
+                ui, "todo.dialog.newtask.hint", w, "创建后可在详情里继续编辑",
+                t.sizes.fontSizeSmall - 2.0f, t.colors.textTertiary,
+                {.y = h - 52.0f, .height = 16.0f, .lineHeight = 16.0f});
+            drawDialogFooterButtons(ui, "todo.dialog.newtask", w, h, "创建",
+                                    [&d] { d.popups.close(Popup::NewTask); },
+                                    [&d, &host] { d.newTask.submit(d.popups, host); },
+                                    t);
+        })
+        .build();
 }
 
 // 新建列弹窗：「+ 列」不即时落库，先走命名弹窗。Input 无程序化 focus/selectAll，
@@ -382,16 +656,43 @@ void drawConfirmDeleteDialog(eui::Ui& ui, const eui::Screen& screen,
     });
 }
 
-// 截止日期选择（datepicker 滚轮，可选任意日期）
+// 截止日期选择（datepicker 滚轮，可选任意日期）。锚点/写回按 datePickOwner 路由
+//（详情「选择日期…」与新建「选择…」两个入口）。
+// 「默认当天」机制（UAT5，不动 EUI-NEO 组件、只动本包装层）：
+// ① 组件滚轮草稿只在「未激活」时才吃 .date() 提交值（syncDraft 守卫），而本层关闭态
+//   根本不建组件 → 草稿 active 恒 true、第二次打开滚轮停在上一次位置而非本卡锚点。
+//   → 每个打开会话首帧 releaseStateScope 放掉旧草稿，滚轮按锚点（有 due 用 due、
+//   无 due 用当天）重新初始化。
+// ② 组件「确定」只在「滚轮草稿 ≠ 提交值」时回调 onChange——首帧喂锚点后直接确定
+//   永远不回调（无 due 的卡就此设不上「今天」）。→ 首帧喂锚点，后续帧喂 1900 哨兵
+//   提交值（滚轮草稿在打开期间不被 syncDraft 重置，哨兵不进显示），使「打开不滚
+//   直接确定」也回调 onChange(滚轮当前值)=当天/原值。
+// 帧计数在「关闭态每帧」归零——Esc/确定/遮罩/任何 popups.close 路径全覆盖。
 void drawDatePicker(eui::Ui& ui, const eui::Screen& screen,
                     const core::theme::Tokens& t, DialogSet& d,
                     const DialogHost& host) {
     (void)host;
-    if (!d.popups.isOpen(Popup::DatePick)) return;
+    if (!d.popups.isOpen(Popup::DatePick)) {
+        d.datePickDrawn = 0;
+        return;
+    }
     const auto themeTokens = core::theme::componentTokensWeChat(t);
+    // 锚点与确定写回按归属弹窗路由（详情/新建可同时在栈上，见 DatePickOwner）
+    const bool forNewTask = d.datePickOwner == DatePickOwner::NewTask;
+    const std::optional<int64_t>& ownerDue =
+        forNewTask ? d.newTask.dueAt : d.detail.dueAt;
     int year = 0, month = 0, day = 0;
-    if (!epochToYmd(d.detail.dueAt.value_or(0), year, month, day)) {
+    if (!epochToYmd(ownerDue.value_or(0), year, month, day)) {
         epochToYmd(static_cast<int64_t>(std::time(nullptr)), year, month, day);
+    }
+    const bool firstFrame = d.datePickDrawn == 0;
+    ++d.datePickDrawn;
+    if (firstFrame) {
+        ui.releaseStateScope("todo.datepicker.draft");
+    } else {
+        year = 1900;   // 哨兵提交值：合法日期（.date() clamp 不炸）且真实任务
+        month = 1;     // 永远选不到 1900-01-01 →「确定」必回调 onChange
+        day = 1;
     }
     components::datePicker(ui, "todo.datepicker")
         .open(true)
@@ -400,8 +701,14 @@ void drawDatePicker(eui::Ui& ui, const eui::Screen& screen,
         .date(year, month, day)
         .theme(themeTokens)
         .zIndex(d.popups.zOf(Popup::DatePick))  // 由打开顺序给出
-        .onChange([&d](int yy, int mm, int dd) {
-            d.detail.dueAt = ymdToEpoch(yy, mm, dd);
+        .onChange([&d, forNewTask](int yy, int mm, int dd) {
+            const int64_t epoch = ymdToEpoch(yy, mm, dd);
+            if (forNewTask) {
+                d.newTask.dueAt = epoch;
+                d.newTask.dueChoice = DueChoice::Custom;
+            } else {
+                d.detail.dueAt = epoch;
+            }
         })
         .onOpenChange([&d](bool v) { d.popups.setOpen(Popup::DatePick, v); })
         .build();
@@ -527,20 +834,6 @@ void DetailDialog::reset(const Task& task) {
     discardArmed = false;
 }
 
-// 标签输入回车 → 追加（去空白/去重/空忽略；保存时才落库）
-void DetailDialog::addTag() {
-    std::string tag;
-    for (char c : tagInput) {
-        if (c != ' ' && c != '\t') tag += c;
-    }
-    tagInput.clear();
-    if (tag.empty()) return;
-    for (const auto& existing : tags) {
-        if (existing == tag) return;
-    }
-    tags.push_back(std::move(tag));
-}
-
 // 表单与库中任务是否有差异（backdrop 关闭守卫用）；任务不在内存时按不脏处理
 bool DetailDialog::dirty(const std::vector<Task>& tasks) const {
     const Task* orig = findTask(tasks, taskId);
@@ -592,258 +885,88 @@ bool DetailDialog::requestClose(PopupStack& popups, const DialogHost& host) {
     return true;
 }
 
+// 任务详情弹窗重设计（UAT5，demo task-new-dialog-redesign.html 详情面板）：
+// 删除/标记完成上移头部（危险操作与保存分离）；标题/描述直接可编辑；
+// 优先级|截止 segment 双列（与新建弹窗同一语言）；标签 = 可删 chips + 添加输入；
+// 底部只留 取消|保存。元素 id 沿用旧契约（input.title / prio.N / due.pick / due.clear /
+// tag.N / delete / toggle / save / close——无头用例按 id 定位与触发）。
 void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
                       const core::theme::Tokens& t, DialogSet& d,
                       const DialogHost& host) {
     const auto themeTokens = core::theme::componentTokensWeChat(t);
-    const float w = ui_kit::dialogWidthPx(ui_kit::DialogWidth::Wide);
-    // 弹窗高；底部操作区 y 随 h-58 上移。「优先级 | 截止日期」同排双列后的紧凑高度：
-    // 内容行收掉一整行（416→352），标签区随之上移，底部按钮带结构不变（18px 底距）。
-    // 双列几何：colW = (640-56-16)/2 = 284；左列 x=28，右列 x = 28+284+16 = 328。
-    // y 坐标仍是字面量体系（不随字号缩放），与 settings 卡的 roundFs 体系互不混用。
-    const float h = 588.0f;
-    constexpr float kCol2X = 328.0f;  // 右列（截止日期）x = 左列 28 + colW 284 + 列距 16
+    const float w = elasticDialogW(screen.width, 640.0f);   // demo 最小档 640，随窗弹性
+    const float h = 600.0f;
+    const float innerW = w - ui_kit::kDialogBodyInsetX;
+    const float x0 = ui_kit::kDialogInsetX;
 
-    ui_kit::DialogFrame frame;
-    frame.id = "todo.dialog.detail";
-    frame.width = ui_kit::DialogWidth::Wide;
-    frame.height = h;
-    frame.open = d.popups.isOpen(Popup::Detail);
-    frame.zIndex = d.popups.zOf(Popup::Detail);
-    // backdrop 点击（dialog 唯一外部关闭通道）→ 与 Esc 兜底共用 requestClose
-    frame.onOpenChange = [&d, &host](bool v) {
-        if (!v) d.detail.requestClose(d.popups, host);
-    };
-
-    ui_kit::drawDialogFrame(ui, screen, frame, themeTokens, [&] {
+    // 关闭态也常驻构建（收起过渡依赖节点存在）
+    components::dialog(ui, "todo.dialog.detail")
+        .open(d.popups.isOpen(Popup::Detail))
+        .screen(screen.width, screen.height)
+        .size(w, h)
+        .theme(themeTokens)
+        .zIndex(d.popups.zOf(Popup::Detail))
+        // backdrop 点击（dialog 唯一外部关闭通道）→ 与 Esc 兜底共用 requestClose
+        .onOpenChange([&d, &host](bool v) {
+            if (!v) d.detail.requestClose(d.popups, host);
+        })
+        .content([&] {
             const bool ro = d.detail.readOnly;
+            // 只读（归档）行整体下移一档给「归档时间」行让位
+            const float offY = ro ? 18.0f : 0.0f;
+
             ui_kit::drawDialogTitle(ui, "todo.dialog.detail.title", w,
                                     ro ? "任务详情（只读）" : "任务详情",
-                                    t.sizes.fontSizeLarge + 2.0f, t.colors.textPrimary,
-                                    {.y = 22.0f});
+                                    t.sizes.fontSizeBody, t.colors.textPrimary,
+                                    {.y = 22.0f, .height = 28.0f, .lineHeight = 28.0f});
 
-            // 归档时间戳（归档列任务显示）；非归档列不占位
-            if (ro) {
-                const Task* orig = findTask(*host.tasks, d.detail.taskId);
-                if (orig != nullptr && orig->archivedAt.has_value()) {
-                    const std::string archStr =
-                        "归档时间: " + formatArchivedAt(orig->archivedAt.value());
-                    ui_kit::drawDialogText(
-                        ui, "todo.dialog.detail.archived", w, archStr,
-                        t.sizes.fontSizeSmall - 1.0f, t.colors.textTertiary,
-                        {.y = 50.0f, .height = 18.0f, .lineHeight = 18.0f});
-                }
-            }
-
-            const float labelOffsetY = ro ? 18.0f : 0.0f;
-
-            ui_kit::drawDialogText(ui, "todo.dialog.detail.tlabel", w, "标题",
-                                   t.sizes.fontSizeSmall - 2.0f, t.colors.textTertiary,
-                                   {.y = 58.0f + labelOffsetY, .width = 80.0f, .height = 16.0f,
-                                    .lineHeight = 16.0f});
-            components::input(ui, "todo.dialog.detail.input.title")
-                .position(28.0f, 76.0f + labelOffsetY)
-                .size(w - 56.0f, 40.0f)
-                .value(d.detail.title)
-                .placeholder("任务标题…")
-                .fontSize(t.sizes.fontSizeBody - 1.0f)
-                .theme(themeTokens)
-                .onChange(ro ? std::function<void(const std::string&)>{} : [&d](const std::string& text) { d.detail.title = text; })
-                .build();
-
-            ui_kit::drawDialogText(ui, "todo.dialog.detail.dlabel", w, "描述",
-                                   t.sizes.fontSizeSmall - 2.0f, t.colors.textTertiary,
-                                   {.y = 126.0f + labelOffsetY, .width = 80.0f, .height = 16.0f,
-                                    .lineHeight = 16.0f});
-            components::input(ui, "todo.dialog.detail.input.desc")
-                .position(28.0f, 144.0f + labelOffsetY)
-                .size(w - 56.0f, 144.0f)
-                .value(d.detail.description)
-                .placeholder("补充说明…（可多行）")
-                .fontSize(t.sizes.fontSizeSmall)
-                .multiline(true)
-                .scrollbar(true)
-                .theme(themeTokens)
-                .onChange(ro ? std::function<void(const std::string&)>{} : [&d](const std::string& text) {
-                    d.detail.description = text;
-                })
-                .build();
-
-            ui_kit::drawDialogText(ui, "todo.dialog.detail.plabel", w, "优先级",
-                                   t.sizes.fontSizeSmall - 2.0f, t.colors.textTertiary,
-                                   {.y = 300.0f + labelOffsetY, .width = 80.0f, .height = 16.0f,
-                                    .lineHeight = 16.0f});
-            const Priority prios[4] = {Priority::None, Priority::Low,
-                                       Priority::Medium, Priority::High};
-            for (int i = 0; i < 4; ++i) {
-                const bool active = (d.detail.priority == prios[i]);
-                // 双列后按钮收窄：4×64 + 3×8 = 280 ≤ colW 284（100 宽四钮 424 会顶进右列）
-                const float bw = 64.0f;
-                // 按钮底色 = 它代表的优先级色（priorityButtonBg：未选中按强度表 tint、选中 0.65 深 tint，与卡底同源）。
-                // 文字用 textPrimary（textSecondary 浅色档 < WCAG AA 4.5:1）；选中/未选中靠底色深浅 + 边框区分
-                // （UAT2 收口把选中档提 0.65，与 High 未选中顶档 0.55 拉开、四档两态底色均可辨）；三态基色随米黄迁移走 wechat 次按钮梯度
-                components::button(ui, "todo.dialog.detail.prio." + std::to_string(i))
-                    .position(28.0f + static_cast<float>(i) * (bw + 8.0f), 320.0f + labelOffsetY)
-                    .size(bw, 32.0f)
-                    .text(priorityLabel(prios[i]))
-                    .fontSize(t.sizes.fontSizeSmall - 1.0f)
-                    .colors(priorityButtonBg(prios[i], t, active,
-                                             t.colors.wechat.secondaryButtonBg),
-                            priorityButtonBg(prios[i], t, active,
-                                             t.colors.wechat.dividerSecondary),
-                            priorityButtonBg(prios[i], t, active,
-                                             t.colors.wechat.selectedBg))
-                    .textColor(t.colors.textPrimary)
-                    .radius(t.sizes.radius)
-                    .border(active ? 2.0f : 1.0f,
-                            active ? priorityColor(prios[i], t)
-                                   : t.colors.borderDefault)
-                    .onClick(ro ? std::function<void()>{} : [&d, i, prios] { d.detail.priority = prios[i]; })
-                    .build();
-            }
-
-            // 截止日期：清除 + datepicker 滚轮选任意日期（与优先级同排，落右列 x=328）
-            ui_kit::drawDialogText(ui, "todo.dialog.detail.dlabel2", w, "截止日期",
-                                   t.sizes.fontSizeSmall - 2.0f, t.colors.textTertiary,
-                                   {.x = kCol2X, .y = 300.0f + labelOffsetY,
-                                    .width = 120.0f, .height = 16.0f,
-                                    .lineHeight = 16.0f});
-            const bool hasDue = d.detail.dueAt.has_value();
-            // 截止行总宽 176（56 + 8 + 112），收在 colW 284 内；pick 占大头让位「选择日期…」+日历图标
-            components::button(ui, "todo.dialog.detail.due.clear")
-                .position(kCol2X, 320.0f + labelOffsetY)
-                .size(56.0f, 32.0f)
-                .text(!hasDue ? "未设置" : "清除")
-                .fontSize(t.sizes.fontSizeSmall - 1.0f)
-                .colors(!hasDue ? t.colors.wechat.selectedBg
-                                : t.colors.wechat.secondaryButtonBg,
-                        t.colors.wechat.dividerSecondary, t.colors.wechat.selectedBg)
-                // UAT3 W2-M2：未设置态绿字落 selectedBg #E5E5E5 仅 1.89:1（12px AA 需
-                // 4.5:1）——文字档用 primaryText #067036（4.93:1）；绿边框是装饰不动
-                .textColor(!hasDue ? t.colors.wechat.primaryText : t.colors.textSecondary)
-                .radius(t.sizes.radius)
-                .border(1.0f, !hasDue ? t.colors.wechat.primary
-                                     : t.colors.wechat.dividerPrimary)
-                .onClick(ro ? std::function<void()>{} : [&d] { d.detail.dueAt = std::nullopt; })
-                .build();
-            // fa-calendar
-            components::button(ui, "todo.dialog.detail.due.pick")
-                .position(kCol2X + 64.0f, 320.0f + labelOffsetY)
-                .size(112.0f, 32.0f)
-                .text(hasDue ? formatDue(d.detail.dueAt.value()) : "选择日期…")
-                .icon(0xF133)
-                .fontSize(t.sizes.fontSizeSmall - 1.0f)
-                .colors(hasDue ? t.colors.wechat.selectedBg
-                               : t.colors.wechat.secondaryButtonBg,
-                        t.colors.wechat.dividerSecondary, t.colors.wechat.selectedBg)
-                // UAT3 W2-M2：已设日期绿字同落 selectedBg——文字档同上换 primaryText
-                .textColor(hasDue ? t.colors.wechat.primaryText : t.colors.textSecondary)
-                .radius(t.sizes.radius)
-                .border(1.0f, hasDue ? t.colors.wechat.primary
-                                     : t.colors.wechat.dividerPrimary)
-                .onClick(ro ? std::function<void()>{} : [&d] { d.popups.open(Popup::DatePick); })
-                .build();
-
-            // 标签：chip × 删除 + 输入回车添加；保存时走 updateTask 的 JSON 序列化
-            //（双列收行后整体上移 64：截止与优先级同排，标签区顶替原截止行位置）
-            ui_kit::drawDialogText(ui, "todo.dialog.detail.taglabel", w, "标签",
-                                   t.sizes.fontSizeSmall - 2.0f, t.colors.textTertiary,
-                                   {.y = 364.0f + labelOffsetY, .width = 120.0f, .height = 16.0f,
-                                    .lineHeight = 16.0f});
-            {
-                float chipX = 28.0f;
-                for (size_t ti = 0; ti < d.detail.tags.size(); ++ti) {
-                    const float tw = chipWidth(d.detail.tags[ti]);
-                    // 单行不换行，放不下即截断（+N 省略）
-                    if (chipX + tw + 22.0f > w - 28.0f) break;
-                    const std::string chipId =
-                        "todo.dialog.detail.tag." + std::to_string(ti);
-                    drawChip(ui, chipId, chipX, 384.0f + labelOffsetY, tw, t, d.detail.tags[ti],
-                             t.colors.info, t.colors.wechat.secondaryButtonBg);
-                    components::button(ui, chipId + ".x")
-                        // 删除按钮高 22 与 chip（kChipHeight）同高，y 对齐 chip 顶
-                        .position(chipX + tw + 1.0f, 384.0f + labelOffsetY)
-                        .size(20.0f, 22.0f)
-                        .text("×")
-                        .fontSize(t.sizes.fontSizeSmall)
-                        .colors(t.colors.wechat.secondaryButtonBg,
-                                t.colors.wechat.dividerSecondary,
-                                t.colors.wechat.selectedBg)
-                        .textColor(t.colors.textSecondary)
-                        .radius(11.0f)
-                        .onClick(ro ? std::function<void()>{} : [&d, ti] {
-                            if (ti < d.detail.tags.size()) {
-                                d.detail.tags.erase(d.detail.tags.begin() +
-                                                    static_cast<long>(ti));
-                            }
-                        })
-                        .build();
-                    chipX += tw + 26.0f;
-                }
-            }
-            components::input(ui, "todo.dialog.detail.tag.input")
-                .position(28.0f, 410.0f + labelOffsetY)
-                .size(w - 56.0f, 36.0f)
-                .value(d.detail.tagInput)
-                .placeholder(ro ? "（只读）" : "输入标签，回车添加…")
-                .fontSize(t.sizes.fontSizeSmall)
-                .theme(themeTokens)
-                .onChange(ro ? std::function<void(const std::string&)>{} : [&d](const std::string& text) { d.detail.tagInput = text; })
-                .onEnter(ro ? std::function<void()>{} : [&d] { d.detail.addTag(); })
-                // Esc=丢弃标签草稿（不关详情弹窗——整窗关断由关闭按钮负责）
-                .onCancel(ro ? std::function<void()>{} : [&d] { d.detail.tagInput.clear(); })
-                .build();
-
-            const float btnY = h - 58.0f;
-            if (ro) {
-                // 只读模式：仅「关闭」按钮
-                components::button(ui, "todo.dialog.detail.close")
-                    .position(w - 28.0f - 160.0f, btnY)
-                    .size(160.0f, 40.0f)
-                    .text("关闭")
-                    .fontSize(t.sizes.fontSizeBody - 1.0f)
-                    .colors(t.colors.wechat.primary, t.colors.wechat.primaryHover,
-                            t.colors.wechat.primaryPressed)
-                    .textColor(t.colors.onPrimary)
-                    .radius(t.sizes.radius)
-                    .onClick([&d] {
-                        d.popups.close(Popup::Detail);
-                        d.detail.discardArmed = false;
-                    })
-                    .build();
-            } else {
+            // 头部右缘动作 chips（demo：🗑 删除 灰 / ✔ 标记完成 绿）——从底部按钮区上移，
+            // 危险操作不再与取消/保存挤一行；只读态不渲染
+            if (!ro) {
+                const float chipY = 22.0f;
+                const float toggleW = 104.0f;
+                const float deleteW = 76.0f;
                 components::button(ui, "todo.dialog.detail.delete")
-                    .position(28.0f, btnY)
-                    .size(96.0f, 40.0f)
+                    .position(w - ui_kit::kDialogBodyInsetX - toggleW - 8.0f - deleteW,
+                              chipY)
+                    .size(deleteW, 28.0f)
+                    .icon(0xF2ED)   // fa-trash
                     .text("删除")
-                    .fontSize(t.sizes.fontSizeSmall)
-                    .colors(t.colors.wechat.secondaryButtonBg,
-                            t.colors.wechat.dividerSecondary,
+                    .fontSize(t.sizes.fontSizeSmall - 1.0f)
+                    .colors(t.colors.wechat.pageBg, t.colors.wechat.secondaryButtonBg,
                             t.colors.wechat.selectedBg)
-                    .textColor(t.colors.error)
-                    .radius(t.sizes.radius)
-                    .border(1.0f, t.colors.borderDefault)
+                    .textColor(t.colors.wechat.textSecondary)
+                    .iconColor(t.colors.wechat.textSecondary)
+                    .radius(14.0f)   // 胶囊（demo .chip border-radius:99px）
+                    .border(1.0f, t.colors.wechat.dividerPrimary)
                     // 与右键菜单删除同路径：先弹确认（Popup::Confirm），不关详情弹窗
                     .onClick([&d] {
                         d.confirm.openForTask(d.detail.taskId, d.detail.title);
                         d.popups.open(Popup::Confirm);
                     })
                     .build();
-
                 components::button(ui, "todo.dialog.detail.toggle")
-                    .position(132.0f, btnY)
-                    .size(132.0f, 40.0f)
+                    .position(w - ui_kit::kDialogBodyInsetX - toggleW, chipY)
+                    .size(toggleW, 28.0f)
                     .icon(d.detail.completed ? 0xF021 : 0xF00C)  // fa-arrows-rotate / fa-check
                     .text(d.detail.completed ? "取消完成" : "标记完成")
-                    .fontSize(t.sizes.fontSizeSmall)
-                    .colors(t.colors.wechat.secondaryButtonBg,
-                            t.colors.wechat.dividerSecondary,
+                    .fontSize(t.sizes.fontSizeSmall - 1.0f)
+                    // 未完成 = demo .chip.pri（浅绿底绿字）；已完成 = 中性灰（弱化）
+                    .colors(d.detail.completed
+                                ? t.colors.wechat.secondaryButtonBg
+                                : eui::mixColor(t.colors.wechat.cardBg,
+                                                t.colors.wechat.primary, 0.12f),
+                            t.colors.wechat.secondaryButtonBg,
                             t.colors.wechat.selectedBg)
-                    .textColor(d.detail.completed ? t.colors.textSecondary : t.colors.success)
-                    .iconColor(d.detail.completed ? t.colors.textSecondary
-                                                  : t.colors.success)
-                    .radius(t.sizes.radius)
-                    .border(1.0f, t.colors.borderDefault)
+                    .textColor(d.detail.completed ? t.colors.wechat.textSecondary
+                                                   : t.colors.wechat.primaryText)
+                    .iconColor(d.detail.completed ? t.colors.wechat.textSecondary
+                                                   : t.colors.wechat.primaryText)
+                    .radius(14.0f)
+                    .border(1.0f, d.detail.completed
+                                      ? t.colors.wechat.dividerPrimary
+                                      : eui::mixColor(t.colors.wechat.cardBg,
+                                                      t.colors.wechat.primary, 0.24f))
                     .onClick([&d, &host] {
                         const int64_t taskId = d.detail.taskId;
                         const bool wasDone = d.detail.completed;
@@ -855,16 +978,179 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
                         else host.completeTask(taskId);
                     })
                     .build();
+            }
 
-                components::button(ui, "todo.dialog.detail.save")
-                    .position(w - 28.0f - 160.0f, btnY)
-                    .size(160.0f, 40.0f)
-                    .text("保存")
-                    .fontSize(t.sizes.fontSizeBody - 1.0f)
+            // 归档时间戳（归档列任务显示）；非归档列不占位
+            if (ro) {
+                const Task* orig = findTask(*host.tasks, d.detail.taskId);
+                if (orig != nullptr && orig->archivedAt.has_value()) {
+                    const std::string archStr =
+                        "归档时间: " + formatArchivedAt(orig->archivedAt.value());
+                    ui_kit::drawDialogText(
+                        ui, "todo.dialog.detail.archived", w, archStr,
+                        t.sizes.fontSizeSmall - 1.0f, t.colors.textTertiary,
+                        {.y = 52.0f, .height = 18.0f, .lineHeight = 18.0f});
+                }
+            }
+
+            // 标题大输入（直接可编辑；demo .titleinput）
+            components::input(ui, "todo.dialog.detail.input.title")
+                .position(x0, 76.0f + offY)
+                .size(innerW, 44.0f)
+                .value(d.detail.title)
+                .placeholder("任务标题…")
+                .fontSize(t.sizes.fontSizeBody + 1.0f)
+                .theme(themeTokens)
+                .onChange(ro ? std::function<void(const std::string&)>{}
+                             : [&d](const std::string& text) { d.detail.title = text; })
+                .build();
+
+            // 描述 textarea（直接可编辑）
+            drawFieldLabel(ui, "todo.dialog.detail.dlabel", x0, 130.0f + offY, 120.0f,
+                           "描述", t);
+            components::input(ui, "todo.dialog.detail.input.desc")
+                .position(x0, 150.0f + offY)
+                .size(innerW, 72.0f)
+                .value(d.detail.description)
+                .placeholder("补充说明…（可多行）")
+                .fontSize(t.sizes.fontSizeSmall)
+                .multiline(true)
+                .scrollbar(true)
+                .theme(themeTokens)
+                .onChange(ro ? std::function<void(const std::string&)>{}
+                             : [&d](const std::string& text) {
+                                   d.detail.description = text;
+                               })
+                .build();
+
+            // 优先级 | 截止日期 双列 segment（列宽各半，随弹窗宽弹性分）
+            const float colGap = 16.0f;
+            const float colW = (innerW - colGap) * 0.5f;
+            const float col2X = x0 + colW + colGap;
+            drawFieldLabel(ui, "todo.dialog.detail.plabel", x0, 234.0f + offY, 120.0f,
+                           "优先级", t);
+            drawFieldLabel(ui, "todo.dialog.detail.dlabel2", col2X, 234.0f + offY, 120.0f,
+                           "截止日期", t);
+
+            // 优先级 segment 四选（选中 = 绿底白字，与新建弹窗同语言）
+            const Priority prios[4] = {Priority::None, Priority::Low,
+                                       Priority::Medium, Priority::High};
+            {
+                constexpr float kGap = 6.0f;
+                const float opW = (colW - kGap * 3.0f) / 4.0f;
+                for (int i = 0; i < 4; ++i) {
+                    drawSegOp(ui, "todo.dialog.detail.prio." + std::to_string(i),
+                              x0 + static_cast<float>(i) * (opW + kGap),
+                              254.0f + offY, opW, 32.0f, prioritySegLabel(prios[i]),
+                              d.detail.priority == prios[i], t,
+                              ro ? std::function<void()>{}
+                                 : [&d, p = prios[i]] { d.detail.priority = p; });
+                }
+            }
+            // 截止 segment：有 due = [📅 MM-DD（选中，点开换）| 清除]；无 due = [选择日期…]
+            const bool hasDue = d.detail.dueAt.has_value();
+            {
+                constexpr float kGap = 6.0f;
+                const int nOps = hasDue ? 2 : 1;
+                const float opW = (colW - kGap * static_cast<float>(nOps - 1)) /
+                                 static_cast<float>(nOps);
+                const std::string pickLabel =
+                    (hasDue ? formatDue(d.detail.dueAt.value()) : "选择日期…");
+                drawSegOp(ui, "todo.dialog.detail.due.pick", col2X, 254.0f + offY, opW,
+                          32.0f, pickLabel, hasDue, t,
+                          ro ? std::function<void()>{}
+                             : [&d] {
+                                   d.datePickOwner = DatePickOwner::Detail;
+                                   d.popups.open(Popup::DatePick);
+                               },
+                          0xF133);   // fa-calendar（demo 📅；module_icons 钉 .icon）
+                if (hasDue) {
+                    drawSegOp(ui, "todo.dialog.detail.due.clear",
+                              col2X + opW + kGap, 254.0f + offY, opW, 32.0f, "清除",
+                              false, t,
+                              ro ? std::function<void()>{}
+                                 : [&d] { d.detail.dueAt = std::nullopt; });
+                }
+            }
+
+            // 标签：可删 chips（单行，放不下截断）+ 添加输入行
+            drawFieldLabel(ui, "todo.dialog.detail.taglabel", x0, 298.0f + offY, 120.0f,
+                           "标签", t);
+            float chipX = x0;
+            for (size_t ti = 0; ti < d.detail.tags.size(); ++ti) {
+                const float cw = chipWidth(d.detail.tags[ti]) + 24.0f;
+                if (chipX + cw > w - x0) break;   // 单行不换行，放不下即截断
+                const std::string cid =
+                    "todo.dialog.detail.tag." + std::to_string(ti);
+                drawDialogChip(ui, cid, chipX, 318.0f + offY, t, d.detail.tags[ti],
+                               ro ? std::function<void()>{}
+                                  : [&d, ti] {
+                                        if (ti < d.detail.tags.size()) {
+                                            d.detail.tags.erase(
+                                                d.detail.tags.begin() +
+                                                static_cast<long>(ti));
+                                        }
+                                    });
+                chipX += cw + 8.0f;
+            }
+            const float tagInputY = (chipX > x0 ? 354.0f : 318.0f) + offY;
+            components::input(ui, "todo.dialog.detail.tag.input")
+                .position(x0, tagInputY)
+                .size(innerW, 34.0f)
+                .value(d.detail.tagInput)
+                .placeholder(ro ? "（只读）" : "+ 添加标签，回车添加")
+                .fontSize(t.sizes.fontSizeSmall)
+                .theme(themeTokens)
+                .onChange(ro ? std::function<void(const std::string&)>{}
+                             : [&d](const std::string& text) {
+                                   d.detail.tagInput = text;
+                               })
+                .onEnter(ro ? std::function<void()>{} : [&d] { d.detail.addTag(); })
+                // Esc=丢弃标签草稿（不关详情弹窗——整窗关断由取消按钮/backdrop 负责）
+                .onCancel(ro ? std::function<void()>{}
+                              : [&d] { d.detail.tagInput.clear(); })
+                .build();
+
+            // 底部：只读 = 关闭；编辑 = 取消|保存 右对齐（demo .dlgf justify-end）
+            const float btnY = h - 58.0f;
+            if (ro) {
+                components::button(ui, "todo.dialog.detail.close")
+                    .position(w - ui_kit::kDialogBodyInsetX - 96.0f, btnY)
+                    .size(96.0f, 34.0f)
+                    .text("关闭")
+                    .fontSize(t.sizes.fontSizeSmall)
                     .colors(t.colors.wechat.primary, t.colors.wechat.primaryHover,
                             t.colors.wechat.primaryPressed)
-                    .textColor(t.colors.onPrimary)
-                    .radius(t.sizes.radius)
+                    .textColor(t.colors.wechat.onPrimary)
+                    .radius(8.0f)
+                    .onClick([&d] {
+                        d.popups.close(Popup::Detail);
+                        d.detail.discardArmed = false;
+                    })
+                    .build();
+            } else {
+                components::button(ui, "todo.dialog.detail.cancel")
+                    .position(w - ui_kit::kDialogBodyInsetX - 96.0f * 2.0f - 8.0f, btnY)
+                    .size(96.0f, 34.0f)
+                    .text("取消")
+                    .fontSize(t.sizes.fontSizeSmall)
+                    .colors(t.colors.wechat.pageBg, t.colors.wechat.secondaryButtonBg,
+                            t.colors.wechat.selectedBg)
+                    .textColor(t.colors.wechat.textPrimary)
+                    .radius(8.0f)
+                    .border(1.0f, t.colors.wechat.dividerPrimary)
+                    // 与 backdrop/Esc 共用未存改动守卫（先警告一次，再点放弃）
+                    .onClick([&d, &host] { d.detail.requestClose(d.popups, host); })
+                    .build();
+                components::button(ui, "todo.dialog.detail.save")
+                    .position(w - ui_kit::kDialogBodyInsetX - 96.0f, btnY)
+                    .size(96.0f, 34.0f)
+                    .text("保存")
+                    .fontSize(t.sizes.fontSizeSmall)
+                    .colors(t.colors.wechat.primary, t.colors.wechat.primaryHover,
+                            t.colors.wechat.primaryPressed)
+                    .textColor(t.colors.wechat.onPrimary)
+                    .radius(8.0f)
                     .onClick([&d, &host] {
                         // 表单组装 + 落库统一走 DetailDialog::save；保存失败保持弹窗
                         if (!d.detail.save(host)) return;
@@ -873,7 +1159,8 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
                     })
                     .build();
             }
-    });
+        })
+        .build();
 }
 
 } // namespace module::todo::ui

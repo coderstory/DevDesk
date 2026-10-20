@@ -205,23 +205,15 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // 触发方式切「定时」：点 trigger 下拉 field → 点 item.1
-    const auto* triggerField = findElement("agent.dialog.task.trigger.field");
-    if (triggerField == nullptr) {
-        std::cerr << "agent_dialog_probe: 'agent.dialog.task.trigger.field' "
+    // 触发方式切「定时」：UAT5 改 segment 选项钮（无下拉 field，直点 .item.1.bg）
+    const auto* triggerOp1 = findElement("agent.dialog.task.trigger.item.1.bg");
+    if (triggerOp1 == nullptr) {
+        std::cerr << "agent_dialog_probe: 'agent.dialog.task.trigger.item.1.bg' "
                      "缺失\n";
         passed = false;
     } else {
-        clickElement(*triggerField);
+        clickElement(*triggerOp1);
         composeFrame();
-        const auto* item1 = findElement("agent.dialog.task.trigger.item.1");
-        if (item1 == nullptr) {
-            std::cerr << "agent_dialog_probe: trigger 下拉 item.1 未出现\n";
-            passed = false;
-        } else {
-            clickElement(*item1);
-            composeFrame();
-        }
     }
 
     // 定时分支：cron 输入 + 模板下拉应渲染

@@ -181,13 +181,28 @@ public:
 
     // doCreate*/doRename* 返回错误信息（空 = 成功）：失败由弹窗写进内嵌红字 formError（弹窗不关）；成功走 toast
 
-    std::string doCreateTask(int64_t columnId, const std::string& title) {
+    // UAT5 方案 A 富创建：attrs 与标题一次 INSERT；标签在建成且非空时补一次整字段
+    // update（service 的 NewTaskAttributes 无 tags 入参——不改 service 签名）。
+    // 标签补写失败不拦成功路径：任务已建成，弹窗保持开会让用户再点一次「创建」造出
+    // 重复任务——改为 toast 警告（任务在、标签丢，用户可见可补）
+    std::string doCreateTask(int64_t columnId, const std::string& title,
+                             const NewTaskAttributes& attrs,
+                             const std::vector<std::string>& tags) {
         if (!service_) return "服务未就绪（TodoService 未注册）";
         if (title.empty()) return "任务标题不能为空";
-        auto r = service_->createTask(columnId, title);
+        auto r = service_->createTask(columnId, title, attrs);
         if (r.isFail()) {
             LOG_ERROR("Todo: createTask 失败: " + r.errorMessage());
             return "新建任务失败：" + r.errorMessage();
+        }
+        if (!tags.empty()) {
+            Task created = r.value();
+            created.tags = tags;
+            auto u = service_->updateTask(created);
+            if (u.isFail()) {
+                LOG_ERROR("Todo: 新建任务写标签失败: " + u.errorMessage());
+                setStatus("任务已创建，但写入标签失败：" + u.errorMessage(), true);
+            }
         }
         setStatus("已创建任务「" + title + "」");
         core::event::bus().emit(core::event::kTodoCreated);
@@ -853,8 +868,10 @@ private:
     ui::DialogHost dialogHost_{
         .columns = &columns_,
         .tasks = &tasks_,
-        .createTask = [this](int64_t columnId, const std::string& title) {
-            return doCreateTask(columnId, title);
+        .createTask = [this](int64_t columnId, const std::string& title,
+                             const NewTaskAttributes& attrs,
+                             const std::vector<std::string>& tags) {
+            return doCreateTask(columnId, title, attrs, tags);
         },
         .createColumn = [this](const std::string& title) {
             return doCreateColumn(title);

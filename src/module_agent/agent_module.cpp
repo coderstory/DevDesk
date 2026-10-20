@@ -14,6 +14,7 @@
 #include <utility>
 
 #include <components/button.h>
+#include <components/dialog.h>
 #include <components/dropdown.h>
 #include <components/input.h>
 #include <components/scrollview.h>
@@ -158,21 +159,17 @@ constexpr float kPageErrorH = 16.0f;
 // 页内错误行下的「去 Claude 页」引导行高（仅「LLM 配置不可用」类错误渲染）
 constexpr float kPageHintH = 16.0f;
 
-// 任务弹窗几何（§8 四组纵向重构：任务目标/基础配置/高级配置/高危选项）
+// 任务弹窗几何（UAT5 重设计：弹性宽 = max(720, 窗口/2)，demo 智能体面板的紧凑行高）
 // kDialogGap/kDialogLabelW/kDialogRowH 已收进 agent_ui_shared.h（与详情弹窗共用真源）
-constexpr float kTaskDialogH = 620.0f;        // §8 四组分组标题 + slot 独立行 → +120
-constexpr float kGoalInputH = 96.0f;
-constexpr float kContextNoteH = 72.0f;
-constexpr float kGroupTitleH = 20.0f;        // §8 分组标题高（14px 加粗 + 行高 20）
+constexpr float kTaskDialogH = 680.0f;        // 重设计后全行预算见 composeTaskDialog
+constexpr float kGoalInputH = 64.0f;          // demo 指令 textarea rows≈3
+constexpr float kContextNoteH = 56.0f;
+constexpr float kGroupTitleH = 20.0f;        // 分组标题高（14px 加粗 + 行高 20）
 
 // AI 草稿子弹窗几何（Standard 460 宽；y 均为本弹窗面板内坐标，与任务弹窗互不影响）
 constexpr float kDraftDialogH = 320.0f;
 constexpr float kDraftInputH = 88.0f;
 constexpr float kDraftGenH = 36.0f;
-// 标题行「AI 生成草稿」按钮：右缘距 ✕（w-56）一个 gap；高 32（ui_kit::button Text 级）
-constexpr float kDraftChipW = 96.0f;
-constexpr float kDraftChipH = 32.0f;
-constexpr float kDraftChipY = 20.0f;   // 底 52 ≤ goal 行顶 66（§8 四组重构后），不压表单
 
 // 任务列表每任务只查最近 1 条（列表状态/通知足够，spec §8.6 D8）。
 // kDetailRunListLimit（=20）在 agent_ui_shared.h——列表查询与详情 UI 共用同一上限
@@ -597,6 +594,7 @@ void AgentModule::openNewTaskDialog() {
     editingTaskId_.reset();
     closeDraftDialog();   // AI 草稿会话随弹窗重置（在途结果一并作废）
     draftInput_.clear();
+    editName_.clear();
     editGoal_.clear();
     editCron_.clear();
     editSlot_ = kModelSlotKeys[0];
@@ -715,6 +713,7 @@ void AgentModule::openTaskEditor(int64_t taskId) {
     editingTaskId_ = r.id;
     closeDraftDialog();   // AI 草稿会话随弹窗重置（在途结果一并作废）
     draftInput_.clear();
+    editName_ = r.name;
     editGoal_ = r.goal;
     editCron_ = cronTextOf(r);
     editOnceAtText_.clear();
@@ -853,8 +852,13 @@ void AgentModule::saveTaskDialog() {
     }
     const int iter = editIter_ < 1 ? 1 : (editIter_ > 50 ? 50 : editIter_);
     const int autoNoteInt = editAutoNote_ ? 1 : 0;
+    // UAT5：任务名称独立输入（TaskDef.name 一一对应）；留空 = 既有行为按目标取名
+    const std::string name = [&] {
+        const std::string trimmed = trimCopy(editName_);
+        return trimmed.empty() ? deriveTaskName(goal) : trimmed;
+    }();
     if (editingTaskId_) {
-        auto updated = store_->updateTask(*editingTaskId_, deriveTaskName(goal), goal,
+        auto updated = store_->updateTask(*editingTaskId_, name, goal,
                                           triggerType, triggerConfig, editSlot_, iter,
                                           editDestructive_, editContextNote_,
                                           autoNoteInt);
@@ -864,7 +868,7 @@ void AgentModule::saveTaskDialog() {
             return;
         }
     } else {
-        auto created = store_->createTask(deriveTaskName(goal), goal, triggerType,
+        auto created = store_->createTask(name, goal, triggerType,
                                           editSlot_, iter, editDestructive_,
                                           triggerConfig, editContextNote_,
                                           autoNoteInt);
@@ -1655,37 +1659,52 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                         })
                         .build();
                     if (toolsOpen_ && !toolsCache_.empty()) {
-                        components::scrollView(ui, "agent.tools.scroll")
+                        // 工具列表容器（UAT5 微信化）：pageBg 浅灰面板 + 白卡浮起
+                        //（§4.14 同语言，与 claude Profile 列表一致）；卡内名称走
+                        // wechat.primaryText（旧 orange primary 已淘汰）
+                        ui.stack("agent.tools.list.wrap")
                             .size(contentW, toolsListH)
-                            .gap(kMsgGap)
-                            .step(kToolCardH)
-                            .theme(themeTokens)
-                            .contentKey("agent.tools.scroll.n" +
-                                        std::to_string(toolsCache_.size()))
-                            .content([&](eui::Ui& inner, float cw, float) {
-                                for (size_t k = 0; k < toolsCache_.size(); ++k) {
-                                    const ToolInfo& tool = toolsCache_[k];
-                                    const std::string cid =
-                                        "agent.tools.card." + std::to_string(k);
-                                    inner.stack(cid)
-                                        .size(cw, kToolCardH)
-                                        .content([&] {
-                                            inner.rect(cid + ".bg")
-                                                .position(0.0f, 0.0f)
+                            .content([&] {
+                                ui.rect("agent.tools.list.panel")
+                                    .position(0.0f, 0.0f)
+                                    .size(contentW, toolsListH)
+                                    .color(t.colors.wechat.pageBg)
+                                    .radius(t.sizes.radiusWeChat)
+                                    .border(1.0f, t.colors.wechat.dividerPrimary)
+                                    .build();
+                                components::scrollView(ui, "agent.tools.scroll")
+                                    .position(0.0f, 0.0f)
+                                    .size(contentW, toolsListH)
+                                    .gap(kMsgGap)
+                                    .step(kToolCardH)
+                                    .theme(themeTokens)
+                                    .contentKey("agent.tools.scroll.n" +
+                                                std::to_string(toolsCache_.size()))
+                                    .content([&](eui::Ui& inner, float cw, float) {
+                                        for (size_t k = 0; k < toolsCache_.size(); ++k) {
+                                            const ToolInfo& tool = toolsCache_[k];
+                                            const std::string cid =
+                                                "agent.tools.card." + std::to_string(k);
+                                            inner.stack(cid)
                                                 .size(cw, kToolCardH)
-                                                .color(t.colors.surface)
-                                                .radius(t.sizes.radiusSmall)
-                                                .build();
-                                            inner.text(cid + ".name")
-                                                .position(12.0f, 5.0f)
-                                                .size(cw - 24.0f, 18.0f)
-                                                .text(tool.name)
-                                                .fontSize(12.0f)
-                                                .lineHeight(18.0f)
-                                                .fontWeight(600)
-                                                .wrap(false)
-                                                .color(t.colors.primary)
-                                                .build();
+                                                .content([&] {
+                                                    inner.rect(cid + ".bg")
+                                                        .position(0.0f, 0.0f)
+                                                        .size(cw, kToolCardH)
+                                                        .color(t.colors.wechat.cardBg)
+                                                        .radius(t.sizes.radiusSmall)
+                                                        .border(1.0f, t.colors.wechat.dividerPrimary)
+                                                        .build();
+                                                    inner.text(cid + ".name")
+                                                        .position(12.0f, 5.0f)
+                                                        .size(cw - 24.0f, 18.0f)
+                                                        .text(tool.name)
+                                                        .fontSize(12.0f)
+                                                        .lineHeight(18.0f)
+                                                        .fontWeight(600)
+                                                        .wrap(false)
+                                                        .color(t.colors.wechat.primaryText)
+                                                        .build();
                                             inner.text(cid + ".desc")
                                                 .position(12.0f, 23.0f)
                                                 .size(cw - 24.0f, 16.0f)
@@ -1739,18 +1758,34 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                                 }
                             })
                             .build();
+                            })   // agent.tools.list.wrap 的 content 收口
+                            .build();
                     }
                 })
                 .build();
 
-            // 任务列表：viewport = 页面剩余高，行高 kTaskRowH（step 同源）；行内动作：启动/详情/编辑/禁用（常驻多一个入队）
-            components::scrollView(ui, "agent.tasklist")
+            // 任务列表面板（UAT5 任务 D）：整列表区一个 cardBg 白面板圆角——微信
+            //「白卡浮起」语言，与页面底拉开可分辨对比；行 hover/选中态不变
+            //（行自身透明底 + hover 反馈，落在白面板上照常成立）
+            ui.stack("agent.tasklist.wrap")
                 .size(contentW, std::max(0.0f, listH))
-                .gap(8.0f)
-                .step(kTaskRowH)
-                .theme(themeTokens)
-                .contentKey("agent.tasklist.n" + std::to_string(tasks_.size()))
-                .content([&](eui::Ui& inner, float cw, float) {
+                .content([&] {
+                    ui.rect("agent.tasklist.panel")
+                        .position(0.0f, 0.0f)
+                        .size(contentW, std::max(0.0f, listH))
+                        .color(t.colors.wechat.cardBg)
+                        .radius(t.sizes.radiusWeChat)
+                        .border(1.0f, t.colors.wechat.dividerPrimary)
+                        .build();
+                    // 行高 kTaskRowH（step 同源）；行内动作：启动/详情/编辑/禁用（常驻多一个入队）
+                    components::scrollView(ui, "agent.tasklist")
+                        .position(0.0f, 0.0f)
+                        .size(contentW, std::max(0.0f, listH))
+                        .gap(8.0f)
+                        .step(kTaskRowH)
+                        .theme(themeTokens)
+                        .contentKey("agent.tasklist.n" + std::to_string(tasks_.size()))
+                        .content([&](eui::Ui& inner, float cw, float) {
                     if (store_ == nullptr) {
                         inner.text("agent.error")
                             .size(cw, 20.0f)
@@ -1941,6 +1976,8 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                     }
                 })
                 .build();
+                })   // agent.tasklist.wrap 的 content 收口
+                .build();
         })
         .build();
 
@@ -1961,11 +1998,21 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
     ui_kit::drawToast(ui, screen, "agent.detail.toast", toast_, themeTokens);
 }
 
-// 任务弹窗：新建/编辑共用同一张表单；关闭态在内容回调内 return——内容节点即开合状态
+// 任务弹窗重设计（UAT5，demo task-new-dialog-redesign.html 智能体面板）：
+// 任务名称大输入 → 触发 segment 六选（demo 只画了三选，但 TaskDef/存量任务有 6 类
+// 触发——砍 UI 等于改写存量任务语义，全部保留；选中 = 绿底白字）→ 状态行
+//（cron+模板 / 闹钟时间 / 事件 chips，互斥）→ 指令 textarea 全宽（标签行右缘
+//「✨ AI 起草」绿 chip，行为接既有草稿功能）→ 执行记忆 → 模型槽位|迭代上限|只跑
+// 一次 → 安全组（破坏性开关独立红组保持 spec §8 item 5）→ 底部 取消|创建/保存。
+// 只动布局不动功能：字段与 TaskDef 一一对应。弹性宽 = max(720, 窗口/2)（demo 最小档）。
+// 元素 id 契约：触发 segment 沿用 item.N（原下拉项名；可点面 .item.N.bg，
+// test 的 callDropdownChange 有 .bg 回落）；slot/iter/limit/destructive/autonote/
+// goal/note/cron/once/error/cancel/save/close 全不变。内容节点存在性即开合状态
+//（与文件头契约一致：关闭态 return，不建内容节点）。
 void AgentModule::composeTaskDialog(
     ::eui::Ui& ui, const ::eui::Screen& screen, const ::core::theme::Tokens& t,
     const components::theme::ThemeColorTokens& themeTokens) {
-    const float w = ui_kit::dialogWidthPx(ui_kit::DialogWidth::Form);
+    const float w = std::max(720.0f, screen.width * 0.5f);   // 弹性宽（demo 最小档 720）
     const float h = kTaskDialogH;
     const float innerW = w - ui_kit::kDialogBodyInsetX;
     const float x0 = ui_kit::kDialogInsetX;
@@ -1987,404 +2034,466 @@ void AgentModule::composeTaskDialog(
         triggerHint = kTriggerHints[editTriggerIdx_];
     }
 
-    ui_kit::DialogFrame frame;
-    frame.id = "agent.dialog.task";
-    frame.width = ui_kit::DialogWidth::Form;
-    frame.height = h;
-    frame.open = taskDialogOpen_;
-    frame.onOpenChange = [this](bool v) {
-        if (!v) closeTaskDialog();
-    };
+    components::dialog(ui, "agent.dialog.task")
+        .open(taskDialogOpen_)
+        .screen(screen.width, screen.height)
+        .size(w, h)
+        .theme(themeTokens)
+        .onOpenChange([this](bool v) {
+            if (!v) closeTaskDialog();
+        })
+        .content([&] {
+            if (!taskDialogOpen_) return;
+            ui_kit::drawDialogTitle(ui, "agent.dialog.task.title", w,
+                                    isEdit ? "编辑任务" : "新建智能任务",
+                                    t.sizes.fontSizeBody, t.colors.textPrimary);
 
-    ui_kit::drawDialogFrame(ui, screen, frame, themeTokens, [&] {
-        if (!taskDialogOpen_) return;
-        ui_kit::drawDialogTitle(ui, "agent.dialog.task.title", w,
-                                isEdit ? "编辑任务" : "新建任务",
-                                t.sizes.fontSizeLarge + 2.0f, t.colors.textPrimary);
-
-        // ✕ 关闭（与取消 / 遮罩 / Esc 同一路径）
-        ui.text("agent.dialog.task.close")
-            .position(w - 56.0f, 22.0f)
-            .size(28.0f, 28.0f)
-            .text("✕")
-            .fontSize(14.0f)
-            .lineHeight(28.0f)
-            .horizontalAlign(eui::HorizontalAlign::Center)
-            .verticalAlign(eui::VerticalAlign::Center)
-            .color(t.colors.textTertiary)
-            .onClick([this] { closeTaskDialog(); })
-            .build();
-
-        // 「AI 生成草稿」绿色文字按钮（§8 item 7）：Text 级（透明底 + 绿字），
-        // 标题行右侧、✕ 左侧。不抢保存主按钮视觉权重
-        ui_kit::button(ui, "agent.dialog.task.aichip", "AI 生成草稿",
-                       ui_kit::ButtonLevel::Text,
-                       w - 56.0f - kDialogGap - kDraftChipW, kDraftChipY,
-                       kDraftChipW, kDraftChipH, t,
-                       {.onClick = [this] { openDraftDialog(); }});
-
-        // —— §8 分组标题 helper：14px 加粗 wechat.textPrimary ——
-        auto groupTitle = [&](const char* gid, const char* label, float gy) {
-            ui.text(gid)
-                .position(x0, gy)
-                .size(innerW, kGroupTitleH)
-                .text(label)
+            // ✕ 关闭（与取消 / 遮罩 / Esc 同一路径）
+            ui.text("agent.dialog.task.close")
+                .position(w - 56.0f, 22.0f)
+                .size(28.0f, 28.0f)
+                .text("✕")
                 .fontSize(14.0f)
-                .lineHeight(kGroupTitleH)
-                .fontWeight(700)
-                .color(t.colors.wechat.textPrimary)
+                .lineHeight(28.0f)
+                .horizontalAlign(eui::HorizontalAlign::Center)
+                .verticalAlign(eui::VerticalAlign::Center)
+                .color(t.colors.textTertiary)
+                .onClick([this] { closeTaskDialog(); })
                 .build();
-        };
 
-        // ① 任务目标组（§8 item 2）：大 textarea + 必填红星号 + 空时校验小字
-        groupTitle("agent.dialog.task.group.goal", "任务目标", 42.0f);
-        fieldCaption(ui, "agent.dialog.task.goal.caption", "任务目标", x0,
-                     66.0f, kDialogLabelW, 20.0f, t.colors.textSecondary);
-        // 必填红星号（wechat.warningRed #FA5151）
-        ui.text("agent.dialog.task.goal.asterisk")
-            .position(x0 + kDialogLabelW, 66.0f)
-            .size(10.0f, 20.0f)
-            .text("*")
-            .fontSize(14.0f)
-            .lineHeight(20.0f)
-            .color(t.colors.wechat.warningRed)
-            .build();
-        components::input(ui, "agent.dialog.task.goal")
-            .position(x0 + kDialogLabelW + kDialogGap, 66.0f)
-            .size(innerW - kDialogLabelW - kDialogGap, kGoalInputH)
-            .value(editGoal_)
-            .placeholder("描述这个任务要做什么，例如：把逾期的待办全部完成")
-            .fontSize(t.sizes.fontSizeBody)
-            .multiline(true)
-            .scrollbar(true)
-            .theme(themeTokens)
-            .onChange([this](const std::string& v) { editGoal_ = v; })
-            .onCancel([this] { closeTaskDialog(); })   // 输入框内 Esc = 关弹窗
-            .build();
-        // 空目标红色校验小字（仅空时渲染，不占固定行高——skipIfEmpty 语义）
-        ui_kit::drawDialogText(
-            ui, "agent.dialog.task.goal.valid", w,
-            editGoal_.empty() ? "请填写任务目标" : "",
-            t.sizes.fontSizeSmall - 1.0f, t.colors.wechat.warningRed,
-            {.x = x0 + kDialogLabelW + kDialogGap, .y = 164.0f,
-             .height = 14.0f, .lineHeight = 14.0f, .skipIfEmpty = true});
+            // 任务名称大输入（demo .titleinput）：留空 = 保存时按任务目标自动取名
+            //（deriveTaskName 既有行为，TaskDef.name 一一对应，不改保存语义）
+            components::input(ui, "agent.dialog.task.name")
+                .position(x0, 56.0f)
+                .size(innerW, 40.0f)
+                .value(editName_)
+                .placeholder("任务名称")
+                .fontSize(t.sizes.fontSizeBody)
+                .theme(themeTokens)
+                .onChange([this](const std::string& v) { editName_ = v; })
+                .onCancel([this] { closeTaskDialog(); })
+                .build();
 
-        // ② 基础配置组（§8 item 3）：触发方式 + 模型槽位
-        groupTitle("agent.dialog.task.group.basic", "基础配置", 182.0f);
-        const float fieldX = x0 + kDialogLabelW + kDialogGap;
-        // 触发 / 槽位下拉宽度。两个下拉最长标签 = 4 字（「子代理」48px @16px），
-        // 字段标签盒 = ddW − 48 = 68 仍富余
-        const float ddW = 116.0f;
-        const float triggerY = 206.0f;
-        fieldCaption(ui, "agent.dialog.task.trigger.caption", "触发方式", x0,
-                     triggerY, kDialogLabelW, kDialogRowH, t.colors.textSecondary);
-        ui.stack("agent.dialog.task.trigger.wrap")
-            .position(fieldX, triggerY)
-            .size(ddW, kDialogRowH)
-            .content([&] {
-                components::dropdown(ui, "agent.dialog.task.trigger")
-                    .size(ddW, kDialogRowH)
-                    .theme(themeTokens)
-                    .items(std::vector<std::string>(kTriggerLabels,
-                                                    kTriggerLabels + kTriggerCount))
-                    .selected(editTriggerIdx_)
-                    .open(editTriggerOpen_)
-                    .onOpenChange([this](bool v) { editTriggerOpen_ = v; })
-                    .onChange([this](int idx) {
-                        editTriggerIdx_ = idx;
-                        // 预览行随类型切换重算：切到闹钟立即显示缺省时间是否合法
-                        //（不重算的话预览行还停在上一个类型的文案 / 空白）
-                        if (idx == kTriggerOnceIdx) {
-                            refreshOncePreview();
-                        } else if (idx == kTriggerScheduleIdx) {
-                            refreshCronPreview();
+            // 触发 segment：六类触发平分整行（demo .seg .op：选中绿底白字/未选灰底）。
+            // 外层 stack 沿用原下拉字段根 id「agent.dialog.task.trigger」（probe/用例按它
+            // 探存在）；选项沿用 item.N（可点面 .item.N.bg，test 的 callDropdownChange
+            // 有 .bg 回落，六处旧调用零改动）
+            fieldCaption(ui, "agent.dialog.task.trigger.caption", "触发", x0,
+                         104.0f, kDialogLabelW, 16.0f, t.colors.textSecondary);
+            {
+                constexpr float kGap = 6.0f;   // demo .seg gap:6px
+                const float opW = (innerW - kGap * (kTriggerCount - 1)) /
+                                 static_cast<float>(kTriggerCount);
+                ui.stack("agent.dialog.task.trigger")
+                    .position(x0, 124.0f)
+                    .size(innerW, 32.0f)
+                    .content([&] {
+                        for (int i = 0; i < kTriggerCount; ++i) {
+                            const bool on = editTriggerIdx_ == i;
+                            components::button(
+                                ui, "agent.dialog.task.trigger.item." +
+                                        std::to_string(i))
+                                .position(static_cast<float>(i) * (opW + kGap),
+                                          0.0f)
+                                .size(opW, 32.0f)
+                                .text(kTriggerLabels[i])
+                                .fontSize(12.0f)
+                                .colors(on ? t.colors.wechat.primary
+                                           : t.colors.wechat.pageBg,
+                                        on ? t.colors.wechat.primaryHover
+                                           : t.colors.wechat.secondaryButtonBg,
+                                        on ? t.colors.wechat.primaryPressed
+                                           : t.colors.wechat.selectedBg)
+                                .textColor(on ? t.colors.wechat.onPrimary
+                                              : t.colors.wechat.textPrimary)
+                                .radius(8.0f)
+                                .border(1.0f, on ? t.colors.wechat.primary
+                                                 : t.colors.wechat.dividerPrimary)
+                                .onClick([this, i] {
+                                    editTriggerIdx_ = i;
+                                    // 预览行随类型切换重算：切到闹钟立即显示缺省
+                                    // 时间是否合法（不重算的话预览行还停在上一个
+                                    // 类型的文案/空白）
+                                    if (i == kTriggerOnceIdx) {
+                                        refreshOncePreview();
+                                    } else if (i == kTriggerScheduleIdx) {
+                                        refreshCronPreview();
+                                    }
+                                })
+                                .build();
                         }
                     })
                     .build();
-            })
-            .build();
-        if (isEvent) {
-            // 事件分支：触发下拉右侧同行放三个事件开关（与 schedule 分支的 cron 行
-            // 同一行、互斥渲染；不新增行——triggerY 行内布局不变）
-            const float evX = fieldX + ddW + kDialogGap;
-            const float evW = innerW - (evX - x0);
-            const float itemW = (evW - kDialogGap * 2.0f) / 3.0f;
-            for (int i = 0; i < kEventCount; ++i) {
-                components::toggleSwitch(
-                    ui, "agent.dialog.task.event." + std::to_string(i))
-                    .position(evX + static_cast<float>(i) * (itemW + kDialogGap),
-                              triggerY)
-                    .size(itemW, 32.0f)
-                    .text(kEventLabels[i])
-                    .checked(editEvents_[i])
-                    .fontSize(12.0f)
+            }
+
+            // 状态行（互斥渲染，同行 y=168）：定时 = cron 输入+模板下拉；闹钟 =
+            // 时刻输入；事件 = 三个事件 chips（选中 = 绿胶囊，demo .chip.pri）
+            if (isSchedule) {
+                fieldCaption(ui, "agent.dialog.task.cron.caption", "cron 表达式",
+                             x0, 168.0f, kDialogLabelW, kDialogRowH,
+                             t.colors.textSecondary);
+                const float cronX = x0 + kDialogLabelW;
+                // cron 输入右侧让位给模板下拉（选中即回填）
+                const float tplW = 110.0f;
+                const float cronW = innerW - kDialogLabelW - tplW - kDialogGap;
+                components::input(ui, "agent.dialog.task.cron")
+                    .position(cronX, 168.0f)
+                    .size(cronW, kDialogRowH)
+                    .value(editCron_)
+                    .placeholder("分 时 日 月 周，例如 0 9 * * 1-5")
+                    .fontSize(t.sizes.fontSizeBody)
                     .theme(themeTokens)
-                    .onChange([this, i](bool v) { editEvents_[i] = v; })
+                    .onChange([this](const std::string& v) { setEditCronDraft(v); })
+                    .onCancel([this] { closeTaskDialog(); })
+                    .build();
+                ui.stack("agent.dialog.task.cron.template.wrap")
+                    .position(cronX + cronW + kDialogGap, 168.0f)
+                    .size(tplW, kDialogRowH)
+                    .content([&] {
+                        // selected 恒 0（「选择模板…」占位）——下拉当菜单用：选完不
+                        // 留选中态，label 不许变成表达式（表达式在 cron 输入框里）
+                        std::vector<std::string> items;
+                        items.reserve(kCronTemplateCount + 1);
+                        items.emplace_back("选择模板…");
+                        for (int i = 0; i < kCronTemplateCount; ++i) {
+                            items.emplace_back(kCronTemplates[i].label);
+                        }
+                        components::dropdown(ui, "agent.dialog.task.cron.template")
+                            .size(tplW, kDialogRowH)
+                            .theme(themeTokens)
+                            .items(std::move(items))
+                            .selected(0)
+                            .open(editCronTemplateOpen_)
+                            .onOpenChange(
+                                [this](bool v) { editCronTemplateOpen_ = v; })
+                            .onChange([this](int idx) {
+                                // idx 0 = 占位项，不回填
+                                if (idx >= 1 && idx <= kCronTemplateCount) {
+                                    setEditCronDraft(kCronTemplates[idx - 1].expr);
+                                }
+                            })
+                            .build();
+                    })
                     .build();
             }
-        }
-        if (isSchedule) {
-            const float cronLabelX = fieldX + ddW + kDialogGap;
-            const float cronX = cronLabelX + kDialogLabelW + kDialogGap;
-            fieldCaption(ui, "agent.dialog.task.cron.caption", "cron 表达式",
-                         cronLabelX, triggerY, kDialogLabelW, kDialogRowH,
-                         t.colors.textSecondary);
-            // cron 输入右侧让位给模板下拉（选中即回填，宽度预算见下行两条 size）
-            const float tplW = 110.0f;
-            const float cronW = innerW - (cronX - x0) - tplW - kDialogGap;
-            components::input(ui, "agent.dialog.task.cron")
-                .position(cronX, triggerY)
-                .size(cronW, kDialogRowH)
-                .value(editCron_)
-                .placeholder("分 时 日 月 周，例如 0 9 * * 1-5")
+            if (isOnce) {
+                // 闹钟分支：只写一个绝对时刻——cron / 事件勾选 / max_runs 全部不渲染
+                //（once_at 与重复载荷在 encode 层互斥，表单不提供制造坏配置的入口）
+                fieldCaption(ui, "agent.dialog.task.once.caption", "闹钟时间", x0,
+                             168.0f, kDialogLabelW, kDialogRowH,
+                             t.colors.textSecondary);
+                components::input(ui, "agent.dialog.task.once")
+                    .position(x0 + kDialogLabelW, 168.0f)
+                    .size(innerW - kDialogLabelW, kDialogRowH)
+                    .value(editOnceAtText_)
+                    .placeholder("YYYY-MM-DD HH:MM（本地时间，24 小时制）")
+                    .fontSize(t.sizes.fontSizeBody)
+                    .theme(themeTokens)
+                    .onChange([this](const std::string& v) { setEditOnceDraft(v); })
+                    .onCancel([this] { closeTaskDialog(); })
+                    .build();
+            }
+            if (isEvent) {
+                // 监听事件 chips（demo .chip.pri：选中 = 浅绿底绿字胶囊；未选 = 灰底）；
+                // caption 与 cron/闹钟行同一「标签在左」语言
+                fieldCaption(ui, "agent.dialog.task.event.caption", "监听事件", x0,
+                             168.0f, kDialogLabelW, kDialogRowH,
+                             t.colors.textSecondary);
+                const float evX = x0 + kDialogLabelW;
+                const float evW = (innerW - kDialogLabelW - kDialogGap * 2.0f) /
+                                  static_cast<float>(kEventCount);
+                for (int i = 0; i < kEventCount; ++i) {
+                    const bool on = editEvents_[i];
+                    components::button(ui, "agent.dialog.task.event." +
+                                               std::to_string(i))
+                        .position(evX + static_cast<float>(i) * (evW + kDialogGap),
+                                  168.0f)
+                        .size(evW, 32.0f)
+                        .text(kEventLabels[i])
+                        .fontSize(12.0f)
+                        .colors(on ? eui::mixColor(t.colors.wechat.cardBg,
+                                                   t.colors.wechat.primary, 0.12f)
+                                   : t.colors.wechat.pageBg,
+                                t.colors.wechat.secondaryButtonBg,
+                                t.colors.wechat.selectedBg)
+                        .textColor(on ? t.colors.wechat.primaryText
+                                      : t.colors.wechat.textSecondary)
+                        .radius(16.0f)   // 胶囊（demo .chip border-radius:99px）
+                        .border(1.0f, on ? eui::mixColor(t.colors.wechat.cardBg,
+                                                         t.colors.wechat.primary,
+                                                         0.24f)
+                                         : t.colors.wechat.dividerPrimary)
+                        .onClick([this, i] { editEvents_[i] = !editEvents_[i]; })
+                        .build();
+                }
+            }
+
+            // 触发语义提示行：占状态行与指令行之间的缝（cron/闹钟预览行同款打法，
+            // 弹窗高度与各行位置不动）；与预览行互斥渲染，见上方 triggerHint 派生
+            ui_kit::drawDialogText(ui, "agent.dialog.task.trigger.hint", w,
+                                   triggerHint, t.sizes.fontSizeSmall - 1.0f,
+                                   t.colors.textTertiary,
+                                   {.x = x0, .y = 212.0f, .height = 12.0f,
+                                    .lineHeight = 12.0f, .skipIfEmpty = true});
+            // cron/闹钟预览行（skipIfEmpty，与 hint 同槽互斥）
+            ui_kit::drawDialogText(
+                ui, "agent.dialog.task.cron.preview", w, cronPreview_,
+                t.sizes.fontSizeSmall - 1.0f,
+                cronPreviewIsError_ ? t.colors.error : t.colors.textTertiary,
+                {.x = x0, .y = 212.0f, .height = 12.0f, .lineHeight = 12.0f,
+                 .skipIfEmpty = true});
+            ui_kit::drawDialogText(
+                ui, "agent.dialog.task.once.preview", w, oncePreview_,
+                t.sizes.fontSizeSmall - 1.0f,
+                oncePreviewIsError_ ? t.colors.error : t.colors.textTertiary,
+                {.x = x0, .y = 212.0f, .height = 12.0f, .lineHeight = 12.0f,
+                 .skipIfEmpty = true});
+
+            // 指令（发给 AI 的 prompt）标签行：左标签 + 右缘「✨ AI 起草」绿 chip
+            //（§8 item 7 行为不变：开草稿子弹窗；位置从标题行挪到指令标签行右缘）
+            fieldCaption(ui, "agent.dialog.task.goal.caption",
+                         "指令（发给 AI 的 prompt）", x0, 232.0f,
+                         innerW - 116.0f, 24.0f, t.colors.textSecondary);
+            {
+                const float chipW = 104.0f;
+                const float chipH = 26.0f;
+                components::button(ui, "agent.dialog.task.aichip")
+                    .position(w - ui_kit::kDialogBodyInsetX - chipW, 231.0f)
+                    .size(chipW, chipH)
+                    .text("✨ AI 起草")
+                    .fontSize(12.0f)
+                    .colors(eui::mixColor(t.colors.wechat.cardBg,
+                                          t.colors.wechat.primary, 0.12f),
+                            t.colors.wechat.secondaryButtonBg,
+                            t.colors.wechat.selectedBg)
+                    .textColor(t.colors.wechat.primaryText)
+                    .radius(13.0f)
+                    .border(1.0f, eui::mixColor(t.colors.wechat.cardBg,
+                                               t.colors.wechat.primary, 0.24f))
+                    .onClick([this] { openDraftDialog(); })
+                    .build();
+            }
+            // 指令 textarea 全宽（必填；空时校验小字就地显示，不占固定行高）
+            components::input(ui, "agent.dialog.task.goal")
+                .position(x0, 260.0f)
+                .size(innerW, kGoalInputH)
+                .value(editGoal_)
+                .placeholder("描述这个任务要做什么，例如：把逾期的待办全部完成")
                 .fontSize(t.sizes.fontSizeBody)
+                .multiline(true)
+                .scrollbar(true)
                 .theme(themeTokens)
-                .onChange([this](const std::string& v) { setEditCronDraft(v); })
+                .onChange([this](const std::string& v) { editGoal_ = v; })
+                .onCancel([this] { closeTaskDialog(); })   // 输入框内 Esc = 关弹窗
+                .build();
+            ui_kit::drawDialogText(
+                ui, "agent.dialog.task.goal.valid", w,
+                editGoal_.empty() ? "请填写任务目标" : "",
+                t.sizes.fontSizeSmall - 1.0f, t.colors.wechat.warningRed,
+                {.x = x0, .y = 260.0f + kGoalInputH + 4.0f, .height = 14.0f,
+                 .lineHeight = 14.0f, .skipIfEmpty = true});
+
+            // 执行记忆：运行时注入 system prompt 的持久上下文（textarea 全宽）
+            fieldCaption(ui, "agent.dialog.task.note.caption", "执行记忆", x0,
+                         348.0f, kDialogLabelW, 16.0f, t.colors.textSecondary);
+            components::input(ui, "agent.dialog.task.note")
+                .position(x0, 368.0f)
+                .size(innerW, kContextNoteH)
+                .value(editContextNote_)
+                .placeholder("记录任务执行上下文，运行时注入 system prompt")
+                .fontSize(t.sizes.fontSizeBody)
+                .multiline(true)
+                .scrollbar(true)
+                .theme(themeTokens)
+                .onChange([this](const std::string& v) { editContextNote_ = v; })
                 .onCancel([this] { closeTaskDialog(); })
                 .build();
-            ui.stack("agent.dialog.task.cron.template.wrap")
-                .position(cronX + cronW + kDialogGap, triggerY)
-                .size(tplW, kDialogRowH)
+
+            // 模型槽位（左）| 迭代上限（中）| 只跑一次（右，仅 schedule/event 渲染——
+            // manual/resident 的 trigger_config 不被 Scheduler 消费，给不消费该列的
+            // 任务显示开关等于假承诺）
+            const float rowY = 448.0f;
+            const float slotDdW = 116.0f;
+            fieldCaption(ui, "agent.dialog.task.slot.caption", "模型槽位", x0,
+                         rowY, kDialogLabelW, kDialogRowH, t.colors.textSecondary);
+            ui.stack("agent.dialog.task.slot.wrap")
+                .position(x0 + kDialogLabelW + kDialogGap, rowY)
+                .size(slotDdW, kDialogRowH)
                 .content([&] {
-                    // selected 恒 0（「选择模板…」占位）——下拉当菜单用：选完不
-                    // 留选中态，label 不许变成表达式（表达式在 cron 输入框里）
-                    std::vector<std::string> items;
-                    items.reserve(kCronTemplateCount + 1);
-                    items.emplace_back("选择模板…");
-                    for (int i = 0; i < kCronTemplateCount; ++i) {
-                        items.emplace_back(kCronTemplates[i].label);
-                    }
-                    components::dropdown(ui, "agent.dialog.task.cron.template")
-                        .size(tplW, kDialogRowH)
+                    components::dropdown(ui, "agent.dialog.task.slot")
+                        .size(slotDdW, kDialogRowH)
                         .theme(themeTokens)
-                        .items(std::move(items))
-                        .selected(0)
-                        .open(editCronTemplateOpen_)
-                        .onOpenChange(
-                            [this](bool v) { editCronTemplateOpen_ = v; })
+                        .items(std::vector<std::string>(
+                            kModelSlotLabels, kModelSlotLabels + kModelSlotCount))
+                        .selected(slotIndexOf(editSlot_))
+                        .open(editSlotOpen_)
+                        .onOpenChange([this](bool v) { editSlotOpen_ = v; })
                         .onChange([this](int idx) {
-                            // idx 0 = 占位项，不回填
-                            if (idx >= 1 && idx <= kCronTemplateCount) {
-                                setEditCronDraft(kCronTemplates[idx - 1].expr);
+                            if (idx >= 0 && idx < kModelSlotCount) {
+                                editSlot_ = kModelSlotKeys[idx];
                             }
                         })
                         .build();
                 })
                 .build();
-            // 预览行：cron 行与 meta 行之间的原 12px gap 内，弹窗总高不变
-            // （triggerY 行内布局不变，预览行 y=248）
-            ui_kit::drawDialogText(
-                ui, "agent.dialog.task.cron.preview", w, cronPreview_,
-                t.sizes.fontSizeSmall - 1.0f,
-                cronPreviewIsError_ ? t.colors.error : t.colors.textTertiary,
-                {.x = x0, .y = 248.0f, .height = 12.0f, .lineHeight = 12.0f,
-                 .skipIfEmpty = true});
-        }
-        if (isOnce) {
-            // 闹钟分支占用与 cron 同一行 / 同一预览行：不新增行。
-            // 只写一个绝对时刻——cron / 事件勾选 / max_runs 全部不渲染（once_at 与
-            // 重复载荷在 encode 层互斥，表单不提供制造坏配置的入口）
-            const float onceLabelX = fieldX + ddW + kDialogGap;
-            const float onceX = onceLabelX + kDialogLabelW + kDialogGap;
-            fieldCaption(ui, "agent.dialog.task.once.caption", "闹钟时间",
-                         onceLabelX, triggerY, kDialogLabelW, kDialogRowH,
-                         t.colors.textSecondary);
-            components::input(ui, "agent.dialog.task.once")
-                .position(onceX, triggerY)
-                .size(innerW - (onceX - x0), kDialogRowH)
-                .value(editOnceAtText_)
-                .placeholder("YYYY-MM-DD HH:MM（本地时间，24 小时制）")
-                .fontSize(t.sizes.fontSizeBody)
-                .theme(themeTokens)
-                .onChange([this](const std::string& v) { setEditOnceDraft(v); })
-                .onCancel([this] { closeTaskDialog(); })
-                .build();
-            ui_kit::drawDialogText(
-                ui, "agent.dialog.task.once.preview", w, oncePreview_,
-                t.sizes.fontSizeSmall - 1.0f,
-                oncePreviewIsError_ ? t.colors.error : t.colors.textTertiary,
-                {.x = x0, .y = 248.0f, .height = 12.0f, .lineHeight = 12.0f,
-                 .skipIfEmpty = true});
-        }
-
-        // 触发语义提示行：占触发行与 meta 行之间的 12px 缝（cron/闹钟预览行同款
-        // 打法，弹窗高度与各行位置不动）；与预览行互斥渲染，见上方 triggerHint 派生
-        ui_kit::drawDialogText(ui, "agent.dialog.task.trigger.hint", w,
-                               triggerHint, t.sizes.fontSizeSmall - 1.0f,
-                               t.colors.textTertiary,
-                               {.x = x0, .y = 248.0f, .height = 12.0f,
-                                .lineHeight = 12.0f, .skipIfEmpty = true});
-
-        // 模型槽位（基础配置组第二行，§8 item 3）：从 metaY 同排拆出独立行
-        const float slotY = 262.0f;
-        fieldCaption(ui, "agent.dialog.task.slot.caption", "模型槽位", x0, slotY,
-                     kDialogLabelW, kDialogRowH, t.colors.textSecondary);
-        ui.stack("agent.dialog.task.slot.wrap")
-            .position(fieldX, slotY)
-            .size(ddW, kDialogRowH)
-            .content([&] {
-                components::dropdown(ui, "agent.dialog.task.slot")
-                    .size(ddW, kDialogRowH)
+            {
+                const float iterLabelX = x0 + kDialogLabelW + kDialogGap +
+                                         slotDdW + kDialogGap;
+                fieldCaption(ui, "agent.dialog.task.iter.caption", "迭代上限",
+                             iterLabelX, rowY, kDialogLabelW, kDialogRowH,
+                             t.colors.textSecondary);
+                components::input(ui, "agent.dialog.task.iter")
+                    .position(iterLabelX + kDialogLabelW + kDialogGap, rowY)
+                    .size(80.0f, kDialogRowH)
+                    .value(std::to_string(editIter_))
+                    .fontSize(t.sizes.fontSizeBody)
                     .theme(themeTokens)
-                    .items(std::vector<std::string>(kModelSlotLabels,
-                                                    kModelSlotLabels + kModelSlotCount))
-                    .selected(slotIndexOf(editSlot_))
-                    .open(editSlotOpen_)
-                    .onOpenChange([this](bool v) { editSlotOpen_ = v; })
-                    .onChange([this](int idx) {
-                        if (idx >= 0 && idx < kModelSlotCount) {
-                            editSlot_ = kModelSlotKeys[idx];
-                        }
+                    .onChange([this](const std::string& v) {
+                        editIter_ = parseIterInput(v);
                     })
+                    .onCancel([this] { closeTaskDialog(); })
                     .build();
-            })
-            .build();
+                const bool supportsRunLimit = isSchedule || isEvent;
+                if (supportsRunLimit) {
+                    const float limitX =
+                        iterLabelX + kDialogLabelW + kDialogGap + 80.0f + kDialogGap;
+                    components::toggleSwitch(ui, "agent.dialog.task.limit")
+                        .position(limitX, rowY)
+                        .size(innerW - (limitX - x0), 32.0f)
+                        .text(runLimitText(editMaxRuns_ > 0 ? editMaxRuns_ : 1))
+                        .checked(editMaxRuns_ > 0)
+                        .fontSize(12.0f)
+                        .theme(themeTokens)
+                        .onChange([this](bool v) {
+                            if (!v) {
+                                editMaxRuns_ = 0;
+                            } else if (editMaxRuns_ < 1) {
+                                editMaxRuns_ = 1;
+                            }
+                        })
+                        .build();
+                }
+            }
 
-        // ③ 高级配置组（§8 item 4）：迭代上限 + 执行记忆 + 自动记录
-        groupTitle("agent.dialog.task.group.advanced", "高级配置", 306.0f);
-        const float iterY = 330.0f;
-        fieldCaption(ui, "agent.dialog.task.iter.caption", "迭代上限", x0,
-                     iterY, kDialogLabelW, kDialogRowH, t.colors.textSecondary);
-        // 问号图标（§8 item 4）：0xF059 fa-circle-question，hover 解释待 EUI tooltip
-        ui.text("agent.dialog.task.iter.help")
-            .position(x0 + kDialogLabelW, iterY)
-            .size(16.0f, kDialogRowH)
-            .icon(0xF059)
-            .fontSize(11.0f)
-            .lineHeight(kDialogRowH)
-            .verticalAlign(eui::VerticalAlign::Center)
-            .color(t.colors.wechat.textTertiary)
-            .build();
-        components::input(ui, "agent.dialog.task.iter")
-            .position(fieldX, iterY)
-            .size(100.0f, kDialogRowH)
-            .value(std::to_string(editIter_))
-            .fontSize(t.sizes.fontSizeBody)
-            .theme(themeTokens)
-            .onChange([this](const std::string& v) { editIter_ = parseIterInput(v); })
-            .onCancel([this] { closeTaskDialog(); })
-            .build();
-        // 「只跑一次」开关：与迭代上限同排（都属运行限制类），右端。
-        // 只对 schedule / event 渲染：manual / resident 的 trigger_config 不被
-        // Scheduler 消费，给不消费该列的任务显示开关等于假承诺
-        const bool supportsRunLimit = isSchedule || isEvent;
-        const float limitX = fieldX + 100.0f + kDialogGap;
-        const float limitW = innerW - (limitX - x0);
-        if (supportsRunLimit) {
-            components::toggleSwitch(ui, "agent.dialog.task.limit")
-                .position(limitX, iterY)
-                .size(limitW, 32.0f)
-                .text(runLimitText(editMaxRuns_ > 0 ? editMaxRuns_ : 1))
-                .checked(editMaxRuns_ > 0)
-                .fontSize(12.0f)
-                .theme(themeTokens)
-                .onChange([this](bool v) {
-                    if (!v) {
-                        editMaxRuns_ = 0;
-                    } else if (editMaxRuns_ < 1) {
-                        editMaxRuns_ = 1;
-                    }
-                })
-                .build();
-        }
+            // meta 行提示：迭代上限讲清「跑满会怎样」，破坏性开关讲清「勾了会发生
+            // 什么/不勾会怎样」。保「受限」「高危」关键词（test_agent_ui 钉值）
+            ui_kit::drawDialogText(
+                ui, "agent.dialog.task.meta.hint", w,
+                "迭代＝单次运行的最多轮数，跑满以「受限」结束、不再重试；"
+                "破坏性操作＝允许删除文件等高危工具，不勾则被拒",
+                t.sizes.fontSizeSmall - 1.0f, t.colors.textTertiary,
+                {.x = x0, .y = 500.0f, .height = 12.0f, .lineHeight = 12.0f});
 
-        // meta 行提示：占高级配置与高危选项之间的缝。迭代上限讲清「跑满会怎样」
-        //（受限终态的直接前因），破坏性开关讲清「勾了会发生什么/不勾会怎样」。
-        // 保「受限」「高危」关键词（test_agent_ui:5261-5265）
-        ui_kit::drawDialogText(
-            ui, "agent.dialog.task.meta.hint", w,
-            "迭代＝单次运行的最多轮数，跑满以「受限」结束、不再重试；"
-            "破坏性操作＝允许删除文件等高危工具，不勾则被拒",
-            t.sizes.fontSizeSmall - 1.0f, t.colors.textTertiary,
-            {.x = x0, .y = 364.0f, .height = 12.0f, .lineHeight = 12.0f});
-
-        // 执行记忆（§8 item 4）：大 textarea（D-12 校准，多行，注入 system prompt）
-        const float noteY = 378.0f;
-        fieldCaption(ui, "agent.dialog.task.note.caption", "执行记忆", x0,
-                     noteY, kDialogLabelW, kContextNoteH, t.colors.textSecondary);
-        components::input(ui, "agent.dialog.task.note")
-            .position(x0 + kDialogLabelW + kDialogGap, noteY)
-            .size(innerW - kDialogLabelW - kDialogGap, kContextNoteH)
-            .value(editContextNote_)
-            .placeholder("记录任务执行上下文，运行时注入 system prompt")
-            .fontSize(t.sizes.fontSizeBody)
-            .multiline(true)
-            .scrollbar(true)
-            .theme(themeTokens)
-            .onChange([this](const std::string& v) { editContextNote_ = v; })
-            .onCancel([this] { closeTaskDialog(); })
-            .build();
-
-        // 自动记录开关：结束后把最后一条 assistant 回复追加进 context note
-        const float autoY = 454.0f;
-        const float autoSwitchW = innerW - kDialogLabelW - kDialogGap;
-        components::toggleSwitch(ui, "agent.dialog.task.autonote")
-            .position(x0 + kDialogLabelW + kDialogGap, autoY)
-            .size(autoSwitchW, 32.0f)
-            .text("结束后自动记录回复")
-            .checked(editAutoNote_)
-            .fontSize(12.0f)
-            .theme(themeTokens)
-            .onChange([this](bool v) { editAutoNote_ = v; })
-            .build();
-
-        // ④ 高危选项组（§8 item 5）：单独分组，wswitch + 红字 + ⚠️ + label nowrap
-        groupTitle("agent.dialog.task.group.danger", "高危选项", 490.0f);
-        const float destructiveY = 514.0f;
-        // ⚠️ 警示图标（仅开启时渲染，wechat.warningRed）
-        if (editDestructive_) {
-            ui.text("agent.dialog.task.destructive.warn")
-                .position(x0, destructiveY)
-                .size(20.0f, 32.0f)
-                .text("⚠")
+            // 安全组：破坏性开关独立红组（spec §8 item 5 高危分组）+ 自动记录
+            ui.text("agent.dialog.task.group.danger")
+                .position(x0, 520.0f)
+                .size(innerW, kGroupTitleH)
+                .text("安全")
                 .fontSize(14.0f)
-                .lineHeight(32.0f)
-                .verticalAlign(eui::VerticalAlign::Center)
-                .color(t.colors.wechat.warningRed)
+                .lineHeight(kGroupTitleH)
+                .fontWeight(700)
+                .color(t.colors.wechat.textPrimary)
                 .build();
-        }
-        // label：nowrap（D-12 校准），开启时 warningRed / 关闭时 textSecondary
-        ui.text("agent.dialog.task.destructive.label")
-            .position(x0 + (editDestructive_ ? 24.0f : 0.0f), destructiveY)
-            .size(160.0f, 32.0f)
-            .text("允许破坏性操作")
-            .fontSize(12.0f)
-            .lineHeight(32.0f)
-            .wrap(false)
-            .verticalAlign(eui::VerticalAlign::Center)
-            .color(editDestructive_ ? t.colors.wechat.warningRed
-                                     : t.colors.wechat.textSecondary)
-            .build();
-        // wswitch（微信绿开关，§4.4）：clickable = .track（原 .hit 改 .track）
-        ui_kit::wswitch(ui, "agent.dialog.task.destructive",
-                        editDestructive_,
-                        x0 + 200.0f, destructiveY + 4.0f, 44.0f, 24.0f, t,
-                        [this](bool v) { editDestructive_ = v; });
+            {
+                const float destructiveY = 544.0f;
+                // ⚠️ 警示图标（仅开启时渲染，wechat.warningRed）
+                if (editDestructive_) {
+                    ui.text("agent.dialog.task.destructive.warn")
+                        .position(x0, destructiveY)
+                        .size(20.0f, 32.0f)
+                        .text("⚠")
+                        .fontSize(14.0f)
+                        .lineHeight(32.0f)
+                        .verticalAlign(eui::VerticalAlign::Center)
+                        .color(t.colors.wechat.warningRed)
+                        .build();
+                }
+                // label：nowrap（D-12 校准），开启时 warningRed / 关闭时 textSecondary
+                ui.text("agent.dialog.task.destructive.label")
+                    .position(x0 + (editDestructive_ ? 24.0f : 0.0f), destructiveY)
+                    .size(160.0f, 32.0f)
+                    .text("允许破坏性操作")
+                    .fontSize(12.0f)
+                    .lineHeight(32.0f)
+                    .wrap(false)
+                    .verticalAlign(eui::VerticalAlign::Center)
+                    .color(editDestructive_ ? t.colors.wechat.warningRed
+                                             : t.colors.wechat.textSecondary)
+                    .build();
+                // wswitch（微信绿开关，§4.4）：clickable = .track
+                ui_kit::wswitch(ui, "agent.dialog.task.destructive",
+                                editDestructive_,
+                                x0 + 200.0f, destructiveY + 4.0f, 44.0f, 24.0f, t,
+                                [this](bool v) { editDestructive_ = v; });
+                // 自动记录（安全组右列）：结束后把最后一条 assistant 回复追加进
+                // context note
+                const float autoX = x0 + 200.0f + 44.0f + kDialogGap * 3.0f;
+                components::toggleSwitch(ui, "agent.dialog.task.autonote")
+                    .position(autoX, destructiveY + 4.0f)
+                    .size(innerW - (autoX - x0), 32.0f)
+                    .text("结束后自动记录回复")
+                    .checked(editAutoNote_)
+                    .fontSize(12.0f)
+                    .theme(themeTokens)
+                    .onChange([this](bool v) { editAutoNote_ = v; })
+                    .build();
+            }
 
-        // 校验 / 保存错误（有错才渲染，弹窗不关）
-        ui_kit::drawDialogText(ui, "agent.dialog.task.error", w, editError_,
-                               t.sizes.fontSizeSmall, t.colors.error,
-                               {.x = x0, .y = 550.0f, .height = 18.0f,
-                                .lineHeight = 18.0f, .skipIfEmpty = true});
+            // 校验 / 保存错误（有错才渲染，弹窗不关）
+            ui_kit::drawDialogText(ui, "agent.dialog.task.error", w, editError_,
+                                   t.sizes.fontSizeSmall, t.colors.error,
+                                   {.x = x0, .y = 588.0f, .height = 16.0f,
+                                    .lineHeight = 16.0f, .skipIfEmpty = true});
 
-        // 底部按钮（§8 item 8）：取消 Secondary 浅灰 + 保存 Primary 微信绿，右对齐
-        const float btnW =
-            (w - ui_kit::kDialogInsetX * 2.0f - kDialogGap) * 0.5f;
-        const float btnY = h - 48.0f;
-        ui_kit::button(ui, "agent.dialog.task.cancel", "取消",
-                       ui_kit::ButtonLevel::Secondary,
-                       x0, btnY, btnW, 40.0f, t,
-                       {.onClick = [this] { closeTaskDialog(); }});
-        // 空目标时保存置灰（§8 item 2）：Secondary 级 + 无 onClick
-        const bool canSave = !editGoal_.empty();
-        ui_kit::button(ui, "agent.dialog.task.save", "保存",
-                       canSave ? ui_kit::ButtonLevel::Primary
-                                : ui_kit::ButtonLevel::Secondary,
-                       x0 + btnW + kDialogGap, btnY, btnW, 40.0f, t,
-                       canSave ? ui_kit::ButtonOptions{
-                                     .onClick = [this] { saveTaskDialog(); }}
-                               : ui_kit::ButtonOptions{});
-    });
+            // 底部按钮（demo .dlgf：hint 左 + 按钮右对齐；新建 =「创建」/编辑 =「保存」）
+            const float btnY = h - 48.0f;
+            ui_kit::drawDialogText(
+                ui, "agent.dialog.task.footer.hint", w,
+                "触发 / 事件 / 执行 / 安全四组；破坏性开关永远单独一组红色呈现",
+                t.sizes.fontSizeSmall - 2.0f, t.colors.textTertiary,
+                {.x = x0, .y = btnY + 12.0f, .height = 16.0f, .lineHeight = 16.0f});
+            {
+                const float bw = 104.0f;
+                const float bh = 36.0f;
+                components::button(ui, "agent.dialog.task.cancel")
+                    .position(w - ui_kit::kDialogBodyInsetX - bw * 2.0f - 8.0f,
+                              btnY)
+                    .size(bw, bh)
+                    .text("取消")
+                    .fontSize(t.sizes.fontSizeSmall)
+                    .colors(t.colors.wechat.pageBg,
+                            t.colors.wechat.secondaryButtonBg,
+                            t.colors.wechat.selectedBg)
+                    .textColor(t.colors.wechat.textPrimary)
+                    .radius(8.0f)
+                    .border(1.0f, t.colors.wechat.dividerPrimary)
+                    .onClick([this] { closeTaskDialog(); })
+                    .build();
+                // 空目标时保存置灰（§8 item 2）：灰态 + 无 onClick
+                const bool canSave = !editGoal_.empty();
+                components::button(ui, "agent.dialog.task.save")
+                    .position(w - ui_kit::kDialogBodyInsetX - bw, btnY)
+                    .size(bw, bh)
+                    .text(isEdit ? "保存" : "创建")
+                    .fontSize(t.sizes.fontSizeSmall)
+                    .colors(canSave ? t.colors.wechat.primary
+                                    : t.colors.wechat.pageBg,
+                            canSave ? t.colors.wechat.primaryHover
+                                    : t.colors.wechat.secondaryButtonBg,
+                            canSave ? t.colors.wechat.primaryPressed
+                                    : t.colors.wechat.selectedBg)
+                    .textColor(canSave ? t.colors.wechat.onPrimary
+                                       : t.colors.wechat.textTertiary)
+                    .radius(8.0f)
+                    .border(1.0f, canSave ? t.colors.wechat.primary
+                                          : t.colors.wechat.dividerPrimary)
+                    .onClick(canSave
+                                 ? std::function<void()>{[this] { saveTaskDialog(); }}
+                                 : std::function<void(){})
+                    .build();
+            }
+        })
+        .build();
 }
 
 // ---- AI 草稿子弹窗（T7b）----
