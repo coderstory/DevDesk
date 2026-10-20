@@ -121,6 +121,8 @@ std::string windowEffectDegradedHint(const std::string& mode,
                                      core::platform::WindowEffect active);
 
 // 按档位 + 当前主题应用窗口视觉，启动恢复 / 切档 / 主题切换三处共用。
+// 同时把档位写入 core::window_effect_state 单值（sidebar / about 页铺色按档带
+// alpha 的读口，UAT2 B 批）。
 void applyWindowVisuals(const std::string& mode);
 
 // 应用配置读写（不抛异常）。落点 = SQLite app_config 表，键前缀 "config.json:"，按顶层键一行一个——整份单行会让多个写者互相覆盖。
