@@ -312,25 +312,28 @@ void drawClaudeHeader(eui::Ui& ui, float contentW, float headerH,
     // header 行 gap=0，两段宽必须相加等于 contentW，防字面量两处改一处忘
     constexpr float kHeaderActionsW = 360.0f;
 
+    // UAT5 页头内部收紧（toptrim 批点名跟进）：内部 50→40 与共享 kHeaderH 叠满，
+    // 对齐各页统一口径——标题行 24 + 间隙 2 + 副题 14（字号不动，副题底不再
+    // 压进下方间隙；同 todo/markdown 页头档）。
     ui.row("claude.header")
         .size(contentW, headerH)
         .alignItems(eui::Align::CENTER)
         .content([&] {
             ui.column("claude.title.col")
                 .size(contentW - kHeaderActionsW, headerH)
-                .gap(6.0f)
+                .gap(2.0f)
                 .content([&] {
                     // UAT2 #10：title row 只留标题——状态组（dot+text+help）右对齐
                     // 挪到 header 右侧「claude.actions」，text 盒不再固定 200px 宽
                     ui.row("claude.title.row")
-                        .size(contentW - kHeaderActionsW, 28.0f)
+                        .size(contentW - kHeaderActionsW, 24.0f)
                         .alignItems(eui::Align::CENTER)
                         .content([&] {
                             ui.text("claude.h1")
-                                .size(220.0f, 32.0f)
+                                .size(220.0f, 24.0f)
                                 .text("Claude 切换器")
                                 .fontSize(t.sizes.fontSizeTitle)
-                                .lineHeight(32.0f)
+                                .lineHeight(24.0f)
                                 .fontWeight(700)
                                 .color(t.colors.wechat.textPrimary)
                                 .build();
@@ -342,10 +345,10 @@ void drawClaudeHeader(eui::Ui& ui, float contentW, float headerH,
                         ? std::string("本地代理运行中，管理多套 Claude API 配置")
                         : std::string("管理多套 Claude API 配置");
                     ui.text("claude.subtitle")
-                        .size(contentW - kHeaderActionsW, 16.0f)
+                        .size(contentW - kHeaderActionsW, 14.0f)
                         .text(subtitle)
                         .fontSize(t.sizes.fontSizeSmall)
-                        .lineHeight(16.0f)
+                        .lineHeight(14.0f)
                         .color(t.colors.wechat.textSecondary)
                         .build();
                 })
