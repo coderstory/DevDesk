@@ -120,6 +120,10 @@ cmake -E copy_directory "$PROJECT_DIR/assets" "$ASSETS_DIR_POSIX"
 # Excludes 挡在包外）、mona-loading-default.gif / Hard drive-rafiki.svg（EUI demo 插画）、
 # icon.svg（仅 EUI 测试/示例引用，Windows 窗口图标走 icon.png 的 stbi 路径）。
 # 只清打包产物目录，不动 EUI-NEO 仓库源 assets（跨仓库改动走 patch 流程，超出本批范围）。
+# 图标批（2026-10-20 C 方案终端窗 >_）起 icon.ico / icon.png 的真身来自**本仓库 assets/ 根**
+# （上面 :112 的 DevDesk/assets 整树拷在 :110 的 EUI 拷之后 → 同名确定性覆盖）：icon.ico =
+# 安装包 SetupIconFile；icon.png = dsl_app 默认窗口图标（任务栏/alt-tab 运行态，7 档 256px PNG）。
+# 故这里零引用清单不动 icon.ico/icon.png——名字与 EUI 同名但内容已是 DevDesk 品牌图。
 rm -rf "$ASSETS_DIR_POSIX/music" \
        "$ASSETS_DIR_POSIX/shaders/shadertoy" \
        "$ASSETS_DIR_POSIX/YouSheBiaoTiHei-2.ttf" \
@@ -146,6 +150,16 @@ fi
 # 断言 ④：托盘图标，缺则安装版任务栏空图标
 if [ ! -f "$ASSETS_DIR_POSIX/tray-icon-win.ico" ]; then
   echo "❌ 断言失败：$ASSETS_DIR_POSIX/tray-icon-win.ico 缺失" >&2
+  exit 1
+fi
+# 断言 ⑤（图标批 2026-10-20）：安装包 SetupIconFile 的 icon.ico 必须是本仓库 assets/ 的
+# 品牌图——内容全等比对挡「同名被 EUI-NEO 旧 icon.ico 反扑」（拷贝序倒挂时这里红）。
+if [ ! -f "$ASSETS_DIR_POSIX/icon.ico" ]; then
+  echo "❌ 断言失败：$ASSETS_DIR_POSIX/icon.ico 缺失" >&2
+  exit 1
+fi
+if ! cmp -s "$ASSETS_DIR_POSIX/icon.ico" "$PROJECT_DIR/assets/icon.ico"; then
+  echo "❌ 断言失败：icon.ico 与仓库 assets/icon.ico 内容不一致（EUI bulk copy 未被覆盖？）" >&2
   exit 1
 fi
 echo "✅ assets 就位（两字体 + icon.png/ico + splash.frag + 托盘图标；零引用资产已排除）"

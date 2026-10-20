@@ -27,7 +27,8 @@ DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 OutputDir=out
 OutputBaseFilename=DevDesk-{#MyAppVersion}-setup
-; 图标属 EUI-NEO assets（即构建目录的 assets/），由 /DAssetsDir 注入
+; 图标真身 = DevDesk 仓库 assets/icon.ico（2026-10-20 C 方案终端窗 >_；经 package-windows.sh
+; 的 AssetsDir 暂存链同树拷入构建目录的 assets/，同名字义下覆盖 EUI-NEO 的同名旧图）
 SetupIconFile={#AssetsDir}\icon.ico
 UninstallDisplayIcon={app}\DevDesk.exe
 ; 卸载项显示名（"应用和功能"里看到的名字）

@@ -78,11 +78,12 @@ endif()
 # 尚未 push 到 origin 的提交（push 与否是用户决策门控），故此处**不做硬钉扎**
 # （他人克隆只有 v0.6.0，硬 fail 会造成误阻断）；EUI-NEO push 后可将本诊断
 # 升级为硬检查。最低依赖 rev 与 CLAUDE.md「当前依赖 rev」保持一致，消费
-# EUI-NEO 新 API 后两处同步更新（当前门槛取 U1 尺度契约合入点，含
-# app::contentScale / core::dsl::Screen::scale 与 yyjson writer 放开；
-# 2026-09-30 起另含 dropdown 展开态弹层 z 修复——tests/probes 的弹层 z 序
+# EUI-NEO 新 API 后两处同步更新（当前门槛 fd904ea：UAT3 D-R3-1 自绘窗口壳的
+# 窗口后端 API——customWindowChromeSupported / setTitleBarAppearance /
+# onCaptionHitTest 等的消费点在 src/main.cpp 与 src/app_sidebar.cpp；此前
+# 门槛含 U1 尺度契约 + dropdown 展开态弹层 z——tests/probes 的弹层 z 序
 # 门禁依赖，见 tests/probes/settings_dropdown_z_probe.cpp）。
-set(DEVDESK_EUI_NEO_MIN_REV "72a5187")
+set(DEVDESK_EUI_NEO_MIN_REV "fd904ea")
 execute_process(
     COMMAND git -C "${EUI_NEO_DIR}" rev-parse --short HEAD
     OUTPUT_VARIABLE EUI_NEO_GIT_REV
@@ -288,10 +289,13 @@ endif()
 # platform::tray::defaultIconPath() 按平台分发，main.cpp 不带平台宏）。
 # 运行时经 EUI-NEO resolveIconPath 的 exeDir/assets 候选在 .app bundle 内命中
 # （build-app.sh 把 <build>/assets 整树拷进 Contents/MacOS/assets，本命令负责
-# 先把图标送进 <build>/assets）。两个文件均入 git，无需平台守卫（同上 pets：
-# macOS 多拷一个 .ico 无害，反而让「产物里两个文件都在」可被用例直接验证）。
+# 先把图标送进 <build>/assets）。文件均入 git，无需平台守卫（同上 pets：
+# macOS 多拷一个 .ico 无害，反而让「产物里文件都在」可被用例直接验证）。
 # 单文件用 copy_if_different；目录由上面 pets 的 copy_directory 先建，
 # make_directory 兜底防顺序依赖。
+# 2026-10-20 C 方案图标批：三件套全部换终端窗 >_ 设计；tray-icon-template@2x.png
+# 为 44×44 Retina 倍图（EUI-NEO eui_tray_image 按同名 @2x 命名惯例拾取，与
+# 底图合并为双档 NSImage 表示，见 EUI-NEO rev 0f7f60b）。
 add_custom_command(TARGET DevDesk POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory
         "$<TARGET_FILE_DIR:DevDesk>/assets"
@@ -299,10 +303,48 @@ add_custom_command(TARGET DevDesk POST_BUILD
         "${CMAKE_SOURCE_DIR}/assets/tray-icon-template.png"
         "$<TARGET_FILE_DIR:DevDesk>/assets/tray-icon-template.png"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_SOURCE_DIR}/assets/tray-icon-template@2x.png"
+        "$<TARGET_FILE_DIR:DevDesk>/assets/tray-icon-template@2x.png"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "${CMAKE_SOURCE_DIR}/assets/tray-icon-win.ico"
         "$<TARGET_FILE_DIR:DevDesk>/assets/tray-icon-win.ico"
     COMMENT "Copying tray icons to build directory"
 )
+
+# 应用图标（2026-10-20 C 方案终端窗 >_ 批）：build/assets 侧的两份品牌图。
+#   icon.ico → 安装包 SetupIconFile（installer/windows/devdesk.iss，经
+#     scripts/package-windows.sh 的 AssetsDir 暂存链取 <build-release>/assets）；
+#   icon.png → EUI-NEO dsl_app 默认 windowIconPath "assets/icon.png"
+#     （applyWindowIcon 每进程一次 glfwSetWindowIcon = Windows 任务栏/alt-tab
+#     运行态图标；macOS build-app.sh 亦从 <build>/assets/icon.png 派生 .icns）。
+# 执行序保证：EUI-NEO 的 assets 整树 bulk copy 是 eui_neo_configure_app(:226)
+# 内附加的 DevDesk POST_BUILD（其 assets/ 自带一份旧 icon.ico/icon.png）；CMake
+# 对同一 target 的 POST_BUILD 按定义顺序串行执行，本节定义在 :226 之后 → 恒后跑，
+# 同名覆盖确定生效（上方托盘图标块沿用同一机制，EUI assets 里的同名托盘图从未反扑）。
+add_custom_command(TARGET DevDesk POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory
+        "$<TARGET_FILE_DIR:DevDesk>/assets"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_SOURCE_DIR}/assets/icon.ico"
+        "$<TARGET_FILE_DIR:DevDesk>/assets/icon.ico"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_SOURCE_DIR}/assets/icon.png"
+        "$<TARGET_FILE_DIR:DevDesk>/assets/icon.png"
+    COMMENT "Copying app icons to build directory"
+)
+
+# exe 内嵌图标 + 版本资源（仅 Windows；资源管理器文件图标 / 桌面快捷方式 /
+# 「应用和功能」卸载项全靠它。macOS 无内嵌资源一说，.app 图标走 build-app.sh）。
+# windres 解析 .rc 里的相对路径按调用 CWD，不可靠——沿用 EUI-NEO eui_app_icon.rc
+# 的约定：configure 期把绝对原生路径（反斜杠双写转义）写进生成文件。图标 ID 用
+# 数值 101：PE 资源目录里数值 ID 恒排在命名资源（EUI-NEO 的 IDI_APP_ICON）之前，
+# Shell 取首个图标组 → DevDesk 图标胜出；两份资源并存互不影响。
+if(WIN32)
+    file(TO_NATIVE_PATH "${CMAKE_SOURCE_DIR}/assets/icon.ico" DEVDESK_ICON_ICO_NATIVE)
+    string(REPLACE "\\" "\\\\" DEVDESK_ICON_ICO_ESCAPED "${DEVDESK_ICON_ICO_NATIVE}")
+    configure_file(src/devdesk.rc.in "${CMAKE_BINARY_DIR}/devdesk.rc" @ONLY)
+    target_sources(DevDesk PRIVATE "${CMAKE_BINARY_DIR}/devdesk.rc")
+endif()
 
 # 启动 splash shader（assets/shaders/splash.frag，随仓库分发；运行时经
 # eui::platform::resolveResourcePath 从 exe 旁或 cwd 的 assets/ 下解析，
