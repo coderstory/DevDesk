@@ -1455,19 +1455,22 @@ int main(int argc, char* argv[]) {
 
     // 组 K：矮窗多档——余量卡在真实最小窗各档都构建
     // 补两处判别力空缺：组 G(d) 只在探针**实际运行**的那档屏高有判别力；
-    // home_probes_min_window 只跑 1200×720，而真实设计最小窗是 1330×845 逻辑
-    // （main.cpp kMinWindowLogical*），本机工作区放不下 845 点、经
-    // minWindowSizeForWorkArea 收缩后的**有效**下限是 1330×805 点
-    // （core/window_layout.h 头注）。
+    // home_probes_min_window 只跑 1200×720，而真实设计最小窗是 1280×800 逻辑
+    // （main.cpp:487-488 kMinWindowLogical*，2026-10-20 UAT2 从 1330×845 收窄）。
+    // 收窄后的真实下限：macOS 工作区可用 805 ≥ 800、不再收缩（有效 = 设计）；
+    // Windows @125% 工作区 1020−47 钳到 973 物理 = 778 逻辑（最低真实档）。
     //
-    // 本组用**无头 compose**一跑覆盖三档（同一模块实例在不同 Screen 下各排
+    // 本组用**无头 compose**一跑覆盖四档（同一模块实例在不同 Screen 下各排
     // 一帧）：compose 的 screen 是参数，不必为每档开一条 ctest 条目重跑全组。
-    // 三档 = 预算的工作档：
-    //   · 845 设计最小窗：装得下档的刀口——quotaBody = 845−fixed−kHomeChartH
-    //     = 95 < 96，靠压缩图表 1px（260→259）恰好画出卡；
-    //   · 805 本机有效最小窗：压缩档（图表压到 ~219）；
+    // 四档 = 预算的工作档：
+    //   · 845 压缩刀口档（合成档，非最小窗——旧设计值恰在刀口，保留专测 1px
+    //     压缩路径）：quotaBody = 845−fixed−kHomeChartH = 95 < 96，靠压缩
+    //     图表 1px（260→259）恰好画出卡；
+    //   · 800 设计最小窗 = macOS 有效下限（805 可用 ≥ 800 不钳）：压缩档；
+    //   · 778 Windows@125% 有效下限（min(800×1.25,1020−47)=973 物理 ÷1.25）：
+    //     更深压缩档（图表压到 ~192）；
     //   · 700 滚动模式档（< fixed+kHomeChartH = 750）：整页出滚动条、图表
-    //     一分不压、卡照画。低于一切真实下限，作守护性深档。
+    //     一分不压、卡照画。低于一切真实下限（778），作守护性深档。
     // 判据（每档一致）：
     //   K(a) 余量卡节点存在、非零尺寸、且不压统计网格（矮窗整张不画 = 欠账复发）
     //   K(b) 整页滚动容器在场（矮窗可见性依赖它吸收溢出；G 同款 content 节点）
@@ -1484,9 +1487,10 @@ int main(int argc, char* argv[]) {
             const char* label;
         };
         const Tier tiers[] = {
-            {845.0f, "1330×845 设计最小窗（main.cpp:529-530，装得下档刀口）"},
-            {805.0f, "1330×805 本机有效最小窗（工作区 833−28 收缩，压缩档）"},
-            {700.0f, "1330×700 滚动模式档（< fixed+kHomeChartH，守护性深档）"},
+            {845.0f, "845 压缩刀口档（合成：quotaBody=95<96 压 1px 恰好画卡；现行设计最小窗 1280×800）"},
+            {800.0f, "1280×800 设计最小窗（main.cpp:487-488；macOS 805 可用不钳，= 有效下限）"},
+            {778.0f, "1280×778 Windows 本机有效下限（@125% 钳 973 物理 ÷1.25，深压缩档）"},
+            {700.0f, "1280×700 滚动模式档（< fixed+kHomeChartH，守护性深档）"},
         };
         // 预算输入与 home_module compose 同源（不另写一套魔法数）：statH =
         // 144×fontScale，pad/gap 取主题 token（组 G(b) 同款口径）。
@@ -1496,7 +1500,7 @@ int main(int argc, char* argv[]) {
         const float kGap = kTheme.sizes.spacingLarge * 1.25f;
         for (const Tier& tier : tiers) {
             eui::Screen tierScreen;
-            tierScreen.width = 1330.0f;
+            tierScreen.width = 1280.0f;
             tierScreen.height = tier.height;
             eui::Ui tierUi;
             tierUi.begin("home_probe_k_" +

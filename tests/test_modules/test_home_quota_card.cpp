@@ -741,12 +741,12 @@ REGISTER_TEST(home_quota_never_succeeded_never_draws_bar_even_with_windows,
 })
 
 // 矮窗下余量卡仍要画出来，且不挤掉既有内容。
-// 720 刻意低于一切真实下限（设计最小窗 1330×845，本机有效 805），目的是守住深档；
-// 不可"修正"到 845 —— 那会让这条断言变成永不触发的废条。
+// 720 刻意低于一切真实下限（设计最小窗 1280×800，Windows@125% 有效 778），目的是守住深档；
+// 不可"修正"到 800 —— 那会让这条断言变成永不触发的废条。
 // 首页整页挂在 scrollView 上，装不下时由滚动条吸收，所以矮窗下仍然该画卡，
 // 不得以「会顶出可视区」为由整张缺席。
 REGISTER_TEST(home_quota_card_visible_at_design_minimum_window,
-              "home quota: 矮窗 720（守护深档；真实最小窗 1330×845/805 见探针组 K）"
+              "home quota: 矮窗 720（守护深档；真实最小窗 1280×800/778 见探针组 K）"
               "仍画出余量卡，且既有内容不丢", {
     test_support::TestEnv env(kDbPrefix, "shortwin", true);
     DOCTEST_REQUIRE(env.ready);

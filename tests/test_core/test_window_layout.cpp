@@ -200,32 +200,34 @@ REGISTER_TEST(window_layout_unit_name, "window_layout: 平台窗口单位名（m
 })
 
 // macOS 档（本机实测：工作区 1470×833 点、windowScaleForPoint 恒 1.0、外框 {0,28}）：
-// 设计下限 845 点 > 工作区可用 805，必须被钳到 805，否则窗口结构性收不进屏
+// 设计最小窗 1280×800（UAT2 从 1330×845 收窄）——800 ≤ 工作区可用 805，本机档
+// **不再钳**（旧 845 > 805 是钳制档；钳制行为本身由 below_work_area_paths ① 与
+// Windows 档用例覆盖，此处钉「设计值在真实工作区原样落实」）
 REGISTER_TEST(window_layout_min_window_macos_work_area,
-              "window_layout: macOS 档（工作区 1470×833 点）最小窗高被钳到 ≤805", {
+              "window_layout: macOS 档（工作区 1470×833 点）设计最小窗 800 ≤ 可用 805 不钳", {
     const auto min = minWindowSizeForWorkArea(
-        InitialWindowRequest{1600, 1000, 1330, 845}, WorkArea{0, 0, 1470, 833}, 1.0f,
+        InitialWindowRequest{1600, 1000, 1280, 800}, WorkArea{0, 0, 1470, 833}, 1.0f,
         FrameInsets{0, 28});
     DOCTEST_CHECK(min.height <= 805);  //≤ 工作区高 − 标题栏(28)
-    DOCTEST_CHECK_EQ(min.height, 805);          //833 − 28
-    DOCTEST_CHECK_EQ(min.width, 1330);          //宽不钳：1330 ≤ 1470 − 0
+    DOCTEST_CHECK_EQ(min.height, 800);          //设计 800 ≤ 833 − 28 = 805，不钳
+    DOCTEST_CHECK_EQ(min.width, 1280);          //宽不钳：1280 ≤ 1470 − 0
     return true;
 })
 
 // Windows 档（本机实测：工作区 1920×1020 物理 @125%、外框 {18,47}）：
-// 换算后 845 逻辑 = 1056 物理 > 工作区 1020，按工作区钳到 973。钳后 973 物理 = 778
-// 逻辑，且 973 + 47 = 1020 == 工作区，最小窗外框仍装得进屏
+// 换算后 800 逻辑 = 1000 物理 > 可用 973（1020 − 47），仍按工作区钳到 973。钳后
+// 973 物理 = 778 逻辑，且 973 + 47 = 1020 == 工作区，最小窗外框仍装得进屏
 REGISTER_TEST(window_layout_min_window_windows_work_area,
               "window_layout: Windows 档（1920×1020 物理 @1.25）换算+按工作区钳，与改动前对照不回归", {
     constexpr FrameInsetsBaseline kWindowsBaseline{14.4f, 37.6f};
     const FrameInsets frame125 = frameInsetsForScale(1.25f, kWindowsBaseline);
     const auto min = minWindowSizeForWorkArea(
-        InitialWindowRequest{1600, 1000, 1330, 845}, WorkArea{0, 0, 1920, 1020}, 1.25f,
+        InitialWindowRequest{1600, 1000, 1280, 800}, WorkArea{0, 0, 1920, 1020}, 1.25f,
         frame125);
-    DOCTEST_CHECK_EQ(min.height, 973);   //min(845×1.25 = 1056, 1020 − 47 = 973)
-    DOCTEST_CHECK_EQ(min.width, 1663);   //1330×1.25 = 1662.5 → 1663；1663+18 < 1920 不钳
-    // 不低于设计下限：钳后必须 ≥845 物理，且外框仍装得进工作区
-    DOCTEST_CHECK(min.height > 845);
+    DOCTEST_CHECK_EQ(min.height, 973);   //min(800×1.25 = 1000, 1020 − 47 = 973)
+    DOCTEST_CHECK_EQ(min.width, 1600);   //1280×1.25 = 1600；1600+18 < 1920 不钳
+    // 不低于设计下限：钳后必须 ≥800 物理，且外框仍装得进工作区
+    DOCTEST_CHECK(min.height > 800);
     DOCTEST_CHECK(min.height + frame125.height <= 1020);
     DOCTEST_CHECK(min.width + frame125.width <= 1920);
     return true;
@@ -233,7 +235,7 @@ REGISTER_TEST(window_layout_min_window_windows_work_area,
 
 REGISTER_TEST(window_layout_min_window_below_work_area_paths,
               "window_layout: 工作区小于最小值时的钳制/降级路径", {
-    const auto req = InitialWindowRequest{1600, 1000, 1330, 845};
+    const auto req = InitialWindowRequest{1600, 1000, 1280, 800};
 
     // ① 工作区比设计下限小 → 按「工作区 − 外框」钳
     const auto small = minWindowSizeForWorkArea(req, WorkArea{0, 0, 1024, 600}, 1.0f,
@@ -245,8 +247,8 @@ REGISTER_TEST(window_layout_min_window_below_work_area_paths,
     //   同口径：信息不足时不擅自改窗口形态
     const auto unknown = minWindowSizeForWorkArea(req, WorkArea{0, 0, 0, 0}, 1.0f,
                                                  FrameInsets{0, 28});
-    DOCTEST_CHECK_EQ(unknown.width, 1330);
-    DOCTEST_CHECK_EQ(unknown.height, 845);
+    DOCTEST_CHECK_EQ(unknown.width, 1280);
+    DOCTEST_CHECK_EQ(unknown.height, 800);
 
     // ③ 工作区比外框还小 → 该方向算出 0，负值不传给后端。注意 0 在 GLFW 两个后端都是
     //   all-or-nothing：任一轴为 0 会让两轴的最小尺寸一起失效（见 window_layout.h
@@ -267,14 +269,14 @@ REGISTER_TEST(window_layout_min_window_below_work_area_paths,
     // ⑤ 非法缩放 → 按 1.0 换算，与 decideInitialWindow 同降级口径
     const auto badScale = minWindowSizeForWorkArea(req, WorkArea{0, 0, 1470, 833}, 0.0f,
                                                   FrameInsets{0, 28});
-    DOCTEST_CHECK_EQ(badScale.width, 1330);
-    DOCTEST_CHECK_EQ(badScale.height, 805);
+    DOCTEST_CHECK_EQ(badScale.width, 1280);
+    DOCTEST_CHECK_EQ(badScale.height, 800);
 
     // ⑥ 换算顺序不可换：必须先乘 scale 再与工作区取 min。先钳后乘会得
-    //    min(845, 973)×1.25 = 1056 物理，仍收不进屏，等于没钳
+    //    min(800, 973)×1.25 = 1000 物理，仍 > 可用 973 收不进屏，等于没钳
     constexpr FrameInsetsBaseline kWindowsBaseline{14.4f, 37.6f};
     const auto order = minWindowSizeForWorkArea(
-        InitialWindowRequest{1600, 1000, 1330, 845}, WorkArea{0, 0, 1920, 1020}, 1.25f,
+        InitialWindowRequest{1600, 1000, 1280, 800}, WorkArea{0, 0, 1920, 1020}, 1.25f,
         frameInsetsForScale(1.25f, kWindowsBaseline));
     DOCTEST_CHECK_EQ(order.height, 973);
     DOCTEST_CHECK(order.height + 47 <= 1020);

@@ -15,6 +15,7 @@
 #include "core/module_interface.h"
 #include "core/router.h"
 #include "core/theme.h"  // 顶部留白断言直接比 spacingXXLarge token
+#include "core/window_effect_state.h"  // 侧栏底 alpha 按窗口效果档位（UAT2 B 批）
 
 #include <eui/dsl.h>
 
@@ -502,6 +503,54 @@ REGISTER_TEST(sidebar_w3_grouping_and_selectionbar,
 
     // 侧栏底色块存在（§4.8 D-12 E1：sidebarBgTinted 微绿灰）
     DOCTEST_CHECK(ui.find("app.sidebar.bg") != nullptr);
+
+    // UAT2 B 批：底色 tint 的 alpha 随窗口效果档位（core::window_effect_state 单值，
+    // 写口 = settings applyWindowVisuals）——off 实色 1.0 / translucent 0.5 /
+    // frosted 0.15 透 backdrop；RGB 恒 sidebarBgTinted。档位本用例内显式设定
+    // （进程级单值，与执行顺序无关），尾档复位 off 不污染后续用例。
+    // 不用 lambda 收 color：DOCTEST_* 宏展开含裸 return（进值返回 lambda 编译炸），
+    // 且 Element 指针系 Ui 内部树节点、Ui 出作用域即悬垂——三个显式块各自持 Ui。
+    {
+        const auto& t = ::core::theme::current();
+        const auto& wc = t.colors.wechat;
+        // off 档：实色 1.0，RGB 恒 sidebarBgTinted
+        core::window_effect_state::setCurrent("off");
+        {
+            eui::Ui fx;
+            fx.begin("sidebar_w3_fx_off");
+            app::compose(fx, screen);
+            fx.end();
+            const auto* bg = fx.find("app.sidebar.bg");
+            DOCTEST_REQUIRE(bg != nullptr);
+            DOCTEST_CHECK(std::abs(bg->color.a - 1.0f) < 1e-3f);
+            DOCTEST_CHECK(std::abs(bg->color.r - wc.sidebarBgTinted.r) < 1e-3f);
+            DOCTEST_CHECK(std::abs(bg->color.g - wc.sidebarBgTinted.g) < 1e-3f);
+            DOCTEST_CHECK(std::abs(bg->color.b - wc.sidebarBgTinted.b) < 1e-3f);
+        }
+        // frosted 档：0.15 透 Acrylic backdrop
+        core::window_effect_state::setCurrent("frosted");
+        {
+            eui::Ui fx;
+            fx.begin("sidebar_w3_fx_frosted");
+            app::compose(fx, screen);
+            fx.end();
+            const auto* bg = fx.find("app.sidebar.bg");
+            DOCTEST_REQUIRE(bg != nullptr);
+            DOCTEST_CHECK(std::abs(bg->color.a - 0.15f) < 1e-3f);
+        }
+        // translucent 档：0.5 半透
+        core::window_effect_state::setCurrent("translucent");
+        {
+            eui::Ui fx;
+            fx.begin("sidebar_w3_fx_translucent");
+            app::compose(fx, screen);
+            fx.end();
+            const auto* bg = fx.find("app.sidebar.bg");
+            DOCTEST_REQUIRE(bg != nullptr);
+            DOCTEST_CHECK(std::abs(bg->color.a - 0.5f) < 1e-3f);
+        }
+        core::window_effect_state::setCurrent("off");  // 尾档复位
+    }
 
     // Home（work 组、active）在 y=100；active 项应有 SelectionBar 三件套（§4.3）
     const auto* homeHit = ui.find("app.sidebar.item.Home.hit");

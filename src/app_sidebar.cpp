@@ -7,6 +7,7 @@
 #include "core/logging.h"
 #include "core/router.h"
 #include "core/theme.h"
+#include "core/window_effect_state.h"  // 侧栏底 alpha 按窗口效果档位（UAT2 B 批）
 #include "module_agent/agent_module.h"
 #include "settings_config.h"
 #include <ui_kit/metrics.h>
@@ -113,11 +114,17 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
         .size(kWidth, screen.height)
         .content([&] {
             // 侧栏底色：微绿灰（D-12 E1，§4.8 sidebarBgTinted #E8F0EC），z 序在最底，
-            // divider/brand/nav/toggle 都在其上。原"不自铺底以透出磨砂效果"的口径作废——
-            // §4.8 明示侧栏要自己的微绿灰底（仅染侧栏，不动页面区/白卡）。
+            // divider/brand/nav/toggle 都在其上，仅染侧栏、不动页面区/白卡。
+            // UAT2 B 批：tint 的 alpha 随窗口效果档位（core::window_effect_state 单值，
+            // 写口 = settings applyWindowVisuals）——磨砂 0.15 透 Acrylic backdrop、
+            // 半透 0.5、off 实色 1.0；off/translucent 档保留 §4.8 微绿灰观感，
+            // 磨砂档侧栏不再把 backdrop 挡死。
+            const float sidebarBgAlpha = ::core::window_effect_state::surfaceAlpha(
+                ::core::window_effect_state::current());
             ui.rect("app.sidebar.bg")
                 .size(kWidth, screen.height)
-                .color(wc.sidebarBgTinted)
+                .color(eui::Color{wc.sidebarBgTinted.r, wc.sidebarBgTinted.g,
+                                  wc.sidebarBgTinted.b, sidebarBgAlpha})
                 .build();
             // 右缘分割线：wechat.dividerPrimary（§4.7 一级 #E5E5E5，原 borderMuted 暖系）
             ui.rect("app.sidebar.divider")

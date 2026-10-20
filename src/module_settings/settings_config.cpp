@@ -10,6 +10,7 @@
 #include "core/app_config.h"
 #include "core/logging.h"
 #include "core/theme.h"
+#include "core/window_effect_state.h"  // 档位单值写口（sidebar/about 铺色 alpha 读）
 #include "platform/json.h"
 
 #include <eui/app.h>
@@ -176,15 +177,17 @@ SettingsConfig SettingsStore::sanitized(const SettingsConfig& cfg) {
 }
 
 // 两层 alpha 串联叠加（窗口背景色层 + clearColor 层），同值推导会让半透/磨砂档视觉无法区分。
+// UAT2 B 批折中（用户反馈半透档"太高"，语义两读）：translucent 内容 0.60→0.80（少透
+// 壁纸）、标题栏 0.90→0.85（略增透出）；frosted 两值不动。用户可再调。
 float windowEffectAlpha(const std::string& mode) {
-    if (mode == kWindowEffectTranslucent) return 0.60f;
+    if (mode == kWindowEffectTranslucent) return 0.80f;
     if (mode == kWindowEffectFrosted) return 0.15f;
     return 1.0f;  // off / 未知值：实色
 }
 
 float windowEffectTitleBarAlpha(const std::string& mode) {
     // 标题栏层 = 窗口背景色，是透出上限（wallpaper 先穿这层再穿 clearColor 纱）。
-    if (mode == kWindowEffectTranslucent) return 0.90f;
+    if (mode == kWindowEffectTranslucent) return 0.85f;
     if (mode == kWindowEffectFrosted) return 0.65f;
     return 1.0f;
 }
@@ -228,6 +231,9 @@ std::string windowEffectDegradedHint(const std::string& mode,
 }
 
 void applyWindowVisuals(const std::string& mode) {
+    // 档位单值先落 core（sidebar/about 的磨砂铺色按档带 alpha 读它；
+    // 启动恢复 / 切档 / 主题切换三处都走本漏斗，写这里即全覆盖）
+    core::window_effect_state::setCurrent(mode);
     const core::theme::Tokens& theme = core::theme::current();
     const eui::Color& bg = theme.colors.background;
     app::setClearColor(eui::Color{bg.r, bg.g, bg.b, windowEffectAlpha(mode)});
