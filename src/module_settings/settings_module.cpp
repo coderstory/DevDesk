@@ -91,13 +91,15 @@ const CardSpec kCardSpecs[] = {
      kAppearanceCardHeight, false, /*half=*/true, &drawAppearanceCard},
     {kTabGeneral, "settings.card.editor", nullptr, CardHeightKind::Fixed,
      kEditorFontCardHeight, true, /*half=*/true, &drawEditorFontCard},
+    // UAT5：Claude 代理卡自「模块」tab 迁「通用」tab（appearance|editor 配对行
+    // 下方、保持全宽）；gate 语义保留（claude 模块关 → 整卡隐藏）。
+    {kTabGeneral, "settings.card.proxy", kModuleIdClaudeProxy,
+     CardHeightKind::ProxyWarnings, 0.0f, false, /*half=*/false, &drawProxyCard},
     {kTabModules, "settings.card.modules", nullptr, CardHeightKind::Fixed,
      kModulesCardHeight, false, /*half=*/false, &drawModulesCard},
     {kTabModules, "settings.card.directory", kModuleIdMarkdown,
      CardHeightKind::Fixed, kDirectoryCardHeight, false, /*half=*/false,
      &drawDirectoryCard},
-    {kTabModules, "settings.card.proxy", kModuleIdClaudeProxy,
-     CardHeightKind::ProxyWarnings, 0.0f, false, /*half=*/false, &drawProxyCard},
     {kTabLog, "settings.card.log", nullptr, CardHeightKind::Fixed,
      kLogSettingsCardHeight, true, /*half=*/false, &drawLogCard},
     {kTabLog, "settings.tab.log", nullptr, CardHeightKind::FillRemainder,
@@ -1275,14 +1277,12 @@ private:
             }
             flushLoneHalf();   // 全宽卡先清掉挂起的半宽游标
             // 分组标题（§6 item 4）+ 组间分隔线（§6 item 6）：仅全宽卡触发
-            //（半宽卡不占组题锚）。「存储配置」「其他设置」仅模块 tab 有；
-            // 其他 tab 卡自带标题不分组。
+            //（半宽卡不占组题锚）。UAT5 代理卡迁「通用」tab 后不再挂组题
+            //（通用 tab 卡自带标题不分组）；「存储配置」仍属模块 tab 目录卡。
             const char* groupTitle = nullptr;
             const std::string specId(spec.id);
             if (specId == "settings.card.directory")
                 groupTitle = "存储配置";
-            else if (specId == "settings.card.proxy")
-                groupTitle = "其他设置";
             if (groupTitle != nullptr) {
                 if (!firstInTab) {
                     // 组间分隔线：wechat.dividerPrimary（#E5E5E5）

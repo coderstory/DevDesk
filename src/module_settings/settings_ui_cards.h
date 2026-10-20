@@ -97,7 +97,7 @@ void drawAppearanceCard(const CardDrawArgs& args);   // 通用：外观（主题
 void drawEditorFontCard(const CardDrawArgs& args);   // 通用：编辑器字号
 void drawModulesCard(const CardDrawArgs& args);      // 模块：插拔开关
 void drawDirectoryCard(const CardDrawArgs& args);    // 模块：笔记目录（开关门控）
-void drawProxyCard(const CardDrawArgs& args);        // 模块：Claude 代理（开关门控）
+void drawProxyCard(const CardDrawArgs& args);        // 通用：Claude 代理（开关门控；UAT5 自模块 tab 迁入）
 void drawLogCard(const CardDrawArgs& args);          // 日志：保留天数 + 级别
 void drawLogViewCard(const CardDrawArgs& args);      // 日志：tail 查看
 

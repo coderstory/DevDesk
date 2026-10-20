@@ -571,21 +571,23 @@ REGISTER_TEST(settings_module_compose_renders, "settings: module compose builds 
     DOCTEST_CHECK(ui.find("settings.tabs.1.hit") != nullptr);
     DOCTEST_CHECK(ui.find("settings.tabs.2.hit") != nullptr);
     DOCTEST_CHECK(ui.find("settings.cards.scroll") != nullptr);
-    // 通用 tab：外观卡 + 编辑器字号卡
+    // 通用 tab：外观卡 + 编辑器字号卡 + Claude 代理卡（UAT5 自模块 tab 迁入，
+    // 配对行下方全宽；服务为空时代理卡仍渲染）
     DOCTEST_CHECK(ui.find("settings.card.appearance") != nullptr);
     DOCTEST_CHECK(ui.find("settings.card.appearance.effect.ddwrap") != nullptr);
     DOCTEST_CHECK(ui.find("settings.card.editor.dd") != nullptr);
+    DOCTEST_CHECK(ui.find("settings.card.proxy") != nullptr);
     DOCTEST_CHECK(ui.find("settings.card.modules") == nullptr);
     DOCTEST_CHECK(ui.find("settings.card.log") == nullptr);
     DOCTEST_CHECK(ui.find("settings.card.about") == nullptr);
 
-    // 模块 tab：插拔开关 + 目录 + 代理（服务为空时代理卡仍渲染）
+    // 模块 tab：插拔开关 + 目录（代理卡已迁通用 tab）
     DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 1));
     frame("modtab");
     DOCTEST_CHECK(ui.find("settings.card.modules") != nullptr);
     DOCTEST_CHECK(ui.find("settings.card.modules.sw.0") != nullptr);
     DOCTEST_CHECK(ui.find("settings.card.directory") != nullptr);
-    DOCTEST_CHECK(ui.find("settings.card.proxy") != nullptr);
+    DOCTEST_CHECK(ui.find("settings.card.proxy") == nullptr);
     DOCTEST_CHECK(ui.find("settings.card.appearance") == nullptr);
 
     // 日志 tab：设置卡（保留天数 + 级别）+ 日志查看卡（tail + 刷新按钮）
@@ -647,8 +649,8 @@ REGISTER_TEST(settings_port_error_clear_on_input,
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
-    // Task B tab 化：代理卡在「模块」tab
-    DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 1));
+    // UAT5：代理卡在「通用」tab（自模块 tab 迁入）
+    DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 0));
     eui::Ui ui;
     auto frame = [&](const char* page) {
         ui.begin(page);
@@ -923,8 +925,8 @@ REGISTER_TEST(settings_takeover_status_row,
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
-    // Task B tab 化：接管状态行随代理卡在「模块」tab
-    DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 1));
+    // UAT5：接管状态行随代理卡在「通用」tab
+    DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 0));
     // DOCTEST_CHECK 宏内含 return false，不能进返回 string 的 lambda——故用 out 参数收敛
     auto composeTakeoverText = [&](std::string* out) -> bool {
         eui::Ui ui;
@@ -1016,7 +1018,7 @@ REGISTER_TEST(settings_takeover_warn_unmanaged,
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
-    DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 1));  // 模块 tab
+    DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 0));  // 通用 tab（UAT5 代理卡迁入）
 
         // 起代理：settings.json 是坏 JSON → 接管失败（写 sidecar 之前中止）
     {
@@ -1305,13 +1307,18 @@ REGISTER_TEST(settings_gated_proxy_card_hidden, "settings: claude 模块关闭 �
     screen.width = 1600.0f;
     screen.height = 1000.0f;
     eui::Ui ui;
-    // Task B tab 化：代理/目录/模块卡在「模块」tab，日志卡在「日志」tab
-    DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 1));
+    // UAT5：代理卡在「通用」tab（gate 语义随卡迁移保留）；目录/模块卡在「模块」tab
+    DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 0));
     ui.begin("gateclaude");
     mod->compose(ui, screen);
     ui.end();
 
     DOCTEST_CHECK(ui.find("settings.card.proxy") == nullptr);  // 整卡隐藏
+    DOCTEST_CHECK(ui.find("settings.card.appearance") != nullptr);  // 同 tab 卡不受 gate 影响
+    DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 1));
+    ui.begin("gateclaude_mod");
+    mod->compose(ui, screen);
+    ui.end();
     DOCTEST_CHECK(ui.find("settings.card.directory") != nullptr);  // markdown 开
     DOCTEST_CHECK(ui.find("settings.card.modules") != nullptr);
 
@@ -1341,7 +1348,7 @@ REGISTER_TEST(settings_gated_directory_card_hidden, "settings: markdown 模块�
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
-    // Task B tab 化：目录/代理卡在「模块」tab
+    // UAT5：目录卡在「模块」tab；代理卡已迁「通用」tab（claude 开 → 在通用 tab 可见）
     DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 1));
     eui::Ui ui;
     ui.begin("gatemd");
@@ -1349,6 +1356,10 @@ REGISTER_TEST(settings_gated_directory_card_hidden, "settings: markdown 模块�
     ui.end();
 
     DOCTEST_CHECK(ui.find("settings.card.directory") == nullptr);  // 整卡隐藏
+    DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 0));
+    ui.begin("gatemd_general");
+    mod->compose(ui, screen);
+    ui.end();
     DOCTEST_CHECK(ui.find("settings.card.proxy") != nullptr);  // claude 开
     mod->onStop();
     ::core::theme::setDark();
@@ -1612,20 +1623,20 @@ REGISTER_TEST(settings_card_rows_scale_derived,
         {0, "settings.card.editor",
          {"settings.card.editor.title", "settings.card.editor.hint",
           "settings.card.editor.ddwrap"}},
+        {0, "settings.card.proxy",
+         {"settings.card.proxy.title", "settings.card.proxy.desc",
+          "settings.card.proxy.port.label", "settings.card.proxy.port.hint",
+          "settings.card.proxy.takeover.label",
+          "settings.card.proxy.takeover.value"}},
         {1, "settings.card.modules",
          {"settings.card.modules.title", "settings.card.modules.desc",
           "settings.card.modules.name.0", "settings.card.modules.rowdesc.0",
           "settings.card.modules.name.1", "settings.card.modules.rowdesc.1",
           "settings.card.modules.name.2", "settings.card.modules.rowdesc.2",
           "settings.card.modules.name.3", "settings.card.modules.rowdesc.3"}},
-        
+
         {1, "settings.card.directory",
          {"settings.card.directory.title", "settings.card.directory.hint"}},
-        {1, "settings.card.proxy",
-         {"settings.card.proxy.title", "settings.card.proxy.desc",
-          "settings.card.proxy.port.label", "settings.card.proxy.port.hint",
-          "settings.card.proxy.takeover.label",
-          "settings.card.proxy.takeover.value"}},
         {2, "settings.card.log",
          {"settings.card.log.title", "settings.card.log.label",
           "settings.card.log.hint", "settings.card.log.ddwrap",
@@ -1766,6 +1777,15 @@ REGISTER_TEST(settings_card_rows_scale_derived,
             if (err.empty())
                 err = pin("appearance 卡高", heightOf("settings.card.appearance"),
                           at(156.0f, 184.0f, 239.0f));
+            // 代理卡（UAT5 迁入通用 tab，卡高公式不变）
+            if (err.empty())
+                err = pin("proxy.takeover.label 高",
+                          heightOf("settings.card.proxy.takeover.label"),
+                          at(15.0f, 18.0f, 23.0f));
+            if (err.empty())
+                err = pin("proxy 卡高（无警告）",
+                          heightOf("settings.card.proxy"),
+                          at(124.0f, 138.0f, 168.0f));
         } else if (tab == 1) {
             err = pin("modules.name.0 高",
                       heightOf("settings.card.modules.name.0"),
@@ -1798,14 +1818,6 @@ REGISTER_TEST(settings_card_rows_scale_derived,
             if (err.empty())
                 err = pin("modules 卡高", heightOf("settings.card.modules"),
                           at(168.0f, 198.0f, 257.0f));
-            if (err.empty())
-                err = pin("proxy.takeover.label 高",
-                          heightOf("settings.card.proxy.takeover.label"),
-                          at(15.0f, 18.0f, 23.0f));
-            if (err.empty())
-                err = pin("proxy 卡高（无警告）",
-                          heightOf("settings.card.proxy"),
-                          at(124.0f, 138.0f, 168.0f));
         } else {
     // 日志卡入派生池：UAT3 双列后两行同排（行 y=roundFs(68)、行高=logFieldHeight）、
     // hint 并一行（hintRowBelowY）、卡高 roundFs(144) 三档同缩放
@@ -2160,8 +2172,8 @@ REGISTER_TEST(settings_port_esc_discards_draft,
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
-    // 端口输入在代理卡（「模块」tab）
-    DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 1));
+    // 端口输入在代理卡（UAT5 迁「通用」tab）
+    DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 0));
     eui::Ui ui;
     auto frame = [&](const char* page) {
         ui.begin(page);
@@ -2231,8 +2243,8 @@ REGISTER_TEST(settings_ctrl_s_save_shortcut,
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
-        // 端口输入 / 重新生成按钮在「模块」tab
-    DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 1));
+        // 端口输入 / 重新生成按钮在「通用」tab（UAT5 代理卡迁入）
+    DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 0));
     eui::Ui ui;
     auto frame = [&](const char* page) {
         ui.begin(page);
@@ -3205,7 +3217,8 @@ REGISTER_TEST(settings_card_registry_order,
         std::unique_ptr<::core::Module> mod(create_settings_module());
         mod->onStart();
         const std::vector<std::string> wantGeneral = {
-            "settings.cards.pair.0"};
+            "settings.cards.pair.0",
+            "settings.card.proxy"};   // UAT5：代理卡迁通用 tab（配对行下方全宽）
         const auto t0 = cardIdsOf(*mod, screen);
         DOCTEST_CHECK_MESSAGE(t0 == wantGeneral, "通用 tab 实测：" + join(t0));
         const auto pairChildren = pairChildIdsOf(*mod, screen, "settings.cards.pair.0");
@@ -3219,10 +3232,7 @@ REGISTER_TEST(settings_card_registry_order,
             "settings.card.modules",
             "settings.card.directory.groupdivider",
             "settings.card.directory.grouptitle",
-            "settings.card.directory",
-            "settings.card.proxy.groupdivider",
-            "settings.card.proxy.grouptitle",
-            "settings.card.proxy"};
+            "settings.card.directory"};
         const auto t1 = cardIdsOf(*mod, screen);
         DOCTEST_CHECK_MESSAGE(t1 == wantModulesAll, "模块 tab（全开） 实测：" + join(t1));
         DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 2));
@@ -3250,10 +3260,11 @@ REGISTER_TEST(settings_card_registry_order,
         const auto g1 = cardIdsOf(*mod, screen);
         DOCTEST_CHECK_MESSAGE(g1 == wantModulesGated, "模块 tab（门控全关） 实测：" + join(g1));
         DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 0));
+        // claude 关 → 代理卡（已迁通用 tab）随 gate 整卡隐藏，只剩配对行
         const std::vector<std::string> wantGeneralGated = {
             "settings.cards.pair.0"};
         const auto g0 = cardIdsOf(*mod, screen);
-        DOCTEST_CHECK_MESSAGE(g0 == wantGeneralGated, "通用 tab（门控不影响） 实测：" + join(g0));
+        DOCTEST_CHECK_MESSAGE(g0 == wantGeneralGated, "通用 tab（claude 关） 实测：" + join(g0));
         mod->onStop();
     }
     ::core::theme::setDark();
@@ -3284,22 +3295,22 @@ REGISTER_TEST(settings_cards_no_outer_cardframe,
 
     // 卡 root stack id（内容锚）+ cardFrame 若加回会出现的 bg id（cardFrame 在 (0,0)
     // 铺的矩形，id = <stack>.bg）。顺序 = 注册表序
-    const int kTabOf[] = {0, 0, 1, 1, 1, 2, 2};
+    const int kTabOf[] = {0, 0, 0, 1, 1, 2, 2};
     const char* const kStackIds[] = {
         "settings.card.appearance",
         "settings.card.editor",
+        "settings.card.proxy",
         "settings.card.modules",
         "settings.card.directory",
-        "settings.card.proxy",
         "settings.card.log",
         "settings.tab.log",
     };
     const char* const kBgIds[] = {
         "settings.card.appearance.bg",
         "settings.card.editor.bg",
+        "settings.card.proxy.bg",
         "settings.card.modules.bg",
         "settings.card.directory.bg",
-        "settings.card.proxy.bg",
         "settings.card.log.bg",
         "settings.tab.log.bg",
     };
