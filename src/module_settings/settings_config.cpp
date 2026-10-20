@@ -177,10 +177,12 @@ SettingsConfig SettingsStore::sanitized(const SettingsConfig& cfg) {
 }
 
 // 两层 alpha 串联叠加（窗口背景色层 + clearColor 层），同值推导会让半透/磨砂档视觉无法区分。
-// UAT2 B 批折中（用户反馈半透档"太高"，语义两读）：translucent 内容 0.60→0.80（少透
-// 壁纸）、标题栏 0.90→0.85（略增透出）；frosted 两值不动。用户可再调。
+// UAT2 B 批（半透档"太高"第一轮）：translucent 0.60/0.90 → 0.80/0.85。UAT3 C1 批
+// （round3 用户仍反馈半透透明度太高）：内容 0.80→0.82（拍板值 ~0.82；标题栏带可
+// 略高——0.85 本就高于内容，不动）；frosted 两值不动。自绘标题栏（D-R3-1）落地后
+// Windows 无系统标题栏，标题栏 alpha 只实际作用于 macOS 系统标题栏底色。
 float windowEffectAlpha(const std::string& mode) {
-    if (mode == kWindowEffectTranslucent) return 0.80f;
+    if (mode == kWindowEffectTranslucent) return 0.82f;
     if (mode == kWindowEffectFrosted) return 0.15f;
     return 1.0f;  // off / 未知值：实色
 }
