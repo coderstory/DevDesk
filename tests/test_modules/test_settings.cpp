@@ -1164,6 +1164,32 @@ REGISTER_TEST(settings_window_effect_param_mapping, "settings: 档位→alpha/ba
     DOCTEST_CHECK(core::window_effect_state::surfaceAlpha(ms::kWindowEffectFrosted) == 0.15f);
     DOCTEST_CHECK(core::window_effect_state::surfaceAlpha("bogus") == 1.0f);
 
+    // M-3（UAT2 一审）降级门控：请求 frosted 但 active 回查档不一致（系统不支持
+    // Acrylic，主循环降级回写）→ 按 active 档取安全值；active 一致/未注入 = 原值。
+    // 经 setActiveTierProvider 注桩（无捕获 lambda → 函数指针）；断完必须复位
+    // nullptr——inline static 跨 TU 单实例，泄漏会污染同二进制后续 compose 用例。
+    core::window_effect_state::setActiveTierProvider(
+        []() -> std::string { return "off"; });  // 对应 active=None（桥映射）
+    DOCTEST_CHECK(core::window_effect_state::surfaceAlpha(
+                      ms::kWindowEffectFrosted) == 1.0f);
+    core::window_effect_state::setActiveTierProvider(
+        []() -> std::string { return "translucent"; });  // active=Transparent
+    DOCTEST_CHECK(core::window_effect_state::surfaceAlpha(
+                      ms::kWindowEffectFrosted) == 0.5f);
+    core::window_effect_state::setActiveTierProvider(
+        []() -> std::string { return "frosted"; });  // active 生效，门控放行
+    DOCTEST_CHECK(core::window_effect_state::surfaceAlpha(
+                      ms::kWindowEffectFrosted) == 0.15f);
+    core::window_effect_state::setActiveTierProvider(nullptr);  // 复位：未注入
+    DOCTEST_CHECK(core::window_effect_state::surfaceAlpha(
+                      ms::kWindowEffectFrosted) == 0.15f);
+    // 非 frosted 档不受门控影响（其铺色不依赖 backdrop）
+    core::window_effect_state::setActiveTierProvider(
+        []() -> std::string { return "off"; });
+    DOCTEST_CHECK(core::window_effect_state::surfaceAlpha(
+                      ms::kWindowEffectTranslucent) == 0.5f);
+    core::window_effect_state::setActiveTierProvider(nullptr);  // 尾态复位
+
     // 半透档目标带 **236–244**（黑壁纸），两端是实机标定值不是随手取的。
     // UAT2 折中 0.80/0.85 → 250×(1−0.15×0.20) = 242.5 落在带内上缘侧。这条同时锁
     // 常量与目标：任一 alpha 再往 0.90 走 → 246.25 出上界；回到 0.60 → 235 出下界。

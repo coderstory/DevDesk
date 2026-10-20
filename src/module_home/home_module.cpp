@@ -81,9 +81,13 @@ void drawStatCard(eui::Ui& ui,
                         .onClick(std::move(onClick))
                         .build();
                     // 卡内文字：坐标相对 card content 原点（已含 16 inset）
+                    // L-4（UAT2 一审）：label 盒高 18→16，底缘 32 恰接 number 盒顶
+                    //（旧 18 高 → 底缘 34 与 number 顶 32 重叠 2px；探针组 A 记载的
+                    // 期望几何即「.label y16..32」）。lineHeight 仍 18：EUI 文本字形
+                    // 按 lineHeight 布局、不按盒高裁字，改盒高视觉零变化。
                     ui.text(id + ".label")
                         .position(0.0f, 16.0f * s)
-                        .size(cw, 18.0f * s)
+                        .size(cw, 16.0f * s)
                         .text(label)
                         .fontSize(t.sizes.fontSizeSmall + 1.0f)
                         .lineHeight(18.0f * s)

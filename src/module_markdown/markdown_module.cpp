@@ -2459,6 +2459,9 @@ private:
                            const components::theme::ThemeColorTokens& componentTheme) {
         const float w = ui_kit::dialogWidthPx(ui_kit::DialogWidth::Standard);
         const float h = 220.0f;
+        // M-1（UAT2 一审）：弹窗内控件统一 wechat 皮肤；页面暖橙 componentTheme
+        // 有意只喂页面主体（compose/drawHeader 两处页面变量），popup 控件就地取 wechat 令牌。
+        const auto wcTheme = core::theme::componentTokensWeChat(t);
 
         ui_kit::DialogFrame frame;
         frame.id = "md.dialog.new";
@@ -2489,7 +2492,7 @@ private:
                     .value(newNoteName_)
                     .placeholder("笔记名，可用 / 分文件夹，如 工作/周会")
                     .fontSize(t.sizes.fontSizeBody)
-                    .theme(componentTheme)
+                    .theme(wcTheme)
                     .onChange([this](const std::string& v) {
                         newNoteName_ = v;
                         newNoteError_.clear();  // 错误随下一次输入清除
@@ -2527,6 +2530,8 @@ private:
                              const components::theme::ThemeColorTokens& componentTheme) {
         const float w = ui_kit::dialogWidthPx(ui_kit::DialogWidth::Standard);
         const float h = 320.0f;
+        // M-1（UAT2 一审）：弹窗内控件（下拉/输入框）统一 wechat 皮肤。
+        const auto wcTheme = core::theme::componentTokensWeChat(t);
 
         // 父目录候选：根目录 + 磁盘上每一级目录
         const auto candidates = folderParentCandidates();
@@ -2572,7 +2577,7 @@ private:
                             .items(parents)
                             .selected(parentIdx)
                             .placeholder("根目录")
-                            .theme(componentTheme)
+                            .theme(wcTheme)
                             .open(newFolderParentOpen_)
                             .onOpenChange(
                                 [this](bool v) { newFolderParentOpen_ = v; })
@@ -2598,7 +2603,7 @@ private:
                     .value(newFolderName_)
                     .placeholder("文件夹名，如 工作")
                     .fontSize(t.sizes.fontSizeBody)
-                    .theme(componentTheme)
+                    .theme(wcTheme)
                     .onChange([this](const std::string& v) {
                         newFolderName_ = v;
                         newFolderError_.clear();  // 错误随下一次输入清除
@@ -2635,14 +2640,18 @@ private:
 
     // Toast 反馈
     // 普通提示走 ui_kit；外部冲突就地绘制；二者共用 md.toast 单实例且互斥。
+    // M-1（UAT2 一审）：toast 属 popup，两分支统一 wechat 皮肤；页面暖橙
+    // componentTheme 只喂页面主体，themeTokens 形参随之闲置（先例 drawDeleteDialog）。
     void drawToast(eui::Ui& ui, const eui::Screen& screen,
                    const components::theme::ThemeColorTokens& themeTokens) {
+        const auto wcTheme =
+            core::theme::componentTokensWeChat(core::theme::current());
         if (!conflictOpen_) {
-            ui_kit::drawToast(ui, screen, "md.toast", toast_, themeTokens);
+            ui_kit::drawToast(ui, screen, "md.toast", toast_, wcTheme);
             return;
         }
         components::toast(ui, "md.toast")
-            .theme(themeTokens)
+            .theme(wcTheme)
             .screen(screen.width, screen.height)
             .visible(true)  // 本分支 conflict 必真
             .size(360.0f, 128.0f)  // 带 action 按钮加高一档
@@ -3490,7 +3499,9 @@ private:
                              const eui::Screen& screen,
                              const core::theme::Tokens& t,
                              const components::theme::ThemeColorTokens& componentTheme) {
-        (void)t;
+        // M-1（UAT2 一审）：右键菜单属 popup，统一 wechat 皮肤；页面暖橙
+        // componentTheme 只喂页面主体。
+        const auto wcTheme = core::theme::componentTokensWeChat(t);
 // 无右键目标时跳过 build 并强制置关：否则组件不渲染 dismiss 层，
 // 点击外部无处触发 onOpenChange(false)。
         if (ctxMenuPath_.empty()) {
@@ -3503,7 +3514,7 @@ private:
             .position(ctxMenuX_, ctxMenuY_)
             .autoWidth()  // 宽度按最宽项自适应
             .items({"重命名", "删除笔记"})
-            .theme(componentTheme)
+            .theme(wcTheme)
             .onSelect([this](int index) {
                 if (index == 0) {
                     renameOpen_ = true;
@@ -3538,7 +3549,8 @@ private:
                                const eui::Screen& screen,
                                const core::theme::Tokens& t,
                                const components::theme::ThemeColorTokens& componentTheme) {
-        (void)t;
+        // M-1（UAT2 一审）：编辑器右键菜单属 popup，统一 wechat 皮肤。
+        const auto wcTheme = core::theme::componentTokensWeChat(t);
         // 只在打开时构建（关闭态无覆盖层残留）
         if (!editorCtxOpen_) return;
         components::contextMenu(ui, "md.editor.ctx")
@@ -3547,7 +3559,7 @@ private:
             .position(editorCtxX_, editorCtxY_)
             .autoWidth()  // 宽度按最宽项自适应
             .items(buildTableMenuItems())
-            .theme(componentTheme)
+            .theme(wcTheme)
             .onSelectPath([this, &ui](const std::vector<int>& path) {
                 // path = [0(插入表格), 行下标, 列下标]
                 if (path.size() == 3 && path[0] == 0) {
@@ -3616,6 +3628,9 @@ private:
                           const components::theme::ThemeColorTokens& componentTheme) {
         const float w = ui_kit::dialogWidthPx(ui_kit::DialogWidth::Standard);
         const float h = 220.0f;
+        // M-1（UAT2 一审）：同类的第七处——重命名弹窗输入框此前也漏吃页面暖橙，
+        // 逐处 Read 核对 popup 控件时补上（frame/buttons 本已是 wechat）。
+        const auto wcTheme = core::theme::componentTokensWeChat(t);
 
         ui_kit::DialogFrame frame;
         frame.id = "md.dialog.rename";
@@ -3638,7 +3653,7 @@ private:
                     .value(renameInput_)
                     .placeholder("新名字或新路径")
                     .fontSize(t.sizes.fontSizeBody)
-                    .theme(componentTheme)
+                    .theme(wcTheme)
                     .onChange([this](const std::string& v) {
                         renameInput_ = v;
                         renameError_.clear();  // 错误随下一次输入清除

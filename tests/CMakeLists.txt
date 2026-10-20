@@ -317,7 +317,7 @@ foreach(_probe_source ${_devdesk_probe_sources})
             PROPERTIES SKIP_RETURN_CODE 77)
     endif()
     # home 的短窗尺寸档（2026-10-03 final 批；设计最小窗 2026-10-20 UAT2 收窄为
-    # 1280×800 逻辑（main.cpp:487-488 kMinWindowLogical*），1200×720 是 spec
+    # 1280×800 逻辑（main.cpp:492-493 kMinWindowLogical*），1200×720 是 spec
     # 早期过期值——本档刻意**低于**一切真实下限（最低真实档 = Windows@125%
     # 有效 778），作守护性深档）。默认那条按
     # 1200×1000 跑，而「矮窗下余量卡画不画」在 1000 高的旧实现也画 → 只跑

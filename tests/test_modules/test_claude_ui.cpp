@@ -227,6 +227,41 @@ REGISTER_TEST(claude_module_actions_row_alignment,
     return true;
 })
 
+// UAT2 #10 C 批布局回归锁（L-5，UAT2 一审）：状态组（dot+text+help）从 title row
+// 挪到 header 右侧 actions 区后——① 右对齐：status row 右缘 ≥ title row 右缘
+//（状态组贴 header 右端，title row 只占左段 contentW−360）；② wrapContent
+// 收缩：无服务态「已停止」≈39px，回退成旧 200px 固定宽盒 → 超 120 红。
+// headless 出 frame 须 ui.layout()，写法仿上一条。
+REGISTER_TEST(claude_module_header_status_geometry,
+              "claude_module: header 状态组右对齐 + wrapContent 收缩（headless layout）", {
+    module::claude::ClaudeService::setGlobal(nullptr);
+    std::unique_ptr<::core::Module> mod(create_claude_module());
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    eui::Ui ui;
+    ui.begin("claude_status_geometry");
+    mod->compose(ui, screen);
+    ui.end();
+    ui.layout(screen.width, screen.height);
+
+    const auto* statusRow = ui.find("claude.status.row");
+    const auto* titleRow = ui.find("claude.title.row");
+    const auto* statusText = ui.find("claude.status.text");
+    DOCTEST_REQUIRE(statusRow != nullptr);
+    DOCTEST_REQUIRE(titleRow != nullptr);
+    DOCTEST_REQUIRE(statusText != nullptr);
+    // ① 右对齐：状态组右缘不早于 title row 右缘
+    const float statusRight = statusRow->frame.x + statusRow->frame.width;
+    const float titleRight = titleRow->frame.x + titleRow->frame.width;
+    DOCTEST_CHECK(statusRight >= titleRight);
+    // ② wrapContent 收缩：上界 120 容「运行中 :port」动态变体（本用例为已停止态）
+    DOCTEST_CHECK(statusText->frame.width <= 120.0f);
+
+    mod->onStop();
+    return true;
+})
+
 // 2. 有真实服务 + 数据时 compose 渲染卡片/徽标/详情
 
 REGISTER_TEST(claude_module_compose_with_data,
