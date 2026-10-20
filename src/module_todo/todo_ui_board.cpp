@@ -184,8 +184,8 @@ void drawBoard(eui::Ui& ui, float contentW, float bodyH,
                     .size(120.0f, 40.0f)
                     .text("重试")
                     .fontSize(t.sizes.fontSizeBody - 1.0f)
-                    .colors(t.colors.primary, t.colors.primaryHover,
-                            t.colors.primaryPressed)
+                    .colors(t.colors.wechat.primary, t.colors.wechat.primaryHover,
+                            t.colors.wechat.primaryPressed)
                     .textColor(t.colors.onPrimary)
                     .radius(t.sizes.radius)
                     .onClick([cb = v.act.retryClicked] { cb(); })

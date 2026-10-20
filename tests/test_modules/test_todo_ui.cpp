@@ -3037,8 +3037,8 @@ REGISTER_TEST(todo_ui_priority_card_tint,
 
 // 详情弹窗优先级按钮自身带该优先级色底
 // 同源判据：按钮底 = priorityButtonBg（与卡底同一张 priorityColor 表 + 同一张
-// 强度表），未选中 = 强度表 tint / 选中 = 0.55 深 tint（"实色感"；D批后 High
-// 未选中 0.55 与选中档重合，两态区分仅靠边框——见用例内同档对比断言）。
+// 强度表），未选中 = 强度表 tint / 选中 = 0.65 深 tint（"实色感"；UAT2 收口把
+// 选中档从 0.55 提到 0.65，与 High 未选中顶档 0.55 拉开——四档两态底色均可辨）。
 REGISTER_TEST(todo_ui_priority_button_tint,
               "todo_ui: 详情优先级按钮各自带该档色底（选中/未选中可区分）", {
     using module::todo::Priority;
@@ -3065,11 +3065,11 @@ REGISTER_TEST(todo_ui_priority_button_tint,
     const auto& t = core::theme::current();
     // 期望值独立写死（改色源 / 改强度表 / 改选中档强度即红）。
     // UAT2 D批：WeChat 板色源（绿/蓝/红）+ 未选中强度 {0.20,0.40,0.50,0.55}；
-    // High 未选中 0.55 与选中档 0.55 重合 → High 选中/未选中底色同深，区分仅靠边框
+    // UAT2 收口：选中档 0.55→0.65（对比度 ≥5.9:1），High 选中（0.65）与未选中（0.55）底色拉开、两态可辨
     const eui::Color kPrio[4] = {t.colors.wechat.textTertiary, t.colors.wechat.primary,
                                  t.colors.wechat.linkBlue, t.colors.wechat.warningRed};
     const float kUnsel[4] = {0.20f, 0.40f, 0.50f, 0.55f};
-    const float kPicked = 0.55f;
+    const float kPicked = 0.65f;
 
     Frame f1(mod.get());
     const auto* card = f1.ui.find("todo.col.4.card.0.bg");
@@ -3102,7 +3102,7 @@ REGISTER_TEST(todo_ui_priority_button_tint,
     }
 
     // 逐档点选（i = 被点中的那档）：
-    //   选中按钮 = 深一档 tint（0.55）+ 2px 该档色边框 + 与自己的未选中态可区分
+    //   选中按钮 = 深一档 tint（0.65）+ 2px 该档色边框 + 与自己的未选中态可区分
     //   其余三档 = 强度表浅 tint + 1px 边框（四档的未选中变体在循环里全覆盖）
     for (int i = 0; i < 4; ++i) {
         Frame f(mod.get());
@@ -3137,14 +3137,10 @@ REGISTER_TEST(todo_ui_priority_button_tint,
             DOCTEST_CHECK(contrastRatio(other->color, t.colors.textPrimary) >=
                           4.5f);
         }
-        // 选中 ≠ 自己的未选中态（同档对比）。D批后 High 未选中强度 0.55 = 选中档 0.55：
-        // High 两态底色同深（下方反向锁死该重合，防悄悄漂移），区分靠边框（2px 该档色 vs 1px 默认，上方已断言）
+        // 选中 ≠ 自己的未选中态（同档对比，四档统一断言）。UAT2 收口把选中档提到 0.65：
+        // High 选中（0.65）与未选中（0.55）不再重合——把选中档悄悄降回 ≤0.55 即红
         DOCTEST_REQUIRE(observed[i]);
-        if (i == static_cast<int>(Priority::High)) {
-            DOCTEST_CHECK(colorNear(sel->color, unsel[i], 0.02f));
-        } else {
-            DOCTEST_CHECK(!colorNear(sel->color, unsel[i], 0.02f));
-        }
+        DOCTEST_CHECK(!colorNear(sel->color, unsel[i], 0.02f));
         // 不同优先级按钮底色互不相同（四档两两）
         for (int x = 0; x < 4; ++x) {
             for (int y = x + 1; y < 4; ++y) {
