@@ -29,6 +29,8 @@ namespace {
 
 // 行几何常量（100% 档基准，运行期随 roundFs 缩放）；E 批统一：标题 16/22、
 // desc y=40/h=16、内容起 y=68，label+control 行迁 ui_kit::formRow（label 110）。
+// UAT2 双列布局：5 行纵排 → 3 行——开关行（启用|自动推送）、URL 全宽行（输入 +
+// 三操作按钮）、输入行（分支|Token）；卡高 460 → 372（见 settings_ui_logic.h）。
 inline constexpr float kCardPaddingX = 28.0f;
 inline constexpr float kTitleH = 22.0f;
 inline constexpr float kDescH = 16.0f;
@@ -114,9 +116,16 @@ void drawGithubSyncCard(const CardDrawArgs& args) {
 
     const float rowH = roundFs(kRowH);
     const float formW = w - kCardPaddingX * 2;
+    // UAT2 双列几何：列间距 = 行距 8（8px 网格）；每列宽 = (formW − 列距)/2，右列
+    // 外缘与全宽行同贴卡内容右缘。label 仍走 formRow 定宽 110，不在双列内单独收窄
+    // ——E 批刚统一的标签列宽不再漂移。
+    const float colGap = roundFs(kRowGap);
+    const float colW = (formW - colGap) * 0.5f;
+    const float col2X = kCardPaddingX + colW + colGap;   // 右列 x
 
-    // 启用开关（第一行）：FormRow = label 110 + 开关（control 区内垂直居中）
-    ui_kit::formRow(ui, id + ".enabled", "启用", kCardPaddingX, y, formW, rowH,
+    // 第一行（双列开关行）：启用（左列）| 自动推送（右列）。右列仅启用态渲染——
+    // 旧版「未启用 → 早退后整行不画」的门控语义，双列配对后由本条件原样承接。
+    ui_kit::formRow(ui, id + ".enabled", "启用", kCardPaddingX, y, colW, rowH,
         [&](eui::Ui& ui, float cx, float cy, float /*cw*/, float ch) {
             components::toggleSwitch(ui, id + ".enabled.sw")
                 .position(cx, cy + (ch - 20.0f) * 0.5f)
@@ -126,14 +135,29 @@ void drawGithubSyncCard(const CardDrawArgs& args) {
                 .onChange([f = a.applyGithubSyncEnabled](bool v) { f(v); })
                 .build();
         }, t);
+    if (in.githubSyncEnabled) {
+        ui_kit::formRow(ui, id + ".autopush", "自动推送", col2X, y, colW, rowH,
+            [&](eui::Ui& ui, float cx, float cy, float /*cw*/, float ch) {
+                components::toggleSwitch(ui, id + ".autopush.sw")
+                    .position(cx, cy + (ch - 20.0f) * 0.5f)
+                    .size(kSwitchW, 20.0f)
+                    .checked(in.githubSyncAutoPush)
+                    .theme(compTheme)
+                    .onChange([f = a.applyGithubSyncAutoPush](bool v) { f(v); })
+                    .build();
+            }, t);
+    }
     y += rowH + roundFs(kRowGap);
 
     if (!in.githubSyncEnabled) {
-        // 未启用：不显示后续表单
+        // 未启用：不显示后续表单（自动推送右列已在上面按启用态隐藏）
         return;
     }
 
-    // 仓库 URL 输入：FormRow = label 110 + input
+    // 第二行（URL 全宽行）：仓库 URL 输入（URL 很长，保持全宽行；输入宽上限
+    // kFieldW 320，实际只占行左段）+ 三个操作按钮（右缘对齐——原与自动推送同行，
+    // 双列后迁来本行右段；最小窗宽 1280 下输入右缘 ~466 与按钮组左缘 ~856 仍隔
+    // ~390px，无重叠）。
     ui_kit::formRow(ui, id + ".url", "仓库 URL", kCardPaddingX, y, formW, rowH,
         [&](eui::Ui& ui, float cx, float cy, float cw, float ch) {
             components::input(ui, id + ".url.input")
@@ -144,50 +168,6 @@ void drawGithubSyncCard(const CardDrawArgs& args) {
                 .fontSize(t.sizes.fontSizeSmall)
                 .theme(compTheme)
                 .onChange([f = a.applyGithubSyncRepoUrl](const std::string& v) { f(v); })
-                .build();
-        }, t);
-    y += rowH + roundFs(kRowGap);
-
-    // 分支输入：FormRow = label 110 + input
-    ui_kit::formRow(ui, id + ".branch", "分支", kCardPaddingX, y, formW, rowH,
-        [&](eui::Ui& ui, float cx, float cy, float cw, float ch) {
-            components::input(ui, id + ".branch.input")
-                .position(cx, cy)
-                .size(std::min(kFieldW, cw), ch)
-                .placeholder("main")
-                .value(in.githubSyncBranch)
-                .fontSize(t.sizes.fontSizeSmall)
-                .theme(compTheme)
-                .onChange([f = a.applyGithubSyncBranch](const std::string& v) { f(v); })
-                .build();
-        }, t);
-    y += rowH + roundFs(kRowGap);
-
-    // Token 输入：FormRow = label 110 + input
-    ui_kit::formRow(ui, id + ".token", "Token", kCardPaddingX, y, formW, rowH,
-        [&](eui::Ui& ui, float cx, float cy, float cw, float ch) {
-            components::input(ui, id + ".token.input")
-                .position(cx, cy)
-                .size(std::min(kFieldW, cw), ch)
-                .placeholder("ghp_xxxxxxxxxxxxxxxxxxxx")
-                .value(in.githubSyncTokenDraft)
-                .fontSize(t.sizes.fontSizeSmall)
-                .theme(compTheme)
-                .onChange([f = a.setGithubSyncTokenDraft](const std::string& v) { f(v); })
-                .build();
-        }, t);
-    y += rowH + roundFs(kRowGap);
-
-    // 自动 Push 开关 + 操作按钮行：FormRow = label 110 + 开关（control 区左）+ 三按钮（control 区右缘）
-    ui_kit::formRow(ui, id + ".autopush", "自动推送", kCardPaddingX, y, formW,
-                    rowH,
-        [&](eui::Ui& ui, float cx, float cy, float /*cw*/, float ch) {
-            components::toggleSwitch(ui, id + ".autopush.sw")
-                .position(cx, cy + (ch - 20.0f) * 0.5f)
-                .size(kSwitchW, 20.0f)
-                .checked(in.githubSyncAutoPush)
-                .theme(compTheme)
-                .onChange([f = a.applyGithubSyncAutoPush](bool v) { f(v); })
                 .build();
         }, t);
 
@@ -231,6 +211,36 @@ void drawGithubSyncCard(const CardDrawArgs& args) {
         .disabled(in.githubSyncRunning)
         .onClick([f = a.githubSyncPull] { f(); })
         .build();
+    y += rowH + roundFs(kRowGap);
+
+    // 第三行（双列输入行）：分支（左列）| Token（右列）。Token 值 40+ 字符：列内
+    // control 区最小窗宽 1280 下仍 ≥450px，输入宽上限 kFieldW 320 与旧全宽行相同
+    // ——值显示截断可接受，编辑滚动由 EUI 单行输入的光标跟随滚动（InputModel::
+    // syncScroll）承担，不失功能。
+    ui_kit::formRow(ui, id + ".branch", "分支", kCardPaddingX, y, colW, rowH,
+        [&](eui::Ui& ui, float cx, float cy, float cw, float ch) {
+            components::input(ui, id + ".branch.input")
+                .position(cx, cy)
+                .size(std::min(kFieldW, cw), ch)
+                .placeholder("main")
+                .value(in.githubSyncBranch)
+                .fontSize(t.sizes.fontSizeSmall)
+                .theme(compTheme)
+                .onChange([f = a.applyGithubSyncBranch](const std::string& v) { f(v); })
+                .build();
+        }, t);
+    ui_kit::formRow(ui, id + ".token", "Token", col2X, y, colW, rowH,
+        [&](eui::Ui& ui, float cx, float cy, float cw, float ch) {
+            components::input(ui, id + ".token.input")
+                .position(cx, cy)
+                .size(std::min(kFieldW, cw), ch)
+                .placeholder("ghp_xxxxxxxxxxxxxxxxxxxx")
+                .value(in.githubSyncTokenDraft)
+                .fontSize(t.sizes.fontSizeSmall)
+                .theme(compTheme)
+                .onChange([f = a.setGithubSyncTokenDraft](const std::string& v) { f(v); })
+                .build();
+        }, t);
     y += rowH + roundFs(kRowGap);
 
     // 进度行（运行中：阶段文案）

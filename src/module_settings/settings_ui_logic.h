@@ -75,10 +75,12 @@ inline constexpr float kEditorFontCardHeight = 122.0f;  // 编辑器字号卡（
 inline constexpr float kModulesCardHeight = 344.0f;     // 模块插拔卡（模块）
 inline constexpr float kDirectoryCardHeight = 216.0f;   // 目录卡（模块；内容起 y=68 顺移后 gitignore 行底 182，85% 档 34 字面行高需富余兜底）
 inline constexpr float kLogSettingsCardHeight = 170.0f; // 日志卡（日志；行2 底 roundFs(116)+roundFs(36)=152，130% 档需 ≥219）
-// GitHub Sync 卡（同步）：启用态满高（最坏行序 = 按钮行 + 进度 + 状态 + 分支
-// 提示 + public 提醒 + 本地 git 灰字，内容底沿 452；错误行与进度行互斥、错误行
-// 显示时状态行让位，故 460 包住所有组合）。未启用时卡片早退，改用折叠高。
-inline constexpr float kGithubSyncCardHeight = 460.0f;
+// GitHub Sync 卡（同步）：启用态满高（UAT2 双列布局后最坏行序 = 双列开关行 +
+// URL 全宽行（含三按钮）+ 双列输入行 + 进度 + 错误/状态 + 分支提示 + public 提
+// 醒 + 本地 git 灰字 + 未同步黄字 + 删跳过黄字，内容底沿 364；错误行与进度行互
+// 斥、错误行显示时状态行让位，故 372 包住所有组合——底距 8 与旧 460−452 一致）。
+// 未启用时卡片早退，改用折叠高。
+inline constexpr float kGithubSyncCardHeight = 372.0f;
 inline constexpr float kGithubSyncCollapsedHeight = 132.0f;  // 未启用（标题+描述+开关）
 
 // 行盒 / 间距随生效字号派生：行盒 = round(基准 × fontScale)，系数恒包住最坏 CJK 墨迹；字号本体仍走 fs()（不取整）。
