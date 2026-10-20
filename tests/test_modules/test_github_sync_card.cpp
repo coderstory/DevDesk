@@ -284,7 +284,8 @@ REGISTER_TEST(github_sync_card_url_input_no_overlap_at_712,
         // 输入框右缘 ≤ 按钮组左缘 − 8（≥8px 间隙不重叠）
         const float urlRight = url->frame.x + url->frame.width;
         DOCTEST_CHECK_MESSAGE(urlRight + 8.0f <= btnAreaX,
-                              "urlRight=" << urlRight << " btnAreaX=" << btnAreaX);
+                              std::string("urlRight=") + std::to_string(urlRight) +
+                                  " btnAreaX=" + std::to_string(btnAreaX));
         return true;
     }));
     return true;
