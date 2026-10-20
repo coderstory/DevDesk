@@ -739,7 +739,7 @@ REGISTER_TEST(settings_log_dropdown_popup_stays_in_window, "settings: log dropdo
     // frame 实测，注释数字随 cardsTopY 公式同步）。
     eui::Screen screen;
     screen.width = 1200.0f;
-    screen.height = 476.0f;   // UAT5 重设计后需 +6px 防 popup 越窗
+    screen.height = 496.0f;   // UAT5 重设计 — 6 项保留下拉需 ≥496 防越窗
     DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 2));
     eui::Ui ui;
     ui.begin("small");
