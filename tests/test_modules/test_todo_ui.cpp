@@ -51,6 +51,9 @@ float maxChannelDelta(const eui::Color& a, const eui::Color& b) {
                      std::fabs(a.b - b.b)});
 }
 
+// 浮点几何相等（px 级判等，0.01 容差）——详情弹窗双列几何断言用
+bool floatEq(float a, float b) { return std::fabs(a - b) < 0.01f; }
+
 // WCAG 相对亮度（sRGB 线性化）
 float relLuminance(const eui::Color& c) {
     auto channel = [](float v) {
@@ -3170,6 +3173,92 @@ REGISTER_TEST(todo_ui_priority_button_tint,
 
     mod->onStop();
     ::core::theme::setDark();  // 恢复默认深色（本用例切了浅色，防污染后续用例）
+    return true;
+})
+
+// UAT3 弹窗双列批：「优先级 | 截止日期」同排双列的几何钉值。
+// 防的事故：回退单列长条（截止组 y 掉回 364+ 独占一行）→ 标签 y 断言红；
+// 优先级钮还原 100 宽（4×100+3×8=424 顶进右列）→ 钮宽/行右缘断言红；
+// 弹高回 656（底部大片空档）→ 面板高断言红。几何断言走 layout 后的 frame
+// 绝对坐标，再减面板原点换回弹窗内坐标（与 agent 弹窗几何用例同口径）。
+REGISTER_TEST(todo_ui_detail_two_column_geometry,
+              "todo_ui: 详情弹窗「优先级|截止」同排双列几何（右列 x=328 / 钮宽 64 / 弹高 588）", {
+    TestEnv env;
+    DOCTEST_REQUIRE(env.ready);
+    auto col = env.svc->createColumn("双列列");
+    DOCTEST_REQUIRE(col.isOk());
+    auto a = env.svc->createTask(col.value().id, "双列卡");
+    DOCTEST_REQUIRE(a.isOk());
+
+    std::unique_ptr<::core::Module> mod(create_todo_module());
+    mod->onStart();
+    {
+        Frame f1(mod.get());
+        const auto* card = f1.ui.find("todo.col.4.card.0.bg");
+        DOCTEST_REQUIRE(card != nullptr);
+        DOCTEST_REQUIRE(card->onClick != nullptr);
+        card->onClick();  // 打开详情（编辑态：非归档列 labelOffsetY=0，几何即字面量）
+    }
+
+    Frame f(mod.get());
+    f.ui.layout(1600.0f, 1000.0f);
+    const auto* panel = f.ui.find("todo.dialog.detail.panel");
+    DOCTEST_REQUIRE(panel != nullptr);
+    const float px = panel->frame.x;
+    const float py = panel->frame.y;
+
+    // 弹窗尺寸：640 宽 × 588 高（双列收行后的紧凑高度）
+    DOCTEST_CHECK(floatEq(panel->frame.width, 640.0f));
+    DOCTEST_CHECK(floatEq(panel->frame.height, 588.0f));
+
+    // 双列：左列 x=28；右列 x = 28+284+16 = 328；两标签同排（y 相等）
+    const auto* plabel = f.ui.find("todo.dialog.detail.plabel");
+    DOCTEST_REQUIRE(plabel != nullptr);
+    const auto* dlabel = f.ui.find("todo.dialog.detail.dlabel2");
+    DOCTEST_REQUIRE(dlabel != nullptr);
+    DOCTEST_CHECK(floatEq(plabel->frame.x - px, 28.0f));
+    DOCTEST_CHECK(floatEq(dlabel->frame.x - px, 328.0f));
+    DOCTEST_CHECK(floatEq(dlabel->frame.y, plabel->frame.y));
+    DOCTEST_CHECK(floatEq(plabel->frame.y - py, 300.0f));
+
+    // 优先级 4 钮：x = 28+i×72、宽 64、行 y=320；行总宽 4×64+3×8=280 ≤ colW 284
+    for (int i = 0; i < 4; ++i) {
+        const auto* bg =
+            f.ui.find("todo.dialog.detail.prio." + std::to_string(i) + ".bg");
+        DOCTEST_REQUIRE(bg != nullptr);
+        DOCTEST_CHECK(floatEq(bg->frame.x - px, 28.0f + static_cast<float>(i) * 72.0f));
+        DOCTEST_CHECK(floatEq(bg->frame.width, 64.0f));
+        DOCTEST_CHECK(floatEq(bg->frame.height, 32.0f));
+        DOCTEST_CHECK(floatEq(bg->frame.y - py, 320.0f));
+    }
+    const auto* p3 = f.ui.find("todo.dialog.detail.prio.3.bg");
+    DOCTEST_REQUIRE(p3 != nullptr);
+    DOCTEST_CHECK(p3->frame.x - px + p3->frame.width <= 312.0f);  // 左列右缘 28+284
+
+    // 截止行（右列）：清除 x=328 宽 56 + 日期 x=392 宽 112 = 总宽 176，收在 284 内
+    const auto* clearBg = f.ui.find("todo.dialog.detail.due.clear.bg");
+    const auto* pickBg = f.ui.find("todo.dialog.detail.due.pick.bg");
+    DOCTEST_REQUIRE(clearBg != nullptr);
+    DOCTEST_REQUIRE(pickBg != nullptr);
+    DOCTEST_CHECK(floatEq(clearBg->frame.x - px, 328.0f));
+    DOCTEST_CHECK(floatEq(clearBg->frame.width, 56.0f));
+    DOCTEST_CHECK(floatEq(pickBg->frame.x - px, 392.0f));
+    DOCTEST_CHECK(floatEq(pickBg->frame.width, 112.0f));
+    DOCTEST_CHECK(floatEq(clearBg->frame.y - py, 320.0f));  // 与优先级钮同行
+    DOCTEST_CHECK(floatEq(pickBg->frame.y - py, 320.0f));
+    DOCTEST_CHECK(pickBg->frame.x - px + pickBg->frame.width <= 612.0f);  // 右列右缘 328+284
+
+    // 标签区随之上移：标签输入 y=410（原 474）；底部按钮带 y=h-58=530、底距 18
+    const auto* tagInput = f.ui.find("todo.dialog.detail.tag.input");
+    DOCTEST_REQUIRE(tagInput != nullptr);
+    DOCTEST_CHECK(floatEq(tagInput->frame.y - py, 410.0f));
+    const auto* saveBg = f.ui.find("todo.dialog.detail.save.bg");
+    DOCTEST_REQUIRE(saveBg != nullptr);
+    DOCTEST_CHECK(floatEq(saveBg->frame.y - py, 530.0f));
+    DOCTEST_CHECK(saveBg->frame.y + saveBg->frame.height <=
+                  panel->frame.y + panel->frame.height - 17.5f);
+
+    mod->onStop();
     return true;
 })
 

@@ -597,7 +597,12 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
                       const DialogHost& host) {
     const auto themeTokens = core::theme::componentTokensWeChat(t);
     const float w = ui_kit::dialogWidthPx(ui_kit::DialogWidth::Wide);
-    const float h = 656.0f;  // 弹窗高；底部操作区 y 随 h-58 上移
+    // 弹窗高；底部操作区 y 随 h-58 上移。「优先级 | 截止日期」同排双列后的紧凑高度：
+    // 内容行收掉一整行（416→352），标签区随之上移，底部按钮带结构不变（18px 底距）。
+    // 双列几何：colW = (640-56-16)/2 = 284；左列 x=28，右列 x = 28+284+16 = 328。
+    // y 坐标仍是字面量体系（不随字号缩放），与 settings 卡的 roundFs 体系互不混用。
+    const float h = 588.0f;
+    constexpr float kCol2X = 328.0f;  // 右列（截止日期）x = 左列 28 + colW 284 + 列距 16
 
     ui_kit::DialogFrame frame;
     frame.id = "todo.dialog.detail";
@@ -672,7 +677,8 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
                                        Priority::Medium, Priority::High};
             for (int i = 0; i < 4; ++i) {
                 const bool active = (d.detail.priority == prios[i]);
-                const float bw = 100.0f;
+                // 双列后按钮收窄：4×64 + 3×8 = 280 ≤ colW 284（100 宽四钮 424 会顶进右列）
+                const float bw = 64.0f;
                 // 按钮底色 = 它代表的优先级色（priorityButtonBg：未选中按强度表 tint、选中 0.65 深 tint，与卡底同源）。
                 // 文字用 textPrimary（textSecondary 浅色档 < WCAG AA 4.5:1）；选中/未选中靠底色深浅 + 边框区分
                 // （UAT2 收口把选中档提 0.65，与 High 未选中顶档 0.55 拉开、四档两态底色均可辨）；三态基色随米黄迁移走 wechat 次按钮梯度
@@ -696,15 +702,17 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
                     .build();
             }
 
-            // 截止日期：清除 + datepicker 滚轮选任意日期
+            // 截止日期：清除 + datepicker 滚轮选任意日期（与优先级同排，落右列 x=328）
             ui_kit::drawDialogText(ui, "todo.dialog.detail.dlabel2", w, "截止日期",
                                    t.sizes.fontSizeSmall - 2.0f, t.colors.textTertiary,
-                                   {.y = 364.0f + labelOffsetY, .width = 120.0f, .height = 16.0f,
+                                   {.x = kCol2X, .y = 300.0f + labelOffsetY,
+                                    .width = 120.0f, .height = 16.0f,
                                     .lineHeight = 16.0f});
             const bool hasDue = d.detail.dueAt.has_value();
+            // 截止行总宽 176（56 + 8 + 112），收在 colW 284 内；pick 占大头让位「选择日期…」+日历图标
             components::button(ui, "todo.dialog.detail.due.clear")
-                .position(28.0f, 384.0f + labelOffsetY)
-                .size(100.0f, 32.0f)
+                .position(kCol2X, 320.0f + labelOffsetY)
+                .size(56.0f, 32.0f)
                 .text(!hasDue ? "未设置" : "清除")
                 .fontSize(t.sizes.fontSizeSmall - 1.0f)
                 .colors(!hasDue ? t.colors.wechat.selectedBg
@@ -720,8 +728,8 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
                 .build();
             // fa-calendar
             components::button(ui, "todo.dialog.detail.due.pick")
-                .position(136.0f, 384.0f + labelOffsetY)
-                .size(180.0f, 32.0f)
+                .position(kCol2X + 64.0f, 320.0f + labelOffsetY)
+                .size(112.0f, 32.0f)
                 .text(hasDue ? formatDue(d.detail.dueAt.value()) : "选择日期…")
                 .icon(0xF133)
                 .fontSize(t.sizes.fontSizeSmall - 1.0f)
@@ -737,9 +745,10 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
                 .build();
 
             // 标签：chip × 删除 + 输入回车添加；保存时走 updateTask 的 JSON 序列化
+            //（双列收行后整体上移 64：截止与优先级同排，标签区顶替原截止行位置）
             ui_kit::drawDialogText(ui, "todo.dialog.detail.taglabel", w, "标签",
                                    t.sizes.fontSizeSmall - 2.0f, t.colors.textTertiary,
-                                   {.y = 428.0f + labelOffsetY, .width = 120.0f, .height = 16.0f,
+                                   {.y = 364.0f + labelOffsetY, .width = 120.0f, .height = 16.0f,
                                     .lineHeight = 16.0f});
             {
                 float chipX = 28.0f;
@@ -749,11 +758,11 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
                     if (chipX + tw + 22.0f > w - 28.0f) break;
                     const std::string chipId =
                         "todo.dialog.detail.tag." + std::to_string(ti);
-                    drawChip(ui, chipId, chipX, 448.0f + labelOffsetY, tw, t, d.detail.tags[ti],
+                    drawChip(ui, chipId, chipX, 384.0f + labelOffsetY, tw, t, d.detail.tags[ti],
                              t.colors.info, t.colors.wechat.secondaryButtonBg);
                     components::button(ui, chipId + ".x")
                         // 删除按钮高 22 与 chip（kChipHeight）同高，y 对齐 chip 顶
-                        .position(chipX + tw + 1.0f, 448.0f + labelOffsetY)
+                        .position(chipX + tw + 1.0f, 384.0f + labelOffsetY)
                         .size(20.0f, 22.0f)
                         .text("×")
                         .fontSize(t.sizes.fontSizeSmall)
@@ -773,7 +782,7 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
                 }
             }
             components::input(ui, "todo.dialog.detail.tag.input")
-                .position(28.0f, 474.0f + labelOffsetY)
+                .position(28.0f, 410.0f + labelOffsetY)
                 .size(w - 56.0f, 36.0f)
                 .value(d.detail.tagInput)
                 .placeholder(ro ? "（只读）" : "输入标签，回车添加…")
