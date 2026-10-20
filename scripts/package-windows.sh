@@ -111,11 +111,33 @@ cmake -E copy_directory "$EUI_DIR/assets" "$ASSETS_DIR_POSIX"
 # DevDesk/assets 根文件（托盘图标 / splash 着色器 / 模板），09-30 后才加入，与 pets 同源幂等
 cmake -E copy_directory "$PROJECT_DIR/assets" "$ASSETS_DIR_POSIX"
 
-# 断言 ①：shaders/shadertoy 非空（字体 / 音乐 / 着色器确实拷进来了）
-if [ -z "$(ls -A "$ASSETS_DIR_POSIX/shaders/shadertoy" 2>/dev/null)" ]; then
-  echo "❌ 断言失败：$ASSETS_DIR_POSIX/shaders/shadertoy 为空（assets 未正确拷贝？）" >&2
-  exit 1
-fi
+# H 批（UAT2 2026-10-20）资产瘦身：上游 copy_directory 是全量拷，DevDesk 运行时实际只用
+# EUI 的两字体（JingNanJunJunTi + Font Awesome，EUI core/render/text.cpp 默认 UI/icon 字体）+
+# icon.png（EUI 默认窗口图标 dsl_app.h iconPathValue，兼托盘兜底）+ icon.ico（devdesk.iss
+# SetupIconFile）。以下零引用资产不进安装包（DevDesk src 与 EUI 运行时均无加载点，2026-10-20
+# 全量 grep 核实）：music/（示例音频）、shaders/shadertoy/（示例着色器，D-11 后 splash 不再用）、
+# YouSheBiaoTiHei-2.ttf / NotoSansSC-VF.ttf（未用字体；NotoSansSC 此前已被 devdesk.iss
+# Excludes 挡在包外）、mona-loading-default.gif / Hard drive-rafiki.svg（EUI demo 插画）、
+# icon.svg（仅 EUI 测试/示例引用，Windows 窗口图标走 icon.png 的 stbi 路径）。
+# 只清打包产物目录，不动 EUI-NEO 仓库源 assets（跨仓库改动走 patch 流程，超出本批范围）。
+rm -rf "$ASSETS_DIR_POSIX/music" \
+       "$ASSETS_DIR_POSIX/shaders/shadertoy" \
+       "$ASSETS_DIR_POSIX/YouSheBiaoTiHei-2.ttf" \
+       "$ASSETS_DIR_POSIX/NotoSansSC-VF.ttf" \
+       "$ASSETS_DIR_POSIX/mona-loading-default.gif" \
+       "$ASSETS_DIR_POSIX/Hard drive-rafiki.svg" \
+       "$ASSETS_DIR_POSIX/icon.svg"
+
+# 断言 ①（H 批改写）：零引用资产不得混入打包目录（防回归——瘦身清单被人弄丢 /
+# 上游 EUI assets 又新增死重量时此处拦截）。原"shaders/shadertoy 非空"断言随
+# shadertoy 废弃（D-11）删除；字体/着色器/图标就位由断言 ③④ 继续钉住。
+for gone in "music" "shaders/shadertoy" "YouSheBiaoTiHei-2.ttf" "NotoSansSC-VF.ttf" \
+            "mona-loading-default.gif" "Hard drive-rafiki.svg" "icon.svg"; do
+  if [ -e "$ASSETS_DIR_POSIX/$gone" ]; then
+    echo "❌ 断言失败：零引用资产仍被拷进打包目录：$gone" >&2
+    exit 1
+  fi
+done
 # 断言 ③：DevDesk/assets 根文件（托盘图标 / splash 着色器），09-30 新增，缺则安装版托盘空图标 + splash 回退
 if [ ! -f "$ASSETS_DIR_POSIX/shaders/splash.frag" ]; then
   echo "❌ 断言失败：$ASSETS_DIR_POSIX/shaders/splash.frag 缺失" >&2
@@ -126,7 +148,7 @@ if [ ! -f "$ASSETS_DIR_POSIX/tray-icon-win.ico" ]; then
   echo "❌ 断言失败：$ASSETS_DIR_POSIX/tray-icon-win.ico 缺失" >&2
   exit 1
 fi
-echo "✅ assets 就位（shaders/shadertoy 非空）"
+echo "✅ assets 就位（两字体 + icon.png/ico + splash.frag + 托盘图标；零引用资产已排除）"
 
 # ISCC 是原生 Windows 程序：路径要 Windows 形态（Git Bash 的 /d/... 形态可能被拒）
 if command -v cygpath >/dev/null 2>&1; then
