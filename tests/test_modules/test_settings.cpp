@@ -1780,7 +1780,7 @@ REGISTER_TEST(settings_card_rows_scale_derived,
                           [&] {
                               float cellW = 0.0f;
                               float cell2X = 0.0f;
-                              ui_kit::columnX(widthOf(ui, "settings.card.modules") -
+                              ui_kit::columnX(widthOf("settings.card.modules") -
                                                   56.0f,
                                               16.0f, &cellW, &cell2X);
                               return cell2X;
