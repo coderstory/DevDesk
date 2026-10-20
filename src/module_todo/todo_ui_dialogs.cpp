@@ -37,15 +37,21 @@ float elasticDialogW(float screenW, float demoMinW) {
 }
 
 // segment 选项钮（demo .seg .op）：未选 = pageBg 底 + dividerPrimary 边 + textPrimary
-// 字；选中 = 主绿底 + 白字（主按钮同语言）。只读/禁用态 = 调用方传空 onClick
+// 字；选中 = 主绿底 + 白字（主按钮同语言）。iconCode 0 = 无图标（截止档传
+// 0xF133 fa-calendar——demo 的 📅，test_module_icons 钉住 .icon 节点）。
+// 只读/禁用态 = 调用方传空 onClick
 void drawSegOp(eui::Ui& ui, const std::string& id, float x, float y, float w, float h,
                const std::string& label, bool on, const core::theme::Tokens& t,
-               std::function<void()> onClick) {
-    components::button(ui, id)
+               std::function<void()> onClick, unsigned iconCode = 0) {
+    auto btn = components::button(ui, id)
         .position(x, y)
         .size(w, h)
         .text(label)
-        .fontSize(t.sizes.fontSizeSmall - 1.0f)   // demo .op 12px
+        .fontSize(t.sizes.fontSizeSmall - 1.0f);   // demo .op 12px
+    if (iconCode != 0) {
+        btn.icon(iconCode);
+    }
+    btn
         .colors(on ? t.colors.wechat.primary : t.colors.wechat.pageBg,
                 on ? t.colors.wechat.primaryHover : t.colors.wechat.secondaryButtonBg,
                 on ? t.colors.wechat.primaryPressed : t.colors.wechat.selectedBg)
@@ -289,7 +295,8 @@ void drawNewTaskDialog(eui::Ui& ui, const eui::Screen& screen,
                                   d.newTask.dueAt = dayShiftEpoch(0);
                                   d.newTask.dueChoice = DueChoice::Today;
                               }
-                          });
+                          },
+                          0xF133);   // fa-calendar（demo 📅 今天）
                 drawSegOp(ui, "todo.dialog.newtask.due.1",
                           col2X + opW + kGap, 232.0f, opW, 32.0f, "明天",
                           hasDue && d.newTask.dueChoice == DueChoice::Tomorrow, t,
@@ -1048,15 +1055,15 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
                 const float opW = (colW - kGap * static_cast<float>(nOps - 1)) /
                                  static_cast<float>(nOps);
                 const std::string pickLabel =
-                    (hasDue ? "📅 " + formatDue(d.detail.dueAt.value())
-                            : "选择日期…");
+                    (hasDue ? formatDue(d.detail.dueAt.value()) : "选择日期…");
                 drawSegOp(ui, "todo.dialog.detail.due.pick", col2X, 254.0f + offY, opW,
                           32.0f, pickLabel, hasDue, t,
                           ro ? std::function<void()>{}
                              : [&d] {
                                    d.datePickOwner = DatePickOwner::Detail;
                                    d.popups.open(Popup::DatePick);
-                               });
+                               },
+                          0xF133);   // fa-calendar（demo 📅；module_icons 钉 .icon）
                 if (hasDue) {
                     drawSegOp(ui, "todo.dialog.detail.due.clear",
                               col2X + opW + kGap, 254.0f + offY, opW, 32.0f, "清除",
