@@ -30,6 +30,8 @@
 #include <eui/dsl.h>
 #include <eui/dsl_app.h>
 
+#include <ui_kit/columns.h>  // 双列几何单一来源（UAT3 多列分栏几何断言）
+
 #include <chrono>
 #include <algorithm>
 #include <ctime>
@@ -731,6 +733,8 @@ REGISTER_TEST(settings_log_dropdown_popup_stays_in_window, "settings: log dropdo
     // + 16 gap = 176；保留字段底 = 176 + 68 + 36 = 280，+ 8 gap + 弹层 216 = 504）。
     // 1600×1300 下方空间充足 → 默认 openDown；短窗下 504 > 高 − 16 → 改 openUp。
     // 卡顶游标只累计本 tab 的卡——全量累加会把这里算错。
+    // UAT3 双列：级别下拉并到保留同排（行 y 116→68），4 项弹层 = 280 + 8 + 148 = 436
+    // ≤ 454（470 − 16）→ 短窗下也保持默认向下展开且收在窗内。
     eui::Screen screen;
     screen.width = 1200.0f;
     screen.height = 470.0f;
@@ -748,6 +752,15 @@ REGISTER_TEST(settings_log_dropdown_popup_stays_in_window, "settings: log dropdo
     DOCTEST_CHECK(popup->frame.y >= 0.0f);
     DOCTEST_CHECK(popup->frame.y + popup->frame.height <= screen.height);
     DOCTEST_CHECK(popup->frame.y + popup->frame.height <= field->frame.y);
+    // 级别下拉（UAT3 双列同排后 openUp 阈值随行 y 116→68）：短窗默认向下仍收在窗内
+    const auto* levelField = ui.find("settings.card.log.level.dd.field");
+    const auto* levelPopup = ui.find("settings.card.log.level.dd.popup");
+    DOCTEST_REQUIRE(levelField != nullptr);
+    DOCTEST_REQUIRE(levelPopup != nullptr);
+    DOCTEST_CHECK(levelPopup->frame.y >=
+                  levelField->frame.y + levelField->frame.height);
+    DOCTEST_CHECK(levelPopup->frame.y + levelPopup->frame.height <=
+                  screen.height);
 
     // 高窗口 1600×1300：下方空间充足，保持默认向下展开（弹层在字段下方）
     eui::Screen tall;
@@ -765,6 +778,14 @@ REGISTER_TEST(settings_log_dropdown_popup_stays_in_window, "settings: log dropdo
     DOCTEST_CHECK(tallPopup->frame.y >=
                   tallField->frame.y + tallField->frame.height);
     DOCTEST_CHECK(tallPopup->frame.y + tallPopup->frame.height <=
+                  tall.height);
+    const auto* tallLevelField = ui.find("settings.card.log.level.dd.field");
+    const auto* tallLevelPopup = ui.find("settings.card.log.level.dd.popup");
+    DOCTEST_REQUIRE(tallLevelField != nullptr);
+    DOCTEST_REQUIRE(tallLevelPopup != nullptr);
+    DOCTEST_CHECK(tallLevelPopup->frame.y >=
+                  tallLevelField->frame.y + tallLevelField->frame.height);
+    DOCTEST_CHECK(tallLevelPopup->frame.y + tallLevelPopup->frame.height <=
                   tall.height);
 
     mod->onStop();
@@ -1414,13 +1435,14 @@ int orderedIndexOf(const core::dsl::Element* parent, const core::dsl::Element* c
 }
 } // namespace
 
-// 日志卡两行同列
-//   ① 两个下拉同列：field.frame.x 相等、同宽同高；
-//   ② 标签同列 + 标签→下拉间距一致；
+// 日志卡卡内双列（UAT3 多列分栏：日志保留 | 日志级别 同排，hint 并一行下移）
+//   ① 两下拉同排异列：field.y 相等；x 差 = 列宽 + 16（ui_kit::columnX 单一来源）；
+//   ② 标签同排、同宽；标签→下拉间距一致；标签与控件垂直居中对齐（基线口径）；
 //   ③ 标签单行：框高 ≤ 单行行高、文本无换行符、估算文本宽 ≤ 标签框宽
-//     （「日志保留」4 字 × 12px = 48 ≤ 84，恒单行）。
-REGISTER_TEST(settings_log_rows_same_column,
-              "settings: 日志 tab 两下拉同列 + 标签单行（错位修复）", {
+//     （「日志保留」4 字 × 12px = 48 ≤ 84，恒单行）；
+//   ④ hint 并一行：两 hint 同 y、在控件行下方，内容底沿留 ≥16 下边距。
+REGISTER_TEST(settings_log_rows_dual_columns,
+              "settings: 日志 tab 两下拉双列同排 + hint 并一行下移", {
     test_support::TestEnv env(kCfgPrefix, "logcols", true);
     test_support::ScopedConfigPath cfgEnv(
         test_support::tempConfigFile(kCfgPrefix, "logcols_cfg"));
@@ -1444,19 +1466,26 @@ REGISTER_TEST(settings_log_rows_same_column,
     const auto* card = ui.find("settings.card.log");
     DOCTEST_REQUIRE(field1 != nullptr);
     DOCTEST_REQUIRE(field2 != nullptr);
-    DOCTEST_REQUIRE(label1 != nullptr);  
+    DOCTEST_REQUIRE(label1 != nullptr);
     DOCTEST_REQUIRE(label2 != nullptr);
     DOCTEST_REQUIRE(card != nullptr);
 
-    // ① 两下拉同列（左边缘 / 宽 / 高）
-    DOCTEST_CHECK_MESSAGE(std::abs(field1->frame.x - field2->frame.x) < 0.5f,
-                          "两下拉 frame.x " + std::to_string(field1->frame.x) +
-                              " vs " + std::to_string(field2->frame.x));
+    // ① 两下拉同排异列：y 相等（同排）；x 差 = 卡内列宽 + 16（columnX 单一来源）
+    DOCTEST_CHECK_MESSAGE(std::abs(field1->frame.y - field2->frame.y) < 0.5f,
+                          "两下拉 frame.y " + std::to_string(field1->frame.y) +
+                              " vs " + std::to_string(field2->frame.y));
+    float colW = 0.0f;
+    float col2X = 0.0f;
+    ui_kit::columnX(card->frame.width - 56.0f, 16.0f, &colW, &col2X);
+    const float fieldDx = field2->frame.x - field1->frame.x;
+    DOCTEST_CHECK_MESSAGE(std::abs(fieldDx - (colW + 16.0f)) < 0.5f,
+                          "两下拉 x 差 " + std::to_string(fieldDx) +
+                              " 期望 " + std::to_string(colW + 16.0f));
     DOCTEST_CHECK(std::abs(field1->frame.width - field2->frame.width) < 0.5f);
     DOCTEST_CHECK(std::abs(field1->frame.height - field2->frame.height) < 0.5f);
 
-    // ② 标签同列 + 标签→下拉间距一致 + 标签与控件垂直居中对齐（基线口径）
-    DOCTEST_CHECK(std::abs(label1->frame.x - label2->frame.x) < 0.5f);
+    // ② 标签同排 + 同宽 + 标签→下拉间距一致 + 标签与控件垂直居中对齐（基线口径）
+    DOCTEST_CHECK(std::abs(label1->frame.y - label2->frame.y) < 0.5f);
     DOCTEST_CHECK(std::abs(label1->frame.width - label2->frame.width) < 0.5f);
     const float gap1 = field1->frame.x - (label1->frame.x + label1->frame.width);
     const float gap2 = field2->frame.x - (label2->frame.x + label2->frame.width);
@@ -1487,13 +1516,18 @@ REGISTER_TEST(settings_log_rows_same_column,
     DOCTEST_CHECK(std::string(label1->text) == "日志保留");
     DOCTEST_CHECK(std::string(label2->text) == "日志级别");
 
-    // 不与标题重叠、两行自上而下不叠，说明列在控件列右侧，且内容底沿仍留 ≥16 下边距
+    // ④ 不与标题重叠；hint 并一行：两 hint 同 y、在控件行盒下方、各随其列，
+    // 且内容底沿仍留 ≥16 下边距（卡高 144 包住 hint 行）
     DOCTEST_CHECK(field1->frame.y > card->frame.y + 38.0f);
-    DOCTEST_CHECK(field2->frame.y >= field1->frame.y + field1->frame.height);
     const auto* hint = ui.find("settings.card.log.hint");
+    const auto* levelHint = ui.find("settings.card.log.level.hint");
     DOCTEST_REQUIRE(hint != nullptr);
-    DOCTEST_CHECK(hint->frame.x >= field1->frame.x + field1->frame.width + 8.0f);
-    DOCTEST_CHECK(field2->frame.y + field2->frame.height + 16.0f <=
+    DOCTEST_REQUIRE(levelHint != nullptr);
+    DOCTEST_CHECK(std::abs(hint->frame.y - levelHint->frame.y) < 0.5f);
+    DOCTEST_CHECK(hint->frame.y >=
+                  field1->frame.y + field1->frame.height);
+    DOCTEST_CHECK(std::abs((levelHint->frame.x - hint->frame.x) - col2X) < 0.5f);
+    DOCTEST_CHECK(hint->frame.y + hint->frame.height + 16.0f <=
                   card->frame.y + card->frame.height + 0.5f);
 
     mod->onStop();
@@ -1678,6 +1712,14 @@ REGISTER_TEST(settings_card_rows_scale_derived,
             const auto* e = ui.find(id);
             return e != nullptr ? e->frame.y : -1.0f;
         };
+        const auto xOf = [&](const char* id) -> float {
+            const auto* e = ui.find(id);
+            return e != nullptr ? e->frame.x : -1.0f;
+        };
+        const auto widthOf = [&](const char* id) -> float {
+            const auto* e = ui.find(id);
+            return e != nullptr ? e->frame.width : -1.0f;
+        };
         const auto pin = [&](const char* what, float got, float want) {
             if (!nearEq(got, want)) {
                 return std::string(what) + " = " + std::to_string(got) +
@@ -1713,6 +1755,15 @@ REGISTER_TEST(settings_card_rows_scale_derived,
                           heightOf("settings.card.editor.ddwrap"),
                           at(31.0f, 36.0f, 47.0f));
             if (err.empty())
+                // UAT3 多列分栏：hint 迁下拉下方第二行（hintRowBelowY=行 y+行高+roundFs(6)）
+                err = pin("editor.hint 行顶（hintRowBelowY）",
+                          yOf("settings.card.editor.hint") -
+                              yOf("settings.card.editor"),
+                          at(94.0f, 110.0f, 143.0f));
+            if (err.empty())
+                err = pin("editor 卡高", heightOf("settings.card.editor"),
+                          at(122.0f, 144.0f, 187.0f));
+            if (err.empty())
                 err = pin("appearance 卡高", heightOf("settings.card.appearance"),
                           at(156.0f, 184.0f, 239.0f));
         } else if (tab == 1) {
@@ -1720,8 +1771,23 @@ REGISTER_TEST(settings_card_rows_scale_derived,
                       heightOf("settings.card.modules.name.0"),
                       at(15.0f, 18.0f, 23.0f));
             if (err.empty())
-                err = pin("modules 行距",
-                          yOf("settings.card.modules.name.1") -
+                // UAT3 多列分栏：单列 4 行改卡内 2×2 格——name.0/name.1 同行异列
+                //（x 差 = 格宽+16，ui_kit::columnX 单一来源；格几何不随字号缩放，
+                // 三档同值），次行 y 差才是行距（rowPitch = roundFs(56)）。
+                err = pin("modules 同行异列 x 差（格宽+16）",
+                          xOf("settings.card.modules.name.1") -
+                              xOf("settings.card.modules.name.0"),
+                          [&] {
+                              float cellW = 0.0f;
+                              float cell2X = 0.0f;
+                              ui_kit::columnX(widthOf(ui, "settings.card.modules") -
+                                                  56.0f,
+                                              16.0f, &cellW, &cell2X);
+                              return cell2X;
+                          }());
+            if (err.empty())
+                err = pin("modules 次行 y 差（rowPitch=roundFs(56)）",
+                          yOf("settings.card.modules.name.2") -
                               yOf("settings.card.modules.name.0"),
                           at(48.0f, 56.0f, 73.0f));
             if (err.empty())
@@ -1731,7 +1797,7 @@ REGISTER_TEST(settings_card_rows_scale_derived,
                           at(17.0f, 20.0f, 26.0f));
             if (err.empty())
                 err = pin("modules 卡高", heightOf("settings.card.modules"),
-                          at(292.0f, 344.0f, 447.0f));
+                          at(168.0f, 198.0f, 257.0f));
             if (err.empty())
                 err = pin("proxy.takeover.label 高",
                           heightOf("settings.card.proxy.takeover.label"),
@@ -1741,8 +1807,8 @@ REGISTER_TEST(settings_card_rows_scale_derived,
                           heightOf("settings.card.proxy"),
                           at(124.0f, 138.0f, 168.0f));
         } else {
-    // 日志卡入派生池：E 批统一迁 FormRow 后行 y=roundFs(68)/roundFs(116)、
-    // 行高=logFieldHeight、卡高 roundFs(170) 三档同缩放
+    // 日志卡入派生池：UAT3 双列后两行同排（行 y=roundFs(68)、行高=logFieldHeight）、
+    // hint 并一行（hintRowBelowY）、卡高 roundFs(144) 三档同缩放
             err = pin("log.label 高（FormRow label 盒=行高 logFieldHeight）",
                       heightOf("settings.card.log.label"),
                       at(31.0f, 36.0f, 47.0f));
@@ -1756,13 +1822,19 @@ REGISTER_TEST(settings_card_rows_scale_derived,
                           heightOf("settings.card.log.ddwrap"),
                           at(31.0f, 36.0f, 47.0f));
             if (err.empty())
-                err = pin("log.level.ddwrap 行顶（logLevelOffsetY）",
+                // 双列同排：级别行 y 从 116 收到 68（与保留行同锚）
+                err = pin("log.level.ddwrap 行顶（同排 = logDropdownOffsetY）",
                           yOf("settings.card.log.level.ddwrap") -
                               yOf("settings.card.log"),
-                          at(99.0f, 116.0f, 151.0f));
+                          at(58.0f, 68.0f, 88.0f));
+            if (err.empty())
+                err = pin("log.hint 行顶（hintRowBelowY）",
+                          yOf("settings.card.log.hint") -
+                              yOf("settings.card.log"),
+                          at(94.0f, 110.0f, 143.0f));
             if (err.empty())
                 err = pin("log 卡高", heightOf("settings.card.log"),
-                          at(145.0f, 170.0f, 221.0f));
+                          at(122.0f, 144.0f, 187.0f));
         }
         return err;
     };
@@ -1842,7 +1914,7 @@ REGISTER_TEST(settings_label_fit_pure,
 })
 
 REGISTER_TEST(settings_appearance_dropdown_popup_above_following_cards,
-              "settings: appearance 卡下拉弹层盖过后续兄弟卡（不被编辑器字号卡截断）", {
+              "settings: appearance 卡下拉弹层盖过配对右侧邻卡（不被编辑器字号卡截断）", {
     std::unique_ptr<::core::Module> mod(create_settings_module());
     mod->onStart();
     eui::Screen screen;
@@ -1868,7 +1940,9 @@ REGISTER_TEST(settings_appearance_dropdown_popup_above_following_cards,
 
     // 绘制序 = orderedChildren 顺序（后者在上）。弹层深嵌外观卡子树、与字号卡没有
     // 共同直接父——按「整卡抬层」语义（subtreeMaxZIndex 让含弹层的卡片整卡作为一个
-    // 绘制单元与兄弟卡竞争），断言两卡在滚动内容列里的兄弟序：外观卡必须排在字号卡之后
+    // 绘制单元与兄弟卡竞争）。UAT3 多列分栏后两卡经配对 row 成为兄弟（原先是滚动
+    // 内容列里的上下兄弟，现在是同一 pair row 里的左右兄弟）：断言配对行内兄弟序，
+    // 外观卡（z 40，含弹层链）必须排在字号卡（z 30）之后 = 盖过右侧邻卡。
     const core::dsl::Element* parent = nullptr;
     for (const auto& root : ui.roots()) {
         parent = commonParentOf(root.get(), appearanceCard, editorCard);
@@ -1877,6 +1951,173 @@ REGISTER_TEST(settings_appearance_dropdown_popup_above_following_cards,
     DOCTEST_REQUIRE(parent != nullptr);
     DOCTEST_CHECK(orderedIndexOf(parent, appearanceCard) >
                   orderedIndexOf(parent, editorCard));
+
+    mod->onStop();
+    ::core::theme::setDark();
+    return true;
+})
+
+// UAT3 多列分栏几何钉值：
+//   ① 两档窗口宽的列宽（ui_kit::columnX 单一来源）：最小窗 1000 → 页宽 792 →
+//     contentW=712 → colW=348；默认窗 1600 → 页宽 1392 → contentW=1312 → colW=648；
+//   ② 配对行：行宽 = contentW、行高 = max(对内卡高)（右卡矮于行高时下方留白不拉伸）；
+//     右卡 x = 左卡 x + colW + 16；
+//   ③ 落单半宽卡（modules）：宽 = colW、仍为内容列直接子元素；
+//   ④ 85% / 130% 档「卡高包住内容」：modules（2×2 格）/ editor（hint 下移）/
+//     log（hint 并一行）三卡高随 roundFs 同缩放且内容底不出卡。
+REGISTER_TEST(settings_card_pair_column_geometry,
+              "settings: 多列分栏几何——两档 colW / 右卡 x / 行高 max / 85%与130% 包住", {
+    test_support::TestEnv env(kCfgPrefix, "pairgeom", true);
+    test_support::ScopedConfigPath cfgEnv(
+        test_support::tempConfigFile(kCfgPrefix, "pairgeom_cfg"));
+    std::unique_ptr<::core::Module> mod(create_settings_module());
+    mod->onStart();
+
+    struct FontScaleGuard {
+        float prev;
+        explicit FontScaleGuard(float s)
+            : prev(::core::theme::fontScale()) {
+            ::core::theme::setFontScale(s);
+        }
+        ~FontScaleGuard() { ::core::theme::setFontScale(prev); }
+    };
+    const auto nearEq = [](float a, float b) {
+        return std::abs(a - b) < 0.5f;
+    };
+
+    // ①②③ 两档窗口宽的配对几何（100% 档：appearance 184 | editor 144 → 行高 184）
+    for (const float pageW : {792.0f, 1392.0f}) {
+        FontScaleGuard g{1.0f};
+        eui::Screen screen;
+        screen.width = pageW;
+        screen.height = 1000.0f;
+        DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 0));   // 通用 tab（跨迭代复位）
+        eui::Ui ui;
+        ui.begin(pageW < 1000.0f ? "pairgeo_min" : "pairgeo_def");
+        mod->compose(ui, screen);
+        ui.end();
+        ui.layout(screen.width, screen.height);
+
+        const float contentW = pageW - 80.0f;   // pad = spacingXXLarge 40 × 2
+        float colWant = 0.0f;
+        ui_kit::columnX(contentW, 16.0f, &colWant, nullptr);
+        const auto* pair = ui.find("settings.cards.pair.0");
+        const auto* appearance = ui.find("settings.card.appearance");
+        const auto* editor = ui.find("settings.card.editor");
+        DOCTEST_REQUIRE(pair != nullptr);
+        DOCTEST_REQUIRE(appearance != nullptr);
+        DOCTEST_REQUIRE(editor != nullptr);
+        DOCTEST_CHECK_MESSAGE(nearEq(appearance->frame.width, colWant),
+                              "appearance 宽 " +
+                                  std::to_string(appearance->frame.width) +
+                                  " 期望 " + std::to_string(colWant));
+        DOCTEST_CHECK(nearEq(editor->frame.width, colWant));
+        DOCTEST_CHECK(nearEq(editor->frame.x,
+                             appearance->frame.x + colWant + 16.0f));
+        DOCTEST_CHECK(nearEq(pair->frame.width, contentW));
+        // 行高 = max(对内卡高)：editor(144) 矮于 appearance(184) → 行高取 184
+        DOCTEST_CHECK(nearEq(pair->frame.height, 184.0f));
+        DOCTEST_CHECK(nearEq(appearance->frame.height, 184.0f));
+        DOCTEST_CHECK(nearEq(editor->frame.height, 144.0f));
+        // 两卡同排（行顶同 y）且都在行内
+        DOCTEST_CHECK(nearEq(appearance->frame.y, pair->frame.y));
+        DOCTEST_CHECK(nearEq(editor->frame.y, pair->frame.y));
+
+        // 落单半宽卡：modules 宽 = colW
+        DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 1));
+        eui::Ui uiM;
+        uiM.begin("pairgeo_modules");
+        mod->compose(uiM, screen);
+        uiM.end();
+        uiM.layout(screen.width, screen.height);
+        const auto* modulesCard = uiM.find("settings.card.modules");
+        DOCTEST_REQUIRE(modulesCard != nullptr);
+        DOCTEST_CHECK_MESSAGE(nearEq(modulesCard->frame.width, colWant),
+                              "modules 宽 " +
+                                  std::to_string(modulesCard->frame.width) +
+                                  " 期望 " + std::to_string(colWant));
+    }
+
+    // ④ 85% / 130% 档「卡高包住内容」（逐卡：卡高 == roundFs(常量)，尾行/hint 底 ≤ 卡底）
+    for (const float scale : {0.85f, 1.3f}) {
+        FontScaleGuard g{scale};
+        const float modulesH = module::settings::roundFs(
+            module::settings::kModulesCardHeight);
+        const float editorH = module::settings::roundFs(
+            module::settings::kEditorFontCardHeight);
+        const float logH = module::settings::roundFs(
+            module::settings::kLogSettingsCardHeight);
+        eui::Screen screen;
+        screen.width = 1392.0f;
+        screen.height = 1000.0f;
+        DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 0));   // 通用 tab（跨迭代复位）
+
+        // 通用 tab：editor hint 底不出卡 + 配对行高随档位缩放（max 语义）
+        eui::Ui ui;
+        ui.begin(scale < 0.9f ? "pairgeo85" : "pairgeo130");
+        mod->compose(ui, screen);
+        ui.end();
+        ui.layout(screen.width, screen.height);
+        const auto* editor = ui.find("settings.card.editor");
+        const auto* editorHint = ui.find("settings.card.editor.hint");
+        const auto* appearance = ui.find("settings.card.appearance");
+        const auto* pair = ui.find("settings.cards.pair.0");
+        DOCTEST_REQUIRE(editor != nullptr);
+        DOCTEST_REQUIRE(editorHint != nullptr);
+        DOCTEST_REQUIRE(appearance != nullptr);
+        DOCTEST_REQUIRE(pair != nullptr);
+        DOCTEST_CHECK(nearEq(editor->frame.height, editorH));
+        DOCTEST_CHECK(editorHint->frame.y + editorHint->frame.height <=
+                      editor->frame.y + editor->frame.height + 0.5f);
+        const float appearanceH = module::settings::roundFs(
+            module::settings::kAppearanceCardHeight);
+        DOCTEST_CHECK(nearEq(pair->frame.height,
+                             std::max(appearanceH, editorH)));
+
+        // 模块 tab：2×2 格次行 desc 底不出卡
+        DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 1));
+        eui::Ui uiM;
+        uiM.begin(scale < 0.9f ? "pairgeoM85" : "pairgeoM130");
+        mod->compose(uiM, screen);
+        uiM.end();
+        uiM.layout(screen.width, screen.height);
+        const auto* modulesCard = uiM.find("settings.card.modules");
+        const auto* rowdesc3 = uiM.find("settings.card.modules.rowdesc.3");
+        DOCTEST_REQUIRE(modulesCard != nullptr);
+        DOCTEST_REQUIRE(rowdesc3 != nullptr);
+        DOCTEST_CHECK(nearEq(modulesCard->frame.height, modulesH));
+        DOCTEST_CHECK(rowdesc3->frame.y + rowdesc3->frame.height <=
+                      modulesCard->frame.y + modulesCard->frame.height + 0.5f);
+
+        // 日志 tab：hint 并一行底不出卡
+        DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 2));
+        eui::Ui uiL;
+        uiL.begin(scale < 0.9f ? "pairgeoL85" : "pairgeoL130");
+        mod->compose(uiL, screen);
+        uiL.end();
+        uiL.layout(screen.width, screen.height);
+        const auto* logCard = uiL.find("settings.card.log");
+        const auto* logHint = uiL.find("settings.card.log.hint");
+        const auto* levelHint = uiL.find("settings.card.log.level.hint");
+        DOCTEST_REQUIRE(logCard != nullptr);
+        DOCTEST_REQUIRE(logHint != nullptr);
+        DOCTEST_REQUIRE(levelHint != nullptr);
+        DOCTEST_CHECK(nearEq(logCard->frame.height, logH));
+        DOCTEST_CHECK(logHint->frame.y + logHint->frame.height <=
+                      logCard->frame.y + logCard->frame.height + 0.5f);
+        DOCTEST_CHECK(levelHint->frame.y + levelHint->frame.height <=
+                      logCard->frame.y + logCard->frame.height + 0.5f);
+        // 下拉两列 x 差 = 卡内列宽+16（columnX(卡宽−56) 单一来源，与卡级配对列宽不同源）
+        const auto* field1 = uiL.find("settings.card.log.dd.field");
+        const auto* field2 = uiL.find("settings.card.log.level.dd.field");
+        DOCTEST_REQUIRE(field1 != nullptr);
+        DOCTEST_REQUIRE(field2 != nullptr);
+        float logCellW = 0.0f;
+        float logCell2X = 0.0f;
+        ui_kit::columnX(logCard->frame.width - 56.0f, 16.0f, &logCellW,
+                        &logCell2X);
+        DOCTEST_CHECK(nearEq(field2->frame.x - field1->frame.x, logCell2X));
+    }
 
     mod->onStop();
     ::core::theme::setDark();
@@ -2782,8 +3023,10 @@ REGISTER_TEST(settings_ui_logic_equivalence,
     };
     int gridHits = 0;
     for (float top : {0.0f, 100.0f, 176.0f, 400.0f, 984.0f}) {
+        // UAT3 双列后级别行并入 row1 同排（原 logLevelOffsetY=116 常量随迁删除），
+        // 第三采样点换 hint 下移行 y（hintRowBelowY(68)=110）保持 off 轴多样。
         for (float off : {ms::logDropdownOffsetY(), ms::editorFontRowY(),
-                          ms::logLevelOffsetY()}) {
+                          ms::hintRowBelowY(ms::logRow1LabelY())}) {
     // 三处下拉高单一来源 logFieldHeight()，fh 轴收敛为 1 档
             for (float fh : {ms::logFieldHeight()}) {
                 for (int n : {ms::kRetentionPresetCount,
@@ -2808,13 +3051,16 @@ REGISTER_TEST(settings_ui_logic_equivalence,
     DOCTEST_CHECK_EQ(ms::kWindowBottomMargin, 16.0f);
     DOCTEST_CHECK_EQ(ms::kSettingsTabHeight, 40.0f);
     DOCTEST_CHECK_EQ(ms::kAppearanceCardHeight, 184.0f);
-    // E 批布局统一：编辑器字号卡迁 FormRow（行 y=68、行高 36，行底 104 + 16；85% 档收敛需富余）
-    DOCTEST_CHECK_EQ(ms::kEditorFontCardHeight, 122.0f);
-    DOCTEST_CHECK_EQ(ms::kModulesCardHeight, 344.0f);  // 4 行开关（agent 加入）
+    // UAT3 多列分栏：编辑器字号卡半宽配对，hint 迁下拉下方第二行
+    //（行底 roundFs(68)+roundFs(36)=104，hint 行底 +roundFs(6)+roundFs(16)=126，+16 → 144）
+    DOCTEST_CHECK_EQ(ms::kEditorFontCardHeight, 144.0f);
+    // UAT3 多列分栏：模块卡半宽 + 卡内 2×2 格（次行块底 68+roundFs(56)+roundFs(36)=160，
+    // +16 → 198 给窄列字号档富余）
+    DOCTEST_CHECK_EQ(ms::kModulesCardHeight, 198.0f);
     // 目录卡内容起 y=68 顺移（gitignore 路径行 y=148 高 34，盒底 182；85% 档 34 字面行高需富余兜底）
     DOCTEST_CHECK_EQ(ms::kDirectoryCardHeight, 216.0f);
-    // 日志卡迁 FormRow（行2 底 116+36=152，+16 下边距；130% 档行底 198 需 ≥219）
-    DOCTEST_CHECK_EQ(ms::kLogSettingsCardHeight, 170.0f);
+    // UAT3 多列分栏：日志卡两下拉双列同排，hint 并一行下移（行底 104，hint 行底 126，+16 → 144）
+    DOCTEST_CHECK_EQ(ms::kLogSettingsCardHeight, 144.0f);
 
     // 3) 档位表（值 + 标签，逐项钉死）
     DOCTEST_CHECK_EQ(ms::kFontPresetCount, 4);
@@ -2878,7 +3124,9 @@ REGISTER_TEST(settings_ui_logic_equivalence,
 
 REGISTER_TEST(settings_card_registry_order,
               "settings: R6 卡片注册表——tab 归属 / 绘制顺序 / 模块门控（headless）", {
-    // 卡根 id 序列 = scrollView 内容列的直接子元素（创建序 = 绘制序）
+    // 卡根 id 序列 = scrollView 内容列的直接子元素（创建序 = 绘制序）。
+    // UAT3 多列分栏：半宽成对卡（appearance|editor）包进 pair row——序列含 pair 行，
+    // 卡根转为其子元素；落单半宽卡（modules）仍是内容列直接子元素。
     auto cardIdsOf = [](::core::Module& mod, const eui::Screen& screen) {
         eui::Ui ui;
         ui.begin("registry");
@@ -2888,6 +3136,23 @@ REGISTER_TEST(settings_card_registry_order,
         const auto* content = ui.find("settings.cards.scroll.content");
         if (content == nullptr) return ids;
         for (const auto& child : content->children) {
+            const auto pos = child->id.find("settings.");
+            ids.push_back(pos == std::string::npos ? child->id
+                                                   : child->id.substr(pos));
+        }
+        return ids;
+    };
+    // pair row 内的卡根序列（半宽配对两卡的直接子元素序 = 左|右）
+    auto pairChildIdsOf = [](::core::Module& mod, const eui::Screen& screen,
+                             const char* pairId) {
+        eui::Ui ui;
+        ui.begin("registry_pair");
+        mod.compose(ui, screen);
+        ui.end();
+        std::vector<std::string> ids;
+        const auto* pair = ui.find(pairId);
+        if (pair == nullptr) return ids;
+        for (const auto& child : pair->children) {
             const auto pos = child->id.find("settings.");
             ids.push_back(pos == std::string::npos ? child->id
                                                    : child->id.substr(pos));
@@ -2915,13 +3180,17 @@ REGISTER_TEST(settings_card_registry_order,
         std::unique_ptr<::core::Module> mod(create_settings_module());
         mod->onStart();
         const std::vector<std::string> wantGeneral = {
-            "settings.card.appearance",
-            "settings.card.editor"};
+            "settings.cards.pair.0"};
         const auto t0 = cardIdsOf(*mod, screen);
         DOCTEST_CHECK_MESSAGE(t0 == wantGeneral, "通用 tab 实测：" + join(t0));
+        const auto pairChildren = pairChildIdsOf(*mod, screen, "settings.cards.pair.0");
+        const std::vector<std::string> wantPairChildren = {
+            "settings.card.appearance",
+            "settings.card.editor"};
+        DOCTEST_CHECK_MESSAGE(pairChildren == wantPairChildren,
+                              "配对行子卡 实测：" + join(pairChildren));
         DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 1));
         const std::vector<std::string> wantModulesAll = {
-            "settings.card.modules.grouptitle",
             "settings.card.modules",
             "settings.card.directory.groupdivider",
             "settings.card.directory.grouptitle",
@@ -2952,14 +3221,12 @@ REGISTER_TEST(settings_card_registry_order,
         mod->onStart();
         DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 1));
         const std::vector<std::string> wantModulesGated = {
-            "settings.card.modules.grouptitle",
             "settings.card.modules"};
         const auto g1 = cardIdsOf(*mod, screen);
         DOCTEST_CHECK_MESSAGE(g1 == wantModulesGated, "模块 tab（门控全关） 实测：" + join(g1));
         DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 0));
         const std::vector<std::string> wantGeneralGated = {
-            "settings.card.appearance",
-            "settings.card.editor"};
+            "settings.cards.pair.0"};
         const auto g0 = cardIdsOf(*mod, screen);
         DOCTEST_CHECK_MESSAGE(g0 == wantGeneralGated, "通用 tab（门控不影响） 实测：" + join(g0));
         mod->onStop();
