@@ -178,8 +178,8 @@ private:
     // 系统通知授权：Module 接口没有「窗口可见」回调，由 pollRunEnd（app::compose 在 splash
     // 结束后每帧调用）触发一次；重复调用由成员闸挡住，不重复弹授权框。
     void requestNotificationAuthorizationOnce();
-    // 任务级 run 汇总缓存：失效判据 = writeVersion + 7d 窗口起点（同 home 余量卡口径——
-    // 版本没变零查询零锁，uiPolling_ 每帧 refreshData 也不重查；版本取查询前快照）
+    // 任务级 run 汇总缓存：失效判据 = writeVersion + 7d 窗口起点（版本没变零查询零锁，
+    // uiPolling_ 每帧 refreshData 也不重查；版本取查询前快照）
     void refreshRunSummaries();
     // 「下一次」/「计划 vs 实际」缓存：键判等早退，禁在 compose 逐帧回扫 cron（§8.4/§8.5）
     void updateNextRunCache(const AgentTaskRow& task, const AgentRunRow* latest,

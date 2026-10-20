@@ -14,6 +14,7 @@
 
 #include <eui/dsl.h>
 
+#include <cmath>
 #include <string>
 
 namespace {

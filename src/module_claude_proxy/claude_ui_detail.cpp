@@ -831,6 +831,8 @@ void drawDetailActions(eui::Ui& ui, float x0, float w, float actY,
                         t.colors.wechat.primaryPressed)
                 .textColor(t.colors.wechat.onPrimary)
                 .radius(t.sizes.radiusWeChat)
+                // 显式 border 0：消组件默认 1px 灰框，同 act.run（UAT3）
+                .border(0.0f, t.colors.wechat.dividerPrimary)
                 .onClick([f = a.enable, warn = a.warn, shownId] {
                     if (shownId == 0) {
                         warn("启用失败", "请先新建或选择一个 Profile");

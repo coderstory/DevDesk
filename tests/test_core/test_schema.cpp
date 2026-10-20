@@ -778,3 +778,41 @@ REGISTER_TEST(schema_migrate_agent_columns_idempotent,
     std::filesystem::remove(path, ec);
     return true;
 })
+
+REGISTER_TEST(schema_drop_removed_quota_tables,
+    "schema: migrate() 幂等清理 profile_quota_config / profile_quota_result（UAT3 M3）", {
+    // 回归：老库遗留两表，migrate 的 dropRemovedTables 段必须清掉它们；误删 dropRemoved
+    // 调用或改错表名会让本用例红
+    auto path = test_support::tempDbPath(kDbPrefix, "quota_drop");
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+
+    {
+        auto r = core::Database::open(path);
+        DOCTEST_REQUIRE(r.isOk());
+        auto& db = r.value().db();
+
+        // open 路径已跑过一次 migrate；手工重建两表模拟「老库残留」
+        DOCTEST_REQUIRE(db.exec(
+            "CREATE TABLE IF NOT EXISTS profile_quota_config (key TEXT PRIMARY KEY, value_json TEXT, updated_at INTEGER)").isOk());
+        DOCTEST_REQUIRE(db.exec(
+            "CREATE TABLE IF NOT EXISTS profile_quota_result (key TEXT PRIMARY KEY, value_json TEXT, updated_at INTEGER)").isOk());
+
+        // 确认两表现在存在
+        auto before = listObjects(db, "table");
+        DOCTEST_CHECK(before.count("profile_quota_config") == 1);
+        DOCTEST_CHECK(before.count("profile_quota_result") == 1);
+
+        // 二次 migrate：dropRemovedTables 段应清掉两表
+        DOCTEST_REQUIRE(r.value().migrate().isOk());
+
+        auto after = listObjects(db, "table");
+        DOCTEST_CHECK_MESSAGE(after.count("profile_quota_config") == 0,
+                              "profile_quota_config 应在 migrate 后被 DROP");
+        DOCTEST_CHECK_MESSAGE(after.count("profile_quota_result") == 0,
+                              "profile_quota_result 应在 migrate 后被 DROP");
+    }
+
+    std::filesystem::remove(path, ec);
+    return true;
+})

@@ -1060,7 +1060,7 @@ REGISTER_TEST(uiAboutLayout,
     eui::Ui ui;
     eui::Screen screen{1600.0f, 1000.0f};
     // 宽度自适应公式镜像（UAT3：窄窗 clamp，与 about_module.cpp 同式）
-    const auto cardWidthAt = [](float screenWidth) {
+    const auto cardWidthAt = [=](float screenWidth) {
         return std::max(560.0f, std::min(kCardW, screenWidth - 2.0f * 24.0f));
     };
     const float cardW = cardWidthAt(screen.width);
@@ -1195,11 +1195,11 @@ REGISTER_TEST(uiAboutLayout,
         DOCTEST_CHECK(c->frame.y + c->frame.height + kFooterGap <= footer->frame.y);
     }
     {
-        // 极矮窗 clamp 档：UAT3 放大后 cardH=616，屏高取 690 使「cardY 钳到 0」与
-        // 「卡底不压 footer」（footerY=630）双成立（旧 550 屏高下 616 卡必然压
-        // footer，两断言不可兼得，随卡上调）
+        // 极矮窗 clamp 档：UAT3 cardH=616，窗 640（页高 600）时 cardY 触 0 后
+        // cardH 仍超 footer，code 侧第二步 cardH clamp 到 564 使不叠（旧仅推
+        // cardY 不行——616 卡高本身已超 footerY=580）
         eui::Ui tiny;
-        eui::Screen tinyScreen{1200.0f, 690.0f};
+        eui::Screen tinyScreen{1200.0f, 640.0f};
         tiny.begin("about_layout_tiny");
         mod->compose(tiny, tinyScreen);
         tiny.end();
