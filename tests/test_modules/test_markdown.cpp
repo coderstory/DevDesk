@@ -1060,8 +1060,11 @@ REGISTER_TEST(md_tree_panel_anim_frame_pump,
     const float edX = ed->frame.x;
     const float edW = ed->frame.width;
     DOCTEST_CHECK_EQ(edX, 40.0f + 240.0f + 16.0f);  // pad + 树宽 + gap（公式锚点）
-    otoggle->onClick();  // 关
-    for (int i = 0; i < 35 && ui.find("md.outline.panel.bg") != nullptr; ++i) frame();  // 动画收敛 ~28 帧
+    const auto* otoggle2 = ui.find("md.outline.toggle.hit");   // 前一帧已重建树，重取
+    DOCTEST_REQUIRE(otoggle2 != nullptr);
+    DOCTEST_REQUIRE(otoggle2->onClick != nullptr);
+    otoggle2->onClick();  // 关
+    frame();
     DOCTEST_CHECK(ui.find("md.outline.panel.bg") == nullptr);
     DOCTEST_CHECK_EQ(ui.find("md.editor")->frame.x, edX);
     DOCTEST_CHECK_EQ(ui.find("md.editor")->frame.width, edW);
