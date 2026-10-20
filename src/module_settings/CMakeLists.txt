@@ -11,13 +11,6 @@ add_library(devdesk_module_settings STATIC
     git_error_dialog.cpp
 )
 
-# 平台适配：磨砂降级文案按平台拆文件（业务代码零平台宏，见 window_effect_hint.h）
-if(WIN32)
-    target_sources(devdesk_module_settings PRIVATE window_effect_hint_win.cpp)
-else()
-    target_sources(devdesk_module_settings PRIVATE window_effect_hint_macos.cpp)
-endif()
-
 # 平台适配：本地 git 探测按平台拆文件（业务代码零平台宏，见 local_git_probe.h）
 if(WIN32)
     target_sources(devdesk_module_settings PRIVATE local_git_probe_win.cpp)

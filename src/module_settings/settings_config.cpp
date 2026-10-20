@@ -1,8 +1,6 @@
 // src/module_settings/settings_config.cpp
 #include "settings_config.h"
 
-#include "window_effect_hint.h"
-
 #include <algorithm>
 
 #include <utility>
@@ -177,10 +175,12 @@ SettingsConfig SettingsStore::sanitized(const SettingsConfig& cfg) {
 }
 
 // 两层 alpha 串联叠加（窗口背景色层 + clearColor 层），同值推导会让半透/磨砂档视觉无法区分。
-// UAT2 B 批折中（用户反馈半透档"太高"，语义两读）：translucent 内容 0.60→0.80（少透
-// 壁纸）、标题栏 0.90→0.85（略增透出）；frosted 两值不动。用户可再调。
+// UAT2 B 批（半透档"太高"第一轮）：translucent 0.60/0.90 → 0.80/0.85。UAT3 C1 批
+// （round3 用户仍反馈半透透明度太高）：内容 0.80→0.82（拍板值 ~0.82；标题栏带可
+// 略高——0.85 本就高于内容，不动）；frosted 两值不动。自绘标题栏（D-R3-1）落地后
+// Windows 无系统标题栏，标题栏 alpha 只实际作用于 macOS 系统标题栏底色。
 float windowEffectAlpha(const std::string& mode) {
-    if (mode == kWindowEffectTranslucent) return 0.80f;
+    if (mode == kWindowEffectTranslucent) return 0.82f;
     if (mode == kWindowEffectFrosted) return 0.15f;
     return 1.0f;  // off / 未知值：实色
 }
@@ -209,24 +209,13 @@ core::platform::WindowEffect windowEffectRequest(const std::string& mode) {
 
 std::string windowEffectDegradedHint(const std::string& mode,
                                      core::platform::WindowEffect active) {
-    using core::platform::WindowEffect;
-    if (mode == kWindowEffectTranslucent) {
-        if (active != WindowEffect::Transparent) {
-            return "当前系统不支持窗口半透，已回退为不透明";
-        }
-        return {};
-    }
-    if (mode == kWindowEffectFrosted) {
-        if (active == WindowEffect::Acrylic) {
-            return {};
-        }
-        if (active == WindowEffect::Transparent) {
-            // 降级文案平台化：磨砂的系统版本要求因平台而异，走 window_effect_hint_*.cpp。
-            return frostedDegradedHint();
-        }
-        return "当前系统不支持窗口效果，已回退为不透明";
-    }
-    // off：alpha=1 下任何 active 都视觉等价（透明 hint 开着也不可见）
+    // UAT3 #10（用户拍板删除）：「当前系统不支持窗口半透/磨砂」提示行不再显示——
+    // 恒返回空串，设置页外观卡的提示行按 empty 条件渲染整行不建。自动降级行为原样
+    // 保留：降级判定在 applyWindowVisuals（按请求档落 clearColor/backdrop）与
+    // EUI-NEO 主循环 activeWindowEffect 回写，与提示文案互不依赖。签名保留（调用方
+    // settings_ui_cards.cpp 仍按此取行文案；mode/active 照传，空串即不渲染）。
+    (void)mode;
+    (void)active;
     return {};
 }
 

@@ -116,7 +116,8 @@ float windowEffectThemeOpacity(const std::string& mode);
 // 档位 → EUI-NEO backdrop 请求：off/translucent 显式关，frosted 请求 Acrylic。
 core::platform::WindowEffect windowEffectRequest(const std::string& mode);
 
-// 降级提示文案（activeWindowEffect 回查 vs 所选档；一致返回空串）。
+// 降级提示文案：UAT3 #10 起恒返回空串（提示行已按用户拍板删除，empty = 渲染侧
+// 整行不建）；自动降级行为不依赖本函数。签名保留是因设置页外观卡仍按此取文案。
 std::string windowEffectDegradedHint(const std::string& mode,
                                      core::platform::WindowEffect active);
 

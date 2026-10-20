@@ -741,12 +741,12 @@ REGISTER_TEST(home_quota_never_succeeded_never_draws_bar_even_with_windows,
 })
 
 // 矮窗下余量卡仍要画出来，且不挤掉既有内容。
-// 720 刻意低于一切真实下限（设计最小窗 1280×800，Windows@125% 有效 778），目的是守住深档；
-// 不可"修正"到 800 —— 那会让这条断言变成永不触发的废条。
+// 600 刻意低于一切真实下限（UAT3 D-R3-2 设计最小窗 1000×640，两平台有效下限 = 640），
+// 目的是守住深档；不可"修正"到 640 —— 那会让这条断言变成永不触发的废条。
 // 首页整页挂在 scrollView 上，装不下时由滚动条吸收，所以矮窗下仍然该画卡，
 // 不得以「会顶出可视区」为由整张缺席。
 REGISTER_TEST(home_quota_card_visible_at_design_minimum_window,
-              "home quota: 矮窗 720（守护深档；真实最小窗 1280×800/778 见探针组 K）"
+              "home quota: 矮窗 600（守护深档；真实最小窗 1000×640 见探针组 K）"
               "仍画出余量卡，且既有内容不丢", {
     test_support::TestEnv env(kDbPrefix, "shortwin", true);
     DOCTEST_REQUIRE(env.ready);
@@ -771,16 +771,16 @@ REGISTER_TEST(home_quota_card_visible_at_design_minimum_window,
     DOCTEST_CHECK_MESSAGE(tallUi.find("home.quota") != nullptr,
                           "1000 高（默认窗）必须画出余量卡");
 
-    // ② 矮窗 720：也画（整页可滚，卡不再两面落空）
+    // ② 矮窗 600（< 640 设计下限，守护深档）：也画（整页可滚，卡不再两面落空）
     eui::Screen shortScreen;
     shortScreen.width = 1200.0f;
-    shortScreen.height = 720.0f;
+    shortScreen.height = 600.0f;
     eui::Ui shortUi;
     composeFrame(*mod, shortUi, shortScreen, "home_quota_short");
     // 恒真陷阱：不 layout 的话所有 frame 都是 0，下面 ④ 会退化成「0 <= 0.5」永远成立
     shortUi.layout(shortScreen.width, shortScreen.height);
     DOCTEST_CHECK_MESSAGE(shortUi.find("home.quota") != nullptr,
-                          "720 高（守护深档）必须画出余量卡");
+                          "600 高（守护深档）必须画出余量卡");
     DOCTEST_CHECK(shortUi.find("home.stats") != nullptr);
     DOCTEST_CHECK(shortUi.find("home.actions") != nullptr);
     DOCTEST_CHECK(shortUi.find("home.api.chart") != nullptr);
