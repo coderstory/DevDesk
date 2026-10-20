@@ -797,7 +797,7 @@ float drawDetailAdvanced(eui::Ui& ui, float x0, float y0, float w,
     return std::min(ey, contentBottom);
 }
 
-// 操作按钮组（启用/测试连通/编辑/运行/余量查询）+ 副提示 + 分隔线。actY 由
+// 操作按钮组（启用/测试连通/编辑/运行）+ 副提示 + 分隔线。actY 由
 // drawDetailPanel 锚定给出；绘制高 = 61 被 kActionBlockH 引用，改几何须同步。
 void drawDetailActions(eui::Ui& ui, float x0, float w, float actY,
                        const core::theme::Tokens& t,
@@ -810,8 +810,8 @@ void drawDetailActions(eui::Ui& ui, float x0, float w, float actY,
         .radius(t.sizes.radius)
         .build();
     const float actGap = 12.0f;
-    // 5 键均分：EUI row spacing 只在相邻子项间生效，n 项只有 n−1 个间隙，故扣 4 个 gap。
-    const float actW = (w - actGap * 4.0f) / 5.0f;
+    // 4 键均分：EUI row spacing 只在相邻子项间生效，n 项只有 n−1 个间隙，故扣 3 个 gap。
+    const float actW = (w - actGap * 3.0f) / 4.0f;
     ui.row("claude.detail.actions")
         .position(x0, actY)
         .size(w, 36.0f)
@@ -893,26 +893,6 @@ void drawDetailActions(eui::Ui& ui, float x0, float w, float actY,
                     f(shownId);
                 })
                 .build();
-            // 余量查询：功能开关关闭时入口隐藏（数据保留不删），开启后可配置/查询 §5 Secondary
-            if (v.quotaEnabled) {
-            components::button(ui, "claude.act.quota")
-                .size(actW, 36.0f)
-                .text("余量查询")
-                .fontSize(t.sizes.fontSizeSmall)
-                .colors(t.colors.wechat.secondaryButtonBg,
-                        t.colors.wechat.dividerSecondary,
-                        t.colors.wechat.dividerSecondary)
-                .textColor(t.colors.wechat.textPrimary)
-                .radius(t.sizes.radiusWeChat)
-                .onClick([f = a.quota, warn = a.warn, shownId] {
-                    if (shownId == 0) {
-                        warn("余量查询", "请先新建或选择一个 Profile");
-                        return;
-                    }
-                    f(shownId);
-                })
-                .build();
-            }
         })
         .build();
 

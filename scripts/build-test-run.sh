@@ -616,38 +616,10 @@ if ! bash scripts/check-module-isolation.sh; then
   exit 1
 fi
 
-# 3b-2. 余量落库路径守卫（纯静态检查，--no-test 也跑）。把 quota_store.h 的不变量
-# 「applyFetchResult 是落库唯一入口」从**注释断言**变成会红的代码断言 —— 少一次全量门禁的
-# 成本，远低于某天有人顺手加一句直写、韧性决策静默失效。
-echo "── 余量落库路径守卫 ──"
-if ! bash scripts/check-quota-write-paths.sh; then
-  echo "❌ 余量落库路径守卫失败（profile_quota_result 的 DML 只能在 quota_store.cpp 的 applyFetchResult / deleteResult 里）"
-  exit 1
-fi
-
-# 3b-3. 探针门禁标签守卫（纯静态检查，--no-test 也跑）。真机出网探针
-# （tools/quota_live_probe.cpp）必须有「想跑的人才找得到」的显式入口，又**绝不能**进默认
-# 门禁（真网络 + 本机 cc-switch 凭据 + 每次实打实打四家）。那条「绝不进」原本只是一句
-# 注释；本守卫把它钉成会红的断言。
-echo "── 探针门禁标签守卫 ──"
-if ! bash scripts/check-probe-gate-labels.sh; then
-  echo "❌ 探针门禁标签守卫失败（quota_live_probe 必须挂 live 标签、不得挂 probe，门禁脚本不得调用它）"
-  exit 1
-fi
-
-# 3b-4. 余量链停机顺序守卫（纯静态检查，--no-test 也跑）。「测试线程 join → 刷新器
-# stopAll+reset → 凭据源 reset → store reset」是最贵的并发契约之一，而单测对两种顺序变异
-# 零反应：把 quotaStore_.reset() 挪到最前（正是要防的悬垂）、把 join 整行删掉（留
-# joinable → 析构 std::terminate）。所以断言只能针对**源码形态**，成本为零、确定性 100%。
-if ! bash scripts/check-quota-shutdown-order.sh; then
-  echo "❌ 余量停机顺序守卫失败（顺序错了就是悬垂：store 先死，刷新器下一次扫描解引用即 UB）"
-  exit 1
-fi
-
-# 3b-5. Windows 交叉编译守卫（纯静态检查，--no-test 也跑）。受编集合 = **从 CMakeLists 的
+# 3b-2. Windows 交叉编译守卫（纯静态检查，--no-test 也跑）。受编集合 = **从 CMakeLists 的
 # WIN32 分支解析出来的、Windows CI 真正会编的源文件**（src + tests，共享文件全在内）。只编
-# `*_win.cpp` 是错的：CI 编整棵树，共享文件它也编 —— `quota_store.cpp` 缺 `#include
-# <optional>` 就是在共享文件上炸的，旧门禁压根不编它，红得毫无预警。
+# `*_win.cpp` 是错的：CI 编整棵树，共享文件它也编 —— 共享 cpp 缺 `#include
+# <optional>` 就是在共享文件上炸的真实先例，旧门禁压根不编它，红得毫无预警。
 # 找不到工具链时**显式打印跳过原因并退出 0**（CI 的 macOS runner 没装这条链，「别人机器上
 # 必红」的守卫会被立刻关掉）；装了链还编不过才是红。
 # 边界：只验**编译**，且本机 clang+libc++ / CI GCC+libstdc++ 标准库不同 ⇒「本机编得过」推不
@@ -658,8 +630,8 @@ if ! bash scripts/check-windows-cross-compile.sh; then
   exit 1
 fi
 
-# 3b-6. std include 守卫（纯静态检查，--no-test 也跑）。上面那道**抓不到缺标准头**：本机
-# 交叉链是 libc++，`quota_store.cpp` 删掉 `#include <optional>` 照样编过（`<optional>` 被
+# 3b-3. std include 守卫（纯静态检查，--no-test 也跑）。上面那道**抓不到缺标准头**：本机
+# 交叉链是 libc++，共享 cpp 删掉 `#include <optional>` 照样编过（`<optional>` 被
 # core/sqlite_db.h → <map> → __node_handle 第 8 层传递带进来），而 MSYS2 的 libstdc++ 不带
 # → 只有 CI 会红。所以另立一道与标准库无关的判据：本文件直接用了 std::X，就得显式 include
 # 对应头。
@@ -669,7 +641,7 @@ if ! bash scripts/check-std-includes.sh; then
   exit 1
 fi
 
-# 3b-7. ToolGuard 双层花括号守卫（纯静态检查，--no-test 也跑）。`ToolGuard g{{"a","b"}}`
+# 3b-4. ToolGuard 双层花括号守卫（纯静态检查，--no-test 也跑）。`ToolGuard g{{"a","b"}}`
 # 外层初始化列表单元素 → 命中 std::string 迭代器对构造 UB，红绿随 .rodata 字面量布局
 # 翻转（2750e51 修的 53 用例批量红）。同类写法再被写出必须在门禁就红，不等链接布局翻脸。
 echo "── ToolGuard 双层花括号守卫 ──"
@@ -678,7 +650,7 @@ if ! bash scripts/check-toolguard-braces.sh; then
   exit 1
 fi
 
-# 3b-8. 守卫自检。这一段跑的**不是**代码，是上面那些守卫**自己** —— 它回答的是前面所有段
+# 3b-5. 守卫自检。这一段跑的**不是**代码，是上面那些守卫**自己** —— 它回答的是前面所有段
 # 都回答不了的问题：「这些守卫现在还活着吗？」
 # 必须接进链里的理由：这几道守卫都带 --self-test，不接进链就全是手动点的 —— 某道守卫被改
 # 坏、或判据退化成恒真，**CI 永远发现不了**，而门禁日志看上去全绿。这是「契约和守卫都声称
@@ -690,12 +662,9 @@ fi
 # 本段**故意放在所有真守卫之后**：代码真的有问题时先报代码问题，别让自检噪音盖住它。
 echo "── 守卫自检（验证上面各守卫自己没坏，非你的代码问题）──"
 SELF_TEST_FAIL=0
-# 自检计数随开关动态：链内 7 道 +（DEVDESK_EUI_API_CHECK=1 时）check-eui-neo-version
-_GUARD_SELF_COUNT=7
+# 自检计数随开关动态：链内 4 道 +（DEVDESK_EUI_API_CHECK=1 时）check-eui-neo-version
+_GUARD_SELF_COUNT=4
 for _guard in check-module-isolation \
-               check-quota-write-paths \
-               check-quota-shutdown-order \
-               check-probe-gate-labels \
                check-probe-skip-gate \
                check-std-includes \
                check-toolguard-braces; do
@@ -707,7 +676,7 @@ done
 # check-eui-neo-version 的自检与其真守卫（0b 段）同门：默认跳过（几十个 TU 的编译探测
 # 太贵），DEVDESK_EUI_API_CHECK=1 时才自检它。
 if [ "${DEVDESK_EUI_API_CHECK:-0}" = "1" ]; then
-  _GUARD_SELF_COUNT=7
+  _GUARD_SELF_COUNT=4
   if ! bash scripts/check-eui-neo-version.sh --eui-dir "$EUI_DIR" --self-test; then
     echo "❌ 守卫自检失败：scripts/check-eui-neo-version.sh --self-test —— 同样是守卫自己坏了" >&2
     SELF_TEST_FAIL=1

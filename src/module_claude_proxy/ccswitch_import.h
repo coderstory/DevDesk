@@ -1,6 +1,6 @@
 // src/module_claude_proxy/ccswitch_import.h
 // 从 cc-switch 导入 Profile：只读读侧 + 纯映射函数。
-// 读侧恒只读（路径与打开 flags 复用 quota/ccswitch_source）；映射为纯函数（无 IO / 无 DB / 无日志）。
+// 读侧恒只读（路径与打开 flags 复用 ccswitch_source）；映射为纯函数（无 IO / 无 DB / 无日志）。
 // apiKey 只作内存局部变量，写库一律走 ClaudeService::createProfile；本文件不写日志、不进错误文案。
 
 #pragma once

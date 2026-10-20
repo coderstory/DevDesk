@@ -19,9 +19,8 @@
 #      markdown_module / claude_module / settings_module）不得引用 module_agent/
 #      ——注册方不回依赖消费方。两侧判据都按「include 路径形态」= 带斜杠后缀匹配，
 #      注释里不带斜杠的模块名不算违规。
-#   D. module_home 只经 src/quota_home_bridge.h 这个中立头读 claude 侧数据：不得
-#      include 兄弟模块头、不得定义/打开 `namespace module::claude`、顶层链接表里
-#      devdesk_module_home 必须排在 devdesk_module_claude_proxy **之前**。
+#   D. module_home 隔离组断言已随中立桥摘除一并移除：home 侧自此零跨模块依赖、
+#      库自洽，链接序断言依据消失。
 #
 # 退出码：0 = 通过；1 = 违规（逐条打印 文件:行:命中行）；2 = 环境错（不得静默绿）
 #
@@ -140,46 +139,6 @@ if [ "$SELF_TEST" -eq 1 ]; then
         fail=1
     fi
 
-    new_tree home_include_sibling
-    for f in "$TMP/home_include_sibling"/src/module_home/*.cpp \
-             "$TMP/home_include_sibling"/src/module_home/*.h; do
-        [ -f "$f" ] || continue
-        printf '%s\n' '#include "module_claude_proxy/quota/quota_store.h"' >> "$f"
-    done
-    assert_red home_include_sibling "module_home include 兄弟模块头（D7）"
-
-    new_tree home_namespace_claude
-    for f in "$TMP/home_namespace_claude"/src/module_home/*.cpp \
-             "$TMP/home_namespace_claude"/src/module_home/*.h; do
-        [ -f "$f" ] || continue
-        printf '%s\n' 'namespace module::claude { struct SelfTestProbe {}; }' >> "$f"
-    done
-    assert_red home_namespace_claude "module_home 往 module::claude 里加东西（D8）"
-
-    new_tree link_order
-    awk '
-        { L[NR] = $0 }
-        END {
-            h = 0; p = 0
-            for (i = 1; i <= NR; i++) {
-                if (!h && L[i] ~ /devdesk_module_home[ \t]*$/) { h = i; hl = L[i] }
-                if (!p && L[i] ~ /devdesk_module_claude_proxy[ \t]*$/) { p = i; pl = L[i] }
-            }
-            if (!h || !p) exit 3
-            for (i = 1; i <= NR; i++) {
-                if (i == h) print pl
-                else if (i == p) print hl
-                else print L[i]
-            }
-        }
-    ' "$TMP/link_order/CMakeLists.txt" > "$TMP/cm.tmp" 2>/dev/null \
-        && cat "$TMP/cm.tmp" > "$TMP/link_order/CMakeLists.txt"
-    assert_red link_order "顶层链接顺序颠倒 home < claude_proxy（D9）"
-
-    new_tree link_missing_home
-    sed_i "$TMP/link_missing_home/CMakeLists.txt" '/devdesk_module_home[ \t]*$/d'
-    assert_red link_missing_home "链接表里缺 devdesk_module_home，守卫看不见自己要守的东西（D9 抽取失配）"
-
     new_tree agent_include_sibling
     for f in "$TMP/agent_include_sibling"/src/module_agent/*.cpp \
              "$TMP/agent_include_sibling"/src/module_agent/*.h; do
@@ -193,46 +152,19 @@ if [ "$SELF_TEST" -eq 1 ]; then
     assert_red tool_ref_agent "todo_tools 回依赖 module_agent（C6）"
 
     # 11) 反向证据：一棵「写法不同但合规」的树必须绿。删掉它，守卫就可能退化成
-    #     刷屏器。刻意做三件「像整理、但合规」的事：① module_home 里加注释，注释里
-    #     **故意提到兄弟模块裸名**（判据按 include 路径形态 = 带斜杠后缀匹配，不是
-    #     按子串，裸名不误报）；② 顶层链接表里把与本不变式无关的两个库换序；
-    #     ③ 改写 settings_module.cpp 的 include 顺序。
+    #     刷屏器。刻意做一件「像整理、但合规」的事：settings_module.cpp 里加注释，
+    #     注释里**故意提到兄弟模块裸名**（判据按 include 路径形态 = 带斜杠后缀匹配，
+    #     不是按子串，裸名不误报）。
     new_tree benign_style
-    for f in "$TMP/benign_style"/src/module_home/*.cpp; do
-        [ -f "$f" ] || continue
-        {
-            printf '\n'
-            printf '%s\n' '// 读法说明：本卡经 src/quota_home_bridge.h 这个中立头读 claude 侧数据。'
-            printf '%s\n' '// 注释里提到 module_claude_proxy / module_pet 这类裸名不算违规——'
-            printf '%s\n' '// 判据按 include 路径形态（带斜杠后缀）匹配，不是按子串。'
-        } >> "$f"
-    done
-    printf '%s\n' '// 说明：本模块不依赖 module_pet。' \
-        >> "$TMP/benign_style/src/module_settings/settings_module.cpp"
-    awk '
-        { L[NR] = $0 }
-        END {
-            h = 0; p = 0
-            for (i = 1; i <= NR; i++) {
-                if (!h && L[i] ~ /devdesk_module_markdown[ \t]*$/) { h = i; hl = L[i] }
-                if (!p && L[i] ~ /devdesk_module_todo[ \t]*$/) { p = i; pl = L[i] }
-            }
-            if (!h || !p) exit 3
-            for (i = 1; i <= NR; i++) {
-                if (i == h) print pl
-                else if (i == p) print hl
-                else print L[i]
-            }
-        }
-    ' "$TMP/benign_style/CMakeLists.txt" > "$TMP/cm.tmp" 2>/dev/null \
-        && cat "$TMP/cm.tmp" > "$TMP/benign_style/CMakeLists.txt"
-    assert_green benign_style "写法不同但合规：注释含裸模块名 + 无关库换序 + 追加说明"
+    printf '%s
+' '// 说明：本模块不依赖 module_pet。' \n        >> "$TMP/benign_style/src/module_settings/settings_module.cpp"
+    assert_green benign_style "写法不同但合规：注释含裸模块名"
 
     if [ "$fail" -ne 0 ]; then
         echo "❌ --self-test 失败：守卫不能自证有效" >&2
         exit 1
     fi
-    echo "✅ --self-test 通过：好树绿 / 6 棵坏树各红 / 反向树绿 —— 非恒真"
+    echo "✅ --self-test 通过：好树绿 / 2 棵坏树各红 / 反向树绿 —— 非恒真"
     exit 0
 fi
 
@@ -323,53 +255,10 @@ for tool_file in "$ROOT/src/module_todo/todo_tools.h" \
     check_absent_fixed "$tool_file" 'module_agent/'
 done
 
-# D：module_home 隔离。首页余量卡经 src/quota_home_bridge.h 中立头读 claude 侧数据，
-#   链接层面 devdesk_module_home 确实有两个未定义符号落在
-#   devdesk_module_claude_proxy 里（nm -u 实测）。include 层中立、链接层由最终目标
-#   兜住，**代价是这个库不自洽**，两条破坏路径都是「只有出事才看得见」的类型：
-#     ① 谁把兄弟模块头 include 进 module_home/ → 依赖形状悄悄变了，无人报警
-#     ② 谁把链接表整理成字母序 → 两个符号 undefined
-HOME_DIR="$ROOT/src/module_home"
-[ -d "$HOME_DIR" ] || { echo "环境错误：目录不存在: $HOME_DIR" >&2; exit 2; }
-home_files=0
-for home_file in "$HOME_DIR"/*.h "$HOME_DIR"/*.cpp; do
-    [ -f "$home_file" ] || { echo "环境错误：module_home 源文件缺失: $home_file" >&2; exit 2; }
-    home_files=$((home_files + 1))
-    for sibling in module_markdown module_todo module_claude_proxy \
-                   module_settings module_agent; do
-        check_absent_fixed "$home_file" "${sibling}/"
-    done
-    # 不得打开/定义 module::claude 命名空间：home 只能**消费**中立头里的类型与
-    # 自由函数，`module::claude::quota::X` 调用形是允许的（那只是消费）。
-    check_absent_fixed "$home_file" 'namespace module::claude'
-done
-[ "$home_files" -gt 0 ] || { echo "环境错误：module_home 下零个源文件" >&2; exit 2; }
-
-# 链接顺序。静态库链接顺序敏感 —— devdesk_module_home 排在
-# devdesk_module_claude_proxy **之后**时，quota_home_bridge 的两个桥符号
-#（listQuotaHomeRows / requestQuotaImmediateRefresh）undefined，构建期红。
-# **不要把顶层链接表整理成字母序**：home < claude_proxy 本来就不是字母序，
-# 被打破文件里的注释挡不住这次改动，所以才写成断言。
-TOP_CMAKE="$ROOT/CMakeLists.txt"
-[ -f "$TOP_CMAKE" ] && [ -r "$TOP_CMAKE" ] \
-    || { echo "环境错误：不可读 $TOP_CMAKE" >&2; exit 2; }
-read -r _home_line _proxy_line <<< "$(awk '
-    /devdesk_module_home[ \t]*$/ && !ln_h { ln_h = FNR }
-    /devdesk_module_claude_proxy[ \t]*$/ && !ln_p { ln_p = FNR }
-    END { printf "%s %s", (ln_h ? ln_h : 0), (ln_p ? ln_p : 0) }
-' "$TOP_CMAKE")"
-if [ "$_home_line" -eq 0 ] || [ "$_proxy_line" -eq 0 ]; then
-    # 两个库任一不在顶层链接表里 → 抽取失配，报红而非静默绿：守卫看不见自己
-    # 要守的东西，那也是假绿。
-    report "$(rel "$TOP_CMAKE"):0:链接表里找不到 devdesk_module_home($_home_line)/devdesk_module_claude_proxy($_proxy_line) —— 链接顺序不变式无法断言（守卫失准）"
-elif [ "$_home_line" -ge "$_proxy_line" ]; then
-    report "$(rel "$TOP_CMAKE"):${_proxy_line}:devdesk_module_home（第 ${_home_line} 行）必须排在 devdesk_module_claude_proxy（第 ${_proxy_line} 行）**之前** —— 静态库链接顺序敏感，颠倒即 listQuotaHomeRows / requestQuotaImmediateRefresh undefined"
-fi
-
 if [ "$VIOLATIONS" -gt 0 ]; then
     echo "❌ 模块隔离守卫失败：$VIOLATIONS 处违规（上方 文件:行:命中行）" >&2
     exit 1
 fi
 
-echo "✅ 模块隔离守卫通过（settings_module.cpp 无兄弟模块依赖；CMakeLists 未 link 兄弟模块；module_agent 零兄弟 include 且工具方不回依赖；module_home ${home_files} 个源文件零兄弟 include、零 namespace module::claude 定义、链接顺序 home<claude_proxy）"
+echo "✅ 模块隔离守卫通过（settings_module.cpp 无兄弟模块依赖；CMakeLists 未 link 兄弟模块；module_agent 零兄弟 include 且工具方不回依赖）"
 exit 0

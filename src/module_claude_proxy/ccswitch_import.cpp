@@ -3,8 +3,8 @@
 #include "ccswitch_import.h"
 
 #include "provider_config.h"
-#include "quota/ccswitch_source.h"
-#include "quota/ccswitch_sqlite.h"  // 与 quota/ccswitch_source.cpp 共用的读取脚手架
+#include "ccswitch_source.h"
+#include "ccswitch_sqlite.h"  // 与 ccswitch_source.cpp 共用的读取脚手架
 
 #include <sqlite3.h>
 
@@ -23,19 +23,19 @@ namespace module::claude {
 
 namespace {
 
-using quota::ccSwitchDbPath;
-using quota::ccswitch_sqlite::columnText;
-using quota::ccswitch_sqlite::DbHandle;
-using quota::ccswitch_sqlite::hasColumn;
-using quota::ccswitch_sqlite::OpenStatus;
-using quota::ccswitch_sqlite::openReadOnly;
-using quota::ccswitch_sqlite::providerColumns;
-using quota::ccswitch_sqlite::sqliteError;
-using quota::ccswitch_sqlite::StmtHandle;
+using ccswitch::ccSwitchDbPath;
+using ccswitch_sqlite::columnText;
+using ccswitch_sqlite::DbHandle;
+using ccswitch_sqlite::hasColumn;
+using ccswitch_sqlite::OpenStatus;
+using ccswitch_sqlite::openReadOnly;
+using ccswitch_sqlite::providerColumns;
+using ccswitch_sqlite::sqliteError;
+using ccswitch_sqlite::StmtHandle;
 
 // wrapper：模板参数 ListT 只在返回类型里，无法推导。
 CcSwitchImportRows unavailable(CcSwitchImportStatus status, std::string reason) {
-    return quota::ccswitch_sqlite::makeUnavailable<CcSwitchImportRows>(
+    return ccswitch_sqlite::makeUnavailable<CcSwitchImportRows>(
         status, std::move(reason));
 }
 
@@ -55,7 +55,7 @@ bool isReservedEnvKey(const std::string& key) {
            key == kEnvModel;
 }
 
-// 读侧（sqlite 骨架来自 quota/ccswitch_sqlite.h）
+// 读侧（sqlite 骨架来自 ccswitch_sqlite.h）
 
 CcSwitchImportRows readAll() {
     const std::string path = ccSwitchDbPath();

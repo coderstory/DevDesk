@@ -129,4 +129,15 @@ core::Result<void> addMissingAgentColumns(core::data::SqliteDb& db) {
     return core::Result<void>::ok();
 }
 
+core::Result<void> dropRemovedTables(core::data::SqliteDb& db) {
+    // 已摘除功能的遗留表（老库启动即清）。必须逐条 DROP 且保持 IF EXISTS：
+    // 新库没有这些表，缺 IF EXISTS 会让全新库第一次 migrate 就红。
+    // 无外键指向这些表、无任何读方——删除不可逆但无副作用。
+    auto r1 = db.exec("DROP TABLE IF EXISTS profile_quota_config");
+    if (r1.isFail()) return r1;
+    auto r2 = db.exec("DROP TABLE IF EXISTS profile_quota_result");
+    if (r2.isFail()) return r2;
+    return core::Result<void>::ok();
+}
+
 } // namespace core::schema

@@ -71,9 +71,6 @@ struct SettingsConfig {
     int logRetentionDays = 30;     // 0 = 永久保留
     // false 时 main 只注册单例、不拉起 8888。
     bool claudeProxyAutoStart = false;
-    // false 时供应商余量整组功能对用户不可见（首页卡隐藏、配置入口消失、后台刷新不启动）。
-    // 默认关闭：用户主动开启才启用余量查询。关闭不删数据库里的配额表/数据/已配供应商引用。
-    bool quotaEnabled = false;
     // Claude 代理监听端口：非法值回落默认 8888；运行中改端口自动 stop→start 重启。
     int proxyPort = kDefaultProxyPort;
     // 窗口效果："off"|"translucent"|"frosted"，未知值收敛 off。

@@ -1,4 +1,4 @@
-// src/module_claude_proxy/quota/ccswitch_source.cpp
+// src/module_claude_proxy/ccswitch_source.cpp
 // 从 cc-switch 只读读取 Claude 供应商配置（不复制密钥）。
 // base_url 匹配用 host 完全相等 + path 相等（非裸 contains）。
 // 主目录探测 HOME / USERPROFILE / HOMEDRIVE+HOMEPATH，不写平台宏。
@@ -22,7 +22,7 @@
 #include "core/logging.h"
 #include "platform/json.h"
 
-namespace module::claude::quota {
+namespace module::claude::ccswitch {
 namespace {
 
 constexpr char kDbPathEnv[] = "CCSWITCH_DB_PATH";
@@ -109,11 +109,6 @@ platform::json::JsonObject parseObject(const std::string& text) {
     return value.asObject();
 }
 
-std::string stringField(const platform::json::JsonObject& object, const char* key) {
-    const platform::json::JsonValue value = object.get(key);
-    return value.isString() ? value.asString() : std::string();
-}
-
 std::string trimTrailingSlashes(std::string text) {
     while (!text.empty() && text.back() == '/') text.pop_back();
     return text;
@@ -141,16 +136,6 @@ std::pair<std::string, std::string> resolveEnvCredentials(
     return {baseUrl, apiKey};
 }
 
-// meta.usage_script → usage 字段；NULL / 非法 JSON / 缺键都当「没配」，逐字段退化而非整行丢。
-void fillUsageScript(CcSwitchProviderInfo* info, const std::string& meta) {
-    const platform::json::JsonValue script = parseObject(meta).get("usage_script");
-    if (!script.isObject()) return;
-    const platform::json::JsonObject usage = script.asObject();
-    info->codingPlanProvider = stringField(usage, "codingPlanProvider");
-    info->accessKeyId = stringField(usage, "accessKeyId");
-    info->secretAccessKey = stringField(usage, "secretAccessKey");
-}
-
 CcSwitchProviderList readAll() {
     const std::string path = ccSwitchDbPath();
     DbHandle db;
@@ -176,8 +161,7 @@ CcSwitchProviderList readAll() {
 
     const std::string sql =
         "SELECT id, " + columnOrNull(columns, "name") + ", " +
-        columnOrNull(columns, "settings_config") + ", " +
-        columnOrNull(columns, "meta") + " FROM providers WHERE app_type = ?";
+        columnOrNull(columns, "settings_config") + " FROM providers WHERE app_type = ?";
     sqlite3_stmt* rowStmt = nullptr;
     if (sqlite3_prepare_v2(db.get(), sql.c_str(), -1, &rowStmt, nullptr) != SQLITE_OK) {
         return unavailable(CcSwitchSourceStatus::Schema,
@@ -198,7 +182,6 @@ CcSwitchProviderList readAll() {
             resolveEnvCredentials(columnText(stmt.get(), 2));
         info.baseUrl = credentials.first;
         info.apiKey = credentials.second;
-        fillUsageScript(&info, columnText(stmt.get(), 3));
         out.providers.push_back(std::move(info));
     }
     if (step != SQLITE_DONE) {
@@ -248,4 +231,4 @@ std::string matchCcSwitchProviderByBaseUrl(const std::string& baseUrl) {
     return {};
 }
 
-}  // namespace module::claude::quota
+}  // namespace module::claude::ccswitch

@@ -40,8 +40,6 @@ struct DetailView {
     std::vector<std::pair<std::string, std::string>> extraSettingsKeys;
     std::string extraSettingsNote;
     // 没有 bodyH 字段：行数预算一律用 contentBottom（真实裁剪下沿）。
-    // 余量功能总开关：false 时不渲染「余量查询」按钮入口
-    bool quotaEnabled = false;
 };
 
 // 生效来源短标签（compose 装配与 pane 共用的单一来源）：三类来源 → 中文标签
@@ -62,9 +60,6 @@ struct DetailActions {
     std::function<void(const Profile& p)> test;                      // 测试连通
     std::function<void(const Profile& p)> edit;                      // 编辑
     std::function<void(int64_t id)> run;                             // 运行
-    // 余量查询弹窗（第 5 键，常驻）：入参 = profile id，弹窗自己负责配置/测试/保存。
-    // 不因「还没配置」而不渲染。
-    std::function<void(int64_t id)> quota;
     std::function<void()> openCalls;                                 // 「查看全部 →」
     // 模型映射 pane 的「1M」开关落库：入参 = profile id + 槽位表下标（表序）+ 目标状态。
     // 只有可用行（支持 1M 且 base 非空）会触发（其余置灰不挂 onChange）。

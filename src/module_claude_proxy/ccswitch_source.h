@@ -1,6 +1,5 @@
-// src/module_claude_proxy/quota/ccswitch_source.h
+// src/module_claude_proxy/ccswitch_source.h
 // 从 cc-switch 只读读取 Claude 供应商配置；密钥只在内存过一手，不落库、不落日志、不进文案。
-// 只存 cc-switch 的 provider id 作引用、现读现取：改了 key / base_url 下次查询即生效。
 // 只读硬约束：恒 SQLITE_OPEN_READONLY，不 CREATE、不写 schema、不动 -wal/-shm、不用读写连接。
 // 失败语义：库不存在 / 打不开 / 表结构不认识 / JSON 字段坏 → 不抛异常，返回空列表 + 面向用户的原因；缺字段一律当空值退化。
 #pragma once
@@ -8,21 +7,16 @@
 #include <string>
 #include <vector>
 
-namespace module::claude::quota {
+namespace module::claude::ccswitch {
 
 // 一个 cc-switch Claude 供应商在 DevDesk 侧需要的全部信息：
 struct CcSwitchProviderInfo {
     std::string id;     // cc-switch providers.id（DevDesk 侧只存这个，当引用）
     std::string name;   // 展示名（providers.name）
-    // 推理 base_url（ANTHROPIC_BASE_URL，去尾斜杠），用于自动匹配。不是 usage_script.baseUrl——后者是余量端点覆盖，可能是另一个域，拿它匹配会匹配错。
+    // 推理 base_url（ANTHROPIC_BASE_URL，去尾斜杠），用于自动匹配（host+path 精确比对）。
     std::string baseUrl;
     // 推理密钥：ANTHROPIC_AUTH_TOKEN → ANTHROPIC_API_KEY → OPENROUTER_API_KEY → GOOGLE_API_KEY 取第一个非空串（同 first_non_empty）。仅内存。
     std::string apiKey;
-    // usage_script.codingPlanProvider（如 "opencode_go" / "minimax" / "volcengine"）；没配 = 空串。
-    std::string codingPlanProvider;
-    // usage_script 的 accessKeyId / secretAccessKey：火山方舟控制面 OpenAPI 的签名凭据，与推理 key 是两套。仅内存。
-    std::string accessKeyId;
-    std::string secretAccessKey;
 };
 
 // 来源不可用分类；Ok 之外都是「读不到」，区别在文案与排查方向：
@@ -55,4 +49,4 @@ std::string matchCcSwitchProviderByBaseUrl(const std::string& baseUrl);
 // 暴露是因为 SQLite 拿不到 O_RDWR 时会静默降级成只读，「权限 + 内容没变」区分不出，单测只能直接问这个常量。
 extern const int kCcSwitchOpenFlags;
 
-}  // namespace module::claude::quota
+}  // namespace module::claude::ccswitch

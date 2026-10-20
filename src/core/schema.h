@@ -162,66 +162,6 @@ inline constexpr const char* kSql = R"(
         extra_settings_json TEXT NOT NULL DEFAULT ''
     );
 
-    -- 逐 profile 一行配置 + 逐 profile 一行最近结果。
-    --
-    -- profile_quota_config：**provider_id 空串 = 未配置**（不是「配了但没选
-    -- 供应商」）——「未配置」态判据就是这一列为空，别改成 NULL 表达。
-    -- extra_json 存 fields() 里 **非 secret** 键的 JSON 对象原文；secrets_json
-    -- 存 secret 键的同名结构（**明文入库前必过 platform::credential::protect**，
-    -- 与 api_key_encrypted 复用同一对函数；POSIX 恒等 + 文件 0600，Windows
-    -- DPAPI 密文 hex）。两者空串 = 该供应商不吃额外字段（沿用 profile 凭据）。
-    -- auto_refresh / interval_minutes 只在 enabled=1 时被定时器读；interval 0 或
-    -- 负 = 「到点即刷」（每次 tick 都算到期），便于测试与「手动刷新档」表达。
-    --
-    -- **ccswitch_provider_id**：用户选了 cc-switch 里某条
-    -- Claude 供应商时**只存这个引用**，绝不把它那份 AK/SK 复制进本表
-    -- （ccswitch_source.h 的「引用而非复制」纪律在此落库侧兑现）。查询时由
-    -- CcSwitchQuotaCredentialSource 现读现取——用户在 cc-switch 改 key /
-    -- 换 base_url，DevDesk 下一次查询立刻生效。空串 = 没走 cc-switch，
-    -- 凭据来自 extra_json / secrets_json（手填）。
-    CREATE TABLE IF NOT EXISTS profile_quota_config (
-        profile_id INTEGER PRIMARY KEY,
-        provider_id TEXT NOT NULL DEFAULT '',
-        extra_json TEXT NOT NULL DEFAULT '',
-        secrets_json TEXT NOT NULL DEFAULT '',
-        ccswitch_provider_id TEXT NOT NULL DEFAULT '',
-        enabled INTEGER NOT NULL DEFAULT 0,
-        auto_refresh INTEGER NOT NULL DEFAULT 1,
-        interval_minutes INTEGER NOT NULL DEFAULT 15
-    );
-
-    -- profile_quota_result：定时器 / 手动刷新落下的最近一次结果。
-    --   kind              "tiered" / "balance"（QuotaKind 名）；空串 = 从未成功过
-    --   windows_json      QuotaWindow 数组的 JSON 原文（编解码单点在
-    --                      quota_store 的 encodeQuotaWindows / decodeQuotaWindows）
-    --   last_error_kind   QuotaError 名（UI 据此选文案）；"none" = 当前无错
-    --
-    -- **fetched_at 与 last_success_at 是两列，不是一列**：
-    --   fetched_at      = 最近一次**尝试**（成败都推进）。定时器用它判到期——
-    --                     若用「上次成功」，一次持续失败会每个 tick 重打供应商
-    --                     = 重试风暴。
-    --   last_success_at = 最近一次**成功**（失败不推进）。UI 用它显示「数据时间」。
-    -- 合成一列会让 UI 在一次 Transient 失败后显示自相矛盾的话：15 分钟前的
-    -- 数字 + 「刚刚查询过」。
-    --
-    -- **「从未成功过」的可分辨性（本表最重要的一条不变量）**：失败落库时
-    -- kind 保持空串、windows_json 保持空、balance_remaining 保持 0，绝不写
-    -- 假的 0% ——UI 靠「kind 空 + last_error_kind 非 none」区分「失败且从未
-    -- 成功」（只渲染错误行）与「有旧值 + 可能过期」。Transient 走另一条路：
-    -- 保留上次成功值、只更新 last_error / last_error_kind。
-    CREATE TABLE IF NOT EXISTS profile_quota_result (
-        profile_id INTEGER PRIMARY KEY,
-        kind TEXT NOT NULL DEFAULT '',
-        windows_json TEXT NOT NULL DEFAULT '',
-        balance_remaining REAL NOT NULL DEFAULT 0,
-        currency TEXT NOT NULL DEFAULT '',
-        plan_name TEXT NOT NULL DEFAULT '',
-        fetched_at INTEGER NOT NULL DEFAULT 0,
-        last_success_at INTEGER NOT NULL DEFAULT 0,
-        last_error TEXT NOT NULL DEFAULT '',
-        last_error_kind TEXT NOT NULL DEFAULT ''
-    );
-
     -- 手动触发的 agent run 三表：任务定义 / 运行实例 / 消息审计。
     -- FK ON DELETE CASCADE：删任务清 runs，删 run 清 messages（审计链随宿主走，
     -- 不留孤儿运行）。content_json 存 Anthropic content blocks 数组原文。
@@ -382,5 +322,9 @@ inline constexpr const char* kSql = R"(
 // 幂等（列已存在则跳过）；表不存在则无操作（IF NOT EXISTS 已在 applySchema 里建全）。
 // 为什么不能靠 CREATE IF NOT EXISTS：IF NOT EXISTS 对已存在表跳过，加列只影响新库（本 bug 根因）。
 core::Result<void> addMissingAgentColumns(core::data::SqliteDb& db);
+
+// 已摘除功能的遗留表清理：幂等 DROP TABLE IF EXISTS（表不在 = 零操作）。
+// 表已不在 DDL 里，但老库启动会带着它们；无外键指向、无读方，删了安全。
+core::Result<void> dropRemovedTables(core::data::SqliteDb& db);
 
 } // namespace core::schema

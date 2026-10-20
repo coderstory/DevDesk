@@ -3,8 +3,8 @@
 // 打真 GitHub API，断言 + 打印结构化结果。
 //
 // 为什么不进 CMake / 不进默认门禁：真网络 + 真 token + 真远端仓库，CI 与离线
-// 环境必红。编译与运行入口见 scripts/run-ghsync-live.sh（形态与
-// tools/quota_live_probe.cpp 一致：手工链接已构建的静态库，不碰 configure 缓存）。
+// 环境必红。编译与运行入口见 scripts/run-ghsync-live.sh（手工链接已构建的静态库，
+// 不碰 configure 缓存）。
 //
 // 凭据纪律：token 只从 DEVDESK_GITHUB_TOKEN 环境变量读，只进 Authorization 头
 //（由 platform::github::GithubApi 保证），本文件不打印、不落盘、不进命令行。

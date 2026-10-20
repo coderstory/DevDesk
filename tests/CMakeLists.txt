@@ -85,19 +85,7 @@ add_executable(devdesk_tests
     test_modules/test_claude_service.cpp
     test_modules/test_credential_storage.cpp
     test_modules/test_claude_tools.cpp
-    test_modules/test_claude_quota.cpp
-    test_modules/test_claude_quota_ccswitch.cpp
     test_modules/test_ccswitch_import.cpp
-    test_modules/test_claude_quota_dialog.cpp
-    test_modules/test_claude_quota_minimax.cpp
-    test_modules/test_claude_quota_store.cpp
-    test_modules/test_claude_quota_volcano.cpp
-    test_modules/test_claude_quota_live_fixtures.cpp
-    test_modules/test_claude_quota_lifecycle.cpp
-    # 「真机探针绝不进默认门禁」的**默认门禁里跑的**代码断言。
-    # 此前 tests/CMakeLists.txt 与 scripts/run-quota-live-probe.sh 都声称
-    # 「由本文件守门」，而文件不存在（静态审计 B2）。补上，注释才变成真的。
-    test_modules/test_probe_gate_labels.cpp
     test_modules/test_provider_config.cpp
     test_modules/test_settings_sync.cpp
     test_modules/test_claude_ui.cpp
@@ -108,7 +96,6 @@ add_executable(devdesk_tests
     test_modules/test_streaming_stress.cpp
     test_modules/test_upstream_dialect.cpp
     test_modules/test_home.cpp
-    test_modules/test_home_quota_card.cpp
     test_modules/test_github_sync_card.cpp
     test_modules/test_github_sync_engine.cpp
     test_modules/test_github_sync_logic.cpp
@@ -239,8 +226,8 @@ add_test(NAME devdesk_unit_tests COMMAND devdesk_tests)
 #  逐条重复，且其中 2 个还被刻意设计成「当前必红」当 TODO 清单用，红灯混在门禁
 #  里会淹没真信号。留下的 4 个各有独占判据，见 CLAUDE.md「功能开发生命周期」。）
 # devdesk_tests 不引用任何 probes/*.cpp（TIN-10 也把 probes/ 排除在用例核对
-# 外），整段包进开关不影响单测；quota_live_probe 在本段之外（它是 bash 脚本
-# 测试、LABELS "live"，没有编译成本，也不该跟着消失）。
+# 外），整段包进开关不影响单测；live 类测试（LABELS "live"）不靠 GLOB 注册、
+# 也不受本开关影响，见下方各自专段。
 option(DEVDESK_BUILD_PROBES "构建 UI probe 可执行（无 GUI 环境如 CI 设 OFF，省 12 个可执行的编译链接时长）" ON)
 if(DEVDESK_BUILD_PROBES)
 file(GLOB _devdesk_probe_sources CONFIGURE_DEPENDS
@@ -319,9 +306,8 @@ foreach(_probe_source ${_devdesk_probe_sources})
     # home 的短窗尺寸档（2026-10-03 final 批；设计最小窗 2026-10-20 UAT2 收窄为
     # 1280×800 逻辑（main.cpp:492-493 kMinWindowLogical*），1200×720 是 spec
     # 早期过期值——本档刻意**低于**一切真实下限（最低真实档 = Windows@125%
-    # 有效 778），作守护性深档）。默认那条按
-    # 1200×1000 跑，而「矮窗下余量卡画不画」在 1000 高的旧实现也画 → 只跑
-    # 默认档恒真。组 K 的多档无头 compose 让每条注册档都覆盖 845 刀口/800 设计/
+    # 有效 778），作守护性深档）。默认那条按 1200×1000 跑，矮窗行为只跑默认档
+    # 验不全。组 K 的多档无头 compose 让每条注册档都覆盖 845/800 设计/
     # 778 Windows 有效/700 守护四档真实/合成高度；本条额外保留「真实窗口 + 真实滚动管线」在 720 下的整跑。
     if(_probe_name STREQUAL "home_probes")
         add_test(NAME ${_probe_name}_min_window
@@ -334,34 +320,11 @@ foreach(_probe_source ${_devdesk_probe_sources})
 endforeach()
 endif()
 
-# ==================== 真机出网探针（**默认门禁之外**，2026-10-03）============
-# 走真网络 + 需要用户本机 ~/.cc-switch/cc-switch.db + 每次实打实打四家供应商
-# 接口 → 绝不能进任何默认门禁（CI / 离线环境必红，且别的机器上没有凭据）。
-#
-# 但「跑它要打一长串编译命令」不可持续（G8 遗留 4：入口只有 .cpp 文件头那段
-# 手敲命令，而那段命令在 macOS 上照抄会直接 link 失败——漏了 yyjson 目标与
-# openssl 路径）。于是给一条**显式入口**：
-#     bash scripts/run-quota-live-probe.sh [--dump <path>] [provider_id ...]
-#     (cd build && ctest -L live)
-#
-# LABELS 只有 **live**、**没有 probe** —— 门禁跑的是 `ctest -L probe`，看不到它。
-# 「绝不进默认门禁」由**两个独立的代码实现**守住（改坏任一个另一个仍报警）：
-#   ① scripts/check-probe-gate-labels.sh（awk 状态机，build-test-run.sh 串跑）
-#   ② tests/test_modules/test_probe_gate_labels.cpp（本文件下一段的单测，进全量）
-# 两者解析路径刻意不同（awk vs C++ 逐行扫）：一个的解析逻辑被改坏时，另一个
-# 仍是有效信号。**不是靠注释保证** —— 那句注释曾经声称有个不存在的文件在守。
-if(UNIX)
-    add_test(NAME quota_live_probe
-        COMMAND bash "${CMAKE_SOURCE_DIR}/scripts/run-quota-live-probe.sh"
-            "${CMAKE_BINARY_DIR}")
-    set_tests_properties(quota_live_probe PROPERTIES LABELS "live")
-endif()
 # ==================== GitHub Sync 真机验收（**默认不构建**）====================
 # tests/live/github_sync_live.cpp 驱动真同步引擎打真 GitHub API：真网络 +
-# 真 PAT + 真远端仓，CI 与离线环境必红 —— 与 quota_live_probe 同一条红线。
+# 真 PAT + 真远端仓，CI 与离线环境必红，所以**默认门禁之外**、LABELS "live"。
 #
-# **为什么它走 CMake 而 quota_live_probe 不走**：那个探针只链 claude_proxy /
-# platform / core / ui_kit，手敲链接命令可行（脚本里那串就是）；本驱动要实例化
+# **为什么它走开关门控的 CMake 目标**：本驱动要实例化
 # SettingsModule（UI 模块），必须链 EUI-NEO 静态库 + macOS 系统框架 + freetype /
 # png / md4c / zlib 一整套 vendored 依赖 —— 手敲链接是纯负债。改为**开关门控的
 # CMake 目标**：默认 OFF → 默认构建 / CI / `ctest -L probe` 全都看不到它。
@@ -413,7 +376,7 @@ endif()
 # ==================== 智能体真机全场景验收（**默认不构建**）====================
 # tests/live/agent_live.cpp 驱动进程内 AgentLoop + DirectLlmClient 用**当前激活
 # profile 的真 key** 发真 LLM 请求跑场景矩阵 A-I —— 真网络 + 真凭据，CI 与离线
-# 环境必红，与 quota_live_probe 同一条红线。
+# 环境必红，同 github_sync_live 一类：live 目标默认不构建、不进任何门禁。
 #
 # **为什么整段包 DEVDESK_BUILD_LIVE_TOOLS && UNIX 双门**：目标链接 todo / markdown /
 # claude_proxy / settings / agent 五个模块库，默认 OFF → 默认构建 / CI / Windows
