@@ -8,7 +8,7 @@
 //     卡高 144、padX 16、最小窗口 1200 时 statW=208、统计格高 144
 //   - todo_module.cpp drawChip：chip 高 22、字号 fontSizeSmall-1；
 //     drawCard：title y=14、chip y=44、卡高 kCardHeight、列头 title y=16
-//   - app_sidebar.cpp：itemH 40、label 宽 200、brand 32px
+//   - app_sidebar.cpp：itemH 40、label 宽 200、brand 56px（UAT5 logo 48 行高 56）
 #include "doctest.h"
 
 #include <cmath>
