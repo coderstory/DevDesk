@@ -751,6 +751,7 @@ REGISTER_TEST(settings_log_dropdown_popup_stays_in_window, "settings: log dropdo
     const auto* popup = ui.find("settings.card.log.dd.popup");
     DOCTEST_REQUIRE(field != nullptr);
     DOCTEST_REQUIRE(popup != nullptr);
+    std::cerr << "DIAG:settings_popup_y=" << popup->frame.y << " field_y=" << field->frame.y << std::endl;
     DOCTEST_CHECK(popup->frame.y >= 0.0f);
     DOCTEST_CHECK(popup->frame.y + popup->frame.height <= screen.height);
     DOCTEST_CHECK(popup->frame.y + popup->frame.height <= field->frame.y);

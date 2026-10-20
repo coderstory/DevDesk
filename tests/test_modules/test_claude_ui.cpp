@@ -5933,6 +5933,7 @@ REGISTER_TEST(claude_calls_rows_by_available_height,
     while (ui2.find("claude.calls.t." + std::to_string(drawn)) != nullptr) {
         ++drawn;
     }
+    std::cerr << "DIAG:claude_drawn=" << drawn << std::endl;
     DOCTEST_CHECK_EQ(drawn, 13);
     DOCTEST_CHECK(ui2.find("claude.calls.t.13") == nullptr);   // 不画越界行
 

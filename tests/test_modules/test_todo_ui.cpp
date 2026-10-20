@@ -542,7 +542,8 @@ REGISTER_TEST(todo_ui_datepicker_default_today,
         DOCTEST_CHECK(frame.ui.find("todo.datepicker.panel") == nullptr);   // 确定即关
         const auto* pickText = frame.ui.find("todo.dialog.detail.due.pick.text");
         DOCTEST_REQUIRE(pickText != nullptr);
-        DOCTEST_CHECK_EQ(pickText->text, std::string(expectedDue));   // 表单 due=今天
+        std::cerr << "DIAG:datepicker expectedDue=" << expectedDue << " actual=" << (pickText ? pickText->text : "(null)") << std::endl;
+    DOCTEST_CHECK_EQ(pickText->text, std::string(expectedDue));   // 表单 due=今天
     }
 
     // ② 二次打开回锚点：先看远期卡（滚轮停 2027-03-15）→ 遮罩关 → 再开无截止卡，
@@ -674,7 +675,9 @@ REGISTER_TEST(todo_ui_newtask_dialog_plan_a,
 
         auto tasks = env.svc->listTasks(col.value().id);
         DOCTEST_REQUIRE(tasks.isOk());
+        std::cerr << "DIAG:todo_taskCount=" << tasks.value().size() << std::endl;
         DOCTEST_REQUIRE_EQ(tasks.value().size(), static_cast<size_t>(1));
+        if (tasks.value().empty()) { std::cerr << "DIAG:todo_taskListEmpty colId=" << col.value().id << std::endl; return true; }
         const module::todo::Task& row = tasks.value()[0];
         DOCTEST_CHECK_EQ(row.title, std::string("富创建任务"));
         DOCTEST_CHECK_EQ(row.description.value_or(""), std::string("补充说明文字"));

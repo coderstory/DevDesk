@@ -1062,7 +1062,9 @@ REGISTER_TEST(md_tree_panel_anim_frame_pump,
     DOCTEST_CHECK_EQ(edX, 40.0f + 240.0f + 16.0f);  // pad + 树宽 + gap（公式锚点）
     otoggle->onClick();  // 关
     frame();
-    DOCTEST_CHECK(ui.find("md.outline.panel.bg") == nullptr);
+    const auto* oPanel = ui.find("md.outline.panel.bg");
+    std::cerr << "DIAG:md_outline_panel=" << (oPanel ? "EXISTS" : "null") << std::endl;
+    DOCTEST_CHECK(oPanel == nullptr);
     DOCTEST_CHECK_EQ(ui.find("md.editor")->frame.x, edX);
     DOCTEST_CHECK_EQ(ui.find("md.editor")->frame.width, edW);
     for (int round = 0; round < 3; ++round) {
@@ -8064,6 +8066,7 @@ REGISTER_TEST(md_module_live_scroll_click_keeps_offset,
     // ③ 断案：滚动位置保持不变（未被点击归零）
     const auto* svPost = e.ui->find(kLiveScrollId0);
     DOCTEST_REQUIRE(svPost != nullptr);
+    std::cerr << "DIAG:md_scrollOffset=" << svPost->scrollOffset << std::endl;
     DOCTEST_REQUIRE_MESSAGE(
         std::fabs(svPost->scrollOffset - 200.0f) <= 4.0f,
         "点击后滚动未被重置。期望≈200 实测=" +
