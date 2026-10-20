@@ -292,6 +292,34 @@ REGISTER_TEST(direct_llm_client_opencode_dialect,
         DOCTEST_CHECK(cap.req.body.find(
             "\"model\":\"bailian/qwen3.8-max\"") != std::string::npos);
     }
+    // 标记家族全量回归（UAT5：旧「尾部恰为 [1M]」匹配漏掉的变体逐个钉住——
+    // 模型名含「[1M]」/任何「[」标记时，发出的请求 model 必须已截断）：
+    //   ① 小写 [1m]（cc-switch 大小写不定）② [200K]（非 1M 家族标记）
+    //   ③ 标记后还挂尾巴 ④ 标记前带空格 ⑤ 无标记纯 trim
+    {
+        struct MarkerCase {
+            const char* model;
+            const char* expect;
+        };
+        const MarkerCase cases[] = {
+            {"fangzhou/glm-5.3[1m]", "fangzhou/glm-5.3"},
+            {"glm-5.3[200K]", "glm-5.3"},
+            {"glm-5.3[1M]-preview", "glm-5.3"},
+            {"glm-5.3 [1M]", "glm-5.3"},
+            {"glm-5.3  ", "glm-5.3"},
+        };
+        for (const auto& c : cases) {
+            test_support::FakeProfileSource profile;
+            profile.profile.defaultModel = c.model;
+            Capture cap;
+            DOCTEST_REQUIRE(sendOnce(profile, cap).isOk());
+            const std::string expectModel = "\"model\":\"" + std::string(c.expect) + "\"";
+            DOCTEST_CHECK_MESSAGE(
+                cap.req.body.find(expectModel) != std::string::npos,
+                "模型名「" + std::string(c.model) + "」截断后应发出 " + expectModel +
+                    "，实测 body: " + cap.req.body.substr(0, 160));
+        }
+    }
     return true;
 })
 

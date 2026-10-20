@@ -143,25 +143,21 @@ bool isOpencodeZen(const core::LlmDirectProfile& profile) {
     return isOpencodeHost(hostOf(profile.baseUrl));
 }
 
-// 模型名剥尾部 [1M]（大小写不敏感、容忍标记前后空白）；未命中 → 原样返回
+// 模型名剥上下文标记：「[」及其后全截断（[1M]/[200K]/[1m] 等 cc-switch 客户端侧
+// 标记家族一网打尽），再 trim 尾部空白。网关一律不认这类后缀——漏剥表现为
+// model null / yyjson_read 失败（星锐/百炼/方舟实测）。无「[」→ 仅 trim 尾空白原样返回。
+// 2026-10-19 的旧实现只匹配「尾部恰为 [1M]」四字符，[200K] / 标记后还挂尾巴 /
+// 双标记等变体全部漏网（用户真机报「AI 草稿 yyjson_read 失败」）——按标记家族
+// 语义改为首个「[」处截断：真实模型 id 不含「[」，标记家族是唯一来源。
 std::string stripOneMSuffix(const std::string& model) {
-    constexpr const char* kMarker = "[1M]";
-    constexpr size_t kMarkerLen = 4;
     const auto trimEnd = [](const std::string& s) {
         size_t e = s.size();
         while (e > 0 && std::isspace(static_cast<unsigned char>(s[e - 1]))) --e;
         return s.substr(0, e);
     };
-    const std::string trimmed = trimEnd(model);
-    if (trimmed.size() < kMarkerLen) return model;
-    const size_t pos = trimmed.size() - kMarkerLen;
-    for (size_t k = 0; k < kMarkerLen; ++k) {
-        if (std::toupper(static_cast<unsigned char>(trimmed[pos + k])) !=
-            static_cast<unsigned char>(kMarker[k])) {
-            return model;
-        }
-    }
-    return trimEnd(trimmed.substr(0, pos));
+    const size_t cut = model.find('[');
+    if (cut == std::string::npos) return trimEnd(model);
+    return trimEnd(model.substr(0, cut));
 }
 
 // opencode 网关要求 x-opencode-session（缺失回 400 MissingSessionID）；
@@ -215,7 +211,8 @@ core::Result<core::LlmResponse> DirectLlmClient::send(
                           "」（该槽位未配置模型，请在 Claude 页补全）");
     }
     std::string modelId = id.value();
-    // [1M] 是客户端侧 1M 上下文标记，网关一律不认此后缀——漏剥即 model null（星锐/百炼实测）
+    // 上下文标记（[1M] 等）是客户端侧记号，网关一律不认——漏剥即 model null /
+    // yyjson_read 失败（星锐/百炼实测）；「[」及之后全截断，见 stripOneMSuffix 注释
     modelId = stripOneMSuffix(modelId);
     const bool opencode = isOpencodeZen(profile);
 
