@@ -227,7 +227,9 @@ REGISTER_TEST(claude_module_actions_row_alignment,
 // UAT2 #10 C 批布局回归锁（L-5，UAT2 一审）：状态组（dot+text+help）从 title row
 // 挪到 header 右侧 actions 区后——① 右对齐：status row 右缘 ≥ title row 右缘
 //（状态组贴 header 右端，title row 只占左段 contentW−360）；② wrapContent
-// 收缩：无服务态「已停止」≈39px，回退成旧 200px 固定宽盒 → 超 120 红。
+// 收缩：无服务态「已停止」≈39px，回退成旧 200px 固定宽盒 → 超 120 红；
+// ③ UAT5 页头内部 40 口径锁（toptrim 批点名跟进）：24+2+14 叠满 kHeaderH=40，
+// 防旧 28+6+16=50 内部布局回潮把副题底压进下方间隙。
 // headless 出 frame 须 ui.layout()，写法仿上一条。
 REGISTER_TEST(claude_module_header_status_geometry,
               "claude_module: header 状态组右对齐 + wrapContent 收缩（headless layout）", {
@@ -254,6 +256,16 @@ REGISTER_TEST(claude_module_header_status_geometry,
     DOCTEST_CHECK(statusRight >= titleRight);
     // ② wrapContent 收缩：上界 120 容「运行中 :port」动态变体（本用例为已停止态）
     DOCTEST_CHECK(statusText->frame.width <= 120.0f);
+    // ③ 页头内部 40 口径锁：标题行 24 + 间隙 2 + 副题 14，副题底恰落页头块底。
+    const auto* headerRow = ui.find("claude.header");
+    const auto* subtitle = ui.find("claude.subtitle");
+    DOCTEST_REQUIRE(headerRow != nullptr);
+    DOCTEST_REQUIRE(subtitle != nullptr);
+    DOCTEST_CHECK(floatEq(titleRow->frame.height, 24.0f));
+    DOCTEST_CHECK(floatEq(subtitle->frame.height, 14.0f));
+    DOCTEST_CHECK(floatEq(subtitle->frame.y - (titleRow->frame.y + titleRow->frame.height), 2.0f));
+    DOCTEST_CHECK(floatEq(subtitle->frame.y + subtitle->frame.height,
+                          headerRow->frame.y + headerRow->frame.height));
 
     mod->onStop();
     return true;
