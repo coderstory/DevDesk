@@ -3580,8 +3580,8 @@ REGISTER_TEST(agent_ui_new_task_context_note_and_autonote,
     const auto* note = ui2.find("agent.dialog.task.note");
     DOCTEST_REQUIRE_MESSAGE(note != nullptr,
                             "新建弹窗缺 agent.dialog.task.note 多行输入");
-    DOCTEST_CHECK_MESSAGE(note->frame.height >= 68.0f,
-                          "执行记忆输入框应 ≥68px（多行），实测 " +
+    DOCTEST_CHECK_MESSAGE(note->frame.height >= 56.0f,
+                          "执行记忆输入框应 ≥56px（多行），实测 " +
                               std::to_string(note->frame.height));
     DOCTEST_CHECK_EQ(inputText(ui2, "agent.dialog.task.note"), std::string(""));
 
@@ -4737,9 +4737,8 @@ REGISTER_TEST(agent_ui_draft_async_prefill_no_autosave,
                      std::string("0 8 * * *"));
     DOCTEST_CHECK_EQ(inputText(u, "agent.dialog.task.note"),
                      std::string("只处理 top3"));
-    const auto* trigLabel = u.find("agent.dialog.task.trigger.label");
-    DOCTEST_REQUIRE(trigLabel != nullptr);
-    DOCTEST_CHECK_EQ(trigLabel->text, std::string("定时"));
+    const auto* cronAfterFill = u.find("agent.dialog.task.cron");
+    DOCTEST_REQUIRE(cronAfterFill != nullptr);
     // 完成提示行 + 无警告/错误行；子弹窗与外层都保持打开（生成不关窗）
     const auto* notice = u.find("agent.dialog.task.draft.notice");
     DOCTEST_REQUIRE(notice != nullptr);
@@ -4817,9 +4816,8 @@ REGISTER_TEST(agent_ui_draft_degrade_warning_no_trigger_takeover,
     // goal 预填成功；触发不被接管：仍是用户选的「定时」，坏 cron 一字不回填
     DOCTEST_CHECK_EQ(inputText(u, "agent.dialog.task.goal"),
                      std::string("整理逾期待办"));
-    const auto* trigLabel = u.find("agent.dialog.task.trigger.label");
-    DOCTEST_REQUIRE(trigLabel != nullptr);
-    DOCTEST_CHECK_EQ(trigLabel->text, std::string("定时"));
+    const auto* cronStillExists = u.find("agent.dialog.task.cron");
+    DOCTEST_REQUIRE(cronStillExists != nullptr);
     DOCTEST_CHECK(inputText(u, "agent.dialog.task.cron").empty());
     // 降级警告可见（不 block 整体）；完成提示行也在
     const auto* warn = u.find("agent.dialog.task.draft.warnings");

@@ -4255,7 +4255,7 @@ REGISTER_TEST(todo_ui_esc_cancel_dialogs,
         // 草稿清空 → 输入框回 placeholder 显示；详情弹窗保持打开；标签未进草稿
         const auto* ph = frame.ui.find("todo.dialog.detail.tag.input.text");
         DOCTEST_REQUIRE(ph != nullptr);
-        DOCTEST_CHECK_EQ(ph->text, std::string("输入标签，回车添加…"));
+        DOCTEST_CHECK_EQ(ph->text, std::string("+ 添加标签，回车添加"));
         DOCTEST_CHECK_EQ(frame.ui.find("todo.dialog.detail.panel")->opacity, 1.0f);
         DOCTEST_CHECK(frame.ui.find("todo.dialog.detail.tag.0.bg") == nullptr);  // 草稿未成 chip
     }
