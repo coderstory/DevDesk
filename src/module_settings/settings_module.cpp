@@ -299,22 +299,6 @@ public:
                  ::core::theme::currentThemeName() + "）");
     }
 
-    void applyAccentTheme(int index) {
-        if (index < 0 || index >= kAccentPresetCount) return;
-        cfg_.accentTheme = kAccentPresetValues[index];
-        ::core::theme::Accent a;
-        if (cfg_.accentTheme == "purple")      a = ::core::theme::Accent::Purple;
-        else if (cfg_.accentTheme == "pink")   a = ::core::theme::Accent::Pink;
-        else if (cfg_.accentTheme == "blue")   a = ::core::theme::Accent::Blue;
-        else                                    a = ::core::theme::Accent::Clay;
-        ::core::theme::setAccent(a);
-        persist();
-        // 提示文案不带色名以避免 "clay" 这个内部名对用户无意义
-        const char* names[] = {"Claude 橙", "雾紫", "玫瑰粉", "QQ 蓝"};
-        setStatus(std::string("主题色：") + names[index] + "（即时生效）");
-        LOG_INFO("Settings: 强调色 → " + cfg_.accentTheme);
-    }
-
     void applyFontPreset(int index) {
         if (index < 0 || index >= kFontPresetCount) return;
         cfg_.fontScalePercent = kFontPresets[index];
@@ -1102,7 +1086,6 @@ private:
     SettingsCardActions cardActions() {
         SettingsCardActions a;
         a.applyThemeMode = [this](int idx) { applyThemeMode(idx); };
-        a.applyAccentTheme = [this](int idx) { applyAccentTheme(idx); };
         a.applyFontPreset = [this](int idx) { applyFontPreset(idx); };
         a.applyWindowEffect = [this](int idx) { applyWindowEffectPreset(idx); };
         a.applyModuleEnabled = [this](const std::string& moduleId, bool on) {

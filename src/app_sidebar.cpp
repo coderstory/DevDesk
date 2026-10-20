@@ -183,13 +183,11 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                     .onClick([router, page] { router->navigateTo(page); })
                     .build();
 
-                // active 态叠 SelectionBar（§4.3：2px 左绿竖线 + selectedBg + 文字）。
-                // 展开态传 displayName：文字被 icon+label 遮盖（视觉无影响，z 序 SelectionBar
-                // 在前、icon/label 在后盖之）；折叠态传空串避免文字溢出（图标居中无文字空间）
+                // active 态叠 SelectionBar（§4.3：2px 左绿竖线 + selectedBg）。
+                // selectionBar 不传文字——其 .text 节点 z 序浮在 icon/label 之上导致重叠；
+                // 文字由下方 .label 画（icon 同理）。selectionBar 只负责 bg + 左 2px 绿竖线。
                 if (active) {
-                    const std::string selLabel =
-                        collapsed ? std::string{} : m->displayName();
-                    ui_kit::selectionBar(ui, id + ".sel", selLabel,
+                    ui_kit::selectionBar(ui, id + ".sel", std::string{},
                                          padX, y, kWidth - padX * 2.0f, itemH, t);
                 }
 

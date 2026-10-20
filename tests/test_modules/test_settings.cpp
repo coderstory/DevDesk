@@ -1737,7 +1737,7 @@ REGISTER_TEST(settings_card_rows_scale_derived,
                           at(31.0f, 36.0f, 47.0f));
             if (err.empty())
                 err = pin("appearance 卡高", heightOf("settings.card.appearance"),
-                          at(211.0f, 248.0f, 322.0f));
+                          at(156.0f, 184.0f, 239.0f));
         } else if (tab == 1) {
             err = pin("modules.name.0 高",
                       heightOf("settings.card.modules.name.0"),
@@ -2829,7 +2829,7 @@ REGISTER_TEST(settings_ui_logic_equivalence,
     DOCTEST_CHECK_EQ(ms::kDropdownPopupGap, 8.0f);
     DOCTEST_CHECK_EQ(ms::kWindowBottomMargin, 16.0f);
     DOCTEST_CHECK_EQ(ms::kSettingsTabHeight, 40.0f);
-    DOCTEST_CHECK_EQ(ms::kAppearanceCardHeight, 248.0f);
+    DOCTEST_CHECK_EQ(ms::kAppearanceCardHeight, 184.0f);
     DOCTEST_CHECK_EQ(ms::kEditorFontCardHeight, 108.0f);
     DOCTEST_CHECK_EQ(ms::kModulesCardHeight, 344.0f);  // 4 行开关（agent 加入）
     // 目录卡加「数据根忽略规则（.gitignore）」路径行（新行 y=126 高 34，盒底 160 + 16 下边距）
