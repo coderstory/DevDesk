@@ -291,9 +291,10 @@ void drawClaudeHeader(eui::Ui& ui, float contentW, float headerH,
                 .size(contentW - kHeaderActionsW, headerH)
                 .gap(6.0f)
                 .content([&] {
+                    // UAT2 #10：title row 只留标题——状态组（dot+text+help）右对齐
+                    // 挪到 header 右侧「claude.actions」，text 盒不再固定 200px 宽
                     ui.row("claude.title.row")
                         .size(contentW - kHeaderActionsW, 28.0f)
-                        .gap(12.0f)
                         .alignItems(eui::Align::CENTER)
                         .content([&] {
                             ui.text("claude.h1")
@@ -303,36 +304,6 @@ void drawClaudeHeader(eui::Ui& ui, float contentW, float headerH,
                                 .lineHeight(32.0f)
                                 .fontWeight(700)
                                 .color(t.colors.wechat.textPrimary)
-                                .build();
-
-                            // §5 灰圆点「已停止」/ 绿圆点「运行中」（wechat 令牌，isProxyRunning 内存态）
-                            const eui::Color dotColor = proxyRunning
-                                ? t.colors.wechat.primary
-                                : t.colors.wechat.textTertiary;
-                            const std::string statusText = proxyRunning
-                                ? std::string("运行中 ") + portStr
-                                : std::string("已停止");
-                            ui.rect("claude.status.dot")
-                                .size(10.0f, 10.0f)
-                                .color(dotColor)
-                                .radius(5.0f)
-                                .build();
-                            ui.text("claude.status.text")
-                                .size(200.0f, 18.0f)
-                                .text(statusText)
-                                .fontSize(t.sizes.fontSizeSmall)
-                                .lineHeight(18.0f)
-                                .color(proxyRunning ? t.colors.wechat.primary
-                                                    : t.colors.wechat.textTertiary)
-                                .fontWeight(500)
-                                .build();
-                            // §5 页面说明长文本收帮助图标（0xF059 占位；EUI tooltip 待绑定）
-                            ui.text("claude.title.help")
-                                .size(16.0f, 18.0f)
-                                .icon(0xF059)
-                                .fontSize(t.sizes.fontSizeSmall)
-                                .lineHeight(18.0f)
-                                .color(t.colors.wechat.textTertiary)
                                 .build();
                         })
                         .build();
@@ -357,6 +328,51 @@ void drawClaudeHeader(eui::Ui& ui, float contentW, float headerH,
                 .alignItems(eui::Align::CENTER)
                 .gap(t.sizes.spacingSmall)
                 .content([&] {
+                    // UAT2 #10：状态组从 title row 挪到 header 右侧右对齐（与操作按钮
+                    // 同区）——原 text 盒 200px 固定宽，「已停止」只占几字致右侧大片
+                    // 空；改 wrapContent 按内容收缩（EUI 文本走真实字形测量，
+                    // 「已停止」≈39px、「运行中 :port」动态），上界无需再设。
+                    // §5 灰圆点「已停止」/ 绿圆点「运行中」（wechat 令牌，isProxyRunning 内存态）
+                    ui.row("claude.status.row")
+                        // 行盒宽随内容收缩（dot+text+help），高取组内最高 18
+                        .width(core::SizeValue::wrapContent())
+                        .height(18.0f)
+                        .gap(12.0f)
+                        .alignItems(eui::Align::CENTER)
+                        .margin(0.0f, 0.0f, 8.0f, 0.0f)
+                        .content([&] {
+                            const eui::Color dotColor = proxyRunning
+                                ? t.colors.wechat.primary
+                                : t.colors.wechat.textTertiary;
+                            const std::string statusText = proxyRunning
+                                ? std::string("运行中 ") + portStr
+                                : std::string("已停止");
+                            ui.rect("claude.status.dot")
+                                .size(10.0f, 10.0f)
+                                .color(dotColor)
+                                .radius(5.0f)
+                                .build();
+                            ui.text("claude.status.text")
+                                .width(core::SizeValue::wrapContent())
+                                .height(18.0f)
+                                .text(statusText)
+                                .fontSize(t.sizes.fontSizeSmall)
+                                .lineHeight(18.0f)
+                                .color(proxyRunning ? t.colors.wechat.primary
+                                                    : t.colors.wechat.textTertiary)
+                                .fontWeight(500)
+                                .build();
+                            // §5 页面说明长文本收帮助图标（0xF059 占位；EUI tooltip 待绑定）
+                            ui.text("claude.title.help")
+                                .size(16.0f, 18.0f)
+                                .icon(0xF059)
+                                .fontSize(t.sizes.fontSizeSmall)
+                                .lineHeight(18.0f)
+                                .color(t.colors.wechat.textTertiary)
+                                .build();
+                        })
+                        .build();
+
                     // §5「启动代理」微信绿主按钮（§4.1 Primary 绿填充+白字；运行态=Secondary 浅灰「停止代理」），无边框
                     const bool stopped = !proxyRunning;
                     components::button(ui, "claude.btn.proxy")
