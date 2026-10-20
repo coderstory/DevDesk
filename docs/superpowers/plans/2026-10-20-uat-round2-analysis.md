@@ -6,8 +6,8 @@
 
 ## 两大跨切根因
 
-1. **popup 容器未迁 wechat 令牌**（R4 统领）：所有 popup（contextMenu/dialog/dropdown/tooltip/styledMenu/toast）传 `.theme()` 的是 `componentTokens(t)`（旧暖橙），无 `componentTokensWeChat(t)`。W5-W10 只改了 popup 叶子元素，容器自身（底色/边框/hover/选中/文字/圆角）全留旧。修：各模块 `themeTokens/componentTheme/compTheme` 变量定义改 `componentTokensWeChat(t)`，~8 定义点一次切齐。
-2. **dialog 按钮未迁 wechat**（R1/R2）：`ui_kit/dialog_form.cpp:75-126 buildDialogButton` 硬编码 core 令牌（Claude 橘），无 wechat 变体。修：加 `PrimaryWechat`/`SecondaryWechat` 枚举值 + 各弹窗 confirm/cancel 切换。
+1. **popup 容器未迁 wechat 令牌**（R4 统领）：所有 popup（contextMenu/dialog/dropdown/tooltip/styledMenu/toast）传 `.theme()` 的是 `componentTokens(t)`（旧暖橙），无 `componentTokensWeChat(t)`。W5-W10 只改了 popup 叶子元素，容器自身（底色/边框/hover/选中/文字/圆角）全留旧。修：各模块 `themeTokens/componentTheme/compTheme` 变量定义改 `componentTokensWeChat(t)`，实测 **19 个定义点**（todo_ui_dialogs.cpp:41/126/190/265/336/391/414/597 ×8、todo_ui_board.cpp:38/394 ×2、settings_ui_cards.cpp:89/210/433/564/679 ×5、settings_module.cpp:991、github_sync_card.cpp:83、git_error_dialog.cpp:93、claude_module.cpp:76、agent_module.cpp:1541）+ 4 处 inline `.theme(componentTokens(t))`（todo_ui_board:466/673、ui_kit/card.cpp:21、settings_module:500、claude_ui_detail:196）一次切齐。补充：非 popup 消费（todo_ui_board 搜索框/scrollView/card、claude_module 页面面板）迁 wechat 是**预期补齐**（home_module.cpp:73/321 已先行用 componentTokensWeChat），非"误伤"；但若只想迁 popup 不迁非 popup，需拆变量（popup 用 WeChat 变量、非 popup 另立旧变量）。
+2. **dialog 按钮未迁 wechat**（R1/R2）：`ui_kit/dialog_form.cpp:75-126 buildDialogButton` 的 `PrimaryThemed/SecondaryThemed/DangerThemed` 枚举值已接 `themeTokens` 参数并从中取色（dialog_form.cpp:90-105），**加 `PrimaryWechat`/`SecondaryWechat` 新枚举冗余**。但 12 个非 Themed callsite 绕过 themeTokens 直接读 `t.colors.primary/surfaceElevated`（todo_ui_dialogs:90/95/173/178/304/309/373/378、claude_ui_ccswitch:382/390、claude_ui_form:1074/1079/1217/1222/1465/1470、claude_ui_quota:267/272、agent_module:2563/2568）。修：改这 12 个非 Themed callsite 用 `*Themed` 样式 + 传 `componentTokensWeChat(t)`，**零新枚举**。4 个 markdown callsite 已用 *Themed，改 themeTokens 实参即可。
 
 （两根因叠加 = 全弹窗/popup 令牌化，覆盖：右击菜单、新建笔记/片段/profile/编辑/导入弹窗、agent 弹窗、各下拉、tooltip、toast）
 
@@ -34,7 +34,7 @@
 
 ### 设置（settings_module.cpp + settings_ui_cards.cpp + github_sync_card.cpp，W4）
 12. **tab 布局乱**：W4 只迁 appearance 卡到 FormRow，其余 7 卡用 W4 前布局（3 label 宽 110/84/64/104 + 2 标题位 + 裸定位）→ 统一 formRow(110)+标题 16/22+desc y=40/h=16+内容起 y=68。纯UI。**W4 未完成迁移（回归）**。
-13. **同步失败弹窗按钮没反应**：git_error_dialog.cpp（retry:248/copy:276/close:295）。接线正确。根因：① retry 静默失败（startGithubSyncAction:735 joinable 静默 return）= **功能 bug**；② close 也"没反应"→ 疑 hit-test（dialog scale/translate transform 矩阵）。修：retry 静默前加 toast 反馈 + hit-test 写 probe 诊断。**功能 bug + 待 probe**。非 W4 回归。
+13. **同步失败弹窗按钮没反应**：git_error_dialog.cpp（retry:248/copy:276/close:295）。接线正确。根因：① retry 静默失败（**settings_module.cpp:719** joinable 静默 return，非 :735，:735 是 token 空时 return）= **功能 bug**；② close 也"没反应"→ "transform 矩阵"假设**无证据**（grep transform/scale/translate 在 dialog_form.cpp + git_error_dialog.cpp 零命中），**close 未证实，待 probe 诊断**（callback 接线正确，疑 hit-test 或遮盖）。修：retry 静默前加 toast 反馈 + close 写 probe 诊断。**功能 bug + 待 probe**。非 W4 回归。
 
 ### 关于（about_module.cpp，W10）
 14. **卡片大**：L125-145（kCardW 520 等）→ 520→580/padX 24→32/padTop/Bottom 32→40/icon 48→56/rowH 36→40。纯UI。
@@ -51,12 +51,13 @@
 19. **大气+放大+可折叠**：中栏 220→240/行高 32→36/字 13→14（专用常量不改 fontSizeSmall token）/图标 16-20→18-22/搜索框 36→40/gap 0→4/padding 12→16。文件夹折叠**已实现+持久化**但命中区只 26px（"不好用"根因）→ 扩大整行；面板折叠**未实现**→ 新增 treePanelCollapsed_ state+按钮（纯 UI state）。纯UI。
 
 ### 窗体（main.cpp）
-20. **最小宽高太大**：kMinWindowLogical 1330×845 → 1080p@125% ≈ 1663×1056 几乎全屏 → 调小（如 1200×720 逻辑）+ 复验各页小窗不溢出。纯UI。
+20. **最小宽高太大**：kMinWindowLogical 1330×845 → 1080p@125% ≈ 1663×1056 几乎全屏。**与 CLAUDE.md 冲突**：CLAUDE.md 明写"1200×720 是 spec 早期过期值"，当前 1330×845。**markdown 三栏在 1080p@125%（864 逻辑）下硬阻塞**：contentW=864−208 侧栏−80pad=576，sideW=220 后剩 340−16gap=324，midW=**170px each**（编辑器不可用）；todo 5 列 colW=96px（挤）；about kCardW 580>576 溢出。建议：**保留 1330×845 或改目标 1280×800**（contentW=712、midW=238 可用）+ 补 markdown/todo 小窗 probe 验证。纯UI。
 
 ## 废物代码清理（R7）
 
 - **真死可清（4）**：`about_anim.h` 空壳文件（删文件）、`markdown_module.cpp:194` kDefaultEditorFontSize float 副本（删 2 行）、`home_module.cpp:39-44` statNumberFont（删 6 行）、`home_module.cpp:46-52` digitCount（删 7 行）。grep 证零消费。
-- **存疑待拍板（3）**：accentTheme config 链（a3c53a34 已删选择器→整链成废，可清）、segvHandler（建议留零成本诊断）、演变叙事注释 5 处（CLAUDE.md 纪律要删）。
+- **存疑待拍板（2）**：segvHandler（建议留零成本诊断）、演变叙事注释 5 处（CLAUDE.md 纪律要删）。
+- **accentTheme config 链（待用户拍板彻底删 vs 留）**：a3c53a34 只删 UI 选择器入口，config 链**仍活**（settings_module.cpp:194-203 启动恢复 accent + settings_config.cpp:33/155-157/404-408/457 序列化 + theme.cpp:152/291 setAccent 着色），**不可清**，从废物存疑清单移除。建议彻底删 config 链（~40 行：SettingsConfig.accentTheme 字段 + kKeyAccentTheme + sanitize/序列化 + 启动恢复 + theme g_accent/Accent 枚举/setAccent）避免半删技术债——待用户拍板彻底删 vs 留。
 - **不死归 UAT 迁移（2）**：旧暖橙令牌（15+ 消费）、componentTokens()（20+ 消费）随 popup 根治迁移。
 
 ## 资产清理（打包）
@@ -75,10 +76,21 @@
 
 ## 统一处理顺序建议
 
-1. **popup/弹窗根治**（根因 1+2）：dialog_form 加 wechat 变体 + 各模块 themeTokens→componentTokensWeChat。一次覆盖全弹窗/popup。blast radius 最大但根因最集中。
+1. **popup/弹窗根治**（根因 1+2）：dialog_form 改 12 个非 Themed callsite 用 `*Themed` 样式 + 传 `componentTokensWeChat(t)`（**零新枚举**）+ 各模块 themeTokens→componentTokensWeChat（19 定义点 + 4 inline `.theme(componentTokens(t))`）。一次覆盖全弹窗/popup。blast radius 最大但根因最集中。
 2. **todo 米黄+优先级配色**（6,7）：批量 surface→wechat + priorityColor 重做。
 3. **各页 per-issue**（1-5, 8-12, 14-16, 19, 20）。
 4. **窗口效果**（17,18）：alpha 调值 + sidebar/about/markdown 带 alpha + titlebar frosted 不设 customColor（+真机验证）。
 5. **废物代码清理**（R7 4 真死 + 拍板 3 存疑）。
 6. **资产清理**（打包 Exclude 未用）。
-7. **同步失败功能 bug**（13）：retry 静默加反馈 + hit-test probe。
+7. **同步失败功能 bug**（13）：retry 静默加反馈 + close probe 诊断。
+
+## 审计补充发现
+
+- **EUI popup 组件层可行**：EUI-NEO/components/{contextmenu,dropdown,tooltip,toast}.h 的 Style 构造体全派生自 tokens（无硬编码非 token 色），改 themeTokens 实参能正确传播 wechat——方案在 EUI 层可行 ✓。
+- **music/ 在 EUI-NEO（非 DevDesk）**：DevDesk/assets/ 只含 shaders+托盘图标；music/ 在 EUI-NEO/assets/music/，package-windows.sh:110 `cmake -E copy_directory "$EUI_DIR/assets"` 全量拷 EUI-NEO assets 进 build-release/assets。EUI audio.cpp（miniaudio）编进二进制但 DevDesk src 零调用→music 删安全。
+- **删 shadertoy 需同步删 package-windows.sh:115-118** 的 `shaders/shadertoy 非空` 硬断言 + 更新 :114 失实注释（"字体/音乐/着色器确实拷进来了"——音乐该删）。
+- **资产清理字体**：DevDesk 只用 2（JingNanJunJunTi UI + Font Awesome 图标，EUI text.cpp:37/38 默认）。未用：YouSheBiaoTiHei（EUI clock demo）、NotoSansSC-VF（CLAUDE.md 说排除但仍塞）。
+
+## 审计状态
+
+两轮独立审计完成（第一轮 a2730e30 + 第二轮 a64b0fe0，adversarial）。收敛：方案 sound，5 必改项已纳入本文档修订。PDCA：Plan→Check(2轮)→Act(本修订)→Do(统一处理)。第 3 轮审计待定（若需）。
