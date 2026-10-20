@@ -474,10 +474,12 @@ void drawCard(eui::Ui& ui, const std::string& id, float x, float y, float width,
         static_cast<size_t>(colIndex) < v.columns.size()
             ? columnDotColor(v.columns[static_cast<size_t>(colIndex)].color)
             : std::optional<eui::Color>{};
-    // 选中态底色换 wechat.selectedBg（§4.3 浅灰底）；优先级 tint 仍叠加于上（两通道独立，与旧边框方案同构）
-    const auto cardBase = selected ? t.colors.wechat.selectedBg : t.colors.surface;
-    const auto cardHover = selected ? t.colors.wechat.selectedBg : t.colors.hover;
-    const auto cardActive = selected ? t.colors.wechat.selectedBg : t.colors.active;
+    // 选中态底色换 wechat.selectedBg（§4.3 浅灰底）；未选中三态 = 微信白卡（D批米黄迁移：
+    // surface→cardBg，hover/active 走分割线灰梯度）；优先级 tint 仍叠加于上（两通道独立，与旧边框方案同构）
+    const auto cardBase = selected ? t.colors.wechat.selectedBg : t.colors.wechat.cardBg;
+    const auto cardHover = selected ? t.colors.wechat.selectedBg
+                                   : t.colors.wechat.dividerSecondary;
+    const auto cardActive = selected ? t.colors.wechat.selectedBg : t.colors.wechat.selectedBg;
     // 归档卡灰化：透明度 0.7（§4 已归档卡片），与拖拽半透明叠加
     const bool isArchiveCard = colIndex >= 0 &&
         static_cast<size_t>(colIndex) < v.columns.size() &&
@@ -621,7 +623,7 @@ void drawCard(eui::Ui& ui, const std::string& id, float x, float y, float width,
     float drawX = 16.0f;
     for (const auto& chip : pendingChips) {
         drawChip(ui, chip.id, drawX, chipY, chip.w, t, chip.text, chip.fg,
-                 t.colors.surface, finalCardOpacity);
+                 t.colors.wechat.secondaryButtonBg, finalCardOpacity);
         drawX += chip.w + 6.0f;  // 自适应宽 + 6 间距
     }
 
@@ -675,6 +677,8 @@ void drawDragGhost(eui::Ui& ui, const core::theme::Tokens& t,
                 .border(0.0f, t.colors.wechat.dividerPrimary)
                 .content([&] {
             // 底 + 1px 分割线（同真卡；选中态已不走粗边框，副本亦然）。底色同走 priorityCardBg，否则拖到一半优先级指示消失。
+            // D批米黄迁移：兜底底随真卡 surface→wechat.cardBg。tint 是 alpha 线性叠加——底从米黄变白后
+            // 算式语义不变、同强度下观感略浅于米黄底（视觉可接受，强度表已按 WeChat 板整体上调）。
             // 列色淡染：同 drawCard——None 优先级按所在列色区分（拖印副本延续列身份）
                     const auto* ghostCol = findColumn(v.columns, task->columnId);
                     const auto ghostColTint = ghostCol
@@ -683,7 +687,7 @@ void drawDragGhost(eui::Ui& ui, const core::theme::Tokens& t,
                     ui.rect("todo.dragghost.bg")
                         .position(0.0f, 0.0f)
                         .size(w, kCardHeight)
-                        .color(priorityCardBg(task->priority, t, t.colors.surface,
+                        .color(priorityCardBg(task->priority, t, t.colors.wechat.cardBg,
                                               ghostColTint))
                         .border(1.0f, t.colors.wechat.dividerPrimary)
                         .radius(t.sizes.radiusWeChat)
