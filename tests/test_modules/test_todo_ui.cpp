@@ -4644,7 +4644,11 @@ REGISTER_TEST(todo_ui_archive_card_title_color,
     const auto* el = frame.ui.find("todo.col.3.card.0.title");
     DOCTEST_REQUIRE(el != nullptr);
     const auto& tm = core::theme::current();
-    DOCTEST_CHECK_EQ(el->color, tm.colors.wechat.textPrimary);
+    // eui::Color 无 operator==：整色 CHECK_EQ 不可编译，必须逐分量比（同列色点断言口径）
+    DOCTEST_CHECK_EQ(el->color.r, tm.colors.wechat.textPrimary.r);
+    DOCTEST_CHECK_EQ(el->color.g, tm.colors.wechat.textPrimary.g);
+    DOCTEST_CHECK_EQ(el->color.b, tm.colors.wechat.textPrimary.b);
+    DOCTEST_CHECK_EQ(el->color.a, tm.colors.wechat.textPrimary.a);
     mod->onStop();
     return true;
 })
