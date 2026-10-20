@@ -72,7 +72,7 @@ enum class CardHeightKind {
     Fixed,
     ProxyWarnings,
     FillRemainder,
-    GithubSync,   // 随启用态切换满高/折叠高（未启用时卡片只画标题+描述+开关）
+    GithubSync,   // 恒满高（UAT4 起不按启用态折叠；UAT5 方案 A 三段式，见 kGithubSyncCardHeight）
 };
 
 struct CardSpec {
@@ -1155,9 +1155,9 @@ private:
         case CardHeightKind::FillRemainder:
             return std::max(260.0f, remain);
         case CardHeightKind::GithubSync:
-            // 恒满高（UAT4）：未启用态也全字段渲染（折叠高 132 装不下 7 字段，
-            // 内容画出 132 槽位外 = scroll 内容记账偏小）。启用/未启用只差表单
-            // 区是否可交互，不再参与卡高决策。
+            // 恒满高（UAT4）：未启用态也全字段渲染（去门控），启用/未启用只差
+            // 表单区是否可交互，不参与卡高决策。UAT5 方案 A 三段式后的最坏行序
+            // 复算见 kGithubSyncCardHeight 注释（settings_ui_logic.h）。
             return roundFs(kGithubSyncCardHeight);
         }
         return spec.height;  // 兜底：枚举穷举，仅为满足「所有路径有返回」

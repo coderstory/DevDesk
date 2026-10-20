@@ -2120,8 +2120,9 @@ REGISTER_TEST(settings_card_pair_column_geometry,
         DOCTEST_CHECK(nearEq(field2->frame.x - field1->frame.x, logCell2X));
     }
 
-    // ⑤ 同步 tab：github_sync 卡高恒 372（UAT4：未启用不再折叠 132——去门控后
-    // 未启用态 7 字段全显示，132 槽位装不下；启用/未启用只差表单可交互性）
+    // ⑤ 同步 tab：github_sync 卡高恒 roundFs(kGithubSyncCardHeight)（UAT4 起不
+    // 按启用态折叠；UAT5 方案 A 三段式后常量改在 settings_ui_logic.h 按最坏行序
+    // 复算，本断言与注册表同源取值、常量一改自动跟随）
     {
         FontScaleGuard g{1.0f};
         eui::Screen screen;

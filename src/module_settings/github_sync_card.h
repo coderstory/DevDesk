@@ -1,5 +1,5 @@
 // src/module_settings/github_sync_card.h
-// GitHub Sync 设置卡片：仓库 URL、分支、Token、一键同步/拉取。
+// GitHub Sync 设置卡片（UAT5 方案 A 三段式：状态头部 / 仓库配置 / 操作+进度）。
 // 自由函数签名，与 settings_ui_cards 同模。
 #pragma once
 
@@ -7,8 +7,12 @@
 
 namespace module::settings {
 
-// GitHub Sync 配置卡片（设置页"模块"tab）
+// GitHub Sync 配置卡片（设置页「同步」tab）
 void drawGithubSyncCard(const CardDrawArgs& args);
+
+// 阶段文案 → 进度条填充比（(0,1]，见 github_sync_card.cpp）：前缀「①..⑨」按
+// 序号/6；认不出序号 → 0.1 起步。纯函数便于单测（test_github_sync_card）。
+float githubSyncProgressFraction(const std::string& stage);
 
 // 表名 → 用户看得懂的中文标签（披露文案用）。
 // 只覆盖 core::sql_dump::defaultSkipTables() 会出现的表；未知表名**原样返回**，
