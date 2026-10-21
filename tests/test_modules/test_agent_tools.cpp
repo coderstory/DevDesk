@@ -24,6 +24,8 @@
 
 #include <atomic>
 #include <chrono>
+#include <filesystem>
+#include <fstream>
 #include <initializer_list>
 #include <memory>
 #include <optional>
@@ -707,5 +709,469 @@ REGISTER_TEST(agent_module_hot_list_in_all_schemas,
     DOCTEST_CHECK(core::ToolRegistry::instance()
                       .allSchemasJson()
                       .find("hot.list") == std::string::npos);
+    return true;
+})
+
+// ========================================================================
+// UAT6 内置工具 14 件测试（文件五件 + bash + git 八件）
+// 场景：用临时目录 fixture 做往返验证，禁全量套件
+// ========================================================================
+
+namespace {
+
+// 在 CWD 下建临时目录，注册清理回调，返回相对路径
+struct TmpDir {
+    std::filesystem::path dir;
+    explicit TmpDir(const std::string& suffix) {
+        std::string name = "agenttools_tmp_" + suffix + "_" +
+                           std::to_string(std::chrono::steady_clock::now()
+                                              .time_since_epoch()
+                                              .count());
+        dir = std::filesystem::current_path() / name;
+        std::filesystem::create_directories(dir);
+    }
+    ~TmpDir() {
+        std::error_code ec;
+        std::filesystem::remove_all(dir, ec);
+    }
+    std::string relPath() const {
+        return std::filesystem::relative(dir, std::filesystem::current_path())
+            .generic_string();
+    }
+    void writeFile(const std::string& fname, const std::string& content) {
+        std::ofstream f(dir / fname, std::ios::binary);
+        f << content;
+    }
+};
+
+// 小工具工厂：给定 schemaJson 的 JSON 字符串，造一个最小 ITool
+class MiniTool : public core::ITool {
+public:
+    std::string name_, schema_;
+    bool destructive_ = false;
+    core::Result<core::ToolResult> result_;
+    std::string name() const override { return name_; }
+    std::string schemaJson() const override { return schema_; }
+    bool isDestructive() const override { return destructive_; }
+    core::Result<core::ToolResult> execute(const core::ToolArgs&) override {
+        return result_;
+    }
+};
+
+} // namespace
+
+REGISTER_TEST(builtin_fs_glob_patterns,
+              "fs.glob: 通配搜索（* / ** / {a,b}），mtime 降序，上限 1000", {
+    TmpDir td("fsglob");
+    // 建测试文件
+    td.writeFile("a.cpp", "// cpp");
+    td.writeFile("b.h", "// header");
+    td.writeFile("sub/x.txt", "// nested");
+    td.writeFile("a.h", "// another header");
+
+    // 验证 {h,cpp} 大括号展开
+    module::agent::registerAgentBuiltinTools();
+    ToolGuard guard{"fs.glob", "fs.grep", "fs.read", "fs.write", "fs.edit",
+                    "bash.run", "git.clone", "git.status", "git.log", "git.diff",
+                    "git.branch", "git.checkout", "git.pull", "git.commit"};
+
+    auto found = core::ToolRegistry::instance().find("fs.glob");
+    DOCTEST_REQUIRE(found.isOk());
+
+    std::string pattern = td.relPath() + "/*.{h,cpp}";
+    auto r = found.value()->execute(
+        core::ToolArgs{pj::stringify(pj::JsonValue(
+            pj::JsonObject().set("pattern", pj::makeString(pattern)).set(
+                "path", pj::makeString(td.relPath()))))
+                           .value()});
+    DOCTEST_REQUIRE(r.isOk());
+    DOCTEST_CHECK_FALSE(r.value().isError);
+
+    auto parsed = pj::parse(r.value().contentJson);
+    DOCTEST_REQUIRE(parsed.isOk());
+    auto obj = parsed.value().asObject();
+    DOCTEST_CHECK(obj.get("count").asInt() >= 1);  // 至少有 .h 文件
+
+    // ** 递归
+    auto r2 = found.value()->execute(
+        core::ToolArgs{pj::stringify(pj::JsonValue(
+            pj::JsonObject().set("pattern", pj::makeString("**/*.txt")).set(
+                "path", pj::makeString(td.relPath()))))
+                           .value()});
+    DOCTEST_REQUIRE(r2.isOk());
+    auto p2 = pj::parse(r2.value().contentJson);
+    DOCTEST_REQUIRE(p2.isOk());
+    DOCTEST_CHECK_EQ(p2.value().asObject().get("count").asInt(), 1);  // sub/x.txt
+
+    // 缺少 pattern → 错误
+    auto r3 = found.value()->execute(core::ToolArgs{"{}"});
+    DOCTEST_REQUIRE(r3.isOk());
+    DOCTEST_CHECK(r3.value().isError);
+
+    // schema 含 description 且非破坏性
+    DOCTEST_CHECK(found.value()->schemaJson().find("fs.glob") != std::string::npos);
+    DOCTEST_CHECK_FALSE(found.value()->isDestructive());
+    return true;
+})
+
+REGISTER_TEST(builtin_fs_grep_modes,
+              "fs.grep: 正则搜索三模式（content/files/count）+ 行号开关", {
+    TmpDir td("fsgrep");
+    td.writeFile("test.txt", "hello world\nfoo bar\nhello again\nbaz qux\n");
+
+    module::agent::registerAgentBuiltinTools();
+    ToolGuard guard{"fs.glob", "fs.grep", "fs.read", "fs.write", "fs.edit",
+                    "bash.run", "git.clone", "git.status", "git.log", "git.diff",
+                    "git.branch", "git.checkout", "git.pull", "git.commit"};
+
+    auto found = core::ToolRegistry::instance().find("fs.grep");
+    DOCTEST_REQUIRE(found.isOk());
+
+    // content 模式
+    auto r = found.value()->execute(
+        core::ToolArgs{pj::stringify(pj::JsonValue(
+            pj::JsonObject()
+                .set("pattern", pj::makeString("hello"))
+                .set("path", pj::makeString(td.relPath()))))
+                           .value()});
+    DOCTEST_REQUIRE(r.isOk());
+    DOCTEST_CHECK_FALSE(r.value().isError);
+    // 内容应包含 test.txt 和匹配行
+    auto text = pj::parse(r.value().contentJson);
+    DOCTEST_REQUIRE(text.isOk());
+    std::string body = text.value().asString();
+    DOCTEST_CHECK(body.find("test.txt") != std::string::npos);
+    DOCTEST_CHECK(body.find("hello") != std::string::npos);
+
+    // files 模式
+    auto r2 = found.value()->execute(
+        core::ToolArgs{pj::stringify(pj::JsonValue(
+            pj::JsonObject()
+                .set("pattern", pj::makeString("hello"))
+                .set("mode", pj::makeString("files"))
+                .set("path", pj::makeString(td.relPath()))))
+                           .value()});
+    DOCTEST_REQUIRE(r2.isOk());
+    auto p2 = pj::parse(r2.value().contentJson);
+    DOCTEST_REQUIRE(p2.isOk());
+    DOCTEST_CHECK(p2.value().asObject().get("count").asInt() >= 1);
+
+    // count 模式
+    auto r3 = found.value()->execute(
+        core::ToolArgs{pj::stringify(pj::JsonValue(
+            pj::JsonObject()
+                .set("pattern", pj::makeString("hello"))
+                .set("mode", pj::makeString("count"))
+                .set("path", pj::makeString(td.relPath()))))
+                           .value()});
+    DOCTEST_REQUIRE(r3.isOk());
+
+    // 缺少 pattern → 错误
+    auto r4 = found.value()->execute(core::ToolArgs{"{}"});
+    DOCTEST_REQUIRE(r4.isOk());
+    DOCTEST_CHECK(r4.value().isError);
+    return true;
+})
+
+REGISTER_TEST(builtin_fs_read_write_roundtrip,
+              "fs.read/fs.write: 写后读往返，行号、offset/limit、大文件截断", {
+    TmpDir td("fsread");
+    std::string fname = td.relPath() + "/test.md";
+
+    module::agent::registerAgentBuiltinTools();
+    ToolGuard guard{"fs.glob", "fs.grep", "fs.read", "fs.write", "fs.edit",
+                    "bash.run", "git.clone", "git.status", "git.log", "git.diff",
+                    "git.branch", "git.checkout", "git.pull", "git.commit"};
+
+    auto writeTool = core::ToolRegistry::instance().find("fs.write");
+    DOCTEST_REQUIRE(writeTool.isOk());
+    auto readTool = core::ToolRegistry::instance().find("fs.read");
+    DOCTEST_REQUIRE(readTool.isOk());
+
+    // 写文件（自动建父目录在 relPath 子目录下）
+    std::string content = "line1\nline2\nline3\nline4\nline5\n";
+    auto w = writeTool.value()->execute(
+        core::ToolArgs{pj::stringify(pj::JsonValue(
+            pj::JsonObject()
+                .set("path", pj::makeString(fname))
+                .set("content", pj::makeString(content))))
+                           .value()});
+    DOCTEST_REQUIRE(w.isOk());
+    DOCTEST_CHECK_FALSE(w.value().isError);
+
+    // 读取验证
+    auto r = readTool.value()->execute(
+        core::ToolArgs{pj::stringify(pj::JsonValue(
+            pj::JsonObject().set("path", pj::makeString(fname))))
+                           .value()});
+    DOCTEST_REQUIRE(r.isOk());
+    DOCTEST_CHECK_FALSE(r.value().isError);
+    auto text = pj::parse(r.value().contentJson);
+    DOCTEST_REQUIRE(text.isOk());
+    std::string body = text.value().asString();
+    DOCTEST_CHECK(body.find("1\tline1") != std::string::npos);
+    DOCTEST_CHECK(body.find("5\tline5") != std::string::npos);
+
+    // offset/limit
+    auto r2 = readTool.value()->execute(
+        core::ToolArgs{pj::stringify(pj::JsonValue(
+            pj::JsonObject()
+                .set("path", pj::makeString(fname))
+                .set("offset", pj::makeInt(2))
+                .set("limit", pj::makeInt(2))))
+                           .value()});
+    DOCTEST_REQUIRE(r2.isOk());
+    auto t2 = pj::parse(r2.value().contentJson);
+    DOCTEST_REQUIRE(t2.isOk());
+    DOCTEST_CHECK(t2.value().asString().find("2\tline2") != std::string::npos);
+    DOCTEST_CHECK(t2.value().asString().find("3\tline3") != std::string::npos);
+
+    // 缺 path → 错误
+    auto r3 = readTool.value()->execute(core::ToolArgs{"{}"});
+    DOCTEST_REQUIRE(r3.isOk());
+    DOCTEST_CHECK(r3.value().isError);
+
+    // fs.write 是破坏性工具
+    DOCTEST_CHECK(writeTool.value()->isDestructive());
+    return true;
+})
+
+REGISTER_TEST(builtin_fs_edit_uniqueness,
+              "fs.edit: 唯一匹配替换 / 多命中报错 / replace_all / 0 命中报错", {
+    TmpDir td("fsedit");
+    std::string fname = td.relPath() + "/data.txt";
+    td.writeFile("data.txt", "hello world\nhello universe\nbye world\n");
+
+    module::agent::registerAgentBuiltinTools();
+    ToolGuard guard{"fs.glob", "fs.grep", "fs.read", "fs.write", "fs.edit",
+                    "bash.run", "git.clone", "git.status", "git.log", "git.diff",
+                    "git.branch", "git.checkout", "git.pull", "git.commit"};
+
+    auto editTool = core::ToolRegistry::instance().find("fs.edit");
+    DOCTEST_REQUIRE(editTool.isOk());
+
+    // 多命中 → 报错
+    auto r1 = editTool.value()->execute(
+        core::ToolArgs{pj::stringify(pj::JsonValue(
+            pj::JsonObject()
+                .set("path", pj::makeString(fname))
+                .set("old_string", pj::makeString("hello"))
+                .set("new_string", pj::makeString("hi")))
+                           .value()});
+    DOCTEST_REQUIRE(r1.isOk());
+    DOCTEST_CHECK(r1.value().isError);   // 出现了 2 次
+
+    // replace_all 模式
+    auto r2 = editTool.value()->execute(
+        core::ToolArgs{pj::stringify(pj::JsonValue(
+            pj::JsonObject()
+                .set("path", pj::makeString(fname))
+                .set("old_string", pj::makeString("hello"))
+                .set("new_string", pj::makeString("hi"))
+                .set("replace_all", pj::makeBool(true))))
+                           .value()});
+    DOCTEST_REQUIRE(r2.isOk());
+    DOCTEST_CHECK_FALSE(r2.value().isError);
+
+    // 0 命中 → 报错
+    auto r3 = editTool.value()->execute(
+        core::ToolArgs{pj::stringify(pj::JsonValue(
+            pj::JsonObject()
+                .set("path", pj::makeString(fname))
+                .set("old_string", pj::makeString("NONEXISTENT"))
+                .set("new_string", pj::makeString("X")))
+                           .value()});
+    DOCTEST_REQUIRE(r3.isOk());
+    DOCTEST_CHECK(r3.value().isError);
+
+    // 唯一匹配 → 成功
+    auto r4 = editTool.value()->execute(
+        core::ToolArgs{pj::stringify(pj::JsonValue(
+            pj::JsonObject()
+                .set("path", pj::makeString(fname))
+                .set("old_string", pj::makeString("bye"))
+                .set("new_string", pj::makeString("goodbye")))
+                           .value()});
+    DOCTEST_REQUIRE(r4.isOk());
+    DOCTEST_CHECK_FALSE(r4.value().isError);
+
+    // 破坏性工具
+    DOCTEST_CHECK(editTool.value()->isDestructive());
+    return true;
+})
+
+REGISTER_TEST(builtin_bash_run_echo,
+              "bash.run: 平台 shell echo 回显 + 非零退出码 isError + 超时", {
+    module::agent::registerAgentBuiltinTools();
+    ToolGuard guard{"fs.glob", "fs.grep", "fs.read", "fs.write", "fs.edit",
+                    "bash.run", "git.clone", "git.status", "git.log", "git.diff",
+                    "git.branch", "git.checkout", "git.pull", "git.commit"};
+
+    auto shell = core::ToolRegistry::instance().find("bash.run");
+    DOCTEST_REQUIRE(shell.isOk());
+
+    // echo "hello agent" 应成功返回
+    auto r = shell.value()->execute(
+        core::ToolArgs{pj::stringify(pj::JsonValue(
+            pj::JsonObject().set("cmd", pj::makeString("echo hello_agent"))))
+                           .value()});
+    DOCTEST_REQUIRE(r.isOk());
+    DOCTEST_CHECK_FALSE(r.value().isError);
+
+    auto parsed = pj::parse(r.value().contentJson);
+    DOCTEST_REQUIRE(parsed.isOk());
+    auto obj = parsed.value().asObject();
+    DOCTEST_CHECK_EQ(obj.get("exit_code").asInt(), 0);
+    std::string stdoutText = obj.get("stdout").asString();
+    DOCTEST_CHECK(stdoutText.find("hello_agent") != std::string::npos);
+
+    // 非零退出码（exit 1）→ isError=true
+    auto r2 = shell.value()->execute(
+        core::ToolArgs{pj::stringify(pj::JsonValue(
+            pj::JsonObject().set("cmd", pj::makeString("exit 1"))))
+                           .value()});
+    DOCTEST_REQUIRE(r2.isOk());
+    DOCTEST_CHECK(r2.value().isError);  // 非零 = isError
+
+    // 缺 cmd → 报错
+    auto r3 = shell.value()->execute(core::ToolArgs{"{}"});
+    DOCTEST_REQUIRE(r3.isOk());
+    DOCTEST_CHECK(r3.value().isError);
+
+    // bash.run 是破坏性工具
+    DOCTEST_CHECK(shell.value()->isDestructive());
+
+    // schemaJSON 合法性
+    auto schemaParsed = pj::parse(shell.value()->schemaJson());
+    DOCTEST_CHECK(schemaParsed.isOk());
+    return true;
+})
+
+REGISTER_TEST(builtin_git_init_chain,
+              "git.*: init 裸仓库链（clone→status→log→branch→checkout→commit→diff）", {
+    TmpDir td1("gitrepo1");
+    TmpDir td2("gitrepo2");
+
+    module::agent::registerAgentBuiltinTools();
+    ToolGuard guard{"fs.glob", "fs.grep", "fs.read", "fs.write", "fs.edit",
+                    "bash.run", "git.clone", "git.status", "git.log", "git.diff",
+                    "git.branch", "git.checkout", "git.pull", "git.commit"};
+
+    // 在 gitrepo1 里 git init 创建 bare 仓库
+    auto bash = core::ToolRegistry::instance().find("bash.run");
+    DOCTEST_REQUIRE(bash.isOk());
+
+    // git init 在 td1 目录下建仓库
+    std::string td1abs = std::filesystem::absolute(td1.dir).string();
+    auto init = bash.value()->execute(
+        core::ToolArgs{pj::stringify(pj::JsonValue(
+            pj::JsonObject()
+                .set("cmd", pj::makeString("git init && git config user.email 'test@test' && git config user.name 'Test' && echo init > README.md && git add README.md && git commit -m 'initial commit'"))
+                .set("cwd", pj::makeString(td1abs))))
+                           .value()});
+    DOCTEST_REQUIRE(init.isOk());
+
+    // git.status
+    auto statusTool = core::ToolRegistry::instance().find("git.status");
+    DOCTEST_REQUIRE(statusTool.isOk());
+    auto sr = statusTool.value()->execute(
+        core::ToolArgs{pj::stringify(pj::JsonValue(
+            pj::JsonObject().set("repo", pj::makeString(td1abs))))
+                           .value()});
+    DOCTEST_REQUIRE(sr.isOk());
+    DOCTEST_CHECK_FALSE(sr.value().isError);
+
+    // git.log
+    auto logTool = core::ToolRegistry::instance().find("git.log");
+    DOCTEST_REQUIRE(logTool.isOk());
+    auto lr = logTool.value()->execute(
+        core::ToolArgs{pj::stringify(pj::JsonValue(
+            pj::JsonObject()
+                .set("repo", pj::makeString(td1abs))
+                .set("n", pj::makeInt(2))))
+                           .value()});
+    DOCTEST_REQUIRE(lr.isOk());
+    DOCTEST_CHECK_FALSE(lr.value().isError);
+    auto logParsed = pj::parse(lr.value().contentJson);
+    DOCTEST_REQUIRE(logParsed.isOk());
+    DOCTEST_CHECK(logParsed.value().asString().find("initial commit") !=
+                  std::string::npos);
+
+    // git.branch
+    auto branchTool = core::ToolRegistry::instance().find("git.branch");
+    DOCTEST_REQUIRE(branchTool.isOk());
+    auto br = branchTool.value()->execute(
+        core::ToolArgs{pj::stringify(pj::JsonValue(
+            pj::JsonObject().set("repo", pj::makeString(td1abs))))
+                           .value()});
+    DOCTEST_REQUIRE(br.isOk());
+    DOCTEST_CHECK_FALSE(br.value().isError);
+
+    // git.commit — 新建文件并提交
+    td1.writeFile("newfile.txt", "new content");
+    auto commitTool = core::ToolRegistry::instance().find("git.commit");
+    DOCTEST_REQUIRE(commitTool.isOk());
+    // 构建 files 数组 JSON
+    pj::JsonArray filesArr;
+    filesArr.append(pj::makeString("newfile.txt"));
+    pj::JsonObject commitArgs;
+    commitArgs.set("repo", pj::makeString(td1abs));
+    commitArgs.set("message", pj::makeString("test: add newfile"));
+    commitArgs.set("files", pj::JsonValue(std::move(filesArr)));
+    auto cr = commitTool.value()->execute(
+        core::ToolArgs{pj::stringify(pj::JsonValue(std::move(commitArgs))).value()});
+    DOCTEST_REQUIRE(cr.isOk());
+    DOCTEST_CHECK_FALSE(cr.value().isError);
+
+    // git.diff — 应该无 diff（已提交）
+    auto diffTool = core::ToolRegistry::instance().find("git.diff");
+    DOCTEST_REQUIRE(diffTool.isOk());
+    auto dr = diffTool.value()->execute(
+        core::ToolArgs{pj::stringify(pj::JsonValue(
+            pj::JsonObject().set("repo", pj::makeString(td1abs))))
+                           .value()});
+    DOCTEST_REQUIRE(dr.isOk());
+
+    // git.commit 是破坏性工具
+    DOCTEST_CHECK(commitTool.value()->isDestructive());
+
+    // 非仓库路径 → 错误
+    auto badStatus = statusTool.value()->execute(
+        core::ToolArgs{pj::stringify(pj::JsonValue(
+            pj::JsonObject().set("repo", pj::makeString(td2.relPath())))
+                           ).value()});
+    DOCTEST_REQUIRE(badStatus.isOk());
+    DOCTEST_CHECK(badStatus.value().isError);
+    return true;
+})
+
+REGISTER_TEST(builtin_schema_json_validity,
+              "内置工具 14 件: schemaJson 全部合法 JSON", {
+    module::agent::registerAgentBuiltinTools();
+    ToolGuard guard{"fs.glob", "fs.grep", "fs.read", "fs.write", "fs.edit",
+                    "bash.run", "git.clone", "git.status", "git.log", "git.diff",
+                    "git.branch", "git.checkout", "git.pull", "git.commit"};
+
+    const char* kNames[] = {
+        "fs.glob",    "fs.grep",    "fs.read",   "fs.write", "fs.edit",
+        "bash.run",   "git.clone",  "git.status","git.log", "git.diff",
+        "git.branch", "git.checkout","git.pull", "git.commit"};
+
+    for (const char* name : kNames) {
+        auto found = core::ToolRegistry::instance().find(name);
+        DOCTEST_REQUIRE_MESSAGE(found.isOk(),
+                                std::string("工具 ") + name + " 未注册");
+        const std::string schema = found.value()->schemaJson();
+        DOCTEST_CHECK_MESSAGE(
+            schema.find("\"name\":\"" + std::string(name) + "\"") !=
+                std::string::npos,
+            name + std::string(" schema 不含正确 name"));
+        DOCTEST_CHECK_MESSAGE(schema.find("input_schema") != std::string::npos,
+                              name + std::string(" schema 缺 input_schema"));
+        auto parsed = pj::parse(schema);
+        DOCTEST_CHECK_MESSAGE(parsed.isOk(),
+                              name + std::string(" schema 非合法 JSON: ") +
+                                  parsed.errorMessage());
+    }
     return true;
 })

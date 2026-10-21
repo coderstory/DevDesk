@@ -2140,8 +2140,8 @@ REGISTER_TEST(agent_ui_dialog_geometry_design_size_and_budget,
     DOCTEST_CHECK_MESSAGE(nearPx(panel->frame.width, 800.0f),
                           "任务弹窗宽应为弹性值 800，实测 " +
                               std::to_string(panel->frame.width));
-    DOCTEST_CHECK_MESSAGE(nearPx(panel->frame.height, 680.0f),
-                          "任务弹窗高应为设计值 680，实测 " +
+    DOCTEST_CHECK_MESSAGE(nearPx(panel->frame.height, 756.0f),
+                          "任务弹窗高应为设计值 756，实测 " +
                               std::to_string(panel->frame.height));
     DOCTEST_CHECK(panel->frame.x >= -0.5f && panel->frame.y >= -0.5f &&
                   panel->frame.x + panel->frame.width <= kScreen.width + 0.5f &&
@@ -3114,8 +3114,8 @@ REGISTER_TEST(agent_ui_cron_template_dropdown_and_preview,
     // ② 布局契约：面板高仍 680；安全组破坏性行 y=548（模板下拉/预览行未挤动布局）
     const auto* panel3 = ui3.find("agent.dialog.task.panel");
     DOCTEST_REQUIRE(panel3 != nullptr);
-    DOCTEST_CHECK_MESSAGE(nearPx(panel3->frame.height, 680.0f),
-                          "任务弹窗高应恒为 680，实测 " +
+    DOCTEST_CHECK_MESSAGE(nearPx(panel3->frame.height, 756.0f),
+                          "任务弹窗高应恒为 756，实测 " +
                               std::to_string(panel3->frame.height));
     const auto* metaRow3 = ui3.find("agent.dialog.task.destructive");
     DOCTEST_REQUIRE(metaRow3 != nullptr);
@@ -3768,9 +3768,9 @@ REGISTER_TEST(agent_ui_dialog_geometry_context_note_within_bounds,
 
     const auto* panel = ui2.find("agent.dialog.task.panel");
     DOCTEST_REQUIRE(panel != nullptr);
-    // 弹窗高 = 设计值 680（UAT5 重设计：名称行 + segment + 紧凑行预算）
-    DOCTEST_CHECK_MESSAGE(nearPx(panel->frame.height, 680.0f),
-                          "任务弹窗高应为设计值 680，实测 " +
+    // 弹窗高 = 设计值 756（UAT6 系统提示词 textarea 后增高）
+    DOCTEST_CHECK_MESSAGE(nearPx(panel->frame.height, 756.0f),
+                          "任务弹窗高应为设计值 756，实测 " +
                               std::to_string(panel->frame.height));
 
     // 执行记忆多行输入在面板内
@@ -4608,8 +4608,8 @@ REGISTER_TEST(agent_ui_dialog_switch_labels_fit_boxes,
     DOCTEST_CHECK_MESSAGE(destructive->frame.y - panel3->frame.y >= 490.0f,
                           "破坏性开关应在高危选项组（面板局部 y≥490），实测 y=" +
                               std::to_string(destructive->frame.y - panel3->frame.y));
-    DOCTEST_CHECK_MESSAGE(limit->frame.y - panel3->frame.y < 490.0f,
-                          "只跑一次应在高级配置组（面板局部 y<490），实测 y=" +
+    DOCTEST_CHECK_MESSAGE(limit->frame.y - panel3->frame.y < 524.0f,
+                          "只跑一次应在高级配置组（面板局部 y<524），实测 y=" +
                               std::to_string(limit->frame.y - panel3->frame.y));
     DOCTEST_CHECK_MESSAGE(
         nearPx(limit->frame.x + limit->frame.width,
@@ -4682,11 +4682,11 @@ REGISTER_TEST(agent_ui_draft_chip_and_subdialog_lifecycle,
     eui::Ui uiB;
     composeTo(uiB, mod, kScreen, "agent_ui_dfl1");
 
-    // 外层几何契约：UAT5 重设计后 680 高（弹性宽 + 紧凑行预算）
+    // 外层几何契约：UAT6 系统提示词 textarea 后 756 高（弹性宽 + 紧凑行预算）
     const auto* panel = uiB.find("agent.dialog.task.panel");
     DOCTEST_REQUIRE(panel != nullptr);
-    DOCTEST_CHECK_MESSAGE(nearPx(panel->frame.height, 680.0f),
-                          "任务弹窗高应恒为 680，实测 " +
+    DOCTEST_CHECK_MESSAGE(nearPx(panel->frame.height, 756.0f),
+                          "任务弹窗高应恒为 756，实测 " +
                               std::to_string(panel->frame.height));
 
     // chip 存在 + 几何：面板内、底 ≤ 指令 textarea 行顶（面板内 y=260）、右缘 ≤ ✕ 左缘

@@ -16,6 +16,7 @@ add_library(devdesk_agent STATIC
     direct_llm_client.cpp
     task_draft.cpp
     task_draft_job.cpp
+    agent_builtin_tools.cpp
     agent_detail_dialog.cpp
     agent_module.cpp
 )

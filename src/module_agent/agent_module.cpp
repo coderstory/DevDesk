@@ -41,6 +41,7 @@
 #include "platform/notification.h"
 #include "module_agent/agent_loop.h"
 #include "module_agent/agent_time_text.h"
+#include "module_agent/agent_builtin_tools.h"
 #include "module_agent/app_notify_tool.h"
 #include "module_agent/app_now_tool.h"
 #include "module_agent/app_stats_tool.h"
@@ -329,6 +330,9 @@ void AgentModule::onStart() {
     if (regNet.isFail()) {
         LOG_ERROR("Agent: net.fetch 注册失败: " + regNet.errorMessage());
     }
+
+    // 内置工具 14 件（UAT6）：fs.* / bash.* / git.* 集中注册，名称冲突只留痕不中断
+    registerAgentBuiltinTools();
 
     tasksDirty_ = true;
     LOG_INFO("Agent 模块启动");
