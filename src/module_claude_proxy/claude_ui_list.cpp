@@ -280,9 +280,9 @@ void drawClaudeHeader(eui::Ui& ui, float contentW, float headerH,
     // header 行 gap=0，两段宽必须相加等于 contentW，防字面量两处改一处忘
     constexpr float kHeaderActionsW = 360.0f;
 
-    // UAT5 页头内部收紧（toptrim 批点名跟进）：内部 50→40 与共享 kHeaderH 叠满，
-    // 对齐各页统一口径——标题行 24 + 间隙 2 + 副题 14（字号不动，副题底不再
-    // 压进下方间隙；同 todo/markdown 页头档）。
+    // UAT5 页头内部收紧（toptrim 批点名跟进）：内部 50→40 与共享 kHeaderH 叠满。
+    // UAT6 副题横扫：标题行下副题 14 行删除，标题行独占页头（同 todo/md/home 档），
+    // 页头行高沿用共享 kHeaderH=40 不动（行内状态组/按钮 40 高）。
     ui.row("claude.header")
         .size(contentW, headerH)
         .alignItems(eui::Align::CENTER)
@@ -306,18 +306,6 @@ void drawClaudeHeader(eui::Ui& ui, float contentW, float headerH,
                                 .color(t.colors.wechat.textPrimary)
                                 .build();
                         })
-                        .build();
-
-                    // §5 页面仅保留一句话摘要（长说明收帮助图标；claude.subtitle 测试无命中）
-                    const std::string subtitle = proxyRunning
-                        ? std::string("本地代理运行中，管理多套 Claude API 配置")
-                        : std::string("管理多套 Claude API 配置");
-                    ui.text("claude.subtitle")
-                        .size(contentW - kHeaderActionsW, 14.0f)
-                        .text(subtitle)
-                        .fontSize(t.sizes.fontSizeSmall)
-                        .lineHeight(14.0f)
-                        .color(t.colors.wechat.textSecondary)
                         .build();
                 })
                 .build();
