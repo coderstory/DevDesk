@@ -430,10 +430,10 @@ REGISTER_TEST(assembly_capture_minimized_flag_from_argv,
         {"devdesk.exe", "--minimized", "note.md"}));
     DOCTEST_CHECK(consumePendingMinimizedStartup());
 
-    // 4. 幂等：首次捕获已定，第二次调用（不同 argv）不覆盖
+    // 4. 幂等：首次捕获已定，第二次调用（不同 argv）不覆盖——但返回首次捕获结果
     resetMinimizedFlagForTest();
     DOCTEST_CHECK(captureMinimizedFlagFromArgv({"devdesk.exe", "--minimized"}));
-    DOCTEST_CHECK_FALSE(captureMinimizedFlagFromArgv({"devdesk.exe"}));
+    DOCTEST_CHECK(captureMinimizedFlagFromArgv({"devdesk.exe"}));  // 幂等返回：首次已捕获--minimized=true
     DOCTEST_CHECK(consumePendingMinimizedStartup());
 
     // 5. 同族前缀不认（--minimized=1 不是 --minimized）

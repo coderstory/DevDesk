@@ -344,8 +344,9 @@ REGISTER_TEST(schema_agent_tables_columns,
         DOCTEST_REQUIRE(r.value().migrate().isOk());
         auto& db = r.value().db();
 
-        // agent_tasks 13 列：默认值钉死（max_iterations=10 / allow_destructive=0 /
-        // enabled=1 / model_slot='default' / context_note='' / auto_note=1）
+        // agent_tasks 14 列（UAT6：新增 system_prompt 列）
+        // 默认值钉死（max_iterations=10 / allow_destructive=0 /
+        // enabled=1 / model_slot='default' / context_note='' / auto_note=1 / system_prompt=''）
         std::vector<std::string> expectTasks{
             "id:INTEGER:0:<none>",
             "name:TEXT:1:<none>",
@@ -358,6 +359,7 @@ REGISTER_TEST(schema_agent_tables_columns,
             "enabled:INTEGER:1:1",
             "context_note:TEXT:1:''",
             "auto_note:INTEGER:1:1",
+            "system_prompt:TEXT:1:''",
             "created_at:INTEGER:1:<none>",
             "updated_at:INTEGER:1:<none>",
         };

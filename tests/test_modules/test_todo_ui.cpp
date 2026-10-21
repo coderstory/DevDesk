@@ -7,6 +7,7 @@
 #include "doctest.h"
 #include "test_support.h"
 
+#include "core/app_config.h"   // appconfig::erase：清除视图状态
 #include "core/database.h"
 #include "core/component_theme.h"  // componentTokensWeChat：详情面板 tint 断言的 surface 基底同源
 #include "core/event_bus.h"
@@ -2585,8 +2586,13 @@ REGISTER_TEST(todo_ui_success_ops_silent_no_toast,
         DOCTEST_CHECK(moved.value()[0].completedAt.has_value());
     }
 
-    // ③ 错误通道保留：无选中 Ctrl+↑ → 引导 toast 照常弹出（fresh 模块保证无选中态）
+    // ③ 错误通道保留：无选中 Ctrl+↑ → 引导 toast 照常弹出
+    // UAT6：视图状态跨模块实例持久化（selectedTaskId 存 app_config），
+    // 需要先清掉前一个模块的选中记录，否则 mod2 的 restoreViewState 会恢复选中
     {
+        if (auto* db = ::core::appDatabase(); db != nullptr) {
+            ::core::appconfig::erase(*db, "todo_view_state");
+        }
         std::unique_ptr<::core::Module> mod2(create_todo_module());
         mod2->onStart();
         DOCTEST_CHECK(!mod2->onKeyEvent(ctrlArrow(eui::InputKey::Up)));

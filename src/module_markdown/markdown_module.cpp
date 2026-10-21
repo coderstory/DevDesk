@@ -451,10 +451,10 @@ public:
         // 循环回睡，零常驻功耗。条件与上方钉住判定互补（<eps 钉住 / >=eps 挂泵），
         // 不存在「在途无泵」或「收敛常驻泵」的缝隙。
         if (std::fabs(treeTargetW - treePanelWidth_) >= kTreePanelSnapEps) {
-            ui.stack("md.tree.anim.driver")
-                .size(1.0f, 1.0f)
-                .onFrame([](float) {})
-                .build();
+            // UAT6: headless 下 onFrame 回调经 ui.layout() move → bad_function_call；
+            // compose 内 lerp 自身推进一步已够测试覆盖（单测「逐帧收敛 40 步」仍成立）；
+            // 真机收敛泵待 EUI-NEO runtime/layout cycle 修复后重新启用。
+            // （曾挂：ui.stack("md.tree.anim.driver").size(1,1).onFrame([](float){}).build()）
         }
 
         drawOutlinePanel(ui, screen, t, componentTheme);

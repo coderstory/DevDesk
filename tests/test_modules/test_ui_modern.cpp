@@ -674,22 +674,22 @@ REGISTER_TEST(uiModernVirtualProfileRows,
     compose();
     DOCTEST_CHECK(ui.find("claude.profiles.scroll.slot.0") != nullptr);
     DOCTEST_CHECK(ui.find("claude.profile.0.name") != nullptr);
-    // slot 窗口生效：25 行不整段渲染，视口外行不存在（virtualList 裁剪）
-    DOCTEST_CHECK(ui.find("claude.profile.15.name") == nullptr);
+    // slot 窗口生效：25 行不整段渲染，视口外行不存在（virtualList 裁剪）。
+    // UAT6：Profile 卡高 56px（name-only 设计，原 96px），更多行入视口——行 20 仍在外
+    DOCTEST_CHECK(ui.find("claude.profile.23.name") == nullptr);
 
     // 滚动回退语义：onScrollOffsetChanged 写 profilesScrollOffset_ →
-    // 重 compose 视口随偏移前移。共享配置片段列表限高 2 条后区块高 94→204，
-    // 列表视口少 110px → 偏移取 1500，让行 17 落进「偏移 ± 1 视口 overscan」渲染窗
+    // 重 compose 视口随偏移前移。偏移取 600 让行 19 落入渲染窗（56px×19≈1064）
     const auto* root = ui.find("claude.profiles.scroll");
     DOCTEST_REQUIRE(root != nullptr);
     DOCTEST_REQUIRE(root->onScrollOffsetChanged != nullptr);
-    root->onScrollOffsetChanged(1500.0f);
+    root->onScrollOffsetChanged(600.0f);
     compose();
     DOCTEST_CHECK(ui.find("claude.profiles.scroll.slot.0") != nullptr);
-    DOCTEST_CHECK(ui.find("claude.profile.17.name") != nullptr);
-    // 行命中节点 .bg 保留（选中/右键挂点行内）。offset 1500 下第 0 行已被 slot
-    // 窗口裁掉，故在已渲染的行 17 上验 .bg
-    DOCTEST_CHECK(ui.find("claude.profile.17.bg") != nullptr);
+    DOCTEST_CHECK(ui.find("claude.profile.19.name") != nullptr);
+    // 行命中节点 .bg 保留（选中/右键挂点行内）。offset 600 下第 0 行已被 slot
+    // 窗口裁掉，故在已渲染的行 19 上验 .bg
+    DOCTEST_CHECK(ui.find("claude.profile.19.bg") != nullptr);
 
     mod->onStop();
     return true;
@@ -1051,7 +1051,7 @@ REGISTER_TEST(uiAboutLayout,
     constexpr float kTitleH = 30.0f;
     constexpr float kTitleGap = 28.0f;
     constexpr float kRowH = 48.0f;
-    constexpr int kRowCount = 6;
+    constexpr int kRowCount = 7;   // UAT6：新增 EUI-NEO 行（行序 2）
     constexpr float kFooterH = 20.0f;
     constexpr float kFooterGap = 16.0f;
     constexpr float kLabelW = 120.0f;
@@ -1143,14 +1143,18 @@ REGISTER_TEST(uiAboutLayout,
         }
         const auto* copy0 = ui.find("about.card.copy.0");
         const auto* copy1 = ui.find("about.card.copy.1");
+        const auto* copy2 = ui.find("about.card.copy.2");
         const auto* hit0 = ui.find("about.card.hit.0");
         const auto* hit1 = ui.find("about.card.hit.1");
+        const auto* hit2 = ui.find("about.card.hit.2");
         DOCTEST_REQUIRE(copy0 != nullptr);
         DOCTEST_REQUIRE(copy1 != nullptr);
         DOCTEST_REQUIRE(hit0 != nullptr);
         DOCTEST_REQUIRE(hit1 != nullptr);
-        DOCTEST_CHECK(ui.find("about.card.copy.2") == nullptr);
-        DOCTEST_CHECK(ui.find("about.card.hit.2") == nullptr);
+        DOCTEST_REQUIRE(copy2 != nullptr);  // UAT6：EUI-NEO 行（行序 2）highlight → 有复制图标
+        DOCTEST_REQUIRE(hit2 != nullptr);
+        DOCTEST_CHECK(ui.find("about.card.copy.3") == nullptr);  // 行序 3 = 构建时间（非 highlight）
+        DOCTEST_CHECK(ui.find("about.card.hit.3") == nullptr);
     }
     {
         const auto* footer = ui.find("about.footer");
@@ -1320,7 +1324,7 @@ REGISTER_TEST(uiAboutPageBgEffectAlpha,
         ui.end();
         const auto* bg = ui.find("about.bg");
         DOCTEST_REQUIRE(bg != nullptr);
-        DOCTEST_CHECK(std::abs(bg->color.a - 0.5f) < 1e-3f);
+        DOCTEST_CHECK(std::abs(bg->color.a - 0.72f) < 1e-3f);  // UAT6 调值：0.5→0.72（window_effect_state.h:64）
     }
     // 尾档 = off：复位 + 验证实色
     core::window_effect_state::setCurrent("off");
@@ -1394,7 +1398,7 @@ REGISTER_TEST(uiAboutBuildLineUiFormat,
     ui.begin("about_build_line_fmt");
     mod->compose(ui, screen);
     ui.end();
-    const auto* buildValue = ui.find("about.card.value.2");   // 行序 2 = 构建时间
+    const auto* buildValue = ui.find("about.card.value.3");   // 行序 3 = 构建时间（行 0/1/2：版本/Git/EUI-NEO）
     DOCTEST_REQUIRE(buildValue != nullptr);
     const std::string& s = buildValue->text;
     DOCTEST_CHECK_MESSAGE(s.find("构建 ") == std::string::npos,

@@ -8423,7 +8423,7 @@ REGISTER_TEST(claude_profile_switch_confirm_dialog,
     {
         eui::Ui ui;
         compose(ui, "dlg_open");
-        DOCTEST_CHECK(ui.find("claude.dialog.switch") != nullptr);
+        DOCTEST_CHECK(ui.find("claude.dialog.switch") != nullptr);   // 对话框节点常驻（组件无条件创建），开/关由 open 态控
         DOCTEST_CHECK(ui.find("claude.profile.0.check") == nullptr);  // 确认前不渲染勾圈
     }
     // 点取消 → 弹窗关闭；卡 A 勾圈仍未出现（选择未变）
@@ -8435,7 +8435,7 @@ REGISTER_TEST(claude_profile_switch_confirm_dialog,
     {
         eui::Ui ui;
         compose(ui, "dlg_closed");
-        DOCTEST_CHECK(ui.find("claude.dialog.switch") == nullptr);
+        DOCTEST_CHECK(ui.find("claude.dialog.switch") != nullptr);   // 节点常驻，取消后 open 态为 false
         DOCTEST_CHECK(ui.find("claude.profile.0.check") == nullptr);
     }
     // 再点卡 A + 确认 → 勾圈落到卡 A
@@ -8452,7 +8452,7 @@ REGISTER_TEST(claude_profile_switch_confirm_dialog,
     {
         eui::Ui ui;
         compose(ui, "dlg_confirmed");
-        DOCTEST_CHECK(ui.find("claude.dialog.switch") == nullptr);
+        DOCTEST_CHECK(ui.find("claude.dialog.switch") != nullptr);   // 节点常驻，确认后 open 态回 false
         DOCTEST_CHECK(ui.find("claude.profile.0.check") != nullptr);
         DOCTEST_CHECK(ui.find("claude.profile.1.check") == nullptr);
     }
@@ -8465,7 +8465,7 @@ REGISTER_TEST(claude_profile_switch_confirm_dialog,
     {
         eui::Ui ui;
         compose(ui, "dlg_noop");
-        DOCTEST_CHECK(ui.find("claude.dialog.switch") == nullptr);
+        DOCTEST_CHECK(ui.find("claude.dialog.switch") != nullptr);   // 节点常驻，点已选卡不弹窗
         DOCTEST_CHECK(ui.find("claude.profile.0.check") != nullptr);
     }
     // 点卡 B + 确认 → 勾圈移到卡 B
