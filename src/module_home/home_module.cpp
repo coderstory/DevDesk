@@ -18,6 +18,7 @@
 #include <components/linechart.h>
 #include <components/scrollview.h>
 #include <components/theme.h>
+#include <ui_kit/glass_card.h>
 
 #include <algorithm>
 #include <cmath>
@@ -130,96 +131,11 @@ void drawGlassStatCard(eui::Ui& ui,
         .border(1.0f, components::theme::withOpacity(wc.cardBg, kGlassBorderAlpha))  // 白细边
         .padding(inset)       // 显式 16：不用组件默认 20（与旧坐标叠加致顶留空/底溢出）
         .content([&] {
-            // —— 玻璃层组（z 序：染色 → 高光 → 顶线 → 污渍 → 交互纱 → 文字）——
-            // ① 染色面：tint 低 alpha 直叠（soft-light 浅底近似，见函数头公式）
-            ui.rect(id + ".glass.tint")
-                .position(-inset, -inset)
-                .size(width, height)
-                .color(components::theme::withOpacity(tint, kGlassTintAlpha))
-                .radius(corner)
-                .build();
-            // ② 白色顶部高光（demo ::before 160° 对角渐弱）：EUI 线性渐变只有横/竖两向
-            //（GradientDirection 无对角，需上游才补），纵向主带 + 横向偏置带两片叠加
-            // 出「左上强、中右弱」的角偏置观感；渐变终点 alpha=0（GL 端 mix 全 vec4 支持）
-            ui.rect(id + ".glass.hl.top")
-                .position(-inset, -inset)
-                .size(width, height * kGlassHighlightFrac)
-                .gradient(components::theme::withOpacity(wc.cardBg, kGlassHighlightAlpha),
-                          components::theme::withAlpha(wc.cardBg, 0.0f),
-                          eui::GradientDirection::Vertical)
-                .radius(corner)
-                .build();
-            ui.rect(id + ".glass.hl.side")
-                .position(-inset, -inset)
-                .size(width * kGlassHighlightSideFrac, height)
-                .gradient(components::theme::withOpacity(wc.cardBg, kGlassHighlightSideAlpha),
-                          components::theme::withAlpha(wc.cardBg, 0.0f),
-                          eui::GradientDirection::Horizontal)
-                .radius(corner)
-                .build();
-            // ③ 顶缘 inset 高光线（demo inset 0 1px 0 rgba(255,255,255,.5)）：1px 白线
-            // 只铺两条圆角弧之间的平直顶边，不戳出圆角（EUI insetShadow 走同一 Shadow
-            // 槽位、会顶掉外投影，故用显式细线近似）
-            ui.rect(id + ".glass.topline")
-                .position(-inset + corner, -inset)
-                .size(width - corner * 2.0f, 1.0f)
-                .color(components::theme::withOpacity(wc.cardBg, kGlassTopLineAlpha))
-                .build();
-            // ④ 轻污渍（demo ::after opacity .12 × 三组 radial）：EUI 无 radial 渐变
-            // 原语（需上游），圆斑近似（splash 墨染先例：rect + radius=r=圆），halo 弱壳
-            // + core 强芯两层叠出「中心浓、边缘散」的径向衰减；落点沿用 demo 分数位，
-            // 半径全部钳在卡内不戳出边界（stack 不裁剪，无 clip 依赖）
-            const auto stain = [&](int idx, float fx, float fy, float coreR,
-                                   float haloR, const eui::Color& col,
-                                   float coreA, float haloA) {
-                // 卡本地分数落点 → content 原点坐标要再减 inset（content 原点 = 卡原点+16）
-                const float cx = fx * width;
-                const float cy = fy * height;
-                const float rc = std::min({coreR, cx, cy, width - cx, height - cy});
-                const float rh = std::min({haloR, cx, cy, width - cx, height - cy});
-                const std::string base =
-                    id + ".glass.stain." + std::to_string(idx);
-                if (rh > 0.5f) {
-                    ui.rect(base + ".halo")
-                        .position(cx - rh - inset, cy - rh - inset)
-                        .size(rh * 2.0f, rh * 2.0f)
-                        .color(components::theme::withOpacity(col, haloA))
-                        .radius(rh)
-                        .build();
-                }
-                if (rc > 0.5f) {
-                    ui.rect(base + ".core")
-                        .position(cx - rc - inset, cy - rc - inset)
-                        .size(rc * 2.0f, rc * 2.0f)
-                        .color(components::theme::withOpacity(col, coreA))
-                        .radius(rc)
-                        .build();
-                }
-            };
-            stain(0, 0.18f, 0.22f, height * 0.14f, height * 0.24f,
-                  wc.cardBg, kGlassStainWhiteCore, kGlassStainWhiteHalo);
-            stain(1, 0.82f, 0.78f, height * 0.12f, height * 0.20f,
-                  wc.textPrimary, kGlassStainDarkCore, kGlassStainDarkHalo);
-            stain(2, 0.64f, 0.12f, height * 0.10f, height * 0.16f,
-                  wc.cardBg, kGlassStainWhiteCore, kGlassStainWhiteHalo);
-            // ⑤ 整卡交互层（点击 + hover 过渡；misc1 整卡语义保留）：原 dividerSecondary/
-            // selectedBg 是不透明色，整卡铺平会把染色面盖没——改同令牌族 textPrimary
-            // 派生的低 alpha 深色纱直叠，染色面上 hover 加深照常可辨（ΔL≈0.10）
-            ui.rect(id + ".press")
-                .position(-inset, -inset)
-                .size(width, height)
-                .states(components::theme::color(0.0f, 0.0f, 0.0f,
-                                                 0.0f),
-                        components::theme::withOpacity(wc.textPrimary,
-                                                       kGlassHoverVeilAlpha),
-                        components::theme::withOpacity(wc.textPrimary,
-                                                       kGlassPressedVeilAlpha))
-                .radius(corner)
-                .transition(core::Transition::make(0.1f,
-                                                   core::Ease::OutQuad))
-                .animate(core::AnimProperty::Color)
-                .onClick(std::move(onClick))
-                .build();
+            // —— 玻璃层组（UAT6 E+F 批：共享参数化帮手替换内联层组）——
+            ui_kit::drawGlassCardLayers(
+                ui, id, -inset, -inset, width, height, corner, t,
+                ui_kit::GlassCardStyle::homeTinted(tint), std::move(onClick));
+
             ui.stack(id + ".inner")
                 .size(cw, ch)
                 .content([&] {

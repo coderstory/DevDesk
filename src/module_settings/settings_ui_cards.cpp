@@ -17,8 +17,10 @@
 #include <components/scrollview.h>
 #include <components/switch.h>
 
+#include <components/theme.h>
 #include <ui_kit/columns.h>
 #include <ui_kit/form_row.h>
+#include <ui_kit/glass_card.h>
 #include <ui_kit/wswitch.h>
 
 #include <algorithm>
@@ -107,6 +109,16 @@ void drawAppearanceCard(const CardDrawArgs& args) {
         .size(w, h)
         .zIndex(40)
         .content([&] {
+            // UAT6 E+F 批玻璃卡底 + 无染色淡雅质感
+            ui.rect(id + ".bg")
+                .position(0.0f, 0.0f).size(w, h)
+                .color(components::theme::withOpacity(t.colors.wechat.cardBg, 0.62f))
+                .radius(t.sizes.radiusWeChat)
+                .border(1.0f, components::theme::withOpacity(t.colors.wechat.cardBg, 0.55f))
+                .build();
+            ui_kit::drawGlassCardLayers(ui, id, 0.0f, 0.0f, w, h,
+                t.sizes.radiusWeChat, t, ui_kit::GlassCardStyle::subtle());
+
             cardTitle(ui, id, t, 16.0f, w - 56.0f - kFluidToggleW, 22.0f,
                       22.0f, "外观");
             cardDesc(ui, id, t, 40.0f, w - 56.0f, descH,
@@ -243,6 +255,16 @@ void drawEditorFontCard(const CardDrawArgs& args) {
         .size(w, h)
         .zIndex(30)
         .content([&] {
+            // UAT6 E+F 批玻璃卡底 + 无染色淡雅质感
+            ui.rect(id + ".bg")
+                .position(0.0f, 0.0f).size(w, h)
+                .color(components::theme::withOpacity(t.colors.wechat.cardBg, 0.62f))
+                .radius(t.sizes.radiusWeChat)
+                .border(1.0f, components::theme::withOpacity(t.colors.wechat.cardBg, 0.55f))
+                .build();
+            ui_kit::drawGlassCardLayers(ui, id, 0.0f, 0.0f, w, h,
+                t.sizes.radiusWeChat, t, ui_kit::GlassCardStyle::subtle());
+
             cardTitle(ui, id, t, 16.0f, w - 56.0f, 22.0f, 22.0f, "编辑器字号");
             ui_kit::formRow(ui, id + ".font", "字号", 28.0f, rowY,
                             w - 56.0f, rowH,
@@ -385,6 +407,16 @@ void drawModulesCard(const CardDrawArgs& args) {
     ui.stack(id)
         .size(w, h)
         .content([&] {
+            // UAT6 E+F 批玻璃卡底 + 无染色淡雅质感
+            ui.rect(id + ".bg")
+                .position(0.0f, 0.0f).size(w, h)
+                .color(components::theme::withOpacity(t.colors.wechat.cardBg, 0.62f))
+                .radius(t.sizes.radiusWeChat)
+                .border(1.0f, components::theme::withOpacity(t.colors.wechat.cardBg, 0.55f))
+                .build();
+            ui_kit::drawGlassCardLayers(ui, id, 0.0f, 0.0f, w, h,
+                t.sizes.radiusWeChat, t, ui_kit::GlassCardStyle::subtle());
+
             cardTitle(ui, id, t, 16.0f, w - 56.0f, 22.0f, 22.0f, "模块");
             cardDesc(ui, id, t, 40.0f, w - 56.0f, roundFs(16.0f),
                      "开关即时生效：关闭后该模块代码不再执行，侧边栏入口与"
@@ -473,6 +505,16 @@ void drawProxyCard(const CardDrawArgs& args) {
     ui.stack(id)
         .size(w, h)
         .content([&] {
+            // UAT6 E+F 批玻璃卡底 + 无染色淡雅质感
+            ui.rect(id + ".bg")
+                .position(0.0f, 0.0f).size(w, h)
+                .color(components::theme::withOpacity(t.colors.wechat.cardBg, 0.62f))
+                .radius(t.sizes.radiusWeChat)
+                .border(1.0f, components::theme::withOpacity(t.colors.wechat.cardBg, 0.55f))
+                .build();
+            ui_kit::drawGlassCardLayers(ui, id, 0.0f, 0.0f, w, h,
+                t.sizes.radiusWeChat, t, ui_kit::GlassCardStyle::subtle());
+
             auto* svc = in.proxy;
             const bool running = svc && svc->isProxyRunning();
             const int port = running ? svc->proxyPort() : 0;
