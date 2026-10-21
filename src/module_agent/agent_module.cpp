@@ -51,6 +51,7 @@
 #include "module_agent/task_draft_parse.h"
 #include "module_agent/tool_info.h"
 #include "module_agent/trigger_config.h"
+#include "module_agent/agent_system_prompt.h"
 #include "module_agent/agent_ui_shared.h"
 
 namespace module::agent {
@@ -177,7 +178,7 @@ constexpr float kPageHintH = 16.0f;
 
 // 任务弹窗几何（UAT5 重设计：弹性宽 = max(720, 窗口/2)，demo 智能体面板的紧凑行高）
 // kDialogGap/kDialogLabelW/kDialogRowH 已收进 agent_ui_shared.h（与详情弹窗共用真源）
-constexpr float kTaskDialogH = 680.0f;        // 重设计后全行预算见 composeTaskDialog
+constexpr float kTaskDialogH = 756.0f;        // 重设计后全行预算见 composeTaskDialog（UAT6 系统提示词 +76）
 constexpr float kGoalInputH = 64.0f;          // demo 指令 textarea rows≈3
 constexpr float kContextNoteH = 56.0f;
 constexpr float kGroupTitleH = 20.0f;        // 分组标题高（14px 加粗 + 行高 20）
@@ -642,6 +643,9 @@ void AgentModule::openNewTaskDialog() {
     editDestructive_ = false;
     editContextNote_.clear();
     editAutoNote_ = true;
+    // 新建时生成默认系统提示词（环境上下文：工作目录、git 分支、OS、架构）
+    editSystemPrompt_ = buildDefaultSystemPrompt(
+        std::filesystem::current_path().string());
     editEvents_ = {};
     editMaxRuns_ = 0;   // 新建缺省 = 不限次数（与旧任务同语义：恒循环）
     editTriggerIdx_ = 0;
@@ -762,6 +766,7 @@ void AgentModule::openTaskEditor(int64_t taskId) {
     editDestructive_ = r.allowDestructive;
     editContextNote_ = r.contextNote;
     editAutoNote_ = (r.autoNote != 0);
+    editSystemPrompt_ = r.systemPrompt;  // 编辑已有任务：保持用户现有值（不覆盖）
     editTriggerIdx_ = triggerIndexOf(r.triggerType);
     // 「闹钟」分支回填：按 once_at 格式化成同一份 YYYY-MM-DD HH:MM 文本；坏配置
     // 留空 + 弹窗内点名异常，绝不回落到「手动」（回落会让一次保存把类型改写成手动）。
@@ -901,7 +906,7 @@ void AgentModule::saveTaskDialog() {
         auto updated = store_->updateTask(*editingTaskId_, name, goal,
                                           triggerType, triggerConfig, editSlot_, iter,
                                           editDestructive_, editContextNote_,
-                                          autoNoteInt);
+                                          autoNoteInt, editSystemPrompt_);
         if (updated.isFail()) {
             editError_ = "保存失败：" + updated.errorMessage();
             LOG_ERROR("Agent: 保存任务失败: " + updated.errorMessage());
@@ -911,7 +916,7 @@ void AgentModule::saveTaskDialog() {
         auto created = store_->createTask(name, goal, triggerType,
                                           editSlot_, iter, editDestructive_,
                                           triggerConfig, editContextNote_,
-                                          autoNoteInt);
+                                          autoNoteInt, editSystemPrompt_);
         if (created.isFail()) {
             editError_ = "创建失败：" + created.errorMessage();
             LOG_ERROR("Agent: 创建任务失败: " + created.errorMessage());
@@ -2362,10 +2367,27 @@ void AgentModule::composeTaskDialog(
                 .onCancel([this] { closeTaskDialog(); })
                 .build();
 
+            // 系统提示词：发给 AI 的环境上下文（新建时预填默认值，用户可编辑）
+            fieldCaption(ui, "agent.dialog.task.sysprompt.caption",
+                         "系统提示词（发给 AI 的环境上下文，可编辑）",
+                         x0, 432.0f, innerW, 16.0f, t.colors.textSecondary);
+            components::input(ui, "agent.dialog.task.sysprompt")
+                .position(x0, 452.0f)
+                .size(innerW, 64.0f)
+                .value(editSystemPrompt_)
+                .placeholder("系统提示词，运行时注入；留空则使用自动生成的默认提示词")
+                .fontSize(t.sizes.fontSizeBody)
+                .multiline(true)
+                .scrollbar(true)
+                .theme(themeTokens)
+                .onChange([this](const std::string& v) { editSystemPrompt_ = v; })
+                .onCancel([this] { closeTaskDialog(); })
+                .build();
+
             // 模型槽位（左）| 迭代上限（中）| 只跑一次（右，仅 schedule/event 渲染——
             // manual/resident 的 trigger_config 不被 Scheduler 消费，给不消费该列的
             // 任务显示开关等于假承诺）
-            const float rowY = 448.0f;
+            const float rowY = 524.0f;
             const float slotDdW = 116.0f;
             fieldCaption(ui, "agent.dialog.task.slot.caption", "模型槽位", x0,
                          rowY, kDialogLabelW, kDialogRowH, t.colors.textSecondary);
@@ -2435,11 +2457,11 @@ void AgentModule::composeTaskDialog(
                 "迭代＝单次运行的最多轮数，跑满以「受限」结束、不再重试；"
                 "破坏性操作＝允许删除文件等高危工具，不勾则被拒",
                 t.sizes.fontSizeSmall - 1.0f, t.colors.textTertiary,
-                {.x = x0, .y = 500.0f, .height = 12.0f, .lineHeight = 12.0f});
+                {.x = x0, .y = 576.0f, .height = 12.0f, .lineHeight = 12.0f});
 
             // 安全组：破坏性开关独立红组（spec §8 item 5 高危分组）+ 自动记录
             ui.text("agent.dialog.task.group.danger")
-                .position(x0, 520.0f)
+                .position(x0, 596.0f)
                 .size(innerW, kGroupTitleH)
                 .text("安全")
                 .fontSize(14.0f)
@@ -2448,7 +2470,7 @@ void AgentModule::composeTaskDialog(
                 .color(t.colors.wechat.textPrimary)
                 .build();
             {
-                const float destructiveY = 544.0f;
+                const float destructiveY = 620.0f;
                 // ⚠️ 警示图标（仅开启时渲染，wechat.warningRed）
                 if (editDestructive_) {
                     ui.text("agent.dialog.task.destructive.warn")
@@ -2495,10 +2517,11 @@ void AgentModule::composeTaskDialog(
             // 校验 / 保存错误（有错才渲染，弹窗不关）
             ui_kit::drawDialogText(ui, "agent.dialog.task.error", w, editError_,
                                    t.sizes.fontSizeSmall, t.colors.error,
-                                   {.x = x0, .y = 588.0f, .height = 16.0f,
+                                   {.x = x0, .y = 664.0f, .height = 16.0f,
                                     .lineHeight = 16.0f, .skipIfEmpty = true});
 
             // 底部按钮（demo .dlgf：hint 左 + 按钮右对齐；新建 =「创建」/编辑 =「保存」）
+            // h = kTaskDialogH = 756；btnY = 756 - 48 = 708
             const float btnY = h - 48.0f;
             ui_kit::drawDialogText(
                 ui, "agent.dialog.task.footer.hint", w,

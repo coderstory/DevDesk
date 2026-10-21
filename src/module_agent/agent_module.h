@@ -340,6 +340,7 @@ private:
     int editMaxRuns_ = 0;
     std::string editContextNote_;
     bool editAutoNote_ = true;
+    std::string editSystemPrompt_;
     // 「事件」分支的勾选态（与 agent_module.cpp 的 kEventNames 一一对应；仅主线程）
     std::array<bool, 3> editEvents_{};
     bool editTriggerOpen_ = false;   // 触发类型下拉开合（UI 态）

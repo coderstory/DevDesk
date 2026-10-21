@@ -50,7 +50,7 @@ std::optional<RowError> rowStr(const core::data::SqlRow& row, const char* col,
 // agent_tasks 11 列列序：listTasks / getTask 共用同一份列清单与行映射
 constexpr const char* kTaskColumns =
     "id,name,goal,trigger_type,trigger_config,model_slot,"
-    "max_iterations,allow_destructive,enabled,context_note,auto_note";
+    "max_iterations,allow_destructive,enabled,context_note,auto_note,system_prompt";
 
 // 一行 → AgentTaskRow（列缺失/类型不符一律 fail）
 Result<AgentTaskRow> taskRowFrom(const core::data::SqlRow& row) {
@@ -89,6 +89,9 @@ Result<AgentTaskRow> taskRowFrom(const core::data::SqlRow& row) {
     if (auto e = rowInt(row, "auto_note", autoNoteInt)) {
         return Result<AgentTaskRow>::fail(e->first, e->second);
     }
+    if (auto e = rowStr(row, "system_prompt", t.systemPrompt)) {
+        return Result<AgentTaskRow>::fail(e->first, e->second);
+    }
     t.maxIterations = static_cast<int>(maxIter);
     t.allowDestructive = (allowDestr != 0);
     t.enabled = (enabled != 0);
@@ -106,20 +109,22 @@ Result<int64_t> AgentStore::createTask(const std::string& name, const std::strin
                                        int maxIterations, bool allowDestructive,
                                        const std::string& triggerConfig,
                                        const std::string& contextNote,
-                                       int autoNote) {
+                                       int autoNote,
+                                       const std::string& systemPrompt) {
     std::lock_guard<std::recursive_mutex> lock(db_.mutex());
     auto st = db_.prepare(
         "INSERT INTO agent_tasks(name, goal, trigger_type, trigger_config, model_slot,"
         " max_iterations, allow_destructive, enabled, context_note, auto_note,"
-        " created_at, updated_at)"
-        " VALUES(?,?,?,?,?,?,?,1,?,?,?,?)");
+        " system_prompt, created_at, updated_at)"
+        " VALUES(?,?,?,?,?,?,?,1,?,?,?,?,?)");
     if (st.isFail()) return Result<int64_t>::fail(st.errorCode(), st.errorMessage());
     const int64_t now = static_cast<int64_t>(std::time(nullptr));
     auto& s = st.value();
     auto ok = bindAll(s, name, goal, triggerType, triggerConfig, modelSlot,
                       static_cast<int64_t>(maxIterations),
                       static_cast<int64_t>(allowDestructive ? 1 : 0),
-                      contextNote, static_cast<int64_t>(autoNote), now, now);
+                      contextNote, static_cast<int64_t>(autoNote),
+                      systemPrompt, now, now);
     if (ok.isFail()) return Result<int64_t>::fail(ok.errorCode(), ok.errorMessage());
     auto step = s.step();
     if (step.isFail()) return Result<int64_t>::fail(step.errorCode(), step.errorMessage());
@@ -211,19 +216,21 @@ Result<void> AgentStore::updateTask(int64_t id, const std::string& name,
                                     const std::string& modelSlot, int maxIterations,
                                     bool allowDestructive,
                                     const std::string& contextNote,
-                                    int autoNote) {
+                                    int autoNote,
+                                    const std::string& systemPrompt) {
     std::lock_guard<std::recursive_mutex> lock(db_.mutex());
     auto st = db_.prepare(
         "UPDATE agent_tasks SET name=?,goal=?,trigger_type=?,trigger_config=?,"
         "model_slot=?,max_iterations=?,allow_destructive=?,context_note=?,"
-        "auto_note=?,updated_at=? WHERE id=?");
+        "auto_note=?,system_prompt=?,updated_at=? WHERE id=?");
     if (st.isFail()) return Result<void>::fail(st.errorCode(), st.errorMessage());
     auto& s = st.value();
     const int64_t now = static_cast<int64_t>(std::time(nullptr));
     auto ok = bindAll(s, name, goal, triggerType, triggerConfig, modelSlot,
                       static_cast<int64_t>(maxIterations),
                       static_cast<int64_t>(allowDestructive ? 1 : 0),
-                      contextNote, static_cast<int64_t>(autoNote), now, id);
+                      contextNote, static_cast<int64_t>(autoNote),
+                      systemPrompt, now, id);
     if (ok.isFail()) return Result<void>::fail(ok.errorCode(), ok.errorMessage());
     auto step = s.step();
     if (step.isFail()) return Result<void>::fail(step.errorCode(), step.errorMessage());

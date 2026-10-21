@@ -73,6 +73,7 @@ add_executable(devdesk_tests
     test_modules/test_message_blocks.cpp
     test_modules/test_agent_ui.cpp
     test_modules/test_agent_detail_layout.cpp
+    test_modules/test_agent_system_prompt.cpp
     test_modules/test_direct_llm_client.cpp
     test_modules/test_todo_ui.cpp
     test_modules/test_ui_modern.cpp

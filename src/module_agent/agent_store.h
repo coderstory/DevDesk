@@ -19,6 +19,7 @@ struct AgentTaskRow {
     bool enabled = true;
     std::string contextNote;
     int autoNote = 1;
+    std::string systemPrompt;
 };
 struct AgentRunRow {
     int64_t id = 0, taskId = 0;
@@ -60,7 +61,8 @@ public:
                                int maxIterations, bool allowDestructive,
                                const std::string& triggerConfig = "",
                                const std::string& contextNote = "",
-                               int autoNote = 1);
+                               int autoNote = 1,
+                               const std::string& systemPrompt = "");
     Result<std::vector<AgentTaskRow>> listTasks();
     Result<AgentTaskRow> getTask(int64_t id);                    // 不存在 → NotFound
     // 任务的唯一「同 task 不并发」闸：锁内查 running 再插 = 原子；已有 running → fail(AlreadyExists) 且不落行
@@ -73,7 +75,8 @@ public:
                             const std::string& modelSlot, int maxIterations,
                             bool allowDestructive,
                             const std::string& contextNote = "",
-                            int autoNote = 1);
+                            int autoNote = 1,
+                            const std::string& systemPrompt = "");
     Result<void> setTaskEnabled(int64_t id, bool enabled);   // 不存在 → NotFound
     // 删任务并清全部运行痕迹：单事务三条显式 DELETE（messages 按 runs 子查询 → runs →
     // tasks），不把级联押在 FK CASCADE 的 pragma 状态上；id 不存在 → NotFound 且三表零变化

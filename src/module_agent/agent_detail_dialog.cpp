@@ -30,6 +30,7 @@
 #include "core/logging.h"
 #include "core/router.h"
 #include "core/theme.h"
+#include <core/window/window_backend.h>
 #include "module_agent/agent_time_text.h"
 #include "module_agent/message_blocks.h"
 #include "module_agent/trigger_config.h"
@@ -1266,6 +1267,9 @@ void AgentModule::composeTaskDetailDialog(
                                 "." +
                                 std::to_string(
                                     cfgTask ? cfgTask->triggerConfig.size() : 0) +
+                                "." +
+                                std::to_string(
+                                    cfgTask ? cfgTask->systemPrompt.size() : 0) +
                                 ".p" + std::to_string(problemV.size()) +
                                 ".f" + std::to_string(fsS))
                     .content([&](eui::Ui& f, float fw, float) {
@@ -1463,6 +1467,13 @@ void AgentModule::composeTaskDetailDialog(
                                      ? (cfgTask->contextNote.empty()
                                             ? std::string("（未设置）")
                                             : cfgTask->contextNote)
+                                     : std::string("—"));
+                        // 系统提示词：配置 tab 只读展示（编辑走任务弹窗）
+                        cfgBlock("sysprompt", "系统提示词",
+                                 cfgTask != nullptr
+                                     ? (cfgTask->systemPrompt.empty()
+                                            ? std::string("（未设置 · 将使用自动生成）")
+                                            : cfgTask->systemPrompt)
                                      : std::string("—"));
                         // 只读口径：改配置走「编辑任务」（AI 起草也在编辑弹窗）
                         f.text(cfgBase + ".readonly.hint")

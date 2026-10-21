@@ -137,6 +137,7 @@ AgentTask taskFromRow(const AgentTaskRow& row) {
     t.allowDestructive = row.allowDestructive;
     t.contextNote = row.contextNote;
     t.autoNote = (row.autoNote != 0);
+    t.systemPrompt = row.systemPrompt;
     return t;
 }
 
@@ -214,11 +215,17 @@ Result<int64_t> AgentLoop::run(const AgentTask& task,
             error = "达到迭代上限 " + std::to_string(iterations);
             break;
         }
-        // system prompt：始终带「当前本地时间」（模型没有时钟，日期类任务靠宿主给日期）；
-        // context note 非空且 autoNote 开时再追加任务记忆
-        std::string systemPrompt = currentTimePromptLine(std::time(nullptr));
-        if (task.autoNote && !task.contextNote.empty()) {
-            systemPrompt += "\n\n[任务上下文记忆]\n" + task.contextNote;
+        // system prompt：用户自定义 > 自动生成（带当前本地时间 + 可选的上下文记忆）。
+        // 用户填写了 systemPrompt → 直接使用，不追加自动内容（由用户自己决定要什么）。
+        // 未填写 → 自动生成：时间行 + 可选上下文记忆（既往行为不变）。
+        std::string systemPrompt;
+        if (!task.systemPrompt.empty()) {
+            systemPrompt = task.systemPrompt;
+        } else {
+            systemPrompt = currentTimePromptLine(std::time(nullptr));
+            if (task.autoNote && !task.contextNote.empty()) {
+                systemPrompt += "\n\n[任务上下文记忆]\n" + task.contextNote;
+            }
         }
         // 槽位→真实 model id 由端点实现解析
         auto resp = llm_.send(messages, toolsJson, systemPrompt, task.modelSlot);
