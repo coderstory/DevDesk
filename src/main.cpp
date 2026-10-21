@@ -500,8 +500,12 @@ bool showTrayStyledMenu(int x, int y) {
         items.push_back(std::move(item));
     }
     // M-2（UAT2 一审）：托盘菜单与五模块 toast/菜单统一 wechat 皮肤
-    const components::StyledMenuStyle style(
+    // UAT6 I 批：托盘菜单底色淡绿（#E8F7EE ~ #EAF8F0 档），hover/选中加深一档
+    components::StyledMenuStyle style(
         core::theme::componentTokensWeChat(core::theme::current()));
+    style.background = eui::Color{0xE8, 0xF7, 0xEE, 0xFF};  // 淡绿底
+    style.hover = eui::Color{0xD0, 0xED, 0xD8, 0xFF};       // hover 加深一档
+    style.pressed = eui::Color{0xBE, 0xE4, 0xC8, 0xFF};     // 按下加深一档
     return components::showStyledMenu("tray", std::move(items), style,
                                       static_cast<float>(x), static_cast<float>(y),
                                       [spec](const std::vector<int>& path) {
