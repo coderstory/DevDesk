@@ -259,12 +259,20 @@ void drawEditorFontCard(const CardDrawArgs& args) {
                         })
                         .build();
                 }, t);
-            // hint 第二行：下拉下方全卡宽（窄列超长文案省略号兜底）。
+            // hint 第二行：下拉下方全卡宽。UAT6「字号说明没显示全」：旧文案
+            // 30.7em 在 115%/130% 档（fs(12)=13.8/15.6）实宽 423/479px 超出
+            // 最小窗 1000 的 hintW 396（colW 452-56）被省略号截断。两案中取
+            // 「缩短」：换行要 +16px 行盒，配对行 184 被外观卡钉死（通用 tab
+            // 零滚动预算 372@640 无余量），只能挪 68 内容锚破坏与外观卡并排
+            // 对齐、且会顶掉 UAT6 自启动行（autostart 批 autostartRowBelowY
+            // 按 hint 单行高推导）——缩短零几何影响。「默认 15px（标准）」与
+            // 下拉选中档文案「标准 15px」重复，删之不损信息。新文案 16.6em，
+            // 四档实宽 169/199/229/259px 全档放得下（回退锁见 hint 适配用例）。
             const float hintW = w - 56.0f;
             ui.text(id + ".hint")
                 .position(28.0f, hintY)
                 .size(hintW, hintH)
-                .text("Markdown 编辑器正文字号；默认 15px（标准）。切换即时生效。")
+                .text("Markdown 正文字号；切换即时生效")
                 .fontSize(fs(12.0f))
                 .lineHeight(hintH)
                 .color(t.colors.textTertiary)

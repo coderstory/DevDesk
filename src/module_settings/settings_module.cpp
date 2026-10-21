@@ -299,6 +299,10 @@ public:
         cfg_.fontScalePercent = kFontPresets[index];
         ::core::theme::setFontScale(
             static_cast<float>(cfg_.fontScalePercent) / 100.0f);
+        // 切档即生效不依赖点击输入顺带触发的 composeRequested：apply 路径显式
+        // 唤醒下一帧 compose（幂等——同帧已请求时多一次重排无害，但把「立即
+        // 反映」变成 apply 链自带属性；UAT6 字号设置实时生效）。
+        core::platform::requestUiUpdate();
         persist();
         setStatus("字号缩放：" + std::to_string(cfg_.fontScalePercent) +
                   "%（下一帧全局生效）");

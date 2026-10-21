@@ -275,6 +275,11 @@ void setFontScale(float scale) {
     // 钳制到 [0.5, 2.0]：低于 0.5 文字不可读，高于 2.0 布局必然破裂
     g_fontScale = scale < 0.5f ? 0.5f : (scale > 2.0f ? 2.0f : scale);
     rebuild();
+    // 与 setDark/setLight/setAccent 同权广播：字号档也是主题状态变更。此前是唯一
+    // 不通知的 mutator（UAT6「字号设置无效，起码没实时生效」排查结论之一）——
+    // 下游联动（标题栏/窗口效果回查等）不该对档位变化无感，重算/重渲染也不再
+    // 依赖输入路径顺带触发的 composeRequested。
+    notifyThemeChanged(g_current.isDark);
 }
 
 float fontScale() { return g_fontScale; }
