@@ -236,11 +236,12 @@ REGISTER_TEST(github_sync_card_progress_bar_and_text,
 })
 
 // 方案 A 三段几何（与 drawGithubSyncCard 行进公式同构；100% 档换算见注释）：
-//   头部 = 点 8（x=28）+ 标题（x=44，22 行高）+ 摘要（+2+16）→ 启用/自动推送
-//   两整行开关行（UAT6，行距 8、行盒 36；启用 52×28 在上、自动推送 44×24 在
-//   下，开关钉 kW−28 右缘、行盒内垂直居中；label+说明左块宽 = 卡内宽−开关−8）；
-//   头部底 = 56+8+36+8+36 = 144 → 分段线（+12，1px）→ 配置组（组题 16 + URL
-//   行 36 + 分支|Token 行 36）→ 分段线 → 操作组（三按钮行 36）。
+//   头部 = 点 8（x=28）+ 标题（x=44，20 行高）+ 摘要（+1+16）→ 启用/自动推送
+//   两整行开关行（UAT6，行距 6、行盒 28；启用 52×28 在上、自动推送 44×24 在
+//   下，开关钉 kW−28 右缘、行盒内垂直居中；label 宽 = 卡内宽−开关−8、垂直
+//   居中于行盒——UAT6 零滚动收口删两行说明文案行）；
+//   头部底 = 45+6+28+6+28 = 113 → 分段线（+5，1px）→ 配置组（URL 行 36 +
+//   分支|Token 行 36，组题行已删）→ 分段线 → 操作组（三按钮行 36）。
 REGISTER_TEST(github_sync_card_plan_a_geometry,
               "github_sync 卡片: 方案 A 三段几何（头部/开关两行/配置组/操作组）", {
     CardFixture fx;
@@ -255,7 +256,6 @@ REGISTER_TEST(github_sync_card_plan_a_geometry,
     const auto* enLabel = ui.find(std::string(kCardId) + ".enabled.label");
     const auto* enSw = ui.find(std::string(kCardId) + ".enabled.sw");
     const auto* divHead = ui.find(std::string(kCardId) + ".div.head");
-    const auto* groupCfg = ui.find(std::string(kCardId) + ".group.config");
     const auto* url = ui.find(std::string(kCardId) + ".url.input");
     const auto* br = ui.find(std::string(kCardId) + ".branch.input");
     const auto* tk = ui.find(std::string(kCardId) + ".token.input");
@@ -271,7 +271,6 @@ REGISTER_TEST(github_sync_card_plan_a_geometry,
     DOCTEST_REQUIRE(enLabel != nullptr);
     DOCTEST_REQUIRE(enSw != nullptr);
     DOCTEST_REQUIRE(divHead != nullptr);
-    DOCTEST_REQUIRE(groupCfg != nullptr);
     DOCTEST_REQUIRE(url != nullptr);
     DOCTEST_REQUIRE(br != nullptr);
     DOCTEST_REQUIRE(tk != nullptr);
@@ -282,11 +281,13 @@ REGISTER_TEST(github_sync_card_plan_a_geometry,
 
     const float kW = 1520.0f;
     const float padX = 28.0f;
-    const float y0 = 16.0f;
-    const float titleH = ms::roundFs(22.0f);
+    const float y0 = 8.0f;   // kCardPaddingY（零滚动收口 16→8）
+    const float titleH = ms::roundFs(20.0f);
     const float mutedH = ms::roundFs(16.0f);
     const float rowH = ms::roundFs(36.0f);
-    const float secGap = ms::roundFs(12.0f);
+    const float toggleRowH = ms::roundFs(28.0f);
+    const float rowGap = ms::roundFs(6.0f);
+    const float secGap = ms::roundFs(5.0f);
     // 头部：状态点 + 标题（启用后缀）+ 摘要（披露兜底，见 disclosure 用例）
     DOCTEST_CHECK(std::fabs(dot->frame.x - padX) < 0.5f);
     DOCTEST_CHECK(std::fabs(dot->frame.y - (y0 + (titleH - 8.0f) * 0.5f)) < 0.5f);
@@ -295,16 +296,22 @@ REGISTER_TEST(github_sync_card_plan_a_geometry,
     DOCTEST_CHECK(std::fabs(title->frame.x - (padX + 8.0f + 8.0f)) < 0.5f);
     DOCTEST_CHECK(std::fabs(title->frame.y - y0) < 0.5f);
     DOCTEST_CHECK_EQ(title->text, std::string("GitHub 同步 · 已启用"));
-    const float summaryY = y0 + titleH + ms::roundFs(2.0f);
+    const float summaryY = y0 + titleH + ms::roundFs(1.0f);
     DOCTEST_CHECK(std::fabs(summary->frame.y - summaryY) < 0.5f);
     DOCTEST_CHECK(std::fabs(summary->frame.x - title->frame.x) < 0.5f);
-    // 启用/自动推送两整行（UAT6）：行 y = 摘要底(56)+8 / 启用行底+8；行盒 36，
-    // 开关钉卡右内边距、行盒内垂直居中（启用 52×28 在上、自动推送 44×24 在下）
-    const float headTextBottom = y0 + titleH + ms::roundFs(2.0f) + mutedH;
-    const float enableRowY = headTextBottom + ms::roundFs(8.0f);
-    const float autoRowY = enableRowY + rowH + ms::roundFs(8.0f);
-    const float enableSwY = enableRowY + (rowH - 28.0f) * 0.5f;
-    const float autoSwY = autoRowY + (rowH - 24.0f) * 0.5f;
+    // 启用/自动推送两整行（UAT6 零滚动收口：无说明行、行盒 28 贴开关）：行 y =
+    // 摘要底+6 / 启用行底(max(行盒/文本/开关))+6；开关钉卡右内边距、行盒内
+    // 垂直居中（启用 52×28 在上、自动推送 44×24 在下）
+    const float labelH = ms::roundFs(18.0f);
+    const float headTextBottom = summaryY + mutedH;
+    const float enableRowY = headTextBottom + rowGap;
+    const float enableTextBottom = enableRowY + (toggleRowH + labelH) * 0.5f;
+    const float enableSwY = enableRowY + (toggleRowH - 28.0f) * 0.5f;
+    const float autoRowY =
+        std::max(enableRowY + toggleRowH,
+                 std::max(enableTextBottom, enableSwY + 28.0f)) + rowGap;
+    const float autoTextBottom = autoRowY + (toggleRowH + labelH) * 0.5f;
+    const float autoSwY = autoRowY + (toggleRowH - 24.0f) * 0.5f;
     DOCTEST_CHECK_EQ(enLabel->text, std::string("启用"));
     DOCTEST_CHECK_EQ(autoLabel->text, std::string("自动推送"));
     DOCTEST_CHECK(std::fabs(enSw->frame.x - (kW - padX - 52.0f)) < 0.5f);
@@ -317,42 +324,34 @@ REGISTER_TEST(github_sync_card_plan_a_geometry,
     DOCTEST_CHECK(std::fabs(autoSw->frame.y - autoSwY) < 0.5f);
     DOCTEST_CHECK_EQ(autoSw->frame.width, 44.0f);
     DOCTEST_CHECK_EQ(autoSw->frame.height, 24.0f);
-    // label+说明左块：贴卡左缘（x=28）、行顶起；宽度 = 卡内宽 − 开关 − 8（弹性）
-    const float labelH = ms::roundFs(18.0f);
-    const float descGap = ms::roundFs(2.0f);
+    // label 左块：贴卡左缘（x=28）、行盒内垂直居中；宽度 = 卡内宽 − 开关 − 8（弹性）。
+    // 说明文案行已删（零滚动收口）：desc 元素不得再出现（防「顺手加回来」）。
     const float enTextW = kW - padX * 2.0f - 52.0f - ms::roundFs(8.0f);
     const float autoTextW = kW - padX * 2.0f - 44.0f - ms::roundFs(8.0f);
-    const auto* enDesc = ui.find(std::string(kCardId) + ".enabled.desc");
-    const auto* autoDesc = ui.find(std::string(kCardId) + ".autopush.desc");
-    DOCTEST_REQUIRE(enDesc != nullptr);
-    DOCTEST_REQUIRE(autoDesc != nullptr);
-    DOCTEST_CHECK(!enDesc->text.empty());
-    DOCTEST_CHECK(!autoDesc->text.empty());
+    DOCTEST_CHECK(ui.find(std::string(kCardId) + ".enabled.desc") == nullptr);
+    DOCTEST_CHECK(ui.find(std::string(kCardId) + ".autopush.desc") == nullptr);
     for (const auto* lbl : {enLabel, autoLabel}) {
         DOCTEST_CHECK(std::fabs(lbl->frame.x - padX) < 0.5f);
     }
-    DOCTEST_CHECK(std::fabs(enLabel->frame.y - enableRowY) < 0.5f);
-    DOCTEST_CHECK(std::fabs(autoLabel->frame.y - autoRowY) < 0.5f);
+    DOCTEST_CHECK(std::fabs(enLabel->frame.y -
+                            (enableRowY +
+                             (toggleRowH - labelH) * 0.5f)) < 0.5f);
+    DOCTEST_CHECK(std::fabs(autoLabel->frame.y -
+                            (autoRowY + (toggleRowH - labelH) * 0.5f)) < 0.5f);
     DOCTEST_CHECK(std::fabs(enLabel->frame.width - enTextW) < 0.5f);
     DOCTEST_CHECK(std::fabs(autoLabel->frame.width - autoTextW) < 0.5f);
-    DOCTEST_CHECK(std::fabs(enDesc->frame.y -
-                            (enableRowY + labelH + descGap)) < 0.5f);
-    DOCTEST_CHECK(std::fabs(autoDesc->frame.y -
-                            (autoRowY + labelH + descGap)) < 0.5f);
-    // 第一段分段线：头部内容底 = 自动推送行底（max(行盒/文本块/开关)）+ 12
-    const float headBottom = std::max(autoRowY + rowH,
-                                      std::max(autoRowY + labelH + descGap +
-                                                   mutedH,
+    // 第一段分段线：头部内容底 = 自动推送行底（max(行盒/文本块/开关)）+ 5
+    const float headBottom = std::max(autoRowY + toggleRowH,
+                                      std::max(autoTextBottom,
                                                autoSwY + 24.0f));
     DOCTEST_CHECK(std::fabs(divHead->frame.y - (headBottom + secGap)) < 0.5f);
     DOCTEST_CHECK(std::fabs(divHead->frame.x - padX) < 0.5f);
-    // 配置组：组题 → URL 全宽行 → 分支|Token 双列（colW 公式沿用）
+    // 配置组：组题行已删（零滚动收口）——URL 全宽行直接跟分段线；group.config
+    // 元素不得再出现（防「顺手加回来」）
+    DOCTEST_CHECK(ui.find(std::string(kCardId) + ".group.config") == nullptr);
     float y = headBottom + secGap + 1.0f + secGap;
-    DOCTEST_CHECK(std::fabs(groupCfg->frame.y - y) < 0.5f);
-    DOCTEST_CHECK_EQ(groupCfg->text, std::string("仓库配置"));
-    y += mutedH + ms::roundFs(8.0f);
     const float formW = kW - padX * 2.0f;
-    const float colGap = ms::roundFs(8.0f);
+    const float colGap = ms::roundFs(6.0f);
     const float colW = (formW - colGap) * 0.5f;
     const float col2X = padX + colW + colGap;
     const float ctrlDx = 110.0f + 8.0f;   // FormRow 定宽 label + 间距
@@ -362,7 +361,7 @@ REGISTER_TEST(github_sync_card_plan_a_geometry,
     DOCTEST_CHECK(std::fabs(url->frame.y - y) < 0.5f);
     DOCTEST_CHECK(std::fabs(url->frame.x + url->frame.width - (kW - padX)) <
                   0.5f);
-    y += rowH + ms::roundFs(8.0f);
+    y += rowH + rowGap;
     // 分支（左列）/ Token（右列）：宽 = 列控制区宽，右缘贴所在列右缘
     DOCTEST_CHECK(std::fabs(br->frame.x - (padX + ctrlDx)) < 0.5f);
     DOCTEST_CHECK(std::fabs(br->frame.y - y) < 0.5f);
@@ -420,7 +419,7 @@ REGISTER_TEST(github_sync_card_fill_full_width,
         DOCTEST_REQUIRE(enLabel != nullptr);
         DOCTEST_REQUIRE(autoLabel != nullptr);
         const float formW = kW - 28.0f * 2.0f;
-        const float colGap = ms::roundFs(8.0f);
+        const float colGap = ms::roundFs(6.0f);   // 列间距 = 行距（零滚动收口 8→6）
         const float colW = (formW - colGap) * 0.5f;
         const float ctrlW = colW - (110.0f + 8.0f);
         // URL 右缘 = 卡内容右缘（kW−28）；分支/Token 右缘 = 所在列右缘
@@ -866,10 +865,11 @@ REGISTER_TEST(github_sync_card_info_rows,
     return true;
 })
 
-// 卡高常量护栏：五条条件信息行全显（最坏组合）时内容底 + 下边距 16 不越卡——
+// 卡高常量护栏：五条条件信息行全显（最坏组合）时内容底 + 下边距 8 不越卡——
 // kGithubSyncCardHeight 若再调整而没按最坏档（85%/130% 档开关 52×28/44×24 是
 // 字面值不随字号缩放）复算，这里红。方案 A 的错误/进度已收进头部与操作行，
-// 最坏行序 = 五条信息行。
+// 最坏行序 = 五条信息行。UAT6 零滚动收口：卡上下留白 16→8（372 = 可用高恰好值，
+// 见 settings_ui_logic.h），下边距判据同步 16→8。
 REGISTER_TEST(github_sync_card_worst_case_fits_height,
               "github_sync 卡片: 五条信息行全显的最坏行序不越卡（卡高护栏）", {
     CardFixture fx;
@@ -887,9 +887,9 @@ REGISTER_TEST(github_sync_card_worst_case_fits_height,
     DOCTEST_REQUIRE(last != nullptr);
     const float cardH = card->frame.height;
     DOCTEST_CHECK_MESSAGE(
-        last->frame.y + last->frame.height + 16.0f <= cardH + 0.5f,
+        last->frame.y + last->frame.height + 8.0f <= cardH + 0.5f,
         "最坏行序内容底 " +
-            std::to_string(last->frame.y + last->frame.height) + " + 16 越出卡高 " +
+            std::to_string(last->frame.y + last->frame.height) + " + 8 越出卡高 " +
             std::to_string(cardH));
     return true;
 })

@@ -32,11 +32,19 @@ namespace module::home {
 
 namespace {
 
-// 首页「今日 token 图表卡」的固定标称高度。首页各块高度全部固定（欢迎区 40 /
+// 首页「今日 token 图表卡」的固定标称高度。首页各块高度全部固定（页头 40 /
 // 统计网格 statH / 图表卡本值 / 快捷按钮行 44），页面装不下时不做任何压缩——
-// 溢出由整页外层 home.scroll（scrollView）出滚动条吸收，最小窗（1000×640）也
-// 不丢内容。
-constexpr float kHomeChartH = 260.0f;
+// 溢出由整页外层 home.scroll（scrollView）出滚动条吸收，不丢内容。UAT6 起真实
+// 最小窗（1000×640 → 页高 600/640）100%/85% 档已装得下零滚动（见下），滚动吸收
+// 只兜 115%/130% 大字号档与低于真实最小页高的退化矮窗。
+// 图表卡高度：UAT6 最小窗零滚动收口 260→220。Windows 自绘壳 1000×640 最小窗
+// 页面高 600（标题条 40）：整页内容 = padding 40×2 + 页头 40 + 统计行 144×档 +
+// gap 20×3 + 图表卡 + 操作行 44 = 628 → 溢出 28 出滚动条。砍图表 40px 后 100%
+// 档内容 588 ≤ 600（12 富余）、85% 档 566.4 ≤ 600（34 富余），最小窗零滚动；
+// 115%/130% 档统计行随字号放大（165.6/187.2）仍会滚动（大字号档设计内）。
+// 图表内部几何自适应：wrap = 卡高−64（100% 档 156）、plot 高 = wrap−112（44，
+// home_probes 组 D 的 plot ≥36 判据仍过）、柱顶数值/x 轴标签锚点随 wrap 派生。
+constexpr float kHomeChartH = 220.0f;
 
 // 渲染单个统计卡片（card 组件，点击整卡跳转）。numberColor/badgeColor 非空覆盖默认配色；
 // timerSeconds > 0 挂 0 尺寸 onTimer 定期重绘；chart 非空叠加迷你图表；onTick 为该 timer 回调。
@@ -555,9 +563,10 @@ public:
                     for (size_t i = 0; i < barCount; ++i) {
                         peak = std::max(peak, hourly[range.first + i]);
                     }
-                    // 图表卡高度：固定标称高；矮窗装不下时整页由外层 home.scroll 吸收溢出。
+                    // 图表卡高度：固定标称高（220，最小窗零滚动收口见 kHomeChartH）；
+                    // 低于真实最小页高的退化矮窗才由外层 home.scroll 吸收溢出。
                     const float chartCardH = kHomeChartH;
-                    const float chartWrapH = chartCardH - 48.0f - 16.0f;  // 196
+                    const float chartWrapH = chartCardH - 48.0f - 16.0f;  // 220−64 = 156
                     components::card(ui, "home.api.chart")
                         .size(contentW, chartCardH)
                         .theme(core::theme::componentTokensWeChat(t))  // W9 微信白卡

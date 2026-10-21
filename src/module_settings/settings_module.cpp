@@ -1152,7 +1152,14 @@ private:
         case CardHeightKind::ProxyWarnings:
             return proxyH;
         case CardHeightKind::FillRemainder:
-            return std::max(260.0f, remain);
+            // UAT6 零滚动收口：日志 tab 在最小窗（1000×640 → 卡区可用高 372）下
+            // remain = 372 − roundFs(144) − gap 16 = 212——旧下限 260 > 212 把日志
+            // 查看卡强行抬到 260，内容高 420 > 372 溢出 48px 出滚动条（85% 档
+            // 398 > 375 溢出 23px；用户判「完全没必要」）。下限降到 160：只在比
+            // 真实最小页高 600 更矮的退化视口兜底（100% 档 min 窗下 remain 212 恒
+            // 不触发），正常路径卡高 = remain 恰好填满 → 内容高 = 可用高，日志
+            // tab 100%~130% 档全部零滚动。
+            return std::max(160.0f, remain);
         case CardHeightKind::GithubSync:
             // 恒满高（UAT4）：未启用态也全字段渲染（去门控），启用/未启用只差
             // 表单区是否可交互，不参与卡高决策。UAT5 方案 A 三段式后的最坏行序
