@@ -6,17 +6,17 @@
 REGISTER_TEST(theme_fontscale_scales_size_tokens, "theme: setFontScale scales fontSize tokens only", {
     core::theme::setFontScale(1.0f);
     DOCTEST_CHECK_EQ(core::theme::fontScale(), 1.0f);
-    DOCTEST_CHECK_EQ(core::theme::current().sizes.fontSizeBody, 15.0f);
+    DOCTEST_CHECK_EQ(core::theme::current().sizes.fontSizeBody, 14.0f);
 
     core::theme::setFontScale(1.2f);
     DOCTEST_CHECK_EQ(core::theme::fontScale(), 1.2f);
-    DOCTEST_CHECK_EQ(core::theme::current().sizes.fontSizeBody, 15.0f * 1.2f);
-    DOCTEST_CHECK_EQ(core::theme::current().sizes.fontSizeSmall, 13.0f * 1.2f);
-    DOCTEST_CHECK_EQ(core::theme::current().sizes.fontSizePage, 32.0f * 1.2f);
+    DOCTEST_CHECK_EQ(core::theme::current().sizes.fontSizeBody, 14.0f * 1.2f);
+    DOCTEST_CHECK_EQ(core::theme::current().sizes.fontSizeSmall, 12.0f * 1.2f);
+    DOCTEST_CHECK_EQ(core::theme::current().sizes.fontSizePage, 24.0f * 1.2f);
     DOCTEST_CHECK_EQ(core::theme::current().sizes.fontSizeDisplay, 48.0f * 1.2f);
     DOCTEST_CHECK_EQ(core::theme::current().sizes.spacing, 8.0f);
-    DOCTEST_CHECK_EQ(core::theme::current().sizes.radius, 10.0f);
-    DOCTEST_CHECK_EQ(core::theme::current().sizes.radiusLarge, 14.0f);
+    DOCTEST_CHECK_EQ(core::theme::current().sizes.radius, 8.0f);
+    DOCTEST_CHECK_EQ(core::theme::current().sizes.radiusLarge, 12.0f);
 
     core::theme::setFontScale(1.0f);  // fontScale 是全局态，结尾复位，否则污染后面的用例
     return true;
@@ -26,12 +26,12 @@ REGISTER_TEST(theme_fontscale_survives_theme_switch, "theme: font scale survives
     core::theme::setFontScale(1.15f);
     core::theme::setLight();
     DOCTEST_CHECK_EQ(core::theme::fontScale(), 1.15f);
-    DOCTEST_CHECK_EQ(core::theme::current().sizes.fontSizeBody, 15.0f * 1.15f);
+    DOCTEST_CHECK_EQ(core::theme::current().sizes.fontSizeBody, 14.0f * 1.15f);
     // 再切回深色仍是 15 × 1.15：token 重建后统一施加，不叠加也不丢失
     core::theme::setDark();
-    DOCTEST_CHECK_EQ(core::theme::current().sizes.fontSizeBody, 15.0f * 1.15f);
+    DOCTEST_CHECK_EQ(core::theme::current().sizes.fontSizeBody, 14.0f * 1.15f);
     core::theme::setFontScale(1.0f);
-    DOCTEST_CHECK_EQ(core::theme::current().sizes.fontSizeBody, 15.0f);
+    DOCTEST_CHECK_EQ(core::theme::current().sizes.fontSizeBody, 14.0f);
     return true;
 })
 

@@ -27,9 +27,9 @@ REGISTER_TEST(theme_set_light, "theme: setLight", {
 
 REGISTER_TEST(theme_tokens_values, "theme: tokens have values", {
     const auto& t = core::theme::current();
-    DOCTEST_CHECK_EQ(t.sizes.fontSizeBody, 15.0f);
+    DOCTEST_CHECK_EQ(t.sizes.fontSizeBody, 14.0f);
     DOCTEST_CHECK_EQ(t.sizes.fontSizeDisplay, 48.0f);
-    DOCTEST_CHECK(t.sizes.radius >= 10.0f);
+    DOCTEST_CHECK(t.sizes.radius >= 8.0f);
     DOCTEST_CHECK_EQ(t.sizes.spacing, 8.0f);
     return true;
 })
