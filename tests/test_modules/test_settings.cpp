@@ -437,6 +437,33 @@ REGISTER_TEST(settings_autostart_enabled_roundtrip,
     return true;
 })
 
+// 动态背景（UAT6 主窗活体流质）：与 autostartEnabled 同款 17 键口径的存储往返。
+// 默认开（效果是用户主动拍板的交付物，关闭是省电出口）；存量无键 → 默认开。
+REGISTER_TEST(settings_fluid_background_roundtrip,
+              "settings: fluidBackgroundEnabled 默认 true + 读写往返 + 存量无键回默认", {
+    test_support::TestEnv cfgDbEnv(kCfgPrefix, "cfgfluid", true);
+    const auto path = test_support::tempConfigFile(kCfgPrefix, "fluidrt");
+    removeQuietly(path);
+    module::settings::SettingsStore store(::core::appDatabase());
+
+    // 默认开
+    DOCTEST_CHECK(store.load().fluidBackgroundEnabled);
+
+    // 关闭后持久化 + 读回 false
+    module::settings::SettingsConfig cfg;
+    cfg.fluidBackgroundEnabled = false;
+    DOCTEST_REQUIRE(store.save(cfg).isOk());
+    DOCTEST_CHECK_FALSE(store.load().fluidBackgroundEnabled);
+
+    // 存量配置无该键 → 回默认 true（老库升级路径）
+    DOCTEST_REQUIRE(test_support::seedConfigJsonRows(
+        ::core::appDatabase(), module::settings::SettingsStore::keyNamespace(),
+        R"({"theme": "light", "logRetentionDays": 30})"));
+    DOCTEST_CHECK(store.load().fluidBackgroundEnabled);
+    removeQuietly(path);
+    return true;
+})
+
 REGISTER_TEST(settings_save_load_roundtrip, "settings: save/load roundtrip", {
     // 配置落 app_config 表，生产代码经 core::appDatabase() 取连接；未注册则 save 一律失败。
     test_support::TestEnv cfgDbEnv(kCfgPrefix, "cfg4", true);
@@ -680,6 +707,70 @@ REGISTER_TEST(settings_module_compose_renders, "settings: module compose builds 
     DOCTEST_CHECK(ui.find("settings.card.appearance.theme.dd") == nullptr);
 
     mod->onStop();
+    ::core::theme::setDark();  // 恢复全局默认主题，不影响其他用例
+    return true;
+})
+
+// 动态背景开关（UAT6 主窗活体流质）落位外观卡**标题带右贴**（代理卡「随应用
+// 启动代理」同款先例）——不是卡内新行：通用 tab 零滚动预算逐值保持（0/1/2 条
+// 代理警告 338/356/372 对可用 372，+30~40 的行必破 1/2 警告档），标题带行盒
+// 零增量 → 卡高 184 不动。锁：结构 + 标签/说明文案 + onClick 接线 + 开关态色
+// 跟随配置 + 行盒高字面 28（不随字号缩放）+ 卡高不破。
+REGISTER_TEST(settings_appearance_fluid_toggle_wiring,
+              "settings: 动态背景开关 = 外观卡标题带（结构/文案/接线/开关态/卡高不破）", {
+    test_support::TestEnv env(kCfgPrefix, "fluidcard", true);
+    test_support::ScopedConfigPath cfgEnv(test_support::tempConfigFile(kCfgPrefix, "fluidcard_cfg"));
+
+    // 第一遍：默认档（fluidBackgroundEnabled 默认 true）→ 开关 ON
+    std::unique_ptr<::core::Module> mod(create_settings_module());
+    mod->onStart();
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    eui::Ui ui;
+    ui.begin("fluid_on");
+    mod->compose(ui, screen);
+    ui.end();
+    ui.layout(screen.width, screen.height);
+    const auto* toggle = ui.find("settings.card.appearance.fluid");
+    const auto* track = ui.find("settings.card.appearance.fluid.track");
+    const auto* label = ui.find("settings.card.appearance.fluid.label");
+    const auto* hit = ui.find("settings.card.appearance.fluid.hit");
+    DOCTEST_REQUIRE(toggle != nullptr);
+    DOCTEST_REQUIRE(track != nullptr);
+    DOCTEST_REQUIRE(label != nullptr);
+    DOCTEST_REQUIRE(hit != nullptr);
+    DOCTEST_CHECK(label->text == "动态背景");
+    DOCTEST_CHECK(hit->onClick != nullptr);  // toggleSwitch hit 承担拨动
+    // 说明文案 = 规格原文（「关闭恢复静态」语义不得漂移）
+    const auto* desc = ui.find("settings.card.appearance.desc");
+    DOCTEST_REQUIRE(desc != nullptr);
+    DOCTEST_CHECK(desc->text == "主窗口背景液态流质动画；关闭恢复静态");
+    // 预算锁：标题带行盒零增量——行盒高字面 28（不随字号缩放）、卡高 184 不破
+    DOCTEST_CHECK_EQ(toggle->frame.height, 28.0f);
+    const auto* card = ui.find("settings.card.appearance");
+    DOCTEST_REQUIRE(card != nullptr);
+    DOCTEST_CHECK_EQ(card->frame.height, module::settings::kAppearanceCardHeight);
+    const float onR = track->color.r;
+    const float onG = track->color.g;
+    const float onB = track->color.b;
+    mod->onStop();
+
+    // 第二遍：库中显式关（fluidBackgroundEnabled=false）→ 开关 OFF，轨道色必变
+    //（checked ? on : off——抓「回退成默认勾选」的回归）
+    DOCTEST_REQUIRE(test_support::seedConfigJsonRows(
+        ::core::appDatabase(), module::settings::SettingsStore::keyNamespace(),
+        R"({"fluidBackgroundEnabled": false})"));
+    std::unique_ptr<::core::Module> mod2(create_settings_module());
+    mod2->onStart();
+    ui.begin("fluid_off");
+    mod2->compose(ui, screen);
+    ui.end();
+    const auto* trackOff = ui.find("settings.card.appearance.fluid.track");
+    DOCTEST_REQUIRE(trackOff != nullptr);
+    DOCTEST_CHECK(trackOff->color.r != onR || trackOff->color.g != onG ||
+                  trackOff->color.b != onB);
+    mod2->onStop();
     ::core::theme::setDark();  // 恢复全局默认主题，不影响其他用例
     return true;
 })
@@ -1763,6 +1854,7 @@ REGISTER_TEST(settings_card_rows_scale_derived,
     const std::vector<CardRows> kCards = {
         {0, "settings.card.appearance",
          {"settings.card.appearance.title", "settings.card.appearance.desc",
+          "settings.card.appearance.fluid",
           "settings.card.appearance.font.label",
           "settings.card.appearance.effect.label"}},
         {0, "settings.card.editor", editorRows},
@@ -1918,6 +2010,18 @@ REGISTER_TEST(settings_card_rows_scale_derived,
             if (err.empty())
                 err = pin("appearance 卡高", heightOf("settings.card.appearance"),
                           at(156.0f, 184.0f, 239.0f));
+            if (err.empty())
+                // UAT6 动态背景开关（活体流质）：标题带右贴行盒 28 高、字面值
+                // 不随字号缩放；与 title 盒 x 相接（重叠判定 0.01 严格收口，
+                // 贴边合法）——卡高 184 全档不动的预算回归锁
+                err = pin("appearance.fluid 开关行盒高（字面 28）",
+                          heightOf("settings.card.appearance.fluid"),
+                          at(28.0f, 28.0f, 28.0f));
+            if (err.empty())
+                err = pin("appearance.fluid 开关行顶（标题带右贴，字面 12）",
+                          yOf("settings.card.appearance.fluid") -
+                              yOf("settings.card.appearance"),
+                          at(12.0f, 12.0f, 12.0f));
             if (err.empty() && platform::autostart::supported()) {
                 // 自启动行（UAT6）：行顶 = hint 底 + roundFs(6)（三档 113/132/172），
                 // 开关 44×24 字面值不随字号缩放

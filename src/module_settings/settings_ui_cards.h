@@ -69,6 +69,7 @@ struct SettingsCardActions {
     std::function<void(int)> applyLogLevelPreset;             // 日志级别档
     std::function<void(int)> applyEditorFontPreset;           // 编辑器字号档
     std::function<void(bool)> applyAutostartEnabled;          // 开机自启动开关（UAT6）
+    std::function<void(bool)> applyFluidBackgroundEnabled;   // 动态背景开关（UAT6 活体流质）
     std::function<void()> requestLogTailReload;               // 日志查看卡刷新
     std::function<void(float)> logViewScrolled;               // 日志查看卡内滚动
 

@@ -21,9 +21,25 @@
 #include <eui/app.h>  // app::closeMainWindow（--minimized 首帧藏主窗）
 #include <eui/types.h>
 
+#include <algorithm>
+#include <cmath>
 #include <functional>
 #include <optional>
 #include <utility>
+
+// 可见态门控的原生查询（IsIconic/IsWindowVisible/EnumWindows）：只在 Windows 编译。
+// 宏守卫与 EUI-NEO detail 头同款（LEAN_AND_MEAN + NOMINMAX），且放在 EUI 头之后
+//（eui/detail/dsl_app_impl.h 同序先例，防 min/max 宏污染 DSL 头）。
+#if defined(_WIN32)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#include <cwchar>
+#endif
 
 namespace app {
 
@@ -41,6 +57,86 @@ std::optional<bool> g_titlebarModeOverride;
 // 关闭钮 hover 态：EUI-NEO .onHover 回调写、compose 读。红底需要图标色随 hover 翻白，
 // 而 .states() 只能给 rect 上色——关闭叉是独立 text 元素，色值须在此跨帧传递
 bool g_closeButtonHovered = false;
+
+// ── 动态背景（UAT6 主窗活体流质）：进程级状态（测试缝复位见 reset）──
+// 配置运行时镜像：首帧惰性读 SettingsStore（fluidBackgroundEnabled）一次，
+// 此后设置页经 setFluidBackgroundEnabled 写（持久化由设置侧 persist 落库）。
+std::optional<bool> g_fluidEnabled;
+// 窗可见态测试覆写（nullopt = 跟平台查询走）；生产路径恒 nullopt
+std::optional<bool> g_fluidVisibleMode;
+// 相位钟（秒）：由帧泵 onFrame 累加推进。最小化/藏托盘时 EUI 主循环跳过主窗
+// update/compose（glfw_app_main.cpp 的 hiddenToTray / iconified 两分支 continue），
+// onFrame 不回调 → 相位冻结；恢复可见从冻结处继续（无时间跳变）。
+float g_fluidPhase = 0.0f;
+
+// 确定性 0~1 hash（splash.cpp 墨染同款 sin 散列取小数）：卫星的角度/距离/大小
+// 全由索引 hash 决定——帧间稳定不闪烁，只随相位缓慢漂移（有机噪声感）
+float fluidHash01(int n) {
+    const float x = std::sin(static_cast<float>(n) * 127.1f) * 43758.5453f;
+    return x - std::floor(x);
+}
+
+#if defined(_WIN32)
+// 主窗 HWND 一次性捕获（首次门控查询时执行一次，static 缓存终身复用）：
+// EnumWindows 扫本进程顶层窗口，取「可见 + 非 WS_EX_TOOLWINDOW」命中——
+// styledMenu 弹层窗带 TOOLWINDOW、single_instance 辅助窗隐藏，首帧时主窗是
+// 唯一命中；标题精确等于 "DevDesk" 者优先（将来有第二个可见顶窗也保命）。
+// 捕获不到（无头单测/窗口未就绪）返回空 → 门控按可见降级（fail-open），
+// 零成本兜底仍由 EUI 主循环的 hidden/iconified 跳帧保证。
+struct FluidHwndSearch {
+    HWND fallback = nullptr;
+    HWND titled = nullptr;
+};
+
+BOOL CALLBACK fluidEnumWindowsProc(HWND hwnd, LPARAM lp) {
+    auto* ctx = reinterpret_cast<FluidHwndSearch*>(lp);
+    DWORD pid = 0;
+    GetWindowThreadProcessId(hwnd, &pid);
+    if (pid != GetCurrentProcessId()) return TRUE;
+    if ((GetWindowLongW(hwnd, GWL_EXSTYLE) & WS_EX_TOOLWINDOW) != 0) return TRUE;
+    if (!IsWindowVisible(hwnd)) return TRUE;
+    if (ctx->fallback == nullptr) ctx->fallback = hwnd;
+    WCHAR title[64] = {};
+    if (GetWindowTextW(hwnd, title, 64) > 0 &&
+        wcscmp(title, L"DevDesk") == 0 && ctx->titled == nullptr) {
+        ctx->titled = hwnd;
+    }
+    return TRUE;
+}
+
+HWND fluidMainWindowHwnd() {
+    static const HWND cached = [] {
+        FluidHwndSearch search;
+        EnumWindows(fluidEnumWindowsProc, reinterpret_cast<LPARAM>(&search));
+        const HWND picked =
+            search.titled != nullptr ? search.titled : search.fallback;
+        if (picked == nullptr) {
+            LOG_WARN("动态背景：主窗 HWND 一次性捕获未命中（无头环境或窗口未就绪），"
+                     "可见态门控本轮按可见降级（EUI 主循环跳帧兜底不变）");
+        }
+        return picked;
+    }();
+    return cached;
+}
+#endif
+
+// 可见态门控查询（compose 每帧顶层调用，铁律防线）：最小化（iconic）或藏托盘
+//（hidden）→ false。Windows = 主窗 HWND 的 IsIconic/IsWindowVisible（EUI 公共
+// API 未暴露 iconic/visible，原生等价查询；glfwGetWindowAttrib(GLFW_ICONIFIED)
+// 的同源真值）；非 Windows 无统一查询恒 true（core::window::windowIsFocused
+// 同款降级口径）——两平台的零成本兜底都是 EUI 主循环跳帧（hiddenToTray/iconified
+// 分支不跑主窗 update/compose/render），本查询再钉一道：不可见帧即便 compose
+// 被调用也不画流质、不挂泵、相位不推进。
+bool fluidWindowVisible() {
+    if (g_fluidVisibleMode.has_value()) return *g_fluidVisibleMode;
+#if defined(_WIN32)
+    const HWND hwnd = fluidMainWindowHwnd();
+    if (hwnd == nullptr) return true;  // 捕获失败按可见降级
+    return !IsIconic(hwnd) && IsWindowVisible(hwnd);
+#else
+    return true;
+#endif
+}
 
 } // namespace
 
@@ -69,6 +165,38 @@ float sidebarWidth() {
 
 // 测试缝：折叠状态回厂（展开），纯内存不触发持久化副作用
 void resetSidebarGlobals() { g_sidebarCollapsed = false; }
+
+// ---- 动态背景（UAT6 主窗活体流质）----
+
+bool fluidBackgroundEnabled() {
+    if (!g_fluidEnabled.has_value()) {
+        // 首帧惰性读库一次并缓存（此后每帧零 DB 查询）；库未就绪（无头测试等）
+        // 按默认值，不制造每帧 ERROR 日志
+        ::core::data::SqliteDb* db = ::core::appDatabase();
+        if (db != nullptr) {
+            const module::settings::SettingsStore store(db);
+            g_fluidEnabled = store.load().fluidBackgroundEnabled;
+        } else {
+            g_fluidEnabled =
+                module::settings::SettingsConfig{}.fluidBackgroundEnabled;
+        }
+    }
+    return *g_fluidEnabled;
+}
+
+void setFluidBackgroundEnabled(bool enabled) { g_fluidEnabled = enabled; }
+
+float fluidPhaseSeconds() { return g_fluidPhase; }
+
+void setFluidWindowVisibleMode(std::optional<bool> mode) {
+    g_fluidVisibleMode = std::move(mode);
+}
+
+void resetFluidBackgroundForTests() {
+    g_fluidEnabled.reset();
+    g_fluidVisibleMode.reset();
+    g_fluidPhase = 0.0f;
+}
 
 void showAppNotice(const std::string& title, const std::string& message) {
     g_appNotice.show(title, message, false);
@@ -405,6 +533,87 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
         .build();
 }
 
+// ── 动态背景（UAT6 主窗活体流质）：纯 DSL 层组合（splash 墨染先例，不碰 EUI）──
+// 4 层大半径低透明绿晕（wechat.primary/primaryHover 交替）+ 每层 2 颗确定性
+// hash 卫星，晕心随相位钟缓慢 Lissajous 漂移（角速度 0.036~0.083 rad/s，整圈
+// 75~175s 液体缓流节奏）。z 序：compose 里最先画 → 自绘标题栏/侧栏/页面内容
+// 全在其上，页面区铺不透明 pageBg、侧栏半透 tint——流质只在页边距/半透侧栏
+// 缝隙透出，正文可读性零影响。帧泵 = md.tree.anim.driver 同款 1x1 空 onFrame
+// 常驻元素（runtime 置 animating → 主循环持续出帧）。门控三重：开关关 /
+// 窗不可见（最小化/藏托盘）→ 整函数不建任何元素（含泵）——不可见态零成本由
+// EUI 主循环跳帧（第一道）+ 本门控不挂泵（第二道）双保险；相位钟只在泵回调
+// 里推进 = 「不挂泵不推进」。
+void drawFluidBackground(eui::Ui& ui, const eui::Screen& screen) {
+    if (!fluidBackgroundEnabled()) return;  // 开关关：零元素零泵（零成本）
+    if (!fluidWindowVisible()) return;      // 铁律：最小化/藏托盘 → 不挂泵不推进
+
+    const auto& t = ::core::theme::current();
+    const auto& wc = t.colors.wechat;
+
+    constexpr int kHalos = 4;            // 3-5 层拍板档取 4：两近心（同心）+ 两对角（偏心）
+    constexpr float kMaxAlpha = 0.13f;   // 单层峰值（保守：最坏全叠 ≈0.37，且仅缝隙可见）
+    constexpr int kSatsPerHalo = 2;      // 卫星/层
+    // 层参数表（锚点 = 窗口比例；速度 rad/s；相位 rad 防共漂；半径 = 短边比例）
+    constexpr float kAnchorX[kHalos] = {0.50f, 0.50f, 0.24f, 0.76f};
+    constexpr float kAnchorY[kHalos] = {0.46f, 0.56f, 0.30f, 0.72f};
+    constexpr float kSpeedX[kHalos] = {0.042f, 0.036f, 0.071f, 0.058f};
+    constexpr float kSpeedY[kHalos] = {0.035f, 0.049f, 0.064f, 0.083f};
+    constexpr float kPhase[kHalos] = {0.0f, 1.7f, 3.1f, 4.9f};
+    constexpr float kRadiusFrac[kHalos] = {0.40f, 0.50f, 0.44f, 0.62f};
+
+    const float phase = g_fluidPhase;
+    const float minDim = std::min(screen.width, screen.height);
+    for (int j = 0; j < kHalos; ++j) {
+        // 漂移中心 = 锚点 + 异频异相振幅（层间不共振，慢到只有「液面在流」而无轨迹感）
+        const float cx = screen.width * kAnchorX[j] +
+                         screen.width * 0.16f *
+                             std::sin(kSpeedX[j] * phase + kPhase[j]);
+        const float cy = screen.height * kAnchorY[j] +
+                         screen.height * 0.13f *
+                             std::cos(kSpeedY[j] * phase + kPhase[j]);
+        const float r = minDim * kRadiusFrac[j];
+        const float alpha =
+            kMaxAlpha * (1.0f - 0.18f * static_cast<float>(j));  // 内浓外淡
+        const eui::Color& color =
+            (j % 2 == 0) ? wc.primary : wc.primaryHover;
+        ui.rect("app.fluid.halo." + std::to_string(j))
+            .position(cx - r, cy - r)
+            .size(r * 2.0f, r * 2.0f)
+            .color(color)
+            .radius(r)  // 半径 = 半宽 → 正圆（splash 墨染同款手法）
+            .opacity(alpha)
+            .build();
+        // 确定性 hash 卫星：层心外慢轨道漂移的墨点，角度/距离/大小全由索引
+        // hash 定死，帧间稳定不闪烁（漂移只来自相位项）
+        for (int b = 0; b < kSatsPerHalo; ++b) {
+            const float ang = fluidHash01(j * 31 + b * 7 + 2) * 6.2831853f +
+                              phase * (0.020f + 0.011f * fluidHash01(j * 13 + b * 5 + 3));
+            const float dist =
+                r * (0.62f + 0.30f * fluidHash01(j * 17 + b * 3 + 4));
+            const float br = r * (0.055f + 0.040f * fluidHash01(j * 19 + b * 11 + 5));
+            ui.rect("app.fluid.sat." + std::to_string(j) + "." +
+                    std::to_string(b))
+                .position(cx + std::cos(ang) * dist - br,
+                          cy + std::sin(ang) * dist - br)
+                .size(br * 2.0f, br * 2.0f)
+                .color(color)
+                .radius(br)
+                .opacity(alpha * 0.55f)
+                .build();
+        }
+    }
+    // 帧泵（md.tree.anim.driver / splash.ink.anim.driver 同款先例）：常驻 1x1 空
+    // onFrame 元素。相位钟在回调内推进，dt 钳 0.1s（模态拖拽循环/系统休眠回来
+    // 不产生时间跳变）；不可见帧本元素不在树上 → 无回调 → 相位冻结，恢复可见
+    // compose 重建本元素，漂移从冻结相位继续。
+    ui.stack("app.fluid.anim.driver")
+        .size(1.0f, 1.0f)
+        .onFrame([](float dt) {
+            g_fluidPhase += (dt < 0.1f ? dt : 0.1f);
+        })
+        .build();
+}
+
 void compose(eui::Ui& ui, const eui::Screen& screen) {
     // --minimized 启动（UAT6 开机自启动）：首帧一次性走 close-to-tray 同款
     // WM_CLOSE→隐藏路径（点标题栏 X 藏托盘是同一入口 app::closeMainWindow；主窗
@@ -453,6 +662,11 @@ void compose(eui::Ui& ui, const eui::Screen& screen) {
     // 布局（UAT3 D-R3-1 自绘标题栏占位）：Windows 自绘壳 → 顶层先画 40px 标题条，
     // 根布局下移、侧边栏与页面内容同起点（页面顶与侧栏顶对齐）；macOS 保系统标题栏
     // → 零占位，几何与旧版一致。bodyScreen/根布局/页面区三处高度同源，不允许各算各的
+
+    // 动态背景（UAT6 活体流质）：app 根层、所有内容前画（z 序最底；splash 早退
+    // 在先 → 启动 splash 帧不画，splash 观感不动）。门控见 drawFluidBackground
+    //——开关关 / 最小化 / 藏托盘的帧零元素零泵（省电零开销），恢复可见继续。
+    drawFluidBackground(ui, screen);
     const bool chrome = customTitlebarActive();
     const float bodyTop = chrome ? titlebarHeight() : 0.0f;
     if (chrome) {

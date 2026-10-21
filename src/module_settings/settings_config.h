@@ -74,6 +74,10 @@ struct SettingsConfig {
     // 开机自启动（UAT6 设置-通用）：持久化的是用户意图；真值 = 平台注册态
     //（HKCU Run / LaunchAgents），设置页打开时回读对齐、拨开关时双写（先写平台再落库）。
     bool autostartEnabled = false;
+    // 动态背景（UAT6 主窗活体流质）：默认开——效果是用户主动拍板的交付物，
+    // 关闭是给省电/静音偏好的出口（关闭 = 主窗恢复静态背景、帧泵零成本）。
+    // 运行时镜像在 app 侧（app_sidebar 持有，设置页经 setFluidBackgroundEnabled 写）。
+    bool fluidBackgroundEnabled = true;
     // Claude 代理监听端口：非法值回落默认 8888；运行中改端口自动 stop→start 重启。
     int proxyPort = kDefaultProxyPort;
     // 窗口效果："off"|"translucent"|"frosted"，未知值收敛 off。
@@ -147,8 +151,9 @@ public:
     // 与 load() 同源，但把「库未就绪 / 表不存在 / 单键读失败」如实报出（ErrorCode + 原因）。
     core::Result<SettingsConfig> loadChecked() const;
 
-    // 写入配置：16 个顶层键在一个事务里 UPSERT，并清掉本轮不再写出的旧键
-    //（UAT6 窗体记忆加 windowRestoreWidth/Height/windowMaximized 三键）。
+    // 写入配置：17 个顶层键在一个事务里 UPSERT，并清掉本轮不再写出的旧键
+    //（UAT6 窗体记忆加 windowRestoreWidth/Height/windowMaximized 三键；动态背景
+    // 批加 fluidBackgroundEnabled，键口径自此 17 个）。
 
     core::Result<void> save(const SettingsConfig& cfg) const;
 

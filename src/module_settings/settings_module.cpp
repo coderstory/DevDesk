@@ -61,6 +61,13 @@
 #include <thread>
 #include <vector>
 
+// 动态背景运行时镜像的单一符号桥（实现见 app_sidebar.cpp，compose 门控读它）：
+// 模块层不 include app 层头文件（层级方向 app→module），此处前置声明、链接期
+// 合并到同一 `app` 命名空间（与 EUI-NEO 的 app:: 前置声明并存，函数名不冲突）。
+namespace app {
+void setFluidBackgroundEnabled(bool enabled);
+}
+
 namespace module::settings {
 
 namespace {
@@ -401,6 +408,21 @@ public:
         LOG_INFO("Settings: 开机自启动 → " +
                  std::string(autostartRegistered_ ? "启用" : "停用") +
                  "（注册态已写入平台）");
+    }
+
+    // 「动态背景」开关（UAT6 主窗活体流质）：cfg 落库 + app 层运行时镜像同步
+    // （compose 门控读镜像，app_sidebar 持有），下一帧即撤/挂帧泵——关闭后当帧
+    // 不再挂泵（零成本），开启当帧恢复漂移。app::setFluidBackgroundEnabled 经
+    // 前置声明接入（模块不 include app 层头，单一符号桥）。
+    void applyFluidBackgroundEnabled(bool on) {
+        cfg_.fluidBackgroundEnabled = on;
+        ::app::setFluidBackgroundEnabled(on);
+        core::platform::requestUiUpdate();  // 唤醒下一帧 compose（开→挂泵/关→撤泵）
+        persist();
+        setStatus(on ? "动态背景已开启（主窗口背景液态流质）"
+                     : "动态背景已关闭（恢复静态背景）");
+        LOG_INFO("Settings: fluidBackgroundEnabled → " +
+                 std::string(on ? "true" : "false"));
     }
 
     // 应用代理端口：重启失败时代理已停、sidecar 已还原，状态栏提示可换端口重试。
@@ -1142,6 +1164,7 @@ private:
         a.applyLogLevelPreset = [this](int idx) { applyLogLevelPreset(idx); };
         a.applyEditorFontPreset = [this](int idx) { applyEditorFontPreset(idx); };
         a.applyAutostartEnabled = [this](bool on) { applyAutostartEnabled(on); };
+        a.applyFluidBackgroundEnabled = [this](bool on) { applyFluidBackgroundEnabled(on); };
         a.requestLogTailReload = [this] { logTailDirty_ = true; };
         a.logViewScrolled = [this](float v) { logViewScrollOffset_ = v; };
 

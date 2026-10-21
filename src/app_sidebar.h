@@ -38,6 +38,22 @@ void setSidebarCollapsed(bool collapsed, bool persist = false);
 // 测试缝：复位进程级折叠状态回厂（展开），纯内存零持久化
 void resetSidebarGlobals();
 
+// ---- 动态背景（UAT6 主窗活体流质）----
+// 运行时镜像（配置真值在 SettingsStore 的 fluidBackgroundEnabled）：首帧惰性
+// 读库一次并缓存（此后每帧零 DB 查询），设置页拨动经 setFluidBackgroundEnabled
+// 写镜像（持久化由设置侧 persist 落库）；库未就绪按默认值，不刷 ERROR 日志。
+bool fluidBackgroundEnabled();
+void setFluidBackgroundEnabled(bool enabled);
+// 相位钟（秒）：只在帧泵 onFrame 里推进——最小化/藏托盘帧不回调即冻结，
+// 恢复可见从冻结相位继续（无跳变）。测试/调试读口。
+float fluidPhaseSeconds();
+// 测试缝：窗可见态覆写（nullopt = 跟平台查询走；显式值 = 钉住不可见/可见，
+// 锁「不可见帧不挂泵不推进」铁律）。用例收尾必须复位 nullopt（进程级状态跨
+// 用例存活）
+void setFluidWindowVisibleMode(std::optional<bool> mode);
+// 测试缝：复位动态背景全部进程级状态（镜像/可见态覆写/相位钟），纯内存零持久化
+void resetFluidBackgroundForTests();
+
 // 当前侧边栏宽度 / 模块内容区宽度（compose 布局与单测共用同一真值）
 float sidebarWidth();
 float pageContentWidth(float windowWidth);
