@@ -29,6 +29,7 @@
 #include <initializer_list>
 #include <memory>
 #include <optional>
+#include <sstream>
 #include <string>
 #include <thread>
 #include <vector>
@@ -719,6 +720,18 @@ REGISTER_TEST(agent_module_hot_list_in_all_schemas,
 
 namespace {
 
+// 构建工具参数 JSON 字符串：每对 key、value（value 是已 stringify 的 JSON 值字符串）
+std::string buildArgs(const std::vector<std::pair<std::string, std::string>>& kvs) {
+    std::ostringstream oss;
+    oss << "{";
+    for (size_t i = 0; i < kvs.size(); ++i) {
+        if (i > 0) oss << ",";
+        oss << "\"" << kvs[i].first << "\":" << kvs[i].second;
+    }
+    oss << "}";
+    return oss.str();
+}
+
 // 在 CWD 下建临时目录，注册清理回调，返回相对路径
 struct TmpDir {
     std::filesystem::path dir;
@@ -1111,13 +1124,12 @@ REGISTER_TEST(builtin_git_init_chain,
     td1.writeFile("newfile.txt", "new content");
     auto commitTool = core::ToolRegistry::instance().find("git.commit");
     DOCTEST_REQUIRE(commitTool.isOk());
-    // 构建 files 数组 JSON
-    pj::JsonArray filesArr;
-    filesArr.append(pj::makeString("newfile.txt"));
+    // 构建 files 数组 JSON（单元素字符串数组）
+    std::vector<std::string> commitFiles = {"newfile.txt"};
     pj::JsonObject commitArgs;
     commitArgs.set("repo", pj::makeString(td1abs));
     commitArgs.set("message", pj::makeString("test: add newfile"));
-    commitArgs.set("files", pj::JsonValue(std::move(filesArr)));
+    commitArgs.set("files", pj::makeStringArray(commitFiles));
     auto cr = commitTool.value()->execute(
         core::ToolArgs{pj::stringify(pj::JsonValue(std::move(commitArgs))).value()});
     DOCTEST_REQUIRE(cr.isOk());

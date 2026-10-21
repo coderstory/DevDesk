@@ -60,7 +60,7 @@ std::string optString(const pj::JsonObject& obj, const char* key,
 
 int64_t optInt(const pj::JsonObject& obj, const char* key, int64_t defaultVal = 0) {
     auto v = obj.get(key);
-    return v.isInt() ? v.asInt() : defaultVal;
+    return v.isNumber() ? v.asInt() : defaultVal;
 }
 
 bool optBool(const pj::JsonObject& obj, const char* key, bool defaultVal = false) {
@@ -116,19 +116,14 @@ fs::path toolCwd() {
 
 // 将 glob pattern 转成正则表达式（支持 ** / * / ? / {a,b}）
 std::string globToRegex(const std::string& pattern) {
-    // 先处理 ** 占位，再处理其他通配符
     std::string s;
     size_t i = 0;
 
-    // 用于存储已经用过的占位符替换
-    std::vector<std::string> expanded;
-    size_t braceIdx = 0;
-
     while (i < pattern.size()) {
         if (i + 1 < pattern.size() && pattern[i] == '*' && pattern[i + 1] == '*') {
-            // **：递归匹配（包括路径分隔符）
+            // ** 递归匹配（包括路径分隔符）
             size_t j = i + 2;
-            // 跳过后续的 / 或 \\
+            /* 跳过后续的 / 或 \ */
             if (j < pattern.size() && (pattern[j] == '/' || pattern[j] == '\\')) ++j;
             s += "(.*)";
             i = j;
@@ -261,13 +256,11 @@ public:
         bool truncated = hits.size() > limit;
         if (truncated) hits.resize(limit);
 
-        pj::JsonArray arr;
-        for (const auto& e : hits) {
-            arr.append(pj::makeString(e.path));
-        }
+        std::vector<std::string> filePaths;
+        for (const auto& e : hits) filePaths.push_back(e.path);
 
         pj::JsonObject out;
-        out.set("files", pj::JsonValue(std::move(arr)));
+        out.set("files", pj::makeStringArray(filePaths));
         out.set("count", pj::makeInt(static_cast<int64_t>(hits.size())));
         if (truncated) {
             out.set("truncated", pj::makeBool(true));
@@ -408,12 +401,10 @@ done:
             if (text.empty()) text = "(无匹配)";
             return okText(text);
         } else if (mode == "files") {
-            pj::JsonArray arr;
-            for (const auto& [fname, cnt] : fileCounts) {
-                arr.append(pj::makeString(fname));
-            }
+            std::vector<std::string> fnames;
+            for (const auto& [fname, cnt] : fileCounts) fnames.push_back(fname);
             pj::JsonObject out;
-            out.set("files", pj::JsonValue(std::move(arr)));
+            out.set("files", pj::makeStringArray(fnames));
             out.set("count", pj::makeInt((int64_t)fileCounts.size()));
             return okJson(pj::stringify(pj::JsonValue(std::move(out))).value());
         } else {  // count
@@ -708,12 +699,10 @@ public:
         }
 
         std::string shell = platform::defaultShellPath();
-        ProcessRunner runner = platform::systemProcessRunner();
+        platform::ProcessRunner runner = platform::systemProcessRunner();
 
         // 构建 argv: <shell> -c <cmd>
         std::vector<std::string> shellArgv;
-        std::string shellName = fs::path(shell).filename().string();
-        // 对 zsh/bash/sh 用 -c；兼容 cmd.exe 用 /c（但 defaultShellPath 应该已经是 unix shell）
         shellArgv.push_back(shell);
         shellArgv.push_back("-c");
         shellArgv.push_back(cmd);
@@ -724,7 +713,7 @@ public:
             return errText("bash.run 执行失败: " + spawned.errorMessage());
         }
 
-        const ProcessResult& pr = spawned.value();
+        const platform::ProcessResult& pr = spawned.value();
 
         // 输出上限 10 MiB
         constexpr size_t kMaxOutput = 10u * 1024u * 1024u;
@@ -758,7 +747,7 @@ public:
 // ========================================================================
 
 // 跑 git 子命令，返回 ProcessResult。repo 是工作目录（绝对或相对路径）。
-Result<ProcessResult> runGit(const std::string& repo,
+core::Result<platform::ProcessResult> runGit(const std::string& repo,
                               const std::vector<std::string>& gitArgs,
                               const std::string& stdinText = "",
                               long timeoutMs = 30000) {
@@ -779,7 +768,7 @@ Result<ProcessResult> runGit(const std::string& repo,
     fs::path gitDir = repoPath / ".git";
     std::error_code ec;
     if (!fs::exists(gitDir, ec)) {
-        return core::Result<ProcessResult>::fail(
+        return core::Result<platform::ProcessResult>::fail(
             core::ErrorCode::NotFound,
             "不是 git 仓库: " + repoPath.string() + "（缺 .git 目录/文件）");
     }
@@ -1049,8 +1038,8 @@ public:
         auto filesVal = obj.get("files");
         std::vector<std::string> files;
         if (filesVal.isArray()) {
-            const auto& arr = filesVal.asArray();
-            for (const auto& v : arr.values()) {
+            for (int idx = 0; idx < filesVal.size(); ++idx) {
+                auto v = filesVal[idx];
                 if (v.isString()) files.push_back(v.asString());
             }
         }
