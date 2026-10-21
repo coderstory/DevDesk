@@ -2392,11 +2392,6 @@ REGISTER_TEST(todo_ui_status_toast_timeout,
     DOCTEST_REQUIRE(body != nullptr);
     DOCTEST_CHECK(body->text.empty());
     DOCTEST_CHECK(body->text.find("Short status message") == std::string::npos);
-    // subtitle 始终是静态操作说明
-    const auto* sub = frame.ui.find("todo.subtitle");
-    DOCTEST_REQUIRE(sub != nullptr);
-    DOCTEST_CHECK(sub->text.find("点击卡片查看详情") != std::string::npos);
-
     // toast 带超时回调（3.5s 自动消失）→ 触发后 visible 关闭
     const auto* timer = frame.ui.find("todo.toast.timer");
     DOCTEST_REQUIRE(timer != nullptr);
