@@ -161,3 +161,31 @@ S0#3 commit message 声称 "ButtonBuilder::theme(tokens,variant) 重载"——�
 | LOW-B1 | LOW | 2. 防瞎改 | ButtonStyle 构造器删除 UAT6 阴影设计意图注释 | `button.h`（旧 L27-32） |
 
 **建议优先级**: 先修 HIGH-D1（修改 `theme.h:231` 的映射源或新增 `ControlSizeTokens::listItemHeight`），再处理 MED-C1（移除或实现 `button()` 三参数重载），LOW-B1 可延后。
+
+---
+
+## 复查结论 (2026-10-21)
+
+复查目标: `/d/wt-uat62-eui` 分支 `feat/uat62-theme`，追加 commit d886b14 / c6bf5fc / ce4501f。
+
+| ID | 处置 | 证据 | 状态 |
+|----|------|------|------|
+| HIGH-D1 | ControlSizeTokens 新增 `listItemHeight=40.0f`，pageVisuals() 改读 `metrics.control.listItemHeight` | `theme.h:102` 新增字段 + `theme.h:232` 映射修正 | **通过** |
+| MED-C1 | `button(ui,id,variant)` 改为 `return ButtonBuilder(ui,id).variant(variant)` —— 链入 `defaultVariant_`，后续 `theme(tokens)` 检测 `hasExplicitVariant_` 后走变体构造 | `button.h:347` 新链 + `button.h:328-329` 新私有字段 + `button.h:112-115` theme() 分支 | **通过** |
+| MED-D2 | 不修——理由: 12 零初始化字段由 W2 DevDesk 主题工厂（S0#5）填充 EUI 默认值仅作占位 | 已在 commit message 与 W2 合约注释中声明（button.h Outline 构造器注释: "W2 合约: primarySoftBg/primaryActive 需由 DevDesk 主题工厂填充"） | **接受不修** |
+| LOW-B1 | 恢复一行注释 `// flat — no shadow (WeChat flat design)` | `button.h:27` 注释恢复 | **通过** |
+
+**无新冲突引入**: d886b14 的 ControlSizeTokens 新字段为默认成员初始化器（非侵入）；c6bf5fc 的 `theme(tokens)` 分支逻辑仅在 `hasExplicitVariant_=true` 时走变体路径，旧单参数 `theme(tokens, primary)` 调用链行为不变。
+
+### W2 接口契约段同步检查
+
+| 检查项 | 当前值 | S2 要求 | 一致 |
+|--------|--------|---------|------|
+| `PageVisualTokens::listItemHeight` | `metrics.control.listItemHeight = 40.0f` | 40px（S2.2/S2.5） | OK |
+| `PageVisualTokens::buttonHeight` | `metrics.control.buttonHeight = 40.0f` | 40px（S2.1） | OK |
+| `PageVisualTokens::tabHeight` | `metrics.control.tabHeight = 40.0f` | 40px（S2.2 页面级） | OK |
+| `PageVisualTokens::inputRadius` | `metrics.radius.small = 6.0f` | 6px（S2.3） | OK |
+
+16 新颜色字段命名与 S1 一致（未变）。接口文档（批报）与实现已对齐，无需标出偏差。
+
+**复查结果: 通过 4 / 未通过 0**
