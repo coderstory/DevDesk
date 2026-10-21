@@ -46,8 +46,108 @@
 #ifndef DEVDESK_ARCH
 #define DEVDESK_ARCH "unknown"
 #endif
+// UAT6 构建行扩展（根 CMakeLists 注入；手工编译兜底同上）
+#ifndef DEVDESK_BUILD_HOST
+#define DEVDESK_BUILD_HOST "unknown"
+#endif
+#ifndef DEVDESK_BUILD_SYSTEM
+#define DEVDESK_BUILD_SYSTEM "unknown"
+#endif
 
 namespace module::about {
+
+namespace {
+// 纯数字解析（前导空格忽略——__DATE__ 日域 <10 为 " 3" 形；非数字/空 → false）。
+// 不用 std::stoi：异常路径与本仓库「不抛异常」约定相悖，且这里只需十进制全数字。
+bool parseAllDigits(std::string s, int& out) {
+    while (!s.empty() && s.front() == ' ') s.erase(s.begin());
+    if (s.empty()) return false;
+    int v = 0;
+    for (const char c : s) {
+        if (c < '0' || c > '9') return false;
+        v = v * 10 + (c - '0');
+    }
+    out = v;
+    return true;
+}
+}  // namespace
+
+// ---- 构建行纯函数（UAT6）：外部链接供 devdesk_tests 经 extern 声明单测；
+// 不建头文件（本批冻结清单只开 about_module.cpp / 根 CMakeLists / 对应测试）----
+
+// __DATE__/__TIME__ → 标准格式「年-月-日 时:分:秒」。两编译器（MSVC/GCC）的
+// __DATE__ 均为 "Mmm dd yyyy"（日 <10 时日域双空格填充，如 "Oct  3 2026"）、
+// __TIME__ 均为 "hh:mm:ss"。解析失败不造数据：原样返回 `date + " " + time`。
+std::string formatBuildStamp(const std::string& date, const std::string& time);
+
+// CMake 原料（根 CMakeLists 注入的 "CMAKE_SYSTEM_NAME CMAKE_SYSTEM_VERSION"，
+// 如 "Windows 10.0.26200" / "Darwin 24.5.0"）→ 用户口径系统标签：
+// Windows build 号（版本第三段）≥22000 → "Windows 11"、<22000 → "Windows 10"
+//（缺版本号则只留系统名）；Darwin → "macOS"（附原版本号）；其余系统原样。
+std::string normalizeBuildSystemLabel(const std::string& raw);
+
+std::string formatBuildStamp(const std::string& date, const std::string& time) {
+    // 格式前提：11 字符 "Mmm dd yyyy"（日域双空格填充）+ 8 字符 "hh:mm:ss"。
+    // 解析失败不造数据：原样返回 `date + " " + time`。
+    if (date.size() != 11 || time.size() != 8) {
+        return date + " " + time;
+    }
+    // 时间 "hh:mm:ss"：分隔位 ':'、其余全数字（编译期宏恒满足；防手传错形）
+    bool timeOk = time[2] == ':' && time[5] == ':';
+    for (size_t i = 0; i < time.size(); ++i) {
+        if (i == 2 || i == 5) continue;
+        if (time[i] < '0' || time[i] > '9') timeOk = false;
+    }
+    if (!timeOk) return date + " " + time;
+    static const char* const kMonths[] = {"Jan", "Feb", "Mar", "Apr",
+                                          "May", "Jun", "Jul", "Aug",
+                                          "Sep", "Oct", "Nov", "Dec"};
+    int month = 0;
+    for (int i = 0; i < 12; ++i) {
+        if (date.compare(0, 3, kMonths[i]) == 0) {
+            month = i + 1;
+            break;
+        }
+    }
+    if (month == 0) return date + " " + time;
+    int day = 0;
+    int year = 0;
+    if (!parseAllDigits(date.substr(4, 2), day) ||
+        !parseAllDigits(date.substr(7, 4), year) || day < 1 || day > 31 ||
+        year < 1970 || year > 2999) {
+        return date + " " + time;
+    }
+    auto pad2 = [](int v) {
+        return (v < 10 ? std::string("0") : std::string()) + std::to_string(v);
+    };
+    return std::to_string(year) + "-" + pad2(month) + "-" + pad2(day) + " " + time;
+}
+
+std::string normalizeBuildSystemLabel(const std::string& raw) {
+    const size_t space = raw.find(' ');
+    const std::string name =
+        space == std::string::npos ? raw : raw.substr(0, space);
+    const std::string ver =
+        space == std::string::npos ? std::string() : raw.substr(space + 1);
+    if (name == "Windows") {
+        // ver 形如 "10.0.26200"（major.minor.build）；build ≥22000 = Windows 11。
+        const size_t dot1 = ver.find('.');
+        const size_t dot2 =
+            dot1 == std::string::npos ? std::string::npos : ver.find('.', dot1 + 1);
+        if (dot1 != std::string::npos && dot2 != std::string::npos) {
+            int build = 0;
+            if (parseAllDigits(ver.substr(dot2 + 1), build)) {
+                if (build >= 22000) return "Windows 11";
+                if (build > 0) return "Windows 10";
+            }
+        }
+        return ver.empty() ? "Windows" : "Windows " + ver;
+    }
+    if (name == "Darwin") {
+        return ver.empty() ? "macOS" : "macOS " + ver;
+    }
+    return raw;
+}
 
 namespace {
 
@@ -56,9 +156,11 @@ std::string aboutVersionLine() {
     return std::string("v") + DEVDESK_VERSION + " · " + DEVDESK_BUILD_TYPE;
 }
 
-// 构建时刻 = 本 TU 编译时刻（__DATE__/__TIME__）
+// 构建行（UAT6 标准格式）：`年-月-日 时:分:秒@设备名@系统`
+//（如 `2026-10-21 09:32:11@E-YUNFEI-PC@Windows 11`）。
 std::string aboutBuildLine() {
-    return std::string("构建 ") + __DATE__ + " " + __TIME__;
+    return formatBuildStamp(__DATE__, __TIME__) + "@" + DEVDESK_BUILD_HOST +
+           "@" + normalizeBuildSystemLabel(DEVDESK_BUILD_SYSTEM);
 }
 
 std::string aboutEuiNeoLine() {
