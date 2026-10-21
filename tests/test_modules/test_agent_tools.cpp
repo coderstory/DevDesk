@@ -757,7 +757,9 @@ struct TmpDir {
             .generic_string();
     }
     void writeFile(const std::string& fname, const std::string& content) {
-        std::ofstream f(dir / fname, std::ios::binary);
+        auto p = dir / fname;
+        std::filesystem::create_directories(p.parent_path());
+        std::ofstream f(p, std::ios::binary);
         f << content;
     }
 };

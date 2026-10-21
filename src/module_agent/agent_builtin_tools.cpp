@@ -114,73 +114,84 @@ fs::path toolCwd() {
     return fs::current_path();
 }
 
-// 将 glob pattern 转成正则表达式（支持 ** / * / ? / {a,b}）
-std::string globToRegex(const std::string& pattern) {
-    std::string s;
-    size_t i = 0;
-
-    while (i < pattern.size()) {
-        if (i + 1 < pattern.size() && pattern[i] == '*' && pattern[i + 1] == '*') {
-            // ** 递归匹配（包括路径分隔符），非贪婪——后续模式决定截断点
-            size_t j = i + 2;
-            if (j < pattern.size() && (pattern[j] == '/' || pattern[j] == '\\')) ++j;
-            s += "(.*?)";
-            i = j;
-        } else if (pattern[i] == '*') {
-            // *：匹配文件名级（不含 / \）
-            s += "([^/\\\\]*)";
-            ++i;
-        } else if (pattern[i] == '?') {
-            // ?：单字符（不含 / \）
-            s += "([^/\\\\])";
-            ++i;
-        } else if (pattern[i] == '{') {
-            // {a,b}：大括号展开
-            size_t close = pattern.find('}', i + 1);
+// 手动 glob 匹配（不依赖 std::regex，MinGW 实现有回溯缺陷）。
+// 支持 **（递归匹配零或多个路径段）、*（单段不含 /）、?（单字符不含 /）、
+// {a,b}（大括号选一）。大小写敏感。
+bool globMatch(const std::string& path, const std::string& pattern,
+               size_t pi = 0, size_t pp = 0) {
+    while (pi < path.size() && pp < pattern.size()) {
+        if (pp + 1 < pattern.size() && pattern[pp] == '*' && pattern[pp + 1] == '*') {
+            // **：递归匹配零或多个路径段
+            pp += 2;
+            if (pp < pattern.size() && (pattern[pp] == '/' || pattern[pp] == '\\')) ++pp;
+            if (pp >= pattern.size()) return true;  // ** 在末尾 → 匹配剩余全部
+            // 尝试从当前位置的每个 / 开始匹配剩余模式
+            for (size_t k = pi; k <= path.size(); ++k) {
+                if (globMatch(path, pattern, k, pp)) return true;
+                if (k < path.size() && path[k] == '/') continue;  // 只从 / 边界尝试
+            }
+            return false;
+        } else if (pattern[pp] == '*') {
+            // *：匹配文件名级单段（不含 /）
+            ++pp;
+            if (pp < pattern.size() && path[pi] == '/') return false;  // * 不跨 /
+            // 贪婪匹配：找到后续模式的最右匹配
+            for (size_t k = path.size(); ; --k) {
+                if (k > pi && path[k-1] == '/') continue;  // 只在不跨 / 的位置尝试
+                if (globMatch(path, pattern, k, pp)) return true;
+                if (k == pi) break;
+            }
+            return false;
+        } else if (pattern[pp] == '?') {
+            if (path[pi] == '/') return false;
+            ++pi; ++pp;
+        } else if (pattern[pp] == '{') {
+            // {a,b}：大括号选一
+            size_t close = pattern.find('}', pp + 1);
             if (close == std::string::npos) {
-                s += "\\{";
-                ++i;
+                if (pattern[pp] != path[pi]) return false;
+                ++pi; ++pp;
             } else {
-                std::string inner = pattern.substr(i + 1, close - i - 1);
-                s += '(';
-                // 逗号分隔
+                std::string inner = pattern.substr(pp + 1, close - pp - 1);
                 size_t start = 0;
-                bool firstAlt = true;
+                bool matched = false;
                 while (start <= inner.size()) {
                     size_t comma = inner.find(',', start);
                     if (comma == std::string::npos) comma = inner.size();
                     std::string alt = inner.substr(start, comma - start);
-                    if (!firstAlt) s += '|';
-                    // 对每个备选项内部再做一次转义
+                    // 尝试用这个备选项匹配
+                    size_t ti = pi;
+                    bool ok = true;
                     for (char c : alt) {
-                        if (c == '.' || c == '^' || c == '$' || c == '+' ||
-                            c == '(' || c == ')' || c == '[' || c == ']' ||
-                            c == '|' || c == '\\') {
-                            s += '\\';
-                        }
-                        s += c;
+                        if (ti >= path.size() || path[ti] != c) { ok = false; break; }
+                        ++ti;
                     }
-                    firstAlt = false;
+                    if (ok && globMatch(path, pattern, ti, close + 1)) {
+                        matched = true; break;
+                    }
                     start = comma + 1;
                 }
-                s += ')';
-                i = close + 1;
+                if (matched) return true;
+                if (path[pi] != pattern[pp]) return false;
+                ++pi; ++pp;
             }
-        } else if (pattern[i] == '.') {
-            s += "\\.";
-            ++i;
-        } else if (pattern[i] == '\\' || pattern[i] == '^' || pattern[i] == '$' ||
-                   pattern[i] == '+' || pattern[i] == '(' || pattern[i] == ')' ||
-                   pattern[i] == '[' || pattern[i] == ']' || pattern[i] == '|') {
-            s += '\\';
-            s += pattern[i];
-            ++i;
         } else {
-            s += pattern[i];
-            ++i;
+            // 字面字符
+            if (path[pi] != pattern[pp]) return false;
+            ++pi; ++pp;
         }
     }
-    return "^" + s + "$";
+    // 双方同时到结尾 = 完全匹配
+    if (pi == path.size() && pp == pattern.size()) return true;
+    // 模式剩余全是 ** → 匹配
+    if (pi == path.size() && pp < pattern.size()) {
+        if (pp + 1 < pattern.size() && pattern[pp] == '*' && pattern[pp + 1] == '*') {
+            pp += 2;
+            if (pp < pattern.size() && (pattern[pp] == '/' || pattern[pp] == '\\')) ++pp;
+        }
+        return pp >= pattern.size();
+    }
+    return false;
 }
 
 // ========================================================================
@@ -212,9 +223,6 @@ public:
             return errText("fs.glob 错误：路径不存在 —— " + baseDir.string());
         }
 
-        std::string regexStr = globToRegex(pattern);
-        std::regex re(regexStr, std::regex::ECMAScript);
-
         // 收集匹配文件
         struct Entry {
             std::string path;
@@ -235,7 +243,7 @@ public:
 
                 std::string relStr = rel.generic_string();
 
-                if (std::regex_match(relStr, re)) {
+                if (globMatch(relStr, pattern)) {
                     Entry e;
                     e.path = relStr;
                     e.mtime = it->last_write_time(ec);
@@ -315,16 +323,8 @@ public:
             return errText("fs.grep 错误：路径不存在 —— " + baseDir.string());
         }
 
-        // 如果有 glob 过滤，预编译 glob regex
-        std::regex globRe;
+        // 如果有 glob 过滤，用手动 globMatch（避免 MinGW regex 缺陷）
         bool hasFileGlob = !fileGlob.empty();
-        if (hasFileGlob) {
-            try {
-                globRe = std::regex(globToRegex(fileGlob), std::regex::ECMAScript);
-            } catch (const std::regex_error& ex) {
-                return errText("fs.grep 参数错误：无效 glob 表达式 —— " + std::string(ex.what()));
-            }
-        }
 
         struct MatchEntry {
             std::string file;
@@ -349,7 +349,7 @@ public:
 
                 if (hasFileGlob) {
                     std::string fname = it->path().filename().string();
-                    if (!std::regex_match(fname, globRe)) continue;
+                    if (!globMatch(fname, fileGlob)) continue;
                 }
 
                 // 读文件（UTF-8 优先）
