@@ -674,22 +674,22 @@ REGISTER_TEST(uiModernVirtualProfileRows,
     compose();
     DOCTEST_CHECK(ui.find("claude.profiles.scroll.slot.0") != nullptr);
     DOCTEST_CHECK(ui.find("claude.profile.0.name") != nullptr);
-    // slot 窗口生效：25 行不整段渲染，视口外行不存在（virtualList 裁剪）
-    DOCTEST_CHECK(ui.find("claude.profile.15.name") == nullptr);
+    // slot 窗口生效：25 行不整段渲染，视口外行不存在（virtualList 裁剪）。
+    // UAT6：Profile 卡高 56px（name-only 设计，原 96px），更多行入视口——行 20 仍在外
+    DOCTEST_CHECK(ui.find("claude.profile.20.name") == nullptr);
 
     // 滚动回退语义：onScrollOffsetChanged 写 profilesScrollOffset_ →
-    // 重 compose 视口随偏移前移。共享配置片段列表限高 2 条后区块高 94→204，
-    // 列表视口少 110px → 偏移取 1500，让行 17 落进「偏移 ± 1 视口 overscan」渲染窗
+    // 重 compose 视口随偏移前移。偏移取 600 让行 19 落入渲染窗（56px×19≈1064）
     const auto* root = ui.find("claude.profiles.scroll");
     DOCTEST_REQUIRE(root != nullptr);
     DOCTEST_REQUIRE(root->onScrollOffsetChanged != nullptr);
-    root->onScrollOffsetChanged(1500.0f);
+    root->onScrollOffsetChanged(600.0f);
     compose();
     DOCTEST_CHECK(ui.find("claude.profiles.scroll.slot.0") != nullptr);
-    DOCTEST_CHECK(ui.find("claude.profile.17.name") != nullptr);
-    // 行命中节点 .bg 保留（选中/右键挂点行内）。offset 1500 下第 0 行已被 slot
-    // 窗口裁掉，故在已渲染的行 17 上验 .bg
-    DOCTEST_CHECK(ui.find("claude.profile.17.bg") != nullptr);
+    DOCTEST_CHECK(ui.find("claude.profile.19.name") != nullptr);
+    // 行命中节点 .bg 保留（选中/右键挂点行内）。offset 600 下第 0 行已被 slot
+    // 窗口裁掉，故在已渲染的行 19 上验 .bg
+    DOCTEST_CHECK(ui.find("claude.profile.19.bg") != nullptr);
 
     mod->onStop();
     return true;
@@ -1320,7 +1320,7 @@ REGISTER_TEST(uiAboutPageBgEffectAlpha,
         ui.end();
         const auto* bg = ui.find("about.bg");
         DOCTEST_REQUIRE(bg != nullptr);
-        DOCTEST_CHECK(std::abs(bg->color.a - 0.5f) < 1e-3f);
+        DOCTEST_CHECK(std::abs(bg->color.a - 0.72f) < 1e-3f);  // UAT6 调值：0.5→0.72（window_effect_state.h:64）
     }
     // 尾档 = off：复位 + 验证实色
     core::window_effect_state::setCurrent("off");
