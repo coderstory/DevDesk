@@ -50,10 +50,10 @@ void drawCandidateRow(eui::Ui& ui, const core::theme::Tokens& t,
         .position(0.0f, 0.0f)
         .size(rowW, kRowCardH)
         .color(selected ? eui::Color{0xE8, 0xF7, 0xEE, 0xFF}  // 淡绿选中底
-                         : t.colors.wechat.cardBg)
+                         : t.colors.surface)
         .radius(t.sizes.radiusLarge)
-        .border(1.0f, selected ? t.colors.wechat.primary          // 绿描边
-                                : t.colors.wechat.dividerPrimary)
+        .border(1.0f, selected ? t.colors.primary          // 绿描边
+                                : t.colors.borderDefault)
         .build();
     // 勾选指示器：20px 圆，选中=绿圈白勾（primaryPressed 加深防淡绿底淹没）、
     // 未选中=cardBg 白圈灰边空圈。
@@ -62,11 +62,11 @@ void drawCandidateRow(eui::Ui& ui, const core::theme::Tokens& t,
     ui.rect(baseId + ".cb.box")
         .position(12.0f, boxY)
         .size(kBoxSize, kBoxSize)
-        .color(selected ? t.colors.wechat.primaryPressed : t.colors.wechat.cardBg)
+        .color(selected ? t.colors.primaryPressed : t.colors.surface)
         .radius(kBoxSize * 0.5f)
         .border(1.0f,
-                selected ? t.colors.wechat.primaryPressed
-                         : t.colors.wechat.dividerPrimary)
+                selected ? t.colors.primaryPressed
+                         : t.colors.borderDefault)
         .build();
     if (selected) {
         ui.text(baseId + ".cb.mark")
@@ -77,7 +77,7 @@ void drawCandidateRow(eui::Ui& ui, const core::theme::Tokens& t,
             .lineHeight(kBoxSize)
             .horizontalAlign(eui::HorizontalAlign::Center)
             .verticalAlign(eui::VerticalAlign::Center)
-            .color(t.colors.wechat.onPrimary)
+            .color(t.colors.onPrimary)
             .build();
     }
     // 名称（粗）+ base_url（mono 小字）+ model（小字）。**密钥一律不画**。
@@ -97,7 +97,7 @@ void drawCandidateRow(eui::Ui& ui, const core::theme::Tokens& t,
         .maxWidth(textW)
         .wrap(false)
         .overflow(core::TextOverflow::Ellipsis)
-        .color(t.colors.wechat.textPrimary)
+        .color(t.colors.textPrimary)
         .build();
     ui.text(baseId + ".url")
         .position(textX, 22.0f)
@@ -109,7 +109,7 @@ void drawCandidateRow(eui::Ui& ui, const core::theme::Tokens& t,
         .maxWidth(textW)
         .wrap(false)
         .overflow(core::TextOverflow::Ellipsis)
-        .color(t.colors.wechat.textTertiary)
+        .color(t.colors.textTertiary)
         .build();
     if (m.ok && !m.model.empty()) {
         ui.text(baseId + ".model")
@@ -121,7 +121,7 @@ void drawCandidateRow(eui::Ui& ui, const core::theme::Tokens& t,
             .maxWidth(textW)
             .wrap(false)
             .overflow(core::TextOverflow::Ellipsis)
-            .color(t.colors.wechat.textSecondary)
+            .color(t.colors.textSecondary)
             .build();
     }
     // 映射失败的行：右侧红字 skipReason（不阻断勾选，但导入选中时只会进「跳过」结果）
@@ -135,7 +135,7 @@ void drawCandidateRow(eui::Ui& ui, const core::theme::Tokens& t,
             .maxWidth(textW)
             .wrap(false)
             .overflow(core::TextOverflow::Ellipsis)
-            .color(t.colors.wechat.warningRed)
+            .color(t.colors.error)
             .build();
     }
 }
@@ -315,12 +315,12 @@ void drawCcSwitchImportDialog(eui::Ui& ui, const eui::Screen& screen,
                 .text(allSelected ? "取消全选" : "全选")
                 .fontSize(t.sizes.fontSizeSmall)
                 //（UAT5 米黄清理：surfaceElevated 暖橙 → WeChat Secondary 白底灰边）
-                .colors(t.colors.wechat.secondaryButtonBg,
-                        t.colors.wechat.dividerSecondary,
-                        t.colors.wechat.dividerSecondary)
-                .textColor(t.colors.wechat.textPrimary)
+                .colors(t.colors.hover,
+                        t.colors.hover,
+                        t.colors.hover)
+                .textColor(t.colors.textPrimary)
                 .radius(t.sizes.radiusWeChat)
-                .border(1.0f, t.colors.wechat.dividerPrimary)
+                .border(1.0f, t.colors.borderDefault)
                 .onClick([sp = &st]() {
                     const bool anySelected =
                         std::any_of(sp->selected_.begin(),

@@ -21,7 +21,7 @@ void selectionBar(eui::Ui& ui, const std::string& id, const std::string& label,
             // 底色 rect：wechat.selectedBg（#E5E5E5 浅灰，§4.3 "深灰背景"）
             ui.rect(id + ".bg")
                 .size(w, h)
-                .color(wc.selectedBg)
+                .color(t.colors.primarySoftBg)
                 .build();
 
             // 左 2px 竖线：wechat.primary（#07C160，§4.3 "左侧 2px 微信绿竖线"）
@@ -29,7 +29,7 @@ void selectionBar(eui::Ui& ui, const std::string& id, const std::string& label,
             ui.rect(id + ".accent")
                 .position(0.0f, 0.0f)
                 .size(kSelectionBarAccentWidth, h)
-                .color(wc.primary)
+                .color(t.colors.primary)
                 .build();
 
             // 文字：wechat.textPrimary（#1A1A1A 深灰）+ 14px + 左对齐 + 垂直居中
@@ -41,7 +41,7 @@ void selectionBar(eui::Ui& ui, const std::string& id, const std::string& label,
                 .fontSize(kSelectionBarFontSize)
                 .horizontalAlign(eui::HorizontalAlign::Left)
                 .verticalAlign(eui::VerticalAlign::Center)
-                .color(wc.textPrimary)
+                .color(t.colors.textPrimary)
                 .build();
         })
         .build();

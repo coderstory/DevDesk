@@ -349,12 +349,12 @@ void drawCallsDialog(eui::Ui& ui, const eui::Screen& screen,
                 .size(88.0f, 40.0f)
                 .text("← 上一页")
                 .fontSize(14.0f)
-                .colors(t.colors.wechat.secondaryButtonBg,
-                        t.colors.wechat.dividerSecondary,
-                        t.colors.wechat.dividerSecondary)
-                .textColor(t.colors.wechat.textPrimary)
+                .colors(t.colors.hover,
+                        t.colors.hover,
+                        t.colors.hover)
+                .textColor(t.colors.textPrimary)
                 .radius(t.sizes.radiusWeChat)
-                .border(1.0f, t.colors.wechat.dividerPrimary)
+                .border(1.0f, t.colors.borderDefault)
                 .disabled(st.callsPage_ == 0)
                 .onClick([sp = &st] {
                     if (sp->callsPage_ == 0) return;
@@ -368,12 +368,12 @@ void drawCallsDialog(eui::Ui& ui, const eui::Screen& screen,
                 .size(88.0f, 40.0f)
                 .text("下一页 →")
                 .fontSize(14.0f)
-                .colors(t.colors.wechat.secondaryButtonBg,
-                        t.colors.wechat.dividerSecondary,
-                        t.colors.wechat.dividerSecondary)
-                .textColor(t.colors.wechat.textPrimary)
+                .colors(t.colors.hover,
+                        t.colors.hover,
+                        t.colors.hover)
+                .textColor(t.colors.textPrimary)
                 .radius(t.sizes.radiusWeChat)
-                .border(1.0f, t.colors.wechat.dividerPrimary)
+                .border(1.0f, t.colors.borderDefault)
                 .disabled(!hasNext)
                 .onClick([sp = &st] {
                     if ((sp->callsPage_ + 1) * kCallsPageSize >= sp->callsTotalMatches_) return;
@@ -398,12 +398,12 @@ void drawCallsDialog(eui::Ui& ui, const eui::Screen& screen,
                 .size(120.0f, 40.0f)
                 .text("关闭")
                 .fontSize(14.0f)
-                .colors(t.colors.wechat.secondaryButtonBg,
-                        t.colors.wechat.dividerSecondary,
-                        t.colors.wechat.dividerSecondary)
-                .textColor(t.colors.wechat.textPrimary)
+                .colors(t.colors.hover,
+                        t.colors.hover,
+                        t.colors.hover)
+                .textColor(t.colors.textPrimary)
                 .radius(t.sizes.radiusWeChat)
-                .border(1.0f, t.colors.wechat.dividerPrimary)
+                .border(1.0f, t.colors.borderDefault)
                 .onClick([sp = &st] { sp->callsDialogOpen_ = false; })
                 .build();
     });

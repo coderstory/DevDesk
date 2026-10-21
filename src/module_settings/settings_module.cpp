@@ -1119,7 +1119,7 @@ public:
                     .fontSize(fs(12.0f))
                     .lineHeight(bottomHintH)
                     .horizontalAlign(eui::HorizontalAlign::Center)
-                    .color(t.colors.wechat.textTertiary)
+                    .color(t.colors.textTertiary)
                     .build();
             })
             .build();

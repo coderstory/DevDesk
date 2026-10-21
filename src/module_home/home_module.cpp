@@ -127,8 +127,8 @@ void drawGlassStatCard(eui::Ui& ui,
         .size(width, height)  // panelShadow 由 CardStyle 默认注入（玻璃外投影保留）
         .theme(ct)            // 先注入主题再逐项覆盖（theme 会重置 CardStyle）
         .radius(corner)       // W9 微信统一圆角 6px（D-12 §4.5）
-        .color(components::theme::withOpacity(wc.cardBg, faceAlpha))   // 半透玻璃面
-        .border(1.0f, components::theme::withOpacity(wc.cardBg, kGlassBorderAlpha))  // 白细边
+        .color(components::theme::withOpacity(t.colors.surface, faceAlpha))   // 半透玻璃面
+        .border(1.0f, components::theme::withOpacity(t.colors.surface, kGlassBorderAlpha))  // 白细边
         .padding(inset)       // 显式 16：不用组件默认 20（与旧坐标叠加致顶留空/底溢出）
         .content([&] {
             // —— 玻璃层组（UAT6 E+F 批：共享参数化帮手替换内联层组）——
@@ -151,7 +151,7 @@ void drawGlassStatCard(eui::Ui& ui,
                         .fontSize(t.sizes.fontSizeSmall + 1.0f)
                         .lineHeight(18.0f * s)
                         .horizontalAlign(eui::HorizontalAlign::Center)
-                        .color(t.colors.wechat.textTertiary)  // W9 三级灰 #999999
+                        .color(t.colors.textTertiary)  // W9 三级灰 #999999
                         .build();
                     // UAT2 覆盖 W9：数字 22px（fontSizeLarge+4）深灰 #1A1A1A，更醒目
                     const float numberSize = t.sizes.fontSizeLarge + 4.0f;
@@ -164,8 +164,8 @@ void drawGlassStatCard(eui::Ui& ui,
                         .fontWeight(700)
                         .horizontalAlign(eui::HorizontalAlign::Center)
                         .color(numberColor ? *numberColor
-                                           : (accent ? t.colors.wechat.warningRed
-                                                     : t.colors.wechat.textPrimary))
+                                           : (accent ? t.colors.error
+                                                     : t.colors.textPrimary))
                         .build();
                     ui.text(id + ".badge")
                         // 底对齐 height-48（= 16 inset + 16 badge + 16 底边距），任何字号档底部不贴卡边
@@ -176,8 +176,8 @@ void drawGlassStatCard(eui::Ui& ui,
                         .lineHeight(16.0f)
                         .horizontalAlign(eui::HorizontalAlign::Center)
                         .color(badgeColor ? *badgeColor
-                                          : (accent ? t.colors.wechat.warningRed
-                                                    : t.colors.wechat.textTertiary))
+                                          : (accent ? t.colors.error
+                                                    : t.colors.textTertiary))
                         .build();
                     if (timerSeconds > 0.0f) {
                         // 周期整卡重绘（compose 不是每帧重跑，靠 onTimer 触发）；onTick 非空时用它
@@ -391,7 +391,7 @@ public:
                                     .fontSize(t.sizes.fontSizeTitle)
                                     .lineHeight(24.0f)
                                     .fontWeight(700)
-                                    .color(t.colors.wechat.textPrimary)
+                                    .color(t.colors.textPrimary)
                                     .build();
                             })
                             .build();
@@ -409,11 +409,11 @@ public:
                                     .text("刷新")
                                     .icon(0xF021)  // fa-arrows-rotate
                                     .fontSize(t.sizes.fontSizeBody - 1.0f)
-                                    .colors(t.colors.wechat.secondaryButtonBg,
-                                            t.colors.wechat.dividerSecondary,
-                                            t.colors.wechat.dividerSecondary)
-                                    .textColor(t.colors.wechat.textPrimary)
-                                    .iconColor(t.colors.wechat.textPrimary)
+                                    .colors(t.colors.hover,
+                                            t.colors.hover,
+                                            t.colors.hover)
+                                    .textColor(t.colors.textPrimary)
+                                    .iconColor(t.colors.textPrimary)
                                     .radius(t.sizes.radiusWeChat)
                                     .onClick([this] { refreshStats(); })
                                     .build();
@@ -457,7 +457,7 @@ public:
                         .text("所有工具模块已关闭")
                         .fontSize(t.sizes.fontSizeBody)
                         .lineHeight(32.0f)
-                        .color(t.colors.wechat.textTertiary)
+                        .color(t.colors.textTertiary)
                         .build();
                 } else {
                 const float statW =
@@ -487,9 +487,9 @@ public:
                                         snap.activeStreams > 0 ||
                                         snap.rateTps > 0.05 || seriesLive;
                                     const eui::Color* tokenNumberColor =
-                                        streaming ? &t.colors.wechat.primary
-                                        : rateOk  ? &t.colors.wechat.textPrimary
-                                                  : &t.colors.wechat.textTertiary;
+                                        streaming ? &t.colors.primary
+                                        : rateOk  ? &t.colors.textPrimary
+                                                  : &t.colors.textTertiary;
                                     drawGlassStatCard(ui, statCardElementId(card.kind),
                                                  statW, statH, t, card.tint, card.title,
                                                  tokenNumber,
@@ -498,7 +498,7 @@ public:
                                                      navigateTo(target);
                                                  },
                                                  tokenNumberColor,
-                                                 streaming ? &t.colors.wechat.primary
+                                                 streaming ? &t.colors.primary
                                                            : nullptr,
                                                  tokenLive ? 1.0f : 0.0f,
                                                  [&](eui::Ui& inner, float chartW,
@@ -622,7 +622,7 @@ public:
                                 .fontSize(t.sizes.fontSizeLarge - 1.0f)
                                 .lineHeight(22.0f)
                                 .fontWeight(600)
-                                .color(t.colors.wechat.textPrimary)
+                                .color(t.colors.textPrimary)
                                 .build();
                             // 图表区：自绘柱体包一层定位 stack（沿用 wrap id，probe 按它量左右对称）。
                             ui.stack("home.api.chart.wrap")
@@ -642,7 +642,7 @@ public:
                                             .lineHeight(40.0f)
                                             .horizontalAlign(
                                                 eui::HorizontalAlign::Center)
-                                            .color(t.colors.wechat.textTertiary)
+                                            .color(t.colors.textTertiary)
                                             .build();
                                     } else {
                                         // 柱体容器（id 沿用组件根 id：probe 与单测按 home.api.chart.bars.* 定位）。
@@ -723,7 +723,7 @@ public:
                                                 .lineHeight(14.0f)
                                                 .horizontalAlign(
                                                     eui::HorizontalAlign::Center)
-                                                .color(t.colors.wechat.textSecondary)
+                                                .color(t.colors.textSecondary)
                                                 .build();
                                             // x 轴小时标签：去头去尾后第 i 根对应真实小时 range.first + i。
                                             ui.text(
@@ -739,7 +739,7 @@ public:
                                                 .lineHeight(16.0f)
                                                 .horizontalAlign(
                                                     eui::HorizontalAlign::Center)
-                                                .color(t.colors.wechat.textTertiary)
+                                                .color(t.colors.textTertiary)
                                                 .build();
                                         }
                                             })
@@ -777,20 +777,20 @@ public:
                                 .fontSize(t.sizes.fontSizeBody)
                                 .radius(t.sizes.radiusWeChat);
                             if (btn.kind == ActionKind::NewNote) {
-                                builder.colors(t.colors.wechat.primary,
-                                               t.colors.wechat.primaryHover,
-                                               t.colors.wechat.primaryPressed)
-                                    .textColor(t.colors.wechat.onPrimary);
+                                builder.colors(t.colors.primary,
+                                               t.colors.primaryHover,
+                                               t.colors.primaryPressed)
+                                    .textColor(t.colors.onPrimary);
                             } else {
                                 builder.colors(
-                                       t.colors.wechat.secondaryButtonBg,
-                                       t.colors.wechat.dividerSecondary,
-                                       t.colors.wechat.dividerSecondary)
-                                    .textColor(t.colors.wechat.textPrimary);
+                                       t.colors.hover,
+                                       t.colors.hover,
+                                       t.colors.hover)
+                                    .textColor(t.colors.textPrimary);
                             }
                             if (btn.iconCodepoint != 0) {
                                 builder.icon(btn.iconCodepoint)  // 0xF46D fa-clipboard-list
-                                    .iconColor(t.colors.wechat.textPrimary);
+                                    .iconColor(t.colors.textPrimary);
                             }
                             // 点击负载按值捕获（btn.navPayload 空串 = 无负载），闭包只活在 compose 调用期。
                             const std::string payload = btn.navPayload;

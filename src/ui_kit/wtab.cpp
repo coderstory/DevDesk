@@ -13,7 +13,7 @@ void wtab(eui::Ui& ui, const std::string& id, const std::string& label,
           const std::function<void()>& onClick) {
     const auto& wc = t.colors.wechat;
     // §4.2：未激活=textSecondary（#666）灰字；激活=textPrimary（#1A1A1A）深灰字
-    const eui::Color txtColor = active ? wc.textPrimary : wc.textSecondary;
+    const eui::Color txtColor = active ? t.colors.textPrimary : t.colors.textSecondary;
 
     ui.stack(id)
         .position(x, y)
@@ -46,7 +46,7 @@ void wtab(eui::Ui& ui, const std::string& id, const std::string& label,
                 ui.rect(id + ".underline")
                     .position(0.0f, h - kWtabUnderlineHeight)
                     .size(w, kWtabUnderlineHeight)
-                    .color(wc.primary)
+                    .color(t.colors.primary)
                     .build();
             }
         })

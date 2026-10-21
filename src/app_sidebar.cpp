@@ -271,7 +271,7 @@ void drawTitlebar(eui::Ui& ui, const eui::Screen& screen) {
             ui.rect(id + ".hit")
                 .position(bx, 0.0f)
                 .size(kWindowButtonW, h)
-                .states(kTransparent, wc.warningRed, wc.warningRed)
+                .states(kTransparent, t.colors.error, t.colors.error)
                 .onHover([](bool hovered) { g_closeButtonHovered = hovered; })
                 .onClick(action)
                 .build();
@@ -279,7 +279,7 @@ void drawTitlebar(eui::Ui& ui, const eui::Screen& screen) {
             ui.rect(id + ".hit")
                 .position(bx, 0.0f)
                 .size(kWindowButtonW, h)
-                .states(kTransparent, wc.dividerSecondary, wc.selectedBg)
+                .states(kTransparent, t.colors.hover, t.colors.primarySoftBg)
                 .onClick(action)
                 .build();
         }
@@ -292,7 +292,7 @@ void drawTitlebar(eui::Ui& ui, const eui::Screen& screen) {
             .verticalAlign(eui::VerticalAlign::Center)
             .color(redHover && g_closeButtonHovered
                        ? eui::Color{1.0f, 1.0f, 1.0f, 1.0f}
-                       : wc.textSecondary)
+                       : t.colors.textSecondary)
             .build();
     };
 
@@ -309,7 +309,7 @@ void drawTitlebar(eui::Ui& ui, const eui::Screen& screen) {
                 .fontSize(t.sizes.fontSizeBody)
                 .fontWeight(700)
                 .verticalAlign(eui::VerticalAlign::Center)
-                .color(wc.textPrimary)
+                .color(t.colors.textPrimary)
                 .build();
 
             // 右：两钮从右往左 = 关闭 / 最小化（UAT4：最大化钮移除，标题栏
@@ -382,7 +382,7 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
             ui.rect("app.sidebar.divider")
                 .position(kWidth - 1.0f, 0.0f)
                 .size(1.0f, screen.height)
-                .color(wc.dividerPrimary)
+                .color(t.colors.borderDefault)
                 .radius(t.sizes.radiusWeChat)
                 .build();
 
@@ -402,7 +402,7 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                     ui_kit::drawDevDeskLogo(
                         ui, "app.sidebar.brand.mark",
                         (kWidth - kLogoSize) * 0.5f, (kBrandH - kLogoSize) * 0.5f,
-                        kLogoSize, wc.primary, wc.cardBg);
+                        kLogoSize, t.colors.primary, t.colors.surface);
                 })
                 .build();
 
@@ -424,8 +424,8 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                     .position(padX, y)
                     .size(kWidth - padX * 2.0f, itemH)
                     .states(kTransparent,
-                            active ? kTransparent : wc.dividerSecondary,
-                            active ? kTransparent : wc.selectedBg)
+                            active ? kTransparent : t.colors.hover,
+                            active ? kTransparent : t.colors.primarySoftBg)
                     .radius(t.sizes.radiusWeChat)
                     .onClick([router, page] { router->navigateTo(page); })
                     .build();
@@ -449,7 +449,7 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                         .fontSize(t.sizes.fontSizeBody)
                         .horizontalAlign(eui::HorizontalAlign::Center)
                         .verticalAlign(eui::VerticalAlign::Center)
-                        .color(active ? wc.primary : wc.textSecondary)
+                        .color(active ? t.colors.primary : t.colors.textSecondary)
                         .build();
                 } else {
                     ui.text(id + ".icon")
@@ -458,7 +458,7 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                         .icon(m->iconGlyph())
                         .fontSize(t.sizes.fontSizeBody)
                         .verticalAlign(eui::VerticalAlign::Center)
-                        .color(active ? wc.primary : wc.textSecondary)
+                        .color(active ? t.colors.primary : t.colors.textSecondary)
                         .build();
                     ui.text(id + ".label")
                         .position(padX + kItemInset + kIconW, y)
@@ -467,7 +467,7 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                         .text(m->displayName())
                         .fontSize(t.sizes.fontSizeBody)
                         .verticalAlign(eui::VerticalAlign::Center)
-                        .color(active ? wc.textPrimary : wc.textSecondary)
+                        .color(active ? t.colors.textPrimary : t.colors.textSecondary)
                         .build();
                 }
 
@@ -494,7 +494,7 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                     ui.rect("app.sidebar.groupdiv")
                         .position(padX, y)
                         .size(kWidth - padX * 2.0f, 1.0f)
-                        .color(wc.dividerPrimary)
+                        .color(t.colors.borderDefault)
                         .build();
                     y += 1.0f + gap;  // divider 高 1px + 标准 gap 到下一项
                     groupDividerDrawn = true;
@@ -514,7 +514,7 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
             ui.rect("app.sidebar.toggle")
                 .position(toggleX, toggleY)
                 .size(kToggleSize, kToggleSize)
-                .states(kTransparent, wc.dividerSecondary, wc.selectedBg)
+                .states(kTransparent, t.colors.hover, t.colors.primarySoftBg)
                 .radius(t.sizes.radiusWeChat)
                 .onClick([] {
                     setSidebarCollapsed(!sidebarCollapsed(), true);
@@ -527,7 +527,7 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                 .fontSize(t.sizes.fontSizeBody)
                 .horizontalAlign(eui::HorizontalAlign::Center)
                 .verticalAlign(eui::VerticalAlign::Center)
-                .color(wc.textSecondary)
+                .color(t.colors.textSecondary)
                 .build();
         })
         .build();
@@ -571,7 +571,7 @@ void drawFluidBackground(eui::Ui& ui, const eui::Screen& screen) {
         const float alpha =
             kMaxAlpha * (1.0f - 0.18f * static_cast<float>(j));  // 内浓外淡
         const eui::Color& color =
-            (j % 2 == 0) ? wc.primary : wc.primaryHover;
+            (j % 2 == 0) ? t.colors.primary : t.colors.primaryHover;
         ui.rect("app.fluid.halo." + std::to_string(j))
             .position(cx - r, cy - r)
             .size(r * 2.0f, r * 2.0f)

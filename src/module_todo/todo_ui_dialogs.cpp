@@ -54,12 +54,12 @@ void drawSegOp(eui::Ui& ui, const std::string& id, float x, float y, float w, fl
         btn.icon(iconCode);
     }
     btn
-        .colors(on ? t.colors.wechat.primary : t.colors.wechat.pageBg,
-                on ? t.colors.wechat.primaryHover : t.colors.wechat.secondaryButtonBg,
-                on ? t.colors.wechat.primaryPressed : t.colors.wechat.selectedBg)
-        .textColor(on ? t.colors.wechat.onPrimary : t.colors.wechat.textPrimary)
+        .colors(on ? t.colors.primary : t.colors.background,
+                on ? t.colors.primaryHover : t.colors.hover,
+                on ? t.colors.primaryPressed : t.colors.primarySoftBg)
+        .textColor(on ? t.colors.onPrimary : t.colors.textPrimary)
         .radius(8.0f)   // demo .op border-radius:8px
-        .border(1.0f, on ? t.colors.wechat.primary : t.colors.wechat.dividerPrimary)
+        .border(1.0f, on ? t.colors.primary : t.colors.borderDefault)
         .onClick(std::move(onClick))
         .build();
 }
@@ -85,10 +85,10 @@ void drawDialogChip(eui::Ui& ui, const std::string& id, float x, float y,
     const float textW = chipWidth(text);
     const float w = textW + 24.0f;
     const float h = 28.0f;
-    const eui::Color bg = eui::mixColor(t.colors.wechat.cardBg,
-                                        t.colors.wechat.primary, 0.12f);
-    const eui::Color border = eui::mixColor(t.colors.wechat.cardBg,
-                                            t.colors.wechat.primary, 0.24f);
+    const eui::Color bg = eui::mixColor(t.colors.surface,
+                                        t.colors.primary, 0.12f);
+    const eui::Color border = eui::mixColor(t.colors.surface,
+                                            t.colors.primary, 0.24f);
     ui.rect(id + ".bg")
         .position(x, y)
         .size(w, h)
@@ -104,16 +104,16 @@ void drawDialogChip(eui::Ui& ui, const std::string& id, float x, float y,
         .lineHeight(h)
         .horizontalAlign(eui::HorizontalAlign::Center)
         .verticalAlign(eui::VerticalAlign::Center)
-        .color(t.colors.wechat.primaryText)
+        .color(t.colors.primaryText)
         .build();
     components::button(ui, id + ".x")
         .position(x + textW + 2.0f, y + 3.0f)
         .size(22.0f, 22.0f)
         .text("×")
         .fontSize(t.sizes.fontSizeSmall)
-        .colors(t.colors.wechat.cardBg, t.colors.wechat.secondaryButtonBg,
-                t.colors.wechat.selectedBg)
-        .textColor(t.colors.wechat.primaryText)
+        .colors(t.colors.surface, t.colors.hover,
+                t.colors.primarySoftBg)
+        .textColor(t.colors.primaryText)
         .radius(11.0f)
         .onClick(std::move(onRemove))
         .build();
@@ -134,11 +134,11 @@ void drawDialogFooterButtons(eui::Ui& ui, const std::string& idBase, float w, fl
         .size(bw, bh)
         .text("取消")
         .fontSize(t.sizes.fontSizeSmall)
-        .colors(t.colors.wechat.pageBg, t.colors.wechat.secondaryButtonBg,
-                t.colors.wechat.selectedBg)
-        .textColor(t.colors.wechat.textPrimary)
+        .colors(t.colors.background, t.colors.hover,
+                t.colors.primarySoftBg)
+        .textColor(t.colors.textPrimary)
         .radius(8.0f)
-        .border(1.0f, t.colors.wechat.dividerPrimary)
+        .border(1.0f, t.colors.borderDefault)
         .onClick(std::move(onCancel))
         .build();
     components::button(ui, idBase + ".confirm")
@@ -146,9 +146,9 @@ void drawDialogFooterButtons(eui::Ui& ui, const std::string& idBase, float w, fl
         .size(bw, bh)
         .text(confirmLabel)
         .fontSize(t.sizes.fontSizeSmall)
-        .colors(t.colors.wechat.primary, t.colors.wechat.primaryHover,
-                t.colors.wechat.primaryPressed)
-        .textColor(t.colors.wechat.onPrimary)
+        .colors(t.colors.primary, t.colors.primaryHover,
+                t.colors.primaryPressed)
+        .textColor(t.colors.onPrimary)
         .radius(8.0f)
         .onClick(std::move(onConfirm))
         .build();
@@ -804,8 +804,8 @@ void drawOverdueDialog(eui::Ui& ui, const eui::Screen& screen,
                 ui.rect(rowId)
                     .position(20.0f, y)
                     .size(w - 40.0f, rowH - 6.0f)
-                    .states(t.colors.wechat.secondaryButtonBg, t.colors.wechat.dividerSecondary,
-                            t.colors.wechat.selectedBg)
+                    .states(t.colors.hover, t.colors.hover,
+                            t.colors.primarySoftBg)
                     .radius(t.sizes.radius)
                     .onClick([&d, &host, taskId = task.id] {
                         d.popups.close(Popup::Overdue);
@@ -1040,12 +1040,12 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
                     .icon(0xF2ED)   // fa-trash
                     .text("删除")
                     .fontSize(t.sizes.fontSizeSmall - 1.0f)
-                    .colors(t.colors.wechat.pageBg, t.colors.wechat.secondaryButtonBg,
-                            t.colors.wechat.selectedBg)
-                    .textColor(t.colors.wechat.textSecondary)
-                    .iconColor(t.colors.wechat.textSecondary)
+                    .colors(t.colors.background, t.colors.hover,
+                            t.colors.primarySoftBg)
+                    .textColor(t.colors.textSecondary)
+                    .iconColor(t.colors.textSecondary)
                     .radius(14.0f)   // 胶囊（demo .chip border-radius:99px）
-                    .border(1.0f, t.colors.wechat.dividerPrimary)
+                    .border(1.0f, t.colors.borderDefault)
                     // 与右键菜单删除同路径：先弹确认（Popup::Confirm），不关详情弹窗
                     .onClick([&d] {
                         d.confirm.openForTask(d.detail.taskId, d.detail.title);
@@ -1060,20 +1060,20 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
                     .fontSize(t.sizes.fontSizeSmall - 1.0f)
                     // 未完成 = demo .chip.pri（浅绿底绿字）；已完成 = 中性灰（弱化）
                     .colors(d.detail.completed
-                                ? t.colors.wechat.secondaryButtonBg
-                                : eui::mixColor(t.colors.wechat.cardBg,
-                                                t.colors.wechat.primary, 0.12f),
-                            t.colors.wechat.secondaryButtonBg,
-                            t.colors.wechat.selectedBg)
-                    .textColor(d.detail.completed ? t.colors.wechat.textSecondary
-                                                   : t.colors.wechat.primaryText)
-                    .iconColor(d.detail.completed ? t.colors.wechat.textSecondary
-                                                   : t.colors.wechat.primaryText)
+                                ? t.colors.hover
+                                : eui::mixColor(t.colors.surface,
+                                                t.colors.primary, 0.12f),
+                            t.colors.hover,
+                            t.colors.primarySoftBg)
+                    .textColor(d.detail.completed ? t.colors.textSecondary
+                                                   : t.colors.primaryText)
+                    .iconColor(d.detail.completed ? t.colors.textSecondary
+                                                   : t.colors.primaryText)
                     .radius(14.0f)
                     .border(1.0f, d.detail.completed
-                                      ? t.colors.wechat.dividerPrimary
-                                      : eui::mixColor(t.colors.wechat.cardBg,
-                                                      t.colors.wechat.primary, 0.24f))
+                                      ? t.colors.borderDefault
+                                      : eui::mixColor(t.colors.surface,
+                                                      t.colors.primary, 0.24f))
                     .onClick([&d, &host] {
                         const int64_t taskId = d.detail.taskId;
                         const bool wasDone = d.detail.completed;
@@ -1329,9 +1329,9 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
                     .size(kFooterBtnW, kFooterBtnH)
                     .text("关闭")
                     .fontSize(t.sizes.fontSizeSmall)
-                    .colors(t.colors.wechat.primary, t.colors.wechat.primaryHover,
-                            t.colors.wechat.primaryPressed)
-                    .textColor(t.colors.wechat.onPrimary)
+                    .colors(t.colors.primary, t.colors.primaryHover,
+                            t.colors.primaryPressed)
+                    .textColor(t.colors.onPrimary)
                     .radius(8.0f)
                     .onClick([&d] {
                         d.popups.close(Popup::Detail);
@@ -1345,11 +1345,11 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
                     .size(kFooterBtnW, kFooterBtnH)
                     .text("取消")
                     .fontSize(t.sizes.fontSizeSmall)
-                    .colors(t.colors.wechat.pageBg, t.colors.wechat.secondaryButtonBg,
-                            t.colors.wechat.selectedBg)
-                    .textColor(t.colors.wechat.textPrimary)
+                    .colors(t.colors.background, t.colors.hover,
+                            t.colors.primarySoftBg)
+                    .textColor(t.colors.textPrimary)
                     .radius(8.0f)
-                    .border(1.0f, t.colors.wechat.dividerPrimary)
+                    .border(1.0f, t.colors.borderDefault)
                     // 与 backdrop/Esc 共用未存改动守卫（先警告一次，再点放弃）
                     .onClick([&d, &host] { d.detail.requestClose(d.popups, host); })
                     .build();
@@ -1358,9 +1358,9 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
                     .size(kFooterBtnW, kFooterBtnH)
                     .text("保存")
                     .fontSize(t.sizes.fontSizeSmall)
-                    .colors(t.colors.wechat.primary, t.colors.wechat.primaryHover,
-                            t.colors.wechat.primaryPressed)
-                    .textColor(t.colors.wechat.onPrimary)
+                    .colors(t.colors.primary, t.colors.primaryHover,
+                            t.colors.primaryPressed)
+                    .textColor(t.colors.onPrimary)
                     .radius(8.0f)
                     .onClick([&d, &host] {
                         // 表单组装 + 落库统一走 DetailDialog::save；保存失败保持弹窗

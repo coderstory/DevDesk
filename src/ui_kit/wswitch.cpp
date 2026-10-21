@@ -15,7 +15,7 @@ void wswitch(eui::Ui& ui, const std::string& id, bool on,
 
     // §4.4 轨道色：开=wechat.primary 绿；关=wechat.dividerSecondary 灰（派生灰
     // 用现有 token，不引入新槽位——开关是唯一用灰轨道的组件，本 helper 内闭合）
-    const eui::Color trackColor = on ? wc.primary : wc.dividerSecondary;
+    const eui::Color trackColor = on ? t.colors.primary : t.colors.hover;
 
     // 滑块几何：直径 = h - 2*padding（在轨道内留白）；圆心 y = padding + thumbR
     const float thumbD = h - 2.0f * kWswitchThumbPadding;
@@ -47,7 +47,7 @@ void wswitch(eui::Ui& ui, const std::string& id, bool on,
             ui.rect(id + ".thumb")
                 .position(thumbX, thumbY)
                 .size(thumbD, thumbD)
-                .color(wc.cardBg)
+                .color(t.colors.surface)
                 .radius(thumbR)
                 .build();
         })

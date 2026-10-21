@@ -160,9 +160,9 @@ void drawGithubSyncCard(const CardDrawArgs& args) {
             .position(kCardPaddingX, y0 + (titleH - kDotSize) * 0.5f)
             .size(kDotSize, kDotSize)
             .color(hasError
-                       ? t.colors.wechat.warningRed
-                       : (in.githubSyncEnabled ? t.colors.wechat.primary
-                                              : t.colors.wechat.textTertiary))
+                       ? t.colors.error
+                       : (in.githubSyncEnabled ? t.colors.primary
+                                              : t.colors.textTertiary))
             .radius(kDotSize * 0.5f)
             .build();
 
@@ -295,7 +295,7 @@ void drawGithubSyncCard(const CardDrawArgs& args) {
             ui.rect(id + suffix)
                 .position(kCardPaddingX, y + roundFs(kSectionGapY))
                 .size(formW, 1.0f)
-                .color(t.colors.wechat.dividerPrimary)
+                .color(t.colors.borderDefault)
                 .build();
             y += roundFs(kSectionGapY) + 1.0f + roundFs(kSectionGapY);
         };
@@ -425,14 +425,14 @@ void drawGithubSyncCard(const CardDrawArgs& args) {
             ui.rect(id + ".progress.bar")
                 .position(barX, barY)
                 .size(barW, kProgressBarH)
-                .color(t.colors.wechat.dividerSecondary)
+                .color(t.colors.hover)
                 .radius(kProgressBarH * 0.5f)
                 .build();
             ui.rect(id + ".progress.fill")
                 .position(barX, barY)
                 .size(barW * githubSyncProgressFraction(in.githubSyncProgress),
                       kProgressBarH)
-                .color(t.colors.wechat.primary)
+                .color(t.colors.primary)
                 .radius(kProgressBarH * 0.5f)
                 .build();
             ui.text(id + ".progress")
