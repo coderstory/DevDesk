@@ -259,6 +259,11 @@ add_subdirectory(tests)
 add_executable(DevDesk src/main.cpp src/app_sidebar.cpp src/app_assembly.cpp
     src/module_toggle_bridge.cpp)
 devdesk_apply_warnings(DevDesk)
+# 排除 EUI-NEO 的旧图标 RC（IDI_APP_ICON）：DevDesk 已在下方用 devdesk.rc.in
+# 注入自己的 "A_DEVDESK_ICON" 命名资源。两份 RC 共用 RT_ICON ID 1-6 会导致
+# windres/ld 合并时 .rsrc 冲突（duplicate leaf warning + PE 图标数据损坏）。
+# 清空 EUI-NEO 全局属性后再调 eui_neo_configure_app，使其不再注入图标 RC。
+set_property(GLOBAL PROPERTY EUI_NEO_APP_ICON_RESOURCE "")
 eui_neo_configure_app(DevDesk KEEP_EXCEPTIONS_RTTI)
 
 # EUI-NEO 曾给非 Debug 的 app target 强加 -Os（eui_apply_compile_options），
