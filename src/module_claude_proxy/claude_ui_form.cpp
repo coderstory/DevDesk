@@ -1033,10 +1033,9 @@ void drawProfileFormDialog(eui::Ui& ui, const eui::Screen& screen,
                            const std::vector<Profile>& profiles,
                            const FormSubmitHooks& hooks) {
     const float w = ui_kit::dialogWidthPx(ui_kit::DialogWidth::Form);
-    // UAT5：四 tab 弹高统一 600 恒高（用户切 tab 看到跳变不满意）。基础页名称/
-    // 认证还原全宽纵排后内容回到 y≈426，与按钮带（h-60=540）间呼吸区同其余页。
-    // 高度不再按 tab 取值：切 tab 弹窗几何恒定，不跳变。
-    const float h = 600.0f;
+    // UAT6 O 批：最小窗 1000×640（页高 600）下弹窗 600 恒高填满全页、按钮出框；
+// 540 档（600−60 余量）使弹窗在最小窗下不溢出、仍有呼吸区。四 tab 高度仍统一。
+const float h = 540.0f;
     const bool isEdit = (f.formEditId_ != 0);
 
     ui_kit::DialogFrame frame;

@@ -31,8 +31,9 @@ constexpr float kSelectAllY = 100.0f;
 constexpr float kSelectAllH = 28.0f;
 // 全选钮带（底 128）与候选列表之间留 12px 呼吸（UAT6：原 4px 太挤）
 constexpr float kListTopY = 140.0f;
-constexpr float kRowPitch = 56.0f;        // 每条候选占的行高（行卡 48 + 行间 8）
-constexpr float kRowCardH = kRowPitch - 8.0f;  // 行卡高（三行文字收进卡内）
+// UAT6 P 批：行卡高 +12.5%（48→54）、行间 8→14（下边距增大）、整卡行距 56→68
+constexpr float kRowPitch = 68.0f;        // 每条候选占的行高（行卡 54 + 行间 14）
+constexpr float kRowCardH = kRowPitch - 14.0f;  // 行卡高 54px（原 48 +12.5%）
 constexpr float kResultH = 18.0f;
 constexpr float kButtonsBottomGap = 60.0f; // 底部按钮行（drawDialogButtons 写死 h-60）
 
@@ -43,27 +44,28 @@ void drawCandidateRow(eui::Ui& ui, const core::theme::Tokens& t,
                       const std::string& baseId, float rowW,
                       const CcSwitchImportRow& row,
                       const CcSwitchImportMapping& m, bool selected) {
-    // 行底卡（UAT5 米黄收尾）：WeChat cardBg 白底灰边；选中 selectedBg 浅灰——
-    // 与 Profile 列表选中态同语义（底色 + 绿圈白勾双指示，不加左竖线）。
+    // UAT6 P 批：选中态淡绿底（#E8F7EE + 绿描边），未选中保白；
+// 勾选指示绿圈白勾（加深绿 primaryPressed 防淡绿底淹没）。
     ui.rect(baseId + ".bg")
         .position(0.0f, 0.0f)
         .size(rowW, kRowCardH)
-        .color(selected ? t.colors.wechat.selectedBg : t.colors.wechat.cardBg)
+        .color(selected ? eui::Color{0xE8, 0xF7, 0xEE, 0xFF}  // 淡绿选中底
+                         : t.colors.wechat.cardBg)
         .radius(t.sizes.radiusLarge)
-        .border(1.0f, t.colors.wechat.dividerPrimary)
+        .border(1.0f, selected ? t.colors.wechat.primary          // 绿描边
+                                : t.colors.wechat.dividerPrimary)
         .build();
-    // 勾选指示（UAT5 米黄收尾）：照 Profile 选中同款 20px「绿圈白勾」——
-    // wechat.primary 圆 + 白 fa-check；未选中 = cardBg 白圈灰边空圈。不引
-    // components::checkbox（其头在 -Werror 下有 unused-variable 告警）。指示器纯视觉。
+    // 勾选指示器：20px 圆，选中=绿圈白勾（primaryPressed 加深防淡绿底淹没）、
+    // 未选中=cardBg 白圈灰边空圈。
     constexpr float kBoxSize = 20.0f;
     const float boxY = (kRowCardH - kBoxSize) * 0.5f;
     ui.rect(baseId + ".cb.box")
         .position(12.0f, boxY)
         .size(kBoxSize, kBoxSize)
-        .color(selected ? t.colors.wechat.primary : t.colors.wechat.cardBg)
+        .color(selected ? t.colors.wechat.primaryPressed : t.colors.wechat.cardBg)
         .radius(kBoxSize * 0.5f)
         .border(1.0f,
-                selected ? t.colors.wechat.primary
+                selected ? t.colors.wechat.primaryPressed
                          : t.colors.wechat.dividerPrimary)
         .build();
     if (selected) {
