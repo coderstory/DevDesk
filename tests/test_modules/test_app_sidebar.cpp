@@ -72,6 +72,33 @@ bool writeRawConfig(const std::string& json) {
 
 bool floatEq(float a, float b) { return std::fabs(a - b) < 0.01f; }
 
+// 动态背景（UAT6 主窗活体流质）测试共用的装配：桩 Router + 可见态钉住。
+// headless 下平台可见查询按「可见」降级（EnumWindows 无命中），用例按钉住值
+// 锁语义，不随测试运行平台漂移。
+struct FluidComposeFixture {
+    RecordingModule home{::core::PageId::Home, "首页"};
+    RecordingModule md{::core::PageId::Markdown, "笔记"};
+    ::core::Router router;
+    test_support::ScopedAppRouter scoped;
+    eui::Screen screen;
+    eui::Ui ui;
+    int frames = 0;
+
+    FluidComposeFixture()
+        : router(makeStubRouter(home, md)), scoped(&router) {
+        screen.width = 1600.0f;
+        screen.height = 1000.0f;
+    }
+
+    void frame() {
+        ui.begin("fluid" + std::to_string(frames++));
+        app::compose(ui, screen);
+        ui.end();
+        // compose 只建树不排版（本文件头部前提）：读任何 frame 前必须 layout
+        ui.layout(screen.width, screen.height);
+    }
+};
+
 } // namespace
 
 REGISTER_TEST(sidebar_config_default_and_roundtrip,
@@ -138,6 +165,87 @@ REGISTER_TEST(sidebar_toggle_persists,
     DOCTEST_CHECK_FALSE(store.load().sidebarCollapsed);
     // 复位：sidebarCollapsed 是进程级全局态，不还原会污染后续用例
     app::setSidebarCollapsed(false);
+    return true;
+})
+
+// ── 动态背景（UAT6 主窗活体流质）──
+// 锁三层：① 开关开+窗可见 → 4 层晕 + 每层 2 卫星 + onFrame 帧泵在树（正圆手法
+// 与强度保守上限）；② 相位钟只在泵回调推进（dt 钳 0.1s，模态循环/休眠不跳变）；
+// 「不挂泵不推进」的不可见侧见 fluid_background_gate_zero_cost。
+REGISTER_TEST(fluid_background_compose_elements,
+              "fluid: 开关开+窗可见 → 4 晕+卫星+帧泵在树；相位只在泵回调推进", {
+    test_support::TestEnv cfgDbEnv(kCfgPrefix, "fluidon", true);
+    app::resetFluidBackgroundForTests();       // 隔离前序用例的进程级镜像
+    app::setFluidWindowVisibleMode(true);      // 钉可见（语义与平台查询解耦）
+    app::setFluidBackgroundEnabled(true);
+
+    FluidComposeFixture fx;
+    fx.frame();
+
+    // 4 层晕 + 每层 2 卫星
+    for (int j = 0; j < 4; ++j) {
+        const auto* halo = fx.ui.find("app.fluid.halo." + std::to_string(j));
+        DOCTEST_REQUIRE(halo != nullptr);
+        // 正圆（splash 墨染同款手法）：宽=高=2r、radius=r；强度保守：单层 ≤ 0.13
+        DOCTEST_CHECK(floatEq(halo->frame.width, halo->frame.height));
+        DOCTEST_CHECK(floatEq(halo->radius, halo->frame.width * 0.5f));
+        DOCTEST_CHECK(halo->opacity <= 0.13f + 0.001f);
+        for (int b = 0; b < 2; ++b) {
+            DOCTEST_CHECK(fx.ui.find("app.fluid.sat." + std::to_string(j) +
+                                      "." + std::to_string(b)) != nullptr);
+        }
+    }
+    const auto* driver = fx.ui.find("app.fluid.anim.driver");
+    DOCTEST_REQUIRE(driver != nullptr);
+    DOCTEST_REQUIRE(driver->onFrame != nullptr);
+
+    // 相位钟只在泵回调推进：0.04（钳内）+ 2.0（钳到 0.1）→ 精确累加 0.14
+    const float before = app::fluidPhaseSeconds();
+    driver->onFrame(0.04f);
+    driver->onFrame(2.0f);
+    DOCTEST_CHECK(floatEq(app::fluidPhaseSeconds(), before + 0.14f));
+
+    app::resetFluidBackgroundForTests();  // 复位：进程级状态不还原会污染后续用例
+    return true;
+})
+
+// 铁律门控（用户拍板：最小化/藏托盘时帧泵必须停）：不可见帧零元素零泵零推进，
+// 恢复可见元素与泵回归（相位从冻结处继续）；开关关 = 同款零成本。
+// 平台层的零成本第一道由 EUI 主循环保证（glfw_app_main hiddenToTray/iconified
+// 两分支不跑主窗 update/compose/render），本用例锁第二道：即便 compose 被调用
+//（测试直泵路径），门控也不建元素不挂泵。
+REGISTER_TEST(fluid_background_gate_zero_cost,
+              "fluid: 窗不可见/开关关 → 零元素零泵零推进；恢复可见继续（铁律）", {
+    test_support::TestEnv cfgDbEnv(kCfgPrefix, "fluidgate", true);
+    app::resetFluidBackgroundForTests();
+    app::setFluidBackgroundEnabled(true);
+
+    FluidComposeFixture fx;
+
+    // 不可见（最小化/藏托盘语义钉住）：整树不建（含泵）
+    app::setFluidWindowVisibleMode(false);
+    fx.frame();
+    DOCTEST_CHECK(fx.ui.find("app.fluid.halo.0") == nullptr);
+    DOCTEST_CHECK(fx.ui.find("app.fluid.sat.0.0") == nullptr);
+    DOCTEST_CHECK(fx.ui.find("app.fluid.anim.driver") == nullptr);
+
+    // 恢复可见：元素与帧泵回归；不可见期间相位零推进（从冻结处继续）
+    const float phaseFrozen = app::fluidPhaseSeconds();
+    app::setFluidWindowVisibleMode(true);
+    fx.frame();
+    DOCTEST_CHECK(fx.ui.find("app.fluid.halo.0") != nullptr);
+    const auto* driver = fx.ui.find("app.fluid.anim.driver");
+    DOCTEST_REQUIRE(driver != nullptr);
+    DOCTEST_REQUIRE(driver->onFrame != nullptr);
+    DOCTEST_CHECK(floatEq(app::fluidPhaseSeconds(), phaseFrozen));
+
+    // 开关关：同样零成本（背景恢复静态 = 流质整体不画）
+    app::setFluidBackgroundEnabled(false);
+    fx.frame();
+    DOCTEST_CHECK(fx.ui.find("app.fluid.halo.0") == nullptr);
+    DOCTEST_CHECK(fx.ui.find("app.fluid.anim.driver") == nullptr);
+
+    app::resetFluidBackgroundForTests();
     return true;
 })
 

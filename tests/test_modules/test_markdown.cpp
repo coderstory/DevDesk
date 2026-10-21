@@ -433,6 +433,61 @@ REGISTER_TEST(md_module_compose_no_service, "markdown_module: 无服务 compose 
     return true;
 })
 
+// UAT6 问号钮重设计（照 sweep 批定标准，claude_module_help_button_spec 同款五段
+// 规格）：md.help.icon 从死 text 占位（无 hover 无 tooltip，注释自认「占位待绑定」）
+// 改为标准小图标钮——24px 正圆、icon 居中、hover 三态、flat（ButtonStyle 默认
+// 阴影已根修为无），快捷键长文案经 EUI tooltip 弹回（文案源 = onKeyEvent 注释）。
+REGISTER_TEST(md_help_button_spec,
+              "markdown_module: 帮助钮规格 = 24px 正圆/hover 三态/flat/tooltip 绑定", {
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();  // appDatabase 为 null → 跳过服务初始化，页头照常渲染
+
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    eui::Ui ui;
+    ui.begin("md_help_btn");
+    mod->compose(ui, screen);
+    ui.end();
+    ui.layout(screen.width, screen.height);
+
+    // ① 结构：stack + .bg + .icon 三节点（旧实现是裸 text 节点占位；旧 id 现被
+    //    stack 占用，.bg 子节点存在即新版结构）
+    const auto* help = ui.find("md.help.icon");
+    const auto* bg = ui.find("md.help.icon.bg");
+    const auto* icon = ui.find("md.help.icon.icon");
+    DOCTEST_REQUIRE(help != nullptr);
+    DOCTEST_REQUIRE(bg != nullptr);
+    DOCTEST_REQUIRE(icon != nullptr);
+    // ② 几何：24px 正圆（radius 12 = 直径一半）；icon 双向居中
+    DOCTEST_CHECK_EQ(bg->frame.width, 24.0f);
+    DOCTEST_CHECK_EQ(bg->frame.height, 24.0f);
+    DOCTEST_CHECK_EQ(bg->radius, 12.0f);
+    DOCTEST_CHECK(icon->horizontalAlign == eui::HorizontalAlign::Center);
+    DOCTEST_CHECK(icon->verticalAlign == eui::VerticalAlign::Center);
+    // ③ hover 三态接线（states）+ 0xF059 问号 glyph
+    DOCTEST_CHECK(bg->hasStateColors);
+    DOCTEST_CHECK(icon->text == eui::utf8(0xF059));
+    // ④ flat（UAT6 阴影统一）：帮助钮与同排「+ 新建笔记」主按钮一律无阴影
+    DOCTEST_CHECK(!bg->shadow.enabled);
+    const auto* newBtnBg = ui.find("md.btn.new.bg");
+    DOCTEST_REQUIRE(newBtnBg != nullptr);
+    DOCTEST_CHECK(!newBtnBg->shadow.enabled);
+    // ⑤ tooltip 绑定：节点在 + source 指向帮助钮 bg + 快捷键一句话说明
+    //   （hover 弹回「问号钮看着可点却无解释」的回归锁）
+    const auto* tip = ui.find("md.help.icon.tooltip");
+    DOCTEST_REQUIRE(tip != nullptr);
+    DOCTEST_CHECK(tip->hoverOpacitySourceId.find("md.help.icon.bg") !=
+                  std::string::npos);
+    const auto* tipText = ui.find("md.help.icon.tooltip.text");
+    DOCTEST_REQUIRE(tipText != nullptr);
+    DOCTEST_CHECK(tipText->text ==
+                  "快捷键：Ctrl+Shift+P 切换视图、Ctrl+N 新建笔记、Ctrl+S 保存、Esc 关浮层");
+
+    mod->onStop();
+    return true;
+})
+
 // 2. 有数据时：文件打开→大纲→跳转→三态循环 全链路（headless）
 
 // GitHub Sync 拉取导入远端库（表被 DROP 重建）后必须重载笔记列表缓存，否则用户看到旧列表。

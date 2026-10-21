@@ -47,6 +47,7 @@
 #include <components/switch.h>
 #include <components/theme.h>
 #include <components/toast.h>
+#include <components/tooltip.h>
 
 #include <algorithm>
 #include <atomic>
@@ -544,15 +545,33 @@ private:
                     .alignItems(eui::Align::CENTER)
                     .gap(t.sizes.spacingSmall)
                     .content([&] {
-                        // 快捷键帮助入口（§5.4）：「?」图标，待 EUI tooltip 绑定后
-                        // hover 弹快捷键面板。0xF059 = fa-circle-question 占位。
-                        ui.text("md.help.icon")
-                            .size(24.0f, 24.0f)
-                            .icon(0xF059)
-                            .fontSize(16.0f)
-                            .lineHeight(24.0f)
-                            .verticalAlign(eui::VerticalAlign::Center)
-                            .color(t.colors.wechat.textSecondary)
+                        // 快捷键帮助入口（§5.4）：UAT6 问号钮重设计——照 sweep 批
+                        // 定标准（claude.title.help 同款五段规格）：24px 正圆、icon
+                        // 居中、hover 三态（透明底→浅灰→按压灰）、flat，长文案经
+                        // EUI tooltip 弹回快捷键说明（文案源 = onKeyEvent 的快捷键
+                        // 注释口径，见下方 tooltip 绑定）。0xF059 = fa-circle-question。
+                        constexpr float kHelpBtnD = 24.0f;
+                        ui.stack("md.help.icon")
+                            .size(kHelpBtnD, kHelpBtnD)
+                            .visualStateFrom("md.help.icon.bg", 0.965f)
+                            .content([&] {
+                                ui.rect("md.help.icon.bg")
+                                    .size(kHelpBtnD, kHelpBtnD)
+                                    .states(eui::Color{0.0f, 0.0f, 0.0f, 0.0f},
+                                            t.colors.wechat.selectedBg,
+                                            t.colors.wechat.dividerSecondary)
+                                    .radius(kHelpBtnD * 0.5f)
+                                    .build();
+                                ui.text("md.help.icon.icon")
+                                    .size(kHelpBtnD, kHelpBtnD)
+                                    .icon(0xF059)
+                                    .fontSize(14.0f)
+                                    .lineHeight(kHelpBtnD)
+                                    .horizontalAlign(eui::HorizontalAlign::Center)
+                                    .verticalAlign(eui::VerticalAlign::Center)
+                                    .color(t.colors.wechat.textTertiary)
+                                    .build();
+                            })
                             .build();
 
                         components::toggleSwitch(ui, "md.outline.toggle")
@@ -579,6 +598,27 @@ private:
                     })
                     .build();
             })
+            .build();
+
+        // 帮助钮 tooltip 绑定（claude.title.help 同款现成 hint 机制）：hover 弹回
+        // 快捷键说明（文案源 = onKeyEvent 的快捷键注释口径，防「问号钮看着可点
+        // 却无解释」回归）。锚点可静态推算——md.actions 行（宽 304）justify END
+        // 打包：help 24 + gap 4 + 大纲 112 + gap 4 + 新建 124 = 268，左余 36 →
+        // help 中心 = 行内 x 48；行起点 x = contentW - 304（title/mode/actions
+        // 三段宽和恒 = contentW），故锚点 x = contentW - 256，y = kHeaderH/2。
+        // bounds 取页头行使气泡恒落钮下方；面板宽放宽到 560——本句 4 组快捷键
+        //（约 19 全角 + 37 ASCII，估宽 ≈505px）远长于 claude 的 15 字档（320），
+        // tooltip 默认 86-112 是 barchart 短标签档必截断；最窄窗（1000，contentW
+        // 920）右限 = 920-560-12 = 348，锚点 664 居中 clamp 到 348，右缘 908 ≤ 920
+        // 仍在列内。
+        components::tooltip(ui, "md.help.icon.tooltip")
+            .theme(componentTheme)
+            .source("md.help.icon.bg")
+            .value("快捷键：Ctrl+Shift+P 切换视图、Ctrl+N 新建笔记、Ctrl+S 保存、Esc 关浮层")
+            .anchor(contentW - 304.0f + 48.0f, ui_kit::kHeaderH * 0.5f)
+            .bounds(contentW, ui_kit::kHeaderH)
+            .minWidth(560.0f)
+            .maxWidth(560.0f)
             .build();
     }
 

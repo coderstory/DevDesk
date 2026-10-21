@@ -95,13 +95,33 @@ void drawAppearanceCard(const CardDrawArgs& args) {
     // roundFs 派生见 settings_ui_logic.h；标题顶 16 = 字面锚）。
     const float descH = roundFs(16.0f);
     const float hintH = roundFs(16.0f);
+    // 「动态背景」开关（UAT6 主窗活体流质）落位：标题带右贴（代理卡「随应用启动
+    // 代理」同款先例），**行盒零增量**——通用 tab 零滚动预算逐值保持（0/1/2 条
+    // 代理警告 = 338/356/372 对可用 372；任何 +30~40 的卡内新行都会破 1/2 警告档
+    // 的 372 上限，加行方案已在预算表排除）。标题盒相应收窄（w-56-150），与
+    // 开关盒 x 相接不叠印（settings_card_rows_scale_derived 行盒池的严格重叠
+    // 判定按 < 0.01 收口，贴边合法）。desc 槽让给开关说明（规格原文），字号/
+    // 窗口效果两行自带 FormRow 标签不再重复占 desc。
+    constexpr float kFluidToggleW = 150.0f;
     ui.stack(id)
         .size(w, h)
         .zIndex(40)
         .content([&] {
-            cardTitle(ui, id, t, 16.0f, w - 56.0f, 22.0f, 22.0f, "外观");
+            cardTitle(ui, id, t, 16.0f, w - 56.0f - kFluidToggleW, 22.0f,
+                      22.0f, "外观");
             cardDesc(ui, id, t, 40.0f, w - 56.0f, descH,
-                     "主题与窗口底色即时生效；字号缩放全局生效");
+                     "主窗口背景液态流质动画；关闭恢复静态");
+
+            // 动态背景开关（标题带右贴，y 12..40 与 desc y 40 相接不叠）
+            components::toggleSwitch(ui, id + ".fluid")
+                .position(w - 28.0f - kFluidToggleW, 12.0f)
+                .size(kFluidToggleW, 28.0f)
+                .text("动态背景")
+                .fontSize(fs(13.0f))
+                .checked(in.cfg.fluidBackgroundEnabled)
+                .theme(compTheme)
+                .onChange([f = a.applyFluidBackgroundEnabled](bool v) { f(v); })
+                .build();
 
             // 主题选择器已删除（D-12/E3 去功能例外——WeChat 皮肤即主题、暗色延后 D-04）。
             // 字号缩放（§6 item 3 确认在通用 tab）+ 窗口效果用 FormRow 排列（§6 item 5）。
