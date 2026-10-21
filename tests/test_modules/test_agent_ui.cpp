@@ -258,13 +258,18 @@ std::string onceConfig(int64_t epoch) {
 
 // 任务弹窗公共前奏：开新建 → 输入目标（真实 input 事件路径）。bool 返回供
 // DOCTEST_REQUIRE 在调用点判停（doctest 宏会 return，不能在 void 辅助函数里用）
+// UAT6 步骤条适配：goal 在 step 2，需先导航
 bool openNewTaskWithGoal(eui::Ui& ui, module::agent::AgentModule& mod,
                          const std::string& pagePrefix,
                          const std::string& goal) {
     if (!openNewTaskDialog(ui, mod, (pagePrefix + "a").c_str())) return false;
     eui::Ui ui2;
     composeTo(ui2, mod, kScreen, (pagePrefix + "b").c_str());
-    auto* goalHit = ui2.find("agent.dialog.task.goal.hit");
+    // 导航到步骤 2（指令）
+    if (!clickId(ui2, "agent.dialog.task.step.2")) return false;
+    eui::Ui ui2s2;
+    composeTo(ui2s2, mod, kScreen, (pagePrefix + "b2").c_str());
+    auto* goalHit = ui2s2.find("agent.dialog.task.goal.hit");
     if (goalHit == nullptr) return false;
     typeInto(goalHit, goal);
     return true;
@@ -373,7 +378,7 @@ REGISTER_TEST(agent_ui_db_import_reloads_tasks,
 })
 
 REGISTER_TEST(agent_ui_new_task_dialog_fields,
-              "agent_ui: 点「+ 新建任务」→ 弹窗全字段存在；cron 仅触发方式=定时 时渲染", {
+              "agent_ui: 点「+ 新建任务」→ 步骤条弹窗各步字段验证；cron 仅触发方式=定时时渲染", {
     test_support::TestDb tdb("agentui", "dialogfields");
     test_support::FakeProfileSource profile;
     ToolGuard statsGuard{"app.stats", "app.notify"};
@@ -393,67 +398,93 @@ REGISTER_TEST(agent_ui_new_task_dialog_fields,
 
     DOCTEST_REQUIRE_MESSAGE(ui2.find("agent.dialog.task") != nullptr,
                             "弹窗外框 agent.dialog.task 缺失");
-    DOCTEST_CHECK(ui2.find("agent.dialog.task.name") != nullptr);   // UAT5 任务名称大输入
-    DOCTEST_CHECK(ui2.find("agent.dialog.task.goal.caption") != nullptr);
-    DOCTEST_CHECK(ui2.find("agent.dialog.task.trigger") != nullptr);
-    DOCTEST_CHECK(ui2.find("agent.dialog.task.slot") != nullptr);
-    DOCTEST_CHECK(ui2.find("agent.dialog.task.iter") != nullptr);
-    DOCTEST_CHECK(ui2.find("agent.dialog.task.destructive") != nullptr);
-    DOCTEST_CHECK(ui2.find("agent.dialog.task.aichip") != nullptr);  // 指令行右缘 AI 起草
+    // 常驻元素
     DOCTEST_CHECK(ui2.find("agent.dialog.task.cancel") != nullptr);
     DOCTEST_CHECK(ui2.find("agent.dialog.task.save") != nullptr);
+    DOCTEST_CHECK(ui2.find("agent.dialog.task.prev") != nullptr);
+    DOCTEST_CHECK(ui2.find("agent.dialog.task.test") != nullptr);
     DOCTEST_CHECK(ui2.find("agent.dialog.task.close") != nullptr);
-    DOCTEST_CHECK(ui2.find("agent.dialog.task.error") == nullptr);
 
-    // 任务目标 = 多行输入（demo rows≈3 → ≥60 高；旧 §8 布局为 96）
-    const auto* goal = ui2.find("agent.dialog.task.goal");
-    DOCTEST_REQUIRE(goal != nullptr);
-    DOCTEST_CHECK_MESSAGE(goal->frame.height >= 60.0f,
-                          "弹窗 goal 输入应 ≥60px，实测 " +
-                              std::to_string(goal->frame.height));
+    // 步骤条：4 个节点 + 背景连线 + 标签
+    DOCTEST_CHECK(ui2.find("agent.dialog.task.stepper.line") != nullptr);
+    for (int i = 0; i < 4; ++i) {
+        DOCTEST_CHECK_MESSAGE(
+            ui2.find("agent.dialog.task.step." + std::to_string(i) + ".bg") != nullptr,
+            "步骤 " + std::to_string(i) + " 节点缺失");
+        DOCTEST_CHECK_MESSAGE(
+            ui2.find("agent.dialog.task.step." + std::to_string(i) + ".label") != nullptr,
+            "步骤 " + std::to_string(i) + " 标签缺失");
+    }
 
-    // 触发 segment：六类全在（缺一类即旧任务不可编辑）；「手动」默认选中
+    // Step 0（基础信息）：名称字段可见；其它步内容不可见
+    DOCTEST_CHECK(ui2.find("agent.dialog.task.name") != nullptr);   // 名称输入在 step 0
+    DOCTEST_CHECK(ui2.find("agent.dialog.task.goal.caption") == nullptr);  // goal 在 step 2
+    DOCTEST_CHECK(ui2.find("agent.dialog.task.trigger") == nullptr);       // 触发在 step 1
+
+    // ---- 导航到步骤 1（触发） ----
+    eui::Ui ui_s1;
+    DOCTEST_REQUIRE(clickId(ui2, "agent.dialog.task.step.1"));
+    composeTo(ui_s1, mod, kScreen, "agent_ui_dlg_s1");
+    DOCTEST_CHECK(ui_s1.find("agent.dialog.task.name") == nullptr);         // step 0 已隐藏
+    DOCTEST_CHECK(ui_s1.find("agent.dialog.task.trigger") != nullptr);      // 触发 segment 出现
+    // 六类触发按钮
     for (int i = 0; i < module::agent::kTriggerCount; ++i) {
         DOCTEST_CHECK_MESSAGE(
-            ui2.find("agent.dialog.task.trigger.item." + std::to_string(i) +
-                     ".bg") != nullptr,
+            ui_s1.find("agent.dialog.task.trigger.item." + std::to_string(i) + ".bg") != nullptr,
             "触发 segment 第 " + std::to_string(i) + " 项缺失");
     }
-    const auto* selOp = ui2.find("agent.dialog.task.trigger.item.0.bg");
-    DOCTEST_REQUIRE(selOp != nullptr);
-    DOCTEST_CHECK(nearPx(selOp->frame.height, 32.0f));
+    // 默认手动 → cron/once/event 不渲染
+    DOCTEST_CHECK(ui_s1.find("agent.dialog.task.cron") == nullptr);
+    DOCTEST_CHECK(ui_s1.find("agent.dialog.task.event.0") == nullptr);
 
-    DOCTEST_CHECK(ui2.find("agent.dialog.task.cron") == nullptr);
-    DOCTEST_CHECK(ui2.find("agent.dialog.task.event.0") == nullptr);   // 事件 chips 仅事件态
-    DOCTEST_REQUIRE_MESSAGE(callDropdownChange(ui2, "agent.dialog.task.trigger", 1),
-                            "agent.dialog.task.trigger.item.1 不存在（segment 未渲染？）");
-    eui::Ui ui3;
-    composeTo(ui3, mod, kScreen, "agent_ui_dlg3");
-    DOCTEST_CHECK_MESSAGE(ui3.find("agent.dialog.task.cron") != nullptr,
-                          "触发方式=定时 时未渲染 agent.dialog.task.cron");
-    DOCTEST_CHECK(ui3.find("agent.dialog.task.cron.caption") != nullptr);
-    DOCTEST_CHECK(ui3.find("agent.dialog.task.cron.template.field") != nullptr);
+    // 切到定时 → cron 出现
+    DOCTEST_REQUIRE_MESSAGE(callDropdownChange(ui_s1, "agent.dialog.task.trigger", 1),
+                            "trigger.item.1 不存在");
+    eui::Ui ui_s1b;
+    composeTo(ui_s1b, mod, kScreen, "agent_ui_dlg_s1b");
+    DOCTEST_CHECK_MESSAGE(ui_s1b.find("agent.dialog.task.cron") != nullptr,
+                          "触发方式=定时 时未渲染 cron");
+    DOCTEST_CHECK(ui_s1b.find("agent.dialog.task.cron.caption") != nullptr);
+    DOCTEST_CHECK(ui_s1b.find("agent.dialog.task.cron.template.field") != nullptr);
 
-    // 事件态：三个监听事件 chips 渲染（可点切选中）
-    DOCTEST_REQUIRE(callDropdownChange(ui3, "agent.dialog.task.trigger", 3));
-    eui::Ui ui3b;
-    composeTo(ui3b, mod, kScreen, "agent_ui_dlg3b");
-    DOCTEST_CHECK(ui3b.find("agent.dialog.task.event.0") != nullptr);
-    DOCTEST_CHECK(ui3b.find("agent.dialog.task.event.1") != nullptr);
-    DOCTEST_CHECK(ui3b.find("agent.dialog.task.event.2") != nullptr);
-    DOCTEST_CHECK(ui3b.find("agent.dialog.task.cron") == nullptr);
+    // 切到事件 → event chips 出现
+    DOCTEST_REQUIRE(callDropdownChange(ui_s1b, "agent.dialog.task.trigger", 3));
+    eui::Ui ui_s1c;
+    composeTo(ui_s1c, mod, kScreen, "agent_ui_dlg_s1c");
+    DOCTEST_CHECK(ui_s1c.find("agent.dialog.task.event.0") != nullptr);
+    DOCTEST_CHECK(ui_s1c.find("agent.dialog.task.event.1") != nullptr);
+    DOCTEST_CHECK(ui_s1c.find("agent.dialog.task.event.2") != nullptr);
+    DOCTEST_CHECK(ui_s1c.find("agent.dialog.task.cron") == nullptr);
 
-    DOCTEST_REQUIRE(callDropdownChange(ui3b, "agent.dialog.task.trigger", 0));
-    eui::Ui ui4;
-    composeTo(ui4, mod, kScreen, "agent_ui_dlg4");
-    DOCTEST_CHECK(ui4.find("agent.dialog.task.cron") == nullptr);
+    // ---- 导航到步骤 2（指令） ----
+    eui::Ui ui_s2;
+    DOCTEST_REQUIRE(clickId(ui_s1c, "agent.dialog.task.step.2"));
+    composeTo(ui_s2, mod, kScreen, "agent_ui_dlg_s2");
+    DOCTEST_CHECK(ui_s2.find("agent.dialog.task.goal") != nullptr);
+    DOCTEST_CHECK(ui_s2.find("agent.dialog.task.goal.caption") != nullptr);
+    DOCTEST_CHECK(ui_s2.find("agent.dialog.task.aichip") != nullptr);
+    DOCTEST_CHECK(ui_s2.find("agent.dialog.task.note") != nullptr);
+    DOCTEST_CHECK(ui_s2.find("agent.dialog.task.sysprompt") != nullptr);
+    DOCTEST_CHECK(ui_s2.find("agent.dialog.task.trigger") == nullptr);
+
+    // ---- 导航到步骤 3（执行与安全） ----
+    eui::Ui ui_s3;
+    DOCTEST_REQUIRE(clickId(ui_s2, "agent.dialog.task.step.3"));
+    composeTo(ui_s3, mod, kScreen, "agent_ui_dlg_s3");
+    DOCTEST_CHECK(ui_s3.find("agent.dialog.task.slot") != nullptr);
+    DOCTEST_CHECK(ui_s3.find("agent.dialog.task.iter") != nullptr);
+    DOCTEST_CHECK(ui_s3.find("agent.dialog.task.destructive") != nullptr);
+    DOCTEST_CHECK(ui_s3.find("agent.dialog.task.autonote") != nullptr);
+    DOCTEST_CHECK(ui_s3.find("agent.dialog.task.meta.hint") != nullptr);
+    DOCTEST_CHECK(ui_s3.find("agent.dialog.task.group.danger") != nullptr);
+    DOCTEST_CHECK(ui_s3.find("agent.dialog.task.goal") == nullptr);
 
     mod.onStop();
     return true;
 })
 
 REGISTER_TEST(agent_ui_dialog_create_task_persists_fields,
-              "agent_ui: 弹窗新建保存 → 落库行 trigger/slot/iter/destructive 与表单取值一致 + 弹窗关闭", {
+              "agent_ui: 步骤条弹窗新建保存 → 落库行字段与表单取值一致 + 弹窗关闭", {
     test_support::TestDb tdb("agentui", "dlgsave");
     test_support::FakeProfileSource profile;
     ToolGuard statsGuard{"app.stats", "app.notify"};
@@ -472,29 +503,42 @@ REGISTER_TEST(agent_ui_dialog_create_task_persists_fields,
     eui::Ui ui2;
     composeTo(ui2, mod, kScreen, "agent_ui_save2");
 
-    // 任务名称走真实 input 事件路径（UAT5 独立输入；TaskDef.name 一一对应）
+    // Step 0（基础信息）：填任务名称
     auto* nameHit = ui2.find("agent.dialog.task.name.hit");
     DOCTEST_REQUIRE(nameHit != nullptr);
     DOCTEST_REQUIRE(nameHit->onTextInput != nullptr);
     typeInto(nameHit, "每日汇总待办");
-    // goal 走真实 input 事件路径
-    auto* goalHit = ui2.find("agent.dialog.task.goal.hit");
+
+    // 导航到 step 2（指令）：填 goal
+    eui::Ui ui2s2;
+    DOCTEST_REQUIRE(clickId(ui2, "agent.dialog.task.step.2"));
+    composeTo(ui2s2, mod, kScreen, "agent_ui_save2s2");
+    auto* goalHit = ui2s2.find("agent.dialog.task.goal.hit");
     DOCTEST_REQUIRE(goalHit != nullptr);
     DOCTEST_REQUIRE(goalHit->onTextInput != nullptr);
     typeInto(goalHit, "汇总今日待办");
 
-    DOCTEST_REQUIRE(callDropdownChange(ui2, "agent.dialog.task.trigger", 1));
+    // 导航到 step 1（触发）：选定时 + 填 cron
+    eui::Ui ui2s1;
+    DOCTEST_REQUIRE(clickId(ui2s2, "agent.dialog.task.step.1"));
+    composeTo(ui2s1, mod, kScreen, "agent_ui_save2s1");
+    DOCTEST_REQUIRE(callDropdownChange(ui2s1, "agent.dialog.task.trigger", 1));
     eui::Ui ui3;
     composeTo(ui3, mod, kScreen, "agent_ui_save3");
     DOCTEST_REQUIRE_MESSAGE(ui3.find("agent.dialog.task.cron") != nullptr,
                             "定时态缺 cron 输入");
     mod.setEditCronDraft("0 9 * * 1-5");
+
+    // 导航到 step 3（执行与安全）：改槽位/迭代/破坏性
+    eui::Ui ui3s3;
+    DOCTEST_REQUIRE(clickId(ui3, "agent.dialog.task.step.3"));
+    composeTo(ui3s3, mod, kScreen, "agent_ui_save3s3");
     // 槽位 = opus（X 宏表第 3 项，index 2）
-    DOCTEST_REQUIRE(callDropdownChange(ui3, "agent.dialog.task.slot", 2));
+    DOCTEST_REQUIRE(callDropdownChange(ui3s3, "agent.dialog.task.slot", 2));
     // 迭代上限 = 7（非默认 10）
     mod.setDialogIterDraft(7);
-    // 破坏性 = true（wswitch 的 clickable = .track，原 .hit 随 toggleSwitch 换 wswitch 改名）
-    DOCTEST_REQUIRE_MESSAGE(clickId(ui3, "agent.dialog.task.destructive.track"),
+    // 破坏性 = true
+    DOCTEST_REQUIRE_MESSAGE(clickId(ui3s3, "agent.dialog.task.destructive.track"),
                             "破坏性开关 track 缺失");
 
     eui::Ui ui4;
@@ -544,13 +588,20 @@ REGISTER_TEST(agent_ui_daily_trigger_saves_without_time,
     eui::Ui ui2;
     composeTo(ui2, mod, kScreen, "agent_ui_daily2");
 
-    auto* goalHit = ui2.find("agent.dialog.task.goal.hit");
+    // 导航到 step 2（指令）填 goal
+    eui::Ui ui2s2;
+    DOCTEST_REQUIRE(clickId(ui2, "agent.dialog.task.step.2"));
+    composeTo(ui2s2, mod, kScreen, "agent_ui_daily2s2");
+    auto* goalHit = ui2s2.find("agent.dialog.task.goal.hit");
     DOCTEST_REQUIRE(goalHit != nullptr);
     DOCTEST_REQUIRE(goalHit->onTextInput != nullptr);
     typeInto(goalHit, "每天生成晨会待办");
 
-    // 第 5 项 = 每天（索引 4）；该模式不写 cron
-    DOCTEST_REQUIRE_MESSAGE(callDropdownChange(ui2, "agent.dialog.task.trigger", 4),
+    // 导航到 step 1（触发）：第 5 项 = 每天（索引 4）
+    eui::Ui ui2s1;
+    DOCTEST_REQUIRE(clickId(ui2s2, "agent.dialog.task.step.1"));
+    composeTo(ui2s1, mod, kScreen, "agent_ui_daily2s1");
+    DOCTEST_REQUIRE_MESSAGE(callDropdownChange(ui2s1, "agent.dialog.task.trigger", 4),
                             "agent.dialog.task.trigger.item.4 不存在");
     eui::Ui ui3;
     composeTo(ui3, mod, kScreen, "agent_ui_daily3");
@@ -590,6 +641,10 @@ REGISTER_TEST(agent_ui_once_trigger_form_and_save,
 
     eui::Ui ui;
     DOCTEST_REQUIRE(openNewTaskWithGoal(ui, mod, "agent_ui_oncenew", "明天中午提醒"));
+    // 导航到步骤 1（触发）
+    eui::Ui ui1;
+    composeTo(ui1, mod, kScreen, "agent_ui_oncenew.s1");
+    DOCTEST_REQUIRE(clickId(ui1, "agent.dialog.task.step.1"));
     eui::Ui ui2;
     composeTo(ui2, mod, kScreen, "agent_ui_oncenew.c");
     // 类型集合 = 6（once 追加在末尾，既有下标 0..4 不动）

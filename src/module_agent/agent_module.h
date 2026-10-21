@@ -164,6 +164,7 @@ private:
     void openTaskEditor(int64_t taskId);
     void closeTaskDialog();
     void saveTaskDialog();
+    void testRunDialog();
     void toggleTaskEnabled(const AgentTaskRow& task);
     // 定时分支预览行：editCron_ 每变（模板回填 / 手改 / 编辑回填）后重算
     void refreshCronPreview();
@@ -322,6 +323,9 @@ private:
     bool toolsCacheLoaded_ = false;
     // 任务弹窗：taskDialogOpen_ 控开关，editingTaskId_ 非空 = 编辑态，字段两态共用
     bool taskDialogOpen_ = false;
+    int currentStep_ = 0;            // 当前步骤索引（0=基础 1=触发 2=指令 3=执行与安全）
+    std::string testRunResult_;      // 试运行结果（空=无结果；"completed"/"failed:xxx"）
+    std::unique_ptr<ActiveRun> dryRun_;  // 试运行线程（非空=运行中；done 后 reap 回收）
     // 任务删除确认弹窗（E1）：非空 = 确认弹窗开着，值 = 待删任务 id（名字由 tasks_ 现查）
     std::optional<int64_t> deleteConfirmTaskId_;
     std::optional<int64_t> editingTaskId_;
