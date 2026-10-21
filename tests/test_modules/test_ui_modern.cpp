@@ -1051,7 +1051,7 @@ REGISTER_TEST(uiAboutLayout,
     constexpr float kTitleH = 30.0f;
     constexpr float kTitleGap = 28.0f;
     constexpr float kRowH = 48.0f;
-    constexpr int kRowCount = 6;
+    constexpr int kRowCount = 7;   // UAT6：新增 EUI-NEO 行（行序 2）
     constexpr float kFooterH = 20.0f;
     constexpr float kFooterGap = 16.0f;
     constexpr float kLabelW = 120.0f;
@@ -1394,7 +1394,7 @@ REGISTER_TEST(uiAboutBuildLineUiFormat,
     ui.begin("about_build_line_fmt");
     mod->compose(ui, screen);
     ui.end();
-    const auto* buildValue = ui.find("about.card.value.2");   // 行序 2 = 构建时间
+    const auto* buildValue = ui.find("about.card.value.3");   // 行序 3 = 构建时间（行 0/1/2：版本/Git/EUI-NEO）
     DOCTEST_REQUIRE(buildValue != nullptr);
     const std::string& s = buildValue->text;
     DOCTEST_CHECK_MESSAGE(s.find("构建 ") == std::string::npos,

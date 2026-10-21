@@ -336,14 +336,15 @@ REGISTER_TEST(settings_window_geometry_roundtrip,
     DOCTEST_CHECK_EQ(back.windowRestoreHeight, 880);
     DOCTEST_CHECK(back.windowMaximized);
 
-    // 脏值：负尺寸归 0（= 无记录），越上限钳到 65535；save 前先经 sanitized 收敛
+    // 脏值：负尺寸 / 越上限均归 0（= 无记录，sanitized 哨兵语义）；
+    // save 前先经 sanitized 收敛
     module::settings::SettingsConfig dirty;
     dirty.windowRestoreWidth = -7;
     dirty.windowRestoreHeight = 99999999;
     DOCTEST_REQUIRE(store.save(dirty).isOk());
     const auto cleaned = store.load();
     DOCTEST_CHECK_EQ(cleaned.windowRestoreWidth, 0);
-    DOCTEST_CHECK_EQ(cleaned.windowRestoreHeight, 65535);
+    DOCTEST_CHECK_EQ(cleaned.windowRestoreHeight, 0);
 
     // 最大化标志单独往返（正常关闭路径：尺寸在、标志 false）
     module::settings::SettingsConfig normal;
