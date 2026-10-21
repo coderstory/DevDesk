@@ -7,6 +7,7 @@
 | `proxy_smoke_test.py` | 直测 Claude 本地代理：向 `127.0.0.1:8888` 发 `/v1/messages`（非流式 + 流式），并可选直连上游做对照，用于定位失败发生在哪一跳 | DevDesk 已启动且代理在跑（Claude 页手动启动，或设置页开「随应用启动代理」） | `python doc/scripts/proxy_smoke_test.py [proxy\|upstream\|all]` |
 | `gen_dmg_background.py` | 生成 macOS DMG 的窗口背景图（`installer/macos/background.png` 700×440 与 `background@2x.png` 1400×880），尺寸与 Mac 侧 `create-dmg --window-size` 严格等大；窗口无 Mac，素材在 Windows 侧预生成入库 | Pillow（本机只有 `C:/Program Files/Python311/python.exe` 带 PIL，MSYS2 的 python 没有；缺 Pillow 时脚本会给出中文提示） | `"C:/Program Files/Python311/python.exe" doc/scripts/gen_dmg_background.py` |
 | `gen_app_icns.sh` | 在 macOS 上用 `iconutil` 把源 PNG（`installer/macos/icon-1024.png`，1024×1024）转成 App 图标 `DevDesk.icns` 与 DMG 卷图标 `.VolumeIcon.icns`（installer 设计 spec §4.4 第 1 项），内部先补画布留白、再用 `sips` 按 Apple iconset 标准缩放 | **只能在 macOS 上运行**（`iconutil`/`sips` 是 macOS 专有工具，Windows/Linux 上运行会清晰报错）；源图 `installer/macos/icon-1024.png` 需先在 Mac 上准备好，缺失时脚本报错退出；补留白需 python3 + Pillow | `bash doc/scripts/gen_app_icns.sh` |
+| `gen_icns.py` | 在 Windows 上用 Pillow 从 `assets/icon.png` 生成全尺寸 .icns（16~1024 共 10 档），替代 macOS 链的 `gen_app_icns.sh`（sips+iconutil）。内部复用 `pad_icon_canvas.py` 同款留白算法，手工拼装 .icns 二进制（header+TOC+10 条目） | Pillow（本机 `C:/Program Files/Python311/python.exe`）；源图 `assets/icon.png` 存在即可 | `"C:/Program Files/Python311/python.exe" doc/scripts/gen_icns.py [仓库根目录]` |
 | `pad_icon_canvas.py` | 把图标源图等比缩到最长边 82% 并居中放进 1024×1024 **透明**画布，供 `gen_app_icns.sh` 与 `platform/macos/build-app.sh` 共用（同一份几何，两处不重复实现）。修「Dock 里图标比其他应用大」——Dock 用同一格子绘制所有图标，苹果自家图标内容只占约 80%，满幅内容就显得大一圈 | Pillow（缺了给中文提示、退出码 2，不静默产出满幅图标） | `python3 doc/scripts/pad_icon_canvas.py <源图> <输出图> [--ratio 0.82]` |
 
 ## proxy_smoke_test.py 说明
@@ -35,3 +36,12 @@
 - 产物 `installer/macos/DevDesk.icns` 与 `installer/macos/.VolumeIcon.icns`（两份内容来自同一 iconset，卷图标在 DMG 根目录命名为 `.VolumeIcon.icns` 即被 Finder 采用）生成后需显式入库。
 - 源图 `installer/macos/icon-1024.png` 被 `installer/macos/.gitignore` 忽略（大二进制源素材不追踪；`.icns` 是交付物不忽略）。
 - Mac 侧尚未验证的部分（本机无 Mac）：`iconutil` / `sips` 实跑、`.VolumeIcon.icns` 在两个产出路径下被 Finder 真实采用。
+
+## gen_icns.py 说明
+
+- 从 `assets/icon.png`（任意尺寸，当前 256×256）派生全尺寸 .icns：内部先用 `pad_icon_canvas.py` 同款算法（ratio=0.82）补画布留白生成 1024×1024 母图，再 LANCZOS 缩放各档 PNG（16/32/64/128/256/512/1024），最后手工拼装 .icns 二进制（header + TOC + 10 条目）。
+- 10 条目：icp4(16) / icp5(32) / ic11(32 用作 Retina 16pt@2x) / ic07(128) / ic12(64 用作 Retina 32pt@2x) / ic08(256) / ic13(256 用作 Retina 128pt@2x) / ic09(512) / ic14(512 用作 Retina 256pt@2x) / ic10(1024)。
+- 产物覆盖 `installer/macos/DevDesk.icns` 和 `installer/macos/.VolumeIcon.icns`（两份内容相同），执行后需显式 `git add` 入库。
+- 与 `gen_app_icns.sh` 互补：本脚本在 Windows 上运行（Pillow 手工拼装，不依赖 iconutil/sips）；macOS 上仍可用 `gen_app_icns.sh` 走 iconutil 原生路径（产物等价）。
+- 回读验证：逐条目解出 PNG 用 Pillow `verify()` 校验像素数据完整，再加整文件 `Image.open()` 确认 ICNS 格式有效；任一条目 PNG 损坏即报 FAIL 退出。
+- 源图已自带圆角（超椭圆 n≈3.4），本脚本只补留白不另加圆角蒙版，理由与 `pad_icon_canvas.py` 头部一致。
