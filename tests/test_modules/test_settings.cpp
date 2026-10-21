@@ -6,6 +6,7 @@
 #include "test_support.h"
 #include "app_tools.h"          // app.read_settings 工厂
 #include "settings_config.h"
+#include "settings_ui_cards.h"   // 卡片直绘夹具（开机自启动行断言，UAT6）
 #include "settings_ui_logic.h"
 
 #include "claude_service.h"
@@ -23,6 +24,7 @@
 #include "platform/github_api.h" // 推送分支定向用例：静态默认发送器注入面
 #include "platform/credential_protection.h" // Token 落库形态断言（storesPlaintext）
 #include "platform/json.h"      // 读 app.read_settings 的 JSON 出参
+#include "platform/autostart.h"    // supported()（自启动行按平台入几何池，UAT6）
 #include "platform/system_theme.h"
 
 #include <eui/app.h>
@@ -354,6 +356,33 @@ REGISTER_TEST(settings_proxy_port_roundtrip_clamp, "settings: proxyPort 默认/�
     DOCTEST_CHECK_FALSE(parseProxyPortInput(" 88", out));
     DOCTEST_CHECK_FALSE(parseProxyPortInput("8.8", out));
     DOCTEST_CHECK_FALSE(parseProxyPortInput("-1", out));
+    removeQuietly(path);
+    return true;
+})
+
+REGISTER_TEST(settings_autostart_enabled_roundtrip,
+              "settings: autostartEnabled 默认 false + 读写往返 + 存量无键回默认（UAT6）", {
+    // 配置落 app_config 表（config.json:autostartEnabled 行）；持久化的是用户意图，
+    // 注册真值回读在设置模块层（refreshExternalState），这里只钉存储往返。
+    test_support::TestEnv cfgDbEnv(kCfgPrefix, "cfgautostart", true);
+    const auto path = test_support::tempConfigFile(kCfgPrefix, "autostartrt");
+    removeQuietly(path);
+    module::settings::SettingsStore store(::core::appDatabase());
+
+    // 默认不开机自启动
+    DOCTEST_CHECK_FALSE(store.load().autostartEnabled);
+
+    // 打开后持久化 + 读回 true
+    module::settings::SettingsConfig cfg;
+    cfg.autostartEnabled = true;
+    DOCTEST_REQUIRE(store.save(cfg).isOk());
+    DOCTEST_CHECK(store.load().autostartEnabled);
+
+    // 存量配置无该键 → 保持默认 false（老库升级路径）
+    DOCTEST_REQUIRE(test_support::seedConfigJsonRows(
+        ::core::appDatabase(), module::settings::SettingsStore::keyNamespace(),
+        R"({"theme": "light", "logRetentionDays": 30})"));
+    DOCTEST_CHECK_FALSE(store.load().autostartEnabled);
     removeQuietly(path);
     return true;
 })
@@ -1559,14 +1588,21 @@ REGISTER_TEST(settings_card_rows_scale_derived,
         const char* card;
         std::vector<const char*> rows;
     };
+    // 开机自启动行（UAT6）按平台能力入池：win/mac 渲染、POSIX 兜底整行不建
+    std::vector<const char*> editorRows = {
+        "settings.card.editor.title", "settings.card.editor.hint",
+        "settings.card.editor.ddwrap"};
+    if (platform::autostart::supported()) {
+        editorRows.push_back("settings.card.editor.autostart.label");
+        editorRows.push_back("settings.card.editor.autostart.desc");
+        editorRows.push_back("settings.card.editor.autostart.sw.track");
+    }
     const std::vector<CardRows> kCards = {
         {0, "settings.card.appearance",
          {"settings.card.appearance.title", "settings.card.appearance.desc",
           "settings.card.appearance.font.label",
           "settings.card.appearance.effect.label"}},
-        {0, "settings.card.editor",
-         {"settings.card.editor.title", "settings.card.editor.hint",
-          "settings.card.editor.ddwrap"}},
+        {0, "settings.card.editor", editorRows},
         {0, "settings.card.proxy",
          {"settings.card.proxy.title", "settings.card.proxy.desc",
           "settings.card.proxy.port.label", "settings.card.proxy.port.hint",
@@ -1713,11 +1749,24 @@ REGISTER_TEST(settings_card_rows_scale_derived,
                               yOf("settings.card.editor"),
                           at(94.0f, 110.0f, 143.0f));
             if (err.empty())
+                // UAT6：卡内第二段加自启动行 → 144→184（与外观卡同高，配对行高不变）
                 err = pin("editor 卡高", heightOf("settings.card.editor"),
-                          at(122.0f, 144.0f, 187.0f));
+                          at(156.0f, 184.0f, 239.0f));
             if (err.empty())
                 err = pin("appearance 卡高", heightOf("settings.card.appearance"),
                           at(156.0f, 184.0f, 239.0f));
+            if (err.empty() && platform::autostart::supported()) {
+                // 自启动行（UAT6）：行顶 = hint 底 + roundFs(6)（三档 113/132/172），
+                // 开关 44×24 字面值不随字号缩放
+                err = pin("editor.autostart 行顶（autostartRowBelowY）",
+                          yOf("settings.card.editor.autostart.label") -
+                              yOf("settings.card.editor"),
+                          at(113.0f, 132.0f, 172.0f));
+                if (err.empty())
+                    err = pin("editor.autostart 开关高（字面 24）",
+                              heightOf("settings.card.editor.autostart.sw.track"),
+                              at(24.0f, 24.0f, 24.0f));
+            }
             // 代理卡（UAT5 迁入通用 tab，卡高公式不变）
             if (err.empty())
                 err = pin("proxy.takeover.label 高",
@@ -1938,7 +1987,8 @@ REGISTER_TEST(settings_card_pair_column_geometry,
         return std::abs(a - b) < 0.5f;
     };
 
-    // ①②③ 两档窗口宽的配对几何（100% 档：appearance 184 | editor 144 → 行高 184）
+    // ①②③ 两档窗口宽的配对几何（100% 档：appearance 184 | editor 184（UAT6 加自
+    // 动行后与外观卡同高）→ 行高 184——行高较 UAT5 前不变）
     for (const float pageW : {792.0f, 1392.0f}) {
         FontScaleGuard g{1.0f};
         eui::Screen screen;
@@ -1968,10 +2018,11 @@ REGISTER_TEST(settings_card_pair_column_geometry,
         DOCTEST_CHECK(nearEq(editor->frame.x,
                              appearance->frame.x + colWant + 16.0f));
         DOCTEST_CHECK(nearEq(pair->frame.width, contentW));
-        // 行高 = max(对内卡高)：editor(144) 矮于 appearance(184) → 行高取 184
+        // 行高 = max(对内卡高)：UAT6 自启动行入 editor 后两卡同高（184|184）→
+        // 行高 184，与 UAT5 前 max(184,144)=184 逐值不变（零滚动预算不动）
         DOCTEST_CHECK(nearEq(pair->frame.height, 184.0f));
         DOCTEST_CHECK(nearEq(appearance->frame.height, 184.0f));
-        DOCTEST_CHECK(nearEq(editor->frame.height, 144.0f));
+        DOCTEST_CHECK(nearEq(editor->frame.height, 184.0f));
         // 两卡同排（行顶同 y）且都在行内
         DOCTEST_CHECK(nearEq(appearance->frame.y, pair->frame.y));
         DOCTEST_CHECK(nearEq(editor->frame.y, pair->frame.y));
@@ -2949,9 +3000,11 @@ REGISTER_TEST(settings_ui_logic_equivalence,
     // UAT5 全局顶部收紧：共享 kHeaderH 64→40，kSettingsHeaderH 已删并入共享源
     DOCTEST_CHECK_EQ(ui_kit::kHeaderH, 40.0f);
     DOCTEST_CHECK_EQ(ms::kAppearanceCardHeight, 184.0f);
-    // UAT3 多列分栏：编辑器字号卡半宽配对，hint 迁下拉下方第二行
-    //（行底 roundFs(68)+roundFs(36)=104，hint 行底 +roundFs(6)+roundFs(16)=126，+16 → 144）
-    DOCTEST_CHECK_EQ(ms::kEditorFontCardHeight, 144.0f);
+    // UAT6：编辑器字号卡卡内第二段加「开机自启动」行 → 144→184（与外观卡同高）。
+    // 关键不变量：与 kAppearanceCardHeight 同值 → 配对行高恒 184 不变，通用 tab
+    // 内容高对可用 372 的零滚动预算逐值保持（338/356/372 @ 0/1/2 条代理警告）。
+    DOCTEST_CHECK_EQ(ms::kEditorFontCardHeight, 184.0f);
+    DOCTEST_CHECK_EQ(ms::kEditorFontCardHeight, ms::kAppearanceCardHeight);
     // UAT3 多列分栏：模块卡半宽 + 卡内 2×2 格（次行块底 68+roundFs(56)+roundFs(36)=160，
     // +16 → 198 给窄列字号档富余）
     DOCTEST_CHECK_EQ(ms::kModulesCardHeight, 198.0f);
@@ -3122,6 +3175,180 @@ REGISTER_TEST(settings_card_registry_order,
             "settings.cards.pair.0"};
         const auto g0 = cardIdsOf(*mod, screen);
         DOCTEST_CHECK_MESSAGE(g0 == wantGeneralGated, "通用 tab（claude 关） 实测：" + join(g0));
+        mod->onStop();
+    }
+    ::core::theme::setDark();
+    return true;
+})
+
+// 「开机自启动」行（UAT6）：编辑器字号卡内第二段。直绘卡片（github_sync_card
+// 测试同款）：注入 SettingsCardsIn 真值 + 假 applyAutostartEnabled 记录回调、点
+// track 断言接线——不经模块，不触真注册表（headless 干净）。
+// 防的事故：开关尺寸漂移（44×24 是 §4.4 钉值）、行底挤出卡外（零滚动批在收紧
+// 卡高，下边距 ≥16 是卡内边距契约）、不支持平台漏判（POSIX 行不建）。
+REGISTER_TEST(settings_editor_card_autostart_row,
+              "settings: 编辑器字号卡「开机自启动」行——渲染几何（44×24/右贴 28/三档行底留边）+ 回调接线 + 不支持平台整行不建", {
+    namespace ms = module::settings;
+    struct FontScaleGuard {
+        float prev;
+        explicit FontScaleGuard(float s)
+            : prev(::core::theme::fontScale()) {
+            ::core::theme::setFontScale(s);
+        }
+        ~FontScaleGuard() { ::core::theme::setFontScale(prev); }
+    };
+
+    // 三档复算：行几何随 roundFs 派生，行底永远在卡高内且下边距 ≥16
+    //（85% = 156-139=17 / 100% = 184-162=22 / 130% = 239-211=28）
+    for (const float scale : {0.85f, 1.0f, 1.3f}) {
+        FontScaleGuard g{scale};
+        ms::SettingsConfig cfg;
+        std::string draft;
+        std::vector<std::string> tail;
+        ms::SettingsCardsIn in{cfg, draft, tail};
+        in.autostartSupported = true;
+        in.autostartRegistered = false;
+        int toggles = 0;
+        bool lastToggle = false;
+        ms::SettingsCardActions a;
+        a.applyAutostartEnabled = [&](bool v) { ++toggles; lastToggle = v; };
+
+        const float w = 416.0f;  // 半宽列宽（1000 窗折叠侧栏档 colW）
+        const float h = ms::roundFs(ms::kEditorFontCardHeight);
+        eui::Ui ui;
+        ui.begin(scale < 0.9f   ? "autorow85"
+                 : scale > 1.2f ? "autorow130"
+                                : "autorow100");
+        ms::CardDrawArgs args{ui, "settings.card.editor", w, h,
+                              ::core::theme::current(), 0.0f, 1000.0f, in, a};
+        ms::drawEditorFontCard(args);
+        ui.end();
+        ui.layout(w, h);   // frame 断言必须真 layout
+
+        const auto* track =
+            ui.find("settings.card.editor.autostart.sw.track");
+        DOCTEST_REQUIRE(track != nullptr);
+        DOCTEST_CHECK_EQ(track->frame.width, ms::kAutostartSwitchW);   // 44
+        DOCTEST_CHECK_EQ(track->frame.height, ms::kAutostartSwitchH);  // 24
+        // 右贴卡内边距 28（模块插拔卡/同步卡同款右锚）
+        DOCTEST_CHECK(std::fabs(track->frame.x -
+                                (w - 28.0f - ms::kAutostartSwitchW)) < 0.5f);
+        // 行 y 单一来源复算：hint 底 + 6，行盒 roundFs(30) 内垂直居中
+        const float rowY =
+            ms::autostartRowBelowY(ms::hintRowBelowY(ms::editorFontRowY()));
+        const float rowH = ms::autostartRowHeight();
+        DOCTEST_CHECK(std::fabs(track->frame.y -
+                               (rowY + (rowH - ms::kAutostartSwitchH) * 0.5f)) <
+                     0.5f);
+        // 行底不出卡 + 下边距 ≥16（卡内边距契约，零滚动批收紧卡高的护栏）
+        DOCTEST_CHECK(rowY + rowH <= h - 16.0f + 0.5f);
+
+        if (scale == 1.0f) {
+            // 文案：标签 + 说明一行
+            const auto* label =
+                ui.find("settings.card.editor.autostart.label");
+            DOCTEST_REQUIRE(label != nullptr);
+            DOCTEST_CHECK_EQ(label->text, std::string("开机自启动"));
+            const auto* desc = ui.find("settings.card.editor.autostart.desc");
+            DOCTEST_REQUIRE(desc != nullptr);
+            DOCTEST_CHECK_EQ(desc->text,
+                             std::string("开机后自动运行并最小化到托盘"));
+            // 回调接线：点 track = 拨到对面态（wswitch 命中元素 .track）
+            DOCTEST_REQUIRE(track->onClick != nullptr);
+            track->onClick();   // 初始 off → on
+            DOCTEST_CHECK_EQ(toggles, 1);
+            DOCTEST_CHECK(lastToggle);
+        }
+    }
+
+    // 不支持平台（POSIX 兜底）：整行不建，字号段照常（卡高不变、阴影留白）
+    {
+        ms::SettingsConfig cfg;
+        std::string draft;
+        std::vector<std::string> tail;
+        ms::SettingsCardsIn in{cfg, draft, tail};
+        in.autostartSupported = false;
+        ms::SettingsCardActions a;
+        eui::Ui ui;
+        ui.begin("autorownosupport");
+        ms::CardDrawArgs args{ui, "settings.card.editor", 416.0f,
+                              ms::roundFs(ms::kEditorFontCardHeight),
+                              ::core::theme::current(), 0.0f, 1000.0f, in, a};
+        ms::drawEditorFontCard(args);
+        ui.end();
+        DOCTEST_CHECK(
+            ui.find("settings.card.editor.autostart.sw.track") == nullptr);
+        DOCTEST_CHECK(ui.find("settings.card.editor.autostart.label") ==
+                      nullptr);
+        DOCTEST_CHECK(ui.find("settings.card.editor.dd") != nullptr);  // 字号段不受影响
+    }
+    ::core::theme::setDark();
+    return true;
+})
+
+// 通用 tab 零滚动预算（UAT6 开机自启动行落位的依据，也是护栏）：1000×640 窗
+//（Windows 自绘壳 → 页区高 600）下 cardsH = 600-152-40-20-16 = 372；内容 =
+// 配对行 184 + 16 + 代理卡（0/1/2 条警告 = 138/156/172）。行落编辑器字号卡
+// 阴影后配对行高恒 184 → 最坏 2 警告态 184+16+172 = 372 恰满可用（零滚动保住）。
+REGISTER_TEST(settings_general_tab_zero_scroll_budget,
+              "settings: 通用 tab 1000×640 零滚动预算——配对行高 184 不变 + 最坏代理态恰满可用 372", {
+    namespace ms = module::settings;
+    struct FontScaleGuard {
+        float prev;
+        explicit FontScaleGuard(float s)
+            : prev(::core::theme::fontScale()) {
+            ::core::theme::setFontScale(s);
+        }
+        ~FontScaleGuard() { ::core::theme::setFontScale(prev); }
+    };
+    FontScaleGuard g{1.0f};
+
+    // ① 纯件：配对行掌高者不变量（editor == appearance → max 恒 appearance 档）
+    DOCTEST_CHECK_EQ(ms::kEditorFontCardHeight, ms::kAppearanceCardHeight);
+    // 最坏代理态（2 条警告）逐值复算：内容 == 可用（刀口等式，超 1px 即破）
+    DOCTEST_CHECK_EQ(ms::proxyCardHeightFor(2), 172.0f);
+    DOCTEST_CHECK_EQ(ms::roundFs(ms::kAppearanceCardHeight) +
+                         16.0f + ms::proxyCardHeightFor(2),
+                     372.0f);
+    // ② compose 实测（headless 无代理服务 → 0 警告态）：配对行/代理卡节点高与
+    // 纯件一致，内容高 338 ≤ 可用 372（页级滚动条断言由同库
+    // settings_min_window_tabs_zero_scroll 承担，本用例钉刀口等式与掌高者不变量）
+    test_support::TestEnv env(kCfgPrefix, "autostartbudget", true);
+    test_support::ScopedConfigPath cfgEnv(
+        test_support::tempConfigFile(kCfgPrefix, "autostartbudget_cfg"));
+    {
+        std::unique_ptr<::core::Module> mod(create_settings_module());
+        mod->onStart();
+        // 页区 = 1000 窗（侧栏 208 展开 → 792 宽）× 640 窗（Windows 自绘壳 40 → 600 高）
+        eui::Screen screen;
+        screen.width = 792.0f;
+        screen.height = 600.0f;
+        eui::Ui ui;
+        ui.begin("autostartbudget");
+        mod->compose(ui, screen);
+        ui.end();
+        ui.layout(screen.width, screen.height);
+        const auto* pair = ui.find("settings.cards.pair.0");
+        const auto* proxy = ui.find("settings.card.proxy");
+        const auto* editor = ui.find("settings.card.editor");
+        DOCTEST_REQUIRE(pair != nullptr);
+        DOCTEST_REQUIRE(proxy != nullptr);
+        DOCTEST_REQUIRE(editor != nullptr);
+        DOCTEST_CHECK_EQ(pair->frame.height, ms::roundFs(ms::kAppearanceCardHeight));
+        DOCTEST_CHECK_EQ(editor->frame.height, ms::roundFs(ms::kEditorFontCardHeight));
+        DOCTEST_CHECK_EQ(proxy->frame.height, ms::proxyCardHeightFor(0));
+        // 可用高与 compose 同式（token/常量同源，不写字面 152）
+        const ::core::theme::Tokens& t = ::core::theme::current();
+        const float pad = t.sizes.spacingXXLarge;
+        const float cardsTopY = pad + ui_kit::kHeaderH + t.sizes.spacingLarge +
+                                ms::kSettingsTabHeight + t.sizes.spacingLarge;
+        const float cardsH = screen.height - cardsTopY - pad -
+                            ms::roundFs(20.0f) - t.sizes.spacingLarge;
+        DOCTEST_CHECK(pair->frame.height + t.sizes.spacingLarge +
+                          proxy->frame.height <
+                      cardsH);   // 338 < 372：零滚动（内容 ≤ 可用）
+        // 配对行内矮卡不变量：editor 不掌行（== appearance 高 → 行高不变）
+        DOCTEST_CHECK(editor->frame.height <= pair->frame.height + 0.5f);
         mod->onStop();
     }
     ::core::theme::setDark();
