@@ -272,6 +272,58 @@ REGISTER_TEST(claude_module_header_status_geometry,
     return true;
 })
 
+// UAT6 问号钮重设计（控件一致性横扫）：帮助图标从死 text 占位（无 hover 无
+// tooltip，注释自认「占位待绑定」）改为标准小图标钮——24px 正圆、icon 居中、
+// hover 三态、flat（ButtonStyle 默认阴影已根修为无），长文案经 EUI tooltip 弹回。
+REGISTER_TEST(claude_module_help_button_spec,
+              "claude_module: 帮助钮规格 = 24px 正圆/hover 三态/flat/tooltip 绑定", {
+    module::claude::ClaudeService::setGlobal(nullptr);   // 无服务态：页头恒渲染且为已停止
+    auto mod = mkmod();
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    eui::Ui ui;
+    ui.begin("claude_help_btn");
+    mod->compose(ui, screen);
+    ui.end();
+    ui.layout(screen.width, screen.height);
+
+    // ① 结构：stack + .bg + .icon 三节点（旧实现是裸 text 节点占位，.icon 子
+    //    节点存在即新版结构；旧 id 现被 stack 占用）
+    const auto* help = ui.find("claude.title.help");
+    const auto* bg = ui.find("claude.title.help.bg");
+    const auto* icon = ui.find("claude.title.help.icon");
+    DOCTEST_REQUIRE(help != nullptr);
+    DOCTEST_REQUIRE(bg != nullptr);
+    DOCTEST_REQUIRE(icon != nullptr);
+    // ② 几何：24px 正圆（radius 12 = 直径一半，md.help.icon 同款 24px 档）；icon 双向居中
+    DOCTEST_CHECK(floatEq(bg->frame.width, 24.0f));
+    DOCTEST_CHECK(floatEq(bg->frame.height, 24.0f));
+    DOCTEST_CHECK(floatEq(bg->radius, 12.0f));
+    DOCTEST_CHECK(icon->horizontalAlign == eui::HorizontalAlign::Center);
+    DOCTEST_CHECK(icon->verticalAlign == eui::VerticalAlign::Center);
+    // ③ hover 三态接线（states）+ 0xF059 问号 glyph
+    DOCTEST_CHECK(bg->hasStateColors);
+    DOCTEST_CHECK(icon->text == eui::utf8(0xF059));
+    // ④ flat（UAT6 阴影统一）：帮助钮与同排「启动代理」主按钮一律无阴影
+    DOCTEST_CHECK(!bg->shadow.enabled);
+    const auto* proxyBg = ui.find("claude.btn.proxy.bg");
+    DOCTEST_REQUIRE(proxyBg != nullptr);
+    DOCTEST_CHECK(!proxyBg->shadow.enabled);
+    // ⑤ tooltip 绑定：节点在 + source 指向帮助钮 bg + 已停态一句话摘要
+    //   （UAT6 副题横扫收起的文案在 hover 弹回，防丢文案回归）
+    const auto* tip = ui.find("claude.title.help.tooltip");
+    DOCTEST_REQUIRE(tip != nullptr);
+    DOCTEST_CHECK(tip->hoverOpacitySourceId.find("claude.title.help.bg") !=
+                  std::string::npos);
+    const auto* tipText = ui.find("claude.title.help.tooltip.text");
+    DOCTEST_REQUIRE(tipText != nullptr);
+    DOCTEST_CHECK(tipText->text == "管理多套 Claude API 配置");
+
+    mod->onStop();
+    return true;
+})
+
 // 2. 有真实服务 + 数据时 compose 渲染卡片/徽标/详情
 
 REGISTER_TEST(claude_module_compose_with_data,

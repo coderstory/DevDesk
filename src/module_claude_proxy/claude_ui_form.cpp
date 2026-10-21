@@ -884,7 +884,8 @@ void drawFormEnvTab(eui::Ui& ui, float w,
             .iconColor(t.colors.error)
             .radius(t.sizes.radiusWeChat)
             .border(1.0f, t.colors.wechat.dividerPrimary)
-            .shadow(0.0f, 0.0f, 0.0f, core::Color{0.0f, 0.0f, 0.0f, 0.0f})  // UAT6 去阴影（WeChat 纯平体系，非 Secondary 按钮）
+            // UAT6 阴影统一：ButtonStyle 默认已无阴影（EUI-NEO 根修），此处不再
+            // 逐钮覆盖透明阴影（原 workaround 已被根修吸收）。
             .onClick([fp = &f, i] {
                 if (i < fp->formEnvRows_.size()) {
                     fp->formEnvRows_.erase(fp->formEnvRows_.begin() +

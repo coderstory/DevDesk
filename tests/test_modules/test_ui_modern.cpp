@@ -198,6 +198,9 @@ REGISTER_TEST(uiModernHomeCardSpark,
         // .content 为内容容器
         DOCTEST_CHECK(ui.find("home.stat.tokens.bg") != nullptr);
         DOCTEST_CHECK(ui.find("home.stat.tokens.content") != nullptr);
+        // UAT6 阴影统一反向锁：根修只关按钮（ButtonStyle 默认 flat），卡片
+        // 容器的 panelShadow 必须保留——按钮去阴影不得殃及卡片立体感。
+        DOCTEST_CHECK(ui.find("home.stat.tokens.bg")->shadow.enabled);
         // sparkline 接线：lineChart 根节点在卡内
         DOCTEST_CHECK(ui.find("home.stat.tokens.spark") != nullptr);
         // sparkline 数据源 = 2 个真实采样点

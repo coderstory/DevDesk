@@ -190,6 +190,41 @@ REGISTER_TEST(github_sync_card_running_disables_three_buttons,
     return true;
 })
 
+// UAT6 控件一致性横扫双规则锁：
+// ① 阴影统一——操作组三按钮（绿 Primary「立即同步」与两个 Secondary 同排）
+//   全部 flat：EUI-NEO ButtonStyle 默认阴影已根修为无，未显式覆盖的按钮
+//   不得再带阴影；
+// ② 同排同尺寸——三按钮高度全等（主次只用颜色表达、不用大小；宽度按
+//   文案收缩不算「特意更大」），绿 Primary 不放大一档。
+REGISTER_TEST(github_sync_card_buttons_flat_and_same_height,
+              "github_sync 卡片: 操作组三按钮 flat 无阴影且同排同高（UAT6 双规则锁）", {
+    CardFixture fx;
+    eui::Ui ui;
+    fx.draw(ui);
+    const auto* push = ui.find(std::string(kCardId) + ".btn.push.bg");
+    const auto* test = ui.find(std::string(kCardId) + ".btn.test.bg");
+    const auto* pull = ui.find(std::string(kCardId) + ".btn.pull.bg");
+    DOCTEST_REQUIRE(push != nullptr);
+    DOCTEST_REQUIRE(test != nullptr);
+    DOCTEST_REQUIRE(pull != nullptr);
+    // ① flat：三钮（含绿 Primary）阴影一律未启用（style 断言，无需 layout）
+    DOCTEST_CHECK_MESSAGE(!push->shadow.enabled, "push (Primary) must be flat");
+    DOCTEST_CHECK_MESSAGE(!test->shadow.enabled, "test must be flat");
+    DOCTEST_CHECK_MESSAGE(!pull->shadow.enabled, "pull must be flat");
+
+    ui.layout(1600.0f, 1000.0f);   // frame 断言必须真 layout
+    // ② 同排同高：高度全等（同一 rowH 常量），字号同为 fs(12)
+    DOCTEST_CHECK(std::fabs(push->frame.height - test->frame.height) < 0.01f);
+    DOCTEST_CHECK(std::fabs(push->frame.height - pull->frame.height) < 0.01f);
+    DOCTEST_CHECK(std::fabs(test->frame.height - pull->frame.height) < 0.01f);
+    const auto* pushText = ui.find(std::string(kCardId) + ".btn.push.text");
+    const auto* pullText = ui.find(std::string(kCardId) + ".btn.pull.text");
+    DOCTEST_REQUIRE(pushText != nullptr);
+    DOCTEST_REQUIRE(pullText != nullptr);
+    DOCTEST_CHECK(std::fabs(pushText->fontSize - pullText->fontSize) < 0.01f);
+    return true;
+})
+
 // 方案 A：进度在操作组右侧——4px 轨道 + 主色填充（填充比 = 阶段序号/6，引擎
 // 只有阶段粒度、不伪造百分比）+「同步中 · <阶段>」文案；空闲右侧整组不渲染。
 REGISTER_TEST(github_sync_card_progress_bar_and_text,
