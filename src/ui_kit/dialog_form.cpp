@@ -62,7 +62,7 @@ void drawDialogTitle(eui::Ui& ui, const std::string& id, float dialogWidth,
 namespace {
 
 // 按钮对公共几何：取消在左、确定在右，各 (w − 2×内缩 − gap)/2，行底距弹窗底 60。
-constexpr float kDialogButtonGap = 12.0f;
+constexpr float kDialogButtonGap = 8.0f;
 constexpr float kDialogButtonRowOffsetY = 60.0f;
 constexpr float kDialogButtonHeight = 40.0f;
 
