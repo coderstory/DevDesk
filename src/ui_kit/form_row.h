@@ -24,7 +24,7 @@ using ControlComposeFn = std::function<void(eui::Ui& ui, float controlX, float c
 // 渲染单表单行：左侧 label（定宽 110px）+ 右侧 control 区（填满剩余宽），
 // 垂直居中对齐。label 与 control 间距用 t.sizes.spacing（8px，§3.1 8px 网格）。
 // 节点 id = `<id>.label`（text）；control 由消费方在回调里画（自行命名 id）。
-// label 文字色走 wechat.textPrimary，字号 14px（§3.3 主文字）。
+// label 文字色走 wechat.textPrimary，字号 14px 基准 × 全局字号档（§3.3 主文字）。
 void formRow(eui::Ui& ui, const std::string& id, const std::string& label,
              float x, float y, float totalW, float totalH,
              const ControlComposeFn& composeControl,

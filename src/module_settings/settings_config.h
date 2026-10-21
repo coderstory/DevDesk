@@ -119,7 +119,8 @@ float windowEffectTitleBarAlpha(const std::string& mode);
 // 无材质档（off/translucent）主题色有效不透明度 = 1−(1−标题栏α)(1−内容区α)，供单测锁目标带；磨砂档不适用。
 float windowEffectThemeOpacity(const std::string& mode);
 
-// 档位 → EUI-NEO backdrop 请求：off/translucent 显式关，frosted 请求 Acrylic。
+// 档位 → EUI-NEO backdrop 请求：off/translucent 显式关，frosted 请求 Mica
+//（UAT6：Acrylic→Mica，主窗材质；见 settings_config.cpp 实现处注释）。
 core::platform::WindowEffect windowEffectRequest(const std::string& mode);
 
 // 降级提示文案：UAT3 #10 起恒返回空串（提示行已按用户拍板删除，empty = 渲染侧

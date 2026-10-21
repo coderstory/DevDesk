@@ -183,3 +183,33 @@ REGISTER_TEST(ui_kit_formrow_label_fixed_control_fill,
     DOCTEST_CHECK_EQ(capControlH, kTotalH);
     return true;
 })
+
+// 场景6（UAT6 字号联动，防「formRow 标签钉死 14px 字面量」）：标签字号 =
+// 14px 基准 × 全局字号档（与 settings 的 fs() 同式；ui_kit 不能 include
+// module_settings，form_row.cpp 直乘 core::theme::fontScale()）。
+// 四档断言：85/100/115/130%（settings 档位全集），1.0 恒等 14 = 既有回归锁。
+// 行盒不缩不在此断言——行高由消费方 roundFs(36) 派生（settings 卡/github 卡），
+// 85% 档 31px、130% 档 47px 均容纳 11.9/18.2px 标签（垂直居中不裁字）。
+REGISTER_TEST(ui_kit_formrow_label_scales_with_fontscale,
+              "ui_kit formRow: label 字号随全局档缩放（四档 14×fontScale）", {
+    const float levels[] = {0.85f, 1.0f, 1.15f, 1.3f};
+    constexpr float kTotalW = 300.0f;
+    constexpr float kTotalH = 34.0f;
+    for (float lv : levels) {
+        core::theme::setFontScale(lv);
+        const auto& t = core::theme::current();  // 引用，随档重建后取新值
+        eui::Ui ui;
+        ui.begin("w02b_formrow_scale");
+        ui_kit::formRow(ui, "fr", "名称", 0.0f, 0.0f, kTotalW, kTotalH,
+                        [](eui::Ui&, float, float, float, float) {}, t);
+        ui.end();
+        const auto* lbl = ui.find("fr.label");
+        DOCTEST_REQUIRE(lbl != nullptr);
+        // 表达式与 form_row.cpp 实现逐字一致（14.0f × 档），浮点全等
+        DOCTEST_CHECK_EQ(lbl->fontSize, 14.0f * lv);
+        // label 盒几何不随档缩：定宽 110 是列对齐基准（spec §4.15），不缩
+        DOCTEST_CHECK_EQ(lbl->width.value, ui_kit::kFormRowLabelWidth);
+    }
+    core::theme::setFontScale(1.0f);  // 复位不可省：档位是进程级全局态
+    return true;
+})

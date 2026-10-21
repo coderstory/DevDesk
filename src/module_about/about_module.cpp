@@ -201,8 +201,9 @@ public:
 
         // —— 页面底色：wechat.pageBg #F7F7F7（§4.14 面板灰底）——
         // UAT2 B 批：tint 的 alpha 随窗口效果档位（core::window_effect_state 单值，
-        // 写口 = settings applyWindowVisuals）——磨砂 0.15 透 Acrylic backdrop、半透 0.5、
-        // off 实色 1.0；off 档与原 opaque 铺底视觉等价。
+        // 写口 = settings applyWindowVisuals）——磨砂 0.15 透 DWM backdrop、半透 0.72
+        //（UAT6 调值，见 window_effect_state.h）、off 实色 1.0；off 档与原 opaque
+        // 铺底视觉等价。
         ui.rect("about.bg")
             .position(0.0f, 0.0f)
             .size(screen.width, screen.height)

@@ -220,8 +220,8 @@ void saveWindowGeometryOnExit();
 // M-3（UAT2 一审）桥：EUI-NEO 实际生效档位（app::activeWindowEffect）→
 // core::window_effect_state 的档位串。core 层不可见 eui/app.h，经函数指针缝
 // 注入（下 getRouter 装配段）；surfaceAlpha 用它做 frosted 降级门控——请求
-// 磨砂但系统不支持 Acrylic（< Win11 22621）时 sidebar/about 铺色按 active 档
-// 回安全 alpha，不再近全透。
+// 磨砂但系统不支持 backdrop 材质（< Win11 22621）时 sidebar/about 铺色按
+// active 档回安全 alpha，不再近全透。
 std::string activeWindowEffectTier() {
     using core::platform::WindowEffect;
     switch (app::activeWindowEffect()) {
