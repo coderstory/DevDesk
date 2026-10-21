@@ -5,7 +5,11 @@
 //（按钮 + 进度条）。旧「URL 行右挂三按钮」布局已废：按钮全部下移操作组，URL 输入
 // 拉满卡内容右缘；错误摘要上收头部（点头部/错误行开既有 git_error_dialog）。
 // UAT6：头部右侧纵排双开关（真机反馈太挤）拆成各自一整行（模块插拔卡开关行
-// 先例：label+说明左块、开关钉卡内容右缘、行宽=卡内宽弹性契约）。
+// 先例：label 左块、开关钉卡内容右缘、行宽=卡内宽弹性契约）。
+// UAT6 最小窗零滚动收口（用户：「同步 tab 出滚动条完全没必要」）：两开关行的
+// 说明文案行删除（label 自承担语义）、「仓库配置」组题行删除（分段线已分节、
+// 三个表单 label 自明）、行距/分段留白/信息行/卡上下留白按档收紧——卡高常量
+// 496 → 372（可用高恰好值，复算见 settings_ui_logic.h 的 kGithubSyncCardHeight）。
 #include "github_sync_card.h"
 
 #include "github_sync_config.h"
@@ -33,47 +37,49 @@ namespace module::settings {
 namespace {
 
 // 行几何常量（100% 档基准，运行期随 roundFs 缩放）；E 批统一：label+control 行
-// 迁 ui_kit::formRow（label 110、行高 36）。UAT5 方案 A 三段式 + UAT6 开关行：
-//   头部 = 状态点 8 + 标题 22 + 摘要 16（左列）+ 启用/自动推送两整行开关行
-//  （行盒 36 = formRow 同口径，label 18 + 2 + 说明 16 文本块；开关钉卡内容
-//   右缘、行盒内垂直居中，尺寸 52×28 / 44×24 为字面值不随字号缩放）；
-//   配置组 = 组题 16 + URL 全宽行 + 分支|Token 双列；
+// 迁 ui_kit::formRow（label 110、行高 36）。UAT5 方案 A 三段式 + UAT6 开关行 +
+// UAT6 零滚动收口：
+//   头部 = 状态点 8 + 标题 20 + 摘要 16（左列）+ 启用/自动推送两整行开关行
+//  （行盒 28 = 主开关高——说明文案行删除后行盒贴开关，label 垂直居中于行盒；
+//   开关钉卡内容右缘，尺寸 52×28 / 44×24 为字面值不随字号缩放）；
+//   配置组 = URL 全宽行 + 分支|Token 双列（组题行已删，分段线已分节）；
 //   操作组 = 三按钮行 + 右侧进度条（仅运行中）；操作组下方为条件信息行。
 // 卡高最坏行序（85%/130% 档复算）见 settings_ui_logic.h 的 kGithubSyncCardHeight。
 inline constexpr float kCardPaddingX = 28.0f;
-inline constexpr float kCardPaddingY = 16.0f;   // 卡上下留白（字面值，不缩放）
-inline constexpr float kTitleH = 22.0f;         // 头部标题行高
-inline constexpr float kSummaryGapY = 2.0f;      // 标题与摘要行间距
-inline constexpr float kMutedH = 16.0f;          // 摘要行 / 组题 / 开关行说明行高
+inline constexpr float kCardPaddingY = 8.0f;    // 卡上下留白（字面值，不缩放；零滚动收口 16→8）
+inline constexpr float kTitleH = 20.0f;         // 头部标题行高（零滚动收口 22→20）
+inline constexpr float kSummaryGapY = 1.0f;      // 标题与摘要行间距（零滚动收口 2→1）
+inline constexpr float kMutedH = 16.0f;          // 摘要行高
 inline constexpr float kRowH = 36.0f;            // 表单行高（formRow 同口径）
-inline constexpr float kRowGap = 8.0f;          // 行距（列间距同值）
-inline constexpr float kSectionGapY = 12.0f;     // 分段线上下留白
+inline constexpr float kToggleRowH = 28.0f;     // 开关行高（零滚动收口新增：= 主开关 28）
+inline constexpr float kRowGap = 6.0f;          // 行距（列间距同值；零滚动收口 8→6）
+inline constexpr float kSectionGapY = 5.0f;     // 分段线上下留白（零滚动收口 12→5）
 inline constexpr float kBtnW = 120.0f;
 inline constexpr float kBtnSmallW = 80.0f;
 inline constexpr float kBtnTestW = 100.0f;
 inline constexpr float kBtnGapX = 8.0f;
-inline constexpr float kStatusH = 20.0f;         // 条件信息行高
+inline constexpr float kStatusH = 16.0f;         // 条件信息行高（零滚动收口 20→16）
 // 头部状态点（方案 A .dot）：8px 圆点，已启用=wechat.primary / 错误=
 // warningRed / 未启用=灰。
 inline constexpr float kDotSize = 8.0f;
 inline constexpr float kDotGapX = 8.0f;          // 状态点与标题左缘间距
 // 头部两整行开关行（UAT6，模块插拔卡开关行先例）：「启用」52×28 主开关 +
 // 「自动推送」44×24（与模块插拔卡开关同口径）。开关尺寸是设计稿字面值，不随
-// 字号缩放；行盒随 roundFs 缩放（85% 档 31 仍包住 28），卡高常量按最坏档兜底。
+// 字号缩放；行盒随 roundFs 缩放（85% 档 24 贴自动推送 24；启用行开关 28 超行盒
+// 由 max(行盒/文本/开关) 记账兜住），卡高常量按最坏档兜底。
 inline constexpr float kAutoSwitchW = 44.0f;
 inline constexpr float kAutoSwitchH = 24.0f;
 inline constexpr float kMainSwitchW = 52.0f;
 inline constexpr float kMainSwitchH = 28.0f;
 inline constexpr float kSwitchLabelGap = 8.0f;     // 行文本块右缘与开关左缘间距
 inline constexpr float kToggleLabelH = 18.0f;      // 开关行 label 高（模块卡 name 同口径）
-inline constexpr float kToggleDescGapY = 2.0f;     // 开关行 label 与说明行间距
 // 操作组右侧进度（方案 A .bar）：4px 高轨道 + 主色填充 + 阶段文案，仅运行中渲染。
 inline constexpr float kProgressBarH = 4.0f;
 inline constexpr float kProgressTextW = 200.0f;
 inline constexpr float kProgressTextGap = 10.0f;   // 轨道右缘与文案间距
 inline constexpr float kProgressLeadGapX = 16.0f;  // 按钮组右缘与轨道左缘间距
-inline constexpr float kInfoLeadGapY = 8.0f;       // 操作行与条件信息行的间距
-inline constexpr float kInfoRowGap = 4.0f;
+inline constexpr float kInfoLeadGapY = 6.0f;       // 操作行与条件信息行的间距（零滚动收口 8→6）
+inline constexpr float kInfoRowGap = 2.0f;         // 信息行行间（零滚动收口 4→2；仅行间无行尾距）
 // 禁用态档位（UAT4 去门控沿用）：Input/Switch 组件没有自带 .disabled()，借 DSL
 // element 级 disabled（子树不参与命中/聚焦）+ 子树 opacity 调暗实现置灰禁用。
 // 0.55 对齐 Button 禁用态文字 40% 透明的既有先例，整树调暗取略轻档。
@@ -213,24 +219,25 @@ void drawGithubSyncCard(const CardDrawArgs& args) {
         }
 
         // ── 启用 / 自动推送：各成一整行（UAT6，模块插拔卡开关行先例）──
-        // 行宽 = 卡内宽（弹性契约，无固定帽）：label+说明左块贴卡左缘、右缘让
+        // 行宽 = 卡内宽（弹性契约，无固定帽）：label 左块贴卡左缘、右缘让
         // 位开关（间距 8），开关钉卡内容右缘、行盒内垂直居中。启用行在上（总
         // 开关，不加 lock——始终可点，是重新启用的入口）；自动推送行在下，整行
         // 经 lock 包装层置灰禁用（disabled 子树不可命中/不可聚焦 + opacity 调暗）。
-        // 行底取 max(行盒, 文本块, 开关)——防小字号档 roundFs 舍入把 28 高主
-        // 开关挤出缩放后的行盒。
+        // UAT6 零滚动收口：说明文案行删除（label 自承担语义，开关行语义不变），
+        // 行盒 36→28 贴主开关高。行底仍取 max(行盒, 文本块, 开关)——防小字号档
+        // roundFs 舍入把 28 高主开关挤出缩放后的行盒。
         const float rowH = roundFs(kRowH);
+        const float toggleRowH = roundFs(kToggleRowH);
         const float rowGap = roundFs(kRowGap);
         const float toggleLabelH = roundFs(kToggleLabelH);
-        const float toggleDescGapY = roundFs(kToggleDescGapY);
         const auto toggleRowText = [&](const char* suffix, const char* label,
-                                       const char* desc, float swW,
-                                       float rowY) {
+                                       float swW, float rowY) {
             const float textW =
                 std::max(0.0f, w - kCardPaddingX * 2.0f - swW -
                                    roundFs(kSwitchLabelGap));
             ui.text(id + suffix + ".label")
-                .position(kCardPaddingX, rowY)
+                .position(kCardPaddingX,
+                          rowY + (toggleRowH - toggleLabelH) * 0.5f)
                 .size(textW, toggleLabelH)
                 .text(label)
                 .fontSize(fs(13.0f))
@@ -241,33 +248,21 @@ void drawGithubSyncCard(const CardDrawArgs& args) {
                 .overflow(core::TextOverflow::Ellipsis)
                 .clip()
                 .build();
-            ui.text(id + suffix + ".desc")
-                .position(kCardPaddingX, rowY + toggleLabelH + toggleDescGapY)
-                .size(textW, mutedH)
-                .text(desc)
-                .fontSize(fs(12.0f))
-                .lineHeight(mutedH)
-                .color(t.colors.textTertiary)
-                .maxWidth(textW)
-                .overflow(core::TextOverflow::Ellipsis)
-                .clip()
-                .build();
-            return rowY + toggleLabelH + toggleDescGapY + mutedH;
+            return rowY + (toggleRowH + toggleLabelH) * 0.5f;
         };
         const float enableRowY = summaryY + mutedH + rowGap;
-        const float enableSwY = enableRowY + (rowH - kMainSwitchH) * 0.5f;
+        const float enableSwY = enableRowY + (toggleRowH - kMainSwitchH) * 0.5f;
         const float enableTextBottom = toggleRowText(
-            ".enabled", "启用", "总开关：关闭后下方配置与同步操作置灰，配置保留",
-            kMainSwitchW, enableRowY);
+            ".enabled", "启用", kMainSwitchW, enableRowY);
         ui_kit::wswitch(ui, id + ".enabled.sw", in.githubSyncEnabled,
                         w - kCardPaddingX - kMainSwitchW, enableSwY,
                         kMainSwitchW, kMainSwitchH, t,
                         [f = a.applyGithubSyncEnabled](bool v) { f(v); });
         const float autoRowY =
-            std::max(enableRowY + rowH,
+            std::max(enableRowY + toggleRowH,
                      std::max(enableTextBottom, enableSwY + kMainSwitchH)) +
             rowGap;
-        const float autoSwY = autoRowY + (rowH - kAutoSwitchH) * 0.5f;
+        const float autoSwY = autoRowY + (toggleRowH - kAutoSwitchH) * 0.5f;
         const float autoSwX = w - kCardPaddingX - kAutoSwitchW;
         float autoTextBottom = 0.0f;
         ui.stack(id + ".autopush.lock")
@@ -276,9 +271,7 @@ void drawGithubSyncCard(const CardDrawArgs& args) {
             .opacity(in.githubSyncEnabled ? 1.0f : kDisabledOpacity)
             .content([&] {
                 autoTextBottom = toggleRowText(
-                    ".autopush", "自动推送",
-                    "笔记或待办变更后自动提交并推送，无需手动操作",
-                    kAutoSwitchW, autoRowY);
+                    ".autopush", "自动推送", kAutoSwitchW, autoRowY);
                 ui_kit::wswitch(ui, id + ".autopush.sw", in.githubSyncAutoPush,
                                 autoSwX, autoSwY, kAutoSwitchW, kAutoSwitchH, t,
                                 [f = a.applyGithubSyncAutoPush](bool v) {
@@ -288,11 +281,11 @@ void drawGithubSyncCard(const CardDrawArgs& args) {
             .build();
 
         // 纵向游标：头部内容底 = 自动推送行底（已含 max(行盒/文本块/开关)）。
-        float y = std::max(autoRowY + rowH,
+        float y = std::max(autoRowY + toggleRowH,
                            std::max(autoTextBottom, autoSwY + kAutoSwitchH));
         const float formW = w - kCardPaddingX * 2.0f;
-        // 双列几何沿用：列间距 = 行距 8（8px 网格）；每列宽 = (formW − 列距)/2，
-        // 右列外缘与全宽行同贴卡内容右缘；label 走 formRow 定宽 110。
+        // 双列几何沿用：列间距 = 行距（kRowGap，零滚动收口 8→6）；每列宽 =
+        // (formW − 列距)/2，右列外缘与全宽行同贴卡内容右缘；label 走 formRow 定宽 110。
         const float colGap = roundFs(kRowGap);
         const float colW = (formW - colGap) * 0.5f;
         const float col2X = kCardPaddingX + colW + colGap;
@@ -307,17 +300,10 @@ void drawGithubSyncCard(const CardDrawArgs& args) {
             y += roundFs(kSectionGapY) + 1.0f + roundFs(kSectionGapY);
         };
 
-        // ── 仓库配置组：组题 + URL 全宽行 + 分支|Token 双列 ──
+        // ── 仓库配置组：URL 全宽行 + 分支|Token 双列 ──
+        // UAT6 零滚动收口：「仓库配置」组题行删除（−22px）——分段线已分节、三个
+        // 表单 label（仓库 URL/分支/Token）自明，不损失信息量。
         sectionDivider(".div.head");
-        ui.text(id + ".group.config")
-            .position(kCardPaddingX, y)
-            .size(formW, mutedH)
-            .text("仓库配置")
-            .fontSize(fs(12.0f))
-            .lineHeight(mutedH)
-            .color(t.colors.textTertiary)
-            .build();
-        y += mutedH + roundFs(kRowGap);
 
         // URL 全宽行：按钮已下移操作组（UAT5），输入拉满卡内容右缘（w−28），
         // 无按钮组让位（H1 让位断言随旧布局一并废除）。未启用时经 lock 置灰。
@@ -466,10 +452,16 @@ void drawGithubSyncCard(const CardDrawArgs& args) {
         y += rowH;
 
         // ── 条件信息行（操作组下方纵排；id 沿用 UAT4）──
+        // 零滚动收口：行高 20→16、行距 4→2 且**仅行间**（旧行尾距 +4 是纯浪费的
+        // 记账高度，五条全显的最坏组合直接吃进卡高常量）。
         y += roundFs(kInfoLeadGapY);
         const float infoH = roundFs(kStatusH);
+        const float infoGap = roundFs(kInfoRowGap);
+        bool infoFirst = true;
         const auto infoRow = [&](const char* suffix, const std::string& text,
                                   const eui::Color& color) {
+            if (!infoFirst) y += infoGap;
+            infoFirst = false;
             ui.text(id + suffix)
                 .position(kCardPaddingX, y)
                 .size(formW, infoH)
@@ -478,7 +470,7 @@ void drawGithubSyncCard(const CardDrawArgs& args) {
                 .lineHeight(infoH)
                 .color(color)
                 .build();
-            y += infoH + roundFs(kInfoRowGap);
+            y += infoH;
         };
         // 分支被自动创建提示
         if (!in.githubSyncBranchHint.empty()) {

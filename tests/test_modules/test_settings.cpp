@@ -2095,6 +2095,23 @@ REGISTER_TEST(settings_card_pair_column_geometry,
                               "github_sync 卡高 " +
                                   std::to_string(syncCard->frame.height) +
                                   " 期望(恒满高) " + std::to_string(wantH));
+        // UAT6 零滚动收口：372 = 最小窗 1000×640（Windows 自绘壳页高 600）下卡区
+        // 可用高的**恰好值**——常量再涨一字，同步 tab 就在最小窗重新出滚动条。
+        // 四档字面钉死防静默回涨（85% 档 roundFs(372)=316 是最坏需高档：内容
+        // 需高 307 富余 9，见 settings_ui_logic.h 复算注释）。
+        const float heightTiers[][2] = {{0.85f, 316.0f}, {1.0f, 372.0f},
+                                        {1.15f, 428.0f}, {1.3f, 484.0f}};
+        for (const auto& kv : heightTiers) {
+            FontScaleGuard g2{kv[0]};
+            const float h = module::settings::roundFs(
+                module::settings::kGithubSyncCardHeight);
+            DOCTEST_CHECK_MESSAGE(nearEq(h, kv[1]),
+                                  "kGithubSyncCardHeight@" +
+                                      std::to_string(kv[0]) + " 档 = " +
+                                      std::to_string(h) + " 期望 " +
+                                      std::to_string(kv[1]) +
+                                      "（零滚动收口常量被改？）");
+        }
     }
 
     mod->onStop();
@@ -3898,6 +3915,70 @@ REGISTER_TEST(settings_dropdown_fill_available_width,
             "log 窄窗下拉宽 " +
                 std::to_string(ddwrapW(ui, "settings.card.log.ddwrap")) +
                 " 期望 202（窄窗让位收缩不变）");
+    }
+
+    mod->onStop();
+    return true;
+})
+
+// UAT6 最小窗零滚动（用户：「日志和同步 tab 出现滚动条，完全没必要」）：最小窗
+// 1000×640 在 Windows 自绘壳下页面高 = 600（标题条 40，app_sidebar.cpp bodyTop；
+// macOS 无自绘壳 = 640 更宽松，以 600 为准），卡区可用高 cardsH = 600 −
+// cardsTopY 152 − pad 40 − hint 20 − gap 16 = 372（85% 档 375）。
+// 判据（每 tab × 100%/85% 两档）：
+//   ① 页级滚动条不渲染：scrollView 只在「内容高 > 视口」时才 build
+//      <id>.scroll 滚动条元素（scrollview.h scrollable 分支）——
+//      "settings.cards.scroll.scroll" 必须查无（生产同一条判定路径，不是旁路估算）；
+//   ② 内容列实测高 ≤ 视口高（belt：frame 级双保险）。
+// 期望内容高（100% / 85%，含卡间距 16）：通用 338/296（无警告代理卡）、模块
+// 198/168、日志 372/375（FillRemainder 恰好填满）、同步 372/316。
+REGISTER_TEST(settings_min_window_tabs_zero_scroll,
+              "settings: 最小窗 1000×640 四 tab 零滚动（100%/85% 档，headless）", {
+    struct FontScaleGuard {
+        float prev;
+        explicit FontScaleGuard(float s)
+            : prev(::core::theme::fontScale()) {
+            ::core::theme::setFontScale(s);
+        }
+        ~FontScaleGuard() { ::core::theme::setFontScale(prev); }
+    };
+    test_support::TestEnv env(kCfgPrefix, "zeroscroll", true);
+    test_support::ScopedConfigPath cfgEnv(test_support::tempConfigFile(kCfgPrefix, "zeroscroll_cfg"));
+    std::unique_ptr<::core::Module> mod(create_settings_module());
+    mod->onStart();
+    // 页面高 600 = Windows 自绘壳下 1000×640 最小窗的真实页区高（宽度侧边栏由
+    // router 裁剪，settings compose 直接收全宽，用 1000 对齐卡区几何）
+    eui::Screen screen;
+    screen.width = 1000.0f;
+    screen.height = 600.0f;
+    const char* tierNames[] = {"100%", "85%"};
+    const float tiers[] = {1.0f, 0.85f};
+    for (int ti = 0; ti < 2; ++ti) {
+        FontScaleGuard g{tiers[ti]};
+        for (int tab = 0; tab < module::settings::kSettingTabCount; ++tab) {
+            DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, tab));
+            eui::Ui ui;
+            ui.begin("zeroscroll");
+            mod->compose(ui, screen);
+            ui.end();
+            ui.layout(screen.width, screen.height);
+            const auto* bar = ui.find("settings.cards.scroll.scroll");
+            DOCTEST_CHECK_MESSAGE(
+                bar == nullptr,
+                std::string("最小窗 ") + tierNames[ti] + " 档 tab " +
+                    module::settings::kSettingTabLabels[tab] +
+                    " 出现页级滚动条（内容高 > 可用高 372/375，零滚动收口被回退？）");
+            const auto* content = ui.find("settings.cards.scroll.content");
+            const auto* viewport = ui.find("settings.cards.scroll");
+            DOCTEST_REQUIRE(content != nullptr);
+            DOCTEST_REQUIRE(viewport != nullptr);
+            DOCTEST_CHECK_MESSAGE(
+                content->frame.height <= viewport->frame.height + 0.5f,
+                std::string("最小窗 ") + tierNames[ti] + " 档 tab " +
+                    module::settings::kSettingTabLabels[tab] + " 内容高 " +
+                    std::to_string(content->frame.height) + " > 视口高 " +
+                    std::to_string(viewport->frame.height));
+        }
     }
 
     mod->onStop();

@@ -910,7 +910,8 @@ REGISTER_TEST(uiModernHomeApiBarChart,
                          std::string("300"));
         DOCTEST_CHECK_EQ(textOf(ui, "home.api.chart.bars.val.8"),
                          std::string("600"));
-        // 相对柱高 == 相对 token 数（峰值柱满高 84，100/600 的柱子 ≈ 14）
+        // 相对柱高 == 相对 token 数（UAT6 零滚动收口后图表卡 220 → wrap 156 →
+        // plot 44：峰值柱满高 44，100/600 的柱子 ≈ 44/6）
         const auto* bar0 = ui.find("home.api.chart.bars.bar.0");
         const auto* bar3 = ui.find("home.api.chart.bars.bar.3");
         const auto* bar8 = ui.find("home.api.chart.bars.bar.8");
@@ -918,20 +919,20 @@ REGISTER_TEST(uiModernHomeApiBarChart,
         DOCTEST_REQUIRE(bar3 != nullptr);
         DOCTEST_REQUIRE(bar8 != nullptr);
         DOCTEST_CHECK_MESSAGE(
-            std::fabs(bar8->frame.height - 84.0f) < 0.5f,
+            std::fabs(bar8->frame.height - 44.0f) < 0.5f,
             "bar8 h=" + std::to_string(bar8->frame.height));
         DOCTEST_CHECK_MESSAGE(
-            std::fabs(bar0->frame.height - 14.0f) < 0.5f,
+            std::fabs(bar0->frame.height - 44.0f / 6.0f) < 0.5f,
             "bar0 h=" + std::to_string(bar0->frame.height));
         DOCTEST_CHECK_MESSAGE(
-            std::fabs(bar3->frame.height - 42.0f) < 0.5f,
+            std::fabs(bar3->frame.height - 22.0f) < 0.5f,
             "bar3 h=" + std::to_string(bar3->frame.height));
         DOCTEST_CHECK_MESSAGE(
-            std::fabs(bar0->frame.height - 14.0f) < 0.5f,
+            std::fabs(bar0->frame.height - 44.0f / 6.0f) < 0.5f,
             "bar0 h=" + std::to_string(bar0->frame.height) + " y=" +
                 std::to_string(bar0->frame.y));
         DOCTEST_CHECK_MESSAGE(
-            std::fabs(bar3->frame.height - 42.0f) < 0.5f,
+            std::fabs(bar3->frame.height - 22.0f) < 0.5f,
             "bar3 h=" + std::to_string(bar3->frame.height) + " y=" +
                 std::to_string(bar3->frame.y));
         // 柱高对齐基线：三根柱底沿相等（y + height 同值）
