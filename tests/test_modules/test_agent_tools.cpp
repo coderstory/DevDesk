@@ -816,7 +816,7 @@ REGISTER_TEST(builtin_fs_glob_patterns,
     DOCTEST_REQUIRE(r2.isOk());
     auto p2 = platform::json::parse(r2.value().contentJson);
     DOCTEST_REQUIRE(p2.isOk());
-    DOCTEST_CHECK(p2.value().asObject().get("count").asInt() >= 1);  // ** 递归匹配 sub/x.txt
+    DOCTEST_CHECK_EQ(p2.value().asObject().get("count").asInt(), 1);  // ** 递归匹配 sub/x.txt
 
     auto r3 = found.value()->execute(core::ToolArgs{"{}"});
     DOCTEST_REQUIRE(r3.isOk());

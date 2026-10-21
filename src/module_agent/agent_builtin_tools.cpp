@@ -121,11 +121,10 @@ std::string globToRegex(const std::string& pattern) {
 
     while (i < pattern.size()) {
         if (i + 1 < pattern.size() && pattern[i] == '*' && pattern[i + 1] == '*') {
-            // ** 递归匹配（包括路径分隔符）
+            // ** 递归匹配（包括路径分隔符），非贪婪——后续模式决定截断点
             size_t j = i + 2;
-            /* 跳过后续的 / 或 \ */
             if (j < pattern.size() && (pattern[j] == '/' || pattern[j] == '\\')) ++j;
-            s += "(.*)";
+            s += "(.*?)";
             i = j;
         } else if (pattern[i] == '*') {
             // *：匹配文件名级（不含 / \）
@@ -698,7 +697,10 @@ public:
             workDir = toolCwd();
         }
 
-        std::string shell = platform::defaultShellPath();
+        // shell 路径缓存：一次探测，后续零 FS 访问
+        static std::string s_shellPath;
+        if (s_shellPath.empty()) s_shellPath = platform::defaultShellPath();
+        std::string shell = s_shellPath;
         platform::ProcessRunner runner = platform::systemProcessRunner();
 
         // 构建 argv: <shell> -c <cmd>
