@@ -172,14 +172,13 @@ public:
             attachTools();
         }
         reloadAll();
-        if (loadError_.empty()) {
-            setStatus("已重新加载");
-        } else {
+        if (!loadError_.empty()) {
             setStatus("重试仍失败：" + loadError_, true);
         }
     }
 
-    // doCreate*/doRename* 返回错误信息（空 = 成功）：失败由弹窗写进内嵌红字 formError（弹窗不关）；成功走 toast
+    // doCreate*/doRename* 返回错误信息（空 = 成功）：失败由弹窗写进内嵌红字 formError
+    //（弹窗不关）；成功静默不提示（UAT6：成功类 toast 删除，toast 只留错误/异常通道）。
 
     // UAT5 方案 A 富创建：attrs 与标题一次 INSERT；标签在建成且非空时补一次整字段
     // update（service 的 NewTaskAttributes 无 tags 入参——不改 service 签名）。
@@ -204,7 +203,6 @@ public:
                 setStatus("任务已创建，但写入标签失败：" + u.errorMessage(), true);
             }
         }
-        setStatus("已创建任务「" + title + "」");
         core::event::bus().emit(core::event::kTodoCreated);
         reloadAll();
         return "";
@@ -216,13 +214,12 @@ public:
         if (r.isFail()) {
             return "新建列失败：" + r.errorMessage();
         }
-        setStatus("已创建列「" + title + "」");
         reloadAll();
         core::event::bus().emit(core::event::kTodoColumnChanged);
         return "";
     }
 
-    // 返回是否成功（拖拽收尾据此给提示；其余调用方忽略）
+    // 返回是否成功（成功静默；失败自己报错误 toast，调用方无需再提示）
     bool doMoveTask(int64_t taskId, int64_t toColumnId, int newPosition) {
         if (!service_) return false;
         auto r = service_->moveTask(taskId, toColumnId, newPosition);
@@ -261,11 +258,12 @@ public:
     // 状态迁移 + 列迁移合起来才算一次操作：列迁移失败不得再提示成功；目标列按 kind 定位（标题/下标在重命名重排后不可靠）
     void finishCompletionMove(int64_t taskId, const std::string& kind) {
         const bool toDone = (kind == "done");
-        const std::string successMsg = toDone ? "任务已完成" : "已取消完成";
         const int64_t targetCol = ui::findColumnByKind(columns_, kind);
         if (targetCol == 0) {
-            // 明示而非静默：没有语义列时任务留在原列
-            setStatus(successMsg + "（未找到 kind='" + kind + "' 的列，任务留在原列）");
+            // 明示而非静默：没有语义列时任务留在原列（异常态，走错误通道）
+            setStatus((toDone ? "任务已完成" : "已取消完成") + "（未找到 kind='" +
+                          kind + "' 的列，任务留在原列）",
+                      true);
             reloadAll();
             return;
         }
@@ -281,8 +279,6 @@ public:
             reloadAll();
             return;
         }
-        // toast 图标已带 fa-check，正文不再混排 ✓
-        setStatus(successMsg);
         reloadAll();
     }
 
@@ -293,7 +289,6 @@ public:
             setStatus("删除失败：" + r.errorMessage(), true);
             return;
         }
-        setStatus("已删除任务");
         reloadAll();
         core::event::bus().emit(core::event::kTodoDeleted);
     }
@@ -306,7 +301,6 @@ public:
             setStatus("保存失败：" + r.errorMessage(), true);
             return false;
         }
-        setStatus("已保存");
         reloadAll();
         core::event::bus().emit(core::event::kTodoUpdated);
         return true;
@@ -320,7 +314,6 @@ public:
         if (r.isFail()) {
             return "重命名失败：" + r.errorMessage();
         }
-        setStatus("已重命名列");
         reloadAll();
         core::event::bus().emit(core::event::kTodoColumnChanged);
         return "";
@@ -333,7 +326,6 @@ public:
             setStatus("删除失败：" + r.errorMessage(), true);
             return;
         }
-        setStatus("已删除列（含其下全部任务）");
         reloadAll();
         core::event::bus().emit(core::event::kTodoColumnChanged);
     }
@@ -345,7 +337,6 @@ public:
             setStatus("改色失败：" + r.errorMessage(), true);
             return;
         }
-        setStatus("已更新列颜色");
         reloadAll();
         core::event::bus().emit(core::event::kTodoColumnChanged);
     }
@@ -363,7 +354,8 @@ public:
         const size_t j = (dir < 0) ? (idx == 0 ? idx : idx - 1)
                                    : (idx + 1 >= ids.size() ? idx : idx + 1);
         if (idx >= ids.size() || j == idx) {
-            setStatus(dir < 0 ? "已经在最左边了" : "已经在最右边了");
+            // 边界 no-op：操作未执行的告示走错误通道（成功类提示已删，绿色勾会误导）
+            setStatus(dir < 0 ? "已经在最左边了" : "已经在最右边了", true);
             return;
         }
         std::swap(ids[idx], ids[j]);
@@ -503,9 +495,7 @@ public:
             if (!row.has_value()) return;  // 插回原位：顺序不变，不写库不提示
             const int newPos =
                 ui::computeReorderInsertPosition(tasks_, dst.id, taskId, *row);
-            if (doMoveTask(taskId, dst.id, newPos)) {
-                setStatus("已调整顺序");
-            }
+            doMoveTask(taskId, dst.id, newPos);   // 成功静默；失败由 doMoveTask 报错
             return;
         }
         const int newPos = (hoverRow >= 0)
@@ -528,15 +518,17 @@ public:
         }
         const auto mv = ui::computeKeyboardMove(tasks_, selectedTaskId_, up);
         if (!mv) {
-            setStatus(up ? "已经在最上面了" : "已经在最下面了");
+            // 边界 no-op：操作未执行的告示走错误通道（成功类提示已删，绿色勾会误导）
+            setStatus(up ? "已经在最上面了" : "已经在最下面了", true);
             return;
         }
-        const std::string title = self != nullptr ? self->title : "";
         doMoveTask(selectedTaskId_, mv->columnId, mv->position);
-        setStatus((up ? "已上移「" : "已下移「") + title + "」");
     }
 
-    // 状态反馈走 toast（3.5s 超时自动消失）；subtitle 保持静态说明
+    // 错误/异常反馈走 toast（3.5s 超时自动消失）；subtitle 保持静态说明。
+    // UAT6：成功类操作提示全删（用户真机反馈噪音），toast 仅剩错误通道——
+    // 拖拽/键盘移动失败、完成态流转异常、搜索/逾期查询失败、无选中/无列引导
+    // 都只经 toast 可见，组件与状态成员保留（见 compose 的 drawToast）。
     void setStatus(const std::string& msg, bool isError = false) {
         // 正文留空 = 不设正文（组件自带默认正文文案随之保留）
         toast_.show(msg, "", isError);
