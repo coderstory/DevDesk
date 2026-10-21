@@ -25,17 +25,16 @@ inline components::theme::ThemeColorTokens componentTokens(const Tokens& t) {
     return tokens;
 }
 
-// 微信风格组件主题映射（D-12 整改新增；与既有 componentTokens 并存，页面逐工单切换调用本函数）
-// 既有 componentTokens()（暖色橙系）不动；W5-W10 页面按需改调本函数。
+// 微信风格组件主题映射（mint green 迁移后统一走主 token 槽位，不再拆双色源）
 inline components::theme::ThemeColorTokens componentTokensWeChat(const Tokens& t) {
     components::theme::ThemeColorTokens tokens;
-    tokens.background = t.colors.wechat.pageBg;
-    tokens.primary = t.colors.wechat.primary;
-    tokens.surface = t.colors.wechat.cardBg;
-    tokens.surfaceHover = t.colors.wechat.dividerSecondary;
-    tokens.surfaceActive = t.colors.wechat.selectedBg;
-    tokens.text = t.colors.wechat.textPrimary;
-    tokens.border = t.colors.wechat.dividerPrimary;
+    tokens.background = t.colors.background;
+    tokens.primary = t.colors.primary;
+    tokens.surface = t.colors.surface;
+    tokens.surfaceHover = t.colors.hover;
+    tokens.surfaceActive = t.colors.primarySoftBg;
+    tokens.text = t.colors.textPrimary;
+    tokens.border = t.colors.borderDefault;
     tokens.dark = t.isDark;
     return tokens;
 }
