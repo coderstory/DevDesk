@@ -21,7 +21,6 @@
 
 #include <algorithm>
 #include <cmath>
-#include <ctime>
 #include <functional>
 #include <memory>
 #include <string>
@@ -42,6 +41,8 @@ namespace {
 // gap 20×3 + 图表卡 + 操作行 44 = 628 → 溢出 28 出滚动条。砍图表 40px 后 100%
 // 档内容 588 ≤ 600（12 富余）、85% 档 566.4 ≤ 600（34 富余），最小窗零滚动；
 // 115%/130% 档统计行随字号放大（165.6/187.2）仍会滚动（大字号档设计内）。
+// UAT6 副题横扫复核：页头日期行删除后行高 40 保持（行内刷新钮 40 高，且与各页
+// kHeaderH=40 同档），页头不缩 → 预算 588/566.4 逐项复算不变，零滚动仍过。
 // 图表内部几何自适应：wrap = 卡高−64（100% 档 156）、plot 高 = wrap−112（44，
 // home_probes 组 D 的 plot ≥36 判据仍过）、柱顶数值/x 轴标签锚点随 wrap 派生。
 constexpr float kHomeChartH = 220.0f;
@@ -299,7 +300,6 @@ public:
         const float cardGap = 20.0f;
         // 卡高 144 × fontScale 派生（144 = 16+16+8+56+16+16，见 drawStatCard）。
         const float statH = 144.0f * core::theme::fontScale();
-        const std::time_t now = std::time(nullptr);
 
         // 模块注册感知：统计卡可见数从元数据表按注册态过滤派生（改表即改计数），全关整行隐藏。
         int statCount = 0;
@@ -326,7 +326,9 @@ public:
             .gap(gap)
             .content([&] {
                 // UAT5 全局顶部收紧：页头行 72→40（与其他页 kHeaderH=40 同档）——
-                // 标题 24px 加粗（与 todo/markdown/agent 页题同字号）+ 日期 14px 两行叠满。
+                // 标题 24px 加粗（与 todo/markdown 页题同字号）。UAT6 副题横扫：
+                // 标题下日期行删除，页头只剩标题行（同 todo/md 档）；行高 40 不动——
+                // 行内刷新钮 40 高，且标题 y 与各页 40 档页头对齐，预算 588/600 复核不变（见文件头）。
                 ui.row("home.header")
                     .size(contentW, 40.0f)
                     .alignItems(eui::Align::CENTER)
@@ -343,13 +345,6 @@ public:
                                     .lineHeight(24.0f)
                                     .fontWeight(700)
                                     .color(t.colors.wechat.textPrimary)
-                                    .build();
-                                ui.text("home.date")
-                                    .size(std::max(280.0f, contentW - kHeaderActionsW), 14.0f)
-                                    .text("今天是 " + formatTodayCn(now))
-                                    .fontSize(t.sizes.fontSizeSmall)
-                                    .lineHeight(14.0f)
-                                    .color(t.colors.wechat.textSecondary)
                                     .build();
                             })
                             .build();

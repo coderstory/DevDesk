@@ -19,8 +19,8 @@ namespace module::claude {
 // 引导条渲染高。单一来源：drawClaudeGuideBar 按它画，compose 按它给 body 行预留。
 inline constexpr float kGuideBarH = 18.0f;
 
-// 顶部 header：标题 + 状态点/文字 + 代理开关。
-// id: claude.header / claude.h1 / claude.status.* / claude.subtitle / claude.btn.proxy
+// 顶部 header：标题 + 状态点/文字 + 代理开关（UAT6 副题横扫：claude.subtitle 已删）。
+// id: claude.header / claude.h1 / claude.status.* / claude.btn.proxy
 void drawClaudeHeader(eui::Ui& ui, float contentW, float headerH,
                       const core::theme::Tokens& t,
                       bool proxyRunning, const std::string& portStr,
