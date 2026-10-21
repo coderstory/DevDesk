@@ -231,15 +231,15 @@ REGISTER_TEST(agent_ui_detail_layout_narrow_700x560,
     DOCTEST_CHECK(ui2.find("agent.dialog.detail.nav.item.0.bg") != nullptr);
     DOCTEST_CHECK(ui2.find("agent.dialog.detail.nav.item.1.bg") != nullptr);
     DOCTEST_CHECK(ui2.find("agent.dialog.detail.nav.item.2.bg") != nullptr);
-    // 单列几何与弹性档同一公式：summaryY=64 / navY=159 / contentY=199
+    // 单列几何与弹性档同一公式：summaryY=48 / navY=143.5 / contentY=183.5（UAT6.1 顶部收紧）
     const auto* lastCard = ui2.find("agent.dialog.detail.summary.last");
     const auto* runlist = ui2.find("agent.dialog.detail.runlist");
     DOCTEST_REQUIRE(lastCard != nullptr && runlist != nullptr);
-    DOCTEST_CHECK_MESSAGE(nearPx(lastCard->frame.y - panel->frame.y, 64.0f),
-                          "摘要卡应 +64（与弹性档同公式），实测 " +
+    DOCTEST_CHECK_MESSAGE(nearPx(lastCard->frame.y - panel->frame.y, 48.0f),
+                          "摘要卡应 +48（与弹性档同公式），实测 " +
                               std::to_string(lastCard->frame.y - panel->frame.y));
-    DOCTEST_CHECK_MESSAGE(nearPx(nav->frame.y - panel->frame.y, 159.0f),
-                          "nav 应 +159（与弹性档同公式），实测 " +
+    DOCTEST_CHECK_MESSAGE(nearPx(nav->frame.y - panel->frame.y, 143.5f),
+                          "nav 应 +143.5（与弹性档同公式），实测 " +
                               std::to_string(nav->frame.y - panel->frame.y));
     DOCTEST_CHECK_MESSAGE(
         nearPx(runlist->frame.x - panel->frame.x, 28.0f) &&
@@ -248,8 +248,8 @@ REGISTER_TEST(agent_ui_detail_layout_narrow_700x560,
             std::to_string(runlist->frame.x - panel->frame.x) + " 宽 " +
             std::to_string(runlist->frame.width));
     DOCTEST_CHECK_MESSAGE(
-        nearPx(runlist->frame.y - panel->frame.y, 199.0f),
-        "窄窗内容应 +199（与弹性档同公式），实测 " +
+        nearPx(runlist->frame.y - panel->frame.y, 183.5f),
+        "窄窗内容应 +183.5（与弹性档同公式），实测 " +
             std::to_string(runlist->frame.y - panel->frame.y));
     DOCTEST_CHECK_MESSAGE(runlist->frame.y + runlist->frame.height <=
                               panel->frame.y + panel->frame.height + 0.5f,

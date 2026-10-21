@@ -49,7 +49,7 @@ constexpr float kStopChipW = 176.0f;
 constexpr float kStopChipH = 32.0f;
 constexpr float kEditChipW = 88.0f;        // 「编辑任务」chip（4 CJK @13 + 余量）
 constexpr float kEditChipH = 32.0f;        // chip 高（actionChip 同档）
-constexpr float kHeaderChipY = 16.0f;      // 头部动作 chip 带（✕ 同带）
+constexpr float kHeaderChipY = 12.0f;      // 头部动作 chip 带（UAT6.1: -4 收紧顶部留白）
 constexpr float kMsgAreaMinH = 96.0f;
 constexpr float kMsgAreaMaxH = 520.0f;
 
@@ -120,7 +120,7 @@ void AgentModule::composeTaskDetailDialog(
     const float lhB = static_cast<float>(std::lround(fsB * 1.4f));
 
     // —— 区域划分（面板内坐标；单列三档 tab 一套几何，无宽窄分叉）——
-    const float summaryY = 64.0f;   // 头部（任务名 + 状态行 + 动作 chips）之下
+    const float summaryY = 48.0f;   // 头部之下（UAT6.1: 64→48 收紧顶部留白，与左右边距 28 协调）
     const float summaryH =
         std::max(81.0f, 2.0f * 10.0f + lhS + lhB + lhS + 4.0f);
     const float navY = summaryY + summaryH + 14.0f;   // segment（三档）
@@ -173,7 +173,7 @@ void AgentModule::composeTaskDetailDialog(
             const float headerRightX =
                 (runActive ? stopX : editX) - kDialogGap;
             ui.text("agent.dialog.detail.title")
-                .position(x0, 14.0f)
+                .position(x0, 10.0f)
                 .size(std::max(0.0f, headerRightX - x0), 26.0f)
                 .text(taskRow ? taskRow->name : std::string("任务详情"))
                 .fontSize(t.sizes.fontSizeLarge)
@@ -193,7 +193,7 @@ void AgentModule::composeTaskDetailDialog(
             constexpr float kKickerW = 56.0f;   // 「任务详情」4 CJK @13
             constexpr float kStatusW = 64.0f;  // 「● 已取消」@13 + 余量
             ui.text("agent.dialog.detail.header.kicker")
-                .position(x0, 40.0f)
+                .position(x0, 34.0f)
                 .size(kKickerW, lhS)
                 .text("任务详情")
                 .fontSize(fsS)
@@ -201,7 +201,7 @@ void AgentModule::composeTaskDetailDialog(
                 .color(t.colors.wechat.textTertiary)
                 .build();
             ui.text("agent.dialog.detail.header.status")
-                .position(x0 + kKickerW + 8.0f, 40.0f)
+                .position(x0 + kKickerW + 8.0f, 34.0f)
                 .size(kStatusW, lhS)
                 .text("● " + statusText)
                 .fontSize(fsS)
@@ -222,10 +222,8 @@ void AgentModule::composeTaskDetailDialog(
                 } else if (taskRow->triggerType == "once") {
                     const std::string onceText = onceTextOf(*taskRow);
                     metaText = "闹钟 · " +
-                               (onceText.empty() ? std::string("（未设置）")
-                                                  : onceText);
+                               (onceText.empty() ? std::string("（未设置）") : onceText);
                 } else {
-                    // 手动/常驻/每天/事件：触发类型即全部信息（细节在任务配置 tab）
                     metaText = triggerLabelOf(taskRow->triggerType);
                 }
             } else {
@@ -233,7 +231,7 @@ void AgentModule::composeTaskDetailDialog(
                 metaColor = t.colors.error;
             }
             ui.text("agent.dialog.detail.header.meta")
-                .position(metaX, 40.0f)
+                .position(metaX, 34.0f)
                 .size(metaW, lhS)
                 .text(metaText)
                 .fontSize(fsS)
@@ -245,7 +243,7 @@ void AgentModule::composeTaskDetailDialog(
 
             // ✕（与底部关闭 / 遮罩 / Esc 同一路径）
             ui.text("agent.dialog.detail.close")
-                .position(closeX, 22.0f)
+                .position(closeX, 18.0f)
                 .size(28.0f, 28.0f)
                 .text("✕")
                 .fontSize(14.0f)
