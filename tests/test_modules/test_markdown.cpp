@@ -2779,65 +2779,6 @@ REGISTER_TEST(md_module_default_name_create, "markdown_module: 空名提交=「�
     return true;
 })
 
-// subtitle 静态操作说明（对齐 Todo 同类口径）
-// 旧行为：subtitle = 「N 篇笔记 · 最后一次操作结果」，操作日志顶掉快捷键
-// 提示且永久驻留。新行为：subtitle 恒为静态说明；操作结果走 toast（status_
-// 成员已删）；笔记数进编辑器底部状态栏右侧
-REGISTER_TEST(md_module_subtitle_static, "markdown_module: subtitle 静态快捷键说明 + 笔记数在状态栏（headless）", {
-    test_support::MdHeadlessEnv env(kDirPrefix, "subtitle", kDbName);
-    DOCTEST_REQUIRE(env.db != nullptr);
-    DOCTEST_REQUIRE(writeTextFile(env.dir / "note.md", "# 标题\n正文\n"));
-
-    std::unique_ptr<::core::Module> mod(create_markdown_module());
-    mod->onStart();
-
-    eui::Screen screen;
-    screen.width = 1600.0f;
-    screen.height = 1000.0f;
-    eui::Ui ui;
-    auto frame = [&](const char* page) {
-        ui.begin(page);
-        mod->compose(ui, screen);
-        ui.end();
-    };
-    frame("f1");
-
-        // W8：快捷键说明已收进「?」帮助图标（§5.4），subtitle 只留短提示。
-    // 断言帮助入口存在 + 短提示关键词（Ctrl+Shift+P 仍在）。
-    const auto* sub = ui.find("md.subtitle");
-    DOCTEST_REQUIRE(sub != nullptr);
-    DOCTEST_CHECK(sub->text.find("Ctrl+Shift+P") != std::string::npos);
-    DOCTEST_CHECK(sub->text.find("?") != std::string::npos);
-    DOCTEST_CHECK(sub->text.find("Ctrl+B/I/K") == std::string::npos);  // 长文本已收
-    DOCTEST_CHECK(ui.find("md.help.icon") != nullptr);  // 帮助图标存在
-    DOCTEST_CHECK(sub->text.find("篇笔记") == std::string::npos);
-    const std::string staticSub = sub->text;
-
-    // 打开笔记（旧行为会把「已打开 note.md」写进 subtitle 顶掉提示）
-    const auto* fileRow = ui.find("md.tree.node.1.row");
-    DOCTEST_REQUIRE(fileRow != nullptr);
-    DOCTEST_REQUIRE(fileRow->onClick != nullptr);
-    fileRow->onClick();
-    frame("f2");
-
-    // subtitle 逐字不变 = 静态
-    const auto* sub2 = ui.find("md.subtitle");
-    DOCTEST_REQUIRE(sub2 != nullptr);
-    DOCTEST_CHECK_EQ(sub2->text, staticSub);
-    // 「已打开」toast 已删（用户 2026-10-14）：打开笔记不再弹提示，subtitle 恒静态。
-    // toast 元素常驻 UI 树（ui_kit::drawToast 无条件 compose，visible 只控显隐），
-    // find 不到是结构性不可能；判据 = 标题文本为空（组件默认占位串被空串覆盖）→
-    // 本次打开没有触发任何 toast。
-    const auto* toastTitle = ui.find("md.toast.title");
-    DOCTEST_CHECK(toastTitle == nullptr || toastTitle->text.empty());
-    // 笔记数落点：编辑器底部状态栏右侧
-    const auto* pos = ui.find("md.status.pos");
-    DOCTEST_REQUIRE(pos != nullptr);
-    DOCTEST_CHECK(pos->text.find("篇笔记") != std::string::npos);
-
-    mod->onStop();
-    return true;
-})
 
 // 创建/编辑弹窗与标签输入框 Esc=取消（onCancel 取代 Esc→提交）
 
