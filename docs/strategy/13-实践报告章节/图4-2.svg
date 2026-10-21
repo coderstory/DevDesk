@@ -1,0 +1,99 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 520 420" width="100%" height="100%">
+  <defs>
+    <marker id="arrow2" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0,0 10,3.5 0,7" fill="#1a3a5c"/>
+    </marker>
+  </defs>
+
+  <rect width="520" height="420" fill="white"/>
+
+  <!-- Title -->
+  <text x="260" y="20" text-anchor="middle" font-family="SimHei,Microsoft YaHei,sans-serif" font-size="14" fill="#1a3a5c" font-weight="bold">图4-2：子任务并发调度模型</text>
+
+  <!-- Section: Task Queue -->
+  <rect x="10" y="32" width="500" height="158" fill="#f8f9fa" stroke="#ddd" stroke-width="0.5" rx="2"/>
+  <text x="20" y="52" font-family="SimHei,Microsoft YaHei,sans-serif" font-size="13" fill="#1a3a5c" font-weight="bold">待派任务队列（主会话管理）</text>
+
+  <!-- Queue items -->
+  <rect x="18" y="66" width="188" height="28" fill="#f0f3f7" stroke="#1a3a5c" stroke-width="0.8" rx="3"/>
+  <text x="112" y="84" text-anchor="middle" font-family="SimSun,Microsoft YaHei,sans-serif" font-size="12.5" fill="#333">任务A · 笔记模块新增</text>
+  <rect x="18" y="100" width="188" height="28" fill="#f0f3f7" stroke="#1a3a5c" stroke-width="0.8" rx="3"/>
+  <text x="112" y="118" text-anchor="middle" font-family="SimSun,Microsoft YaHei,sans-serif" font-size="12.5" fill="#333">任务B · 设置页布局调整</text>
+  <rect x="18" y="134" width="188" height="28" fill="#f0f3f7" stroke="#1a3a5c" stroke-width="0.8" rx="3"/>
+  <text x="112" y="152" text-anchor="middle" font-family="SimSun,Microsoft YaHei,sans-serif" font-size="12.5" fill="#333">任务C · 智能体工具注册</text>
+  <text x="112" y="180" text-anchor="middle" font-family="SimSun,Microsoft YaHei,sans-serif" font-size="14" fill="#888">...</text>
+
+  <!-- Pre-dispatch checklist -->
+  <rect x="218" y="58" width="284" height="124" fill="#fefefe" stroke="#1a3a5c" stroke-width="1" rx="3"/>
+  <text x="232" y="80" font-family="SimHei,Microsoft YaHei,sans-serif" font-size="13" fill="#1a3a5c" font-weight="bold">派单前置检查（缺一不派）</text>
+  <text x="232" y="102" font-family="SimSun,Microsoft YaHei,sans-serif" font-size="12.5" fill="#333">1. 并发槽有空位（在飞 &lt; 8 个）</text>
+  <text x="232" y="122" font-family="SimSun,Microsoft YaHei,sans-serif" font-size="12.5" fill="#333">2. 目标文件无冲突（同文件不同时改）</text>
+  <text x="232" y="142" font-family="SimSun,Microsoft YaHei,sans-serif" font-size="12.5" fill="#333">3. 复杂度合适（机械改合并、复杂任务拆）</text>
+  <text x="232" y="162" font-family="SimSun,Microsoft YaHei,sans-serif" font-size="12.5" fill="#333">4. 编译槽空闲或已知排队状态</text>
+
+  <!-- Section: Concurrent Slots -->
+  <text x="15" y="214" font-family="SimHei,Microsoft YaHei,sans-serif" font-size="13" fill="#1a3a5c" font-weight="bold">8 条并发执行槽（在飞子任务，worktree 隔离互不踩脚）</text>
+
+  <!-- 8 slot boxes, each 59px wide, 4px gap -->
+  <!-- Slot 1: active -->
+  <rect x="10" y="224" width="59" height="60" fill="#d4e0ed" stroke="#1a3a5c" stroke-width="0.8" rx="2"/>
+  <text x="39.5" y="242" text-anchor="middle" font-family="SimSun,Microsoft YaHei,sans-serif" font-size="12.5" fill="#1a3a5c" font-weight="bold">槽1</text>
+  <text x="39.5" y="260" text-anchor="middle" font-family="SimSun,Microsoft YaHei,sans-serif" font-size="12.5" fill="#555">开发</text>
+  <text x="39.5" y="278" text-anchor="middle" font-family="SimSun,Microsoft YaHei,sans-serif" font-size="12.5" fill="#888">笔记</text>
+
+  <!-- Slot 2: active -->
+  <rect x="73" y="224" width="59" height="60" fill="#d4e0ed" stroke="#1a3a5c" stroke-width="0.8" rx="2"/>
+  <text x="102.5" y="242" text-anchor="middle" font-family="SimSun,Microsoft YaHei,sans-serif" font-size="12.5" fill="#1a3a5c" font-weight="bold">槽2</text>
+  <text x="102.5" y="260" text-anchor="middle" font-family="SimSun,Microsoft YaHei,sans-serif" font-size="12.5" fill="#555">审计</text>
+  <text x="102.5" y="278" text-anchor="middle" font-family="SimSun,Microsoft YaHei,sans-serif" font-size="12.5" fill="#888">设置</text>
+
+  <!-- Slot 3: active -->
+  <rect x="136" y="224" width="59" height="60" fill="#d4e0ed" stroke="#1a3a5c" stroke-width="0.8" rx="2"/>
+  <text x="165.5" y="242" text-anchor="middle" font-family="SimSun,Microsoft YaHei,sans-serif" font-size="12.5" fill="#1a3a5c" font-weight="bold">槽3</text>
+  <text x="165.5" y="260" text-anchor="middle" font-family="SimSun,Microsoft YaHei,sans-serif" font-size="12.5" fill="#555">开发</text>
+  <text x="165.5" y="278" text-anchor="middle" font-family="SimSun,Microsoft YaHei,sans-serif" font-size="12.5" fill="#888">Claude</text>
+
+  <!-- Slot 4: active -->
+  <rect x="199" y="224" width="59" height="60" fill="#d4e0ed" stroke="#1a3a5c" stroke-width="0.8" rx="2"/>
+  <text x="228.5" y="242" text-anchor="middle" font-family="SimSun,Microsoft YaHei,sans-serif" font-size="12.5" fill="#1a3a5c" font-weight="bold">槽4</text>
+  <text x="228.5" y="260" text-anchor="middle" font-family="SimSun,Microsoft YaHei,sans-serif" font-size="12.5" fill="#555">审计</text>
+  <text x="228.5" y="278" text-anchor="middle" font-family="SimSun,Microsoft YaHei,sans-serif" font-size="12.5" fill="#888">智能体</text>
+
+  <!-- Slot 5: idle -->
+  <rect x="262" y="224" width="59" height="60" fill="#d4e0ed" stroke="#1a3a5c" stroke-width="0.8" rx="2"/>
+  <text x="291.5" y="242" text-anchor="middle" font-family="SimSun,Microsoft YaHei,sans-serif" font-size="12.5" fill="#1a3a5c" font-weight="bold">槽5</text>
+  <text x="291.5" y="260" text-anchor="middle" font-family="SimSun,Microsoft YaHei,sans-serif" font-size="12.5" fill="#555">空闲</text>
+
+  <!-- Slots 6-8: empty -->
+  <rect x="325" y="224" width="59" height="60" fill="#f0f3f7" stroke="#ccc" stroke-width="0.6" rx="2"/>
+  <text x="354.5" y="242" text-anchor="middle" font-family="SimSun,Microsoft YaHei,sans-serif" font-size="12.5" fill="#aaa" font-weight="bold">槽6</text>
+  <text x="354.5" y="260" text-anchor="middle" font-family="SimSun,Microsoft YaHei,sans-serif" font-size="12.5" fill="#aaa">空闲</text>
+
+  <rect x="388" y="224" width="59" height="60" fill="#f0f3f7" stroke="#ccc" stroke-width="0.6" rx="2"/>
+  <text x="417.5" y="242" text-anchor="middle" font-family="SimSun,Microsoft YaHei,sans-serif" font-size="12.5" fill="#aaa" font-weight="bold">槽7</text>
+  <text x="417.5" y="260" text-anchor="middle" font-family="SimSun,Microsoft YaHei,sans-serif" font-size="12.5" fill="#aaa">空闲</text>
+
+  <rect x="451" y="224" width="59" height="60" fill="#f0f3f7" stroke="#ccc" stroke-width="0.6" rx="2"/>
+  <text x="480.5" y="242" text-anchor="middle" font-family="SimSun,Microsoft YaHei,sans-serif" font-size="12.5" fill="#aaa" font-weight="bold">槽8</text>
+  <text x="480.5" y="260" text-anchor="middle" font-family="SimSun,Microsoft YaHei,sans-serif" font-size="12.5" fill="#aaa">空闲</text>
+
+  <!-- Section: Compile Slot -->
+  <text x="15" y="312" font-family="SimHei,Microsoft YaHei,sans-serif" font-size="13" fill="#1a3a5c" font-weight="bold">编译/测试槽（仅1个，多线并编互拖IO和缓存命中率）</text>
+
+  <!-- Compile slot active -->
+  <rect x="10" y="322" width="120" height="28" fill="#d4e0ed" stroke="#1a3a5c" stroke-width="0.8" rx="3"/>
+  <text x="70" y="340" text-anchor="middle" font-family="SimSun,Microsoft YaHei,sans-serif" font-size="12.5" fill="#1a3a5c">编译中: 槽1</text>
+
+  <!-- Queued compile -->
+  <rect x="140" y="322" width="120" height="28" fill="#f0f3f7" stroke="#888" stroke-width="0.6" rx="3"/>
+  <text x="200" y="340" text-anchor="middle" font-family="SimSun,Microsoft YaHei,sans-serif" font-size="12.5" fill="#555">排队: 槽3等待</text>
+
+  <rect x="270" y="322" width="120" height="28" fill="#f0f3f7" stroke="#888" stroke-width="0.6" rx="3"/>
+  <text x="330" y="340" text-anchor="middle" font-family="SimSun,Microsoft YaHei,sans-serif" font-size="12.5" fill="#555">排队: 另一任务</text>
+
+  <text x="400" y="340" font-family="SimSun,Microsoft YaHei,sans-serif" font-size="12.5" fill="#666">编译槽释放后依次执行</text>
+
+  <!-- Bottom annotation -->
+  <line x1="10" y1="376" x2="510" y2="376" stroke="#ddd" stroke-width="0.3"/>
+  <text x="260" y="394" text-anchor="middle" font-family="SimSun,Microsoft YaHei,sans-serif" font-size="12.5" fill="#888">图注：主会话每派一个子任务前检查并发槽是否满（≤ 8）、文件冲突、编译槽状态。8槽可并行读代码和分析，仅1槽跑编译。</text>
+</svg>

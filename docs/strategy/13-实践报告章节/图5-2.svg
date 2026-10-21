@@ -1,0 +1,95 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 340" width="500" height="340">
+  <defs>
+    <style>
+      text { font-family: "SimSun","Microsoft YaHei","Arial",sans-serif; font-size: 12px; fill: #1a1a1a; }
+      .title { font-size: 14px; font-weight: bold; }
+      .layer-title { font-size: 13px; font-weight: bold; fill: #1a1a1a; }
+      .layer-sub { font-size: 12px; fill: #2c3e50; }
+      .layer-detail { font-size: 12px; fill: #4a6a8a; }
+      .box { fill: #ffffff; stroke: #2c3e50; stroke-width: 1.2; }
+      .box-hi { fill: #dce8f4; stroke: #1a1a1a; stroke-width: 2; }
+      .arrow { stroke: #2c3e50; stroke-width: 1.2; fill: none; marker-end: url(#arrowhead); }
+      .arrow-big { stroke: #1a1a1a; stroke-width: 1.8; fill: none; marker-end: url(#arrowhead-big); }
+    </style>
+    <marker id="arrowhead" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M0,1 L9,5 L0,9" fill="#2c3e50"/>
+    </marker>
+    <marker id="arrowhead-big" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="9" markerHeight="9" orient="auto">
+      <path d="M0,1 L9,5 L0,9" fill="#1a1a1a"/>
+    </marker>
+  </defs>
+
+  <text x="250" y="20" text-anchor="middle" class="title">图5-2 四层机制示意图：从"规则在纸上"到"规则在闸上"</text>
+
+  <!-- Layer 1 -->
+  <rect x="20" y="40" width="110" height="116" rx="4" class="box"/>
+  <text x="75" y="62" text-anchor="middle" class="layer-title">第一层：注入层</text>
+  <text x="75" y="80" text-anchor="middle" class="layer-sub">CLAUDE.md + 记忆库</text>
+  <line x1="32" y1="88" x2="118" y2="88" stroke="#ccc" stroke-width="0.5"/>
+  <text x="75" y="106" text-anchor="middle" class="layer-detail">谁保证：启动自动加载</text>
+  <text x="75" y="122" text-anchor="middle" class="layer-detail">失效时：AI 选择性忽略</text>
+  <text x="75" y="138" text-anchor="middle" class="layer-detail">或上下文冲淡后遗忘</text>
+
+  <line x1="130" y1="98" x2="148" y2="98" class="arrow"/>
+
+  <!-- Layer 2 (HIGHLIGHTED) -->
+  <rect x="152" y="36" width="118" height="124" rx="4" class="box-hi"/>
+  <text x="211" y="58" text-anchor="middle" class="layer-title" fill="#1a1a1a">第二层：强制层</text>
+  <text x="211" y="76" text-anchor="middle" class="layer-sub" fill="#1a1a1a">hooks + 守卫脚本</text>
+  <line x1="164" y1="84" x2="258" y2="84" stroke="#1a1a1a" stroke-width="0.8"/>
+  <text x="211" y="102" text-anchor="middle" class="layer-detail">谁保证：机器判、AI绕不过</text>
+  <text x="211" y="118" text-anchor="middle" class="layer-detail">失效时：脚本部署时机或</text>
+  <text x="211" y="134" text-anchor="middle" class="layer-detail">依赖缺失(已fail-soft控制)</text>
+  <text x="211" y="150" text-anchor="middle" class="layer-sub" fill="#1a1a1a">&#x25B2; 强制力最高的一层 &#x25B2;</text>
+
+  <line x1="270" y1="98" x2="288" y2="98" class="arrow"/>
+
+  <!-- Layer 3 -->
+  <rect x="292" y="40" width="112" height="116" rx="4" class="box"/>
+  <text x="348" y="62" text-anchor="middle" class="layer-title">第三层：对账审计层</text>
+  <text x="348" y="80" text-anchor="middle" class="layer-sub">独立审计 + 对账</text>
+  <line x1="304" y1="88" x2="392" y2="88" stroke="#ccc" stroke-width="0.5"/>
+  <text x="348" y="106" text-anchor="middle" class="layer-detail">谁保证：不同 AI 互相验证</text>
+  <text x="348" y="122" text-anchor="middle" class="layer-detail">失效时：审计员盲区一致</text>
+  <text x="348" y="138" text-anchor="middle" class="layer-detail">（概率低但存在）</text>
+
+  <line x1="404" y1="98" x2="418" y2="98" class="arrow"/>
+
+  <!-- Layer 4 -->
+  <rect x="422" y="40" width="64" height="116" rx="4" class="box"/>
+  <text x="454" y="62" text-anchor="middle" class="layer-title">第四层</text>
+  <text x="454" y="78" text-anchor="middle" class="layer-sub">结构层</text>
+  <line x1="432" y1="86" x2="476" y2="86" stroke="#ccc" stroke-width="0.5"/>
+  <text x="454" y="104" text-anchor="middle" class="layer-detail">谁保证：</text>
+  <text x="454" y="120" text-anchor="middle" class="layer-detail">正路比歪</text>
+  <text x="454" y="136" text-anchor="middle" class="layer-detail">路省力</text>
+
+  <!-- Bottom: enforcement details -->
+  <text x="250" y="184" text-anchor="middle" class="layer-title">强制层（第二层）当前形态：四条项目级 hook</text>
+
+  <!-- Hook 1 -->
+  <rect x="16" y="196" width="234" height="56" rx="3" class="box"/>
+  <text x="133" y="214" text-anchor="middle" class="layer-sub" font-weight="bold">hook 1：基线内容守卫（唯一阻塞）</text>
+  <text x="133" y="232" text-anchor="middle" class="layer-detail">触发：战略文件被改 → 核对累积清单 → 丢标记即拦截</text>
+  <text x="133" y="248" text-anchor="middle" class="layer-detail">设计：正常静默、异常才拦——常响的提醒等于没提醒</text>
+
+  <!-- Hook 2 -->
+  <rect x="256" y="196" width="230" height="56" rx="3" class="box"/>
+  <text x="371" y="214" text-anchor="middle" class="layer-sub" font-weight="bold">hook 2：合并后门禁提醒</text>
+  <text x="371" y="232" text-anchor="middle" class="layer-detail">触发：git merge/pull/rebase → "分支绿≠合并绿"</text>
+  <text x="371" y="248" text-anchor="middle" class="layer-detail">设计：不阻塞（会卡自动化流程），只递到眼前</text>
+
+  <!-- Hook 3 -->
+  <rect x="16" y="258" width="234" height="56" rx="3" class="box"/>
+  <text x="133" y="276" text-anchor="middle" class="layer-sub" font-weight="bold">hook 3：提交前"先红后绿"提醒</text>
+  <text x="133" y="294" text-anchor="middle" class="layer-detail">触发：git commit（含行为变更）→ 提醒先红后绿证据</text>
+  <text x="133" y="310" text-anchor="middle" class="layer-detail">设计：恒真=假绿；纯文档/配置 commit 豁免</text>
+
+  <!-- Hook 4 -->
+  <rect x="256" y="258" width="230" height="56" rx="3" class="box"/>
+  <text x="371" y="276" text-anchor="middle" class="layer-sub" font-weight="bold">hook 4：改源码前"plan 先行"提醒</text>
+  <text x="371" y="294" text-anchor="middle" class="layer-detail">触发：Edit/Write 命中 src/ → "无 plan = 无审计锚点"</text>
+  <text x="371" y="310" text-anchor="middle" class="layer-detail">设计：trivial 一行修复可自证豁免，不拦</text>
+
+  <text x="250" y="336" text-anchor="middle" fill="#888" font-size="12">机制落地：2026-10-21 | 上线当天即发生自我订正（装载时机坑）| 实证：本项目</text>
+</svg>
