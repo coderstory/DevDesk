@@ -5,13 +5,15 @@
 // ① 图标路径是 configure 期写入的绝对原生路径（@DEVDESK_ICON_ICO_ESCAPED@，
 //    反斜杠双写转义；windres 对相对路径按调用 CWD 解析不可靠，沿用 EUI-NEO
 //    eui_app_icon.rc 的同一约定）。
-// ② 图标 ID 用数值 101：PE 资源目录里数值 ID 恒排在命名资源（EUI-NEO 经
-//    eui_neo_configure_app 塞入的 IDI_APP_ICON）之前，Shell 取首个图标组 →
-//    DevDesk 图标胜出；两份资源并存互不影响。
+// ② eui_neo_configure_app 注入 IDI_APP_ICON（EUI-NEO 旧图标）作为命名资源；
+//    PE 资源目录以命名条目在前、数值 ID 在后排列，且命名条目按 Unicode 升序。
+//    "A_DEVDESK_ICON" (0x41) 排在 "IDI_APP_ICON" (0x49) 之前 → Shell 取首个
+//    图标组 → DevDesk C 方案图标胜出。旧注释"数值 ID 恒排在命名资源之前"与
+//    PE 格式实际行为相反（Named 先于 ID，详析见 commit message）。
 // ③ 版本号单一源 = 根 CMakeLists.txt 的 project(DevDesk VERSION ...)（VERSION
 //    文件）；RC 侧不做第二份手工版本。VALUE 串保持 ASCII（windres 代码页转换
 //    不确定性），中文文案不入资源。
-101 ICON "@DEVDESK_ICON_ICO_ESCAPED@"
+"A_DEVDESK_ICON" ICON "@DEVDESK_ICON_ICO_ESCAPED@"
 
 1 VERSIONINFO
 FILEVERSION @PROJECT_VERSION_MAJOR@,@PROJECT_VERSION_MINOR@,@PROJECT_VERSION_PATCH@,0

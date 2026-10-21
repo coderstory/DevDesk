@@ -371,9 +371,10 @@ add_custom_command(TARGET DevDesk POST_BUILD
 # exe 内嵌图标 + 版本资源（仅 Windows；资源管理器文件图标 / 桌面快捷方式 /
 # 「应用和功能」卸载项全靠它。macOS 无内嵌资源一说，.app 图标走 build-app.sh）。
 # windres 解析 .rc 里的相对路径按调用 CWD，不可靠——沿用 EUI-NEO eui_app_icon.rc
-# 的约定：configure 期把绝对原生路径（反斜杠双写转义）写进生成文件。图标 ID 用
-# 数值 101：PE 资源目录里数值 ID 恒排在命名资源（EUI-NEO 的 IDI_APP_ICON）之前，
-# Shell 取首个图标组 → DevDesk 图标胜出；两份资源并存互不影响。
+# 的约定：configure 期把绝对原生路径（反斜杠双写转义）写进生成文件。图标用命名
+# 资源 "A_DEVDESK_ICON"（非数值 ID）：PE 资源目录命名条目排在数值 ID 之前，
+# "A_DEVDESK_ICON" 按 Unicode 升序落在 "IDI_APP_ICON"（EUI-NEO 旧图标）之前 →
+# Shell 取首个图标组 → DevDesk C 方案图标胜出；两份资源并存互不影响。
 if(WIN32)
     file(TO_NATIVE_PATH "${CMAKE_SOURCE_DIR}/assets/icon.ico" DEVDESK_ICON_ICO_NATIVE)
     string(REPLACE "\\" "\\\\" DEVDESK_ICON_ICO_ESCAPED "${DEVDESK_ICON_ICO_NATIVE}")
