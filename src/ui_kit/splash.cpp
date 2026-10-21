@@ -2,7 +2,15 @@
 // 启动 splash：WeChat-minimal（D-11 反转，2026-10-19）——
 // 全屏微绿底(wechat.sidebarBgTinted #E8F0EC) + 居中深绿 logo(wechat.primaryPressed #059A4C)
 // + 底部深绿细进度条（H 批 2026-10-20：用户反馈"底色纯白没有绿色印染"，见下方对比度核）。
-// 时序：0.0-2.0s 进度 0→100%；2.0-2.3s 整体 opacity 1→0 淡出；2.3s 后 drawSplashIfNeeded 恒返 false。
+// UAT6 动态印染（用户："splash 没有绿色印染的动态效果"——静态绿底不够）：开场 1.2s
+// 绿色自 logo 瓦中心径向扩散/晕染，边缘带确定性噪声（有机晕染而非硬圆），扩散完
+// 收敛为纯静态底色（终态与 H 批一致，W 批底色断言不动）。实现为纯 DSL 同心圆 +
+// 噪声卫星墨点——契约（test_splash_contract）禁回归 shadertoy 渐变与 fragment
+// shader 资产引用（D-11 用户拍板反转），"shader uniform" 的等效物 = inkProgress
+//（elapsed 归一化）驱动 inkFrontFraction / inkWashAlpha（曲线在 splash.h 内联，
+// 无头单测可钉）。
+// 时序：0.0-1.2s 墨染扩散；0.0-2.0s 进度 0→100%；2.0-2.3s 整体 opacity 1→0 淡出；
+// 2.3s 后 drawSplashIfNeeded 恒返 false。
 //
 // D-11 反转：去除极光波 shadertoy 渐变（§8 禁项 #4：大面积渐变背景），改 WeChat-minimal
 // 与整改后基调协调；颜色全部走 W1 wechat 令牌，禁硬编码色字面量（W0.5 清单 W-W1~W-W3 + #15-#17）。
@@ -22,14 +30,28 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
+#include <string>
 
 namespace ui_kit {
 
 namespace {
 
-// 时序常量（与 splash.h 注释一致）
+// 时序常量（与 splash.h 注释一致；墨染时长 kInkDurationSec 在 splash.h 供单测共用）
 constexpr float kDurationSec = 2.0f;  // 进度 0→100%
 constexpr float kFadeOutSec = 0.3f;   // 整体淡出
+
+// 墨染视觉常量：内层最浓峰值 / 同心圆层数 / 噪声卫星数（只撒外两环）
+constexpr float kInkMaxAlpha = 0.35f;
+constexpr int kInkRings = 4;
+constexpr int kInkBlobsPerRing = 8;
+
+// 确定性 0~1 hash（sin 散列取小数）：噪声卫星的角度/凸起/大小全由索引 hash 决定
+//——帧间稳定不闪烁，只随前沿半径一起生长（把硬圆边打散成有机晕染边）
+float hash01(int n) {
+    const float x = std::sin(static_cast<float>(n) * 127.1f) * 43758.5453f;
+    return x - std::floor(x);
+}
 
 struct SplashState {
     bool active = true;
@@ -54,7 +76,7 @@ bool drawSplashIfNeeded(eui::Ui& ui, const eui::Screen& screen) {
     if (!state.startSet) {
         state.startSet = true;
         state.start = now;
-        LOG_INFO("启动 splash 开始（WeChat-minimal，2.0s 进度 + 0.3s 淡出）");
+        LOG_INFO("启动 splash 开始（WeChat-minimal，1.2s 墨染扩散 + 2.0s 进度 + 0.3s 淡出）");
     }
     const float elapsed =
         std::chrono::duration<float>(now - state.start).count();
@@ -92,6 +114,61 @@ bool drawSplashIfNeeded(eui::Ui& ui, const eui::Screen& screen) {
     const float logoY = cy - kLogoH - 44.0f;
     const float subY = cy - kSubH - 10.0f;
     const float barY = cy + 90.0f;
+
+    // —— 墨染动态印染（UAT6）：绿色自 logo 瓦中心径向扩散/晕染，1.2s 后收敛 ——
+    // 进度源 = splash 自身 steady_clock 时间轴的归一化（等效 shader uniform）：
+    // inkFrontFraction 定前沿半径、inkWashAlpha 定浓度（扩散摊薄），曲线在 splash.h。
+    // 画在底色与 logo 之间（z 序 bg → 墨染 → logo），logo 保持清晰不被洗染。
+    // 扩散结束（inkProgress >= 1）本块整体不再执行 → 不画任何墨染元素、不再挂
+    // 帧泵，终态 = 纯静态 sidebarBgTinted 底（W 批底色断言恒成立）。
+    const float inkProgress = std::clamp(elapsed / kInkDurationSec, 0.0f, 1.0f);
+    if (inkProgress < 1.0f) {
+        const float inkX = cx - 86.0f;  // logo 瓦几何中心（56px 瓦挂载中心，见下方图标块）
+        const float inkY = logoY + 30.0f;
+        const float farX = std::max(inkX, screen.width - inkX);
+        const float farY = std::max(inkY, screen.height - inkY);
+        const float maxDist = std::sqrt(farX * farX + farY * farY) + 1.0f;
+        const float front = maxDist * inkFrontFraction(inkProgress);
+        const float envelope = inkWashAlpha(inkProgress);
+        for (int j = 0; j < kInkRings; ++j) {
+            const float frac = 1.0f - static_cast<float>(j) / kInkRings;  // 1.0→0.25 内密外疏
+            const float r = front * frac;
+            if (r < 1.0f) continue;  // 首帧半径≈0，不建空元素
+            const float ringAlpha = kInkMaxAlpha * envelope * frac;
+            ui.rect("splash.ink.ring." + std::to_string(j))
+                .position(inkX - r, inkY - r)
+                .size(r * 2.0f, r * 2.0f)
+                .color(wc.primaryPressed)
+                .radius(r)
+                .opacity(ringAlpha * opacity)
+                .build();
+            // 噪声卫星（只撒外两环）：前沿圈上按确定性 hash 撒墨点，凸起 0.82~1.20
+            // 倍半径参差——硬圆边打散成有机晕染；hash 只吃索引，帧间稳定不闪
+            if (j <= 1) {
+                for (int b = 0; b < kInkBlobsPerRing; ++b) {
+                    const float ang = hash01(j * 17 + b * 3 + 1) * 6.2831853f;
+                    const float lead = 0.82f + 0.38f * hash01(j * 31 + b * 7 + 2);
+                    const float br = r * (0.10f + 0.08f * hash01(j * 13 + b * 5 + 3));
+                    ui.rect("splash.ink.blob." + std::to_string(j) + "." +
+                            std::to_string(b))
+                        .position(inkX + std::cos(ang) * r * lead - br,
+                                  inkY + std::sin(ang) * r * lead - br)
+                        .size(br * 2.0f, br * 2.0f)
+                        .color(wc.primaryPressed)
+                        .radius(br)
+                        .opacity(ringAlpha * 0.6f * opacity)
+                        .build();
+                }
+            }
+        }
+        // 帧泵（照 md.tree.anim.driver 折叠动画先例）：墨染在途挂 1x1 空 onFrame
+        // 元素，runtime 每帧回调它并置 animating → 主循环持续出帧推进扩散；与既有
+        // 的 app::requestUpdate（本函数尾部每帧调）双保险。收敛后不再挂载即被剪除
+        ui.stack("splash.ink.anim.driver")
+            .size(1.0f, 1.0f)
+            .onFrame([](float) {})
+            .build();
+    }
 
     // logo 图标（图标批 2026-10-20）：C 方案终端窗 >_ 几何 logo（ui_kit::drawDevDeskLogo
     // 矢量绘制）替换 fa-laptop-code 字形（0xF5FC 主接线点退役；about 页遗留一处属
