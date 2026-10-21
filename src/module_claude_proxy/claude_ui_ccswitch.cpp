@@ -29,8 +29,10 @@ constexpr float kDescY = 56.0f;
 constexpr float kDescH = 34.0f;
 constexpr float kSelectAllY = 100.0f;
 constexpr float kSelectAllH = 28.0f;
-constexpr float kListTopY = 132.0f;
-constexpr float kRowPitch = 56.0f;        // 每条候选占的行高
+// 全选钮带（底 128）与候选列表之间留 12px 呼吸（UAT6：原 4px 太挤）
+constexpr float kListTopY = 140.0f;
+constexpr float kRowPitch = 56.0f;        // 每条候选占的行高（行卡 48 + 行间 8）
+constexpr float kRowCardH = kRowPitch - 8.0f;  // 行卡高（三行文字收进卡内）
 constexpr float kResultH = 18.0f;
 constexpr float kButtonsBottomGap = 60.0f; // 底部按钮行（drawDialogButtons 写死 h-60）
 
@@ -45,7 +47,7 @@ void drawCandidateRow(eui::Ui& ui, const core::theme::Tokens& t,
     // 与 Profile 列表选中态同语义（底色 + 绿圈白勾双指示，不加左竖线）。
     ui.rect(baseId + ".bg")
         .position(0.0f, 0.0f)
-        .size(rowW, kRowPitch - 8.0f)
+        .size(rowW, kRowCardH)
         .color(selected ? t.colors.wechat.selectedBg : t.colors.wechat.cardBg)
         .radius(t.sizes.radiusLarge)
         .border(1.0f, t.colors.wechat.dividerPrimary)
@@ -54,7 +56,7 @@ void drawCandidateRow(eui::Ui& ui, const core::theme::Tokens& t,
     // wechat.primary 圆 + 白 fa-check；未选中 = cardBg 白圈灰边空圈。不引
     // components::checkbox（其头在 -Werror 下有 unused-variable 告警）。指示器纯视觉。
     constexpr float kBoxSize = 20.0f;
-    const float boxY = (kRowPitch - 8.0f - kBoxSize) * 0.5f;
+    const float boxY = (kRowCardH - kBoxSize) * 0.5f;
     ui.rect(baseId + ".cb.box")
         .position(12.0f, boxY)
         .size(kBoxSize, kBoxSize)
@@ -79,44 +81,58 @@ void drawCandidateRow(eui::Ui& ui, const core::theme::Tokens& t,
     // 名称（粗）+ base_url（mono 小字）+ model（小字）。**密钥一律不画**。
     // 文字四档（UAT5 米黄收尾）：name=textPrimary / url=textTertiary /
     // model=textSecondary / skip 红=warningRed，全走 wechat 档。
+    // UAT6：三行文字收紧进 48 高卡内（name 5..22 / url 22..35 / model 35..47，
+    // 原 model 行 40..52 溢出卡底 4px）；超宽走 Ellipsis 截断不再跑出卡框。
     const float textX = 44.0f;
     const float textW = rowW - textX - 12.0f;
     ui.text(baseId + ".name")
-        .position(textX, 6.0f)
-        .size(textW, 18.0f)
+        .position(textX, 5.0f)
+        .size(textW, 17.0f)
         .text(row.name.empty() ? std::string("（无名称）") : row.name)
         .fontSize(13.0f)
-        .lineHeight(18.0f)
+        .lineHeight(17.0f)
         .fontWeight(600)
+        .maxWidth(textW)
+        .wrap(false)
+        .overflow(core::TextOverflow::Ellipsis)
         .color(t.colors.wechat.textPrimary)
         .build();
     ui.text(baseId + ".url")
-        .position(textX, 26.0f)
-        .size(textW, 14.0f)
+        .position(textX, 22.0f)
+        .size(textW, 13.0f)
         .text(row.appType + " · " +
               (m.ok ? m.baseUrl : std::string("—")))
         .fontSize(11.0f)
-        .lineHeight(14.0f)
+        .lineHeight(13.0f)
+        .maxWidth(textW)
+        .wrap(false)
+        .overflow(core::TextOverflow::Ellipsis)
         .color(t.colors.wechat.textTertiary)
         .build();
     if (m.ok && !m.model.empty()) {
         ui.text(baseId + ".model")
-            .position(textX, 40.0f)
+            .position(textX, 35.0f)
             .size(textW, 12.0f)
             .text("model: " + m.model)
             .fontSize(11.0f)
             .lineHeight(12.0f)
+            .maxWidth(textW)
+            .wrap(false)
+            .overflow(core::TextOverflow::Ellipsis)
             .color(t.colors.wechat.textSecondary)
             .build();
     }
     // 映射失败的行：右侧红字 skipReason（不阻断勾选，但导入选中时只会进「跳过」结果）
     if (!m.ok) {
         ui.text(baseId + ".skip")
-            .position(textX, 40.0f)
+            .position(textX, 35.0f)
             .size(textW, 12.0f)
             .text("跳过：" + m.skipReason)
             .fontSize(11.0f)
             .lineHeight(12.0f)
+            .maxWidth(textW)
+            .wrap(false)
+            .overflow(core::TextOverflow::Ellipsis)
             .color(t.colors.wechat.warningRed)
             .build();
     }
@@ -337,22 +353,32 @@ void drawCcSwitchImportDialog(eui::Ui& ui, const eui::Screen& screen,
                     for (size_t i = 0; i < st.rows_.size(); ++i) {
                         const std::string id =
                             "claude.dialog.ccswitch.row." + std::to_string(i);
+                        // 行 = stack：先画行卡内容，末尾叠整行透明命中区（stack 内
+                        // 后建者命中优先 = 点行卡本体即翻勾选）。
+                        // UAT6 修通：hit 原是 scrollView 流式布局的**兄弟**节点——
+                        // column 布局无视显式 position(0,0)，命中区被排进行间空隙，
+                        // 真机点行卡落空（全选钮正常 → 只单选坏）；且幽灵占位让
+                        // 视觉行距翻倍（112px/行）。收进 stack 后命中区与行卡同帧
+                        // 同位，行距回归 56px/行。
                         inner.stack(id + ".wrap")
-                            .size(rowW, kRowPitch - 8.0f)
+                            .size(rowW, kRowCardH)
                             .content([&] {
                                 drawCandidateRow(inner, t, themeTokens, id, rowW,
                                                  st.rows_[i], st.mappings_[i],
                                                  st.selected_[i]);
-                            })
-                            .build();
-                        // 勾选框点击区 = 整行（行底卡 onClick 翻转 selected）
-                        inner.rect(id + ".hit")
-                            .position(0.0f, 0.0f)
-                            .size(rowW, kRowPitch - 8.0f)
-                            .onClick([sp = &st, idx = i] {
-                                if (idx < sp->selected_.size()) {
-                                    sp->selected_[idx] = !sp->selected_[idx];
-                                }
+                                // 勾选框点击区 = 整行（透明覆盖层；rect 无 color
+                                // 时默认白会盖住选中灰底，必须显式全透明）
+                                inner.rect(id + ".hit")
+                                    .position(0.0f, 0.0f)
+                                    .size(rowW, kRowCardH)
+                                    .color(eui::Color{0.0f, 0.0f, 0.0f, 0.0f})
+                                    .onClick([sp = &st, idx = i] {
+                                        if (idx < sp->selected_.size()) {
+                                            sp->selected_[idx] =
+                                                !sp->selected_[idx];
+                                        }
+                                    })
+                                    .build();
                             })
                             .build();
                     }
