@@ -2,6 +2,7 @@
 #include "claude_ui_list.h"
 
 #include "claude_ui_logic.h"
+#include "core/component_theme.h"
 #include "provider_config.h"
 #include "settings_sync.h"
 
@@ -9,6 +10,7 @@
 #include <components/contextmenu.h>
 #include <ui_kit/dialog_form.h>
 #include <components/scrollview.h>
+#include <components/tooltip.h>
 #include <components/virtuallist.h>
 
 #include <core/logging.h>
@@ -280,6 +282,14 @@ void drawClaudeHeader(eui::Ui& ui, float contentW, float headerH,
     // header 行 gap=0，两段宽必须相加等于 contentW，防字面量两处改一处忘
     constexpr float kHeaderActionsW = 360.0f;
 
+    // §5 帮助钮几何（UAT6 问号钮重设计）：24px 正圆（对齐 md.help.icon 24px 档）。
+    // claude.actions 行 justify END 右打包：help 左缘 = contentW − 代理钮宽 −
+    // 行 gap − 自宽（与状态组动态宽无关，可静态推算——tooltip 锚点需要）。
+    constexpr float kHelpBtnD = 24.0f;
+    constexpr float kProxyBtnW = 110.0f;
+    const float helpBtnX =
+        contentW - kProxyBtnW - t.sizes.spacingSmall - kHelpBtnD;
+
     // UAT5 页头内部收紧（toptrim 批点名跟进）：内部 50→40 与共享 kHeaderH 叠满。
     // UAT6 副题横扫：标题行下副题 14 行删除，标题行独占页头（同 todo/md/home 档），
     // 页头行高沿用共享 kHeaderH=40 不动（行内状态组/按钮 40 高）。
@@ -322,7 +332,7 @@ void drawClaudeHeader(eui::Ui& ui, float contentW, float headerH,
                     // 「已停止」≈39px、「运行中 :port」动态），上界无需再设。
                     // §5 灰圆点「已停止」/ 绿圆点「运行中」（wechat 令牌，isProxyRunning 内存态）
                     ui.row("claude.status.row")
-                        // 行盒宽随内容收缩（dot+text+help），高取组内最高 18
+                        // 行盒宽随内容收缩（dot+text），高取组内最高 18
                         .width(core::SizeValue::wrapContent())
                         .height(18.0f)
                         .gap(12.0f)
@@ -350,12 +360,32 @@ void drawClaudeHeader(eui::Ui& ui, float contentW, float headerH,
                                                     : t.colors.wechat.textTertiary)
                                 .fontWeight(500)
                                 .build();
-                            // §5 页面说明长文本收帮助图标（0xF059 占位；EUI tooltip 待绑定）
-                            ui.text("claude.title.help")
-                                .size(16.0f, 18.0f)
-                                .icon(0xF059)
-                                .fontSize(t.sizes.fontSizeSmall)
-                                .lineHeight(18.0f)
+                        })
+                        .build();
+
+                    // §5 帮助图标钮（UAT6 问号钮重设计，尺寸对齐 md.help.icon 的
+                    // 24px 档）：正圆、icon 居中、hover 三态（透明底→浅灰→按压灰），
+                    // 照已过 UAT 的圆钮先例（claude.shared.header 勾箭钮同款结构）。
+                    // 从状态组 wrap 行挪出为独立钮——右缘可静态推算（tooltip 锚点
+                    // 需要 wrap 行给不了）；长文案 hover 经 EUI tooltip 弹回（下方）。
+                    ui.stack("claude.title.help")
+                        .size(kHelpBtnD, kHelpBtnD)
+                        .visualStateFrom("claude.title.help.bg", 0.965f)
+                        .content([&] {
+                            ui.rect("claude.title.help.bg")
+                                .size(kHelpBtnD, kHelpBtnD)
+                                .states(core::Color{0.0f, 0.0f, 0.0f, 0.0f},
+                                        t.colors.wechat.selectedBg,
+                                        t.colors.wechat.dividerSecondary)
+                                .radius(kHelpBtnD * 0.5f)
+                                .build();
+                            ui.text("claude.title.help.icon")
+                                .size(kHelpBtnD, kHelpBtnD)
+                                .icon(0xF059)  // fa-circle-question
+                                .fontSize(14.0f)
+                                .lineHeight(kHelpBtnD)
+                                .horizontalAlign(eui::HorizontalAlign::Center)
+                                .verticalAlign(eui::VerticalAlign::Center)
                                 .color(t.colors.wechat.textTertiary)
                                 .build();
                         })
@@ -384,6 +414,20 @@ void drawClaudeHeader(eui::Ui& ui, float contentW, float headerH,
                 })
                 .build();
         })
+        .build();
+
+    // 帮助钮 tooltip 绑定（现成 hint 机制）：UAT6 副题横扫时收起的一句话摘要
+    // 在 hover 弹回。面板宽档放宽到 320——TooltipBuilder 默认 86-112 是 barchart
+    // 短标签档，本句 20 字装不下；bounds 取页头行，topLimit 使气泡恒落钮下方。
+    components::tooltip(ui, "claude.title.help.tooltip")
+        .theme(core::theme::componentTokensWeChat(t))
+        .source("claude.title.help.bg")
+        .value(proxyRunning ? "本地代理运行中，管理多套 Claude API 配置"
+                             : "管理多套 Claude API 配置")
+        .anchor(helpBtnX + kHelpBtnD * 0.5f, headerH * 0.5f)
+        .bounds(contentW, headerH)
+        .minWidth(320.0f)
+        .maxWidth(320.0f)
         .build();
 }
 
