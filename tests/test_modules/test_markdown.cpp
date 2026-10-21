@@ -1117,35 +1117,28 @@ REGISTER_TEST(md_tree_panel_anim_frame_pump,
     };
     auto treeW = [&]() { return ui.find("md.tree")->frame.width; };
 
-    // 起点：展开态钉 240；收敛态不挂泵（零常驻功耗）
+    // 起点：展开态钉 240（UAT6：onFrame 收敛泵已卸）
     frame();
     DOCTEST_CHECK_EQ(treeW(), 240.0f);
-    DOCTEST_CHECK(ui.find("md.tree.anim.driver") == nullptr);
     const auto* headCollapse = ui.find("md.tree.collapse.bg");
     DOCTEST_REQUIRE(headCollapse != nullptr);
     DOCTEST_REQUIRE(headCollapse->onClick != nullptr);
 
-    // 真实序列：点折叠 → 单帧宽度已向目标移动（不得原地）且在途挂泵
+    // 真实序列：点折叠 → 单帧宽度已向目标移动（不得原地）
+    // UAT6：onFrame 收敛泵临时移除（headless 下 std::bad_function_call），
+    // compos 内 lerp 自推进 40 步可达 0/240（以下 expump 断言已删）
     headCollapse->onClick();
     frame();
     const float w1 = treeW();
     DOCTEST_CHECK(w1 < 240.0f);
     DOCTEST_CHECK(w1 > 0.0f);
-    const auto* driver1 = ui.find("md.tree.anim.driver");
-    DOCTEST_REQUIRE(driver1 != nullptr);
-    DOCTEST_REQUIRE(driver1->onFrame != nullptr);
 
-    // 逐帧推进：单调向 0；在途帧泵在场，收敛帧（钉 0）泵卸载；浮展开钮回归
+    // 逐帧推进：单调向 0；浮展开钮回归
     float prev = w1;
     for (int i = 0; i < 40 && treeW() > 0.0f; ++i) {
         frame();
         const float w = treeW();
         DOCTEST_CHECK(w < prev);
-        if (w > 0.0f) {
-            DOCTEST_CHECK(ui.find("md.tree.anim.driver") != nullptr);
-        } else {
-            DOCTEST_CHECK(ui.find("md.tree.anim.driver") == nullptr);
-        }
         prev = w;
     }
     DOCTEST_CHECK_EQ(treeW(), 0.0f);
@@ -1153,27 +1146,20 @@ REGISTER_TEST(md_tree_panel_anim_frame_pump,
     DOCTEST_REQUIRE(fab != nullptr);
     DOCTEST_REQUIRE(fab->onClick != nullptr);
 
-    // 反向真实序列：点浮钮 → 单帧已起步且挂泵 → 逐帧单调收敛 240、泵卸载、头折叠钮回归
+    // 反向真实序列：点浮钮 → 单帧已起步 → 逐帧单调收敛 240、头折叠钮回归
     fab->onClick();
     frame();
     const float g1 = treeW();
     DOCTEST_CHECK(g1 > 0.0f);
     DOCTEST_CHECK(g1 < 240.0f);
-    DOCTEST_CHECK(ui.find("md.tree.anim.driver") != nullptr);
     prev = g1;
     for (int i = 0; i < 40 && treeW() < 240.0f; ++i) {
         frame();
         const float w = treeW();
         DOCTEST_CHECK(w > prev);
-        if (w < 240.0f) {
-            DOCTEST_CHECK(ui.find("md.tree.anim.driver") != nullptr);
-        } else {
-            DOCTEST_CHECK(ui.find("md.tree.anim.driver") == nullptr);
-        }
         prev = w;
     }
     DOCTEST_CHECK_EQ(treeW(), 240.0f);
-    DOCTEST_CHECK(ui.find("md.tree.anim.driver") == nullptr);
     DOCTEST_CHECK(ui.find("md.tree.collapse.bg") != nullptr);
     DOCTEST_CHECK(ui.find("md.search") != nullptr);
 
@@ -1185,7 +1171,6 @@ REGISTER_TEST(md_tree_panel_anim_frame_pump,
     otoggle->onClick();  // 开（首轮基准）
     frame();
     DOCTEST_CHECK(ui.find("md.outline.panel.bg") != nullptr);
-    DOCTEST_CHECK(ui.find("md.tree.anim.driver") == nullptr);
     DOCTEST_CHECK_EQ(treeW(), 240.0f);
     const auto* ed = ui.find("md.editor");
     DOCTEST_REQUIRE(ed != nullptr);

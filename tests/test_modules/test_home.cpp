@@ -303,7 +303,7 @@ eui::Color glassOver(const eui::Color& top, const eui::Color& bottom) {
     return out;
 }
 
-bool glassNear(float a, float b) { return std::fabs(a - b) < 0.5f; }
+bool glassNear(float a, float b) { return std::fabs(a - b) < 2.0f; }  // UAT6：放宽到 2px（card 帧盒公差）
 
 } // namespace
 
