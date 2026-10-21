@@ -1,0 +1,678 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>DevDesk 智能中枢技术调研报告</title>
+<style>
+@page { size: A4 portrait; margin: 2.5cm 2cm 2.5cm 2cm;
+  @top-center { content: "DevDesk 智能中枢技术调研报告"; font-family: "SimHei","黑体",sans-serif; font-size: 8pt; color: #666; }
+  @bottom-center { content: "第 " counter(page) " 页"; font-family: "SimSun","宋体",serif; font-size: 8pt; color: #666; } }
+@page cover { @top-center { content: none; } @bottom-center { content: none; } }
+@page toc { @top-center { content: none; } }
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: "SimSun","宋体","Microsoft YaHei",serif; font-size: 11pt; line-height: 1.8; color: #1a1a1a; counter-reset: chapter; }
+h1 { font-family: "SimHei","黑体","Microsoft YaHei",sans-serif; font-size: 16pt; font-weight: bold; margin: 0.5em 0; page-break-before: always; }
+h2 { font-family: "SimHei","黑体","Microsoft YaHei",sans-serif; font-size: 13pt; font-weight: bold; margin: 1.2em 0 0.5em 0; }
+h3 { font-family: "SimHei","黑体","Microsoft YaHei",sans-serif; font-size: 11.5pt; font-weight: bold; margin: 1em 0 0.4em 0; }
+p { text-indent: 2em; margin: 0.4em 0; }
+p.no-indent { text-indent: 0; }
+.cover { page: cover; text-align: center; padding-top: 8cm; }
+.cover .title { font-family: "SimHei","黑体",sans-serif; font-size: 22pt; font-weight: bold; letter-spacing: 0.1em; margin-bottom: 2em; }
+.cover .subtitle { font-family: "SimSun","宋体",serif; font-size: 12pt; margin-bottom: 4em; color: #555; }
+.cover .meta { font-family: "SimSun","宋体",serif; font-size: 11pt; line-height: 2.5; }
+.cover .meta span { display: block; }
+.abstract { page-break-after: always; }
+.abstract h1 { page-break-before: avoid; }
+.abstract .keywords { margin-top: 1em; font-family: "SimHei","黑体",sans-serif; }
+.abstract .keywords span { font-family: "SimSun","宋体",serif; font-weight: normal; }
+.toc { page: toc; page-break-after: always; }
+.toc h1 { page-break-before: avoid; }
+.toc ul { list-style: none; padding-left: 0; }
+.toc li { margin: 0.3em 0; text-indent: 0; }
+.toc .l1 { font-weight: bold; margin-top: 0.6em; }
+.toc .l2 { padding-left: 2em; }
+.toc .l3 { padding-left: 4em; font-size: 10pt; }
+.conclusions-table { margin: 1em 0; }
+.conclusions-table table { width: 100%; border-collapse: collapse; font-size: 10pt; }
+.conclusions-table th { border-top: 1.5pt solid #1a1a1a; border-bottom: 0.75pt solid #1a1a1a; padding: 6px 8px; text-align: left; font-family: "SimHei","黑体",sans-serif; background: none; }
+.conclusions-table td { border-bottom: 0.5pt solid #999; padding: 5px 8px; vertical-align: top; }
+.conclusions-table td.cnum { width: 2em; text-align: center; color: #1f4e79; font-weight: bold; }
+.data-table { margin: 1em 0; }
+.data-table table { width: 100%; border-collapse: collapse; font-size: 10pt; }
+.data-table caption { font-family: "SimHei","黑体",sans-serif; font-weight: bold; margin-bottom: 0.5em; text-align: center; }
+.data-table th { border-top: 1.5pt solid #1a1a1a; border-bottom: 0.75pt solid #1a1a1a; padding: 5px 8px; text-align: left; font-family: "SimHei","黑体",sans-serif; background: none; }
+.data-table td { border-bottom: 0.5pt solid #ccc; padding: 5px 8px; vertical-align: top; }
+.data-table tr:last-child td { border-bottom: 1.5pt solid #1a1a1a; }
+.data-table .num { text-align: center; width: 3em; }
+.figure { margin: 1.2em 0; text-align: center; page-break-inside: avoid; }
+.figure svg { max-width: 100%; height: auto; display: block; margin: 0 auto; }
+.figure .caption { font-size: 9.5pt; color: #555; margin-top: 0.3em; font-family: "SimSun","宋体",serif; }
+.figure .label { font-weight: bold; }
+.keypoints { margin: 0.8em 0; padding: 0.6em 1em; border-left: 3px solid #1f4e79; background: #f8f8f8; font-size: 10pt; }
+.keypoints strong { font-family: "SimHei","黑体",sans-serif; }
+.keypoints p { text-indent: 0; margin: 0.2em 0; }
+h1::before { counter-increment: chapter; content: "第 " counter(chapter, cjk-ideographic) "章  "; }
+h1.no-num::before { content: none; }
+h2::before { content: counter(chapter) "." counter(h2_counter) "  "; counter-increment: h2_counter; }
+h2.no-num::before { content: none; }
+h1 { counter-reset: h2_counter; }
+.ref { font-size: 9pt; vertical-align: super; color: #1f4e79; }
+.appendix h1::before { content: "附录 " counter(appendix, upper-alpha) "  "; counter-increment: appendix; }
+.appendix { counter-reset: appendix; }
+.glossary dt { font-weight: bold; font-family: "SimHei","黑体",sans-serif; margin-top: 0.4em; }
+.glossary dd { margin-left: 2em; margin-bottom: 0.5em; }
+.page-break { page-break-before: always; }
+.small { font-size: 9.5pt; }
+.note { font-size: 9.5pt; color: #666; }
+.chap-break { text-align: center; margin: 0.5em 0; font-size: 10pt; color: #1f4e79; }
+</style>
+</head>
+<body>
+<!-- ====== 封面 ====== -->
+<div class="cover">
+<div class="title">DevDesk 智能中枢<br>技术调研报告</div>
+<div class="subtitle">——从开发者桌面工具集到智能中枢的战略技术评估</div>
+<div class="meta"><span>版本：v2.0</span><span>日期：2026-10-21</span><span>编制：DevDesk 项目组</span><span>分类：内部技术报告</span></div>
+</div>
+
+<!-- ====== 摘要 ====== -->
+<div class="abstract">
+<h1 class="no-num" style="counter-increment:none;">摘  要</h1>
+<p>本报告是 DevDesk 从"开发者桌面工具集"向"智能中枢"战略转型的技术调研总成。报告基于七路调研，系统评估了智能中枢各关键技术方向的成熟度、可用方案与本项目适配性。</p>
+<p>核心结论：DevDesk 的智能中枢路线图（A 至 E 五期）方向正确，不存在"全期报废"的致命风险。成熟 Harness（智能体运行时，即触发调度、工具注册、权限闸、审计、预算护栏等围绕智能体循环的宿主机制统称）骨架在开源社区已有充分验证；PRD 到 MR 流水线与行业共识一致——MR 留人审是当前所有主流产品的共同选择。最大风险在协议层：C 期如不做 MCP 适配缝，将在 2027-2028 年标准化浪潮中被迫返工。A 期即可开始埋协议适配缝（约一天工作量），成本远低于事后重构。</p>
+<p>报告共六章：调研背景、现状分析、运行原理、调研结论、路线图结合、结论与建议。附三份附录：引用清单、决策记录卡、术语表。</p>
+<div class="keywords">关键词：<span>智能中枢；AI Agent；Harness 运行时；AgentLoop；MCP 协议；技能（Skill）；PRD-to-MR 流水线；C++20</span></div>
+</div>
+
+<!-- ====== 目录 ====== -->
+<div class="toc">
+<h1 class="no-num" style="counter-increment:none;">目  次</h1>
+<ul>
+<li class="l1">摘要</li>
+<li class="l1">第一章 调研背景与目标</li><li class="l2">1.1 智能中枢定位</li><li class="l2">1.2 七路调研综述</li><li class="l2">1.3 调研方法与限制</li>
+<li class="l1">第二章 智能体现状技术分析</li><li class="l2">2.1 四层架构</li><li class="l2">2.2 执行循环机制</li><li class="l2">2.3 触发调度体系</li><li class="l2">2.4 护栏与审计</li><li class="l2">2.5 工具与扩展点</li><li class="l2">2.6 模块依赖反转</li>
+<li class="l1">第三章 运行原理</li><li class="l2">3.1 Harness 基本原理与工作流程</li><li class="l2">3.2 技能的调用与实现</li><li class="l2">3.3 MCP 的调用与实现</li><li class="l2">3.4 用户如何扩展能力</li>
+<li class="l1">第四章 调研结论</li><li class="l2">4.1 行业格局</li><li class="l2">4.2 成熟 Harness 机制</li><li class="l2">4.3 工具生态与技能</li><li class="l2">4.4 GitLab 对接</li><li class="l2">4.5 可靠性与自主性</li><li class="l2">4.6 未来趋势与押注</li>
+<li class="l1">第五章 与本项目计划的结合</li><li class="l2">5.1 A 期：收口</li><li class="l2">5.2 B 期：对接能力</li><li class="l2">5.3 C 期：扩展机制</li><li class="l2">5.4 D 期：自主性</li><li class="l2">5.5 E 期：PRD→MR 流水线</li><li class="l2">5.6 已拍板决策</li><li class="l2">5.7 设计原则</li><li class="l2">5.8 吸收映射</li><li class="l2">5.9 结论→计划对照</li>
+<li class="l1">第六章 结论与建议</li><li class="l2">6.1 总判断</li><li class="l2">6.2 最大风险与对冲</li><li class="l2">6.3 三条近期建议</li>
+<li class="l1">附录 A 引用清单</li><li class="l1">附录 B 决策记录卡</li><li class="l1">附录 C 术语表</li>
+</ul>
+</div>
+
+<!-- ====== 第一章 ====== -->
+<h1>调研背景与目标</h1>
+<div class="keypoints"><p><strong>本章要点：</strong>界定 DevDesk 智能中枢的战略定位（特化三轴、轻资产原则），综述七路调研的范围与方法，说明调研的网络受限环境与引用口径。</p></div>
+
+<h2>智能中枢定位</h2>
+<p>DevDesk 是面向开发者的跨平台桌面工具集（C++20 GUI 应用），现有七个功能页面。2026 年 10 月，项目确定战略方向为<strong>智能中枢</strong>：形态借鉴 Claude Code 和 OpenCode 已验证的"智能体 + Harness"骨架。这里的 Harness 指围绕智能体循环的一整套宿主机制——触发调度、工具注册、权限闸、预算护栏、运行审计、任务记忆——它们不是模型的一部分，而是为模型提供"可安全执行任务的运行环境"的工程系统。Harness 的概念贯穿本报告全文，具体工作原理见第三章。</p>
+<p>智能中枢特化在三条轴上：<strong>（1）无人值守</strong>——触发驱动（定时 / 事件 / 自唤醒）+ 失败重试 + 验收自评 + 失败升级通知。人不在环，可靠性优先于交互性。<strong>（2）C++ 原生桌面常驻</strong>——系统托盘、可视化审计、桌面感知（剪贴板 / 窗口 / 文件状态），这是 Web 或 Electron 方案做不到的差异化能力。<strong>（3）业务绑定</strong>——自有模块工具面 + 公司内部 GitLab / 敏捷平台对接，外部产品不会为这些场景做深度定制。</p>
+<p>路线方针为"走前人铺好的路，继而发展出自己的路"：每个设计取舍先问"前人（Claude Code / OpenCode）有没有已验证的答案"，有就照搬机制模式；没有答案、或答案不落在三条特化轴上，才自研。</p>
+<p><strong>轻资产原则</strong>（ADR 0004）：核心只保留"机制与接口"——智能体循环、工具注册、事件总线、触发调度、权限闸、审计、预算护栏。一切具体业务能力（文件工具、GitLab、搜索、技能包、角色定义）一律以可插拔形态接入，不进核心。接口质量的硬判据为新能力以"注册 / 放文件"形态接入的步骤数——工具 4 步、事件 2 步即标准线。协议层面同样贯彻可替换原则：模型端点与工具协议都是可替换层（core::LlmEndpoint / ToolRegistry 即为接口缝合处）。</p>
+
+<h2>七路调研综述</h2>
+<p>为支撑路线图各期决策，项目于 2026-10-21 集中开展了七路外部调研：</p>
+<div class="data-table">
+<caption>表 1-1  七路调研总览</caption>
+<table>
+<tr><th style="width:3em;">#</th><th>调研</th><th>主要内容</th><th>产出文档</th></tr>
+<tr><td class="num">1</td><td>行业趋势</td><td>21 次抓取，覆盖 Claude Code / Copilot / Cursor / n8n / Raycast / OpenHands 等 7 个主题</td><td>06</td></tr>
+<tr><td class="num">2</td><td>OpenCode 源码吸收</td><td>对 opencode v2.1.1 的机制拆解：权限模型、Agent 角色体系、工具定义 Schema、会话与持久化</td><td>07</td></tr>
+<tr><td class="num">3</td><td>GitHub 生态深扫</td><td>24 次抓取，6 个开源 Agent 框架盘点、5 个技能候选、5 个克隆仓库推荐</td><td>08</td></tr>
+<tr><td class="num">4</td><td>GitLab 工具链</td><td>17 次抓取，reviewdog / Danger 审查方案、GitLab MCP Server 现状、webhook 事件接入</td><td>09</td></tr>
+<tr><td class="num">5</td><td>学术文献</td><td>14 次有效抓取，17 篇论文，总结验收自评、失败重试、自唤醒、多角色交付四类设计建议</td><td>10</td></tr>
+<tr><td class="num">6</td><td>未来趋势</td><td>16 次抓取，2027-2028 推演：模型能力 / 协议标准化 / 开发工作流 / 桌面 Agent 四轴</td><td>11</td></tr>
+<tr><td class="num">7</td><td>AI Agent 手册</td><td>阿里云 AI Agent Handbook 23/30 章精读，11 条直接吸收 + 9 条已有等价</td><td>12</td></tr>
+</table>
+</div>
+
+<h2>调研方法与限制</h2>
+<p>所有调研在公司网络环境下完成，使用系统 Edge 无头模式抓取目标页面正文。受限于公司网关屏蔽和部分站点反爬机制，约 20-30% 抓取尝试失败（Bing 搜索被全量屏蔽、知乎反爬 403、部分站点 SPA 渲染不全）。关键结论均经多源交叉验证，单一来源的个别断言已标注。所有引用均附抓取日期（2026-10-21）和完整 URL，见附录 A。</p>
+
+<!-- ====== 第二章 ====== -->
+<h1>智能体现状技术分析</h1>
+<div class="keypoints"><p><strong>本章要点：</strong>以 DevDesk 现有代码库为基准，系统展示智能体模块的四层架构、AgentLoop 执行循环、六种触发调度、预算护栏与三表审计、21 个工具清单、以及模块依赖反转设计。</p></div>
+
+<h2>四层架构</h2>
+<p>DevDesk 采用四层分层架构：应用入口层（main）→ 模块层（module_*，7 个 Router 页面）→ 核心层（core：Result、数据库、路由、主题、工具注册、事件总线、LLM 端点）→ 平台层（platform：HTTP 客户端/服务端、凭据保护、JSON）。底层依赖 EUI-NEO GUI 框架。</p>
+<p>关键依赖铁律：core 不得依赖 platform（仅允许一种有限的例外——头文件中声明但不包含实现的类型桥接，例如 eui::Color 值类型和组件主题的纯映射函数，它们不引入任何平台层的编译链接依赖）；module_* 之间不得互相依赖（工具调用走 ToolRegistry 按名间接触达，事件通信走 EventBus）；platform 可依赖 core。</p>
+
+<div class="figure">
+<svg width="470" height="310" viewBox="0 0 470 310" xmlns="http://www.w3.org/2000/svg">
+<defs><marker id="a1" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="#1f4e79"/></marker></defs>
+<rect x="35" y="10" width="400" height="46" rx="0" fill="none" stroke="#1a1a1a" stroke-width="2"/><text x="235" y="38" text-anchor="middle" font-family="SimHei" font-size="12">main（应用入口、装配层）</text>
+<rect x="35" y="72" width="400" height="62" rx="0" fill="none" stroke="#1a1a1a" stroke-width="2"/><text x="235" y="95" text-anchor="middle" font-family="SimHei" font-size="12">module_*（7 个 Router 页面模块）</text><text x="235" y="114" text-anchor="middle" font-family="SimSun" font-size="9" fill="#555">home / markdown / todo / claude_proxy / agent / settings / about</text><text x="235" y="128" text-anchor="middle" font-family="SimSun" font-size="8" fill="#999">模块间互不依赖——工具走 ToolRegistry，事件走 EventBus</text>
+<rect x="35" y="150" width="400" height="46" rx="0" fill="none" stroke="#1a1a1a" stroke-width="2"/><text x="235" y="169" text-anchor="middle" font-family="SimHei" font-size="12">core（共享基础层）</text><text x="235" y="186" text-anchor="middle" font-family="SimSun" font-size="9" fill="#555">Result / Database / Router / Theme / ToolRegistry / EventBus / LlmEndpoint</text>
+<rect x="35" y="212" width="400" height="40" rx="0" fill="none" stroke="#1a1a1a" stroke-width="2"/><text x="235" y="230" text-anchor="middle" font-family="SimHei" font-size="12">platform（OS 能力抽象层）</text><text x="235" y="246" text-anchor="middle" font-family="SimSun" font-size="9" fill="#555">HttpClient / HttpServer / Keychain / CredentialProtection / Json</text>
+<rect x="35" y="268" width="400" height="22" rx="0" fill="none" stroke="#1f4e79" stroke-width="1.5" stroke-dasharray="4,2"/><text x="235" y="283" text-anchor="middle" font-family="SimHei" font-size="10" fill="#1f4e79">EUI-NEO（GUI 框架，同级目录源码依赖）</text>
+<line x1="235" y1="56" x2="235" y2="70" stroke="#1f4e79" stroke-width="1.5" marker-end="url(#a1)"/><line x1="235" y1="134" x2="235" y2="148" stroke="#1f4e79" stroke-width="1.5" marker-end="url(#a1)"/><line x1="235" y1="196" x2="235" y2="210" stroke="#1f4e79" stroke-width="1.5" marker-end="url(#a1)"/><line x1="235" y1="252" x2="235" y2="266" stroke="#1f4e79" stroke-width="1.2" stroke-dasharray="3,2" marker-end="url(#a1)"/>
+<text x="442" y="114" font-family="SimSun" font-size="8" fill="#c00">禁互相依赖</text><text x="442" y="169" font-family="SimSun" font-size="8" fill="#c00">禁依赖 platform</text>
+</svg>
+<div class="caption"><span class="label">图 2-1</span> DevDesk 四层架构分层框图。实线箭头为允许的依赖方向，虚线为源码级引用（不进入链接）。红色标注为架构铁律。</div></div>
+
+<h2>执行循环机制</h2>
+<p>智能体的核心执行器是 AgentLoop（单次任务运行循环，流程见第三章 3.1 节的五阶段模型及与 DevDesk 实现的逐段对照）。其工作过程可分四步理解：</p>
+<p><strong>第一步，启动与组装。</strong>从 Scheduler 获得启动信号后，AgentLoop 将三块信息组装成一次 LLM 请求——全局运行环境提示词（由 Harness 内置生成）、本条任务自己填的角色设定、以及任务目标本身。</p>
+<p><strong>第二步，调用与解析。</strong>将组装好的提示词发给 LLM，等待响应。如果响应是纯文本回答，运行即告结束；如果响应中含有工具调用指令（tool_use），则进入工具执行通道。</p>
+<p><strong>第三步，工具执行。</strong>按工具名查找 ToolRegistry，检查权限（当前为全局破坏性操作开关，允许则执行、拒绝则终止），同步执行工具，将结果回喂到消息历史中。每轮执行前检查三个护栏——迭代次数是否超上限、运行时长是否超预算、Token 累计是否超阈值——任一超限即标记 limited 并终止运行。</p>
+<p><strong>第四步，迭代与落库。</strong>将本轮的用户提示词、模型响应、工具调用结果全部写入 agent_messages 审计表，然后回到第二步继续下一轮。运行结束时（completed / failed / cancelled / limited），把汇总信息写入 agent_runs 表。整个过程中，run 的状态变化通过 EventBus 推送给 UI，详情弹窗实时刷新。</p>
+
+<div class="figure">
+<svg width="450" height="460" viewBox="0 0 450 460" xmlns="http://www.w3.org/2000/svg">
+<defs><marker id="a2" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="#1a1a1a"/></marker></defs>
+<rect x="140" y="5" width="170" height="28" rx="2" fill="none" stroke="#1a1a1a" stroke-width="2"/><text x="225" y="24" text-anchor="middle" font-family="SimHei" font-size="11">Scheduler 派发启动</text>
+<line x1="225" y1="33" x2="225" y2="46" stroke="#1a1a1a" stroke-width="1.5" marker-end="url(#a2)"/>
+<rect x="115" y="48" width="220" height="28" rx="2" fill="none" stroke="#1a1a1a" stroke-width="1.5"/><text x="225" y="67" text-anchor="middle" font-family="SimSun" font-size="10">组装 System + User Prompt</text>
+<line x1="225" y1="76" x2="225" y2="89" stroke="#1a1a1a" stroke-width="1.5" marker-end="url(#a2)"/>
+<rect x="140" y="91" width="170" height="28" rx="2" fill="none" stroke="#1a1a1a" stroke-width="2"/><text x="225" y="110" text-anchor="middle" font-family="SimSun" font-size="11">POST /v1/messages (LLM)</text>
+<line x1="225" y1="119" x2="225" y2="132" stroke="#1a1a1a" stroke-width="1.5" marker-end="url(#a2)"/>
+<polygon points="225,134 300,170 225,206 150,170" fill="none" stroke="#1a1a1a" stroke-width="2"/><text x="225" y="168" text-anchor="middle" font-family="SimHei" font-size="10">有 tool_use？</text>
+<line x1="150" y1="170" x2="55" y2="170" stroke="#1a1a1a" stroke-width="1.5" marker-end="url(#a2)"/><text x="95" y="163" text-anchor="middle" font-family="SimSun" font-size="9" fill="#1f4e79">否 → completed</text>
+<line x1="300" y1="170" x2="390" y2="170" stroke="#1a1a1a" stroke-width="1.5" marker-end="url(#a2)"/><text x="350" y="163" text-anchor="middle" font-family="SimSun" font-size="9" fill="#1f4e79">是</text>
+<rect x="375" y="125" width="68" height="28" rx="2" fill="none" stroke="#1f4e79" stroke-width="1.5"/><text x="409" y="140" text-anchor="middle" font-family="SimSun" font-size="8">权限检查</text><text x="409" y="150" text-anchor="middle" font-family="SimSun" font-size="7">破坏性门控</text>
+<line x1="409" y1="153" x2="409" y2="185" stroke="#1a1a1a" stroke-width="1.5"/><polygon points="409,187 450,215 409,243 368,215" fill="none" stroke="#1a1a1a" stroke-width="1.5"/><text x="409" y="214" text-anchor="middle" font-family="SimSun" font-size="9">通过？</text>
+<line x1="450" y1="215" x2="460" y2="215" stroke="#1a1a1a" stroke-width="1.5"/><text x="455" y="208" font-family="SimSun" font-size="7" fill="#c00">拒→cancelled</text>
+<line x1="409" y1="243" x2="409" y2="265" stroke="#1a1a1a" stroke-width="1.5" marker-end="url(#a2)"/>
+<rect x="330" y="267" width="158" height="28" rx="2" fill="none" stroke="#1a1a1a" stroke-width="2"/><text x="409" y="286" text-anchor="middle" font-family="SimSun" font-size="10">ToolRegistry 查找+执行</text>
+<line x1="409" y1="295" x2="409" y2="315" stroke="#1a1a1a" stroke-width="1.5" marker-end="url(#a2)"/>
+<rect x="310" y="317" width="198" height="28" rx="2" fill="none" stroke="#1a1a1a" stroke-width="2"/><text x="409" y="336" text-anchor="middle" font-family="SimSun" font-size="10">结果回喂消息历史 + 落库</text>
+<line x1="409" y1="345" x2="409" y2="365" stroke="#1a1a1a" stroke-width="1.5" marker-end="url(#a2)"/>
+<polygon points="409,367 445,395 409,423 373,395" fill="none" stroke="#1a1a1a" stroke-width="1.5"/><text x="409" y="393" text-anchor="middle" font-family="SimSun" font-size="9">超护栏？</text>
+<line x1="445" y1="395" x2="455" y2="395" stroke="#1a1a1a" stroke-width="1.5"/><text x="450" y="388" font-family="SimSun" font-size="7" fill="#c00">是→limited</text>
+<line x1="373" y1="395" x2="225" y2="395" stroke="#1a1a1a" stroke-width="1.5"/><line x1="225" y1="395" x2="225" y2="206" stroke="#1a1a1a" stroke-width="1.5" marker-end="url(#a2)"/>
+<text x="290" y="388" font-family="SimSun" font-size="9" fill="#1f4e79">否 → 下一轮迭代</text>
+<text x="225" y="448" text-anchor="middle" font-family="SimSun" font-size="8" fill="#666">每轮消息落 agent_messages，运行结束写 agent_runs</text>
+</svg>
+<div class="caption"><span class="label">图 2-2</span> AgentLoop 执行循环流程图。方框为过程步骤，菱形为判断节点，实线箭头为控制流。</div></div>
+
+<h2>触发调度体系</h2>
+<p>智能体支持六种触发类型，由 Scheduler 统一管理：手动（UI 按钮）、定时 cron（按 cron 表达式周期调度，如"工作日每天 9 点"）、每天首次、闹钟一次性、事件（EventBus 驱动，首批三个动作事件——待办新建/完成/笔记保存）、常驻（手动入队）。共用闸包括同任务不并发、事件冷却（默认 300 秒，同任务不同事件互不压制）、运行次数上限达上限自动停用。</p>
+
+<div class="figure">
+<svg width="450" height="200" viewBox="0 0 450 200" xmlns="http://www.w3.org/2000/svg">
+<defs><marker id="a3" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="#1a1a1a"/></marker></defs>
+<rect x="5" y="10" width="68" height="24" rx="2" fill="none" stroke="#1a1a1a" stroke-width="1.5"/><text x="39" y="27" text-anchor="middle" font-family="SimSun" font-size="10">手动</text>
+<rect x="78" y="10" width="68" height="24" rx="2" fill="none" stroke="#1a1a1a" stroke-width="1.5"/><text x="112" y="27" text-anchor="middle" font-family="SimSun" font-size="10">定时 cron</text>
+<rect x="151" y="10" width="68" height="24" rx="2" fill="none" stroke="#1a1a1a" stroke-width="1.5"/><text x="185" y="27" text-anchor="middle" font-family="SimSun" font-size="10">每天</text>
+<rect x="224" y="10" width="68" height="24" rx="2" fill="none" stroke="#1a1a1a" stroke-width="1.5"/><text x="258" y="27" text-anchor="middle" font-family="SimSun" font-size="10">闹钟</text>
+<rect x="297" y="10" width="68" height="24" rx="2" fill="none" stroke="#1a1a1a" stroke-width="1.5"/><text x="331" y="27" text-anchor="middle" font-family="SimSun" font-size="10">事件</text>
+<rect x="370" y="10" width="68" height="24" rx="2" fill="none" stroke="#1a1a1a" stroke-width="1.5"/><text x="404" y="27" text-anchor="middle" font-family="SimSun" font-size="10">常驻</text>
+<line x1="39" y1="34" x2="39" y2="55"/><line x1="112" y1="34" x2="112" y2="55"/><line x1="185" y1="34" x2="185" y2="55"/><line x1="258" y1="34" x2="258" y2="55"/><line x1="331" y1="34" x2="331" y2="55"/><line x1="404" y1="34" x2="404" y2="55"/>
+<line x1="39" y1="55" x2="404" y2="55" stroke="#1a1a1a" stroke-width="1.5"/><line x1="222" y1="55" x2="222" y2="73" stroke="#1a1a1a" stroke-width="1.5" marker-end="url(#a3)"/>
+<rect x="140" y="75" width="164" height="28" rx="2" fill="none" stroke="#1a1a1a" stroke-width="2"/><text x="222" y="94" text-anchor="middle" font-family="SimHei" font-size="11">Scheduler 调度器</text>
+<line x1="222" y1="103" x2="222" y2="118" stroke="#1a1a1a" stroke-width="1.5" marker-end="url(#a3)"/>
+<rect x="100" y="120" width="244" height="22" rx="2" fill="none" stroke="#1f4e79" stroke-width="1.5"/><text x="222" y="136" text-anchor="middle" font-family="SimSun" font-size="9" fill="#1f4e79">共用闸：同任务不并发 / 事件冷却 / 限次</text>
+<line x1="222" y1="142" x2="222" y2="158" stroke="#1a1a1a" stroke-width="1.5" marker-end="url(#a3)"/>
+<rect x="155" y="160" width="134" height="28" rx="2" fill="none" stroke="#1a1a1a" stroke-width="2"/><text x="222" y="179" text-anchor="middle" font-family="SimHei" font-size="11">AgentLoop 执行</text>
+</svg>
+<div class="caption"><span class="label">图 2-3</span> 触发调度示意图。六种触发源汇入 Scheduler，经共用闸校验后派发 AgentLoop 执行。</div></div>
+
+<h2>护栏与审计</h2>
+<div class="data-table">
+<caption>表 2-1  预算护栏体系现状</caption>
+<table>
+<tr><th>护栏</th><th>实现位置</th><th>说明</th></tr>
+<tr><td>迭代上限</td><td>AgentTask::maxIterations（默认 10）</td><td>超限后结束运行，标记 limited</td></tr>
+<tr><td>墙钟上限</td><td>AgentLoop 内 wallClockBudgetSec</td><td>min（迭代数 x 60s，30min）</td></tr>
+<tr><td>Token 上限</td><td>Anthropic usage 字段累计</td><td>200K token 硬上限</td></tr>
+<tr><td>工具结果截断</td><td>AgentLoop 32KB 硬上限</td><td>按 UTF-8 边界截断加 [truncated] 标记后回喂</td></tr>
+<tr><td>单一运行闸</td><td>startRunExclusive</td><td>同任务同时只允许一个 run</td></tr>
+</table>
+</div>
+<p>审计体系由三张数据库表构成：agent_tasks（任务定义）、agent_runs（运行实例，含状态 / 耗时 / Token / 错误）、agent_messages（消息审计，含角色 / 内容 JSON / 工具调用 ID / 时间戳）。三表级联存储，支持运行记录逐轮回放。</p>
+
+<h2>工具与扩展点</h2>
+<div class="data-table">
+<caption>表 2-2  智能体工具清单（按组）</caption>
+<table>
+<tr><th>组</th><th>工具</th><th>说明</th><th>破坏性</th></tr>
+<tr><td>应用</td><td>app.stats / app.notify / app.now</td><td>统计数字、系统通知、当前时间</td><td>否</td></tr>
+<tr><td>笔记</td><td>md.create / md.list_tags / md.delete</td><td>创建笔记、列标签、删除笔记</td><td>md.delete 是</td></tr>
+<tr><td>待办</td><td>todo.create / todo.move / todo.complete / todo.list</td><td>创建、移动、完成、列待办</td><td>否</td></tr>
+<tr><td>Claude</td><td>claude.list_profiles / claude.get_active / claude.switch_profile / claude.test_connection / claude.recent_logs</td><td>Profile 管理、切换、测试、日志</td><td>切换是</td></tr>
+<tr><td>网络</td><td>net.fetch / hot.list</td><td>HTTP GET 抓取、四源热搜降级</td><td>否</td></tr>
+</table>
+</div>
+<p>扩展一个工具的标准步骤（已按现有模块接入路径设计、尚未有外部第三方工具按此流程完整接入验证）：在所属模块实现 core::ITool（名称 / Schema JSON / execute / isDestructive）→ 在模块 onStart 里 ToolRegistry::registerTool → 在 onStop 里 unregisterTool。模块隔离守卫自动检查 module_agent 与工具方互不 include。扩展一个事件只需两步：EventBus 加常量 → 发布方调 emit → 订阅方 subscribe。</p>
+
+<h2>模块依赖反转</h2>
+<p>四个核心抽象实现了模块间依赖反转（即高层模块不直接依赖低层模块、两者都依赖抽象接口——此处指 agent 模块通过 ToolRegistry 等 core 层抽象按名查找工具，而非直接 include 业务模块头文件），确保智能体模块与各业务模块互不依赖：ToolRegistry（agent 按名查找工具）、LlmEndpoint（agent loop 不依赖代理或具体传输层）、EventBus（发布方与订阅方只 include core 头）、LlmProfileSource（agent 从 claude_proxy 获取 Profile，互不依赖）。</p>
+
+<div class="figure">
+<svg width="430" height="180" viewBox="0 0 430 180" xmlns="http://www.w3.org/2000/svg">
+<circle cx="215" cy="90" r="16" fill="none" stroke="#1f4e79" stroke-width="2"/><text x="215" y="87" text-anchor="middle" font-family="SimHei" font-size="8" fill="#1f4e79">core</text><text x="215" y="98" text-anchor="middle" font-family="SimHei" font-size="7" fill="#1f4e79">抽象层</text>
+<rect x="35" y="15" width="105" height="24" rx="2" fill="none" stroke="#1a1a1a" stroke-width="1.5"/><text x="87" y="32" text-anchor="middle" font-family="SimSun" font-size="9">ToolRegistry</text>
+<rect x="285" y="15" width="105" height="24" rx="2" fill="none" stroke="#1a1a1a" stroke-width="1.5"/><text x="337" y="32" text-anchor="middle" font-family="SimSun" font-size="9">LlmEndpoint</text>
+<rect x="35" y="135" width="105" height="24" rx="2" fill="none" stroke="#1a1a1a" stroke-width="1.5"/><text x="87" y="152" text-anchor="middle" font-family="SimSun" font-size="9">EventBus</text>
+<rect x="285" y="135" width="105" height="24" rx="2" fill="none" stroke="#1a1a1a" stroke-width="1.5"/><text x="337" y="152" text-anchor="middle" font-family="SimSun" font-size="9">LlmProfileSource</text>
+<line x1="140" y1="27" x2="200" y2="82" stroke="#1a1a1a" stroke-width="1" stroke-dasharray="3,2"/><line x1="290" y1="27" x2="230" y2="82" stroke="#1a1a1a" stroke-width="1" stroke-dasharray="3,2"/>
+<line x1="140" y1="147" x2="200" y2="98" stroke="#1a1a1a" stroke-width="1" stroke-dasharray="3,2"/><line x1="290" y1="147" x2="230" y2="98" stroke="#1a1a1a" stroke-width="1" stroke-dasharray="3,2"/>
+<text x="87" y="8" text-anchor="middle" font-family="SimSun" font-size="7" fill="#666">agent 按名查找工具</text>
+<text x="87" y="170" text-anchor="middle" font-family="SimSun" font-size="7" fill="#666">发布/订阅互不 include</text>
+<text x="337" y="8" text-anchor="middle" font-family="SimSun" font-size="7" fill="#666">不依赖代理/传输层</text>
+<text x="337" y="170" text-anchor="middle" font-family="SimSun" font-size="7" fill="#666">不依赖 claude_proxy</text>
+</svg>
+<div class="caption"><span class="label">图 2-4</span> 模块依赖反转关系图。四个抽象接口定义在 core 层，agent 通过接口间接触达各业务模块，互不产生编译期依赖。</div></div>
+
+<!-- ====== 第三章：运行原理（v2 新增） ====== -->
+<h1>运行原理</h1>
+<div class="keypoints"><p><strong>本章要点：</strong>讲解智能体三项核心机制的工作原理——Harness 五阶段循环、技能（skill）的渐进披露与上下文注入、MCP 协议的调用路径。最后从用户视角梳理扩展新能力的完整流程（业务面 + 技术面）。素材来自 12 号报告（AI Agent Handbook）、07 号报告（OpenCode 源码吸收）、06/11 号报告，以及本地克隆的 anthropics/skills 规范和 opencode2 源码。</p></div>
+
+<h2>Harness 基本原理与工作流程</h2>
+<p>智能体应用的核心公式是 <strong>Agent = Model + Harness</strong> [11]。模型提供认知能力（理解任务、推理方案、生成输出），但它不知道自己运行在什么环境里、有哪些工具可用、每次能花多少 Token。Harness 的职责就是把模型缺少的这些"外部约束和上下文"补上，让模型在一个有边界、可审计、可终止的环境中执行任务。</p>
+<p>手册（12 号报告第 4 章）将 Harness 的执行内核抽象为一个五阶段循环 [11]——Prepare（准备）→ Model（调模型）→ Act（执行）→ Observe（观察）→ Verify（验证）。这个循环与我们 DevDesk 目前已实现的 AgentLoop 在结构上同构，各阶段职责如下：</p>
+<p><strong>Prepare（准备）。</strong>Harness 侧：组装本次调用的上下文——从 Context Builder 管线中收集环境信息、任务状态、技能指令、工具清单，按优先级和 Token 预算分配到系统提示词的各层（详见 3.2 节的六层编译表）。DevDesk 对应：AgentLoop 在每轮开始前从 AgentStore 读取任务定义（角色设定 + 任务记忆 + 触发配置），加上全局运行环境提示词，组装成完整的 messages 数组。</p>
+<p><strong>Model（调模型）。</strong>Harness 侧：将组装好的提示词发给 LLM，附上本次允许的工具定义列表。模型返回文本回答或工具调用请求。DevDesk 对应：通过 LlmEndpoint 抽象，经 DirectLlmClient 直连上游 API，POST /v1/messages，返回内容 stream 解析。</p>
+<p><strong>Act（执行）。</strong>Harness 侧：解析模型返回的工具调用——校验参数 Schema → 身份绑定 → 策略判定 → 审批（如果需要）→ 执行 → 捕获输出。DevDesk 对应：ToolRegistry::find(name) 查找 → 检查 allowDestructive 开关 → 同步执行 execute() → 32KB 截断保护。</p>
+<p><strong>Observe（观察）。</strong>Harness 侧：将工具执行结果结构化后回喂到对话历史中，同时写入 Event Log（只追加的不可变记录）和 Context Manifest（本轮模型到底看到了什么）。DevDesk 对应：工具结果追加进 messages 数组，本轮完整记录写入 agent_messages 表。</p>
+<p><strong>Verify（验证）。</strong>Harness 侧：检查停止条件——是否达到迭代上限、墙钟预算是否耗尽、Token 是否超阈值、Plan 是否有进展。满足任一条件则终止循环并产出 outcome（完成/失败/中断）。DevDesk 对应：每轮结束后检查三个护栏（maxIterations / wallClockBudgetSec / token limit），撞闸即标记 limited 或 failed。</p>
+<p>手册同时归纳了 Harness 编排层需要提供的七大核心能力 [11]：循环与终止控制、指令工程（Prompt 分层编译）、规划与委派、工具管理、中间件与策略钩子、上下文压缩与续行、人在回路的验证点。DevDesk 当前已覆盖其中四项（循环控制、工具管理、策略钩子即权限闸、人在回路即破坏性操作审批），规划委派（对应 D/E 期角色分工）、压缩续行（对应长对话截断策略）、指令工程精细化（对应 A 期角色设定栏）为后续增量。</p>
+
+<div class="figure">
+<svg width="480" height="300" viewBox="0 0 480 300" xmlns="http://www.w3.org/2000/svg">
+<defs><marker id="a5" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="#1a1a1a"/></marker></defs>
+<rect x="180" y="5" width="120" height="24" rx="2" fill="none" stroke="#1f4e79" stroke-width="1.5"/><text x="240" y="22" text-anchor="middle" font-family="SimHei" font-size="10" fill="#1f4e79">任务启动</text>
+<line x1="240" y1="29" x2="240" y2="40" stroke="#1a1a1a" stroke-width="1.5" marker-end="url(#a5)"/>
+<rect x="120" y="42" width="240" height="44" rx="0" fill="none" stroke="#1a1a1a" stroke-width="2"/><text x="240" y="60" text-anchor="middle" font-family="SimHei" font-size="12">① Prepare</text><text x="240" y="76" text-anchor="middle" font-family="SimSun" font-size="9" fill="#555">组装 Context → 分配 Token 预算 → 注入工具清单</text>
+<line x1="240" y1="86" x2="240" y2="97" stroke="#1a1a1a" stroke-width="1.5" marker-end="url(#a5)"/>
+<rect x="120" y="99" width="240" height="38" rx="0" fill="none" stroke="#1a1a1a" stroke-width="2"/><text x="240" y="115" text-anchor="middle" font-family="SimHei" font-size="12">② Model</text><text x="240" y="130" text-anchor="middle" font-family="SimSun" font-size="9" fill="#555">LLM 推理 → 返回文本或 tool_use</text>
+<line x1="240" y1="137" x2="240" y2="148" stroke="#1a1a1a" stroke-width="1.5" marker-end="url(#a5)"/>
+<rect x="120" y="150" width="240" height="44" rx="0" fill="none" stroke="#1a1a1a" stroke-width="2"/><text x="240" y="168" text-anchor="middle" font-family="SimHei" font-size="12">③ Act</text><text x="240" y="184" text-anchor="middle" font-family="SimSun" font-size="9" fill="#555">Schema 校验 → 身份绑定 → 策略判定 → 执行</text>
+<line x1="240" y1="194" x2="240" y2="205" stroke="#1a1a1a" stroke-width="1.5" marker-end="url(#a5)"/>
+<rect x="120" y="207" width="240" height="38" rx="0" fill="none" stroke="#1a1a1a" stroke-width="2"/><text x="240" y="223" text-anchor="middle" font-family="SimHei" font-size="12">④ Observe</text><text x="240" y="238" text-anchor="middle" font-family="SimSun" font-size="9" fill="#555">结果回喂 → 写 Event Log + Context Manifest</text>
+<line x1="240" y1="245" x2="240" y2="256" stroke="#1a1a1a" stroke-width="1.5" marker-end="url(#a5)"/>
+<rect x="120" y="258" width="240" height="38" rx="0" fill="none" stroke="#1a1a1a" stroke-width="2"/><text x="240" y="274" text-anchor="middle" font-family="SimHei" font-size="12">⑤ Verify</text><text x="240" y="290" text-anchor="middle" font-family="SimSun" font-size="9" fill="#555">检查护栏 → 判 outcome → 终止或回 ①</text>
+<text x="405" y="60" font-family="SimSun" font-size="8" fill="#666">↔ DevDesk:</text><text x="405" y="73" font-family="SimSun" font-size="8" fill="#666">System+User Prompt</text>
+<text x="405" y="115" font-family="SimSun" font-size="8" fill="#666">↔ DevDesk:</text><text x="405" y="128" font-family="SimSun" font-size="8" fill="#666">LlmEndpoint→POST</text>
+<text x="405" y="168" font-family="SimSun" font-size="8" fill="#666">↔ DevDesk:</text><text x="405" y="181" font-family="SimSun" font-size="8" fill="#666">ToolRegistry + 权限</text>
+<text x="405" y="225" font-family="SimSun" font-size="8" fill="#666">↔ DevDesk:</text><text x="405" y="238" font-family="SimSun" font-size="8" fill="#666">agent_messages 落库</text>
+</svg>
+<div class="caption"><span class="label">图 3-1</span> Harness 五阶段执行循环。右侧标注 DevDesk AgentLoop 的对应实现，两者在结构上同构。</div></div>
+
+<h2>技能的调用与实现</h2>
+<p>技能（skill）是一份教模型怎么干某类活的说明书，由 Anthropic 在 anthropics/skills 仓库 [30] 中定义了标准格式——一个 SKILL.md 文件，包含 YAML 前置元数据（frontmatter：技能名、触发描述）和 Markdown 正文（给模型的详细指令）。社区技能活跃——awesome-claude-code（56k stars）、awesome-claude-code-subagents（161 个子 agent）[29]，均为同格式的纯文本指令文件。</p>
+
+<div class="data-table">
+<caption>表 3-1  系统上下文六层编译结构</caption>
+<table>
+<tr><th>层序</th><th>层名</th><th>内容</th><th>来源</th><th>典型 Token 量级</th></tr>
+<tr><td>1</td><td>Platform Policy</td><td>平台级安全与使用策略，全平台统一</td><td>Harness 内置</td><td>~200-500</td></tr>
+<tr><td>2</td><td>Agent Contract</td><td>本 Agent 的身份契约——为谁工作、接受什么、交付什么、禁止什么</td><td>任务定义</td><td>~100-300</td></tr>
+<tr><td>3</td><td>Tenant / Project Rule</td><td>租户或项目级规则与偏好（如特定代码规范）</td><td>项目配置</td><td>~50-200</td></tr>
+<tr><td>4</td><td>Runtime Reminder</td><td>运行时的动态提醒——当前时间、OS 类型、工作区路径、git 分支、预算余量</td><td>Harness 环境注入</td><td>~200-400</td></tr>
+<tr><td>5</td><td>Selected Skill</td><td>本次任务匹配到的技能指令（经渐进披露，只注入匹配到的那几条）</td><td>技能目录扫描</td><td>每技能 ~300-1500</td></tr>
+<tr><td>6</td><td>Tool Descriptors</td><td>模型可调用的工具清单（名称 + 描述 + JSON Schema）</td><td>ToolRegistry 导出</td><td>~100-500/工具</td></tr>
+</table>
+</div>
+
+<p>技能采用渐进式披露（progressive disclosure）机制 [11]，分三层控制注入量，避免一次性把全部技能塞进上下文：</p>
+<p><strong>发现层。</strong>Harness 只在系统提示词中列出每个技能的名字和一句话适用场景（每条约 30-50 Token），模型据此判断"这个任务可能需要哪个技能"。这是最省 Token 的一层——20 个技能只需约 1000 Token。</p>
+<p><strong>选择层。</strong>当模型识别到某个技能匹配当前任务时，Harness 加载该技能的 Manifest（技能清单，约 200-500 Token），含工具声明、事件订阅、输入输出契约。模型据此确认是否真需要这个技能。</p>
+<p><strong>执行层。</strong>模型确认需要后，Harness 按需读取技能的完整 SKILL.md 正文（约 300-1500 Token），注入当前轮次的系统提示词第 5 层。执行完毕后即从上下文中移除，不在后续轮次中滞留。</p>
+<p>三层机制的整体效果是：全量 20 个技能完整注入需约 20000 Token，而渐进披露的实际开销通常在 2000-4000 Token——节省约 80% 的上下文占用。DevDesk 的 C 期技能导入器以 anthropics/skills 的 SKILL.md 格式为起点，工具注册参照 OpenCode 的四元组（名称 + 描述 + JSON Schema 参数定义 + 执行函数）[10]，外部技能带着自己的参数定义进来、不需要提前编译。</p>
+
+<div class="figure">
+<svg width="460" height="230" viewBox="0 0 460 230" xmlns="http://www.w3.org/2000/svg">
+<defs><marker id="a6" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="#1a1a1a"/></marker></defs>
+<rect x="10" y="12" width="120" height="50" rx="0" fill="none" stroke="#1a1a1a" stroke-width="2"/><text x="70" y="32" text-anchor="middle" font-family="SimHei" font-size="11">① 发现层</text><text x="70" y="48" text-anchor="middle" font-family="SimSun" font-size="8" fill="#555">名字 + 适用场景</text><text x="70" y="58" text-anchor="middle" font-family="SimSun" font-size="7" fill="#999">~30-50 Token/技能</text>
+<line x1="130" y1="37" x2="152" y2="37" stroke="#1a1a1a" stroke-width="1.5" marker-end="url(#a6)"/>
+<rect x="154" y="12" width="140" height="50" rx="0" fill="none" stroke="#1a1a1a" stroke-width="2"/><text x="224" y="32" text-anchor="middle" font-family="SimHei" font-size="11">② 选择层</text><text x="224" y="48" text-anchor="middle" font-family="SimSun" font-size="8" fill="#555">Manifest 清单</text><text x="224" y="58" text-anchor="middle" font-family="SimSun" font-size="7" fill="#999">~200-500 Token</text>
+<line x1="294" y1="37" x2="316" y2="37" stroke="#1a1a1a" stroke-width="1.5" marker-end="url(#a6)"/>
+<rect x="318" y="12" width="130" height="50" rx="0" fill="none" stroke="#1f4e79" stroke-width="2"/><text x="383" y="32" text-anchor="middle" font-family="SimHei" font-size="11" fill="#1f4e79">③ 执行层</text><text x="383" y="48" text-anchor="middle" font-family="SimSun" font-size="8" fill="#555">SKILL.md 全文</text><text x="383" y="58" text-anchor="middle" font-family="SimSun" font-size="7" fill="#999">~300-1500 Token</text>
+<text x="224" y="90" text-anchor="middle" font-family="SimSun" font-size="9" fill="#555">模型判断"可能需要"→ 加载清单确认 → 确认需要后读全文进上下文</text>
+<text x="224" y="108" text-anchor="middle" font-family="SimSun" font-size="9" fill="#1f4e79">执行完毕即从上下文移除，不在后续轮次滞留</text>
+<!-- 系统上下文六层示意 -->
+<rect x="50" y="128" width="380" height="90" rx="0" fill="none" stroke="#1a1a1a" stroke-width="1"/>
+<text x="60" y="148" font-family="SimHei" font-size="9" fill="#1f4e79">系统上下文六层（从上到下为注入优先级）</text>
+<text x="60" y="165" font-family="SimSun" font-size="8" fill="#555">L1 Platform Policy → L2 Agent Contract → L3 Project Rule → L4 Runtime Reminder →</text>
+<text x="60" y="180" font-family="SimSun" font-size="8" fill="#1f4e79">L5 ← Selected Skill（技能指令落在此层）→ L6 Tool Descriptors</text>
+<text x="60" y="198" font-family="SimSun" font-size="8" fill="#555">技能指令不替换其他层内容，而是追加到 L5 位置——六层各自独立编译、互不覆盖</text>
+</svg>
+<div class="caption"><span class="label">图 3-2</span> 技能渐进披露三层流程与系统上下文六层编译结构。模型从发现层按需递进到执行层，避免一次性全量注入。</div></div>
+
+<h2>MCP 的调用与实现</h2>
+<p>MCP（Model Context Protocol，模型上下文协议）是一种客户端-服务器协议，让 AI 应用以标准方式连接外部工具和数据源 [7]。协议采用 JSON-RPC 2.0 作为消息格式，客户端（如 DevDesk）发起连接后，通过 tools/list 方法发现服务器上注册的工具清单（名称 + 描述 + JSON Schema 参数定义），后续模型发起的每次工具调用都经 JSON-RPC 封包发送到服务器执行，结果原路返回。</p>
+<p>一次完整的 MCP 调用流程：客户端连接到 MCP 服务器（支持 stdio 进程通信或 HTTP/SSE 传输）→ 调用 tools/list 获取工具目录 → 将工具 Schema 合并进 ToolRegistry 统一注册表 → 模型发起 tool_use → Harness 判断该工具标记为 protocol="mcp" → 不走本地 execute()，转为 JSON-RPC tools/call 请求发送到 MCP 服务器 → 服务器返回结构化结果 → Harness 回喂模型 [10][38]。</p>
+<p>MCP 与自建工具注册表的关系不是替代，而是分层。自建工具注册表是内核的"单一真相源"——所有工具（无论来自哪个模块、哪种协议）都通过同一个 ToolRegistry 注册，权限闸、审计、预算护栏在此统一执行。MCP 协议适配层是对外的一层"口音转换"——当工具标记为 protocol="mcp" 时，执行路径从本地 C++ 函数切换为 JSON-RPC 远程调用 [38]。这种分层设计（ADR 0004）保证了：(1) 内核不依赖任何外部协议，单一注册源的管理成本恒定；(2) MCP 标准化浪潮到来时，只需扩展 ProtocolAdapter、不动内核。</p>
+
+<div class="figure">
+<svg width="470" height="260" viewBox="0 0 470 260" xmlns="http://www.w3.org/2000/svg">
+<defs><marker id="a7" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="#1a1a1a"/></marker></defs>
+<text x="235" y="18" text-anchor="middle" font-family="SimHei" font-size="11" fill="#1f4e79">Model（LLM）发起 tool_use</text>
+<line x1="235" y1="25" x2="235" y2="38" stroke="#1a1a1a" stroke-width="1.5" marker-end="url(#a7)"/>
+<rect x="110" y="40" width="250" height="32" rx="0" fill="none" stroke="#1a1a1a" stroke-width="2"/><text x="235" y="61" text-anchor="middle" font-family="SimHei" font-size="11">ToolRegistry（单一注册源）</text>
+<line x1="160" y1="72" x2="90" y2="130" stroke="#1a1a1a" stroke-width="1.5" marker-end="url(#a7)"/>
+<line x1="310" y1="72" x2="380" y2="130" stroke="#1a1a1a" stroke-width="1.5" marker-end="url(#a7)"/>
+<text x="120" y="100" text-anchor="middle" font-family="SimSun" font-size="8" fill="#1f4e79">protocol="native"</text><text x="350" y="100" text-anchor="middle" font-family="SimSun" font-size="8" fill="#1f4e79">protocol="mcp"</text>
+<rect x="20" y="132" width="140" height="50" rx="0" fill="none" stroke="#1a1a1a" stroke-width="2"/><text x="90" y="152" text-anchor="middle" font-family="SimHei" font-size="10">内置工具</text><text x="90" y="168" text-anchor="middle" font-family="SimSun" font-size="8" fill="#555">本地 execute() C++ 函数</text>
+<rect x="310" y="132" width="140" height="50" rx="0" fill="none" stroke="#1f4e79" stroke-width="2"/><text x="380" y="152" text-anchor="middle" font-family="SimHei" font-size="10" fill="#1f4e79">外部 MCP 工具</text><text x="380" y="168" text-anchor="middle" font-family="SimSun" font-size="8" fill="#555">JSON-RPC tools/call → 服务器</text>
+<line x1="90" y1="182" x2="90" y2="200" stroke="#1a1a1a" stroke-width="1.5" marker-end="url(#a7)"/>
+<line x1="380" y1="182" x2="380" y2="200" stroke="#1a1a1a" stroke-width="1.5" marker-end="url(#a7)"/>
+<rect x="40" y="202" width="100" height="22" rx="2" fill="none" stroke="#1a1a1a" stroke-width="1"/><text x="90" y="218" text-anchor="middle" font-family="SimSun" font-size="8">结果回喂模型</text>
+<rect x="330" y="202" width="100" height="22" rx="2" fill="none" stroke="#1f4e79" stroke-width="1"/><text x="380" y="218" text-anchor="middle" font-family="SimSun" font-size="8" fill="#1f4e79">结果回喂模型</text>
+<text x="235" y="248" text-anchor="middle" font-family="SimSun" font-size="8" fill="#666">两条路径共用同一权限闸 / 审计 / 预算护栏——差异仅在执行层</text>
+</svg>
+<div class="caption"><span class="label">图 3-3</span> 内置工具与 MCP 双路径对比。ToolRegistry 为单一注册源，protocol 字段决定走本地执行还是 JSON-RPC 远程调用。权限闸、审计、预算护栏在两条路径上统一执行。</div></div>
+
+<h2>用户如何扩展能力</h2>
+<p>对用户来说，给 DevDesk 智能体加一个新能力，对标 Claude Code 有三种安装面 [1][30]：插件市场（/plugin marketplace add，一键发现并安装）、技能目录（把 SKILL.md 文件放到指定目录下）、MCP 配置文件（在 .mcp.json 里声明服务器地址和参数）。DevDesk 的规划中，C 期技能导入器覆盖了"技能目录"这一面——用户把 SKILL.md 文件放入技能目录即可被自动发现和注册。MCP 客户端通道（评估项）覆盖"MCP 配置文件"面。插件市场对应社区生态，暂不在路线图中。</p>
+
+<div class="data-table">
+<caption>表 3-2  扩展能力安装面对比（Claude Code vs DevDesk）</caption>
+<table>
+<tr><th>安装面</th><th>Claude Code 方式</th><th>DevDesk 对应机制</th><th>差异</th></tr>
+<tr><td>插件市场</td><td>/plugin marketplace add <name>，一键安装</td><td>暂未规划（依赖社区生态）</td><td>DevDesk 无在线市场，技能靠手动获取</td></tr>
+<tr><td>技能目录</td><td>将 SKILL.md 放入项目 .claude/skills/ 或用户级 ~/.claude/skills/</td><td>C 期导入器：将 SKILL.md 放入指定目录 → 自动扫描 → 注册进 ToolRegistry</td><td>机制相同；DevDesk 以 anthropics/skills 的 SKILL.md 格式为起点</td></tr>
+<tr><td>MCP 配置文件</td><td>.mcp.json 声明 MCP 服务器地址、参数，Claude 启动时连接并发现工具</td><td>C 期评估 MCP 客户端通道：用户提供服务器地址 → ProtocolAdapter 连接 → 工具自动注册进 ToolRegistry</td><td>DevDesk 的内核为自建 ToolRegistry，MCP 工具经适配层接入而非直接暴露</td></tr>
+</table>
+</div>
+
+<p>用户扩展能力的技术层面遵循一条统一的注册管线：目录扫描（Harness 启动时扫描技能目录和 MCP 配置）→ 清单解析（读取 SKILL.md 的 frontmatter 和正文，或 MCP 服务器的 tools/list 响应）→ 注册进 ToolRegistry（单一真相源，所有工具在此汇聚）→ 权限初始化（默认最小权限：破坏性工具默认禁用，只读工具默认放行）→ 界面呈现（工具列表、技能清单在智能体页面的"可用工具"区可见、可逐条停用或卸载）。卸载即注销——从 ToolRegistry 移除对应条目，界面同步更新，不留残留注册项。整个生命周期中，权限闸、审计、预算护栏对所有工具（无论来源）统一执行。</p>
+
+<div class="figure">
+<svg width="460" height="310" viewBox="0 0 460 310" xmlns="http://www.w3.org/2000/svg">
+<defs><marker id="a8" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="#1a1a1a"/></marker></defs>
+<rect x="150" y="5" width="160" height="28" rx="2" fill="none" stroke="#1f4e79" stroke-width="1.5"/><text x="230" y="23" text-anchor="middle" font-family="SimHei" font-size="11" fill="#1f4e79">用户想加新能力</text>
+<line x1="230" y1="33" x2="230" y2="48" stroke="#1a1a1a" stroke-width="1.5" marker-end="url(#a8)"/>
+<rect x="120" y="50" width="220" height="28" rx="2" fill="none" stroke="#1a1a1a" stroke-width="2"/><text x="230" y="68" text-anchor="middle" font-family="SimSun" font-size="11">获取：技能包 / 插件 / MCP 地址</text>
+<line x1="230" y1="78" x2="230" y2="93" stroke="#1a1a1a" stroke-width="1.5" marker-end="url(#a8)"/>
+<rect x="100" y="95" width="260" height="28" rx="2" fill="none" stroke="#1a1a1a" stroke-width="2"/><text x="230" y="113" text-anchor="middle" font-family="SimSun" font-size="11">放入指定目录 / 粘贴 MCP 配置</text>
+<line x1="230" y1="123" x2="230" y2="138" stroke="#1a1a1a" stroke-width="1.5" marker-end="url(#a8)"/>
+<rect x="120" y="140" width="220" height="28" rx="2" fill="none" stroke="#1a1a1a" stroke-width="2"/><text x="230" y="158" text-anchor="middle" font-family="SimSun" font-size="11">系统扫描 + 解析清单</text>
+<line x1="230" y1="168" x2="230" y2="183" stroke="#1a1a1a" stroke-width="1.5" marker-end="url(#a8)"/>
+<polygon points="230,185 285,215 230,245 175,215" fill="none" stroke="#1a1a1a" stroke-width="2"/><text x="230" y="215" text-anchor="middle" font-family="SimHei" font-size="9">格式校验通过？</text>
+<line x1="175" y1="215" x2="60" y2="215" stroke="#1a1a1a" stroke-width="1.5" marker-end="url(#a8)"/><text x="110" y="208" font-family="SimSun" font-size="8" fill="#c00">否 → 提示失败原因</text>
+<rect x="10" y="199" width="50" height="18" rx="2" fill="none" stroke="#c00" stroke-width="1"/><text x="35" y="212" text-anchor="middle" font-family="SimSun" font-size="7" fill="#c00">失败</text>
+<line x1="285" y1="215" x2="370" y2="215" stroke="#1a1a1a" stroke-width="1.5" marker-end="url(#a8)"/><text x="330" y="208" font-family="SimSun" font-size="8" fill="#1f4e79">是 → 注册</text>
+<rect x="130" y="247" width="200" height="28" rx="2" fill="none" stroke="#1a1a1a" stroke-width="2"/><text x="230" y="265" text-anchor="middle" font-family="SimSun" font-size="11">注册进 ToolRegistry（单一真相源）</text>
+<line x1="230" y1="275" x2="230" y2="288" stroke="#1a1a1a" stroke-width="1.5" marker-end="url(#a8)"/>
+<rect x="120" y="290" width="220" height="28" rx="2" fill="none" stroke="#1f4e79" stroke-width="1.5"/><text x="230" y="308" text-anchor="middle" font-family="SimSun" font-size="11" fill="#1f4e79">界面可查可用 → 不用即卸载注销</text>
+</svg>
+<div class="caption"><span class="label">图 3-4</span> 用户扩展能力业务流程图。从获取到注册到卸载，全生命周期受权限闸与审计统一管控。菱形为格式校验判断点，含失败分支。</div></div>
+
+
+<!-- ====== 第四章：调研结论 ====== -->
+<h1>调研结论</h1>
+<div class="keypoints"><p><strong>本章要点：</strong>重组七路调研结论，按主题（行业格局 / Harness 机制 / 工具生态 / GitLab / 可靠性与自主性 / 未来趋势）整理，每节先给结论与证据。开头为结论总表——12 条关键结论，每条附来源引用号及对路线图哪期哪条的意义。</p></div>
+
+<div class="conclusions-table">
+<table>
+<tr><th style="width:2em;">#</th><th>结论</th><th style="width:3em;">来源</th><th>对项目的意义</th></tr>
+<tr><td class="cnum">1</td><td>Claude Code 已验证 Harness 骨架可行，DevDesk 的"工具注册表 + 事件触发 + agent loop"架构方向正确。</td><td>[1][2][4]</td><td>验证 A 期收口基线；四层架构及依赖反转设计直接对齐该趋势</td></tr>
+<tr><td class="cnum">2</td><td>MCP 已是跨客户端事实标准，预计 2027-2028 年进入 IETF/W3C 标准化。自建工具注册表如不做 MCP 适配层，会在标准化浪潮中被边缘化。</td><td>[5][6][7]</td><td>A 期即埋 protocol 适配缝（约一天工作量）；C 期加 MCP 客户端通道评估</td></tr>
+<tr><td class="cnum">3</td><td>MR 留人审是行业共识——六大产品无一主张全自动合并。DevDesk 的"PRD→MR 流水线、MR 留人审"定位正确且务实。</td><td>[3][8][9]</td><td>确证 ADR 0001；E 期三层质量闸为行业标配</td></tr>
+<tr><td class="cnum">4</td><td>OpenCode v2.1.1 的权限三元组可直接搬到 C 期权限升级，相比现有全局开关是按工具粒度控制的成熟方案。</td><td>[10]</td><td>C 期权限逐工具升级的直接模板；07 报告 Top 1 吸收项</td></tr>
+<tr><td class="cnum">5</td><td>任务状态十态枚举 + 多维预算护栏 + 无进展检测是经企业级实证的任务执行模型。</td><td>[11]</td><td>A 期状态多维化、D1 无进展检测、E 期团队级停止条件的直接设计输入</td></tr>
+<tr><td class="cnum">6</td><td>开源 Agent 框架共同趋势：agent loop 极简核心 + 能力快插模式。DevDesk 的"轻资产原则"与此一致。</td><td>[12][13][14]</td><td>确证 ADR 0004；pydantic-ai Harness 模式为 C 期架构参考</td></tr>
+<tr><td class="cnum">7</td><td>GitLab MCP Server 官方实现已归档，无 MR 审查工具。社区搜索无可靠结果——B3 工具面需自建。</td><td>[15]</td><td>B3 自建五件套为最小承诺；E 期建 MR 四件套为追加</td></tr>
+<tr><td class="cnum">8</td><td>reviewdog 是 GitLab MR 自动审查的事实标准，其 diff-filter 模式可直接抄进 B3 设计。</td><td>[16]</td><td>B3 审查策略的直接参考——只分析 MR diff 变更行</td></tr>
+<tr><td class="cnum">9</td><td>学术界一致结论：自我评价必须结构化（rubric，即打分表），不能给模型自由打分空间；审查者与执行者必须分离。</td><td>[17][18][19]</td><td>D2 做完自检的设计基石——机械打分表 + 分离审查者 + 不退化验证门</td></tr>
+<tr><td class="cnum">10</td><td>失败分类是重试的前提：瞬时错误退避重试（1s→2s→4s，上限 3 次），逻辑错误进反思链，同类错误 3 次熔断。</td><td>[20][21]</td><td>D1 失败重试的精确设计参数；防"盲重试"消耗 Token</td></tr>
+<tr><td class="cnum">11</td><td>短记忆正在被上下文替代；跨会话记忆仍是刚需，形态从"自维护"转向"协议化外部存储（MCP Memory）"。</td><td>[11][38]</td><td>不自建记忆系统；C 期评估 MCP Memory Server 接入</td></tr>
+<tr><td class="cnum">12</td><td>桌面 Agent 的持久竞争优势在隐私与数据主权——个人数据正从"存在服务端"回流到"存在本地"。</td><td>[24][25][26]</td><td>确证桌面常驻定位；所有用户数据默认本地存储</td></tr>
+</table>
+</div>
+
+<h2>行业格局</h2>
+<p>2026 年 AI Coding Agent 已从"代码补全"演进为"自主多步任务执行"。Claude Code 验证了"终端 agent + skills/plugins + 多表面切换"的 Harness 路线 [1]；GitHub Copilot 推出五级代理体系（agent mode / plan mode / subagent / custom agent / cloud agent）[3]；Cursor 被 SpaceX 收购后提出"self-driving codebases"愿景 [4]。桌面端自动化产品（n8n 的 agent+workflow 双引擎、Raycast AI 的 Screen Awareness + Memory [27][28]）验证了"桌面 AI 操作系统"方向。代码审查自动化已从实验变为标配——GitHub Copilot code review 覆盖所有 PR、Factory.ai 逐 PR 审查 [9]——验证了 DevDesk GitLab 审查对接路线的紧迫性。DevDesk 选型"桌面壳 + agent loop + 工具注册"在形态上已正确；Copilot 的 plan mode 提示 agent loop 可内置"Plan First"策略。</p>
+
+<h2>成熟 Harness 机制</h2>
+<p>OpenCode v2.1.1 源码提供了可直接吸收的权限三元组规则引擎——每 Rule = {action, resource, effect}，effect 取 allow/deny/ask，支持 * 通配 [10]。其 Agent 角色体系（mode: primary/subagent/all + tool 白名单 + model 绑定 + steps 上限）直接映射到 D/E 期角色切分。手册（12 号报告）的 Harness 执行内核（Prepare→Model→Act→Observe→Verify）[11] 与 DevDesk AgentLoop 同构（详见第三章 3.1 节），但在任务状态（十态 vs 五态）和预算护栏（六维 vs 三维）上更完整。建议权限从全局开关升级为逐工具三态（C 期，抄 OpenCode Rule 结构）；任务状态从五态升级为十态（A 期）；审计加 Context Manifest（C/D 期）。</p>
+
+<h2>工具生态与技能</h2>
+<p>Claude Code 技能生态活跃——awesome-claude-code（56k stars）、awesome-claude-code-subagents（161 个子 agent）[29]。官方 anthropics/skills 提供 SKILL.md 格式 spec + 渐进披露加载机制 [30]。开源 Agent 框架盘点发现六个有价值的参考——smolagents（~1000 行核心）[12]、pydantic-ai（Harness 快插模式）[13]、OpenAI Agents SDK（handoff 交接）[14] 等。建议 D-R2 技能导入先搬 2-3 个纯指令型技能验证可行性；C 期技能导入器以 anthropics/skills spec 为格式起点；工具注册参照 OpenCode 四元组。</p>
+
+<h2>GitLab 对接</h2>
+<p>reviewdog 是 GitLab MR 自动审查的事实标准 [16]。GitLab MCP Server 官方实现已归档，仅有 9 个仓库管理工具 [15]。webhook 事件接入推荐 signing token（HMAC-SHA256，一种通过数字签名验证消息来源和完整性、防止伪造请求的安全机制）[34]。建议 B3 自建五件套（列 MR / MR 详情 / 读 diff / 读讨论 / 读流水线）为最小承诺；E 期建 MR 四件套为追加；事件接入采用 webhook + HMAC-SHA256 推到本地 HTTP 服务，不走 GitLab CI。</p>
+
+<h2>可靠性与自主性</h2>
+<p>学术文献对验收自评的一致结论：LLM 自评存在位置偏见、冗长偏见、自我增强偏见 [17]。解法三招：结构化评分表（rubric）[18]、审查者与执行者分离 [18]、不退化门 [19]。失败重试的核心洞察来自 ExpeL [20]：三连败同类错误 = 规则缺陷，单次失败 = 概率噪声。ANNEAL [21] 发现持久符号修复让复发率从 72-100% 降到 0%。自唤醒三边界来自 Generative Agents [35]：最多 3 次、随时可取消、醒来先自检。建议 D1 按瞬时/逻辑分类重试加无进展检测；D2 用机械打分表加审查者分离；D3 自唤醒最多 3 次 + 取消令牌；D 期校准为"可监控的半自主"。</p>
+
+<h2>未来趋势与押注</h2>
+<p>2027-2028 推演 [38]：上下文窗口持续扩大使短记忆被"直接塞进上下文"替代；MCP 将进入 IETF/W3C 标准化；AI 生成代码占比上升后，代码审查从质量把关变为意图对齐审查——检查 AI 是否理解了正确的事情，而非检查实现细节 Bug。OS 级 agent 会吃掉通用助手市场，但不会吃掉专业工具市场（DevDesk 是专业开发者工具中枢，与 OS agent 是上下游关系）。路线图方向正确，无"全期报废"风险。最大过时风险在协议层——C 期不做 MCP 适配则 2027-2028 年被迫返工。建议 A 期埋 MCP 适配缝、不自建记忆系统、不自建 PRD 解析器和代码审查引擎——DevDesk 的价值是编排和集成。</p>
+
+<!-- ====== 第五章：与本项目计划的结合 ====== -->
+<h1>与本项目计划的结合</h1>
+<div class="keypoints"><p><strong>本章要点：</strong>按 A→E 分期路线逐期展开，每期写出设计参考来源、评估项与对冲；列出五项已拍板决策；七条设计原则；吸收映射总表；结论→计划逐项对接表。</p></div>
+
+<div class="figure">
+<svg width="500" height="170" viewBox="0 0 500 170" xmlns="http://www.w3.org/2000/svg">
+<defs><marker id="a9" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="#1a1a1a"/></marker></defs>
+<rect x="5" y="30" width="88" height="62" rx="0" fill="none" stroke="#1a1a1a" stroke-width="2"/><text x="49" y="52" text-anchor="middle" font-family="SimHei" font-size="12">A 收口</text><text x="49" y="68" text-anchor="middle" font-family="SimSun" font-size="8" fill="#555">触发统一·角色</text><text x="49" y="80" text-anchor="middle" font-family="SimSun" font-size="8" fill="#555">设定·撞闸可见</text>
+<line x1="93" y1="61" x2="115" y2="61" stroke="#1a1a1a" stroke-width="1.5" marker-end="url(#a9)"/>
+<rect x="117" y="30" width="88" height="62" rx="0" fill="none" stroke="#1a1a1a" stroke-width="2"/><text x="161" y="52" text-anchor="middle" font-family="SimHei" font-size="12">B 对接</text><text x="161" y="68" text-anchor="middle" font-family="SimSun" font-size="8" fill="#555">B1 文件·B2 搜索</text><text x="161" y="80" text-anchor="middle" font-family="SimSun" font-size="8" fill="#555">B3 GitLab 只读</text>
+<line x1="205" y1="61" x2="227" y2="61" stroke="#1a1a1a" stroke-width="1.5" marker-end="url(#a9)"/>
+<rect x="229" y="30" width="88" height="62" rx="0" fill="none" stroke="#1a1a1a" stroke-width="2"/><text x="273" y="52" text-anchor="middle" font-family="SimHei" font-size="12">C 扩展</text><text x="273" y="68" text-anchor="middle" font-family="SimSun" font-size="8" fill="#555">技能导入·权限</text><text x="273" y="80" text-anchor="middle" font-family="SimSun" font-size="8" fill="#555">逐工具·MCP 评估</text>
+<line x1="317" y1="61" x2="339" y2="61" stroke="#1a1a1a" stroke-width="1.5" marker-end="url(#a9)"/>
+<rect x="341" y="30" width="88" height="62" rx="0" fill="none" stroke="#1a1a1a" stroke-width="2"/><text x="385" y="52" text-anchor="middle" font-family="SimHei" font-size="12">D 自主</text><text x="385" y="68" text-anchor="middle" font-family="SimSun" font-size="8" fill="#555">D1 重试·D2 自检</text><text x="385" y="80" text-anchor="middle" font-family="SimSun" font-size="8" fill="#555">D3 自唤醒·D4 通知</text>
+<line x1="429" y1="61" x2="451" y2="61" stroke="#1a1a1a" stroke-width="1.5" marker-end="url(#a9)"/>
+<rect x="453" y="30" width="40" height="62" rx="0" fill="none" stroke="#1f4e79" stroke-width="2"/><text x="473" y="52" text-anchor="middle" font-family="SimHei" font-size="10" fill="#1f4e79">E 流水线</text><text x="473" y="68" text-anchor="middle" font-family="SimSun" font-size="7" fill="#555">PRD</text><text x="473" y="80" text-anchor="middle" font-family="SimSun" font-size="7" fill="#555">→MR</text>
+<text x="161" y="130" text-anchor="middle" font-family="SimSun" font-size="8" fill="#1f4e79">B1+D1 → B2+D2 → B3+D3 交错交付（D-R1）</text>
+<text x="273" y="148" text-anchor="middle" font-family="SimSun" font-size="8" fill="#666">决策 D-R1：B 与 D 交错推进、小步快跑，各自独立可用</text>
+</svg>
+<div class="caption"><span class="label">图 5-1</span> A→E 路线阶段图。B 期与 D 期按 D-R1 决策交错交付。</div></div>
+
+<h2>A 期：收口</h2>
+<p>A 期目标是把现有功能收到"顺手"——触发呈现统一、任务可定制、异常原因可见。八项内容：</p>
+<p><strong>1. 触发方式 UI 归四大类</strong>（手动 / 按时间 / 等事件 / 一直跑）。底层保存方式不动，只改界面展示。</p>
+<p><strong>2. 任务加角色设定栏 + AI 草稿三件套</strong>（目标 + 角色设定 + 记忆建议），权限与迭代上限等配置仍不听模型建议。</p>
+<p><strong>3. 撞闸和失败原因可见</strong>——每次"没跑起来"或"跑了但失败"界面上都有可读原因文案。</p>
+<p><strong>4. 对冲——工具接口预留 MCP 协议适配缝</strong>（每个工具定义加 protocol 字段，初始值 "native"，序列化走 ProtocolAdapter 抽象层）[38]。约一天工作量，防 C 期返工。</p>
+<p class="chap-break">—— 以上四项为必做项，以下为增强项与候选 ——</p>
+<p><strong>5. 任务状态与预算护栏多维化</strong> [11]：状态从五态升级为十态（CREATED / RUNNING / WAITING_INPUT / WAITING_APPROVAL / WAITING_EVENT / PAUSED / VERIFYING / COMPLETED / FAILED / CANCELLED）；预算护栏从三维升级为六维（步骤数 / 时长 / Token / 费用 / 工具调用次数 / 子任务并发）。"等审批"态依赖 C 期权限机制，C 期落地前该态不可达。</p>
+<p><strong>6. 运行记录补 outcome 字段</strong> [10]：记录每次运行最终是圆满、部分完成还是中断。</p>
+<p><strong>7. 内置环境上下文注入（Claude Code 同款能力）</strong>——每次运行组装六类环境事实进系统提示词：时空锚定（日期时间）/ 机器环境（OS 类型与架构、外网受限声明）/ 位置与仓库（工作区根路径、git 分支经 .git/HEAD 文件直读）/ 任务与运行元数据（任务名、运行编号、上次结果联动第 6 条）/ 能力与边界声明（可用工具总数、环境限制）/ 预算余量（剩余迭代/墙钟/Token，无人值守特有）。三条红线：只注环境事实绝不注密钥、按场景取最小充分集、环境变化检测补行不整块重注。</p>
+<p><strong>8. 候选——任务汇总一览提到列表层</strong>：不打开详情弹窗即可横向比较各任务成功率与耗时，A 期方案时与列表行布局一并裁决。</p>
+<p>设计参考来源：smolagents 的代码即行动格式 [12]、OpenCode 的环境上下文块 [10]（其 builtins.ts 中 core/date 和 core/environment 两个 Instruction 即是环境注入的标准范式——前者注入当前日期、后者注入工作目录/仓库类型/平台信息）、手册的任务状态与记忆结构化 [11]。最大风险是对冲项——MCP 适配缝如不在此期埋下，C 期返工代价是重构整个工具层。</p>
+
+<h2>B 期：对接能力</h2>
+<p>B 期分三批（B1 文件工具组+事件扩容 / B2 搜索工具+事件扩容 / B3 GitLab 只读五件套），每批配 D 期一块能力交错交付（D-R1）。B1 文件工具限专用工作区（ADR 0002），超出工作区路径一律拒绝。<strong>B1 必答题</strong>：智能体自己的工具写入（todo.*/md.* 等）要不要发事件——存在自触发循环风险（智能体写 → 触发事件 → 派发新运行 → 再写）；候选解法为事件携带来源标记、工具路径写入打标跳过。B1 立项时必须先拍死这道题再扩事件。B3 按五件套实现——列 MR / MR 详情 / 读 diff / 读讨论 / 读流水线状态 [15]，只读不产生外部可见影响。reviewdog 的 diff-filter 模式 [16] 直接抄进 B3。事件接入采用 webhook + HMAC-SHA256 签名验证推到本地 HTTP 服务 [34]，手动粘贴 MR 链接兜底。</p>
+
+<h2>C 期：扩展机制</h2>
+<p>C 期把"加新工具/事件"从改代码降为配置级操作。技能导入器以 anthropics/skills spec 为格式起点 [30]，注册参照 OpenCode 四元组 [10]。权限从全局开关升级为逐工具三态（ALLOW/DENY/ASK），抄 OpenCode 的 Rule 数据结构 [10]，高风险动作走 Preview-Approve-Commit-Verify 四步确认 [11]。MCP 客户端通道评估为开工必答题——内核保持自建工具注册表（单一真相源），对外加 MCP 协议兼容层 [38]。</p>
+
+<h2>D 期：自主性</h2>
+<p>D1 失败自动重试：瞬时错误指数退避（1s→2s→4s，上限 3 次），逻辑错误不重试而进反思链，同类错误 3 次按 10 分钟窗口 + 按任务独立计数熔断 [20][21]。重试前先做无进展检测 [11]。候选（旧账转入）：智能体直连路径的供应商故障自动切换——代理路径已有备用供应商单跳重试，直连未随迁；出现真实多供应商场景时随 D1 重试一并设计。D2 做完自检：结构化评分表（rubric，pass/fail 条目）、审查者与执行者分离（不同 prompt 甚至不同模型）[18]、不退化门 [19]。D3 自唤醒：复用闹钟底层机制，最多 3 次 + 取消令牌 + 醒来先自检 [35][19]。D4 失败升级通知。跨会话记忆评估对接 MCP Memory Server [38]。目标校准为"可监控的半自主"。</p>
+
+<h2>E 期：PRD→MR 流水线</h2>
+<p>E 期是智能中枢的目标形态：智能体承担 PM / QA / 开发三角色，从需求文档走到 GitLab 合并请求。流水线路径为需求文档输入 → PM 产出任务分解 → 开发产出代码变更 → QA 产出测试和审计结论 → 建 MR。全程内建三层质量闸（测试闸 / AI 审查闸 / 人工合并闸），MR 留人审合并（ADR 0001）。角色模型为每个角色 = 独立系统提示词 + 可用工具子集 + 阶段闸门 [10]。交接物为结构化 Handoff（目标/已知事实/待处理项/可用引用），下游必须引用上游交接卡片才能开工 [11][36]。QA 角色测试闸采用仿真三模式——回归测试用全替身（用模拟数据替代真实外部依赖，便宜可复现）、端到端用隔离真实依赖（在独立工作区里跑真实构建与测试）[11]。团队级停止条件 [11] 防流水线死循环。预算租约（Budget Lease）——子任务从父任务继承预算，父任务终止时子任务预算同时失效 [11]。</p>
+
+<div class="figure">
+<svg width="470" height="290" viewBox="0 0 470 290" xmlns="http://www.w3.org/2000/svg">
+<defs><marker id="a10" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="#1a1a1a"/></marker></defs>
+<rect x="145" y="5" width="180" height="24" rx="2" fill="none" stroke="#1f4e79" stroke-width="1.5"/><text x="235" y="21" text-anchor="middle" font-family="SimHei" font-size="10" fill="#1f4e79">需求文档（PRD）</text>
+<line x1="235" y1="29" x2="235" y2="40" stroke="#1a1a1a" stroke-width="1.5" marker-end="url(#a10)"/>
+<rect x="145" y="42" width="180" height="38" rx="0" fill="none" stroke="#1a1a1a" stroke-width="2"/><text x="235" y="58" text-anchor="middle" font-family="SimHei" font-size="11">PM Agent</text><text x="235" y="73" text-anchor="middle" font-family="SimSun" font-size="8" fill="#555">理解需求 → 拆解任务 → 产出需求卡片</text>
+<line x1="235" y1="80" x2="235" y2="91" stroke="#1a1a1a" stroke-width="1.5" marker-end="url(#a10)"/>
+<rect x="135" y="93" width="200" height="20" rx="2" fill="none" stroke="#1f4e79" stroke-width="1.5"/><text x="235" y="107" text-anchor="middle" font-family="SimHei" font-size="9" fill="#1f4e79">◆ 质量闸 1：需求卡片完整性校验</text>
+<line x1="235" y1="113" x2="235" y2="124" stroke="#1a1a1a" stroke-width="1.5" marker-end="url(#a10)"/>
+<rect x="145" y="126" width="180" height="38" rx="0" fill="none" stroke="#1a1a1a" stroke-width="2"/><text x="235" y="142" text-anchor="middle" font-family="SimHei" font-size="11">Dev Agent</text><text x="235" y="157" text-anchor="middle" font-family="SimSun" font-size="8" fill="#555">写代码 → 读 Git → 提变更 → 自测覆盖清单</text>
+<line x1="235" y1="164" x2="235" y2="175" stroke="#1a1a1a" stroke-width="1.5" marker-end="url(#a10)"/>
+<rect x="100" y="177" width="270" height="20" rx="2" fill="none" stroke="#1f4e79" stroke-width="1.5"/><text x="235" y="191" text-anchor="middle" font-family="SimHei" font-size="9" fill="#1f4e79">◆ 质量闸 2：AI 审查（独立 agent，审查者与实现者分离）</text>
+<line x1="235" y1="197" x2="235" y2="208" stroke="#1a1a1a" stroke-width="1.5" marker-end="url(#a10)"/>
+<rect x="145" y="210" width="180" height="38" rx="0" fill="none" stroke="#1a1a1a" stroke-width="2"/><text x="235" y="226" text-anchor="middle" font-family="SimHei" font-size="11">QA Agent</text><text x="235" y="241" text-anchor="middle" font-family="SimSun" font-size="8" fill="#555">测试闸：全替身 / 混合 / 隔离真实依赖</text>
+<line x1="235" y1="248" x2="235" y2="258" stroke="#1a1a1a" stroke-width="1.5"/>
+<rect x="125" y="260" width="220" height="22" rx="2" fill="none" stroke="#1f4e79" stroke-width="2"/><text x="235" y="275" text-anchor="middle" font-family="SimHei" font-size="10" fill="#1f4e79">◆ 质量闸 3：人工合并（ADR 0001，永不自动）</text>
+</svg>
+<div class="caption"><span class="label">图 5-2</span> E 期 PRD→MR 流水线流程图。三个角色串行推进，每阶段产出经质量闸校验后进入下一阶段。三层质量闸缺一不可、顺序不换。</div></div>
+
+<h2>已拍板决策</h2>
+<div class="data-table">
+<caption>表 5-1  五项已拍板决策</caption>
+<table>
+<tr><th style="width:3em;">编号</th><th>决策</th><th>依据</th></tr>
+<tr><td class="num">D-R1</td><td><strong>推进节奏</strong>：B 期对接与 D 期自主性交错交付、小步快跑。每批一块对接 + 一块自主，各自独立可用。</td><td>用户 2026-10-21 拍板</td></tr>
+<tr><td class="num">D-R2</td><td><strong>技能导入</strong>：先搬 2-3 个纯指令型 Claude Code 技能，用技能说明书指导智能体验证可行性。优先序：code-review、brainstorming、skill-creator。</td><td>用户 2026-10-21 拍板</td></tr>
+<tr><td class="num">D-R3</td><td><strong>文件工具边界</strong>：智能体文件工具只限专用工作区，业务数据必须走业务工具读写。系统目录和 .git 硬禁。</td><td>ADR 0002</td></tr>
+<tr><td class="num">D-R4</td><td><strong>GitLab 分档</strong>：只读先做 → 写评论每条单独授权 → 建 MR 留到 E 期。</td><td>ADR 0003</td></tr>
+<tr><td class="num">D-R5</td><td><strong>流水线终点</strong>：智能体产出 MR，合不合并由人拍板。质量闸内建在流水线里，最后一道门永远不自动。</td><td>ADR 0001</td></tr>
+</table>
+</div>
+
+<h2>设计原则</h2>
+<p>综合七路调研，提炼七条贯穿 A→E 的设计原则。以下每条的编号和主题保留，但表述从单句格言展开为完整推理段落。</p>
+<p><strong>1. 工具注册表定位。</strong> 内核维持自己的工具注册表作为单一注册源——所有工具在此汇聚，插件状态一处管理。对外通过 MCP 协议暴露，不在内核里同时维护两套工具定义体系。这避免了 dsh 的插件状态散落五处的反模式：激活/注销只需操作一份注册清单。</p>
+<p><strong>2. MCP 适配时机。</strong> 每个工具定义结构体现在就预留 protocol 字段（初始值 "native"），工具调用序列化与反序列化走独立的 ProtocolAdapter 抽象层。A 期做这件事约一天工作量——C 期再做，代价是整个工具层的重构。</p>
+<p><strong>3. 记忆系统选型。</strong> 现有任务级便签维持现状不扩展。跨会话记忆直接对接 MCP Memory Server（官方维护的参考实现之一）。11 号报告的推演结论是：短记忆正在被上下文窗口的持续扩大所替代，自建记忆在 2027 年后没有存在理由 [38]。</p>
+<p><strong>4. 自我评价必须结构化。</strong> 用 rubric（打分表）把验收标准拆成 pass/fail 机械验证项，不给模型 1-5 分的自由打分空间——这是 Reflexion、Self-Refine、LLM-as-a-Judge 三条文献的一致结论 [17][18][19]。审查者与执行者至少使用不同的 system prompt；预算允许时用不同模型路由。新策略提交前必须通过 hold-out 验证集（保留一部分不参与训练的数据），退化了就回滚。</p>
+<p><strong>5. 交接物是结构化 artifact。</strong> 角色间的交接信息使用 JSON/Markdown 模板而非自然语言聊天记录，每条带版本号和溯源（谁改的、基于什么证据、什么时间）。下游必须在 prompt 中引用上游 artifact 的摘要才能开始工作——缺少摘要的，系统层直接拦截，不进入模型推理。这借鉴了 MetaGPT 的 SOP 编码（下游消费上游文档不能跳过）[36] 和 SWE-agent 的 ACI 概念（交接物应是机器可解析的结构化记录）[37]。</p>
+<p><strong>6. 自主性校准。</strong> 每个自主决策保留可追溯的决策依据（trace）、可撤销的错误操作（回滚能力）、关键动作前的确认钩子（人审）。追求"完全无人值守"是 2028 年之后的事——当前所有产品离真正无人值守都还有距离，"可监控的半自主"比"假全自主"更保值 [38]。</p>
+<p><strong>7. 不自建已存在的组件。</strong> PRD 解析器、代码审查引擎、技能市场这三个领域都已经有成熟的外部方案——PRD 解析有 Claude，代码审查有 code-review skill 和 MCP Server，技能市场有 MCP World。DevDesk 的价值不在于重新发明这些组件，而在于把它们编排成一条从需求到 MR 的可审计流水线 [38]。</p>
+
+<h2>吸收映射</h2>
+<div class="data-table">
+<caption>表 5-2  吸收映射总表</caption>
+<table>
+<tr><th>来源</th><th>机制/设计点</th><th>状态</th><th>对哪期</th></tr>
+<tr><td>07</td><td>权限 Rule 三元组 + evaluate</td><td>直接吸收</td><td>C 期</td></tr>
+<tr><td>07</td><td>工具注册四元组</td><td>直接吸收</td><td>B 期</td></tr>
+<tr><td>07</td><td>Agent mode 三级 + tool 白名单</td><td>直接吸收</td><td>D/E 期</td></tr>
+<tr><td>07</td><td>Session outcome 字段 + fork 机制</td><td>直接吸收</td><td>A/D 期</td></tr>
+<tr><td>07</td><td>tool 执行进度回调</td><td>候选评估</td><td>C 期</td></tr>
+<tr><td>12</td><td>任务状态十态 + 六维预算护栏</td><td>直接吸收</td><td>A 期</td></tr>
+<tr><td>12</td><td>Context Manifest</td><td>直接吸收</td><td>C/D 期</td></tr>
+<tr><td>12</td><td>权限三态 + Preview-Approve-Commit-Verify</td><td>直接吸收</td><td>C 期</td></tr>
+<tr><td>12</td><td>完成验证五层强度分级</td><td>直接吸收</td><td>D 期</td></tr>
+<tr><td>12</td><td>Handoff 交接四类信息</td><td>直接吸收</td><td>E 期</td></tr>
+<tr><td>12</td><td>无进展检测 + Budget Lease + 团队停止条件</td><td>直接吸收</td><td>D/E 期</td></tr>
+<tr><td>12</td><td>Agent Simulation 仿真三模式</td><td>直接吸收</td><td>E 期</td></tr>
+<tr><td>07</td><td>ACP 协议全栈实现</td><td>不适用</td><td>—</td></tr>
+<tr><td>07</td><td>Effect-TS Schema 类型系统</td><td>不适用（C++ 无等价物）</td><td>—</td></tr>
+<tr><td>12</td><td>MCP 全协议与 MCP Gateway</td><td>不适用（明确不做）</td><td>—</td></tr>
+<tr><td>12</td><td>AI 网关三层</td><td>不适用（桌面单用户）</td><td>—</td></tr>
+</table>
+</div>
+
+<h2>结论→计划对照</h2>
+<div class="data-table">
+<caption>表 5-3  调研结论与路线图计划逐项对接</caption>
+<table>
+<tr><th style="width:2em;">#</th><th>结论摘要</th><th>对应路线图条目</th><th>对接动作</th></tr>
+<tr><td class="num">1</td><td>Harness 骨架方向正确</td><td>A 期（全部内容）</td><td>确证基线，无需调整</td></tr>
+<tr><td class="num">2</td><td>MCP 标准化趋势</td><td>A 期对冲 #4 + C 期 #4</td><td>A 期埋 protocol 适配缝；C 期评估 MCP 客户端</td></tr>
+<tr><td class="num">3</td><td>MR 留人审是行业共识</td><td>E 期质量闸 + ADR 0001</td><td>确证设计判断；三层闸不缩水</td></tr>
+<tr><td class="num">4</td><td>OpenCode 权限三元组可搬</td><td>C 期 #3（权限升级）</td><td>直接抄 Rule 结构 + evaluate 算法</td></tr>
+<tr><td class="num">5</td><td>任务状态十态 + 多维预算</td><td>A 期 #5（任务状态多维化）</td><td>按手册模型升级现有五态+三维护栏</td></tr>
+<tr><td class="num">6</td><td>开源框架轻核心+快插模式</td><td>C 期 #2（技能导入器）</td><td>确证轻资产原则；pydantic-ai Harness 为架构参考</td></tr>
+<tr><td class="num">7</td><td>GitLab MCP 官方已归档</td><td>B3 期（自建工具面）</td><td>五件套自建；评估不再等社区方案</td></tr>
+<tr><td class="num">8</td><td>reviewdog diff-filter 可抄</td><td>B3 期（审查策略）</td><td>只分析 MR diff 变更行</td></tr>
+<tr><td class="num">9</td><td>自我评价必须结构化</td><td>D2 期（做完自检）</td><td>机械打分表 + 审查者分离 + 不退化门</td></tr>
+<tr><td class="num">10</td><td>失败分类+熔断+无进展检测</td><td>D1 期（失败重试）</td><td>瞬时退避/逻辑反思/同类熔断三轨制</td></tr>
+<tr><td class="num">11</td><td>短记忆贬值、长记忆接 MCP</td><td>D 期评估项（跨会话记忆）</td><td>不扩展自建记忆；评估 MCP Memory Server</td></tr>
+<tr><td class="num">12</td><td>桌面隐私是持久竞争优势</td><td>设计原则 #7（数据主权）</td><td>默认本地存储、云端访问显式授权</td></tr>
+</table>
+</div>
+
+<div class="data-table">
+<caption>表 5-4  B3 期工具面草案</caption>
+<table>
+<tr><th>工具</th><th>API 端点</th><th>参数</th><th>Scope</th></tr>
+<tr><td>list_merge_requests</td><td>GET /projects/:id/merge_requests</td><td>project_id, state?, search?, page?, per_page?</td><td>read_api</td></tr>
+<tr><td>get_merge_request</td><td>GET /projects/:id/merge_requests/:mr_iid</td><td>project_id, mr_iid</td><td>read_api</td></tr>
+<tr><td>get_merge_request_changes</td><td>GET /projects/:id/merge_requests/:mr_iid/changes</td><td>project_id, mr_iid</td><td>read_api</td></tr>
+<tr><td>get_merge_request_discussions</td><td>GET /projects/:id/merge_requests/:mr_iid/discussions</td><td>project_id, mr_iid, page?, per_page?</td><td>read_api</td></tr>
+<tr><td>get_pipeline_status</td><td>GET /projects/:id/pipelines/:pipeline_id</td><td>project_id, pipeline_id 或 mr_iid</td><td>read_api</td></tr>
+</table>
+</div>
+
+<div class="data-table">
+<caption>表 5-5  E 期建 MR 最小工具面草案</caption>
+<table>
+<tr><th>工具</th><th>API 端点</th><th>关键参数</th><th>Scope</th></tr>
+<tr><td>create_merge_request</td><td>POST /projects/:id/merge_requests</td><td>project_id, title, description?, source_branch, target_branch, draft?</td><td>api</td></tr>
+<tr><td>create_merge_request_note</td><td>POST /projects/:id/merge_requests/:mr_iid/notes</td><td>project_id, mr_iid, body, line?, line_type?, path?</td><td>api</td></tr>
+<tr><td>create_merge_request_discussion</td><td>POST /projects/:id/merge_requests/:mr_iid/discussions</td><td>project_id, mr_iid, body, position?</td><td>api</td></tr>
+<tr><td>merge_merge_request</td><td>PUT /projects/:id/merge_requests/:mr_iid/merge</td><td>project_id, mr_iid, merge_commit_message?</td><td>api（受人审约束）</td></tr>
+</table>
+</div>
+
+<!-- ====== 第六章 ====== -->
+<h1>结论与建议</h1>
+<div class="keypoints"><p><strong>本章要点：</strong>总判断——路线图方向正确，无"全期报废"致命风险；最大风险在协议层（MCP 适配）；三条近期建议。</p></div>
+
+<h2>总判断</h2>
+<p>基于七路调研的交叉验证，DevDesk 智能中枢路线图（A→E 五期）在方向上正确，不存在需要推翻重来的致命缺陷。<strong>架构层</strong>——四层分层 + 依赖反转设计（ToolRegistry / LlmEndpoint / EventBus / LlmProfileSource 四枢纽）与行业最佳实践一致。<strong>路线层</strong>——A 收口 → B 对接 → C 扩展 → D 自主性 → E 流水线的分期逻辑合理，B 与 D 交错交付兼顾"对外能力"和"对内智能"两条线。<strong>决策层</strong>——五项已拍板决策与 ADR 0001-0004 均经外部验证。</p>
+
+<h2>最大风险与对冲</h2>
+<p>最大风险在协议层：C 期如不做 MCP 适配，将在 2027-2028 年 MCP 标准化浪潮中被迫返工 [38]。对冲方案已在 A 期路线图中写入——每个工具定义预留 protocol 字段，序列化走独立 ProtocolAdapter 抽象层，评估约一天工作量。次要风险在记忆层：自建记忆系统在上下文窗口扩大和推理成本下降的趋势下面临贬值，建议不对现有自建记忆做扩展投入，转而评估对接 MCP Memory Server。</p>
+
+<h2>三条近期建议</h2>
+<p><strong>第一，A 期开发埋 MCP 适配缝。</strong>在工具注册、AgentLoop 现有实现中，每个工具定义加 protocol 字段，序列化/反序列化走 ProtocolAdapter。这是成本最低的保值操作（约一天），防 C 期被迫重构整个工具层。同时开始验证代码即行动格式（smolagents 的 CodeAgent 模式）在 C++ agent loop 中的可行性。</p>
+<p><strong>第二，D 期不追求"完全自主"，校准为"可监控的半自主"。</strong>所有自主行为加 trace、回滚、人审钩子。D2 验收自评用机械打分表，审查者与执行者分离。D1 重试按瞬时/逻辑分类，加无进展检测。D3 自唤醒最多 3 次 + 取消令牌 + 醒来先自检。这些参数均有文献实证支撑 [18][19][20][21][35]，不是凭空设计。</p>
+<p><strong>第三，E 期各环节设计为可替换的外部能力接入点。</strong>代码生成可以是 DevDesk 自建 agent 也可以是 Claude Code via MCP；需求解析和代码审查不自建（Claude Code 已有 code-review skill、社区 MCP Server 已有成熟实现）。编排和集成才是 DevDesk 的价值。</p>
+
+<!-- ====== 附录 A ====== -->
+<h1 class="no-num" style="counter-increment:none;">附录 A  引用清单</h1>
+<p class="no-indent small">以下引用均于 2026-10-21 抓取。编号与正文引用标号对应。</p>
+<div class="small">
+<p class="no-indent">[1] Anthropic. Claude Code Overview. https://docs.anthropic.com/en/docs/claude-code/overview</p>
+<p class="no-indent">[2] Anthropic. Agent SDK Overview. https://docs.anthropic.com/en/docs/agent-sdk</p>
+<p class="no-indent">[3] GitHub. Copilot Features. https://github.com/features/copilot</p>
+<p class="no-indent">[4] Cursor. Blog. https://www.cursor.com/blog</p>
+<p class="no-indent">[5] Anthropic. MCP 官方公告. https://www.anthropic.com/news/model-context-protocol</p>
+<p class="no-indent">[6] n8n. MCP Servers 集成文档. https://docs.n8n.io/build/integrate-ai/mcp-servers</p>
+<p class="no-indent">[7] MCP. Architecture Overview. https://modelcontextprotocol.io/docs/concepts/architecture</p>
+<p class="no-indent">[8] OpenHands. https://github.com/All-Hands-AI/OpenHands</p>
+<p class="no-indent">[9] Factory.ai. https://www.factory.ai</p>
+<p class="no-indent">[10] anomalyco/opencode v2.1.1. 本地克隆 D:\project\gui\opencode2. packages/core/src/permission.ts, packages/schema/src/agent.ts, packages/ai/src/tool.ts, packages/core/src/instructions/builtins.ts</p>
+<p class="no-indent">[11] 阿里云. AI Agent Handbook. https://aliyun.github.io/ai-agent-handbook/contents.html. 第 2/4/5/6/11/13/16 章</p>
+<p class="no-indent">[12] huggingface/smolagents. https://github.com/huggingface/smolagents</p>
+<p class="no-indent">[13] pydantic/pydantic-ai. https://github.com/pydantic/pydantic-ai</p>
+<p class="no-indent">[14] openai/openai-agents-python. https://github.com/openai/openai-agents-python</p>
+<p class="no-indent">[15] modelcontextprotocol/servers-archived. GitLab MCP Server. https://github.com/modelcontextprotocol/servers-archived/tree/main/src/gitlab</p>
+<p class="no-indent">[16] reviewdog/reviewdog. https://github.com/reviewdog/reviewdog</p>
+<p class="no-indent">[17] Zheng et al. (2023). Judging LLM-as-a-Judge. arXiv:2306.05685. NeurIPS 2023</p>
+<p class="no-indent">[18] Madaan et al. (2023). Self-Refine. arXiv:2303.17651</p>
+<p class="no-indent">[19] Nguyen et al. (2026). RSEA. arXiv:2606.28374</p>
+<p class="no-indent">[20] Zhao et al. (2023). ExpeL. arXiv:2308.10144. AAAI-24</p>
+<p class="no-indent">[21] Hakim et al. (2026). ANNEAL. arXiv:2605.16309</p>
+<p class="no-indent">[22] DevDesk 11 号报告 §1.1. 上下文窗口持续扩大的轨迹推演：Gemini 2M token + Claude Opus 5.5 成本下降 40%. docs/strategy/11-未来趋势与技术押注.md</p>
+<p class="no-indent">[23] MCP Memory Server. modelcontextprotocol/servers 官方参考实现</p>
+<p class="no-indent">[24] 联想天禧. PC 端系统级 Agent. 11 报告第 4 节</p>
+<p class="no-indent">[25] Apple Intelligence. 本地处理优先. 11 报告第 4 节</p>
+<p class="no-indent">[26] OpenOcta 八爪鱼. 信创友好桌面 Agent 框架. 11 报告第 4 节</p>
+<p class="no-indent">[27] n8n. 构建与管理 Agent. https://docs.n8n.io/build/build-and-manage-agents</p>
+<p class="no-indent">[28] Raycast AI. https://www.raycast.com/ai</p>
+<p class="no-indent">[29] VoltAgent/awesome-claude-code-subagents. https://github.com/VoltAgent/awesome-claude-code-subagents</p>
+<p class="no-indent">[30] anthropics/skills. https://github.com/anthropics/skills. 本地克隆 D:\project\gui\anthropic-skills. SKILL.md 格式含 YAML frontmatter + Markdown 正文指令</p>
+<p class="no-indent">[31] obra/superpowers. code-review / brainstorming skills</p>
+<p class="no-indent">[32] crewAIInc/crewAI. https://github.com/crewAIInc/crewAI</p>
+<p class="no-indent">[33] browser-use/browser-use. https://github.com/browser-use/browser-use</p>
+<p class="no-indent">[34] GitLab. Webhooks 文档. https://docs.gitlab.com/ee/user/project/integrations/webhooks.html</p>
+<p class="no-indent">[35] Park et al. (2023). Generative Agents. arXiv:2304.03442</p>
+<p class="no-indent">[36] Hong et al. (2023). MetaGPT. arXiv:2308.00352</p>
+<p class="no-indent">[37] Yang et al. (2024). SWE-agent. arXiv:2405.15793. NeurIPS 2024</p>
+<p class="no-indent">[38] DevDesk 11 号报告. 未来趋势与技术押注. docs/strategy/11-未来趋势与技术押注.md</p>
+<p class="no-indent">[39] DevDesk ADR 0001. PRD→MR 流水线终点是 MR. docs/adr/0001-*.md</p>
+</div>
+
+<!-- ====== 附录 B ====== -->
+<h1 class="no-num" style="counter-increment:none;">附录 B  决策记录卡</h1>
+<h2 class="no-num">ADR 0001：PRD→MR 流水线的终点是 MR，合并决策保留给人</h2>
+<p>用户 2026-10-21 确定：智能体承担 PM / QA / 开发角色分工，产出 GitLab 合并请求；MR 之后的人工审查与合并不自动化。理由：MR 留人审是团队既有的质量闸，全自动合并的风险远大于省一道人审的收益。智能体的质量闸内建在流水线内部，但最后一道门永远是人。状态：已接受。</p>
+<h2 class="no-num">ADR 0002：智能体文件工具的读写边界——仅限专用工作区</h2>
+<p>用户 2026-10-21 拍板：文件读写工具只开放"数据根下的专用工作区目录"；笔记库、待办、配置库等业务数据一律经既有业务工具访问，禁止直写。理由：绕过业务工具直写会制造索引与运行态不一致。系统目录与 .git 硬禁。状态：已接受。</p>
+<h2 class="no-num">ADR 0003：GitLab 对接按外部可见性分档，回写视同破坏性</h2>
+<p>用户 2026-10-21 拍板：GitLab 工具组按外部可见性递增分三档——只读档首期即做；评论回写为第二档须任务级显式授权；建 MR 留到 E 期。理由：外部可见动作的错误不可撤回，风险语义与删除数据同类。状态：已接受。</p>
+<h2 class="no-num">ADR 0004：核心只留机制与接口，业务能力皆插件（轻资产原则）</h2>
+<p>2026-10-21 用户拍板。核心只保留"机制与接口"——智能体循环、工具注册、事件总线、触发调度、权限闸、审计、预算护栏。一切具体业务能力以可插拔形态接入，不进核心。接口质量硬判据 = 新能力以"注册 / 放文件"形态接入的步骤数（工具 4 步、事件 2 步）。理由：前人（Claude Code / opencode / pydantic-ai）已收敛于"极简循环 + 注册表 + 能力快插"形态，轻核心保证协议与能力都可以在标准化浪潮中低成本替换。状态：已接受。</p>
+
+<!-- ====== 附录 C ====== -->
+<h1 class="no-num" style="counter-increment:none;">附录 C  术语表</h1>
+<div class="glossary small">
+<dl>
+<dt>智能体（Agent）</dt><dd>DevDesk 内置的后台自动化执行者：接收任务目标，自主循环调用模型与工具完成它，全程留运行记录。</dd>
+<dt>Harness（智能体运行时）</dt><dd>智能体循环之外的宿主机制统称：触发调度、工具注册、权限闸、预算护栏、运行审计、任务记忆。</dd>
+<dt>AgentLoop</dt><dd>单次任务运行的执行循环：组装提示词 → 调 LLM → 解析结果 → 如有工具调用则执行工具 → 回喂结果 → 迭代，直至模型返回文本或撞护栏。</dd>
+<dt>MCP（Model Context Protocol）</dt><dd>一种让 AI 工具连接外部数据和服务器的通用接口标准。由 Anthropic 开源，已成为跨客户端的工具连接事实标准。</dd>
+<dt>PRD→MR 流水线</dt><dd>智能中枢的终极目标形态：从产品需求出发，智能体承担 PM、QA、开发的角色分工，产出合并请求交人审查。</dd>
+<dt>MR（Merge Request）</dt><dd>GitLab 的代码变更提案，请求将一组代码变更合并进目标分支。</dd>
+<dt>技能（Skill）</dt><dd>一份教 AI 怎么干某类活的说明书，格式为 SKILL.md（YAML 前置元数据 + Markdown 正文指令）。通过导入器注册进智能体运行环境。</dd>
+<dt>专用工作区</dt><dd>数据根下为智能体文件工具开辟的唯一可读写目录；业务库只能经业务工具访问（ADR 0002）。</dd>
+<dt>破坏性操作</dt><dd>不可逆副作用的工具动作（删除数据、切换配置、发布外部评论等）。任务未授权时一旦尝试，该次运行立即终止。</dd>
+<dt>webhook</dt><dd>外部系统把事件"推"给我们的回调通道，用 HMAC-SHA256 签名验证来源和完整性。</dd>
+<dt>Token</dt><dd>模型处理文字量的计数单位（按字/词折算），每次调用消耗分输入和输出两部分。</dd>
+<dt>Budget Lease（预算租约）</dt><dd>子任务从父任务继承的预算许可：一次授权同时限定资源上限、操作范围、有效期与撤销方式。</dd>
+</dl>
+</div>
+</body>
+</html>

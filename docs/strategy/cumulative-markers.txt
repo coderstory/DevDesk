@@ -1,0 +1,84 @@
+# 战略基线累积核对清单——每轮对基线文件的注入/修改之后，运行：
+#   bash scripts/check-cumulative-markers.sh docs/strategy/cumulative-markers.txt
+# 新增注入时把标记追加到本清单（这是「累积」的关键：只加不减，删项=接受该内容永久丢失）。
+# 格式：仓库内相对路径::期望子串
+
+# ---- 07 轮（OpenCode 源码吸收）----
+docs/strategy/05-技术路线图.md::最终结果
+docs/strategy/05-技术路线图.md::四元组
+docs/strategy/05-技术路线图.md::始终允许
+docs/strategy/05-技术路线图.md::进度回调
+docs/strategy/05-技术路线图.md::方案分叉
+docs/strategy/05-技术路线图.md::步数上限
+
+# ---- 08-10 轮（GitHub 生态 / GitLab 工具链 / 文献铁律）----
+docs/strategy/05-技术路线图.md::smolagents
+docs/strategy/05-技术路线图.md::五件套
+docs/strategy/05-技术路线图.md::webhook
+docs/strategy/05-技术路线图.md::熔断
+docs/strategy/05-技术路线图.md::anthropics/skills
+docs/strategy/05-技术路线图.md::code-review、brainstorming
+
+# ---- 11-12 轮（未来趋势 / 手册研学）----
+docs/strategy/05-技术路线图.md::协议适配
+docs/strategy/05-技术路线图.md::十态
+docs/strategy/05-技术路线图.md::半自主
+docs/strategy/05-技术路线图.md::无进展检测
+docs/strategy/05-技术路线图.md::预算租约
+docs/strategy/05-技术路线图.md::Handoff
+docs/strategy/05-技术路线图.md::仿真
+docs/strategy/05-技术路线图.md::Context Manifest
+
+# ---- 用户直接指示 + 旧账转入（2026-10-21）----
+docs/strategy/05-技术路线图.md::环境上下文
+docs/strategy/05-技术路线图.md::自触发
+docs/strategy/05-技术路线图.md::供应商故障自动切换
+docs/strategy/05-技术路线图.md::一览
+docs/strategy/05-技术路线图.md::0004
+docs/strategy/05-技术路线图.md::三种安装面
+
+# ---- 00 索引行 ----
+docs/strategy/00-总览索引.md::07-OpenCode
+docs/strategy/00-总览索引.md::08-GitHub
+docs/strategy/00-总览索引.md::09-GitLab
+docs/strategy/00-总览索引.md::10-文献
+docs/strategy/00-总览索引.md::11-未来趋势
+docs/strategy/00-总览索引.md::12-AI智能体手册
+docs/strategy/00-总览索引.md::0004
+
+# ---- CLAUDE.md 定位节与纪律 ----
+CLAUDE.md::轻资产原则
+CLAUDE.md::单一注册源
+CLAUDE.md::并发上限 8
+CLAUDE.md::零黑话
+CLAUDE.md::smolagents
+CLAUDE.md::两段制
+CLAUDE.md::分支绿 ≠ 合并绿
+
+# ---- GLOSSARY 词条 ----
+GLOSSARY.md::决策记录卡
+GLOSSARY.md::专用工作区
+GLOSSARY.md::webhook
+GLOSSARY.md::自唤醒
+GLOSSARY.md::环境上下文
+
+# ---- ADR 与配套 ----
+docs/adr/0004-light-asset-core-interfaces-only.md::轻资产原则
+docs/superpowers/plans/2026-09-22-backlog.md::旧账转入
+docs/strategy/PDF报告构建规格.md::运行原理
+docs/strategy/PDF报告构建规格.md::业务流程图
+
+# ---- 纪律包最小件落地（2026-10-21 hooks）----
+scripts/check-cumulative-markers.sh::累积核对
+.claude/settings.json::strategy-guard
+.claude/hooks/strategy-guard.sh::退出码 2
+.claude/hooks/discipline-reminders.sh::恒退出 0
+CLAUDE.md::项目级 hooks 已内置
+
+# ---- 13-大纲（2026-10-21 双评审修订 + hooks 增补）----
+docs/strategy/13-AI驱动开发实践报告-大纲.md::四层机制
+docs/strategy/13-AI驱动开发实践报告-大纲.md::机制跨章归属表
+docs/strategy/13-AI驱动开发实践报告-大纲.md::批次 0
+docs/strategy/13-AI驱动开发实践报告-大纲.md::方法论沿袭
+docs/strategy/13-AI驱动开发实践报告-大纲.md::一个月密集迭代
+docs/strategy/13-AI驱动开发实践报告-大纲.md::项目级 hooks

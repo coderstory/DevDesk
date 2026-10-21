@@ -1,0 +1,64 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "if": "Bash(git commit*)",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/discipline-reminders.sh\" red-green",
+            "timeout": 15
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "if": "Edit(src/**)",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/discipline-reminders.sh\" plan-first",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/strategy-guard.sh\"",
+            "timeout": 30,
+            "statusMessage": "战略基线累积核对"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "if": "Bash(git merge*)",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/discipline-reminders.sh\" merge-tree",
+            "timeout": 15
+          },
+          {
+            "type": "command",
+            "if": "Bash(git pull*)",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/discipline-reminders.sh\" merge-tree",
+            "timeout": 15
+          },
+          {
+            "type": "command",
+            "if": "Bash(git rebase*)",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/discipline-reminders.sh\" merge-tree",
+            "timeout": 15
+          }
+        ]
+      }
+    ]
+  }
+}
