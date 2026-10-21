@@ -9,10 +9,12 @@
 //      --shot-task <path> 落 PNG（弹层展开态——审阅弹层 z 序用）；
 //      --shot-task-plain <path> 在开弹层前落 PNG（无覆盖帧——行为开关行
 //      「允许破坏性操作 / 只跑一次」不被模板弹层盖住，审阅开关本身用）。
-//   B. 详情弹窗：种子库给一条 failed run（错误文案 = needsClaudePageHint 的
-//      「LLM 配置不可用…」类）+ 一条带 text 块的 assistant 消息，断言
-//      runlist.<i>.err、runlist.<i>.err.hint（去 Claude 页 →）、
-//      msgs.copyfinal chip 三者同时在场；--shot-detail <path> 落 PNG。
+//   B. 详情弹窗（UAT6 方案 A 三档 tab）：种子库给一条 failed run（错误文案 =
+//      needsClaudePageHint 的「LLM 配置不可用…」类）+ 一条带 text 块的 assistant
+//      消息。tab 0 断言头部真实任务名、segment 三档、runlist.<i>.err、
+//      runlist.<i>.err.hint（去 Claude 页 →）、摘要三卡；点 run 行自动切
+//      「运行详情」tab 后断言 msgs.copyfinal / .detail.status.text /
+//      .detail.error 全文；--shot-detail <path> 落 PNG。
 //   C. AI 草稿子弹窗双层 z 序（G5，ui-test-gap-map）：任务弹窗之上叠开
 //      「AI 生成草稿」子弹窗，断言层级契约——子弹窗根 zIndex 严格大于外层、
 //      遮罩全屏启用、L2 z 碰撞扫描；失败态（空输入校验错 / 生成中 / 请求失败）
@@ -570,12 +572,24 @@ int main(int argc, char* argv[]) {
             passed = false;
         }
 
-        // 复制回复 chip（run 有带 text 块的 assistant 消息 → finalAssistantText 非空）
-        const auto* copyChip = findElement("agent.dialog.detail.msgs.copyfinal");
-        if (copyChip == nullptr) {
-            std::cerr << "agent_dialog_probe: 「复制回复」chip 缺失"
-                         "（finalAssistantText 为空？）\n";
+        // UAT6 方案 A：头部真实任务名（不再恒「任务详情」）+ segment 三档
+        const auto* detailTitle = findElement("agent.dialog.detail.title");
+        if (detailTitle == nullptr || detailTitle->text.empty() ||
+            detailTitle->text == "任务详情") {
+            std::cerr << "agent_dialog_probe: 头部应显示真实任务名（方案 A），实测 '"
+                      << (detailTitle != nullptr ? detailTitle->text : "<缺失>")
+                      << "'\n";
             passed = false;
+        }
+        for (int i = 0; i < 3; ++i) {
+            const auto* segOp =
+                findElement("agent.dialog.detail.nav.item." + std::to_string(i) +
+                           ".bg");
+            if (segOp == nullptr) {
+                std::cerr << "agent_dialog_probe: segment 三档缺 .nav.item." << i
+                          << ".bg\n";
+                passed = false;
+            }
         }
 
         // P2：时间线行三列 + 摘要三卡 + 右栏详情块（spec §12.4 P2 子集）
@@ -606,6 +620,24 @@ int main(int argc, char* argv[]) {
                 passed = false;
             }
         }
+        // 点 run 行自动切「运行详情」tab（方案 A 要点 ③）：详情块/错误全文/
+        // 复制回复 chip 都在 tab 1
+        const auto* runRowBg = findElement("agent.dialog.detail.runlist.0.bg");
+        if (runRowBg != nullptr) {
+            clickElement(*runRowBg);
+            composeFrame();
+        } else {
+            std::cerr << "agent_dialog_probe: '.runlist.0.bg' 缺失"
+                         "（无法自动切运行详情 tab）\n";
+            passed = false;
+        }
+        // 复制回复 chip（run 有带 text 块的 assistant 消息 → finalAssistantText 非空）
+        const auto* copyChip = findElement("agent.dialog.detail.msgs.copyfinal");
+        if (copyChip == nullptr) {
+            std::cerr << "agent_dialog_probe: 「复制回复」chip 缺失"
+                         "（finalAssistantText 为空？）\n";
+            passed = false;
+        }
         const auto* detailStatus =
             findElement("agent.dialog.detail.detail.status.text");
         if (detailStatus == nullptr || detailStatus->text != "失败") {
@@ -629,7 +661,7 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // 构图 B：详情弹窗稳定帧（错误行 + 引导 + chip 同帧在场，断言已把过关）
+    // 构图 B：详情弹窗稳定帧（运行详情 tab：chip + 状态 + 错误全文同帧在场）
     if (!shotDetail.empty()) {
         if (!probe::captureFramePng(window, runtime, shotDetail)) {
             std::cerr << "agent_dialog_probe: --shot-detail 落图失败: "

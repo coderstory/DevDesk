@@ -397,11 +397,19 @@ REGISTER_TEST(agent_module_ui_id_contract,
         mod->compose(ui2, screen);
         ui2.end();
         DOCTEST_CHECK(ui2.find("agent.dialog.detail") != nullptr);
-        DOCTEST_CHECK(ui2.find("agent.dialog.detail.config.header.hint") !=
-                      nullptr);
-        // 消息区默认折叠（D6）：先点 .msgs.toggle 再看消息行
+        DOCTEST_CHECK(ui2.find("agent.dialog.detail.header.meta") != nullptr);
+        // 切「运行详情」tab（方案 A 三档）：消息区默认折叠（D6），
+        // 先点 .msgs.toggle 再看消息行
         DOCTEST_CHECK(ui2.find("agent.dialog.detail.msgscroll") == nullptr);
-        const auto* msgsToggle = ui2.find("agent.dialog.detail.msgs.toggle");
+        const auto* navTab1 = ui2.find("agent.dialog.detail.nav.item.1.bg");
+        DOCTEST_REQUIRE(navTab1 != nullptr);
+        DOCTEST_REQUIRE(navTab1->onClick != nullptr);
+        navTab1->onClick();
+        eui::Ui ui2a;
+        ui2a.begin("agent_ui2a");
+        mod->compose(ui2a, screen);
+        ui2a.end();
+        const auto* msgsToggle = ui2a.find("agent.dialog.detail.msgs.toggle");
         DOCTEST_REQUIRE(msgsToggle != nullptr);
         DOCTEST_REQUIRE(msgsToggle->onClick != nullptr);
         msgsToggle->onClick();
