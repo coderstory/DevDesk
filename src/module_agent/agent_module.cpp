@@ -24,6 +24,7 @@
 #include <core/platform/platform.h>
 #include <eui/dsl.h>
 #include <ui_kit/dialog_form.h>
+#include <ui_kit/glass_card.h>
 #include <ui_kit/metrics.h>
 #include <ui_kit/button.h>
 #include <ui_kit/wswitch.h>
@@ -2035,15 +2036,20 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                                 inner.rect(id + ".bg")
                                     .position(0.0f, 0.0f)
                                     .size(cw, kTaskCardH)
-                                    .states(t.colors.wechat.cardBg,
+                                    .states(components::theme::withOpacity(t.colors.wechat.cardBg, 0.62f),
                                             t.colors.wechat.dividerSecondary,
                                             t.colors.wechat.selectedBg)
                                     .radius(t.sizes.radiusWeChat)
-                                    .border(1.0f, t.colors.wechat.dividerPrimary)
+                                    .border(1.0f, components::theme::withOpacity(t.colors.wechat.cardBg, 0.55f))
                                     .onClick([this, taskId = task.id] {
                                         openTaskDetail(taskId);
                                     })
                                     .build();
+                                // UAT6 玻璃：淡雅玻璃层（hover/select 由 bg rect states 处理）
+                                ui_kit::drawGlassCardLayers(inner, id,
+                                    0.0f, 0.0f, cw, kTaskCardH,
+                                    t.sizes.radiusWeChat, t,
+                                    ui_kit::GlassCardStyle::subtle());
                                 inner.row(id + ".row")
                             .position(kTaskCardPad, kTaskCardPad)
                             .size(rowW, kTaskRowH)
