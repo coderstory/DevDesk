@@ -190,11 +190,13 @@ SettingsConfig SettingsStore::sanitized(const SettingsConfig& cfg) {
 
 // 两层 alpha 串联叠加（窗口背景色层 + clearColor 层），同值推导会让半透/磨砂档视觉无法区分。
 // UAT2 B 批（半透档"太高"第一轮）：translucent 0.60/0.90 → 0.80/0.85。UAT3 C1 批
-// （round3 用户仍反馈半透透明度太高）：内容 0.80→0.82（拍板值 ~0.82；标题栏带可
-// 略高——0.85 本就高于内容，不动）；frosted 两值不动。自绘标题栏（D-R3-1）落地后
-// Windows 无系统标题栏，标题栏 alpha 只实际作用于 macOS 系统标题栏底色。
+// （round3 用户仍反馈半透透明度太高）：内容 0.80→0.82。UAT6 真机两连（第 4 轮，用户
+// 「win下 半透的透明度太高了 看不清内容」）：内容 0.82→0.85、标题栏 0.85 不动（两值
+// 拉平），壁纸透出率 18%→15%——正文（textPrimary 叠乘后）极端壁纸最坏 WCAG 对比度
+// 两主题 ≥10.6:1（护栏：test_settings settings_window_effect_contrast_guard）。
+// 自绘标题栏（D-R3-1）落地后 Windows 无系统标题栏，标题栏 alpha 只实际作用于 macOS。
 float windowEffectAlpha(const std::string& mode) {
-    if (mode == kWindowEffectTranslucent) return 0.82f;
+    if (mode == kWindowEffectTranslucent) return 0.85f;
     if (mode == kWindowEffectFrosted) return 0.15f;
     return 1.0f;  // off / 未知值：实色
 }
@@ -215,7 +217,18 @@ float windowEffectThemeOpacity(const std::string& mode) {
 
 core::platform::WindowEffect windowEffectRequest(const std::string& mode) {
     if (mode == kWindowEffectFrosted) {
-        return core::platform::WindowEffect::Acrylic;
+        // UAT6 真机两连「磨砂直接没半透效果了，底色变成灰色」：Acrylic→Mica。
+        // DWMSBT_TRANSIENTWINDOW 是系统给菜单/浮层的 transient 材质，用于常驻主窗
+        // 时落进系统的回退策略高发区（最大化/失焦态常见表现 = 材质不渲、窗底成实
+        // 色灰——真机症状同形；本机 1920×1080@125% 工作区 1680×860，主窗自 9-27 起
+        // 「放不下即启动最大化」恒常驻最大化态，e554acde 又记忆最大化标志）。
+        // Mica（DWMSBT_MAINWINDOW）是主窗材质，无 transient 回退类；最大化态窗后
+        // 无活物，blur 实时性差异视觉不可辨。M-3 门控桥已把 Mica 映射 "frosted"
+        //（main.cpp activeWindowEffectTier），降级 UX 不变；macOS Mica 族挂同一
+        // NSVisualEffectView 材质视图（window_effect_macos.mm），不受影响。若换
+        // Mica 后真机仍灰底，根因收敛到 EUI-NEO 自绘壳系列（逐像素透明/backdrop
+        // 渲染）——见本批报告取证项，非本层请求。
+        return core::platform::WindowEffect::Mica;
     }
     // off / translucent（含未知值）：显式关 backdrop，视觉由 clearColor alpha 决定
     return core::platform::WindowEffect::None;
