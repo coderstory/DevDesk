@@ -10,6 +10,7 @@
 #include <components/card.h>
 #include <components/input.h>
 #include <components/scrollview.h>
+#include <ui_kit/glass_card.h>
 #include <ui_kit/selection_bar.h>  // kSelectionBarAccentWidth（§4.3 选中态 2px 竖线宽度）
 
 #include <algorithm>
@@ -393,6 +394,7 @@ void drawColumnContent(eui::Ui& ui, const std::string& id, const Column& col,
                 .gap(kCardGap)
                 .step(60.0f)
                 .theme(componentTheme)
+                .scrollbarOverlay()  // UAT6 K 批：覆盖式不占内容宽
                 .contentKey(id + ".scroll." + std::to_string(taskCount))
                 .offset(columnScrollOffset(v.columns, v.columnScrolls, colIndex))
                 .onChange([cb = v.act.columnScrollChanged, colIndex](float value) {
@@ -454,6 +456,11 @@ void drawCard(eui::Ui& ui, const std::string& id, float x, float y, float width,
         .padding(0.0f)  // 卡内坐标以 content 原点为基准
         .border(0.0f, t.colors.wechat.dividerPrimary)  // 边框职责已移到内部交互层
         .content([&] {
+
+    // UAT6 E+F 批：淡雅玻璃层（背景底，交互层在上方覆盖）
+    ui_kit::drawGlassCardLayers(ui, id + ".glass",
+        0.0f, 0.0f, width, kCardHeight,
+        t.sizes.radiusWeChat, t, ui_kit::GlassCardStyle::subtle());
 
     // 交互层（卡内首层）：优先级直接改卡底色，hover/active 同走该算式；选中态走底色+左竖线两通道（§4.3）
     // 列色淡染：None 优先级按所在列色 0.12 混底，列区分列（优先级语义优先于列染）
