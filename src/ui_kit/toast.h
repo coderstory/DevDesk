@@ -45,6 +45,10 @@ struct ToastOptions {
 // 正文无条件以 state.body 覆盖组件默认值（含空串）——否则 EUI-NEO 的英文占位正文会在
 // 无正文站点（如 todo 的 setStatus）被画出来；空串 → 空文本节点 → 视觉无正文。
 // screen = 所在页面逻辑尺寸（toast 据此贴右下角），Ui 不暴露 screen 故由调用方透传。
+//
+// 尺寸（UAT6 内容驱动）：宽 = min(内容宽+边距, 360 上限)、高 = 行数×行高+边距
+//（长文本按最大宽换行不跑出框；短文本一行就一行高）；宽下限 180、高下限 58，
+// 上限钳制防巨框。签名不变，调用方零改动；字体测量不可用时退组件默认 360×88。
 void drawToast(eui::Ui& ui, const eui::Screen& screen, const std::string& id,
                ToastState& state,
                const components::theme::ThemeColorTokens& tokens,

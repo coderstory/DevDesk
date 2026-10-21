@@ -14,7 +14,9 @@
 // resetCaseGlobals 默认 setDark()，wechat 令牌在深浅两模式均初始化（theme.cpp）。
 #include "doctest.h"
 #include "core/theme.h"
+#include "core/component_theme.h"
 #include "ui_kit/light_toast.h"
+#include "ui_kit/toast.h"
 #include "ui_kit/empty_state.h"
 #include "ui_kit/button.h"
 #include <eui/dsl.h>
@@ -22,6 +24,7 @@
 
 #include <chrono>
 #include <cmath>
+#include <string>
 
 namespace {
 
@@ -243,5 +246,78 @@ REGISTER_TEST(ui_kit_question_glyph_fa7_solid_0xF128_bound,
     DOCTEST_REQUIRE(q != nullptr);
     DOCTEST_CHECK(!q->text.empty());
     DOCTEST_CHECK_EQ(q->fontFamily, std::string{"Icon"});
+    return true;
+})
+
+// ---- UAT6 toast 内容驱动尺寸（ui_kit/toast.cpp，防两条真机事故）----
+// 事故1（长文本跑出框）：toast 原固定 360×88，正文区 38px 只装 2 行，长文本第
+//   3 行起画出框外。修后：长文本按最大宽换行，高 = 行数×18+边距 全装进框。
+// 事故2（短文本空框）：todo setStatus 单行标题也配 88 高（两行高的空框）。
+//   修后：仅标题 = 58 高；标题+一行正文 = 78 高。
+// 三档（短/中/长换行）+ 仅标题的尺寸断言；几何公式见 ui_kit/toast.cpp 文件头
+//（正文顶 44 / 行高 18 / 下留白 16 / 宽 = 内容+106，上限 360 下限 180）。
+namespace {
+struct ToastBox { float w, h; };
+// 合成一帧 toast 并取根节点 frame（显式 layout 后 frame 才有值；Ui 每帧新建，
+// 返回值拷贝避免悬垂指针）。
+ToastBox measureToastBox(const char* tag, const std::string& title,
+                         const std::string& body) {
+    ui_kit::ToastState st;
+    st.show(title, body, false);
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    eui::Ui ui;
+    ui.begin(tag);
+    ui_kit::drawToast(ui, screen, "tbox", st,
+                      core::theme::componentTokensWeChat(
+                          core::theme::current()));
+    ui.end();
+    ui.layout(screen.width, screen.height);
+    const auto* root = ui.find("tbox");
+    if (root == nullptr) return {-1.0f, -1.0f};
+    return {root->frame.width, root->frame.height};
+}
+bool boxNear(float a, float b) { return std::fabs(a - b) <= 0.5f; }
+}  // namespace
+
+REGISTER_TEST(ui_kit_toast_size_content_driven_short,
+              "ui_kit toast 尺寸: 短文本=一行高（78）不再配两行高空框", {
+    // 防事故2：短正文一行就一行高（44+18+16=78）；原固定 88 高留 10px 死空。
+    const ToastBox box = measureToastBox("w02d_t_short", "已保存", "已复制");
+    DOCTEST_CHECK_MESSAGE(box.w > 0.0f, "toast 根节点缺失");
+    DOCTEST_CHECK_MESSAGE(boxNear(box.h, 78.0f),
+                          "短文本高应 78（44+18+16），实测 " +
+                              std::to_string(box.h));
+    // 宽内容驱动：短文本被 180 下限托住（原固定 360）
+    DOCTEST_CHECK_MESSAGE(box.w >= 180.0f && box.w < 360.0f,
+                          "短文本宽应落在 [180,360)，实测 " +
+                              std::to_string(box.w));
+    return true;
+})
+
+REGISTER_TEST(ui_kit_toast_size_title_only_compact,
+              "ui_kit toast 尺寸: 仅标题（todo setStatus 型）= 58 高零空框", {
+    // 防事故2 变体：无正文站点（todo setStatus 恒空 body）原也配 88 高；
+    // 修后仅标题 = max(40+16, 图标下限 58) = 58。
+    const ToastBox box = measureToastBox("w02d_t_tonly", "已同步完成", "");
+    DOCTEST_CHECK_MESSAGE(boxNear(box.h, 58.0f),
+                          "仅标题高应 58，实测 " + std::to_string(box.h));
+    return true;
+})
+
+REGISTER_TEST(ui_kit_toast_size_long_wraps_inside_box,
+              "ui_kit toast 尺寸: 长文本按最大宽换行全装进框（≥3 行 + 宽封顶 360）", {
+    // 防事故1：60 个 CJK ≈ 840px 正文在 254px 最大宽下 ≥4 行；
+    // 原固定 360×88 只装 2 行 → 第 3 行起跑出框。修后高 ≥44+3×18+16=114 全装下。
+    std::string longBody;
+    for (int i = 0; i < 60; ++i) longBody += "同步";
+    const ToastBox box = measureToastBox("w02d_t_long", "导入完成", longBody);
+    DOCTEST_CHECK_MESSAGE(box.h >= 114.0f,
+                          "长文本高应 ≥114（≥3 行），实测 " +
+                              std::to_string(box.h));
+    // 宽封顶：超宽内容按 360 上限钳制（防巨框）
+    DOCTEST_CHECK_MESSAGE(boxNear(box.w, 360.0f),
+                          "长文本宽应封顶 360，实测 " + std::to_string(box.w));
     return true;
 })
