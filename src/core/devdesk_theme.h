@@ -7,6 +7,7 @@ namespace core::theme {
 struct DevDeskTheme {
     static components::theme::ThemeColorTokens light();
     static components::theme::ThemeColorTokens dark();
+    static constexpr const char* kFontStack = "Inter, \"Microsoft YaHei\", \"PingFang SC\", sans-serif";
     static void registerWidgetStyles();
 };
 
