@@ -225,6 +225,28 @@ target_link_libraries(devdesk_tests PRIVATE
 
 add_test(NAME devdesk_unit_tests COMMAND devdesk_tests)
 
+# 托盘图标资产拷贝（与 DevDesk app 目标同款 POST_BUILD，根 CMakeLists.txt :334-347）：
+# test_tray_icon.cpp 的 tray_icon_asset_shipped 与 tray_icon_retina_sibling_shipped
+# 两条用例通过 findShippedAsset 在 exeDir.parent_path()（即 <build>/assets/）下查找
+# defaultIconPath() 返回的 assets 相对路径。app 目标的 POST_BUILD 只在 DevDesk 被
+# 编译时运行——干净构建只编 devdesk_tests 不会触发资产拷贝，两条用例必红。
+# 本块把托盘图标三件套复制到 devdesk_tests 可执行文件旁的上层 assets/ 目录（与
+# DevDesk 目标的拷贝产物同径、同文件，不冗余写不变文件）。
+add_custom_command(TARGET devdesk_tests POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory
+        "$<TARGET_FILE_DIR:devdesk_tests>/../assets"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_SOURCE_DIR}/assets/tray-icon-template.png"
+        "$<TARGET_FILE_DIR:devdesk_tests>/../assets/tray-icon-template.png"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_SOURCE_DIR}/assets/tray-icon-template@2x.png"
+        "$<TARGET_FILE_DIR:devdesk_tests>/../assets/tray-icon-template@2x.png"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_SOURCE_DIR}/assets/tray-icon-win.ico"
+        "$<TARGET_FILE_DIR:devdesk_tests>/../assets/tray-icon-win.ico"
+    COMMENT "Copying tray icon assets for devdesk_tests"
+)
+
 # ==================== 独立 probe 可执行（probes/ 目录） =============# probes/ 下每个 .cpp 是独立小程序（如 dropdown z 可视化验证），不属于
 # devdesk_tests 用例（已在上方 TIN-10 自检中排除）：单独编译成可执行，
 # 以 LABELS "probe" 注册 ctest，便于定向跑单个 probe。
