@@ -154,9 +154,23 @@ constexpr int kModelSlotCount = static_cast<int>(
 constexpr float kPageHeaderH = 40.0f;
 constexpr float kNewTaskBtnW = 140.0f;
 constexpr float kTaskRowH = 44.0f;
+// UAT6 任务卡片化（用户真机反馈：列表 item 卡片展示、内容四边加内边距）：
+// kTaskCardPad = 卡内内容四边内边距 12；kTaskCardInset = 卡列表在灰面板内的
+// 四边留边 10（卡宽 = 列表宽 − 2×inset，弹性契约：无固定帽，随窗口缩放）；
+// kTaskCardGap = 卡间距 8；kTaskCardH = 卡高 = 行高 + 上下内边距（step 同源，
+// 一滚一格）
+constexpr float kTaskCardPad = 12.0f;
+constexpr float kTaskCardInset = 10.0f;
+constexpr float kTaskCardGap = 8.0f;
+constexpr float kTaskCardH = kTaskRowH + 2.0f * kTaskCardPad;
 // 任务行「配置异常」标记宽：4 个 CJK 字 @12px = 48，留 8 余量（文案再长就换行/截断，
 // 原因全文在详情弹窗配置摘要里）
 constexpr float kTaskWarnW = 56.0f;
+// UAT6 真机反馈「启动按钮比其他按钮大」的统一规格。差异源：原启动钮走
+// components::button 派生字号 h×0.46≈14.7 且宽 72，其余 chip 字号 12、宽 48/56。
+// 行内操作钮（详情/编辑/启停/删除/[入队]/启动）统一 56×32、字号 12——同排
+// 同尺寸同级；「启动」的主操作语义用 Primary 色同尺寸表达，不用大一号。
+constexpr float kTaskActionW = 56.0f;
 constexpr float kPageErrorH = 16.0f;
 // 页内错误行下的「去 Claude 页」引导行高（仅「LLM 配置不可用」类错误渲染）
 constexpr float kPageHintH = 16.0f;
@@ -1785,25 +1799,29 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                 })
                 .build();
 
-            // 任务列表面板（UAT5 任务 D）：整列表区一个 cardBg 白面板圆角——微信
-            //「白卡浮起」语言，与页面底拉开可分辨对比；行 hover/选中态不变
-            //（行自身透明底 + hover 反馈，落在白面板上照常成立）
+            // 任务列表面板（UAT6 卡片化）：整区语义收敛为 pageBg 浅灰面板——
+            // 每个 item 是独立白卡浮起（§4.14 与上方工具列表 / claude Profile
+            // 列表同语言；灰面板上的白卡对比比「白面板上再画白卡」清晰，选择
+            // 此方案）。行级交互不变：点卡开详情、hover 加深一档；列表无选中
+            // 语义（点行是开弹窗不是选中），不加绿圈白勾
             ui.stack("agent.tasklist.wrap")
                 .size(contentW, std::max(0.0f, listH))
                 .content([&] {
                     ui.rect("agent.tasklist.panel")
                         .position(0.0f, 0.0f)
                         .size(contentW, std::max(0.0f, listH))
-                        .color(t.colors.wechat.cardBg)
+                        .color(t.colors.wechat.pageBg)
                         .radius(t.sizes.radiusWeChat)
                         .border(1.0f, t.colors.wechat.dividerPrimary)
                         .build();
-                    // 行高 kTaskRowH（step 同源）；行内动作：启动/详情/编辑/禁用（常驻多一个入队）
+                    // 卡片列表：面板内四边留 kTaskCardInset，卡宽 = 列表宽 − 边距；
+                    // 卡高 kTaskCardH（step 同源）；行内动作：启动/详情/编辑/禁用（常驻多一个入队）
                     components::scrollView(ui, "agent.tasklist")
-                        .position(0.0f, 0.0f)
-                        .size(contentW, std::max(0.0f, listH))
-                        .gap(8.0f)
-                        .step(kTaskRowH)
+                        .position(kTaskCardInset, kTaskCardInset)
+                        .size(std::max(0.0f, contentW - 2.0f * kTaskCardInset),
+                              std::max(0.0f, listH - 2.0f * kTaskCardInset))
+                        .gap(kTaskCardGap)
+                        .step(kTaskCardH)
                         .theme(themeTokens)
                         .contentKey("agent.tasklist.n" + std::to_string(tasks_.size()))
                         .content([&](eui::Ui& inner, float cw, float) {
@@ -1842,9 +1860,10 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                         const bool runStarted =
                             it != latestRuns_.end() &&
                             it->second.status == "running";
-                        // 宽度分配：状态 80（圆点 8 + gap 12 + 文字 60）/
-                        // 详情·编辑·启停·删除 各 48 / [入队 56] / 启动 72 /
-                        // [配置异常·已停用 各 56]；childCount 须与实际子元素数一致
+                        // 宽度分配（卡内行）：状态 80（圆点 8 + gap 12 + 文字 60）/
+                        // 行内操作钮统一 kTaskActionW×32（详情·编辑·启停·删除·
+                        // 启动 + [常驻入队]，UAT6 同排同尺寸）/ [配置异常·限次·
+                        // 已停用 各 kTaskWarnW]；childCount 须与实际子元素数一致
                         const bool resident = task.triggerType == "resident";
                         const bool taskOff = !task.enabled;
                         const bool hasProblem =
@@ -1861,31 +1880,37 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                                                (hasProblem ? 1 : 0) +
                                                (limited ? 1 : 0) +
                                                (taskOff ? 1 : 0);
-                        const float fixedW = 80.0f + 48.0f * 4.0f + 72.0f +
-                                             (resident ? 56.0f : 0.0f) +
+                        const float fixedW = 80.0f + kTaskActionW *
+                                                         (5.0f + (resident ? 1.0f : 0.0f)) +
                                              (hasProblem ? kTaskWarnW : 0.0f) +
                                              (limited ? kTaskWarnW : 0.0f) +
                                              (taskOff ? kTaskWarnW : 0.0f);
+                        const float rowW = cw - 2.0f * kTaskCardPad;
                         const float titleW =
-                            cw - fixedW - rowGap * static_cast<float>(childCount - 1);
-                        // 行 = 两个同尺寸层叠在 stack 里：底层 bg rect 承担 hover
-                        // 反馈与「点行开详情」命中（容器 row 不画自身背景），上层
-                        // row 只做布局；非交互的 row 不拦指针，子 chip 各自消费点击
+                            rowW - fixedW - rowGap * static_cast<float>(childCount - 1);
+                        // 卡 = 两个层叠在 stack 里：底层 bg rect 是白卡本体
+                        //（cardBg 底 + radiusWeChat 圆角 + dividerPrimary 细边；
+                        // hover 加深一档、点击开详情，照 claude shared 卡三态），
+                        // 上层 row 内缩 kTaskCardPad 四边内边距只做布局；非交互的
+                        // row 不拦指针，子 chip 各自消费点击
                         inner.stack(id)
-                            .size(cw, kTaskRowH)
+                            .size(cw, kTaskCardH)
                             .content([&] {
                                 inner.rect(id + ".bg")
-                                    .size(cw, kTaskRowH)
-                                    .states(eui::Color{0.0f, 0.0f, 0.0f, 0.0f},
-                                            t.colors.hover,
-                                            eui::Color{0.0f, 0.0f, 0.0f, 0.0f})
-                                    .radius(t.sizes.radiusSmall)
+                                    .position(0.0f, 0.0f)
+                                    .size(cw, kTaskCardH)
+                                    .states(t.colors.wechat.cardBg,
+                                            t.colors.wechat.dividerSecondary,
+                                            t.colors.wechat.selectedBg)
+                                    .radius(t.sizes.radiusWeChat)
+                                    .border(1.0f, t.colors.wechat.dividerPrimary)
                                     .onClick([this, taskId = task.id] {
                                         openTaskDetail(taskId);
                                     })
                                     .build();
                                 inner.row(id + ".row")
-                            .size(cw, kTaskRowH)
+                            .position(kTaskCardPad, kTaskCardPad)
+                            .size(rowW, kTaskRowH)
                             .alignItems(eui::Align::CENTER)
                             .gap(rowGap)
                             .content([&] {
@@ -1942,23 +1967,23 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                                     .lineHeight(20.0f)
                                     .color(t.colors.textSecondary)
                                     .build();
-                                actionChip(inner, id + ".detail", "详情", 48.0f,
+                                actionChip(inner, id + ".detail", "详情", kTaskActionW,
                                            /*primary=*/false, /*enabled=*/true,
                                                themeTokens, [this, taskId = task.id] {
                                                    openTaskDetail(taskId);
                                                });
-                                actionChip(inner, id + ".edit", "编辑", 48.0f,
+                                actionChip(inner, id + ".edit", "编辑", kTaskActionW,
                                            /*primary=*/false, /*enabled=*/true,
                                            themeTokens, [this, taskId = task.id] {
                                                openTaskEditor(taskId);
                                            });
                                 actionChip(inner, id + ".toggle",
-                                           task.enabled ? "禁用" : "启用", 48.0f,
+                                           task.enabled ? "禁用" : "启用", kTaskActionW,
                                            /*primary=*/false, /*enabled=*/true,
                                            themeTokens, [this, taskCopy = task] {
                                                toggleTaskEnabled(taskCopy);
                                            });
-                                actionChip(inner, id + ".delete", "删除", 48.0f,
+                                actionChip(inner, id + ".delete", "删除", kTaskActionW,
                                            /*primary=*/false, /*enabled=*/!runBusy,
                                            themeTokens,
                                            [this, taskId = task.id, busy = runBusy] {
@@ -1967,7 +1992,7 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                                            });
                                 if (resident) {
                                     // Scheduler 未装配时置灰；入队跑手动子任务
-                                    actionChip(inner, id + ".enqueue", "入队", 56.0f,
+                                    actionChip(inner, id + ".enqueue", "入队", kTaskActionW,
                                                /*primary=*/false,
                                                /*enabled=*/scheduler_ != nullptr,
                                                themeTokens, [this, taskId = task.id] {
@@ -1979,9 +2004,13 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                                                    scheduler_->enqueueResident(taskId);
                                                });
                                 }
+                                // 启动 = 行内唯一主操作：Primary 绿表达主次，几何
+                                // 与其他 chip 同规格（kTaskActionW×32、字号 12——
+                                // UAT6 真机反馈「启动比其他按钮大」的统一收口）
                                 components::button(inner, id + ".run")
-                                    .size(72.0f, 32.0f)
+                                    .size(kTaskActionW, 32.0f)
                                     .text(runStarted ? "运行中…" : "启动")
+                                    .fontSize(12.0f)
                                     .theme(themeTokens)
                                     .disabled(loop_ == nullptr || runStarted)
                                     .onClick([this, taskId = task.id] {

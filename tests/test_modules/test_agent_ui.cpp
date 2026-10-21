@@ -5,9 +5,12 @@
 // 跨文件前提（节点 id 契约，agent_module.cpp 侧为准）：
 //   页面   agent.page / agent.page.header / agent.title / agent.page.newTask /
 //          agent.tools.*（可用工具区块）/ agent.tasklist（scrollView）+.content /
-//          agent.task.<id>（.title / .status / .status.dot / .detail / .edit /
+//          agent.tasklist.panel（UAT6 列表容器 = pageBg 灰面板，item 白卡浮起）/
+//          agent.task.<id>（UAT6 卡片化：= 卡 stack，.bg 是白卡本体（cardBg+
+//          radiusWeChat+细边，hover 加深，点击开详情），.row 内缩 12px 内边距；
+//          .title / .status / .status.dot / .detail / .edit /
 //          .toggle / .delete / [.limit 仅限次任务] / [.warn 配置异常] /
-//          [.off 仅停用] / [.enqueue 仅常驻] / .run / .bg（行 hover 命中层）/
+//          [.off 仅停用] / [.enqueue 仅常驻] / .run（行内操作钮统一 56×32）/
 //          run 结束通知（Task 1；fix round 起经 takeRunEndNotice 走 app 级通道）/
 //          失败迁移同帧发 OS 系统通知（id 前缀 agent-run-，成功/取消零发送）
 //   删除确认弹窗 agent.dialog.delete.*：.title / .msg / .cancel / .confirm（zIndex 1100，
@@ -70,6 +73,7 @@
 #include <components/input.h>   // InputState：读回弹窗内输入框真实文本（预填判据）
 #include <eui/dsl.h>
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -5125,7 +5129,7 @@ REGISTER_TEST(agent_ui_delete_task_disabled_while_running,
 // 徽章、运行中启动钮禁用（防双起）、行 hover 命中层。全部数值断言；配色断言带
 // 非恒真自证（三色两两不同），防止 token 改成同值时配色检查空转。
 REGISTER_TEST(agent_ui_task_list_status_visuals,
-              "agent_ui: 列表状态视觉——failed 圆点 8px error 色 / 成功 success / 停用行标题 0.45 置灰加已停用徽章 / running 启动钮禁用文案切换 / 行 bg hover 层", {
+              "agent_ui: 列表状态视觉——failed 圆点 8px error 色 / 成功 success / 停用行标题 0.45 置灰加已停用徽章 / running 启动钮禁用文案切换 / UAT6 卡片化（灰面板+白卡三态+四边内边距+卡间距+行内钮统一 56×32）", {
     test_support::TestDb tdb("agentui", "listvis");
     test_support::FakeProfileSource profile;
     ToolGuard statsGuard{"app.stats", "app.notify"};
@@ -5218,12 +5222,93 @@ REGISTER_TEST(agent_ui_task_list_status_visuals,
     DOCTEST_REQUIRE(idleTitle != nullptr);
     DOCTEST_CHECK(idleTitle->textColor.a > 0.9f);
 
-    // 行 hover 命中层：bg rect 带状态色（hover = 主题 hover token）且承接点击
+    // ---- UAT6 卡片化几何/背景（用户真机反馈：item 卡片展示 + 四边内边距）----
+    // 列表容器收敛为 pageBg 灰面板——白底让给 item 卡；防「整区白面板」回潮
+    const auto& themeNow = core::theme::current();
+    const auto* panel = ui.find("agent.tasklist.panel");
+    DOCTEST_REQUIRE(panel != nullptr);
+    DOCTEST_CHECK_MESSAGE(sameColor(panel->color, themeNow.colors.wechat.pageBg),
+                          "列表容器应为 pageBg 灰面板（白底已让给 item 卡）");
+    // 卡列表在面板内四边留边 10（kTaskCardInset；卡宽 = 列表宽 − 边距）
+    const auto* tasklist = ui.find("agent.tasklist");
+    DOCTEST_REQUIRE(tasklist != nullptr);
+    DOCTEST_CHECK_MESSAGE(nearPx(tasklist->frame.x - panel->frame.x, 10.0f),
+                          "卡列表左留边应 10");
+    DOCTEST_CHECK_MESSAGE(nearPx(tasklist->frame.y - panel->frame.y, 10.0f),
+                          "卡列表上留边应 10");
+    DOCTEST_CHECK_MESSAGE(
+        nearPx(panel->frame.width - tasklist->frame.width, 20.0f),
+        "卡列表应比面板窄 2×10（弹性契约：卡宽=列表宽−边距）");
+
+    // 卡本体三态：normal cardBg 白卡 / hover 加深 dividerSecondary / pressed
+    // selectedBg（列表无选中语义，第三档只是按压反馈，无绿圈白勾）+ 微信圆角
+    // + 细边 + 点击开详情
     const auto* rowBg = ui.find("agent.task." + idleTid + ".bg");
     DOCTEST_REQUIRE(rowBg != nullptr);
     DOCTEST_CHECK(rowBg->hasStateColors);
-    DOCTEST_CHECK(sameColor(rowBg->hoverColor, core::theme::current().colors.hover));
+    DOCTEST_CHECK_MESSAGE(sameColor(rowBg->color, themeNow.colors.wechat.cardBg),
+                          "卡底应为 cardBg 白卡");
+    DOCTEST_CHECK_MESSAGE(
+        sameColor(rowBg->hoverColor, themeNow.colors.wechat.dividerSecondary),
+        "卡 hover 应加深一档 dividerSecondary（原 transparent→hover 行为已随卡片化换代）");
+    DOCTEST_CHECK_MESSAGE(
+        sameColor(rowBg->pressedColor, themeNow.colors.wechat.selectedBg),
+        "卡按压档应为 selectedBg");
+    DOCTEST_CHECK_MESSAGE(nearPx(rowBg->radius, themeNow.sizes.radiusWeChat),
+                          "卡圆角应为 radiusWeChat");
+    DOCTEST_CHECK_MESSAGE(nearPx(rowBg->border.width, 1.0f) &&
+                              sameColor(rowBg->border.color,
+                                        themeNow.colors.wechat.dividerPrimary),
+                          "卡应为 1px dividerPrimary 细边");
     DOCTEST_CHECK(rowBg->onClick != nullptr);
+    // 卡几何：卡高 = 行 44 + 上下内边距 12 = 68；.row 四边内缩 12
+    const auto* card = ui.find("agent.task." + idleTid);
+    const auto* cardRow = ui.find("agent.task." + idleTid + ".row");
+    DOCTEST_REQUIRE(card != nullptr && cardRow != nullptr);
+    DOCTEST_CHECK_MESSAGE(nearPx(card->frame.height, 68.0f),
+                          "卡高应 44+2×12=68，实测 " +
+                              std::to_string(card->frame.height));
+    DOCTEST_CHECK_MESSAGE(nearPx(cardRow->frame.x - card->frame.x, 12.0f),
+                          "卡内容左内边距应 12");
+    DOCTEST_CHECK_MESSAGE(nearPx(cardRow->frame.y - card->frame.y, 12.0f),
+                          "卡内容上内边距应 12");
+    DOCTEST_CHECK_MESSAGE(
+        nearPx(card->frame.width - cardRow->frame.width, 24.0f),
+        "卡内容左右内边距合计应 24");
+    DOCTEST_CHECK_MESSAGE(nearPx(cardRow->frame.height, 44.0f), "卡内行高应 44");
+    // 卡间距 8：相邻两卡 y 差 = 68 + 8 = 76（按 y 排序逐对验，不依赖 store 顺序）
+    const std::string cardIds[] = {okTid, failTid, idleTid, offTid};
+    std::vector<const core::dsl::Element*> cards;
+    for (const auto& cid : cardIds) {
+        const auto* c = ui.find("agent.task." + cid);
+        DOCTEST_REQUIRE(c != nullptr);
+        cards.push_back(c);
+    }
+    std::sort(cards.begin(), cards.end(),
+              [](const core::dsl::Element* a, const core::dsl::Element* b) {
+                  return a->frame.y < b->frame.y;
+              });
+    for (size_t i = 1; i < cards.size(); ++i) {
+        DOCTEST_CHECK_MESSAGE(
+            nearPx(cards[i]->frame.y - cards[i - 1]->frame.y, 76.0f),
+            "相邻卡间距应 68+8=76，实测 " +
+                std::to_string(cards[i]->frame.y - cards[i - 1]->frame.y));
+    }
+    // 行内操作钮统一规格（真机反馈「启动比其他按钮大」的回归钉）：启动与
+    // 详情 chip 同宽 56、同高 32、字号 12——主操作只用 Primary 色表达
+    const auto* runBgS = ui.find("agent.task." + idleTid + ".run.bg");
+    const auto* runTextS = ui.find("agent.task." + idleTid + ".run.text");
+    const auto* detailChipS = ui.find("agent.task." + idleTid + ".detail.chip");
+    DOCTEST_REQUIRE(runBgS != nullptr && runTextS != nullptr &&
+                    detailChipS != nullptr);
+    DOCTEST_CHECK_MESSAGE(nearPx(runBgS->frame.width, 56.0f) &&
+                              nearPx(runBgS->frame.height, 32.0f),
+                          "启动钮应统一 56×32");
+    DOCTEST_CHECK_MESSAGE(
+        nearPx(runBgS->frame.width, detailChipS->frame.width),
+        "启动钮与行内 chip 不同宽——同排操作钮须同尺寸（主操作不许大一号）");
+    DOCTEST_CHECK_MESSAGE(nearPx(runTextS->fontSize, 12.0f),
+                          "启动钮字号应 12（原派生 14.7 是「大一号」根因）");
 
     // 运行中：启动钮禁用 + 文案「运行中…」；同帧对照（没在跑的任务可用）证明
     // disabled 位来自运行判定而非 loop 未装配。终态后恢复「启动」可点。
