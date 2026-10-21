@@ -6,6 +6,7 @@ add_library(devdesk_platform STATIC
     json.cpp
     github_api.cpp                      # GitHub Contents API 客户端（libcurl，不依赖外部 git）
     utf8.cpp                            # UTF-8 良构校验/清洗（M2 审计 F1：跨模块纯函数）
+    autostart.h                         # 开机自启动抽象：注入缝+纯逻辑在头（UAT6），实现按平台拆
     file_open_common.cpp
     terminal_launch_common.cpp          # 跨平台纯函数（三支之外，无条件编译）
 )
@@ -27,6 +28,7 @@ if(WIN32)
         message_box_win.cpp             # 启动期阻塞对话框（损坏还原流程）
         single_instance_win.cpp        # 单实例互斥：命名 mutex + 事件监听线程
         notification_win.cpp           # 系统通知：EUI-NEO 托盘通知（Shell_NotifyIconW NIF_INFO）
+        autostart_win.cpp              # 开机自启动：HKCU Run 注册表写/删/查（UAT6）
     )
 elseif(APPLE)
     target_sources(devdesk_platform PRIVATE
@@ -43,6 +45,7 @@ elseif(APPLE)
         message_box_macos.cpp          # osascript display dialog（启动期阻塞对话框）
         single_instance_macos.cpp      # .app bundle 系统保证单实例，恒 true
         notification_macos.mm          # UNUserNotificationCenter（ARC，见下方编译选项）
+        autostart_macos.cpp            # 开机自启动：LaunchAgents plist 写/删/查（UAT6）
     )
 else()
     target_sources(devdesk_platform PRIVATE
@@ -59,6 +62,7 @@ else()
         message_box_posix.cpp          # 无原生阻塞对话框：诚实降级（LOG + Cancel）
         single_instance_posix.cpp      # 暂 no-op 恒 true
         notification_posix.cpp         # 无原生通知后端：诚实 NotImplemented
+        autostart_posix.cpp            # 开机自启动兜底：恒不支持（UAT6）
     )
 endif()
 

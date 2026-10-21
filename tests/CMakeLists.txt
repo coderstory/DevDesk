@@ -38,6 +38,8 @@ add_executable(devdesk_tests
     test_platform/test_tray_icon.cpp
     test_platform/test_single_instance.cpp
     test_platform/test_notification.cpp
+    # 开机自启动平台层（UAT6）：注入缝假 writer 断言注册内容/注销/回读，headless 不写系统
+    test_platform/test_autostart.cpp
     test_modules/test_markdown.cpp
     test_modules/test_markdown_service.cpp
     test_modules/test_markdown_tools.cpp
