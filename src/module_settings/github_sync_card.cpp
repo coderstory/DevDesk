@@ -1,9 +1,11 @@
 // src/module_settings/github_sync_card.cpp
 // GitHub Sync 设置卡片实现（UAT5 方案 A 三段式）。
 // 视觉规格 = D:/tmp-icon-candidates/sync-tab-redesign.html 的「方案 A」面板：
-// 头部（状态点 + 标题/摘要 + 右侧纵排双开关）→ 仓库配置组 → 操作组（按钮 +
-// 进度条）。旧「URL 行右挂三按钮」布局已废：按钮全部下移操作组，URL 输入
+// 头部（状态点 + 标题/摘要）→ 启用/自动推送两整行开关行 → 仓库配置组 → 操作组
+//（按钮 + 进度条）。旧「URL 行右挂三按钮」布局已废：按钮全部下移操作组，URL 输入
 // 拉满卡内容右缘；错误摘要上收头部（点头部/错误行开既有 git_error_dialog）。
+// UAT6：头部右侧纵排双开关（真机反馈太挤）拆成各自一整行（模块插拔卡开关行
+// 先例：label+说明左块、开关钉卡内容右缘、行宽=卡内宽弹性契约）。
 #include "github_sync_card.h"
 
 #include "github_sync_config.h"
@@ -31,9 +33,10 @@ namespace module::settings {
 namespace {
 
 // 行几何常量（100% 档基准，运行期随 roundFs 缩放）；E 批统一：label+control 行
-// 迁 ui_kit::formRow（label 110、行高 36）。UAT5 方案 A 三段式：
-//   头部 = 状态点 8 + 标题 22 + 摘要 16（左列）｜自动推送 44×24 + 启用主开关
-//   52×28 纵排（右列，尺寸为字面值不随字号缩放，卡高兜底见下方 85% 档说明）；
+// 迁 ui_kit::formRow（label 110、行高 36）。UAT5 方案 A 三段式 + UAT6 开关行：
+//   头部 = 状态点 8 + 标题 22 + 摘要 16（左列）+ 启用/自动推送两整行开关行
+//  （行盒 36 = formRow 同口径，label 18 + 2 + 说明 16 文本块；开关钉卡内容
+//   右缘、行盒内垂直居中，尺寸 52×28 / 44×24 为字面值不随字号缩放）；
 //   配置组 = 组题 16 + URL 全宽行 + 分支|Token 双列；
 //   操作组 = 三按钮行 + 右侧进度条（仅运行中）；操作组下方为条件信息行。
 // 卡高最坏行序（85%/130% 档复算）见 settings_ui_logic.h 的 kGithubSyncCardHeight。
@@ -41,7 +44,7 @@ inline constexpr float kCardPaddingX = 28.0f;
 inline constexpr float kCardPaddingY = 16.0f;   // 卡上下留白（字面值，不缩放）
 inline constexpr float kTitleH = 22.0f;         // 头部标题行高
 inline constexpr float kSummaryGapY = 2.0f;      // 标题与摘要行间距
-inline constexpr float kMutedH = 16.0f;          // 摘要行 / 组题 / 开关标签行高
+inline constexpr float kMutedH = 16.0f;          // 摘要行 / 组题 / 开关行说明行高
 inline constexpr float kRowH = 36.0f;            // 表单行高（formRow 同口径）
 inline constexpr float kRowGap = 8.0f;          // 行距（列间距同值）
 inline constexpr float kSectionGapY = 12.0f;     // 分段线上下留白
@@ -54,17 +57,16 @@ inline constexpr float kStatusH = 20.0f;         // 条件信息行高
 // warningRed / 未启用=灰。
 inline constexpr float kDotSize = 8.0f;
 inline constexpr float kDotGapX = 8.0f;          // 状态点与标题左缘间距
-// 右侧纵排双开关（方案 A 头部右列）：自动推送 44×24（与模块插拔卡开关同口径）
-// + 启用主开关 52×28（大一号，管整个功能）。两开关尺寸是设计稿字面值，
-// 不随字号缩放——85% 档它们撑住头部高度，卡高常量已按最坏档兜底。
+// 头部两整行开关行（UAT6，模块插拔卡开关行先例）：「启用」52×28 主开关 +
+// 「自动推送」44×24（与模块插拔卡开关同口径）。开关尺寸是设计稿字面值，不随
+// 字号缩放；行盒随 roundFs 缩放（85% 档 31 仍包住 28），卡高常量按最坏档兜底。
 inline constexpr float kAutoSwitchW = 44.0f;
 inline constexpr float kAutoSwitchH = 24.0f;
 inline constexpr float kMainSwitchW = 52.0f;
 inline constexpr float kMainSwitchH = 28.0f;
-inline constexpr float kSwitchRowGap = 6.0f;      // 两开关纵排间距
-inline constexpr float kSwitchLabelGap = 8.0f;     // 标签右缘与开关左缘间距
-inline constexpr float kAutoLabelW = 56.0f;        // 「自动推送」标签盒宽
-inline constexpr float kEnableLabelW = 32.0f;     // 「启用」标签盒宽
+inline constexpr float kSwitchLabelGap = 8.0f;     // 行文本块右缘与开关左缘间距
+inline constexpr float kToggleLabelH = 18.0f;      // 开关行 label 高（模块卡 name 同口径）
+inline constexpr float kToggleDescGapY = 2.0f;     // 开关行 label 与说明行间距
 // 操作组右侧进度（方案 A .bar）：4px 高轨道 + 主色填充 + 阶段文案，仅运行中渲染。
 inline constexpr float kProgressBarH = 4.0f;
 inline constexpr float kProgressTextW = 200.0f;
@@ -142,7 +144,7 @@ void drawGithubSyncCard(const CardDrawArgs& args) {
     ui.stack(id)
         .size(w, h)
         .content([&] {
-        // ── 头部：状态点 + 标题/摘要（左）｜纵排双开关（右）──
+        // ── 头部：状态点 + 标题/摘要（左列，宽度全展开）→ 启用/自动推送两整行 ──
         const float y0 = kCardPaddingY;
         const bool hasError = !in.githubSyncError.empty();
         const float textL = kCardPaddingX + kDotSize + kDotGapX;   // 44
@@ -210,28 +212,73 @@ void drawGithubSyncCard(const CardDrawArgs& args) {
                 .build();
         }
 
-        // 右侧纵排双开关：自动推送（上；未启用时整组经 lock 包装层置灰禁用，
-        // disabled 子树不可命中/不可聚焦 + opacity 调暗）；启用主开关（下，
-        // 52×28 大一号）不加 lock——始终可点，是重新启用的入口。
-        const float autoSwY = y0;
-        const float enableSwY = y0 + kAutoSwitchH + roundFs(kSwitchRowGap);
+        // ── 启用 / 自动推送：各成一整行（UAT6，模块插拔卡开关行先例）──
+        // 行宽 = 卡内宽（弹性契约，无固定帽）：label+说明左块贴卡左缘、右缘让
+        // 位开关（间距 8），开关钉卡内容右缘、行盒内垂直居中。启用行在上（总
+        // 开关，不加 lock——始终可点，是重新启用的入口）；自动推送行在下，整行
+        // 经 lock 包装层置灰禁用（disabled 子树不可命中/不可聚焦 + opacity 调暗）。
+        // 行底取 max(行盒, 文本块, 开关)——防小字号档 roundFs 舍入把 28 高主
+        // 开关挤出缩放后的行盒。
+        const float rowH = roundFs(kRowH);
+        const float rowGap = roundFs(kRowGap);
+        const float toggleLabelH = roundFs(kToggleLabelH);
+        const float toggleDescGapY = roundFs(kToggleDescGapY);
+        const auto toggleRowText = [&](const char* suffix, const char* label,
+                                       const char* desc, float swW,
+                                       float rowY) {
+            const float textW =
+                std::max(0.0f, w - kCardPaddingX * 2.0f - swW -
+                                   roundFs(kSwitchLabelGap));
+            ui.text(id + suffix + ".label")
+                .position(kCardPaddingX, rowY)
+                .size(textW, toggleLabelH)
+                .text(label)
+                .fontSize(fs(13.0f))
+                .lineHeight(toggleLabelH)
+                .fontWeight(500)
+                .color(t.colors.textPrimary)
+                .maxWidth(textW)
+                .overflow(core::TextOverflow::Ellipsis)
+                .clip()
+                .build();
+            ui.text(id + suffix + ".desc")
+                .position(kCardPaddingX, rowY + toggleLabelH + toggleDescGapY)
+                .size(textW, mutedH)
+                .text(desc)
+                .fontSize(fs(12.0f))
+                .lineHeight(mutedH)
+                .color(t.colors.textTertiary)
+                .maxWidth(textW)
+                .overflow(core::TextOverflow::Ellipsis)
+                .clip()
+                .build();
+            return rowY + toggleLabelH + toggleDescGapY + mutedH;
+        };
+        const float enableRowY = summaryY + mutedH + rowGap;
+        const float enableSwY = enableRowY + (rowH - kMainSwitchH) * 0.5f;
+        const float enableTextBottom = toggleRowText(
+            ".enabled", "启用", "总开关：关闭后下方配置与同步操作置灰，配置保留",
+            kMainSwitchW, enableRowY);
+        ui_kit::wswitch(ui, id + ".enabled.sw", in.githubSyncEnabled,
+                        w - kCardPaddingX - kMainSwitchW, enableSwY,
+                        kMainSwitchW, kMainSwitchH, t,
+                        [f = a.applyGithubSyncEnabled](bool v) { f(v); });
+        const float autoRowY =
+            std::max(enableRowY + rowH,
+                     std::max(enableTextBottom, enableSwY + kMainSwitchH)) +
+            rowGap;
+        const float autoSwY = autoRowY + (rowH - kAutoSwitchH) * 0.5f;
         const float autoSwX = w - kCardPaddingX - kAutoSwitchW;
-        const float enableSwX = w - kCardPaddingX - kMainSwitchW;
+        float autoTextBottom = 0.0f;
         ui.stack(id + ".autopush.lock")
             .position(0.0f, 0.0f)
             .disabled(!in.githubSyncEnabled)
             .opacity(in.githubSyncEnabled ? 1.0f : kDisabledOpacity)
             .content([&] {
-                ui.text(id + ".autopush.label")
-                    .position(autoSwX - kSwitchLabelGap - kAutoLabelW,
-                              autoSwY + (kAutoSwitchH - mutedH) * 0.5f)
-                    .size(kAutoLabelW, mutedH)
-                    .text("自动推送")
-                    .fontSize(fs(12.0f))
-                    .lineHeight(mutedH)
-                    .horizontalAlign(eui::HorizontalAlign::Right)
-                    .color(t.colors.textTertiary)
-                    .build();
+                autoTextBottom = toggleRowText(
+                    ".autopush", "自动推送",
+                    "笔记或待办变更后自动提交并推送，无需手动操作",
+                    kAutoSwitchW, autoRowY);
                 ui_kit::wswitch(ui, id + ".autopush.sw", in.githubSyncAutoPush,
                                 autoSwX, autoSwY, kAutoSwitchW, kAutoSwitchH, t,
                                 [f = a.applyGithubSyncAutoPush](bool v) {
@@ -239,26 +286,11 @@ void drawGithubSyncCard(const CardDrawArgs& args) {
                                 });
             })
             .build();
-        ui.text(id + ".enabled.label")
-            .position(enableSwX - kSwitchLabelGap - kEnableLabelW,
-                      enableSwY + (kMainSwitchH - mutedH) * 0.5f)
-            .size(kEnableLabelW, mutedH)
-            .text("启用")
-            .fontSize(fs(12.0f))
-            .lineHeight(mutedH)
-            .horizontalAlign(eui::HorizontalAlign::Right)
-            .color(t.colors.textTertiary)
-            .build();
-        ui_kit::wswitch(ui, id + ".enabled.sw", in.githubSyncEnabled,
-                       enableSwX, enableSwY, kMainSwitchW, kMainSwitchH, t,
-                       [f = a.applyGithubSyncEnabled](bool v) { f(v); });
 
-        // 纵向游标：头部内容底 = max(左列标题+摘要, 右侧开关纵排)——
-        // 85% 档开关纵排（24+5+28，字面值）高于缩放后的左列，取 max 保住。
-        float y = std::max(y0 + titleH + roundFs(kSummaryGapY) + mutedH,
-                           enableSwY + kMainSwitchH);
+        // 纵向游标：头部内容底 = 自动推送行底（已含 max(行盒/文本块/开关)）。
+        float y = std::max(autoRowY + rowH,
+                           std::max(autoTextBottom, autoSwY + kAutoSwitchH));
         const float formW = w - kCardPaddingX * 2.0f;
-        const float rowH = roundFs(kRowH);
         // 双列几何沿用：列间距 = 行距 8（8px 网格）；每列宽 = (formW − 列距)/2，
         // 右列外缘与全宽行同贴卡内容右缘；label 走 formRow 定宽 110。
         const float colGap = roundFs(kRowGap);
