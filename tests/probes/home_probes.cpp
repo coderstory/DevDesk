@@ -292,7 +292,7 @@ int main(int argc, char* argv[]) {
     // 组 F：类 6(a) stat 溢出（P1）
     // 注入：测试时钟（每次 nowMs() +1000ms）+ 单流累计 20M→40M → 2s 窗口
     // delta 20M → rateTps=10M → 「10000000」（8 位）。数字自 UAT2 起为 22px
-    // 固定字号（fontSizeLarge+4，见 drawStatCard；旧的 48px+动态收缩已删）：
+    // 固定字号（fontSizeLarge+4，见 drawGlassStatCard；旧的 48px+动态收缩已删）：
     // 8 位内在宽 ≈106 < cw 176 天然收纳，无溢出。本组防的是回归——字号再涨
     // 或盒再窄 → 下面两段式判别兜底变红。
     // badge = 流式档「● 1 路 · 累计 40M」，相对当前元素 frame 度量，是弱判别；

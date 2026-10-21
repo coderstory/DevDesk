@@ -4,7 +4,7 @@
 //
 // 跨文件前提：布局常量（卡高 / chip 高 / itemH / 侧边栏 label 宽）镜像自各模块源码，
 // 改源码布局必须同步改这里，否则这组断言会对着旧常量恒绿：
-//   - home_module.cpp drawStatCard：label y=16、number y=40、badge 底对齐 height-48、
+//   - home_module.cpp drawGlassStatCard：label y=16、number y=40、badge 底对齐 height-48、
 //     卡高 144、padX 16、最小窗口 1200 时 statW=208、统计格高 144
 //   - todo_module.cpp drawChip：chip 高 22、字号 fontSizeSmall-1；
 //     drawCard：title y=14、chip y=44、卡高 kCardHeight、列头 title y=16
@@ -64,7 +64,7 @@ REGISTER_TEST(home_stat_card_text_fits, "font-em: home stat card text fits fixed
     DOCTEST_CHECK(textW("暂无成功调用", badgeSize) <= kHomeStatTextW);
     DOCTEST_CHECK(textW("今日修改过的笔记", badgeSize) <= kHomeStatTextW);
 
-    // 纵向（drawStatCard 绝对定位：label 16 / number 40 / badge 底对齐 height-48；
+    // 纵向（drawGlassStatCard 绝对定位：label 16 / number 40 / badge 底对齐 height-48；
     // 最小档 fontScale=1 时 badge 顶 96、卡高 144）
     DOCTEST_CHECK(16.0f + kGlyphExtentRatio * labelSize <= 40.0f);   // 标签不压数字
     DOCTEST_CHECK(40.0f + kAscentRatio * numberSize <= 96.0f);       // 数字（无下延）不压 badge
