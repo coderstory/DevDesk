@@ -173,7 +173,7 @@ REGISTER_TEST(sidebar_toggle_persists,
 // 与强度保守上限）；② 相位钟只在泵回调推进（dt 钳 0.1s，模态循环/休眠不跳变）；
 // 「不挂泵不推进」的不可见侧见 fluid_background_gate_zero_cost。
 REGISTER_TEST(fluid_background_compose_elements,
-              "fluid: 开关开+窗可见 → 4 晕+卫星+帧泵在树；相位只在泵回调推进", {
+              "fluid: 开关开+窗可见 → 7 晕+卫星+帧泵在树；相位只在泵回调推进", {
     test_support::TestEnv cfgDbEnv(kCfgPrefix, "fluidon", true);
     app::resetFluidBackgroundForTests();       // 隔离前序用例的进程级镜像
     app::setFluidWindowVisibleMode(true);      // 钉可见（语义与平台查询解耦）
@@ -182,14 +182,15 @@ REGISTER_TEST(fluid_background_compose_elements,
     FluidComposeFixture fx;
     fx.frame();
 
-    // 4 层晕 + 每层 2 卫星
-    for (int j = 0; j < 4; ++j) {
+    // 7 层晕 + 每层 2 卫星（UAT6.1: 4→7，半径缩至 60%）
+    for (int j = 0; j < 7; ++j) {
         const auto* halo = fx.ui.find("app.fluid.halo." + std::to_string(j));
-        DOCTEST_REQUIRE(halo != nullptr);
-        // 正圆（splash 墨染同款手法）：宽=高=2r、radius=r；强度保守：单层 ≤ 0.13
+        DOCTEST_REQUIRE_MESSAGE(halo != nullptr, "缺晕 halo." + std::to_string(j));
+        // 正圆（splash 墨染同款手法）：宽=高=2r、radius=r
         DOCTEST_CHECK(floatEq(halo->frame.width, halo->frame.height));
         DOCTEST_CHECK(floatEq(halo->radius, halo->frame.width * 0.5f));
-        DOCTEST_CHECK(halo->opacity <= 0.13f + 0.001f);
+        // UAT6.1: kMaxAlpha 0.14（7 层半径缩至 60%，峰值可控）
+        DOCTEST_CHECK(halo->opacity <= 0.14f + 0.001f);
         for (int b = 0; b < 2; ++b) {
             DOCTEST_CHECK(fx.ui.find("app.fluid.sat." + std::to_string(j) +
                                       "." + std::to_string(b)) != nullptr);

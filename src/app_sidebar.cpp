@@ -533,16 +533,10 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
         .build();
 }
 
-// ── 动态背景（UAT6 主窗活体流质）：纯 DSL 层组合（splash 墨染先例，不碰 EUI）──
-// 4 层大半径低透明绿晕（wechat.primary/primaryHover 交替）+ 每层 2 颗确定性
-// hash 卫星，晕心随相位钟缓慢 Lissajous 漂移（角速度 0.036~0.083 rad/s，整圈
-// 75~175s 液体缓流节奏）。z 序：compose 里最先画 → 自绘标题栏/侧栏/页面内容
-// 全在其上，页面区铺不透明 pageBg、侧栏半透 tint——流质只在页边距/半透侧栏
-// 缝隙透出，正文可读性零影响。帧泵 = md.tree.anim.driver 同款 1x1 空 onFrame
-// 常驻元素（runtime 置 animating → 主循环持续出帧）。门控三重：开关关 /
-// 窗不可见（最小化/藏托盘）→ 整函数不建任何元素（含泵）——不可见态零成本由
-// EUI 主循环跳帧（第一道）+ 本门控不挂泵（第二道）双保险；相位钟只在泵回调
-// 里推进 = 「不挂泵不推进」。
+// ── 动态背景（UAT6 主窗活体流质）：纯 DSL 层组合 ──
+// UAT6.1：7 层半径缩至原 60% 的小晕 + 每层 2 颗卫星；相位/周期错开分布，
+// 观感从「几大团」变「多小晕流动」。帧泵与门控同旧版。z 序最底，正文可读
+// 性零影响。角速度 0.035~0.083 rad/s，整圈 75~180s 液体缓流。
 void drawFluidBackground(eui::Ui& ui, const eui::Screen& screen) {
     if (!fluidBackgroundEnabled()) return;  // 开关关：零元素零泵（零成本）
     if (!fluidWindowVisible()) return;      // 铁律：最小化/藏托盘 → 不挂泵不推进
@@ -550,16 +544,18 @@ void drawFluidBackground(eui::Ui& ui, const eui::Screen& screen) {
     const auto& t = ::core::theme::current();
     const auto& wc = t.colors.wechat;
 
-    constexpr int kHalos = 4;            // 3-5 层拍板档取 4：两近心（同心）+ 两对角（偏心）
-    constexpr float kMaxAlpha = 0.13f;   // 单层峰值（保守：最坏全叠 ≈0.37，且仅缝隙可见）
+    constexpr int kHalos = 7;            // UAT6.1 缩小增多：4→7 个小晕流动（几大团→多小晕流）
+    constexpr float kMaxAlpha = 0.14f;   // 单层峰值（7 层 α 平均约 0.123，全叠峰值可控）
     constexpr int kSatsPerHalo = 2;      // 卫星/层
     // 层参数表（锚点 = 窗口比例；速度 rad/s；相位 rad 防共漂；半径 = 短边比例）
-    constexpr float kAnchorX[kHalos] = {0.50f, 0.50f, 0.24f, 0.76f};
-    constexpr float kAnchorY[kHalos] = {0.46f, 0.56f, 0.30f, 0.72f};
-    constexpr float kSpeedX[kHalos] = {0.042f, 0.036f, 0.071f, 0.058f};
-    constexpr float kSpeedY[kHalos] = {0.035f, 0.049f, 0.064f, 0.083f};
-    constexpr float kPhase[kHalos] = {0.0f, 1.7f, 3.1f, 4.9f};
-    constexpr float kRadiusFrac[kHalos] = {0.40f, 0.50f, 0.44f, 0.62f};
+    constexpr float kAnchorX[kHalos] = {0.50f, 0.50f, 0.24f, 0.76f, 0.12f, 0.88f, 0.36f};
+    constexpr float kAnchorY[kHalos] = {0.46f, 0.56f, 0.30f, 0.72f, 0.80f, 0.18f, 0.88f};
+    constexpr float kSpeedX[kHalos] = {0.042f, 0.036f, 0.071f, 0.058f, 0.051f, 0.067f, 0.044f};
+    constexpr float kSpeedY[kHalos] = {0.035f, 0.049f, 0.064f, 0.083f, 0.038f, 0.055f, 0.072f};
+    constexpr float kPhase[kHalos] = {0.0f, 1.7f, 3.1f, 4.9f, 2.3f, 5.8f, 4.0f};
+    // 半径缩至原 60%：0.40→0.24, 0.50→0.30, 0.44→0.264, 0.62→0.372
+    // 新增 3 层分布补全覆盖：H4 左下(0.216) / H5 右上(0.204) / H6 底中(0.228)
+    constexpr float kRadiusFrac[kHalos] = {0.24f, 0.30f, 0.264f, 0.372f, 0.216f, 0.204f, 0.228f};
 
     const float phase = g_fluidPhase;
     const float minDim = std::min(screen.width, screen.height);
