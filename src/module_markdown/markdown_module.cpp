@@ -83,6 +83,10 @@ constexpr float kTreePanelWidth = 240.0f;         // 展开宽（沿用 UAT2 F�
 constexpr float kTreePanelAnimK = 0.18f;          // 每帧向目标靠拢的固定 lerp 系数
 constexpr float kTreePanelSnapEps = 1.0f;         // 距目标 <1px 视为收敛，直接钉住
 constexpr float kTreePanelContentMinW = 220.0f;   // 内容回画门槛（动画中只画面板壳）
+// UAT6 misc2：收起态展开浮钮几何——右缘与编辑列左缘保持 kTreeFabEditorClear
+// 边界距（零重叠）；旧位右缘骑进编辑列灰底 6px，见 drawTreeExpandFab 注释。
+constexpr float kTreeFabSize = 28.0f;         // 浮钮边长
+constexpr float kTreeFabEditorClear = 8.0f;  // 浮钮右缘 → 编辑列左缘最小边界距
 
 // 单行树条目：整行包一层 stack —— position() 只在 stack 内生效，流式子元素会被静默忽略。
 // W8：选中态改 wechat 风格（§4.3）——浅灰底 #E5E5E5 + 左 2px 绿竖线。
@@ -580,6 +584,11 @@ private:
     // D-R3-3 b：收起态展开浮钮——面板完全收起（宽 0）后，编辑区左上角常显的
     // 圆形 28px 微信风格钮（chevron-right = 向右展开）。页面级浮层（zIndex 5，
     // 低于大纲面板 10 / 弹窗 1000），常驻 id md.tree.expand.btn（含 .bg/.hit 子件）。
+    // UAT6 misc2（真机反馈「展开钮压编辑框」）：浮钮整体左移出编辑列 x 带。
+    // 旧位 x = pad-6（34..62）：右缘骑进收起态编辑列灰底（列左缘 pad+gap=56，
+    // 重叠 56..62 共 6px），距白输入框左缘（64）仅 2px——视觉即「按钮压在编辑
+    // 框上」。新位右缘 = 编辑列左缘 - kTreeFabEditorClear（x = 20..48），浮钮与
+    // 编辑列 bg/输入框零重叠（边界距 8px）；仍贴左缘留白带，展开入口语义不变。
     void drawTreeExpandFab(eui::Ui& ui,
                            const eui::Screen& screen,
                            float pad,
@@ -587,16 +596,17 @@ private:
         (void)screen;
         // 收起动画未收敛（宽 >1px）不画：避免收起途中浮钮与残影同屏。
         if (treePanelWidth_ > kTreePanelSnapEps) return;
-        // 位置：body 左上角——横跨页边留白/树列空槽缝，右缘轻搭编辑列左缘
-        //（收起后编辑列 x = pad + gap，浮钮右缘 62 < 标签 chip 起点 64，互不压）。
+        // 位置：页面左缘留白带，右缘让开收起态编辑列左缘（pad + gap）8px。
+        const float fabX = pad + t.sizes.spacingLarge - kTreeFabSize -
+                           kTreeFabEditorClear;
         const float fabY = pad + ui_kit::kHeaderH + t.sizes.spacingLarge + 8.0f;
         ui.stack("md.tree.expand")
-            .position(pad - 6.0f, fabY)
-            .size(28.0f, 28.0f)
+            .position(fabX, fabY)
+            .size(kTreeFabSize, kTreeFabSize)
             .zIndex(5)
             .content([&] {
                 components::button(ui, "md.tree.expand.btn")
-                    .size(28.0f, 28.0f)
+                    .size(kTreeFabSize, kTreeFabSize)
                     .icon(0xF054)  // fa-chevron-right
                     .fontSize(14.0f)
                     .theme(core::theme::componentTokensWeChat(t), false)

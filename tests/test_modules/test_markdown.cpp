@@ -953,6 +953,83 @@ REGISTER_TEST(md_tree_panel_collapse,
     return true;
 })
 
+// 2b2''''''' UAT6 misc2：收起态展开浮钮与编辑框零重叠回归锁（真机反馈：旧位
+// x = pad-6（34..62）右缘骑进收起态编辑列灰底 6px、距白输入框左缘仅 2px）。
+// 两态断言：展开态浮钮退场；收起态浮钮与编辑列壳 / 列灰底 / 编辑器输入框
+// （md.editor.input）零重叠（边界距 ≥ 0，设计边界距 = kTreeFabEditorClear 8px）。
+REGISTER_TEST(md_tree_expand_fab_clears_editor,
+              "markdown_module: 收起态展开浮钮不压编辑框（两态零重叠回归）", {
+    test_support::MdHeadlessEnv env(kDirPrefix, "fabclear", kDbName);
+    DOCTEST_REQUIRE(env.db != nullptr);
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "a.md", "# A\n"));
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    eui::Ui ui;
+    int n = 0;
+    auto frame = [&]() {
+        ui.begin("fabclear" + std::to_string(n++));
+        mod->compose(ui, screen);
+        ui.end();
+        ui.layout(screen.width, screen.height);
+    };
+    auto settle = [&]() {
+        for (int i = 0; i < 40; ++i) frame();
+    };
+    auto rectOf = [](const core::dsl::Element* e) {
+        return eui::Rect{e->frame.x, e->frame.y, e->frame.width, e->frame.height};
+    };
+    auto overlaps = [](const eui::Rect& a, const eui::Rect& b) {
+        return a.x < b.x + b.width && b.x < a.x + a.width &&
+               a.y < b.y + b.height && b.y < a.y + a.height;
+    };
+
+    // 展开态：打开笔记（输入框在场）→ 浮钮退场
+    settle();
+    const auto* fileRow = ui.find("md.tree.node.1.row");
+    DOCTEST_REQUIRE(fileRow != nullptr);
+    DOCTEST_REQUIRE(fileRow->onClick != nullptr);
+    fileRow->onClick();
+    settle();
+    DOCTEST_REQUIRE(ui.find(kEditorInputId) != nullptr);
+    DOCTEST_CHECK(ui.find("md.tree.expand.btn.bg") == nullptr);  // 展开态无浮钮
+
+    // 收起态：浮钮回归，与编辑列壳/灰底/输入框零重叠
+    const auto* headCollapse = ui.find("md.tree.collapse.bg");
+    DOCTEST_REQUIRE(headCollapse != nullptr);
+    DOCTEST_REQUIRE(headCollapse->onClick != nullptr);
+    headCollapse->onClick();
+    settle();
+    const auto* fab = ui.find("md.tree.expand");
+    DOCTEST_REQUIRE(fab != nullptr);
+    DOCTEST_REQUIRE(ui.find("md.tree.expand.btn.bg") != nullptr);
+    const auto* ed = ui.find("md.editor");
+    const auto* edBg = ui.find("md.editor.bg");
+    const auto* input = ui.find(kEditorInputId);
+    DOCTEST_REQUIRE(ed != nullptr);
+    DOCTEST_REQUIRE(edBg != nullptr);
+    DOCTEST_REQUIRE(input != nullptr);
+    const auto fabR = rectOf(fab);
+    // 前提锚点：收起态编辑列左缘 = pad + gap；浮钮右缘到列左缘边界距 ≥ 8
+    //（旧位 34..62 → 右缘越列左缘 56 共 6px，本断言红）
+    DOCTEST_CHECK_EQ(ed->frame.x, 40.0f + 16.0f);
+    DOCTEST_CHECK(fabR.x + fabR.width <= ed->frame.x - 8.0f);
+    // 零重叠（两轴联合判定，边界距 ≥ 0）
+    DOCTEST_CHECK_MESSAGE(!overlaps(fabR, rectOf(ed)),
+                          "收起态浮钮压编辑列壳");
+    DOCTEST_CHECK_MESSAGE(!overlaps(fabR, rectOf(edBg)),
+                          "收起态浮钮压编辑列灰底");
+    DOCTEST_CHECK_MESSAGE(!overlaps(fabR, rectOf(input)),
+                          "收起态浮钮压编辑器输入框");
+
+    mod->onStop();
+    return true;
+})
+
 // 2b2''''''. UAT5 真机/headless 分叉回归锁：树列 lerp 只在 compose 里推进，真机主循环
 // 事件驱动（无输入即 glfwWaitEvents 睡眠），runtime 的 animating 位只认 DSL 管理的动画
 //（onFrame/过渡/GIF/滚动惯性），手搓 treePanelWidth_ lerp 对它不可见 → 折叠点击帧只推进
