@@ -6,6 +6,7 @@
 #include "core/database.h"
 #include "module_markdown/md_file_open.h"
 #include "module_toggle_bridge.h"
+#include "platform/autostart.h"
 #include "platform/file_open.h"
 #include "platform/notification.h"
 #include "settings_config.h"
@@ -15,6 +16,7 @@
 
 #include <cstdlib>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace app::assembly {
@@ -26,6 +28,10 @@ bool g_exitHookArmed = false;
 
 // argv 捕获门：仅第一次调用生效
 bool g_argvCaptureDone = false;
+
+// --minimized 捕获门（与 openFile 同款幂等）+ 待执行旗标（命中后由 compose 首帧取走）
+bool g_minimizedCaptureDone = false;
+bool g_minimizedStartupPending = false;
 
 // 捕获落点：写进程级 pending 路径；空路径（无文件参数/只有 flag）不写
 void capturePendingOpenFile(const std::string& path) {
@@ -136,6 +142,30 @@ void captureOpenFileFromArgv(const std::vector<std::string>& utf8Args) {
 }
 
 void resetArgvCaptureForTest() { g_argvCaptureDone = false; }
+
+void captureMinimizedFlagFromArgv() {
+    // 平台层读进程自身命令行（EUI-NEO 的 main 不接 argc/argv 形参，先例同 openFileFromArgv）
+    captureMinimizedFlagFromArgv(platform::autostart::processArgsUtf8());
+}
+
+bool captureMinimizedFlagFromArgv(const std::vector<std::string>& utf8Args) {
+    if (g_minimizedCaptureDone) return g_minimizedStartupPending;
+    g_minimizedCaptureDone = true;
+    if (platform::autostart::parseMinimizedFlag(utf8Args)) {
+        g_minimizedStartupPending = true;
+        LOG_INFO("--minimized 启动：窗口保持托盘态");
+    }
+    return g_minimizedStartupPending;
+}
+
+void resetMinimizedFlagForTest() {
+    g_minimizedCaptureDone = false;
+    g_minimizedStartupPending = false;
+}
+
+bool consumePendingMinimizedStartup() {
+    return std::exchange(g_minimizedStartupPending, false);
+}
 
 ::core::PageId dispatchPageForFile(const std::string& path) {
     auto endsWith = [&](const char* suffix) {

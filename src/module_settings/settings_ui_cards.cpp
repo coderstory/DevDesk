@@ -199,7 +199,8 @@ void drawAppearanceCard(const CardDrawArgs& args) {
 
 // 档位写 core::theme::editorFontSize 通道；pageY/screenH 用于下拉弹层 openUp 几何估算。
 // UAT3 多列分栏：本卡为半宽配对右列，行内尾注放不下（formW ≈292、控件区仅 ≈174）
-// → hint 迁下拉下方第二行（行 y 单一来源 hintRowBelowY），卡高 122→144。
+// → hint 迁下拉下方第二行（行 y 单一来源 hintRowBelowY）。UAT6：卡内第二段加
+// 「开机自启动」开关行，卡高 144→184（与外观卡同高，配对行高不变，见行内注释）。
 void drawEditorFontCard(const CardDrawArgs& args) {
     eui::Ui& ui = args.ui;
     const std::string& id = args.id;
@@ -272,6 +273,56 @@ void drawEditorFontCard(const CardDrawArgs& args) {
                 .overflow(core::TextOverflow::Ellipsis)
                 .clip()
                 .build();
+
+            // ── 开机自启动行（UAT6）：落位在本卡的配对行阴影里 ──
+            // 通用 tab 1000×640 档零滚动预算已满（配对行 184 + 代理卡 138~172 =
+            // 内容 338~372，可用 372），新建卡/加高外观卡都会破预算；唯一零增长
+            // 空位 = 配对行内矮卡（本卡原 144 → 现 184）的 40px 阴影，行落此 →
+            // 配对行高恒 max(184,184)=184 不变（85%/130% 同由 roundFs(184) 掌行高）。
+            // 几何单一来源 settings_ui_logic.h（autostartRowBelowY/autostartRowHeight/
+            // kAutostartSwitch*）；POSIX（不支持）整行不建，卡高不变（阴影留白）。
+            if (in.autostartSupported) {
+                // 行盒两变量刻意异名（startRowY/startRowH）：本卡上方已有字号段的
+                // rowY/rowH（editorFontRowY/logFieldHeight），lambda 内同名会遮蔽捕获
+                const float startRowY = autostartRowBelowY(hintY);
+                const float startRowH = autostartRowHeight();
+                const float swY = startRowY + (startRowH - kAutostartSwitchH) * 0.5f;
+                const float labelW = roundFs(92.0f);
+                const float descX = 28.0f + labelW + roundFs(8.0f);
+                const float descW = w - 28.0f - kAutostartSwitchW -
+                                    roundFs(12.0f) - descX;
+                // 标签 + 说明一行 + 右贴 44×24 微信开关（行几何 = 开关右贴卡内
+                // 边距 28、行盒内垂直居中；说明超宽省略号兜底）
+                ui.text(id + ".autostart.label")
+                    .position(28.0f, startRowY)
+                    .size(labelW, startRowH)
+                    .text("开机自启动")
+                    .fontSize(t.sizes.fontSizeBody - 1.0f)
+                    .lineHeight(startRowH)
+                    .fontWeight(500)
+                    .color(t.colors.textPrimary)
+                    .maxWidth(labelW)
+                    .overflow(core::TextOverflow::Ellipsis)
+                    .clip()
+                    .build();
+                ui.text(id + ".autostart.desc")
+                    .position(descX, startRowY)
+                    .size(std::max(0.0f, descW), startRowH)
+                    .text("开机后自动运行并最小化到托盘")
+                    .fontSize(fs(12.0f))
+                    .lineHeight(startRowH)
+                    .color(t.colors.textTertiary)
+                    .maxWidth(std::max(0.0f, descW))
+                    .overflow(core::TextOverflow::Ellipsis)
+                    .clip()
+                    .build();
+                // wswitch 命中元素 = <id>.track（回调断言按此定位）；开关显示
+                // 注册真值（in.autostartRegistered），拨动 → applyAutostartEnabled
+                ui_kit::wswitch(ui, id + ".autostart.sw", in.autostartRegistered,
+                                w - 28.0f - kAutostartSwitchW, swY,
+                                kAutostartSwitchW, kAutostartSwitchH, t,
+                                [f = a.applyAutostartEnabled](bool v) { f(v); });
+            }
         })
         .build();
 }

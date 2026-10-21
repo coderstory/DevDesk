@@ -71,6 +71,9 @@ struct SettingsConfig {
     int logRetentionDays = 30;     // 0 = 永久保留
     // false 时 main 只注册单例、不拉起 8888。
     bool claudeProxyAutoStart = false;
+    // 开机自启动（UAT6 设置-通用）：持久化的是用户意图；真值 = 平台注册态
+    //（HKCU Run / LaunchAgents），设置页打开时回读对齐、拨开关时双写（先写平台再落库）。
+    bool autostartEnabled = false;
     // Claude 代理监听端口：非法值回落默认 8888；运行中改端口自动 stop→start 重启。
     int proxyPort = kDefaultProxyPort;
     // 窗口效果："off"|"translucent"|"frosted"，未知值收敛 off。
@@ -137,7 +140,7 @@ public:
     // 与 load() 同源，但把「库未就绪 / 表不存在 / 单键读失败」如实报出（ErrorCode + 原因）。
     core::Result<SettingsConfig> loadChecked() const;
 
-    // 写入配置：11 个顶层键在一个事务里 UPSERT，并清掉本轮不再写出的旧键。
+    // 写入配置：12 个顶层键在一个事务里 UPSERT，并清掉本轮不再写出的旧键。
     core::Result<void> save(const SettingsConfig& cfg) const;
 
     // 数值越界收敛到合法范围（load 时应用；也供单测直接验证）

@@ -1,5 +1,6 @@
 // 常驻侧边栏 + 折叠/展开实现（接口见 app_sidebar.h）。折叠态：宽 208→72，只显居中图标，
 // label 不渲染；动画为瞬时切换（EUI-NEO AnimProperty 无 Width 档）。
+#include "app_assembly.h"
 #include "app_sidebar.h"
 
 #include "core/component_theme.h"
@@ -16,6 +17,7 @@
 #include <ui_kit/splash.h>
 #include <ui_kit/toast.h>
 
+#include <eui/app.h>  // app::closeMainWindow（--minimized 首帧藏主窗）
 #include <eui/types.h>
 
 #include <functional>
@@ -403,6 +405,14 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
 }
 
 void compose(eui::Ui& ui, const eui::Screen& screen) {
+    // --minimized 启动（UAT6 开机自启动）：首帧一次性走 close-to-tray 同款
+    // WM_CLOSE→隐藏路径（点标题栏 X 藏托盘是同一入口 app::closeMainWindow；主窗
+    // 句柄此刻已由 EUI-NEO 主循环回写，SendMessage 同步派发 → close callback 置
+    // hideToTrayRequested，下一帧循环顶隐藏到托盘）。须在 splash 之前：旗标在身
+    // 时 splash 不该露脸。取走即清：仅启动后第一帧生效，托盘左键/Show 正常唤起。
+    if (app::assembly::consumePendingMinimizedStartup()) {
+        app::closeMainWindow();
+    }
     // 启动 splash：2.0s 动画 + 0.3s 淡出后切主界面；期间跳过布局
     if (ui_kit::drawSplashIfNeeded(ui, screen)) {
         return;

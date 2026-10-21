@@ -74,7 +74,14 @@ inline constexpr long kLogTailReadWindow = 256 * 1024;  // tail 只读末尾 256
 // 卡片高度（唯一来源：注册表卡高与卡内几何同源）
 // 内边距四周 ≥16px，改动须同时满足「内容底沿 + 16」；这些是 100% 档基准，注册表运行期取 roundFs(常量)，卡高与行盒同缩放才不挤出尾行。
 inline constexpr float kAppearanceCardHeight = 184.0f;  // 外观卡（通用 | 半宽配对左列；降级提示行底 168 + 16，E 批布局统一后行序不变仍 184）
-inline constexpr float kEditorFontCardHeight = 144.0f;  // 编辑器字号卡（通用 | 半宽配对右列；hint 迁下拉下方第二行后行底 hintRowBelowY(68)+roundFs(16)=126，+16 → 144；85% 档 122 / 130% 档 187）
+// 编辑器字号卡（通用 | 半宽配对右列；UAT6 起卡内第二段加「开机自启动」开关行）：
+// 字号段行底 hintRowBelowY(68)+roundFs(16)=126，自启动行顶 126+roundFs(6)=132、
+// 行盒 roundFs(30)=30 → 行底 162，+ 边距 16 → 184，与外观卡同高。**配对行高
+// 184 全档不变**（max(184,184)，外观卡继续掌行高）→ 通用 tab 内容高
+// 338/356/372（0/1/2 条代理警告）对可用 372 的零滚动预算逐值保持。
+// 85% 档卡高 156（自启动行底 139，下边距 17）/130% 档 239（行底 211，下边距 28），
+// 下边距全档 ≥16（卡内边距契约）。历史：UAT5 时 144（hint 行底 126+16）。
+inline constexpr float kEditorFontCardHeight = 184.0f;
 inline constexpr float kModulesCardHeight = 198.0f;     // 模块插拔卡（模块 | 全宽卡内 2×2 开关格，UAT4 按用户拍板撑满；次行块底 68+roundFs(56)+roundFs(36)=160，+16 → 198 给字号档富余；85% 档 168 / 130% 档 257）
 inline constexpr float kLogSettingsCardHeight = 144.0f; // 日志卡（日志；两下拉同排双列，hint 并一行下移后行底 126，+16 → 144；85% 档 122 / 130% 档 187）
 // GitHub Sync 卡（同步，UAT5 方案 A 三段式 + UAT6 开关行 + UAT6 零滚动收口）：
@@ -118,6 +125,17 @@ inline float editorFontRowY() { return roundFs(68.0f); }  // 100% = 68
 inline float hintRowBelowY(float rowY) {
     return rowY + logFieldHeight() + roundFs(6.0f);
 }
+// ── 开机自启动行（编辑器字号卡内第二段，UAT6；几何与卡高同源推导见
+// kEditorFontCardHeight 注释）──
+// 行 y = hint 行底（hintH 恒 roundFs(16)）+ 行距 6：100% = 110+16+6 = 132。
+inline float autostartRowBelowY(float hintY) {
+    return hintY + roundFs(16.0f) + roundFs(6.0f);
+}
+// 行盒高：roundFs(30)（85% 档 26 仍包住 44×24 字面开关——开关是字面值不随字号缩放）
+inline float autostartRowHeight() { return roundFs(30.0f); }
+// 开关尺寸（§4.4 微信开关口径，与模块插拔卡/同步卡同款字面值）
+inline constexpr float kAutostartSwitchW = 44.0f;
+inline constexpr float kAutostartSwitchH = 24.0f;
 inline constexpr float kDropdownPopupGap = 8.0f;       // 字段底边与弹层间距（spacing.compact）
 inline constexpr float kDropdownItemHeight = 34.0f;    // 单个菜单项高（control.menuItem）
 inline constexpr float kDropdownPopupPadding = 12.0f;  // 弹层上下 padding（spacing.small × 2）

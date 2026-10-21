@@ -64,6 +64,23 @@ void captureOpenFileFromArgv(const std::vector<std::string>& utf8Args);
 // 测试缝：复位「已捕获」门（幂等状态是进程级的）
 void resetArgvCaptureForTest();
 
+// ── --minimized 启动旗标（UAT6 开机自启动）──
+// 开机自启动注册项带 --minimized；命中则启动后主窗保持托盘态（不显示、仅托盘，
+// 点托盘恢复）。这里只捕获；执行须等主窗句柄由 EUI-NEO 主循环回写后，由
+// app::compose 首帧经 consumePendingMinimizedStartup 取走、走 close-to-tray 同款
+// WM_CLOSE→隐藏路径（见 app_sidebar.cpp compose 顶部）。
+void captureMinimizedFlagFromArgv();
+
+// 测试缝：argv 来源参数化（UTF-8 数组，argv[0]=exe）；返回本次捕获是否命中旗标。
+// 生产捕获同款幂等；须在 setupLogging 之后调用（命中时记 LOG）
+bool captureMinimizedFlagFromArgv(const std::vector<std::string>& utf8Args);
+
+// 测试缝：回翻捕获门与待执行旗标（用例间隔离）
+void resetMinimizedFlagForTest();
+
+// 首帧一次性取走「--minimized 启动」待执行请求（取走即清，compose 侧每帧调用无害）
+bool consumePendingMinimizedStartup();
+
 // 根据扩展名返回目标 PageId（仅目标选择；内容加载由 dispatchFileOpen 完成）
 ::core::PageId dispatchPageForFile(const std::string& path);
 

@@ -30,6 +30,7 @@
 #include "platform/github_api.h"     // platform::github::ApiLogEntry（弹窗日志源；GithubApi 由同步引擎持有）
 #include <core/platform/platform.h>   // core::platform::requestUiUpdate（唤醒主循环）
 #include <core/window/window_backend.h>   // core::window::setClipboardText（复制详情）
+#include "platform/autostart.h"      // platform::autostart（开机自启动注册态回读/写入，UAT6）
 #include "platform/system_theme.h"
 
 // 模块开关即时生效桥：函数指针缝 + 默认 no-op，真 handler 由 main.cpp 装配段注入。
@@ -370,6 +371,32 @@ public:
                      : "代理不再随应用启动（下次启动生效）");
         LOG_INFO("Settings: claudeProxyAutoStart → " +
                  std::string(on ? "true" : "false"));
+    }
+
+    // 「开机自启动」开关（UAT6）：先写平台注册项（Windows HKCU Run / macOS
+    // LaunchAgents，注册内容带 --minimized），回读真值后再持久化——写失败时
+    // cfg/开关回到真值，不停留在错态。设置页显示的恒是注册真值（防漂移）。
+    void applyAutostartEnabled(bool on) {
+        platform::autostart::AutostartController ctl(
+            platform::autostart::systemOps());
+        const auto r = ctl.setRegistered(on);
+        autostartRegistered_ = ctl.isRegistered();  // 成败都回读真值
+        cfg_.autostartEnabled = autostartRegistered_;  // 意图对齐真值再落库
+        persist();
+        if (r.isFail()) {
+            setStatus((on ? "开启开机自启动失败: " : "关闭开机自启动失败: ") +
+                          r.errorMessage(), true);
+            LOG_ERROR("Settings: 开机自启动注册态写入失败（→ " +
+                      std::string(on ? "on" : "off") +
+                      "）: " + r.errorMessage());
+            return;
+        }
+        setStatus(autostartRegistered_
+                      ? "开机自启动已开启：下次开机自动运行并最小化到托盘"
+                      : "开机自启动已关闭");
+        LOG_INFO("Settings: 开机自启动 → " +
+                 std::string(autostartRegistered_ ? "启用" : "停用") +
+                 "（注册态已写入平台）");
     }
 
     // 应用代理端口：重启失败时代理已停、sidecar 已还原，状态栏提示可换端口重试。
@@ -1110,6 +1137,7 @@ private:
         a.applyRetentionPreset = [this](int idx) { applyRetentionPreset(idx); };
         a.applyLogLevelPreset = [this](int idx) { applyLogLevelPreset(idx); };
         a.applyEditorFontPreset = [this](int idx) { applyEditorFontPreset(idx); };
+        a.applyAutostartEnabled = [this](bool on) { applyAutostartEnabled(on); };
         a.requestLogTailReload = [this] { logTailDirty_ = true; };
         a.logViewScrolled = [this](float v) { logViewScrollOffset_ = v; };
 
@@ -1190,6 +1218,9 @@ private:
         in.takeoverManaged = takeoverManaged_;
         in.openDropdown = openDropdown_;
         in.proxy = svc;
+        // 开机自启动（UAT6）：注册真值快照（POSIX 兜底 false → 行整行不建）
+        in.autostartSupported = autostartSupported_;
+        in.autostartRegistered = autostartRegistered_;
         // GitHub Sync 快照
         in.githubSyncEnabled = githubSyncCfg_.enabled;
         in.githubSyncRepoUrl = githubSyncCfg_.repoUrl;
@@ -1397,6 +1428,13 @@ private:
     void refreshExternalState() {
         auto* svc = claudeProxy();
         takeoverManaged_ = svc && svc->isClaudeCodeManaged();
+        // 开机自启动（UAT6）：真值回读（HKCU Run / LaunchAgents 有项 = 开，只读不写）
+        // 防漂移——手改注册表 / 上次注销失败在开页时自愈；cfg 意图对齐真值
+        //（下次 persist 落库，开关显示恒走 autostartRegistered_ 真值）
+        autostartSupported_ = platform::autostart::supported();
+        autostartRegistered_ = platform::autostart::AutostartController(
+            platform::autostart::systemOps()).isRegistered();
+        cfg_.autostartEnabled = autostartRegistered_;
         externalStateLoaded_ = true;
     }
 
@@ -1476,6 +1514,9 @@ private:
     std::future<void> logTailWorker_;
     bool externalStateLoaded_ = false;    // 首次装载标记（compose 冷启动兜底）
     bool takeoverManaged_ = false;        // Claude Code 接管（sidecar 存在性）
+    // 开机自启动（UAT6）：注册真值快照（开关显示源，防漂移）；supported=false → 卡内行整行不建
+    bool autostartSupported_ = true;
+    bool autostartRegistered_ = false;
     float logViewScrollOffset_ = 0.0f;    // 日志查看卡内滚动位置
     std::string statusMessage_;
     bool statusIsError_ = false;

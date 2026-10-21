@@ -31,6 +31,11 @@ struct SettingsCardsIn {
     int openDropdown = -1;                     // 下拉唯一持有者
     ::core::IClaudeProxyService* proxy = nullptr;  // 代理运行面（null = 未装配）
 
+    // 开机自启动（UAT6）：显示的是平台注册真值（HKCU Run / LaunchAgents 有项 = 开，
+    // 页面打开时回读防漂移），不是 cfg 意图；POSIX 兜底 false → 行整行不建（卡高不变）
+    bool autostartSupported = true;
+    bool autostartRegistered = false;
+
     // GitHub Sync 快照
     bool githubSyncEnabled = false;
     std::string githubSyncRepoUrl;
@@ -63,6 +68,7 @@ struct SettingsCardActions {
     std::function<void(int)> applyRetentionPreset;            // 日志保留档
     std::function<void(int)> applyLogLevelPreset;             // 日志级别档
     std::function<void(int)> applyEditorFontPreset;           // 编辑器字号档
+    std::function<void(bool)> applyAutostartEnabled;          // 开机自启动开关（UAT6）
     std::function<void()> requestLogTailReload;               // 日志查看卡刷新
     std::function<void(float)> logViewScrolled;               // 日志查看卡内滚动
 

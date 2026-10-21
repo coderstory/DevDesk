@@ -404,6 +404,49 @@ REGISTER_TEST(assembly_capture_open_file_from_argv,
     return true;
 })
 
+// --minimized 启动旗标捕获（UAT6 开机自启动）：注册项带本旗标，命中 → 主窗保持
+// 托盘态。捕获门/待执行取走语义与 openFile 同款（幂等门 + 一次性取走）；执行在
+// app::compose 首帧（窗口创建后才有主窗句柄），这里只测捕获/取走两侧。
+REGISTER_TEST(assembly_capture_minimized_flag_from_argv,
+              "assembly: --minimized 旗标捕获（有旗标→待执行 / 无旗标 / 与文件参数共存 / 幂等 / 取走一次）", {
+    using app::assembly::captureMinimizedFlagFromArgv;
+    using app::assembly::consumePendingMinimizedStartup;
+    using app::assembly::resetMinimizedFlagForTest;
+
+    // 1. 无旗标 → 捕获返回 false，无待执行
+    resetMinimizedFlagForTest();
+    DOCTEST_CHECK_FALSE(captureMinimizedFlagFromArgv({"devdesk.exe"}));
+    DOCTEST_CHECK_FALSE(consumePendingMinimizedStartup());
+
+    // 2. 有旗标 → 捕获 true；取走一次即清（第二次取走 false——compose 首帧一次性）
+    resetMinimizedFlagForTest();
+    DOCTEST_CHECK(captureMinimizedFlagFromArgv({"devdesk.exe", "--minimized"}));
+    DOCTEST_CHECK(consumePendingMinimizedStartup());
+    DOCTEST_CHECK_FALSE(consumePendingMinimizedStartup());
+
+    // 3. 旗标与文件参数共存（开机拉起后又被分发打开文件）：旗标照常命中
+    resetMinimizedFlagForTest();
+    DOCTEST_CHECK(captureMinimizedFlagFromArgv(
+        {"devdesk.exe", "--minimized", "note.md"}));
+    DOCTEST_CHECK(consumePendingMinimizedStartup());
+
+    // 4. 幂等：首次捕获已定，第二次调用（不同 argv）不覆盖
+    resetMinimizedFlagForTest();
+    DOCTEST_CHECK(captureMinimizedFlagFromArgv({"devdesk.exe", "--minimized"}));
+    DOCTEST_CHECK_FALSE(captureMinimizedFlagFromArgv({"devdesk.exe"}));
+    DOCTEST_CHECK(consumePendingMinimizedStartup());
+
+    // 5. 同族前缀不认（--minimized=1 不是 --minimized）
+    resetMinimizedFlagForTest();
+    DOCTEST_CHECK_FALSE(
+        captureMinimizedFlagFromArgv({"devdesk.exe", "--minimized=1"}));
+    DOCTEST_CHECK_FALSE(consumePendingMinimizedStartup());
+
+    // 收尾：不留进程级状态（真实启动的 compose 首帧会读它）
+    resetMinimizedFlagForTest();
+    return true;
+})
+
 // 空态兜底渲染的注入接线：core 侧的 Router 不自行绘制「无页面」占位（eui::Ui 只可透传，
 // 文案与样式不能住在 core），占位搬到装配段注入。本用例证明装配后「当前页无模块」真的会
 // 画出 app 层的那一块。

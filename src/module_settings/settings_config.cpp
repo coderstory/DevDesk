@@ -25,6 +25,7 @@ constexpr const char* kKeyLogLevel = "logLevel";
 constexpr const char* kKeyFontScale = "fontScalePercentV3";
 constexpr const char* kKeyLogRetention = "logRetentionDays";
 constexpr const char* kKeyProxyAutoStart = "claudeProxyAutoStart";
+constexpr const char* kKeyAutostart = "autostartEnabled";
 constexpr const char* kKeyProxyPort = "claudeProxyPort";
 constexpr const char* kKeyWindowEffect = "windowEffect";
 constexpr const char* kKeyEnabledModules = "enabledModules";
@@ -371,6 +372,12 @@ core::Result<SettingsConfig> SettingsStore::loadChecked() const {
             v.errorCode(), v.errorMessage());
         if (v.value().isBool()) cfg.claudeProxyAutoStart = v.value().asBool();
     }
+    if (auto raw = readRow(kKeyAutostart); raw.isOk()) {
+        auto v = parseRow(configKey(kKeyAutostart), raw.value());
+        if (v.isFail()) return core::Result<SettingsConfig>::fail(
+            v.errorCode(), v.errorMessage());
+        if (v.value().isBool()) cfg.autostartEnabled = v.value().asBool();
+    }
     if (auto raw = readRow(kKeyProxyPort); raw.isOk()) {
         auto v = parseRow(configKey(kKeyProxyPort), raw.value());
         if (v.isFail()) return core::Result<SettingsConfig>::fail(
@@ -439,6 +446,7 @@ core::Result<void> SettingsStore::save(const SettingsConfig& cfgRaw) const {
         {kKeyFontScale, platform::json::makeInt(cfg.fontScalePercent)},
         {kKeyLogRetention, platform::json::makeInt(cfg.logRetentionDays)},
         {kKeyProxyAutoStart, platform::json::makeBool(cfg.claudeProxyAutoStart)},
+        {kKeyAutostart, platform::json::makeBool(cfg.autostartEnabled)},
         {kKeyProxyPort, platform::json::makeInt(cfg.proxyPort)},
         {kKeyWindowEffect, platform::json::makeString(cfg.windowEffect)},
         {kKeySidebarCollapsed, platform::json::makeBool(cfg.sidebarCollapsed)},
