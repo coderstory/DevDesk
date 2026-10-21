@@ -50,6 +50,9 @@ public:
         if (testThread_.joinable()) testThread_.join();
     }
 
+    // 测试缝：开关切换确认弹窗（调用后选卡不弹窗，直走选中路径）
+    void bypassSwitchConfirm() { state_.list.switchBypassConfirm_ = true; }
+
     // UI（骨架：分区委派，各区实现见 claude_ui_*.cpp）
 
     void compose(eui::Ui& ui, const eui::Screen& screen) override {
@@ -263,6 +266,8 @@ public:
         // cc-switch 导入弹窗，绘制序即 Esc 序链最顶层
         drawCcSwitchImportDialog(ui, screen, t, themeTokens,
                                  state_.ccswitchImport, ccswitchImportHooks());
+        drawSwitchConfirmDialog(ui, screen, t, themeTokens,
+                                  state_.list);
         harvestTestResult();
         drawToast(ui, screen, themeTokens);
 
@@ -837,4 +842,11 @@ private:
 
 extern "C" ::core::Module* create_claude_module() {
     return new module::claude::ClaudeModule();
+}
+
+// 测试缝：关掉切换确认弹窗，让全量回归测试直走选中路径
+extern "C" void claude_test_bypass_switch_confirm(::core::Module* mod) {
+    auto* m = dynamic_cast<module::claude::ClaudeModule*>(mod);
+    if (!m) return;
+    m->bypassSwitchConfirm();
 }

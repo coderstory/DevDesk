@@ -7,6 +7,7 @@
 
 #include <components/button.h>
 #include <components/contextmenu.h>
+#include <ui_kit/dialog_form.h>
 #include <components/scrollview.h>
 #include <components/virtuallist.h>
 
@@ -157,7 +158,16 @@ void drawProfileCard(eui::Ui& ui,
         .transition(core::Transition::make(0.1f, core::Ease::OutQuad))
         .animate(core::AnimProperty::Color)
         .radius(t.sizes.radiusSmall)
-        .onClick([sp = &st, pid = p.id] { sp->selectedId_ = pid; })
+        .onClick([sp = &st, pid = p.id, pname = p.name] {
+            if (sp->selectedId_ == pid) return;  // 已选卡无操作
+            if (sp->switchBypassConfirm_) {       // 测试缝直走
+                sp->selectedId_ = pid;
+                return;
+            }
+            sp->switchTargetId_ = pid;
+            sp->switchTargetName_ = pname;
+            sp->switchConfirmOpen_ = true;
+        })
         .build();
 
     // 头像：按 profile id 稳定派生的圆 + 1.5px 同色系包边；垂直居中由 (h - 头像径) 推导
@@ -196,7 +206,7 @@ void drawProfileCard(eui::Ui& ui,
             nameRight = std::min(nameRight, badgeX - 4.0f);
         }
         if (selected) {
-            nameRight = std::min(nameRight, width - 40.0f);
+            nameRight = std::min(nameRight, width - 48.0f);  // checkX(44) - 4 gap
         }
         const float nameMaxW = std::max(40.0f, nameRight - 64.0f);
         ui.text(id + ".name")
@@ -235,11 +245,11 @@ void drawProfileCard(eui::Ui& ui,
             .build();
     }
 
-    // 选中「绿圈白勾」徽标（UAT5）：右缘垂直居中，20px wechat.primary 圆 +
-    // 白 fa-check；未选中不画。语义 = 列表选中（selectedId_）。
+    // UAT6：绿圈白勾 20→26px（用户拍板），fa-check 同步放大 11→14。右缘
+    // checkX = width-42-4 → width-44（26+4+gap=4），与共享徽标 4px 隔开。
     if (selected) {
-        constexpr float kCheckD = 20.0f;
-        const float checkX = width - 36.0f;
+        constexpr float kCheckD = 26.0f;
+        const float checkX = width - 44.0f;
         const float checkY = y + (h - kCheckD) * 0.5f;
         ui.rect(id + ".check")
             .position(checkX, checkY)
@@ -251,7 +261,7 @@ void drawProfileCard(eui::Ui& ui,
             .position(checkX, checkY)
             .size(kCheckD, kCheckD)
             .icon(0xF00C)  // fa-check
-            .fontSize(11.0f)
+            .fontSize(14.0f)
             .lineHeight(kCheckD)
             .horizontalAlign(eui::HorizontalAlign::Center)
             .verticalAlign(eui::VerticalAlign::Center)
@@ -609,13 +619,11 @@ void drawProfileListPanel(eui::Ui& ui, float leftW, float bodyH,
                 .position(20.0f + btnW + btnGap, bottomButtonRowY(bodyH))
                 .size(btnW, 40.0f)
                 .text("导入配置")
-                .icon(0xF019)  // fa-download
                 .fontSize(t.sizes.fontSizeSmall)
                 .colors(t.colors.wechat.secondaryButtonBg,
                         t.colors.wechat.dividerSecondary,
                         t.colors.wechat.dividerSecondary)
                 .textColor(t.colors.wechat.textPrimary)
-                .iconColor(t.colors.wechat.textPrimary)
                 .radius(t.sizes.radiusWeChat)
                 .onClick([onImport = actions.onImportCurrent] { onImport(); })
                 .build();
@@ -636,6 +644,50 @@ void drawProfileListPanel(eui::Ui& ui, float leftW, float bodyH,
                 .build();
         })
         .build();
+}
+
+// 切换 Profile 二次确认弹窗（UAT6）
+// 点非选中卡不直接切——先弹确认：取消=关闭不动，确认=走现有切换路径并关窗。
+// 点已选卡维持现状无操作（drawProfileCard onClick 已 return 跳过）。
+void drawSwitchConfirmDialog(eui::Ui& ui, const eui::Screen& screen,
+                              const core::theme::Tokens& t,
+                              const components::theme::ThemeColorTokens& themeTokens,
+                              ProfileListState& st) {
+    constexpr float h = 156.0f;
+    const float w = ui_kit::dialogWidthPx(ui_kit::DialogWidth::Compact);
+    ui_kit::DialogFrame frame;
+    frame.id = "claude.dialog.switch";
+    frame.width = ui_kit::DialogWidth::Compact;
+    frame.height = h;
+    frame.open = st.switchConfirmOpen_;
+    frame.onOpenChange = [sp = &st](bool v) { sp->switchConfirmOpen_ = v; };
+
+    ui_kit::drawDialogFrame(ui, screen, frame, themeTokens, [&] {
+        ui_kit::drawDialogTitle(ui, "claude.dialog.switch.title", w,
+                                "切换 Profile", 20.0f, t.colors.textPrimary);
+        ui_kit::drawDialogText(
+            ui, "claude.dialog.switch.msg", w,
+            "切换到\"" + st.switchTargetName_ + "\"？代理配置将立即生效",
+            14.0f, t.colors.textSecondary,
+            {.y = 56.0f, .height = 40.0f, .lineHeight = 20.0f,
+             .wrap = true});
+
+        ui_kit::DialogButtonSpec cancel;
+        cancel.label = "取消";
+        cancel.fontSize = 14.0f;
+        cancel.style = ui_kit::DialogButtonStyle::SecondaryThemed;
+        cancel.onClick = [sp = &st] { sp->switchConfirmOpen_ = false; };
+        ui_kit::DialogButtonSpec confirm;
+        confirm.label = "确认切换";
+        confirm.fontSize = 14.0f;
+        confirm.style = ui_kit::DialogButtonStyle::PrimaryThemed;
+        confirm.onClick = [sp = &st] {
+            sp->selectedId_ = sp->switchTargetId_;
+            sp->switchConfirmOpen_ = false;
+        };
+        ui_kit::drawDialogButtons(ui, "claude.dialog.switch", w, h, cancel,
+                                  confirm, t, themeTokens);
+    });
 }
 
 // 共享配置区块（UAT5 可折叠）：默认收起只画一行头，点头行/勾箭钮展开；「+」
