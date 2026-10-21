@@ -223,12 +223,12 @@ public:
         constexpr float kTitleH = 30.0f;
         constexpr float kTitleGap = 28.0f;
         constexpr float kRowH = 48.0f;
-        constexpr int kRowCount = 6;
+        constexpr int kRowCount = 7;
         constexpr float kFooterH = 20.0f;
         constexpr float kFooterGap = 16.0f;  // 卡底→页脚间距
         constexpr float kLabelW = 120.0f;
 
-        // 卡高 = 上留白 + 图标 + 图标间距 + 标题 + 标题间距 + 6 行 + 下留白
+        // 卡高 = 上留白 + 图标 + 图标间距 + 标题 + 标题间距 + 7 行 + 下留白
         const float cardH_nominal = kCardPadTop + kIconSize + kIconGap + kTitleH +
                                     kTitleGap + kRowCount * kRowH + kCardPadBottom;
 
@@ -294,6 +294,7 @@ public:
                 const AboutRow rows[] = {
                     {"版本", aboutVersionLine(), true},
                     {"Git commit", DEVDESK_GIT_REV, true},
+                    {"EUI-NEO", aboutEuiNeoLine(), true},
                     {"构建时间", aboutBuildLine(), false},
                     {"编译器", DEVDESK_COMPILER, false},
                     {"平台", aboutPlatformLine(), false},
