@@ -47,45 +47,174 @@ namespace {
 // home_probes 组 D 的 plot ≥36 判据仍过）、柱顶数值/x 轴标签锚点随 wrap 派生。
 constexpr float kHomeChartH = 220.0f;
 
-// 渲染单个统计卡片（card 组件，点击整卡跳转）。numberColor/badgeColor 非空覆盖默认配色；
-// timerSeconds > 0 挂 0 尺寸 onTimer 定期重绘；chart 非空叠加迷你图表；onTick 为该 timer 回调。
-// 卡内容四周统一 16px 内边距（显式 .padding 替代组件默认 20）
-void drawStatCard(eui::Ui& ui,
-                  const std::string& id,
-                  float width,
-                  float height,
-                  const core::theme::Tokens& t,
-                  const std::string& label,
-                  const std::string& number,
-                  const std::string& badge,
-                  bool accent,
-                  std::function<void()> onClick,
-                  const eui::Color* numberColor = nullptr,
-                  const eui::Color* badgeColor = nullptr,
-                  float timerSeconds = 0.0f,
-                  std::function<void(eui::Ui&, float, float)> chart =
-                      nullptr,
-                  std::function<void()> onTick = nullptr) {
-    const auto ct = core::theme::componentTokensWeChat(t);  // W9 微信白卡
+// 渲染单个统计卡（UAT6 方案一 · 五色软染玻璃形态；card 组件为壳，点击整卡跳转）。
+// numberColor/badgeColor 非空覆盖默认配色；timerSeconds > 0 挂 0 尺寸 onTimer 定期重绘；
+// chart 非空叠加迷你图表；onTick 为该 timer 回调。卡内容四周统一 16px 内边距（显式
+// .padding 替代组件默认 20）。
+//
+// 设计基准：D:/tmp-icon-candidates/home-glass-cards.html 方案一（用户拍板）——五卡分别
+// soft-light 染 绿 #7EE2A8 / 蓝 #8ECBF5 / 橙 #F5C98E / 紫 #C8A8F5 / 青 #8EF0E2（按
+// 统计卡语义顺序 Tokens/Notes/TodoPending/TodoOverdue/ApiCalls）+ 白色顶部高光 +
+// 轻污渍 + 半透卡面 + 白色细边框 + 顶缘 inset 高光。
+//
+// 浅底适配（对比度优先，demo 是深底白字不照搬）：文字维持 wechat 深色档不动（数字
+// textPrimary、标题/副题 textTertiary、逾期 warningRed、流式 primary），玻璃感全部由
+// 「面」承担——染色半透面 + 白高光 + 白细边 + 轻污渍。
+//
+// soft-light 近似公式：EUI 无 mix-blend-mode，且 soft-light 在浅底上数学不可见
+//（B=1 时 (1−2S)·B²+2S·B ≡ 1，纯白底染不动任何色）——demo 的染色观感来自深底
+// 透光，浅底等价物是「tint 低 alpha 直叠」：comp = α·T + (1−α)·face，
+// α = kGlassTintAlpha。
+//
+// 三态对比度（护栏用例 test_home::home_glass_stat_cards 同模型；worst 区 = 卡底
+// 暗污渍带、无顶部高光；磨砂黑壁纸底取 effects 批实机 M=192 材质输出）：
+//   不透明页：数字 14.8–15.7:1，标题 #999 2.42–2.57:1
+//   半透窗（白壁纸最亮底）：数字 14.9–15.8:1，标题 2.43–2.58:1
+//   磨砂窗（黑壁纸最暗底）：数字 12.9–13.7:1，标题 2.11–2.24:1
+// 数字三态全 ≥4.5:1（最低 ≈12.9，约 2.9 倍余量）。#999 在纯白上也仅 2.85:1——4.5
+// 对三级灰档数学不可达（W9 既定档，文字档位本批不动），护栏改为不劣化：不透明/
+// 半透 ≥2.40:1、磨砂 ≥2.05:1（页面级 #999 在磨砂黑壁纸档本来就只有 ≈1.7:1，
+// 卡面恒优于页面底）。
+//
+// 布局零影响：玻璃层组全部绝对定位铺在卡 content 内，卡高/卡宽公式与 noscroll
+// 首页预算 588/600（见文件头）不动。
+constexpr float kGlassFaceAlpha = 0.62f;         // 半透白卡面（demo rgba(255,255,255,.14) 的浅底加强档）
+constexpr float kGlassFaceAlphaDark = 0.92f;     // 深色主题面透明度：dark-WeChat 延后（D-04），wechat
+                                                // 槽位 dark/light 同值——白面 0.62 在深色窗底会调成
+                                                // 奶灰、三级灰标签塌到 ≈1.2:1，深色档抬高到近实白
+                                                //（对比度/观感与改前白卡基本一致，玻璃层组照常渲染）
+constexpr float kGlassTintAlpha = 0.15f;         // 染色直叠强度（soft-light 近似）
+constexpr float kGlassBorderAlpha = 0.55f;       // 白色细边（demo rgba(255,255,255,.55)）
+constexpr float kGlassHighlightAlpha = 0.32f;   // 顶部高光峰值（demo ::before .35@0%）
+constexpr float kGlassHighlightFrac = 0.58f;     // 高光纵向覆盖（demo 60% 处渐没）
+constexpr float kGlassHighlightSideAlpha = 0.15f;  // 左上偏置横向高光峰值
+constexpr float kGlassHighlightSideFrac = 0.46f;   // 横向高光覆盖
+constexpr float kGlassTopLineAlpha = 0.50f;      // 顶缘 inset 白线（demo inset 0 1px 0 .5）
+constexpr float kGlassStainWhiteCore = 0.06f;    // 白污渍芯/壳（demo .5×.12 / 衰减壳）
+constexpr float kGlassStainWhiteHalo = 0.03f;
+constexpr float kGlassStainDarkCore = 0.019f;    // 暗污渍芯/壳（demo .16×.12）
+constexpr float kGlassStainDarkHalo = 0.010f;
+constexpr float kGlassHoverVeilAlpha = 0.06f;    // 整卡 hover 深色纱（紫卡实测 ΔL≈0.10）
+constexpr float kGlassPressedVeilAlpha = 0.12f;  // 整卡按压纱
+
+void drawGlassStatCard(eui::Ui& ui,
+                       const std::string& id,
+                       float width,
+                       float height,
+                       const core::theme::Tokens& t,
+                       const eui::Color& tint,
+                       const std::string& label,
+                       const std::string& number,
+                       const std::string& badge,
+                       bool accent,
+                       std::function<void()> onClick,
+                       const eui::Color* numberColor = nullptr,
+                       const eui::Color* badgeColor = nullptr,
+                       float timerSeconds = 0.0f,
+                       std::function<void(eui::Ui&, float, float)> chart =
+                           nullptr,
+                       std::function<void()> onTick = nullptr) {
+    const auto ct = core::theme::componentTokensWeChat(t);  // W9 微信组件档（阴影/圆角基线）
+    const auto& wc = t.colors.wechat;
     const float s = core::theme::fontScale();
     const float inset = t.sizes.spacingLarge; // 16：卡内容统一内边距（16px 网格）
     const float cw = width - inset * 2.0f;
     const float ch = height - inset * 2.0f;
+    const float corner = t.sizes.radiusWeChat;
+    const float faceAlpha = t.isDark ? kGlassFaceAlphaDark : kGlassFaceAlpha;
     components::card(ui, id)
-        .size(width, height) // panelShadow 由 CardStyle 默认注入
-        .theme(ct)           // 先注入主题再覆盖 radius（theme 会重置 CardStyle）
-        .radius(t.sizes.radiusWeChat)  // W9 微信统一圆角 6px（D-12 §4.5）
-        .padding(inset)      // 显式 16：不用组件默认 20（与旧坐标叠加致顶留空/底溢出）
+        .size(width, height)  // panelShadow 由 CardStyle 默认注入（玻璃外投影保留）
+        .theme(ct)            // 先注入主题再逐项覆盖（theme 会重置 CardStyle）
+        .radius(corner)       // W9 微信统一圆角 6px（D-12 §4.5）
+        .color(components::theme::withOpacity(wc.cardBg, faceAlpha))   // 半透玻璃面
+        .border(1.0f, components::theme::withOpacity(wc.cardBg, kGlassBorderAlpha))  // 白细边
+        .padding(inset)       // 显式 16：不用组件默认 20（与旧坐标叠加致顶留空/底溢出）
         .content([&] {
-            // 交互层（点击 + hover 过渡）：画整卡矩形垫底，内容画其上
+            // —— 玻璃层组（z 序：染色 → 高光 → 顶线 → 污渍 → 交互纱 → 文字）——
+            // ① 染色面：tint 低 alpha 直叠（soft-light 浅底近似，见函数头公式）
+            ui.rect(id + ".glass.tint")
+                .position(-inset, -inset)
+                .size(width, height)
+                .color(components::theme::withOpacity(tint, kGlassTintAlpha))
+                .radius(corner)
+                .build();
+            // ② 白色顶部高光（demo ::before 160° 对角渐弱）：EUI 线性渐变只有横/竖两向
+            //（GradientDirection 无对角，需上游才补），纵向主带 + 横向偏置带两片叠加
+            // 出「左上强、中右弱」的角偏置观感；渐变终点 alpha=0（GL 端 mix 全 vec4 支持）
+            ui.rect(id + ".glass.hl.top")
+                .position(-inset, -inset)
+                .size(width, height * kGlassHighlightFrac)
+                .gradient(components::theme::withOpacity(wc.cardBg, kGlassHighlightAlpha),
+                          components::theme::withAlpha(wc.cardBg, 0.0f),
+                          eui::GradientDirection::Vertical)
+                .radius(corner)
+                .build();
+            ui.rect(id + ".glass.hl.side")
+                .position(-inset, -inset)
+                .size(width * kGlassHighlightSideFrac, height)
+                .gradient(components::theme::withOpacity(wc.cardBg, kGlassHighlightSideAlpha),
+                          components::theme::withAlpha(wc.cardBg, 0.0f),
+                          eui::GradientDirection::Horizontal)
+                .radius(corner)
+                .build();
+            // ③ 顶缘 inset 高光线（demo inset 0 1px 0 rgba(255,255,255,.5)）：1px 白线
+            // 只铺两条圆角弧之间的平直顶边，不戳出圆角（EUI insetShadow 走同一 Shadow
+            // 槽位、会顶掉外投影，故用显式细线近似）
+            ui.rect(id + ".glass.topline")
+                .position(-inset + corner, -inset)
+                .size(width - corner * 2.0f, 1.0f)
+                .color(components::theme::withOpacity(wc.cardBg, kGlassTopLineAlpha))
+                .build();
+            // ④ 轻污渍（demo ::after opacity .12 × 三组 radial）：EUI 无 radial 渐变
+            // 原语（需上游），圆斑近似（splash 墨染先例：rect + radius=r=圆），halo 弱壳
+            // + core 强芯两层叠出「中心浓、边缘散」的径向衰减；落点沿用 demo 分数位，
+            // 半径全部钳在卡内不戳出边界（stack 不裁剪，无 clip 依赖）
+            const auto stain = [&](int idx, float fx, float fy, float coreR,
+                                   float haloR, const eui::Color& col,
+                                   float coreA, float haloA) {
+                // 卡本地分数落点 → content 原点坐标要再减 inset（content 原点 = 卡原点+16）
+                const float cx = fx * width;
+                const float cy = fy * height;
+                const float rc = std::min({coreR, cx, cy, width - cx, height - cy});
+                const float rh = std::min({haloR, cx, cy, width - cx, height - cy});
+                const std::string base =
+                    id + ".glass.stain." + std::to_string(idx);
+                if (rh > 0.5f) {
+                    ui.rect(base + ".halo")
+                        .position(cx - rh - inset, cy - rh - inset)
+                        .size(rh * 2.0f, rh * 2.0f)
+                        .color(components::theme::withOpacity(col, haloA))
+                        .radius(rh)
+                        .build();
+                }
+                if (rc > 0.5f) {
+                    ui.rect(base + ".core")
+                        .position(cx - rc - inset, cy - rc - inset)
+                        .size(rc * 2.0f, rc * 2.0f)
+                        .color(components::theme::withOpacity(col, coreA))
+                        .radius(rc)
+                        .build();
+                }
+            };
+            stain(0, 0.18f, 0.22f, height * 0.14f, height * 0.24f,
+                  wc.cardBg, kGlassStainWhiteCore, kGlassStainWhiteHalo);
+            stain(1, 0.82f, 0.78f, height * 0.12f, height * 0.20f,
+                  wc.textPrimary, kGlassStainDarkCore, kGlassStainDarkHalo);
+            stain(2, 0.64f, 0.12f, height * 0.10f, height * 0.16f,
+                  wc.cardBg, kGlassStainWhiteCore, kGlassStainWhiteHalo);
+            // ⑤ 整卡交互层（点击 + hover 过渡；misc1 整卡语义保留）：原 dividerSecondary/
+            // selectedBg 是不透明色，整卡铺平会把染色面盖没——改同令牌族 textPrimary
+            // 派生的低 alpha 深色纱直叠，染色面上 hover 加深照常可辨（ΔL≈0.10）
             ui.rect(id + ".press")
                 .position(-inset, -inset)
                 .size(width, height)
                 .states(components::theme::color(0.0f, 0.0f, 0.0f,
                                                  0.0f),
-                        t.colors.wechat.dividerSecondary,
-                        t.colors.wechat.selectedBg)
-                .radius(t.sizes.radiusWeChat)
+                        components::theme::withOpacity(wc.textPrimary,
+                                                       kGlassHoverVeilAlpha),
+                        components::theme::withOpacity(wc.textPrimary,
+                                                       kGlassPressedVeilAlpha))
+                .radius(corner)
                 .transition(core::Transition::make(0.1f,
                                                    core::Ease::OutQuad))
                 .animate(core::AnimProperty::Color)
@@ -167,20 +296,22 @@ bool moduleRegistered(::core::PageId page) {
 // 统计卡 / 快捷按钮元数据表：static 纯数据表，不带 lambda/可调用列（static 表带可调用列
 // 首次初始化只求值一次，捕获引用会冻结甚至悬垂）。行序 = 渲染序；数值/副标题文案在 compose 逐行查表外取。
 
-// 统计卡：kind = 行身份，module = 归属模块（注册态过滤），target = 点击跳转页。
+// 统计卡：kind = 行身份，module = 归属模块（注册态过滤），target = 点击跳转页，
+// tint = 方案一五色软染色（demo 设计基准拍板色，绿/蓝/橙/紫/青按语义顺序落卡）。
 enum class StatCardKind { Tokens, Notes, TodoPending, TodoOverdue, ApiCalls };
 struct HomeStatCard {
     StatCardKind kind;
     ::core::PageId module;
     const char* title;
     ::core::PageId target;
+    eui::Color tint;
 };
 constexpr HomeStatCard kStatCards[] = {
-    {StatCardKind::Tokens,      ::core::PageId::ClaudeProxy, "Token 速率 (tok/s)", ::core::PageId::ClaudeProxy},
-    {StatCardKind::Notes,       ::core::PageId::Markdown,    "今日笔记",           ::core::PageId::Markdown},
-    {StatCardKind::TodoPending, ::core::PageId::Todo,        "待办任务",           ::core::PageId::Todo},
-    {StatCardKind::TodoOverdue, ::core::PageId::Todo,        "逾期任务",           ::core::PageId::Todo},
-    {StatCardKind::ApiCalls,    ::core::PageId::ClaudeProxy, "API 调用",           ::core::PageId::ClaudeProxy},
+    {StatCardKind::Tokens,      ::core::PageId::ClaudeProxy, "Token 速率 (tok/s)", ::core::PageId::ClaudeProxy, eui::Color::fromHex(0x7EE2A8)},  // 绿
+    {StatCardKind::Notes,       ::core::PageId::Markdown,    "今日笔记",           ::core::PageId::Markdown,    eui::Color::fromHex(0x8ECBF5)},  // 蓝
+    {StatCardKind::TodoPending, ::core::PageId::Todo,        "待办任务",           ::core::PageId::Todo,        eui::Color::fromHex(0xF5C98E)},  // 橙
+    {StatCardKind::TodoOverdue, ::core::PageId::Todo,        "逾期任务",           ::core::PageId::Todo,        eui::Color::fromHex(0xC8A8F5)},  // 紫
+    {StatCardKind::ApiCalls,    ::core::PageId::ClaudeProxy, "API 调用",           ::core::PageId::ClaudeProxy, eui::Color::fromHex(0x8EF0E2)},  // 青
 };
 
 // 快捷按钮：kind = 行身份，module = 归属模块，target + navPayload = 点击负载。
@@ -298,7 +429,7 @@ public:
         // 回调拿到的 innerW 说了算（见下方同名遮蔽定义）。kHeaderActionsW + 标题列 = contentW。
         constexpr float kHeaderActionsW = 100.0f;  // W9 仅保留刷新按钮（设置按钮已移除）
         const float cardGap = 20.0f;
-        // 卡高 144 × fontScale 派生（144 = 16+16+8+56+16+16，见 drawStatCard）。
+        // 卡高 144 × fontScale 派生（144 = 16+16+8+56+16+16，见 drawGlassStatCard）。
         const float statH = 144.0f * core::theme::fontScale();
 
         // 模块注册感知：统计卡可见数从元数据表按注册态过滤派生（改表即改计数），全关整行隐藏。
@@ -443,8 +574,8 @@ public:
                                         streaming ? &t.colors.wechat.primary
                                         : rateOk  ? &t.colors.wechat.textPrimary
                                                   : &t.colors.wechat.textTertiary;
-                                    drawStatCard(ui, statCardElementId(card.kind),
-                                                 statW, statH, t, card.title,
+                                    drawGlassStatCard(ui, statCardElementId(card.kind),
+                                                 statW, statH, t, card.tint, card.title,
                                                  tokenNumber,
                                                  tokenBadge, false,
                                                  [this, target = card.target] {
@@ -488,8 +619,8 @@ public:
                                     break;
                                 }
                                 case StatCardKind::Notes:
-                                    drawStatCard(ui, statCardElementId(card.kind),
-                                                 statW, statH, t, card.title,
+                                    drawGlassStatCard(ui, statCardElementId(card.kind),
+                                                 statW, statH, t, card.tint, card.title,
                                                  num(stats_.todayNotes),
                                                  ok ? "今日修改过的笔记"
                                                     : "加载失败",
@@ -499,8 +630,8 @@ public:
                                                  });
                                     break;
                                 case StatCardKind::TodoPending:
-                                    drawStatCard(ui, statCardElementId(card.kind),
-                                                 statW, statH, t, card.title,
+                                    drawGlassStatCard(ui, statCardElementId(card.kind),
+                                                 statW, statH, t, card.tint, card.title,
                                                  num(stats_.pendingTodos),
                                                  ok ? "未完成总数" : "加载失败",
                                                  false,
@@ -509,8 +640,8 @@ public:
                                                  });
                                     break;
                                 case StatCardKind::TodoOverdue:
-                                    drawStatCard(ui, statCardElementId(card.kind),
-                                                 statW, statH, t, card.title,
+                                    drawGlassStatCard(ui, statCardElementId(card.kind),
+                                                 statW, statH, t, card.tint, card.title,
                                                  num(stats_.overdueTodos),
                                                  ok ? "已过截止时间" : "加载失败",
                                                  stats_.overdueTodos > 0,
@@ -519,8 +650,8 @@ public:
                                                  });
                                     break;
                                 case StatCardKind::ApiCalls:
-                                    drawStatCard(ui, statCardElementId(card.kind),
-                                                 statW, statH, t, card.title,
+                                    drawGlassStatCard(ui, statCardElementId(card.kind),
+                                                 statW, statH, t, card.tint, card.title,
                                                  num(stats_.todayApiCalls),
                                                  ok ? "今日代理调用" : "加载失败",
                                                  false,
