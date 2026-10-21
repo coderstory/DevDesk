@@ -1087,20 +1087,18 @@ REGISTER_TEST(uiAboutLayout,
         DOCTEST_CHECK_MESSAGE(nearPx(bg->frame.width, screen.width), px("about.bg", bg));
         DOCTEST_CHECK_MESSAGE(nearPx(bg->frame.height, screen.height), px("about.bg", bg));
     }
-    {
-        const auto* card = ui.find("about.card");
-        DOCTEST_REQUIRE(card != nullptr);
-        DOCTEST_CHECK_MESSAGE(nearPx(card->frame.x, cardX), px("about.card.x", card));
-        DOCTEST_CHECK_MESSAGE(nearPx(card->frame.y, cardY), px("about.card.y", card));
-        DOCTEST_CHECK_MESSAGE(nearPx(card->frame.width, cardW), px("about.card.w", card));
-        DOCTEST_CHECK_MESSAGE(nearPx(card->frame.height, cardH), px("about.card.h", card));
-        DOCTEST_CHECK(card->frame.y + card->frame.height + kFooterGap <= footerY);
-    }
+    // UAT6 H 批：about.card 堆栈已移除，about.card.bg 即单层卡（位 + 大小 = 原 about.card）
     {
         const auto* cbg = ui.find("about.card.bg");
         DOCTEST_REQUIRE(cbg != nullptr);
-        DOCTEST_CHECK_MESSAGE(nearPx(cbg->frame.width, cardW), px("about.card.bg", cbg));
+        DOCTEST_CHECK_MESSAGE(nearPx(cbg->frame.x, cardX), px("about.card.bg.x", cbg));
+        DOCTEST_CHECK_MESSAGE(nearPx(cbg->frame.y, cardY), px("about.card.bg.y", cbg));
+        DOCTEST_CHECK_MESSAGE(nearPx(cbg->frame.width, cardW), px("about.card.bg.w", cbg));
+        DOCTEST_CHECK_MESSAGE(nearPx(cbg->frame.height, cardH), px("about.card.bg.h", cbg));
+        DOCTEST_CHECK(cbg->frame.y + cbg->frame.height + kFooterGap <= footerY);
     }
+    // about.card 堆栈已移除，verify 对 about.card 的查找返回 nullptr
+    { DOCTEST_CHECK(ui.find("about.card") == nullptr); }
     {
         const auto* icon = ui.find("about.card.icon");
         DOCTEST_REQUIRE(icon != nullptr);
@@ -1175,7 +1173,8 @@ REGISTER_TEST(uiAboutLayout,
         mod->compose(mini, minScreen);
         mini.end();
         mini.layout(minScreen.width, minScreen.height);
-        const auto* c = mini.find("about.card");
+        // UAT6 H 批：about.card 已移除，用 about.card.bg 代
+        const auto* c = mini.find("about.card.bg");
         DOCTEST_REQUIRE(c != nullptr);
         DOCTEST_CHECK(c->frame.x >= 0.0f);
         DOCTEST_CHECK(c->frame.x + c->frame.width <= minScreen.width);
@@ -1198,12 +1197,13 @@ REGISTER_TEST(uiAboutLayout,
         mod->compose(tiny, tinyScreen);
         tiny.end();
         tiny.layout(tinyScreen.width, tinyScreen.height);
-        const auto* card = tiny.find("about.card");
+        // UAT6 H 批：about.card 已移除，用 about.card.bg 代
+        const auto* card = tiny.find("about.card.bg");
         const auto* footer = tiny.find("about.footer");
         DOCTEST_REQUIRE(card != nullptr);
         DOCTEST_REQUIRE(footer != nullptr);
         DOCTEST_CHECK_MESSAGE(nearPx(card->frame.y, 0.0f),
-                              px("about.card.tiny", card));
+                              px("about.card.bg.tiny", card));
         DOCTEST_CHECK(card->frame.y + card->frame.height <= footer->frame.y);
     }
     {
@@ -1216,16 +1216,17 @@ REGISTER_TEST(uiAboutLayout,
         mod->compose(narrow, narrowScreen);
         narrow.end();
         narrow.layout(narrowScreen.width, narrowScreen.height);
-        const auto* c = narrow.find("about.card");
+        // UAT6 H 批：about.card 已移除，用 about.card.bg 代
+        const auto* c = narrow.find("about.card.bg");
         DOCTEST_REQUIRE(c != nullptr);
         const float expectW = cardWidthAt(narrowScreen.width);
         DOCTEST_CHECK_MESSAGE(nearPx(c->frame.width, expectW),
-                              px("about.card.narrow", c));
+                              px("about.card.bg.narrow", c));
         DOCTEST_CHECK(c->frame.x >= 0.0f);
         DOCTEST_CHECK(c->frame.x + c->frame.width <= narrowScreen.width);
         DOCTEST_CHECK_MESSAGE(
             nearPx(c->frame.x, (narrowScreen.width - expectW) / 2.0f),
-            px("about.card.narrow.x", c));
+            px("about.card.bg.narrow.x", c));
     }
     mod->onStop();
     return true;
