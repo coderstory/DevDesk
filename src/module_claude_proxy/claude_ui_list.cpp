@@ -9,6 +9,7 @@
 #include <components/button.h>
 #include <components/contextmenu.h>
 #include <ui_kit/dialog_form.h>
+#include <ui_kit/glass_card.h>
 #include <components/scrollview.h>
 #include <components/tooltip.h>
 #include <components/virtuallist.h>
@@ -145,9 +146,10 @@ void drawProfileCard(eui::Ui& ui,
     // §5 Profile 选中态（UAT5 改版）：浅灰 wechat.selectedBg 底 + 右缘「绿圈白勾」
     // 唯一承担「谁是选中」语义（原 2px 左竖线移除，不叠双指示）。
     // isActive 不染底色（isActive 语义，与列表选中分立）。
+    // UAT6 玻璃：未选中半透面 cardBg@0.62（原透明显列底 pageBg）
     const eui::Color bgNormal = selected
         ? t.colors.wechat.selectedBg
-        : eui::Color{0.0f, 0.0f, 0.0f, 0.0f};  // 未选中透明，显列底 pageBg
+        : components::theme::withOpacity(t.colors.wechat.cardBg, 0.62f);
     // 共享徽标 / 选中绿圈右缘 x（供名称截断让位）
     const float badgeX = selected ? (width - 88.0f) : (width - 60.0f);
 
@@ -160,6 +162,7 @@ void drawProfileCard(eui::Ui& ui,
         .transition(core::Transition::make(0.1f, core::Ease::OutQuad))
         .animate(core::AnimProperty::Color)
         .radius(t.sizes.radiusSmall)
+        .border(1.0f, components::theme::withOpacity(t.colors.wechat.cardBg, 0.55f))
         .onClick([sp = &st, pid = p.id, pname = p.name] {
             if (sp->selectedId_ == pid) return;  // 已选卡无操作
             if (sp->switchBypassConfirm_) {       // 测试缝直走
@@ -171,6 +174,10 @@ void drawProfileCard(eui::Ui& ui,
             sp->switchConfirmOpen_ = true;
         })
         .build();
+
+    // UAT6 玻璃：淡雅玻璃层（hover/select 由 bg rect states 处理）
+    ui_kit::drawGlassCardLayers(ui, id, 0.0f, y, width, h,
+        t.sizes.radiusSmall, t, ui_kit::GlassCardStyle::subtle());
 
     // 头像：按 profile id 稳定派生的圆 + 1.5px 同色系包边；垂直居中由 (h - 头像径) 推导
     const float avatarSize = 40.0f;
@@ -883,15 +890,19 @@ void drawSharedConfigBlock(eui::Ui& ui, float width, float blockH,
                             inner.rect(cid + ".bg")
                                 .position(0.0f, 0.0f)
                                 .size(contentWidth, kSharedCardH)
-                                .states(t.colors.wechat.cardBg,
+                                .states(components::theme::withOpacity(t.colors.wechat.cardBg, 0.62f),
                                         t.colors.wechat.dividerSecondary,
                                         t.colors.wechat.selectedBg)
                                 .radius(t.sizes.radiusWeChat)
-                                .border(1.0f, t.colors.wechat.dividerPrimary)
+                                .border(1.0f, components::theme::withOpacity(t.colors.wechat.cardBg, 0.55f))
                                 .onClick([onEdit = actions.requestEditShared, sc] {
                                     onEdit(sc);   // 按值拷贝（sc 引用 compose 局部副本，跨帧悬垂）
                                 })
                                 .build();
+                            ui_kit::drawGlassCardLayers(inner, cid,
+                                0.0f, 0.0f, contentWidth, kSharedCardH,
+                                t.sizes.radiusWeChat, t,
+                                ui_kit::GlassCardStyle::subtle());
                             inner.text(cid + ".name")
                                 .position(16.0f, 8.0f)
                                 .size(contentWidth - 32.0f, 20.0f)
