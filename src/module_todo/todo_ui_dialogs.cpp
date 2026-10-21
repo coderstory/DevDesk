@@ -669,6 +669,13 @@ void drawConfirmDeleteDialog(eui::Ui& ui, const eui::Screen& screen,
 //   永远不回调（无 due 的卡就此设不上「今天」）。→ 首帧喂锚点，后续帧喂 1900 哨兵
 //   提交值（滚轮草稿在打开期间不被 syncDraft 重置，哨兵不进显示），使「打开不滚
 //   直接确定」也回调 onChange(滚轮当前值)=当天/原值。
+// ③ 确认路径帧无关（UAT6 真机实锤）：真机是事件驱动循环，无输入不合成帧——
+//   「打开→不动→确定」只合成得到首帧（锚点），哨兵提交值等不到帧，组件判
+//   「草稿==提交值」不回调 onChange，截止日期设不上（无头测试泵了帧所以绿）。
+//   → done 钩子兜底：本次会话组件没回调过 onChange（= 用户没动过滚轮）时，
+//   确认直接提交锚点——有 due 维持原值；无 due = 今天（确认时点取系统日期，
+//   不依赖任何 compose 帧）。首帧视觉锚定保留，但赋值一律走 ③ 的系统时钟，
+//   不取首帧喂的锚点值。
 // 帧计数在「关闭态每帧」归零——Esc/确定/遮罩/任何 popups.close 路径全覆盖。
 void drawDatePicker(eui::Ui& ui, const eui::Screen& screen,
                     const core::theme::Tokens& t, DialogSet& d,
@@ -681,7 +688,7 @@ void drawDatePicker(eui::Ui& ui, const eui::Screen& screen,
     const auto themeTokens = core::theme::componentTokensWeChat(t);
     // 锚点与确定写回按归属弹窗路由（详情/新建可同时在栈上，见 DatePickOwner）
     const bool forNewTask = d.datePickOwner == DatePickOwner::NewTask;
-    const std::optional<int64_t>& ownerDue =
+    const std::optional<int64_t> ownerDue =
         forNewTask ? d.newTask.dueAt : d.detail.dueAt;
     int year = 0, month = 0, day = 0;
     if (!epochToYmd(ownerDue.value_or(0), year, month, day)) {
@@ -689,8 +696,12 @@ void drawDatePicker(eui::Ui& ui, const eui::Screen& screen,
     }
     const bool firstFrame = d.datePickDrawn == 0;
     ++d.datePickDrawn;
+    // 「本次会话组件是否已回调 onChange」：放 ui.state（帧间存活；新会话首帧归零）。
+    // done 钩子据此判断「用户没动过滚轮」（哨兵机制在真机等不到帧，见 ③）。
+    bool& confirmed = ui.state<bool>("todo.datepicker.confirmed");
     if (firstFrame) {
         ui.releaseStateScope("todo.datepicker.draft");
+        confirmed = false;
     } else {
         year = 1900;   // 哨兵提交值：合法日期（.date() clamp 不炸）且真实任务
         month = 1;     // 永远选不到 1900-01-01 →「确定」必回调 onChange
@@ -703,7 +714,8 @@ void drawDatePicker(eui::Ui& ui, const eui::Screen& screen,
         .date(year, month, day)
         .theme(themeTokens)
         .zIndex(d.popups.zOf(Popup::DatePick))  // 由打开顺序给出
-        .onChange([&d, forNewTask](int yy, int mm, int dd) {
+        .onChange([&d, forNewTask, &confirmed](int yy, int mm, int dd) {
+            confirmed = true;   // 组件回调过 = 有真实赋值，done 钩子不再兜底
             const int64_t epoch = ymdToEpoch(yy, mm, dd);
             if (forNewTask) {
                 d.newTask.dueAt = epoch;
@@ -714,6 +726,27 @@ void drawDatePicker(eui::Ui& ui, const eui::Screen& screen,
         })
         .onOpenChange([&d](bool v) { d.popups.setOpen(Popup::DatePick, v); })
         .build();
+    // ③ done 钩子：组件原 onClick 只在「草稿 ≠ 提交值」时回调 onChange 并关面板；
+    // 零交互时（真机等不到哨兵帧）不回调 → 本层兜底提交锚点（帧无关）。
+    // 原回调先行（含关面板），再按 confirmed 决定是否补写。
+    if (core::dsl::Element* doneEl = ui.find("todo.datepicker.done.bg");
+        doneEl != nullptr && doneEl->onClick) {
+        auto original = doneEl->onClick;
+        doneEl->onClick = [&d, forNewTask, &confirmed, ownerDue,
+                           original]() {
+            original();
+            if (confirmed) return;
+            // 没动过滚轮 = 提交「今天」；已有 due 的卡维持原值（滚轮所见即所得）。
+            // 无 due 时取确认时点的系统日期（dayShiftEpoch(0)），不依赖 compose 帧。
+            const int64_t fallback = ownerDue.value_or(dayShiftEpoch(0));
+            if (forNewTask) {
+                d.newTask.dueAt = fallback;
+                d.newTask.dueChoice = DueChoice::Custom;   // 与 onChange 同语义
+            } else {
+                d.detail.dueAt = fallback;
+            }
+        };
+    }
 }
 
 // 逾期任务弹窗。数据源 listOverdue()（模块打开时刷新）；行点击 = 关本弹窗 + 开详情
@@ -905,15 +938,14 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
                       const core::theme::Tokens& t, DialogSet& d,
                       const DialogHost& host) {
     const auto themeTokens = core::theme::componentTokensWeChat(t);
-    // 实际 frame 尺寸 = min(期望, 窗口 − overlay 48)：与 components::dialog 内建
-    // clamp 同式同源（metrics.spacing.overlay）；组件里再 clamp 一次结果不变。
-    // 宽保持弹性契约 max(640 最小档, 窗口/2)，再夹窗口可用宽。
+    // 宽：弹性契约 max(640 最小档, 窗口/2)，再夹窗口可用宽（与 components::dialog
+    // 内建 clamp 同式同源 metrics.spacing.overlay，组件里再 clamp 一次结果不变）。
     const float w = std::max(0.0f, std::min(elasticDialogW(screen.width, 640.0f),
                                            screen.width -
                                                themeTokens.metrics.spacing.overlay));
-    const float h = std::max(0.0f, std::min(600.0f,
-                                           screen.height -
-                                               themeTokens.metrics.spacing.overlay));
+    const bool ro = d.detail.readOnly;
+    // 只读（归档）行整体下移一档给「归档时间」行让位
+    const float offY = ro ? 18.0f : 0.0f;
     const float x0 = ui_kit::kDialogInsetX;
     // 底部按钮带：贴 frame 底固定偏移（frame 底 − 18 − 按钮高），任何内容高度与
     // 窗口高度下都不越框（UAT6 前随请求高 600 定位，frame 被 clamp 矮后被顶出框）
@@ -921,7 +953,60 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
     constexpr float kFooterBtnH = 34.0f;
     constexpr float kFooterBtnW = 96.0f;
     constexpr float kContentGapAboveFooter = 12.0f;   // 内容滚动区底 → 按钮带顶
+    const float contentTop = 76.0f + offY;
+
+    // —— frame 高 = 内容驱动（UAT6 真机反馈「底部空白太多」）——
+    // 高 = 头部(contentTop) + 实际内容高 + 按钮带(缝+钮+lift)，上限仍钳
+    // min(600, 窗−48)：内容少则框矮、按钮带紧跟内容，不再恒 600 一截空尾；
+    // 内容多仍钳到上限、由内容区滚动兜底。各块定高 = 下方 stack .size 同源
+    //（改块高必须同步两处）。
+    constexpr float kBlockTitleH = 54.0f;     // 标题输入 44 + 到描述标签 10 缝
+    constexpr float kBlockDescH = 104.0f;     // 标签 16 + 4 缝 + textarea 72 + 12 缝
+    constexpr float kBlockPrioH = 64.0f;      // 双列标签 16 + 4 缝 + segment 32 + 12 缝
+    constexpr float kBlockTagLabelH = 20.0f;  // 标签行标签 16 + 4 缝
+    constexpr float kBlockTagInputH = 34.0f;  // 标签添加输入行（末块无尾缝）
+    // chips 块高预排（与内容 lambda 内 wrap 同式：cw2 = chipWidth+24、行右界
+    // x0+sw、行高 28+行缝 8）。sw 取无滚动条口径（w−56）——短内容不出滚动条
+    // 时与运行时精确一致；出滚动条时 frame 高已被上限钳住，估算差只进滚动量。
+    float chipsBottomEst = 0.0f;
+    {
+        const float sw = std::max(0.0f, w - ui_kit::kDialogBodyInsetX);
+        float chipX = x0;
+        float chipRowY = 0.0f;
+        for (const auto& tg : d.detail.tags) {
+            const float cw2 = chipWidth(tg) + 24.0f;
+            if (cw2 > sw) continue;   // 单枚超行宽跳过（旧「不横向溢出」语义）
+            if (chipX + cw2 > x0 + sw) {   // 本行放不下 → 换行
+                chipX = x0;
+                chipRowY += 28.0f + 8.0f;
+            }
+            chipsBottomEst = std::max(chipsBottomEst, chipRowY + 28.0f);
+            chipX += cw2 + 8.0f;
+        }
+    }
+    const float chipsBlockH = chipsBottomEst > 0.0f ? chipsBottomEst + 8.0f : 0.0f;
+    const float contentH = kBlockTitleH + kBlockDescH + kBlockPrioH +
+                           kBlockTagLabelH + kBlockTagInputH + chipsBlockH;
+    const float h = std::max(0.0f,
+                             std::min(contentTop + contentH +
+                                          kContentGapAboveFooter + kFooterBtnH +
+                                          kFooterLift,
+                                      std::min(600.0f,
+                                               screen.height -
+                                                   themeTokens.metrics.spacing
+                                                       .overlay)));
     const float btnY = h - kFooterLift - kFooterBtnH;
+    const float viewportH =
+        std::max(0.0f, btnY - kContentGapAboveFooter - contentTop);
+
+    // —— 弹窗面板背景 = 该任务优先级 tint（UAT6 用户拍板）——
+    // 复用看板卡的 priorityColor 成员指针表 + 混色公式（priorityTintBg），强度走
+    // 大面板档（卡强度 ×0.5：Low 0.20 / Medium 0.25 / High 0.275；None 无 tint 原
+    // 底早退，同卡片 None 语义）。公式与 AA 实测数字见 todo_ui_logic.h 的
+    // priorityPanelTintStrength 注释（textPrimary 在三档 tint 底上 14.5/12.4/12.5:1）。
+    components::DialogStyle panelStyle(themeTokens);
+    panelStyle.surface = priorityTintBg(d.detail.priority, t, themeTokens.surface,
+                                        priorityPanelTintStrength(d.detail.priority));
 
     // 关闭态也常驻构建（收起过渡依赖节点存在）
     components::dialog(ui, "todo.dialog.detail")
@@ -929,16 +1014,14 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
         .screen(screen.width, screen.height)
         .size(w, h)
         .theme(themeTokens)
+        // surface 覆写为优先级 tint；backdrop/边框/阴影/圆角仍与 theme() 同源
+        .style(panelStyle)
         .zIndex(d.popups.zOf(Popup::Detail))
         // backdrop 点击（dialog 唯一外部关闭通道）→ 与 Esc 兜底共用 requestClose
         .onOpenChange([&d, &host](bool v) {
             if (!v) d.detail.requestClose(d.popups, host);
         })
         .content([&] {
-            const bool ro = d.detail.readOnly;
-            // 只读（归档）行整体下移一档给「归档时间」行让位
-            const float offY = ro ? 18.0f : 0.0f;
-
             ui_kit::drawDialogTitle(ui, "todo.dialog.detail.title", w,
                                     ro ? "任务详情（只读）" : "任务详情",
                                     t.sizes.fontSizeBody, t.colors.textPrimary,
@@ -1018,12 +1101,10 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
             }
 
             // —— 内容区（UAT6 限高滚动容器）——
-            // 视口 = frame 高 − 头部(76+offY) − 按钮带 − 12 缝；标题/描述/优先级|截止/
+            // 视口 = frame 高 − 头部 − 按钮带 − 12 缝（contentTop/viewportH 在
+            // frame 高计算处预算，见函数头）；标题/描述/优先级|截止/
             // 标签全部装进本区（board 列内滚动同款 scrollView 先例），chips 换行、
             // 任意形态内容超高都由本区滚动兜底，按钮带不受内容高度影响。
-            const float contentTop = 76.0f + offY;
-            const float viewportH =
-                std::max(0.0f, btnY - kContentGapAboveFooter - contentTop);
             // 测量缓存键：标签数 + 逐标签字节数（chips 换行数随两者变 → 内容高变）
             std::string scrollKey =
                 "todo.dialog.detail.scroll.t" +
@@ -1049,7 +1130,7 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
                     // 下一块的缝 → 不滚动时各元素绝对 y 与旧版逐像素一致
                     // （76/130/150/234/254/298/318|354）。
                     inner.stack("todo.dialog.detail.scroll.title.w")
-                        .size(cw, 54.0f)   // 标题输入 44 + 到描述标签 10 缝
+                        .size(cw, kBlockTitleH)
                         .content([&] {
                             // 标题大输入（直接可编辑；demo .titleinput）
                             components::input(inner, "todo.dialog.detail.input.title")
@@ -1068,7 +1149,7 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
                         .build();
 
                     inner.stack("todo.dialog.detail.scroll.desc.w")
-                        .size(cw, 104.0f)   // 标签 16 + 4 缝 + textarea 72 + 12 缝
+                        .size(cw, kBlockDescH)
                         .content([&] {
                             // 描述 textarea（直接可编辑）
                             drawFieldLabel(inner, "todo.dialog.detail.dlabel", x0,
@@ -1091,7 +1172,7 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
                         .build();
 
                     inner.stack("todo.dialog.detail.scroll.prio.w")
-                        .size(cw, 64.0f)   // 双列标签 16 + 4 缝 + segment 32 + 12 缝
+                        .size(cw, kBlockPrioH)
                         .content([&] {
                             // 优先级 | 截止日期 双列 segment（列宽各半，随弹窗宽弹性分）
                             drawFieldLabel(inner, "todo.dialog.detail.plabel", x0,
@@ -1153,7 +1234,7 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
                         .build();
 
                     inner.stack("todo.dialog.detail.scroll.taglabel.w")
-                        .size(cw, 20.0f)   // 标签行标签 16 + 4 缝
+                        .size(cw, kBlockTagLabelH)
                         .content([&] {
                             drawFieldLabel(inner, "todo.dialog.detail.taglabel", x0,
                                            0.0f, 120.0f, "标签", t);
@@ -1214,7 +1295,7 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
                     }
 
                     inner.stack("todo.dialog.detail.scroll.taginput.w")
-                        .size(cw, 34.0f)
+                        .size(cw, kBlockTagInputH)
                         .content([&] {
                             components::input(inner, "todo.dialog.detail.tag.input")
                                 .position(x0, 0.0f)

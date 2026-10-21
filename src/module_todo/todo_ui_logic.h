@@ -343,6 +343,19 @@ inline eui::Color priorityButtonBg(Priority p, const core::theme::Tokens& t,
                                  : priorityTintStrength(p));
 }
 
+// ③ 大面板底强度（任务详情弹窗面板，UAT6 用户拍板「背景对齐优先级色」）：
+// 卡强度 ×0.5（大面积底视觉衰减）→ Low 0.20 / Medium 0.25 / High 0.275；
+// None 无 tint（原底早退，同 priorityCardBg 的 None 分支语义——无优先级不改底）。
+// 强度公式 = 「卡片的 ~50%」档（冻结清单给的两选项之一）。AA 实测（正文
+// textPrimary #1A1A1A 在 cardBg #FFFFFF 向各档色混后的底上，WCAG 对比度）：
+// Low 14.5:1 / Medium 12.4:1 / High 12.5:1，全部 ≥4.5:1（余量 ≥2.7×）。
+// 另一选项「实测 AA 达标的最大强度」上限约 0.84（Medium 档 4.45:1 处破线），
+// 大面板取该强度视觉过重，不采用。色源与混色公式复用 ① 的 priorityTintBg。
+inline float priorityPanelTintStrength(Priority p) {
+    if (p == Priority::None) return 0.0f;
+    return priorityTintStrength(p) * 0.5f;
+}
+
 // epoch 秒 → "MM-DD"；<=0 表示无截止日期
 inline std::string formatDue(int64_t epoch) {
     if (epoch <= 0) return {};
