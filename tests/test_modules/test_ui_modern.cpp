@@ -1335,3 +1335,86 @@ REGISTER_TEST(uiAboutPageBgEffectAlpha,
     return true;
 })
 
+
+// ---- UAT6：关于页构建时间行标准格式（`年-月-日 时:分:秒@设备名@系统`）----
+// 纯函数单测（extern 声明，定义在 about_module.cpp，外部链接无头文件）：
+// 防「__DATE__ 原样上屏」（"Oct 21 2026 09:32:11" 不是用户可读格式）与
+// 「日域双空格/系统归并错档」两类解析事故。
+namespace module::about {
+std::string formatBuildStamp(const std::string& date, const std::string& time);
+std::string normalizeBuildSystemLabel(const std::string& raw);
+}  // namespace module::about
+
+REGISTER_TEST(uiAboutBuildStampFormat,
+              "about: UAT6 构建行标准格式——__DATE__/__TIME__ 解析重组 + 系统归并", {
+    using module::about::formatBuildStamp;
+    using module::about::normalizeBuildSystemLabel;
+    // 常规日（日 ≥10）：Oct 21 2026 → 2026-10-21
+    DOCTEST_CHECK_EQ(formatBuildStamp("Oct 21 2026", "09:32:11"),
+                     std::string("2026-10-21 09:32:11"));
+    // 单数字日（__DATE__ 日域双空格填充）："Oct  3 2026" → 2026-10-03
+    DOCTEST_CHECK_EQ(formatBuildStamp("Oct  3 2026", "00:01:09"),
+                     std::string("2026-10-03 00:01:09"));
+    // 12 个月抽 3 验月名映射边界（1 月/12 月/跨年位不动）
+    DOCTEST_CHECK_EQ(formatBuildStamp("Jan  1 2031", "23:59:59"),
+                     std::string("2031-01-01 23:59:59"));
+    DOCTEST_CHECK_EQ(formatBuildStamp("Dec 31 2026", "13:45:00"),
+                     std::string("2026-12-31 13:45:00"));
+    // 解析失败不造数据：坏月名/坏时间原样回传
+    DOCTEST_CHECK_EQ(formatBuildStamp("Foo 21 2026", "09:32:11"),
+                     std::string("Foo 21 2026 09:32:11"));
+    DOCTEST_CHECK_EQ(formatBuildStamp("Oct 21 2026", "9:32"),
+                     std::string("Oct 21 2026 9:32"));
+    // 系统归并：Windows build ≥22000 → 11（本机 26200 实况），<22000 → 10
+    DOCTEST_CHECK_EQ(normalizeBuildSystemLabel("Windows 10.0.26200"),
+                     std::string("Windows 11"));
+    DOCTEST_CHECK_EQ(normalizeBuildSystemLabel("Windows 10.0.19045"),
+                     std::string("Windows 10"));
+    DOCTEST_CHECK_EQ(normalizeBuildSystemLabel("Windows"),
+                     std::string("Windows"));
+    // Darwin → macOS（附原版本号）；其余系统原样
+    DOCTEST_CHECK_EQ(normalizeBuildSystemLabel("Darwin 24.5.0"),
+                     std::string("macOS 24.5.0"));
+    DOCTEST_CHECK_EQ(normalizeBuildSystemLabel("Linux 6.8.0"),
+                     std::string("Linux 6.8.0"));
+    return true;
+})
+
+REGISTER_TEST(uiAboutBuildLineUiFormat,
+              "about: UAT6 构建行 UI 上屏格式锁——value.2 三段 @ 分隔 + 19 字符时间戳", {
+    // 防断链事故：纯函数对了但 UI 行没接上（row 值仍写死 "构建 ..." 前缀即红）。
+    std::unique_ptr<::core::Module> mod(create_about_module());
+    DOCTEST_REQUIRE(mod != nullptr);
+    mod->onStart();
+    eui::Ui ui;
+    eui::Screen screen{1392.0f, 1000.0f};
+    ui.begin("about_build_line_fmt");
+    mod->compose(ui, screen);
+    ui.end();
+    const auto* buildValue = ui.find("about.card.value.2");   // 行序 2 = 构建时间
+    DOCTEST_REQUIRE(buildValue != nullptr);
+    const std::string& s = buildValue->text;
+    DOCTEST_CHECK_MESSAGE(s.find("构建 ") == std::string::npos,
+                          "构建行不应再带「构建 」前缀（标签列已有），实测: " + s);
+    // 三段：19 字符时间戳 @ 设备名 @ 系统标签
+    const size_t at1 = s.find('@');
+    DOCTEST_REQUIRE_MESSAGE(at1 != std::string::npos, "构建行缺第一个 @: " + s);
+    const size_t at2 = s.find('@', at1 + 1);
+    DOCTEST_REQUIRE_MESSAGE(at2 != std::string::npos, "构建行缺第二个 @: " + s);
+    DOCTEST_CHECK_MESSAGE(s.find('@', at2 + 1) == std::string::npos,
+                          "构建行应恰两段 @ 分隔，实测: " + s);
+    // 第一段 = YYYY-MM-DD hh:mm:ss（19 字符，位 4/7 为 '-'、10 为空格、13/16 为 ':'）
+    DOCTEST_REQUIRE_MESSAGE(at1 == 19, "时间戳段应 19 字符，实测 " +
+                                           std::to_string(at1) + ": " + s);
+    DOCTEST_CHECK_MESSAGE(s[4] == '-' && s[7] == '-' && s[10] == ' ' &&
+                              s[13] == ':' && s[16] == ':',
+                          "时间戳分段符位不对，实测: " + s);
+    DOCTEST_CHECK_MESSAGE(!s.substr(0, 4).empty() && s[0] == '2' &&
+                              s[1] >= '0' && s[1] <= '9',
+                          "年份段应以 2 开头，实测: " + s);
+    // 后两段非空（CMake 注入缺失时为 "unknown" 也算过——不造数据但可见）
+    DOCTEST_CHECK_MESSAGE(at2 > at1 + 1, "设备名段为空，实测: " + s);
+    DOCTEST_CHECK_MESSAGE(s.size() > at2 + 1, "系统段为空，实测: " + s);
+    mod->onStop();
+    return true;
+})

@@ -129,6 +129,33 @@ if(NOT _devdesk_git_rev_rc EQUAL 0 OR DEVDESK_GIT_REV STREQUAL "")
 endif()
 message(STATUS "DevDesk git rev: ${DEVDESK_GIT_REV} (build version ${PROJECT_VERSION})")
 
+# ---- 关于页「构建时间」行扩展（UAT6）：构建机设备名 + 系统标签原料 ----
+# 目标格式 `年-月-日 时:分:秒@设备名@系统`（时间来自 __DATE__/__TIME__ 编译期宏，
+# 运行时在 about_module.cpp 解析重组，可单测）。
+# 设备名：Windows 取 ENV{COMPUTERNAME}（如 E-YUNFEI-PC）；macOS/Linux 无该
+# 环境变量，用 hostname 命令取同等的机器标识（取不到保持 unknown）。
+set(DEVDESK_BUILD_HOST "unknown")
+if(WIN32 AND DEFINED ENV{COMPUTERNAME} AND NOT "$ENV{COMPUTERNAME}" STREQUAL "")
+    set(DEVDESK_BUILD_HOST "$ENV{COMPUTERNAME}")
+else()
+    execute_process(
+        COMMAND hostname
+        OUTPUT_VARIABLE _devdesk_build_host
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET
+    )
+    if(NOT _devdesk_build_host STREQUAL "")
+        set(DEVDESK_BUILD_HOST "${_devdesk_build_host}")
+    endif()
+endif()
+# 系统原料 = CMAKE_SYSTEM_NAME + CMAKE_SYSTEM_VERSION（如 "Windows 10.0.26200" /
+# "Darwin 24.5.0"）；用户口径归并（Windows 11 / macOS）在 about_module.cpp 运行时做。
+if(NOT CMAKE_SYSTEM_VERSION STREQUAL "")
+    set(DEVDESK_BUILD_SYSTEM "${CMAKE_SYSTEM_NAME} ${CMAKE_SYSTEM_VERSION}")
+else()
+    set(DEVDESK_BUILD_SYSTEM "${CMAKE_SYSTEM_NAME}")
+endif()
+
 # T3：MinGW 全静态链接（默认 ON，仅 MinGW 工具链生效，macOS/MSVC 不受影响）
 # SQLite3/CURL/OpenSSL/zlib 全部用静态库 + libcurl.a 传递依赖闭包，
 # 配合 EUI-NEO 给 app target 的 -static（运行时静态），产出单 exe 零外部 DLL。
@@ -172,6 +199,14 @@ add_subdirectory(src/module_agent)
 add_subdirectory(src/module_claude_proxy)
 add_subdirectory(src/module_settings)
 add_subdirectory(src/module_about)
+
+# UAT6：构建机信息注入关于页构建行。定义挂在根而非 src/module_about/
+# CMakeLists.txt——本批冻结清单只开根 CMakeLists（module_about 侧文件不动），
+# target 已存在，add_subdirectory 之后追加 PRIVATE 定义等效同源。
+target_compile_definitions(devdesk_module_about PRIVATE
+    DEVDESK_BUILD_HOST="${DEVDESK_BUILD_HOST}"
+    DEVDESK_BUILD_SYSTEM="${DEVDESK_BUILD_SYSTEM}"
+)
 # module_pet 已于 2026-10-13 整模块摘除（分支 feat/remove-pet-module）
 
 # ---- 覆盖率插桩（2026-10-03 已知欠账落地）：DEVDESK_COVERAGE=ON → llvm source-based 覆盖率 ----

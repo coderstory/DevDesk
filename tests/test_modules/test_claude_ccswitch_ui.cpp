@@ -283,6 +283,46 @@ REGISTER_TEST(claude_ccswitch_ui_skeleton_contract,
     const auto* rowHit = ui2.find("claude.dialog.ccswitch.row.1.hit");
     DOCTEST_REQUIRE(rowHit != nullptr);
     DOCTEST_REQUIRE(rowHit->onClick != nullptr);
+    //（UAT6 修通单选）命中区几何锁：hit 必须与行卡同帧同位——曾经 hit 是 scrollView
+    // 流式布局的兄弟节点，column 布局无视 position(0,0) 把命中区排进行间空隙，
+    // 真机点行卡落空（headless 直调 onClick 测不出，必须锁 frame）。
+    {
+        const auto* rowBg = ui2.find("claude.dialog.ccswitch.row.1.bg");
+        DOCTEST_REQUIRE(rowBg != nullptr);
+        auto near = [](float a, float b) { return std::fabs(a - b) <= 0.5f; };
+        DOCTEST_CHECK_MESSAGE(near(rowHit->frame.x, rowBg->frame.x) &&
+                                  near(rowHit->frame.y, rowBg->frame.y) &&
+                                  near(rowHit->frame.width, rowBg->frame.width) &&
+                                  near(rowHit->frame.height, rowBg->frame.height),
+                              "整行命中区与行卡不同位（真机点行将落空）");
+        // 卡内文字不溢出卡底：model 行底 ≤ 行卡底（曾 model y40..52 越出 48 卡）
+        const auto* model = ui2.find("claude.dialog.ccswitch.row.1.model");
+        DOCTEST_REQUIRE(model != nullptr);
+        DOCTEST_CHECK_MESSAGE(
+            model->frame.y + model->frame.height <=
+                rowBg->frame.y + rowBg->frame.height + 0.5f,
+            "model 行跑出行卡底（" +
+                std::to_string(model->frame.y + model->frame.height -
+                               rowBg->frame.y - rowBg->frame.height) +
+                "px）");
+        // 行距收紧锁：相邻行卡顶距 = 56（kRowPitch；曾 hit 幽灵占位把行距撑到 112）
+        const auto* nextBg = ui2.find("claude.dialog.ccswitch.row.2.bg");
+        if (nextBg != nullptr) {
+            DOCTEST_CHECK_MESSAGE(
+                near(nextBg->frame.y - rowBg->frame.y, 56.0f),
+                "相邻行卡距应为 56，实测 " +
+                    std::to_string(nextBg->frame.y - rowBg->frame.y));
+        }
+        // 全选钮带与列表间的呼吸位：列表顶 ≥ 钮带底 + 12
+        const auto* list = ui2.find("claude.dialog.ccswitch.list");
+        const auto* selallBg = ui2.find("claude.dialog.ccswitch.selall.bg");
+        if (list != nullptr && selallBg != nullptr) {
+            DOCTEST_CHECK_MESSAGE(
+                list->frame.y >= selallBg->frame.y + selallBg->frame.height +
+                                    12.0f - 0.5f,
+                "列表顶与全选钮带间应留 ≥12 空白");
+        }
+    }
 
     // 选择交互：点行翻勾选 → selall / 确认计数联动
     rowHit->onClick();

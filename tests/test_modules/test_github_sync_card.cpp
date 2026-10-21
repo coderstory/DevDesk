@@ -717,12 +717,31 @@ REGISTER_TEST(github_error_dialog_content,
             DOCTEST_CHECK_MESSAGE(b->onClick != nullptr, id);
         }
 
+        //（UAT6 去米黄）三钮色锁：主=wechat.primary 绿；复制/关闭=微信
+        // Secondary（theme 面=wechat.cardBg），反向锁死暖米 surfaceElevated
+        const auto& wc = core::theme::current().colors;
+        {
+            const auto* retryBg = ui.find(std::string(kDlgId) + ".btn.retry.bg");
+            DOCTEST_REQUIRE(retryBg != nullptr);
+            DOCTEST_CHECK(colorEq(retryBg->color, wc.wechat.primary));
+            const auto* copyBg = ui.find(std::string(kDlgId) + ".btn.copy.bg");
+            DOCTEST_REQUIRE(copyBg != nullptr);
+            DOCTEST_CHECK(colorEq(copyBg->color, wc.wechat.cardBg));
+            DOCTEST_CHECK(!colorEq(copyBg->color, wc.surfaceElevated));
+            const auto* closeBg = ui.find(std::string(kDlgId) + ".btn.close.bg");
+            DOCTEST_REQUIRE(closeBg != nullptr);
+            DOCTEST_CHECK(colorEq(closeBg->color, wc.wechat.cardBg));
+            DOCTEST_CHECK(!colorEq(closeBg->color, wc.surfaceElevated));
+        }
+
         // 复制详情：注入回调拿到含摘要 + 日志行的文本
         ui.find(std::string(kDlgId) + ".btn.copy.bg")->onClick();
         // 选中第 2 条 → 详情区显示其 errorMessage
         ui.find(std::string(kDlgId) + ".logs.row.1.bg")->onClick();
         ui.find(std::string(kDlgId) + ".btn.retry.bg")->onClick();
         ui.find(std::string(kDlgId) + ".btn.close.bg")->onClick();
+        //（UAT6）点关闭后弹窗态翻关：frame.open 回读 st.open，本帧内已置 false
+        DOCTEST_CHECK_EQ(fx.st.open, false);
         return true;
     }));
 
