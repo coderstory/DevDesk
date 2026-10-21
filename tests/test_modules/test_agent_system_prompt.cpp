@@ -77,6 +77,7 @@ REGISTER_TEST(readGitBranch_normal_仓库, "system_prompt: readGitBranch 正常�
     fx.writeNormalHead("main");
     DOCTEST_CHECK_EQ(module::agent::readGitBranch(fx.pathStr()),
                      std::string("main"));
+    return true;
 })
 
 REGISTER_TEST(readGitBranch_worktree, "system_prompt: readGitBranch worktree 跟进 gitdir 取分支名", {
@@ -87,6 +88,7 @@ REGISTER_TEST(readGitBranch_worktree, "system_prompt: readGitBranch worktree 跟
     fx.writeWorktreeHead("feature/test", gitDir);
     DOCTEST_CHECK_EQ(module::agent::readGitBranch(fx.pathStr()),
                      std::string("feature/test"));
+    return true;
 })
 
 REGISTER_TEST(readGitBranch_非git目录, "system_prompt: readGitBranch 无 .git 返回空串", {
@@ -94,6 +96,7 @@ REGISTER_TEST(readGitBranch_非git目录, "system_prompt: readGitBranch 无 .git
     // 不创建 .git
     DOCTEST_CHECK_EQ(module::agent::readGitBranch(fx.pathStr()),
                      std::string(""));
+    return true;
 })
 
 REGISTER_TEST(readGitBranch_空目录, "system_prompt: readGitBranch 空目录返回空串", {
@@ -101,6 +104,7 @@ REGISTER_TEST(readGitBranch_空目录, "system_prompt: readGitBranch 空目录�
     // 空目录 — 无 .git
     DOCTEST_CHECK_EQ(module::agent::readGitBranch(fx.pathStr()),
                      std::string(""));
+    return true;
 })
 
 // ====== buildDefaultSystemPrompt 用例 ======
@@ -116,12 +120,14 @@ REGISTER_TEST(buildDefaultSystemPrompt_四项齐全, "system_prompt: buildDefaul
     DOCTEST_CHECK_NE(prompt.find("操作系统："), std::string::npos);
     // 系统架构
     DOCTEST_CHECK_NE(prompt.find("系统架构："), std::string::npos);
+    return true;
 })
 
 REGISTER_TEST(buildDefaultSystemPrompt_非git目录_显示_非git仓库, "system_prompt: buildDefaultSystemPrompt 无 git 时显示「非 git 仓库」", {
     GitFixture fx("nogit2");
     std::string prompt = module::agent::buildDefaultSystemPrompt(fx.pathStr());
     DOCTEST_CHECK_NE(prompt.find("非 git 仓库"), std::string::npos);
+    return true;
 })
 
 // ====== 编译期宏验证 ======
@@ -140,6 +146,7 @@ REGISTER_TEST(os_arch_macros_非空, "system_prompt: OS/架构编译期宏产出
     std::string afterArch = prompt.substr(archPos + 15);  // skip "系统架构："
     afterArch = afterArch.substr(0, afterArch.find('\n'));
     DOCTEST_CHECK_FALSE(afterArch.empty());
+    return true;
 })
 
 // ====== 默认提示词内容验证 ======
@@ -152,4 +159,5 @@ REGISTER_TEST(defaultPrompt_可编辑原则, "system_prompt: buildDefaultSystemP
     DOCTEST_CHECK_EQ(prompt.find('#'), std::string::npos);  // 无 markdown 标题
     // 首行含 "DevDesk 智能体"
     DOCTEST_CHECK_NE(prompt.find("DevDesk"), std::string::npos);
+    return true;
 })

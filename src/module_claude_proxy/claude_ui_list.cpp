@@ -775,7 +775,7 @@ void drawSharedConfigBlock(eui::Ui& ui, float width, float blockH,
         const float y0 = 2.0f;
         auto normalC = t.colors.wechat.cardBg;
         auto hoverC  = core::mixColor(normalC, t.colors.wechat.primary, 0.10f);
-        auto pressC  = core::mixColor(normalC, t.colors.wechat.surfaceActive, 0.22f);
+        auto pressC  = core::mixColor(normalC, t.colors.wechat.selectedBg, 0.22f);
         ui.stack("claude.shared.header.chevron")
             .position(x0, y0).size(kD, kD)
             .visualStateFrom("claude.shared.header.chevron.bg", 0.965f)

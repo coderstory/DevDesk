@@ -131,13 +131,13 @@ REGISTER_TEST(splash_ink_curve, "splash.h: 墨染曲线（时长 1.2s / 半径 e
     DOCTEST_CHECK(ui_kit::inkFrontFraction(0.5f) < ui_kit::inkFrontFraction(0.75f));
     DOCTEST_CHECK_EQ(ui_kit::inkFrontFraction(1.0f), 1.0f);
     // easeOut 自检：前半程过 87.5%（1 − 0.5³ = 0.875）——先急速铺开再缓收
-    DOCTEST_CHECK_GT(ui_kit::inkFrontFraction(0.5f), 0.874f);
+    DOCTEST_CHECK(ui_kit::inkFrontFraction(0.5f) > 0.874f);
     // 非法入参钳制（负值/超界与端点同值，不产生倒退或外抛）
     DOCTEST_CHECK_EQ(ui_kit::inkFrontFraction(-0.5f), 0.0f);
     DOCTEST_CHECK_EQ(ui_kit::inkFrontFraction(1.5f), 1.0f);
     // 浓度包络：随扩散单调摊薄、终点归零（终态=纯静态底色）、入参钳制
-    DOCTEST_CHECK_GT(ui_kit::inkWashAlpha(0.0f), ui_kit::inkWashAlpha(0.25f));
-    DOCTEST_CHECK_GT(ui_kit::inkWashAlpha(0.25f), ui_kit::inkWashAlpha(0.5f));
+    DOCTEST_CHECK(ui_kit::inkWashAlpha(0.0f) > ui_kit::inkWashAlpha(0.25f));
+    DOCTEST_CHECK(ui_kit::inkWashAlpha(0.25f) > ui_kit::inkWashAlpha(0.5f));
     DOCTEST_CHECK_EQ(ui_kit::inkWashAlpha(1.0f), 0.0f);
     DOCTEST_CHECK_EQ(ui_kit::inkWashAlpha(1.5f), 0.0f);
     DOCTEST_CHECK_EQ(ui_kit::inkWashAlpha(-1.0f), 1.0f);

@@ -199,6 +199,7 @@ REGISTER_TEST(agent_ui_detail_layout_elastic_1600x1000,
                   footerEdit->frame.x + 0.5f);
     DOCTEST_CHECK(footerClose->frame.y + footerClose->frame.height <=
                   panelBot + 0.5f);
+    return true;
 })
 
 REGISTER_TEST(agent_ui_detail_layout_narrow_700x560,
@@ -272,6 +273,7 @@ REGISTER_TEST(agent_ui_detail_layout_narrow_700x560,
     DOCTEST_REQUIRE(ui4.find("agent.dialog.detail.config.scroll") != nullptr);
     DOCTEST_CHECK(ui4.find("agent.dialog.detail.runlist") == nullptr);
     DOCTEST_CHECK(ui4.find("agent.dialog.detail.detail") == nullptr);
+    return true;
 })
 
 REGISTER_TEST(agent_ui_detail_layout_shortwide_900x600,
@@ -325,6 +327,7 @@ REGISTER_TEST(agent_ui_detail_layout_shortwide_900x600,
             std::to_string(scroll->frame.y + scroll->frame.height) +
             " 面板底 " +
             std::to_string(panel->frame.y + panel->frame.height));
+    return true;
 })
 
 }  // namespace

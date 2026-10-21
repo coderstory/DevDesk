@@ -5684,6 +5684,9 @@ bool clickById(eui::Ui& ui, const std::string& id) {
     return true;
 }
 
+// click 是 clickById 的别名（222 处旧调用，clickById 是 2026-09-29 规范命名；新调用用 clickById）
+bool click(eui::Ui& ui, const std::string& id) { return clickById(ui, id); }
+
 // 造 n 条调用记录（含 429 / 超时两态，让「另有 N 条」行与状态列都有内容）
 bool seedCalls(module::claude::ClaudeService* svc, int64_t pid, int n) {
     const std::time_t base = std::time(nullptr);
@@ -8404,8 +8407,6 @@ REGISTER_TEST(claude_profile_switch_confirm_dialog,
         ui.end();
         ui.layout(screen.width, screen.height);
     };
-    const auto& t = core::theme::current();
-
     // 初帧：无选中 → 两卡都无勾圈
     {
         eui::Ui ui;

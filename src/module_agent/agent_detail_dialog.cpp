@@ -22,6 +22,7 @@
 #include <components/button.h>
 #include <components/dialog.h>
 #include <components/scrollview.h>
+#include <core/window/window_backend.h>
 #include <eui/dsl.h>
 #include <ui_kit/metrics.h>
 #include <ui_kit/toast.h>

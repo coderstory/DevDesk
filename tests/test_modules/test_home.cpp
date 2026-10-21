@@ -13,6 +13,7 @@
 #include "core/module_interface.h"
 #include "core/overdue.h"
 #include "core/proxy_stats.h"
+#include "core/theme.h"
 #include "core/time.h"
 #include "module_home/home_service.h"
 // 跨模块逾期口径一致性用例需要同时问首页与 Todo 两条读取路径

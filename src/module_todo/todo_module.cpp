@@ -261,7 +261,7 @@ public:
         const int64_t targetCol = ui::findColumnByKind(columns_, kind);
         if (targetCol == 0) {
             // 明示而非静默：没有语义列时任务留在原列（异常态，走错误通道）
-            setStatus((toDone ? "任务已完成" : "已取消完成") + "（未找到 kind='" +
+            setStatus(std::string{toDone ? "任务已完成" : "已取消完成"} + "（未找到 kind='" +
                           kind + "' 的列，任务留在原列）",
                       true);
             reloadAll();
