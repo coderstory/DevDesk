@@ -24,6 +24,7 @@
 #include <components/scrollview.h>
 #include <core/window/window_backend.h>
 #include <eui/dsl.h>
+#include <ui_kit/glass_card.h>
 #include <ui_kit/metrics.h>
 #include <ui_kit/toast.h>
 
@@ -354,9 +355,14 @@ void AgentModule::composeTaskDetailDialog(
                     .content([&] {
                         ui.rect(id + ".bg")
                             .size(cw, summaryH)
-                            .color(t.colors.wechat.cardBg)
+                            .color(components::theme::withOpacity(t.colors.wechat.cardBg, 0.62f))
                             .radius(t.sizes.radius)
+                            .border(1.0f, components::theme::withOpacity(t.colors.wechat.cardBg, 0.55f))
                             .build();
+                        ui_kit::drawGlassCardLayers(ui, id,
+                            0.0f, 0.0f, cw, summaryH,
+                            t.sizes.radius, t,
+                            ui_kit::GlassCardStyle::subtle());
                         ui.text(id + ".label")
                             .position(kCardPad, kCardPad)
                             .size(std::max(0.0f, cw - 2.0f * kCardPad), lhS)
