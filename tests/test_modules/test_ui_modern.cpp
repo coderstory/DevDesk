@@ -676,7 +676,7 @@ REGISTER_TEST(uiModernVirtualProfileRows,
     DOCTEST_CHECK(ui.find("claude.profile.0.name") != nullptr);
     // slot 窗口生效：25 行不整段渲染，视口外行不存在（virtualList 裁剪）。
     // UAT6：Profile 卡高 56px（name-only 设计，原 96px），更多行入视口——行 20 仍在外
-    DOCTEST_CHECK(ui.find("claude.profile.20.name") == nullptr);
+    DOCTEST_CHECK(ui.find("claude.profile.23.name") == nullptr);
 
     // 滚动回退语义：onScrollOffsetChanged 写 profilesScrollOffset_ →
     // 重 compose 视口随偏移前移。偏移取 600 让行 19 落入渲染窗（56px×19≈1064）
@@ -1143,14 +1143,18 @@ REGISTER_TEST(uiAboutLayout,
         }
         const auto* copy0 = ui.find("about.card.copy.0");
         const auto* copy1 = ui.find("about.card.copy.1");
+        const auto* copy2 = ui.find("about.card.copy.2");
         const auto* hit0 = ui.find("about.card.hit.0");
         const auto* hit1 = ui.find("about.card.hit.1");
+        const auto* hit2 = ui.find("about.card.hit.2");
         DOCTEST_REQUIRE(copy0 != nullptr);
         DOCTEST_REQUIRE(copy1 != nullptr);
         DOCTEST_REQUIRE(hit0 != nullptr);
         DOCTEST_REQUIRE(hit1 != nullptr);
-        DOCTEST_CHECK(ui.find("about.card.copy.2") == nullptr);
-        DOCTEST_CHECK(ui.find("about.card.hit.2") == nullptr);
+        DOCTEST_REQUIRE(copy2 != nullptr);  // UAT6：EUI-NEO 行（行序 2）highlight → 有复制图标
+        DOCTEST_REQUIRE(hit2 != nullptr);
+        DOCTEST_CHECK(ui.find("about.card.copy.3") == nullptr);  // 行序 3 = 构建时间（非 highlight）
+        DOCTEST_CHECK(ui.find("about.card.hit.3") == nullptr);
     }
     {
         const auto* footer = ui.find("about.footer");

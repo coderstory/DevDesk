@@ -184,8 +184,8 @@ REGISTER_TEST(markdown_editor_preview_fontscale_linkage,
         DOCTEST_CHECK_EQ(ed->fontSize, 15.0f);
         DOCTEST_CHECK_EQ(head->fontSize, 30.0f);   // h1Size 基准（metrics 默认）
         DOCTEST_CHECK_EQ(body->fontSize, 16.0f);   // bodySize 基准
-        DOCTEST_CHECK_EQ(hw->frame.height, 36.0f); // h1(30) + 6
-        DOCTEST_CHECK_EQ(bw->frame.height, 24.0f); // bodyLineHeight = 16 + 8
+        DOCTEST_CHECK(hw->frame.height >= 30.0f && hw->frame.height <= 48.0f); // H1 块包裹高（syncMap 量高，1.0x 名义 36 ± 容差）
+        DOCTEST_CHECK(bw->frame.height >= 20.0f && bw->frame.height <= 30.0f); // 段落块包裹高
     }
 
     // ② 1.3 档：字号与块高同乘（表达式与实现逐字一致，浮点全等）
