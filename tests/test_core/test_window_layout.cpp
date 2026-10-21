@@ -375,3 +375,128 @@ REGISTER_TEST(window_layout_tin08_bare_comma_in_body,
     DOCTEST_CHECK_EQ(expectedH, decision.height);
     return true;
 })
+
+// ==================== 窗体记忆恢复（UAT6：restoreInitialWindow）====================
+// 记忆尺寸必须走 decideInitialWindow 同一条收缩钳制链：换屏后巨屏记忆值自适应收缩、
+// 过小记忆值提到最小窗下限、无记录回退默认；最大化标志独立透传（不参与尺寸链）。
+
+namespace {
+
+// main.cpp 生产口径的默认请求：默认 1600×1000 + 最小窗 1000×640（逻辑）
+core::window_layout::InitialWindowDefaults mainDefaults() {
+    return core::window_layout::InitialWindowDefaults{1600, 1000, 1000, 640};
+}
+
+}  // namespace
+
+REGISTER_TEST(window_restore_no_record_uses_default,
+              "window_restore: 无记录（0×0）→ 回退默认 1600×1000，不最大化", {
+    const auto plan = core::window_layout::restoreInitialWindow(
+        core::window_layout::SavedWindowGeometry{0, 0, false}, mainDefaults(),
+        area(1920, 1080), 1.0f, frameInsetsForScale(1.0f));
+    DOCTEST_CHECK_FALSE(plan.fromSavedRecord);
+    DOCTEST_CHECK_FALSE(plan.initial.maximize);
+    DOCTEST_CHECK_EQ(plan.initial.width, 1600);
+    DOCTEST_CHECK_EQ(plan.initial.height, 1000);
+    // 实际采用的请求 = 默认口径（minWindowSizeForWorkArea 须拿它同口径换算）
+    DOCTEST_CHECK_EQ(plan.requestUsed.logicalWidth, 1600);
+    DOCTEST_CHECK_EQ(plan.requestUsed.logicalHeight, 1000);
+    DOCTEST_CHECK_EQ(plan.requestUsed.minLogicalWidth, 1000);
+    DOCTEST_CHECK_EQ(plan.requestUsed.minLogicalHeight, 640);
+    return true;
+})
+
+REGISTER_TEST(window_restore_saved_size_kept,
+              "window_restore: 有记忆（1280×800）→ 原样恢复，requestUsed 同口径", {
+    const auto plan = core::window_layout::restoreInitialWindow(
+        core::window_layout::SavedWindowGeometry{1280, 800, false}, mainDefaults(),
+        area(1920, 1080), 1.0f, frameInsetsForScale(1.0f));
+    DOCTEST_CHECK(plan.fromSavedRecord);
+    DOCTEST_CHECK_FALSE(plan.initial.maximize);
+    DOCTEST_CHECK_EQ(plan.initial.width, 1280);
+    DOCTEST_CHECK_EQ(plan.initial.height, 800);
+    DOCTEST_CHECK_EQ(plan.requestUsed.logicalWidth, 1280);
+    DOCTEST_CHECK_EQ(plan.requestUsed.logicalHeight, 800);
+    // 最小窗换算与「直接拿记忆请求建 InitialWindowRequest」逐字段一致（main.cpp
+    // 用 plan.requestUsed 喂 minWindowSizeForWorkArea，此断言防另建请求分叉）
+    const auto minViaPlan = minWindowSizeForWorkArea(
+        plan.requestUsed, area(1920, 1080), 1.0f, frameInsetsForScale(1.0f));
+    const auto minDirect = minWindowSizeForWorkArea(
+        InitialWindowRequest{1280, 800, 1000, 640}, area(1920, 1080), 1.0f,
+        frameInsetsForScale(1.0f));
+    DOCTEST_CHECK_EQ(minViaPlan.width, minDirect.width);
+    DOCTEST_CHECK_EQ(minViaPlan.height, minDirect.height);
+    return true;
+})
+
+REGISTER_TEST(window_restore_oversized_clamps_via_same_chain,
+              "window_restore: 巨屏记忆值（4000×3000 逻辑）→ 走同一条收缩链钳回工作区", {
+    // UAT6 用户真机档：1080p@125%（工作区 1920×1032 物理、外框 +18/+47）
+    const auto plan = core::window_layout::restoreInitialWindow(
+        core::window_layout::SavedWindowGeometry{4000, 3000, false}, mainDefaults(),
+        area(1920, 1032), 1.25f, frameInsetsForScale(1.25f));
+    // 与直接拿同参数请求走 decideInitialWindow 逐字段相等（证明记忆值没有旁路钳制链）
+    const auto direct = decideInitialWindow(
+        InitialWindowRequest{4000, 3000, 1000, 640}, area(1920, 1032), 1.25f,
+        frameInsetsForScale(1.25f));
+    DOCTEST_CHECK_EQ(plan.initial.width, direct.width);
+    DOCTEST_CHECK_EQ(plan.initial.height, direct.height);
+    DOCTEST_CHECK_EQ(plan.initial.width, 1870);   // 1920−18−32
+    DOCTEST_CHECK_EQ(plan.initial.height, 953);   // 1032−47−32
+    DOCTEST_CHECK_FALSE(plan.initial.maximize);
+    DOCTEST_CHECK(plan.fromSavedRecord);
+    return true;
+})
+
+REGISTER_TEST(window_restore_tiny_raises_to_min,
+              "window_restore: 过小记忆值（300×200）→ 提到最小窗下限 1000×640", {
+    const auto plan = core::window_layout::restoreInitialWindow(
+        core::window_layout::SavedWindowGeometry{300, 200, false}, mainDefaults(),
+        area(1920, 1080), 1.0f, frameInsetsForScale(1.0f));
+    DOCTEST_CHECK(plan.fromSavedRecord);
+    DOCTEST_CHECK_EQ(plan.initial.width, 1000);
+    DOCTEST_CHECK_EQ(plan.initial.height, 640);
+    DOCTEST_CHECK_FALSE(plan.initial.maximize);
+    return true;
+})
+
+REGISTER_TEST(window_restore_maximized_flag_passthrough,
+              "window_restore: 最大化标志往返（有尺寸/无尺寸都透传，false 不误开）", {
+    // 有尺寸记录 + 最大化 → 恢复最大化，windowSize 即还原态尺寸（退出最大化回到它）
+    const auto maxed = core::window_layout::restoreInitialWindow(
+        core::window_layout::SavedWindowGeometry{1280, 800, true}, mainDefaults(),
+        area(1920, 1080), 1.0f, frameInsetsForScale(1.0f));
+    DOCTEST_CHECK(maxed.initial.maximize);
+    DOCTEST_CHECK_EQ(maxed.initial.width, 1280);
+    DOCTEST_CHECK_EQ(maxed.initial.height, 800);
+    // 尺寸记录缺失但标志为 true：仍恢复最大化（还原态尺寸回退默认，不记全屏值）
+    const auto maxedNoSize = core::window_layout::restoreInitialWindow(
+        core::window_layout::SavedWindowGeometry{0, 0, true}, mainDefaults(),
+        area(1920, 1080), 1.0f, frameInsetsForScale(1.0f));
+    DOCTEST_CHECK(maxedNoSize.initial.maximize);
+    DOCTEST_CHECK_EQ(maxedNoSize.initial.width, 1600);
+    // 正常关闭 → 不最大化（防标志误置位回归）
+    const auto normal = core::window_layout::restoreInitialWindow(
+        core::window_layout::SavedWindowGeometry{1280, 800, false}, mainDefaults(),
+        area(1920, 1080), 1.0f, frameInsetsForScale(1.0f));
+    DOCTEST_CHECK_FALSE(normal.initial.maximize);
+    return true;
+})
+
+REGISTER_TEST(window_restore_dirty_record_falls_back,
+              "window_restore: 脏记录（负值/半记录）→ 当无记录处理，不产出负/零尺寸", {
+    // 负值（SettingsStore 已收敛 0，这里防绕过 store 直传脏值的调用方）
+    const auto negative = core::window_layout::restoreInitialWindow(
+        core::window_layout::SavedWindowGeometry{-500, -300, false}, mainDefaults(),
+        area(1920, 1080), 1.0f, frameInsetsForScale(1.0f));
+    DOCTEST_CHECK_FALSE(negative.fromSavedRecord);
+    DOCTEST_CHECK_EQ(negative.initial.width, 1600);
+    // 半记录（宽有效、高 0）：任一轴非正 = 无记录，整条回默认（不产 0 高窗口）
+    const auto half = core::window_layout::restoreInitialWindow(
+        core::window_layout::SavedWindowGeometry{1280, 0, false}, mainDefaults(),
+        area(1920, 1080), 1.0f, frameInsetsForScale(1.0f));
+    DOCTEST_CHECK_FALSE(half.fromSavedRecord);
+    DOCTEST_CHECK_EQ(half.initial.width, 1600);
+    DOCTEST_CHECK_EQ(half.initial.height, 1000);
+    return true;
+})

@@ -9,6 +9,7 @@
 #include "core/router.h"
 #include "core/theme.h"
 #include "core/window_effect_state.h"  // 侧栏底 alpha 按窗口效果档位（UAT2 B 批）
+#include "core/window_geometry.h"  // 窗体记忆账本（UAT6：compose 每帧记账还原态尺寸）
 #include "module_agent/agent_module.h"
 #include "settings_config.h"
 #include <ui_kit/logo.h>  // 图标批 2026-10-20：brand 行/标题栏几何 logo（C 方案终端窗 >_）
@@ -413,6 +414,11 @@ void compose(eui::Ui& ui, const eui::Screen& screen) {
     if (app::assembly::consumePendingMinimizedStartup()) {
         app::closeMainWindow();
     }
+    // 窗体记忆记账（UAT6）：每帧记录还原态客户区逻辑尺寸 + 最大化标志（退出落盘的
+    // 数据源）。须在 splash 早退之前——splash 帧也是主窗帧，启动即最大化的会话靠它
+    // 记下最大化态（尺寸则由 main.cpp 的播种兜底）。最大化帧不记尺寸（保留还原态）
+    ::core::window_geometry::noteFrame(screen.width, screen.height,
+                                       app::mainWindowMaximized());
     // 启动 splash：2.0s 动画 + 0.3s 淡出后切主界面；期间跳过布局
     if (ui_kit::drawSplashIfNeeded(ui, screen)) {
         return;

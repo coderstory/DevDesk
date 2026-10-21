@@ -31,6 +31,12 @@ constexpr const char* kKeyWindowEffect = "windowEffect";
 constexpr const char* kKeyEnabledModules = "enabledModules";
 constexpr const char* kKeySidebarCollapsed = "sidebarCollapsed";
 constexpr const char* kKeyAccentTheme = "accentTheme";
+// 窗体记忆（UAT6）：还原态尺寸 0 = 无记录；sanitized 负值/越此上限归 0
+//（巨值/微值的可用性由恢复侧钳制链兜底，这里只防脏数据落账）
+constexpr const char* kKeyWindowRestoreWidth = "windowRestoreWidth";
+constexpr const char* kKeyWindowRestoreHeight = "windowRestoreHeight";
+constexpr const char* kKeyWindowMaximized = "windowMaximized";
+constexpr int kMaxWindowRestoreSide = 65535;
 
 // 合法模块 ID 清单（sanitized 过滤未知项；与 kModuleId* 一一对应）
 const char* const kKnownModuleIds[] = {
@@ -146,6 +152,14 @@ SettingsConfig SettingsStore::sanitized(const SettingsConfig& cfg) {
     // 只认三档，未知值收敛 auto；不在此解析 auto→darkTheme（保持纯函数）。
     if (out.themeMode != kThemeModeLight && out.themeMode != kThemeModeDark) {
         out.themeMode = kThemeModeAuto;
+    }
+    // 窗体记忆：负值/越上限归 0 = 无记录（0 是「无记录」哨兵，不能钳到别的合法值——
+    // 负值钳 1 会把脏数据变成 1px 窗口记录；巨值由恢复侧收缩链兜底，这里只防落账）
+    if (out.windowRestoreWidth < 0 || out.windowRestoreWidth > kMaxWindowRestoreSide) {
+        out.windowRestoreWidth = 0;
+    }
+    if (out.windowRestoreHeight < 0 || out.windowRestoreHeight > kMaxWindowRestoreSide) {
+        out.windowRestoreHeight = 0;
     }
     if (out.windowEffect != kWindowEffectTranslucent &&
         out.windowEffect != kWindowEffectFrosted) {
@@ -396,6 +410,25 @@ core::Result<SettingsConfig> SettingsStore::loadChecked() const {
             v.errorCode(), v.errorMessage());
         if (v.value().isBool()) cfg.sidebarCollapsed = v.value().asBool();
     }
+    // 窗体记忆（UAT6）：键缺失（首启动/旧版本升级）→ 默认 0/0/false = 无记录
+    if (auto raw = readRow(kKeyWindowRestoreWidth); raw.isOk()) {
+        auto v = parseRow(configKey(kKeyWindowRestoreWidth), raw.value());
+        if (v.isFail()) return core::Result<SettingsConfig>::fail(
+            v.errorCode(), v.errorMessage());
+        if (v.value().isNumber()) cfg.windowRestoreWidth = static_cast<int>(v.value().asInt());
+    }
+    if (auto raw = readRow(kKeyWindowRestoreHeight); raw.isOk()) {
+        auto v = parseRow(configKey(kKeyWindowRestoreHeight), raw.value());
+        if (v.isFail()) return core::Result<SettingsConfig>::fail(
+            v.errorCode(), v.errorMessage());
+        if (v.value().isNumber()) cfg.windowRestoreHeight = static_cast<int>(v.value().asInt());
+    }
+    if (auto raw = readRow(kKeyWindowMaximized); raw.isOk()) {
+        auto v = parseRow(configKey(kKeyWindowMaximized), raw.value());
+        if (v.isFail()) return core::Result<SettingsConfig>::fail(
+            v.errorCode(), v.errorMessage());
+        if (v.value().isBool()) cfg.windowMaximized = v.value().asBool();
+    }
     if (auto raw = readRow(kKeyAccentTheme); raw.isOk()) {
         auto v = parseRow(configKey(kKeyAccentTheme), raw.value());
         if (v.isFail()) return core::Result<SettingsConfig>::fail(
@@ -451,6 +484,9 @@ core::Result<void> SettingsStore::save(const SettingsConfig& cfgRaw) const {
         {kKeyWindowEffect, platform::json::makeString(cfg.windowEffect)},
         {kKeySidebarCollapsed, platform::json::makeBool(cfg.sidebarCollapsed)},
         {kKeyAccentTheme, platform::json::makeString(cfg.accentTheme)},
+        {kKeyWindowRestoreWidth, platform::json::makeInt(cfg.windowRestoreWidth)},
+        {kKeyWindowRestoreHeight, platform::json::makeInt(cfg.windowRestoreHeight)},
+        {kKeyWindowMaximized, platform::json::makeBool(cfg.windowMaximized)},
         {kKeyEnabledModules,
          platform::json::makeStringArray(cfg.enabledModules)},
     };

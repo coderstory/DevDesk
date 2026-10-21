@@ -82,6 +82,12 @@ struct SettingsConfig {
     std::string accentTheme = "clay";
     // true = 启动恢复 72px 图标栏；运行时切换在 app_sidebar，经 SettingsStore 持久化到这里。
     bool sidebarCollapsed = false;
+    // 窗体记忆（UAT6）：上次退出时的还原态客户区尺寸（逻辑单位）+ 最大化标志；0 = 无记录
+    //（首次启动 / 异常退出未落盘），启动回退默认尺寸。恢复钳制链见
+    // core/window_layout::restoreInitialWindow；sanitized 负值/越上限归 0
+    int windowRestoreWidth = 0;
+    int windowRestoreHeight = 0;
+    bool windowMaximized = false;
     // 模块开关：home/settings 恒启用（sanitized 强制补齐）；agent 与 pet 默认关闭。
     std::vector<std::string> enabledModules = defaultEnabledModules();
 };
@@ -140,7 +146,9 @@ public:
     // 与 load() 同源，但把「库未就绪 / 表不存在 / 单键读失败」如实报出（ErrorCode + 原因）。
     core::Result<SettingsConfig> loadChecked() const;
 
-    // 写入配置：12 个顶层键在一个事务里 UPSERT，并清掉本轮不再写出的旧键。
+    // 写入配置：16 个顶层键在一个事务里 UPSERT，并清掉本轮不再写出的旧键
+    //（UAT6 窗体记忆加 windowRestoreWidth/Height/windowMaximized 三键）。
+
     core::Result<void> save(const SettingsConfig& cfg) const;
 
     // 数值越界收敛到合法范围（load 时应用；也供单测直接验证）

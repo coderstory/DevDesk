@@ -4,11 +4,18 @@
 // 防的事故：splash 回归极光波 shadertoy 渐变（§8 禁项 #4：大面积渐变背景）；
 // 以及 splash 重新引入硬编码色字面量（W0.5 清单 W-W1~W-W3 + #15-#17）。
 //
+// UAT6 动态印染新增两层：①曲线行为断言——墨染时长/前沿半径/浓度包络是 splash.h
+// 内联纯函数，无头直调钉曲线（时长档、单调性、终态收敛）；②接线源码断言——
+// splash.cpp 只许经 inkProgress 驱动墨染、挂 md.tree.anim.driver 同款 onFrame
+// 帧泵、洗染色走 wechat 令牌（禁 color(wc.primary) 回退由既有负向契约钉）。
+//
 // 为什么读源文件而不是跑渲染：splash 需 GL 上下文 + 2.3s 时序，无头单测活不过；
 // test_main.cpp 的 fixture 恒 setSplashDisabledForTests(true) 让 drawSplashIfNeeded
 // 短路返 false，跑不出 splash 路径。时序/真渲染由 probe（screenshot_probe）覆盖；
 // 本文件只钉源码契约——这是唯一能在无头套件里钉住"不回归极光波 / 不回归硬编码色"的层。
 #include "doctest.h"
+
+#include <ui_kit/splash.h>  // 墨染曲线纯函数（kInkDurationSec / inkFrontFraction / inkWashAlpha）
 
 #include <filesystem>
 #include <fstream>
@@ -107,5 +114,52 @@ REGISTER_TEST(splash_no_hardcoded_literals, "splash.cpp: 不含硬编码色字�
     DOCTEST_CHECK(!contains(src, "Color{0.04f, 0.42f, 1.0f"));
     // #17：渐变绿端点（splash.cpp:160）
     DOCTEST_CHECK(!contains(src, "Color{0.13f, 0.69f, 0.44f"));
+    return true;
+})
+
+// ==================== UAT6 动态印染（墨染径向扩散）====================
+
+// 墨染曲线行为断言：直调 splash.h 内联纯函数（测试缝同 header inline 先例，
+// 不拉 splash.cpp.o）。防：时长档漂出用户 1~1.5s、前沿半径非单调/不达满圆、
+// 浓度包络不归零（终态残留墨染 ≠ 静态底色，W 批底色断言会被动态层遮蔽）
+REGISTER_TEST(splash_ink_curve, "splash.h: 墨染曲线（时长 1.2s / 半径 easeOut 单调达满 / 浓度稀释归零）", {
+    DOCTEST_CHECK_EQ(ui_kit::kInkDurationSec, 1.2f);  // 用户档 1~1.5s
+    // 前沿半径：0 → 0、单调升、1 → 1（铺满全屏，最远角也吃到墨）
+    DOCTEST_CHECK_EQ(ui_kit::inkFrontFraction(0.0f), 0.0f);
+    DOCTEST_CHECK(ui_kit::inkFrontFraction(0.0f) < ui_kit::inkFrontFraction(0.25f));
+    DOCTEST_CHECK(ui_kit::inkFrontFraction(0.25f) < ui_kit::inkFrontFraction(0.5f));
+    DOCTEST_CHECK(ui_kit::inkFrontFraction(0.5f) < ui_kit::inkFrontFraction(0.75f));
+    DOCTEST_CHECK_EQ(ui_kit::inkFrontFraction(1.0f), 1.0f);
+    // easeOut 自检：前半程过 87.5%（1 − 0.5³ = 0.875）——先急速铺开再缓收
+    DOCTEST_CHECK_GT(ui_kit::inkFrontFraction(0.5f), 0.874f);
+    // 非法入参钳制（负值/超界与端点同值，不产生倒退或外抛）
+    DOCTEST_CHECK_EQ(ui_kit::inkFrontFraction(-0.5f), 0.0f);
+    DOCTEST_CHECK_EQ(ui_kit::inkFrontFraction(1.5f), 1.0f);
+    // 浓度包络：随扩散单调摊薄、终点归零（终态=纯静态底色）、入参钳制
+    DOCTEST_CHECK_GT(ui_kit::inkWashAlpha(0.0f), ui_kit::inkWashAlpha(0.25f));
+    DOCTEST_CHECK_GT(ui_kit::inkWashAlpha(0.25f), ui_kit::inkWashAlpha(0.5f));
+    DOCTEST_CHECK_EQ(ui_kit::inkWashAlpha(1.0f), 0.0f);
+    DOCTEST_CHECK_EQ(ui_kit::inkWashAlpha(1.5f), 0.0f);
+    DOCTEST_CHECK_EQ(ui_kit::inkWashAlpha(-1.0f), 1.0f);
+    return true;
+})
+
+// 墨染接线源码断言：防「曲线在但没接上」——inkProgress 必须真的驱动半径/浓度，
+// 帧泵（md.tree.anim.driver 同款 onFrame 元素）必须在途挂载、收敛剪除，洗染色
+// 走 wechat.primaryPressed 令牌（有机晕染的噪声卫星也在令牌体系内，禁字面量）
+REGISTER_TEST(splash_ink_dynamic_wiring, "splash.cpp: 墨染接线（inkProgress 驱动 + onFrame 帧泵 + 终态收敛 + 令牌色）", {
+    const std::string src = readSourceFile("src/ui_kit/splash.cpp");
+    DOCTEST_CHECK(!src.empty());
+    // 进度源（等效 uniform）：elapsed 归一化驱动，曲线经 splash.h 内联函数接线
+    DOCTEST_CHECK(contains(src, "kInkDurationSec"));
+    DOCTEST_CHECK(contains(src, "inkFrontFraction(inkProgress)"));
+    DOCTEST_CHECK(contains(src, "inkWashAlpha(inkProgress)"));
+    // 帧泵在途挂载 + 收敛剪除（条件块包住整套墨染元素与泵）
+    DOCTEST_CHECK(contains(src, "if (inkProgress < 1.0f)"));
+    DOCTEST_CHECK(contains(src, "splash.ink.anim.driver"));
+    DOCTEST_CHECK(contains(src, ".onFrame("));
+    // 墨染元素与洗染色令牌（同 logo/进度条的 AA 对比档令牌）
+    DOCTEST_CHECK(contains(src, "splash.ink.ring."));
+    DOCTEST_CHECK(contains(src, "splash.ink.blob."));
     return true;
 })
