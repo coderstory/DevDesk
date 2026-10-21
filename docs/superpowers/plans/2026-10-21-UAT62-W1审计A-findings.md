@@ -57,3 +57,26 @@
 | D4 测试 | 1 OK（确认 W2 范围） |
 
 **总检察**: 5 提交 / 3 文件 / 184 行新增 / 38 行删减。结构正确、API 向后兼容。需修 2 HIGH（值错误）+ 2 MED（并发/静默风险），LOW 和其余 MED 可延至 W2 评估。
+
+---
+
+# 复查结论（2026-10-21，修复批 c6bf5fc + ce4501f）
+
+**修复提交**: c6bf5fc (button.h 值修正+逐态文字+工厂接链+合约注释) / ce4501f (widget_style.h 线程合约注释)
+
+## 逐条核对
+
+| Finding | 处置 | 证据 | 结论 |
+|---------|------|------|------|
+| **H1** Danger bg alpha 12%→20% | 改 `0.12f` → `0.20f` + 注释 `S2.1: #FEE2E2 = error 20% alpha` | `button.h:65` | **通过** |
+| **H2** Danger hover 文字无法切白 | 新增 `textHover`/`textPressed` 字段 (line 83-84)；Danger 构造设 `textHover = textPressed = #FFFFFF` (line 70-71)；build() 双栈 text + hoverOpacityFrom 交叉淡入淡出 (line 257-292)——hover/pressed 时正常文字渐隐、白字渐显 | `button.h:70-71 + 83-84 + 257-292` | **通过**。S2 Danger hover+pressed 均为白字，双状态栈满足。textPressed 字段未在 render 中独占消费（与 textHover 共用 hoverClr），但 Danger 两态同白色故无实际差异。 |
+| **M1** Danger pressed `#DC2626` | `mixColor(...)` → 硬编码 `core::Color{0.863f, 0.149f, 0.149f, 1.0f}` = 220/38/38 = #DC2626 | `button.h:68` | **通过** |
+| **L1** `button(ui, id, variant)` 吞参数 | 新增 `hasExplicitVariant_`/`defaultVariant_` 成员 (line 336-337) + `.variant(ButtonVariant)` 方法 (line 126-130)；`.theme(tokens, bool)` 检查 flag 走 variant 构造 (line 111-117)；工厂 `button(ui, id, v)` 改为 `return ButtonBuilder(ui, id).variant(v)` (line 348) | `button.h:111-117 + 126-130 + 336-337 + 348` | **通过**。端到端链路：`button(ui,"x",Outline)` → 存储 variant → `.theme(tokens)` 检查 flag → `ButtonStyle(tokens, Outline)` → 正确样式。 |
+| **M3** Outline/Ghost/Danger fallback 无声 | 加 W2 合约注释说明 fallback 语义 (line 38-39) | `button.h:38-39` | **通过**。行为未改（fallback 仍存在，W2 填充为消除风险的唯一路径），但合约已显式声明。 |
+| **M2** WidgetStyleRegistry 无锁 | 加线程安全合约注释：声明 EUI 单线程框架、多线程使用者外部同步 (line 22-23) | `widget_style.h:22-23` | **通过**。合约注释明确责任边界——EUI 框架侧不做内部锁、多线程使用者自己上锁。 |
+
+## 总评
+
+**6/6 全部通过**。值修正精确（H1/M1 逐位对照 S2 hex 值），逐态文字机制可见可验（H2 双栈 + hoverOpacityFrom 交叉过渡），工厂接链端到端闭合（L1 variant→theme 全路径），两处合约注释位置准确（M2/M3 边界声明）。
+
+**副作用审计**: 新增 `textHover`/`textPressed` 字段默认 `{}` (零 alpha)，旧代码不设则为 0 → render 走旧单 text 分支，零回归。`hasExplicitVariant_` 默认 false → `.theme(tokens, bool)` 走旧路径，旧 `.theme(tokens, true/false)` 调用点不受影响。
