@@ -272,10 +272,9 @@ REGISTER_TEST(github_sync_card_progress_bar_and_text,
 
 // 方案 A 三段几何（与 drawGithubSyncCard 行进公式同构；100% 档换算见注释）：
 //   头部 = 点 8（x=28）+ 标题（x=44，20 行高）+ 摘要（+1+16）→ 启用/自动推送
-//   两整行开关行（UAT6，行距 6、行盒 28；启用 52×28 在上、自动推送 44×24 在
-//   下，开关钉 kW−28 右缘、行盒内垂直居中；label 宽 = 卡内宽−开关−8、垂直
-//   居中于行盒——UAT6 零滚动收口删两行说明文案行）；
-//   头部底 = 45+6+28+6+28 = 113 → 分段线（+5，1px）→ 配置组（URL 行 36 +
+//   两整行开关行（UAT6 N 项：开关统一 44×24、行盒 24；启用/自动推送同上同下，
+//   开关钉 kW−28 右缘、行盒内垂直居中；label 宽 = 卡内宽−开关−8）；
+//   头部底 = 45+6+24+6+24 = 105 → 分段线（+5，1px）→ 配置组（URL 行 36 +
 //   分支|Token 行 36，组题行已删）→ 分段线 → 操作组（三按钮行 36）。
 REGISTER_TEST(github_sync_card_plan_a_geometry,
               "github_sync 卡片: 方案 A 三段几何（头部/开关两行/配置组/操作组）", {
@@ -320,7 +319,7 @@ REGISTER_TEST(github_sync_card_plan_a_geometry,
     const float titleH = ms::roundFs(20.0f);
     const float mutedH = ms::roundFs(16.0f);
     const float rowH = ms::roundFs(36.0f);
-    const float toggleRowH = ms::roundFs(28.0f);
+    const float toggleRowH = ms::roundFs(24.0f);  // N 项: 28→24 (主开关统一 44×24)
     const float rowGap = ms::roundFs(6.0f);
     const float secGap = ms::roundFs(5.0f);
     // 头部：状态点 + 标题（启用后缀）+ 摘要（披露兜底，见 disclosure 用例）
@@ -334,25 +333,25 @@ REGISTER_TEST(github_sync_card_plan_a_geometry,
     const float summaryY = y0 + titleH + ms::roundFs(1.0f);
     DOCTEST_CHECK(std::fabs(summary->frame.y - summaryY) < 0.5f);
     DOCTEST_CHECK(std::fabs(summary->frame.x - title->frame.x) < 0.5f);
-    // 启用/自动推送两整行（UAT6 零滚动收口：无说明行、行盒 28 贴开关）：行 y =
+    // 启用/自动推送两整行（N 项: 两开关统一 44×24、行盒 24）：行 y =
     // 摘要底+6 / 启用行底(max(行盒/文本/开关))+6；开关钉卡右内边距、行盒内
-    // 垂直居中（启用 52×28 在上、自动推送 44×24 在下）
+    // 垂直居中
     const float labelH = ms::roundFs(18.0f);
     const float headTextBottom = summaryY + mutedH;
     const float enableRowY = headTextBottom + rowGap;
     const float enableTextBottom = enableRowY + (toggleRowH + labelH) * 0.5f;
-    const float enableSwY = enableRowY + (toggleRowH - 28.0f) * 0.5f;
+    const float enableSwY = enableRowY + (toggleRowH - 24.0f) * 0.5f;  // N 项: 28→24
     const float autoRowY =
         std::max(enableRowY + toggleRowH,
-                 std::max(enableTextBottom, enableSwY + 28.0f)) + rowGap;
+                 std::max(enableTextBottom, enableSwY + 24.0f)) + rowGap;  // N 项: 28→24
     const float autoTextBottom = autoRowY + (toggleRowH + labelH) * 0.5f;
     const float autoSwY = autoRowY + (toggleRowH - 24.0f) * 0.5f;
     DOCTEST_CHECK_EQ(enLabel->text, std::string("启用"));
     DOCTEST_CHECK_EQ(autoLabel->text, std::string("自动推送"));
-    DOCTEST_CHECK(std::fabs(enSw->frame.x - (kW - padX - 52.0f)) < 0.5f);
+    DOCTEST_CHECK(std::fabs(enSw->frame.x - (kW - padX - 44.0f)) < 0.5f);  // N 项: 52→44
     DOCTEST_CHECK(std::fabs(enSw->frame.y - enableSwY) < 0.5f);
-    DOCTEST_CHECK_EQ(enSw->frame.width, 52.0f);
-    DOCTEST_CHECK_EQ(enSw->frame.height, 28.0f);
+    DOCTEST_CHECK_EQ(enSw->frame.width, 44.0f);  // N 项: 52→44
+    DOCTEST_CHECK_EQ(enSw->frame.height, 24.0f);  // N 项: 28→24
     DOCTEST_CHECK(std::fabs(enSw->frame.x + enSw->frame.width - (kW - padX)) <
                   0.5f);
     DOCTEST_CHECK(std::fabs(autoSw->frame.x - (kW - padX - 44.0f)) < 0.5f);
@@ -361,7 +360,7 @@ REGISTER_TEST(github_sync_card_plan_a_geometry,
     DOCTEST_CHECK_EQ(autoSw->frame.height, 24.0f);
     // label 左块：贴卡左缘（x=28）、行盒内垂直居中；宽度 = 卡内宽 − 开关 − 8（弹性）。
     // 说明文案行已删（零滚动收口）：desc 元素不得再出现（防「顺手加回来」）。
-    const float enTextW = kW - padX * 2.0f - 52.0f - ms::roundFs(8.0f);
+    const float enTextW = kW - padX * 2.0f - 44.0f - ms::roundFs(8.0f);  // N 项: 52→44
     const float autoTextW = kW - padX * 2.0f - 44.0f - ms::roundFs(8.0f);
     DOCTEST_CHECK(ui.find(std::string(kCardId) + ".enabled.desc") == nullptr);
     DOCTEST_CHECK(ui.find(std::string(kCardId) + ".autopush.desc") == nullptr);
@@ -466,19 +465,19 @@ REGISTER_TEST(github_sync_card_fill_full_width,
                                 (28.0f + colW)) < 0.5f);
         DOCTEST_CHECK(std::fabs(tk->frame.x + tk->frame.width -
                                 (kW - 28.0f)) < 0.5f);
-        // 开关右缘钉卡右内边距（44×24 / 52×28 字面尺寸不随窗宽变）
+        // 开关右缘钉卡右内边距（N 项: 两开关统一 44×24）
         DOCTEST_CHECK(std::fabs(autoSw->frame.x + autoSw->frame.width -
                                 (kW - 28.0f)) < 0.5f);
         DOCTEST_CHECK(std::fabs(enSw->frame.x + enSw->frame.width -
                                 (kW - 28.0f)) < 0.5f);
         DOCTEST_CHECK_EQ(autoSw->frame.width, 44.0f);
-        DOCTEST_CHECK_EQ(enSw->frame.width, 52.0f);
+        DOCTEST_CHECK_EQ(enSw->frame.width, 44.0f);  // N 项: 52→44
         // 开关行文本块宽随窗宽弹性（= 卡内宽 − 开关 − 8，无固定帽）且贴卡左缘
         //（UAT6 行宽=卡内宽契约；旧右侧纵排定宽标签盒已废，此处钉住不回归）
         DOCTEST_CHECK(std::fabs(enLabel->frame.x - 28.0f) < 0.5f);
         DOCTEST_CHECK(std::fabs(autoLabel->frame.x - 28.0f) < 0.5f);
         DOCTEST_CHECK(std::fabs(enLabel->frame.width -
-                                (formW - 52.0f - ms::roundFs(8.0f))) < 0.5f);
+                                (formW - 44.0f - ms::roundFs(8.0f))) < 0.5f);  // N 项: 52→44
         DOCTEST_CHECK(std::fabs(autoLabel->frame.width -
                                 (formW - 44.0f - ms::roundFs(8.0f))) < 0.5f);
     }
@@ -487,7 +486,7 @@ REGISTER_TEST(github_sync_card_fill_full_width,
 
 // UAT4 去门控语义钉子（方案 A 布局下延续）：未启用时表单不隐藏——自动推送/
 // URL/分支/Token/按钮全部照常渲染，但呈置灰禁用态（lock 包装层 disabled +
-// opacity 调暗、按钮 disabled）；启用主开关（52×28）不加 lock、始终可点
+// opacity 调暗、按钮 disabled）；启用主开关（44×24）不加 lock、始终可点  // N 项: 52×28→44×24
 //（重新启用的入口；wswitch 命中 = <id>.enabled.sw.track）。另配「启用后全部
 // 恢复」对照组（禁用解除、opacity 回 1）。
 REGISTER_TEST(github_sync_card_disabled_state,
@@ -920,9 +919,9 @@ REGISTER_TEST(github_sync_card_info_rows,
 })
 
 // 卡高常量护栏：五条条件信息行全显（最坏组合）时内容底 + 下边距 8 不越卡——
-// kGithubSyncCardHeight 若再调整而没按最坏档（85%/130% 档开关 52×28/44×24 是
-// 字面值不随字号缩放）复算，这里红。方案 A 的错误/进度已收进头部与操作行，
-// 最坏行序 = 五条信息行。UAT6 零滚动收口：卡上下留白 16→8（372 = 可用高恰好值，
+// kGithubSyncCardHeight 若再调整而没按最坏档（开关 44×24 字面值不随字号缩放；
+// N 项统一大小 52×28→44×24）复算，这里红。方案 A 的错误/进度已收进头部与操作行，
+// 最坏行序 = 五条信息行。UAT6 零滚动收口：卡上下留白 16→8（362 = 可用高恰好值，
 // 见 settings_ui_logic.h），下边距判据同步 16→8。
 REGISTER_TEST(github_sync_card_worst_case_fits_height,
               "github_sync 卡片: 五条信息行全显的最坏行序不越卡（卡高护栏）", {

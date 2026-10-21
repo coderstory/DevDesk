@@ -51,7 +51,7 @@ inline constexpr float kTitleH = 20.0f;         // 头部标题行高（零滚�
 inline constexpr float kSummaryGapY = 1.0f;      // 标题与摘要行间距（零滚动收口 2→1）
 inline constexpr float kMutedH = 16.0f;          // 摘要行高
 inline constexpr float kRowH = 36.0f;            // 表单行高（formRow 同口径）
-inline constexpr float kToggleRowH = 28.0f;     // 开关行高（零滚动收口新增：= 主开关 28）
+inline constexpr float kToggleRowH = 24.0f;     // 开关行高（N 项: 28→24, = 主开关 24）
 inline constexpr float kRowGap = 6.0f;          // 行距（列间距同值；零滚动收口 8→6）
 inline constexpr float kSectionGapY = 5.0f;     // 分段线上下留白（零滚动收口 12→5）
 inline constexpr float kBtnW = 120.0f;
@@ -63,14 +63,14 @@ inline constexpr float kStatusH = 16.0f;         // 条件信息行高（零滚�
 // warningRed / 未启用=灰。
 inline constexpr float kDotSize = 8.0f;
 inline constexpr float kDotGapX = 8.0f;          // 状态点与标题左缘间距
-// 头部两整行开关行（UAT6，模块插拔卡开关行先例）：「启用」52×28 主开关 +
-// 「自动推送」44×24（与模块插拔卡开关同口径）。开关尺寸是设计稿字面值，不随
-// 字号缩放；行盒随 roundFs 缩放（85% 档 24 贴自动推送 24；启用行开关 28 超行盒
-// 由 max(行盒/文本/开关) 记账兜住），卡高常量按最坏档兜底。
+// 头部两整行开关行（UAT6，模块插拔卡开关行先例）：「启用」与「自动推送」
+// 均 44×24 微信绿 wswitch（与 settings 其他 tab 开关同口径，Module 开关行同
+// 尺寸先例：settings_ui_cards.cpp toggleSwitch 44×24）。N 项统一大小——不再有大
+// 一圈的 52×28。开关尺寸是设计稿字面值，不随字号缩放。
 inline constexpr float kAutoSwitchW = 44.0f;
 inline constexpr float kAutoSwitchH = 24.0f;
-inline constexpr float kMainSwitchW = 52.0f;
-inline constexpr float kMainSwitchH = 28.0f;
+inline constexpr float kMainSwitchW = 44.0f;   // N 项: 52→44, 与自动推送同尺寸
+inline constexpr float kMainSwitchH = 24.0f;   // N 项: 28→24, 对齐标准 wswitch
 inline constexpr float kSwitchLabelGap = 8.0f;     // 行文本块右缘与开关左缘间距
 inline constexpr float kToggleLabelH = 18.0f;      // 开关行 label 高（模块卡 name 同口径）
 // 操作组右侧进度（方案 A .bar）：4px 高轨道 + 主色填充 + 阶段文案，仅运行中渲染。

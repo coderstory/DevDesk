@@ -110,7 +110,7 @@ inline constexpr float kLogSettingsCardHeight = 144.0f; // 日志卡（日志；
 // 分段留白 12→5、信息行 20→16/行距 4→2 去行尾距、行距 8→6、标题/摘要距、
 // 卡上下留白 16→8、信息行前距 8→6）。卡高恒定不按启用态折叠（UAT4 口径）：
 // 未启用态全字段显示，只差表单可交互性。
-inline constexpr float kGithubSyncCardHeight = 372.0f;
+inline constexpr float kGithubSyncCardHeight = 362.0f; // N 项: 372→362 (主开关 52×28→44×24, toggleRowH 28→24 节省 ~10px@130% 档)
 
 // 行盒 / 间距随生效字号派生：行盒 = round(基准 × fontScale)，系数恒包住最坏 CJK 墨迹；字号本体仍走 fs()（不取整）。
 inline float roundFs(float base) {
