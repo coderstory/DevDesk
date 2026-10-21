@@ -26,6 +26,7 @@
 #include "platform/json.h"      // 读 app.read_settings 的 JSON 出参
 #include "platform/autostart.h"    // supported()（自启动行按平台入几何池，UAT6）
 #include "platform/system_theme.h"
+#include <core/platform/platform.h>  // requestUiUpdate/consumeUiUpdate（字号档 apply 路径显式唤醒断言）
 
 #include <eui/app.h>
 #include <eui/detail/dsl_app_impl.h>
@@ -2501,6 +2502,86 @@ REGISTER_TEST(settings_editor_font_dropdown_applies_channel,
     mod->onStop();
     ::core::theme::setEditorFontSize(15.0f);  // 恢复通道默认
     ::core::theme::setDark();  // onStart 的 auto 解析可能 setLight，防串扰
+    return true;
+})
+
+// UAT6「字号设置无效，起码没实时生效」：字号缩放下拉（通用 tab 外观卡，85/100/
+// 115/130%）点档必须即时写 core::theme（token 重建当帧可见），且 apply 路径显式
+// 请求下一帧 compose（不依赖点击输入顺带触发的 composeRequested）+ 落盘。
+REGISTER_TEST(settings_font_scale_dropdown_applies_live,
+              "settings: 字号缩放下拉点档 → fontScale/token 即时生效 + 请求重排 + 落盘", {
+    test_support::TestEnv env(kCfgPrefix, "fontui", true);
+    test_support::ScopedConfigPath cfgEnv(test_support::tempConfigFile(kCfgPrefix, "fontui_cfg"));
+    std::unique_ptr<::core::Module> mod(create_settings_module());
+    mod->onStart();
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    eui::Ui ui;
+    ui.begin("fontui");
+    mod->compose(ui, screen);
+    ui.end();
+
+    // 通用 tab（默认）外观卡的字号缩放下拉在场
+    DOCTEST_CHECK(ui.find("settings.card.appearance.font.dd") != nullptr);
+    // 清掉 compose 期可能遗留的唤醒位，点击后的置位才可归因于 apply 路径
+    (void)::core::platform::consumeUiUpdate();
+    // 点第 4 档「特大 130%」→ 通道 + token 即时生效 + 显式请求重排 + 持久化
+    const auto* item = ui.find("settings.card.appearance.font.dd.item.3");
+    DOCTEST_REQUIRE(item != nullptr);
+    DOCTEST_REQUIRE(item->onClick != nullptr);
+    item->onClick();
+    DOCTEST_CHECK_EQ(::core::theme::fontScale(), 1.3f);
+    DOCTEST_CHECK_EQ(::core::theme::current().sizes.fontSizeBody, 15.0f * 1.3f);
+    DOCTEST_CHECK(::core::platform::consumeUiUpdate());
+    module::settings::SettingsStore store(::core::appDatabase());
+    DOCTEST_CHECK_EQ(store.load().fontScalePercent, 130);
+
+    mod->onStop();
+    ::core::theme::setFontScale(1.0f);  // 恢复档位默认
+    ::core::theme::setDark();           // onStart 的 auto 解析可能 setLight，防串扰
+    return true;
+})
+
+// UAT6「字号说明文本太长没显示全」回退锁：编辑器字号卡 hint 单行文案按四档
+// fs(12) 保守估宽必须放进最小窗 1000 的 hintW（colW 452 - 56 = 396）——旧文案
+// 30.7em 在 115%/130% 档超宽被省略号截断。文案从 compose 真身取（改文案不
+// 改测试即红，防再加长回截断）。
+REGISTER_TEST(settings_editor_font_hint_fits_all_tiers,
+              "settings: 编辑器字号 hint 文案四档单行放得下（115%/130% 不截断）", {
+    test_support::TestEnv env(kCfgPrefix, "fonthint", true);
+    test_support::ScopedConfigPath cfgEnv(test_support::tempConfigFile(kCfgPrefix, "fonthint_cfg"));
+    std::unique_ptr<::core::Module> mod(create_settings_module());
+    mod->onStart();
+    eui::Screen screen;
+    screen.width = 1000.0f;   // 最小窗宽：hintW 取最坏值
+    screen.height = 640.0f;
+    eui::Ui ui;
+    ui.begin("fonthint");
+    mod->compose(ui, screen);
+    ui.end();
+    const auto* hint = ui.find("settings.card.editor.hint");
+    DOCTEST_REQUIRE(hint != nullptr);
+    // hintW 与卡内/卡区同式：pad=spacingXXLarge、列宽 gap=spacingLarge、卡内左右各 28
+    const float pad = ::core::theme::current().sizes.spacingXXLarge;
+    const float gap = ::core::theme::current().sizes.spacingLarge;
+    const float contentW = 1000.0f - pad * 2.0f;
+    const float colW = (contentW - gap) * 0.5f;
+    const float hintW = colW - 56.0f;
+    const std::string text(hint->text);
+    const float tiers[] = {0.85f, 1.0f, 1.15f, 1.3f};
+    for (const float tier : tiers) {
+        ::core::theme::setFontScale(tier);
+        const float width =
+            module::settings::estimatedTextWidth(text, module::settings::fs(12.0f));
+        DOCTEST_CHECK_MESSAGE(width <= hintW,
+                              std::string("hint 档 ") + std::to_string(tier) +
+                                  " 估宽 " + std::to_string(width) + " > hintW " +
+                                  std::to_string(hintW));
+    }
+    ::core::theme::setFontScale(1.0f);
+    mod->onStop();
+    ::core::theme::setDark();  // 防串扰
     return true;
 })
 

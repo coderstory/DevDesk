@@ -62,3 +62,22 @@ REGISTER_TEST(theme_editor_font_channel,
     core::theme::setFontScale(1.0f);
     return true;
 })
+
+// UAT6「字号设置无效，起码没实时生效」：setFontScale 此前是唯一不广播 change
+// handler 的 theme mutator（setDark/setLight/setAccent 都通知）——档位变化对
+// 下游联动（标题栏/窗口效果回查）无感。回退锁：设档必须广播。
+REGISTER_TEST(theme_fontscale_notifies_change_handler,
+              "theme: setFontScale 广播 change handler（与 setDark/setLight 同权）", {
+    int notified = 0;
+    core::theme::setChangeHandler([&notified](bool) { ++notified; });
+    core::theme::setFontScale(1.15f);
+    DOCTEST_CHECK_EQ(notified, 1);
+    // 同档再设也广播（与 setDark/setLight 一致：无同值早退）
+    core::theme::setFontScale(1.15f);
+    DOCTEST_CHECK_EQ(notified, 2);
+    // 复位全局 handler + 档位，防串扰后续用例（handler 是进程级全局态）
+    core::theme::setChangeHandler(nullptr);
+    core::theme::setFontScale(1.0f);
+    DOCTEST_CHECK_EQ(core::theme::fontScale(), 1.0f);
+    return true;
+})
