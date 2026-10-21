@@ -278,8 +278,10 @@ void drawGitErrorDialog(eui::Ui& ui, const eui::Screen& screen,
             .size(btnW, kBtnH)
             .text("复制详情")
             .fontSize(labelFont)
+            // UAT6 去米黄：删 .colors(surfaceElevated,...) 覆盖——22f55a2c 已把
+            // themeTokens 迁 componentTokensWeChat，但该覆盖把钮面压回暖米色；
+            // 与 dialog_form SecondaryThemed 先例（已过 UAT）完全同构。
             .theme(themeTokens, /*primary=*/false)
-            .colors(t.colors.surfaceElevated, t.colors.hover, t.colors.active)
             .textColor(t.colors.textPrimary)
             .radius(t.sizes.radius)
             .border(1.0f, t.colors.borderDefault)
@@ -298,11 +300,16 @@ void drawGitErrorDialog(eui::Ui& ui, const eui::Screen& screen,
             .text("关闭")
             .fontSize(labelFont)
             .theme(themeTokens, /*primary=*/false)
-            .colors(t.colors.surfaceElevated, t.colors.hover, t.colors.active)
             .textColor(t.colors.textPrimary)
             .radius(t.sizes.radius)
             .border(1.0f, t.colors.borderDefault)
-            .onClick(a.close)
+            // UAT6 关闭自足：除调用方注入的 a.close 外，本弹窗内直接把
+            // st.open 置 false（frame.open 回读它）——注入回调缺失/装配漂移也
+            // 保证「点关闭 → 下一帧弹窗收起」链在本文件内闭环。
+            .onClick([sp = &st, f = a.close] {
+                sp->open = false;
+                if (f) f();
+            })
             .build();
     });
 }
