@@ -304,6 +304,54 @@ REGISTER_TEST(settings_proxy_autostart_default_off, "settings: claudeProxyAutoSt
     return true;
 })
 
+// 窗体记忆（UAT6「记住窗体大小」）：还原态尺寸 + 最大化标志经 SettingsStore 落库往返；
+// 脏值（负尺寸/越上限）sanitized 归 0 = 无记录（0 是哨兵，负值钳 1 会把脏数据变成
+// 1px 窗口记录）。恢复钳制链与账本行为分别由 test_window_layout / test_window_geometry 钉
+REGISTER_TEST(settings_window_geometry_roundtrip,
+              "settings: 窗体记忆字段（还原态尺寸 + 最大化标志）默认/读写往返/脏值收敛", {
+    // 配置落 app_config 表，生产代码经 core::appDatabase() 取连接；未注册则 save 一律失败。
+    test_support::TestEnv cfgDbEnv(kCfgPrefix, "wgeom", true);
+    const auto path = test_support::tempConfigFile(kCfgPrefix, "wgeom");
+    removeQuietly(path);
+    module::settings::SettingsStore store(::core::appDatabase());
+
+    // 默认（首启动无记录）：0×0 + false
+    const auto d = store.load();
+    DOCTEST_CHECK_EQ(d.windowRestoreWidth, 0);
+    DOCTEST_CHECK_EQ(d.windowRestoreHeight, 0);
+    DOCTEST_CHECK_FALSE(d.windowMaximized);
+
+    // 往返：还原态 1440×880 + 最大化
+    module::settings::SettingsConfig cfg;
+    cfg.windowRestoreWidth = 1440;
+    cfg.windowRestoreHeight = 880;
+    cfg.windowMaximized = true;
+    DOCTEST_REQUIRE(store.save(cfg).isOk());
+    const auto back = store.load();
+    DOCTEST_CHECK_EQ(back.windowRestoreWidth, 1440);
+    DOCTEST_CHECK_EQ(back.windowRestoreHeight, 880);
+    DOCTEST_CHECK(back.windowMaximized);
+
+    // 脏值：负尺寸归 0（= 无记录），越上限钳到 65535；save 前先经 sanitized 收敛
+    module::settings::SettingsConfig dirty;
+    dirty.windowRestoreWidth = -7;
+    dirty.windowRestoreHeight = 99999999;
+    DOCTEST_REQUIRE(store.save(dirty).isOk());
+    const auto cleaned = store.load();
+    DOCTEST_CHECK_EQ(cleaned.windowRestoreWidth, 0);
+    DOCTEST_CHECK_EQ(cleaned.windowRestoreHeight, 65535);
+
+    // 最大化标志单独往返（正常关闭路径：尺寸在、标志 false）
+    module::settings::SettingsConfig normal;
+    normal.windowRestoreWidth = 1600;
+    normal.windowRestoreHeight = 1000;
+    normal.windowMaximized = false;
+    DOCTEST_REQUIRE(store.save(normal).isOk());
+    DOCTEST_CHECK_FALSE(store.load().windowMaximized);
+    removeQuietly(path);
+    return true;
+})
+
 REGISTER_TEST(settings_proxy_port_roundtrip_clamp, "settings: proxyPort 默认/读写往返/非法回落/输入解析", {
     // 配置落 app_config 表，生产代码经 core::appDatabase() 取连接；未注册则 save 一律失败。
     test_support::TestEnv cfgDbEnv(kCfgPrefix, "cfg3", true);

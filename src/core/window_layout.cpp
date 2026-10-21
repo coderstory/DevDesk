@@ -127,4 +127,25 @@ WindowSize minWindowSizeForWorkArea(const InitialWindowRequest& request,
     return minSize;
 }
 
+RestoredWindowPlan restoreInitialWindow(const SavedWindowGeometry& saved,
+                                        const InitialWindowDefaults& defaults,
+                                        const WorkArea& workArea,
+                                        float scale,
+                                        const FrameInsets& frameInsets) {
+    RestoredWindowPlan plan;
+    // 尺寸记录判定：任一轴非正 = 无记录（SettingsStore 已把负值收敛 0，这里再防直传脏值）
+    plan.fromSavedRecord = saved.logicalWidth > 0 && saved.logicalHeight > 0;
+    // 记忆尺寸（或默认）+ 最小窗下限 → 同一条 decideInitialWindow 钳制链
+    plan.requestUsed = InitialWindowRequest{
+        plan.fromSavedRecord ? saved.logicalWidth : defaults.logicalWidth,
+        plan.fromSavedRecord ? saved.logicalHeight : defaults.logicalHeight,
+        defaults.minLogicalWidth, defaults.minLogicalHeight};
+    plan.initial =
+        decideInitialWindow(plan.requestUsed, workArea, scale, frameInsets);
+    // 最大化标志独立透传（不参与尺寸钳制链）：恢复为最大化时 windowSize 即还原态
+    // 尺寸（GLFW 用它当退出最大化后的回落尺寸），尺寸缺失仍可最大化（回退默认尺寸）
+    plan.initial.maximize = saved.maximized;
+    return plan;
+}
+
 } // namespace core::window_layout

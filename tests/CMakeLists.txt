@@ -20,6 +20,7 @@ add_executable(devdesk_tests
     test_core/test_proxy_stats.cpp
     test_core/test_time.cpp
     test_core/test_window_layout.cpp
+    test_core/test_window_geometry.cpp
     test_core/test_tool_registry.cpp
     test_core/test_file_perms.cpp
     test_core/test_atomic_write.cpp

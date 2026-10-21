@@ -17,6 +17,7 @@
 #include "core/theme.h"
 #include "core/tray_menu_spec.h"
 #include "core/window_layout.h"
+#include "core/window_geometry.h"  // 窗体记忆几何账本（UAT6：每帧记账、退出落盘）
 #include "core/window_effect_state.h"  // M-3：frosted 降级门控的 active 档回查缝注册
 #include "module_home/home_service.h"
 #include "module_toggle_bridge.h"
@@ -213,6 +214,9 @@ void prepareClaudeServiceBeforeModules();
 void assembleClaudeServiceNow();
 void ensureClaudeServiceAssembledImpl(bool autoStart);
 
+// 窗体记忆落盘体（实现见 resolveWindowSizing 之后；getRouter 的 atexit 引用需先见声明）
+void saveWindowGeometryOnExit();
+
 // M-3（UAT2 一审）桥：EUI-NEO 实际生效档位（app::activeWindowEffect）→
 // core::window_effect_state 的档位串。core 层不可见 eui/app.h，经函数指针缝
 // 注入（下 getRouter 装配段）；surfaceAlpha 用它做 frosted 降级门控——请求
@@ -273,6 +277,11 @@ std::string activeWindowEffectTier() {
         // router->stopAll() 跑，此刻模块与数据库都还活着；推不完由
         // settings onStop 的 join 收束（上限 5s 等待见 runExitSyncPush）。
         std::atexit([] { ::module::settings::runGithubSyncExitPush(); });
+
+        // 窗体记忆落盘钩子（UAT6）：同一 LIFO 保证先于 stopAll 跑（数据库活着；
+        // 几何账本是 compose 累积的快照，不依赖窗口此刻是否已销毁）。晚于上面的
+        // 补推钩子注册 → 先于它执行，两侧互不依赖
+        std::atexit([] { saveWindowGeometryOnExit(); });
 
         app::assembly::dispatchFileOpen(
             &router, app::assembly::pendingOpenFilePath(),
@@ -504,7 +513,9 @@ bool showTrayStyledMenu(int x, int y) {
 }
 
 // 启动期窗口尺寸决策（逻辑单位）：windowSize 单位 Windows=物理像素、macOS=点，换算成
-// 窗口单位 + 非客户区外框后与工作区比较，放不下则启动即最大化；纯函数在 core::window_layout
+// 窗口单位 + 非客户区外框后与工作区比较，放不下则收缩适配；纯函数在 core::window_layout。
+// 窗体记忆（UAT6）后这两个常量是「无记录时的回退默认」——上次退出尺寸优先（经
+// restoreInitialWindow 走同一条收缩钳制链：换屏自适应、最小窗下限兜底）
 constexpr int kInitialWindowLogicalWidth = 1600;
 constexpr int kInitialWindowLogicalHeight = 1000;
 // 最小窗 1000×640 逻辑（UAT3 D-R3-2 从 1280×800 收窄，用户拍板）：两平台工作区均
@@ -538,28 +549,67 @@ ResolvedWindowSizing resolveWindowSizing() {
             : 1.0f;
     const core::window_layout::FrameInsets frame =
         core::window_layout::frameInsetsForScale(scale);
-    const core::window_layout::InitialWindowRequest request{
-        kInitialWindowLogicalWidth, kInitialWindowLogicalHeight,
-        kMinWindowLogicalWidth, kMinWindowLogicalHeight};
     const core::window_layout::WorkArea workArea{workX, workY, workW, workH};
 
+    // 窗体记忆（UAT6）：上次退出的还原态尺寸 + 最大化标志优先，无记录回退默认 1600×1000；
+    // 记忆尺寸同样走 decideInitialWindow 的收缩钳制链（换屏自适应、最小窗下限兜底）
+    const module::settings::SettingsStore store(::core::appDatabase());
+    const auto cfg = store.load();
+    const core::window_layout::SavedWindowGeometry saved{
+        cfg.windowRestoreWidth, cfg.windowRestoreHeight, cfg.windowMaximized};
+    const core::window_layout::InitialWindowDefaults defaults{
+        kInitialWindowLogicalWidth, kInitialWindowLogicalHeight,
+        kMinWindowLogicalWidth, kMinWindowLogicalHeight};
+
     ResolvedWindowSizing sizing;
-    sizing.initial = core::window_layout::decideInitialWindow(request, workArea,
-                                                              scale, frame);
-    sizing.minSize =
-        core::window_layout::minWindowSizeForWorkArea(request, workArea, scale, frame);
-    LOG_INFO("初始窗口尺寸决策：工作区 " + std::to_string(workW) + "x" +
-             std::to_string(workH) + "@(" + std::to_string(workX) + "," +
-             std::to_string(workY) + ") " + core::window_layout::windowUnitName() +
-             "，缩放 " + std::to_string(scale) + "，外框 +" +
-             std::to_string(frame.width) + "x+" + std::to_string(frame.height) +
-             "，客户区 " + std::to_string(sizing.initial.width) + "x" +
+    const auto plan = core::window_layout::restoreInitialWindow(
+        saved, defaults, workArea, scale, frame);
+    sizing.initial = plan.initial;
+    // 最小窗与初始窗必须同一条请求口径（plan.requestUsed 即记忆值或默认），不能另建请求
+    sizing.minSize = core::window_layout::minWindowSizeForWorkArea(
+        plan.requestUsed, workArea, scale, frame);
+    // 播种账本：启动即恢复最大化的会话全程没有非最大化帧，退出快照尺寸靠这里兜底
+    ::core::window_geometry::seedRestoreSize(plan.requestUsed.logicalWidth,
+                                             plan.requestUsed.logicalHeight);
+    LOG_INFO("初始窗口尺寸决策（" +
+             std::string(plan.fromSavedRecord ? "窗体记忆" : "无记录用默认") +
+             " " + std::to_string(plan.requestUsed.logicalWidth) + "x" +
+             std::to_string(plan.requestUsed.logicalHeight) + " 逻辑）：工作区 " +
+             std::to_string(workW) + "x" + std::to_string(workH) + "@(" +
+             std::to_string(workX) + "," + std::to_string(workY) + ") " +
+             core::window_layout::windowUnitName() + "，缩放 " +
+             std::to_string(scale) + "，外框 +" + std::to_string(frame.width) +
+             "x+" + std::to_string(frame.height) + "，客户区 " +
+             std::to_string(sizing.initial.width) + "x" +
              std::to_string(sizing.initial.height) + "，最小窗 " +
              std::to_string(sizing.minSize.width) + "x" +
              std::to_string(sizing.minSize.height) +
-             (sizing.initial.maximize ? " → 启动即最大化（外框放不进工作区）"
+             (sizing.initial.maximize ? " → 启动即最大化（记忆标志）"
                                       : " → 用请求尺寸"));
     return sizing;
+}
+
+// 窗体记忆落盘（atexit 调）：拍 compose 账本快照 → load-modify-save 全量回写
+// SettingsStore（与设置页保存同款路径）。没播种也没见过帧（异常启动路径）不落盘，
+// 保留上次的记录；失败只 WARN 不阻断退出
+void saveWindowGeometryOnExit() {
+    const auto snap = ::core::window_geometry::current();
+    if (!snap.valid) {
+        LOG_INFO("窗体记忆：本会话无几何记录（异常启动路径），不覆盖上次记录");
+        return;
+    }
+    module::settings::SettingsStore store(::core::appDatabase());
+    auto cfg = store.load();
+    cfg.windowRestoreWidth = snap.logicalWidth;
+    cfg.windowRestoreHeight = snap.logicalHeight;
+    cfg.windowMaximized = snap.maximized;
+    if (auto r = store.save(cfg); r.isFail()) {
+        LOG_WARN("窗体记忆保存失败（不阻断退出）: " + r.errorMessage());
+    } else {
+        LOG_INFO("窗体记忆已保存：还原态 " + std::to_string(snap.logicalWidth) +
+                 "x" + std::to_string(snap.logicalHeight) +
+                 (snap.maximized ? "（上次最大化）" : ""));
+    }
 }
 
 } // namespace

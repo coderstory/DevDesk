@@ -38,8 +38,8 @@ struct InitialWindowRequest {
 
 struct InitialWindowDecision {
     // true = 启动即最大化，落成 GLFW_MAXIMIZED 创建期 hint。decideInitialWindow 自 UAT6
-    // 收缩适配策略起恒 false（超出工作区改为钳小、不再默认全屏）；字段保留供未来
-    // 「记住/手动最大化」类需求复用，true 语义不变
+    // 收缩适配策略起恒 false（超出工作区改为钳小、不再默认全屏）；「记住最大化」类
+    // 需求经 restoreInitialWindow 从记忆标志透传置位（UAT6 窗体记忆），true 语义不变
     bool maximize = false;
     // 实际创建用的客户区窗口单位；超出工作区的轴已收缩适配（仍不低于最小窗尺寸下限）
     int width = 0;
@@ -52,6 +52,42 @@ struct FrameInsetsBaseline {
     float width = 0.0f;
     float height = 0.0f;
 };
+
+// ---- 窗体记忆（UAT6：记住窗体大小，下次启动还是这么大）----
+
+// 上次会话持久化的还原态客户区尺寸（逻辑单位）+ 最大化标志。0/负尺寸 = 无记录
+//（首次启动 / 异常退出未落盘），调用方回退默认值
+struct SavedWindowGeometry {
+    int logicalWidth = 0;
+    int logicalHeight = 0;
+    bool maximized = false;  // 上次退出时是否最大化（与尺寸记录独立透传）
+};
+
+// 无记录时回退的默认请求口径：尺寸 + 最小窗下限（逻辑单位）
+struct InitialWindowDefaults {
+    int logicalWidth = 0;
+    int logicalHeight = 0;
+    int minLogicalWidth = 0;
+    int minLogicalHeight = 0;
+};
+
+// 恢复决策结果：initial 供窗口创建；requestUsed 是实际采用的请求（记忆值或默认），
+// minWindowSizeForWorkArea 须用它同口径换算（不能另建一份请求，否则最小窗与初始窗分叉）
+struct RestoredWindowPlan {
+    InitialWindowDecision initial;
+    InitialWindowRequest requestUsed = {};
+    bool fromSavedRecord = false;  // 命中记忆记录（日志用；false = 走默认）
+};
+
+// 窗体记忆恢复决策（纯函数）：记忆尺寸仍走 decideInitialWindow 同一条收缩钳制链——
+// 换屏后巨屏记忆值自适应收缩回工作区、过小记忆值提到最小窗下限，无记录回退默认尺寸；
+// 最大化标志独立于尺寸链透传（InitialWindowDecision::maximize 即为此预留的字段：
+// 恢复为最大化时 windowSize 即还原态尺寸，退出最大化回到它）
+RestoredWindowPlan restoreInitialWindow(const SavedWindowGeometry& saved,
+                                        const InitialWindowDefaults& defaults,
+                                        const WorkArea& workArea,
+                                        float scale,
+                                        const FrameInsets& frameInsets);
 
 // 本平台窗口单位下的非客户区外框基准：macOS {0,28}（仅标题栏）；Windows {14.4,37.6}（96 DPI）
 FrameInsetsBaseline frameInsetsBaseline();
