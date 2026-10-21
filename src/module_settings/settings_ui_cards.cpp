@@ -112,9 +112,9 @@ void drawAppearanceCard(const CardDrawArgs& args) {
             // UAT6 E+F 批玻璃卡底 + 无染色淡雅质感
             ui.rect(id + ".bg")
                 .position(0.0f, 0.0f).size(w, h)
-                .color(components::theme::withOpacity(t.colors.wechat.cardBg, 0.62f))
+                .color(components::theme::withOpacity(t.colors.surface, 0.62f))
                 .radius(t.sizes.radiusWeChat)
-                .border(1.0f, components::theme::withOpacity(t.colors.wechat.cardBg, 0.55f))
+                .border(1.0f, components::theme::withOpacity(t.colors.surface, 0.55f))
                 .build();
             ui_kit::drawGlassCardLayers(ui, id, 0.0f, 0.0f, w, h,
                 t.sizes.radiusWeChat, t, ui_kit::GlassCardStyle::subtle());
@@ -258,9 +258,9 @@ void drawEditorFontCard(const CardDrawArgs& args) {
             // UAT6 E+F 批玻璃卡底 + 无染色淡雅质感
             ui.rect(id + ".bg")
                 .position(0.0f, 0.0f).size(w, h)
-                .color(components::theme::withOpacity(t.colors.wechat.cardBg, 0.62f))
+                .color(components::theme::withOpacity(t.colors.surface, 0.62f))
                 .radius(t.sizes.radiusWeChat)
-                .border(1.0f, components::theme::withOpacity(t.colors.wechat.cardBg, 0.55f))
+                .border(1.0f, components::theme::withOpacity(t.colors.surface, 0.55f))
                 .build();
             ui_kit::drawGlassCardLayers(ui, id, 0.0f, 0.0f, w, h,
                 t.sizes.radiusWeChat, t, ui_kit::GlassCardStyle::subtle());
@@ -410,9 +410,9 @@ void drawModulesCard(const CardDrawArgs& args) {
             // UAT6 E+F 批玻璃卡底 + 无染色淡雅质感
             ui.rect(id + ".bg")
                 .position(0.0f, 0.0f).size(w, h)
-                .color(components::theme::withOpacity(t.colors.wechat.cardBg, 0.62f))
+                .color(components::theme::withOpacity(t.colors.surface, 0.62f))
                 .radius(t.sizes.radiusWeChat)
-                .border(1.0f, components::theme::withOpacity(t.colors.wechat.cardBg, 0.55f))
+                .border(1.0f, components::theme::withOpacity(t.colors.surface, 0.55f))
                 .build();
             ui_kit::drawGlassCardLayers(ui, id, 0.0f, 0.0f, w, h,
                 t.sizes.radiusWeChat, t, ui_kit::GlassCardStyle::subtle());
@@ -508,9 +508,9 @@ void drawProxyCard(const CardDrawArgs& args) {
             // UAT6 E+F 批玻璃卡底 + 无染色淡雅质感
             ui.rect(id + ".bg")
                 .position(0.0f, 0.0f).size(w, h)
-                .color(components::theme::withOpacity(t.colors.wechat.cardBg, 0.62f))
+                .color(components::theme::withOpacity(t.colors.surface, 0.62f))
                 .radius(t.sizes.radiusWeChat)
-                .border(1.0f, components::theme::withOpacity(t.colors.wechat.cardBg, 0.55f))
+                .border(1.0f, components::theme::withOpacity(t.colors.surface, 0.55f))
                 .build();
             ui_kit::drawGlassCardLayers(ui, id, 0.0f, 0.0f, w, h,
                 t.sizes.radiusWeChat, t, ui_kit::GlassCardStyle::subtle());

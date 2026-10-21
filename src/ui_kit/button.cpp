@@ -36,31 +36,31 @@ void button(eui::Ui& ui, const std::string& id, const std::string& label,
     switch (level) {
         case ButtonLevel::Primary:
             // 核心确认：微信绿 + 白字；hover 走 primaryHover（派生绿，#06AE56）
-            bgNormal = wc.primary;
-            bgHover = wc.primaryHover;
-            bgPressed = wc.primaryPressed;
-            txtColor = wc.onPrimary;
+            bgNormal = t.colors.primary;
+            bgHover = t.colors.primaryHover;
+            bgPressed = t.colors.primaryPressed;
+            txtColor = t.colors.onPrimary;
             break;
         case ButtonLevel::Secondary:
             // 次要操作：浅灰底 + 深灰字；hover 走 dividerSecondary（#EDEDED）
-            bgNormal = wc.secondaryButtonBg;
-            bgHover = wc.dividerSecondary;
-            bgPressed = wc.dividerSecondary;
-            txtColor = wc.textPrimary;
+            bgNormal = t.colors.hover;
+            bgHover = t.colors.hover;
+            bgPressed = t.colors.hover;
+            txtColor = t.colors.textPrimary;
             break;
         case ButtonLevel::Text:
             // 辅助操作：透明底 + 绿字（默认）；hover bg=dividerSecondary（§4.13）
             bgNormal = eui::Color{0.0f, 0.0f, 0.0f, 0.0f};
-            bgHover = wc.dividerSecondary;
-            bgPressed = wc.dividerSecondary;
-            txtColor = wc.primary;
+            bgHover = t.colors.hover;
+            bgPressed = t.colors.hover;
+            txtColor = t.colors.primary;
             break;
         case ButtonLevel::Danger:
             // 删除/高危：警示红 + 白字；hover 加深一档（派生）
-            bgNormal = wc.warningRed;
-            bgHover = darkenRed(wc.warningRed);
-            bgPressed = darkenRed(wc.warningRed);
-            txtColor = wc.onPrimary;
+            bgNormal = t.colors.error;
+            bgHover = darkenRed(t.colors.error);
+            bgPressed = darkenRed(t.colors.error);
+            txtColor = t.colors.onPrimary;
             break;
     }
 

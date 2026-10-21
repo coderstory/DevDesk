@@ -283,15 +283,15 @@ inline eui::Color priorityColor(Priority p, const core::theme::Tokens& t) {
     // UAT2 D批重做（用户：微信不是绿的吗，四个类型没一个绿，颜色淡灰蒙蒙）：
     // None=中性灰 / Low=微信绿 / Medium=链接蓝 / High=警示红，覆盖 2026-10-13 的 info/warning/error 鲜艳轮。
     // None 档仅显色场景用；卡底 tint 路径 None 不经本表（priorityCardBg 走列色淡染/原底早退）
-    static constexpr eui::Color core::theme::ColorTokens::WeChatColors::*kColorFields[] = {
-        &core::theme::ColorTokens::WeChatColors::textTertiary,  // None 中性灰 #999999
-        &core::theme::ColorTokens::WeChatColors::primary,       // Low 微信绿 #07C160
-        &core::theme::ColorTokens::WeChatColors::linkBlue,      // Medium 链接蓝 #576B95
-        &core::theme::ColorTokens::WeChatColors::warningRed,    // High 警示红 #FA5151
+    static constexpr eui::Color core::theme::ColorTokens::*kColorFields[] = {
+        &core::theme::ColorTokens::textTertiary,  // None 中性灰 #999999
+        &core::theme::ColorTokens::primary,       // Low 微信绿 #07C160
+        &core::theme::ColorTokens::info,          // Medium 链接蓝 #576B95
+        &core::theme::ColorTokens::error,         // High 警示红 #FA5151
     };
     static_assert(std::size(kColorFields) == static_cast<size_t>(Priority::High) + 1);
     const size_t idx = static_cast<size_t>(p);
-    return t.colors.wechat.*kColorFields[idx <= static_cast<size_t>(Priority::High) ? idx : 0];
+    return t.colors.*kColorFields[idx <= static_cast<size_t>(Priority::High) ? idx : 0];
 }
 
 // 优先级色底：卡底与详情弹窗优先级按钮底的唯一色源（priorityColor 色表 + 强度表 + priorityTintBg 算式）。

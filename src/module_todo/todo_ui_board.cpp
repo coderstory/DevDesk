@@ -63,7 +63,7 @@ void drawHeader(eui::Ui& ui, float contentW, float headerH, float bodyH,
                         .fontSize(t.sizes.fontSizeTitle)
                         .lineHeight(24.0f)
                         .fontWeight(700)
-                        .color(t.colors.wechat.textPrimary)
+                        .color(t.colors.textPrimary)
                         .build();
                 })
                 .build();
@@ -97,7 +97,7 @@ void drawHeader(eui::Ui& ui, float contentW, float headerH, float bodyH,
                                 .icon(0xF002)  // fa-magnifying-glass
                                 .fontSize(12.0f)
                                 .lineHeight(16.0f)
-                                .color(t.colors.wechat.textTertiary)
+                                .color(t.colors.textTertiary)
                                 .build();
                         })
                         .build();
@@ -109,15 +109,15 @@ void drawHeader(eui::Ui& ui, float contentW, float headerH, float bodyH,
                         .text("逾期 " + std::to_string(v.overdueCount))
                         .icon(0xF071)
                         .fontSize(t.sizes.fontSizeSmall)
-                        .colors(hasOverdue ? t.colors.wechat.primary : t.colors.wechat.secondaryButtonBg,
-                                hasOverdue ? t.colors.wechat.primaryHover : t.colors.wechat.dividerSecondary,
-                                hasOverdue ? t.colors.wechat.primaryPressed : t.colors.wechat.selectedBg)
-                        .textColor(hasOverdue ? t.colors.wechat.onPrimary
-                                              : t.colors.wechat.textTertiary)
-                        .iconColor(hasOverdue ? t.colors.wechat.onPrimary
-                                              : t.colors.wechat.textTertiary)
+                        .colors(hasOverdue ? t.colors.primary : t.colors.hover,
+                                hasOverdue ? t.colors.primaryHover : t.colors.hover,
+                                hasOverdue ? t.colors.primaryPressed : t.colors.primarySoftBg)
+                        .textColor(hasOverdue ? t.colors.onPrimary
+                                              : t.colors.textTertiary)
+                        .iconColor(hasOverdue ? t.colors.onPrimary
+                                              : t.colors.textTertiary)
                         .radius(t.sizes.radiusWeChat)
-                        .border(0.0f, t.colors.wechat.dividerPrimary)
+                        .border(0.0f, t.colors.borderDefault)
                         .onClick([cb = v.act.overdueClicked] { cb(); })
                         .build();
 
@@ -125,10 +125,10 @@ void drawHeader(eui::Ui& ui, float contentW, float headerH, float bodyH,
                         .size(72.0f, 40.0f)
                         .text("+ 列")
                         .fontSize(t.sizes.fontSizeSmall)
-                        .colors(t.colors.wechat.secondaryButtonBg, t.colors.wechat.dividerSecondary, t.colors.wechat.selectedBg)
-                        .textColor(t.colors.wechat.textSecondary)
+                        .colors(t.colors.hover, t.colors.hover, t.colors.primarySoftBg)
+                        .textColor(t.colors.textSecondary)
                         .radius(t.sizes.radiusWeChat)
-                        .border(0.0f, t.colors.wechat.dividerPrimary)
+                        .border(0.0f, t.colors.borderDefault)
                         .onClick([cb = v.act.addColumnClicked] { cb(); })
                         .build();
 
@@ -136,9 +136,9 @@ void drawHeader(eui::Ui& ui, float contentW, float headerH, float bodyH,
                         .size(120.0f, 40.0f)
                         .text("+ 新建任务")
                         .fontSize(t.sizes.fontSizeSmall)
-                        .colors(t.colors.wechat.primary, t.colors.wechat.primaryHover,
-                                t.colors.wechat.primaryPressed)
-                        .textColor(t.colors.wechat.onPrimary)
+                        .colors(t.colors.primary, t.colors.primaryHover,
+                                t.colors.primaryPressed)
+                        .textColor(t.colors.onPrimary)
                         .radius(t.sizes.radiusWeChat)
                         .onClick([cb = v.act.addTaskClicked] { cb(); })
                         .build();
@@ -172,8 +172,8 @@ void drawBoard(eui::Ui& ui, float contentW, float bodyH,
                     .size(120.0f, 40.0f)
                     .text("重试")
                     .fontSize(t.sizes.fontSizeBody - 1.0f)
-                    .colors(t.colors.wechat.primary, t.colors.wechat.primaryHover,
-                            t.colors.wechat.primaryPressed)
+                    .colors(t.colors.primary, t.colors.primaryHover,
+                            t.colors.primaryPressed)
                     .textColor(t.colors.onPrimary)
                     .radius(t.sizes.radius)
                     .onClick([cb = v.act.retryClicked] { cb(); })
@@ -194,7 +194,7 @@ void drawBoard(eui::Ui& ui, float contentW, float bodyH,
                     .fontSize(t.sizes.fontSizeBody)
                     .lineHeight(24.0f)
                     .horizontalAlign(eui::HorizontalAlign::Center)
-                    .color(t.colors.wechat.textTertiary)
+                    .color(t.colors.textTertiary)
                     .build();
             })
             .build();
@@ -247,7 +247,7 @@ void drawColumnContent(eui::Ui& ui, const std::string& id, const Column& col,
     const bool showDropBar = v.dragActive &&
         v.dragHoverColumn == static_cast<int>(colIndex) && v.dragHoverRow >= 0;
     auto drawDropBar = [&](eui::Ui& inner, float barY, float barW) {
-        eui::Color barColor = t.colors.wechat.primary;
+        eui::Color barColor = t.colors.primary;
         barColor.a = 0.55f;  // 高亮占位（半透微信绿，§4 拖拽绿色占位线）
         // ignoreLayout：scrollView 内容列按流式排布、position 无效；置位后走 overlay 绝对定位
         inner.rect(id + ".dropbar")
@@ -263,10 +263,10 @@ void drawColumnContent(eui::Ui& ui, const std::string& id, const Column& col,
         .position(0.0f, 0.0f)
         .size(width, height)
         // 列容器 = 页面结构 → 微信 pageBg 浅灰底（§4.14 白卡浮起于浅灰底）；卡片白只给列内浮动卡片与按钮
-        .color(t.colors.wechat.pageBg)
+        .color(t.colors.background)
         .radius(t.sizes.radiusWeChat)
         .border(dropHover ? 2.0f : 1.0f,
-                dropHover ? t.colors.wechat.primary : t.colors.wechat.dividerPrimary)
+                dropHover ? t.colors.primary : t.colors.borderDefault)
         .build();
 
     auto colTasks = tasksInColumn(v.tasks, col.id);
@@ -316,7 +316,7 @@ void drawColumnContent(eui::Ui& ui, const std::string& id, const Column& col,
         // 省略号三件套：列名 + 计数超宽时截断，不压右侧 ✎/+ 按钮
         .maxWidth(width - 88.0f - (colDot.has_value() ? 18.0f : 0.0f))
         .overflow(core::TextOverflow::Ellipsis)
-        .color(t.colors.wechat.textPrimary)
+        .color(t.colors.textPrimary)
         .build();
 
     // 列头 ✎ 按钮直达改名弹窗；右键菜单「重命名列」入口保留
@@ -325,8 +325,8 @@ void drawColumnContent(eui::Ui& ui, const std::string& id, const Column& col,
         .size(28.0f, 28.0f)
         .icon(0xF303)  // fa-pencil-alt
         .iconSize(t.sizes.fontSizeSmall)
-        .colors(t.colors.wechat.cardBg, t.colors.wechat.dividerSecondary, t.colors.wechat.selectedBg)
-        .iconColor(t.colors.wechat.textSecondary)
+        .colors(t.colors.surface, t.colors.hover, t.colors.primarySoftBg)
+        .iconColor(t.colors.textSecondary)
         .radius(14.0f)
         .onClick([cb = v.act.renameColumn, col] { cb(col); })
         .build();
@@ -336,8 +336,8 @@ void drawColumnContent(eui::Ui& ui, const std::string& id, const Column& col,
         .size(28.0f, 28.0f)
         .text("+")
         .fontSize(t.sizes.fontSizeBody + 1.0f)
-        .colors(t.colors.wechat.cardBg, t.colors.wechat.dividerSecondary, t.colors.wechat.selectedBg)
-        .textColor(t.colors.wechat.textSecondary)
+        .colors(t.colors.surface, t.colors.hover, t.colors.primarySoftBg)
+        .textColor(t.colors.textSecondary)
         .radius(14.0f)
         .onClick([cb = v.act.addTaskToColumn, col] { cb(col.id); })
         .build();
@@ -358,7 +358,7 @@ void drawColumnContent(eui::Ui& ui, const std::string& id, const Column& col,
             .fontSize(t.sizes.fontSizeSmall - 1.0f)
             .lineHeight(24.0f)
             .horizontalAlign(eui::HorizontalAlign::Center)
-            .color(t.colors.wechat.textTertiary)
+            .color(t.colors.textTertiary)
             .build();
         // 空列「+ 添加任务」入口（非归档 + 无搜索时；§4.12 按钮就近原则）
         if (v.searchQuery.empty() && !isArchive) {
@@ -367,11 +367,11 @@ void drawColumnContent(eui::Ui& ui, const std::string& id, const Column& col,
                 .size(110.0f, 32.0f)
                 .text("+ 添加任务")
                 .fontSize(t.sizes.fontSizeSmall)
-                .colors(t.colors.wechat.pageBg, t.colors.wechat.dividerSecondary,
-                        t.colors.wechat.selectedBg)
-                .textColor(t.colors.wechat.primaryText)
+                .colors(t.colors.background, t.colors.hover,
+                        t.colors.primarySoftBg)
+                .textColor(t.colors.primaryText)
                 .radius(t.sizes.radiusWeChat)
-                .border(0.0f, t.colors.wechat.dividerPrimary)
+                .border(0.0f, t.colors.borderDefault)
                 .onClick([cb = v.act.addTaskToColumn, col] { cb(col.id); })
                 .build();
         }
@@ -454,7 +454,7 @@ void drawCard(eui::Ui& ui, const std::string& id, float x, float y, float width,
         .radius(t.sizes.radiusWeChat)
         .theme(core::theme::componentTokensWeChat(t))
         .padding(0.0f)  // 卡内坐标以 content 原点为基准
-        .border(0.0f, t.colors.wechat.dividerPrimary)  // 边框职责已移到内部交互层
+        .border(0.0f, t.colors.borderDefault)  // 边框职责已移到内部交互层
         .content([&] {
 
     // UAT6 E+F 批：淡雅玻璃层（背景底，交互层在上方覆盖）
@@ -470,10 +470,10 @@ void drawCard(eui::Ui& ui, const std::string& id, float x, float y, float width,
             : std::optional<eui::Color>{};
     // 选中态底色换 wechat.selectedBg（§4.3 浅灰底）；未选中三态 = 微信白卡（D批米黄迁移：
     // surface→cardBg，hover/active 走分割线灰梯度）；优先级 tint 仍叠加于上（两通道独立，与旧边框方案同构）
-    const auto cardBase = selected ? t.colors.wechat.selectedBg : t.colors.wechat.cardBg;
-    const auto cardHover = selected ? t.colors.wechat.selectedBg
-                                   : t.colors.wechat.dividerSecondary;
-    const auto cardActive = selected ? t.colors.wechat.selectedBg : t.colors.wechat.selectedBg;
+    const auto cardBase = selected ? t.colors.primarySoftBg : t.colors.surface;
+    const auto cardHover = selected ? t.colors.primarySoftBg
+                                   : t.colors.hover;
+    const auto cardActive = selected ? t.colors.primarySoftBg : t.colors.primarySoftBg;
     // 归档卡灰化：透明度 0.7（§4 已归档卡片），与拖拽半透明叠加
     const bool isArchiveCard = colIndex >= 0 &&
         static_cast<size_t>(colIndex) < v.columns.size() &&
@@ -488,7 +488,7 @@ void drawCard(eui::Ui& ui, const std::string& id, float x, float y, float width,
                 priorityCardBg(task.priority, t, cardHover, colTint),
                 priorityCardBg(task.priority, t, cardActive, colTint))
         // 选中态不再走粗边框（§4.3 完全移除原红色粗边框）；统一 1px 微信分割线
-        .border(1.0f, t.colors.wechat.dividerPrimary)
+        .border(1.0f, t.colors.borderDefault)
         // hover/按下颜色过渡（0.1s OutQuad；拖拽半透明 opacity 不在掩码里）
         .transition(core::Transition::make(0.1f, core::Ease::OutQuad))
         .animate(core::AnimProperty::Color | core::AnimProperty::Opacity)
@@ -519,14 +519,14 @@ void drawCard(eui::Ui& ui, const std::string& id, float x, float y, float width,
         ui.rect(id + ".selbar")
             .position(0.0f, y)
             .size(ui_kit::kSelectionBarAccentWidth, kCardHeight)
-            .color(t.colors.wechat.primary)
+            .color(t.colors.primary)
             .opacity(finalCardOpacity)
             .build();
     } else if (overdue) {
         ui.rect(id + ".overduebar")
             .position(0.0f, y)
             .size(ui_kit::kSelectionBarAccentWidth, kCardHeight)
-            .color(t.colors.wechat.warningRed)
+            .color(t.colors.error)
             .opacity(finalCardOpacity)
             .build();
     }
@@ -608,8 +608,8 @@ void drawCard(eui::Ui& ui, const std::string& id, float x, float y, float width,
         .maxWidth(width - 2.0f * kCardPadX)
         .overflow(core::TextOverflow::Ellipsis)
         // 逾期标题红（§4）；归档标题三级灰（§4）；常规标题走主题一级文字
-        .color(isArchiveCard ? t.colors.wechat.textPrimary
-                             : (overdue ? t.colors.wechat.warningRed
+        .color(isArchiveCard ? t.colors.textPrimary
+                             : (overdue ? t.colors.error
                                         : t.colors.textPrimary))
         .opacity(done ? 0.6f : finalCardOpacity)
         .build();
@@ -618,7 +618,7 @@ void drawCard(eui::Ui& ui, const std::string& id, float x, float y, float width,
     float drawX = kCardChipPadX;
     for (const auto& chip : pendingChips) {
         drawChip(ui, chip.id, drawX, chipY, chip.w, t, chip.text, chip.fg,
-                 t.colors.wechat.secondaryButtonBg, finalCardOpacity);
+                 t.colors.hover, finalCardOpacity);
         drawX += chip.w + 6.0f;  // 自适应宽 + 6 间距
     }
 
@@ -671,7 +671,7 @@ void drawDragGhost(eui::Ui& ui, const core::theme::Tokens& t,
                 .radius(t.sizes.radiusWeChat)
                 .theme(core::theme::componentTokensWeChat(t))
                 .padding(0.0f)
-                .border(0.0f, t.colors.wechat.dividerPrimary)
+                .border(0.0f, t.colors.borderDefault)
                 .content([&] {
             // 底 + 1px 分割线（同真卡；选中态已不走粗边框，副本亦然）。底色同走 priorityCardBg，否则拖到一半优先级指示消失。
             // D批米黄迁移：兜底底随真卡 surface→wechat.cardBg。tint 是 alpha 线性叠加——底从米黄变白后
@@ -684,9 +684,9 @@ void drawDragGhost(eui::Ui& ui, const core::theme::Tokens& t,
                     ui.rect("todo.dragghost.bg")
                         .position(0.0f, 0.0f)
                         .size(w, kCardHeight)
-                        .color(priorityCardBg(task->priority, t, t.colors.wechat.cardBg,
+                        .color(priorityCardBg(task->priority, t, t.colors.surface,
                                               ghostColTint))
-                        .border(1.0f, t.colors.wechat.dividerPrimary)
+                        .border(1.0f, t.colors.borderDefault)
                         .radius(t.sizes.radiusWeChat)
                         .build();
                     // 标题同真卡居中形态（副本不画 chips = 无 chip 卡：独占整卡居中）。

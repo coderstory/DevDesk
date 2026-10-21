@@ -137,7 +137,7 @@ void AgentModule::composeTaskDetailDialog(
     // 停止 chip = 危险语义（文案「停止 · 当前轮结束后生效」）：红底白字
     // wechat.warningRed #FA5151；hover/pressed/边框由 actionChip 从 base 派生
     auto stopTokens = wcTokens;
-    stopTokens.primary = t.colors.wechat.warningRed;
+    stopTokens.primary = t.colors.error;
 
     components::dialog(ui, "agent.dialog.detail")
         .open(detailTaskId_.has_value())
@@ -182,11 +182,11 @@ void AgentModule::composeTaskDetailDialog(
                 .fontWeight(700)
                 .wrap(false)
                 .maxWidth(std::max(0.0f, headerRightX - x0))
-                .color(t.colors.wechat.textPrimary)
+                .color(t.colors.textPrimary)
                 .build();
             // 状态行：任务详情 · ● <状态> · <触发摘要>（状态着色，其余灰）
             std::string statusText = "从未执行";
-            eui::Color statusColor = t.colors.wechat.textTertiary;
+            eui::Color statusColor = t.colors.textTertiary;
             if (latestRun != nullptr) {
                 statusText = runStatusText(latestRun->status);
                 statusColor = statusDotColor(latestRun->status, t);
@@ -199,7 +199,7 @@ void AgentModule::composeTaskDetailDialog(
                 .text("任务详情")
                 .fontSize(fsS)
                 .lineHeight(lhS)
-                .color(t.colors.wechat.textTertiary)
+                .color(t.colors.textTertiary)
                 .build();
             ui.text("agent.dialog.detail.header.status")
                 .position(x0 + kKickerW + 8.0f, 34.0f)
@@ -214,7 +214,7 @@ void AgentModule::composeTaskDetailDialog(
             const float metaX = x0 + kKickerW + 8.0f + kStatusW + 8.0f;
             const float metaW = std::max(0.0f, headerRightX - metaX);
             std::string metaText;
-            eui::Color metaColor = t.colors.wechat.textSecondary;
+            eui::Color metaColor = t.colors.textSecondary;
             if (taskRow != nullptr) {
                 if (taskRow->triggerType == "schedule") {
                     const std::string cron = cronTextOf(*taskRow);
@@ -251,7 +251,7 @@ void AgentModule::composeTaskDetailDialog(
                 .lineHeight(28.0f)
                 .horizontalAlign(eui::HorizontalAlign::Center)
                 .verticalAlign(eui::VerticalAlign::Center)
-                .color(t.colors.wechat.textTertiary)
+                .color(t.colors.textTertiary)
                 .onClick([this] { closeTaskDetail(); })
                 .build();
 
@@ -298,7 +298,7 @@ void AgentModule::composeTaskDetailDialog(
             std::string lastValue = summaryFailed ? "读取失败" : "从未执行";
             std::string lastSub;
             eui::Color lastValueColor =
-                summaryFailed ? t.colors.error : t.colors.wechat.textPrimary;
+                summaryFailed ? t.colors.error : t.colors.textPrimary;
             if (!summaryFailed && latestRun != nullptr) {
                 if (latestRun->status == "running") {
                     int64_t secs = nowSec - latestRun->startedAt;
@@ -336,7 +336,7 @@ void AgentModule::composeTaskDetailDialog(
                 (detailTaskRow_ && nextRunText_) ? *nextRunText_ : NextRunInfo{};
             auto toneColor = [&t](TextTone tone, eui::Color normal) -> eui::Color {
                 switch (tone) {
-                    case TextTone::Muted: return t.colors.wechat.textTertiary;
+                    case TextTone::Muted: return t.colors.textTertiary;
                     case TextTone::Warning: return t.colors.warning;
                     case TextTone::Error: return t.colors.error;
                     case TextTone::Normal: break;
@@ -355,9 +355,9 @@ void AgentModule::composeTaskDetailDialog(
                     .content([&] {
                         ui.rect(id + ".bg")
                             .size(cw, summaryH)
-                            .color(components::theme::withOpacity(t.colors.wechat.cardBg, 0.62f))
+                            .color(components::theme::withOpacity(t.colors.surface, 0.62f))
                             .radius(t.sizes.radius)
-                            .border(1.0f, components::theme::withOpacity(t.colors.wechat.cardBg, 0.55f))
+                            .border(1.0f, components::theme::withOpacity(t.colors.surface, 0.55f))
                             .build();
                         ui_kit::drawGlassCardLayers(ui, id,
                             0.0f, 0.0f, cw, summaryH,
@@ -369,7 +369,7 @@ void AgentModule::composeTaskDetailDialog(
                             .text(label)
                             .fontSize(fsS)
                             .lineHeight(lhS)
-                            .color(t.colors.wechat.textTertiary)
+                            .color(t.colors.textTertiary)
                             .build();
                         ui.text(id + ".value")
                             .position(kCardPad, kCardPad + lhS)
@@ -399,19 +399,19 @@ void AgentModule::composeTaskDetailDialog(
                 std::max(0.0f, (innerW - 2.0f * kCardGap) / 3.0f);
             summaryCard("agent.dialog.detail.summary.last", x0, summaryY, cardW,
                         "最近一次", lastValue, lastValueColor, lastSub,
-                        t.colors.wechat.textTertiary);
+                        t.colors.textTertiary);
             summaryCard("agent.dialog.detail.summary.next",
                         x0 + cardW + kCardGap, summaryY, cardW, "下一次",
                         nextInfo.value,
-                        toneColor(nextInfo.tone, t.colors.wechat.textPrimary),
+                        toneColor(nextInfo.tone, t.colors.textPrimary),
                         nextInfo.detail,
-                        toneColor(nextInfo.tone, t.colors.wechat.textTertiary));
+                        toneColor(nextInfo.tone, t.colors.textTertiary));
             summaryCard("agent.dialog.detail.summary.stats",
                         x0 + 2.0f * (cardW + kCardGap), summaryY, cardW,
                         "近 7 天", statsValue,
                         summaryFailed ? t.colors.error
-                                      : t.colors.wechat.textPrimary,
-                        statsSub, t.colors.wechat.textTertiary);
+                                      : t.colors.textPrimary,
+                        statsSub, t.colors.textTertiary);
 
             // —— 顶部 segment 三档（方案 A）：执行记录 | 运行详情 | 任务配置 ——
             // 选中 = 绿底白字（任务弹窗触发 segment 同语言；旧暖橙选中块退役）。
@@ -435,18 +435,18 @@ void AgentModule::composeTaskDetailDialog(
                             .size(segW, kNavH)
                             .text(kDetailTabLabels[i])
                             .fontSize(12.0f)
-                            .colors(on ? t.colors.wechat.primary
-                                       : t.colors.wechat.pageBg,
-                                    on ? t.colors.wechat.primaryHover
-                                       : t.colors.wechat.secondaryButtonBg,
-                                    on ? t.colors.wechat.primaryPressed
-                                       : t.colors.wechat.selectedBg)
-                            .textColor(on ? t.colors.wechat.onPrimary
-                                          : t.colors.wechat.textPrimary)
+                            .colors(on ? t.colors.primary
+                                       : t.colors.background,
+                                    on ? t.colors.primaryHover
+                                       : t.colors.hover,
+                                    on ? t.colors.primaryPressed
+                                       : t.colors.primarySoftBg)
+                            .textColor(on ? t.colors.onPrimary
+                                          : t.colors.textPrimary)
                             .radius(8.0f)
                             .border(1.0f,
-                                    on ? t.colors.wechat.primary
-                                       : t.colors.wechat.dividerPrimary)
+                                    on ? t.colors.primary
+                                       : t.colors.borderDefault)
                             .onClick([this, i] { detailTab_ = i; })
                             .build();
                     }
@@ -482,7 +482,7 @@ void AgentModule::composeTaskDetailDialog(
                             .fontSize(fsB)
                             .lineHeight(lhB)
                             .fontWeight(600)
-                            .color(t.colors.wechat.textPrimary)
+                            .color(t.colors.textPrimary)
                             .build();
                         ui.text("agent.dialog.detail.runlist.count")
                             .position(0.0f, 0.0f)
@@ -493,7 +493,7 @@ void AgentModule::composeTaskDetailDialog(
                             .fontSize(fsS)
                             .lineHeight(lhB)
                             .horizontalAlign(eui::HorizontalAlign::Right)
-                            .color(t.colors.wechat.textTertiary)
+                            .color(t.colors.textTertiary)
                             .build();
                         if (!hasRuns) {
                             ui.text("agent.dialog.detail.runlist.empty")
@@ -503,7 +503,7 @@ void AgentModule::composeTaskDetailDialog(
                                 .fontSize(fsS)
                                 .lineHeight(lhS)
                                 .verticalAlign(eui::VerticalAlign::Center)
-                                .color(t.colors.wechat.textTertiary)
+                                .color(t.colors.textTertiary)
                                 .build();
                             return;
                         }
@@ -542,7 +542,7 @@ void AgentModule::composeTaskDetailDialog(
                                             .fontSize(fsS)
                                             .lineHeight(lhS)
                                             .fontWeight(600)
-                                            .color(t.colors.wechat.textTertiary)
+                                            .color(t.colors.textTertiary)
                                             .build();
                                     }
                                     const std::string runRowId =
@@ -581,11 +581,11 @@ void AgentModule::composeTaskDetailDialog(
                                                 .size(cw, rowH)
                                                 .radius(t.sizes.radiusSmall)
                                                 .states(highlighted
-                                                            ? t.colors.wechat.selectedBg
+                                                            ? t.colors.primarySoftBg
                                                             : eui::Color{0.0f, 0.0f,
                                                                          0.0f, 0.0f},
-                                                        t.colors.wechat.dividerSecondary,
-                                                        t.colors.wechat.dividerSecondary)
+                                                        t.colors.hover,
+                                                        t.colors.hover)
                                                 .onClick([this, runId = run.id] {
                                                     selectedRunId_ = runId;
                                                     // seq 只在 run 内唯一：切 run 清
@@ -603,7 +603,7 @@ void AgentModule::composeTaskDetailDialog(
                                                 // 选中行左缘 2px primary
                                                 inner.rect(runRowId + ".edge")
                                                     .size(2.0f, rowH)
-                                                    .color(t.colors.wechat.primary)
+                                                    .color(t.colors.primary)
                                                     .build();
                                             }
                                             inner.rect(runRowId + ".dot")
@@ -623,7 +623,7 @@ void AgentModule::composeTaskDetailDialog(
                                                 .lineHeight(lhS)
                                                 .wrap(false)
                                                 .maxWidth(kTimeW)
-                                                .color(t.colors.wechat.textSecondary)
+                                                .color(t.colors.textSecondary)
                                                 .build();
                                             inner.text(runRowId + ".status")
                                                 .position(statusX,
@@ -649,7 +649,7 @@ void AgentModule::composeTaskDetailDialog(
                                                 .wrap(false)
                                                 .maxWidth(std::max(
                                                     0.0f, cw - durationX - kRowInnerX))
-                                                .color(t.colors.wechat.textTertiary)
+                                                .color(t.colors.textTertiary)
                                                 .build();
                                             if (hasErr) {
                                                 inner.text(runRowId + ".err")
@@ -683,7 +683,7 @@ void AgentModule::composeTaskDetailDialog(
                                                         .fontSize(fsS)
                                                         .lineHeight(rowErrH)
                                                         .wrap(false)
-                                                        .color(t.colors.wechat.primary)
+                                                        .color(t.colors.primary)
                                                         .onClick(
                                                             [] {
                                                                 navigateToClaudePage();
@@ -705,7 +705,7 @@ void AgentModule::composeTaskDetailDialog(
                                       std::to_string(kDetailRunListLimit) + " 次")
                                 .fontSize(fsS)
                                 .lineHeight(lhS)
-                                .color(t.colors.wechat.textTertiary)
+                                .color(t.colors.textTertiary)
                                 .build();
                         }
                     })
@@ -776,7 +776,7 @@ void AgentModule::composeTaskDetailDialog(
                                 .lineHeight(lhB)
                                 .fontWeight(600)
                                 .verticalAlign(eui::VerticalAlign::Center)
-                                .color(t.colors.wechat.textPrimary)
+                                .color(t.colors.textPrimary)
                                 .build();
                             // 「复制回复」：一键复制 run 最终回复全文（最后一条
                             // assistant 的全部 text 块）。空串不渲染
@@ -913,7 +913,7 @@ void AgentModule::composeTaskDetailDialog(
                                         .lineHeight(statusH)
                                         .horizontalAlign(eui::HorizontalAlign::Right)
                                         .verticalAlign(eui::VerticalAlign::Center)
-                                        .color(t.colors.wechat.textTertiary)
+                                        .color(t.colors.textTertiary)
                                         .build();
                                 })
                                 .build();
@@ -948,7 +948,7 @@ void AgentModule::composeTaskDetailDialog(
                                                                 .text(m.label)
                                                                 .fontSize(fsS)
                                                                 .lineHeight(lhS)
-                                                                .color(t.colors.wechat.textTertiary)
+                                                                .color(t.colors.textTertiary)
                                                                 .build();
                                                             inner.text(base + ".value")
                                                                 .position(70.0f, 0.0f)
@@ -962,7 +962,7 @@ void AgentModule::composeTaskDetailDialog(
                                                                 .wrap(false)
                                                                 .maxWidth(std::max(
                                                                     0.0f, cellW - 70.0f))
-                                                                .color(t.colors.wechat.textSecondary)
+                                                                .color(t.colors.textSecondary)
                                                                 .build();
                                                         })
                                                         .build();
@@ -984,7 +984,7 @@ void AgentModule::composeTaskDetailDialog(
                                         .fontSize(fsS)
                                         .lineHeight(lhS)
                                         .wrap(false)
-                                        .color(t.colors.wechat.textSecondary)
+                                        .color(t.colors.textSecondary)
                                         .build();
                                     inner.text(
                                               "agent.dialog.detail.detail.schedule.actual")
@@ -993,7 +993,7 @@ void AgentModule::composeTaskDetailDialog(
                                         .fontSize(fsS)
                                         .lineHeight(lhS)
                                         .wrap(false)
-                                        .color(t.colors.wechat.textSecondary)
+                                        .color(t.colors.textSecondary)
                                         .build();
                                     inner.text(
                                               "agent.dialog.detail.detail.schedule.verdict")
@@ -1009,7 +1009,7 @@ void AgentModule::composeTaskDetailDialog(
                                                    ? t.colors.warning
                                                : plan.tone == TextTone::Error
                                                    ? t.colors.error
-                                                   : t.colors.wechat.textTertiary)
+                                                   : t.colors.textTertiary)
                                         .build();
                                 })
                                 .build();
@@ -1066,7 +1066,7 @@ void AgentModule::composeTaskDetailDialog(
                                 .lineHeight(lhS)
                                 .horizontalAlign(eui::HorizontalAlign::Center)
                                 .verticalAlign(eui::VerticalAlign::Center)
-                                .color(t.colors.wechat.textTertiary)
+                                .color(t.colors.textTertiary)
                                 .build();
                             return;
                         }
@@ -1100,7 +1100,7 @@ void AgentModule::composeTaskDetailDialog(
                                     .lineHeight(lhS)
                                     // 盒高 ≠ 行高，不给 verticalAlign 会顶在上缘
                                     .verticalAlign(eui::VerticalAlign::Center)
-                                    .color(t.colors.wechat.textTertiary)
+                                    .color(t.colors.textTertiary)
                                     .build();
                                 return;
                             }
@@ -1113,7 +1113,7 @@ void AgentModule::composeTaskDetailDialog(
                                     .fontSize(fsS)
                                     .lineHeight(lhS)
                                     .verticalAlign(eui::VerticalAlign::Center)
-                                    .color(t.colors.wechat.textTertiary)
+                                    .color(t.colors.textTertiary)
                                     .build();
                                 return;
                             }
@@ -1202,7 +1202,7 @@ void AgentModule::composeTaskDetailDialog(
                                         .fontSize(fsS)
                                         .lineHeight(lhS)
                                         .verticalAlign(eui::VerticalAlign::Center)
-                                        .color(t.colors.wechat.textTertiary)
+                                        .color(t.colors.textTertiary)
                                         .build();
                                     return;
                                 }
@@ -1212,7 +1212,7 @@ void AgentModule::composeTaskDetailDialog(
                                         .text("展开查看完整链路")
                                         .fontSize(fsS)
                                         .lineHeight(lhS)
-                                        .color(t.colors.wechat.textTertiary)
+                                        .color(t.colors.textTertiary)
                                         .build();
                                     return;
                                 }
@@ -1294,7 +1294,7 @@ void AgentModule::composeTaskDetailDialog(
                                         .text(label)
                                         .fontSize(fsS)
                                         .lineHeight(lhS)
-                                        .color(t.colors.wechat.textTertiary)
+                                        .color(t.colors.textTertiary)
                                         .build();
                                     f.text(base + ".value")
                                         .position(kFieldLabelW + 6.0f, 0.0f)
@@ -1328,7 +1328,7 @@ void AgentModule::composeTaskDetailDialog(
                                 .content([&] {
                                     f.rect(base + ".bg")
                                         .size(fw, blockH)
-                                        .color(t.colors.wechat.pageBg)
+                                        .color(t.colors.background)
                                         .radius(t.sizes.radius)
                                         .build();
                                     f.text(base + ".label")
@@ -1337,7 +1337,7 @@ void AgentModule::composeTaskDetailDialog(
                                         .text(label)
                                         .fontSize(fsS)
                                         .lineHeight(lhS)
-                                        .color(t.colors.wechat.textTertiary)
+                                        .color(t.colors.textTertiary)
                                         .build();
                                     f.text(base + ".value")
                                         .position(kBlockPad, 8.0f + lhS + 4.0f)
@@ -1347,7 +1347,7 @@ void AgentModule::composeTaskDetailDialog(
                                         .lineHeight(lhS)
                                         .wrap(true)
                                         .maxWidth(textW)
-                                        .color(t.colors.wechat.textPrimary)
+                                        .color(t.colors.textPrimary)
                                         .build();
                                 })
                                 .build();
@@ -1359,7 +1359,7 @@ void AgentModule::composeTaskDetailDialog(
                                 .fontSize(fsS)
                                 .lineHeight(lhS)
                                 .fontWeight(600)
-                                .color(t.colors.wechat.textTertiary)
+                                .color(t.colors.textTertiary)
                                 .build();
                         };
 
@@ -1369,7 +1369,7 @@ void AgentModule::composeTaskDetailDialog(
                         cfgCell("name", "名称",
                                 taskValue(cfgTask ? cfgTask->name
                                                   : std::string()),
-                                fw, t.colors.wechat.textPrimary);
+                                fw, t.colors.textPrimary);
                         {
                             const float colW =
                                 std::max(0.0f, (fw - kMetaGridGapX) * 0.5f);
@@ -1411,7 +1411,7 @@ void AgentModule::composeTaskDetailDialog(
                                             const CellSpec& c = cells[row * 2 + slot];
                                             cfgCell(c.field, c.label, c.value,
                                                     colW,
-                                                    t.colors.wechat.textPrimary);
+                                                    t.colors.textPrimary);
                                         }
                                     })
                                     .build();
@@ -1433,7 +1433,7 @@ void AgentModule::composeTaskDetailDialog(
                                               : std::string()),
                                 std::max(0.0f, (fw - kMetaGridGapX) * 0.5f),
                                 cfgTask != nullptr && cfgTask->allowDestructive
-                                    ? t.colors.wechat.warningRed
+                                    ? t.colors.error
                                     : t.colors.success);
                         if (!problemV.empty()) {
                             // 配置异常：error 色全文（wrap），与普通值不同色即显形
@@ -1486,7 +1486,7 @@ void AgentModule::composeTaskDetailDialog(
                             .text("详情弹窗只读 · 改动配置走「编辑任务」")
                             .fontSize(fsS - 1.0f)
                             .lineHeight(lhS)
-                            .color(t.colors.wechat.textTertiary)
+                            .color(t.colors.textTertiary)
                             .build();
                     })
                     .build();
@@ -1511,7 +1511,7 @@ void AgentModule::composeTaskDetailDialog(
                 .fontSize(fsS - 2.0f)
                 .lineHeight(16.0f)
                 .wrap(false)
-                .color(t.colors.wechat.textTertiary)
+                .color(t.colors.textTertiary)
                 .build();
             {
                 const float bw = 104.0f;
@@ -1521,12 +1521,12 @@ void AgentModule::composeTaskDetailDialog(
                     .size(bw, bh)
                     .text("关闭")
                     .fontSize(t.sizes.fontSizeSmall)
-                    .colors(t.colors.wechat.pageBg,
-                            t.colors.wechat.secondaryButtonBg,
-                            t.colors.wechat.selectedBg)
-                    .textColor(t.colors.wechat.textPrimary)
+                    .colors(t.colors.background,
+                            t.colors.hover,
+                            t.colors.primarySoftBg)
+                    .textColor(t.colors.textPrimary)
                     .radius(8.0f)
-                    .border(1.0f, t.colors.wechat.dividerPrimary)
+                    .border(1.0f, t.colors.borderDefault)
                     .onClick([this] { closeTaskDetail(); })
                     .build();
                 components::button(ui, "agent.dialog.detail.footer.edit")
@@ -1534,12 +1534,12 @@ void AgentModule::composeTaskDetailDialog(
                     .size(bw, bh)
                     .text("编辑任务")
                     .fontSize(t.sizes.fontSizeSmall)
-                    .colors(t.colors.wechat.primary,
-                            t.colors.wechat.primaryHover,
-                            t.colors.wechat.primaryPressed)
-                    .textColor(t.colors.wechat.onPrimary)
+                    .colors(t.colors.primary,
+                            t.colors.primaryHover,
+                            t.colors.primaryPressed)
+                    .textColor(t.colors.onPrimary)
                     .radius(8.0f)
-                    .border(1.0f, t.colors.wechat.primary)
+                    .border(1.0f, t.colors.primary)
                     .onClick([this, taskId = *detailTaskId_] {
                         closeTaskDetail();
                         openTaskEditor(taskId);

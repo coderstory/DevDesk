@@ -209,7 +209,7 @@ public:
         ui.rect("about.bg")
             .position(0.0f, 0.0f)
             .size(screen.width, screen.height)
-            .color(eui::Color{wc.pageBg.r, wc.pageBg.g, wc.pageBg.b,
+            .color(eui::Color{t.colors.background.r, t.colors.background.g, t.colors.background.b,
                               ::core::window_effect_state::surfaceAlpha(
                                   ::core::window_effect_state::current())})
             .build();
@@ -263,9 +263,9 @@ public:
         ui.rect("about.card.bg")
             .position(cardX, cardY)
             .size(cardW, cardH)
-            .color(components::theme::withOpacity(wc.cardBg, 0.62f))
+            .color(components::theme::withOpacity(t.colors.surface, 0.62f))
             .radius(t.sizes.radiusWeChat)
-            .border(1.0f, components::theme::withOpacity(wc.cardBg, 0.55f))
+            .border(1.0f, components::theme::withOpacity(t.colors.surface, 0.55f))
             .build();
         ui_kit::drawGlassCardLayers(ui, "about.card",
             cardX, cardY, cardW, cardH,
@@ -277,7 +277,7 @@ public:
             // C 方案终端窗 >_ 几何 logo 替换 fa-laptop-code 字形（图标批 2026-10-20）
             ui_kit::drawDevDeskLogo(ui, "about.card.icon",
                                     cardX + (cardW - kIconSize) / 2.0f, y,
-                                    kIconSize, wc.primary, wc.cardBg);
+                                    kIconSize, t.colors.primary, t.colors.surface);
             y += kIconSize + kIconGap;
 
             ui.text("about.card.title")
@@ -287,7 +287,7 @@ public:
                 .fontSize(t.sizes.fontSizeTitle)
                 .lineHeight(kTitleH)
                 .fontWeight(700)
-                .color(wc.textPrimary)
+                .color(t.colors.textPrimary)
                 .horizontalAlign(eui::HorizontalAlign::Center)
                 .build();
             y += kTitleH + kTitleGap;
@@ -316,7 +316,7 @@ public:
                 ui.rect("about.card.divider." + std::to_string(i))
                     .position(cardX + kCardPadX, rowY - 0.5f)
                     .size(cardW - kCardPadX * 2.0f, 1.0f)
-                    .color(wc.dividerSecondary)
+                    .color(t.colors.hover)
                     .build();
             }
 
@@ -327,7 +327,7 @@ public:
                 .text(rows[i].label)
                 .fontSize(t.sizes.fontSizeWeChat)  // UAT3 放大：13→16
                 .lineHeight(kRowH)
-                .color(wc.textSecondary)
+                .color(t.colors.textSecondary)
                 .build();
 
             // 右内容（highlight → 绿色 wechat.primary）
@@ -337,7 +337,7 @@ public:
                 .text(rows[i].value)
                 .fontSize(t.sizes.fontSizeWeChat)  // UAT3 放大：13→16
                 .lineHeight(kRowH)
-                .color(rows[i].highlight ? wc.primaryText : wc.textPrimary)
+                .color(rows[i].highlight ? t.colors.primaryText : t.colors.textPrimary)
                 .build();
 
             // 复制图标（highlight 行；EUI 无 onEnter/onLeave → 始终可见）
@@ -350,7 +350,7 @@ public:
                     .size(kCopyIconSize, kCopyIconSize)
                     .icon(0xF0C5)  // fa-copy
                     .fontSize(kCopyIconSize)
-                    .color(wc.textTertiary)
+                    .color(t.colors.textTertiary)
                     .build();
 
                 // 透明 hit 区：点击复制该行值
@@ -378,7 +378,7 @@ public:
             .text("© 2026 DevDesk")
             .fontSize(12.0f)  // spec §3.7.4：版权 12px（theme 无 12px token，用字面量）
             .lineHeight(kFooterH)
-            .color(wc.textTertiary)
+            .color(t.colors.textTertiary)
             .horizontalAlign(eui::HorizontalAlign::Center)
             .build();
 

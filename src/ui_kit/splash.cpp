@@ -139,7 +139,7 @@ bool drawSplashIfNeeded(eui::Ui& ui, const eui::Screen& screen) {
             ui.rect("splash.ink.ring." + std::to_string(j))
                 .position(inkX - r, inkY - r)
                 .size(r * 2.0f, r * 2.0f)
-                .color(wc.primaryPressed)
+                .color(t.colors.primaryPressed)
                 .radius(r)
                 .opacity(ringAlpha * opacity)
                 .build();
@@ -155,7 +155,7 @@ bool drawSplashIfNeeded(eui::Ui& ui, const eui::Screen& screen) {
                         .position(inkX + std::cos(ang) * r * lead - br,
                                   inkY + std::sin(ang) * r * lead - br)
                         .size(br * 2.0f, br * 2.0f)
-                        .color(wc.primaryPressed)
+                        .color(t.colors.primaryPressed)
                         .radius(br)
                         .opacity(ringAlpha * 0.6f * opacity)
                         .build();
@@ -184,7 +184,7 @@ bool drawSplashIfNeeded(eui::Ui& ui, const eui::Screen& screen) {
             ui, "splash.logo.icon",
             cx - 86.0f - kSplashLogoSize * 0.5f,
             logoY + kLogoH * 0.5f - kSplashLogoSize * 0.5f,
-            kSplashLogoSize, wc.primaryPressed, wc.cardBg, opacity);
+            kSplashLogoSize, t.colors.primaryPressed, t.colors.surface, opacity);
     }
     // logo 文字：wechat.textPrimary（#1A1A1A）；原 W-W1 白色字面量(splash.cpp:131) → 深字（微绿底上 15.0:1）。
     ui.text("splash.logo")
@@ -194,7 +194,7 @@ bool drawSplashIfNeeded(eui::Ui& ui, const eui::Screen& screen) {
         .fontSize(44.0f)
         .fontWeight(700)
         .verticalAlign(eui::VerticalAlign::Center)
-        .color(wc.textPrimary)
+        .color(t.colors.textPrimary)
         .opacity(opacity)
         .build();
 
@@ -206,7 +206,7 @@ bool drawSplashIfNeeded(eui::Ui& ui, const eui::Screen& screen) {
         .fontSize(17.0f)
         .horizontalAlign(eui::HorizontalAlign::Center)
         .verticalAlign(eui::VerticalAlign::Center)
-        .color(wc.textSecondary)
+        .color(t.colors.textSecondary)
         .opacity(opacity)
         .build();
 
@@ -219,14 +219,14 @@ bool drawSplashIfNeeded(eui::Ui& ui, const eui::Screen& screen) {
     ui.rect("splash.progress.bg")
         .position(barX, barY)
         .size(kBarW, kBarH)
-        .color(wc.cardBg)
+        .color(t.colors.surface)
         .radius(kBarH * 0.5f)
         .opacity(opacity)
         .build();
     ui.rect("splash.progress.fill")
         .position(barX, barY)
         .size(kBarW * progress, kBarH)
-        .color(wc.primaryPressed)
+        .color(t.colors.primaryPressed)
         .radius(kBarH * 0.5f)
         .opacity(opacity)
         .build();

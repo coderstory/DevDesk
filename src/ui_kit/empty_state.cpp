@@ -31,7 +31,7 @@ void emptyState(eui::Ui& ui, const std::string& id, const std::string& message,
         .fontSize(kEmptyStateFontSize)
         .horizontalAlign(eui::HorizontalAlign::Center)
         .verticalAlign(eui::VerticalAlign::Center)
-        .color(wc.textSecondary)
+        .color(t.colors.textSecondary)
         .build();
 
     // 可选就近按钮（§4.12 + §5.6 就近原则）：按钮在文字下方居中，

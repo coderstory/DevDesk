@@ -708,24 +708,24 @@ void drawFormAdvancedTab(eui::Ui& ui, float w,
     components::button(ui, "claude.form.advanced.json.format")
         .position(28.0f, 440.0f).size(110.0f, 32.0f)
         .text("格式化").fontSize(12.0f)
-        .colors(t.colors.wechat.secondaryButtonBg,
-                t.colors.wechat.dividerSecondary,
-                t.colors.wechat.dividerSecondary)
-        .textColor(t.colors.wechat.textPrimary)
+        .colors(t.colors.hover,
+                t.colors.hover,
+                t.colors.hover)
+        .textColor(t.colors.textPrimary)
         .radius(t.sizes.radiusWeChat)
-        .border(1.0f, t.colors.wechat.dividerPrimary)
+        .border(1.0f, t.colors.borderDefault)
         .onClick([fp = &f] { formatAdvancedJson(*fp); })
         .build();
     // 「全屏编辑」入口：只置位 formJsonFullscreen_，覆盖层由 compose 绘制，表单态本帧不动
     components::button(ui, "claude.form.advanced.json.fs")
         .position(150.0f, 440.0f).size(110.0f, 32.0f)
         .text("全屏编辑").fontSize(12.0f)
-        .colors(t.colors.wechat.secondaryButtonBg,
-                t.colors.wechat.dividerSecondary,
-                t.colors.wechat.dividerSecondary)
-        .textColor(t.colors.wechat.textPrimary)
+        .colors(t.colors.hover,
+                t.colors.hover,
+                t.colors.hover)
+        .textColor(t.colors.textPrimary)
         .radius(t.sizes.radiusWeChat)
-        .border(1.0f, t.colors.wechat.dividerPrimary)
+        .border(1.0f, t.colors.borderDefault)
         .onClick([fp = &f] { fp->formJsonFullscreen_ = true; })
         .build();
     // 已绑定片段提示行：文本框无逐键行，片段赢语义在此明示
@@ -877,13 +877,13 @@ void drawFormEnvTab(eui::Ui& ui, float w,
             .position(682.0f, y).size(50.0f, 32.0f)
             .icon(0xF00D)  // fa-xmark
             .fontSize(12.0f)
-            .colors(t.colors.wechat.secondaryButtonBg,
-                    t.colors.wechat.dividerSecondary,
-                    t.colors.wechat.dividerSecondary)
+            .colors(t.colors.hover,
+                    t.colors.hover,
+                    t.colors.hover)
             .textColor(t.colors.error)
             .iconColor(t.colors.error)
             .radius(t.sizes.radiusWeChat)
-            .border(1.0f, t.colors.wechat.dividerPrimary)
+            .border(1.0f, t.colors.borderDefault)
             // UAT6 阴影统一：ButtonStyle 默认已无阴影（EUI-NEO 根修），此处不再
             // 逐钮覆盖透明阴影（原 workaround 已被根修吸收）。
             .onClick([fp = &f, i] {
@@ -898,12 +898,12 @@ void drawFormEnvTab(eui::Ui& ui, float w,
     components::button(ui, "claude.form.env.add")
         .position(28.0f, 314.0f).size(110.0f, 30.0f)
         .text("+ 添加变量").fontSize(12.0f)
-        .colors(t.colors.wechat.secondaryButtonBg,
-                t.colors.wechat.dividerSecondary,
-                t.colors.wechat.dividerSecondary)
-        .textColor(t.colors.wechat.textPrimary)
+        .colors(t.colors.hover,
+                t.colors.hover,
+                t.colors.hover)
+        .textColor(t.colors.textPrimary)
         .radius(t.sizes.radiusWeChat)
-        .border(1.0f, t.colors.wechat.dividerPrimary)
+        .border(1.0f, t.colors.borderDefault)
         .onClick([fp = &f] { fp->formEnvRows_.emplace_back(); })
         .build();
     if (f.formEnvRows_.size() > kMaxVisibleRows) {
@@ -935,12 +935,12 @@ void drawFormEnvTab(eui::Ui& ui, float w,
     components::button(ui, "claude.form.import.parse")
         .position(28.0f, 468.0f).size(110.0f, 32.0f)
         .text("解析导入").fontSize(12.0f)
-        .colors(t.colors.wechat.secondaryButtonBg,
-                t.colors.wechat.dividerSecondary,
-                t.colors.wechat.dividerSecondary)
-        .textColor(t.colors.wechat.textPrimary)
+        .colors(t.colors.hover,
+                t.colors.hover,
+                t.colors.hover)
+        .textColor(t.colors.textPrimary)
         .radius(t.sizes.radiusWeChat)
-        .border(1.0f, t.colors.wechat.dividerPrimary)
+        .border(1.0f, t.colors.borderDefault)
         .onClick([ip = &imp] { doParseImport(*ip); })
         .build();
     if (imp.importReady_) {
@@ -948,9 +948,9 @@ void drawFormEnvTab(eui::Ui& ui, float w,
         components::button(ui, "claude.form.import.apply")
             .position(148.0f, 468.0f).size(110.0f, 32.0f)
             .text("应用到表单").fontSize(12.0f)
-            .colors(t.colors.wechat.primary, t.colors.wechat.primaryHover,
-                    t.colors.wechat.primaryPressed)
-            .textColor(t.colors.wechat.onPrimary)
+            .colors(t.colors.primary, t.colors.primaryHover,
+                    t.colors.primaryPressed)
+            .textColor(t.colors.onPrimary)
             .radius(t.sizes.radiusWeChat)
             .onClick([fp = &f, ip = &imp] { doApplyImport(*fp, *ip); })
             .build();
@@ -1125,14 +1125,14 @@ void drawJsonFullscreenOverlay(eui::Ui& ui, const eui::Screen& screen,
             //（UAT5 米黄清理：legacy background 暖底 → wechat.pageBg）
             ui.rect("claude.jsonfs.bg")
                 .size(w, h)
-                .color(t.colors.wechat.pageBg)
+                .color(t.colors.background)
                 .blockPointer()
                 .onClick([fp = &f] { discardJsonFullscreenEdits(*fp); })
                 .build();
 
             ui_kit::drawDialogTitle(ui, "claude.jsonfs.title", w,
                                     "高级设置 JSON（全屏）", 20.0f,
-                                    t.colors.wechat.textPrimary,
+                                    t.colors.textPrimary,
                                     {.y = 20.0f, .height = 26.0f,
                                      .lineHeight = 26.0f});
             // 基础项（名称/URL/Key）缺失的修复入口在基础页、全屏态不可达，末尾明示回表单补填
@@ -1142,7 +1142,7 @@ void drawJsonFullscreenOverlay(eui::Ui& ui, const eui::Screen& screen,
                       "「放弃修改」、Esc 或点击遮罩 = 丢弃本次改动并回到上次保存值；"
                       "基础项（名称/URL/Key）缺失需回表单基础页补填")
                 .fontSize(11.0f).lineHeight(16.0f)
-                .color(t.colors.wechat.textTertiary).build();
+                .color(t.colors.textTertiary).build();
 
             // 大号多行编辑框；与表单框同接 formExtraSettingsJson_（同一编辑缓冲），Esc = 放弃修改
             components::input(ui, "claude.jsonfs.editor")
@@ -1174,20 +1174,20 @@ void drawJsonFullscreenOverlay(eui::Ui& ui, const eui::Screen& screen,
             components::button(ui, "claude.jsonfs.format")
                 .position(28.0f, h - 68.0f).size(110.0f, 40.0f)
                 .text("格式化").fontSize(12.0f)
-                .colors(t.colors.wechat.secondaryButtonBg,
-                        t.colors.wechat.dividerSecondary,
-                        t.colors.wechat.dividerSecondary)
-                .textColor(t.colors.wechat.textPrimary)
+                .colors(t.colors.hover,
+                        t.colors.hover,
+                        t.colors.hover)
+                .textColor(t.colors.textPrimary)
                 .radius(t.sizes.radiusWeChat)
-                .border(1.0f, t.colors.wechat.dividerPrimary)
+                .border(1.0f, t.colors.borderDefault)
                 .onClick([fp = &f] { formatAdvancedJson(*fp); })
                 .build();
             components::button(ui, "claude.jsonfs.apply")
                 .position(150.0f, h - 68.0f).size(110.0f, 40.0f)
                 .text("保存").fontSize(12.0f)
-                .colors(t.colors.wechat.primary, t.colors.wechat.primaryHover,
-                        t.colors.wechat.primaryPressed)
-                .textColor(t.colors.wechat.onPrimary)
+                .colors(t.colors.primary, t.colors.primaryHover,
+                        t.colors.primaryPressed)
+                .textColor(t.colors.onPrimary)
                 .radius(t.sizes.radiusWeChat)
                 .onClick([fp = &f, hooks, scs = &sharedConfigs] {
                     submitForm(*fp, hooks, *scs);
@@ -1196,12 +1196,12 @@ void drawJsonFullscreenOverlay(eui::Ui& ui, const eui::Screen& screen,
             components::button(ui, "claude.jsonfs.discard")
                 .position(272.0f, h - 68.0f).size(110.0f, 40.0f)
                 .text("放弃修改").fontSize(12.0f)
-                .colors(t.colors.wechat.secondaryButtonBg,
-                        t.colors.wechat.dividerSecondary,
-                        t.colors.wechat.dividerSecondary)
-                .textColor(t.colors.wechat.textPrimary)
+                .colors(t.colors.hover,
+                        t.colors.hover,
+                        t.colors.hover)
+                .textColor(t.colors.textPrimary)
                 .radius(t.sizes.radiusWeChat)
-                .border(1.0f, t.colors.wechat.dividerPrimary)
+                .border(1.0f, t.colors.borderDefault)
                 .onClick([fp = &f] { discardJsonFullscreenEdits(*fp); })
                 .build();
         })
@@ -1385,12 +1385,12 @@ void drawSharedConfigDialog(eui::Ui& ui, const eui::Screen& screen,
         components::button(ui, "claude.dialog.shared.json.format")
             .position(28.0f, 324.0f).size(110.0f, 32.0f)
             .text("格式化").fontSize(12.0f)
-            .colors(t.colors.wechat.secondaryButtonBg,
-                    t.colors.wechat.dividerSecondary,
-                    t.colors.wechat.dividerSecondary)
-            .textColor(t.colors.wechat.textPrimary)
+            .colors(t.colors.hover,
+                    t.colors.hover,
+                    t.colors.hover)
+            .textColor(t.colors.textPrimary)
             .radius(t.sizes.radiusWeChat)
-            .border(1.0f, t.colors.wechat.dividerPrimary)
+            .border(1.0f, t.colors.borderDefault)
             .onClick([sp = &s] {
                 sp->error_.clear();
                 if (sp->extraSettingsJson_.empty()) return;
@@ -1422,12 +1422,12 @@ void drawSharedConfigDialog(eui::Ui& ui, const eui::Screen& screen,
             components::button(ui, "claude.dialog.shared.delete")
                 .position(28.0f, py).size(88.0f, 40.0f)
                 .text("删除").fontSize(14.0f)
-                .colors(t.colors.wechat.secondaryButtonBg,
-                        t.colors.wechat.dividerSecondary,
-                        t.colors.wechat.dividerSecondary)
+                .colors(t.colors.hover,
+                        t.colors.hover,
+                        t.colors.hover)
                 .textColor(t.colors.error)
                 .radius(t.sizes.radiusWeChat)
-                .border(1.0f, t.colors.wechat.dividerPrimary)
+                .border(1.0f, t.colors.borderDefault)
                 .onClick([sp = &s] {
                     sp->deleteConfirmId_ = sp->editId_;
                     sp->deleteConfirmName_ = sp->name_;
@@ -1442,20 +1442,20 @@ void drawSharedConfigDialog(eui::Ui& ui, const eui::Screen& screen,
         components::button(ui, "claude.dialog.shared.cancel")
             .position(cancelX, py).size(pairW, 40.0f)
             .text("取消").fontSize(14.0f)
-            .colors(t.colors.wechat.secondaryButtonBg,
-                    t.colors.wechat.dividerSecondary,
-                    t.colors.wechat.dividerSecondary)
-            .textColor(t.colors.wechat.textPrimary)
+            .colors(t.colors.hover,
+                    t.colors.hover,
+                    t.colors.hover)
+            .textColor(t.colors.textPrimary)
             .radius(t.sizes.radiusWeChat)
-            .border(1.0f, t.colors.wechat.dividerPrimary)
+            .border(1.0f, t.colors.borderDefault)
             .onClick([sp = &s] { sp->open_ = false; })
             .build();
         components::button(ui, "claude.dialog.shared.confirm")
             .position(confirmX, py).size(pairW, 40.0f)
             .text(isEdit ? "保存" : "创建").fontSize(14.0f)
-            .colors(t.colors.wechat.primary, t.colors.wechat.primaryHover,
-                    t.colors.wechat.primaryPressed)
-            .textColor(t.colors.wechat.onPrimary)
+            .colors(t.colors.primary, t.colors.primaryHover,
+                    t.colors.primaryPressed)
+            .textColor(t.colors.onPrimary)
             .radius(t.sizes.radiusWeChat)
             .onClick([sp = &s, hooks] { submitSharedForm(*sp, hooks); })
             .build();

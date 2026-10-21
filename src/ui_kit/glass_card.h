@@ -93,9 +93,9 @@ inline void drawGlassCardLayers(eui::Ui& ui, const std::string& baseId,
     ui.rect(baseId + ".glass.hl.top")
         .position(originX, originY)
         .size(cardW, cardH * style.highlightFrac)
-        .gradient(components::theme::withOpacity(wc.cardBg,
+        .gradient(components::theme::withOpacity(t.colors.surface,
                                                   style.highlightAlpha),
-                  components::theme::withAlpha(wc.cardBg, 0.0f),
+                  components::theme::withAlpha(t.colors.surface, 0.0f),
                   eui::GradientDirection::Vertical)
         .radius(corner)
         .build();
@@ -104,9 +104,9 @@ inline void drawGlassCardLayers(eui::Ui& ui, const std::string& baseId,
     ui.rect(baseId + ".glass.hl.side")
         .position(originX, originY)
         .size(cardW * style.highlightSideFrac, cardH)
-        .gradient(components::theme::withOpacity(wc.cardBg,
+        .gradient(components::theme::withOpacity(t.colors.surface,
                                                   style.highlightSideAlpha),
-                  components::theme::withAlpha(wc.cardBg, 0.0f),
+                  components::theme::withAlpha(t.colors.surface, 0.0f),
                   eui::GradientDirection::Horizontal)
         .radius(corner)
         .build();
@@ -115,7 +115,7 @@ inline void drawGlassCardLayers(eui::Ui& ui, const std::string& baseId,
     ui.rect(baseId + ".glass.topline")
         .position(originX + corner, originY)
         .size(cardW - corner * 2.0f, 1.0f)
-        .color(components::theme::withOpacity(wc.cardBg,
+        .color(components::theme::withOpacity(t.colors.surface,
                                               style.topLineAlpha))
         .build();
 
@@ -146,11 +146,11 @@ inline void drawGlassCardLayers(eui::Ui& ui, const std::string& baseId,
         }
     };
     stain(0, 0.18f, 0.22f, cardH * 0.14f, cardH * 0.24f,
-          wc.cardBg, style.stainWhiteCore, style.stainWhiteHalo);
+          t.colors.surface, style.stainWhiteCore, style.stainWhiteHalo);
     stain(1, 0.82f, 0.78f, cardH * 0.12f, cardH * 0.20f,
-          wc.textPrimary, style.stainDarkCore, style.stainDarkHalo);
+          t.colors.textPrimary, style.stainDarkCore, style.stainDarkHalo);
     stain(2, 0.64f, 0.12f, cardH * 0.10f, cardH * 0.16f,
-          wc.cardBg, style.stainWhiteCore, style.stainWhiteHalo);
+          t.colors.surface, style.stainWhiteCore, style.stainWhiteHalo);
 
     // ⑥ 整卡交互层（点击 + hover 过渡）
     if (onClick) {
@@ -158,9 +158,9 @@ inline void drawGlassCardLayers(eui::Ui& ui, const std::string& baseId,
             .position(originX, originY)
             .size(cardW, cardH)
             .states(components::theme::color(0.0f, 0.0f, 0.0f, 0.0f),
-                    components::theme::withOpacity(wc.textPrimary,
+                    components::theme::withOpacity(t.colors.textPrimary,
                                                    style.hoverVeilAlpha),
-                    components::theme::withOpacity(wc.textPrimary,
+                    components::theme::withOpacity(t.colors.textPrimary,
                                                    style.pressedVeilAlpha))
             .radius(corner)
             .transition(core::Transition::make(0.1f, core::Ease::OutQuad))

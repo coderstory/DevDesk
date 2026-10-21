@@ -27,7 +27,7 @@ void formRow(eui::Ui& ui, const std::string& id, const std::string& label,
         .fontSize(14.0f * core::theme::fontScale())
         .horizontalAlign(eui::HorizontalAlign::Left)
         .verticalAlign(eui::VerticalAlign::Center)
-        .color(wc.textPrimary)
+        .color(t.colors.textPrimary)
         .build();
 
     // control 区：填满剩余宽，垂直居中；由消费方在回调里画具体控件

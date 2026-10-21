@@ -82,7 +82,7 @@ void showLightToast(eui::Ui& ui, const std::string& id, const std::string& messa
                 .fontSize(kLightToastFontSize)
                 .horizontalAlign(eui::HorizontalAlign::Center)
                 .verticalAlign(eui::VerticalAlign::Center)
-                .color(wc.onPrimary)
+                .color(t.colors.onPrimary)
                 .build();
         })
         .build();
