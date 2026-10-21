@@ -283,12 +283,8 @@ void drawClaudeHeader(eui::Ui& ui, float contentW, float headerH,
     constexpr float kHeaderActionsW = 360.0f;
 
     // §5 帮助钮几何（UAT6 问号钮重设计）：24px 正圆（对齐 md.help.icon 24px 档）。
-    // claude.actions 行 justify END 右打包：help 左缘 = contentW − 代理钮宽 −
-    // 行 gap − 自宽（与状态组动态宽无关，可静态推算——tooltip 锚点需要）。
+    // Q 项：tooltip 锚改为跟随 source 元素实际位置，不再硬算 helpBtnX。
     constexpr float kHelpBtnD = 24.0f;
-    constexpr float kProxyBtnW = 110.0f;
-    const float helpBtnX =
-        contentW - kProxyBtnW - t.sizes.spacingSmall - kHelpBtnD;
 
     // UAT5 页头内部收紧（toptrim 批点名跟进）：内部 50→40 与共享 kHeaderH 叠满。
     // UAT6 副题横扫：标题行下副题 14 行删除，标题行独占页头（同 todo/md/home 档），
@@ -417,15 +413,14 @@ void drawClaudeHeader(eui::Ui& ui, float contentW, float headerH,
         .build();
 
     // 帮助钮 tooltip 绑定（现成 hint 机制）：UAT6 副题横扫时收起的一句话摘要
-    // 在 hover 弹回。面板宽档放宽到 320——TooltipBuilder 默认 86-112 是 barchart
-    // 短标签档，本句 20 字装不下；bounds 取页头行，topLimit 使气泡恒落钮下方。
+    // 在 hover 弹回。Q 项：去掉手算锚位 / 页面 bounds，改为跟随 source 元素
+    // 当前实际位置（claude.form.env 同款默认锚 auto-position 先例），不再硬编码
+    // helpBtnX / headerH 推算——任何按钮位置变动不用改 tooltip。
     components::tooltip(ui, "claude.title.help.tooltip")
         .theme(core::theme::componentTokensWeChat(t))
         .source("claude.title.help.bg")
         .value(proxyRunning ? "本地代理运行中，管理多套 Claude API 配置"
                              : "管理多套 Claude API 配置")
-        .anchor(helpBtnX + kHelpBtnD * 0.5f, headerH * 0.5f)
-        .bounds(contentW, headerH)
         .minWidth(320.0f)
         .maxWidth(320.0f)
         .build();
