@@ -884,6 +884,7 @@ void drawFormEnvTab(eui::Ui& ui, float w,
             .iconColor(t.colors.error)
             .radius(t.sizes.radiusWeChat)
             .border(1.0f, t.colors.wechat.dividerPrimary)
+            .shadow(0.0f, 0.0f, 0.0f, core::Color{0.0f, 0.0f, 0.0f, 0.0f})  // UAT6 去阴影（WeChat 纯平体系，非 Secondary 按钮）
             .onClick([fp = &f, i] {
                 if (i < fp->formEnvRows_.size()) {
                     fp->formEnvRows_.erase(fp->formEnvRows_.begin() +

@@ -74,6 +74,11 @@ struct ProfileListState {
     bool sharedBlockCollapsed_ = true;
     // 引导条一次性标记（会话内代理从未启动过才显示；内存态）
     bool proxyEverSeen_ = false;
+    // 切换 Profile 二次确认弹窗（UAT6）：点非选中卡先弹窗，确定后才切 selectedId_
+    bool switchConfirmOpen_ = false;
+    int64_t switchTargetId_ = 0;
+    std::string switchTargetName_;
+    bool switchBypassConfirm_ = false;  // 测试缝：true 时直接切不弹窗（全量测试回归门控）
     // 列表右键菜单：目标 profile id（0 = 无）+ 锚点（页面坐标）+ 开合标志
     int64_t ctxProfileId_ = 0;
     float ctxMenuX_ = 0.0f;

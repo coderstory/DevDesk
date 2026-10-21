@@ -48,6 +48,14 @@ extern "C" ::core::Module* create_claude_module();
 //（worker 写，0 = 未跑过）。用于把「渲染帧只发意图」写成计数断言
 extern "C" int claude_calls_query_dispatches_for_test();
 extern "C" unsigned long long claude_calls_query_last_thread_for_test();
+extern "C" void claude_test_bypass_switch_confirm(::core::Module*);
+
+// 测试模块工厂：默认关掉切换确认弹窗（全量回归直走选中；对话框测试用 mkmod(false)）
+static std::unique_ptr<::core::Module> mkmod(bool bypassSwitch = true) {
+    auto m = std::unique_ptr<::core::Module>(create_claude_module());
+    if (bypassSwitch) claude_test_bypass_switch_confirm(m.get());
+    return m;
+}
 
 namespace {
 
@@ -142,7 +150,7 @@ REGISTER_TEST(claude_format_call_time, "claude: formatCallTime 今日/昨天/更
 REGISTER_TEST(claude_module_compose_null_service,
               "claude_module: compose 无服务不崩（headless）", {
     module::claude::ClaudeService::setGlobal(nullptr);   // 干净起点
-    std::unique_ptr<::core::Module> mod(create_claude_module());
+    auto mod = mkmod();
     eui::Screen screen{1600.0f, 1000.0f};
     eui::Ui ui;
     ui.begin("claude_null");
@@ -194,7 +202,7 @@ REGISTER_TEST(claude_module_compose_null_service,
 REGISTER_TEST(claude_module_actions_row_alignment,
               "claude_module: 4 键均分——末键（运行）右缘对齐分隔线（headless layout）", {
     module::claude::ClaudeService::setGlobal(nullptr);
-    std::unique_ptr<::core::Module> mod(create_claude_module());
+    auto mod = mkmod();
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
@@ -234,7 +242,7 @@ REGISTER_TEST(claude_module_actions_row_alignment,
 REGISTER_TEST(claude_module_header_status_geometry,
               "claude_module: header 状态组右对齐 + wrapContent 收缩（headless layout）", {
     module::claude::ClaudeService::setGlobal(nullptr);
-    std::unique_ptr<::core::Module> mod(create_claude_module());
+    auto mod = mkmod();
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
@@ -284,7 +292,7 @@ REGISTER_TEST(claude_module_compose_with_data,
     DOCTEST_REQUIRE(b.isOk());
     DOCTEST_REQUIRE(env.svc->setActiveProfile(a.value().id).isOk());
 
-    std::unique_ptr<::core::Module> mod(create_claude_module());
+    auto mod = mkmod();
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
@@ -295,9 +303,6 @@ REGISTER_TEST(claude_module_compose_with_data,
 
     DOCTEST_CHECK(ui.find("claude.profile.0.name") != nullptr);
     DOCTEST_CHECK(ui.find("claude.profile.1.name") != nullptr);
-    // 激活卡片的 ACTIVE 徽标（profile 0 = 激活的「官方」）
-    DOCTEST_CHECK(ui.find("claude.profile.0.active.text") != nullptr);
-    DOCTEST_CHECK(ui.find("claude.profile.1.active.text") == nullptr);
 
     const auto* nameV = ui.find("claude.field.name.value");
     DOCTEST_REQUIRE(nameV != nullptr);
@@ -348,7 +353,7 @@ REGISTER_TEST(claude_module_test_connection_async,
     DOCTEST_REQUIRE(a.isOk());
     DOCTEST_REQUIRE(env.svc->setActiveProfile(a.value().id).isOk());
 
-    std::unique_ptr<::core::Module> mod(create_claude_module());
+    auto mod = mkmod();
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
@@ -404,7 +409,7 @@ REGISTER_TEST(claude_module_start_proxy_requires_active_profile,
     const int port = pickFreePort();
     DOCTEST_REQUIRE(port > 0);
     env.svc->setConfiguredProxyPort(port);
-    std::unique_ptr<::core::Module> mod(create_claude_module());
+    auto mod = mkmod();
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
@@ -477,7 +482,7 @@ REGISTER_TEST(claude_module_start_proxy_binds_only_at_harvest,
     DOCTEST_REQUIRE(a.isOk());
     DOCTEST_REQUIRE(env.svc->setActiveProfile(a.value().id).isOk());
 
-    std::unique_ptr<::core::Module> mod(create_claude_module());
+    auto mod = mkmod();
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
@@ -554,7 +559,7 @@ REGISTER_TEST(claude_module_form_tabs_roundtrip,
     DOCTEST_REQUIRE(a.isOk());
     const int64_t pid = a.value().id;
 
-    std::unique_ptr<::core::Module> mod(create_claude_module());
+    auto mod = mkmod();
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
@@ -667,12 +672,7 @@ REGISTER_TEST(claude_module_form_tabs_roundtrip,
         // deriveDisplayName(存储值)。用**精确相等**断言——find 前缀命中会被未剥的
         // "…[1M]" 假绿混过。
         DOCTEST_CHECK_EQ(slot0->text, std::string("fangzhou/glm-5.3"));
-        // 列表卡片 model 行同口径剥除（同一 deriveDisplayName 通道）
-        const auto* cardModel = ui.find("claude.profile.0.model");
-        DOCTEST_REQUIRE(cardModel != nullptr);
-        DOCTEST_CHECK_EQ(cardModel->text,
-                         std::string("model: fangzhou/glm-5.3"));
-    }
+        }
     {
         auto got = env.svc->getProfile(pid);
         DOCTEST_REQUIRE(got.isOk());
@@ -733,7 +733,7 @@ REGISTER_TEST(claude_module_form_tabs_roundtrip,
 REGISTER_TEST(claude_module_import_flow,
               "claude_module: cc-switch 粘贴导入解析应用（headless）", {
     TestEnv env;
-    std::unique_ptr<::core::Module> mod(create_claude_module());
+    auto mod = mkmod();
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
@@ -875,7 +875,7 @@ REGISTER_TEST(claude_module_import_current_full_chain,
         }
     })");
 
-    std::unique_ptr<::core::Module> mod(create_claude_module());
+    auto mod = mkmod();
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
@@ -990,7 +990,7 @@ REGISTER_TEST(claude_module_import_current_reads_advanced_json,
         }
     })");
 
-    std::unique_ptr<::core::Module> mod(create_claude_module());
+    auto mod = mkmod();
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
@@ -1149,7 +1149,7 @@ REGISTER_TEST(claude_module_import_current_missing_file,
     env.svc->setSettingsSyncPaths(paths);
     env.svc->setSettingsTakeOverEnabled(true);
 
-    std::unique_ptr<::core::Module> mod(create_claude_module());
+    auto mod = mkmod();
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
@@ -1240,7 +1240,7 @@ REGISTER_TEST(claude_module_import_current_takeover_warn,
         &env.handle(), module::claude::settings_sync::kSidecarConfigKey,
         R"({"env": {"ANTHROPIC_BASE_URL": "https://orig.example.com"}})"));
 
-    std::unique_ptr<::core::Module> mod(create_claude_module());
+    auto mod = mkmod();
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
@@ -1333,7 +1333,7 @@ REGISTER_TEST(claude_module_calls_dialog,
                                base + 200 + i));
     }
 
-    std::unique_ptr<::core::Module> mod(create_claude_module());
+    auto mod = mkmod();
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
@@ -1606,7 +1606,7 @@ REGISTER_TEST(claude_cpx06_calls_query_async_debounce,
     DOCTEST_REQUIRE(addRow("POST", "/v1/complete", 429, "", base + 3));
     DOCTEST_REQUIRE(addRow("GET", "/v1/hold", 0, "timeout", base + 4));
 
-    std::unique_ptr<::core::Module> mod(create_claude_module());
+    auto mod = mkmod();
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
@@ -1744,7 +1744,7 @@ REGISTER_TEST(claude_profiles_scrollview,
         ids.push_back(p.value().id);
     }
 
-    std::unique_ptr<::core::Module> mod(create_claude_module());
+    auto mod = mkmod();
     auto composeAt = [&](eui::Ui& ui, float h) {
         eui::Screen screen;
         screen.width = 1600.0f;
@@ -1816,7 +1816,7 @@ REGISTER_TEST(claude_shared_block_outside_viewport,
         ids.push_back(p.value().id);
     }
 
-    std::unique_ptr<::core::Module> mod(create_claude_module());
+    auto mod = mkmod();
     auto composeAt = [&](eui::Ui& ui, float h) {
         eui::Screen screen;
         screen.width = 1600.0f;
@@ -1857,7 +1857,7 @@ REGISTER_TEST(claude_shared_block_outside_viewport,
 REGISTER_TEST(claude_module_form_esc_cancels,
               "claude_module: 表单基础页/模型页输入框 Esc=取消不落库（headless）", {
     TestEnv env;
-    std::unique_ptr<::core::Module> mod(create_claude_module());
+    auto mod = mkmod();
     mod->onStart();
     eui::Screen screen;
     screen.width = 1600.0f;
@@ -1950,7 +1950,7 @@ REGISTER_TEST(claude_module_form_esc_cancels,
 REGISTER_TEST(claude_module_keyboard_shortcuts,
               "claude: Ctrl+N 新建 / Ctrl+S 保存表单 / Ctrl+Enter 启停代理", {
     TestEnv env;
-    std::unique_ptr<::core::Module> mod(create_claude_module());
+    auto mod = mkmod();
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
@@ -2114,7 +2114,7 @@ REGISTER_TEST(claude_module_compose_cache_equivalence,
     DOCTEST_REQUIRE(b.isOk());
     DOCTEST_REQUIRE(env.svc->setActiveProfile(b.value().id).isOk());
 
-    std::unique_ptr<::core::Module> mod(create_claude_module());
+    auto mod = mkmod();
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
@@ -2163,7 +2163,6 @@ REGISTER_TEST(claude_module_compose_cache_equivalence,
         DOCTEST_CHECK_EQ(name0, std::string("B缓存"));
         DOCTEST_CHECK_EQ(name1, std::string("A缓存"));
         DOCTEST_CHECK_EQ(detail, std::string("B缓存"));
-        DOCTEST_CHECK(ui.find("claude.profile.0.active.text") != nullptr);
     }
     {
         eui::Ui ui;
@@ -2248,8 +2247,6 @@ REGISTER_TEST(claude_module_compose_cache_equivalence,
         compose(ui);
         DOCTEST_CHECK_EQ(textOf(ui, "claude.profile.0.name"),
                          std::string("A缓存"));
-        DOCTEST_CHECK(ui.find("claude.profile.0.active.text") != nullptr);
-        DOCTEST_CHECK(ui.find("claude.profile.1.active.text") == nullptr);
     }
 
     mod->onStop();
@@ -2270,7 +2267,7 @@ REGISTER_TEST(claude_ui_esc_closes_delete_confirm,
     DOCTEST_REQUIRE(created.isOk());
     const int64_t pid = created.value().id;
 
-    std::unique_ptr<::core::Module> mod(create_claude_module());
+    auto mod = mkmod();
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
@@ -2343,7 +2340,7 @@ REGISTER_TEST(claude_h2_compose_snapshot_async,
                                     "sk-ant-aaaa-1111", "claude-sonnet-4-5");
     DOCTEST_REQUIRE(a.isOk());
 
-    std::unique_ptr<::core::Module> mod(create_claude_module());
+    auto mod = mkmod();
     mod->onStart();
     eui::Screen screen;
     screen.width = 1600.0f;
@@ -2421,7 +2418,7 @@ REGISTER_TEST(claude_module_duplicate_profile_ui,
     DOCTEST_REQUIRE(b.isOk());
     DOCTEST_REQUIRE(env.svc->setActiveProfile(a.value().id).isOk());
 
-    std::unique_ptr<::core::Module> mod(create_claude_module());
+    auto mod = mkmod();
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
@@ -2512,8 +2509,6 @@ REGISTER_TEST(claude_module_duplicate_profile_ui,
         const auto* n = ui.find("claude.profile.2.name");
         if (n != nullptr && n->text == "中转 副本") {
             sawCopy = true;
-            DOCTEST_CHECK(ui.find("claude.profile.0.active.text") != nullptr);
-            DOCTEST_CHECK(ui.find("claude.profile.2.active.text") == nullptr);
         } else {
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
@@ -2549,7 +2544,7 @@ REGISTER_TEST(claude_module_ui_enable_captures_settings,
                                     "sk-b-key-0123456789abcdef", "");
     DOCTEST_REQUIRE(b.isOk());
 
-    std::unique_ptr<::core::Module> mod(create_claude_module());
+    auto mod = mkmod();
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
@@ -2617,7 +2612,7 @@ REGISTER_TEST(claude_module_takeover_warn_visible,
     // 坏 settings.json（非法 JSON）→ takeOver 解析失败中止，全程不写 sidecar
     d.write(d.file("settings.json"), "{ 这不是合法 JSON");
 
-    std::unique_ptr<::core::Module> mod(create_claude_module());
+    auto mod = mkmod();
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
@@ -2673,7 +2668,7 @@ REGISTER_TEST(claude_module_takeover_warn_summary,
             R"({"env": {"ANTHROPIC_BASE_URL": "https://corp.example.com"}})");
     d.write(d.file("project.json"), R"({"env": {"ANTHROPIC_MODEL": "m-override"}})");
 
-    std::unique_ptr<::core::Module> mod(create_claude_module());
+    auto mod = mkmod();
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
@@ -2701,7 +2696,7 @@ REGISTER_TEST(claude_module_takeover_warn_summary,
 REGISTER_TEST(claude_ui_form_auth_field_dropdown_exists,
               "claude_module: 表单基础页认证字段下拉渲染（无服务不崩）", {
     module::claude::ClaudeService::setGlobal(nullptr);   // 干净起点
-    std::unique_ptr<::core::Module> mod(create_claude_module());
+    auto mod = mkmod();
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
@@ -2752,7 +2747,7 @@ REGISTER_TEST(claude_ui_form_basic_single_column_geometry,
                                     "sk-ant-geo-0001", "");
     DOCTEST_REQUIRE(a.isOk());
 
-    std::unique_ptr<::core::Module> mod(create_claude_module());
+    auto mod = mkmod();
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
@@ -2870,7 +2865,7 @@ REGISTER_TEST(claude_ui_form_basic_single_column_geometry,
 REGISTER_TEST(claude_ui_auth_field_create_persists,
               "claude_module: 新建表单选「只发 x-api-key」保存后落库", {
     TestEnv env;
-    std::unique_ptr<::core::Module> mod(create_claude_module());
+    auto mod = mkmod();
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
@@ -2958,7 +2953,7 @@ REGISTER_TEST(claude_ui_auth_field_edit_shows_current,
                                     /*sharedConfigId=*/0, "api_key");
     DOCTEST_REQUIRE(a.isOk());
 
-    std::unique_ptr<::core::Module> mod(create_claude_module());
+    auto mod = mkmod();
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
@@ -3028,7 +3023,7 @@ REGISTER_TEST(claude_ui_fallback_dropdown_edit_persists,
     DOCTEST_REQUIRE(a.isOk());
     DOCTEST_REQUIRE(env.svc->setActiveProfile(a.value().id).isOk());
 
-    std::unique_ptr<::core::Module> mod(create_claude_module());
+    auto mod = mkmod();
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
@@ -3140,7 +3135,7 @@ REGISTER_TEST(claude_ui_fallback_dropdown_edit_persists,
 REGISTER_TEST(claude_ui_advanced_tab_dialect_persists,
               "claude_module: 高级配置页方言下拉（新建与编辑落库/自动档/不触碰保留，headless）", {
     TestEnv env;
-    std::unique_ptr<::core::Module> mod(create_claude_module());
+    auto mod = mkmod();
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
@@ -3409,7 +3404,7 @@ REGISTER_TEST(claude_ui_advanced_tab_dialect_persists,
 REGISTER_TEST(claude_ui_advanced_json_pretty_persisted,
               "claude_module: 高级设置 JSON compact 输入落库为 pretty 文本（headless，变异④钉子）", {
     TestEnv env;
-    std::unique_ptr<::core::Module> mod(create_claude_module());
+    auto mod = mkmod();
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
@@ -3493,7 +3488,7 @@ REGISTER_TEST(claude_ui_advanced_json_pretty_persisted,
 REGISTER_TEST(claude_ui_advanced_json_invalid_and_env_key_rejected,
               "claude_module: 高级设置 JSON 非法/含 env 键 → formError_ 红字不落库（headless）", {
     TestEnv env;
-    std::unique_ptr<::core::Module> mod(create_claude_module());
+    auto mod = mkmod();
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
@@ -3703,7 +3698,7 @@ REGISTER_TEST(claude_ui_advanced_json_invalid_and_env_key_rejected,
 REGISTER_TEST(claude_ui_json_fullscreen_enter_cover_and_esc,
               "claude_module: JSON 全屏编辑进入覆盖窗口几何 + Esc 退回表单文本保留（headless）", {
     TestEnv env;
-    std::unique_ptr<::core::Module> mod(create_claude_module());
+    auto mod = mkmod();
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
@@ -3867,7 +3862,7 @@ REGISTER_TEST(claude_ui_json_fullscreen_enter_cover_and_esc,
 REGISTER_TEST(claude_ui_json_fullscreen_buffer_roundtrip_and_error_gate,
               "claude_module: JSON 全屏编辑同一缓冲往返（双向落库）+ 应用校验红字同源（headless）", {
     TestEnv env;
-    std::unique_ptr<::core::Module> mod(create_claude_module());
+    auto mod = mkmod();
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
@@ -4168,7 +4163,7 @@ REGISTER_TEST(claude_ui_json_fullscreen_discard_semantics,
     DOCTEST_REQUIRE(p.isOk());
     const int64_t pid = p.value().id;
 
-    std::unique_ptr<::core::Module> mod(create_claude_module());
+    auto mod = mkmod();
     mod->onStart();
     eui::Screen screen;
     screen.width = 1600.0f;
@@ -4506,7 +4501,7 @@ REGISTER_TEST(claude_module_run_button_headless,
         }
         ~PickerStub() { platform::folderpicker::setPickerForTest(nullptr); }
     } pickerStub(root.dir);
-    std::unique_ptr<::core::Module> mod(create_claude_module());
+    auto mod = mkmod();
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
@@ -4642,7 +4637,7 @@ REGISTER_TEST(claude_module_shared_block_and_card,
                                     "sk-ant-sblk-0001", "");
     DOCTEST_REQUIRE(p.isOk());
 
-    std::unique_ptr<::core::Module> mod(create_claude_module());
+    auto mod = mkmod();
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
@@ -4762,7 +4757,7 @@ REGISTER_TEST(claude_module_shared_block_and_card,
 REGISTER_TEST(claude_module_shared_editor_create,
               "claude_module: 新建共享配置片段保存落库（headless）", {
     TestEnv env;
-    std::unique_ptr<::core::Module> mod(create_claude_module());
+    auto mod = mkmod();
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
@@ -4885,7 +4880,7 @@ REGISTER_TEST(claude_module_shared_bind_and_frozen_preview,
         DOCTEST_REQUIRE(env.svc->updateProfile(p).isOk());
     }
 
-    std::unique_ptr<::core::Module> mod(create_claude_module());
+    auto mod = mkmod();
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
@@ -5063,7 +5058,7 @@ REGISTER_TEST(claude_module_shared_detail_row_and_badge,
                                           "sk-ant-sbdg-0002", "");
     DOCTEST_REQUIRE(unbound.isOk());
 
-    std::unique_ptr<::core::Module> mod(create_claude_module());
+    auto mod = mkmod();
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
@@ -5130,7 +5125,7 @@ REGISTER_TEST(claude_module_shared_esc_chain_and_gating,
     TestEnv env;
     auto f = env.svc->createSharedConfig("片段A", R"({"MY_A":"1"})");
     DOCTEST_REQUIRE(f.isOk());
-    std::unique_ptr<::core::Module> mod(create_claude_module());
+    auto mod = mkmod();
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
@@ -5260,7 +5255,7 @@ REGISTER_TEST(claude_module_shared_delete_unbinds,
                                        "sk-ant-sdel-0009", "");
     DOCTEST_REQUIRE(free.isOk());
 
-    std::unique_ptr<::core::Module> mod(create_claude_module());
+    auto mod = mkmod();
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
@@ -5508,7 +5503,7 @@ REGISTER_TEST(claude_export_json_shape,
 REGISTER_TEST(claude_copyconfig_ctx_menu_after_row_slim,
               "claude_module: 详情动作行 4 键 + 复制配置仅右键菜单（文案/节点收口/点击派发）", {
     TestEnv env;
-    std::unique_ptr<::core::Module> mod(create_claude_module());
+    auto mod = mkmod();
     mod->onStart();
     eui::Screen screen;
     screen.width = 1600.0f;
@@ -5682,7 +5677,7 @@ REGISTER_TEST(claude_detail_actions_anchor_four_tabs,
     DOCTEST_REQUIRE(env.svc->updateProfile(g.value()).isOk());
     DOCTEST_REQUIRE(seedCalls(env.svc.get(), pid, 3));
 
-    std::unique_ptr<::core::Module> mod(create_claude_module());
+    auto mod = mkmod();
     mod->onStart();   // 首载同步装载快照（H2），下面第一帧就有 recent
 
     constexpr float kW = 1262.0f;   // 真实 macOS 页面宽（窗口 1470 − 侧边栏 208）
@@ -5743,7 +5738,7 @@ REGISTER_TEST(claude_detail_advanced_pane_readonly,
                                       "sk-ant-advd-0001", "m");
     DOCTEST_REQUIRE(mid.isOk());
 
-    std::unique_ptr<::core::Module> mod(create_claude_module());
+    auto mod = mkmod();
     mod->onStart();
 
     constexpr float kW = 1262.0f;
@@ -5881,7 +5876,7 @@ REGISTER_TEST(claude_copyconfig_seven_keys_geometry,
     DOCTEST_REQUIRE(a.isOk());
     const int64_t pid = a.value().id;
     DOCTEST_REQUIRE(env.svc->setActiveProfile(pid).isOk());
-    std::unique_ptr<::core::Module> mod(create_claude_module());
+    auto mod = mkmod();
     mod->onStart();
     constexpr float kW = 1262.0f;
     constexpr float kH = 801.0f;
@@ -5915,7 +5910,7 @@ REGISTER_TEST(claude_calls_rows_by_available_height,
     DOCTEST_REQUIRE(env.svc->setActiveProfile(pid).isOk());
     DOCTEST_REQUIRE(seedCalls(env.svc.get(), pid, 30));
 
-    std::unique_ptr<::core::Module> mod(create_claude_module());
+    auto mod = mkmod();
     mod->onStart();
 
     constexpr float kW = 1262.0f;
@@ -5964,7 +5959,7 @@ REGISTER_TEST(claude_calls_no_rows_when_too_short,
     DOCTEST_REQUIRE(env.svc->setActiveProfile(pid).isOk());
     DOCTEST_REQUIRE(seedCalls(env.svc.get(), pid, 30));
 
-    std::unique_ptr<::core::Module> mod(create_claude_module());
+    auto mod = mkmod();
     mod->onStart();
 
     // 480 高 → bodyH = 480 − 80 − 64 − 16 − 34(引导条) = 286；
@@ -6039,7 +6034,7 @@ REGISTER_TEST(claude_calls_rate_column,
         "(" + pidStr + ", 'POST', '/v1/messages', 200, 1000, NULL, 10, 20, '', " +
         std::to_string(now - 500) + ")").isOk());
 
-    std::unique_ptr<::core::Module> mod(create_claude_module());
+    auto mod = mkmod();
     mod->onStart();
 
     constexpr float kW = 1262.0f;
@@ -6107,7 +6102,7 @@ REGISTER_TEST(claude_detail_vertical_center_and_viewall_button,
     DOCTEST_REQUIRE(env.svc->setActiveProfile(pid).isOk());
     DOCTEST_REQUIRE(seedCalls(env.svc.get(), pid, 3));
 
-    std::unique_ptr<::core::Module> mod(create_claude_module());
+    auto mod = mkmod();
     mod->onStart();
 
     constexpr float kW = 1262.0f;
@@ -6242,7 +6237,7 @@ REGISTER_TEST(claude_dialog_pagination_vertical_align,
     DOCTEST_REQUIRE(env.svc->setActiveProfile(pid).isOk());
     DOCTEST_REQUIRE(seedCalls(env.svc.get(), pid, 30));  // >1 页
 
-    std::unique_ptr<::core::Module> mod(create_claude_module());
+    auto mod = mkmod();
     mod->onStart();
 
     constexpr float kW = 1262.0f;
@@ -6312,12 +6307,11 @@ REGISTER_TEST(claude_dialog_pagination_vertical_align,
     return true;
 })
 
-// Profile 卡 ACTIVE 胶囊徽标文字居中
+// Profile 卡「共享」胶囊徽标文字居中
 // 文字 frame 中心 == 胶囊 frame 中心（x/y 各 ±0.5）+ 行高口径一致（文本
-// lineHeight == 胶囊高，不靠 padding 蒙）。回退 active.text 的 verticalAlign
-// → 本用例红；「共享」胶囊是同类项，一并钉住。
-REGISTER_TEST(claude_profile_active_badge_centered,
-              "claude_module: Profile 卡 ACTIVE / 共享 胶囊徽标文字居中", {
+// lineHeight == 胶囊高，不靠 padding 蒙）。
+REGISTER_TEST(claude_profile_shared_badge_centered,
+              "claude_module: Profile 卡共享胶囊徽标文字居中", {
     TestEnv env;
     auto sc = env.svc->createSharedConfig("片段A", R"({"MY_K":"v"})");
     DOCTEST_REQUIRE(sc.isOk());
@@ -6331,7 +6325,7 @@ REGISTER_TEST(claude_profile_active_badge_centered,
     g.value().sharedConfigId = sc.value().id;   // 「共享」角标要绑定片段才画
     DOCTEST_REQUIRE(env.svc->updateProfile(g.value()).isOk());
 
-    std::unique_ptr<::core::Module> mod(create_claude_module());
+    auto mod = mkmod();
     mod->onStart();
     eui::Ui ui;
     composeAtSize(mod.get(), ui, "claude_badge", 1262.0f, 801.0f);
@@ -6373,17 +6367,9 @@ REGISTER_TEST(claude_profile_active_badge_centered,
         }
         return {};
     };
-    const std::string activeBadge =
-        pillProblem("claude.profile.0.active.text", "claude.profile.0.active.bg");
-    DOCTEST_CHECK_MESSAGE(activeBadge.empty(), activeBadge);
     const std::string sharedBadge = pillProblem(
         "claude.profile.0.shared.badge.text", "claude.profile.0.shared.badge");
     DOCTEST_CHECK_MESSAGE(sharedBadge.empty(), sharedBadge);
-    // 胶囊几何：§5 加宽后「当前选中」64×20 在卡片右上角（原 ACTIVE 48×20 放不下 4 全角字）
-    const auto* abg = ui.find("claude.profile.0.active.bg");
-    DOCTEST_REQUIRE(abg != nullptr);
-    DOCTEST_CHECK_EQ(abg->frame.width, 64.0f);
-    DOCTEST_CHECK_EQ(abg->frame.height, 20.0f);
 
     mod->onStop();
     cleanupProfileKey(kTestKeychainService, pid);
@@ -6406,7 +6392,7 @@ REGISTER_TEST(claude_profile_avatar_color_ring_centered,
         DOCTEST_REQUIRE(p.isOk());
     }
 
-    std::unique_ptr<::core::Module> mod(create_claude_module());
+    auto mod = mkmod();
     mod->onStart();
 
     const auto compose = [&](eui::Ui& ui) {
@@ -6536,7 +6522,7 @@ REGISTER_TEST(claude_profile_avatar_initial_utf8,
     auto lat = env.svc->createProfile("Alpha", "https://a.example.com",
                                       "sk-ant-u8-002", "m");
     DOCTEST_REQUIRE(lat.isOk());
-    std::unique_ptr<::core::Module> mod(create_claude_module());
+    auto mod = mkmod();
     mod->onStart();
     eui::Ui ui;
     composeAtSize(mod.get(), ui, "claude_u8", 1262.0f, 801.0f);
@@ -6588,7 +6574,7 @@ REGISTER_TEST(claude_profile_avatar_centered,
     DOCTEST_REQUIRE(p.isOk());
     const int64_t pid = p.value().id;
 
-    std::unique_ptr<::core::Module> mod(create_claude_module());
+    auto mod = mkmod();
     mod->onStart();
     eui::Ui ui;
     composeAtSize(mod.get(), ui, "claude_avatar", 1262.0f, 801.0f);
@@ -6673,7 +6659,7 @@ REGISTER_TEST(claude_env_tab_lists_effective_env_with_source,
     g.value().sharedConfigId = sc.value().id;   // 片段带 1 个键
     DOCTEST_REQUIRE(env.svc->updateProfile(g.value()).isOk());
 
-    std::unique_ptr<::core::Module> mod(create_claude_module());
+    auto mod = mkmod();
     mod->onStart();
 
     eui::Ui ui;
@@ -6737,7 +6723,7 @@ REGISTER_TEST(claude_env_tab_no_overlap_and_model_keys_hidden,
         R"({"MY_GEO":"v","ANTHROPIC_DEFAULT_HAIKU_MODEL":"m-user-h"})";
     DOCTEST_REQUIRE(env.svc->updateProfile(g.value()).isOk());
 
-    std::unique_ptr<::core::Module> mod(create_claude_module());
+    auto mod = mkmod();
     mod->onStart();
 
     // 判据 helper：对一帧已 layout 的 Ui 逐行断言（返回空串 = 通过；本框架
@@ -6845,7 +6831,7 @@ REGISTER_TEST(claude_shared_block_bottom_anchored,
         ids.push_back(p.value().id);
     }
 
-    std::unique_ptr<::core::Module> mod(create_claude_module());
+    auto mod = mkmod();
     mod->onStart();
 
     // 尺寸矩阵（折叠默认态）：真实 macOS 尺寸 + 默认 + 最小窗 + 高窗，逐档断言
@@ -6994,7 +6980,7 @@ REGISTER_TEST(claude_shared_list_cap_two_cards,
             auto f = env.svc->createSharedConfig("片段" + std::to_string(i), "");
             DOCTEST_REQUIRE(f.isOk());
         }
-        std::unique_ptr<::core::Module> mod(create_claude_module());
+        auto mod = mkmod();
         mod->onStart();
 
         // ⓪ 默认折叠：一行头、无列表区（不论条数）
@@ -7196,7 +7182,7 @@ REGISTER_TEST(claude_detail_advanced_key_sources,
         DOCTEST_REQUIRE(env.svc->updateProfile(p).isOk());
     }
 
-    std::unique_ptr<::core::Module> mod(create_claude_module());
+    auto mod = mkmod();
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
@@ -7372,7 +7358,7 @@ REGISTER_TEST(claude_detail_advanced_key_overflow_within_box,
         DOCTEST_REQUIRE(env.svc->updateProfile(p).isOk());
     }
 
-    std::unique_ptr<::core::Module> mod(create_claude_module());
+    auto mod = mkmod();
     eui::Screen screen;
     // 最小窗档（1200×720）：详情内容框最矮——溢出行数预算的判别力来源
     screen.width = 1200.0f;
@@ -7474,7 +7460,7 @@ REGISTER_TEST(claude_advjson_pane_geometry_follows_font_scale,
         DOCTEST_REQUIRE(env.svc->updateProfile(pr).isOk());
     }
 
-    std::unique_ptr<::core::Module> mod(create_claude_module());
+    auto mod = mkmod();
     eui::Screen screen;
     screen.width = 1262.0f;
     screen.height = 1000.0f;
@@ -7710,7 +7696,7 @@ REGISTER_TEST(claude_advjson_pane_geometry_follows_font_scale,
 REGISTER_TEST(claude_shared_dialog_json_roundtrip,
               "claude_module: 片段弹窗 JSON 保存落库 pretty + 重开回读 + env 键拒绝（headless）", {
     TestEnv env;
-    std::unique_ptr<::core::Module> mod(create_claude_module());
+    auto mod = mkmod();
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
@@ -7896,7 +7882,7 @@ REGISTER_TEST(claude_module_onstart_reentry_idempotent,
               "claude_module: onStart→onStop→onStart 重入 + 双 onStart/双 onStop no-op", {
     TestEnv env;
     DOCTEST_REQUIRE(module::claude::ClaudeService::global() != nullptr);
-    std::unique_ptr<::core::Module> mod(create_claude_module());
+    auto mod = mkmod();
 
     // 观察面（onStart 无注册表副作用，取服务状态一致性最低契约）：
     // 硬性需求 1 —— onStart 不自动起代理（main 按设置门控 / 用户手动启动）
@@ -7944,7 +7930,7 @@ REGISTER_TEST(claude_ui_model_one_m_switch,
     cur.value().modelsConfigJson = seeded.value();
     DOCTEST_REQUIRE(env.svc->updateProfile(cur.value()).isOk());
 
-    std::unique_ptr<::core::Module> mod(create_claude_module());
+    auto mod = mkmod();
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
@@ -8085,7 +8071,7 @@ REGISTER_TEST(claude_ui_form_one_m_normalize_on_save,
     DOCTEST_REQUIRE(a.isOk());
     const int64_t pid = a.value().id;
 
-    std::unique_ptr<::core::Module> mod(create_claude_module());
+    auto mod = mkmod();
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
@@ -8193,7 +8179,7 @@ REGISTER_TEST(claude_keychain_backfill_one_shot,
         platform::keychain::setBackendForTest(&fake);
 
     {
-        std::unique_ptr<::core::Module> mod(create_claude_module());
+        auto mod = mkmod();
         mod->onStart();
         mod->onStop();
     }
@@ -8204,7 +8190,7 @@ REGISTER_TEST(claude_keychain_backfill_one_shot,
     DOCTEST_CHECK_EQ(done.isOk() ? done.value() : std::string(), std::string("1"));
 
     {
-        std::unique_ptr<::core::Module> mod(create_claude_module());
+        auto mod = mkmod();
         mod->onStart();
         mod->onStop();
     }
@@ -8223,7 +8209,7 @@ REGISTER_TEST(claude_keychain_backfill_one_shot,
 REGISTER_TEST(claude_module_left_pane_adaptive_width,
               "claude_module: 左栏 clamp(0.39,320,460) 自适应 + 四档右栏 ≥350（headless）", {
     module::claude::ClaudeService::setGlobal(nullptr);
-    std::unique_ptr<::core::Module> mod(create_claude_module());
+    auto mod = mkmod();
     // 模块可见屏宽 = 窗宽 − 侧栏 208（core::windowToCompose 口径，test_router 同源）
     const struct { float winW; float expLeftW; } kCases[] = {
         {1000.0f, 320.0f},    // contentW 712 → 277.68 触下限 320；右栏 376
@@ -8274,7 +8260,7 @@ REGISTER_TEST(claude_profile_selection_check_badge,
                                     "sk-ant-chk-0002", "");
     DOCTEST_REQUIRE(b.isOk());
 
-    std::unique_ptr<::core::Module> mod(create_claude_module());
+    auto mod = mkmod();
     eui::Screen screen{1600.0f, 1000.0f};
     auto compose = [&](eui::Ui& ui, const char* tag) {
         ui.begin(tag);
@@ -8324,10 +8310,10 @@ REGISTER_TEST(claude_profile_selection_check_badge,
         DOCTEST_CHECK(sameColor(c0->color, t.colors.wechat.primary));
         DOCTEST_CHECK(sameColor(i0->color, t.colors.wechat.onPrimary));
         DOCTEST_CHECK(sameColor(bg0->color, t.colors.wechat.selectedBg));
-        // 圈在卡右缘垂直居中带（96 高卡的 y+38..y+58），不越卡右缘
-        DOCTEST_CHECK(c0->frame.y >= bg0->frame.y + 37.0f);
+        // 圈在卡右缘垂直居中（56 高卡，26px 圈 y+15..y+41）
+        DOCTEST_CHECK(c0->frame.y >= bg0->frame.y + 14.5f);
         DOCTEST_CHECK(c0->frame.y + c0->frame.height <=
-                      bg0->frame.y + bg0->frame.height - 37.0f + 0.5f);
+                      bg0->frame.y + bg0->frame.height - 14.5f + 0.5f);
         DOCTEST_CHECK(c0->frame.x + c0->frame.width <=
                       bg0->frame.x + bg0->frame.width + 0.5f);
         DOCTEST_CHECK(ui.find("claude.profile.1.check") == nullptr);
@@ -8353,42 +8339,110 @@ REGISTER_TEST(claude_profile_selection_check_badge,
     return true;
 })
 
-// UAT5：卡内 URL 单行省略号截断——真机长 URL 曾溢出卡片外（EUI 文本默认不裁
-// ink）；须显式 Ellipsis + maxWidth 卡内宽，窄窗 320 档左栏下同样截住。
-REGISTER_TEST(claude_profile_card_url_ellipsis,
-              "claude_module: 卡内 URL Ellipsis 截断（长 URL 不外溢，含窄窗档）", {
+// UAT6 切换 Profile 二次确认弹窗：点卡弹窗 → 取消 = 不变 → 确认 = 切换；点已选卡无弹窗
+REGISTER_TEST(claude_profile_switch_confirm_dialog,
+              "claude_module: 切换 Profile 二次确认弹窗", {
     TestEnv env;
-    const std::string longUrl =
-        "https://" + std::string(28, 'a') +
-        ".extra-long-gateway-subdomain.example.com/api/v1/messages"
-        "?beta=true&tracking=1&more=query";
-    auto a = env.svc->createProfile("长址", longUrl, "sk-ant-url-0001", "");
+    auto a = env.svc->createProfile("A", "https://a.example.com", "sk-a", "");
     DOCTEST_REQUIRE(a.isOk());
+    auto b = env.svc->createProfile("B", "https://b.example.com", "sk-b", "");
+    DOCTEST_REQUIRE(b.isOk());
+    const int64_t idA = a.value().id;
+    const int64_t idB = b.value().id;
 
-    std::unique_ptr<::core::Module> mod(create_claude_module());
+    auto mod = mkmod(false);  // 不 bypass——真走弹窗路径
     mod->onStart();
-    auto assertUrlInCard = [&](float winW, const char* tag) {
-        eui::Screen screen{winW, 1000.0f};
-        eui::Ui ui;
+    eui::Screen screen{1600.0f, 1000.0f};
+    auto compose = [&](eui::Ui& ui, const char* tag) {
         ui.begin(tag);
         mod->compose(ui, screen);
         ui.end();
         ui.layout(screen.width, screen.height);
-        const auto* url = ui.find("claude.profile.0.url");
-        const auto* card = ui.find("claude.profile.0.bg");
-        DOCTEST_REQUIRE(url != nullptr);
-        DOCTEST_REQUIRE(card != nullptr);
-        DOCTEST_CHECK_EQ(url->overflow, core::TextOverflow::Ellipsis);
-        DOCTEST_CHECK(url->frame.x + url->frame.width <=
-                      card->frame.x + card->frame.width + 0.5f);
-        return true;  // 宏含 return false，lambda 落尾须补 true（否则 bool 推导落空）
     };
-    // 默认窗（左栏触上限 460）与 320 档窄窗（contentW 820 → 左栏贴下限）
-    assertUrlInCard(1600.0f, "url_wide");
-    assertUrlInCard(900.0f, "url_narrow");
+    const auto& t = core::theme::current();
+
+    // 初帧：无选中 → 两卡都无勾圈
+    {
+        eui::Ui ui;
+        compose(ui, "dlg_init");
+        DOCTEST_CHECK(ui.find("claude.profile.0.check") == nullptr);
+        DOCTEST_CHECK(ui.find("claude.profile.1.check") == nullptr);
+    }
+    // 点卡 A → 弹窗出现；卡 A 勾圈未出现（确认前不切）
+    {
+        eui::Ui ui;
+        compose(ui, "dlg_clickA");
+        DOCTEST_CHECK(click(ui, "claude.profile.0.bg"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "dlg_open");
+        DOCTEST_CHECK(ui.find("claude.dialog.switch") != nullptr);
+        DOCTEST_CHECK(ui.find("claude.profile.0.check") == nullptr);  // 确认前不渲染勾圈
+    }
+    // 点取消 → 弹窗关闭；卡 A 勾圈仍未出现（选择未变）
+    {
+        eui::Ui ui;
+        compose(ui, "dlg_cancel");
+        DOCTEST_CHECK(click(ui, "claude.dialog.switch.cancel.bg"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "dlg_closed");
+        DOCTEST_CHECK(ui.find("claude.dialog.switch") == nullptr);
+        DOCTEST_CHECK(ui.find("claude.profile.0.check") == nullptr);
+    }
+    // 再点卡 A + 确认 → 勾圈落到卡 A
+    {
+        eui::Ui ui;
+        compose(ui, "dlg_clickA2");
+        DOCTEST_CHECK(click(ui, "claude.profile.0.bg"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "dlg_confirmA");
+        DOCTEST_CHECK(click(ui, "claude.dialog.switch.confirm.bg"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "dlg_confirmed");
+        DOCTEST_CHECK(ui.find("claude.dialog.switch") == nullptr);
+        DOCTEST_CHECK(ui.find("claude.profile.0.check") != nullptr);
+        DOCTEST_CHECK(ui.find("claude.profile.1.check") == nullptr);
+    }
+    // 点已选卡 A（selectedId_==idA）→ 无弹窗、勾圈不变
+    {
+        eui::Ui ui;
+        compose(ui, "dlg_sameA");
+        DOCTEST_CHECK(click(ui, "claude.profile.0.bg"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "dlg_noop");
+        DOCTEST_CHECK(ui.find("claude.dialog.switch") == nullptr);
+        DOCTEST_CHECK(ui.find("claude.profile.0.check") != nullptr);
+    }
+    // 点卡 B + 确认 → 勾圈移到卡 B
+    {
+        eui::Ui ui;
+        compose(ui, "dlg_clickB");
+        DOCTEST_CHECK(click(ui, "claude.profile.1.bg"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "dlg_confirmB");
+        DOCTEST_CHECK(click(ui, "claude.dialog.switch.confirm.bg"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "dlg_onB");
+        DOCTEST_CHECK(ui.find("claude.profile.0.check") == nullptr);
+        DOCTEST_CHECK(ui.find("claude.profile.1.check") != nullptr);
+    }
 
     mod->onStop();
-    cleanupProfileKey(kTestKeychainService, a.value().id);
+    cleanupProfileKey(kTestKeychainService, idA);
+    cleanupProfileKey(kTestKeychainService, idB);
     return true;
 })
 
@@ -8398,7 +8452,7 @@ REGISTER_TEST(claude_profile_card_url_ellipsis,
 REGISTER_TEST(claude_form_wechat_colors,
               "claude_module: 表单/全屏编辑输入面与按钮 WeChat 令牌锁死（反暖橙）", {
     TestEnv env;
-    std::unique_ptr<::core::Module> mod(create_claude_module());
+    auto mod = mkmod();
     eui::Screen screen{1600.0f, 1000.0f};
     auto compose = [&](eui::Ui& ui, const char* tag) {
         ui.begin(tag);
@@ -8546,7 +8600,7 @@ REGISTER_TEST(claude_detail_wechat_and_no_inactive_badge,
     e.startedAt = std::time(nullptr);
     DOCTEST_REQUIRE(env.svc->logCall(e).isOk());
 
-    std::unique_ptr<::core::Module> mod(create_claude_module());
+    auto mod = mkmod();
     eui::Screen screen{1600.0f, 1000.0f};
     auto compose = [&](eui::Ui& ui, const char* tag) {
         ui.begin(tag);
@@ -8666,7 +8720,7 @@ REGISTER_TEST(claude_shared_dialog_wechat_colors,
                                     "sk-ant-sdlg-0001", "");
     DOCTEST_REQUIRE(p.isOk());
 
-    std::unique_ptr<::core::Module> mod(create_claude_module());
+    auto mod = mkmod();
     eui::Screen screen{1600.0f, 1000.0f};
     auto compose = [&](eui::Ui& ui, const char* tag) {
         ui.begin(tag);
