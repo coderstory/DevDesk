@@ -756,7 +756,7 @@ void drawOverdueDialog(eui::Ui& ui, const eui::Screen& screen,
     const auto themeTokens = core::theme::componentTokensWeChat(t);
     const float w = ui_kit::dialogWidthPx(ui_kit::DialogWidth::Wide);
     const float rowH = 44.0f;
-    constexpr float kMaxDialogH = 640.0f;
+    constexpr float kMaxDialogH = 552.0f;     // UAT6 弹窗收口：bodyH=600→avail≈552，原 640→552（10 行）
     // 行数按封顶高度截断（标题保留总数，提示行标注截断）
     const size_t maxRows =
         static_cast<size_t>((kMaxDialogH - 96.0f) / rowH);  // = 12

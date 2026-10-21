@@ -19,7 +19,7 @@ namespace module::settings {
 namespace {
 
 constexpr const char* kDialogId = "settings.github.err";
-constexpr float kDialogH = 560.0f;
+constexpr float kDialogH = 552.0f;          // UAT6 弹窗收口：原 560→552（内部元素几何无需变动）
 // 纵向布局（100% 档基准；行盒走 roundFs 派生）。内容底沿 = kDetailY + kDetailH
 // = 484，按钮行 y = h - 60 = 500，互不重叠。
 constexpr float kSummaryY = 58.0f;

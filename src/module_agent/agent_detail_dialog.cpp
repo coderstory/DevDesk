@@ -43,7 +43,7 @@ namespace module::agent {
 namespace {
 
 // 详情弹窗独有常量（仅 composeTaskDetailDialog 消费）
-constexpr float kDetailDialogH = 660.0f;   // 面板高（宽走弹性契约）
+constexpr float kDetailDialogH = 552.0f;   // UAT6 弹窗收口：原 660→552（紧凑档，余 309 内容高仍够三 tab）
 constexpr float kDetailMinW = 720.0f;      // 弹性宽最小档（方案 A 720）
 constexpr float kNavH = 32.0f;             // segment 高（任务弹窗触发 segment 同档）
 constexpr float kStopChipW = 176.0f;
