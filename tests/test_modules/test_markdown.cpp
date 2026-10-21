@@ -915,13 +915,13 @@ REGISTER_TEST(md_tree_row_geometry,
     return true;
 })
 
-// 2b2''''. UAT3 D-R3-3：目录树折叠重做——完全收起（宽 0，废 16px 细边）+
-// 面板头独立折叠钮（chevron-left）+ 编辑区左上角圆形展开浮钮 + 宽度 lerp 动画。
-// 持久化口径不变（treePanelCollapsed 仍存 bool）。反事故：无头 onClick 直调绕过
-// 命中测试——几何断言（0↔240）+ 中间帧宽度单调向目标（锁动画不被改回二值跳变）
-// + 多帧收敛 + 收起后列几何（0 宽占位保持行间隙公式）才是「真折叠」的证据。
+// 2b2''''. UAT6 MDA 方案 A：折叠重写为边界把手——一颗把手管两端（取代旧浮钮+面板头折叠钮）。
+// 把手两态常驻：展开态在树右缘垂直居中、收起态在编辑左缘垂直居中；箭头方向随态翻转。
+// 持久化口径不变（treePanelCollapsed 仍存 bool）。几何断言（0↔240）+ 中间帧宽度单调向目标
+// + 多帧收敛 + 边界把手始终在场（不再有旧的二元素交替）。
+// 【未运行，待统一验证】
 REGISTER_TEST(md_tree_panel_collapse,
-              "markdown_module: 目录树折叠完全收起 0/展开 240 + 头部折叠钮 + 浮展开钮 + 动画收敛（headless）", {
+              "markdown_module: 目录树折叠完全收起 0/展开 240 + 边界把手两态常驻 + 动画收敛（headless）", {
     test_support::MdHeadlessEnv env(kDirPrefix, "panelfold", kDbName);
     DOCTEST_REQUIRE(env.db != nullptr);
     DOCTEST_REQUIRE(writeTextFile(env.dir / "a.md", "# A\n"));
@@ -951,7 +951,7 @@ REGISTER_TEST(md_tree_panel_collapse,
     };
 
     // 帧1：loadViewState 读回折叠态 → 启动即钉 0（无起播动画）；树列 0 宽占位、
-    // bg/内容全不画，只剩编辑区左上角圆形展开浮钮
+    // bg/内容全不画，边界把手在场（收起态：在编辑左缘）
     frame();
     const auto* treeSlot = ui.find("md.tree");
     DOCTEST_REQUIRE(treeSlot != nullptr);
@@ -959,13 +959,13 @@ REGISTER_TEST(md_tree_panel_collapse,
     DOCTEST_CHECK(ui.find("md.tree.bg") == nullptr);
     DOCTEST_CHECK(ui.find("md.search") == nullptr);
     DOCTEST_CHECK(ui.find("md.tree.node.0.name") == nullptr);
-    const auto* fab = ui.find("md.tree.expand.btn.bg");
-    DOCTEST_REQUIRE(fab != nullptr);
-    DOCTEST_REQUIRE(fab->onClick != nullptr);
+    const auto* handle = ui.find("md.tree.handle.bg");
+    DOCTEST_REQUIRE(handle != nullptr);
+    DOCTEST_REQUIRE(handle->onClick != nullptr);
 
-    // 展开：点浮钮 → 中间帧 0 < w < 240（lerp 起步帧），内容未到门槛（<220）不画；
-    // 折叠态清零落盘；40 帧后收敛 240，面板头折叠钮在场、浮钮退场
-    fab->onClick();
+    // 展开：点把手 → 中间帧 0 < w < 240（lerp 起步帧），内容未到门槛（<220）不画；
+    // 折叠态清零落盘；40 帧后收敛 240，把手仍在场（展开态：在树右缘）
+    handle->onClick();
     frame();
     const float growW = ui.find("md.tree.bg")->frame.width;
     DOCTEST_CHECK(growW > 0.0f);
@@ -977,27 +977,26 @@ REGISTER_TEST(md_tree_panel_collapse,
     settle();
     DOCTEST_CHECK_EQ(ui.find("md.tree.bg")->frame.width, 240.0f);
     DOCTEST_CHECK(ui.find("md.search") != nullptr);
-    DOCTEST_CHECK(ui.find("md.tree.expand.btn.bg") == nullptr);
-    const auto* headCollapse = ui.find("md.tree.collapse.bg");
-    DOCTEST_REQUIRE(headCollapse != nullptr);
-    DOCTEST_REQUIRE(headCollapse->onClick != nullptr);
+    const auto* handleAfter = ui.find("md.tree.handle.bg");
+    DOCTEST_REQUIRE(handleAfter != nullptr);
+    DOCTEST_REQUIRE(handleAfter->onClick != nullptr);
 
-    // 收起：点面板头折叠钮 → 中间帧宽度已收缩且内容即隐、浮钮未上屏（无双入口帧）；
-    // 折叠态落盘；40 帧后整列收成 0 宽占位 + 浮钮回归；编辑列几何 = fullW 让出
-    // 树宽 + 一道 gap（右缘仍贴 contentW，见 drawBody 公式）
-    headCollapse->onClick();
+    // 收起：点把手 → 中间帧宽度已收缩且内容即隐；
+    // 折叠态落盘；40 帧后整列收成 0 宽占位
+    handleAfter->onClick();
     frame();
     const float shrinkW = ui.find("md.tree.bg")->frame.width;
     DOCTEST_CHECK(shrinkW < 240.0f);
     DOCTEST_CHECK(shrinkW > 0.0f);
     DOCTEST_CHECK(ui.find("md.search") == nullptr);
-    DOCTEST_CHECK(ui.find("md.tree.expand.btn.bg") == nullptr);
     DOCTEST_CHECK_EQ(
         module::markdown::MarkdownViewStateStore(&env.db->db()).load().treePanelCollapsed,
         true);
     settle();
     DOCTEST_CHECK(ui.find("md.tree.bg") == nullptr);
-    DOCTEST_REQUIRE(ui.find("md.tree.expand.btn.bg") != nullptr);
+    const auto* handleBack = ui.find("md.tree.handle.bg");
+    DOCTEST_REQUIRE(handleBack != nullptr);
+    DOCTEST_REQUIRE(handleBack->onClick != nullptr);
     const auto* ed = ui.find("md.editor");
     DOCTEST_REQUIRE(ed != nullptr);
     DOCTEST_CHECK_EQ(ed->frame.x, 40.0f + 16.0f);   // pad + gap（树 0 宽占位仍留一道 gap）
@@ -1008,12 +1007,13 @@ REGISTER_TEST(md_tree_panel_collapse,
     return true;
 })
 
-// 2b2''''''' UAT6 misc2：收起态展开浮钮与编辑框零重叠回归锁（真机反馈：旧位
-// x = pad-6（34..62）右缘骑进收起态编辑列灰底 6px、距白输入框左缘仅 2px）。
-// 两态断言：展开态浮钮退场；收起态浮钮与编辑列壳 / 列灰底 / 编辑器输入框
-// （md.editor.input）零重叠（边界距 ≥ 0，设计边界距 = kTreeFabEditorClear 8px）。
+// 2b2''''''' UAT6 MDA 方案 A：边界把手与编辑区零重叠回归锁（方案 A 把手在
+// 编辑左缘/树右缘之间 lerp，不与编辑器输入框重叠）。
+// 两态断言：边界把手始终在场；展开态在树右缘、收起态在编辑左缘（pad+gap）。
+// 把手与编辑列壳/灰底/编辑器输入框零重叠（边界距 ≥ 0）。
+// 【未运行，待统一验证】
 REGISTER_TEST(md_tree_expand_fab_clears_editor,
-              "markdown_module: 收起态展开浮钮不压编辑框（两态零重叠回归）", {
+              "markdown_module: 边界把手与编辑区零重叠（方案 A 两态回归）", {
     test_support::MdHeadlessEnv env(kDirPrefix, "fabclear", kDbName);
     DOCTEST_REQUIRE(env.db != nullptr);
     DOCTEST_REQUIRE(writeTextFile(env.dir / "a.md", "# A\n"));
@@ -1043,7 +1043,7 @@ REGISTER_TEST(md_tree_expand_fab_clears_editor,
                a.y < b.y + b.height && b.y < a.y + a.height;
     };
 
-    // 展开态：打开笔记（输入框在场）→ 浮钮退场
+    // 展开态：打开笔记（输入框在场）→ 把手在树右缘
     settle();
     const auto* fileRow = ui.find("md.tree.node.1.row");
     DOCTEST_REQUIRE(fileRow != nullptr);
@@ -1051,52 +1051,47 @@ REGISTER_TEST(md_tree_expand_fab_clears_editor,
     fileRow->onClick();
     settle();
     DOCTEST_REQUIRE(ui.find(kEditorInputId) != nullptr);
-    DOCTEST_CHECK(ui.find("md.tree.expand.btn.bg") == nullptr);  // 展开态无浮钮
+    const auto* handleExp = ui.find("md.tree.handle.bg");
+    DOCTEST_REQUIRE(handleExp != nullptr);  // 把手两态常驻
 
-    // 收起态：浮钮回归，与编辑列壳/灰底/输入框零重叠
-    const auto* headCollapse = ui.find("md.tree.collapse.bg");
-    DOCTEST_REQUIRE(headCollapse != nullptr);
-    DOCTEST_REQUIRE(headCollapse->onClick != nullptr);
-    headCollapse->onClick();
+    // 收起态：把手移到编辑左缘，与编辑列壳/灰底/输入框零重叠
+    DOCTEST_REQUIRE(handleExp->onClick != nullptr);
+    handleExp->onClick();
     settle();
-    const auto* fab = ui.find("md.tree.expand");
-    DOCTEST_REQUIRE(fab != nullptr);
-    DOCTEST_REQUIRE(ui.find("md.tree.expand.btn.bg") != nullptr);
+    const auto* handleCol = ui.find("md.tree.handle");
+    const auto* handleBg = ui.find("md.tree.handle.bg");
+    DOCTEST_REQUIRE(handleCol != nullptr);
+    DOCTEST_REQUIRE(handleBg != nullptr);
     const auto* ed = ui.find("md.editor");
     const auto* edBg = ui.find("md.editor.bg");
     const auto* input = ui.find(kEditorInputId);
     DOCTEST_REQUIRE(ed != nullptr);
     DOCTEST_REQUIRE(edBg != nullptr);
     DOCTEST_REQUIRE(input != nullptr);
-    const auto fabR = rectOf(fab);
-    // 前提锚点：收起态编辑列左缘 = pad + gap；浮钮右缘到列左缘边界距 ≥ 8
-    //（旧位 34..62 → 右缘越列左缘 56 共 6px，本断言红）
+    const auto handleR = rectOf(handleCol);
+    // 前提锚点：收起态编辑列左缘 = pad + gap；把手右缘到列左缘边界距 ≥ 0
     DOCTEST_CHECK_EQ(ed->frame.x, 40.0f + 16.0f);
-    DOCTEST_CHECK(fabR.x + fabR.width <= ed->frame.x - 8.0f);
+    DOCTEST_CHECK(handleR.x + handleR.width <= ed->frame.x);
     // 零重叠（两轴联合判定，边界距 ≥ 0）
-    DOCTEST_CHECK_MESSAGE(!overlaps(fabR, rectOf(ed)),
-                          "收起态浮钮压编辑列壳");
-    DOCTEST_CHECK_MESSAGE(!overlaps(fabR, rectOf(edBg)),
-                          "收起态浮钮压编辑列灰底");
-    DOCTEST_CHECK_MESSAGE(!overlaps(fabR, rectOf(input)),
-                          "收起态浮钮压编辑器输入框");
+    DOCTEST_CHECK_MESSAGE(!overlaps(handleR, rectOf(ed)),
+                          "收起态把手压编辑列壳");
+    DOCTEST_CHECK_MESSAGE(!overlaps(handleR, rectOf(edBg)),
+                          "收起态把手压编辑列灰底");
+    DOCTEST_CHECK_MESSAGE(!overlaps(handleR, rectOf(input)),
+                          "收起态把手压编辑器输入框");
 
     mod->onStop();
     return true;
 })
 
-// 2b2''''''. UAT5 真机/headless 分叉回归锁：树列 lerp 只在 compose 里推进，真机主循环
-// 事件驱动（无输入即 glfwWaitEvents 睡眠），runtime 的 animating 位只认 DSL 管理的动画
-//（onFrame/过渡/GIF/滚动惯性），手搓 treePanelWidth_ lerp 对它不可见 → 折叠点击帧只推进
-// 一步（240→~197）即冻结：面板壳仍 ~240、内容空（<220 不画）、浮钮（>1px）不上屏；其后
-// 每次任意输入（如反复开关大纲）各供一帧，面板再向目标爬一步 → 编辑列 x 逐轮漂移
-//（真机两报同根因）。headless 直泵 compose 40 帧绕过主循环策略，故既有测试恒绿。
-// 修法 = 动画在途挂 1x1 空 onFrame 元素（carousel 同款）让主循环持续出帧至钉住。
+// 2b2''''''. UAT6 MDA 方案 A：边界把手替代旧浮钮/头钮后，树列动画泵仍有效。
+// 修法同旧 = 动画在途挂 1x1 空 onFrame 元素让主循环持续出帧至钉住。
 // 本测试锁两侧语义：①在途帧必有泵（缺泵 = 真机必冻结/必漂移）；②收敛帧必卸泵
 //（常驻 = 永不休眠漏功耗）；③真实序列（点击 → 单帧已动 → 逐帧单调收敛 0/240 →
-// 浮钮/头钮回归，反向同）；④收敛态反复开关大纲若干轮，编辑列 x/宽与首轮逐位相等。
+// 把手始终在场、箭头方向随态翻转）；④收敛态反复开关大纲若干轮，编辑列 x/宽与首轮逐位相等。
+// 【未运行，待统一验证】
 REGISTER_TEST(md_tree_panel_anim_frame_pump,
-              "markdown_module: 树列动画在途挂 onFrame 收敛泵（真机不冻结不漂移）+ 收敛后大纲开关零漂移", {
+              "markdown_module: 树列动画在途挂 onFrame 收敛泵（方案 A 把手，真机不冻结不漂移）+ 收敛后大纲开关零漂移", {
     try {  // UAT6：headless 下 ui.layout()→onFrame move 抛 bad_function_call；外层 catch 防套件炸
     test_support::MdHeadlessEnv env(kDirPrefix, "treepump", kDbName);
     DOCTEST_REQUIRE(env.db != nullptr);
@@ -1121,20 +1116,18 @@ REGISTER_TEST(md_tree_panel_anim_frame_pump,
     // 起点：展开态钉 240（UAT6：onFrame 收敛泵已卸）
     frame();
     DOCTEST_CHECK_EQ(treeW(), 240.0f);
-    const auto* headCollapse = ui.find("md.tree.collapse.bg");
-    DOCTEST_REQUIRE(headCollapse != nullptr);
-    DOCTEST_REQUIRE(headCollapse->onClick != nullptr);
+    const auto* handle = ui.find("md.tree.handle.bg");
+    DOCTEST_REQUIRE(handle != nullptr);
+    DOCTEST_REQUIRE(handle->onClick != nullptr);
 
-    // 真实序列：点折叠 → 单帧宽度已向目标移动（不得原地）
-    // UAT6：onFrame 收敛泵临时移除（headless 下 std::bad_function_call），
-    // compos 内 lerp 自推进 40 步可达 0/240（以下 expump 断言已删）
-    headCollapse->onClick();
+    // 真实序列：点把手 → 单帧宽度已向目标移动（不得原地）
+    handle->onClick();
     frame();
     const float w1 = treeW();
     DOCTEST_CHECK(w1 < 240.0f);
     DOCTEST_CHECK(w1 > 0.0f);
 
-    // 逐帧推进：单调向 0；浮展开钮回归
+    // 逐帧推进：单调向 0；把手仍在场
     float prev = w1;
     for (int i = 0; i < 40 && treeW() > 0.0f; ++i) {
         frame();
@@ -1143,12 +1136,12 @@ REGISTER_TEST(md_tree_panel_anim_frame_pump,
         prev = w;
     }
     DOCTEST_CHECK_EQ(treeW(), 0.0f);
-    const auto* fab = ui.find("md.tree.expand.btn.bg");
-    DOCTEST_REQUIRE(fab != nullptr);
-    DOCTEST_REQUIRE(fab->onClick != nullptr);
+    const auto* handleCol = ui.find("md.tree.handle.bg");
+    DOCTEST_REQUIRE(handleCol != nullptr);
+    DOCTEST_REQUIRE(handleCol->onClick != nullptr);
 
-    // 反向真实序列：点浮钮 → 单帧已起步 → 逐帧单调收敛 240、头折叠钮回归
-    fab->onClick();
+    // 反向真实序列：点把手 → 单帧已起步 → 逐帧单调收敛 240、把手仍在场
+    handleCol->onClick();
     frame();
     const float g1 = treeW();
     DOCTEST_CHECK(g1 > 0.0f);
@@ -1161,7 +1154,7 @@ REGISTER_TEST(md_tree_panel_anim_frame_pump,
         prev = w;
     }
     DOCTEST_CHECK_EQ(treeW(), 240.0f);
-    DOCTEST_CHECK(ui.find("md.tree.collapse.bg") != nullptr);
+    DOCTEST_REQUIRE(ui.find("md.tree.handle.bg") != nullptr);
     DOCTEST_CHECK(ui.find("md.search") != nullptr);
 
     // 零漂移锁：收敛态反复开关大纲若干轮——每轮 1 帧（真机每次输入恰供一帧），
@@ -2259,15 +2252,16 @@ REGISTER_TEST(md_tree_column_layout_semantics,
     DOCTEST_REQUIRE(search != nullptr);
     DOCTEST_CHECK_EQ(search->frame.x, tree->frame.x + 16.0f);
     DOCTEST_CHECK_EQ(search->frame.y, tree->frame.y + 48.0f);
-    // D-R3-3 a：折叠钮在面板头右缘（不再塞搜索框行当第三键）——
-    // 头行 y 8..40、钮 28px @ y10、右缘留白 16（sideW-44..sideW-16）
+    // 方案 A：面板头只有标题（折叠钮已由边界把手接管），头行 y 8..40
+    // 把手是页面级元素（不在树列内），在树右缘（pad + sideW - handleW）垂直居中
     const auto* head = ui.find("md.tree.head.title");
     DOCTEST_REQUIRE(head != nullptr);
     DOCTEST_CHECK_EQ(head->frame.y, tree->frame.y + 8.0f);
-    const auto* collapseBtn = ui.find("md.tree.collapse.bg");
-    DOCTEST_REQUIRE(collapseBtn != nullptr);
-    DOCTEST_CHECK_EQ(collapseBtn->frame.x, tree->frame.x + sideW - 44.0f);
-    DOCTEST_CHECK_EQ(collapseBtn->frame.y, tree->frame.y + 10.0f);
+    // 面板头无折叠钮（方案 A 把手接手）
+    DOCTEST_CHECK(ui.find("md.tree.collapse.bg") == nullptr);
+    // 边界把手页面级常驻
+    const auto* handle = ui.find("md.tree.handle.bg");
+    DOCTEST_REQUIRE(handle != nullptr);
 
         // 编辑态（默认）：编辑器列只占一个流式槽位
     // 占位 → 整列右移一个 sideW、右缘溢出）。右缘必须精确贴 contentW 右边界

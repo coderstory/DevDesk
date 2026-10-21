@@ -84,10 +84,12 @@ constexpr float kTreePanelWidth = 240.0f;         // 展开宽（沿用 UAT2 F�
 constexpr float kTreePanelAnimK = 0.18f;          // 每帧向目标靠拢的固定 lerp 系数
 constexpr float kTreePanelSnapEps = 1.0f;         // 距目标 <1px 视为收敛，直接钉住
 constexpr float kTreePanelContentMinW = 220.0f;   // 内容回画门槛（动画中只画面板壳）
-// UAT6 misc2：收起态展开浮钮几何——右缘与编辑列左缘保持 kTreeFabEditorClear
-// 边界距（零重叠）；旧位右缘骑进编辑列灰底 6px，见 drawTreeExpandFab 注释。
-constexpr float kTreeFabSize = 28.0f;         // 浮钮边长
-constexpr float kTreeFabEditorClear = 8.0f;  // 浮钮右缘 → 编辑列左缘最小边界距
+// UAT6 MDA（方案 A 边界把手）：一颗把手管两端——树展开时把手位于树右缘垂直居中，
+// 树收起后同颗把手出现在编辑区左缘同一垂直位置；绿底白箭头，箭头方向随两态翻转。
+// 取代旧 drawTreeExpandFab 浮钮 + md.tree.collapse 面板头折叠钮。
+constexpr float kTreeHandleW = 24.0f;          // 把手宽
+constexpr float kTreeHandleH = 48.0f;          // 把手高
+constexpr float kTreeHandleArrowSize = 14.0f;  // 箭头字号
 
 // UAT6 字号联动：markdown 的两条 token 系外旁路在此收口进全局缩放档
 //（core::theme::fontScale；token 系字号已由 theme 的 applyFontScale 统一乘）。
@@ -421,7 +423,12 @@ public:
         const float sideW = treePanelWidth_;
         const float gap = t.sizes.spacingLarge;
         const float midW = (contentW - sideW - gap * 2.0f) / 2.0f;
-        const float bodyH = contentH - ui_kit::kHeaderH - t.sizes.spacingLarge;
+        // 方案 A：笔记标签条高 34px（有标签时出现）；列 gap 随元素数调整以免溢出
+        constexpr float kNoteTabBarH = 34.0f;
+        const int gaps = openNotes_.empty() ? 1 : 2;
+        const float tabBarH = openNotes_.empty() ? 0.0f : kNoteTabBarH;
+        const float bodyH = contentH - ui_kit::kHeaderH - tabBarH -
+                            t.sizes.spacingLarge * static_cast<float>(gaps);
 
         // 页面底色 = 主窗口 clearColor，不自铺不透明底（半透/磨砂档才生效）
 
@@ -431,12 +438,13 @@ public:
             .gap(t.sizes.spacingLarge)
             .content([&] {
                 drawHeader(ui, contentW, contentH, bodyH, t);
+                drawNoteTabBar(ui, contentW, t, componentTheme);
                 drawBody(ui, contentW, bodyH, sideW, midW, gap, t, componentTheme);
             })
             .build();
 
-        // UAT3 D-R3-3 b：完全收起后，编辑区左上角常显的圆形展开浮钮
-        drawTreeExpandFab(ui, screen, pad, t);
+        // 方案 A 边界把手：一颗把手管两端，取代旧 drawTreeExpandFab + md.tree.collapse
+        drawTreeHandle(ui, pad, bodyH, sideW, gap, t);
 
         // UAT5 真机收敛泵：lerp 只在 compose 里推进，而真机主循环是事件驱动——无输入
         // 即 glfwWaitEvents 睡眠，且 runtime 的 animating 位只认 DSL 管理的动画
@@ -652,41 +660,167 @@ private:
             .build();
     }
 
-    // D-R3-3 b：收起态展开浮钮——面板完全收起（宽 0）后，编辑区左上角常显的
-    // 圆形 28px 微信风格钮（chevron-right = 向右展开）。页面级浮层（zIndex 5，
-    // 低于大纲面板 10 / 弹窗 1000），常驻 id md.tree.expand.btn（含 .bg/.hit 子件）。
-    // UAT6 misc2（真机反馈「展开钮压编辑框」）：浮钮整体左移出编辑列 x 带。
-    // 旧位 x = pad-6（34..62）：右缘骑进收起态编辑列灰底（列左缘 pad+gap=56，
-    // 重叠 56..62 共 6px），距白输入框左缘（64）仅 2px——视觉即「按钮压在编辑
-    // 框上」。新位右缘 = 编辑列左缘 - kTreeFabEditorClear（x = 20..48），浮钮与
-    // 编辑列 bg/输入框零重叠（边界距 8px）；仍贴左缘留白带，展开入口语义不变。
-    void drawTreeExpandFab(eui::Ui& ui,
-                           const eui::Screen& screen,
-                           float pad,
-                           const core::theme::Tokens& t) {
-        (void)screen;
-        // 收起动画未收敛（宽 >1px）不画：避免收起途中浮钮与残影同屏。
-        if (treePanelWidth_ > kTreePanelSnapEps) return;
-        // 位置：页面左缘留白带，右缘让开收起态编辑列左缘（pad + gap）8px。
-        const float fabX = pad + t.sizes.spacingLarge - kTreeFabSize -
-                           kTreeFabEditorClear;
-        const float fabY = pad + ui_kit::kHeaderH + t.sizes.spacingLarge + 8.0f;
-        ui.stack("md.tree.expand")
-            .position(fabX, fabY)
-            .size(kTreeFabSize, kTreeFabSize)
-            .zIndex(5)
+    // 方案 A 边界把手：一颗把手管两端——树展开时把手位于树与编辑区之间（树右缘）垂直居中，
+    // 树收起后同颗把手出现在编辑区左缘同一垂直位置。绿底白箭头门把手样式，箭头方向随
+    // 两态翻转形成镜像对称。页面级元素（zIndex 6，低于大纲 10 / 弹窗 1000），
+    // 常驻 id md.tree.handle（含 .bg 子件）。取代旧 drawTreeExpandFab + md.tree.collapse。
+    void drawTreeHandle(eui::Ui& ui,
+                        float pad,
+                        float bodyH,
+                        float sideW,
+                        float gap,
+                        const core::theme::Tokens& t) {
+        // 把手在两端之间 lerp：sideW=240 时右贴树右缘（pad+240-handleW），
+        // sideW=0 时左贴编辑列左缘（pad+gap）；动画途中平滑过渡，无跳变。
+        const float lerpT = sideW / kTreePanelWidth;
+        const float handleX =
+            (pad + gap) +
+            (kTreePanelWidth - kTreeHandleW - gap) * lerpT;
+        const float handleY = pad + ui_kit::kHeaderH + t.sizes.spacingLarge +
+                              bodyH * 0.5f - kTreeHandleH * 0.5f;
+        // 箭头方向在中点两侧各持一态，但点击只调 toggleTreePanel → 目标态反向；
+        // 不依赖箭头方向判当前态。折半为分界：>120px 显示左箭头（收起语义），
+        // <=120px 显示右箭头（展开语义），动画全程方向逐步翻转无突然跳动。
+        const bool expanded = sideW > kTreePanelWidth * 0.5f;
+        ui.stack("md.tree.handle")
+            .position(handleX, handleY)
+            .size(kTreeHandleW, kTreeHandleH)
+            .zIndex(6)
             .content([&] {
-                components::button(ui, "md.tree.expand.btn")
-                    .size(kTreeFabSize, kTreeFabSize)
-                    .icon(0xF054)  // fa-chevron-right
-                    .fontSize(14.0f)
-                    .theme(core::theme::componentTokensWeChat(t), false)
-                    .textColor(t.colors.wechat.textSecondary)
-                    .radius(t.sizes.radiusPill)  // 圆形
+                // UAT6 MDA：把手底——品牌绿底（wechat.primary #07C160），hover 加深
+                const float hoverBrighter = 0.08f;
+                ui.rect("md.tree.handle.bg")
+                    .size(kTreeHandleW, kTreeHandleH)
+                    .color(t.colors.wechat.primary)
+                    .hoverColor(eui::Color{
+                        t.colors.wechat.primary.r + hoverBrighter,
+                        t.colors.wechat.primary.g + hoverBrighter,
+                        t.colors.wechat.primary.b + hoverBrighter,
+                        1.0f})
+                    .radius(t.sizes.radiusWeChat)  // 四角同圆（方案 A 门把手）
                     .onClick([this] { toggleTreePanel(); })
+                    .build();
+                // 箭头：展开态 = 左箭头（收起）F053，折叠态 = 右箭头（展开）F054——镜像对称
+                ui.text("md.tree.handle.arrow")
+                    .size(kTreeHandleW, kTreeHandleH)
+                    .icon(expanded ? 0xF053u : 0xF054u)
+                    .fontSize(kTreeHandleArrowSize)
+                    .lineHeight(kTreeHandleH)
+                    .horizontalAlign(eui::HorizontalAlign::Center)
+                    .verticalAlign(eui::VerticalAlign::Center)
+                    .color(t.colors.wechat.onPrimary)
                     .build();
             })
             .build();
+    }
+
+    // 方案 A 笔记标签条：已打开的笔记以 tab 行展示在头部与编辑器之间。
+    // 每 tab = 笔记名 + 关闭钮；激活 tab 有 2px 绿下划线（wechat.primary）。
+    // 关闭最后一个 tab 回到空态；数据源 = openNotes_ 向量（会话内存态）。
+    void drawNoteTabBar(eui::Ui& ui,
+                        float contentW,
+                        const core::theme::Tokens& t,
+                        const components::theme::ThemeColorTokens& componentTheme) {
+        if (openNotes_.empty()) return;  // 无标签时不创建元素，不占列 gap
+        constexpr float kTabBarH = 34.0f;
+        constexpr float kTabMinW = 80.0f;
+        constexpr float kTabMaxW = 200.0f;
+        ui.row("md.note.tabs")
+            .size(contentW, kTabBarH)
+            .gap(0.0f)
+            .content([&] {
+                for (size_t i = 0; i < openNotes_.size(); ++i) {
+                    const auto& path = openNotes_[i];
+                    bool active = (path == currentPath_);
+                    // 从路径取无扩展名的短名作 tab 标签
+                    fs::path p(path);
+                    std::string name = p.filename().replace_extension("").string();
+                    if (name.empty()) name = path;
+                    // 估宽后钳位
+                    const float nameW = estimateTextWidth(name, 12.0f);
+                    const float tabW = std::min(kTabMaxW, std::max(kTabMinW, nameW + 42.0f));
+                    ui.stack("md.note.tab." + std::to_string(i))
+                        .size(tabW, kTabBarH)
+                        .content([&] {
+                            // tab 底条
+                            ui.rect("md.note.tab." + std::to_string(i) + ".bg")
+                                .size(tabW, kTabBarH)
+                                .color(active ? t.colors.wechat.pageBg
+                                              : t.colors.wechat.cardBg)
+                                .hoverColor(t.colors.wechat.dividerSecondary)
+                                .radius(0.0f)
+                                .onClick([this, path] {
+                                    if (path != currentPath_) openNote(path);
+                                })
+                                .build();
+                            // 激活态底部 2px 绿线
+                            if (active) {
+                                ui.rect("md.note.tab." + std::to_string(i) + ".line")
+                                    .position(0.0f, kTabBarH - 2.0f)
+                                    .size(tabW, 2.0f)
+                                    .color(t.colors.wechat.primary)
+                                    .build();
+                            }
+                            // tab 名称
+                            ui.text("md.note.tab." + std::to_string(i) + ".name")
+                                .position(8.0f, 0.0f)
+                                .size(tabW - 28.0f, kTabBarH)
+                                .text(name)
+                                .fontSize(12.0f)
+                                .lineHeight(kTabBarH)
+                                .verticalAlign(eui::VerticalAlign::Center)
+                                .color(active ? t.colors.wechat.textPrimary
+                                              : t.colors.wechat.textSecondary)
+                                .fontWeight(active ? 600 : 400)
+                                .build();
+                            // 关闭钮（×），hover 浅灰底
+                            ui.stack("md.note.tab." + std::to_string(i) + ".close")
+                                .position(tabW - 24.0f, (kTabBarH - 18.0f) * 0.5f)
+                                .size(18.0f, 18.0f)
+                                .content([&] {
+                                    ui.rect("md.note.tab." + std::to_string(i) + ".close.bg")
+                                        .size(18.0f, 18.0f)
+                                        .color(eui::Color{0.0f, 0.0f, 0.0f, 0.0f})
+                                        .hoverColor(t.colors.wechat.dividerSecondary)
+                                        .radius(9.0f)
+                                        .onClick([this, path] { closeTab(path); })
+                                        .build();
+                                    ui.text("md.note.tab." + std::to_string(i) + ".close.icon")
+                                        .size(18.0f, 18.0f)
+                                        .text("\xC3\x97")  // ×
+                                        .fontSize(12.0f)
+                                        .lineHeight(18.0f)
+                                        .horizontalAlign(eui::HorizontalAlign::Center)
+                                        .verticalAlign(eui::VerticalAlign::Center)
+                                        .color(t.colors.wechat.textTertiary)
+                                        .build();
+                                })
+                                .build();
+                        })
+                        .build();
+                }
+            })
+            .build();
+    }
+
+    // 关闭一个标签页：从 openNotes_ 移除，若关闭的是当前活跃笔记则切换到最后剩余项
+    void closeTab(const std::string& path) {
+        auto it = std::find(openNotes_.begin(), openNotes_.end(), path);
+        if (it == openNotes_.end()) return;
+        openNotes_.erase(it);
+        if (path == currentPath_) {
+            if (!openNotes_.empty()) {
+                openNote(openNotes_.back());
+            } else {
+                currentPath_.clear();
+                editorText_.clear();
+                editorDirty_ = false;
+                lastSavedText_.clear();
+                outlineDirty_ = true;
+                currentTags_.clear();
+                tagInput_.clear();
+            }
+        }
     }
 
     void drawTreeColumn(eui::Ui& ui,
@@ -697,28 +831,28 @@ private:
         // 单 stack 列 = bg rect + 绝对定位内容；bg 与 stack 两侧尺寸必须精确重合，
         // 测试 md_tree_column_layout_semantics 锁定（错位会静默溢出）。
         // D-R3-3 b：完全收起时本列仍以 0 宽占位（保持 md.body 行间隙公式与右缘
-        // 对齐不变），但不画 bg/内容——展开入口移交 drawTreeExpandFab 浮钮。
+        // 对齐不变），但不画 bg/内容——展开入口移交边界把手 drawTreeHandle。
         ui.stack("md.tree").size(sideW, bodyH).content([&] {
             if (sideW <= kTreePanelSnapEps) return;
-            // 白底面板（§4.14：wechat.cardBg #FFFFFF）+ 右侧 1px 分割线（§4.7）。
-            // 去圆角/去 border：flat 白卡，右分割线单独画。
+            // 方案 A 共面融合：树区与编辑区同底（wechat.pageBg #F7F7F7），
+            // 不再是独立白卡；右侧 1px 极细分隔（wechat.dividerSecondary 更淡）。
             ui.rect("md.tree.bg")
                 .size(sideW, bodyH)
-                .color(t.colors.wechat.cardBg)
+                .color(t.colors.wechat.pageBg)
                 .build();
             ui.rect("md.tree.divider")
                 .position(sideW - 1.0f, 0.0f)
                 .size(1.0f, bodyH)
-                .color(t.colors.wechat.dividerPrimary)
+                .color(t.colors.wechat.dividerSecondary)
                 .build();
             // 收起中 / 展开动画未到门槛：只画面板壳（bg/divider），内容不画——
             // 窄板上搜索框/按钮的固定几何会破版；内容左锚定，展开末段自然滑入。
             if (treePanelCollapsed_ || sideW < kTreePanelContentMinW) return;
-            // D-R3-3 a：面板头——「目录」标题 + 右缘独立折叠钮（不再塞进搜索框行
-            // 当第三键）。头行 y 8..40；搜索框行随之下移 16→48，标签/列表基准 +32。
+            // 方案 A：面板头只有标题——折叠钮已由边界把手接管（drawTreeHandle），
+            // 头行 y 8..40；搜索框行 y 48，标签/列表基准同旧。
             ui.text("md.tree.head.title")
                 .position(16.0f, 8.0f)
-                .size(sideW - 60.0f, 32.0f)
+                .size(sideW - 32.0f, 32.0f)
                 .text("目录")
                 .fontSize(kTreeFontSize)
                 .lineHeight(32.0f)
@@ -726,18 +860,7 @@ private:
                 .verticalAlign(eui::VerticalAlign::Center)
                 .color(t.colors.wechat.textPrimary)
                 .build();
-            components::button(ui, "md.tree.collapse")
-                .position(sideW - 44.0f, 10.0f)
-                .size(28.0f, 28.0f)
-                .icon(0xF053)  // fa-chevron-left（收起 = 面板向左收）
-                .fontSize(14.0f)
-                .theme(componentTheme, false)
-                .textColor(t.colors.wechat.textSecondary)
-                .radius(t.sizes.radiusWeChat)
-                .onClick([this] { toggleTreePanel(); })
-                .build();
-            // 搜索框 + 右侧两个图标按钮（折叠键已上移面板头；§3.3.3 新建按钮上移）。
-            // 搜索框窄至留 64px 给两个 28px 图标按钮 + 间距。
+            // 搜索框 + 右侧两个图标按钮（+笔记/+文件夹，见下方）。
             const float searchW = sideW - 96.0f;  // 16 左 + 4 gap + 60 btns + 16 右
             components::input(ui, "md.search")
                 .position(16.0f, 48.0f)
@@ -3169,6 +3292,11 @@ private:
         // 新建条目的父目录跟随当前打开笔记的所在目录
         // 选中不级联：文件夹选中标记仅精确匹配，不因打开笔记而上溯选中父目录
         newItemTargetDir_ = parentDirOf(relPath);
+        // 方案 A：维护已打开笔记标签页列表；重复打开时保持原位不重复追加
+        auto it = std::find(openNotes_.begin(), openNotes_.end(), relPath);
+        if (it == openNotes_.end()) {
+            openNotes_.push_back(relPath);
+        }
         saveViewState();  // 选中笔记跨会话记忆
         LOG_INFO("打开笔记: " + relPath);
     }
@@ -3853,6 +3981,9 @@ private:
             lastKnownMtime_ = 0;
             conflictOpen_ = false;
         }
+        // 方案 A：从标签页列表中移除已删除笔记
+        auto it = std::find(openNotes_.begin(), openNotes_.end(), path);
+        if (it != openNotes_.end()) openNotes_.erase(it);
         refreshList();
         showToast("已删除笔记", fs::path(path).filename().string(), false);
         LOG_INFO("已删除笔记: " + path);
@@ -3904,6 +4035,10 @@ private:
             syncCurrentMtime();
             saveViewState();  // 重命名后恢复新路径
         }
+        // 方案 A：标签页列表中的旧路径也同步重命名为新路径
+        for (auto& p : openNotes_) {
+            if (p == oldPath) p = newPath;
+        }
         refreshList();
         showToast("已重命名", newPath, false);
         LOG_INFO("重命名笔记: " + oldPath + " → " + newPath);
@@ -3931,6 +4066,8 @@ private:
     std::vector<NoteMeta> notes_;      // 当前展示（全部或搜索结果）
     std::string searchQuery_;          // 搜索框内容
     std::string currentPath_;          // 打开的笔记（POSIX 相对路径）
+    // 方案 A：笔记标签页列表（会话内存态，顺序 = tab 顺序；持久化仅记 lastPath）
+    std::vector<std::string> openNotes_;
     std::string editorText_;           // 编辑器缓冲
     // 内容修订号（唯一写点 = setEditorText），下游缓存以它为键跨帧复用
     uint64_t editorTextRev_ = 0;
