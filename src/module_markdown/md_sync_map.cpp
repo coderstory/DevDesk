@@ -61,7 +61,7 @@ void MdSyncMap::rebuild(const std::string& text,
         bool have = false;
         if (b.stableId >= 0) {
             auto it = memo_.find(b.stableId);
-            if (it != memo_.end() && it->second.width == width) {
+            if (it != memo_.end() && it->second.width == width && it->second.gap == blockGap) {
                 h = it->second.height;
                 have = true;
             }
@@ -71,10 +71,10 @@ void MdSyncMap::rebuild(const std::string& text,
             ++heightComputes_;
             if (!(h > 0.0f)) h = 0.001f;  // 防御：除零/负高不可入表
             if (b.stableId >= 0) {
-                nextMemo[b.stableId] = MemoEntry{width, h};
+                nextMemo[b.stableId] = MemoEntry{width, blockGap, h};
             }
         } else if (b.stableId >= 0) {
-            nextMemo[b.stableId] = MemoEntry{width, h};
+            nextMemo[b.stableId] = MemoEntry{width, blockGap, h};
         }
         height_[k] = h;
         topY_[k] = curY;

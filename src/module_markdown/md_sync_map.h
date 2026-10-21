@@ -3,7 +3,7 @@
 //   渲染同源（预览块 k 顶部 y = Σ(H_i + blockGap)，H_i = 注入的 heightFn，与上游
 //   renderBlock 共用测量 ⇒ 块边界误差 0）。块内按「行数 × 等高」线性插值，反函数块
 //   边界精确可逆（round-trip 恒等），供块级交互点预览定位使用。
-// 增量缓存：rebuild() 仅 (rev, width, blockGap, 块数) 变化时重算，块高按 stableId 备忘，
+// 增量缓存：rebuild() 仅 (rev, width, blockGap, 块数) 变化时重算，块高按 (stableId, width, gap) 备忘，
 //   未变块零重测；任意行 O(log n) 查询，锚 = 每个块。纯数学 + 注入测量，不依赖 EUI-NEO。
 #pragma once
 
@@ -61,6 +61,7 @@ public:
 private:
     struct MemoEntry {
         float width = -1.0f;  // 该高度是在哪个宽度下测的（宽度变则作废）
+        float gap = -1.0f;    // 字号联动：切档后 memo 须随 blockGap 一同失效（旧高用旧档）
         float height = 0.0f;
     };
 
