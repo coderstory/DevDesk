@@ -114,6 +114,12 @@ void setLight();
 void setFontScale(float scale);
 float fontScale();
 
+// v1.0 字体栈（S1.2 字体系统 / S5.2 平台回退）
+// Inter 为基准无衬线，Windows 回退 YaHei，macOS 回退 PingFang SC
+inline const char* fontStack() {
+    return "Inter, \"Microsoft YaHei\", \"PingFang SC\", sans-serif";
+}
+
 // Markdown 编辑器字号（px）：「core 存值、app/settings 写、消费方读」全局通道
 //（markdown 不可 include module_settings）。默认 15.0f，set 钳制 [10, 32]
 void setEditorFontSize(float px);
