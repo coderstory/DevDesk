@@ -80,3 +80,41 @@
 | **合计** | — | **2** | **6** | **8** | **2** |
 
 **排序建议**（按落地修复优先度）：Fork #2 删除 → S3 玻璃条目修正 → S4.3 弹窗公式修正 → G1 disabled 断言补强 → ThemeColorTokens 字段归属澄清 → 其余 LOW 项。
+
+---
+
+## 复查结论（commit 5cc0f0e0，2026-10-21）
+
+核对对象：`/d/wt-uat62-ds/docs/superpowers/plans/2026-10-21-UAT62-设计规格定稿.md`（修订后全文）。逐 finding 结论：
+
+| # | Severity | 结论 | 理由 |
+|---|----------|------|------|
+| 1 | HIGH | 通过 | Fork #2（RadiusTokens 四字段）已从 Fork 清单删除。S1 圆角表正确引用现有 `radius.small/control/card/overlay/full`。 |
+| 2 | MED | 通过 | Fork #1 行已注明 "`inputHeight` 已由现有 `control.input = 40.0f` 覆盖，不新增"。 |
+| 3 | MED | 通过 | Fork 清单新增第 2 项 "ThemeColorTokens 新增字段"，列出 success/warning/error/info + textSecondary/Tertiary/Disabled + primaryHover/Active/SoftBg + sidebarBg + 六种 cardXxx 辅助色。S1.1 新增标注规则（EUI 已有 vs 新增）。 |
+| 4 | LOW | 通过 | S5.4 已修正为 "24×44pt"。 |
+| 5 | LOW | 部分通过 | Fork 清单保留了 ButtonVariant 枚举（#3），但 S0 entry #12 标注仍为 "Fork 否（构造器）"——与 Fork 清单存在残留矛盾。不影响实现（实现者读 Fork 清单即可），但建议同步修正 entry #12 为 "Fork 是" 或补注 "构造器可达但枚举提升 DX"。 |
+| 7 | HIGH | 通过 | S3.2#8 / S3.3#8 / S3.5#6 / S3.7#7 四条全部改为 "实底 #FFFFFF + Sm 阴影（S6.1 玻璃退役）"。S6.1 影响面清单同步扩充至覆盖这四处的具体 file:line。新引入 S6.1 第 (5) 点（splash 绿墨染迁移至动作）与 S6.3 品牌绿迁移一致，无矛盾。 |
+| 8 | MED | 通过 | S1.1 新增标注规则说明行 + 间距表前补 hairline/micro 保留说明。S1.2 entry #14 sidebar 色值已独立裁决（S6.7 新增，`#F0FDF7` 独立于 primarySoftBg）。 |
+| 9 | LOW | 通过 | S1.1 间距表前新增说明："EUI SpacingTokens 额外有 hairline=1 与 micro=2 两档——保留给边框/微调专用，常规间距从 tiny=4 起。" |
+| 10 | LOW | 通过 | 已改为 "typography.heading 不变(已 24)"。 |
+| 11 | MED | 通过 | G1 step 3 断言拆为两条：① `button.disabled == true`（状态断言）② 指针注入点击 disabled 按钮后 `currentStep 仍为 1`（行为断言）。step 4 补充 "（此时按钮已 enabled）"。 |
+| 12 | MED | 通过 | G1 step 6 断言补全视觉断言：`bg=#FFFFFF、border=1px #36D399、text=#36D399（S2.1 Outline 默认）/ 14px/600`。 |
+| 13 | LOW | 通过 | G4 step 9 改为 "hover 后 ≤0.5s 内 tooltip 可见（用事件信号替代固定时间等待）"。 |
+| 14 | LOW | 通过 | G1 后新增 "G1-LIVE" 子流程，step 13 独立为 live 层验收（需真实网关+token），其余 step 1-12 为 probe 层。 |
+| 15 | MED | 通过 | S4.3 完全重写：公式改为 `min(窗口客户区实际高度 - 48, 内容自然高度)`，分别给出 macOS（564pt）和 Windows（554px）最小档计算结果。标注 "审计 B#15"。 |
+| 16 | LOW | 通过 | S3.4#1 修正为 "左 240px（固定）: 右 flex（主区宽 - 240）。最小档 1000px 下主区 736px → 右 = 736-240 = 496px（≈1:2.06 比例，非固定 480）"。 |
+| 17 | LOW | 通过 | S1.2 entry #16 新增注："linkBlue 原专用于链接文字，info 是通用信息色——合并后改 info 会把链接色也带走，接受此耦合"。 |
+| 18 | INFO | 通过 | S6.3 豁免清单 #3 保留 "primarySoftBg 始终为 #E6FBF2（mint 淡底，不与强调色联动）"——这是已验证的用户决策。新增 S6.7 裁决：sidebarBg `#F0FDF7`（独立于 primarySoftBg）。 |
+
+**新增检查项**（修订引入的新内容）：
+
+| 检查项 | 结果 | 说明 |
+|--------|------|------|
+| S2.11 新增任务卡片规格 vs S6.5 | 一致 | S2.11 白底/左 3px 色条/Sm 阴影/8px 圆角/14px 标题 —— 与 S6.5 (1)-(5) 全同。S6.5 新增 "(6) 卡片内边距 12px、圆角 8px——完整规格见 S2.11"。 |
+| S3.11 新增测试锚联动清单 | 无矛盾 | 4 条测试锚变更与 S1.2/S3 迁移方向一致（fontSizePage 32→24、radius 10→8、wechat.primary→new primary）。 |
+| S6.1 影响面扩充 + splash 从豁免移入动作 | 无矛盾 | S6.1 第 (5) 点（splash 绿墨染 #07C160→#36D399）与 S6.3 品牌绿迁移口径一致。 |
+| S6.7 新增侧栏底色裁决 | 无矛盾 | `sidebarBg = #F0FDF7` ≠ `primarySoftBg = #E6FBF2`，以 v1.0 §四.1 原文为准。 |
+| S3.1 #1 补卡片内边距 20px、圆角 16px | 一致 | 与 v1.0 §三.6（内边距 20px）和 S1 圆角表 `radius.overlay=16` 对齐。S6.6 同步加 (6)。 |
+
+**复查总评**：17 条通过 / 1 条部分通过（#5 S0 entry#12 标注残留，LOW，不影响实现）/ 0 条未通过。三处最关键的修复（#1 Fork 冗余删除、#7 玻璃矛盾消除、#15 弹窗公式修正）均正确落实。未发现修订引入的新矛盾。
