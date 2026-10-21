@@ -92,6 +92,7 @@ struct SizeTokens {
     float fontSizeTitle;       // 24.0f
     float fontSizePage;        // 32.0f
     float fontSizeDisplay;     // 48.0f
+    float fontSizeStat;          // 28.0f  首页数据数字（S1.2 字号迁移）
     float spacingPage;            // 12.0f 页面外 padding（D-12 A3：16→12）
     float radiusWeChat;           // 6.0f 微信风格统一圆角（D-12 E2：v1.0 三档 6/8/4→统一 6）
     float fontSizeWeChat;         // 16.0f 微信风格正文字号（D-12 §2.4：16/18 档，18 复用既有 fontSizeLarge）
