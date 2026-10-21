@@ -88,6 +88,37 @@ constexpr float kTreePanelContentMinW = 220.0f;   // 内容回画门槛（动画
 constexpr float kTreeFabSize = 28.0f;         // 浮钮边长
 constexpr float kTreeFabEditorClear = 8.0f;  // 浮钮右缘 → 编辑列左缘最小边界距
 
+// UAT6 字号联动：markdown 的两条 token 系外旁路在此收口进全局缩放档
+//（core::theme::fontScale；token 系字号已由 theme 的 applyFontScale 统一乘）。
+// 编辑器不再直读 core::theme::editorFontSize()、预览不再裸构造 MarkdownStyle，
+// 一律经下方两个函数取生效值；settings 系仍写/显示基础值，语义不变。
+
+// 编辑器生效字号：编辑器 input、实时块贴合高度、同步滚动换算全部经本函数取值
+// ⇒ 行几何（lineHeight = 字号 × kInputLineHeightFactor，与 EUI input 内部 ×1.2
+// 同系数）随档位整链自洽；任何一处绕开本函数直读基础值会与渲染行高错位。
+float mdEditorFontSize() {
+    return core::theme::editorFontSize() * core::theme::fontScale();
+}
+
+// 预览生效样式：字号族（body/h1/h2/h3/code + bodyLineHeight）× 档位。
+// blockGap 必须同乘——它同时是 syncMap 缓存键项（rev/width/gap/块数），不乘则
+// 切档时键不变、块高备忘不重建，新字号配旧几何会裁字。标题/代码块行高在 EUI
+// 渲染器 = 字号+6 ⇒ 随字号自洽；bodyLineHeight 是唯一独立行高字段，与 bodySize
+// 同乘防行叠。间距/缩进/圆角不动（与 token 系同口径：只缩字号与行盒）。
+components::MarkdownStyle scaledPreviewStyle(
+    const components::theme::ThemeColorTokens& componentTheme) {
+    components::MarkdownStyle style(componentTheme);
+    const float k = core::theme::fontScale();
+    style.bodySize *= k;
+    style.bodyLineHeight *= k;
+    style.h1Size *= k;
+    style.h2Size *= k;
+    style.h3Size *= k;
+    style.codeSize *= k;
+    style.blockGap *= k;
+    return style;
+}
+
 // 单行树条目：整行包一层 stack —— position() 只在 stack 内生效，流式子元素会被静默忽略。
 // W8：选中态改 wechat 风格（§4.3）——浅灰底 #E5E5E5 + 左 2px 绿竖线。
 // 搜索命中时高亮关键词（§3.2.4 补充项）。
@@ -1217,7 +1248,7 @@ private:
                     .placeholder("在这里写 Markdown…")
                     .multiline(true)
                     .scrollbar(true)
-                    .fontSize(core::theme::editorFontSize())
+                    .fontSize(mdEditorFontSize())
                     .inset(10.0f)
                     .theme(componentTheme)
                     .onChange([this](const std::string& v) {
@@ -1563,7 +1594,8 @@ private:
                 return;
             }
 
-            const components::MarkdownStyle style(componentTheme);
+            const components::MarkdownStyle style =
+                scaledPreviewStyle(componentTheme);
 
             // 滚动位置来源：Split = 同步滚动目标（编辑器驱动）；Preview = previewOffset_
             float scrollOffset = previewOffset_;
@@ -1783,7 +1815,7 @@ private:
                                float contentWidth, float viewportH) {
         if (!liveFollow_) return;                       // 用户滚动后：不干预
         if (viewportH <= 0.0f || contentWidth <= 0.0f) return;
-        const float fontSize = core::theme::editorFontSize();
+        const float fontSize = mdEditorFontSize();
         const float textWidth =
             std::max(0.0f, contentWidth - kLiveInputInset * 2.0f);
         const float lineH = fontSize * kInputLineHeightFactor;
@@ -1829,7 +1861,8 @@ private:
         drawTextColumnChrome(
             ui, "md.live", bodyH, midW, t, componentTheme,
             [&](const TextColumnGeometry& g) {
-                const components::MarkdownStyle style(componentTheme);
+                const components::MarkdownStyle style =
+                    scaledPreviewStyle(componentTheme);
                 // 输入框状态换代（释放点）
                 // enterLiveState 置位，本帧先释放再建 input；释放会清焦点，
                 // 必须与 liveFocusPending_ 同帧补发配对。id 落在被释放前缀下
@@ -2065,7 +2098,7 @@ private:
     // ⇒ maxVerticalScroll == 0）；备忘键避免整块 shaping 逐帧重付。
     float liveFitHeight(const MdBlock& b, const std::string& blockText,
                         float contentWidth) {
-        const float fontSize = core::theme::editorFontSize();
+        const float fontSize = mdEditorFontSize();
         const float textWidth =
             std::max(0.0f, contentWidth - kLiveInputInset * 2.0f);
         if (liveHeight_.stableId == b.stableId && liveHeight_.hash == b.hash &&
@@ -2128,7 +2161,7 @@ private:
             .value(blockText)
             .placeholder("")  // 活动块恒有源码（空文档无块 = 不建 input）
             .multiline(true)
-            .fontSize(core::theme::editorFontSize())
+            .fontSize(mdEditorFontSize())
             .inset(kLiveInputInset)
             .theme(*live.theme)
             .onChange([this](const std::string& v) { syncDocumentFromLiveInput(v); })
@@ -2476,7 +2509,7 @@ private:
         const auto& st = ui.state<components::input_detail::InputModel::InputState>(kEditorInputId);
         const float topLine =
             st.verticalScroll /
-            (core::theme::editorFontSize() * kInputLineHeightFactor);
+            (mdEditorFontSize() * kInputLineHeightFactor);
         const float width = lastPvContentWidth_ > 0.0f ? lastPvContentWidth_ : pvW;
         rebuildSyncMap(width, style);
         const float y = syncMap_.previewYForEditorLine(topLine);
@@ -2859,7 +2892,7 @@ private:
             const float width = lastPvContentWidth_;
             previewOffset_ = components::MarkdownBuilder::estimateHeight(
                 editorText_.substr(0, h.byteOffset), width,
-                components::MarkdownStyle(componentTheme));
+                scaledPreviewStyle(componentTheme));
             syncPreviewOnEnter_ = false;
             return;
         }
