@@ -37,6 +37,23 @@ int clampMinToWorkArea(int minSize, int available) {
     return available > 0 ? std::min(minSize, available) : 0;
 }
 
+// 收缩适配的呼吸边距（窗口单位：Windows=物理px、macOS=pt）：请求超出工作区时该轴钳到
+// 「工作区 − 外框 − 本边距」，窗口不贴满工作区、四周留视觉余量。32 = 单轴方向各留 32
+constexpr int kBreathingMargin = 32;
+
+// 收缩适配单轴：钳到「工作区 − 外框 − 呼吸边距」；minFloor（minWindowSizeForWorkArea
+// 同口径钳制值，0 = 无下限）兜极端小屏——钳完低于最小窗时以最小窗为准（贴边不留呼吸
+// 边距，也不产出低于最小窗的不可用尺寸）；最后至少 1 单位（后端拿 0/负值建窗会出问题，
+// 与 physicalSize 的「至少 1」口径一致）
+int shrinkToFitWorkArea(int requestedUnits, int workAxisSize, int insets, int minFloor) {
+    const int fit = workAxisSize - insets - kBreathingMargin;
+    int shrunk = std::min(requestedUnits, fit);
+    if (minFloor > 0) {
+        shrunk = std::max(shrunk, minFloor);
+    }
+    return std::max(shrunk, 1);
+}
+
 } // namespace
 
 FrameInsets frameInsetsForScale(float scale) {
@@ -45,7 +62,7 @@ FrameInsets frameInsetsForScale(float scale) {
 
 FrameInsets frameInsetsForScale(float scale, const FrameInsetsBaseline& baselineAt96Dpi) {
     const float s = normalizedScale(scale);
-    // 向上取整：高估最多多触发一次最大化（用户可还原），低估则窗口再被任务栏吃掉
+    // 向上取整：高估最多让收缩适配多收一点（用户可自行放大窗口），低估则窗口再被任务栏吃掉
     return FrameInsets{
         static_cast<int>(std::ceil(baselineAt96Dpi.width * s)),
         static_cast<int>(std::ceil(baselineAt96Dpi.height * s)),
@@ -66,10 +83,25 @@ InitialWindowDecision decideInitialWindow(const InitialWindowRequest& request,
         return decision;
     }
 
-    // 外框与工作区比较：严格超出才最大化，正好等于算放得下
+    // 外框与工作区比较（正好等于算放得下）：严格超出的轴收缩适配，不再默认最大化
+    //（UAT6 修复：1600×1000 逻辑请求在 1080p@125% 换算 2000×1250 后超出工作区，旧
+    //「超出即最大化」策略导致每次启动都全屏）。maximize 恒 false，字段保留供未来
+    //「手动/记住最大化」类需求，本函数不再产出默认最大化
     const bool tooWide = decision.width + frameInsets.width > workArea.width;
     const bool tooTall = decision.height + frameInsets.height > workArea.height;
-    decision.maximize = tooWide || tooTall;
+    if (tooWide || tooTall) {
+        // 最小窗下限与 minWindowSizeForWorkArea 同口径（换算 → 与「工作区−外框」取 min）：
+        // 极端小屏收缩后低于最小窗时以它为准（宁可贴边，也不给低于最小窗的不可用尺寸）
+        const WindowSize minFloor = minWindowSizeForWorkArea(request, workArea, s, frameInsets);
+        if (tooWide) {
+            decision.width =
+                shrinkToFitWorkArea(decision.width, workArea.width, frameInsets.width, minFloor.width);
+        }
+        if (tooTall) {
+            decision.height =
+                shrinkToFitWorkArea(decision.height, workArea.height, frameInsets.height, minFloor.height);
+        }
+    }
     return decision;
 }
 

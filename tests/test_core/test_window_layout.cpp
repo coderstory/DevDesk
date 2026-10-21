@@ -54,27 +54,88 @@ REGISTER_TEST(window_layout_scales_to_physical, "window_layout: 高 DPI 下请�
     return true;
 })
 
-REGISTER_TEST(window_layout_too_small_maximizes, "window_layout: 本机 1920×1020 @125% 放不下 → 最大化", {
+REGISTER_TEST(window_layout_too_small_shrinks,
+              "window_layout: 本机 1920×1020 @125% 放不下 → 收缩适配不最大化", {
     const auto decision = decideInitialWindow(request1600x1000(), area(1920, 1020), 1.25f,
                                               frameInsetsForScale(1.25f));
-    // 2000+18 = 2018 > 1920（宽超）；1250+47 = 1297 > 1020（高超）
-    DOCTEST_CHECK(decision.maximize);
-    // 最大化时尺寸字段仍留换算结果（供日志诊断），后端会忽略
-    DOCTEST_CHECK_EQ(decision.width, 2000);
-    DOCTEST_CHECK_EQ(decision.height, 1250);
+    // 2000+18 = 2018 > 1920（宽超）；1250+47 = 1297 > 1020（高超）→ 两轴各自钳到
+    // 「工作区 − 外框 − 呼吸边距32」：宽 1920−18−32 = 1870、高 1020−47−32 = 941。
+    // UAT6 前此档走「超出即最大化」，用户反馈每次启动都全屏，不可接受
+    DOCTEST_CHECK_FALSE(decision.maximize);
+    DOCTEST_CHECK_EQ(decision.width, 1870);
+    DOCTEST_CHECK_EQ(decision.height, 941);
+    // 收缩后外框 + 呼吸边距整体放得进工作区（不再越界，也不贴满）
+    DOCTEST_CHECK(decision.width + 18 + 32 <= 1920);
+    DOCTEST_CHECK(decision.height + 47 + 32 <= 1020);
+    // 不低于最小窗换算值（1200×720 逻辑 @1.25 = 1500×900 物理）
+    DOCTEST_CHECK(decision.width >= 1500);
+    DOCTEST_CHECK(decision.height >= 900);
     return true;
 })
 
-REGISTER_TEST(window_layout_width_only_overflow, "window_layout: 单方向超出外框 → 最大化", {
+REGISTER_TEST(window_layout_single_axis_overflow_shrinks_that_axis,
+              "window_layout: 单方向超出外框 → 只收缩该轴，不最大化", {
     const FrameInsets frame = frameInsetsForScale(1.0f);
-    // 宽度差 1 物理 px、高度正好放下
+    // 宽度差 1 物理 px、高度正好放下：只钳宽（钳到 工作区−外框−32），高不动
     const auto tooWide = decideInitialWindow(request1600x1000(),
                                              area(1600 + frame.width - 1, 1000 + frame.height), 1.0f, frame);
-    DOCTEST_CHECK(tooWide.maximize);
-    // 高度差 1 物理 px、宽度正好放下（对称方向）
+    DOCTEST_CHECK_FALSE(tooWide.maximize);
+    DOCTEST_CHECK_EQ(tooWide.width, 1600 + frame.width - 1 - frame.width - 32);
+    DOCTEST_CHECK_EQ(tooWide.height, 1000);
+    // 高度差 1 物理 px、宽度正好放下（对称方向）：只钳高，宽不动
     const auto tooTall = decideInitialWindow(request1600x1000(),
                                              area(1600 + frame.width, 1000 + frame.height - 1), 1.0f, frame);
-    DOCTEST_CHECK(tooTall.maximize);
+    DOCTEST_CHECK_FALSE(tooTall.maximize);
+    DOCTEST_CHECK_EQ(tooTall.width, 1600);
+    DOCTEST_CHECK_EQ(tooTall.height, 1000 + frame.height - 1 - frame.height - 32);
+    return true;
+})
+
+// UAT6 用户真机档：1080p@125%（屏幕 1920×1080 物理、任务栏后工作区 1920×1032 物理）。
+// 1600×1000 逻辑请求换算 2000×1250 超出 → 旧策略每次启动全屏；新策略收缩、永不默认最大化
+REGISTER_TEST(window_layout_uat6_1080p_at_125_shrinks,
+              "window_layout: UAT6 1080p@125%（工作区 1920×1032）→ 钳到 1870×953 不最大化", {
+    const auto decision = decideInitialWindow(request1600x1000(), area(1920, 1032), 1.25f,
+                                              frameInsetsForScale(1.25f));
+    DOCTEST_CHECK_FALSE(decision.maximize);
+    // 宽 1920−18−32 = 1870；高 1032−47−32 = 953
+    DOCTEST_CHECK_EQ(decision.width, 1870);
+    DOCTEST_CHECK_EQ(decision.height, 953);
+    // 收缩后外框 + 呼吸边距整体放得进工作区
+    DOCTEST_CHECK(decision.width + 18 + 32 <= 1920);
+    DOCTEST_CHECK(decision.height + 47 + 32 <= 1032);
+    return true;
+})
+
+// 100% 大屏档：请求原样落实、不最大化（防收缩策略误伤放得下的常规档）
+REGISTER_TEST(window_layout_large_screen_scale1_keeps_request,
+              "window_layout: 100% 大屏（2560×1440）→ 1600×1000 原样不最大化", {
+    const auto decision = decideInitialWindow(request1600x1000(), area(2560, 1440), 1.0f,
+                                              frameInsetsForScale(1.0f));
+    DOCTEST_CHECK_FALSE(decision.maximize);
+    DOCTEST_CHECK_EQ(decision.width, 1600);
+    DOCTEST_CHECK_EQ(decision.height, 1000);
+    return true;
+})
+
+// 极端小屏：钳到「工作区−外框−32」已低于最小窗换算值 → 以 minWindowSizeForWorkArea
+// 同口径钳制值（= min(最小窗, 工作区−外框)，无呼吸边距）为下限，仍不最大化；
+// min 无约束且工作区小于外框+呼吸边距时至少 1 单位（不给后端 0/负值）
+REGISTER_TEST(window_layout_tiny_screen_min_floor_wins,
+              "window_layout: 极端小屏收缩低于最小窗 → 以最小窗钳制值为准，不最大化", {
+    // 900×600 工作区 @100%：fit 宽 = 900−15−32 = 853 < 最小窗 1200 → minFloor =
+    // min(1200, 900−15) = 885 胜出；fit 高 = 600−38−32 = 530 < 720 → minFloor = 562
+    const auto decision = decideInitialWindow(request1600x1000(), area(900, 600), 1.0f,
+                                              frameInsetsForScale(1.0f));
+    DOCTEST_CHECK_FALSE(decision.maximize);
+    DOCTEST_CHECK_EQ(decision.width, 885);
+    DOCTEST_CHECK_EQ(decision.height, 562);
+    // min 无约束 + 工作区装不下外框+呼吸边距：钳完不为 0/负，至少 1（建窗保护）
+    const auto degenerate = decideInitialWindow(request(1600, 1000, 0, 0), area(40, 80), 1.0f,
+                                                frameInsetsForScale(1.0f));
+    DOCTEST_CHECK_FALSE(degenerate.maximize);
+    DOCTEST_CHECK(degenerate.width >= 1);
+    DOCTEST_CHECK(degenerate.height >= 1);
     return true;
 })
 
