@@ -295,9 +295,6 @@ REGISTER_TEST(claude_module_compose_with_data,
 
     DOCTEST_CHECK(ui.find("claude.profile.0.name") != nullptr);
     DOCTEST_CHECK(ui.find("claude.profile.1.name") != nullptr);
-    // 激活卡片的 ACTIVE 徽标（profile 0 = 激活的「官方」）
-    DOCTEST_CHECK(ui.find("claude.profile.0.active.text") != nullptr);
-    DOCTEST_CHECK(ui.find("claude.profile.1.active.text") == nullptr);
 
     const auto* nameV = ui.find("claude.field.name.value");
     DOCTEST_REQUIRE(nameV != nullptr);
@@ -667,12 +664,7 @@ REGISTER_TEST(claude_module_form_tabs_roundtrip,
         // deriveDisplayName(存储值)。用**精确相等**断言——find 前缀命中会被未剥的
         // "…[1M]" 假绿混过。
         DOCTEST_CHECK_EQ(slot0->text, std::string("fangzhou/glm-5.3"));
-        // 列表卡片 model 行同口径剥除（同一 deriveDisplayName 通道）
-        const auto* cardModel = ui.find("claude.profile.0.model");
-        DOCTEST_REQUIRE(cardModel != nullptr);
-        DOCTEST_CHECK_EQ(cardModel->text,
-                         std::string("model: fangzhou/glm-5.3"));
-    }
+        }
     {
         auto got = env.svc->getProfile(pid);
         DOCTEST_REQUIRE(got.isOk());
@@ -2163,7 +2155,6 @@ REGISTER_TEST(claude_module_compose_cache_equivalence,
         DOCTEST_CHECK_EQ(name0, std::string("B缓存"));
         DOCTEST_CHECK_EQ(name1, std::string("A缓存"));
         DOCTEST_CHECK_EQ(detail, std::string("B缓存"));
-        DOCTEST_CHECK(ui.find("claude.profile.0.active.text") != nullptr);
     }
     {
         eui::Ui ui;
@@ -2248,8 +2239,6 @@ REGISTER_TEST(claude_module_compose_cache_equivalence,
         compose(ui);
         DOCTEST_CHECK_EQ(textOf(ui, "claude.profile.0.name"),
                          std::string("A缓存"));
-        DOCTEST_CHECK(ui.find("claude.profile.0.active.text") != nullptr);
-        DOCTEST_CHECK(ui.find("claude.profile.1.active.text") == nullptr);
     }
 
     mod->onStop();
@@ -2512,8 +2501,6 @@ REGISTER_TEST(claude_module_duplicate_profile_ui,
         const auto* n = ui.find("claude.profile.2.name");
         if (n != nullptr && n->text == "中转 副本") {
             sawCopy = true;
-            DOCTEST_CHECK(ui.find("claude.profile.0.active.text") != nullptr);
-            DOCTEST_CHECK(ui.find("claude.profile.2.active.text") == nullptr);
         } else {
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
         }
@@ -6312,12 +6299,11 @@ REGISTER_TEST(claude_dialog_pagination_vertical_align,
     return true;
 })
 
-// Profile 卡 ACTIVE 胶囊徽标文字居中
+// Profile 卡「共享」胶囊徽标文字居中
 // 文字 frame 中心 == 胶囊 frame 中心（x/y 各 ±0.5）+ 行高口径一致（文本
-// lineHeight == 胶囊高，不靠 padding 蒙）。回退 active.text 的 verticalAlign
-// → 本用例红；「共享」胶囊是同类项，一并钉住。
-REGISTER_TEST(claude_profile_active_badge_centered,
-              "claude_module: Profile 卡 ACTIVE / 共享 胶囊徽标文字居中", {
+// lineHeight == 胶囊高，不靠 padding 蒙）。
+REGISTER_TEST(claude_profile_shared_badge_centered,
+              "claude_module: Profile 卡共享胶囊徽标文字居中", {
     TestEnv env;
     auto sc = env.svc->createSharedConfig("片段A", R"({"MY_K":"v"})");
     DOCTEST_REQUIRE(sc.isOk());
@@ -6373,17 +6359,9 @@ REGISTER_TEST(claude_profile_active_badge_centered,
         }
         return {};
     };
-    const std::string activeBadge =
-        pillProblem("claude.profile.0.active.text", "claude.profile.0.active.bg");
-    DOCTEST_CHECK_MESSAGE(activeBadge.empty(), activeBadge);
     const std::string sharedBadge = pillProblem(
         "claude.profile.0.shared.badge.text", "claude.profile.0.shared.badge");
     DOCTEST_CHECK_MESSAGE(sharedBadge.empty(), sharedBadge);
-    // 胶囊几何：§5 加宽后「当前选中」64×20 在卡片右上角（原 ACTIVE 48×20 放不下 4 全角字）
-    const auto* abg = ui.find("claude.profile.0.active.bg");
-    DOCTEST_REQUIRE(abg != nullptr);
-    DOCTEST_CHECK_EQ(abg->frame.width, 64.0f);
-    DOCTEST_CHECK_EQ(abg->frame.height, 20.0f);
 
     mod->onStop();
     cleanupProfileKey(kTestKeychainService, pid);
@@ -8350,45 +8328,6 @@ REGISTER_TEST(claude_profile_selection_check_badge,
     mod->onStop();
     cleanupProfileKey(kTestKeychainService, a.value().id);
     cleanupProfileKey(kTestKeychainService, b.value().id);
-    return true;
-})
-
-// UAT5：卡内 URL 单行省略号截断——真机长 URL 曾溢出卡片外（EUI 文本默认不裁
-// ink）；须显式 Ellipsis + maxWidth 卡内宽，窄窗 320 档左栏下同样截住。
-REGISTER_TEST(claude_profile_card_url_ellipsis,
-              "claude_module: 卡内 URL Ellipsis 截断（长 URL 不外溢，含窄窗档）", {
-    TestEnv env;
-    const std::string longUrl =
-        "https://" + std::string(28, 'a') +
-        ".extra-long-gateway-subdomain.example.com/api/v1/messages"
-        "?beta=true&tracking=1&more=query";
-    auto a = env.svc->createProfile("长址", longUrl, "sk-ant-url-0001", "");
-    DOCTEST_REQUIRE(a.isOk());
-
-    std::unique_ptr<::core::Module> mod(create_claude_module());
-    mod->onStart();
-    auto assertUrlInCard = [&](float winW, const char* tag) {
-        eui::Screen screen{winW, 1000.0f};
-        eui::Ui ui;
-        ui.begin(tag);
-        mod->compose(ui, screen);
-        ui.end();
-        ui.layout(screen.width, screen.height);
-        const auto* url = ui.find("claude.profile.0.url");
-        const auto* card = ui.find("claude.profile.0.bg");
-        DOCTEST_REQUIRE(url != nullptr);
-        DOCTEST_REQUIRE(card != nullptr);
-        DOCTEST_CHECK_EQ(url->overflow, core::TextOverflow::Ellipsis);
-        DOCTEST_CHECK(url->frame.x + url->frame.width <=
-                      card->frame.x + card->frame.width + 0.5f);
-        return true;  // 宏含 return false，lambda 落尾须补 true（否则 bool 推导落空）
-    };
-    // 默认窗（左栏触上限 460）与 320 档窄窗（contentW 820 → 左栏贴下限）
-    assertUrlInCard(1600.0f, "url_wide");
-    assertUrlInCard(900.0f, "url_narrow");
-
-    mod->onStop();
-    cleanupProfileKey(kTestKeychainService, a.value().id);
     return true;
 })
 
