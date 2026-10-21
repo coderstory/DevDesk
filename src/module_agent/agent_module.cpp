@@ -937,7 +937,7 @@ void AgentModule::toggleTaskEnabled(const AgentTaskRow& task) {
 }
 
 // 打开详情弹窗：每开一次回到「最近一次 run」（selectedRunId_ 清空，refreshData 回落首条）。
-// 布局态一并清零（窄屏回 tab 0、配置头收起），弹窗不记忆上一次的分支状态
+// 布局态一并清零（回 tab 0「执行记录」、消息区收起），弹窗不记忆上一次的分支状态
 void AgentModule::openTaskDetail(int64_t taskId) {
     detailTaskId_ = taskId;
     selectedRunId_.reset();
@@ -949,7 +949,6 @@ void AgentModule::openTaskDetail(int64_t taskId) {
     expandedMsgSeqs_.clear();
     autoExpandedSeq_.reset();
     detailTab_ = 0;
-    configOpen_ = false;
     messagesOpen_ = false;
     ++msgScrollVersion_;
     tasksDirty_ = true;
@@ -967,7 +966,6 @@ void AgentModule::closeTaskDetail() {
     expandedMsgSeqs_.clear();
     autoExpandedSeq_.reset();
     detailTab_ = 0;
-    configOpen_ = false;
     messagesOpen_ = false;
     ++msgScrollVersion_;
 }
@@ -2778,9 +2776,10 @@ void AgentModule::performDeleteTask(int64_t taskId) {
     LOG_INFO("Agent: 任务 " + std::to_string(taskId) + " 已删除（含全部运行记录）");
 }
 
-// 详情弹窗布局壳：摘要三卡（常驻）→ 配置头（+覆盖式配置浮层）→ 主区（宽屏左右分栏 /
-// 窄屏单列 tab）。所有区域坐标从实际钳制后的 w/h 推导（纯函数镜像上游钳制公式），
-// 禁用屏幕绝对坐标；消息区默认折叠（messagesOpen_），复制反馈走页级 toast
+// 详情弹窗布局壳（UAT6 方案 A）：弹性宽 max(720, 窗口/2) + 头部（任务名/状态/动作
+// chips）→ 摘要三卡（常驻横排）→ 顶部 segment 三档（执行记录|运行详情|任务配置）→
+// 单列 tab 内容 → 底部 关闭|编辑任务。所有区域坐标从实际钳制后的 w/h 推导，禁用屏幕
+// 绝对坐标；消息区默认折叠（messagesOpen_），复制反馈走页级 toast
 bool AgentModule::onKeyEvent(const ::eui::KeyEvent& event) {
     if (!event.isDown()) return false;
     if (event.key != eui::InputKey::Escape) return false;
