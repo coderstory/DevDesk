@@ -34,3 +34,20 @@ void ensureClaudeServiceAssembled(bool autoStart) {
 }
 
 }  // namespace app::toggle
+
+// 动态背景桥（UAT6 主窗活体流质）：settings_module.cpp 前置声明 ::app::setFluidBackgroundEnabled，
+// 主程序真实现见 app_sidebar.cpp（全局态 + compose 门控），探针与单测缺该符号时由此 weak stub
+// 兜底（默认无副作用 no-op）。
+#ifdef __GNUC__
+#define DEVDESK_WEAK __attribute__((weak))
+#elif defined(_MSC_VER)
+#define DEVDESK_WEAK __declspec(selectany)
+#else
+#define DEVDESK_WEAK
+#endif
+
+namespace app {
+DEVDESK_WEAK void setFluidBackgroundEnabled(bool /*enabled*/) {
+    // 弱符号默认 no-op：探针/单测环境直接吞掉，不做动画泵/全局态变更。
+}
+}  // namespace app
