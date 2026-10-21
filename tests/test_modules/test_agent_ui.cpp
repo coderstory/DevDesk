@@ -4618,23 +4618,60 @@ REGISTER_TEST(agent_ui_draft_chip_and_subdialog_lifecycle,
     composeTo(uiC, mod, kScreen, "agent_ui_dfl2");
     const auto* dpanel = uiC.find("agent.dialog.task.draft.panel");
     DOCTEST_REQUIRE(dpanel != nullptr);
-    DOCTEST_CHECK_MESSAGE(nearPx(dpanel->frame.height, 320.0f),
-                          "AI 草稿子弹窗高应恒为 320，实测 " +
+    DOCTEST_CHECK_MESSAGE(nearPx(dpanel->frame.height, 380.0f),
+                          "AI 草稿子弹窗高应恒为 380，实测 " +
                               std::to_string(dpanel->frame.height));
     const auto* dinput = uiC.find("agent.dialog.task.draft.input");
     const auto* genBtn = uiC.find("agent.dialog.task.draft.generate");
     const auto* dismissBtn = uiC.find("agent.dialog.task.draft.dismiss");
+    const auto* genBtnBg = uiC.find("agent.dialog.task.draft.generate.bg");
+    const auto* dismissBg = uiC.find("agent.dialog.task.draft.dismiss.bg");
     DOCTEST_REQUIRE(dinput != nullptr);
     DOCTEST_REQUIRE(genBtn != nullptr);
     DOCTEST_REQUIRE(dismissBtn != nullptr);
+    DOCTEST_REQUIRE(genBtnBg != nullptr);
+    DOCTEST_REQUIRE(dismissBg != nullptr);
     DOCTEST_CHECK_MESSAGE(frameContained(*dpanel, *dinput),
                           "草稿输入框跑出子弹窗");
     DOCTEST_CHECK_MESSAGE(frameContained(*dpanel, *genBtn) &&
                               frameContained(*dpanel, *dismissBtn),
                           "按钮行跑出子弹窗");
+    // UAT6 重排：输入区加高填满内容宽（460-56=404、高 140）
     DOCTEST_CHECK_MESSAGE(
-        genBtn->frame.y + genBtn->frame.height <= dpanel->frame.y + 248.0f + 0.5f,
-        "按钮行底压到结果行顶（面板内 248）");
+        nearPx(dinput->frame.width, dpanel->frame.width - 56.0f),
+        "草稿输入框应填满弹窗内容区，实测宽 " +
+            std::to_string(dinput->frame.width));
+    DOCTEST_CHECK_MESSAGE(nearPx(dinput->frame.height, 140.0f),
+                          "草稿输入框应加高到 140，实测 " +
+                              std::to_string(dinput->frame.height));
+    // 按钮带：两钮同排整体居中（组中心 == 面板中心）、行底距弹窗底 20（y=h-60）
+    DOCTEST_CHECK_MESSAGE(nearPx(genBtn->frame.y, dismissBtn->frame.y),
+                          "生成/关闭两钮应同排");
+    DOCTEST_CHECK_MESSAGE(
+        nearPx(genBtn->frame.y + genBtn->frame.height,
+               dpanel->frame.y + dpanel->frame.height - 20.0f),
+        "按钮带行底应距弹窗底 20（y=h-60），实测按钮底 " +
+            std::to_string(genBtn->frame.y + genBtn->frame.height));
+    const float groupCenter =
+        (genBtn->frame.x + dismissBtn->frame.x + dismissBtn->frame.width) * 0.5f;
+    DOCTEST_CHECK_MESSAGE(
+        nearPx(groupCenter, dpanel->frame.x + dpanel->frame.width * 0.5f),
+        "按钮组应整体居中，实测组中心 " + std::to_string(groupCenter));
+    // 按钮带压不到结果行：结果槽底（面板内 306）在按钮顶上方
+    DOCTEST_CHECK_MESSAGE(
+        genBtn->frame.y >= dpanel->frame.y + 306.0f - 0.5f,
+        "按钮带顶压到结果槽底（面板内 306），实测按钮顶 " +
+            std::to_string(genBtn->frame.y - dpanel->frame.y));
+    // 微信化色锁：生成=Primary 微信绿、关闭=Secondary 白底（cardBg）
+    const auto& wc = ::core::theme::current().colors.wechat;
+    auto tone = [](const eui::Color& x, const eui::Color& y) {
+        return std::fabs(x.r - y.r) < 0.01f && std::fabs(x.g - y.g) < 0.01f &&
+               std::fabs(x.b - y.b) < 0.01f;
+    };
+    DOCTEST_CHECK_MESSAGE(tone(genBtnBg->color, wc.primary),
+                          "生成草稿钮应为微信 Primary 绿");
+    DOCTEST_CHECK_MESSAGE(tone(dismissBg->color, wc.cardBg),
+                          "关闭钮应为微信 Secondary 白底");
     DOCTEST_CHECK(uiC.find("agent.dialog.task.panel") != nullptr);
 
     // ② ✕ 关子弹窗（外层保留）
@@ -4748,6 +4785,10 @@ REGISTER_TEST(agent_ui_draft_async_prefill_no_autosave,
     DOCTEST_REQUIRE(notice != nullptr);
     DOCTEST_CHECK(notice->text.find("已预填表单") != std::string::npos);
     DOCTEST_CHECK(notice->text.find("定时") != std::string::npos);
+    // 微信化文字档锁：完成提示行 = wechat.textSecondary
+    DOCTEST_CHECK(std::fabs(notice->textColor.r -
+                            core::theme::current().colors.wechat.textSecondary.r) <
+                  0.01f);
     DOCTEST_CHECK(u.find("agent.dialog.task.draft.warnings") == nullptr);
     DOCTEST_CHECK(u.find("agent.dialog.task.draft.error") == nullptr);
     DOCTEST_CHECK(u.find("agent.dialog.task.draft.panel") != nullptr);
@@ -4827,6 +4868,9 @@ REGISTER_TEST(agent_ui_draft_degrade_warning_no_trigger_takeover,
     const auto* warn = u.find("agent.dialog.task.draft.warnings");
     DOCTEST_REQUIRE(warn != nullptr);
     DOCTEST_CHECK(warn->text.find("cron") != std::string::npos);
+    // 警告行保留 amber t.colors.warning（微信档无 amber 槽位，与 claude 详情警示行同款）
+    DOCTEST_CHECK(std::fabs(warn->textColor.r -
+                            core::theme::current().colors.warning.r) < 0.01f);
     const auto* notice = u.find("agent.dialog.task.draft.notice");
     DOCTEST_REQUIRE(notice != nullptr);
     DOCTEST_CHECK(notice->text.find("已预填表单") != std::string::npos);
@@ -4878,6 +4922,10 @@ REGISTER_TEST(agent_ui_draft_error_paths,
     const auto* err = uiD.find("agent.dialog.task.draft.error");
     DOCTEST_REQUIRE(err != nullptr);
     DOCTEST_CHECK(err->text.find("一句话") != std::string::npos);
+    // 微信化错误行锁：错误文字 = wechat.warningRed（#FA5151）
+    DOCTEST_CHECK(std::fabs(err->textColor.r -
+                            core::theme::current().colors.wechat.warningRed.r) <
+                  0.01f);
     DOCTEST_CHECK_EQ(calls, 0);
 
     // ② 上游 500：请求失败 → 错误行、无预填、不落库

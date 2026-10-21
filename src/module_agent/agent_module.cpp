@@ -182,10 +182,15 @@ constexpr float kGoalInputH = 64.0f;          // demo 指令 textarea rows≈3
 constexpr float kContextNoteH = 56.0f;
 constexpr float kGroupTitleH = 20.0f;        // 分组标题高（14px 加粗 + 行高 20）
 
-// AI 草稿子弹窗几何（Standard 460 宽；y 均为本弹窗面板内坐标，与任务弹窗互不影响）
-constexpr float kDraftDialogH = 320.0f;
-constexpr float kDraftInputH = 88.0f;
-constexpr float kDraftGenH = 36.0f;
+// AI 草稿子弹窗几何（Standard 460 宽；y 均为本弹窗面板内坐标，与任务弹窗互不影响）。
+// UAT6 重排：输入加高 88→140、结果行让位下移、按钮组迁底部按钮带（行底距弹窗底 60，
+// 与 dialog_form 同口径）并整体居中。
+constexpr float kDraftDialogH = 380.0f;
+constexpr float kDraftInputH = 140.0f;
+constexpr float kDraftBtnH = 40.0f;          // 底部按钮带按钮高（dialog_form 同档）
+constexpr float kDraftBtnW = 110.0f;
+constexpr float kDraftBtnGap = 12.0f;
+constexpr float kDraftResultY = 244.0f;      // 结果行顶（输入底 232 + 12 呼吸）
 
 // 任务列表每任务只查最近 1 条（列表状态/通知足够，spec §8.6 D8）。
 // kDetailRunListLimit（=20）在 agent_ui_shared.h——列表查询与详情 UI 共用同一上限
@@ -2577,7 +2582,7 @@ void AgentModule::composeDraftDialog(
         if (!draftDialogOpen_) return;
         ui_kit::drawDialogTitle(ui, "agent.dialog.task.draft.title", w,
                                 "AI 生成草稿", t.sizes.fontSizeLarge,
-                                t.colors.textPrimary);
+                                t.colors.wechat.textPrimary);
 
         // ✕ 关闭（与遮罩 / Esc / 「关闭」按钮同一路径）
         ui.text("agent.dialog.task.draft.close")
@@ -2588,14 +2593,14 @@ void AgentModule::composeDraftDialog(
             .lineHeight(28.0f)
             .horizontalAlign(eui::HorizontalAlign::Center)
             .verticalAlign(eui::VerticalAlign::Center)
-            .color(t.colors.textTertiary)
+            .color(t.colors.wechat.textTertiary)
             .onClick([this] { closeDraftDialog(); })
             .build();
 
         ui_kit::drawDialogText(
             ui, "agent.dialog.task.draft.caption", w,
             "用一句话描述这个任务，AI 生成表单草稿；结果只预填，保存仍由你确认",
-            t.sizes.fontSizeSmall, t.colors.textSecondary,
+            t.sizes.fontSizeSmall, t.colors.wechat.textSecondary,
             {.x = x0, .y = 64.0f, .height = 18.0f, .lineHeight = 18.0f});
 
         components::input(ui, "agent.dialog.task.draft.input")
@@ -2611,44 +2616,49 @@ void AgentModule::composeDraftDialog(
             .onCancel([this] { closeDraftDialog(); })   // 输入框内 Esc = 关子弹窗
             .build();
 
-        const float btnY = 196.0f;
+        // 底部按钮带（UAT6 重排）：生成=Primary 微信绿（核心确认）、关闭=Secondary
+        //（次要），两钮同排整体居中、行底距弹窗底 60（与 dialog_form 按钮带同口径）。
+        const float btnY = h - 60.0f;
+        const float btnX0 = (w - (kDraftBtnW * 2.0f + kDraftBtnGap)) * 0.5f;
         components::button(ui, "agent.dialog.task.draft.generate")
-            .position(x0, btnY)
-            .size(110.0f, kDraftGenH)
+            .position(btnX0, btnY)
+            .size(kDraftBtnW, kDraftBtnH)
             .text(generating ? "生成中…" : "生成草稿")
             .fontSize(t.sizes.fontSizeBody - 1.0f)
             .theme(themeTokens, true)
-            .textColor(t.colors.onPrimary)
+            .textColor(t.colors.wechat.onPrimary)
             .radius(t.sizes.radius)
             .disabled(generating)
             .onClick([this] { startDraftGeneration(); })
             .build();
         components::button(ui, "agent.dialog.task.draft.dismiss")
-            .position(x0 + 110.0f + kDialogGap, btnY)
-            .size(110.0f, kDraftGenH)
+            .position(btnX0 + kDraftBtnW + kDraftBtnGap, btnY)
+            .size(kDraftBtnW, kDraftBtnH)
             .text("关闭")
             .fontSize(t.sizes.fontSizeBody - 1.0f)
             .theme(themeTokens, false)
-            .textColor(t.colors.textPrimary)
+            .textColor(t.colors.wechat.textPrimary)
             .radius(t.sizes.radius)
             .border(1.0f, t.colors.borderDefault)
             .onClick([this] { closeDraftDialog(); })
             .build();
 
-        // 结果行（Done → notice+warnings；Failed → error；同一槽位互斥渲染）
+        // 结果行（Done → notice+warnings；Failed → error；同一槽位互斥渲染）。
+        // 错误行走 wechat.warningRed（UAT6 微信化）；警告保留 amber t.colors.warning
+        //（微信档无 amber 槽位，WeChat 化模块同款先例：claude_ui_detail 警示行）。
         ui_kit::drawDialogText(ui, "agent.dialog.task.draft.notice", w, draftNotice_,
-                               t.sizes.fontSizeSmall, t.colors.textSecondary,
-                               {.x = x0, .y = 248.0f, .height = 18.0f,
+                               t.sizes.fontSizeSmall, t.colors.wechat.textSecondary,
+                               {.x = x0, .y = kDraftResultY, .height = 18.0f,
                                 .lineHeight = 18.0f, .skipIfEmpty = true});
         ui_kit::drawDialogText(ui, "agent.dialog.task.draft.warnings", w,
                                draftWarnings_, t.sizes.fontSizeSmall - 1.0f,
                                t.colors.warning,
-                               {.x = x0, .y = 268.0f, .height = 44.0f,
+                               {.x = x0, .y = kDraftResultY + 18.0f, .height = 44.0f,
                                 .lineHeight = 16.0f, .wrap = true,
                                 .skipIfEmpty = true});
         ui_kit::drawDialogText(ui, "agent.dialog.task.draft.error", w, draftError_,
-                               t.sizes.fontSizeSmall, t.colors.error,
-                               {.x = x0, .y = 248.0f, .height = 18.0f,
+                               t.sizes.fontSizeSmall, t.colors.wechat.warningRed,
+                               {.x = x0, .y = kDraftResultY, .height = 18.0f,
                                 .lineHeight = 18.0f, .skipIfEmpty = true});
     });
 }
