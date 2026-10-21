@@ -31,6 +31,17 @@ void drawCard(eui::Ui& ui, const std::string& id, float x, float y, float width,
               int colIndex, int colCount, int cardIndex,
               const BoardView& v, BoardPlate& plate);
 
+// ---- UAT6 misc2：卡内水平内边距收紧（真机反馈：标题/标签可视字符太少）----
+// 只动水平，垂直排版零改动（groupTop/行高/行距不动）。旧值：标题双侧 40
+// （todo_ui_logic.h kCardTitleBoxInset）、chip 行左 16 / 右 12、完成角标 24px。
+// 让位公式不变：标题右内边距 = chip 右边距 + 角标宽 + 4px 间隙
+// （旧 40 = 12 + 24 + 4；新 28 = 8 + 16 + 4），标题框右缘永不压完成角标。
+// 常量收敛在本文件（卡片专属几何），不动 todo_ui_logic.h——该头与详情弹窗批共用。
+constexpr float kCardPadX = 28.0f;         // 标题框左右内边距（旧 40，-30%）
+constexpr float kCardChipPadX = 10.0f;    // chip 行左内边距（旧 16，-37.5%）
+constexpr float kCardChipPadRight = 8.0f; // chip 行/完成角标右内边距（旧 12，-33%）
+constexpr float kCardDoneBadgeW = 16.0f;  // 完成角标宽（旧 24，右缘对齐 chip 右边距）
+
 // 右侧动作区 560px = 搜索框(240)+逾期(104)+「+ 列」(72)+「+ 新建任务」(120)+间距
 void drawHeader(eui::Ui& ui, float contentW, float headerH, float bodyH,
                 const core::theme::Tokens& t, const BoardView& v) {
@@ -521,12 +532,12 @@ void drawCard(eui::Ui& ui, const std::string& id, float x, float y, float width,
         eui::Color fg;
     };
     std::vector<PendingChip> pendingChips;
-    float chipX = 16.0f;
+    float chipX = kCardChipPadX;
 
     // 截止 chip：列宽无下限（≥6-7 列时 colW 跌破 130），固定 66px 会越出卡右缘——自适应剩余空间，放不下就跳过
     if (task.dueAt.has_value()) {
         const std::string dueText = formatDue(task.dueAt.value());
-        const float dueMaxW = std::max(0.0f, width - 12.0f - chipX);
+        const float dueMaxW = std::max(0.0f, width - kCardChipPadRight - chipX);
         const float dueW = std::min(66.0f, dueMaxW);
         if (dueW >= 24.0f) {
             pendingChips.push_back({id + ".due", dueW, dueText,
@@ -545,7 +556,7 @@ void drawCard(eui::Ui& ui, const std::string& id, float x, float y, float width,
     if (showArchivedChip) {
         const std::string archText = formatArchivedAt(task.archivedAt.value());
         const float archW = chipWidth(archText);
-        const float avail = std::max(0.0f, width - 12.0f - chipX);
+        const float avail = std::max(0.0f, width - kCardChipPadRight - chipX);
         if (archW <= avail) {
             pendingChips.push_back({id + ".archived", archW, archText,
                                     t.colors.textTertiary});
@@ -555,7 +566,7 @@ void drawCard(eui::Ui& ui, const std::string& id, float x, float y, float width,
         size_t shown = 0;
         for (size_t ti = 0; ti < task.tags.size() && shown < 2; ++ti) {
             const float tw = chipWidth(task.tags[ti]);
-            if (chipX + tw > width - 12.0f) break;
+            if (chipX + tw > width - kCardChipPadRight) break;
             pendingChips.push_back({id + ".tag." + std::to_string(ti), tw,
                                     task.tags[ti], t.colors.info});
             chipX += tw + 6.0f;
@@ -565,7 +576,7 @@ void drawCard(eui::Ui& ui, const std::string& id, float x, float y, float width,
             const std::string more = "+" + std::to_string(task.tags.size() - shown);
             const float moreW = chipWidth(more);
             // 放不下就不画
-            if (chipX + moreW <= width - 12.0f) {
+            if (chipX + moreW <= width - kCardChipPadRight) {
                 pendingChips.push_back({id + ".tag.more", moreW, more,
                                         t.colors.textTertiary});
             }
@@ -578,15 +589,16 @@ void drawCard(eui::Ui& ui, const std::string& id, float x, float y, float width,
     const float chipY = y + groupTop + kCardTitleLineH + kCardTitleToChipGap;
 
     // 序号徽章已移除（§4 卡片构成 = 标题+优先级+截止，不含序号）；标题可用全宽
+    //（UAT6 misc2：左右内边距 40→28，双侧减 12px 让给标题字符；Ellipsis 截断机制不变）
     ui.text(id + ".title")
-        .position(kCardTitleBoxInset, y + groupTop)
-        .size(width - 2.0f * kCardTitleBoxInset, kCardTitleLineH)
+        .position(kCardPadX, y + groupTop)
+        .size(width - 2.0f * kCardPadX, kCardTitleLineH)
         .text(task.title)
         .fontSize(t.sizes.fontSizeBody - 1.0f)
         .lineHeight(kCardTitleLineH)
         .fontWeight(500)
         .horizontalAlign(eui::HorizontalAlign::Center)
-        .maxWidth(width - 2.0f * kCardTitleBoxInset)
+        .maxWidth(width - 2.0f * kCardPadX)
         .overflow(core::TextOverflow::Ellipsis)
         // 逾期标题红（§4）；归档标题三级灰（§4）；常规标题走主题一级文字
         .color(isArchiveCard ? t.colors.wechat.textPrimary
@@ -595,19 +607,21 @@ void drawCard(eui::Ui& ui, const std::string& id, float x, float y, float width,
         .opacity(done ? 0.6f : finalCardOpacity)
         .build();
 
-    // chip 行按清单绘制（x 从左往右，y 随内容组）
-    float drawX = 16.0f;
+    // chip 行按清单绘制（x 从左往右，y 随内容组；左内边距 16→10）
+    float drawX = kCardChipPadX;
     for (const auto& chip : pendingChips) {
         drawChip(ui, chip.id, drawX, chipY, chip.w, t, chip.text, chip.fg,
                  t.colors.wechat.secondaryButtonBg, finalCardOpacity);
         drawX += chip.w + 6.0f;  // 自适应宽 + 6 间距
     }
 
-    // 完成打勾（标题行尾角标：y 随标题行走内容组顶）
+    // 完成打勾（标题行尾角标：y 随标题行走内容组顶）。UAT6 misc2：角标 24→16px、
+    // 右缘随 chip 右边距右移（width-36 → width-24）；标题框右缘（width-28）到
+    // 角标左缘（width-24）保持 4px 间隙，让位公式同文件头常量注释。
     if (done) {
         ui.text(id + ".done")
-            .position(width - 36.0f, y + groupTop)
-            .size(24.0f, kCardTitleLineH)
+            .position(width - kCardChipPadRight - kCardDoneBadgeW, y + groupTop)
+            .size(kCardDoneBadgeW, kCardTitleLineH)
             .icon(0xF00C)  // fa-check（✓ 字符混排正文不可行，走 icon 通道）
             .fontSize(t.sizes.fontSizeBody - 1.0f)
             .lineHeight(18.0f)
@@ -669,16 +683,17 @@ void drawDragGhost(eui::Ui& ui, const core::theme::Tokens& t,
                         .radius(t.sizes.radiusWeChat)
                         .build();
                     // 标题同真卡居中形态（副本不画 chips = 无 chip 卡：独占整卡居中）。
-                    // 省略号三件套同真卡；序号徽章已移除，真卡与副本标题宽度一致（不减 kCardOrdinalBadgeHoriz）
+                    // 省略号三件套同真卡；序号徽章已移除，真卡与副本标题宽度一致（同 kCardPadX，
+                    // UAT6 misc2 随真卡 40→28 收紧）
                     ui.text("todo.dragghost.title")
-                        .position(kCardTitleBoxInset, cardContentGroupTop(false))
-                        .size(w - 2.0f * kCardTitleBoxInset, kCardTitleLineH)
+                        .position(kCardPadX, cardContentGroupTop(false))
+                        .size(w - 2.0f * kCardPadX, kCardTitleLineH)
                         .text(task->title)
                         .fontSize(t.sizes.fontSizeBody - 1.0f)
                         .lineHeight(kCardTitleLineH)
                         .fontWeight(500)
                         .horizontalAlign(eui::HorizontalAlign::Center)
-                        .maxWidth(w - 2.0f * kCardTitleBoxInset)
+                        .maxWidth(w - 2.0f * kCardPadX)
                         .overflow(core::TextOverflow::Ellipsis)
                         .color(t.colors.textPrimary)
                         .build();

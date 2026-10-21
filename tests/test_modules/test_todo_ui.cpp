@@ -1430,10 +1430,15 @@ REGISTER_TEST(todo_ui_card_text_centered,
         DOCTEST_CHECK_EQ(title->horizontalAlign, eui::HorizontalAlign::Center);
         DOCTEST_CHECK(std::abs((title->frame.x + title->frame.width / 2.0f) -
                                cardCX) <= 1.0f);
-        // 水平让位（kCardTitleBoxInset = 40）：标题框右缘必须让开完成角标区间
-        // [w-36, w-12]（drawCard 的 .done 角标 x = width-36），否则标题文字压角标
+        // UAT6 misc2：卡内水平内边距收紧回归锁——标题框左右各让 28（旧 40），
+        // 框宽 = 卡宽 - 56（旧 -80，多显示 ~24px ≈ 1.8 个 CJK 字符）
+        DOCTEST_CHECK_EQ(title->frame.x - cardBg->frame.x, 28.0f);
+        DOCTEST_CHECK_EQ(title->frame.width, cardBg->frame.width - 56.0f);
+        // 水平让位（28 = 8 右边距 + 16 角标宽 + 4 间隙）：标题框右缘必须让开完成
+        // 角标区间 [w-24, w-8]（drawCard 的 .done 角标 16px、x = width-24），否则
+        // 标题文字压角标
         DOCTEST_CHECK(title->frame.x + title->frame.width <=
-                      cardBg->frame.x + cardBg->frame.width - 36.0f);
+                      cardBg->frame.x + cardBg->frame.width - 24.0f);
 
         // 垂直：内容组 [顶, 底] 中点 = 卡内容区中心（≤1px）。
         // 组顶 = 标题顶；组底 = chip 底（有 chip 行）或标题底（纯标题卡）
@@ -1445,8 +1450,8 @@ REGISTER_TEST(todo_ui_card_text_centered,
             // 组内排版保持：标题行底 → chip 行顶 = 原间距 12
             DOCTEST_CHECK_EQ(chipBg->frame.y - (title->frame.y + title->frame.height),
                              kCardTitleToChipGap);
-            // chip 行水平不拽歪：x 仍 = 卡左缘 + 16（卡内左内边距）
-            DOCTEST_CHECK_EQ(chipBg->frame.x - cardBg->frame.x, 16.0f);
+            // chip 行水平不拽歪：x = 卡左缘 + 10（UAT6 misc2 卡内左内边距 16→10）
+            DOCTEST_CHECK_EQ(chipBg->frame.x - cardBg->frame.x, 10.0f);
             groupBottom = chipBg->frame.y + chipBg->frame.height;
         }
         DOCTEST_CHECK(std::abs(((groupTop + groupBottom) / 2.0f) - cardCY) <= 1.0f);
@@ -3593,7 +3598,9 @@ REGISTER_TEST(todo_ui_tag_chip_font_bigger,
 // 列宽无下限（colW = (contentW - gap*(n-1)) / n）。删掉 42px 优先级 chip 后
 // chipX 起点从 58 回到 16，8 列（卡宽 94 → 剩余 66）不再触发缩窄，故本用例取
 // 9 列（1200 窗：colW = (1120-8*16)/9 ≈ 110.2，卡宽 ≈ 78.2 → 剩余 ≈ 50.2 < 66
-// 仍走缩窄分支）；宽窗不缩（保持 66px 原观感）
+// 仍走缩窄分支）；宽窗不缩（保持 66px 原观感）。
+// UAT6 misc2：卡内边距收紧（chipX 16→10、右边距 12→8）后 8 列剩余 94-18=76 仍
+// 不缩窄，9 列剩余 ≈ 78.2-18=60.2 < 66 缩窄分支不变，仅公式右边距字面量同步。
 REGISTER_TEST(todo_card_due_chip_adapts_narrow_column,
               "todo_ui: 窄列截止 chip 自适应缩窄不越出卡右缘（审计修复）", {
     TestEnv env;
@@ -3632,7 +3639,7 @@ REGISTER_TEST(todo_card_due_chip_adapts_narrow_column,
     DOCTEST_CHECK(dueBg->frame.width >= 24.0f);
     DOCTEST_CHECK(dueBg->frame.width < 66.0f);
     DOCTEST_CHECK_EQ(dueBg->frame.width,
-                     std::min(66.0f, cardBg->frame.width - 12.0f - 16.0f));
+                     std::min(66.0f, cardBg->frame.width - 8.0f - 10.0f));
     // 宽窗 1600×1000 9 列：colW = (1520-128)/9 ≈ 154.7 → 不缩
     Frame wide(mod.get(), 1600.0f, 1000.0f);
     wide.ui.layout(1600.0f, 1000.0f);
