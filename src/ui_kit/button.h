@@ -29,9 +29,9 @@ enum class ButtonLevel {
 };
 
 // 统一尺寸（spec §4.1 D-12 校准）：四级按钮共用同一档，避免同视口高低错落。
-// 钉死常量保 W2c/d 一致；圆角读 t.sizes.radiusWeChat（D-12 统一 6px）。
-constexpr float kButtonHeight = 34.0f;     // 高度（区间 32-36 取中）
-constexpr float kButtonPaddingX = 10.0f;   // 左右 padding（区间 8-12 取中）
+// 钉死常量保 W2c/d 一致；半径读 t.sizes.radius（v1.0 控件 8px）。
+constexpr float kButtonHeight = 40.0f;     // 高度（S1.2 #35: v1.0 按钮 40px）
+constexpr float kButtonPaddingX = 16.0f;   // 左右 padding（S1.2 #37: v1.0 水平 16px）
 constexpr float kButtonFontSize = 14.0f;   // 字号（§4.1 / §3.3 主文字）
 
 // 按钮可选配置：onClick 回调 + 文字色覆盖。
