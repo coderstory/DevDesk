@@ -83,7 +83,7 @@ constexpr float kGlassFaceAlphaDark = 0.92f;     // 深色主题面透明度：d
                                                 // 槽位 dark/light 同值——白面 0.62 在深色窗底会调成
                                                 // 奶灰、三级灰标签塌到 ≈1.2:1，深色档抬高到近实白
                                                 //（对比度/观感与改前白卡基本一致，玻璃层组照常渲染）
-constexpr float kGlassTintAlpha = 0.15f;         // 染色直叠强度（soft-light 近似）
+constexpr float kGlassTintAlpha = 0.40f;         // 染色直叠强度（UAT6 D 批加浓：0.15→0.40，五色一眼可辨）
 constexpr float kGlassBorderAlpha = 0.55f;       // 白色细边（demo rgba(255,255,255,.55)）
 constexpr float kGlassHighlightAlpha = 0.32f;   // 顶部高光峰值（demo ::before .35@0%）
 constexpr float kGlassHighlightFrac = 0.58f;     // 高光纵向覆盖（demo 60% 处渐没）
@@ -94,7 +94,7 @@ constexpr float kGlassStainWhiteCore = 0.06f;    // 白污渍芯/壳（demo .5×
 constexpr float kGlassStainWhiteHalo = 0.03f;
 constexpr float kGlassStainDarkCore = 0.019f;    // 暗污渍芯/壳（demo .16×.12）
 constexpr float kGlassStainDarkHalo = 0.010f;
-constexpr float kGlassHoverVeilAlpha = 0.06f;    // 整卡 hover 深色纱（紫卡实测 ΔL≈0.10）
+constexpr float kGlassHoverVeilAlpha = 0.10f;    // 整卡 hover 深色纱（UAT6 D 批加浓：0.06→0.10，浓底上仍可辨）
 constexpr float kGlassPressedVeilAlpha = 0.12f;  // 整卡按压纱
 
 void drawGlassStatCard(eui::Ui& ui,
@@ -307,11 +307,11 @@ struct HomeStatCard {
     eui::Color tint;
 };
 constexpr HomeStatCard kStatCards[] = {
-    {StatCardKind::Tokens,      ::core::PageId::ClaudeProxy, "Token 速率 (tok/s)", ::core::PageId::ClaudeProxy, eui::Color::fromHex(0x7EE2A8)},  // 绿
-    {StatCardKind::Notes,       ::core::PageId::Markdown,    "今日笔记",           ::core::PageId::Markdown,    eui::Color::fromHex(0x8ECBF5)},  // 蓝
-    {StatCardKind::TodoPending, ::core::PageId::Todo,        "待办任务",           ::core::PageId::Todo,        eui::Color::fromHex(0xF5C98E)},  // 橙
-    {StatCardKind::TodoOverdue, ::core::PageId::Todo,        "逾期任务",           ::core::PageId::Todo,        eui::Color::fromHex(0xC8A8F5)},  // 紫
-    {StatCardKind::ApiCalls,    ::core::PageId::ClaudeProxy, "API 调用",           ::core::PageId::ClaudeProxy, eui::Color::fromHex(0x8EF0E2)},  // 青
+    {StatCardKind::Tokens,      ::core::PageId::ClaudeProxy, "Token 速率 (tok/s)", ::core::PageId::ClaudeProxy, eui::Color::fromHex(0x68E2A2)},  // 绿（UAT6 D 批向饱和端移一档）
+    {StatCardKind::Notes,       ::core::PageId::Markdown,    "今日笔记",           ::core::PageId::Markdown,    eui::Color::fromHex(0x78C6F5)},  // 蓝（UAT6 D 批向饱和端移一档）
+    {StatCardKind::TodoPending, ::core::PageId::Todo,        "待办任务",           ::core::PageId::Todo,        eui::Color::fromHex(0xF5C080)},  // 橙（UAT6 D 批向饱和端移一档）
+    {StatCardKind::TodoOverdue, ::core::PageId::Todo,        "逾期任务",           ::core::PageId::Todo,        eui::Color::fromHex(0xC098F5)},  // 紫（UAT6 D 批向饱和端移一档）
+    {StatCardKind::ApiCalls,    ::core::PageId::ClaudeProxy, "API 调用",           ::core::PageId::ClaudeProxy, eui::Color::fromHex(0x78F0E2)},  // 青（UAT6 D 批向饱和端移一档）
 };
 
 // 快捷按钮：kind = 行身份，module = 归属模块，target + navPayload = 点击负载。
