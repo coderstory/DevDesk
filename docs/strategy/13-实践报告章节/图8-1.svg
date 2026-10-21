@@ -1,0 +1,137 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 694" width="500" height="694">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 Z" fill="#444"/>
+    </marker>
+    <marker id="arrow-blue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 Z" fill="#1a3a5c"/>
+    </marker>
+  </defs>
+
+  <!-- 标题 -->
+  <text x="250" y="24" text-anchor="middle" font-family="sans-serif" font-size="14" font-weight="bold" fill="#000">图 8-1：从零起步最小路线图</text>
+  <text x="250" y="40" text-anchor="middle" font-family="sans-serif" font-size="12" fill="#666">按依赖关系递进，标注事故触发条件</text>
+
+  <!-- 从零起步 -->
+  <rect x="185" y="52" width="130" height="26" rx="13" fill="#1a3a5c"/>
+  <text x="250" y="70" text-anchor="middle" font-family="sans-serif" font-size="13" fill="#fff">从零起步</text>
+
+  <line x1="250" y1="78" x2="250" y2="96" stroke="#1a3a5c" stroke-width="1.5" marker-end="url(#arrow-blue)"/>
+
+  <rect x="180" y="98" width="140" height="24" rx="4" fill="#fff" stroke="#1a3a5c" stroke-width="1.3"/>
+  <text x="250" y="114" text-anchor="middle" font-family="sans-serif" font-size="12" fill="#1a3a5c">写第一版 CLAUDE.md</text>
+
+  <line x1="250" y1="122" x2="250" y2="137" stroke="#1a3a5c" stroke-width="1.5" marker-end="url(#arrow-blue)"/>
+
+  <rect x="180" y="139" width="140" height="24" rx="4" fill="#fff" stroke="#1a3a5c" stroke-width="1.3"/>
+  <text x="250" y="155" text-anchor="middle" font-family="sans-serif" font-size="12" fill="#1a3a5c">建立构建脚本</text>
+
+  <line x1="250" y1="163" x2="250" y2="178" stroke="#1a3a5c" stroke-width="1.5" marker-end="url(#arrow-blue)"/>
+
+  <rect x="180" y="180" width="140" height="24" rx="4" fill="#fff" stroke="#1a3a5c" stroke-width="1.3"/>
+  <text x="250" y="196" text-anchor="middle" font-family="sans-serif" font-size="12" fill="#1a3a5c">启用 worktree 隔离</text>
+
+  <line x1="250" y1="204" x2="250" y2="224" stroke="#1a3a5c" stroke-width="1.5" marker-end="url(#arrow-blue)"/>
+
+  <rect x="165" y="226" width="170" height="28" rx="6" fill="#1a3a5c" fill-opacity="0.12" stroke="#1a3a5c" stroke-width="1.3"/>
+  <text x="250" y="245" text-anchor="middle" font-family="sans-serif" font-size="12" font-weight="bold" fill="#1a3a5c">最小可跑循环运转</text>
+
+  <!-- 分隔线 -->
+  <line x1="25" y1="268" x2="475" y2="268" stroke="#ccc" stroke-width="0.8" stroke-dasharray="6,3"/>
+
+  <!-- 路径一 -->
+  <text x="25" y="290" font-family="sans-serif" font-size="13" font-weight="bold" fill="#1a3a5c">路径一：必备机制（缺一则系统退化）</text>
+
+  <!-- 必备第一行 -->
+  <rect x="25" y="301" width="135" height="24" rx="4" fill="#fff" stroke="#1a3a5c" stroke-width="1.5"/>
+  <text x="92" y="317" text-anchor="middle" font-family="sans-serif" font-size="12" fill="#1a3a5c">1. 项目 CLAUDE.md</text>
+
+  <line x1="160" y1="313" x2="183" y2="313" stroke="#1a3a5c" stroke-width="1.2" marker-end="url(#arrow-blue)"/>
+
+  <rect x="185" y="301" width="135" height="24" rx="4" fill="#fff" stroke="#1a3a5c" stroke-width="1.5"/>
+  <text x="252" y="317" text-anchor="middle" font-family="sans-serif" font-size="12" fill="#1a3a5c">2. Worktree 隔离</text>
+
+  <line x1="320" y1="313" x2="343" y2="313" stroke="#1a3a5c" stroke-width="1.2" marker-end="url(#arrow-blue)"/>
+
+  <rect x="345" y="301" width="135" height="24" rx="4" fill="#fff" stroke="#1a3a5c" stroke-width="1.5"/>
+  <text x="412" y="317" text-anchor="middle" font-family="sans-serif" font-size="12" fill="#1a3a5c">3. 独立审计关卡</text>
+
+  <!-- 必备第二行 -->
+  <rect x="25" y="338" width="135" height="24" rx="4" fill="#fff" stroke="#1a3a5c" stroke-width="1.5"/>
+  <text x="92" y="354" text-anchor="middle" font-family="sans-serif" font-size="12" fill="#1a3a5c">4. 先红后绿</text>
+
+  <line x1="160" y1="350" x2="183" y2="350" stroke="#1a3a5c" stroke-width="1.2" marker-end="url(#arrow-blue)"/>
+
+  <rect x="185" y="338" width="135" height="24" rx="4" fill="#fff" stroke="#1a3a5c" stroke-width="1.5"/>
+  <text x="252" y="354" text-anchor="middle" font-family="sans-serif" font-size="12" fill="#1a3a5c">5. 经验沉淀闭环</text>
+
+  <line x1="320" y1="350" x2="343" y2="350" stroke="#1a3a5c" stroke-width="1.2" marker-end="url(#arrow-blue)"/>
+
+  <rect x="345" y="338" width="135" height="24" rx="4" fill="#fff" stroke="#1a3a5c" stroke-width="1.5"/>
+  <text x="412" y="354" text-anchor="middle" font-family="sans-serif" font-size="12" fill="#1a3a5c">6. 流程强制层 hooks</text>
+
+  <!-- 分隔线 -->
+  <line x1="25" y1="378" x2="475" y2="378" stroke="#ccc" stroke-width="0.8" stroke-dasharray="6,3"/>
+
+  <!-- 路径二 -->
+  <text x="25" y="399" font-family="sans-serif" font-size="13" font-weight="bold" fill="#555">路径二：推荐机制（有更好，没有也能跑）</text>
+
+  <rect x="25" y="410" width="135" height="22" rx="4" fill="#fff" stroke="#777" stroke-width="1.2"/>
+  <text x="92" y="425" text-anchor="middle" font-family="sans-serif" font-size="12" fill="#555">7. 跨项目经验库</text>
+
+  <rect x="185" y="410" width="135" height="22" rx="4" fill="#fff" stroke="#777" stroke-width="1.2"/>
+  <text x="252" y="425" text-anchor="middle" font-family="sans-serif" font-size="12" fill="#555">8. 自动复盘</text>
+
+  <rect x="345" y="410" width="135" height="22" rx="4" fill="#fff" stroke="#777" stroke-width="1.2"/>
+  <text x="412" y="425" text-anchor="middle" font-family="sans-serif" font-size="12" fill="#555">9. 多轮 PDCA 审计</text>
+
+  <rect x="95" y="440" width="145" height="22" rx="4" fill="#fff" stroke="#777" stroke-width="1.2"/>
+  <text x="167" y="455" text-anchor="middle" font-family="sans-serif" font-size="12" fill="#555">10. 无人值守 watchdog</text>
+
+  <rect x="265" y="440" width="135" height="22" rx="4" fill="#fff" stroke="#777" stroke-width="1.2"/>
+  <text x="332" y="455" text-anchor="middle" font-family="sans-serif" font-size="12" fill="#555">11. 交付前三问</text>
+
+  <!-- 分隔线 -->
+  <line x1="25" y1="477" x2="475" y2="477" stroke="#ccc" stroke-width="0.8" stroke-dasharray="6,3"/>
+
+  <!-- 路径三 -->
+  <text x="25" y="498" font-family="sans-serif" font-size="13" font-weight="bold" fill="#999">路径三：配套基建</text>
+
+  <rect x="25" y="509" width="135" height="22" rx="4" fill="#fff" stroke="#aaa" stroke-width="1"/>
+  <text x="92" y="524" text-anchor="middle" font-family="sans-serif" font-size="12" fill="#777">12. 编译缓存 ccache</text>
+
+  <line x1="160" y1="520" x2="183" y2="520" stroke="#aaa" stroke-width="1" marker-end="url(#arrow)"/>
+
+  <rect x="185" y="509" width="135" height="22" rx="4" fill="#fff" stroke="#aaa" stroke-width="1"/>
+  <text x="252" y="524" text-anchor="middle" font-family="sans-serif" font-size="12" fill="#777">13. 构建脚本封装</text>
+
+  <line x1="320" y1="520" x2="343" y2="520" stroke="#aaa" stroke-width="1" marker-end="url(#arrow)"/>
+
+  <rect x="345" y="509" width="135" height="22" rx="4" fill="#fff" stroke="#aaa" stroke-width="1"/>
+  <text x="412" y="524" text-anchor="middle" font-family="sans-serif" font-size="12" fill="#777">14. 真窗口探针</text>
+
+  <!-- 分隔线 -->
+  <line x1="25" y1="546" x2="475" y2="546" stroke="#ccc" stroke-width="0.8" stroke-dasharray="6,3"/>
+
+  <!-- 触发条件速查 -->
+  <text x="25" y="566" font-family="sans-serif" font-size="12" font-weight="bold" fill="#000">触发条件速查 — 事故类型及其该补的机制</text>
+
+  <text x="25" y="586" font-family="sans-serif" font-size="12" fill="#444">AI 顺手改了不该改的</text>
+  <text x="280" y="586" font-family="sans-serif" font-size="12" fill="#888">— 补 1 中的镜像复述纪律</text>
+
+  <text x="25" y="604" font-family="sans-serif" font-size="12" fill="#444">测试全绿但真机一上手就炸</text>
+  <text x="280" y="604" font-family="sans-serif" font-size="12" fill="#888">— 补 11 交付前三问</text>
+
+  <text x="25" y="622" font-family="sans-serif" font-size="12" fill="#444">多子任务同文件合并冲突</text>
+  <text x="280" y="622" font-family="sans-serif" font-size="12" fill="#888">— 补 1 中的同文件互斥规则</text>
+
+  <text x="25" y="640" font-family="sans-serif" font-size="12" fill="#444">规则写了但 AI 不遵守</text>
+  <text x="280" y="640" font-family="sans-serif" font-size="12" fill="#888">— 补 6 流程强制层 hooks</text>
+
+  <text x="25" y="658" font-family="sans-serif" font-size="12" fill="#444">隔周不记得上次的教训</text>
+  <text x="280" y="658" font-family="sans-serif" font-size="12" fill="#888">— 补 5 经验沉淀闭环</text>
+
+  <text x="25" y="676" font-family="sans-serif" font-size="12" fill="#444">无人值守子任务悄悄卡死</text>
+  <text x="280" y="676" font-family="sans-serif" font-size="12" fill="#888">— 补 10 无人值守 watchdog</text>
+
+</svg>

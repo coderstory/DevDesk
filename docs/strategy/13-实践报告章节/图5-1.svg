@@ -1,0 +1,117 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 498" width="500" height="498">
+  <defs>
+    <style>
+      text { font-family: "SimSun","Microsoft YaHei","Arial",sans-serif; font-size: 12px; fill: #1a1a1a; }
+      .title { font-size: 15px; font-weight: bold; }
+      .risk { font-size: 13px; font-weight: bold; fill: #1a1a1a; }
+      .mech { font-size: 12px; fill: #2c3e50; }
+      .label { font-size: 12px; fill: #4a6a8a; }
+      .edge { stroke: #2c3e50; stroke-width: 0.8; fill: none; }
+      .edge-dashed { stroke: #2c3e50; stroke-width: 0.6; fill: none; stroke-dasharray: 3,3; }
+      .risk-box { fill: #f0ece6; stroke: #1a1a1a; stroke-width: 1.2; }
+      .mech-box { fill: #ffffff; stroke: #2c3e50; stroke-width: 1; }
+      .mech-box-hi { fill: #e8f0f8; stroke: #2c3e50; stroke-width: 1.5; }
+    </style>
+  </defs>
+
+  <text x="250" y="22" text-anchor="middle" class="title">图5-1 预防机制全景图：五类风险 → 六组机制</text>
+
+  <!-- Risk row (5 boxes, 494px total width: 92+8+92+8+92+8+92+8+92 = 494, margins 3 each side) -->
+  <rect x="8" y="40" width="92" height="40" rx="4" class="risk-box"/>
+  <text x="54" y="56" text-anchor="middle" class="risk">改错地方</text>
+  <text x="54" y="70" text-anchor="middle" class="label">范围失控</text>
+
+  <rect x="104" y="40" width="92" height="40" rx="4" class="risk-box"/>
+  <text x="150" y="56" text-anchor="middle" class="risk">互踩</text>
+  <text x="150" y="70" text-anchor="middle" class="label">并发冲突</text>
+
+  <rect x="200" y="40" width="92" height="40" rx="4" class="risk-box"/>
+  <text x="246" y="56" text-anchor="middle" class="risk">假绿</text>
+  <text x="246" y="70" text-anchor="middle" class="label">测试失效</text>
+
+  <rect x="296" y="40" width="92" height="40" rx="4" class="risk-box"/>
+  <text x="342" y="56" text-anchor="middle" class="risk">静默失败</text>
+  <text x="342" y="70" text-anchor="middle" class="label">零日志</text>
+
+  <rect x="392" y="40" width="92" height="40" rx="4" class="risk-box"/>
+  <text x="438" y="56" text-anchor="middle" class="risk">忙中出错</text>
+  <text x="438" y="70" text-anchor="middle" class="label">隐性不一致</text>
+
+  <!-- Mechanism groups (2 rows of 3) -->
+  <!-- Row 1 -->
+  <rect x="8" y="102" width="156" height="78" rx="3" class="mech-box"/>
+  <text x="86" y="120" text-anchor="middle" class="risk">5.1 范围边界</text>
+  <text x="86" y="136" text-anchor="middle" class="mech">镜像复述·三分类</text>
+  <text x="86" y="150" text-anchor="middle" class="mech">封装独立·scope-drift</text>
+  <text x="86" y="168" text-anchor="middle" class="label">顺改三Service类</text>
+
+  <rect x="172" y="102" width="156" height="78" rx="3" class="mech-box"/>
+  <text x="250" y="120" text-anchor="middle" class="risk">5.2 隔离并发</text>
+  <text x="250" y="136" text-anchor="middle" class="mech">worktree隔离·单写者</text>
+  <text x="250" y="150" text-anchor="middle" class="mech">编译槽唯一·用完即清</text>
+  <text x="250" y="168" text-anchor="middle" class="label">同文件双写·12残留</text>
+
+  <rect x="336" y="102" width="156" height="78" rx="3" class="mech-box"/>
+  <text x="414" y="120" text-anchor="middle" class="risk">5.3 验证有效性</text>
+  <text x="414" y="136" text-anchor="middle" class="mech">先红后绿·按场景写</text>
+  <text x="414" y="150" text-anchor="middle" class="mech">两段制·报场景不报数</text>
+  <text x="414" y="168" text-anchor="middle" class="label">全绿当天真机三连爆</text>
+
+  <!-- Row 2 -->
+  <rect x="8" y="194" width="156" height="78" rx="3" class="mech-box"/>
+  <text x="86" y="212" text-anchor="middle" class="risk">5.4 可观测性</text>
+  <text x="86" y="228" text-anchor="middle" class="mech">禁吞异常·界面可见</text>
+  <text x="86" y="242" text-anchor="middle" class="mech">平台对称审计</text>
+  <text x="86" y="260" text-anchor="middle" class="label">材质挂不上零日志</text>
+
+  <rect x="172" y="194" width="156" height="78" rx="3" class="mech-box"/>
+  <text x="250" y="212" text-anchor="middle" class="risk">5.5 调度安全</text>
+  <text x="250" y="228" text-anchor="middle" class="mech">禁手敲cmake·禁长sleep</text>
+  <text x="250" y="242" text-anchor="middle" class="mech">3分钟超时·追加对账</text>
+  <text x="250" y="260" text-anchor="middle" class="label">三份不一致构建目录</text>
+
+  <rect x="336" y="194" width="156" height="78" rx="3" class="mech-box-hi"/>
+  <text x="414" y="212" text-anchor="middle" class="risk">5.6 流程强制(hooks)</text>
+  <text x="414" y="228" text-anchor="middle" class="mech">四层: 注入→强制</text>
+  <text x="414" y="242" text-anchor="middle" class="mech">→对账→结构</text>
+  <text x="414" y="260" text-anchor="middle" class="label">融合覆盖丢标记</text>
+
+  <!-- Connecting lines -->
+  <line x1="54" y1="80" x2="54" y2="120" class="edge"/>
+  <line x1="54" y1="120" x2="86" y2="120" class="edge-dashed"/>
+
+  <line x1="150" y1="80" x2="150" y2="138" class="edge"/>
+  <line x1="150" y1="138" x2="250" y2="138" class="edge-dashed"/>
+
+  <line x1="246" y1="80" x2="246" y2="138" class="edge"/>
+  <line x1="246" y1="138" x2="414" y2="138" class="edge-dashed"/>
+
+  <line x1="342" y1="80" x2="342" y2="230" class="edge"/>
+  <line x1="342" y1="230" x2="86" y2="230" class="edge-dashed"/>
+
+  <line x1="438" y1="80" x2="438" y2="230" class="edge"/>
+  <line x1="438" y1="230" x2="250" y2="230" class="edge-dashed"/>
+
+  <!-- Edge labels -->
+  <text x="370" y="96" text-anchor="middle" class="label">恒真check</text>
+  <text x="370" y="232" text-anchor="middle" class="label">覆盖事故·丢标记</text>
+  <text x="466" y="96" text-anchor="middle" class="label">三份不一致build</text>
+  <text x="38" y="96" text-anchor="middle" class="label">"顺便也…"</text>
+  <text x="110" y="96" text-anchor="middle" class="label">同文件双写</text>
+
+  <!-- Legend -->
+  <rect x="8" y="288" width="484" height="44" rx="2" fill="#f8f6f2" stroke="#ccc" stroke-width="0.5"/>
+  <text x="20" y="306" class="label" font-weight="bold">图注</text>
+  <text x="20" y="320" class="label">实线 = 风险到机制的主要映射　虚线 = 次要关联　高亮框 = 2026-10-21 新增强制层 hooks</text>
+
+  <text x="250" y="345" text-anchor="middle" class="label">实证来源：DevDesk 2026-09 至 2026-10 开发实录 + 兄弟项目经验库（rs-host / winui3 / cs-retro）</text>
+  <text x="250" y="362" text-anchor="middle" class="label">本章覆盖 20 条机制（12 条完整展开 + 8 条仅入表 5-1），全部标注【本项目】或【方法论沿袭】</text>
+
+  <!-- Additional risk→mechanism connections -->
+  <line x1="54" y1="80" x2="54" y2="244" class="edge-dashed" stroke-width="0.4"/>
+  <line x1="54" y1="244" x2="250" y2="244" class="edge-dashed" stroke-width="0.4"/>
+
+  <line x1="150" y1="80" x2="150" y2="244" class="edge-dashed" stroke-width="0.4"/>
+  <line x1="150" y1="244" x2="414" y2="244" class="edge-dashed" stroke-width="0.4"/>
+<text x="250" y="380" text-anchor="middle" font-family="SimSun,serif" font-size="12" fill="#999">图注：本图采用功能配色区分五类风险（灰底）与六组机制（白底/蓝底），非装饰用途。</text>
+</svg>

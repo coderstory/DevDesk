@@ -1,0 +1,169 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 520 520" width="100%" height="100%">
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0,0 10,3.5 0,7" fill="#1a3a5c"/>
+    </marker>
+    <marker id="arrow-gray" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0,0 10,3.5 0,7" fill="#666"/>
+    </marker>
+    <marker id="arrow-red" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0,0 10,3.5 0,7" fill="#c0392b"/>
+    </marker>
+  </defs>
+
+  <rect width="520" height="520" fill="white"/>
+
+  <!-- Title -->
+  <text x="260" y="22" text-anchor="middle" font-family="SimHei,Microsoft YaHei,sans-serif" font-size="14" fill="#1a3a5c" font-weight="bold">图4-1：AI六阶段流水线时序图</text>
+
+  <!-- Swimlane header row (y=34-58) -->
+  <rect x="8" y="34" width="70" height="24" fill="#1a3a5c" rx="2"/>
+  <text x="43" y="50" text-anchor="middle" font-family="SimHei,Microsoft YaHei,sans-serif" font-size="12.5" fill="white">角色/阶段</text>
+
+  <!-- P1-P6 phase headers, each 72px wide from x=82 to 514 -->
+  <rect x="82" y="34" width="72" height="24" fill="#1a3a5c" rx="2"/>
+  <text x="118" y="50" text-anchor="middle" font-family="SimHei,Microsoft YaHei,sans-serif" font-size="12.5" fill="white">P1 实现</text>
+
+  <rect x="154" y="34" width="72" height="24" fill="#1a3a5c" rx="2"/>
+  <text x="190" y="50" text-anchor="middle" font-family="SimHei,Microsoft YaHei,sans-serif" font-size="12.5" fill="white">P2 审计</text>
+
+  <rect x="226" y="34" width="72" height="24" fill="#1a3a5c" rx="2"/>
+  <text x="262" y="50" text-anchor="middle" font-family="SimHei,Microsoft YaHei,sans-serif" font-size="12.5" fill="white">P3 修复</text>
+
+  <rect x="298" y="34" width="72" height="24" fill="#1a3a5c" rx="2"/>
+  <text x="334" y="50" text-anchor="middle" font-family="SimHei,Microsoft YaHei,sans-serif" font-size="12.5" fill="white">P4 测试</text>
+
+  <rect x="370" y="34" width="72" height="24" fill="#1a3a5c" rx="2"/>
+  <text x="406" y="50" text-anchor="middle" font-family="SimHei,Microsoft YaHei,sans-serif" font-size="12.5" fill="white">P5 发布</text>
+
+  <rect x="442" y="34" width="72" height="24" fill="#1a3a5c" rx="2"/>
+  <text x="478" y="50" text-anchor="middle" font-family="SimHei,Microsoft YaHei,sans-serif" font-size="12.5" fill="white">P6 验收</text>
+
+  <!-- Phase info boxes (y=60-90) -->
+  <rect x="82" y="60" width="72" height="30" fill="#f0f3f7" stroke="#1a3a5c" stroke-width="0.6" rx="1"/>
+  <text x="118" y="74" text-anchor="middle" font-family="SimSun,Microsoft YaHei,sans-serif" font-size="12.5" fill="#333">隔离开发</text>
+  <text x="118" y="87" text-anchor="middle" font-family="SimSun,Microsoft YaHei,sans-serif" font-size="12.5" fill="#888">原子提交</text>
+
+  <rect x="154" y="60" width="72" height="30" fill="#f0f3f7" stroke="#1a3a5c" stroke-width="0.6" rx="1"/>
+  <text x="190" y="74" text-anchor="middle" font-family="SimSun,Microsoft YaHei,sans-serif" font-size="12.5" fill="#333">六维核查</text>
+  <text x="190" y="87" text-anchor="middle" font-family="SimSun,Microsoft YaHei,sans-serif" font-size="12.5" fill="#888">产出findings</text>
+
+  <rect x="226" y="60" width="72" height="30" fill="#f0f3f7" stroke="#1a3a5c" stroke-width="0.6" rx="1"/>
+  <text x="262" y="74" text-anchor="middle" font-family="SimSun,Microsoft YaHei,sans-serif" font-size="12.5" fill="#333">逐条处置</text>
+  <text x="262" y="87" text-anchor="middle" font-family="SimSun,Microsoft YaHei,sans-serif" font-size="12.5" fill="#888">修/不修+理由</text>
+
+  <rect x="298" y="60" width="72" height="30" fill="#f0f3f7" stroke="#1a3a5c" stroke-width="0.6" rx="1"/>
+  <text x="334" y="74" text-anchor="middle" font-family="SimSun,Microsoft YaHei,sans-serif" font-size="12.5" fill="#333">四层验证</text>
+  <text x="334" y="87" text-anchor="middle" font-family="SimSun,Microsoft YaHei,sans-serif" font-size="12.5" fill="#888">交付前三问</text>
+
+  <rect x="370" y="60" width="72" height="30" fill="#f0f3f7" stroke="#1a3a5c" stroke-width="0.6" rx="1"/>
+  <text x="406" y="74" text-anchor="middle" font-family="SimSun,Microsoft YaHei,sans-serif" font-size="12.5" fill="#333">串行合并</text>
+  <text x="406" y="87" text-anchor="middle" font-family="SimSun,Microsoft YaHei,sans-serif" font-size="12.5" fill="#888">合并后重建</text>
+
+  <rect x="442" y="60" width="72" height="30" fill="#f0f3f7" stroke="#1a3a5c" stroke-width="0.6" rx="1"/>
+  <text x="478" y="74" text-anchor="middle" font-family="SimSun,Microsoft YaHei,sans-serif" font-size="12.5" fill="#333">用户点验</text>
+  <text x="478" y="87" text-anchor="middle" font-family="SimSun,Microsoft YaHei,sans-serif" font-size="12.5" fill="#888">发现问题重走</text>
+
+  <!-- Swimlane backgrounds -->
+  <rect x="8" y="96" width="70" height="70" fill="#e8edf2" stroke="#1a3a5c" stroke-width="0.8"/>
+  <text x="43" y="122" text-anchor="middle" font-family="SimHei,Microsoft YaHei,sans-serif" font-size="12.5" fill="#1a3a5c" font-weight="bold">AI 系统</text>
+  <text x="43" y="142" text-anchor="middle" font-family="SimSun,Microsoft YaHei,sans-serif" font-size="12.5" fill="#555">主会话</text>
+  <text x="43" y="158" text-anchor="middle" font-family="SimSun,Microsoft YaHei,sans-serif" font-size="12.5" fill="#555">+子任务</text>
+
+  <rect x="8" y="172" width="70" height="48" fill="#e8edf2" stroke="#1a3a5c" stroke-width="0.8"/>
+  <text x="43" y="192" text-anchor="middle" font-family="SimHei,Microsoft YaHei,sans-serif" font-size="12.5" fill="#1a3a5c" font-weight="bold">审计者</text>
+  <text x="43" y="210" text-anchor="middle" font-family="SimSun,Microsoft YaHei,sans-serif" font-size="12.5" fill="#555">只读子任务</text>
+
+  <rect x="8" y="226" width="70" height="48" fill="#e8edf2" stroke="#1a3a5c" stroke-width="0.8"/>
+  <text x="43" y="246" text-anchor="middle" font-family="SimHei,Microsoft YaHei,sans-serif" font-size="12.5" fill="#1a3a5c" font-weight="bold">用户</text>
+  <text x="43" y="264" text-anchor="middle" font-family="SimSun,Microsoft YaHei,sans-serif" font-size="12.5" fill="#555">肉眼+真机</text>
+
+  <!-- Swimlane separator lines -->
+  <line x1="78" y1="60" x2="514" y2="60" stroke="#1a3a5c" stroke-width="0.5" stroke-dasharray="4,4"/>
+  <line x1="78" y1="166" x2="514" y2="166" stroke="#1a3a5c" stroke-width="0.5" stroke-dasharray="4,4"/>
+  <line x1="78" y1="220" x2="514" y2="220" stroke="#1a3a5c" stroke-width="0.5" stroke-dasharray="4,4"/>
+  <line x1="78" y1="274" x2="514" y2="274" stroke="#1a3a5c" stroke-width="0.5" stroke-dasharray="4,4"/>
+
+  <!-- Phase separator lines (vertical dashed) -->
+  <line x1="153" y1="34" x2="153" y2="346" stroke="#ccc" stroke-width="0.4" stroke-dasharray="3,6"/>
+  <line x1="225" y1="34" x2="225" y2="346" stroke="#ccc" stroke-width="0.4" stroke-dasharray="3,6"/>
+  <line x1="297" y1="34" x2="297" y2="346" stroke="#ccc" stroke-width="0.4" stroke-dasharray="3,6"/>
+  <line x1="369" y1="34" x2="369" y2="346" stroke="#ccc" stroke-width="0.4" stroke-dasharray="3,6"/>
+  <line x1="441" y1="34" x2="441" y2="346" stroke="#ccc" stroke-width="0.4" stroke-dasharray="3,6"/>
+
+  <!-- P1 activity: AI system -->
+  <rect x="84" y="104" width="66" height="22" fill="#d4e0ed" stroke="#1a3a5c" stroke-width="0.8" rx="2"/>
+  <text x="117" y="119" text-anchor="middle" font-family="SimSun,Microsoft YaHei,sans-serif" font-size="12.5" fill="#1a3a5c">子任务开发</text>
+
+  <!-- P1→P2 arrow (AI → Auditor) -->
+  <line x1="150" y1="115" x2="172" y2="178" stroke="#1a3a5c" stroke-width="0.8" marker-end="url(#arrow)"/>
+
+  <!-- P2 activity: Auditor -->
+  <rect x="156" y="182" width="66" height="22" fill="#d4e0ed" stroke="#1a3a5c" stroke-width="0.8" rx="2"/>
+  <text x="189" y="197" text-anchor="middle" font-family="SimSun,Microsoft YaHei,sans-serif" font-size="12.5" fill="#1a3a5c">产出findings</text>
+
+  <!-- Diamond D1 (after P2): problems? -->
+  <polygon points="189,225 204,241 189,257 174,241" fill="white" stroke="#c0392b" stroke-width="1"/>
+  <text x="189" y="239" text-anchor="middle" font-family="SimSun,Microsoft YaHei,sans-serif" font-size="12.5" fill="#c0392b">问题?</text>
+
+  <!-- D1 → Yes → P3 (Auditor → AI fix) -->
+  <line x1="204" y1="241" x2="244" y2="195" stroke="#c0392b" stroke-width="0.8" marker-end="url(#arrow-red)"/>
+  <text x="218" y="218" font-family="SimSun,Microsoft YaHei,sans-serif" font-size="12.5" fill="#c0392b">是</text>
+
+  <!-- D1 → No → skip to P4 -->
+  <line x1="204" y1="241" x2="316" y2="195" stroke="#666" stroke-width="0.8" marker-end="url(#arrow-gray)"/>
+  <text x="260" y="218" font-family="SimSun,Microsoft YaHei,sans-serif" font-size="12.5" fill="#666">否</text>
+
+  <!-- P3 activity: AI fix -->
+  <rect x="228" y="182" width="66" height="22" fill="#d4e0ed" stroke="#1a3a5c" stroke-width="0.8" rx="2"/>
+  <text x="261" y="197" text-anchor="middle" font-family="SimSun,Microsoft YaHei,sans-serif" font-size="12.5" fill="#1a3a5c">逐条修复/裁定</text>
+
+  <!-- P3→P4 arrow -->
+  <line x1="294" y1="193" x2="316" y2="193" stroke="#1a3a5c" stroke-width="0.8" marker-end="url(#arrow)"/>
+
+  <!-- P4 activity: AI test -->
+  <rect x="300" y="182" width="66" height="22" fill="#d4e0ed" stroke="#1a3a5c" stroke-width="0.8" rx="2"/>
+  <text x="333" y="197" text-anchor="middle" font-family="SimSun,Microsoft YaHei,sans-serif" font-size="12.5" fill="#1a3a5c">四层验证测试</text>
+
+  <!-- Diamond D2 (after P4): tests pass? -->
+  <polygon points="333,228 348,244 333,260 318,244" fill="white" stroke="#c0392b" stroke-width="1"/>
+  <text x="333" y="243" text-anchor="middle" font-family="SimSun,Microsoft YaHei,sans-serif" font-size="12.5" fill="#c0392b">通过?</text>
+
+  <!-- D2 → No → back to P1/P3 -->
+  <path d="M318,244 L280,244 L280,290 L117,290 L117,128" fill="none" stroke="#c0392b" stroke-width="0.8" marker-end="url(#arrow-red)" stroke-dasharray="6,4"/>
+  <text x="198" y="304" font-family="SimSun,Microsoft YaHei,sans-serif" font-size="12.5" fill="#c0392b">否 → 回退阶段1/3修</text>
+
+  <!-- D2 → Yes → P5 -->
+  <line x1="348" y1="244" x2="388" y2="195" stroke="#1a3a5c" stroke-width="0.8" marker-end="url(#arrow)"/>
+  <text x="362" y="218" font-family="SimSun,Microsoft YaHei,sans-serif" font-size="12.5" fill="#1a3a5c">是</text>
+
+  <!-- P5 activity: AI merge -->
+  <rect x="372" y="182" width="66" height="22" fill="#d4e0ed" stroke="#1a3a5c" stroke-width="0.8" rx="2"/>
+  <text x="405" y="197" text-anchor="middle" font-family="SimSun,Microsoft YaHei,sans-serif" font-size="12.5" fill="#1a3a5c">合并+安装</text>
+
+  <!-- P5→P6 arrow -->
+  <line x1="438" y1="193" x2="460" y2="232" stroke="#1a3a5c" stroke-width="0.8" marker-end="url(#arrow)"/>
+
+  <!-- P6 activity: User acceptance -->
+  <rect x="444" y="236" width="68" height="22" fill="#e8edf2" stroke="#666" stroke-width="0.8" rx="2"/>
+  <text x="478" y="251" text-anchor="middle" font-family="SimSun,Microsoft YaHei,sans-serif" font-size="12.5" fill="#555">真机验收</text>
+
+  <!-- P6 → feedback loop back to P1 -->
+  <path d="M478,258 L478,320 L117,320 L117,128" fill="none" stroke="#666" stroke-width="0.8" marker-end="url(#arrow-gray)" stroke-dasharray="6,4"/>
+  <text x="297" y="336" font-family="SimSun,Microsoft YaHei,sans-serif" font-size="12.5" fill="#555">发现问题→从阶段1重走（不跳阶段）</text>
+
+  <!-- Legend -->
+  <rect x="10" y="355" width="500" height="90" fill="#f8f9fa" stroke="#ddd" stroke-width="0.5" rx="2"/>
+  <text x="20" y="376" font-family="SimHei,Microsoft YaHei,sans-serif" font-size="13" fill="#333" font-weight="bold">图例</text>
+  <line x1="20" y1="396" x2="55" y2="396" stroke="#c0392b" stroke-width="1"/>
+  <text x="65" y="400" font-family="SimSun,Microsoft YaHei,sans-serif" font-size="12.5" fill="#555">红色 = 决策否定路径（回退）</text>
+  <line x1="20" y1="416" x2="55" y2="416" stroke="#1a3a5c" stroke-width="1"/>
+  <text x="65" y="420" font-family="SimSun,Microsoft YaHei,sans-serif" font-size="12.5" fill="#555">深蓝 = 正常流转路径</text>
+  <line x1="280" y1="396" x2="315" y2="396" stroke="#666" stroke-width="1" stroke-dasharray="6,4"/>
+  <text x="325" y="400" font-family="SimSun,Microsoft YaHei,sans-serif" font-size="12.5" fill="#555">灰虚线 = 反馈回路</text>
+  <text x="20" y="438" font-family="SimSun,Microsoft YaHei,sans-serif" font-size="12.5" fill="#888">菱形 = 门禁决策点（不满足判据则停在原地，满足则进入下一阶段）</text>
+
+  <!-- Bottom annotation -->
+  <text x="260" y="478" text-anchor="middle" font-family="SimSun,Microsoft YaHei,sans-serif" font-size="12.5" fill="#888">图注：每个阶段标注产出与门禁判据。通过则箭头指向下一阶段，不通过则停在原地或回退。</text>
+  <text x="260" y="496" text-anchor="middle" font-family="SimSun,Microsoft YaHei,sans-serif" font-size="12.5" fill="#888">阶段间流转由主会话调度。详见正文 4.2 节各阶段详述与表 4-1 速查。</text>
+</svg>

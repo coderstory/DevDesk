@@ -1,0 +1,101 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 520 650" width="100%" height="100%">
+  <defs>
+    <marker id="arrowD" markerWidth="8" markerHeight="8" refX="4" refY="8" orient="auto">
+      <polygon points="0 0, 8 8, 4 8, 0 8" fill="#2c3e50"/>
+    </marker>
+    <marker id="arrowR" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+      <polygon points="0 0, 8 3, 0 6" fill="#2c3e50"/>
+    </marker>
+  </defs>
+
+  <rect width="520" height="650" fill="#ffffff"/>
+
+  <!-- Title -->
+  <text x="260" y="30" text-anchor="middle" font-family="SimSun,serif" font-size="15" font-weight="bold" fill="#1a1a1a">图6-1 事故到经验的闭环流程</text>
+
+  <!-- ===== LEFT COLUMN: 事故轴 ===== -->
+  <rect x="14" y="52" width="152" height="330" rx="4" fill="#f8f9fa" stroke="#2c3e50" stroke-width="1"/>
+  <text x="90" y="78" text-anchor="middle" font-family="SimHei,sans-serif" font-size="14" font-weight="bold" fill="#2c3e50">事故轴</text>
+
+  <rect x="24" y="94" width="132" height="49" rx="3" fill="#e74c3c" opacity="0.9"/>
+  <text x="90" y="114" text-anchor="middle" font-family="SimHei,sans-serif" font-size="13" fill="#ffffff">事故发生</text>
+  <text x="90" y="132" text-anchor="middle" font-family="SimSun,serif" font-size="13" fill="#fdedec">bug / 用户纠正</text>
+
+  <line x1="90" y1="143" x2="90" y2="163" stroke="#2c3e50" stroke-width="1" marker-end="url(#arrowD)"/>
+
+  <rect x="24" y="166" width="132" height="49" rx="3" fill="#3498db" opacity="0.9"/>
+  <text x="90" y="186" text-anchor="middle" font-family="SimHei,sans-serif" font-size="13" fill="#ffffff">修复</text>
+  <text x="90" y="206" text-anchor="middle" font-family="SimSun,serif" font-size="13" fill="#ebf5fb">定位根因 + 验证</text>
+
+  <line x1="90" y1="215" x2="90" y2="235" stroke="#2c3e50" stroke-width="1" marker-end="url(#arrowD)"/>
+
+  <rect x="24" y="238" width="132" height="49" rx="3" fill="#2ecc71" opacity="0.9"/>
+  <text x="90" y="258" text-anchor="middle" font-family="SimHei,sans-serif" font-size="13" fill="#ffffff">识别模式</text>
+  <text x="90" y="278" text-anchor="middle" font-family="SimSun,serif" font-size="13" fill="#eafaf1">孤立事件 or 行为模式</text>
+
+  <line x1="90" y1="287" x2="90" y2="307" stroke="#2c3e50" stroke-width="1" marker-end="url(#arrowD)"/>
+
+  <rect x="24" y="310" width="132" height="49" rx="3" fill="#ecf0f1" stroke="#95a5a6" stroke-width="1" stroke-dasharray="3,2"/>
+  <text x="90" y="330" text-anchor="middle" font-family="SimSun,serif" font-size="13" fill="#7f8c8d">泛用性检查</text>
+  <text x="90" y="348" text-anchor="middle" font-family="SimSun,serif" font-size="13" fill="#95a5a6">仅本项目 → MEMORY.md</text>
+
+  <line x1="156" y1="262" x2="186" y2="262" stroke="#2c3e50" stroke-width="1.5" marker-end="url(#arrowR)"/>
+
+  <!-- ===== CENTER: cs-retro ===== -->
+  <rect x="192" y="185" width="100" height="164" rx="6" fill="#ecf0f1" stroke="#2c3e50" stroke-width="1.5" stroke-dasharray="5,3"/>
+  <text x="242" y="212" text-anchor="middle" font-family="SimHei,sans-serif" font-size="14" font-weight="bold" fill="#2c3e50">cs-retro</text>
+  <text x="242" y="232" text-anchor="middle" font-family="SimSun,serif" font-size="13" fill="#2c3e50">自动复盘</text>
+  <line x1="202" y1="244" x2="282" y2="244" stroke="#95a5a6" stroke-width="0.5"/>
+  <text x="242" y="264" text-anchor="middle" font-family="SimSun,serif" font-size="13" fill="#7f8c8d">扫描对话记录</text>
+  <text x="242" y="284" text-anchor="middle" font-family="SimSun,serif" font-size="13" fill="#7f8c8d">识别重复模式</text>
+  <text x="242" y="304" text-anchor="middle" font-family="SimSun,serif" font-size="13" fill="#7f8c8d">查重 → 写入</text>
+  <text x="242" y="324" text-anchor="middle" font-family="SimSun,serif" font-size="13" fill="#bdc3c7">生成候选经验</text>
+  <text x="242" y="342" text-anchor="middle" font-family="SimSun,serif" font-size="13" fill="#bdc3c7">[方法论沿袭]</text>
+
+  <line x1="292" y1="262" x2="322" y2="262" stroke="#2c3e50" stroke-width="1.5" marker-end="url(#arrowR)"/>
+
+  <!-- ===== RIGHT COLUMN: 经验轴 ===== -->
+  <rect x="328" y="52" width="178" height="440" rx="4" fill="#f8f9fa" stroke="#2c3e50" stroke-width="1"/>
+  <text x="417" y="78" text-anchor="middle" font-family="SimHei,sans-serif" font-size="14" font-weight="bold" fill="#2c3e50">经验轴</text>
+
+  <rect x="338" y="94" width="158" height="49" rx="3" fill="#8e44ad" opacity="0.9"/>
+  <text x="417" y="114" text-anchor="middle" font-family="SimHei,sans-serif" font-size="13" fill="#ffffff">提炼条目</text>
+  <text x="417" y="134" text-anchor="middle" font-family="SimSun,serif" font-size="13" fill="#f4ecf7">问题 + 规则 + 为什么</text>
+
+  <line x1="417" y1="143" x2="417" y2="163" stroke="#2c3e50" stroke-width="1" marker-end="url(#arrowD)"/>
+
+  <rect x="338" y="166" width="158" height="49" rx="3" fill="#e67e22" opacity="0.9"/>
+  <text x="417" y="186" text-anchor="middle" font-family="SimHei,sans-serif" font-size="13" fill="#ffffff">写入 memory</text>
+  <text x="417" y="206" text-anchor="middle" font-family="SimSun,serif" font-size="13" fill="#fef5e7">CLAUDE / MEMORY / 01~09</text>
+
+  <line x1="417" y1="215" x2="417" y2="235" stroke="#2c3e50" stroke-width="1" marker-end="url(#arrowD)"/>
+
+  <rect x="338" y="238" width="158" height="49" rx="3" fill="#1abc9c" opacity="0.9"/>
+  <text x="417" y="258" text-anchor="middle" font-family="SimHei,sans-serif" font-size="13" fill="#ffffff">标注日期</text>
+  <text x="417" y="278" text-anchor="middle" font-family="SimSun,serif" font-size="13" fill="#e8f8f5">90d STALE / 180d VERY STALE</text>
+
+  <line x1="417" y1="287" x2="417" y2="307" stroke="#2c3e50" stroke-width="1" marker-end="url(#arrowD)"/>
+
+  <rect x="338" y="310" width="158" height="49" rx="3" fill="#34495e" opacity="0.9"/>
+  <text x="417" y="330" text-anchor="middle" font-family="SimHei,sans-serif" font-size="13" fill="#ffffff">启动自动加载</text>
+  <text x="417" y="350" text-anchor="middle" font-family="SimSun,serif" font-size="13" fill="#d5dbdb">@import 注入会话上下文</text>
+
+  <text x="338" y="386" font-family="SimSun,serif" font-size="13" fill="#34495e" font-weight="bold">加载时机：</text>
+  <text x="338" y="406" font-family="SimSun,serif" font-size="13" fill="#2c3e50">会话启动时全量读取</text>
+  <text x="338" y="426" font-family="SimSun,serif" font-size="13" fill="#2c3e50">最早注入，不容绕过</text>
+
+  <text x="338" y="452" font-family="SimSun,serif" font-size="13" fill="#34495e" font-weight="bold">生效范围：</text>
+  <text x="338" y="470" font-family="SimSun,serif" font-size="13" fill="#2c3e50">第三层 跨项目通用</text>
+  <text x="338" y="488" font-family="SimSun,serif" font-size="13" fill="#2c3e50">第一/二层 仅本仓库</text>
+
+  <!-- Feedback loop -->
+  <path d="M 417 515 L 417 540 L 90 540 L 90 510" stroke="#2c3e50" stroke-width="1" fill="none" stroke-dasharray="4,3" marker-end="url(#arrowD)"/>
+  <text x="253" y="558" text-anchor="middle" font-family="SimSun,serif" font-size="13" fill="#7f8c8d">新事故触发下一轮闭环</text>
+
+  <!-- Legend -->
+  <rect x="14" y="578" width="492" height="58" rx="3" fill="#f8f9fa" stroke="#bdc3c7" stroke-width="0.5"/>
+  <text x="26" y="598" font-family="SimSun,serif" font-size="13" fill="#2c3e50">图注：左侧为事故产生至识别模式的单向推进；右侧为经验提炼至激活的持续循环；中间虚线框为 cs-retro 自动复盘补充通道（[方法论沿袭]）。</text>
+  <text x="26" y="618" font-family="SimSun,serif" font-size="13" fill="#2c3e50">左侧底部的泛用性检查决定经验进入项目层（一/二）还是跨项目层（三）。底部虚线回路表示经验在后续事故中被再次验证与修正。</text>
+
+<text x="260" y="640" text-anchor="middle" font-family="SimSun,serif" font-size="13" fill="#2c3e50">图注：本图采用功能配色区分事故轴（左）与经验轴（右），非装饰用途。</text>
+</svg>

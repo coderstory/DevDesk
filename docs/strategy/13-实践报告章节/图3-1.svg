@@ -1,0 +1,120 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 715" width="500" height="715">
+  <defs>
+    <marker id="arrowBlue" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#1a3a5c"/>
+    </marker>
+    <marker id="arrowGray" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#666"/>
+    </marker>
+    <marker id="arrowRed" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#c0392b"/>
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect width="500" height="715" fill="#fff"/>
+
+  <!-- Subtle vertical divider (user side left, main flow center-right) -->
+  <line x1="120" y1="10" x2="120" y2="570" stroke="#e0e0e0" stroke-width="0.8" stroke-dasharray="6,10"/>
+
+  <!-- Region labels -->
+  <text x="55" y="18" text-anchor="middle" font-size="12" font-family="sans-serif" fill="#aaa">用户侧</text>
+  <text x="310" y="18" text-anchor="middle" font-size="12" font-family="sans-serif" fill="#aaa">AI 系统侧</text>
+
+  <!-- ====== MAIN FLOW (center x=250) ====== -->
+
+  <!-- Node 1: 用户提需求 -->
+  <rect x="130" y="22" width="240" height="38" rx="10" ry="10" fill="#e8edf3" stroke="#1a3a5c" stroke-width="1.8"/>
+  <text x="250" y="46" text-anchor="middle" font-size="13" font-family="sans-serif" fill="#1a3a5c" font-weight="bold">用户：提需求 / 给方向</text>
+
+  <!-- Arrow 1->2 -->
+  <line x1="250" y1="60" x2="250" y2="82" stroke="#1a3a5c" stroke-width="1.5" marker-end="url(#arrowBlue)"/>
+
+  <!-- Node 2: AI出方案 -->
+  <rect x="140" y="82" width="220" height="38" rx="4" ry="4" fill="#f5f5f5" stroke="#666" stroke-width="1.2"/>
+  <text x="250" y="106" text-anchor="middle" font-size="13" font-family="sans-serif" fill="#333">AI：出方案 / 调研设计</text>
+
+  <!-- Arrow 2->3 -->
+  <line x1="250" y1="120" x2="250" y2="142" stroke="#666" stroke-width="1.2" marker-end="url(#arrowGray)"/>
+
+  <!-- Node 3: ◇用户拍板 (diamond center y=170, half-h=30, half-w=70) -->
+  <polygon points="250,140 320,170 250,200 180,170" fill="#fff" stroke="#1a3a5c" stroke-width="2"/>
+  <text x="250" y="175" text-anchor="middle" font-size="13" font-family="sans-serif" fill="#1a3a5c" font-weight="bold">用户拍板</text>
+
+  <!-- Feedback 1: 拍板 No → 回到提需求 -->
+  <path d="M320,170 C365,170 380,90 370,41 L250,41" fill="none" stroke="#c0392b" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#arrowRed)"/>
+  <text x="386" y="110" text-anchor="start" font-size="12" font-family="sans-serif" fill="#c0392b">否</text>
+
+  <!-- Arrow 3->4 (yes path) -->
+  <line x1="250" y1="200" x2="250" y2="218" stroke="#1a3a5c" stroke-width="1.5" marker-end="url(#arrowBlue)"/>
+  <text x="262" y="213" text-anchor="start" font-size="12" font-family="sans-serif" fill="#1a3a5c">是</text>
+
+  <!-- Node 4: AI派子任务执行 -->
+  <rect x="130" y="218" width="240" height="38" rx="4" ry="4" fill="#f5f5f5" stroke="#666" stroke-width="1.2"/>
+  <text x="250" y="242" text-anchor="middle" font-size="13" font-family="sans-serif" fill="#333">AI：派子任务 自主执行</text>
+
+  <!-- Arrow 4->5 -->
+  <line x1="250" y1="256" x2="250" y2="274" stroke="#666" stroke-width="1.2" marker-end="url(#arrowGray)"/>
+
+  <!-- Node 5: AI测试打包 -->
+  <rect x="140" y="274" width="220" height="38" rx="4" ry="4" fill="#f5f5f5" stroke="#666" stroke-width="1.2"/>
+  <text x="250" y="298" text-anchor="middle" font-size="13" font-family="sans-serif" fill="#333">AI：测试 / 截屏 / 打包</text>
+
+  <!-- Arrow 5->6 -->
+  <line x1="250" y1="312" x2="250" y2="330" stroke="#666" stroke-width="1.2" marker-end="url(#arrowGray)"/>
+
+  <!-- Node 6: AI交付安装包 -->
+  <rect x="140" y="330" width="220" height="38" rx="4" ry="4" fill="#e8edf3" stroke="#1a3a5c" stroke-width="1.5"/>
+  <text x="250" y="354" text-anchor="middle" font-size="13" font-family="sans-serif" fill="#1a3a5c" font-weight="bold">AI：交付安装包</text>
+
+  <!-- Arrow 6->7 -->
+  <line x1="250" y1="368" x2="250" y2="388" stroke="#1a3a5c" stroke-width="1.5" marker-end="url(#arrowBlue)"/>
+
+  <!-- Node 7: ◇用户验收点验 (diamond center y=418, half-h=34, half-w=80) -->
+  <polygon points="250,384 330,418 250,452 170,418" fill="#fff" stroke="#1a3a5c" stroke-width="2"/>
+  <text x="250" y="423" text-anchor="middle" font-size="13" font-family="sans-serif" fill="#1a3a5c" font-weight="bold">用户验收点验</text>
+
+  <!-- Arrow 7->8 (pass) -->
+  <line x1="250" y1="452" x2="250" y2="474" stroke="#1a3a5c" stroke-width="1.5" marker-end="url(#arrowBlue)"/>
+  <text x="262" y="467" text-anchor="start" font-size="12" font-family="sans-serif" fill="#1a3a5c">通过</text>
+
+  <!-- Node 8: 完成 -->
+  <rect x="175" y="474" width="150" height="40" rx="20" ry="20" fill="#d5e8d4" stroke="#2d6a2d" stroke-width="1.5"/>
+  <text x="250" y="499" text-anchor="middle" font-size="15" font-family="sans-serif" fill="#2d6a2d" font-weight="bold">完 成</text>
+
+  <!-- ====== FEEDBACK LOOP 2: 验收发现问题 (left side) ====== -->
+  <!-- Arrow from diamond 7 left -->
+  <line x1="170" y1="418" x2="55" y2="418" stroke="#c0392b" stroke-width="1.2" marker-end="url(#arrowRed)"/>
+  <text x="50" y="410" text-anchor="end" font-size="12" font-family="sans-serif" fill="#c0392b">发现问题</text>
+
+  <!-- Left feedback nodes -->
+  <rect x="35" y="436" width="120" height="30" rx="4" ry="4" fill="#fff" stroke="#c0392b" stroke-width="1.2"/>
+  <text x="95" y="456" text-anchor="middle" font-size="12" font-family="sans-serif" fill="#c0392b">用户：反馈问题</text>
+
+  <line x1="95" y1="466" x2="95" y2="482" stroke="#c0392b" stroke-width="1.2" marker-end="url(#arrowRed)"/>
+
+  <rect x="35" y="482" width="120" height="30" rx="4" ry="4" fill="#fff" stroke="#c0392b" stroke-width="1.2"/>
+  <text x="95" y="502" text-anchor="middle" font-size="12" font-family="sans-serif" fill="#c0392b">AI：排查修复</text>
+
+  <line x1="95" y1="512" x2="95" y2="528" stroke="#c0392b" stroke-width="1.2" marker-end="url(#arrowRed)"/>
+
+  <rect x="35" y="528" width="120" height="30" rx="4" ry="4" fill="#fff" stroke="#c0392b" stroke-width="1.2"/>
+  <text x="95" y="548" text-anchor="middle" font-size="12" font-family="sans-serif" fill="#c0392b">AI：重新交付</text>
+
+  <!-- Arrow from 重新交付 back to 验收 -->
+  <path d="M155,543 C185,543 185,418 200,418" fill="none" stroke="#c0392b" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#arrowRed)"/>
+
+  <!-- ====== LEGEND ====== -->
+  <rect x="10" y="578" width="480" height="62" rx="4" ry="4" fill="#fafafa" stroke="#ddd" stroke-width="0.5"/>
+
+  <text x="25" y="600" font-size="12" font-family="sans-serif" fill="#666">菱形 = 用户决策点</text>
+  <text x="200" y="600" font-size="12" font-family="sans-serif" fill="#666">实线 = 主流程</text>
+  <text x="330" y="600" font-size="12" font-family="sans-serif" fill="#666">虚线 = 反馈回路</text>
+
+  <text x="25" y="626" font-size="12" font-family="sans-serif" fill="#c0392b">红色 = 不通过 / 发现问题的路径</text>
+  <text x="290" y="626" font-size="12" font-family="sans-serif" fill="#1a3a5c">蓝色 = 通过 / 交付的路径</text>
+
+  <!-- Implicit region divider (match the top label's intent) -->
+  <line x1="120" y1="10" x2="120" y2="568" stroke="#e8e8e8" stroke-width="0.6" stroke-dasharray="8,12"/>
+
+</svg>

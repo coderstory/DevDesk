@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 520 550" width="100%" height="100%">
+  <defs>
+    <marker id="arrowD2" markerWidth="8" markerHeight="8" refX="4" refY="8" orient="auto">
+      <polygon points="0 0, 8 8, 4 8, 0 8" fill="#2c3e50"/>
+    </marker>
+  </defs>
+
+  <rect width="520" height="550" fill="#ffffff"/>
+
+  <text x="260" y="28" text-anchor="middle" font-family="SimSun,serif" font-size="15" font-weight="bold" fill="#1a1a1a">图6-2 经验的三层存储结构（倒金字塔）</text>
+
+  <!-- ===== TIER 1: CLAUDE.md ===== -->
+  <polygon points="175,58 345,58 375,152 145,152" fill="#34495e" stroke="#2c3e50" stroke-width="1.5" opacity="0.92"/>
+  <text x="260" y="90" text-anchor="middle" font-family="SimHei,sans-serif" font-size="15" font-weight="bold" fill="#ffffff">第一层 CLAUDE.md</text>
+  <text x="260" y="114" text-anchor="middle" font-family="SimSun,serif" font-size="13" fill="#bdc3c7">项目硬纪律 约 15 条</text>
+  <text x="260" y="136" text-anchor="middle" font-family="SimSun,serif" font-size="13" fill="#95a5a6">六阶段生命周期 反事故红线 交付流水线四律</text>
+
+  <line x1="375" y1="106" x2="410" y2="106" stroke="#2c3e50" stroke-width="1"/>
+  <text x="416" y="94" font-family="SimSun,serif" font-size="13" fill="#2c3e50" font-weight="bold">加载</text>
+  <text x="416" y="112" font-family="SimSun,serif" font-size="13" fill="#2c3e50">会话启动 全量读取</text>
+  <text x="416" y="128" font-family="SimSun,serif" font-size="13" fill="#7f8c8d">范围 仅本仓库</text>
+
+  <line x1="260" y1="152" x2="260" y2="180" stroke="#2c3e50" stroke-width="1.5" marker-end="url(#arrowD2)"/>
+
+  <!-- ===== TIER 2: MEMORY.md ===== -->
+  <polygon points="145,190 375,190 410,305 110,305" fill="#2c3e50" stroke="#1a252f" stroke-width="1.5" opacity="0.88"/>
+  <text x="260" y="226" text-anchor="middle" font-family="SimHei,sans-serif" font-size="15" font-weight="bold" fill="#ffffff">第二层 MEMORY.md + 子文件</text>
+  <text x="260" y="252" text-anchor="middle" font-family="SimSun,serif" font-size="13" fill="#bdc3c7">项目软纪律 约 20 条</text>
+  <text x="260" y="276" text-anchor="middle" font-family="SimSun,serif" font-size="13" fill="#95a5a6">按场景写测试 交付三问 累积清单 mac 门禁</text>
+
+  <line x1="410" y1="246" x2="445" y2="246" stroke="#2c3e50" stroke-width="1"/>
+  <text x="452" y="236" font-family="SimSun,serif" font-size="13" fill="#ecf0f1" font-weight="bold">加载</text>
+  <text x="452" y="254" font-family="SimSun,serif" font-size="13" fill="#ecf0f1">启动时索引注入</text>
+  <text x="452" y="272" font-family="SimSun,serif" font-size="13" fill="#bdc3c7">范围 仅本仓库</text>
+
+  <line x1="260" y1="305" x2="260" y2="338" stroke="#2c3e50" stroke-width="1.5" marker-end="url(#arrowD2)"/>
+
+  <!-- ===== TIER 3: memory/01~09 ===== -->
+  <polygon points="105,350 415,350 455,498 65,498" fill="#1a252f" stroke="#0d1317" stroke-width="1.5" opacity="0.85"/>
+  <text x="260" y="390" text-anchor="middle" font-family="SimHei,sans-serif" font-size="15" font-weight="bold" fill="#ffffff">第三层 memory/01~09 跨项目经验库</text>
+  <text x="260" y="416" text-anchor="middle" font-family="SimSun,serif" font-size="13" fill="#bdc3c7">9 个领域文件 约 120 条可检索条目</text>
+  <text x="260" y="438" text-anchor="middle" font-family="SimSun,serif" font-size="13" fill="#95a5a6">01 交付纪律 02 反幻觉 03 AI编排 04 用户协作</text>
+  <text x="260" y="456" text-anchor="middle" font-family="SimSun,serif" font-size="13" fill="#95a5a6">05-06 桌面 07 Python 08 工具链 09 记忆体系</text>
+  <text x="260" y="478" text-anchor="middle" font-family="SimSun,serif" font-size="13" fill="#7f8c8d">治理 8 commands · FTS5 检索 · STALE 保鲜标记</text>
+
+  <line x1="455" y1="416" x2="490" y2="416" stroke="#2c3e50" stroke-width="1"/>
+  <text x="494" y="406" font-family="SimSun,serif" font-size="13" fill="#ffffff" font-weight="bold">加载</text>
+  <text x="494" y="424" font-family="SimSun,serif" font-size="13" fill="#ffffff">启动时 @import 全文注入</text>
+  <text x="494" y="442" font-family="SimSun,serif" font-size="13" fill="#ecf0f1">范围 所有项目 含 DevDesk</text>
+
+  <!-- Legend -->
+  <rect x="12" y="510" width="496" height="32" rx="3" fill="#f8f9fa" stroke="#bdc3c7" stroke-width="0.5"/>
+  <text x="24" y="532" font-family="SimSun,serif" font-size="13" fill="#2c3e50">图注：倒金字塔上窄下宽，代表"条目数量由少到多、生效范围由窄到广"。三层在会话启动时同时加载，分层仅为维护清晰度——第三层跨项目共用，第一/二层 DevDesk 独有。</text>
+
+</svg>

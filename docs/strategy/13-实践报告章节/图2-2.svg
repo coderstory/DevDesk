@@ -1,0 +1,95 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 360" width="480" height="360">
+  <style>
+    text { font-family: "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif; }
+    .node { fill: #f8f9fa; stroke: #2c3e50; stroke-width: 1.8; rx: 6; }
+    .node-main { fill: #eef1f5; stroke: #1e40af; stroke-width: 2.0; rx: 6; }
+    .node-title { font-size: 14px; font-weight: bold; fill: #1a1a2e; }
+    .node-desc { font-size: 12px; fill: #4a5568; }
+    .link-line { stroke: #1e40af; stroke-width: 1.4; fill: none; }
+    .link-dashed { stroke: #64748b; stroke-width: 1.0; fill: none; stroke-dasharray: 6,3; }
+    .link-label { font-size: 12px; fill: #1e40af; }
+    .link-label-gray { font-size: 12px; fill: #64748b; }
+    .wt-box { fill: #f8f9fa; stroke: #94a3b8; stroke-width: 1.2; rx: 4; }
+    .wt-title { font-size: 12px; font-weight: bold; fill: #334155; }
+    .wt-desc { font-size: 12px; fill: #64748b; }
+  </style>
+
+  <!-- Title -->
+  <text x="240" y="22" text-anchor="middle" class="node-title">开发环境关系图</text>
+
+  <!-- User Computer -->
+  <rect x="10" y="40" width="130" height="52" class="node" />
+  <text x="75" y="60" text-anchor="middle" class="node-title">用户电脑</text>
+  <text x="75" y="78" text-anchor="middle" class="node-desc">Windows 11 / macOS</text>
+
+  <!-- User → Claude Code -->
+  <line x1="140" y1="66" x2="178" y2="66" class="link-line" />
+  <text x="159" y="58" text-anchor="middle" class="link-label">打字提需求</text>
+
+  <!-- Claude Code Main Session -->
+  <rect x="180" y="38" width="150" height="58" class="node-main" />
+  <text x="255" y="58" text-anchor="middle" class="node-title">Claude Code</text>
+  <text x="255" y="76" text-anchor="middle" class="node-title">主会话</text>
+  <text x="255" y="92" text-anchor="middle" class="node-desc">拆分任务 派发 审计 合并</text>
+
+  <!-- Main → Worktrees -->
+  <line x1="255" y1="96" x2="255" y2="126" class="link-line" />
+  <text x="270" y="113" class="link-label">fork 子任务</text>
+
+  <!-- Worktree Group border -->
+  <rect x="10" y="128" width="462" height="108" rx="5" fill="none" stroke="#94a3b8" stroke-width="1.0" stroke-dasharray="6,4" />
+  <text x="241" y="144" text-anchor="middle" class="link-label-gray">git worktree 隔离工作区（同时最多 8 个）</text>
+
+  <!-- Worktree A -->
+  <rect x="22" y="152" width="108" height="56" class="wt-box" />
+  <text x="76" y="170" text-anchor="middle" class="wt-title">工作区 A</text>
+  <text x="76" y="186" text-anchor="middle" class="wt-desc">独立代码副本</text>
+  <text x="76" y="202" text-anchor="middle" class="wt-desc">修改编译测试</text>
+
+  <!-- Worktree B -->
+  <rect x="140" y="152" width="108" height="56" class="wt-box" />
+  <text x="194" y="170" text-anchor="middle" class="wt-title">工作区 B</text>
+  <text x="194" y="186" text-anchor="middle" class="wt-desc">独立代码副本</text>
+  <text x="194" y="202" text-anchor="middle" class="wt-desc">修改编译测试</text>
+
+  <!-- Worktree C -->
+  <rect x="258" y="152" width="108" height="56" class="wt-box" />
+  <text x="312" y="170" text-anchor="middle" class="wt-title">工作区 C</text>
+  <text x="312" y="186" text-anchor="middle" class="wt-desc">独立代码副本</text>
+  <text x="312" y="202" text-anchor="middle" class="wt-desc">修改编译测试</text>
+
+  <!-- Worktree ... -->
+  <rect x="376" y="152" width="84" height="56" class="wt-box" />
+  <text x="418" y="176" text-anchor="middle" class="wt-title">...</text>
+  <text x="418" y="196" text-anchor="middle" class="wt-desc">互不干扰</text>
+
+  <!-- Worktree → Compiler -->
+  <line x1="76" y1="208" x2="76" y2="240" class="link-line" />
+  <text x="24" y="228" class="link-label">调编译器</text>
+  <line x1="194" y1="208" x2="194" y2="240" class="link-line" />
+  <text x="142" y="228" class="link-label">调编译器</text>
+  <line x1="312" y1="208" x2="312" y2="240" class="link-line" />
+  <text x="260" y="228" class="link-label">调编译器</text>
+
+  <!-- Compiler -->
+  <rect x="22" y="242" width="180" height="48" class="node" />
+  <text x="112" y="262" text-anchor="middle" class="node-title">编译器 + ccache 缓存</text>
+  <text x="112" y="280" text-anchor="middle" class="node-desc">MSYS2 MinGW64 / AppleClang</text>
+
+  <!-- Build Script -->
+  <rect x="224" y="242" width="148" height="48" class="node" />
+  <text x="298" y="260" text-anchor="middle" class="node-title">一体化构建脚本</text>
+  <text x="298" y="280" text-anchor="middle" class="node-desc">build-test-run.sh</text>
+
+  <!-- Compiler → Build Script -->
+  <line x1="202" y1="266" x2="222" y2="266" class="link-dashed" />
+  <text x="212" y="258" text-anchor="middle" class="link-label-gray">接脚本</text>
+
+  <!-- Build → Products -->
+  <line x1="298" y1="290" x2="298" y2="310" class="link-line" />
+
+  <!-- Build Products -->
+  <rect x="160" y="312" width="270" height="40" class="node" />
+  <text x="295" y="330" text-anchor="middle" class="node-title">构建产物：DevDesk 可执行程序</text>
+  <text x="295" y="347" text-anchor="middle" class="node-desc">单文件可执行，零外部依赖</text>
+</svg>

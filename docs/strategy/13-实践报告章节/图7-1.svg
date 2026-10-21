@@ -1,0 +1,86 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 700" width="100%" max-width="170mm">
+  <defs>
+    <marker id="arrowUp" markerWidth="8" markerHeight="8" refX="4" refY="8" orient="auto">
+      <path d="M0,8 L4,0 L8,8" fill="#c0392b" stroke="none"/>
+    </marker>
+    <marker id="arrowDown" markerWidth="8" markerHeight="8" refX="4" refY="0" orient="auto">
+      <path d="M0,0 L4,8 L8,0" fill="#2c3e50" stroke="none"/>
+    </marker>
+  </defs>
+
+  <rect width="500" height="700" fill="#ffffff"/>
+
+  <!-- Title -->
+  <text x="250" y="24" text-anchor="middle" font-family="SimHei, Microsoft YaHei, sans-serif" font-size="15" fill="#2c3e50" font-weight="bold">图 7-1 多层审计防御塔</text>
+
+  <!-- ===== Layer 0: Code Implementation ===== -->
+  <rect x="80" y="630" width="340" height="38" rx="4" fill="#ecf0f1" stroke="#bdc3c7" stroke-width="1.5"/>
+  <text x="250" y="654" text-anchor="middle" font-family="SimHei, sans-serif" font-size="13" fill="#2c3e50">代码实现（子任务 worktree）</text>
+
+  <!-- ===== Layer 1: Independent Audit ===== -->
+  <rect x="50" y="518" width="400" height="95" rx="4" fill="#eaf2f8" stroke="#2980b9" stroke-width="1.8"/>
+  <text x="250" y="540" text-anchor="middle" font-family="SimHei, Microsoft YaHei, sans-serif" font-size="13" fill="#2980b9" font-weight="bold">第一层：独立审计关卡（每个改动必过）</text>
+  <text x="250" y="557" text-anchor="middle" font-family="SimSun, sans-serif" font-size="12" fill="#555">审查者与实现者为不同会话 | 六维度逐条核查</text>
+  <text x="250" y="574" text-anchor="middle" font-family="SimSun, sans-serif" font-size="12" fill="#555">正确性 / 回归面 / 平台对称性</text>
+  <text x="250" y="591" text-anchor="middle" font-family="SimSun, sans-serif" font-size="12" fill="#555">静默失败面 / 测试有效性 / 文档口径</text>
+  <text x="250" y="607" text-anchor="middle" font-family="SimSun, sans-serif" font-size="12" fill="#888">审查者身份：独立只读子任务</text>
+
+  <line x1="250" y1="630" x2="250" y2="615" stroke="#2c3e50" stroke-width="1.5" marker-end="url(#arrowDown)"/>
+
+  <!-- Leak arrow L1->L2 -->
+  <line x1="440" y1="560" x2="440" y2="468" stroke="#c0392b" stroke-width="1.2" stroke-dasharray="4,3" marker-end="url(#arrowUp)"/>
+  <text x="448" y="518" font-family="SimSun, sans-serif" font-size="12" fill="#c0392b">漏过</text>
+
+  <!-- ===== Layer 2: PDCA ===== -->
+  <rect x="50" y="395" width="400" height="88" rx="4" fill="#fef9e7" stroke="#f39c12" stroke-width="1.8"/>
+  <text x="250" y="417" text-anchor="middle" font-family="SimHei, Microsoft YaHei, sans-serif" font-size="13" fill="#e67e22" font-weight="bold">第二层：多轮递升 PDCA 审计（里程碑关）【沿袭】</text>
+  <text x="250" y="435" text-anchor="middle" font-family="SimSun, sans-serif" font-size="12" fill="#555">首轮核心路径 → 修复 → 次轮边界条件（范围扩大）</text>
+  <text x="250" y="452" text-anchor="middle" font-family="SimSun, sans-serif" font-size="12" fill="#555">三轮跨模块影响（再扩大）→ 连续 N 轮无新发现 → 通过</text>
+  <text x="250" y="469" text-anchor="middle" font-family="SimSun, sans-serif" font-size="12" fill="#555">每轮不同审计员 | 新发现未清零不得标记通过</text>
+  <text x="250" y="484" text-anchor="middle" font-family="SimSun, sans-serif" font-size="12" fill="#888">审查者身份：每轮独立的只读 session（轮间不同人）</text>
+
+  <line x1="250" y1="518" x2="250" y2="485" stroke="#2c3e50" stroke-width="1.5" marker-end="url(#arrowDown)"/>
+
+  <line x1="440" y1="435" x2="440" y2="345" stroke="#c0392b" stroke-width="1.2" stroke-dasharray="4,3" marker-end="url(#arrowUp)"/>
+  <text x="448" y="395" font-family="SimSun, sans-serif" font-size="12" fill="#c0392b">漏过</text>
+
+  <!-- ===== Layer 3: Message Reconciliation ===== -->
+  <rect x="50" y="270" width="400" height="90" rx="4" fill="#e8f8f5" stroke="#27ae60" stroke-width="1.8"/>
+  <text x="250" y="292" text-anchor="middle" font-family="SimHei, Microsoft YaHei, sans-serif" font-size="13" fill="#1e8449" font-weight="bold">第三层：追加消息对账（运行时关卡）【本项目】</text>
+  <text x="250" y="310" text-anchor="middle" font-family="SimSun, sans-serif" font-size="12" fill="#555">追加即登记清单 → 子任务完成报告回来</text>
+  <text x="250" y="327" text-anchor="middle" font-family="SimSun, sans-serif" font-size="12" fill="#555">逐项比对报告与清单 → 缺项自动唤起补做</text>
+  <text x="250" y="344" text-anchor="middle" font-family="SimSun, sans-serif" font-size="12" fill="#555">实证：UAT6 两起遗漏靠对账追回</text>
+  <text x="250" y="360" text-anchor="middle" font-family="SimSun, sans-serif" font-size="12" fill="#888">审查者身份：主会话逐项核对</text>
+
+  <line x1="250" y1="395" x2="250" y2="362" stroke="#2c3e50" stroke-width="1.5" marker-end="url(#arrowDown)"/>
+
+  <line x1="440" y1="310" x2="440" y2="225" stroke="#c0392b" stroke-width="1.2" stroke-dasharray="4,3" marker-end="url(#arrowUp)"/>
+  <text x="448" y="270" font-family="SimSun, sans-serif" font-size="12" fill="#c0392b">漏过</text>
+
+  <!-- ===== Layer 4: Watchdog ===== -->
+  <rect x="50" y="148" width="400" height="92" rx="4" fill="#f4ecf7" stroke="#8e44ad" stroke-width="1.8"/>
+  <text x="250" y="170" text-anchor="middle" font-family="SimHei, Microsoft YaHei, sans-serif" font-size="13" fill="#7d3c98" font-weight="bold">第四层：无人值守 watchdog（长运行关卡）【沿袭】</text>
+  <text x="250" y="188" text-anchor="middle" font-family="SimSun, sans-serif" font-size="12" fill="#555">定时扫描在飞子任务 → 心跳探活</text>
+  <text x="250" y="205" text-anchor="middle" font-family="SimSun, sans-serif" font-size="12" fill="#555">活着但停滞则唤醒续跑 | 失联则终止并重派</text>
+  <text x="250" y="222" text-anchor="middle" font-family="SimSun, sans-serif" font-size="12" fill="#555">不靠一次派发永远正确 → 靠持续检查 + 自动修复</text>
+  <text x="250" y="239" text-anchor="middle" font-family="SimSun, sans-serif" font-size="12" fill="#888">审查者身份：Cron 定时脚本，人不参与</text>
+
+  <line x1="250" y1="270" x2="250" y2="242" stroke="#2c3e50" stroke-width="1.5" marker-end="url(#arrowDown)"/>
+
+  <!-- ===== Top: User Verification ===== -->
+  <rect x="105" y="38" width="290" height="78" rx="8" fill="#2c3e50" stroke="#1a252f" stroke-width="2"/>
+  <!-- Eye icon -->
+  <ellipse cx="238" cy="78" rx="11" ry="7" fill="none" stroke="#ecf0f1" stroke-width="1.8"/>
+  <circle cx="238" cy="78" r="3.5" fill="#ecf0f1"/>
+  <ellipse cx="268" cy="78" rx="11" ry="7" fill="none" stroke="#ecf0f1" stroke-width="1.8"/>
+  <circle cx="268" cy="78" r="3.5" fill="#ecf0f1"/>
+
+  <text x="250" y="55" text-anchor="middle" font-family="SimHei, Microsoft YaHei, sans-serif" font-size="14" fill="#ecf0f1" font-weight="bold">用户真机验收（最终安全网）</text>
+  <text x="250" y="73" text-anchor="middle" font-family="SimSun, sans-serif" font-size="12" fill="#bdc3c7">审计防"人能想到的错" | 人眼防"没想到的错"</text>
+
+  <line x1="250" y1="148" x2="250" y2="118" stroke="#2c3e50" stroke-width="1.5" marker-end="url(#arrowDown)"/>
+
+  <!-- Figure note -->
+  <text x="250" y="688" text-anchor="middle" font-family="SimSun, sans-serif" font-size="12" fill="#999">图注：红色虚线箭头表示上层审计漏过的缺陷继续往上升，直到用户验收层由人眼最终拦截</text>
+<text x="250" y="695" text-anchor="middle" font-family="SimSun,sans-serif" font-size="12" fill="#999">图注：本图采用功能配色区分四层审计防御（蓝/橙/绿/紫），非装饰用途。</text>
+</svg>
