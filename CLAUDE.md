@@ -10,13 +10,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **Todo 看板**：SQLite 存储，多列卡片管理
 - **Claude 配置切换器**：多套 API profile 管理 + 本地 HTTP 代理（带流式转发）
 
-另有**首页仪表盘**、**设置页**（模块插拔开关）、**关于页**、**智能体页**（module_agent：任务 / 运行 / 工具）。
+另有**首页仪表盘**、**设置页**、**关于页**、**智能体页**（module_agent：任务 / 运行 / 工具）。
 
 > **模块口径以代码为准**：`src/app_registry.h` 的 `kModuleRegistry` 现有 **7 个 Router 页面**（首页 / 笔记 / 待办 / Claude / **智能体** / 设置 / **关于**，枚举序见 `src/core/module_interface.h` 的 `PageId`），**可被模块开关插拔的只有 笔记 / 待办 / Claude / 智能体 四者**（Home / Settings / About 的 `ModuleEntry` 里模块 id 是 `nullptr`，不可禁用）。`src/` 下有 7 个 `module_*` 目录。
 
-目标平台：**macOS 27+**（本机 arm64，当前开发平台，P0-P8 主线在此完成）和 **Windows 11**——**两个平台都是原生支持，不是「移植目标」**（2026-09-29 用户指出并改正，见提交 `5bc5a0a`；本文件旧版把 Windows 写成移植目标是过期口径）。两侧都由 `.github/workflows/ci.yml` 双平台构建 + 测试守着。
+目标平台：**macOS**（arm64）和 **Windows 11**——两平台均为原生支持。CI 双平台构建 + 测试守卫。
 
-> **平台补记（2026-09-28）**：项目已搬回本机 macOS（arm64）继续开发——macOS 是本项目最初的开发平台。本文件的 Windows 相关工具链章节（「常用命令」的 MSYS2 MinGW64 段、ccache 三件套、并行度封顶等）保留，作为 Windows 侧的参考，不再是当前的日常开发环境。
 
 ## 🧭 智能中枢定位（2026-10-21 定，贯穿所有开发会话的设计基准）
 
@@ -44,9 +43,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 >
 > 这条规则 2026-09-28 立，依据是当天实测出的事故，不是风格偏好：
 >
-> 1. **手敲会造出多份互相漂移的构建目录。** 当天机器上同时存在 `build/`、`build-release/`、`build-debug/` 三份手工构建目录，各自的 configure 参数互不相同；`build-debug/` 事后被删，`build-release/` 的产物与脚本构建出的不一致。结果是没人说得清"当前这个二进制到底是哪份配置编出来的"——这正是本项目要求"工艺参数可审计、可复现"的反面。
-> 2. **手敲必然漏掉脚本里已经封装好的约定。** 脚本封装的每一项少掉都不会立刻报错，只会在之后某个时刻以"莫名其妙的结果"出现：`EUI_NEO_DIR` 的 worktree 自动定位（worktree 里没有同级 `../EUI-NEO`，漏了直接 configure 失败或链到错的框架源码）、ccache 的两个 launcher 参数（漏了编译缓存全 miss，白装）、`OPENSSL_ROOT_DIR` 的平台差异（macOS 用 Homebrew `openssl@3`、Windows 用 `C:/msys64/mingw64`）、发布形态守卫（Windows 单 exe / 零外部 DLL，漏了会在发布时才发现）、模块隔离守卫、以及并行度封顶 `DEVDESK_JOBS`（默认 3，多条 worktree 并发构建时防止互相拖死）。
-> 3. **手敲的命令不会被任何人复现。** 脚本是唯一被记录、被反复执行的构建路径；只有它跑出来的结果才能当成基线——手敲的命令出问题时，无法区分是环境问题还是代码问题，事后也无法一次复跑定位。
+> 1. **手敲会造出多份互相漂移的构建目录**（当天机器上同时存在 build/build-release/build-debug 三份手工构建目录，互相不一致）。
+> 2. **手敲必然漏掉脚本里已经封装好的约定**（EUI_NEO_DIR 自动定位、ccache 参数、OPENSSL_ROOT_DIR 平台差异、发布形态守卫——少了不立刻报错，只在某个时刻以莫名其妙的结果出现）。
+> 3. **手敲的命令不会被任何人复现**（脚本是唯一被记录并反复执行的构建路径）。
 >
 > 脚本已覆盖两种构建类型：默认 Debug（构建目录 `build/`），加 `--release` 即 Release（自动切到 `build-release/`，两类构建互不覆盖）。需要非常规目录时用 `DEVDESK_BUILD_DIR=<dir>`，不要绕回手敲 cmake。
 >
@@ -96,14 +95,12 @@ cd build && ctest --output-on-failure
 - `CCACHE_NOHASHDIR=true` —— 命令哈希不含工作目录；`-g` 调试信息里也有绝对路径，靠 BASEDIR 一起改写
 
 launcher 是 **configure 期属性**：已存在的 `build/` 目录不会自动改，要么 `--clean`、要么手敲一次带 launcher 的 configure，之后才走缓存。**并行度封顶**：脚本默认 `DEVDESK_JOBS=3`（→ `CMAKE_BUILD_PARALLEL_LEVEL`），12 核机器上多条 worktree 并发构建时避免互拖；单条独占机器可 `DEVDESK_JOBS=8 bash scripts/build-test-run.sh`。
-**实测（2026-09-27，12 核 / `DEVDESK_JOBS=3` / 两个全新 worktree 首建）**：冷缓存 **647 s**（configure 52 s + ninja 284 边 595 s）→ 热缓存 **35 s**（239 次查找 237 命中 = **99.2%**，且 237 全为 direct 命中、零预处理），即 worktree 首建从 ~11 分钟降到 **~35 秒**；缓存产物 `devdesk_tests.exe` 全量全绿（当时快照 589/589；**用例总数以运行输出 `Total:` 为准，不在文档写死**）、`DevDesk.exe` 依赖 DLL 集合与冷编译逐项一致（17 个系统 DLL、零外部 DLL）。
 **"裸 `cmake -B build`（完全不带 -D）也能吃缓存"这条路走不通，别再试**：① 本仓库 configure 本身就需要 `-DOPENSSL_ROOT_DIR=C:/msys64/mingw64`（否则 `Could NOT find OpenSSL` 直接失败，CLAUDE.md 上面那段是最简可用形态）；② 试过 ccache 官方 masquerade（MSYS2 自带 `/mingw64/lib/ccache/bin` 是 bash 脚本、写死 `/mingw64/bin/g++`，在 Git Bash 里指向 Git 自带目录 → 报错）与自建 shim 目录（ccache.exe 复制成 `g++.exe`，实测能让 `g++ --version` 走 ccache），但 shim 会顶替编译器路径 → 本仓库 `DEVDESK_MINGW_ROOT` 从编译器路径反推 MinGW 根（`cmake/Dependencies.cmake`），根变成 `D:/software` 后静态 curl 依赖链解析失败（`set_property can not be used on an ALIAS target`）→ 不采用。
-**实测（2026-09-27，12 核 / `DEVDESK_JOBS=3` / 两个全新 worktree 首建）**：冷缓存 **647 s**（configure 52 s + ninja 284 边 595 s）→ 热缓存 **35 s**（239 次查找 237 命中 = **99.2%**，且 237 全为 direct 命中、零预处理），即 worktree 首建从 ~11 分钟降到 **~35 秒**；缓存产物 `devdesk_tests.exe` 全量全绿（当时快照 589/589；**用例总数以运行输出 `Total:` 为准，不在文档写死**）、`DevDesk.exe` 依赖 DLL 集合与冷编译逐项一致（17 个系统 DLL、零外部 DLL）。
 
-**macOS 侧的脚本（2026-09-28 起为跨平台）**：`scripts/build-test-run.sh` / `scripts/ccache-env.sh` / `scripts/check-consistency.sh` 由提交 `577e0d0` 加上 macOS/Linux 分支——Darwin 走 `pkill -f` 杀进程、`otool -L` 依赖清单、`screencapture -x` 截屏、`stat -f%z`、`-DOPENSSL_ROOT_DIR=/opt/homebrew/opt/openssl@3`，ccache 配置读 `~/Library/Preferences/ccache/ccache.conf`；原先写死的 Windows 工具链 PATH 与 `C:/msys64/mingw64` openssl 路径改为按 `DEVDESK_OS` 分支取（Windows 分支行为不变，波 1 TIN-13 的 Playwright + `CopyFromScreen` + Pillow 回退仍在）。**该移植当年只做过语法检查（2026-09-28），此后 macOS 已成为日常开发平台、脚本在 macOS 上逐日真跑**；`check-consistency.sh` 的 `screencapture` 分支所需的终端「屏幕录制」TCC 权限已于 2026-09-28 晚授予，但对 OpenGL 窗口可能抓到导航前的旧帧。**agent 会话里不要指望 `screencapture`**：会话由 launchd 拉起、不在终端进程树下，拿不到该 TCC 授权——要出图请用探针的进程内帧捕获（`./build/tests/<probe> --screenshot <路径>`，见「功能开发生命周期」阶段 4）。本文档旧版提到的 `./scripts/dev.sh`（构建+运行）、`./scripts/test.sh`、`./scripts/screenshot.sh <page>`、`./scripts/reset-db.sh` **在本仓库中不存在**（`git ls-files scripts/` 可核），不要再照抄执行。（旧版此处引用的 `docs/KNOWN_LIMITATIONS.md` 已于 `5bc5a0a` 按用户指示整档删除，见本文「已知欠账」。）
+**macOS 侧的脚本（跨平台）**：`scripts/build-test-run.sh` / `scripts/ccache-env.sh` / `scripts/check-consistency.sh` 已支持 macOS/Linux 分支——Darwin 走 `pkill -f` 杀进程、`otool -L` 依赖清单、`screencapture -x` 截屏、`stat -f%z`、`-DOPENSSL_ROOT_DIR=/opt/homebrew/opt/openssl@3`，ccache 配置读 `~/Library/Preferences/ccache/ccache.conf`；原先写死的 Windows 工具链 PATH 与 `C:/msys64/mingw64` openssl 路径改为按 `DEVDESK_OS` 分支取（Windows 分支行为不变，波 1 TIN-13 的 Playwright + `CopyFromScreen` + Pillow 回退仍在）。**该移植当年只做过语法检查，此后 macOS 已成为日常开发平台、脚本在 macOS 上逐日真跑**；`check-consistency.sh` 的 `screencapture` 分支所需的终端「屏幕录制」TCC 权限已授予，但对 OpenGL 窗口可能抓到导航前的旧帧。**agent 会话里不要指望 `screencapture`**：会话由 launchd 拉起、不在终端进程树下，拿不到该 TCC 授权——要出图请用探针的进程内帧捕获（`./build/tests/<probe> --screenshot <路径>`，见「功能开发生命周期」阶段 4）。本文档旧版提到的 `./scripts/dev.sh`（构建+运行）、`./scripts/test.sh`、`./scripts/screenshot.sh <page>`、`./scripts/reset-db.sh` **在本仓库中不存在**（`git ls-files scripts/` 可核），不要再照抄执行。（旧版此处引用的 `docs/KNOWN_LIMITATIONS.md` 已按用户指示整档删除。）
 
 构建入口：`CMakeLists.txt` 顶层 → `src/main.cpp`。
-EUI-NEO 依赖：`../EUI-NEO/`（同级目录，通过 `EUI_NEO_DIR` cache 变量 `add_subdirectory` 集成，**不是 git submodule**）。两个数**不是一回事，别混**：**最低依赖 rev（门槛）= `fd904ea`**（= `CMakeLists.txt` 的 `DEVDESK_EUI_NEO_MIN_REV`，含 U1 尺度契约 + dropdown 弹层 z + UAT3 自绘窗口壳 window_backend API——customWindowChromeSupported/setTitleBarAppearance/onCaptionHitTest 等，消费点 src/main.cpp 与 src/app_sidebar.cpp；低于它 configure 会 `message(WARNING)` 软警告但不 fail）；**本机当前检出 = `0f7f60b`**（2026-10-20 实测，领先 `origin` **2** 个提交）。EUI-NEO 本地 main 领先 origin 是长期状态——**已决策永不 push 到 `origin`（= 上游 sudoevolve/EUI-NEO）**（2026-09-28 用户决策），origin/main 停在 `703243b`（2026-10-20 实测）；可推的是 **`fork`（= coderstory/EUI-NEO）**，CI 的 `EUI_NEO_REPO` 正是克隆它（`fork/main` 远端引用 2026-10-20 本机不可解析，齐平与否下次数）。**EUI-NEO 需保持本地 main 最新**（含 onWindowDestroyed/requestFocus/trayMenu/windowEffect/lineStyles/getMonitorWorkAreas/setSystemPowerHandler/styledMenu/onTrayMenu/windowIsFocused/input onCancel 等新 API）；原计划「EUI-NEO push 后启用硬版本检查」的前置条件因「永不 push 到 origin」决策不再到来，硬版本检查保持未启用（审计 [11]）。
+EUI-NEO 依赖：`../EUI-NEO/`（同级目录，通过 `EUI_NEO_DIR` cache 变量 `add_subdirectory` 集成，**不是 git submodule**）。两个数**不是一回事，别混**：**最低依赖 rev（门槛）= `fd904ea`**（= `CMakeLists.txt` 的 `DEVDESK_EUI_NEO_MIN_REV`，含 U1 尺度契约 + dropdown 弹层 z + UAT3 自绘窗口壳 window_backend API——customWindowChromeSupported/setTitleBarAppearance/onCaptionHitTest 等，消费点 src/main.cpp 与 src/app_sidebar.cpp；低于它 configure 会 `message(WARNING)` 软警告但不 fail）；**本机当前检出 = `0f7f60b`**（2026-10-20 实测，领先 `origin` **2** 个提交）。EUI-NEO 本地 main 领先 origin 是长期状态——**已决策永不 push 到 `origin`（= 上游 sudoevolve/EUI-NEO）**（用户决策），origin/main 停在 `703243b`（2026-10-20 实测）；可推的是 **`fork`（= coderstory/EUI-NEO）**，CI 的 `EUI_NEO_REPO` 正是克隆它（`fork/main` 远端引用 2026-10-20 本机不可解析，齐平与否下次数）。**EUI-NEO 需保持本地 main 最新**（含 onWindowDestroyed/requestFocus/trayMenu/windowEffect/lineStyles/getMonitorWorkAreas/setSystemPowerHandler/styledMenu/onTrayMenu/windowIsFocused/input onCancel 等新 API）；原计划「EUI-NEO push 后启用硬版本检查」的前置条件因「永不 push 到 origin」决策不再到来，硬版本检查保持未启用（审计 [11]）。
 
 ## 🏗️ 架构要点（4 层模块化）
 
@@ -243,91 +240,14 @@ main → 7 个 Router 页面 (home / markdown / todo / claude_proxy / agent / se
 
 完整 token 见 spec §6.5.1 和 §6.5.2。
 
-## 🚦 当前状态（2026-10-03）
+## 🚦 当前状态
 
-> **用例总数会变，一律以运行输出 `Total:` 为准**——本节的数字全部带日期与出处。本段是「现在是什么样」，下面「实施沿革」段是「怎么走到这儿的」，两者别混读。
+> **测试与 CI 状态以实际运行输出和 `.github/workflows/ci.yml` 为准**，不在文档写死数字。
 
-### 测试与 CI（观测点 2026-10-03）
-
-- **单测全量**：`Total: 1259 / Passed: 1253 / Failed: 0`（macOS，CI run `37093130440` 的 macOS job，日志时间 2026-10-03T03:29Z）。`Total − Passed` = **6**，是按平台条件 `DOCTEST_SKIP` 的用例数（全仓 12 处 `DOCTEST_SKIP`：Windows 专属内存采样、`DEVDESK_SOAK` 门控、junction 注入、按平台权限模型分派等），**不是失败**；具体是哪 6 条以该次运行 `Skipped:` 行为准。`scripts/build-test-run.sh` 只回显 `Total/Passed/Failed` 三行，`Skipped:` 在原始输出里。
-- **CI 存在且是双平台**：`.github/workflows/ci.yml` —— `push dev` / `PR → dev·master` 触发；macOS job = `xcode-27` runner + Homebrew，Windows job = `windows-2025` + MSYS2 MinGW64。两个 job 都跑 `scripts/build-test-run.sh --release --no-run`。**别再说"仓库没有 CI"**——`docs/superpowers/plans/2026-09-28-platform-adaptation-audit.md` 里"仓库无 `.github/`"的断言写于当时，早已不成立。
-- **CI 不编 probe 二进制**（2026-10-03 起）：workflow env `DEVDESK_BUILD_PROBES=0` → probe 可执行不编译、不注册进 ctest（runner 无 GUI 会话，probe 测试本来就全跳过，编它们纯浪费），probe 门禁段与读 configure 产物的探针跳过登记守卫在 OFF 时显式跳过打 ⏭；**单测全量与全部静态守卫在 CI 照跑**，probe 真门禁靠本地（默认 ON 照常构建 + `ctest -L probe` 三态判定）+ headless 几何断言单测在 CI 照跑。
-- **probe 从 12 个收到 4 个**（2026-10-03 轻量化，分支 `refactor/lightweight`）：删掉 8 个与无头单测逐条重复的 probe（其中 2 个还被刻意设计成「当前必红」当 TODO 清单用，红灯混在门禁里会淹没真信号）。留下 4 个各有独占判据：`home_probes`（首页矮窗多档无头 compose + 真实滚动管线整跑，组 A-F + K）/ `screenshot_probe`（帧捕获能力自测）/ `settings_dropdown_z_probe`（只有真窗口能测 z 序）/ `module_toggle_sidebar_probe`（唯一真点击派发栈）。ctest 侧 6 条（4 + `screenshot_probe_screenshot_switch` + `home_probes_min_window`）。
-  > **2026-10-19 起按「所有业务场景必须实际跑起来」新标准**：轻量化删掉的 8 个 probe 所在面须以业务流程 probe 回补。
-- **🔴 CI 红灯根因已修复并合并进 dev、但未复验**（截至 2026-10-03，口径为「已修、待复验确认」，**不得宣称 CI 已绿**）：
-  - 最后一次**全绿** = **2026-10-01**（run `36849232387`）——那是修复前的历史基线，不是本次修复后的状态。
-  - **Windows 编译失败的根因已修**：某测试 TU 的 `-Wfree-nonheap-object` 判红经 2026-10-03 实测证伪为 GCC 误报（详见下方「已交付」WinWarn 批），按既定政策进 `-Wno-error=` 白名单（仍打印、不静默）；`-Wformat-truncation` 两处缓冲 16→36。已在 dev（merge `dd5cc1e`）。
-  - **macOS 14 个 UI probe 全红的根因已修**：无 GUI 会话时「无显示」诚实跳过（ctest `SKIP_RETURN_CODE 77`）+ 门禁三态（全绿/全跳过/混合）+ 跳过登记守卫 + 判据失败不被跳过掩盖。已在 dev（merge `7d6b729`）。
-  - ⏳ **两条修复是否已 push、CI 重跑复验是否通过：未确认**。本地 `origin/dev` 跟踪引用停在 `d1f37a5`（2026-10-03 12:16），早于两个 merge；`git branch -a --contains` 对两个 merge 只命中本地 dev——但跟踪引用可能滞后，最终以推送后重跑的 CI 为准。winwarn 批提交自注「未在 Windows CI 实测」。
-  - ⚠ **历史重申**：**「Windows 代码从 09-28 起一次都没编译过」是错的**——CI 一直在编 Windows（最后绿灯 10-01）；此前红灯的两条根因即上面两批所修，不要归因到平台迁移。
-
-### 已交付（2026-10-01 ~ 10-03 这批）
-
-- **模块开关即时生效（LiveToggle，10-01）**：设置页模块开关从「重启生效」改为**即时生效**（Router 活门控基座 + 装配层 `dispatchModuleToggle` + 四模块 onStart/onStop 重入幂等）。
-- **智能体二期（Agent M2，10-02）**：单次运行墙钟 / token 上限、`startRunExclusive` 单一闸、cron Scheduler、8 个新工具、任务与运行管理 UI。
-- **凭据入库**：profile 的 API key 从系统钥匙串迁进 SQLite 的 `claude_profiles.api_key_encrypted` 列。保护级别**按平台拆**（铁律：平台无关头 + `_win` / `_posix` 分文件）：macOS/POSIX = 明文列 + 文件权限 `0600`；Windows = DPAPI 密文的 hex 文本。见 `src/platform/credential_protection.h`。
-- **配置入库**：六类 JSON 配置（`config.json` / `pet_config.json` / `markdown_view_state.json` / `todo_view_state.json` / `run-settings/*.json` / `claude_settings_snapshot.json`）全部迁进 SQLite 的 `app_config` 等表；`core::paths::configFile()` 与 `DEVDESK_CONFIG_PATH` 已随清理批删除。**唯一保留在文件系统的配置是 `~/.claude/settings.json`**（那是 Claude Code 的接管契约，动了就断接管）。
-- **探针帧捕获（2026-10-03）**：`--screenshot` 走进程内 `glReadPixels` → PNG，**不需要任何系统截屏授权**（agent 会话拿不到「屏幕录制」TCC）。
-- **Windows GCC 告警修复（WinWarn 批，10-03，merge `dd5cc1e`）**：一条测试 TU 的 `-Wfree-nonheap-object` 经 2026-10-03 实测证伪为 GCC 误报（完全相同编译命令加 `-fno-exceptions` 重编该 TU 告警消失 → 被诊断的 `operator delete` 只存在于异常清理 CFG；`72 = sizeof` 被诊断结构，是 `_UninitDestroyGuard` 取 `&__result` 栈上地址后沿 +72 误判）；按 `cmake/CompilerWarnings.cmake` 既定政策进 `-Wno-error=` 白名单（仍打印、不静默）；另把两处 `char buf[16]` 按 GCC 可证明最坏情况加大到 36（三个 int 各 11 字节 + 2 分隔符 + NUL，`src/module_claude_proxy/claude_ui_logic.cpp` / `src/module_home/home_service.cpp`）。**提交自注「未在 Windows CI 实测」**——只修了 GCC 16.2.0 全仓扫出的两条告警，Windows 侧复验待 CI 重跑。
-- **probe 无显示诚实跳过 + 门禁三态（hd 批，10-03，merge `7d6b729`）**：CI macOS runner 无 GUI 会话导致 14 个 UI probe 全红的根因打法——「无显示」走 ctest `SKIP_RETURN_CODE 77` 诚实跳过（`tests/probes/probe_harness.h`），门禁落成三态：**全绿 → 绿 / 全跳过 → 本地红「无显示环境，probe 未执行」+ CI（`GITHUB_ACTIONS=true`）绿但显式警告「本次未验证 UI」（绝不静默绿）/ 部分跳过 → 红「判据误判或代码 bug，必须人工查」**。新守卫 `scripts/check-probe-skip-gate.sh` 在 configure 产物 `CTestTestfile.cmake` 层断言每个 probe 带 `SKIP_RETURN_CODE 77` 且与 harness `kSkipExitCode` 一致（自带 `--self-test`，好树绿/坏树红，非恒真）；`tests/probes/screenshot_probe.cpp` ⑥ 无显示判据表失败先于窗口段 `return 1`，不被跳过掩盖。提交自带本地实测（`dd33415`，有 GUI 会话）：全绿 `1263/1257/0` + probe 14/14 通过、强制全跳过（本地红 / CI 绿带警告）、混合（1/14 跳过）红、变异守卫守住。
-- 更早的大批交付（P0–P8 / W 各波 / R8·R10 / macOS 三特性 / UI 现代化 M1-M3 / 桌宠 6 皮肤 / 安装程序）见下方「实施沿革」与 `CHANGELOG.md`。
-
-### 已知欠账（诚实清单，2026-10-03）
-
-| 欠账 | 依据 / 位置 |
-|---|---|
-| **CI 复验待确认**：两条红灯根因（Windows 编译失败 / macOS probe 全红）修复已合并进 dev（winwarn 批 `dd5cc1e`、hd 批 `7d6b729`），但**未 push、CI 未重跑**，不得宣称已绿 | 见上「测试与 CI」 |
-| **`-wal` / `-shm` chmod 的极端场景**：空事务失败时不会被 chmod（正常路径由 `Database::open` 先 `BEGIN IMMEDIATE;COMMIT;` 把伴生文件逼出来再一并收紧） | G8 简报「F1 m1 残留」；修它要动 `sqlite_db.h` / 装配顺序 |
-| **Windows DPAPI 运行时未验证**：`credential_protection_win.cpp` 只有静态审读 + CI 编译门禁，没有在真 Windows 上跑过「加密入库 → 解密读回」 | `src/platform/credential_protection_win.cpp`；`keychain_win.cpp` 同理 |
-| **`.clip()` 只剪不省略 —— 已修（`8df78dc` / dev merge `7362788`，2026-10-03）**：单行文本裁剪面已接 Ellipsis 省略号（settings 降级提示、md.subtitle / md.status.save、ccswitch.note / result、slot.val / env.key / env.val / env.hint / advjson.row.key、todo.subtitle），`.clip()` 保留作几何兜底；另有若干处有界内容 / 几何界（视口栈等）有意不动。`.clip()` 本身仍是硬裁不产生省略号——**EUI-NEO 能力上限不变**，只是 DevDesk 侧文本溢出面已不再单独依赖它 | `8df78dc` 提交说明（13 处清单 + 保留判据）；`docs/EUI-NEO-CAPABILITIES.md` |
-| **覆盖率工具：macOS 已落地（2026-10-03，`1a3de0b`）+ Windows gcovr 待做 + CI 未接**：CMake 开关 `DEVDESK_COVERAGE`（仅 AppleClang，默认 OFF、正常构建命令零变化）+ `scripts/coverage.sh`（独立 `build-coverage/`，门禁 `build-test-run.sh` 零改动；测试 Failed 非 0 即中止，不出假基线）。**首批真实基线**（dev `99a9aef`，测试 1275/1269/0 全绿）：DevDesk 合计 **87.1%**；core **79.5%（未达 90% 目标）**、platform 81.2%、ui_kit 46.7%（UI 不强制）、各 module 84.4%–95.7%（**pet 40.0% 最低**）。数字会漂移，**以脚本最新输出为准**、不在文档写死 | 工具：`scripts/coverage.sh` + `CMakeLists.txt` 的 `DEVDESK_COVERAGE` 段；分层目标 spec §12.3；快照在 `build-coverage/coverage-summary.txt`（构建产物，不入 git） |
-
-### ⚠ 跨仓库耦合（推 DevDesk 前必读）
-
-- DevDesk **硬依赖 EUI-NEO 的默认分支 HEAD，且不锁版本**：CI 每次都 `git clone --depth 1 https://github.com/coderstory/EUI-NEO.git`（`EUI_NEO_REPO`，即 **fork** 而非上游）取最新，本地则用同级 `../EUI-NEO`。`DEVDESK_EUI_NEO_MIN_REV` 只是**软警告**下限，不 fail。
-- **推 DevDesk 前若用到了 EUI-NEO 的新 API，必须先推 EUI-NEO（推到 `fork`）**，否则 CI 会在 DevDesk 的某个文件里报一个**指向错误文件**的编译错误——真实发生过：错误行落在 DevDesk 侧，根因却在框架还没推上去。
-- **`origin`（= 上游 sudoevolve/EUI-NEO）永不 push**（2026-09-28 用户决策）；`fork`（coderstory/EUI-NEO）是可推的那一个。本地 `main` = `0f7f60b`（2026-10-20 实测；`fork/main` 远端引用本机当前不可解析，齐平与否待下次数）。
-
-### 实施沿革（历史，不再是当前状态）
-
-> 下面每条括号里的日期 = **该条交付的时点**，不是"最后更新于"。文内的测试数（66 / 109 / 124 / 137 / 194 / 330 …）都是**当时**的快照，只作沿革；当前值见上面「🚦 当前状态」。
-
-按 spec §16 实施，进度：
-
-- ✅ **P0-P8 完成**（macOS 上 66 测试通过 + .app bundle，截图见 `docs/screenshots/`）
-- ✅ **P9（代理非流式）+ P10a（SSE 流式）+ P10b（流式压测）完成** —— W1 收编 macOS 中断现场并修全部基线问题（T1-T5），Windows 全量测试 109 例全绿（W2 验收 2026-09-22：10MB e2e/soak/断连恢复/内存采样全过）
-- ✅ **P14（Windows）必选达成** —— spec §16 已更新：P14 升必选（当时以 Windows 11 为开发环境；2026-09-28 起当前开发平台是本机 macOS）+ 发布形态约束"单 exe 零外部 DLL"（T3 达成，W2 复查通过，均为 Windows 侧验收）；平台适配接口隔离完成（T6，业务代码零平台宏）
-- ✅ **W3 剩余需求收官（T9–T12 + P16）** —— 启动顺序理顺零 WARN、P12 Home 真实数据、P13 设置页、platform::json 实装、P15 文档（124/124 全绿），恢复计划关闭
-- ✅ **W5 遗留项清零（2026-09-22）** —— Claude 按钮全量接线、侧边栏导航（删浮动齿轮）、全局字号缩放、UTF-8 argv、clearColor 随主题、跨模块跳转负载（Home 快捷按钮弹窗 + 最近编辑打开指定笔记）。最终基线 **137/137 全绿**；详见 CHANGELOG [W5]（当时另有 `KNOWN_LIMITATIONS.md` 存档，该文件已于 `5bc5a0a` 按用户指示删除，勿再引用）
-- ✅ **W6-W9 + 磨砂全链（2026-09-22/23）** —— 窗口效果三档、供应商配置（settings.json 自动接管）、插件化门控、桌宠 MVP、Markdown 键盘流/标签/目录树、Todo 搜索/逾期/tags/拖拽反馈、模块插拔（09-23 基线 330 全绿）
-- ✅ **R8 装配层收口 + R10 ClaudeService 拆分（2026-09-24~28）** —— Module::shortName 虚函数 + app_registry 合表 + buildGatedEntries/dispatchTrayNavigation 下沉可测 + THS-08 表驱动移除 claudeOn；R10 A1-A4 把 CallLogStore / ProfileRepository / ProxyRuntime / SettingsTakeOver 抽离，门面 `claude_service.cpp` 2005→780 行、**43 签名零变化**
-- ✅ **共享配置 + failover 批 1-3（2026-09-24~28）** —— 服务层 + 片段编辑器 UI + `shouldFailoverTo` / `resolveFallbackProfile` / `fallback_profile_id` migration v10 + 注入守卫，共享全链闭环
-- ✅ **MD-01 重载块映射修复（2026-09-24~28）** —— `(kind,hash,stableId)` 三元组优先 + `(kind,hash)` 回退 + 空文档 guard
-- ✅ **setScrollOffset 上游补齐（2026-09-24~28）** —— EUI-NEO `Ui::setScrollOffset` pending 挂起模式 + DevDesk M6 删 id 轮转 hack
-- ✅ **TIN-06 测试 scaffold 迁移（2026-09-24~28）** —— HeadlessFrame 三合一 + InMemoryDb + ScopedAppDatabase + DataRootEnv
-- ✅ **UI 综合 audit + 修（2026-09-24~28）** —— home/markdown/todo/settings/pet 41 findings（home hover 闪烁 = onTimer 整页重绘、markdown 双栏滚动失效 = init-only scrollState、todo 拖动插入、settings 下拉 z 碰撞回归）；lineChart chromeless 化、datepicker 中文化、窗口失焦全局重绘（EUI-NEO `ca40ff2`）、theme 去纯白米色基调（surface `#F5F2EC`）、卡片 panelShadow、侧边栏删 tooltip
-- ✅ **macOS 三特性 + UI 现代化 M1-M3（2026-09-28）** —— specs：`2026-09-28-macos-three-features-design.md` / `2026-09-28-ui-modernization-design.md`
-- ✅ **DevDesk probes spec（2026-09-28 起实施，后已远超原 MVP）** —— spec `docs/superpowers/specs/2026-09-28-devdesk-probes-design.md`（e149132）规划的「EUI-NEO probe 模式 + dropdown z MVP」**早已落地**：`tests/probes/` 现有 **13 个探针**全部被 git 跟踪、接入 `ctest -L probe`（`build-test-run.sh` 测试段之后自动跑，失败即整体 `exit 1`），并在 2026-10-03 补上进程内帧捕获（`--screenshot`）。**不要再把它读成"未开始"**。（本行旧文写"dev 未开始"，是 2026-09-28 的时点快照。）
-- ✅ **Windows 迁移缺口全部清零（P14 / W 各批，2026-09-22~28）** —— 见下方状态表，全部 ✅；**2026-09-29 起 Windows 不再叫"移植目标"**（用户指出：两平台都是原生支持，见本文开头与 `5bc5a0a`）
-
-### Windows 迁移缺口（P14 提前激活；2026-09-22 W2 验收后更新为状态表 —— 以下全部为**已结案**的历史记录）
-
-| 问题 | 位置 | 状态 |
-|------|------|------|
-| DPAPI keychain 曾是 stub（三函数全返回 NotImplemented，阻断 Claude 模块） | `src/platform/keychain_win.cpp` | ✅ T7 已实现（a534f5d）：CryptProtectData/CryptUnprotectData + 文件存储，19 个连锁用例全转绿 |
-| 缺 `ws2_32` + `crypt32` 链接（Winsock2 + TLS 依赖链） | `src/platform/CMakeLists.txt` | ✅ T2 已修：`if(WIN32)` 内 PUBLIC 链接，不再需要 `CMAKE_CXX_STANDARD_LIBRARIES` 绕过 |
-| FTS5 检测假阴性（MSYS2 sqlite 实际带 FTS5） | `cmake/Dependencies.cmake` | ✅ T2 已修：`check_cxx_source_compiles` 补 SQLite3 库链接，CJK 搜索测试全过 |
-| 5 处干净编译修复（json.h 缺 cstdint / migrations designated initializers / proxy_router 绑临时 / -Werror 泄漏进 EUI-NEO） | `src/platform/json.h` 等 | ✅ T2 已修：删 build/ 全新 configure 零 workaround flag 可构建 |
-| 测试基建 Windows 崩溃（`filesystem::remove` 抛异常 + sqlite 句柄未关 + test_main 无容错） | `tests/` | ✅ T1-B 已修：套件跑到底，单测异常只挂本用例不炸套件 |
-| 启动顺序 WARN：模块 `onStart` 时 `ClaudeService::global()` 为 null，main 兜底启动代理 | `main.cpp` / `claude_module.cpp` | ✅ W3 已修（`50ff663`）：`startClaudeProxy()` 挪到 `getRouter()` 之前，模块 onStart 时 service 就绪，启动零 WARN |
-| 发布形态：单 exe 零外部 DLL | `cmake/Dependencies.cmake` | ✅ T3 已达成（95c59d5）：sqlite3/curl/ssl/crypto/C++ 运行时全静态，W2 验收复查 `objdump` 仅 16 个 Windows 系统 DLL |
-| `captureOpenFileFromArgv()` 曾仅 `__APPLE__` 有实现 | `src/platform/file_open_win.cpp` | ✅ T6 已按平台拆文件（接口隔离）；✅ W5 已修（`90d5792`）：改 `GetCommandLineW + CommandLineToArgvW` 宽字符 argv 转 UTF-8，非 ASCII 路径不再乱码 |
-| `check-consistency.sh` 用 macOS `screencapture`/`open -a` | `scripts/` | ✅ 波 1 TIN-13 已 Windows 化（Playwright + `CopyFromScreen` + Pillow 回退）；残留限制（锁屏/RDP 黑图、python 解释器错配）原登记在 `docs/KNOWN_LIMITATIONS.md` 一.3，**该文件已删除（`5bc5a0a`）**，现存限制直接看脚本源码 |
-| 旧 `build/` 曾是 Darwin arm64 产物 | `build/` | ✅ W1 已删除并在 Windows 重建；**2026-09-28 搬回 macOS 后本机 `build/` 是 macOS 产物**，换平台必须删重建这条依然成立 |
-
-已正确处理的跨平台点（T6 接口隔离后）：**keychain / paths / time / file_open 四族平台 API 全部按平台拆文件**（`*_win.cpp` / `*_macos.cpp` / `*_posix.cpp`，CMake `target_sources` 按平台选择编译，与 EUI-NEO 后端选择同一模式），业务代码零 `#ifdef _WIN32` / `__APPLE__`（2026-09-22 W2 验收 grep `src/` *.cpp/*.h 零命中）；HTTP 层（libcurl/cpp-httplib）本身跨平台；`.app` target（`if(APPLE)` 守卫）、Security.framework 链接（有守卫）。time 统一走 `core::time::localTime`（`src/core/time.h` + `time_win/posix.cpp`）。
-
-**测试框架注意**：`tests/doctest.h` 是自制迷你框架（`REGISTER_TEST` 宏静态自注册 + `DOCTEST_CHECK/REQUIRE` 断言，fail-fast），**不是真 doctest**——grep `TEST_CASE` 找不到用例、`--list-test-cases` 之类参数会被当作过滤子串属正常。**用例总数以运行输出 `Total:` 为准，不在文档写死**——**当前值见本文「🚦 当前状态」段（带日期与出处）**。二进制名随平台变：macOS 是 `./build/tests/devdesk_tests`，Windows 是 `./build/tests/devdesk_tests.exe`。test_main 支持子串过滤：`./build/tests/devdesk_tests stress` 只跑名字含 "stress" 的用例，`--log` 打开 Debug 级控制台日志。`Total` 与 `Passed` 的差额 = 按平台条件 `DOCTEST_SKIP` 的用例（`test_main.cpp` 的 `Skipped:` 行给出条数），**不是失败**。以下数字均为**历史**快照，只作沿革记录、不再作为当前值引用：646（2026-09-28，Windows 侧波 1 合并后）← 621/619/1（波 1 之前，那条 Failed 是模块隔离守卫的 cwd 缺陷——ccache 把 `__FILE__` 相对化后、从仓库根跑必误报「找不到仓库根」，已由波 1 迁到 `scripts/check-module-isolation.sh` 修复）← 530（2026-09-27）→ 514（同日更早）→ 481（2026-09-24；= 09-23 基线 330 + W6-W9/磨砂全链/供应商配置/桌宠 MVP/Markdown 键盘流等 backlog 波 + 词法器加 JS/Go/Rust/Shell +4 + 挂机穿透功能移除 -1）。
+- **CI**：双平台（macOS xcode-27 / Windows windows-2025），`push dev` / `PR → dev·master` 触发，跑 `scripts/build-test-run.sh --release --no-run`
+- **已知欠账与架构债**：已归档到 `docs/strategy/03-软件架构能力清单.md` 第 6 节
+- **近期交付**：见 `git log`
+- **跨仓库耦合**：DevDesk 硬依赖 EUI-NEO HEAD（不锁版本）；推 DevDesk 前若用了 EUI-NEO 新 API 必须先推 EUI-NEO fork（`origin` 永不 push）；`DEVDESK_EUI_NEO_MIN_REV` 只是软警告下限
 
 ## 📦 安装程序（2026-09-28）
 
