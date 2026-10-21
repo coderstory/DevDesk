@@ -4612,7 +4612,7 @@ REGISTER_TEST(agent_ui_draft_chip_and_subdialog_lifecycle,
                               closeBtn->frame.x + 0.5f,
                           "AI chip 右缘压到 ✕ 关闭钮");
 
-    // ① 点 chip 开子弹窗：320 高、输入框/按钮行都在面板内、外层仍在
+    // ① 点 chip 开子弹窗：380 高、输入框/底部按钮带都在面板内、外层仍在
     DOCTEST_REQUIRE(clickId(uiB, "agent.dialog.task.aichip.bg"));
     eui::Ui uiC;
     composeTo(uiC, mod, kScreen, "agent_ui_dfl2");

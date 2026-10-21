@@ -183,8 +183,8 @@ constexpr float kContextNoteH = 56.0f;
 constexpr float kGroupTitleH = 20.0f;        // 分组标题高（14px 加粗 + 行高 20）
 
 // AI 草稿子弹窗几何（Standard 460 宽；y 均为本弹窗面板内坐标，与任务弹窗互不影响）。
-// UAT6 重排：输入加高 88→140、结果行让位下移、按钮组迁底部按钮带（行底距弹窗底 60，
-// 与 dialog_form 同口径）并整体居中。
+// UAT6 重排：输入加高 88→140、结果行让位下移、按钮组迁底部按钮带（行顶 y=h-60、
+// 行底距弹窗底 20，与 dialog_form 同口径）并整体居中。
 constexpr float kDraftDialogH = 380.0f;
 constexpr float kDraftInputH = 140.0f;
 constexpr float kDraftBtnH = 40.0f;          // 底部按钮带按钮高（dialog_form 同档）
@@ -2617,7 +2617,7 @@ void AgentModule::composeDraftDialog(
             .build();
 
         // 底部按钮带（UAT6 重排）：生成=Primary 微信绿（核心确认）、关闭=Secondary
-        //（次要），两钮同排整体居中、行底距弹窗底 60（与 dialog_form 按钮带同口径）。
+        //（次要），两钮同排整体居中、行顶 y=h-60（与 dialog_form 按钮带同口径）。
         const float btnY = h - 60.0f;
         const float btnX0 = (w - (kDraftBtnW * 2.0f + kDraftBtnGap)) * 0.5f;
         components::button(ui, "agent.dialog.task.draft.generate")
