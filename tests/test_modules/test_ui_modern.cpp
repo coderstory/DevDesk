@@ -1031,13 +1031,13 @@ bool nearPx(float a, float b) { return std::abs(a - b) <= 0.5f; }
 }  // namespace
 
 REGISTER_TEST(uiAboutLayout,
-              "about: W10 微信风格—居中白卡 760（窄屏自适应）/ 信息列表两列 / 复制按钮 / 版权 footer / 极矮窗 clamp", {
+              "about: W10 微信风格—居中白卡 760（窄屏自适应）/ 信息列表两列 / 版权 footer / 极矮窗 clamp", {
     std::unique_ptr<::core::Module> mod(create_about_module());
     DOCTEST_REQUIRE(mod != nullptr);
     mod->onStart();
     const auto& t = ::core::theme::current();
     // 与 about_module.cpp 同值镜像（UAT3 放大：580→760 / pad 32→48 / 上下 40→60 /
-    // 图标 56→72 / 行高 40→48 / 按钮 160·34→200·40）——两边漂移时本用例红
+    // 图标 56→72 / 行高 40→48）——两边漂移时本用例红
     constexpr float kCardW = 760.0f;
     constexpr float kCardPadX = 48.0f;
     constexpr float kCardPadTop = 60.0f;
@@ -1048,15 +1048,11 @@ REGISTER_TEST(uiAboutLayout,
     constexpr float kTitleGap = 28.0f;
     constexpr float kRowH = 48.0f;
     constexpr int kRowCount = 6;
-    constexpr float kButtonGap = 28.0f;
-    constexpr float kButtonH = 40.0f;
-    constexpr float kButtonW = 200.0f;
     constexpr float kFooterH = 20.0f;
     constexpr float kFooterGap = 16.0f;
     constexpr float kLabelW = 120.0f;
     const float cardH = kCardPadTop + kIconSize + kIconGap + kTitleH +
-                        kTitleGap + kRowCount * kRowH + kButtonGap +
-                        kButtonH + kCardPadBottom;
+                        kTitleGap + kRowCount * kRowH + kCardPadBottom;
     eui::Ui ui;
     eui::Screen screen{1600.0f, 1000.0f};
     // 宽度自适应公式镜像（UAT3：窄窗 clamp，与 about_module.cpp 同式）
@@ -1151,16 +1147,6 @@ REGISTER_TEST(uiAboutLayout,
         DOCTEST_REQUIRE(hit1 != nullptr);
         DOCTEST_CHECK(ui.find("about.card.copy.2") == nullptr);
         DOCTEST_CHECK(ui.find("about.card.hit.2") == nullptr);
-    }
-    {
-        const float btnY = cardY + kCardPadTop + kIconSize + kIconGap + kTitleH +
-                           kTitleGap + kRowCount * kRowH + kButtonGap;
-        const auto* btn = ui.find("about.card.copyall");
-        DOCTEST_REQUIRE(btn != nullptr);
-        DOCTEST_CHECK_MESSAGE(nearPx(btn->frame.x, cardX + (cardW - kButtonW) / 2.0f),
-                              px("about.card.copyall", btn));
-        DOCTEST_CHECK_MESSAGE(nearPx(btn->frame.y, btnY),
-                              px("about.card.copyall", btn));
     }
     {
         const auto* footer = ui.find("about.footer");
