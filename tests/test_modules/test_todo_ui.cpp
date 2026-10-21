@@ -3516,12 +3516,13 @@ REGISTER_TEST(todo_ui_detail_two_column_geometry,
     DOCTEST_CHECK(floatEq(tagInput->frame.y - py, 318.0f));
     DOCTEST_CHECK(floatEq(tagInput->frame.height, 34.0f));
 
-    // ⑧ 底部：取消|保存 右对齐（y=542 h34）；保存底 ≤ 面板底-17.5
+    // ⑧ 底部：取消|保存 右对齐、钉 frame 底（y = frame 高 −18 −34 = 548 h34）；
+    // 保存底 = 面板底 − 18（UAT6 前是 h−58 随请求高定位）
     const auto* saveBg = f.ui.find("todo.dialog.detail.save.bg");
     const auto* cancelBg = f.ui.find("todo.dialog.detail.cancel.bg");
     DOCTEST_REQUIRE(saveBg != nullptr);
     DOCTEST_REQUIRE(cancelBg != nullptr);
-    DOCTEST_CHECK(floatEq(saveBg->frame.y - py, 542.0f));
+    DOCTEST_CHECK(floatEq(saveBg->frame.y - py, 548.0f));
     DOCTEST_CHECK(floatEq(saveBg->frame.height, 34.0f));
     DOCTEST_CHECK(floatEq(saveBg->frame.x - px, 800.0f - 56.0f - 96.0f));
     DOCTEST_CHECK(floatEq(cancelBg->frame.x - px, 800.0f - 56.0f - 96.0f * 2.0f - 8.0f));
@@ -3529,6 +3530,162 @@ REGISTER_TEST(todo_ui_detail_two_column_geometry,
                   panel->frame.y + panel->frame.height - 17.5f);
     // 底部不再有 删除/标记完成（上移到头部）
     DOCTEST_CHECK(f.ui.find("todo.dialog.detail.move.0") == nullptr);
+
+    mod->onStop();
+    return true;
+})
+
+// UAT6 防回退①：底部按钮钉 frame 底——多标签（chips 换行）内容注入后，取消/保存
+// 的 y 仍 == frame 底 − 18 − 按钮高，与内容高度、窗口高度都解耦；弹高 clamp 公式
+// min(600, 窗高 − 48) 在多档窗高下逐点验证（含真机出框报告里的 588 frame 档）。
+// 回退路径：按钮改回随请求高定位（h − 58）→ 548/540/536/420 各档 y 断言红；
+// 高度公式回退成不 clamp 的固定 600 → 636/520 两档 frameH 断言红。
+REGISTER_TEST(todo_ui_detail_footer_pinned_frame_bottom,
+              "todo_ui: 详情底部按钮钉 frame 底（frame 底−18−按钮高）+ 弹高 clamp min(600,窗高−48)", {
+    TestEnv env;
+    DOCTEST_REQUIRE(env.ready);
+    auto col = env.svc->createColumn("钉底列");
+    DOCTEST_REQUIRE(col.isOk());
+    auto a = env.svc->createTask(col.value().id, "多标签任务");
+    DOCTEST_REQUIRE(a.isOk());
+    {
+        // 10 枚中文标签 → chips 在 800 宽弹窗内换 2 行（UAT6 前单行截断只渲染前 8 枚）
+        module::todo::Task t2 = a.value();
+        for (int i = 0; i < 10; ++i) t2.tags.push_back("标签" + std::to_string(i));
+        DOCTEST_REQUIRE(env.svc->updateTask(t2).isOk());
+    }
+
+    std::unique_ptr<::core::Module> mod(create_todo_module());
+    mod->onStart();
+    {
+        Frame f1(mod.get());
+        const auto* card = f1.ui.find("todo.col.4.card.0.bg");
+        DOCTEST_REQUIRE(card != nullptr);
+        DOCTEST_REQUIRE(card->onClick != nullptr);
+        card->onClick();   // 打开详情
+    }
+
+    // chips 换行不再截断：第 10 枚照常渲染、与第 1 枚不同行（行 y 递增）
+    {
+        Frame f(mod.get());
+        f.ui.layout(1600.0f, 1000.0f);
+        const auto* c0 = f.ui.find("todo.dialog.detail.tag.0.bg");
+        const auto* c9 = f.ui.find("todo.dialog.detail.tag.9.bg");
+        DOCTEST_REQUIRE(c0 != nullptr);
+        DOCTEST_REQUIRE_MESSAGE(c9 != nullptr, "chips 未换行截断——第 10 枚应照常渲染");
+        DOCTEST_CHECK(c9->frame.y > c0->frame.y);   // 换到第二行
+        // chips 不横向溢出：首枚右缘在内容右缘内
+        const auto* panel = f.ui.find("todo.dialog.detail.panel");
+        DOCTEST_REQUIRE(panel != nullptr);
+        DOCTEST_CHECK(c0->frame.x + c0->frame.width <=
+                      panel->frame.x + panel->frame.width - 28.0f + 0.5f);
+    }
+
+    // 按钮钉底：多窗高逐档验证 y == frameH − 52（frameH = min(600, 窗高 − 48)）
+    struct SizeCase { float w, h, frameH; };
+    const SizeCase cases[] = {
+        {1600.0f, 1000.0f, 600.0f},   // 常规窗：不 clamp
+        {1000.0f, 640.0f, 592.0f},   // 最小窗档
+        {1000.0f, 636.0f, 588.0f},   // 真机出框档（用户量到的 588 frame）
+        {1000.0f, 520.0f, 472.0f},   // 矮窗：clamp 生效，内容靠滚动兜底
+    };
+    for (const auto& c : cases) {
+        Frame f(mod.get(), c.w, c.h);
+        f.ui.layout(c.w, c.h);
+        const auto* panel = f.ui.find("todo.dialog.detail.panel");
+        const auto* saveBg = f.ui.find("todo.dialog.detail.save.bg");
+        const auto* cancelBg = f.ui.find("todo.dialog.detail.cancel.bg");
+        DOCTEST_REQUIRE(panel != nullptr);
+        DOCTEST_REQUIRE(saveBg != nullptr);
+        DOCTEST_REQUIRE(cancelBg != nullptr);
+        // 弹高 clamp 公式：panel 高 = min(600, 窗高 − 48)
+        DOCTEST_CHECK(floatEq(panel->frame.height, c.frameH));
+        // 按钮钉 frame 底固定偏移：y = frameH − 18 − 34；底缘 = frame 底 − 18
+        DOCTEST_CHECK(floatEq(saveBg->frame.y - panel->frame.y, c.frameH - 52.0f));
+        DOCTEST_CHECK(floatEq(cancelBg->frame.y, saveBg->frame.y));
+        DOCTEST_CHECK(floatEq(saveBg->frame.y + saveBg->frame.height,
+                              panel->frame.y + panel->frame.height - 18.0f));
+        // 不越框：按钮整体在 frame 内
+        DOCTEST_CHECK(saveBg->frame.y + saveBg->frame.height <=
+                      panel->frame.y + panel->frame.height);
+    }
+
+    mod->onStop();
+    return true;
+})
+
+// UAT6 防回退②：内容超高（60 标签 → chips 多行）时内容区滚动兜底——scrollView 出
+// 滚动条（.track/.thumb）、末枚 chip 照常渲染（旧单行截断路径整个消失）、按钮仍在
+// 框内钉底；短内容（无标签）不建滚动条。
+REGISTER_TEST(todo_ui_detail_content_scroll_when_tall,
+              "todo_ui: 详情内容超高滚动兜底——chips 全渲染 + 滚动条出现 + 按钮钉底", {
+    TestEnv env;
+    DOCTEST_REQUIRE(env.ready);
+    auto col = env.svc->createColumn("滚动列");
+    DOCTEST_REQUIRE(col.isOk());
+    auto plain = env.svc->createTask(col.value().id, "无标签任务");
+    DOCTEST_REQUIRE(plain.isOk());
+    auto heavy = env.svc->createTask(col.value().id, "重标签任务");
+    DOCTEST_REQUIRE(heavy.isOk());
+    {
+        // 60 枚标签 → 800 宽弹窗内 ~8 行，内容高 > 视口 460 → 触发滚动
+        module::todo::Task t2 = heavy.value();
+        for (int i = 0; i < 60; ++i) t2.tags.push_back("标签" + std::to_string(i));
+        DOCTEST_REQUIRE(env.svc->updateTask(t2).isOk());
+    }
+
+    std::unique_ptr<::core::Module> mod(create_todo_module());
+    mod->onStart();
+
+    // 短内容（无标签）：不建滚动条（track 不存在）
+    {
+        Frame f1(mod.get());
+        const auto* card = f1.ui.find("todo.col.4.card.0.bg");
+        DOCTEST_REQUIRE(card != nullptr);
+        DOCTEST_REQUIRE(card->onClick != nullptr);
+        card->onClick();
+    }
+    {
+        Frame f(mod.get());
+        f.ui.layout(1600.0f, 1000.0f);
+        DOCTEST_CHECK(f.ui.find("todo.dialog.detail.scroll.scroll.track") == nullptr);
+        DOCTEST_CHECK(f.ui.find("todo.dialog.detail.tag.input") != nullptr);
+    }
+
+    // 长内容（60 标签）：滚动条出现、末枚 chip 渲染、按钮仍在框内钉底
+    {
+        Frame f1(mod.get());
+        const auto* card = f1.ui.find("todo.col.4.card.1.bg");
+        DOCTEST_REQUIRE(card != nullptr);
+        DOCTEST_REQUIRE(card->onClick != nullptr);
+        card->onClick();   // 弹窗开着直接切换到重标签任务
+    }
+    {
+        Frame f(mod.get());
+        f.ui.layout(1600.0f, 1000.0f);
+        DOCTEST_CHECK_MESSAGE(
+            f.ui.find("todo.dialog.detail.scroll.scroll.track") != nullptr,
+            "内容超高时应出现滚动条 track");
+        DOCTEST_CHECK(f.ui.find("todo.dialog.detail.scroll.scroll.thumb") != nullptr);
+        const auto* last = f.ui.find("todo.dialog.detail.tag.59.bg");
+        DOCTEST_REQUIRE_MESSAGE(last != nullptr, "chips 应多行全渲染，不截断");
+        const auto* first = f.ui.find("todo.dialog.detail.tag.0.bg");
+        DOCTEST_REQUIRE(first != nullptr);
+        DOCTEST_CHECK(last->frame.y > first->frame.y);   // 多行换行生效
+        const auto* panel = f.ui.find("todo.dialog.detail.panel");
+        const auto* saveBg = f.ui.find("todo.dialog.detail.save.bg");
+        DOCTEST_REQUIRE(panel != nullptr);
+        DOCTEST_REQUIRE(saveBg != nullptr);
+        // 按钮钉底 + 在框内
+        DOCTEST_CHECK(floatEq(saveBg->frame.y - panel->frame.y, 548.0f));
+        DOCTEST_CHECK(saveBg->frame.y + saveBg->frame.height <=
+                      panel->frame.y + panel->frame.height);
+        // 滚动视口限高：= frame 高 600 − 头部 76 − 按钮带(18+34) − 12 缝 = 460
+        const auto* scroll = f.ui.find("todo.dialog.detail.scroll");
+        DOCTEST_REQUIRE(scroll != nullptr);
+        DOCTEST_CHECK(floatEq(scroll->frame.y - panel->frame.y, 76.0f));
+        DOCTEST_CHECK(floatEq(scroll->frame.height, 460.0f));
+    }
 
     mod->onStop();
     return true;

@@ -16,10 +16,12 @@
 #include <components/datepicker.h>
 #include <components/dialog.h>
 #include <components/input.h>
+#include <components/scrollview.h>
 
 #include <ctime>
 #include <map>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace module::todo::ui {
@@ -890,14 +892,36 @@ bool DetailDialog::requestClose(PopupStack& popups, const DialogHost& host) {
 // 优先级|截止 segment 双列（与新建弹窗同一语言）；标签 = 可删 chips + 添加输入；
 // 底部只留 取消|保存。元素 id 沿用旧契约（input.title / prio.N / due.pick / due.clear /
 // tag.N / delete / toggle / save / close——无头用例按 id 定位与触发）。
+//
+// UAT6 框底钉定（真机 1000×640 偶发「取消/保存出框」根治）：根因是
+// components::dialog 内建把 panel 尺寸 clamp 到「窗口 − overlay(48)」，而内容子节点
+// 此前按未 clamp 的请求尺寸（高 600 / 弹性宽）定位，且 panel stack 不裁剪——窗口
+// 逻辑高被 DPI 缩放/小窗压小后实际 frame < 600，按 600 定位的按钮落在 frame 外。
+// 修法：① w/h 在此先按组件同式 clamp，子布局全部按 clamp 后的「实际 frame 尺寸」走；
+// ② 取消/保存钉 frame 底固定偏移（frame 底 − 18 − 按钮高），与内容高度彻底解耦；
+// ③ 标题/描述/优先级|截止/标签装进限高滚动容器（frame 高 − 头部 − 按钮带 − 缝），
+//    chips 多行换行（替掉旧单行截断）、任意内容形态超高都由本区滚动兜底。
 void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
                       const core::theme::Tokens& t, DialogSet& d,
                       const DialogHost& host) {
     const auto themeTokens = core::theme::componentTokensWeChat(t);
-    const float w = elasticDialogW(screen.width, 640.0f);   // demo 最小档 640，随窗弹性
-    const float h = 600.0f;
-    const float innerW = w - ui_kit::kDialogBodyInsetX;
+    // 实际 frame 尺寸 = min(期望, 窗口 − overlay 48)：与 components::dialog 内建
+    // clamp 同式同源（metrics.spacing.overlay）；组件里再 clamp 一次结果不变。
+    // 宽保持弹性契约 max(640 最小档, 窗口/2)，再夹窗口可用宽。
+    const float w = std::max(0.0f, std::min(elasticDialogW(screen.width, 640.0f),
+                                           screen.width -
+                                               themeTokens.metrics.spacing.overlay));
+    const float h = std::max(0.0f, std::min(600.0f,
+                                           screen.height -
+                                               themeTokens.metrics.spacing.overlay));
     const float x0 = ui_kit::kDialogInsetX;
+    // 底部按钮带：贴 frame 底固定偏移（frame 底 − 18 − 按钮高），任何内容高度与
+    // 窗口高度下都不越框（UAT6 前随请求高 600 定位，frame 被 clamp 矮后被顶出框）
+    constexpr float kFooterLift = 18.0f;   // 按钮底缘 → frame 底
+    constexpr float kFooterBtnH = 34.0f;
+    constexpr float kFooterBtnW = 96.0f;
+    constexpr float kContentGapAboveFooter = 12.0f;   // 内容滚动区底 → 按钮带顶
+    const float btnY = h - kFooterLift - kFooterBtnH;
 
     // 关闭态也常驻构建（收起过渡依赖节点存在）
     components::dialog(ui, "todo.dialog.detail")
@@ -993,130 +1017,235 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
                 }
             }
 
-            // 标题大输入（直接可编辑；demo .titleinput）
-            components::input(ui, "todo.dialog.detail.input.title")
-                .position(x0, 76.0f + offY)
-                .size(innerW, 44.0f)
-                .value(d.detail.title)
-                .placeholder("任务标题…")
-                .fontSize(t.sizes.fontSizeBody + 1.0f)
+            // —— 内容区（UAT6 限高滚动容器）——
+            // 视口 = frame 高 − 头部(76+offY) − 按钮带 − 12 缝；标题/描述/优先级|截止/
+            // 标签全部装进本区（board 列内滚动同款 scrollView 先例），chips 换行、
+            // 任意形态内容超高都由本区滚动兜底，按钮带不受内容高度影响。
+            const float contentTop = 76.0f + offY;
+            const float viewportH =
+                std::max(0.0f, btnY - kContentGapAboveFooter - contentTop);
+            // 测量缓存键：标签数 + 逐标签字节数（chips 换行数随两者变 → 内容高变）
+            std::string scrollKey =
+                "todo.dialog.detail.scroll.t" +
+                std::to_string(d.detail.tags.size());
+            for (const auto& tg : d.detail.tags) {
+                scrollKey += "." + std::to_string(tg.size());
+            }
+            components::scrollView(ui, "todo.dialog.detail.scroll")
+                .position(0.0f, contentTop)
+                .size(w, viewportH)
                 .theme(themeTokens)
-                .onChange(ro ? std::function<void(const std::string&)>{}
-                             : [&d](const std::string& text) { d.detail.title = text; })
+                .contentKey(scrollKey)
+                .content([&](eui::Ui& inner, float cw, float) {
+                    // 内容有效宽（= 旧 innerW 契约：宽 − 双侧 56；出滚动条时 scrollView
+                    // 已把 cw 扣减滚动条宽，长内容自动让位）
+                    const float sw = std::max(0.0f, cw - ui_kit::kDialogBodyInsetX);
+                    const float colGap = 16.0f;
+                    const float colW = (sw - colGap) * 0.5f;
+                    const float col2X = x0 + colW + colGap;
+
+                    // 流式 wrap stack（board 卡片同款先例）：scrollView 内容列里
+                    // .position 会被流式布局接管，块内子元素才用绝对定位；块高含到
+                    // 下一块的缝 → 不滚动时各元素绝对 y 与旧版逐像素一致
+                    // （76/130/150/234/254/298/318|354）。
+                    inner.stack("todo.dialog.detail.scroll.title.w")
+                        .size(cw, 54.0f)   // 标题输入 44 + 到描述标签 10 缝
+                        .content([&] {
+                            // 标题大输入（直接可编辑；demo .titleinput）
+                            components::input(inner, "todo.dialog.detail.input.title")
+                                .position(x0, 0.0f)
+                                .size(sw, 44.0f)
+                                .value(d.detail.title)
+                                .placeholder("任务标题…")
+                                .fontSize(t.sizes.fontSizeBody + 1.0f)
+                                .theme(themeTokens)
+                                .onChange(ro ? std::function<void(const std::string&)>{}
+                                             : [&d](const std::string& text) {
+                                                   d.detail.title = text;
+                                               })
+                                .build();
+                        })
+                        .build();
+
+                    inner.stack("todo.dialog.detail.scroll.desc.w")
+                        .size(cw, 104.0f)   // 标签 16 + 4 缝 + textarea 72 + 12 缝
+                        .content([&] {
+                            // 描述 textarea（直接可编辑）
+                            drawFieldLabel(inner, "todo.dialog.detail.dlabel", x0,
+                                           0.0f, 120.0f, "描述", t);
+                            components::input(inner, "todo.dialog.detail.input.desc")
+                                .position(x0, 20.0f)
+                                .size(sw, 72.0f)
+                                .value(d.detail.description)
+                                .placeholder("补充说明…（可多行）")
+                                .fontSize(t.sizes.fontSizeSmall)
+                                .multiline(true)
+                                .scrollbar(true)
+                                .theme(themeTokens)
+                                .onChange(ro ? std::function<void(const std::string&)>{}
+                                             : [&d](const std::string& text) {
+                                                   d.detail.description = text;
+                                               })
+                                .build();
+                        })
+                        .build();
+
+                    inner.stack("todo.dialog.detail.scroll.prio.w")
+                        .size(cw, 64.0f)   // 双列标签 16 + 4 缝 + segment 32 + 12 缝
+                        .content([&] {
+                            // 优先级 | 截止日期 双列 segment（列宽各半，随弹窗宽弹性分）
+                            drawFieldLabel(inner, "todo.dialog.detail.plabel", x0,
+                                           0.0f, 120.0f, "优先级", t);
+                            drawFieldLabel(inner, "todo.dialog.detail.dlabel2", col2X,
+                                           0.0f, 120.0f, "截止日期", t);
+
+                            // 优先级 segment 四选（选中 = 绿底白字，与新建弹窗同语言）
+                            const Priority prios[4] = {Priority::None, Priority::Low,
+                                                       Priority::Medium, Priority::High};
+                            {
+                                constexpr float kGap = 6.0f;
+                                const float opW = (colW - kGap * 3.0f) / 4.0f;
+                                for (int i = 0; i < 4; ++i) {
+                                    drawSegOp(inner,
+                                              "todo.dialog.detail.prio." +
+                                                  std::to_string(i),
+                                              x0 + static_cast<float>(i) * (opW + kGap),
+                                              20.0f, opW, 32.0f,
+                                              prioritySegLabel(prios[i]),
+                                              d.detail.priority == prios[i], t,
+                                              ro ? std::function<void()>{}
+                                                 : [&d, p = prios[i]] {
+                                                       d.detail.priority = p;
+                                                   });
+                                }
+                            }
+                            // 截止 segment：有 due = [📅 MM-DD（选中，点开换）| 清除]；
+                            // 无 due = [选择日期…]
+                            const bool hasDue = d.detail.dueAt.has_value();
+                            {
+                                constexpr float kGap = 6.0f;
+                                const int nOps = hasDue ? 2 : 1;
+                                const float opW =
+                                    (colW - kGap * static_cast<float>(nOps - 1)) /
+                                    static_cast<float>(nOps);
+                                const std::string pickLabel =
+                                    (hasDue ? formatDue(d.detail.dueAt.value())
+                                            : "选择日期…");
+                                drawSegOp(inner, "todo.dialog.detail.due.pick", col2X,
+                                          20.0f, opW, 32.0f, pickLabel, hasDue, t,
+                                          ro ? std::function<void()>{}
+                                             : [&d] {
+                                                   d.datePickOwner =
+                                                       DatePickOwner::Detail;
+                                                   d.popups.open(Popup::DatePick);
+                                               },
+                                          0xF133);   // fa-calendar（demo 📅；
+                                                     // module_icons 钉 .icon）
+                                if (hasDue) {
+                                    drawSegOp(inner, "todo.dialog.detail.due.clear",
+                                              col2X + opW + kGap, 20.0f, opW, 32.0f,
+                                              "清除", false, t,
+                                              ro ? std::function<void()>{}
+                                                 : [&d] { d.detail.dueAt = std::nullopt; });
+                                }
+                            }
+                        })
+                        .build();
+
+                    inner.stack("todo.dialog.detail.scroll.taglabel.w")
+                        .size(cw, 20.0f)   // 标签行标签 16 + 4 缝
+                        .content([&] {
+                            drawFieldLabel(inner, "todo.dialog.detail.taglabel", x0,
+                                           0.0f, 120.0f, "标签", t);
+                        })
+                        .build();
+
+                    // 标签 chips：多行换行（UAT6 前是单行截断 break——放不下的整尾
+                    // 不渲染）；单枚超行宽仍跳过，保留旧「不横向溢出」语义。
+                    // y<0 = 该标签被跳过；其余 (x, 行内 y)，行高 28 + 行缝 8。
+                    std::vector<std::pair<float, float>> chipXY(d.detail.tags.size(),
+                                                                {-1.0f, -1.0f});
+                    float chipX = x0;
+                    float chipRowY = 0.0f;
+                    for (size_t ti = 0; ti < d.detail.tags.size(); ++ti) {
+                        const float cw2 = chipWidth(d.detail.tags[ti]) + 24.0f;
+                        if (cw2 > sw) continue;
+                        if (chipX + cw2 > x0 + sw) {   // 本行放不下 → 换行
+                            chipX = x0;
+                            chipRowY += 28.0f + 8.0f;
+                        }
+                        chipXY[ti] = {chipX, chipRowY};
+                        chipX += cw2 + 8.0f;
+                    }
+                    float chipsBottom = 0.0f;
+                    size_t chipCount = 0;
+                    for (const auto& pos : chipXY) {
+                        if (pos.second >= 0.0f) {
+                            ++chipCount;
+                            chipsBottom = std::max(chipsBottom, pos.second + 28.0f);
+                        }
+                    }
+                    if (chipCount > 0) {
+                        // chips 块高 = 末行底 + 到添加输入行的 8 缝（旧 318→354 同律）
+                        inner.stack("todo.dialog.detail.scroll.chips.w")
+                            .size(cw, chipsBottom + 8.0f)
+                            .content([&] {
+                                for (size_t ti = 0; ti < d.detail.tags.size(); ++ti) {
+                                    if (chipXY[ti].second < 0.0f) continue;
+                                    const std::string cid =
+                                        "todo.dialog.detail.tag." + std::to_string(ti);
+                                    drawDialogChip(inner, cid, chipXY[ti].first,
+                                                   chipXY[ti].second, t,
+                                                   d.detail.tags[ti],
+                                                   ro ? std::function<void()>{}
+                                                      : [&d, ti] {
+                                                            if (ti <
+                                                                d.detail.tags.size()) {
+                                                                d.detail.tags.erase(
+                                                                    d.detail.tags
+                                                                        .begin() +
+                                                                    static_cast<long>(
+                                                                        ti));
+                                                            }
+                                                        });
+                                }
+                            })
+                            .build();
+                    }
+
+                    inner.stack("todo.dialog.detail.scroll.taginput.w")
+                        .size(cw, 34.0f)
+                        .content([&] {
+                            components::input(inner, "todo.dialog.detail.tag.input")
+                                .position(x0, 0.0f)
+                                .size(sw, 34.0f)
+                                .value(d.detail.tagInput)
+                                .placeholder(ro ? "（只读）" : "+ 添加标签，回车添加")
+                                .fontSize(t.sizes.fontSizeSmall)
+                                .theme(themeTokens)
+                                .onChange(ro ? std::function<void(const std::string&)>{}
+                                             : [&d](const std::string& text) {
+                                                   d.detail.tagInput = text;
+                                               })
+                                .onEnter(ro ? std::function<void()>{}
+                                            : [&d] { d.detail.addTag(); })
+                                // Esc=丢弃标签草稿（不关详情弹窗——整窗关断由取消
+                                // 按钮/backdrop 负责）
+                                .onCancel(ro ? std::function<void()>{}
+                                              : [&d] { d.detail.tagInput.clear(); })
+                                .build();
+                        })
+                        .build();
+                })
                 .build();
 
-            // 描述 textarea（直接可编辑）
-            drawFieldLabel(ui, "todo.dialog.detail.dlabel", x0, 130.0f + offY, 120.0f,
-                           "描述", t);
-            components::input(ui, "todo.dialog.detail.input.desc")
-                .position(x0, 150.0f + offY)
-                .size(innerW, 72.0f)
-                .value(d.detail.description)
-                .placeholder("补充说明…（可多行）")
-                .fontSize(t.sizes.fontSizeSmall)
-                .multiline(true)
-                .scrollbar(true)
-                .theme(themeTokens)
-                .onChange(ro ? std::function<void(const std::string&)>{}
-                             : [&d](const std::string& text) {
-                                   d.detail.description = text;
-                               })
-                .build();
-
-            // 优先级 | 截止日期 双列 segment（列宽各半，随弹窗宽弹性分）
-            const float colGap = 16.0f;
-            const float colW = (innerW - colGap) * 0.5f;
-            const float col2X = x0 + colW + colGap;
-            drawFieldLabel(ui, "todo.dialog.detail.plabel", x0, 234.0f + offY, 120.0f,
-                           "优先级", t);
-            drawFieldLabel(ui, "todo.dialog.detail.dlabel2", col2X, 234.0f + offY, 120.0f,
-                           "截止日期", t);
-
-            // 优先级 segment 四选（选中 = 绿底白字，与新建弹窗同语言）
-            const Priority prios[4] = {Priority::None, Priority::Low,
-                                       Priority::Medium, Priority::High};
-            {
-                constexpr float kGap = 6.0f;
-                const float opW = (colW - kGap * 3.0f) / 4.0f;
-                for (int i = 0; i < 4; ++i) {
-                    drawSegOp(ui, "todo.dialog.detail.prio." + std::to_string(i),
-                              x0 + static_cast<float>(i) * (opW + kGap),
-                              254.0f + offY, opW, 32.0f, prioritySegLabel(prios[i]),
-                              d.detail.priority == prios[i], t,
-                              ro ? std::function<void()>{}
-                                 : [&d, p = prios[i]] { d.detail.priority = p; });
-                }
-            }
-            // 截止 segment：有 due = [📅 MM-DD（选中，点开换）| 清除]；无 due = [选择日期…]
-            const bool hasDue = d.detail.dueAt.has_value();
-            {
-                constexpr float kGap = 6.0f;
-                const int nOps = hasDue ? 2 : 1;
-                const float opW = (colW - kGap * static_cast<float>(nOps - 1)) /
-                                 static_cast<float>(nOps);
-                const std::string pickLabel =
-                    (hasDue ? formatDue(d.detail.dueAt.value()) : "选择日期…");
-                drawSegOp(ui, "todo.dialog.detail.due.pick", col2X, 254.0f + offY, opW,
-                          32.0f, pickLabel, hasDue, t,
-                          ro ? std::function<void()>{}
-                             : [&d] {
-                                   d.datePickOwner = DatePickOwner::Detail;
-                                   d.popups.open(Popup::DatePick);
-                               },
-                          0xF133);   // fa-calendar（demo 📅；module_icons 钉 .icon）
-                if (hasDue) {
-                    drawSegOp(ui, "todo.dialog.detail.due.clear",
-                              col2X + opW + kGap, 254.0f + offY, opW, 32.0f, "清除",
-                              false, t,
-                              ro ? std::function<void()>{}
-                                 : [&d] { d.detail.dueAt = std::nullopt; });
-                }
-            }
-
-            // 标签：可删 chips（单行，放不下截断）+ 添加输入行
-            drawFieldLabel(ui, "todo.dialog.detail.taglabel", x0, 298.0f + offY, 120.0f,
-                           "标签", t);
-            float chipX = x0;
-            for (size_t ti = 0; ti < d.detail.tags.size(); ++ti) {
-                const float cw = chipWidth(d.detail.tags[ti]) + 24.0f;
-                if (chipX + cw > w - x0) break;   // 单行不换行，放不下即截断
-                const std::string cid =
-                    "todo.dialog.detail.tag." + std::to_string(ti);
-                drawDialogChip(ui, cid, chipX, 318.0f + offY, t, d.detail.tags[ti],
-                               ro ? std::function<void()>{}
-                                  : [&d, ti] {
-                                        if (ti < d.detail.tags.size()) {
-                                            d.detail.tags.erase(
-                                                d.detail.tags.begin() +
-                                                static_cast<long>(ti));
-                                        }
-                                    });
-                chipX += cw + 8.0f;
-            }
-            const float tagInputY = (chipX > x0 ? 354.0f : 318.0f) + offY;
-            components::input(ui, "todo.dialog.detail.tag.input")
-                .position(x0, tagInputY)
-                .size(innerW, 34.0f)
-                .value(d.detail.tagInput)
-                .placeholder(ro ? "（只读）" : "+ 添加标签，回车添加")
-                .fontSize(t.sizes.fontSizeSmall)
-                .theme(themeTokens)
-                .onChange(ro ? std::function<void(const std::string&)>{}
-                             : [&d](const std::string& text) {
-                                   d.detail.tagInput = text;
-                               })
-                .onEnter(ro ? std::function<void()>{} : [&d] { d.detail.addTag(); })
-                // Esc=丢弃标签草稿（不关详情弹窗——整窗关断由取消按钮/backdrop 负责）
-                .onCancel(ro ? std::function<void()>{}
-                              : [&d] { d.detail.tagInput.clear(); })
-                .build();
-
-            // 底部：只读 = 关闭；编辑 = 取消|保存 右对齐（demo .dlgf justify-end）
-            const float btnY = h - 58.0f;
+            // 底部：只读 = 关闭；编辑 = 取消|保存 右对齐（demo .dlgf justify-end）。
+            // 钉 frame 底（btnY 预计算 = frame 高 − 18 − 按钮高），内容再高/窗口再矮
+            // 也不越框
             if (ro) {
                 components::button(ui, "todo.dialog.detail.close")
-                    .position(w - ui_kit::kDialogBodyInsetX - 96.0f, btnY)
-                    .size(96.0f, 34.0f)
+                    .position(w - ui_kit::kDialogBodyInsetX - kFooterBtnW, btnY)
+                    .size(kFooterBtnW, kFooterBtnH)
                     .text("关闭")
                     .fontSize(t.sizes.fontSizeSmall)
                     .colors(t.colors.wechat.primary, t.colors.wechat.primaryHover,
@@ -1130,8 +1259,9 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
                     .build();
             } else {
                 components::button(ui, "todo.dialog.detail.cancel")
-                    .position(w - ui_kit::kDialogBodyInsetX - 96.0f * 2.0f - 8.0f, btnY)
-                    .size(96.0f, 34.0f)
+                    .position(w - ui_kit::kDialogBodyInsetX - kFooterBtnW * 2.0f - 8.0f,
+                              btnY)
+                    .size(kFooterBtnW, kFooterBtnH)
                     .text("取消")
                     .fontSize(t.sizes.fontSizeSmall)
                     .colors(t.colors.wechat.pageBg, t.colors.wechat.secondaryButtonBg,
@@ -1143,8 +1273,8 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
                     .onClick([&d, &host] { d.detail.requestClose(d.popups, host); })
                     .build();
                 components::button(ui, "todo.dialog.detail.save")
-                    .position(w - ui_kit::kDialogBodyInsetX - 96.0f, btnY)
-                    .size(96.0f, 34.0f)
+                    .position(w - ui_kit::kDialogBodyInsetX - kFooterBtnW, btnY)
+                    .size(kFooterBtnW, kFooterBtnH)
                     .text("保存")
                     .fontSize(t.sizes.fontSizeSmall)
                     .colors(t.colors.wechat.primary, t.colors.wechat.primaryHover,
