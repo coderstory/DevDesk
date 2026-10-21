@@ -34,7 +34,7 @@ inline constexpr const char* kWindowEffectPresets[] = {
     kWindowEffectOff, kWindowEffectTranslucent, kWindowEffectFrosted};
 inline constexpr int kWindowEffectPresetCount = 3;
 inline constexpr const char* kWindowEffectPresetLabels[] = {
-    "关闭（默认）", "半透", "磨砂（Acrylic）"};
+    "关闭（默认）", "半透", "磨砂（Mica）"};
 
 // 主题模式三档（与 settings_config 的 kThemeMode* 一一对应）
 inline constexpr const char* kThemeModePresets[] = {kThemeModeAuto,

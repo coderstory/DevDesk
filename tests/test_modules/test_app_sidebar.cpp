@@ -558,7 +558,7 @@ REGISTER_TEST(sidebar_w3_grouping_and_selectionbar,
             DOCTEST_CHECK(std::abs(bg->color.g - wc.sidebarBgTinted.g) < 1e-3f);
             DOCTEST_CHECK(std::abs(bg->color.b - wc.sidebarBgTinted.b) < 1e-3f);
         }
-        // frosted 档：0.15 透 Acrylic backdrop
+        // frosted 档：0.15 透 DWM backdrop（UAT6 起请求 Mica）
         core::window_effect_state::setCurrent("frosted");
         {
             eui::Ui fx;
@@ -569,7 +569,7 @@ REGISTER_TEST(sidebar_w3_grouping_and_selectionbar,
             DOCTEST_REQUIRE(bg != nullptr);
             DOCTEST_CHECK(std::abs(bg->color.a - 0.15f) < 1e-3f);
         }
-        // translucent 档：0.5 半透
+        // translucent 档：0.72 半透（UAT6 调值，见 window_effect_state.h）
         core::window_effect_state::setCurrent("translucent");
         {
             eui::Ui fx;
@@ -578,7 +578,7 @@ REGISTER_TEST(sidebar_w3_grouping_and_selectionbar,
             fx.end();
             const auto* bg = fx.find("app.sidebar.bg");
             DOCTEST_REQUIRE(bg != nullptr);
-            DOCTEST_CHECK(std::abs(bg->color.a - 0.5f) < 1e-3f);
+            DOCTEST_CHECK(std::abs(bg->color.a - 0.72f) < 1e-3f);
         }
         core::window_effect_state::setCurrent("off");  // 尾档复位
     }

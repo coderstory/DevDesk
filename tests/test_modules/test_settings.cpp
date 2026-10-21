@@ -37,6 +37,7 @@
 
 #include <chrono>
 #include <algorithm>
+#include <cmath>
 #include <ctime>
 #include <filesystem>
 #include <fstream>
@@ -1103,14 +1104,15 @@ REGISTER_TEST(settings_window_effect_param_mapping, "settings: 档位→alpha/ba
     namespace ms = module::settings;
     using WE = core::platform::WindowEffect;
 
-    // 两处 alpha 各自独立：clearColor（内容区纱）off=1.0 / translucent=0.82 /
+    // 两处 alpha 各自独立：clearColor（内容区纱）off=1.0 / translucent=0.85 /
     // frosted=0.15 / 未知→1.0；窗口背景色（标题栏底）1.0 / 0.85 / 0.65 / 未知→1.0。
     // 两处不可取同一个值。UAT2 B 批（「太高」第一轮）0.60/0.90 → 0.80/0.85；
-    // UAT3 C1 批（round3 用户仍嫌透）内容 0.80 → 0.82，标题栏 0.85 保持
-    //（拍板口径：内容 ~0.82、标题栏带可略高；自绘标题栏后 Windows 无系统标题栏，
-    // 标题栏 alpha 只作用于 macOS）。
+    // UAT3 C1 批（round3 用户仍嫌透）内容 0.80 → 0.82；UAT6 真机两连（第 4 轮
+    // 「win下 半透的透明度太高了 看不清内容」）内容 0.82 → 0.85、标题栏 0.85
+    // 保持（两值拉平）；frosted 两值不动。自绘标题栏后 Windows 无系统标题栏，
+    // 标题栏 alpha 只作用于 macOS。叠乘对比度护栏见 settings_window_effect_contrast_guard。
     DOCTEST_CHECK(ms::windowEffectAlpha(ms::kWindowEffectOff) == 1.0f);
-    DOCTEST_CHECK(ms::windowEffectAlpha(ms::kWindowEffectTranslucent) == 0.82f);
+    DOCTEST_CHECK(ms::windowEffectAlpha(ms::kWindowEffectTranslucent) == 0.85f);
     DOCTEST_CHECK(ms::windowEffectAlpha(ms::kWindowEffectFrosted) == 0.15f);
     DOCTEST_CHECK(ms::windowEffectAlpha("bogus") == 1.0f);
     DOCTEST_CHECK(ms::windowEffectTitleBarAlpha(ms::kWindowEffectOff) == 1.0f);
@@ -1120,9 +1122,10 @@ REGISTER_TEST(settings_window_effect_param_mapping, "settings: 档位→alpha/ba
 
     // 面铺色 alpha（UAT2 B 批，core::window_effect_state——sidebar/about 磨砂铺色
     // 的读口；经 ms 常量喂入锁 core 头字面量与 kWindowEffect* 同值防漂移）：
-    // frosted=0.15 透 backdrop / translucent=0.5 / off、未知=1.0 实色
+    // frosted=0.15 透 backdrop / translucent=0.72（UAT6 调值，见 core 头注释）/
+    // off、未知=1.0 实色
     DOCTEST_CHECK(core::window_effect_state::surfaceAlpha(ms::kWindowEffectOff) == 1.0f);
-    DOCTEST_CHECK(core::window_effect_state::surfaceAlpha(ms::kWindowEffectTranslucent) == 0.5f);
+    DOCTEST_CHECK(core::window_effect_state::surfaceAlpha(ms::kWindowEffectTranslucent) == 0.72f);
     DOCTEST_CHECK(core::window_effect_state::surfaceAlpha(ms::kWindowEffectFrosted) == 0.15f);
     DOCTEST_CHECK(core::window_effect_state::surfaceAlpha("bogus") == 1.0f);
 
@@ -1137,7 +1140,7 @@ REGISTER_TEST(settings_window_effect_param_mapping, "settings: 档位→alpha/ba
     core::window_effect_state::setActiveTierProvider(
         []() -> std::string { return "translucent"; });  // active=Transparent
     DOCTEST_CHECK(core::window_effect_state::surfaceAlpha(
-                      ms::kWindowEffectFrosted) == 0.5f);
+                      ms::kWindowEffectFrosted) == 0.72f);
     core::window_effect_state::setActiveTierProvider(
         []() -> std::string { return "frosted"; });  // active 生效，门控放行
     DOCTEST_CHECK(core::window_effect_state::surfaceAlpha(
@@ -1149,21 +1152,22 @@ REGISTER_TEST(settings_window_effect_param_mapping, "settings: 档位→alpha/ba
     core::window_effect_state::setActiveTierProvider(
         []() -> std::string { return "off"; });
     DOCTEST_CHECK(core::window_effect_state::surfaceAlpha(
-                      ms::kWindowEffectTranslucent) == 0.5f);
+                      ms::kWindowEffectTranslucent) == 0.72f);
     core::window_effect_state::setActiveTierProvider(nullptr);  // 尾态复位
 
-    // 半透档目标带 **236–244**（黑壁纸），两端是 UAT2 实机标定值不是随手取的。
-    // UAT3 C1 批 0.82/0.85 → 250×(1−0.18×0.15) = 243.25，贴带上缘——用户连续两轮
-    // 要求更实（0.80→0.82 仍在标定带内）；再往 0.90 走 → 246.25 出上界，须先重标定。
+    // 半透档目标带 **242–246**（黑壁纸）：UAT6 真机两连第 4 轮重标定——用户连三轮
+    // 嫌透（0.80→0.82 仍在旧带 236–244 内且贴上缘仍被投诉），旧上界作废；新锚
+    // 0.85/0.85 → 250×(1−0.15×0.15) = 244.375，带走 242–246（再往 0.87 走 = 245.5
+    // 仍带内；0.90 = 246.25 出上界须再重标定——与对比度护栏互为双闸）。
     const float translucentOverBlack =
         250.0f * ms::windowEffectThemeOpacity(ms::kWindowEffectTranslucent);
-    DOCTEST_CHECK(translucentOverBlack >= 236.0f);
-    DOCTEST_CHECK(translucentOverBlack <= 244.0f);
+    DOCTEST_CHECK(translucentOverBlack >= 242.0f);
+    DOCTEST_CHECK(translucentOverBlack <= 246.0f);
     DOCTEST_CHECK(translucentOverBlack < 250.0f);
     // 关闭档：实色，黑壁纸下恒 250
     DOCTEST_CHECK(250.0f * ms::windowEffectThemeOpacity(ms::kWindowEffectOff) == 250.0f);
-    // 半透档标题栏 vs 内容区差：UAT3 后 250×(0.973−0.85) ≈ 30.75（原 0.60/0.90 时代
-    // 的 ≤20 紧约束按折中值放宽到 ≤35；差再往外走即出目标带）
+    // 半透档标题栏 vs 内容区差：UAT6 两值拉平后 250×(0.9775−0.85) ≈ 31.875
+    //（原 0.60/0.90 时代的 ≤20 紧约束按折中值放宽到 ≤35；差再往外走即出目标带）
     const float translucentBar = 250.0f * ms::windowEffectTitleBarAlpha(ms::kWindowEffectTranslucent);
     DOCTEST_CHECK(std::abs(translucentOverBlack - translucentBar) <= 35.0f);
 
@@ -1180,11 +1184,121 @@ REGISTER_TEST(settings_window_effect_param_mapping, "settings: 档位→alpha/ba
     DOCTEST_CHECK(ms::windowEffectTitleBarAlpha(ms::kWindowEffectFrosted) <
                   ms::windowEffectTitleBarAlpha(ms::kWindowEffectTranslucent));
 
-    // backdrop 请求：off/translucent 显式关（None），frosted→Acrylic，未知→None
+    // backdrop 请求：off/translucent 显式关（None），frosted→Mica（UAT6：Acrylic→
+    // Mica，主窗材质，DWMSBT_MAINWINDOW——「磨砂底色变灰」真机回归锚点，另见
+    // settings_window_effect_frosted_material 回归用例），未知→None
     DOCTEST_CHECK(ms::windowEffectRequest(ms::kWindowEffectOff) == WE::None);
     DOCTEST_CHECK(ms::windowEffectRequest(ms::kWindowEffectTranslucent) == WE::None);
-    DOCTEST_CHECK(ms::windowEffectRequest(ms::kWindowEffectFrosted) == WE::Acrylic);
+    DOCTEST_CHECK(ms::windowEffectRequest(ms::kWindowEffectFrosted) == WE::Mica);
     DOCTEST_CHECK(ms::windowEffectRequest("bogus") == WE::None);
+    return true;
+})
+
+REGISTER_TEST(settings_window_effect_contrast_guard, "settings: 半透叠乘后正文对比度护栏（UAT6）", {
+    namespace ms = module::settings;
+    // UAT6 真机两连第 1 连「win下 半透的透明度太高了 看不清内容」的护栏：把
+    // alpha 调值（窗口纱 0.82→0.85、铺面 0.5→0.72）的可读性判据公式化——正文在
+    // 「窗口纱 × 铺面 tint × 壁纸」三层叠乘后的**最坏情况** WCAG 对比度 ≥4.5:1。
+    // 壁纸取极端值（暗主题纯白抬底 / 亮主题纯黑压底——对文字对比度的最坏挤压
+    // 方向）；再有人把 alpha 往「更透」调回时这里先红，不用再等真机。
+    const auto channelLin = [](float c) {
+        c = c < 0.0f ? 0.0f : (c > 1.0f ? 1.0f : c);
+        return c <= 0.04045f ? c / 12.92f
+                             : std::pow((c + 0.055f) / 1.055f, 2.4f);
+    };
+    const auto luminance = [&](const eui::Color& color) {
+        return 0.2126f * channelLin(color.r) + 0.7152f * channelLin(color.g) +
+               0.0722f * channelLin(color.b);
+    };
+    const auto contrast = [&](const eui::Color& a, const eui::Color& b) {
+        const float la = luminance(a);
+        const float lb = luminance(b);
+        const float hi = la > lb ? la : lb;
+        const float lo = la > lb ? lb : la;
+        return (hi + 0.05f) / (lo + 0.05f);
+    };
+    // alpha-over 复合（sRGB 域，与 DWM 呈现观感一致）：top 以 alpha 覆在 bottom 上
+    const auto over = [](const eui::Color& top, float alpha,
+                         const eui::Color& bottom) {
+        return eui::Color{top.r * alpha + bottom.r * (1.0f - alpha),
+                          top.g * alpha + bottom.g * (1.0f - alpha),
+                          top.b * alpha + bottom.b * (1.0f - alpha), 1.0f};
+    };
+
+    // 前提闸：本批调值本身不可回退（回 0.82/0.5 即红——那两值在旧带内仍被真机
+    // 连续三轮投诉「太透」，对比度判据取代手感标定带）
+    DOCTEST_CHECK(ms::windowEffectAlpha(ms::kWindowEffectTranslucent) >= 0.85f);
+    DOCTEST_CHECK(core::window_effect_state::surfaceAlpha(
+                      ms::kWindowEffectTranslucent) >= 0.72f);
+
+    const std::string initialTheme = core::theme::currentThemeName();
+    const float windowAlpha = ms::windowEffectAlpha(ms::kWindowEffectTranslucent);
+    const float surfaceAlpha = core::window_effect_state::surfaceAlpha(
+        ms::kWindowEffectTranslucent);
+
+    // —— 暗主题：正文浅字，最坏壁纸 = 纯白抬底 ——
+    core::theme::setDark();
+    {
+        const auto& t = core::theme::current();
+        const eui::Color whiteWall{1.0f, 1.0f, 1.0f, 1.0f};
+        // 页面正文（home/markdown/todo/claude/settings 无铺面页）：textPrimary 直接
+        // 落在 bg@窗口纱 × 壁纸上（0.85 → 10.6:1；0.82 时代 9.5:1）
+        DOCTEST_CHECK(contrast(t.colors.textPrimary,
+                                over(t.colors.background, windowAlpha, whiteWall)) >= 4.5f);
+        // 铺面正文（侧栏底 / about 页底，tint@铺面 alpha 叠窗口纱叠壁纸）
+        const eui::Color base = over(t.colors.background, windowAlpha, whiteWall);
+        DOCTEST_CHECK(contrast(t.colors.wechat.textPrimary,
+                               over(t.colors.wechat.sidebarBgTinted, surfaceAlpha, base)) >= 4.5f);
+        DOCTEST_CHECK(contrast(t.colors.wechat.textPrimary,
+                               over(t.colors.wechat.pageBg, surfaceAlpha, base)) >= 4.5f);
+        // 次要文字（导航 inactive #666666）：暗主题下浅 tint 混深底属 D-04
+        // dark-WeChat 延后域（D-12：dark 模式 wechat 槽位沿用 light 调色板），不作
+        // 4.5 断言；锁 2.5 = 0.5 时代 1.99 与 0.72 时代 3.01 的中点——回退调值即红
+        DOCTEST_CHECK(contrast(t.colors.wechat.textSecondary,
+                               over(t.colors.wechat.sidebarBgTinted, surfaceAlpha, base)) >= 2.5f);
+    }
+    // —— 亮主题：正文深字，最坏壁纸 = 纯黑压底 ——
+    core::theme::setLight();
+    {
+        const auto& t = core::theme::current();
+        const eui::Color blackWall{0.0f, 0.0f, 0.0f, 1.0f};
+        DOCTEST_CHECK(contrast(t.colors.textPrimary,
+                               over(t.colors.background, windowAlpha, blackWall)) >= 4.5f);
+        const eui::Color base = over(t.colors.background, windowAlpha, blackWall);
+        DOCTEST_CHECK(contrast(t.colors.wechat.textPrimary,
+                               over(t.colors.wechat.sidebarBgTinted, surfaceAlpha, base)) >= 4.5f);
+        DOCTEST_CHECK(contrast(t.colors.wechat.textPrimary,
+                               over(t.colors.wechat.pageBg, surfaceAlpha, base)) >= 4.5f);
+        // 亮主题次要文字达 AA：0.72 时代 4.62（0.5 时代 4.22 差一线，本批修过——锁住）
+        DOCTEST_CHECK(contrast(t.colors.wechat.textSecondary,
+                               over(t.colors.wechat.sidebarBgTinted, surfaceAlpha, base)) >= 4.5f);
+    }
+    // 主题复位（inline static 跨 TU 单实例，勿污染同二进制后续 compose 用例）
+    if (initialTheme == "Light") {
+        core::theme::setLight();
+    } else {
+        core::theme::setDark();
+    }
+    return true;
+})
+
+REGISTER_TEST(settings_window_effect_frosted_material, "settings: 磨砂档请求主窗材质 Mica（UAT6 灰底回归锚）", {
+    namespace ms = module::settings;
+    using WE = core::platform::WindowEffect;
+    // UAT6 真机两连第 2 连「磨砂直接没半透效果了，底色变成灰色」的 DevDesk 侧
+    // 真因锚点：磨砂档此前请求 DWMSBT_TRANSIENTWINDOW（Acrylic）——transient 材质
+    // 系统语义给菜单/浮层，常驻主窗（本机 1920×1080@125% 主窗自 9-27 起恒启动即
+    // 最大化）落进系统材质回退策略高发区，真机症状与之同形（窗底成实色灰、无通
+    // 透）。本批改请求 Mica（DWMSBT_MAINWINDOW=2，主窗材质，无 transient 回退
+    // 类；最大化态窗后无活物，blur 实时性视觉不可辨）。三锁：① 请求档 = Mica；
+    // ② SYSTEMBACKDROP 落值 = 2（改回 Acrylic=3 时红）；③ frosted 请求必须与
+    // 无材质档（None/Transparent）可区分——M-3 门控靠 active≠frosted 判降级。
+    DOCTEST_CHECK(ms::windowEffectRequest(ms::kWindowEffectFrosted) == WE::Mica);
+    DOCTEST_CHECK(core::platform::systemBackdropValue(
+                      ms::windowEffectRequest(ms::kWindowEffectFrosted)) == 2);
+    DOCTEST_CHECK(ms::windowEffectRequest(ms::kWindowEffectFrosted) != WE::None);
+    DOCTEST_CHECK(ms::windowEffectRequest(ms::kWindowEffectFrosted) != WE::Transparent);
+    DOCTEST_CHECK(ms::windowEffectRequest(ms::kWindowEffectFrosted) != WE::Acrylic);
     return true;
 })
 
@@ -1213,10 +1327,10 @@ REGISTER_TEST(settings_window_effect_apply_visuals, "settings: applyWindowVisual
     namespace ms = module::settings;
     using WE = core::platform::WindowEffect;
 
-    // 半透档：clearColor alpha=0.82 + backdrop 请求 None（显式关）；档位单值同步写 core
+    // 半透档：clearColor alpha=0.85 + backdrop 请求 None（显式关）；档位单值同步写 core
     ms::applyWindowVisuals(ms::kWindowEffectTranslucent);
     DOCTEST_CHECK(core::window_effect_state::current() == ms::kWindowEffectTranslucent);
-    DOCTEST_CHECK(app::currentClearColor().a == 0.82f);
+    DOCTEST_CHECK(app::currentClearColor().a == 0.85f);
     DOCTEST_CHECK(app::currentWindowEffect() == WE::None);
     // 标题栏底**独立** alpha（显式 customColor，覆盖 EUI-NEO 按 clearColor 推导的做法）
     {
@@ -1225,11 +1339,11 @@ REGISTER_TEST(settings_window_effect_apply_visuals, "settings: applyWindowVisual
         DOCTEST_CHECK(tb.colorAlpha == 0.85f);
     }
 
-    // 磨砂档：alpha=0.15 + Acrylic 请求 + 标题栏 0.65；档位单值同步写 core
+    // 磨砂档：alpha=0.15 + Mica 请求（UAT6 起主窗材质）+ 标题栏 0.65；档位单值同步写 core
     ms::applyWindowVisuals(ms::kWindowEffectFrosted);
     DOCTEST_CHECK(core::window_effect_state::current() == ms::kWindowEffectFrosted);
     DOCTEST_CHECK(app::currentClearColor().a == 0.15f);
-    DOCTEST_CHECK(app::currentWindowEffect() == WE::Acrylic);
+    DOCTEST_CHECK(app::currentWindowEffect() == WE::Mica);
     {
         const auto tb = app::currentTitleBarAppearance();
         DOCTEST_CHECK(tb.customColor);
