@@ -38,8 +38,9 @@ namespace ui_kit {
 namespace {
 
 // 时序常量（与 splash.h 注释一致；墨染时长 kInkDurationSec 在 splash.h 供单测共用）
-constexpr float kDurationSec = 2.0f;  // 进度 0→100%
-constexpr float kFadeOutSec = 0.3f;   // 整体淡出
+// UAT6 G 批：整体放慢 ×1.4，各阶段比例保持（2.0→2.8, 0.3→0.42）
+constexpr float kDurationSec = 2.8f;  // 进度 0→100%（原 2.0 ×1.4）
+constexpr float kFadeOutSec = 0.42f;  // 整体淡出（原 0.3 ×1.4）
 
 // 墨染视觉常量：内层最浓峰值 / 同心圆层数 / 噪声卫星数（只撒外两环）
 constexpr float kInkMaxAlpha = 0.35f;
