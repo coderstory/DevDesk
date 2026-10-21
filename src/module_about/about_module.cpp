@@ -9,7 +9,6 @@
 #include "core/window/window_backend.h"  // core::window::setClipboardText（复制）
 #include "core/window_effect_state.h"    // 页底 alpha 按窗口效果档位（UAT2 B 批）
 
-#include <ui_kit/button.h>      // ui_kit::button Secondary（复制全部信息）
 #include <ui_kit/light_toast.h>  // showLightToast（复制成功 toast）
 #include <ui_kit/logo.h>          // ui_kit::drawDevDeskLogo（品牌几何 logo）
 
@@ -78,24 +77,6 @@ std::string aboutCppLine() {
     return "C++11";
 }
 
-// 「复制全部信息」文本：拼全部版本/commit/依赖信息到一段文本。
-std::string buildAllInfoText() {
-    std::string text;
-    text += "DevDesk " + aboutVersionLine() + "\n";
-    text += "Git commit: " + std::string(DEVDESK_GIT_REV) + "\n";
-    text += "构建时间: " + aboutBuildLine() + "\n";
-    text += "编译器: " + std::string(DEVDESK_COMPILER) + "\n";
-    text += "平台: " + aboutPlatformLine() + "\n";
-    text += "C++ 标准: " + aboutCppLine() + "\n";
-    text += "GUI 框架: EUI-NEO (OpenGL)\n";
-    text += "EUI-NEO: " + aboutEuiNeoLine() + "\n";
-    text += "数据库: SQLite 3 + FTS5\n";
-    text += "HTTP: libcurl (静态链接)\n";
-    text += "TLS: OpenSSL 3.x (静态链接)\n";
-    text += "字体: FreeType + FontAwesome 7";
-    return text;
-}
-
 // 信息行：左标签 + 右内容。highlight=true → 绿色文字 + 可复制（wechat.primary）。
 struct AboutRow {
     const char* label;
@@ -140,17 +121,13 @@ public:
         constexpr float kTitleGap = 28.0f;
         constexpr float kRowH = 48.0f;
         constexpr int kRowCount = 6;
-        constexpr float kButtonGap = 28.0f;
-        constexpr float kButtonH = 40.0f;
-        constexpr float kButtonW = 200.0f;
         constexpr float kFooterH = 20.0f;
         constexpr float kFooterGap = 16.0f;  // 卡底→页脚间距
         constexpr float kLabelW = 120.0f;
 
-        // 卡高 = 上留白 + 图标 + 图标间距 + 标题 + 标题间距 + 6 行 + 按钮间距 + 按钮 + 下留白
+        // 卡高 = 上留白 + 图标 + 图标间距 + 标题 + 标题间距 + 6 行 + 下留白
         const float cardH_nominal = kCardPadTop + kIconSize + kIconGap + kTitleH +
-                                    kTitleGap + kRowCount * kRowH + kButtonGap +
-                                    kButtonH + kCardPadBottom;
+                                    kTitleGap + kRowCount * kRowH + kCardPadBottom;
 
         // 宽度自适应（UAT3：最小窗宽拟降至 1000，content≈712 < 名义 760）：
         // 有效卡宽 = min(kCardW, screen.width − 2×24)，下限 560（两侧至少 24px）
@@ -284,20 +261,6 @@ public:
                             .build();
                     }
                 }
-                y += kRowCount * kRowH + kButtonGap;
-
-                // —— 「复制全部信息」浅灰次按钮（§4.1 Secondary 级），居中 ——
-                const float btnX = (cardW - kButtonW) / 2.0f;
-                ui_kit::ButtonOptions opts;
-                opts.onClick = [this] {
-                    ::core::window::setClipboardText(buildAllInfoText());
-                    triggerToast("已复制全部信息");
-                    LOG_INFO("About: 已复制全部信息");
-                };
-                ui_kit::button(ui, "about.card.copyall", "复制全部信息",
-                               ui_kit::ButtonLevel::Secondary,
-                               btnX, y, kButtonW, kButtonH, t, opts);
-
                 // TODO: 开源许可证模块（补充项，签认可划；依赖清单待取全，暂不硬做）
             })
             .build();

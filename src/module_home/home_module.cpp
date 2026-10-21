@@ -68,22 +68,23 @@ void drawStatCard(eui::Ui& ui,
         .radius(t.sizes.radiusWeChat)  // W9 微信统一圆角 6px（D-12 §4.5）
         .padding(inset)      // 显式 16：不用组件默认 20（与旧坐标叠加致顶留空/底溢出）
         .content([&] {
+            // 交互层（点击 + hover 过渡）：画整卡矩形垫底，内容画其上
+            ui.rect(id + ".press")
+                .position(-inset, -inset)
+                .size(width, height)
+                .states(components::theme::color(0.0f, 0.0f, 0.0f,
+                                                 0.0f),
+                        t.colors.wechat.dividerSecondary,
+                        t.colors.wechat.selectedBg)
+                .radius(t.sizes.radiusWeChat)
+                .transition(core::Transition::make(0.1f,
+                                                   core::Ease::OutQuad))
+                .animate(core::AnimProperty::Color)
+                .onClick(std::move(onClick))
+                .build();
             ui.stack(id + ".inner")
                 .size(cw, ch)
                 .content([&] {
-                    // 交互层（点击 + hover 过渡；非交互文本穿透命中）
-                    ui.rect(id + ".press")
-                        .size(cw, ch)
-                        .states(components::theme::color(0.0f, 0.0f, 0.0f,
-                                                         0.0f),
-                                t.colors.wechat.dividerSecondary,
-                                t.colors.wechat.selectedBg)
-                        .radius(t.sizes.radiusWeChat)
-                        .transition(core::Transition::make(0.1f,
-                                                           core::Ease::OutQuad))
-                        .animate(core::AnimProperty::Color)
-                        .onClick(std::move(onClick))
-                        .build();
                     // 卡内文字：坐标相对 card content 原点（已含 16 inset）
                     // L-4（UAT2 一审）：label 盒高 18→16，底缘 32 恰接 number 盒顶
                     //（旧 18 高 → 底缘 34 与 number 顶 32 重叠 2px；探针组 A 记载的
