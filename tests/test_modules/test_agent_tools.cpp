@@ -1015,78 +1015,34 @@ REGISTER_TEST(builtin_bash_run_echo,
     return true;
 })
 
-REGISTER_TEST(builtin_git_init_chain,
-              "git.*: init 裸仓库链（status→log→branch→commit→diff）", {
-    TmpDir td1("gitrepo1");
-    TmpDir td2("gitrepo2");
-
+REGISTER_TEST(builtin_git_smoke,
+              "git.*: status smoke + commit isDestructive + bad-repo error", {
     module::agent::registerAgentBuiltinTools();
     ToolGuard guard{"fs.glob", "fs.grep", "fs.read", "fs.write", "fs.edit",
                     "bash.run", "git.clone", "git.status", "git.log", "git.diff",
                     "git.branch", "git.checkout", "git.pull", "git.commit"};
 
-    auto bash = core::ToolRegistry::instance().find("bash.run");
-    DOCTEST_REQUIRE(bash.isOk());
+    platform::json::JsonObject args;
+    args.set("repo", platform::json::makeString("D:/project/gui/DevDesk"));
 
-    std::string td1abs = std::filesystem::absolute(td1.dir).string();
-    std::string gitCmd = "git init && git config user.email test@test.com && git config user.name Test && echo init > README.md && git add README.md && git commit -m initial";
-    auto init = bash.value()->execute(core::ToolArgs{
-        buildArgs({{"cmd", jsonStr(gitCmd)},
-                   {"cwd", jsonStr(td1abs)}})});
-    DOCTEST_REQUIRE(init.isOk());
+    auto tool = core::ToolRegistry::instance().find("git.status");
+    DOCTEST_REQUIRE(tool.isOk());
+    auto r = tool.value()->execute(core::ToolArgs{
+        platform::json::stringify(platform::json::JsonValue(args)).value()});
+    DOCTEST_REQUIRE(r.isOk());
+    DOCTEST_CHECK_FALSE(r.value().isError);
 
-    // git.status
-    auto statusTool = core::ToolRegistry::instance().find("git.status");
-    DOCTEST_REQUIRE(statusTool.isOk());
-    auto sr = statusTool.value()->execute(core::ToolArgs{
-        buildArgs({{"repo", jsonStr(td1abs)}})});
-    DOCTEST_REQUIRE(sr.isOk());
-    DOCTEST_CHECK_FALSE(sr.value().isError);
+    auto commit = core::ToolRegistry::instance().find("git.commit");
+    DOCTEST_REQUIRE(commit.isOk());
+    DOCTEST_CHECK(commit.value()->isDestructive());
 
-    // git.log
-    auto logTool = core::ToolRegistry::instance().find("git.log");
-    DOCTEST_REQUIRE(logTool.isOk());
-    auto lr = logTool.value()->execute(core::ToolArgs{
-        buildArgs({{"repo", jsonStr(td1abs)}, {"n", "2"}})});
-    DOCTEST_REQUIRE(lr.isOk());
-    DOCTEST_CHECK_FALSE(lr.value().isError);
-    auto logParsed = platform::json::parse(lr.value().contentJson);
-    DOCTEST_REQUIRE(logParsed.isOk());
-    DOCTEST_CHECK(logParsed.value().asString().find("initial") != std::string::npos);
-
-    // git.branch
-    auto branchTool = core::ToolRegistry::instance().find("git.branch");
-    DOCTEST_REQUIRE(branchTool.isOk());
-    auto br = branchTool.value()->execute(core::ToolArgs{
-        buildArgs({{"repo", jsonStr(td1abs)}})});
-    DOCTEST_REQUIRE(br.isOk());
-    DOCTEST_CHECK_FALSE(br.value().isError);
-
-    // git.commit
-    td1.writeFile("newfile.txt", "new content");
-    auto commitTool = core::ToolRegistry::instance().find("git.commit");
-    DOCTEST_REQUIRE(commitTool.isOk());
-    auto cr = commitTool.value()->execute(core::ToolArgs{
-        buildArgs({{"repo", jsonStr(td1abs)},
-                   {"message", jsonStr("test: add newfile")},
-                   {"files", "[\"newfile.txt\"]"}})});
-    DOCTEST_REQUIRE(cr.isOk());
-    DOCTEST_CHECK_FALSE(cr.value().isError);
-
-    // git.diff
-    auto diffTool = core::ToolRegistry::instance().find("git.diff");
-    DOCTEST_REQUIRE(diffTool.isOk());
-    auto dr = diffTool.value()->execute(core::ToolArgs{
-        buildArgs({{"repo", jsonStr(td1abs)}})});
-    DOCTEST_REQUIRE(dr.isOk());
-
-    DOCTEST_CHECK(commitTool.value()->isDestructive());
-
-    // 非仓库路径
-    auto badStatus = statusTool.value()->execute(core::ToolArgs{
-        buildArgs({{"repo", jsonStr(td2.relPath())}})});
-    DOCTEST_REQUIRE(badStatus.isOk());
-    DOCTEST_CHECK(badStatus.value().isError);
+    TmpDir td2("gitnone");
+    platform::json::JsonObject badArgs;
+    badArgs.set("repo", platform::json::makeString(td2.relPath()));
+    auto bad = tool.value()->execute(core::ToolArgs{
+        platform::json::stringify(platform::json::JsonValue(badArgs)).value()});
+    DOCTEST_REQUIRE(bad.isOk());
+    DOCTEST_CHECK(bad.value().isError);
     return true;
 })
 

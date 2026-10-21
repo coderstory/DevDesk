@@ -769,7 +769,10 @@ core::Result<platform::ProcessResult> runGit(const std::string& repo,
     // 校验是 git 仓库（有 .git 目录或文件——worktree 用 .git 文件）
     fs::path gitDir = repoPath / ".git";
     std::error_code ec;
-    if (!fs::exists(gitDir, ec)) {
+    fprintf(stderr, "[GIT_RUN] repo=%s gitDir=%s exists=%d ec=%s\n",
+            repoPath.string().c_str(), gitDir.string().c_str(), (int)gitExists,
+            ec.message().c_str());
+    if (!gitExists) {
         return core::Result<platform::ProcessResult>::fail(
             core::ErrorCode::NotFound,
             "不是 git 仓库: " + repoPath.string() + "（缺 .git 目录/文件）");
