@@ -15,6 +15,7 @@
 #include <core/call_rate.h>
 #include <core/component_theme.h>
 #include <core/logging.h>
+#include <ui_kit/glass_card.h>
 
 #include <algorithm>
 #include <cctype>
@@ -65,8 +66,11 @@ float drawDetailBasic(eui::Ui& ui, float x0, float y0, float w,
         .color(t.colors.wechat.textTertiary).build();
     ui.rect("claude.field.name.bg")
         .position(x0, y0 + 18.0f).size(w * 0.5f - 8.0f, 24.0f)
-        .color(t.colors.wechat.cardBg).radius(t.sizes.radiusSmall)
-        .border(1.0f, t.colors.wechat.dividerPrimary).build();
+        .color(components::theme::withOpacity(t.colors.wechat.cardBg, 0.62f)).radius(t.sizes.radiusSmall)
+        .border(1.0f, components::theme::withOpacity(t.colors.wechat.cardBg, 0.55f)).build();
+    ui_kit::drawGlassCardLayers(ui, "claude.field.name", x0, y0 + 18.0f,
+        w * 0.5f - 8.0f, 24.0f, t.sizes.radiusSmall, t,
+        ui_kit::GlassCardStyle::subtle());
     ui.text("claude.field.name.value")
         .position(x0 + 12.0f, y0 + 18.0f)
         .size(w * 0.5f - 20.0f, 24.0f)
@@ -81,8 +85,11 @@ float drawDetailBasic(eui::Ui& ui, float x0, float y0, float w,
         .color(t.colors.wechat.textTertiary).build();
     ui.rect("claude.field.url.bg")
         .position(x0, urlY + 18.0f).size(w, 28.0f)
-        .color(t.colors.wechat.cardBg).radius(t.sizes.radiusSmall)
-        .border(1.0f, t.colors.wechat.dividerPrimary).build();
+        .color(components::theme::withOpacity(t.colors.wechat.cardBg, 0.62f)).radius(t.sizes.radiusSmall)
+        .border(1.0f, components::theme::withOpacity(t.colors.wechat.cardBg, 0.55f)).build();
+    ui_kit::drawGlassCardLayers(ui, "claude.field.url", x0, urlY + 18.0f,
+        w, 28.0f, t.sizes.radiusSmall, t,
+        ui_kit::GlassCardStyle::subtle());
     ui.text("claude.field.url.value")
         .position(x0 + 12.0f, urlY + 18.0f).size(w - 24.0f, 28.0f)
         .text(v.urlValue).fontSize(t.sizes.fontSizeSmall).lineHeight(28.0f)
@@ -99,8 +106,11 @@ float drawDetailBasic(eui::Ui& ui, float x0, float y0, float w,
         .color(t.colors.wechat.textTertiary).build();
     ui.rect("claude.field.token.bg")
         .position(x0, keyY + 18.0f).size(w, 32.0f)
-        .color(t.colors.wechat.cardBg).radius(t.sizes.radiusSmall)
-        .border(1.0f, t.colors.wechat.dividerPrimary).build();
+        .color(components::theme::withOpacity(t.colors.wechat.cardBg, 0.62f)).radius(t.sizes.radiusSmall)
+        .border(1.0f, components::theme::withOpacity(t.colors.wechat.cardBg, 0.55f)).build();
+    ui_kit::drawGlassCardLayers(ui, "claude.field.token", x0, keyY + 18.0f,
+        w, 32.0f, t.sizes.radiusSmall, t,
+        ui_kit::GlassCardStyle::subtle());
     ui.text("claude.field.token.value")
         .position(x0 + 12.0f, keyY + 18.0f).size(w - 24.0f, 32.0f)
         .text(v.tokenValue).fontSize(t.sizes.fontSizeSmall).lineHeight(32.0f)
@@ -207,9 +217,12 @@ float drawDetailModels(eui::Ui& ui, float x0, float y0, float w,
         // §5 模型映射行：左对齐名 + 右侧开关；行 hover 浅灰（补充项），无边框
         ui.rect("claude.slot.bg." + idx)
             .position(x0, sy).size(w, 32.0f)
-            .states(t.colors.wechat.cardBg, t.colors.wechat.dividerSecondary,
+            .states(components::theme::withOpacity(t.colors.wechat.cardBg, 0.62f),
+                    t.colors.wechat.dividerSecondary,
                     t.colors.wechat.selectedBg)
             .radius(t.sizes.radiusSmall).build();
+        ui_kit::drawGlassCardLayers(ui, "claude.slot." + idx, x0, sy, w, 32.0f,
+            t.sizes.radiusSmall, t, ui_kit::GlassCardStyle::subtle());
         ui.text("claude.slot.name." + idx)
             .position(x0 + 12.0f, sy).size(80.0f, 32.0f)
             .text(meta.label).fontSize(12.0f).lineHeight(32.0f)
@@ -349,10 +362,13 @@ float drawDetailEnv(eui::Ui& ui, float x0, float y0, float w,
         const float valW = std::max(40.0f, w - keyColW - 48.0f);
         ui.rect(std::string("claude.env.row.bg.") + rid)
             .position(x0, ey).size(w, rowH)
-            .color(t.colors.wechat.cardBg).radius(t.sizes.radiusSmall)
-            .border(1.0f, hint ? t.colors.wechat.dividerPrimary
+            .color(components::theme::withOpacity(t.colors.wechat.cardBg, 0.62f)).radius(t.sizes.radiusSmall)
+            .border(1.0f, hint ? components::theme::withOpacity(t.colors.wechat.cardBg, 0.55f)
                                : t.colors.error)
             .build();
+        ui_kit::drawGlassCardLayers(ui, std::string("claude.env.row.") + rid,
+            x0, ey, w, rowH, t.sizes.radiusSmall, t,
+            ui_kit::GlassCardStyle::subtle());
         // 行带 1：键名 | 值（同带 Center 对齐）；长文本走省略号 + clip，不换行不撑高。
         ui.text(std::string("claude.env.key.") + rid)
             .position(x0 + 12.0f, ey + line1Y).size(keyColW, line1H)
@@ -686,8 +702,11 @@ float drawDetailAdvanced(eui::Ui& ui, float x0, float y0, float w,
         .color(t.colors.textTertiary).build();
     ui.rect("claude.field.dialect.bg")
         .position(x0, y0 + labelGap).size(w, fieldH)
-        .color(t.colors.wechat.cardBg).radius(t.sizes.radiusSmall)
-        .border(1.0f, t.colors.wechat.dividerPrimary).build();
+        .color(components::theme::withOpacity(t.colors.wechat.cardBg, 0.62f)).radius(t.sizes.radiusSmall)
+        .border(1.0f, components::theme::withOpacity(t.colors.wechat.cardBg, 0.55f)).build();
+    ui_kit::drawGlassCardLayers(ui, "claude.field.dialect", x0, y0 + labelGap,
+        w, fieldH, t.sizes.radiusSmall, t,
+        ui_kit::GlassCardStyle::subtle());
     ui.text("claude.field.dialect.value")
         .position(x0 + 12.0f, y0 + labelGap).size(w - 24.0f, fieldH)
         .text(v.dialectText).fontSize(t.sizes.fontSizeSmall).lineHeight(fieldH)
@@ -702,8 +721,11 @@ float drawDetailAdvanced(eui::Ui& ui, float x0, float y0, float w,
         .color(t.colors.textTertiary).build();
     ui.rect("claude.field.fallback.bg")
         .position(x0, fbY + labelGap).size(w, fieldH)
-        .color(t.colors.wechat.cardBg).radius(t.sizes.radiusSmall)
-        .border(1.0f, t.colors.wechat.dividerPrimary).build();
+        .color(components::theme::withOpacity(t.colors.wechat.cardBg, 0.62f)).radius(t.sizes.radiusSmall)
+        .border(1.0f, components::theme::withOpacity(t.colors.wechat.cardBg, 0.55f)).build();
+    ui_kit::drawGlassCardLayers(ui, "claude.field.fallback", x0, fbY + labelGap,
+        w, fieldH, t.sizes.radiusSmall, t,
+        ui_kit::GlassCardStyle::subtle());
     ui.text("claude.field.fallback.value")
         .position(x0 + 12.0f, fbY + labelGap).size(w - 24.0f, fieldH)
         .text(v.fallbackName).fontSize(t.sizes.fontSizeSmall).lineHeight(fieldH)
@@ -747,8 +769,11 @@ float drawDetailAdvanced(eui::Ui& ui, float x0, float y0, float w,
         const std::string idx = std::to_string(i);
         ui.rect("claude.advjson.row.bg." + idx)
             .position(x0, ey).size(w, kKeyRowH)
-            .color(t.colors.wechat.cardBg).radius(t.sizes.radiusSmall)
-            .border(1.0f, t.colors.wechat.dividerPrimary).build();
+            .color(components::theme::withOpacity(t.colors.wechat.cardBg, 0.62f)).radius(t.sizes.radiusSmall)
+            .border(1.0f, components::theme::withOpacity(t.colors.wechat.cardBg, 0.55f)).build();
+        ui_kit::drawGlassCardLayers(ui, "claude.advjson.row." + idx,
+            x0, ey, w, kKeyRowH, t.sizes.radiusSmall, t,
+            ui_kit::GlassCardStyle::subtle());
         // 键列单行省略号（显式 maxWidth 是前提）+ clip 兜底；来源列有界枚举，保留 clip。
         ui.text("claude.advjson.row.key." + idx)
             .position(x0 + 12.0f, ey).size(w * 0.4f, kKeyRowH)
@@ -1002,10 +1027,15 @@ void drawDetailPanel(eui::Ui& ui, float rightW, float bodyH, float xOffset,
                 .position(x0 - 12.0f, boxTop)
                 .size(w0 + 24.0f, std::max(0.0f, contentBottom - boxTop))
                 // §4.14 白卡浮起于灰底（wechat.cardBg）；二级分割线边框
-                .color(t.colors.wechat.cardBg)
+                // UAT6 玻璃：换半透面 + subtle 玻璃层
+                .color(components::theme::withOpacity(t.colors.wechat.cardBg, 0.62f))
                 .radius(t.sizes.radiusLarge)
-                .border(1.0f, t.colors.wechat.dividerSecondary)
+                .border(1.0f, components::theme::withOpacity(t.colors.wechat.cardBg, 0.55f))
                 .build();
+            ui_kit::drawGlassCardLayers(ui, "claude.detail.contentbox",
+                x0 - 12.0f, boxTop,
+                w0 + 24.0f, std::max(0.0f, contentBottom - boxTop),
+                t.sizes.radiusLarge, t, ui_kit::GlassCardStyle::subtle());
 
             float paneBottom = paneY;  // 各 pane 累加真实底沿，供 max() 兜底防重叠
             PaneRows paneRows;         // 行数统计（诊断日志用）
