@@ -36,6 +36,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <iostream>
+#include <iterator>
 #include <memory>
 #include <string>
 #include <unordered_set>
