@@ -54,7 +54,6 @@ void showLightToast(eui::Ui& ui, const std::string& id, const std::string& messa
 
     if (!s.open || s.message.empty()) return;
 
-    const auto& wc = t.colors.wechat;
 
     // 几何：居中于 (cx, cy)
     const float estW = std::max(kLightToastMinWidth,

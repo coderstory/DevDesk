@@ -11,7 +11,6 @@ void wtab(eui::Ui& ui, const std::string& id, const std::string& label,
           bool active, float x, float y, float w, float h,
           const core::theme::Tokens& t,
           const std::function<void()>& onClick) {
-    const auto& wc = t.colors.wechat;
     // §4.2：未激活=textSecondary（#666）灰字；激活=textPrimary（#1A1A1A）深灰字
     const eui::Color txtColor = active ? t.colors.textPrimary : t.colors.textSecondary;
 

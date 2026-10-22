@@ -76,7 +76,6 @@ inline void drawGlassCardLayers(eui::Ui& ui, const std::string& baseId,
                                 const core::theme::Tokens& t,
                                 const GlassCardStyle& style,
                                 std::function<void()> onClick = nullptr) {
-    const auto& wc = t.colors.wechat;
 
     // ① 染色面：tint 低 alpha 直叠（soft-light 浅底近似，见 home_module 公式）
     if (style.tint.has_value() && style.tintAlpha > 0.0f) {

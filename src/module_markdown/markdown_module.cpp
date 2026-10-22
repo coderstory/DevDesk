@@ -137,7 +137,6 @@ void drawFileTreeItem(eui::Ui& ui,
                       std::function<void(const eui::PointerEvent&, const eui::Rect&)>
                           onContextMenu = {},
                       const std::string& highlight = {}) {
-    const auto& wc = t.colors.wechat;
     ui.stack(id)
         .size(width, kTreeRowHeight)
         .content([&] {
@@ -1555,7 +1554,6 @@ private:
                     float w,
                     const core::theme::Tokens& t,
                     const components::theme::ThemeColorTokens& componentTheme) {
-        const auto& wc = t.colors.wechat;
         const float y = 16.0f;
         const float h = 24.0f;
         const float fs = 11.0f;

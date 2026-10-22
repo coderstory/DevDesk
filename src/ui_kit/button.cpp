@@ -27,7 +27,6 @@ void button(eui::Ui& ui, const std::string& id, const std::string& label,
             ButtonLevel level, float x, float y, float w, float h,
             const core::theme::Tokens& t,
             const ButtonOptions& options) {
-    const auto& wc = t.colors.wechat;
     eui::Color bgNormal, bgHover, bgPressed, txtColor;
 
     // §4.1 四级配色：每级 (normal, hover, pressed) + 文字色。
