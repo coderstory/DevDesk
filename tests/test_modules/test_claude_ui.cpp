@@ -222,8 +222,8 @@ REGISTER_TEST(claude_module_actions_row_alignment,
     const float runRight = run->frame.x + run->frame.width;
     DOCTEST_CHECK(runRight >= dividerRight - 0.5f);
     DOCTEST_CHECK(runRight <= dividerRight + 0.5f);
-        // 单键宽 = (行宽 − 3×gap) / 4（gap=12）
-    const float expect = (row->frame.width - 12.0f * 3.0f) / 4.0f;
+        // 单键宽 = (行宽 − 3×gap) / 4（gap=8）
+    const float expect = (row->frame.width - 8.0f * 3.0f) / 4.0f;
     DOCTEST_CHECK(std::fabs(run->frame.width - expect) < 0.01f);
     DOCTEST_CHECK(std::fabs(ui.find("claude.act.enable.bg")->frame.width - expect) <
                   0.01f);
@@ -5936,7 +5936,7 @@ REGISTER_TEST(claude_copyconfig_seven_keys_geometry,
     DOCTEST_REQUIRE(run != nullptr);
     const float w0 = row->frame.width;
     // 动作行 4 键，末键（运行）右缘对齐断言据此定宽
-    const float expect = (w0 - 12.0f * 3.0f) / 4.0f;
+    const float expect = (w0 - 8.0f * 3.0f) / 4.0f;
     DOCTEST_CHECK(std::fabs(run->frame.width - expect) < 0.01f);
     // 行右缘对齐：末键右缘 == row 右缘（浮点 0.5px 容差）
     const float rowRight = row->frame.x + row->frame.width;
