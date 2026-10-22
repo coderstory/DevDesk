@@ -458,11 +458,19 @@ public:
         // → 主循环持续出帧推进 compose 直至钉住；收敛后本元素不再挂载即被剪除，
         // 循环回睡，零常驻功耗。条件与上方钉住判定互补（<eps 钉住 / >=eps 挂泵），
         // 不存在「在途无泵」或「收敛常驻泵」的缝隙。
+        // W3.5 审计 B（F5）复现裁决：本泵曾在 UAT6（2fd90a3c）被移除，移除理由
+        // 「headless 下 onFrame 经 ui.layout() move → bad_function_call」为误诊——
+        // 实测（泵重挂 + 逐断言）真因是 test_markdown.cpp 树列收敛用例「零漂移锁」
+        // 循环跨帧持 otoggle 悬垂指针（元素每帧重建，旧 onClick 调用 = UB）；泵
+        // 元素改变堆布局使 UB 以 bad_function_call 显形。EUI onFrame 契约本身
+        // 健全（updateElementTree→updateFrameCallback 链路无 move）。悬垂指针已修，
+        // 泵恢复为 md 树折叠动画的**自持帧源**——不再依赖 app.fluid.anim.driver
+        // 的旁路持续 compose（fluid 开关关闭时树折叠动画因此逐输入步进）。
         if (std::fabs(treeTargetW - treePanelWidth_) >= kTreePanelSnapEps) {
-            // UAT6: headless 下 onFrame 回调经 ui.layout() move → bad_function_call；
-            // compose 内 lerp 自身推进一步已够测试覆盖（单测「逐帧收敛 40 步」仍成立）；
-            // 真机收敛泵待 EUI-NEO runtime/layout cycle 修复后重新启用。
-            // （曾挂：ui.stack("md.tree.anim.driver").size(1,1).onFrame([](float){}).build()）
+            ui.stack("md.tree.anim.driver")
+                .size(1.0f, 1.0f)
+                .onFrame([](float) {})
+                .build();
         }
 
         drawOutlinePanel(ui, screen, t, componentTheme);
