@@ -1,4 +1,7 @@
 #pragma once
+// 单源定义：所有颜色值定义于 light()/dark()，registerWidgetStyles() 引用 light() 派生字段，
+//   theme.cpp 的 Tokens / WechatTokens 同值独立维护（eui::Color 体系）。
+// 变更时两处同改，以 hex 值为权威对照。
 #include <components/theme.h>
 #include <components/widget_style.h>
 
