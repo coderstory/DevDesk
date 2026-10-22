@@ -2414,12 +2414,10 @@ REGISTER_TEST(settings_card_pair_column_geometry,
                               "github_sync 卡高 " +
                                   std::to_string(syncCard->frame.height) +
                                   " 期望(恒满高) " + std::to_string(wantH));
-        // UAT6 零滚动收口：372 = 最小窗 1000×640（Windows 自绘壳页高 600）下卡区
-        // 可用高的**恰好值**——常量再涨一字，同步 tab 就在最小窗重新出滚动条。
-        // 四档字面钉死防静默回涨（85% 档 roundFs(372)=316 是最坏需高档：内容
-        // 需高 307 富余 9，见 settings_ui_logic.h 复算注释）。
-        const float heightTiers[][2] = {{0.85f, 316.0f}, {1.0f, 372.0f},
-                                        {1.15f, 428.0f}, {1.3f, 484.0f}};
+        // UAT6 零滚动收口：362 = W2.4 字号迁移后（fontSizeBody 15→14）最小窗可用高。
+        // S1.2 #24: fontSizeBody迁移 + W2.4 UI Kit尺寸迁移共同导致kGithubSyncCardHeight 372→362。
+        const float heightTiers[][2] = {{0.85f, 308.0f}, {1.0f, 362.0f},
+                                        {1.15f, 416.0f}, {1.3f, 471.0f}};
         for (const auto& kv : heightTiers) {
             FontScaleGuard g2{kv[0]};
             const float h = module::settings::roundFs(
@@ -2799,7 +2797,7 @@ REGISTER_TEST(settings_font_scale_dropdown_applies_live,
     DOCTEST_REQUIRE(item->onClick != nullptr);
     item->onClick();
     DOCTEST_CHECK_EQ(::core::theme::fontScale(), 1.3f);
-    DOCTEST_CHECK_EQ(::core::theme::current().sizes.fontSizeBody, 15.0f * 1.3f);
+    DOCTEST_CHECK_EQ(::core::theme::current().sizes.fontSizeBody, 14.0f * 1.3f);
     DOCTEST_CHECK(::core::platform::consumeUiUpdate());
     module::settings::SettingsStore store(::core::appDatabase());
     DOCTEST_CHECK_EQ(store.load().fontScalePercent, 130);
