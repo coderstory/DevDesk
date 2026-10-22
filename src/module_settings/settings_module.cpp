@@ -1009,8 +1009,8 @@ public:
         maybeAutoGithubSync();
         // 本地 git 探测收割/重探：非阻塞，结果驱动卡片灰字。
         maybeRefreshLocalGitProbe();
-        const float pad = t.sizes.spacingXXLarge;
-        const float contentW = screen.width - pad * 2.0f;
+        const float pad = t.sizes.spacingLarge * 2.0f;  // 32 —— S4.2 弹性内边距（spacingLarge=16×2=32）
+        const float contentW = screen.width - pad * 2.0f;   // 宽 = 窗口宽 − 双侧内边距
 
         // 页面底色 = 主窗口 clearColor，不自铺不透明底。
 
@@ -1041,7 +1041,7 @@ public:
 
         ui.column("settings.root")
             .size(screen.width, screen.height)
-            .padding(pad)
+            .padding(pad, pad, 0.0f, pad)  // 上右下左：底边贴底、内容随窗高伸缩（S4.2 弹性骨架）
             .gap(t.sizes.spacingLarge)
             .content([&] {
                 drawHeader(ui, contentW, headerH, t);
@@ -1077,8 +1077,9 @@ public:
                     t.sizes.spacingLarge + tabH + t.sizes.spacingLarge;
                 // 底部提示行（§6 item 11）：12px 三级灰居中「所有设置即时生效…」
                 const float bottomHintH = roundFs(20.0f);
+                // cardsH S4.2 弹性：底 padding 已为 0（列 .padding 底=0），cardsH 底缘贴 bottomHint 上方 gap 处
                 const float cardsH =
-                    screen.height - cardsTopY - pad - bottomHintH -
+                    screen.height - cardsTopY - bottomHintH -
                     t.sizes.spacingLarge;
                 // 半宽配对列宽桶（.c348 / .c648 …）：换窗宽后列宽变 → 配对行高随
                 // 对内卡高变，内容高缓存必须失效重测（UAT3 多列分栏）。

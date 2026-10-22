@@ -409,9 +409,9 @@ public:
                  .styleRevision;
         }
 
-        const float pad = t.sizes.spacingXXLarge; // 40
-        const float contentW = screen.width - pad * 2.0f;
-        const float contentH = screen.height - pad * 2.0f;
+        const float pad = t.sizes.spacingLarge * 2.0f;  // 32 —— S4.2 弹性内边距（spacingLarge=16×2=32）
+        const float contentW = screen.width - pad * 2.0f;   // 宽 = 窗口宽 − 双侧内边距
+        const float contentH = screen.height - pad;          // 高 = 窗口高 − 顶内边距（底贴底、无下 padding）
         // UAT3 D-R3-3 c：面板宽每帧向目标 lerp（固定系数），距目标 <1px 即钉住；
         // treePanelCollapsed_（bool）仍为唯一持久化口径，本值启动时按折叠态直接落位。
         // sideW 取连续值 → midW/列宽随动画平滑过渡，窄窗下不再二值跳变。
@@ -434,7 +434,7 @@ public:
 
         ui.column("md.root")
             .size(screen.width, screen.height)
-            .padding(pad)
+            .padding(pad, pad, 0.0f, pad)  // 上右下左：底边贴底、内容随窗高伸缩（S4.2 弹性骨架）
             .gap(t.sizes.spacingLarge)
             .content([&] {
                 drawHeader(ui, contentW, contentH, bodyH, t);
@@ -1217,10 +1217,10 @@ private:
                           const core::theme::Tokens& t,
                           const components::theme::ThemeColorTokens& componentTheme) {
         if (!outlineOpen_) return;
-        const float pad = t.sizes.spacingXXLarge; // 与 compose 同基准（40）
+        const float pad = t.sizes.spacingLarge * 2.0f;  // 32 —— S4.2 弹性内边距
         const float panelW = 264.0f;
-        const float panelH = screen.height - pad * 2.0f - ui_kit::kHeaderH -
-                             t.sizes.spacingLarge;
+        const float panelH = screen.height - pad - ui_kit::kHeaderH -
+                             t.sizes.spacingLarge;     // 底贴底、仅扣顶内边距
         const float x = screen.width - pad - panelW;
         const float y = pad + ui_kit::kHeaderH + t.sizes.spacingLarge;
 

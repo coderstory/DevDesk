@@ -1714,8 +1714,8 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
     }
     const auto& t = ::core::theme::current();
     const auto themeTokens = ::core::theme::componentTokensWeChat(t);
-    const float pad = t.sizes.spacingXXLarge;
-    const float contentW = screen.width - pad * 2.0f;
+    const float pad = t.sizes.spacingLarge * 2.0f;  // 32 —— S4.2 弹性内边距（spacingLarge=16×2=32）
+    const float contentW = screen.width - pad * 2.0f;   // 宽 = 窗口宽 − 双侧内边距
 
     // 页面帧惰性解析：否则 loop_ 恒空、「启动」永久禁用，惰性解析在真实 UI 上不可达
     if (store_ != nullptr && loop_ == nullptr && tasksDirty_) {
@@ -1737,14 +1737,15 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
     const bool hasPageError = !pageError_.empty();
     const bool hasPageHint = hasPageError && needsClaudePageHint(pageError_);
     const int kPageGapCount = 2 + (hasPageError ? 1 : 0) + (hasPageHint ? 1 : 0);
-    const float listH = screen.height - pad * 2.0f - kPageHeaderH - toolsH -
+    // listH S4.2 弹性：底 padding 已为 0，高仅扣 pad 一次（顶内边距）
+    const float listH = screen.height - pad - kPageHeaderH - toolsH -
                         (hasPageError ? kPageErrorH : 0.0f) -
                         (hasPageHint ? kPageHintH : 0.0f) -
                         static_cast<float>(kPageGapCount) * t.sizes.spacingLarge;
 
     ui.column("agent.page")
         .size(screen.width, screen.height)
-        .padding(pad)
+        .padding(pad, pad, 0.0f, pad)  // 上右下左：底边贴底、内容随窗高伸缩（S4.2 弹性骨架）
         .gap(t.sizes.spacingLarge)
                 .content([&] {
             ui.row("agent.page.header")

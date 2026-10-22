@@ -512,9 +512,9 @@ struct BoardGeom {
 inline BoardGeom boardGeom(float screenWidth, size_t columnCount,
                            const core::theme::Tokens& t) {
     BoardGeom g;
-    g.pad = t.sizes.spacingXXLarge;
+    g.pad = t.sizes.spacingLarge * 2.0f;  // 32 —— S4.2 弹性内边距（spacingLarge=16×2=32）
     g.colGap = t.sizes.spacingLarge;
-    const float contentW = screenWidth - g.pad * 2.0f;
+    const float contentW = screenWidth - g.pad * 2.0f;  // 宽 = 窗口宽 − 双侧内边距
     const auto n = static_cast<float>(columnCount == 0 ? 1 : columnCount);
     g.colW = (contentW - g.colGap * (n - 1.0f)) / n;
     g.boardTop = g.pad + ui_kit::kHeaderH + t.sizes.spacingLarge;

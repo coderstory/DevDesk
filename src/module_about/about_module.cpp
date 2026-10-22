@@ -259,8 +259,10 @@ public:
         const float cardW =
             std::max(560.0f, std::min(760.0f, screen.width - 2.0f * 32.0f));
         const float cardX = std::max(0.0f, (screen.width - cardW) / 2.0f);
-        const float footerY = screen.height - t.sizes.spacingXXLarge - kFooterH;
-        float cardY = t.sizes.spacingXXLarge;
+        // S4.2 弹性：页内边距 32（spacingLarge×2），底贴底无额外 padding
+        const float pagePad = t.sizes.spacingLarge * 2.0f;  // 32
+        const float footerY = screen.height - pagePad - kFooterH;
+        float cardY = pagePad;
         if (cardY + cardH + 16.0f > footerY) {
             cardY = std::max(0.0f, footerY - 16.0f - cardH);
             if (cardY + cardH + 16.0f > footerY) {
