@@ -619,45 +619,49 @@ void drawProfileListPanel(eui::Ui& ui, float leftW, float bodyH,
                     .build();
             }
 
-            // 底部三键等分（新建 / 导入配置 / 从 CC 导入），12px 间距
+            // S3.4 底部三键主次分级：新建=Filled，导入/CC导入=Outline
             const float btnW = (leftW - 40.0f - 24.0f) * (1.0f / 3.0f);
             const float btnGap = 12.0f;
-            // §5 列表底部按钮=Secondary 浅灰次按钮（§4.1：#F2F2F2 底 + 深灰字 + 6px 圆角，无边框）
+            // 新建: Filled（绿底白字）
             components::button(ui, "claude.profiles.new")
                 .position(20.0f, bottomButtonRowY(bodyH))
                 .size(btnW, 40.0f)
                 .text("+ 新建 Profile")
-                .fontSize(t.sizes.fontSizeSmall)
-                .colors(t.colors.hover,
-                        t.colors.hover,
-                        t.colors.hover)
-                .textColor(t.colors.textPrimary)
-                .radius(t.sizes.radiusWeChat)
+                .fontSize(14.0f)
+                .colors(t.colors.primary,
+                        t.colors.primaryHover,
+                        t.colors.primaryPressed)
+                .textColor(t.colors.onPrimary)
+                .radius(8.0f)
                 .onClick([onNew = actions.onNewProfile] { onNew(); })
                 .build();
+            // 导入配置: Outline（白底绿边绿字）
             components::button(ui, "claude.profiles.import")
                 .position(20.0f + btnW + btnGap, bottomButtonRowY(bodyH))
                 .size(btnW, 40.0f)
                 .text("导入配置")
-                .fontSize(t.sizes.fontSizeSmall)
-                .colors(t.colors.hover,
-                        t.colors.hover,
-                        t.colors.hover)
-                .textColor(t.colors.textPrimary)
-                .radius(t.sizes.radiusWeChat)
+                .fontSize(14.0f)
+                .colors(t.colors.surface,
+                        t.colors.primarySoftBg,
+                        t.colors.primarySoftBg)
+                .textColor(t.colors.primary)
+                .radius(8.0f)
+                .border(1.0f, t.colors.primary)
                 .onClick([onImport = actions.onImportCurrent] { onImport(); })
                 .build();
+            // 从 CC 导入: Outline（白底绿边绿字）
             components::button(ui, "claude.profiles.import.ccswitch")
                 .position(20.0f + 2.0f * (btnW + btnGap),
                           bottomButtonRowY(bodyH))
                 .size(btnW, 40.0f)
                 .text("从 CC 导入")
-                .fontSize(t.sizes.fontSizeSmall)
-                .colors(t.colors.hover,
-                        t.colors.hover,
-                        t.colors.hover)
-                .textColor(t.colors.textPrimary)
-                .radius(t.sizes.radiusWeChat)
+                .fontSize(14.0f)
+                .colors(t.colors.surface,
+                        t.colors.primarySoftBg,
+                        t.colors.primarySoftBg)
+                .textColor(t.colors.primary)
+                .radius(8.0f)
+                .border(1.0f, t.colors.primary)
                 .onClick([onImportCc = actions.onImportCcSwitch] {
                     if (onImportCc) onImportCc();
                 })
