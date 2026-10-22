@@ -12,7 +12,6 @@
 #include <components/card.h>
 #include <components/theme.h>
 #include <ui_kit/light_toast.h>  // showLightToast（复制成功 toast）
-#include <ui_kit/logo.h>          // ui_kit::drawDevDeskLogo（品牌几何 logo）
 
 #include <eui/dsl.h>
 
@@ -181,11 +180,12 @@ std::string aboutCppLine() {
     return "C++11";
 }
 
-// 信息行：左标签 + 右内容。highlight=true → 绿色文字 + 可复制（wechat.primary）。
+// 信息行：左标签 + 右内容。highlight=true → 可复制（wechat.primary）。linkToast 非空=Ghost链接。
 struct AboutRow {
     const char* label;
     std::string value;
     bool highlight = false;
+    std::string linkToast;  // non-empty → render as ghost link, toast on click
 };
 
 } // namespace
@@ -210,12 +210,10 @@ public:
             .build();
 
         // S3.8: 卡片几何——标题左对齐 + 描述列表两列 + Ghost 复制图标 + 信息分组
-        constexpr float kCardPadX = 32.0f;   // 左右内边距（8px 栅格 × 4）
-        constexpr float kCardPadTop = 32.0f;  // 上内边距
-        constexpr float kCardPadBottom = 32.0f; // 下内边距
-        constexpr float kIconSize = 40.0f;     // logo 图标
-        constexpr float kTitleH = 32.0f;       // 标题高
-        constexpr float kGroupHdrH = 22.0f;    // 分组标题高（16px 字）
+        constexpr float kCardPadX = 24.0f;   // 左右内边距（8px 栅格 × 3）
+        constexpr float kCardPadTop = 24.0f;  // 上内边距
+        constexpr float kCardPadBottom = 24.0f; // 下内边距
+        constexpr float kGroupHdrH = 24.0f;    // 分组标题行高（16px/600 档 24px）
         constexpr float kGroupGap = 24.0f;     // 组间间距
         constexpr float kRowH = 32.0f;         // 行高（S3.8#1）
         constexpr float kLabelW = 100.0f;      // 标签宽（S3.8#1）
@@ -240,13 +238,14 @@ public:
                 {"平台", aboutPlatformLine(), false},
                 {"C++ 标准", aboutCppLine(), false},
             }},
-            {"许可", {
+            {"许可与致谢", {
                 {"开源协议", "MIT License", false},
+                {"开源组件", "查看完整列表", false, "完整开源组件清单见仓库 LICENSE 说明"},
             }},
         };
 
-        // 计算卡高：上留白 + logo + 标题 + 各组（组头+各行）+ 组间间隔 + 下留白
-        float cardH = kCardPadTop + kIconSize + kTitleH + kGroupGap;
+        // 计算卡高：上留白 + 各组（组头+各行+组间间距）+ 下留白（无 Logo 行，首组紧贴上内边距）
+        float cardH = kCardPadTop;
         for (const auto& g : groups) {
             cardH += kGroupHdrH;
             for (size_t i = 0; i < g.rows.size(); ++i) {
@@ -280,42 +279,21 @@ public:
                 const float cw = cardW - kCardPadX * 2.0f;
                 float y = 0.0f;
 
-                // Logo + 标题行：左对齐
-                ui.row("about.card.header")
-                    .size(cw, kIconSize)
-                    .alignItems(eui::Align::CENTER)
-                    .gap(12.0f)
-                    .content([&] {
-                        ui_kit::drawDevDeskLogo(ui, "about.card.icon",
-                                                0.0f, 0.0f,
-                                                kIconSize, t.colors.primary, t.colors.surface);
-                        ui.text("about.card.title")
-                            .size(cw - kIconSize - 12.0f, kTitleH)
-                            .text("DevDesk")
-                            .fontSize(t.sizes.fontSizeTitle)  // 24px
-                            .lineHeight(kTitleH)
-                            .fontWeight(600)
-                            .color(t.colors.textPrimary)
-                            .horizontalAlign(eui::HorizontalAlign::Left)
-                            .verticalAlign(eui::VerticalAlign::Center)
-                            .build();
-                    })
-                    .build();
-                y += kIconSize;
-
-                // S3.8: 信息分组
-                for (const auto& g : groups) {
-                    // 分组标题：16px/600 textSecondary
+                // S3.8: 信息分组（首组标题紧贴上内边距）
+                for (size_t gi = 0; gi < std::size(groups); ++gi) {
+                    const auto& g = groups[gi];
+                    if (gi > 0) y += kGroupGap;  // 组间间距
+                    // 分组标题：16px/600 textPrimary
                     ui.text("about.card.group." + std::string(g.header))
-                        .position(0.0f, y + kGroupGap)
+                        .position(0.0f, y)
                         .size(cw, kGroupHdrH)
                         .text(g.header)
                         .fontSize(t.sizes.fontSizeWeChat)  // 16px
                         .lineHeight(kGroupHdrH)
                         .fontWeight(600)
-                        .color(t.colors.textSecondary)
+                        .color(t.colors.textPrimary)
                         .build();
-                    y += kGroupGap + kGroupHdrH;
+                    y += kGroupHdrH;
 
                     for (size_t i = 0; i < g.rows.size(); ++i) {
                         const float rowY = y + static_cast<float>(i) * kRowH;
@@ -328,21 +306,24 @@ public:
                             .fontSize(t.sizes.fontSizeSmall)  // 12px
                             .lineHeight(kRowH)
                             .color(t.colors.textTertiary)
+                            .horizontalAlign(eui::HorizontalAlign::Right)
                             .build();
 
-                        // 右内容：14px，highlight → primaryText 绿色
-                        const float valueX = kLabelW + 8.0f;
+                        // 右内容：14px/600，统一 textPrimary；highlight 仅控制复制图标显隐
+                        const float valueX = kLabelW + 16.0f;
                         const float valueW = cw - valueX - kCopyW;
+                        const bool isGhostLink = !g.rows[i].linkToast.empty();
                         ui.text("about.card.value." + std::to_string(i))
                             .position(valueX, rowY)
                             .size(valueW, kRowH)
                             .text(g.rows[i].value)
                             .fontSize(t.sizes.fontSizeBody)  // 14px
                             .lineHeight(kRowH)
-                            .color(g.rows[i].highlight ? t.colors.primaryText : t.colors.textPrimary)
+                            .fontWeight(600)
+                            .color(isGhostLink ? t.colors.primary : t.colors.textPrimary)
                             .build();
 
-                        // S3.8#2: Ghost 复制图标按钮（highlight 行）
+                        // S3.8#2: Ghost 复制图标按钮（highlight 行）；热区收窄到图标区
                         if (g.rows[i].highlight) {
                             const float iconX = cw - kCopyW;
                             const float iconY = rowY + (kRowH - 16.0f) * 0.5f;
@@ -356,14 +337,29 @@ public:
 
                             std::string copyText = g.rows[i].value;
                             ui.rect("about.card.hit." + std::to_string(i))
-                                .position(0.0f, rowY)
-                                .size(cw, kRowH)
+                                .position(cw - kCopyW, rowY)
+                                .size(kCopyW, kRowH)
                                 .color(eui::Color{0.0f, 0.0f, 0.0f, 0.0f})
                                 .cursor(eui::CursorShape::Hand)
                                 .onClick([this, copyText] {
                                     ::core::window::setClipboardText(copyText);
                                     triggerToast("已复制");
                                     LOG_INFO("About: 已复制 " + copyText);
+                                })
+                                .build();
+                        }
+
+                        // Ghost 链接按钮（linkToast 非空行）
+                        if (!g.rows[i].linkToast.empty()) {
+                            std::string toastMsg = g.rows[i].linkToast;
+                            ui.rect("about.card.link." + std::to_string(i))
+                                .position(valueX, rowY)
+                                .size(valueW, kRowH)
+                                .color(eui::Color{0.0f, 0.0f, 0.0f, 0.0f})
+                                .cursor(eui::CursorShape::Hand)
+                                .onClick([this, toastMsg] {
+                                    triggerToast(toastMsg);
+                                    LOG_INFO("About: 开源组件链接点击");
                                 })
                                 .build();
                         }
@@ -380,7 +376,7 @@ public:
             .text("© 2026 DevDesk")
             .fontSize(12.0f)
             .lineHeight(kFooterH)
-            .color(t.colors.textTertiary)
+            .color(t.colors.textDisabled)
             .horizontalAlign(eui::HorizontalAlign::Center)
             .build();
 

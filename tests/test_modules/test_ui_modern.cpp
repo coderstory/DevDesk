@@ -1040,22 +1040,19 @@ REGISTER_TEST(uiAboutLayout,
     DOCTEST_REQUIRE(mod != nullptr);
     mod->onStart();
     const auto& t = ::core::theme::current();
-    // 与 about_module.cpp 同值镜像（S3.8 分组化：pad 32→32 / 图标 72→40 /
-    // 行高 48→32 / 3 分组 + 组头 + 组间间距）——两边漂移时本用例红
-    constexpr float kCardPadX = 32.0f;
-    constexpr float kCardPadTop = 32.0f;
-    constexpr float kCardPadBottom = 32.0f;
-    constexpr float kIconSize = 40.0f;
-    constexpr float kTitleH = 32.0f;
-    constexpr float kGroupHdrH = 22.0f;
+    // 与 about_module.cpp 同值镜像（W3.5 H7: pad 24 / 组标题行高 24 / 无 Logo / 新增开源组件行）
+    constexpr float kCardPadX = 24.0f;
+    constexpr float kCardPadTop = 24.0f;
+    constexpr float kCardPadBottom = 24.0f;
+    constexpr float kGroupHdrH = 24.0f;
     constexpr float kGroupGap = 16.0f;
     constexpr float kRowH = 32.0f;
     constexpr int kGroupCount = 3;
-    constexpr int kRowCount = 8;   // S3.8: 3+4+1=8 rows across 3 groups
+    constexpr int kRowCount = 9;   // W3.5 H7: 3+4+2=9 rows (许可与致谢组加开源组件)
     constexpr float kFooterH = 20.0f;
     constexpr float kFooterGap = 16.0f;
     constexpr float kLabelW = 100.0f;
-    const float cardH = kCardPadTop + kIconSize + kTitleH + kGroupGap +
+    const float cardH = kCardPadTop +
                         static_cast<float>(kGroupCount) * kGroupHdrH +
                         static_cast<float>(kRowCount) * kRowH +
                         static_cast<float>(kGroupCount) * kGroupGap +
@@ -1070,7 +1067,7 @@ REGISTER_TEST(uiAboutLayout,
     const float cardX = std::max(0.0f, (screen.width - cardW) / 2.0f);
     const float footerY = screen.height - t.sizes.spacingXXLarge - kFooterH;
     const float cardY = t.sizes.spacingXXLarge;
-    const float valueX = kCardPadX + kLabelW + 8.0f;
+    const float valueX = kCardPadX + kLabelW + 16.0f;
     ui.begin("about_layout");
     mod->compose(ui, screen);
     ui.end();
@@ -1102,27 +1099,13 @@ REGISTER_TEST(uiAboutLayout,
     }
     // about.card 堆栈已移除，verify 对 about.card 的查找返回 nullptr
     { DOCTEST_CHECK(ui.find("about.card") == nullptr); }
+    // W3.5 H7: Logo 行已删除，icon/title 元素不再存在
     {
-        const auto* icon = ui.find("about.card.icon");
-        DOCTEST_REQUIRE(icon != nullptr);
-        DOCTEST_CHECK_MESSAGE(nearPx(icon->frame.x, cardX + (cardW - kIconSize) / 2.0f),
-                              px("about.card.icon", icon));
-        DOCTEST_CHECK_MESSAGE(nearPx(icon->frame.y, cardY + kCardPadTop),
-                              px("about.card.icon", icon));
-        DOCTEST_CHECK_MESSAGE(nearPx(icon->frame.width, kIconSize),
-                              px("about.card.icon", icon));
+        DOCTEST_CHECK(ui.find("about.card.icon") == nullptr);
+        DOCTEST_CHECK(ui.find("about.card.title") == nullptr);
     }
     {
-        const auto* title = ui.find("about.card.title");
-        DOCTEST_REQUIRE(title != nullptr);
-        DOCTEST_CHECK_MESSAGE(nearPx(title->frame.x, cardX), px("about.card.title", title));
-        DOCTEST_CHECK_MESSAGE(nearPx(title->frame.y, cardY + kCardPadTop + (kIconSize - kTitleH) * 0.5f),
-                              px("about.card.title", title));
-        DOCTEST_CHECK_MESSAGE(nearPx(title->frame.width, cardW),
-                              px("about.card.title", title));
-    }
-    {
-        const float rowsY = cardY + kCardPadTop + kIconSize + kGroupGap + kGroupHdrH;
+        const float rowsY = cardY + kCardPadTop + kGroupHdrH;
         for (int i = 0; i < kRowCount; ++i) {
             const float rowY = rowsY + i * kRowH;
             const auto* label = ui.find("about.card.label." + std::to_string(i));
