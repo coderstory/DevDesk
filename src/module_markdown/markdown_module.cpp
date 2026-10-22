@@ -2735,7 +2735,7 @@ private:
 
         ui_kit::drawDialogFrame(ui, screen, frame, core::theme::componentTokensWeChat(t), [&] {
                 ui_kit::drawDialogTitle(ui, "md.dialog.new.title", w, "新建笔记",
-                                        20.0f, t.colors.textPrimary);
+                                        t.sizes.fontSizeLarge + 2.0f, t.colors.textPrimary);
 
                 // 提示行用就地判据而非 newItemParentDir()（后者每帧 WARN 刷屏）
                 const std::string newNoteParent =
@@ -2816,7 +2816,7 @@ private:
 
         ui_kit::drawDialogFrame(ui, screen, frame, core::theme::componentTokensWeChat(t), [&] {
                 ui_kit::drawDialogTitle(ui, "md.dialog.newfolder.title", w, "新建文件夹",
-                                        20.0f, t.colors.textPrimary);
+                                        t.sizes.fontSizeLarge + 2.0f, t.colors.textPrimary);
 
                 // 提示行带上实际落点（= 当前上级目录），避免「显示 A 建到 B」。
                 ui_kit::drawDialogText(ui, "md.dialog.newfolder.hint", w,
@@ -3869,7 +3869,7 @@ private:
 
         ui_kit::drawDialogFrame(ui, screen, frame, core::theme::componentTokensWeChat(t), [&] {
                 ui_kit::drawDialogTitle(ui, "md.dialog.del.title", w, "删除笔记",
-                                        20.0f, t.colors.textPrimary);
+                                        t.sizes.fontSizeLarge + 2.0f, t.colors.textPrimary);
                 ui_kit::drawDialogText(
                     ui, "md.dialog.del.body", w,
                     "将删除笔记「" + deleteTargetPath_ + "」及其磁盘文件，不可恢复。",
@@ -3911,7 +3911,7 @@ private:
 
         ui_kit::drawDialogFrame(ui, screen, frame, core::theme::componentTokensWeChat(t), [&] {
                 ui_kit::drawDialogTitle(ui, "md.dialog.rename.title", w, "重命名笔记",
-                                        20.0f, t.colors.textPrimary);
+                                        t.sizes.fontSizeLarge + 2.0f, t.colors.textPrimary);
                 ui_kit::drawDialogText(ui, "md.dialog.rename.hint", w,
                                        "相对笔记目录；填「工作/新名」可同时移动。"
                                        "笔记一律以 .md 结尾：不写会自动补上",

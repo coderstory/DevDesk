@@ -216,7 +216,7 @@ public:
         constexpr float kIconSize = 40.0f;     // logo 图标
         constexpr float kTitleH = 32.0f;       // 标题高
         constexpr float kGroupHdrH = 22.0f;    // 分组标题高（16px 字）
-        constexpr float kGroupGap = 16.0f;     // 组间间距
+        constexpr float kGroupGap = 24.0f;     // 组间间距
         constexpr float kRowH = 32.0f;         // 行高（S3.8#1）
         constexpr float kLabelW = 100.0f;      // 标签宽（S3.8#1）
         constexpr float kCopyW = 24.0f;        // 复制按钮宽
