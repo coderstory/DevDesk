@@ -1106,26 +1106,31 @@ REGISTER_TEST(uiAboutLayout,
         DOCTEST_CHECK(ui.find("about.card.title") == nullptr);
     }
     {
-        const float rowsY = cardY + kCardPadTop + kGroupHdrH;
-        for (int i = 0; i < kRowCount; ++i) {
-            const float rowY = rowsY + i * kRowH;
+        // W3-B1 分组布局（3 组，组内序号重启）：label/value id 同组内重启，重复注册
+        // 时 find 取最后注册——label.0/1 落在组3（许可与致谢）、label.2/3 落在组2
+        // （构建信息），组1 的 0..2 被覆盖不可查；各组行 y 分段而非平铺（组间 gap+组头）
+        const float rowsY = cardY + kCardPadTop + kGroupHdrH;               // 组1 首行
+        const float g1Y = rowsY + 3 * kRowH + kGroupGap + kGroupHdrH;       // 组2 首行
+        const float g2Y = g1Y + 4 * kRowH + kGroupGap + kGroupHdrH;         // 组3 首行
+        const float checkableY[4] = {g2Y, g2Y + kRowH,
+                                     g1Y + 2 * kRowH, g1Y + 3 * kRowH};
+        for (int i = 0; i < 4; ++i) {
             const auto* label = ui.find("about.card.label." + std::to_string(i));
             const auto* value = ui.find("about.card.value." + std::to_string(i));
             DOCTEST_REQUIRE(label != nullptr);
             DOCTEST_REQUIRE(value != nullptr);
             DOCTEST_CHECK_MESSAGE(nearPx(label->frame.x, cardX + kCardPadX),
                                   px(("about.card.label." + std::to_string(i)).c_str(), label));
-            DOCTEST_CHECK_MESSAGE(nearPx(label->frame.y, rowY),
+            DOCTEST_CHECK_MESSAGE(nearPx(label->frame.y, checkableY[i]),
                                   px(("about.card.label." + std::to_string(i)).c_str(), label));
             DOCTEST_CHECK_MESSAGE(nearPx(value->frame.x, cardX + valueX),
                                   px(("about.card.value." + std::to_string(i)).c_str(), value));
-            DOCTEST_CHECK_MESSAGE(nearPx(value->frame.y, rowY),
+            DOCTEST_CHECK_MESSAGE(nearPx(value->frame.y, checkableY[i]),
                                   px(("about.card.value." + std::to_string(i)).c_str(), value));
-            if (i > 0) {
-                const auto* div = ui.find("about.card.divider." + std::to_string(i));
-                DOCTEST_REQUIRE(div != nullptr);
-            }
         }
+        // 组内最多 4 行 → label.4..8 不再注册（旧平铺模型退役）
+        DOCTEST_CHECK(ui.find("about.card.label.4") == nullptr);
+        DOCTEST_CHECK(ui.find("about.card.value.4") == nullptr);
         const auto* copy0 = ui.find("about.card.copy.0");
         const auto* copy1 = ui.find("about.card.copy.1");
         const auto* copy2 = ui.find("about.card.copy.2");
