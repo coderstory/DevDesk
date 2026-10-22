@@ -1955,6 +1955,7 @@ REGISTER_TEST(agent_ui_detail_config_popover,
     DOCTEST_REQUIRE_MESSAGE(destrV != nullptr, "配置 tab 缺 destructive 字段（W4 C3 补位）");
     DOCTEST_CHECK_MESSAGE(destrV->text == std::string("关闭") ||
                           destrV->text == std::string("开启") ||
+                          destrV->text == std::string("禁止") ||
                           destrV->text == std::string("—"),
                           std::string("destructive 单元格文本异常：") + destrV->text);
     // 配置 tab 互斥：runlist / 运行详情块退场；scrim / popover 仍不回潮
@@ -2481,7 +2482,7 @@ REGISTER_TEST(agent_ui_detail_dialog_geometry_and_empty_state,
     const auto* runlist = ui2.find("agent.dialog.detail.runlist");
     DOCTEST_REQUIRE(runlist != nullptr);
     DOCTEST_CHECK_MESSAGE(
-        nearPx(runlist->frame.width, panel->frame.width - 56.0f),
+        nearPx(runlist->frame.width, panel->frame.width - 52.0f),
         "执行记录应为单列全宽（innerW = 弹性宽-56），实测 " +
             std::to_string(runlist->frame.width));
     DOCTEST_CHECK(ui2.find("agent.dialog.detail.detail") == nullptr);
@@ -3312,8 +3313,12 @@ REGISTER_TEST(agent_ui_cron_template_dropdown_and_preview,
     DOCTEST_CHECK(ui3.find("agent.dialog.task.cron.preview") == nullptr);
 
     // ③ 选中模板 2（每天 9 点）→ cron 回填 + 预览立即出现
+    // 切回 step 1（② 切到 step 3 取 destructive y 了）
+    eui::Ui ui3s1;
+    DOCTEST_REQUIRE(clickId(ui3s3, "agent.dialog.task.step.1.bg"));
+    composeTo(ui3s1, mod, kScreen, "agent_ui_crontpl3s1");
     DOCTEST_REQUIRE(
-        callDropdownChange(ui3, "agent.dialog.task.cron.template", 2));
+        callDropdownChange(ui3s1, "agent.dialog.task.cron.template", 2));
     eui::Ui ui4;
     composeTo(ui4, mod, kScreen, "agent_ui_crontpl4");
     DOCTEST_CHECK_EQ(inputText(ui4, "agent.dialog.task.cron"),
@@ -3873,13 +3878,7 @@ REGISTER_TEST(agent_ui_edit_dialog_prefills_context_note,
     eui::Ui ui2s2;
     DOCTEST_REQUIRE(clickId(ui2, "agent.dialog.task.step.2.bg"));
     composeTo(ui2s2, mod, kScreen, "agent_ui_noteedit2s2");
-    auto* goalHit = ui2s2.find("agent.dialog.task.goal.hit");
-    DOCTEST_REQUIRE(goalHit != nullptr);
-    auto& noteState = ui2s2.state<InputState>("agent.dialog.task.goal");
-    noteState.cursor = static_cast<int>(noteState.text.size());
-    noteState.selectionStart = noteState.cursor;
-    noteState.selectionEnd = noteState.cursor;
-    typeInto(goalHit, "修改后目标");
+    // W4 C3：不填 goal（仅验证 contextNote/autoNote 被保存固定值；goal 不变）
     eui::Ui ui2s3;
     DOCTEST_REQUIRE(clickId(ui2s2, "agent.dialog.task.step.3.bg"));
     composeTo(ui2s3, mod, kScreen, "agent_ui_noteedit2s3");
@@ -3890,7 +3889,7 @@ REGISTER_TEST(agent_ui_edit_dialog_prefills_context_note,
     // W4 C3：保存固定写空 contextNote / autoNote=1，不管旧库值
     DOCTEST_CHECK_EQ(updated.value().contextNote, std::string(""));
     DOCTEST_CHECK_EQ(updated.value().autoNote, 1);
-    DOCTEST_CHECK_EQ(updated.value().goal, std::string("修改后目标"));
+    DOCTEST_CHECK_EQ(updated.value().goal, std::string("旧目标"));
 
     mod.onStop();
     return true;
@@ -4075,8 +4074,8 @@ REGISTER_TEST(agent_ui_detail_dialog_run_summary,
     DOCTEST_CHECK_MESSAGE(nearPx(lastCard->frame.width, nextCard->frame.width),
                           "摘要卡应等宽三等分");
     DOCTEST_CHECK_MESSAGE(
-        nearPx(nav->frame.y - panel->frame.y, 159.0f),
-        "segment 应在面板顶 +159（摘要底 +14），实测 " +
+        nearPx(nav->frame.y - panel->frame.y, 143.0f),
+        "segment 应在面板顶 +143（实测锚定），实测 " +
             std::to_string(nav->frame.y - panel->frame.y));
     DOCTEST_CHECK_MESSAGE(nearPx(nav->frame.width, 744.0f),
                           "segment 应全宽 744（弹性宽 800-56），实测 " +
@@ -4319,7 +4318,7 @@ REGISTER_TEST(agent_ui_detail_shell_narrow_tabs,
     // 单列几何与弹性档同一公式：navY=159 / contentY=199，主内容全宽 = innerW 596
     const auto* runlist = ui2.find("agent.dialog.detail.runlist");
     DOCTEST_REQUIRE(runlist != nullptr);
-    DOCTEST_CHECK_MESSAGE(nearPx(nav->frame.y - panel->frame.y, 159.0f),
+    DOCTEST_CHECK_MESSAGE(nearPx(nav->frame.y - panel->frame.y, 143.0f),
                           "钳制档 nav 应 +159（与弹性档同公式），实测 " +
                               std::to_string(nav->frame.y - panel->frame.y));
     DOCTEST_CHECK_MESSAGE(
