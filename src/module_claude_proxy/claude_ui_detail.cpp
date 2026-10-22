@@ -12,6 +12,7 @@
 #include <components/button.h>
 #include <components/switch.h>
 #include <components/tabs.h>
+#include <components/tooltip.h>
 #include <core/call_rate.h>
 #include <core/component_theme.h>
 #include <core/logging.h>
@@ -30,10 +31,10 @@ namespace {
 
 // 详情面板动作区几何（单一来源）：动作块 = 61（分隔线/按钮行 36/副提示/分隔线）；
 // 其上 20 间距、其下 24 呼吸 → 预留 85。由 drawDetailActions 绘制推出，改绘制须同步。
-constexpr float kActionBlockH = 61.0f;
+constexpr float kActionBlockH = 65.0f;
 constexpr float kActTopGap = 20.0f;     // 内容框底 → actY
-constexpr float kActBottomPad = 24.0f;  // actY+61 → 面板底
-constexpr float kActReserve = kActionBlockH + kActBottomPad;  // 85
+constexpr float kActBottomPad = 24.0f;  // actY+65 → 面板底
+constexpr float kActReserve = kActionBlockH + kActBottomPad;  // 89
 
 // 模型映射域的 env 键：键集从槽位表派生（与写入点同源），此处仅语义别名。
 bool isModelMappingEnvKey(const std::string& key) {
@@ -817,7 +818,7 @@ float drawDetailAdvanced(eui::Ui& ui, float x0, float y0, float w,
 }
 
 // 操作按钮组（启用/测试连通/编辑/运行）+ 副提示 + 分隔线。actY 由
-// drawDetailPanel 锚定给出；绘制高 = 61 被 kActionBlockH 引用，改几何须同步。
+// drawDetailPanel 锚定给出；绘制高 = 65 被 kActionBlockH 引用，改几何须同步。
 void drawDetailActions(eui::Ui& ui, float x0, float w, float actY,
                        const core::theme::Tokens& t,
                        const DetailView& v, const DetailActions& a) {
@@ -828,30 +829,28 @@ void drawDetailActions(eui::Ui& ui, float x0, float w, float actY,
         .color(t.colors.borderDefault)
         .radius(t.sizes.radius)
         .build();
-    const float actGap = 12.0f;
+    const float actGap = 8.0f;
     // 4 键均分：EUI row spacing 只在相邻子项间生效，n 项只有 n−1 个间隙，故扣 3 个 gap。
     const float actW = (w - actGap * 3.0f) / 4.0f;
     ui.row("claude.detail.actions")
         .position(x0, actY)
-        .size(w, 36.0f)
+        .size(w, 40.0f)
         .gap(actGap)
         .content([&] {
             const int64_t shownId = shown ? shown->id : 0;
             const Profile shownCopy = shown
                 ? *shown : Profile{};
 
-            // 启用（设为激活）§5 微信绿主按钮（§4.1 Primary：绿填充+白字，无边框）
+            // 启用（Filled 主按钮：绿底白字，8px 圆角）
             components::button(ui, "claude.act.enable")
-                .size(actW, 36.0f)
+                .size(actW, 40.0f)
                 .text("启用")
-                .fontSize(t.sizes.fontSizeSmall)
+                .fontSize(14.0f)
                 .colors(t.colors.primary,
                         t.colors.primaryHover,
                         t.colors.primaryPressed)
                 .textColor(t.colors.onPrimary)
-                .radius(t.sizes.radiusWeChat)
-                // 显式 border 0：消组件默认 1px 灰框，同 act.run（UAT3）
-                .border(0.0f, t.colors.borderDefault)
+                .radius(8.0f)
                 .onClick([f = a.enable, warn = a.warn, shownId] {
                     if (shownId == 0) {
                         warn("启用失败", "请先新建或选择一个 Profile");
@@ -860,18 +859,17 @@ void drawDetailActions(eui::Ui& ui, float x0, float w, float actY,
                     f(shownId);
                 })
                 .build();
-            // 测试连通 §5 Secondary 浅灰次按钮
+            // 测试连通（Outline 次按钮：白底绿边绿字）
             components::button(ui, "claude.act.test")
-                .size(actW, 36.0f)
+                .size(actW, 40.0f)
                 .text("测试连通")
-                .fontSize(t.sizes.fontSizeSmall)
-                .colors(t.colors.hover,
-                        t.colors.hover,
-                        t.colors.hover)
-                .textColor(t.colors.textPrimary)
-                .radius(t.sizes.radiusWeChat)
-                // 显式 border 0：组件默认 1px border 在次按钮上同样画出灰框（UAT3）
-                .border(0.0f, t.colors.borderDefault)
+                .fontSize(14.0f)
+                .colors(t.colors.surface,
+                        t.colors.primarySoftBg,
+                        t.colors.primarySoftBg)
+                .textColor(t.colors.primary)
+                .radius(8.0f)
+                .border(1.0f, t.colors.primary)
                 .onClick([f = a.test, warn = a.warn, shownCopy] {
                     if (shownCopy.id == 0) {
                         warn("测试连通失败", "请先新建或选择一个 Profile");
@@ -880,18 +878,17 @@ void drawDetailActions(eui::Ui& ui, float x0, float w, float actY,
                     f(shownCopy);
                 })
                 .build();
-            // 编辑（预填现有值）§5 Secondary
+            // 编辑（Outline 次按钮：白底绿边绿字）
             components::button(ui, "claude.act.edit")
-                .size(actW, 36.0f)
+                .size(actW, 40.0f)
                 .text("编辑")
-                .fontSize(t.sizes.fontSizeSmall)
-                .colors(t.colors.hover,
-                        t.colors.hover,
-                        t.colors.hover)
-                .textColor(t.colors.textPrimary)
-                .radius(t.sizes.radiusWeChat)
-                // 显式 border 0：同上，消组件默认 1px 灰框（UAT3）
-                .border(0.0f, t.colors.borderDefault)
+                .fontSize(14.0f)
+                .colors(t.colors.surface,
+                        t.colors.primarySoftBg,
+                        t.colors.primarySoftBg)
+                .textColor(t.colors.primary)
+                .radius(8.0f)
+                .border(1.0f, t.colors.primary)
                 .onClick([f = a.edit, warn = a.warn, shownCopy] {
                     if (shownCopy.id == 0) {
                         warn("编辑失败", "请先新建或选择一个 Profile");
@@ -900,20 +897,16 @@ void drawDetailActions(eui::Ui& ui, float x0, float w, float actY,
                     f(shownCopy);
                 })
                 .build();
-            // 运行 §5 微信绿主按钮（UAT3：用户反馈灰底框——旧 Text 级透明底被组件
-            // 默认 1px border 画出灰框；改为该页核心操作 Primary：绿填充+白字，
-            // 显式 border 0 消默认边框，同 todo_ui_board 0 宽先例）
+            // 运行（Filled 主按钮：绿底白字）
             components::button(ui, "claude.act.run")
-                .size(actW, 36.0f)
+                .size(actW, 40.0f)
                 .text("运行")
-                .fontSize(t.sizes.fontSizeSmall)
+                .fontSize(14.0f)
                 .colors(t.colors.primary,
                         t.colors.primaryHover,
                         t.colors.primaryPressed)
                 .textColor(t.colors.onPrimary)
-                .iconColor(t.colors.onPrimary)
-                .radius(t.sizes.radiusWeChat)
-                .border(0.0f, t.colors.borderDefault)
+                .radius(8.0f)
                 .onClick([f = a.run, warn = a.warn, shownId] {
                     if (shownId == 0) {
                         warn("运行失败", "请先选择 Profile");
@@ -925,9 +918,18 @@ void drawDetailActions(eui::Ui& ui, float x0, float w, float actY,
         })
         .build();
 
-    // §5「运行」副提示（长解释收 tooltip/帮助；EUI tooltip 待绑定，暂留简短提示）
+    // S3.4 「运行」tooltip 区分语义
+    components::tooltip(ui, "claude.act.run.tooltip")
+        .theme(core::theme::componentTokensWeChat(t))
+        .source("claude.act.run")
+        .value("以该 Profile 直接打开 Claude Code 会话（不改全局设置）")
+        .minWidth(280.0f)
+        .maxWidth(320.0f)
+        .build();
+
+    // §5「运行」副提示
     ui.text("claude.act.run.hint")
-        .position(x0, actY + 40.0f)
+        .position(x0, actY + 44.0f)
         .size(w, 16.0f)
         .text("以该 Profile 直接打开 Claude Code（不改当前设置）")
         .fontSize(11.0f)
@@ -937,7 +939,7 @@ void drawDetailActions(eui::Ui& ui, float x0, float w, float actY,
 
     // 分隔线
     ui.rect("claude.divider")
-        .position(x0, actY + 60.0f)
+        .position(x0, actY + 64.0f)
         .size(w, 1.0f)
         .color(t.colors.hover)
         .radius(t.sizes.radius)
