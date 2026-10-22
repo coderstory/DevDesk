@@ -76,6 +76,7 @@ inline components::theme::ThemeColorTokens DevDeskTheme::dark() {
     t.primaryHover  = color(62.0f / 255.0f, 219.0f / 255.0f, 166.0f / 255.0f);  // #3EDBA6
     t.primaryActive = color(46.0f / 255.0f, 196.0f / 255.0f, 143.0f / 255.0f);  // #2EC48F
     t.primarySoftBg = color(13.0f / 255.0f, 51.0f / 255.0f, 38.0f / 255.0f);   // #0D3326
+    t.primaryText   = color(54.0f / 255.0f, 211.0f / 255.0f, 153.0f / 255.0f);   // #36D399（暗主题 primaryText = 主色本体，深底对比度 ~7.85:1）
 
     // Text (light on dark)
     t.text          = color(250.0f / 255.0f, 249.0f / 255.0f, 245.0f / 255.0f); // #FAF9F5
@@ -130,14 +131,14 @@ inline void DevDeskTheme::registerWidgetStyles() {
 
     // ---- Button:Outline -------------------------------------------------------
     reg.set("Button", "Outline", "default",
-            WidgetStyleEntry{cWhite, t.primary, t.primary, 8.0f, 14.0f, 40.0f});
+            WidgetStyleEntry{t.surface, t.primary, t.primary, 8.0f, 14.0f, 40.0f});
     reg.set("Button", "Outline", "hover",
             WidgetStyleEntry{t.primarySoftBg, t.primary, t.primary, 8.0f, 14.0f, 40.0f});
     reg.set("Button", "Outline", "pressed",
             WidgetStyleEntry{withOpacity(t.primaryActive, 0.15f), t.primaryActive,
                              t.primaryActive, 8.0f, 14.0f, 40.0f});
     reg.set("Button", "Outline", "disabled",
-            WidgetStyleEntry{cWhite, t.textDisabled, t.textDisabled, 8.0f, 14.0f, 40.0f});
+            WidgetStyleEntry{t.surface, t.textDisabled, t.textDisabled, 8.0f, 14.0f, 40.0f});
 
     // ---- Button:Ghost ---------------------------------------------------------
     reg.set("Button", "Ghost", "default",

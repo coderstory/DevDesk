@@ -39,7 +39,7 @@ namespace {
         c.wechat.primary = eui::Color("#36D399");
         c.wechat.primaryHover = eui::Color("#2EC48F");
         c.wechat.primaryPressed = eui::Color("#23B07F");
-        c.wechat.primaryText = eui::Color("#23B07F");
+        c.wechat.primaryText = eui::Color("#36D399");  // 暗主题用 primary 本身即够（~7.85:1 on #1A1816）
         c.wechat.onPrimary = eui::Color("#FFFFFF");
         c.wechat.warningRed = eui::Color("#EF4444");
         c.wechat.linkBlue = eui::Color("#3B82F6");
@@ -90,7 +90,7 @@ namespace {
         c.primaryHover = eui::Color("#2EC48F");
         c.primaryPressed = eui::Color("#23B07F");
         c.primarySoftBg = eui::Color("#E6FBF2");
-        c.primaryText = eui::Color("#23B07F");
+        c.primaryText = eui::Color("#157E4E");  // ~4.87:1 on #FAFAF9 ≥ WCAG AA 4.5:1（审计 F3.4 裁决）
         c.onPrimary = eui::Color("#FFFFFF");
         c.textPrimary = eui::Color("#1F2937");
         c.textSecondary = eui::Color("#4B5563");
@@ -109,7 +109,7 @@ namespace {
         c.wechat.primary = eui::Color("#36D399");
         c.wechat.primaryHover = eui::Color("#2EC48F");
         c.wechat.primaryPressed = eui::Color("#23B07F");
-        c.wechat.primaryText = eui::Color("#23B07F");
+        c.wechat.primaryText = eui::Color("#157E4E");  // ~4.87:1 on #FAFAF9 ≥ WCAG AA 4.5:1
         c.wechat.onPrimary = eui::Color("#FFFFFF");
         c.wechat.warningRed = eui::Color("#EF4444");
         c.wechat.linkBlue = eui::Color("#3B82F6");
