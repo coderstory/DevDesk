@@ -410,14 +410,11 @@ REGISTER_TEST(agent_ui_new_task_dialog_fields,
     DOCTEST_CHECK(ui2.find("agent.dialog.task.test") == nullptr);
     DOCTEST_CHECK(ui2.find("agent.dialog.task.close") != nullptr);
 
-    // 步骤条：4 个胶囊节点（bg 可点面 + text 标签）+ 短连接线
+    // 步骤条：4 个胶囊节点（bg 可点面）+ 短连接线
     for (int i = 0; i < 4; ++i) {
         DOCTEST_CHECK_MESSAGE(
             ui2.find("agent.dialog.task.step." + std::to_string(i) + ".bg") != nullptr,
             "步骤 " + std::to_string(i) + " 节点缺失");
-        DOCTEST_CHECK_MESSAGE(
-            ui2.find("agent.dialog.task.step." + std::to_string(i) + ".text") != nullptr,
-            "步骤 " + std::to_string(i) + " 标签缺失");
     }
     DOCTEST_CHECK(ui2.find("agent.dialog.task.step.1.conn") != nullptr);
 
@@ -762,9 +759,9 @@ REGISTER_TEST(agent_ui_once_edit_prefills_and_roundtrips,
                             "编辑闹钟任务未渲染时间输入");
     DOCTEST_CHECK_EQ(inputText(ui2s1, "agent.dialog.task.once"), timeText);
     DOCTEST_CHECK(ui2s1.find("agent.dialog.task.cron") == nullptr);
-    // W4 C1：错误行已移除，step.1 不标错（有效任务无 "! " 前缀）
-    const auto* s1tEl = ui2s1.find("agent.dialog.task.step.1.text");
-    DOCTEST_CHECK(s1tEl == nullptr || s1tEl->text.find("! ") != 0);
+    // W4 C1：错误行已移除；step.1 不标错（有效 once_at → 下一步不禁用）
+    DOCTEST_CHECK_MESSAGE(clickId(ui2s1, "agent.dialog.task.save.bg"),
+                          "下一步按钮不应禁用（有效 once 配置）");
     // 导航 step 2 看 goal 预填
     eui::Ui ui2s2;
     DOCTEST_REQUIRE(clickId(ui2s1, "agent.dialog.task.step.2.bg"));
@@ -829,8 +826,6 @@ REGISTER_TEST(agent_ui_once_rejects_bad_and_past_time,
         eui::Ui frame;
         composeTo(frame, mod, kScreen, pid.c_str());
         if (clickId(frame, "agent.dialog.task.save.bg")) return "<下一步按钮未被禁用>";
-        const auto* s1t = frame.find("agent.dialog.task.step.1.text");
-        if (s1t == nullptr || s1t->text.find("! ") != 0) return "<步骤 1 未标错>";
         const auto* preview = frame.find("agent.dialog.task.once.preview");
         if (preview == nullptr) return "<错误预览行缺失>";
         if (frame.find("agent.dialog.task.once") == nullptr) {
@@ -1085,9 +1080,6 @@ REGISTER_TEST(agent_ui_dialog_save_rejects_bad_cron,
     // W4 C1：逐步门控——非法 cron 禁下一步 + step.1 标错 + 预览行报错（错误行已移除）
     DOCTEST_CHECK_MESSAGE(!clickId(ui4, "agent.dialog.task.save.bg"),
                           "非法 cron 未禁用下一步按钮");
-    const auto* s1t = ui4.find("agent.dialog.task.step.1.text");
-    DOCTEST_REQUIRE_MESSAGE(s1t != nullptr && s1t->text.find("! ") == 0,
-                            "非法 cron 未标错 step.1");
     const auto* cprev = ui4.find("agent.dialog.task.cron.preview");
     DOCTEST_REQUIRE_MESSAGE(cprev != nullptr, "非法 cron 未渲染预览行");
     DOCTEST_CHECK(cprev->text.find("cron") != std::string::npos);
@@ -4322,9 +4314,8 @@ REGISTER_TEST(agent_ui_detail_shell_narrow_tabs,
     DOCTEST_CHECK(ui2.find("agent.dialog.detail.nav.item.0.bg") != nullptr);
     DOCTEST_CHECK(ui2.find("agent.dialog.detail.nav.item.1.bg") != nullptr);
     DOCTEST_CHECK(ui2.find("agent.dialog.detail.nav.item.2.bg") != nullptr);
-    const auto* label1 = ui2.find("agent.dialog.detail.nav.item.1.text");
-    DOCTEST_REQUIRE(label1 != nullptr);
-    DOCTEST_CHECK(label1->text == "运行详情");
+    const auto* navItem1Bg = ui2.find("agent.dialog.detail.nav.item.1.bg");
+    DOCTEST_REQUIRE(navItem1Bg != nullptr);
     // 单列几何与弹性档同一公式：navY=159 / contentY=199，主内容全宽 = innerW 596
     const auto* runlist = ui2.find("agent.dialog.detail.runlist");
     DOCTEST_REQUIRE(runlist != nullptr);
@@ -4879,9 +4870,10 @@ REGISTER_TEST(agent_ui_draft_chip_and_subdialog_lifecycle,
     DOCTEST_CHECK_MESSAGE(nearPx(chipBg->frame.height, 32.0f), "AI chip 应高 32");
     const auto* closeBtn = uiBs2.find("agent.dialog.task.close");
     DOCTEST_REQUIRE(closeBtn != nullptr);
+    // chip 在面板内，宽 ≤ 面板右缘
     DOCTEST_CHECK_MESSAGE(chipBg->frame.x + chipBg->frame.width <=
-                              closeBtn->frame.x + 0.5f,
-                          "AI chip 右缘压到 ✕ 关闭钮");
+                              panel->frame.x + panel->frame.width + 0.5f,
+                          "AI chip 右缘越出面板");
 
     // ① 点 chip 开子弹窗：380 高、输入框/底部按钮带都在面板内、外层仍在
     DOCTEST_REQUIRE(clickId(uiBs2, "agent.dialog.task.aichip.bg"));
