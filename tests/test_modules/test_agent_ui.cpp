@@ -2308,9 +2308,11 @@ REGISTER_TEST(agent_ui_dialog_geometry_design_size_and_budget,
     const float px = panel->frame.x;
     const float py = panel->frame.y;
     const float pw = 800.0f;
-    const float innerW = pw - 56.0f;   // 744
+    // 裁定 2：内容区双侧内边距 24px（v1.0 §三.4），正文行宽 = 弹窗宽 − 2×24 = −48。
+    // 旧锚 56（28×2）为收紧前口径；kDialogBodyInsetX = 48 是产品真值。
+    const float innerW = pw - 48.0f;   // 752
 
-    // ② 步骤胶囊几何：4 块面节点 y=64 h=32 r=16，首节点 step.0 在 (28, 64)
+    // ② 步骤胶囊几何：4 块面节点 y=64 h=32 r=16，首节点 step.0 在 (24, 64)
     constexpr float kPillH = 32.0f;
     constexpr float kStepperY = 64.0f;
     const auto* step0 = ui2.find("agent.dialog.task.step.0");
@@ -2319,35 +2321,38 @@ REGISTER_TEST(agent_ui_dialog_geometry_design_size_and_budget,
     DOCTEST_CHECK_MESSAGE(nearPx(step0->frame.y - py, kStepperY), "step.0 y 应=64");
     DOCTEST_CHECK_MESSAGE(nearPx(step0->frame.height, kPillH), "step.0 h 应=32");
 
-    // ②b step 0：名称输入 y=144（kContentTop+28）h=40 全宽
+    // ②b step 0：名称输入 y=144（kContentTop+28）h=40 全宽（x0=24）
     const auto* nameInput = ui2.find("agent.dialog.task.name");
     DOCTEST_REQUIRE(nameInput != nullptr);
-    DOCTEST_CHECK_MESSAGE(nearPx(nameInput->frame.x - px, 28.0f), "名称输入应 x=28");
+    DOCTEST_CHECK_MESSAGE(nearPx(nameInput->frame.x - px, 24.0f), "名称输入应 x=24");
     DOCTEST_CHECK_MESSAGE(nearPx(nameInput->frame.y - py, 144.0f), "名称输入应 y=144");
     DOCTEST_CHECK_MESSAGE(nearPx(nameInput->frame.height, 40.0f), "名称输入应高 40");
     DOCTEST_CHECK_MESSAGE(nearPx(nameInput->frame.width, innerW),
-                          "名称输入应全宽 744，实测 " +
+                          "名称输入应全宽 752，实测 " +
                               std::to_string(nameInput->frame.width));
 
-    // ③ 导航 step 1：触发 segment 平分整行（opW=119 x=28+i*125 y=136 h=32）
+    // ③ 导航 step 1：触发 segment 平分整行（opW=(752−5×6)/6≈120.33 x=24+i×(opW+6) y=136 h=32）
     eui::Ui ui2s1;
     DOCTEST_REQUIRE(clickId(ui2, "agent.dialog.task.step.1.bg"));
     composeTo(ui2s1, mod, kScreen, "agent_ui_geo2s1");
+    const float opW = (innerW - 6.0f * 5.0f) / 6.0f;  // 与产品码同公式
     for (int i = 0; i < module::agent::kTriggerCount; ++i) {
         const auto* op = ui2s1.find("agent.dialog.task.trigger.item." +
                                     std::to_string(i) + ".bg");
         DOCTEST_REQUIRE(op != nullptr);
-        DOCTEST_CHECK_MESSAGE(nearPx(op->frame.x - px, 28.0f + 125.0f * i),
-                              "segment 第 " + std::to_string(i) + " 项 x 错位");
-        DOCTEST_CHECK_MESSAGE(nearPx(op->frame.width, 119.0f),
-                              "segment 第 " + std::to_string(i) + " 项宽应 119");
+        DOCTEST_CHECK_MESSAGE(
+            nearPx(op->frame.x - px, 24.0f + (opW + 6.0f) * i),
+            "segment 第 " + std::to_string(i) + " 项 x 错位");
+        DOCTEST_CHECK_MESSAGE(nearPx(op->frame.width, opW),
+                              "segment 第 " + std::to_string(i) + " 项宽应 " +
+                                  std::to_string(opW));
         DOCTEST_CHECK(nearPx(op->frame.height, 32.0f));
         DOCTEST_CHECK(nearPx(op->frame.y - py, 136.0f));
     }
     const auto* segLast = ui2s1.find("agent.dialog.task.trigger.item.5.bg");
     DOCTEST_REQUIRE(segLast != nullptr);
     DOCTEST_CHECK(segLast->frame.x - px + segLast->frame.width <=
-                  28.0f + innerW + 0.5f);
+                  24.0f + innerW + 0.5f);
 
     // ④ 导航 step 2：goal textarea h≥60 全宽；行底 ≤ 按钮行顶
     eui::Ui ui2s2;
@@ -2359,7 +2364,7 @@ REGISTER_TEST(agent_ui_dialog_geometry_design_size_and_budget,
                           "编辑弹窗 goal 输入应 ≥60px，实测 " +
                               std::to_string(goal->frame.height));
     DOCTEST_CHECK_MESSAGE(nearPx(goal->frame.width, innerW),
-                          "goal 输入应全宽 744，实测 " +
+                          "goal 输入应全宽 752，实测 " +
                               std::to_string(goal->frame.width));
     const auto* saveBtn = ui2s2.find("agent.dialog.task.save");
     DOCTEST_REQUIRE_MESSAGE(saveBtn != nullptr, "保存按钮缺失");
@@ -2472,18 +2477,19 @@ REGISTER_TEST(agent_ui_detail_dialog_geometry_and_empty_state,
         "详情弹窗宽应为弹性值 max(720, 1600/2)=800，实测 " +
             std::to_string(panel->frame.width));
     DOCTEST_CHECK_MESSAGE(nearPx(panel->frame.height, 552.0f),
-                          "详情弹窗高应为设计值 660，实测 " +
+                          "详情弹窗高应为设计值 552，实测 " +
                               std::to_string(panel->frame.height));
     // 头部真实任务名（方案 A：不再恒「任务详情」）
     const auto* title = ui2.find("agent.dialog.detail.title");
     DOCTEST_REQUIRE(title != nullptr);
     DOCTEST_CHECK_EQ(title->text, std::string("有消息"));
     // 执行记录 tab 全宽单列（三档 tab 互斥；旧双栏退役）
+    // 裁定 2：innerW = 弹窗宽 − 2×24（v1.0 §三.4 内容区双侧 24px 内边距）
     const auto* runlist = ui2.find("agent.dialog.detail.runlist");
     DOCTEST_REQUIRE(runlist != nullptr);
     DOCTEST_CHECK_MESSAGE(
-        nearPx(runlist->frame.width, panel->frame.width - 52.0f),
-        "执行记录应为单列全宽（innerW = 弹性宽-56），实测 " +
+        nearPx(runlist->frame.width, panel->frame.width - 48.0f),
+        "执行记录应为单列全宽（innerW = 弹性宽-48），实测 " +
             std::to_string(runlist->frame.width));
     DOCTEST_CHECK(ui2.find("agent.dialog.detail.detail") == nullptr);
     DOCTEST_CHECK(ui2.find("agent.dialog.detail.config.scroll") == nullptr);
@@ -4077,20 +4083,20 @@ REGISTER_TEST(agent_ui_detail_dialog_run_summary,
         nearPx(nav->frame.y - panel->frame.y, 143.0f),
         "segment 应在面板顶 +143（实测锚定），实测 " +
             std::to_string(nav->frame.y - panel->frame.y));
-    DOCTEST_CHECK_MESSAGE(nearPx(nav->frame.width, 744.0f),
-                          "segment 应全宽 744（弹性宽 800-56），实测 " +
+    DOCTEST_CHECK_MESSAGE(nearPx(nav->frame.width, 752.0f),
+                          "segment 应全宽 752（弹性宽 800-48，裁定 2：内容区双侧 24px），实测 " +
                               std::to_string(nav->frame.width));
     DOCTEST_CHECK_MESSAGE(
-        nearPx(runlist->frame.y - panel->frame.y, 199.0f),
-        "tab 内容区应在面板顶 +199（nav 底 +8），实测 " +
+        nearPx(runlist->frame.y - panel->frame.y, 183.0f),
+        "tab 内容区应在面板顶 +183（navY 143 + kNavH 32 + 8，UAT6.1 顶部收紧后），实测 " +
             std::to_string(runlist->frame.y - panel->frame.y));
     DOCTEST_CHECK_MESSAGE(
         runlist->frame.y + runlist->frame.height <=
             panel->frame.y + panel->frame.height - 23.5f,
         "主区溢出面板底（底部按钮带需让位）");
     DOCTEST_CHECK_MESSAGE(
-        nearPx(runlist->frame.width, 744.0f),
-        "执行记录应单列全宽 744（旧左右分栏已退役），实测 " +
+        nearPx(runlist->frame.width, 752.0f),
+        "执行记录应单列全宽 752（旧左右分栏已退役），实测 " +
             std::to_string(runlist->frame.width));
 
     // 无 run 的任务：三卡照常渲染（空态文案），几何与有 run 完全一致（不再下移）
@@ -4172,7 +4178,7 @@ REGISTER_TEST(agent_ui_detail_summary_error_visible,
 // 窄窗钳制（700×560 → 652×512）/ 矮窗钳制（900×600 → 720×552）
 
 REGISTER_TEST(agent_ui_detail_shell_wide_default,
-              "agent_ui: 布局壳弹性档 800×660——segment 三档绿底白字（反向锁死暖橙）/ tab 互斥 / 消息折叠展开档位 / summaryH=81", {
+              "agent_ui: 布局壳弹性档 800×660——segment 三档薄荷绿 primary（D-12 令牌统一）/ tab 互斥 / 消息折叠展开档位 / summaryH=81", {
     test_support::TestDb tdb("agentui", "shellwide");
     test_support::FakeProfileSource profile;
     ToolGuard statsGuard{"app.stats", "app.notify"};
@@ -4217,20 +4223,18 @@ REGISTER_TEST(agent_ui_detail_shell_wide_default,
     const auto* navOff = ui2.find("agent.dialog.detail.nav.item.1.bg");
     DOCTEST_REQUIRE_MESSAGE(navOn != nullptr && navOff != nullptr,
                             "segment 缺 .nav.item.<i>.bg（三档手搓 segment）");
-    // 正向：选中块 = wechat 绿（任务弹窗同语言）
+    // 正向：选中块 = 薄荷绿 primary（D-12 迁移后 primary 槽位即 #36D399，
+    // 与产品码 t.colors.primary 同源；任务弹窗 segment 同语言）
     DOCTEST_CHECK_MESSAGE(
         nearPx(navOn->color.r, tok.colors.primary.r) &&
             nearPx(navOn->color.g, tok.colors.primary.g) &&
             nearPx(navOn->color.b, tok.colors.primary.b),
-        "segment 选中块应为 wechat 绿底，实测 rgb(" +
+        "segment 选中块应为薄荷绿 primary 底，实测 rgb(" +
             std::to_string(navOn->color.r) + "," + std::to_string(navOn->color.g) +
             "," + std::to_string(navOn->color.b) + ")");
-    // 反向锁死：选中块不得回潮 module 暖橙（旧 EUI-NEO segmented 选中色）
-    DOCTEST_CHECK_MESSAGE(
-        !(nearPx(navOn->color.r, tok.colors.primary.r) &&
-          nearPx(navOn->color.g, tok.colors.primary.g) &&
-          nearPx(navOn->color.b, tok.colors.primary.b)),
-        "segment 选中块回潮成暖橙 primary（必须 wechat 绿）");
+    // 旧「反向锁死暖橙」断言已删：W2.3（b6e3161d）扫荡后 primary 槽位就是
+    // 薄荷绿（暖橙旧槽在 D-12 迁移中退役），该断言与正向断言共用同一令牌、
+    // 自相矛盾恒红。暖橙令牌已不存在，无可锁对象。
     // 未选中：灰底深字（background 底 + textPrimary 文字）
     DOCTEST_CHECK_MESSAGE(
         nearPx(navOff->color.r, tok.colors.background.r) &&
@@ -4898,9 +4902,9 @@ REGISTER_TEST(agent_ui_draft_chip_and_subdialog_lifecycle,
     DOCTEST_CHECK_MESSAGE(frameContained(*dpanel, *genBtn) &&
                               frameContained(*dpanel, *dismissBtn),
                           "按钮行跑出子弹窗");
-    // UAT6 重排：输入区加高填满内容宽（460-56=404、高 140）
+    // UAT6 重排：输入区加高填满内容宽（裁定 2：内容区双侧 24px，460−48=412、高 140）
     DOCTEST_CHECK_MESSAGE(
-        nearPx(dinput->frame.width, dpanel->frame.width - 56.0f),
+        nearPx(dinput->frame.width, dpanel->frame.width - 48.0f),
         "草稿输入框应填满弹窗内容区，实测宽 " +
             std::to_string(dinput->frame.width));
     DOCTEST_CHECK_MESSAGE(nearPx(dinput->frame.height, 140.0f),
@@ -4965,7 +4969,12 @@ REGISTER_TEST(agent_ui_draft_chip_and_subdialog_lifecycle,
     DOCTEST_REQUIRE(clickId(uiG, "agent.page.newTask.bg"));
     eui::Ui uiH;
     composeTo(uiH, mod, kScreen, "agent_ui_dfl7");
-    DOCTEST_REQUIRE(clickId(uiH, "agent.dialog.task.aichip.bg"));
+    // 裁定 3：aichip 只在 step 2 渲染（设计稿 08-新建任务wizard 只在「系统指令」
+    // 步给 AI 起草按钮，点击无跨步导航语义），点前先导航到 step 2。
+    DOCTEST_REQUIRE(clickId(uiH, "agent.dialog.task.step.2.bg"));
+    eui::Ui uiH2;
+    composeTo(uiH2, mod, kScreen, "agent_ui_dfl7s2");
+    DOCTEST_REQUIRE(clickId(uiH2, "agent.dialog.task.aichip.bg"));
     eui::Ui uiI;
     composeTo(uiI, mod, kScreen, "agent_ui_dfl8");
     DOCTEST_REQUIRE_MESSAGE(
@@ -5012,7 +5021,11 @@ REGISTER_TEST(agent_ui_draft_async_prefill_no_autosave,
     DOCTEST_REQUIRE(clickId(uiA, "agent.empty.btn.bg"));
     eui::Ui uiB;
     composeTo(uiB, mod, kScreen, "agent_ui_dpf1");
-    DOCTEST_REQUIRE(clickId(uiB, "agent.dialog.task.aichip.bg"));
+    // 裁定 3：aichip 只在 step 2 渲染，先导航（设计稿 08 无跨步导航语义）
+    DOCTEST_REQUIRE(clickId(uiB, "agent.dialog.task.step.2.bg"));
+    eui::Ui uiB2;
+    composeTo(uiB2, mod, kScreen, "agent_ui_dpf1s2");
+    DOCTEST_REQUIRE(clickId(uiB2, "agent.dialog.task.aichip.bg"));
     eui::Ui uiC;
     composeTo(uiC, mod, kScreen, "agent_ui_dpf2");
     auto* hit = uiC.find("agent.dialog.task.draft.input.hit");
@@ -5038,8 +5051,8 @@ REGISTER_TEST(agent_ui_draft_async_prefill_no_autosave,
                      std::string("每天 8 点整理热榜并发通知"));
     DOCTEST_CHECK_EQ(inputText(u, "agent.dialog.task.cron"),
                      std::string("0 8 * * *"));
-    DOCTEST_CHECK_EQ(inputText(u, "agent.dialog.task.note"),
-                     std::string("只处理 top3"));
+    // W4 C3：执行记忆（note）字段已移除并入 systemPrompt，回填断言删除；
+    // 载荷里的 contextNote 不再解析（task_draft.cpp 注释同口径）。
     const auto* cronAfterFill = u.find("agent.dialog.task.cron");
     DOCTEST_REQUIRE(cronAfterFill != nullptr);
     // 完成提示行 + 无警告/错误行；子弹窗与外层都保持打开（生成不关窗）
@@ -5100,7 +5113,11 @@ REGISTER_TEST(agent_ui_draft_degrade_warning_no_trigger_takeover,
     composeTo(uiB, mod, kScreen, "agent_ui_dwr1");
     // 先手动选「定时」：模型载荷不可信时不得把它改掉 / 也不得回填坏 cron
     DOCTEST_REQUIRE(callDropdownChange(uiB, "agent.dialog.task.trigger", 1));
-    DOCTEST_REQUIRE(clickId(uiB, "agent.dialog.task.aichip.bg"));
+    // 裁定 3：aichip 只在 step 2 渲染，先导航（设计稿 08 无跨步导航语义）
+    DOCTEST_REQUIRE(clickId(uiB, "agent.dialog.task.step.2.bg"));
+    eui::Ui uiB2;
+    composeTo(uiB2, mod, kScreen, "agent_ui_dwr1s2");
+    DOCTEST_REQUIRE(clickId(uiB2, "agent.dialog.task.aichip.bg"));
     eui::Ui uiC;
     composeTo(uiC, mod, kScreen, "agent_ui_dwr2");
     auto* hit = uiC.find("agent.dialog.task.draft.input.hit");
@@ -5173,7 +5190,11 @@ REGISTER_TEST(agent_ui_draft_error_paths,
     DOCTEST_REQUIRE(clickId(uiA, "agent.empty.btn.bg"));
     eui::Ui uiB;
     composeTo(uiB, mod, kScreen, "agent_ui_der1");
-    DOCTEST_REQUIRE(clickId(uiB, "agent.dialog.task.aichip.bg"));
+    // 裁定 3：aichip 只在 step 2 渲染，先导航（设计稿 08 无跨步导航语义）
+    DOCTEST_REQUIRE(clickId(uiB, "agent.dialog.task.step.2.bg"));
+    eui::Ui uiB2;
+    composeTo(uiB2, mod, kScreen, "agent_ui_der1s2");
+    DOCTEST_REQUIRE(clickId(uiB2, "agent.dialog.task.aichip.bg"));
     eui::Ui uiC;
     composeTo(uiC, mod, kScreen, "agent_ui_der2");
 
@@ -5258,7 +5279,12 @@ REGISTER_TEST(agent_ui_draft_close_discards_inflight_result,
     DOCTEST_REQUIRE(clickId(uiA, "agent.empty.btn.bg"));
     eui::Ui uiB;
     composeTo(uiB, mod, kScreen, "agent_ui_ddc1");
-    DOCTEST_REQUIRE(clickId(uiB, "agent.dialog.task.aichip.bg"));
+    // 裁定 3：aichip 只在 step 2 渲染，先导航（设计稿 08 无跨步导航语义）；
+    // 导航后 currentStep_ 保持 2，后续循环内与收尾重开点击无需再导航。
+    DOCTEST_REQUIRE(clickId(uiB, "agent.dialog.task.step.2.bg"));
+    eui::Ui uiB2;
+    composeTo(uiB2, mod, kScreen, "agent_ui_ddc1s2");
+    DOCTEST_REQUIRE(clickId(uiB2, "agent.dialog.task.aichip.bg"));
     eui::Ui uiC;
     composeTo(uiC, mod, kScreen, "agent_ui_ddc2");
     auto* hit = uiC.find("agent.dialog.task.draft.input.hit");
