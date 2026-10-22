@@ -392,7 +392,7 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
             // 防跳动断言不动；品牌文本由自绘标题栏承载。
             // UAT5：logo 36→48 按用户拍板放大（「不够大」），行高 32→56 随之加高
             //（48 瓦在 56 行内居中上下各留 4px，不再溢出），首个导航起点
-            // 40+56+28=124 连锁（test_app_sidebar 各导航 y 断言同步）。
+            // 32+56+28=116 连锁（test_app_sidebar 各导航 y 断言同步）。
             ui.stack("app.sidebar.brand")
                 .position(0.0f, topPad)
                 .size(kWidth, kBrandH)
