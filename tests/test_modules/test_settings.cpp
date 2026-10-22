@@ -4525,12 +4525,12 @@ REGISTER_TEST(settings_dropdown_fill_available_width,
         mod->compose(ui, screen);
         ui.end();
         ui.layout(screen.width, screen.height);
-        // log 全宽卡：卡内列 colW=(712−72)/2=320 → cw=202
+        // log 全宽卡：S4.2 pad 40→32 → colW=(728−72)/2=328 → cw=210（H3 漂移 +8）
         DOCTEST_CHECK_MESSAGE(
-            nearEq(ddwrapW(ui, "settings.card.log.ddwrap"), 202.0f),
+            nearEq(ddwrapW(ui, "settings.card.log.ddwrap"), 210.0f),
             "log 窄窗下拉宽 " +
                 std::to_string(ddwrapW(ui, "settings.card.log.ddwrap")) +
-                " 期望 202（窄窗让位收缩不变）");
+                " 期望 210（窄窗让位收缩随 H3 骨架漂移）");
     }
 
     mod->onStop();

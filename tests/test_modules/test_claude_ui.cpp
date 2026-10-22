@@ -5981,10 +5981,10 @@ REGISTER_TEST(claude_calls_rows_by_available_height,
     // 截断必须有可见表达（与 env 页签同款口径）
     const auto* overflow = ui2.find("claude.calls.overflow");
     DOCTEST_REQUIRE(overflow != nullptr);
-    DOCTEST_CHECK(overflow->text.find("另有 13 条") != std::string::npos);
+    DOCTEST_CHECK(overflow->text.find("另有 14 条") != std::string::npos);
 
     // 行区不越过内容框底：末行底 ≤ 内容框底（真实裁剪下沿）
-    const auto* last = ui2.find("claude.calls.d.16");
+    const auto* last = ui2.find("claude.calls.d.15");
     DOCTEST_REQUIRE(last != nullptr);
     const auto* viewall = ui2.find("claude.calls.viewall.hit");
     DOCTEST_REQUIRE(viewall != nullptr);
