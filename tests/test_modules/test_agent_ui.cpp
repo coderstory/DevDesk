@@ -1116,6 +1116,8 @@ REGISTER_TEST(agent_ui_dialog_cancel_close_backdrop_esc,
     auto typedGoalAndCompose = [&](const char* pageId, eui::Ui& ui) -> bool {
         eui::Ui page;
         if (!openNewTaskDialog(page, mod, pageId)) return false;
+        // W4 步骤条：goal 在 step 2，先导航
+        if (!clickId(page, "agent.dialog.task.step.2.bg")) return false;
         composeTo(ui, mod, kScreen, pageId);
         auto* hit = ui.find("agent.dialog.task.goal.hit");
         if (hit == nullptr) return false;
