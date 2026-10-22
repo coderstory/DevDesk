@@ -58,9 +58,11 @@ public:
     void compose(eui::Ui& ui, const eui::Screen& screen) override {
         const auto& t = core::theme::current();
         const auto themeTokens = core::theme::componentTokensWeChat(t);
-        const float pad = t.sizes.spacingXXLarge;        // 40
-        const float contentW = screen.width - pad * 2.0f;
-        const float contentH = screen.height - pad * 2.0f;
+        // S3.4 顶部收紧为 24，左右下保持 40
+        const float padTop = t.sizes.spacingPanel;       // 24
+        const float padSide = t.sizes.spacingXXLarge;    // 40
+        const float contentW = screen.width - padSide * 2.0f;
+        const float contentH = screen.height - padTop - padSide;
         const std::time_t now = std::time(nullptr);   // 调用时间列「今天/昨天」判定
         const float headerH = ui_kit::kHeaderH;
         const float gap = t.sizes.spacingLarge;
@@ -78,7 +80,9 @@ public:
 
         // 引导条：代理未运行且本会话从未启动过时显示（内存态一次性）
         if (proxyRunning) state_.list.proxyEverSeen_ = true;
-        const bool showGuide = !proxyRunning && !state_.list.proxyEverSeen_;
+        // S3.4 引导条可手动关闭
+        const bool showGuide = !proxyRunning && !state_.list.proxyEverSeen_ &&
+                               !state_.list.guideDismissed_;
         // 预留高必须与绘制侧一致；bodyH 在 compose 期间就要传给左右子面板。
         const float bodyH = contentH - headerH - t.sizes.spacingLarge -
                             (showGuide ? kGuideBarH + t.sizes.spacingLarge : 0.0f);
@@ -211,13 +215,13 @@ public:
 
         ui.column("claude.root")
             .size(screen.width, screen.height)
-            .padding(pad)
+            .padding(padTop, padSide, padSide, padSide)
             .gap(t.sizes.spacingLarge)
             .content([&] {
                 drawClaudeHeader(ui, contentW, headerH, t, proxyRunning, portStr,
                                  [this] { doToggleProxy(); });
 
-                if (showGuide) drawClaudeGuideBar(ui, contentW, t);
+                if (showGuide) drawClaudeGuideBar(ui, contentW, t, state_.list);
 
                 ui.row("claude.body")
                     .size(contentW, bodyH)

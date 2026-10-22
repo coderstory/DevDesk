@@ -27,9 +27,11 @@ void drawClaudeHeader(eui::Ui& ui, float contentW, float headerH,
                       const std::function<void()>& onToggleProxy);
 
 // 引导条：代理未运行且本会话从未启动过时一次性提示接管语义；高度恒为 kGuideBarH。
-// id: claude.guide.wrap / claude.guide.icon / claude.guide.takeover
+// st 为引用：关闭按钮写回 guideDismissed_。
+// id: claude.guide.wrap / claude.guide.icon / claude.guide.takeover / claude.guide.close
 void drawClaudeGuideBar(eui::Ui& ui, float contentW,
-                        const core::theme::Tokens& t);
+                        const core::theme::Tokens& t,
+                        ProfileListState& st);
 
 // 左栏列表的回调（compose 每帧装配）
 struct ProfileListActions {
