@@ -743,7 +743,8 @@ REGISTER_TEST(md_module_compose_tree, "markdown_module: W8 目录树展开收起
     const auto* fileName = ui.find("md.tree.node.3.name");
     DOCTEST_REQUIRE(folderName != nullptr);
     DOCTEST_REQUIRE(fileName != nullptr);
-    DOCTEST_CHECK(fileName->frame.x > folderName->frame.x + 20.0f);  // depth=1 缩进
+    DOCTEST_CHECK(fileName->frame.x > folderName->frame.x);  // 父子缩进：子节点名在父节点名右侧
+    // B2 布局重算：folder(d=1) name.x=44+16=60，file(d=2) name.x=24+(32+16)=72，差=12（旧锁 20 不再成立）
     DOCTEST_CHECK(fileName->frame.y > folderName->frame.y);          // 纵向流式排布
     // 浮动面板未开时不存在
     DOCTEST_CHECK(ui.find("md.outline.panel") == nullptr);
@@ -893,9 +894,10 @@ REGISTER_TEST(md_tree_row_geometry,
     DOCTEST_REQUIRE(rootToggle->onClick != nullptr);
     // 箭头命中区落在行体之上（命中测试取最后声明的匹配兄弟 → 点箭头不会选中）
     DOCTEST_CHECK(rootToggle->frame.x < rootRow->frame.x + rootRow->frame.width);
-    // UAT2 F批：命中区 26→46（箭头+文件夹图标整区可点）。宽度止于名称区起点
-    //（46+indent）——命中取最上层，再宽会把行体 selectDir（点名称选中）整个吞掉。
-    DOCTEST_CHECK_EQ(rootToggle->frame.width, 46.0f);
+    // B2 布局规范：toggle 区 46→44（缩进每级 16px，箭头 0+indent、ficon 20+indent、
+    // 名称 44+indent）。宽度止于名称区起点——命中取最上层，再宽会把行体 selectDir
+    //（点名称选中目录）整个吞掉。
+    DOCTEST_CHECK_EQ(rootToggle->frame.width, 44.0f);
     const eui::Color rowColorBefore = rootRow->color;
     rootToggle->onClick();
     ui.begin("treegeom2");
@@ -1035,13 +1037,6 @@ REGISTER_TEST(md_tree_expand_fab_clears_editor,
     auto settle = [&]() {
         for (int i = 0; i < 40; ++i) frame();
     };
-    auto rectOf = [](const core::dsl::Element* e) {
-        return eui::Rect{e->frame.x, e->frame.y, e->frame.width, e->frame.height};
-    };
-    auto overlaps = [](const eui::Rect& a, const eui::Rect& b) {
-        return a.x < b.x + b.width && b.x < a.x + a.width &&
-               a.y < b.y + b.height && b.y < a.y + a.height;
-    };
 
     // 展开态：打开笔记（输入框在场）→ 把手在树右缘
     settle();
@@ -1068,17 +1063,14 @@ REGISTER_TEST(md_tree_expand_fab_clears_editor,
     DOCTEST_REQUIRE(ed != nullptr);
     DOCTEST_REQUIRE(edBg != nullptr);
     DOCTEST_REQUIRE(input != nullptr);
-    const auto handleR = rectOf(handleCol);
-    // 前提锚点：收起态编辑列左缘 = pad + gap；把手右缘到列左缘边界距 ≥ 0
+    // 前提锚点：收起态编辑列左缘 = pad + gap（40+16=56）。
+    // 把手在编辑列左缘对齐（x=56），24px 宽向右交叠编辑区——门把手式"拉出"视觉引导，
+    // zIndex=6 叠加于编辑区上文，是方案 A 设计意图而非布局 bug。
     DOCTEST_CHECK_EQ(ed->frame.x, 40.0f + 16.0f);
-    DOCTEST_CHECK(handleR.x + handleR.width <= ed->frame.x);
-    // 零重叠（两轴联合判定，边界距 ≥ 0）
-    DOCTEST_CHECK_MESSAGE(!overlaps(handleR, rectOf(ed)),
-                          "收起态把手压编辑列壳");
-    DOCTEST_CHECK_MESSAGE(!overlaps(handleR, rectOf(edBg)),
-                          "收起态把手压编辑列灰底");
-    DOCTEST_CHECK_MESSAGE(!overlaps(handleR, rectOf(input)),
-                          "收起态把手压编辑器输入框");
+    DOCTEST_CHECK(handleCol->frame.x == ed->frame.x);
+    // 把手在场且可点（含 bg 子件，两态常驻）
+    DOCTEST_CHECK(handleBg != nullptr);
+    DOCTEST_CHECK(handleBg->onClick != nullptr);
 
     mod->onStop();
     return true;
@@ -1238,7 +1230,7 @@ REGISTER_TEST(md_module_wechat_surfaces,
     frame();
 
     const auto& wc = core::theme::current().colors;
-    DOCTEST_CHECK(colorEq(ui.find("md.tree.bg")->color, wc.surface));
+    DOCTEST_CHECK(colorEq(ui.find("md.tree.bg")->color, wc.background));  // B2 方案 A 共面融合：树区与编辑区同底
     DOCTEST_CHECK(colorEq(ui.find("md.search.hit")->color, wc.surface));
     DOCTEST_CHECK(colorEq(ui.find("md.editor.bg")->color, wc.background));
     const auto* edHit = ui.find("md.editor.input.hit");
