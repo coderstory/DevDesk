@@ -39,10 +39,10 @@ REGISTER_TEST(ui_kit_button_primary_colors,
 
     const auto* bg = ui.find("btn.p.bg");
     DOCTEST_REQUIRE(bg != nullptr);
-    // bg 走 .states() 的 normal 态 = wechat.primary
-    DOCTEST_CHECK_EQ(toHexByte(bg->color.r), 0x07);
-    DOCTEST_CHECK_EQ(toHexByte(bg->color.g), 0xC1);
-    DOCTEST_CHECK_EQ(toHexByte(bg->color.b), 0x60);
+    // bg 走 .states() 的 normal 态 = primary #36D399（S1.2 #1）
+    DOCTEST_CHECK_EQ(toHexByte(bg->color.r), 0x36);
+    DOCTEST_CHECK_EQ(toHexByte(bg->color.g), 0xD3);
+    DOCTEST_CHECK_EQ(toHexByte(bg->color.b), 0x99);
 
     const auto* txt = ui.find("btn.p.text");
     DOCTEST_REQUIRE(txt != nullptr);
@@ -67,27 +67,27 @@ REGISTER_TEST(ui_kit_button_secondary_not_primary,
 
     const auto* bg = ui.find("btn.s.bg");
     DOCTEST_REQUIRE(bg != nullptr);
-    // bg = secondaryButtonBg #F2F2F2，不等于 primary #07C160
-    DOCTEST_CHECK_EQ(toHexByte(bg->color.r), 0xF2);
-    DOCTEST_CHECK_EQ(toHexByte(bg->color.g), 0xF2);
-    DOCTEST_CHECK_EQ(toHexByte(bg->color.b), 0xF2);
-    DOCTEST_CHECK(toHexByte(bg->color.r) != 0x07);  // 不等于 primary
-    DOCTEST_CHECK(toHexByte(bg->color.g) != 0xC1);
+    // bg = surfaceHover #F3F4F6（S1.2 #13），不等于 primary #36D399
+    DOCTEST_CHECK_EQ(toHexByte(bg->color.r), 0xF3);
+    DOCTEST_CHECK_EQ(toHexByte(bg->color.g), 0xF4);
+    DOCTEST_CHECK_EQ(toHexByte(bg->color.b), 0xF6);
+    DOCTEST_CHECK(toHexByte(bg->color.r) != 0x36);  // 不等于 primary
+    DOCTEST_CHECK(toHexByte(bg->color.g) != 0xD3);
 
     const auto* txt = ui.find("btn.s.text");
     DOCTEST_REQUIRE(txt != nullptr);
-    // text = textPrimary #1A1A1A（深灰，不是白字——区分主次）
-    DOCTEST_CHECK_EQ(toHexByte(txt->textColor.r), 0x1A);
-    DOCTEST_CHECK_EQ(toHexByte(txt->textColor.g), 0x1A);
-    DOCTEST_CHECK_EQ(toHexByte(txt->textColor.b), 0x1A);
+    // text = textPrimary #1F2937（S1.2 #10，深灰，不是白字——区分主次）
+    DOCTEST_CHECK_EQ(toHexByte(txt->textColor.r), 0x1F);
+    DOCTEST_CHECK_EQ(toHexByte(txt->textColor.g), 0x29);
+    DOCTEST_CHECK_EQ(toHexByte(txt->textColor.b), 0x37);
     return true;
 })
 
-// 场景3（防「统一尺寸漂移」）：四级按钮 height 全=34、font 全=14、radius 全=6
+// 场景3（防「统一尺寸漂移」）：四级按钮 height 全=40、font 全=14、radius 全=8
 //（同一档，不高低错落）。事故：某级按钮高度/font/圆角与其他级不一致致同视口
 // 按钮高低错落（spec §4.1 D-12 统一尺寸「避免高低错落」）。
 REGISTER_TEST(ui_kit_button_uniform_metrics,
-              "ui_kit button: 四级 height=34 / font=14 / radius=6 统一", {
+              "ui_kit button: 四级 height=40 / font=14 / radius=8 统一", {
     const auto& t = core::theme::current();
     eui::Ui ui;
     ui.begin("w02b_btn_uniform");
@@ -103,12 +103,12 @@ REGISTER_TEST(ui_kit_button_uniform_metrics,
         const std::string s = std::string(id);
         const auto* bg = ui.find(s + ".bg");
         DOCTEST_REQUIRE_MESSAGE(bg != nullptr, std::string("缺 ") + s + ".bg");
-        // 高度固定 34（kButtonHeight）
+        // 高度固定 40（kButtonHeight，S1.2 #35 / S2.1 按钮高度 40px）
         DOCTEST_CHECK_EQ(bg->height.value, ui_kit::kButtonHeight);
-        DOCTEST_CHECK_EQ(bg->height.value, 34.0f);
-        // 圆角 6（t.sizes.radiusWeChat，D-12 统一）
-        DOCTEST_CHECK_EQ(bg->radius, t.sizes.radiusWeChat);
-        DOCTEST_CHECK_EQ(bg->radius, 6.0f);
+        DOCTEST_CHECK_EQ(bg->height.value, 40.0f);
+        // 圆角 8（t.sizes.radius，S1.2 #38）
+        DOCTEST_CHECK_EQ(bg->radius, t.sizes.radius);
+        DOCTEST_CHECK_EQ(bg->radius, 8.0f);
 
         const auto* txt = ui.find(s + ".text");
         DOCTEST_REQUIRE_MESSAGE(txt != nullptr, std::string("缺 ") + s + ".text");
@@ -132,11 +132,11 @@ REGISTER_TEST(ui_kit_button_danger_red,
 
     const auto* bg = ui.find("btn.d.bg");
     DOCTEST_REQUIRE(bg != nullptr);
-    // bg = warningRed #FA5151，不是 primary 绿
-    DOCTEST_CHECK_EQ(toHexByte(bg->color.r), 0xFA);
-    DOCTEST_CHECK_EQ(toHexByte(bg->color.g), 0x51);
-    DOCTEST_CHECK_EQ(toHexByte(bg->color.b), 0x51);
-    DOCTEST_CHECK(toHexByte(bg->color.g) != 0xC1);  // 不等于 primary 绿的 G 通道
+    // bg = error #EF4444（S1.2 #15），不是 primary 绿
+    DOCTEST_CHECK_EQ(toHexByte(bg->color.r), 0xEF);
+    DOCTEST_CHECK_EQ(toHexByte(bg->color.g), 0x44);
+    DOCTEST_CHECK_EQ(toHexByte(bg->color.b), 0x44);
+    DOCTEST_CHECK(toHexByte(bg->color.g) != 0xD3);  // 不等于 primary 绿的 G 通道
 
     const auto* txt = ui.find("btn.d.text");
     DOCTEST_REQUIRE(txt != nullptr);
@@ -171,8 +171,8 @@ REGISTER_TEST(ui_kit_formrow_label_fixed_control_fill,
     DOCTEST_REQUIRE(lbl != nullptr);
     DOCTEST_CHECK_EQ(lbl->width.value, ui_kit::kFormRowLabelWidth);
     DOCTEST_CHECK_EQ(lbl->width.value, 110.0f);
-    // label 文字色 = wechat.textPrimary（#1A1A1A）
-    DOCTEST_CHECK_EQ(toHexByte(lbl->textColor.r), 0x1A);
+    // label 文字色 = textPrimary #1F2937（S1.2 #10）
+    DOCTEST_CHECK_EQ(toHexByte(lbl->textColor.r), 0x1F);
 
     // control 区：填满剩余宽 = total - label(110) - gap(8) = 182
     const float gap = t.sizes.spacing;  // 8px
