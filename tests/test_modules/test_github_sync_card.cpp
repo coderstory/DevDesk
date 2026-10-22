@@ -32,6 +32,7 @@
 
 #include <eui/dsl.h>
 
+#include <algorithm>
 #include <cmath>
 #include <filesystem>
 #include <fstream>

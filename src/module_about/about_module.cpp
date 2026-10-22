@@ -20,7 +20,9 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <iterator>
 #include <string>
+#include <vector>
 
 // 编译期信息宏回退（CMake 注入缺失时的手工编译兜底）
 #ifndef DEVDESK_VERSION

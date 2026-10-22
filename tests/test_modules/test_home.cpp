@@ -21,6 +21,7 @@
 
 #include <eui/dsl.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <ctime>
