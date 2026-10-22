@@ -52,10 +52,10 @@ struct ColorTokens {
     // —— 微信风格配色（D-12 整改新增；独立于既有暖色系，新旧并存，页面逐工单切换）——
     // 旧槽位（primary=橙 #D97757 等）完全不动；微信样式经 componentTokensWeChat() 显式传值。
     struct WeChatColors {
-        eui::Color primary;            // #07C160 主色（按钮底/选中/高亮）
+        eui::Color primary;            // #36D399 主色（薄荷绿）
         eui::Color primaryHover;       // #06AE56 主色 hover（spec 未指定则用此派生值）
         eui::Color primaryPressed;     // #059A4C 主色 pressed（派生值）
-        // UAT3 W2-M2：主色作「文字」的达标档——#07C160 落 selectedBg #E5E5E5 仅
+        // UAT3 W2-M2：主色作「文字」的达标档——#36D399 落 selectedBg #E5E5E5 仅
         // 1.89:1（12px 文字 AA 需 4.5:1），加深到 #067036：
         // on selectedBg 4.93:1 / on cardBg 6.22:1 / on pageBg 5.80:1。
         // 按钮填充/边框等非文字用途仍用 primary。
@@ -92,7 +92,7 @@ struct SizeTokens {
     float fontSizeBody;        // 15.0f
     float fontSizeLarge;       // 18.0f
     float fontSizeTitle;       // 24.0f
-    float fontSizePage;        // 32.0f
+    float fontSizePage;        // 24.0f
     float fontSizeDisplay;     // 48.0f
     float fontSizeStat;          // 28.0f  首页数据数字（S1.2 字号迁移）
     float spacingPage;            // 12.0f 页面外 padding（D-12 A3：16→12）

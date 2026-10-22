@@ -686,7 +686,7 @@ private:
             .size(kTreeHandleW, kTreeHandleH)
             .zIndex(6)
             .content([&] {
-                // UAT6 MDA：把手底——品牌绿底（wechat.primary #07C160），hover 加深
+                // UAT6 MDA：把手底——品牌绿底（wechat.primary #36D399），hover 加深
                 const float hoverBrighter = 0.08f;
                 ui.rect("md.tree.handle.bg")
                     .size(kTreeHandleW, kTreeHandleH)

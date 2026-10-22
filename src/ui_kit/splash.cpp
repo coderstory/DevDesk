@@ -15,7 +15,7 @@
 // D-11 反转：去除极光波 shadertoy 渐变（§8 禁项 #4：大面积渐变背景），改 WeChat-minimal
 // 与整改后基调协调；颜色全部走 W1 wechat 令牌，禁硬编码色字面量（W0.5 清单 W-W1~W-W3 + #15-#17）。
 //
-// H 批对比度核（WCAG 相对亮度）：wechat.primary #07C160(L=0.390) 在微绿底 #E8F0EC(L=0.855)
+// H 批对比度核（WCAG 相对亮度）：wechat.primary #36D399(L=0.390) 在微绿底 #E8F0EC(L=0.855)
 // 上仅 2.06:1，纯白底上限也只 2.39:1——任何浅底都到不了图形 AA 3:1（"更浅绿底"方案数学
 // 不可达），故取方案 b 变体：图标与进度条加深为同族令牌 wechat.primaryPressed
 // #059A4C(L=0.237)，在 #E8F0EC 上 3.16:1 ≥ AA 3:1（D-12 令牌族内取值，未引入新色值）。
@@ -174,7 +174,7 @@ bool drawSplashIfNeeded(eui::Ui& ui, const eui::Screen& screen) {
     // logo 图标（图标批 2026-10-20）：C 方案终端窗 >_ 几何 logo（ui_kit::drawDevDeskLogo
     // 矢量绘制）替换 fa-laptop-code 字形（0xF5FC 主接线点退役；about 页遗留一处属
     // 本批红线文件，后续批接 helper）。瓦色 wechat.primaryPressed
-    //（#059A4C，H 批对比档：wechat.primary #07C160 在微绿底仅 2.06:1 破图形 AA，深绿
+    //（#059A4C，H 批对比档：wechat.primary #36D399 在微绿底仅 2.06:1 破图形 AA，深绿
     // 3.16:1 ≥ 3:1——契约测试钉 wechat.primaryPressed 令牌落点，进度条填充同源）；
     // 白窗 cardBg；56px 瓦居中于旧图标区中心 (cx-86, logoY+30)，与「DevDesk」文字
     //（cx-56 起）保持 2px 间距，布局常量零改动。
