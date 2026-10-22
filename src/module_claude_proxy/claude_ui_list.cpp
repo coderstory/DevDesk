@@ -143,26 +143,23 @@ void drawProfileCard(eui::Ui& ui,
                      ProfileListState& st) {
     const float h = 56.0f;
     const bool selected = (p.id == st.selectedId_);
-    // §5 Profile 选中态（UAT5 改版）：浅灰 wechat.selectedBg 底 + 右缘「绿圈白勾」
-    // 唯一承担「谁是选中」语义（原 2px 左竖线移除，不叠双指示）。
-    // isActive 不染底色（isActive 语义，与列表选中分立）。
-    // UAT6 玻璃：未选中半透面 cardBg@0.62（原透明显列底 pageBg）
+    // S2.5 选中态：primarySoftBg 底 + 左 3px primary 竖线（替代旧绿圈白勾）
     const eui::Color bgNormal = selected
         ? t.colors.primarySoftBg
-        : components::theme::withOpacity(t.colors.surface, 0.62f);
-    // 共享徽标 / 选中绿圈右缘 x（供名称截断让位）
-    const float badgeX = selected ? (width - 88.0f) : (width - 60.0f);
+        : t.colors.surface;
+    const eui::Color nameColor = selected
+        ? t.colors.primary
+        : t.colors.textPrimary;
 
     ui.rect(id + ".bg")
         .position(0.0f, y)
         .size(width, h)
-        .states(bgNormal, t.colors.hover,
+        .states(bgNormal, t.colors.surfaceHover,
                 t.colors.primarySoftBg)
         // 行 hover/选中颜色过渡
         .transition(core::Transition::make(0.1f, core::Ease::OutQuad))
         .animate(core::AnimProperty::Color)
         .radius(t.sizes.radiusSmall)
-        .border(1.0f, components::theme::withOpacity(t.colors.surface, 0.55f))
         .onClick([sp = &st, pid = p.id, pname = p.name] {
             if (sp->selectedId_ == pid) return;  // 已选卡无操作
             if (sp->switchBypassConfirm_) {       // 测试缝直走
@@ -175,9 +172,14 @@ void drawProfileCard(eui::Ui& ui,
         })
         .build();
 
-    // UAT6 玻璃：淡雅玻璃层（hover/select 由 bg rect states 处理）
-    ui_kit::drawGlassCardLayers(ui, id, 0.0f, y, width, h,
-        t.sizes.radiusSmall, t, ui_kit::GlassCardStyle::subtle());
+    // S2.5 左 3px 竖线（仅选中时）
+    if (selected) {
+        ui.rect(id + ".accent")
+            .position(0.0f, y)
+            .size(3.0f, h)
+            .color(t.colors.primary)
+            .build();
+    }
 
     // 头像：按 profile id 稳定派生的圆 + 1.5px 同色系包边；垂直居中由 (h - 头像径) 推导
     const float avatarSize = 40.0f;
@@ -208,14 +210,11 @@ void drawProfileCard(eui::Ui& ui,
         .fontWeight(600)
         .build();
 
-    // 名称：单行截断让位右缘共享徽标 / 选中绿圈（首建无徽标时伸展到卡右界 −12px）
+    // 名称：单行截断让位右缘共享徽标（不再为绿圈白勾让位）
     {
         float nameRight = width - 12.0f;
         if (p.sharedConfigId != 0) {
-            nameRight = std::min(nameRight, badgeX - 4.0f);
-        }
-        if (selected) {
-            nameRight = std::min(nameRight, width - 48.0f);  // checkX(44) - 4 gap
+            nameRight = std::min(nameRight, width - 64.0f);  // 共享徽标 x=width-60
         }
         const float nameMaxW = std::max(40.0f, nameRight - 64.0f);
         ui.text(id + ".name")
@@ -228,13 +227,23 @@ void drawProfileCard(eui::Ui& ui,
             .fontSize(14.0f)
             .lineHeight(20.0f)
             .fontWeight(600)
-            .color(t.colors.textPrimary)
+            .color(nameColor)
             .build();
     }
 
+    // S3.4 名称 tooltip
+    components::tooltip(ui, id + ".name.tooltip")
+        .theme(core::theme::componentTokensWeChat(t))
+        .source(id + ".name")
+        .value(p.name)
+        .minWidth(200.0f)
+        .maxWidth(320.0f)
+        .build();
+
     // 绑定共享片段的卡片角标「共享」：服务层保证无悬空 id（删片段同事务解绑），
-    // sharedConfigId != 0 即可判定。选中时右缘让位绿圈白勾（左移 28px），不叠压。
+    // sharedConfigId != 0 即可判定。
     if (p.sharedConfigId != 0) {
+        const float badgeX = width - 60.0f;
         ui.rect(id + ".shared.badge")
             .position(badgeX, y + 20.0f)
             .size(48.0f, 16.0f)
@@ -251,30 +260,6 @@ void drawProfileCard(eui::Ui& ui,
             .horizontalAlign(eui::HorizontalAlign::Center)
             .verticalAlign(eui::VerticalAlign::Center)
             .color(t.colors.textTertiary)
-            .build();
-    }
-
-    // UAT6：绿圈白勾 20→26px（用户拍板），fa-check 同步放大 11→14。右缘
-    // checkX = width-42-4 → width-44（26+4+gap=4），与共享徽标 4px 隔开。
-    if (selected) {
-        constexpr float kCheckD = 26.0f;
-        const float checkX = width - 44.0f;
-        const float checkY = y + (h - kCheckD) * 0.5f;
-        ui.rect(id + ".check")
-            .position(checkX, checkY)
-            .size(kCheckD, kCheckD)
-            .color(t.colors.primary)
-            .radius(kCheckD * 0.5f)
-            .build();
-        ui.text(id + ".check.icon")
-            .position(checkX, checkY)
-            .size(kCheckD, kCheckD)
-            .icon(0xF00C)  // fa-check
-            .fontSize(14.0f)
-            .lineHeight(kCheckD)
-            .horizontalAlign(eui::HorizontalAlign::Center)
-            .verticalAlign(eui::VerticalAlign::Center)
-            .color(t.colors.onPrimary)
             .build();
     }
 
