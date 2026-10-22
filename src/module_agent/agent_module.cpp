@@ -2286,7 +2286,7 @@ void AgentModule::composeTaskDialog(
             if (!taskDialogOpen_) return;
             ui_kit::drawDialogTitle(ui, "agent.dialog.task.title", w,
                                     isEdit ? "编辑任务" : "新建智能任务",
-                                    t.sizes.fontSizeBody, t.colors.textPrimary);
+                                    20.0f, t.colors.textPrimary);
 
             // ✕ 关闭
             ui.text("agent.dialog.task.close")
@@ -2947,7 +2947,7 @@ void AgentModule::composeDraftDialog(
     ui_kit::drawDialogFrame(ui, screen, frame, themeTokens, [&] {
         if (!draftDialogOpen_) return;
         ui_kit::drawDialogTitle(ui, "agent.dialog.task.draft.title", w,
-                                "AI 生成草稿", t.sizes.fontSizeLarge,
+                                "AI 生成草稿", 20.0f,
                                 t.colors.textPrimary);
 
         // ✕ 关闭（与遮罩 / Esc / 「关闭」按钮同一路径）
