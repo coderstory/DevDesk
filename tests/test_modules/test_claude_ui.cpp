@@ -691,7 +691,7 @@ REGISTER_TEST(claude_module_form_tabs_roundtrip,
         {
             eui::Ui ui;
             compose(ui);
-            DOCTEST_CHECK(click(ui, "claude.detail.tabs.hit.1"));  // 切到模型 tab
+            DOCTEST_CHECK(click(ui, "claude.detail.tab.1.hit"));  // 切到模型 tab
         }
         // 保存是异步刷新：详情 pane 读的是后台快照——有界轮询等新槽位值进**渲染树**。
         // 只 compose 两帧就读旧快照 = 快照竞态 flaky。
@@ -1159,7 +1159,7 @@ REGISTER_TEST(claude_module_import_current_reads_advanced_json,
     {
         eui::Ui ui;
         compose(ui);
-        DOCTEST_CHECK(click(ui, "claude.detail.tabs.hit.3"));
+        DOCTEST_CHECK(click(ui, "claude.detail.tab.3.hit"));
     }
     {
         eui::Ui ui;
@@ -1442,7 +1442,7 @@ REGISTER_TEST(claude_module_calls_dialog,
     {
         eui::Ui ui;
         compose(ui);
-        DOCTEST_CHECK(click(ui, "claude.detail.tabs.hit.4"));
+        DOCTEST_CHECK(click(ui, "claude.detail.tab.4.hit"));
     }
     {
         eui::Ui ui;
@@ -1590,7 +1590,7 @@ REGISTER_TEST(claude_module_calls_dialog,
     {
         eui::Ui ui;
         compose(ui);
-        DOCTEST_CHECK(click(ui, "claude.detail.tabs.hit.4"));  // tab 保持 4（幂等）
+        DOCTEST_CHECK(click(ui, "claude.detail.tab.4.hit"));  // tab 保持 4（幂等）
     }
     {
         eui::Ui ui;
@@ -1700,7 +1700,7 @@ REGISTER_TEST(claude_cpx06_calls_query_async_debounce,
     {   // 开弹窗帧：调用记录在详情面板第 5 页签里（idx 4），先切 tab（同帧不派发）
         eui::Ui ui;
         compose(ui);
-        DOCTEST_REQUIRE(click(ui, "claude.detail.tabs.hit.4"));
+        DOCTEST_REQUIRE(click(ui, "claude.detail.tab.4.hit"));
     }
     // ② 开弹窗那一帧：只发意图（查询在后台）——数据未到 + 恰好派发一次。同步查库
     // 会让本帧就把行画出来，且派发计数按每次点击 +1 而非 +1/帧。
@@ -2220,7 +2220,7 @@ REGISTER_TEST(claude_module_compose_cache_equivalence,
     {
         eui::Ui ui;
         compose(ui);
-        DOCTEST_CHECK(click(ui, "claude.detail.tabs.hit.4"));
+        DOCTEST_CHECK(click(ui, "claude.detail.tab.4.hit"));
     }
     {
         eui::Ui ui;
@@ -3409,7 +3409,7 @@ REGISTER_TEST(claude_ui_advanced_tab_dialect_persists,
         if (clickCardNamed(ui, "方言编辑")) {
             eui::Ui ui2;
             compose(ui2, "adv_k0b");
-            if (click(ui2, "claude.detail.tabs.hit.3")) {
+            if (click(ui2, "claude.detail.tab.3.hit")) {
                 eui::Ui ui3;
                 compose(ui3, "adv_k0c");
                 const auto* dv = ui3.find("claude.field.dialect.value");
@@ -5739,7 +5739,7 @@ REGISTER_TEST(claude_detail_actions_anchor_four_tabs,
             eui::Ui ui;
             composeAtSize(mod.get(), ui, "claude_anchor", kW, kH);
             DOCTEST_REQUIRE(clickById(
-                ui, "claude.detail.tabs.hit." + std::to_string(tab)));
+                ui, "claude.detail.tab." + std::to_string(tab) + ".hit"));
         }
         eui::Ui ui;
         composeAtSize(mod.get(), ui, "claude_anchor", kW, kH);
@@ -5815,7 +5815,7 @@ REGISTER_TEST(claude_detail_advanced_pane_readonly,
     {
         eui::Ui ui;
         composeAtSize(mod.get(), ui, "adv_d2", kW, kH);
-        DOCTEST_REQUIRE(clickById(ui, "claude.detail.tabs.hit.3"));
+        DOCTEST_REQUIRE(clickById(ui, "claude.detail.tab.3.hit"));
     }
     {
         eui::Ui ui;
@@ -5842,7 +5842,7 @@ REGISTER_TEST(claude_detail_advanced_pane_readonly,
     {
         eui::Ui ui;
         composeAtSize(mod.get(), ui, "adv_d5", kW, kH);
-        DOCTEST_REQUIRE(clickById(ui, "claude.detail.tabs.hit.3"));
+        DOCTEST_REQUIRE(clickById(ui, "claude.detail.tab.3.hit"));
     }
     {
         eui::Ui ui;
@@ -5870,7 +5870,7 @@ REGISTER_TEST(claude_detail_advanced_pane_readonly,
         if (clickCardNamed(ui, "中家")) {
             eui::Ui ui2;
             composeAtSize(mod.get(), ui2, "adv_d8", kW, kH);
-            if (clickById(ui2, "claude.detail.tabs.hit.3")) {
+            if (clickById(ui2, "claude.detail.tab.3.hit")) {
                 eui::Ui ui3;
                 composeAtSize(mod.get(), ui3, "adv_d9", kW, kH);
                 const auto* fallback = ui3.find("claude.field.fallback.value");
@@ -5890,7 +5890,7 @@ REGISTER_TEST(claude_detail_advanced_pane_readonly,
     {
         eui::Ui ui;
         composeAtSize(mod.get(), ui, "adv_d10", kW, kH);
-        DOCTEST_REQUIRE(clickById(ui, "claude.detail.tabs.hit.4"));
+        DOCTEST_REQUIRE(clickById(ui, "claude.detail.tab.4.hit"));
     }
     {
         eui::Ui ui;
@@ -5965,7 +5965,7 @@ REGISTER_TEST(claude_calls_rows_by_available_height,
     constexpr float kH = 801.0f;
     eui::Ui ui;
     composeAtSize(mod.get(), ui, "claude_rows", kW, kH);
-    DOCTEST_REQUIRE(clickById(ui, "claude.detail.tabs.hit.4"));
+    DOCTEST_REQUIRE(clickById(ui, "claude.detail.tab.4.hit"));
     eui::Ui ui2;
     composeAtSize(mod.get(), ui2, "claude_rows", kW, kH);
 
@@ -6014,7 +6014,7 @@ REGISTER_TEST(claude_calls_no_rows_when_too_short,
     // 内容框底 = 286 − 85 − 20 = 181；行区 = 181 − 136 − 32 = 13 < 24 → 0 行
     eui::Ui ui;
     composeAtSize(mod.get(), ui, "claude_short", 1000.0f, 480.0f);
-    DOCTEST_REQUIRE(clickById(ui, "claude.detail.tabs.hit.4"));
+    DOCTEST_REQUIRE(clickById(ui, "claude.detail.tab.4.hit"));
     eui::Ui ui2;
     composeAtSize(mod.get(), ui2, "claude_short", 1000.0f, 480.0f);
 
@@ -6089,7 +6089,7 @@ REGISTER_TEST(claude_calls_rate_column,
     constexpr float kH = 801.0f;
     eui::Ui ui;
     composeAtSize(mod.get(), ui, "claude_rate", kW, kH);
-    DOCTEST_REQUIRE(clickById(ui, "claude.detail.tabs.hit.4"));
+    DOCTEST_REQUIRE(clickById(ui, "claude.detail.tab.4.hit"));
     eui::Ui ui2;
     composeAtSize(mod.get(), ui2, "claude_rate", kW, kH);
 
@@ -6207,7 +6207,7 @@ REGISTER_TEST(claude_detail_vertical_center_and_viewall_button,
     {
         eui::Ui ui;
         composeAtSize(mod.get(), ui, "claude_center_models", kW, kH);
-        DOCTEST_REQUIRE(clickById(ui, "claude.detail.tabs.hit.1"));
+        DOCTEST_REQUIRE(clickById(ui, "claude.detail.tab.1.hit"));
         eui::Ui ui2;
         composeAtSize(mod.get(), ui2, "claude_center_models", kW, kH);
         int rows = 0;
@@ -6233,7 +6233,7 @@ REGISTER_TEST(claude_detail_vertical_center_and_viewall_button,
     {
         eui::Ui ui;
         composeAtSize(mod.get(), ui, "claude_center_calls", kW, kH);
-        DOCTEST_REQUIRE(clickById(ui, "claude.detail.tabs.hit.4"));
+        DOCTEST_REQUIRE(clickById(ui, "claude.detail.tab.4.hit"));
         eui::Ui ui2;
         composeAtSize(mod.get(), ui2, "claude_center_calls", kW, kH);
         const auto* hit = ui2.find("claude.calls.viewall.hit");
@@ -6293,7 +6293,7 @@ REGISTER_TEST(claude_dialog_pagination_vertical_align,
     {
         eui::Ui ui;
         composeAtSize(mod.get(), ui, "claude_page_align", kW, kH);
-        DOCTEST_REQUIRE(clickById(ui, "claude.detail.tabs.hit.4"));
+        DOCTEST_REQUIRE(clickById(ui, "claude.detail.tab.4.hit"));
     }
     {
         eui::Ui ui;
@@ -6712,7 +6712,7 @@ REGISTER_TEST(claude_env_tab_lists_effective_env_with_source,
 
     eui::Ui ui;
     composeAtSize(mod.get(), ui, "claude_env", 1262.0f, 801.0f);
-    DOCTEST_REQUIRE(clickById(ui, "claude.detail.tabs.hit.2"));
+    DOCTEST_REQUIRE(clickById(ui, "claude.detail.tab.2.hit"));
     eui::Ui ui2;
     composeAtSize(mod.get(), ui2, "claude_env", 1262.0f, 801.0f);
 
@@ -6827,7 +6827,7 @@ REGISTER_TEST(claude_env_tab_no_overlap_and_model_keys_hidden,
     // 100% 档（进程默认）：先点开「环境变量」页签再断言
     eui::Ui ui1;
     composeAtSize(mod.get(), ui1, "claude_env", 1262.0f, 801.0f);
-    DOCTEST_REQUIRE(clickById(ui1, "claude.detail.tabs.hit.2"));
+    DOCTEST_REQUIRE(clickById(ui1, "claude.detail.tab.2.hit"));
     eui::Ui ui2;
     composeAtSize(mod.get(), ui2, "claude_env", 1262.0f, 801.0f);
     const std::string p100 = paneProblem(ui2);
@@ -7278,7 +7278,7 @@ REGISTER_TEST(claude_detail_advanced_key_sources,
     {
         eui::Ui ui;
         compose(ui);
-        DOCTEST_CHECK(click(ui, "claude.detail.tabs.hit.3"));
+        DOCTEST_CHECK(click(ui, "claude.detail.tab.3.hit"));
     }
     {
         eui::Ui ui;
@@ -7334,7 +7334,7 @@ REGISTER_TEST(claude_detail_advanced_key_sources,
     {
         eui::Ui ui;
         compose(ui);
-        DOCTEST_CHECK(click(ui, "claude.detail.tabs.hit.3"));
+        DOCTEST_CHECK(click(ui, "claude.detail.tab.3.hit"));
     }
     {
         eui::Ui ui;
@@ -7364,7 +7364,7 @@ REGISTER_TEST(claude_detail_advanced_key_sources,
         {
             eui::Ui ui;
             compose(ui);
-            DOCTEST_CHECK(click(ui, "claude.detail.tabs.hit.3"));
+            DOCTEST_CHECK(click(ui, "claude.detail.tab.3.hit"));
         }
         {
             eui::Ui ui;
@@ -7436,7 +7436,7 @@ REGISTER_TEST(claude_detail_advanced_key_overflow_within_box,
     {
         eui::Ui ui;
         compose(ui);
-        DOCTEST_CHECK(click(ui, "claude.detail.tabs.hit.3"));
+        DOCTEST_CHECK(click(ui, "claude.detail.tab.3.hit"));
     }
     bool sawKeys = false;
     for (int i = 0; i < 250 && !sawKeys; ++i) {
@@ -7548,7 +7548,7 @@ REGISTER_TEST(claude_advjson_pane_geometry_follows_font_scale,
         eui::Ui ui;
         compose(ui);
         if (!sawTab) {
-            sawTab = click(ui, "claude.detail.tabs.hit.3");
+            sawTab = click(ui, "claude.detail.tab.3.hit");
         }
         sawPane = ui.find("claude.field.dialect.label") != nullptr;
         if (!sawPane) std::this_thread::sleep_for(std::chrono::milliseconds(5));
@@ -8010,7 +8010,7 @@ REGISTER_TEST(claude_ui_model_one_m_switch,
     {
         eui::Ui ui;
         compose(ui);
-        DOCTEST_CHECK(click(ui, "claude.detail.tabs.hit.1"));
+        DOCTEST_CHECK(click(ui, "claude.detail.tab.1.hit"));
     }
     {
         eui::Ui ui;
@@ -8686,7 +8686,7 @@ REGISTER_TEST(claude_detail_wechat_and_no_inactive_badge,
     {
         eui::Ui ui;
         compose(ui, "dt_tab2");
-        DOCTEST_CHECK(click(ui, "claude.detail.tabs.hit.2"));
+        DOCTEST_CHECK(click(ui, "claude.detail.tab.2.hit"));
     }
     {
         eui::Ui ui;
@@ -8700,7 +8700,7 @@ REGISTER_TEST(claude_detail_wechat_and_no_inactive_badge,
     {
         eui::Ui ui;
         compose(ui, "dt_tab3");
-        DOCTEST_CHECK(click(ui, "claude.detail.tabs.hit.3"));
+        DOCTEST_CHECK(click(ui, "claude.detail.tab.3.hit"));
     }
     {
         eui::Ui ui;
@@ -8716,7 +8716,7 @@ REGISTER_TEST(claude_detail_wechat_and_no_inactive_badge,
     {
         eui::Ui ui;
         compose(ui, "dt_tab4");
-        DOCTEST_CHECK(click(ui, "claude.detail.tabs.hit.4"));
+        DOCTEST_CHECK(click(ui, "claude.detail.tab.4.hit"));
     }
     {
         eui::Ui ui;
