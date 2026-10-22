@@ -3779,6 +3779,15 @@ REGISTER_TEST(settings_cards_solid_white_bg,
             DOCTEST_REQUIRE_MESSAGE(ui.find(kStackIds[i]) != nullptr,
                                     tag + " 卡 stack " + kStackIds[i] +
                                         " 应存在（内容未丢）");
+            // H10 对比度门禁：白卡 bg 必须有 borderDefault 描边（白卡浮于 #FAFAF9 底）
+            const auto* bg = ui.find(kBgIds[i]);
+            if (bg) {
+                DOCTEST_CHECK_MESSAGE(bg->border.width > 0.005f,
+                                      tag + " 卡 " + kBgIds[i] +
+                                          " 白底应有 borderDefault 描边（H10 对比度门禁），"
+                                          "当前 border.width=" +
+                                          std::to_string(bg->border.width));
+            }
         }
     }
     mod->onStop();

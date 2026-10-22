@@ -12,18 +12,20 @@ void wtab(eui::Ui& ui, const std::string& id, const std::string& label,
           const core::theme::Tokens& t,
           const std::function<void()>& onClick) {
     // S2.2 块面 Tab：选中=primarySoftBg底+primary字+8px圆角；未选中=透明底+textSecondary字
+    // H10：primarySoftBg（#E6FBF2）在白/淡绿底上对比度不足，加 borderDefault 描边。
     const eui::Color txtColor = active ? t.colors.primary : t.colors.textSecondary;
 
     ui.stack(id)
         .position(x, y)
         .size(w, h)
         .content([&] {
-            // 选中态背景 rect：primarySoftBg（#E6FBF2）+ 8px 圆角
+            // 选中态背景 rect：primarySoftBg（#E6FBF2）+ 8px 圆角 + H10 描边
             if (active) {
                 ui.rect(id + ".bg")
                     .size(w, h)
                     .color(t.colors.primarySoftBg)
                     .radius(8.0f)
+                    .border(1.0f, t.colors.borderDefault)
                     .build();
             }
 

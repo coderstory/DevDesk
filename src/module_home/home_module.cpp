@@ -578,8 +578,9 @@ public:
                     const float chartWrapH = chartCardH - 48.0f - 16.0f;  // 220−64 = 156
                     components::card(ui, "home.api.chart")
                         .size(contentW, chartCardH)
-                        .theme(core::theme::componentTokensWeChat(t))  // W9 微信白卡
+                        .theme(core::theme::componentTokensWeChat(t))  // W9 微信白卡 + H10 描边
                         .radius(t.sizes.radiusWeChat)
+                        .border(1.0f, t.colors.borderDefault)
                         .padding(t.sizes.spacingLarge)  // 16 统一内边距（替代默认 20）
                         .content([&] {
                             ui.text("home.api.chart.title")
