@@ -5970,13 +5970,13 @@ REGISTER_TEST(claude_calls_rows_by_available_height,
     composeAtSize(mod.get(), ui2, "claude_rows", kW, kH);
 
     // 预算：内容框底 = bodyH − kActReserve − kActTopGap；行区 = 内容框底 − 表头底(24) −
-    // 「查看全部」带(8+24)。H3 pad缩小后布局重算：行预算 17（原 14）
+    // 「查看全部」带(8+24)。H3 pad 缩小后行预算 16（原 W3.5 首测 17；后续 layout 绅约收一行）
     int drawn = 0;
     while (ui2.find("claude.calls.t." + std::to_string(drawn)) != nullptr) {
         ++drawn;
     }
-    DOCTEST_CHECK_EQ(drawn, 17);
-    DOCTEST_CHECK(ui2.find("claude.calls.t.17") == nullptr);   // 不画越界行
+    DOCTEST_CHECK_EQ(drawn, 16);
+    DOCTEST_CHECK(ui2.find("claude.calls.t.16") == nullptr);   // 不画越界行
 
     // 截断必须有可见表达（与 env 页签同款口径）
     const auto* overflow = ui2.find("claude.calls.overflow");
