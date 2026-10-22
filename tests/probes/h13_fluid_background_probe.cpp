@@ -7,6 +7,7 @@
 // 额外帧泵采样：md.tree.anim.driver / splash.ink（验证这两项的动画帧泵也在推进）
 #include "probes/probe_harness.h"
 
+#include <eui/detail/dsl_app_impl.h>  // DslAppConfig（namespace app）
 #include "app_sidebar.h"      // fluidPhaseSeconds / resetFluidBackgroundForTests / setFluidBackgroundEnabled
 #include "app_assembly.h"
 #include "app_registry.h"
@@ -51,19 +52,14 @@ int main(int argc, char* argv[]) {
     float phaseBefore = app::fluidPhaseSeconds();
     std::cout << "H13: phaseBefore=" << phaseBefore << std::endl;
 
-    // 跑 ≥2 帧（pollOnce + render 触发 onFrame 回调 → phase 推进）
+    // 跑 >=2 帧：pollOnce 触发 onFrame 回调推进 fluid 相位，compose 重建树
     for (int i = 0; i < 3; ++i) {
-        probe::pollOnce(window, runtime);
-        // compose 全应用（含侧栏 fluidBackground draw + onFrame 注册）
-        runtime.compose("home", static_cast<float>(args.windowW),
-                        static_cast<float>(args.windowH),
-                        [&](eui::Ui& ui, const eui::Screen& screen) {
-                            app::compose(ui, screen);
-                        });
-        runtime.beginFrame();
-        runtime.render(static_cast<int>(args.windowW),
-                       static_cast<int>(args.windowH), 1.0f);
-        runtime.present();
+        probe::composeModuleFrame(runtime, window, "home",
+                                  static_cast<float>(args.windowW),
+                                  static_cast<float>(args.windowH),
+                                  [&](eui::Ui& ui, const eui::Screen& screen) {
+                                      app::compose(ui, screen);
+                                  });
     }
 
     float phaseAfter = app::fluidPhaseSeconds();

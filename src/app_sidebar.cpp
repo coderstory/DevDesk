@@ -22,6 +22,7 @@
 #include <eui/types.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <functional>
 #include <optional>
@@ -68,6 +69,7 @@ std::optional<bool> g_fluidVisibleMode;
 // update/compose（glfw_app_main.cpp 的 hiddenToTray / iconified 两分支 continue），
 // onFrame 不回调 → 相位冻结；恢复可见从冻结处继续（无时间跳变）。
 float g_fluidPhase = 0.0f;
+static std::chrono::steady_clock::time_point g_fluidEpoch = std::chrono::steady_clock::now();
 
 // 确定性 0~1 hash（splash.cpp 墨染同款 sin 散列取小数）：卫星的角度/距离/大小
 // 全由索引 hash 决定——帧间稳定不闪烁，只随相位缓慢漂移（有机噪声感）
@@ -186,7 +188,10 @@ bool fluidBackgroundEnabled() {
 
 void setFluidBackgroundEnabled(bool enabled) { g_fluidEnabled = enabled; }
 
-float fluidPhaseSeconds() { return g_fluidPhase; }
+float fluidPhaseSeconds() {
+    using namespace std::chrono;
+    return duration<float>(steady_clock::now() - g_fluidEpoch).count();
+}
 
 void setFluidWindowVisibleMode(std::optional<bool> mode) {
     g_fluidVisibleMode = std::move(mode);
@@ -196,6 +201,7 @@ void resetFluidBackgroundForTests() {
     g_fluidEnabled.reset();
     g_fluidVisibleMode.reset();
     g_fluidPhase = 0.0f;
+    g_fluidEpoch = std::chrono::steady_clock::now();
 }
 
 void showAppNotice(const std::string& title, const std::string& message) {
@@ -555,7 +561,7 @@ void drawFluidBackground(eui::Ui& ui, const eui::Screen& screen) {
     // 新增 3 层分布补全覆盖：H4 左下(0.216) / H5 右上(0.204) / H6 底中(0.228)
     constexpr float kRadiusFrac[kHalos] = {0.24f, 0.30f, 0.264f, 0.372f, 0.216f, 0.204f, 0.228f};
 
-    const float phase = g_fluidPhase;
+    const float phase = fluidPhaseSeconds();
     const float minDim = std::min(screen.width, screen.height);
     for (int j = 0; j < kHalos; ++j) {
         // 漂移中心 = 锚点 + 异频异相振幅（层间不共振，慢到只有「液面在流」而无轨迹感）
