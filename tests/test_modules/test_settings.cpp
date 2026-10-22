@@ -3718,14 +3718,10 @@ REGISTER_TEST(settings_general_tab_zero_scroll_budget,
     return true;
 })
 
-// 反断言：设置页不得出现 cardFrame 的 bg 矩形
-// cardFrame = surface 填充 + 1px 边框 + panelShadow 阴影 + radiusLarge 圆角；白色卡框叠在
-// 主体渐变底上就是用户说的「最外层卡片」。反断言：<stack>.bg 不存在（cardFrame 若加回会
-// 重新出现）、卡 stack 仍在（内容未丢）。
-// 页面渐变底本身也已删，页面级反断言在 test_ui_modern.cpp
-// uiModernSettingsBodyGradientRemoved（settings.body.gradient / .bg 必须都不存在）。
-REGISTER_TEST(settings_cards_no_outer_cardframe,
-              "settings: 6 卡无外层 cardFrame——内容直接铺页面底（两档主题；UAT5 删目录卡后 7→6）", {
+// S6.1 玻璃退役→实底白卡：每卡均有实底白 bg rect（id = <stack>.bg），
+// surface 底色 + radiusLarge 圆角 + Sm 阴影。断言 bg rect 存在且 stack 内容未丢。
+REGISTER_TEST(settings_cards_solid_white_bg,
+              "settings: 6 卡实底白 bg——每卡有 surface 底色 bg rect（S6.1 玻璃退役）", {
     test_support::TestEnv env(kCfgPrefix, "noframe", true);
     test_support::ScopedConfigPath cfgEnv(
         test_support::tempConfigFile(kCfgPrefix, "noframe_cfg"));
@@ -3777,9 +3773,9 @@ REGISTER_TEST(settings_cards_no_outer_cardframe,
             mod->compose(ui, screen);
             ui.end();
             ui.layout(screen.width, screen.height);
-            DOCTEST_CHECK_MESSAGE(ui.find(kBgIds[i]) == nullptr,
+            DOCTEST_CHECK_MESSAGE(ui.find(kBgIds[i]) != nullptr,
                                   tag + " 卡 " + kBgIds[i] +
-                                      " 不应再有外层卡框（cardFrame 已删）");
+                                      " 应有实底白 bg rect（S6.1 玻璃退役→实底白卡）");
             DOCTEST_REQUIRE_MESSAGE(ui.find(kStackIds[i]) != nullptr,
                                     tag + " 卡 stack " + kStackIds[i] +
                                         " 应存在（内容未丢）");

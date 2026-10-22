@@ -1194,6 +1194,8 @@ private:
         a.githubSyncPull = [this] { githubSyncPull(); };
         a.githubSyncTestConnection = [this] { applyGithubSyncTestConnection(); };
         a.githubSyncShowErrorDetail = [this] { showGithubSyncErrorDetail(); };
+        a.toggleGithubSyncTokenVisibility = [this] { githubSyncTokenVisible_ = !githubSyncTokenVisible_; };
+        a.toggleGithubSyncDetail = [this] { githubSyncDetailExpanded_ = !githubSyncDetailExpanded_; };
 
         return a;
     }
@@ -1265,6 +1267,8 @@ private:
             githubSyncLocalGitProbe_.load(std::memory_order_acquire) == 0;
         in.githubSyncUnsyncedNotice = githubSyncUnsyncedNotice_;
         in.githubSyncDeleteSkipHint = githubSyncDeleteSkipHint_;
+        in.githubSyncTokenVisible = githubSyncTokenVisible_;
+        in.githubSyncDetailExpanded = githubSyncDetailExpanded_;
         const SettingsCardActions a = cardActions();
         const float gapY = t.sizes.spacingLarge;
         float cardY = 0.0f;
@@ -1521,6 +1525,8 @@ private:
     bool githubSyncLocalGitProbeDirty_ = false;        // 首探 + 配置变更置位
     bool githubSyncNoGitWarned_ = false;    // 无 git 警告只弹一次（改配置时触发）
     bool githubSyncUnsyncedNotice_ = false;  // 退出时未推完 → 卡片黄字
+    bool githubSyncTokenVisible_ = false;      // S3.7#6 Token 显隐切换
+    bool githubSyncDetailExpanded_ = false;    // S3.7#4 同步说明折叠展开
     std::string githubSyncDeleteSkipHint_;   // 删远端跳过提示（UI 侧）
     // EventBus 订阅 token 必须持有：token 析构即退订（丢弃 = 订阅立刻失效）。
     std::vector<::core::event::EventBus::Subscription> githubSyncSubs_;

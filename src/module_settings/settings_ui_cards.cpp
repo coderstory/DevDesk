@@ -20,7 +20,6 @@
 #include <components/theme.h>
 #include <ui_kit/columns.h>
 #include <ui_kit/form_row.h>
-#include <ui_kit/glass_card.h>
 #include <ui_kit/wswitch.h>
 
 #include <algorithm>
@@ -109,15 +108,13 @@ void drawAppearanceCard(const CardDrawArgs& args) {
         .size(w, h)
         .zIndex(40)
         .content([&] {
-            // UAT6 E+F 批玻璃卡底 + 无染色淡雅质感
+            // S6.1 玻璃退役→实底白卡 + Sm 阴影
             ui.rect(id + ".bg")
                 .position(0.0f, 0.0f).size(w, h)
-                .color(components::theme::withOpacity(t.colors.surface, 0.62f))
-                .radius(t.sizes.radiusWeChat)
-                .border(1.0f, components::theme::withOpacity(t.colors.surface, 0.55f))
+                .color(t.colors.surface)
+                .radius(t.sizes.radiusLarge)
+                .shadow(components::theme::shadow(compTheme, 3.0f, 1.0f, 0.04f, 0.02f))
                 .build();
-            ui_kit::drawGlassCardLayers(ui, id, 0.0f, 0.0f, w, h,
-                t.sizes.radiusWeChat, t, ui_kit::GlassCardStyle::subtle());
 
             cardTitle(ui, id, t, 16.0f, w - 56.0f - kFluidToggleW, 22.0f,
                       22.0f, "外观");
@@ -255,15 +252,13 @@ void drawEditorFontCard(const CardDrawArgs& args) {
         .size(w, h)
         .zIndex(30)
         .content([&] {
-            // UAT6 E+F 批玻璃卡底 + 无染色淡雅质感
+            // S6.1 玻璃退役→实底白卡 + Sm 阴影
             ui.rect(id + ".bg")
                 .position(0.0f, 0.0f).size(w, h)
-                .color(components::theme::withOpacity(t.colors.surface, 0.62f))
-                .radius(t.sizes.radiusWeChat)
-                .border(1.0f, components::theme::withOpacity(t.colors.surface, 0.55f))
+                .color(t.colors.surface)
+                .radius(t.sizes.radiusLarge)
+                .shadow(components::theme::shadow(compTheme, 3.0f, 1.0f, 0.04f, 0.02f))
                 .build();
-            ui_kit::drawGlassCardLayers(ui, id, 0.0f, 0.0f, w, h,
-                t.sizes.radiusWeChat, t, ui_kit::GlassCardStyle::subtle());
 
             cardTitle(ui, id, t, 16.0f, w - 56.0f, 22.0f, 22.0f, "编辑器字号");
             ui_kit::formRow(ui, id + ".font", "字号", 28.0f, rowY,
@@ -407,15 +402,14 @@ void drawModulesCard(const CardDrawArgs& args) {
     ui.stack(id)
         .size(w, h)
         .content([&] {
-            // UAT6 E+F 批玻璃卡底 + 无染色淡雅质感
+            const auto compThemeTop = core::theme::componentTokensWeChat(t);
+            // S6.1 玻璃退役→实底白卡 + Sm 阴影
             ui.rect(id + ".bg")
                 .position(0.0f, 0.0f).size(w, h)
-                .color(components::theme::withOpacity(t.colors.surface, 0.62f))
-                .radius(t.sizes.radiusWeChat)
-                .border(1.0f, components::theme::withOpacity(t.colors.surface, 0.55f))
+                .color(t.colors.surface)
+                .radius(t.sizes.radiusLarge)
+                .shadow(components::theme::shadow(compThemeTop, 3.0f, 1.0f, 0.04f, 0.02f))
                 .build();
-            ui_kit::drawGlassCardLayers(ui, id, 0.0f, 0.0f, w, h,
-                t.sizes.radiusWeChat, t, ui_kit::GlassCardStyle::subtle());
 
             cardTitle(ui, id, t, 16.0f, w - 56.0f, 22.0f, 22.0f, "模块");
             cardDesc(ui, id, t, 40.0f, w - 56.0f, roundFs(16.0f),
@@ -505,15 +499,14 @@ void drawProxyCard(const CardDrawArgs& args) {
     ui.stack(id)
         .size(w, h)
         .content([&] {
-            // UAT6 E+F 批玻璃卡底 + 无染色淡雅质感
+            const auto compTheme = core::theme::componentTokensWeChat(t);
+            // S6.1 玻璃退役→实底白卡 + Sm 阴影
             ui.rect(id + ".bg")
                 .position(0.0f, 0.0f).size(w, h)
-                .color(components::theme::withOpacity(t.colors.surface, 0.62f))
-                .radius(t.sizes.radiusWeChat)
-                .border(1.0f, components::theme::withOpacity(t.colors.surface, 0.55f))
+                .color(t.colors.surface)
+                .radius(t.sizes.radiusLarge)
+                .shadow(components::theme::shadow(compTheme, 3.0f, 1.0f, 0.04f, 0.02f))
                 .build();
-            ui_kit::drawGlassCardLayers(ui, id, 0.0f, 0.0f, w, h,
-                t.sizes.radiusWeChat, t, ui_kit::GlassCardStyle::subtle());
 
             auto* svc = in.proxy;
             const bool running = svc && svc->isProxyRunning();
@@ -522,7 +515,6 @@ void drawProxyCard(const CardDrawArgs& args) {
             cardTitle(ui, id, t, 16.0f, 240.0f, 22.0f, 22.0f, "Claude 代理");
 
             // 随应用启动代理（默认关）放卡片右上。
-            const auto compTheme = core::theme::componentTokensWeChat(t);
             components::toggleSwitch(ui, id + ".autostart")
                 .position(w - 28.0f - 240.0f, 12.0f)
                 .size(240.0f, 28.0f)
@@ -669,6 +661,14 @@ void drawLogCard(const CardDrawArgs& args) {
         .size(w, h)
         .zIndex(30)
         .content([&] {
+            // S6.1 玻璃退役→实底白卡 + Sm 阴影（日志卡原本无 bg，新增）
+            ui.rect(id + ".bg")
+                .position(0.0f, 0.0f).size(w, h)
+                .color(t.colors.surface)
+                .radius(t.sizes.radiusLarge)
+                .shadow(components::theme::shadow(compTheme, 3.0f, 1.0f, 0.04f, 0.02f))
+                .build();
+
             cardTitle(ui, id, t, 16.0f, w - 56.0f, 22.0f, 22.0f, "日志");
 
             // 档位标签（0 = 永久）；存的是原始天数 int，清理任务按值读取
@@ -786,6 +786,14 @@ void drawLogViewCard(const CardDrawArgs& args) {
     ui.stack(id)
         .size(w, h)
         .content([&] {
+            // S6.1 玻璃退役→实底白卡 + Sm 阴影（日志查看卡原本无 bg，新增）
+            ui.rect(id + ".bg")
+                .position(0.0f, 0.0f).size(w, h)
+                .color(t.colors.surface)
+                .radius(t.sizes.radiusLarge)
+                .shadow(components::theme::shadow(compTheme, 3.0f, 1.0f, 0.04f, 0.02f))
+                .build();
+
             const float btnW = 96.0f;
             cardTitle(ui, id, t, 16.0f, w - 56.0f - btnW - 12.0f, 22.0f, 22.0f,
                       "运行日志（末尾 500 行）");

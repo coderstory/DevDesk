@@ -150,6 +150,14 @@ void drawGithubSyncCard(const CardDrawArgs& args) {
     ui.stack(id)
         .size(w, h)
         .content([&] {
+        // S6.1 玻璃退役→实底白卡 + Sm 阴影
+        ui.rect(id + ".bg")
+            .position(0.0f, 0.0f).size(w, h)
+            .color(t.colors.surface)
+            .radius(t.sizes.radiusLarge)
+            .shadow(components::theme::shadow(compTheme, 3.0f, 1.0f, 0.04f, 0.02f))
+            .build();
+
         // ── 头部：状态点 + 标题/摘要（左列，宽度全展开）→ 启用/自动推送两整行 ──
         const float y0 = kCardPaddingY;
         const bool hasError = !in.githubSyncError.empty();
@@ -202,20 +210,49 @@ void drawGithubSyncCard(const CardDrawArgs& args) {
                 .onClick([f = a.githubSyncShowErrorDetail] { f(); })
                 .build();
         } else {
-            std::string summary = in.githubSyncStatus.empty()
-                ? githubSyncDisclosureText()
-                : in.githubSyncStatus;
-            ui.text(id + ".summary")
-                .position(textL, summaryY)
-                .size(summaryW, mutedH)
-                .text(summary)
-                .fontSize(fs(12.0f))
-                .lineHeight(mutedH)
-                .color(t.colors.textTertiary)
-                .maxWidth(summaryW)
-                .overflow(core::TextOverflow::Ellipsis)
-                .clip()
-                .build();
+            // S3.7#4: 同步说明可折叠——默认紧凑摘要，展开后显示完整披露
+            if (in.githubSyncStatus.empty()) {
+                const char* compactSummary = "同步笔记与整库数据库快照到 GitHub 私有仓库";
+                std::string summaryText = in.githubSyncDetailExpanded
+                    ? githubSyncDisclosureText()
+                    : compactSummary;
+                ui.text(id + ".summary")
+                    .position(textL, summaryY)
+                    .size(summaryW, mutedH)
+                    .text(summaryText)
+                    .fontSize(fs(12.0f))
+                    .lineHeight(mutedH)
+                    .color(t.colors.textTertiary)
+                    .maxWidth(summaryW)
+                    .overflow(core::TextOverflow::Ellipsis)
+                    .clip()
+                    .build();
+                // 折叠/展开按钮（Ghost 风格文字链接）
+                const float toggleY = summaryY + mutedH + 1.0f;
+                auto toggle = ui.text(id + ".summary.toggle")
+                    .position(textL, toggleY)
+                    .size(100.0f, mutedH)
+                    .text(in.githubSyncDetailExpanded ? "收起详细说明" : "查看详细说明")
+                    .fontSize(fs(11.0f))
+                    .lineHeight(mutedH)
+                    .color(t.colors.primary);
+                if (a.toggleGithubSyncDetail) {
+                    toggle.onClick([f = a.toggleGithubSyncDetail] { f(); });
+                }
+                toggle.build();
+            } else {
+                ui.text(id + ".summary")
+                    .position(textL, summaryY)
+                    .size(summaryW, mutedH)
+                    .text(in.githubSyncStatus)
+                    .fontSize(fs(12.0f))
+                    .lineHeight(mutedH)
+                    .color(t.colors.textTertiary)
+                    .maxWidth(summaryW)
+                    .overflow(core::TextOverflow::Ellipsis)
+                    .clip()
+                    .build();
+            }
         }
 
         // ── 启用 / 自动推送：各成一整行（UAT6，模块插拔卡开关行先例）──
@@ -359,15 +396,32 @@ void drawGithubSyncCard(const CardDrawArgs& args) {
                 ui_kit::formRow(ui, id + ".token", "Token", col2X, y,
                                 colW, rowH,
                     [&](eui::Ui& ui, float cx, float cy, float cw, float ch) {
+                        // S3.7#6: 输入右给眼睛图标让位
+                        const float eyeW = 20.0f;
+                        const float inputW = std::max(0.0f, cw - eyeW - 4.0f);
                         components::input(ui, id + ".token.input")
                             .position(cx, cy)
-                            .size(cw, ch)
+                            .size(inputW, ch)
                             .placeholder("ghp_xxxxxxxxxxxxxxxxxxxx")
-                            .value(in.githubSyncTokenDraft)
+                            .value(in.githubSyncTokenVisible
+                                       ? in.githubSyncTokenDraft
+                                       : std::string(in.githubSyncTokenDraft.size(),
+                                                     '*'))
                             .fontSize(t.sizes.fontSizeSmall)
                             .theme(compTheme)
                             .onChange([f = a.setGithubSyncTokenDraft](const std::string& v) { f(v); })
                             .build();
+                        // 眼睛显隐图标
+                        auto eye = ui.text(id + ".token.eye")
+                            .position(cx + inputW + 4.0f, cy + (ch - 16.0f) * 0.5f)
+                            .size(eyeW, 16.0f)
+                            .icon(in.githubSyncTokenVisible ? 0xF070 : 0xF06E)
+                            .fontSize(fs(14.0f))
+                            .color(t.colors.textTertiary);
+                        if (a.toggleGithubSyncTokenVisibility) {
+                            eye.onClick([f = a.toggleGithubSyncTokenVisibility] { f(); });
+                        }
+                        eye.build();
                     }, t);
             })
             .build();
@@ -379,9 +433,9 @@ void drawGithubSyncCard(const CardDrawArgs& args) {
             .position(kCardPaddingX, y)
             .size(kBtnW, rowH)
             .text("立即同步")
-            .fontSize(fs(12.0f))
+            .fontSize(t.sizes.fontSizeBody)
             .theme(compTheme, /*primary=*/true)
-            .radius(t.sizes.radiusSmall)
+            .radius(t.sizes.radius)
             .disabled(!in.githubSyncEnabled || in.githubSyncRunning)
             .onClick([f = a.githubSyncPush] { f(); })
             .build();
@@ -389,12 +443,13 @@ void drawGithubSyncCard(const CardDrawArgs& args) {
             .position(kCardPaddingX + kBtnW + kBtnGapX, y)
             .size(kBtnTestW, rowH)
             .text("测试连接")
-            .fontSize(fs(12.0f))
+            .fontSize(t.sizes.fontSizeBody)
             .theme(compTheme, /*primary=*/false)
-            .colors(t.colors.surfaceElevated, t.colors.hover, t.colors.active)
-            .textColor(t.colors.textPrimary)
-            .radius(t.sizes.radiusSmall)
-            .border(1.0f, t.colors.borderDefault)
+            .colors(t.colors.surface, t.colors.primarySoftBg,
+                    components::theme::withOpacity(t.colors.primaryPressed, 0.15f))
+            .textColor(t.colors.primary)
+            .radius(t.sizes.radius)
+            .border(1.0f, t.colors.primary)
             .disabled(!in.githubSyncEnabled || in.githubSyncRunning)
             .onClick([f = a.githubSyncTestConnection] { f(); })
             .build();
@@ -402,12 +457,13 @@ void drawGithubSyncCard(const CardDrawArgs& args) {
             .position(kCardPaddingX + kBtnW + kBtnGapX + kBtnTestW + kBtnGapX, y)
             .size(kBtnSmallW, rowH)
             .text("拉取")
-            .fontSize(fs(12.0f))
+            .fontSize(t.sizes.fontSizeBody)
             .theme(compTheme, /*primary=*/false)
-            .colors(t.colors.surfaceElevated, t.colors.hover, t.colors.active)
-            .textColor(t.colors.textPrimary)
-            .radius(t.sizes.radiusSmall)
-            .border(1.0f, t.colors.borderDefault)
+            .colors(t.colors.surface, t.colors.primarySoftBg,
+                    components::theme::withOpacity(t.colors.primaryPressed, 0.15f))
+            .textColor(t.colors.primary)
+            .radius(t.sizes.radius)
+            .border(1.0f, t.colors.primary)
             .disabled(!in.githubSyncEnabled || in.githubSyncRunning)
             .onClick([f = a.githubSyncPull] { f(); })
             .build();
@@ -459,29 +515,49 @@ void drawGithubSyncCard(const CardDrawArgs& args) {
         const float infoGap = roundFs(kInfoRowGap);
         bool infoFirst = true;
         const auto infoRow = [&](const char* suffix, const std::string& text,
-                                  const eui::Color& color) {
+                                  const eui::Color& color, bool showIcon = false) {
             if (!infoFirst) y += infoGap;
             infoFirst = false;
-            ui.text(id + suffix)
-                .position(kCardPaddingX, y)
-                .size(formW, infoH)
-                .text(text)
-                .fontSize(fs(11.0f))
-                .lineHeight(infoH)
-                .color(color)
-                .build();
+            if (showIcon) {
+                // S3.7#4: warning 信息行前加 fa-triangle-exclamation 图标
+                ui.text(id + std::string(suffix) + ".icon")
+                    .position(kCardPaddingX, y)
+                    .size(14.0f, infoH)
+                    .icon(0xF071)  // fa-triangle-exclamation
+                    .fontSize(fs(11.0f))
+                    .lineHeight(infoH)
+                    .color(color)
+                    .build();
+                ui.text(id + suffix)
+                    .position(kCardPaddingX + 16.0f, y)
+                    .size(formW - 16.0f, infoH)
+                    .text(text)
+                    .fontSize(fs(11.0f))
+                    .lineHeight(infoH)
+                    .color(color)
+                    .build();
+            } else {
+                ui.text(id + suffix)
+                    .position(kCardPaddingX, y)
+                    .size(formW, infoH)
+                    .text(text)
+                    .fontSize(fs(11.0f))
+                    .lineHeight(infoH)
+                    .color(color)
+                    .build();
+            }
             y += infoH;
         };
         // 分支被自动创建提示
         if (!in.githubSyncBranchHint.empty()) {
-            infoRow(".branchhint", in.githubSyncBranchHint, t.colors.warning);
+            infoRow(".branchhint", in.githubSyncBranchHint, t.colors.warning, true);
         }
         // public 仓黄字提醒（提示不硬拦）。口径必须与披露文案同源：同步载荷是
         // **整库快照**而不只是「笔记、待办」（sync-02）。
         if (in.githubSyncRepoPublic) {
             infoRow(".publicwarn",
                     "仓库为公开（public）：笔记、整库快照与其中的密钥将公开可见",
-                    t.colors.warning);
+                    t.colors.warning, true);
         }
         // 本地 git 不可用（灰字，不影响同步）
         if (in.githubSyncLocalGitUnavailable) {
@@ -491,11 +567,11 @@ void drawGithubSyncCard(const CardDrawArgs& args) {
         if (in.githubSyncUnsyncedNotice) {
             infoRow(".unsynced",
                     "有未同步改动（上次退出时未能推送，建议点「立即同步」）",
-                    t.colors.warning);
+                    t.colors.warning, true);
         }
         // 删远端被安全栏跳过（本地仍在但读失败）→ 黄字提示
         if (!in.githubSyncDeleteSkipHint.empty()) {
-            infoRow(".deleteskip", in.githubSyncDeleteSkipHint, t.colors.warning);
+            infoRow(".deleteskip", in.githubSyncDeleteSkipHint, t.colors.warning, true);
         }
         })
         .build();
