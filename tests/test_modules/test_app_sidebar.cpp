@@ -288,12 +288,12 @@ REGISTER_TEST(sidebar_collapsed_compose,
     DOCTEST_CHECK(floatEq(collapsedMark->y, 4.0f));
     DOCTEST_CHECK(floatEq(collapsedMark->width.value, 48.0f));
 
-    // 顶部留白 = spacingXXLarge(40)，与页面主区上 padding 同档；折叠/展开两态必须同值，
+    // 顶部留白 = spacingLarge×2(32)，与页面主区上 padding 同档（S4.2 弹性）；折叠/展开两态必须同值，
     // 否则切换时 logo 会纵向跳
-    DOCTEST_CHECK(floatEq(collapsedBrand->y, 40.0f));
+    DOCTEST_CHECK(floatEq(collapsedBrand->y, 32.0f));
     const auto* firstHit = ui.find("app.sidebar.item.Home.hit");
     DOCTEST_CHECK(firstHit != nullptr);
-    DOCTEST_CHECK(floatEq(firstHit->y, 124.0f));  // 40 + 品牌高 56 + 品牌/导航间距 28
+    DOCTEST_CHECK(floatEq(firstHit->y, 116.0f));  // 32 + 品牌高 56 + 品牌/导航间距 28
 
     // 折叠态不渲染 label（模块名只走 tooltip）
     DOCTEST_CHECK(ui.find("app.sidebar.item.Home.label") == nullptr);
@@ -342,11 +342,11 @@ REGISTER_TEST(sidebar_expanded_compose,
 
     // UAT3 #9 + 图标批 2026-10-20：brand 行展开态 = 折叠态同款居中几何 logo
     //（.mark 矢量瓦，同 ui_kit::drawDevDeskLogo 契约），「DevDesk」文本改由自绘
-    // 标题栏承载（app.titlebar.brand）；品牌行 y=40 防跳动。UAT5 logo 36→48、
+    // 标题栏承载（app.titlebar.brand）；品牌行 y=32 防跳动（S4.2 弹性，原 40）。UAT5 logo 36→48、
     // kBrandH 32→56：(208-48)/2=80、(56-48)/2=4（48 瓦上下各留 4px，无溢出）
     const auto* brand = ui.find("app.sidebar.brand");
     DOCTEST_CHECK(brand != nullptr);
-    DOCTEST_CHECK(floatEq(brand->y, 40.0f));
+    DOCTEST_CHECK(floatEq(brand->y, 32.0f));
     const auto* mark = ui.find("app.sidebar.brand.mark");
     DOCTEST_CHECK(mark != nullptr);
     DOCTEST_CHECK(floatEq(mark->x, 80.0f));  // (208-48)/2，行内水平居中
@@ -354,7 +354,7 @@ REGISTER_TEST(sidebar_expanded_compose,
     DOCTEST_CHECK(floatEq(mark->width.value, 48.0f));
     DOCTEST_CHECK(ui.find("app.sidebar.brand.logo") == nullptr);  // 旧展开态 logo 子元素已并
     // 导航列表整体下移到 40 + 56 + 28
-    DOCTEST_CHECK(floatEq(ui.find("app.sidebar.item.Home.hit")->y, 124.0f));
+    DOCTEST_CHECK(floatEq(ui.find("app.sidebar.item.Home.hit")->y, 116.0f));
     const auto* label = ui.find("app.sidebar.item.Home.label");
     DOCTEST_CHECK(label != nullptr);
     DOCTEST_CHECK(label->text == "首页");
@@ -420,9 +420,10 @@ REGISTER_TEST(sidebar_top_padding_stays_inside_sidebar,
     DOCTEST_CHECK(floatEq(divider->frame.y, 0.0f));
     DOCTEST_CHECK(floatEq(divider->frame.height, 1000.0f));
 
-    // 留白值 = spacingXXLarge(40)，且落在容器内部（0 ≤ brand.y < 首个导航项 y）
-    const float space = ::core::theme::current().sizes.spacingXXLarge;
-    DOCTEST_CHECK(floatEq(space, 40.0f));
+    // 留白值 = spacingLarge×2(32)（S4.2 弹性，侧栏不再与页面 spacingXXLarge 同档），
+    // 且落在容器内部（0 ≤ brand.y < 首个导航项 y）
+    const float space = ::core::theme::current().sizes.spacingLarge * 2.0f;
+    DOCTEST_CHECK(floatEq(space, 32.0f));
     DOCTEST_CHECK(floatEq(brand->frame.y, space));
     DOCTEST_CHECK(brand->frame.y >= sidebar->frame.y);
 
@@ -494,7 +495,7 @@ REGISTER_TEST(sidebar_live_toggle_reflects_registration,
 
     // 基础 id（"app.sidebar.item." + pageIdToString(page)）自身不构成元素，
     // 直接 find 必为空；元素本体是 .hit/.icon/.label 三个。
-    // 注册态：Agent 排在 Home/Markdown 之后，y = 124 + 2×(40+4)
+    // 注册态：Agent 排在 Home/Markdown 之后，y = 116 + 2×(40+4)
     {
         eui::Ui ui;
         ui.begin("live_toggle_on");
@@ -502,7 +503,7 @@ REGISTER_TEST(sidebar_live_toggle_reflects_registration,
         ui.end();
         const auto* agentHit = ui.find("app.sidebar.item.Agent.hit");
         DOCTEST_REQUIRE(agentHit != nullptr);
-        DOCTEST_CHECK(floatEq(agentHit->y, 212.0f));
+        DOCTEST_CHECK(floatEq(agentHit->y, 204.0f));
         const auto* agentLabel = ui.find("app.sidebar.item.Agent.label");
         DOCTEST_REQUIRE(agentLabel != nullptr);
         DOCTEST_CHECK(agentLabel->text == "智能体");
@@ -522,8 +523,8 @@ REGISTER_TEST(sidebar_live_toggle_reflects_registration,
         const auto* mdHit = ui.find("app.sidebar.item.Markdown.hit");
         DOCTEST_REQUIRE(homeHit != nullptr);
         DOCTEST_REQUIRE(mdHit != nullptr);
-        DOCTEST_CHECK(floatEq(homeHit->y, 124.0f));
-        DOCTEST_CHECK(floatEq(mdHit->y, 168.0f));
+        DOCTEST_CHECK(floatEq(homeHit->y, 116.0f));
+        DOCTEST_CHECK(floatEq(mdHit->y, 160.0f));
     }
 
     // 再注册 → 条目回来，y 仍是 212（表序把它排在末位）
@@ -535,13 +536,13 @@ REGISTER_TEST(sidebar_live_toggle_reflects_registration,
         ui.end();
         const auto* agentHit = ui.find("app.sidebar.item.Agent.hit");
         DOCTEST_REQUIRE(agentHit != nullptr);
-        DOCTEST_CHECK(floatEq(agentHit->y, 212.0f));
+        DOCTEST_CHECK(floatEq(agentHit->y, 204.0f));
         const auto* homeHit = ui.find("app.sidebar.item.Home.hit");
         const auto* mdHit = ui.find("app.sidebar.item.Markdown.hit");
         DOCTEST_REQUIRE(homeHit != nullptr);
         DOCTEST_REQUIRE(mdHit != nullptr);
-        DOCTEST_CHECK(floatEq(homeHit->y, 124.0f));
-        DOCTEST_CHECK(floatEq(mdHit->y, 168.0f));
+        DOCTEST_CHECK(floatEq(homeHit->y, 116.0f));
+        DOCTEST_CHECK(floatEq(mdHit->y, 160.0f));
     }
     app::setCustomTitlebarMode(std::nullopt);  // 复位：跟平台走
     return true;
@@ -574,7 +575,7 @@ REGISTER_TEST(sidebar_re_register_lands_table_order,
         ui.end();
         const auto* agentHit = ui.find("app.sidebar.item.Agent.hit");
         DOCTEST_REQUIRE(agentHit != nullptr);
-        DOCTEST_CHECK(floatEq(agentHit->y, 124.0f));
+        DOCTEST_CHECK(floatEq(agentHit->y, 116.0f));
     }
 
     // 再注册 Home、Markdown → 它们插到 Agent 前面，Agent 被挤到 y=212
@@ -591,9 +592,9 @@ REGISTER_TEST(sidebar_re_register_lands_table_order,
         DOCTEST_REQUIRE(homeHit != nullptr);
         DOCTEST_REQUIRE(mdHit != nullptr);
         DOCTEST_REQUIRE(agentHit != nullptr);
-        DOCTEST_CHECK(floatEq(homeHit->y, 124.0f));
-        DOCTEST_CHECK(floatEq(mdHit->y, 168.0f));
-        DOCTEST_CHECK(floatEq(agentHit->y, 212.0f));
+        DOCTEST_CHECK(floatEq(homeHit->y, 116.0f));
+        DOCTEST_CHECK(floatEq(mdHit->y, 160.0f));
+        DOCTEST_CHECK(floatEq(agentHit->y, 204.0f));
     }
 
     // unregister → 再 register：y 仍 212（表序位由 pageId 决定，不受反复开关影响）
@@ -606,10 +607,10 @@ REGISTER_TEST(sidebar_re_register_lands_table_order,
         ui.end();
         const auto* agentHit = ui.find("app.sidebar.item.Agent.hit");
         DOCTEST_REQUIRE(agentHit != nullptr);
-        DOCTEST_CHECK(floatEq(agentHit->y, 212.0f));
+        DOCTEST_CHECK(floatEq(agentHit->y, 204.0f));
         const auto* homeHit = ui.find("app.sidebar.item.Home.hit");
         DOCTEST_REQUIRE(homeHit != nullptr);
-        DOCTEST_CHECK(floatEq(homeHit->y, 124.0f));
+        DOCTEST_CHECK(floatEq(homeHit->y, 116.0f));
     }
     app::setSidebarCollapsed(false);  // 还原，不污染后续用例
     app::setCustomTitlebarMode(std::nullopt);  // 复位：跟平台走
@@ -694,20 +695,20 @@ REGISTER_TEST(sidebar_w3_grouping_and_selectionbar,
     // Home（work 组、active）在 y=124；active 项应有 SelectionBar 三件套（§4.3）
     const auto* homeHit = ui.find("app.sidebar.item.Home.hit");
     DOCTEST_REQUIRE(homeHit != nullptr);
-    DOCTEST_CHECK(floatEq(homeHit->y, 124.0f));
+    DOCTEST_CHECK(floatEq(homeHit->y, 116.0f));
     DOCTEST_CHECK(ui.find("app.sidebar.item.Home.sel.bg") != nullptr);
     DOCTEST_CHECK(ui.find("app.sidebar.item.Home.sel.accent") != nullptr);
     DOCTEST_CHECK(ui.find("app.sidebar.item.Home.sel.text") != nullptr);
 
-    // 组间 divider 在 Home 之下（y=168 = 124 + itemH40 + gap4）
+    // 组间 divider 在 Home 之下（y=160 = 116 + itemH40 + gap4）
     const auto* groupdiv = ui.find("app.sidebar.groupdiv");
     DOCTEST_REQUIRE(groupdiv != nullptr);
-    DOCTEST_CHECK(floatEq(groupdiv->y, 168.0f));
+    DOCTEST_CHECK(floatEq(groupdiv->y, 160.0f));
 
     // Settings（system 组）在 divider 之下（y=173 = 168 + divider1 + gap4）
     const auto* settingsHit = ui.find("app.sidebar.item.Settings.hit");
     DOCTEST_REQUIRE(settingsHit != nullptr);
-    DOCTEST_CHECK(floatEq(settingsHit->y, 173.0f));
+    DOCTEST_CHECK(floatEq(settingsHit->y, 165.0f));
 
     // About 在 Settings 之下（y=217 = 173 + itemH40 + gap4）
     const auto* aboutHit = ui.find("app.sidebar.item.About.hit");
@@ -749,7 +750,7 @@ REGISTER_TEST(sidebar_w3_no_divider_when_only_work,
     // 无 system 组项 → 不应画 groupdiv
     DOCTEST_CHECK(ui.find("app.sidebar.groupdiv") == nullptr);
     // Markdown.y 仍是 168（不被 divider 推走）
-    DOCTEST_CHECK(floatEq(ui.find("app.sidebar.item.Markdown.hit")->y, 168.0f));
+    DOCTEST_CHECK(floatEq(ui.find("app.sidebar.item.Markdown.hit")->y, 160.0f));
 
     app::setSidebarCollapsed(false);
     app::setCustomTitlebarMode(std::nullopt);  // 复位：跟平台走
