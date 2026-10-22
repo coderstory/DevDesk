@@ -5,8 +5,8 @@
 // 跨文件前提（节点 id 契约，agent_module.cpp 侧为准）：
 //   页面   agent.page / agent.page.header / agent.title / agent.page.newTask /
 //          agent.tools.*（可用工具区块）/ agent.tasklist（scrollView）+.content /
-//          agent.tasklist.panel（UAT6 列表容器 = pageBg 灰面板，item 白卡浮起）/
-//          agent.task.<id>（UAT6 卡片化：= 卡 stack，.bg 是白卡本体（cardBg+
+//          agent.tasklist.panel（UAT6 列表容器 = background 灰面板，item 白卡浮起）/
+//          agent.task.<id>（UAT6 卡片化：= 卡 stack，.bg 是白卡本体（surface+
 //          radiusWeChat+细边，hover 加深，点击开详情），.row 内缩 12px 内边距；
 //          .title / .status / .status.dot / .detail / .edit /
 //          .toggle / .delete / [.limit 仅限次任务] / [.warn 配置异常] /
@@ -1373,7 +1373,7 @@ REGISTER_TEST(agent_ui_detail_dialog_shows_config_runs_messages,
     const auto* run1Bg = ui2.find("agent.dialog.detail.runlist.1.bg");
     DOCTEST_REQUIRE(run0Bg != nullptr && run1Bg != nullptr);
     DOCTEST_CHECK_MESSAGE(run0Bg->color.a > run1Bg->color.a,
-                          "最近一次 run 未高亮（选中 .bg 应为 selectedBg）");
+                          "最近一次 run 未高亮（选中 .bg 应为 primarySoftBg）");
     const auto* errRow = ui2.find("agent.dialog.detail.runlist.1.err");
     DOCTEST_REQUIRE(errRow != nullptr);
     DOCTEST_CHECK(errRow->text.find("200K") != std::string::npos);
@@ -4138,12 +4138,12 @@ REGISTER_TEST(agent_ui_detail_shell_wide_default,
           nearPx(navOn->color.g, tok.colors.primary.g) &&
           nearPx(navOn->color.b, tok.colors.primary.b)),
         "segment 选中块回潮成暖橙 primary（必须 wechat 绿）");
-    // 未选中：灰底深字（pageBg 底 + textPrimary 文字）
+    // 未选中：灰底深字（background 底 + textPrimary 文字）
     DOCTEST_CHECK_MESSAGE(
-        nearPx(navOff->color.r, tok.colors.pageBg.r) &&
-            nearPx(navOff->color.g, tok.colors.pageBg.g) &&
-            nearPx(navOff->color.b, tok.colors.pageBg.b),
-        "segment 未选中块应为 pageBg 灰底");
+        nearPx(navOff->color.r, tok.colors.background.r) &&
+            nearPx(navOff->color.g, tok.colors.background.g) &&
+            nearPx(navOff->color.b, tok.colors.background.b),
+        "segment 未选中块应为 background 灰底");
     const auto* navLabel2 = ui2.find("agent.dialog.detail.nav.item.2.text");
     DOCTEST_REQUIRE(navLabel2 != nullptr);
     DOCTEST_CHECK_EQ(navLabel2->text, std::string("任务配置"));
@@ -4810,15 +4810,15 @@ REGISTER_TEST(agent_ui_draft_chip_and_subdialog_lifecycle,
         genBtn->frame.y >= dpanel->frame.y + 306.0f - 0.5f,
         "按钮带顶压到结果槽底（面板内 306），实测按钮顶 " +
             std::to_string(genBtn->frame.y - dpanel->frame.y));
-    // 微信化色锁：生成=Primary 微信绿、关闭=Secondary 白底（cardBg）
-    const auto& wc = ::core::theme::current().colors.wechat;
+    // 微信化色锁：生成=Primary 微信绿、关闭=Secondary 白底（surface）
+    const auto& wc = ::core::theme::current().colors;
     auto tone = [](const eui::Color& x, const eui::Color& y) {
         return std::fabs(x.r - y.r) < 0.01f && std::fabs(x.g - y.g) < 0.01f &&
                std::fabs(x.b - y.b) < 0.01f;
     };
     DOCTEST_CHECK_MESSAGE(tone(genBtnBg->color, wc.primary),
                           "生成草稿钮应为微信 Primary 绿");
-    DOCTEST_CHECK_MESSAGE(tone(dismissBg->color, wc.cardBg),
+    DOCTEST_CHECK_MESSAGE(tone(dismissBg->color, wc.surface),
                           "关闭钮应为微信 Secondary 白底");
     DOCTEST_CHECK(uiC.find("agent.dialog.task.panel") != nullptr);
 
@@ -5070,9 +5070,9 @@ REGISTER_TEST(agent_ui_draft_error_paths,
     const auto* err = uiD.find("agent.dialog.task.draft.error");
     DOCTEST_REQUIRE(err != nullptr);
     DOCTEST_CHECK(err->text.find("一句话") != std::string::npos);
-    // 微信化错误行锁：错误文字 = warningRed（#FA5151）
+    // 微信化错误行锁：错误文字 = error（#FA5151）
     DOCTEST_CHECK(std::fabs(err->textColor.r -
-                            core::theme::current().colors.warningRed.r) <
+                            core::theme::current().colors.error.r) <
                   0.01f);
     DOCTEST_CHECK_EQ(calls, 0);
 
@@ -5419,12 +5419,12 @@ REGISTER_TEST(agent_ui_task_list_status_visuals,
     DOCTEST_CHECK(idleTitle->textColor.a > 0.9f);
 
     // ---- UAT6 卡片化几何/背景（用户真机反馈：item 卡片展示 + 四边内边距）----
-    // 列表容器收敛为 pageBg 灰面板——白底让给 item 卡；防「整区白面板」回潮
+    // 列表容器收敛为 background 灰面板——白底让给 item 卡；防「整区白面板」回潮
     const auto& themeNow = core::theme::current();
     const auto* panel = ui.find("agent.tasklist.panel");
     DOCTEST_REQUIRE(panel != nullptr);
-    DOCTEST_CHECK_MESSAGE(sameColor(panel->color, themeNow.colors.pageBg),
-                          "列表容器应为 pageBg 灰面板（白底已让给 item 卡）");
+    DOCTEST_CHECK_MESSAGE(sameColor(panel->color, themeNow.colors.background),
+                          "列表容器应为 background 灰面板（白底已让给 item 卡）");
     // 卡列表在面板内四边留边 10（kTaskCardInset；卡宽 = 列表宽 − 边距）
     const auto* tasklist = ui.find("agent.tasklist");
     DOCTEST_REQUIRE(tasklist != nullptr);
@@ -5436,26 +5436,26 @@ REGISTER_TEST(agent_ui_task_list_status_visuals,
         nearPx(panel->frame.width - tasklist->frame.width, 20.0f),
         "卡列表应比面板窄 2×10（弹性契约：卡宽=列表宽−边距）");
 
-    // 卡本体三态：normal cardBg 白卡 / hover 加深 dividerSecondary / pressed
-    // selectedBg（列表无选中语义，第三档只是按压反馈，无绿圈白勾）+ 微信圆角
+    // 卡本体三态：normal surface 白卡 / hover 加深 hover / pressed
+    // primarySoftBg（列表无选中语义，第三档只是按压反馈，无绿圈白勾）+ 微信圆角
     // + 细边 + 点击开详情
     const auto* rowBg = ui.find("agent.task." + idleTid + ".bg");
     DOCTEST_REQUIRE(rowBg != nullptr);
     DOCTEST_CHECK(rowBg->hasStateColors);
-    DOCTEST_CHECK_MESSAGE(sameColor(rowBg->color, themeNow.colors.cardBg),
-                          "卡底应为 cardBg 白卡");
+    DOCTEST_CHECK_MESSAGE(sameColor(rowBg->color, themeNow.colors.surface),
+                          "卡底应为 surface 白卡");
     DOCTEST_CHECK_MESSAGE(
-        sameColor(rowBg->hoverColor, themeNow.colors.dividerSecondary),
-        "卡 hover 应加深一档 dividerSecondary（原 transparent→hover 行为已随卡片化换代）");
+        sameColor(rowBg->hoverColor, themeNow.colors.hover),
+        "卡 hover 应加深一档 hover（原 transparent→hover 行为已随卡片化换代）");
     DOCTEST_CHECK_MESSAGE(
-        sameColor(rowBg->pressedColor, themeNow.colors.selectedBg),
-        "卡按压档应为 selectedBg");
+        sameColor(rowBg->pressedColor, themeNow.colors.primarySoftBg),
+        "卡按压档应为 primarySoftBg");
     DOCTEST_CHECK_MESSAGE(nearPx(rowBg->radius, themeNow.sizes.radiusWeChat),
                           "卡圆角应为 radiusWeChat");
     DOCTEST_CHECK_MESSAGE(nearPx(rowBg->border.width, 1.0f) &&
                               sameColor(rowBg->border.color,
-                                        themeNow.colors.dividerPrimary),
-                          "卡应为 1px dividerPrimary 细边");
+                                        themeNow.colors.borderDefault),
+                          "卡应为 1px borderDefault 细边");
     DOCTEST_CHECK(rowBg->onClick != nullptr);
     // 卡几何：卡高 = 行 44 + 上下内边距 12 = 68；.row 四边内缩 12
     const auto* card = ui.find("agent.task." + idleTid);

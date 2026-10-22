@@ -8048,12 +8048,12 @@ REGISTER_TEST(claude_ui_model_one_m_switch,
             trackHaiku->color.b == trackDef->color.b &&
             trackHaiku->color.a == trackDef->color.a;
         DOCTEST_CHECK_FALSE(sameColor);
-        //（UAT5 米黄收尾）禁用 knob 换 WeChat 白（cardBg，与启用态白 knob 同源），
+        //（UAT5 米黄收尾）禁用 knob 换 WeChat 白（surface，与启用态白 knob 同源），
         // 不再走暖橙 surfaceElevated；「禁用」语义仍由 textDisabled 深灰轨道承担
         const auto& wc = core::theme::current().colors;
-        DOCTEST_CHECK(knobHaiku->color.r == wc.cardBg.r &&
-                      knobHaiku->color.g == wc.cardBg.g &&
-                      knobHaiku->color.b == wc.cardBg.b);
+        DOCTEST_CHECK(knobHaiku->color.r == wc.surface.r &&
+                      knobHaiku->color.g == wc.surface.g &&
+                      knobHaiku->color.b == wc.surface.b);
         DOCTEST_CHECK(!(knobHaiku->color.r == wc.surfaceElevated.r &&
                         knobHaiku->color.g == wc.surfaceElevated.g &&
                         knobHaiku->color.b == wc.surfaceElevated.b));
@@ -8297,7 +8297,7 @@ REGISTER_TEST(claude_module_left_pane_adaptive_width,
 // ── UAT5 批：Profile 卡选中「绿圈白勾」/ URL 省略号 / 表单与详情米黄清零 / 未激活徽章删除 ──
 
 // UAT5：列表选中态改绿圈白勾——旧 2px 左竖线删（唯一选中指示），未选卡不画圈，
-// 点另一卡勾圈跟随移动；选中底色浅灰 selectedBg 保留。
+// 点另一卡勾圈跟随移动；选中底色浅灰 primarySoftBg 保留。
 REGISTER_TEST(claude_profile_selection_check_badge,
               "claude_module: 选中卡绿圈白勾徽标（未选不画/跟随切换/左竖线已删）", {
     TestEnv env;
@@ -8357,7 +8357,7 @@ REGISTER_TEST(claude_profile_selection_check_badge,
         DOCTEST_REQUIRE(bg0 != nullptr);
         DOCTEST_CHECK(sameColor(c0->color, t.colors.primary));
         DOCTEST_CHECK(sameColor(i0->color, t.colors.onPrimary));
-        DOCTEST_CHECK(sameColor(bg0->color, t.colors.selectedBg));
+        DOCTEST_CHECK(sameColor(bg0->color, t.colors.primarySoftBg));
         // 圈在卡右缘垂直居中（56 高卡，26px 圈 y+15..y+41）
         DOCTEST_CHECK(c0->frame.y >= bg0->frame.y + 14.5f);
         DOCTEST_CHECK(c0->frame.y + c0->frame.height <=
@@ -8493,7 +8493,7 @@ REGISTER_TEST(claude_profile_switch_confirm_dialog,
 })
 
 // UAT5 米黄清理：表单 env/高级配置 tab 与全屏编辑覆盖层的输入面/按钮全量换
-// WeChat 令牌——输入底 == cardBg、工具钮 == secondaryButtonBg、
+// WeChat 令牌——输入底 == surface、工具钮 == hover、
 // 主动作 == primary；反向断言锁死暖橙 surfaceElevated/legacy primary。
 REGISTER_TEST(claude_form_wechat_colors,
               "claude_module: 表单/全屏编辑输入面与按钮 WeChat 令牌锁死（反暖橙）", {
@@ -8551,17 +8551,17 @@ REGISTER_TEST(claude_form_wechat_colors,
         DOCTEST_REQUIRE(ui.find("claude.form.import.text.hit") != nullptr);
         // env 页：键/值输入底 == wechat 白系；删除/添加/解析钮 == WeChat Secondary
         DOCTEST_CHECK(sameColor(colorOf(ui, "claude.form.env.row.0.key.hit"),
-                                t.colors.cardBg));
+                                t.colors.surface));
         DOCTEST_CHECK(sameColor(colorOf(ui, "claude.form.env.row.0.value.hit"),
-                                t.colors.cardBg));
+                                t.colors.surface));
         DOCTEST_CHECK(sameColor(colorOf(ui, "claude.form.env.row.0.del.bg"),
-                                t.colors.secondaryButtonBg));
+                                t.colors.hover));
         DOCTEST_CHECK(sameColor(colorOf(ui, "claude.form.env.add.bg"),
-                                t.colors.secondaryButtonBg));
+                                t.colors.hover));
         DOCTEST_CHECK(sameColor(colorOf(ui, "claude.form.import.parse.bg"),
-                                t.colors.secondaryButtonBg));
+                                t.colors.hover));
         DOCTEST_CHECK(sameColor(colorOf(ui, "claude.form.import.text.hit"),
-                                t.colors.cardBg));
+                                t.colors.surface));
         // 导入区标题同步「从 CC」口径
         const auto* importLabel = ui.find("claude.form.import.label");
         DOCTEST_REQUIRE(importLabel != nullptr);
@@ -8584,12 +8584,12 @@ REGISTER_TEST(claude_form_wechat_colors,
         compose(ui, "wc_adv");
         DOCTEST_REQUIRE(ui.find("claude.form.advanced.json.hit") != nullptr);
         DOCTEST_CHECK(sameColor(colorOf(ui, "claude.form.advanced.json.hit"),
-                                t.colors.cardBg));
+                                t.colors.surface));
         DOCTEST_CHECK(sameColor(
             colorOf(ui, "claude.form.advanced.json.format.bg"),
-            t.colors.secondaryButtonBg));
+            t.colors.hover));
         DOCTEST_CHECK(sameColor(colorOf(ui, "claude.form.advanced.json.fs.bg"),
-                                t.colors.secondaryButtonBg));
+                                t.colors.hover));
         DOCTEST_CHECK(!sameColor(
             colorOf(ui, "claude.form.advanced.json.format.bg"), warmSurface));
         // 进全屏编辑
@@ -8599,17 +8599,17 @@ REGISTER_TEST(claude_form_wechat_colors,
         eui::Ui ui;
         compose(ui, "wc_jsonfs");
         DOCTEST_REQUIRE(ui.find("claude.jsonfs.editor.hit") != nullptr);
-        // 全屏编辑视图：整页底 pageBg、编辑器底白系、保存绿主钮、格式化/放弃 Secondary
+        // 全屏编辑视图：整页底 background、编辑器底白系、保存绿主钮、格式化/放弃 Secondary
         DOCTEST_CHECK(sameColor(colorOf(ui, "claude.jsonfs.bg"),
-                                t.colors.pageBg));
+                                t.colors.background));
         DOCTEST_CHECK(sameColor(colorOf(ui, "claude.jsonfs.editor.hit"),
-                                t.colors.cardBg));
+                                t.colors.surface));
         DOCTEST_CHECK(sameColor(colorOf(ui, "claude.jsonfs.apply.bg"),
                                 t.colors.primary));
         DOCTEST_CHECK(sameColor(colorOf(ui, "claude.jsonfs.format.bg"),
-                                t.colors.secondaryButtonBg));
+                                t.colors.hover));
         DOCTEST_CHECK(sameColor(colorOf(ui, "claude.jsonfs.discard.bg"),
-                                t.colors.secondaryButtonBg));
+                                t.colors.hover));
         DOCTEST_CHECK(!sameColor(colorOf(ui, "claude.jsonfs.bg"), warmSurface));
         DOCTEST_CHECK(!sameColor(colorOf(ui, "claude.jsonfs.apply.bg"),
                                  warmPrimary));
@@ -8682,7 +8682,7 @@ REGISTER_TEST(claude_detail_wechat_and_no_inactive_badge,
         DOCTEST_CHECK(ui.find("claude.field.name.inactive.bg") == nullptr);
         DOCTEST_CHECK(ui.find("claude.field.name.value") != nullptr);
     }
-    // 环境变量 pane：行底 == cardBg（原暖橙 surfaceElevated 行）
+    // 环境变量 pane：行底 == surface（原暖橙 surfaceElevated 行）
     {
         eui::Ui ui;
         compose(ui, "dt_tab2");
@@ -8693,10 +8693,10 @@ REGISTER_TEST(claude_detail_wechat_and_no_inactive_badge,
         compose(ui, "dt_env");
         const auto* rowBg = ui.find("claude.env.row.bg.0");
         DOCTEST_REQUIRE(rowBg != nullptr);
-        DOCTEST_CHECK(sameColor(rowBg->color, t.colors.cardBg));
+        DOCTEST_CHECK(sameColor(rowBg->color, t.colors.surface));
         DOCTEST_CHECK(!sameColor(rowBg->color, t.colors.surfaceElevated));
     }
-    // 高级配置 pane：生效方言/备用 Profile 字段底 == cardBg
+    // 高级配置 pane：生效方言/备用 Profile 字段底 == surface
     {
         eui::Ui ui;
         compose(ui, "dt_tab3");
@@ -8709,8 +8709,8 @@ REGISTER_TEST(claude_detail_wechat_and_no_inactive_badge,
         const auto* fbBg = ui.find("claude.field.fallback.bg");
         DOCTEST_REQUIRE(dialectBg != nullptr);
         DOCTEST_REQUIRE(fbBg != nullptr);
-        DOCTEST_CHECK(sameColor(dialectBg->color, t.colors.cardBg));
-        DOCTEST_CHECK(sameColor(fbBg->color, t.colors.cardBg));
+        DOCTEST_CHECK(sameColor(dialectBg->color, t.colors.surface));
+        DOCTEST_CHECK(sameColor(fbBg->color, t.colors.surface));
     }
     // 最近调用 pane：「查看全部」钮底 == WeChat Secondary
     {
@@ -8724,7 +8724,7 @@ REGISTER_TEST(claude_detail_wechat_and_no_inactive_badge,
         const auto* viewall = ui.find("claude.calls.viewall.hit");
         DOCTEST_REQUIRE(viewall != nullptr);
         DOCTEST_CHECK(sameColor(viewall->color,
-                                t.colors.secondaryButtonBg));
+                                t.colors.hover));
         DOCTEST_CHECK(!sameColor(viewall->color, t.colors.surfaceElevated));
         // 点「查看全部」开调用记录弹窗（UAT5 米黄收尾：底部三钮也要过色锁）
         DOCTEST_CHECK(click(ui, "claude.calls.viewall.hit"));
@@ -8739,9 +8739,9 @@ REGISTER_TEST(claude_detail_wechat_and_no_inactive_badge,
         DOCTEST_REQUIRE(prevBg != nullptr);
         DOCTEST_REQUIRE(nextBg != nullptr);
         DOCTEST_REQUIRE(closeBg != nullptr);
-        DOCTEST_CHECK(sameColor(prevBg->color, t.colors.secondaryButtonBg));
-        DOCTEST_CHECK(sameColor(nextBg->color, t.colors.secondaryButtonBg));
-        DOCTEST_CHECK(sameColor(closeBg->color, t.colors.secondaryButtonBg));
+        DOCTEST_CHECK(sameColor(prevBg->color, t.colors.hover));
+        DOCTEST_CHECK(sameColor(nextBg->color, t.colors.hover));
+        DOCTEST_CHECK(sameColor(closeBg->color, t.colors.hover));
         DOCTEST_CHECK(!sameColor(closeBg->color, t.colors.surfaceElevated));
     }
 
@@ -8811,11 +8811,11 @@ REGISTER_TEST(claude_shared_dialog_wechat_colors,
         // 格式化/删除/取消 == WeChat Secondary；保存 == WeChat Primary 绿
         DOCTEST_CHECK(sameColor(
             colorOf(ui, "claude.dialog.shared.json.format.bg"),
-            t.colors.secondaryButtonBg));
+            t.colors.hover));
         DOCTEST_CHECK(sameColor(colorOf(ui, "claude.dialog.shared.delete.bg"),
-                                t.colors.secondaryButtonBg));
+                                t.colors.hover));
         DOCTEST_CHECK(sameColor(colorOf(ui, "claude.dialog.shared.cancel.bg"),
-                                t.colors.secondaryButtonBg));
+                                t.colors.hover));
         DOCTEST_CHECK(sameColor(colorOf(ui, "claude.dialog.shared.confirm.bg"),
                                 t.colors.primary));
         // 反向：不得命中暖橙 surfaceElevated / legacy primary

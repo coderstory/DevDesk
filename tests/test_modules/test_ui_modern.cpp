@@ -1006,7 +1006,7 @@ REGISTER_TEST(uiModernMdPreviewGradient,
         ui.end();
         const auto* bg = ui.find("md.preview.bg");
         DOCTEST_REQUIRE(bg != nullptr);
-        // W8：渐变已移除（§8 #4 禁大面积渐变），改为 flat pageBg。
+        // W8：渐变已移除（§8 #4 禁大面积渐变），改为 flat background。
         DOCTEST_CHECK(!bg->gradient.enabled);
         mod->onStop();
     }
@@ -1269,15 +1269,15 @@ REGISTER_TEST(uiAboutGlow,
 
     // 反证⑤：about.anim state 不存在（about_anim.h 已清空为空壳）
 
-    // 反证⑥：about.bg 颜色 RGB = pageBg（RGB 不随效果档位变；档位 alpha
+    // 反证⑥：about.bg 颜色 RGB = background（RGB 不随效果档位变；档位 alpha
     // 的行为断言见 uiAboutPageBgEffectAlpha）
     {
         const auto& t = ::core::theme::current();
         const auto* bg = ui.find("about.bg");
         DOCTEST_REQUIRE(bg != nullptr);
-        DOCTEST_CHECK(std::abs(bg->color.r - t.colors.pageBg.r) < 1e-3f);
-        DOCTEST_CHECK(std::abs(bg->color.g - t.colors.pageBg.g) < 1e-3f);
-        DOCTEST_CHECK(std::abs(bg->color.b - t.colors.pageBg.b) < 1e-3f);
+        DOCTEST_CHECK(std::abs(bg->color.r - t.colors.background.r) < 1e-3f);
+        DOCTEST_CHECK(std::abs(bg->color.g - t.colors.background.g) < 1e-3f);
+        DOCTEST_CHECK(std::abs(bg->color.b - t.colors.background.b) < 1e-3f);
     }
 
     // 反证⑦：渐变背景元素不存在（about.bg 无 gradient）
@@ -1292,15 +1292,15 @@ REGISTER_TEST(uiAboutGlow,
 })
 
 // UAT2 B 批：about 页底 alpha 随窗口效果档位（core::window_effect_state 单值）——
-// 磨砂 0.15 透 backdrop / off 实色 1.0；RGB 恒 pageBg 不随档位变。档位本用例内
+// 磨砂 0.15 透 backdrop / off 实色 1.0；RGB 恒 background 不随档位变。档位本用例内
 // 显式设定（进程级单值，与执行顺序无关），尾档复位 off 不污染后续用例。
 REGISTER_TEST(uiAboutPageBgEffectAlpha,
-              "about: 页底 alpha 随窗口效果档位（UAT2：磨砂 0.15 / off 1.0；RGB 恒 pageBg）", {
+              "about: 页底 alpha 随窗口效果档位（UAT2：磨砂 0.15 / off 1.0；RGB 恒 background）", {
     std::unique_ptr<::core::Module> mod(create_about_module());
     DOCTEST_REQUIRE(mod != nullptr);
     mod->onStart();
     const auto& t = ::core::theme::current();
-    const auto& wc = t.colors.wechat;
+    const auto& wc = t.colors;
 
     core::window_effect_state::setCurrent("frosted");
     {
@@ -1312,9 +1312,9 @@ REGISTER_TEST(uiAboutPageBgEffectAlpha,
         const auto* bg = ui.find("about.bg");
         DOCTEST_REQUIRE(bg != nullptr);
         DOCTEST_CHECK(std::abs(bg->color.a - 0.15f) < 1e-3f);
-        DOCTEST_CHECK(std::abs(bg->color.r - wc.pageBg.r) < 1e-3f);
-        DOCTEST_CHECK(std::abs(bg->color.g - wc.pageBg.g) < 1e-3f);
-        DOCTEST_CHECK(std::abs(bg->color.b - wc.pageBg.b) < 1e-3f);
+        DOCTEST_CHECK(std::abs(bg->color.r - wc.background.r) < 1e-3f);
+        DOCTEST_CHECK(std::abs(bg->color.g - wc.background.g) < 1e-3f);
+        DOCTEST_CHECK(std::abs(bg->color.b - wc.background.b) < 1e-3f);
     }
     core::window_effect_state::setCurrent("translucent");
     {

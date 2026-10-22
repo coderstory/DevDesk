@@ -1389,14 +1389,14 @@ REGISTER_TEST(settings_window_effect_contrast_guard, "settings: 半透叠乘后�
         // 铺面正文（侧栏底 / about 页底，tint@铺面 alpha 叠窗口纱叠壁纸）
         const eui::Color base = over(t.colors.background, windowAlpha, whiteWall);
         DOCTEST_CHECK(contrast(t.colors.textPrimary,
-                               over(t.colors.sidebarBgTinted, surfaceAlpha, base)) >= 4.5f);
+                               over(t.colors.sidebarBg, surfaceAlpha, base)) >= 4.5f);
         DOCTEST_CHECK(contrast(t.colors.textPrimary,
-                               over(t.colors.pageBg, surfaceAlpha, base)) >= 4.5f);
+                               over(t.colors.background, surfaceAlpha, base)) >= 4.5f);
         // 次要文字（导航 inactive #666666）：暗主题下浅 tint 混深底属 D-04
         // dark-WeChat 延后域（D-12：dark 模式 wechat 槽位沿用 light 调色板），不作
         // 4.5 断言；锁 2.5 = 0.5 时代 1.99 与 0.72 时代 3.01 的中点——回退调值即红
         DOCTEST_CHECK(contrast(t.colors.textSecondary,
-                               over(t.colors.sidebarBgTinted, surfaceAlpha, base)) >= 2.5f);
+                               over(t.colors.sidebarBg, surfaceAlpha, base)) >= 2.5f);
     }
     // —— 亮主题：正文深字，最坏壁纸 = 纯黑压底 ——
     core::theme::setLight();
@@ -1407,12 +1407,12 @@ REGISTER_TEST(settings_window_effect_contrast_guard, "settings: 半透叠乘后�
                                over(t.colors.background, windowAlpha, blackWall)) >= 4.5f);
         const eui::Color base = over(t.colors.background, windowAlpha, blackWall);
         DOCTEST_CHECK(contrast(t.colors.textPrimary,
-                               over(t.colors.sidebarBgTinted, surfaceAlpha, base)) >= 4.5f);
+                               over(t.colors.sidebarBg, surfaceAlpha, base)) >= 4.5f);
         DOCTEST_CHECK(contrast(t.colors.textPrimary,
-                               over(t.colors.pageBg, surfaceAlpha, base)) >= 4.5f);
+                               over(t.colors.background, surfaceAlpha, base)) >= 4.5f);
         // 亮主题次要文字达 AA：0.72 时代 4.62（0.5 时代 4.22 差一线，本批修过——锁住）
         DOCTEST_CHECK(contrast(t.colors.textSecondary,
-                               over(t.colors.sidebarBgTinted, surfaceAlpha, base)) >= 4.5f);
+                               over(t.colors.sidebarBg, surfaceAlpha, base)) >= 4.5f);
     }
     // 主题复位（inline static 跨 TU 单实例，勿污染同二进制后续 compose 用例）
     if (initialTheme == "Light") {

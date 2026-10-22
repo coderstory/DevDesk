@@ -219,7 +219,7 @@ REGISTER_TEST(claude_ccswitch_ui_skeleton_contract,
         return std::fabs(x.r - y.r) < 0.01f && std::fabs(x.g - y.g) < 0.01f &&
                std::fabs(x.b - y.b) < 0.01f;
     };
-    // S1.2 #13: secondaryButtonBg→hover
+    // S1.2 #13: hover→hover
     DOCTEST_CHECK(sameColor(selallBg->color, wc.hover));
     DOCTEST_CHECK(!sameColor(selallBg->color, wc.surfaceElevated));
     const auto* confirm = ui2.find("claude.dialog.ccswitch.confirm.text");
@@ -262,7 +262,7 @@ REGISTER_TEST(claude_ccswitch_ui_skeleton_contract,
         DOCTEST_CHECK(sameColor(selModel->textColor, wc.textSecondary));  // S1.2 #11
         const auto* failSkip = ui2.find("claude.dialog.ccswitch.row.0.skip");
         DOCTEST_REQUIRE(failSkip != nullptr);
-        DOCTEST_CHECK(sameColor(failSkip->textColor, wc.error));  // S1.2 #15: warningRed→error
+        DOCTEST_CHECK(sameColor(failSkip->textColor, wc.error));  // S1.2 #15: error→error
         DOCTEST_CHECK(!sameColor(failSkip->textColor, wc.surface));  // 反向：不是表面色
     }
 
@@ -343,7 +343,7 @@ REGISTER_TEST(claude_ccswitch_ui_skeleton_contract,
     {
         const auto* unRowBg = ui3.find("claude.dialog.ccswitch.row.1.bg");
         DOCTEST_REQUIRE(unRowBg != nullptr);
-        DOCTEST_CHECK(sameColor(unRowBg->color, wc.surface));    // S1.2 #7: cardBg→surface
+        DOCTEST_CHECK(sameColor(unRowBg->color, wc.surface));    // S1.2 #7: surface→surface
         DOCTEST_CHECK(!sameColor(unRowBg->color, wc.primary));   // 反向：不是绿色
         const auto* unBox = ui3.find("claude.dialog.ccswitch.row.1.cb.box");
         DOCTEST_REQUIRE(unBox != nullptr);
