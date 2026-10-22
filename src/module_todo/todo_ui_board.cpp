@@ -10,7 +10,6 @@
 #include <components/card.h>
 #include <components/input.h>
 #include <components/scrollview.h>
-#include <ui_kit/glass_card.h>
 #include <ui_kit/selection_bar.h>  // kSelectionBarAccentWidth（§4.3 选中态 2px 竖线宽度）
 
 #include <algorithm>
@@ -38,9 +37,9 @@ void drawCard(eui::Ui& ui, const std::string& id, float x, float y, float width,
 // 让位公式不变：标题右内边距 = chip 右边距 + 角标宽 + 4px 间隙
 // （旧 40 = 12 + 24 + 4；新 28 = 8 + 16 + 4），标题框右缘永不压完成角标。
 // 常量收敛在本文件（卡片专属几何），不动 todo_ui_logic.h——该头与详情弹窗批共用。
-constexpr float kCardPadX = 28.0f;         // 标题框左右内边距（旧 40，-30%）
-constexpr float kCardChipPadX = 10.0f;    // chip 行左内边距（旧 16，-37.5%）
-constexpr float kCardChipPadRight = 8.0f; // chip 行/完成角标右内边距（旧 12，-33%）
+constexpr float kCardPadX = 12.0f;         // 标题框左右内边距（S3.3 收紧至 12）
+constexpr float kCardChipPadX = 12.0f;    // chip 行左内边距
+constexpr float kCardChipPadRight = 12.0f; // chip 行/完成角标右内边距
 constexpr float kCardDoneBadgeW = 16.0f;  // 完成角标宽（旧 24，右缘对齐 chip 右边距）
 
 // 右侧动作区 560px = 搜索框(240)+逾期(104)+「+ 列」(72)+「+ 新建任务」(120)+间距
@@ -102,44 +101,58 @@ void drawHeader(eui::Ui& ui, float contentW, float headerH, float bodyH,
                         })
                         .build();
 
-                    // 逾期入口：badge = listOverdue().size()，0 时置灰不可点；有逾期时微信绿高亮可点（§4）
+                    // 逾期入口：chip 小标签（S3.3 #5）；0 时置灰不可点；有逾期时微信绿高亮可点
                     const bool hasOverdue = v.overdueCount > 0;
-                    components::button(ui, "todo.btn.overdue")
-                        .size(104.0f, 40.0f)
-                        .text("逾期 " + std::to_string(v.overdueCount))
-                        .icon(0xF071)
-                        .fontSize(t.sizes.fontSizeSmall)
-                        .colors(hasOverdue ? t.colors.primary : t.colors.hover,
-                                hasOverdue ? t.colors.primaryHover : t.colors.hover,
-                                hasOverdue ? t.colors.primaryPressed : t.colors.primarySoftBg)
-                        .textColor(hasOverdue ? t.colors.onPrimary
-                                              : t.colors.textTertiary)
-                        .iconColor(hasOverdue ? t.colors.onPrimary
-                                              : t.colors.textTertiary)
-                        .radius(t.sizes.radiusWeChat)
-                        .border(0.0f, t.colors.borderDefault)
-                        .onClick([cb = v.act.overdueClicked] { cb(); })
+                    ui.stack("todo.btn.overdue.wrap")
+                        .size(88.0f, 28.0f)
+                        .content([&] {
+                            ui.rect("todo.btn.overdue.bg")
+                                .position(0.0f, 0.0f)
+                                .size(88.0f, 28.0f)
+                                .color(hasOverdue ? t.colors.primarySoftBg : t.colors.hover)
+                                .radius(14.0f)
+                                .build();
+                            ui.text("todo.btn.overdue.text")
+                                .position(0.0f, 0.0f)
+                                .size(88.0f, 28.0f)
+                                .text("逾期 " + std::to_string(v.overdueCount))
+                                .fontSize(12.0f)
+                                .lineHeight(28.0f)
+                                .horizontalAlign(eui::HorizontalAlign::Center)
+                                .verticalAlign(eui::VerticalAlign::Center)
+                                .color(hasOverdue ? t.colors.primary : t.colors.textTertiary)
+                                .fontWeight(600)
+                                .build();
+                            if (hasOverdue) {
+                                ui.rect("todo.btn.overdue.hit")
+                                    .position(0.0f, 0.0f)
+                                    .size(88.0f, 28.0f)
+                                    .color(eui::Color{0,0,0,0})
+                                    .onClick([cb = v.act.overdueClicked] { cb(); })
+                                    .build();
+                            }
+                        })
                         .build();
 
                     components::button(ui, "todo.btn.addcol")
-                        .size(72.0f, 40.0f)
+                        .size(72.0f, 32.0f)
                         .text("+ 列")
                         .fontSize(t.sizes.fontSizeSmall)
-                        .colors(t.colors.hover, t.colors.hover, t.colors.primarySoftBg)
-                        .textColor(t.colors.textSecondary)
-                        .radius(t.sizes.radiusWeChat)
-                        .border(0.0f, t.colors.borderDefault)
+                        .colors(t.colors.surface, t.colors.primarySoftBg, t.colors.primarySoftBg)
+                        .textColor(t.colors.primary)
+                        .radius(6.0f)
+                        .border(1.0f, t.colors.primary)
                         .onClick([cb = v.act.addColumnClicked] { cb(); })
                         .build();
 
                     components::button(ui, "todo.btn.add")
-                        .size(120.0f, 40.0f)
+                        .size(120.0f, 32.0f)
                         .text("+ 新建任务")
                         .fontSize(t.sizes.fontSizeSmall)
                         .colors(t.colors.primary, t.colors.primaryHover,
                                 t.colors.primaryPressed)
                         .textColor(t.colors.onPrimary)
-                        .radius(t.sizes.radiusWeChat)
+                        .radius(6.0f)
                         .onClick([cb = v.act.addTaskClicked] { cb(); })
                         .build();
                 })
@@ -298,10 +311,10 @@ void drawColumnContent(eui::Ui& ui, const std::string& id, const Column& col,
     const auto colDot = columnDotColor(col.color);
     if (colDot.has_value()) {
         ui.rect(id + ".dot")
-            .position(16.0f, 21.0f)
-            .size(10.0f, 10.0f)
+            .position(16.0f, 22.0f)
+            .size(8.0f, 8.0f)
             .color(*colDot)
-            .radius(5.0f)
+            .radius(4.0f)
             .build();
     }
 
@@ -310,7 +323,7 @@ void drawColumnContent(eui::Ui& ui, const std::string& id, const Column& col,
         // 右侧留到 width-88：给 ✎ 重命名（width-70 起）和 + 加任务（width-36 起）两个按钮
         .size(width - 88.0f - (colDot.has_value() ? 18.0f : 0.0f), 20.0f)
         .text(col.title + " (" + std::to_string(taskCount) + ")")
-        .fontSize(t.sizes.fontSizeBody)
+        .fontSize(t.sizes.fontSizeWeChat)
         .lineHeight(20.0f)
         .fontWeight(600)
         // 省略号三件套：列名 + 计数超宽时截断，不压右侧 ✎/+ 按钮
@@ -319,28 +332,78 @@ void drawColumnContent(eui::Ui& ui, const std::string& id, const Column& col,
         .color(t.colors.textPrimary)
         .build();
 
-    // 列头 ✎ 按钮直达改名弹窗；右键菜单「重命名列」入口保留
-    components::button(ui, id + ".rename")
-        .position(width - 70.0f, 14.0f)
-        .size(28.0f, 28.0f)
-        .icon(0xF303)  // fa-pencil-alt
-        .iconSize(t.sizes.fontSizeSmall)
-        .colors(t.colors.surface, t.colors.hover, t.colors.primarySoftBg)
-        .iconColor(t.colors.textSecondary)
-        .radius(14.0f)
-        .onClick([cb = v.act.renameColumn, col] { cb(col); })
-        .build();
+    // 列头 ✎ 按钮直达改名弹窗；右键菜单「重命名列」入口保留（S3.3 Ghost 32x32）
+    if (isArchive) {
+        // 归档列：展开/折叠 + 重命名 + 添加（S3.3 #6）
+        const float toggleIcon = v.archiveExpanded ? 0xF077 : 0xF054;  // chevron-up / chevron-right
+        components::button(ui, id + ".archivetoggle")
+            .position(width - 110.0f, 14.0f)
+            .size(32.0f, 32.0f)
+            .icon(toggleIcon)
+            .iconSize(14.0f)
+            .colors(eui::Color{0,0,0,0}, t.colors.primarySoftBg, t.colors.primarySoftBg)
+            .iconColor(t.colors.primary)
+            .radius(6.0f)
+            .onClick([cb = v.act.archiveToggle] { cb(); })
+            .build();
+        components::button(ui, id + ".rename")
+            .position(width - 72.0f, 14.0f)
+            .size(32.0f, 32.0f)
+            .icon(0xF303)  // fa-pencil-alt
+            .iconSize(14.0f)
+            .colors(eui::Color{0,0,0,0}, t.colors.primarySoftBg, t.colors.primarySoftBg)
+            .iconColor(t.colors.primary)
+            .radius(6.0f)
+            .onClick([cb = v.act.renameColumn, col] { cb(col); })
+            .build();
+        components::button(ui, id + ".add")
+            .position(width - 36.0f, 14.0f)
+            .size(32.0f, 32.0f)
+            .icon(0xF067)  // fa-plus
+            .iconSize(14.0f)
+            .colors(eui::Color{0,0,0,0}, t.colors.primarySoftBg, t.colors.primarySoftBg)
+            .iconColor(t.colors.primary)
+            .radius(6.0f)
+            .onClick([cb = v.act.addTaskToColumn, col] { cb(col.id); })
+            .build();
+    } else {
+        components::button(ui, id + ".rename")
+            .position(width - 78.0f, 14.0f)
+            .size(32.0f, 32.0f)
+            .icon(0xF303)  // fa-pencil-alt
+            .iconSize(14.0f)
+            .colors(eui::Color{0,0,0,0}, t.colors.primarySoftBg, t.colors.primarySoftBg)
+            .iconColor(t.colors.primary)
+            .radius(6.0f)
+            .onClick([cb = v.act.renameColumn, col] { cb(col); })
+            .build();
+        components::button(ui, id + ".add")
+            .position(width - 36.0f, 14.0f)
+            .size(32.0f, 32.0f)
+            .icon(0xF067)  // fa-plus
+            .iconSize(14.0f)
+            .colors(eui::Color{0,0,0,0}, t.colors.primarySoftBg, t.colors.primarySoftBg)
+            .iconColor(t.colors.primary)
+            .radius(6.0f)
+            .onClick([cb = v.act.addTaskToColumn, col] { cb(col.id); })
+            .build();
+    }
 
-    components::button(ui, id + ".add")
-        .position(width - 36.0f, 14.0f)
-        .size(28.0f, 28.0f)
-        .text("+")
-        .fontSize(t.sizes.fontSizeBody + 1.0f)
-        .colors(t.colors.surface, t.colors.hover, t.colors.primarySoftBg)
-        .textColor(t.colors.textSecondary)
-        .radius(14.0f)
-        .onClick([cb = v.act.addTaskToColumn, col] { cb(col.id); })
-        .build();
+    // 归档列折叠态：只显标题行+展开按钮，不画卡片（S3.3 #6）
+    if (isArchive && !v.archiveExpanded) {
+        components::button(ui, id + ".expand")
+            .position(width - 78.0f, 14.0f)
+            .size(32.0f, 32.0f)
+            .icon(0xF054)  // fa-chevron-right
+            .iconSize(14.0f)
+            .colors(eui::Color{0,0,0,0}, t.colors.primarySoftBg, t.colors.primarySoftBg)
+            .iconColor(t.colors.primary)
+            .radius(6.0f)
+            .onClick([cb = v.act.archiveToggle] { cb(); })
+            .build();
+        return;
+    }
+
 
     if (taskCount == 0) {
         // 空列无滚动容器，占位条直接画在列内容层首卡位（内容高 0，滚动恒 0）
@@ -412,7 +475,8 @@ void drawColumnContent(eui::Ui& ui, const std::string& id, const Column& col,
                                       (kCardHeight + kCardGap) - kCardGap);
                         drawDropBar(inner, barY, cardW);
                     }
-                    for (size_t i = 0; i < taskCount; ++i) {
+                    const size_t renderLimit = (isArchive && v.archiveExpanded) ? std::min(taskCount, size_t(20)) : taskCount;
+                    for (size_t i = 0; i < renderLimit; ++i) {
                         const std::string cardId =
                             id + ".card." + std::to_string(i);
                         // wrap 占满内容宽（流式子元素，position 无效），卡在 wrap 内按 inset 落位
@@ -446,6 +510,7 @@ void drawCard(eui::Ui& ui, const std::string& id, float x, float y, float width,
     const bool dragging = v.dragActive && v.dragTaskId == task.id;
     const float cardOpacity = dragging ? 0.45f : 1.0f;
     plate.cardW = width;  // compose 空间卡宽（拖拽命中 dpi 探针）
+    const auto componentTheme = core::theme::componentTokensWeChat(t);
 
     // 卡片骨架用 card 组件；选中/未选中边框挂卡内交互层 .bg（挂 card 上会被不透明 .bg 盖住）
     components::card(ui, id + ".card")
@@ -457,23 +522,7 @@ void drawCard(eui::Ui& ui, const std::string& id, float x, float y, float width,
         .border(0.0f, t.colors.borderDefault)  // 边框职责已移到内部交互层
         .content([&] {
 
-    // UAT6 E+F 批：淡雅玻璃层（背景底，交互层在上方覆盖）
-    ui_kit::drawGlassCardLayers(ui, id + ".glass",
-        0.0f, 0.0f, width, kCardHeight,
-        t.sizes.radiusWeChat, t, ui_kit::GlassCardStyle::subtle());
-
-    // 交互层（卡内首层）：优先级直接改卡底色，hover/active 同走该算式；选中态走底色+左竖线两通道（§4.3）
-    // 列色淡染：None 优先级按所在列色 0.12 混底，列区分列（优先级语义优先于列染）
-    const auto colTint = colIndex >= 0 &&
-        static_cast<size_t>(colIndex) < v.columns.size()
-            ? columnDotColor(v.columns[static_cast<size_t>(colIndex)].color)
-            : std::optional<eui::Color>{};
-    // 选中态底色换 wechat.selectedBg（§4.3 浅灰底）；未选中三态 = 微信白卡（D批米黄迁移：
-    // surface→cardBg，hover/active 走分割线灰梯度）；优先级 tint 仍叠加于上（两通道独立，与旧边框方案同构）
-    const auto cardBase = selected ? t.colors.primarySoftBg : t.colors.surface;
-    const auto cardHover = selected ? t.colors.primarySoftBg
-                                   : t.colors.hover;
-    const auto cardActive = selected ? t.colors.primarySoftBg : t.colors.primarySoftBg;
+    // S3.3：玻璃层退役 + 白底优先级色条替代整卡涂色（§S6.1 玻璃退役 / §S6.5 优先级色条）
     // 归档卡灰化：透明度 0.7（§4 已归档卡片），与拖拽半透明叠加
     const bool isArchiveCard = colIndex >= 0 &&
         static_cast<size_t>(colIndex) < v.columns.size() &&
@@ -484,15 +533,10 @@ void drawCard(eui::Ui& ui, const std::string& id, float x, float y, float width,
     ui.rect(id + ".bg")
         .position(0.0f, y)
         .size(width, kCardHeight)
-        .states(priorityCardBg(task.priority, t, cardBase, colTint),
-                priorityCardBg(task.priority, t, cardHover, colTint),
-                priorityCardBg(task.priority, t, cardActive, colTint))
-        // 选中态不再走粗边框（§4.3 完全移除原红色粗边框）；统一 1px 微信分割线
+        .color(t.colors.surface)
+        .shadow(components::theme::shadow(componentTheme, 3.0f, 1.0f, 0.06f, 0.03f))
         .border(1.0f, t.colors.borderDefault)
-        // hover/按下颜色过渡（0.1s OutQuad；拖拽半透明 opacity 不在掩码里）
-        .transition(core::Transition::make(0.1f, core::Ease::OutQuad))
-        .animate(core::AnimProperty::Color | core::AnimProperty::Opacity)
-        .radius(t.sizes.radiusWeChat)
+        .radius(8.0f)
         .opacity(finalCardOpacity)
         .onClick([cb = v.act.cardClicked, task] { cb(task); })
         .onContextMenu([cb = v.act.cardMenu, task, colIndex, cardIndex](
@@ -514,24 +558,17 @@ void drawCard(eui::Ui& ui, const std::string& id, float x, float y, float width,
         })
         .build();
 
-    // 选中态左 2px 微信绿竖线（§4.3）；逾期卡左 2px 红竖线（§4 逾期卡片）；两态不叠加（选中优先）
-    if (selected) {
-        ui.rect(id + ".selbar")
-            .position(0.0f, y)
-            .size(ui_kit::kSelectionBarAccentWidth, kCardHeight)
-            .color(t.colors.primary)
-            .opacity(finalCardOpacity)
-            .build();
-    } else if (overdue) {
-        ui.rect(id + ".overduebar")
-            .position(0.0f, y)
-            .size(ui_kit::kSelectionBarAccentWidth, kCardHeight)
-            .color(t.colors.error)
-            .opacity(finalCardOpacity)
-            .build();
-    }
+    // S3.3 #2 / S6.5：优先级色条（白底左侧 3px 色条替代整卡涂色）
+    eui::Color barColor = priorityColor(task.priority, t);
+    ui.rect(id + ".priobar")
+        .position(0.0f, y)
+        .size(3.0f, kCardHeight)
+        .color(barColor)
+        .opacity(finalCardOpacity)
+        .build();
 
-    // 卡内文本居中；chip 行先算后画（自适应宽与绘制共用同一清单），chipX 保持卡内相对坐标
+
+    // 卡内文本居中（S3.3：选中/逾期竖线已由优先级色条替代）；chip 行先算后画（自适应宽与绘制共用同一清单），chipX 保持卡内相对坐标
     struct PendingChip {
         std::string id;
         float w;
@@ -566,7 +603,7 @@ void drawCard(eui::Ui& ui, const std::string& id, float x, float y, float width,
         const float avail = std::max(0.0f, width - kCardChipPadRight - chipX);
         if (archW <= avail) {
             pendingChips.push_back({id + ".archived", archW, archText,
-                                    t.colors.textTertiary});
+                                    t.colors.textSecondary});
         }
     }
     if (!task.tags.empty()) {
@@ -603,12 +640,12 @@ void drawCard(eui::Ui& ui, const std::string& id, float x, float y, float width,
         .text(task.title)
         .fontSize(t.sizes.fontSizeBody - 1.0f)
         .lineHeight(kCardTitleLineH)
-        .fontWeight(500)
+        .fontWeight(600)
         .horizontalAlign(eui::HorizontalAlign::Center)
         .maxWidth(width - 2.0f * kCardPadX)
         .overflow(core::TextOverflow::Ellipsis)
-        // 逾期标题红（§4）；归档标题三级灰（§4）；常规标题走主题一级文字
-        .color(isArchiveCard ? t.colors.textPrimary
+        // S3.3：逾期标题红；归档标题二级灰（textSecondary）；常规标题走主题一级文字
+        .color(isArchiveCard ? t.colors.textSecondary
                              : (overdue ? t.colors.error
                                         : t.colors.textPrimary))
         .opacity(done ? 0.6f : finalCardOpacity)
@@ -673,21 +710,21 @@ void drawDragGhost(eui::Ui& ui, const core::theme::Tokens& t,
                 .padding(0.0f)
                 .border(0.0f, t.colors.borderDefault)
                 .content([&] {
-            // 底 + 1px 分割线（同真卡；选中态已不走粗边框，副本亦然）。底色同走 priorityCardBg，否则拖到一半优先级指示消失。
-            // D批米黄迁移：兜底底随真卡 surface→wechat.cardBg。tint 是 alpha 线性叠加——底从米黄变白后
-            // 算式语义不变、同强度下观感略浅于米黄底（视觉可接受，强度表已按 WeChat 板整体上调）。
-            // 列色淡染：同 drawCard——None 优先级按所在列色区分（拖印副本延续列身份）
-                    const auto* ghostCol = findColumn(v.columns, task->columnId);
-                    const auto ghostColTint = ghostCol
-                        ? columnDotColor(ghostCol->color)
-                        : std::optional<eui::Color>{};
+            // S3.3：副本匹配新卡风——白底 + 3px 优先级色条 + Sm 阴影（同 drawCard）
+                    const auto ghostComponentTheme = core::theme::componentTokensWeChat(t);
                     ui.rect("todo.dragghost.bg")
                         .position(0.0f, 0.0f)
                         .size(w, kCardHeight)
-                        .color(priorityCardBg(task->priority, t, t.colors.surface,
-                                              ghostColTint))
+                        .color(t.colors.surface)
+                        .shadow(components::theme::shadow(ghostComponentTheme, 3.0f, 1.0f, 0.06f, 0.03f))
                         .border(1.0f, t.colors.borderDefault)
-                        .radius(t.sizes.radiusWeChat)
+                        .radius(8.0f)
+                        .build();
+                    eui::Color ghostBarColor = priorityColor(task->priority, t);
+                    ui.rect("todo.dragghost.priobar")
+                        .position(0.0f, 0.0f)
+                        .size(3.0f, kCardHeight)
+                        .color(ghostBarColor)
                         .build();
                     // 标题同真卡居中形态（副本不画 chips = 无 chip 卡：独占整卡居中）。
                     // 省略号三件套同真卡；序号徽章已移除，真卡与副本标题宽度一致（同 kCardPadX，
@@ -698,7 +735,7 @@ void drawDragGhost(eui::Ui& ui, const core::theme::Tokens& t,
                         .text(task->title)
                         .fontSize(t.sizes.fontSizeBody - 1.0f)
                         .lineHeight(kCardTitleLineH)
-                        .fontWeight(500)
+                        .fontWeight(600)
                         .horizontalAlign(eui::HorizontalAlign::Center)
                         .maxWidth(w - 2.0f * kCardPadX)
                         .overflow(core::TextOverflow::Ellipsis)

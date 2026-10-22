@@ -286,7 +286,7 @@ inline eui::Color priorityColor(Priority p, const core::theme::Tokens& t) {
     static constexpr eui::Color core::theme::ColorTokens::*kColorFields[] = {
         &core::theme::ColorTokens::textTertiary,  // None 中性灰 #999999
         &core::theme::ColorTokens::primary,       // Low 微信绿 #07C160
-        &core::theme::ColorTokens::info,          // Medium 链接蓝 #576B95
+        &core::theme::ColorTokens::warning,       // Medium 警示橙 #FFC300
         &core::theme::ColorTokens::error,         // High 警示红 #FA5151
     };
     static_assert(std::size(kColorFields) == static_cast<size_t>(Priority::High) + 1);

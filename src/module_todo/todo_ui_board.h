@@ -25,6 +25,7 @@ struct BoardPlate {
     float colGap = 0.0f;
     float height = 0.0f;
     float cardW = 0.0f;
+    int64_t archiveColumnId = 0;
 };
 
 // 看板 → 模块的回写通道（模块构造期绑定一次）；回调体写在模块侧，读模块当下状态，不是当帧快照
@@ -45,6 +46,7 @@ struct BoardActions {
     // 四参：指针 x/y（命中换算，物理像素）+ 按下点起累计位移 totalX/totalY（跟手副本锚点用，框架算）
     std::function<void(double, double, double, double)> cardDragged;
     std::function<void(double, double, bool)> cardReleased;
+    std::function<void()> archiveToggle;
 };
 
 // 看板绘制的只读输入（模块每帧组装一次）：容器是模块成员的引用（不拷贝），拖拽中间态与标量取当帧快照
@@ -69,7 +71,9 @@ struct BoardView {
     bool hasService = false;
     const std::string& loadError;
     const BoardActions& act;
-    // 落位淡入按 dragActive 门控列内容容器 opacity：拖拽中 0.6，松手 0.6→1.0 淡回（0.12s OutQuad）
+    // 落位淡入按 dragActive 门控
+    bool archiveExpanded = false;
+列内容容器 opacity：拖拽中 0.6，松手 0.6→1.0 淡回（0.12s OutQuad）
 };
 
 // 表头（标题 + 搜索框 + 逾期入口 + 建列/建任务）
