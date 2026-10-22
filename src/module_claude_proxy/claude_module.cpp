@@ -53,6 +53,12 @@ public:
     // 测试缝：开关切换确认弹窗（调用后选卡不弹窗，直走选中路径）
     void bypassSwitchConfirm() { state_.list.switchBypassConfirm_ = true; }
 
+    // 测试缝：强制显示引导条（覆盖 proxyEverSeen_/guideDismissed_，图标锚点确定性）
+    void forceShowGuide() {
+        state_.list.proxyEverSeen_ = false;
+        state_.list.guideDismissed_ = false;
+    }
+
     // UI（骨架：分区委派，各区实现见 claude_ui_*.cpp）
 
     void compose(eui::Ui& ui, const eui::Screen& screen) override {
@@ -846,4 +852,11 @@ extern "C" void claude_test_bypass_switch_confirm(::core::Module* mod) {
     auto* m = dynamic_cast<module::claude::ClaudeModule*>(mod);
     if (!m) return;
     m->bypassSwitchConfirm();
+}
+
+// 测试缝：强制显示引导条（重置 proxyEverSeen_/guideDismissed_，图标锚点确定性）
+extern "C" void claude_test_force_show_guide(::core::Module* mod) {
+    auto* m = dynamic_cast<module::claude::ClaudeModule*>(mod);
+    if (!m) return;
+    m->forceShowGuide();
 }
