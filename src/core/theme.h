@@ -85,9 +85,10 @@ struct SizeTokens {
     float spacingXXLarge;      // 40.0f
     float radius;              // 10.0f
     float radiusSmall;         // 6.0f
-    float radiusLarge;         // 14.0f
+    float radiusLarge;         // 12.0f
+    float radiusOverlay;       // 16.0f 首页大卡片圆角（S1 圆角 16px 档）
     float radiusPill;          // 999.0f
-    float fontSizeSmall;       // 13.0f
+    float fontSizeSmall;       // 12.0f
     float fontSizeBody;        // 15.0f
     float fontSizeLarge;       // 18.0f
     float fontSizeTitle;       // 24.0f

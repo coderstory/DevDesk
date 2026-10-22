@@ -47,7 +47,7 @@ struct ButtonOptions {
 // 节点 id = `<id>`（stack）/ `<id>.bg`（rect）/ `<id>.text`（text），单测按此定位。
 // 几何：(x, y) 左上角，(w, h) 尺寸；高度建议 kButtonHeight（34px）。
 // spec §4.1 禁止项：阴影、边框（填充按钮）、圆角>8——本 helper 不加 border/shadow，
-// radius 用 t.sizes.radiusWeChat（6px）。
+// radius 用 t.sizes.radius（8px，S1.2#38）。
 void button(eui::Ui& ui, const std::string& id, const std::string& label,
             ButtonLevel level, float x, float y, float w, float h,
             const core::theme::Tokens& t,

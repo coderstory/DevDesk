@@ -106,9 +106,9 @@ REGISTER_TEST(ui_kit_button_uniform_metrics,
         // 高度固定 40（kButtonHeight，S1.2 #35 / S2.1 按钮高度 40px）
         DOCTEST_CHECK_EQ(bg->height.value, ui_kit::kButtonHeight);
         DOCTEST_CHECK_EQ(bg->height.value, 40.0f);
-        // 圆角 6（t.sizes.radiusWeChat，button.cpp L80 仍用 wechat 令牌；S1.2 #38 目标 radius=8 待代码侧升级）
-        DOCTEST_CHECK_EQ(bg->radius, t.sizes.radiusWeChat);
-        DOCTEST_CHECK_EQ(bg->radius, 6.0f);
+        // 圆角 8（t.sizes.radius，S1.2 #38 按钮 8px 圆角）
+        DOCTEST_CHECK_EQ(bg->radius, t.sizes.radius);
+        DOCTEST_CHECK_EQ(bg->radius, 8.0f);
 
         const auto* txt = ui.find(s + ".text");
         DOCTEST_REQUIRE_MESSAGE(txt != nullptr, std::string("缺 ") + s + ".text");

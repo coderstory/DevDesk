@@ -18,7 +18,6 @@
 #include <components/linechart.h>
 #include <components/scrollview.h>
 #include <components/theme.h>
-#include <ui_kit/glass_card.h>
 
 #include <algorithm>
 #include <cmath>
@@ -48,62 +47,17 @@ namespace {
 // home_probes 组 D 的 plot ≥36 判据仍过）、柱顶数值/x 轴标签锚点随 wrap 派生。
 constexpr float kHomeChartH = 220.0f;
 
-// 渲染单个统计卡（UAT6 方案一 · 五色软染玻璃形态；card 组件为壳，点击整卡跳转）。
+// S3.1 / S6.6：五色实底统计卡——辅助色纯色底 + 16px 圆角 + 20px 内边距 +
+// 指标名 12px 三级 / 数据 28px 600 一级 / 说明 12px 三级 上中下排版。
+// 玻璃体系退役：不再使用 glass_card.h（S6.1）。
 // numberColor/badgeColor 非空覆盖默认配色；timerSeconds > 0 挂 0 尺寸 onTimer 定期重绘；
-// chart 非空叠加迷你图表；onTick 为该 timer 回调。卡内容四周统一 16px 内边距（显式
-// .padding 替代组件默认 20）。
-//
-// 设计基准：D:/tmp-icon-candidates/home-glass-cards.html 方案一（用户拍板）——五卡分别
-// soft-light 染 绿 #7EE2A8 / 蓝 #8ECBF5 / 橙 #F5C98E / 紫 #C8A8F5 / 青 #8EF0E2（按
-// 统计卡语义顺序 Tokens/Notes/TodoPending/TodoOverdue/ApiCalls）+ 白色顶部高光 +
-// 轻污渍 + 半透卡面 + 白色细边框 + 顶缘 inset 高光。
-//
-// 浅底适配（对比度优先，demo 是深底白字不照搬）：文字维持 wechat 深色档不动（数字
-// textPrimary、标题/副题 textTertiary、逾期 warningRed、流式 primary），玻璃感全部由
-// 「面」承担——染色半透面 + 白高光 + 白细边 + 轻污渍。
-//
-// soft-light 近似公式：EUI 无 mix-blend-mode，且 soft-light 在浅底上数学不可见
-//（B=1 时 (1−2S)·B²+2S·B ≡ 1，纯白底染不动任何色）——demo 的染色观感来自深底
-// 透光，浅底等价物是「tint 低 alpha 直叠」：comp = α·T + (1−α)·face，
-// α = kGlassTintAlpha。
-//
-// 三态对比度（护栏用例 test_home::home_glass_stat_cards 同模型；worst 区 = 卡底
-// 暗污渍带、无顶部高光；磨砂黑壁纸底取 effects 批实机 M=192 材质输出）：
-//   不透明页：数字 14.8–15.7:1，标题 #999 2.42–2.57:1
-//   半透窗（白壁纸最亮底）：数字 14.9–15.8:1，标题 2.43–2.58:1
-//   磨砂窗（黑壁纸最暗底）：数字 12.9–13.7:1，标题 2.11–2.24:1
-// 数字三态全 ≥4.5:1（最低 ≈12.9，约 2.9 倍余量）。#999 在纯白上也仅 2.85:1——4.5
-// 对三级灰档数学不可达（W9 既定档，文字档位本批不动），护栏改为不劣化：不透明/
-// 半透 ≥2.40:1、磨砂 ≥2.05:1（页面级 #999 在磨砂黑壁纸档本来就只有 ≈1.7:1，
-// 卡面恒优于页面底）。
-//
-// 布局零影响：玻璃层组全部绝对定位铺在卡 content 内，卡高/卡宽公式与 noscroll
-// 首页预算 588/600（见文件头）不动。
-constexpr float kGlassFaceAlpha = 0.62f;         // 半透白卡面（demo rgba(255,255,255,.14) 的浅底加强档）
-constexpr float kGlassFaceAlphaDark = 0.92f;     // 深色主题面透明度：dark-WeChat 延后（D-04），wechat
-                                                // 槽位 dark/light 同值——白面 0.62 在深色窗底会调成
-                                                // 奶灰、三级灰标签塌到 ≈1.2:1，深色档抬高到近实白
-                                                //（对比度/观感与改前白卡基本一致，玻璃层组照常渲染）
-constexpr float kGlassTintAlpha = 0.40f;         // 染色直叠强度（UAT6 D 批加浓：0.15→0.40，五色一眼可辨）
-constexpr float kGlassBorderAlpha = 0.55f;       // 白色细边（demo rgba(255,255,255,.55)）
-constexpr float kGlassHighlightAlpha = 0.32f;   // 顶部高光峰值（demo ::before .35@0%）
-constexpr float kGlassHighlightFrac = 0.58f;     // 高光纵向覆盖（demo 60% 处渐没）
-constexpr float kGlassHighlightSideAlpha = 0.15f;  // 左上偏置横向高光峰值
-constexpr float kGlassHighlightSideFrac = 0.46f;   // 横向高光覆盖
-constexpr float kGlassTopLineAlpha = 0.50f;      // 顶缘 inset 白线（demo inset 0 1px 0 .5）
-constexpr float kGlassStainWhiteCore = 0.06f;    // 白污渍芯/壳（demo .5×.12 / 衰减壳）
-constexpr float kGlassStainWhiteHalo = 0.03f;
-constexpr float kGlassStainDarkCore = 0.019f;    // 暗污渍芯/壳（demo .16×.12）
-constexpr float kGlassStainDarkHalo = 0.010f;
-constexpr float kGlassHoverVeilAlpha = 0.10f;    // 整卡 hover 深色纱（UAT6 D 批加浓：0.06→0.10，浓底上仍可辨）
-constexpr float kGlassPressedVeilAlpha = 0.12f;  // 整卡按压纱
-
-void drawGlassStatCard(eui::Ui& ui,
+// chart 非空叠加迷你图表；onTick 为该 timer 回调。点击由 .press 透明层接收（hover/press 态）。
+void drawSolidStatCard(eui::Ui& ui,
                        const std::string& id,
                        float width,
                        float height,
                        const core::theme::Tokens& t,
-                       const eui::Color& tint,
+                       const eui::Color& bgColor,
                        const std::string& label,
                        const std::string& number,
                        const std::string& badge,
@@ -115,89 +69,100 @@ void drawGlassStatCard(eui::Ui& ui,
                        std::function<void(eui::Ui&, float, float)> chart =
                            nullptr,
                        std::function<void()> onTick = nullptr) {
-    const auto ct = core::theme::componentTokensWeChat(t);  // W9 微信组件档（阴影/圆角基线）
-    const float s = core::theme::fontScale();
-    const float inset = t.sizes.spacingLarge; // 16：卡内容统一内边距（16px 网格）
-    const float cw = width - inset * 2.0f;
-    const float ch = height - inset * 2.0f;
-    const float corner = t.sizes.radiusWeChat;
-    const float faceAlpha = t.isDark ? kGlassFaceAlphaDark : kGlassFaceAlpha;
-    components::card(ui, id)
-        .size(width, height)  // panelShadow 由 CardStyle 默认注入（玻璃外投影保留）
-        .theme(ct)            // 先注入主题再逐项覆盖（theme 会重置 CardStyle）
-        .radius(corner)       // W9 微信统一圆角 6px（D-12 §4.5）
-        .color(components::theme::withOpacity(t.colors.surface, faceAlpha))   // 半透玻璃面
-        .border(1.0f, components::theme::withOpacity(t.colors.surface, kGlassBorderAlpha))  // 白细边
-        .padding(inset)       // 显式 16：不用组件默认 20（与旧坐标叠加致顶留空/底溢出）
-        .content([&] {
-            // —— 玻璃层组（UAT6 E+F 批：共享参数化帮手替换内联层组）——
-            ui_kit::drawGlassCardLayers(
-                ui, id, -inset, -inset, width, height, corner, t,
-                ui_kit::GlassCardStyle::homeTinted(tint), std::move(onClick));
+    const float pad = 20.0f;  // S6.6 / v1.0 §三.6：卡片内边距 20px
+    const float cw = width - pad * 2.0f;
+    const float corner = t.sizes.radiusOverlay;  // 16px（S1 圆角 16px 档）
+    // 内部排版：指标名 16px 高 + 8px 间隙 + 数字 36px 高 + 8px 间隙 + 说明 16px 高
+    const float labelH = 16.0f;
+    const float numGap = 8.0f;
+    const float numberH = 36.0f;
+    const float descGap = 8.0f;
+    const float descH = 16.0f;
 
-            ui.stack(id + ".inner")
-                .size(cw, ch)
-                .content([&] {
-                    // 卡内文字：坐标相对 card content 原点（已含 16 inset）
-                    // L-4（UAT2 一审）：label 盒高 18→16，底缘 32 恰接 number 盒顶
-                    //（旧 18 高 → 底缘 34 与 number 顶 32 重叠 2px；探针组 A 记载的
-                    // 期望几何即「.label y16..32」）。lineHeight 仍 18：EUI 文本字形
-                    // 按 lineHeight 布局、不按盒高裁字，改盒高视觉零变化。
-                    ui.text(id + ".label")
-                        .position(0.0f, 16.0f * s)
-                        .size(cw, 16.0f * s)
-                        .text(label)
-                        .fontSize(t.sizes.fontSizeSmall + 1.0f)
-                        .lineHeight(18.0f * s)
-                        .horizontalAlign(eui::HorizontalAlign::Center)
-                        .color(t.colors.textTertiary)  // W9 三级灰 #999999
-                        .build();
-                    // UAT2 覆盖 W9：数字 22px（fontSizeLarge+4）深灰 #1A1A1A，更醒目
-                    const float numberSize = t.sizes.fontSizeLarge + 4.0f;
-                    ui.text(id + ".number")
-                        .position(0.0f, 32.0f * s)
-                        .size(cw, 56.0f * s)
-                        .text(number)
-                        .fontSize(numberSize)
-                        .lineHeight(56.0f * s)
-                        .fontWeight(700)
-                        .horizontalAlign(eui::HorizontalAlign::Center)
-                        .color(numberColor ? *numberColor
-                                           : (accent ? t.colors.error
-                                                     : t.colors.textPrimary))
-                        .build();
-                    ui.text(id + ".badge")
-                        // 底对齐 height-48（= 16 inset + 16 badge + 16 底边距），任何字号档底部不贴卡边
-                        .position(0.0f, height - 48.0f)
-                        .size(cw, 16.0f)
-                        .text(badge)
-                        .fontSize(t.sizes.fontSizeSmall)
-                        .lineHeight(16.0f)
-                        .horizontalAlign(eui::HorizontalAlign::Center)
-                        .color(badgeColor ? *badgeColor
-                                          : (accent ? t.colors.error
-                                                    : t.colors.textTertiary))
-                        .build();
-                    if (timerSeconds > 0.0f) {
-                        // 周期整卡重绘（compose 不是每帧重跑，靠 onTimer 触发）；onTick 非空时用它
-                        ui.stack(id + ".timer")
-                            .size(0.0f, 0.0f)
-                            .onTimer(timerSeconds,
-                                     onTick ? std::move(onTick)
-                                            : std::function<void()>([] {}))
-                            .build();
-                    }
-                    if (chart) {
-                        // sparkline 固定进顶带（内 y0..16 = label 16 之上），整盒高 16
-                        const float sparkW = cw - 56.0f * s;
-                        ui.stack(id + ".sparkwrap")
-                            .position(0.0f, 0.0f)
-                            .size(sparkW, 16.0f)
-                            .content([&] { chart(ui, sparkW, 16.0f); })
-                            .build();
-                    }
-                })
+    components::card(ui, id)
+        .size(width, height)
+        .radius(corner)
+        .color(bgColor)
+        .padding(pad)
+        .content([&] {
+            // 指标名：12px 三级字，居中
+            ui.text(id + ".label")
+                .position(0.0f, 0.0f)
+                .size(cw, labelH)
+                .text(label)
+                .fontSize(t.sizes.fontSizeSmall)  // 12px
+                .lineHeight(labelH)
+                .horizontalAlign(eui::HorizontalAlign::Center)
+                .color(t.colors.textTertiary)
                 .build();
+
+            // 数据：28px 600 一级字，居中
+            const float numberY = labelH + numGap;
+            ui.text(id + ".number")
+                .position(0.0f, numberY)
+                .size(cw, numberH)
+                .text(number)
+                .fontSize(t.sizes.fontSizeStat)  // 28px
+                .lineHeight(numberH)
+                .fontWeight(600)
+                .horizontalAlign(eui::HorizontalAlign::Center)
+                .color(numberColor ? *numberColor
+                                   : (accent ? t.colors.error
+                                             : t.colors.textPrimary))
+                .build();
+
+            // 说明/副题：12px 三级字，居中
+            const float descY = numberY + numberH + descGap;
+            ui.text(id + ".badge")
+                .position(0.0f, descY)
+                .size(cw, descH)
+                .text(badge)
+                .fontSize(t.sizes.fontSizeSmall)
+                .lineHeight(descH)
+                .horizontalAlign(eui::HorizontalAlign::Center)
+                .color(badgeColor ? *badgeColor
+                                  : (accent ? t.colors.error
+                                            : t.colors.textTertiary))
+                .build();
+
+            // 可选计时器（0 尺寸 onTimer）
+            if (timerSeconds > 0.0f) {
+                ui.stack(id + ".timer")
+                    .size(0.0f, 0.0f)
+                    .onTimer(timerSeconds,
+                             onTick ? std::move(onTick)
+                                    : std::function<void()>([] {}))
+                    .build();
+            }
+            // 可选迷你图表（sparkline）
+            if (chart) {
+                const float sparkW = cw - 56.0f;
+                ui.stack(id + ".sparkwrap")
+                    .position(0.0f, 0.0f)
+                    .size(sparkW, 16.0f)
+                    .content([&] { chart(ui, sparkW, 16.0f); })
+                    .build();
+            }
+            // 整卡点击层：透明 rect 覆盖全卡，挂 hover/press/onClick
+            if (onClick) {
+                ui.rect(id + ".press")
+                    .position(-pad, -pad)
+                    .size(width, height)
+                    .states(eui::Color{0.0f, 0.0f, 0.0f, 0.0f},
+                            t.isDark
+                                ? eui::Color{t.colors.surface.r, t.colors.surface.g,
+                                             t.colors.surface.b, 0.08f}
+                                : eui::Color{t.colors.textPrimary.r, t.colors.textPrimary.g,
+                                             t.colors.textPrimary.b, 0.06f},
+                            t.isDark
+                                ? eui::Color{t.colors.surface.r, t.colors.surface.g,
+                                             t.colors.surface.b, 0.12f}
+                                : eui::Color{t.colors.textPrimary.r, t.colors.textPrimary.g,
+                                             t.colors.textPrimary.b, 0.10f})
+                    .radius(corner)
+                    .onClick(std::move(onClick))
+                    .build();
+            }
         })
         .build();
 }
@@ -221,12 +186,14 @@ struct HomeStatCard {
     ::core::PageId target;
     eui::Color tint;
 };
+// S6.6 五色实底：绿色 cardGreen #E6FBF2 / 蓝色 cardBlue #E0F4FF /
+// 橙色 cardOrange #FFF1E0 / 紫色 cardPurple #F3E8FF / 青色 cardCyan #DFFAF6
 constexpr HomeStatCard kStatCards[] = {
-    {StatCardKind::Tokens,      ::core::PageId::ClaudeProxy, "Token 速率 (tok/s)", ::core::PageId::ClaudeProxy, eui::Color::fromHex(0x68E2A2)},  // 绿（UAT6 D 批向饱和端移一档）
-    {StatCardKind::Notes,       ::core::PageId::Markdown,    "今日笔记",           ::core::PageId::Markdown,    eui::Color::fromHex(0x78C6F5)},  // 蓝（UAT6 D 批向饱和端移一档）
-    {StatCardKind::TodoPending, ::core::PageId::Todo,        "待办任务",           ::core::PageId::Todo,        eui::Color::fromHex(0xF5C080)},  // 橙（UAT6 D 批向饱和端移一档）
-    {StatCardKind::TodoOverdue, ::core::PageId::Todo,        "逾期任务",           ::core::PageId::Todo,        eui::Color::fromHex(0xC098F5)},  // 紫（UAT6 D 批向饱和端移一档）
-    {StatCardKind::ApiCalls,    ::core::PageId::ClaudeProxy, "API 调用",           ::core::PageId::ClaudeProxy, eui::Color::fromHex(0x78F0E2)},  // 青（UAT6 D 批向饱和端移一档）
+    {StatCardKind::Tokens,      ::core::PageId::ClaudeProxy, "Token 速率 (tok/s)", ::core::PageId::ClaudeProxy, eui::Color::fromHex(0xE6FBF2)},
+    {StatCardKind::Notes,       ::core::PageId::Markdown,    "今日笔记",           ::core::PageId::Markdown,    eui::Color::fromHex(0xE0F4FF)},
+    {StatCardKind::TodoPending, ::core::PageId::Todo,        "待办任务",           ::core::PageId::Todo,        eui::Color::fromHex(0xFFF1E0)},
+    {StatCardKind::TodoOverdue, ::core::PageId::Todo,        "逾期任务",           ::core::PageId::Todo,        eui::Color::fromHex(0xF3E8FF)},
+    {StatCardKind::ApiCalls,    ::core::PageId::ClaudeProxy, "API 调用",           ::core::PageId::ClaudeProxy, eui::Color::fromHex(0xDFFAF6)},
 };
 
 // 快捷按钮：kind = 行身份，module = 归属模块，target + navPayload = 点击负载。
@@ -344,7 +311,7 @@ public:
         // 回调拿到的 innerW 说了算（见下方同名遮蔽定义）。kHeaderActionsW + 标题列 = contentW。
         constexpr float kHeaderActionsW = 100.0f;  // W9 仅保留刷新按钮（设置按钮已移除）
         const float cardGap = 20.0f;
-        // 卡高 144 × fontScale 派生（144 = 16+16+8+56+16+16，见 drawGlassStatCard）。
+        // 卡高 144 × fontScale 派生（144 = 16+16+8+56+16+16，见 drawSolidStatCard）。
         const float statH = 144.0f * core::theme::fontScale();
 
         // 模块注册感知：统计卡可见数从元数据表按注册态过滤派生（改表即改计数），全关整行隐藏。
@@ -401,19 +368,20 @@ public:
                             .alignItems(eui::Align::CENTER)
                             .gap(t.sizes.spacingSmall)
                             .content([&] {
-                                // UAT2 覆盖 W9：刷新按钮对齐底部次按钮——
-                                // secondaryButtonBg 底 + textPrimary 字（不再透明底浮空）
+                                // S3.1#4: 刷新按钮 Standard Outline 40px——
+                                // 白底 + 绿边框 + 绿文字 + 绿图标
                                 components::button(ui, "home.btn.refresh")
                                     .size(100.0f, 40.0f)
-                                    .text("刷新")
+                                    .text("  刷新")
                                     .icon(0xF021)  // fa-arrows-rotate
-                                    .fontSize(t.sizes.fontSizeBody - 1.0f)
-                                    .colors(t.colors.hover,
-                                            t.colors.hover,
-                                            t.colors.hover)
-                                    .textColor(t.colors.textPrimary)
-                                    .iconColor(t.colors.textPrimary)
-                                    .radius(t.sizes.radiusWeChat)
+                                    .fontSize(t.sizes.fontSizeBody)
+                                    .colors(t.colors.surface,
+                                            t.colors.primarySoftBg,
+                                            components::theme::withOpacity(t.colors.primaryPressed, 0.15f))
+                                    .border(1.0f, t.colors.primary)
+                                    .textColor(t.colors.primary)
+                                    .iconColor(t.colors.primary)
+                                    .radius(t.sizes.radius)
                                     .onClick([this] { refreshStats(); })
                                     .build();
                             })
@@ -489,7 +457,7 @@ public:
                                         streaming ? &t.colors.primary
                                         : rateOk  ? &t.colors.textPrimary
                                                   : &t.colors.textTertiary;
-                                    drawGlassStatCard(ui, statCardElementId(card.kind),
+                                    drawSolidStatCard(ui, statCardElementId(card.kind),
                                                  statW, statH, t, card.tint, card.title,
                                                  tokenNumber,
                                                  tokenBadge, false,
@@ -534,7 +502,7 @@ public:
                                     break;
                                 }
                                 case StatCardKind::Notes:
-                                    drawGlassStatCard(ui, statCardElementId(card.kind),
+                                    drawSolidStatCard(ui, statCardElementId(card.kind),
                                                  statW, statH, t, card.tint, card.title,
                                                  num(stats_.todayNotes),
                                                  ok ? "今日修改过的笔记"
@@ -545,7 +513,7 @@ public:
                                                  });
                                     break;
                                 case StatCardKind::TodoPending:
-                                    drawGlassStatCard(ui, statCardElementId(card.kind),
+                                    drawSolidStatCard(ui, statCardElementId(card.kind),
                                                  statW, statH, t, card.tint, card.title,
                                                  num(stats_.pendingTodos),
                                                  ok ? "未完成总数" : "加载失败",
@@ -555,7 +523,7 @@ public:
                                                  });
                                     break;
                                 case StatCardKind::TodoOverdue:
-                                    drawGlassStatCard(ui, statCardElementId(card.kind),
+                                    drawSolidStatCard(ui, statCardElementId(card.kind),
                                                  statW, statH, t, card.tint, card.title,
                                                  num(stats_.overdueTodos),
                                                  ok ? "已过截止时间" : "加载失败",
@@ -565,7 +533,7 @@ public:
                                                  });
                                     break;
                                 case StatCardKind::ApiCalls:
-                                    drawGlassStatCard(ui, statCardElementId(card.kind),
+                                    drawSolidStatCard(ui, statCardElementId(card.kind),
                                                  statW, statH, t, card.tint, card.title,
                                                  num(stats_.todayApiCalls),
                                                  ok ? "今日代理调用" : "加载失败",
@@ -630,18 +598,69 @@ public:
                                 .content([&] {
                                     const float wrapW = contentW - 32.0f;
                                     if (!range.hasData) {
-                                        // 空态：整天没数据不画空轴也不画假条，居中一句引导。
-                                        ui.text("home.api.chart.empty")
-                                            .position(
-                                                0.0f,
-                                                (chartWrapH - 40.0f) * 0.5f)
-                                            .size(contentW - 32.0f, 40.0f)
-                                            .text("今日暂无 API 调用")
-                                            .fontSize(t.sizes.fontSizeBody)
-                                            .lineHeight(40.0f)
-                                            .horizontalAlign(
-                                                eui::HorizontalAlign::Center)
+                                        // S2.8 空状态：图标 + 标题 + 说明 + 操作按钮（垂直居中排列）
+                                        const float iconH = 48.0f;
+                                        const float gap = 8.0f;
+                                        const float titleH = 22.0f;
+                                        const float descH = 18.0f;
+                                        const float btnH = 40.0f;
+                                        const float totalH = iconH + gap + titleH + gap + descH + gap + btnH;
+                                        const float startY = (chartWrapH - totalH) * 0.5f;
+                                        float cy = startY;
+
+                                        ui.text("home.api.chart.empty.icon")
+                                            .position((wrapW - iconH) * 0.5f, cy)
+                                            .size(iconH, iconH)
+                                            .icon(0xF201)  // fa-line-chart
+                                            .fontSize(iconH)
+                                            .color(components::theme::withOpacity(t.colors.primary, 0.40f))
+                                            .build();
+                                        cy += iconH + gap;
+
+                                        ui.text("home.api.chart.empty.title")
+                                            .position(0.0f, cy)
+                                            .size(wrapW, titleH)
+                                            .text("暂无数据")
+                                            .fontSize(t.sizes.fontSizeWeChat)  // 16px
+                                            .lineHeight(titleH)
+                                            .fontWeight(600)
+                                            .horizontalAlign(eui::HorizontalAlign::Center)
+                                            .color(t.colors.textSecondary)
+                                            .build();
+                                        cy += titleH + gap;
+
+                                        ui.text("home.api.chart.empty.desc")
+                                            .position(0.0f, cy)
+                                            .size(wrapW, descH)
+                                            .text("执行智能任务后查看用量分布")
+                                            .fontSize(t.sizes.fontSizeSmall)  // 12px
+                                            .lineHeight(descH)
+                                            .horizontalAlign(eui::HorizontalAlign::Center)
                                             .color(t.colors.textTertiary)
+                                            .build();
+                                        cy += descH + gap;
+
+                                        // 按钮居中：row 包 button stack 实现水平居中
+                                        ui.row("home.api.chart.empty.btnwrap")
+                                            .size(wrapW, btnH)
+                                            .justifyContent(eui::Align::CENTER)
+                                            .content([&] {
+                                                components::button(ui, "home.api.chart.empty.btn")
+                                                    .size(160.0f, btnH)
+                                                    .text("  新建智能任务")
+                                                    .icon(0xF067)  // fa-plus
+                                                    .fontSize(t.sizes.fontSizeBody)
+                                                    .colors(t.colors.primary,
+                                                            t.colors.primaryHover,
+                                                            t.colors.primaryPressed)
+                                                    .textColor(t.colors.onPrimary)
+                                                    .iconColor(t.colors.onPrimary)
+                                                    .radius(t.sizes.radius)
+                                                    .onClick([this] {
+                                                        navigateTo(::core::PageId::Agent, "action:new_task");
+                                                    })
+                                                    .build();
+                                            })
                                             .build();
                                     } else {
                                         // 柱体容器（id 沿用组件根 id：probe 与单测按 home.api.chart.bars.* 定位）。
@@ -750,19 +769,17 @@ public:
                         .build();
                 }
 
-                // 快捷操作按钮组：目标模块关闭 → 按钮隐藏；UAT2 覆盖改等宽。
+                // 快捷操作按钮组（S3.1#3/#6）：主次分层——新建笔记=Filled 44px / 新建任务=Outline 44px / 切换 Profile=Ghost 44px。
                 int actCount = 0;
                 for (const auto& btn : kActionButtons) {
                     if (moduleRegistered(btn.module)) ++actCount;
                 }
                 if (actCount > 0) {
                 const float actGap = t.sizes.spacingLarge; // 16
-                // UAT2 覆盖 W9 主次不等宽：三按钮权重全 1.0（actWeightSum=actCount）
                 ui.row("home.actions")
                     .size(contentW, 44.0f)
                     .gap(actGap)
                     .content([&] {
-                        // W9 微信风格：新建笔记绿主按钮，其余浅灰次按钮（无边框）；UAT2 起等宽
                         for (const auto& btn : kActionButtons) {
                             if (!moduleRegistered(btn.module)) continue;
                             const float actW =
@@ -774,24 +791,31 @@ public:
                             builder.size(actW, 44.0f)
                                 .text(btn.label)
                                 .fontSize(t.sizes.fontSizeBody)
-                                .radius(t.sizes.radiusWeChat);
+                                .radius(t.sizes.radius);
                             if (btn.kind == ActionKind::NewNote) {
+                                // Filled: primary bg + white text
                                 builder.colors(t.colors.primary,
                                                t.colors.primaryHover,
                                                t.colors.primaryPressed)
                                     .textColor(t.colors.onPrimary);
+                            } else if (btn.kind == ActionKind::NewTodo) {
+                                // Outline: white bg + green border + green text
+                                builder.colors(t.colors.surface,
+                                               t.colors.primarySoftBg,
+                                               components::theme::withOpacity(t.colors.primaryPressed, 0.15f))
+                                    .border(1.0f, t.colors.primary)
+                                    .textColor(t.colors.primary);
                             } else {
-                                builder.colors(
-                                       t.colors.hover,
-                                       t.colors.hover,
-                                       t.colors.hover)
-                                    .textColor(t.colors.textPrimary);
+                                // Ghost: 透明 bg + green text
+                                builder.colors(eui::Color{0.0f, 0.0f, 0.0f, 0.0f},
+                                               t.colors.primarySoftBg,
+                                               t.colors.primarySoftBg)
+                                    .textColor(t.colors.primary);
                             }
                             if (btn.iconCodepoint != 0) {
-                                builder.icon(btn.iconCodepoint)  // 0xF46D fa-clipboard-list
-                                    .iconColor(t.colors.textPrimary);
+                                builder.icon(btn.iconCodepoint)
+                                    .iconColor(t.colors.primary);
                             }
-                            // 点击负载按值捕获（btn.navPayload 空串 = 无负载），闭包只活在 compose 调用期。
                             const std::string payload = btn.navPayload;
                             builder
                                 .onClick([this, payload,

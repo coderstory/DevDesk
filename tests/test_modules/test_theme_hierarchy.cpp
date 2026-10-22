@@ -206,7 +206,7 @@ REGISTER_TEST(theme_hierarchy_claude,
 })
 
 REGISTER_TEST(theme_hierarchy_home,
-              "theme_hierarchy: home 统计卡=surface 页面底无自铺底（light+dark）", {
+              "theme_hierarchy: home 统计卡=S6.6 辅助色实底 + 页面无自铺底（light+dark）", {
     core::proxy_stats::resetForTest();
 
     std::unique_ptr<::core::Module> mod(create_home_module());
@@ -214,8 +214,12 @@ REGISTER_TEST(theme_hierarchy_home,
     const auto checkFrame = [&](Frame& frame,
                                 const core::theme::Tokens& t) -> bool {
         DOCTEST_CHECK(frame.absent("home.pagebg"));
-        // W9: 统计卡换微信白底（surface #FFFFFF），不再用暖色 surface
-        DOCTEST_CHECK(frame.colorIs("home.stat.tokens.bg", t.colors.surface));
+        // S6.6: 统计卡改辅助色实底——卡底有色、非半透白面
+        // Token速率卡 bg = cardGreen #E6FBF2（g≈0.98），不再是 surface #FFFFFF
+        DOCTEST_CHECK(!frame.colorIs("home.stat.tokens.bg", t.colors.surface));
+        const auto* bg = frame.ui.find("home.stat.tokens.bg");
+        DOCTEST_REQUIRE(bg != nullptr);
+        DOCTEST_CHECK(bg->color.a > 0.9f);  // 实底非半透
         return true;
     };
 
