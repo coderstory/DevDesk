@@ -870,19 +870,19 @@ REGISTER_TEST(md_tree_row_geometry,
     DOCTEST_REQUIRE(ficon0 != nullptr);
     DOCTEST_CHECK(arrow0->frame.x + arrow0->frame.width <= ficon0->frame.x);
 
-    // d. 箭头字号：一档放大（kTreeFontSize 14 × 1.43 ≈ 20，落在 1.25~1.45 倍区间），
-    //    且 < 行高不溢出（F批：13/18 → 14/20）
+    // d. 箭头字号：12px（三级文字色，W3.5批6 H12-1 口径）
+    //    且 < 行高不溢出
     const auto* arrow = ui.find("md.tree.node.2.arrow");
     const auto* label = ui.find("md.tree.node.2.name");
     DOCTEST_REQUIRE(arrow != nullptr);
     DOCTEST_REQUIRE(label != nullptr);
     const float arrowFontSize = arrow->fontSize;  // 跨帧读值：重开帧后旧 Element* 失效
-    DOCTEST_CHECK_EQ(arrowFontSize, 20.0f);       // 锁定的常量值
-    DOCTEST_CHECK_MESSAGE(arrowFontSize >= 14.0f * 1.25f && arrowFontSize <= 14.0f * 1.45f,
+    DOCTEST_CHECK_EQ(arrowFontSize, 12.0f);       // 锁定的常量值
+    DOCTEST_CHECK_MESSAGE(arrowFontSize >= 12.0f && arrowFontSize <= 14.0f,
                           "箭头 fontSize=" + std::to_string(arrowFontSize) +
-                              " 不在 [17.5, 20.3]");
-    DOCTEST_CHECK(arrowFontSize > label->fontSize);  // 确实比行内正文大
-    DOCTEST_CHECK(arrowFontSize < kRowH);            // 不溢出 item 行高
+                              " 不在 [12, 14]");
+    DOCTEST_CHECK(arrowFontSize < label->fontSize);   // 12 < kTreeFontSize 14
+    DOCTEST_CHECK(arrowFontSize < kRowH);             // 不溢出 item 行高
     DOCTEST_CHECK_EQ(arrowFontSize, ui.find("md.tree.node.4.arrow")->fontSize);
     // 折叠态（▸）与展开态（▾）同一字号口径：点根组行的**箭头命中区**收起 →
     // 箭头文本变 ▸、字号不变。行体点击 = 选中后，收起只剩箭头命中区这一个入口。
