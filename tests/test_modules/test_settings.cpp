@@ -4513,12 +4513,12 @@ REGISTER_TEST(settings_dropdown_fill_available_width,
         mod->compose(ui, screen);
         ui.end();
         ui.layout(screen.width, screen.height);
-        // editor 半宽卡：colW=(712−16)/2=348 → 行宽 292 → cw=174
+        // editor 半宽卡：S4.2 pad 40→32 → colW=(728−16)/2=356 → cw=182（H3 漂移同 log 全宽卡 +8）
         DOCTEST_CHECK_MESSAGE(
-            nearEq(ddwrapW(ui, "settings.card.editor.ddwrap"), 174.0f),
+            nearEq(ddwrapW(ui, "settings.card.editor.ddwrap"), 182.0f),
             "editor 窄窗下拉宽 " +
                 std::to_string(ddwrapW(ui, "settings.card.editor.ddwrap")) +
-                " 期望 174（窄窗让位收缩不变）");
+                " 期望 182（窄窗让位收缩随 H3 骨架漂移）");
 
         DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 2));
         ui.begin("ddfill_narrow_log");
