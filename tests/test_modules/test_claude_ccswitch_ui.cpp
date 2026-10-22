@@ -208,10 +208,10 @@ REGISTER_TEST(claude_ccswitch_ui_skeleton_contract,
     DOCTEST_CHECK(ui2.find("claude.dialog.ccswitch.list") != nullptr);
 
     // 默认全选 → selall 显示「取消全选」，确认键计数 = claude 行数（codex 被滤掉）
-    const auto* selall = ui2.find("claude.dialog.ccswitch.selall.text.normal");
+    const auto* selall = ui2.find("claude.dialog.ccswitch.selall.text");
     DOCTEST_REQUIRE(selall != nullptr);
     DOCTEST_CHECK_EQ(selall->text, std::string("取消全选"));
-    //（UAT5 米黄收尾）全选钮底 == hover 白底灰边；反向锁死暖橙 surfaceElevated
+    // W4 批2：全选钮改 Ghost 文字钮（透明底绿字）；反向锁死暖橙 surfaceElevated 与白底
     const auto* selallBg = ui2.find("claude.dialog.ccswitch.selall.bg");
     DOCTEST_REQUIRE(selallBg != nullptr);
     const auto& wc = core::theme::current().colors;
@@ -219,9 +219,12 @@ REGISTER_TEST(claude_ccswitch_ui_skeleton_contract,
         return std::fabs(x.r - y.r) < 0.01f && std::fabs(x.g - y.g) < 0.01f &&
                std::fabs(x.b - y.b) < 0.01f;
     };
-    // S1.2 #13: hover→hover
-    DOCTEST_CHECK(sameColor(selallBg->color, wc.hover));
+    // S2.1 Ghost：默认底透明（a=0）
+    DOCTEST_CHECK_LT(selallBg->color.a, 0.01f);            // Ghost 默认底透明
     DOCTEST_CHECK(!sameColor(selallBg->color, wc.surfaceElevated));
+    const auto* selallText = ui2.find("claude.dialog.ccswitch.selall.text");
+    DOCTEST_REQUIRE(selallText != nullptr);
+    DOCTEST_CHECK(sameColor(selallText->color, wc.primary));  // S2.1 Ghost 绿字（单节点 .text）
     const auto* confirm = ui2.find("claude.dialog.ccswitch.confirm.text.normal");
     DOCTEST_REQUIRE(confirm != nullptr);
     DOCTEST_CHECK_EQ(confirm->text, std::string("导入选中(3)"));
@@ -229,12 +232,12 @@ REGISTER_TEST(claude_ccswitch_ui_skeleton_contract,
     DOCTEST_REQUIRE(cancel != nullptr);
     DOCTEST_CHECK_EQ(cancel->text, std::string("关闭"));
 
-    //（UAT5 米黄收尾）候选行卡/勾选指示/文字四档 mint 色锁（默认全选帧）：
-    // 选中行淡绿硬编码底 + primary 绿边；cb.box primaryPressed 绿圈
-    // （radius = D/2 = 10 → 20px 圆，Profile 选中同款）+ 白 fa-check；文字四档。
+    //（W4 批2）候选行卡/勾选指示/文字四档 mint 色锁（默认全选帧）：
+    // 选中行底 = primarySoftBg（S2.5 淡绿选中，替代硬编码 #E8F7EE）+ primary 绿边；
+    // cb.box primaryPressed 绿圈（radius = D/2 = 10 → 20px 圆）+ 白 fa-check；文字四档。
     // 反向锁死暖橙 surface / legacy primary / legacy error。
     {
-        const auto kSelRowBgColor = eui::Color{0xE8, 0xF7, 0xEE, 0xFF};  // 硬编码淡绿选中底（ccswitch source L52）
+        const auto kSelRowBgColor = wc.primarySoftBg;  // S2.5 淡绿选中底（ccswitch source: t.colors.primarySoftBg）
         const auto* selRowBg = ui2.find("claude.dialog.ccswitch.row.1.bg");
         DOCTEST_REQUIRE(selRowBg != nullptr);
         DOCTEST_CHECK(sameColor(selRowBg->color, kSelRowBgColor));
@@ -331,7 +334,7 @@ REGISTER_TEST(claude_ccswitch_ui_skeleton_contract,
     rowHit->onClick();
     eui::Ui ui3;
     composeFrame(*mod, ui3, "cc_ui_skel3");
-    const auto* selall3 = ui3.find("claude.dialog.ccswitch.selall.text.normal");
+    const auto* selall3 = ui3.find("claude.dialog.ccswitch.selall.text");
     DOCTEST_REQUIRE(selall3 != nullptr);
     DOCTEST_CHECK_EQ(selall3->text, std::string("全选"));
     const auto* confirm3 = ui3.find("claude.dialog.ccswitch.confirm.text.normal");

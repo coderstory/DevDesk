@@ -16,6 +16,7 @@
 #include <components/tabs.h>
 #include <components/tooltip.h>
 #include <ui_kit/dialog_form.h>
+#include <ui_kit/wtab.h>
 
 #include <algorithm>
 #include <filesystem>
@@ -838,7 +839,7 @@ void drawFormEnvTab(eui::Ui& ui, float w,
         const float y = 124.0f + static_cast<float>(i) * 38.0f;
         const std::string idx = std::to_string(i);
         components::input(ui, "claude.form.env.row." + idx + ".key")
-            .position(28.0f, y).size(220.0f, 32.0f)
+            .position(28.0f, y).size(220.0f, 40.0f)
             .value(f.formEnvRows_[i].first).placeholder("ENV_KEY")
             .fontSize(12.0f).theme(themeTokens)
             .onChange([fp = &f, i](const std::string& v) {
@@ -858,14 +859,14 @@ void drawFormEnvTab(eui::Ui& ui, float w,
                 .build();
         } else if (!f.formEnvRows_[i].first.empty()) {
             ui.rect("claude.form.env.row." + idx + ".key.unknown")
-                .position(28.0f, y).size(220.0f, 32.0f)
+                .position(28.0f, y).size(220.0f, 40.0f)
                 .color(eui::Color{0.0f, 0.0f, 0.0f, 0.0f})
                 .border(1.0f, t.colors.error)
                 .radius(t.sizes.radiusSmall)
                 .build();
         }
         components::input(ui, "claude.form.env.row." + idx + ".value")
-            .position(258.0f, y).size(414.0f, 32.0f)
+            .position(258.0f, y).size(414.0f, 40.0f)
             .value(f.formEnvRows_[i].second).placeholder("值（字符串）")
             .fontSize(12.0f).theme(themeTokens)
             .onChange([fp = &f, i](const std::string& v) {
@@ -873,17 +874,14 @@ void drawFormEnvTab(eui::Ui& ui, float w,
             })
             .onCancel([fp = &f] { fp->formOpen_ = false; })  // Esc=取消
             .build();
-        components::button(ui, "claude.form.env.row." + idx + ".del")
-            .position(682.0f, y).size(50.0f, 32.0f)
+        // S2.1 Danger Ghost：浅红底（error 20%）+ 红字，无实心红块；hover 红底白字由
+        // ButtonVariant::Danger 默认实现（EUI-NEO button.h）。
+        components::button(ui, "claude.form.env.row." + idx + ".del",
+                           components::ButtonVariant::Danger)
+            .position(700.0f, y).size(32.0f, 40.0f)
             .icon(0xF00D)  // fa-xmark
-            .fontSize(12.0f)
-            .colors(t.colors.hover,
-                    t.colors.hover,
-                    t.colors.hover)
-            .textColor(t.colors.error)
-            .iconColor(t.colors.error)
-            .radius(t.sizes.radiusWeChat)
-            .border(1.0f, t.colors.borderDefault)
+            .fontSize(13.0f)
+            .theme(themeTokens)
             // UAT6 阴影统一：ButtonStyle 默认已无阴影（EUI-NEO 根修），此处不再
             // 逐钮覆盖透明阴影（原 workaround 已被根修吸收）。
             .onClick([fp = &f, i] {
@@ -895,25 +893,26 @@ void drawFormEnvTab(eui::Ui& ui, float w,
             .build();
     }
 
-    components::button(ui, "claude.form.env.add")
-        .position(28.0f, 314.0f).size(110.0f, 30.0f)
+    // S3.9 #4：「+ 添加变量」改 Outline 次按钮 32px 高（白底绿边绿字，hover 淡绿底）
+    components::button(ui, "claude.form.env.add", components::ButtonVariant::Outline)
+        .position(28.0f, 314.0f).size(120.0f, 32.0f)
         .text("+ 添加变量").fontSize(12.0f)
-        .colors(t.colors.hover,
-                t.colors.hover,
-                t.colors.hover)
-        .textColor(t.colors.textPrimary)
-        .radius(t.sizes.radiusWeChat)
-        .border(1.0f, t.colors.borderDefault)
+        .theme(themeTokens)
         .onClick([fp = &f] { fp->formEnvRows_.emplace_back(); })
         .build();
     if (f.formEnvRows_.size() > kMaxVisibleRows) {
+        // S3.9 #6：前置 ℹ 图标（14px 信息蓝）+ 12px 三级灰字（原 11px 过浅）
+        ui.text("claude.form.env.overflow.icon")
+            .position(150.0f, 322.0f).size(14.0f, 16.0f)
+            .icon(0xF05A).fontSize(12.0f).lineHeight(16.0f)
+            .color(t.colors.info).build();
         ui.text("claude.form.env.overflow")
-            .position(150.0f, 320.0f).size(w - 150.0f - 28.0f, 16.0f)
+            .position(168.0f, 322.0f).size(w - 168.0f - 28.0f, 32.0f)
             .text("另有 " + std::to_string(f.formEnvRows_.size() -
                                            kMaxVisibleRows) +
                   " 项已保存（保存时全量写入，列表仅显示前 " +
                   std::to_string(kMaxVisibleRows) + " 项）")
-            .fontSize(11.0f).lineHeight(16.0f)
+            .fontSize(12.0f).lineHeight(16.0f)
             .color(t.colors.textTertiary).build();
     }
 
@@ -923,7 +922,7 @@ void drawFormEnvTab(eui::Ui& ui, float w,
         .fontSize(11.0f).lineHeight(16.0f)
         .color(t.colors.textTertiary).build();
     components::input(ui, "claude.form.import.text")
-        .position(28.0f, 376.0f).size(w - 56.0f, 82.0f)
+        .position(28.0f, 376.0f).size(w - 56.0f, 72.0f)
         .value(imp.importText_)
         .placeholder(R"({ "env": { "ANTHROPIC_BASE_URL": "...", ... } }  粘贴整段 settings.json 或仅 env 对象)")
         .multiline(true).scrollbar(true)
@@ -931,6 +930,12 @@ void drawFormEnvTab(eui::Ui& ui, float w,
         .onChange([ip = &imp](const std::string& v) { ip->importText_ = v; })
         .onCancel([fp = &f] { fp->formOpen_ = false; })  // Esc=取消
         .build();
+    // S3.9 #7：粘贴导入格式说明（输入框下方 11px 三级灰字）
+    ui.text("claude.form.import.formathint")
+        .position(28.0f, 452.0f).size(w - 56.0f, 14.0f)
+        .text("每行一条，格式: KEY=VALUE；或粘贴整段 settings.json / 仅 env 对象")
+        .fontSize(11.0f).lineHeight(14.0f)
+        .color(t.colors.textTertiary).build();
 
     components::button(ui, "claude.form.import.parse")
         .position(28.0f, 468.0f).size(110.0f, 32.0f)
@@ -1051,21 +1056,23 @@ const float h = 540.0f;
                 isEdit ? "编辑 Profile" : "新建 Profile", 20.0f, t.colors.textPrimary,
                 {.y = 12.0f, .height = 26.0f, .lineHeight = 26.0f});
 
-            // tabs 四页；TabsBuilder 无 position，套 stack 定位
-            ui.stack("claude.form.tabs.wrap")
-                .position(28.0f, 52.0f)
-                .size(w - 56.0f, 34.0f)
-                .content([&] {
-                    components::tabs(ui, "claude.form.tabs")
-                        .size(w - 56.0f, 34.0f)
-                        .items({"基础", "模型映射", "高级 env", "高级配置"})
-                        .selected(f.formTab_)
-                        .fontSize(13.0f)
-                        .theme(themeTokens)
-                        .onChange([fp = &f](int idx) { fp->formTab_ = idx; })
-                        .build();
-                })
-                .build();
+            // S3.10 弹窗级小 Tab：块面式 32px/12px/13px（淘汰下划线式 components::tabs）
+            {
+                const char* kTabLabels[] = {"基础", "模型映射", "高级 env", "高级配置"};
+                const float kTabW[] = {60.0f, 90.0f, 90.0f, 90.0f};
+                constexpr float kTabH = 32.0f;
+                constexpr float kTabGap = 4.0f;
+                constexpr float kTabY = 52.0f;
+                float xPos = 28.0f;
+                for (int i = 0; i < 4; ++i) {
+                    ui_kit::wtab(ui, "claude.form.tabs." + std::to_string(i),
+                                 kTabLabels[i], f.formTab_ == i, xPos, kTabY,
+                                 kTabW[i], kTabH, t,
+                                 [fp = &f, idx = i] { fp->formTab_ = idx; },
+                                 ui_kit::kWtabSmallFontSize);
+                    xPos += kTabW[i] + kTabGap;
+                }
+            }
 
             if (f.formTab_ == 0) {
                 drawFormBasicTab(ui, w, t, themeTokens, isEdit, f);
@@ -1243,7 +1250,7 @@ void drawDeleteConfirmDialog(eui::Ui& ui, const eui::Screen& screen,
             ui_kit::DialogButtonSpec confirm;
             confirm.label = "确认删除";
             confirm.fontSize = 14.0f;
-            confirm.style = ui_kit::DialogButtonStyle::DangerOutlineThemed;
+            confirm.style = ui_kit::DialogButtonStyle::DangerSoftThemed;
             confirm.onClick = [fp = &f, onConfirmDelete] {
                 const int64_t id = fp->deleteTargetId_;
                 fp->deleteConfirmOpen_ = false;
@@ -1498,7 +1505,7 @@ void drawSharedConfigDeleteConfirmDialog(
         ui_kit::DialogButtonSpec confirm;
         confirm.label = "确认删除";
         confirm.fontSize = 14.0f;
-        confirm.style = ui_kit::DialogButtonStyle::DangerOutlineThemed;
+        confirm.style = ui_kit::DialogButtonStyle::DangerSoftThemed;
         confirm.onClick = [sp = &s, onConfirmDelete] {
             const int64_t id = sp->deleteConfirmId_;
             const std::string name = sp->deleteConfirmName_;

@@ -10,7 +10,7 @@ namespace ui_kit {
 void wtab(eui::Ui& ui, const std::string& id, const std::string& label,
           bool active, float x, float y, float w, float h,
           const core::theme::Tokens& t,
-          const std::function<void()>& onClick) {
+          const std::function<void()>& onClick, float fontSize) {
     // S2.2 块面 Tab：选中=primarySoftBg底+primary字+8px圆角；未选中=透明底+textSecondary字
     // H10：primarySoftBg（#E6FBF2）在白/淡绿底上对比度不足，加 borderDefault 描边。
     const eui::Color txtColor = active ? t.colors.primary : t.colors.textSecondary;
@@ -42,7 +42,7 @@ void wtab(eui::Ui& ui, const std::string& id, const std::string& label,
             ui.text(id + ".text")
                 .size(w, h)
                 .text(label)
-                .fontSize(kWtabFontSize)
+                .fontSize(fontSize)
                 .horizontalAlign(eui::HorizontalAlign::Center)
                 .verticalAlign(eui::VerticalAlign::Center)
                 .color(txtColor)

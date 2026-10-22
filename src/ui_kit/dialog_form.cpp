@@ -127,6 +127,11 @@ void buildDialogButton(eui::Ui& ui, const std::string& id, float x, float y, flo
                 .radius(t.sizes.radius)
                 .border(1.0f, t.colors.borderDefault);
             break;
+        case DialogButtonStyle::DangerSoftThemed:
+            // S2.1 Danger 默认态：浅红底（#FEE2E2 = error 20%）+ 红字；hover 红底白字
+            button.theme(themeTokens, components::ButtonVariant::Danger)
+                .radius(t.sizes.radius);
+            break;
     }
     button.onClick(spec.onClick).build();
 }

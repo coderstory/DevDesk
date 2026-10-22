@@ -44,12 +44,12 @@ void drawCandidateRow(eui::Ui& ui, const core::theme::Tokens& t,
                       const std::string& baseId, float rowW,
                       const CcSwitchImportRow& row,
                       const CcSwitchImportMapping& m, bool selected) {
-    // UAT6 P 批：选中态淡绿底（#E8F7EE + 绿描边），未选中保白；
-// 勾选指示绿圈白勾（加深绿 primaryPressed 防淡绿底淹没）。
+    // S2.5 列表选中态：淡绿选中底 = primarySoftBg（#E6FBF2），未选中保白；
+    // 勾选指示绿圈白勾（加深绿 primaryPressed 防淡绿底淹没）。
     ui.rect(baseId + ".bg")
         .position(0.0f, 0.0f)
         .size(rowW, kRowCardH)
-        .color(selected ? eui::Color{0xE8, 0xF7, 0xEE, 0xFF}  // 淡绿选中底
+        .color(selected ? t.colors.primarySoftBg   // 淡绿选中底（token，替代硬编码 #E8F7EE）
                          : t.colors.surface)
         .radius(t.sizes.radiusLarge)
         .border(1.0f, selected ? t.colors.primary          // 绿描边
@@ -309,18 +309,15 @@ void drawCcSwitchImportDialog(eui::Ui& ui, const eui::Screen& screen,
             const int selCount = static_cast<int>(
                 std::count(st.selected_.begin(), st.selected_.end(), true));
             const bool allSelected = (selCount == static_cast<int>(st.rows_.size()));
-            components::button(ui, "claude.dialog.ccswitch.selall")
+            // 按钮组分层（S2.1）：全选 = Ghost 文字钮（透明底绿字，hover 淡绿底）；
+            // 关闭 = Outline 次按钮；导入选中 = Filled 主按钮（最右）。
+            components::button(ui, "claude.dialog.ccswitch.selall",
+                               components::ButtonVariant::Ghost)
                 .position(ui_kit::kDialogInsetX, kSelectAllY)
-                .size(120.0f, kSelectAllH)
+                .size(96.0f, kSelectAllH)
                 .text(allSelected ? "取消全选" : "全选")
                 .fontSize(14.0f)  // H2：fontSizeSmall(12)→14 对齐规格（按钮文字 14/600）
-                //（UAT5 米黄清理：surfaceElevated 暖橙 → WeChat Secondary 白底灰边）
-                .colors(t.colors.hover,
-                        t.colors.hover,
-                        t.colors.hover)
-                .textColor(t.colors.textPrimary)
-                .radius(8.0f)  // H2：radiusWeChat(6)→8 对齐规格（按钮圆角 8）
-                .border(1.0f, t.colors.borderDefault)
+                .theme(themeTokens)
                 .onClick([sp = &st]() {
                     const bool anySelected =
                         std::any_of(sp->selected_.begin(),

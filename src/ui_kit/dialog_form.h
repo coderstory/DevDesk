@@ -82,6 +82,8 @@ enum class DialogButtonStyle {
     DangerThemed,     // .theme(themeTokens,false) + .colors(error,error,error) + onPrimary
     DangerOutline,    // .colors(surfaceElevated/hover/active) + textColor(error) + border
     DangerOutlineThemed,  // .theme(themeTokens,false) + textColor(error) + border
+    // S2.1 Danger 默认态：浅红底（error 20%）+ 红字，hover 红底白字（ButtonVariant::Danger）
+    DangerSoftThemed,
 };
 
 struct DialogButtonSpec {
