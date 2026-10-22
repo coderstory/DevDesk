@@ -2878,7 +2878,7 @@ REGISTER_TEST(todo_ui_overdue_dialog,
         DOCTEST_REQUIRE(badge != nullptr);
         DOCTEST_CHECK(badge->text.find("1") != std::string::npos);
         // 打开弹窗
-        const auto* btn = frame.ui.find("todo.btn.overdue.bg");
+        const auto* btn = frame.ui.find("todo.btn.overdue.hit");
         DOCTEST_REQUIRE(btn != nullptr);
         DOCTEST_REQUIRE(btn->onClick != nullptr);
         btn->onClick();
@@ -2924,7 +2924,7 @@ REGISTER_TEST(todo_ui_overdue_zero_grey,
     const auto* badge = frame.ui.find("todo.btn.overdue.text");
     DOCTEST_REQUIRE(badge != nullptr);
     DOCTEST_CHECK(badge->text.find("0") != std::string::npos);
-    const auto* btn = frame.ui.find("todo.btn.overdue.bg");
+    const auto* btn = frame.ui.find("todo.btn.overdue.hit");
     DOCTEST_REQUIRE(btn != nullptr);
     DOCTEST_REQUIRE(btn->onClick != nullptr);
     btn->onClick();
@@ -2963,7 +2963,7 @@ REGISTER_TEST(todo_ui_overdue_min_one_day,
         const auto* badge = frame.ui.find("todo.btn.overdue.text");
         DOCTEST_REQUIRE(badge != nullptr);
         DOCTEST_CHECK(badge->text.find("1") != std::string::npos);  // 计数 = 1
-        const auto* btn = frame.ui.find("todo.btn.overdue.bg");
+        const auto* btn = frame.ui.find("todo.btn.overdue.hit");
         DOCTEST_REQUIRE(btn != nullptr);
         DOCTEST_REQUIRE(btn->onClick != nullptr);
         btn->onClick();
@@ -3010,7 +3010,7 @@ REGISTER_TEST(todo_ui_overdue_query_fail,
         DOCTEST_REQUIRE(env.db->db().exec("DROP TABLE todo_tasks").isOk());
 
         // ① 点 badge：失败 → 不开弹窗（旧行为开成「逾期任务（0）」）+ 报错
-        const auto* btn = frame.ui.find("todo.btn.overdue.bg");
+        const auto* btn = frame.ui.find("todo.btn.overdue.hit");
         DOCTEST_REQUIRE(btn != nullptr);
         DOCTEST_REQUIRE(btn->onClick != nullptr);
         btn->onClick();
@@ -5599,7 +5599,7 @@ REGISTER_TEST(todo_ui_overdue_row_ellipsis,
 
     {
         Frame frame(mod.get());
-        const auto* btn = frame.ui.find("todo.btn.overdue.bg");
+        const auto* btn = frame.ui.find("todo.btn.overdue.hit");
         DOCTEST_REQUIRE(btn != nullptr);
         DOCTEST_REQUIRE(btn->onClick != nullptr);
         btn->onClick();
