@@ -2825,9 +2825,9 @@ REGISTER_TEST(claude_ui_form_basic_single_column_geometry,
         const float px = panel->frame.x;
         const float py = panel->frame.y;
 
-        // 弹窗尺寸：760 宽 × 600 高（UAT5：四 tab 恒高，基础页不再 532）
+        // 弹窗尺寸：760 宽 × 540 高（UAT6：最小窗 1000×640 下 540 档不溢出）
         DOCTEST_CHECK(floatEq(panel->frame.width, 760.0f));
-        DOCTEST_CHECK(floatEq(panel->frame.height, 600.0f));
+        DOCTEST_CHECK(floatEq(panel->frame.height, 540.0f));
 
         // 单列纵排：名称行在认证行上方（y=104 < 314）；两标签同 x=28
         const auto* nameLabel = ui.find("claude.form.basic.name.label");
