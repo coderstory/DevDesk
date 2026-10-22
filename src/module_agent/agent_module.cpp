@@ -658,8 +658,7 @@ void AgentModule::openNewTaskDialog() {
     editSlot_ = kModelSlotKeys[0];
     editIter_ = 10;
     editDestructive_ = false;
-    editContextNote_.clear();
-    editAutoNote_ = true;
+    // 上下文记忆与自动记录已并入系统提示词（W4 C3 字段合并）：固定 autoNote=1、contextNote=""
     // 新建时生成默认系统提示词（环境上下文：工作目录、git 分支、OS、架构）
     editSystemPrompt_ = buildDefaultSystemPrompt(
         std::filesystem::current_path().string());
@@ -790,8 +789,6 @@ void AgentModule::openTaskEditor(int64_t taskId) {
     editSlot_ = r.modelSlot;
     editIter_ = r.maxIterations;
     editDestructive_ = r.allowDestructive;
-    editContextNote_ = r.contextNote;
-    editAutoNote_ = (r.autoNote != 0);
     editSystemPrompt_ = r.systemPrompt;  // 编辑已有任务：保持用户现有值（不覆盖）
     editTriggerIdx_ = triggerIndexOf(r.triggerType);
     // 「闹钟」分支回填：按 once_at 格式化成同一份 YYYY-MM-DD HH:MM 文本；坏配置
@@ -924,7 +921,7 @@ void AgentModule::saveTaskDialog() {
         triggerConfig = encoded.value();
     }
     const int iter = editIter_ < 1 ? 1 : (editIter_ > 50 ? 50 : editIter_);
-    const int autoNoteInt = editAutoNote_ ? 1 : 0;
+    const int autoNoteInt = 1;  // W4 C3：自动记录固定开启
     // UAT5：任务名称独立输入（TaskDef.name 一一对应）；留空 = 既有行为按目标取名
     const std::string name = [&] {
         const std::string trimmed = trimCopy(editName_);
@@ -933,7 +930,7 @@ void AgentModule::saveTaskDialog() {
     if (editingTaskId_) {
         auto updated = store_->updateTask(*editingTaskId_, name, goal,
                                           triggerType, triggerConfig, editSlot_, iter,
-                                          editDestructive_, editContextNote_,
+                                          editDestructive_, /*contextNote=*/"",
                                           autoNoteInt, editSystemPrompt_);
         if (updated.isFail()) {
             editError_ = "保存失败：" + updated.errorMessage();
@@ -943,7 +940,7 @@ void AgentModule::saveTaskDialog() {
     } else {
         auto created = store_->createTask(name, goal, triggerType,
                                           editSlot_, iter, editDestructive_,
-                                          triggerConfig, editContextNote_,
+                                          triggerConfig, /*contextNote=*/"",
                                           autoNoteInt, editSystemPrompt_);
         if (created.isFail()) {
             editError_ = "创建失败：" + created.errorMessage();
@@ -1010,7 +1007,7 @@ void AgentModule::testRunDialog() {
         triggerConfig = encoded.value();
     }
     const int iter = editIter_ < 1 ? 1 : (editIter_ > 50 ? 50 : editIter_);
-    const int autoNoteInt = editAutoNote_ ? 1 : 0;
+    const int autoNoteInt = 1;  // W4 C3：自动记录固定开启
     const std::string name = [&] {
         const std::string trimmed = trimCopy(editName_);
         return trimmed.empty() ? deriveTaskName(goal) : trimmed;
@@ -1018,7 +1015,7 @@ void AgentModule::testRunDialog() {
     // 建临时任务
     auto created = store_->createTask(name + "（试运行）", goal, triggerType,
                                       editSlot_, iter, editDestructive_,
-                                      triggerConfig, editContextNote_,
+                                      triggerConfig, /*contextNote=*/"",
                                       autoNoteInt, editSystemPrompt_);
     if (created.isFail()) {
         editError_ = "试运行失败：" + created.errorMessage();
@@ -2238,7 +2235,7 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
 void AgentModule::composeTaskDialog(
     ::eui::Ui& ui, const ::eui::Screen& screen, const ::core::theme::Tokens& t,
     const components::theme::ThemeColorTokens& themeTokens) {
-    const float w = std::max(720.0f, screen.width * 0.5f);
+    const float w = std::max(640.0f, screen.width * 0.5f);
     const float h = kTaskDialogH;
     const float innerW = w - ui_kit::kDialogBodyInsetX;
     const float x0 = ui_kit::kDialogInsetX;
@@ -2251,13 +2248,24 @@ void AgentModule::composeTaskDialog(
     constexpr const char* kStepLabels[] = {"基础信息", "触发", "指令", "执行与安全"};
     constexpr int kStepCount = 4;
 
-    // 步骤条几何：4 节点均匀分布 + 连线 + 标签
-    constexpr float kStepperLineY = 68.0f;    // 连线/圆心 Y
-    constexpr float kNodeRadius = 13.0f;
-    constexpr float kStepperNodeW = 28.0f;    // 节点正方形尺寸（直径）
-    constexpr float kContentTop = 112.0f;      // 内容区起始 Y
-    constexpr float kContentBot = 388.0f;      // 内容区结束 Y（276px 高）
-    const float kNodeSpacing = innerW / (kStepCount - 1);  // 节点水平间距
+    // 逐步校验（W4 C1）：下一步按钮按当前步表单校验启用；出错标节点不弹全局错误
+    const auto stepValidFor = [&](int i) -> bool {
+        if (i == 0) return true;  // 名称可留空（自动取名）
+        if (i == 1) {
+            if (isSchedule) return parseCron(editCron_).isOk();
+            if (isOnce) return !editOnceAtText_.empty()
+                                && parseOnceAtLocalText(editOnceAtText_).isOk();
+            if (isEvent) return std::any_of(editEvents_.begin(), editEvents_.end(),
+                                            [](bool v) { return v; });
+            return true;  // manual / resident 等无需配置
+        }
+        if (i == 2) return !editGoal_.empty();
+        return true;  // step 3 执行与安全
+    };
+
+    // 步骤条几何：4 块面胶囊均匀分布 + 短连接线（W4 C1 重做）
+    constexpr float kContentTop = 116.0f;      // 内容区起始 Y（步骤条 64+32+20）
+    constexpr float kContentBot = 388.0f;      // 内容区结束 Y
 
     // 试运行结果收割：dryRun_ done 后才 join + 显结果（线程安全：只用原子 done 作同步点）
     if (dryRun_ && dryRun_->done.load(std::memory_order_acquire)) {
@@ -2305,108 +2313,55 @@ void AgentModule::composeTaskDialog(
                 .onClick([this] { closeTaskDialog(); })
                 .build();
 
-            // ====== 步骤条（快递详情风：节点 + 连线 + 标签） ======
+            // ====== 步骤条（块面柔和式：胶囊节点 + 短连接线 + 序号.名称） ======
+            // 四态：completed=#E6FBF2 底+#36D399 字+✓ / current=#36D399 填充+白字
+            //       future=#F3F4F6 底+#9CA3AF 字 / error=#EF4444 10% 底+#EF4444 字+!
             {
-                // 背景横线（全宽，1px，wechat.dividerPrimary）
-                const float lineH = 2.0f;
-                ui.rect("agent.dialog.task.stepper.line")
-                    .position(x0, kStepperLineY - lineH * 0.5f)
-                    .size(innerW, lineH)
-                    .color(t.colors.borderDefault)
-                    .build();
-
+                constexpr float kPillH = 32.0f;
+                constexpr float kPillRadius = 16.0f;
+                constexpr float kConnW = 16.0f;
+                constexpr float kStepperY = 64.0f;
+                const float pillW = (innerW - kConnW * (kStepCount - 1)) / kStepCount;
                 for (int i = 0; i < kStepCount; ++i) {
-                    const float cx = x0 + kNodeSpacing * static_cast<float>(i);
-                    const float nx = cx - kNodeRadius;
-                    const float ny = kStepperLineY - kNodeRadius;
-
-                    // 已完成段连线变绿（wechat.primary）
-                    if (i > 0 && i <= currentStep_) {
-                        const float segX = x0 + kNodeSpacing * static_cast<float>(i - 1);
-                        const float segW = cx - segX;
-                        ui.rect("agent.dialog.task.stepper.seg." + std::to_string(i - 1))
-                            .position(segX, kStepperLineY - lineH * 0.5f)
-                            .size(segW, lineH)
-                            .color(t.colors.primary)
-                            .build();
-                    }
-
-                    // 节点圆形背景
+                    const float px = x0 + (pillW + kConnW) * static_cast<float>(i);
                     std::string nodeId = "agent.dialog.task.step." + std::to_string(i);
-                    if (i < currentStep_) {
-                        // 已完成：绿色实心 + 白色 ✓
-                        ui.rect(nodeId + ".bg")
-                            .position(nx, ny)
-                            .size(kStepperNodeW, kStepperNodeW)
-                            .radius(kNodeRadius)
-                            .color(t.colors.primary)
-                            .onClick([this, i] { currentStep_ = i; })
-                            .build();
-                        ui.text(nodeId)
-                            .position(nx, ny)
-                            .size(kStepperNodeW, kStepperNodeW)
-                            .text("✓")
-                            .fontSize(14.0f)
-                            .lineHeight(kStepperNodeW)
-                            .horizontalAlign(eui::HorizontalAlign::Center)
-                            .verticalAlign(eui::VerticalAlign::Center)
-                            .color(t.colors.onPrimary)
-                            .onClick([this, i] { currentStep_ = i; })
-                            .build();
-                    } else if (i == currentStep_) {
-                        // 当前：白色底 + 绿色边框 + 绿色数字
-                        ui.rect(nodeId + ".bg")
-                            .position(nx, ny)
-                            .size(kStepperNodeW, kStepperNodeW)
-                            .radius(kNodeRadius)
-                            .color(t.colors.background)
-                            .border(2.0f, t.colors.primary)
-                            .onClick([this, i] { currentStep_ = i; })
-                            .build();
-                        ui.text(nodeId)
-                            .position(nx, ny)
-                            .size(kStepperNodeW, kStepperNodeW)
-                            .text(std::to_string(i + 1))
-                            .fontSize(13.0f)
-                            .fontWeight(700)
-                            .lineHeight(kStepperNodeW)
-                            .horizontalAlign(eui::HorizontalAlign::Center)
-                            .verticalAlign(eui::VerticalAlign::Center)
-                            .color(t.colors.primary)
-                            .onClick([this, i] { currentStep_ = i; })
-                            .build();
-                    } else {
-                        // 未到：白色底 + 灰色边框 + 灰色数字
-                        ui.rect(nodeId + ".bg")
-                            .position(nx, ny)
-                            .size(kStepperNodeW, kStepperNodeW)
-                            .radius(kNodeRadius)
-                            .color(t.colors.background)
-                            .border(1.0f, t.colors.borderDefault)
-                            .onClick([this, i] { currentStep_ = i; })
-                            .build();
-                        ui.text(nodeId)
-                            .position(nx, ny)
-                            .size(kStepperNodeW, kStepperNodeW)
-                            .text(std::to_string(i + 1))
-                            .fontSize(13.0f)
-                            .lineHeight(kStepperNodeW)
-                            .horizontalAlign(eui::HorizontalAlign::Center)
-                            .verticalAlign(eui::VerticalAlign::Center)
-                            .color(t.colors.textTertiary)
-                            .onClick([this, i] { currentStep_ = i; })
+                    // 连接线（i>0）
+                    if (i > 0) {
+                        const float connX = px - kConnW;
+                        const float connY = kStepperY + kPillH * 0.5f - 2.0f;
+                        ui.rect(nodeId + ".conn")
+                            .position(connX, connY)
+                            .size(kConnW, 4.0f)
+                            .radius(2.0f)
+                            .color(i <= currentStep_ ? t.colors.primarySoftBg
+                                                     : t.colors.borderDefault)
                             .build();
                     }
-
-                    // 节点下方标签
-                    ui.text(nodeId + ".label")
-                        .position(cx - 40.0f, kStepperLineY + kNodeRadius + 4.0f)
-                        .size(80.0f, 16.0f)
-                        .text(kStepLabels[i])
-                        .fontSize(12.0f)
-                        .lineHeight(16.0f)
-                        .horizontalAlign(eui::HorizontalAlign::Center)
-                        .color(t.colors.textSecondary)
+                    // 当前步校验失败 → 节点标红（#EF4444 10% 底 + 红字 + !）
+                    const bool stepInvalid = (i == currentStep_) && !stepValidFor(i);
+                    // 胶囊按钮
+                    components::button(ui, nodeId)
+                        .position(px, kStepperY)
+                        .size(pillW, kPillH)
+                        .text([&]() -> std::string {
+                            std::string label = std::to_string(i + 1) + ". " + kStepLabels[i];
+                            if (i < currentStep_) return "✓ " + label;
+                            if (stepInvalid) return "! " + label;
+                            return label;
+                        }())
+                        .fontSize(13.0f)
+                        .colors(
+                            i < currentStep_ ? t.colors.primarySoftBg
+                            : (stepInvalid ? eui::mixColor(t.colors.error, t.colors.background, 0.10f)
+                            : (i == currentStep_ ? t.colors.primary : t.colors.hover)),
+                            t.colors.hover,
+                            t.colors.primarySoftBg)
+                        .textColor(
+                            i < currentStep_ ? t.colors.primary
+                            : (stepInvalid ? t.colors.error
+                            : (i == currentStep_ ? t.colors.onPrimary : t.colors.textDisabled)))
+                        .radius(kPillRadius)
+                        .onClick([this, i] { currentStep_ = i; })
                         .build();
                 }
             }
@@ -2595,26 +2550,24 @@ void AgentModule::composeTaskDialog(
                 // --- Step 2: 指令 ---
                 if (currentStep_ == 2) {
                     const float s2y = kContentTop;
-                    // 指令标签行 + AI 起草 chip
+                    // 指令标签行 + AI 起草 Outline 次按钮（白色底 + 主色边框，W4 C1）
                     fieldCaption(ui, "agent.dialog.task.goal.caption",
                                  "指令（发给 AI 的 prompt）", x0, s2y,
                                  innerW - 116.0f, 24.0f, t.colors.textSecondary);
                     {
-                        const float chipW = 104.0f;
-                        const float chipH = 26.0f;
+                        const float chipW = 96.0f;
+                        const float chipH = 32.0f;
                         components::button(ui, "agent.dialog.task.aichip")
-                            .position(w - ui_kit::kDialogBodyInsetX - chipW, s2y - 1.0f)
+                            .position(w - ui_kit::kDialogBodyInsetX - chipW, s2y - 4.0f)
                             .size(chipW, chipH)
-                            .text("✨ AI 起草")
-                            .fontSize(12.0f)
-                            .colors(eui::mixColor(t.colors.surface,
-                                                  t.colors.primary, 0.12f),
-                                    t.colors.hover,
+                            .text("✎ AI 起草")
+                            .fontSize(13.0f)
+                            .colors(t.colors.background,
+                                    t.colors.primarySoftBg,
                                     t.colors.primarySoftBg)
-                            .textColor(t.colors.primaryText)
-                            .radius(13.0f)
-                            .border(1.0f, eui::mixColor(t.colors.surface,
-                                                       t.colors.primary, 0.24f))
+                            .textColor(t.colors.primary)
+                            .radius(8.0f)
+                            .border(1.0f, t.colors.primary)
                             .onClick([this] { openDraftDialog(); })
                             .build();
                     }
@@ -2640,26 +2593,9 @@ void AgentModule::composeTaskDialog(
                         {.x = x0, .y = goalInY + kStepGoalH + 4.0f, .height = 14.0f,
                          .lineHeight = 14.0f, .skipIfEmpty = true});
 
-                    // 执行记忆
-                    const float noteY = goalInY + kStepGoalH + 24.0f;
-                    fieldCaption(ui, "agent.dialog.task.note.caption", "执行记忆",
-                                 x0, noteY, kDialogLabelW, 16.0f, t.colors.textSecondary);
-                    constexpr float kStepNoteH = 48.0f;
-                    components::input(ui, "agent.dialog.task.note")
-                        .position(x0, noteY + 20.0f)
-                        .size(innerW, kStepNoteH)
-                        .value(editContextNote_)
-                        .placeholder("记录任务执行上下文，运行时注入 system prompt")
-                        .fontSize(t.sizes.fontSizeBody)
-                        .multiline(true)
-                        .scrollbar(true)
-                        .theme(themeTokens)
-                        .onChange([this](const std::string& v) { editContextNote_ = v; })
-                        .onCancel([this] { closeTaskDialog(); })
-                        .build();
-
+                    // 执行记忆已并入系统提示词（W4 C3）：只保留 systemPrompt 单字段
                     // 系统提示词
-                    const float sysY = noteY + 20.0f + kStepNoteH + 12.0f;
+                    const float sysY = goalInY + kStepGoalH + 24.0f;
                     fieldCaption(ui, "agent.dialog.task.sysprompt.caption",
                                  "系统提示词（发给 AI 的环境上下文，可编辑）",
                                  x0, sysY, innerW, 16.0f, t.colors.textSecondary);
@@ -2789,81 +2725,51 @@ void AgentModule::composeTaskDialog(
                                         editDestructive_,
                                         x0 + 200.0f, destructiveY + 4.0f, 44.0f, 24.0f, t,
                                         [this](bool v) { editDestructive_ = v; });
-                        const float autoX = x0 + 200.0f + 44.0f + kDialogGap * 3.0f;
-                        components::toggleSwitch(ui, "agent.dialog.task.autonote")
-                            .position(autoX, destructiveY + 4.0f)
-                            .size(innerW - (autoX - x0), 32.0f)
-                            .text("结束后自动记录回复")
-                            .checked(editAutoNote_)
-                            .fontSize(12.0f)
-                            .theme(themeTokens)
-                            .onChange([this](bool v) { editAutoNote_ = v; })
-                            .build();
+                        // 自动记录开关已移除（W4 C3）：行为固定为开启，字段五处清链
                     }
                 }
             }
 
-            // ====== 校验/错误行（内容区下方） ======
-            ui_kit::drawDialogText(ui, "agent.dialog.task.error", w, editError_,
-                                   t.sizes.fontSizeSmall, t.colors.error,
-                                   {.x = x0, .y = kContentBot + 4.0f, .height = 16.0f,
-                                    .lineHeight = 16.0f, .skipIfEmpty = true});
-
-            // 试运行结果行
+            // ====== 试运行结果行（W4 C1：移除去全局错误行，出错标节点不弹全局错误） ======
             ui_kit::drawDialogText(
                 ui, "agent.dialog.task.test.result", w, testRunResult_,
                 t.sizes.fontSizeSmall, t.colors.success,
-                {.x = x0, .y = kContentBot + 24.0f, .height = 14.0f,
+                {.x = x0, .y = kContentBot + 4.0f, .height = 14.0f,
                  .lineHeight = 14.0f, .skipIfEmpty = true});
 
-            // ====== 底部按钮区（常驻） ======
-            const float btnY = h - 48.0f;
-            // Footer hint
-            const char* kFooterHint = "步骤条：点击节点跳转 / 上一步下一步顺序导航 / 测试键试运行（不保存任务）";
-            ui_kit::drawDialogText(
-                ui, "agent.dialog.task.footer.hint", w, kFooterHint,
-                t.sizes.fontSizeSmall - 2.0f, t.colors.textTertiary,
-                {.x = x0, .y = btnY - 20.0f, .height = 16.0f, .lineHeight = 16.0f});
+            // ====== 底部按钮区（W4 C1 重做：40px 高、8px 间距、居中文字；按钮顺序从右到左：下一步 Filled 最右 → 上一步 Outline → 测试 Outline → 取消 Ghost 最左） ======
+            const float btnY = h - 56.0f;
+            const float btnH = 40.0f;
+            const float bw = 96.0f;
+            const float testW = 112.0f;
+            const float kBtnGap = 8.0f;
+            const float rightEdge = w - ui_kit::kDialogBodyInsetX;
 
-            const float bw = 84.0f;
-            const float bh = 36.0f;
+            // 从右到左逐按钮排位，cursor 追随后退
+            float xCursor = rightEdge;
 
-            // 取消（右 1）
-            components::button(ui, "agent.dialog.task.cancel")
-                .position(w - ui_kit::kDialogBodyInsetX - bw, btnY)
-                .size(bw, bh)
-                .text("取消")
-                .fontSize(t.sizes.fontSizeSmall)
-                .colors(t.colors.background,
-                        t.colors.hover,
-                        t.colors.primarySoftBg)
-                .textColor(t.colors.textPrimary)
-                .radius(8.0f)
-                .border(1.0f, t.colors.borderDefault)
-                .onClick([this] { closeTaskDialog(); })
-                .build();
-
-            // 创建/下一步（右 2）
+            // 下一步/创建/保存（Filled，最右）
             const bool isLastStep = currentStep_ == kStepCount - 1;
-            const bool canSave = !editGoal_.empty();
+            const bool canNext = stepValidFor(currentStep_);
             const char* nextLabel = isLastStep ? (isEdit ? "保存" : "创建") : "下一步";
+            const float saveX = xCursor - bw;
             components::button(ui, "agent.dialog.task.save")
-                .position(w - ui_kit::kDialogBodyInsetX - bw * 2.0f - 8.0f, btnY)
-                .size(bw, bh)
+                .position(saveX, btnY)
+                .size(bw, btnH)
                 .text(nextLabel)
-                .fontSize(t.sizes.fontSizeSmall)
-                .colors(canSave ? t.colors.primary
+                .fontSize(14.0f)
+                .colors(canNext ? t.colors.primary
                                 : t.colors.background,
-                        canSave ? t.colors.primaryHover
+                        canNext ? t.colors.primaryHover
                                 : t.colors.hover,
-                        canSave ? t.colors.primaryPressed
+                        canNext ? t.colors.primaryPressed
                                 : t.colors.primarySoftBg)
-                .textColor(canSave ? t.colors.onPrimary
+                .textColor(canNext ? t.colors.onPrimary
                                    : t.colors.textTertiary)
                 .radius(8.0f)
-                .border(1.0f, canSave ? t.colors.primary
+                .border(1.0f, canNext ? t.colors.primary
                                       : t.colors.borderDefault)
-                .onClick(canSave ? std::function<void()>{[this, isLastStep] {
+                .onClick(canNext ? std::function<void()>{[this, isLastStep] {
                     if (isLastStep) {
                         saveTaskDialog();
                     } else {
@@ -2871,51 +2777,68 @@ void AgentModule::composeTaskDialog(
                     }
                 }} : std::function<void()>{})
                 .build();
+            xCursor -= bw + kBtnGap;
 
-            // 上一步（右 3）
-            const bool canPrev = currentStep_ > 0;
-            components::button(ui, "agent.dialog.task.prev")
-                .position(w - ui_kit::kDialogBodyInsetX - bw * 3.0f - 16.0f, btnY)
-                .size(bw, bh)
-                .text("上一步")
-                .fontSize(t.sizes.fontSizeSmall)
-                .colors(canPrev ? t.colors.background
-                                : t.colors.background,
-                        canPrev ? t.colors.hover
-                                : t.colors.hover,
-                        canPrev ? t.colors.primarySoftBg
-                                : t.colors.primarySoftBg)
-                .textColor(canPrev ? t.colors.textPrimary
-                                   : t.colors.textTertiary)
-                .radius(8.0f)
-                .border(1.0f, canPrev ? t.colors.borderDefault
-                                      : t.colors.borderDefault)
-                .onClick(canPrev ? std::function<void()>{[this] {
-                    currentStep_ = std::max(0, currentStep_ - 1);
-                }} : std::function<void()>{})
-                .build();
+            // 上一步（Outline）—— 非首步才渲染
+            if (currentStep_ > 0) {
+                const float prevX = xCursor - bw;
+                components::button(ui, "agent.dialog.task.prev")
+                    .position(prevX, btnY)
+                    .size(bw, btnH)
+                    .text("上一步")
+                    .fontSize(14.0f)
+                    .colors(t.colors.background,
+                            t.colors.hover,
+                            t.colors.primarySoftBg)
+                    .textColor(t.colors.textPrimary)
+                    .radius(8.0f)
+                    .border(1.0f, t.colors.borderDefault)
+                    .onClick([this] { currentStep_ = std::max(0, currentStep_ - 1); })
+                    .build();
+                xCursor -= bw + kBtnGap;
+            }
 
-            // 测试按钮（左区域）
-            const bool testDisabled = !canSave || dryRun_ != nullptr;
-            const std::string testLabel = dryRun_ ? "测试中…" : "测试试运行";
-            components::button(ui, "agent.dialog.task.test")
-                .position(x0, btnY)
-                .size(bw + 16.0f, bh)
-                .text(testLabel)
-                .fontSize(t.sizes.fontSizeSmall)
-                .colors(testDisabled ? t.colors.background
-                                     : t.colors.background,
-                        testDisabled ? t.colors.hover
-                                     : t.colors.success,
-                        testDisabled ? t.colors.primarySoftBg
-                                     : t.colors.primarySoftBg)
-                .textColor(testDisabled ? t.colors.textTertiary
-                                        : t.colors.success)
+            // 测试（Outline）—— 仅最后一步渲染
+            if (isLastStep) {
+                const bool testDisabled = !canNext || dryRun_ != nullptr;
+                const std::string testLabel = dryRun_ ? "测试中…" : "测试试运行";
+                const float testX = xCursor - testW;
+                components::button(ui, "agent.dialog.task.test")
+                    .position(testX, btnY)
+                    .size(testW, btnH)
+                    .text(testLabel)
+                    .fontSize(14.0f)
+                    .colors(testDisabled ? t.colors.background
+                                         : t.colors.background,
+                            testDisabled ? t.colors.hover
+                                         : t.colors.primary,
+                            testDisabled ? t.colors.primarySoftBg
+                                         : t.colors.primarySoftBg)
+                    .textColor(testDisabled ? t.colors.textTertiary
+                                            : t.colors.primary)
+                    .radius(8.0f)
+                    .border(1.0f, testDisabled ? t.colors.borderDefault
+                                               : t.colors.primary)
+                    .onClick(testDisabled ? std::function<void()>{}
+                                         : std::function<void()>{[this] { testRunDialog(); }})
+                    .build();
+                xCursor -= testW + kBtnGap;
+            }
+
+            // 取消（Ghost，最左）
+            const float cancelX = xCursor - bw;
+            components::button(ui, "agent.dialog.task.cancel")
+                .position(cancelX, btnY)
+                .size(bw, btnH)
+                .text("取消")
+                .fontSize(14.0f)
+                .colors(t.colors.background,
+                        t.colors.primarySoftBg,
+                        t.colors.primarySoftBg)
+                .textColor(t.colors.primary)
                 .radius(8.0f)
-                .border(1.0f, testDisabled ? t.colors.borderDefault
-                                           : t.colors.success)
-                .onClick(testDisabled ? std::function<void()>{}
-                                     : std::function<void()>{[this] { testRunDialog(); }})
+                .border(0.0f, t.colors.borderDefault)
+                .onClick([this] { closeTaskDialog(); })
                 .build();
         })
         .build();
