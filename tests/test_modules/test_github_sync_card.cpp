@@ -141,7 +141,7 @@ REGISTER_TEST(github_sync_card_has_test_button,
         const auto* btn = ui.find(std::string(kCardId) + ".btn.test.bg");
         DOCTEST_REQUIRE(btn != nullptr);
         DOCTEST_CHECK(btn->onClick != nullptr);
-        const auto* label = ui.find(std::string(kCardId) + ".btn.test.text");
+        const auto* label = ui.find(std::string(kCardId) + ".btn.test.text.normal");
         DOCTEST_REQUIRE(label != nullptr);
         DOCTEST_CHECK_EQ(label->text, std::string("测试连接"));
         // 点击只落到注入回调（零真线程/零真网）
@@ -217,8 +217,8 @@ REGISTER_TEST(github_sync_card_buttons_flat_and_same_height,
     DOCTEST_CHECK(std::fabs(push->frame.height - test->frame.height) < 0.01f);
     DOCTEST_CHECK(std::fabs(push->frame.height - pull->frame.height) < 0.01f);
     DOCTEST_CHECK(std::fabs(test->frame.height - pull->frame.height) < 0.01f);
-    const auto* pushText = ui.find(std::string(kCardId) + ".btn.push.text");
-    const auto* pullText = ui.find(std::string(kCardId) + ".btn.pull.text");
+    const auto* pushText = ui.find(std::string(kCardId) + ".btn.push.text.normal");
+    const auto* pullText = ui.find(std::string(kCardId) + ".btn.pull.text.normal");
     DOCTEST_REQUIRE(pushText != nullptr);
     DOCTEST_REQUIRE(pullText != nullptr);
     DOCTEST_CHECK(std::fabs(pushText->fontSize - pullText->fontSize) < 0.01f);
@@ -404,7 +404,7 @@ REGISTER_TEST(github_sync_card_plan_a_geometry,
                   0.5f);
     DOCTEST_CHECK(std::fabs(tk->frame.x - (col2X + ctrlDx)) < 0.5f);
     DOCTEST_CHECK(std::fabs(tk->frame.y - y) < 0.5f);
-    DOCTEST_CHECK(std::fabs(tk->frame.x + tk->frame.width - (kW - padX)) < 0.5f);
+    DOCTEST_CHECK(std::fabs(tk->frame.x + tk->frame.width - (kW - padX - 24.0f)) < 0.5f);
     y += rowH;
     // 第二段分段线 → 操作组：三按钮在左（Primary 最左、同排等高）
     DOCTEST_CHECK(std::fabs(divAct->frame.y - (y + secGap)) < 0.5f);
@@ -460,11 +460,11 @@ REGISTER_TEST(github_sync_card_fill_full_width,
         DOCTEST_CHECK(std::fabs(url->frame.x + url->frame.width -
                                 (kW - 28.0f)) < 0.5f);
         DOCTEST_CHECK(std::fabs(br->frame.width - ctrlW) < 0.5f);
-        DOCTEST_CHECK(std::fabs(tk->frame.width - ctrlW) < 0.5f);
+        DOCTEST_CHECK(std::fabs(tk->frame.width - (ctrlW - 24.0f)) < 0.5f);
         DOCTEST_CHECK(std::fabs(br->frame.x + br->frame.width -
                                 (28.0f + colW)) < 0.5f);
         DOCTEST_CHECK(std::fabs(tk->frame.x + tk->frame.width -
-                                (kW - 28.0f)) < 0.5f);
+                                (kW - 28.0f - 24.0f)) < 0.5f);
         // 开关右缘钉卡右内边距（N 项: 两开关统一 44×24）
         DOCTEST_CHECK(std::fabs(autoSw->frame.x + autoSw->frame.width -
                                 (kW - 28.0f)) < 0.5f);
@@ -964,7 +964,7 @@ REGISTER_TEST(github_error_dialog_conflict_variant,
         const auto* title = ui.find(std::string(kDlgId) + ".title");
         DOCTEST_REQUIRE(title != nullptr);
         DOCTEST_CHECK(title->text.find("409") != std::string::npos);
-        const auto* label = ui.find(std::string(kDlgId) + ".btn.retry.text");
+        const auto* label = ui.find(std::string(kDlgId) + ".btn.retry.text.normal");
         DOCTEST_REQUIRE(label != nullptr);
         DOCTEST_CHECK_EQ(label->text, std::string("拉取远端后再推"));
         // 第一下只武装，不触发动作
@@ -977,7 +977,7 @@ REGISTER_TEST(github_error_dialog_conflict_variant,
     // 第二帧：文案变确认态 + 提示行变成覆盖警告；第二下才真触发
     DOCTEST_CHECK(f.frame([&](eui::Ui& ui) {
         fx.draw(ui, screen);
-        const auto* label = ui.find(std::string(kDlgId) + ".btn.retry.text");
+        const auto* label = ui.find(std::string(kDlgId) + ".btn.retry.text.normal");
         DOCTEST_REQUIRE(label != nullptr);
         DOCTEST_CHECK(label->text.find("确认") != std::string::npos);
         const auto* hint = ui.find(std::string(kDlgId) + ".hint");
@@ -1028,7 +1028,7 @@ REGISTER_TEST(github_error_dialog_auth_variant,
         const auto* title = ui.find(std::string(kDlgId) + ".title");
         DOCTEST_REQUIRE(title != nullptr);
         DOCTEST_CHECK(title->text.find("认证失败") != std::string::npos);
-        const auto* label = ui.find(std::string(kDlgId) + ".btn.retry.text");
+        const auto* label = ui.find(std::string(kDlgId) + ".btn.retry.text.normal");
         DOCTEST_REQUIRE(label != nullptr);
         DOCTEST_CHECK_EQ(label->text, std::string("去更新 Token"));
         ui.find(std::string(kDlgId) + ".btn.retry.bg")->onClick();
@@ -1044,7 +1044,7 @@ REGISTER_TEST(github_error_dialog_auth_variant,
         const auto* title = ui.find(std::string(kDlgId) + ".title");
         DOCTEST_REQUIRE(title != nullptr);
         DOCTEST_CHECK(title->text.find("认证失败") == std::string::npos);
-        const auto* label = ui.find(std::string(kDlgId) + ".btn.retry.text");
+        const auto* label = ui.find(std::string(kDlgId) + ".btn.retry.text.normal");
         DOCTEST_REQUIRE(label != nullptr);
         DOCTEST_CHECK_EQ(label->text, std::string("重试"));
         return true;
