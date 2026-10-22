@@ -316,14 +316,14 @@ REGISTER_TEST(claude_ccswitch_ui_skeleton_contract,
                 "相邻行卡距应为 62，实测 " +
                     std::to_string(nextBg->frame.y - rowBg->frame.y));
         }
-        // 全选钮带与列表间的呼吸位：列表顶 ≥ 钮带底 + 12
+        // 全选钮带与列表间的呼吸位：列表顶 ≥ 钮带底 + 8（kListTopY=140, selectAll底=132）
         const auto* list = ui2.find("claude.dialog.ccswitch.list");
         const auto* selallBg = ui2.find("claude.dialog.ccswitch.selall.bg");
         if (list != nullptr && selallBg != nullptr) {
             DOCTEST_CHECK_MESSAGE(
                 list->frame.y >= selallBg->frame.y + selallBg->frame.height +
-                                    12.0f - 0.5f,
-                "列表顶与全选钮带间应留 ≥12 空白");
+                                    8.0f - 0.5f,
+                "列表顶与全选钮带间应留 ≥8 空白");
         }
     }
 

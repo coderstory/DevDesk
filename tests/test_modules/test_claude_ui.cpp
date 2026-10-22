@@ -5969,22 +5969,22 @@ REGISTER_TEST(claude_calls_rows_by_available_height,
     eui::Ui ui2;
     composeAtSize(mod.get(), ui2, "claude_rows", kW, kH);
 
-    // 预算：内容框底 = bodyH − 85 − 20；行区 = 内容框底 − 表头底(24) −
-    // 「查看全部」带(8+24)。UAT5 布局重算：行预算 14（原 13）
+    // 预算：内容框底 = bodyH − kActReserve − kActTopGap；行区 = 内容框底 − 表头底(24) −
+    // 「查看全部」带(8+24)。H3 pad缩小后布局重算：行预算 17（原 14）
     int drawn = 0;
     while (ui2.find("claude.calls.t." + std::to_string(drawn)) != nullptr) {
         ++drawn;
     }
-    DOCTEST_CHECK_EQ(drawn, 14);
-    DOCTEST_CHECK(ui2.find("claude.calls.t.14") == nullptr);   // 不画越界行
+    DOCTEST_CHECK_EQ(drawn, 17);
+    DOCTEST_CHECK(ui2.find("claude.calls.t.17") == nullptr);   // 不画越界行
 
     // 截断必须有可见表达（与 env 页签同款口径）
     const auto* overflow = ui2.find("claude.calls.overflow");
     DOCTEST_REQUIRE(overflow != nullptr);
-    DOCTEST_CHECK(overflow->text.find("另有 16 条") != std::string::npos);
+    DOCTEST_CHECK(overflow->text.find("另有 13 条") != std::string::npos);
 
     // 行区不越过内容框底：末行底 ≤ 内容框底（真实裁剪下沿）
-    const auto* last = ui2.find("claude.calls.d.13");
+    const auto* last = ui2.find("claude.calls.d.16");
     DOCTEST_REQUIRE(last != nullptr);
     const auto* viewall = ui2.find("claude.calls.viewall.hit");
     DOCTEST_REQUIRE(viewall != nullptr);
@@ -6010,16 +6010,17 @@ REGISTER_TEST(claude_calls_no_rows_when_too_short,
     auto mod = mkmod();
     mod->onStart();
 
-    // S3.4 新几何：padTop=24/padSide=40, tabH=40, kActReserve=89
-    // 引导条显示时：440 高 → contentH=440-24-40=376
-    // bodyH = 376 - 40(headerH) - 16(spacingLarge) - (34+16)(guide) = 270
-    // 内容框底 = 270 - 89(kActReserve) - 20(kActTopGap) = 161
-    // empty 文本底 = (paneY=116) + 24 + 16(kEmptyH) = 156 < 161 ✓
+    // 当前几何（padTop=24/spacingLarge=16/kHeaderH=40/kGuideBarH=18/kActReserve=89）
+    // 引导条显示时：380 高 → contentH=380-24=356
+    // bodyH = 356 - 40(headerH) - 16(spacingLarge) - (18+16)(guide) = 266
+    // contentBottom = bodyH - kActReserve - kActTopGap = 266 - 89 - 20 = 157
+    // cellsY = paneY + 24 = 92 + 24 = 116; rowsAvail = 157 - 116 - 32(kViewallBand) = 9
+    // rowsCap = 9/24 = 0 → 不画行、empty 文本底 = 116 + 16(kEmptyH) = 132 < 157 ✓
     eui::Ui ui;
-    composeAtSize(mod.get(), ui, "claude_short", 1000.0f, 440.0f);
+    composeAtSize(mod.get(), ui, "claude_short", 1000.0f, 380.0f);
     DOCTEST_REQUIRE(clickById(ui, "claude.detail.tab.4.hit"));
     eui::Ui ui2;
-    composeAtSize(mod.get(), ui2, "claude_short", 1000.0f, 440.0f);
+    composeAtSize(mod.get(), ui2, "claude_short", 1000.0f, 380.0f);
 
     DOCTEST_CHECK(ui2.find("claude.calls.t.0") == nullptr);   // 不画越界行
     const auto* empty = ui2.find("claude.calls.empty");
@@ -8252,7 +8253,7 @@ REGISTER_TEST(claude_keychain_backfill_one_shot,
 })
 
 // UAT4 布局自适应（用户真机反馈：布局应随窗宽伸缩）
-// 左栏 leftW = clamp(contentW×0.39, 320, 460)，替代固定 400。防两件事故：
+// 左栏固定 240px（S3.4），替代旧 clamp(0.39,320,460)。防两件事故：
 //   ① 最小窗 1000（contentW=712）下右栏只剩 296，详情面板放不下；
 //   ② 右栏宽不随窗宽变（默认窗起宽窗大量空白）。
 // 0.39 = 400/1024：默认窗 1312 下与旧固定 400 几何等价（零回归锚）。
@@ -8261,7 +8262,7 @@ REGISTER_TEST(claude_module_left_pane_adaptive_width,
               "claude_module: 左栏 clamp(0.39,320,460) 自适应 + 四档右栏 ≥350（headless）", {
     module::claude::ClaudeService::setGlobal(nullptr);
     auto mod = mkmod();
-    // S3.4 左栏固定 240px，右栏 flex 自适应；模块可见屏宽 = 窗宽 − 侧栏 208
+    // 左栏固定 240px（S3.4），右栏 flex 自适应；模块可见屏宽 = 窗宽 − 侧栏 208
     const struct { float winW; float expLeftW; } kCases[] = {
         {1000.0f, 240.0f},
         {1200.0f, 240.0f},
@@ -8285,7 +8286,7 @@ REGISTER_TEST(claude_module_left_pane_adaptive_width,
             "窗 " + std::to_string(c.winW) + " 左栏宽 " +
                 std::to_string(left->frame.width) + " 期望 " +
                 std::to_string(c.expLeftW));
-        const float contentW = screen.width - 80.0f;   // pad 40×2
+        const float contentW = screen.width - 64.0f;   // padSide 32×2
         const float expRightW = contentW - c.expLeftW - 16.0f;   // gap 16
         DOCTEST_CHECK(floatEq(right->frame.width, expRightW));
         DOCTEST_CHECK_MESSAGE(right->frame.width >= 350.0f,

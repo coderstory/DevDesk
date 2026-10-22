@@ -4962,12 +4962,12 @@ REGISTER_TEST(todo_ui_r5_pure_helpers,
     using namespace module::todo;
     const core::theme::Tokens& t = core::theme::current();
 
-    // 板面几何：pad = spacingXXLarge、列间隙 = spacingLarge、
+    // 板面几何：pad = spacingLarge*2（S4.2 弹性内边距 32）、列间隙 = spacingLarge、
     // 顶边 = pad + kHeaderH + spacingLarge，剩余宽度按列数均分
     const ui::BoardGeom g3 = ui::boardGeom(1600.0f, 3, t);
-    DOCTEST_CHECK_EQ(g3.pad, t.sizes.spacingXXLarge);
+    DOCTEST_CHECK_EQ(g3.pad, t.sizes.spacingLarge * 2.0f);
     DOCTEST_CHECK_EQ(g3.colGap, t.sizes.spacingLarge);
-    const float contentW = 1600.0f - t.sizes.spacingXXLarge * 2.0f;
+    const float contentW = 1600.0f - t.sizes.spacingLarge * 4.0f;  // pad=32×2
     DOCTEST_CHECK_EQ(g3.colW, (contentW - t.sizes.spacingLarge * 2.0f) / 3.0f);
     DOCTEST_CHECK_EQ(g3.boardTop, g3.pad + ui_kit::kHeaderH + t.sizes.spacingLarge);
     // 零列不除零（按 1 列算，与 drawBoard 空态分支同款兜底）

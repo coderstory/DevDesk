@@ -36,12 +36,12 @@ auto sameColor = [](const eui::Color& x, const eui::Color& y) {
 } // namespace
 
 // 场景1（防「红橙粗边框 / 对勾选中态」回归，§4.3 / §8 #2 #12 禁止项）：
-// selectionBar bg=primarySoftBg(#E5E5E5) + accent=primary(#07C160)
-// + text=textPrimary(#1A1A1A) + accent width=2px。
+// H5: selectionBar bg=surface 白卡 + border + accent=primary(#36D399) + text=primary(#36D399)
+// + accent width=3px。原 primarySoftBg 与侧栏底同色分不清，改为白卡 + 描边对比。
 // 事故：选中态用红 / 橙粗外边框或小对勾标记（v1.0 §3.4 / §3.1 旧设计）——
-// 本 helper 钉死 2px 绿竖线 + 浅灰底 + 深灰文字，无 border / 无 check。
+// 本 helper 钉死 3px 绿竖线 + 白卡描边 + 绿色文字。
 REGISTER_TEST(ui_kit_selection_bar_colors,
-              "ui_kit selectionBar: bg=primarySoftBg + accent=primary + text=textPrimary", {
+              "ui_kit selectionBar: H5 bg=surface+border + accent=primary + text=primary", {
     const auto& t = core::theme::current();
     eui::Ui ui;
     ui.begin("w02c_sel_colors");
@@ -50,8 +50,8 @@ REGISTER_TEST(ui_kit_selection_bar_colors,
 
     const auto* bg = ui.find("sel.bg");
     DOCTEST_REQUIRE(bg != nullptr);
-    // bg = primarySoftBg #E6FBF2（S2.5 selectionBar 选中底色）
-    DOCTEST_CHECK(sameColor(bg->color, t.colors.primarySoftBg));
+    // H5: bg = surface 白卡 + 1px borderDefault 描边（elevated card 观感）
+    DOCTEST_CHECK(sameColor(bg->color, t.colors.surface));
 
     const auto* accent = ui.find("sel.accent");
     DOCTEST_REQUIRE(accent != nullptr);
