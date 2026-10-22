@@ -394,7 +394,7 @@ void drawClaudeHeader(eui::Ui& ui, float contentW, float headerH,
                         })
                         .build();
 
-                    // §5「启动代理」微信绿主按钮（§4.1 Primary 绿填充+白字；运行态=Secondary 浅灰「停止代理」），无边框
+                    // §5「启动代理」按钮（S3.4：停止态 Outline / 启动态 Filled）
                     const bool stopped = !proxyRunning;
                     components::button(ui, "claude.btn.proxy")
                         .size(110.0f, 40.0f)
@@ -402,16 +402,17 @@ void drawClaudeHeader(eui::Ui& ui, float contentW, float headerH,
                         .icon(proxyRunning ? 0xF04C : 0xF04B)  // fa-pause / fa-play
                         .fontSize(t.sizes.fontSizeSmall)
                         .colors(stopped ? t.colors.primary
-                                        : t.colors.hover,
+                                        : t.colors.surface,
                                 stopped ? t.colors.primaryHover
-                                        : t.colors.hover,
+                                        : t.colors.primarySoftBg,
                                 stopped ? t.colors.primaryPressed
-                                        : t.colors.hover)
+                                        : t.colors.primarySoftBg)
                         .textColor(stopped ? t.colors.onPrimary
-                                           : t.colors.textPrimary)
+                                           : t.colors.primary)
                         .iconColor(stopped ? t.colors.onPrimary
-                                           : t.colors.textPrimary)
-                        .radius(t.sizes.radiusWeChat)
+                                           : t.colors.primary)
+                        .radius(8.0f)
+                        .border(stopped ? 0.0f : 1.0f, t.colors.primary)
                         .onClick([onToggleProxy] { onToggleProxy(); })
                         .build();
                 })
