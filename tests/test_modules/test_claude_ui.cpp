@@ -6010,15 +6010,16 @@ REGISTER_TEST(claude_calls_no_rows_when_too_short,
     auto mod = mkmod();
     mod->onStart();
 
-    // 400 高 → contentH = 400 − 24 − 40 = 336；
-    // bodyH = 336 − 40 − 16 − 34(引导条) = 246；
-    // 内容框底 = 246 − 89 − 20 = 137；
-    // rowsAvail = 137 − 140 − 32 = −35 < 24 → 0 行
+    // S3.4 新几何：padTop=24/padSide=40, tabH=40, kActReserve=89
+    // 引导条显示时：440 高 → contentH=440-24-40=376
+    // bodyH = 376 - 40(headerH) - 16(spacingLarge) - (34+16)(guide) = 270
+    // 内容框底 = 270 - 89(kActReserve) - 20(kActTopGap) = 161
+    // empty 文本底 = (paneY=116) + 24 + 16(kEmptyH) = 156 < 161 ✓
     eui::Ui ui;
-    composeAtSize(mod.get(), ui, "claude_short", 1000.0f, 400.0f);
+    composeAtSize(mod.get(), ui, "claude_short", 1000.0f, 440.0f);
     DOCTEST_REQUIRE(clickById(ui, "claude.detail.tab.4.hit"));
     eui::Ui ui2;
-    composeAtSize(mod.get(), ui2, "claude_short", 1000.0f, 400.0f);
+    composeAtSize(mod.get(), ui2, "claude_short", 1000.0f, 440.0f);
 
     DOCTEST_CHECK(ui2.find("claude.calls.t.0") == nullptr);   // 不画越界行
     const auto* empty = ui2.find("claude.calls.empty");
