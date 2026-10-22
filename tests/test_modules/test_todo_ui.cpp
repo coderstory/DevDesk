@@ -3813,8 +3813,8 @@ REGISTER_TEST(todo_ui_detail_two_column_geometry,
     DOCTEST_REQUIRE(cancelBg != nullptr);
     DOCTEST_CHECK(floatEq(saveBg->frame.y - py, 346.0f));
     DOCTEST_CHECK(floatEq(saveBg->frame.height, 34.0f));
-    DOCTEST_CHECK(floatEq(saveBg->frame.x - px, 800.0f - 56.0f - 96.0f));
-    DOCTEST_CHECK(floatEq(cancelBg->frame.x - px, 800.0f - 56.0f - 96.0f * 2.0f - 8.0f));
+    DOCTEST_CHECK(floatEq(saveBg->frame.x - px, 800.0f - 48.0f - 96.0f));
+    DOCTEST_CHECK(floatEq(cancelBg->frame.x - px, 800.0f - 48.0f - 96.0f * 2.0f - 8.0f));
     DOCTEST_CHECK(saveBg->frame.y + saveBg->frame.height <=
                   panel->frame.y + panel->frame.height - 17.5f);
     // 底部不再有 删除/标记完成（上移到头部）
