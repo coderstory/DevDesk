@@ -176,7 +176,7 @@ void AgentModule::composeTaskDetailDialog(
                 .position(x0, 10.0f)
                 .size(std::max(0.0f, headerRightX - x0), 26.0f)
                 .text(taskRow ? taskRow->name : std::string("任务详情"))
-                .fontSize(t.sizes.fontSizeLarge)
+                .fontSize(20.0f)
                 .lineHeight(26.0f)
                 .fontWeight(700)
                 .wrap(false)
