@@ -248,6 +248,8 @@ public:
         }
         // 进页面 = 外部状态刷新点；变化频率低，不需要每帧重查。
         refreshExternalState();
+        // H1: 进页面不自动弹错误弹窗——错误留在卡片里、用户点「查看详情」才弹
+        githubSyncErrorDialog_.open = false;
     }
 
     // Ctrl+S：端口草稿非空且 ≠ 已应用端口 → applyProxyPort，否则重写配置 + 回显「已保存」。
@@ -740,7 +742,8 @@ public:
                  "（下次启动卡片提示）");
     }
 
-    // 前置校验失败等 UI 线程内的即时错误：进错误行 + 直接开详情弹窗。
+    // 前置校验失败等 UI 线程内的即时错误：进错误行，不自动弹弹窗。
+    // H1: 错误留在卡片内（警告色+图标），用户点「查看详情」才弹。
     void setGithubSyncError(const std::string& msg) {
         githubSyncStatus_ = msg;
         githubSyncStatusError_ = true;
@@ -748,7 +751,6 @@ public:
         githubSyncErrorDialog_.variant = GitErrorDialogVariant::Error;
         githubSyncErrorDialog_.conflictConfirmArmed = false;
         githubSyncErrorDialog_.selectedLogIndex = 0;
-        githubSyncErrorDialog_.open = true;
         LOG_WARN("Settings: GitHub Sync " + msg);
     }
 
@@ -962,14 +964,9 @@ public:
         // 401 走定向引导、其余通用。判据 = 请求日志状态码（SyncRunResult 不带错误码）。
         githubSyncErrorDialog_.variant =
             variantForSyncFailure(githubSyncLogs_, conflict);
-        // 手动操作失败 → 弹窗；自动同步失败只留卡片红字 + 详情入口。
-        // 启用流程的校验失败同自动路径（用户刚拨开关，此刻弹窗等于打断）。
-        const bool silentFailure =
-            githubSyncLastAction_ == SyncAction::ValidateFirstSync;
-        if (githubSyncLastAction_ != SyncAction::None && githubSyncLastManual_ &&
-            !silentFailure) {
-            githubSyncErrorDialog_.open = true;
-        }
+        // H1: 手动失败不再自动弹弹窗——错误留在卡片内，用户点「查看详情」才弹。
+        // 自动同步失败只留卡片红字 + 详情入口（无变更：本来就不弹）。
+        // 启用流程的校验失败同自动路径（无变更：本来就不弹）。
         LOG_ERROR("Settings: GitHub Sync 失败: " + githubSyncResultSummary_);
     }
 
