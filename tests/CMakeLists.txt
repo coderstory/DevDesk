@@ -272,7 +272,8 @@ foreach(_probe_source ${_devdesk_probe_sources})
     # 真 dispatchModuleToggle → 额外编译 app_sidebar.cpp + app_assembly.cpp
     #（其余 probe 维持最小链接面，不拖 app 层）
     if(_probe_name STREQUAL "module_toggle_sidebar_probe" OR
-       _probe_name STREQUAL "h13_fluid_background_probe")
+       _probe_name STREQUAL "h13_fluid_background_probe" OR
+       _probe_name STREQUAL "uat62_page_shots_probe")
         add_executable(${_probe_name} "${_probe_source}"
             "${CMAKE_SOURCE_DIR}/src/module_toggle_bridge.cpp"
             "${CMAKE_SOURCE_DIR}/src/app_sidebar.cpp"
