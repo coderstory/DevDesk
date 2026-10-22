@@ -1402,7 +1402,7 @@ REGISTER_TEST(github_sync_card_h10_contrast_gate,
     DOCTEST_REQUIRE(bg != nullptr);
 
     // 门禁：白卡背景必须有描边（border.width > 0）
-    DOCTEST_CHECK_GT(bg->border.width, 0.005f);
+    DOCTEST_CHECK(bg->border.width > 0.005f);
     DOCTEST_CHECK(colorEq(bg->border.color, core::theme::current().colors.borderDefault));
 
     // 备选通道：无描边时填充色与页面底色 #FAFAF9 亮度差 ≥0.05
