@@ -16,6 +16,7 @@
 #include <core/component_theme.h>
 #include <core/logging.h>
 #include <ui_kit/glass_card.h>
+#include <ui_kit/wtab.h>
 
 #include <algorithm>
 #include <cctype>
@@ -985,34 +986,22 @@ void drawDetailPanel(eui::Ui& ui, float rightW, float bodyH, float xOffset,
                 .color(t.colors.textPrimary)
                 .build();
 
-            // 页签栏用 EUI-NEO tabs（无 .position 故包 stack 对齐内边距）；高级配置 = idx 3
+            // S3.4 块面式 Tab（wtab 替代原下划线式 components::tabs）
             const float tabY = y0 + 40.0f;
-            const float tabH = 36.0f;
-            ui.stack("claude.detail.tabs.wrap")
-                .position(x0, tabY)
-                .size(w0, tabH)
-                .content([&] {
-                    // §4.2 微信式 Tab：深灰激活字 + 2px wechat.primary 下划线。
-                    // 保留 components::tabs（id 体系 hit.N/label.N 不变）以守 27 处
-                    // 索引点击依赖与 label.3/label.4 逐字断言（§5）；仅换 TabsStyle 配色。
-                    components::TabsStyle tabStyle;
-                    tabStyle.text = t.colors.textSecondary;        // #666 未激活
-                    tabStyle.hover = t.colors.hover;    // #EDEDED
-                    tabStyle.selectedText = t.colors.textPrimary;  // #1A1A1A 激活
-                    tabStyle.indicator = t.colors.primary;         // #07C160 绿下划线
-                    tabStyle.border = t.colors.borderDefault;     // #E5E5E5 底线
-                    components::tabs(ui, "claude.detail.tabs")
-                        .size(w0, tabH)
-                        .items(std::vector<std::string>{
-                            "基础信息", "模型映射", "环境变量", "高级配置",
-                            "最近调用"})
-                        .selected(st.detailTab_)
-                        .fontSize(t.sizes.fontSizeSmall)
-                        .theme(themeTokens)   // 设 metrics（spacing/radius）；style 覆盖配色
-                        .style(tabStyle)
-                        .onChange([sp = &st](int idx) { sp->detailTab_ = idx; })
-                        .build();
-                });
+            const float tabH = 40.0f;
+            const char* tabLabels[] = {"基础信息", "模型映射", "环境变量", "高级配置", "最近调用"};
+            float tabX = x0;
+            for (int i = 0; i < 5; ++i) {
+                float tabW = 72.0f;
+                if (i == 2) tabW = 80.0f;
+                else if (i == 3) tabW = 80.0f;
+                else if (i == 4) tabW = 80.0f;
+                ui_kit::wtab(ui, "claude.detail.tab." + std::to_string(i),
+                             tabLabels[i], st.detailTab_ == i,
+                             tabX, tabY, tabW, tabH, t,
+                             [sp = &st, idx = i] { sp->detailTab_ = idx; });
+                tabX += tabW + 4.0f;
+            }
 
             const float paneY = tabY + tabH + 12.0f;
 
