@@ -196,9 +196,9 @@ REGISTER_TEST(theme_light_contrast_wcag, "theme: 浅色辅助灰/主色文字 WC
     DOCTEST_CHECK(wcagContrast(c.textTertiary, c.primarySoftBg) >= 4.0);
     DOCTEST_CHECK(wcagContrast(c.textSecondary, c.background) >= 4.5);
     // 主色作文字的场合（树选中/chip/大纲当前节/列表符号）走 primaryText，不是 primary
-    // S1.2 #5: primaryText = #23B07F（mint 加深档），在浅背景 ~2.6:1，低于 WCAG AA 4.5
-    DOCTEST_CHECK(wcagContrast(c.primaryText, c.background) >= 2.5);
-    DOCTEST_CHECK(wcagContrast(c.primaryText, c.primarySoftBg) >= 2.5);
+    // S1.2 #5: primaryText = #157E4E（浅色档 / ~4.87:1 on #FAFAF9 ≥ WCAG AA 4.5:1）
+    DOCTEST_CHECK(wcagContrast(c.primaryText, c.background) >= 4.5);
+    DOCTEST_CHECK(wcagContrast(c.primaryText, c.primarySoftBg) >= 4.5);
     // 辅助灰三档亮度层级不能坍塌：浅底上文字越深越主要，亮度严格递增
     // textPrimary < textSecondary < textTertiary
     DOCTEST_CHECK(wcagLuminance(c.textPrimary) < wcagLuminance(c.textSecondary));
