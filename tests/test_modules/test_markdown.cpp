@@ -1001,9 +1001,9 @@ REGISTER_TEST(md_tree_panel_collapse,
     DOCTEST_REQUIRE(handleBack->onClick != nullptr);
     const auto* ed = ui.find("md.editor");
     DOCTEST_REQUIRE(ed != nullptr);
-    DOCTEST_CHECK_EQ(ed->frame.x, 40.0f + 16.0f);   // pad + gap（树 0 宽占位仍留一道 gap）
-    DOCTEST_CHECK_EQ(ed->frame.width, (1600.0f - 80.0f) - 16.0f);
-    DOCTEST_CHECK_EQ(ed->frame.x + ed->frame.width, 40.0f + (1600.0f - 80.0f));
+    DOCTEST_CHECK_EQ(ed->frame.x, 32.0f + 16.0f);   // pad + gap（树 0 宽占位仍留一道 gap，S4.2 pad 40→32）
+    DOCTEST_CHECK_EQ(ed->frame.width, (1600.0f - 64.0f) - 16.0f);
+    DOCTEST_CHECK_EQ(ed->frame.x + ed->frame.width, 32.0f + (1600.0f - 64.0f));
 
     mod->onStop();
     return true;
@@ -1063,10 +1063,10 @@ REGISTER_TEST(md_tree_expand_fab_clears_editor,
     DOCTEST_REQUIRE(ed != nullptr);
     DOCTEST_REQUIRE(edBg != nullptr);
     DOCTEST_REQUIRE(input != nullptr);
-    // 前提锚点：收起态编辑列左缘 = pad + gap（40+16=56）。
-    // 把手在编辑列左缘对齐（x=56），24px 宽向右交叠编辑区——门把手式"拉出"视觉引导，
+    // 前提锚点：收起态编辑列左缘 = pad + gap（32+16=48，S4.2 pad 40→32）。
+    // 把手在编辑列左缘对齐（x=48），24px 宽向右交叠编辑区——门把手式"拉出"视觉引导，
     // zIndex=6 叠加于编辑区上文，是方案 A 设计意图而非布局 bug。
-    DOCTEST_CHECK_EQ(ed->frame.x, 40.0f + 16.0f);
+    DOCTEST_CHECK_EQ(ed->frame.x, 32.0f + 16.0f);
     DOCTEST_CHECK(handleCol->frame.x == ed->frame.x);
     // 把手在场且可点（含 bg 子件，两态常驻）
     DOCTEST_CHECK(handleBg != nullptr);
@@ -1162,7 +1162,7 @@ REGISTER_TEST(md_tree_panel_anim_frame_pump,
     DOCTEST_REQUIRE(ed != nullptr);
     const float edX = ed->frame.x;
     const float edW = ed->frame.width;
-    DOCTEST_CHECK_EQ(edX, 40.0f + 240.0f + 16.0f);  // pad + 树宽 + gap（公式锚点）
+    DOCTEST_CHECK_EQ(edX, 32.0f + 240.0f + 16.0f);  // pad + 树宽 + gap（S4.2 pad 40→32）
     const auto* otoggle2 = ui.find("md.outline.toggle.hit");   // 前一帧已重建树，重取
     DOCTEST_REQUIRE(otoggle2 != nullptr);
     DOCTEST_REQUIRE(otoggle2->onClick != nullptr);
@@ -2186,8 +2186,8 @@ REGISTER_TEST(md_module_split_layout, "markdown_module: W9 双栏三列铺满 co
     DOCTEST_REQUIRE(editor != nullptr);
     DOCTEST_REQUIRE(preview != nullptr);
 
-    // 三列 + 2 gap 铺满 contentW（1600 - 80 padding = 1520），无残余死白
-    const float pad = 40.0f;
+    // 三列 + 2 gap 铺满 contentW（1600 - 64 padding = 1536，S4.2 pad 40→32），无残余死白
+    const float pad = 32.0f;
     const float contentW = screen.width - pad * 2.0f;
     const float gap = 16.0f;
     DOCTEST_CHECK_EQ(tree->frame.x, pad);
