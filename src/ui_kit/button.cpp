@@ -77,7 +77,7 @@ void button(eui::Ui& ui, const std::string& id, const std::string& label,
             auto bg = ui.rect(id + ".bg")
                 .size(w, h)
                 .states(bgNormal, bgHover, bgPressed)
-                .radius(t.sizes.radiusWeChat);
+                .radius(t.sizes.radius);
             if (options.onClick) {
                 bg.onClick(options.onClick);
             }

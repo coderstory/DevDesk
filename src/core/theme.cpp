@@ -66,6 +66,7 @@ namespace {
         s.radius = 8.0f;
         s.radiusSmall = 6.0f;
         s.radiusLarge = 12.0f;
+        s.radiusOverlay = 16.0f;
         s.radiusPill = 999.0f;
         s.fontSizeSmall = 12.0f;
         s.fontSizeBody = 14.0f;
@@ -137,6 +138,7 @@ namespace {
         s.radius = 8.0f;
         s.radiusSmall = 6.0f;
         s.radiusLarge = 12.0f;
+        s.radiusOverlay = 16.0f;
         s.radiusPill = 999.0f;
         s.fontSizeSmall = 12.0f;
         s.fontSizeBody = 14.0f;
