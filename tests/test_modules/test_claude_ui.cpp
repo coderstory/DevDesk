@@ -8521,7 +8521,6 @@ REGISTER_TEST(claude_form_wechat_colors,
     };
     const auto& t = core::theme::current();
     const eui::Color warmSurface = t.colors.surfaceElevated;
-    const eui::Color warmPrimary = t.colors.primary;
 
     // 开新建表单 → env 页加一行变量
     {
