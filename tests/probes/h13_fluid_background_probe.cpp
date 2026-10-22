@@ -8,7 +8,7 @@
 //
 // 采样不经过 Runtime 帧循环：相位源是壁钟（fluidPhaseSeconds），halo 帧位在
 // compose 期即由相位派生，Ui 树两次独立构建即可比对——不依赖 onFrame 泵投递，
-// 也不动 app.fluid.anim.driver（g_fluidPhase 死状态已随 W3.5 审计 B 批移除）。
+// 也不动 app.fluid.anim.driver / g_fluidPhase（归并行动画批）。
 #include "probes/probe_harness.h"
 
 #include <eui/dsl_app.h>  // DslAppConfig（app:: 层链接桩，main.cpp 不在 probe 链接面）
