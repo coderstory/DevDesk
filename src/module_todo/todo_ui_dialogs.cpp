@@ -216,7 +216,7 @@ void drawNewTaskDialog(eui::Ui& ui, const eui::Screen& screen,
         .onOpenChange([&d](bool v) { d.popups.setOpen(Popup::NewTask, v); })
         .content([&] {
             ui_kit::drawDialogTitle(ui, "todo.dialog.newtask.title", w, "新建任务",
-                                    t.sizes.fontSizeBody, t.colors.textPrimary,
+                                    t.sizes.fontSizeLarge + 2.0f, t.colors.textPrimary,
                                     {.y = 22.0f, .height = 28.0f, .lineHeight = 28.0f});
 
             std::string colName = "?";
@@ -953,7 +953,7 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
     constexpr float kFooterBtnH = 34.0f;
     constexpr float kFooterBtnW = 96.0f;
     constexpr float kContentGapAboveFooter = 12.0f;   // 内容滚动区底 → 按钮带顶
-    const float contentTop = 76.0f + offY;
+    const float contentTop = 58.0f + offY;
 
     // —— frame 高 = 内容驱动（UAT6 真机反馈「底部空白太多」）——
     // 高 = 头部(contentTop) + 实际内容高 + 按钮带(缝+钮+lift)，上限仍钳
@@ -1024,13 +1024,13 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
         .content([&] {
             ui_kit::drawDialogTitle(ui, "todo.dialog.detail.title", w,
                                     ro ? "任务详情（只读）" : "任务详情",
-                                    t.sizes.fontSizeBody, t.colors.textPrimary,
-                                    {.y = 22.0f, .height = 28.0f, .lineHeight = 28.0f});
+                                    t.sizes.fontSizeLarge + 2.0f, t.colors.textPrimary,
+                                    {.y = 18.0f, .height = 28.0f, .lineHeight = 28.0f});
 
             // 头部右缘动作 chips（demo：🗑 删除 灰 / ✔ 标记完成 绿）——从底部按钮区上移，
             // 危险操作不再与取消/保存挤一行；只读态不渲染
             if (!ro) {
-                const float chipY = 22.0f;
+                const float chipY = 18.0f;
                 const float toggleW = 104.0f;
                 const float deleteW = 76.0f;
                 components::button(ui, "todo.dialog.detail.delete")
