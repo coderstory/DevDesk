@@ -322,7 +322,7 @@ REGISTER_TEST(home_glass_stat_cards,
     ui.end();
 
     const auto& t = core::theme::current();
-    const auto& wc = t.colors.wechat;
+    const auto& wc = t.colors;
 
     // —— ① 五卡染色逐卡断言（绿/蓝/橙/紫/青按统计卡语义顺序）——
     struct ExpTint {
@@ -458,7 +458,7 @@ REGISTER_TEST(home_glass_stat_cards,
 
             const double num = glassContrast(wc.textPrimary, comp);
             const double label = glassContrast(wc.textTertiary, comp);
-            const double red = glassContrast(wc.warningRed, comp);
+            const double red = glassContrast(wc.error, comp);
             minNum = std::min(minNum, num);
             minLabel = std::min(minLabel, label);
             minRed = std::min(minRed, red);
@@ -474,7 +474,7 @@ REGISTER_TEST(home_glass_stat_cards,
                 id + " " + stateNames[stIdx] + ": 标题灰对比度 " +
                     std::to_string(label) + " < " +
                     std::to_string(labelFloor));
-            // 逾期卡 warningRed 数字/副题档（磨砂最暗底随 label 同比例放宽一档）
+            // 逾期卡 error 数字/副题档（磨砂最暗底随 label 同比例放宽一档）
             const double redFloor = (stIdx == 2) ? 2.40 : 2.75;
             DOCTEST_CHECK_MESSAGE(
                 red >= redFloor,

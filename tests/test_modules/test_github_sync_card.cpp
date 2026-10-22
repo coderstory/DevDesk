@@ -595,11 +595,11 @@ REGISTER_TEST(github_sync_card_error_row_and_header_click,
         DOCTEST_REQUIRE(title != nullptr);
         DOCTEST_REQUIRE(title->onClick != nullptr);
         title->onClick();
-        // 错误态：状态点变红（warningRed）
+        // 错误态：状态点变红（error）
         const auto* dot = ui.find(std::string(kCardId) + ".dot");
         DOCTEST_REQUIRE(dot != nullptr);
         DOCTEST_CHECK(colorEq(dot->color,
-                              core::theme::current().colors.warningRed));
+                              core::theme::current().colors.error));
         // 旧「详情」小按钮已废（点击头部/错误行替代）
         DOCTEST_CHECK(ui.find(std::string(kCardId) + ".btn.detail.bg") ==
                       nullptr);
@@ -752,7 +752,7 @@ REGISTER_TEST(github_error_dialog_content,
         }
 
         //（UAT6 去米黄）三钮色锁：主=primary 绿；复制/关闭=微信
-        // Secondary（theme 面=cardBg），反向锁死暖米 surfaceElevated
+        // Secondary（theme 面=surface），反向锁死暖米 surfaceElevated
         const auto& wc = core::theme::current().colors;
         {
             const auto* retryBg = ui.find(std::string(kDlgId) + ".btn.retry.bg");
@@ -760,11 +760,11 @@ REGISTER_TEST(github_error_dialog_content,
             DOCTEST_CHECK(colorEq(retryBg->color, wc.primary));
             const auto* copyBg = ui.find(std::string(kDlgId) + ".btn.copy.bg");
             DOCTEST_REQUIRE(copyBg != nullptr);
-            DOCTEST_CHECK(colorEq(copyBg->color, wc.cardBg));
+            DOCTEST_CHECK(colorEq(copyBg->color, wc.surface));
             DOCTEST_CHECK(!colorEq(copyBg->color, wc.surfaceElevated));
             const auto* closeBg = ui.find(std::string(kDlgId) + ".btn.close.bg");
             DOCTEST_REQUIRE(closeBg != nullptr);
-            DOCTEST_CHECK(colorEq(closeBg->color, wc.cardBg));
+            DOCTEST_CHECK(colorEq(closeBg->color, wc.surface));
             DOCTEST_CHECK(!colorEq(closeBg->color, wc.surfaceElevated));
         }
 

@@ -30,6 +30,11 @@ namespace {
 
 // float [0,1] → 0-255 字节值（hex 精确比对，同 test_theme_accents / test_ui_kit_button 口径）
 int toHexByte(float v) { return static_cast<int>(std::round(v * 255.0f)); }
+// 浮点颜色近似比较（±0.01 容差，深浅模式自适应）
+auto sameColor = [](const eui::Color& x, const eui::Color& y) {
+    return std::fabs(x.r - y.r) < 0.01f && std::fabs(x.g - y.g) < 0.01f &&
+           std::fabs(x.b - y.b) < 0.01f;
+};
 
 } // namespace
 
@@ -154,18 +159,15 @@ REGISTER_TEST(ui_kit_empty_state_minimal_text_with_nearby_action,
     // 文字节点存在 + color=textSecondary #4B5563（S2.8 标题 textSecondary） + fontSize=14
     const auto* msg = ui.find("es.message");
     DOCTEST_REQUIRE(msg != nullptr);
-    DOCTEST_CHECK_EQ(toHexByte(msg->textColor.r), 0x4B);
-    DOCTEST_CHECK_EQ(toHexByte(msg->textColor.g), 0x55);
-    DOCTEST_CHECK_EQ(toHexByte(msg->textColor.b), 0x63);
+    DOCTEST_CHECK(sameColor(msg->textColor, t.colors.textSecondary));
     DOCTEST_CHECK_EQ(msg->fontSize, 14.0f);
     DOCTEST_CHECK_EQ(msg->text, std::string{"暂无任务"});
 
     // 按钮节点存在（W2b button helper Secondary 级，id="es.action"）
     const auto* btnBg = ui.find("es.action.bg");
     DOCTEST_REQUIRE(btnBg != nullptr);
-    // Secondary bg = surfaceHover #F3F4F6（S1.2 #13）
-    DOCTEST_CHECK_EQ(toHexByte(btnBg->color.r), 0xF3);
-    DOCTEST_CHECK_EQ(toHexByte(btnBg->color.g), 0xF4);
+    // Secondary bg = hover #F3F4F6（S1.2 #13）
+    DOCTEST_CHECK(sameColor(btnBg->color, t.colors.hover));
     // 按钮高度 = kButtonHeight（40，S1.2 #35 / S2.1）
     DOCTEST_CHECK_EQ(btnBg->height.value, ui_kit::kButtonHeight);
     DOCTEST_CHECK_EQ(btnBg->height.value, 40.0f);

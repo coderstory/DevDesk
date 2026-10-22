@@ -641,19 +641,19 @@ REGISTER_TEST(sidebar_w3_grouping_and_selectionbar,
     app::compose(ui, screen);
     ui.end();
 
-    // 侧栏底色块存在（§4.8 D-12 E1：sidebarBgTinted 微绿灰）
+    // 侧栏底色块存在（§4.8 D-12 E1：sidebarBg 微绿灰）
     DOCTEST_CHECK(ui.find("app.sidebar.bg") != nullptr);
 
     // UAT2 B 批：底色 tint 的 alpha 随窗口效果档位（core::window_effect_state 单值，
     // 写口 = settings applyWindowVisuals）——off 实色 1.0 / translucent 0.5 /
-    // frosted 0.15 透 backdrop；RGB 恒 sidebarBgTinted。档位本用例内显式设定
+    // frosted 0.15 透 backdrop；RGB 恒 sidebarBg。档位本用例内显式设定
     // （进程级单值，与执行顺序无关），尾档复位 off 不污染后续用例。
     // 不用 lambda 收 color：DOCTEST_* 宏展开含裸 return（进值返回 lambda 编译炸），
     // 且 Element 指针系 Ui 内部树节点、Ui 出作用域即悬垂——三个显式块各自持 Ui。
     {
         const auto& t = ::core::theme::current();
-        const auto& wc = t.colors.wechat;
-        // off 档：实色 1.0，RGB 恒 sidebarBgTinted
+        const auto& wc = t.colors;
+        // off 档：实色 1.0，RGB 恒 sidebarBg
         core::window_effect_state::setCurrent("off");
         {
             eui::Ui fx;
@@ -663,9 +663,9 @@ REGISTER_TEST(sidebar_w3_grouping_and_selectionbar,
             const auto* bg = fx.find("app.sidebar.bg");
             DOCTEST_REQUIRE(bg != nullptr);
             DOCTEST_CHECK(std::abs(bg->color.a - 1.0f) < 1e-3f);
-            DOCTEST_CHECK(std::abs(bg->color.r - wc.sidebarBgTinted.r) < 1e-3f);
-            DOCTEST_CHECK(std::abs(bg->color.g - wc.sidebarBgTinted.g) < 1e-3f);
-            DOCTEST_CHECK(std::abs(bg->color.b - wc.sidebarBgTinted.b) < 1e-3f);
+            DOCTEST_CHECK(std::abs(bg->color.r - wc.sidebarBg.r) < 1e-3f);
+            DOCTEST_CHECK(std::abs(bg->color.g - wc.sidebarBg.g) < 1e-3f);
+            DOCTEST_CHECK(std::abs(bg->color.b - wc.sidebarBg.b) < 1e-3f);
         }
         // frosted 档：0.15 透 DWM backdrop（UAT6 起请求 Mica）
         core::window_effect_state::setCurrent("frosted");

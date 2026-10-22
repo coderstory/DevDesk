@@ -382,13 +382,13 @@ int treeRowIndex(eui::Ui& ui, const std::string& displayName, bool folder) {
     return -1;
 }
 
-// 目录行是否处于选中态（W8：底色 == selectedBg #E5E5E5）
+// 目录行是否处于选中态（W8：底色 == primarySoftBg #E5E5E5）
 bool folderRowSelected(eui::Ui& ui, const std::string& displayName) {
     const int i = treeRowIndex(ui, displayName, /*folder=*/true);
     if (i < 0) return false;
     const auto* row = ui.find("md.tree.node." + std::to_string(i) + ".row");
     return row != nullptr &&
-           colorEq(row->color, core::theme::current().colors.selectedBg);
+           colorEq(row->color, core::theme::current().colors.primarySoftBg);
 }
 
 // W8：标签添加从独立按钮改为输入框内置（回车提交）。
@@ -1203,7 +1203,7 @@ REGISTER_TEST(md_tree_panel_anim_frame_pump,
 
 // 2b2'''''. UAT3 T1（D-R3-1 米黄清除）：md 页主体面 wechat 化回归锁——
 // 树面板/搜索框/编辑输入面/实时输入面/编辑·预览列底/状态栏/大纲浮面板全部
-// 白卡 cardBg + 浅灰 pageBg。反事故：页面变量（compose/drawHeader 的
+// 白卡 surface + 浅灰 background。反事故：页面变量（compose/drawHeader 的
 // componentTheme）曾长期喂暖橙 componentTokens——编辑器输入面、搜索面、滚动
 // 通道与大纲浮面板（surfaceElevated）全米黄；任一处回退暖橙即红。
 REGISTER_TEST(md_module_wechat_surfaces,
@@ -1237,28 +1237,28 @@ REGISTER_TEST(md_module_wechat_surfaces,
     fileRow->onClick();
     frame();
 
-    const auto& wc = core::theme::current().colors.wechat;
-    DOCTEST_CHECK(colorEq(ui.find("md.tree.bg")->color, wc.cardBg));
-    DOCTEST_CHECK(colorEq(ui.find("md.search.hit")->color, wc.cardBg));
-    DOCTEST_CHECK(colorEq(ui.find("md.editor.bg")->color, wc.pageBg));
+    const auto& wc = core::theme::current().colors;
+    DOCTEST_CHECK(colorEq(ui.find("md.tree.bg")->color, wc.surface));
+    DOCTEST_CHECK(colorEq(ui.find("md.search.hit")->color, wc.surface));
+    DOCTEST_CHECK(colorEq(ui.find("md.editor.bg")->color, wc.background));
     const auto* edHit = ui.find("md.editor.input.hit");
     DOCTEST_REQUIRE(edHit != nullptr);
-    DOCTEST_CHECK(colorEq(edHit->color, wc.cardBg));   // 编辑面板底 = 白卡（米黄主诉点）
-    DOCTEST_CHECK(colorEq(ui.find("md.status.bg")->color, wc.cardBg));
+    DOCTEST_CHECK(colorEq(edHit->color, wc.surface));   // 编辑面板底 = 白卡（米黄主诉点）
+    DOCTEST_CHECK(colorEq(ui.find("md.status.bg")->color, wc.surface));
 
     // 实时态：列底浅灰 + 活动输入面白卡
     DOCTEST_REQUIRE(cycle());   // 编辑 → 实时
     frame();
-    DOCTEST_CHECK(colorEq(ui.find("md.live.bg")->color, wc.pageBg));
+    DOCTEST_CHECK(colorEq(ui.find("md.live.bg")->color, wc.background));
     const auto* liveHit = ui.find("md.live.input.hit");
     DOCTEST_REQUIRE(liveHit != nullptr);
-    DOCTEST_CHECK(colorEq(liveHit->color, wc.cardBg));
+    DOCTEST_CHECK(colorEq(liveHit->color, wc.surface));
 
-    // 双栏：编辑列 + 预览列底都为浅灰 pageBg（白卡内容浮于其上）
+    // 双栏：编辑列 + 预览列底都为浅灰 background（白卡内容浮于其上）
     DOCTEST_REQUIRE(cycle());   // 实时 → 双栏
     frame();
-    DOCTEST_CHECK(colorEq(ui.find("md.editor.bg")->color, wc.pageBg));
-    DOCTEST_CHECK(colorEq(ui.find("md.preview.bg")->color, wc.pageBg));
+    DOCTEST_CHECK(colorEq(ui.find("md.editor.bg")->color, wc.background));
+    DOCTEST_CHECK(colorEq(ui.find("md.preview.bg")->color, wc.background));
 
     // 大纲浮面板：底 = 白卡（曾 = surfaceElevated，米黄根源之一）；
     // 行选中浅灰 / 未选白卡。反向锁：不许回退暖橙 surfaceElevated。
@@ -1269,13 +1269,13 @@ REGISTER_TEST(md_module_wechat_surfaces,
     frame();
     const auto* outlineBg = ui.find("md.outline.panel.bg");
     DOCTEST_REQUIRE(outlineBg != nullptr);
-    DOCTEST_CHECK(colorEq(outlineBg->color, wc.cardBg));
+    DOCTEST_CHECK(colorEq(outlineBg->color, wc.surface));
     const auto* outlineRow0 = ui.find("md.outline.item.0.row");
     const auto* outlineRow1 = ui.find("md.outline.item.1.row");
     DOCTEST_REQUIRE(outlineRow0 != nullptr);
     DOCTEST_REQUIRE(outlineRow1 != nullptr);
-    DOCTEST_CHECK(colorEq(outlineRow0->color, wc.selectedBg));  // 光标 0 → A 为当前节
-    DOCTEST_CHECK(colorEq(outlineRow1->color, wc.cardBg));
+    DOCTEST_CHECK(colorEq(outlineRow0->color, wc.primarySoftBg));  // 光标 0 → A 为当前节
+    DOCTEST_CHECK(colorEq(outlineRow1->color, wc.surface));
     const auto& warm = core::theme::current().colors;
     DOCTEST_CHECK(!colorEq(outlineBg->color, warm.surfaceElevated));
     DOCTEST_CHECK(!colorEq(ui.find("md.tree.bg")->color, warm.surfaceElevated));
@@ -1397,16 +1397,16 @@ REGISTER_TEST(md_module_new_folder, "markdown_module: W9 新建文件夹入口�
     const auto* nfHint = ui.find("md.dialog.new.hint");
     DOCTEST_REQUIRE(nfHint != nullptr);
     DOCTEST_CHECK(nfHint->text.find("根目录") != std::string::npos);
-    // 选中态可视：根目录行底色 = selectedBg（W8 选中色 #E5E5E5），刚建好的「工作」行回底色
+    // 选中态可视：根目录行底色 = primarySoftBg（W8 选中色 #E5E5E5），刚建好的「工作」行回底色
     const auto* rootRowNow = ui.find("md.tree.node.0.row");
     const auto* workRowNow = ui.find("md.tree.node.2.row");
     DOCTEST_REQUIRE(rootRowNow != nullptr);
     DOCTEST_REQUIRE(workRowNow != nullptr);
-    // W8：选中态底色改 selectedBg（#E5E5E5）
+    // W8：选中态底色改 primarySoftBg（#E5E5E5）
     const auto& treeColors = core::theme::current().colors;
-    DOCTEST_CHECK(colorEq(rootRowNow->color, treeColors.selectedBg));
-    DOCTEST_CHECK(colorEq(rootRowNow->color, treeColors.selectedBg) &&
-                  !colorEq(workRowNow->color, treeColors.selectedBg));
+    DOCTEST_CHECK(colorEq(rootRowNow->color, treeColors.primarySoftBg));
+    DOCTEST_CHECK(colorEq(rootRowNow->color, treeColors.primarySoftBg) &&
+                  !colorEq(workRowNow->color, treeColors.primarySoftBg));
     const auto* noteBtn = ui.find("md.tree.new.bg");
     DOCTEST_REQUIRE(noteBtn != nullptr);
     noteBtn->onClick();
@@ -1650,7 +1650,7 @@ REGISTER_TEST(md_module_new_folder_parent,
 
 // 2b4b''. 目录树选中态 → 新建笔记落在选中目录
 // 逐档钉死（不只测根——「永远落在根目录」正是报障点）：
-//   ① 初始选中 = 根目录行（默认值），行底色 = selectedBg；
+//   ① 初始选中 = 根目录行（默认值），行底色 = primarySoftBg；
 //   ② 点**二级目录**行 → 选中态 == 工作/周会 → 新建笔记落盘 工作/周会/xxx.md
 //      （不是根、也不是父目录 工作）；
 //   ③ 点**一级目录**行 → 新建笔记落 工作/xxx.md；
@@ -3741,9 +3741,9 @@ REGISTER_TEST(md_module_split_block_click_hover,
                      static_cast<int>(closeByte));
 
     // ③ hover：上游 Heading 块底衬 idle 透明 → enter 后 = 页面主体 wechat 悬停色
-    //（UAT3 T1：块 hover 底衬随 componentTheme 迁 wechat，同 surfaceHover 口径）
+    //（UAT3 T1：块 hover 底衬随 componentTheme 迁 wechat，同 hover 口径）
     const eui::Color hoverTint =
-        core::theme::current().colors.dividerSecondary;
+        core::theme::current().colors.hover;
     const std::string hlHead = "md.preview.blk." + std::to_string(kh) + ".hl";
     frame();
     DOCTEST_CHECK(ui.find(hlHead)->color.a == 0.0f);
@@ -8476,8 +8476,8 @@ REGISTER_TEST(md_module_tree_list_error,
     DOCTEST_CHECK(err->text.find("列表加载失败") != std::string::npos);
     DOCTEST_CHECK(err->text.find("每 5 秒自动重试") != std::string::npos);
     // 文本元素：TextBuilder::color() 落在 textColor（element->color 是底色字段）
-    // W8：错误色改走 wechat 令牌 warningRed（#FA5151），不再用 colors.error
-    DOCTEST_CHECK(colorEq(err->textColor, core::theme::current().colors.warningRed));
+    // W8：错误色改走 wechat 令牌 error（#FA5151），不再用 colors.error
+    DOCTEST_CHECK(colorEq(err->textColor, core::theme::current().colors.error));
     DOCTEST_CHECK(err->frame.width > 0.0f);
     DOCTEST_CHECK(err->frame.height > 0.0f);
     // 失败态顶掉空态与树（分支互斥：不拿旧数据/空态伪装正常）
@@ -8563,10 +8563,10 @@ REGISTER_TEST(md_module_statusbar_save_error,
     DOCTEST_CHECK(save->text.find("未保存") == std::string::npos);
     DOCTEST_CHECK(save->text.find("已保存") == std::string::npos);
     // 文本元素：TextBuilder::color() 落在 textColor（element->color 是底色字段）
-    // UAT3 T1 测试对齐：模块 saveFailed_ 态自 W8 起即用 warningRed
+    // UAT3 T1 测试对齐：模块 saveFailed_ 态自 W8 起即用 error
     //（#FA5151）；本断言此前仍钉旧 colors.error，属 W8 后漂移未同步的存量红。
     DOCTEST_CHECK(colorEq(save->textColor,
-                          core::theme::current().colors.warningRed));
+                          core::theme::current().colors.error));
     DOCTEST_CHECK(save->frame.width > 0.0f);
 
     // 还原目录权限，RAII 夹具才能清理

@@ -39,6 +39,7 @@ struct ColorTokens {
     eui::Color warning;
     eui::Color error;
     eui::Color info;
+    eui::Color sidebarBg;       // #F0FDF7 侧栏淡绿底（S1.2 迁移自 wechat.sidebarBgTinted）
     // 与现有功能色同族的去饱和强调色（区别于 blue 的品牌色档位，浅色档达图形 AA）
     eui::Color purple;
     eui::Color pink;

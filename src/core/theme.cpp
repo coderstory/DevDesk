@@ -34,6 +34,7 @@ namespace {
         c.warning = eui::Color("#FBBF24");
         c.error = eui::Color("#F87171");
         c.info = eui::Color("#60A5FA");
+        c.sidebarBg = eui::Color("#0F1F18");
         c.purple = eui::Color("#A18FC8");
         c.pink = eui::Color("#DE8FB4");
         c.blue = eui::Color("#12B7F5");
@@ -104,6 +105,7 @@ namespace {
         c.warning = eui::Color("#F59E0B");
         c.error = eui::Color("#EF4444");
         c.info = eui::Color("#3B82F6");
+        c.sidebarBg = eui::Color("#F0FDF7");
         c.purple = eui::Color("#71639B");
         c.pink = eui::Color("#C05E86");
         c.blue = eui::Color("#12B7F5");

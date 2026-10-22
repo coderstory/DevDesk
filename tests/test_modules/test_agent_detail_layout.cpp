@@ -166,10 +166,10 @@ REGISTER_TEST(agent_ui_detail_layout_elastic_1600x1000,
           nearPx(navOn->color.b, tok.colors.primary.b)),
         "segment 选中块回潮成 module 暖橙");
     DOCTEST_CHECK_MESSAGE(
-        nearPx(navOff->color.r, tok.colors.pageBg.r) &&
-            nearPx(navOff->color.g, tok.colors.pageBg.g) &&
-            nearPx(navOff->color.b, tok.colors.pageBg.b),
-        "segment 未选中块应为 pageBg 灰底");
+        nearPx(navOff->color.r, tok.colors.background.r) &&
+            nearPx(navOff->color.g, tok.colors.background.g) &&
+            nearPx(navOff->color.b, tok.colors.background.b),
+        "segment 未选中块应为 background 灰底");
     // nav 全宽 = innerW（800-56=744）
     const auto* nav = ui2.find("agent.dialog.detail.nav");
     DOCTEST_REQUIRE(nav != nullptr);

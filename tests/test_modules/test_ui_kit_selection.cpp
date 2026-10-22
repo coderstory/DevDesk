@@ -27,16 +27,21 @@ int toHexByte(float v) { return static_cast<int>(std::round(v * 255.0f)); }
 
 // 浮点近似比较（同 test_app_sidebar.cpp:72 口径，epsilon=0.01）
 bool floatEq(float a, float b) { return std::fabs(a - b) < 0.01f; }
+// 浮点颜色近似比较（±0.01 容差，深浅模式自适应）
+auto sameColor = [](const eui::Color& x, const eui::Color& y) {
+    return std::fabs(x.r - y.r) < 0.01f && std::fabs(x.g - y.g) < 0.01f &&
+           std::fabs(x.b - y.b) < 0.01f;
+};
 
 } // namespace
 
 // 场景1（防「红橙粗边框 / 对勾选中态」回归，§4.3 / §8 #2 #12 禁止项）：
-// selectionBar bg=selectedBg(#E5E5E5) + accent=primary(#07C160)
+// selectionBar bg=primarySoftBg(#E5E5E5) + accent=primary(#07C160)
 // + text=textPrimary(#1A1A1A) + accent width=2px。
 // 事故：选中态用红 / 橙粗外边框或小对勾标记（v1.0 §3.4 / §3.1 旧设计）——
 // 本 helper 钉死 2px 绿竖线 + 浅灰底 + 深灰文字，无 border / 无 check。
 REGISTER_TEST(ui_kit_selection_bar_colors,
-              "ui_kit selectionBar: bg=selectedBg + accent=primary + text=textPrimary", {
+              "ui_kit selectionBar: bg=primarySoftBg + accent=primary + text=textPrimary", {
     const auto& t = core::theme::current();
     eui::Ui ui;
     ui.begin("w02c_sel_colors");
@@ -46,16 +51,12 @@ REGISTER_TEST(ui_kit_selection_bar_colors,
     const auto* bg = ui.find("sel.bg");
     DOCTEST_REQUIRE(bg != nullptr);
     // bg = primarySoftBg #E6FBF2（S2.5 selectionBar 选中底色）
-    DOCTEST_CHECK_EQ(toHexByte(bg->color.r), 0xE6);
-    DOCTEST_CHECK_EQ(toHexByte(bg->color.g), 0xFB);
-    DOCTEST_CHECK_EQ(toHexByte(bg->color.b), 0xF2);
+    DOCTEST_CHECK(sameColor(bg->color, t.colors.primarySoftBg));
 
     const auto* accent = ui.find("sel.accent");
     DOCTEST_REQUIRE(accent != nullptr);
     // accent = primary #36D399（S2.5 selectionBar 左侧竖线 + text）
-    DOCTEST_CHECK_EQ(toHexByte(accent->color.r), 0x36);
-    DOCTEST_CHECK_EQ(toHexByte(accent->color.g), 0xD3);
-    DOCTEST_CHECK_EQ(toHexByte(accent->color.b), 0x99);
+    DOCTEST_CHECK(sameColor(accent->color, t.colors.primary));
     // accent width = 2px（§4.3 钉死）
     DOCTEST_CHECK_EQ(accent->width.value, 3.0f);
     DOCTEST_CHECK_EQ(accent->width.value, ui_kit::kSelectionBarAccentWidth);
@@ -63,9 +64,7 @@ REGISTER_TEST(ui_kit_selection_bar_colors,
     const auto* txt = ui.find("sel.text");
     DOCTEST_REQUIRE(txt != nullptr);
     // text = primary #36D399（S2.5 选中项文字绿色高亮）
-    DOCTEST_CHECK_EQ(toHexByte(txt->textColor.r), 0x36);
-    DOCTEST_CHECK_EQ(toHexByte(txt->textColor.g), 0xD3);
-    DOCTEST_CHECK_EQ(toHexByte(txt->textColor.b), 0x99);
+    DOCTEST_CHECK(sameColor(txt->textColor, t.colors.primary));
     return true;
 })
 
@@ -91,9 +90,7 @@ REGISTER_TEST(ui_kit_wtab_active_colors,
     // S2.2 wtab active bg = primarySoftBg #E6FBF2 + radius 8
     const auto* bg = ui.find("tab.a.bg");
     DOCTEST_REQUIRE(bg != nullptr);
-    DOCTEST_CHECK_EQ(toHexByte(bg->color.r), 0xE6);
-    DOCTEST_CHECK_EQ(toHexByte(bg->color.g), 0xFB);
-    DOCTEST_CHECK_EQ(toHexByte(bg->color.b), 0xF2);
+    DOCTEST_CHECK(sameColor(bg->color, t.colors.primarySoftBg));
     DOCTEST_CHECK_EQ(bg->radius, 8.0f);
     // underline rect removed (S6.2 wtab block-style)（§4.2 钉死"底部 2px"）
     const auto* underline_legacy = ui.find("tab.a.underline");
@@ -122,11 +119,9 @@ REGISTER_TEST(ui_kit_wtab_inactive_no_underline,
 
     const auto* txt = ui.find("tab.i.text");
     DOCTEST_REQUIRE(txt != nullptr);
-    // inactive bg 不创建（透明底） text = textSecondary #666666（灰字，非 textPrimary 深灰）
-    DOCTEST_CHECK_EQ(toHexByte(txt->textColor.r), 0x4B);
-    DOCTEST_CHECK_EQ(toHexByte(txt->textColor.g), 0x55);
-    DOCTEST_CHECK_EQ(toHexByte(txt->textColor.b), 0x63);
-    DOCTEST_CHECK(toHexByte(txt->textColor.r) != 0x36);  // 不等于 textPrimary
+    // inactive bg 不创建（透明底） text = textSecondary #4B5563（灰字，非 textPrimary 深灰）
+    DOCTEST_CHECK(sameColor(txt->textColor, t.colors.textSecondary));
+    DOCTEST_CHECK(!sameColor(txt->textColor, t.colors.primary));  // 不等于 primary 绿字
 
     // inactive 不创建 underline 节点（避免与 active 视觉冲突）
     const auto* bg = ui.find("tab.i.bg");
@@ -140,10 +135,10 @@ REGISTER_TEST(ui_kit_wtab_inactive_no_underline,
 })
 
 // 场景4（防「开关开启非绿」，§4.4）：
-// wswitch on：track=primary(#07C160) + thumb=cardBg(#FFFFFF) +
+// wswitch on：track=primary(#07C160) + thumb=surface(#FFFFFF) +
 // 滑块贴右。事故：开关开启态轨道非绿（用蓝 / 橙）——v1.0 §2.2.4 钉死绿轨道。
 REGISTER_TEST(ui_kit_wswitch_on_track_green,
-              "ui_kit wswitch on: track=primary + thumb=cardBg + thumb right", {
+              "ui_kit wswitch on: track=primary + thumb=surface + thumb right", {
     const auto& t = core::theme::current();
     constexpr float kSw = 44.0f;
     constexpr float kSh = 24.0f;
@@ -161,20 +156,18 @@ REGISTER_TEST(ui_kit_wswitch_on_track_green,
 
     const auto* thumb = ui.find("sw.on.thumb");
     DOCTEST_REQUIRE(thumb != nullptr);
-    // thumb = cardBg #FFFFFF
-    DOCTEST_CHECK_EQ(toHexByte(thumb->color.r), 0xFF);
-    DOCTEST_CHECK_EQ(toHexByte(thumb->color.g), 0xFF);
-    DOCTEST_CHECK_EQ(toHexByte(thumb->color.b), 0xFF);
+    // thumb = surface（浅 #FFFFFF / 暗 #232120）
+    DOCTEST_CHECK(sameColor(thumb->color, t.colors.surface));
     // 滑块贴右：x = w - thumbD - padding = 44 - 20 - 2 = 22
     DOCTEST_CHECK(floatEq(thumb->x, 22.0f));
     return true;
 })
 
 // 场景5（防「开关闭合非灰」，§4.4）：
-// wswitch off：track=dividerSecondary(#EDEDED) 灰，非 primary 绿。
+// wswitch off：track=hover(#EDEDED) 灰，非 primary 绿。
 // 事故：开关闭合态轨道仍用绿 / 其他色——与开启态不分。
 REGISTER_TEST(ui_kit_wswitch_off_track_gray_not_green,
-              "ui_kit wswitch off: track=dividerSecondary (gray, not primary)", {
+              "ui_kit wswitch off: track=hover (gray, not primary)", {
     const auto& t = core::theme::current();
     constexpr float kSw = 44.0f;
     constexpr float kSh = 24.0f;
@@ -185,18 +178,14 @@ REGISTER_TEST(ui_kit_wswitch_off_track_gray_not_green,
 
     const auto* track = ui.find("sw.off.track");
     DOCTEST_REQUIRE(track != nullptr);
-    // track = t.colors.hover #F3F4F6（wswitch.cpp:17；S2.6 指定 #D1D5DB，当前代码未对齐——测试锚代码现状）
-    DOCTEST_CHECK_EQ(toHexByte(track->color.r), 0xF3);
-    DOCTEST_CHECK_EQ(toHexByte(track->color.g), 0xF4);
-    DOCTEST_CHECK_EQ(toHexByte(track->color.b), 0xF6);
-    // 不等于 primary 绿（G 通道差异最大：0xF4 vs 0xD3）
-    DOCTEST_CHECK(toHexByte(track->color.g) != 0xD3);
-    DOCTEST_CHECK(toHexByte(track->color.r) != 0x36);
+    // track = t.colors.hover（wswitch.cpp:17；S2.6 指定 #D1D5DB，当前代码未对齐——测试锚代码现状）
+    DOCTEST_CHECK(sameColor(track->color, t.colors.hover));
+    DOCTEST_CHECK(!sameColor(track->color, t.colors.primary));  // 不等于 primary 绿
 
     const auto* thumb = ui.find("sw.off.thumb");
     DOCTEST_REQUIRE(thumb != nullptr);
-    // 滑块仍白色（§4.4 "白色滑块"两态共用）
-    DOCTEST_CHECK_EQ(toHexByte(thumb->color.r), 0xFF);
+    // 滑块 surface（两态共用，§4.4）
+    DOCTEST_CHECK(sameColor(thumb->color, t.colors.surface));
     // 滑块贴左：x = padding = 2
     DOCTEST_CHECK(floatEq(thumb->x, 2.0f));
     return true;
