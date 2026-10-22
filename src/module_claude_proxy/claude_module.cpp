@@ -59,7 +59,7 @@ public:
         const auto& t = core::theme::current();
         const auto themeTokens = core::theme::componentTokensWeChat(t);
         // S3.4 顶部收紧为 24，左右下保持 40
-        const float padTop = t.sizes.spacingPanel;       // 24
+        const float padTop = t.sizes.spacingXLarge;       // 24
         const float padSide = t.sizes.spacingXXLarge;    // 40
         const float contentW = screen.width - padSide * 2.0f;
         const float contentH = screen.height - padTop - padSide;

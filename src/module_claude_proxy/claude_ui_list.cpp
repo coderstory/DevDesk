@@ -154,7 +154,7 @@ void drawProfileCard(eui::Ui& ui,
     ui.rect(id + ".bg")
         .position(0.0f, y)
         .size(width, h)
-        .states(bgNormal, t.colors.surfaceHover,
+        .states(bgNormal, t.colors.hover,
                 t.colors.primarySoftBg)
         // 行 hover/选中颜色过渡
         .transition(core::Transition::make(0.1f, core::Ease::OutQuad))
