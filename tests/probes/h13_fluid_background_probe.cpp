@@ -11,7 +11,7 @@
 // 也不动 app.fluid.anim.driver / g_fluidPhase（归并行动画批）。
 #include "probes/probe_harness.h"
 
-#include <eui/dsl_app.h>  // DslAppConfig（app:: 层链接桩，main.cpp 不在 probe 链接面）
+#include <eui/detail/dsl_app_impl.h>  // app:: 层内联实现（requestUpdate/closeMainWindow 等，main.cpp 不在 probe 链接面）
 
 #include "app_sidebar.h"  // fluidPhaseSeconds / resetFluidBackgroundForTests /
                           // setFluidBackgroundEnabled / drawFluidBackground
