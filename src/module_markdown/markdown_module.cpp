@@ -148,17 +148,17 @@ void drawFileTreeItem(eui::Ui& ui,
                 .onClick(std::move(onClick))
                 .onContextMenu(std::move(onContextMenu))
                 .build();
-            // 选中态左 2px 绿竖线（§4.3）
+            // 选中态左 3px 绿竖线（S2.5 selectionBar）
             if (active) {
                 ui.rect(id + ".accent")
                     .position(indent, 0.0f)
-                    .size(2.0f, kTreeRowHeight)
+                    .size(3.0f, kTreeRowHeight)
                     .color(t.colors.primary)
                     .build();
             }
             ui.text(id + ".icon")
-                .position(12.0f + indent, 0.0f)
-                .size(22.0f, kTreeRowHeight)
+                .position(0.0f + indent, 0.0f)
+                .size(16.0f, kTreeRowHeight)
                 .icon(icon)
                 .fontSize(kTreeFontSize)
                 .lineHeight(kTreeRowHeight)
@@ -167,8 +167,8 @@ void drawFileTreeItem(eui::Ui& ui,
                 .build();
             // 文件名：搜索命中时高亮关键词段（wechat.primary 着色）
             auto nameBuilder = ui.text(id + ".name")
-                .position(36.0f + indent, 0.0f)
-                .size(std::max(0.0f, width - 48.0f - indent), kTreeRowHeight)
+                .position(24.0f + indent, 0.0f)
+                .size(std::max(0.0f, width - 32.0f - indent), kTreeRowHeight)
                 .text(name)
                 .fontSize(kTreeFontSize)
                 .lineHeight(kTreeRowHeight)
@@ -594,12 +594,12 @@ private:
                         // 用 componentTokensWeChat 给 button 组件绿底；row 布局定位不受 ui_kit::button position 干扰。
                         const auto wechatTheme = core::theme::componentTokensWeChat(t);
                         components::button(ui, "md.btn.new")
-                            .size(124.0f, 36.0f)
-                            .text("+ 新建笔记")
+                            .size(136.0f, 40.0f)
+                            .text("新建笔记")
                             .fontSize(t.sizes.fontSizeBody)
                             .theme(wechatTheme, true)
                             .textColor(t.colors.onPrimary)
-                            .radius(t.sizes.radiusWeChat)
+                            .radius(t.sizes.radius)
                             .onClick([this] { openNewNoteDialog(); })
                             .build();
                     })
@@ -763,7 +763,7 @@ private:
                             // tab 名称
                             ui.text("md.note.tab." + std::to_string(i) + ".name")
                                 .position(8.0f, 0.0f)
-                                .size(tabW - 28.0f, kTabBarH)
+                                .size(tabW - 32.0f, kTabBarH)
                                 .text(name)
                                 .fontSize(12.0f)
                                 .lineHeight(kTabBarH)
@@ -774,21 +774,21 @@ private:
                                 .build();
                             // 关闭钮（×），hover 浅灰底
                             ui.stack("md.note.tab." + std::to_string(i) + ".close")
-                                .position(tabW - 24.0f, (kTabBarH - 18.0f) * 0.5f)
-                                .size(18.0f, 18.0f)
+                                .position(tabW - 28.0f, (kTabBarH - 24.0f) * 0.5f)
+                                .size(24.0f, 24.0f)
                                 .content([&] {
                                     ui.rect("md.note.tab." + std::to_string(i) + ".close.bg")
-                                        .size(18.0f, 18.0f)
+                                        .size(24.0f, 24.0f)
                                         .color(eui::Color{0.0f, 0.0f, 0.0f, 0.0f})
                                         .hoverColor(t.colors.hover)
-                                        .radius(9.0f)
+                                        .radius(12.0f)
                                         .onClick([this, path] { closeTab(path); })
                                         .build();
                                     ui.text("md.note.tab." + std::to_string(i) + ".close.icon")
-                                        .size(18.0f, 18.0f)
+                                        .size(24.0f, 24.0f)
                                         .text("\xC3\x97")  // ×
-                                        .fontSize(12.0f)
-                                        .lineHeight(18.0f)
+                                        .fontSize(14.0f)
+                                        .lineHeight(24.0f)
                                         .horizontalAlign(eui::HorizontalAlign::Center)
                                         .verticalAlign(eui::VerticalAlign::Center)
                                         .color(t.colors.textTertiary)
@@ -1137,11 +1137,11 @@ private:
                                     .radius(t.sizes.radiusWeChat)
                                     .onClick([this, dir = r.relPath] { selectDir(dir); })
                                     .build();
-                                // 选中态左 2px 绿竖线（§4.3）
+                                // 选中态左 3px 绿竖线（S2.5 selectionBar）
                                 if (selected) {
                                     inner.rect(id + ".accent")
                                         .position(indent, 0.0f)
-                                        .size(2.0f, kTreeRowHeight)
+                                        .size(3.0f, kTreeRowHeight)
                                         .color(t.colors.primary)
                                         .build();
                                 }
@@ -1152,7 +1152,7 @@ private:
                                 // 再宽会把行体的 selectDir（点名称选中目录）整个吞掉。
                                 inner.rect(id + ".toggle")
                                     .position(indent, 0.0f)
-                                    .size(46.0f, kTreeRowHeight)
+                                    .size(44.0f, kTreeRowHeight)
                                     .states(eui::Color{0.0f, 0.0f, 0.0f, 0.0f},
                                             t.colors.hover,
                                             t.colors.primarySoftBg)
@@ -1167,7 +1167,7 @@ private:
                                     })
                                     .build();
                                 inner.text(id + ".arrow")
-                                    .position(6.0f + indent, 0.0f)
+                                    .position(0.0f + indent, 0.0f)
                                     .size(16.0f, kTreeRowHeight)
                                     .text(expanded ? "▾" : "▸")
                                     .fontSize(kTreeArrowFontSize)
@@ -1176,8 +1176,8 @@ private:
                                     .color(t.colors.textTertiary)
                                     .build();
                                 inner.text(id + ".ficon")
-                                    .position(26.0f + indent, 0.0f)
-                                    .size(18.0f, kTreeRowHeight)
+                                    .position(20.0f + indent, 0.0f)
+                                    .size(16.0f, kTreeRowHeight)
                                     .icon(0xF07B)  // fa-folder
                                     .fontSize(kTreeFontSize)
                                     .lineHeight(kTreeRowHeight)
@@ -1186,8 +1186,8 @@ private:
                                                     : t.colors.textTertiary)
                                     .build();
                                 inner.text(id + ".name")
-                                    .position(46.0f + indent, 0.0f)
-                                    .size(std::max(0.0f, w - 58.0f - indent),
+                                    .position(44.0f + indent, 0.0f)
+                                    .size(std::max(0.0f, w - 52.0f - indent),
                                           kTreeRowHeight)
                                     .text(r.name)
                                     .fontSize(kTreeFontSize)
@@ -2735,7 +2735,7 @@ private:
 
         ui_kit::drawDialogFrame(ui, screen, frame, core::theme::componentTokensWeChat(t), [&] {
                 ui_kit::drawDialogTitle(ui, "md.dialog.new.title", w, "新建笔记",
-                                        t.sizes.fontSizeLarge, t.colors.textPrimary);
+                                        20.0f, t.colors.textPrimary);
 
                 // 提示行用就地判据而非 newItemParentDir()（后者每帧 WARN 刷屏）
                 const std::string newNoteParent =
@@ -2816,7 +2816,7 @@ private:
 
         ui_kit::drawDialogFrame(ui, screen, frame, core::theme::componentTokensWeChat(t), [&] {
                 ui_kit::drawDialogTitle(ui, "md.dialog.newfolder.title", w, "新建文件夹",
-                                        t.sizes.fontSizeLarge, t.colors.textPrimary);
+                                        20.0f, t.colors.textPrimary);
 
                 // 提示行带上实际落点（= 当前上级目录），避免「显示 A 建到 B」。
                 ui_kit::drawDialogText(ui, "md.dialog.newfolder.hint", w,
@@ -3869,7 +3869,7 @@ private:
 
         ui_kit::drawDialogFrame(ui, screen, frame, core::theme::componentTokensWeChat(t), [&] {
                 ui_kit::drawDialogTitle(ui, "md.dialog.del.title", w, "删除笔记",
-                                        t.sizes.fontSizeLarge + 2.0f, t.colors.textPrimary);
+                                        20.0f, t.colors.textPrimary);
                 ui_kit::drawDialogText(
                     ui, "md.dialog.del.body", w,
                     "将删除笔记「" + deleteTargetPath_ + "」及其磁盘文件，不可恢复。",
@@ -3911,7 +3911,7 @@ private:
 
         ui_kit::drawDialogFrame(ui, screen, frame, core::theme::componentTokensWeChat(t), [&] {
                 ui_kit::drawDialogTitle(ui, "md.dialog.rename.title", w, "重命名笔记",
-                                        t.sizes.fontSizeLarge, t.colors.textPrimary);
+                                        20.0f, t.colors.textPrimary);
                 ui_kit::drawDialogText(ui, "md.dialog.rename.hint", w,
                                        "相对笔记目录；填「工作/新名」可同时移动。"
                                        "笔记一律以 .md 结尾：不写会自动补上",
