@@ -21,9 +21,12 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <cmath>
 #include <functional>
 #include <map>
+
+#include <ui_kit/light_toast.h>
 
 namespace module::claude {
 
@@ -35,6 +38,10 @@ constexpr float kActionBlockH = 65.0f;
 constexpr float kActTopGap = 20.0f;     // 内容框底 → actY
 constexpr float kActBottomPad = 24.0f;  // actY+65 → 面板底
 constexpr float kActReserve = kActionBlockH + kActBottomPad;  // 89
+
+// 复制按钮 toast 单实例状态（onClick 设，drawDetailBasic 每帧查并渲染）
+std::string g_copyToastMsg;
+std::chrono::steady_clock::time_point g_copyToastTime{};
 
 // 模型映射域的 env 键：键集从槽位表派生（与写入点同源），此处仅语义别名。
 bool isModelMappingEnvKey(const std::string& key) {
@@ -77,18 +84,23 @@ float drawDetailBasic(eui::Ui& ui, float x0, float y0, float w,
         .verticalAlign(eui::VerticalAlign::Center)
         .color(t.colors.textPrimary).build();
     {
-        const float copyX = x0 + w * 0.5f - 28.0f;
+        const float copyX = x0 + w - 28.0f;
         const std::string copyVal = v.nameValue;
         ui.stack("claude.field.name.copy")
             .position(copyX, y0 + 18.0f)
             .size(24.0f, 24.0f)
-            .visualStateFrom("claude.field.name.copy.bg", 0.965f)
             .content([&] {
                 ui.rect("claude.field.name.copy.bg")
                     .size(24.0f, 24.0f)
-                    .color(eui::Color{0.0f, 0.0f, 0.0f, 0.0f})
+                    .states(eui::Color{0.0f, 0.0f, 0.0f, 0.0f},
+                            t.colors.primarySoftBg,
+                            t.colors.hover)
                     .radius(4.0f)
-                    .onClick([cv = copyVal] { core::window::setClipboardText(cv); })
+                    .onClick([cv = copyVal] {
+                        core::window::setClipboardText(cv);
+                        g_copyToastMsg = "已复制";
+                        g_copyToastTime = std::chrono::steady_clock::now();
+                    })
                     .build();
                 ui.text("claude.field.name.copy.icon")
                     .size(24.0f, 24.0f)
@@ -123,13 +135,18 @@ float drawDetailBasic(eui::Ui& ui, float x0, float y0, float w,
         ui.stack("claude.field.url.copy")
             .position(copyX, urlY + 20.0f)
             .size(24.0f, 24.0f)
-            .visualStateFrom("claude.field.url.copy.bg", 0.965f)
             .content([&] {
                 ui.rect("claude.field.url.copy.bg")
                     .size(24.0f, 24.0f)
-                    .color(eui::Color{0.0f, 0.0f, 0.0f, 0.0f})
+                    .states(eui::Color{0.0f, 0.0f, 0.0f, 0.0f},
+                            t.colors.primarySoftBg,
+                            t.colors.hover)
                     .radius(4.0f)
-                    .onClick([cv = copyVal] { core::window::setClipboardText(cv); })
+                    .onClick([cv = copyVal] {
+                        core::window::setClipboardText(cv);
+                        g_copyToastMsg = "已复制";
+                        g_copyToastTime = std::chrono::steady_clock::now();
+                    })
                     .build();
                 ui.text("claude.field.url.copy.icon")
                     .size(24.0f, 24.0f)
@@ -167,13 +184,18 @@ float drawDetailBasic(eui::Ui& ui, float x0, float y0, float w,
         ui.stack("claude.field.token.copy")
             .position(copyX, keyY + 22.0f)
             .size(24.0f, 24.0f)
-            .visualStateFrom("claude.field.token.copy.bg", 0.965f)
             .content([&] {
                 ui.rect("claude.field.token.copy.bg")
                     .size(24.0f, 24.0f)
-                    .color(eui::Color{0.0f, 0.0f, 0.0f, 0.0f})
+                    .states(eui::Color{0.0f, 0.0f, 0.0f, 0.0f},
+                            t.colors.primarySoftBg,
+                            t.colors.hover)
                     .radius(4.0f)
-                    .onClick([cv = copyVal] { core::window::setClipboardText(cv); })
+                    .onClick([cv = copyVal] {
+                        core::window::setClipboardText(cv);
+                        g_copyToastMsg = "已复制";
+                        g_copyToastTime = std::chrono::steady_clock::now();
+                    })
                     .build();
                 ui.text("claude.field.token.copy.icon")
                     .size(24.0f, 24.0f)
@@ -242,6 +264,21 @@ float drawDetailBasic(eui::Ui& ui, float x0, float y0, float w,
             .fontSize(11.0f).lineHeight(16.0f)
             .verticalAlign(eui::VerticalAlign::Center)
             .color(t.colors.warning).build();
+    }
+    // 复制按钮轻量 toast：每帧渲染，timer 1.5s 自动消失
+    {
+        std::string toastMsg;
+        if (!g_copyToastMsg.empty()) {
+            auto now = std::chrono::steady_clock::now();
+            auto elapsed = std::chrono::duration<float>(now - g_copyToastTime).count();
+            if (elapsed < ui_kit::kLightToastDurationSec) {
+                toastMsg = g_copyToastMsg;
+            } else {
+                g_copyToastMsg.clear();
+            }
+        }
+        ui_kit::showLightToast(ui, "claude.detail.copy.toast", toastMsg,
+                               x0 + w * 0.5f, y0 + 120.0f, t);
     }
     return shY + (!ccWarnings.empty() ? 32.0f : 16.0f);
 }
