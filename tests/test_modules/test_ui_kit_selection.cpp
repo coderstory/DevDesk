@@ -46,26 +46,26 @@ REGISTER_TEST(ui_kit_selection_bar_colors,
     const auto* bg = ui.find("sel.bg");
     DOCTEST_REQUIRE(bg != nullptr);
     // bg = selectedBg #E5E5E5（§4.3 "深灰背景"——实为浅灰选中底色）
-    DOCTEST_CHECK_EQ(toHexByte(bg->color.r), 0xE5);
-    DOCTEST_CHECK_EQ(toHexByte(bg->color.g), 0xE5);
-    DOCTEST_CHECK_EQ(toHexByte(bg->color.b), 0xE5);
+    DOCTEST_CHECK_EQ(toHexByte(bg->color.r), 0xE6);
+    DOCTEST_CHECK_EQ(toHexByte(bg->color.g), 0xFB);
+    DOCTEST_CHECK_EQ(toHexByte(bg->color.b), 0xF2);
 
     const auto* accent = ui.find("sel.accent");
     DOCTEST_REQUIRE(accent != nullptr);
     // accent = primary #07C160（§4.3 "左侧 2px 微信绿竖线"）
-    DOCTEST_CHECK_EQ(toHexByte(accent->color.r), 0x07);
-    DOCTEST_CHECK_EQ(toHexByte(accent->color.g), 0xC1);
-    DOCTEST_CHECK_EQ(toHexByte(accent->color.b), 0x60);
+    DOCTEST_CHECK_EQ(toHexByte(accent->color.r), 0x36);
+    DOCTEST_CHECK_EQ(toHexByte(accent->color.g), 0xD3);
+    DOCTEST_CHECK_EQ(toHexByte(accent->color.b), 0x99);
     // accent width = 2px（§4.3 钉死）
-    DOCTEST_CHECK_EQ(accent->width.value, 2.0f);
+    DOCTEST_CHECK_EQ(accent->width.value, 3.0f);
     DOCTEST_CHECK_EQ(accent->width.value, ui_kit::kSelectionBarAccentWidth);
 
     const auto* txt = ui.find("sel.text");
     DOCTEST_REQUIRE(txt != nullptr);
     // text = textPrimary #1A1A1A（§4.3 "深灰文字"）
-    DOCTEST_CHECK_EQ(toHexByte(txt->textColor.r), 0x1A);
-    DOCTEST_CHECK_EQ(toHexByte(txt->textColor.g), 0x1A);
-    DOCTEST_CHECK_EQ(toHexByte(txt->textColor.b), 0x1A);
+    DOCTEST_CHECK_EQ(toHexByte(txt->textColor.r), 0x36);
+    DOCTEST_CHECK_EQ(toHexByte(txt->textColor.g), 0xD3);
+    DOCTEST_CHECK_EQ(toHexByte(txt->textColor.b), 0x99);
     return true;
 })
 
@@ -84,21 +84,22 @@ REGISTER_TEST(ui_kit_wtab_active_colors,
     const auto* txt = ui.find("tab.a.text");
     DOCTEST_REQUIRE(txt != nullptr);
     // active text = textPrimary #1A1A1A（深灰，非 textSecondary 灰）
-    DOCTEST_CHECK_EQ(toHexByte(txt->textColor.r), 0x1A);
-    DOCTEST_CHECK_EQ(toHexByte(txt->textColor.g), 0x1A);
-    DOCTEST_CHECK_EQ(toHexByte(txt->textColor.b), 0x1A);
+    DOCTEST_CHECK_EQ(toHexByte(txt->textColor.r), 0x36);
+    DOCTEST_CHECK_EQ(toHexByte(txt->textColor.g), 0xD3);
+    DOCTEST_CHECK_EQ(toHexByte(txt->textColor.b), 0x99);
 
-    const auto* underline = ui.find("tab.a.underline");
-    DOCTEST_REQUIRE(underline != nullptr);
-    // underline = primary #07C160
-    DOCTEST_CHECK_EQ(toHexByte(underline->color.r), 0x07);
-    DOCTEST_CHECK_EQ(toHexByte(underline->color.g), 0xC1);
-    DOCTEST_CHECK_EQ(toHexByte(underline->color.b), 0x60);
-    // underline height = 2px（§4.2 钉死"底部 2px"）
-    DOCTEST_CHECK_EQ(underline->height.value, 2.0f);
-    DOCTEST_CHECK_EQ(underline->height.value, ui_kit::kWtabUnderlineHeight);
+    // S2.2 wtab active bg = primarySoftBg #E6FBF2 + radius 8
+    const auto* bg = ui.find("tab.a.bg");
+    DOCTEST_REQUIRE(bg != nullptr);
+    DOCTEST_CHECK_EQ(toHexByte(bg->color.r), 0xE6);
+    DOCTEST_CHECK_EQ(toHexByte(bg->color.g), 0xFB);
+    DOCTEST_CHECK_EQ(toHexByte(bg->color.b), 0xF2);
+    DOCTEST_CHECK_EQ(bg->radius, 8.0f);
+    // underline rect removed (S6.2 wtab block-style)（§4.2 钉死"底部 2px"）
+    const auto* underline_legacy = ui.find("tab.a.underline");
+    DOCTEST_CHECK(underline_legacy == nullptr);  // underline removed in block-style
     // underline 贴底：y = h - 2 = 34
-    DOCTEST_CHECK(floatEq(underline->y, 36.0f - 2.0f));
+    DOCTEST_CHECK(floatEq(bg->y, 0.0f));  // bg rect starts at stack origin
 
     // hit area 透明（alpha=0）——防 §4.2 "实心填充按钮做 Tab"
     const auto* hit = ui.find("tab.a.hit");
@@ -121,15 +122,15 @@ REGISTER_TEST(ui_kit_wtab_inactive_no_underline,
 
     const auto* txt = ui.find("tab.i.text");
     DOCTEST_REQUIRE(txt != nullptr);
-    // inactive text = textSecondary #666666（灰字，非 textPrimary 深灰）
-    DOCTEST_CHECK_EQ(toHexByte(txt->textColor.r), 0x66);
-    DOCTEST_CHECK_EQ(toHexByte(txt->textColor.g), 0x66);
-    DOCTEST_CHECK_EQ(toHexByte(txt->textColor.b), 0x66);
-    DOCTEST_CHECK(toHexByte(txt->textColor.r) != 0x1A);  // 不等于 textPrimary
+    // inactive bg 不创建（透明底） text = textSecondary #666666（灰字，非 textPrimary 深灰）
+    DOCTEST_CHECK_EQ(toHexByte(txt->textColor.r), 0x4B);
+    DOCTEST_CHECK_EQ(toHexByte(txt->textColor.g), 0x55);
+    DOCTEST_CHECK_EQ(toHexByte(txt->textColor.b), 0x63);
+    DOCTEST_CHECK(toHexByte(txt->textColor.r) != 0x36);  // 不等于 textPrimary
 
     // inactive 不创建 underline 节点（避免与 active 视觉冲突）
-    const auto* underline = ui.find("tab.i.underline");
-    DOCTEST_CHECK(underline == nullptr);
+    const auto* bg = ui.find("tab.i.bg");
+    DOCTEST_CHECK(bg == nullptr);
 
     // hit 仍透明（不画填充底）
     const auto* hit = ui.find("tab.i.hit");
@@ -154,9 +155,9 @@ REGISTER_TEST(ui_kit_wswitch_on_track_green,
     const auto* track = ui.find("sw.on.track");
     DOCTEST_REQUIRE(track != nullptr);
     // track = primary #07C160
-    DOCTEST_CHECK_EQ(toHexByte(track->color.r), 0x07);
-    DOCTEST_CHECK_EQ(toHexByte(track->color.g), 0xC1);
-    DOCTEST_CHECK_EQ(toHexByte(track->color.b), 0x60);
+    DOCTEST_CHECK_EQ(toHexByte(track->color.r), 0x36);
+    DOCTEST_CHECK_EQ(toHexByte(track->color.g), 0xD3);
+    DOCTEST_CHECK_EQ(toHexByte(track->color.b), 0x99);
 
     const auto* thumb = ui.find("sw.on.thumb");
     DOCTEST_REQUIRE(thumb != nullptr);
@@ -185,12 +186,12 @@ REGISTER_TEST(ui_kit_wswitch_off_track_gray_not_green,
     const auto* track = ui.find("sw.off.track");
     DOCTEST_REQUIRE(track != nullptr);
     // track = dividerSecondary #EDEDED 灰
-    DOCTEST_CHECK_EQ(toHexByte(track->color.r), 0xED);
-    DOCTEST_CHECK_EQ(toHexByte(track->color.g), 0xED);
-    DOCTEST_CHECK_EQ(toHexByte(track->color.b), 0xED);
-    // 不等于 primary 绿（G 通道差异最大：0xED vs 0xC1）
-    DOCTEST_CHECK(toHexByte(track->color.g) != 0xC1);
-    DOCTEST_CHECK(toHexByte(track->color.r) != 0x07);
+    DOCTEST_CHECK_EQ(toHexByte(track->color.r), 0xF3);
+    DOCTEST_CHECK_EQ(toHexByte(track->color.g), 0xF4);
+    DOCTEST_CHECK_EQ(toHexByte(track->color.b), 0xF6);
+    // 不等于 primary 绿（G 通道差异最大：0xF4 vs 0xD3）
+    DOCTEST_CHECK(toHexByte(track->color.g) != 0xD3);
+    DOCTEST_CHECK(toHexByte(track->color.r) != 0x36);
 
     const auto* thumb = ui.find("sw.off.thumb");
     DOCTEST_REQUIRE(thumb != nullptr);
@@ -220,18 +221,19 @@ REGISTER_TEST(ui_kit_selection_unified_metrics,
     ui1.end();
     const auto* accent = ui1.find("m.sel.accent");
     DOCTEST_REQUIRE(accent != nullptr);
-    DOCTEST_CHECK_EQ(accent->width.value, 2.0f);
+    DOCTEST_CHECK_EQ(accent->width.value, 3.0f);
     DOCTEST_CHECK_EQ(accent->width.value, ui_kit::kSelectionBarAccentWidth);
 
-    // wtab underline height = 2（§4.2 钉死）
+    // wtab active bg radius = 8 (S2.2 block-style)（§4.2 钉死）
     eui::Ui ui2;
     ui2.begin("w02c_metrics_tab");
     ui_kit::wtab(ui2, "m.tab", "x", true, 0.0f, 0.0f, 80.0f, 36.0f, t);
     ui2.end();
-    const auto* underline = ui2.find("m.tab.underline");
-    DOCTEST_REQUIRE(underline != nullptr);
-    DOCTEST_CHECK_EQ(underline->height.value, 2.0f);
-    DOCTEST_CHECK_EQ(underline->height.value, ui_kit::kWtabUnderlineHeight);
+    const auto* bg2 = ui2.find("m.tab.bg");
+    DOCTEST_REQUIRE(bg2 != nullptr);
+    DOCTEST_CHECK_EQ(bg2->radius, 8.0f);
+    const auto* underline2 = ui2.find("m.tab.underline");
+    DOCTEST_CHECK(underline2 == nullptr);
 
     // wswitch track radius = h/2（pill 形，§4.4 "圆角轨道"）
     constexpr float kSw = 44.0f;
