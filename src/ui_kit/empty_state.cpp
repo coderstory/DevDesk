@@ -19,7 +19,6 @@ void emptyState(eui::Ui& ui, const std::string& id, const std::string& message,
                 const std::optional<std::pair<std::string, std::function<void()>>>& action,
                 float x, float y, float w, float h,
                 const core::theme::Tokens& t) {
-    const auto& wc = t.colors.wechat;
 
     // 极简文字（§4.12 防「插画式/情绪化」——本 helper 只画一行极简文字）
     // 文字色 wechat.textSecondary(#666666)，14px，居中对齐

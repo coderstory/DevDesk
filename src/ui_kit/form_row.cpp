@@ -10,7 +10,6 @@ void formRow(eui::Ui& ui, const std::string& id, const std::string& label,
              float x, float y, float totalW, float totalH,
              const ControlComposeFn& composeControl,
              const core::theme::Tokens& t) {
-    const auto& wc = t.colors.wechat;
     const float gap = t.sizes.spacing;  // 8px（§3.1 8px 网格），label 与 control 间距
     const float labelW = kFormRowLabelWidth;  // 110px（§4.15 区间中值）
     const float controlX = x + labelW + gap;

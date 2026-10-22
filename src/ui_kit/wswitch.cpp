@@ -11,7 +11,6 @@ void wswitch(eui::Ui& ui, const std::string& id, bool on,
              float x, float y, float w, float h,
              const core::theme::Tokens& t,
              const std::function<void(bool)>& onToggle) {
-    const auto& wc = t.colors.wechat;
 
     // §4.4 轨道色：开=wechat.primary 绿；关=wechat.dividerSecondary 灰（派生灰
     // 用现有 token，不引入新槽位——开关是唯一用灰轨道的组件，本 helper 内闭合）

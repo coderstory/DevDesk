@@ -116,7 +116,6 @@ void drawGlassStatCard(eui::Ui& ui,
                            nullptr,
                        std::function<void()> onTick = nullptr) {
     const auto ct = core::theme::componentTokensWeChat(t);  // W9 微信组件档（阴影/圆角基线）
-    const auto& wc = t.colors.wechat;
     const float s = core::theme::fontScale();
     const float inset = t.sizes.spacingLarge; // 16：卡内容统一内边距（16px 网格）
     const float cw = width - inset * 2.0f;

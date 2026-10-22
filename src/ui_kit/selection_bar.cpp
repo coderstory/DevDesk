@@ -10,7 +10,6 @@ namespace ui_kit {
 void selectionBar(eui::Ui& ui, const std::string& id, const std::string& label,
                   float x, float y, float w, float h,
                   const core::theme::Tokens& t) {
-    const auto& wc = t.colors.wechat;
 
     // stack 包裹 bg + accent + text，保证竖线与文字浮在底色之上；调用方可把
     // stack 放进任意布局（如 nav 列表项的 row stack）。

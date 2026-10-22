@@ -258,7 +258,6 @@ bool titlebarCaptionHit(const CaptionHitQuery& query) {
 // wechat 风格：灰字灰 hover；关闭钮 hover 红（theme warningRed #FA5151）+ 白叉
 void drawTitlebar(eui::Ui& ui, const eui::Screen& screen) {
     const auto& t = ::core::theme::current();
-    const auto& wc = t.colors.wechat;
     const eui::Color kTransparent{0.0f, 0.0f, 0.0f, 0.0f};
     const float h = titlebarHeight();
 
@@ -542,7 +541,6 @@ void drawFluidBackground(eui::Ui& ui, const eui::Screen& screen) {
     if (!fluidWindowVisible()) return;      // 铁律：最小化/藏托盘 → 不挂泵不推进
 
     const auto& t = ::core::theme::current();
-    const auto& wc = t.colors.wechat;
 
     constexpr int kHalos = 7;            // UAT6.1 缩小增多：4→7 个小晕流动（几大团→多小晕流）
     constexpr float kMaxAlpha = 0.14f;   // 单层峰值（7 层 α 平均约 0.123，全叠峰值可控）

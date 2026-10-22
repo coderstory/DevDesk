@@ -199,7 +199,6 @@ public:
 
     void compose(eui::Ui& ui, const eui::Screen& screen) override {
         const auto& t = core::theme::current();
-        const auto& wc = t.colors.wechat;
 
         // —— 页面底色：wechat.pageBg #F7F7F7（§4.14 面板灰底）——
         // UAT2 B 批：tint 的 alpha 随窗口效果档位（core::window_effect_state 单值，
