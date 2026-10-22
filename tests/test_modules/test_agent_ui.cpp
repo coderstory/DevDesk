@@ -215,7 +215,11 @@ bool frameContained(const core::dsl::Element& outer,
 bool openNewTaskDialog(eui::Ui& ui, module::agent::AgentModule& mod,
                        const char* pageId) {
     composeTo(ui, mod, kScreen, pageId);
-    return clickId(ui, "agent.page.newTask.bg");
+    // 空库 = 空态 CTA「创建第一个任务」(.empty.btn.bg)；
+    // 有任务列表 = 页头「+ 新建任务」(.page.newTask.bg)
+    if (clickId(ui, "agent.page.newTask.bg")) return true;
+    if (clickId(ui, "agent.empty.btn.bg")) return true;
+    return false;
 }
 
 // 打开某任务的详情弹窗（点行内「详情」chip）
@@ -266,7 +270,7 @@ bool openNewTaskWithGoal(eui::Ui& ui, module::agent::AgentModule& mod,
     eui::Ui ui2;
     composeTo(ui2, mod, kScreen, (pagePrefix + "b").c_str());
     // 导航到步骤 2（指令）
-    if (!clickId(ui2, "agent.dialog.task.step.2")) return false;
+    if (!clickId(ui2, "agent.dialog.task.step.2.bg")) return false;
     eui::Ui ui2s2;
     composeTo(ui2s2, mod, kScreen, (pagePrefix + "b2").c_str());
     auto* goalHit = ui2s2.find("agent.dialog.task.goal.hit");
@@ -405,16 +409,16 @@ REGISTER_TEST(agent_ui_new_task_dialog_fields,
     DOCTEST_CHECK(ui2.find("agent.dialog.task.test") != nullptr);
     DOCTEST_CHECK(ui2.find("agent.dialog.task.close") != nullptr);
 
-    // 步骤条：4 个节点 + 背景连线 + 标签
-    DOCTEST_CHECK(ui2.find("agent.dialog.task.stepper.line") != nullptr);
+    // 步骤条：4 个胶囊节点（bg 可点面 + text 标签）+ 短连接线
     for (int i = 0; i < 4; ++i) {
         DOCTEST_CHECK_MESSAGE(
             ui2.find("agent.dialog.task.step." + std::to_string(i) + ".bg") != nullptr,
             "步骤 " + std::to_string(i) + " 节点缺失");
         DOCTEST_CHECK_MESSAGE(
-            ui2.find("agent.dialog.task.step." + std::to_string(i) + ".label") != nullptr,
+            ui2.find("agent.dialog.task.step." + std::to_string(i) + ".text") != nullptr,
             "步骤 " + std::to_string(i) + " 标签缺失");
     }
+    DOCTEST_CHECK(ui2.find("agent.dialog.task.step.1.conn") != nullptr);
 
     // Step 0（基础信息）：名称字段可见；其它步内容不可见
     DOCTEST_CHECK(ui2.find("agent.dialog.task.name") != nullptr);   // 名称输入在 step 0
@@ -423,7 +427,7 @@ REGISTER_TEST(agent_ui_new_task_dialog_fields,
 
     // ---- 导航到步骤 1（触发） ----
     eui::Ui ui_s1;
-    DOCTEST_REQUIRE(clickId(ui2, "agent.dialog.task.step.1"));
+    DOCTEST_REQUIRE(clickId(ui2, "agent.dialog.task.step.1.bg"));
     composeTo(ui_s1, mod, kScreen, "agent_ui_dlg_s1");
     DOCTEST_CHECK(ui_s1.find("agent.dialog.task.name") == nullptr);         // step 0 已隐藏
     DOCTEST_CHECK(ui_s1.find("agent.dialog.task.trigger") != nullptr);      // 触发 segment 出现
@@ -458,7 +462,7 @@ REGISTER_TEST(agent_ui_new_task_dialog_fields,
 
     // ---- 导航到步骤 2（指令） ----
     eui::Ui ui_s2;
-    DOCTEST_REQUIRE(clickId(ui_s1c, "agent.dialog.task.step.2"));
+    DOCTEST_REQUIRE(clickId(ui_s1c, "agent.dialog.task.step.2.bg"));
     composeTo(ui_s2, mod, kScreen, "agent_ui_dlg_s2");
     DOCTEST_CHECK(ui_s2.find("agent.dialog.task.goal") != nullptr);
     DOCTEST_CHECK(ui_s2.find("agent.dialog.task.goal.caption") != nullptr);
@@ -470,7 +474,7 @@ REGISTER_TEST(agent_ui_new_task_dialog_fields,
 
     // ---- 导航到步骤 3（执行与安全） ----
     eui::Ui ui_s3;
-    DOCTEST_REQUIRE(clickId(ui_s2, "agent.dialog.task.step.3"));
+    DOCTEST_REQUIRE(clickId(ui_s2, "agent.dialog.task.step.3.bg"));
     composeTo(ui_s3, mod, kScreen, "agent_ui_dlg_s3");
     DOCTEST_CHECK(ui_s3.find("agent.dialog.task.slot") != nullptr);
     DOCTEST_CHECK(ui_s3.find("agent.dialog.task.iter") != nullptr);
@@ -513,7 +517,7 @@ REGISTER_TEST(agent_ui_dialog_create_task_persists_fields,
 
     // 导航到 step 2（指令）：填 goal
     eui::Ui ui2s2;
-    DOCTEST_REQUIRE(clickId(ui2, "agent.dialog.task.step.2"));
+    DOCTEST_REQUIRE(clickId(ui2, "agent.dialog.task.step.2.bg"));
     composeTo(ui2s2, mod, kScreen, "agent_ui_save2s2");
     auto* goalHit = ui2s2.find("agent.dialog.task.goal.hit");
     DOCTEST_REQUIRE(goalHit != nullptr);
@@ -522,7 +526,7 @@ REGISTER_TEST(agent_ui_dialog_create_task_persists_fields,
 
     // 导航到 step 1（触发）：选定时 + 填 cron
     eui::Ui ui2s1;
-    DOCTEST_REQUIRE(clickId(ui2s2, "agent.dialog.task.step.1"));
+    DOCTEST_REQUIRE(clickId(ui2s2, "agent.dialog.task.step.1.bg"));
     composeTo(ui2s1, mod, kScreen, "agent_ui_save2s1");
     DOCTEST_REQUIRE(callDropdownChange(ui2s1, "agent.dialog.task.trigger", 1));
     eui::Ui ui3;
@@ -533,7 +537,7 @@ REGISTER_TEST(agent_ui_dialog_create_task_persists_fields,
 
     // 导航到 step 3（执行与安全）：改槽位/迭代/破坏性
     eui::Ui ui3s3;
-    DOCTEST_REQUIRE(clickId(ui3, "agent.dialog.task.step.3"));
+    DOCTEST_REQUIRE(clickId(ui3, "agent.dialog.task.step.3.bg"));
     composeTo(ui3s3, mod, kScreen, "agent_ui_save3s3");
     // 槽位 = opus（X 宏表第 3 项，index 2）
     DOCTEST_REQUIRE(callDropdownChange(ui3s3, "agent.dialog.task.slot", 2));
@@ -592,7 +596,7 @@ REGISTER_TEST(agent_ui_daily_trigger_saves_without_time,
 
     // 导航到 step 2（指令）填 goal
     eui::Ui ui2s2;
-    DOCTEST_REQUIRE(clickId(ui2, "agent.dialog.task.step.2"));
+    DOCTEST_REQUIRE(clickId(ui2, "agent.dialog.task.step.2.bg"));
     composeTo(ui2s2, mod, kScreen, "agent_ui_daily2s2");
     auto* goalHit = ui2s2.find("agent.dialog.task.goal.hit");
     DOCTEST_REQUIRE(goalHit != nullptr);
@@ -601,7 +605,7 @@ REGISTER_TEST(agent_ui_daily_trigger_saves_without_time,
 
     // 导航到 step 1（触发）：第 5 项 = 每天（索引 4）
     eui::Ui ui2s1;
-    DOCTEST_REQUIRE(clickId(ui2s2, "agent.dialog.task.step.1"));
+    DOCTEST_REQUIRE(clickId(ui2s2, "agent.dialog.task.step.1.bg"));
     composeTo(ui2s1, mod, kScreen, "agent_ui_daily2s1");
     DOCTEST_REQUIRE_MESSAGE(callDropdownChange(ui2s1, "agent.dialog.task.trigger", 4),
                             "agent.dialog.task.trigger.item.4 不存在");
@@ -609,7 +613,11 @@ REGISTER_TEST(agent_ui_daily_trigger_saves_without_time,
     composeTo(ui3, mod, kScreen, "agent_ui_daily3");
     DOCTEST_CHECK_MESSAGE(ui3.find("agent.dialog.task.cron") == nullptr,
                           "触发方式=每天 时不应渲染 cron 输入");
-    DOCTEST_REQUIRE_MESSAGE(clickId(ui3, "agent.dialog.task.save.bg"),
+    // W4 步骤条：导航 step 3 再保存
+    eui::Ui ui3s3;
+    DOCTEST_REQUIRE(clickId(ui3, "agent.dialog.task.step.3.bg"));
+    composeTo(ui3s3, mod, kScreen, "agent_ui_daily3s3");
+    DOCTEST_REQUIRE_MESSAGE(clickId(ui3s3, "agent.dialog.task.save.bg"),
                             "保存按钮 agent.dialog.task.save.bg 缺失");
 
     auto tasks = store.listTasks();
@@ -646,7 +654,7 @@ REGISTER_TEST(agent_ui_once_trigger_form_and_save,
     // 导航到步骤 1（触发）
     eui::Ui ui1;
     composeTo(ui1, mod, kScreen, "agent_ui_oncenew.s1");
-    DOCTEST_REQUIRE(clickId(ui1, "agent.dialog.task.step.1"));
+    DOCTEST_REQUIRE(clickId(ui1, "agent.dialog.task.step.1.bg"));
     eui::Ui ui2;
     composeTo(ui2, mod, kScreen, "agent_ui_oncenew.c");
     // 类型集合 = 6（once 追加在末尾，既有下标 0..4 不动）
@@ -743,7 +751,7 @@ REGISTER_TEST(agent_ui_once_edit_prefills_and_roundtrips,
     composeTo(ui2, mod, kScreen, "agent_ui_onceedit2");
     // W4：编辑打开停在 step 0（基础信息）；导航 step 1 看 once 预填
     eui::Ui ui2s1;
-    DOCTEST_REQUIRE(clickId(ui2, "agent.dialog.task.step.1"));
+    DOCTEST_REQUIRE(clickId(ui2, "agent.dialog.task.step.1.bg"));
     composeTo(ui2s1, mod, kScreen, "agent_ui_onceedit2s1");
     DOCTEST_REQUIRE_MESSAGE(ui2s1.find("agent.dialog.task.once") != nullptr,
                             "编辑闹钟任务未渲染时间输入");
@@ -754,14 +762,14 @@ REGISTER_TEST(agent_ui_once_edit_prefills_and_roundtrips,
     DOCTEST_CHECK(s1tEl == nullptr || s1tEl->text.find("! ") != 0);
     // 导航 step 2 看 goal 预填
     eui::Ui ui2s2;
-    DOCTEST_REQUIRE(clickId(ui2s1, "agent.dialog.task.step.2"));
+    DOCTEST_REQUIRE(clickId(ui2s1, "agent.dialog.task.step.2.bg"));
     composeTo(ui2s2, mod, kScreen, "agent_ui_onceedit2s2");
     DOCTEST_CHECK_EQ(inputText(ui2s2, "agent.dialog.task.goal"),
                      std::string("明天中午提醒"));
 
     // 导航 step 3 → 保存（不改时间 once_at 不变）
     eui::Ui ui2s3;
-    DOCTEST_REQUIRE(clickId(ui2s2, "agent.dialog.task.step.3"));
+    DOCTEST_REQUIRE(clickId(ui2s2, "agent.dialog.task.step.3.bg"));
     composeTo(ui2s3, mod, kScreen, "agent_ui_onceedit2s3");
     DOCTEST_REQUIRE(clickId(ui2s3, "agent.dialog.task.save.bg"));
     auto updated = store.getTask(created.value());
@@ -801,7 +809,7 @@ REGISTER_TEST(agent_ui_once_rejects_bad_and_past_time,
     DOCTEST_REQUIRE(openNewTaskWithGoal(ui, mod, "agent_ui_oncebad", "非法闹钟任务"));
     // W4 步骤条：导航 step 1 设触发=闹钟
     eui::Ui ui2;
-    DOCTEST_REQUIRE(clickId(ui, "agent.dialog.task.step.1"));
+    DOCTEST_REQUIRE(clickId(ui, "agent.dialog.task.step.1.bg"));
     composeTo(ui2, mod, kScreen, "agent_ui_oncebad.c");
     DOCTEST_REQUIRE(callDropdownChange(ui2, "agent.dialog.task.trigger", 5));
 
@@ -843,7 +851,7 @@ REGISTER_TEST(agent_ui_once_rejects_bad_and_past_time,
     DOCTEST_REQUIRE_MESSAGE(pastPrev != nullptr, "过去时间未渲染预览行");
     DOCTEST_CHECK_MESSAGE(pastPrev->text.find("晚于当前时间") != std::string::npos,
                           "过去时间错误文案：" + pastPrev->text);
-    DOCTEST_REQUIRE(clickId(pastF, "agent.dialog.task.step.3"));
+    DOCTEST_REQUIRE(clickId(pastF, "agent.dialog.task.step.3.bg"));
     eui::Ui pastS3;
     composeTo(pastS3, mod, kScreen, "agent_ui_oncebad.past3");
     DOCTEST_REQUIRE(clickId(pastS3, "agent.dialog.task.save.bg"));
@@ -880,7 +888,9 @@ REGISTER_TEST(agent_ui_once_switch_type_clears_payload,
 
     eui::Ui ui;
     DOCTEST_REQUIRE(openNewTaskWithGoal(ui, mod, "agent_ui_onceswitch", "切换类型任务"));
+    // W4 步骤条：导航 step 1 切触发类型
     eui::Ui ui2;
+    DOCTEST_REQUIRE(clickId(ui, "agent.dialog.task.step.1.bg"));
     composeTo(ui2, mod, kScreen, "agent_ui_onceswitch.c");
     DOCTEST_REQUIRE(callDropdownChange(ui2, "agent.dialog.task.trigger", 1));
     mod.setEditCronDraft("0 9 * * *");
@@ -890,7 +900,11 @@ REGISTER_TEST(agent_ui_once_switch_type_clears_payload,
     mod.setEditOnceDraft(formatLocalMinute(tomorrowNoon));
     eui::Ui ui4;
     composeTo(ui4, mod, kScreen, "agent_ui_onceswitch.e");
-    DOCTEST_REQUIRE(clickId(ui4, "agent.dialog.task.save.bg"));
+    // 导航 step 3 保存
+    eui::Ui ui4s3;
+    DOCTEST_REQUIRE(clickId(ui4, "agent.dialog.task.step.3.bg"));
+    composeTo(ui4s3, mod, kScreen, "agent_ui_onceswitch.e3");
+    DOCTEST_REQUIRE(clickId(ui4s3, "agent.dialog.task.save.bg"));
 
     auto tasks = store.listTasks();
     DOCTEST_REQUIRE(tasks.isOk());
@@ -905,11 +919,19 @@ REGISTER_TEST(agent_ui_once_switch_type_clears_payload,
     DOCTEST_REQUIRE(clickId(ui5, "agent.task." + std::to_string(row.id) + ".edit"));
     eui::Ui ui6;
     composeTo(ui6, mod, kScreen, "agent_ui_onceswitch.g");
-    DOCTEST_REQUIRE(callDropdownChange(ui6, "agent.dialog.task.trigger", 1));
+    // W4 步骤条：导航 step 1 切回定时
+    eui::Ui ui6s1;
+    DOCTEST_REQUIRE(clickId(ui6, "agent.dialog.task.step.1.bg"));
+    composeTo(ui6s1, mod, kScreen, "agent_ui_onceswitch.g1");
+    DOCTEST_REQUIRE(callDropdownChange(ui6s1, "agent.dialog.task.trigger", 1));
     eui::Ui ui7;
     composeTo(ui7, mod, kScreen, "agent_ui_onceswitch.h");
     mod.setEditCronDraft("30 8 * * 1");
-    DOCTEST_REQUIRE(clickId(ui7, "agent.dialog.task.save.bg"));
+    // 导航 step 3 保存
+    eui::Ui ui7s3;
+    DOCTEST_REQUIRE(clickId(ui7, "agent.dialog.task.step.3.bg"));
+    composeTo(ui7s3, mod, kScreen, "agent_ui_onceswitch.h3");
+    DOCTEST_REQUIRE(clickId(ui7s3, "agent.dialog.task.save.bg"));
 
     auto updated = store.getTask(row.id);
     DOCTEST_REQUIRE(updated.isOk());
@@ -999,7 +1021,7 @@ REGISTER_TEST(agent_ui_once_edit_bad_config_shows_problem_without_fallback,
     composeTo(ui2, mod, kScreen, "agent_ui_oncebadcfg2");
     // W4 步骤条：导航 step 1 看触发态
     eui::Ui ui2s1;
-    DOCTEST_REQUIRE(clickId(ui2, "agent.dialog.task.step.1"));
+    DOCTEST_REQUIRE(clickId(ui2, "agent.dialog.task.step.1.bg"));
     composeTo(ui2s1, mod, kScreen, "agent_ui_oncebadcfg2s1");
     // 触发方式仍是闹钟（有 once 时间输入 = 未回落手动；回落手动不会有该节点）
     DOCTEST_REQUIRE_MESSAGE(ui2s1.find("agent.dialog.task.once") != nullptr,
@@ -1034,14 +1056,14 @@ REGISTER_TEST(agent_ui_dialog_save_rejects_bad_cron,
     DOCTEST_REQUIRE(openNewTaskDialog(ui, mod, "agent_ui_bad1"));
     // W4 步骤条：导航 step 2 填 goal
     eui::Ui ui2s2;
-    DOCTEST_REQUIRE(clickId(ui, "agent.dialog.task.step.2"));
+    DOCTEST_REQUIRE(clickId(ui, "agent.dialog.task.step.2.bg"));
     composeTo(ui2s2, mod, kScreen, "agent_ui_bad2s2");
     auto* goalHit = ui2s2.find("agent.dialog.task.goal.hit");
     DOCTEST_REQUIRE(goalHit != nullptr);
     typeInto(goalHit, "非法 cron 任务");
     // 导航 step 1：设定时 + 非法 cron
     eui::Ui ui2s1;
-    DOCTEST_REQUIRE(clickId(ui2s2, "agent.dialog.task.step.1"));
+    DOCTEST_REQUIRE(clickId(ui2s2, "agent.dialog.task.step.1.bg"));
     composeTo(ui2s1, mod, kScreen, "agent_ui_bad2s1");
     DOCTEST_REQUIRE(callDropdownChange(ui2s1, "agent.dialog.task.trigger", 1));
     eui::Ui ui3;
@@ -1059,7 +1081,7 @@ REGISTER_TEST(agent_ui_dialog_save_rejects_bad_cron,
     DOCTEST_REQUIRE_MESSAGE(cprev != nullptr, "非法 cron 未渲染预览行");
     DOCTEST_CHECK(cprev->text.find("cron") != std::string::npos);
     // 直跳 step 3 点创建 → saveTaskDialog 二次校验拒绝，弹窗不关
-    DOCTEST_REQUIRE(clickId(ui4, "agent.dialog.task.step.3"));
+    DOCTEST_REQUIRE(clickId(ui4, "agent.dialog.task.step.3.bg"));
     eui::Ui ui4s3;
     composeTo(ui4s3, mod, kScreen, "agent_ui_bad4s3");
     DOCTEST_REQUIRE(clickId(ui4s3, "agent.dialog.task.save.bg"));
@@ -1172,17 +1194,28 @@ REGISTER_TEST(agent_ui_edit_dialog_prefills_and_updates,
                             "任务行缺 agent.task.<id>.edit");
     eui::Ui ui2;
     composeTo(ui2, mod, kScreen, "agent_ui_edit2");
-    DOCTEST_REQUIRE_MESSAGE(ui2.find("agent.dialog.task.goal") != nullptr,
+    DOCTEST_REQUIRE_MESSAGE(ui2.find("agent.dialog.task.name") != nullptr,
                             "编辑态未打开任务弹窗");
-    // 预填：与库同一份 AgentTaskRow
-    DOCTEST_CHECK_EQ(inputText(ui2, "agent.dialog.task.goal"), std::string("旧目标"));
-    DOCTEST_REQUIRE_MESSAGE(ui2.find("agent.dialog.task.cron") != nullptr,
+    // W4 步骤条：step 2 看 goal 预填
+    eui::Ui ui2s2;
+    DOCTEST_REQUIRE(clickId(ui2, "agent.dialog.task.step.2.bg"));
+    composeTo(ui2s2, mod, kScreen, "agent_ui_edit2s2");
+    DOCTEST_CHECK_EQ(inputText(ui2s2, "agent.dialog.task.goal"), std::string("旧目标"));
+    // step 1 看 cron 预填
+    eui::Ui ui2s1;
+    DOCTEST_REQUIRE(clickId(ui2s2, "agent.dialog.task.step.1.bg"));
+    composeTo(ui2s1, mod, kScreen, "agent_ui_edit2s1");
+    DOCTEST_REQUIRE_MESSAGE(ui2s1.find("agent.dialog.task.cron") != nullptr,
                             "schedule 任务未渲染 cron 输入");
-    DOCTEST_CHECK_EQ(inputText(ui2, "agent.dialog.task.cron"),
+    DOCTEST_CHECK_EQ(inputText(ui2s1, "agent.dialog.task.cron"),
                      std::string("0 9 * * 1-5"));
-    DOCTEST_CHECK_EQ(inputText(ui2, "agent.dialog.task.iter"), std::string("20"));
+    // step 3 看 iter 预填 + 改槽位
+    eui::Ui ui2s3;
+    DOCTEST_REQUIRE(clickId(ui2s1, "agent.dialog.task.step.3.bg"));
+    composeTo(ui2s3, mod, kScreen, "agent_ui_edit2s3");
+    DOCTEST_CHECK_EQ(inputText(ui2s3, "agent.dialog.task.iter"), std::string("20"));
 
-    DOCTEST_REQUIRE(callDropdownChange(ui2, "agent.dialog.task.slot", 3));
+    DOCTEST_REQUIRE(callDropdownChange(ui2s3, "agent.dialog.task.slot", 3));
     mod.setDialogIterDraft(3);
     eui::Ui ui3;
     composeTo(ui3, mod, kScreen, "agent_ui_edit3");
@@ -2284,7 +2317,7 @@ REGISTER_TEST(agent_ui_dialog_geometry_design_size_and_budget,
 
     // ③ 导航 step 1：触发 segment 平分整行（opW=119 x=28+i*125 y=136 h=32）
     eui::Ui ui2s1;
-    DOCTEST_REQUIRE(clickId(ui2, "agent.dialog.task.step.1"));
+    DOCTEST_REQUIRE(clickId(ui2, "agent.dialog.task.step.1.bg"));
     composeTo(ui2s1, mod, kScreen, "agent_ui_geo2s1");
     for (int i = 0; i < module::agent::kTriggerCount; ++i) {
         const auto* op = ui2s1.find("agent.dialog.task.trigger.item." +
@@ -2304,7 +2337,7 @@ REGISTER_TEST(agent_ui_dialog_geometry_design_size_and_budget,
 
     // ④ 导航 step 2：goal textarea h≥60 全宽；行底 ≤ 按钮行顶
     eui::Ui ui2s2;
-    DOCTEST_REQUIRE(clickId(ui2s1, "agent.dialog.task.step.2"));
+    DOCTEST_REQUIRE(clickId(ui2s1, "agent.dialog.task.step.2.bg"));
     composeTo(ui2s2, mod, kScreen, "agent_ui_geo2s2");
     const auto* goal = ui2s2.find("agent.dialog.task.goal");
     DOCTEST_REQUIRE(goal != nullptr);
@@ -2332,7 +2365,7 @@ REGISTER_TEST(agent_ui_dialog_geometry_design_size_and_budget,
 
     // ⑤ 导航 step 3：槽位下拉展开不越屏 + 破坏性行位置稳定
     eui::Ui ui2s3;
-    DOCTEST_REQUIRE(clickId(ui2s2, "agent.dialog.task.step.3"));
+    DOCTEST_REQUIRE(clickId(ui2s2, "agent.dialog.task.step.3.bg"));
     composeTo(ui2s3, mod, kScreen, "agent_ui_geo2s3");
     DOCTEST_REQUIRE_MESSAGE(clickId(ui2s3, "agent.dialog.task.slot.field"),
                             "模型槽位下拉字段命中面缺失");
@@ -3220,7 +3253,7 @@ REGISTER_TEST(agent_ui_cron_template_dropdown_and_preview,
     DOCTEST_REQUIRE(openNewTaskDialog(ui1, mod, "agent_ui_crontpl1"));
     // W4：先导航 step 1 才可见 trigger segment
     eui::Ui ui1s1;
-    DOCTEST_REQUIRE(clickId(ui1, "agent.dialog.task.step.1"));
+    DOCTEST_REQUIRE(clickId(ui1, "agent.dialog.task.step.1.bg"));
     composeTo(ui1s1, mod, kScreen, "agent_ui_crontpl1s1");
     DOCTEST_REQUIRE(callDropdownChange(ui1s1, "agent.dialog.task.trigger", 1));
     eui::Ui ui3;
@@ -3245,13 +3278,6 @@ REGISTER_TEST(agent_ui_cron_template_dropdown_and_preview,
                          std::string(module::agent::kCronTemplates[i].label));
     }
 
-    // ② 布局契约：面板高仍 680；安全组破坏性行 y=548（模板下拉/预览行未挤动布局）
-    const auto* panel3 = ui3.find("agent.dialog.task.panel");
-    DOCTEST_REQUIRE(panel3 != nullptr);
-    // W4 C1：步骤条重做后高 496
-    DOCTEST_CHECK_MESSAGE(nearPx(panel3->frame.height, 496.0f),
-                          "任务弹窗高应恒为 496，实测 " +
-                              std::to_string(panel3->frame.height));
     // ② 布局契约：面板高 496；破坏性行在 step 3 才渲染（切过去取 y）
     const auto* panel3 = ui3.find("agent.dialog.task.panel");
     DOCTEST_REQUIRE(panel3 != nullptr);
@@ -3260,7 +3286,7 @@ REGISTER_TEST(agent_ui_cron_template_dropdown_and_preview,
                           "任务弹窗高应恒为 496，实测 " +
                               std::to_string(panel3->frame.height));
     eui::Ui ui3s3;
-    DOCTEST_REQUIRE(clickId(ui3, "agent.dialog.task.step.3"));
+    DOCTEST_REQUIRE(clickId(ui3, "agent.dialog.task.step.3.bg"));
     composeTo(ui3s3, mod, kScreen, "agent_ui_crontpl3s3");
     const auto* metaRow3 = ui3s3.find("agent.dialog.task.destructive");
     DOCTEST_REQUIRE(metaRow3 != nullptr);
@@ -3772,13 +3798,13 @@ REGISTER_TEST(agent_ui_new_task_context_note_and_autonote,
 
     // 导航 step 2 填 goal → step 3 保存
     eui::Ui ui2s2;
-    DOCTEST_REQUIRE(clickId(ui2, "agent.dialog.task.step.2"));
+    DOCTEST_REQUIRE(clickId(ui2, "agent.dialog.task.step.2.bg"));
     composeTo(ui2s2, mod, kScreen, "agent_ui_note2s2");
     auto* goalHit = ui2s2.find("agent.dialog.task.goal.hit");
     DOCTEST_REQUIRE(goalHit != nullptr);
     typeInto(goalHit, "测试执行记忆");
     eui::Ui ui2s3;
-    DOCTEST_REQUIRE(clickId(ui2s2, "agent.dialog.task.step.3"));
+    DOCTEST_REQUIRE(clickId(ui2s2, "agent.dialog.task.step.3.bg"));
     composeTo(ui2s3, mod, kScreen, "agent_ui_note2s3");
     DOCTEST_REQUIRE(clickId(ui2s3, "agent.dialog.task.save.bg"));
 
@@ -3830,13 +3856,13 @@ REGISTER_TEST(agent_ui_edit_dialog_prefills_context_note,
 
     // 导航 step 2 填 goal → step 3 保存
     eui::Ui ui2s2;
-    DOCTEST_REQUIRE(clickId(ui2, "agent.dialog.task.step.2"));
+    DOCTEST_REQUIRE(clickId(ui2, "agent.dialog.task.step.2.bg"));
     composeTo(ui2s2, mod, kScreen, "agent_ui_noteedit2s2");
     auto* goalHit = ui2s2.find("agent.dialog.task.goal.hit");
     DOCTEST_REQUIRE(goalHit != nullptr);
     typeInto(goalHit, "修改后目标");
     eui::Ui ui2s3;
-    DOCTEST_REQUIRE(clickId(ui2s2, "agent.dialog.task.step.3"));
+    DOCTEST_REQUIRE(clickId(ui2s2, "agent.dialog.task.step.3.bg"));
     composeTo(ui2s3, mod, kScreen, "agent_ui_noteedit2s3");
     DOCTEST_REQUIRE(clickId(ui2s3, "agent.dialog.task.save.bg"));
 
@@ -3883,7 +3909,7 @@ REGISTER_TEST(agent_ui_dialog_geometry_context_note_within_bounds,
 
     // 导航到 step 2：系统提示词 textarea 在面板内、底 ≤ 按钮行顶
     eui::Ui ui2s2;
-    DOCTEST_REQUIRE(clickId(ui2, "agent.dialog.task.step.2"));
+    DOCTEST_REQUIRE(clickId(ui2, "agent.dialog.task.step.2.bg"));
     composeTo(ui2s2, mod, kScreen, "agent_ui_notegeo2s2");
     const auto* sysprompt = ui2s2.find("agent.dialog.task.sysprompt");
     DOCTEST_REQUIRE(sysprompt != nullptr);
@@ -3899,7 +3925,7 @@ REGISTER_TEST(agent_ui_dialog_geometry_context_note_within_bounds,
 
     // 导航到 step 3：安全组破坏性行 y 恒等面板顶 +216（W4 步骤条后）
     eui::Ui ui2s3;
-    DOCTEST_REQUIRE(clickId(ui2s2, "agent.dialog.task.step.3"));
+    DOCTEST_REQUIRE(clickId(ui2s2, "agent.dialog.task.step.3.bg"));
     composeTo(ui2s3, mod, kScreen, "agent_ui_notegeo2s3");
     const auto* metaRow = ui2s3.find("agent.dialog.task.destructive");
     DOCTEST_REQUIRE(metaRow != nullptr);
@@ -4513,28 +4539,41 @@ REGISTER_TEST(agent_ui_dialog_once_only_toggle_persists_and_roundtrips,
 
     eui::Ui ui;
     DOCTEST_REQUIRE(openNewTaskDialog(ui, mod, "agent_ui_once1"));
-    eui::Ui ui2;
-    composeTo(ui2, mod, kScreen, "agent_ui_once2");
-    auto* goalHit = ui2.find("agent.dialog.task.goal.hit");
+    // W4 步骤条：step 2 填 goal
+    eui::Ui ui2s2;
+    DOCTEST_REQUIRE(clickId(ui, "agent.dialog.task.step.2.bg"));
+    composeTo(ui2s2, mod, kScreen, "agent_ui_once2s2");
+    auto* goalHit = ui2s2.find("agent.dialog.task.goal.hit");
     DOCTEST_REQUIRE(goalHit != nullptr);
     typeInto(goalHit, "18 点提醒一次");
-    // 默认触发方式 = 手动（不消费 trigger_config）→ 开关不许渲染
-    DOCTEST_CHECK_MESSAGE(ui2.find("agent.dialog.task.limit") == nullptr,
+    // 默认触发方式 = 手动 → step 3 不许渲染「只跑一次」开关（写了也没人消费）
+    eui::Ui ui2s3;
+    DOCTEST_REQUIRE(clickId(ui2s2, "agent.dialog.task.step.3.bg"));
+    composeTo(ui2s3, mod, kScreen, "agent_ui_once2s3");
+    DOCTEST_CHECK_MESSAGE(ui2s3.find("agent.dialog.task.limit") == nullptr,
                           "手动触发不该渲染「只跑一次」开关（写了也没人消费）");
-    // 切事件型 → 开关出现（事件型同样能配一次性：下次保存笔记时跑一次）
-    DOCTEST_REQUIRE(callDropdownChange(ui2, "agent.dialog.task.trigger", 3));
-    eui::Ui ui2b;
-    composeTo(ui2b, mod, kScreen, "agent_ui_once2b");
-    DOCTEST_CHECK_MESSAGE(ui2b.find("agent.dialog.task.limit") != nullptr,
+    // step 1 切事件型 → step 3 开关出现（事件型同样能配一次性：下次保存笔记时跑一次）
+    eui::Ui ui2s1;
+    DOCTEST_REQUIRE(clickId(ui2s3, "agent.dialog.task.step.1.bg"));
+    composeTo(ui2s1, mod, kScreen, "agent_ui_once2s1");
+    DOCTEST_REQUIRE(callDropdownChange(ui2s1, "agent.dialog.task.trigger", 3));
+    eui::Ui ui2s3b;
+    DOCTEST_REQUIRE(clickId(ui2s1, "agent.dialog.task.step.3.bg"));
+    composeTo(ui2s3b, mod, kScreen, "agent_ui_once2s3b");
+    DOCTEST_CHECK_MESSAGE(ui2s3b.find("agent.dialog.task.limit") != nullptr,
                           "事件触发缺「只跑一次」开关");
-    // 切定时 → 开关在 + 文案是大白话（不是 max_runs 术语）
-    DOCTEST_REQUIRE(callDropdownChange(ui2b, "agent.dialog.task.trigger", 1));
+    // step 1 切定时 → step 3 开关在 + 文案是大白话（不是 max_runs 术语）
+    eui::Ui ui2s1c;
+    DOCTEST_REQUIRE(clickId(ui2s3b, "agent.dialog.task.step.1.bg"));
+    composeTo(ui2s1c, mod, kScreen, "agent_ui_once2s1c");
+    DOCTEST_REQUIRE(callDropdownChange(ui2s1c, "agent.dialog.task.trigger", 1));
+    mod.setEditCronDraft("0 18 * * *");
     eui::Ui ui3;
+    DOCTEST_REQUIRE(clickId(ui2s1c, "agent.dialog.task.step.3.bg"));
     composeTo(ui3, mod, kScreen, "agent_ui_once3");
     const auto* limitLabel = ui3.find("agent.dialog.task.limit.label");
     DOCTEST_REQUIRE_MESSAGE(limitLabel != nullptr, "「只跑一次」开关缺文案");
     DOCTEST_CHECK_EQ(limitLabel->text, std::string("只跑一次"));
-    mod.setEditCronDraft("0 18 * * *");
     DOCTEST_REQUIRE_MESSAGE(clickId(ui3, "agent.dialog.task.limit.hit"),
                             "「只跑一次」开关命中面缺失");
 
@@ -4553,7 +4592,10 @@ REGISTER_TEST(agent_ui_dialog_once_only_toggle_persists_and_roundtrips,
     eui::Ui ui5;
     composeTo(ui5, mod, kScreen, "agent_ui_once5");
     DOCTEST_REQUIRE(clickId(ui5, "agent.task." + std::to_string(row.id) + ".edit"));
+    eui::Ui ui6s0;
+    composeTo(ui6s0, mod, kScreen, "agent_ui_once6s0");
     eui::Ui ui6;
+    DOCTEST_REQUIRE(clickId(ui6s0, "agent.dialog.task.step.3.bg"));
     composeTo(ui6, mod, kScreen, "agent_ui_once6");
     const auto* knob = ui6.find("agent.dialog.task.limit.knob");
     const auto* track = ui6.find("agent.dialog.task.limit.track");
@@ -4795,7 +4837,7 @@ REGISTER_TEST(agent_ui_draft_chip_and_subdialog_lifecycle,
 
     // chip 在 step 2 才渲染；几何：面板内、指令标签行右缘（y=112 h=32）、右缘 ≤ ✕ 左缘
     eui::Ui uiBs2;
-    DOCTEST_REQUIRE(clickId(uiB, "agent.dialog.task.step.2"));
+    DOCTEST_REQUIRE(clickId(uiB, "agent.dialog.task.step.2.bg"));
     composeTo(uiBs2, mod, kScreen, "agent_ui_dfl1s2");
     const auto* chipBg = uiBs2.find("agent.dialog.task.aichip.bg");
     DOCTEST_REQUIRE(chipBg != nullptr);
