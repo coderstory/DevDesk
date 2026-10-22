@@ -24,7 +24,6 @@
 #include <core/platform/platform.h>
 #include <eui/dsl.h>
 #include <ui_kit/dialog_form.h>
-#include <ui_kit/glass_card.h>
 #include <ui_kit/metrics.h>
 #include <ui_kit/button.h>
 #include <ui_kit/wswitch.h>
@@ -200,7 +199,7 @@ constexpr float kDraftResultY = 244.0f;      // 结果行顶（输入底 232 + 1
 constexpr int kRunListLimit = 1;
 
 constexpr float kToolsHeaderH = 28.0f;
-constexpr float kToolCardH = 44.0f;
+constexpr float kToolCardH = 40.0f;
 constexpr float kToolsListMaxH = 240.0f;
 
 int slotIndexOf(const std::string& slotKey) {
@@ -1831,17 +1830,15 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                         })
                         .build();
                     if (toolsOpen_ && !toolsCache_.empty()) {
-                        // 工具列表容器（UAT5 微信化）：pageBg 浅灰面板 + 白卡浮起
-                        //（§4.14 同语言，与 claude Profile 列表一致）；卡内名称走
-                        // wechat.primaryText（旧 orange primary 已淘汰）
+                        // 工具列表容器：实底白卡面板（S6.1 玻璃退役）
                         ui.stack("agent.tools.list.wrap")
                             .size(contentW, toolsListH)
                             .content([&] {
                                 ui.rect("agent.tools.list.panel")
                                     .position(0.0f, 0.0f)
                                     .size(contentW, toolsListH)
-                                    .color(t.colors.background)
-                                    .radius(t.sizes.radiusWeChat)
+                                    .color(t.colors.surface)
+                                    .radius(t.sizes.radius)
                                     .border(1.0f, t.colors.borderDefault)
                                     .build();
                                 components::scrollView(ui, "agent.tools.scroll")
@@ -1860,86 +1857,84 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                                             inner.stack(cid)
                                                 .size(cw, kToolCardH)
                                                 .content([&] {
+                                                    // 白卡背景（S6.1 实底）
                                                     inner.rect(cid + ".bg")
                                                         .position(0.0f, 0.0f)
                                                         .size(cw, kToolCardH)
                                                         .color(t.colors.surface)
-                                                        .radius(t.sizes.radiusSmall)
+                                                        .radius(t.sizes.radius)
                                                         .border(1.0f, t.colors.borderDefault)
                                                         .build();
+                                                    // 行1：工具名（14px 600 一级字）
                                                     inner.text(cid + ".name")
-                                                        .position(12.0f, 5.0f)
-                                                        .size(cw - 24.0f, 18.0f)
+                                                        .position(12.0f, 3.0f)
+                                                        .size(cw - 24.0f, 17.0f)
                                                         .text(tool.name)
-                                                        .fontSize(12.0f)
-                                                        .lineHeight(18.0f)
+                                                        .fontSize(14.0f)
+                                                        .lineHeight(17.0f)
                                                         .fontWeight(600)
                                                         .wrap(false)
-                                                        .color(t.colors.primaryText)
+                                                        .color(t.colors.textPrimary)
                                                         .build();
-                                            inner.text(cid + ".desc")
-                                                .position(12.0f, 23.0f)
-                                                .size(cw - 24.0f, 16.0f)
-                                                .text(
-                                                    tool.description.empty()
-                                                        ? "（无描述）"
-                                                        : utf8Truncate(
-                                                              tool.description,
-                                                              100))
-                                                .fontSize(11.0f)
-                                                .lineHeight(16.0f)
-                                                .wrap(false)
-                                                .color(t.colors.textSecondary)
-                                                .build();
-                                            std::string params = "参数：";
-                                            if (tool.params.empty()) {
-                                                params += "无";
-                                            } else {
-                                                for (size_t p = 0;
-                                                     p < tool.params.size();
-                                                     ++p) {
-                                                    if (p > 0) params += ", ";
-                                                    params += tool.params[p];
-                                                }
-                                            }
-                                            inner.text(cid + ".params")
-                                                .position(
-                                                    12.0f + 8.0f +
-                                                        static_cast<float>(
-                                                            tool.name.size()) *
-                                                            7.5f,
-                                                    5.0f)
-                                                .size(std::max(
-                                                          40.0f,
-                                                          cw - 24.0f - 8.0f -
-                                                              static_cast<float>(
-                                                                  tool.name
-                                                                      .size()) *
-                                                                  7.5f),
-                                                      18.0f)
-                                                .text(params)
-                                                .fontSize(11.0f)
-                                                .lineHeight(18.0f)
-                                                .wrap(false)
-                                                .horizontalAlign(
-                                                    eui::HorizontalAlign::Right)
-                                                .color(t.colors.textTertiary)
-                                                .build();
-                                        })
+                                                    // 行2：描述+参数（12px 三级字）
+                                                    std::string descShort;
+                                                    if (!tool.description.empty())
+                                                        descShort = utf8Truncate(tool.description, 80);
+                                                    std::string paramsText;
+                                                    if (!tool.params.empty()) {
+                                                        paramsText = "参数：";
+                                                        for (size_t p = 0; p < tool.params.size(); ++p) {
+                                                            if (p > 0) paramsText += ", ";
+                                                            paramsText += tool.params[p];
+                                                        }
+                                                    }
+                                                    std::string line2;
+                                                    if (!descShort.empty() && !paramsText.empty())
+                                                        line2 = descShort + " · " + paramsText;
+                                                    else if (!descShort.empty())
+                                                        line2 = descShort;
+                                                    else if (!paramsText.empty())
+                                                        line2 = paramsText;
+                                                    else
+                                                        line2 = "（无描述）";
+                                                    inner.text(cid + ".desc")
+                                                        .position(12.0f, 22.0f)
+                                                        .size(cw - 24.0f, 15.0f)
+                                                        .text(line2)
+                                                        .fontSize(12.0f)
+                                                        .lineHeight(15.0f)
+                                                        .wrap(false)
+                                                        .color(t.colors.textTertiary)
+                                                        .build();
+                                                })
                                         .build();
                                 }
                             })
                             .build();
                             })   // agent.tools.list.wrap 的 content 收口
                             .build();
+                        // 滚动提示：工具数多于可见行数时显示"还有 N 件"
+                        if (!toolsCache_.empty()) {
+                            const float visibleRows = kToolsListMaxH / kToolCardH;
+                            const int total = static_cast<int>(toolsCache_.size());
+                            const int visible = static_cast<int>(visibleRows);
+                            if (total > visible) {
+                                ui.text("agent.tools.scrollHint")
+                                    .size(contentW, 16.0f)
+                                    .text("还有 " + std::to_string(total - visible) + " 件")
+                                    .fontSize(11.0f)
+                                    .lineHeight(16.0f)
+                                    .horizontalAlign(eui::HorizontalAlign::Center)
+                                    .color(t.colors.textTertiary)
+                                    .build();
+                            }
+                        }
                     }
                 })
                 .build();
 
-            // 任务列表面板（UAT6 卡片化）：整区语义收敛为 pageBg 浅灰面板——
-            // 每个 item 是独立白卡浮起（§4.14 与上方工具列表 / claude Profile
-            // 列表同语言；灰面板上的白卡对比比「白面板上再画白卡」清晰，选择
-            // 此方案）。行级交互不变：点卡开详情、hover 加深一档；列表无选中
+            // 任务列表面板（S6.1 实底白卡、玻璃退役）
+            // 行级交互不变：点卡开详情、hover 加深一档；列表无选中
             // 语义（点行是开弹窗不是选中），不加绿圈白勾
             ui.stack("agent.tasklist.wrap")
                 .size(contentW, std::max(0.0f, listH))
@@ -1947,8 +1942,8 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                     ui.rect("agent.tasklist.panel")
                         .position(0.0f, 0.0f)
                         .size(contentW, std::max(0.0f, listH))
-                        .color(t.colors.background)
-                        .radius(t.sizes.radiusWeChat)
+                        .color(t.colors.surface)
+                        .radius(t.sizes.radius)
                         .border(1.0f, t.colors.borderDefault)
                         .build();
                     // 卡片列表：面板内四边留 kTaskCardInset，卡宽 = 列表宽 − 边距；
@@ -1973,12 +1968,55 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                         return;
                     }
                     if (tasks_.empty()) {
-                        inner.text("agent.empty")
-                            .size(cw, 20.0f)
-                            .text("暂无任务——点右上角「+ 新建任务」创建")
-                            .fontSize(t.sizes.fontSizeBody)
-                            .lineHeight(20.0f)
+                        // S2.8 空状态标准化：图标 + 标题 + 说明 + 操作按钮
+                        const float chipW = 120.0f, chipH = 40.0f;
+                        inner.text("agent.empty.icon")
+                            .size(cw, 24.0f)
+                            .text("+")
+                            .fontSize(20.0f)
+                            .lineHeight(24.0f)
+                            .horizontalAlign(eui::HorizontalAlign::Center)
                             .color(t.colors.textTertiary)
+                            .build();
+                        inner.text("agent.empty.title")
+                            .size(cw, 24.0f)
+                            .text("暂无任务")
+                            .fontSize(16.0f)
+                            .lineHeight(24.0f)
+                            .fontWeight(600)
+                            .horizontalAlign(eui::HorizontalAlign::Center)
+                            .color(t.colors.textPrimary)
+                            .build();
+                        inner.text("agent.empty.desc")
+                            .size(cw, 20.0f)
+                            .text("创建智能任务，让 AI 自动执行工作流")
+                            .fontSize(12.0f)
+                            .lineHeight(20.0f)
+                            .horizontalAlign(eui::HorizontalAlign::Center)
+                            .color(t.colors.textTertiary)
+                            .build();
+                        inner.stack("agent.empty.btn.chip")
+                            .size(chipW, chipH)
+                            .content([&] {
+                                inner.rect("agent.empty.btn.bg")
+                                    .size(chipW, chipH)
+                                    .states(t.colors.primary, t.colors.primaryHover, t.colors.primaryPressed)
+                                    .radius(t.sizes.radius)
+                                    .onClick([this] { openNewTaskDialog(); })
+                                    .build();
+                                inner.text("agent.empty.btn")
+                                    .size(chipW, chipH)
+                                    .text("新建任务")
+                                    .fontSize(14.0f)
+                                    .lineHeight(40.0f)
+                                    .fontWeight(600)
+                                    .horizontalAlign(eui::HorizontalAlign::Center)
+                                    .verticalAlign(eui::VerticalAlign::Center)
+                                    .color(t.colors.onPrimary)
+                                    .hitTestMode(core::dsl::HitTestMode::None)
+                                    .onClick([this] { openNewTaskDialog(); })
+                                    .build();
+                            })
                             .build();
                         return;
                     }
@@ -2025,9 +2063,7 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                         const float rowW = cw - 2.0f * kTaskCardPad;
                         const float titleW =
                             rowW - fixedW - rowGap * static_cast<float>(childCount - 1);
-                        // 卡 = 两个层叠在 stack 里：底层 bg rect 是白卡本体
-                        //（cardBg 底 + radiusWeChat 圆角 + dividerPrimary 细边；
-                        // hover 加深一档、点击开详情，照 claude shared 卡三态），
+                        // S6.1 实底白卡（玻璃退役）：白底 + borderDefault 细边 + radius 圆角
                         // 上层 row 内缩 kTaskCardPad 四边内边距只做布局；非交互的
                         // row 不拦指针，子 chip 各自消费点击
                         inner.stack(id)
@@ -2036,20 +2072,15 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                                 inner.rect(id + ".bg")
                                     .position(0.0f, 0.0f)
                                     .size(cw, kTaskCardH)
-                                    .states(components::theme::withOpacity(t.colors.surface, 0.62f),
+                                    .states(t.colors.surface,
                                             t.colors.hover,
                                             t.colors.primarySoftBg)
-                                    .radius(t.sizes.radiusWeChat)
-                                    .border(1.0f, components::theme::withOpacity(t.colors.surface, 0.55f))
+                                    .radius(t.sizes.radius)
+                                    .border(1.0f, t.colors.borderDefault)
                                     .onClick([this, taskId = task.id] {
                                         openTaskDetail(taskId);
                                     })
                                     .build();
-                                // UAT6 玻璃：淡雅玻璃层（hover/select 由 bg rect states 处理）
-                                ui_kit::drawGlassCardLayers(inner, id,
-                                    0.0f, 0.0f, cw, kTaskCardH,
-                                    t.sizes.radiusWeChat, t,
-                                    ui_kit::GlassCardStyle::subtle());
                                 inner.row(id + ".row")
                             .position(kTaskCardPad, kTaskCardPad)
                             .size(rowW, kTaskRowH)
