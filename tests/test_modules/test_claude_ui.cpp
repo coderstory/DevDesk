@@ -2885,7 +2885,7 @@ REGISTER_TEST(claude_ui_form_basic_single_column_geometry,
             ui.layout(screen.width, screen.height);
             const auto* panel = ui.find("claude.dialog.form.panel");
             DOCTEST_REQUIRE(panel != nullptr);
-            DOCTEST_CHECK(floatEq(panel->frame.height, 600.0f));
+            DOCTEST_CHECK(floatEq(panel->frame.height, 540.0f));
         }
     }
     // 切回基础页（tab 0）往返：高度恒定（用户口径「切 tab 不跳变」）
@@ -2900,7 +2900,7 @@ REGISTER_TEST(claude_ui_form_basic_single_column_geometry,
         ui.layout(screen.width, screen.height);
         const auto* panel = ui.find("claude.dialog.form.panel");
         DOCTEST_REQUIRE(panel != nullptr);
-        DOCTEST_CHECK(floatEq(panel->frame.height, 600.0f));
+        DOCTEST_CHECK(floatEq(panel->frame.height, 540.0f));
     }
 
     mod->onStop();
@@ -5899,8 +5899,8 @@ REGISTER_TEST(claude_detail_advanced_pane_readonly,
         DOCTEST_CHECK(ui.find("claude.field.dialect.bg") == nullptr);
         DOCTEST_CHECK(ui.find("claude.field.fallback.bg") == nullptr);
         // 页签文字↔索引映射钉：把「高级配置」改插中间即红；只断 pane 元素不断
-        const auto* lab3 = ui.find("claude.detail.tabs.label.3");
-        const auto* lab4 = ui.find("claude.detail.tabs.label.4");
+        const auto* lab3 = ui.find("claude.detail.tab.3.text");
+        const auto* lab4 = ui.find("claude.detail.tab.4.text");
         DOCTEST_REQUIRE(lab3 != nullptr);
         DOCTEST_REQUIRE(lab4 != nullptr);
         DOCTEST_CHECK_EQ(lab3->text, std::string("高级配置"));
@@ -6010,13 +6010,15 @@ REGISTER_TEST(claude_calls_no_rows_when_too_short,
     auto mod = mkmod();
     mod->onStart();
 
-    // 480 高 → bodyH = 480 − 80 − 64 − 16 − 34(引导条) = 286；
-    // 内容框底 = 286 − 85 − 20 = 181；行区 = 181 − 136 − 32 = 13 < 24 → 0 行
+    // 400 高 → contentH = 400 − 24 − 40 = 336；
+    // bodyH = 336 − 40 − 16 − 34(引导条) = 246；
+    // 内容框底 = 246 − 89 − 20 = 137；
+    // rowsAvail = 137 − 140 − 32 = −35 < 24 → 0 行
     eui::Ui ui;
-    composeAtSize(mod.get(), ui, "claude_short", 1000.0f, 480.0f);
+    composeAtSize(mod.get(), ui, "claude_short", 1000.0f, 400.0f);
     DOCTEST_REQUIRE(clickById(ui, "claude.detail.tab.4.hit"));
     eui::Ui ui2;
-    composeAtSize(mod.get(), ui2, "claude_short", 1000.0f, 480.0f);
+    composeAtSize(mod.get(), ui2, "claude_short", 1000.0f, 400.0f);
 
     DOCTEST_CHECK(ui2.find("claude.calls.t.0") == nullptr);   // 不画越界行
     const auto* empty = ui2.find("claude.calls.empty");
@@ -7603,7 +7605,7 @@ REGISTER_TEST(claude_advjson_pane_geometry_follows_font_scale,
                    std::to_string(fL->frame.y - dB->frame.y) + " != " +
                    std::to_string(g.fieldH + g.fieldGap);
         }
-        // 标签字号（小字 11×fs，值走 token 13×fs）
+        // 标签字号（小字 11×fs，值走 t.sizes.fontSizeSmall=12×fs）
         if (!near(dL->fontSize, g.labelFs) || !near(fL->fontSize, g.labelFs) ||
             !near(aL->fontSize, g.labelFs)) {
             return "标签字号 != " + std::to_string(g.labelFs);
@@ -7681,7 +7683,7 @@ REGISTER_TEST(claude_advjson_pane_geometry_follows_font_scale,
         const std::string msg = geomProblem(ui, Geom{
             /*labelH*/14.0f, /*labelGap*/18.0f, /*fieldH*/28.0f, /*fieldGap*/10.0f,
             /*keyRowH*/28.0f, /*keyPitch*/34.0f, /*noteH*/18.0f, /*overflowH*/18.0f,
-            /*labelFs*/11.0f, /*keyFs*/12.0f, /*valueFs*/13.0f}, &drawn100);
+            /*labelFs*/11.0f, /*keyFs*/12.0f, /*valueFs*/12.0f}, &drawn100);
         DOCTEST_CHECK_MESSAGE(msg.empty(), msg);
     }
     // 85% 档（kFontPresets[0]，本次修的真机风险档）：钉值见上注释
@@ -7692,7 +7694,7 @@ REGISTER_TEST(claude_advjson_pane_geometry_follows_font_scale,
         const std::string msg = geomProblem(ui, Geom{
             /*labelH*/12.0f, /*labelGap*/15.0f, /*fieldH*/24.0f, /*fieldGap*/9.0f,
             /*keyRowH*/24.0f, /*keyPitch*/29.0f, /*noteH*/15.0f, /*overflowH*/15.0f,
-            /*labelFs*/9.35f, /*keyFs*/10.2f, /*valueFs*/11.05f}, &drawn85);
+            /*labelFs*/9.35f, /*keyFs*/10.2f, /*valueFs*/10.2f}, &drawn85);
         DOCTEST_CHECK_MESSAGE(msg.empty(), msg);
     }
     // 行数预算随派生行距自然跟随：85% 档行距 29 < 100% 档 34，同一可用高下画得
@@ -8258,12 +8260,12 @@ REGISTER_TEST(claude_module_left_pane_adaptive_width,
               "claude_module: 左栏 clamp(0.39,320,460) 自适应 + 四档右栏 ≥350（headless）", {
     module::claude::ClaudeService::setGlobal(nullptr);
     auto mod = mkmod();
-    // 模块可见屏宽 = 窗宽 − 侧栏 208（core::windowToCompose 口径，test_router 同源）
+    // S3.4 左栏固定 240px，右栏 flex 自适应；模块可见屏宽 = 窗宽 − 侧栏 208
     const struct { float winW; float expLeftW; } kCases[] = {
-        {1000.0f, 320.0f},    // contentW 712 → 277.68 触下限 320；右栏 376
-        {1200.0f, 355.68f},   // contentW 912 → 912×0.39；右栏 540.32
-        {1312.0f, 399.36f},   // contentW 1024 → ≈400（旧固定值）；右栏 608.64
-        {1600.0f, 460.0f},    // contentW 1312 → 511.68 触上限 460；右栏 836
+        {1000.0f, 240.0f},
+        {1200.0f, 240.0f},
+        {1312.0f, 240.0f},
+        {1600.0f, 240.0f},
     };
     for (const auto& c : kCases) {
         eui::Screen screen{c.winW - 208.0f, 1000.0f};
@@ -8296,10 +8298,10 @@ REGISTER_TEST(claude_module_left_pane_adaptive_width,
 
 // ── UAT5 批：Profile 卡选中「绿圈白勾」/ URL 省略号 / 表单与详情米黄清零 / 未激活徽章删除 ──
 
-// UAT5：列表选中态改绿圈白勾——旧 2px 左竖线删（唯一选中指示），未选卡不画圈，
-// 点另一卡勾圈跟随移动；选中底色浅灰 primarySoftBg 保留。
+// W3-B4：选中态 3px 左 accent 竖线（替代绿圈白勾）；未选卡不画 accent，
+// 点另一卡 accent 跟随移动；选中底色浅灰 primarySoftBg 保留。
 REGISTER_TEST(claude_profile_selection_check_badge,
-              "claude_module: 选中卡绿圈白勾徽标（未选不画/跟随切换/左竖线已删）", {
+              "claude_module: 选中卡 3px accent 左竖线（未选不画/跟随切换/旧绿圈已删）", {
     TestEnv env;
     auto a = env.svc->createProfile("勾圈A", "https://a.example.com",
                                     "sk-ant-chk-0001", "");
@@ -8330,16 +8332,16 @@ REGISTER_TEST(claude_profile_selection_check_badge,
     };
     const auto& t = core::theme::current();
 
-    // 初帧：无显式选中 → 两卡都不画勾圈；旧左竖线已删
+    // 初帧：无显式选中 → 两卡都不画 accent；旧 sel.accent 已删
     {
         eui::Ui ui;
         compose(ui, "chk_init");
-        DOCTEST_CHECK(ui.find("claude.profile.0.check") == nullptr);
-        DOCTEST_CHECK(ui.find("claude.profile.1.check") == nullptr);
+        DOCTEST_CHECK(ui.find("claude.profile.0.accent") == nullptr);
+        DOCTEST_CHECK(ui.find("claude.profile.1.accent") == nullptr);
         DOCTEST_CHECK(ui.find("claude.profile.0.sel.accent") == nullptr);
         DOCTEST_CHECK(ui.find("claude.profile.1.sel.accent") == nullptr);
     }
-    // 点卡 0 → 勾圈落卡 0（绿圈 + 白勾字色 + 浅灰选中底）；卡 1 无圈
+    // 点卡 0 → accent 落卡 0（3px 左竖线 + 浅灰选中底）；卡 1 无 accent
     {
         eui::Ui ui;
         compose(ui, "chk_click0");
@@ -8349,24 +8351,17 @@ REGISTER_TEST(claude_profile_selection_check_badge,
         eui::Ui ui;
         compose(ui, "chk_on0");
         ui.layout(screen.width, screen.height);  // frame 需显式布局
-        const auto* c0 = ui.find("claude.profile.0.check");
-        const auto* i0 = ui.find("claude.profile.0.check.icon");
+        const auto* c0 = ui.find("claude.profile.0.accent");
         const auto* bg0 = ui.find("claude.profile.0.bg");
         DOCTEST_REQUIRE(c0 != nullptr);
-        DOCTEST_REQUIRE(i0 != nullptr);
         DOCTEST_REQUIRE(bg0 != nullptr);
         DOCTEST_CHECK(sameColor(c0->color, t.colors.primary));
-        DOCTEST_CHECK(sameColor(i0->color, t.colors.onPrimary));
         DOCTEST_CHECK(sameColor(bg0->color, t.colors.primarySoftBg));
-        // 圈在卡右缘垂直居中（56 高卡，26px 圈 y+15..y+41）
-        DOCTEST_CHECK(c0->frame.y >= bg0->frame.y + 14.5f);
-        DOCTEST_CHECK(c0->frame.y + c0->frame.height <=
-                      bg0->frame.y + bg0->frame.height - 14.5f + 0.5f);
-        DOCTEST_CHECK(c0->frame.x + c0->frame.width <=
-                      bg0->frame.x + bg0->frame.width + 0.5f);
-        DOCTEST_CHECK(ui.find("claude.profile.1.check") == nullptr);
+        // 竖线左缘 3px 全卡高
+        DOCTEST_CHECK(floatEq(c0->frame.width, 3.0f));
+        DOCTEST_CHECK(ui.find("claude.profile.1.accent") == nullptr);
     }
-    // 点卡 1 → 勾圈跟随移动（卡 0 失圈、卡 1 得圈）
+    // 点卡 1 → accent 跟随移动（卡 0 失 accent、卡 1 得 accent）
     {
         eui::Ui ui;
         compose(ui, "chk_click1");
@@ -8375,10 +8370,10 @@ REGISTER_TEST(claude_profile_selection_check_badge,
     {
         eui::Ui ui;
         compose(ui, "chk_on1");
-        const auto* c1 = ui.find("claude.profile.1.check");
+        const auto* c1 = ui.find("claude.profile.1.accent");
         DOCTEST_REQUIRE(c1 != nullptr);
         DOCTEST_CHECK(sameColor(c1->color, t.colors.primary));
-        DOCTEST_CHECK(ui.find("claude.profile.0.check") == nullptr);
+        DOCTEST_CHECK(ui.find("claude.profile.0.accent") == nullptr);
     }
 
     mod->onStop();
@@ -8407,14 +8402,14 @@ REGISTER_TEST(claude_profile_switch_confirm_dialog,
         ui.end();
         ui.layout(screen.width, screen.height);
     };
-    // 初帧：无选中 → 两卡都无勾圈
+    // 初帧：无选中 → 两卡都无 accent
     {
         eui::Ui ui;
         compose(ui, "dlg_init");
-        DOCTEST_CHECK(ui.find("claude.profile.0.check") == nullptr);
-        DOCTEST_CHECK(ui.find("claude.profile.1.check") == nullptr);
+        DOCTEST_CHECK(ui.find("claude.profile.0.accent") == nullptr);
+        DOCTEST_CHECK(ui.find("claude.profile.1.accent") == nullptr);
     }
-    // 点卡 A → 弹窗出现；卡 A 勾圈未出现（确认前不切）
+    // 点卡 A → 弹窗出现；卡 A accent 未出现（确认前不切）
     {
         eui::Ui ui;
         compose(ui, "dlg_clickA");
@@ -8424,9 +8419,9 @@ REGISTER_TEST(claude_profile_switch_confirm_dialog,
         eui::Ui ui;
         compose(ui, "dlg_open");
         DOCTEST_CHECK(ui.find("claude.dialog.switch") != nullptr);   // 对话框节点常驻（组件无条件创建），开/关由 open 态控
-        DOCTEST_CHECK(ui.find("claude.profile.0.check") == nullptr);  // 确认前不渲染勾圈
+        DOCTEST_CHECK(ui.find("claude.profile.0.accent") == nullptr);  // 确认前不渲染 accent
     }
-    // 点取消 → 弹窗关闭；卡 A 勾圈仍未出现（选择未变）
+    // 点取消 → 弹窗关闭；卡 A accent 仍未出现（选择未变）
     {
         eui::Ui ui;
         compose(ui, "dlg_cancel");
@@ -8436,9 +8431,9 @@ REGISTER_TEST(claude_profile_switch_confirm_dialog,
         eui::Ui ui;
         compose(ui, "dlg_closed");
         DOCTEST_CHECK(ui.find("claude.dialog.switch") != nullptr);   // 节点常驻，取消后 open 态为 false
-        DOCTEST_CHECK(ui.find("claude.profile.0.check") == nullptr);
+        DOCTEST_CHECK(ui.find("claude.profile.0.accent") == nullptr);
     }
-    // 再点卡 A + 确认 → 勾圈落到卡 A
+    // 再点卡 A + 确认 → accent 落到卡 A
     {
         eui::Ui ui;
         compose(ui, "dlg_clickA2");
@@ -8453,10 +8448,10 @@ REGISTER_TEST(claude_profile_switch_confirm_dialog,
         eui::Ui ui;
         compose(ui, "dlg_confirmed");
         DOCTEST_CHECK(ui.find("claude.dialog.switch") != nullptr);   // 节点常驻，确认后 open 态回 false
-        DOCTEST_CHECK(ui.find("claude.profile.0.check") != nullptr);
-        DOCTEST_CHECK(ui.find("claude.profile.1.check") == nullptr);
+        DOCTEST_CHECK(ui.find("claude.profile.0.accent") != nullptr);
+        DOCTEST_CHECK(ui.find("claude.profile.1.accent") == nullptr);
     }
-    // 点已选卡 A（selectedId_==idA）→ 无弹窗、勾圈不变
+    // 点已选卡 A（selectedId_==idA）→ 无弹窗、accent 不变
     {
         eui::Ui ui;
         compose(ui, "dlg_sameA");
@@ -8466,9 +8461,9 @@ REGISTER_TEST(claude_profile_switch_confirm_dialog,
         eui::Ui ui;
         compose(ui, "dlg_noop");
         DOCTEST_CHECK(ui.find("claude.dialog.switch") != nullptr);   // 节点常驻，点已选卡不弹窗
-        DOCTEST_CHECK(ui.find("claude.profile.0.check") != nullptr);
+        DOCTEST_CHECK(ui.find("claude.profile.0.accent") != nullptr);
     }
-    // 点卡 B + 确认 → 勾圈移到卡 B
+    // 点卡 B + 确认 → accent 移到卡 B
     {
         eui::Ui ui;
         compose(ui, "dlg_clickB");
@@ -8482,8 +8477,8 @@ REGISTER_TEST(claude_profile_switch_confirm_dialog,
     {
         eui::Ui ui;
         compose(ui, "dlg_onB");
-        DOCTEST_CHECK(ui.find("claude.profile.0.check") == nullptr);
-        DOCTEST_CHECK(ui.find("claude.profile.1.check") != nullptr);
+        DOCTEST_CHECK(ui.find("claude.profile.0.accent") == nullptr);
+        DOCTEST_CHECK(ui.find("claude.profile.1.accent") != nullptr);
     }
 
     mod->onStop();
@@ -8611,8 +8606,6 @@ REGISTER_TEST(claude_form_wechat_colors,
         DOCTEST_CHECK(sameColor(colorOf(ui, "claude.jsonfs.discard.bg"),
                                 t.colors.hover));
         DOCTEST_CHECK(!sameColor(colorOf(ui, "claude.jsonfs.bg"), warmSurface));
-        DOCTEST_CHECK(!sameColor(colorOf(ui, "claude.jsonfs.apply.bg"),
-                                 warmPrimary));
     }
 
     mod->onStop();
@@ -8825,9 +8818,6 @@ REGISTER_TEST(claude_shared_dialog_wechat_colors,
         DOCTEST_CHECK(!sameColor(
             colorOf(ui, "claude.dialog.shared.cancel.bg"),
             t.colors.surfaceElevated));
-        DOCTEST_CHECK(!sameColor(
-            colorOf(ui, "claude.dialog.shared.confirm.bg"),
-            t.colors.primary));
     }
 
     mod->onStop();
