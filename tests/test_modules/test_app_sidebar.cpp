@@ -200,11 +200,13 @@ REGISTER_TEST(fluid_background_compose_elements,
     DOCTEST_REQUIRE(driver != nullptr);
     DOCTEST_REQUIRE(driver->onFrame != nullptr);
 
-    // 相位钟只在泵回调推进：0.04（钳内）+ 2.0（钳到 0.1）→ 精确累加 0.14
+    // 相位钟由壁钟驱动（H13 fix）：onFrame 泵仍在树提供帧回调，但相位不依赖 dt 累加
     const float before = app::fluidPhaseSeconds();
     driver->onFrame(0.04f);
     driver->onFrame(2.0f);
-    DOCTEST_CHECK(floatEq(app::fluidPhaseSeconds(), before + 0.14f));
+    const float after = app::fluidPhaseSeconds();
+    DOCTEST_CHECK(after >= before);
+    DOCTEST_CHECK(before > 0.0f);
 
     app::resetFluidBackgroundForTests();  // 复位：进程级状态不还原会污染后续用例
     return true;
@@ -710,10 +712,10 @@ REGISTER_TEST(sidebar_w3_grouping_and_selectionbar,
     DOCTEST_REQUIRE(settingsHit != nullptr);
     DOCTEST_CHECK(floatEq(settingsHit->y, 165.0f));
 
-    // About 在 Settings 之下（y=217 = 173 + itemH40 + gap4）
+    // About 在 Settings 之下（y=209 = 165 + itemH40 + gap4）
     const auto* aboutHit = ui.find("app.sidebar.item.About.hit");
     DOCTEST_REQUIRE(aboutHit != nullptr);
-    DOCTEST_CHECK(floatEq(aboutHit->y, 217.0f));
+    DOCTEST_CHECK(floatEq(aboutHit->y, 209.0f));
 
     // Settings/About 是 inactive，不应有 SelectionBar（W3：active 才叠 SelectionBar）
     DOCTEST_CHECK(ui.find("app.sidebar.item.Settings.sel.bg") == nullptr);
