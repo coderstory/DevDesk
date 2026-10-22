@@ -26,7 +26,8 @@ constexpr float kSelectionBarFontSize = 14.0f;       // S2.5 主文字
 // 节点 id = `<id>.bg`（底色 rect）/ `<id>.accent`（左竖线 rect）/ `<id>.text`（文字），
 // 单测按此定位。
 // spec §4.3 禁止项：红色 / 橙色粗外边框作普通选中态、小对勾标记——本 helper
-// 不加 border / shadow / check，只 2px 绿竖线 + 浅灰底 + 深灰文字。
+// 加 border 描边（H5 白卡 elevation 代 shallow background）但不加 shadow / check，
+// 只 3px 绿竖线 + 白卡 border + 深灰文字。
 void selectionBar(eui::Ui& ui, const std::string& id, const std::string& label,
                   float x, float y, float w, float h,
                   const core::theme::Tokens& t);

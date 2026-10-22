@@ -28,9 +28,9 @@ constexpr float kTitleH = 28.0f;
 constexpr float kDescY = 56.0f;
 constexpr float kDescH = 34.0f;
 constexpr float kSelectAllY = 100.0f;
-constexpr float kSelectAllH = 28.0f;
-// 全选钮带（底 128）与候选列表之间留 12px 呼吸（UAT6：原 4px 太挤）
-constexpr float kListTopY = 140.0f;
+constexpr float kSelectAllH = 40.0f;  // H2：28→40 对齐规格（按钮高度 40px）
+// 全选钮带（底 128→140，H2 钮高 28→40 对齐规格）与候选列表留 8px 间距（UAT6：原 4px 太挤）
+constexpr float kListTopY = 148.0f;
 // UAT6 P 批：行卡高 +12.5%（48→54）、行间 8→14（下边距增大）、整卡行距 56→68
 constexpr float kRowPitch = 68.0f;        // 每条候选占的行高（行卡 54 + 行间 14）
 constexpr float kRowCardH = kRowPitch - 14.0f;  // 行卡高 54px（原 48 +12.5%）
@@ -313,13 +313,13 @@ void drawCcSwitchImportDialog(eui::Ui& ui, const eui::Screen& screen,
                 .position(ui_kit::kDialogInsetX, kSelectAllY)
                 .size(120.0f, kSelectAllH)
                 .text(allSelected ? "取消全选" : "全选")
-                .fontSize(t.sizes.fontSizeSmall)
+                .fontSize(14.0f)  // H2：fontSizeSmall(12)→14 对齐规格（按钮文字 14/600）
                 //（UAT5 米黄清理：surfaceElevated 暖橙 → WeChat Secondary 白底灰边）
                 .colors(t.colors.hover,
                         t.colors.hover,
                         t.colors.hover)
                 .textColor(t.colors.textPrimary)
-                .radius(t.sizes.radiusWeChat)
+                .radius(8.0f)  // H2：radiusWeChat(6)→8 对齐规格（按钮圆角 8）
                 .border(1.0f, t.colors.borderDefault)
                 .onClick([sp = &st]() {
                     const bool anySelected =
