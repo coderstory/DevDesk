@@ -1524,13 +1524,13 @@ REGISTER_TEST(todo_ui_card_text_centered,
                                cardCX) <= 1.0f);
         // UAT6 misc2：卡内水平内边距收紧回归锁——标题框左右各让 28（旧 40），
         // 框宽 = 卡宽 - 56（旧 -80，多显示 ~24px ≈ 1.8 个 CJK 字符）
-        DOCTEST_CHECK_EQ(title->frame.x - surface->frame.x, 28.0f);
-        DOCTEST_CHECK_EQ(title->frame.width, surface->frame.width - 56.0f);
-        // 水平让位（28 = 8 右边距 + 16 角标宽 + 4 间隙）：标题框右缘必须让开完成
-        // 角标区间 [w-24, w-8]（drawCard 的 .done 角标 16px、x = width-24），否则
+        DOCTEST_CHECK_EQ(title->frame.x - surface->frame.x, 12.0f);
+        DOCTEST_CHECK_EQ(title->frame.width, surface->frame.width - 24.0f);
+        // 水平让位（28 = 12 右边距 + 16 角标宽 + 0 间隙）：标题框右缘必须让开完成
+        // 角标区间 [w-28, w-12]（drawCard 的 .done 角标 16px、x = width-28），否则
         // 标题文字压角标
         DOCTEST_CHECK(title->frame.x + title->frame.width <=
-                      surface->frame.x + surface->frame.width - 24.0f);
+                      surface->frame.x + surface->frame.width - 28.0f);
 
         // 垂直：内容组 [顶, 底] 中点 = 卡内容区中心（≤1px）。
         // 组顶 = 标题顶；组底 = chip 底（有 chip 行）或标题底（纯标题卡）
@@ -1543,7 +1543,7 @@ REGISTER_TEST(todo_ui_card_text_centered,
             DOCTEST_CHECK_EQ(chipBg->frame.y - (title->frame.y + title->frame.height),
                              kCardTitleToChipGap);
             // chip 行水平不拽歪：x = 卡左缘 + 10（UAT6 misc2 卡内左内边距 16→10）
-            DOCTEST_CHECK_EQ(chipBg->frame.x - surface->frame.x, 10.0f);
+            DOCTEST_CHECK_EQ(chipBg->frame.x - surface->frame.x, 12.0f);
             groupBottom = chipBg->frame.y + chipBg->frame.height;
         }
         DOCTEST_CHECK(std::abs(((groupTop + groupBottom) / 2.0f) - cardCY) <= 1.0f);
@@ -3348,25 +3348,22 @@ REGISTER_TEST(todo_ui_feature_pure_helpers,
 // 回退任一条即红：把 .prio 色块画回来 → 元素存在断言红；把卡底算式换回
 // 旧 surface 底 → 「无 vs 高 背景色不同」与 tint 取值断言红；把 hover 态
 // 换回中性 token → 三态叠加断言红；调低/调高对比度 → ≥4.5:1 断言红。
-REGISTER_TEST(todo_ui_priority_card_tint,
-              "todo_ui: 优先级直接改卡底色（色块已删 / 三态叠加 / 对比度 ≥ AA）", {
+REGISTER_TEST(todo_ui_priority_card_bar,
+              "todo_ui: 优先级色条替代整卡涂色——白底+左3px色条+Sm阴影（W3-B3 S6.5）", {
     using module::todo::Priority;
     TestEnv env;
     DOCTEST_REQUIRE(env.ready);
-    auto col = env.svc->createColumn("底色列");
+    auto col = env.svc->createColumn("色条列");
     DOCTEST_REQUIRE(col.isOk());
     const Priority kOrder[4] = {Priority::None, Priority::Low, Priority::Medium,
                                 Priority::High};
     for (int i = 0; i < 4; ++i) {
-        auto a = env.svc->createTask(col.value().id, "底色卡" + std::to_string(i));
+        auto a = env.svc->createTask(col.value().id, "色条卡" + std::to_string(i));
         DOCTEST_REQUIRE(a.isOk());
         module::todo::Task t2 = a.value();
         t2.priority = kOrder[i];
         DOCTEST_REQUIRE(env.svc->updateTask(t2).isOk());
     }
-    // 期望值独立写死在用例里（不引用被测常量表）：改强度表/色源即红。
-    // UAT2 D批：WeChat 板色源 + 强度 {0.20,0.40,0.50,0.55}；卡底 None 档不经强度表（列色淡染/原底）→ 取 0
-    const float kStrength[4] = {0.00f, 0.40f, 0.50f, 0.55f};
 
     std::unique_ptr<::core::Module> mod(create_todo_module());
     mod->onStart();
@@ -3374,108 +3371,95 @@ REGISTER_TEST(todo_ui_priority_card_tint,
     frame.ui.layout(1600.0f, 1000.0f);
     const auto& t = core::theme::current();
 
-    // 判据 a：优先级色块元素已不存在（元素 id 查不到）
+    // 判据 a：四张卡背景全是白色（surface），不再按优先级整卡涂色
+    for (int i = 0; i < 4; ++i) {
+        const std::string cid = "todo.col.4.card." + std::to_string(i);
+        const auto* bg = frame.ui.find(cid + ".bg");
+        DOCTEST_REQUIRE(bg != nullptr);
+        // 卡底纯白
+        DOCTEST_CHECK(colorNear(bg->color, t.colors.surface));
+        // hover/active 也不再混 priority tint——三态统一白底
+        DOCTEST_CHECK(colorNear(bg->hoverColor, t.colors.surface));
+        DOCTEST_CHECK(colorNear(bg->pressedColor, t.colors.surface));
+        // Sm 阴影已附着（shadow 字段非空 / blur > 0）
+        DOCTEST_CHECK(bg->shadow.enabled);
+        // 圆角 8px
+        DOCTEST_CHECK_EQ(bg->radius, 8.0f);
+    }
+
+    // 判据 b：旧优先级色块/竖线已不存在（整卡涂色退役 + selbar 退役）
     for (int i = 0; i < 4; ++i) {
         const std::string cid = "todo.col.4.card." + std::to_string(i);
         DOCTEST_CHECK(frame.ui.find(cid + ".prio.bg") == nullptr);
         DOCTEST_CHECK(frame.ui.find(cid + ".prio.text") == nullptr);
         DOCTEST_CHECK(frame.ui.find(cid + ".bar") == nullptr);
+        DOCTEST_CHECK(frame.ui.find(cid + ".selbar") == nullptr);
+        DOCTEST_CHECK(frame.ui.find(cid + ".overduebar") == nullptr);
     }
 
-    const auto* noneBg = frame.ui.find("todo.col.4.card.0.bg");
-    const auto* lowBg = frame.ui.find("todo.col.4.card.1.bg");
-    const auto* midBg = frame.ui.find("todo.col.4.card.2.bg");
-    const auto* highBg = frame.ui.find("todo.col.4.card.3.bg");
-    DOCTEST_REQUIRE(noneBg != nullptr);
-    DOCTEST_REQUIRE(lowBg != nullptr);
-    DOCTEST_REQUIRE(midBg != nullptr);
-    DOCTEST_REQUIRE(highBg != nullptr);
-
-    // 判据 b：底色 = 卡三态基色 × 强度表的 tint（D批后非选中卡底 = surface 白；None 档强度 0 = 原底）
-    const eui::Color kPrio[4] = {t.colors.textTertiary, t.colors.primary,
-                                 t.colors.info, t.colors.error};
-    const core::dsl::Element* cards[4] = {noneBg, lowBg, midBg, highBg};
+    // 判据 c：左 3px 优先级色条存在且颜色正确
+    // priorityColor 色表（W3-B3）：None=textTertiary Low=primary Medium=warning High=error
+    const eui::Color kExpectBarColor[4] = {
+        t.colors.textTertiary,  // None 中性灰
+        t.colors.primary,       // Low 绿 #36D399
+        t.colors.warning,       // Medium 橙 #F59E0B（W3-B3 从 info 蓝改为 warning 橙）
+        t.colors.error,         // High 红 #EF4444
+    };
     for (int i = 0; i < 4; ++i) {
-        DOCTEST_CHECK(colorNear(
-            cards[i]->color,
-            eui::mixColor(t.colors.surface, kPrio[i], kStrength[i])));
+        const std::string cid = "todo.col.4.card." + std::to_string(i);
+        const auto* bar = frame.ui.find(cid + ".priobar");
+        DOCTEST_REQUIRE(bar != nullptr);
+        // 色条 3px 宽、卡高
+        DOCTEST_CHECK_EQ(bar->frame.width, 3.0f);
+        DOCTEST_CHECK_EQ(bar->frame.height, module::todo::ui::kCardHeight);
+        // 颜色与优先级色表一致
+        DOCTEST_CHECK(colorNear(bar->color, kExpectBarColor[i]));
     }
-    // 判据 b'：无优先级卡与高优先级卡背景色不同（用户原始判据 1）
-    DOCTEST_CHECK(!colorNear(noneBg->color, highBg->color, 0.01f));
-    // 判据 b'：四档两两不同（含 None ↔ Low：None 白底 vs 低优先级绿）
+    // 判据 c'：四档色条颜色两两不同
     for (int i = 0; i < 4; ++i) {
+        const std::string ci = "todo.col.4.card." + std::to_string(i);
+        const auto* bi = frame.ui.find(ci + ".priobar");
         for (int j = i + 1; j < 4; ++j) {
-            DOCTEST_CHECK(maxChannelDelta(cards[i]->color, cards[j]->color) >
-                          0.02f);
+            const std::string cj = "todo.col.4.card." + std::to_string(j);
+            const auto* bj = frame.ui.find(cj + ".priobar");
+            DOCTEST_CHECK(!colorNear(bi->color, bj->color, 0.01f));
         }
     }
-    // 判据 b'：低优先级仍不刺眼 / 高优先级看得出（参照系 = 卡基底 surface，D批米黄迁移后不再对 surface）。
-    // UAT2 D批第三轮提强度（用户「颜色淡灰蒙蒙」，覆盖 2026-10-13 鲜艳轮阈值）：Low 0.40 绿 tint
-    // 距白底 ~99/255，'不刺眼'上限 72→120/255；High 0.55 红 tint ~96/255，'看得出'下限 45→80/255
-    DOCTEST_CHECK(maxChannelDelta(lowBg->color, t.colors.surface) <= 120.0f / 255.0f);
-    DOCTEST_CHECK(maxChannelDelta(highBg->color, t.colors.surface) >= 80.0f / 255.0f);
 
-    // 判据 c：hover / active 与优先级底色**叠加**（不被中性态色顶掉），
-    // 且仍与 base 不同（既有 hover 反馈没被底色覆盖）
-    for (int i = 0; i < 4; ++i) {
-        DOCTEST_CHECK(colorNear(
-            cards[i]->hoverColor,
-            eui::mixColor(t.colors.hover, kPrio[i], kStrength[i])));
-        DOCTEST_CHECK(colorNear(
-            cards[i]->pressedColor,
-            eui::mixColor(t.colors.primarySoftBg, kPrio[i], kStrength[i])));
-        DOCTEST_CHECK(maxChannelDelta(cards[i]->hoverColor, cards[i]->color) >
-                      0.02f);
-    }
-    // 判据 c'：选中态不再走粗边框（§4.3 移除原红色粗边框）；选中 = 左竖线 + 浅灰底
-    DOCTEST_CHECK_EQ(noneBg->border.width, 1.0f);
-    DOCTEST_CHECK(colorNear(highBg->border.color, t.colors.borderDefault));
+    // 判据 d：选中态——点击卡后色条仍存在、底色仍白（无 selbar、无旧底色 tint 回归）
     {
         Frame f2(mod.get());
         const auto* card = f2.ui.find("todo.col.4.card.3.bg");
         DOCTEST_REQUIRE(card != nullptr);
         DOCTEST_REQUIRE(card->onClick != nullptr);
-        card->onClick();  // 选中高优先级卡（下一帧看选中态）
+        card->onClick();  // 选中高优先级卡
         Frame f3(mod.get());
-        const auto* sel = f3.ui.find("todo.col.4.card.3.bg");
-        DOCTEST_REQUIRE(sel != nullptr);
-        // 选中态边框 = 统一 1px 分割线（不再 2px primary）
-        DOCTEST_CHECK_EQ(sel->border.width, 1.0f);
-        DOCTEST_CHECK(colorNear(sel->border.color, t.colors.borderDefault));
-        // 选中态左竖线存在（§4.3 2px 微信绿竖线）
-        DOCTEST_CHECK(f3.ui.find("todo.col.4.card.3.selbar") != nullptr);
-        // 选中态底色 = primarySoftBg 基底 + 优先级 tint（底色与优先级两通道独立）
-        DOCTEST_CHECK(colorNear(
-            sel->color,
-            eui::mixColor(t.colors.primarySoftBg, t.colors.error, 0.55f)));
+        const auto* selBg = f3.ui.find("todo.col.4.card.3.bg");
+        DOCTEST_REQUIRE(selBg != nullptr);
+        // 选中态边框 = 统一 1px 分割线
+        DOCTEST_CHECK_EQ(selBg->border.width, 1.0f);
+        DOCTEST_CHECK(colorNear(selBg->border.color, t.colors.borderDefault));
+        // 选中态底色仍白（不再走 primarySoftBg + priority tint）
+        DOCTEST_CHECK(colorNear(selBg->color, t.colors.surface));
+        // 优先级色条仍在
+        DOCTEST_CHECK(f3.ui.find("todo.col.4.card.3.priobar") != nullptr);
+        // 旧选中左竖线已退役
+        DOCTEST_CHECK(f3.ui.find("todo.col.4.card.3.selbar") == nullptr);
     }
 
-    // 判据 d：底色改了，卡片文字对比度不掉（WCAG AA 4.5:1）——挪至浅色段判定：
-    // 卡底迁 surface 后深色下为浅值（D-04 dark-WeChat 延后，同深色扫描 todo.* 例外），
-    // 深色 textPrimary 同浅，对比度只在浅色（wechat 浅值即设计值）下成立
-    // 浅色主题复查（默认深色）：card.3 仍选中（模块态跨帧），底色走 primarySoftBg 基底
+    // 判据 e：浅色主题 WCAG — 白底上文字对比度达标
     ::core::theme::setLight();
     const auto& tl = core::theme::current();
     Frame light(mod.get());
     light.ui.layout(1600.0f, 1000.0f);
-    const core::dsl::Element* lCards[4] = {};
     for (int i = 0; i < 4; ++i) {
-        lCards[i] = light.ui.find("todo.col.4.card." + std::to_string(i) + ".bg");
-        DOCTEST_REQUIRE(lCards[i] != nullptr);
+        const auto* bg = light.ui.find("todo.col.4.card." + std::to_string(i) + ".bg");
+        DOCTEST_REQUIRE(bg != nullptr);
+        // 四档全白底，textPrimary 对比度 ≥ 4.5:1
+        DOCTEST_CHECK(colorNear(bg->color, tl.colors.surface));
+        DOCTEST_CHECK(contrastRatio(bg->color, tl.colors.textPrimary) >= 4.5f);
     }
-    const auto* lNone = lCards[0];
-    const auto* lHigh = lCards[3];
-    DOCTEST_CHECK(colorNear(lNone->color, tl.colors.surface));
-    // card.3 选中：底色 = primarySoftBg + error tint 0.55（非 surface，因选中态 cardBase 换 primarySoftBg）
-    DOCTEST_CHECK(colorNear(
-        lHigh->color,
-        eui::mixColor(tl.colors.primarySoftBg, tl.colors.error, 0.55f)));
-    DOCTEST_CHECK(!colorNear(lNone->color, lHigh->color, 0.01f));
-    // 判据 d（浅色下四档全查）：WCAG AA 4.5:1
-    for (int i = 0; i < 4; ++i) {
-        DOCTEST_CHECK(contrastRatio(lCards[i]->color, tl.colors.textPrimary) >= 4.5f);
-    }
-    ::core::theme::setDark();  // 恢复默认（本用例前提 = 深色，防污染后续用例）
+    ::core::theme::setDark();  // 恢复默认
 
     mod->onStop();
     return true;
@@ -5473,9 +5457,9 @@ REGISTER_TEST(todo_archive_tasks_in_column_sort,
     return true;
 })
 
-// UAT3 反馈：归档卡标题文字用黑色，不再灰色（透明度压暗保留区分）
+// S3.3#3: 归档卡标题文字色 = textSecondary 二级文字 #4B5563
 REGISTER_TEST(todo_ui_archive_card_title_color,
-              "todo_ui: 归档卡标题文字色 = textPrimary（黑，非灰）", {
+              "todo_ui: 归档卡标题文字色 = textSecondary（S3.3#3 二级文字 #4B5563）", {
     TestEnv env;
     DOCTEST_REQUIRE(env.ready);
     // 从种子列里找到归档列：kind == "archive"
@@ -5497,11 +5481,11 @@ REGISTER_TEST(todo_ui_archive_card_title_color,
     DOCTEST_REQUIRE(el != nullptr);
     const auto& tm = core::theme::current();
     // eui::Color 无 operator==：整色 CHECK_EQ 不可编译；text 元素颜色走 textColor 字段，
-    // 非 color（color 是 rect 的 bg），expect 归档标题 = textPrimary #1A1A1A
-    DOCTEST_CHECK_EQ(el->textColor.r, tm.colors.textPrimary.r);
-    DOCTEST_CHECK_EQ(el->textColor.g, tm.colors.textPrimary.g);
-    DOCTEST_CHECK_EQ(el->textColor.b, tm.colors.textPrimary.b);
-    DOCTEST_CHECK_EQ(el->textColor.a, tm.colors.textPrimary.a);
+    // 非 color（color 是 rect 的 bg），expect 归档标题 = textSecondary #4B5563
+    DOCTEST_CHECK_EQ(el->textColor.r, tm.colors.textSecondary.r);
+    DOCTEST_CHECK_EQ(el->textColor.g, tm.colors.textSecondary.g);
+    DOCTEST_CHECK_EQ(el->textColor.b, tm.colors.textSecondary.b);
+    DOCTEST_CHECK_EQ(el->textColor.a, tm.colors.textSecondary.a);
     mod->onStop();
     return true;
 })
