@@ -1753,20 +1753,22 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                 .alignItems(eui::Align::CENTER)
                 .content([&] {
                     ui.text("agent.title")
-                        .size(contentW - kNewTaskBtnW - kDialogGap, 32.0f)
+                        .size(tasks_.empty() ? contentW : (contentW - kNewTaskBtnW - kDialogGap), 32.0f)
                         .text("智能体")
                         .fontSize(t.sizes.fontSizeTitle)
                         .lineHeight(32.0f)
                         .fontWeight(700)
                         .color(t.colors.textPrimary)
                         .build();
-                    components::button(ui, "agent.page.newTask")
-                        .size(kNewTaskBtnW, 40.0f)
-                        .text("+ 新建任务")
-                        .theme(themeTokens)
-                        .disabled(store_ == nullptr)
-                        .onClick([this] { openNewTaskDialog(); })
-                        .build();
+                    if (!tasks_.empty()) {
+                        components::button(ui, "agent.page.newTask")
+                            .size(kNewTaskBtnW, 40.0f)
+                            .text("+ 新建任务")
+                            .theme(themeTokens)
+                            .disabled(store_ == nullptr)
+                            .onClick([this] { openNewTaskDialog(); })
+                            .build();
+                    }
                 })
                 .build();
 
@@ -2006,7 +2008,7 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                                     .build();
                                 inner.text("agent.empty.btn")
                                     .size(chipW, chipH)
-                                    .text("新建任务")
+                                    .text("创建第一个任务")
                                     .fontSize(14.0f)
                                     .lineHeight(40.0f)
                                     .fontWeight(600)

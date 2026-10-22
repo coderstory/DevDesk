@@ -302,9 +302,9 @@ REGISTER_TEST(agent_ui_compose_skeleton,
     DOCTEST_REQUIRE(title != nullptr);
     DOCTEST_CHECK_EQ(title->text, std::string("智能体"));
 
-    // 「+ 新建任务」是唯一的新建通道
-    DOCTEST_CHECK(ui.find("agent.page.newTask") != nullptr);
-    DOCTEST_CHECK(ui.find("agent.page.newTask.bg") != nullptr);
+    // 「+ 新建任务」：空库时隐藏（只留空态引导 CTA「创建第一个任务」）
+    DOCTEST_CHECK(ui.find("agent.page.newTask") == nullptr);
+    DOCTEST_CHECK(ui.find("agent.page.newTask.bg") == nullptr);
 
     // 旧页内新建表单 / 编辑表单节点全部不存在（骨架契约）
     DOCTEST_CHECK(ui.find("agent.form") == nullptr);

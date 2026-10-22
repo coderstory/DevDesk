@@ -598,13 +598,12 @@ public:
                                 .content([&] {
                                     const float wrapW = contentW - 32.0f;
                                     if (!range.hasData) {
-                                        // S2.8 空状态：图标 + 标题 + 说明 + 操作按钮（垂直居中排列）
+                                        // S2.8 空状态：图标 + 标题 + 说明（垂直居中排列，无按钮）
                                         const float iconH = 48.0f;
                                         const float gap = 8.0f;
                                         const float titleH = 22.0f;
                                         const float descH = 18.0f;
-                                        const float btnH = 40.0f;
-                                        const float totalH = iconH + gap + titleH + gap + descH + gap + btnH;
+                                        const float totalH = iconH + gap + titleH + gap + descH;
                                         const float startY = (chartWrapH - totalH) * 0.5f;
                                         float cy = startY;
 
@@ -620,7 +619,7 @@ public:
                                         ui.text("home.api.chart.empty.title")
                                             .position(0.0f, cy)
                                             .size(wrapW, titleH)
-                                            .text("暂无数据")
+                                            .text("今日暂无 API 调用")
                                             .fontSize(t.sizes.fontSizeWeChat)  // 16px
                                             .lineHeight(titleH)
                                             .fontWeight(600)
@@ -632,35 +631,11 @@ public:
                                         ui.text("home.api.chart.empty.desc")
                                             .position(0.0f, cy)
                                             .size(wrapW, descH)
-                                            .text("执行智能任务后查看用量分布")
+                                            .text("启动 Claude 代理后将展示用量统计")
                                             .fontSize(t.sizes.fontSizeSmall)  // 12px
                                             .lineHeight(descH)
                                             .horizontalAlign(eui::HorizontalAlign::Center)
                                             .color(t.colors.textTertiary)
-                                            .build();
-                                        cy += descH + gap;
-
-                                        // 按钮居中：row 包 button stack 实现水平居中
-                                        ui.row("home.api.chart.empty.btnwrap")
-                                            .size(wrapW, btnH)
-                                            .justifyContent(eui::Align::CENTER)
-                                            .content([&] {
-                                                components::button(ui, "home.api.chart.empty.btn")
-                                                    .size(160.0f, btnH)
-                                                    .text("  新建智能任务")
-                                                    .icon(0xF067)  // fa-plus
-                                                    .fontSize(t.sizes.fontSizeBody)
-                                                    .colors(t.colors.primary,
-                                                            t.colors.primaryHover,
-                                                            t.colors.primaryPressed)
-                                                    .textColor(t.colors.onPrimary)
-                                                    .iconColor(t.colors.onPrimary)
-                                                    .radius(t.sizes.radius)
-                                                    .onClick([this] {
-                                                        navigateTo(::core::PageId::Agent, "action:new_task");
-                                                    })
-                                                    .build();
-                                            })
                                             .build();
                                     } else {
                                         // 柱体容器（id 沿用组件根 id：probe 与单测按 home.api.chart.bars.* 定位）。
