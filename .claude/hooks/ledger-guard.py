@@ -72,13 +72,17 @@ def _check_statuses(lines):
         m = LINE_PATTERN.match(ln)
         if not m:
             continue
-        parts = ln.split("|")
-        if len(parts) < 6:
-            errors.append(f"行{i}: 列数不足，无法取状态格")
-            continue
-        status = parts[4].strip()
-        if status not in VALID_STATUSES:
-            errors.append(f"行{i}: 非法状态值「{status}」")
+        row_id = m.group(1)
+        found = False
+        for cell in ln.split("|")[1:]:  # 跳过行首空串, 余下各格逐个扫
+            stripped = cell.strip()
+            if not stripped:
+                continue
+            if any(stripped.startswith(marker) for marker in VALID_STATUSES):
+                found = True
+                break
+        if not found:
+            errors.append(f"行{i}({row_id}): 无有效状态标记")
     return errors
 
 
