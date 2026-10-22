@@ -1097,8 +1097,9 @@ REGISTER_TEST(uiAboutLayout,
         DOCTEST_CHECK_MESSAGE(nearPx(cbg->frame.height, cardH), px("about.card.bg.h", cbg));
         DOCTEST_CHECK(cbg->frame.y + cbg->frame.height + kFooterGap <= footerY);
     }
-    // about.card 堆栈已移除，verify 对 about.card 的查找返回 nullptr
-    { DOCTEST_CHECK(ui.find("about.card") == nullptr); }
+    // W3-B1 组件化改造后 about.card 堆栈回归（components::card），bg 为其子层；
+    // UAT6 去双层嵌套的说法已过时——只反证 Logo 时代残留 icon/title 元素不存在
+    { DOCTEST_CHECK(ui.find("about.card") != nullptr); }
     // W3.5 H7: Logo 行已删除，icon/title 元素不再存在
     {
         DOCTEST_CHECK(ui.find("about.card.icon") == nullptr);
