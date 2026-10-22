@@ -576,43 +576,57 @@ REGISTER_TEST(github_sync_card_disabled_state,
     return true;
 })
 
-// 方案 A：错误不再占独立行 + 「详情」小按钮——错误摘要上收头部摘要行（红字、
-// 可点），点头部标题/错误行 = 打开既有 git_error_dialog；状态点变红。
+// H1 修复：错误不再上收头部可点摘要，改为页内警示条（Warning 色 + 警告图标）+
+//「查看详情」文字链接；标题不再可点。点「查看详情」才开弹窗。
 REGISTER_TEST(github_sync_card_error_row_and_header_click,
-              "github_sync 卡片: 错误摘要上收头部（点标题/错误行开详情）+ 状态点变红（带无错误对照）", {
+              "github_sync 卡片: 错误摘要→警示条（Warning色+图标+查看详情链接，标题不可点）+ 无错误对照", {
     CardFixture fx;
     fx.in.githubSyncError = "网络不可达：api.github.com";
     test_support::HeadlessFrame f("githubsynccarderr");
     DOCTEST_CHECK(f.frame([&](eui::Ui& ui) {
         fx.draw(ui);
+        // 错误文本存在，但不挂 onClick（入口已移到 .error.detail）
         const auto* err = ui.find(std::string(kCardId) + ".error");
         DOCTEST_REQUIRE(err != nullptr);
         DOCTEST_CHECK(err->text.find("网络不可达") != std::string::npos);
-        DOCTEST_REQUIRE(err->onClick != nullptr);
-        err->onClick();   // 点错误行 = 开详情
-        // 点头部标题同款开详情
+        DOCTEST_CHECK_MESSAGE(err->onClick == nullptr,
+                              "错误文本不应挂 onClick（入口在 .error.detail）");
+        // 警告图标存在
+        const auto* errIcon = ui.find(std::string(kCardId) + ".error.icon");
+        DOCTEST_REQUIRE(errIcon != nullptr);
+        DOCTEST_CHECK(colorEq(errIcon->color,
+                              core::theme::current().colors.warning));
+        //「查看详情」——唯一弹窗入口
+        const auto* detail = ui.find(std::string(kCardId) + ".error.detail");
+        DOCTEST_REQUIRE(detail != nullptr);
+        DOCTEST_CHECK_EQ(detail->text, std::string("查看详情"));
+        DOCTEST_REQUIRE(detail->onClick != nullptr);
+        detail->onClick();
+        // 标题不可点（H1：入口已移入「查看详情」）
         const auto* title = ui.find(std::string(kCardId) + ".title");
         DOCTEST_REQUIRE(title != nullptr);
-        DOCTEST_REQUIRE(title->onClick != nullptr);
-        title->onClick();
-        // 错误态：状态点变红（error）
+        DOCTEST_CHECK_MESSAGE(title->onClick == nullptr,
+                              "标题不应挂 onClick（H1）");
+        // 错误态：状态点闪红（不变——点仍是紧凑态指示器）
         const auto* dot = ui.find(std::string(kCardId) + ".dot");
         DOCTEST_REQUIRE(dot != nullptr);
         DOCTEST_CHECK(colorEq(dot->color,
                               core::theme::current().colors.error));
-        // 旧「详情」小按钮已废（点击头部/错误行替代）
+        // 旧「详情」小按钮已废
         DOCTEST_CHECK(ui.find(std::string(kCardId) + ".btn.detail.bg") ==
                       nullptr);
         return true;
     }));
-    DOCTEST_CHECK_EQ(fx.detailClicks, 2);
+    DOCTEST_CHECK_EQ(fx.detailClicks, 1);
 
-    // 对照组：无错误 → 错误行不在、标题不可点、状态点回主色、摘要行在
+    // 对照组：无错误 → 错误行/图标/查看详情都不在、标题不可点、状态点回主色、摘要行在
     CardFixture clean;
     test_support::HeadlessFrame fc("githubsynccardclean");
     DOCTEST_CHECK(fc.frame([&](eui::Ui& ui) {
         clean.draw(ui);
         DOCTEST_CHECK(ui.find(std::string(kCardId) + ".error") == nullptr);
+        DOCTEST_CHECK(ui.find(std::string(kCardId) + ".error.icon") == nullptr);
+        DOCTEST_CHECK(ui.find(std::string(kCardId) + ".error.detail") == nullptr);
         const auto* title = ui.find(std::string(kCardId) + ".title");
         DOCTEST_REQUIRE(title != nullptr);
         DOCTEST_CHECK(title->onClick == nullptr);

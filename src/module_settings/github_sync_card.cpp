@@ -174,8 +174,8 @@ void drawGithubSyncCard(const CardDrawArgs& args) {
             .radius(kDotSize * 0.5f)
             .build();
 
-        // 标题行（~15px 加粗，状态后缀随启用态）。错误时点击头部 = 打开
-        // 既有 git_error_dialog（弹窗本身不动）；无错误时不挂 onClick。
+        // 标题行（~15px 加粗，状态后缀随启用态）。不挂 onClick——
+        // H1: 错误详情入口已移入摘要行的「查看详情」，标题不再双击即弹。
         {
             auto title = ui.text(id + ".title")
                 .position(textL, y0)
@@ -186,27 +186,48 @@ void drawGithubSyncCard(const CardDrawArgs& args) {
                 .lineHeight(titleH)
                 .fontWeight(600)
                 .color(t.colors.textPrimary);
-            if (hasError) {
-                title.onClick([f = a.githubSyncShowErrorDetail] { f(); });
-            }
             title.build();
         }
 
-        // 摘要行（muted）：错误一行红字优先（可点，同标题）；否则上次同步状态
-        //（沿用既有 status 数据源）；都空 → 披露文案兜底（见上方披露注释）。
+        // 摘要行（muted）：错误一行优先——Warning 色+图标警示条 +「查看详情」可点；
+        // 否则上次同步状态（沿用既有 status 数据源）；都空 → 披露文案兜底。
         const float summaryY = y0 + titleH + roundFs(kSummaryGapY);
         const float summaryW = w - textL - kCardPaddingX;
         if (hasError) {
+            // H1: 页内警示条——警告图标 + 黄字错误摘要 +「查看详情」文字链接
+            const float detailW = roundFs(56.0f);     // "查看详情" 宽度
+            const float iconW = roundFs(14.0f);       // 警告图标宽
+            const float iconGap = 3.0f;                // 图标与文本间距
+            const float errTextW = std::max(0.0f, summaryW - iconW - iconGap - detailW - 4.0f);
+            // 警告图标（fa-triangle-exclamation，Warning 色 #F59E0B）
+            ui.text(id + ".error.icon")
+                .position(textL, summaryY + (mutedH - 12.0f) * 0.5f)
+                .size(iconW, 12.0f)
+                .icon(0xF071)
+                .fontSize(fs(12.0f))
+                .color(t.colors.warning)
+                .build();
+            // 错误摘要文本（Warning 色）
             ui.text(id + ".error")
-                .position(textL, summaryY)
-                .size(summaryW, mutedH)
+                .position(textL + iconW + iconGap, summaryY)
+                .size(errTextW, mutedH)
                 .text(in.githubSyncError)
                 .fontSize(fs(12.0f))
                 .lineHeight(mutedH)
-                .color(t.colors.error)
-                .maxWidth(summaryW)
+                .color(t.colors.warning)
+                .maxWidth(errTextW)
                 .overflow(core::TextOverflow::Ellipsis)
                 .clip()
+                .build();
+            //「查看详情」——唯一弹窗入口
+            ui.text(id + ".error.detail")
+                .position(textL + iconW + iconGap + errTextW + roundFs(4.0f), summaryY)
+                .size(detailW, mutedH)
+                .text("查看详情")
+                .fontSize(fs(12.0f))
+                .lineHeight(mutedH)
+                .fontWeight(500)
+                .color(t.colors.primary)
                 .onClick([f = a.githubSyncShowErrorDetail] { f(); })
                 .build();
         } else {
