@@ -351,7 +351,7 @@ REGISTER_TEST(agent_ui_db_import_reloads_tasks,
 
     eui::Ui ui;
     composeTo(ui, mod, kScreen, "agent_ui_dbimport1");
-    DOCTEST_REQUIRE(ui.find("agent.empty") != nullptr);   // 空库空态
+    DOCTEST_REQUIRE(ui.find("agent.empty.title") != nullptr);   // 空库空态 S2.8
     DOCTEST_CHECK(!mod.dbImportedDirtyForTest());
 
     // 模拟远端库导入：库里多出一条任务，但**不发任何事件**（缓存应保持旧值）
@@ -2134,9 +2134,10 @@ REGISTER_TEST(agent_ui_tools_section_toggle,
     const auto* name4 = ui2.find("agent.tools.card.4.name");
     DOCTEST_REQUIRE(name4 != nullptr);
     DOCTEST_CHECK_EQ(name4->text, std::string("net.fetch"));
-    const auto* params0 = ui2.find("agent.tools.card.0.params");
-    DOCTEST_REQUIRE(params0 != nullptr);
-    DOCTEST_CHECK(params0->text.find("参数：") != std::string::npos);
+    // 参数文字已并入 desc（双行布局：行 1=名称，行 2=描述+参数）
+    const auto* desc0 = ui2.find("agent.tools.card.0.desc");
+    DOCTEST_REQUIRE(desc0 != nullptr);
+    DOCTEST_CHECK(desc0->text.find("参数：") != std::string::npos);
 
     const auto* header2 = ui2.find("agent.tools.header");
     DOCTEST_REQUIRE(header2 != nullptr && header2->onClick != nullptr);
@@ -5418,13 +5419,13 @@ REGISTER_TEST(agent_ui_task_list_status_visuals,
     DOCTEST_REQUIRE(idleTitle != nullptr);
     DOCTEST_CHECK(idleTitle->textColor.a > 0.9f);
 
-    // ---- UAT6 卡片化几何/背景（用户真机反馈：item 卡片展示 + 四边内边距）----
-    // 列表容器收敛为 background 灰面板——白底让给 item 卡；防「整区白面板」回潮
+    // ---- S6.1 实底白卡几何/背景（玻璃退役）----
+    // 列表容器收敛为 surface 白底面板
     const auto& themeNow = core::theme::current();
     const auto* panel = ui.find("agent.tasklist.panel");
     DOCTEST_REQUIRE(panel != nullptr);
-    DOCTEST_CHECK_MESSAGE(sameColor(panel->color, themeNow.colors.background),
-                          "列表容器应为 background 灰面板（白底已让给 item 卡）");
+    DOCTEST_CHECK_MESSAGE(sameColor(panel->color, themeNow.colors.surface),
+                          "列表容器应为 surface 白底面板");
     // 卡列表在面板内四边留边 10（kTaskCardInset；卡宽 = 列表宽 − 边距）
     const auto* tasklist = ui.find("agent.tasklist");
     DOCTEST_REQUIRE(tasklist != nullptr);
@@ -5437,7 +5438,7 @@ REGISTER_TEST(agent_ui_task_list_status_visuals,
         "卡列表应比面板窄 2×10（弹性契约：卡宽=列表宽−边距）");
 
     // 卡本体三态：normal surface 白卡 / hover 加深 hover / pressed
-    // primarySoftBg（列表无选中语义，第三档只是按压反馈，无绿圈白勾）+ 微信圆角
+    // primarySoftBg（列表无选中语义，第三档只是按压反馈，无绿圈白勾）+ radius 圆角
     // + 细边 + 点击开详情
     const auto* rowBg = ui.find("agent.task." + idleTid + ".bg");
     DOCTEST_REQUIRE(rowBg != nullptr);
@@ -5450,8 +5451,8 @@ REGISTER_TEST(agent_ui_task_list_status_visuals,
     DOCTEST_CHECK_MESSAGE(
         sameColor(rowBg->pressedColor, themeNow.colors.primarySoftBg),
         "卡按压档应为 primarySoftBg");
-    DOCTEST_CHECK_MESSAGE(nearPx(rowBg->radius, themeNow.sizes.radiusWeChat),
-                          "卡圆角应为 radiusWeChat");
+    DOCTEST_CHECK_MESSAGE(nearPx(rowBg->radius, themeNow.sizes.radius),
+                          "卡圆角应为 radius (8px)");
     DOCTEST_CHECK_MESSAGE(nearPx(rowBg->border.width, 1.0f) &&
                               sameColor(rowBg->border.color,
                                         themeNow.colors.borderDefault),
