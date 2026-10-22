@@ -64,15 +64,8 @@ public:
         const std::time_t now = std::time(nullptr);   // 调用时间列「今天/昨天」判定
         const float headerH = ui_kit::kHeaderH;
         const float gap = t.sizes.spacingLarge;
-        // UAT4 布局自适应：左栏随窗宽按比例伸缩（替代固定 400——最小窗 1000 下
-        // contentW=712、右栏仅剩 296 太窄，默认窗起右栏也不随窗宽变）。
-        // 0.39 = 400/1024：默认窗 1312（contentW=1024）下左栏 ≈400、右栏 ≈608，
-        // 与旧固定值几何等价（默认窗零回归）；比例保证其余档位随窗宽伸缩。
-        // 下限 320：Profile 卡（leftW-40 内容宽）与底部三键下限；最小窗 1000 下
-        // 右栏 = 712-320-16 = 376 ≥ 350（审计口径），三键 ≈85 仍可点（UAT5 文案
-        // 缩短「从 CC 导入」后原 ≤1200 窗轻裁切消失，最长键不裁）。
-        // 上限 460：列表超宽无增益，余宽全给右栏（1600 窗右栏 836）。
-        const float leftW = std::clamp(contentW * 0.39f, 320.0f, 460.0f);
+        // S3.4 左栏固定 240px，右栏 flex 自适应。
+        const float leftW = 240.0f;
         const float rightW = contentW - leftW - gap;
 
         // 读真实状态（ClaudeService 全局单例，由 main.cpp 注册）
