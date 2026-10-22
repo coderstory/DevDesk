@@ -3800,16 +3800,16 @@ REGISTER_TEST(claude_ui_json_fullscreen_enter_cover_and_esc,
         DOCTEST_CHECK(ui.find("claude.jsonfs.format.bg") != nullptr);
         const auto* saveBtn = ui.find("claude.jsonfs.apply.bg");
         DOCTEST_REQUIRE(saveBtn != nullptr);
-        const auto* saveText = ui.find("claude.jsonfs.apply.text");
+        const auto* saveText = ui.find("claude.jsonfs.apply.text.normal");
         DOCTEST_REQUIRE(saveText != nullptr);
         DOCTEST_CHECK_EQ(saveText->text, std::string("保存"));
         const auto* discardBtn = ui.find("claude.jsonfs.discard.bg");
         DOCTEST_REQUIRE(discardBtn != nullptr);
-        const auto* discardText = ui.find("claude.jsonfs.discard.text");
+        const auto* discardText = ui.find("claude.jsonfs.discard.text.normal");
         DOCTEST_REQUIRE(discardText != nullptr);
         DOCTEST_CHECK_EQ(discardText->text, std::string("放弃修改"));
         DOCTEST_CHECK(ui.find("claude.jsonfs.done.bg") == nullptr);
-        DOCTEST_CHECK(ui.find("claude.jsonfs.done.text") == nullptr);
+        DOCTEST_CHECK(ui.find("claude.jsonfs.done.text.normal") == nullptr);
         // 按钮行右缘不溢出覆盖层（三键同行：x=28 / 150 / 272，各 110 宽）
         DOCTEST_CHECK(discardBtn->frame.x + discardBtn->frame.width <=
                       screen.width - 27.0f);
