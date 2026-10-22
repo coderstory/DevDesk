@@ -790,6 +790,7 @@ REGISTER_TEST(settings_h3_elastic_heights, "settings: H3 elastic — cardsH at 6
     ui.begin("h3_min");
     mod->compose(ui, screenMin);
     ui.end();
+    ui.layout(screenMin.width, screenMin.height);
     const auto* scrollMin = ui.find("settings.cards.scroll");
     DOCTEST_CHECK(scrollMin != nullptr);
     if (scrollMin != nullptr) {
@@ -802,6 +803,7 @@ REGISTER_TEST(settings_h3_elastic_heights, "settings: H3 elastic — cardsH at 6
     ui.begin("h3_large");
     mod->compose(ui, screenLarge);
     ui.end();
+    ui.layout(screenLarge.width, screenLarge.height);
     const auto* scrollLarge = ui.find("settings.cards.scroll");
     DOCTEST_CHECK(scrollLarge != nullptr);
     if (scrollLarge != nullptr) {
