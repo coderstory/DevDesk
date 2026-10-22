@@ -9,15 +9,18 @@ void selectionBar(eui::Ui& ui, const std::string& id, const std::string& label,
                   float x, float y, float w, float h,
                   const core::theme::Tokens& t) {
 
-    // S2.5：选中 = primarySoftBg 底 + 左 3px primary 竖线 + primary 文字
+    // S2.5 + H5：选中 = 白底 elevated 卡（surface + border）+ 左 3px primary 竖线 + primary 文字。
+    // H5 把底从 primarySoftBg（#E6FBF2）改为 surface（#FFFFFF）加 border：
+    // 淡绿侧栏底（#F0FDF7）上 primarySoftBg 分不清，白卡 + 描边对比成立。
     ui.stack(id)
         .position(x, y)
         .size(w, h)
         .content([&] {
-            // 底色 rect：primarySoftBg（#E6FBF2）
+            // 底色 rect：surface 白卡 + border 描边（elevated card 观感）
             ui.rect(id + ".bg")
                 .size(w, h)
-                .color(t.colors.primarySoftBg)
+                .color(t.colors.surface)
+                .border(1.0f, t.colors.borderDefault)
                 .build();
 
             // 左 3px 竖线：primary（#36D399）
