@@ -709,7 +709,7 @@ public:
             selectedTaskId_, drag_.active, drag_.taskId, drag_.hoverColIndex,
             drag_.hoverRow, drag_.active && drag_.taskId != 0, ghostAnchor.x,
             ghostAnchor.y, overdueCount_, service_ != nullptr, loadError_,
-            boardActions_};
+            boardActions_, archiveExpanded_};
         page.column("todo.root")
             .size(screen.width, screen.height)
             .padding(pad)
@@ -855,6 +855,7 @@ private:
             const int target = released ? hitDropColumn(x, y) : -1;
             finishDrag(target);
         },
+        .archiveToggle = [this] { archiveExpanded_ = !archiveExpanded_; },
     };
 
     ui::DialogHost dialogHost_{
@@ -924,6 +925,8 @@ private:
 
     // 数据加载错误（空 = 正常；与空态区分）
     std::string loadError_;
+
+    bool archiveExpanded_ = false;
 };
 
 } // namespace module::todo
