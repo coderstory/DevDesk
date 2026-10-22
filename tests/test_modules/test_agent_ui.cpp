@@ -1373,7 +1373,7 @@ REGISTER_TEST(agent_ui_detail_dialog_shows_config_runs_messages,
     const auto* run1Bg = ui2.find("agent.dialog.detail.runlist.1.bg");
     DOCTEST_REQUIRE(run0Bg != nullptr && run1Bg != nullptr);
     DOCTEST_CHECK_MESSAGE(run0Bg->color.a > run1Bg->color.a,
-                          "最近一次 run 未高亮（选中 .bg 应为 wechat.selectedBg）");
+                          "最近一次 run 未高亮（选中 .bg 应为 selectedBg）");
     const auto* errRow = ui2.find("agent.dialog.detail.runlist.1.err");
     DOCTEST_REQUIRE(errRow != nullptr);
     DOCTEST_CHECK(errRow->text.find("200K") != std::string::npos);
@@ -4126,9 +4126,9 @@ REGISTER_TEST(agent_ui_detail_shell_wide_default,
                             "segment 缺 .nav.item.<i>.bg（三档手搓 segment）");
     // 正向：选中块 = wechat 绿（任务弹窗同语言）
     DOCTEST_CHECK_MESSAGE(
-        nearPx(navOn->color.r, tok.colors.wechat.primary.r) &&
-            nearPx(navOn->color.g, tok.colors.wechat.primary.g) &&
-            nearPx(navOn->color.b, tok.colors.wechat.primary.b),
+        nearPx(navOn->color.r, tok.colors.primary.r) &&
+            nearPx(navOn->color.g, tok.colors.primary.g) &&
+            nearPx(navOn->color.b, tok.colors.primary.b),
         "segment 选中块应为 wechat 绿底，实测 rgb(" +
             std::to_string(navOn->color.r) + "," + std::to_string(navOn->color.g) +
             "," + std::to_string(navOn->color.b) + ")");
@@ -4140,9 +4140,9 @@ REGISTER_TEST(agent_ui_detail_shell_wide_default,
         "segment 选中块回潮成暖橙 primary（必须 wechat 绿）");
     // 未选中：灰底深字（pageBg 底 + textPrimary 文字）
     DOCTEST_CHECK_MESSAGE(
-        nearPx(navOff->color.r, tok.colors.wechat.pageBg.r) &&
-            nearPx(navOff->color.g, tok.colors.wechat.pageBg.g) &&
-            nearPx(navOff->color.b, tok.colors.wechat.pageBg.b),
+        nearPx(navOff->color.r, tok.colors.pageBg.r) &&
+            nearPx(navOff->color.g, tok.colors.pageBg.g) &&
+            nearPx(navOff->color.b, tok.colors.pageBg.b),
         "segment 未选中块应为 pageBg 灰底");
     const auto* navLabel2 = ui2.find("agent.dialog.detail.nav.item.2.text");
     DOCTEST_REQUIRE(navLabel2 != nullptr);
@@ -4933,9 +4933,9 @@ REGISTER_TEST(agent_ui_draft_async_prefill_no_autosave,
     DOCTEST_REQUIRE(notice != nullptr);
     DOCTEST_CHECK(notice->text.find("已预填表单") != std::string::npos);
     DOCTEST_CHECK(notice->text.find("定时") != std::string::npos);
-    // 微信化文字档锁：完成提示行 = wechat.textSecondary
+    // 微信化文字档锁：完成提示行 = textSecondary
     DOCTEST_CHECK(std::fabs(notice->textColor.r -
-                            core::theme::current().colors.wechat.textSecondary.r) <
+                            core::theme::current().colors.textSecondary.r) <
                   0.01f);
     DOCTEST_CHECK(u.find("agent.dialog.task.draft.warnings") == nullptr);
     DOCTEST_CHECK(u.find("agent.dialog.task.draft.error") == nullptr);
@@ -5070,9 +5070,9 @@ REGISTER_TEST(agent_ui_draft_error_paths,
     const auto* err = uiD.find("agent.dialog.task.draft.error");
     DOCTEST_REQUIRE(err != nullptr);
     DOCTEST_CHECK(err->text.find("一句话") != std::string::npos);
-    // 微信化错误行锁：错误文字 = wechat.warningRed（#FA5151）
+    // 微信化错误行锁：错误文字 = warningRed（#FA5151）
     DOCTEST_CHECK(std::fabs(err->textColor.r -
-                            core::theme::current().colors.wechat.warningRed.r) <
+                            core::theme::current().colors.warningRed.r) <
                   0.01f);
     DOCTEST_CHECK_EQ(calls, 0);
 
@@ -5423,7 +5423,7 @@ REGISTER_TEST(agent_ui_task_list_status_visuals,
     const auto& themeNow = core::theme::current();
     const auto* panel = ui.find("agent.tasklist.panel");
     DOCTEST_REQUIRE(panel != nullptr);
-    DOCTEST_CHECK_MESSAGE(sameColor(panel->color, themeNow.colors.wechat.pageBg),
+    DOCTEST_CHECK_MESSAGE(sameColor(panel->color, themeNow.colors.pageBg),
                           "列表容器应为 pageBg 灰面板（白底已让给 item 卡）");
     // 卡列表在面板内四边留边 10（kTaskCardInset；卡宽 = 列表宽 − 边距）
     const auto* tasklist = ui.find("agent.tasklist");
@@ -5442,19 +5442,19 @@ REGISTER_TEST(agent_ui_task_list_status_visuals,
     const auto* rowBg = ui.find("agent.task." + idleTid + ".bg");
     DOCTEST_REQUIRE(rowBg != nullptr);
     DOCTEST_CHECK(rowBg->hasStateColors);
-    DOCTEST_CHECK_MESSAGE(sameColor(rowBg->color, themeNow.colors.wechat.cardBg),
+    DOCTEST_CHECK_MESSAGE(sameColor(rowBg->color, themeNow.colors.cardBg),
                           "卡底应为 cardBg 白卡");
     DOCTEST_CHECK_MESSAGE(
-        sameColor(rowBg->hoverColor, themeNow.colors.wechat.dividerSecondary),
+        sameColor(rowBg->hoverColor, themeNow.colors.dividerSecondary),
         "卡 hover 应加深一档 dividerSecondary（原 transparent→hover 行为已随卡片化换代）");
     DOCTEST_CHECK_MESSAGE(
-        sameColor(rowBg->pressedColor, themeNow.colors.wechat.selectedBg),
+        sameColor(rowBg->pressedColor, themeNow.colors.selectedBg),
         "卡按压档应为 selectedBg");
     DOCTEST_CHECK_MESSAGE(nearPx(rowBg->radius, themeNow.sizes.radiusWeChat),
                           "卡圆角应为 radiusWeChat");
     DOCTEST_CHECK_MESSAGE(nearPx(rowBg->border.width, 1.0f) &&
                               sameColor(rowBg->border.color,
-                                        themeNow.colors.wechat.dividerPrimary),
+                                        themeNow.colors.dividerPrimary),
                           "卡应为 1px dividerPrimary 细边");
     DOCTEST_CHECK(rowBg->onClick != nullptr);
     // 卡几何：卡高 = 行 44 + 上下内边距 12 = 68；.row 四边内缩 12

@@ -5,9 +5,9 @@
 // 断言三层（spec §7.1）：
 //   - 元素存在性（ui.find != nullptr）
 //   - 几何数值（height / radius / fontSize / label width / control geometry）
-//   - 颜色 hex 精确（token 落点 → wechat.* 令牌值）
+//   - 颜色 hex 精确（token 落点 → * 令牌值）
 //
-// 色值走 wechat 令牌（core::theme::current().colors.wechat.*），深浅模式同值；
+// 色值走 wechat 令牌（core::theme::current().colors.*），深浅模式同值；
 // resetCaseGlobals 默认 setDark()，wechat 令牌在深浅两模式均初始化（theme.cpp）。
 #include "doctest.h"
 #include "core/theme.h"
@@ -25,11 +25,11 @@ int toHexByte(float v) { return static_cast<int>(std::round(v * 255.0f)); }
 
 } // namespace
 
-// 场景1（防「主按钮非绿/字非白」）：Primary 渲染 bg=wechat.primary(#07C160)
-// + text=wechat.onPrimary(#FFFFFF)。事故：主按钮用橙/灰等非绿底、或字色非白
+// 场景1（防「主按钮非绿/字非白」）：Primary 渲染 bg=primary(#07C160)
+// + text=onPrimary(#FFFFFF)。事故：主按钮用橙/灰等非绿底、或字色非白
 // 致可读性塌陷（D-01 微信基线 vs v1.1 橙系冲突——绿白必须钉死）。
 REGISTER_TEST(ui_kit_button_primary_colors,
-              "ui_kit button: Primary bg=wechat.primary(#07C160) + text=wechat.onPrimary(#FFFFFF)", {
+              "ui_kit button: Primary bg=primary(#07C160) + text=onPrimary(#FFFFFF)", {
     const auto& t = core::theme::current();
     eui::Ui ui;
     ui.begin("w02b_btn_primary");
@@ -46,7 +46,7 @@ REGISTER_TEST(ui_kit_button_primary_colors,
 
     const auto* txt = ui.find("btn.p.text");
     DOCTEST_REQUIRE(txt != nullptr);
-    // text 走 textColor = wechat.onPrimary（#FFFFFF）
+    // text 走 textColor = onPrimary（#FFFFFF）
     DOCTEST_CHECK_EQ(toHexByte(txt->textColor.r), 0xFF);
     DOCTEST_CHECK_EQ(toHexByte(txt->textColor.g), 0xFF);
     DOCTEST_CHECK_EQ(toHexByte(txt->textColor.b), 0xFF);
@@ -122,7 +122,7 @@ REGISTER_TEST(ui_kit_button_uniform_metrics,
 // 场景4（防「danger 误作普通色」）：Danger bg=warningRed(#FA5151)。事故：删除/
 // 高危按钮用普通绿/灰底致用户误点（spec §2.2 红仅告警语义；§4.1 Danger 红填充）。
 REGISTER_TEST(ui_kit_button_danger_red,
-              "ui_kit button: Danger bg=wechat.warningRed(#FA5151)", {
+              "ui_kit button: Danger bg=warningRed(#FA5151)", {
     const auto& t = core::theme::current();
     eui::Ui ui;
     ui.begin("w02b_btn_danger");

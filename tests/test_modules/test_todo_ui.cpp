@@ -803,13 +803,13 @@ REGISTER_TEST(todo_ui_newtask_dialog_plan_a,
         f.refresh();
         const auto* on0 = f.ui.find("todo.dialog.newtask.due.0.bg");
         DOCTEST_REQUIRE(on0 != nullptr);
-        DOCTEST_CHECK(colorNear(on0->color, core::theme::current().colors.wechat.primary));
+        DOCTEST_CHECK(colorNear(on0->color, core::theme::current().colors.primary));
         on0->onClick();   // 再点 = 取消
         f.refresh();
         const auto* off0 = f.ui.find("todo.dialog.newtask.due.0.bg");
         DOCTEST_REQUIRE(off0 != nullptr);
         DOCTEST_CHECK(colorNear(off0->color,
-                                core::theme::current().colors.wechat.pageBg));
+                                core::theme::current().colors.pageBg));
     }
 
     mod->onStop();
@@ -2044,14 +2044,14 @@ REGISTER_TEST(todo_ui_drag_follow_ghost,
     // 坑二：半透（< 1）——目标列插入位占位条能从副本底下透出，不整块吃掉
     DOCTEST_CHECK(ghost->opacity < 1.0f);
     // 副本底色 = 该卡的优先级底（与真卡同一条 priorityCardBg）——
-    // 拖到一半优先级指示不许消失（D批后底=wechat.cardBg + WeChat 板色源；回退成旧 surface/error 底即红）
+    // 拖到一半优先级指示不许消失（D批后底=cardBg + WeChat 板色源；回退成旧 surface/error 底即红）
     {
         const auto* ghostBg = ui.find("todo.dragghost.bg");
         DOCTEST_REQUIRE(ghostBg != nullptr);
         const auto& t = core::theme::current();
         DOCTEST_CHECK(colorNear(
             ghostBg->color,
-            eui::mixColor(t.colors.wechat.cardBg, t.colors.wechat.warningRed, 0.55f)));
+            eui::mixColor(t.colors.cardBg, t.colors.warningRed, 0.55f)));
     }
     // 跟手期间源列原卡照旧半透明 + 源列调暗（门控关系未反：被调暗的是原卡
     // 与源列，副本全亮跟手）
@@ -3391,14 +3391,14 @@ REGISTER_TEST(todo_ui_priority_card_tint,
     DOCTEST_REQUIRE(midBg != nullptr);
     DOCTEST_REQUIRE(highBg != nullptr);
 
-    // 判据 b：底色 = 卡三态基色 × 强度表的 tint（D批后非选中卡底 = wechat.cardBg 白；None 档强度 0 = 原底）
-    const eui::Color kPrio[4] = {t.colors.wechat.textTertiary, t.colors.wechat.primary,
-                                 t.colors.wechat.linkBlue, t.colors.wechat.warningRed};
+    // 判据 b：底色 = 卡三态基色 × 强度表的 tint（D批后非选中卡底 = cardBg 白；None 档强度 0 = 原底）
+    const eui::Color kPrio[4] = {t.colors.textTertiary, t.colors.primary,
+                                 t.colors.linkBlue, t.colors.warningRed};
     const core::dsl::Element* cards[4] = {noneBg, lowBg, midBg, highBg};
     for (int i = 0; i < 4; ++i) {
         DOCTEST_CHECK(colorNear(
             cards[i]->color,
-            eui::mixColor(t.colors.wechat.cardBg, kPrio[i], kStrength[i])));
+            eui::mixColor(t.colors.cardBg, kPrio[i], kStrength[i])));
     }
     // 判据 b'：无优先级卡与高优先级卡背景色不同（用户原始判据 1）
     DOCTEST_CHECK(!colorNear(noneBg->color, highBg->color, 0.01f));
@@ -3409,27 +3409,27 @@ REGISTER_TEST(todo_ui_priority_card_tint,
                           0.02f);
         }
     }
-    // 判据 b'：低优先级仍不刺眼 / 高优先级看得出（参照系 = 卡基底 wechat.cardBg，D批米黄迁移后不再对 surface）。
+    // 判据 b'：低优先级仍不刺眼 / 高优先级看得出（参照系 = 卡基底 cardBg，D批米黄迁移后不再对 surface）。
     // UAT2 D批第三轮提强度（用户「颜色淡灰蒙蒙」，覆盖 2026-10-13 鲜艳轮阈值）：Low 0.40 绿 tint
     // 距白底 ~99/255，'不刺眼'上限 72→120/255；High 0.55 红 tint ~96/255，'看得出'下限 45→80/255
-    DOCTEST_CHECK(maxChannelDelta(lowBg->color, t.colors.wechat.cardBg) <= 120.0f / 255.0f);
-    DOCTEST_CHECK(maxChannelDelta(highBg->color, t.colors.wechat.cardBg) >= 80.0f / 255.0f);
+    DOCTEST_CHECK(maxChannelDelta(lowBg->color, t.colors.cardBg) <= 120.0f / 255.0f);
+    DOCTEST_CHECK(maxChannelDelta(highBg->color, t.colors.cardBg) >= 80.0f / 255.0f);
 
     // 判据 c：hover / active 与优先级底色**叠加**（不被中性态色顶掉），
     // 且仍与 base 不同（既有 hover 反馈没被底色覆盖）
     for (int i = 0; i < 4; ++i) {
         DOCTEST_CHECK(colorNear(
             cards[i]->hoverColor,
-            eui::mixColor(t.colors.wechat.dividerSecondary, kPrio[i], kStrength[i])));
+            eui::mixColor(t.colors.dividerSecondary, kPrio[i], kStrength[i])));
         DOCTEST_CHECK(colorNear(
             cards[i]->pressedColor,
-            eui::mixColor(t.colors.wechat.selectedBg, kPrio[i], kStrength[i])));
+            eui::mixColor(t.colors.selectedBg, kPrio[i], kStrength[i])));
         DOCTEST_CHECK(maxChannelDelta(cards[i]->hoverColor, cards[i]->color) >
                       0.02f);
     }
     // 判据 c'：选中态不再走粗边框（§4.3 移除原红色粗边框）；选中 = 左竖线 + 浅灰底
     DOCTEST_CHECK_EQ(noneBg->border.width, 1.0f);
-    DOCTEST_CHECK(colorNear(highBg->border.color, t.colors.wechat.dividerPrimary));
+    DOCTEST_CHECK(colorNear(highBg->border.color, t.colors.dividerPrimary));
     {
         Frame f2(mod.get());
         const auto* card = f2.ui.find("todo.col.4.card.3.bg");
@@ -3441,19 +3441,19 @@ REGISTER_TEST(todo_ui_priority_card_tint,
         DOCTEST_REQUIRE(sel != nullptr);
         // 选中态边框 = 统一 1px 分割线（不再 2px primary）
         DOCTEST_CHECK_EQ(sel->border.width, 1.0f);
-        DOCTEST_CHECK(colorNear(sel->border.color, t.colors.wechat.dividerPrimary));
+        DOCTEST_CHECK(colorNear(sel->border.color, t.colors.dividerPrimary));
         // 选中态左竖线存在（§4.3 2px 微信绿竖线）
         DOCTEST_CHECK(f3.ui.find("todo.col.4.card.3.selbar") != nullptr);
-        // 选中态底色 = wechat.selectedBg 基底 + 优先级 tint（底色与优先级两通道独立）
+        // 选中态底色 = selectedBg 基底 + 优先级 tint（底色与优先级两通道独立）
         DOCTEST_CHECK(colorNear(
             sel->color,
-            eui::mixColor(t.colors.wechat.selectedBg, t.colors.wechat.warningRed, 0.55f)));
+            eui::mixColor(t.colors.selectedBg, t.colors.warningRed, 0.55f)));
     }
 
     // 判据 d：底色改了，卡片文字对比度不掉（WCAG AA 4.5:1）——挪至浅色段判定：
-    // 卡底迁 wechat.cardBg 后深色下为浅值（D-04 dark-WeChat 延后，同深色扫描 todo.* 例外），
+    // 卡底迁 cardBg 后深色下为浅值（D-04 dark-WeChat 延后，同深色扫描 todo.* 例外），
     // 深色 textPrimary 同浅，对比度只在浅色（wechat 浅值即设计值）下成立
-    // 浅色主题复查（默认深色）：card.3 仍选中（模块态跨帧），底色走 wechat.selectedBg 基底
+    // 浅色主题复查（默认深色）：card.3 仍选中（模块态跨帧），底色走 selectedBg 基底
     ::core::theme::setLight();
     const auto& tl = core::theme::current();
     Frame light(mod.get());
@@ -3465,11 +3465,11 @@ REGISTER_TEST(todo_ui_priority_card_tint,
     }
     const auto* lNone = lCards[0];
     const auto* lHigh = lCards[3];
-    DOCTEST_CHECK(colorNear(lNone->color, tl.colors.wechat.cardBg));
-    // card.3 选中：底色 = wechat.selectedBg + warningRed tint 0.55（非 cardBg，因选中态 cardBase 换 selectedBg）
+    DOCTEST_CHECK(colorNear(lNone->color, tl.colors.cardBg));
+    // card.3 选中：底色 = selectedBg + warningRed tint 0.55（非 cardBg，因选中态 cardBase 换 selectedBg）
     DOCTEST_CHECK(colorNear(
         lHigh->color,
-        eui::mixColor(tl.colors.wechat.selectedBg, tl.colors.wechat.warningRed, 0.55f)));
+        eui::mixColor(tl.colors.selectedBg, tl.colors.warningRed, 0.55f)));
     DOCTEST_CHECK(!colorNear(lNone->color, lHigh->color, 0.01f));
     // 判据 d（浅色下四档全查）：WCAG AA 4.5:1
     for (int i = 0; i < 4; ++i) {
@@ -3510,10 +3510,10 @@ REGISTER_TEST(todo_ui_priority_button_tint,
     ::core::theme::setLight();
     const auto& t = core::theme::current();
     // 期望值独立写死（改选中档色源 / 未选底 / 文字档即红）
-    const eui::Color kSelBg = t.colors.wechat.primary;        // #07C160
-    const eui::Color kSelText = t.colors.wechat.onPrimary;    // #FFFFFF
-    const eui::Color kUnselBg = t.colors.wechat.pageBg;       // #F7F7F7
-    const eui::Color kUnselText = t.colors.wechat.textPrimary;  // #1A1A1A
+    const eui::Color kSelBg = t.colors.primary;        // #07C160
+    const eui::Color kSelText = t.colors.onPrimary;    // #FFFFFF
+    const eui::Color kUnselBg = t.colors.pageBg;       // #F7F7F7
+    const eui::Color kUnselText = t.colors.textPrimary;  // #1A1A1A
     const char* kLabels[4] = {"无", "低", "中", "高"};
 
     Frame f1(mod.get());
@@ -3544,7 +3544,7 @@ REGISTER_TEST(todo_ui_priority_button_tint,
         DOCTEST_REQUIRE(selText != nullptr);
         DOCTEST_CHECK(colorNear(sel->color, kSelBg));
         DOCTEST_CHECK(colorNear(selText->textColor, kSelText));
-        DOCTEST_CHECK(colorNear(sel->border.color, t.colors.wechat.primary));
+        DOCTEST_CHECK(colorNear(sel->border.color, t.colors.primary));
         DOCTEST_CHECK_EQ(selText->text, std::string("高"));
     }
 
@@ -3652,7 +3652,7 @@ REGISTER_TEST(todo_ui_detail_panel_priority_tint,
         }
         // AA 护栏：正文 textPrimary 在 tint 底上 ≥4.5:1（实测 14.5/12.4/12.5）
         DOCTEST_CHECK(contrastRatio(panelBg->color,
-                                     t.colors.wechat.textPrimary) >= 4.5f);
+                                     t.colors.textPrimary) >= 4.5f);
         // 观感钉值①：选中优先级钮 = 主绿底白字（不透明实底，不被 tint 波及）
         const auto* selBg =
             f.ui.find("todo.dialog.detail.prio." + std::to_string(i) + ".bg");
@@ -3660,8 +3660,8 @@ REGISTER_TEST(todo_ui_detail_panel_priority_tint,
             f.ui.find("todo.dialog.detail.prio." + std::to_string(i) + ".text");
         DOCTEST_REQUIRE(selBg != nullptr);
         DOCTEST_REQUIRE(selText != nullptr);
-        DOCTEST_CHECK(colorNear(selBg->color, t.colors.wechat.primary));
-        DOCTEST_CHECK(colorNear(selText->textColor, t.colors.wechat.onPrimary));
+        DOCTEST_CHECK(colorNear(selBg->color, t.colors.primary));
+        DOCTEST_CHECK(colorNear(selText->textColor, t.colors.onPrimary));
         // 观感钉值②：任一未选钮 = pageBg 底 + textPrimary 字（对比度不受 tint 影响）
         const int j = (i + 1) % 4;
         const auto* unBg =
@@ -3670,8 +3670,8 @@ REGISTER_TEST(todo_ui_detail_panel_priority_tint,
             f.ui.find("todo.dialog.detail.prio." + std::to_string(j) + ".text");
         DOCTEST_REQUIRE(unBg != nullptr);
         DOCTEST_REQUIRE(unText != nullptr);
-        DOCTEST_CHECK(colorNear(unBg->color, t.colors.wechat.pageBg));
-        DOCTEST_CHECK(colorNear(unText->textColor, t.colors.wechat.textPrimary));
+        DOCTEST_CHECK(colorNear(unBg->color, t.colors.pageBg));
+        DOCTEST_CHECK(colorNear(unText->textColor, t.colors.textPrimary));
         DOCTEST_CHECK(contrastRatio(unBg->color, unText->textColor) >= 4.5f);
         // 观感钉值③：头部「标记完成」chip（未完成态）= cardBg 向 primary 混 0.12，
         // 未吃面板 tint
@@ -3679,7 +3679,7 @@ REGISTER_TEST(todo_ui_detail_panel_priority_tint,
         DOCTEST_REQUIRE(toggleBg != nullptr);
         DOCTEST_CHECK(colorNear(
             toggleBg->color,
-            eui::mixColor(t.colors.wechat.cardBg, t.colors.wechat.primary, 0.12f)));
+            eui::mixColor(t.colors.cardBg, t.colors.primary, 0.12f)));
     }
 
     ::core::theme::setDark();   // 恢复默认深色（本用例切了浅色，防污染后续用例）
@@ -5475,7 +5475,7 @@ REGISTER_TEST(todo_archive_tasks_in_column_sort,
 
 // UAT3 反馈：归档卡标题文字用黑色，不再灰色（透明度压暗保留区分）
 REGISTER_TEST(todo_ui_archive_card_title_color,
-              "todo_ui: 归档卡标题文字色 = wechat.textPrimary（黑，非灰）", {
+              "todo_ui: 归档卡标题文字色 = textPrimary（黑，非灰）", {
     TestEnv env;
     DOCTEST_REQUIRE(env.ready);
     // 从种子列里找到归档列：kind == "archive"
@@ -5497,11 +5497,11 @@ REGISTER_TEST(todo_ui_archive_card_title_color,
     DOCTEST_REQUIRE(el != nullptr);
     const auto& tm = core::theme::current();
     // eui::Color 无 operator==：整色 CHECK_EQ 不可编译；text 元素颜色走 textColor 字段，
-    // 非 color（color 是 rect 的 bg），expect 归档标题 = wechat.textPrimary #1A1A1A
-    DOCTEST_CHECK_EQ(el->textColor.r, tm.colors.wechat.textPrimary.r);
-    DOCTEST_CHECK_EQ(el->textColor.g, tm.colors.wechat.textPrimary.g);
-    DOCTEST_CHECK_EQ(el->textColor.b, tm.colors.wechat.textPrimary.b);
-    DOCTEST_CHECK_EQ(el->textColor.a, tm.colors.wechat.textPrimary.a);
+    // 非 color（color 是 rect 的 bg），expect 归档标题 = textPrimary #1A1A1A
+    DOCTEST_CHECK_EQ(el->textColor.r, tm.colors.textPrimary.r);
+    DOCTEST_CHECK_EQ(el->textColor.g, tm.colors.textPrimary.g);
+    DOCTEST_CHECK_EQ(el->textColor.b, tm.colors.textPrimary.b);
+    DOCTEST_CHECK_EQ(el->textColor.a, tm.colors.textPrimary.a);
     mod->onStop();
     return true;
 })

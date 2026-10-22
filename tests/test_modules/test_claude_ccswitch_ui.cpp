@@ -219,7 +219,7 @@ REGISTER_TEST(claude_ccswitch_ui_skeleton_contract,
         return std::fabs(x.r - y.r) < 0.01f && std::fabs(x.g - y.g) < 0.01f &&
                std::fabs(x.b - y.b) < 0.01f;
     };
-    // S1.2 #13: wechat.secondaryButtonBg→hover
+    // S1.2 #13: secondaryButtonBg→hover
     DOCTEST_CHECK(sameColor(selallBg->color, wc.hover));
     DOCTEST_CHECK(!sameColor(selallBg->color, wc.surfaceElevated));
     const auto* confirm = ui2.find("claude.dialog.ccswitch.confirm.text");

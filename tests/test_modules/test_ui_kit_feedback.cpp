@@ -5,9 +5,9 @@
 // 断言三层（spec §7.1）：
 //   - 元素存在性（ui.find != nullptr）
 //   - 几何数值（width / height / radius / fontSize）
-//   - 颜色 hex 精确（wechat.* 令牌值；黑半透明 bg 例外用语义常量）
+//   - 颜色 hex 精确（* 令牌值；黑半透明 bg 例外用语义常量）
 //
-// 色值走 wechat 令牌（core::theme::current().colors.wechat.*）；黑半透明 bg 例外
+// 色值走 wechat 令牌（core::theme::current().colors.*）；黑半透明 bg 例外
 // （wechat 无黑半透明槽位——§4.10 spec 钉「黑色半透明」，故用 eui::Color{0,0,0,0.7}
 // 语义常量，alpha=0.7 ≈ 178/255）。
 //
@@ -60,12 +60,12 @@ REGISTER_TEST(ui_kit_light_toast_black_translucent_bg,
     return true;
 })
 
-// 场景2（§4.10 防「轻提示非白字」）：text 节点 color=wechat.onPrimary(#FFFFFF)
+// 场景2（§4.10 防「轻提示非白字」）：text 节点 color=onPrimary(#FFFFFF)
 // + 字号 14px（§3.3 主文字）。
 // 事故：黑底非白字致对比度塌陷（§4.10 spec 钉「白色文字」；onPrimary=#FFFFFF
 // 在 wechat 令牌里是主色上的前景色，黑底白字同义复用）。
 REGISTER_TEST(ui_kit_light_toast_white_text_on_primary,
-              "ui_kit lightToast: text color=wechat.onPrimary(#FFFFFF) + fontSize=14", {
+              "ui_kit lightToast: text color=onPrimary(#FFFFFF) + fontSize=14", {
     ui_kit::resetLightToastForTests();  // 防单实例 state 跨测试用例泄漏
     const auto& t = core::theme::current();
     eui::Ui ui;
@@ -75,7 +75,7 @@ REGISTER_TEST(ui_kit_light_toast_white_text_on_primary,
 
     const auto* txt = ui.find("lt.text");
     DOCTEST_REQUIRE(txt != nullptr);
-    // text color = wechat.onPrimary (#FFFFFF)
+    // text color = onPrimary (#FFFFFF)
     DOCTEST_CHECK_EQ(toHexByte(txt->textColor.r), 0xFF);
     DOCTEST_CHECK_EQ(toHexByte(txt->textColor.g), 0xFF);
     DOCTEST_CHECK_EQ(toHexByte(txt->textColor.b), 0xFF);
@@ -137,7 +137,7 @@ REGISTER_TEST(ui_kit_light_toast_new_message_overrides,
 })
 
 // 场景5（§4.12 防「空状态插画式/无入口」）：emptyState 渲染极简文字
-// （wechat.textSecondary #666666）+ 就近按钮（Secondary 级 浅灰底 + 深灰字）。
+// （textSecondary #666666）+ 就近按钮（Secondary 级 浅灰底 + 深灰字）。
 // 事故：空状态用插画/情绪化文案/无按钮致用户卡死（§4.12 禁止项 + §5.6 按钮就近
 // 原则；违反即用户面对空列表无操作入口）。
 REGISTER_TEST(ui_kit_empty_state_minimal_text_with_nearby_action,
