@@ -271,7 +271,8 @@ foreach(_probe_source ${_devdesk_probe_sources})
     # module_toggle_sidebar_probe：活门控真窗口 probe 还要真 app::compose +
     # 真 dispatchModuleToggle → 额外编译 app_sidebar.cpp + app_assembly.cpp
     #（其余 probe 维持最小链接面，不拖 app 层）
-    if(_probe_name STREQUAL "module_toggle_sidebar_probe")
+    if(_probe_name STREQUAL "module_toggle_sidebar_probe" OR
+       _probe_name STREQUAL "h13_fluid_background_probe")
         add_executable(${_probe_name} "${_probe_source}"
             "${CMAKE_SOURCE_DIR}/src/module_toggle_bridge.cpp"
             "${CMAKE_SOURCE_DIR}/src/app_sidebar.cpp"
