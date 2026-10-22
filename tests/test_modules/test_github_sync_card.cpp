@@ -594,7 +594,8 @@ REGISTER_TEST(github_sync_card_error_row_and_header_click,
         // 警告图标存在
         const auto* errIcon = ui.find(std::string(kCardId) + ".error.icon");
         DOCTEST_REQUIRE(errIcon != nullptr);
-        DOCTEST_CHECK(colorEq(errIcon->color,
+        DOCTEST_CHECK_EQ(errIcon->text, eui::utf8(0xF071));  // fa-triangle-exclamation
+        DOCTEST_CHECK(colorEq(errIcon->textColor,
                               core::theme::current().colors.warning));
         //「查看详情」——唯一弹窗入口
         const auto* detail = ui.find(std::string(kCardId) + ".error.detail");
