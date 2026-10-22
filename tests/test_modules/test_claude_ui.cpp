@@ -651,11 +651,11 @@ REGISTER_TEST(claude_module_form_tabs_roundtrip,
     {
         eui::Ui ui;
         compose(ui);
-        DOCTEST_CHECK(ui.find("claude.form.tabs.hit.1") != nullptr);
+        DOCTEST_CHECK(ui.find("claude.form.tabs.1.hit") != nullptr);
         const auto* nameText = ui.find("claude.dialog.form.name.text");
         DOCTEST_REQUIRE(nameText != nullptr);
         DOCTEST_CHECK_EQ(nameText->text, std::string("槽位测试"));
-        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.1"));
+        DOCTEST_CHECK(click(ui, "claude.form.tabs.1.hit"));
     }
     // 模型映射页：槽位输入；默认槽位空 → name placeholder 是「自动派生」
     {
@@ -672,7 +672,7 @@ REGISTER_TEST(claude_module_form_tabs_roundtrip,
         type(ui, "claude.form.slot.1.model.hit", "m-sonnet");
         type(ui, "claude.form.slot.1.name.hit", "sonnet显示名");
         type(ui, "claude.form.slot.5.model.hit", "m-sub");
-        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.2"));
+        DOCTEST_CHECK(click(ui, "claude.form.tabs.2.hit"));
     }
     {
         eui::Ui ui;
@@ -744,7 +744,7 @@ REGISTER_TEST(claude_module_form_tabs_roundtrip,
     {
         eui::Ui ui;
         compose(ui);
-        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.1"));
+        DOCTEST_CHECK(click(ui, "claude.form.tabs.1.hit"));
     }
     {
         eui::Ui ui;
@@ -759,7 +759,7 @@ REGISTER_TEST(claude_module_form_tabs_roundtrip,
     {
         eui::Ui ui;
         compose(ui);
-        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.2"));
+        DOCTEST_CHECK(click(ui, "claude.form.tabs.2.hit"));
     }
     {
         eui::Ui ui;
@@ -829,7 +829,7 @@ REGISTER_TEST(claude_module_import_flow,
         eui::Ui ui;
         compose(ui);
         type(ui, "claude.dialog.form.name.hit", "导入测试");
-        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.2"));
+        DOCTEST_CHECK(click(ui, "claude.form.tabs.2.hit"));
     }
     {
         eui::Ui ui;
@@ -858,7 +858,7 @@ REGISTER_TEST(claude_module_import_flow,
     {
         eui::Ui ui;
         compose(ui);
-        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.0"));
+        DOCTEST_CHECK(click(ui, "claude.form.tabs.0.hit"));
     }
     {
         eui::Ui ui;
@@ -964,7 +964,7 @@ REGISTER_TEST(claude_module_import_current_full_chain,
         DOCTEST_CHECK_EQ(textOf(ui, "claude.dialog.form.key.text"),
                          std::string("sk-imp-current-0001"));
         DOCTEST_CHECK(ui.find("claude.dialog.form.importwarn") == nullptr);
-        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.1"));
+        DOCTEST_CHECK(click(ui, "claude.form.tabs.1.hit"));
     }
     {
         eui::Ui ui;
@@ -973,7 +973,7 @@ REGISTER_TEST(claude_module_import_current_full_chain,
                          std::string("m-cur-default"));
         DOCTEST_CHECK_EQ(textOf(ui, "claude.form.slot.1.model.text"),
                          std::string("m-cur-sonnet"));
-        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.2"));
+        DOCTEST_CHECK(click(ui, "claude.form.tabs.2.hit"));
     }
     {
         eui::Ui ui;
@@ -1078,7 +1078,7 @@ REGISTER_TEST(claude_module_import_current_reads_advanced_json,
     {
         eui::Ui ui;
         compose(ui);
-        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.3"));
+        DOCTEST_CHECK(click(ui, "claude.form.tabs.3.hit"));
     }
     {
         eui::Ui ui;
@@ -1327,7 +1327,7 @@ REGISTER_TEST(claude_module_import_current_takeover_warn,
         DOCTEST_CHECK(warn->text.find("接管态") != std::string::npos);
         DOCTEST_CHECK(warn->text.find("代理配置") != std::string::npos);
         DOCTEST_CHECK(warn->text.find("停止代理") != std::string::npos);
-        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.2"));
+        DOCTEST_CHECK(click(ui, "claude.form.tabs.2.hit"));
     }
     {
         eui::Ui ui;
@@ -1976,7 +1976,7 @@ REGISTER_TEST(claude_module_form_esc_cancels,
         ui.begin("fe_m1");
         mod->compose(ui, screen);
         ui.end();
-        auto* tab = ui.find("claude.form.tabs.hit.1");
+        auto* tab = ui.find("claude.form.tabs.1.hit");
         DOCTEST_REQUIRE(tab != nullptr);
         DOCTEST_REQUIRE(tab->onClick != nullptr);
         tab->onClick();
@@ -2876,7 +2876,7 @@ REGISTER_TEST(claude_ui_form_basic_single_column_geometry,
             eui::Ui ui;
             compose(ui, "claude_geo_tab");
             const std::string hit =
-                std::string("claude.form.tabs.hit.") + std::to_string(tab);
+                std::string("claude.form.tabs.") + std::to_string(tab) + ".hit";
             DOCTEST_CHECK(click(ui, hit));
         }
         {
@@ -2892,7 +2892,7 @@ REGISTER_TEST(claude_ui_form_basic_single_column_geometry,
     {
         eui::Ui ui;
         compose(ui, "claude_geo_back");
-        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.0"));
+        DOCTEST_CHECK(click(ui, "claude.form.tabs.0.hit"));
     }
     {
         eui::Ui ui;
@@ -3102,7 +3102,7 @@ REGISTER_TEST(claude_ui_fallback_dropdown_edit_persists,
     {
         eui::Ui ui;
         compose(ui, "fb_tab3");
-        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.3"));
+        DOCTEST_CHECK(click(ui, "claude.form.tabs.3.hit"));
     }
     {
         eui::Ui ui;
@@ -3154,7 +3154,7 @@ REGISTER_TEST(claude_ui_fallback_dropdown_edit_persists,
         {   // 重开的表单回到 tab 0，failover 下拉在 tab 3
             eui::Ui ui;
             compose(ui, "fb_e7b2");
-            DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.3"));
+            DOCTEST_CHECK(click(ui, "claude.form.tabs.3.hit"));
         }
         {
             eui::Ui ui;
@@ -3247,7 +3247,7 @@ REGISTER_TEST(claude_ui_advanced_tab_dialect_persists,
     {
         eui::Ui ui;
         compose(ui, "adv_c2");
-        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.3"));
+        DOCTEST_CHECK(click(ui, "claude.form.tabs.3.hit"));
     }
     {
         eui::Ui ui;
@@ -3285,7 +3285,7 @@ REGISTER_TEST(claude_ui_advanced_tab_dialect_persists,
     {
         eui::Ui ui;
         compose(ui, "adv_c6");
-        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.0"));   // 基础页补必填项
+        DOCTEST_CHECK(click(ui, "claude.form.tabs.0.hit"));   // 基础页补必填项
     }
     {
         eui::Ui ui;
@@ -3335,7 +3335,7 @@ REGISTER_TEST(claude_ui_advanced_tab_dialect_persists,
     {
         eui::Ui ui;
         compose(ui, "adv_e2");
-        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.3"));
+        DOCTEST_CHECK(click(ui, "claude.form.tabs.3.hit"));
     }
     {
         eui::Ui ui;
@@ -3368,7 +3368,7 @@ REGISTER_TEST(claude_ui_advanced_tab_dialect_persists,
     {
         eui::Ui ui;
         compose(ui, "adv_e7");
-        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.3"));
+        DOCTEST_CHECK(click(ui, "claude.form.tabs.3.hit"));
     }
     {
         eui::Ui ui;
@@ -3482,7 +3482,7 @@ REGISTER_TEST(claude_ui_advanced_json_pretty_persisted,
     {
         eui::Ui ui;
         compose(ui, "json_c2");
-        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.3"));
+        DOCTEST_CHECK(click(ui, "claude.form.tabs.3.hit"));
     }
     {
         eui::Ui ui;
@@ -3494,7 +3494,7 @@ REGISTER_TEST(claude_ui_advanced_json_pretty_persisted,
     {
         eui::Ui ui;
         compose(ui, "json_c4");
-        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.0"));
+        DOCTEST_CHECK(click(ui, "claude.form.tabs.0.hit"));
     }
     {
         eui::Ui ui;
@@ -3567,7 +3567,7 @@ REGISTER_TEST(claude_ui_advanced_json_invalid_and_env_key_rejected,
         {
             eui::Ui ui;
             compose(ui, tag);
-            if (!click(ui, "claude.form.tabs.hit.3")) return false;
+            if (!click(ui, "claude.form.tabs.3.hit")) return false;
         }
         return true;
     };
@@ -3575,7 +3575,7 @@ REGISTER_TEST(claude_ui_advanced_json_invalid_and_env_key_rejected,
         {
             eui::Ui ui;
             compose(ui, tag);
-            if (!click(ui, "claude.form.tabs.hit.0")) return false;
+            if (!click(ui, "claude.form.tabs.0.hit")) return false;
         }
         {
             eui::Ui ui;
@@ -3778,7 +3778,7 @@ REGISTER_TEST(claude_ui_json_fullscreen_enter_cover_and_esc,
     {
         eui::Ui ui;
         compose(ui, "fs_a2");
-        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.3"));
+        DOCTEST_CHECK(click(ui, "claude.form.tabs.3.hit"));
     }
     {
         eui::Ui ui;
@@ -3947,7 +3947,7 @@ REGISTER_TEST(claude_ui_json_fullscreen_buffer_roundtrip_and_error_gate,
         DOCTEST_CHECK(type(ui, "claude.dialog.form.name.hit", "FS往返A"));
         DOCTEST_CHECK(type(ui, "claude.dialog.form.url.hit", "https://fs-a.example.com"));
         DOCTEST_CHECK(type(ui, "claude.dialog.form.key.hit", "sk-ant-fs-a-0001"));
-        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.3"));
+        DOCTEST_CHECK(click(ui, "claude.form.tabs.3.hit"));
     }
     {
         eui::Ui ui;
@@ -4009,7 +4009,7 @@ REGISTER_TEST(claude_ui_json_fullscreen_buffer_roundtrip_and_error_gate,
         DOCTEST_CHECK(type(ui, "claude.dialog.form.name.hit", "FS往返B"));
         DOCTEST_CHECK(type(ui, "claude.dialog.form.url.hit", "https://fs-b.example.com"));
         DOCTEST_CHECK(type(ui, "claude.dialog.form.key.hit", "sk-ant-fs-b-0001"));
-        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.3"));
+        DOCTEST_CHECK(click(ui, "claude.form.tabs.3.hit"));
     }
     {
         eui::Ui ui;
@@ -4066,7 +4066,7 @@ REGISTER_TEST(claude_ui_json_fullscreen_buffer_roundtrip_and_error_gate,
     {
         eui::Ui ui;
         compose(ui, "fs_d3");
-        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.3"));
+        DOCTEST_CHECK(click(ui, "claude.form.tabs.3.hit"));
     }
     {
         eui::Ui ui;
@@ -4141,7 +4141,7 @@ REGISTER_TEST(claude_ui_json_fullscreen_buffer_roundtrip_and_error_gate,
     {
         eui::Ui ui;
         compose(ui, "fs_e2");
-        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.3"));
+        DOCTEST_CHECK(click(ui, "claude.form.tabs.3.hit"));
     }
     {
         eui::Ui ui;
@@ -4265,7 +4265,7 @@ REGISTER_TEST(claude_ui_json_fullscreen_discard_semantics,
         {
             eui::Ui ui;
             compose(ui, "disc_tab3");
-            DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.3"));
+            DOCTEST_CHECK(click(ui, "claude.form.tabs.3.hit"));
         }
         {
             eui::Ui ui;
@@ -4479,7 +4479,7 @@ REGISTER_TEST(claude_ui_json_fullscreen_discard_semantics,
     {
         eui::Ui ui;
         compose(ui, "disc_prec_tab3");
-        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.3"));
+        DOCTEST_CHECK(click(ui, "claude.form.tabs.3.hit"));
     }
     {
         eui::Ui ui;
@@ -4962,7 +4962,7 @@ REGISTER_TEST(claude_module_shared_bind_and_frozen_preview,
     {
         eui::Ui ui;
         compose(ui);
-        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.3"));
+        DOCTEST_CHECK(click(ui, "claude.form.tabs.3.hit"));
     }
     {
         eui::Ui ui;
@@ -4973,7 +4973,7 @@ REGISTER_TEST(claude_module_shared_bind_and_frozen_preview,
         // env 页不再有绑定下拉（迁走后该节点不存在）
         eui::Ui ui2;
         compose(ui2);
-        DOCTEST_CHECK(click(ui2, "claude.form.tabs.hit.2"));
+        DOCTEST_CHECK(click(ui2, "claude.form.tabs.2.hit"));
         eui::Ui ui3;
         compose(ui3);
         DOCTEST_CHECK(ui3.find("claude.form.env.shared.dd.label") == nullptr);
@@ -4984,7 +4984,7 @@ REGISTER_TEST(claude_module_shared_bind_and_frozen_preview,
                          std::string("MY_KEY"));
         eui::Ui ui4;
         compose(ui4);
-        DOCTEST_CHECK(click(ui4, "claude.form.tabs.hit.3"));
+        DOCTEST_CHECK(click(ui4, "claude.form.tabs.3.hit"));
     }
     // 高级配置页拉开绑定下拉 → 选「片段A」→ 提示行出现（片段赢语义明示）
     {
@@ -5042,7 +5042,7 @@ REGISTER_TEST(claude_module_shared_bind_and_frozen_preview,
     {
         eui::Ui ui;
         compose(ui);
-        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.3"));
+        DOCTEST_CHECK(click(ui, "claude.form.tabs.3.hit"));
     }
     {
         eui::Ui ui;
@@ -8167,7 +8167,7 @@ REGISTER_TEST(claude_ui_form_one_m_normalize_on_save,
     {
         eui::Ui ui;
         compose(ui);
-        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.1"));   // 模型映射页
+        DOCTEST_CHECK(click(ui, "claude.form.tabs.1.hit"));   // 模型映射页
     }
     // 手输：def 小写标记（支持→规范化）/ haiku 大写标记（不支持→剥离）/
     //       opus 无标记（原样）
@@ -8533,7 +8533,7 @@ REGISTER_TEST(claude_form_wechat_colors,
     {
         eui::Ui ui;
         compose(ui, "wc_tab2");
-        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.2"));
+        DOCTEST_CHECK(click(ui, "claude.form.tabs.2.hit"));
     }
     {
         eui::Ui ui;
@@ -8545,15 +8545,16 @@ REGISTER_TEST(claude_form_wechat_colors,
         compose(ui, "wc_env");
         DOCTEST_REQUIRE(ui.find("claude.form.env.row.0.key.hit") != nullptr);
         DOCTEST_REQUIRE(ui.find("claude.form.import.text.hit") != nullptr);
-        // env 页：键/值输入底 == wechat 白系；删除/添加/解析钮 == WeChat Secondary
+        // env 页（W4 批2）：键/值输入底 == 白；删除钮 = Danger Ghost 浅红底（error 20%）
+        // 添加钮 = Outline 白底绿边；解析钮 == WeChat Secondary
         DOCTEST_CHECK(sameColor(colorOf(ui, "claude.form.env.row.0.key.hit"),
                                 t.colors.surface));
         DOCTEST_CHECK(sameColor(colorOf(ui, "claude.form.env.row.0.value.hit"),
                                 t.colors.surface));
         DOCTEST_CHECK(sameColor(colorOf(ui, "claude.form.env.row.0.del.bg"),
-                                t.colors.hover));
+                                t.colors.error));   // S2.1 Danger 默认底 = error 20%（RGB 同 error）
         DOCTEST_CHECK(sameColor(colorOf(ui, "claude.form.env.add.bg"),
-                                t.colors.hover));
+                                t.colors.surface)); // S2.1 Outline 默认底 = surface
         DOCTEST_CHECK(sameColor(colorOf(ui, "claude.form.import.parse.bg"),
                                 t.colors.hover));
         DOCTEST_CHECK(sameColor(colorOf(ui, "claude.form.import.text.hit"),
@@ -8573,7 +8574,7 @@ REGISTER_TEST(claude_form_wechat_colors,
     {
         eui::Ui ui;
         compose(ui, "wc_tab3");
-        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.3"));
+        DOCTEST_CHECK(click(ui, "claude.form.tabs.3.hit"));
     }
     {
         eui::Ui ui;
