@@ -1945,8 +1945,10 @@ REGISTER_TEST(agent_ui_detail_config_popover,
     DOCTEST_REQUIRE_MESSAGE(goalV != nullptr, "配置 tab 缺 goal 字段");
     DOCTEST_CHECK(goalV->text.size() >= longGoal.size());
     const auto* noteV = ui3.find(base + ".config.body.context.value");
-    DOCTEST_REQUIRE_MESSAGE(noteV != nullptr, "配置 tab 缺 context 字段");
-    DOCTEST_CHECK(noteV->text.size() >= longNote.size());
+    DOCTEST_CHECK_MESSAGE(noteV == nullptr, "配置 tab context 字段应已移除（W4 C3）");
+    const auto* destrV = ui3.find(base + ".config.body.destructive.value");
+    DOCTEST_REQUIRE_MESSAGE(destrV != nullptr, "配置 tab 缺 destructive 字段（W4 C3 补位）");
+    DOCTEST_CHECK(destrV->text.find("关闭") != std::string::npos);
     // 配置 tab 互斥：runlist / 运行详情块退场；scrim / popover 仍不回潮
     DOCTEST_CHECK(ui3.find(base + ".runlist") == nullptr);
     DOCTEST_CHECK(ui3.find(base + ".detail") == nullptr);
@@ -2147,11 +2149,13 @@ REGISTER_TEST(agent_ui_edit_read_failure_shows_page_error,
     const auto* toggleErr = ui2b.find("agent.page.error");
     DOCTEST_REQUIRE_MESSAGE(toggleErr != nullptr, "启停失败没有任何可见反馈");
     DOCTEST_CHECK(toggleErr->text.find("启停切换失败") != std::string::npos);
-    DOCTEST_REQUIRE(clickId(ui2b, "agent.page.newTask.bg"));
+    // 列表已空（删除后）→ 空态 CTA 开新建弹窗
+    DOCTEST_REQUIRE(clickId(ui2b, "agent.empty.btn.bg"));
     eui::Ui ui3;
     composeTo(ui3, mod, kScreen, "agent_ui_eerr3");
     DOCTEST_CHECK(ui3.find("agent.page.error") == nullptr);
-    DOCTEST_CHECK(ui3.find("agent.dialog.task.goal") != nullptr);
+    // W4 步骤条：新建弹窗打开停在 step 0（名称输入可见，goal 在 step 2）
+    DOCTEST_CHECK(ui3.find("agent.dialog.task.name") != nullptr);
 
     mod.onStop();
     return true;
@@ -2206,7 +2210,9 @@ REGISTER_TEST(agent_ui_tools_section_toggle,
                           "工具卡数 " + std::to_string(cards) +
                               " != 注册表数 " + std::to_string(registered));
     // listTools 是 map 序（name 字典序）：app.notify < app.now < app.stats <
-    // hot.list < net.fetch（五工具全注册时的完整卡序）
+    // bash.run < fs.edit < fs.glob < fs.grep < fs.read < fs.write <
+    // git.branch < git.checkout < git.clone < git.commit < git.diff < git.log <
+    // git.pull < git.status < hot.list < net.fetch（五默认工具 + 14 内置工具）
     const auto* name0 = ui2.find("agent.tools.card.0.name");
     DOCTEST_REQUIRE(name0 != nullptr);
     DOCTEST_CHECK_EQ(name0->text, std::string("app.notify"));
@@ -2218,10 +2224,10 @@ REGISTER_TEST(agent_ui_tools_section_toggle,
     DOCTEST_CHECK_EQ(name2->text, std::string("app.stats"));
     const auto* name3 = ui2.find("agent.tools.card.3.name");
     DOCTEST_REQUIRE(name3 != nullptr);
-    DOCTEST_CHECK_EQ(name3->text, std::string("hot.list"));
+    DOCTEST_CHECK_EQ(name3->text, std::string("bash.run"));
     const auto* name4 = ui2.find("agent.tools.card.4.name");
     DOCTEST_REQUIRE(name4 != nullptr);
-    DOCTEST_CHECK_EQ(name4->text, std::string("net.fetch"));
+    DOCTEST_CHECK_EQ(name4->text, std::string("fs.edit"));
     // 参数文字已并入 desc（双行布局：行 1=名称，行 2=描述+参数）
     const auto* desc0 = ui2.find("agent.tools.card.0.desc");
     DOCTEST_REQUIRE(desc0 != nullptr);
@@ -2301,7 +2307,7 @@ REGISTER_TEST(agent_ui_dialog_geometry_design_size_and_budget,
     constexpr float kStepperY = 64.0f;
     const auto* step0 = ui2.find("agent.dialog.task.step.0");
     DOCTEST_REQUIRE(step0 != nullptr);
-    DOCTEST_CHECK_MESSAGE(nearPx(step0->frame.x - px, 28.0f), "step.0 x 应=28");
+    DOCTEST_CHECK_MESSAGE(nearPx(step0->frame.x - px, 28.0f), "step.0 x 应=28，实测 " + std::to_string(step0->frame.x - px));
     DOCTEST_CHECK_MESSAGE(nearPx(step0->frame.y - py, kStepperY), "step.0 y 应=64");
     DOCTEST_CHECK_MESSAGE(nearPx(step0->frame.height, kPillH), "step.0 h 应=32");
 
@@ -2457,7 +2463,7 @@ REGISTER_TEST(agent_ui_detail_dialog_geometry_and_empty_state,
         nearPx(panel->frame.width, 800.0f),
         "详情弹窗宽应为弹性值 max(720, 1600/2)=800，实测 " +
             std::to_string(panel->frame.width));
-    DOCTEST_CHECK_MESSAGE(nearPx(panel->frame.height, 660.0f),
+    DOCTEST_CHECK_MESSAGE(nearPx(panel->frame.height, 552.0f),
                           "详情弹窗高应为设计值 660，实测 " +
                               std::to_string(panel->frame.height));
     // 头部真实任务名（方案 A：不再恒「任务详情」）
@@ -4189,7 +4195,7 @@ REGISTER_TEST(agent_ui_detail_shell_wide_default,
     const auto* panel = ui2.find("agent.dialog.detail.panel");
     DOCTEST_REQUIRE(panel != nullptr);
     DOCTEST_CHECK_MESSAGE(nearPx(panel->frame.width, 800.0f) &&
-                              nearPx(panel->frame.height, 660.0f),
+                              nearPx(panel->frame.height, 552.0f),
                           "弹性档应为 800×660（max(720, 窗口/2)），实测 " +
                               std::to_string(panel->frame.width) + "×" +
                               std::to_string(panel->frame.height));
