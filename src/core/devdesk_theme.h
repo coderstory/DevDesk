@@ -28,6 +28,7 @@ inline components::theme::ThemeColorTokens DevDeskTheme::light() {
     t.primaryHover  = color(46.0f / 255.0f, 196.0f / 255.0f, 143.0f / 255.0f);   // #2EC48F
     t.primaryActive = color(35.0f / 255.0f, 176.0f / 255.0f, 127.0f / 255.0f);   // #23B07F
     t.primarySoftBg = color(230.0f / 255.0f, 251.0f / 255.0f, 242.0f / 255.0f);  // #E6FBF2
+    t.primaryText   = color(21.0f / 255.0f, 126.0f / 255.0f, 78.0f / 255.0f);   // #157E4E S1.2 #5 (~4.87:1 on #FAFAF9)
 
     // Text
     t.text          = color(31.0f / 255.0f, 41.0f / 255.0f, 55.0f / 255.0f);     // #1F2937
