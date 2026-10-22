@@ -37,6 +37,16 @@
         ]
       },
       {
+        "matcher": "Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "C:/PROGRA~1/Python311/python.exe D:/project/gui/DevDesk/.claude/hooks/ledger-guard.py",
+            "timeout": 30
+          }
+        ]
+      },
+      {
         "matcher": "Bash",
         "hooks": [
           {
@@ -56,6 +66,18 @@
             "if": "Bash(git rebase*)",
             "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/discipline-reminders.sh\" merge-tree",
             "timeout": 15
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "C:/PROGRA~1/Python311/python.exe D:/project/gui/DevDesk/.claude/hooks/uat62-whip.py",
+            "timeout": 10
           }
         ]
       }
