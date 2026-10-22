@@ -557,7 +557,7 @@ void drawProxyCard(const CardDrawArgs& args) {
                         .build();
                     // UAT3 W2-M1：core 橘（#D97757 三态）残留 → 与 github 卡主按钮
                     //（btn.push「立即同步」）完全同款：componentTokensWeChat 的
-                    // primary=#07C160 绿，不再覆写 colors/textColor
+                    // primary=#36D399 绿，不再覆写 colors/textColor
                     components::button(ui, id + ".port.apply")
                         .position(cx + 96.0f + 8.0f, ctrlY)
                         .size(64.0f, inputH)

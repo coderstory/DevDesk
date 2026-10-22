@@ -25,7 +25,7 @@ constexpr float kWswitchThumbPadding = 2.0f;   // 滑块与轨道内缘的留白
 // 节点 id = `<id>.track`（轨道 rect）/ `<id>.thumb`（滑块 rect），单测按此定位。
 // spec §4.4 视觉：
 //   关 = 灰轨道（wechat.dividerSecondary #EDEDED）+ 白滑块；
-//   开 = wechat.primary（#07C160）绿轨道 + 白滑块。
+//   开 = wechat.primary（#36D399）绿轨道 + 白滑块。
 // spec §4.4 禁止项：开关非绿 / 非灰——本 helper 走 wechat 令牌派生，绿 / 灰
 // 二态钉死。滑块位移用简单 position（不强制动画；EUI 若有 transition 可后续加 .animate）。
 void wswitch(eui::Ui& ui, const std::string& id, bool on,

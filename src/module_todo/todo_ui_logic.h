@@ -285,7 +285,7 @@ inline eui::Color priorityColor(Priority p, const core::theme::Tokens& t) {
     // None 档仅显色场景用；卡底 tint 路径 None 不经本表（priorityCardBg 走列色淡染/原底早退）
     static constexpr eui::Color core::theme::ColorTokens::*kColorFields[] = {
         &core::theme::ColorTokens::textTertiary,  // None 中性灰 #999999
-        &core::theme::ColorTokens::primary,       // Low 微信绿 #07C160
+        &core::theme::ColorTokens::primary,       // Low 薄荷绿 #36D399
         &core::theme::ColorTokens::warning,       // Medium 警示橙 #FFC300
         &core::theme::ColorTokens::error,         // High 警示红 #FA5151
     };
