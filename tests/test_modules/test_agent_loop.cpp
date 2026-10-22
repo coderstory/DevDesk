@@ -694,8 +694,10 @@ REGISTER_TEST(agent_loop_goal_escaping, "agent_loop: goal 含引号/反斜杠/�
     return true;
 })
 
-// contextNote 非空 + autoNote → system prompt 注入格式头 + 原文
-REGISTER_TEST(agent_loop_context_note_injected, "agent_loop: contextNote 非空 → system prompt 含记忆头 + 原文", {
+// W4 C3 反转：上下文记忆并入 systemPrompt 单字段，运行时不再注入 contextNote
+//（agent_loop.cpp L219-225：systemPrompt 非空直接用，否则只拼时间行）。
+// contextNote 非空 + autoNote=true 也不得出现在 system prompt 里。
+REGISTER_TEST(agent_loop_context_note_injected, "agent_loop: contextNote 非空 → system prompt 不注入记忆头与原文（C3 反转）", {
     Fixture fx;
     AgentTask task;
     DOCTEST_REQUIRE(setupTask(fx, task, "打招呼", 10, false));
@@ -707,8 +709,8 @@ REGISTER_TEST(agent_loop_context_note_injected, "agent_loop: contextNote 非空 
     DOCTEST_REQUIRE(runId.isOk());
     DOCTEST_REQUIRE_EQ(fx.llm.sentSystemPrompts.size(), 1u);
     const std::string& sp = fx.llm.sentSystemPrompts[0];
-    DOCTEST_CHECK(sp.find("[任务上下文记忆]") != std::string::npos);
-    DOCTEST_CHECK(sp.find("上次 run 用了 t.hello") != std::string::npos);
+    DOCTEST_CHECK(sp.find("[任务上下文记忆]") == std::string::npos);
+    DOCTEST_CHECK(sp.find("上次 run 用了 t.hello") == std::string::npos);
     return true;
 })
 
@@ -764,8 +766,11 @@ REGISTER_TEST(agent_loop_autonote_off_not_injected, "agent_loop: autoNote=false 
     return true;
 })
 
-// completed + autoNote → 自动 append 最终回复到 context note（含时间戳前缀）
-REGISTER_TEST(agent_loop_completed_autonote_appends, "agent_loop: completed + autoNote → contextNote 追加时间戳 + 回复截断", {
+// W4 C3 反转：`status == "completed" && task.autoNote` 的自动 append 分支已移除
+//（agent_loop.cpp 收尾注释同口径——执行记忆/自动记录并入 systemPrompt 单字段，
+// context note 不再写入也不再展示）。completed 后 contextNote 必须原样不变：
+// 无时间戳条目、无回复截断文本。
+REGISTER_TEST(agent_loop_completed_autonote_appends, "agent_loop: completed + autoNote → contextNote 不再追加（C3 反转）", {
     Fixture fx;
     auto taskId = fx.store.createTask("t", "打招呼", "manual", "default", 10, false, "",
                                       "旧记忆\n", 1);
@@ -774,24 +779,18 @@ REGISTER_TEST(agent_loop_completed_autonote_appends, "agent_loop: completed + au
     task.modelSlot = "default"; task.maxIterations = 10;
     task.contextNote = "旧记忆\n";
     task.autoNote = true;
-    // 回复 2000+ 字节确保触发截断
+    // 回复 2000+ 字节（旧口径会触发截断 append；C3 后不 append 也就无截断路径）
     std::string longText(2500, 'X');
     fx.llm.script = { resp((std::string(R"([{"type":"text","text":")") + longText +
                             R"("}])").c_str(), "end_turn") };
     std::atomic<bool> cancel{false};
     auto runId = fx.loop.run(task, cancel);
     DOCTEST_REQUIRE(runId.isOk());
-    // 读回 contextNote 验证追加
+    // 读回 contextNote：C3 后必须与输入逐字节一致（不追加、不截断）
     auto row = fx.store.getTask(taskId.value());
     DOCTEST_REQUIRE(row.isOk());
     const std::string& cn = row.value().contextNote;
-    // 旧记忆保留
-    DOCTEST_CHECK(cn.find("旧记忆") != std::string::npos);
-    // 新条目含时间戳格式 "[yyyy-MM-dd HH:mm] "
-    DOCTEST_CHECK(cn.find("] ") != std::string::npos);
-    // 截断后不超过 1500 字节（+ 时间戳前缀 ~18 + 旧记忆 ~7 字节 UTF-8）
-    // 注：旧记忆 + 新条目经 4KB 滚动（旧记忆很短不会触发滚动），追加文本 ≤ 1500+18 字节
-    DOCTEST_CHECK(cn.size() <= std::string("旧记忆\n").size() + 18 + 1500 + 16);
+    DOCTEST_CHECK_EQ(cn, std::string("旧记忆\n"));
     return true;
 })
 
