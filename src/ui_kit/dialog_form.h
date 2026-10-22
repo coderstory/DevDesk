@@ -44,7 +44,7 @@ void drawDialogFrame(eui::Ui& ui, const eui::Screen& screen, const DialogFrame& 
 // 现状排版：position + size + text + fontSize + lineHeight [+ fontWeight(700)] [+ wrap] + color。
 struct DialogTextOptions {
     float x = kDialogInsetX;
-    float y = 24.0f;
+    float y = 16.0f;  // 规格 §三.4：内容区内边距 24px，标题上缘距顶 ≤16px（原 24）
     float inset = kDialogBodyInsetX;  // 文本宽 = 对话框宽 - inset（D2 现状多数派）
     float width = 0.0f;        // > 0 = 直接用此宽（覆盖 inset；详情弹窗标签行现状）
     float height = 28.0f;      // 文本元素高
@@ -61,7 +61,7 @@ void drawDialogText(eui::Ui& ui, const std::string& id, float dialogWidth,
 // 标题行（宽 w-56、高 28、行高 28、700 字重）
 struct DialogTitleOptions {
     float x = kDialogInsetX;
-    float y = 24.0f;
+    float y = 16.0f;  // 规格 §三.4：标题上缘距弹窗顶 ≤16px（原 24）
     float inset = kDialogBodyInsetX;  // 文本宽 = 对话框宽 - inset（逾期标题留图标位时为 78）
     float height = 28.0f;
     float lineHeight = 28.0f;

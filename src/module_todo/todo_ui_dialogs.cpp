@@ -217,7 +217,7 @@ void drawNewTaskDialog(eui::Ui& ui, const eui::Screen& screen,
         .content([&] {
             ui_kit::drawDialogTitle(ui, "todo.dialog.newtask.title", w, "新建任务",
                                     t.sizes.fontSizeLarge + 2.0f, t.colors.textPrimary,
-                                    {.y = 22.0f, .height = 28.0f, .lineHeight = 28.0f});
+                                    {.y = 14.0f, .height = 28.0f, .lineHeight = 28.0f});
 
             std::string colName = "?";
             for (const auto& c : *host.columns) {
@@ -785,7 +785,7 @@ void drawOverdueDialog(eui::Ui& ui, const eui::Screen& screen,
                 ui, "todo.dialog.overdue.title", w,
                 "逾期任务（" + std::to_string(d.overdue.tasks.size()) + "）",
                 t.sizes.fontSizeLarge + 2.0f, t.colors.error,
-                {.x = 50.0f, .y = 20.0f, .inset = 78.0f});
+                {.x = 50.0f, .y = 12.0f, .inset = 78.0f});
             std::string hint = "任务名 · 所属列 · 截止 · 逾期天数，点击行跳转详情";
             if (d.overdue.tasks.size() > shown) {
                 hint += "（仅显示前 " + std::to_string(shown) + " 条）";

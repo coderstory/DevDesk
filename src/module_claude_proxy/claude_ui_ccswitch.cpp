@@ -23,14 +23,14 @@ namespace {
 
 // 弹窗几何（单一来源，绘制与高度算式都用这里）
 constexpr float kDialogHeight = 520.0f;
-constexpr float kTitleY = 24.0f;
+constexpr float kTitleY = 16.0f;  // 规格 §三.4：标题上缘距弹窗顶 ≤16px（原 24）
 constexpr float kTitleH = 28.0f;
-constexpr float kDescY = 56.0f;
+constexpr float kDescY = 48.0f;   // 标题底 44 + 4 缝（原 56）
 constexpr float kDescH = 34.0f;
-constexpr float kSelectAllY = 100.0f;
+constexpr float kSelectAllY = 92.0f;  // desc 底 82 + 10 缝（原 100）
 constexpr float kSelectAllH = 40.0f;  // H2：28→40 对齐规格（按钮高度 40px）
-// 全选钮带（底 128→140，H2 钮高 28→40 对齐规格）与候选列表留 8px 间距（UAT6：原 4px 太挤）
-constexpr float kListTopY = 148.0f;
+// 全选钮带（底 120→132，H2 钮高 28→40 对齐规格）与候选列表留 8px 间距（UAT6：原 4px 太挤）
+constexpr float kListTopY = 140.0f;  // selectAll 底 132 + 8 缝（原 148）
 // UAT6 P 批：行卡高 +12.5%（48→54）、行间 8→14（下边距增大）、整卡行距 56→68
 constexpr float kRowPitch = 68.0f;        // 每条候选占的行高（行卡 54 + 行间 14）
 constexpr float kRowCardH = kRowPitch - 14.0f;  // 行卡高 54px（原 48 +12.5%）

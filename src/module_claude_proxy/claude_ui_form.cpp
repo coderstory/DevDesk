@@ -1049,7 +1049,7 @@ const float h = 540.0f;
             ui_kit::drawDialogTitle(
                 ui, "claude.dialog.form.title", w,
                 isEdit ? "编辑 Profile" : "新建 Profile", 20.0f, t.colors.textPrimary,
-                {.y = 20.0f, .height = 26.0f, .lineHeight = 26.0f});
+                {.y = 12.0f, .height = 26.0f, .lineHeight = 26.0f});
 
             // tabs 四页；TabsBuilder 无 position，套 stack 定位
             ui.stack("claude.form.tabs.wrap")
@@ -1133,7 +1133,7 @@ void drawJsonFullscreenOverlay(eui::Ui& ui, const eui::Screen& screen,
             ui_kit::drawDialogTitle(ui, "claude.jsonfs.title", w,
                                     "高级设置 JSON（全屏）", 20.0f,
                                     t.colors.textPrimary,
-                                    {.y = 20.0f, .height = 26.0f,
+                                    {.y = 12.0f, .height = 26.0f,
                                      .lineHeight = 26.0f});
             // 基础项（名称/URL/Key）缺失的修复入口在基础页、全屏态不可达，末尾明示回表单补填
             ui.text("claude.jsonfs.hint")
@@ -1348,7 +1348,7 @@ void drawSharedConfigDialog(eui::Ui& ui, const eui::Screen& screen,
         ui_kit::drawDialogTitle(
             ui, "claude.dialog.shared.title", w,
             isEdit ? "编辑共享配置片段" : "新建共享配置片段", 20.0f,
-            t.colors.textPrimary, {.y = 20.0f, .height = 26.0f, .lineHeight = 26.0f});
+            t.colors.textPrimary, {.y = 12.0f, .height = 26.0f, .lineHeight = 26.0f});
 
         ui.text("claude.dialog.shared.name.label")
             .position(28.0f, 64.0f).size(w - 56.0f, 16.0f)
