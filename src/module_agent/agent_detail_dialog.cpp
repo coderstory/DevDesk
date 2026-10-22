@@ -1389,9 +1389,11 @@ void AgentModule::composeTaskDetailDialog(
                                                ? std::to_string(cfgTask->maxIterations)
                                                : std::string())},
                                 {"limit", "次数上限", limitV},
-                                {"autonote", "自动记录",
+                                // W4 C3：「自动记录」单元格已移除（功能并入系统提示词，
+                                // 自动记录固定开启）；原位补「允许破坏性」保持 3×2 网格完整
+                                {"destructive", "允许破坏性",
                                  cfgTask != nullptr
-                                     ? std::string(cfgTask->autoNote != 0
+                                     ? std::string(cfgTask->allowDestructive
                                                        ? "开启"
                                                        : "关闭")
                                      : std::string("—")},
@@ -1461,12 +1463,7 @@ void AgentModule::composeTaskDetailDialog(
                                 })
                                 .build();
                         }
-                        cfgBlock("context", "执行记忆",
-                                 cfgTask != nullptr
-                                     ? (cfgTask->contextNote.empty()
-                                            ? std::string("（未设置）")
-                                            : cfgTask->contextNote)
-                                     : std::string("—"));
+                        // W4 C3：「执行记忆」展示已移除（并入系统提示词单字段）
                         // 系统提示词：配置 tab 只读展示（编辑走任务弹窗）
                         cfgBlock("sysprompt", "系统提示词",
                                  cfgTask != nullptr

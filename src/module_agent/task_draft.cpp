@@ -210,14 +210,13 @@ std::string buildTaskDraftSystemPrompt(std::time_t now,
         "3. 输出格式（给用户看什么、怎么组织）；\n"
         "4. 约束：不编造数据；不改动或删除用户已有数据（除非用户明确要求且 "
         "allowDestructive 为 true）；不回显密钥等敏感信息。\n"
-        "contextNote 只放长期有效的约束（如「只处理 work 前缀的待办」），没有就空串。\n"
-        "两者的分工：goal 是这一次要做的步骤，contextNote 是每次都生效的前提。\n\n";
+        "长期有效的约束（如「只处理 work 前缀的待办」）写进 goal 本身。\n\n";
 
     p +=
         "[输出格式]（唯一硬要求）\n"
         "只输出一个 JSON 对象。不要 markdown 代码块围栏（```），不要任何解释文字、"
-        "前后缀或多余空行。字段固定为下面这七个，键名一字不改：\n"
-        "{\"goal\":\"...\",\"contextNote\":\"\",\"triggerType\":\"manual\",\"cron\":"
+        "前后缀或多余空行。字段固定为下面这六个，键名一字不改：\n"
+        "{\"goal\":\"...\",\"triggerType\":\"manual\",\"cron\":"
         "\"\",\"onceLocal\":\"YYYY-MM-DD HH:MM\",\"maxIterations\":10,"
         "\"allowDestructive\":false,\"needsUserInput\":[]}\n"
         "- cron：仅 triggerType=schedule 时填五段表达式，其余一律填空串。\n"
@@ -233,28 +232,28 @@ std::string buildTaskDraftSystemPrompt(std::time_t now,
         "用户：每天早上八点帮我看看热榜，有大新闻就通知我\n"
         "输出：{\"goal\":\"调用 hot.list 取热榜；与昨天的条目做对比（取不到昨天数据"
         "就只报当前前十）。有新增的显著条目时调用 app.notify 通知我标题与链接；没有"
-        "新增就不通知、不发任何消息。\",\"contextNote\":\"\",\"triggerType\":"
+        "新增就不通知、不发任何消息。\"\"triggerType\":"
         "\"schedule\",\"cron\":\"0 8 * * *\",\"onceLocal\":\"\",\"maxIterations"
         "\":10,\"allowDestructive\":false,\"needsUserInput\":[]}\n\n"
         "用户：每天帮我新建一个当天的笔记\n"
         "输出：{\"goal\":\"调用 md.save 在笔记目录新建当天笔记，文件名为 "
         "YYYY-MM-DD.md，正文写当天日期和一句待办提示；文件已存在则跳过，不覆盖。\","
-        "\"contextNote\":\"\",\"triggerType\":\"daily\",\"cron\":\"\",\"onceLocal"
+        "\"triggerType\":\"daily\",\"cron\":\"\",\"onceLocal"
         "\":\"\",\"maxIterations\":10,\"allowDestructive\":false,\"needsUserInput"
         "\":[]}\n\n"
         "用户：帮我看看有哪些逾期待办\n"
         "输出：{\"goal\":\"调用 todo.list 并传 overdue=true，列出标题与到期日并按"
-        "到期日升序；结果为空就明确说没有逾期项。\",\"contextNote\":\"\",\"triggerType"
+        "到期日升序；结果为空就明确说没有逾期项。\"\"triggerType"
         "\":\"manual\",\"cron\":\"\",\"onceLocal\":\"\",\"maxIterations\":10,"
         "\"allowDestructive\":false,\"needsUserInput\":[]}\n\n"
         "用户：明早八点提醒我开会\n"
         "输出：{\"goal\":\"到点后调用 app.notify 发一条标题「会议提醒」、正文「该"
-        "开会了」的通知。\",\"contextNote\":\"\",\"triggerType\":\"once\",\"cron"
+        "开会了」的通知。\"\"triggerType\":\"once\",\"cron"
         "\":\"\",\"onceLocal\":\"<按当前时间换算出的明早 08:00>\",\"maxIterations"
         "\":10,\"allowDestructive\":false,\"needsUserInput\":[]}\n\n"
         "用户：等我提醒我交房租（没说时间）\n"
         "输出：{\"goal\":\"到点后调用 app.notify 发一条标题「房租提醒」、正文「该"
-        "交房租了」的通知。\",\"contextNote\":\"\",\"triggerType\":\"once\",\"cron"
+        "交房租了」的通知。\"\"triggerType\":\"once\",\"cron"
         "\":\"\",\"onceLocal\":\"\",\"maxIterations\":10,\"allowDestructive\":false,"
         "\"needsUserInput\":[\"请指定闹钟时间（YYYY-MM-DD HH:MM）\"]}\n";
     return p;
@@ -350,7 +349,7 @@ core::Result<TaskDraftResult> parseTaskDraft(
         d.goal = goal;
         out.goalFilled = true;
     }
-    d.contextNote = trimmedStr(obj, "contextNote");
+    // W4 C3：contextNote 已移除——执行记忆并入 systemPrompt 单字段，不再从草稿解析
 
     // ---- 模型自报「还缺什么」 ----
     for (const auto& ask : stringArray(obj, "needsUserInput")) {

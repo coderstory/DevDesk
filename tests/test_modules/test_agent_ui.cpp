@@ -463,7 +463,8 @@ REGISTER_TEST(agent_ui_new_task_dialog_fields,
     DOCTEST_CHECK(ui_s2.find("agent.dialog.task.goal") != nullptr);
     DOCTEST_CHECK(ui_s2.find("agent.dialog.task.goal.caption") != nullptr);
     DOCTEST_CHECK(ui_s2.find("agent.dialog.task.aichip") != nullptr);
-    DOCTEST_CHECK(ui_s2.find("agent.dialog.task.note") != nullptr);
+    // W4 C3：执行记忆字段已移除（并入系统提示词单字段）
+    DOCTEST_CHECK(ui_s2.find("agent.dialog.task.note") == nullptr);
     DOCTEST_CHECK(ui_s2.find("agent.dialog.task.sysprompt") != nullptr);
     DOCTEST_CHECK(ui_s2.find("agent.dialog.task.trigger") == nullptr);
 
@@ -474,7 +475,8 @@ REGISTER_TEST(agent_ui_new_task_dialog_fields,
     DOCTEST_CHECK(ui_s3.find("agent.dialog.task.slot") != nullptr);
     DOCTEST_CHECK(ui_s3.find("agent.dialog.task.iter") != nullptr);
     DOCTEST_CHECK(ui_s3.find("agent.dialog.task.destructive") != nullptr);
-    DOCTEST_CHECK(ui_s3.find("agent.dialog.task.autonote") != nullptr);
+    // W4 C3：自动记录开关已移除（行为固定开启）
+    DOCTEST_CHECK(ui_s3.find("agent.dialog.task.autonote") == nullptr);
     DOCTEST_CHECK(ui_s3.find("agent.dialog.task.meta.hint") != nullptr);
     DOCTEST_CHECK(ui_s3.find("agent.dialog.task.group.danger") != nullptr);
     DOCTEST_CHECK(ui_s3.find("agent.dialog.task.goal") == nullptr);

@@ -342,8 +342,8 @@ private:
     //（「只跑一次」开关），但草稿是整数：手改库/将来放开 N 次时编辑态能原样回写，
     // 不会被开关压回 1（往返不丢数据）
     int editMaxRuns_ = 0;
-    std::string editContextNote_;
-    bool editAutoNote_ = true;
+    // W4 C3 字段合并：editContextNote_ / editAutoNote_ 已移除（执行记忆并入系统提示词，
+    // 自动记录固定开启），保留 systemPrompt 单字段
     std::string editSystemPrompt_;
     // 「事件」分支的勾选态（与 agent_module.cpp 的 kEventNames 一一对应；仅主线程）
     std::array<bool, 3> editEvents_{};
