@@ -246,7 +246,7 @@ REGISTER_TEST(claude_ccswitch_ui_skeleton_contract,
         // S1: source uses primaryPressed for checkbox fill
         DOCTEST_CHECK(sameColor(selBox->color, wc.primaryPressed));  // 绿圈白勾
         DOCTEST_CHECK(!sameColor(selBox->color, wc.primary));       // 反向：不是 primary（更亮）
-        DOCTEST_CHECK_EQ(selBox->radius, 10.0f);  // 20px 圆：radius == kBoxSize/2
+        DOCTEST_CHECK_EQ(selBox->radius, 8.0f);  // S2 控件统一 8px 圆角
         DOCTEST_CHECK(sameColor(selBox->border.color, wc.primaryPressed));
         const auto* selMark = ui2.find("claude.dialog.ccswitch.row.1.cb.mark");
         DOCTEST_REQUIRE(selMark != nullptr);
@@ -349,7 +349,7 @@ REGISTER_TEST(claude_ccswitch_ui_skeleton_contract,
         DOCTEST_REQUIRE(unBox != nullptr);
         DOCTEST_CHECK(sameColor(unBox->color, wc.surface));      // 白圈（source: surface）
         DOCTEST_CHECK(!sameColor(unBox->color, wc.primary));     // 反向：不是绿色
-        DOCTEST_CHECK_EQ(unBox->radius, 10.0f);  // 未选中同 20px 圆
+        DOCTEST_CHECK_EQ(unBox->radius, 8.0f);  // S2 控件统一 8px 圆角
         DOCTEST_CHECK(sameColor(unBox->border.color, wc.borderDefault));  // S1.2 #8
         DOCTEST_CHECK(!sameColor(unBox->border.color, wc.primary));       // 反向：不是绿色
     }

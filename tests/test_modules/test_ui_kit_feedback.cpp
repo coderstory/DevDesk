@@ -151,24 +151,24 @@ REGISTER_TEST(ui_kit_empty_state_minimal_text_with_nearby_action,
                       0.0f, 0.0f, 300.0f, 200.0f, t);
     ui.end();
 
-    // 文字节点存在 + color=wechat.textSecondary(#666666) + fontSize=14
+    // 文字节点存在 + color=textSecondary #4B5563（S2.8 标题 textSecondary） + fontSize=14
     const auto* msg = ui.find("es.message");
     DOCTEST_REQUIRE(msg != nullptr);
-    DOCTEST_CHECK_EQ(toHexByte(msg->textColor.r), 0x66);
-    DOCTEST_CHECK_EQ(toHexByte(msg->textColor.g), 0x66);
-    DOCTEST_CHECK_EQ(toHexByte(msg->textColor.b), 0x66);
+    DOCTEST_CHECK_EQ(toHexByte(msg->textColor.r), 0x4B);
+    DOCTEST_CHECK_EQ(toHexByte(msg->textColor.g), 0x55);
+    DOCTEST_CHECK_EQ(toHexByte(msg->textColor.b), 0x63);
     DOCTEST_CHECK_EQ(msg->fontSize, 14.0f);
     DOCTEST_CHECK_EQ(msg->text, std::string{"暂无任务"});
 
     // 按钮节点存在（W2b button helper Secondary 级，id="es.action"）
     const auto* btnBg = ui.find("es.action.bg");
     DOCTEST_REQUIRE(btnBg != nullptr);
-    // Secondary bg = wechat.secondaryButtonBg (#F2F2F2)
-    DOCTEST_CHECK_EQ(toHexByte(btnBg->color.r), 0xF2);
-    DOCTEST_CHECK_EQ(toHexByte(btnBg->color.g), 0xF2);
-    // 按钮高度 = kButtonHeight (34，§4.1 D-12 统一)
+    // Secondary bg = surfaceHover #F3F4F6（S1.2 #13）
+    DOCTEST_CHECK_EQ(toHexByte(btnBg->color.r), 0xF3);
+    DOCTEST_CHECK_EQ(toHexByte(btnBg->color.g), 0xF4);
+    // 按钮高度 = kButtonHeight（40，S1.2 #35 / S2.1）
     DOCTEST_CHECK_EQ(btnBg->height.value, ui_kit::kButtonHeight);
-    DOCTEST_CHECK_EQ(btnBg->height.value, 34.0f);
+    DOCTEST_CHECK_EQ(btnBg->height.value, 40.0f);
 
     // 按钮文字节点存在 + 内容正确
     const auto* btnTxt = ui.find("es.action.text");

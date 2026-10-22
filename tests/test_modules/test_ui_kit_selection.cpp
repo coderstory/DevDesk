@@ -45,14 +45,14 @@ REGISTER_TEST(ui_kit_selection_bar_colors,
 
     const auto* bg = ui.find("sel.bg");
     DOCTEST_REQUIRE(bg != nullptr);
-    // bg = selectedBg #E5E5E5（§4.3 "深灰背景"——实为浅灰选中底色）
+    // bg = primarySoftBg #E6FBF2（S2.5 selectionBar 选中底色）
     DOCTEST_CHECK_EQ(toHexByte(bg->color.r), 0xE6);
     DOCTEST_CHECK_EQ(toHexByte(bg->color.g), 0xFB);
     DOCTEST_CHECK_EQ(toHexByte(bg->color.b), 0xF2);
 
     const auto* accent = ui.find("sel.accent");
     DOCTEST_REQUIRE(accent != nullptr);
-    // accent = primary #07C160（§4.3 "左侧 2px 微信绿竖线"）
+    // accent = primary #36D399（S2.5 selectionBar 左侧竖线 + text）
     DOCTEST_CHECK_EQ(toHexByte(accent->color.r), 0x36);
     DOCTEST_CHECK_EQ(toHexByte(accent->color.g), 0xD3);
     DOCTEST_CHECK_EQ(toHexByte(accent->color.b), 0x99);
@@ -62,7 +62,7 @@ REGISTER_TEST(ui_kit_selection_bar_colors,
 
     const auto* txt = ui.find("sel.text");
     DOCTEST_REQUIRE(txt != nullptr);
-    // text = textPrimary #1A1A1A（§4.3 "深灰文字"）
+    // text = primary #36D399（S2.5 选中项文字绿色高亮）
     DOCTEST_CHECK_EQ(toHexByte(txt->textColor.r), 0x36);
     DOCTEST_CHECK_EQ(toHexByte(txt->textColor.g), 0xD3);
     DOCTEST_CHECK_EQ(toHexByte(txt->textColor.b), 0x99);
@@ -185,7 +185,7 @@ REGISTER_TEST(ui_kit_wswitch_off_track_gray_not_green,
 
     const auto* track = ui.find("sw.off.track");
     DOCTEST_REQUIRE(track != nullptr);
-    // track = dividerSecondary #EDEDED 灰
+    // track = t.colors.hover #F3F4F6（wswitch.cpp:17；S2.6 指定 #D1D5DB，当前代码未对齐——测试锚代码现状）
     DOCTEST_CHECK_EQ(toHexByte(track->color.r), 0xF3);
     DOCTEST_CHECK_EQ(toHexByte(track->color.g), 0xF4);
     DOCTEST_CHECK_EQ(toHexByte(track->color.b), 0xF6);
