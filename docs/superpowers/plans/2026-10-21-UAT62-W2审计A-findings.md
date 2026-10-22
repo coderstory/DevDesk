@@ -105,3 +105,49 @@
 | 4 遗留完整性 | 14 行删除到位；src/ 残余有因（W3 分批）；tests/ 残余待 W3 | 无缺陷，2 非缺陷，1 注意 |
 
 **三阈值裁决结论**：lumadiff 0.4→0.35 合理（primary 变亮不可避），wcag 4.5→4.0 可接受（值真 4.19:1），wcag 4.5→2.5 **不可接受**——`#23B07F` 是 primaryActive（pressed 态色）不是文字色，应改用 ≥`#1B8C5C` 级暗绿使 primaryText on background 恢复到 ≥4.5:1，阈值回滚到 `wcagContrast(primaryText, background) >= 4.5`。当前 2.5 阈值已将 WCAG 护栏降为摆设。
+
+---
+
+# 复查结论（W2 红件修复批：3fd60a54 / 8d232dcb / 280dd1ce / 532e4073）
+
+## 逐 finding 处置核对
+
+### F3.4（HIGH）primaryText #23B07F 误用 — **通过**
+- 浅色档 primaryText `#23B07F` → `#157E4E`（`theme.cpp:93`）
+- **独立复算**：`#157E4E` on `#FAFAF9` = **4.87:1 ≥ WCAG AA 4.5:1**（Python 逐分量 sRGB 线性化计算）；on `#E6FBF2` = **4.71:1** 同过。
+- wcag 阈值回滚 `2.5`→`4.5`（`test_theme.cpp:199-201`）：断言已恢复为 `wcagContrast(c.primaryText, c.background) >= 4.5` 和 `wcagContrast(c.primaryText, c.primarySoftBg) >= 4.5`。
+- 暗色档 primaryText 保持 `#36D399`（深底 `#1A1816` 上 **9.22:1**——远过 AA）。
+- 规格 S1.2 #5 已同步修订注记（含审计 F3.4 裁决引用）。
+- ccswitch 测试断言联动更新：`t.colors.wechat.*` → 主槽位值 + checkbox 用 `primaryPressed`（#23B07F）替代旧 primary（`test_claude_ccswitch_ui.cpp:232-235`）。
+
+### F2.1（MED）dark 工厂 primaryText 缺位 — **通过（dark 侧）**
+- `DevDeskTheme::dark()` 已补 `t.primaryText = color(54/255, 211/255, 153/255); // #36D399`（`devdesk_theme.h:79`）。
+- 暗色 `theme.cpp:23` 的 `c.primaryText` 同值 `#36D399`，工厂与 setDark 一致。
+- **残余注意**：`DevDeskTheme::light()` 工厂仍未显式设 `primaryText`（依赖 `theme.cpp:setLight()` 覆盖），若未来直接使用 light 工厂输出而跳过 setLight→零初始化。当前无调用路径触发此缺口，不阻塞。
+
+### WidgetStyle Outline bg cWhite→t.surface — **通过**
+- `devdesk_theme.h:134,141`：Outline default/disabled 背景从 `cWhite` 改为 `t.surface`。暗色主题下 `t.surface` = `#232120`（非纯白），修复暗主题一致性。
+
+### ccswitch .text.normal→.text 回滚 — **通过**
+- `532e4073`：`test_claude_ccswitch_ui.cpp` 全部 9 处 `.text.normal` 回滚为 `.text`。
+- 根因：ccswitch 对话框按钮 `SecondaryThemed`/`PrimaryThemed` 调 EUI button 的 `textColor` 但不设 `textHover`，EUI 创建的是 `.text` 节点（非 `.text.normal`）——`17a268a2` 改错，已回滚。
+
+### 非 audit 直接 findings 的批内附赠（wtab/selectionBar）— **通过**
+- `8d232dcb` wtab 块面重绘：选中态 `primarySoftBg` 底 + `primary` 字 + 8px 圆角；移除 underline rect。与 S2.2 及 S6.2 吻合。
+- `280dd1ce` selectionBar S2.5：文字色 `textPrimary`→`primary`（#36D399），左竖线 2px→3px（`kSelectionBarAccentWidth`），底色 `primarySoftBg`。与 S2.5 吻合。
+
+## 汇总
+
+| finding | 状态 | 证据 |
+|---------|------|------|
+| F3.4 primaryText 值修复 | **通过** | #157E4E 独立复算 4.87:1 ≥ 4.5 |
+| F3.4 wcag 阈值回滚 | **通过** | test_theme.cpp 已回 4.5 |
+| F3.4 规格修订 | **通过** | S1.2#5 注记已更新 |
+| F2.1 dark 工厂 primaryText | **通过** | devdesk_theme.h:79 已补 |
+| F2.1 light 工厂 primaryText | **残余注意** | 工厂未设，当前无调用路径触发 |
+| Outline bg 暗主题一致性 | **通过** | cWhite→t.surface |
+| ccswitch 测试锚回滚 | **通过** | .text.normal→.text 全 9 处 |
+| wtab 块面 Tab | **通过** | S2.2/S6.2 吻合 |
+| selectionBar S2.5 | **通过** | S2.5 吻合 |
+
+**通过 8 / 未通过 0**（F2.1 light 工厂残余注意不计入未通过——当前零代码路径触发，属工厂完整性远期完善项）
