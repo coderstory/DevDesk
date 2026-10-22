@@ -543,7 +543,7 @@ REGISTER_TEST(todo_ui_datepicker_default_today,
         done->onClick();   // 不滚直接确定 → onChange(今天)
         frame.refresh();
         DOCTEST_CHECK(frame.ui.find("todo.datepicker.panel") == nullptr);   // 确定即关
-        const auto* pickText = frame.ui.find("todo.dialog.detail.due.pick.text");
+        const auto* pickText = frame.ui.find("todo.dialog.detail.due.pick.text.normal");
         DOCTEST_REQUIRE(pickText != nullptr);
         std::cerr << "DIAG:datepicker expectedDue=" << expectedDue << " actual=" << (pickText ? pickText->text : "(null)") << std::endl;
     DOCTEST_CHECK_EQ(pickText->text, std::string(expectedDue));   // 表单 due=今天
@@ -651,7 +651,7 @@ REGISTER_TEST(todo_ui_datepicker_confirm_frame_independent,
         done->onClick();   // 不泵帧直接确定 → 本层兜底写今天
         frame.refresh();
         DOCTEST_CHECK(frame.ui.find("todo.datepicker.panel") == nullptr);  // 确定即关
-        const auto* pickText = frame.ui.find("todo.dialog.detail.due.pick.text");
+        const auto* pickText = frame.ui.find("todo.dialog.detail.due.pick.text.normal");
         DOCTEST_REQUIRE(pickText != nullptr);
         DOCTEST_CHECK_EQ(pickText->text, std::string(expectedDue));  // due = 今天
     }
@@ -674,7 +674,7 @@ REGISTER_TEST(todo_ui_datepicker_confirm_frame_independent,
         DOCTEST_REQUIRE(done->onClick != nullptr);
         done->onClick();   // 零帧确定 → 维持 2027-03-15
         frame.refresh();
-        const auto* pickText = frame.ui.find("todo.dialog.detail.due.pick.text");
+        const auto* pickText = frame.ui.find("todo.dialog.detail.due.pick.text.normal");
         DOCTEST_REQUIRE(pickText != nullptr);
         DOCTEST_CHECK_EQ(pickText->text, std::string("03-15"));
         DOCTEST_CHECK(pickText->text != std::string(expectedDue));  // 没被盖成今天
@@ -2637,9 +2637,9 @@ REGISTER_TEST(todo_ui_fontscale_tokens,
     float scaled = 0.0f;
     DOCTEST_REQUIRE(cardTitleSize(&scaled));
     ::core::theme::setFontScale(1.0f);           // 恢复，不影响其他用例
-    DOCTEST_CHECK_EQ(base, 14.0f);
-    // 派生式 = token(缩放后) - 1：15×1.3 - 1 = 18.5（字面量时代这里恒为 14 不动）
-    DOCTEST_CHECK_EQ(scaled, 15.0f * 1.3f - 1.0f);
+    DOCTEST_CHECK_EQ(base, 13.0f);
+    // 派生式 = token(缩放后) - 1：14×1.3 - 1 = 17.2（fontSizeBody 15→14）
+    DOCTEST_CHECK_EQ(scaled, 14.0f * 1.3f - 1.0f);
     return true;
 })
 
@@ -3506,7 +3506,7 @@ REGISTER_TEST(todo_ui_priority_button_tint,
             const auto* bg = f.ui.find("todo.dialog.detail.prio." +
                                        std::to_string(j) + ".bg");
             const auto* text = f.ui.find("todo.dialog.detail.prio." +
-                                         std::to_string(j) + ".text");
+                                         std::to_string(j) + ".text.normal");
             DOCTEST_REQUIRE(bg != nullptr);
             DOCTEST_CHECK(text != nullptr);
             DOCTEST_CHECK(colorNear(bg->color, kUnselBg));
@@ -3518,7 +3518,7 @@ REGISTER_TEST(todo_ui_priority_button_tint,
             }
         }
         const auto* sel = f.ui.find("todo.dialog.detail.prio.3.bg");
-        const auto* selText = f.ui.find("todo.dialog.detail.prio.3.text");
+        const auto* selText = f.ui.find("todo.dialog.detail.prio.3.text.normal");
         DOCTEST_REQUIRE(sel != nullptr);
         DOCTEST_CHECK(selText != nullptr);
         DOCTEST_CHECK(colorNear(sel->color, kSelBg));
@@ -3556,7 +3556,7 @@ REGISTER_TEST(todo_ui_priority_button_tint,
     {
         Frame f(mod.get());
         const auto* pickBg = f.ui.find("todo.dialog.detail.due.pick.bg");
-        const auto* pickText = f.ui.find("todo.dialog.detail.due.pick.text");
+        const auto* pickText = f.ui.find("todo.dialog.detail.due.pick.text.normal");
         DOCTEST_REQUIRE(pickBg != nullptr);
         DOCTEST_REQUIRE(pickText != nullptr);
         DOCTEST_CHECK(contrastRatio(pickBg->color, pickText->textColor) >= 4.5f);
@@ -3638,7 +3638,7 @@ REGISTER_TEST(todo_ui_detail_panel_priority_tint,
         const auto* selBg =
             f.ui.find("todo.dialog.detail.prio." + std::to_string(i) + ".bg");
         const auto* selText =
-            f.ui.find("todo.dialog.detail.prio." + std::to_string(i) + ".text");
+            f.ui.find("todo.dialog.detail.prio." + std::to_string(i) + ".text.normal");
         DOCTEST_REQUIRE(selBg != nullptr);
         DOCTEST_CHECK(selText != nullptr);
         DOCTEST_CHECK(colorNear(selBg->color, t.colors.primary));
@@ -3650,7 +3650,7 @@ REGISTER_TEST(todo_ui_detail_panel_priority_tint,
         const auto* unBg =
             f.ui.find("todo.dialog.detail.prio." + std::to_string(j) + ".bg");
         const auto* unText =
-            f.ui.find("todo.dialog.detail.prio." + std::to_string(j) + ".text");
+            f.ui.find("todo.dialog.detail.prio." + std::to_string(j) + ".text.normal");
         DOCTEST_REQUIRE(unBg != nullptr);
         DOCTEST_CHECK(unText != nullptr);
         DOCTEST_CHECK(colorNear(unBg->color, t.colors.background));
@@ -3726,8 +3726,8 @@ REGISTER_TEST(todo_ui_detail_two_column_geometry,
         DOCTEST_CHECK(floatEq(panel2->frame.width, 640.0f));
     }
 
-    // 几何基准（800 宽）：innerW=744、colW=(744-16)/2=364、右列 x = 28+364+16 = 408
-    const float kColW = 364.0f;
+    // 几何基准（800 宽）：sw=752、colW=(752-16)/2=368、右列 x = 24+368+16 = 408
+    const float kColW = 368.0f;
     const float kCol2X = 408.0f;
 
     // ② 头部右缘动作 chips（删除 / 标记完成 上移；标题行 y=22）
@@ -3743,16 +3743,16 @@ REGISTER_TEST(todo_ui_detail_two_column_geometry,
     DOCTEST_CHECK(del->frame.x + del->frame.width <
                   toggle->frame.x);   // 删除在标记完成左侧
 
-    // ③ 标题大输入（y=76 h44 全宽）+ 描述 textarea（y=150 h72）
+    // ③ 标题大输入（y=58 h44 全宽）+ 描述 textarea（y=132 h72）
     const auto* titleInput = f.ui.find("todo.dialog.detail.input.title");
     DOCTEST_REQUIRE(titleInput != nullptr);
     DOCTEST_CHECK(floatEq(titleInput->frame.x - px, 24.0f));
-    DOCTEST_CHECK(floatEq(titleInput->frame.y - py, 76.0f));
+    DOCTEST_CHECK(floatEq(titleInput->frame.y - py, 58.0f));
     DOCTEST_CHECK(floatEq(titleInput->frame.height, 44.0f));
-    DOCTEST_CHECK(floatEq(titleInput->frame.width, 744.0f));
+    DOCTEST_CHECK(floatEq(titleInput->frame.width, 752.0f));
     const auto* descInput = f.ui.find("todo.dialog.detail.input.desc");
     DOCTEST_REQUIRE(descInput != nullptr);
-    DOCTEST_CHECK(floatEq(descInput->frame.y - py, 150.0f));
+    DOCTEST_CHECK(floatEq(descInput->frame.y - py, 132.0f));
     DOCTEST_CHECK(floatEq(descInput->frame.height, 72.0f));
     // demo 重设计：标题无行标签（大输入自明）
     DOCTEST_CHECK(f.ui.find("todo.dialog.detail.tlabel") == nullptr);
@@ -3762,56 +3762,56 @@ REGISTER_TEST(todo_ui_detail_two_column_geometry,
     DOCTEST_REQUIRE(plabel != nullptr);
     const auto* dlabel = f.ui.find("todo.dialog.detail.dlabel2");
     DOCTEST_REQUIRE(dlabel != nullptr);
-    DOCTEST_CHECK(floatEq(plabel->frame.x - px, 28.0f));
+    DOCTEST_CHECK(floatEq(plabel->frame.x - px, 24.0f));
     DOCTEST_CHECK(floatEq(dlabel->frame.x - px, kCol2X));
     DOCTEST_CHECK(floatEq(dlabel->frame.y, plabel->frame.y));
-    DOCTEST_CHECK(floatEq(plabel->frame.y - py, 234.0f));
+    DOCTEST_CHECK(floatEq(plabel->frame.y - py, 216.0f));
 
-    // ⑤ 优先级 segment 4 op 平分列宽：opW = (364-3×6)/4 = 86.5、x = 28+i×92.5、y=254
+    // ⑤ 优先级 segment 4 op 平分列宽：opW = (368-3×6)/4 = 87.5、x = 24+i×93.5、y=236
     for (int i = 0; i < 4; ++i) {
         const auto* bg =
             f.ui.find("todo.dialog.detail.prio." + std::to_string(i) + ".bg");
         DOCTEST_REQUIRE(bg != nullptr);
         DOCTEST_CHECK(floatEq(bg->frame.x - px,
-                              28.0f + static_cast<float>(i) * 92.5f));
-        DOCTEST_CHECK(floatEq(bg->frame.width, 86.5f));
+                              24.0f + static_cast<float>(i) * 93.5f));
+        DOCTEST_CHECK(floatEq(bg->frame.width, 87.5f));
         DOCTEST_CHECK(floatEq(bg->frame.height, 32.0f));
-        DOCTEST_CHECK(floatEq(bg->frame.y - py, 254.0f));
+        DOCTEST_CHECK(floatEq(bg->frame.y - py, 236.0f));
     }
     const auto* p3 = f.ui.find("todo.dialog.detail.prio.3.bg");
     DOCTEST_REQUIRE(p3 != nullptr);
-    DOCTEST_CHECK(p3->frame.x - px + p3->frame.width <= 28.0f + kColW + 0.5f);
+    DOCTEST_CHECK(p3->frame.x - px + p3->frame.width <= 24.0f + kColW + 0.5f);
 
-    // ⑥ 截止 segment 双 op（有 due）：pick x=408 宽 179 + clear x=593 宽 179
-    //   = (364-6)/2；pick 选中（hasDue）显示 📅 03-15
+    // ⑥ 截止 segment 双 op（有 due）：pick x=408 宽 181 + clear x=595 宽 181
+    //   = (368-6)/2；pick 选中（hasDue）显示 📅 03-15
     const auto* pickBg = f.ui.find("todo.dialog.detail.due.pick.bg");
-    const auto* pickText = f.ui.find("todo.dialog.detail.due.pick.text");
+    const auto* pickText = f.ui.find("todo.dialog.detail.due.pick.text.normal");
     const auto* clearBg = f.ui.find("todo.dialog.detail.due.clear.bg");
     DOCTEST_REQUIRE(pickBg != nullptr);
     DOCTEST_REQUIRE(pickText != nullptr);
     DOCTEST_REQUIRE(clearBg != nullptr);
     DOCTEST_CHECK(floatEq(pickBg->frame.x - px, kCol2X));
-    DOCTEST_CHECK(floatEq(pickBg->frame.width, 179.0f));
-    DOCTEST_CHECK(floatEq(clearBg->frame.x - px, kCol2X + 179.0f + 6.0f));
-    DOCTEST_CHECK(floatEq(clearBg->frame.width, 179.0f));
-    DOCTEST_CHECK(floatEq(pickBg->frame.y - py, 254.0f));
+    DOCTEST_CHECK(floatEq(pickBg->frame.width, 181.0f));
+    DOCTEST_CHECK(floatEq(clearBg->frame.x - px, kCol2X + 181.0f + 6.0f));
+    DOCTEST_CHECK(floatEq(clearBg->frame.width, 181.0f));
+    DOCTEST_CHECK(floatEq(pickBg->frame.y - py, 236.0f));
     DOCTEST_CHECK(pickText->text.find("03-15") != std::string::npos);
     DOCTEST_CHECK(clearBg->frame.x - px + clearBg->frame.width <=
                   kCol2X + kColW + 0.5f);
 
-    // ⑦ 标签区（无标签）：label y=298、输入行 y=318 h34
+    // ⑦ 标签区（无标签）：label y=280、输入行 y=300 h34
     const auto* tagInput = f.ui.find("todo.dialog.detail.tag.input");
     DOCTEST_REQUIRE(tagInput != nullptr);
-    DOCTEST_CHECK(floatEq(tagInput->frame.y - py, 318.0f));
+    DOCTEST_CHECK(floatEq(tagInput->frame.y - py, 300.0f));
     DOCTEST_CHECK(floatEq(tagInput->frame.height, 34.0f));
 
-    // ⑧ 底部：取消|保存 右对齐、钉 frame 底（y = frame 高 −18 −34 = 416−52 = 364
+    // ⑧ 底部：取消|保存 右对齐、钉 frame 底（y = frame 高 −18 −34 = 398−52 = 346
     // h34）；保存底 = 面板底 − 18（UAT6 前是 h−58 随请求高定位）
     const auto* saveBg = f.ui.find("todo.dialog.detail.save.bg");
     const auto* cancelBg = f.ui.find("todo.dialog.detail.cancel.bg");
     DOCTEST_REQUIRE(saveBg != nullptr);
     DOCTEST_REQUIRE(cancelBg != nullptr);
-    DOCTEST_CHECK(floatEq(saveBg->frame.y - py, 364.0f));
+    DOCTEST_CHECK(floatEq(saveBg->frame.y - py, 346.0f));
     DOCTEST_CHECK(floatEq(saveBg->frame.height, 34.0f));
     DOCTEST_CHECK(floatEq(saveBg->frame.x - px, 800.0f - 56.0f - 96.0f));
     DOCTEST_CHECK(floatEq(cancelBg->frame.x - px, 800.0f - 56.0f - 96.0f * 2.0f - 8.0f));
@@ -4024,7 +4024,7 @@ REGISTER_TEST(todo_ui_tag_chip_font_bigger,
         DOCTEST_REQUIRE(chipText != nullptr);
         // 调后字号 12（= fontSizeSmall - 1；调前 10 = fontSizeSmall - 3）
         DOCTEST_CHECK_EQ(chipText->fontSize, t.sizes.fontSizeSmall - 1.0f);
-        DOCTEST_CHECK_EQ(chipText->fontSize, 12.0f);
+        DOCTEST_CHECK_EQ(chipText->fontSize, 11.0f);
         // chip 高跟着适配（调前 18），lineHeight 同高 → 文字不裁行
         DOCTEST_CHECK_EQ(chipBg->frame.height, 22.0f);
         DOCTEST_CHECK_EQ(chipText->lineHeight, chipBg->frame.height);
