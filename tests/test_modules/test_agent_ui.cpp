@@ -20,8 +20,8 @@
 //          .trigger（segment 根，选项 .trigger.item.N——可点面 .bg，callDropdownChange 有回落）/
 //          .cron（仅定时）/ .once（仅闹钟，本地时间输入）/
 //          .limit（仅定时·事件，行为开关行的"只跑一次"）/
-//          .slot / .iter / .destructive / .cancel / .save / .close / .error（有错才渲染）/
-//          .aichip（指令标签行右缘「✨ AI 起草」chip，T7b；UAT5 从标题行挪入）/
+//          .slot / .iter / .destructive / .cancel / .save / .close / .step.<i>[.conn]（步骤胶囊+短连接线；当前步校验失败标 "! " 红字，无全局错误行）/
+//          .aichip（指令标签行右缘「✎ AI 起草」chip，T7b；UAT5 从标题行挪入）/
 //          .trigger.hint（触发语义提示，定时/闹钟预览非空时让位）/
 //          .meta.hint（迭代上限后果 + 破坏性操作说明，恒渲染）
 //   AI 草稿子弹窗 agent.dialog.task.draft.*（叠在任务弹窗上，zIndex 1100，T7b）：
@@ -741,15 +741,29 @@ REGISTER_TEST(agent_ui_once_edit_prefills_and_roundtrips,
                             "闹钟任务行缺编辑入口");
     eui::Ui ui2;
     composeTo(ui2, mod, kScreen, "agent_ui_onceedit2");
-    DOCTEST_REQUIRE_MESSAGE(ui2.find("agent.dialog.task.once") != nullptr,
+    // W4：编辑打开停在 step 0（基础信息）；导航 step 1 看 once 预填
+    eui::Ui ui2s1;
+    DOCTEST_REQUIRE(clickId(ui2, "agent.dialog.task.step.1"));
+    composeTo(ui2s1, mod, kScreen, "agent_ui_onceedit2s1");
+    DOCTEST_REQUIRE_MESSAGE(ui2s1.find("agent.dialog.task.once") != nullptr,
                             "编辑闹钟任务未渲染时间输入");
-    DOCTEST_CHECK_EQ(inputText(ui2, "agent.dialog.task.once"), timeText);
-    DOCTEST_CHECK_EQ(inputText(ui2, "agent.dialog.task.goal"),
+    DOCTEST_CHECK_EQ(inputText(ui2s1, "agent.dialog.task.once"), timeText);
+    DOCTEST_CHECK(ui2s1.find("agent.dialog.task.cron") == nullptr);
+    // W4 C1：错误行已移除，step.1 不标错（有效任务无 "! " 前缀）
+    const auto* s1tEl = ui2s1.find("agent.dialog.task.step.1.text");
+    DOCTEST_CHECK(s1tEl == nullptr || s1tEl->text.find("! ") != 0);
+    // 导航 step 2 看 goal 预填
+    eui::Ui ui2s2;
+    DOCTEST_REQUIRE(clickId(ui2s1, "agent.dialog.task.step.2"));
+    composeTo(ui2s2, mod, kScreen, "agent_ui_onceedit2s2");
+    DOCTEST_CHECK_EQ(inputText(ui2s2, "agent.dialog.task.goal"),
                      std::string("明天中午提醒"));
-    DOCTEST_CHECK(ui2.find("agent.dialog.task.cron") == nullptr);
-    DOCTEST_CHECK(ui2.find("agent.dialog.task.error") == nullptr);
 
-    DOCTEST_REQUIRE(clickId(ui2, "agent.dialog.task.save.bg"));
+    // 导航 step 3 → 保存（不改时间 once_at 不变）
+    eui::Ui ui2s3;
+    DOCTEST_REQUIRE(clickId(ui2s2, "agent.dialog.task.step.3"));
+    composeTo(ui2s3, mod, kScreen, "agent_ui_onceedit2s3");
+    DOCTEST_REQUIRE(clickId(ui2s3, "agent.dialog.task.save.bg"));
     auto updated = store.getTask(created.value());
     DOCTEST_REQUIRE(updated.isOk());
     DOCTEST_CHECK_EQ(updated.value().id, created.value());
@@ -760,8 +774,9 @@ REGISTER_TEST(agent_ui_once_edit_prefills_and_roundtrips,
     DOCTEST_CHECK_EQ(updated.value().modelSlot, std::string("sonnet"));
     DOCTEST_CHECK_EQ(updated.value().maxIterations, 20);
     DOCTEST_CHECK(updated.value().allowDestructive);
-    DOCTEST_CHECK_EQ(updated.value().contextNote, std::string("闹钟上下文"));
-    DOCTEST_CHECK_EQ(updated.value().autoNote, 0);
+    // W4 C3：保存固定写 contextNote=""、autoNote=1
+    DOCTEST_CHECK_EQ(updated.value().contextNote, std::string(""));
+    DOCTEST_CHECK_EQ(updated.value().autoNote, 1);
 
     mod.onStop();
     return true;
@@ -784,42 +799,58 @@ REGISTER_TEST(agent_ui_once_rejects_bad_and_past_time,
 
     eui::Ui ui;
     DOCTEST_REQUIRE(openNewTaskWithGoal(ui, mod, "agent_ui_oncebad", "非法闹钟任务"));
+    // W4 步骤条：导航 step 1 设触发=闹钟
     eui::Ui ui2;
+    DOCTEST_REQUIRE(clickId(ui, "agent.dialog.task.step.1"));
     composeTo(ui2, mod, kScreen, "agent_ui_oncebad.c");
     DOCTEST_REQUIRE(callDropdownChange(ui2, "agent.dialog.task.trigger", 5));
 
     int frameNo = 0;
-    // Lambda 里不能用 DOCTEST_*（宏失败时 return false，会与 lambda 返回类型冲突）
-    auto rejectionError = [&](const std::string& text) -> std::string {
+    // W4 C1：格式/日期非法 → 逐步门控禁下一步 + step.1 标错（"! " 前缀）+ 预览行报具体错误
+    // （agent.dialog.task.error 全局错误行已移除）
+    auto gatingError = [&](const std::string& text) -> std::string {
         mod.setEditOnceDraft(text);
         const std::string pid = "agent_ui_oncebad.s" + std::to_string(++frameNo);
         eui::Ui frame;
         composeTo(frame, mod, kScreen, pid.c_str());
-        if (!clickId(frame, "agent.dialog.task.save.bg")) return "<保存按钮缺失>";
-        eui::Ui after;
-        composeTo(after, mod, kScreen, (pid + ".after").c_str());
-        const auto* err = after.find("agent.dialog.task.error");
-        if (err == nullptr) return "<无错误行>";
-        if (after.find("agent.dialog.task.once") == nullptr) {
+        if (clickId(frame, "agent.dialog.task.save.bg")) return "<下一步按钮未被禁用>";
+        const auto* s1t = frame.find("agent.dialog.task.step.1.text");
+        if (s1t == nullptr || s1t->text.find("! ") != 0) return "<步骤 1 未标错>";
+        const auto* preview = frame.find("agent.dialog.task.once.preview");
+        if (preview == nullptr) return "<错误预览行缺失>";
+        if (frame.find("agent.dialog.task.once") == nullptr) {
             return "<弹窗被关闭>";
         }
-        return err->text;
+        return preview->text;
     };
 
-    const std::string formatErr = rejectionError("abc");
+    const std::string formatErr = gatingError("abc");
     DOCTEST_CHECK_MESSAGE(formatErr.find("格式") != std::string::npos,
                           "abc 错误文案：" + formatErr);
-    const std::string rangeErr = rejectionError("2026-13-40 99:99");
+    const std::string rangeErr = gatingError("2026-13-40 99:99");
     DOCTEST_CHECK_MESSAGE(rangeErr.find("超出范围") != std::string::npos,
                           "超范围错误文案：" + rangeErr);
     // mktime 会把 2 月 30 日归一化成 3 月 2 日——归一化逐字段比对必须拦住
-    const std::string invalidDateErr = rejectionError("2026-02-30 12:00");
+    const std::string invalidDateErr = gatingError("2026-02-30 12:00");
     DOCTEST_CHECK_MESSAGE(invalidDateErr.find("不存在") != std::string::npos,
                           "2026-02-30 错误文案：" + invalidDateErr);
-    const std::string pastErr =
-        rejectionError(formatLocalMinute(localNoonTm(-1)));
-    DOCTEST_CHECK_MESSAGE(pastErr.find("晚于当前时间") != std::string::npos,
-                          "过去时间错误文案：" + pastErr);
+
+    // 过去时间：解析合法（门控放行），预览行报红 + 保存被拒（弹窗不关）
+    mod.setEditOnceDraft(formatLocalMinute(localNoonTm(-1)));
+    eui::Ui pastF;
+    composeTo(pastF, mod, kScreen, "agent_ui_oncebad.past");
+    const auto* pastPrev = pastF.find("agent.dialog.task.once.preview");
+    DOCTEST_REQUIRE_MESSAGE(pastPrev != nullptr, "过去时间未渲染预览行");
+    DOCTEST_CHECK_MESSAGE(pastPrev->text.find("晚于当前时间") != std::string::npos,
+                          "过去时间错误文案：" + pastPrev->text);
+    DOCTEST_REQUIRE(clickId(pastF, "agent.dialog.task.step.3"));
+    eui::Ui pastS3;
+    composeTo(pastS3, mod, kScreen, "agent_ui_oncebad.past3");
+    DOCTEST_REQUIRE(clickId(pastS3, "agent.dialog.task.save.bg"));
+    eui::Ui pastAfter;
+    composeTo(pastAfter, mod, kScreen, "agent_ui_oncebad.pastAfter");
+    DOCTEST_CHECK_MESSAGE(pastAfter.find("agent.dialog.task.panel") != nullptr,
+                          "过去时间保存后弹窗被关闭（应拒绝）");
 
     auto tasks = store.listTasks();
     DOCTEST_REQUIRE(tasks.isOk());
@@ -966,14 +997,19 @@ REGISTER_TEST(agent_ui_once_edit_bad_config_shows_problem_without_fallback,
                             "agent.task." + std::to_string(created.value()) + ".edit"));
     eui::Ui ui2;
     composeTo(ui2, mod, kScreen, "agent_ui_oncebadcfg2");
+    // W4 步骤条：导航 step 1 看触发态
+    eui::Ui ui2s1;
+    DOCTEST_REQUIRE(clickId(ui2, "agent.dialog.task.step.1"));
+    composeTo(ui2s1, mod, kScreen, "agent_ui_oncebadcfg2s1");
     // 触发方式仍是闹钟（有 once 时间输入 = 未回落手动；回落手动不会有该节点）
-    DOCTEST_REQUIRE_MESSAGE(ui2.find("agent.dialog.task.once") != nullptr,
+    DOCTEST_REQUIRE_MESSAGE(ui2s1.find("agent.dialog.task.once") != nullptr,
                             "坏配置编辑回落成了其它触发类型");
-    DOCTEST_CHECK(inputText(ui2, "agent.dialog.task.once").empty());
-    const auto* err = ui2.find("agent.dialog.task.error");
-    DOCTEST_REQUIRE_MESSAGE(err != nullptr, "坏闹钟配置编辑未显示配置异常");
-    DOCTEST_CHECK_MESSAGE(err->text.find("触发配置异常") != std::string::npos,
-                          "配置异常文案缺失：" + err->text);
+    DOCTEST_CHECK(inputText(ui2s1, "agent.dialog.task.once").empty());
+    // W4 C1：全局错误行已移除；空输入经预览行报红提示
+    const auto* prev = ui2s1.find("agent.dialog.task.once.preview");
+    DOCTEST_REQUIRE_MESSAGE(prev != nullptr, "坏闹钟配置编辑未渲染预览行");
+    DOCTEST_CHECK_MESSAGE(prev->text.find("请填写") != std::string::npos,
+                          "空输入预览提示缺失：" + prev->text);
 
     mod.onStop();
     return true;
@@ -996,24 +1032,41 @@ REGISTER_TEST(agent_ui_dialog_save_rejects_bad_cron,
 
     eui::Ui ui;
     DOCTEST_REQUIRE(openNewTaskDialog(ui, mod, "agent_ui_bad1"));
-    eui::Ui ui2;
-    composeTo(ui2, mod, kScreen, "agent_ui_bad2");
-    auto* goalHit = ui2.find("agent.dialog.task.goal.hit");
+    // W4 步骤条：导航 step 2 填 goal
+    eui::Ui ui2s2;
+    DOCTEST_REQUIRE(clickId(ui, "agent.dialog.task.step.2"));
+    composeTo(ui2s2, mod, kScreen, "agent_ui_bad2s2");
+    auto* goalHit = ui2s2.find("agent.dialog.task.goal.hit");
     DOCTEST_REQUIRE(goalHit != nullptr);
     typeInto(goalHit, "非法 cron 任务");
-    DOCTEST_REQUIRE(callDropdownChange(ui2, "agent.dialog.task.trigger", 1));
+    // 导航 step 1：设定时 + 非法 cron
+    eui::Ui ui2s1;
+    DOCTEST_REQUIRE(clickId(ui2s2, "agent.dialog.task.step.1"));
+    composeTo(ui2s1, mod, kScreen, "agent_ui_bad2s1");
+    DOCTEST_REQUIRE(callDropdownChange(ui2s1, "agent.dialog.task.trigger", 1));
     eui::Ui ui3;
     composeTo(ui3, mod, kScreen, "agent_ui_bad3");
     mod.setEditCronDraft("0 9 * * 1-5x");
-    DOCTEST_REQUIRE(clickId(ui3, "agent.dialog.task.save.bg"));
-
     eui::Ui ui4;
     composeTo(ui4, mod, kScreen, "agent_ui_bad4");
-    const auto* err = ui4.find("agent.dialog.task.error");
-    DOCTEST_REQUIRE_MESSAGE(err != nullptr,
-                            "非法 cron 未在弹窗内报错（agent.dialog.task.error 缺失）");
-    DOCTEST_CHECK(err->text.find("cron") != std::string::npos);
-    DOCTEST_CHECK(ui4.find("agent.dialog.task.goal") != nullptr);
+    // W4 C1：逐步门控——非法 cron 禁下一步 + step.1 标错 + 预览行报错（错误行已移除）
+    DOCTEST_CHECK_MESSAGE(!clickId(ui4, "agent.dialog.task.save.bg"),
+                          "非法 cron 未禁用下一步按钮");
+    const auto* s1t = ui4.find("agent.dialog.task.step.1.text");
+    DOCTEST_REQUIRE_MESSAGE(s1t != nullptr && s1t->text.find("! ") == 0,
+                            "非法 cron 未标错 step.1");
+    const auto* cprev = ui4.find("agent.dialog.task.cron.preview");
+    DOCTEST_REQUIRE_MESSAGE(cprev != nullptr, "非法 cron 未渲染预览行");
+    DOCTEST_CHECK(cprev->text.find("cron") != std::string::npos);
+    // 直跳 step 3 点创建 → saveTaskDialog 二次校验拒绝，弹窗不关
+    DOCTEST_REQUIRE(clickId(ui4, "agent.dialog.task.step.3"));
+    eui::Ui ui4s3;
+    composeTo(ui4s3, mod, kScreen, "agent_ui_bad4s3");
+    DOCTEST_REQUIRE(clickId(ui4s3, "agent.dialog.task.save.bg"));
+    eui::Ui ui5;
+    composeTo(ui5, mod, kScreen, "agent_ui_bad5");
+    DOCTEST_CHECK_MESSAGE(ui5.find("agent.dialog.task.panel") != nullptr,
+                          "非法 cron 保存后弹窗被关闭（应拒绝）");
     auto tasks = store.listTasks();
     DOCTEST_REQUIRE(tasks.isOk());
     DOCTEST_CHECK_EQ(tasks.value().size(), static_cast<size_t>(0));
@@ -2161,7 +2214,7 @@ REGISTER_TEST(agent_ui_tools_section_toggle,
 // 超长任务名不挤位（输入盒宽恒定 + 行内动作不被标题挤出）。几何断言走 layout 后
 // frame 绝对坐标再减面板原点（与详情弹窗几何用例同口径）。
 REGISTER_TEST(agent_ui_dialog_geometry_design_size_and_budget,
-              "agent_ui: 任务弹窗几何——弹性宽 800x680 / segment 平分整行 / 槽位下拉屏内 / 超长文本不挤位", {
+              "agent_ui: 任务弹窗几何——弹性宽 800x496（步骤条）/ segment 平分整行 / 槽位下拉屏内 / 超长文本不挤位", {
     test_support::TestDb tdb("agentui", "dlggeom");
     test_support::FakeProfileSource profile;
     ToolGuard statsGuard{"app.stats", "app.notify"};
@@ -2192,14 +2245,15 @@ REGISTER_TEST(agent_ui_dialog_geometry_design_size_and_budget,
     eui::Ui ui2;
     composeTo(ui2, mod, kScreen, "agent_ui_geo2");
 
-    // ① 面板设计尺寸：弹性宽 = max(720, 1600/2) = 800；高 680
+    // ① 面板设计尺寸：弹性宽 = max(720, 1600/2) = 800；高 496
     const auto* panel = ui2.find("agent.dialog.task.panel");
     DOCTEST_REQUIRE(panel != nullptr);
     DOCTEST_CHECK_MESSAGE(nearPx(panel->frame.width, 800.0f),
                           "任务弹窗宽应为弹性值 800，实测 " +
                               std::to_string(panel->frame.width));
-    DOCTEST_CHECK_MESSAGE(nearPx(panel->frame.height, 756.0f),
-                          "任务弹窗高应为设计值 756，实测 " +
+    // W4 C1：步骤条重做后高 496（内容区 280 + 步骤条 64 + 标题/按钮/间距）
+    DOCTEST_CHECK_MESSAGE(nearPx(panel->frame.height, 496.0f),
+                          "任务弹窗高应为设计值 496，实测 " +
                               std::to_string(panel->frame.height));
     DOCTEST_CHECK(panel->frame.x >= -0.5f && panel->frame.y >= -0.5f &&
                   panel->frame.x + panel->frame.width <= kScreen.width + 0.5f &&
@@ -2209,35 +2263,50 @@ REGISTER_TEST(agent_ui_dialog_geometry_design_size_and_budget,
     const float pw = 800.0f;
     const float innerW = pw - 56.0f;   // 744
 
-    // ② 任务名称大输入：y=56、全宽、超长文本不挤盒宽
+    // ② 步骤胶囊几何：4 块面节点 y=64 h=32 r=16，首节点 step.0 在 (28, 64)
+    constexpr float kPillH = 32.0f;
+    constexpr float kStepperY = 64.0f;
+    const auto* step0 = ui2.find("agent.dialog.task.step.0");
+    DOCTEST_REQUIRE(step0 != nullptr);
+    DOCTEST_CHECK_MESSAGE(nearPx(step0->frame.x - px, 28.0f), "step.0 x 应=28");
+    DOCTEST_CHECK_MESSAGE(nearPx(step0->frame.y - py, kStepperY), "step.0 y 应=64");
+    DOCTEST_CHECK_MESSAGE(nearPx(step0->frame.height, kPillH), "step.0 h 应=32");
+
+    // ②b step 0：名称输入 y=144（kContentTop+28）h=40 全宽
     const auto* nameInput = ui2.find("agent.dialog.task.name");
     DOCTEST_REQUIRE(nameInput != nullptr);
     DOCTEST_CHECK_MESSAGE(nearPx(nameInput->frame.x - px, 28.0f), "名称输入应 x=28");
-    DOCTEST_CHECK_MESSAGE(nearPx(nameInput->frame.y - py, 56.0f), "名称输入应 y=56");
+    DOCTEST_CHECK_MESSAGE(nearPx(nameInput->frame.y - py, 144.0f), "名称输入应 y=144");
     DOCTEST_CHECK_MESSAGE(nearPx(nameInput->frame.height, 40.0f), "名称输入应高 40");
     DOCTEST_CHECK_MESSAGE(nearPx(nameInput->frame.width, innerW),
                           "名称输入应全宽 744，实测 " +
                               std::to_string(nameInput->frame.width));
 
-    // ③ 触发 segment：六选平分整行（opW = (744-5×6)/6 = 119；x = 28+i×125、y=124 高 32）
+    // ③ 导航 step 1：触发 segment 平分整行（opW=119 x=28+i*125 y=136 h=32）
+    eui::Ui ui2s1;
+    DOCTEST_REQUIRE(clickId(ui2, "agent.dialog.task.step.1"));
+    composeTo(ui2s1, mod, kScreen, "agent_ui_geo2s1");
     for (int i = 0; i < module::agent::kTriggerCount; ++i) {
-        const auto* op = ui2.find("agent.dialog.task.trigger.item." +
-                                  std::to_string(i) + ".bg");
+        const auto* op = ui2s1.find("agent.dialog.task.trigger.item." +
+                                    std::to_string(i) + ".bg");
         DOCTEST_REQUIRE(op != nullptr);
         DOCTEST_CHECK_MESSAGE(nearPx(op->frame.x - px, 28.0f + 125.0f * i),
                               "segment 第 " + std::to_string(i) + " 项 x 错位");
         DOCTEST_CHECK_MESSAGE(nearPx(op->frame.width, 119.0f),
                               "segment 第 " + std::to_string(i) + " 项宽应 119");
         DOCTEST_CHECK(nearPx(op->frame.height, 32.0f));
-        DOCTEST_CHECK(nearPx(op->frame.y - py, 124.0f));
+        DOCTEST_CHECK(nearPx(op->frame.y - py, 136.0f));
     }
-    const auto* segLast = ui2.find("agent.dialog.task.trigger.item.5.bg");
+    const auto* segLast = ui2s1.find("agent.dialog.task.trigger.item.5.bg");
     DOCTEST_REQUIRE(segLast != nullptr);
     DOCTEST_CHECK(segLast->frame.x - px + segLast->frame.width <=
                   28.0f + innerW + 0.5f);
 
-    // ④ goal 输入多行（demo rows≈3 → 64 高、全宽）+ 行底 ≤ 按钮行顶
-    const auto* goal = ui2.find("agent.dialog.task.goal");
+    // ④ 导航 step 2：goal textarea h≥60 全宽；行底 ≤ 按钮行顶
+    eui::Ui ui2s2;
+    DOCTEST_REQUIRE(clickId(ui2s1, "agent.dialog.task.step.2"));
+    composeTo(ui2s2, mod, kScreen, "agent_ui_geo2s2");
+    const auto* goal = ui2s2.find("agent.dialog.task.goal");
     DOCTEST_REQUIRE(goal != nullptr);
     DOCTEST_CHECK_MESSAGE(goal->frame.height >= 60.0f,
                           "编辑弹窗 goal 输入应 ≥60px，实测 " +
@@ -2245,22 +2314,27 @@ REGISTER_TEST(agent_ui_dialog_geometry_design_size_and_budget,
     DOCTEST_CHECK_MESSAGE(nearPx(goal->frame.width, innerW),
                           "goal 输入应全宽 744，实测 " +
                               std::to_string(goal->frame.width));
-    const auto* autonote = ui2.find("agent.dialog.task.autonote");
-    const auto* saveBtn = ui2.find("agent.dialog.task.save");
-    DOCTEST_REQUIRE_MESSAGE(autonote != nullptr, "自动记录开关缺失");
+    const auto* saveBtn = ui2s2.find("agent.dialog.task.save");
     DOCTEST_REQUIRE_MESSAGE(saveBtn != nullptr, "保存按钮缺失");
+    // W4 C3：自动记录已移除，替换字段是系统提示词
+    const auto* sysprompt = ui2s2.find("agent.dialog.task.sysprompt");
+    DOCTEST_REQUIRE_MESSAGE(sysprompt != nullptr, "系统提示词缺失");
     DOCTEST_CHECK_MESSAGE(
-        autonote->frame.y + autonote->frame.height <= saveBtn->frame.y + 0.5f,
-        "最后一个字段底 " +
-            std::to_string(autonote->frame.y + autonote->frame.height) +
+        sysprompt->frame.y + sysprompt->frame.height <= saveBtn->frame.y + 0.5f,
+        "系统提示词底 " +
+            std::to_string(sysprompt->frame.y + sysprompt->frame.height) +
             " 压到按钮行顶 " + std::to_string(saveBtn->frame.y));
+    DOCTEST_CHECK(ui2s2.find("agent.dialog.task.autonote") == nullptr);
     DOCTEST_CHECK_MESSAGE(
         saveBtn->frame.y + saveBtn->frame.height <=
             panel->frame.y + panel->frame.height - 7.5f,
-        "按钮行溢出面板底（btnY=h-48）");
+        "按钮行溢出面板底（btnY=h-56）");
 
-    // ⑤ 槽位下拉展开态（槽位仍是下拉）：最后一项完整在屏内
-    DOCTEST_REQUIRE_MESSAGE(clickId(ui2, "agent.dialog.task.slot.field"),
+    // ⑤ 导航 step 3：槽位下拉展开不越屏 + 破坏性行位置稳定
+    eui::Ui ui2s3;
+    DOCTEST_REQUIRE(clickId(ui2s2, "agent.dialog.task.step.3"));
+    composeTo(ui2s3, mod, kScreen, "agent_ui_geo2s3");
+    DOCTEST_REQUIRE_MESSAGE(clickId(ui2s3, "agent.dialog.task.slot.field"),
                             "模型槽位下拉字段命中面缺失");
     eui::Ui ui2c;
     composeTo(ui2c, mod, kScreen, "agent_ui_geo2c");
@@ -2276,8 +2350,8 @@ REGISTER_TEST(agent_ui_dialog_geometry_design_size_and_budget,
             slotLast->frame.y + slotLast->frame.height <= kScreen.height + 0.5f,
         "槽位下拉最后一项掉出屏底: 底=" +
             std::to_string(slotLast->frame.y + slotLast->frame.height));
-    // 弹层是覆盖层：展开不挤动下方行（destructive wswitch 行位置恒等）
-    const auto* metaBefore = ui2.find("agent.dialog.task.destructive");
+    // 弹层不挤动下方行
+    const auto* metaBefore = ui2s3.find("agent.dialog.task.destructive");
     const float metaYBefore = metaBefore != nullptr ? metaBefore->frame.y : -1.0f;
     const auto* metaAfter = ui2c.find("agent.dialog.task.destructive");
     DOCTEST_REQUIRE(metaAfter != nullptr);
@@ -3144,9 +3218,11 @@ REGISTER_TEST(agent_ui_cron_template_dropdown_and_preview,
 
     eui::Ui ui1;
     DOCTEST_REQUIRE(openNewTaskDialog(ui1, mod, "agent_ui_crontpl1"));
-    eui::Ui ui2;
-    composeTo(ui2, mod, kScreen, "agent_ui_crontpl2");
-    DOCTEST_REQUIRE(callDropdownChange(ui2, "agent.dialog.task.trigger", 1));
+    // W4：先导航 step 1 才可见 trigger segment
+    eui::Ui ui1s1;
+    DOCTEST_REQUIRE(clickId(ui1, "agent.dialog.task.step.1"));
+    composeTo(ui1s1, mod, kScreen, "agent_ui_crontpl1s1");
+    DOCTEST_REQUIRE(callDropdownChange(ui1s1, "agent.dialog.task.trigger", 1));
     eui::Ui ui3;
     composeTo(ui3, mod, kScreen, "agent_ui_crontpl3");
 
@@ -3172,13 +3248,24 @@ REGISTER_TEST(agent_ui_cron_template_dropdown_and_preview,
     // ② 布局契约：面板高仍 680；安全组破坏性行 y=548（模板下拉/预览行未挤动布局）
     const auto* panel3 = ui3.find("agent.dialog.task.panel");
     DOCTEST_REQUIRE(panel3 != nullptr);
-    DOCTEST_CHECK_MESSAGE(nearPx(panel3->frame.height, 756.0f),
-                          "任务弹窗高应恒为 756，实测 " +
+    // W4 C1：步骤条重做后高 496
+    DOCTEST_CHECK_MESSAGE(nearPx(panel3->frame.height, 496.0f),
+                          "任务弹窗高应恒为 496，实测 " +
                               std::to_string(panel3->frame.height));
-    const auto* metaRow3 = ui3.find("agent.dialog.task.destructive");
+    // ② 布局契约：面板高 496；破坏性行在 step 3 才渲染（切过去取 y）
+    const auto* panel3 = ui3.find("agent.dialog.task.panel");
+    DOCTEST_REQUIRE(panel3 != nullptr);
+    // W4 C1：步骤条重做后高 496
+    DOCTEST_CHECK_MESSAGE(nearPx(panel3->frame.height, 496.0f),
+                          "任务弹窗高应恒为 496，实测 " +
+                              std::to_string(panel3->frame.height));
+    eui::Ui ui3s3;
+    DOCTEST_REQUIRE(clickId(ui3, "agent.dialog.task.step.3"));
+    composeTo(ui3s3, mod, kScreen, "agent_ui_crontpl3s3");
+    const auto* metaRow3 = ui3s3.find("agent.dialog.task.destructive");
     DOCTEST_REQUIRE(metaRow3 != nullptr);
-    DOCTEST_CHECK_MESSAGE(nearPx(metaRow3->frame.y, panel3->frame.y + 548.0f),
-                          "破坏性行 y 应恒为面板顶 +548（UAT5 重设计后），实测 " +
+    DOCTEST_CHECK_MESSAGE(nearPx(metaRow3->frame.y, panel3->frame.y + 214.0f),
+                          "破坏性行 y 应恒为面板顶 +214（W4 步骤条后），实测 " +
                               std::to_string(metaRow3->frame.y));
     // cron 为空 → 预览行不渲染（skipIfEmpty）
     DOCTEST_CHECK(ui3.find("agent.dialog.task.cron.preview") == nullptr);
@@ -3200,19 +3287,19 @@ REGISTER_TEST(agent_ui_cron_template_dropdown_and_preview,
         sameColor(preview4->textColor,
                   ::core::theme::current().colors.textTertiary),
         "合法 cron 预览行应为次要文本色");
-    // 预览行落在 cron 行与 meta 行之间（原 gap 内）
+    // 预览行落在 cron 行与底部按钮行之间（W4：meta 行在 step 3，step 1 以按钮行顶为界）
     const auto* cronRow4 = ui4.find("agent.dialog.task.cron");
     DOCTEST_REQUIRE(cronRow4 != nullptr);
-    const auto* metaRow4 = ui4.find("agent.dialog.task.destructive");
-    DOCTEST_REQUIRE(metaRow4 != nullptr);
+    const auto* saveRow4 = ui4.find("agent.dialog.task.save");
+    DOCTEST_REQUIRE(saveRow4 != nullptr);
     DOCTEST_CHECK_MESSAGE(
         preview4->frame.y >= cronRow4->frame.y + cronRow4->frame.height - 0.5f,
         "预览行应在 cron 行之下");
     DOCTEST_CHECK_MESSAGE(
-        preview4->frame.y + preview4->frame.height <= metaRow4->frame.y + 0.5f,
-        "预览行压到 meta 行：底 " +
+        preview4->frame.y + preview4->frame.height <= saveRow4->frame.y + 0.5f,
+        "预览行压到按钮行：底 " +
             std::to_string(preview4->frame.y + preview4->frame.height) +
-            " meta 顶 " + std::to_string(metaRow4->frame.y));
+            " 按钮行顶 " + std::to_string(saveRow4->frame.y));
 
     // ④ 手改非法表达式 → 预览位显示校验文案（不等到保存才报）
     mod.setEditCronDraft("0 9 * * 1-5x");
@@ -3658,7 +3745,7 @@ REGISTER_TEST(agent_ui_page_error_no_hint_other_errors,
 })
 
 REGISTER_TEST(agent_ui_new_task_context_note_and_autonote,
-              "agent_ui: 新建弹窗含执行记忆多行输入 + 自动记录开关（默认开）→ 保存后读回一致", {
+              "agent_ui: W4 C3 新建弹窗无执行记忆/自动记录 UI；保存固定 contextNote=空 autoNote=1", {
     test_support::TestDb tdb("agentui", "notecreate");
     test_support::FakeProfileSource profile;
     ToolGuard statsGuard{"app.stats", "app.notify"};
@@ -3677,53 +3764,31 @@ REGISTER_TEST(agent_ui_new_task_context_note_and_autonote,
     eui::Ui ui2;
     composeTo(ui2, mod, kScreen, "agent_ui_note2");
 
-    // 执行记忆多行输入存在
-    const auto* note = ui2.find("agent.dialog.task.note");
-    DOCTEST_REQUIRE_MESSAGE(note != nullptr,
-                            "新建弹窗缺 agent.dialog.task.note 多行输入");
-    DOCTEST_CHECK_MESSAGE(note->frame.height >= 56.0f,
-                          "执行记忆输入框应 ≥56px（多行），实测 " +
-                              std::to_string(note->frame.height));
-    DOCTEST_CHECK_EQ(inputText(ui2, "agent.dialog.task.note"), std::string(""));
+    // W4 C3：执行记忆/自动记录 UI 已移除（打开态 step 0 即不渲染）
+    DOCTEST_CHECK_MESSAGE(ui2.find("agent.dialog.task.note") == nullptr,
+                          "agent.dialog.task.note 应已移除");
+    DOCTEST_CHECK_MESSAGE(ui2.find("agent.dialog.task.autonote") == nullptr,
+                          "agent.dialog.task.autonote 应已移除");
 
-    // 自动记录开关存在且默认开：knob.x > track.x + 1 表示 checked（右端）
-    const auto* autosw = ui2.find("agent.dialog.task.autonote");
-    DOCTEST_REQUIRE_MESSAGE(autosw != nullptr,
-                            "新建弹窗缺 agent.dialog.task.autonote 开关");
-    const auto* knob = ui2.find("agent.dialog.task.autonote.knob");
-    const auto* track = ui2.find("agent.dialog.task.autonote.track");
-    DOCTEST_REQUIRE(knob != nullptr);
-    DOCTEST_REQUIRE(track != nullptr);
-    DOCTEST_CHECK_MESSAGE(knob->frame.x > track->frame.x + 1.0f,
-                          "新建任务 auto_note 默认应为开（knob 在右端），"
-                          "knob.x=" + std::to_string(knob->frame.x) +
-                          " track.x=" + std::to_string(track->frame.x));
-
-    // 填 goal + 执行记忆 → 保存
-    auto* goalHit = ui2.find("agent.dialog.task.goal.hit");
+    // 导航 step 2 填 goal → step 3 保存
+    eui::Ui ui2s2;
+    DOCTEST_REQUIRE(clickId(ui2, "agent.dialog.task.step.2"));
+    composeTo(ui2s2, mod, kScreen, "agent_ui_note2s2");
+    auto* goalHit = ui2s2.find("agent.dialog.task.goal.hit");
     DOCTEST_REQUIRE(goalHit != nullptr);
     typeInto(goalHit, "测试执行记忆");
-    auto* noteHit = ui2.find("agent.dialog.task.note.hit");
-    DOCTEST_REQUIRE(noteHit != nullptr);
-    typeInto(noteHit, "这是一段上下文记忆");
+    eui::Ui ui2s3;
+    DOCTEST_REQUIRE(clickId(ui2s2, "agent.dialog.task.step.3"));
+    composeTo(ui2s3, mod, kScreen, "agent_ui_note2s3");
+    DOCTEST_REQUIRE(clickId(ui2s3, "agent.dialog.task.save.bg"));
 
-    // 关闭自动记录
-    const auto* autoHit = ui2.find("agent.dialog.task.autonote.hit");
-    DOCTEST_REQUIRE(autoHit != nullptr);
-    DOCTEST_REQUIRE(autoHit->onClick != nullptr);
-    autoHit->onClick();
-
-    eui::Ui ui3;
-    composeTo(ui3, mod, kScreen, "agent_ui_note3");
-    DOCTEST_REQUIRE(clickId(ui3, "agent.dialog.task.save.bg"));
-
-    // 读回
+    // 读回：contextNote 固定空、autoNote 固定 1
     auto tasks = store.listTasks();
     DOCTEST_REQUIRE(tasks.isOk());
     DOCTEST_REQUIRE_EQ(tasks.value().size(), static_cast<size_t>(1));
     const auto& row = tasks.value()[0];
-    DOCTEST_CHECK_EQ(row.contextNote, std::string("这是一段上下文记忆"));
-    DOCTEST_CHECK_EQ(row.autoNote, 0);   // 已关闭
+    DOCTEST_CHECK_EQ(row.contextNote, std::string(""));
+    DOCTEST_CHECK_EQ(row.autoNote, 1);   // 固定开启
 
     // 弹窗关闭
     eui::Ui ui4;
@@ -3735,7 +3800,7 @@ REGISTER_TEST(agent_ui_new_task_context_note_and_autonote,
 })
 
 REGISTER_TEST(agent_ui_edit_dialog_prefills_context_note,
-              "agent_ui: 编辑弹窗从库行回填 contextNote + autoNote；修改保存后读回更新值", {
+              "agent_ui: W4 C3 编辑弹窗无 note/autonote UI；保存固定 contextNote=空 autoNote=1", {
     test_support::TestDb tdb("agentui", "noteedit");
     test_support::FakeProfileSource profile;
     ToolGuard statsGuard{"app.stats", "app.notify"};
@@ -3759,47 +3824,28 @@ REGISTER_TEST(agent_ui_edit_dialog_prefills_context_note,
     eui::Ui ui2;
     composeTo(ui2, mod, kScreen, "agent_ui_noteedit2");
 
-    // 回填：contextNote 与 autoNote 与库一致
-    DOCTEST_CHECK_EQ(inputText(ui2, "agent.dialog.task.note"),
-                     std::string("旧记忆内容"));
-    const auto* autosw2 = ui2.find("agent.dialog.task.autonote");
-    DOCTEST_REQUIRE(autosw2 != nullptr);
-    const auto* knob2 = ui2.find("agent.dialog.task.autonote.knob");
-    const auto* track2 = ui2.find("agent.dialog.task.autonote.track");
-    DOCTEST_REQUIRE(knob2 != nullptr);
-    DOCTEST_REQUIRE(track2 != nullptr);
-    DOCTEST_CHECK_MESSAGE(knob2->frame.x > track2->frame.x + 1.0f,
-                          "编辑回填 auto_note=1 → knob 应在右端，"
-                          "knob.x=" + std::to_string(knob2->frame.x) +
-                          " track.x=" + std::to_string(track2->frame.x));
+    // W4 C3：note/autonote UI 已移除
+    DOCTEST_CHECK(ui2.find("agent.dialog.task.note") == nullptr);
+    DOCTEST_CHECK(ui2.find("agent.dialog.task.autonote") == nullptr);
 
-    // 修改记忆内容。真实用户路径 = 先点输入框（聚焦 + 光标落到点击点）再输入；
-    // 裸 Ui 无 Runtime 焦点消费端，且未聚焦时预填同步把光标拨回 0（input.h 有意
-    // 行为），直发 typeInto 会插在开头 —— 等价模拟：先把光标/选区落到文本末尾再输入
-    auto& noteState = ui2.state<InputState>("agent.dialog.task.note");
-    noteState.cursor = static_cast<int>(noteState.text.size());
-    noteState.selectionStart = noteState.cursor;
-    noteState.selectionEnd = noteState.cursor;
-    auto* noteHit = ui2.find("agent.dialog.task.note.hit");
-    DOCTEST_REQUIRE(noteHit != nullptr);
-    typeInto(noteHit, "新增内容");
-    // 关闭自动记录
-    const auto* autoHit = ui2.find("agent.dialog.task.autonote.hit");
-    DOCTEST_REQUIRE(autoHit != nullptr);
-    DOCTEST_REQUIRE(autoHit->onClick != nullptr);
-    autoHit->onClick();
-
-    eui::Ui ui3;
-    composeTo(ui3, mod, kScreen, "agent_ui_noteedit3");
-    DOCTEST_REQUIRE(clickId(ui3, "agent.dialog.task.save.bg"));
+    // 导航 step 2 填 goal → step 3 保存
+    eui::Ui ui2s2;
+    DOCTEST_REQUIRE(clickId(ui2, "agent.dialog.task.step.2"));
+    composeTo(ui2s2, mod, kScreen, "agent_ui_noteedit2s2");
+    auto* goalHit = ui2s2.find("agent.dialog.task.goal.hit");
+    DOCTEST_REQUIRE(goalHit != nullptr);
+    typeInto(goalHit, "修改后目标");
+    eui::Ui ui2s3;
+    DOCTEST_REQUIRE(clickId(ui2s2, "agent.dialog.task.step.3"));
+    composeTo(ui2s3, mod, kScreen, "agent_ui_noteedit2s3");
+    DOCTEST_REQUIRE(clickId(ui2s3, "agent.dialog.task.save.bg"));
 
     auto updated = store.getTask(created.value());
     DOCTEST_REQUIRE(updated.isOk());
-    DOCTEST_CHECK_EQ(updated.value().contextNote,
-                     std::string("旧记忆内容新增内容"));
-    DOCTEST_CHECK_EQ(updated.value().autoNote, 0);
-    // goal 未改
-    DOCTEST_CHECK_EQ(updated.value().goal, std::string("旧目标"));
+    // W4 C3：保存固定写空 contextNote / autoNote=1，不管旧库值
+    DOCTEST_CHECK_EQ(updated.value().contextNote, std::string(""));
+    DOCTEST_CHECK_EQ(updated.value().autoNote, 1);
+    DOCTEST_CHECK_EQ(updated.value().goal, std::string("修改后目标"));
 
     mod.onStop();
     return true;
@@ -3826,39 +3872,39 @@ REGISTER_TEST(agent_ui_dialog_geometry_context_note_within_bounds,
 
     const auto* panel = ui2.find("agent.dialog.task.panel");
     DOCTEST_REQUIRE(panel != nullptr);
-    // 弹窗高 = 设计值 756（UAT6 系统提示词 textarea 后增高）
-    DOCTEST_CHECK_MESSAGE(nearPx(panel->frame.height, 756.0f),
-                          "任务弹窗高应为设计值 756，实测 " +
+    // W4 C1：弹窗高 496（步骤条重做后）
+    DOCTEST_CHECK_MESSAGE(nearPx(panel->frame.height, 496.0f),
+                          "任务弹窗高应为设计值 496，实测 " +
                               std::to_string(panel->frame.height));
 
-    // 执行记忆多行输入在面板内
-    const auto* note = ui2.find("agent.dialog.task.note");
-    DOCTEST_REQUIRE(note != nullptr);
-    DOCTEST_CHECK_MESSAGE(frameContained(*panel, *note),
-                          "执行记忆输入框跑出弹窗外");
+    // W4 C3：执行记忆/自动记录已移除（打开态 step 0 即不渲染）
+    DOCTEST_CHECK(ui2.find("agent.dialog.task.note") == nullptr);
+    DOCTEST_CHECK(ui2.find("agent.dialog.task.autonote") == nullptr);
 
-    // 自动记录开关在面板内
-    const auto* autosw = ui2.find("agent.dialog.task.autonote");
-    DOCTEST_REQUIRE(autosw != nullptr);
-    DOCTEST_CHECK_MESSAGE(frameContained(*panel, *autosw),
-                          "自动记录开关跑出弹窗外");
-
-    // 行底（自动记录）≤ 按钮行顶
-    const auto* autoWrap = ui2.find("agent.dialog.task.autonote");
-    const auto* saveBtn = ui2.find("agent.dialog.task.save");
-    DOCTEST_REQUIRE(autoWrap != nullptr);
+    // 导航到 step 2：系统提示词 textarea 在面板内、底 ≤ 按钮行顶
+    eui::Ui ui2s2;
+    DOCTEST_REQUIRE(clickId(ui2, "agent.dialog.task.step.2"));
+    composeTo(ui2s2, mod, kScreen, "agent_ui_notegeo2s2");
+    const auto* sysprompt = ui2s2.find("agent.dialog.task.sysprompt");
+    DOCTEST_REQUIRE(sysprompt != nullptr);
+    DOCTEST_CHECK_MESSAGE(frameContained(*panel, *sysprompt),
+                          "系统提示词 textarea 跑出弹窗外");
+    const auto* saveBtn = ui2s2.find("agent.dialog.task.save");
     DOCTEST_REQUIRE(saveBtn != nullptr);
     DOCTEST_CHECK_MESSAGE(
-        autoWrap->frame.y + autoWrap->frame.height <= saveBtn->frame.y + 0.5f,
-        "自动记录行底 " +
-            std::to_string(autoWrap->frame.y + autoWrap->frame.height) +
+        sysprompt->frame.y + sysprompt->frame.height <= saveBtn->frame.y + 0.5f,
+        "系统提示词底 " +
+            std::to_string(sysprompt->frame.y + sysprompt->frame.height) +
             " 压到按钮行顶 " + std::to_string(saveBtn->frame.y));
 
-    // 安全组破坏性行 y 恒等面板顶 +548（UAT5 重设计后；新字段不得挤动它）
-    const auto* metaRow = ui2.find("agent.dialog.task.destructive");
+    // 导航到 step 3：安全组破坏性行 y 恒等面板顶 +216（W4 步骤条后）
+    eui::Ui ui2s3;
+    DOCTEST_REQUIRE(clickId(ui2s2, "agent.dialog.task.step.3"));
+    composeTo(ui2s3, mod, kScreen, "agent_ui_notegeo2s3");
+    const auto* metaRow = ui2s3.find("agent.dialog.task.destructive");
     DOCTEST_REQUIRE(metaRow != nullptr);
-    DOCTEST_CHECK_MESSAGE(nearPx(metaRow->frame.y, panel->frame.y + 548.0f),
-                          "破坏性行 y 应恒为面板顶 +548（UAT5 重设计后安全组）（新字段不得挤动），实测 " +
+    DOCTEST_CHECK_MESSAGE(nearPx(metaRow->frame.y, panel->frame.y + 214.0f),
+                          "破坏性行 y 应恒为面板顶 +214（W4 步骤条后），实测 " +
                               std::to_string(metaRow->frame.y));
 
     mod.onStop();
@@ -4721,7 +4767,7 @@ std::string draftResponseBody(const std::string& draftJson) {
 
 REGISTER_TEST(agent_ui_draft_chip_and_subdialog_lifecycle,
               "agent_ui_draft: 指令行 chip 几何（不压 goal 行 / 不压 ✕）/ 子弹窗开合"
-              "（chip·✕·遮罩·Esc 先子后父）/ 外层 680 高（UAT5 重设计）", {
+              "（chip·✕·遮罩·Esc 先子后父）/ 外层 496 高（W4 步骤条）", {
     test_support::TestDb tdb("agentui", "draftlife");
     test_support::FakeProfileSource profile;
     ToolGuard statsGuard{"app.stats", "app.notify"};
@@ -4740,31 +4786,33 @@ REGISTER_TEST(agent_ui_draft_chip_and_subdialog_lifecycle,
     eui::Ui uiB;
     composeTo(uiB, mod, kScreen, "agent_ui_dfl1");
 
-    // 外层几何契约：UAT6 系统提示词 textarea 后 756 高（弹性宽 + 紧凑行预算）
+    // 外层几何契约：W4 C1 步骤条重做后 496 高（弹性宽 + 紧凑行预算）
     const auto* panel = uiB.find("agent.dialog.task.panel");
     DOCTEST_REQUIRE(panel != nullptr);
-    DOCTEST_CHECK_MESSAGE(nearPx(panel->frame.height, 756.0f),
-                          "任务弹窗高应恒为 756，实测 " +
+    DOCTEST_CHECK_MESSAGE(nearPx(panel->frame.height, 496.0f),
+                          "任务弹窗高应恒为 496，实测 " +
                               std::to_string(panel->frame.height));
 
-    // chip 存在 + 几何：面板内、底 ≤ 指令 textarea 行顶（面板内 y=260）、右缘 ≤ ✕ 左缘
-    //（UAT5：chip 从标题行挪到指令标签行右缘）
-    const auto* chipBg = uiB.find("agent.dialog.task.aichip.bg");
+    // chip 在 step 2 才渲染；几何：面板内、指令标签行右缘（y=112 h=32）、右缘 ≤ ✕ 左缘
+    eui::Ui uiBs2;
+    DOCTEST_REQUIRE(clickId(uiB, "agent.dialog.task.step.2"));
+    composeTo(uiBs2, mod, kScreen, "agent_ui_dfl1s2");
+    const auto* chipBg = uiBs2.find("agent.dialog.task.aichip.bg");
     DOCTEST_REQUIRE(chipBg != nullptr);
     DOCTEST_CHECK_MESSAGE(frameContained(*panel, *chipBg),
                           "AI chip 跑出弹窗面板");
-    DOCTEST_CHECK_MESSAGE(
-        chipBg->frame.y + chipBg->frame.height <= panel->frame.y + 260.0f + 0.5f,
-        "AI chip 底 " + std::to_string(chipBg->frame.y + chipBg->frame.height) +
-            " 压到指令输入行顶 " + std::to_string(panel->frame.y + 260.0f));
-    const auto* closeBtn = uiB.find("agent.dialog.task.close");
+    DOCTEST_CHECK_MESSAGE(nearPx(chipBg->frame.y - panel->frame.y, 112.0f),
+                          "AI chip 应 y=112（指令标签行右缘），实测 " +
+                              std::to_string(chipBg->frame.y - panel->frame.y));
+    DOCTEST_CHECK_MESSAGE(nearPx(chipBg->frame.height, 32.0f), "AI chip 应高 32");
+    const auto* closeBtn = uiBs2.find("agent.dialog.task.close");
     DOCTEST_REQUIRE(closeBtn != nullptr);
     DOCTEST_CHECK_MESSAGE(chipBg->frame.x + chipBg->frame.width <=
                               closeBtn->frame.x + 0.5f,
                           "AI chip 右缘压到 ✕ 关闭钮");
 
     // ① 点 chip 开子弹窗：380 高、输入框/底部按钮带都在面板内、外层仍在
-    DOCTEST_REQUIRE(clickId(uiB, "agent.dialog.task.aichip.bg"));
+    DOCTEST_REQUIRE(clickId(uiBs2, "agent.dialog.task.aichip.bg"));
     eui::Ui uiC;
     composeTo(uiC, mod, kScreen, "agent_ui_dfl2");
     const auto* dpanel = uiC.find("agent.dialog.task.draft.panel");
