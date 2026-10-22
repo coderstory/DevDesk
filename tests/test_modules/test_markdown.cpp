@@ -2223,7 +2223,7 @@ REGISTER_TEST(md_tree_column_layout_semantics,
     ui.end();
     ui.layout(screen.width, screen.height);
 
-    const float pad = 40.0f;        // spacingXXLarge
+    const float pad = 32.0f;        // S4.2 弹性内边距（spacingLarge×2，H3 40→32）
     const float sideW = 240.0f;     // 左栏树宽（UAT2 F批：220→240）
     const float gap = 16.0f;
     const float contentW = screen.width - pad * 2.0f;
@@ -4674,7 +4674,7 @@ REGISTER_TEST(md_module_text_column_chrome_shared,
         ui.end();
         ui.layout(screen.width, screen.height);
     };
-    const float pad = 40.0f;
+    const float pad = 32.0f;  // S4.2 弹性内边距（spacingLarge×2，H3 40→32）
     const float sideW = 240.0f;  // UAT2 F批：220→240
     const float gap = 16.0f;
 
