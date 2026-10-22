@@ -1045,7 +1045,7 @@ REGISTER_TEST(uiAboutLayout,
     constexpr float kCardPadTop = 24.0f;
     constexpr float kCardPadBottom = 24.0f;
     constexpr float kGroupHdrH = 24.0f;
-    constexpr float kGroupGap = 16.0f;
+    constexpr float kGroupGap = 24.0f;   // 与 about_module.cpp 同值（组间间距）
     constexpr float kRowH = 32.0f;
     constexpr int kGroupCount = 3;
     constexpr int kRowCount = 9;   // W3.5 H7: 3+4+2=9 rows (许可与致谢组加开源组件)
@@ -1065,8 +1065,8 @@ REGISTER_TEST(uiAboutLayout,
     };
     const float cardW = cardWidthAt(screen.width);
     const float cardX = std::max(0.0f, (screen.width - cardW) / 2.0f);
-    const float footerY = screen.height - t.sizes.spacingXXLarge - kFooterH;
-    const float cardY = t.sizes.spacingXXLarge;
+    const float footerY = screen.height - t.sizes.spacingLarge * 2.0f - kFooterH;  // S4.2 弹性内边距 32
+    const float cardY = t.sizes.spacingLarge * 2.0f;                                // pagePad
     const float valueX = kCardPadX + kLabelW + 16.0f;
     ui.begin("about_layout");
     mod->compose(ui, screen);
@@ -1147,7 +1147,7 @@ REGISTER_TEST(uiAboutLayout,
                               px("about.footer", footer));
         DOCTEST_CHECK_MESSAGE(
             nearPx(footer->frame.y + footer->frame.height,
-                   screen.height - t.sizes.spacingXXLarge),
+                   screen.height - t.sizes.spacingLarge * 2.0f),  // S4.2 pagePad=32
             px("about.footer", footer));
     }
     {
@@ -1170,7 +1170,7 @@ REGISTER_TEST(uiAboutLayout,
         const auto* footer = mini.find("about.footer");
         DOCTEST_REQUIRE(footer != nullptr);
         DOCTEST_CHECK(nearPx(footer->frame.y + footer->frame.height,
-                             minScreen.height - t.sizes.spacingXXLarge));
+                             minScreen.height - t.sizes.spacingLarge * 2.0f));  // S4.2 pagePad=32
         DOCTEST_CHECK(c->frame.y + c->frame.height + kFooterGap <= footer->frame.y);
     }
     {
