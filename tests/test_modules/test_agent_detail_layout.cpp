@@ -156,9 +156,9 @@ REGISTER_TEST(agent_ui_detail_layout_elastic_1600x1000,
     DOCTEST_REQUIRE_MESSAGE(navOn != nullptr && navOff != nullptr,
                             "segment 缺 .nav.item.<i>.bg");
     DOCTEST_CHECK_MESSAGE(
-        nearPx(navOn->color.r, tok.colors.wechat.primary.r) &&
-            nearPx(navOn->color.g, tok.colors.wechat.primary.g) &&
-            nearPx(navOn->color.b, tok.colors.wechat.primary.b),
+        nearPx(navOn->color.r, tok.colors.primary.r) &&
+            nearPx(navOn->color.g, tok.colors.primary.g) &&
+            nearPx(navOn->color.b, tok.colors.primary.b),
         "segment 选中块应为 wechat 绿底");
     DOCTEST_CHECK_MESSAGE(
         !(nearPx(navOn->color.r, tok.colors.primary.r) &&
@@ -166,9 +166,9 @@ REGISTER_TEST(agent_ui_detail_layout_elastic_1600x1000,
           nearPx(navOn->color.b, tok.colors.primary.b)),
         "segment 选中块回潮成 module 暖橙");
     DOCTEST_CHECK_MESSAGE(
-        nearPx(navOff->color.r, tok.colors.wechat.pageBg.r) &&
-            nearPx(navOff->color.g, tok.colors.wechat.pageBg.g) &&
-            nearPx(navOff->color.b, tok.colors.wechat.pageBg.b),
+        nearPx(navOff->color.r, tok.colors.pageBg.r) &&
+            nearPx(navOff->color.g, tok.colors.pageBg.g) &&
+            nearPx(navOff->color.b, tok.colors.pageBg.b),
         "segment 未选中块应为 pageBg 灰底");
     // nav 全宽 = innerW（800-56=744）
     const auto* nav = ui2.find("agent.dialog.detail.nav");

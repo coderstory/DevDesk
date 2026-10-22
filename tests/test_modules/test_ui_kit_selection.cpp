@@ -5,9 +5,9 @@
 // 断言三层（spec §7.1）：
 //   - 元素存在性（ui.find != nullptr）
 //   - 几何数值（width / height / radius / position）
-//   - 颜色 hex 精确（token 落点 → wechat.* 令牌值）
+//   - 颜色 hex 精确（token 落点 → * 令牌值）
 //
-// 色值走 wechat 令牌（core::theme::current().colors.wechat.*），深浅模式同值；
+// 色值走 wechat 令牌（core::theme::current().colors.*），深浅模式同值；
 // resetCaseGlobals 默认 setDark()，wechat 令牌在深浅两模式均初始化（theme.cpp）。
 // 仿 test_ui_kit_button.cpp 模式：REGISTER_TEST + toHexByte + floatEq。
 #include "doctest.h"
@@ -31,8 +31,8 @@ bool floatEq(float a, float b) { return std::fabs(a - b) < 0.01f; }
 } // namespace
 
 // 场景1（防「红橙粗边框 / 对勾选中态」回归，§4.3 / §8 #2 #12 禁止项）：
-// selectionBar bg=wechat.selectedBg(#E5E5E5) + accent=wechat.primary(#07C160)
-// + text=wechat.textPrimary(#1A1A1A) + accent width=2px。
+// selectionBar bg=selectedBg(#E5E5E5) + accent=primary(#07C160)
+// + text=textPrimary(#1A1A1A) + accent width=2px。
 // 事故：选中态用红 / 橙粗外边框或小对勾标记（v1.0 §3.4 / §3.1 旧设计）——
 // 本 helper 钉死 2px 绿竖线 + 浅灰底 + 深灰文字，无 border / 无 check。
 REGISTER_TEST(ui_kit_selection_bar_colors,
@@ -140,7 +140,7 @@ REGISTER_TEST(ui_kit_wtab_inactive_no_underline,
 })
 
 // 场景4（防「开关开启非绿」，§4.4）：
-// wswitch on：track=wechat.primary(#07C160) + thumb=wechat.cardBg(#FFFFFF) +
+// wswitch on：track=primary(#07C160) + thumb=cardBg(#FFFFFF) +
 // 滑块贴右。事故：开关开启态轨道非绿（用蓝 / 橙）——v1.0 §2.2.4 钉死绿轨道。
 REGISTER_TEST(ui_kit_wswitch_on_track_green,
               "ui_kit wswitch on: track=primary + thumb=cardBg + thumb right", {
@@ -171,7 +171,7 @@ REGISTER_TEST(ui_kit_wswitch_on_track_green,
 })
 
 // 场景5（防「开关闭合非灰」，§4.4）：
-// wswitch off：track=wechat.dividerSecondary(#EDEDED) 灰，非 primary 绿。
+// wswitch off：track=dividerSecondary(#EDEDED) 灰，非 primary 绿。
 // 事故：开关闭合态轨道仍用绿 / 其他色——与开启态不分。
 REGISTER_TEST(ui_kit_wswitch_off_track_gray_not_green,
               "ui_kit wswitch off: track=dividerSecondary (gray, not primary)", {

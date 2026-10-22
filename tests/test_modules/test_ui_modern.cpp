@@ -1269,15 +1269,15 @@ REGISTER_TEST(uiAboutGlow,
 
     // 反证⑤：about.anim state 不存在（about_anim.h 已清空为空壳）
 
-    // 反证⑥：about.bg 颜色 RGB = wechat.pageBg（RGB 不随效果档位变；档位 alpha
+    // 反证⑥：about.bg 颜色 RGB = pageBg（RGB 不随效果档位变；档位 alpha
     // 的行为断言见 uiAboutPageBgEffectAlpha）
     {
         const auto& t = ::core::theme::current();
         const auto* bg = ui.find("about.bg");
         DOCTEST_REQUIRE(bg != nullptr);
-        DOCTEST_CHECK(std::abs(bg->color.r - t.colors.wechat.pageBg.r) < 1e-3f);
-        DOCTEST_CHECK(std::abs(bg->color.g - t.colors.wechat.pageBg.g) < 1e-3f);
-        DOCTEST_CHECK(std::abs(bg->color.b - t.colors.wechat.pageBg.b) < 1e-3f);
+        DOCTEST_CHECK(std::abs(bg->color.r - t.colors.pageBg.r) < 1e-3f);
+        DOCTEST_CHECK(std::abs(bg->color.g - t.colors.pageBg.g) < 1e-3f);
+        DOCTEST_CHECK(std::abs(bg->color.b - t.colors.pageBg.b) < 1e-3f);
     }
 
     // 反证⑦：渐变背景元素不存在（about.bg 无 gradient）

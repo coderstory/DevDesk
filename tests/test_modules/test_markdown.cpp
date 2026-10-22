@@ -382,13 +382,13 @@ int treeRowIndex(eui::Ui& ui, const std::string& displayName, bool folder) {
     return -1;
 }
 
-// 目录行是否处于选中态（W8：底色 == wechat.selectedBg #E5E5E5）
+// 目录行是否处于选中态（W8：底色 == selectedBg #E5E5E5）
 bool folderRowSelected(eui::Ui& ui, const std::string& displayName) {
     const int i = treeRowIndex(ui, displayName, /*folder=*/true);
     if (i < 0) return false;
     const auto* row = ui.find("md.tree.node." + std::to_string(i) + ".row");
     return row != nullptr &&
-           colorEq(row->color, core::theme::current().colors.wechat.selectedBg);
+           colorEq(row->color, core::theme::current().colors.selectedBg);
 }
 
 // W8：标签添加从独立按钮改为输入框内置（回车提交）。
@@ -1397,16 +1397,16 @@ REGISTER_TEST(md_module_new_folder, "markdown_module: W9 新建文件夹入口�
     const auto* nfHint = ui.find("md.dialog.new.hint");
     DOCTEST_REQUIRE(nfHint != nullptr);
     DOCTEST_CHECK(nfHint->text.find("根目录") != std::string::npos);
-    // 选中态可视：根目录行底色 = wechat.selectedBg（W8 选中色 #E5E5E5），刚建好的「工作」行回底色
+    // 选中态可视：根目录行底色 = selectedBg（W8 选中色 #E5E5E5），刚建好的「工作」行回底色
     const auto* rootRowNow = ui.find("md.tree.node.0.row");
     const auto* workRowNow = ui.find("md.tree.node.2.row");
     DOCTEST_REQUIRE(rootRowNow != nullptr);
     DOCTEST_REQUIRE(workRowNow != nullptr);
-    // W8：选中态底色改 wechat.selectedBg（#E5E5E5）
+    // W8：选中态底色改 selectedBg（#E5E5E5）
     const auto& treeColors = core::theme::current().colors;
-    DOCTEST_CHECK(colorEq(rootRowNow->color, treeColors.wechat.selectedBg));
-    DOCTEST_CHECK(colorEq(rootRowNow->color, treeColors.wechat.selectedBg) &&
-                  !colorEq(workRowNow->color, treeColors.wechat.selectedBg));
+    DOCTEST_CHECK(colorEq(rootRowNow->color, treeColors.selectedBg));
+    DOCTEST_CHECK(colorEq(rootRowNow->color, treeColors.selectedBg) &&
+                  !colorEq(workRowNow->color, treeColors.selectedBg));
     const auto* noteBtn = ui.find("md.tree.new.bg");
     DOCTEST_REQUIRE(noteBtn != nullptr);
     noteBtn->onClick();
@@ -1650,7 +1650,7 @@ REGISTER_TEST(md_module_new_folder_parent,
 
 // 2b4b''. 目录树选中态 → 新建笔记落在选中目录
 // 逐档钉死（不只测根——「永远落在根目录」正是报障点）：
-//   ① 初始选中 = 根目录行（默认值），行底色 = wechat.selectedBg；
+//   ① 初始选中 = 根目录行（默认值），行底色 = selectedBg；
 //   ② 点**二级目录**行 → 选中态 == 工作/周会 → 新建笔记落盘 工作/周会/xxx.md
 //      （不是根、也不是父目录 工作）；
 //   ③ 点**一级目录**行 → 新建笔记落 工作/xxx.md；
@@ -3743,7 +3743,7 @@ REGISTER_TEST(md_module_split_block_click_hover,
     // ③ hover：上游 Heading 块底衬 idle 透明 → enter 后 = 页面主体 wechat 悬停色
     //（UAT3 T1：块 hover 底衬随 componentTheme 迁 wechat，同 surfaceHover 口径）
     const eui::Color hoverTint =
-        core::theme::current().colors.wechat.dividerSecondary;
+        core::theme::current().colors.dividerSecondary;
     const std::string hlHead = "md.preview.blk." + std::to_string(kh) + ".hl";
     frame();
     DOCTEST_CHECK(ui.find(hlHead)->color.a == 0.0f);
@@ -8477,7 +8477,7 @@ REGISTER_TEST(md_module_tree_list_error,
     DOCTEST_CHECK(err->text.find("每 5 秒自动重试") != std::string::npos);
     // 文本元素：TextBuilder::color() 落在 textColor（element->color 是底色字段）
     // W8：错误色改走 wechat 令牌 warningRed（#FA5151），不再用 colors.error
-    DOCTEST_CHECK(colorEq(err->textColor, core::theme::current().colors.wechat.warningRed));
+    DOCTEST_CHECK(colorEq(err->textColor, core::theme::current().colors.warningRed));
     DOCTEST_CHECK(err->frame.width > 0.0f);
     DOCTEST_CHECK(err->frame.height > 0.0f);
     // 失败态顶掉空态与树（分支互斥：不拿旧数据/空态伪装正常）
@@ -8563,10 +8563,10 @@ REGISTER_TEST(md_module_statusbar_save_error,
     DOCTEST_CHECK(save->text.find("未保存") == std::string::npos);
     DOCTEST_CHECK(save->text.find("已保存") == std::string::npos);
     // 文本元素：TextBuilder::color() 落在 textColor（element->color 是底色字段）
-    // UAT3 T1 测试对齐：模块 saveFailed_ 态自 W8 起即用 wechat.warningRed
+    // UAT3 T1 测试对齐：模块 saveFailed_ 态自 W8 起即用 warningRed
     //（#FA5151）；本断言此前仍钉旧 colors.error，属 W8 后漂移未同步的存量红。
     DOCTEST_CHECK(colorEq(save->textColor,
-                          core::theme::current().colors.wechat.warningRed));
+                          core::theme::current().colors.warningRed));
     DOCTEST_CHECK(save->frame.width > 0.0f);
 
     // 还原目录权限，RAII 夹具才能清理
