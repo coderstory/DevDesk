@@ -2288,7 +2288,8 @@ void AgentModule::composeTaskDialog(
             if (!taskDialogOpen_) return;
             ui_kit::drawDialogTitle(ui, "agent.dialog.task.title", w,
                                     isEdit ? "编辑任务" : "新建智能任务",
-                                    20.0f, t.colors.textPrimary);
+                                    20.0f, t.colors.textPrimary,
+                                    {.y = 24.0f});  // W4 域：保持原几何，不随默认值收紧
 
             // ✕ 关闭
             ui.text("agent.dialog.task.close")
@@ -2950,7 +2951,8 @@ void AgentModule::composeDraftDialog(
         if (!draftDialogOpen_) return;
         ui_kit::drawDialogTitle(ui, "agent.dialog.task.draft.title", w,
                                 "AI 生成草稿", 20.0f,
-                                t.colors.textPrimary);
+                                t.colors.textPrimary,
+                                {.y = 24.0f});  // W4 域：保持原几何，不随默认值收紧
 
         // ✕ 关闭（与遮罩 / Esc / 「关闭」按钮同一路径）
         ui.text("agent.dialog.task.draft.close")
@@ -3087,7 +3089,8 @@ void AgentModule::composeDeleteConfirmDialog(
             }
         }
         ui_kit::drawDialogTitle(ui, "agent.dialog.delete.title", w, "确认删除？",
-                                20.0f, t.colors.textPrimary);
+                                20.0f, t.colors.textPrimary,
+                                {.y = 24.0f});  // W4 域：保持原几何，不随默认值收紧
         ui_kit::drawDialogText(
             ui, "agent.dialog.delete.msg", w,
             "将删除任务「" + name + "」及其全部运行记录，不可恢复。",
