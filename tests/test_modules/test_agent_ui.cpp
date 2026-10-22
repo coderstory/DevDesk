@@ -1964,7 +1964,7 @@ REGISTER_TEST(agent_ui_detail_config_popover,
     DOCTEST_CHECK_MESSAGE(destrV->text == std::string("关闭") ||
                           destrV->text == std::string("开启") ||
                           destrV->text == std::string("—"),
-                          string("destructive 单元格文本异常：") + destrV->text);
+                          std::string("destructive 单元格文本异常：") + destrV->text);
     // 配置 tab 互斥：runlist / 运行详情块退场；scrim / popover 仍不回潮
     DOCTEST_CHECK(ui3.find(base + ".runlist") == nullptr);
     DOCTEST_CHECK(ui3.find(base + ".detail") == nullptr);
