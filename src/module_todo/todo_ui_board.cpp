@@ -505,7 +505,6 @@ void drawCard(eui::Ui& ui, const std::string& id, float x, float y, float width,
               const BoardView& v, BoardPlate& plate) {
     (void)colCount;
     const bool done = task.completedAt.has_value();
-    const bool selected = (task.id == v.selectedTaskId);
     // 拖拽中间态：被拖卡片半透明（拖动只记录，松手才落库）
     const bool dragging = v.dragActive && v.dragTaskId == task.id;
     const float cardOpacity = dragging ? 0.45f : 1.0f;
