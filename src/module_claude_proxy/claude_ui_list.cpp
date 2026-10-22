@@ -420,8 +420,10 @@ void drawClaudeHeader(eui::Ui& ui, float contentW, float headerH,
 }
 
 void drawClaudeGuideBar(eui::Ui& ui, float contentW,
-                        const core::theme::Tokens& t) {
+                        const core::theme::Tokens& t,
+                        ProfileListState& st) {
     // 引导条：代理未运行时的接管语义提示（图标字体不能与正文混排，图标/文字拆两元素）
+    // S3.4 右侧添加关闭按钮
     ui.row("claude.guide.wrap")
         .size(contentW, kGuideBarH)
         .gap(6.0f)
@@ -435,13 +437,35 @@ void drawClaudeGuideBar(eui::Ui& ui, float contentW,
                 .color(t.colors.textSecondary)
                 .build();
             ui.text("claude.guide.takeover")
-                .size(contentW - 20.0f, 18.0f)
+                .size(contentW - 44.0f, 18.0f)
                 .text("启动代理将接管 Claude Code 配置（" +
                       settings_sync::defaultPaths().settingsFile.string() +
                       " 指向本地代理），停止代理时自动还原")
                 .fontSize(t.sizes.fontSizeSmall)
                 .lineHeight(18.0f)
                 .color(t.colors.textSecondary)
+                .build();
+            // 关闭按钮（×）
+            ui.stack("claude.guide.close")
+                .size(18.0f, 18.0f)
+                .visualStateFrom("claude.guide.close.bg", 0.965f)
+                .content([&] {
+                    ui.rect("claude.guide.close.bg")
+                        .size(18.0f, 18.0f)
+                        .color(eui::Color{0.0f, 0.0f, 0.0f, 0.0f})
+                        .radius(4.0f)
+                        .onClick([sp = &st] { sp->guideDismissed_ = true; })
+                        .build();
+                    ui.text("claude.guide.close.icon")
+                        .size(18.0f, 18.0f)
+                        .icon(0xF00D)  // fa-times
+                        .fontSize(12.0f)
+                        .lineHeight(18.0f)
+                        .horizontalAlign(eui::HorizontalAlign::Center)
+                        .verticalAlign(eui::VerticalAlign::Center)
+                        .color(t.colors.textTertiary)
+                        .build();
+                })
                 .build();
         })
         .build();
