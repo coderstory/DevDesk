@@ -16,6 +16,7 @@
 #include <core/call_rate.h>
 #include <core/component_theme.h>
 #include <core/logging.h>
+#include <core/window/window_backend.h>
 #include <ui_kit/glass_card.h>
 #include <ui_kit/wtab.h>
 
@@ -73,12 +74,39 @@ float drawDetailBasic(eui::Ui& ui, float x0, float y0, float w,
     ui_kit::drawGlassCardLayers(ui, "claude.field.name", x0, y0 + 18.0f,
         w * 0.5f - 8.0f, 24.0f, t.sizes.radiusSmall, t,
         ui_kit::GlassCardStyle::subtle());
+    // S3.4 值盒收窄让位右侧复制按钮
     ui.text("claude.field.name.value")
         .position(x0 + 12.0f, y0 + 18.0f)
-        .size(w * 0.5f - 20.0f, 24.0f)
+        .size(w * 0.5f - 40.0f, 24.0f)
         .text(v.nameValue).fontSize(14.0f).lineHeight(24.0f)
         .verticalAlign(eui::VerticalAlign::Center)
         .color(t.colors.textPrimary).build();
+    {
+        const float copyX = x0 + w * 0.5f - 28.0f;
+        const std::string copyVal = v.nameValue;
+        ui.stack("claude.field.name.copy")
+            .position(copyX, y0 + 18.0f)
+            .size(24.0f, 24.0f)
+            .visualStateFrom("claude.field.name.copy.bg", 0.965f)
+            .content([&] {
+                ui.rect("claude.field.name.copy.bg")
+                    .size(24.0f, 24.0f)
+                    .color(eui::Color{0.0f, 0.0f, 0.0f, 0.0f})
+                    .radius(4.0f)
+                    .onClick([cv = copyVal] { core::window::setClipboardText(cv); })
+                    .build();
+                ui.text("claude.field.name.copy.icon")
+                    .size(24.0f, 24.0f)
+                    .icon(0xF0C5)
+                    .fontSize(14.0f)
+                    .lineHeight(24.0f)
+                    .horizontalAlign(eui::HorizontalAlign::Center)
+                    .verticalAlign(eui::VerticalAlign::Center)
+                    .color(t.colors.textTertiary)
+                    .build();
+            })
+            .build();
+    }
     const float urlY = y0 + 56.0f;
     ui.text("claude.field.url.label")
         .position(x0, urlY).size(w, 14.0f)
@@ -92,11 +120,38 @@ float drawDetailBasic(eui::Ui& ui, float x0, float y0, float w,
     ui_kit::drawGlassCardLayers(ui, "claude.field.url", x0, urlY + 18.0f,
         w, 28.0f, t.sizes.radiusSmall, t,
         ui_kit::GlassCardStyle::subtle());
+    // S3.4 值盒收窄让位右侧复制按钮
     ui.text("claude.field.url.value")
-        .position(x0 + 12.0f, urlY + 18.0f).size(w - 24.0f, 28.0f)
+        .position(x0 + 12.0f, urlY + 18.0f).size(w - 40.0f, 28.0f)
         .text(v.urlValue).fontSize(t.sizes.fontSizeSmall).lineHeight(28.0f)
         .verticalAlign(eui::VerticalAlign::Center)
         .color(t.colors.textPrimary).build();
+    {
+        const float copyX = x0 + w - 28.0f;
+        const std::string copyVal = v.urlValue;
+        ui.stack("claude.field.url.copy")
+            .position(copyX, urlY + 20.0f)
+            .size(24.0f, 24.0f)
+            .visualStateFrom("claude.field.url.copy.bg", 0.965f)
+            .content([&] {
+                ui.rect("claude.field.url.copy.bg")
+                    .size(24.0f, 24.0f)
+                    .color(eui::Color{0.0f, 0.0f, 0.0f, 0.0f})
+                    .radius(4.0f)
+                    .onClick([cv = copyVal] { core::window::setClipboardText(cv); })
+                    .build();
+                ui.text("claude.field.url.copy.icon")
+                    .size(24.0f, 24.0f)
+                    .icon(0xF0C5)
+                    .fontSize(14.0f)
+                    .lineHeight(24.0f)
+                    .horizontalAlign(eui::HorizontalAlign::Center)
+                    .verticalAlign(eui::VerticalAlign::Center)
+                    .color(t.colors.textTertiary)
+                    .build();
+            })
+            .build();
+    }
     const float keyY = urlY + 56.0f;
     // §5 API Key 显隐：本字段为只读脱敏提示（apiKeyHint，非明文），已防肩窥；
     // 真正 type=password 明文/掩码切换属编辑表单（claude_ui_form.cpp，不在 W7
@@ -113,11 +168,38 @@ float drawDetailBasic(eui::Ui& ui, float x0, float y0, float w,
     ui_kit::drawGlassCardLayers(ui, "claude.field.token", x0, keyY + 18.0f,
         w, 32.0f, t.sizes.radiusSmall, t,
         ui_kit::GlassCardStyle::subtle());
+    // S3.4 值盒收窄让位右侧复制按钮
     ui.text("claude.field.token.value")
-        .position(x0 + 12.0f, keyY + 18.0f).size(w - 24.0f, 32.0f)
+        .position(x0 + 12.0f, keyY + 18.0f).size(w - 40.0f, 32.0f)
         .text(v.tokenValue).fontSize(t.sizes.fontSizeSmall).lineHeight(32.0f)
         .verticalAlign(eui::VerticalAlign::Center)
         .color(t.colors.textSecondary).build();
+    {
+        const float copyX = x0 + w - 28.0f;
+        const std::string copyVal = v.tokenValue;
+        ui.stack("claude.field.token.copy")
+            .position(copyX, keyY + 22.0f)
+            .size(24.0f, 24.0f)
+            .visualStateFrom("claude.field.token.copy.bg", 0.965f)
+            .content([&] {
+                ui.rect("claude.field.token.copy.bg")
+                    .size(24.0f, 24.0f)
+                    .color(eui::Color{0.0f, 0.0f, 0.0f, 0.0f})
+                    .radius(4.0f)
+                    .onClick([cv = copyVal] { core::window::setClipboardText(cv); })
+                    .build();
+                ui.text("claude.field.token.copy.icon")
+                    .size(24.0f, 24.0f)
+                    .icon(0xF0C5)
+                    .fontSize(14.0f)
+                    .lineHeight(24.0f)
+                    .horizontalAlign(eui::HorizontalAlign::Center)
+                    .verticalAlign(eui::VerticalAlign::Center)
+                    .color(t.colors.textTertiary)
+                    .build();
+            })
+            .build();
+    }
     ClaudeService* svc = v.svc;
     const bool ccManaged = svc && svc->isClaudeCodeManaged();
     // 接管失败与上层覆盖警告都要可见，不以 ccManaged 为展示门；读内存 getter（无 IO）
