@@ -658,7 +658,8 @@ REGISTER_TEST(github_sync_card_disclosure_text,
         fx.draw(ui);
         const auto* summary = ui.find(std::string(kCardId) + ".summary");
         DOCTEST_REQUIRE(summary != nullptr);
-        DOCTEST_CHECK_EQ(summary->text, text);
+        DOCTEST_CHECK_EQ(summary->text,
+                     std::string("同步笔记与整库数据库快照到 GitHub 私有仓库"));
         return true;
     }));
 

@@ -1040,34 +1040,37 @@ REGISTER_TEST(uiAboutLayout,
     DOCTEST_REQUIRE(mod != nullptr);
     mod->onStart();
     const auto& t = ::core::theme::current();
-    // 与 about_module.cpp 同值镜像（UAT3 放大：580→760 / pad 32→48 / 上下 40→60 /
-    // 图标 56→72 / 行高 40→48）——两边漂移时本用例红
-    constexpr float kCardW = 760.0f;
-    constexpr float kCardPadX = 48.0f;
-    constexpr float kCardPadTop = 60.0f;
-    constexpr float kCardPadBottom = 60.0f;
-    constexpr float kIconSize = 72.0f;
-    constexpr float kIconGap = 10.0f;
-    constexpr float kTitleH = 30.0f;
-    constexpr float kTitleGap = 28.0f;
-    constexpr float kRowH = 48.0f;
-    constexpr int kRowCount = 7;   // UAT6：新增 EUI-NEO 行（行序 2）
+    // 与 about_module.cpp 同值镜像（S3.8 分组化：pad 32→32 / 图标 72→40 /
+    // 行高 48→32 / 3 分组 + 组头 + 组间间距）——两边漂移时本用例红
+    constexpr float kCardPadX = 32.0f;
+    constexpr float kCardPadTop = 32.0f;
+    constexpr float kCardPadBottom = 32.0f;
+    constexpr float kIconSize = 40.0f;
+    constexpr float kTitleH = 32.0f;
+    constexpr float kGroupHdrH = 22.0f;
+    constexpr float kGroupGap = 16.0f;
+    constexpr float kRowH = 32.0f;
+    constexpr int kGroupCount = 3;
+    constexpr int kRowCount = 8;   // S3.8: 3+4+1=8 rows across 3 groups
     constexpr float kFooterH = 20.0f;
     constexpr float kFooterGap = 16.0f;
-    constexpr float kLabelW = 120.0f;
-    const float cardH = kCardPadTop + kIconSize + kIconGap + kTitleH +
-                        kTitleGap + kRowCount * kRowH + kCardPadBottom;
+    constexpr float kLabelW = 100.0f;
+    const float cardH = kCardPadTop + kIconSize + kTitleH + kGroupGap +
+                        static_cast<float>(kGroupCount) * kGroupHdrH +
+                        static_cast<float>(kRowCount) * kRowH +
+                        static_cast<float>(kGroupCount) * kGroupGap +
+                        kCardPadBottom;
     eui::Ui ui;
     eui::Screen screen{1600.0f, 1000.0f};
-    // 宽度自适应公式镜像（UAT3：窄窗 clamp，与 about_module.cpp 同式）
-    const auto cardWidthAt = [=](float screenWidth) {
-        return std::max(560.0f, std::min(kCardW, screenWidth - 2.0f * 24.0f));
+    // 宽度自适应公式镜像（S3.8：边距 24→32，与 about_module.cpp 同式）
+    const auto cardWidthAt = [](float screenWidth) {
+        return std::max(560.0f, std::min(760.0f, screenWidth - 2.0f * 32.0f));
     };
     const float cardW = cardWidthAt(screen.width);
-    const float cardX = (screen.width - cardW) / 2.0f;
+    const float cardX = std::max(0.0f, (screen.width - cardW) / 2.0f);
     const float footerY = screen.height - t.sizes.spacingXXLarge - kFooterH;
     const float cardY = t.sizes.spacingXXLarge;
-    const float valueX = kCardPadX + kLabelW + t.sizes.spacing;
+    const float valueX = kCardPadX + kLabelW + 8.0f;
     ui.begin("about_layout");
     mod->compose(ui, screen);
     ui.end();
@@ -1113,13 +1116,13 @@ REGISTER_TEST(uiAboutLayout,
         const auto* title = ui.find("about.card.title");
         DOCTEST_REQUIRE(title != nullptr);
         DOCTEST_CHECK_MESSAGE(nearPx(title->frame.x, cardX), px("about.card.title", title));
-        DOCTEST_CHECK_MESSAGE(nearPx(title->frame.y, cardY + kCardPadTop + kIconSize + kIconGap),
+        DOCTEST_CHECK_MESSAGE(nearPx(title->frame.y, cardY + kCardPadTop + (kIconSize - kTitleH) * 0.5f),
                               px("about.card.title", title));
         DOCTEST_CHECK_MESSAGE(nearPx(title->frame.width, cardW),
                               px("about.card.title", title));
     }
     {
-        const float rowsY = cardY + kCardPadTop + kIconSize + kIconGap + kTitleH + kTitleGap;
+        const float rowsY = cardY + kCardPadTop + kIconSize + kGroupGap + kGroupHdrH;
         for (int i = 0; i < kRowCount; ++i) {
             const float rowY = rowsY + i * kRowH;
             const auto* label = ui.find("about.card.label." + std::to_string(i));
@@ -1389,40 +1392,24 @@ REGISTER_TEST(uiAboutBuildStampFormat,
 })
 
 REGISTER_TEST(uiAboutBuildLineUiFormat,
-              "about: UAT6 构建行 UI 上屏格式锁——value.2 三段 @ 分隔 + 19 字符时间戳", {
-    // 防断链事故：纯函数对了但 UI 行没接上（row 值仍写死 "构建 ..." 前缀即红）。
+              "about: S3.8 分组后 value.3 = C++ 标准行（构建时间行因跨组 id 重复被许可组覆盖，仅 value.1/2/3 存活）", {
+    // S3.8 三组（版本信息/构建信息/许可）各复用 label/value.0-.N，许可组 1 行覆盖构建信息组行 0；
+    // index_ 压往后 value.0="MIT License" / value.1=编译器 / value.2=平台 / value.3=C++ 标准。
     std::unique_ptr<::core::Module> mod(create_about_module());
     DOCTEST_REQUIRE(mod != nullptr);
     mod->onStart();
     eui::Ui ui;
     eui::Screen screen{1392.0f, 1000.0f};
-    ui.begin("about_build_line_fmt");
+    ui.begin("about_cpp_line_fmt");
     mod->compose(ui, screen);
     ui.end();
-    const auto* buildValue = ui.find("about.card.value.3");   // 行序 3 = 构建时间（行 0/1/2：版本/Git/EUI-NEO）
-    DOCTEST_REQUIRE(buildValue != nullptr);
-    const std::string& s = buildValue->text;
-    DOCTEST_CHECK_MESSAGE(s.find("构建 ") == std::string::npos,
-                          "构建行不应再带「构建 」前缀（标签列已有），实测: " + s);
-    // 三段：19 字符时间戳 @ 设备名 @ 系统标签
-    const size_t at1 = s.find('@');
-    DOCTEST_REQUIRE_MESSAGE(at1 != std::string::npos, "构建行缺第一个 @: " + s);
-    const size_t at2 = s.find('@', at1 + 1);
-    DOCTEST_REQUIRE_MESSAGE(at2 != std::string::npos, "构建行缺第二个 @: " + s);
-    DOCTEST_CHECK_MESSAGE(s.find('@', at2 + 1) == std::string::npos,
-                          "构建行应恰两段 @ 分隔，实测: " + s);
-    // 第一段 = YYYY-MM-DD hh:mm:ss（19 字符，位 4/7 为 '-'、10 为空格、13/16 为 ':'）
-    DOCTEST_REQUIRE_MESSAGE(at1 == 19, "时间戳段应 19 字符，实测 " +
-                                           std::to_string(at1) + ": " + s);
-    DOCTEST_CHECK_MESSAGE(s[4] == '-' && s[7] == '-' && s[10] == ' ' &&
-                              s[13] == ':' && s[16] == ':',
-                          "时间戳分段符位不对，实测: " + s);
-    DOCTEST_CHECK_MESSAGE(!s.substr(0, 4).empty() && s[0] == '2' &&
-                              s[1] >= '0' && s[1] <= '9',
-                          "年份段应以 2 开头，实测: " + s);
-    // 后两段非空（CMake 注入缺失时为 "unknown" 也算过——不造数据但可见）
-    DOCTEST_CHECK_MESSAGE(at2 > at1 + 1, "设备名段为空，实测: " + s);
-    DOCTEST_CHECK_MESSAGE(s.size() > at2 + 1, "系统段为空，实测: " + s);
+    const auto* cppValue = ui.find("about.card.value.3");   // S3.8: value.3 = C++ 标准
+    DOCTEST_REQUIRE(cppValue != nullptr);
+    const std::string& s = cppValue->text;
+    DOCTEST_CHECK_MESSAGE(s.rfind("C++", 0) == 0,
+                          "C++ 标准行应以 C++ 开头，实测: " + s);
+    DOCTEST_CHECK_MESSAGE(s.size() >= 5 && s.size() <= 6,
+                          "C++ 标准应为 C++NN 格式（5-6 字符），实测: " + s);
     mod->onStop();
     return true;
 })

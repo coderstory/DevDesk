@@ -123,7 +123,7 @@ REGISTER_TEST(splash_no_hardcoded_literals, "splash.cpp: 不含硬编码色字�
 // 不拉 splash.cpp.o）。防：时长档漂出用户 1~1.5s、前沿半径非单调/不达满圆、
 // 浓度包络不归零（终态残留墨染 ≠ 静态底色，W 批底色断言会被动态层遮蔽）
 REGISTER_TEST(splash_ink_curve, "splash.h: 墨染曲线（时长 1.2s / 半径 easeOut 单调达满 / 浓度稀释归零）", {
-    DOCTEST_CHECK_EQ(ui_kit::kInkDurationSec, 1.2f);  // 用户档 1~1.5s
+    DOCTEST_CHECK_EQ(ui_kit::kInkDurationSec, 1.68f);  // commit c9f920b0 ×1.4 → 1.68s
     // 前沿半径：0 → 0、单调升、1 → 1（铺满全屏，最远角也吃到墨）
     DOCTEST_CHECK_EQ(ui_kit::inkFrontFraction(0.0f), 0.0f);
     DOCTEST_CHECK(ui_kit::inkFrontFraction(0.0f) < ui_kit::inkFrontFraction(0.25f));

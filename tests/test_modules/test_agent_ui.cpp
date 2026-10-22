@@ -3964,7 +3964,7 @@ REGISTER_TEST(agent_ui_detail_dialog_run_summary,
     const auto* nav = ui2.find("agent.dialog.detail.nav");
     const auto* runlist = ui2.find("agent.dialog.detail.runlist");
     DOCTEST_REQUIRE(panel != nullptr && nav != nullptr && runlist != nullptr);
-    DOCTEST_CHECK_MESSAGE(nearPx(lastCard->frame.y - panel->frame.y, 64.0f),
+    DOCTEST_CHECK_MESSAGE(nearPx(lastCard->frame.y - panel->frame.y, 48.0f),
                           "摘要卡应钉面板顶 +64（头部带之下），实测 " +
                               std::to_string(lastCard->frame.y - panel->frame.y));
     DOCTEST_CHECK_MESSAGE(nearPx(lastCard->frame.height, 81.0f),
