@@ -4491,12 +4491,12 @@ REGISTER_TEST(settings_dropdown_fill_available_width,
         mod->compose(ui, screen);
         ui.end();
         ui.layout(screen.width, screen.height);
-        // log 全宽卡：卡内列 colW=(1312−72)/2=620 → cw=620−118=502
+        // log 全宽卡：cw=510（H3 弹性骨架 pad 40→32，列宽漂移 620→628）
         DOCTEST_CHECK_MESSAGE(
-            nearEq(ddwrapW(ui, "settings.card.log.ddwrap"), 502.0f),
+            nearEq(ddwrapW(ui, "settings.card.log.ddwrap"), 510.0f),
             "log 下拉宽 " +
                 std::to_string(ddwrapW(ui, "settings.card.log.ddwrap")) +
-                " 期望 502（固定帽退位填满）");
+                " 期望 510（H3 弹性骨架退位填满）");
         // 两下拉同宽口径不变（同一列公式来源）
         DOCTEST_CHECK(nearEq(ddwrapW(ui, "settings.card.log.level.ddwrap"),
                              ddwrapW(ui, "settings.card.log.ddwrap")));
