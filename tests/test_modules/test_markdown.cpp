@@ -743,8 +743,9 @@ REGISTER_TEST(md_module_compose_tree, "markdown_module: W8 目录树展开收起
     const auto* fileName = ui.find("md.tree.node.3.name");
     DOCTEST_REQUIRE(folderName != nullptr);
     DOCTEST_REQUIRE(fileName != nullptr);
-    DOCTEST_CHECK(fileName->frame.x > folderName->frame.x);  // 父子缩进：子节点名在父节点名右侧
-    // B2 布局重算：folder(d=1) name.x=44+16=60，file(d=2) name.x=24+(32+16)=72，差=12（旧锁 20 不再成立）
+    // H12 文件行前导 32→0：folder(d=1) name.x=44+16=60，file(d=2) name.x=24+16=40
+    // 文件 name 24+indent < 文件夹 44+indent（文件夹多 20px 箭头列）
+    DOCTEST_CHECK(fileName->frame.x < folderName->frame.x);
     DOCTEST_CHECK(fileName->frame.y > folderName->frame.y);          // 纵向流式排布
     // 浮动面板未开时不存在
     DOCTEST_CHECK(ui.find("md.outline.panel") == nullptr);
