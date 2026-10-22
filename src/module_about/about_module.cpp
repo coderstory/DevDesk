@@ -268,12 +268,13 @@ public:
             }
         }
 
-        // S3.8 / S6.1: 实底白卡（无需玻璃层）
+        // S3.8 / S6.1: 实底白卡 + H10 描边（#FAFAF9 底上白卡分不清）
         components::card(ui, "about.card")
             .position(cardX, cardY)
             .size(cardW, cardH)
             .color(t.colors.surface)  // #FFFFFF
             .radius(t.sizes.radiusLarge)  // 12px
+            .border(1.0f, t.colors.borderDefault)
             .padding(kCardPadX)  // 32px 四边统一（8px 栅格 × 4）
             .content([&] {
                 const float cw = cardW - kCardPadX * 2.0f;

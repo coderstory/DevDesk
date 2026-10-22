@@ -742,13 +742,14 @@ private:
                     ui.stack("md.note.tab." + std::to_string(i))
                         .size(tabW, kTabBarH)
                         .content([&] {
-                            // tab 背景（S2.2 块面 Tab：选中 primarySoftBg，未选中透明）
+                            // tab 背景（S2.2 块面 Tab：选中 primarySoftBg + H10 描边，未选中透明）
                             ui.rect("md.note.tab." + std::to_string(i) + ".bg")
                                 .size(tabW, kTabBarH)
                                 .color(active ? t.colors.primarySoftBg
                                               : eui::Color{0.0f, 0.0f, 0.0f, 0.0f})
                                 .hoverColor(t.colors.hover)
                                 .radius(8.0f)
+                                .border(active ? 1.0f : 0.0f, t.colors.borderDefault)
                                 .onClick([this, path] {
                                     if (path != currentPath_) openNote(path);
                                 })

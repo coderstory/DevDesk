@@ -108,12 +108,13 @@ void drawAppearanceCard(const CardDrawArgs& args) {
         .size(w, h)
         .zIndex(40)
         .content([&] {
-            // S6.1 玻璃退役→实底白卡 + Sm 阴影
+            // S6.1 玻璃退役→实底白卡 + Sm 阴影 + H10 描边（#FAFAF9 底上白卡分不清）
             ui.rect(id + ".bg")
                 .position(0.0f, 0.0f).size(w, h)
                 .color(t.colors.surface)
                 .radius(t.sizes.radiusLarge)
                 .shadow(components::theme::shadow(compTheme, 3.0f, 1.0f, 0.04f, 0.02f))
+                .border(1.0f, t.colors.borderDefault)
                 .build();
 
             cardTitle(ui, id, t, 16.0f, w - 56.0f - kFluidToggleW, 22.0f,
@@ -252,12 +253,13 @@ void drawEditorFontCard(const CardDrawArgs& args) {
         .size(w, h)
         .zIndex(30)
         .content([&] {
-            // S6.1 玻璃退役→实底白卡 + Sm 阴影
+            // S6.1 玻璃退役→实底白卡 + Sm 阴影 + H10 描边
             ui.rect(id + ".bg")
                 .position(0.0f, 0.0f).size(w, h)
                 .color(t.colors.surface)
                 .radius(t.sizes.radiusLarge)
                 .shadow(components::theme::shadow(compTheme, 3.0f, 1.0f, 0.04f, 0.02f))
+                .border(1.0f, t.colors.borderDefault)
                 .build();
 
             cardTitle(ui, id, t, 16.0f, w - 56.0f, 22.0f, 22.0f, "编辑器字号");
@@ -403,12 +405,13 @@ void drawModulesCard(const CardDrawArgs& args) {
         .size(w, h)
         .content([&] {
             const auto compThemeTop = core::theme::componentTokensWeChat(t);
-            // S6.1 玻璃退役→实底白卡 + Sm 阴影
+            // S6.1 玻璃退役→实底白卡 + Sm 阴影 + H10 描边
             ui.rect(id + ".bg")
                 .position(0.0f, 0.0f).size(w, h)
                 .color(t.colors.surface)
                 .radius(t.sizes.radiusLarge)
                 .shadow(components::theme::shadow(compThemeTop, 3.0f, 1.0f, 0.04f, 0.02f))
+                .border(1.0f, t.colors.borderDefault)
                 .build();
 
             cardTitle(ui, id, t, 16.0f, w - 56.0f, 22.0f, 22.0f, "模块");
@@ -500,12 +503,13 @@ void drawProxyCard(const CardDrawArgs& args) {
         .size(w, h)
         .content([&] {
             const auto compTheme = core::theme::componentTokensWeChat(t);
-            // S6.1 玻璃退役→实底白卡 + Sm 阴影
+            // S6.1 玻璃退役→实底白卡 + Sm 阴影 + H10 描边
             ui.rect(id + ".bg")
                 .position(0.0f, 0.0f).size(w, h)
                 .color(t.colors.surface)
                 .radius(t.sizes.radiusLarge)
                 .shadow(components::theme::shadow(compTheme, 3.0f, 1.0f, 0.04f, 0.02f))
+                .border(1.0f, t.colors.borderDefault)
                 .build();
 
             auto* svc = in.proxy;
@@ -661,12 +665,13 @@ void drawLogCard(const CardDrawArgs& args) {
         .size(w, h)
         .zIndex(30)
         .content([&] {
-            // S6.1 玻璃退役→实底白卡 + Sm 阴影（日志卡原本无 bg，新增）
+            // S6.1 玻璃退役→实底白卡 + Sm 阴影（日志卡原本无 bg，新增）+ H10 描边
             ui.rect(id + ".bg")
                 .position(0.0f, 0.0f).size(w, h)
                 .color(t.colors.surface)
                 .radius(t.sizes.radiusLarge)
                 .shadow(components::theme::shadow(compTheme, 3.0f, 1.0f, 0.04f, 0.02f))
+                .border(1.0f, t.colors.borderDefault)
                 .build();
 
             cardTitle(ui, id, t, 16.0f, w - 56.0f, 22.0f, 22.0f, "日志");
@@ -786,12 +791,13 @@ void drawLogViewCard(const CardDrawArgs& args) {
     ui.stack(id)
         .size(w, h)
         .content([&] {
-            // S6.1 玻璃退役→实底白卡 + Sm 阴影（日志查看卡原本无 bg，新增）
+            // S6.1 玻璃退役→实底白卡 + Sm 阴影（日志查看卡原本无 bg，新增）+ H10 描边
             ui.rect(id + ".bg")
                 .position(0.0f, 0.0f).size(w, h)
                 .color(t.colors.surface)
                 .radius(t.sizes.radiusLarge)
                 .shadow(components::theme::shadow(compTheme, 3.0f, 1.0f, 0.04f, 0.02f))
+                .border(1.0f, t.colors.borderDefault)
                 .build();
 
             const float btnW = 96.0f;

@@ -1370,3 +1370,47 @@ REGISTER_TEST(github_sync_store_sha_records,
     DOCTEST_CHECK_EQ(recs3.value().count("a.md"), static_cast<size_t>(0));
     return true;
 })
+
+// ── H10 对比度门禁：白卡底板（surface）与容器底（background）对比度 ──
+// 规则：填充色与容器底色亮度差 ≥0.05，或存在描边节点（border.width > 0）。
+// WCAG 2.1 相对亮度公式：L = 0.2126·R + 0.7152·G + 0.0722·B
+//（线性化后 sRGB 分量，亮度差 ≥0.05 即可分辨；非 WCAG 对比度比，是与用户一致的
+// 「亮底浅块分不清」的人眼判据。）
+
+namespace {
+float srgbLinear(float c) {
+    c = c <= 0.04045f ? c / 12.92f : std::pow((c + 0.055f) / 1.055f, 2.4f);
+    return c;
+}
+float relativeLuminance(const eui::Color& c) {
+    return 0.2126f * srgbLinear(c.r) + 0.7152f * srgbLinear(c.g) +
+           0.0722f * srgbLinear(c.b);
+}
+} // namespace
+
+REGISTER_TEST(github_sync_card_h10_contrast_gate,
+              "H10 对比度门禁：GitHub 同步卡白底有 borderDefault 描边（白卡浮于 #FAFAF9 底）", {
+    CardFixture fx;
+    eui::Ui ui;
+    const float kW = 1000.0f;
+    ms::CardDrawArgs args{ui, kCardId, kW, ms::roundFs(ms::kGithubSyncCardHeight),
+                          core::theme::current(), 0.0f, 1000.0f, fx.in, fx.a};
+    ms::drawGithubSyncCard(args);
+    ui.layout(kW, 1000.0f);
+
+    const auto* bg = ui.find(std::string(kCardId) + ".bg");
+    DOCTEST_REQUIRE(bg != nullptr);
+
+    // 门禁：白卡背景必须有描边（border.width > 0）
+    DOCTEST_CHECK_GT(bg->border.width, 0.005f);
+    DOCTEST_CHECK(colorEq(bg->border.color, core::theme::current().colors.borderDefault));
+
+    // 备选通道：无描边时填充色与页面底色 #FAFAF9 亮度差 ≥0.05
+    const float cardLum = relativeLuminance(bg->color);
+    const eui::Color pageBg = core::theme::current().colors.background;  // #FAFAF9
+    const float pageLum = relativeLuminance(pageBg);
+    const bool hasBorder = bg->border.width > 0.005f;
+    const bool enoughContrast = std::fabs(cardLum - pageLum) >= 0.05f;
+    DOCTEST_CHECK((hasBorder || enoughContrast));
+    return true;
+})

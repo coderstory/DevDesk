@@ -150,12 +150,13 @@ void drawGithubSyncCard(const CardDrawArgs& args) {
     ui.stack(id)
         .size(w, h)
         .content([&] {
-        // S6.1 玻璃退役→实底白卡 + Sm 阴影
+        // S6.1 玻璃退役→实底白卡 + Sm 阴影 + H10 描边
         ui.rect(id + ".bg")
             .position(0.0f, 0.0f).size(w, h)
             .color(t.colors.surface)
             .radius(t.sizes.radiusLarge)
             .shadow(components::theme::shadow(compTheme, 3.0f, 1.0f, 0.04f, 0.02f))
+            .border(1.0f, t.colors.borderDefault)
             .build();
 
         // ── 头部：状态点 + 标题/摘要（左列，宽度全展开）→ 启用/自动推送两整行 ──
