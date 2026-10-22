@@ -3739,7 +3739,7 @@ REGISTER_TEST(todo_ui_detail_two_column_geometry,
     DOCTEST_CHECK(floatEq(del->frame.height, 28.0f));
     DOCTEST_CHECK(floatEq(toggle->frame.x - px, 800.0f - 48.0f - 104.0f));  // kDialogBodyInsetX 56→48
     DOCTEST_CHECK(floatEq(toggle->frame.x + toggle->frame.width,
-                          px + 800.0f - 56.0f));   // toggle 右缘 = 内容右缘
+                          px + 800.0f - 48.0f));   // toggle 右缘 = 内容右缘（kDialogBodyInsetX）
     DOCTEST_CHECK(del->frame.x + del->frame.width <
                   toggle->frame.x);   // 删除在标记完成左侧
 
