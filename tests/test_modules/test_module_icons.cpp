@@ -135,8 +135,8 @@ REGISTER_TEST(module_icons_page_emoji_replaced,
     // 别把它当成漏测的用例补断言——先确认这两处是否还在。
     // ficon/fa-folder 树在 test_markdown.cpp 的空目录用例里断言：icons 探针无服务无数据
     if (!checkPageIcon(create_markdown_module, "md.search.icon", 0xF002)) return false;
+    // S3.3#5 逾期入口已改为 chip 小标签（纯文本「逾期 N」，无图标元素）——旧 FA 图标锚点退役
     // detail dialog 常驻 compose，无数据也渲染，故截止日期按钮的元素存在性无需造数据
-    if (!checkPageIcon(create_todo_module, "todo.btn.overdue.icon", 0xF071)) return false;
     if (!checkPageIcon(create_todo_module, "todo.search.icon", 0xF002)) return false;
     if (!checkPageIcon(create_todo_module,
                        "todo.dialog.detail.due.pick.icon", 0xF133)) return false;
