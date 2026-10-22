@@ -65,10 +65,10 @@ bool g_closeButtonHovered = false;
 std::optional<bool> g_fluidEnabled;
 // 窗可见态测试覆写（nullopt = 跟平台查询走）；生产路径恒 nullopt
 std::optional<bool> g_fluidVisibleMode;
-// 相位钟（秒）：由帧泵 onFrame 累加推进。最小化/藏托盘时 EUI 主循环跳过主窗
-// update/compose（glfw_app_main.cpp 的 hiddenToTray / iconified 两分支 continue），
-// onFrame 不回调 → 相位冻结；恢复可见从冻结处继续（无时间跳变）。
-float g_fluidPhase = 0.0f;
+// 相位源（秒）：71ce7d4c 起走壁钟 elapsed（fluidPhaseSeconds() =
+// steady_clock::now() - g_fluidEpoch），不再由帧泵 onFrame 累加。旧 g_fluidPhase
+// 只写死状态已随 W3.5 审计 B（F4）移除。注意：壁钟模式下最小化/藏托盘期间相位
+// 照走、休眠恢复会跳变——原「隐藏冻结 + dt 钳 0.1s」语义待 elapsed helper 收口。
 static std::chrono::steady_clock::time_point g_fluidEpoch = std::chrono::steady_clock::now();
 
 // 确定性 0~1 hash（splash.cpp 墨染同款 sin 散列取小数）：卫星的角度/距离/大小
@@ -200,7 +200,6 @@ void setFluidWindowVisibleMode(std::optional<bool> mode) {
 void resetFluidBackgroundForTests() {
     g_fluidEnabled.reset();
     g_fluidVisibleMode.reset();
-    g_fluidPhase = 0.0f;
     g_fluidEpoch = std::chrono::steady_clock::now();
 }
 
@@ -603,14 +602,12 @@ void drawFluidBackground(eui::Ui& ui, const eui::Screen& screen) {
         }
     }
     // 帧泵（md.tree.anim.driver / splash.ink.anim.driver 同款先例）：常驻 1x1 空
-    // onFrame 元素。相位钟在回调内推进，dt 钳 0.1s（模态拖拽循环/系统休眠回来
-    // 不产生时间跳变）；不可见帧本元素不在树上 → 无回调 → 相位冻结，恢复可见
-    // compose 重建本元素，漂移从冻结相位继续。
+    // onFrame 元素——只借它让 runtime 置 animating_/composeRequested_ 保持持续
+    // 出帧（流质背景须逐帧重渲）。相位推进不再在此回调：71ce7d4c 起相位走壁钟
+    // fluidPhaseSeconds()，回调体只写死 g_fluidPhase 已随 W3.5 审计 B（F4）清空。
     ui.stack("app.fluid.anim.driver")
         .size(1.0f, 1.0f)
-        .onFrame([](float dt) {
-            g_fluidPhase += (dt < 0.1f ? dt : 0.1f);
-        })
+        .onFrame([](float) {})
         .build();
 }
 

@@ -1085,7 +1085,6 @@ REGISTER_TEST(md_tree_expand_fab_clears_editor,
 // 【未运行，待统一验证】
 REGISTER_TEST(md_tree_panel_anim_frame_pump,
               "markdown_module: 树列动画在途挂 onFrame 收敛泵（方案 A 把手，真机不冻结不漂移）+ 收敛后大纲开关零漂移", {
-    try {  // UAT6：headless 下 ui.layout()→onFrame move 抛 bad_function_call；外层 catch 防套件炸
     test_support::MdHeadlessEnv env(kDirPrefix, "treepump", kDbName);
     DOCTEST_REQUIRE(env.db != nullptr);
     DOCTEST_REQUIRE(writeTextFile(env.dir / "a.md", "# A\n"));
@@ -1173,12 +1172,20 @@ REGISTER_TEST(md_tree_panel_anim_frame_pump,
     DOCTEST_CHECK_EQ(ui.find("md.editor")->frame.x, edX);
     DOCTEST_CHECK_EQ(ui.find("md.editor")->frame.width, edW);
     for (int round = 0; round < 3; ++round) {
-        otoggle->onClick();
+        // 元素每帧重建、跨帧指针悬垂——每轮必须当前帧重取再点（旧 otoggle
+        // 悬垂调用 = bad_function_call，onFrame 泵元素改变堆布局时必现）
+        const auto* rt = ui.find("md.outline.toggle.hit");
+        DOCTEST_REQUIRE(rt != nullptr);
+        DOCTEST_REQUIRE(rt->onClick != nullptr);
+        rt->onClick();
         frame();
         DOCTEST_CHECK_EQ(ui.find("md.editor")->frame.x, edX);
         DOCTEST_CHECK_EQ(ui.find("md.editor")->frame.width, edW);
         DOCTEST_CHECK_EQ(treeW(), 240.0f);
-        otoggle->onClick();
+        rt = ui.find("md.outline.toggle.hit");
+        DOCTEST_REQUIRE(rt != nullptr);
+        DOCTEST_REQUIRE(rt->onClick != nullptr);
+        rt->onClick();
         frame();
         DOCTEST_CHECK_EQ(ui.find("md.editor")->frame.x, edX);
         DOCTEST_CHECK_EQ(ui.find("md.editor")->frame.width, edW);
@@ -1187,11 +1194,6 @@ REGISTER_TEST(md_tree_panel_anim_frame_pump,
 
     mod->onStop();
     return true;
-    } catch (const std::bad_function_call&) {
-        // headless 下 ui.layout() 触发 onFrame/std::function move→bad_function_call；
-        // 真机 GLFW 主循环不触发此路径。允许此例外以跑通套件。
-        return true;
-    }
 })
 
 // 2b2'''''. UAT3 T1（D-R3-1 米黄清除）：md 页主体面 wechat 化回归锁——
