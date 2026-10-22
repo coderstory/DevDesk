@@ -3735,9 +3735,9 @@ REGISTER_TEST(todo_ui_detail_two_column_geometry,
     const auto* toggle = f.ui.find("todo.dialog.detail.toggle.bg");
     DOCTEST_REQUIRE(del != nullptr);
     DOCTEST_REQUIRE(toggle != nullptr);
-    DOCTEST_CHECK(floatEq(del->frame.y - py, 22.0f));
+    DOCTEST_CHECK(floatEq(del->frame.y - py, 18.0f));  // chipY 22→18 (contentTop 76→58)
     DOCTEST_CHECK(floatEq(del->frame.height, 28.0f));
-    DOCTEST_CHECK(floatEq(toggle->frame.x - px, 800.0f - 56.0f - 104.0f));
+    DOCTEST_CHECK(floatEq(toggle->frame.x - px, 800.0f - 48.0f - 104.0f));  // kDialogBodyInsetX 56→48
     DOCTEST_CHECK(floatEq(toggle->frame.x + toggle->frame.width,
                           px + 800.0f - 56.0f));   // toggle 右缘 = 内容右缘
     DOCTEST_CHECK(del->frame.x + del->frame.width <
@@ -3979,11 +3979,11 @@ REGISTER_TEST(todo_ui_detail_content_scroll_when_tall,
         DOCTEST_CHECK(floatEq(saveBg->frame.y - panel->frame.y, 548.0f));
         DOCTEST_CHECK(saveBg->frame.y + saveBg->frame.height <=
                       panel->frame.y + panel->frame.height);
-        // 滚动视口限高：= frame 高 600 − 头部 76 − 按钮带(18+34) − 12 缝 = 460
+        // 滚动视口限高：= frame 高 600 − 头部 58 − 按钮带(18+34) − 12 缝 = 478
         const auto* scroll = f.ui.find("todo.dialog.detail.scroll");
         DOCTEST_REQUIRE(scroll != nullptr);
-        DOCTEST_CHECK(floatEq(scroll->frame.y - panel->frame.y, 76.0f));
-        DOCTEST_CHECK(floatEq(scroll->frame.height, 460.0f));
+        DOCTEST_CHECK(floatEq(scroll->frame.y - panel->frame.y, 58.0f));  // contentTop 76→58
+        DOCTEST_CHECK(floatEq(scroll->frame.height, 478.0f));
     }
 
     mod->onStop();
