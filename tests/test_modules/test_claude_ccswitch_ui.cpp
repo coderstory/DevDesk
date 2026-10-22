@@ -220,7 +220,7 @@ REGISTER_TEST(claude_ccswitch_ui_skeleton_contract,
                std::fabs(x.b - y.b) < 0.01f;
     };
     // S2.1 Ghost：默认底透明（a=0）
-    DOCTEST_CHECK_LT(selallBg->color.a, 0.01f);            // Ghost 默认底透明
+    DOCTEST_CHECK(selallBg->color.a < 0.01f);            // Ghost 默认底透明
     DOCTEST_CHECK(!sameColor(selallBg->color, wc.surfaceElevated));
     const auto* selallText = ui2.find("claude.dialog.ccswitch.selall.text");
     DOCTEST_REQUIRE(selallText != nullptr);
