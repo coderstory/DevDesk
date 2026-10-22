@@ -71,9 +71,8 @@ struct BoardView {
     bool hasService = false;
     const std::string& loadError;
     const BoardActions& act;
-    // 落位淡入按 dragActive 门控
+    // 落位淡入按 dragActive 门控列内容容器 opacity：拖拽中 0.6，松手 0.6→1.0 淡回（0.12s OutQuad）
     bool archiveExpanded = false;
-列内容容器 opacity：拖拽中 0.6，松手 0.6→1.0 淡回（0.12s OutQuad）
 };
 
 // 表头（标题 + 搜索框 + 逾期入口 + 建列/建任务）
