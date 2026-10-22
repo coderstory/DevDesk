@@ -663,9 +663,9 @@ REGISTER_TEST(sidebar_w3_grouping_and_selectionbar,
             const auto* bg = fx.find("app.sidebar.bg");
             DOCTEST_REQUIRE(bg != nullptr);
             DOCTEST_CHECK(std::abs(bg->color.a - 1.0f) < 1e-3f);
-            DOCTEST_CHECK(std::abs(bg->color.r - wc.sidebarBg.r) < 1e-3f);
-            DOCTEST_CHECK(std::abs(bg->color.g - wc.sidebarBg.g) < 1e-3f);
-            DOCTEST_CHECK(std::abs(bg->color.b - wc.sidebarBg.b) < 1e-3f);
+            DOCTEST_CHECK(std::abs(bg->color.r - wc.sidebarBgTinted.r) < 1e-3f);
+            DOCTEST_CHECK(std::abs(bg->color.g - wc.sidebarBgTinted.g) < 1e-3f);
+            DOCTEST_CHECK(std::abs(bg->color.b - wc.sidebarBgTinted.b) < 1e-3f);
         }
         // frosted 档：0.15 透 DWM backdrop（UAT6 起请求 Mica）
         core::window_effect_state::setCurrent("frosted");

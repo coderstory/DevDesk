@@ -3746,7 +3746,7 @@ REGISTER_TEST(todo_ui_detail_two_column_geometry,
     // ③ 标题大输入（y=76 h44 全宽）+ 描述 textarea（y=150 h72）
     const auto* titleInput = f.ui.find("todo.dialog.detail.input.title");
     DOCTEST_REQUIRE(titleInput != nullptr);
-    DOCTEST_CHECK(floatEq(titleInput->frame.x - px, 28.0f));
+    DOCTEST_CHECK(floatEq(titleInput->frame.x - px, 24.0f));
     DOCTEST_CHECK(floatEq(titleInput->frame.y - py, 76.0f));
     DOCTEST_CHECK(floatEq(titleInput->frame.height, 44.0f));
     DOCTEST_CHECK(floatEq(titleInput->frame.width, 744.0f));

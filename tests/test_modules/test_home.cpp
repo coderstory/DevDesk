@@ -444,7 +444,7 @@ REGISTER_TEST(home_last_rate_and_hourly_tokens,
         DOCTEST_REQUIRE(badge != nullptr);
         DOCTEST_CHECK_EQ(number->text, std::string("--"));
         DOCTEST_CHECK_EQ(badge->text, std::string("暂无成功调用"));
-        DOCTEST_CHECK(ui.find("home.api.chart.empty") != nullptr);
+        DOCTEST_CHECK(ui.find("home.api.chart.empty.title") != nullptr);
         DOCTEST_CHECK(ui.find("home.api.chart.bars.bar.0") == nullptr);
         mod->onStop();
     }
