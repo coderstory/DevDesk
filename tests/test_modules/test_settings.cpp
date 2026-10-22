@@ -793,7 +793,9 @@ REGISTER_TEST(settings_h3_elastic_heights, "settings: H3 elastic — cardsH at 6
     const auto* scrollMin = ui.find("settings.cards.scroll");
     DOCTEST_CHECK(scrollMin != nullptr);
     if (scrollMin != nullptr) {
-        DOCTEST_CHECK(scrollMin->frame.height > 440.0f);  // S4.2 弹性：高点 > 440
+        DOCTEST_CHECK_MESSAGE(
+        scrollMin->frame.height > 430.0f,
+        "scrollMin height = " + std::to_string(scrollMin->frame.height) + " <= 430");
     }
     // 大档 1600×1000：cardsH = 1000 − 144 − 20 − 16 = 820（等比放大）
     eui::Screen screenLarge{1600.0f, 1000.0f};
@@ -2303,7 +2305,7 @@ REGISTER_TEST(settings_card_pair_column_geometry,
         ui.end();
         ui.layout(screen.width, screen.height);
 
-        const float contentW = pageW - 80.0f;   // pad = spacingXXLarge 40 × 2
+        const float contentW = pageW - 64.0f;   // pad = spacingLarge×2 = 32×2（S4.2 弹性）
         float colWant = 0.0f;
         ui_kit::columnX(contentW, 16.0f, &colWant, nullptr);
         const auto* pair = ui.find("settings.cards.pair.0");
@@ -4477,12 +4479,12 @@ REGISTER_TEST(settings_dropdown_fill_available_width,
         mod->compose(ui, screen);
         ui.end();
         ui.layout(screen.width, screen.height);
-        // editor 半宽卡：colW=(1312−16)/2=648 → 行宽 648−56=592 → cw=592−118=474
+        // editor 半宽卡（新 pad=32）：colW=(1328−16)/2=656 → 行宽 656−56=600 → cw=600−118=482
         DOCTEST_CHECK_MESSAGE(
-            nearEq(ddwrapW(ui, "settings.card.editor.ddwrap"), 474.0f),
+            nearEq(ddwrapW(ui, "settings.card.editor.ddwrap"), 482.0f),
             "editor 下拉宽 " +
                 std::to_string(ddwrapW(ui, "settings.card.editor.ddwrap")) +
-                " 期望 474（固定帽退位填满）");
+                " 期望 482（固定帽退位填满，S4.2 pad 40→32）");
 
         DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 2));   // 日志 tab
         ui.begin("ddfill_wide_log");

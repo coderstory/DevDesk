@@ -114,12 +114,12 @@ REGISTER_TEST(agent_ui_detail_layout_elastic_1600x1000,
     eui::Ui ui2;
     composeTo(ui2, fx.mod, kScreenBig, "layout_elastic_2");
 
-    // 面板 = 弹性宽 max(720, 1600/2)=800 × 660
+    // 面板 = 弹性宽 max(720, 1600/2)=800 × 552（UAT6 弹窗收口，原 660）
     const auto* panel = ui2.find("agent.dialog.detail.panel");
     DOCTEST_REQUIRE_MESSAGE(panel != nullptr, "弹性档缺 panel");
     DOCTEST_CHECK_MESSAGE(nearPx(panel->frame.width, 800.0f) &&
-                              nearPx(panel->frame.height, 660.0f),
-                          "弹性档面板应 800×660，实测 " +
+                              nearPx(panel->frame.height, 552.0f),
+                          "弹性档面板应 800×552，实测 " +
                               std::to_string(panel->frame.width) + "×" +
                               std::to_string(panel->frame.height));
     // 头部 = 真实任务名（方案 A：不再恒「任务详情」）
@@ -242,9 +242,9 @@ REGISTER_TEST(agent_ui_detail_layout_narrow_700x560,
                           "nav 应 +143.5（与弹性档同公式），实测 " +
                               std::to_string(nav->frame.y - panel->frame.y));
     DOCTEST_CHECK_MESSAGE(
-        nearPx(runlist->frame.x - panel->frame.x, 28.0f) &&
-            nearPx(runlist->frame.width, 596.0f),
-        "窄窗主内容应单列全宽（x0=28、宽 596），实测 x=" +
+        nearPx(runlist->frame.x - panel->frame.x, 24.0f) &&
+            nearPx(runlist->frame.width, 604.0f),
+        "窄窗主内容应单列全宽（x0=24、宽 604，kDialogInsetX 28→24），实测 x=" +
             std::to_string(runlist->frame.x - panel->frame.x) + " 宽 " +
             std::to_string(runlist->frame.width));
     DOCTEST_CHECK_MESSAGE(
