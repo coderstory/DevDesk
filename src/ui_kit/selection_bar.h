@@ -15,12 +15,10 @@
 
 namespace ui_kit {
 
-// 选中态常量（§4.3）：2px 左竖线、14px 主文字、12px 文字左 padding。
-// 钉死常量保 W3/d 一致；圆角走 t.sizes.radiusWeChat（D-12 统一 6px，bg 用 0
-// ——选中态是平铺底色，不是圆角卡片）。
-constexpr float kSelectionBarAccentWidth = 2.0f;    // §4.3 "左侧 2px 微信绿竖线"
+// 选中态常量（S2.5）：3px 左竖线、14px 主文字、12px 文字左 padding。
+constexpr float kSelectionBarAccentWidth = 3.0f;    // S2.5 "左侧 3px 主色竖线"
 constexpr float kSelectionBarTextPadX = 12.0f;      // 文字距竖线的视觉留白
-constexpr float kSelectionBarFontSize = 14.0f;       // §3.3 主文字
+constexpr float kSelectionBarFontSize = 14.0f;       // S2.5 主文字
 
 // 渲染单选中条：stack(id) 内含 rect.bg（浅灰底）+ rect.accent（2px 左竖线）
 // + text（深灰文字，左对齐 + 垂直居中）。用于导航 / 列表 / 卡片选中态（W3 nav 用）。
