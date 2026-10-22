@@ -73,10 +73,11 @@ namespace {
 namespace fs = std::filesystem;
 
 // 树行几何常量；改动须同步 tests/test_modules/test_markdown.cpp 的数值断言。
-// UAT2 F批（目录树大气）：行高 32→36、箭头 18→20、条目字号 13→14（专用常量，
+// UAT2 F批（目录树大气）：行高 32→36、条目字号 13→14（专用常量，
 // 不改 fontSizeSmall token——它波及全 UI）。
+// W3.5批6 H12-1：箭头 12px（三级文字色，S2 列表规范）
 constexpr float kTreeRowHeight = 36.0f;
-constexpr float kTreeArrowFontSize = 20.0f;
+constexpr float kTreeArrowFontSize = 12.0f;
 constexpr float kTreeFontSize = 14.0f;
 
 // UAT3 D-R3-3（目录树折叠重做）：面板宽动画与收起形态常量。
@@ -123,7 +124,7 @@ components::MarkdownStyle scaledPreviewStyle(
 }
 
 // 单行树条目：整行包一层 stack —— position() 只在 stack 内生效，流式子元素会被静默忽略。
-// W8：选中态改 wechat 风格（§4.3）——浅灰底 #E5E5E5 + 左 2px 绿竖线。
+// S2.5：选中态 = primarySoftBg 底 + 行左缘 3px 绿竖线 + primary 文字 / 图标。
 // 搜索命中时高亮关键词（§3.2.4 补充项）。
 void drawFileTreeItem(eui::Ui& ui,
                       const std::string& id,
@@ -151,7 +152,7 @@ void drawFileTreeItem(eui::Ui& ui,
             // 选中态左 3px 绿竖线（S2.5 selectionBar）
             if (active) {
                 ui.rect(id + ".accent")
-                    .position(indent, 0.0f)
+                    .position(0.0f, 0.0f)
                     .size(3.0f, kTreeRowHeight)
                     .color(t.colors.primary)
                     .build();
@@ -422,8 +423,8 @@ public:
         const float sideW = treePanelWidth_;
         const float gap = t.sizes.spacingLarge;
         const float midW = (contentW - sideW - gap * 2.0f) / 2.0f;
-        // 方案 A：笔记标签条高 34px（有标签时出现）；列 gap 随元素数调整以免溢出
-        constexpr float kNoteTabBarH = 34.0f;
+        // 方案 A：笔记标签条高 32px（有标签时出现）；列 gap 随元素数调整以免溢出
+        constexpr float kNoteTabBarH = 32.0f;
         const int gaps = openNotes_.empty() ? 1 : 2;
         const float tabBarH = openNotes_.empty() ? 0.0f : kNoteTabBarH;
         const float bodyH = contentH - ui_kit::kHeaderH - tabBarH -
@@ -524,13 +525,13 @@ private:
                     })
                     .build();
 
-                // 微信风格 Tab（§4.2）：2px 绿下划线激活、灰字未激活。
-                // 保 md.mode 作 wrapper stack id（ui.find("md.mode") 仍绿）；
-                // 子 Tab id = md.mode.0..3，hit/text/underline 按 wtab 约定。
+                // S2.2 块面 Tab：高度 40、4px 间距（gaps=3，tabW 反算）；primarySoftBg+primary 字。
+                // 节点 id = md.mode.0..3，hit/text/bg 按 wtab 约定。
                 // 标签逐字「编辑/实时/双栏/预览」不变（modeOrderIndex 逆映射）。
-                const float tabW = segW / 4.0f;
+                const float tabGap = 4.0f;
+                const float tabW = (segW - tabGap * 3.0f) / 4.0f;
                 ui.stack("md.mode")
-                    .size(segW, 36.0f)
+                    .size(segW, 40.0f)
                     .content([&] {
                         for (int i = 0; i < 4; ++i) {
                             ui_kit::wtab(
@@ -539,8 +540,8 @@ private:
                                 std::vector<std::string>{"编辑", "实时", "双栏",
                                                          "预览"}[i],
                                 modeOrderIndex(mode_) == i,
-                                static_cast<float>(i) * tabW, 0.0f, tabW,
-                                36.0f, t,
+                                static_cast<float>(i) * (tabW + tabGap), 0.0f, tabW,
+                                40.0f, t,
                                 [this, i] { setMode(modeFromOrderIndex(i)); });
                         }
                     })
@@ -714,14 +715,14 @@ private:
     }
 
     // 方案 A 笔记标签条：已打开的笔记以 tab 行展示在头部与编辑器之间。
-    // 每 tab = 笔记名 + 关闭钮；激活 tab 有 2px 绿下划线（wechat.primary）。
+    // 每 tab = 笔记名 + 关闭钮；激活 tab = 块面式（primarySoftBg 底+primary 字+8px 圆角，S2.2）。
     // 关闭最后一个 tab 回到空态；数据源 = openNotes_ 向量（会话内存态）。
     void drawNoteTabBar(eui::Ui& ui,
                         float contentW,
                         const core::theme::Tokens& t,
                         const components::theme::ThemeColorTokens& componentTheme) {
         if (openNotes_.empty()) return;  // 无标签时不创建元素，不占列 gap
-        constexpr float kTabBarH = 34.0f;
+        constexpr float kTabBarH = 32.0f;       // S2.2 块面 Tab（弹窗级）
         constexpr float kTabMinW = 80.0f;
         constexpr float kTabMaxW = 200.0f;
         ui.row("md.note.tabs")
@@ -741,34 +742,26 @@ private:
                     ui.stack("md.note.tab." + std::to_string(i))
                         .size(tabW, kTabBarH)
                         .content([&] {
-                            // tab 底条
+                            // tab 背景（S2.2 块面 Tab：选中 primarySoftBg，未选中透明）
                             ui.rect("md.note.tab." + std::to_string(i) + ".bg")
                                 .size(tabW, kTabBarH)
-                                .color(active ? t.colors.background
-                                              : t.colors.surface)
+                                .color(active ? t.colors.primarySoftBg
+                                              : eui::Color{0.0f, 0.0f, 0.0f, 0.0f})
                                 .hoverColor(t.colors.hover)
-                                .radius(0.0f)
+                                .radius(8.0f)
                                 .onClick([this, path] {
                                     if (path != currentPath_) openNote(path);
                                 })
                                 .build();
-                            // 激活态底部 2px 绿线
-                            if (active) {
-                                ui.rect("md.note.tab." + std::to_string(i) + ".line")
-                                    .position(0.0f, kTabBarH - 2.0f)
-                                    .size(tabW, 2.0f)
-                                    .color(t.colors.primary)
-                                    .build();
-                            }
                             // tab 名称
                             ui.text("md.note.tab." + std::to_string(i) + ".name")
                                 .position(8.0f, 0.0f)
                                 .size(tabW - 32.0f, kTabBarH)
                                 .text(name)
-                                .fontSize(12.0f)
+                                .fontSize(13.0f)
                                 .lineHeight(kTabBarH)
                                 .verticalAlign(eui::VerticalAlign::Center)
-                                .color(active ? t.colors.textPrimary
+                                .color(active ? t.colors.primary
                                               : t.colors.textSecondary)
                                 .fontWeight(active ? 600 : 400)
                                 .build();
@@ -1137,10 +1130,10 @@ private:
                                     .radius(t.sizes.radiusWeChat)
                                     .onClick([this, dir = r.relPath] { selectDir(dir); })
                                     .build();
-                                // 选中态左 3px 绿竖线（S2.5 selectionBar）
+                                // 选中态左 3px 绿竖线（S2.5 selectionBar，行左缘锚定）
                                 if (selected) {
                                     inner.rect(id + ".accent")
-                                        .position(indent, 0.0f)
+                                        .position(0.0f, 0.0f)
                                         .size(3.0f, kTreeRowHeight)
                                         .color(t.colors.primary)
                                         .build();
@@ -1200,9 +1193,9 @@ private:
                             })
                             .build();
                     } else {
-                        // 文件行缩进 = 32 + (depth-1)*16；文件名与文件夹名错开 22px
+                        // 文件行缩进：16px 内边距基准 + (depth-1)*16 层级缩进（S2.5 列表水平内边距）
                         const float indent =
-                            32.0f + static_cast<float>(std::max(0, r.depth - 1)) * 16.0f;
+                            0.0f + static_cast<float>(std::max(0, r.depth - 1)) * 16.0f;
                         drawFileTreeItem(inner, id, w, t, 0xF15C, r.name,
                                          r.relPath == currentPath_,
                                          indent,
