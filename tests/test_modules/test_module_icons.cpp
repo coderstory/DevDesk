@@ -24,6 +24,7 @@ extern "C" ::core::Module* create_claude_module();
 extern "C" ::core::Module* create_settings_module();
 extern "C" ::core::Module* create_about_module();
 extern "C" ::core::Module* create_agent_module();
+extern "C" void claude_test_force_show_guide(::core::Module*);
 
 namespace {
 
@@ -113,7 +114,23 @@ REGISTER_TEST(module_icons_page_emoji_replaced,
     }
     if (!checkPageIcon(create_home_module, "home.act.claude.icon", 0xF46D)) return false;
     if (!checkPageIcon(create_claude_module, "claude.btn.proxy.icon", 0xF04B)) return false;
-    if (!checkPageIcon(create_claude_module, "claude.guide.icon", 0xF05A)) return false;
+    // H14: guide 图标门控确定性——test 进程直接 compose 时 proxyEverSeen_/guideDismissed_
+    // 默认值与真实进程（经 onStart 演化）状态不同，门控不可靠。显式重置后保锚点命中。
+    {
+        std::unique_ptr<::core::Module> mod(create_claude_module());
+        claude_test_force_show_guide(mod.get());
+        eui::Screen screen;
+        screen.width = 1600.0f;
+        screen.height = 1000.0f;
+        eui::Ui ui;
+        ui.begin("probe_guide_icon");
+        mod->compose(ui, screen);
+        ui.end();
+        const core::dsl::Element* el = ui.find("claude.guide.icon");
+        DOCTEST_REQUIRE(el != nullptr);
+        DOCTEST_CHECK_EQ(el->fontFamily, std::string("Icon"));
+        DOCTEST_CHECK_EQ(el->text, eui::utf8(0xF05A));
+    }
     // 设置页无 FA 元素：主题模式下拉无图标通道，「重新生成 Token」按钮已随代理鉴权移除。
     // 别把它当成漏测的用例补断言——先确认这两处是否还在。
     // ficon/fa-folder 树在 test_markdown.cpp 的空目录用例里断言：icons 探针无服务无数据
