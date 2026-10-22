@@ -724,7 +724,7 @@ REGISTER_TEST(uiModernVirtualLogRows,
     //（idx 4）——先切 tab（该帧生效），再点「查看全部 →」开弹窗
     {
         compose();
-        const auto* tab = ui.find("claude.detail.tabs.hit.4");
+        const auto* tab = ui.find("claude.detail.tab.4.hit");
         DOCTEST_REQUIRE(tab != nullptr);
         DOCTEST_REQUIRE(tab->onClick != nullptr);
         tab->onClick();
