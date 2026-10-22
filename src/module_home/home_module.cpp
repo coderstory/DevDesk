@@ -305,7 +305,7 @@ public:
 
     void compose(eui::Ui& ui, const eui::Screen& screen) override {
         const auto& t = core::theme::current();
-        const float pad = t.sizes.spacingXXLarge;       // 40
+        const float pad = t.sizes.spacingLarge * 2.0f;  // 32 —— S4.2 弹性内边距（spacingLarge=16×2=32）
         const float gap = t.sizes.spacingLarge * 1.25f; // 20
         // ⚠ contentW 不在这里定义：整页挂在 home.scroll 下，内容宽只有 scrollView 的 content
         // 回调拿到的 innerW 说了算（见下方同名遮蔽定义）。kHeaderActionsW + 标题列 = contentW。
@@ -335,7 +335,7 @@ public:
             // 高度用 wrapContent：固定高度会让 scrollView 的测量 pass 永远量到「正好等于视口」→ 永不判可滚
             .width(innerW)
             .height(core::SizeValue::wrapContent())
-            .padding(pad)
+            .padding(pad, pad, 0.0f, pad)  // 上右下左：底贴底、内容随窗高伸缩（S4.2 弹性骨架）
             .gap(gap)
             .content([&] {
                 // UAT5 全局顶部收紧：页头行 72→40（与其他页 kHeaderH=40 同档）——

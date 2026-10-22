@@ -353,8 +353,8 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
     constexpr float kIconW = 28.0f;
     constexpr float kItemInset = 12.0f;  // 内容距高亮条左缘内边距
 
-    // 顶部留白取页面主区 padding 同档 token（spacingXXLarge=40）：品牌块上缘与页面内容齐平
-    const float topPad = t.sizes.spacingXXLarge;
+    // 顶部留白取页面主区 padding 同档（S4.2 弹性 32）：品牌块上缘与页面内容齐平
+    const float topPad = t.sizes.spacingLarge * 2.0f;  // 32
     // 品牌块高 56（字面值，不用 fontSizePage 运行时值：fontScale 会缩放 fontSize* 而该框不随之变）
     // UAT5：logo 36→48 按用户拍板放大，行高 32→56 随之加高（48 瓦在 56 行内居中各留 4px）
     constexpr float kBrandH = 56.0f;

@@ -64,11 +64,11 @@ public:
     void compose(eui::Ui& ui, const eui::Screen& screen) override {
         const auto& t = core::theme::current();
         const auto themeTokens = core::theme::componentTokensWeChat(t);
-        // S3.4 顶部收紧为 24，左右下保持 40
-        const float padTop = t.sizes.spacingXLarge;       // 24
-        const float padSide = t.sizes.spacingXXLarge;    // 40
-        const float contentW = screen.width - padSide * 2.0f;
-        const float contentH = screen.height - padTop - padSide;
+        // S3.4 顶部收紧为 24；S4.2 弹性骨架：左右 32、底贴底（无下 padding）
+        const float padTop = t.sizes.spacingXLarge;              // 24
+        const float padSide = t.sizes.spacingLarge * 2.0f;     // 32 —— S4.2 弹性内边距
+        const float contentW = screen.width - padSide * 2.0f;   // 宽 = 窗口宽 − 双侧内边距
+        const float contentH = screen.height - padTop;           // 高 = 窗口高 − 顶内边距（底贴底）
         const std::time_t now = std::time(nullptr);   // 调用时间列「今天/昨天」判定
         const float headerH = ui_kit::kHeaderH;
         const float gap = t.sizes.spacingLarge;
@@ -221,7 +221,7 @@ public:
 
         ui.column("claude.root")
             .size(screen.width, screen.height)
-            .padding(padTop, padSide, padSide, padSide)
+            .padding(padTop, padSide, 0.0f, padSide)  // 上右下左：底贴底、内容随窗高伸缩（S4.2 弹性骨架）
             .gap(t.sizes.spacingLarge)
             .content([&] {
                 drawClaudeHeader(ui, contentW, headerH, t, proxyRunning, portStr,

@@ -776,6 +776,40 @@ REGISTER_TEST(settings_appearance_fluid_toggle_wiring,
     return true;
 })
 
+// H3 弹性骨架：双档几何断言（S4.2 公式：内容底缘锚到窗口底，高随窗口伸缩）
+REGISTER_TEST(settings_h3_elastic_heights, "settings: H3 elastic — cardsH at 640 vs 1000", {
+    test_support::TestEnv env(kCfgPrefix, "h3elastic", true);
+    test_support::ScopedConfigPath cfgEnv(test_support::tempConfigFile(kCfgPrefix, "h3elastic_cfg"));
+    std::unique_ptr<::core::Module> mod(create_settings_module());
+    mod->onStart();
+    eui::Ui ui;
+    // 最小档 1000×640：cardsH = 640 − cardsTopY − bottomHintH − gap
+    // cardsTopY = pad(32) + headerH(40) + gap(16) + tabH(40) + gap(16) = 144
+    // cardsH = 640 − 144 − 20 − 16 = 460 > 440（旧码 40 内边距双扣时 cardsH=412）
+    eui::Screen screenMin{1000.0f, 640.0f};
+    ui.begin("h3_min");
+    mod->compose(ui, screenMin);
+    ui.end();
+    const auto* scrollMin = ui.find("settings.cards.scroll");
+    DOCTEST_CHECK(scrollMin != nullptr);
+    if (scrollMin != nullptr) {
+        DOCTEST_CHECK(scrollMin->frame.height > 440.0f);  // S4.2 弹性：高点 > 440
+    }
+    // 大档 1600×1000：cardsH = 1000 − 144 − 20 − 16 = 820（等比放大）
+    eui::Screen screenLarge{1600.0f, 1000.0f};
+    ui.begin("h3_large");
+    mod->compose(ui, screenLarge);
+    ui.end();
+    const auto* scrollLarge = ui.find("settings.cards.scroll");
+    DOCTEST_CHECK(scrollLarge != nullptr);
+    if (scrollLarge != nullptr) {
+        DOCTEST_CHECK(scrollLarge->frame.height > 780.0f);  // S4.2 弹性：等比放大
+        DOCTEST_CHECK(scrollLarge->frame.height > scrollMin->frame.height + 300.0f); // 1000-640=360 增量
+    }
+    mod->onStop();
+    return true;
+})
+
 // 日志查看卡：刷新按钮 → 重读 tail
 // 读盘在 compose 顶部，不在 scrollView content lambda 内；日志文件缺失时渲染空态不崩
 

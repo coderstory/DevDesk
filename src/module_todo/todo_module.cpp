@@ -689,9 +689,9 @@ public:
         consumeNavPayload();
 
         const auto& t = core::theme::current();
-        const float pad = t.sizes.spacingXXLarge;        // 40
-        const float contentW = screen.width - pad * 2.0f;
-        const float contentH = screen.height - pad * 2.0f;
+        const float pad = t.sizes.spacingLarge * 2.0f;  // 32 —— S4.2 弹性内边距
+        const float contentW = screen.width - pad * 2.0f;   // 宽 = 窗口宽 − 双侧内边距
+        const float contentH = screen.height - pad;          // 高 = 窗口高 − 顶内边距（底贴底、无下 padding）
         const float headerH = ui_kit::kHeaderH;
         const float bodyH = contentH - headerH - t.sizes.spacingLarge;
 
@@ -712,7 +712,7 @@ public:
             boardActions_, archiveExpanded_};
         page.column("todo.root")
             .size(screen.width, screen.height)
-            .padding(pad)
+            .padding(pad, pad, 0.0f, pad)  // 上右下左：底边贴底、内容随窗高伸缩（S4.2 弹性骨架）
             .gap(t.sizes.spacingLarge)
             .content([&] {
                 ui::drawHeader(page, contentW, headerH, bodyH, t, boardView);
