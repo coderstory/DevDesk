@@ -9,7 +9,6 @@
 #include <components/button.h>
 #include <components/contextmenu.h>
 #include <ui_kit/dialog_form.h>
-#include <ui_kit/glass_card.h>
 #include <components/scrollview.h>
 #include <components/tooltip.h>
 #include <components/virtuallist.h>
@@ -904,19 +903,14 @@ void drawSharedConfigBlock(eui::Ui& ui, float width, float blockH,
                             inner.rect(cid + ".bg")
                                 .position(0.0f, 0.0f)
                                 .size(contentWidth, kSharedCardH)
-                                .states(components::theme::withOpacity(t.colors.surface, 0.62f),
+                                .states(t.colors.surface,
                                         t.colors.hover,
                                         t.colors.primarySoftBg)
-                                .radius(t.sizes.radiusWeChat)
-                                .border(1.0f, components::theme::withOpacity(t.colors.surface, 0.55f))
+                                .radius(t.sizes.radiusLarge)
                                 .onClick([onEdit = actions.requestEditShared, sc] {
                                     onEdit(sc);   // 按值拷贝（sc 引用 compose 局部副本，跨帧悬垂）
                                 })
                                 .build();
-                            ui_kit::drawGlassCardLayers(inner, cid,
-                                0.0f, 0.0f, contentWidth, kSharedCardH,
-                                t.sizes.radiusWeChat, t,
-                                ui_kit::GlassCardStyle::subtle());
                             inner.text(cid + ".name")
                                 .position(16.0f, 8.0f)
                                 .size(contentWidth - 32.0f, 20.0f)
