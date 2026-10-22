@@ -1180,9 +1180,8 @@ REGISTER_TEST(uiAboutLayout,
         DOCTEST_CHECK(c->frame.y + c->frame.height + kFooterGap <= footer->frame.y);
     }
     {
-        // 极矮窗 clamp 档：UAT3 cardH=616，窗 640（页高 600）时 cardY 触 0 后
-        // cardH 仍超 footer，code 侧第二步 cardH clamp 到 564 使不叠（旧仅推
-        // cardY 不行——616 卡高本身已超 footerY=580）
+        // 极矮窗档：W3.5 H7 删 Logo 行后 cardH 616→480，窗 640 时不再触 clamp
+        // （32+480+16=528 ≤ footerY=588），cardY 恒为 pagePad=32；仍断言卡不叠 footer
         eui::Ui tiny;
         eui::Screen tinyScreen{1200.0f, 640.0f};
         tiny.begin("about_layout_tiny");
@@ -1194,7 +1193,7 @@ REGISTER_TEST(uiAboutLayout,
         const auto* footer = tiny.find("about.footer");
         DOCTEST_REQUIRE(card != nullptr);
         DOCTEST_REQUIRE(footer != nullptr);
-        DOCTEST_CHECK_MESSAGE(nearPx(card->frame.y, 0.0f),
+        DOCTEST_CHECK_MESSAGE(nearPx(card->frame.y, t.sizes.spacingLarge * 2.0f),
                               px("about.card.bg.tiny", card));
         DOCTEST_CHECK(card->frame.y + card->frame.height <= footer->frame.y);
     }
