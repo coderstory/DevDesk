@@ -140,6 +140,8 @@ REGISTER_TEST(todo_tools_list_overdue_filter,
     DOCTEST_REQUIRE(cols.isOk());
     DOCTEST_REQUIRE(!cols.value().empty());
     const int64_t colId = cols.value().front().id;
+    const std::string colKind = cols.value().front().kind;
+    DOCTEST_CHECK_MESSAGE(colKind == "todo", ("colKind=" + colKind).c_str());
 
     // dueAt 是 Unix 秒：past = 2001 年，future = 2286 年
     const int64_t past = 1000000000;
@@ -166,6 +168,11 @@ REGISTER_TEST(todo_tools_list_overdue_filter,
     // 无 dueAt → 不命中
     auto t4 = env.svc->createTask(colId, "无截止");
     DOCTEST_REQUIRE(t4.isOk());
+
+    auto od = env.svc->listOverdue();
+    DOCTEST_CHECK_MESSAGE(od.isOk() && od.value().size() == 1,
+        ("overdueCount=" + std::to_string(od.isOk() ? od.value().size() : 999) +
+         " colKind=" + colKind).c_str());
 
     auto r = runTool("todo.list", R"({"overdue":true})");
     DOCTEST_REQUIRE(r.isOk());
@@ -217,9 +224,8 @@ REGISTER_TEST(todo_tools_list_overdue_filter,
     DOCTEST_CHECK(badType.value().isError);
     DOCTEST_CHECK(badType.value().contentJson.find("overdue") != std::string::npos);
 
-    // 归档任务：listOverdue() 现有 SQL 只看 due_at / completed_at，不看 archived_at，
-    // 所以「已归档 + 已逾期 + 未完成」当前仍会返回。本票明确沿用服务层语义
-    // （不改 Todo 页弹窗口径），这里断言实际行为，防止将来误以为工具层过滤了归档。
+    // H21 收窄：逾期口径只认 kind=todo/doing 的列；归档列不再计入（与服务层唯一真源
+    // core/overdue.h 一致）。这里锁实际行为：归档逾期任务不出现在 listOverdue / 工具结果。
     int64_t archiveColId = -1;
     for (const auto& c : cols.value()) {
         if (c.kind == "archive") archiveColId = c.id;
@@ -232,15 +238,15 @@ REGISTER_TEST(todo_tools_list_overdue_filter,
 
     auto svcOverdue = env.svc->listOverdue();
     DOCTEST_REQUIRE(svcOverdue.isOk());
-    DOCTEST_CHECK_EQ(svcOverdue.value().size(), 2u);  // 含归档任务
+    DOCTEST_CHECK_EQ(svcOverdue.value().size(), 1u);  // 仅 todo/doing 列
 
     auto withArchived = runTool("todo.list", R"({"overdue":true})");
     DOCTEST_REQUIRE(withArchived.isOk());
     DOCTEST_CHECK_FALSE(withArchived.value().isError);
     auto archivedParsed = platform::json::parse(withArchived.value().contentJson);
     DOCTEST_REQUIRE(archivedParsed.isOk());
-    DOCTEST_CHECK_EQ(archivedParsed.value().asObject().get("tasks").size(), 2);
-    DOCTEST_CHECK(withArchived.value().contentJson.find("归档逾期") !=
+    DOCTEST_CHECK_EQ(archivedParsed.value().asObject().get("tasks").size(), 1);
+    DOCTEST_CHECK(withArchived.value().contentJson.find("归档逾期") ==
                   std::string::npos);
 
     // schema 宣传新参数

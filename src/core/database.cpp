@@ -40,25 +40,9 @@ core::Result<Database> Database::open(const std::filesystem::path& path) {
 }
 
 core::Result<void> Database::migrate() {
-    auto r = db_.applySchema(core::schema::kSql);
-    if (r.isFail()) {
-        LOG_ERROR("Database schema 应用失败: " + r.errorMessage());
-        return r;
-    }
-    // 补列迁移：CREATE IF NOT EXISTS 对已存在表跳过，老库缺新列（2026-10-19
-    // agent_tasks 缺 context_note/auto_none → 智能体任务创建报障的根因）
-    auto colMig = core::schema::addMissingAgentColumns(db_);
-    if (colMig.isFail()) {
-        LOG_ERROR("agent 表列对齐失败: " + colMig.errorMessage());
-        return colMig;
-    }
-    // 遗留表清理：已摘除功能的两张表老库里还在，启动即幂等 DROP（见 schema.h 契约）
-    auto drop = core::schema::dropRemovedTables(db_);
-    if (drop.isFail()) {
-        LOG_ERROR("遗留表清理失败: " + drop.errorMessage());
-        return drop;
-    }
-    return core::Result<void>::ok();
+    // 迁移序列下沉到 core::schema::migrate：整库导入（github_sync_config）只有 SqliteDb&，
+    // 不能为跑迁移重开连接，需与启动路径共用同一份实现。
+    return core::schema::migrate(db_);
 }
 
 core::Result<int64_t> Database::pruneCallLogs(int retentionDays) {

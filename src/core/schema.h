@@ -50,11 +50,12 @@ inline constexpr const char* kSql = R"(
         tokenize = 'unicode61 remove_diacritics 2'
     );
 
-    -- kind 是列的语义标记（UI 行为靠它，不靠标题字符串）：
-    --   'todo'    = 默认待办列
-    --   'done'    = 已完成列（完成任务 → 流转目标）
-    --   'archive' = 已归档列（空态文案 / 归档动作的目标列）
-    --   NULL      = 普通列
+    -- kind 是列的语义标记（UI 行为靠它，不靠标题字符串）。UAT6.2 H20 起固定四列：
+    --   'todo'    = 待办列（新建任务默认落列）          position 0
+    --   'doing'   = 进行中列（H20 新增语义值）          position 1
+    --   'done'    = 已完成列（完成任务 → 流转目标）     position 2
+    --   'archive' = 已归档列（归档动作目标 / 只读）     position 3
+    --   NULL      = 老库普通列（Database::migrate 启动路径的固定四列迁移会把它并入默认列）
     -- 不许退回按标题字符串匹配：用户一改名就静默失效。
     CREATE TABLE IF NOT EXISTS todo_columns (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -303,16 +304,18 @@ inline constexpr const char* kSql = R"(
         ON claude_run_settings(written_at DESC);
 
     -- 种子数据
-    -- 首次建库插入 4 个默认 Todo 列，kind 直接带最终值。
+    -- 首次建库插入 4 个固定 Todo 列，kind 直接带最终值（UAT6.2 H20：四列固定、标题固定）。
     -- 守卫 `WHERE NOT EXISTS (SELECT 1 FROM todo_columns)`：**表非空就不插**——这是
     -- 本脚本唯一的幂等守卫（DDL 靠 IF NOT EXISTS，种子靠这一句），连跑两次
     -- applySchema 仍是这 4 行。todo_columns.title 无 UNIQUE 约束，写不了
     -- ON CONFLICT，所以用这条整表守卫。
+    -- 老库（种子已存在 / 进行中 kind 为 NULL / 有多余自定义列）由
+    -- Database::migrate 启动路径的 migrateTodoFixedColumns() 一次性迁移（幂等、单事务、先备份）。
     INSERT INTO todo_columns (title, position, color, created_at, kind)
     SELECT title, position, color, CAST(strftime('%s','now') AS INTEGER), kind
     FROM (
         SELECT '待办'   AS title, 0 AS position, 'claude-clay' AS color, 'todo'    AS kind
-        UNION ALL SELECT '进行中', 1,             'warm-amber',           NULL
+        UNION ALL SELECT '进行中', 1,             'warm-amber',           'doing'
         UNION ALL SELECT '已完成', 2,             'muted-sage',           'done'
         UNION ALL SELECT '已归档', 3,             'warm-gray',            'archive'
     )
@@ -322,10 +325,27 @@ inline constexpr const char* kSql = R"(
 // 补列迁移：对 agent 三表的已有行逐列与当前 DDL 对齐，缺列补 ALTER TABLE ADD COLUMN。
 // 幂等（列已存在则跳过）；表不存在则无操作（IF NOT EXISTS 已在 applySchema 里建全）。
 // 为什么不能靠 CREATE IF NOT EXISTS：IF NOT EXISTS 对已存在表跳过，加列只影响新库（本 bug 根因）。
+// 本函数同时是 Database::migrate 的「启动期修列」入口末尾，会串行调用
+// migrateTodoFixedColumns（Todo 固定四列迁移）。
 core::Result<void> addMissingAgentColumns(core::data::SqliteDb& db);
+
+// Todo 固定四列迁移（UAT6.2 H20）——挂在 **DB 打开 / migrate 的启动路径**，与 Todo 模块
+// 是否启用无关（模块关闭时首页逾期/待办口径仍正确）。每次进程启动随 Database::open 跑一次；
+// 幂等（已迁移库零改动）、破坏性部分（删多余列）整段单事务、迁移前按预检自动备份库文件、
+// 迁移后校验任务行数守恒（不等即 ROLLBACK）。
+//   - 按 kind 确保 todo/doing/done/archive 四列存在，缺失按固定标题/色点重建；
+//   - 历史「进行中」列（kind IS NULL 且 title='进行中'）补 kind='doing'；
+//   - 多余自定义列：任务按 position 顺序追加到目标默认列（同 kind → 该 kind 列，
+//     无对应 kind → 待办列），随后删列；**先 UPDATE column_id 再 DELETE**（外键 CASCADE）；
+//   - 四列 position 归位 0..3。
+core::Result<void> migrateTodoFixedColumns(core::data::SqliteDb& db);
 
 // 已摘除功能的遗留表清理：幂等 DROP TABLE IF EXISTS（表不在 = 零操作）。
 // 表已不在 DDL 里，但老库启动会带着它们；无外键指向、无读方，删了安全。
 core::Result<void> dropRemovedTables(core::data::SqliteDb& db);
+
+// 完整迁移入口（Database::migrate 与整库导入共用）：applySchema → 补列/Todo 固定四列 →
+// 遗留表清理。幂等；失败时各步自身保事务原子性，调用方不得继续把该库交给 UI。
+core::Result<void> migrate(core::data::SqliteDb& db);
 
 } // namespace core::schema

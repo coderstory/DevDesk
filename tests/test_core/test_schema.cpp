@@ -11,6 +11,7 @@
 #include <filesystem>
 #include <set>
 #include <string>
+#include <variant>
 #include <vector>
 
 namespace {
@@ -521,7 +522,7 @@ REGISTER_TEST(schema_seeds_default_todo_columns,
         struct Expect { const char* title; const char* color; const char* kind; };
         Expect expects[4] = {
             {"待办",   "claude-clay", "todo"},
-{"进行中", "warm-amber",  ""},       // 普通列：kind 为 NULL
+            {"进行中", "warm-amber",  "doing"},  // H20 固定语义值
             {"已完成", "muted-sage",  "done"},
             {"已归档", "warm-gray",   "archive"},
         };
@@ -544,6 +545,111 @@ REGISTER_TEST(schema_seeds_default_todo_columns,
     return true;
 })
 
+
+// UAT6.2 H20：Todo 固定四列迁移挂在 Database::open / migrate 的启动路径
+// （applySchema → addMissingAgentColumns → migrateTodoFixedColumns），
+// 与 Todo 模块是否启用无关；老库重开后必须收敛到固定四列，且任务行数守恒。
+REGISTER_TEST(schema_migrate_todo_fixed_columns,
+              "schema: Todo 固定四列迁移（老库补 doing / 重建缺列 / 并多余列 / 任务守恒）", {
+    auto path = test_support::tempDbPath(kDbPrefix, "todo_fixed");
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+
+    // 阶段 1：open 已跑过一次迁移；这里手工退回 H20 之前的老库形态
+    {
+        auto r = core::Database::open(path);
+        DOCTEST_REQUIRE(r.isOk());
+        auto& db = r.value().db();
+
+        // 进行中退回 kind=NULL（老种子形态）
+        DOCTEST_REQUIRE(db.exec(
+            "UPDATE todo_columns SET kind = NULL WHERE kind = 'doing'").isOk());
+        // 删掉已归档列（模拟用户删过默认列）——重开时应按固定形态重建
+        DOCTEST_REQUIRE(db.exec(
+            "DELETE FROM todo_columns WHERE kind = 'archive'").isOk());
+        // 多余自定义列（kind 为空）+ 两个任务：迁移后应并入待办列再删列
+        DOCTEST_REQUIRE(db.exec(
+            "INSERT INTO todo_columns (title, position, color, created_at, kind) "
+            "VALUES ('自定义', 9, NULL, 0, NULL)").isOk());
+        DOCTEST_REQUIRE(db.exec(
+            "INSERT INTO todo_tasks (column_id, title, priority, position, created_at, updated_at) "
+            "VALUES ((SELECT id FROM todo_columns WHERE title = '自定义'), '并入1', 0, 0, 0, 0), "
+            "((SELECT id FROM todo_columns WHERE title = '自定义'), '并入2', 0, 1, 0, 0)").isOk());
+    } // 关闭库，触发下次 open 的完整 migrate 启动路径
+
+    // 阶段 2：重开 → 迁移收敛
+    {
+        auto r = core::Database::open(path);
+        DOCTEST_REQUIRE(r.isOk());
+        auto& db = r.value().db();
+
+        // 四列固定顺序 + kind（进行中补回 doing；已归档列重建）
+        auto prep = db.prepare(
+            "SELECT title, kind, position FROM todo_columns "
+            "ORDER BY position ASC, id ASC");
+        DOCTEST_REQUIRE(prep.isOk());
+        auto rows = prep.value().fetchAll();
+        DOCTEST_REQUIRE(rows.isOk());
+        DOCTEST_REQUIRE_EQ(rows.value().size(), 4u);
+        struct Expect { const char* title; const char* kind; int position; };
+        const Expect expects[4] = {
+            {"待办", "todo", 0},
+            {"进行中", "doing", 1},
+            {"已完成", "done", 2},
+            {"已归档", "archive", 3},
+        };
+        for (int i = 0; i < 4; ++i) {
+            const auto& row = rows.value()[static_cast<size_t>(i)];
+            DOCTEST_CHECK_EQ(row.getString("title").valueOr("?"),
+                             std::string(expects[i].title));
+            DOCTEST_CHECK_EQ(row.getString("kind").valueOr("?"),
+                             std::string(expects[i].kind));
+            DOCTEST_CHECK_EQ(row.getInt64("position").valueOr(-1), expects[i].position);
+        }
+
+        // 多余列已删；两个任务原样保留并全部并入待办列（行数守恒）
+        auto count = [&db](const std::string& sql) -> int64_t {
+            auto p = db.prepare(sql);
+            if (p.isFail()) return -1;
+            auto rs = p.value().fetchAll();
+            if (rs.isFail() || rs.value().empty()) return -1;
+            return rs.value()[0].values.empty()
+                       ? -1
+                       : std::get<int64_t>(rs.value()[0].values[0]);
+        };
+        DOCTEST_CHECK_EQ(count("SELECT COUNT(*) FROM todo_columns WHERE title = '自定义'"), 0);
+        DOCTEST_CHECK_EQ(count("SELECT COUNT(*) FROM todo_tasks"), 2);
+        DOCTEST_CHECK_EQ(
+            count("SELECT COUNT(*) FROM todo_tasks WHERE column_id IN "
+                  "(SELECT id FROM todo_columns WHERE kind = 'todo')"),
+            2);
+
+        // 幂等：再跑两次启动迁移，列/任务数保持不变
+        DOCTEST_REQUIRE(r.value().migrate().isOk());
+        DOCTEST_REQUIRE(r.value().migrate().isOk());
+        DOCTEST_CHECK_EQ(count("SELECT COUNT(*) FROM todo_columns"), 4);
+        DOCTEST_CHECK_EQ(count("SELECT COUNT(*) FROM todo_tasks"), 2);
+    }
+
+    std::filesystem::remove(path, ec);
+    std::filesystem::remove(path.string() + "-wal", ec);
+    std::filesystem::remove(path.string() + "-shm", ec);
+    // 迁移前备份文件（<db名>.backup-<时间戳>）一并清理，避免临时目录残留。
+    // 用带 ec 的 increment（非抛异常重载，本 target -fno-exceptions）。
+    {
+        std::error_code iterEc;
+        std::error_code rmEc;
+        const std::string prefix = path.filename().string() + ".backup-";
+        for (std::filesystem::directory_iterator it(path.parent_path(), iterEc), end;
+             !iterEc && it != end; it.increment(iterEc)) {
+            const std::string name = it->path().filename().string();
+            if (name.rfind(prefix, 0) == 0) {
+                std::filesystem::remove(it->path(), rmEc);
+            }
+        }
+    }
+    return true;
+})
 
 REGISTER_TEST(schema_is_idempotent,
               "schema: 重复 applySchema 幂等（不报错 / schema 不变 / 种子不重复）", {
