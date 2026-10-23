@@ -1,0 +1,2393 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DevDesk · Todo 看板四列归档交互原型</title>
+<style>
+/* ============================================================
+   Tokens — DevDesk 设计系统 v1.0
+   ============================================================ */
+:root{
+  --primary:#36D399;
+  --primary-hover:#2EC48F;
+  --primary-active:#23B07F;
+  --primary-soft:#E6FBF2;
+  --page:#FAFAF9;
+  --card:#FFFFFF;
+  --border:#E5E7EB;
+  --text-1:#1F2937;
+  --text-2:#4B5563;
+  --text-3:#6B7280;
+  --dot-todo:#D97757;
+  --dot-doing:#C29243;
+  --dot-done:#788C5D;
+  --dot-archive:#9A948A;
+  --p-high:#EF4444;
+  --p-mid:#F59E0B;
+  --p-low:#36D399;
+  --radius-card:8px;
+  --radius-col:12px;
+  --shadow-sm:0 1px 3px rgba(0,0,0,.04);
+  --shadow-card:0 1px 3px rgba(0,0,0,.04), 0 0 0 1px rgba(229,231,235,.68);
+  --ease:cubic-bezier(.215,.61,.355,1); /* ease-out cubic */
+  --gap:16px;
+  --sidebar-w:208px;
+  --pad-x:40px;
+  --sans:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei UI","Microsoft YaHei","Noto Sans CJK SC",sans-serif;
+  --mono:ui-monospace,"Cascadia Code","SF Mono",Consolas,monospace;
+}
+
+*,*::before,*::after{box-sizing:border-box}
+html,body{height:100%}
+body{
+  margin:0;
+  font-family:var(--sans);
+  color:var(--text-1);
+  background:
+    radial-gradient(900px 520px at 50% -10%, rgba(230,251,242,.92), rgba(250,250,249,0) 72%),
+    var(--page);
+  overflow:hidden;
+  -webkit-font-smoothing:antialiased;
+  text-rendering:optimizeLegibility;
+}
+button,input,textarea{font:inherit;color:inherit}
+button{border:none;background:none;cursor:pointer}
+h1,h2,h3,p{margin:0}
+:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
+::selection{background:var(--primary-soft);color:var(--text-1)}
+.sr-only{
+  position:absolute!important;width:1px;height:1px;padding:0;margin:-1px;
+  overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0;
+}
+[hidden]{display:none!important}
+.boot *,.boot *::before,.boot *::after{transition:none!important;animation:none!important}
+
+/* ============================================================
+   Stage / mock app window
+   ============================================================ */
+.stage{
+  width:100%;height:100%;
+  padding:16px;
+  display:flex;align-items:center;justify-content:center;
+}
+.app-window{
+  width:1600px;max-width:100%;
+  height:calc(100vh - 32px);max-height:920px;
+  background:var(--page);
+  border-radius:16px;
+  box-shadow:
+    0 0 0 1px var(--border),
+    0 24px 70px rgba(31,41,55,.12),
+    0 2px 8px rgba(31,41,55,.04);
+  display:flex;
+  overflow:hidden;
+  position:relative;
+}
+
+/* ============================================================
+   Sidebar
+   ============================================================ */
+.sidebar{
+  width:var(--sidebar-w);flex:0 0 var(--sidebar-w);
+  background:#fff;
+  border-right:1px solid var(--border);
+  padding:18px 12px 14px;
+  display:flex;flex-direction:column;
+  min-height:0;
+}
+.brand{
+  display:flex;align-items:center;gap:10px;
+  padding:2px 8px 20px;
+  flex:none;
+}
+.brand-mark{
+  width:28px;height:28px;border-radius:9px;
+  background:var(--primary);
+  color:#fff;
+  display:grid;place-items:center;
+  box-shadow:0 3px 8px rgba(54,211,153,.24);
+  flex:none;
+}
+.brand-mark svg{width:15px;height:15px}
+.brand-text{display:flex;flex-direction:column;gap:1px;min-width:0}
+.brand-name{font-size:15px;font-weight:700;letter-spacing:-.01em;line-height:1.2}
+.brand-sub{font-size:10px;color:var(--text-3);letter-spacing:.02em;line-height:1.3}
+.nav{display:flex;flex-direction:column;gap:3px;min-height:0}
+.nav-item{
+  position:relative;
+  display:flex;align-items:center;gap:10px;
+  height:38px;padding:0 12px;
+  border-radius:8px;
+  color:var(--text-2);
+  font-size:13px;font-weight:500;
+  text-align:left;
+  transition:background 150ms var(--ease),color 150ms var(--ease);
+  flex:none;
+}
+.nav-item svg{width:18px;height:18px;flex:none;stroke-width:1.7}
+.nav-item:hover{background:rgba(31,41,55,.045);color:var(--text-1)}
+.nav-item.is-active{
+  background:var(--primary-soft);
+  color:var(--text-1);
+  font-weight:600;
+}
+.nav-item.is-active::before{
+  content:"";
+  position:absolute;left:0;top:9px;bottom:9px;width:3px;
+  border-radius:0 3px 3px 0;
+  background:var(--primary);
+}
+.nav-item.is-active svg{color:var(--primary)}
+.nav-gap{height:8px;flex:none}
+.sidebar-foot{
+  margin-top:auto;
+  display:flex;align-items:center;gap:8px;
+  padding:12px 8px 2px;
+  font-size:10.5px;color:var(--text-3);
+  letter-spacing:.02em;
+  flex:none;
+}
+.foot-dot{
+  width:6px;height:6px;border-radius:50%;
+  background:var(--primary);
+  box-shadow:0 0 0 3px var(--primary-soft);
+  flex:none;
+}
+.nav-item.nav-nudge{animation:navNudge 240ms var(--ease)}
+
+/* ============================================================
+   Main / page header
+   ============================================================ */
+.main{
+  flex:1;min-width:0;min-height:0;
+  display:flex;flex-direction:column;
+  background:var(--page);
+}
+.page-head{
+  flex:none;
+  padding:28px var(--pad-x) 16px;
+  border-bottom:1px solid rgba(229,231,235,.62);
+}
+.head-main{
+  display:flex;align-items:center;justify-content:space-between;
+  gap:16px;
+}
+.page-title{
+  font-size:24px;line-height:1.2;font-weight:600;
+  letter-spacing:-.015em;
+  color:var(--text-1);
+  white-space:nowrap;
+}
+.head-actions{
+  display:flex;align-items:center;justify-content:flex-end;
+  gap:8px;flex-wrap:wrap;
+}
+.search-box{
+  position:relative;
+  width:240px;height:40px;
+  flex:none;
+}
+.search-box .search-icon{
+  position:absolute;left:13px;top:50%;
+  width:16px;height:16px;
+  transform:translateY(-50%);
+  color:var(--text-3);
+  pointer-events:none;
+}
+.search-box input{
+  width:100%;height:100%;
+  border:1px solid var(--border);
+  border-radius:8px;
+  background:#fff;
+  padding:0 12px 0 38px;
+  font-size:13px;color:var(--text-1);
+  outline:none;
+  transition:border-color 150ms var(--ease),box-shadow 150ms var(--ease);
+}
+.search-box input::placeholder{color:#A7ADB6}
+.search-box input:hover{border-color:#D5D9DE}
+.search-box input:focus{
+  border-color:var(--primary);
+  box-shadow:0 0 0 3px rgba(54,211,153,.16);
+}
+.chip-overdue{
+  height:32px;padding:0 12px;
+  border-radius:999px;
+  background:var(--primary-soft);
+  border:1px solid transparent;
+  display:inline-flex;align-items:center;gap:7px;
+  font-size:12px;font-weight:500;color:var(--text-1);
+  white-space:nowrap;
+  transition:background 150ms var(--ease),box-shadow 150ms var(--ease);
+}
+.chip-overdue .chip-dot{
+  width:6px;height:6px;border-radius:50%;
+  background:var(--p-high);
+  flex:none;
+}
+.chip-overdue strong{
+  font-size:12px;font-weight:700;
+  font-variant-numeric:tabular-nums;
+}
+.chip-overdue:hover{background:#DDF8EE}
+.chip-overdue[aria-pressed="true"]{
+  background:#DDF8EE;
+  box-shadow:inset 0 0 0 1.5px var(--primary);
+}
+.chip-overdue[disabled]{opacity:.55;cursor:default}
+.btn-primary{
+  height:34px;padding:0 14px;
+  border-radius:8px;
+  background:var(--primary);
+  color:#fff;
+  font-size:13px;font-weight:600;
+  display:inline-flex;align-items:center;gap:7px;
+  white-space:nowrap;
+  box-shadow:0 1px 2px rgba(54,211,153,.22);
+  transition:background 150ms var(--ease),transform 150ms var(--ease);
+}
+.btn-primary:hover{background:var(--primary-hover)}
+.btn-primary:active{background:var(--primary-active);transform:translateY(1px)}
+.btn-primary svg{width:15px;height:15px}
+.btn-ghost{
+  height:34px;padding:0 14px;
+  border-radius:8px;
+  background:#fff;
+  border:1px solid var(--border);
+  color:var(--text-2);
+  font-size:13px;font-weight:500;
+  display:inline-flex;align-items:center;gap:6px;
+  transition:background 150ms var(--ease),color 150ms var(--ease),border-color 150ms var(--ease);
+}
+.btn-ghost:hover{background:rgba(31,41,55,.04);color:var(--text-1)}
+.icon-btn{
+  width:32px;height:32px;padding:0;
+  border-radius:8px;
+  display:inline-grid;place-items:center;
+  color:var(--text-3);
+  background:transparent;
+  transition:background 150ms var(--ease),color 150ms var(--ease);
+  flex:none;
+}
+.icon-btn:hover{background:rgba(31,41,55,.06);color:var(--text-1)}
+.icon-btn svg{width:16px;height:16px}
+
+.head-meta{
+  margin-top:13px;
+  display:flex;align-items:center;justify-content:space-between;
+  gap:14px;flex-wrap:wrap;
+}
+.measure{
+  display:flex;align-items:center;flex-wrap:wrap;
+  gap:4px 7px;
+  font-size:11.5px;color:var(--text-3);
+  letter-spacing:.01em;
+  min-height:24px;
+}
+.measure b{
+  font-family:var(--mono);
+  font-size:11.5px;font-weight:600;
+  color:var(--text-1);
+  font-variant-numeric:tabular-nums;
+}
+.mgroup{display:inline-flex;align-items:center;gap:5px;white-space:nowrap}
+.mgroup.is-muted{color:var(--text-3)}
+.mgroup.is-muted b{color:var(--text-2)}
+.msep{color:#C6CBD2;font-size:10px;line-height:1}
+.munit{color:#AAB0B8;font-size:10px;line-height:1}
+.state-pill{
+  display:inline-flex;align-items:center;
+  height:20px;padding:0 8px;
+  border-radius:999px;
+  background:rgba(31,41,55,.05);
+  color:var(--text-2);
+  font-size:10.5px;font-weight:600;letter-spacing:.03em;
+  transition:background 150ms var(--ease),color 150ms var(--ease);
+}
+.state-pill.is-open{background:var(--primary-soft);color:var(--text-1)}
+.live-dot{
+  width:6px;height:6px;border-radius:50%;
+  background:var(--primary);
+  animation:pulse 2.2s ease-in-out infinite;
+  margin-left:1px;
+}
+.width-switch{
+  display:inline-flex;align-items:center;
+  height:30px;flex:none;
+  background:#fff;
+  border:1px solid var(--border);
+  border-radius:8px;
+  box-shadow:var(--shadow-sm);
+  overflow:hidden;
+}
+.switch-label{
+  padding:0 9px;
+  font-size:10.5px;color:var(--text-3);
+  letter-spacing:.02em;white-space:nowrap;
+}
+.seg-btn{
+  height:100%;padding:0 11px;
+  font-family:var(--mono);
+  font-size:11px;font-weight:600;
+  color:var(--text-3);
+  border-left:1px solid var(--border);
+  transition:background 150ms var(--ease),color 150ms var(--ease);
+  font-variant-numeric:tabular-nums;
+}
+.seg-btn:hover{background:rgba(31,41,55,.04);color:var(--text-1)}
+.seg-btn.is-active{background:var(--primary-soft);color:var(--text-1)}
+.seg-btn:focus-visible{outline-offset:-2px}
+
+/* ============================================================
+   Board / columns
+   ============================================================ */
+.board-wrap{
+  flex:1;min-height:0;
+  padding:18px var(--pad-x) 28px;
+  display:flex;
+}
+.board{
+  position:relative;
+  flex:1;min-width:0;min-height:0;
+  display:flex;align-items:stretch;
+  gap:var(--gap);
+}
+.column{
+  flex:0 0 auto;
+  width:var(--col-w);
+  min-width:0;
+  height:100%;
+  display:flex;flex-direction:column;
+  background:rgba(255,255,255,.58);
+  border:1px solid rgba(229,231,235,.8);
+  border-radius:var(--radius-col);
+  overflow:hidden;
+  transition:background 150ms var(--ease),border-color 150ms var(--ease);
+}
+.column.is-drop-target{
+  background:var(--primary-soft);
+  border-color:rgba(54,211,153,.6);
+}
+.col-head{
+  height:56px;flex:0 0 56px;
+  display:flex;align-items:center;
+  gap:7px;
+  padding:0 12px;
+  min-width:0;
+}
+.col-dot{
+  width:8px;height:8px;border-radius:50%;
+  background:var(--dot);
+  box-shadow:0 0 0 3px rgba(31,41,55,.045);
+  flex:none;
+}
+.dot-todo{--dot:var(--dot-todo);background:var(--dot-todo)}
+.dot-doing{--dot:var(--dot-doing);background:var(--dot-doing)}
+.dot-done{--dot:var(--dot-done);background:var(--dot-done)}
+.dot-archive{--dot:var(--dot-archive);background:var(--dot-archive)}
+.col-title{
+  font-size:16px;font-weight:600;
+  letter-spacing:-.01em;
+  color:var(--text-1);
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  flex:none;
+}
+.col-count{
+  font-size:12.5px;font-weight:500;
+  color:var(--text-3);
+  font-variant-numeric:tabular-nums;
+  white-space:nowrap;
+  flex:none;
+}
+.collapse-btn{margin-left:auto}
+.cards{
+  flex:1;min-height:0;
+  overflow-y:auto;
+  overflow-anchor:none;
+  overscroll-behavior:contain;
+  padding:2px 12px 14px;
+  display:flex;flex-direction:column;
+  gap:10px;
+  scrollbar-width:thin;
+  scrollbar-color:rgba(31,41,55,.16) transparent;
+}
+.cards::-webkit-scrollbar{width:8px}
+.cards::-webkit-scrollbar-track{background:transparent}
+.cards::-webkit-scrollbar-thumb{
+  background:rgba(31,41,55,.14);
+  border-radius:999px;
+  border:2px solid transparent;
+  background-clip:content-box;
+}
+.empty-hint{
+  display:none;
+  padding:18px 10px;
+  border:1px dashed rgba(31,41,55,.13);
+  border-radius:8px;
+  background:rgba(255,255,255,.35);
+  color:var(--text-3);
+  font-size:11.5px;
+  text-align:center;
+  line-height:1.5;
+}
+.cards.is-empty .empty-hint{display:block}
+.search-empty{
+  display:none;
+  padding:18px 10px;
+  border:1px dashed rgba(31,41,55,.13);
+  border-radius:8px;
+  background:rgba(255,255,255,.35);
+  color:var(--text-3);
+  font-size:11.5px;
+  text-align:center;
+  line-height:1.5;
+}
+.cards.is-search-empty .search-empty{display:block}
+.cards.is-search .empty-hint{display:none}
+
+/* ============================================================
+   Cards
+   ============================================================ */
+.card{
+  position:relative;
+  flex:none;
+  background:var(--card);
+  border-radius:var(--radius-card);
+  border-left:3px solid var(--priority,var(--p-mid));
+  box-shadow:var(--shadow-card);
+  padding:11px 12px 10px 13px;
+  cursor:grab;
+  user-select:none;
+  overflow:hidden;
+  transition:box-shadow 150ms var(--ease),transform 150ms var(--ease),opacity 150ms var(--ease);
+}
+.card:hover{
+  box-shadow:0 4px 12px rgba(31,41,55,.07), 0 0 0 1px rgba(229,231,235,.9);
+  transform:translateY(-1px);
+}
+.card:active{cursor:grabbing}
+.card.p-high{--priority:var(--p-high)}
+.card.p-mid{--priority:var(--p-mid)}
+.card.p-low{--priority:var(--p-low)}
+.card.p-none{--priority:#D1D5DB}
+.card-title{
+  font-size:14px;font-weight:600;
+  line-height:1.45;
+  color:var(--text-1);
+  letter-spacing:-.005em;
+  overflow-wrap:anywhere;
+}
+.card-desc{
+  margin-top:4px;
+  font-size:12px;line-height:1.55;
+  color:var(--text-3);
+  overflow-wrap:anywhere;
+}
+.card-foot{
+  display:flex;align-items:center;flex-wrap:wrap;
+  gap:5px;
+  margin-top:9px;
+}
+.tag,.archive-chip,.due-chip{
+  display:inline-flex;align-items:center;
+  height:18px;padding:0 7px;
+  border-radius:999px;
+  font-size:10.5px;font-weight:500;
+  white-space:nowrap;
+  line-height:1;
+}
+.tag{background:rgba(31,41,55,.045);color:var(--text-2)}
+.due-chip{background:#FEF2F2;color:#C2413B;font-weight:600}
+.due-chip.normal{background:#F3F4F6;color:var(--text-2);font-weight:500}
+.card.search-hidden{display:none}
+.archive-chip{background:#F3F4F6;color:var(--text-3)}
+.card.archived{opacity:.7}
+.card.dragging{opacity:.42;transform:none;box-shadow:var(--shadow-sm)}
+.card.card-enter{animation:cardIn 220ms var(--ease)}
+.card.is-beyond-limit{display:none}
+.board.focus-overdue .card:not(.is-overdue){opacity:.32}
+.board.focus-overdue .card.is-overdue{
+  box-shadow:0 0 0 2px rgba(239,68,68,.3), 0 4px 12px rgba(239,68,68,.10);
+}
+.board.focus-overdue .card.archived{opacity:.3}
+.board.focus-overdue .card.is-overdue:hover{
+  box-shadow:0 0 0 2px rgba(239,68,68,.4), 0 6px 16px rgba(239,68,68,.12);
+}
+
+/* ============================================================
+   Archive: same normal column, narrowed to W×25% ↔ full equal column
+   ============================================================ */
+.archive-slot{
+  position:relative;
+  flex:0 0 auto;
+  width:var(--archive-w);
+  min-width:0;
+  height:100%;
+}
+.archive-slot > .column{
+  width:100%;
+}
+.archive-panel{
+  position:relative;
+}
+.archive-inner{
+  display:flex;flex-direction:column;
+  height:100%;min-height:0;
+  opacity:0;visibility:hidden;
+  transition:opacity 60ms linear 0s, visibility 0s linear 60ms;
+}
+.board[data-archive="expanded"] .archive-inner{
+  opacity:1;visibility:visible;
+  transition:opacity 120ms var(--ease) 96ms, visibility 0s linear 0s;
+}
+
+/* 折叠态 = 同一根普通列收窄，不另做白色竖条组件 */
+.archive-compact{
+  position:absolute;inset:0;
+  width:100%;height:100%;
+  padding:16px 0 14px;
+  display:flex;flex-direction:column;
+  align-items:center;justify-content:space-between;
+  background:transparent;
+  border:0;
+  box-shadow:none;
+  border-radius:0;
+  color:var(--text-2);
+  opacity:1;visibility:visible;
+  z-index:4;
+  overflow:hidden;
+  appearance:none;
+  transition:
+    color 150ms var(--ease),
+    opacity 120ms var(--ease) 100ms,
+    visibility 0s linear 220ms;
+}
+.board[data-archive="collapsed"] .archive-panel:hover{
+  background:var(--primary-soft);
+  border-color:rgba(54,211,153,.26);
+}
+.board[data-archive="collapsed"] .archive-panel:hover .archive-compact,
+.board[data-archive="collapsed"] .archive-panel:hover .compact-count{color:var(--primary)}
+.archive-panel.drag-over{
+  background:var(--primary-soft);
+  border-color:var(--primary);
+  box-shadow:inset 0 0 0 2px var(--primary);
+}
+.archive-panel.drag-over .archive-compact,
+.archive-panel.drag-over .compact-count{color:var(--primary)}
+.archive-compact:focus-visible{
+  outline:2px solid var(--primary);
+  outline-offset:-3px;
+  border-radius:10px;
+}
+.archive-compact .chev{width:14px;height:14px;flex:none}
+.compact-label{
+  writing-mode:vertical-rl;
+  text-orientation:upright;
+  font-size:13px;font-weight:600;
+  letter-spacing:.18em;
+  line-height:1;
+  white-space:nowrap;
+}
+.compact-count{
+  color:var(--text-1);
+  font-variant-numeric:tabular-nums;
+}
+.board[data-archive="expanded"] .archive-compact{
+  opacity:0;visibility:hidden;pointer-events:none;
+  transition:
+    color 150ms var(--ease),
+    opacity 90ms var(--ease) 0s,
+    visibility 0s linear 90ms;
+}
+.chev{transition:transform 240ms var(--ease)}
+.board[data-anim="collapse"] .chev{transition-duration:200ms}
+.board[data-archive="expanded"] .chev{transform:rotate(180deg)}
+.archive-limit{
+  flex:none;
+  margin:0 12px 12px;
+  padding:7px 9px;
+  border-radius:7px;
+  background:rgba(31,41,55,.045);
+  color:var(--text-3);
+  font-size:10.5px;line-height:1.45;
+  text-align:center;
+}
+
+/* width animation — the three main columns and the archive slot always share timing */
+.board > .column,
+.board > .archive-slot{transition:none}
+.board[data-anim="expand"] > .column,
+.board[data-anim="expand"] > .archive-slot{transition:width 240ms var(--ease)}
+.board[data-anim="collapse"] > .column,
+.board[data-anim="collapse"] > .archive-slot{transition:width 200ms var(--ease)}
+
+/* ============================================================
+   Create task dialog (≈640×470)
+   ============================================================ */
+.create-dialog{
+  width:640px;max-width:calc(100vw - 32px);
+  padding:0;border:none;background:transparent;
+  color:var(--text-1);
+  font-family:var(--sans);
+  margin:auto;
+}
+.create-dialog::backdrop{
+  background:rgba(31,41,55,.28);
+  backdrop-filter:blur(3px);
+}
+.create-card{
+  background:#fff;
+  border-radius:14px;
+  overflow:hidden;
+  box-shadow:0 24px 64px rgba(31,41,55,.2), 0 0 0 1px rgba(229,231,235,.8);
+  animation:dialogIn 180ms var(--ease);
+}
+.create-head{
+  display:flex;align-items:flex-start;justify-content:space-between;
+  gap:16px;
+  padding:16px 22px 0;
+}
+.create-title{font-size:18px;font-weight:600;letter-spacing:-.01em}
+.create-sub{margin-top:3px;font-size:11.5px;color:var(--text-3);line-height:1.5}
+.create-body{
+  padding:14px 22px 2px;
+  display:flex;flex-direction:column;
+  gap:10px;
+}
+.field{display:flex;flex-direction:column;gap:6px;min-width:0}
+.field > span,.field legend{
+  font-size:11.5px;font-weight:600;color:var(--text-2);
+  letter-spacing:.01em;
+}
+.field em{font-style:normal;font-weight:400;color:var(--text-3)}
+.field > input[type="text"],.field > textarea,.field .date-field input[type="date"]{
+  width:100%;
+  border:1px solid var(--border);
+  border-radius:8px;
+  background:#fff;
+  padding:9px 11px;
+  font-size:13px;
+  color:var(--text-1);
+  outline:none;
+  transition:border-color 150ms var(--ease),box-shadow 150ms var(--ease);
+  resize:vertical;
+}
+.field textarea{min-height:52px;line-height:1.55}
+.field input::placeholder,.field textarea::placeholder{color:#A7ADB6}
+.field > input[type="text"]:hover,.field > textarea:hover,.field .date-field input[type="date"]:hover{border-color:#D5D9DE}
+.field > input[type="text"]:focus,.field > textarea:focus,.field .date-field input[type="date"]:focus{
+  border-color:var(--primary);
+  box-shadow:0 0 0 3px rgba(54,211,153,.16);
+}
+.field > input[type="text"].is-invalid{border-color:var(--p-high);box-shadow:0 0 0 3px rgba(239,68,68,.12)}
+.field-error{font-size:11px;color:var(--p-high);line-height:1.4}
+.create-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.seg-options{display:flex;gap:6px;flex-wrap:wrap}
+.seg-option{
+  display:inline-flex;align-items:center;gap:6px;
+  height:32px;padding:0 10px;
+  border:1px solid var(--border);
+  border-radius:8px;
+  background:#fff;
+  color:var(--text-2);
+  font-size:12px;font-weight:500;
+  white-space:nowrap;
+  transition:border-color 150ms var(--ease),background 150ms var(--ease),color 150ms var(--ease);
+}
+.seg-option:hover{background:rgba(31,41,55,.035)}
+.seg-option.is-active{
+  border-color:var(--primary);
+  background:var(--primary-soft);
+  color:var(--text-1);
+}
+.seg-option:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
+.seg-dot{width:7px;height:7px;border-radius:50%;flex:none}
+.seg-dot.none{background:#D1D5DB}
+.seg-dot.low{background:var(--p-low)}
+.seg-dot.mid{background:var(--p-mid)}
+.seg-dot.high{background:var(--p-high)}
+.date-field{margin-top:6px}
+.tag-editor{
+  display:flex;align-items:center;flex-wrap:wrap;gap:5px;
+  min-height:40px;padding:5px 8px;
+  border:1px solid var(--border);
+  border-radius:8px;
+  background:#fff;
+  cursor:text;
+  transition:border-color 150ms var(--ease),box-shadow 150ms var(--ease);
+}
+.tag-editor:focus-within{
+  border-color:var(--primary);
+  box-shadow:0 0 0 3px rgba(54,211,153,.16);
+}
+.tag-list{display:contents}
+.tag-editor input{
+  flex:1;min-width:120px;
+  border:none;outline:none;background:transparent;
+  padding:2px 0;
+  font-size:13px;color:var(--text-1);
+}
+.tag-editor input::placeholder{color:#A7ADB6}
+.tag-chip{
+  display:inline-flex;align-items:center;gap:4px;
+  height:22px;padding:0 4px 0 7px;
+  border-radius:999px;
+  background:var(--primary-soft);
+  color:var(--text-1);
+  font-size:10.5px;font-weight:500;
+  white-space:nowrap;
+}
+.tag-chip button{
+  width:16px;height:16px;padding:0;
+  display:inline-grid;place-items:center;
+  border-radius:50%;
+  color:var(--text-3);
+}
+.tag-chip button:hover{background:rgba(31,41,55,.08);color:var(--text-1)}
+.create-hints{
+  display:flex;align-items:center;flex-wrap:wrap;gap:5px;
+  font-size:10.5px;color:var(--text-3);line-height:1.5;
+  padding-top:2px;
+}
+.create-hints .hint-sep{color:#C6CBD2}
+.create-foot{
+  display:flex;align-items:center;justify-content:flex-end;
+  gap:8px;
+  padding:12px 22px 16px;
+  border-top:1px solid rgba(229,231,235,.7);
+  margin-top:12px;
+}
+
+/* ============================================================
+   Design annotation panel
+   ============================================================ */
+.spec-fab{
+  position:fixed;right:20px;bottom:20px;
+  z-index:80;
+  height:38px;padding:0 14px;
+  border-radius:999px;
+  background:#fff;
+  border:1px solid var(--border);
+  box-shadow:0 6px 18px rgba(31,41,55,.1);
+  display:inline-flex;align-items:center;gap:8px;
+  font-size:12px;font-weight:600;color:var(--text-1);
+  transition:background 150ms var(--ease),border-color 150ms var(--ease),transform 150ms var(--ease);
+}
+.spec-fab:hover{background:var(--primary-soft);border-color:rgba(54,211,153,.36);transform:translateY(-1px)}
+.spec-fab svg{width:15px;height:15px;color:var(--text-2)}
+.spec-fab .fab-dot{width:7px;height:7px;border-radius:50%;background:var(--primary)}
+.spec-fab[aria-expanded="true"]{background:var(--primary-soft);border-color:rgba(54,211,153,.36)}
+.spec-panel{
+  position:fixed;right:20px;bottom:72px;
+  z-index:79;
+  width:min(382px,calc(100vw - 32px));
+  max-height:calc(100vh - 110px);
+  background:#fff;
+  border:1px solid var(--border);
+  border-radius:14px;
+  box-shadow:0 24px 64px rgba(31,41,55,.16);
+  display:flex;flex-direction:column;
+  opacity:0;visibility:hidden;pointer-events:none;
+  transform:translateY(8px);
+  transition:opacity 180ms var(--ease),transform 180ms var(--ease),visibility 0s linear 180ms;
+}
+.spec-panel.open{
+  opacity:1;visibility:visible;pointer-events:auto;
+  transform:none;
+  transition:opacity 180ms var(--ease),transform 180ms var(--ease),visibility 0s linear 0s;
+}
+.spec-head{
+  flex:none;
+  display:flex;align-items:flex-start;justify-content:space-between;
+  gap:12px;
+  padding:16px 18px 14px;
+  border-bottom:1px solid rgba(229,231,235,.72);
+}
+.spec-kicker{
+  display:block;
+  font-family:var(--mono);
+  font-size:9px;font-weight:600;
+  letter-spacing:.16em;
+  color:var(--primary);
+  margin-bottom:5px;
+}
+.spec-title{font-size:15px;font-weight:600;letter-spacing:-.01em}
+.spec-body{
+  overflow-y:auto;
+  padding:16px 18px 18px;
+  display:flex;flex-direction:column;gap:18px;
+  scrollbar-width:thin;
+}
+.spec-section h3{
+  font-size:11.5px;font-weight:700;color:var(--text-2);
+  letter-spacing:.03em;
+  margin-bottom:8px;
+}
+.spec-code{
+  margin:0 0 6px;
+  padding:7px 9px;
+  border-radius:7px;
+  background:rgba(31,41,55,.045);
+  color:var(--text-2);
+  font-family:var(--mono);
+  font-size:10px;line-height:1.55;
+  overflow-wrap:anywhere;
+}
+.spec-copy{
+  margin-top:7px;
+  font-size:10.5px;line-height:1.65;
+  color:var(--text-3);
+}
+.spec-table{
+  width:100%;
+  border-collapse:collapse;
+  font-size:10px;
+  color:var(--text-2);
+}
+.spec-table th{
+  text-align:left;
+  font-weight:600;color:var(--text-3);
+  padding:5px 4px;
+  border-bottom:1px solid var(--border);
+  white-space:nowrap;
+}
+.spec-table td{
+  padding:5px 4px;
+  border-bottom:1px solid rgba(229,231,235,.55);
+  font-variant-numeric:tabular-nums;
+  white-space:nowrap;
+}
+.spec-table tr:last-child td{border-bottom:none}
+.swatches{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.swatch{
+  display:flex;align-items:center;gap:7px;
+  font-size:10px;color:var(--text-3);
+  letter-spacing:.01em;
+}
+.swatch i{
+  width:14px;height:14px;border-radius:4px;flex:none;
+  box-shadow:inset 0 0 0 1px rgba(31,41,55,.08);
+}
+.swatch code{font-family:var(--mono);font-size:9.5px;color:var(--text-2)}
+.spec-list{
+  margin:0;padding:0;
+  list-style:none;
+  display:flex;flex-direction:column;gap:6px;
+  font-size:10.5px;line-height:1.55;color:var(--text-3);
+}
+.spec-list li{display:flex;gap:7px}
+.spec-list li::before{
+  content:"";width:4px;height:4px;border-radius:50%;
+  background:var(--primary);flex:none;margin-top:6px;
+}
+.spec-note{
+  font-size:10px;line-height:1.65;color:var(--text-3);
+  padding-top:12px;
+  border-top:1px dashed rgba(31,41,55,.1);
+}
+
+/* ============================================================
+   Toast
+   ============================================================ */
+.toast{
+  position:fixed;left:50%;bottom:26px;
+  z-index:100;
+  max-width:calc(100vw - 40px);
+  padding:9px 14px;
+  border-radius:8px;
+  background:#1F2937;
+  color:#fff;
+  font-size:12px;font-weight:500;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  box-shadow:0 8px 24px rgba(31,41,55,.22);
+  opacity:0;pointer-events:none;
+  transform:translate(-50%,8px);
+  transition:opacity 180ms var(--ease),transform 180ms var(--ease);
+}
+.toast.show{opacity:1;transform:translate(-50%,0)}
+
+/* ============================================================
+   Motion
+   ============================================================ */
+@keyframes pulse{
+  0%,100%{opacity:.35;transform:scale(.85)}
+  50%{opacity:1;transform:scale(1)}
+}
+@keyframes cardIn{
+  from{opacity:0;transform:translateY(-5px)}
+  to{opacity:1;transform:none}
+}
+@keyframes dialogIn{
+  from{opacity:0;transform:translateY(6px) scale(.985)}
+  to{opacity:1;transform:none}
+}
+@keyframes navNudge{
+  0%,100%{transform:translateX(0)}
+  35%{transform:translateX(-2px)}
+  70%{transform:translateX(2px)}
+}
+
+/* ============================================================
+   Responsive floor
+   ============================================================ */
+@media (max-width: 1080px){
+  .page-head{padding-top:22px}
+  .board-wrap{padding-top:14px}
+}
+@media (max-width: 760px){
+  .sidebar{display:none}
+  .page-head{padding-left:22px;padding-right:22px}
+  .board-wrap{padding-left:22px;padding-right:22px}
+}
+@media (prefers-reduced-motion: reduce){
+  *,*::before,*::after{
+    animation-duration:.01ms!important;
+    animation-iteration-count:1!important;
+    transition-duration:.01ms!important;
+    transition-delay:0ms!important;
+    scroll-behavior:auto!important;
+  }
+}
+</style>
+</head>
+<body class="boot">
+
+<div class="stage">
+  <div class="app-window" id="appWindow" aria-label="DevDesk 应用窗口模拟">
+
+    <!-- ================= Sidebar ================= -->
+    <aside class="sidebar" aria-label="主导航">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 4.5 4.5L19 7"/></svg>
+        </span>
+        <span class="brand-text">
+          <span class="brand-name">DevDesk</span>
+          <span class="brand-sub">开发者工作台</span>
+        </span>
+      </div>
+
+      <nav class="nav" aria-label="功能导航">
+        <button class="nav-item" type="button" data-page="home">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 10.5 9-7.5 9 7.5"/><path d="M5 9.5V21h14V9.5"/><path d="M9.5 21v-6h5v6"/></svg>
+          <span class="nav-label">首页</span>
+        </button>
+        <button class="nav-item" type="button" data-page="notes">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="3" width="16" height="18" rx="3"/><path d="M8 8h8M8 12h8M8 16h5"/></svg>
+          <span class="nav-label">笔记</span>
+        </button>
+        <button class="nav-item is-active" type="button" data-page="todo" aria-current="page">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="4"/><path d="m8 12 2.5 2.5L16 9"/></svg>
+          <span class="nav-label">待办</span>
+        </button>
+        <button class="nav-item" type="button" data-page="switch">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h13"/><path d="m14 4 3 3-3 3"/><path d="M20 17H7"/><path d="m10 14-3 3 3 3"/></svg>
+          <span class="nav-label">切换器</span>
+        </button>
+        <button class="nav-item" type="button" data-page="agent">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.5 13.4 8l4.6 1.4-4.6 1.4L12 15.3l-1.4-4.5L6 9.4 10.6 8 12 3.5Z"/><path d="m18 15 .7 2.1 2.3.7-2.3.7L18 20.6l-.7-2.1-2.3-.7 2.3-.7L18 15Z"/></svg>
+          <span class="nav-label">智能体</span>
+        </button>
+        <div class="nav-gap" aria-hidden="true"></div>
+        <button class="nav-item" type="button" data-page="settings">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h9"/><circle cx="16.5" cy="7" r="2.5"/><path d="M20 17h-9"/><circle cx="7.5" cy="17" r="2.5"/></svg>
+          <span class="nav-label">设置</span>
+        </button>
+        <button class="nav-item" type="button" data-page="about">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 11v5"/><circle cx="12" cy="7.7" r=".8" fill="currentColor" stroke="none"/></svg>
+          <span class="nav-label">关于</span>
+        </button>
+      </nav>
+
+      <div class="sidebar-foot">
+        <span class="foot-dot" aria-hidden="true"></span>
+        <span>v0.10 · 设计验证原型</span>
+      </div>
+    </aside>
+
+    <!-- ================= Main ================= -->
+    <main class="main">
+      <header class="page-head">
+        <div class="head-main">
+          <h1 class="page-title">Todo 看板</h1>
+          <div class="head-actions">
+            <div class="search-box">
+              <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m16.5 16.5 4 4"/></svg>
+              <input id="taskSearch" type="text" placeholder="搜索任务…" autocomplete="off" spellcheck="false" aria-label="搜索任务">
+            </div>
+            <button class="chip-overdue" id="overdueChip" type="button" aria-pressed="false" title="高亮逾期任务">
+              <span class="chip-dot" aria-hidden="true"></span>
+              <span>逾期</span>
+              <strong id="overdueCount">2</strong>
+            </button>
+            <button class="btn-primary" id="newTaskBtn" type="button">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+              <span>新建任务</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="head-meta">
+          <div class="measure" id="measureLine" aria-label="当前列宽读数">
+            <span class="state-pill" id="statePill">折叠</span>
+            <span class="live-dot" aria-hidden="true"></span>
+            <span class="mgroup">展开列宽 <b id="mExpandedW">—</b></span>
+            <span class="msep">·</span>
+            <span class="mgroup">折叠归档 <b id="mCollapsedArchiveW">—</b></span>
+            <span class="msep">·</span>
+            <span class="mgroup">三列各 <b id="mCols">—</b></span>
+            <span class="munit">px</span>
+            <span class="msep">·</span>
+            <span class="mgroup is-muted">可用 <b id="mAvail">—</b> px</span>
+          </div>
+
+          <div class="width-switch" role="group" aria-label="模拟窗口宽度">
+            <span class="switch-label">模拟窗口</span>
+            <button class="seg-btn" type="button" data-width="1000" aria-pressed="false" title="模拟 1000px 窗口总宽（含侧边栏与页边距）">1000</button>
+            <button class="seg-btn is-active" type="button" data-width="1600" aria-pressed="true" title="模拟 1600px 窗口总宽（含侧边栏与页边距）">1600</button>
+          </div>
+        </div>
+      </header>
+
+      <div class="board-wrap">
+        <div class="board" id="board" data-archive="collapsed">
+
+          <!-- 待办 -->
+          <section class="column" data-col="todo" aria-label="待办列">
+            <header class="col-head">
+              <span class="col-dot dot-todo" aria-hidden="true"></span>
+              <h2 class="col-title">待办</h2>
+              <span class="col-count">(<span data-count-for="todo">4</span>)</span>
+            </header>
+            <div class="cards" data-cards-for="todo">
+              <article class="card p-high is-overdue" draggable="true" data-id="t-001" aria-label="高优先级：完成 Todo 四列归档交互原型">
+                <span class="sr-only">高优先级</span>
+                <h3 class="card-title">完成 Todo 四列归档交互原型</h3>
+                <p class="card-desc">折叠展开、拖拽归档与键盘链路的完整演示</p>
+                <div class="card-foot">
+                  <span class="tag">设计验证</span>
+                  <span class="due-chip">逾期 · 10-20</span>
+                </div>
+              </article>
+              <article class="card p-mid" draggable="true" data-id="t-002" aria-label="中优先级：补齐 macOS 窗口失焦重绘验证">
+                <span class="sr-only">中优先级</span>
+                <h3 class="card-title">补齐 macOS 窗口失焦重绘验证</h3>
+                <p class="card-desc">对照 Windows 版复测三个高频场景</p>
+                <div class="card-foot"><span class="tag">兼容性</span></div>
+              </article>
+              <article class="card p-low" draggable="true" data-id="t-003" aria-label="低优先级：整理 v0.10 发布说明">
+                <span class="sr-only">低优先级</span>
+                <h3 class="card-title">整理 v0.10 发布说明</h3>
+                <p class="card-desc">汇总本周合并的 12 个提交与已知问题</p>
+                <div class="card-foot"><span class="tag">文档</span></div>
+              </article>
+              <article class="card p-mid" draggable="true" data-id="t-004" aria-label="中优先级：更新安装包应用图标">
+                <span class="sr-only">中优先级</span>
+                <h3 class="card-title">更新安装包应用图标</h3>
+                <p class="card-desc">替换 Inno Setup 与 DMG 的资源文件</p>
+                <div class="card-foot"><span class="tag">发布</span></div>
+              </article>
+              <div class="empty-hint">暂无任务</div>
+              <div class="search-empty">无命中任务</div>
+            </div>
+          </section>
+
+          <!-- 进行中 -->
+          <section class="column" data-col="doing" aria-label="进行中列">
+            <header class="col-head">
+              <span class="col-dot dot-doing" aria-hidden="true"></span>
+              <h2 class="col-title">进行中</h2>
+              <span class="col-count">(<span data-count-for="doing">3</span>)</span>
+            </header>
+            <div class="cards" data-cards-for="doing">
+              <article class="card p-high is-overdue" draggable="true" data-id="d-001" aria-label="高优先级：修复归档展开时的布局抖动">
+                <span class="sr-only">高优先级</span>
+                <h3 class="card-title">修复归档展开时的布局抖动</h3>
+                <p class="card-desc">列宽与内容淡入需要同帧收口</p>
+                <div class="card-foot">
+                  <span class="tag">缺陷</span>
+                  <span class="due-chip">逾期 · 10-19</span>
+                </div>
+              </article>
+              <article class="card p-mid" draggable="true" data-id="d-002" aria-label="中优先级：列表虚拟滚动接入">
+                <span class="sr-only">中优先级</span>
+                <h3 class="card-title">列表虚拟滚动接入</h3>
+                <p class="card-desc">长列表只渲染可视区域，保持 60fps</p>
+                <div class="card-foot"><span class="tag">性能</span></div>
+              </article>
+              <article class="card p-low" draggable="true" data-id="d-003" aria-label="低优先级：桌宠皮肤预览图补全">
+                <span class="sr-only">低优先级</span>
+                <h3 class="card-title">桌宠皮肤预览图补全</h3>
+                <p class="card-desc">六套皮肤统一裁切比例与命名</p>
+                <div class="card-foot"><span class="tag">资源</span></div>
+              </article>
+              <div class="empty-hint">暂无任务</div>
+              <div class="search-empty">无命中任务</div>
+            </div>
+          </section>
+
+          <!-- 已完成 -->
+          <section class="column" data-col="done" aria-label="已完成列">
+            <header class="col-head">
+              <span class="col-dot dot-done" aria-hidden="true"></span>
+              <h2 class="col-title">已完成</h2>
+              <span class="col-count">(<span data-count-for="done">4</span>)</span>
+            </header>
+            <div class="cards" data-cards-for="done">
+              <article class="card p-high" draggable="true" data-id="c-001" aria-label="高优先级：看板四列宽度自适应">
+                <span class="sr-only">高优先级</span>
+                <h3 class="card-title">看板四列宽度自适应</h3>
+                <p class="card-desc">按可用宽实时计算前三列宽度</p>
+                <div class="card-foot"><span class="tag">布局</span></div>
+              </article>
+              <article class="card p-mid" draggable="true" data-id="c-002" aria-label="中优先级：归档竖条键盘可达">
+                <span class="sr-only">中优先级</span>
+                <h3 class="card-title">归档竖条键盘可达</h3>
+                <p class="card-desc">Enter / Space 切换，Esc 收起</p>
+                <div class="card-foot"><span class="tag">无障碍</span></div>
+              </article>
+              <article class="card p-mid" draggable="true" data-id="c-003" aria-label="中优先级：设计标注浮层">
+                <span class="sr-only">中优先级</span>
+                <h3 class="card-title">设计标注浮层</h3>
+                <p class="card-desc">汇总动画时长、宽度公式与色值</p>
+                <div class="card-foot"><span class="tag">文档</span></div>
+              </article>
+              <article class="card p-low" draggable="true" data-id="c-004" aria-label="低优先级：侧边栏待办高亮态">
+                <span class="sr-only">低优先级</span>
+                <h3 class="card-title">侧边栏待办高亮态</h3>
+                <p class="card-desc">浅绿底与左 3px 主色条落位</p>
+                <div class="card-foot"><span class="tag">样式</span></div>
+              </article>
+              <div class="empty-hint">暂无任务</div>
+              <div class="search-empty">无命中任务</div>
+            </div>
+          </section>
+
+          <!-- 归档：同一根普通列收窄至 W×25% ↔ 等分普通列 -->
+          <div class="archive-slot" id="archiveSlot">
+            <section class="column archive-panel" id="archivePanel" data-col="archived" aria-label="已归档列">
+              <div class="archive-inner" id="archiveInner" aria-hidden="true">
+                <header class="col-head">
+                  <span class="col-dot dot-archive" aria-hidden="true"></span>
+                  <h2 class="col-title">已归档</h2>
+                  <span class="col-count">(<span data-count-for="archived">6</span>)</span>
+                  <button class="icon-btn collapse-btn" id="collapseBtn" type="button" aria-label="收起归档列" title="收起归档">
+                    <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>
+                  </button>
+                </header>
+                <div class="cards" data-cards-for="archived">
+                  <article class="card p-mid archived" draggable="true" data-id="a-001" aria-label="中优先级：建立基线色板与令牌">
+                    <span class="sr-only">中优先级</span>
+                    <h3 class="card-title">建立基线色板与令牌</h3>
+                    <p class="card-desc">设计系统 v1.0 的色值与圆角</p>
+                    <div class="card-foot"><span class="tag">设计系统</span><span class="archive-chip">10-21 归档</span></div>
+                  </article>
+                  <article class="card p-low archived" draggable="true" data-id="a-002" aria-label="低优先级：桌面端快捷键总表">
+                    <span class="sr-only">低优先级</span>
+                    <h3 class="card-title">桌面端快捷键总表</h3>
+                    <p class="card-desc">对齐 macOS 与 Windows 两套键位</p>
+                    <div class="card-foot"><span class="tag">文档</span><span class="archive-chip">10-20 归档</span></div>
+                  </article>
+                  <article class="card p-mid archived" draggable="true" data-id="a-003" aria-label="中优先级：窗口最小尺寸适配">
+                    <span class="sr-only">中优先级</span>
+                    <h3 class="card-title">窗口最小尺寸适配</h3>
+                    <p class="card-desc">1000×640 下无横向滚动</p>
+                    <div class="card-foot"><span class="tag">布局</span><span class="archive-chip">10-19 归档</span></div>
+                  </article>
+                  <article class="card p-low archived" draggable="true" data-id="a-004" aria-label="低优先级：旧版看板列宽方案">
+                    <span class="sr-only">低优先级</span>
+                    <h3 class="card-title">旧版看板列宽方案</h3>
+                    <p class="card-desc">固定 280px，已被自适应方案替代</p>
+                    <div class="card-foot"><span class="tag">历史</span><span class="archive-chip">10-17 归档</span></div>
+                  </article>
+                  <article class="card p-mid archived" draggable="true" data-id="a-005" aria-label="中优先级：桌宠待机动画帧率优化">
+                    <span class="sr-only">中优先级</span>
+                    <h3 class="card-title">桌宠待机动画帧率优化</h3>
+                    <p class="card-desc">空闲场景稳定在 60fps</p>
+                    <div class="card-foot"><span class="tag">性能</span><span class="archive-chip">10-15 归档</span></div>
+                  </article>
+                  <article class="card p-low archived" draggable="true" data-id="a-006" aria-label="低优先级：设置页模块开关插拔">
+                    <span class="sr-only">低优先级</span>
+                    <h3 class="card-title">设置页模块开关插拔</h3>
+                    <p class="card-desc">六个模块可独立启停</p>
+                    <div class="card-foot"><span class="tag">设置</span><span class="archive-chip">10-14 归档</span></div>
+                  </article>
+                  <div class="empty-hint">暂无归档</div>
+                  <div class="search-empty">无命中任务</div>
+                </div>
+                <div class="archive-limit" id="archiveLimit" hidden></div>
+              </div>
+              <button class="archive-compact" id="archiveCompact" type="button" tabindex="0" aria-expanded="false" aria-controls="archivePanel" aria-label="展开已归档列，共 6 项" title="展开归档">
+                <span class="compact-label">已归档 · <span class="compact-count" id="compactCount">6</span></span>
+                <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>
+              </button>
+            </section>
+          </div>
+
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<!-- ================= Floating design annotation ================= -->
+<button class="spec-fab" id="specFab" type="button" aria-expanded="false" aria-controls="specPanel">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8h18v8H3z"/><path d="M7 8v3M11 8v2M15 8v3M19 8v2"/></svg>
+  <span>设计标注</span>
+  <span class="fab-dot" aria-hidden="true"></span>
+</button>
+
+<aside class="spec-panel" id="specPanel" aria-hidden="true" aria-label="设计标注">
+  <div class="spec-head">
+    <div>
+      <span class="spec-kicker">DESIGN NOTES</span>
+      <h2 class="spec-title">Todo 看板 · 四列归档</h2>
+    </div>
+    <button class="icon-btn" id="specClose" type="button" aria-label="关闭设计标注">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg>
+    </button>
+  </div>
+  <div class="spec-body">
+    <section class="spec-section">
+      <h3>宽度公式</h3>
+      <div class="spec-code">contentW = 模拟窗口宽 − 208 侧栏 − 2×40 页边距</div>
+      <div class="spec-code">展开列宽 W = (contentW − 3×16) / 4</div>
+      <div class="spec-code">折叠归档宽 = W × 25%</div>
+      <div class="spec-code">折叠三列 = (contentW − 3×16 − 折叠归档宽) / 3</div>
+      <p class="spec-copy">折叠态就是同一根普通列被收窄，容器底色、边框、圆角与其余三列一致，没有独立白色竖条组件；展开后的归档列与其余三列同宽同款。动画在 W×25% ↔ W 之间插值。</p>
+    </section>
+
+    <section class="spec-section">
+      <h3>两档实测（gap = 16）</h3>
+      <table class="spec-table">
+        <thead>
+          <tr><th>窗口</th><th>contentW</th><th>展开 W</th><th>折叠归档</th><th>折叠三列</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>1000</td><td>712</td><td>166</td><td>41.5</td><td>207.5</td></tr>
+          <tr><td>1600</td><td>1312</td><td>316</td><td>79</td><td>395</td></tr>
+        </tbody>
+      </table>
+      <p class="spec-copy">页头读数显示展开列宽 W、折叠归档宽与当前三列宽；动画过程中三列宽逐帧变化。</p>
+    </section>
+
+    <section class="spec-section">
+      <h3>动画</h3>
+      <ul class="spec-list">
+        <li>展开 240ms，收起 200ms，ease-out cubic（cubic-bezier(.215,.61,.355,1)）。</li>
+        <li>归档列宽度在 W×25% ↔ W 之间插值，其余三列同步重排。</li>
+        <li>归档内容在进度 40%（96ms）后淡入 120ms；收起前 30%（60ms）淡出。</li>
+        <li>chevron 旋转 180°，收窄列标签淡出 / 淡入。</li>
+      </ul>
+    </section>
+
+    <section class="spec-section">
+      <h3>交互</h3>
+      <ul class="spec-list">
+        <li>点击收窄归档列任意位置展开；收起按钮、Esc 收起。</li>
+        <li>收窄列 tabindex=0，Enter / Space 切换；focus 2px 主色 outline。</li>
+        <li>拖卡悬停收窄列 300ms 自动展开；drop 归档；取消或拖离自动收回（200ms）。</li>
+        <li>归档卡可拖回任一主列恢复；归档最多渲染最近 20 张。</li>
+        <li>搜索框按标题 / 描述 / 标签实时过滤；无命中列显示「无命中任务」，归档命中自动展开并显示命中数，清空搜索恢复原展开状态。</li>
+        <li>页头「新建任务」打开富创建弹窗（标题 / 描述 / 优先级 / 截止日期 / 标签），空标题创建时显示红字提示；取消或 Esc 不插入。</li>
+        <li>「逾期」chip 切换逾期高亮。</li>
+      </ul>
+    </section>
+
+    <section class="spec-section">
+      <h3>色值</h3>
+      <div class="swatches">
+        <span class="swatch"><i style="background:#36D399"></i><code>#36D399</code></span>
+        <span class="swatch"><i style="background:#E6FBF2"></i><code>#E6FBF2</code></span>
+        <span class="swatch"><i style="background:#FAFAF9"></i><code>#FAFAF9</code></span>
+        <span class="swatch"><i style="background:#FFFFFF"></i><code>#FFFFFF</code></span>
+        <span class="swatch"><i style="background:#E5E7EB"></i><code>#E5E7EB</code></span>
+        <span class="swatch"><i style="background:#1F2937"></i><code>#1F2937</code></span>
+        <span class="swatch"><i style="background:#EF4444"></i><code>高 #EF4444</code></span>
+        <span class="swatch"><i style="background:#F59E0B"></i><code>中 #F59E0B</code></span>
+        <span class="swatch"><i style="background:#36D399"></i><code>低 #36D399</code></span>
+        <span class="swatch"><i style="background:#D97757"></i><code>待办 #D97757</code></span>
+        <span class="swatch"><i style="background:#C29243"></i><code>进行 #C29243</code></span>
+        <span class="swatch"><i style="background:#788C5D"></i><code>完成 #788C5D</code></span>
+        <span class="swatch"><i style="background:#9A948A"></i><code>归档 #9A948A</code></span>
+      </div>
+    </section>
+
+    <p class="spec-note">1000 / 1600 按钮模拟的是窗口总宽（含 208px 侧边栏与左右 40px 页边距）；视口不足时按可用宽缩放，实际 contentW 与列宽以页头读数为准。本页为设计验证原型，数据不落库。</p>
+  </div>
+</aside>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<!-- ================= Create task dialog ================= -->
+<dialog class="create-dialog" id="createDialog" aria-labelledby="createDialogTitle">
+  <div class="create-card">
+    <form id="createForm" novalidate>
+      <div class="create-head">
+        <div>
+          <h2 class="create-title" id="createDialogTitle">新建任务</h2>
+          <p class="create-sub">填写任务信息</p>
+        </div>
+        <button class="icon-btn" id="createClose" type="button" aria-label="关闭新建任务">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18"/></svg>
+        </button>
+      </div>
+
+      <div class="create-body">
+        <label class="field">
+          <span>标题</span>
+          <input id="createTitle" name="title" type="text" maxlength="60" autocomplete="off" placeholder="任务标题，回车直接创建">
+          <p class="field-error" id="createTitleError" role="alert" hidden>请输入任务标题</p>
+        </label>
+
+        <label class="field">
+          <span>描述 <em>可选</em></span>
+          <textarea id="createDesc" name="desc" rows="2" maxlength="200" placeholder="补充说明…"></textarea>
+        </label>
+
+        <div class="create-grid">
+          <div class="field">
+            <span>优先级</span>
+            <div class="seg-options" role="group" aria-label="优先级">
+              <button class="seg-option" type="button" data-priority="none"><i class="seg-dot none" aria-hidden="true"></i>无</button>
+              <button class="seg-option" type="button" data-priority="low"><i class="seg-dot low" aria-hidden="true"></i>低</button>
+              <button class="seg-option is-active" type="button" data-priority="mid" aria-pressed="true"><i class="seg-dot mid" aria-hidden="true"></i>中</button>
+              <button class="seg-option" type="button" data-priority="high"><i class="seg-dot high" aria-hidden="true"></i>高</button>
+            </div>
+            <input type="hidden" id="createPriority" value="mid">
+          </div>
+
+          <div class="field">
+            <span>截止日期</span>
+            <div class="seg-options" role="group" aria-label="截止日期">
+              <button class="seg-option is-active" type="button" data-due="today" aria-pressed="true">今天</button>
+              <button class="seg-option" type="button" data-due="tomorrow">明天</button>
+              <button class="seg-option" type="button" data-due="custom">选择…</button>
+            </div>
+            <input type="hidden" id="createDue" value="today">
+            <div class="date-field" id="createDateField" hidden>
+              <input type="date" id="createDate" aria-label="选择截止日期">
+            </div>
+          </div>
+        </div>
+
+        <div class="field">
+          <span>标签 <em>可选</em></span>
+          <div class="tag-editor" id="tagEditor">
+            <div class="tag-list" id="tagList"></div>
+            <input id="createTagInput" type="text" maxlength="12" autocomplete="off" placeholder="+ 添加标签，回车添加" aria-label="添加标签">
+          </div>
+        </div>
+
+        <div class="create-hints">
+          <span>将创建在「待办」列</span>
+          <span class="hint-sep">·</span>
+          <span>创建后可在详情里继续编辑</span>
+        </div>
+      </div>
+
+      <div class="create-foot">
+        <button class="btn-ghost" id="createCancel" type="button">取消</button>
+        <button class="btn-primary" type="submit">创建</button>
+      </div>
+    </form>
+  </div>
+</dialog>
+
+<script>
+(() => {
+  'use strict';
+
+  const GAP = 16;
+  const COLLAPSED_RATIO = 0.25;
+  const MAX_ARCHIVE_RENDER = 20;
+
+  const board = document.getElementById('board');
+  const appWindow = document.getElementById('appWindow');
+  const archiveSlot = document.getElementById('archiveSlot');
+  const archivePanel = document.getElementById('archivePanel');
+  const archiveInner = document.getElementById('archiveInner');
+  const archiveCompact = document.getElementById('archiveCompact');
+  const compactCount = document.getElementById('compactCount');
+  const collapseBtn = document.getElementById('collapseBtn');
+  const archiveLimit = document.getElementById('archiveLimit');
+
+  const statePill = document.getElementById('statePill');
+  const mExpandedW = document.getElementById('mExpandedW');
+  const mCollapsedArchiveW = document.getElementById('mCollapsedArchiveW');
+  const mCols = document.getElementById('mCols');
+  const mAvail = document.getElementById('mAvail');
+
+  const overdueChip = document.getElementById('overdueChip');
+  const overdueCountEl = document.getElementById('overdueCount');
+  const newTaskBtn = document.getElementById('newTaskBtn');
+  const toastEl = document.getElementById('toast');
+  const searchInput = document.getElementById('taskSearch');
+
+  const specFab = document.getElementById('specFab');
+  const specPanel = document.getElementById('specPanel');
+  const specClose = document.getElementById('specClose');
+
+  const createDialog = document.getElementById('createDialog');
+  const createForm = document.getElementById('createForm');
+  const createTitle = document.getElementById('createTitle');
+  const createDesc = document.getElementById('createDesc');
+  const createPriority = document.getElementById('createPriority');
+  const createDue = document.getElementById('createDue');
+  const createDate = document.getElementById('createDate');
+  const createDateField = document.getElementById('createDateField');
+  const createTitleError = document.getElementById('createTitleError');
+  const createTagInput = document.getElementById('createTagInput');
+  const tagList = document.getElementById('tagList');
+  const tagEditor = document.getElementById('tagEditor');
+  const createClose = document.getElementById('createClose');
+  const createCancel = document.getElementById('createCancel');
+  const priorityOptions = Array.from(document.querySelectorAll('.seg-option[data-priority]'));
+  const dueOptions = Array.from(document.querySelectorAll('.seg-option[data-due]'));
+
+  const cardAreas = {
+    todo: document.querySelector('[data-cards-for="todo"]'),
+    doing: document.querySelector('[data-cards-for="doing"]'),
+    done: document.querySelector('[data-cards-for="done"]'),
+    archived: document.querySelector('[data-cards-for="archived"]')
+  };
+  const countEls = {
+    todo: document.querySelector('[data-count-for="todo"]'),
+    doing: document.querySelector('[data-count-for="doing"]'),
+    done: document.querySelector('[data-count-for="done"]'),
+    archived: document.querySelector('[data-count-for="archived"]')
+  };
+  const columnEls = {
+    todo: document.querySelector('.column[data-col="todo"]'),
+    doing: document.querySelector('.column[data-col="doing"]'),
+    done: document.querySelector('.column[data-col="done"]')
+  };
+  const widthButtons = Array.from(document.querySelectorAll('.seg-btn'));
+  const COL_LABEL = { todo: '待办', doing: '进行中', done: '已完成', archived: '已归档' };
+  const PRIORITY_CLASS = { none: 'p-none', low: 'p-low', mid: 'p-mid', high: 'p-high' };
+  const PRIORITY_LABEL = { none: '无', low: '低', mid: '中', high: '高' };
+
+  let archiveOpen = false;
+  let currentWidthPreset = 1600;
+  let booted = false;
+  let animTimer = null;
+  let measureRaf = 0;
+  let toastTimer = null;
+
+  let searchActive = false;
+  let searchQuery = '';
+  let archiveBeforeSearch = false;
+  let searchAutoExpanded = false;
+
+  let draggedCard = null;
+  let stripHoverTimer = null;
+  let autoCollapseTimer = null;
+  let autoExpanded = false;
+  let archivedDuringDrag = false;
+  let currentDropTarget = null;
+
+  let createTags = [];
+
+  /* ---------- small helpers ---------- */
+
+  const fmt = (n) => {
+    if (!Number.isFinite(n)) return '—';
+    const r = Math.round(n * 10) / 10;
+    return Number.isInteger(r) ? String(r) : r.toFixed(1);
+  };
+
+  const todayLabel = () => {
+    const d = new Date();
+    return String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  };
+
+  const isoFromDate = (d) => {
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  };
+
+  const tomorrowISO = () => {
+    const d = new Date();
+    d.setDate(d.getDate() + 1);
+    return isoFromDate(d);
+  };
+
+  const mmddFromISO = (iso) => {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || '');
+    return m ? m[2] + '-' + m[3] : todayLabel();
+  };
+
+  const cardSearchText = (card) => {
+    const parts = [];
+    const title = card.querySelector('.card-title');
+    const desc = card.querySelector('.card-desc');
+    if (title) parts.push(title.textContent);
+    if (desc) parts.push(desc.textContent);
+    card.querySelectorAll('.tag').forEach((tag) => parts.push(tag.textContent));
+    return parts.join(' ').toLowerCase();
+  };
+
+  const matchCount = (area) => {
+    return Array.from(area.querySelectorAll(':scope > .card'))
+      .filter((card) => !card.classList.contains('search-hidden')).length;
+  };
+
+  const cardTitle = (card) => {
+    const el = card && card.querySelector('.card-title');
+    return el ? el.textContent.trim() : '任务';
+  };
+
+  const toast = (message) => {
+    toastEl.textContent = message;
+    toastEl.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => toastEl.classList.remove('show'), 2200);
+  };
+
+  /* ---------- layout ---------- */
+
+  const setWindowWidth = (w) => {
+    currentWidthPreset = w;
+    const maxW = Math.max(320, window.innerWidth - 32);
+    appWindow.style.width = Math.min(w, maxW) + 'px';
+    for (const btn of widthButtons) {
+      const on = Number(btn.dataset.width) === w;
+      btn.classList.toggle('is-active', on);
+      btn.setAttribute('aria-pressed', String(on));
+    }
+  };
+
+  const computeLayout = () => {
+    const contentW = board.clientWidth;
+    if (!contentW) return;
+    const expandedW = Math.max(0, (contentW - GAP * 3) / 4);
+    const collapsedArchiveW = expandedW * COLLAPSED_RATIO;
+    const collapsedColW = Math.max(0, (contentW - GAP * 3 - collapsedArchiveW) / 3);
+    const colW = archiveOpen ? expandedW : collapsedColW;
+    const archiveW = archiveOpen ? expandedW : collapsedArchiveW;
+    board.style.setProperty('--col-w', colW + 'px');
+    board.style.setProperty('--archive-w', archiveW + 'px');
+  };
+
+  const updateStatePill = () => {
+    statePill.textContent = archiveOpen ? '展开' : '折叠';
+    statePill.classList.toggle('is-open', archiveOpen);
+  };
+
+  const updateReadout = () => {
+    const contentW = board.clientWidth;
+    const expandedW = (contentW - GAP * 3) / 4;
+    const collapsedArchiveW = expandedW * COLLAPSED_RATIO;
+    const currentColW = columnEls.todo ? columnEls.todo.getBoundingClientRect().width : 0;
+    mExpandedW.textContent = fmt(expandedW);
+    mCollapsedArchiveW.textContent = fmt(collapsedArchiveW);
+    mCols.textContent = fmt(currentColW);
+    mAvail.textContent = fmt(contentW);
+  };
+
+  const startMeasure = (duration) => {
+    cancelAnimationFrame(measureRaf);
+    const t0 = performance.now();
+    const tick = (now) => {
+      updateReadout();
+      if (now - t0 < duration + 80) {
+        measureRaf = requestAnimationFrame(tick);
+      } else {
+        updateReadout();
+      }
+    };
+    measureRaf = requestAnimationFrame(tick);
+  };
+
+  /* ---------- archive open / close ---------- */
+
+  const setArchive = (open, options = {}) => {
+    if (open === archiveOpen) return;
+    const focus = !!options.focus;
+    archiveOpen = open;
+
+    clearTimeout(autoCollapseTimer);
+    autoCollapseTimer = null;
+    clearTimeout(stripHoverTimer);
+    stripHoverTimer = null;
+    archivePanel.classList.remove('drag-over');
+    if (!open) autoExpanded = false;
+
+    board.dataset.anim = open ? 'expand' : 'collapse';
+    void board.offsetWidth;
+    board.dataset.archive = open ? 'expanded' : 'collapsed';
+    archiveCompact.setAttribute('aria-expanded', String(open));
+    archiveInner.setAttribute('aria-hidden', String(!open));
+    updateStatePill();
+    computeLayout();
+    updateReadout();
+    startMeasure(open ? 240 : 200);
+
+    clearTimeout(animTimer);
+    animTimer = setTimeout(() => {
+      board.removeAttribute('data-anim');
+      updateReadout();
+    }, open ? 300 : 250);
+
+    if (focus) {
+      if (open) {
+        setTimeout(() => {
+          if (archiveOpen) collapseBtn.focus({ preventScroll: true });
+        }, 140);
+      } else {
+        setTimeout(() => {
+          if (!archiveOpen) archiveCompact.focus({ preventScroll: true });
+        }, 320);
+      }
+    }
+  };
+
+  const openArchive = (options = {}) => setArchive(true, options);
+
+  const closeArchive = (options = {}) => {
+    if (!archiveOpen) return;
+    const active = document.activeElement;
+    const returnFocus = !!options.focus || archivePanel.contains(active) || active === collapseBtn;
+    setArchive(false, { focus: returnFocus });
+  };
+
+  /* ---------- counts / limits / overdue ---------- */
+
+  const cardCount = (area) => area.querySelectorAll(':scope > .card').length;
+
+  const updateArchiveLimit = (total) => {
+    const cards = Array.from(cardAreas.archived.querySelectorAll(':scope > .card'));
+    cards.forEach((card, index) => {
+      card.classList.toggle('is-beyond-limit', index >= MAX_ARCHIVE_RENDER);
+    });
+    if (total > MAX_ARCHIVE_RENDER) {
+      archiveLimit.hidden = false;
+      archiveLimit.textContent = '仅展示最近 ' + MAX_ARCHIVE_RENDER + ' 张；另有 ' + (total - MAX_ARCHIVE_RENDER) + ' 张较早归档未展示。';
+    } else {
+      archiveLimit.hidden = true;
+    }
+  };
+
+  const updateOverdue = () => {
+    const n = board.querySelectorAll('.card.is-overdue:not(.archived)').length;
+    overdueCountEl.textContent = n;
+    overdueChip.disabled = n === 0;
+    overdueChip.title = n === 0 ? '暂无逾期任务' : '高亮逾期任务';
+    if (n === 0) {
+      board.classList.remove('focus-overdue');
+      overdueChip.setAttribute('aria-pressed', 'false');
+    }
+  };
+
+  const updateCounts = () => {
+    const totals = { todo: 0, doing: 0, done: 0, archived: 0 };
+    const shown = { todo: 0, doing: 0, done: 0, archived: 0 };
+    for (const key of Object.keys(cardAreas)) {
+      const area = cardAreas[key];
+      const total = cardCount(area);
+      const visible = searchActive ? matchCount(area) : total;
+      totals[key] = total;
+      shown[key] = visible;
+      area.classList.toggle('is-empty', total === 0);
+      area.classList.toggle('is-search', searchActive);
+      area.classList.toggle('is-search-empty', searchActive && visible === 0);
+      if (countEls[key]) countEls[key].textContent = visible;
+    }
+    compactCount.textContent = shown.archived;
+    archiveCompact.setAttribute(
+      'aria-label',
+      searchActive
+        ? '展开已归档列，搜索命中 ' + shown.archived + ' 项'
+        : '展开已归档列，共 ' + shown.archived + ' 项'
+    );
+    updateArchiveLimit(totals.archived);
+    updateOverdue();
+  };
+
+  /* ---------- search ---------- */
+
+  const clearSearchFilters = () => {
+    for (const key of Object.keys(cardAreas)) {
+      const area = cardAreas[key];
+      area.querySelectorAll(':scope > .card').forEach((card) => card.classList.remove('search-hidden'));
+      area.classList.remove('is-search', 'is-search-empty');
+    }
+  };
+
+  const applySearch = () => {
+    const query = searchInput.value.trim().toLowerCase();
+    if (!query) {
+      if (searchActive) {
+        clearSearch();
+      } else {
+        clearSearchFilters();
+        updateCounts();
+      }
+      return;
+    }
+
+    if (!searchActive) {
+      searchActive = true;
+      searchQuery = query;
+      archiveBeforeSearch = archiveOpen;
+      searchAutoExpanded = archiveOpen;
+    }
+    searchQuery = query;
+
+    for (const key of Object.keys(cardAreas)) {
+      cardAreas[key].querySelectorAll(':scope > .card').forEach((card) => {
+        card.classList.toggle('search-hidden', !cardSearchText(card).includes(query));
+      });
+    }
+
+    updateCounts();
+
+    const archivedMatches = matchCount(cardAreas.archived);
+    if (archivedMatches > 0 && !archiveOpen && !searchAutoExpanded) {
+      searchAutoExpanded = true;
+      openArchive({ focus: false });
+    }
+  };
+
+  const clearSearch = () => {
+    searchInput.value = '';
+    if (!searchActive) {
+      clearSearchFilters();
+      updateCounts();
+      return;
+    }
+    const restoreArchive = archiveBeforeSearch;
+    searchActive = false;
+    searchQuery = '';
+    searchAutoExpanded = false;
+    archiveBeforeSearch = false;
+    clearSearchFilters();
+    updateCounts();
+    if (archiveOpen !== restoreArchive) {
+      setArchive(restoreArchive, { focus: false });
+    }
+  };
+
+  searchInput.addEventListener('input', applySearch);
+  searchInput.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && searchInput.value) {
+      event.preventDefault();
+      event.stopPropagation();
+      clearSearch();
+    }
+  });
+
+  /* ---------- card movement ---------- */
+
+  const archiveCard = (card) => {
+    if (!card || card.classList.contains('archived')) return false;
+    card.classList.remove('dragging');
+    card.classList.add('archived');
+
+    if (!card.querySelector('.archive-chip')) {
+      let foot = card.querySelector('.card-foot');
+      if (!foot) {
+        foot = document.createElement('div');
+        foot.className = 'card-foot';
+        card.appendChild(foot);
+      }
+      const chip = document.createElement('span');
+      chip.className = 'archive-chip';
+      chip.textContent = todayLabel() + ' 归档';
+      foot.appendChild(chip);
+    }
+
+    cardAreas.archived.prepend(card);
+    updateCounts();
+    toast('已归档「' + cardTitle(card) + '」');
+    return true;
+  };
+
+  const restoreCard = (card, targetKey) => {
+    if (!card || !card.classList.contains('archived') || !cardAreas[targetKey]) return false;
+    card.classList.remove('archived');
+    card.classList.remove('dragging');
+    const chip = card.querySelector('.archive-chip');
+    if (chip) chip.remove();
+    cardAreas[targetKey].prepend(card);
+    updateCounts();
+    toast('已恢复到「' + COL_LABEL[targetKey] + '」');
+    return true;
+  };
+
+  const moveCard = (card, targetKey) => {
+    if (!card || !cardAreas[targetKey]) return false;
+    if (card.classList.contains('archived')) return restoreCard(card, targetKey);
+    const area = card.closest('[data-cards-for]');
+    const sourceKey = area ? area.dataset.cardsFor : null;
+    if (!sourceKey || sourceKey === targetKey) return false;
+    card.classList.remove('dragging');
+    cardAreas[targetKey].prepend(card);
+    updateCounts();
+    toast('已移至「' + COL_LABEL[targetKey] + '」');
+    return true;
+  };
+
+  const createCard = ({ title, desc, priority = 'mid', tags = [], due = null }) => {
+    const priorityKey = PRIORITY_CLASS[priority] ? priority : 'mid';
+    const priorityLabel = PRIORITY_LABEL[priorityKey];
+    const card = document.createElement('article');
+    card.className = 'card ' + PRIORITY_CLASS[priorityKey];
+    card.draggable = true;
+    card.dataset.id = 'task-' + Date.now() + '-' + Math.random().toString(36).slice(2, 7);
+    card.setAttribute('aria-label', priorityLabel + '优先级：' + title + (due && due.label ? '，截止' + due.label : ''));
+
+    const sr = document.createElement('span');
+    sr.className = 'sr-only';
+    sr.textContent = priorityLabel + '优先级';
+
+    const h = document.createElement('h3');
+    h.className = 'card-title';
+    h.textContent = title;
+
+    const p = document.createElement('p');
+    p.className = 'card-desc';
+    p.textContent = desc || '暂无描述';
+
+    const foot = document.createElement('div');
+    foot.className = 'card-foot';
+
+    for (const tagText of Array.isArray(tags) ? tags : []) {
+      if (!tagText) continue;
+      const tagEl = document.createElement('span');
+      tagEl.className = 'tag';
+      tagEl.textContent = tagText;
+      foot.appendChild(tagEl);
+    }
+
+    if (due && due.label) {
+      const dueEl = document.createElement('span');
+      dueEl.className = 'due-chip normal';
+      dueEl.textContent = due.label;
+      foot.appendChild(dueEl);
+    }
+
+    card.append(sr, h, p, foot);
+    return card;
+  };
+
+  /* ---------- long-list demo seed (#7：60 / 8 / 6 / 20) ---------- */
+
+  const seedDemoCards = () => {
+    for (const area of Object.values(cardAreas)) {
+      area.querySelectorAll(':scope > .card').forEach((card) => card.remove());
+    }
+
+    const insertCard = (area, card) => {
+      const hint = area.querySelector('.empty-hint');
+      if (hint) area.insertBefore(card, hint);
+      else area.appendChild(card);
+    };
+    const priorities = ['high', 'mid', 'low', 'mid'];
+    const tags = ['设计', '前端', '后端', '文档', '测试', '发布', '性能', '兼容性'];
+    const pick = (list, i) => list[(i - 1) % list.length];
+
+    for (let i = 1; i <= 60; i += 1) {
+      const card = createCard({
+        title: '待办示例任务 ' + i,
+        desc: '长列表示例卡 #' + i + '，用于验证列内独立滚动与归档动画。',
+        priority: pick(priorities, i),
+        tags: [pick(tags, i)]
+      });
+      if (i === 1) {
+        card.classList.add('is-overdue');
+        const due = document.createElement('span');
+        due.className = 'due-chip';
+        due.textContent = '逾期 · 10-20';
+        card.querySelector('.card-foot').appendChild(due);
+      }
+      insertCard(cardAreas.todo, card);
+    }
+
+    for (let i = 1; i <= 8; i += 1) {
+      const card = createCard({
+        title: '进行中示例任务 ' + i,
+        desc: '进行中列示例 #' + i + '，保持独立滚动。',
+        priority: pick(priorities, i + 1),
+        tags: [pick(tags, i + 1)]
+      });
+      if (i === 1) {
+        card.classList.add('is-overdue');
+        const due = document.createElement('span');
+        due.className = 'due-chip';
+        due.textContent = '逾期 · 10-19';
+        card.querySelector('.card-foot').appendChild(due);
+      }
+      insertCard(cardAreas.doing, card);
+    }
+
+    for (let i = 1; i <= 6; i += 1) {
+      const card = createCard({
+        title: '已完成示例任务 ' + i,
+        desc: '已完成列示例 #' + i + '。',
+        priority: pick(priorities, i + 2),
+        tags: [pick(tags, i + 2)]
+      });
+      insertCard(cardAreas.done, card);
+    }
+
+    for (let i = 1; i <= 20; i += 1) {
+      const card = createCard({
+        title: '已归档示例任务 ' + i,
+        desc: '归档列示例 #' + i + '，展开后可滚动查看。',
+        priority: pick(priorities, i),
+        tags: [pick(tags, i)]
+      });
+      card.classList.add('archived');
+      const chip = document.createElement('span');
+      chip.className = 'archive-chip';
+      chip.textContent = '10-' + String(22 - i).padStart(2, '0') + ' 归档';
+      card.querySelector('.card-foot').appendChild(chip);
+      insertCard(cardAreas.archived, card);
+    }
+  };
+
+  /* ---------- drag & drop ---------- */
+
+  const setDropTarget = (el) => {
+    if (currentDropTarget === el) return;
+    if (currentDropTarget) currentDropTarget.classList.remove('is-drop-target');
+    currentDropTarget = el;
+    if (el) el.classList.add('is-drop-target');
+  };
+
+  const clearDragUI = () => {
+    archivePanel.classList.remove('drag-over');
+    setDropTarget(null);
+    clearTimeout(stripHoverTimer);
+    stripHoverTimer = null;
+  };
+
+  const cancelAutoCollapse = () => {
+    clearTimeout(autoCollapseTimer);
+    autoCollapseTimer = null;
+  };
+
+  const scheduleAutoCollapse = () => {
+    if (!autoExpanded) return;
+    clearTimeout(autoCollapseTimer);
+    autoCollapseTimer = setTimeout(() => {
+      autoCollapseTimer = null;
+      if (archiveOpen) closeArchive();
+      autoExpanded = false;
+    }, 200);
+  };
+
+  const finishDrag = () => {
+    if (draggedCard) draggedCard.classList.remove('dragging');
+    draggedCard = null;
+    clearDragUI();
+    if (autoExpanded && !archivedDuringDrag) {
+      scheduleAutoCollapse();
+    } else {
+      cancelAutoCollapse();
+      autoExpanded = false;
+    }
+    archivedDuringDrag = false;
+  };
+
+  board.addEventListener('dragstart', (event) => {
+    const card = event.target.closest('.card');
+    if (!card) return;
+    draggedCard = card;
+    archivedDuringDrag = false;
+    autoExpanded = false;
+    cancelAutoCollapse();
+    clearDragUI();
+    card.classList.add('dragging');
+    try {
+      event.dataTransfer.effectAllowed = 'move';
+      event.dataTransfer.setData('text/plain', card.dataset.id || 'card');
+    } catch (err) { /* synthetic drag may not expose DataTransfer */ }
+  });
+
+  board.addEventListener('dragend', finishDrag);
+
+  board.addEventListener('dragover', (event) => {
+    if (!draggedCard) return;
+
+    const archiveHit = event.target.closest('#archivePanel');
+    if (archiveHit && !archiveOpen) {
+      event.preventDefault();
+      try { event.dataTransfer.dropEffect = 'move'; } catch (err) {}
+      archivePanel.classList.add('drag-over');
+      setDropTarget(null);
+      cancelAutoCollapse();
+      if (!stripHoverTimer) {
+        stripHoverTimer = setTimeout(() => {
+          stripHoverTimer = null;
+          if (draggedCard && !archiveOpen) {
+            autoExpanded = true;
+            openArchive({ focus: false });
+          }
+        }, 300);
+      }
+      return;
+    }
+
+    archivePanel.classList.remove('drag-over');
+    clearTimeout(stripHoverTimer);
+    stripHoverTimer = null;
+
+    if (archiveHit) {
+      event.preventDefault();
+      try { event.dataTransfer.dropEffect = 'move'; } catch (err) {}
+      setDropTarget(archivePanel);
+      cancelAutoCollapse();
+      return;
+    }
+
+    const colHit = event.target.closest('.column[data-col]');
+    if (colHit && colHit.dataset.col !== 'archived') {
+      event.preventDefault();
+      try { event.dataTransfer.dropEffect = 'move'; } catch (err) {}
+      setDropTarget(colHit);
+      return;
+    }
+
+    setDropTarget(null);
+  });
+
+  archiveSlot.addEventListener('dragleave', (event) => {
+    if (!draggedCard) return;
+    if (archiveSlot.contains(event.relatedTarget)) return;
+    clearTimeout(stripHoverTimer);
+    stripHoverTimer = null;
+    archivePanel.classList.remove('drag-over');
+    if (currentDropTarget === archivePanel) setDropTarget(null);
+    if (autoExpanded) scheduleAutoCollapse();
+  });
+
+  board.addEventListener('drop', (event) => {
+    if (!draggedCard) return;
+
+    const archiveHit = event.target.closest('#archivePanel');
+    const colHit = event.target.closest('.column[data-col]');
+    let handled = false;
+
+    if (archiveHit) {
+      event.preventDefault();
+      handled = archiveCard(draggedCard);
+      if (handled) {
+        archivedDuringDrag = true;
+        autoExpanded = false;
+        cancelAutoCollapse();
+      }
+    } else if (colHit && colHit.dataset.col !== 'archived') {
+      event.preventDefault();
+      handled = moveCard(draggedCard, colHit.dataset.col);
+    }
+
+    if (handled) clearDragUI();
+  });
+
+  /* ---------- archive keyboard / buttons ---------- */
+
+  archiveCompact.addEventListener('click', () => {
+    if (!archiveOpen) openArchive({ focus: true });
+  });
+
+  archiveCompact.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' || event.key === ' ' || event.key === 'Spacebar') {
+      event.preventDefault();
+      if (!archiveOpen) openArchive({ focus: true });
+    }
+  });
+
+  collapseBtn.addEventListener('click', () => closeArchive({ focus: true }));
+
+  collapseBtn.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' || event.key === ' ' || event.key === 'Spacebar') {
+      event.preventDefault();
+      if (archiveOpen) closeArchive({ focus: true });
+    }
+  });
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape') return;
+    if (createDialog.open) return;
+    if (specPanel.classList.contains('open')) {
+      setSpec(false);
+      return;
+    }
+    if (archiveOpen) {
+      event.preventDefault();
+      closeArchive({ focus: true });
+    }
+  });
+
+  /* ---------- overdue ---------- */
+
+  overdueChip.addEventListener('click', () => {
+    const n = board.querySelectorAll('.card.is-overdue:not(.archived)').length;
+    if (!n) return;
+    const on = overdueChip.getAttribute('aria-pressed') === 'true';
+    overdueChip.setAttribute('aria-pressed', String(!on));
+    board.classList.toggle('focus-overdue', !on);
+    toast(!on ? '已高亮 ' + n + ' 个逾期任务' : '已取消逾期高亮');
+  });
+
+  /* ---------- width presets ---------- */
+
+  for (const btn of widthButtons) {
+    btn.addEventListener('click', () => {
+      setWindowWidth(Number(btn.dataset.width));
+      computeLayout();
+      updateReadout();
+    });
+  }
+
+  /* ---------- create task dialog ---------- */
+
+  const renderCreateTags = () => {
+    tagList.textContent = '';
+    for (const tag of createTags) {
+      const chip = document.createElement('span');
+      chip.className = 'tag-chip';
+      const label = document.createElement('span');
+      label.textContent = tag;
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.setAttribute('aria-label', '移除标签 ' + tag);
+      remove.textContent = '×';
+      remove.addEventListener('click', (event) => {
+        event.stopPropagation();
+        createTags = createTags.filter((item) => item !== tag);
+        renderCreateTags();
+        createTagInput.focus();
+      });
+      chip.append(label, remove);
+      tagList.appendChild(chip);
+    }
+  };
+
+  const addCreateTag = (raw) => {
+    const tag = String(raw || '').trim().slice(0, 12);
+    if (!tag) return false;
+    if (createTags.length >= 6) return false;
+    if (createTags.includes(tag)) {
+      createTagInput.value = '';
+      return false;
+    }
+    createTags.push(tag);
+    createTagInput.value = '';
+    renderCreateTags();
+    return true;
+  };
+
+  const setCreatePriority = (value) => {
+    createPriority.value = value;
+    for (const option of priorityOptions) {
+      const active = option.dataset.priority === value;
+      option.classList.toggle('is-active', active);
+      option.setAttribute('aria-pressed', String(active));
+    }
+  };
+
+  const setCreateDue = (value, openPicker) => {
+    createDue.value = value;
+    for (const option of dueOptions) {
+      const active = option.dataset.due === value;
+      option.classList.toggle('is-active', active);
+      option.setAttribute('aria-pressed', String(active));
+    }
+    const isCustom = value === 'custom';
+    createDateField.hidden = !isCustom;
+    if (isCustom) {
+      if (!createDate.value) createDate.value = isoFromDate(new Date());
+      if (openPicker) {
+        try { createDate.showPicker(); } catch (err) { createDate.focus(); }
+      }
+    }
+  };
+
+  const resetCreateForm = () => {
+    createForm.reset();
+    createTitleError.hidden = true;
+    createTitle.classList.remove('is-invalid');
+    createTags = [];
+    renderCreateTags();
+    createTagInput.value = '';
+    createDate.value = isoFromDate(new Date());
+    setCreatePriority('mid');
+    setCreateDue('today', false);
+  };
+
+  const openCreateDialog = () => {
+    resetCreateForm();
+    createDialog.showModal();
+    requestAnimationFrame(() => createTitle.focus());
+  };
+
+  const closeCreateDialog = () => {
+    if (createDialog.open) createDialog.close();
+  };
+
+  const dueValue = () => {
+    const kind = createDue.value;
+    if (kind === 'tomorrow') {
+      return { label: '明天', date: tomorrowISO() };
+    }
+    if (kind === 'custom') {
+      const value = createDate.value || isoFromDate(new Date());
+      return { label: mmddFromISO(value), date: value };
+    }
+    return { label: '今天', date: isoFromDate(new Date()) };
+  };
+
+  newTaskBtn.addEventListener('click', openCreateDialog);
+  createClose.addEventListener('click', closeCreateDialog);
+  createCancel.addEventListener('click', closeCreateDialog);
+  createDialog.addEventListener('click', (event) => {
+    if (event.target === createDialog) createDialog.close();
+  });
+  createDialog.addEventListener('close', resetCreateForm);
+
+  for (const option of priorityOptions) {
+    option.addEventListener('click', () => setCreatePriority(option.dataset.priority));
+  }
+
+  for (const option of dueOptions) {
+    option.addEventListener('click', () => {
+      const value = option.dataset.due;
+      setCreateDue(value, value === 'custom');
+    });
+  }
+
+  tagEditor.addEventListener('click', () => createTagInput.focus());
+
+  createTagInput.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      event.stopPropagation();
+      addCreateTag(createTagInput.value);
+    } else if (event.key === 'Backspace' && !createTagInput.value && createTags.length) {
+      createTags.pop();
+      renderCreateTags();
+    }
+  });
+
+  createTitle.addEventListener('input', () => {
+    createTitleError.hidden = true;
+    createTitle.classList.remove('is-invalid');
+  });
+
+  createTitle.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      createForm.requestSubmit();
+    }
+  });
+
+  createForm.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const title = createTitle.value.trim();
+    if (!title) {
+      createTitleError.hidden = false;
+      createTitle.classList.add('is-invalid');
+      createTitle.focus();
+      return;
+    }
+
+    if (createTagInput.value.trim()) addCreateTag(createTagInput.value);
+
+    const card = createCard({
+      title,
+      desc: createDesc.value.trim(),
+      priority: createPriority.value,
+      tags: createTags.slice(),
+      due: dueValue()
+    });
+
+    cardAreas.todo.prepend(card);
+    card.classList.add('card-enter');
+    setTimeout(() => card.classList.remove('card-enter'), 420);
+
+    if (searchActive) {
+      clearSearch();
+    } else {
+      updateCounts();
+    }
+
+    createDialog.close();
+    toast('已创建任务「' + title + '」');
+  });
+
+  /* ---------- design annotation ---------- */
+
+  const setSpec = (open) => {
+    specPanel.classList.toggle('open', open);
+    specPanel.setAttribute('aria-hidden', String(!open));
+    specFab.setAttribute('aria-expanded', String(open));
+  };
+
+  specFab.addEventListener('click', () => {
+    setSpec(!specPanel.classList.contains('open'));
+  });
+  specClose.addEventListener('click', () => setSpec(false));
+
+  /* ---------- sidebar feedback ---------- */
+
+  for (const item of document.querySelectorAll('.nav-item')) {
+    item.addEventListener('click', () => {
+      const page = item.dataset.page;
+      const labelEl = item.querySelector('.nav-label');
+      const label = labelEl ? labelEl.textContent : '该页面';
+      if (page === 'todo') {
+        toast('当前已在「待办」看板');
+        return;
+      }
+      toast('「' + label + '」不在本次原型范围');
+      item.classList.remove('nav-nudge');
+      void item.offsetWidth;
+      item.classList.add('nav-nudge');
+      setTimeout(() => item.classList.remove('nav-nudge'), 280);
+    });
+  }
+
+  /* ---------- resize ---------- */
+
+  window.addEventListener('resize', () => {
+    setWindowWidth(currentWidthPreset);
+    computeLayout();
+    updateReadout();
+  });
+
+  if ('ResizeObserver' in window) {
+    new ResizeObserver(() => {
+      if (!booted) return;
+      computeLayout();
+      updateReadout();
+    }).observe(board);
+  }
+
+  /* ---------- boot ---------- */
+
+  const init = () => {
+    seedDemoCards();
+    setWindowWidth(1600);
+    computeLayout();
+    updateCounts();
+    updateStatePill();
+    updateReadout();
+    booted = true;
+    requestAnimationFrame(() => {
+      computeLayout();
+      updateReadout();
+      requestAnimationFrame(() => document.body.classList.remove('boot'));
+    });
+  };
+
+  init();
+})();
+</script>
+</body>
+</html>

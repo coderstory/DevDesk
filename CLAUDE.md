@@ -243,12 +243,18 @@ main → 7 个 Router 页面 (home / markdown / todo / claude_proxy / agent / se
 
 ## 🚦 当前状态
 
+> **当前权威台账与规则（UAT6.2）**：
+> - 权威台账 = `docs/superpowers/plans/2026-10-21-UAT62-整改清单.md`
+> - 波次/时限规则 = `docs/superpowers/plans/2026-10-23-UAT62-收敛执行计划.md`
+> - Todo 契约 = `docs/superpowers/plans/2026-10-23-UAT62-H20-Todo四列固定与归档折叠设计.md`
+
 > **测试与 CI 状态以实际运行输出和 `.github/workflows/ci.yml` 为准**，不在文档写死数字。
 
 - **CI**：双平台（macOS xcode-27 / Windows windows-2025），`push dev` / `PR → dev·master` 触发，跑 `scripts/build-test-run.sh --release --no-run`
 - **已知欠账与架构债**：已归档到 `docs/strategy/03-软件架构能力清单.md` 第 6 节
 - **近期交付**：见 `git log`
 - **跨仓库耦合**：DevDesk 硬依赖 EUI-NEO HEAD（不锁版本）；推 DevDesk 前若用了 EUI-NEO 新 API 必须先推 EUI-NEO fork（`origin` 永不 push）；`DEVDESK_EUI_NEO_MIN_REV` 只是软警告下限
+  - CI/release 固定 EUI-NEO pin = 64cf1ac054b82dfa92f5d0bdc3f3e514e19e90fc（本机开发可领先，出包前以 pin 为准）
 
 ## 📦 安装程序（2026-09-28）
 
