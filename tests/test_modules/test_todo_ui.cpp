@@ -2041,12 +2041,13 @@ REGISTER_TEST(todo_ui_drag_follow_ghost,
     DOCTEST_CHECK(ghost->zIndex > 0);       // z 压过看板子树（列滚动条 z+1）
     // 坑二：半透（< 1）——目标列插入位占位条能从副本底下透出，不整块吃掉
     DOCTEST_CHECK(ghost->opacity < 1.0f);
-    // 副本底色 = surface（白底，D批后拖拽副本同款白底+色条卡风，不再整卡涂色）
+    // 副本底色 = 优先级浅染（H16：与真卡同款，本测试任务 High → error 0.12 浅染）
     {
         const auto* ghostBg = ui.find("todo.dragghost.bg");
         DOCTEST_REQUIRE(ghostBg != nullptr);
         const auto& t = core::theme::current();
-        DOCTEST_CHECK(colorNear(ghostBg->color, t.colors.surface));
+        DOCTEST_CHECK(colorNear(ghostBg->color,
+                                eui::mixColor(t.colors.surface, t.colors.error, 0.12f)));
     }
     // 跟手期间源列原卡照旧半透明 + 源列调暗（门控关系未反：被调暗的是原卡
     // 与源列，副本全亮跟手）
@@ -3339,12 +3340,12 @@ REGISTER_TEST(todo_ui_feature_pure_helpers,
     return true;
 })
 
-// 优先级直接改卡底色（不加色块 pill）
-// 回退任一条即红：把 .prio 色块画回来 → 元素存在断言红；把卡底算式换回
-// 旧 surface 底 → 「无 vs 高 背景色不同」与 tint 取值断言红；把 hover 态
-// 换回中性 token → 三态叠加断言红；调低/调高对比度 → ≥4.5:1 断言红。
+// H16：卡面优先级浅染（surface 底 + 优先级色 ×0.12），3px 色条保留作硬标识。
+// 回退任一条即红：把 .prio 色块画回来 → 元素存在断言红；把卡面浅染换回
+// 纯 surface 底 → 「None 纯白 vs 低/中/高浅染」取值断言红；把浅染色源换色
+// （success/warning/error 板）→ 色值断言红；调低/调高对比度 → ≥4.5:1 断言红。
 REGISTER_TEST(todo_ui_priority_card_bar,
-              "todo_ui: 优先级色条替代整卡涂色——白底+左3px色条+Sm阴影（W3-B3 S6.5）", {
+              "todo_ui: 优先级浅染卡面+左3px色条+Sm阴影（H16 覆盖 S6#5 纯白）", {
     using module::todo::Priority;
     TestEnv env;
     DOCTEST_REQUIRE(env.ready);
@@ -3366,13 +3367,21 @@ REGISTER_TEST(todo_ui_priority_card_bar,
     frame.ui.layout(1600.0f, 1000.0f);
     const auto& t = core::theme::current();
 
-    // 判据 a：四张卡背景全是白色（surface），不再按优先级整卡涂色
+    // 判据 a：卡面优先级浅染（H16 覆盖 S6#5 纯白）——None 纯白、Low/Med/High 浅染；
+    // 色源：Low=success #10B981 / Medium=warning #F59E0B / High=error #EF4444，
+    // 强度 kTodoTintAlpha=0.12。档间互异，卡底不再是纯白 surface。
+    const eui::Color kExpectFaceColor[4] = {
+        t.colors.surface,  // None 无 tint 保持纯白
+        eui::mixColor(t.colors.surface, t.colors.success, 0.12f),  // Low 祖母绿浅染
+        eui::mixColor(t.colors.surface, t.colors.warning, 0.12f),  // Medium 琥珀浅染
+        eui::mixColor(t.colors.surface, t.colors.error, 0.12f),    // High 警示红浅染
+    };
     for (int i = 0; i < 4; ++i) {
         const std::string cid = "todo.col.4.card." + std::to_string(i);
         const auto* bg = frame.ui.find(cid + ".bg");
         DOCTEST_REQUIRE(bg != nullptr);
-        // 卡底纯白
-        DOCTEST_CHECK(colorNear(bg->color, t.colors.surface));
+        // 卡面按优先级浅染
+        DOCTEST_CHECK(colorNear(bg->color, kExpectFaceColor[i]));
         // Sm 阴影已附着（shadow 字段非空 / blur > 0）
         DOCTEST_CHECK(bg->shadow.enabled);
         // 圆角 8px
@@ -3419,7 +3428,7 @@ REGISTER_TEST(todo_ui_priority_card_bar,
         }
     }
 
-    // 判据 d：选中态——点击卡后色条仍存在、底色仍白（无 selbar、无旧底色 tint 回归）
+    // 判据 d：选中态——点击卡后色条仍存在、卡面仍浅染（H16：无 selbar、无旧底色 tint 回归）
     {
         Frame f2(mod.get());
         const auto* card = f2.ui.find("todo.col.4.card.3.bg");
@@ -3432,24 +3441,31 @@ REGISTER_TEST(todo_ui_priority_card_bar,
         // 选中态边框 = 统一 1px 分割线
         DOCTEST_CHECK_EQ(selBg->border.width, 1.0f);
         DOCTEST_CHECK(colorNear(selBg->border.color, t.colors.borderDefault));
-        // 选中态底色仍白（不再走 primarySoftBg + priority tint）
-        DOCTEST_CHECK(colorNear(selBg->color, t.colors.surface));
+        // 选中态卡面仍为 High→error 浅染（不再走 primarySoftBg + priority tint）
+        DOCTEST_CHECK(colorNear(selBg->color,
+                                eui::mixColor(t.colors.surface, t.colors.error, 0.12f)));
         // 优先级色条仍在
         DOCTEST_CHECK(f3.ui.find("todo.col.4.card.3.priobar") != nullptr);
         // 旧选中左竖线已退役
         DOCTEST_CHECK(f3.ui.find("todo.col.4.card.3.selbar") == nullptr);
     }
 
-    // 判据 e：浅色主题 WCAG — 白底上文字对比度达标
+    // 判据 e：浅色主题 WCAG — 各档浅染底上文字对比度达标
     ::core::theme::setLight();
     const auto& tl = core::theme::current();
     Frame light(mod.get());
     light.ui.layout(1600.0f, 1000.0f);
+    const eui::Color kExpectFaceLight[4] = {
+        tl.colors.surface,  // None 纯白
+        eui::mixColor(tl.colors.surface, tl.colors.success, 0.12f),  // Low
+        eui::mixColor(tl.colors.surface, tl.colors.warning, 0.12f),  // Medium
+        eui::mixColor(tl.colors.surface, tl.colors.error, 0.12f),    // High
+    };
     for (int i = 0; i < 4; ++i) {
         const auto* bg = light.ui.find("todo.col.4.card." + std::to_string(i) + ".bg");
         DOCTEST_REQUIRE(bg != nullptr);
-        // 四档全白底，textPrimary 对比度 ≥ 4.5:1
-        DOCTEST_CHECK(colorNear(bg->color, tl.colors.surface));
+        // 四档浅染底（None 纯白），textPrimary 对比度 ≥ 4.5:1
+        DOCTEST_CHECK(colorNear(bg->color, kExpectFaceLight[i]));
         DOCTEST_CHECK(contrastRatio(bg->color, tl.colors.textPrimary) >= 4.5f);
     }
     ::core::theme::setDark();  // 恢复默认
