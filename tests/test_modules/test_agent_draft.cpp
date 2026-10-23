@@ -354,9 +354,6 @@ REGISTER_TEST(draft_empty_goal_only_warns,
         DOCTEST_CHECK(r.value().draft.goal.empty());
         DOCTEST_CHECK(hasWarningContaining(r.value(), "任务目标"));
         DOCTEST_CHECK(r.value().triggerFilled);   // 触发与 goal 互不牵连
-        // W4 C3：contextNote 已移除（task_draft.cpp 注释——执行记忆并入
-        // systemPrompt 单字段，不再从草稿解析）；载荷里的 contextNote 丢弃为默认空。
-        DOCTEST_CHECK(r.value().draft.contextNote.empty());
     }
     return true;
 })

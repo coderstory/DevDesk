@@ -135,8 +135,6 @@ AgentTask taskFromRow(const AgentTaskRow& row) {
     t.modelSlot = row.modelSlot;
     t.maxIterations = row.maxIterations;
     t.allowDestructive = row.allowDestructive;
-    t.contextNote = row.contextNote;
-    t.autoNote = (row.autoNote != 0);
     t.systemPrompt = row.systemPrompt;
     return t;
 }

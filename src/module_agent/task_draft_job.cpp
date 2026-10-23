@@ -125,8 +125,8 @@ void AgentModule::reapDraftJob() {
     draftPhase_ = DraftPhase::Done;
 }
 
-// 把校验过的草稿填进表单：只填模型给出的可信字段（goalFilled / triggerFilled /
-// 非空 contextNote）；触发不可信时一字不动。结果永不落库——保存仍是用户动作。
+// 把校验过的草稿填进表单：只填模型给出的可信字段（goalFilled / triggerFilled）；
+// 触发不可信时一字不动。结果永不落库——保存仍是用户动作。
 void AgentModule::applyDraftPrefill(const TaskDraftResult& res) {
     std::vector<std::string> filled;
     if (res.goalFilled && !res.draft.goal.empty()) {

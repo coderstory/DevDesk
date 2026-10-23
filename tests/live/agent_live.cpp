@@ -241,19 +241,16 @@ void report(const char* name, const std::string& evidence) {
 AgentTask makeTask(AgentStore& store, const char* name, const char* goal,
                    int maxIterations, bool allowDestructive,
                    const char* triggerType = "manual",
-                   const std::string& triggerConfig = "",
-                   const std::string& contextNote = "", int autoNote = 0) {
+                   const std::string& triggerConfig = "") {
     AgentTask t;
     auto r = store.createTask(name, goal, triggerType, "default", maxIterations,
-                              allowDestructive, triggerConfig, contextNote, autoNote);
+                              allowDestructive, triggerConfig);
     if (r.isOk()) t.id = r.value();
     t.name = name;
     t.goal = goal;
     t.maxIterations = maxIterations;
     t.allowDestructive = allowDestructive;
     t.modelSlot = "default";
-    t.contextNote = contextNote;
-    t.autoNote = autoNote != 0;
     return t;
 }
 
@@ -285,36 +282,6 @@ std::string scG2(Ctx& c) {
     if (out.status != "failed") return "status=" + out.status + " error=" + out.error;
     if (out.error.find("上游 HTTP 4") == std::string::npos) {
         return "错误信息未带 4xx 状态码: " + out.error.substr(0, 120);
-    }
-    return {};
-}
-
-// ── H context note 自动追加进 system ──
-std::string scH(Ctx& c) {
-    const char* canary = "AGENT_LIVE_CANARY_9527";
-    auto t1 = makeTask(*c.store, "live-h1", "只回复 OK，不要调用任何工具。", 3,
-                       false, "manual", "", canary, /*autoNote=*/1);
-    auto out1 = c.run(t1);
-    if (out1.status != "completed") return "autoNote=1 status=" + out1.status;
-    std::string body1;
-    {
-        std::lock_guard<std::mutex> lock(c.capture.mu);
-        body1 = c.capture.lastBody;
-    }
-    if (body1.find(canary) == std::string::npos || body1.find("\"system\"") == std::string::npos) {
-        return "autoNote=1 请求体未见 system 注入 canary";
-    }
-    auto t2 = makeTask(*c.store, "live-h2", "只回复 OK，不要调用任何工具。", 3,
-                       false, "manual", "", canary, /*autoNote=*/0);
-    auto out2 = c.run(t2);
-    if (out2.status != "completed") return "autoNote=0 status=" + out2.status;
-    std::string body2;
-    {
-        std::lock_guard<std::mutex> lock(c.capture.mu);
-        body2 = c.capture.lastBody;
-    }
-    if (body2.find(canary) != std::string::npos) {
-        return "autoNote=0 请求体不应含 canary 却出现了";
     }
     return {};
 }
@@ -845,7 +812,7 @@ int main(int argc, char** argv) {
 
         const std::vector<std::pair<const char*, ScenarioFn>> scenarios = {
             {"G1_bad_baseurl", scG1},        {"G2_bad_key_401", scG2},
-            {"H_context_note_system", scH},  {"B_single_tool", scB},
+            {"B_single_tool", scB},
             {"A1_todo_6tools", scA1},        {"A2_md_5tools", scA2},
             {"A3_claude_4tools", scA3},      {"A4_app_2tools", scA4},
             {"G3_tool_error_feedback", scG3},{"G4_destructive_denied", scG4},

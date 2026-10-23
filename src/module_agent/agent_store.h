@@ -17,8 +17,6 @@ struct AgentTaskRow {
     int maxIterations = 10;
     bool allowDestructive = false;
     bool enabled = true;
-    std::string contextNote;
-    int autoNote = 1;
     std::string systemPrompt;
 };
 struct AgentRunRow {
@@ -60,22 +58,19 @@ public:
                                const std::string& modelSlot,
                                int maxIterations, bool allowDestructive,
                                const std::string& triggerConfig = "",
-                               const std::string& contextNote = "",
-                               int autoNote = 1,
                                const std::string& systemPrompt = "");
     Result<std::vector<AgentTaskRow>> listTasks();
     Result<AgentTaskRow> getTask(int64_t id);                    // 不存在 → NotFound
     // 任务的唯一「同 task 不并发」闸：锁内查 running 再插 = 原子；已有 running → fail(AlreadyExists) 且不落行
     Result<int64_t> startRunExclusive(int64_t taskId);
     Result<int64_t> startRun(int64_t taskId);                    // INSERT status='running'
-    // 九列覆盖 + updated_at；enabled 归 setTaskEnabled（两动作互不覆盖）；id 不存在 → NotFound
+    // 八列覆盖 + updated_at；enabled 归 setTaskEnabled（两动作互不覆盖）；id 不存在 →
+    // NotFound。context_note/auto_note 停写（遗留值保留，列删除归 W6）
     Result<void> updateTask(int64_t id, const std::string& name, const std::string& goal,
                             const std::string& triggerType,
                             const std::string& triggerConfig,
                             const std::string& modelSlot, int maxIterations,
                             bool allowDestructive,
-                            const std::string& contextNote = "",
-                            int autoNote = 1,
                             const std::string& systemPrompt = "");
     Result<void> setTaskEnabled(int64_t id, bool enabled);   // 不存在 → NotFound
     // 删任务并清全部运行痕迹：单事务三条显式 DELETE（messages 按 runs 子查询 → runs →
@@ -102,9 +97,6 @@ public:
     Result<void> sweepStaleRuns();   // running → failed('应用异常退出（悬挂 run）')
     // UI 侧 version 缓存判脏（读侧 acquire load，无锁不查库；透传 db_ 的写版本号）
     uint64_t writeVersion() const { return db_.writeVersion(); }
-    // 追加文本到 context_note：锁内读-拼-裁-写单事务；超 4096 字节从头丢最旧至 UTF-8 边界；
-    // 空串 no-op；taskId 不存在 → NotFound
-    Result<void> appendContextNote(int64_t taskId, const std::string& text);
 private:
     core::data::SqliteDb& db_;
 };

@@ -182,7 +182,6 @@ constexpr float kPageHintH = 16.0f;
 // kDialogGap/kDialogLabelW/kDialogRowH 已收进 agent_ui_shared.h（与详情弹窗共用真源）
 constexpr float kTaskDialogH = 496.0f;        // UAT6 步骤条重设计：内容区 280px + 步骤条 64px + 标题/按钮/间距
 constexpr float kGoalInputH = 64.0f;          // demo 指令 textarea rows≈3
-constexpr float kContextNoteH = 56.0f;
 constexpr float kGroupTitleH = 20.0f;        // 分组标题高（14px 加粗 + 行高 20）
 
 // AI 草稿子弹窗几何（Standard 460 宽；y 均为本弹窗面板内坐标，与任务弹窗互不影响）。
@@ -661,7 +660,7 @@ void AgentModule::openNewTaskDialog() {
     editSlot_ = kModelSlotKeys[0];
     editIter_ = 10;
     editDestructive_ = false;
-    // 上下文记忆与自动记录已并入系统提示词（W4 C3 字段合并）：固定 autoNote=1、contextNote=""
+    // 上下文记忆与自动记录两字段已停读写（并入系统提示词；DB 列删除归 W6）
     // 新建时生成默认系统提示词（环境上下文：工作目录、git 分支、OS、架构）
     editSystemPrompt_ = buildDefaultSystemPrompt(
         std::filesystem::current_path().string());
@@ -924,7 +923,6 @@ void AgentModule::saveTaskDialog() {
         triggerConfig = encoded.value();
     }
     const int iter = editIter_ < 1 ? 1 : (editIter_ > 50 ? 50 : editIter_);
-    const int autoNoteInt = 1;  // W4 C3：自动记录固定开启
     // UAT5：任务名称独立输入（TaskDef.name 一一对应）；留空 = 既有行为按目标取名
     const std::string name = [&] {
         const std::string trimmed = trimCopy(editName_);
@@ -933,8 +931,7 @@ void AgentModule::saveTaskDialog() {
     if (editingTaskId_) {
         auto updated = store_->updateTask(*editingTaskId_, name, goal,
                                           triggerType, triggerConfig, editSlot_, iter,
-                                          editDestructive_, /*contextNote=*/"",
-                                          autoNoteInt, editSystemPrompt_);
+                                          editDestructive_, editSystemPrompt_);
         if (updated.isFail()) {
             editError_ = "保存失败：" + updated.errorMessage();
             LOG_ERROR("Agent: 保存任务失败: " + updated.errorMessage());
@@ -943,8 +940,7 @@ void AgentModule::saveTaskDialog() {
     } else {
         auto created = store_->createTask(name, goal, triggerType,
                                           editSlot_, iter, editDestructive_,
-                                          triggerConfig, /*contextNote=*/"",
-                                          autoNoteInt, editSystemPrompt_);
+                                          triggerConfig, editSystemPrompt_);
         if (created.isFail()) {
             editError_ = "创建失败：" + created.errorMessage();
             LOG_ERROR("Agent: 创建任务失败: " + created.errorMessage());
@@ -1010,7 +1006,6 @@ void AgentModule::testRunDialog() {
         triggerConfig = encoded.value();
     }
     const int iter = editIter_ < 1 ? 1 : (editIter_ > 50 ? 50 : editIter_);
-    const int autoNoteInt = 1;  // W4 C3：自动记录固定开启
     const std::string name = [&] {
         const std::string trimmed = trimCopy(editName_);
         return trimmed.empty() ? deriveTaskName(goal) : trimmed;
@@ -1018,8 +1013,7 @@ void AgentModule::testRunDialog() {
     // 建临时任务
     auto created = store_->createTask(name + "（试运行）", goal, triggerType,
                                       editSlot_, iter, editDestructive_,
-                                      triggerConfig, /*contextNote=*/"",
-                                      autoNoteInt, editSystemPrompt_);
+                                      triggerConfig, editSystemPrompt_);
     if (created.isFail()) {
         editError_ = "试运行失败：" + created.errorMessage();
         return;
@@ -2246,7 +2240,7 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
 // 一次 → 安全组（破坏性开关独立红组保持 spec §8 item 5）→ 底部 取消|创建/保存。
 // 只动布局不动功能：字段与 TaskDef 一一对应。弹性宽 = max(720, 窗口/2)（demo 最小档）。
 // 元素 id 契约：触发 segment 沿用 item.N（原下拉项名；可点面 .item.N.bg，
-// test 的 callDropdownChange 有 .bg 回落）；slot/iter/limit/destructive/autonote/
+// test 的 callDropdownChange 有 .bg 回落）；slot/iter/limit/destructive/
 // UAT6 步骤条重设计：顶部 4 步节点条（快递详情风）+ 每步只显示该步配置 + 底部常驻按钮
 //（取消/上一步/下一步(创建)/测试）。字段与数据模型零增删，纯布局重排。
 void AgentModule::composeTaskDialog(

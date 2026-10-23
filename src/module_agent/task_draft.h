@@ -39,7 +39,6 @@ namespace module::agent {
 
 struct TaskDraft {
     std::string goal;            // 任务指令（LLM 改写后的完整可执行指令）
-    std::string contextNote;     // 可选：长期约束
     std::string triggerType;     // manual|schedule|resident|event|daily|once
     std::string triggerConfig;   // 编码后的 JSON 字符串（由 TriggerConfig encode 而非 LLM 直出）
     std::vector<std::string> warnings;   // 给用户看的降级/提示

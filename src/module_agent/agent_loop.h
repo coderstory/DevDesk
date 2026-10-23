@@ -26,8 +26,6 @@ struct AgentTask {
     std::string modelSlot;      // "default"/"sonnet"/...（profile 槽位键名）
     int maxIterations = 10;
     bool allowDestructive = false;
-    std::string contextNote;    // 任务级执行记忆（注入 system prompt 末尾）
-    bool autoNote = false;      // run 正常结束后自动 append 最终回复到 contextNote
     std::string systemPrompt;   // 用户可编辑的系统提示词（空串 = 用 run() 内默认）
 };
 

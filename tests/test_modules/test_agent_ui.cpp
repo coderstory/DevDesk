@@ -44,7 +44,7 @@
 //          .msgs.title / .msgs.toggle（默认折叠）/ .msgs.copyfinal / .msgs.hint /
 //          .msgscroll（展开态固定区）或 .detail.scroll（余高不足整栏滚）/ .empty /
 //          .config.scroll（tab2 根）+ .config.body.<field>[.label/.value]（field ∈
-//          name/trigger/schedule/model/iterations/limit/autonote/goal/destructive/
+//          name/trigger/schedule/model/iterations/limit/goal/destructive/
 //          problem/context；problem 仅异常时渲染，error 色）——字段 id 沿用旧浮层契约 /
 //          .msg.<i>[.badge / .time / .toggle / .preview / .copy（仅展开态）/
 //          .blk.<j>[.out]] / .footer.hint / .footer.close / .footer.edit
@@ -735,9 +735,12 @@ REGISTER_TEST(agent_ui_once_edit_prefills_and_roundtrips,
     const std::string timeText = formatLocalMinute(tomorrowNoon);
     const int64_t expectedEpoch = epochOfLocal(tomorrowNoon);
     auto created = store.createTask("明天中午提醒", "明天中午提醒", "once", "sonnet",
-                                    20, true, onceConfig(expectedEpoch),
-                                    "闹钟上下文", 0);
+                                    20, true, onceConfig(expectedEpoch));
     DOCTEST_REQUIRE(created.isOk());
+    // 预埋执行记忆旧值（store 已停写两列）：UI 保存后必须原样保留
+    DOCTEST_REQUIRE(tdb.handle().exec(
+        "UPDATE agent_tasks SET context_note='闹钟上下文', auto_note=0 WHERE id=" +
+        std::to_string(created.value())).isOk());
     const std::string tid = std::to_string(created.value());
 
     module::agent::AgentModule::Deps deps;
@@ -785,9 +788,17 @@ REGISTER_TEST(agent_ui_once_edit_prefills_and_roundtrips,
     DOCTEST_CHECK_EQ(updated.value().modelSlot, std::string("sonnet"));
     DOCTEST_CHECK_EQ(updated.value().maxIterations, 20);
     DOCTEST_CHECK(updated.value().allowDestructive);
-    // W4 C3：保存固定写 contextNote=""、autoNote=1
-    DOCTEST_CHECK_EQ(updated.value().contextNote, std::string(""));
-    DOCTEST_CHECK_EQ(updated.value().autoNote, 1);
+    // 保存不写 context_note/auto_note：预埋旧值（'闹钟上下文'/0）原样保留
+    auto memCols = tdb.handle().prepare(
+        "SELECT context_note, auto_note FROM agent_tasks WHERE id=" +
+        std::to_string(created.value()));
+    DOCTEST_REQUIRE(memCols.isOk());
+    auto memRows = memCols.value().fetchAll();
+    DOCTEST_REQUIRE(memRows.isOk());
+    DOCTEST_REQUIRE_EQ(memRows.value().size(), 1u);
+    DOCTEST_CHECK_EQ(memRows.value()[0].getString("context_note").valueOr("?"),
+                     std::string("闹钟上下文"));
+    DOCTEST_CHECK_EQ(memRows.value()[0].getInt64("auto_note").valueOr(-1), 0);
 
     mod.onStop();
     return true;
@@ -1912,13 +1923,12 @@ REGISTER_TEST(agent_ui_detail_config_popover,
     core::ToolRegistry::instance().unregisterTool("app.stats");
     core::ToolRegistry::instance().unregisterTool("app.notify");
     module::agent::AgentStore store(tdb.handle());
-    // 长目标 + 长执行记忆：wrap 字段走估高，配置 tab 内容可内滚（ASCII 长串，换行判据同效）
+    // 长目标 + 长系统提示词：wrap 字段走估高，配置 tab 内容可内滚（ASCII 长串，换行判据同效）
     const std::string longGoal(400, 'z');
     const std::string longNote(400, 'n');
     auto created = store.createTask("配置任务", longGoal, "schedule", "default",
-                                    10, false, R"({"cron":"0 9 * * 1-5"})");
+                                    10, false, R"({"cron":"0 9 * * 1-5"})", longNote);
     DOCTEST_REQUIRE(created.isOk());
-    DOCTEST_REQUIRE(store.appendContextNote(created.value(), longNote).isOk());
     auto r = store.startRun(created.value());
     DOCTEST_REQUIRE(r.isOk());
     DOCTEST_REQUIRE(store.finishRun(r.value(), "completed", 1, std::nullopt,
@@ -3858,8 +3868,8 @@ REGISTER_TEST(agent_ui_page_error_no_hint_other_errors,
     return true;
 })
 
-REGISTER_TEST(agent_ui_new_task_context_note_and_autonote,
-              "agent_ui: W4 C3 新建弹窗无执行记忆/自动记录 UI；保存固定 contextNote=空 autoNote=1", {
+REGISTER_TEST(agent_ui_new_task_memory_columns_not_written,
+              "agent_ui: 新建弹窗无执行记忆/自动记录 UI；保存不写 context_note/auto_note（行取 DB 默认值）", {
     test_support::TestDb tdb("agentui", "notecreate");
     test_support::FakeProfileSource profile;
     ToolGuard statsGuard{"app.stats", "app.notify"};
@@ -3896,13 +3906,20 @@ REGISTER_TEST(agent_ui_new_task_context_note_and_autonote,
     composeTo(ui2s3, mod, kScreen, "agent_ui_note2s3");
     DOCTEST_REQUIRE(clickId(ui2s3, "agent.dialog.task.save.bg"));
 
-    // 读回：contextNote 固定空、autoNote 固定 1
+    // 读回：两列未被写入 → 取建表 DEFAULT（''/1）
     auto tasks = store.listTasks();
     DOCTEST_REQUIRE(tasks.isOk());
     DOCTEST_REQUIRE_EQ(tasks.value().size(), static_cast<size_t>(1));
-    const auto& row = tasks.value()[0];
-    DOCTEST_CHECK_EQ(row.contextNote, std::string(""));
-    DOCTEST_CHECK_EQ(row.autoNote, 1);   // 固定开启
+    auto memCols = tdb.handle().prepare(
+        "SELECT context_note, auto_note FROM agent_tasks WHERE id=" +
+        std::to_string(tasks.value()[0].id));
+    DOCTEST_REQUIRE(memCols.isOk());
+    auto memRows = memCols.value().fetchAll();
+    DOCTEST_REQUIRE(memRows.isOk());
+    DOCTEST_REQUIRE_EQ(memRows.value().size(), 1u);
+    DOCTEST_CHECK_EQ(memRows.value()[0].getString("context_note").valueOr("?"),
+                     std::string(""));
+    DOCTEST_CHECK_EQ(memRows.value()[0].getInt64("auto_note").valueOr(-1), 1);
 
     // 弹窗关闭
     eui::Ui ui4;
@@ -3913,8 +3930,8 @@ REGISTER_TEST(agent_ui_new_task_context_note_and_autonote,
     return true;
 })
 
-REGISTER_TEST(agent_ui_edit_dialog_prefills_context_note,
-              "agent_ui: W4 C3 编辑弹窗无 note/autonote UI；保存固定 contextNote=空 autoNote=1", {
+REGISTER_TEST(agent_ui_edit_dialog_memory_columns_untouched,
+              "agent_ui: 编辑弹窗无 note/autonote UI；编辑保存不改写 context_note/auto_note", {
     test_support::TestDb tdb("agentui", "noteedit");
     test_support::FakeProfileSource profile;
     ToolGuard statsGuard{"app.stats", "app.notify"};
@@ -3922,8 +3939,12 @@ REGISTER_TEST(agent_ui_edit_dialog_prefills_context_note,
     core::ToolRegistry::instance().unregisterTool("app.notify");
     module::agent::AgentStore store(tdb.handle());
     auto created = store.createTask("记忆任务", "旧目标", "manual", "default", 10,
-                                    false, "", "旧记忆内容", 1);
+                                    false);
     DOCTEST_REQUIRE(created.isOk());
+    // 预埋执行记忆旧值（store 已停写两列）：编辑保存后必须原样保留
+    DOCTEST_REQUIRE(tdb.handle().exec(
+        "UPDATE agent_tasks SET context_note='旧记忆内容', auto_note=0 WHERE id=" +
+        std::to_string(created.value())).isOk());
     const std::string tid = std::to_string(created.value());
 
     module::agent::AgentModule::Deps deps;
@@ -3946,7 +3967,7 @@ REGISTER_TEST(agent_ui_edit_dialog_prefills_context_note,
     eui::Ui ui2s2;
     DOCTEST_REQUIRE(clickId(ui2, "agent.dialog.task.step.2.bg"));
     composeTo(ui2s2, mod, kScreen, "agent_ui_noteedit2s2");
-    // W4 C3：不填 goal（仅验证 contextNote/autoNote 被保存固定值；goal 不变）
+    // 不填 goal（仅验证编辑保存不动 context_note/auto_note；goal 不变）
     eui::Ui ui2s3;
     DOCTEST_REQUIRE(clickId(ui2s2, "agent.dialog.task.step.3.bg"));
     composeTo(ui2s3, mod, kScreen, "agent_ui_noteedit2s3");
@@ -3954,17 +3975,25 @@ REGISTER_TEST(agent_ui_edit_dialog_prefills_context_note,
 
     auto updated = store.getTask(created.value());
     DOCTEST_REQUIRE(updated.isOk());
-    // W4 C3：保存固定写空 contextNote / autoNote=1，不管旧库值
-    DOCTEST_CHECK_EQ(updated.value().contextNote, std::string(""));
-    DOCTEST_CHECK_EQ(updated.value().autoNote, 1);
+    // 编辑保存不写两列：预埋旧值（'旧记忆内容'/0）原样保留
+    auto memCols = tdb.handle().prepare(
+        "SELECT context_note, auto_note FROM agent_tasks WHERE id=" +
+        std::to_string(created.value()));
+    DOCTEST_REQUIRE(memCols.isOk());
+    auto memRows = memCols.value().fetchAll();
+    DOCTEST_REQUIRE(memRows.isOk());
+    DOCTEST_REQUIRE_EQ(memRows.value().size(), 1u);
+    DOCTEST_CHECK_EQ(memRows.value()[0].getString("context_note").valueOr("?"),
+                     std::string("旧记忆内容"));
+    DOCTEST_CHECK_EQ(memRows.value()[0].getInt64("auto_note").valueOr(-1), 0);
     DOCTEST_CHECK_EQ(updated.value().goal, std::string("旧目标"));
 
     mod.onStop();
     return true;
 })
 
-REGISTER_TEST(agent_ui_dialog_geometry_context_note_within_bounds,
-              "agent_ui: 新字段（执行记忆/自动记录）不越弹窗边界 + 行底 ≤ 按钮行顶", {
+REGISTER_TEST(agent_ui_dialog_geometry_sysprompt_within_bounds,
+              "agent_ui: 步骤条弹窗内容（系统提示词等）不越弹窗边界 + 行底 ≤ 按钮行顶", {
     test_support::TestDb tdb("agentui", "notegeom");
     test_support::FakeProfileSource profile;
     ToolGuard statsGuard{"app.stats", "app.notify"};

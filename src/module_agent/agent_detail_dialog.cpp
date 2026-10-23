@@ -1263,9 +1263,6 @@ void AgentModule::composeTaskDetailDialog(
                                 std::to_string(cfgTask ? cfgTask->goal.size() : 0) +
                                 "." +
                                 std::to_string(
-                                    cfgTask ? cfgTask->contextNote.size() : 0) +
-                                "." +
-                                std::to_string(
                                     cfgTask ? cfgTask->triggerConfig.size() : 0) +
                                 "." +
                                 std::to_string(
