@@ -227,9 +227,8 @@ REGISTER_TEST(todo_ui_compose_and_context_menu,
         // 卡片渲染（迁移默认 4 列 + 新建 2 列；「右键源列」= col.4）
         DOCTEST_CHECK(frame.ui.find("todo.col.4.card.0.bg") != nullptr);
         DOCTEST_CHECK(frame.ui.find("todo.col.4.card.1.bg") != nullptr);
-        // 卡片和列头都接了右键回调
+        // 卡片接右键回调（H20 固定四列：列头右键菜单已移除）
         DOCTEST_CHECK(frame.ui.find("todo.col.4.card.0.bg")->onContextMenu != nullptr);
-        DOCTEST_CHECK(frame.ui.find("todo.col.4.head")->onContextMenu != nullptr);
 
         // 右键任务A → 菜单打开并渲染（上移/下移/移动到各列）
         eui::PointerEvent pe;
@@ -257,19 +256,7 @@ REGISTER_TEST(todo_ui_compose_and_context_menu,
         DOCTEST_CHECK_EQ(inProgress.value()[0].title, std::string("任务A"));
     }
 
-    {
-        // 右键列头 → 列管理菜单；点「重命名列」→ 弹窗出现
-        Frame frame(mod.get());
-        eui::PointerEvent pe;
-        eui::Rect rect;
-        frame.ui.find("todo.col.4.head")->onContextMenu(pe, rect);
-        frame.refresh();
-        const auto* rename = frame.ui.find("todo.ctx.level.0.item.0");
-        DOCTEST_REQUIRE(rename != nullptr);
-        rename->onClick();
-        frame.refresh();
-        DOCTEST_CHECK(frame.ui.find("todo.dialog.rename.input") != nullptr);
-    }
+    // （H20 删除）列头右键菜单/重命名入口随固定四列移除；列管理语义仅保留在 service 层。
 
     mod->onStop();
     return true;
@@ -376,92 +363,23 @@ REGISTER_TEST(todo_ui_keyboard_move,
 })
 
 REGISTER_TEST(todo_ui_column_ops_and_datepicker,
-              "todo_ui: 列左移/右移/删除 + datepicker 渲染（headless）", {
+              "todo_ui: datepicker 面板/月年滚轮渲染（固定四列，headless）", {
     TestEnv env;
     DOCTEST_REQUIRE(env.ready);
-
-    auto c1 = env.svc->createColumn("列一");
-    auto c2 = env.svc->createColumn("列二");
-    DOCTEST_REQUIRE(c1.isOk() && c2.isOk());
-    auto t = env.svc->createTask(c1.value().id, "将删列的任务");
-    DOCTEST_REQUIRE(t.isOk());
-    auto c3 = env.svc->createColumn("日期列");
-    DOCTEST_REQUIRE(c3.isOk());
-    auto tk = env.svc->createTask(c3.value().id, "带日期");
+    // H20：列左移/右移/删除入口已随固定四列移除（service 层语义由 test_todo_service 覆盖），
+    // 本用例保留 datepicker 渲染覆盖；数据直接落种子「待办」列（col.0）。
+    auto cols = env.svc->listColumns();
+    DOCTEST_REQUIRE(cols.isOk());
+    DOCTEST_REQUIRE_EQ(cols.value().size(), 4u);
+    auto tk = env.svc->createTask(cols.value()[0].id, "带日期");
     DOCTEST_REQUIRE(tk.isOk());
-    // 数据必须在模块 onStart 前就位（模块只在自身写操作后 reloadAll）
-    // 列布局：[0..3]=迁移默认列，4=列一，5=列二，6=日期列
 
     std::unique_ptr<::core::Module> mod(create_todo_module());
     mod->onStart();
 
     {
         Frame frame(mod.get());
-        eui::PointerEvent pe;
-        eui::Rect rect;
-        // 「列二」右移（下面还有「日期列」）→ 与其交换
-        frame.ui.find("todo.col.5.head")->onContextMenu(pe, rect);
-        frame.refresh();
-        const auto* shiftRight = frame.ui.find("todo.ctx.level.0.item.2");
-        DOCTEST_REQUIRE(shiftRight != nullptr);
-        shiftRight->onClick();
-        auto cols = env.svc->listColumns();
-        DOCTEST_REQUIRE(cols.isOk());
-        DOCTEST_CHECK_EQ(cols.value()[5].title, std::string("日期列"));
-        DOCTEST_CHECK_EQ(cols.value()[6].title, std::string("列二"));
-
-        // 「列二」（现在是最右 idx6）右移 → 已在最右，顺序不变
-        frame.refresh();  // 上一轮 swap 后重画，col.6 才是「列二」
-        frame.ui.find("todo.col.6.head")->onContextMenu(pe, rect);
-        frame.refresh();
-        const auto* shiftRight1 = frame.ui.find("todo.ctx.level.0.item.2");
-        DOCTEST_REQUIRE(shiftRight1 != nullptr);
-        shiftRight1->onClick();
-        cols = env.svc->listColumns();
-        DOCTEST_REQUIRE(cols.isOk());
-        DOCTEST_CHECK_EQ(cols.value()[6].title, std::string("列二"));  // 顺序不变
-    }
-
-    // 删除「列一」（idx4，含任务）：菜单 → 删除列 → 确认弹窗 → 确认
-    {
-        Frame frame(mod.get());
-        eui::PointerEvent pe;
-        eui::Rect rect;
-        frame.ui.find("todo.col.4.head")->onContextMenu(pe, rect);  // 列一还在 idx4
-        frame.refresh();
-        // 列菜单：0=重命名 1=左移 2=右移 3=改色(子菜单) 4=删除
-        const auto* del = frame.ui.find("todo.ctx.level.0.item.4");
-        DOCTEST_REQUIRE(del != nullptr);
-        del->onClick();
-        frame.refresh();
-        const auto* confirm = frame.ui.find("todo.dialog.delcol.confirm.bg");
-        DOCTEST_REQUIRE(confirm != nullptr);
-        DOCTEST_REQUIRE(confirm->onClick != nullptr);
-        confirm->onClick();
-
-        auto cols = env.svc->listColumns();
-        DOCTEST_REQUIRE(cols.isOk());
-        bool found = false;
-        for (const auto& c : cols.value()) {
-            if (c.title == "列一") found = true;
-        }
-        DOCTEST_CHECK(!found);
-        // 列下任务 CASCADE 删除
-        auto tasks = env.svc->listAllTasks();
-        DOCTEST_REQUIRE(tasks.isOk());
-        bool taskGone = true;
-        for (const auto& tk : tasks.value()) {
-            if (tk.title == "将删列的任务") taskGone = false;
-        }
-        DOCTEST_CHECK(taskGone);
-    }
-
-    // datepicker：打开详情 → 点「选择日期」→ datepicker 面板渲染
-    // 删除列一后列布局：[0..3]默认列，4=日期列，5=列二
-    {
-        Frame frame(mod.get());
-        frame.refresh();
-        const auto* card = frame.ui.find("todo.col.4.card.0.bg");
+        const auto* card = frame.ui.find("todo.col.0.card.0.bg");
         DOCTEST_REQUIRE(card != nullptr);
         card->onClick();  // 打开详情（选中）
         frame.refresh();
@@ -1742,6 +1660,9 @@ REGISTER_TEST(todo_ui_drag_hit_pure,
     in.boardHeight = 500.0f;
     in.scrollOffset = 0.0f;
     in.cardIndex = 0;
+    // 逐列几何（命中唯一几何来源）：与上述均匀布局逐位一致
+    in.columnX = {0.0f, 220.0f, 440.0f};
+    in.columnWidth = {200.0f, 200.0f, 200.0f};
 
     DOCTEST_CHECK_EQ(dragDropTarget(in, 400.0, 300.0), 1);   // 源列
     DOCTEST_CHECK_EQ(dragDropTarget(in, 350.0, 300.0), 1);   // 源列内偏左
@@ -1823,6 +1744,64 @@ REGISTER_TEST(todo_ui_drag_hit_pure,
     return true;
 })
 
+// 逐列几何命中：H20 四列不再等宽（归档折叠窄条 / 展开宽列），
+// 命中必须按 boardColumnWidths 的实际列宽逐列判定，不能再用均匀步长。
+REGISTER_TEST(todo_ui_drag_hit_variable_columns,
+              "todo_ui: 逐列几何拖拽命中（归档折叠窄条/末主列右半/展开四等分）", {
+    namespace u = module::todo::ui;
+    using u::DragHitInput;
+    const float gap = 20.0f;
+    const float contentW = 860.0f;
+    // 四列、归档列 index 3：折叠 → 主列 250 / 归档 50；展开 → 四列各 200
+    const auto makeInput = [&](float archiveT, int fromCol) {
+        const auto widths = u::boardColumnWidths(contentW, gap, 4, 3, archiveT);
+        DragHitInput in;
+        in.fromColIndex = fromCol;
+        in.colCount = 4;
+        in.cardWidth = 100.0f;
+        in.pressWidth = 100.0f;
+        in.colWidth = widths.normal;  // 回落值（逐列向量在场时不参与命中）
+        in.colGap = gap;
+        in.boardHeight = 500.0f;
+        in.cardIndex = 0;
+        float cursor = 0.0f;
+        for (size_t i = 0; i < 4; ++i) {
+            const float w = i == 3 ? widths.archive : widths.normal;
+            in.columnX.push_back(cursor);
+            in.columnWidth.push_back(w);
+            cursor += w + gap;
+        }
+        // 锚点 = 源列左缘 + 卡左内边距；boardTop 经 pressY 反推 = 144（同上例口径）
+        in.pressX = in.columnX[static_cast<size_t>(fromCol)] + u::kColumnContentInset;
+        in.pressY = 200.0f;
+        return in;
+    };
+
+    // 折叠：x = 0 / 270 / 540 / 810
+    const DragHitInput collapsed = makeInput(0.0f, 1);
+    DOCTEST_CHECK_EQ(collapsed.columnWidth[0], 250.0f);
+    DOCTEST_CHECK_EQ(collapsed.columnWidth[3], 50.0f);
+    DOCTEST_CHECK_EQ(u::dragDropTarget(collapsed, 830.0, 300.0), 3);  // 窄归档条命中
+    DOCTEST_CHECK_EQ(u::dragDropTarget(collapsed, 855.0, 300.0), 3);  // 归档右缘内
+    DOCTEST_CHECK_EQ(u::dragDropTarget(collapsed, 799.0, 300.0), -1); // 末主列↔归档缝隙
+    DOCTEST_CHECK_EQ(u::dragDropTarget(collapsed, 700.0, 300.0), 2);  // 末主列右半
+    DOCTEST_CHECK_EQ(u::dragDropTarget(collapsed, 560.0, 300.0), 2);  // 末主列左半
+    DOCTEST_CHECK_EQ(u::dragDropTarget(collapsed, 100.0, 300.0), 0);  // 首列
+    // 行命中同吃逐列几何：落点在归档条 → 目标列 3 有效；按主列 1 口径 → 列外
+    DOCTEST_CHECK_EQ(u::dragDropRowIndex(collapsed, 3, 830.0, 300.0, 0.0f, 2), 1);
+    DOCTEST_CHECK_EQ(u::dragDropRowIndex(collapsed, 1, 830.0, 300.0, 0.0f, 2), -1);
+
+    // 展开：x = 0 / 220 / 440 / 660
+    const DragHitInput expanded = makeInput(1.0f, 1);
+    DOCTEST_CHECK_EQ(expanded.columnWidth[3], 200.0f);
+    DOCTEST_CHECK_EQ(u::dragDropTarget(expanded, 700.0, 300.0), 3);
+    DOCTEST_CHECK_EQ(u::dragDropTarget(expanded, 500.0, 300.0), 2);
+    DOCTEST_CHECK_EQ(u::dragDropTarget(expanded, 300.0, 300.0), 1);
+    DOCTEST_CHECK_EQ(u::dragDropTarget(expanded, 100.0, 300.0), 0);
+    DOCTEST_CHECK_EQ(u::dragDropTarget(expanded, 210.0, 300.0), -1);  // 列隙 [200,220)
+    return true;
+})
+
 REGISTER_TEST(todo_ui_drag_scale_from_framework,
               "todo_ui: 拖拽尺度取自框架（与探针路径等价 + 不一致可观测）", {
     using module::todo::ui::DragHitInput;
@@ -1851,6 +1830,9 @@ REGISTER_TEST(todo_ui_drag_scale_from_framework,
         in.boardHeight = 500.0f;
         in.dpiScale = scale;             // 调用点喂的框架值（原为探针反推）
         in.cardIndex = 0;
+        // 逐列几何：列 [80,280][300,500][520,720]（同 todo_ui_drag_hit_pure 口径）
+        in.columnX = {0.0f, 220.0f, 440.0f};
+        in.columnWidth = {200.0f, 200.0f, 200.0f};
         return in;
     };
 
@@ -1909,6 +1891,9 @@ REGISTER_TEST(todo_ui_drag_hit_scroll_same_frame,
     in.boardHeight = 500.0f;
     in.cardIndex = 3;
     in.scrollOffset = 100.0f;  // 按下时刻快照（DragState.pressScrollOffset 语义）
+    // 逐列几何：两列各 200、步长 220，列 0 左缘 = 80
+    in.columnX = {0.0f, 220.0f};
+    in.columnWidth = {200.0f, 200.0f};
     // 锚点 x = 列 0 左缘 + 卡左内边距（缺陷 1 起卡在列内有 16px 内边距，
     // dragDropTarget 内同源扣减还原列左缘）
     in.pressX = 80.0f + u::kColumnContentInset;
@@ -2092,13 +2077,16 @@ REGISTER_TEST(todo_ui_drag_follow_ghost,
 })
 
 REGISTER_TEST(todo_ui_column_scroll_geometry,
-              "todo_ui: 列内滚动——第 12 张起不裁切 + 列几何正确（headless layout）", {
+              "todo_ui: 列内滚动——H20 虚拟化窗口 + 列几何正确（headless layout）", {
     TestEnv env;
     DOCTEST_REQUIRE(env.ready);
-    auto col = env.svc->createColumn("长列");
-    DOCTEST_REQUIRE(col.isOk());
+    // 固定四列：不经 service 造自定义第 5 列；15 张卡落种子「待办」列（col.0）
+    auto cols = env.svc->listColumns();
+    DOCTEST_REQUIRE(cols.isOk());
+    DOCTEST_REQUIRE_EQ(cols.value().size(), 4u);
+    const int64_t colId = cols.value()[0].id;
     for (int i = 1; i <= 15; ++i) {
-        auto r = env.svc->createTask(col.value().id, "任务" + std::to_string(i));
+        auto r = env.svc->createTask(colId, "任务" + std::to_string(i));
         DOCTEST_REQUIRE(r.isOk());
     }
 
@@ -2117,31 +2105,44 @@ REGISTER_TEST(todo_ui_column_scroll_geometry,
     };
     layoutFrame();
 
-    // 15 张卡全部构建（旧缺陷：第 ~8 张起因列高 break 消失）
-    for (int i = 0; i < 15; ++i) {
-        const auto* card = ui.find("todo.col.4.card." + std::to_string(i) + ".bg");
+    // H20 虚拟化：滚动偏移 0 只构建可视区 + 上下各 3 张缓冲。
+    // 列内容可视高 856、卡 pitch 92 → first=0、last=13（索引 0..12）；13/14 不建。
+    for (int i = 0; i < 13; ++i) {
+        const auto* card = ui.find("todo.col.0.card." + std::to_string(i) + ".bg");
         DOCTEST_REQUIRE(card != nullptr);
     }
-    // 滚动容器存在
-    DOCTEST_CHECK(ui.find("todo.col.4.scroll") != nullptr);
+    DOCTEST_CHECK(ui.find("todo.col.0.card.13.bg") == nullptr);
+    DOCTEST_CHECK(ui.find("todo.col.0.card.14.bg") == nullptr);
+    // 滚动容器存在；内容总高仍按 15 张槽位撑出（占位元素），不随本帧构建张数缩水
+    DOCTEST_CHECK(ui.find("todo.col.0.scroll") != nullptr);
+    const auto* spacer = ui.find("todo.col.0.vspacer");
+    DOCTEST_REQUIRE(spacer != nullptr);
+    DOCTEST_CHECK_EQ(spacer->frame.height,
+                     module::todo::ui::columnContentHeight(15));
 
     // 列头与列背景同 x 起点，卡片在列内纵向排列。
     // 旧缺陷：position() 在 row 流式布局里被忽略，列头/卡片横向排开（col 头 x 偏移一整列宽）
-    const auto* colBg = ui.find("todo.col.4.bg");
-    const auto* colHead = ui.find("todo.col.4.head");
-    const auto* colTitle = ui.find("todo.col.4.title");
+    const auto* colBg = ui.find("todo.col.0.bg");
+    const auto* colHead = ui.find("todo.col.0.head");
+    const auto* colTitle = ui.find("todo.col.0.title");
     DOCTEST_REQUIRE(colBg != nullptr);
     DOCTEST_REQUIRE(colHead != nullptr);
     DOCTEST_REQUIRE(colTitle != nullptr);
     DOCTEST_CHECK_EQ(colHead->frame.x, colBg->frame.x);
     DOCTEST_CHECK_EQ(colHead->frame.y, colBg->frame.y);
-    DOCTEST_CHECK_EQ(colTitle->frame.x, colBg->frame.x + 16.0f);
-    const auto* card0 = ui.find("todo.col.4.card.0.bg");
-    const auto* card1 = ui.find("todo.col.4.card.1.bg");
-    const auto* card14 = ui.find("todo.col.4.card.14.bg");
+    // 标题 x 按色点存在与否（todo_ui_board.cpp:407 titleX = colDot ? 34 : 16）：
+    // 默认「待办」列有 8px 色点（dot@+16）→ 标题让至 +34；无色点列 → 标题贴 +16。
+    // 不写死 16，按 todo.col.0.dot 是否存在分支断言。
+    const auto* colDot = ui.find("todo.col.0.dot");
+    if (colDot != nullptr) {
+        DOCTEST_CHECK_EQ(colTitle->frame.x, colBg->frame.x + 34.0f);
+    } else {
+        DOCTEST_CHECK_EQ(colTitle->frame.x, colBg->frame.x + 16.0f);
+    }
+    const auto* card0 = ui.find("todo.col.0.card.0.bg");
+    const auto* card1 = ui.find("todo.col.0.card.1.bg");
     DOCTEST_REQUIRE(card0 != nullptr);
     DOCTEST_REQUIRE(card1 != nullptr);
-    DOCTEST_REQUIRE(card14 != nullptr);
     // 卡片在列内（不是横向流式排开）。卡左缘 = 列左缘 + 列内容左内边距
     // kColumnContentInset（16px），两侧 inset 同源派生（见 contentCardWidth）：
     // 钉成 0 会退回「卡贴列左缘、左零边距」的缺陷形态。
@@ -2150,13 +2151,31 @@ REGISTER_TEST(todo_ui_column_scroll_geometry,
     DOCTEST_CHECK_EQ(card1->frame.x,
                      colBg->frame.x + module::todo::ui::kColumnContentInset);
     DOCTEST_CHECK_EQ(card1->frame.y - card0->frame.y, 84.0f + 8.0f);  // 卡高 + 间距
-    DOCTEST_CHECK(card14->frame.y > card1->frame.y);          // 超出视口的卡继续向下排
 
-    // 多列不重叠：col.4 与相邻 col.3 背景横向相邻（x 差 = 列宽 + 间距）
-    const auto* prevBg = ui.find("todo.col.3.bg");
-    DOCTEST_REQUIRE(prevBg != nullptr);
-    DOCTEST_CHECK(colBg->frame.x > prevBg->frame.x);
-    DOCTEST_CHECK(colBg->frame.x - prevBg->frame.x < colBg->frame.width * 2.0f);
+    // 滚到底（offset = 内容高 1372 − 可视高 856 = 516）→ 窗口换批：
+    // first=floor(516/92)−3=2、last=15；0/1 不再构建、14 进入构建集。
+    const auto* scroll = ui.find("todo.col.0.scroll");
+    DOCTEST_REQUIRE(scroll != nullptr);
+    DOCTEST_REQUIRE(scroll->onScrollOffsetChanged != nullptr);
+    scroll->onScrollOffsetChanged(516.0f);
+    layoutFrame();
+    DOCTEST_CHECK(ui.find("todo.col.0.card.0.bg") == nullptr);
+    DOCTEST_CHECK(ui.find("todo.col.0.card.1.bg") == nullptr);
+    const auto* card13 = ui.find("todo.col.0.card.13.bg");
+    const auto* card14 = ui.find("todo.col.0.card.14.bg");
+    DOCTEST_REQUIRE(card13 != nullptr);
+    DOCTEST_REQUIRE(card14 != nullptr);
+    DOCTEST_CHECK_EQ(card14->frame.y - card13->frame.y, 84.0f + 8.0f);  // 槽位仍等距
+
+    // 多列不重叠：col.0/col.1 背景横向相邻（x 差 = 前列实际宽 + 间距；变宽列逐列核对）
+    const auto* col0Bg = ui.find("todo.col.0.bg");
+    const auto* col1Bg = ui.find("todo.col.1.bg");
+    DOCTEST_REQUIRE(col0Bg != nullptr);
+    DOCTEST_REQUIRE(col1Bg != nullptr);
+    DOCTEST_CHECK(col1Bg->frame.x > col0Bg->frame.x);
+    const float gap = core::theme::current().sizes.spacingLarge;
+    DOCTEST_CHECK(std::fabs(col1Bg->frame.x -
+                            (col0Bg->frame.x + col0Bg->frame.width + gap)) < 0.5f);
 
     mod->onStop();
     return true;
@@ -3020,24 +3039,9 @@ REGISTER_TEST(todo_ui_overdue_query_fail,
         DOCTEST_REQUIRE(toast != nullptr);
         DOCTEST_CHECK(toast->text.find("逾期任务加载失败") != std::string::npos);
 
-        // ② 刷新路径（列右移成功 → reloadAll → refreshOverdueCount 失败）：
-        //    失败不得静默把 badge 改写为 0，须报错且保留上次计数
-        eui::PointerEvent pe;
-        eui::Rect rect;
-        const auto* head = frame.ui.find("todo.col.0.head");
-        DOCTEST_REQUIRE(head != nullptr);
-        head->onContextMenu(pe, rect);
-        frame.refresh();
-        const auto* shiftRight = frame.ui.find("todo.ctx.level.0.item.2");
-        DOCTEST_REQUIRE(shiftRight != nullptr);
-        shiftRight->onClick();
-        frame.refresh();
-        const auto* toast2 = frame.ui.find("todo.toast.title");
-        DOCTEST_REQUIRE(toast2 != nullptr);
-        DOCTEST_CHECK(toast2->text.find("逾期任务查询失败") != std::string::npos);
-        const auto* badge2 = frame.ui.find("todo.btn.overdue.text");
-        DOCTEST_REQUIRE(badge2 != nullptr);
-        DOCTEST_CHECK(badge2->text.find("1") != std::string::npos);  // 保留计数
+        // ②（H20 删除）原「列右移成功 → reloadAll → 逾期查询失败保留计数」链路依赖
+        //    列管理菜单；固定四列后该入口不存在，而删表注入会同时打挂 listAllTasks
+        //    （board 进错误态），无法只让 listOverdue 单独失败——本子场景随之移除。
     }
 
     mod->onStop();
@@ -3203,13 +3207,19 @@ REGISTER_TEST(todo_ui_tags_edit_roundtrip,
     return true;
 })
 
-// 列色点：迁移种子渲染 + 新建列无色不渲 + 右键改色落库
+// 列色点：种子列渲染色点；service 设置 color 的自定义列渲染对应色；无色列不渲
 REGISTER_TEST(todo_ui_column_color_dot_and_menu,
-              "todo_ui: 列色点渲染 + 右键改色子选落库（headless）", {
+              "todo_ui: 列色点渲染（种子色/自定义色/无色，headless）", {
     TestEnv env;
     DOCTEST_REQUIRE(env.ready);
     auto plain = env.svc->createColumn("无色列");
     DOCTEST_REQUIRE(plain.isOk());
+    // H20：列右键「改色」入口随固定四列移除；service 层 setColumnColor 仍合法——
+    // 在模块 onStart 前落库，验证色点随 color 渲染（只锁渲染，不锁已删入口）
+    auto colored = env.svc->createColumn("有色列");
+    DOCTEST_REQUIRE(colored.isOk());
+    DOCTEST_REQUIRE(env.svc->setColumnColor(
+        colored.value().id, std::optional<std::string>("dusty-blue")).isOk());
 
     std::unique_ptr<::core::Module> mod(create_todo_module());
     mod->onStart();
@@ -3223,39 +3233,14 @@ REGISTER_TEST(todo_ui_column_color_dot_and_menu,
         DOCTEST_CHECK_EQ(dot->color.r, clay.r);
         DOCTEST_CHECK_EQ(dot->color.g, clay.g);
         DOCTEST_CHECK_EQ(dot->color.b, clay.b);
-        // 用户新建列无色（color NULL）→ 不渲色点
+        // 用户新建列无色（color NULL）→ 不渲色点；自定义有色列 → 渲对应色
         DOCTEST_CHECK(frame.ui.find("todo.col.4.dot") == nullptr);
-
-        // 右键列头 → 改色（子选）→ 选第一个预设 Claude 橘
-        eui::PointerEvent pe;
-        eui::Rect rect;
-        frame.ui.find("todo.col.4.head")->onContextMenu(pe, rect);
-        frame.refresh();
-        const auto* colorItem = frame.ui.find("todo.ctx.level.0.item.3");
-        DOCTEST_REQUIRE(colorItem != nullptr);
-        DOCTEST_REQUIRE(colorItem->onClick != nullptr);
-        colorItem->onClick();  // 打开子菜单（不关闭主菜单）
-        frame.refresh();
-        const auto* preset0 = frame.ui.find("todo.ctx.level.1.item.0");
-        DOCTEST_REQUIRE(preset0 != nullptr);
-        DOCTEST_REQUIRE(preset0->onClick != nullptr);
-        preset0->onClick();
-    }
-    {
-        // 落库：无色列 → claude-clay，且色点出现
-        auto cols = env.svc->listColumns();
-        DOCTEST_REQUIRE(cols.isOk());
-        bool checked = false;
-        for (const auto& c : cols.value()) {
-            if (c.title == "无色列") {
-                DOCTEST_REQUIRE(c.color.has_value());
-                DOCTEST_CHECK_EQ(*c.color, std::string("claude-clay"));
-                checked = true;
-            }
-        }
-        DOCTEST_CHECK(checked);
-        Frame frame(mod.get());
-        DOCTEST_CHECK(frame.ui.find("todo.col.4.dot") != nullptr);
+        const auto* blue = frame.ui.find("todo.col.5.dot");
+        DOCTEST_REQUIRE(blue != nullptr);
+        const eui::Color dusty("#6A9BCC");
+        DOCTEST_CHECK_EQ(blue->color.r, dusty.r);
+        DOCTEST_CHECK_EQ(blue->color.g, dusty.g);
+        DOCTEST_CHECK_EQ(blue->color.b, dusty.b);
     }
 
     mod->onStop();
@@ -4065,63 +4050,6 @@ REGISTER_TEST(todo_ui_tag_chip_font_bigger,
     return true;
 })
 
-// 窄列固定 66px 截止 chip 越出卡右缘 → 自适应缩窄
-// 列宽无下限（colW = (contentW - gap*(n-1)) / n）。删掉 42px 优先级 chip 后
-// chipX 起点从 58 回到 16，8 列（卡宽 94 → 剩余 66）不再触发缩窄，故本用例取
-// 9 列（1200 窗：colW = (1120-8*16)/9 ≈ 110.2，卡宽 ≈ 78.2 → 剩余 ≈ 50.2 < 66
-// 仍走缩窄分支）；宽窗不缩（保持 66px 原观感）。
-// UAT6 misc2：卡内边距收紧（chipX 16→10、右边距 12→8）后 8 列剩余 94-18=76 仍
-// 不缩窄，9 列剩余 ≈ 78.2-18=60.2 < 66 缩窄分支不变，仅公式右边距字面量同步。
-REGISTER_TEST(todo_card_due_chip_adapts_narrow_column,
-              "todo_ui: 窄列截止 chip 自适应缩窄不越出卡右缘（审计修复）", {
-    TestEnv env;
-    DOCTEST_REQUIRE(env.ready);
-    std::vector<int64_t> colIds;
-    for (int i = 0; i < 5; ++i) {  // 迁移默认 4 列之上再造 5 列 = 9 列
-        auto col = env.svc->createColumn("窄列" + std::to_string(i));
-        DOCTEST_REQUIRE(col.isOk());
-        colIds.push_back(col.value().id);
-    }
-    auto a = env.svc->createTask(colIds.back(), "窄列卡");
-    DOCTEST_REQUIRE(a.isOk());
-    {
-        module::todo::Task t2 = a.value();
-        t2.priority = module::todo::Priority::High;
-        t2.dueAt = 2000000000;  // 未来时间，未逾期
-        auto up = env.svc->updateTask(t2);
-        DOCTEST_REQUIRE(up.isOk());
-    }
-
-    std::unique_ptr<::core::Module> mod(create_todo_module());
-    mod->onStart();
-    // 最小窗 1200×720：9 列 → colW = (1120-8*16)/9 ≈ 110.2，卡宽 ≈ 78.2
-    Frame frame(mod.get(), 1200.0f, 720.0f);
-    frame.ui.layout(1200.0f, 720.0f);  // 元素 frame 需显式 layout（Frame 不跑）
-    const auto* surface = frame.ui.find("todo.col.8.card.0.bg");
-    const auto* dueBg = frame.ui.find("todo.col.8.card.0.due.bg");
-    DOCTEST_REQUIRE(surface != nullptr);
-    DOCTEST_REQUIRE(dueBg != nullptr);
-    // 优先级 chip 已删：此处不再有 .prio 元素
-    DOCTEST_CHECK(frame.ui.find("todo.col.8.card.0.prio.bg") == nullptr);
-    // 截止 chip 右缘不越出卡右缘（修复前固定 66px 越界）
-    DOCTEST_CHECK(dueBg->frame.x + dueBg->frame.width <=
-                  surface->frame.x + surface->frame.width);
-    // chip 缩窄到「卡宽 - 左右留白」且仍在（≥ 最小宽 24）
-    DOCTEST_CHECK(dueBg->frame.width >= 24.0f);
-    DOCTEST_CHECK(dueBg->frame.width < 66.0f);
-    DOCTEST_CHECK_EQ(dueBg->frame.width,
-                     std::min(66.0f, surface->frame.width - 12.0f - 12.0f));
-    // 宽窗 1600×1000 9 列：colW = (1520-128)/9 ≈ 154.7 → 不缩
-    Frame wide(mod.get(), 1600.0f, 1000.0f);
-    wide.ui.layout(1600.0f, 1000.0f);
-    const auto* wideDue = wide.ui.find("todo.col.8.card.0.due.bg");
-    DOCTEST_REQUIRE(wideDue != nullptr);
-    DOCTEST_CHECK_EQ(wideDue->frame.width, 66.0f);
-
-    mod->onStop();
-    return true;
-})
-
 // 详情弹窗动作先存表单 / 删除确认保留弹窗 / backdrop 守卫
 
 REGISTER_TEST(todo_ui_detail_actions_save_form,
@@ -4317,166 +4245,17 @@ REGISTER_TEST(todo_ui_detail_actions_save_form,
     return true;
 })
 
-// 「+ 列」命名弹窗 + 列头 ✎ 重命名入口（headless）
-
-// 点「+ 列」不即时落库：先弹命名弹窗，确认才落库；Esc（输入框聚焦走 input
-// onCancel，未聚焦走 app 级兜底）取消不落库；留空确认采用默认名；输入名字按名字建。
-// 改名入口显性化为列头 ✎。
-REGISTER_TEST(todo_ui_new_column_dialog,
-              "todo_ui: + 列命名弹窗创建/Esc 取消/列头 ✎ 重命名（headless）", {
-    TestEnv env;
-    DOCTEST_REQUIRE(env.ready);
-
-    std::unique_ptr<::core::Module> mod(create_todo_module());
-    mod->onStart();
-
-    Frame frame(mod.get());
-    auto colCount = [&](void) -> size_t {
-        auto l = env.svc->listColumns();
-        return l.isOk() ? l.value().size() : 0;
-    };
-    auto findTitle = [&](const std::string& want) -> bool {
-        auto l = env.svc->listColumns();
-        if (!l.isOk()) return false;
-        for (const auto& c : l.value()) {
-            if (c.title == want) return true;
-        }
-        return false;
-    };
-
-    const size_t seed = colCount();   // 迁移默认 4 列
-    DOCTEST_REQUIRE_EQ(seed, 4u);
-
-    // 1) 点「+ 列」→ 只开弹窗，不即时落库
-    auto* addcol = frame.ui.find("todo.btn.addcol.bg");
-    DOCTEST_REQUIRE(addcol != nullptr);
-    DOCTEST_REQUIRE(addcol->onClick != nullptr);
-    addcol->onClick();
-    frame.refresh();
-    DOCTEST_REQUIRE_EQ(colCount(), seed);
-
-    // 2) 留空点「创建」→ 采用默认名「新列 5」，弹窗关闭
-    auto* confirm = frame.ui.find("todo.dialog.newcol.confirm.bg");
-    DOCTEST_REQUIRE(confirm != nullptr);
-    DOCTEST_REQUIRE(confirm->onClick != nullptr);
-    confirm->onClick();
-    frame.refresh();
-    DOCTEST_REQUIRE_EQ(colCount(), seed + 1);
-    DOCTEST_CHECK(findTitle("新列 5"));
-
-    // 3) Esc（焦点在输入框：input 内置 Escape→onCancel=取消）→ 取消不落库。
-    //    Esc 走 input 的 onCancel，不要再加模块级 passthrough；若 onCancel 被删，
-    //    内置会把 Esc 回退到 onEnter 提交并建出新列 → colCount 变
-    //    注意：refresh 重建元素树，所有旧 Element* 悬垂——每次点击前重新 find
-    addcol = frame.ui.find("todo.btn.addcol.bg");
-    DOCTEST_REQUIRE(addcol != nullptr);
-    addcol = frame.ui.find("todo.btn.addcol.bg");
-    DOCTEST_REQUIRE(addcol != nullptr);
-    addcol->onClick();
-    frame.refresh();
-    auto* hit = frame.ui.find("todo.dialog.newcol.input.hit");
-    DOCTEST_REQUIRE(hit != nullptr);
-    DOCTEST_REQUIRE(hit->onKeyEvent != nullptr);
-    eui::KeyEvent esc;
-    esc.key = eui::InputKey::Escape;
-    esc.action = eui::KeyAction::Press;
-    DOCTEST_CHECK(hit->onKeyEvent(esc));    // 已消费
-    frame.refresh();
-    DOCTEST_REQUIRE_EQ(colCount(), seed + 1);   // 没有多建
-
-    // 3b) Esc（输入框未聚焦的 app 级兜底：Module::onKeyEvent）→ 取消不落库
-    addcol = frame.ui.find("todo.btn.addcol.bg");
-    DOCTEST_REQUIRE(addcol != nullptr);
-    addcol->onClick();
-    frame.refresh();
-    DOCTEST_CHECK(mod->onKeyEvent(esc));
-    frame.refresh();
-    DOCTEST_REQUIRE_EQ(colCount(), seed + 1);
-
-    // 3c) 「取消」按钮 → 不落库
-    addcol = frame.ui.find("todo.btn.addcol.bg");
-    DOCTEST_REQUIRE(addcol != nullptr);
-    addcol->onClick();
-    frame.refresh();
-    auto* cancel = frame.ui.find("todo.dialog.newcol.cancel.bg");
-    DOCTEST_REQUIRE(cancel != nullptr);
-    DOCTEST_REQUIRE(cancel->onClick != nullptr);
-    cancel->onClick();
-    frame.refresh();
-    DOCTEST_REQUIRE_EQ(colCount(), seed + 1);
-
-    // 4) 输入名字再创建：onTextInput 写回 → 「创建」按输入名落库
-    addcol = frame.ui.find("todo.btn.addcol.bg");
-    DOCTEST_REQUIRE(addcol != nullptr);
-    addcol->onClick();
-    frame.refresh();
-    hit = frame.ui.find("todo.dialog.newcol.input.hit");
-    DOCTEST_REQUIRE(hit != nullptr);
-    DOCTEST_REQUIRE(hit->onTextInput != nullptr);
-    eui::TextInputEvent tie;
-    tie.text = "迭代列";
-    hit->onTextInput(tie);
-    frame.refresh();
-    confirm = frame.ui.find("todo.dialog.newcol.confirm.bg");
-    DOCTEST_REQUIRE(confirm != nullptr);
-    confirm->onClick();
-    frame.refresh();
-    DOCTEST_REQUIRE_EQ(colCount(), seed + 2);
-    DOCTEST_CHECK(findTitle("迭代列"));
-    DOCTEST_CHECK(!findTitle("新列 6"));   // 输入名优先于默认名
-
-    // 5) 列头 ✎ 按钮存在且接重命名弹窗：点开 → 输入框 Ctrl+A 全选 →
-    //    打新标题 → 保存 → 落库改名（入口显性化的端到端链路）
-    auto* pen = frame.ui.find("todo.col.0.rename.bg");
-    DOCTEST_REQUIRE(pen != nullptr);
-    DOCTEST_REQUIRE(pen->onClick != nullptr);
-    pen->onClick();
-    frame.refresh();
-    auto* rhit = frame.ui.find("todo.dialog.rename.input.hit");
-    DOCTEST_REQUIRE(rhit != nullptr);
-    DOCTEST_REQUIRE(rhit->onKeyEvent != nullptr);
-    DOCTEST_REQUIRE(rhit->onTextInput != nullptr);
-    eui::KeyEvent selectAll;
-    selectAll.key = eui::InputKey::A;
-    selectAll.action = eui::KeyAction::Press;
-    test_support::setShortcutModifier(selectAll.modifiers);
-    rhit->onKeyEvent(selectAll);          // 内置 Ctrl+A 全选
-    eui::TextInputEvent rtie;
-    rtie.text = "列头改名";
-    rhit->onTextInput(rtie);              // 打字典换选中内容 → onChange 写回
-    frame.refresh();
-    auto* save = frame.ui.find("todo.dialog.rename.confirm.bg");
-    DOCTEST_REQUIRE(save != nullptr);
-    DOCTEST_REQUIRE(save->onClick != nullptr);
-    save->onClick();
-    frame.refresh();
-    DOCTEST_CHECK(findTitle("列头改名"));   // ✎ → 弹窗 → 保存 全链路
-    return true;
-})
-
 // 创建/校验失败反馈 → 弹窗内嵌红字 formError
-
+// H20：列改名入口随固定四列删除——本用例只保留新建任务的校验反馈链路
 REGISTER_TEST(todo_ui_dialog_form_error,
-              "todo_ui: 新建列/重命名列/新建任务校验失败 → 内嵌红字 + 弹窗不关 + 输入清除（headless）", {
+              "todo_ui: 新建任务校验失败 → 内嵌红字 + 弹窗不关 + 输入清除（headless）", {
     TestEnv env;
     DOCTEST_REQUIRE(env.ready);
-    auto seed = env.svc->listColumns();
-    DOCTEST_REQUIRE(seed.isOk());
-    DOCTEST_REQUIRE(seed.value().size() >= 2);
-    const std::string dupTitle = seed.value()[1].title;   // 已存在列名，撞名素材
 
     std::unique_ptr<::core::Module> mod(create_todo_module());
     mod->onStart();
     Frame frame(mod.get());
 
-    auto findTitle = [&](const std::string& want) -> bool {
-        auto l = env.svc->listColumns();
-        if (!l.isOk()) return false;
-        for (const auto& c : l.value()) {
-            if (c.title == want) return true;
-        }
-        return false;
-    };
     auto taskTitleExists = [&](const std::string& want) -> bool {
         auto l = env.svc->listAllTasks();
         if (!l.isOk()) return false;
@@ -4486,103 +4265,7 @@ REGISTER_TEST(todo_ui_dialog_form_error,
         return false;
     };
 
-    eui::KeyEvent selectAll;
-    selectAll.key = eui::InputKey::A;
-    selectAll.action = eui::KeyAction::Press;
-    test_support::setShortcutModifier(selectAll.modifiers);
-    eui::KeyEvent del;
-    del.key = eui::InputKey::Delete;
-    del.action = eui::KeyAction::Press;
-
-    // 注意：refresh 重建元素树，所有旧 Element* 悬垂——每次交互前重新 find
-
-    // A. 重命名列空名 → 内嵌红字 + 弹窗不关
-    auto* pen = frame.ui.find("todo.col.0.rename.bg");
-    DOCTEST_REQUIRE(pen != nullptr);
-    pen->onClick();
-    frame.refresh();
-    auto* rinput = frame.ui.find("todo.dialog.rename.input.hit");
-    DOCTEST_REQUIRE(rinput != nullptr);
-    DOCTEST_REQUIRE(rinput->onKeyEvent != nullptr);
-    rinput->onKeyEvent(selectAll);   // Ctrl+A 全选
-    rinput->onKeyEvent(del);         // Delete 清空（onTextInput 空文本是 no-op）
-    frame.refresh();
-    auto* rsave = frame.ui.find("todo.dialog.rename.confirm.bg");
-    DOCTEST_REQUIRE(rsave != nullptr);
-    DOCTEST_REQUIRE(rsave->onClick != nullptr);
-    rsave->onClick();
-    frame.refresh();
-    const auto* rerr = frame.ui.find("todo.dialog.rename.error");
-    DOCTEST_REQUIRE(rerr != nullptr);   // 错误行只随错误态存在
-    DOCTEST_CHECK_EQ(rerr->text, std::string("列标题不能为空"));
-    DOCTEST_CHECK_EQ(frame.ui.find("todo.dialog.rename.panel")->opacity, 1.0f);  // 弹窗不关
-
-    // B. 重命名撞名 → 红字；下一次输入清除；改唯一名成功关窗落库
-    rinput = frame.ui.find("todo.dialog.rename.input.hit");
-    DOCTEST_REQUIRE(rinput != nullptr);
-    rinput->onKeyEvent(selectAll);
-    eui::TextInputEvent t1;
-    t1.text = dupTitle;
-    rinput->onTextInput(t1);            // 打成已存在的列名
-    frame.refresh();
-    rsave = frame.ui.find("todo.dialog.rename.confirm.bg");
-    DOCTEST_REQUIRE(rsave != nullptr);
-    rsave->onClick();
-    frame.refresh();
-    rerr = frame.ui.find("todo.dialog.rename.error");
-    DOCTEST_REQUIRE(rerr != nullptr);
-    DOCTEST_CHECK_EQ(rerr->text, std::string("该列名已存在，请换一个"));
-    DOCTEST_CHECK_EQ(frame.ui.find("todo.dialog.rename.panel")->opacity, 1.0f);
-    rinput = frame.ui.find("todo.dialog.rename.input.hit");
-    rinput->onKeyEvent(selectAll);
-    eui::TextInputEvent t2;
-    t2.text = "唯一新名";
-    rinput->onTextInput(t2);            // 下一次输入 → 错误清除
-    frame.refresh();
-    DOCTEST_CHECK(frame.ui.find("todo.dialog.rename.error") == nullptr);
-    rsave = frame.ui.find("todo.dialog.rename.confirm.bg");
-    DOCTEST_REQUIRE(rsave != nullptr);
-    rsave->onClick();
-    frame.refresh();
-    DOCTEST_CHECK_EQ(frame.ui.find("todo.dialog.rename.panel")->opacity, 0.0f);  // 成功才关
-    DOCTEST_CHECK(findTitle("唯一新名"));
-
-    // C. 新建列显式输入撞名 → 红字 + 不关（留空默认名路径不受影响）
-    auto* addcol = frame.ui.find("todo.btn.addcol.bg");
-    DOCTEST_REQUIRE(addcol != nullptr);
-    addcol->onClick();
-    frame.refresh();
-    auto* chit = frame.ui.find("todo.dialog.newcol.input.hit");
-    DOCTEST_REQUIRE(chit != nullptr);
-    DOCTEST_REQUIRE(chit->onTextInput != nullptr);
-    eui::TextInputEvent t3;
-    t3.text = "唯一新名";
-    chit->onTextInput(t3);
-    frame.refresh();
-    auto* cconf = frame.ui.find("todo.dialog.newcol.confirm.bg");
-    DOCTEST_REQUIRE(cconf != nullptr);
-    cconf->onClick();
-    frame.refresh();
-    const auto* cerr = frame.ui.find("todo.dialog.newcol.error");
-    DOCTEST_REQUIRE(cerr != nullptr);
-    DOCTEST_CHECK_EQ(cerr->text, std::string("该列名已存在，请换一个"));
-    DOCTEST_CHECK_EQ(frame.ui.find("todo.dialog.newcol.panel")->opacity, 1.0f);
-    chit = frame.ui.find("todo.dialog.newcol.input.hit");
-    DOCTEST_REQUIRE(chit != nullptr);
-    chit->onKeyEvent(selectAll);
-    eui::TextInputEvent t4;
-    t4.text = "迭代列B";
-    chit->onTextInput(t4);
-    frame.refresh();
-    DOCTEST_CHECK(frame.ui.find("todo.dialog.newcol.error") == nullptr);  // 输入清除
-    cconf = frame.ui.find("todo.dialog.newcol.confirm.bg");
-    DOCTEST_REQUIRE(cconf != nullptr);
-    cconf->onClick();
-    frame.refresh();
-    DOCTEST_CHECK(findTitle("迭代列B"));
-    DOCTEST_CHECK_EQ(frame.ui.find("todo.dialog.newcol.panel")->opacity, 0.0f);
-
-    // D. 新建任务空标题 → 红字 + 不关（错误 toast 在弹窗内，不弹到窗外）
+    // 新建任务空标题 → 红字 + 不关（错误 toast 在弹窗内，不弹到窗外）
     auto* add = frame.ui.find("todo.btn.add.bg");
     DOCTEST_REQUIRE(add != nullptr);
     add->onClick();
@@ -4615,7 +4298,7 @@ REGISTER_TEST(todo_ui_dialog_form_error,
 // 创建/编辑弹窗 Esc=取消（onCancel，不是误提交）
 
 REGISTER_TEST(todo_ui_esc_cancel_dialogs,
-              "todo_ui: 新建任务/重命名列 Esc=取消不落库；详情标签 Esc=清草稿（headless）", {
+              "todo_ui: 新建任务 Esc=取消不落库；详情标签 Esc=清草稿（headless）", {
     TestEnv env;
     DOCTEST_REQUIRE(env.ready);
 
@@ -4629,11 +4312,6 @@ REGISTER_TEST(todo_ui_esc_cancel_dialogs,
             if (t.title == title) return true;
         }
         return false;
-    };
-    auto columnTitle = [&](size_t idx) -> std::string {
-        auto cols = env.svc->listColumns();
-        if (!cols.isOk() || idx >= cols.value().size()) return std::string("<缺失>");
-        return cols.value()[idx].title;
     };
     const std::string escTask = "Esc不应建的任务";
 
@@ -4664,30 +4342,7 @@ REGISTER_TEST(todo_ui_esc_cancel_dialogs,
         DOCTEST_CHECK(!taskExists(escTask));   // 旧行为：Esc→onEnter=submitNewTask 会落库
     }
 
-    // 2) 重命名列：改标题 → Esc → 弹窗关、标题不变
-    {
-        const std::string before = columnTitle(0);
-        auto* pen = frame.ui.find("todo.col.0.rename.bg");
-        DOCTEST_REQUIRE(pen != nullptr);
-        pen->onClick();
-        frame.refresh();
-        auto* hit = frame.ui.find("todo.dialog.rename.input.hit");
-        DOCTEST_REQUIRE(hit != nullptr);
-        DOCTEST_REQUIRE(hit->onTextInput != nullptr);
-        eui::TextInputEvent t;
-        t.text = "Esc不应改的名";
-        hit->onTextInput(t);
-        frame.refresh();
-        hit = frame.ui.find("todo.dialog.rename.input.hit");
-        DOCTEST_REQUIRE(hit != nullptr);
-        eui::KeyEvent esc;
-        esc.key = eui::InputKey::Escape;
-        esc.action = eui::KeyAction::Press;
-        DOCTEST_CHECK(hit->onKeyEvent(esc));
-        frame.refresh();
-        DOCTEST_CHECK_EQ(frame.ui.find("todo.dialog.rename.panel")->opacity, 0.0f);
-        DOCTEST_CHECK_EQ(columnTitle(0), before);
-    }
+    // 2)（H20 删除）列改名入口随固定四列移除，原「重命名列 Esc=取消」链路不再可达。
 
     // 3) 详情标签输入框：打半截 → Esc → 草稿清空（不误提交成标签），弹窗不关
     {
@@ -5231,204 +4886,6 @@ REGISTER_TEST(todo_ui_event_wiring_write_paths,
     return true;
 })
 
-// 列写路径事件补齐：建列 / 改列名 / 移列 / 改色 / 删列五条都改待办数据，GitHub Sync 的
-// dirty 触发源必须覆盖。最高风险 = 删除列：外键 CASCADE 连带删掉列下全部任务，不置 dirty
-// 则任务从看板消失而同步端毫不知情。
-// 列操作共用 todo.column_changed（没有订阅方需要区分这五种列改动，见 core/event_bus.h）。
-REGISTER_TEST(todo_ui_event_wiring_columns,
-              "todo_ui: 建列/改列名/移列/改色/删列→todo.column_changed（删列级联任务也置位）", {
-    TestEnv env;
-    DOCTEST_REQUIRE(env.ready);
-
-    // 待删列由 service 直接建（不经 UI，免与下面的计数混）：列下挂一个任务验级联
-    auto doomed = env.svc->createColumn("级联列");
-    DOCTEST_REQUIRE(doomed.isOk());
-    const int64_t doomedId = doomed.value().id;
-    DOCTEST_REQUIRE(env.svc->createTask(doomedId, "随列消失的任务").isOk());
-
-    auto cols0 = env.svc->listColumns();
-    DOCTEST_REQUIRE(cols0.isOk());
-    DOCTEST_REQUIRE_EQ(cols0.value().size(), static_cast<size_t>(5));  // 4 默认 + 级联列
-    DOCTEST_REQUIRE_EQ(cols0.value()[4].id, doomedId);                 // createColumn 追加在末位
-
-    std::unique_ptr<::core::Module> mod(create_todo_module());
-    mod->onStart();
-
-    int gotColumn = 0;
-    auto sc = ::core::event::bus().subscribe(
-        ::core::event::kTodoColumnChanged, [&](const std::string&) { ++gotColumn; });
-
-    // 1) 「+ 列」→ 命名弹窗 → 确认 → doCreateColumn 成功分支发布
-    {
-        Frame frame(mod.get());
-        const auto* add = frame.ui.find("todo.btn.addcol.bg");
-        DOCTEST_REQUIRE(add != nullptr);
-        DOCTEST_REQUIRE(add->onClick != nullptr);
-        add->onClick();
-    }
-    {
-        Frame frame(mod.get());
-        const auto* hit = frame.ui.find("todo.dialog.newcol.input.hit");
-        DOCTEST_REQUIRE(hit != nullptr);
-        DOCTEST_REQUIRE(hit->onTextInput != nullptr);
-        eui::TextInputEvent t;
-        t.text = "事件列";
-        hit->onTextInput(t);
-    }
-    {
-        Frame frame(mod.get());
-        const auto* conf = frame.ui.find("todo.dialog.newcol.confirm.bg");
-        DOCTEST_REQUIRE(conf != nullptr);
-        DOCTEST_REQUIRE(conf->onClick != nullptr);
-        conf->onClick();
-        DOCTEST_CHECK_EQ(gotColumn, 1);
-    }
-    {
-        auto cols = env.svc->listColumns();
-        DOCTEST_REQUIRE(cols.isOk());
-        DOCTEST_REQUIRE_EQ(cols.value().size(), static_cast<size_t>(6));
-        DOCTEST_CHECK_EQ(cols.value()[5].title, std::string("事件列"));
-    }
-
-    // 2) 列头右键 →「重命名列」→ 弹窗改名 → 确认 → doRenameColumn 成功分支发布
-    {
-        Frame frame(mod.get());
-        eui::PointerEvent pe;
-        eui::Rect rect;
-        const auto* head = frame.ui.find("todo.col.0.head");
-        DOCTEST_REQUIRE(head != nullptr);
-        DOCTEST_REQUIRE(head->onContextMenu != nullptr);
-        head->onContextMenu(pe, rect);
-        frame.refresh();
-        const auto* label = frame.ui.find("todo.ctx.level.0.label.0");
-        DOCTEST_REQUIRE(label != nullptr);
-        DOCTEST_CHECK_EQ(label->text, std::string("重命名列"));
-        const auto* item = frame.ui.find("todo.ctx.level.0.item.0");
-        DOCTEST_REQUIRE(item != nullptr);
-        DOCTEST_REQUIRE(item->onClick != nullptr);
-        item->onClick();
-    }
-    {
-        Frame frame(mod.get());
-        // 弹窗预填原列名且光标在开头：直接打字会插在原名前 → 先全选再输入 = 整段替换
-        auto& st = frame.ui.state<components::input_detail::InputModel::InputState>(
-            "todo.dialog.rename.input");
-        st.cursor = st.selectionStart = 0;
-        st.selectionEnd = static_cast<int>(st.text.size());
-        const auto* hit = frame.ui.find("todo.dialog.rename.input.hit");
-        DOCTEST_REQUIRE(hit != nullptr);
-        DOCTEST_REQUIRE(hit->onTextInput != nullptr);
-        eui::TextInputEvent t;
-        t.text = "改名列";
-        hit->onTextInput(t);
-    }
-    {
-        Frame frame(mod.get());
-        const auto* conf = frame.ui.find("todo.dialog.rename.confirm.bg");
-        DOCTEST_REQUIRE(conf != nullptr);
-        DOCTEST_REQUIRE(conf->onClick != nullptr);
-        conf->onClick();
-        DOCTEST_CHECK_EQ(gotColumn, 2);
-    }
-    {
-        auto cols = env.svc->listColumns();
-        DOCTEST_REQUIRE(cols.isOk());
-        DOCTEST_CHECK_EQ(cols.value()[0].title, std::string("改名列"));  // 真改名了，不是插字
-    }
-
-    // 3) 列头右键 →「左移列」→ doShiftColumn 成功分支发布
-    //（下标 1 左移确有交换；下标 0 左移是 no-op，走「已经在最左边了」分支不发事件）
-    {
-        Frame frame(mod.get());
-        eui::PointerEvent pe;
-        eui::Rect rect;
-        const auto* head = frame.ui.find("todo.col.1.head");
-        DOCTEST_REQUIRE(head != nullptr);
-        DOCTEST_REQUIRE(head->onContextMenu != nullptr);
-        head->onContextMenu(pe, rect);
-        frame.refresh();
-        const auto* label = frame.ui.find("todo.ctx.level.0.label.1");
-        DOCTEST_REQUIRE(label != nullptr);
-        DOCTEST_CHECK_EQ(label->text, std::string("左移列"));
-        const auto* item = frame.ui.find("todo.ctx.level.0.item.1");
-        DOCTEST_REQUIRE(item != nullptr);
-        DOCTEST_REQUIRE(item->onClick != nullptr);
-        item->onClick();
-        DOCTEST_CHECK_EQ(gotColumn, 3);
-    }
-
-    // 4) 列头右键 →「删除列」→ 确认弹窗 → 确认 → doDeleteColumn 发布，级联任务一并消失
-    {
-        Frame frame(mod.get());
-        eui::PointerEvent pe;
-        eui::Rect rect;
-        const auto* head = frame.ui.find("todo.col.4.head");  // 级联列（左移只动下标 0/1）
-        DOCTEST_REQUIRE(head != nullptr);
-        DOCTEST_REQUIRE(head->onContextMenu != nullptr);
-        head->onContextMenu(pe, rect);
-        frame.refresh();
-        const auto* label = frame.ui.find("todo.ctx.level.0.label.4");
-        DOCTEST_REQUIRE(label != nullptr);
-        DOCTEST_CHECK_EQ(label->text, std::string("删除列"));
-        const auto* item = frame.ui.find("todo.ctx.level.0.item.4");
-        DOCTEST_REQUIRE(item != nullptr);
-        DOCTEST_REQUIRE(item->onClick != nullptr);
-        item->onClick();
-        frame.refresh();
-        const auto* confirm = frame.ui.find("todo.dialog.delcol.confirm.bg");
-        DOCTEST_REQUIRE(confirm != nullptr);
-        DOCTEST_REQUIRE(confirm->onClick != nullptr);
-        confirm->onClick();
-        DOCTEST_CHECK_EQ(gotColumn, 4);
-    }
-    {
-        auto cols = env.svc->listColumns();
-        DOCTEST_REQUIRE(cols.isOk());
-        bool gone = true;
-        for (const auto& c : cols.value()) {
-            if (c.id == doomedId) gone = false;
-        }
-        DOCTEST_CHECK(gone);
-        auto ts = env.svc->listTasks(doomedId);
-        DOCTEST_REQUIRE(ts.isOk());
-        DOCTEST_CHECK_EQ(ts.value().size(), static_cast<size_t>(0));  // CASCADE 连带删掉
-    }
-
-    // 5) 列头右键 →「改色」子选 → doSetColumnColor 成功分支发布
-    //（改色只写 color 列、不动列与任务结构，故单独走一条，别被「列没变」骗过去）
-    {
-        Frame frame(mod.get());
-        eui::PointerEvent pe;
-        eui::Rect rect;
-        const auto* head = frame.ui.find("todo.col.0.head");
-        DOCTEST_REQUIRE(head != nullptr);
-        DOCTEST_REQUIRE(head->onContextMenu != nullptr);
-        head->onContextMenu(pe, rect);
-        frame.refresh();
-        const auto* colorItem = frame.ui.find("todo.ctx.level.0.item.3");
-        DOCTEST_REQUIRE(colorItem != nullptr);
-        DOCTEST_REQUIRE(colorItem->onClick != nullptr);
-        colorItem->onClick();   // 打开改色子菜单（主菜单不关）
-        frame.refresh();
-        const auto* preset0 = frame.ui.find("todo.ctx.level.1.item.0");
-        DOCTEST_REQUIRE(preset0 != nullptr);
-        DOCTEST_REQUIRE(preset0->onClick != nullptr);
-        preset0->onClick();
-        DOCTEST_CHECK_EQ(gotColumn, 5);
-    }
-    {
-        // 真落库（事件不是空发）：下标 0 那列的颜色已变成预设 0 = claude-clay
-        auto cols = env.svc->listColumns();
-        DOCTEST_REQUIRE(cols.isOk());
-        DOCTEST_REQUIRE(cols.value()[0].color.has_value());
-        DOCTEST_CHECK_EQ(*cols.value()[0].color, std::string("claude-clay"));
-    }
-
-    mod->onStop();
-    return true;
-})
-
-
 REGISTER_TEST(todo_archive_format,
               "Todo UI: formatArchivedAt 按 YYYY-MM-DD HH:MM:SS 输出",
               {
@@ -5595,6 +5052,251 @@ REGISTER_TEST(todo_ui_title_ellipsis,
         DOCTEST_CHECK_EQ(el->overflow, core::TextOverflow::Ellipsis);
         DOCTEST_CHECK(el->maxWidth > 0.0f);
     }
+
+    mod->onStop();
+    return true;
+})
+
+// ---- H20 四列固定与归档折叠：列宽公式（无头纯函数）----
+// 公式契约（docs/superpowers/plans/2026-10-23-UAT62-H20-...md §4）：
+//   W = (contentW − 3×gap)/4；archiveW = lerp(W×25%, W, archiveT)；
+//   其余三列 = (contentW − 3×gap − archiveW)/3。
+// 双档取原型表的内容宽口径：窗口 1000 → 712、1600 → 1312（侧栏 208 + 双侧 pad 40）。
+REGISTER_TEST(todo_ui_h20_column_widths,
+              "todo_ui: H20 四列宽度派生 archiveT=0/0.5/1 双档", {
+    using namespace module::todo::ui;
+    constexpr float kGap = 16.0f;
+    const float presets[] = {712.0f, 1312.0f};   // 1000 / 1600 窗口
+
+    for (const float contentW : presets) {
+        const float W = (contentW - 3.0f * kGap) / 4.0f;
+
+        // archiveT=0（默认折叠）：归档 = W×25%，其余三列均分剩余宽
+        const BoardColumnWidths collapsed =
+            boardColumnWidths(contentW, kGap, 4, 3, 0.0f);
+        DOCTEST_CHECK(std::fabs(collapsed.archive - W * 0.25f) < 0.01f);
+        const float expectedCol = (contentW - 3.0f * kGap - W * 0.25f) / 3.0f;
+        DOCTEST_CHECK(std::fabs(collapsed.normal - expectedCol) < 0.01f);
+        // 列宽 + 间隙必须铺满内容宽（四列 = 3×gap）
+        DOCTEST_CHECK(std::fabs(collapsed.archive + 3.0f * collapsed.normal +
+                                3.0f * kGap - contentW) < 0.01f);
+
+        // archiveT=1（展开）：四列等分，与普通列完全同逻辑
+        const BoardColumnWidths expanded =
+            boardColumnWidths(contentW, kGap, 4, 3, 1.0f);
+        DOCTEST_CHECK(std::fabs(expanded.archive - W) < 0.01f);
+        DOCTEST_CHECK(std::fabs(expanded.normal - W) < 0.01f);
+        DOCTEST_CHECK(std::fabs(expanded.archive + 3.0f * expanded.normal +
+                                3.0f * kGap - contentW) < 0.01f);
+
+        // archiveT=0.5（动画中间帧）：归档宽严格介于 W×25% 与 W 之间（线性插值中点）
+        const BoardColumnWidths mid = boardColumnWidths(contentW, kGap, 4, 3, 0.5f);
+        DOCTEST_CHECK(mid.archive > W * 0.25f);
+        DOCTEST_CHECK(mid.archive < W);
+        DOCTEST_CHECK(std::fabs(mid.archive - (W * 0.25f + W) * 0.5f) < 0.01f);
+        DOCTEST_CHECK(mid.normal < collapsed.normal);   // 归档吃掉的空间由三列等分
+        DOCTEST_CHECK(mid.normal > W);                  // 但三列仍宽于展开均分宽
+        DOCTEST_CHECK(std::fabs(mid.archive + 3.0f * mid.normal + 3.0f * kGap -
+                                contentW) < 0.01f);
+    }
+
+    // 无归档列（老库/自定义列）：退回等分，不产生 25% 窄列
+    const BoardColumnWidths noArchive =
+        boardColumnWidths(712.0f, kGap, 4, -1, 0.0f);
+    DOCTEST_CHECK(std::fabs(noArchive.normal - (712.0f - 3.0f * kGap) / 4.0f) < 0.01f);
+    DOCTEST_CHECK(std::fabs(noArchive.archive - noArchive.normal) < 0.01f);
+    // 零列不除零
+    DOCTEST_CHECK_EQ(boardColumnWidths(712.0f, kGap, 0, -1, 0.0f).normal, 0.0f);
+
+    // 虚拟化窗口：pitch=92，可视高 856 → 顶部构建 0..12（上下各 3 张缓冲）；
+    // 底部 offset=300×92−8−856 时 last=300、first=287
+    const float contentHeight = columnContentHeight(300);
+    DOCTEST_CHECK(std::fabs(contentHeight - (300.0f * 92.0f - 8.0f)) < 0.01f);
+    const auto top = virtualCardRange(300, 0.0f, 856.0f, 92.0f);
+    DOCTEST_CHECK_EQ(top.first, static_cast<size_t>(0));
+    DOCTEST_CHECK_EQ(top.second, static_cast<size_t>(13));
+    const auto bottom = virtualCardRange(300, contentHeight - 856.0f, 856.0f, 92.0f);
+    DOCTEST_CHECK_EQ(bottom.first, static_cast<size_t>(287));
+    DOCTEST_CHECK_EQ(bottom.second, static_cast<size_t>(300));
+    // 空列与退化 pitch：返回空窗口（调用方不构建卡片）
+    DOCTEST_CHECK_EQ(virtualCardRange(0, 0.0f, 856.0f, 92.0f).second,
+                     static_cast<size_t>(0));
+    DOCTEST_CHECK_EQ(virtualCardRange(10, 0.0f, 856.0f, 0.0f).second,
+                     static_cast<size_t>(0));
+    // 槽位等距：第 i 张 y = i×92
+    DOCTEST_CHECK(std::fabs(cardSlotY(5) - 460.0f) < 0.01f);
+    return true;
+})
+
+// ---- H20 渲染契约：折叠态四列几何 + 窄态不越界 + 入口删除 ----
+REGISTER_TEST(todo_ui_h20_board_render,
+              "todo_ui: H20 归档折叠渲染（四列宽/竖排窄态不越界/新建入口唯一）", {
+    TestEnv env;
+    DOCTEST_REQUIRE(env.ready);
+    auto cols = env.svc->listColumns();
+    DOCTEST_REQUIRE(cols.isOk());
+    DOCTEST_REQUIRE_EQ(cols.value().size(), static_cast<size_t>(4));
+    int archiveIndex = -1;
+    int64_t archiveColId = 0;
+    for (size_t i = 0; i < cols.value().size(); ++i) {
+        if (cols.value()[i].kind == "archive") {
+            archiveIndex = static_cast<int>(i);
+            archiveColId = cols.value()[i].id;
+            break;
+        }
+    }
+    DOCTEST_REQUIRE(archiveIndex >= 0);
+    // 归档列放一张卡：折叠态不渲染卡片，展开结构（目标态）下可查到
+    DOCTEST_REQUIRE(env.svc->createTask(archiveColId, "归档样例").isOk());
+
+    std::unique_ptr<::core::Module> mod(create_todo_module());
+    mod->onStart();
+
+    eui::Ui ui;
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    auto layoutFrame = [&]() {
+        ui.begin("todo_h20_frame");
+        mod->compose(ui, screen);
+        ui.end();
+        ui.layout(screen);
+    };
+    layoutFrame();
+
+    const auto& t = core::theme::current();
+    const float contentW = 1600.0f - t.sizes.spacingLarge * 4.0f;  // module: pad 32×2
+    const float gap = t.sizes.spacingLarge;
+    const float W = (contentW - 3.0f * gap) / 4.0f;
+    const float archiveW = W * 0.25f;
+    const float normalW = (contentW - 3.0f * gap - archiveW) / 3.0f;
+
+    auto colId = [&](int idx) { return "todo.col." + std::to_string(idx); };
+    // 四列宽度：折叠态归档 W×25%，其余三列均分剩余；x 依次递增（row 流式重排）
+    const auto* archiveBg = ui.find(colId(archiveIndex) + ".bg");
+    DOCTEST_REQUIRE(archiveBg != nullptr);
+    DOCTEST_CHECK(std::fabs(archiveBg->frame.width - archiveW) < 0.5f);
+    float prevRight = -1.0f;
+    for (size_t i = 0; i < cols.value().size(); ++i) {
+        const auto* bg = ui.find(colId(static_cast<int>(i)) + ".bg");
+        DOCTEST_REQUIRE(bg != nullptr);
+        const float expected = (static_cast<int>(i) == archiveIndex) ? archiveW
+                                                                     : normalW;
+        DOCTEST_CHECK(std::fabs(bg->frame.width - expected) < 0.5f);
+        if (prevRight >= 0.0f) {
+            DOCTEST_CHECK(std::fabs(bg->frame.x - (prevRight + gap)) < 0.5f);
+        }
+        prevRight = bg->frame.x + bg->frame.width;
+    }
+    // 右缘 = 窗口宽 − 双侧 pad（pad = 2×spacingLarge = 32/侧）
+    DOCTEST_CHECK(std::fabs(prevRight - (1600.0f - t.sizes.spacingLarge * 2.0f)) < 0.5f);
+
+    // 折叠态：竖排窄态存在，普通列头/加号/展开按钮都不画
+    DOCTEST_CHECK(ui.find(colId(archiveIndex) + ".title") == nullptr);
+    DOCTEST_CHECK(ui.find(colId(archiveIndex) + ".archivetoggle") == nullptr);
+    const auto* compactHit = ui.find(colId(archiveIndex) + ".expand.bg");
+    DOCTEST_REQUIRE(compactHit != nullptr);
+    DOCTEST_CHECK(compactHit->onClick != nullptr);
+    const float colX = archiveBg->frame.x;
+    const float colRight = colX + archiveBg->frame.width;
+    const float colBottom = archiveBg->frame.y + archiveBg->frame.height;
+    // 竖排字/计数 pill/chevron 都必须 clip 在列内（不越界）
+    for (int gi = 0; gi < 4; ++gi) {
+        const auto* glyph = ui.find(colId(archiveIndex) + ".compact.label." +
+                                    std::to_string(gi));
+        DOCTEST_REQUIRE(glyph != nullptr);
+        DOCTEST_CHECK(glyph->frame.x >= colX - 0.01f);
+        DOCTEST_CHECK(glyph->frame.x + glyph->frame.width <= colRight + 0.01f);
+        DOCTEST_CHECK(glyph->frame.y + glyph->frame.height <= colBottom + 0.01f);
+    }
+    const auto* pill = ui.find(colId(archiveIndex) + ".compact.pill");
+    const auto* count = ui.find(colId(archiveIndex) + ".compact.count");
+    const auto* chev = ui.find(colId(archiveIndex) + ".compact.chev");
+    DOCTEST_REQUIRE(pill != nullptr);
+    DOCTEST_REQUIRE(count != nullptr);
+    DOCTEST_REQUIRE(chev != nullptr);
+    for (const auto* el : {pill, count, chev}) {
+        DOCTEST_CHECK(el->frame.x >= colX - 0.01f);
+        DOCTEST_CHECK(el->frame.x + el->frame.width <= colRight + 0.01f);
+        DOCTEST_CHECK(el->frame.y + el->frame.height <= colBottom + 0.01f);
+    }
+    DOCTEST_CHECK_EQ(count->text, std::string("1"));
+
+    // 入口唯一：+ 列 / 列头 + 新建 / 空列「+ 添加任务」全部不存在
+    DOCTEST_CHECK(ui.find("todo.btn.addcol.bg") == nullptr);
+    for (size_t i = 0; i < cols.value().size(); ++i) {
+        DOCTEST_CHECK(ui.find(colId(static_cast<int>(i)) + ".add.bg") == nullptr);
+        DOCTEST_CHECK(ui.find(colId(static_cast<int>(i)) + ".emptyadd.bg") == nullptr);
+    }
+    const auto* newTask = ui.find("todo.btn.add.bg");
+    DOCTEST_REQUIRE(newTask != nullptr);
+    const auto* newTaskText = ui.find("todo.btn.add.text");
+    if (newTaskText == nullptr) newTaskText = ui.find("todo.btn.add.text.normal");
+    DOCTEST_REQUIRE(newTaskText != nullptr);
+    DOCTEST_CHECK_EQ(newTaskText->text, std::string("新建任务"));
+    // 标题区宽 = contentW − 动作区实际宽（240+88+120+2×spacingSmall）
+    const auto* h1 = ui.find("todo.h1");
+    DOCTEST_REQUIRE(h1 != nullptr);
+    const float actionsW = 240.0f + 88.0f + 120.0f + t.sizes.spacingSmall * 2.0f;
+    DOCTEST_CHECK(std::fabs(h1->frame.width - (contentW - actionsW)) < 0.5f);
+
+    // 点击窄态 → 目标态展开（archiveT 由模块侧动画推进；无头下结构先行）
+    const auto* hit = ui.find(colId(archiveIndex) + ".expand.bg");
+    DOCTEST_REQUIRE(hit != nullptr);
+    DOCTEST_REQUIRE(hit->onClick != nullptr);
+    hit->onClick();
+    layoutFrame();
+    DOCTEST_CHECK(ui.find(colId(archiveIndex) + ".title") != nullptr);
+    DOCTEST_CHECK(ui.find(colId(archiveIndex) + ".archivetoggle.bg") != nullptr);
+    DOCTEST_CHECK(ui.find(colId(archiveIndex) + ".card.0.title") != nullptr);
+
+    // ---- 1000×640 最小档：内容宽按真实 pad（2×spacingLarge = 32/侧）复算 ----
+    // 展开态：四列等分 W=(contentW−3×gap)/4；onPageEnter 落目标态（不补播动画）
+    screen.width = 1000.0f;
+    screen.height = 640.0f;
+    mod->onPageEnter();
+    layoutFrame();
+    const float contentW1000 = screen.width - t.sizes.spacingLarge * 4.0f;  // 936
+    const float W1000 = (contentW1000 - 3.0f * gap) / 4.0f;                 // 222
+    float right1000 = -1.0f;
+    for (size_t i = 0; i < cols.value().size(); ++i) {
+        const auto* bg = ui.find(colId(static_cast<int>(i)) + ".bg");
+        DOCTEST_REQUIRE(bg != nullptr);
+        DOCTEST_CHECK(std::fabs(bg->frame.width - W1000) < 0.5f);  // 展开四列等分
+        if (right1000 >= 0.0f) {
+            DOCTEST_CHECK(std::fabs(bg->frame.x - (right1000 + gap)) < 0.5f);
+        }
+        right1000 = bg->frame.x + bg->frame.width;
+    }
+    DOCTEST_CHECK(std::fabs(right1000 -
+                            (screen.width - t.sizes.spacingLarge * 2.0f)) < 0.5f);  // 968
+
+    // 折叠态：归档 = W×25%，其余三列均分剩余宽
+    const auto* toggle = ui.find(colId(archiveIndex) + ".archivetoggle.bg");
+    DOCTEST_REQUIRE(toggle != nullptr);
+    DOCTEST_REQUIRE(toggle->onClick != nullptr);
+    toggle->onClick();
+    mod->onPageEnter();
+    layoutFrame();
+    const float archiveW1000 = W1000 * 0.25f;                                     // 55.5
+    const float normalW1000 = (contentW1000 - 3.0f * gap - archiveW1000) / 3.0f;  // 277.5
+    right1000 = -1.0f;
+    for (size_t i = 0; i < cols.value().size(); ++i) {
+        const auto* bg = ui.find(colId(static_cast<int>(i)) + ".bg");
+        DOCTEST_REQUIRE(bg != nullptr);
+        const float expected = (static_cast<int>(i) == archiveIndex) ? archiveW1000
+                                                                    : normalW1000;
+        DOCTEST_CHECK(std::fabs(bg->frame.width - expected) < 0.5f);
+        if (right1000 >= 0.0f) {
+            DOCTEST_CHECK(std::fabs(bg->frame.x - (right1000 + gap)) < 0.5f);
+        }
+        right1000 = bg->frame.x + bg->frame.width;
+    }
+    DOCTEST_CHECK(std::fabs(right1000 -
+                            (screen.width - t.sizes.spacingLarge * 2.0f)) < 0.5f);
+    // 折叠结构：普通列头让位给竖排窄态
+    DOCTEST_CHECK(ui.find(colId(archiveIndex) + ".title") == nullptr);
+    DOCTEST_CHECK(ui.find(colId(archiveIndex) + ".expand.bg") != nullptr);
 
     mod->onStop();
     return true;

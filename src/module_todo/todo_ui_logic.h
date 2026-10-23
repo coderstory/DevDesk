@@ -14,6 +14,7 @@
 #include <optional>
 #include <string>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 #include "core/theme.h"
@@ -40,6 +41,74 @@ constexpr float kColumnContentInset = 16.0f;
 // 卡片 / 占位条共用的可用宽（内容宽 - 双侧 inset），窄列钳到 0
 inline float contentCardWidth(float contentWidth) {
     return std::max(0.0f, contentWidth - kColumnContentInset * 2.0f);
+}
+
+// ---- 固定四列 + 归档折叠动画的纯几何 ----
+// W = (contentW − 3×gap) / 4；归档宽 = lerp(W×25%, W, archiveT)；
+// 其余三列 = (contentW − 3×gap − 归档宽) / 3。无归档列时四列均分。
+constexpr float kArchiveCollapsedRatio = 0.25f;  // 折叠宽 = 展开列宽 × 25%
+constexpr size_t kVirtualCardBuffer = 3;         // 虚拟化：可视区上下各 3 张缓冲
+
+struct BoardColumnWidths {
+    float normal = 0.0f;   // 普通列宽（归档展开时 = W）
+    float archive = 0.0f;  // 归档列宽（折叠时 = W×25%）
+};
+
+inline float uiLerp(float from, float to, float t) {
+    return from + (to - from) * std::clamp(t, 0.0f, 1.0f);
+}
+
+// 平滑阶跃（内容淡入/淡出）：x ≤ edge0 → 0，x ≥ edge1 → 1，中间 3u²−2u³
+inline float smoothStep(float edge0, float edge1, float x) {
+    if (edge1 <= edge0) return x >= edge1 ? 1.0f : 0.0f;
+    const float u = std::clamp((x - edge0) / (edge1 - edge0), 0.0f, 1.0f);
+    return u * u * (3.0f - 2.0f * u);
+}
+
+// archiveIndex < 0（无归档列）时 normal == archive == 等分宽，调用方按 normal 布局所有列。
+// columnCount 仅用于零列早退，布局恒按四列（列模型固定，不再有 n 列推广）。
+inline BoardColumnWidths boardColumnWidths(float contentW, float gap,
+                                           size_t columnCount, int archiveIndex,
+                                           float archiveT) {
+    constexpr float kColumns = 4.0f;
+    BoardColumnWidths out{};
+    if (columnCount == 0) return out;
+    const float span = contentW - gap * (kColumns - 1.0f);
+    out.normal = span / kColumns;
+    out.archive = out.normal;
+    if (archiveIndex >= 0) {
+        out.archive = uiLerp(out.normal * kArchiveCollapsedRatio, out.normal, archiveT);
+        out.normal = (span - out.archive) / (kColumns - 1.0f);
+    }
+    return out;
+}
+
+// 虚拟化窗口 [first, last)：按列滚动偏移与可视高算首/末张，上下各 kVirtualCardBuffer 张缓冲。
+// 卡片定高 pitch = kCardHeight + kCardGap，因此索引 = floor(offset / pitch)。
+inline std::pair<size_t, size_t> virtualCardRange(size_t taskCount, float scrollOffset,
+                                                  float viewportH, float pitch) {
+    if (taskCount == 0 || !(pitch > 0.0f)) return {0, 0};
+    const float offset = std::max(0.0f, scrollOffset);
+    const size_t visibleFirst = static_cast<size_t>(offset / pitch);
+    const size_t first = visibleFirst > kVirtualCardBuffer
+                             ? visibleFirst - kVirtualCardBuffer
+                             : 0;
+    // 可视区末张（含）→ +1；再补下缓冲
+    size_t last = static_cast<size_t>((offset + std::max(0.0f, viewportH)) / pitch) +
+                  1 + kVirtualCardBuffer;
+    last = std::min(last, taskCount);
+    return {std::min(first, last), last};
+}
+
+// 列内容总高：n 张卡 + (n−1) 个间距（虚拟化时用等高清单一占位元素撑出同一高度）
+inline float columnContentHeight(size_t taskCount) {
+    if (taskCount == 0) return 0.0f;
+    return static_cast<float>(taskCount) * (kCardHeight + kCardGap) - kCardGap;
+}
+
+// 第 index 张卡的槽位 y（相对列内容原点；等价于旧流式布局的位置）
+inline float cardSlotY(size_t index) {
+    return static_cast<float>(index) * (kCardHeight + kCardGap);
 }
 
 // 键盘移动的目标（columnId + moveTask 的 newPosition 语义）
@@ -108,7 +177,10 @@ struct DragHitInput {
     float pressY = 0.0f;
     float pressWidth = 0.0f;    // 按下时卡片 bounds 宽（dpi 探针的分子）
     float cardWidth = 0.0f;     // compose 空间卡宽（dpi 探针的分母）
-    float colWidth = 0.0f;      // compose 空间列宽
+    float colWidth = 0.0f;      // compose 空间均匀列宽（命中逻辑不读取，仅为入参兼容保留）
+    // 逐列实际几何（compose 空间，列左缘 + 当帧宽）：拖拽命中唯一几何来源
+    std::vector<float> columnX;
+    std::vector<float> columnWidth;
     float colGap = 0.0f;
     float boardHeight = 0.0f;   // compose 空间板高
     float scrollOffset = 0.0f;  // 源列滚动偏移（compose 空间，按下时刻快照）
@@ -129,19 +201,28 @@ inline bool dragScaleMismatch(float explicitScale, float probeScale) {
            std::fabs(probeScale - explicitScale) > 0.001f;
 }
 
+// 逐列几何可用：两向量等长、覆盖全部列且含源列
+inline bool hasColumnGeometry(const DragHitInput& in) {
+    return !in.columnX.empty() && in.columnX.size() == in.columnWidth.size() &&
+           in.columnX.size() >= static_cast<size_t>(in.colCount) &&
+           static_cast<size_t>(in.fromColIndex) < in.columnX.size();
+}
+
 // 指针 → 目标列索引；列间隙 / 板外 / 输入退化 → -1。bounds.y 含列滚动，先还原成未滚动位置再推板面顶边
 inline int dragDropTarget(const DragHitInput& in, double pointerX, double pointerY) {
     if (in.colCount <= 0 || in.cardWidth <= 0.0f || in.pressWidth <= 0.0f ||
-        in.colWidth <= 0.0f || in.fromColIndex < 0 ||
+        in.fromColIndex < 0 ||
         in.fromColIndex >= in.colCount || in.cardIndex < 0) {
         return -1;
     }
+    // 逐列几何是命中前置条件：缺向量 / 尺寸不齐 / 未覆盖全部列 → -1（同其他退化入参）
+    if (!hasColumnGeometry(in)) return -1;
     const float dpi = in.dpiScale;
-    const float stride = in.colWidth + in.colGap;
-    // 板面原点：按下锚点（卡片左缘 → compose）减 kColumnContentInset 还原列左缘，再左移若干列步长
-    const float originX = ::core::windowToCompose(in.pressX, in.pageOriginX, dpi) -
-                          kColumnContentInset -
-                          static_cast<float>(in.fromColIndex) * stride;
+    // 板面原点：按下锚点（卡片左缘 → compose）减 kColumnContentInset 还原列左缘，
+    // 再按源列实际左缘左移回板面原点
+    const float anchorX = ::core::windowToCompose(in.pressX, in.pageOriginX, dpi) -
+                          kColumnContentInset;
+    const float originX = anchorX - in.columnX[static_cast<size_t>(in.fromColIndex)];
     // 板面顶边：卡片未滚动 y = 列头高 + 序号*(卡高+间距) - 滚动偏移
     const float cardTopInCol =
         kColumnHeaderHeight +
@@ -155,8 +236,10 @@ inline int dragDropTarget(const DragHitInput& in, double pointerX, double pointe
     const float x = ::core::windowToCompose(static_cast<float>(pointerX),
                                             in.pageOriginX, dpi);
     for (int j = 0; j < in.colCount; ++j) {
-        const float left = originX + static_cast<float>(j) * stride;
-        if (x >= left && x <= left + in.colWidth) return j;
+        const float left = originX + in.columnX[static_cast<size_t>(j)];
+        const float right = left + in.columnWidth[static_cast<size_t>(j)];
+        // 半开区间 [left, right)，避免相邻列右缘与下一列左缘重叠命中
+        if (x >= left && x < right) return j;
     }
     return -1;
 }
@@ -165,21 +248,24 @@ inline int dragDropTarget(const DragHitInput& in, double pointerX, double pointe
 inline int dragDropRowIndex(const DragHitInput& in, int targetCol, double pointerX,
                             double pointerY, float targetScroll, int taskCount) {
     if (in.colCount <= 0 || in.cardWidth <= 0.0f || in.pressWidth <= 0.0f ||
-        in.colWidth <= 0.0f || in.fromColIndex < 0 ||
+        in.fromColIndex < 0 ||
         in.fromColIndex >= in.colCount || in.cardIndex < 0 ||
         targetCol < 0 || targetCol >= in.colCount || taskCount < 0) {
         return -1;
     }
+    // 逐列几何是命中前置条件（同 dragDropTarget）
+    if (!hasColumnGeometry(in)) return -1;
     const float dpi = in.dpiScale;
-    const float stride = in.colWidth + in.colGap;
     // 同 dragDropTarget：由按下锚点回推板面原点
-    const float originX = ::core::windowToCompose(in.pressX, in.pageOriginX, dpi) -
-                          kColumnContentInset -
-                          static_cast<float>(in.fromColIndex) * stride;
+    const float anchorX = ::core::windowToCompose(in.pressX, in.pageOriginX, dpi) -
+                          kColumnContentInset;
+    const float originX = anchorX - in.columnX[static_cast<size_t>(in.fromColIndex)];
     const float x = ::core::windowToCompose(static_cast<float>(pointerX),
                                             in.pageOriginX, dpi);
-    const float left = originX + static_cast<float>(targetCol) * stride;
-    if (x < left || x > left + in.colWidth) return -1;  // 不在目标列
+    const float left = originX + in.columnX[static_cast<size_t>(targetCol)];
+    const float right = left + in.columnWidth[static_cast<size_t>(targetCol)];
+    // 不在目标列（半开区间）
+    if (x < left || x >= right) return -1;
     const float cardTopInCol =
         kColumnHeaderHeight +
         static_cast<float>(in.cardIndex) * (kCardHeight + kCardGap) - in.scrollOffset;

@@ -216,8 +216,8 @@ void drawNewTaskDialog(eui::Ui& ui, const eui::Screen& screen,
         .onOpenChange([&d](bool v) { d.popups.setOpen(Popup::NewTask, v); })
         .content([&] {
             ui_kit::drawDialogTitle(ui, "todo.dialog.newtask.title", w, "新建任务",
-                                    t.sizes.fontSizeLarge + 2.0f, t.colors.textPrimary,
-                                    {.y = 14.0f, .height = 28.0f, .lineHeight = 28.0f});
+                                    20.0f, t.colors.textPrimary,
+                                    {.y = 16.0f, .height = 28.0f, .lineHeight = 28.0f});
 
             std::string colName = "?";
             for (const auto& c : *host.columns) {
@@ -375,97 +375,16 @@ void drawNewTaskDialog(eui::Ui& ui, const eui::Screen& screen,
         .build();
 }
 
-// 新建列弹窗：「+ 列」不即时落库，先走命名弹窗。Input 无程序化 focus/selectAll，
-// 改用空值 + placeholder 显示默认名：留空 = 采用「新列 N」，输入 = 按名字建。
-
-// 列名撞名/创建失败 → 弹窗内嵌红字、弹窗不关；留空采用默认名路径不查重。
-void NewColumnDialog::submit(PopupStack& popups, const DialogHost& host) {
-    const bool defaulted = title.empty();
-    const std::string text = defaulted
-        ? defaultColumnTitle(host.columns->size())
-        : title;
-    if (!defaulted && columnTitleTaken(*host.columns, text, 0)) {
-        error = "该列名已存在，请换一个";
-        return;
-    }
-    const std::string err = host.createColumn(text);
-    if (!err.empty()) {
-        error = err;
-        return;
-    }
-    popups.close(Popup::NewColumn);
-}
-
-void drawNewColumnDialog(eui::Ui& ui, const eui::Screen& screen,
-                         const core::theme::Tokens& t, DialogSet& d,
-                         const DialogHost& host) {
-    const auto themeTokens = core::theme::componentTokensWeChat(t);
-    const float w = ui_kit::dialogWidthPx(ui_kit::DialogWidth::Standard);
-    const float h = 230.0f;
-
-    ui_kit::DialogFrame frame;
-    frame.id = "todo.dialog.newcol";
-    frame.width = ui_kit::DialogWidth::Standard;
-    frame.height = h;
-    frame.open = d.popups.isOpen(Popup::NewColumn);
-    frame.zIndex = d.popups.zOf(Popup::NewColumn);
-    frame.onOpenChange = [&d](bool v) { d.popups.setOpen(Popup::NewColumn, v); };
-
-    ui_kit::drawDialogFrame(ui, screen, frame, themeTokens, [&] {
-            ui_kit::drawDialogTitle(ui, "todo.dialog.newcol.title", w, "新建列",
-                                    t.sizes.fontSizeLarge + 2.0f, t.colors.textPrimary);
-
-            ui_kit::drawDialogText(
-                ui, "todo.dialog.newcol.hint", w,
-                "输入列标题，留空回车则用「" +
-                    defaultColumnTitle(host.columns->size()) + "」",
-                t.sizes.fontSizeSmall - 1.0f, t.colors.textTertiary,
-                {.y = 56.0f, .height = 18.0f, .lineHeight = 18.0f});
-
-            components::input(ui, "todo.dialog.newcol.input")
-                .position(28.0f, 84.0f)
-                .size(w - 56.0f, 44.0f)
-                .value(d.newColumn.title)
-                .placeholder(defaultColumnTitle(host.columns->size()))
-                .fontSize(t.sizes.fontSizeBody)
-                .theme(themeTokens)
-                .onChange([&d](const std::string& text) {
-                    d.newColumn.title = text;
-                    d.newColumn.error.clear();  // 错误随下一次输入清除
-                })
-                .onEnter([&d, &host] { d.newColumn.submit(d.popups, host); })
-                // Esc=取消走 onCancel；输入框未聚焦的兜底走 app 级 Module::onKeyEvent
-                .onCancel([&d] { d.popups.close(Popup::NewColumn); })
-                .build();
-
-            ui_kit::drawDialogText(ui, "todo.dialog.newcol.error", w, d.newColumn.error,
-                                   t.sizes.fontSizeSmall, t.colors.error,
-                                   {.y = 134.0f, .height = 18.0f, .lineHeight = 18.0f,
-                                    .skipIfEmpty = true});
-
-            ui_kit::DialogButtonSpec cancel;
-            cancel.label = "取消";
-            cancel.fontSize = t.sizes.fontSizeBody - 1.0f;
-            cancel.style = ui_kit::DialogButtonStyle::SecondaryThemed;
-            cancel.onClick = [&d] { d.popups.close(Popup::NewColumn); };
-            ui_kit::DialogButtonSpec confirm;
-            confirm.label = "创建";
-            confirm.fontSize = t.sizes.fontSizeBody - 1.0f;
-            confirm.style = ui_kit::DialogButtonStyle::PrimaryThemed;
-            confirm.onClick = [&d, &host] { d.newColumn.submit(d.popups, host); };
-            ui_kit::drawDialogButtons(ui, "todo.dialog.newcol", w, h, cancel, confirm,
-                                      t, themeTokens);
-    });
-}
-
 // 右键菜单。菜单项点击分发（onContextSelectPath）留在模块：编排各弹窗打开与写操作，非菜单自身状态
 void drawContextMenu(eui::Ui& ui, const eui::Screen& screen,
                      const core::theme::Tokens& t, DialogSet& d,
                      const DialogHost& host,
                      const std::map<int64_t, float>& columnScrolls) {
     const auto themeTokens = core::theme::componentTokensWeChat(t);
+    // 列右键菜单入口已随固定四列删除，此处只构建任务菜单
+    if (d.ctx.taskId == 0) return;
     std::vector<components::ContextMenuItem> items;
-    if (d.ctx.taskId != 0) {
+    {
         const Task* self = findTask(*host.tasks, d.ctx.taskId);
         if (self == nullptr) return;
         items.push_back({"编辑"});
@@ -477,25 +396,11 @@ void drawContextMenu(eui::Ui& ui, const eui::Screen& screen,
             }
         }
         items.push_back({"删除"});
-    } else if (d.ctx.columnId != 0) {
-        if (findColumn(*host.columns, d.ctx.columnId) == nullptr) return;
-        items.push_back({"重命名列"});
-        items.push_back({"左移列"});
-        items.push_back({"右移列"});
-        // 改色子选（预设与 ui::columnDotColor 映射表对应）
-        std::vector<components::ContextMenuItem> colorItems;
-        for (int i = 0; i < kColorPresetCount; ++i) {
-            colorItems.push_back({kColorPresets[i].label});
-        }
-        items.push_back({"改色", std::move(colorItems)});
-        items.push_back({"删除列"});
-    } else {
-        return;
     }
 
     const BoardGeom g = boardGeom(screen.width, host.columns->size(), t);
     // 锚点统一经 core::menuAnchorForPointer：x 取列中芯、y 取卡片视觉底（未滚几何），滚动偏移经 scrollOffsetY 叠加
-    const float x = cardLeft(g, d.ctx.columnIndex) + g.colW * 0.5f;
+    const float x = d.ctx.anchorX;
     const float scrollY = d.ctx.cardIndex >= 0
         ? columnScrollOffset(*host.columns, columnScrolls,
                              static_cast<size_t>(d.ctx.columnIndex))
@@ -521,72 +426,6 @@ void drawContextMenu(eui::Ui& ui, const eui::Screen& screen,
         })
         .onOpenChange([&d](bool v) { d.popups.setOpen(Popup::Ctx, v); })
         .build();
-}
-
-// 重命名提交：空名/撞名 → 弹窗内嵌红字 + 弹窗不关。
-void RenameDialog::submit(PopupStack& popups, const DialogHost& host) {
-    const int64_t id = columnId;
-    const std::string text = title;
-    const std::string err = host.renameColumn(id, text);
-    if (!err.empty()) {
-        error = err;
-        return;
-    }
-    popups.close(Popup::Rename);
-}
-
-void drawRenameDialog(eui::Ui& ui, const eui::Screen& screen,
-                      const core::theme::Tokens& t, DialogSet& d,
-                      const DialogHost& host) {
-    const auto themeTokens = core::theme::componentTokensWeChat(t);
-    const float w = ui_kit::dialogWidthPx(ui_kit::DialogWidth::Standard);
-    const float h = 210.0f;
-
-    ui_kit::DialogFrame frame;
-    frame.id = "todo.dialog.rename";
-    frame.width = ui_kit::DialogWidth::Standard;
-    frame.height = h;
-    frame.open = d.popups.isOpen(Popup::Rename);
-    frame.zIndex = d.popups.zOf(Popup::Rename);
-    frame.onOpenChange = [&d](bool v) { d.popups.setOpen(Popup::Rename, v); };
-
-    ui_kit::drawDialogFrame(ui, screen, frame, themeTokens, [&] {
-            ui_kit::drawDialogTitle(ui, "todo.dialog.rename.title", w, "重命名列",
-                                    t.sizes.fontSizeLarge + 2.0f, t.colors.textPrimary);
-
-            components::input(ui, "todo.dialog.rename.input")
-                .position(28.0f, 68.0f)
-                .size(w - 56.0f, 44.0f)
-                .value(d.rename.title)
-                .placeholder("列标题…")
-                .fontSize(t.sizes.fontSizeBody)
-                .theme(themeTokens)
-                .onChange([&d](const std::string& text) {
-                    d.rename.title = text;
-                    d.rename.error.clear();  // 错误随下一次输入清除
-                })
-                .onEnter([&d, &host] { d.rename.submit(d.popups, host); })
-                .onCancel([&d] { d.popups.close(Popup::Rename); })
-                .build();
-
-            ui_kit::drawDialogText(ui, "todo.dialog.rename.error", w, d.rename.error,
-                                   t.sizes.fontSizeSmall, t.colors.error,
-                                   {.y = 118.0f, .height = 18.0f, .lineHeight = 18.0f,
-                                    .skipIfEmpty = true});
-
-            ui_kit::DialogButtonSpec cancel;
-            cancel.label = "取消";
-            cancel.fontSize = t.sizes.fontSizeBody - 1.0f;
-            cancel.style = ui_kit::DialogButtonStyle::SecondaryThemed;
-            cancel.onClick = [&d] { d.popups.close(Popup::Rename); };
-            ui_kit::DialogButtonSpec confirm;
-            confirm.label = "保存";
-            confirm.fontSize = t.sizes.fontSizeBody - 1.0f;
-            confirm.style = ui_kit::DialogButtonStyle::PrimaryThemed;
-            confirm.onClick = [&d, &host] { d.rename.submit(d.popups, host); };
-            ui_kit::drawDialogButtons(ui, "todo.dialog.rename", w, h, cancel, confirm,
-                                      t, themeTokens);
-    });
 }
 
 // 删除确认弹窗提交：taskId>0 = 删任务；否则 columnId>0 = 删列（外键 CASCADE 连带删列下任务）
@@ -638,7 +477,7 @@ void drawConfirmDeleteDialog(eui::Ui& ui, const eui::Screen& screen,
 
     ui_kit::drawDialogFrame(ui, screen, frame, themeTokens, [&] {
             ui_kit::drawDialogTitle(ui, "todo.dialog.delcol.title", w, title,
-                                    t.sizes.fontSizeLarge + 2.0f, t.colors.textPrimary);
+                                    20.0f, t.colors.textPrimary);
             ui_kit::drawDialogText(ui, "todo.dialog.delcol.body", w, body,
                                    t.sizes.fontSizeBody - 1.0f, t.colors.textSecondary,
                                    {.y = 60.0f, .height = 40.0f, .lineHeight = 20.0f});
@@ -777,15 +616,15 @@ void drawOverdueDialog(eui::Ui& ui, const eui::Screen& screen,
                 .position(28.0f, 20.0f)
                 .size(18.0f, 28.0f)
                 .icon(0xF071)  // fa-triangle-exclamation
-                .fontSize(t.sizes.fontSizeLarge + 2.0f)
+                .fontSize(20.0f)
                 .lineHeight(28.0f)
                 .color(t.colors.error)
                 .build();
             ui_kit::drawDialogTitle(
                 ui, "todo.dialog.overdue.title", w,
                 "逾期任务（" + std::to_string(d.overdue.tasks.size()) + "）",
-                t.sizes.fontSizeLarge + 2.0f, t.colors.error,
-                {.x = 50.0f, .y = 12.0f, .inset = 78.0f});
+                20.0f, t.colors.error,
+                {.x = 50.0f, .y = 16.0f, .inset = 78.0f});
             std::string hint = "任务名 · 所属列 · 截止 · 逾期天数，点击行跳转详情";
             if (d.overdue.tasks.size() > shown) {
                 hint += "（仅显示前 " + std::to_string(shown) + " 条）";
@@ -1024,8 +863,8 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
         .content([&] {
             ui_kit::drawDialogTitle(ui, "todo.dialog.detail.title", w,
                                     ro ? "任务详情（只读）" : "任务详情",
-                                    t.sizes.fontSizeLarge + 2.0f, t.colors.textPrimary,
-                                    {.y = 18.0f, .height = 28.0f, .lineHeight = 28.0f});
+                                    20.0f, t.colors.textPrimary,
+                                    {.y = 16.0f, .height = 28.0f, .lineHeight = 28.0f});
 
             // 头部右缘动作 chips（demo：🗑 删除 灰 / ✔ 标记完成 绿）——从底部按钮区上移，
             // 危险操作不再与取消/保存挤一行；只读态不渲染

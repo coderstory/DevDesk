@@ -10,10 +10,13 @@
 #include <components/card.h>
 #include <components/input.h>
 #include <components/scrollview.h>
+#include <components/tooltip.h>
 #include <ui_kit/card.h>
 #include <ui_kit/selection_bar.h>  // kSelectionBarAccentWidth（§4.3 选中态 2px 竖线宽度）
 
 #include <algorithm>
+#include <cmath>
+#include <iterator>
 #include <optional>
 #include <string>
 #include <vector>
@@ -51,6 +54,11 @@ constexpr float kCardDoneBadgeW = 16.0f;  // 完成角标宽（旧 24，右缘�
 // 两色源独立（色条 Low 走 primary 薄荷绿 #36D399，浅染 Low 走 success 祖母绿 #10B981）。
 constexpr float kTodoTintAlpha = 0.12f;
 
+// 归档折叠竖条的 hover / focus 态：回调写、compose 读（同 app_sidebar 关闭钮先例）。
+// 只是视觉态不是模块状态；同一时刻至多一根归档列，单 bool 足够。
+bool gArchiveCompactHovered = false;
+bool gArchiveCompactFocused = false;
+
 inline eui::Color cardFaceColor(Priority p, const core::theme::Tokens& t) {
     const eui::Color* src = nullptr;
     switch (p) {
@@ -64,22 +72,38 @@ inline eui::Color cardFaceColor(Priority p, const core::theme::Tokens& t) {
                           : eui::mixColor(ui_kit::cardSurface(t), *src, kTodoTintAlpha);
 }
 
-// 右侧动作区 560px = 搜索框(240)+逾期(104)+「+ 列」(72)+「+ 新建任务」(120)+间距
+// ---- H20：动作区按真实控件重算（不再留 560 死值）----
+// 搜索框 240×40 → 逾期 chip 88×28 → 「新建任务」120×32，控件间 2×spacingSmall。
+// 「+ 列」入口按固定四列设计删除（列模型不可增删）。
+constexpr float kHeaderSearchW = 240.0f;
+constexpr float kHeaderOverdueW = 88.0f;
+constexpr float kHeaderNewTaskW = 120.0f;
+
+// 归档展开态渲染上限（最近 20 张），超出部分只在列底提示一行。
+constexpr size_t kArchiveRenderLimit = 20;
+constexpr float kArchiveLimitH = 44.0f;
+// 列容器圆角（原型 --radius-col: 12px）
+constexpr float kColumnRadius = 12.0f;
+
 void drawHeader(eui::Ui& ui, float contentW, float headerH, float bodyH,
                 const core::theme::Tokens& t, const BoardView& v) {
     (void)bodyH;
     const auto componentTheme = core::theme::componentTokensWeChat(t);
+    const float actionsW = kHeaderSearchW + kHeaderOverdueW + kHeaderNewTaskW +
+                           t.sizes.spacingSmall * 2.0f;
+    // 标题区可用宽 = 内容宽 − 动作区实际宽；极窄窗口钳到 0 防负宽
+    const float titleW = std::max(0.0f, contentW - actionsW);
     ui.row("todo.header")
         .size(contentW, headerH)
         .alignItems(eui::Align::CENTER)
         .content([&] {
             ui.column("todo.title")
-                .size(contentW - 560.0f, headerH)
+                .size(titleW, headerH)
                 .gap(2.0f)
                 .content([&] {
                     // UAT5 全局顶部收紧：headerH 64→40，标题行 24
                     ui.text("todo.h1")
-                        .size(contentW - 560.0f, 24.0f)
+                        .size(titleW, 24.0f)
                         .text("Todo 看板")
                         .fontSize(t.sizes.fontSizeTitle)
                         .lineHeight(24.0f)
@@ -90,7 +114,7 @@ void drawHeader(eui::Ui& ui, float contentW, float headerH, float bodyH,
                 .build();
 
             ui.row("todo.actions")
-                .size(560.0f, 40.0f)
+                .size(actionsW, 40.0f)
                 .justifyContent(eui::Align::END)
                 .alignItems(eui::Align::CENTER)
                 .gap(t.sizes.spacingSmall)
@@ -156,20 +180,10 @@ void drawHeader(eui::Ui& ui, float contentW, float headerH, float bodyH,
                         })
                         .build();
 
-                    components::button(ui, "todo.btn.addcol")
-                        .size(72.0f, 32.0f)
-                        .text("+ 列")
-                        .fontSize(t.sizes.fontSizeSmall)
-                        .colors(t.colors.surface, t.colors.primarySoftBg, t.colors.primarySoftBg)
-                        .textColor(t.colors.primary)
-                        .radius(6.0f)
-                        .border(1.0f, t.colors.primary)
-                        .onClick([cb = v.act.addColumnClicked] { cb(); })
-                        .build();
-
+                    // H20：唯一创建入口（列头 + / 空列添加入口已删除），走富创建弹窗
                     components::button(ui, "todo.btn.add")
-                        .size(120.0f, 32.0f)
-                        .text("+ 新建任务")
+                        .size(kHeaderNewTaskW, 32.0f)
+                        .text("新建任务")
                         .fontSize(t.sizes.fontSizeSmall)
                         .colors(t.colors.primary, t.colors.primaryHover,
                                 t.colors.primaryPressed)
@@ -219,13 +233,15 @@ void drawBoard(eui::Ui& ui, float contentW, float bodyH,
     }
 
     if (v.columns.empty()) {
+        plate.columnX.clear();
+        plate.columnWidth.clear();
         ui.stack("todo.empty")
             .size(contentW, bodyH)
             .content([&] {
                 ui.text("todo.empty.text")
                     .position(0.0f, bodyH / 2.0f - 12.0f)
                     .size(contentW, 24.0f)
-                    .text("还没有任何列，点击右上角「+ 列」开始")
+                    .text("还没有任何列")
                     .fontSize(t.sizes.fontSizeBody)
                     .lineHeight(24.0f)
                     .horizontalAlign(eui::HorizontalAlign::Center)
@@ -237,14 +253,34 @@ void drawBoard(eui::Ui& ui, float contentW, float bodyH,
     }
 
     const float colGap = t.sizes.spacingLarge;
-    const int n = static_cast<int>(v.columns.size());
-    const float colW = (contentW - colGap * static_cast<float>(n - 1)) /
-                       static_cast<float>(n);
+    // H20 列宽派生：展开 W=(contentW−3×gap)/4；归档 = lerp(W×25%, W, archiveT)；
+    // 其余三列 = (contentW−3×gap−archiveW)/3。位置由 row 流式重排，随插值宽度逐帧生效。
+    int archiveIndex = -1;
+    for (size_t ci = 0; ci < v.columns.size(); ++ci) {
+        if (v.columns[ci].kind == "archive") {
+            archiveIndex = static_cast<int>(ci);
+            break;
+        }
+    }
+    const BoardColumnWidths widths = boardColumnWidths(
+        contentW, colGap, v.columns.size(), archiveIndex, v.archiveT);
 
-    // 板面几何快照（拖拽命中换算用；compose 每帧刷新）
-    plate.colW = colW;
+    // 板面几何快照（拖拽命中换算用；compose 每帧刷新）。colW 保留普通列宽作回落值，
+    // 逐列实际几何（含归档折叠动画宽度）写入 columnX/columnWidth
+    plate.colW = widths.normal;
     plate.colGap = colGap;
     plate.height = bodyH;
+    plate.columnX.resize(v.columns.size());
+    plate.columnWidth.resize(v.columns.size());
+    float cursorX = 0.0f;
+    for (size_t ci = 0; ci < v.columns.size(); ++ci) {
+        const float colW = (static_cast<int>(ci) == archiveIndex)
+                               ? widths.archive
+                               : widths.normal;
+        plate.columnX[ci] = cursorX;
+        plate.columnWidth[ci] = colW;
+        cursorX += colW + colGap;
+    }
 
     ui.row("todo.body")
         .size(contentW, bodyH)
@@ -252,7 +288,7 @@ void drawBoard(eui::Ui& ui, float contentW, float bodyH,
         .content([&] {
             for (size_t ci = 0; ci < v.columns.size(); ++ci) {
                 drawColumn(ui, "todo.col." + std::to_string(ci),
-                           v.columns[ci], colW, bodyH, t, ci, v, plate);
+                           v.columns[ci], plate.columnWidth[ci], bodyH, t, ci, v, plate);
             }
         })
         .build();
@@ -297,9 +333,11 @@ void drawColumnContent(eui::Ui& ui, const std::string& id, const Column& col,
     ui.rect(id + ".bg")
         .position(0.0f, 0.0f)
         .size(width, height)
-        // 列容器 = 页面结构 → 微信 pageBg 浅灰底（§4.14 白卡浮起于浅灰底）；卡片白只给列内浮动卡片与按钮
-        .color(t.colors.background)
-        .radius(t.sizes.radiusWeChat)
+        // 列容器 = 页面结构 → 微信 pageBg 浅灰底（§4.14 白卡浮起于浅灰底）；卡片白只给列内浮动卡片与按钮。
+        // H20：归档折叠态就是同一根普通列收窄，底色/边/圆角与其他列一致，不做独立白条/阴影。
+        // 拖拽悬停目标列 = 浅绿底 + 主色边（原型 .column.is-drop-target）。
+        .color(dropHover ? t.colors.primarySoftBg : t.colors.background)
+        .radius(kColumnRadius)
         .border(dropHover ? 2.0f : 1.0f,
                 dropHover ? t.colors.primary : t.colors.borderDefault)
         .build();
@@ -317,113 +355,203 @@ void drawColumnContent(eui::Ui& ui, const std::string& id, const Column& col,
     const auto& renderTasks = isArchive ? archiveFiltered : colTasks;
     const size_t taskCount = renderTasks.size();
 
-    // 列头右键热区。纯命中区必须显式给全透明：Rect 默认不透明白色，深色主题会刷白
-    ui.rect(id + ".head")
-        .position(0.0f, 0.0f)
-        .size(width, kColumnHeaderHeight)
-        .color(eui::Color{0.0f, 0.0f, 0.0f, 0.0f})
-        .radius(t.sizes.radiusWeChat)
-        .onContextMenu([cb = v.act.columnMenu, col, colIndex](
-                           const eui::PointerEvent&, const eui::Rect&) {
-            cb(col, static_cast<int>(colIndex));
-        })
-        .build();
-
-    // 列颜色点（10px 圆点，token→hex 见 ui::columnDotColor）
-    const auto colDot = columnDotColor(col.color);
-    if (colDot.has_value()) {
-        ui.rect(id + ".dot")
-            .position(16.0f, 22.0f)
-            .size(8.0f, 8.0f)
-            .color(*colDot)
-            .radius(4.0f)
-            .build();
+    // ---- 归档折叠动画：archiveT 是唯一进度输入（模块侧驱动）----
+    // 窄态 <0.5；展开列头 0.5→0.65 淡入。
+    const float archiveT = std::clamp(v.archiveT, 0.0f, 1.0f);
+    const float compactAlpha =
+        isArchive ? 1.0f - smoothStep(0.35f, 0.5f, archiveT) : 0.0f;
+    const float headAlpha =
+        isArchive ? smoothStep(0.5f, 0.65f, archiveT) : 1.0f;
+    // archiveT 已含 easeOutCubic；反解出线性时间 p（展开 240ms / 收起 200ms），
+    // 内容淡入按 p∈[0.4,0.9]、收起按 p<0.3 淡出，与原型时长对齐。
+    const float easedT = std::clamp(
+        v.archiveExpanded ? archiveT : 1.0f - archiveT, 0.0f, 1.0f);
+    const float linearP = 1.0f - std::cbrt(1.0f - easedT);
+    const float contentAlpha =
+        isArchive ? (v.archiveExpanded ? smoothStep(0.4f, 0.9f, linearP)
+                                       : 1.0f - smoothStep(0.0f, 0.3f, linearP))
+                  : 1.0f;
+    // 结构口径（目标态为真时即便动画帧未推进也保留展开结构，供无头用例/首帧落位）：
+    const bool archiveHeaderOn =
+        !isArchive || v.archiveExpanded || archiveT >= 0.5f;
+    const bool archiveCardsOn =
+        !isArchive || v.archiveExpanded || archiveT >= 0.4f;
+    // 窄态元素在交叉淡化后移除时框架不会补发 hover(false)：此处主动复位，
+    // 防下次折叠回来文字停在主色 hover 态。
+    if (isArchive && compactAlpha <= 0.01f) {
+        gArchiveCompactHovered = false;
+        gArchiveCompactFocused = false;
     }
 
-    ui.text(id + ".title")
-        .position(colDot.has_value() ? 34.0f : 16.0f, 16.0f)
-        // 右侧留到 width-88：给 ✎ 重命名（width-70 起）和 + 加任务（width-36 起）两个按钮
-        .size(width - 88.0f - (colDot.has_value() ? 18.0f : 0.0f), 20.0f)
-        .text(col.title + " (" + std::to_string(taskCount) + ")")
-        .fontSize(t.sizes.fontSizeWeChat)
-        .lineHeight(20.0f)
-        .fontWeight(600)
-        // 省略号三件套：列名 + 计数超宽时截断，不压右侧 ✎/+ 按钮
-        .maxWidth(width - 88.0f - (colDot.has_value() ? 18.0f : 0.0f))
-        .overflow(core::TextOverflow::Ellipsis)
-        .color(t.colors.textPrimary)
-        .build();
+    // 列头（归档折叠窄态不画普通列头，整列让位给竖排条）
+    if (archiveHeaderOn) {
+        // 列头热区保留；透明底防深色主题刷白（右键菜单入口已随固定四列删除）
+        ui.rect(id + ".head")
+            .position(0.0f, 0.0f)
+            .size(width, kColumnHeaderHeight)
+            .color(eui::Color{0.0f, 0.0f, 0.0f, 0.0f})
+            .radius(t.sizes.radiusWeChat)
+            .build();
 
-    // 列头 ✎ 按钮直达改名弹窗；右键菜单「重命名列」入口保留（S3.3 Ghost 32x32）
-    if (isArchive) {
-        // 归档列：展开/折叠 + 重命名 + 添加（S3.3 #6）
-        const float toggleIcon = v.archiveExpanded ? 0xF077 : 0xF054;  // chevron-up / chevron-right
-        components::button(ui, id + ".archivetoggle")
-            .position(width - 110.0f, 14.0f)
-            .size(32.0f, 32.0f)
-            .icon(toggleIcon)
-            .iconSize(14.0f)
-            .colors(eui::Color{0,0,0,0}, t.colors.primarySoftBg, t.colors.primarySoftBg)
-            .iconColor(t.colors.primary)
-            .radius(6.0f)
-            .onClick([cb = v.act.archiveToggle] { cb(); })
-            .build();
-        components::button(ui, id + ".rename")
-            .position(width - 72.0f, 14.0f)
-            .size(32.0f, 32.0f)
-            .icon(0xF303)  // fa-pencil-alt
-            .iconSize(14.0f)
-            .colors(eui::Color{0,0,0,0}, t.colors.primarySoftBg, t.colors.primarySoftBg)
-            .iconColor(t.colors.primary)
-            .radius(6.0f)
-            .onClick([cb = v.act.renameColumn, col] { cb(col); })
-            .build();
-        components::button(ui, id + ".add")
-            .position(width - 36.0f, 14.0f)
-            .size(32.0f, 32.0f)
-            .icon(0xF067)  // fa-plus
-            .iconSize(14.0f)
-            .colors(eui::Color{0,0,0,0}, t.colors.primarySoftBg, t.colors.primarySoftBg)
-            .iconColor(t.colors.primary)
-            .radius(6.0f)
-            .onClick([cb = v.act.addTaskToColumn, col] { cb(col.id); })
-            .build();
-    } else {
-        components::button(ui, id + ".rename")
-            .position(width - 78.0f, 14.0f)
-            .size(32.0f, 32.0f)
-            .icon(0xF303)  // fa-pencil-alt
-            .iconSize(14.0f)
-            .colors(eui::Color{0,0,0,0}, t.colors.primarySoftBg, t.colors.primarySoftBg)
-            .iconColor(t.colors.primary)
-            .radius(6.0f)
-            .onClick([cb = v.act.renameColumn, col] { cb(col); })
-            .build();
-        components::button(ui, id + ".add")
-            .position(width - 36.0f, 14.0f)
-            .size(32.0f, 32.0f)
-            .icon(0xF067)  // fa-plus
-            .iconSize(14.0f)
-            .colors(eui::Color{0,0,0,0}, t.colors.primarySoftBg, t.colors.primarySoftBg)
-            .iconColor(t.colors.primary)
-            .radius(6.0f)
-            .onClick([cb = v.act.addTaskToColumn, col] { cb(col.id); })
-            .build();
+        auto drawHeadContent = [&](eui::Ui& target) {
+            // 列颜色点（10px 圆点，token→hex 见 ui::columnDotColor）
+            const auto colDot = columnDotColor(col.color);
+            if (colDot.has_value()) {
+                target.rect(id + ".dot")
+                    .position(16.0f, 22.0f)
+                    .size(8.0f, 8.0f)
+                    .color(*colDot)
+                    .radius(4.0f)
+                    .build();
+            }
+            const float titleX = colDot.has_value() ? 34.0f : 16.0f;
+            // 归档列右侧留 32px 收起钮 + 12px 内边距；普通列只留 16px
+            const float titleW = width - titleX - (isArchive ? 44.0f : 16.0f);
+            target.text(id + ".title")
+                .position(titleX, 16.0f)
+                .size(titleW, 20.0f)
+                .text(col.title + " (" + std::to_string(taskCount) + ")")
+                .fontSize(t.sizes.fontSizeWeChat)
+                .lineHeight(20.0f)
+                .fontWeight(600)
+                // 省略号三件套：列名 + 计数超宽时截断，不压右侧按钮
+                .maxWidth(titleW)
+                .overflow(core::TextOverflow::Ellipsis)
+                .color(t.colors.textPrimary)
+                .build();
+
+            if (isArchive) {
+                // 同一个 chevron 旋转 180°：折叠竖条的 chevron-left → 展开态指向右
+                target.rect(id + ".archivetoggle.bg")
+                    .position(width - 44.0f, 14.0f)
+                    .size(32.0f, 32.0f)
+                    .color(eui::Color{0, 0, 0, 0})
+                    .hoverColor(t.colors.primarySoftBg)
+                    .radius(6.0f)
+                    .onClick([cb = v.act.archiveToggle] { cb(); })
+                    .build();
+                target.text(id + ".archivetoggle.icon")
+                    .position(width - 44.0f, 14.0f)
+                    .size(32.0f, 32.0f)
+                    .icon(0xF053)  // fa-chevron-left
+                    .rotate(3.14159265f)
+                    .fontSize(14.0f)
+                    .lineHeight(14.0f)
+                    .horizontalAlign(eui::HorizontalAlign::Center)
+                    .verticalAlign(eui::VerticalAlign::Center)
+                    .color(t.colors.primary)
+                    .build();
+            }
+        };
+        if (isArchive) {
+            // 归档列头与窄态按 alpha 交叉淡化：整块随 headAlpha 渐显
+            ui.stack(id + ".headwrap")
+                .position(0.0f, 0.0f)
+                .size(width, kColumnHeaderHeight)
+                .opacity(headAlpha)
+                .content([&] { drawHeadContent(ui); })
+                .build();
+        } else {
+            drawHeadContent(ui);
+        }
     }
 
-    // 归档列折叠态：只显标题行+展开按钮，不画卡片（S3.3 #6）
-    if (isArchive && !v.archiveExpanded) {
-        components::button(ui, id + ".expand")
-            .position(width - 78.0f, 14.0f)
-            .size(32.0f, 32.0f)
-            .icon(0xF054)  // fa-chevron-right
-            .iconSize(14.0f)
-            .colors(eui::Color{0,0,0,0}, t.colors.primarySoftBg, t.colors.primarySoftBg)
-            .iconColor(t.colors.primary)
-            .radius(6.0f)
+    // 归档折叠窄态：竖排「已归档 · N」+ 计数 pill + chevron-left；整列可点、hover 浅绿底 + 主色字。
+    // 容器仍是同一根普通列（列 bg 已画），这里只是列内内容层，不做独立白条/阴影。
+    if (isArchive && compactAlpha > 0.01f) {
+        const bool hover = gArchiveCompactHovered;
+        const eui::Color labelColor =
+            hover ? t.colors.primary : t.colors.textSecondary;
+        const eui::Color countColor =
+            hover ? t.colors.primary : t.colors.textPrimary;
+
+        // 整列命中层：hover 浅绿底，键盘 Enter/Space 切换，focus 画 2px 主色框
+        ui.rect(id + ".expand.bg")
+            .position(0.0f, 0.0f)
+            .size(width, height)
+            .color(eui::Color{0.0f, 0.0f, 0.0f, 0.0f})
+            .hoverColor(t.colors.primarySoftBg)
+            .radius(kColumnRadius)
+            .border(gArchiveCompactFocused ? 2.0f : 0.0f, t.colors.primary)
+            .onHover([](bool hovered) { gArchiveCompactHovered = hovered; })
+            .onFocusChanged([](bool focused) { gArchiveCompactFocused = focused; })
+            .onKeyEvent([cb = v.act.archiveToggle](const eui::KeyEvent& ev) {
+                if (ev.action != eui::KeyAction::Press) return false;
+                if (ev.key != eui::InputKey::Enter && ev.key != eui::InputKey::Space) {
+                    return false;
+                }
+                cb();
+                return true;
+            })
             .onClick([cb = v.act.archiveToggle] { cb(); })
             .build();
-        return;
+
+        // EUI 无 writing-mode:vertical-rl —— 逐字居中堆叠，复现原型竖排标签
+        static constexpr const char* kCompactGlyphs[] = {"已", "归", "档", "·"};
+        float glyphY = 16.0f;
+        for (size_t gi = 0; gi < std::size(kCompactGlyphs); ++gi) {
+            ui.text(id + ".compact.label." + std::to_string(gi))
+                .position(0.0f, glyphY)
+                .size(width, 18.0f)
+                .text(kCompactGlyphs[gi])
+                .fontSize(13.0f)
+                .lineHeight(18.0f)
+                .fontWeight(600)
+                .horizontalAlign(eui::HorizontalAlign::Center)
+                .color(labelColor)
+                .opacity(compactAlpha)
+                .build();
+            glyphY += 18.0f;
+        }
+
+        // 计数 pill（#E6FBF2 底圆角）：宽随位数走，窄列钳到列宽 - 6
+        const std::string countText = std::to_string(taskCount);
+        const float pillW = std::min(
+            std::max(18.0f, 12.0f + static_cast<float>(countText.size()) * 7.0f),
+            width - 6.0f);
+        const float pillX = (width - pillW) / 2.0f;
+        const float pillY = glyphY + 6.0f;
+        ui.rect(id + ".compact.pill")
+            .position(pillX, pillY)
+            .size(pillW, 18.0f)
+            .color(t.colors.primarySoftBg)
+            .radius(9.0f)
+            .opacity(compactAlpha)
+            .build();
+        ui.text(id + ".compact.count")
+            .position(pillX, pillY)
+            .size(pillW, 18.0f)
+            .text(countText)
+            .fontSize(11.0f)
+            .lineHeight(18.0f)
+            .fontWeight(600)
+            .horizontalAlign(eui::HorizontalAlign::Center)
+            .verticalAlign(eui::VerticalAlign::Center)
+            .color(countColor)
+            .opacity(compactAlpha)
+            .build();
+
+        // 底部 chevron-left（14px 主色）；展开列头的收起按钮是同一图标旋转 180°
+        ui.text(id + ".compact.chev")
+            .position(0.0f, std::max(0.0f, height - 28.0f))
+            .size(width, 14.0f)
+            .icon(0xF053)  // fa-chevron-left
+            .fontSize(14.0f)
+            .lineHeight(14.0f)
+            .horizontalAlign(eui::HorizontalAlign::Center)
+            .color(t.colors.primary)
+            .opacity(compactAlpha)
+            .build();
+
+        components::tooltip(ui, id + ".compact.tooltip")
+            .theme(core::theme::componentTokensWeChat(t))
+            .source(id + ".expand.bg")
+            .anchor(width * 0.5f, 36.0f)
+            .bounds(width, height)
+            .value("展开归档")
+            .build();
+
+        if (!archiveCardsOn) return;
     }
 
 
@@ -438,44 +566,36 @@ void drawColumnContent(eui::Ui& ui, const std::string& id, const Column& col,
             .position(0.0f, height / 2.0f - 24.0f)
             .size(width, 24.0f)
             .text(v.searchQuery.empty()
-                      ? (isArchive ? "归档的任务在这里" : "暂无任务")
+                      ? (isArchive ? "暂无归档" : "暂无任务")
                       : "无命中任务")
             .fontSize(t.sizes.fontSizeSmall - 1.0f)
             .lineHeight(24.0f)
             .horizontalAlign(eui::HorizontalAlign::Center)
             .color(t.colors.textTertiary)
             .build();
-        // 空列「+ 添加任务」入口（非归档 + 无搜索时；§4.12 按钮就近原则）
-        if (v.searchQuery.empty() && !isArchive) {
-            components::button(ui, id + ".emptyadd")
-                .position(width / 2.0f - 55.0f, height / 2.0f + 4.0f)
-                .size(110.0f, 32.0f)
-                .text("+ 添加任务")
-                .fontSize(t.sizes.fontSizeSmall)
-                .colors(t.colors.background, t.colors.hover,
-                        t.colors.primarySoftBg)
-                .textColor(t.colors.primaryText)
-                .radius(t.sizes.radiusWeChat)
-                .border(0.0f, t.colors.borderDefault)
-                .onClick([cb = v.act.addTaskToColumn, col] { cb(col.id); })
-                .build();
-        }
+        // H20：空列「+ 添加任务」入口删除——创建入口唯一（页头「新建任务」）
         return;
     }
 
     // 列内滚动（scrollView）；滚动位置按列索引记忆（vector resize 保留旧值）
     const auto componentTheme = core::theme::componentTokensWeChat(t);
-    // 列内容容器 = 卡片落位淡入载体：opacity 门控 dragActive（跟手中整列 0.6 调暗，松手 0.6→1.0 淡回）
+    // 归档超出 20 张时列底留一行提示（计入容器高度，不遮卡片）
+    const bool showArchiveLimit =
+        isArchive && archiveCardsOn && taskCount > kArchiveRenderLimit;
+    const float cardsH =
+        height - kColumnHeaderHeight - (showArchiveLimit ? kArchiveLimitH : 0.0f);
+    // 列内容容器 = 卡片落位淡入载体：opacity 门控 dragActive（跟手中整列 0.6 调暗，松手 0.6→1.0 淡回），
+    // 归档列再乘 contentAlpha（线性时间口径的淡入淡出）
     ui.stack(id + ".cards")
         .position(0.0f, kColumnHeaderHeight)
-        .size(width, height - kColumnHeaderHeight)
-        .opacity(v.dragActive ? 0.6f : 1.0f)
+        .size(width, cardsH)
+        .opacity((v.dragActive ? 0.6f : 1.0f) * contentAlpha)
         .transition(core::Transition::make(0.12f, core::Ease::OutQuad))
         .animate(core::AnimProperty::Opacity)
         .content([&] {
             components::scrollView(ui, id + ".scroll")
                 .position(0.0f, 0.0f)
-                .size(width, height - kColumnHeaderHeight)
+                .size(width, cardsH)
                 .gap(kCardGap)
                 .step(60.0f)
                 .theme(componentTheme)
@@ -487,9 +607,27 @@ void drawColumnContent(eui::Ui& ui, const std::string& id, const Column& col,
                 })
                 .content([&](eui::Ui& inner, float contentWidth,
                              float viewportHeight) {
-                    (void)viewportHeight;
                     // 卡槽几何（卡与占位条唯一来源）：宽 = 内容宽 - 双侧 inset，x = inset
                     const float cardW = contentCardWidth(contentWidth);
+                    // 归档展开最多渲染最近 20 张；其余列全量进入虚拟化窗口
+                    const size_t renderLimit = (isArchive && archiveCardsOn)
+                                                   ? std::min(taskCount, kArchiveRenderLimit)
+                                                   : (isArchive ? size_t(0) : taskCount);
+                    // H20 虚拟化：卡片定高 pitch，只构建可视区 + 上下各 3 张缓冲。
+                    // 内容总高仍按 taskCount×pitch（归档展开按 20 张）由占位元素撑出，
+                    // 让 scrollView 的滚动范围不受本帧构建多少张影响。
+                    const auto visibleCards = virtualCardRange(
+                        renderLimit,
+                        columnScrollOffset(v.columns, v.columnScrolls, colIndex),
+                        viewportHeight, kCardHeight + kCardGap);
+                    const size_t firstCard = visibleCards.first;
+                    const size_t lastCard = visibleCards.second;
+
+                    // 占位：唯一参与流式布局的子元素，高度 = 全量卡槽高（不含末尾 gap）
+                    inner.stack(id + ".vspacer")
+                        .size(contentWidth, columnContentHeight(renderLimit))
+                        .build();
+
                     // 占位条与卡片同帧布局（随列滚动跟手）
                     if (showDropBar) {
                         const float barY = std::max(
@@ -497,12 +635,14 @@ void drawColumnContent(eui::Ui& ui, const std::string& id, const Column& col,
                                       (kCardHeight + kCardGap) - kCardGap);
                         drawDropBar(inner, barY, cardW);
                     }
-                    const size_t renderLimit = (isArchive && v.archiveExpanded) ? std::min(taskCount, size_t(20)) : taskCount;
-                    for (size_t i = 0; i < renderLimit; ++i) {
+                    for (size_t i = firstCard; i < lastCard; ++i) {
                         const std::string cardId =
                             id + ".card." + std::to_string(i);
-                        // wrap 占满内容宽（流式子元素，position 无效），卡在 wrap 内按 inset 落位
+                        // overlay 定位（ignoreLayout）：卡片不参与流式布局，y 按绝对槽位；
+                        // 容器宽仍占满内容宽，卡在 wrap 内按 inset 落位
                         inner.stack(cardId + ".wrap")
+                            .position(0.0f, cardSlotY(i))
+                            .ignoreLayout()
                             .size(contentWidth, kCardHeight)
                             .content([&] {
                                 drawCard(inner, cardId, kColumnContentInset,
@@ -518,6 +658,31 @@ void drawColumnContent(eui::Ui& ui, const std::string& id, const Column& col,
                 .build();
         })
         .build();
+
+    if (showArchiveLimit) {
+        const std::string limitText =
+            "仅展示最近 " + std::to_string(kArchiveRenderLimit) + " 张，另有 " +
+            std::to_string(taskCount - kArchiveRenderLimit) +
+            " 张较早归档未展示";
+        ui.rect(id + ".archivelimit.bg")
+            .position(12.0f, height - kArchiveLimitH + 6.0f)
+            .size(width - 24.0f, 32.0f)
+            .color(t.colors.hover)
+            .radius(7.0f)
+            .opacity(contentAlpha)
+            .build();
+        ui.text(id + ".archivelimit.text")
+            .position(12.0f, height - kArchiveLimitH + 6.0f)
+            .size(width - 24.0f, 32.0f)
+            .text(limitText)
+            .fontSize(10.5f)
+            .lineHeight(14.0f)
+            .horizontalAlign(eui::HorizontalAlign::Center)
+            .verticalAlign(eui::VerticalAlign::Center)
+            .color(t.colors.textTertiary)
+            .opacity(contentAlpha)
+            .build();
+    }
 }
 
 // x 只作用于卡片容器——卡内元素坐标一律相对卡内容原点，不得再加 x（重复平移 = 双倍偏移）
@@ -549,9 +714,16 @@ void drawCard(eui::Ui& ui, const std::string& id, float x, float y, float width,
     const bool isArchiveCard = colIndex >= 0 &&
         static_cast<size_t>(colIndex) < v.columns.size() &&
         v.columns[static_cast<size_t>(colIndex)].kind == "archive";
+    const bool isDoneCard = colIndex >= 0 &&
+        static_cast<size_t>(colIndex) < v.columns.size() &&
+        v.columns[static_cast<size_t>(colIndex)].kind == "done";
+    // 归档/已完成列不参与逾期着色（与页头逾期计数口径一致）
+    const bool overdueTint = !isArchiveCard && !isDoneCard && isOverdue(task);
     const float finalCardOpacity = cardOpacity * (isArchiveCard ? 0.7f : 1.0f);
-    // 逾期判定（core/overdue.h 谓词不动，纯展示渲染）
-    const bool overdue = isOverdue(task);
+    const float menuAnchorX =
+        t.sizes.spacingLarge * 2.0f +
+        plate.columnX[static_cast<size_t>(colIndex)] +
+        plate.columnWidth[static_cast<size_t>(colIndex)] * 0.5f;
     ui.rect(id + ".bg")
         .position(0.0f, y)
         .size(width, kCardHeight)
@@ -561,9 +733,9 @@ void drawCard(eui::Ui& ui, const std::string& id, float x, float y, float width,
         .radius(8.0f)
         .opacity(finalCardOpacity)
         .onClick([cb = v.act.cardClicked, task] { cb(task); })
-        .onContextMenu([cb = v.act.cardMenu, task, colIndex, cardIndex](
+        .onContextMenu([cb = v.act.cardMenu, task, colIndex, cardIndex, menuAnchorX](
                            const eui::PointerEvent&, const eui::Rect&) {
-            cb(task, colIndex, cardIndex);
+            cb(task, colIndex, cardIndex, menuAnchorX);
         })
         // drop 语义：拖动中无落库，松手按指针落点决定
         .onPress([cb = v.act.cardPressed, task, colIndex, cardIndex](
@@ -607,8 +779,8 @@ void drawCard(eui::Ui& ui, const std::string& id, float x, float y, float width,
         const float dueW = std::min(66.0f, dueMaxW);
         if (dueW >= 24.0f) {
             pendingChips.push_back({id + ".due", dueW, dueText,
-                                    isOverdue(task) ? t.colors.error
-                                                    : t.colors.textTertiary});
+                                    overdueTint ? t.colors.error
+                                                : t.colors.textTertiary});
             chipX += dueW + 6.0f;  // 自适应宽 + 6 间距
         }
     }
@@ -620,7 +792,8 @@ void drawCard(eui::Ui& ui, const std::string& id, float x, float y, float width,
         v.columns[static_cast<size_t>(colIndex)].kind == "archive" &&
         task.archivedAt.has_value();
     if (showArchivedChip) {
-        const std::string archText = formatArchivedAt(task.archivedAt.value());
+        // 原型 chip 格式：MM-DD 归档（formatDue 复用同一日期口径）
+        const std::string archText = formatDue(task.archivedAt.value()) + " 归档";
         const float archW = chipWidth(archText);
         const float avail = std::max(0.0f, width - kCardChipPadRight - chipX);
         if (archW <= avail) {
@@ -668,8 +841,8 @@ void drawCard(eui::Ui& ui, const std::string& id, float x, float y, float width,
         .overflow(core::TextOverflow::Ellipsis)
         // S3.3：逾期标题红；归档标题二级灰（textSecondary）；常规标题走主题一级文字
         .color(isArchiveCard ? t.colors.textSecondary
-                             : (overdue ? t.colors.error
-                                        : t.colors.textPrimary))
+                             : (overdueTint ? t.colors.error
+                                            : t.colors.textPrimary))
         .opacity(done ? 0.6f : finalCardOpacity)
         .build();
 

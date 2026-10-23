@@ -225,12 +225,14 @@ struct ContextMenuState {
     int64_t columnId = 0;
     int columnIndex = 0;
     int cardIndex = -1;
+    float anchorX = 0.0f;
 
-    void openTask(const Task& task, int colIndex, int cardIndex) {
+    void openTask(const Task& task, int colIndex, int cardIndex, float anchorX) {
         taskId = task.id;
         columnId = 0;
         columnIndex = colIndex;
         this->cardIndex = cardIndex;
+        this->anchorX = anchorX;
     }
     void openColumn(const Column& col, int colIndex) {
         taskId = 0;

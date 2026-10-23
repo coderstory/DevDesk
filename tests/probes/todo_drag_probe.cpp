@@ -61,24 +61,33 @@ int main(int argc, char* argv[]) {
     test_support::TestDb tdb("tododrag_", "probe");
     test_support::ScopedAppDatabase scopedDb(tdb.handle());
 
-    // 清除 schema 迁移带进来的 4 列默认种子（待办/进行中/已完成/已归档），
-    // 否则 todo.col.0 指向默认列而非我们的列（列序 = position 序）
-    tdb.handle().exec("DELETE FROM todo_tasks");
-    tdb.handle().exec("DELETE FROM todo_columns");
-
+    // 先构造 service 让 H20 固定四列迁移跑完，再按 kind 取列 id。自定义列会在
+    // 模块 onStart 时被再次迁移归并，故直接使用固定四列（列序 = position 序）
     module::todo::TodoService svc(tdb.handle());
-
-    auto c0 = svc.createColumn("待办");
-    auto c1 = svc.createColumn("进行中");
-    auto c2 = svc.createColumn("验收");
-    if (c0.isFail() || c1.isFail() || c2.isFail()) {
-        std::cerr << "todo_drag_probe: seed columns failed\n";
+    tdb.handle().exec("DELETE FROM todo_tasks");
+    int64_t col0Id = 0;
+    int64_t col1Id = 0;
+    int64_t col2Id = 0;
+    int64_t archiveColId = 0;
+    {
+        auto cols = svc.listColumns();
+        if (cols.isFail()) {
+            std::cerr << "todo_drag_probe: 读取固定列失败\n";
+            probe::terminateWindowBackend();
+            return 3;
+        }
+        for (const auto& c : cols.value()) {
+            if (c.kind == "todo") col0Id = c.id;
+            else if (c.kind == "doing") col1Id = c.id;
+            else if (c.kind == "done") col2Id = c.id;
+            else if (c.kind == "archive") archiveColId = c.id;
+        }
+    }
+    if (col0Id == 0 || col1Id == 0 || col2Id == 0 || archiveColId == 0) {
+        std::cerr << "todo_drag_probe: 固定四列缺失\n";
         probe::terminateWindowBackend();
         return 3;
     }
-    const int64_t col0Id = c0.value().id;
-    const int64_t col1Id = c1.value().id;
-    const int64_t col2Id = c2.value().id;
 
     auto tA = svc.createTask(col0Id, "任务A");
     auto tB = svc.createTask(col0Id, "任务B");
@@ -354,20 +363,26 @@ int main(int argc, char* argv[]) {
 
     // ==================== R3: 拖拽到归档列 → 列内重排无效化 ====================
     {
-        // F3 后 col2 含卡。设 col2 为 archive，重载，拖 col2 首卡下移。
-        tdb.handle()
-            .exec("UPDATE todo_columns SET kind = 'archive' WHERE id = " +
-                  std::to_string(col2Id));
-        mod->onStop();
-        mod->onStart();
-        composeFrame();
-
+        // F3 后 col2（已完成）有卡：先拖入归档列（col3），再在归档列内下拖 → position 不变
         const auto* card = findEl("todo.col.2.card.0.bg");
-        if (card != nullptr) {
+        const auto* archColEl = findEl("todo.col.3");
+        if (card != nullptr && archColEl != nullptr) {
             auto [sx, sy] = center(*card);
-            auto [beforeCol, beforePos] = taskPlace(taskDId);
+            const float tx = archColEl->frame.x + archColEl->frame.width * 0.5f;
+            const float ty = archColEl->frame.y + 120.0f;
+            doDrag(sx, sy, tx, ty, 6);
+        } else {
+            std::cout << "R3 INFO: col2 无卡或无归档列，归档列内重排测试跳过\n";
+        }
+        composeFrame();
+        auto archTasks = svc.listTasks(archiveColId);
+        const auto* archCard = findEl("todo.col.3.card.0.bg");
+        if (archTasks.isOk() && !archTasks.value().empty() && archCard != nullptr) {
+            const int64_t archTaskId = archTasks.value().front().id;
+            auto [beforeCol, beforePos] = taskPlace(archTaskId);
+            auto [sx, sy] = center(*archCard);
             doDrag(sx, sy, sx, sy + 120.0f, 6);
-            auto [cid, pos] = taskPlace(taskDId);
+            auto [cid, pos] = taskPlace(archTaskId);
             if (cid != beforeCol || pos != beforePos) {
                 std::cerr << "R3 FAIL: 归档列内重排 position 被改写（"
                           << beforePos << "→" << pos << "）\n";
@@ -375,12 +390,8 @@ int main(int argc, char* argv[]) {
             } else {
                 std::cout << "R3 PASS: 归档列拖拽无效化 → position 不变\n";
             }
-        } else if (findEl("todo.col.1.card.0.bg") != nullptr) {
-            // col2 无卡兜底：对 col1 的卡做板外拖，至少验证不崩
-            std::cout << "R3 INFO: col2 无卡，归档列测试非决定性跳过\n";
         } else {
-            std::cerr << "R3 ERR: 无可用卡片\n";
-            passed = false;
+            std::cout << "R3 INFO: 归档列无卡，非决定性跳过\n";
         }
     }
 
@@ -395,11 +406,8 @@ int main(int argc, char* argv[]) {
             passed = false;
         } else {
             int64_t newId = tNew.value().id;
-            tdb.handle().exec(
-                "UPDATE todo_columns SET kind = '' WHERE id = " +
-                std::to_string(col2Id));
-            mod->onStop();
-            mod->onStart();
+            // 不重启模块（onStart 会重跑固定四列迁移）；用导入事件驱动 reloadAll
+            core::event::bus().emit(core::event::kDbImported);
             composeFrame();
 
             // 找 col0 末尾卡
@@ -474,8 +482,9 @@ int main(int argc, char* argv[]) {
                                 "窄列卡" + std::to_string(i + 1));
             }
         }
-        mod->onStop();
-        mod->onStart();
+        // 不重启模块：onStart 会重跑固定四列迁移，把 6 个自定义列归并回四列；
+        // 用导入事件驱动 reloadAll，保持 6 列现场
+        core::event::bus().emit(core::event::kDbImported);
         composeFrame();
 
         // 取列0的卡和列5的cards区

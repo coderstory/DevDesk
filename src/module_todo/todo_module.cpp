@@ -1,4 +1,4 @@
-// Todo 看板模块：Module 接口 + compose 骨架 + 拖拽状态机 + 数据 reload + 写操作 + 右键菜单分发。
+// Todo 看板模块：Module 接口 + compose 骨架 + 拖拽状态机 + 归档折叠动画状态机 + 数据 reload + 写操作 + 右键菜单分发。
 // 看板绘制在 todo_ui_board.{h,cpp}，弹窗状态在 todo_dialogs.h，纯函数在 todo_ui_logic.h。
 // 两条通道（BoardActions / DialogHost）构造期绑定一次，回调体读模块当下状态，UI 单元不持有本类
 #include "core/database.h"
@@ -6,6 +6,7 @@
 #include "core/module_interface.h"
 #include "core/router.h"
 #include "core/theme.h"
+#include <core/platform/platform.h>   // core::platform::requestUiUpdate（唤醒主循环续帧）
 #include "core/component_theme.h"
 #include "core/event_bus.h"
 #include <ui_kit/metrics.h>
@@ -22,6 +23,9 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
+#include <cmath>
+#include <cstdint>
 #include <map>
 #include <memory>
 #include <optional>
@@ -30,6 +34,35 @@
 #include <vector>
 
 namespace module::todo {
+
+namespace {
+
+// H20 归档折叠动画时长（设计 §3）：展开 240ms / 收起 200ms，ease-out cubic。
+// 取 float 毫秒：反向点击时按剩余行程等比缩短，避免「半程慢爬」。
+constexpr float kArchiveExpandMs = 240.0f;
+constexpr float kArchiveCollapseMs = 200.0f;
+// 拖卡悬停折叠归档列 300ms 自动展开（设计 §5.3）
+constexpr int64_t kArchiveHoverExpandMs = 300;
+// 拖离/取消且本次为自动展开 → 200ms 后收回（设计 §5.3；延迟避免手抖回弹）
+constexpr int64_t kArchiveAutoCollapseDelayMs = 200;
+
+// 壁钟毫秒（steady_clock 单调钟，不受系统时间调整影响）。与 H13 71ce7d4c 同源：
+// 进度一律由「起始壁钟 + 已过毫秒」反算，不依赖 EUI onFrame 的 dt 累积
+//（headless/探针帧循环下 onFrame 回调可能不推进，dt 口径会冻结）。
+int64_t steadyNowMs() {
+    using namespace std::chrono;
+    return duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
+}
+
+// ease-out cubic：1-(1-t)^3（设计 §3 指定曲线，先快后缓）
+float easeOutCubic(float t) {
+    if (t <= 0.0f) return 0.0f;
+    if (t >= 1.0f) return 1.0f;
+    const float inv = 1.0f - t;
+    return 1.0f - inv * inv * inv;
+}
+
+} // namespace
 
 class TodoModule : public ::core::Module {
 public:
@@ -69,6 +102,19 @@ public:
         restoreViewState();
         LOG_INFO("Todo 模块启动（" + std::to_string(columns_.size()) + " 列 / " +
                  std::to_string(tasks_.size()) + " 任务）");
+    }
+
+    // H20：切页回来不补播离开时中断的归档折叠动画——直接落目标态（首帧同口径）；
+    // 拖拽悬停计时随页面离开作废（残留的 hover 列不再参与 300ms 自动展开）
+    void onPageEnter() override {
+        archiveAnimating_ = false;
+        archiveHoverArmed_ = false;
+        archiveT_ = archiveExpanded_ ? 1.0f : 0.0f;
+        drag_ = DragState{};   // 离开时拖拽被物理中断，锚点一并作废
+        // 离开时的拖拽会被物理中断（收不到 release）：本次悬停自动展开按拖离收回收尾
+        if (archiveAutoExpanded_ && archiveAutoCollapseAtMs_ == 0) {
+            archiveAutoCollapseAtMs_ = steadyNowMs() + kArchiveAutoCollapseDelayMs;
+        }
     }
 
     void onStop() override {
@@ -112,23 +158,38 @@ public:
         // 拖拽中任务被外部删除 → 锚点失效，复位防悬垂
         if (drag_.active && ui::findTask(tasks_, drag_.taskId) == nullptr) {
             drag_ = DragState{};
+            archiveHoverArmed_ = false;
+            // H20：拖拽被外部中断收不到 release，本次悬停自动展开按「取消」收回收尾
+            if (archiveAutoExpanded_ && archiveAutoCollapseAtMs_ == 0) {
+                archiveAutoCollapseAtMs_ = steadyNowMs() + kArchiveAutoCollapseDelayMs;
+            }
         }
         refreshOverdueCount();
         if (!searchQuery_.empty()) refreshSearch();
+        // 重载/删卡后列内卡数可能减少：按上次视口高钳制，防旧偏移遗留空白列
+        clampColumnScrolls(lastColumnViewportH_);
     }
 
     void refreshSearch() {
         searchMatchIds_.clear();
-        if (searchQuery_.empty() || !service_) return;
-        auto r = service_->search(searchQuery_);
-        if (r.isFail()) {
-            setStatus("搜索失败：" + r.errorMessage(), true);
-            return;
+        if (!searchQuery_.empty() && service_) {
+            auto r = service_->search(searchQuery_);
+            if (r.isFail()) {
+                setStatus("搜索失败：" + r.errorMessage(), true);
+                // 命中集已清空，仍要收口归档自动展开状态（查询失败不保留旧命中表的展开）
+                syncSearchArchiveExpand();
+                clampColumnScrolls(lastColumnViewportH_);
+                return;
+            }
+            // 命中表用 unordered_set（filterBySearch O(1) 查）
+            for (const auto& t : r.value()) {
+                searchMatchIds_.insert(t.id);
+            }
         }
-        // 命中表用 unordered_set（filterBySearch O(1) 查）
-        for (const auto& t : r.value()) {
-            searchMatchIds_.insert(t.id);
-        }
+        // H20：命中集变化后统一同步「归档命中 → 自动展开 / 无命中或清空 → 还原」
+        syncSearchArchiveExpand();
+        // 过滤后卡数变少 → 旧偏移可能越过内容底，立即钳制防虚拟窗口越界空白
+        clampColumnScrolls(lastColumnViewportH_);
     }
 
     void refreshOverdueCount() {
@@ -205,17 +266,6 @@ public:
         }
         core::event::bus().emit(core::event::kTodoCreated);
         reloadAll();
-        return "";
-    }
-
-    std::string doCreateColumn(const std::string& title) {
-        if (!service_) return "服务未就绪（TodoService 未注册）";
-        auto r = service_->createColumn(title);
-        if (r.isFail()) {
-            return "新建列失败：" + r.errorMessage();
-        }
-        reloadAll();
-        core::event::bus().emit(core::event::kTodoColumnChanged);
         return "";
     }
 
@@ -306,62 +356,11 @@ public:
         return true;
     }
 
-    std::string doRenameColumn(int64_t id, const std::string& title) {
-        if (!service_) return "服务未就绪（TodoService 未注册）";
-        if (title.empty()) return "列标题不能为空";
-        if (ui::columnTitleTaken(columns_, title, id)) return "该列名已存在，请换一个";
-        auto r = service_->renameColumn(id, title);
-        if (r.isFail()) {
-            return "重命名失败：" + r.errorMessage();
-        }
-        reloadAll();
-        core::event::bus().emit(core::event::kTodoColumnChanged);
-        return "";
-    }
-
     void doDeleteColumn(int64_t id) {
         if (!service_) return;
         auto r = service_->deleteColumn(id);
         if (r.isFail()) {
             setStatus("删除失败：" + r.errorMessage(), true);
-            return;
-        }
-        reloadAll();
-        core::event::bus().emit(core::event::kTodoColumnChanged);
-    }
-
-    void doSetColumnColor(int64_t id, const std::string& token) {
-        if (!service_) return;
-        auto r = service_->setColumnColor(id, token);
-        if (r.isFail()) {
-            setStatus("改色失败：" + r.errorMessage(), true);
-            return;
-        }
-        reloadAll();
-        core::event::bus().emit(core::event::kTodoColumnChanged);
-    }
-
-    // dir = -1 左移 / +1 右移（交换相邻列后整体重排 position）
-    void doShiftColumn(int64_t id, int dir) {
-        if (!service_) return;
-        std::vector<int64_t> ids;
-        ids.reserve(columns_.size());
-        size_t idx = columns_.size();
-        for (size_t i = 0; i < columns_.size(); ++i) {
-            ids.push_back(columns_[i].id);
-            if (columns_[i].id == id) idx = i;
-        }
-        const size_t j = (dir < 0) ? (idx == 0 ? idx : idx - 1)
-                                   : (idx + 1 >= ids.size() ? idx : idx + 1);
-        if (idx >= ids.size() || j == idx) {
-            // 边界 no-op：操作未执行的告示走错误通道（成功类提示已删，绿色勾会误导）
-            setStatus(dir < 0 ? "已经在最左边了" : "已经在最右边了", true);
-            return;
-        }
-        std::swap(ids[idx], ids[j]);
-        auto r = service_->reorderColumns(ids);
-        if (r.isFail()) {
-            setStatus("重排列失败：" + r.errorMessage(), true);
             return;
         }
         reloadAll();
@@ -386,6 +385,32 @@ public:
         if (colIndex >= columns_.size()) return;
         columnScrolls_[columns_[colIndex].id] = v;
         viewDirty_ = true;
+        // 事件驱动主循环：滚动只回写状态不会自动出帧，必须主动要一帧重建虚拟窗口
+        ::core::platform::requestUiUpdate();
+    }
+
+    // 可见卡数 = 搜索过滤后（归档按展开态封顶 20）；滚动上限 = 内容高 − 列视口高
+    void clampColumnScrolls(float viewportH) {
+        lastColumnViewportH_ = std::max(0.0f, viewportH);
+        const bool searching = !searchQuery_.empty();
+        for (const auto& col : columns_) {
+            auto it = columnScrolls_.find(col.id);
+            if (it == columnScrolls_.end()) continue;
+            auto colTasks = ui::tasksInColumn(tasks_, col.id);
+            colTasks = ui::filterBySearch(colTasks, searchMatchIds_, searching);
+            size_t count = colTasks.size();
+            if (col.kind == "archive") {
+                const bool cardsOn = archiveExpanded_ || archiveT_ >= 0.4f;
+                count = cardsOn ? std::min(count, size_t{20}) : size_t{0};
+            }
+            const float maxScroll =
+                std::max(0.0f, ui::columnContentHeight(count) - lastColumnViewportH_);
+            const float clamped = std::clamp(it->second, 0.0f, maxScroll);
+            if (clamped != it->second) {
+                it->second = clamped;
+                viewDirty_ = true;
+            }
+        }
     }
 
     // reloadAll 之后调用：恢复列滚动（列已不存在则丢弃）与选中任务（findTask 校验）
@@ -426,6 +451,13 @@ public:
         in.pressWidth = drag_.pressWidth;
         in.cardWidth = boardPlate_.cardW;
         in.colWidth = boardPlate_.colW;
+        in.columnX = boardPlate_.columnX;
+        in.columnWidth = boardPlate_.columnWidth;
+        // 源列左缘钉按下时刻：origin 由 pressX − columnX[from] 反推，读当下值会被归档动画位移污染
+        if (drag_.hasPressColumnX && drag_.fromColIndex >= 0 &&
+            static_cast<size_t>(drag_.fromColIndex) < in.columnX.size()) {
+            in.columnX[static_cast<size_t>(drag_.fromColIndex)] = drag_.pressColumnX;
+        }
         in.colGap = boardPlate_.colGap;
         in.boardHeight = boardPlate_.height;
         // 必须用按下时刻快照（与 pressY 同帧）：读"当下"值会在拖拽途中列被滚动时混帧错位
@@ -471,6 +503,18 @@ public:
         const int from = drag_.fromColIndex;
         const int hoverRow = drag_.hoverRow;
         drag_ = DragState{};  // 先复位（拖拽中间态结束，无论成败）
+
+        // H20 §5.3：拖拽悬停自动展开的收尾。落在归档列 = 用户明确归档（moveTask 会写
+        // archived_at），保持展开并交还手动控制；取消 / 落别列 = 200ms 后自动收回。
+        if (archiveAutoExpanded_) {
+            const int archCol = archiveColumnIndex();
+            if (target >= 0 && target == archCol) {
+                archiveAutoExpanded_ = false;
+                archiveAutoCollapseAtMs_ = 0;
+            } else if (archiveAutoCollapseAtMs_ == 0) {
+                archiveAutoCollapseAtMs_ = steadyNowMs() + kArchiveAutoCollapseDelayMs;
+            }
+        }
         if (target < 0 || target >= static_cast<int>(columns_.size())) return;
         const auto& dst = columns_[static_cast<size_t>(target)];
         if (target == from) {
@@ -548,15 +592,24 @@ public:
         if (payload.empty()) return;
 
         if (payload == "action:new_task") {
-            if (columns_.empty()) {
-                setStatus("请先创建至少一列", true);
-                return;
-            }
-            openNewTaskDialog(columns_.front().id);
+            // H20 创建入口唯一：与页头「新建任务」同口径（kind='todo' 定位待办列）
+            openNewTaskForTodoColumn();
             LOG_INFO("跨模块负载：打开新建任务弹窗");
             return;
         }
         LOG_WARN("Todo: 未识别的跳转负载: " + payload);
+    }
+
+    // H20 §5.0 创建入口唯一：按 kind='todo' 定位待办列（标题/下标在重命名重排后不可靠）。
+    // 缺该语义列 = 数据异常：报错中止，不静默落到首列造成误建
+    void openNewTaskForTodoColumn() {
+        const int64_t columnId = ui::findColumnByKind(columns_, "todo");
+        if (columnId == 0) {
+            LOG_ERROR("Todo: 未找到 kind='todo' 的列，新建任务已中止");
+            setStatus("未找到待办列，无法新建任务", true);
+            return;
+        }
+        openNewTaskDialog(columnId);
     }
 
     void openNewTaskDialog(int64_t columnId) {
@@ -564,16 +617,135 @@ public:
         dialogs_.popups.open(ui::Popup::NewTask);
     }
 
-    // 「+ 列」不即时落库，先走命名弹窗
-    void openNewColumnDialog() {
-        dialogs_.newColumn.reset();        // 打开清（含内嵌红字）
-        dialogs_.popups.open(ui::Popup::NewColumn);
+    // ---- H20 归档折叠动画 / 拖拽与搜索联动状态机 ----
+    // 目标态 archiveExpanded_ 与当前进度 archiveT_ 分离：点击只改目标并给动画定起点，
+    // 每帧由壁钟推进 archiveT_（board 侧只读这两个值做宽度插值与内容淡入淡出）。
+
+    // 归档列下标（kind='archive'；无归档列 → -1）。kind 权威，不按标题判
+    int archiveColumnIndex() const {
+        const int64_t id = ui::findColumnByKind(columns_, "archive");
+        if (id == 0) return -1;
+        for (size_t i = 0; i < columns_.size(); ++i) {
+            if (columns_[i].id == id) return static_cast<int>(i);
+        }
+        return -1;
     }
 
-    // 打开列重命名弹窗（右键菜单与列头 ✎ 共用）
-    void openRenameDialog(const Column& col) {
-        dialogs_.rename.reset(col);        // 打开清（含内嵌红字）
-        dialogs_.popups.open(ui::Popup::Rename);
+    // 归档列搜索命中数 = searchMatchIds_ ∩ 归档列任务（自动展开判据；board 侧同源自算「N 命中」）
+    size_t archiveHitCount() const {
+        if (searchQuery_.empty() || searchMatchIds_.empty()) return 0;
+        const int64_t id = ui::findColumnByKind(columns_, "archive");
+        if (id == 0) return 0;
+        size_t n = 0;
+        for (const auto& t : tasks_) {
+            if (t.columnId == id && searchMatchIds_.count(t.id) != 0) ++n;
+        }
+        return n;
+    }
+
+    // 启动一段动画：起点取当前 archiveT_（在途反向点击从当前进度回插，不回跳）。
+    // 时长 = 设计定值（展开 240 / 收起 200）× 剩余行程比例——全程 0↔1 恰为 240/200ms，
+    // 反向只走半程时不出现「短距离慢爬」。
+    void beginArchiveAnim(bool expand) {
+        archiveExpanded_ = expand;
+        archiveAnimFrom_ = archiveT_;
+        archiveAnimTo_ = expand ? 1.0f : 0.0f;
+        const float dist = std::fabs(archiveAnimTo_ - archiveAnimFrom_);
+        if (dist <= 0.001f) {  // 已在目标态：直接落位，不播空动画
+            archiveT_ = archiveAnimTo_;
+            archiveAnimating_ = false;
+            return;
+        }
+        archiveAnimStartMs_ = steadyNowMs();
+        archiveAnimDurationMs_ = (expand ? kArchiveExpandMs : kArchiveCollapseMs) * dist;
+        archiveAnimating_ = true;
+        // 重绘请求双保险：帧泵（todo.archive.anim.driver）管持续出帧，本调用确保
+        // 起播当帧即使错过输入事件的 compose 调度也会立刻被主循环捞起。
+        // 走 core::platform 而非 app::requestUpdate（后者只编进 app main TU，探针/无头链接不过）。
+        ::core::platform::requestUiUpdate();
+    }
+
+    // 点击折叠竖条任意位置 / 展开态收起按钮 / Esc（无弹窗时）共用。
+    // 手动操作优先：清掉自动展开标记与待收回截止，避免自动逻辑稍后回滚用户刚做的选择。
+    void onArchiveToggle() {
+        archiveAutoExpanded_ = false;
+        archiveAutoCollapseAtMs_ = 0;
+        archiveHoverArmed_ = false;
+        searchAutoExpanded_ = false;
+        beginArchiveAnim(!archiveExpanded_);
+    }
+
+    // 搜索联动（设计 §5.5/§5.7）：归档命中 > 0 → 自动展开并记住展开前目标态；
+    // 查询清空或命中归零 → 还原搜索前状态（同样走动画，不瞬跳）。
+    // 由 refreshSearch 收口（输入/清空/重新加载/查询失败都会经过）。
+    void syncSearchArchiveExpand() {
+        const bool searching = !searchQuery_.empty();
+        const size_t hits = archiveHitCount();
+        if (searching && hits > 0) {
+            if (!searchAutoExpanded_) {
+                searchExpandPrev_ = archiveExpanded_;
+                searchAutoExpanded_ = true;
+                if (!archiveExpanded_) beginArchiveAnim(true);
+            }
+        } else if (searchAutoExpanded_) {
+            searchAutoExpanded_ = false;
+            if (archiveExpanded_ != searchExpandPrev_) beginArchiveAnim(searchExpandPrev_);
+        }
+    }
+
+    // 每帧推进（compose 首步调用）：progress = 已过壁钟 / 本次时长，与帧率解耦；
+    // 动画/悬停计时/待收回在途时由帧泵（todo.archive.anim.driver）保证持续出帧。
+    void advanceArchiveAnim() {
+        const int64_t now = steadyNowMs();
+        if (archiveAnimating_) {
+            const float p = archiveAnimDurationMs_ > 0.0f
+                ? std::clamp(static_cast<float>(now - archiveAnimStartMs_) /
+                                 archiveAnimDurationMs_,
+                             0.0f, 1.0f)
+                : 1.0f;
+            archiveT_ = archiveAnimFrom_ +
+                        (archiveAnimTo_ - archiveAnimFrom_) * easeOutCubic(p);
+            if (p >= 1.0f) {
+                archiveT_ = archiveAnimTo_;
+                archiveAnimating_ = false;
+            }
+        } else if (std::fabs(archiveT_ - (archiveExpanded_ ? 1.0f : 0.0f)) > 0.0005f) {
+            // 首帧/切页回来兜底：动画不在途但进度未落位（离开页面时被打断）→ 直接落目标态
+            archiveT_ = archiveExpanded_ ? 1.0f : 0.0f;
+        }
+
+        // 拖卡悬停折叠归档列 300ms → 自动展开。只认折叠态且无动画在途；
+        // 计时起点取指针首次落在竖条上的那一帧（拖拽中指针可能静止，靠帧泵推进）
+        const int archCol = archiveColumnIndex();
+        const bool hoverArchive = drag_.active && archCol >= 0 &&
+                                  drag_.hoverColIndex == archCol &&
+                                  !archiveExpanded_ && !archiveAnimating_;
+        if (hoverArchive) {
+            if (!archiveHoverArmed_) {
+                archiveHoverArmed_ = true;
+                archiveHoverStartMs_ = now;
+            } else if (now - archiveHoverStartMs_ >= kArchiveHoverExpandMs) {
+                archiveHoverArmed_ = false;
+                archiveAutoExpanded_ = true;
+                beginArchiveAnim(true);
+            }
+        } else {
+            archiveHoverArmed_ = false;
+        }
+
+        // 拖离/取消后 200ms 自动收回（期间指针回到归档列由 cardDragged 撤销截止时刻）。
+        // 搜索仍命中时保持展开——搜索联动的保留优先级高于拖拽收回。
+        if (archiveAutoCollapseAtMs_ != 0 && now >= archiveAutoCollapseAtMs_) {
+            archiveAutoCollapseAtMs_ = 0;
+            const bool keepForSearch = searchAutoExpanded_;
+            archiveAutoExpanded_ = false;
+            if (!keepForSearch) beginArchiveAnim(false);
+        }
+    }
+
+    // 动画/悬停计时/待收回在途 → 挂 1x1 空 onFrame 帧泵（见 compose）
+    bool archiveNeedsFrame() const {
+        return archiveAnimating_ || archiveHoverArmed_ || archiveAutoCollapseAtMs_ != 0;
     }
 
     void openDetailDialog(const Task& task) {
@@ -587,15 +759,10 @@ public:
     }
 
     // 菜单定位走模块布局空间（ui::boardGeom），不用窗口坐标
-    void openTaskContextMenu(const Task& task, int columnIndex, int cardIndex) {
+    void openTaskContextMenu(const Task& task, int columnIndex, int cardIndex, float anchorX) {
         selectedTaskId_ = task.id;
         saveViewState();
-        dialogs_.ctx.openTask(task, columnIndex, cardIndex);
-        dialogs_.popups.open(ui::Popup::Ctx);
-    }
-
-    void openColumnContextMenu(const Column& col, int columnIndex) {
-        dialogs_.ctx.openColumn(col, columnIndex);
+        dialogs_.ctx.openTask(task, columnIndex, cardIndex, anchorX);
         dialogs_.popups.open(ui::Popup::Ctx);
     }
 
@@ -612,25 +779,13 @@ public:
         return true;
     }
 
-    // 菜单项点击分发（路径版，兼容「改色」子菜单）。列菜单 3=改色（path[1]=预设索引）
+    // 菜单项点击分发（路径版）：列右键菜单已随固定四列删除，只余任务菜单
     void onContextSelectPath(const std::vector<int>& path) {
-        if (dialogs_.ctx.taskId != 0) {
-            if (!path.empty()) onContextSelect(path[0]);
-            return;
-        }
-        if (path.size() == 2 && path[0] == 3) {
-            const Column* col = ui::findColumn(columns_, dialogs_.ctx.columnId);
-            if (col != nullptr && path[1] >= 0 && path[1] < ui::kColorPresetCount) {
-                doSetColumnColor(col->id, ui::kColorPresets[path[1]].token);
-            }
-            return;
-        }
-        // 改色插在前面，删除列索引 3→4
-        onContextSelect(!path.empty() && path[0] == 4 ? 3 : (path.empty() ? -1 : path[0]));
+        if (dialogs_.ctx.taskId == 0 || path.empty()) return;
+        onContextSelect(path[0]);
     }
 
-    // 菜单项分发，索引与 drawContextMenu 构建的 items 对应。任务菜单：0=编辑
-    // 1=上移 2=下移 3+i=移到第 i 个其他列 末项=删除；列菜单改色走 onContextSelectPath
+    // 任务菜单：0=编辑 1=上移 2=下移 3+i=移到第 i 个其他列 末项=删除
     void onContextSelect(int index) {
         if (dialogs_.ctx.taskId != 0) {
             const Task* self = ui::findTask(tasks_, dialogs_.ctx.taskId);
@@ -663,20 +818,6 @@ public:
             }
             return;
         }
-        const Column* col = ui::findColumn(columns_, dialogs_.ctx.columnId);
-        if (col == nullptr) return;
-        switch (index) {
-            case 0:
-                openRenameDialog(*col);
-                break;
-            case 1: doShiftColumn(col->id, -1); break;
-            case 2: doShiftColumn(col->id, +1); break;
-            case 3:
-                dialogs_.confirm.openForColumn(col->id);
-                dialogs_.popups.open(ui::Popup::Confirm);
-                break;
-            default: break;
-        }
     }
 
     void compose(eui::Ui& page, const eui::Screen& screen) override {
@@ -688,12 +829,20 @@ public:
 
         consumeNavPayload();
 
+        // H20 归档折叠：compose 首步按壁钟推进 archiveT_（含拖拽悬停 300ms 计时与
+        // 拖离后 200ms 自动收回），再装配 boardView 给看板绘制读「目标态 + 当前进度」
+        advanceArchiveAnim();
+
         const auto& t = core::theme::current();
         const float pad = t.sizes.spacingLarge * 2.0f;  // 32 —— S4.2 弹性内边距
         const float contentW = screen.width - pad * 2.0f;   // 宽 = 窗口宽 − 双侧内边距
         const float contentH = screen.height - pad;          // 高 = 窗口高 − 顶内边距（底贴底、无下 padding）
         const float headerH = ui_kit::kHeaderH;
         const float bodyH = contentH - headerH - t.sizes.spacingLarge;
+
+        // 装配看板前按列钳制滚动偏移：过滤/重载后卡数变少时旧偏移会越过内容底，
+        // 虚拟窗口 first 越界 → 整列空白。回写使 scrollView 与实际内容一致
+        clampColumnScrolls(bodyH - ui::kColumnHeaderHeight);
 
         // 页面底色 = 主窗口 clearColor（运行时跟随主题/效果档）——不自铺不透明底，半透/磨砂档才生效
 
@@ -703,13 +852,29 @@ public:
             dragHit.pressX, dragHit.pressY, drag_.totalX, drag_.totalY,
             dragHit.pageOriginX, dragHit.dpiScale);
 
-        // 看板绘制入参（容器是成员引用，不每帧拷贝）
-        const ui::BoardView boardView{
-            columns_, tasks_, searchMatchIds_, searchQuery_, columnScrolls_,
-            selectedTaskId_, drag_.active, drag_.taskId, drag_.hoverColIndex,
-            drag_.hoverRow, drag_.active && drag_.taskId != 0, ghostAnchor.x,
-            ghostAnchor.y, overdueCount_, service_ != nullptr, loadError_,
-            boardActions_, archiveExpanded_};
+        // 看板绘制入参（容器是成员引用，不每帧拷贝）。H20：archiveExpanded 给目标态
+        //（列头/内容阈值），archiveT 给当前动画进度（宽度插值）。archiveT 用构造后赋值，
+        // 与 BoardView 新增字段的声明位置解耦（todo_ui_board.h 由并行子任务改）。
+        ui::BoardView boardView{
+            .columns = columns_,
+            .tasks = tasks_,
+            .searchMatchIds = searchMatchIds_,
+            .searchQuery = searchQuery_,
+            .columnScrolls = columnScrolls_,
+            .selectedTaskId = selectedTaskId_,
+            .dragActive = drag_.active,
+            .dragTaskId = drag_.taskId,
+            .dragHoverColumn = drag_.hoverColIndex,
+            .dragHoverRow = drag_.hoverRow,
+            .dragGhostOn = drag_.active && drag_.taskId != 0,
+            .dragGhostX = ghostAnchor.x,
+            .dragGhostY = ghostAnchor.y,
+            .overdueCount = overdueCount_,
+            .hasService = service_ != nullptr,
+            .loadError = loadError_,
+            .act = boardActions_,
+            .archiveExpanded = archiveExpanded_};
+        boardView.archiveT = archiveT_;
         page.column("todo.root")
             .size(screen.width, screen.height)
             .padding(pad, pad, 0.0f, pad)  // 上右下左：底边贴底、内容随窗高伸缩（S4.2 弹性骨架）
@@ -717,6 +882,16 @@ public:
             .content([&] {
                 ui::drawHeader(page, contentW, headerH, bodyH, t, boardView);
                 ui::drawBoard(page, contentW, bodyH, t, boardView, boardPlate_);
+                // H20 归档折叠帧泵（照 md.tree.anim.driver / H13 的 1x1 空 onFrame 先例）：
+                // 真机主循环事件驱动，指针静止时无输入即不 compose；动画/300ms 悬停计时/
+                // 200ms 待收回在途挂本元素，runtime 每帧置 animating_ 持续出帧推进，
+                // 收敛后不再挂载自动剪除，零常驻功耗。
+                if (archiveNeedsFrame()) {
+                    page.stack("todo.archive.anim.driver")
+                        .size(1.0f, 1.0f)
+                        .onFrame([](float) {})
+                        .build();
+                }
             })
             .build();
 
@@ -724,12 +899,10 @@ public:
         ui::drawDragGhost(page, t, boardView, boardPlate_);
 
         ui::drawNewTaskDialog(page, screen, t, dialogs_, dialogHost_);
-        ui::drawNewColumnDialog(page, screen, t, dialogs_, dialogHost_);
         ui::drawDetailDialog(page, screen, t, dialogs_, dialogHost_);
         ui::drawOverdueDialog(page, screen, t, dialogs_, dialogHost_);
         ui::drawContextMenu(page, screen, t, dialogs_, dialogHost_, columnScrolls_);
         ui::drawDatePicker(page, screen, t, dialogs_, dialogHost_);
-        ui::drawRenameDialog(page, screen, t, dialogs_, dialogHost_);
         ui::drawConfirmDeleteDialog(page, screen, t, dialogs_, dialogHost_);
         drawToast(page, screen, core::theme::componentTokensWeChat(t));
     }
@@ -741,7 +914,13 @@ public:
             return false;
         }
         if (event.key == eui::InputKey::Escape) {
-            return closeTopmostPopup();
+            if (closeTopmostPopup()) return true;
+            // H20 §5.1：无弹窗时 Esc 收起展开态的归档列（与点收起按钮同走手动切换）
+            if (archiveExpanded_) {
+                onArchiveToggle();
+                return true;
+            }
+            return false;
         }
         if (event.key != eui::InputKey::Up && event.key != eui::InputKey::Down) {
             return false;
@@ -769,6 +948,9 @@ private:
         float pressWidth = 0.0f;
         // 与 pressX/pressY 同帧的源列滚动快照；dragDropTarget 靠它还原板面顶边
         float pressScrollOffset = 0.0f;
+        // 按下时刻源列左缘（板面空间）：归档展开动画会移动列，命中换算钉住按下时原点
+        float pressColumnX = 0.0f;
+        bool hasPressColumnX = false;
         int hoverColIndex = -1;    // 拖动中指针所在列（-1 = 列外，松手取消）
         // 目标列行（-1 = 不预览；仅搜索态不置位）。驱动占位条 + 落库插入位
         int hoverRow = -1;
@@ -794,28 +976,18 @@ private:
         .overdueClicked = [this] {
             if (overdueCount_ > 0) openOverdueDialog();
         },
-        .addColumnClicked = [this] {
-            openNewColumnDialog();
-        },
         .addTaskClicked = [this] {
-            if (columns_.empty()) {
-                setStatus("请先创建至少一列", true);
-                return;
-            }
-            openNewTaskDialog(columns_.front().id);
+            // H20 创建入口唯一：页头「新建任务」按 kind='todo' 定位待办列
+            openNewTaskForTodoColumn();
         },
         .retryClicked = [this] { retryLoad(); },
-        .columnMenu = [this](const Column& col, int columnIndex) {
-            openColumnContextMenu(col, columnIndex);
-        },
-        .renameColumn = [this](const Column& col) { openRenameDialog(col); },
-        .addTaskToColumn = [this](int64_t columnId) { openNewTaskDialog(columnId); },
+        // 固定四列：列右键菜单/列改名/加列/加任务入口已全部删除
         .columnScrollChanged = [this](size_t colIndex, float value) {
             setColScrollOffset(colIndex, value);
         },
         .cardClicked = [this](const Task& task) { openDetailDialog(task); },
-        .cardMenu = [this](const Task& task, int columnIndex, int cardIndex) {
-            openTaskContextMenu(task, columnIndex, cardIndex);
+        .cardMenu = [this](const Task& task, int columnIndex, int cardIndex, float anchorX) {
+            openTaskContextMenu(task, columnIndex, cardIndex, anchorX);
         },
         .cardPressed = [this](const Task& task, int colIndex, int cardIndex,
                               const eui::Rect& bounds) {
@@ -831,6 +1003,12 @@ private:
             drag_.pressScrollOffset =
                 ui::columnScrollOffset(columns_, columnScrolls_,
                                        static_cast<size_t>(colIndex));
+            if (colIndex >= 0 &&
+                static_cast<size_t>(colIndex) < boardPlate_.columnX.size()) {
+                drag_.pressColumnX =
+                    boardPlate_.columnX[static_cast<size_t>(colIndex)];
+                drag_.hasPressColumnX = true;
+            }
         },
         .cardDragged = [this](double x, double y, double totalX, double totalY) {
             // 超过 dragThreshold 才派发 → 到这里即视为拖拽激活
@@ -845,6 +1023,18 @@ private:
             drag_.hoverRow = (target >= 0 && searchQuery_.empty())
                 ? hitDropRow(target, x, y)
                 : -1;
+            // H20 §5.3：悬停计时本身由 compose 逐帧推进（指针可静止，靠帧泵）；
+            // 这里只维护「本次自动展开后拖离」的 200ms 收回截止：回到归档列撤销，
+            // 离开归档列开始计时（drop 落定后由 finishDrag 再判一次）
+            if (archiveAutoExpanded_) {
+                const int archCol = archiveColumnIndex();
+                if (target == archCol) {
+                    archiveAutoCollapseAtMs_ = 0;
+                } else if (archiveAutoCollapseAtMs_ == 0) {
+                    archiveAutoCollapseAtMs_ =
+                        steadyNowMs() + kArchiveAutoCollapseDelayMs;
+                }
+            }
         },
         .cardReleased = [this](double x, double y, bool released) {
             if (!drag_.active) {
@@ -855,7 +1045,7 @@ private:
             const int target = released ? hitDropColumn(x, y) : -1;
             finishDrag(target);
         },
-        .archiveToggle = [this] { archiveExpanded_ = !archiveExpanded_; },
+        .archiveToggle = [this] { onArchiveToggle(); },
     };
 
     ui::DialogHost dialogHost_{
@@ -865,12 +1055,6 @@ private:
                              const NewTaskAttributes& attrs,
                              const std::vector<std::string>& tags) {
             return doCreateTask(columnId, title, attrs, tags);
-        },
-        .createColumn = [this](const std::string& title) {
-            return doCreateColumn(title);
-        },
-        .renameColumn = [this](int64_t id, const std::string& title) {
-            return doRenameColumn(id, title);
         },
         .deleteTask = [this](int64_t taskId) { doDeleteTask(taskId); },
         .deleteColumn = [this](int64_t id) { doDeleteColumn(id); },
@@ -900,6 +1084,7 @@ private:
     std::vector<Task> tasks_;
     // 列内滚动偏移按列 id 记忆 + 跨会话持久化（viewDirty_ = 有未落盘变更，onStop 收口）
     std::map<int64_t, float> columnScrolls_;
+    float lastColumnViewportH_ = 0.0f;  // 上次 compose 的列视口高（非 compose 期间钳制用）
     std::unique_ptr<TodoViewStateStore> viewStore_;
     bool viewDirty_ = false;
 
@@ -926,7 +1111,24 @@ private:
     // 数据加载错误（空 = 正常；与空态区分）
     std::string loadError_;
 
+    // ---- H20 归档折叠动画 / 联动状态机 ----
+    // archiveExpanded_ = 目标态（唯一语义口径；BoardView.archiveExpanded 传它）
+    // archiveT_ = 当前进度 0..1（壁钟推进；BoardView.archiveT 传它，看板按它插值列宽与内容透明度）
     bool archiveExpanded_ = false;
+    float archiveT_ = 0.0f;
+    bool archiveAnimating_ = false;        // 动画在途（compose 每帧推进；在途挂帧泵）
+    float archiveAnimFrom_ = 0.0f;         // 本次起点进度（反向点击 = 当前 archiveT_，不回跳）
+    float archiveAnimTo_ = 0.0f;           // 本次终点进度（= 目标态）
+    int64_t archiveAnimStartMs_ = 0;       // 起始壁钟（steady_clock ms）
+    float archiveAnimDurationMs_ = 0.0f;   // 本次时长（240/200 × 剩余行程比例）
+    // 拖拽悬停 300ms 自动展开（只对折叠态；指针离开竖条重新计时）
+    bool archiveHoverArmed_ = false;
+    int64_t archiveHoverStartMs_ = 0;
+    bool archiveAutoExpanded_ = false;     // 本次展开由拖拽悬停触发 → 拖离/取消后自动收回
+    int64_t archiveAutoCollapseAtMs_ = 0;  // 待收回截止壁钟（0 = 无）
+    // 搜索联动：归档命中 > 0 自动展开，记住展开前目标态；清空搜索/命中归零还原
+    bool searchAutoExpanded_ = false;
+    bool searchExpandPrev_ = false;
 };
 
 } // namespace module::todo
