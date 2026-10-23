@@ -10,6 +10,7 @@
 
 #include "core/logging.h"
 #include "platform/json.h"
+#include "todo_ui_logic.h"
 
 #include <optional>
 #include <string>
@@ -241,7 +242,7 @@ public:
     std::string name() const override { return "todo.create"; }
 
     std::string schemaJson() const override {
-        return R"({"name":"todo.create","description":"新建待办任务（缺省建到第一列）；描述/优先级/截止时间可在同一次调用里一起给","input_schema":{"type":"object","properties":{"title":{"type":"string","description":"任务标题（必填）"},"columnId":{"type":"integer","description":"目标列 id，缺省=第一列"},"description":{"type":"string","description":"任务描述（可选）"},"priority":{"type":"integer","description":"0=无 1=低 2=中 3=高（可选，缺省 0）"},"dueAt":{"type":"integer","description":"截止时间 Unix 秒（可选）"}},"required":["title"]}})";
+        return R"({"name":"todo.create","description":"新建待办任务（缺省建到待办列）；描述/优先级/截止时间可在同一次调用里一起给","input_schema":{"type":"object","properties":{"title":{"type":"string","description":"任务标题（必填）"},"columnId":{"type":"integer","description":"目标列 id，缺省=待办列（kind='todo'）"},"description":{"type":"string","description":"任务描述（可选）"},"priority":{"type":"integer","description":"0=无 1=低 2=中 3=高（可选，缺省 0）"},"dueAt":{"type":"integer","description":"截止时间 Unix 秒（可选）"}},"required":["title"]}})";
     }
 
     Result<ToolResult> execute(const ToolArgs& args) override {
@@ -259,7 +260,7 @@ public:
             return toolError(parsed.errorMessage());
         }
 
-        // 目标列：显式 columnId > 第一列
+        // 目标列：显式 columnId > 待办列（kind='todo' 权威定位；标题/下标不可靠）
         int64_t columnId = 0;
         if (auto explicitCol = intField(argsObj.value(), "columnId")) {
             std::string err;
@@ -272,10 +273,12 @@ public:
             if (cols.isFail()) {
                 return toolError("读取列失败: " + cols.errorMessage());
             }
-            if (cols.value().empty()) {
-                return toolError("没有任何列，无法新建任务（请先创建列）");
+            // 与 openNewTaskForTodoColumn 同口径：缺待办列 = 数据异常，报错中止，不静默落首列误建
+            columnId = ui::findColumnByKind(cols.value(), "todo");
+            if (columnId == 0) {
+                LOG_ERROR("TodoTools: 未找到 kind='todo' 的列，新建任务已中止");
+                return toolError("未找到待办列，无法新建任务（请先创建待办列）");
             }
-            columnId = cols.value().front().id;
         }
 
         auto created = svc_.createTask(columnId, title, attrs);

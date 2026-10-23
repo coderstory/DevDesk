@@ -398,7 +398,7 @@ void drawContextMenu(eui::Ui& ui, const eui::Screen& screen,
         items.push_back({"删除"});
     }
 
-    const BoardGeom g = boardGeom(screen.width, host.columns->size(), t);
+    const BoardGeom g = boardGeom(t);
     // 锚点统一经 core::menuAnchorForPointer：x 取列中芯、y 取卡片视觉底（未滚几何），滚动偏移经 scrollOffsetY 叠加
     const float x = d.ctx.anchorX;
     const float scrollY = d.ctx.cardIndex >= 0
@@ -428,21 +428,15 @@ void drawContextMenu(eui::Ui& ui, const eui::Screen& screen,
         .build();
 }
 
-// 删除确认弹窗提交：taskId>0 = 删任务；否则 columnId>0 = 删列（外键 CASCADE 连带删列下任务）
+// 删除任务确认弹窗提交：确认后才关详情弹窗（取消路径不关，回到弹窗）
 void ConfirmDeleteDialog::confirm(DialogSet& d, const DialogHost& host) {
-    if (forTask()) {
-        const int64_t id = taskId;
-        d.popups.close(Popup::Confirm);
-        taskId = 0;
-        // 详情弹窗发起的删除：确认后才关详情（取消路径不关，回到弹窗）
-        d.popups.close(Popup::Detail);
-        d.detail.discardArmed = false;
-        host.deleteTask(id);
-        return;
-    }
-    const int64_t id = columnId;
+    const int64_t id = taskId;
     d.popups.close(Popup::Confirm);
-    host.deleteColumn(id);
+    taskId = 0;
+    // 详情弹窗发起的删除：确认后才关详情（取消路径不关，回到弹窗）
+    d.popups.close(Popup::Detail);
+    d.detail.discardArmed = false;
+    host.deleteTask(id);
 }
 
 void drawConfirmDeleteDialog(eui::Ui& ui, const eui::Screen& screen,
@@ -451,20 +445,8 @@ void drawConfirmDeleteDialog(eui::Ui& ui, const eui::Screen& screen,
     const auto themeTokens = core::theme::componentTokensWeChat(t);
     const float w = ui_kit::dialogWidthPx(ui_kit::DialogWidth::Standard);
     const float h = 200.0f;
-    const bool delTask = d.confirm.forTask();
-    std::string colName = "?";
-    int taskCount = 0;
-    if (!delTask) {
-        if (const Column* col = findColumn(*host.columns, d.confirm.columnId)) {
-            colName = col->title;
-            taskCount = static_cast<int>(tasksInColumn(*host.tasks, col->id).size());
-        }
-    }
-    const std::string title = delTask ? "删除任务" : "删除列";
-    const std::string body = delTask
-        ? "将删除任务「" + d.confirm.taskTitle + "」，不可恢复。"
-        : "将删除「" + colName + "」列及其中 " +
-              std::to_string(taskCount) + " 个任务，不可恢复。";
+    const std::string title = "删除任务";
+    const std::string body = "将删除任务「" + d.confirm.taskTitle + "」，不可恢复。";
 
     ui_kit::DialogFrame frame;
     frame.id = "todo.dialog.delcol";

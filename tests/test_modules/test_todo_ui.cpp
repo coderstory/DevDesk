@@ -1655,8 +1655,6 @@ REGISTER_TEST(todo_ui_drag_hit_pure,
     in.pressY = 200.0f;
     in.pressWidth = 200.0f;
     in.cardWidth = 200.0f;
-    in.colWidth = 200.0f;
-    in.colGap = 20.0f;
     in.boardHeight = 500.0f;
     in.scrollOffset = 0.0f;
     in.cardIndex = 0;
@@ -1760,8 +1758,6 @@ REGISTER_TEST(todo_ui_drag_hit_variable_columns,
         in.colCount = 4;
         in.cardWidth = 100.0f;
         in.pressWidth = 100.0f;
-        in.colWidth = widths.normal;  // 回落值（逐列向量在场时不参与命中）
-        in.colGap = gap;
         in.boardHeight = 500.0f;
         in.cardIndex = 0;
         float cursor = 0.0f;
@@ -1825,8 +1821,6 @@ REGISTER_TEST(todo_ui_drag_scale_from_framework,
         in.pressY = 200.0f * scale;      // compose 200 = 列头 + 第 0 张 - 无滚动
         in.pressWidth = 200.0f * scale;  // 探针分子：按下 bounds（指针空间）
         in.cardWidth = 200.0f;           // 探针分母：compose 卡宽
-        in.colWidth = 200.0f;
-        in.colGap = 20.0f;
         in.boardHeight = 500.0f;
         in.dpiScale = scale;             // 调用点喂的框架值（原为探针反推）
         in.cardIndex = 0;
@@ -1884,8 +1878,6 @@ REGISTER_TEST(todo_ui_drag_hit_scroll_same_frame,
     DragHitInput in;
     in.fromColIndex = 0;
     in.colCount = 2;
-    in.colWidth = 200.0f;
-    in.colGap = 20.0f;
     in.cardWidth = 200.0f;
     in.pressWidth = 200.0f;  // dpi = 1
     in.boardHeight = 500.0f;
@@ -4637,20 +4629,15 @@ REGISTER_TEST(todo_ui_r5_pure_helpers,
     using namespace module::todo;
     const core::theme::Tokens& t = core::theme::current();
 
-    // 板面几何：pad = spacingLarge*2（S4.2 弹性内边距 32）、列间隙 = spacingLarge、
-    // 顶边 = pad + kHeaderH + spacingLarge，剩余宽度按列数均分
-    const ui::BoardGeom g3 = ui::boardGeom(1600.0f, 3, t);
-    DOCTEST_CHECK_EQ(g3.pad, t.sizes.spacingLarge * 2.0f);
-    DOCTEST_CHECK_EQ(g3.colGap, t.sizes.spacingLarge);
-    const float contentW = 1600.0f - t.sizes.spacingLarge * 4.0f;  // pad=32×2
-    DOCTEST_CHECK_EQ(g3.colW, (contentW - t.sizes.spacingLarge * 2.0f) / 3.0f);
-    DOCTEST_CHECK_EQ(g3.boardTop, g3.pad + ui_kit::kHeaderH + t.sizes.spacingLarge);
-    // 零列不除零（按 1 列算，与 drawBoard 空态分支同款兜底）
-    DOCTEST_CHECK_EQ(ui::boardGeom(1600.0f, 0, t).colW, contentW);
+    // 板面几何：顶边 = pad + kHeaderH + spacingLarge（pad = spacingLarge*2，S4.2
+    // 弹性内边距 32）。boardGeom 只剩顶边求值——n 列均匀数学与 cardLeft 随固定
+    // 四列、菜单 x 改走 ctx.anchorX 一并退役
+    const ui::BoardGeom g3 = ui::boardGeom(t);
+    DOCTEST_CHECK_EQ(g3.boardTop,
+                     t.sizes.spacingLarge * 2.0f + ui_kit::kHeaderH +
+                         t.sizes.spacingLarge);
 
-    // 列 / 卡片左上角：列步进 = 列宽 + 间隙，卡步进 = 卡高 + 卡间距
-    DOCTEST_CHECK_EQ(ui::cardLeft(g3, 0), g3.pad);
-    DOCTEST_CHECK_EQ(ui::cardLeft(g3, 2), g3.pad + 2.0f * (g3.colW + g3.colGap));
+    // 卡片顶边：卡步进 = 卡高 + 卡间距
     DOCTEST_CHECK_EQ(ui::cardTop(g3, 0), g3.boardTop + ui::kColumnHeaderHeight);
     DOCTEST_CHECK_EQ(ui::cardTop(g3, 3),
                      g3.boardTop + ui::kColumnHeaderHeight +
@@ -4688,7 +4675,7 @@ REGISTER_TEST(todo_ui_r5_pure_helpers,
     DOCTEST_CHECK_EQ(ui::findColumnByKind(cols, "archive"), 0);   // 找不到 = 0
     DOCTEST_CHECK(ui::columnTitleTaken(cols, "待办", 0));
     DOCTEST_CHECK(!ui::columnTitleTaken(cols, "待办", 7));        // 改名为自己不算撞
-    DOCTEST_CHECK_EQ(ui::defaultColumnTitle(cols.size()), "新列 3");
+    // defaultColumnTitle（「新列 N」）已随建列弹窗删除，无对应断言
 
     // 列内滚动按列 id 记忆（列重排/删列不串列）；无记录 / 越界 = 0
     std::map<int64_t, float> scrolls;

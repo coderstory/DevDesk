@@ -356,17 +356,6 @@ public:
         return true;
     }
 
-    void doDeleteColumn(int64_t id) {
-        if (!service_) return;
-        auto r = service_->deleteColumn(id);
-        if (r.isFail()) {
-            setStatus("删除失败：" + r.errorMessage(), true);
-            return;
-        }
-        reloadAll();
-        core::event::bus().emit(core::event::kTodoColumnChanged);
-    }
-
     // 智能体工具集：service 与 tools 生命周期成对（service_ 存在 ⇒ todoTools_ 存在且已注册）；
     // retryLoad 晚建 service 时同样要补注册，故收成两个小口
     void attachTools() {
@@ -450,7 +439,6 @@ public:
         in.pressY = drag_.pressY;
         in.pressWidth = drag_.pressWidth;
         in.cardWidth = boardPlate_.cardW;
-        in.colWidth = boardPlate_.colW;
         in.columnX = boardPlate_.columnX;
         in.columnWidth = boardPlate_.columnWidth;
         // 源列左缘钉按下时刻：origin 由 pressX − columnX[from] 反推，读当下值会被归档动画位移污染
@@ -458,7 +446,6 @@ public:
             static_cast<size_t>(drag_.fromColIndex) < in.columnX.size()) {
             in.columnX[static_cast<size_t>(drag_.fromColIndex)] = drag_.pressColumnX;
         }
-        in.colGap = boardPlate_.colGap;
         in.boardHeight = boardPlate_.height;
         // 必须用按下时刻快照（与 pressY 同帧）：读"当下"值会在拖拽途中列被滚动时混帧错位
         in.scrollOffset = drag_.pressScrollOffset;
@@ -1057,7 +1044,6 @@ private:
             return doCreateTask(columnId, title, attrs, tags);
         },
         .deleteTask = [this](int64_t taskId) { doDeleteTask(taskId); },
-        .deleteColumn = [this](int64_t id) { doDeleteColumn(id); },
         .updateTask = [this](const Task& task) { return doUpdateTask(task); },
         .moveTask = [this](int64_t taskId, int64_t toColumnId, int newPosition) {
             doMoveTask(taskId, toColumnId, newPosition);

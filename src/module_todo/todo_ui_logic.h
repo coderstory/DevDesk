@@ -177,11 +177,9 @@ struct DragHitInput {
     float pressY = 0.0f;
     float pressWidth = 0.0f;    // 按下时卡片 bounds 宽（dpi 探针的分子）
     float cardWidth = 0.0f;     // compose 空间卡宽（dpi 探针的分母）
-    float colWidth = 0.0f;      // compose 空间均匀列宽（命中逻辑不读取，仅为入参兼容保留）
     // 逐列实际几何（compose 空间，列左缘 + 当帧宽）：拖拽命中唯一几何来源
     std::vector<float> columnX;
     std::vector<float> columnWidth;
-    float colGap = 0.0f;
     float boardHeight = 0.0f;   // compose 空间板高
     float scrollOffset = 0.0f;  // 源列滚动偏移（compose 空间，按下时刻快照）
     float pageOriginX = 0.0f;   // 页面区原点 x（compose 空间；无头/未接入 = 0）
@@ -572,11 +570,6 @@ inline bool columnTitleTaken(const std::vector<Column>& columns,
     return false;
 }
 
-// 留空默认列名「新列 N」（N = 现有列数 + 1）
-inline std::string defaultColumnTitle(size_t columnCount) {
-    return "新列 " + std::to_string(columnCount + 1);
-}
-
 // 列内滚动位置（按列 id 记忆，列重排/删列不串列）
 inline float columnScrollOffset(const std::vector<Column>& columns,
                                 const std::map<int64_t, float>& scrolls,
@@ -586,29 +579,17 @@ inline float columnScrollOffset(const std::vector<Column>& columns,
     return it == scrolls.end() ? 0.0f : it->second;
 }
 
-// 看板几何：drawBoard 与右键菜单定位共用（菜单走模块布局空间，非指针窗口坐标）
+// 看板几何：右键菜单 y 定位用（菜单走模块布局空间，非指针窗口坐标；x 经 ctx.anchorX）
 struct BoardGeom {
-    float pad = 0.0f;
-    float colW = 0.0f;
-    float colGap = 0.0f;
     float boardTop = 0.0f;  // 看板区（列背景）顶边的模块空间 y
 };
 
-// screenWidth = 页面逻辑宽（调用点传 Screen::width）；本头不碰 Ui，故只收 float
-inline BoardGeom boardGeom(float screenWidth, size_t columnCount,
-                           const core::theme::Tokens& t) {
+// 本头不碰 Ui，只收 Tokens；列模型固定四列，唯一消费者只吃顶边
+inline BoardGeom boardGeom(const core::theme::Tokens& t) {
+    const float pad = t.sizes.spacingLarge * 2.0f;  // 32 —— S4.2 弹性内边距（spacingLarge=16×2=32）
     BoardGeom g;
-    g.pad = t.sizes.spacingLarge * 2.0f;  // 32 —— S4.2 弹性内边距（spacingLarge=16×2=32）
-    g.colGap = t.sizes.spacingLarge;
-    const float contentW = screenWidth - g.pad * 2.0f;  // 宽 = 窗口宽 − 双侧内边距
-    const auto n = static_cast<float>(columnCount == 0 ? 1 : columnCount);
-    g.colW = (contentW - g.colGap * (n - 1.0f)) / n;
-    g.boardTop = g.pad + ui_kit::kHeaderH + t.sizes.spacingLarge;
+    g.boardTop = pad + ui_kit::kHeaderH + t.sizes.spacingLarge;
     return g;
-}
-
-inline float cardLeft(const BoardGeom& g, int columnIndex) {
-    return g.pad + static_cast<float>(columnIndex) * (g.colW + g.colGap);
 }
 
 inline float cardTop(const BoardGeom& g, int cardIndex) {

@@ -260,7 +260,7 @@ REGISTER_TEST(todo_tools_list_overdue_filter,
 
 
 REGISTER_TEST(todo_tools_create_default_first_column,
-              "todo.create: 缺省列=第一列，service 真实落库 + 返回新 id", {
+              "todo.create: 缺省列=待办列（kind='todo'），service 真实落库 + 返回新 id", {
     ToolEnv env("create");
     DOCTEST_REQUIRE(env.ready);
     env.tools->registerAll();

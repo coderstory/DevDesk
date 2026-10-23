@@ -36,7 +36,6 @@ struct BoardActions {
     std::function<void(const std::string&)> searchChanged;
     std::function<void()> searchCancelled;
     std::function<void()> overdueClicked;
-    std::function<void()> addColumnClicked;
     std::function<void()> addTaskClicked;
     std::function<void()> retryClicked;
     std::function<void(size_t, float)> columnScrollChanged;
