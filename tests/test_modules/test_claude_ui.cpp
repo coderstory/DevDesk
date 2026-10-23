@@ -6050,6 +6050,115 @@ REGISTER_TEST(claude_calls_no_rows_when_too_short,
     return true;
 })
 
+// H17：最小窗（1000×640）切换器底部按钮双档可见性断言（H3 只覆盖 settings，此用例补切换器）
+// 左列底部三钮（新建/导入配置/从 CC 导入）+ 右列动作区（启用/测试连通/编辑/运行 +
+// 副提示 + 分隔线）都必须完整落在各自面板底之内；640 档与 1000 档都不越界。
+REGISTER_TEST(claude_switch_bottom_buttons_dual_tier,
+              "claude_module: H17 切换器底部按钮双档可见性（1000x640 / 1600x1000）", {
+    TestEnv env;
+    auto p = env.svc->createProfile("底钮", "https://btn.example.com",
+                                    "sk-ant-btn-0001", "m-btn");
+    DOCTEST_REQUIRE(p.isOk());
+    const int64_t pid = p.value().id;
+    DOCTEST_REQUIRE(env.svc->setActiveProfile(pid).isOk());
+
+    auto mod = mkmod();
+    mod->onStart();
+
+    // 两档逐档断言（不可放入 lambda——DOCTEST 宏内 return false 与 void lambda 冲突）
+    // 640 档（最小窗内容高度档）
+    {
+        eui::Ui ui;
+        composeAtSize(mod.get(), ui, "h17_640", 1000.0f, 640.0f);
+        const auto* profilesPanel = ui.find("claude.profiles");
+        const auto* detailPanel = ui.find("claude.detail");
+        DOCTEST_REQUIRE(profilesPanel != nullptr);
+        DOCTEST_REQUIRE(detailPanel != nullptr);
+        const float leftBottom =
+            profilesPanel->frame.y + profilesPanel->frame.height;
+        const float rightBottom =
+            detailPanel->frame.y + detailPanel->frame.height;
+        // 左列三钮完整可见
+        for (const char* id : {"claude.profiles.new",
+                               "claude.profiles.import",
+                               "claude.profiles.import.ccswitch"}) {
+            const auto* btn = ui.find(id);
+            DOCTEST_REQUIRE(btn != nullptr);
+            DOCTEST_CHECK_MESSAGE(
+                btn->frame.y + btn->frame.height <= leftBottom + 0.5f,
+                std::string("640 ") + id + " 越出左列面板底: btn bottom=" +
+                    std::to_string(btn->frame.y + btn->frame.height) +
+                    " panel bottom=" + std::to_string(leftBottom));
+        }
+        // 右列动作区四钮 + 副提示 + 分隔线完整可见
+        for (const char* id : {"claude.act.enable", "claude.act.test",
+                               "claude.act.edit", "claude.act.run"}) {
+            const auto* btn = ui.find(id);
+            DOCTEST_REQUIRE(btn != nullptr);
+            DOCTEST_CHECK_MESSAGE(
+                btn->frame.y + btn->frame.height <= rightBottom + 0.5f,
+                std::string("640 ") + id + " 越出右列面板底: btn bottom=" +
+                    std::to_string(btn->frame.y + btn->frame.height) +
+                    " panel bottom=" + std::to_string(rightBottom));
+        }
+        const auto* hint = ui.find("claude.act.run.hint");
+        const auto* divider = ui.find("claude.act.divider");
+        DOCTEST_REQUIRE(hint != nullptr);
+        DOCTEST_REQUIRE(divider != nullptr);
+        DOCTEST_CHECK(hint->frame.y + hint->frame.height <=
+                      rightBottom + 0.5f);
+        DOCTEST_CHECK(divider->frame.y + divider->frame.height <=
+                      rightBottom + 0.5f);
+    }
+
+    // 1000 档（大窗，等比放大后不得越界）
+    {
+        eui::Ui ui;
+        composeAtSize(mod.get(), ui, "h17_1000", 1600.0f, 1000.0f);
+        const auto* profilesPanel = ui.find("claude.profiles");
+        const auto* detailPanel = ui.find("claude.detail");
+        DOCTEST_REQUIRE(profilesPanel != nullptr);
+        DOCTEST_REQUIRE(detailPanel != nullptr);
+        const float leftBottom =
+            profilesPanel->frame.y + profilesPanel->frame.height;
+        const float rightBottom =
+            detailPanel->frame.y + detailPanel->frame.height;
+        for (const char* id : {"claude.profiles.new",
+                               "claude.profiles.import",
+                               "claude.profiles.import.ccswitch"}) {
+            const auto* btn = ui.find(id);
+            DOCTEST_REQUIRE(btn != nullptr);
+            DOCTEST_CHECK_MESSAGE(
+                btn->frame.y + btn->frame.height <= leftBottom + 0.5f,
+                std::string("1000 ") + id + " 越出左列面板底: btn bottom=" +
+                    std::to_string(btn->frame.y + btn->frame.height) +
+                    " panel bottom=" + std::to_string(leftBottom));
+        }
+        for (const char* id : {"claude.act.enable", "claude.act.test",
+                               "claude.act.edit", "claude.act.run"}) {
+            const auto* btn = ui.find(id);
+            DOCTEST_REQUIRE(btn != nullptr);
+            DOCTEST_CHECK_MESSAGE(
+                btn->frame.y + btn->frame.height <= rightBottom + 0.5f,
+                std::string("1000 ") + id + " 越出右列面板底: btn bottom=" +
+                    std::to_string(btn->frame.y + btn->frame.height) +
+                    " panel bottom=" + std::to_string(rightBottom));
+        }
+        const auto* hint = ui.find("claude.act.run.hint");
+        const auto* divider = ui.find("claude.act.divider");
+        DOCTEST_REQUIRE(hint != nullptr);
+        DOCTEST_REQUIRE(divider != nullptr);
+        DOCTEST_CHECK(hint->frame.y + hint->frame.height <=
+                      rightBottom + 0.5f);
+        DOCTEST_CHECK(divider->frame.y + divider->frame.height <=
+                      rightBottom + 0.5f);
+    }
+
+    mod->onStop();
+    cleanupProfileKey(kTestKeychainService, pid);
+    return true;
+})
+
 // 最近调用明细列「本地调用速率」
 // output_tokens > 0 的调用有值；非 2xx / 0 token 行显示「—」（不是 0 —— 0 是
 // 合法速率值，两者必须可区分）。口径单源 core/call_rate.h（与首页卡同一处）。
