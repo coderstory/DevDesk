@@ -116,6 +116,11 @@ void setLight();
 void setFontScale(float scale);
 float fontScale();
 
+// H19 窗高驱动字号封顶（2026-10-23 用户拍板）：app::compose 每帧喂入窗口逻辑高；
+// 生效公式 fontScale() = min(用户手动档, windowScaleCap(logicalHeight))：
+// ≤660 逻辑高 → 85% 档，>660 → 不封顶。档位跨越时重建 token 并广播 change handler
+void setWindowHeight(float logicalHeight);
+
 // v1.0 字体栈（S1.2 字体系统 / S5.2 平台回退）
 // Inter 为基准无衬线，Windows 回退 YaHei，macOS 回退 PingFang SC
 inline const char* fontStack() {

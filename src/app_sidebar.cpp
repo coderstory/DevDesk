@@ -625,6 +625,8 @@ void compose(eui::Ui& ui, const eui::Screen& screen) {
     // 记下最大化态（尺寸则由 main.cpp 的播种兜底）。最大化帧不记尺寸（保留还原态）
     ::core::window_geometry::noteFrame(screen.width, screen.height,
                                        app::mainWindowMaximized());
+    // H19 窗高驱动字号封顶：每帧喂窗口逻辑高；封顶档变化时 theme 内部重建 token + 广播
+    ::core::theme::setWindowHeight(screen.height);
     // 启动 splash：2.0s 动画 + 0.3s 淡出后切主界面；期间跳过布局
     if (ui_kit::drawSplashIfNeeded(ui, screen)) {
         return;
