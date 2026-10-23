@@ -6109,6 +6109,14 @@ REGISTER_TEST(claude_switch_bottom_buttons_dual_tier,
                       rightBottom + 0.5f);
         DOCTEST_CHECK(divider->frame.y + divider->frame.height <=
                       rightBottom + 0.5f);
+        // H17 面板底不得越出页面区（越出即被 app.page 裁掉；修复前实证红：
+        // ①claude.root padding 实参序错位 ②帮助钮 tooltip 排入列布局占 56px）
+        DOCTEST_CHECK_MESSAGE(leftBottom <= 640.0f + 0.5f,
+                              "640 档左列面板底越出页面区: " +
+                                  std::to_string(leftBottom));
+        DOCTEST_CHECK_MESSAGE(rightBottom <= 640.0f + 0.5f,
+                              "640 档右列面板底越出页面区: " +
+                                  std::to_string(rightBottom));
     }
 
     // 1000 档（大窗，等比放大后不得越界）
@@ -6152,6 +6160,12 @@ REGISTER_TEST(claude_switch_bottom_buttons_dual_tier,
                       rightBottom + 0.5f);
         DOCTEST_CHECK(divider->frame.y + divider->frame.height <=
                       rightBottom + 0.5f);
+        DOCTEST_CHECK_MESSAGE(leftBottom <= 1000.0f + 0.5f,
+                              "1000 档左列面板底越出页面区: " +
+                                  std::to_string(leftBottom));
+        DOCTEST_CHECK_MESSAGE(rightBottom <= 1000.0f + 0.5f,
+                              "1000 档右列面板底越出页面区: " +
+                                  std::to_string(rightBottom));
     }
 
     mod->onStop();

@@ -410,13 +410,20 @@ void drawClaudeHeader(eui::Ui& ui, float contentW, float headerH,
     // 在 hover 弹回。Q 项：去掉手算锚位 / 页面 bounds，改为跟随 source 元素
     // 当前实际位置（claude.form.env 同款默认锚 auto-position 先例），不再硬编码
     // helpBtnX / headerH 推算——任何按钮位置变动不用改 tooltip。
-    components::tooltip(ui, "claude.title.help.tooltip")
-        .theme(core::theme::componentTokensWeChat(t))
-        .source("claude.title.help.bg")
-        .value(proxyRunning ? "本地代理运行中，管理多套 Claude API 配置"
-                             : "管理多套 Claude API 配置")
-        .minWidth(320.0f)
-        .maxWidth(320.0f)
+    // H17：tooltip 画在 header row 之外会被列布局当子项排入、占用 40px+16gap，
+    // 裹进 ignoreLayout 栈防它参与 root column 流式布局。
+    ui.stack("__tooltip_ignore")
+        .ignoreLayout()
+        .content([&] {
+            components::tooltip(ui, "claude.title.help.tooltip")
+                .theme(core::theme::componentTokensWeChat(t))
+                .source("claude.title.help.bg")
+                .value(proxyRunning ? "本地代理运行中，管理多套 Claude API 配置"
+                                     : "管理多套 Claude API 配置")
+                .minWidth(320.0f)
+                .maxWidth(320.0f)
+                .build();
+        })
         .build();
 }
 

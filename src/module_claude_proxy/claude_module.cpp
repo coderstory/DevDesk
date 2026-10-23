@@ -221,7 +221,7 @@ public:
 
         ui.column("claude.root")
             .size(screen.width, screen.height)
-            .padding(padTop, padSide, 0.0f, padSide)  // 上右下左：底贴底、内容随窗高伸缩（S4.2 弹性骨架）
+            .padding(padSide, padTop, padSide, 0.0f)  // left/top/right/bottom: H17 fix——EUII padding 实参序=(left,top,right,bottom)，原（padTop,padSide,0,padSide）被错解为 left=24 top=32 right=0 bottom=32，致左距从 32→24 且顶内距从 24→32，底部整块越出页面区 64px
             .gap(t.sizes.spacingLarge)
             .content([&] {
                 drawClaudeHeader(ui, contentW, headerH, t, proxyRunning, portStr,
