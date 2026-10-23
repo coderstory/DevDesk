@@ -11,6 +11,7 @@
 
 #include <components/card.h>
 #include <components/theme.h>
+#include <ui_kit/card.h>
 #include <ui_kit/light_toast.h>  // showLightToast（复制成功 toast）
 
 #include <eui/dsl.h>
@@ -272,11 +273,11 @@ public:
             }
         }
 
-        // S3.8 / S6.1: 实底白卡 + H10 描边（#FAFAF9 底上白卡分不清）
+        // S3.8 / S6.1: 白卡 + H10 描边 + H15 轻微半透（kCardGlassAlpha）
         components::card(ui, "about.card")
             .position(cardX, cardY)
             .size(cardW, cardH)
-            .color(t.colors.surface)  // #FFFFFF
+            .color(ui_kit::cardSurface(t))
             .radius(t.sizes.radiusLarge)  // 12px
             .border(1.0f, t.colors.borderDefault)
             .padding(kCardPadX)  // 32px 四边统一（8px 栅格 × 4）

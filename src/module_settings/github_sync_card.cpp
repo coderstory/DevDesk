@@ -25,6 +25,7 @@
 #include <components/button.h>
 #include <components/input.h>
 
+#include <ui_kit/card.h>
 #include <ui_kit/form_row.h>
 #include <ui_kit/wswitch.h>
 
@@ -150,10 +151,10 @@ void drawGithubSyncCard(const CardDrawArgs& args) {
     ui.stack(id)
         .size(w, h)
         .content([&] {
-        // S6.1 玻璃退役→实底白卡 + Sm 阴影 + H10 描边
+        // S6.1 玻璃退役→白卡 + Sm 阴影 + H10 描边 + H15 轻微半透（kCardGlassAlpha）
         ui.rect(id + ".bg")
             .position(0.0f, 0.0f).size(w, h)
-            .color(t.colors.surface)
+            .color(ui_kit::cardSurface(t))
             .radius(t.sizes.radiusLarge)
             .shadow(components::theme::shadow(compTheme, 3.0f, 1.0f, 0.04f, 0.02f))
             .border(1.0f, t.colors.borderDefault)

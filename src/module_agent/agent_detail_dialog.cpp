@@ -24,6 +24,7 @@
 #include <components/scrollview.h>
 #include <core/window/window_backend.h>
 #include <eui/dsl.h>
+#include <ui_kit/card.h>
 #include <ui_kit/metrics.h>
 #include <ui_kit/toast.h>
 
@@ -354,7 +355,7 @@ void AgentModule::composeTaskDetailDialog(
                     .content([&] {
                         ui.rect(id + ".bg")
                             .size(cw, summaryH)
-                            .color(t.colors.surface)
+                            .color(ui_kit::cardSurface(t))  // H15 轻微半透（kCardGlassAlpha）
                             .radius(t.sizes.radiusLarge)
                             .build();
                         ui.text(id + ".label")

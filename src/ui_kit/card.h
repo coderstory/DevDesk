@@ -5,10 +5,16 @@
 
 #include <core/theme.h>
 #include <eui/dsl.h>
+#include <ui_kit/metrics.h>
 
 #include <string>
 
 namespace ui_kit {
+
+// H15：白卡半透表面色——t.colors.surface 叠加 kCardGlassAlpha 半透 alpha 通道
+inline eui::Color cardSurface(const core::theme::Tokens& t) {
+    return {t.colors.surface.r, t.colors.surface.g, t.colors.surface.b, kCardGlassAlpha};
+}
 
 // 卡片底板：表面色矩形 + 大圆角 + 1px 描边，铺在卡根 stack 的 (0,0)；几何由调用方决定。
 // 节点 id = `<id>.bg`（单测按此定位，不得改）。内边距四周 ≥16px，调用方负责内容留白。
