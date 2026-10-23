@@ -2,6 +2,8 @@
 // 变更时两处同改，以 hex 值为对照。
 #include "theme.h"
 
+#include <algorithm>
+#include <limits>
 #include <utility>
 
 #include <eui/types.h>
@@ -224,16 +226,29 @@ namespace {
     // 全局字号缩放（默认 1.0）；setDark/setLight 重建 token 后统一施加
     float g_fontScale = 1.0f;
 
-    // 只缩放字号，间距/圆角不动（字号是可读性需求，布局度量保持稳定）
+    // H19 窗口逻辑高（app::compose 每帧喂入）；默认超大 = 不封顶（首帧 compose 前）
+    float g_windowHeight = 1.0e6f;
+
+    // H19 窗高 → 字号封顶档：≤660 逻辑高 → 85%（640 最小窗防拥挤/裁切），>660 → 不封顶。
+    // 取舍：两档跳变而非 660~1000 线性——
+    //   (1) 与设置页离散档位（85/100/115/130）语义一致，线性会造出档位外任意字号（如 92.5%）；
+    //   (2) 拖拽窗口跨档只跳一次，线性则拖拽全程字号连续回流、视觉抖动。
+    float windowScaleCap(float height) {
+        return height <= 660.0f ? 0.85f : std::numeric_limits<float>::max();
+    }
+
+    // 只缩放字号，间距/圆角不动（字号是可读性需求，布局度量保持稳定）。
+    // H19：施加的是生效档 fontScale()（用户档 ∩ 窗高封顶），不是裸用户档
     void applyFontScale(Tokens& t) {
-        auto& s = t.sizes;
-        s.fontSizeSmall *= g_fontScale;
-        s.fontSizeBody *= g_fontScale;
-        s.fontSizeLarge *= g_fontScale;
-        s.fontSizeTitle *= g_fontScale;
-        s.fontSizePage *= g_fontScale;
-        s.fontSizeDisplay *= g_fontScale;
-        s.fontSizeStat *= g_fontScale;
+        const float s = fontScale();
+        auto& sz = t.sizes;
+        sz.fontSizeSmall *= s;
+        sz.fontSizeBody *= s;
+        sz.fontSizeLarge *= s;
+        sz.fontSizeTitle *= s;
+        sz.fontSizePage *= s;
+        sz.fontSizeDisplay *= s;
+        sz.fontSizeStat *= s;
     }
 
     // 按当前 isDark + g_fontScale 重建全局 token（单一来源，避免缩放叠加）
@@ -283,7 +298,25 @@ void setFontScale(float scale) {
     notifyThemeChanged(g_current.isDark);
 }
 
-float fontScale() { return g_fontScale; }
+float fontScale() {
+    // H19 生效档 = 用户手动档 ∩ 窗高封顶：封顶只缩不放（>660 高 cap=+inf → 用户档原样，
+    // 115%/130% 档在大窗不被腰斩——「更大窗保持用户手动档」）
+    return std::min(g_fontScale, windowScaleCap(g_windowHeight));
+}
+
+void setWindowHeight(float logicalHeight) {
+    // 非正/非有限忽略（compose 的 screen 恒有效，这里只防脏数据）
+    if (!(logicalHeight > 0.0f)) return;
+    const float before = fontScale();
+    g_windowHeight = logicalHeight;
+    if (fontScale() != before) {
+        // 封顶档跨越才重建 + 广播：同档内 resize 零开销；广播与 setFontScale 同权 →
+        // 下游重渲染。H3 已确认 compose 随 screen 参数即时重跑，本次重建让该帧起
+        // token 即新档，无需额外 resize 回调。
+        rebuild();
+        notifyThemeChanged(g_current.isDark);
+    }
+}
 
 namespace {
     // 编辑器字号全局通道；默认 15 = fontSizeBody token 基准

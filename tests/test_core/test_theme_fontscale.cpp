@@ -81,3 +81,29 @@ REGISTER_TEST(theme_fontscale_notifies_change_handler,
     DOCTEST_CHECK_EQ(core::theme::fontScale(), 1.0f);
     return true;
 })
+
+// H19（2026-10-23 用户拍板）：最小窗（640 逻辑高）自动落 85% 字号档；更大窗保持用户手动档。
+// effective = min(用户档, 窗高封顶)；封顶只缩不放（禁替用户放大小字）。
+// 先红后绿：在 setWindowHeight 为 no-op 时以下断言必红。
+REGISTER_TEST(theme_fontscale_window_height_cap,
+              "theme: H19 窗高驱动字号封顶——640 档落 85%、1000 档保持用户档", {
+    core::theme::setFontScale(1.0f);
+    // 640 档：cap=0.85 → effective = min(1.0, 0.85) = 0.85
+    core::theme::setWindowHeight(640.0f);
+    DOCTEST_CHECK_EQ(core::theme::fontScale(), 0.85f);
+    DOCTEST_CHECK_EQ(core::theme::current().sizes.fontSizeBody, 14.0f * 0.85f);
+    // 1000 档：不封顶 → 用户手动档原样
+    core::theme::setWindowHeight(1000.0f);
+    DOCTEST_CHECK_EQ(core::theme::fontScale(), 1.0f);
+    DOCTEST_CHECK_EQ(core::theme::current().sizes.fontSizeBody, 14.0f);
+    // 封顶只缩不放：用户 115% 档在 640 被 cap 到 85%，回到 1000 原样保留
+    core::theme::setFontScale(1.15f);
+    core::theme::setWindowHeight(640.0f);
+    DOCTEST_CHECK_EQ(core::theme::fontScale(), 0.85f);
+    core::theme::setWindowHeight(1000.0f);
+    DOCTEST_CHECK_EQ(core::theme::fontScale(), 1.15f);
+    // 复位（fontScale / windowHeight 都是进程级全局态）
+    core::theme::setFontScale(1.0f);
+    core::theme::setWindowHeight(1000.0f);
+    return true;
+})
