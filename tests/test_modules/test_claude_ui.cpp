@@ -5,6 +5,7 @@
 // 断言可见性一律走有界轮询 + onPageEnter，不能只 compose 一帧就断言。
 // 真实鼠标点击留给人工点验。
 #include "doctest.h"
+#include "test_dialog_frame_helper.h"  // dialog_frame：弹窗「元素在框内」共享断言
 #include "test_support.h"
 
 #include "claude_service.h"
@@ -8952,5 +8953,83 @@ REGISTER_TEST(claude_shared_dialog_wechat_colors,
 
     mod->onStop();
     cleanupProfileKey(kTestKeychainService, p.value().id);
+    return true;
+})
+
+// F1 弹窗防回潮：P4 表单 / P8 编辑 env / P5 删除确认 / P6 调用记录 / P9 CC 导入
+// 逐弹窗「全元素在框内」+ 标题锚（y=16 / fontSize=20，规格 S2.4）。回退即红：
+// 任一可见子孙 frame 越出 panel（>0.5px）、标题 y 偏移≠16、标题字号≠20。
+REGISTER_TEST(claude_ui_dialog_frame_containment,
+              "claude_ui: P4/P8/P5/P6/P9 弹窗全元素在框内 + 标题 y=16/字号 20（防回潮）", {
+    TestEnv env;
+    auto mod = mkmod();
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    eui::Ui ui;
+    int n = 0;
+    auto frame = [&]() {
+        ui.begin("claude_df" + std::to_string(n++));
+        mod->compose(ui, screen);
+        ui.end();
+        ui.layout(screen.width, screen.height);
+    };
+    auto click = [&](const char* id) -> bool {
+        auto* b = ui.find(id);
+        DOCTEST_REQUIRE(b != nullptr);
+        DOCTEST_REQUIRE(b->onClick != nullptr);
+        b->onClick();
+        frame();
+        return true;
+    };
+    auto check = [&](const char* panelId, const char* titleId, const char* tag) -> bool {
+        std::string v = dialog_frame::allInside(ui, panelId);
+        DOCTEST_CHECK_MESSAGE(v.empty(), std::string(tag) + " 全元素在框内: " + v);
+        v = dialog_frame::titleAnchor(ui, panelId, titleId);
+        DOCTEST_CHECK_MESSAGE(v.empty(), std::string(tag) + " 标题锚: " + v);
+            return true;
+    };
+
+    // P5 前置：一条可删 Profile
+    auto prof = env.svc->createProfile("框内档案", "https://frame.example.com",
+                                       "sk-ant-frame-00000001", "m");
+    DOCTEST_REQUIRE(prof.isOk());
+
+    // P4 新建 Profile 表单（基础 tab）
+    frame();
+    DOCTEST_CHECK(click("claude.profiles.new.bg"));
+    DOCTEST_CHECK(check("claude.dialog.form.panel", "claude.dialog.form.title", "P4 表单"));
+
+    // P8 高级 env 页（同 panel，切 tab 后内容面不同）
+    DOCTEST_CHECK(click("claude.form.tabs.2.hit"));
+    DOCTEST_CHECK(check("claude.dialog.form.panel", "claude.dialog.form.title", "P8 编辑 env"));
+    click("claude.dialog.form.backdrop");   // 关表单
+
+    // P5 删除确认（P4 族）：选中行 → 右键菜单「删除」
+    DOCTEST_CHECK(click("claude.profile.0.bg"));
+    {
+        auto* wrap = ui.find("claude.profile.0.wrap");
+        DOCTEST_REQUIRE(wrap != nullptr);
+        DOCTEST_REQUIRE(wrap->onContextMenu != nullptr);
+        eui::PointerEvent pe;
+        eui::Rect rect;
+        wrap->onContextMenu(pe, rect);
+        frame();
+    }
+    DOCTEST_CHECK(click("claude.list.ctx.level.0.item.3"));
+    DOCTEST_CHECK(check("claude.dialog.delete.panel", "claude.dialog.delete.title", "P5 删除确认"));
+    click("claude.dialog.delete.backdrop");   // 取消不删
+
+    // P6 调用记录（详情第 5 页签 → 查看全部；零日志也可开）
+    DOCTEST_CHECK(click("claude.detail.tab.4.hit"));
+    DOCTEST_CHECK(click("claude.calls.viewall.hit"));
+    DOCTEST_CHECK(check("claude.dialog.calls.panel", "claude.dialog.calls.title", "P6 调用记录"));
+    DOCTEST_CHECK(click("claude.dialog.calls.backdrop"));
+
+    // P9 CC 导入
+    DOCTEST_CHECK(click("claude.profiles.import.ccswitch.bg"));
+    DOCTEST_CHECK(check("claude.dialog.ccswitch.panel", "claude.dialog.ccswitch.title", "P9 CC 导入"));
+
+    mod->onStop();
     return true;
 })

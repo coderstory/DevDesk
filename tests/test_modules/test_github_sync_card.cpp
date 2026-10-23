@@ -15,6 +15,8 @@
 // - 全部依赖注入：卡片的动作与弹窗的日志源/回调都是本文件构造的 lambda，
 //   零真网、零真线程（本文件不启动任何后台任务）。
 #include "doctest.h"
+
+#include <ui_kit/card.h>  // cardSurface：B5 同步卡白卡底色（H15 alpha 0.92）单一来源
 #include "frame_env.h"
 #include "test_support.h"
 
@@ -142,6 +144,11 @@ REGISTER_TEST(github_sync_card_has_test_button,
         const auto* btn = ui.find(std::string(kCardId) + ".btn.test.bg");
         DOCTEST_REQUIRE(btn != nullptr);
         DOCTEST_CHECK(btn->onClick != nullptr);
+        // B5 同步卡白卡面：cardSurface（H15 alpha 0.92）底 + 1px 描边存在
+        const auto* bg = ui.find(std::string(kCardId) + ".bg");
+        DOCTEST_REQUIRE(bg != nullptr);
+        DOCTEST_CHECK(colorEq(bg->color, ui_kit::cardSurface(core::theme::current())));
+        DOCTEST_CHECK(bg->border.width >= 1.0f);
         const auto* label = ui.find(std::string(kCardId) + ".btn.test.text.normal");
         DOCTEST_REQUIRE(label != nullptr);
         DOCTEST_CHECK_EQ(label->text, std::string("测试连接"));

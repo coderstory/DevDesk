@@ -5,6 +5,7 @@
 //   - 无头环境下没有真实输入与焦点，键盘移动与菜单点击只能靠直接调回调 + 断言落库结果。
 //   - 拖放条是覆盖层不是流式内容：悬停行下方的占位条必须压在两卡之间的底缝，卡片不得被下推。
 #include "doctest.h"
+#include "test_dialog_frame_helper.h"  // dialog_frame：弹窗「元素在框内」共享断言
 #include "test_support.h"
 
 #include "core/app_config.h"   // appconfig::erase：清除视图状态
@@ -5328,6 +5329,67 @@ REGISTER_TEST(todo_ui_overdue_row_ellipsis,
         DOCTEST_CHECK_EQ(el->overflow, core::TextOverflow::Ellipsis);
         DOCTEST_CHECK(el->maxWidth > 0.0f);
     }
+
+    mod->onStop();
+    return true;
+})
+
+// F1 弹窗防回潮：P1/P2/P3/P10 逐弹窗「全元素在框内」+ 标题锚（y=16 / fontSize=20，
+// 规格 S2.4）。回退即红：任一可见子孙 frame 越出 panel（>0.5px）、标题 y 偏移≠16、
+// 标题字号≠20。弹窗串行开合走真实点击链（新建 → 逾期 → 行点击进详情 → 详情删除 chip → 列删除确认）。
+REGISTER_TEST(todo_ui_dialog_frame_containment,
+              "todo_ui: P1/P2/P3/P10 弹窗全元素在框内 + 标题 y=16/字号 20（防回潮）", {
+    TestEnv env;
+    DOCTEST_REQUIRE(env.ready);
+    // 逾期谓词限定 kind IN ('todo','doing')：用种子默认列（用户新建列 kind="" 不计逾期）
+    auto cols = env.svc->listColumns();
+    DOCTEST_REQUIRE(cols.isOk());
+    DOCTEST_REQUIRE(!cols.value().empty());
+    auto tsk = env.svc->createTask(cols.value()[0].id, "框内任务");
+    DOCTEST_REQUIRE(tsk.isOk());
+    // 同一条任务兼作 P2 详情与 P3 逾期数据源：到期 = 本地昨天同时刻（日历日差 ≥1）
+    {
+        module::todo::Task t = tsk.value();
+        std::tm dueTm{};
+        core::time::localTime(static_cast<int64_t>(std::time(nullptr)), &dueTm);
+        t.dueAt = std::mktime(&dueTm) - 86400;
+        DOCTEST_REQUIRE(env.svc->updateTask(t).isOk());
+    }
+
+    std::unique_ptr<::core::Module> mod(create_todo_module());
+    mod->onStart();
+    Frame frame(mod.get());
+    auto click = [&](const char* id) -> bool {
+        auto* b = frame.ui.find(id);
+        DOCTEST_REQUIRE(b != nullptr);
+        DOCTEST_REQUIRE(b->onClick != nullptr);
+        b->onClick();
+        frame.refresh();
+        frame.ui.layout(1600.0f, 1000.0f);
+        return true;
+    };
+    auto check = [&](const char* panelId, const char* titleId, const char* tag) -> bool {
+        std::string v = dialog_frame::allInside(frame.ui, panelId);
+        DOCTEST_CHECK_MESSAGE(v.empty(), std::string(tag) + " 全元素在框内: " + v);
+        v = dialog_frame::titleAnchor(frame.ui, panelId, titleId);
+        DOCTEST_CHECK_MESSAGE(v.empty(), std::string(tag) + " 标题锚: " + v);
+            return true;
+    };
+
+    // P1 新建任务
+    DOCTEST_CHECK(click("todo.btn.add.bg"));
+    DOCTEST_CHECK(check("todo.dialog.newtask.panel", "todo.dialog.newtask.title", "P1 新建"));
+    click("todo.dialog.newtask.backdrop");   // 关
+
+    // P3 逾期 → 行点击跳 P2 详情（overdue 行 onClick = 关逾期 + openDetail）
+    DOCTEST_CHECK(click("todo.btn.overdue.hit"));
+    DOCTEST_CHECK(check("todo.dialog.overdue.panel", "todo.dialog.overdue.title", "P3 逾期"));
+    DOCTEST_CHECK(click("todo.dialog.overdue.row.0"));
+    DOCTEST_CHECK(check("todo.dialog.detail.panel", "todo.dialog.detail.title", "P2 详情"));
+
+    // P10 删除确认（详情删除 chip → 确认弹窗）
+    DOCTEST_CHECK(click("todo.dialog.detail.delete.bg"));
+    DOCTEST_CHECK(check("todo.dialog.delcol.panel", "todo.dialog.delcol.title", "P10 删除确认"));
 
     mod->onStop();
     return true;

@@ -60,6 +60,7 @@
 //   - 下拉切换 = 直调 <id>.item.<i> 的 onClick；开关切换 = 直调 <id>.hit 的 onClick。
 //   真窗口几何 + 真命中分发的探针侧在 tests/probes/agent_probes.cpp。
 #include "doctest.h"
+#include "test_dialog_frame_helper.h"  // dialog_frame：弹窗「元素在框内」共享断言
 #include "test_support.h"
 
 #include "app_sidebar.h"
@@ -856,6 +857,20 @@ REGISTER_TEST(agent_ui_once_rejects_bad_and_past_time,
     const std::string invalidDateErr = gatingError("2026-02-30 12:00");
     DOCTEST_CHECK_MESSAGE(invalidDateErr.find("不存在") != std::string::npos,
                           "2026-02-30 错误文案：" + invalidDateErr);
+
+    // F1 门控行为补锚：禁用态「下一步」被点（空 onClick 或内部守卫）不得改步——
+    // 仍停在触发步（step 1 独有的 once 输入面在，即未跳 step 2）
+    {
+        eui::Ui d0;
+        composeTo(d0, mod, kScreen, "agent_ui_oncebad.dc0");
+        const auto* saveBg = d0.find("agent.dialog.task.save.bg");
+        DOCTEST_REQUIRE(saveBg != nullptr);
+        if (saveBg->onClick) saveBg->onClick();
+        eui::Ui d1;
+        composeTo(d1, mod, kScreen, "agent_ui_oncebad.dc1");
+        DOCTEST_CHECK_MESSAGE(d1.find("agent.dialog.task.once") != nullptr,
+                              "禁用「下一步」点击后仍应停在触发步（currentStep 未变）");
+    }
 
     // 过去时间：解析合法（门控放行），预览行报红 + 保存被拒（弹窗不关）
     mod.setEditOnceDraft(formatLocalMinute(localNoonTm(-1)));
@@ -2237,6 +2252,19 @@ REGISTER_TEST(agent_ui_tools_section_toggle,
     const auto* name0 = ui2.find("agent.tools.card.0.name");
     DOCTEST_REQUIRE(name0 != nullptr);
     DOCTEST_CHECK_EQ(name0->text, std::string("app.notify"));
+    // B3 工具卡白卡面：cardSurface（H15 alpha 0.92）底 + 1px borderDefault 描边
+    const auto* toolBg = ui2.find("agent.tools.card.0.bg");
+    DOCTEST_REQUIRE(toolBg != nullptr);
+    const auto& themeTools = core::theme::current();
+    const auto sameColorL = [](const eui::Color& a, const eui::Color& b) {
+        return a.r == b.r && a.g == b.g && a.b == b.b && a.a == b.a;
+    };
+    DOCTEST_CHECK_MESSAGE(sameColorL(toolBg->color, ui_kit::cardSurface(themeTools)),
+                          "工具卡底色应为 cardSurface（alpha 0.92）");
+    DOCTEST_CHECK_MESSAGE(nearPx(toolBg->border.width, 1.0f) &&
+                              sameColorL(toolBg->border.color,
+                                         themeTools.colors.borderDefault),
+                          "工具卡应有 1px borderDefault 描边");
     const auto* name1 = ui2.find("agent.tools.card.1.name");
     DOCTEST_REQUIRE(name1 != nullptr);
     DOCTEST_CHECK_EQ(name1->text, std::string("app.now"));
@@ -6342,6 +6370,57 @@ REGISTER_TEST(agent_ui_detail_error_scroll,
                           "弹性档 552 高 + 长错误应降级为 .detail.scroll 整栏滚");
     // 消息区默认折叠（本任务无消息也无妨——折叠态本就不建 .msgscroll）
     DOCTEST_CHECK(ui2n.find("agent.dialog.detail.msgscroll") == nullptr);
+
+    mod.onStop();
+    return true;
+})
+
+
+// F1 弹窗防回潮：P7 任务向导 + 删除确认逐弹窗「全元素在框内」+ 标题锚
+// （y=16 / fontSize=20，规格 S2.4）。回退即红：任一可见子孙 frame 越出 panel
+// （>0.5px）、标题 y 偏移≠16、标题字号≠20。
+REGISTER_TEST(agent_ui_dialog_frame_containment,
+              "agent_ui: P7 任务向导/删除确认弹窗全元素在框内 + 标题 y=16/字号 20（防回潮）", {
+    test_support::TestDb tdb("agentui", "dialogframe");
+    test_support::FakeProfileSource profile;
+    module::agent::AgentModule::Deps deps;
+    deps.db = &tdb.handle();
+    deps.profileSource = &profile;
+    module::agent::AgentModule mod(deps);
+    mod.onStart();
+    module::agent::AgentStore store(tdb.handle());
+    auto t1 = store.createTask("框内任务", "g", "manual", "default", 10, false);
+    DOCTEST_REQUIRE(t1.isOk());
+    const std::string tid = std::to_string(t1.value());
+
+    auto check = [&](eui::Ui& ui, const char* panelId, const char* titleId,
+                     const char* tag) -> bool {
+        std::string v = dialog_frame::allInside(ui, panelId);
+        DOCTEST_CHECK_MESSAGE(v.empty(), std::string(tag) + " 全元素在框内: " + v);
+        v = dialog_frame::titleAnchor(ui, panelId, titleId);
+        DOCTEST_CHECK_MESSAGE(v.empty(), std::string(tag) + " 标题锚: " + v);
+        return true;
+    };
+
+    // P7 任务向导（openNewTaskWithGoal 停在 step 2 指令页，goal 已预填）
+    eui::Ui ui;
+    DOCTEST_REQUIRE(openNewTaskWithGoal(ui, mod, "agent_df", "框内向导"));
+    eui::Ui ui2;
+    composeTo(ui2, mod, kScreen, "agent_df_chk");
+    DOCTEST_CHECK(check(ui2, "agent.dialog.task.panel", "agent.dialog.task.title", "P7 向导"));
+
+    // 关向导 → 任务行删除 chip → P10 删除确认
+    eui::Ui ui3;
+    composeTo(ui3, mod, kScreen, "agent_df_close");
+    DOCTEST_REQUIRE(clickId(ui3, "agent.dialog.task.backdrop"));
+    eui::Ui ui4;
+    composeTo(ui4, mod, kScreen, "agent_df_del");
+    DOCTEST_REQUIRE_MESSAGE(clickId(ui4, "agent.task." + tid + ".delete.bg"),
+                            "删除 chip 不可点");
+    eui::Ui ui5;
+    composeTo(ui5, mod, kScreen, "agent_df_del2");
+    DOCTEST_CHECK(check(ui5, "agent.dialog.delete.panel", "agent.dialog.delete.title",
+          "P10 删除确认"));
 
     mod.onStop();
     return true;

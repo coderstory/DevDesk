@@ -632,6 +632,8 @@ REGISTER_TEST(md_module_compose_phase1, "markdown_module: Phase 1 三态/大纲/
     DOCTEST_REQUIRE(folderRow->onClick != nullptr);
     const auto* fileRow = ui.find("md.tree.node.1.row");
     DOCTEST_REQUIRE(fileRow != nullptr);
+    // B2 树行白卡底：note.md 行未打开（currentPath_ 空）= cardSurface 半透白卡
+    DOCTEST_CHECK(colorEq(fileRow->color, ui_kit::cardSurface(core::theme::current())));
     DOCTEST_REQUIRE(fileRow->onClick != nullptr);
     fileRow->onClick();
 
@@ -1267,6 +1269,8 @@ REGISTER_TEST(md_module_wechat_surfaces,
     const auto* outlineBg = ui.find("md.outline.panel.bg");
     DOCTEST_REQUIRE(outlineBg != nullptr);
     DOCTEST_CHECK(colorEq(outlineBg->color, cardBg));
+    // B2 描边存在性（H10 门禁）：大纲浮面板白卡须有 1px 描边
+    DOCTEST_CHECK(outlineBg->border.width >= 1.0f);
     const auto* outlineRow0 = ui.find("md.outline.item.0.row");
     const auto* outlineRow1 = ui.find("md.outline.item.1.row");
     DOCTEST_REQUIRE(outlineRow0 != nullptr);
@@ -1404,6 +1408,9 @@ REGISTER_TEST(md_module_new_folder, "markdown_module: W9 新建文件夹入口�
     DOCTEST_CHECK(colorEq(rootRowNow->color, treeColors.primarySoftBg));
     DOCTEST_CHECK(colorEq(rootRowNow->color, treeColors.primarySoftBg) &&
                   !colorEq(workRowNow->color, treeColors.primarySoftBg));
+    // B2 文件夹行未选中 = 白卡半透底（H15 cardSurface 0.92）
+    DOCTEST_CHECK(colorEq(workRowNow->color,
+                          ui_kit::cardSurface(core::theme::current())));
     const auto* noteBtn = ui.find("md.tree.new.bg");
     DOCTEST_REQUIRE(noteBtn != nullptr);
     noteBtn->onClick();

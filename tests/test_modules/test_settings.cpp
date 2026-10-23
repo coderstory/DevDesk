@@ -34,6 +34,7 @@
 #include <eui/dsl.h>
 #include <eui/dsl_app.h>
 
+#include <ui_kit/card.h>      // cardSurface：B5 白卡底色（H15 alpha 0.92）单一来源
 #include <ui_kit/columns.h>  // 双列几何单一来源（UAT3 多列分栏几何断言）
 #include <ui_kit/metrics.h>  // kHeaderH（UAT5 起设置页页头高 = 共享常量，不再双源）
 
@@ -3967,6 +3968,12 @@ REGISTER_TEST(settings_cards_solid_white_bg,
             // H10 对比度门禁：白卡 bg 必须有 borderDefault 描边（白卡浮于 #FAFAF9 底）
             const auto* bg = ui.find(kBgIds[i]);
             if (bg) {
+                // B5 白卡面双锚：底色 = cardSurface（H15 alpha 0.92）+ 描边存在（H10）
+                const auto cs = ui_kit::cardSurface(core::theme::current());
+                DOCTEST_CHECK_MESSAGE(bg->color.r == cs.r && bg->color.g == cs.g &&
+                                          bg->color.b == cs.b && bg->color.a == cs.a,
+                                      tag + " 卡 " + kBgIds[i] +
+                                          " 底色应为 cardSurface（alpha 0.92）");
                 DOCTEST_CHECK_MESSAGE(bg->border.width > 0.005f,
                                       tag + " 卡 " + kBgIds[i] +
                                           " 白底应有 borderDefault 描边（H10 对比度门禁），"
