@@ -15,6 +15,7 @@
 #include "core/input/input_types.h"
 #include "core/module_interface.h"
 #include "core/sqlite_db.h"
+#include "core/component_theme.h"   // componentTokensWeChat：Danger 按钮底色的实际令牌源
 #include "core/theme.h"
 #include "core/time.h"
 #include "platform/http_server.h"
@@ -8645,6 +8646,10 @@ REGISTER_TEST(claude_form_wechat_colors,
                std::fabs(x.b - y.b) < 0.01f;
     };
     const auto& t = core::theme::current();
+    // Danger 变体的底色来自传给 .theme() 的组件令牌（componentTokensWeChat），
+    // 该映射未覆写 error/success/warning/info 槽——暗色下组件 error 仍是
+    // ThemeColorTokens 默认 #EF4444，与 t.colors.error（暗色 #F87171）非同值。
+    const auto wcTokens = core::theme::componentTokensWeChat(t);
     const eui::Color warmSurface = t.colors.surfaceElevated;
 
     // 开新建表单 → env 页加一行变量
@@ -8675,7 +8680,7 @@ REGISTER_TEST(claude_form_wechat_colors,
         DOCTEST_CHECK(sameColor(colorOf(ui, "claude.form.env.row.0.value.hit"),
                                 t.colors.surface));
         DOCTEST_CHECK(sameColor(colorOf(ui, "claude.form.env.row.0.del.bg"),
-                                t.colors.error));   // S2.1 Danger 默认底 = error 20%（RGB 同 error）
+                                wcTokens.error));   // S2.1 Danger 默认底 = 组件 error 20%（RGB 同组件 error）
         DOCTEST_CHECK(sameColor(colorOf(ui, "claude.form.env.add.bg"),
                                 t.colors.surface)); // S2.1 Outline 默认底 = surface
         DOCTEST_CHECK(sameColor(colorOf(ui, "claude.form.import.parse.bg"),

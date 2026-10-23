@@ -13,6 +13,7 @@
 #include "core/event_bus.h"
 #include "core/time.h"
 #include <ui_kit/button.h>
+#include <ui_kit/card.h>
 #include <ui_kit/dialog_form.h>
 #include <ui_kit/metrics.h>
 #include <ui_kit/toast.h>
@@ -81,7 +82,7 @@ constexpr float kTreeArrowFontSize = 12.0f;
 constexpr float kTreeFontSize = 14.0f;
 
 // UAT3 D-R3-3（目录树折叠重做）：面板宽动画与收起形态常量。
-constexpr float kTreePanelWidth = 240.0f;         // 展开宽（沿用 UAT2 F批 240）
+constexpr float kTreePanelWidth = 224.0f;         // 展开宽（S4.4 规格 224，收窄最小 200）
 constexpr float kTreePanelAnimK = 0.18f;          // 每帧向目标靠拢的固定 lerp 系数
 constexpr float kTreePanelSnapEps = 1.0f;         // 距目标 <1px 视为收敛，直接钉住
 constexpr float kTreePanelContentMinW = 220.0f;   // 内容回画门槛（动画中只画面板壳）
@@ -143,7 +144,7 @@ void drawFileTreeItem(eui::Ui& ui,
         .content([&] {
             ui.rect(id + ".row")
                 .size(width, kTreeRowHeight)
-                .color(active ? t.colors.primarySoftBg : t.colors.surface)
+                .color(active ? t.colors.primarySoftBg : ui_kit::cardSurface(t))
                 .hoverColor(t.colors.hover)
                 .radius(t.sizes.radiusWeChat)
                 .onClick(std::move(onClick))
@@ -449,8 +450,8 @@ public:
         // UAT5 真机收敛泵：lerp 只在 compose 里推进，而真机主循环是事件驱动——无输入
         // 即 glfwWaitEvents 睡眠，且 runtime 的 animating 位只认 DSL 管理的动画
         //（onFrame/过渡/GIF/滚动惯性），本手搓 treePanelWidth_ lerp 对它不可见。
-        // 后果（真机两报同根因）：点折叠/展开 → 点击帧只推进一步（240→~197）即冻结，
-        // 面板壳仍 ~240、内容空（<220 不画）、浮钮（>1px）不上屏；其后每次任意输入
+        // 后果（真机两报同根因）：点折叠/展开 → 点击帧只推进一步（224→~184）即冻结，
+        // 面板壳仍 ~224、内容空（<220 不画）、浮钮（>1px）不上屏；其后每次任意输入
         //（如反复开关大纲）各供一帧，面板再向目标爬一步 → 编辑列 x 随之逐轮漂移。
         // headless 直泵 compose 40 帧绕过主循环策略，故既有测试恒绿、真机分叉。
         // 修法 = carousel 同款模式：动画在途挂 1x1 空 onFrame 元素——runtime 每帧经
@@ -678,7 +679,7 @@ private:
                         float sideW,
                         float gap,
                         const core::theme::Tokens& t) {
-        // 把手在两端之间 lerp：sideW=240 时右贴树右缘（pad+240-handleW），
+        // 把手在两端之间 lerp：sideW=224 时右贴树右缘（pad+224-handleW），
         // sideW=0 时左贴编辑列左缘（pad+gap）；动画途中平滑过渡，无跳变。
         const float lerpT = sideW / kTreePanelWidth;
         const float handleX =
@@ -1134,7 +1135,7 @@ private:
                                 inner.rect(id + ".row")
                                     .size(w, kTreeRowHeight)
                                     .color(selected ? t.colors.primarySoftBg
-                                                    : t.colors.surface)
+                                                    : ui_kit::cardSurface(t))
                                     .hoverColor(t.colors.hover)
                                     .radius(t.sizes.radiusWeChat)
                                     .onClick([this, dir = r.relPath] { selectDir(dir); })
@@ -1241,7 +1242,7 @@ private:
                 // 随页面主体整体 wechat 化——白卡底 + 一级分割线边框 + wechat 文字档。
                 ui.rect("md.outline.panel.bg")
                     .size(panelW, panelH)
-                    .color(t.colors.surface)
+                    .color(ui_kit::cardSurface(t))
                     .radius(t.sizes.radiusLarge)
                     .border(1.0f, t.colors.borderDefault)
                     .build();
@@ -1312,7 +1313,7 @@ private:
                                     inner.rect(id + ".row")
                                         .size(rowW, 30.0f)
                                         .color(current ? t.colors.primarySoftBg
-                                                       : t.colors.surface)
+                                                       : ui_kit::cardSurface(t))
                                         .hoverColor(t.colors.hover)
                                         .radius(t.sizes.radiusSmall)
                                         .onClick([this, i, &ui, componentTheme] {
@@ -1633,7 +1634,7 @@ private:
         ui.rect("md.status.bg")
             .position(x, y)
             .size(w, 22.0f)
-            .color(t.colors.surface)
+            .color(ui_kit::cardSurface(t))
             .build();
 
         std::string left = "未选择笔记";
@@ -2737,7 +2738,7 @@ private:
 
         ui_kit::drawDialogFrame(ui, screen, frame, core::theme::componentTokensWeChat(t), [&] {
                 ui_kit::drawDialogTitle(ui, "md.dialog.new.title", w, "新建笔记",
-                                        t.sizes.fontSizeLarge + 2.0f, t.colors.textPrimary);
+                                        20.0f, t.colors.textPrimary);
 
                 // 提示行用就地判据而非 newItemParentDir()（后者每帧 WARN 刷屏）
                 const std::string newNoteParent =
@@ -2818,7 +2819,7 @@ private:
 
         ui_kit::drawDialogFrame(ui, screen, frame, core::theme::componentTokensWeChat(t), [&] {
                 ui_kit::drawDialogTitle(ui, "md.dialog.newfolder.title", w, "新建文件夹",
-                                        t.sizes.fontSizeLarge + 2.0f, t.colors.textPrimary);
+                                        20.0f, t.colors.textPrimary);
 
                 // 提示行带上实际落点（= 当前上级目录），避免「显示 A 建到 B」。
                 ui_kit::drawDialogText(ui, "md.dialog.newfolder.hint", w,
@@ -3871,7 +3872,7 @@ private:
 
         ui_kit::drawDialogFrame(ui, screen, frame, core::theme::componentTokensWeChat(t), [&] {
                 ui_kit::drawDialogTitle(ui, "md.dialog.del.title", w, "删除笔记",
-                                        t.sizes.fontSizeLarge + 2.0f, t.colors.textPrimary);
+                                        20.0f, t.colors.textPrimary);
                 ui_kit::drawDialogText(
                     ui, "md.dialog.del.body", w,
                     "将删除笔记「" + deleteTargetPath_ + "」及其磁盘文件，不可恢复。",
@@ -3913,7 +3914,7 @@ private:
 
         ui_kit::drawDialogFrame(ui, screen, frame, core::theme::componentTokensWeChat(t), [&] {
                 ui_kit::drawDialogTitle(ui, "md.dialog.rename.title", w, "重命名笔记",
-                                        t.sizes.fontSizeLarge + 2.0f, t.colors.textPrimary);
+                                        20.0f, t.colors.textPrimary);
                 ui_kit::drawDialogText(ui, "md.dialog.rename.hint", w,
                                        "相对笔记目录；填「工作/新名」可同时移动。"
                                        "笔记一律以 .md 结尾：不写会自动补上",

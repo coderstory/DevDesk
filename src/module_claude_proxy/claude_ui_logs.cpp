@@ -196,7 +196,7 @@ void drawCallsDialog(eui::Ui& ui, const eui::Screen& screen,
 
     ui_kit::drawDialogFrame(ui, screen, frame, themeTokens, [&] {
             ui_kit::drawDialogTitle(ui, "claude.dialog.calls.title", w, "调用记录",
-                                    20.0f, t.colors.textPrimary, {.y = 12.0f});
+                                    20.0f, t.colors.textPrimary, {.y = 16.0f});
 
             // 工具行：搜索框 + 状态码过滤 + 匹配总数
             components::input(ui, "claude.dialog.calls.search")

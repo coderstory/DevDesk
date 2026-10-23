@@ -26,6 +26,7 @@
 #include <ui_kit/dialog_form.h>
 #include <ui_kit/metrics.h>
 #include <ui_kit/button.h>
+#include <ui_kit/card.h>
 #include <ui_kit/wswitch.h>
 #include <ui_kit/toast.h>
 
@@ -200,7 +201,9 @@ constexpr int kRunListLimit = 1;
 
 constexpr float kToolsHeaderH = 28.0f;
 constexpr float kToolCardH = 40.0f;
-constexpr float kToolsListMaxH = 240.0f;
+// 工具列表高锚点 = 640 档（S4.1 最小窗 1000×640）下的列表高，也是弹性下限。
+// H18-批3 起不再封顶：高窗按 body 可用高放大（公式见 compose 内 toolsListH）
+constexpr float kToolsListAnchorH = 240.0f;
 
 int slotIndexOf(const std::string& slotKey) {
     for (int i = 0; i < kModelSlotCount; ++i) {
@@ -1725,9 +1728,21 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
     }
 
     ensureToolsCache(/*forceReload=*/false);
+    // 工具列表纵向弹性（H18-批3 / S4.1「锚点 1000×640 + 伸缩公式」）：
+    //   toolsListH = min(max(240 锚点, body 可用高 × 0.3), 内容自然高)
+    // ① body 可用高 = screen.height − pad：与下方 listH 同口径（页 column 底 padding
+    //    为 0，只在顶部扣一次 pad），即工具区所在 body 的真实可用高度；
+    // ② 内容自然高 = 行数 × kToolCardH：沿用既有算式（scrollView 无额外内边距，
+    //    卡间 gap 已含在 step 节奏里）；
+    // ③ 240 = 最小窗锚点（原封顶值）：大窗按真实页高 960 算 (960−32)×0.3 = 278.4
+    //    > 240，工具区随窗拉高；×0.2 时 928×0.2 = 185.6 会被锚点封死，故取 0.3
+    //   （最小窗 body 可用高 568×0.3 = 170.4 仍落 240，两档同时成立）。
+    const float toolsBodyAvailH = screen.height - pad;
+    const float toolsNaturalH =
+        static_cast<float>(toolsCache_.size()) * kToolCardH;
     const float toolsListH =
-        toolsOpen_ ? std::min(static_cast<float>(toolsCache_.size()) * kToolCardH,
-                              kToolsListMaxH)
+        toolsOpen_ ? std::min(std::max(kToolsListAnchorH, toolsBodyAvailH * 0.3f),
+                              toolsNaturalH)
                    : 0.0f;
     const float toolsH = kToolsHeaderH + (toolsOpen_ ? kMsgGap + toolsListH : 0.0f);
     // 页 column 子项：标题行 / [错误行] / [引导行] / tools / tasklist；子项数或行高一变，kPageGapCount 与减项必须同步
@@ -1837,7 +1852,7 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                                 ui.rect("agent.tools.list.panel")
                                     .position(0.0f, 0.0f)
                                     .size(contentW, toolsListH)
-                                    .color(t.colors.surface)
+                                    .color(ui_kit::cardSurface(t))
                                     .radius(t.sizes.radius)
                                     .border(1.0f, t.colors.borderDefault)
                                     .build();
@@ -1861,7 +1876,7 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                                                     inner.rect(cid + ".bg")
                                                         .position(0.0f, 0.0f)
                                                         .size(cw, kToolCardH)
-                                                        .color(t.colors.surface)
+                                                        .color(ui_kit::cardSurface(t))
                                                         .radius(t.sizes.radius)
                                                         .border(1.0f, t.colors.borderDefault)
                                                         .build();
@@ -1913,9 +1928,11 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                             .build();
                             })   // agent.tools.list.wrap 的 content 收口
                             .build();
-                        // 滚动提示：工具数多于可见行数时显示"还有 N 件"
+                        // 滚动提示：工具数多于可见行数时显示"还有 N 件"。
+                        // 可见行数按本帧弹性列表高推（H18-批3：窗口拉高后可见行变多，
+                        // 提示要跟着变，不能再用固定 240 锚点算）
                         if (!toolsCache_.empty()) {
-                            const float visibleRows = kToolsListMaxH / kToolCardH;
+                            const float visibleRows = toolsListH / kToolCardH;
                             const int total = static_cast<int>(toolsCache_.size());
                             const int visible = static_cast<int>(visibleRows);
                             if (total > visible) {
@@ -1942,7 +1959,7 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                     ui.rect("agent.tasklist.panel")
                         .position(0.0f, 0.0f)
                         .size(contentW, std::max(0.0f, listH))
-                        .color(t.colors.surface)
+                        .color(ui_kit::cardSurface(t))
                         .radius(t.sizes.radius)
                         .border(1.0f, t.colors.borderDefault)
                         .build();
@@ -2297,8 +2314,7 @@ void AgentModule::composeTaskDialog(
             if (!taskDialogOpen_) return;
             ui_kit::drawDialogTitle(ui, "agent.dialog.task.title", w,
                                     isEdit ? "编辑任务" : "新建智能任务",
-                                    20.0f, t.colors.textPrimary,
-                                    {.y = 24.0f});  // W4 域：保持原几何，不随默认值收紧
+                                    20.0f, t.colors.textPrimary, {.y = 16.0f});
 
             // ✕ 关闭
             ui.text("agent.dialog.task.close")
@@ -2875,8 +2891,7 @@ void AgentModule::composeDraftDialog(
         if (!draftDialogOpen_) return;
         ui_kit::drawDialogTitle(ui, "agent.dialog.task.draft.title", w,
                                 "AI 生成草稿", 20.0f,
-                                t.colors.textPrimary,
-                                {.y = 24.0f});  // W4 域：保持原几何，不随默认值收紧
+                                t.colors.textPrimary, {.y = 16.0f});
 
         // ✕ 关闭（与遮罩 / Esc / 「关闭」按钮同一路径）
         ui.text("agent.dialog.task.draft.close")
@@ -3013,8 +3028,7 @@ void AgentModule::composeDeleteConfirmDialog(
             }
         }
         ui_kit::drawDialogTitle(ui, "agent.dialog.delete.title", w, "确认删除？",
-                                20.0f, t.colors.textPrimary,
-                                {.y = 24.0f});  // W4 域：保持原几何，不随默认值收紧
+                                20.0f, t.colors.textPrimary, {.y = 16.0f});
         ui_kit::drawDialogText(
             ui, "agent.dialog.delete.msg", w,
             "将删除任务「" + name + "」及其全部运行记录，不可恢复。",

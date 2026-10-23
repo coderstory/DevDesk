@@ -19,6 +19,7 @@
 #include "core/database.h"
 #include "core/module_interface.h"
 #include "core/theme.h"
+#include "core/component_theme.h"  // componentTokensWeChat：Ghost 按钮文字色源
 
 #include <eui/dsl.h>
 
@@ -208,7 +209,7 @@ REGISTER_TEST(claude_ccswitch_ui_skeleton_contract,
     DOCTEST_CHECK(ui2.find("claude.dialog.ccswitch.list") != nullptr);
 
     // 默认全选 → selall 显示「取消全选」，确认键计数 = claude 行数（codex 被滤掉）
-    const auto* selall = ui2.find("claude.dialog.ccswitch.selall.text");
+    const auto* selall = ui2.find("claude.dialog.ccswitch.selall.text.normal");
     DOCTEST_REQUIRE(selall != nullptr);
     DOCTEST_CHECK_EQ(selall->text, std::string("取消全选"));
     // W4 批2：全选钮改 Ghost 文字钮（透明底绿字）；反向锁死暖橙 surfaceElevated 与白底
@@ -222,13 +223,25 @@ REGISTER_TEST(claude_ccswitch_ui_skeleton_contract,
     // S2.1 Ghost：默认底透明（a=0）
     DOCTEST_CHECK(selallBg->color.a < 0.01f);            // Ghost 默认底透明
     DOCTEST_CHECK(!sameColor(selallBg->color, wc.surfaceElevated));
-    const auto* selallText = ui2.find("claude.dialog.ccswitch.selall.text");
+    const auto* selallText = ui2.find("claude.dialog.ccswitch.selall.text.normal");
     DOCTEST_REQUIRE(selallText != nullptr);
-    DOCTEST_CHECK(sameColor(selallText->color, wc.primary));  // S2.1 Ghost 绿字（单节点 .text）
-    const auto* confirm = ui2.find("claude.dialog.ccswitch.confirm.text");
+    // S2.1 Ghost 文字钮：text 走组件令牌 primary（EUI button.h Ghost → text=tokens.primary），
+    // 非裸 current().colors.primary；用 componentTokensWeChat(<当前主题>).primary 比对
+    const auto& wcPrimary = core::theme::current().colors.primary;
+    const auto& wechatPrimary = core::theme::componentTokensWeChat(core::theme::current()).primary;
+    DOCTEST_CHECK_MESSAGE(sameColor(selallText->textColor, wechatPrimary),
+        ("actual=" + std::to_string(selallText->textColor.r) + "," + std::to_string(selallText->textColor.g) + "," +
+         std::to_string(selallText->textColor.b) + "," + std::to_string(selallText->textColor.a) +
+         " expected=" + std::to_string(wechatPrimary.r) + "," + std::to_string(wechatPrimary.g) + "," +
+         std::to_string(wechatPrimary.b) + "," + std::to_string(wechatPrimary.a) +
+         " wc.primary=" + std::to_string(wcPrimary.r) + "," + std::to_string(wcPrimary.g) + "," +
+         std::to_string(wcPrimary.b) + "," + std::to_string(wcPrimary.a) +
+         " comp=" + std::to_string(wechatPrimary.r) + "," + std::to_string(wechatPrimary.g) + "," +
+         std::to_string(wechatPrimary.b) + "," + std::to_string(wechatPrimary.a)).c_str());
+    const auto* confirm = ui2.find("claude.dialog.ccswitch.confirm.text.normal");
     DOCTEST_REQUIRE(confirm != nullptr);
     DOCTEST_CHECK_EQ(confirm->text, std::string("导入选中(3)"));
-    const auto* cancel = ui2.find("claude.dialog.ccswitch.cancel.text");
+    const auto* cancel = ui2.find("claude.dialog.ccswitch.cancel.text.normal");
     DOCTEST_REQUIRE(cancel != nullptr);
     DOCTEST_CHECK_EQ(cancel->text, std::string("关闭"));
 
@@ -334,10 +347,10 @@ REGISTER_TEST(claude_ccswitch_ui_skeleton_contract,
     rowHit->onClick();
     eui::Ui ui3;
     composeFrame(*mod, ui3, "cc_ui_skel3");
-    const auto* selall3 = ui3.find("claude.dialog.ccswitch.selall.text");
+    const auto* selall3 = ui3.find("claude.dialog.ccswitch.selall.text.normal");
     DOCTEST_REQUIRE(selall3 != nullptr);
     DOCTEST_CHECK_EQ(selall3->text, std::string("全选"));
-    const auto* confirm3 = ui3.find("claude.dialog.ccswitch.confirm.text");
+    const auto* confirm3 = ui3.find("claude.dialog.ccswitch.confirm.text.normal");
     DOCTEST_REQUIRE(confirm3 != nullptr);
     DOCTEST_CHECK_EQ(confirm3->text, std::string("导入选中(2)"));
     DOCTEST_CHECK(ui3.find("claude.dialog.ccswitch.row.1.cb.mark") == nullptr);
@@ -360,7 +373,7 @@ REGISTER_TEST(claude_ccswitch_ui_skeleton_contract,
     DOCTEST_REQUIRE(clickById(ui3, "claude.dialog.ccswitch.row.1.hit"));
     eui::Ui ui4;
     composeFrame(*mod, ui4, "cc_ui_skel4");
-    const auto* confirm4 = ui4.find("claude.dialog.ccswitch.confirm.text");
+    const auto* confirm4 = ui4.find("claude.dialog.ccswitch.confirm.text.normal");
     DOCTEST_REQUIRE(confirm4 != nullptr);
     DOCTEST_CHECK_EQ(confirm4->text, std::string("导入选中(3)"));
 
@@ -396,7 +409,7 @@ REGISTER_TEST(claude_ccswitch_ui_empty_state,
     DOCTEST_CHECK(ui2.find("claude.dialog.ccswitch.list") == nullptr);
     DOCTEST_CHECK(ui2.find("claude.dialog.ccswitch.selall") == nullptr);
     DOCTEST_CHECK(ui2.find("claude.dialog.ccswitch.row.0.name") == nullptr);
-    const auto* confirm = ui2.find("claude.dialog.ccswitch.confirm.text");
+    const auto* confirm = ui2.find("claude.dialog.ccswitch.confirm.text.normal");
     DOCTEST_REQUIRE(confirm != nullptr);
     DOCTEST_CHECK_EQ(confirm->text, std::string("导入选中(0)"));
 
@@ -466,13 +479,13 @@ REGISTER_TEST(claude_ccswitch_ui_import_chain,
     DOCTEST_REQUIRE(clickById(ui2, "claude.dialog.ccswitch.row.2.hit"));
     eui::Ui ui3;
     composeFrame(*mod, ui3, "cc_ui_chain3");
-    const auto* confirm3 = ui3.find("claude.dialog.ccswitch.confirm.text");
+    const auto* confirm3 = ui3.find("claude.dialog.ccswitch.confirm.text.normal");
     DOCTEST_REQUIRE(confirm3 != nullptr);
     DOCTEST_CHECK_EQ(confirm3->text, std::string("导入选中(2)"));
     DOCTEST_REQUIRE(clickById(ui3, "claude.dialog.ccswitch.row.2.hit"));
     eui::Ui ui4;
     composeFrame(*mod, ui4, "cc_ui_chain4");
-    const auto* confirm4 = ui4.find("claude.dialog.ccswitch.confirm.text");
+    const auto* confirm4 = ui4.find("claude.dialog.ccswitch.confirm.text.normal");
     DOCTEST_REQUIRE(confirm4 != nullptr);
     DOCTEST_CHECK_EQ(confirm4->text, std::string("导入选中(3)"));
 

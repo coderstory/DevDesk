@@ -1,6 +1,6 @@
 // 关于页独立模块（S3.8 UAT6.2 整改）。
 // 实底白卡 + 标题左对齐 + 描述列表（标签/值层级）+ Ghost 复制图标 + 信息分组。
-// 玻璃体系退役（S6.1）：不再使用 glass_card.h。
+// 玻璃体系已退役（S6.1）。
 // 平台/架构由 CMake 配置期注入宏，本文件只消费。
 #include "core/component_theme.h"
 #include "core/logging.h"
