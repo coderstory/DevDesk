@@ -655,7 +655,7 @@ REGISTER_TEST(sidebar_w3_grouping_and_selectionbar,
     // 且 Element 指针系 Ui 内部树节点、Ui 出作用域即悬垂——三个显式块各自持 Ui。
     {
         const auto& t = ::core::theme::current();
-        // off 档：实色 1.0，RGB 恒 sidebarBgTinted
+        // off 档：实色 1.0，RGB 恒 sidebarBg（dark 档 #0F1F18，light 档 #F0FDF7）
         core::window_effect_state::setCurrent("off");
         {
             eui::Ui fx;
@@ -665,9 +665,9 @@ REGISTER_TEST(sidebar_w3_grouping_and_selectionbar,
             const auto* bg = fx.find("app.sidebar.bg");
             DOCTEST_REQUIRE(bg != nullptr);
             DOCTEST_CHECK(std::abs(bg->color.a - 1.0f) < 1e-3f);
-            DOCTEST_CHECK(std::abs(bg->color.r - t.colors.wechat.sidebarBgTinted.r) < 1e-3f);
-            DOCTEST_CHECK(std::abs(bg->color.g - t.colors.wechat.sidebarBgTinted.g) < 1e-3f);
-            DOCTEST_CHECK(std::abs(bg->color.b - t.colors.wechat.sidebarBgTinted.b) < 1e-3f);
+            DOCTEST_CHECK(std::abs(bg->color.r - t.colors.sidebarBg.r) < 1e-3f);
+            DOCTEST_CHECK(std::abs(bg->color.g - t.colors.sidebarBg.g) < 1e-3f);
+            DOCTEST_CHECK(std::abs(bg->color.b - t.colors.sidebarBg.b) < 1e-3f);
         }
         // frosted 档：0.15 透 DWM backdrop（UAT6 起请求 Mica）
         core::window_effect_state::setCurrent("frosted");

@@ -1,6 +1,6 @@
 // src/ui_kit/splash.cpp
 // 启动 splash：WeChat-minimal（D-11 反转，2026-10-19）——
-// 全屏微绿底(wechat.sidebarBgTinted #E8F0EC) + 居中深绿 logo(wechat.primaryPressed #059A4C)
+// 全屏微绿底(sidebarBg #F0FDF7) + 居中深绿 logo(wechat.primaryPressed #059A4C)
 // + 底部深绿细进度条（H 批 2026-10-20：用户反馈"底色纯白没有绿色印染"，见下方对比度核）。
 // UAT6 动态印染（用户："splash 没有绿色印染的动态效果"——静态绿底不够）：开场 1.2s
 // 绿色自 logo 瓦中心径向扩散/晕染，边缘带确定性噪声（有机晕染而非硬圆），扩散完
@@ -94,14 +94,13 @@ bool drawSplashIfNeeded(eui::Ui& ui, const eui::Screen& screen) {
     }
 
     const auto& t = ::core::theme::current();
-    const auto& wc = t.colors.wechat;
 
-    // 全屏微绿底（wechat.sidebarBgTinted #E8F0EC）——H 批"绿色印染"：原 wechat.pageBg
-    // #F7F7F7 灰被用户看成纯白，换侧栏同款微绿灰令牌，与主界面基调呼应。
+    // 全屏微绿底（sidebarBg，light #F0FDF7 / dark #0F1F18），与侧栏同源，
+    // 与主界面基调呼应。
     ui.rect("splash.bg")
         .position(0.0f, 0.0f)
         .size(screen.width, screen.height)
-        .color(wc.sidebarBgTinted)
+        .color(t.colors.sidebarBg)
         .opacity(opacity)
         .build();
 
@@ -121,7 +120,7 @@ bool drawSplashIfNeeded(eui::Ui& ui, const eui::Screen& screen) {
     // inkFrontFraction 定前沿半径、inkWashAlpha 定浓度（扩散摊薄），曲线在 splash.h。
     // 画在底色与 logo 之间（z 序 bg → 墨染 → logo），logo 保持清晰不被洗染。
     // 扩散结束（inkProgress >= 1）本块整体不再执行 → 不画任何墨染元素、不再挂
-    // 帧泵，终态 = 纯静态 sidebarBgTinted 底（W 批底色断言恒成立）。
+    // 帧泵，终态 = 纯静态 sidebarBg 底（W 批底色断言恒成立）。
     const float inkProgress = std::clamp(elapsed / kInkDurationSec, 0.0f, 1.0f);
     if (inkProgress < 1.0f) {
         const float inkX = cx - 86.0f;  // logo 瓦几何中心（56px 瓦挂载中心，见下方图标块）

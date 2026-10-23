@@ -388,7 +388,7 @@ void drawColumnContent(eui::Ui& ui, const std::string& id, const Column& col,
             .position(0.0f, 0.0f)
             .size(width, kColumnHeaderHeight)
             .color(eui::Color{0.0f, 0.0f, 0.0f, 0.0f})
-            .radius(t.sizes.radiusWeChat)
+            .radius(t.sizes.radiusSmall)
             .build();
 
         auto drawHeadContent = [&](eui::Ui& target) {

@@ -336,8 +336,6 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
     if (!router) return;
 
     const auto& t = ::core::theme::current();
-    // 微信色令牌快捷引用（W1 新增槽位，§2.1）；新旧并存，W3 侧栏逐页切换到此
-    const auto& wc = t.colors.wechat;
     // W0.5：透明语义常量（非可主题化色，W0.5 误标为待清理字面量）。
     // 用途：inactive hit 底 + toggle 底 + active 遮让 SelectionBar（让 SelectionBar 盖底）。
     // 不抽到 theme.h 的 wechat.transparent 槽位（W3 不动 theme.h），保留为局部语义常量。
@@ -369,7 +367,7 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
     ui.stack("app.sidebar")
         .size(kWidth, screen.height)
         .content([&] {
-            // 侧栏底色：微绿灰（D-12 E1，§4.8 sidebarBgTinted #E8F0EC），z 序在最底，
+            // 侧栏底色（sidebarBg：light #F0FDF7 / dark #0F1F18），z 序在最底，
             // divider/brand/nav/toggle 都在其上，仅染侧栏、不动页面区/白卡。
             // UAT2 B 批：tint 的 alpha 随窗口效果档位（core::window_effect_state 单值，
             // 写口 = settings applyWindowVisuals）——磨砂 0.15 透 Acrylic backdrop、
@@ -379,15 +377,15 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                 ::core::window_effect_state::current());
             ui.rect("app.sidebar.bg")
                 .size(kWidth, screen.height)
-                .color(eui::Color{wc.sidebarBgTinted.r, wc.sidebarBgTinted.g,
-                                  wc.sidebarBgTinted.b, sidebarBgAlpha})
+                .color(eui::Color{t.colors.sidebarBg.r, t.colors.sidebarBg.g,
+                                  t.colors.sidebarBg.b, sidebarBgAlpha})
                 .build();
-            // 右缘分割线：wechat.dividerPrimary（§4.7 一级 #E5E5E5，原 borderMuted 暖系）
+            // 右缘分割线：borderDefault
             ui.rect("app.sidebar.divider")
                 .position(kWidth - 1.0f, 0.0f)
                 .size(1.0f, screen.height)
                 .color(t.colors.borderDefault)
-                .radius(t.sizes.radiusWeChat)
+                .radius(t.sizes.radiusSmall)
                 .build();
 
             // brand 行（UAT3 #9 + 图标批 2026-10-20）：折叠/展开两态统一为居中几何
@@ -430,7 +428,7 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                     .states(kTransparent,
                             active ? kTransparent : t.colors.hover,
                             active ? kTransparent : t.colors.primarySoftBg)
-                    .radius(t.sizes.radiusWeChat)
+                    .radius(t.sizes.radiusSmall)
                     .onClick([router, page] { router->navigateTo(page); })
                     .build();
 
@@ -443,8 +441,8 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                 }
 
                 // 图标与文字分两个元素：Icon 字体（FontAwesome）不能和正文字体混排在一个 Text 里。
-                // 图标：active=wechat.primary（§4.8 "图标同步变绿"），inactive=wechat.textSecondary。
-                // 标签：active=wechat.textPrimary（§4.3 "深灰文字 #1A1A1A"），inactive=wechat.textSecondary。
+                // 图标：active=primary，inactive=textSecondary。
+                // 标签：active=textPrimary，inactive=textSecondary。
                 if (collapsed) {
                     ui.text(id + ".icon")
                         .position((kWidth - kIconW) * 0.5f, y)
@@ -510,7 +508,7 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
 
             // 折叠开关（底部固定）：展开态 fa-angles-left、折叠态 fa-bars；展开左对齐、折叠居中。
             // toggle 底色透明（W0.5：kTransparent 语义常量，非可主题化色）；
-            // hover/active 走 wechat.dividerSecondary/wechat.selectedBg；radius→radiusWeChat（D-12 E2 统一 6）
+            // hover/active 走 hover/primarySoftBg 主槽位。
             constexpr float kToggleSize = 36.0f;
             const float toggleY = screen.height - 56.0f;
             const float toggleX =
@@ -519,7 +517,7 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                 .position(toggleX, toggleY)
                 .size(kToggleSize, kToggleSize)
                 .states(kTransparent, t.colors.hover, t.colors.primarySoftBg)
-                .radius(t.sizes.radiusWeChat)
+                .radius(t.sizes.radiusSmall)
                 .onClick([] {
                     setSidebarCollapsed(!sidebarCollapsed(), true);
                 })

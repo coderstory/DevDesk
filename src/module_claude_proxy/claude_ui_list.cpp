@@ -809,7 +809,7 @@ void drawSharedConfigBlock(eui::Ui& ui, float width, float blockH,
         .states(eui::Color{0.0f, 0.0f, 0.0f, 0.0f},
                 t.colors.hover,
                 t.colors.primarySoftBg)
-        .radius(t.sizes.radiusWeChat)
+        .radius(t.sizes.radiusSmall)
         .onClick([sp = &st] {
             sp->sharedBlockCollapsed_ = !sp->sharedBlockCollapsed_;
         })
@@ -847,7 +847,7 @@ void drawSharedConfigBlock(eui::Ui& ui, float width, float blockH,
                 ui.rect("claude.shared.header.chevron.bg")
                     .size(kD, kD)
                     .states(normalC, hoverC, pressC)
-                    .radius(t.sizes.radiusWeChat)
+                    .radius(t.sizes.radiusSmall)
                     .onClick([sp = &st] {
                         sp->sharedBlockCollapsed_ = !sp->sharedBlockCollapsed_;
                     })

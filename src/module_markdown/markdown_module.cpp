@@ -146,7 +146,7 @@ void drawFileTreeItem(eui::Ui& ui,
                 .size(width, kTreeRowHeight)
                 .color(active ? t.colors.primarySoftBg : ui_kit::cardSurface(t))
                 .hoverColor(t.colors.hover)
-                .radius(t.sizes.radiusWeChat)
+                .radius(t.sizes.radiusSmall)
                 .onClick(std::move(onClick))
                 .onContextMenu(std::move(onContextMenu))
                 .build();
@@ -706,7 +706,7 @@ private:
                         t.colors.primary.g + hoverBrighter,
                         t.colors.primary.b + hoverBrighter,
                         1.0f})
-                    .radius(t.sizes.radiusWeChat)  // 四角同圆（方案 A 门把手）
+                    .radius(t.sizes.radiusSmall)  // 四角同圆（方案 A 门把手）
                     .onClick([this] { toggleTreePanel(); })
                     .build();
                 // 箭头：展开态 = 左箭头（收起）F053，折叠态 = 右箭头（展开）F054——镜像对称
@@ -979,7 +979,7 @@ private:
                                 .size(chipW, rowH)
                                 .color(active ? t.colors.primary : t.colors.hover)
                                 .hoverColor(t.colors.primarySoftBg)
-                                .radius(t.sizes.radiusWeChat)
+                                .radius(t.sizes.radiusSmall)
                                 .onClick([this, name = tc.name] {
                                     toggleTagFilter(name);
                                 })
@@ -1137,7 +1137,7 @@ private:
                                     .color(selected ? t.colors.primarySoftBg
                                                     : ui_kit::cardSurface(t))
                                     .hoverColor(t.colors.hover)
-                                    .radius(t.sizes.radiusWeChat)
+                                    .radius(t.sizes.radiusSmall)
                                     .onClick([this, dir = r.relPath] { selectDir(dir); })
                                     .build();
                                 // 选中态左 3px 绿竖线（S2.5 selectionBar，行左缘锚定）
@@ -1159,7 +1159,7 @@ private:
                                     .states(eui::Color{0.0f, 0.0f, 0.0f, 0.0f},
                                             t.colors.hover,
                                             t.colors.primarySoftBg)
-                                    .radius(t.sizes.radiusWeChat)
+                                    .radius(t.sizes.radiusSmall)
                                     .onClick([this, dir = r.relPath] {
                                         if (collapsedDirs_.count(dir) != 0) {
                                             collapsedDirs_.erase(dir);
@@ -1573,7 +1573,7 @@ private:
                     ui.rect(id + ".bg")
                         .size(chipW, h)
                         .color(t.colors.hover)
-                        .radius(t.sizes.radiusWeChat)
+                        .radius(t.sizes.radiusSmall)
                         .build();
                     ui.text(id + ".name")
                         .position(10.0f, 0.0f)
@@ -1592,7 +1592,7 @@ private:
                         .size(24.0f, h)
                         .color(t.colors.hover)
                         .hoverColor(t.colors.primarySoftBg)
-                        .radius(t.sizes.radiusWeChat)
+                        .radius(t.sizes.radiusSmall)
                         .onClick([this, name] { removeTag(name); })
                         .build();
                     ui.text(id + ".x")
