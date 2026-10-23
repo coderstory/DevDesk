@@ -10,6 +10,7 @@
 #include <components/card.h>
 #include <components/input.h>
 #include <components/scrollview.h>
+#include <ui_kit/card.h>
 #include <ui_kit/selection_bar.h>  // kSelectionBarAccentWidth（§4.3 选中态 2px 竖线宽度）
 
 #include <algorithm>
@@ -58,8 +59,9 @@ inline eui::Color cardFaceColor(Priority p, const core::theme::Tokens& t) {
         case Priority::High: src = &t.colors.error; break;
         case Priority::None: break;
     }
-    return src == nullptr ? t.colors.surface
-                          : eui::mixColor(t.colors.surface, *src, kTodoTintAlpha);
+    // H15：基底 surface 叠加 kCardGlassAlpha 轻微半透，H16 浅染在其上混色
+    return src == nullptr ? ui_kit::cardSurface(t)
+                          : eui::mixColor(ui_kit::cardSurface(t), *src, kTodoTintAlpha);
 }
 
 // 右侧动作区 560px = 搜索框(240)+逾期(104)+「+ 列」(72)+「+ 新建任务」(120)+间距

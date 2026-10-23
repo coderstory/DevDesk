@@ -10,6 +10,7 @@
 #include "core/router.h"
 #include "core/theme.h"
 #include "home_service.h"
+#include <ui_kit/card.h>
 
 #include <eui/dsl.h>
 
@@ -579,6 +580,7 @@ public:
                     components::card(ui, "home.api.chart")
                         .size(contentW, chartCardH)
                         .theme(core::theme::componentTokensWeChat(t))  // W9 微信白卡 + H10 描边
+                        .color(ui_kit::cardSurface(t))  // H15 轻微半透（kCardGlassAlpha）
                         .radius(t.sizes.radiusWeChat)
                         .border(1.0f, t.colors.borderDefault)
                         .padding(t.sizes.spacingLarge)  // 16 统一内边距（替代默认 20）

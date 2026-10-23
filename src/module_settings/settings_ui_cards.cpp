@@ -18,6 +18,7 @@
 #include <components/switch.h>
 
 #include <components/theme.h>
+#include <ui_kit/card.h>
 #include <ui_kit/columns.h>
 #include <ui_kit/form_row.h>
 #include <ui_kit/wswitch.h>
@@ -108,10 +109,10 @@ void drawAppearanceCard(const CardDrawArgs& args) {
         .size(w, h)
         .zIndex(40)
         .content([&] {
-            // S6.1 玻璃退役→实底白卡 + Sm 阴影 + H10 描边（#FAFAF9 底上白卡分不清）
+            // S6.1 玻璃退役→白卡 + Sm 阴影 + H10 描边 + H15 轻微半透（kCardGlassAlpha）
             ui.rect(id + ".bg")
                 .position(0.0f, 0.0f).size(w, h)
-                .color(t.colors.surface)
+                .color(ui_kit::cardSurface(t))
                 .radius(t.sizes.radiusLarge)
                 .shadow(components::theme::shadow(compTheme, 3.0f, 1.0f, 0.04f, 0.02f))
                 .border(1.0f, t.colors.borderDefault)
@@ -253,10 +254,10 @@ void drawEditorFontCard(const CardDrawArgs& args) {
         .size(w, h)
         .zIndex(30)
         .content([&] {
-            // S6.1 玻璃退役→实底白卡 + Sm 阴影 + H10 描边
+            // S6.1 玻璃退役→白卡 + Sm 阴影 + H10 描边 + H15 轻微半透（kCardGlassAlpha）
             ui.rect(id + ".bg")
                 .position(0.0f, 0.0f).size(w, h)
-                .color(t.colors.surface)
+                .color(ui_kit::cardSurface(t))
                 .radius(t.sizes.radiusLarge)
                 .shadow(components::theme::shadow(compTheme, 3.0f, 1.0f, 0.04f, 0.02f))
                 .border(1.0f, t.colors.borderDefault)
@@ -405,10 +406,10 @@ void drawModulesCard(const CardDrawArgs& args) {
         .size(w, h)
         .content([&] {
             const auto compThemeTop = core::theme::componentTokensWeChat(t);
-            // S6.1 玻璃退役→实底白卡 + Sm 阴影 + H10 描边
+            // S6.1 玻璃退役→白卡 + Sm 阴影 + H10 描边 + H15 轻微半透（kCardGlassAlpha）
             ui.rect(id + ".bg")
                 .position(0.0f, 0.0f).size(w, h)
-                .color(t.colors.surface)
+                .color(ui_kit::cardSurface(t))
                 .radius(t.sizes.radiusLarge)
                 .shadow(components::theme::shadow(compThemeTop, 3.0f, 1.0f, 0.04f, 0.02f))
                 .border(1.0f, t.colors.borderDefault)
@@ -503,10 +504,10 @@ void drawProxyCard(const CardDrawArgs& args) {
         .size(w, h)
         .content([&] {
             const auto compTheme = core::theme::componentTokensWeChat(t);
-            // S6.1 玻璃退役→实底白卡 + Sm 阴影 + H10 描边
+            // S6.1 玻璃退役→白卡 + Sm 阴影 + H10 描边 + H15 轻微半透（kCardGlassAlpha）
             ui.rect(id + ".bg")
                 .position(0.0f, 0.0f).size(w, h)
-                .color(t.colors.surface)
+                .color(ui_kit::cardSurface(t))
                 .radius(t.sizes.radiusLarge)
                 .shadow(components::theme::shadow(compTheme, 3.0f, 1.0f, 0.04f, 0.02f))
                 .border(1.0f, t.colors.borderDefault)
@@ -665,10 +666,10 @@ void drawLogCard(const CardDrawArgs& args) {
         .size(w, h)
         .zIndex(30)
         .content([&] {
-            // S6.1 玻璃退役→实底白卡 + Sm 阴影（日志卡原本无 bg，新增）+ H10 描边
+            // S6.1 玻璃退役→白卡 + Sm 阴影（日志卡原本无 bg，新增）+ H10 描边 + H15 轻微半透（kCardGlassAlpha）
             ui.rect(id + ".bg")
                 .position(0.0f, 0.0f).size(w, h)
-                .color(t.colors.surface)
+                .color(ui_kit::cardSurface(t))
                 .radius(t.sizes.radiusLarge)
                 .shadow(components::theme::shadow(compTheme, 3.0f, 1.0f, 0.04f, 0.02f))
                 .border(1.0f, t.colors.borderDefault)
@@ -791,10 +792,10 @@ void drawLogViewCard(const CardDrawArgs& args) {
     ui.stack(id)
         .size(w, h)
         .content([&] {
-            // S6.1 玻璃退役→实底白卡 + Sm 阴影（日志查看卡原本无 bg，新增）+ H10 描边
+            // S6.1 玻璃退役→白卡 + Sm 阴影（日志查看卡原本无 bg，新增）+ H10 描边 + H15 轻微半透（kCardGlassAlpha）
             ui.rect(id + ".bg")
                 .position(0.0f, 0.0f).size(w, h)
-                .color(t.colors.surface)
+                .color(ui_kit::cardSurface(t))
                 .radius(t.sizes.radiusLarge)
                 .shadow(components::theme::shadow(compTheme, 3.0f, 1.0f, 0.04f, 0.02f))
                 .border(1.0f, t.colors.borderDefault)

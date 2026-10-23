@@ -43,4 +43,7 @@ inline float dialogWidthPx(DialogWidth width) {
 inline constexpr float kDialogInsetX = 24.0f;
 inline constexpr float kDialogBodyInsetX = 48.0f;
 
+// H15：白卡轻微半透质感档位（用户可要求 0.85-0.96 间微调）
+inline constexpr float kCardGlassAlpha = 0.92f;
+
 } // namespace ui_kit
