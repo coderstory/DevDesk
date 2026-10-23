@@ -607,7 +607,7 @@ public:
                         .size(contentW, chartCardH)
                         .theme(core::theme::componentTokensWeChat(t))  // W9 微信白卡 + H10 描边
                         .color(ui_kit::cardSurface(t))  // H15 轻微半透（kCardGlassAlpha）
-                        .radius(t.sizes.radiusWeChat)
+                        .radius(t.sizes.radius)
                         .border(1.0f, t.colors.borderDefault)
                         .padding(t.sizes.spacingLarge)  // 16 统一内边距（替代默认 20）
                         .content([&] {

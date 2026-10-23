@@ -700,7 +700,7 @@ void drawCard(eui::Ui& ui, const std::string& id, float x, float y, float width,
     components::card(ui, id + ".card")
         .position(x, y)
         .size(width, kCardHeight)
-        .radius(t.sizes.radiusWeChat)
+        .radius(t.sizes.radius)
         .theme(core::theme::componentTokensWeChat(t))
         .padding(0.0f)  // 卡内坐标以 content 原点为基准
         .border(0.0f, t.colors.borderDefault)  // 边框职责已移到内部交互层
@@ -898,7 +898,7 @@ void drawDragGhost(eui::Ui& ui, const core::theme::Tokens& t,
             components::card(ui, "todo.dragghost.card")
                 .position(0.0f, 0.0f)
                 .size(w, kCardHeight)
-                .radius(t.sizes.radiusWeChat)
+                .radius(t.sizes.radius)
                 .theme(core::theme::componentTokensWeChat(t))
                 .padding(0.0f)
                 .border(0.0f, t.colors.borderDefault)

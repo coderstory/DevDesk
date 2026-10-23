@@ -353,7 +353,7 @@ void drawCallsDialog(eui::Ui& ui, const eui::Screen& screen,
                         t.colors.hover,
                         t.colors.hover)
                 .textColor(t.colors.textPrimary)
-                .radius(t.sizes.radiusWeChat)
+                .radius(t.sizes.radius)
                 .border(1.0f, t.colors.borderDefault)
                 .disabled(st.callsPage_ == 0)
                 .onClick([sp = &st] {
@@ -372,7 +372,7 @@ void drawCallsDialog(eui::Ui& ui, const eui::Screen& screen,
                         t.colors.hover,
                         t.colors.hover)
                 .textColor(t.colors.textPrimary)
-                .radius(t.sizes.radiusWeChat)
+                .radius(t.sizes.radius)
                 .border(1.0f, t.colors.borderDefault)
                 .disabled(!hasNext)
                 .onClick([sp = &st] {
@@ -402,7 +402,7 @@ void drawCallsDialog(eui::Ui& ui, const eui::Screen& screen,
                         t.colors.hover,
                         t.colors.hover)
                 .textColor(t.colors.textPrimary)
-                .radius(t.sizes.radiusWeChat)
+                .radius(t.sizes.radius)
                 .border(1.0f, t.colors.borderDefault)
                 .onClick([sp = &st] { sp->callsDialogOpen_ = false; })
                 .build();

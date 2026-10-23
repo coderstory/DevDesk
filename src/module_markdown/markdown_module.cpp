@@ -920,7 +920,7 @@ private:
                 .fontSize(t.sizes.fontSizeBody)
                 .theme(componentTheme, false)
                 .textColor(t.colors.textSecondary)
-                .radius(t.sizes.radiusWeChat)
+                .radius(t.sizes.radius)
                 .onClick([this] { openNewNoteDialog(); })
                 .build();
             components::button(ui, "md.tree.newfolder")
@@ -930,7 +930,7 @@ private:
                 .fontSize(12.0f)
                 .theme(componentTheme, false)
                 .textColor(t.colors.textSecondary)
-                .radius(t.sizes.radiusWeChat)
+                .radius(t.sizes.radius)
                 .onClick([this] {
                     newFolderOpen_ = true;
                     newFolderName_.clear();

@@ -713,7 +713,7 @@ void drawFormAdvancedTab(eui::Ui& ui, float w,
                 t.colors.hover,
                 t.colors.hover)
         .textColor(t.colors.textPrimary)
-        .radius(t.sizes.radiusWeChat)
+        .radius(t.sizes.radius)
         .border(1.0f, t.colors.borderDefault)
         .onClick([fp = &f] { formatAdvancedJson(*fp); })
         .build();
@@ -725,7 +725,7 @@ void drawFormAdvancedTab(eui::Ui& ui, float w,
                 t.colors.hover,
                 t.colors.hover)
         .textColor(t.colors.textPrimary)
-        .radius(t.sizes.radiusWeChat)
+        .radius(t.sizes.radius)
         .border(1.0f, t.colors.borderDefault)
         .onClick([fp = &f] { fp->formJsonFullscreen_ = true; })
         .build();
@@ -944,7 +944,7 @@ void drawFormEnvTab(eui::Ui& ui, float w,
                 t.colors.hover,
                 t.colors.hover)
         .textColor(t.colors.textPrimary)
-        .radius(t.sizes.radiusWeChat)
+        .radius(t.sizes.radius)
         .border(1.0f, t.colors.borderDefault)
         .onClick([ip = &imp] { doParseImport(*ip); })
         .build();
@@ -956,7 +956,7 @@ void drawFormEnvTab(eui::Ui& ui, float w,
             .colors(t.colors.primary, t.colors.primaryHover,
                     t.colors.primaryPressed)
             .textColor(t.colors.onPrimary)
-            .radius(t.sizes.radiusWeChat)
+            .radius(t.sizes.radius)
             .onClick([fp = &f, ip = &imp] { doApplyImport(*fp, *ip); })
             .build();
     }
@@ -1185,7 +1185,7 @@ void drawJsonFullscreenOverlay(eui::Ui& ui, const eui::Screen& screen,
                         t.colors.hover,
                         t.colors.hover)
                 .textColor(t.colors.textPrimary)
-                .radius(t.sizes.radiusWeChat)
+                .radius(t.sizes.radius)
                 .border(1.0f, t.colors.borderDefault)
                 .onClick([fp = &f] { formatAdvancedJson(*fp); })
                 .build();
@@ -1195,7 +1195,7 @@ void drawJsonFullscreenOverlay(eui::Ui& ui, const eui::Screen& screen,
                 .colors(t.colors.primary, t.colors.primaryHover,
                         t.colors.primaryPressed)
                 .textColor(t.colors.onPrimary)
-                .radius(t.sizes.radiusWeChat)
+                .radius(t.sizes.radius)
                 .onClick([fp = &f, hooks, scs = &sharedConfigs] {
                     submitForm(*fp, hooks, *scs);
                 })
@@ -1207,7 +1207,7 @@ void drawJsonFullscreenOverlay(eui::Ui& ui, const eui::Screen& screen,
                         t.colors.hover,
                         t.colors.hover)
                 .textColor(t.colors.textPrimary)
-                .radius(t.sizes.radiusWeChat)
+                .radius(t.sizes.radius)
                 .border(1.0f, t.colors.borderDefault)
                 .onClick([fp = &f] { discardJsonFullscreenEdits(*fp); })
                 .build();
@@ -1396,7 +1396,7 @@ void drawSharedConfigDialog(eui::Ui& ui, const eui::Screen& screen,
                     t.colors.hover,
                     t.colors.hover)
             .textColor(t.colors.textPrimary)
-            .radius(t.sizes.radiusWeChat)
+            .radius(t.sizes.radius)
             .border(1.0f, t.colors.borderDefault)
             .onClick([sp = &s] {
                 sp->error_.clear();
@@ -1433,7 +1433,7 @@ void drawSharedConfigDialog(eui::Ui& ui, const eui::Screen& screen,
                         t.colors.hover,
                         t.colors.hover)
                 .textColor(t.colors.error)
-                .radius(t.sizes.radiusWeChat)
+                .radius(t.sizes.radius)
                 .border(1.0f, t.colors.borderDefault)
                 .onClick([sp = &s] {
                     sp->deleteConfirmId_ = sp->editId_;
@@ -1453,7 +1453,7 @@ void drawSharedConfigDialog(eui::Ui& ui, const eui::Screen& screen,
                     t.colors.hover,
                     t.colors.hover)
             .textColor(t.colors.textPrimary)
-            .radius(t.sizes.radiusWeChat)
+            .radius(t.sizes.radius)
             .border(1.0f, t.colors.borderDefault)
             .onClick([sp = &s] { sp->open_ = false; })
             .build();
@@ -1463,7 +1463,7 @@ void drawSharedConfigDialog(eui::Ui& ui, const eui::Screen& screen,
             .colors(t.colors.primary, t.colors.primaryHover,
                     t.colors.primaryPressed)
             .textColor(t.colors.onPrimary)
-            .radius(t.sizes.radiusWeChat)
+            .radius(t.sizes.radius)
             .onClick([sp = &s, hooks] { submitSharedForm(*sp, hooks); })
             .build();
     });
