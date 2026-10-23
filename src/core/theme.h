@@ -39,7 +39,7 @@ struct ColorTokens {
     eui::Color warning;
     eui::Color error;
     eui::Color info;
-    eui::Color sidebarBg;       // #F0FDF7 侧栏淡绿底（S1.2 迁移自 wechat.sidebarBgTinted）
+    eui::Color sidebarBg;       // #F0FDF7 侧栏淡绿底
     // 与现有功能色同族的去饱和强调色（区别于 blue 的品牌色档位，浅色档达图形 AA）
     eui::Color purple;
     eui::Color pink;
@@ -48,32 +48,6 @@ struct ColorTokens {
     // 只作图标/标签/边框/装饰强调，禁止作小字正文色。
     // 同 primaryText 模式：将来需要文字用法另设 blueText 档，勿直接拿本值当文字色。
     eui::Color blue;
-
-    // —— 微信风格配色（D-12 整改新增；独立于既有暖色系，新旧并存，页面逐工单切换）——
-    // 旧槽位（primary=橙 #D97757 等）完全不动；微信样式经 componentTokensWeChat() 显式传值。
-    struct WeChatColors {
-        eui::Color primary;            // #36D399 主色（薄荷绿）
-        eui::Color primaryHover;       // #06AE56 主色 hover（spec 未指定则用此派生值）
-        eui::Color primaryPressed;     // #059A4C 主色 pressed（派生值）
-        // UAT3 W2-M2：主色作「文字」的达标档——#36D399 落 selectedBg #E5E5E5 仅
-        // 1.89:1（12px 文字 AA 需 4.5:1），加深到 #067036：
-        // on selectedBg 4.93:1 / on cardBg 6.22:1 / on pageBg 5.80:1。
-        // 按钮填充/边框等非文字用途仍用 primary。
-        eui::Color primaryText;        // #067036 主色文字档（浅底上 ≥4.5:1）
-        eui::Color onPrimary;          // #FFFFFF 主色上的前景（按钮文字）
-        eui::Color warningRed;         // #FA5151 警示/危险/逾期
-        eui::Color linkBlue;           // #576B95 链接/可复制文本
-        eui::Color pageBg;             // #F7F7F7 页面底
-        eui::Color cardBg;             // #FFFFFF 卡片底
-        eui::Color dividerPrimary;     // #E5E5E5 一级分割线
-        eui::Color dividerSecondary;   // #EDEDED 二级分割线 / hover
-        eui::Color textPrimary;        // #1A1A1A 一级文字
-        eui::Color textSecondary;     // #666666 二级文字
-        eui::Color textTertiary;      // #999999 三级文字
-        eui::Color selectedBg;        // #E5E5E5 选中态底
-        eui::Color secondaryButtonBg; // #F2F2F2 次按钮底
-        eui::Color sidebarBgTinted;   // #E8F0EC 侧栏微绿灰（D-12 E1）
-    } wechat;
 };
 
 // 尺寸 token（唯一权威定义）
@@ -96,7 +70,6 @@ struct SizeTokens {
     float fontSizeDisplay;     // 48.0f
     float fontSizeStat;          // 28.0f  首页数据数字（S1.2 字号迁移）
     float spacingPage;            // 12.0f 页面外 padding（D-12 A3：16→12）
-    float radiusWeChat;           // 6.0f 微信风格统一圆角（D-12 E2：v1.0 三档 6/8/4→统一 6）
     float fontSizeWeChat;         // 16.0f 微信风格正文字号（D-12 §2.4：16/18 档，18 复用既有 fontSizeLarge）
 };
 

@@ -40,24 +40,6 @@ namespace {
         c.purple = eui::Color("#A18FC8");
         c.pink = eui::Color("#DE8FB4");
         c.blue = eui::Color("#12B7F5");
-        // 微信风格配色（D-12 整改 → mint green 迁移）
-        c.wechat.primary = eui::Color("#36D399");
-        c.wechat.primaryHover = eui::Color("#2EC48F");
-        c.wechat.primaryPressed = eui::Color("#23B07F");
-        c.wechat.primaryText = eui::Color("#36D399");  // 暗主题用 primary 本身即够（~7.85:1 on #1A1816）
-        c.wechat.onPrimary = eui::Color("#FFFFFF");
-        c.wechat.warningRed = eui::Color("#EF4444");
-        c.wechat.linkBlue = eui::Color("#3B82F6");
-        c.wechat.pageBg = eui::Color("#FAFAF9");
-        c.wechat.cardBg = eui::Color("#FFFFFF");
-        c.wechat.dividerPrimary = eui::Color("#E5E7EB");
-        c.wechat.dividerSecondary = eui::Color("#F3F4F6");
-        c.wechat.textPrimary = eui::Color("#1F2937");
-        c.wechat.textSecondary = eui::Color("#4B5563");
-        c.wechat.textTertiary = eui::Color("#6B7280");
-        c.wechat.selectedBg = eui::Color("#E6FBF2");
-        c.wechat.secondaryButtonBg = eui::Color("#F3F4F6");
-        c.wechat.sidebarBgTinted = eui::Color("#F0FDF7");
 
         auto& s = t.sizes;
         s.spacing = 8.0f;
@@ -78,7 +60,6 @@ namespace {
         s.fontSizeDisplay = 48.0f;
         s.fontSizeStat = 28.0f;
         s.spacingPage = 12.0f;
-        s.radiusWeChat = 6.0f;
         s.fontSizeWeChat = 16.0f;
         return t;
     }
@@ -112,24 +93,6 @@ namespace {
         c.purple = eui::Color("#71639B");
         c.pink = eui::Color("#C05E86");
         c.blue = eui::Color("#12B7F5");
-        // 微信风格配色（D-12 整改 → mint green 迁移）
-        c.wechat.primary = eui::Color("#36D399");
-        c.wechat.primaryHover = eui::Color("#2EC48F");
-        c.wechat.primaryPressed = eui::Color("#23B07F");
-        c.wechat.primaryText = eui::Color("#157E4E");  // ~4.87:1 on #FAFAF9 ≥ WCAG AA 4.5:1
-        c.wechat.onPrimary = eui::Color("#FFFFFF");
-        c.wechat.warningRed = eui::Color("#EF4444");
-        c.wechat.linkBlue = eui::Color("#3B82F6");
-        c.wechat.pageBg = eui::Color("#FAFAF9");
-        c.wechat.cardBg = eui::Color("#FFFFFF");
-        c.wechat.dividerPrimary = eui::Color("#E5E7EB");
-        c.wechat.dividerSecondary = eui::Color("#F3F4F6");
-        c.wechat.textPrimary = eui::Color("#1F2937");
-        c.wechat.textSecondary = eui::Color("#4B5563");
-        c.wechat.textTertiary = eui::Color("#6B7280");
-        c.wechat.selectedBg = eui::Color("#E6FBF2");
-        c.wechat.secondaryButtonBg = eui::Color("#F3F4F6");
-        c.wechat.sidebarBgTinted = eui::Color("#F0FDF7");
 
         auto& s = t.sizes;
         s.spacing = 8.0f;
@@ -150,7 +113,6 @@ namespace {
         s.fontSizeDisplay = 48.0f;
         s.fontSizeStat = 28.0f;
         s.spacingPage = 12.0f;
-        s.radiusWeChat = 6.0f;
         s.fontSizeWeChat = 16.0f;
         return t;
     }

@@ -39,7 +39,7 @@ auto sameColor = [](const eui::Color& x, const eui::Color& y) {
 } // namespace
 
 // 场景1（§4.10 防「轻提示不黑底/非半透明」）：showLightToast 首次触发后 bg 节点
-// 存在 + color=黑半透明 (0,0,0,0.7) + 圆角=radiusWeChat(6)。
+// 存在 + color=黑半透明 (0,0,0,0.7) + 圆角=radiusSmall(6)。
 // 事故：轻提示用白底/纯黑底致可读性塌陷或违和（§4.10 spec 钉「黑色半透明」；
 // 违反即整条 toast 视觉与微信基线脱节）。
 REGISTER_TEST(ui_kit_light_toast_black_translucent_bg,
@@ -59,8 +59,8 @@ REGISTER_TEST(ui_kit_light_toast_black_translucent_bg,
     DOCTEST_CHECK_EQ(toHexByte(bg->color.b), 0x00);
     // alpha 0.7 → std::round(0.7×255)=std::round(178.5)=179（std::round 半远离零）
     DOCTEST_CHECK_EQ(toHexByte(bg->color.a), 179);
-    // 圆角 = radiusWeChat (6px，§3.2 D-12 统一)
-    DOCTEST_CHECK_EQ(bg->radius, t.sizes.radiusWeChat);
+    // 圆角 = radiusSmall (6px)
+    DOCTEST_CHECK_EQ(bg->radius, t.sizes.radiusSmall);
     DOCTEST_CHECK_EQ(bg->radius, 6.0f);
     return true;
 })

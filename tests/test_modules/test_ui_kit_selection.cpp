@@ -192,16 +192,16 @@ REGISTER_TEST(ui_kit_wswitch_off_track_gray_not_green,
 })
 
 // 场景6（防漂移）：统一尺寸 / 圆角检查。
-// - t.sizes.radiusWeChat == 6（D-12 统一圆角 token，钉死）
+// - t.sizes.radiusSmall == 6（统一圆角 token，钉死）
 // - wswitch track radius == h/2（pill 形，强制圆角轨道）
 // - selectionBar accent width == 2、wtab underline height == 2
 //   （§4.3 / §4.2 钉死 2px——这是"左竖线"与"下划线"的视觉契约）
 // 事故：后续工单改坏 helper 常量或 token 值——本测试钉死几何契约。
 REGISTER_TEST(ui_kit_selection_unified_metrics,
-              "ui_kit selection: radiusWeChat=6 + wswitch pill + 2px accents", {
+              "ui_kit selection: radiusSmall=6 + wswitch pill + 2px accents", {
     const auto& t = core::theme::current();
-    // t.sizes.radiusWeChat == 6（D-12 统一圆角 token，钉死）
-    DOCTEST_CHECK_EQ(t.sizes.radiusWeChat, 6.0f);
+    // t.sizes.radiusSmall == 6（统一圆角 token，钉死）
+    DOCTEST_CHECK_EQ(t.sizes.radiusSmall, 6.0f);
 
     // selectionBar accent width = 2（§4.3 钉死）
     eui::Ui ui1;
