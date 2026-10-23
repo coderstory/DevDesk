@@ -16,6 +16,7 @@
 #include "core/theme.h"
 #include "module_todo/todo_service.h"
 #include "module_todo/todo_ui_logic.h"
+#include "ui_kit/card.h"      // cardSurface / kCardGlassAlpha
 #include "ui_kit/metrics.h"  // kHeaderH：看板几何断言基准高
 
 #include <eui/dsl.h>
@@ -2046,8 +2047,9 @@ REGISTER_TEST(todo_ui_drag_follow_ghost,
         const auto* ghostBg = ui.find("todo.dragghost.bg");
         DOCTEST_REQUIRE(ghostBg != nullptr);
         const auto& t = core::theme::current();
+        // H15：基底 surface 已叠加 kCardGlassAlpha=0.92，H16 浅染在其上混色
         DOCTEST_CHECK(colorNear(ghostBg->color,
-                                eui::mixColor(t.colors.surface, t.colors.error, 0.12f)));
+                                eui::mixColor(ui_kit::cardSurface(t), t.colors.error, 0.12f)));
     }
     // 跟手期间源列原卡照旧半透明 + 源列调暗（门控关系未反：被调暗的是原卡
     // 与源列，副本全亮跟手）
@@ -3370,11 +3372,12 @@ REGISTER_TEST(todo_ui_priority_card_bar,
     // 判据 a：卡面优先级浅染（H16 覆盖 S6#5 纯白）——None 纯白、Low/Med/High 浅染；
     // 色源：Low=success #10B981 / Medium=warning #F59E0B / High=error #EF4444，
     // 强度 kTodoTintAlpha=0.12。档间互异，卡底不再是纯白 surface。
+    // H15：基底 surface 已叠加 kCardGlassAlpha=0.92，H16 浅染在其上混色。
     const eui::Color kExpectFaceColor[4] = {
-        t.colors.surface,  // None 无 tint 保持纯白
-        eui::mixColor(t.colors.surface, t.colors.success, 0.12f),  // Low 祖母绿浅染
-        eui::mixColor(t.colors.surface, t.colors.warning, 0.12f),  // Medium 琥珀浅染
-        eui::mixColor(t.colors.surface, t.colors.error, 0.12f),    // High 警示红浅染
+        ui_kit::cardSurface(t),  // None 无 tint 保持白卡半透
+        eui::mixColor(ui_kit::cardSurface(t), t.colors.success, 0.12f),  // Low 祖母绿浅染
+        eui::mixColor(ui_kit::cardSurface(t), t.colors.warning, 0.12f),  // Medium 琥珀浅染
+        eui::mixColor(ui_kit::cardSurface(t), t.colors.error, 0.12f),    // High 警示红浅染
     };
     for (int i = 0; i < 4; ++i) {
         const std::string cid = "todo.col.4.card." + std::to_string(i);
@@ -3441,9 +3444,9 @@ REGISTER_TEST(todo_ui_priority_card_bar,
         // 选中态边框 = 统一 1px 分割线
         DOCTEST_CHECK_EQ(selBg->border.width, 1.0f);
         DOCTEST_CHECK(colorNear(selBg->border.color, t.colors.borderDefault));
-        // 选中态卡面仍为 High→error 浅染（不再走 primarySoftBg + priority tint）
+        // 选中态卡面仍为 High→error 浅染（不再走 primarySoftBg + priority tint）；H15 cardSurface 基底
         DOCTEST_CHECK(colorNear(selBg->color,
-                                eui::mixColor(t.colors.surface, t.colors.error, 0.12f)));
+                                eui::mixColor(ui_kit::cardSurface(t), t.colors.error, 0.12f)));
         // 优先级色条仍在
         DOCTEST_CHECK(f3.ui.find("todo.col.4.card.3.priobar") != nullptr);
         // 旧选中左竖线已退役
@@ -3455,11 +3458,12 @@ REGISTER_TEST(todo_ui_priority_card_bar,
     const auto& tl = core::theme::current();
     Frame light(mod.get());
     light.ui.layout(1600.0f, 1000.0f);
+    // H15：基底 surface 已叠加 kCardGlassAlpha=0.92
     const eui::Color kExpectFaceLight[4] = {
-        tl.colors.surface,  // None 纯白
-        eui::mixColor(tl.colors.surface, tl.colors.success, 0.12f),  // Low
-        eui::mixColor(tl.colors.surface, tl.colors.warning, 0.12f),  // Medium
-        eui::mixColor(tl.colors.surface, tl.colors.error, 0.12f),    // High
+        ui_kit::cardSurface(tl),  // None 白卡半透
+        eui::mixColor(ui_kit::cardSurface(tl), tl.colors.success, 0.12f),  // Low
+        eui::mixColor(ui_kit::cardSurface(tl), tl.colors.warning, 0.12f),  // Medium
+        eui::mixColor(ui_kit::cardSurface(tl), tl.colors.error, 0.12f),    // High
     };
     for (int i = 0; i < 4; ++i) {
         const auto* bg = light.ui.find("todo.col.4.card." + std::to_string(i) + ".bg");
