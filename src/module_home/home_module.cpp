@@ -32,25 +32,21 @@ namespace module::home {
 
 namespace {
 
-// 首页「今日 token 图表卡」的固定标称高度。首页各块高度全部固定（页头 40 /
-// 统计网格 statH / 图表卡本值 / 快捷按钮行 44），页面装不下时不做任何压缩——
-// 溢出由整页外层 home.scroll（scrollView）出滚动条吸收，不丢内容。UAT6 起真实
-// 最小窗（1000×640 → 页高 600/640）100%/85% 档已装得下零滚动（见下），滚动吸收
-// 只兜 115%/130% 大字号档与低于真实最小页高的退化矮窗。
-// 图表卡高度：UAT6 最小窗零滚动收口 260→220。Windows 自绘壳 1000×640 最小窗
-// 页面高 600（标题条 40）：整页内容 = padding 40×2 + 页头 40 + 统计行 144×档 +
-// gap 20×3 + 图表卡 + 操作行 44 = 628 → 溢出 28 出滚动条。砍图表 40px 后 100%
-// 档内容 588 ≤ 600（12 富余）、85% 档 566.4 ≤ 600（34 富余），最小窗零滚动；
-// 115%/130% 档统计行随字号放大（165.6/187.2）仍会滚动（大字号档设计内）。
-// UAT6 副题横扫复核：页头日期行删除后行高 40 保持（行内刷新钮 40 高，且与各页
-// kHeaderH=40 同档），页头不缩 → 预算 588/566.4 逐项复算不变，零滚动仍过。
-// 图表内部几何自适应：wrap = 卡高−64（100% 档 156）、plot 高 = wrap−112（44，
-// home_probes 组 D 的 plot ≥36 判据仍过）、柱顶数值/x 轴标签锚点随 wrap 派生。
+// 首页「今日 token 图表卡」基准高度 220：弹性基准 baseContentH 由 compose 从
+// 令牌派生（内容刚好填满页高），高于基准的余高 18% 给统计行、其余给图表卡；
+// 图表卡缺席时余高全给统计行。装不下时由外层 home.scroll 滚动吸收。
 constexpr float kHomeChartH = 220.0f;
+
+// 基准以上余高分给统计行的比例（S4 弹性规则）：统计行适度增高，其余全部留给
+// 图表卡吸收——避免统计卡被拉成巨块、图表仍停在 220。
+constexpr float kHomeStatGrowRatio = 0.18f;
+
+// 图表内部几何自适应：wrap = 卡高−64（基准档 156）、plot 高 = wrap−112（44，
+// home_probes 组 D 的 plot ≥36 判据仍过）、柱顶数值/x 轴标签锚点随 wrap 派生。
 
 // S3.1 / S6.6：五色实底统计卡——辅助色纯色底 + 16px 圆角 + 20px 内边距 +
 // 指标名 12px 三级 / 数据 28px 600 一级 / 说明 12px 三级 上中下排版。
-// 玻璃体系退役：不再使用 glass_card.h（S6.1）。
+// 玻璃体系已退役（S6.1）。
 // numberColor/badgeColor 非空覆盖默认配色；timerSeconds > 0 挂 0 尺寸 onTimer 定期重绘；
 // chart 非空叠加迷你图表；onTick 为该 timer 回调。点击由 .press 透明层接收（hover/press 态）。
 void drawSolidStatCard(eui::Ui& ui,
@@ -79,6 +75,13 @@ void drawSolidStatCard(eui::Ui& ui,
     const float numberH = 36.0f;
     const float descGap = 8.0f;
     const float descH = 16.0f;
+    // 统计行随窗高伸展后的余高均分到两个行间隙；基准档（144×字号档）余高为 0，
+    // 三行位置与改造前逐像素一致。
+    const float extraCardH =
+        std::max(0.0f, height - 144.0f * core::theme::fontScale());
+    // 带 sparkline 的卡（Token）：顶带 y0..16 画曲线，文字三行整体让位其下
+    // （home_probes 组 A：spark 与 label 不相交且 gapY ≥ 0）。
+    const float chartTopH = chart ? 16.0f : 0.0f;
 
     components::card(ui, id)
         .size(width, height)
@@ -88,7 +91,7 @@ void drawSolidStatCard(eui::Ui& ui,
         .content([&] {
             // 指标名：12px 三级字，居中
             ui.text(id + ".label")
-                .position(0.0f, 0.0f)
+                .position(0.0f, chartTopH)
                 .size(cw, labelH)
                 .text(label)
                 .fontSize(t.sizes.fontSizeSmall)  // 12px
@@ -98,7 +101,7 @@ void drawSolidStatCard(eui::Ui& ui,
                 .build();
 
             // 数据：28px 600 一级字，居中
-            const float numberY = labelH + numGap;
+            const float numberY = chartTopH + labelH + numGap + extraCardH * 0.5f;
             ui.text(id + ".number")
                 .position(0.0f, numberY)
                 .size(cw, numberH)
@@ -113,7 +116,7 @@ void drawSolidStatCard(eui::Ui& ui,
                 .build();
 
             // 说明/副题：12px 三级字，居中
-            const float descY = numberY + numberH + descGap;
+            const float descY = numberY + numberH + descGap + extraCardH * 0.5f;
             ui.text(id + ".badge")
                 .position(0.0f, descY)
                 .size(cw, descH)
@@ -312,8 +315,7 @@ public:
         // 回调拿到的 innerW 说了算（见下方同名遮蔽定义）。kHeaderActionsW + 标题列 = contentW。
         constexpr float kHeaderActionsW = 100.0f;  // W9 仅保留刷新按钮（设置按钮已移除）
         const float cardGap = 20.0f;
-        // 卡高 144 × fontScale 派生（144 = 16+16+8+56+16+16，见 drawSolidStatCard）。
-        const float statH = 144.0f * core::theme::fontScale();
+        // 统计行高在下方 scrollView 的 content 回调内派生（需要视口高 innerH），见那里。
 
         // 模块注册感知：统计卡可见数从元数据表按注册态过滤派生（改表即改计数），全关整行隐藏。
         int statCount = 0;
@@ -329,9 +331,33 @@ public:
         components::scrollView(ui, "home.scroll")
             .size(screen.width, screen.height)
             .theme(core::theme::componentTokensWeChat(t))  // W9 微信页面底 #F7F7F7
-            .content([&](eui::Ui& ui, float innerW, float) {
+            .content([&](eui::Ui& ui, float innerW, float innerH) {
             // ⚠ contentW 遮蔽外层：出滚动条时内容列收窄，必须跟 innerW 走，否则横向溢出。
             const float contentW = innerW - pad * 2.0f;
+            // 弹性基准 baseContentH = 内容刚好填满页高的高度，全部从令牌派生，
+            // 与平台标题条无关：上下内边距 + 页头 40 + 统计块 + 间隙 + 图表卡 + 操作行。
+            // 窗口高于基准才伸展；低于基准由外层滚动吸收（不压缩）。
+            const bool hasStats = statCount > 0;
+            const bool hasChart = moduleRegistered(::core::PageId::ClaudeProxy);
+            int actCount = 0;
+            for (const auto& btn : kActionButtons) {
+                if (moduleRegistered(btn.module)) ++actCount;
+            }
+            const bool hasActions = actCount > 0;
+            const float statBaseH = 144.0f * core::theme::fontScale();
+            // 全关时统计区是 32 高空态行（见下方 statCount == 0 分支）。
+            const float statsBlockH = hasStats ? statBaseH : 32.0f;
+            const int childCount = 2 + (hasChart ? 1 : 0) + (hasActions ? 1 : 0);
+            const float baseContentH =
+                pad * 2.0f + 40.0f + statsBlockH +
+                gap * static_cast<float>(childCount - 1) +
+                (hasChart ? kHomeChartH : 0.0f) + (hasActions ? 44.0f : 0.0f);
+            // 0.5px 余量：防浮点求和越过视口触发本不该出现的滚动条。
+            const float extraH = std::max(0.0f, innerH - baseContentH - 0.5f);
+            // 余高去向：统计行分 18%，图表卡吸收其余；图表卡缺席时统计行全吃。
+            const float statsGrowH =
+                hasStats ? (hasChart ? extraH * kHomeStatGrowRatio : extraH) : 0.0f;
+            const float statH = statBaseH + statsGrowH;
         ui.column("home.root")
             // 高度用 wrapContent：固定高度会让 scrollView 的测量 pass 永远量到「正好等于视口」→ 永不判可滚
             .width(innerW)
@@ -517,7 +543,7 @@ public:
                                     drawSolidStatCard(ui, statCardElementId(card.kind),
                                                  statW, statH, t, card.tint, card.title,
                                                  num(stats_.pendingTodos),
-                                                 ok ? "未完成总数" : "加载失败",
+                                                 ok ? "待办+进行中未完成" : "加载失败",
                                                  false,
                                                  [this, target = card.target] {
                                                      navigateTo(target);
@@ -553,7 +579,7 @@ public:
                 // ..「最后一个」闭区间；整天无数据 → 空态。
                 // 不用 components::barChart：它把纵值硬编码成 [0,1] 百分比语义，喂 token 合计会被夹成满格，
                 // 故模块内自绘柱体（元素 id 沿用 home.api.chart.bars.*，probe/单测不失效）；无悬停 tooltip，用柱顶数值标签。
-                if (moduleRegistered(::core::PageId::ClaudeProxy)) {
+                if (hasChart) {
                     const auto tokenSeries =
                         service_ ? service_->getTodayHourlyTokenTotals(24)
                                  : core::Result<std::vector<int64_t>>::fail(
@@ -573,10 +599,10 @@ public:
                     for (size_t i = 0; i < barCount; ++i) {
                         peak = std::max(peak, hourly[range.first + i]);
                     }
-                    // 图表卡高度：固定标称高（220，最小窗零滚动收口见 kHomeChartH）；
-                    // 低于真实最小页高的退化矮窗才由外层 home.scroll 吸收溢出。
-                    const float chartCardH = kHomeChartH;
-                    const float chartWrapH = chartCardH - 48.0f - 16.0f;  // 220−64 = 156
+                    // H18 纵向弹性：图表卡吸收基准以上的余高（扣掉统计行已分走的增量），
+                    // 基准档（内容刚好填满）为 220；矮于基准才由外层滚动吸收。
+                    const float chartCardH = kHomeChartH + extraH - statsGrowH;
+                    const float chartWrapH = chartCardH - 48.0f - 16.0f;  // 基准档 156
                     components::card(ui, "home.api.chart")
                         .size(contentW, chartCardH)
                         .theme(core::theme::componentTokensWeChat(t))  // W9 微信白卡 + H10 描边
@@ -748,10 +774,6 @@ public:
                 }
 
                 // 快捷操作按钮组（S3.1#3/#6）：主次分层——新建笔记=Filled 44px / 新建任务=Outline 44px / 切换 Profile=Ghost 44px。
-                int actCount = 0;
-                for (const auto& btn : kActionButtons) {
-                    if (moduleRegistered(btn.module)) ++actCount;
-                }
                 if (actCount > 0) {
                 const float actGap = t.sizes.spacingLarge; // 16
                 ui.row("home.actions")

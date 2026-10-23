@@ -238,55 +238,63 @@ REGISTER_TEST(uiModernAnchorPure,
     return true;
 })
 
-// todo 看板右键锚点 = 板几何经统一换算
+// todo 看板右键锚点 = 被右键卡片自身 frame（不依赖 boardGeom 均匀列宽）
 REGISTER_TEST(uiModernTodoMenuAnchor,
-              "uiModern todo: 右键菜单锚点 = 板几何经统一换算（卡片 + 列头）", {
+              "uiModern todo: 卡片右键菜单锚点 = 卡片中芯/卡底（headless）", {
     TodoEnv env;
     DOCTEST_REQUIRE(env.ready);
-    auto c1 = env.svc->createColumn("右键源列");
-    DOCTEST_REQUIRE(c1.isOk());
-    auto t1 = env.svc->createTask(c1.value().id, "任务A");
-    DOCTEST_REQUIRE(t1.isOk());
+    // 固定四列：用默认「待办」列（col.0）造一张任务，不新建第 5 列（与固定四列冲突）
+    auto cols = env.svc->listColumns();
+    DOCTEST_REQUIRE(cols.isOk());
+    DOCTEST_REQUIRE(!cols.value().empty());
+    const int64_t col0Id = cols.value()[0].id;
+    auto t = env.svc->createTask(col0Id, "任务A");
+    DOCTEST_REQUIRE(t.isOk());
 
     std::unique_ptr<::core::Module> mod(create_todo_module());
     mod->onStart();
 
-    // 迁移默认 4 列 + 新建 1 列（「右键源列」= col.4）：板几何按 5 列推算，
-    // 与 drawContextMenu 内 host.columns->size() 一致
-    const auto& tok = ::core::theme::current();
-    const ::module::todo::ui::BoardGeom g =
-        ::module::todo::ui::boardGeom(1600.0f, 5, tok);
-    // 锚点 = 列中芯 / 卡片视觉底；无 Router（headless）→ 页面原点 0，
-    // 滚动 0 → 与统一换算结果逐值一致
-    const float expectColumnX = ::module::todo::ui::cardLeft(g, 4) + g.colW * 0.5f;
-    const float expectCardY = ::module::todo::ui::cardTop(g, 0) +
-                              ::module::todo::ui::kCardHeight + 4.0f;
-
     {
         TodoFrame frame(mod.get());
-        DOCTEST_CHECK(frame.ui.find("todo.col.4.card.0.bg") != nullptr);
-        // 右键任务A → 菜单打开；锚点经统一换算（坐标 = 列中芯 / 卡片底）
+        frame.ui.layout(frame.screen);  // 卡片/列 frame 需 layout 后才有几何
+        const auto* col0 = frame.ui.find("todo.col.0.bg");
+        DOCTEST_REQUIRE(col0 != nullptr);
+        const auto* card = frame.ui.find("todo.col.0.card.0.bg");
+        DOCTEST_REQUIRE(card != nullptr);
+        // 锚点取真实列几何（归档折叠时列宽随动画变化）：x = 列中芯、y = 卡片视觉底。
+        // 菜单在卡底下方留 4px 视觉间隙（drawContextMenu 的 +4.0f）。
+        const float expectX = col0->frame.x + col0->frame.width * 0.5f;
+        const float expectY = card->frame.y + card->frame.height + 4.0f;
+        const float cardX = card->frame.x;
+        const float cardW = card->frame.width;
+        const float col0X = col0->frame.x;
+        const float col0W = col0->frame.width;
         eui::PointerEvent pe;
         eui::Rect rect;
-        frame.ui.find("todo.col.4.card.0.bg")->onContextMenu(pe, rect);
-        frame.refresh();
+        card->onContextMenu(pe, rect);
+        frame.refresh();  // 重 compose：菜单已开，menu->x/y 在 compose 期落位
         const auto* menu = frame.ui.find("todo.ctx.level.0");
         DOCTEST_REQUIRE(menu != nullptr);
-        DOCTEST_CHECK_EQ(menu->x, expectColumnX);
-        DOCTEST_CHECK_EQ(menu->y, expectCardY);
+        DOCTEST_CHECK_MESSAGE(menu->x == expectX,
+            ("menu.x=" + std::to_string(menu->x) +
+             " menu.y=" + std::to_string(menu->y) +
+             " expectX=" + std::to_string(expectX) +
+             " expectY=" + std::to_string(expectY) +
+             " card.x=" + std::to_string(cardX) +
+             " card.w=" + std::to_string(cardW) +
+             " col0.x=" + std::to_string(col0X) +
+             " col0.w=" + std::to_string(col0W)).c_str());
+        DOCTEST_CHECK_MESSAGE(menu->y == expectY,
+            ("menu.x=" + std::to_string(menu->x) +
+             " menu.y=" + std::to_string(menu->y) +
+             " expectX=" + std::to_string(expectX) +
+             " expectY=" + std::to_string(expectY) +
+             " card.x=" + std::to_string(cardX) +
+             " card.w=" + std::to_string(cardW) +
+             " col0.x=" + std::to_string(col0X) +
+             " col0.w=" + std::to_string(col0W)).c_str());
     }
-    {
-        TodoFrame frame(mod.get());
-        // 右键列头 → 菜单锚点 y = 板顶下方（滚动区外，scrollY = 0）
-        eui::PointerEvent pe;
-        eui::Rect rect;
-        frame.ui.find("todo.col.4.head")->onContextMenu(pe, rect);
-        frame.refresh();
-        const auto* menu = frame.ui.find("todo.ctx.level.0");
-        DOCTEST_REQUIRE(menu != nullptr);
-        DOCTEST_CHECK_EQ(menu->x, expectColumnX);
-        DOCTEST_CHECK_EQ(menu->y, g.boardTop + 4.0f);
-    }
+    // 列头 onContextMenu 已随固定四列删除（H20），不再测列头右键。
 
     mod->onStop();
     return true;
@@ -913,8 +921,13 @@ REGISTER_TEST(uiModernHomeApiBarChart,
                          std::string("300"));
         DOCTEST_CHECK_EQ(textOf(ui, "home.api.chart.bars.val.8"),
                          std::string("600"));
-        // 相对柱高 == 相对 token 数（UAT6 零滚动收口后图表卡 220 → wrap 156 →
-        // plot 44：峰值柱满高 44，100/600 的柱子 ≈ 44/6）
+        // 相对柱高 == 相对 token 数（H18 纵向弹性 1200×720 档，fs=1.0）：
+        // baseContentH = pad×2(64) + 页头40 + 统计144 + gap×3(60) + 图220 + 操作44 = 572；
+        // extraH = 720 − 572 − 0.5 = 147.5；statsGrow = 147.5×0.18 = 26.55；
+        // chartH = 220 + 147.5 − 26.55 = 340.95 → wrap = 340.95 − 64 = 276.95
+        // → plot = 276.95 − 112 = 164.95。
+        // 峰值柱（600）= plot，100/600 柱 = plot/6 ≈ 27.49，300/600 柱 = plot/2 = 82.475。
+        constexpr float kElasticPlotH = 164.95f;
         const auto* bar0 = ui.find("home.api.chart.bars.bar.0");
         const auto* bar3 = ui.find("home.api.chart.bars.bar.3");
         const auto* bar8 = ui.find("home.api.chart.bars.bar.8");
@@ -922,20 +935,20 @@ REGISTER_TEST(uiModernHomeApiBarChart,
         DOCTEST_REQUIRE(bar3 != nullptr);
         DOCTEST_REQUIRE(bar8 != nullptr);
         DOCTEST_CHECK_MESSAGE(
-            std::fabs(bar8->frame.height - 44.0f) < 0.5f,
+            std::fabs(bar8->frame.height - kElasticPlotH) < 0.5f,
             "bar8 h=" + std::to_string(bar8->frame.height));
         DOCTEST_CHECK_MESSAGE(
-            std::fabs(bar0->frame.height - 44.0f / 6.0f) < 0.5f,
+            std::fabs(bar0->frame.height - kElasticPlotH / 6.0f) < 0.5f,
             "bar0 h=" + std::to_string(bar0->frame.height));
         DOCTEST_CHECK_MESSAGE(
-            std::fabs(bar3->frame.height - 22.0f) < 0.5f,
+            std::fabs(bar3->frame.height - kElasticPlotH / 2.0f) < 0.5f,
             "bar3 h=" + std::to_string(bar3->frame.height));
         DOCTEST_CHECK_MESSAGE(
-            std::fabs(bar0->frame.height - 44.0f / 6.0f) < 0.5f,
+            std::fabs(bar0->frame.height - kElasticPlotH / 6.0f) < 0.5f,
             "bar0 h=" + std::to_string(bar0->frame.height) + " y=" +
                 std::to_string(bar0->frame.y));
         DOCTEST_CHECK_MESSAGE(
-            std::fabs(bar3->frame.height - 22.0f) < 0.5f,
+            std::fabs(bar3->frame.height - kElasticPlotH / 2.0f) < 0.5f,
             "bar3 h=" + std::to_string(bar3->frame.height) + " y=" +
                 std::to_string(bar3->frame.y));
         // 柱高对齐基线：三根柱底沿相等（y + height 同值）

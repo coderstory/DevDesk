@@ -42,7 +42,7 @@ HourRange hourlyDataRange(const std::vector<int64_t>& hourly);
 
 struct DashboardStats {
     int64_t todayNotes = 0;     // 今日笔记（markdown_index 当天有 mtime）
-    int64_t pendingTodos = 0;   // 待办任务（todo_tasks 未完成总数）
+    int64_t pendingTodos = 0;   // 待办任务（待办/进行中列内未完成数；历史进行中列靠 kind 空+标题识别，H20 补 doing 后不再依赖标题；自定义列不计）
     int64_t overdueTodos = 0;   // 逾期任务（due_at < now 且未完成）
     int64_t todayApiCalls = 0;  // API 调用（claude_call_logs 当天条数）
     std::vector<RecentNote> recentNotes;  // 最近编辑（mtime 倒序）

@@ -13,6 +13,7 @@
 #include "core/module_interface.h"
 #include "core/overdue.h"
 #include "core/proxy_stats.h"
+#include "core/router.h"
 #include "core/theme.h"
 #include "core/time.h"
 #include "module_home/home_service.h"
@@ -29,11 +30,27 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
 
 constexpr const char* kDbPrefix = "devdesk_test_homesvc_";
+
+// 模块注册门控用例的最小占位模块（只为让 Router 记住「这些页开着」）。
+class GatingStubModule : public ::core::Module {
+public:
+    GatingStubModule(::core::PageId page, std::string name)
+        : page_(page), name_(std::move(name)) {}
+    ::core::PageId pageId() const override { return page_; }
+    std::string displayName() const override { return name_; }
+    std::string iconGlyph() const override { return "•"; }
+    void compose(eui::Ui&, const eui::Screen&) override {}
+
+private:
+    ::core::PageId page_;
+    std::string name_;
+};
 
 } // namespace
 
@@ -67,6 +84,29 @@ REGISTER_TEST(home_service_real_stats,
         "(1, 't4', 0, 3, " + std::to_string(now - 7200) + ", " + std::to_string(now) + ", " + std::to_string(now) + ", " + std::to_string(now) + ")"
     ).isOk());
 
+    // H21 待办口径只认列 kind（schema.h 禁止按标题匹配）：t5（kind='doing'）计入；
+    // t6(kind='done')/t7(kind='archive')/t8 与 t9（kind NULL 的自定义列，其一标题
+    // 就叫「进行中」）均不计。五行 due_at 均为 NULL，不影响 overdueTodos。
+    DOCTEST_CHECK(sq.exec(
+        "INSERT INTO todo_tasks (column_id, title, priority, position, due_at, completed_at, archived_at, created_at, updated_at) VALUES "
+        "(2, 't5', 0, 4, NULL, NULL, NULL, " + std::to_string(now) + ", " + std::to_string(now) + "), "
+        "(3, 't6', 0, 5, NULL, NULL, NULL, " + std::to_string(now) + ", " + std::to_string(now) + "), "
+        "(4, 't7', 0, 6, NULL, NULL, " + std::to_string(now) + ", " + std::to_string(now) + ", " + std::to_string(now) + ")"
+    ).isOk());
+
+    // 自定义普通列：kind 为空——必须被口径排除；其一标题叫「进行中」，
+    // 钉住「不得按标题兜底」（schema.h 契约）。
+    DOCTEST_CHECK(sq.exec(
+        "INSERT INTO todo_columns (title, position, color, created_at, kind) VALUES "
+        "('自定义', 4, NULL, " + std::to_string(now) + ", NULL), "
+        "('进行中', 5, NULL, " + std::to_string(now) + ", NULL)"
+    ).isOk());
+    DOCTEST_CHECK(sq.exec(
+        "INSERT INTO todo_tasks (column_id, title, priority, position, due_at, completed_at, created_at, updated_at) VALUES "
+        "((SELECT id FROM todo_columns WHERE title = '自定义'), 't8', 0, 7, NULL, NULL, " + std::to_string(now) + ", " + std::to_string(now) + "), "
+        "((SELECT id FROM todo_columns WHERE title = '进行中' AND kind IS NULL), 't9', 0, 8, NULL, NULL, " + std::to_string(now) + ", " + std::to_string(now) + ")"
+    ).isOk());
+
     // claude_call_logs：先建 profile（FK ON），2 条今天 + 1 条昨天
     DOCTEST_CHECK(sq.exec(
         "INSERT INTO claude_profiles (name, base_url, api_key_hint, api_key_check, "
@@ -86,8 +126,11 @@ REGISTER_TEST(home_service_real_stats,
     DOCTEST_REQUIRE_MESSAGE(r.isOk(), "getStats 失败: " + r.errorMessage());
     const auto& s = r.value();
     DOCTEST_CHECK_EQ(s.todayNotes, 2);        // a + b
-    DOCTEST_CHECK_EQ(s.pendingTodos, 3);      // t1 t2 t3
-    DOCTEST_CHECK_EQ(s.overdueTodos, 1);      // t2（t4 已完成不计）
+    // 待办口径 = 待办列 + 进行中列 的未完成任务：t1 t2 t3（待办列）+ t5（进行中列）
+    // t4 已完成；t6 在 kind='done' 列（completed_at 脏 NULL 也不放宽）；
+    // t7 归档列；t8/t9 在 kind 为空的自定义列（t9 标题为「进行中」也不按标题计入）
+    DOCTEST_CHECK_EQ(s.pendingTodos, 4);
+    DOCTEST_CHECK_EQ(s.overdueTodos, 1);      // t2（t4 已完成；t5-t9 无截止时间）
     DOCTEST_CHECK_EQ(s.todayApiCalls, 2);
     DOCTEST_CHECK_EQ(s.recentNotes.size(), static_cast<size_t>(3));
     if (!s.recentNotes.empty()) {
@@ -445,6 +488,10 @@ REGISTER_TEST(home_last_rate_and_hourly_tokens,
         DOCTEST_REQUIRE(badge != nullptr);
         DOCTEST_CHECK_EQ(number->text, std::string("--"));
         DOCTEST_CHECK_EQ(badge->text, std::string("暂无成功调用"));
+        // 待办卡副题与 H21 口径一致（待办列 + 进行中列）
+        const auto* todoBadge = ui.find("home.stat.todo.badge");
+        DOCTEST_REQUIRE(todoBadge != nullptr);
+        DOCTEST_CHECK_EQ(todoBadge->text, std::string("待办+进行中未完成"));
         DOCTEST_CHECK(ui.find("home.api.chart.empty.title") != nullptr);
         DOCTEST_CHECK(ui.find("home.api.chart.bars.bar.0") == nullptr);
         mod->onStop();
@@ -554,6 +601,168 @@ REGISTER_TEST(home_last_rate_and_hourly_tokens,
     }
     return true;
 })
+// H18 首页纵向弹性双档（真实页高）：600 档 = 最小窗 1000×640 减标题条、H19 封顶
+// 0.85；960 档 = 1600×1000 减标题条。弹性基准 = 内容刚好填满页高（全部令牌派生），
+// 余高 18% 给统计行、其余归图表卡；底部仅留 0.5px 防浮点越界出滚条。
+REGISTER_TEST(home_stat_chart_dual_tier,
+              "home_module: H18 统计卡/图表卡纵向弹性双档（页高 600 / 960）", {
+    core::proxy_stats::resetForTest();
+    core::theme::setLight();
+    // 字号档是进程级全局态：用户档固定 100%，窗高封顶交给 H19（600 → 0.85）
+    core::theme::setFontScale(1.0f);
+
+    std::unique_ptr<::core::Module> mod(create_home_module());
+
+    // 600 档：真实最小页高——不强制 fs=1，验证 H19 封顶下的弹性基准几何
+    {
+        core::theme::setWindowHeight(600.0f);
+        const float fs = core::theme::fontScale();
+        DOCTEST_REQUIRE_MESSAGE(std::fabs(fs - 0.85f) < 1e-4f,
+                                "600 档生效字号应为 H19 封顶 0.85，实际 " +
+                                    std::to_string(fs));
+        eui::Ui ui;
+        eui::Screen screen{1000.0f, 600.0f};
+        ui.begin("home_tier_600");
+        mod->compose(ui, screen);
+        ui.end();
+        ui.layout(screen.width, screen.height);
+        const auto* stat = ui.find("home.stat.notes");
+        const auto* chart = ui.find("home.api.chart");
+        const auto* number = ui.find("home.stat.notes.number");
+        const auto* desc = ui.find("home.stat.notes.badge");
+        const auto* root = ui.find("home.root");
+        DOCTEST_REQUIRE(stat != nullptr);
+        DOCTEST_REQUIRE(chart != nullptr);
+        DOCTEST_REQUIRE(number != nullptr);
+        DOCTEST_REQUIRE(desc != nullptr);
+        DOCTEST_REQUIRE(root != nullptr);
+        // 基准 = pad×2(64)+页头40+统计144×0.85(122.4)+gap×3(60)+图220+操作44
+        // = 550.4；余高 49.6−0.5=49.1 → 统计 131.238，图表 260.262
+        DOCTEST_CHECK_MESSAGE(
+            std::fabs(stat->frame.height - 131.238f) < 0.5f,
+            "600 档统计卡高应为 131.238，实际 " +
+                std::to_string(stat->frame.height));
+        DOCTEST_CHECK_MESSAGE(
+            std::fabs(chart->frame.height - 260.262f) < 0.5f,
+            "600 档图表卡高应为 260.262，实际 " +
+                std::to_string(chart->frame.height));
+        // 卡内三行随卡高派生：仍在卡内、number 与 desc 不重叠
+        const float cardTop = stat->frame.y;
+        const float cardBottom = cardTop + stat->frame.height;
+        DOCTEST_CHECK(number->frame.y >= cardTop);
+        DOCTEST_CHECK(number->frame.y + number->frame.height <= cardBottom);
+        DOCTEST_CHECK(desc->frame.y >= number->frame.y + number->frame.height);
+        DOCTEST_CHECK(desc->frame.y + desc->frame.height <= cardBottom);
+        // 内容刚好填满页高：基准以上余高被统计行/图表卡全部吸收
+        const float bottomMargin =
+            screen.height - (root->frame.y + root->frame.height);
+        DOCTEST_CHECK_MESSAGE(
+            bottomMargin <= 1.0f,
+            "600 档内容应填满页高（底部余量 ≤1），实际 " +
+                std::to_string(bottomMargin));
+    }
+
+    // 960 档（1600×1000 真实页高，fs=1）：基准 572、余高 388−0.5=387.5 →
+    // 统计卡 213.75，图表卡 537.75（写死具体值，不用恒等式）
+    {
+        core::theme::setWindowHeight(960.0f);
+        const float fs = core::theme::fontScale();
+        DOCTEST_REQUIRE_MESSAGE(std::fabs(fs - 1.0f) < 1e-4f,
+                                "960 档应保持用户档 1.0，实际 " +
+                                    std::to_string(fs));
+        eui::Ui ui;
+        eui::Screen screen{1600.0f, 960.0f};
+        ui.begin("home_tier_960");
+        mod->compose(ui, screen);
+        ui.end();
+        ui.layout(screen.width, screen.height);
+        const auto* stat = ui.find("home.stat.notes");
+        const auto* chart = ui.find("home.api.chart");
+        const auto* number = ui.find("home.stat.notes.number");
+        const auto* desc = ui.find("home.stat.notes.badge");
+        const auto* root = ui.find("home.root");
+        DOCTEST_REQUIRE(stat != nullptr);
+        DOCTEST_REQUIRE(chart != nullptr);
+        DOCTEST_REQUIRE(number != nullptr);
+        DOCTEST_REQUIRE(desc != nullptr);
+        DOCTEST_REQUIRE(root != nullptr);
+        DOCTEST_CHECK_MESSAGE(
+            std::fabs(stat->frame.height - 213.75f) < 0.5f,
+            "960 档统计卡高应为 213.75，实际 " +
+                std::to_string(stat->frame.height));
+        DOCTEST_CHECK_MESSAGE(
+            std::fabs(chart->frame.height - 537.75f) < 0.5f,
+            "960 档图表卡高应为 537.75，实际 " +
+                std::to_string(chart->frame.height));
+        // 卡高增长后卡内三行仍居中分布、在卡内且不重叠
+        const float cardTop = stat->frame.y;
+        const float cardBottom = cardTop + stat->frame.height;
+        DOCTEST_CHECK(number->frame.y >= cardTop);
+        DOCTEST_CHECK(number->frame.y + number->frame.height <= cardBottom);
+        DOCTEST_CHECK(desc->frame.y >= number->frame.y + number->frame.height);
+        DOCTEST_CHECK(desc->frame.y + desc->frame.height <= cardBottom);
+        // 内容刚好填满页高：基准以上余高被统计行/图表卡全部吸收
+        const float bottomMargin =
+            screen.height - (root->frame.y + root->frame.height);
+        DOCTEST_CHECK_MESSAGE(
+            bottomMargin <= 1.0f,
+            "960 档内容应填满页高（底部余量 ≤1），实际 " +
+                std::to_string(bottomMargin));
+    }
+
+    // 复位进程级全局态，避免污染其它用例
+    core::theme::setWindowHeight(1000.0f);
+    mod->onStop();
+    core::proxy_stats::resetForTest();
+    return true;
+})
+
+// 关闭 ClaudeProxy：图表卡不渲染时余高必须由统计行吸收，页底不留死区。
+// 基准（无图表卡）= 64 + 页头40 + 统计144 + gap×2(40) + 操作44 = 332。
+REGISTER_TEST(home_no_chart_extra_to_stats,
+              "home_module: ClaudeProxy 关闭时余高全给统计行（无图表卡）", {
+    core::theme::setFontScale(1.0f);
+    core::theme::setWindowHeight(960.0f);  // H19 不封顶 → fs=1
+
+    ::core::Router router;
+    GatingStubModule home(::core::PageId::Home, "home");
+    GatingStubModule markdown(::core::PageId::Markdown, "markdown");
+    GatingStubModule todo(::core::PageId::Todo, "todo");
+    router.registerModule(&home);
+    router.registerModule(&markdown);
+    router.registerModule(&todo);
+    test_support::ScopedAppRouter scoped(&router);
+
+    std::unique_ptr<::core::Module> mod(create_home_module());
+    eui::Screen screen{1600.0f, 960.0f};
+    eui::Ui ui;
+    ui.begin("home_no_chart");
+    mod->compose(ui, screen);
+    ui.end();
+    ui.layout(screen.width, screen.height);
+
+    DOCTEST_CHECK(ui.find("home.api.chart") == nullptr);
+    const auto* stat = ui.find("home.stat.notes");
+    const auto* root = ui.find("home.root");
+    DOCTEST_REQUIRE(stat != nullptr);
+    DOCTEST_REQUIRE(root != nullptr);
+    // 余高 960−332−0.5=627.5 全给统计行 → 144+627.5=771.5；内容填满页高
+    DOCTEST_CHECK_MESSAGE(
+        std::fabs(stat->frame.height - 771.5f) < 0.5f,
+        "无图表卡时统计行应吸收全部余高（期望 771.5），实际 " +
+            std::to_string(stat->frame.height));
+    const float bottomMargin =
+        screen.height - (root->frame.y + root->frame.height);
+    DOCTEST_CHECK_MESSAGE(
+        bottomMargin <= 1.0f,
+        "无图表卡时页底不应留死区（余量 ≤1），实际 " +
+            std::to_string(bottomMargin));
+
+    core::theme::setWindowHeight(1000.0f);
+    mod->onStop();
+    return true;
+})
+
 // 同一批种子数据同时问两条读取路径，把它们钉在同一个数字上——口径分叉即红
 REGISTER_TEST(home_todo_overdue_consistency,
               "HomeService/TodoService: 逾期口径单源一致性",
