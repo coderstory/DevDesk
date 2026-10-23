@@ -44,7 +44,8 @@ namespace {
 //  （行盒 28 = 主开关高——说明文案行删除后行盒贴开关，label 垂直居中于行盒；
 //   开关钉卡内容右缘，尺寸 52×28 / 44×24 为字面值不随字号缩放）；
 //   配置组 = URL 全宽行 + 分支|Token 双列（组题行已删，分段线已分节）；
-//   操作组 = 三按钮行 + 右侧进度条（仅运行中）；操作组下方为条件信息行。
+//   操作组 = 左侧进度（条+文案，仅运行中）+ 右侧三按钮组（按钮组右锚）；
+//   操作组下方为条件信息行。
 // 卡高最坏行序（85%/130% 档复算）见 settings_ui_logic.h 的 kGithubSyncCardHeight。
 inline constexpr float kCardPaddingX = 28.0f;
 inline constexpr float kCardPaddingY = 8.0f;    // 卡上下留白（字面值，不缩放；零滚动收口 16→8）
@@ -55,6 +56,8 @@ inline constexpr float kRowH = 36.0f;            // 表单行高（formRow 同�
 inline constexpr float kToggleRowH = 24.0f;     // 开关行高（N 项: 28→24, = 主开关 24）
 inline constexpr float kRowGap = 6.0f;          // 行距（列间距同值；零滚动收口 8→6）
 inline constexpr float kSectionGapY = 5.0f;     // 分段线上下留白（零滚动收口 12→5）
+// H18 横向弹性锚（S4.1：1000×640 为锚点）：三按钮定宽不伸，按钮组整体右锚
+// 卡内容右缘（组右缘 = w − 28）；宽窗增量全部让给左侧进度文案列（flex）。
 inline constexpr float kBtnW = 120.0f;
 inline constexpr float kBtnSmallW = 80.0f;
 inline constexpr float kBtnTestW = 100.0f;
@@ -74,11 +77,14 @@ inline constexpr float kMainSwitchW = 44.0f;   // N 项: 52→44, 与自动推�
 inline constexpr float kMainSwitchH = 24.0f;   // N 项: 28→24, 对齐标准 wswitch
 inline constexpr float kSwitchLabelGap = 8.0f;     // 行文本块右缘与开关左缘间距
 inline constexpr float kToggleLabelH = 18.0f;      // 开关行 label 高（模块卡 name 同口径）
-// 操作组右侧进度（方案 A .bar）：4px 高轨道 + 主色填充 + 阶段文案，仅运行中渲染。
+// 操作组左侧进度（方案 A .bar，H18 按钮组右锚后移到左侧剩余区）：4px 高定宽
+// 轨道 + 主色填充 + 阶段文案，仅运行中渲染。轨道定宽 130 = 1000×640 最小档
+//（页宽 792 = 1000 − 208 侧栏 → 卡宽 728）旧布局的轨道宽，文案列 200 与之同宽
+// ——最小档进度分界与改前逐值一致；文案列改 flex 占剩余宽，宽窗增量全进文案。
 inline constexpr float kProgressBarH = 4.0f;
-inline constexpr float kProgressTextW = 200.0f;
+inline constexpr float kProgressBarW = 130.0f;
 inline constexpr float kProgressTextGap = 10.0f;   // 轨道右缘与文案间距
-inline constexpr float kProgressLeadGapX = 16.0f;  // 按钮组右缘与轨道左缘间距
+inline constexpr float kProgressLeadGapX = 16.0f;  // 进度区右缘与按钮组左缘间距
 inline constexpr float kInfoLeadGapY = 6.0f;       // 操作行与条件信息行的间距（零滚动收口 8→6）
 inline constexpr float kInfoRowGap = 2.0f;         // 信息行行间（零滚动收口 4→2；仅行间无行尾距）
 // 禁用态档位（UAT4 去门控沿用）：Input/Switch 组件没有自带 .disabled()，借 DSL
@@ -450,10 +456,16 @@ void drawGithubSyncCard(const CardDrawArgs& args) {
             .build();
         y += rowH;
 
-        // ── 操作组：三按钮（左）+ 进度（右，仅运行中）──
+        // ── 操作组：左侧进度（仅运行中）+ 右侧三按钮组（右锚）──
+        // H18 横向弹性（S4.1）：按钮定宽不伸，组右缘钉卡内容右缘 w − 28；
+        // 组左缘 = w − 28 − (120 + 8 + 100 + 8 + 80) = w − 344
+        //（1000×640 最小档：页宽 792 − 64 → 卡 728 → 组左缘 384）。
         sectionDivider(".div.actions");
+        const float btnPullX = w - kCardPaddingX - kBtnSmallW;
+        const float btnTestX = btnPullX - kBtnGapX - kBtnTestW;
+        const float btnPushX = btnTestX - kBtnGapX - kBtnW;
         components::button(ui, id + ".btn.push")
-            .position(kCardPaddingX, y)
+            .position(btnPushX, y)
             .size(kBtnW, rowH)
             .text("立即同步")
             .fontSize(t.sizes.fontSizeBody)
@@ -463,7 +475,7 @@ void drawGithubSyncCard(const CardDrawArgs& args) {
             .onClick([f = a.githubSyncPush] { f(); })
             .build();
         components::button(ui, id + ".btn.test")
-            .position(kCardPaddingX + kBtnW + kBtnGapX, y)
+            .position(btnTestX, y)
             .size(kBtnTestW, rowH)
             .text("测试连接")
             .fontSize(t.sizes.fontSizeBody)
@@ -477,7 +489,7 @@ void drawGithubSyncCard(const CardDrawArgs& args) {
             .onClick([f = a.githubSyncTestConnection] { f(); })
             .build();
         components::button(ui, id + ".btn.pull")
-            .position(kCardPaddingX + kBtnW + kBtnGapX + kBtnTestW + kBtnGapX, y)
+            .position(btnPullX, y)
             .size(kBtnSmallW, rowH)
             .text("拉取")
             .fontSize(t.sizes.fontSizeBody)
@@ -491,15 +503,15 @@ void drawGithubSyncCard(const CardDrawArgs& args) {
             .onClick([f = a.githubSyncPull] { f(); })
             .build();
 
-        // 进度条（右）：4px 轨道 + 主色填充（填充比 = 阶段序号/6）+「同步中 ·
-        // <阶段>」文案；空闲时右侧留空（整组不渲染）。
+        // 进度（按钮组左侧剩余区）：轨道定宽 130 + 主色填充（填充比 = 阶段序号/6）
+        // +「同步中 · <阶段>」文案列 flex（宽 = 进度区宽 − 轨道 − 10）；空闲整组
+        // 不渲染。进度区右缘 = 按钮组左缘 − 16。
         if (in.githubSyncRunning) {
-            const float btnRight = kCardPaddingX + kBtnW + kBtnTestW +
-                                   kBtnSmallW + kBtnGapX * 2.0f;
-            const float textX = w - kCardPaddingX - kProgressTextW;
-            const float barX = btnRight + roundFs(kProgressLeadGapX);
-            const float barW =
-                std::max(0.0f, textX - kProgressTextGap - barX);
+            const float progressRight = btnPushX - roundFs(kProgressLeadGapX);
+            const float barX = kCardPaddingX;
+            const float barW = kProgressBarW;
+            const float textX = barX + barW + kProgressTextGap;
+            const float textW = std::max(0.0f, progressRight - textX);
             const float barY = y + (rowH - kProgressBarH) * 0.5f;
             ui.rect(id + ".progress.bar")
                 .position(barX, barY)
@@ -516,14 +528,14 @@ void drawGithubSyncCard(const CardDrawArgs& args) {
                 .build();
             ui.text(id + ".progress")
                 .position(textX, y + (rowH - mutedH) * 0.5f)
-                .size(kProgressTextW, mutedH)
+                .size(textW, mutedH)
                 .text(in.githubSyncProgress.empty()
                           ? std::string("同步中…")
                           : "同步中 · " + in.githubSyncProgress)
                 .fontSize(fs(11.0f))
                 .lineHeight(mutedH)
                 .color(t.colors.textSecondary)
-                .maxWidth(kProgressTextW)
+                .maxWidth(textW)
                 .overflow(core::TextOverflow::Ellipsis)
                 .clip()
                 .build();

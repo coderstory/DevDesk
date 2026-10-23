@@ -500,6 +500,19 @@ void drawProxyCard(const CardDrawArgs& args) {
     const float warnY0 = proxyWarnRowTop();
     const float warnH = proxyWarnRowHeight();
 
+    // H18 横向弹性锚（S4.1：1000×640 为锚点，向上按伸缩公式）：
+    // 固定控件（开关/输入/按钮）各持定宽，控件组右缘钉卡内容右缘（w − 28）；
+    // 说明列（端口提示 / 接管状态值）宽 = 卡内可用宽 − label 宽 − 控件宽 − 间距，
+    // 宽窗增量只进说明列——各列宽与改前逐值一致（仅控件组按右锚重排次序），
+    // 不产生右侧死区。
+    constexpr float kAutoStartToggleW = 240.0f;  // 「随应用启动代理」文字+44×24 轨道盒
+    constexpr float kPortInputW = 96.0f;         // 端口输入框（数值定宽）
+    constexpr float kPortApplyW = 64.0f;         // 「应用」按钮
+    constexpr float kPortCtrlGap = 8.0f;         // 输入框 → 按钮
+    constexpr float kPortHintGap = 12.0f;        // 说明列 → 控件组
+    constexpr float kTakeoverLabelW = 150.0f;    // 接管行 label（固定列）
+    constexpr float kTakeoverGap = 12.0f;        // label → 状态值（说明列）
+
     ui.stack(id)
         .size(w, h)
         .content([&] {
@@ -519,10 +532,11 @@ void drawProxyCard(const CardDrawArgs& args) {
 
             cardTitle(ui, id, t, 16.0f, 240.0f, 22.0f, 22.0f, "Claude 代理");
 
-            // 随应用启动代理（默认关）放卡片右上。
+            // 随应用启动代理（默认关）放卡片右上：开关盒定宽、右缘贴卡内容右缘
+            // 28（固定控件右锚——宽窗只增左侧标题/描述可用宽，开关不随宽度漂）。
             components::toggleSwitch(ui, id + ".autostart")
-                .position(w - 28.0f - 240.0f, 12.0f)
-                .size(240.0f, 28.0f)
+                .position(w - 28.0f - kAutoStartToggleW, 12.0f)
+                .size(kAutoStartToggleW, 28.0f)
                 .text("随应用启动代理")
                 .fontSize(fs(13.0f))
                 .checked(in.cfg.claudeProxyAutoStart)
@@ -540,15 +554,22 @@ void drawProxyCard(const CardDrawArgs& args) {
             const std::string portText = in.proxyPortDraft.empty()
                 ? std::to_string(in.cfg.proxyPort)
                 : in.proxyPortDraft;
-            // E 批统一：端口行 = FormRow（label 110）+ input/应用按钮/hint 行内尾注。
+            // E 批统一：端口行 = FormRow（label 110）+ 说明列 + 右侧固定控件组
+            //（input/应用按钮，H18 右锚）。
             ui_kit::formRow(ui, id + ".port", "代理端口", 28.0f, portRowY,
                             w - 56.0f, rowH,
                 [&](eui::Ui& ui, float cx, float cy, float cw, float ch) {
                     const float inputH = 28.0f;
                     const float ctrlY = cy + (ch - inputH) * 0.5f;
+                    // H18：固定控件组（输入 96 + 间距 8 + 应用 64）右锚控件区
+                    // 右缘（cx+cw = 卡内容右缘 w−28）；说明列 flex 从 label 右缘
+                    // 起，宽 = cw − 96 − 8 − 64 − 12（任一宽度下均与改前盒宽同值，
+                    // 宽窗增量全归说明列）。
+                    const float applyX = cx + cw - kPortApplyW;
+                    const float inputX = applyX - kPortCtrlGap - kPortInputW;
                     components::input(ui, id + ".port.input")
-                        .position(cx, ctrlY)
-                        .size(96.0f, inputH)
+                        .position(inputX, ctrlY)
+                        .size(kPortInputW, inputH)
                         .value(portText)
                         .placeholder("8888")
                         .fontSize(fs(13.0f))
@@ -564,18 +585,20 @@ void drawProxyCard(const CardDrawArgs& args) {
                     //（btn.push「立即同步」）完全同款：componentTokensWeChat 的
                     // primary=#36D399 绿，不再覆写 colors/textColor
                     components::button(ui, id + ".port.apply")
-                        .position(cx + 96.0f + 8.0f, ctrlY)
-                        .size(64.0f, inputH)
+                        .position(applyX, ctrlY)
+                        .size(kPortApplyW, inputH)
                         .text("应用")
                         .fontSize(fs(13.0f))
                         .theme(compTheme, /*primary=*/true)
                         .radius(t.sizes.radiusSmall)
                         .onClick([f = a.applyProxyPort] { f(); })
                         .build();
-                    const float hintX = cx + 96.0f + 8.0f + 64.0f + 12.0f;
+                    const float hintX = cx;
+                    const float hintW =
+                        std::max(0.0f, inputX - kPortHintGap - hintX);
                     ui.text(id + ".port.hint")
                         .position(hintX, cy + (ch - hintH) * 0.5f)
-                        .size(std::max(0.0f, cx + cw - hintX), hintH)
+                        .size(hintW, hintH)
                         .text("改后回车或点「应用」；代理运行中自动重启")
                         .fontSize(fs(12.0f))
                         .lineHeight(hintH)
@@ -585,9 +608,14 @@ void drawProxyCard(const CardDrawArgs& args) {
 
             // Claude Code 接管状态：sidecar 是否存在推导，让还原机制对用户可见。
             const bool managed = in.takeoverManaged;
+            // H18：label 150 为固定列；状态值列（说明列）起点由 28 + label + 12
+            // 派生（旧写死 190，改 label 宽即漂），宽 = w − 起点 − 28（与原式
+            // 等价；宽窗增量同进状态值列）。
+            const float takeoverValueX =
+                28.0f + kTakeoverLabelW + kTakeoverGap;
             ui.text(id + ".takeover.label")
                 .position(28.0f, takeoverY)
-                .size(150.0f, takeoverH)
+                .size(kTakeoverLabelW, takeoverH)
                 .text("Claude Code 接管")
                 .fontSize(fs(12.0f))
                 .lineHeight(takeoverH)
@@ -597,8 +625,8 @@ void drawProxyCard(const CardDrawArgs& args) {
             const std::string ccPath =
                 svc ? svc->settingsFilePath() : std::string();
             ui.text(id + ".takeover.value")
-                .position(190.0f, takeoverY)
-                .size(w - 190.0f - 28.0f, takeoverH)
+                .position(takeoverValueX, takeoverY)
+                .size(w - takeoverValueX - 28.0f, takeoverH)
                 .text(managed
                       ? ("● 已接管 " + ccPath)
                       : std::string("○ 未接管（启动代理后自动接管，停止时还原）"))

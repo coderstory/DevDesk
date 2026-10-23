@@ -6,6 +6,7 @@
 #include "core/event_bus.h"
 #include "core/logging.h"
 #include "core/result.h"
+#include "core/schema.h"
 #include "core/sql_dump.h"
 #include "platform/credential_protection.h"
 #include "platform/json.h"
@@ -418,6 +419,15 @@ core::Result<void> GithubSyncStore::importDatabase(const std::string& sql) {
                                              : verdict));
                 }
             }
+        }
+        // 导入把远端库的旧 schema 原样换进来：广播前补跑启动迁移（applySchema +
+        // 补列 + Todo 固定四列），否则本进程内 kind=NULL/自定义列要活到下次重启。
+        auto migrated = core::schema::migrate(*db_);
+        if (migrated.isFail()) {
+            ::core::event::bus().emit(::core::event::kDbImportEnd);
+            return core::Result<void>::fail(
+                migrated.errorCode(),
+                "导入后数据库迁移失败：" + migrated.errorMessage());
         }
         ::core::event::bus().emit(::core::event::kDbImported);
     }

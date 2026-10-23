@@ -254,12 +254,19 @@ REGISTER_TEST(github_sync_card_progress_bar_and_text,
     DOCTEST_CHECK_EQ(p->text, std::string("同步中 · ① 校验 token…"));
     DOCTEST_CHECK_EQ(bar->frame.height, 4.0f);   // 方案 A .bar 4px 高
     DOCTEST_CHECK(std::fabs(fill->frame.width - bar->frame.width / 6.0f) < 0.5f);
-    // 进度在按钮组右侧：轨道左缘 > 拉取按钮右缘；文案右缘贴卡右内边距
+    // H18：按钮组右锚（右缘 = 卡右 − 28），进度移到按钮组左侧——轨道贴卡左
+    // 内边距、定宽 130（最小档旧轨道宽）；文案列 flex，右缘 = 按钮组左缘 − 16。
+    const auto* push = ui.find(std::string(kCardId) + ".btn.push.bg");
     const auto* pull = ui.find(std::string(kCardId) + ".btn.pull.bg");
+    DOCTEST_REQUIRE(push != nullptr);
     DOCTEST_REQUIRE(pull != nullptr);
-    DOCTEST_CHECK(bar->frame.x > pull->frame.x + pull->frame.width);
-    DOCTEST_CHECK(std::fabs(p->frame.x + p->frame.width - (1520.0f - 28.0f)) <
+    DOCTEST_CHECK(std::fabs(pull->frame.x + pull->frame.width - (1520.0f - 28.0f)) <
                   0.5f);
+    DOCTEST_CHECK(bar->frame.x < pull->frame.x);   // 轨道在按钮组左侧
+    DOCTEST_CHECK(std::fabs(bar->frame.x - 28.0f) < 0.5f);
+    DOCTEST_CHECK(std::fabs(bar->frame.width - 130.0f) < 0.5f);
+    DOCTEST_CHECK(std::fabs(p->frame.x + p->frame.width -
+                            (push->frame.x - ms::roundFs(16.0f))) < 0.5f);
 
     // 对照组：非运行态无进度条/文案（否则上面断言可能只是「恒渲染」恒真）
     CardFixture idle;
@@ -407,14 +414,18 @@ REGISTER_TEST(github_sync_card_plan_a_geometry,
     DOCTEST_CHECK(std::fabs(tk->frame.y - y) < 0.5f);
     DOCTEST_CHECK(std::fabs(tk->frame.x + tk->frame.width - (kW - padX - 24.0f)) < 0.5f);
     y += rowH;
-    // 第二段分段线 → 操作组：三按钮在左（Primary 最左、同排等高）
+    // 第二段分段线 → 操作组：三按钮组右锚（H18）——拉取右缘 = 卡右 − 28，
+    // 组内自右向左 80/100/120、间距 8（Primary 最左、同排等高）
     DOCTEST_CHECK(std::fabs(divAct->frame.y - (y + secGap)) < 0.5f);
     y += secGap + 1.0f + secGap;
-    DOCTEST_CHECK(std::fabs(push->frame.x - padX) < 0.5f);
+    const float pullX = kW - padX - 80.0f;
     DOCTEST_CHECK(std::fabs(push->frame.y - y) < 0.5f);
-    DOCTEST_CHECK(std::fabs(test->frame.x - (padX + 120.0f + 8.0f)) < 0.5f);
-    DOCTEST_CHECK(std::fabs(pull->frame.x -
-                            (padX + 120.0f + 8.0f + 100.0f + 8.0f)) < 0.5f);
+    DOCTEST_CHECK(std::fabs(pull->frame.x - pullX) < 0.5f);
+    DOCTEST_CHECK(std::fabs(pull->frame.x + pull->frame.width -
+                            (kW - padX)) < 0.5f);
+    DOCTEST_CHECK(std::fabs(test->frame.x - (pullX - 8.0f - 100.0f)) < 0.5f);
+    DOCTEST_CHECK(std::fabs(push->frame.x -
+                            (pullX - 8.0f - 100.0f - 8.0f - 120.0f)) < 0.5f);
     DOCTEST_CHECK(std::fabs(test->frame.y - y) < 0.5f);
     DOCTEST_CHECK(std::fabs(pull->frame.y - y) < 0.5f);
     DOCTEST_CHECK(std::fabs(push->frame.height - rowH) < 0.5f);

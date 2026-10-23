@@ -7,6 +7,7 @@
 #include "app_tools.h"          // app.read_settings 工厂
 #include "settings_config.h"
 #include "settings_ui_cards.h"   // 卡片直绘夹具（开机自启动行断言，UAT6）
+#include "github_sync_card.h"    // 同步卡直绘（H18 按钮组右锚双档断言）
 #include "settings_ui_logic.h"
 
 #include "claude_service.h"
@@ -811,6 +812,152 @@ REGISTER_TEST(settings_h3_elastic_heights, "settings: H3 elastic — cardsH at 6
         DOCTEST_CHECK(scrollLarge->frame.height > scrollMin->frame.height + 300.0f); // 1000-640=360 增量
     }
     mod->onStop();
+    return true;
+})
+
+// H18 批2：通用 tab 代理卡横向弹性（S4.1：1000×640 为锚点 + 伸缩公式）。固定
+// 控件（端口输入 96 / 应用 64）定宽不伸、组右缘钉卡内容右缘 28；说明列（端口
+// 提示 / 接管状态值）宽 = 卡内可用宽 − label − 控件 − 间距，宽窗增量全归说明列。
+// 防的事故：卡拉宽后表单左对齐、右侧死区回潮（H18 弹性普查 §5）。
+REGISTER_TEST(settings_form_flex_dual_tier,
+              "settings_form_flex_dual_tier: 通用 tab 表单横向弹性（说明列 flex + 固定控件右锚，双档）", {
+    test_support::TestEnv env(kCfgPrefix, "formflex", true);
+    test_support::ScopedConfigPath cfgEnv(
+        test_support::tempConfigFile(kCfgPrefix, "formflex_cfg"));
+    std::unique_ptr<::core::Module> mod(create_settings_module());
+    mod->onStart();
+
+    struct Tier {
+        eui::Screen screen;
+        const char* page;
+        float cardW = 0.0f;
+        float hintW = 0.0f;
+        float valueW = 0.0f;
+        float inputW = 0.0f;
+        float applyW = 0.0f;
+        float applyRightGap = 0.0f;   // 按钮右缘 → 卡右缘
+        float hintControlGap = 0.0f;  // 说明列右缘 → 输入框左缘
+    };
+    // 双档 = 窗 1000×640 / 1600×1000 的真实页区（减 208 侧栏）：页宽 792/1392
+    //（高再减 40 自绘标题条），卡宽 = 页宽 − 64 内边距 = 728 / 1328。
+    Tier tiers[2] = {{eui::Screen{792.0f, 600.0f}, "formflex640"},
+                     {eui::Screen{1392.0f, 960.0f}, "formflex1000"}};
+    for (Tier& tier : tiers) {
+        eui::Ui ui;
+        ui.begin(tier.page);
+        mod->compose(ui, tier.screen);
+        ui.end();
+        ui.layout(tier.screen.width, tier.screen.height);   // frame 断言必须真 layout
+        const auto* card = ui.find("settings.card.proxy");
+        const auto* hint = ui.find("settings.card.proxy.port.hint");
+        const auto* input = ui.find("settings.card.proxy.port.input");
+        const auto* apply = ui.find("settings.card.proxy.port.apply.bg");
+        const auto* value = ui.find("settings.card.proxy.takeover.value");
+        DOCTEST_REQUIRE(card != nullptr);
+        DOCTEST_REQUIRE(hint != nullptr);
+        DOCTEST_REQUIRE(input != nullptr);
+        DOCTEST_REQUIRE(apply != nullptr);
+        DOCTEST_REQUIRE(value != nullptr);
+        tier.cardW = card->frame.width;
+        tier.hintW = hint->frame.width;
+        tier.valueW = value->frame.width;
+        tier.inputW = input->frame.width;
+        tier.applyW = apply->frame.width;
+        tier.applyRightGap = (card->frame.x + card->frame.width) -
+                             (apply->frame.x + apply->frame.width);
+        tier.hintControlGap =
+            input->frame.x - (hint->frame.x + hint->frame.width);
+    }
+    // 固定控件两档同宽（定宽不伸）+ 组右锚卡内容右缘 28 + 说明列与控件间距 12
+    for (const Tier& tier : tiers) {
+        DOCTEST_CHECK(std::fabs(tier.inputW - 96.0f) < 0.5f);
+        DOCTEST_CHECK(std::fabs(tier.applyW - 64.0f) < 0.5f);
+        DOCTEST_CHECK(std::fabs(tier.applyRightGap - 28.0f) < 0.5f);
+        DOCTEST_CHECK(std::fabs(tier.hintControlGap - 12.0f) < 0.5f);
+    }
+    // 说明列 flex：卡宽增量全归说明列（1000 档提示/状态值显著更宽）
+    DOCTEST_CHECK(tiers[1].cardW > tiers[0].cardW + 500.0f);
+    DOCTEST_CHECK(tiers[1].hintW > tiers[0].hintW + 500.0f);
+    DOCTEST_CHECK(tiers[1].valueW > tiers[0].valueW + 500.0f);
+    // 640 档列宽公式复算：hint = (卡宽 − 174) − 96 − 8 − 64 − 12；value = 卡宽 − 218
+    DOCTEST_CHECK(std::fabs(tiers[0].hintW - (tiers[0].cardW - 354.0f)) < 0.5f);
+    DOCTEST_CHECK(std::fabs(tiers[0].valueW - (tiers[0].cardW - 218.0f)) < 0.5f);
+
+    mod->onStop();
+    ::core::theme::setDark();
+    return true;
+})
+
+// H18 批2：GitHub 同步卡操作组——三按钮组右锚（组右缘 = 卡右 − 28），进度移到
+// 按钮组左侧剩余区（轨道定宽 130、文案列 flex 占剩余宽）。双档同锚，宽窗增量
+// 只进文案列；防「按钮固定宽停在左侧、右侧留死区」回潮。
+REGISTER_TEST(sync_buttons_right_anchor,
+              "sync_buttons_right_anchor: 同步卡按钮组右锚（两档右缘 = 卡右−28）+ 进度文案列 flex", {
+    namespace ms = module::settings;
+    struct FontScaleGuard {
+        float prev;
+        explicit FontScaleGuard(float s)
+            : prev(::core::theme::fontScale()) {
+            ::core::theme::setFontScale(s);
+        }
+        ~FontScaleGuard() { ::core::theme::setFontScale(prev); }
+    };
+    FontScaleGuard g{1.0f};
+
+    ms::SettingsConfig cfg;
+    std::string draft;
+    std::vector<std::string> tail;
+    ms::SettingsCardsIn in{cfg, draft, tail};
+    in.githubSyncEnabled = true;
+    in.githubSyncRunning = true;
+    in.githubSyncProgress = "① 校验 token…";
+    ms::SettingsCardActions a;
+
+    struct Tier {
+        float w;
+        const char* page;
+        float textW = 0.0f;
+        float pushX = 0.0f;
+        float pullRight = 0.0f;
+    };
+    // 双档卡宽同表单用例：1000×640 窗 → 卡 728；1600×1000 窗 → 卡 1328。
+    Tier tiers[2] = {{728.0f, "syncanchor640"},
+                     {1328.0f, "syncanchor1000"}};
+    for (Tier& tier : tiers) {
+        eui::Ui ui;
+        ui.begin(tier.page);
+        ms::CardDrawArgs args{ui, "settings.card.github_sync", tier.w,
+                              ms::roundFs(ms::kGithubSyncCardHeight),
+                              ::core::theme::current(), 0.0f, 1000.0f, in, a};
+        ms::drawGithubSyncCard(args);
+        ui.end();
+        ui.layout(tier.w, 1000.0f);   // frame 断言必须真 layout
+        const auto* push = ui.find("settings.card.github_sync.btn.push.bg");
+        const auto* pull = ui.find("settings.card.github_sync.btn.pull.bg");
+        const auto* progress = ui.find("settings.card.github_sync.progress");
+        const auto* bar = ui.find("settings.card.github_sync.progress.bar");
+        DOCTEST_REQUIRE(push != nullptr);
+        DOCTEST_REQUIRE(pull != nullptr);
+        DOCTEST_REQUIRE(progress != nullptr);
+        DOCTEST_REQUIRE(bar != nullptr);
+        tier.pullRight = pull->frame.x + pull->frame.width;
+        tier.pushX = push->frame.x;
+        tier.textW = progress->frame.width;
+        // 按钮组右缘 = 卡右 − 28（两档同锚）
+        DOCTEST_CHECK(std::fabs(tier.pullRight - (tier.w - 28.0f)) < 0.5f);
+        // 组左缘 = 卡右 − 28 − (120+8+100+8+80) = 卡右 − 344
+        DOCTEST_CHECK(std::fabs(tier.pushX - (tier.w - 344.0f)) < 0.5f);
+        // 进度在按钮组左侧：轨道贴卡左内边距、定宽 130（最小档旧轨道宽）
+        DOCTEST_CHECK(std::fabs(bar->frame.x - 28.0f) < 0.5f);
+        DOCTEST_CHECK(std::fabs(bar->frame.width - 130.0f) < 0.5f);
+        // 文案列 flex：右缘 = 按钮组左缘 − 16（lead gap）
+        DOCTEST_CHECK(std::fabs(progress->frame.x + progress->frame.width -
+                                (tier.pushX - ms::roundFs(16.0f))) < 0.5f);
+    }
+    // 宽窗增量全归文案列（两档卡宽差 600）
+    DOCTEST_CHECK(tiers[1].textW > tiers[0].textW + 500.0f);
+
+    ::core::theme::setDark();
     return true;
 })
 
