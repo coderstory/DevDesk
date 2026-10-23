@@ -265,10 +265,8 @@ void drawBoard(eui::Ui& ui, float contentW, float bodyH,
     const BoardColumnWidths widths = boardColumnWidths(
         contentW, colGap, v.columns.size(), archiveIndex, v.archiveT);
 
-    // 板面几何快照（拖拽命中换算用；compose 每帧刷新）。colW 保留普通列宽作回落值，
+    // 板面几何快照（拖拽命中换算用；compose 每帧刷新）。
     // 逐列实际几何（含归档折叠动画宽度）写入 columnX/columnWidth
-    plate.colW = widths.normal;
-    plate.colGap = colGap;
     plate.height = bodyH;
     plate.columnX.resize(v.columns.size());
     plate.columnWidth.resize(v.columns.size());

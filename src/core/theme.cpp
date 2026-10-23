@@ -1,4 +1,4 @@
-// 颜色值与 devdesk_theme.h light()/dark() 完全同步（S1 令牌总表为权威）。
+// 颜色值以 S1 令牌总表为权威；本文件 dark()/light() 两套令牌表。
 // 变更时两处同改，以 hex 值为对照。
 #include "theme.h"
 

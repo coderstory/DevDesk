@@ -21,8 +21,6 @@ namespace module::todo::ui {
 
 // 板面几何快照（drawBoard / drawCard 每帧刷新）：写权在本单元、读权在模块（hitDropColumn）
 struct BoardPlate {
-    float colW = 0.0f;  // 普通列宽（旧均匀命中路径的回落值）
-    float colGap = 0.0f;
     float height = 0.0f;
     float cardW = 0.0f;
     // 逐列实际几何（compose 空间，列左缘 + 当帧宽）：drawBoard 每帧填入，含归档折叠动画宽度。
