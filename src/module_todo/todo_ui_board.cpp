@@ -42,6 +42,26 @@ constexpr float kCardChipPadX = 12.0f;    // chip 行左内边距
 constexpr float kCardChipPadRight = 12.0f; // chip 行/完成角标右内边距
 constexpr float kCardDoneBadgeW = 16.0f;  // 完成角标宽（旧 24，右缘对齐 chip 右边距）
 
+// ---- H16（2026-10-23 用户拍板覆盖 S6#5「禁止整卡涂色」）：卡面优先级浅染 ----
+// 真机 0.5.0 实测卡面全白、优先级色丢失。surface 白底向优先级色混 kTodoTintAlpha
+// 恢复轻微彩色半透质感（量级 0.10-0.15，可调）。色源按用户指定板：
+// 高=error #EF4444 / 中=warning #F59E0B / 低=success #10B981；None 档无 tint 保持纯白。
+// 与左侧 3px 色条（priorityColor 表）并存：色条 = 硬标识，浅染 = 卡面氛围；
+// 两色源独立（色条 Low 走 primary 薄荷绿 #36D399，浅染 Low 走 success 祖母绿 #10B981）。
+constexpr float kTodoTintAlpha = 0.12f;
+
+inline eui::Color cardFaceColor(Priority p, const core::theme::Tokens& t) {
+    const eui::Color* src = nullptr;
+    switch (p) {
+        case Priority::Low: src = &t.colors.success; break;
+        case Priority::Medium: src = &t.colors.warning; break;
+        case Priority::High: src = &t.colors.error; break;
+        case Priority::None: break;
+    }
+    return src == nullptr ? t.colors.surface
+                          : eui::mixColor(t.colors.surface, *src, kTodoTintAlpha);
+}
+
 // 右侧动作区 560px = 搜索框(240)+逾期(104)+「+ 列」(72)+「+ 新建任务」(120)+间距
 void drawHeader(eui::Ui& ui, float contentW, float headerH, float bodyH,
                 const core::theme::Tokens& t, const BoardView& v) {
@@ -521,8 +541,9 @@ void drawCard(eui::Ui& ui, const std::string& id, float x, float y, float width,
         .border(0.0f, t.colors.borderDefault)  // 边框职责已移到内部交互层
         .content([&] {
 
-    // S3.3：玻璃层退役 + 白底优先级色条替代整卡涂色（§S6.1 玻璃退役 / §S6.5 优先级色条）
-    // 归档卡灰化：透明度 0.7（§4 已归档卡片），与拖拽半透明叠加
+    // S3.3：玻璃层退役 + 白底优先级色条替代整卡涂色（§S6.1 玻璃退役 / §S6.5 优先级色条）；
+    // H16 覆盖：卡面白底改为优先级浅染（cardFaceColor），色条保留作硬标识
+    // 归档卡灰化：透明度 0.7（§4 已归档卡片），与拖拽半透明叠加（浅染随卡整体变灰）
     const bool isArchiveCard = colIndex >= 0 &&
         static_cast<size_t>(colIndex) < v.columns.size() &&
         v.columns[static_cast<size_t>(colIndex)].kind == "archive";
@@ -532,7 +553,7 @@ void drawCard(eui::Ui& ui, const std::string& id, float x, float y, float width,
     ui.rect(id + ".bg")
         .position(0.0f, y)
         .size(width, kCardHeight)
-        .color(t.colors.surface)
+        .color(cardFaceColor(task.priority, t))
         .shadow(components::theme::shadow(componentTheme, 3.0f, 1.0f, 0.06f, 0.03f))
         .border(1.0f, t.colors.borderDefault)
         .radius(8.0f)
@@ -709,12 +730,13 @@ void drawDragGhost(eui::Ui& ui, const core::theme::Tokens& t,
                 .padding(0.0f)
                 .border(0.0f, t.colors.borderDefault)
                 .content([&] {
-            // S3.3：副本匹配新卡风——白底 + 3px 优先级色条 + Sm 阴影（同 drawCard）
+            // S3.3：副本匹配新卡风——白底 + 3px 优先级色条 + Sm 阴影（同 drawCard）；
+            // H16：副本底同真卡走优先级浅染（cardFaceColor）
                     const auto ghostComponentTheme = core::theme::componentTokensWeChat(t);
                     ui.rect("todo.dragghost.bg")
                         .position(0.0f, 0.0f)
                         .size(w, kCardHeight)
-                        .color(t.colors.surface)
+                        .color(cardFaceColor(task->priority, t))
                         .shadow(components::theme::shadow(ghostComponentTheme, 3.0f, 1.0f, 0.06f, 0.03f))
                         .border(1.0f, t.colors.borderDefault)
                         .radius(8.0f)
