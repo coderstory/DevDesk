@@ -25,11 +25,12 @@ namespace {
         c.primaryPressed = eui::Color("#23B07F");
         c.primarySoftBg = eui::Color("#0D3326");
         c.primaryText = eui::Color("#36D399");
+        c.accentText = eui::Color("#36D399");  // 深底 9.22:1，与 primary 同值
         c.onPrimary = eui::Color("#FFFFFF");
         c.textPrimary = eui::Color("#FAF9F5");
         c.textSecondary = eui::Color("#C9C5BD");
         c.textTertiary = eui::Color("#9A948A");
-        c.textDisabled = eui::Color("#6B6660");
+        c.textDisabled = eui::Color("#908A82");  // 5.18:1 on #1A1816（旧 #6B6660 仅 3.11:1）
         c.borderDefault = eui::Color("#3A3735");
         c.borderMuted = eui::Color("#2A2826");
         c.success = eui::Color("#34D399");
@@ -78,11 +79,12 @@ namespace {
         c.primaryPressed = eui::Color("#23B07F");
         c.primarySoftBg = eui::Color("#E6FBF2");
         c.primaryText = eui::Color("#157E4E");  // ~4.87:1 on #FAFAF9 ≥ WCAG AA 4.5:1（审计 F3.4 裁决）
+        c.accentText = eui::Color("#0C7E58");   // #0F9D6E 加深档：4.86:1 on #FAFAF9 ≥ 4.5（#0F9D6E 本身仅 3.31）
         c.onPrimary = eui::Color("#FFFFFF");
         c.textPrimary = eui::Color("#1F2937");
         c.textSecondary = eui::Color("#4B5563");
         c.textTertiary = eui::Color("#6B7280");
-        c.textDisabled = eui::Color("#9CA3AF");
+        c.textDisabled = eui::Color("#6B7280");  // 4.83:1 on #FFF（旧 #9CA3AF 仅 2.54:1）
         c.borderDefault = eui::Color("#E5E7EB");
         c.borderMuted = eui::Color("#F3F4F6");
         c.success = eui::Color("#10B981");
@@ -183,6 +185,8 @@ namespace {
                 break;
             }
         }
+        // accentText 随 accent 走 primaryText 档（浅色各 accent 档均 ≥4.5:1 on #FAFAF9）
+        c.accentText = c.primaryText;
     }
 
     // 全局字号缩放（默认 1.0）；setDark/setLight 重建 token 后统一施加
@@ -191,12 +195,10 @@ namespace {
     // H19 窗口逻辑高（app::compose 每帧喂入）；默认超大 = 不封顶（首帧 compose 前）
     float g_windowHeight = 1.0e6f;
 
-    // H19 窗高 → 字号封顶档：≤660 逻辑高 → 85%（640 最小窗防拥挤/裁切），>660 → 不封顶。
-    // 取舍：两档跳变而非 660~1000 线性——
-    //   (1) 与设置页离散档位（85/100/115/130）语义一致，线性会造出档位外任意字号（如 92.5%）；
-    //   (2) 拖拽窗口跨档只跳一次，线性则拖拽全程字号连续回流、视觉抖动。
-    float windowScaleCap(float height) {
-        return height <= 660.0f ? 0.85f : std::numeric_limits<float>::max();
+    // 2026-10-25 用户拍板废止窗高封顶（字体偏小，可读性优先）；如需恢复 revert 此处。
+    // 旧档：≤660 逻辑高 → 0.85（640 最小窗防拥挤/裁切），>660 → 不封顶
+    float windowScaleCap(float) {
+        return std::numeric_limits<float>::max();
     }
 
     // 只缩放字号，间距/圆角不动（字号是可读性需求，布局度量保持稳定）。
@@ -261,8 +263,7 @@ void setFontScale(float scale) {
 }
 
 float fontScale() {
-    // H19 生效档 = 用户手动档 ∩ 窗高封顶：封顶只缩不放（>660 高 cap=+inf → 用户档原样，
-    // 115%/130% 档在大窗不被腰斩——「更大窗保持用户手动档」）
+    // 生效档 = 用户手动档 ∩ 窗高封顶；封顶已废止（cap 恒 +inf）→ 恒等于用户手动档
     return std::min(g_fontScale, windowScaleCap(g_windowHeight));
 }
 

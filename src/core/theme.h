@@ -27,6 +27,10 @@ struct ColorTokens {
     // 主色作文字色的专用 token：#D97757 直接当 11-13px 小字在浅底上仅 2.96:1，低于 WCAG AA 4.5:1；
     // 深色档 = primary，浅色档 = 深一档 clay。链接/chip 文字用本 token；图标/边框/背景继续用 primary
     eui::Color primaryText;
+    // Ghost/Text 级按钮（透明底 + 主题色字）的专用字色：primary 浅色 #36D399 on #FAFAF9
+    // 仅 1.84:1 禁作字色，故与作图标/边框用的 primary 分槽；两主题均须对
+    // background/primarySoftBg ≥ WCAG AA 4.5:1
+    eui::Color accentText;
     // 主色背景上的前景色（主按钮文字/ACTIVE 徽标；两主题均为白）
     eui::Color onPrimary;
     eui::Color textPrimary;
@@ -89,9 +93,9 @@ void setLight();
 void setFontScale(float scale);
 float fontScale();
 
-// H19 窗高驱动字号封顶（2026-10-23 用户拍板）：app::compose 每帧喂入窗口逻辑高；
-// 生效公式 fontScale() = min(用户手动档, windowScaleCap(logicalHeight))：
-// ≤660 逻辑高 → 85% 档，>660 → 不封顶。档位跨越时重建 token 并广播 change handler
+// 窗高驱动字号封顶已废止（2026-10-25 用户拍板，可读性优先）：windowScaleCap 恒不封顶，
+// fontScale() = 用户手动档；setWindowHeight 保留信号通道（app::compose 每帧喂入）。
+// 如需恢复 revert theme.cpp windowScaleCap
 void setWindowHeight(float logicalHeight);
 
 // v1.0 字体栈（S1.2 字体系统 / S5.2 平台回退）

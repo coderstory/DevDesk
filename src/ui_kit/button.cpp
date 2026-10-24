@@ -48,11 +48,12 @@ void button(eui::Ui& ui, const std::string& id, const std::string& label,
             txtColor = t.colors.textPrimary;
             break;
         case ButtonLevel::Text:
-            // 辅助操作：透明底 + 绿字（默认）；hover bg=dividerSecondary（§4.13）
+            // 辅助操作：透明底 + 强调字色 accentText（primary 浅色 on #FAFAF9 仅 1.84:1，
+            // 禁直接作字）；hover bg=hover（§4.13）
             bgNormal = eui::Color{0.0f, 0.0f, 0.0f, 0.0f};
             bgHover = t.colors.hover;
             bgPressed = t.colors.hover;
-            txtColor = t.colors.primary;
+            txtColor = t.colors.accentText;
             break;
         case ButtonLevel::Danger:
             // 删除/高危：警示红 + 白字；hover 加深一档（派生）

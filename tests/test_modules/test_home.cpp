@@ -601,24 +601,24 @@ REGISTER_TEST(home_last_rate_and_hourly_tokens,
     }
     return true;
 })
-// H18 首页纵向弹性双档（真实页高）：600 档 = 最小窗 1000×640 减标题条、H19 封顶
-// 0.85；960 档 = 1600×1000 减标题条。弹性基准 = 内容刚好填满页高（全部令牌派生），
+// H18 首页纵向弹性双档（真实页高）：600 档 = 最小窗 1000×640 减标题条（窗高封顶
+// 已废止 → fs=1）；960 档 = 1600×1000 减标题条。弹性基准 = 内容刚好填满页高（全部令牌派生），
 // 余高 18% 给统计行、其余归图表卡；底部仅留 0.5px 防浮点越界出滚条。
 REGISTER_TEST(home_stat_chart_dual_tier,
               "home_module: H18 统计卡/图表卡纵向弹性双档（页高 600 / 960）", {
     core::proxy_stats::resetForTest();
     core::theme::setLight();
-    // 字号档是进程级全局态：用户档固定 100%，窗高封顶交给 H19（600 → 0.85）
+    // 字号档是进程级全局态：用户档固定 100%（窗高封顶已废止 → 600 档 fs=1）
     core::theme::setFontScale(1.0f);
 
     std::unique_ptr<::core::Module> mod(create_home_module());
 
-    // 600 档：真实最小页高——不强制 fs=1，验证 H19 封顶下的弹性基准几何
+    // 600 档：真实最小页高，fs=1 下验证弹性基准几何
     {
         core::theme::setWindowHeight(600.0f);
         const float fs = core::theme::fontScale();
-        DOCTEST_REQUIRE_MESSAGE(std::fabs(fs - 0.85f) < 1e-4f,
-                                "600 档生效字号应为 H19 封顶 0.85，实际 " +
+        DOCTEST_REQUIRE_MESSAGE(std::fabs(fs - 1.0f) < 1e-4f,
+                                "600 档生效字号应为用户档 1.0（窗高封顶已废止），实际 " +
                                     std::to_string(fs));
         eui::Ui ui;
         eui::Screen screen{1000.0f, 600.0f};
@@ -636,15 +636,15 @@ REGISTER_TEST(home_stat_chart_dual_tier,
         DOCTEST_REQUIRE(number != nullptr);
         DOCTEST_REQUIRE(desc != nullptr);
         DOCTEST_REQUIRE(root != nullptr);
-        // 基准 = pad×2(64)+页头40+统计144×0.85(122.4)+gap×3(60)+图220+操作44
-        // = 550.4；余高 49.6−0.5=49.1 → 统计 131.238，图表 260.262
+        // 基准 = pad×2(64)+页头40+统计144+gap×3(60)+图220+操作44 = 572；
+        // 余高 600−572−0.5=27.5 → 统计 148.95，图表 242.55
         DOCTEST_CHECK_MESSAGE(
-            std::fabs(stat->frame.height - 131.238f) < 0.5f,
-            "600 档统计卡高应为 131.238，实际 " +
+            std::fabs(stat->frame.height - 148.95f) < 0.5f,
+            "600 档统计卡高应为 148.95，实际 " +
                 std::to_string(stat->frame.height));
         DOCTEST_CHECK_MESSAGE(
-            std::fabs(chart->frame.height - 260.262f) < 0.5f,
-            "600 档图表卡高应为 260.262，实际 " +
+            std::fabs(chart->frame.height - 242.55f) < 0.5f,
+            "600 档图表卡高应为 242.55，实际 " +
                 std::to_string(chart->frame.height));
         // 卡内三行随卡高派生：仍在卡内、number 与 desc 不重叠
         const float cardTop = stat->frame.y;
@@ -722,7 +722,7 @@ REGISTER_TEST(home_stat_chart_dual_tier,
 REGISTER_TEST(home_no_chart_extra_to_stats,
               "home_module: ClaudeProxy 关闭时余高全给统计行（无图表卡）", {
     core::theme::setFontScale(1.0f);
-    core::theme::setWindowHeight(960.0f);  // H19 不封顶 → fs=1
+    core::theme::setWindowHeight(960.0f);  // 窗高不封顶 → fs=1
 
     ::core::Router router;
     GatingStubModule home(::core::PageId::Home, "home");

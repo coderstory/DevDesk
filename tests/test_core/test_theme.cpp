@@ -163,8 +163,8 @@ REGISTER_TEST(theme_component_tokens_light_source, "theme: componentTokens deriv
     return true;
 })
 
-// 浅色主题的 WCAG AA 对比度护栏：辅助灰与 primaryText 在所有落底上 ≥4.5:1（按 WCAG
-// 2.x 相对亮度定义）。这些字号落在 11-13px，降一档就直接不合格
+// 浅色主题的 WCAG AA 对比度护栏：辅助灰（含 textDisabled）与 primaryText/accentText
+// 在所有落底上 ≥4.5:1（按 WCAG 2.x 相对亮度定义）。这些字号落在 11-13px，降一档就直接不合格
 
 namespace {
 
@@ -195,6 +195,12 @@ REGISTER_TEST(theme_light_contrast_wcag, "theme: 浅色辅助灰/主色文字 WC
     DOCTEST_CHECK(wcagContrast(c.textTertiary, c.surface) >= 4.5);
     DOCTEST_CHECK(wcagContrast(c.textTertiary, c.primarySoftBg) >= 4.0);
     DOCTEST_CHECK(wcagContrast(c.textSecondary, c.background) >= 4.5);
+    // 禁用态字（2026-10-25 可读性专项：#9CA3AF → #6B7280，旧值仅 2.54:1 on #FFF）
+    DOCTEST_CHECK(wcagContrast(c.textDisabled, c.background) >= 4.5);
+    DOCTEST_CHECK(wcagContrast(c.textDisabled, c.surface) >= 4.5);
+    // Ghost/Text 按钮字色（透明底主题色字）：浅色 #0C7E58 深绿档（primary 本身仅 1.84:1）
+    DOCTEST_CHECK(wcagContrast(c.accentText, c.background) >= 4.5);
+    DOCTEST_CHECK(wcagContrast(c.accentText, c.primarySoftBg) >= 4.5);
     // 主色作文字的场合（树选中/chip/大纲当前节/列表符号）走 primaryText，不是 primary
     // S1.2 #5: primaryText = #157E4E（浅色档 / ~4.87:1 on #FAFAF9 ≥ WCAG AA 4.5:1）
     DOCTEST_CHECK(wcagContrast(c.primaryText, c.background) >= 4.5);
@@ -205,7 +211,10 @@ REGISTER_TEST(theme_light_contrast_wcag, "theme: 浅色辅助灰/主色文字 WC
     DOCTEST_CHECK(wcagLuminance(c.textSecondary) < wcagLuminance(c.textTertiary));
     // 深色档同样进护栏防退化
     DOCTEST_CHECK(wcagContrast(d.textTertiary, d.background) >= 4.5);
+    DOCTEST_CHECK(wcagContrast(d.textDisabled, d.background) >= 4.5);
     DOCTEST_CHECK(wcagContrast(d.primaryText, d.background) >= 4.5);
     DOCTEST_CHECK(wcagContrast(d.primaryText, d.primarySoftBg) >= 4.5);
+    DOCTEST_CHECK(wcagContrast(d.accentText, d.background) >= 4.5);
+    DOCTEST_CHECK(wcagContrast(d.accentText, d.primarySoftBg) >= 4.5);
     return true;
 })
