@@ -207,13 +207,13 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // W4 向导：内容区按步切显，步骤胶囊直点跳步（触发段在 step 1、
+    // 竖向导航向导：内容区按步切显，nav 项 .bg 直点跳步（触发段在 step 1、
     // AI 草稿在 step 2），与 doctest test_agent_ui 的向导用法同缝。
     auto gotoStep = [&](int n) {
         const auto* pill =
-            findElement("agent.dialog.task.step." + std::to_string(n));
+            findElement("agent.dialog.task.step." + std::to_string(n) + ".bg");
         if (pill == nullptr) {
-            std::cerr << "agent_dialog_probe: 步骤胶囊 step." << n << " 缺失\n";
+            std::cerr << "agent_dialog_probe: 步骤节点 step." << n << ".bg 缺失\n";
             passed = false;
             return;
         }

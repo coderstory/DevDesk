@@ -20,7 +20,9 @@
 //          .trigger（segment 根，选项 .trigger.item.N——可点面 .bg，callDropdownChange 有回落）/
 //          .cron（仅定时）/ .once（仅闹钟，本地时间输入）/
 //          .limit（仅定时·事件，行为开关行的"只跑一次"）/
-//          .slot / .iter / .destructive / .cancel / .save / .close / .step.<i>[.conn]（步骤胶囊+短连接线；当前步校验失败标 "! " 红字，无全局错误行）/
+//          .slot / .iter / .destructive / .cancel / .save / .close /
+//          .step.<i>（左侧竖向 nav 项 (0,44+i*56) 160×56：.bg 可点面/.bar 当步左条/
+//          .num 序号圆/.label/.sub；当前步校验失败标 "!" 红字，无全局错误行）/
 //          .aichip（指令标签行右缘「✎ AI 起草」chip，T7b；UAT5 从标题行挪入）/
 //          .trigger.hint（触发语义提示，定时/闹钟预览非空时让位）/
 //          .meta.hint（迭代上限后果 + 破坏性操作说明，恒渲染）
@@ -412,13 +414,12 @@ REGISTER_TEST(agent_ui_new_task_dialog_fields,
     DOCTEST_CHECK(ui2.find("agent.dialog.task.test") == nullptr);
     DOCTEST_CHECK(ui2.find("agent.dialog.task.close") != nullptr);
 
-    // 步骤条：4 个胶囊节点（bg 可点面）+ 短连接线
+    // 步骤条：4 个竖向 nav 项（.bg 可点面）
     for (int i = 0; i < 4; ++i) {
         DOCTEST_CHECK_MESSAGE(
             ui2.find("agent.dialog.task.step." + std::to_string(i) + ".bg") != nullptr,
             "步骤 " + std::to_string(i) + " 节点缺失");
     }
-    DOCTEST_CHECK(ui2.find("agent.dialog.task.step.1.conn") != nullptr);
 
     // Step 0（基础信息）：名称字段可见；其它步内容不可见
     DOCTEST_CHECK(ui2.find("agent.dialog.task.name") != nullptr);   // 名称输入在 step 0
@@ -2361,7 +2362,7 @@ REGISTER_TEST(agent_tools_height_dual_tier,
 // 超长任务名不挤位（输入盒宽恒定 + 行内动作不被标题挤出）。几何断言走 layout 后
 // frame 绝对坐标再减面板原点（与详情弹窗几何用例同口径）。
 REGISTER_TEST(agent_ui_dialog_geometry_design_size_and_budget,
-              "agent_ui: 任务弹窗几何——弹性宽 800x496（步骤条）/ segment 平分整行 / 槽位下拉屏内 / 超长文本不挤位", {
+              "agent_ui: 任务弹窗几何——弹性宽 800x520（竖向导航）/ segment 平分整行 / 槽位下拉屏内 / 超长文本不挤位", {
     test_support::TestDb tdb("agentui", "dlggeom");
     test_support::FakeProfileSource profile;
     ToolGuard statsGuard{"app.stats", "app.notify"};
@@ -2392,15 +2393,15 @@ REGISTER_TEST(agent_ui_dialog_geometry_design_size_and_budget,
     eui::Ui ui2;
     composeTo(ui2, mod, kScreen, "agent_ui_geo2");
 
-    // ① 面板设计尺寸：弹性宽 = max(720, 1600/2) = 800；高 496
+    // ① 面板设计尺寸：弹性宽 = max(720, 1600/2) = 800；高 520（标题/底栏各 44 带 + 内容区 432）
     const auto* panel = ui2.find("agent.dialog.task.panel");
     DOCTEST_REQUIRE(panel != nullptr);
     DOCTEST_CHECK_MESSAGE(nearPx(panel->frame.width, 800.0f),
                           "任务弹窗宽应为弹性值 800，实测 " +
                               std::to_string(panel->frame.width));
-    // W4 C1：步骤条重做后高 496（内容区 280 + 步骤条 64 + 标题/按钮/间距）
-    DOCTEST_CHECK_MESSAGE(nearPx(panel->frame.height, 496.0f),
-                          "任务弹窗高应为设计值 496，实测 " +
+    // 竖向导航案：左 nav 160 + 内容区 432 + 底栏 44 + 标题栏 44 = 520
+    DOCTEST_CHECK_MESSAGE(nearPx(panel->frame.height, 520.0f),
+                          "任务弹窗高应为设计值 520，实测 " +
                               std::to_string(panel->frame.height));
     DOCTEST_CHECK(panel->frame.x >= -0.5f && panel->frame.y >= -0.5f &&
                   panel->frame.x + panel->frame.width <= kScreen.width + 0.5f &&
@@ -2408,51 +2409,50 @@ REGISTER_TEST(agent_ui_dialog_geometry_design_size_and_budget,
     const float px = panel->frame.x;
     const float py = panel->frame.y;
     const float pw = 800.0f;
-    // 裁定 2：内容区双侧内边距 24px（v1.0 §三.4），正文行宽 = 弹窗宽 − 2×24 = −48。
-    // 旧锚 56（28×2）为收紧前口径；kDialogBodyInsetX = 48 是产品真值。
-    const float innerW = pw - 48.0f;   // 752
+    // 竖向导航案内容区：左缘 164（nav 160 + 1px 边线）、pad 16 → 字段 x0=180，
+    // 字段有效宽 = 弹窗宽 − 196（左导航 160 + 双侧 pad 32）。
+    const float kContentW = pw - 196.0f;   // 604
 
-    // ② 步骤胶囊几何：4 块面节点 y=64 h=32 r=16，首节点 step.0 在 (24, 64)
-    constexpr float kPillH = 32.0f;
-    constexpr float kStepperY = 64.0f;
-    const auto* step0 = ui2.find("agent.dialog.task.step.0");
+    // ② 竖向导航几何：项面 (0, 44+i*56) 160×56，首项 step.0.bg 顶=标题栏带底
+    const auto* step0 = ui2.find("agent.dialog.task.step.0.bg");
     DOCTEST_REQUIRE(step0 != nullptr);
-    DOCTEST_CHECK_MESSAGE(nearPx(step0->frame.x - px, 24.0f), "step.0 x 应=24（实测锚定），实测 " + std::to_string(step0->frame.x - px));
-    DOCTEST_CHECK_MESSAGE(nearPx(step0->frame.y - py, kStepperY), "step.0 y 应=64");
-    DOCTEST_CHECK_MESSAGE(nearPx(step0->frame.height, kPillH), "step.0 h 应=32");
+    DOCTEST_CHECK_MESSAGE(nearPx(step0->frame.x - px, 0.0f), "step.0.bg x 应=0（贴弹窗左缘），实测 " + std::to_string(step0->frame.x - px));
+    DOCTEST_CHECK_MESSAGE(nearPx(step0->frame.y - py, 44.0f), "step.0.bg y 应=44");
+    DOCTEST_CHECK_MESSAGE(nearPx(step0->frame.width, 160.0f), "step.0.bg w 应=160");
+    DOCTEST_CHECK_MESSAGE(nearPx(step0->frame.height, 56.0f), "step.0.bg h 应=56");
 
-    // ②b step 0：名称输入 y=144（kContentTop+28）h=40 全宽（x0=24）
+    // ②b step 0：名称输入 y=88（44 内容区顶 + 16 pad + 28）h=40 全内容宽（x0=180）
     const auto* nameInput = ui2.find("agent.dialog.task.name");
     DOCTEST_REQUIRE(nameInput != nullptr);
-    DOCTEST_CHECK_MESSAGE(nearPx(nameInput->frame.x - px, 24.0f), "名称输入应 x=24");
-    DOCTEST_CHECK_MESSAGE(nearPx(nameInput->frame.y - py, 144.0f), "名称输入应 y=144");
+    DOCTEST_CHECK_MESSAGE(nearPx(nameInput->frame.x - px, 180.0f), "名称输入应 x=180");
+    DOCTEST_CHECK_MESSAGE(nearPx(nameInput->frame.y - py, 88.0f), "名称输入应 y=88");
     DOCTEST_CHECK_MESSAGE(nearPx(nameInput->frame.height, 40.0f), "名称输入应高 40");
-    DOCTEST_CHECK_MESSAGE(nearPx(nameInput->frame.width, innerW),
-                          "名称输入应全宽 752，实测 " +
+    DOCTEST_CHECK_MESSAGE(nearPx(nameInput->frame.width, kContentW),
+                          "名称输入应全内容宽 604，实测 " +
                               std::to_string(nameInput->frame.width));
 
-    // ③ 导航 step 1：触发 segment 平分整行（opW=(752−5×6)/6≈120.33 x=24+i×(opW+6) y=136 h=32）
+    // ③ 导航 step 1：触发 segment 平分整行（opW=(604−5×6)/6 x=180+i×(opW+6) y=80 h=32）
     eui::Ui ui2s1;
     DOCTEST_REQUIRE(clickId(ui2, "agent.dialog.task.step.1.bg"));
     composeTo(ui2s1, mod, kScreen, "agent_ui_geo2s1");
-    const float opW = (innerW - 6.0f * 5.0f) / 6.0f;  // 与产品码同公式
+    const float opW = (kContentW - 6.0f * 5.0f) / 6.0f;  // 与产品码同公式
     for (int i = 0; i < module::agent::kTriggerCount; ++i) {
         const auto* op = ui2s1.find("agent.dialog.task.trigger.item." +
                                     std::to_string(i) + ".bg");
         DOCTEST_REQUIRE(op != nullptr);
         DOCTEST_CHECK_MESSAGE(
-            nearPx(op->frame.x - px, 24.0f + (opW + 6.0f) * i),
+            nearPx(op->frame.x - px, 180.0f + (opW + 6.0f) * i),
             "segment 第 " + std::to_string(i) + " 项 x 错位");
         DOCTEST_CHECK_MESSAGE(nearPx(op->frame.width, opW),
                               "segment 第 " + std::to_string(i) + " 项宽应 " +
                                   std::to_string(opW));
         DOCTEST_CHECK(nearPx(op->frame.height, 32.0f));
-        DOCTEST_CHECK(nearPx(op->frame.y - py, 136.0f));
+        DOCTEST_CHECK(nearPx(op->frame.y - py, 80.0f));
     }
     const auto* segLast = ui2s1.find("agent.dialog.task.trigger.item.5.bg");
     DOCTEST_REQUIRE(segLast != nullptr);
     DOCTEST_CHECK(segLast->frame.x - px + segLast->frame.width <=
-                  24.0f + innerW + 0.5f);
+                  180.0f + kContentW + 0.5f);
 
     // ④ 导航 step 2：goal textarea h≥60 全宽；行底 ≤ 按钮行顶
     eui::Ui ui2s2;
@@ -2463,8 +2463,8 @@ REGISTER_TEST(agent_ui_dialog_geometry_design_size_and_budget,
     DOCTEST_CHECK_MESSAGE(goal->frame.height >= 60.0f,
                           "编辑弹窗 goal 输入应 ≥60px，实测 " +
                               std::to_string(goal->frame.height));
-    DOCTEST_CHECK_MESSAGE(nearPx(goal->frame.width, innerW),
-                          "goal 输入应全宽 752，实测 " +
+    DOCTEST_CHECK_MESSAGE(nearPx(goal->frame.width, kContentW),
+                          "goal 输入应全内容宽 604，实测 " +
                               std::to_string(goal->frame.width));
     const auto* saveBtn = ui2s2.find("agent.dialog.task.save");
     DOCTEST_REQUIRE_MESSAGE(saveBtn != nullptr, "保存按钮缺失");
@@ -2479,8 +2479,8 @@ REGISTER_TEST(agent_ui_dialog_geometry_design_size_and_budget,
     DOCTEST_CHECK(ui2s2.find("agent.dialog.task.autonote") == nullptr);
     DOCTEST_CHECK_MESSAGE(
         saveBtn->frame.y + saveBtn->frame.height <=
-            panel->frame.y + panel->frame.height - 7.5f,
-        "按钮行溢出面板底（btnY=h-56）");
+            panel->frame.y + panel->frame.height - 1.5f,
+        "按钮行溢出面板底（底栏带 H-44 + 按钮高 40，底距 2）");
 
     // ⑤ 导航 step 3：槽位下拉展开不越屏 + 破坏性行位置稳定
     eui::Ui ui2s3;
@@ -3400,20 +3400,20 @@ REGISTER_TEST(agent_ui_cron_template_dropdown_and_preview,
                          std::string(module::agent::kCronTemplates[i].label));
     }
 
-    // ② 布局契约：面板高 496；破坏性行在 step 3 才渲染（切过去取 y）
+    // ② 布局契约：面板高 520；破坏性行在 step 3 才渲染（切过去取 y）
     const auto* panel3 = ui3.find("agent.dialog.task.panel");
     DOCTEST_REQUIRE(panel3 != nullptr);
-    // W4 C1：步骤条重做后高 496
-    DOCTEST_CHECK_MESSAGE(nearPx(panel3->frame.height, 496.0f),
-                          "任务弹窗高应恒为 496，实测 " +
+    // 竖向导航案：高恒 520（标题/底栏各 44 带 + 内容区 432）
+    DOCTEST_CHECK_MESSAGE(nearPx(panel3->frame.height, 520.0f),
+                          "任务弹窗高应恒为 520，实测 " +
                               std::to_string(panel3->frame.height));
     eui::Ui ui3s3;
     DOCTEST_REQUIRE(clickId(ui3, "agent.dialog.task.step.3.bg"));
     composeTo(ui3s3, mod, kScreen, "agent_ui_crontpl3s3");
     const auto* metaRow3 = ui3s3.find("agent.dialog.task.destructive");
     DOCTEST_REQUIRE(metaRow3 != nullptr);
-    DOCTEST_CHECK_MESSAGE(nearPx(metaRow3->frame.y, panel3->frame.y + 214.0f),
-                          "破坏性行 y 应恒为面板顶 +214（W4 步骤条后），实测 " +
+    DOCTEST_CHECK_MESSAGE(nearPx(metaRow3->frame.y, panel3->frame.y + 158.0f),
+                          "破坏性行 y 应恒为面板顶 +158（s3y=60+52+18+组标 20，开关本体 +4），实测 " +
                               std::to_string(metaRow3->frame.y));
     // cron 为空 → 预览行不渲染（skipIfEmpty）
     DOCTEST_CHECK(ui3.find("agent.dialog.task.cron.preview") == nullptr);
@@ -4041,9 +4041,9 @@ REGISTER_TEST(agent_ui_dialog_geometry_sysprompt_within_bounds,
 
     const auto* panel = ui2.find("agent.dialog.task.panel");
     DOCTEST_REQUIRE(panel != nullptr);
-    // W4 C1：弹窗高 496（步骤条重做后）
-    DOCTEST_CHECK_MESSAGE(nearPx(panel->frame.height, 496.0f),
-                          "任务弹窗高应为设计值 496，实测 " +
+    // 竖向导航案：弹窗高 520（标题/底栏各 44 带 + 内容区 432）
+    DOCTEST_CHECK_MESSAGE(nearPx(panel->frame.height, 520.0f),
+                          "任务弹窗高应为设计值 520，实测 " +
                               std::to_string(panel->frame.height));
 
     // W4 C3：执行记忆/自动记录已移除（打开态 step 0 即不渲染）
@@ -4066,14 +4066,14 @@ REGISTER_TEST(agent_ui_dialog_geometry_sysprompt_within_bounds,
             std::to_string(sysprompt->frame.y + sysprompt->frame.height) +
             " 压到按钮行顶 " + std::to_string(saveBtn->frame.y));
 
-    // 导航到 step 3：安全组破坏性行 y 恒等面板顶 +216（W4 步骤条后）
+    // 导航到 step 3：安全组破坏性行 y 恒等面板顶 +158（s3y=60+52+18+组标 20，开关本体 +4）
     eui::Ui ui2s3;
     DOCTEST_REQUIRE(clickId(ui2s2, "agent.dialog.task.step.3.bg"));
     composeTo(ui2s3, mod, kScreen, "agent_ui_notegeo2s3");
     const auto* metaRow = ui2s3.find("agent.dialog.task.destructive");
     DOCTEST_REQUIRE(metaRow != nullptr);
-    DOCTEST_CHECK_MESSAGE(nearPx(metaRow->frame.y, panel->frame.y + 214.0f),
-                          "破坏性行 y 应恒为面板顶 +214（W4 步骤条后），实测 " +
+    DOCTEST_CHECK_MESSAGE(nearPx(metaRow->frame.y, panel->frame.y + 158.0f),
+                          "破坏性行 y 应恒为面板顶 +158，实测 " +
                               std::to_string(metaRow->frame.y));
 
     mod.onStop();
@@ -4889,9 +4889,10 @@ REGISTER_TEST(agent_ui_dialog_switch_labels_fit_boxes,
     const std::string limitProblem = labelFitProblem(ui3, "agent.dialog.task.limit");
     DOCTEST_CHECK_MESSAGE(limitProblem.empty(), limitProblem);
 
-    // ② W4 步骤条：执行与安全只在 step 3——limit 与模型槽位/迭代上限同排
-    //（面板局部 y=116），破坏性开关在「安全」组（116+52+18+20+4=210，开关本体 +4=214）；
-    // goal 在 step 2，右缘同属内容列右边界（x0+innerW），跨步几何仍须对齐。
+    // ② 竖向导航案：执行与安全只在 step 3——limit 与模型槽位/迭代上限同排
+    //（面板局部 y=60，内容区首行），破坏性开关在「安全」组（60+52+18+20+4=154，
+    // 开关本体 +4=158）；goal 在 step 2，右缘同属内容列右边界（x0+kContentW），
+    // 跨步几何仍须对齐。
     const auto* destructive = ui3.find("agent.dialog.task.destructive");
     const auto* limit = ui3.find("agent.dialog.task.limit");
     DOCTEST_REQUIRE_MESSAGE(destructive != nullptr && limit != nullptr,
@@ -4904,11 +4905,11 @@ REGISTER_TEST(agent_ui_dialog_switch_labels_fit_boxes,
     const auto* goal = ui3s2.find("agent.dialog.task.goal");
     DOCTEST_REQUIRE_MESSAGE(goal != nullptr, "step 2 缺 goal 输入节点");
     // y 断言用面板相对坐标（绝对 y 含 panel 居中偏移）
-    DOCTEST_CHECK_MESSAGE(nearPx(limit->frame.y - panel3->frame.y, 116.0f),
-                          "只跑一次应在 step 3 首行（面板局部 y=116），实测 y=" +
+    DOCTEST_CHECK_MESSAGE(nearPx(limit->frame.y - panel3->frame.y, 60.0f),
+                          "只跑一次应在 step 3 首行（面板局部 y=60），实测 y=" +
                               std::to_string(limit->frame.y - panel3->frame.y));
-    DOCTEST_CHECK_MESSAGE(nearPx(destructive->frame.y - panel3->frame.y, 214.0f),
-                          "破坏性开关应在安全组（面板局部 y=214），实测 y=" +
+    DOCTEST_CHECK_MESSAGE(nearPx(destructive->frame.y - panel3->frame.y, 158.0f),
+                          "破坏性开关应在安全组（面板局部 y=158），实测 y=" +
                               std::to_string(destructive->frame.y - panel3->frame.y));
     DOCTEST_CHECK_MESSAGE(
         nearPx(limit->frame.x + limit->frame.width,
@@ -4975,7 +4976,7 @@ std::string draftResponseBody(const std::string& draftJson) {
 
 REGISTER_TEST(agent_ui_draft_chip_and_subdialog_lifecycle,
               "agent_ui_draft: 指令行 chip 几何（不压 goal 行 / 不压 ✕）/ 子弹窗开合"
-              "（chip·✕·遮罩·Esc 先子后父）/ 外层 496 高（W4 步骤条）", {
+              "（chip·✕·遮罩·Esc 先子后父）/ 外层 520 高（竖向导航）", {
     test_support::TestDb tdb("agentui", "draftlife");
     test_support::FakeProfileSource profile;
     ToolGuard statsGuard{"app.stats", "app.notify"};
@@ -4994,14 +4995,14 @@ REGISTER_TEST(agent_ui_draft_chip_and_subdialog_lifecycle,
     eui::Ui uiB;
     composeTo(uiB, mod, kScreen, "agent_ui_dfl1");
 
-    // 外层几何契约：W4 C1 步骤条重做后 496 高（弹性宽 + 紧凑行预算）
+    // 外层几何契约：竖向导航案 520 高（弹性宽 + 内容区 432 + 双 44 带）
     const auto* panel = uiB.find("agent.dialog.task.panel");
     DOCTEST_REQUIRE(panel != nullptr);
-    DOCTEST_CHECK_MESSAGE(nearPx(panel->frame.height, 496.0f),
-                          "任务弹窗高应恒为 496，实测 " +
+    DOCTEST_CHECK_MESSAGE(nearPx(panel->frame.height, 520.0f),
+                          "任务弹窗高应恒为 520，实测 " +
                               std::to_string(panel->frame.height));
 
-    // chip 在 step 2 才渲染；几何：面板内、指令标签行右缘（y=112 h=32）、右缘 ≤ ✕ 左缘
+    // chip 在 step 2 才渲染；几何：面板内、指令标签行右缘（y=60 h=32）、右缘 ≤ ✕ 左缘
     eui::Ui uiBs2;
     DOCTEST_REQUIRE(clickId(uiB, "agent.dialog.task.step.2.bg"));
     composeTo(uiBs2, mod, kScreen, "agent_ui_dfl1s2");
@@ -5009,8 +5010,8 @@ REGISTER_TEST(agent_ui_draft_chip_and_subdialog_lifecycle,
     DOCTEST_REQUIRE(chipBg != nullptr);
     DOCTEST_CHECK_MESSAGE(frameContained(*panel, *chipBg),
                           "AI chip 跑出弹窗面板");
-    DOCTEST_CHECK_MESSAGE(nearPx(chipBg->frame.y - panel->frame.y, 112.0f),
-                          "AI chip 应 y=112（指令标签行右缘），实测 " +
+    DOCTEST_CHECK_MESSAGE(nearPx(chipBg->frame.y - panel->frame.y, 60.0f),
+                          "AI chip 应 y=60（指令标签行右缘），实测 " +
                               std::to_string(chipBg->frame.y - panel->frame.y));
     DOCTEST_CHECK_MESSAGE(nearPx(chipBg->frame.height, 32.0f), "AI chip 应高 32");
     const auto* closeBtn = uiBs2.find("agent.dialog.task.close");
@@ -6377,10 +6378,10 @@ REGISTER_TEST(agent_ui_detail_error_scroll,
 
 
 // F1 弹窗防回潮：P7 任务向导 + 删除确认逐弹窗「全元素在框内」+ 标题锚
-// （y=16 / fontSize=20，规格 S2.4）。回退即红：任一可见子孙 frame 越出 panel
-// （>0.5px）、标题 y 偏移≠16、标题字号≠20。
+// （向导 y=8：44 高标题栏带内居中；删除确认 y=16（S2.4）；fontSize=20）。
+// 回退即红：任一可见子孙 frame 越出 panel（>0.5px）、标题 y 偏移不符、标题字号≠20。
 REGISTER_TEST(agent_ui_dialog_frame_containment,
-              "agent_ui: P7 任务向导/删除确认弹窗全元素在框内 + 标题 y=16/字号 20（防回潮）", {
+              "agent_ui: P7 任务向导/删除确认弹窗全元素在框内 + 标题 y=8|16/字号 20（防回潮）", {
     test_support::TestDb tdb("agentui", "dialogframe");
     test_support::FakeProfileSource profile;
     module::agent::AgentModule::Deps deps;
@@ -6394,11 +6395,22 @@ REGISTER_TEST(agent_ui_dialog_frame_containment,
     const std::string tid = std::to_string(t1.value());
 
     auto check = [&](eui::Ui& ui, const char* panelId, const char* titleId,
-                     const char* tag) -> bool {
+                     const char* tag, float titleY) -> bool {
         std::string v = dialog_frame::allInside(ui, panelId);
         DOCTEST_CHECK_MESSAGE(v.empty(), std::string(tag) + " 全元素在框内: " + v);
-        v = dialog_frame::titleAnchor(ui, panelId, titleId);
-        DOCTEST_CHECK_MESSAGE(v.empty(), std::string(tag) + " 标题锚: " + v);
+        const auto* panel = ui.find(panelId);
+        const auto* title = ui.find(titleId);
+        DOCTEST_REQUIRE_MESSAGE(panel != nullptr && title != nullptr,
+                                std::string(tag) + " 标题/面板缺失");
+        const float dy = title->frame.y - panel->frame.y;
+        DOCTEST_CHECK_MESSAGE(std::fabs(dy - titleY) <= dialog_frame::kPxTol,
+                              std::string(tag) + " 标题 y 偏移应为 " +
+                                  std::to_string(titleY) + "，实测 " +
+                                  std::to_string(dy));
+        DOCTEST_CHECK_MESSAGE(std::fabs(title->fontSize -
+                                        dialog_frame::kTitleFontSize) <= 0.01f,
+                              std::string(tag) + " 标题字号应为 20，实测 " +
+                                  std::to_string(title->fontSize));
         return true;
     };
 
@@ -6407,7 +6419,8 @@ REGISTER_TEST(agent_ui_dialog_frame_containment,
     DOCTEST_REQUIRE(openNewTaskWithGoal(ui, mod, "agent_df", "框内向导"));
     eui::Ui ui2;
     composeTo(ui2, mod, kScreen, "agent_df_chk");
-    DOCTEST_CHECK(check(ui2, "agent.dialog.task.panel", "agent.dialog.task.title", "P7 向导"));
+    DOCTEST_CHECK(check(ui2, "agent.dialog.task.panel", "agent.dialog.task.title",
+                        "P7 向导", 8.0f));
 
     // 关向导 → 任务行删除 chip → P10 删除确认
     eui::Ui ui3;
@@ -6420,7 +6433,7 @@ REGISTER_TEST(agent_ui_dialog_frame_containment,
     eui::Ui ui5;
     composeTo(ui5, mod, kScreen, "agent_df_del2");
     DOCTEST_CHECK(check(ui5, "agent.dialog.delete.panel", "agent.dialog.delete.title",
-          "P10 删除确认"));
+                        "P10 删除确认", dialog_frame::kTitleY));
 
     mod.onStop();
     return true;
