@@ -180,7 +180,7 @@ constexpr float kPageHintH = 16.0f;
 
 // 任务弹窗几何（UAT5 重设计：弹性宽 = max(720, 窗口/2)，demo 智能体面板的紧凑行高）
 // kDialogGap/kDialogLabelW/kDialogRowH 已收进 agent_ui_shared.h（与详情弹窗共用真源）
-constexpr float kTaskDialogH = 496.0f;        // UAT6 步骤条重设计：内容区 280px + 步骤条 64px + 标题/按钮/间距
+constexpr float kTaskDialogH = 520.0f;        // UAT6 竖向导航案：标题栏/底栏各 44 带 + 内容区 432
 constexpr float kGoalInputH = 64.0f;          // demo 指令 textarea rows≈3
 constexpr float kGroupTitleH = 20.0f;        // 分组标题高（14px 加粗 + 行高 20）
 
@@ -2248,8 +2248,13 @@ void AgentModule::composeTaskDialog(
     const components::theme::ThemeColorTokens& themeTokens) {
     const float w = std::max(640.0f, screen.width * 0.5f);
     const float h = kTaskDialogH;
-    const float innerW = w - ui_kit::kDialogBodyInsetX;
-    const float x0 = ui_kit::kDialogInsetX;
+    // 竖向导航案几何：标题栏/底栏各占上下 44 带，左导航固定 160（弹窗宽仍弹性），内容区夹于其间
+    constexpr float kVertNavW = 160.0f;        // 左导航宽
+    constexpr float kVertContentX = 164.0f;    // 内容区左缘 = 导航右缘 + 呼吸
+    constexpr float kVertContentPad = 16.0f;   // 内容区四边内距
+    constexpr float kContentY = 44.0f;         // 标题栏高 = 内容区顶 = 底栏高
+    const float kContentW = w - kVertContentX - kVertContentPad * 2.0f;  // 字段有效宽 = W-196
+    const float x0 = kVertContentX + kVertContentPad;                    // 字段左缘 = 180
     const bool isSchedule = editTriggerIdx_ == kTriggerScheduleIdx;
     const bool isEvent = editTriggerIdx_ == kTriggerEventIdx;
     const bool isOnce = editTriggerIdx_ == kTriggerOnceIdx;
@@ -2273,10 +2278,6 @@ void AgentModule::composeTaskDialog(
         if (i == 2) return !editGoal_.empty();
         return true;  // step 3 执行与安全
     };
-
-    // 步骤条几何：4 块面胶囊均匀分布 + 短连接线（W4 C1 重做）
-    constexpr float kContentTop = 116.0f;      // 内容区起始 Y（步骤条 64+32+20）
-    constexpr float kContentBot = 388.0f;      // 内容区结束 Y
 
     // 试运行结果收割：dryRun_ done 后才 join + 显结果（线程安全：只用原子 done 作同步点）
     if (dryRun_ && dryRun_->done.load(std::memory_order_acquire)) {
@@ -2306,13 +2307,19 @@ void AgentModule::composeTaskDialog(
         })
         .content([&] {
             if (!taskDialogOpen_) return;
+            // 标题栏独立段 (0,0) W×44：标题带内垂直居中（行高 28），底部 1px 分隔线
             ui_kit::drawDialogTitle(ui, "agent.dialog.task.title", w,
                                     isEdit ? "编辑任务" : "新建智能任务",
-                                    20.0f, t.colors.textPrimary, {.y = 16.0f});
+                                    20.0f, t.colors.textPrimary, {.y = 8.0f});
+            ui.rect("agent.dialog.task.titlebar.edge")
+                .position(0.0f, kContentY - 1.0f)
+                .size(w, 1.0f)
+                .color(t.colors.borderDefault)
+                .build();
 
-            // ✕ 关闭
+            // ✕ 关闭（带内垂直居中）
             ui.text("agent.dialog.task.close")
-                .position(w - 56.0f, 22.0f)
+                .position(w - 56.0f, 8.0f)
                 .size(28.0f, 28.0f)
                 .text("✕")
                 .fontSize(14.0f)
@@ -2323,55 +2330,95 @@ void AgentModule::composeTaskDialog(
                 .onClick([this] { closeTaskDialog(); })
                 .build();
 
-            // ====== 步骤条（块面柔和式：胶囊节点 + 短连接线 + 序号.名称） ======
-            // 四态：completed=#E6FBF2 底+#36D399 字+✓ / current=#36D399 填充+白字
-            //       future=#F3F4F6 底+#9CA3AF 字 / error=#EF4444 10% 底+#EF4444 字+!
+            // ====== 左侧竖向导航 (0,44) 160×(H-44)：nav-item 高 56，序号圆 r=11 + 标签/副标竖排 ======
+            // 四态：done=#E6FBF2 底+#36D399 字+✓ / cur=#36D399 填充+白字+左3px绿条
+            //       cur-err=#EF4444 10% 底+红字+!+左3px红条 / todo=#F3F4F6 底+#9CA3AF 字
             {
-                constexpr float kPillH = 32.0f;
-                constexpr float kPillRadius = 16.0f;
-                constexpr float kConnW = 16.0f;
-                constexpr float kStepperY = 64.0f;
-                const float pillW = (innerW - kConnW * (kStepCount - 1)) / kStepCount;
+                // 侧栏底（#FAFAF9）+ 右缘 1px 边线
+                ui.rect("agent.dialog.task.nav")
+                    .position(0.0f, kContentY)
+                    .size(kVertNavW, h - kContentY)
+                    .color(t.colors.background)
+                    .build();
+                ui.rect("agent.dialog.task.nav.edge")
+                    .position(kVertNavW, kContentY)
+                    .size(1.0f, h - kContentY)
+                    .color(t.colors.borderDefault)
+                    .build();
+
+                constexpr float kVertNavItemH = 56.0f;
+                constexpr float kVertNumD = 22.0f;   // 序号圆直径（r=11）
+                constexpr const char* kStepSubs[] = {
+                    "任务名称", "六类 + cron", "目标 / 系统提示词", "模型 / 限次 / 安全组"};
                 for (int i = 0; i < kStepCount; ++i) {
-                    const float px = x0 + (pillW + kConnW) * static_cast<float>(i);
                     std::string nodeId = "agent.dialog.task.step." + std::to_string(i);
-                    // 连接线（i>0）
-                    if (i > 0) {
-                        const float connX = px - kConnW;
-                        const float connY = kStepperY + kPillH * 0.5f - 2.0f;
-                        ui.rect(nodeId + ".conn")
-                            .position(connX, connY)
-                            .size(kConnW, 4.0f)
-                            .radius(2.0f)
-                            .color(i <= currentStep_ ? t.colors.primarySoftBg
-                                                     : t.colors.borderDefault)
-                            .build();
-                    }
+                    const float navY = kContentY + static_cast<float>(i) * kVertNavItemH;
                     // 当前步校验失败 → 节点标红（#EF4444 10% 底 + 红字 + !）
                     const bool stepInvalid = (i == currentStep_) && !stepValidFor(i);
-                    // 胶囊按钮
-                    components::button(ui, nodeId)
-                        .position(px, kStepperY)
-                        .size(pillW, kPillH)
-                        .text([&]() -> std::string {
-                            std::string label = std::to_string(i + 1) + ". " + kStepLabels[i];
-                            if (i < currentStep_) return "✓ " + label;
-                            if (stepInvalid) return "! " + label;
-                            return label;
-                        }())
-                        .fontSize(13.0f)
-                        .colors(
-                            i < currentStep_ ? t.colors.primarySoftBg
-                            : (stepInvalid ? eui::mixColor(t.colors.error, t.colors.background, 0.10f)
-                            : (i == currentStep_ ? t.colors.primary : t.colors.hover)),
-                            t.colors.hover,
-                            t.colors.primarySoftBg)
-                        .textColor(
-                            i < currentStep_ ? t.colors.primary
-                            : (stepInvalid ? t.colors.error
-                            : (i == currentStep_ ? t.colors.onPrimary : t.colors.textDisabled)))
-                        .radius(kPillRadius)
+                    const bool done = i < currentStep_;
+                    const bool cur = i == currentStep_;
+                    const auto itemBg = done ? t.colors.primarySoftBg
+                        : stepInvalid ? eui::mixColor(t.colors.error, t.colors.background, 0.10f)
+                        : cur ? t.colors.primary : t.colors.hover;
+                    const auto itemFg = done ? t.colors.primary
+                        : stepInvalid ? t.colors.error
+                        : cur ? t.colors.onPrimary : t.colors.textDisabled;
+                    // 可点面（可点元素 id 本身带 onClick，测试锚 <nodeId>.bg）
+                    ui.rect(nodeId + ".bg")
+                        .position(0.0f, navY)
+                        .size(kVertNavW, kVertNavItemH)
+                        .color(itemBg)
                         .onClick([this, i] { currentStep_ = i; })
+                        .build();
+                    // cur / cur-err 左 3px 态条
+                    if (cur) {
+                        ui.rect(nodeId + ".bar")
+                            .position(0.0f, navY)
+                            .size(3.0f, kVertNavItemH)
+                            .color(stepInvalid ? t.colors.error : t.colors.primary)
+                            .build();
+                    }
+                    // 序号圆（done=✓ / cur-err=!，其余显序号）
+                    const float numY = navY + (kVertNavItemH - kVertNumD) * 0.5f;
+                    ui.rect(nodeId + ".num")
+                        .position(14.0f, numY)
+                        .size(kVertNumD, kVertNumD)
+                        .radius(kVertNumD * 0.5f)
+                        .color(done ? t.colors.primarySoftBg
+                            : stepInvalid ? t.colors.error
+                            : cur ? t.colors.primary : t.colors.hover)
+                        .build();
+                    ui.text(nodeId + ".num.text")
+                        .position(14.0f, numY)
+                        .size(kVertNumD, kVertNumD)
+                        .text(done ? "✓" : stepInvalid ? "!" : std::to_string(i + 1))
+                        .fontSize(11.0f)
+                        .lineHeight(kVertNumD)
+                        .horizontalAlign(eui::HorizontalAlign::Center)
+                        .verticalAlign(eui::VerticalAlign::Center)
+                        .color(done ? t.colors.primary
+                            : (stepInvalid || cur) ? t.colors.onPrimary
+                                                   : t.colors.textDisabled)
+                        .build();
+                    // 标签 + 副标竖排（圆右 8px，块在 56 高内垂直居中）
+                    ui.text(nodeId + ".label")
+                        .position(44.0f, navY + 12.0f)
+                        .size(kVertNavW - 44.0f - 14.0f, 18.0f)
+                        .text(kStepLabels[i])
+                        .fontSize(13.0f)
+                        .lineHeight(18.0f)
+                        .fontWeight(600)
+                        .wrap(false)
+                        .color(itemFg)
+                        .build();
+                    ui.text(nodeId + ".sub")
+                        .position(44.0f, navY + 30.0f)
+                        .size(kVertNavW - 44.0f - 14.0f, 14.0f)
+                        .text(kStepSubs[i])
+                        .fontSize(10.0f)
+                        .lineHeight(14.0f)
+                        .wrap(false)
+                        .color(t.colors.textDisabled)
                         .build();
                 }
             }
@@ -2381,11 +2428,11 @@ void AgentModule::composeTaskDialog(
                 // --- Step 0: 基础信息（名称） ---
                 if (currentStep_ == 0) {
                     fieldCaption(ui, "agent.dialog.task.name.caption", "任务名称",
-                                 x0, kContentTop, kDialogLabelW, 24.0f,
+                                 x0, kContentY + kVertContentPad, kDialogLabelW, 24.0f,
                                  t.colors.textSecondary);
                     components::input(ui, "agent.dialog.task.name")
-                        .position(x0, kContentTop + 28.0f)
-                        .size(innerW, 40.0f)
+                        .position(x0, kContentY + kVertContentPad + 28.0f)
+                        .size(kContentW, 40.0f)
                         .value(editName_)
                         .placeholder("给任务起个名字，留空则按任务目标自动取名")
                         .fontSize(t.sizes.fontSizeBody)
@@ -2397,18 +2444,18 @@ void AgentModule::composeTaskDialog(
 
                 // --- Step 1: 触发 ---
                 if (currentStep_ == 1) {
-                    const float s1y = kContentTop;
+                    const float s1y = kContentY + kVertContentPad;
                     // 触发 segment（六类触发平分整行；保持旧 id）
                     fieldCaption(ui, "agent.dialog.task.trigger.caption", "触发方式",
                                  x0, s1y, kDialogLabelW, 16.0f,
                                  t.colors.textSecondary);
                     {
                         constexpr float kGap = 6.0f;
-                        const float opW = (innerW - kGap * (kTriggerCount - 1)) /
+                        const float opW = (kContentW - kGap * (kTriggerCount - 1)) /
                                          static_cast<float>(kTriggerCount);
                         ui.stack("agent.dialog.task.trigger")
                             .position(x0, s1y + 20.0f)
-                            .size(innerW, 32.0f)
+                            .size(kContentW, 32.0f)
                             .content([&] {
                                 for (int i = 0; i < kTriggerCount; ++i) {
                                     const bool on = editTriggerIdx_ == i;
@@ -2451,7 +2498,7 @@ void AgentModule::composeTaskDialog(
                                      t.colors.textSecondary);
                         const float cronX = x0 + kDialogLabelW;
                         const float tplW = 110.0f;
-                        const float cronW = innerW - kDialogLabelW - tplW - kDialogGap;
+                        const float cronW = kContentW - kDialogLabelW - tplW - kDialogGap;
                         components::input(ui, "agent.dialog.task.cron")
                             .position(cronX, cfgY)
                             .size(cronW, kDialogRowH)
@@ -2492,7 +2539,7 @@ void AgentModule::composeTaskDialog(
                                      t.colors.textSecondary);
                         components::input(ui, "agent.dialog.task.once")
                             .position(x0 + kDialogLabelW, cfgY)
-                            .size(innerW - kDialogLabelW, kDialogRowH)
+                            .size(kContentW - kDialogLabelW, kDialogRowH)
                             .value(editOnceAtText_)
                             .placeholder("YYYY-MM-DD HH:MM（本地时间，24 小时制）")
                             .fontSize(t.sizes.fontSizeBody)
@@ -2506,7 +2553,7 @@ void AgentModule::composeTaskDialog(
                                      x0, cfgY, kDialogLabelW, kDialogRowH,
                                      t.colors.textSecondary);
                         const float evX = x0 + kDialogLabelW;
-                        const float evW = (innerW - kDialogLabelW - kDialogGap * 2.0f) /
+                        const float evW = (kContentW - kDialogLabelW - kDialogGap * 2.0f) /
                                           static_cast<float>(kEventCount);
                         for (int i = 0; i < kEventCount; ++i) {
                             const bool on = editEvents_[i];
@@ -2559,16 +2606,16 @@ void AgentModule::composeTaskDialog(
 
                 // --- Step 2: 指令 ---
                 if (currentStep_ == 2) {
-                    const float s2y = kContentTop;
+                    const float s2y = kContentY + kVertContentPad;
                     // 指令标签行 + AI 起草 Outline 次按钮（白色底 + 主色边框，W4 C1）
                     fieldCaption(ui, "agent.dialog.task.goal.caption",
                                  "指令（发给 AI 的 prompt）", x0, s2y,
-                                 innerW - 116.0f, 24.0f, t.colors.textSecondary);
+                                 kContentW - 116.0f, 24.0f, t.colors.textSecondary);
                     {
                         const float chipW = 96.0f;
                         const float chipH = 32.0f;
                         components::button(ui, "agent.dialog.task.aichip")
-                            .position(w - ui_kit::kDialogBodyInsetX - chipW, s2y - 4.0f)
+                            .position(w - kVertContentPad - chipW, s2y)
                             .size(chipW, chipH)
                             .text("✎ AI 起草")
                             .fontSize(13.0f)
@@ -2586,7 +2633,7 @@ void AgentModule::composeTaskDialog(
                     constexpr float kStepGoalH = 60.0f;
                     components::input(ui, "agent.dialog.task.goal")
                         .position(x0, goalInY)
-                        .size(innerW, kStepGoalH)
+                        .size(kContentW, kStepGoalH)
                         .value(editGoal_)
                         .placeholder("描述这个任务要做什么，例如：把逾期的待办全部完成")
                         .fontSize(t.sizes.fontSizeBody)
@@ -2608,11 +2655,11 @@ void AgentModule::composeTaskDialog(
                     const float sysY = goalInY + kStepGoalH + 24.0f;
                     fieldCaption(ui, "agent.dialog.task.sysprompt.caption",
                                  "系统提示词（发给 AI 的环境上下文，可编辑）",
-                                 x0, sysY, innerW, 16.0f, t.colors.textSecondary);
+                                 x0, sysY, kContentW, 16.0f, t.colors.textSecondary);
                     constexpr float kStepSysH = 54.0f;
                     components::input(ui, "agent.dialog.task.sysprompt")
                         .position(x0, sysY + 20.0f)
-                        .size(innerW, kStepSysH)
+                        .size(kContentW, kStepSysH)
                         .value(editSystemPrompt_)
                         .placeholder("系统提示词，运行时注入；留空则使用自动生成的默认提示词")
                         .fontSize(t.sizes.fontSizeBody)
@@ -2626,7 +2673,7 @@ void AgentModule::composeTaskDialog(
 
                 // --- Step 3: 执行与安全 ---
                 if (currentStep_ == 3) {
-                    const float s3y = kContentTop;
+                    const float s3y = kContentY + kVertContentPad;
                     // 模型槽位（左）| 迭代上限（中）| 只跑一次（右）
                     const float slotDdW = 116.0f;
                     fieldCaption(ui, "agent.dialog.task.slot.caption", "模型槽位",
@@ -2674,7 +2721,7 @@ void AgentModule::composeTaskDialog(
                                                  kDialogGap + 80.0f + kDialogGap;
                             components::toggleSwitch(ui, "agent.dialog.task.limit")
                                 .position(limitX, s3y)
-                                .size(innerW - (limitX - x0), 32.0f)
+                                .size(kContentW - (limitX - x0), 32.0f)
                                 .text(runLimitText(editMaxRuns_ > 0 ? editMaxRuns_ : 1))
                                 .checked(editMaxRuns_ > 0)
                                 .fontSize(12.0f)
@@ -2700,7 +2747,7 @@ void AgentModule::composeTaskDialog(
                     const float safeY = hintY + 18.0f;
                     ui.text("agent.dialog.task.group.danger")
                         .position(x0, safeY)
-                        .size(innerW, kGroupTitleH)
+                        .size(kContentW, kGroupTitleH)
                         .text("安全")
                         .fontSize(14.0f)
                         .lineHeight(kGroupTitleH)
@@ -2741,19 +2788,20 @@ void AgentModule::composeTaskDialog(
             }
 
             // ====== 试运行结果行（W4 C1：移除去全局错误行，出错标节点不弹全局错误） ======
+            // 锚内容区底缘内侧（底栏上方 18px），新竖向案内容区与底栏间无过渡带
             ui_kit::drawDialogText(
                 ui, "agent.dialog.task.test.result", w, testRunResult_,
                 t.sizes.fontSizeSmall, t.colors.success,
-                {.x = x0, .y = kContentBot + 4.0f, .height = 14.0f,
+                {.x = x0, .y = h - kContentY - 18.0f, .height = 14.0f,
                  .lineHeight = 14.0f, .skipIfEmpty = true});
 
             // ====== 底部按钮区（W4 C1 重做：40px 高、8px 间距、居中文字；按钮顺序从右到左：下一步 Filled 最右 → 上一步 Outline → 测试 Outline → 取消 Ghost 最左） ======
-            const float btnY = h - 56.0f;
+            const float btnY = h - kContentY;   // 底栏带 (164, H-44) 高 44，按钮右对齐
             const float btnH = 40.0f;
             const float bw = 96.0f;
             const float testW = 112.0f;
             const float kBtnGap = 8.0f;
-            const float rightEdge = w - ui_kit::kDialogBodyInsetX;
+            const float rightEdge = w - kVertContentPad;   // 与内容区共用右留 16px
 
             // 从右到左逐按钮排位，cursor 追随后退
             float xCursor = rightEdge;
@@ -2761,7 +2809,7 @@ void AgentModule::composeTaskDialog(
             // 下一步/创建/保存（Filled，最右）
             const bool isLastStep = currentStep_ == kStepCount - 1;
             const bool canNext = stepValidFor(currentStep_);
-            const char* nextLabel = isLastStep ? (isEdit ? "保存" : "创建") : "下一步";
+            const char* nextLabel = isLastStep ? "保存" : "下一步";  // 末步定死「保存」，不区分编辑/新建态
             const float saveX = xCursor - bw;
             components::button(ui, "agent.dialog.task.save")
                 .position(saveX, btnY)
