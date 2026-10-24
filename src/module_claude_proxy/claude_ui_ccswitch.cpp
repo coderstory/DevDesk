@@ -318,6 +318,9 @@ void drawCcSwitchImportDialog(eui::Ui& ui, const eui::Screen& screen,
                 .text(allSelected ? "取消全选" : "全选")
                 .fontSize(14.0f)  // H2：fontSizeSmall(12)→14 对齐规格（按钮文字 14/600）
                 .theme(themeTokens)
+                // Ghost 变体字色 = tokens.primary（浅底 1.92:1），覆写 accentText；
+                // 须在 theme() 之后（theme() 重建 style_）
+                .textColor(t.colors.accentText)
                 .onClick([sp = &st]() {
                     const bool anySelected =
                         std::any_of(sp->selected_.begin(),

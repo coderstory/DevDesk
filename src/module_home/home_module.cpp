@@ -806,11 +806,11 @@ public:
                                     .border(1.0f, t.colors.primary)
                                     .textColor(t.colors.primary);
                             } else {
-                                // Ghost: 透明 bg + green text
+                                // Ghost: 透明 bg + accentText（primary 浅绿压浅底仅 1.92:1）
                                 builder.colors(eui::Color{0.0f, 0.0f, 0.0f, 0.0f},
                                                t.colors.primarySoftBg,
                                                t.colors.primarySoftBg)
-                                    .textColor(t.colors.primary);
+                                    .textColor(t.colors.accentText);
                             }
                             if (btn.iconCodepoint != 0) {
                                 builder.icon(btn.iconCodepoint)

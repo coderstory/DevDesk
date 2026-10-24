@@ -1631,7 +1631,7 @@ REGISTER_TEST(todo_ui_drag_empty_column_dropbar,
     // （旧缺陷：y=0 画在列顶、叠列头区域；并保证与非空列 row 0 槽位
     // 绝对坐标一致——两路径同语义）
     DOCTEST_CHECK_EQ(dropBar->frame.y, colBg->frame.y + 56.0f);
-    DOCTEST_CHECK(ui.find("todo.col.5.empty") != nullptr);  // 空态提示不受影响
+    DOCTEST_CHECK(ui.find("todo.col.5.empty.message") != nullptr);  // 空态提示不受影响
 
     mod->onStop();
     return true;
@@ -2647,14 +2647,14 @@ REGISTER_TEST(todo_ui_fontscale_tokens,
     };
     ::core::theme::setFontScale(1.0f);
     float base = 0.0f;
-    DOCTEST_REQUIRE(cardTitleSize(&base));       // 14（Body-1 派生）
+    DOCTEST_REQUIRE(cardTitleSize(&base));       // 14（Body 直读）
     ::core::theme::setFontScale(1.3f);
     float scaled = 0.0f;
     DOCTEST_REQUIRE(cardTitleSize(&scaled));
     ::core::theme::setFontScale(1.0f);           // 恢复，不影响其他用例
-    DOCTEST_CHECK_EQ(base, 13.0f);
-    // 派生式 = token(缩放后) - 1：14×1.3 - 1 = 17.2（fontSizeBody 15→14）
-    DOCTEST_CHECK_EQ(scaled, 14.0f * 1.3f - 1.0f);
+    DOCTEST_CHECK_EQ(base, 14.0f);
+    // 派生式 = token(缩放后)：14×1.3 = 18.2
+    DOCTEST_CHECK_EQ(scaled, 14.0f * 1.3f);
     return true;
 })
 

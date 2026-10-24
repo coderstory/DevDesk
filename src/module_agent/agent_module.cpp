@@ -2362,7 +2362,7 @@ void AgentModule::composeTaskDialog(
                         : cur ? t.colors.primary : t.colors.hover;
                     const auto itemFg = done ? t.colors.primary
                         : stepInvalid ? t.colors.error
-                        : cur ? t.colors.onPrimary : t.colors.textDisabled;
+                        : cur ? t.colors.onPrimary : t.colors.textSecondary;
                     // 可点面（可点元素 id 本身带 onClick，测试锚 <nodeId>.bg）
                     ui.rect(nodeId + ".bg")
                         .position(0.0f, navY)
@@ -2392,20 +2392,20 @@ void AgentModule::composeTaskDialog(
                         .position(14.0f, numY)
                         .size(kVertNumD, kVertNumD)
                         .text(done ? "✓" : stepInvalid ? "!" : std::to_string(i + 1))
-                        .fontSize(11.0f)
+                        .fontSize(12.0f)
                         .lineHeight(kVertNumD)
                         .horizontalAlign(eui::HorizontalAlign::Center)
                         .verticalAlign(eui::VerticalAlign::Center)
                         .color(done ? t.colors.primary
                             : (stepInvalid || cur) ? t.colors.onPrimary
-                                                   : t.colors.textDisabled)
+                                                   : t.colors.textSecondary)
                         .build();
                     // 标签 + 副标竖排（圆右 8px，块在 56 高内垂直居中）
                     ui.text(nodeId + ".label")
                         .position(44.0f, navY + 12.0f)
                         .size(kVertNavW - 44.0f - 14.0f, 18.0f)
                         .text(kStepLabels[i])
-                        .fontSize(13.0f)
+                        .fontSize(14.0f)
                         .lineHeight(18.0f)
                         .fontWeight(600)
                         .wrap(false)
@@ -2415,10 +2415,13 @@ void AgentModule::composeTaskDialog(
                         .position(44.0f, navY + 30.0f)
                         .size(kVertNavW - 44.0f - 14.0f, 14.0f)
                         .text(kStepSubs[i])
-                        .fontSize(10.0f)
+                        .fontSize(12.0f)
                         .lineHeight(14.0f)
                         .wrap(false)
-                        .color(t.colors.textDisabled)
+                        // 白字只压 valid 当前步绿底；无效态粉底仍走 textSecondary
+                        //（error 红压粉底仅 3.18:1）
+                        .color((cur && !stepInvalid) ? t.colors.onPrimary
+                                                     : t.colors.textSecondary)
                         .build();
                 }
             }
@@ -2584,20 +2587,20 @@ void AgentModule::composeTaskDialog(
                     // 触发提示 / 预览行
                     const float hintY = cfgY + 44.0f;
                     ui_kit::drawDialogText(ui, "agent.dialog.task.trigger.hint", w,
-                                           triggerHint, t.sizes.fontSizeSmall - 1.0f,
+                                           triggerHint, t.sizes.fontSizeSmall,
                                            t.colors.textTertiary,
                                            {.x = x0, .y = hintY, .height = 12.0f,
                                             .lineHeight = 12.0f, .skipIfEmpty = true});
                     ui_kit::drawDialogText(ui, "agent.dialog.task.cron.preview", w,
                                            cronPreview_,
-                                           t.sizes.fontSizeSmall - 1.0f,
+                                           t.sizes.fontSizeSmall,
                                            cronPreviewIsError_ ? t.colors.error
                                                                : t.colors.textTertiary,
                                            {.x = x0, .y = hintY, .height = 12.0f,
                                             .lineHeight = 12.0f, .skipIfEmpty = true});
                     ui_kit::drawDialogText(ui, "agent.dialog.task.once.preview", w,
                                            oncePreview_,
-                                           t.sizes.fontSizeSmall - 1.0f,
+                                           t.sizes.fontSizeSmall,
                                            oncePreviewIsError_ ? t.colors.error
                                                                : t.colors.textTertiary,
                                            {.x = x0, .y = hintY, .height = 12.0f,
@@ -2646,7 +2649,7 @@ void AgentModule::composeTaskDialog(
                     ui_kit::drawDialogText(
                         ui, "agent.dialog.task.goal.valid", w,
                         editGoal_.empty() ? "请填写任务目标" : "",
-                        t.sizes.fontSizeSmall - 1.0f, t.colors.error,
+                        t.sizes.fontSizeSmall, t.colors.error,
                         {.x = x0, .y = goalInY + kStepGoalH + 4.0f, .height = 14.0f,
                          .lineHeight = 14.0f, .skipIfEmpty = true});
 
@@ -2740,7 +2743,7 @@ void AgentModule::composeTaskDialog(
                         ui, "agent.dialog.task.meta.hint", w,
                         "迭代＝单次运行的最多轮数，跑满以「受限」结束、不再重试；"
                         "破坏性操作＝允许删除文件等高危工具，不勾则被拒",
-                        t.sizes.fontSizeSmall - 1.0f, t.colors.textTertiary,
+                        t.sizes.fontSizeSmall, t.colors.textTertiary,
                         {.x = x0, .y = hintY, .height = 12.0f, .lineHeight = 12.0f});
 
                     // 安全组
@@ -2893,7 +2896,7 @@ void AgentModule::composeTaskDialog(
                 .colors(t.colors.background,
                         t.colors.primarySoftBg,
                         t.colors.primarySoftBg)
-                .textColor(t.colors.primary)
+                .textColor(t.colors.accentText)
                 .radius(8.0f)
                 .border(0.0f, t.colors.borderDefault)
                 .onClick([this] { closeTaskDialog(); })
@@ -3002,7 +3005,7 @@ void AgentModule::composeDraftDialog(
                                {.x = x0, .y = kDraftResultY, .height = 18.0f,
                                 .lineHeight = 18.0f, .skipIfEmpty = true});
         ui_kit::drawDialogText(ui, "agent.dialog.task.draft.warnings", w,
-                               draftWarnings_, t.sizes.fontSizeSmall - 1.0f,
+                               draftWarnings_, t.sizes.fontSizeSmall,
                                t.colors.warning,
                                {.x = x0, .y = kDraftResultY + 18.0f, .height = 44.0f,
                                 .lineHeight = 16.0f, .wrap = true,

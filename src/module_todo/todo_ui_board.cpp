@@ -12,6 +12,7 @@
 #include <components/scrollview.h>
 #include <components/tooltip.h>
 #include <ui_kit/card.h>
+#include <ui_kit/empty_state.h>
 #include <ui_kit/selection_bar.h>  // kSelectionBarAccentWidth（§4.3 选中态 2px 竖线宽度）
 
 #include <algorithm>
@@ -520,7 +521,7 @@ void drawColumnContent(eui::Ui& ui, const std::string& id, const Column& col,
             .position(pillX, pillY)
             .size(pillW, 18.0f)
             .text(countText)
-            .fontSize(11.0f)
+            .fontSize(12.0f)
             .lineHeight(18.0f)
             .fontWeight(600)
             .horizontalAlign(eui::HorizontalAlign::Center)
@@ -560,17 +561,13 @@ void drawColumnContent(eui::Ui& ui, const std::string& id, const Column& col,
             // 空列 hoverRow 恒 0：条落卡区首卡位（列头下方），宽与非空列卡槽同源
             drawDropBar(ui, kColumnHeaderHeight, contentCardWidth(width));
         }
-        ui.text(id + ".empty")
-            .position(0.0f, height / 2.0f - 24.0f)
-            .size(width, 24.0f)
-            .text(v.searchQuery.empty()
-                      ? (isArchive ? "暂无归档" : "暂无任务")
-                      : "无命中任务")
-            .fontSize(t.sizes.fontSizeSmall - 1.0f)
-            .lineHeight(24.0f)
-            .horizontalAlign(eui::HorizontalAlign::Center)
-            .color(t.colors.textTertiary)
-            .build();
+        // S2.8：空态走 ui_kit::emptyState 极简文字档（14px/textSecondary 居中）
+        ui_kit::emptyState(ui, id + ".empty",
+                           v.searchQuery.empty()
+                               ? (isArchive ? "暂无归档" : "暂无任务")
+                               : "无命中任务",
+                           std::nullopt, 0.0f, height / 2.0f - 24.0f, width, 48.0f,
+                           t);
         // H20：空列「+ 添加任务」入口删除——创建入口唯一（页头「新建任务」）
         return;
     }
@@ -673,8 +670,8 @@ void drawColumnContent(eui::Ui& ui, const std::string& id, const Column& col,
             .position(12.0f, height - kArchiveLimitH + 6.0f)
             .size(width - 24.0f, 32.0f)
             .text(limitText)
-            .fontSize(10.5f)
-            .lineHeight(14.0f)
+            .fontSize(12.0f)
+            .lineHeight(16.0f)
             .horizontalAlign(eui::HorizontalAlign::Center)
             .verticalAlign(eui::VerticalAlign::Center)
             .color(t.colors.textTertiary)
@@ -831,7 +828,7 @@ void drawCard(eui::Ui& ui, const std::string& id, float x, float y, float width,
         .position(kCardPadX, y + groupTop)
         .size(width - 2.0f * kCardPadX, kCardTitleLineH)
         .text(task.title)
-        .fontSize(t.sizes.fontSizeBody - 1.0f)
+        .fontSize(t.sizes.fontSizeBody)
         .lineHeight(kCardTitleLineH)
         .fontWeight(600)
         .horizontalAlign(eui::HorizontalAlign::Center)
@@ -841,7 +838,8 @@ void drawCard(eui::Ui& ui, const std::string& id, float x, float y, float width,
         .color(isArchiveCard ? t.colors.textSecondary
                              : (overdueTint ? t.colors.error
                                             : t.colors.textPrimary))
-        .opacity(done ? 0.6f : finalCardOpacity)
+        // done 0.78：textPrimary 压白卡 7.2:1（0.6 仅 4.04，低于正文 4.5 档）
+        .opacity(done ? 0.78f : finalCardOpacity)
         .build();
 
     // chip 行按清单绘制（x 从左往右，y 随内容组；左内边距 16→10）

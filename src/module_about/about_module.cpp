@@ -326,7 +326,8 @@ public:
                             .fontSize(t.sizes.fontSizeBody)  // 14px
                             .lineHeight(kRowH)
                             .fontWeight(600)
-                            .color(isGhostLink ? t.colors.primary : t.colors.textPrimary)
+                            .color(isGhostLink ? t.colors.accentText
+                                               : t.colors.textPrimary)
                             .build();
 
                         // S3.8#2: Ghost 复制图标按钮（highlight 行）；热区收窄到图标区
