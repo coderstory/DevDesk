@@ -795,10 +795,13 @@ REGISTER_TEST(settings_h3_elastic_heights, "settings: H3 elastic — cardsH at 6
     ui.layout(screenMin.width, screenMin.height);
     const auto* scrollMin = ui.find("settings.cards.scroll");
     DOCTEST_CHECK(scrollMin != nullptr);
+    // 跨帧不持 Element*：下一次 begin() 清空整棵元素树，指针读 = use-after-free
+    //（偶发段错误取决于后续 compose 的堆复用是否覆盖旧块）。帧内取值成标量。
+    const float scrollMinH = scrollMin != nullptr ? scrollMin->frame.height : 0.0f;
     if (scrollMin != nullptr) {
         DOCTEST_CHECK_MESSAGE(
-        scrollMin->frame.height > 430.0f,
-        "scrollMin height = " + std::to_string(scrollMin->frame.height) + " <= 430");
+        scrollMinH > 430.0f,
+        "scrollMin height = " + std::to_string(scrollMinH) + " <= 430");
     }
     // 大档 1600×1000：cardsH = 1000 − 144 − 20 − 16 = 820（等比放大）
     eui::Screen screenLarge{1600.0f, 1000.0f};
@@ -810,7 +813,7 @@ REGISTER_TEST(settings_h3_elastic_heights, "settings: H3 elastic — cardsH at 6
     DOCTEST_CHECK(scrollLarge != nullptr);
     if (scrollLarge != nullptr) {
         DOCTEST_CHECK(scrollLarge->frame.height > 780.0f);  // S4.2 弹性：等比放大
-        DOCTEST_CHECK(scrollLarge->frame.height > scrollMin->frame.height + 300.0f); // 1000-640=360 增量
+        DOCTEST_CHECK(scrollLarge->frame.height > scrollMinH + 300.0f); // 1000-640=360 增量
     }
     mod->onStop();
     return true;
@@ -838,6 +841,7 @@ REGISTER_TEST(settings_form_flex_dual_tier,
         float applyW = 0.0f;
         float applyRightGap = 0.0f;   // 按钮右缘 → 卡右缘
         float hintControlGap = 0.0f;  // 说明列右缘 → 输入框左缘
+        float autoRightGap = 0.0f;    // 自启动开关盒右缘 → 卡右缘（盒宽=内容实宽）
     };
     // 双档 = 窗 1000×640 / 1600×1000 的真实页区（减 208 侧栏）：页宽 792/1392
     //（高再减 40 自绘标题条），卡宽 = 页宽 − 64 内边距 = 728 / 1328。
@@ -854,11 +858,13 @@ REGISTER_TEST(settings_form_flex_dual_tier,
         const auto* input = ui.find("settings.card.proxy.port.input");
         const auto* apply = ui.find("settings.card.proxy.port.apply.bg");
         const auto* value = ui.find("settings.card.proxy.takeover.value");
+        const auto* autostart = ui.find("settings.card.proxy.autostart");
         DOCTEST_REQUIRE(card != nullptr);
         DOCTEST_REQUIRE(hint != nullptr);
         DOCTEST_REQUIRE(input != nullptr);
         DOCTEST_REQUIRE(apply != nullptr);
         DOCTEST_REQUIRE(value != nullptr);
+        DOCTEST_REQUIRE(autostart != nullptr);
         tier.cardW = card->frame.width;
         tier.hintW = hint->frame.width;
         tier.valueW = value->frame.width;
@@ -868,6 +874,8 @@ REGISTER_TEST(settings_form_flex_dual_tier,
                              (apply->frame.x + apply->frame.width);
         tier.hintControlGap =
             input->frame.x - (hint->frame.x + hint->frame.width);
+        tier.autoRightGap = (card->frame.x + card->frame.width) -
+                            (autostart->frame.x + autostart->frame.width);
     }
     // 固定控件两档同宽（定宽不伸）+ 组右锚卡内容右缘 28 + 说明列与控件间距 12
     for (const Tier& tier : tiers) {
@@ -875,6 +883,8 @@ REGISTER_TEST(settings_form_flex_dual_tier,
         DOCTEST_CHECK(std::fabs(tier.applyW - 64.0f) < 0.5f);
         DOCTEST_CHECK(std::fabs(tier.applyRightGap - 28.0f) < 0.5f);
         DOCTEST_CHECK(std::fabs(tier.hintControlGap - 12.0f) < 0.5f);
+        // 自启动开关盒宽 = 内容实宽（轨+字），右缘同钉 28——盒宽超出即右侧死区
+        DOCTEST_CHECK(std::fabs(tier.autoRightGap - 28.0f) < 0.5f);
     }
     // 说明列 flex：卡宽增量全归说明列（1000 档提示/状态值显著更宽）
     DOCTEST_CHECK(tiers[1].cardW > tiers[0].cardW + 500.0f);

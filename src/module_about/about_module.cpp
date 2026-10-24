@@ -305,7 +305,9 @@ public:
                         const float rowY = y + static_cast<float>(i) * kRowH;
 
                         // 左标签：12px 三级字，右对齐，100px 宽
-                        ui.text("about.card.label." + std::to_string(i))
+                        // ID 必须含组维度 gi：框架按 ID 去重、后建覆盖先建，仅用行下标会跨组互覆丢行
+                        ui.text("about.card.label." + std::to_string(gi) + "." +
+                                std::to_string(i))
                             .position(0.0f, rowY)
                             .size(kLabelW, kRowH)
                             .text(g.rows[i].label)
@@ -319,7 +321,8 @@ public:
                         const float valueX = kLabelW + 16.0f;
                         const float valueW = cw - valueX - kCopyW;
                         const bool isGhostLink = !g.rows[i].linkToast.empty();
-                        ui.text("about.card.value." + std::to_string(i))
+                        ui.text("about.card.value." + std::to_string(gi) + "." +
+                                std::to_string(i))
                             .position(valueX, rowY)
                             .size(valueW, kRowH)
                             .text(g.rows[i].value)
@@ -334,7 +337,8 @@ public:
                         if (g.rows[i].highlight) {
                             const float iconX = cw - kCopyW;
                             const float iconY = rowY + (kRowH - 16.0f) * 0.5f;
-                            ui.text("about.card.copy." + std::to_string(i))
+                            ui.text("about.card.copy." + std::to_string(gi) + "." +
+                                    std::to_string(i))
                                 .position(iconX, iconY)
                                 .size(16.0f, 16.0f)
                                 .icon(0xF0C5)  // fa-copy
@@ -343,7 +347,8 @@ public:
                                 .build();
 
                             std::string copyText = g.rows[i].value;
-                            ui.rect("about.card.hit." + std::to_string(i))
+                            ui.rect("about.card.hit." + std::to_string(gi) + "." +
+                                    std::to_string(i))
                                 .position(cw - kCopyW, rowY)
                                 .size(kCopyW, kRowH)
                                 .color(eui::Color{0.0f, 0.0f, 0.0f, 0.0f})
@@ -359,7 +364,8 @@ public:
                         // Ghost 链接按钮（linkToast 非空行）
                         if (!g.rows[i].linkToast.empty()) {
                             std::string toastMsg = g.rows[i].linkToast;
-                            ui.rect("about.card.link." + std::to_string(i))
+                            ui.rect("about.card.link." + std::to_string(gi) + "." +
+                                    std::to_string(i))
                                 .position(valueX, rowY)
                                 .size(valueW, kRowH)
                                 .color(eui::Color{0.0f, 0.0f, 0.0f, 0.0f})

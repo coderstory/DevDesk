@@ -41,6 +41,8 @@
 #include <ui_kit/toast.h>
 #include <ui_kit/wtab.h>
 
+#include <core/render/text.h>  // core::TextPrimitive::measureTextWidth
+
 #include <eui/dsl.h>
 
 #include <components/scrollview.h>
@@ -1045,16 +1047,22 @@ public:
             .content([&] {
                 drawHeader(ui, contentW, headerH, t);
 
-                // tab 栏：微信风格 WTab（§4.2），2px 绿下划线激活、间距收紧（D-12）。
-                // 4 Tab 顺序 + 标签不动（kSettingTabLabels）；hit area id = settings.tabs.N.hit（测试按此点击）。
+                // tab 栏：S2.2 页面级大 Tab——内容宽（文字实宽+水平内边距 16×2）、
+                // 枚间 4px、左对齐；等宽铺满会使单枚内边距远超 16 口径。文字实宽
+                // 与 wtab 渲染同参（14px/默认字重 400）。4 Tab 顺序 + 标签不动
+                // （kSettingTabLabels）；hit area id = settings.tabs.N.hit（测试按此点击）。
                 ui.stack("settings.tabs.wrap")
                     .size(contentW, tabH)
                     .content([&] {
-                        const float tabW =
-                            contentW / static_cast<float>(kSettingTabCount);
+                        constexpr float kTabPadH = 16.0f;  // S2.2 水平内边距
+                        constexpr float kTabGap = 4.0f;    // S2.2 Tab 间距
+                        float tabX = 0.0f;
                         for (int i = 0; i < kSettingTabCount; ++i) {
-                            const float tabX =
-                                static_cast<float>(i) * tabW;
+                            const float tabW =
+                                core::TextPrimitive::measureTextWidth(
+                                    kSettingTabLabels[i], {},
+                                    ui_kit::kWtabFontSize, 400) +
+                                2.0f * kTabPadH;
                             ui_kit::wtab(
                                 ui,
                                 std::string("settings.tabs.") +
@@ -1067,6 +1075,7 @@ public:
                                     if (i == kTabModules)
                                         refreshExternalState();
                                 });
+                            tabX += tabW + kTabGap;
                         }
                     })
                     .build();

@@ -7,6 +7,7 @@
 #include "settings_ui_cards.h"
 
 #include <core/component_theme.h>
+#include <core/render/text.h>  // core::TextPrimitive::measureTextWidth
 
 #include <eui/app.h>
 #include <eui/dsl.h>
@@ -505,7 +506,6 @@ void drawProxyCard(const CardDrawArgs& args) {
     // 说明列（端口提示 / 接管状态值）宽 = 卡内可用宽 − label 宽 − 控件宽 − 间距，
     // 宽窗增量只进说明列——各列宽与改前逐值一致（仅控件组按右锚重排次序），
     // 不产生右侧死区。
-    constexpr float kAutoStartToggleW = 240.0f;  // 「随应用启动代理」文字+44×24 轨道盒
     constexpr float kPortInputW = 96.0f;         // 端口输入框（数值定宽）
     constexpr float kPortApplyW = 64.0f;         // 「应用」按钮
     constexpr float kPortCtrlGap = 8.0f;         // 输入框 → 按钮
@@ -532,11 +532,19 @@ void drawProxyCard(const CardDrawArgs& args) {
 
             cardTitle(ui, id, t, 16.0f, 240.0f, 22.0f, 22.0f, "Claude 代理");
 
-            // 随应用启动代理（默认关）放卡片右上：开关盒定宽、右缘贴卡内容右缘
-            // 28（固定控件右锚——宽窗只增左侧标题/描述可用宽，开关不随宽度漂）。
+            // 随应用启动代理（默认关）放卡片右上：SwitchBuilder 盒内左排（轨左字右）
+            // 且不感知盒宽，盒宽须=内容实宽（左内距+轨道+间距+文字实宽），文字右缘
+            // 才恰钉卡内容右缘 28（H18）；盒宽超出即右侧死区、控件组视觉脱离锚线。
+            // 文字实宽随生效字号缩放，须运行期测量（同 SwitchBuilder 度量口径）。
+            const float autoStartTextW = core::TextPrimitive::measureTextWidth(
+                "随应用启动代理", {}, fs(13.0f), 400);
+            const float autoStartBoxW = compTheme.metrics.spacing.control
+                + compTheme.metrics.control.switchWidth
+                + compTheme.metrics.spacing.control
+                + autoStartTextW;
             components::toggleSwitch(ui, id + ".autostart")
-                .position(w - 28.0f - kAutoStartToggleW, 12.0f)
-                .size(kAutoStartToggleW, 28.0f)
+                .position(w - 28.0f - autoStartBoxW, 12.0f)
+                .size(autoStartBoxW, 28.0f)
                 .text("随应用启动代理")
                 .fontSize(fs(13.0f))
                 .checked(in.cfg.claudeProxyAutoStart)

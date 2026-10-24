@@ -141,9 +141,10 @@ void drawProfileCard(eui::Ui& ui,
                      float width,
                      const core::theme::Tokens& t,
                      const Profile& p,
-                     ProfileListState& st) {
+                     ProfileListState& st,
+                     int64_t selectedId) {
     const float h = 56.0f;
-    const bool selected = (p.id == st.selectedId_);
+    const bool selected = (p.id == selectedId);
     // S2.5 选中态：primarySoftBg 底 + 左 3px primary 竖线（替代旧绿圈白勾）
     const eui::Color bgNormal = selected
         ? t.colors.primarySoftBg
@@ -161,8 +162,8 @@ void drawProfileCard(eui::Ui& ui,
         .transition(core::Transition::make(0.1f, core::Ease::OutQuad))
         .animate(core::AnimProperty::Color)
         .radius(t.sizes.radiusSmall)
-        .onClick([sp = &st, pid = p.id, pname = p.name] {
-            if (sp->selectedId_ == pid) return;  // 已选卡无操作
+        .onClick([sp = &st, pid = p.id, pname = p.name, sel = selectedId] {
+            if (pid == sel) return;  // 已选卡（含跟随激活态）无操作
             if (sp->switchBypassConfirm_) {       // 测试缝直走
                 sp->selectedId_ = pid;
                 return;
@@ -581,6 +582,18 @@ void drawProfileListPanel(eui::Ui& ui, float leftW, float bodyH,
                               std::to_string(kSharedListMinH) + " bodyH=" +
                               std::to_string(bodyH));
                 }
+                // selectedId_ 契约（claude_ui_state.h）= 0 跟随激活 profile；显式 id
+                // 不在列表（已删）同规则回落激活，与右栏详情 shown 取用口径一致。
+                // 缺此回落则首帧列表无任何选中高亮，详情有值而列表裸白。
+                int64_t effSelectedId = st.selectedId_;
+                bool effFound = false;
+                for (const auto& p : profiles) {
+                    if (p.id == effSelectedId) { effFound = true; break; }
+                }
+                if (!effFound) {
+                    effSelectedId = st.cachedHasActive_
+                        ? st.cachedActive_.id : 0;
+                }
                 components::virtualList(ui, "claude.profiles.scroll")
                     .position(20.0f, cardY0)
                     .size(leftW - 40.0f, listH)
@@ -632,7 +645,7 @@ void drawProfileListPanel(eui::Ui& ui, float leftW, float bodyH,
                                         drawProfileCard(
                                             inner, cardId, 0.0f,
                                             contentWidth, t, profiles[idx],
-                                            st);
+                                            st, effSelectedId);
                                     })
                                     .build();
                             })

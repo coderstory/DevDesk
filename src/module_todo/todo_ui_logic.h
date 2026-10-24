@@ -402,9 +402,10 @@ inline eui::Color priorityTintBg(Priority p, const core::theme::Tokens& t,
     return eui::mixColor(base, priorityColor(p, t), strength);
 }
 
-// ① 看板卡底：None 走列色淡染 0.12——列区分列（待办=clay橙、进行中=amber、已完成=sage、
-// 归档=warm-gray，归档天然灰契合只读气质）；低/中/高按强度表混优先级原生色（优先级语义覆盖列染）。
-// columnColor=nullopt 时退 base 原色（列无色/无头测试等场景）。色相与 hover/active 反馈叠加而非互相覆盖
+// ① 看板卡底的 H16 实际口径 = todo_ui_board.cpp cardFaceColor：surface 白底向优先级色
+// 混 kTodoTintAlpha=0.12（Low=success/Medium=warning/High=error），None 档纯白 cardSurface
+// 不染、与列无关。本 helper 的 None 分支是列色淡染语义，与该口径不一致，当前无调用方；
+// 色相与 hover/active 反馈叠加而非互相覆盖
 inline eui::Color priorityCardBg(Priority p, const core::theme::Tokens& t,
                                  const eui::Color& base,
                                  const std::optional<eui::Color>& columnColor = std::nullopt) {
