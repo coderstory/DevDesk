@@ -848,6 +848,115 @@ REGISTER_TEST(schema_migrate_agent_columns_from_old_schema,
     return true;
 })
 
+// 回归：agent_tasks 老库（13 列、无 system_prompt）升级。契约——migrate 后列存在
+// （TEXT NOT NULL DEFAULT ''）、旧行原值守恒、agent_store 读写列序的 SELECT prepare 成功
+// （该 SELECT 即 Scheduler 每分钟轮询的查询形态）。迁移清单漏掉 system_prompt 时，
+// CREATE IF NOT EXISTS 对已存在表跳过，本用例在「列缺失」与「prepare fail」两处红。
+REGISTER_TEST(schema_migrate_agent_tasks_pre_system_prompt,
+    "schema: agent_tasks 老库升级补 system_prompt（旧行守恒 + Scheduler 列序查询恢复）", {
+    auto path = test_support::tempDbPath(kDbPrefix, "mig_sysprompt");
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+
+    // 阶段 1：open（先建全当前 schema），再把 agent_tasks 退回无 system_prompt 的老形态
+    {
+        auto r = core::Database::open(path);
+        DOCTEST_REQUIRE(r.isOk());
+        auto& db = r.value().db();
+
+        DOCTEST_REQUIRE(db.exec("DROP TABLE agent_tasks").isOk());
+        DOCTEST_REQUIRE(db.exec(
+            "CREATE TABLE agent_tasks ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            "name TEXT NOT NULL,"
+            "goal TEXT NOT NULL,"
+            "trigger_type TEXT NOT NULL,"
+            "trigger_config TEXT NOT NULL DEFAULT '',"
+            "model_slot TEXT NOT NULL DEFAULT 'default',"
+            "max_iterations INTEGER NOT NULL DEFAULT 10,"
+            "allow_destructive INTEGER NOT NULL DEFAULT 0,"
+            "enabled INTEGER NOT NULL DEFAULT 1,"
+            "context_note TEXT NOT NULL DEFAULT '',"
+            "auto_note INTEGER NOT NULL DEFAULT 1,"
+            "created_at INTEGER NOT NULL,"
+            "updated_at INTEGER NOT NULL)").isOk());
+        for (const auto& c : columnDefs(db, "agent_tasks")) {
+            DOCTEST_CHECK(c.find("system_prompt:") != 0);
+        }
+        DOCTEST_REQUIRE(db.exec(
+            "INSERT INTO agent_tasks (name, goal, trigger_type, trigger_config, "
+            "model_slot, max_iterations, allow_destructive, enabled, context_note, "
+            "auto_note, created_at, updated_at) "
+            "VALUES ('legacy-task', 'legacy-goal', 'schedule', '{\"cron\":\"*\"}', "
+            "'slot-a', 5, 1, 0, 'note', 0, 111, 222)").isOk());
+    } // 关闭库，下次 open / migrate 走完整迁移路径
+
+    // 阶段 2：迁移 → 补列、旧行守恒、Scheduler 列序查询恢复
+    {
+        auto r = core::Database::open(path);
+        DOCTEST_REQUIRE(r.isOk());
+        DOCTEST_REQUIRE(r.value().migrate().isOk());
+        auto& db = r.value().db();
+
+        bool found = false;
+        for (const auto& c : columnDefs(db, "agent_tasks")) {
+            if (c == "system_prompt:TEXT:1:''") found = true;
+        }
+        DOCTEST_CHECK_MESSAGE(found,
+                              "迁移后 agent_tasks 应有 system_prompt:TEXT:1:''");
+
+        // 列序与 agent_store 的 kTaskColumns 一致（id + 9 列）
+        auto q = db.prepare(
+            "SELECT id,name,goal,trigger_type,trigger_config,model_slot,"
+            "max_iterations,allow_destructive,enabled,system_prompt FROM agent_tasks");
+        DOCTEST_REQUIRE_MESSAGE(q.isOk(),
+                                "agent_store 列序 SELECT prepare 应成功");
+        auto rows = q.value().fetchAll();
+        DOCTEST_REQUIRE(rows.isOk());
+        DOCTEST_REQUIRE_EQ(rows.value().size(), 1u);
+        const auto& row = rows.value()[0];
+        DOCTEST_CHECK_EQ(row.getInt64("id").valueOr(-1), 1);
+        DOCTEST_CHECK_EQ(row.getString("name").valueOr("?"), std::string("legacy-task"));
+        DOCTEST_CHECK_EQ(row.getString("goal").valueOr("?"), std::string("legacy-goal"));
+        DOCTEST_CHECK_EQ(row.getString("trigger_type").valueOr("?"),
+                         std::string("schedule"));
+        DOCTEST_CHECK_EQ(row.getString("trigger_config").valueOr("?"),
+                         std::string("{\"cron\":\"*\"}"));
+        DOCTEST_CHECK_EQ(row.getString("model_slot").valueOr("?"), std::string("slot-a"));
+        DOCTEST_CHECK_EQ(row.getInt64("max_iterations").valueOr(-1), 5);
+        DOCTEST_CHECK_EQ(row.getInt64("allow_destructive").valueOr(-1), 1);
+        DOCTEST_CHECK_EQ(row.getInt64("enabled").valueOr(-1), 0);
+        // 新列对旧行取建表 DEFAULT ''
+        DOCTEST_CHECK_EQ(row.getString("system_prompt").valueOr("?"), std::string(""));
+
+        // 行内其余列同样守恒（不在 kTaskColumns 里的部分）
+        auto q2 = db.prepare(
+            "SELECT context_note, auto_note, created_at, updated_at FROM agent_tasks");
+        DOCTEST_REQUIRE(q2.isOk());
+        auto rows2 = q2.value().fetchAll();
+        DOCTEST_REQUIRE(rows2.isOk());
+        DOCTEST_REQUIRE_EQ(rows2.value().size(), 1u);
+        DOCTEST_CHECK_EQ(rows2.value()[0].getString("context_note").valueOr("?"),
+                         std::string("note"));
+        DOCTEST_CHECK_EQ(rows2.value()[0].getInt64("auto_note").valueOr(-1), 0);
+        DOCTEST_CHECK_EQ(rows2.value()[0].getInt64("created_at").valueOr(-1), 111);
+        DOCTEST_CHECK_EQ(rows2.value()[0].getInt64("updated_at").valueOr(-1), 222);
+
+        // 幂等：二次 migrate 列定义零变化、行数不变
+        auto colsBefore = columnDefs(db, "agent_tasks");
+        DOCTEST_REQUIRE(r.value().migrate().isOk());
+        DOCTEST_CHECK_EQ(columnDefs(db, "agent_tasks"), colsBefore);
+        auto cnt = db.prepare("SELECT COUNT(*) AS n FROM agent_tasks");
+        DOCTEST_REQUIRE(cnt.isOk());
+        auto cntRows = cnt.value().fetchAll();
+        DOCTEST_REQUIRE(cntRows.isOk());
+        DOCTEST_CHECK_EQ(std::get<int64_t>(cntRows.value()[0].values[0]), 1);
+    }
+
+    std::filesystem::remove(path, ec);
+    return true;
+})
+
 REGISTER_TEST(schema_migrate_agent_columns_idempotent,
     "schema: migrate_agent_columns 幂等——新库连跑两次不报错、列定义不变", {
     auto path = test_support::tempDbPath(kDbPrefix, "mig_idem");

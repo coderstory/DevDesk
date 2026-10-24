@@ -41,6 +41,7 @@ std::vector<std::pair<std::string, std::string>> agentTasksColumns() {
         {"enabled",           "INTEGER NOT NULL DEFAULT 1"},
         {"context_note",      "TEXT NOT NULL DEFAULT ''"},
         {"auto_note",         "INTEGER NOT NULL DEFAULT 1"},
+        {"system_prompt",     "TEXT NOT NULL DEFAULT ''"},
         {"created_at",        "INTEGER NOT NULL"},
         {"updated_at",        "INTEGER NOT NULL"},
     };
