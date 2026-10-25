@@ -73,7 +73,17 @@ REGISTER_TEST(logging_rotate_by_size, "logging: 超阈值轮转 + 保留份数�
     DOCTEST_CHECK_EQ(shifted, std::string("OLD-1"));
 
     core::log::logMessage(core::log::Level::Info, "rotated file line");
-    DOCTEST_CHECK(std::filesystem::file_size(base, ec) > 0);  // 新内容写进新建的 base
+    // 新内容写进新建的 base：用新开读句柄读内容作证（内容断言比 size>0 更强，
+    // 顺带验证写的确实是这条消息）。不能用 file_size(base)>0——Windows 上
+    // fs::file_size 走 msvcrt stat 族，对「刚创建+已写入、但句柄未关」的文件，
+    // 写后**首个** stat 读到的是目录项陈旧 size（恒 0，句柄关闭或缓存被其它
+    // 查询刷新后才翻正）；logging 的 g_file 进程内不关，size 通道恒假阴性
+    // （Linux stat 无此滞后，故该断言在原平台绿）。flush 后新开句柄读到的
+    // 就是已落盘内容，与句柄是否关闭无关。
+    std::string newLine;
+    std::ifstream baseIn(base, std::ios::binary);
+    std::getline(baseIn, newLine);
+    DOCTEST_CHECK(newLine.find("rotated file line") != std::string::npos);
 
     std::filesystem::remove(r1, ec);
     std::filesystem::remove(r2, ec);
