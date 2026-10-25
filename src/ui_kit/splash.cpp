@@ -9,8 +9,9 @@
 // shader 资产引用（D-11 用户拍板反转），"shader uniform" 的等效物 = inkProgress
 //（elapsed 归一化）驱动 inkFrontFraction / inkWashAlpha（曲线在 splash.h 内联，
 // 无头单测可钉）。
-// 时序：0.0-1.2s 墨染扩散；0.0-2.0s 进度 0→100%；2.0-2.3s 整体 opacity 1→0 淡出；
-// 2.3s 后 drawSplashIfNeeded 恒返 false。
+// 时序（2026-10-25 拍板：进度 ×0.6、墨染 ×1.3）：0.0-2.184s 墨染扩散（与进度、淡出
+// 重叠继续铺）；0.0-1.68s 进度 0→100%；1.68-2.10s 整体 opacity 1→0 淡出；2.10s 后
+// drawSplashIfNeeded 恒返 false。
 //
 // D-11 反转：去除极光波 shadertoy 渐变（§8 禁项 #4：大面积渐变背景），改 WeChat-minimal
 // 与整改后基调协调；颜色全部走 W1 wechat 令牌，禁硬编码色字面量（W0.5 清单 W-W1~W-W3 + #15-#17）。
@@ -38,9 +39,9 @@ namespace ui_kit {
 namespace {
 
 // 时序常量（与 splash.h 注释一致；墨染时长 kInkDurationSec 在 splash.h 供单测共用）
-// UAT6 G 批：整体放慢 ×1.4，各阶段比例保持（2.0→2.8, 0.3→0.42）
-constexpr float kDurationSec = 2.8f;  // 进度 0→100%（原 2.0 ×1.4）
-constexpr float kFadeOutSec = 0.42f;  // 整体淡出（原 0.3 ×1.4）
+// 2026-10-25 拍板：进度缩短 40%（2.8→1.68），淡出随进度等比（0.42→0.42*0.6=0.252）
+constexpr float kDurationSec = 1.68f;    // 进度 0→100%（2.8 ×0.6）
+constexpr float kFadeOutSec = 0.252f;    // 整体淡出（随进度档等比缩短）
 
 // 墨染视觉常量：内层最浓峰值 / 同心圆层数 / 噪声卫星数（只撒外两环）
 constexpr float kInkMaxAlpha = 0.35f;
@@ -77,7 +78,7 @@ bool drawSplashIfNeeded(eui::Ui& ui, const eui::Screen& screen) {
     if (!state.startSet) {
         state.startSet = true;
         state.start = now;
-        LOG_INFO("启动 splash 开始（WeChat-minimal，1.2s 墨染扩散 + 2.0s 进度 + 0.3s 淡出）");
+        LOG_INFO("启动 splash 开始（WeChat-minimal，2.184s 墨染扩散 + 1.68s 进度 + 0.252s 淡出）");
     }
     const float elapsed =
         std::chrono::duration<float>(now - state.start).count();
