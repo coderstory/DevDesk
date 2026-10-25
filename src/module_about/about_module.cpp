@@ -7,7 +7,6 @@
 #include "core/module_interface.h"
 #include "core/theme.h"
 #include "core/window/window_backend.h"  // core::window::setClipboardText（复制）
-#include "core/window_effect_state.h"    // 页底 alpha 按窗口效果档位（UAT2 B 批）
 
 #include <ui_kit/light_toast.h>  // showLightToast（复制成功 toast）
 
@@ -199,15 +198,6 @@ public:
 
     void compose(eui::Ui& ui, const eui::Screen& screen) override {
         const auto& t = core::theme::current();
-
-        // 页面底色
-        ui.rect("about.bg")
-            .position(0.0f, 0.0f)
-            .size(screen.width, screen.height)
-            .color(eui::Color{t.colors.background.r, t.colors.background.g, t.colors.background.b,
-                              ::core::window_effect_state::surfaceAlpha(
-                                  ::core::window_effect_state::current())})
-            .build();
 
         // S3.8 平铺版（2026-10-25 批J 用户拍板：彻底去卡片化，与其他页统一——
         // 页标题 + 分组内容直接铺在页面底上，无容器/描边/圆角/居中）

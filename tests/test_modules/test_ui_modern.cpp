@@ -1231,90 +1231,43 @@ REGISTER_TEST(uiAboutGlow,
     // 反证③：浮环不存在
     DOCTEST_CHECK(ui.find("about.ring.0") == nullptr);
 
-    // 反证④：about.bg 存在但无 onTimer（无动画驱动）+ 无 onMove（无指针追踪）
-    {
-        const auto* bg = ui.find("about.bg");
-        DOCTEST_REQUIRE(bg != nullptr);
-        DOCTEST_CHECK(bg->onTimer == nullptr);
-        DOCTEST_CHECK(bg->onMove == nullptr);
-    }
+    // 反证④（批K）：about.bg 自铺底已拆（统一不自铺底），onTimer/onMove 断言随之作废
+    DOCTEST_CHECK(ui.find("about.bg") == nullptr);
 
     // 反证⑤：about.anim state 不存在（about_anim.h 已清空为空壳）
 
-    // 反证⑥：about.bg 颜色 RGB = background（RGB 不随效果档位变；档位 alpha
-    // 的行为断言见 uiAboutPageBgEffectAlpha）
-    {
-        const auto& t = ::core::theme::current();
-        const auto* bg = ui.find("about.bg");
-        DOCTEST_REQUIRE(bg != nullptr);
-        DOCTEST_CHECK(std::abs(bg->color.r - t.colors.background.r) < 1e-3f);
-        DOCTEST_CHECK(std::abs(bg->color.g - t.colors.background.g) < 1e-3f);
-        DOCTEST_CHECK(std::abs(bg->color.b - t.colors.background.b) < 1e-3f);
-    }
-
-    // 反证⑦：渐变背景元素不存在（about.bg 无 gradient）
-    {
-        const auto* bg = ui.find("about.bg");
-        DOCTEST_REQUIRE(bg != nullptr);
-        DOCTEST_CHECK(!bg->gradient.enabled);
-    }
+    // 反证⑥⑦（批K）：about 页不再自铺底色（UAT2 磨砂时代遗留已拆）——与其他页
+    // 统一走主窗 clearColor，about.bg 元素不得存在，渐变载体随之消失
 
     mod->onStop();
     return true;
 })
 
-// UAT2 B 批：about 页底 alpha 随窗口效果档位（core::window_effect_state 单值）——
-// 磨砂 0.15 透 backdrop / off 实色 1.0；RGB 恒 background 不随档位变。档位本用例内
-// 显式设定（进程级单值，与执行顺序无关），尾档复位 off 不污染后续用例。
+// 批K（2026-10-25 用户拍板「背景色的动态不协调」）：about 页与其他页统一——
+// 不自铺底色（home/markdown 同规注释：页面底色 = 主窗口 clearColor，半透/磨砂档
+// 由窗口合成透出）。UAT2 的页底 alpha 随档位动态行为随自铺底一并拆除，本用例
+// 反向锁「不得回潮」。
 REGISTER_TEST(uiAboutPageBgEffectAlpha,
-              "about: 页底 alpha 随窗口效果档位（UAT2：磨砂 0.15 / off 1.0；RGB 恒 background）", {
+              "about: 页面不自铺底色（与其他页统一走主窗 clearColor，UAT2 自铺 alpha 已拆）", {
     std::unique_ptr<::core::Module> mod(create_about_module());
     DOCTEST_REQUIRE(mod != nullptr);
     mod->onStart();
-    const auto& t = ::core::theme::current();
-    const auto& wc = t.colors;
-
-    core::window_effect_state::setCurrent("frosted");
-    {
+    // 两个效果档位下都不许出现自铺底
+    for (const char* tier : {"frosted", "off"}) {
+        core::window_effect_state::setCurrent(tier);
         eui::Ui ui;
         eui::Screen screen{1392.0f, 1000.0f};
-        ui.begin("about_bg_alpha_frosted");
+        ui.begin(std::string("about_no_bg_") + tier);
         mod->compose(ui, screen);
         ui.end();
-        const auto* bg = ui.find("about.bg");
-        DOCTEST_REQUIRE(bg != nullptr);
-        DOCTEST_CHECK(std::abs(bg->color.a - 0.15f) < 1e-3f);
-        DOCTEST_CHECK(std::abs(bg->color.r - wc.background.r) < 1e-3f);
-        DOCTEST_CHECK(std::abs(bg->color.g - wc.background.g) < 1e-3f);
-        DOCTEST_CHECK(std::abs(bg->color.b - wc.background.b) < 1e-3f);
+        DOCTEST_CHECK_MESSAGE(ui.find("about.bg") == nullptr,
+                              std::string("about.bg 自铺底在档位 ") + tier +
+                                  " 下不得存在（统一不自铺底）");
     }
-    core::window_effect_state::setCurrent("translucent");
-    {
-        eui::Ui ui;
-        eui::Screen screen{1392.0f, 1000.0f};
-        ui.begin("about_bg_alpha_translucent");
-        mod->compose(ui, screen);
-        ui.end();
-        const auto* bg = ui.find("about.bg");
-        DOCTEST_REQUIRE(bg != nullptr);
-        DOCTEST_CHECK(std::abs(bg->color.a - 0.72f) < 1e-3f);  // UAT6 调值：0.5→0.72（window_effect_state.h:64）
-    }
-    // 尾档 = off：复位 + 验证实色
-    core::window_effect_state::setCurrent("off");
-    {
-        eui::Ui ui;
-        eui::Screen screen{1392.0f, 1000.0f};
-        ui.begin("about_bg_alpha_off");
-        mod->compose(ui, screen);
-        ui.end();
-        const auto* bg = ui.find("about.bg");
-        DOCTEST_REQUIRE(bg != nullptr);
-        DOCTEST_CHECK(std::abs(bg->color.a - 1.0f) < 1e-3f);
-    }
+    core::window_effect_state::setCurrent("off");  // 尾档复位不污染后续用例
     mod->onStop();
     return true;
 })
-
 
 // ---- UAT6：关于页构建时间行标准格式（`年-月-日 时:分:秒@设备名@系统`）----
 // 纯函数单测（extern 声明，定义在 about_module.cpp，外部链接无头文件）：
