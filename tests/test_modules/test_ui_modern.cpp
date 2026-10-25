@@ -1048,7 +1048,7 @@ bool nearPx(float a, float b) { return std::abs(a - b) <= 0.5f; }
 }  // namespace
 
 REGISTER_TEST(uiAboutLayout,
-              "about: W10 微信风格—居中白卡 760（窄屏自适应）/ 信息列表两列 / 版权 footer / 极矮窗 clamp", {
+              "about: W10 居中面板卡 760（窄屏自适应，2026-10-25 拍板弃白卡改面板族）/ 信息列表两列 / 版权 footer / 极矮窗 clamp", {
     std::unique_ptr<::core::Module> mod(create_about_module());
     DOCTEST_REQUIRE(mod != nullptr);
     mod->onStart();
@@ -1119,45 +1119,50 @@ REGISTER_TEST(uiAboutLayout,
         DOCTEST_CHECK(ui.find("about.card.title") == nullptr);
     }
     {
-        // W3-B1 分组布局（3 组，组内序号重启）：label/value id 同组内重启，重复注册
-        // 时 find 取最后注册——label.0/1 落在组3（许可与致谢）、label.2/3 落在组2
-        // （构建信息），组1 的 0..2 被覆盖不可查；各组行 y 分段而非平铺（组间 gap+组头）
-        const float rowsY = cardY + kCardPadTop + kGroupHdrH;               // 组1 首行
-        const float g1Y = rowsY + 3 * kRowH + kGroupGap + kGroupHdrH;       // 组2 首行
-        const float g2Y = g1Y + 4 * kRowH + kGroupGap + kGroupHdrH;         // 组3 首行
-        const float checkableY[4] = {g2Y, g2Y + kRowH,
-                                     g1Y + 2 * kRowH, g1Y + 3 * kRowH};
-        for (int i = 0; i < 4; ++i) {
-            const auto* label = ui.find("about.card.label." + std::to_string(i));
-            const auto* value = ui.find("about.card.value." + std::to_string(i));
-            DOCTEST_REQUIRE(label != nullptr);
-            DOCTEST_REQUIRE(value != nullptr);
-            DOCTEST_CHECK_MESSAGE(nearPx(label->frame.x, cardX + kCardPadX),
-                                  px(("about.card.label." + std::to_string(i)).c_str(), label));
-            DOCTEST_CHECK_MESSAGE(nearPx(label->frame.y, checkableY[i]),
-                                  px(("about.card.label." + std::to_string(i)).c_str(), label));
-            DOCTEST_CHECK_MESSAGE(nearPx(value->frame.x, cardX + valueX),
-                                  px(("about.card.value." + std::to_string(i)).c_str(), value));
-            DOCTEST_CHECK_MESSAGE(nearPx(value->frame.y, checkableY[i]),
-                                  px(("about.card.value." + std::to_string(i)).c_str(), value));
+        // 批B 修复后（5e3f0626）：label/value/copy/hit ID 带组维度 <gi>.<i>——组间不再
+        // 覆盖，9 行全可查（版本 3 / 构建 4 / 许可 2）；各组行 y 分段（组头+行紧接+组间 gap）
+        const float rowsY = cardY + kCardPadTop + kGroupHdrH;               // 组0 首行
+        const float gBase[3] = {rowsY,
+                                rowsY + 3 * kRowH + kGroupGap + kGroupHdrH,
+                                rowsY + 3 * kRowH + kGroupGap + kGroupHdrH +
+                                    4 * kRowH + kGroupGap + kGroupHdrH};
+        const int gRowCount[3] = {3, 4, 2};
+        for (int gi = 0; gi < kGroupCount; ++gi) {
+            for (int i = 0; i < gRowCount[gi]; ++i) {
+                const std::string sid = std::to_string(gi) + "." + std::to_string(i);
+                const auto* label = ui.find("about.card.label." + sid);
+                const auto* value = ui.find("about.card.value." + sid);
+                DOCTEST_REQUIRE(label != nullptr);
+                DOCTEST_REQUIRE(value != nullptr);
+                const float rowY = gBase[gi] + i * kRowH;
+                DOCTEST_CHECK_MESSAGE(nearPx(label->frame.x, cardX + kCardPadX),
+                                      px(("about.card.label." + sid).c_str(), label));
+                DOCTEST_CHECK_MESSAGE(nearPx(label->frame.y, rowY),
+                                      px(("about.card.label." + sid).c_str(), label));
+                DOCTEST_CHECK_MESSAGE(nearPx(value->frame.x, cardX + valueX),
+                                      px(("about.card.value." + sid).c_str(), value));
+                DOCTEST_CHECK_MESSAGE(nearPx(value->frame.y, rowY),
+                                      px(("about.card.value." + sid).c_str(), value));
+            }
         }
-        // 组内最多 4 行 → label.4..8 不再注册（旧平铺模型退役）
-        DOCTEST_CHECK(ui.find("about.card.label.4") == nullptr);
-        DOCTEST_CHECK(ui.find("about.card.value.4") == nullptr);
-        const auto* copy0 = ui.find("about.card.copy.0");
-        const auto* copy1 = ui.find("about.card.copy.1");
-        const auto* copy2 = ui.find("about.card.copy.2");
-        const auto* hit0 = ui.find("about.card.hit.0");
-        const auto* hit1 = ui.find("about.card.hit.1");
-        const auto* hit2 = ui.find("about.card.hit.2");
+        // 扁平旧 ID 不得回潮（批B 前的跨组覆盖载体）
+        DOCTEST_CHECK(ui.find("about.card.label.0") == nullptr);
+        DOCTEST_CHECK(ui.find("about.card.value.0") == nullptr);
+        // 复制图标/命中区仅 highlight 行（组0 版本信息全部 3 行）存在
+        const auto* copy0 = ui.find("about.card.copy.0.0");
+        const auto* copy1 = ui.find("about.card.copy.0.1");
+        const auto* copy2 = ui.find("about.card.copy.0.2");
+        const auto* hit0 = ui.find("about.card.hit.0.0");
+        const auto* hit1 = ui.find("about.card.hit.0.1");
+        const auto* hit2 = ui.find("about.card.hit.0.2");
         DOCTEST_REQUIRE(copy0 != nullptr);
         DOCTEST_REQUIRE(copy1 != nullptr);
         DOCTEST_REQUIRE(hit0 != nullptr);
         DOCTEST_REQUIRE(hit1 != nullptr);
-        DOCTEST_REQUIRE(copy2 != nullptr);  // UAT6：EUI-NEO 行（行序 2）highlight → 有复制图标
+        DOCTEST_REQUIRE(copy2 != nullptr);  // EUI-NEO 行 highlight → 有复制图标
         DOCTEST_REQUIRE(hit2 != nullptr);
-        DOCTEST_CHECK(ui.find("about.card.copy.3") == nullptr);  // 行序 3 = 构建时间（非 highlight）
-        DOCTEST_CHECK(ui.find("about.card.hit.3") == nullptr);
+        DOCTEST_CHECK(ui.find("about.card.copy.1.0") == nullptr);  // 构建信息组非 highlight
+        DOCTEST_CHECK(ui.find("about.card.hit.1.0") == nullptr);
     }
     {
         const auto* footer = ui.find("about.footer");
@@ -1393,9 +1398,9 @@ REGISTER_TEST(uiAboutBuildStampFormat,
 })
 
 REGISTER_TEST(uiAboutBuildLineUiFormat,
-              "about: S3.8 分组后 value.3 = C++ 标准行（构建时间行因跨组 id 重复被许可组覆盖，仅 value.1/2/3 存活）", {
-    // S3.8 三组（版本信息/构建信息/许可）各复用 label/value.0-.N，许可组 1 行覆盖构建信息组行 0；
-    // index_ 压往后 value.0="MIT License" / value.1=编译器 / value.2=平台 / value.3=C++ 标准。
+              "about: S3.8 分组批B修复后 value.1.3 = C++ 标准行 + 构建时间行存活（ID 组维度验证）", {
+    // S3.8 三组：版本信息 3 行 / 构建信息 4 行（构建时间/编译器/平台/C++ 标准）/ 许可与致谢 2 行。
+    // 批B 修复前：构建时间行因跨组 id 重复被许可组覆盖（该 bug 已修，本用例锁定修复行为）。
     std::unique_ptr<::core::Module> mod(create_about_module());
     DOCTEST_REQUIRE(mod != nullptr);
     mod->onStart();
@@ -1404,7 +1409,9 @@ REGISTER_TEST(uiAboutBuildLineUiFormat,
     ui.begin("about_cpp_line_fmt");
     mod->compose(ui, screen);
     ui.end();
-    const auto* cppValue = ui.find("about.card.value.3");   // S3.8: value.3 = C++ 标准
+    const auto* buildTime = ui.find("about.card.value.1.0");   // 构建信息组行0 = 构建时间
+    DOCTEST_REQUIRE(buildTime != nullptr);                     // 批B 前此行被覆盖不可查
+    const auto* cppValue = ui.find("about.card.value.1.3");    // S3.8: 构建信息组行3 = C++ 标准
     DOCTEST_REQUIRE(cppValue != nullptr);
     const std::string& s = cppValue->text;
     DOCTEST_CHECK_MESSAGE(s.rfind("C++", 0) == 0,

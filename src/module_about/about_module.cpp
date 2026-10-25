@@ -273,11 +273,13 @@ public:
             }
         }
 
-        // S3.8 / S6.1: 白卡 + H10 描边 + H15 轻微半透（kCardGlassAlpha）
+        // S3.8: 面板族容器（2026-10-25 用户拍板：关于页不用纯白卡，与 todo 列/markdown
+        // 面板统一——background 底 + H10 描边 + 12px 圆角；白卡族 cardSurface 仅保留给
+        // settings/home 等页内内容卡）
         components::card(ui, "about.card")
             .position(cardX, cardY)
             .size(cardW, cardH)
-            .color(ui_kit::cardSurface(t))
+            .color(t.colors.background)
             .radius(t.sizes.radiusLarge)  // 12px
             .border(1.0f, t.colors.borderDefault)
             .padding(kCardPadX)  // 32px 四边统一（8px 栅格 × 4）
