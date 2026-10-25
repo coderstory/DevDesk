@@ -69,10 +69,10 @@ cd build && ctest --output-on-failure
 
 本机工具链：cmake 4.4.3、ninja 1.13.2、AppleClang（`/usr/bin/clang++`）、ccache 4.14.1（均在 `/opt/homebrew/bin`，已在 PATH）。ccache 在 macOS 的持久配置读 **`~/Library/Preferences/ccache/ccache.conf`**——**不是** XDG 的 `~/.config/ccache/ccache.conf`（实测写 XDG 路径 ccache 完全无视）。**当前构建与测试状态见本文「🚦 当前状态」段**（用例总数以运行输出 `Total:` 为准，不在文档写死）。
 
-**Windows 11（原生支持平台，MSYS2 MinGW64 + Ninja；本机当前不是 Windows，以下命令保留作 Windows 侧参考，CI 的 Windows job 走的就是这套）**：
+**Windows 11（原生支持平台，MSYS2 MinGW64 + Ninja；本机当前为 Windows 11，以下命令可直接使用；CI 的 Windows job 走同一套）**：
 
 ```bash
-export PATH="/d/software/cmake/cmake-4.3.3-windows-x86_64/bin:/d/software/ninja:/c/msys64/mingw64/bin:$PATH"
+export PATH="/d/software/msys64/mingw64/bin:$PATH"
 
 cd DevDesk
 rm -rf build   # 换平台后必须（缓存里锁着旧平台的产物）
@@ -96,7 +96,7 @@ cd build && ctest --output-on-failure
 - `CCACHE_NOHASHDIR=true` —— 命令哈希不含工作目录；`-g` 调试信息里也有绝对路径，靠 BASEDIR 一起改写
 
 launcher 是 **configure 期属性**：已存在的 `build/` 目录不会自动改，要么 `--clean`、要么手敲一次带 launcher 的 configure，之后才走缓存。**并行度封顶**：脚本默认 `DEVDESK_JOBS=3`（→ `CMAKE_BUILD_PARALLEL_LEVEL`），12 核机器上多条 worktree 并发构建时避免互拖；单条独占机器可 `DEVDESK_JOBS=8 bash scripts/build-test-run.sh`。
-**"裸 `cmake -B build`（完全不带 -D）也能吃缓存"这条路走不通，别再试**：① 本仓库 configure 本身就需要 `-DOPENSSL_ROOT_DIR=C:/msys64/mingw64`（否则 `Could NOT find OpenSSL` 直接失败，CLAUDE.md 上面那段是最简可用形态）；② 试过 ccache 官方 masquerade（MSYS2 自带 `/mingw64/lib/ccache/bin` 是 bash 脚本、写死 `/mingw64/bin/g++`，在 Git Bash 里指向 Git 自带目录 → 报错）与自建 shim 目录（ccache.exe 复制成 `g++.exe`，实测能让 `g++ --version` 走 ccache），但 shim 会顶替编译器路径 → 本仓库 `DEVDESK_MINGW_ROOT` 从编译器路径反推 MinGW 根（`cmake/Dependencies.cmake`），根变成 `D:/software` 后静态 curl 依赖链解析失败（`set_property can not be used on an ALIAS target`）→ 不采用。
+**"裸 `cmake -B build`（完全不带 -D）也能吃缓存"这条路走不通，别再试**：① 本仓库 configure 的 OpenSSL/MinGW 根由 `cmake/Dependencies.cmake` 从编译器路径自动推导（2026-10 起无需手传 `-DOPENSSL_ROOT_DIR`）；② 试过 ccache 官方 masquerade（MSYS2 自带 `/mingw64/lib/ccache/bin` 是 bash 脚本、写死 `/mingw64/bin/g++`，在 Git Bash 里指向 Git 自带目录 → 报错）与自建 shim 目录（ccache.exe 复制成 `g++.exe`，实测能让 `g++ --version` 走 ccache），但 shim 会顶替编译器路径 → 本仓库 `DEVDESK_MINGW_ROOT` 从编译器路径反推 MinGW 根（`cmake/Dependencies.cmake`），根变成 `D:/software` 后静态 curl 依赖链解析失败（`set_property can not be used on an ALIAS target`）→ 不采用。
 
 **macOS 侧的脚本（跨平台）**：`scripts/build-test-run.sh` / `scripts/ccache-env.sh` / `scripts/check-consistency.sh` 已支持 macOS/Linux 分支——Darwin 走 `pkill -f` 杀进程、`otool -L` 依赖清单、`screencapture -x` 截屏、`stat -f%z`、`-DOPENSSL_ROOT_DIR=/opt/homebrew/opt/openssl@3`，ccache 配置读 `~/Library/Preferences/ccache/ccache.conf`；原先写死的 Windows 工具链 PATH 与 `C:/msys64/mingw64` openssl 路径改为按 `DEVDESK_OS` 分支取（Windows 分支行为不变，波 1 TIN-13 的 Playwright + `CopyFromScreen` + Pillow 回退仍在）。**该移植当年只做过语法检查，此后 macOS 已成为日常开发平台、脚本在 macOS 上逐日真跑**；`check-consistency.sh` 的 `screencapture` 分支所需的终端「屏幕录制」TCC 权限已授予，但对 OpenGL 窗口可能抓到导航前的旧帧。**agent 会话里不要指望 `screencapture`**：会话由 launchd 拉起、不在终端进程树下，拿不到该 TCC 授权——要出图请用探针的进程内帧捕获（`./build/tests/<probe> --screenshot <路径>`，见「功能开发生命周期」阶段 4）。本文档旧版提到的 `./scripts/dev.sh`（构建+运行）、`./scripts/test.sh`、`./scripts/screenshot.sh <page>`、`./scripts/reset-db.sh` **在本仓库中不存在**（`git ls-files scripts/` 可核），不要再照抄执行。（旧版此处引用的 `docs/KNOWN_LIMITATIONS.md` 已按用户指示整档删除。）
 
@@ -307,7 +307,7 @@ main → 7 个 Router 页面 (home / markdown / todo / claude_proxy / agent / se
 ### 交付流水线（四律，按序叠加）
 
 1. **只跑定向测试**：只编译受影响目标 + 只跑相关用例（macOS：`./build/tests/devdesk_tests <功能子串>`；Windows：`./build/tests/devdesk_tests.exe <功能子串>`，如 `markdown` / `proxy` / `settings`）。**禁全量重建、禁全量套件**（用户原话"进度太慢了"）；全量只在里程碑收尾 / 提交前由主会话跑一次。
-2. **涉及编译 / 测试的子任务必须 worktree 隔离**（`isolation: "worktree"` 或手动 `git worktree add`），**主工作树禁跑构建**；worktree 首建用 `scripts/build-test-run.sh` 自动 configure——它按 `EUI_NEO_DIR` 环境变量 → 同级 `../EUI-NEO` → **git 主工作树同级**依次定位框架源码，并自动补 OPENSSL（macOS `/opt/homebrew/opt/openssl@3`、Windows `C:/msys64/mingw64`）等平台参数，**worktree 里首建不需要手敲任何 `-D`**。
+2. **涉及编译 / 测试的子任务必须 worktree 隔离**（`isolation: "worktree"` 或手动 `git worktree add`），**主工作树禁跑构建**；worktree 首建用 `scripts/build-test-run.sh` 自动 configure——它按 `EUI_NEO_DIR` 环境变量 → 同级 `../EUI-NEO` → **git 主工作树同级**依次定位框架源码，并自动补 OPENSSL（macOS `-DOPENSSL_ROOT_DIR=/opt/homebrew/opt/openssl@3`；Windows 由 `cmake/Dependencies.cmake` 从编译器路径自动推导）等平台参数，**worktree 里首建不需要手敲任何 `-D`**。
 3. **完成即提交并合 `dev`**：agent 在自己的分支原子 commit（**显式 pathspec，禁 `git add -A`**）并报 sha → 主会话审计（读 diff + 复跑验收）→ **串行**合并进 **`dev`**（多 agent 同时 merge 会撞 `index.lock`）。**不攒批**。⚠ **集成分支是 `dev` 不是 `master`**：近期的合并全是 `Merge branch 'worktree-agent-*' into dev`；`master` 只是**发布分支**（`.github/workflows/release.yml` 只在 `push master` 时出 Release 制品），本机甚至没有 `master` 分支（要引用得写 `origin/master`）。别把改动合到一个不存在的本地 `master` 上。**分支绿 ≠ 合并绿**：任何 merge 提交后必须对合并后的 dev 树跑一次完整门禁——worktree 上的审计闸不覆盖合并结果（f274f74 事故：审计在 worktree 跑闸、合并进 dev 后从未构建，dev 当场无法 configure，直到 1ad2ac9 补救）。
 4. **worktree 用完即清**：合并后立即 `git worktree remove <path>` + `git worktree prune`；有未跟踪文件先看内容、必要时先备份到仓库外再 `--force`。**禁止残留**（曾一次清出 12 个 EUI-NEO 残留 worktree）。
 
@@ -392,7 +392,7 @@ main → 7 个 Router 页面 (home / markdown / todo / claude_proxy / agent / se
 
 ### 环境与工具链
 
-- **构建 / 测试**：`bash scripts/build-test-run.sh` 内部处理工具链 PATH（macOS 前置 `/opt/homebrew/bin`；Windows 三件套 cmake 4.3.3 / ninja / msys64 mingw64）；测试二进制 macOS `build/tests/devdesk_tests`、Windows `build/tests/devdesk_tests.exe`，两者都**支持子串过滤**。测试框架是**自制迷你 doctest**（`REGISTER_TEST` + fail-fast，**不是**真 doctest）——grep `TEST_CASE` 找不到用例、`--list-test-cases` 被当过滤子串属正常。用例总数与 CI 现状见本文「🚦 当前状态」。
+- **构建 / 测试**：`bash scripts/build-test-run.sh` 内部处理工具链 PATH（macOS 前置 `/opt/homebrew/bin`；Windows 三件套 cmake 4.4.4 / ninja 1.13.2 / `D:/software/msys64/mingw64`）；测试二进制 macOS `build/tests/devdesk_tests`、Windows `build/tests/devdesk_tests.exe`，两者都**支持子串过滤**。测试框架是**自制迷你 doctest**（`REGISTER_TEST` + fail-fast，**不是**真 doctest）——grep `TEST_CASE` 找不到用例、`--list-test-cases` 被当过滤子串属正常。用例总数与 CI 现状见本文「🚦 当前状态」。
 - **并行度封顶**：`CMAKE_BUILD_PARALLEL_LEVEL` = `DEVDESK_JOBS`（**默认 3**，`scripts/build-test-run.sh:90`）——多条 worktree 并发构建时避免互拖；单条独占机器才调高（如 `DEVDESK_JOBS=8`）。
 - **ccache 持久配置按平台各一份**（`.sh` 里已接，**平时不用管**）：Windows `%LOCALAPPDATA%\ccache\ccache.conf` + `D:/software/ccache-devdesk/ccache.conf`；macOS **`~/Library/Preferences/ccache/ccache.conf`**（`cache_dir=~/Library/Caches/ccache-devdesk` / `base_dir=~/dev/gui` / `hash_dir=false` / `max_size=5G`）——**不是** XDG 的 `~/.config/ccache/ccache.conf`，写那儿 ccache 完全无视。**不设 BASEDIR = 白装**：每棵 worktree 绝对路径不同 → 同一份源码哈希不同 → 永远 miss。要**临时覆盖**再 `source scripts/ccache-env.sh`。
 - **codegraph 索引排除 worktree / build**：`/Users/coderstory/dev/gui/codegraph.json`（Windows 侧同文件在 `D:/project/gui/`）的 `exclude` = `.claude/worktrees/**`、`**/.claude/worktrees/**`、`DevDesk/.claude/worktrees/**`、`wt-*/**`、`**/build/**`（新增临时目录时同步维护，别把产物灌进索引）。

@@ -80,7 +80,24 @@ if [ "$DEVDESK_OS" = "windows" ]; then EXE_SUFFIX=".exe"; fi
 # 就不重复追加 —— 幂等）；Linux 不动 PATH（发行版装的工具本就在 PATH 里）。
 case "$DEVDESK_OS" in
   windows)
-    export PATH="/d/software/cmake/cmake-4.3.3-windows-x86_64/bin:/d/software/ninja:/c/msys64/mingw64/bin:$PATH"
+    # 工具链根不写死机器路径：按 MSYS2 实际安装位置探测（本机 D:/software/msys64，
+    # CI 常见 C:/msys64）。cmake/ninja/g++/ccache 都在 <root>/bin 下。
+    if [ -z "${MINGW_PREFIX:-}" ]; then
+      if command -v g++ >/dev/null 2>&1; then
+        MINGW_PREFIX="$(cygpath -m "$(dirname "$(dirname "$(command -v g++)")")")"
+      else
+        for _cand in /d/software/msys64/mingw64 /c/msys64/mingw64; do
+          if [ -d "$_cand" ]; then MINGW_PREFIX="$(cygpath -m "$_cand")"; break; fi
+        done
+        unset _cand
+      fi
+    fi
+    if [ -n "${MINGW_PREFIX:-}" ] && [ -d "$MINGW_PREFIX/bin" ]; then
+      export MINGW_PREFIX
+      # MINGW_PREFIX 保持 Windows 形态（CMake 的 -D 需要）；PATH 必须用 POSIX 形态，
+      # Git Bash 不会在 `D:/...` 形式的 PATH 条目里查找可执行文件。
+      export PATH="$(cygpath -u "$MINGW_PREFIX")/bin:$PATH"
+    fi
     ;;
   darwin)
     case ":$PATH:" in
