@@ -9,9 +9,6 @@
 #include "core/window/window_backend.h"  // core::window::setClipboardText（复制）
 #include "core/window_effect_state.h"    // 页底 alpha 按窗口效果档位（UAT2 B 批）
 
-#include <components/card.h>
-#include <components/theme.h>
-#include <ui_kit/card.h>
 #include <ui_kit/light_toast.h>  // showLightToast（复制成功 toast）
 
 #include <eui/dsl.h>
@@ -212,16 +209,15 @@ public:
                                   ::core::window_effect_state::current())})
             .build();
 
-        // S3.8: 卡片几何——标题左对齐 + 描述列表两列 + Ghost 复制图标 + 信息分组
-        constexpr float kCardPadX = 24.0f;   // 左右内边距（8px 栅格 × 3）
-        constexpr float kCardPadTop = 24.0f;  // 上内边距
-        constexpr float kCardPadBottom = 24.0f; // 下内边距
+        // S3.8 平铺版（2026-10-25 批J 用户拍板：彻底去卡片化，与其他页统一——
+        // 页标题 + 分组内容直接铺在页面底上，无容器/描边/圆角/居中）
         constexpr float kGroupHdrH = 24.0f;    // 分组标题行高（16px/600 档 24px）
-        constexpr float kGroupGap = 24.0f;     // 组间间距
+        constexpr float kGroupGap = 24.0f;     // 组间间距（1px 分隔线居中）
         constexpr float kRowH = 32.0f;         // 行高（S3.8#1）
         constexpr float kLabelW = 100.0f;      // 标签宽（S3.8#1）
         constexpr float kCopyW = 24.0f;        // 复制按钮宽
         constexpr float kFooterH = 20.0f;
+        constexpr float kTitleH = 32.0f;       // 页标题行高（fontSizeTitle 档，同 agent.title）
 
         // 信息行结构：按分组组织
         struct InfoGroup {
@@ -247,142 +243,124 @@ public:
             }},
         };
 
-        // 计算卡高：上留白 + 各组（组头+各行+组间间距）+ 下留白（无 Logo 行，首组紧贴上内边距）
-        float cardH = kCardPadTop;
-        for (const auto& g : groups) {
-            cardH += kGroupHdrH;
-            for (size_t i = 0; i < g.rows.size(); ++i) {
-                if (i > 0) cardH += 0.0f;  // 行紧接，无间隙（分隔线计入行高）
-                cardH += kRowH;
-            }
-            cardH += kGroupGap;
-        }
-        cardH += kCardPadBottom;
-
-        const float cardW =
-            std::max(560.0f, std::min(760.0f, screen.width - 2.0f * 32.0f));
-        const float cardX = std::max(0.0f, (screen.width - cardW) / 2.0f);
-        // S4.2 弹性：页内边距 32（spacingLarge×2），底贴底无额外 padding
+        // S4.2 弹性：页内边距 32（spacingLarge×2）；内容固定高，最小窗 640 内不触 footer
         const float pagePad = t.sizes.spacingLarge * 2.0f;  // 32
+        const float contentW = std::max(0.0f, screen.width - pagePad * 2.0f);
         const float footerY = screen.height - pagePad - kFooterH;
-        float cardY = pagePad;
-        if (cardY + cardH + 16.0f > footerY) {
-            cardY = std::max(0.0f, footerY - 16.0f - cardH);
-            if (cardY + cardH + 16.0f > footerY) {
-                cardH = std::max(200.0f, footerY - cardY - 16.0f);
-            }
-        }
 
-        // S3.8: 面板族容器（2026-10-25 用户拍板：关于页不用纯白卡，与 todo 列/markdown
-        // 面板统一——background 底 + H10 描边 + 12px 圆角；白卡族 cardSurface 仅保留给
-        // settings/home 等页内内容卡）
-        components::card(ui, "about.card")
-            .position(cardX, cardY)
-            .size(cardW, cardH)
-            .color(t.colors.background)
-            .radius(t.sizes.radiusLarge)  // 12px
-            .border(1.0f, t.colors.borderDefault)
-            .padding(kCardPadX)  // 32px 四边统一（8px 栅格 × 4）
-            .content([&] {
-                const float cw = cardW - kCardPadX * 2.0f;
-                float y = 0.0f;
-
-                // S3.8: 信息分组（首组标题紧贴上内边距）
-                for (size_t gi = 0; gi < std::size(groups); ++gi) {
-                    const auto& g = groups[gi];
-                    if (gi > 0) y += kGroupGap;  // 组间间距
-                    // 分组标题：16px/600 textPrimary
-                    ui.text("about.card.group." + std::string(g.header))
-                        .position(0.0f, y)
-                        .size(cw, kGroupHdrH)
-                        .text(g.header)
-                        .fontSize(t.sizes.fontSizeWeChat)  // 16px
-                        .lineHeight(kGroupHdrH)
-                        .fontWeight(600)
-                        .color(t.colors.textPrimary)
-                        .build();
-                    y += kGroupHdrH;
-
-                    for (size_t i = 0; i < g.rows.size(); ++i) {
-                        const float rowY = y + static_cast<float>(i) * kRowH;
-
-                        // 左标签：12px 三级字，右对齐，100px 宽
-                        // ID 必须含组维度 gi：框架按 ID 去重、后建覆盖先建，仅用行下标会跨组互覆丢行
-                        ui.text("about.card.label." + std::to_string(gi) + "." +
-                                std::to_string(i))
-                            .position(0.0f, rowY)
-                            .size(kLabelW, kRowH)
-                            .text(g.rows[i].label)
-                            .fontSize(t.sizes.fontSizeSmall)  // 12px
-                            .lineHeight(kRowH)
-                            .color(t.colors.textTertiary)
-                            .horizontalAlign(eui::HorizontalAlign::Right)
-                            .build();
-
-                        // 右内容：14px/600，统一 textPrimary；highlight 仅控制复制图标显隐
-                        const float valueX = kLabelW + 16.0f;
-                        const float valueW = cw - valueX - kCopyW;
-                        const bool isGhostLink = !g.rows[i].linkToast.empty();
-                        ui.text("about.card.value." + std::to_string(gi) + "." +
-                                std::to_string(i))
-                            .position(valueX, rowY)
-                            .size(valueW, kRowH)
-                            .text(g.rows[i].value)
-                            .fontSize(t.sizes.fontSizeBody)  // 14px
-                            .lineHeight(kRowH)
-                            .fontWeight(600)
-                            .color(isGhostLink ? t.colors.accentText
-                                               : t.colors.textPrimary)
-                            .build();
-
-                        // S3.8#2: Ghost 复制图标按钮（highlight 行）；热区收窄到图标区
-                        if (g.rows[i].highlight) {
-                            const float iconX = cw - kCopyW;
-                            const float iconY = rowY + (kRowH - 16.0f) * 0.5f;
-                            ui.text("about.card.copy." + std::to_string(gi) + "." +
-                                    std::to_string(i))
-                                .position(iconX, iconY)
-                                .size(16.0f, 16.0f)
-                                .icon(0xF0C5)  // fa-copy
-                                .fontSize(core::theme::scaled(16.0f))
-                                .color(t.colors.primary)
-                                .build();
-
-                            std::string copyText = g.rows[i].value;
-                            ui.rect("about.card.hit." + std::to_string(gi) + "." +
-                                    std::to_string(i))
-                                .position(cw - kCopyW, rowY)
-                                .size(kCopyW, kRowH)
-                                .color(eui::Color{0.0f, 0.0f, 0.0f, 0.0f})
-                                .cursor(eui::CursorShape::Hand)
-                                .onClick([this, copyText] {
-                                    ::core::window::setClipboardText(copyText);
-                                    triggerToast("已复制");
-                                    LOG_INFO("About: 已复制 " + copyText);
-                                })
-                                .build();
-                        }
-
-                        // Ghost 链接按钮（linkToast 非空行）
-                        if (!g.rows[i].linkToast.empty()) {
-                            std::string toastMsg = g.rows[i].linkToast;
-                            ui.rect("about.card.link." + std::to_string(gi) + "." +
-                                    std::to_string(i))
-                                .position(valueX, rowY)
-                                .size(valueW, kRowH)
-                                .color(eui::Color{0.0f, 0.0f, 0.0f, 0.0f})
-                                .cursor(eui::CursorShape::Hand)
-                                .onClick([this, toastMsg] {
-                                    triggerToast(toastMsg);
-                                    LOG_INFO("About: 开源组件链接点击");
-                                })
-                                .build();
-                        }
-                    }
-                    y += static_cast<float>(g.rows.size()) * kRowH;
-                }
-            })
+        // 页标题（与 agent.title 同款：fontSizeTitle 24/700、32 行高、左上）
+        ui.text("about.title")
+            .position(pagePad, pagePad)
+            .size(contentW, kTitleH)
+            .text("关于")
+            .fontSize(t.sizes.fontSizeTitle)
+            .lineHeight(kTitleH)
+            .fontWeight(700)
+            .color(t.colors.textPrimary)
             .build();
+
+        // 平铺内容：分组标题/行/分隔线直接铺页面底，ID 从 about.card.* 迁 about.info.*
+        const float valueX = kLabelW + 16.0f;
+        float y = pagePad + kTitleH + kGroupGap;
+        for (size_t gi = 0; gi < std::size(groups); ++gi) {
+            const auto& g = groups[gi];
+            if (gi > 0) {
+                // 组间 1px 分隔线（居中于 24 间距）
+                ui.rect("about.info.divider." + std::to_string(gi))
+                    .position(pagePad, y + kGroupGap * 0.5f - 0.5f)
+                    .size(contentW, 1.0f)
+                    .color(t.colors.borderDefault)
+                    .build();
+                y += kGroupGap;
+            }
+            // 分组标题：16px/600 textPrimary
+            ui.text("about.info.group." + std::string(g.header))
+                .position(pagePad, y)
+                .size(contentW, kGroupHdrH)
+                .text(g.header)
+                .fontSize(t.sizes.fontSizeWeChat)  // 16px
+                .lineHeight(kGroupHdrH)
+                .fontWeight(600)
+                .color(t.colors.textPrimary)
+                .build();
+            y += kGroupHdrH;
+
+            for (size_t i = 0; i < g.rows.size(); ++i) {
+                const float rowY = y + static_cast<float>(i) * kRowH;
+
+                // 左标签：12px 三级字，右对齐，100px 宽
+                // ID 必须含组维度 gi：框架按 ID 去重、后建覆盖先建，仅用行下标会跨组互覆丢行
+                ui.text("about.info.label." + std::to_string(gi) + "." +
+                        std::to_string(i))
+                    .position(pagePad, rowY)
+                    .size(kLabelW, kRowH)
+                    .text(g.rows[i].label)
+                    .fontSize(t.sizes.fontSizeSmall)  // 12px
+                    .lineHeight(kRowH)
+                    .color(t.colors.textTertiary)
+                    .horizontalAlign(eui::HorizontalAlign::Right)
+                    .build();
+
+                // 右内容：14px/600，统一 textPrimary；highlight 仅控制复制图标显隐
+                const float valueW = contentW - valueX - kCopyW;
+                const bool isGhostLink = !g.rows[i].linkToast.empty();                ui.text("about.info.value." + std::to_string(gi) + "." +
+                        std::to_string(i))
+                    .position(pagePad + valueX, rowY)
+                    .size(valueW, kRowH)
+                    .text(g.rows[i].value)
+                    .fontSize(t.sizes.fontSizeBody)  // 14px
+                    .lineHeight(kRowH)
+                    .fontWeight(600)
+                    .color(isGhostLink ? t.colors.accentText
+                                       : t.colors.textPrimary)
+                    .build();
+
+                // S3.8#2: Ghost 复制图标按钮（highlight 行）；热区收窄到图标区
+                if (g.rows[i].highlight) {
+                    const float iconX = pagePad + contentW - kCopyW;
+                    const float iconY = rowY + (kRowH - 16.0f) * 0.5f;
+                    ui.text("about.info.copy." + std::to_string(gi) + "." +
+                            std::to_string(i))
+                        .position(iconX, iconY)
+                        .size(16.0f, 16.0f)
+                        .icon(0xF0C5)  // fa-copy
+                        .fontSize(core::theme::scaled(16.0f))
+                        .color(t.colors.primary)
+                        .build();
+
+                    std::string copyText = g.rows[i].value;
+                    ui.rect("about.info.hit." + std::to_string(gi) + "." +
+                            std::to_string(i))
+                        .position(pagePad + contentW - kCopyW, rowY)
+                        .size(kCopyW, kRowH)
+                        .color(eui::Color{0.0f, 0.0f, 0.0f, 0.0f})
+                        .cursor(eui::CursorShape::Hand)
+                        .onClick([this, copyText] {
+                            ::core::window::setClipboardText(copyText);
+                            triggerToast("已复制");
+                            LOG_INFO("About: 已复制 " + copyText);
+                        })
+                        .build();
+                }
+
+                // Ghost 链接按钮（linkToast 非空行）
+                if (!g.rows[i].linkToast.empty()) {
+                    std::string toastMsg = g.rows[i].linkToast;
+                    ui.rect("about.info.link." + std::to_string(gi) + "." +
+                            std::to_string(i))
+                        .position(pagePad + valueX, rowY)
+                        .size(valueW, kRowH)
+                        .color(eui::Color{0.0f, 0.0f, 0.0f, 0.0f})
+                        .cursor(eui::CursorShape::Hand)
+                        .onClick([this, toastMsg] {
+                            triggerToast(toastMsg);
+                            LOG_INFO("About: 开源组件链接点击");
+                        })
+                        .build();
+                }
+            }
+            y += static_cast<float>(g.rows.size()) * kRowH;
+        }
 
         // 版权声明
         ui.text("about.footer")
