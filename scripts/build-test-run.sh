@@ -98,6 +98,15 @@ case "$DEVDESK_OS" in
       # Git Bash 不会在 `D:/...` 形式的 PATH 条目里查找可执行文件。
       export PATH="$(cygpath -u "$MINGW_PREFIX")/bin:$PATH"
     fi
+    # cmake 可能不在 MSYS2 里（本机独立装在 D:/SoftWare/cmake/cmake-*/bin）——
+    # 已在 PATH 就不追加，幂等，与上方同款约定；ninja 由 CMakeCache 的绝对路径
+    # （CMAKE_MAKE_PROGRAM）引用，已配置目录不依赖 PATH。
+    if ! command -v cmake >/dev/null 2>&1; then
+      for _cand in /d/software/cmake/cmake-*-windows-x86_64/bin /c/cmake/cmake-*-windows-x86_64/bin; do
+        if [ -d "$_cand" ]; then export PATH="$_cand:$PATH"; break; fi
+      done
+      unset _cand
+    fi
     ;;
   darwin)
     case ":$PATH:" in

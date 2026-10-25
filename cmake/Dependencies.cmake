@@ -37,6 +37,19 @@ if(MINGW AND EXISTS "${DEVDESK_MINGW_ROOT}/lib")
             CACHE PATH "zlib headers (EUI-NEO bundled 1.3.1, pairs with libpng)")
     endif()
 
+    # SQLite3 / CURL 头文件同源直指：find_path 的默认搜索覆盖不了所有 MinGW 安装根
+    # （编译器隐式 include 目录不参与搜索；独立安装的 MSYS2 与 CI 的 setup-msys2
+    # 都可能落空），与下面两个 *_LIBRARY 钉死配对。按值判断 + FORCE：上次失败跑
+    # 会把 NOTFOUND 焙进缓存，NOT DEFINED 挡不住、无 FORCE 的 CACHE set 也不覆盖
+    if(NOT SQLite3_INCLUDE_DIR AND EXISTS "${DEVDESK_MINGW_ROOT}/include/sqlite3.h")
+        set(SQLite3_INCLUDE_DIR "${DEVDESK_MINGW_ROOT}/include"
+            CACHE PATH "SQLite3 headers (MinGW)" FORCE)
+    endif()
+    if(NOT CURL_INCLUDE_DIR AND EXISTS "${DEVDESK_MINGW_ROOT}/include/curl/curl.h")
+        set(CURL_INCLUDE_DIR "${DEVDESK_MINGW_ROOT}/include/curl"
+            CACHE PATH "CURL headers (MinGW)" FORCE)
+    endif()
+
     # -----------------------------------------------------------------------
     # T3：MinGW 默认全静态（DEVDESK_STATIC，默认 ON，-DDEVDESK_STATIC=OFF 可关）
     # -----------------------------------------------------------------------
