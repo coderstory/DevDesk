@@ -104,9 +104,6 @@ core::log::Level parseLogLevel(const std::string& mode) {
 #ifndef DEVDESK_EUI_NEO_REV
 #define DEVDESK_EUI_NEO_REV "unknown"
 #endif
-#ifndef DEVDESK_EUI_NEO_MIN_REV
-#define DEVDESK_EUI_NEO_MIN_REV "?"
-#endif
 
 std::string aboutVersionLine() {
     // 版本号 = CMake project(VERSION)；__DATE__/__TIME__ 为本 TU 编译时刻。
@@ -116,8 +113,9 @@ std::string aboutVersionLine() {
 
 std::string aboutEuiNeoLine() {
     // EUI-NEO 同级源码集成，rev 取 configure 期 git rev-parse。
-    return std::string("EUI-NEO rev ") + DEVDESK_EUI_NEO_REV +
-           "（最低依赖 rev " + DEVDESK_EUI_NEO_MIN_REV + "）";
+    // 消费政策（ADR 0006）：不锁版本、每次用最新源码——无「最低依赖 rev」；
+    // 版本匹配由 scripts/check-eui-neo-version.sh 内容级守卫把关。
+    return std::string("EUI-NEO rev ") + DEVDESK_EUI_NEO_REV;
 }
 
 SettingsStore::SettingsStore(core::data::SqliteDb* db) : db_(db) {}

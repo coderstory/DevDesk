@@ -156,7 +156,7 @@ EUI-NEO 侧 easing 共 8 种：`Linear/InQuad/OutQuad/InOutQuad/OutCubic/InOutCu
 **跨仓库流程（按仓库纪律，两个仓库同级、非 submodule）**：
 1. 隔离 agent（`isolation: worktree`）在 DevDesk 侧副本 + patch 产上游改动的 patch + 验证（文件副本模拟依赖真跑 DevDesk 编译）；
 2. patch 经**非隔离** agent `git apply` 进 `../EUI-NEO`，跑 EUI-NEO 自身编译（+其测试，如 `tests/unit/` 相关用例），原子 commit（消息写明"DevDesk 需要 X 功能"）；
-3. DevDesk 顶层 bump `DEVDESK_EUI_NEO_MIN_REV`（`src/module_settings/settings_config.cpp:103` 默认值 + 顶层 CMake 注入点 + 本文件「当前依赖 rev」记录两处同步）；DevDesk 消费新 API 后删对应 hack；
+3. DevDesk 顶层 bump `最低依赖 rev 软校验（已删，ADR 0006）`（`src/module_settings/settings_config.cpp:103` 默认值 + 顶层 CMake 注入点 + 本文件「当前依赖 rev」记录两处同步）；DevDesk 消费新 API 后删对应 hack；
 4. EUI-NEO 侧不留尾巴：example/demo 或最小测试用例随贡献带上。
 
 ## 7. 文件改动清单
@@ -172,7 +172,7 @@ EUI-NEO 侧 easing 共 8 种：`Linear/InQuad/OutQuad/InOutQuad/OutCubic/InOutCu
 | `src/module_home/home_module.cpp` | 统计卡换 `card`；Token sparkline `lineChart`；API `barChart`；recent 区背景换 card；hover 过渡 |
 | `src/module_home/home_service.h/.cpp` | （如 D-6 需）补 API 调用当日分布查询——纯数据扩展，不动既有字段 |
 | `src/module_todo/todo_ui_board.cpp` | 卡片换 `card`（拖拽保留） |
-| `src/module_settings/settings_config.cpp` + 顶层 `CMakeLists.txt` | DEVDESK_EUI_NEO_MIN_REV bump（M4 后） |
+| `src/module_settings/settings_config.cpp` + 顶层 `CMakeLists.txt` | 最低依赖 rev 软校验（已删，ADR 0006） bump（M4 后） |
 | `tests/`（`test_menu_beautify.cpp`、新增 `test_ui_modern.cpp` 等） | §9 用例 |
 
 **EUI-NEO 侧（M4，上游贡献）**

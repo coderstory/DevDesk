@@ -25,7 +25,7 @@ DevDesk 目标平台含 macOS（macOS 主线 P0-P8 已完成；2026-09-28 起本
 | **D-3** | 磨砂失败 → **保留 Transparent 降级交付**，不阻塞 | stub 现状即降级路径，调用链天然支持（§5）；Tahoe 若真不支持，交付形态劣于 Windows 但行为不退化 |
 | **D-4** | 平台实现按接口拆文件（`*_macos.cpp` / `*_macos.mm`），与既有 `*_win.cpp` / `*_posix.cpp` 同模式，业务代码不散布平台宏 | DevDesk CLAUDE.md 核心约束 5 / EUI-NEO 后端同模式；stubs 收窄为仅非 Apple 平台使用 |
 | **D-5** | **M0 句柄供给 / M1 托盘 / M2 磨砂 / M3 桌宠为独立任务**，各自走 §7 跨仓库交付线（**M0 阻塞性串行先行，M2/M3 依赖**；隔离 worktree 产 patch → 非隔离线 apply + 编译 + commit） | 各任务改 EUI-NEO 独立文件、共享头接口签名零改动（M0 零 API 变化），冲突面最小；跨仓库施工受隔离守卫约束，必须"产补丁 + 非隔离线应用"（DevDesk CLAUDE.md 反事故红线）；M0 是 M2/M3 的硬前置（§3） |
-| **D-6** | 收尾统一 bump `DEVDESK_EUI_NEO_MIN_REV`（DevDesk 顶层 CMakeLists.txt + DevDesk CLAUDE.md 两处同步），不掺进 M0-M3 | DevDesk CLAUDE.md：消费 EUI 新 API 后两处同步更新，当前依赖 rev `269a8c4` |
+| **D-6** | 收尾统一 bump `最低依赖 rev 软校验（已删，ADR 0006）`（DevDesk 顶层 CMakeLists.txt + DevDesk CLAUDE.md 两处同步），不掺进 M0-M3 | DevDesk CLAUDE.md：消费 EUI 新 API 后两处同步更新，当前依赖 rev `269a8c4` |
 | **D-7** | 不做 mac 自动化构建/CI、不做 Linux 对等实现（§9） | 成稿时本机无 mac、无法在本仓库验证 mac 编译（2026-09-28 起本机已是 macOS，但本批仍不建 mac CI，macOS 编译走本机手动 + 实机验收）；Linux 无宿主需求 |
 
 ## 2. 现状事实（源码核实）
@@ -73,7 +73,7 @@ DevDesk 目标平台含 macOS（macOS 主线 P0-P8 已完成；2026-09-28 起本
 |------|------|
 | 平台适配代码接口隔离：头文件平台无关接口，`*_win.cpp` / `*_macos.cpp` / `*_posix.cpp`，CMake 按平台选源；业务代码禁散布 `#ifdef` | `DevDesk/CLAUDE.md` 核心约束 5 |
 | 跨仓库改动必须"产补丁 + 非隔离线应用"：隔离 worktree agent 无法对其它仓库 git 操作；非隔离线 prompt 写死只许改目标仓库 | `DevDesk/CLAUDE.md`「反事故红线」 |
-| EUI-NEO 当前依赖 rev `269a8c4`（2026-09-27），本地 main 领先 origin 的提交**永不 push**（2026-09-28 用户决策：origin/main 停在 v0.6.0，本地领先是长期状态、不再按「待 push」跟踪）；`DEVDESK_EUI_NEO_MIN_REV` 在 DevDesk 顶层 CMakeLists.txt 与 CLAUDE.md 两处同步 | `DevDesk/CLAUDE.md`「常用命令」段 |
+| EUI-NEO 当前依赖 rev `269a8c4`（2026-09-27），本地 main 领先 origin 的提交**永不 push**（2026-09-28 用户决策：origin/main 停在 v0.6.0，本地领先是长期状态、不再按「待 push」跟踪）；`最低依赖 rev 软校验（已删，ADR 0006）` 在 DevDesk 顶层 CMakeLists.txt 与 CLAUDE.md 两处同步 | `DevDesk/CLAUDE.md`「常用命令」段 |
 
 ## 3. M0 —— macOS 原生句柄供给（阻塞性前置，串行先行 M2/M3）
 
@@ -180,7 +180,7 @@ stub 恒 false → GL 后端降级 → `activeWindowEffect` 回写 → 设置页
 2. 任务完成 → `git format-patch` 产出（base = 该任务分支起点；多 commit 成一链）→ 报告 patch 路径 + sha + 验证摘要；
 3. **非隔离 agent**（不设 `isolation`）在 EUI-NEO 主树 `git apply` + 编译 + 原子 commit；prompt 写死「只许改 `D:/project/gui/EUI-NEO`，禁止碰 DevDesk 任何文件」；commit message 注明需求来源（"DevDesk 需要 X 功能"，EUI-NEO 仓库约定）；
 4. 主会话读 diff 审计 + 验收（Patch 内容与任务声明一致、未夹带）；
-5. **收尾**（M0-M3 全部合入后）：bump `DEVDESK_EUI_NEO_MIN_REV`（`DevDesk/CMakeLists.txt` + DevDesk `CLAUDE.md`「常用命令」段**两处同步**，当前 `269a8c4`）——bump 改的是 DevDesk 侧文件，走 DevDesk 侧 worktree 线执行（或 EUI 合入后由主会话派 DevDesk 侧收尾子任务，见下条第 6 条）；
+5. **收尾**（M0-M3 全部合入后）：bump `最低依赖 rev 软校验（已删，ADR 0006）`（`DevDesk/CMakeLists.txt` + DevDesk `CLAUDE.md`「常用命令」段**两处同步**，当前 `269a8c4`）——bump 改的是 DevDesk 侧文件，走 DevDesk 侧 worktree 线执行（或 EUI 合入后由主会话派 DevDesk 侧收尾子任务，见下条第 6 条）；
 6. **DevDesk 侧改动归属（V2 补）**：§8.2 的 `settings_config.cpp` 文案平台化（§5.3 案 A/B）与收尾 bump 均属 DevDesk 仓库改动——红线禁止「非隔离线 agent 碰 DevDesk」（其工作目录就是主树），一律由 **DevDesk 侧隔离 worktree 子任务**执行（普通交付流水线：worktree 子任务 → 原子 commit → 主会话审计合并），**不走本节的 EUI 补丁线**。串行依赖：**案 A** 需 EUI 侧 hint 接口先经本节补丁线合入 EUI-NEO main，DevDesk 接线后行（EUI 修订在前、DevDesk 接线在后）；**案 B** 中性文案改一行、零跨仓依赖，DevDesk 线可独立先行、不必等 EUI（§13-1 拍板选案）；
 7. EUI-NEO 本地 main 领先 origin 的提交**永不 push**（2026-09-28 用户决策，origin/main 停在 v0.6.0）——本批改动继续落本地 main，与 push 无关（§13-3）。
 
@@ -206,7 +206,7 @@ stub 恒 false → GL 后端降级 → `activeWindowEffect` 回写 → 设置页
 | 任务 | 文件 | 动作 |
 |------|------|------|
 | M2 | `DevDesk/src/module_settings/settings_config.cpp` | 改：`windowEffectDegradedHint` frosted 分支文案平台化（§5.3 案 A 或 B）——**DevDesk 侧线执行**：案 A 依赖 EUI hint 接口先合入（§7-6 串行）；案 B 一行中性文案零跨仓依赖可独立先行 |
-| 收尾 | `DevDesk/CMakeLists.txt` + `DevDesk/CLAUDE.md` | 改：`DEVDESK_EUI_NEO_MIN_REV` bump 两处同步（当前 `269a8c4`，§7-5） |
+| 收尾 | `DevDesk/CMakeLists.txt` + `DevDesk/CLAUDE.md` | 改：`最低依赖 rev 软校验（已删，ADR 0006）` bump 两处同步（当前 `269a8c4`，§7-5） |
 
 M1 预期 DevDesk 侧零改动（`main.cpp:566-575` / `:390-408` 已就绪）。
 
@@ -245,7 +245,7 @@ M1 预期 DevDesk 侧零改动（`main.cpp:566-575` / `:390-408` 已就绪）。
 | **M1** | 托盘 styled 菜单（§4：tray_bridge.c appkit 段挂 action 分流 + 共存争议预备改法；**不改 3rd/tray**） | 无（与 M0 无依赖，可并行） |
 | **M2** | 磨砂（§5：`window_effect_macos.mm` + 顶层 CMakeLists 选源 + 文案平台化→DevDesk 线） | **M0** |
 | **M3** | 桌宠三项（§6：三个 mac 平台文件 + 顶层 CMakeLists 追加） | **M0**（顶层 CMakeLists.txt 与 M2 同文件——并行时只追加各任务自己的段，或由主会话合并派单，遵守"同一文件同一时刻只有一个写者"） |
-| **收尾** | bump `DEVDESK_EUI_NEO_MIN_REV`（两处同步，DevDesk 侧线）+ Win 全量回归 | M0-M3 全部合入后 |
+| **收尾** | bump `最低依赖 rev 软校验（已删，ADR 0006）`（两处同步，DevDesk 侧线）+ Win 全量回归 | M0-M3 全部合入后 |
 
 M0-M3 各独立；**M0 阻塞性串行先行（M2/M3 依赖、M1 不依赖）**，M1 可与 M0 并行；每个任务完整走 §7 交付线（隔离 worktree 产 patch → 非隔离线 apply + 编译 + commit）后并入 EUI-NEO main；DevDesk 侧 `settings_config.cpp` 文案改动不属 EUI 补丁线（§7-6）。
 

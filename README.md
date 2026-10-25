@@ -167,7 +167,7 @@ Windows 构建默认静态链接（sqlite3 / curl / ssl / crypto / C++ 运行时
 </p>
 
 > [!NOTE]
-> 架构图最底层的 **EUI-NEO 是修改版**：本项目用的是 [`coderstory/EUI-NEO`](https://github.com/coderstory/EUI-NEO) fork（比上游多 90+ 个提交），
+> 架构图最底层的 **EUI-NEO 是修改版**：本项目用的是 [`coderstory/EUI-NEO`](https://github.com/coderstory/EUI-NEO) fork（比上游多百余个提交，计数随开发持续增长），
 > 修复并在上游基础上补了 DevDesk 依赖的能力 —— 原生标题栏主题联动、窗口材质贯通、`setScrollOffset`、嵌套弹层 z 序逃逸、dropdown `openUp` 等。
 > **直接用上游 `sudoevolve/EUI-NEO` 会编译失败**（缺这些 API）。
 

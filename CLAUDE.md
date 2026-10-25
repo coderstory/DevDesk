@@ -101,7 +101,7 @@ launcher 是 **configure 期属性**：已存在的 `build/` 目录不会自动�
 **macOS 侧的脚本（跨平台）**：`scripts/build-test-run.sh` / `scripts/ccache-env.sh` / `scripts/check-consistency.sh` 已支持 macOS/Linux 分支——Darwin 走 `pkill -f` 杀进程、`otool -L` 依赖清单、`screencapture -x` 截屏、`stat -f%z`、`-DOPENSSL_ROOT_DIR=/opt/homebrew/opt/openssl@3`，ccache 配置读 `~/Library/Preferences/ccache/ccache.conf`；原先写死的 Windows 工具链 PATH 与 `C:/msys64/mingw64` openssl 路径改为按 `DEVDESK_OS` 分支取（Windows 分支行为不变，波 1 TIN-13 的 Playwright + `CopyFromScreen` + Pillow 回退仍在）。**该移植当年只做过语法检查，此后 macOS 已成为日常开发平台、脚本在 macOS 上逐日真跑**；`check-consistency.sh` 的 `screencapture` 分支所需的终端「屏幕录制」TCC 权限已授予，但对 OpenGL 窗口可能抓到导航前的旧帧。**agent 会话里不要指望 `screencapture`**：会话由 launchd 拉起、不在终端进程树下，拿不到该 TCC 授权——要出图请用探针的进程内帧捕获（`./build/tests/<probe> --screenshot <路径>`，见「功能开发生命周期」阶段 4）。本文档旧版提到的 `./scripts/dev.sh`（构建+运行）、`./scripts/test.sh`、`./scripts/screenshot.sh <page>`、`./scripts/reset-db.sh` **在本仓库中不存在**（`git ls-files scripts/` 可核），不要再照抄执行。（旧版此处引用的 `docs/KNOWN_LIMITATIONS.md` 已按用户指示整档删除。）
 
 构建入口：`CMakeLists.txt` 顶层 → `src/main.cpp`。
-EUI-NEO 依赖：`../EUI-NEO/`（同级目录，通过 `EUI_NEO_DIR` cache 变量 `add_subdirectory` 集成，**不是 git submodule**）。两个数**不是一回事，别混**：**最低依赖 rev（门槛）= `fd904ea`**（= `CMakeLists.txt` 的 `DEVDESK_EUI_NEO_MIN_REV`，含 U1 尺度契约 + dropdown 弹层 z + UAT3 自绘窗口壳 window_backend API——customWindowChromeSupported/setTitleBarAppearance/onCaptionHitTest 等，消费点 src/main.cpp 与 src/app_sidebar.cpp；低于它 configure 会 `message(WARNING)` 软警告但不 fail）；**本机当前检出 = `0f7f60b`**（2026-10-20 实测，领先 `origin` **2** 个提交）。EUI-NEO 本地 main 领先 origin 是长期状态——**已决策永不 push 到 `origin`（= 上游 sudoevolve/EUI-NEO）**（用户决策），origin/main 停在 `703243b`（2026-10-20 实测）；可推的是 **`fork`（= coderstory/EUI-NEO）**，CI 的 `EUI_NEO_REPO` 正是克隆它（`fork/main` 远端引用 2026-10-20 本机不可解析，齐平与否下次数）。**EUI-NEO 需保持本地 main 最新**（含 onWindowDestroyed/requestFocus/trayMenu/windowEffect/lineStyles/getMonitorWorkAreas/setSystemPowerHandler/styledMenu/onTrayMenu/windowIsFocused/input onCancel 等新 API）；原计划「EUI-NEO push 后启用硬版本检查」的前置条件因「永不 push 到 origin」决策不再到来，硬版本检查保持未启用（审计 [11]）。
+EUI-NEO 依赖：`../EUI-NEO/`（同级目录，通过 `EUI_NEO_DIR` cache 变量 `add_subdirectory` 集成，**不是 git submodule**）。消费政策（2026-10-25 用户拍板，**ADR `docs/adr/0006-eui-neo-consume-policy-latest-source.md`**）：**源码同级目录引入、不锁版本、每次用最新源码**——无最低依赖 rev、无 pin，configure 期不做任何 rev 校验（旧 rev 软校验已删，其基准 rev 在 EUI-NEO 历史重写后已蒸发）。版本匹配的唯一权威判据 = `scripts/check-eui-neo-version.sh` 的**内容级 API 守卫**（src/ 下全部 EUI-NEO 消费编译单元逐个 `-fsyntax-only`）。远端形态：EUI-NEO 的 `origin` = coderstory/EUI-NEO（fork，**已与本地 main 同步**），上游 sudoevolve/EUI-NEO 仅作参考；CI 的 `EUI_NEO_REPO` 克隆 fork、`--depth 1` 拉 HEAD = 最新源码（**政策，非缺陷**）。**EUI-NEO 需保持本地 main 最新**（含 onWindowDestroyed/requestFocus/trayMenu/windowEffect/lineStyles/getMonitorWorkAreas/setSystemPowerHandler/styledMenu/onTrayMenu/windowIsFocused/input onCancel 等新 API），用了新 API 先推 fork 再推 DevDesk。
 
 ## 🏗️ 架构要点（4 层模块化）
 
@@ -253,8 +253,7 @@ main → 7 个 Router 页面 (home / markdown / todo / claude_proxy / agent / se
 - **CI**：双平台（macOS xcode-27 / Windows windows-2025），`push dev` / `PR → dev·master` 触发，跑 `scripts/build-test-run.sh --release --no-run`
 - **已知欠账与架构债**：已归档到 `docs/strategy/03-软件架构能力清单.md` 第 6 节
 - **近期交付**：见 `git log`
-- **跨仓库耦合**：DevDesk 硬依赖 EUI-NEO HEAD（不锁版本）；推 DevDesk 前若用了 EUI-NEO 新 API 必须先推 EUI-NEO fork（`origin` 永不 push）；`DEVDESK_EUI_NEO_MIN_REV` 只是软警告下限
-  - CI/release 固定 EUI-NEO pin = 64cf1ac054b82dfa92f5d0bdc3f3e514e19e90fc（本机开发可领先，出包前以 pin 为准）
+- **跨仓库耦合**：DevDesk 硬依赖 EUI-NEO 最新源码（**不锁版本**，消费政策见 ADR 0006）；推 DevDesk 前若用了 EUI-NEO 新 API 必须先推 EUI-NEO 的 `origin`（= coderstory fork，CI 克隆它）；版本匹配由 `scripts/check-eui-neo-version.sh` 内容级守卫把关，CI `--depth 1` 拉 fork HEAD = 最新源码
 
 ## 📦 安装程序（2026-09-28）
 
@@ -269,7 +268,7 @@ main → 7 个 Router 页面 (home / markdown / todo / claude_proxy / agent / se
 | `docs/superpowers/specs/2026-09-20-devdesk-design.md` | **唯一权威 spec**，所有架构 / API / token 决策都在这 |
 | `docs/mockups/palette-comparison.html` | 配色对比 demo（已确定方案 B）|
 | `docs/mockups/devdesk-prototype.html` | HTML 交互原型（待生成）|
-| `../EUI-NEO/` | 上游 GUI 框架（同级目录源码，非 submodule），通过 `EUI_NEO_DIR` 以 `add_subdirectory` 集成；**最低依赖 rev `fd904ea`（软门槛）/ 本机检出 `0f7f60b`（2026-10-20，领先 `origin` 2 个提交）**；`origin`（上游）永不 push、`fork` 可推，见「常用命令」段与审计 [11] |
+| `../EUI-NEO/` | 上游 GUI 框架（同级目录源码，非 submodule），通过 `EUI_NEO_DIR` 以 `add_subdirectory` 集成；**消费政策：不锁版本、每次用最新源码（ADR 0006），版本匹配由 `scripts/check-eui-neo-version.sh` 内容级判据保证**；EUI-NEO 的 `origin` = coderstory fork（CI 克隆它，已与本地同步），见「常用命令」段 |
 | `docs/superpowers/specs/2026-09-27-*.md` | 09-27 批次 specs：wave1-fix / god-class-refactor / shared-config-and-failover |
 | `docs/superpowers/specs/2026-09-28-*.md` | 09-28 批次 specs：installer-and-dmg / devdesk-probes / r8-assembly-layer / tin06-test-scaffold-migration / setscrolloffset-upstream-m6-refactor / md01-reload-block-mapping / macos-three-features / ui-modernization / profile-run |
 
@@ -398,7 +397,7 @@ main → 7 个 Router 页面 (home / markdown / todo / claude_proxy / agent / se
 - **codegraph 索引排除 worktree / build**：`/Users/coderstory/dev/gui/codegraph.json`（Windows 侧同文件在 `D:/project/gui/`）的 `exclude` = `.claude/worktrees/**`、`**/.claude/worktrees/**`、`DevDesk/.claude/worktrees/**`、`wt-*/**`、`**/build/**`（新增临时目录时同步维护，别把产物灌进索引）。
 - **`DevDesk.exe` 会锁 build 目录**：运行中链接报 `cannot open output file DevDesk.exe: Permission denied` → `taskkill -F -IM DevDesk.exe` 解锁（**别杀 `claude.exe` / `cc-switch.exe`**）。
 - **代理直测脚本**：`doc/scripts/proxy_smoke_test.py`（`proxy` / `upstream` / `all`；环境变量 `DEVDESK_PROXY` / `DEVDESK_MODEL` / `DEVDESK_TOKEN`）。
-- **EUI-NEO 最低依赖 rev `fd904ea`**：`CMakeLists.txt` 的 `DEVDESK_EUI_NEO_MIN_REV`（**软警告，不 fail**），需与本文件「常用命令」段的记录保持一致，消费 EUI 新 API 后两处同步更新；EUI-NEO 要跑在本地 main 最新（本机检出 `0f7f60b`，2026-10-20 实测；`origin` 永不 push、`fork` 可推，见「常用命令」段与「跨仓库耦合」段）。
+- **EUI-NEO 版本匹配**：消费政策 = **不锁版本、每次用最新源码**（ADR 0006）；无最低依赖 rev / 无 pin，configure 期零 rev 校验。唯一权威判据 = `bash scripts/check-eui-neo-version.sh --root . --eui-dir ../EUI-NEO`（内容级 API 守卫）绿。EUI-NEO 要保持本地 main 最新并与 `origin`（coderstory fork，CI 克隆它）同步，见「常用命令」段与「跨仓库耦合」段。
 - **已踩过的坑（写码前先想一遍）**：
   - **单位错配（系统性）**：`windowSize` / `glfwCreateWindow` 是**客户区物理像素**，compose 侧按 `framebuffer/(dpiScale×uiScale)` 折算逻辑像素——菜单窗、启动窗、桌宠锚点都栽过。本机 125%：工作区 1920×1020 物理、任务栏 60 px，窗口客户区底部 52 物理 px 会被任务栏吃掉（贴底 UI 不可见）。
     - **上面这条只是 Windows 口径**；macOS 口径（2026-09-28 实机回填，三行实测）：① `windowSize` / `glfwCreateWindow` / `glfwSetWindowSizeLimits` 的单位是**点**——`core::window::windowScaleForPoint` 在 macOS **恒返 1.0**（Retina 的 2.0 是 contentScale/backing scale，**不是**窗口单位换算，乘上去会双倍放大）；② 本机实测 `framebuffer 2940×1602 / contentScale 2.0 → 逻辑 1470×801`，即 `screen.height` **等于客户区点高**（两平台都只除一次，无多除少除——"Retina 没折算"的假设已被此数据证伪）；③ 工作区 1470×833 点、标题栏 28 点 → 客户区 805 点；设计最小窗高现为 800 点 < 833（2026-10-20 UAT2 从 845 收窄——旧 845 点 > 833 点曾致「最小值 > 可用面积」，这正是最小窗必须经 `core::window_layout::minWindowSizeForWorkArea` 做**同一条换算**再与工作区取 min 的原因，只做其中一步就是把病换个平台复制）。非客户区外框同样按平台注入：macOS `{0,28}`、Windows `{14.4,37.6}@96dpi`（`window_layout_macos.cpp` / `_win.cpp`）。

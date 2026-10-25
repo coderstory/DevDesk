@@ -26,7 +26,7 @@
     },
     "5_test_effectiveness_and_delivery_order": {
       "status": "已核（双探针红→绿证据为真且完整；上游单测未跑 + MIN_REV 未升两条登记见 findings）",
-      "conclusion": "①红→绿证据链核对（时间戳自洽：16:08 patch 落盘 → 16:13-16:14 红绿跑 → 16:25:57 EUI-NEO 提交）：红 = /tmp/zprobe-baseline.log（未打补丁基线：assertDrawnAbove 'skin.ddwrap subtreeMaxZ=20' 未压过 'scale.ddwrap 20' 绘制序红 + 重叠区点击被 scale 字段截获「大小」误开命中序红，与探针声明的双红变异口径逐字一致；base2/base3 为几何夹具修正后复跑，两条主判据红稳定重现）、/tmp/claude-base3.log（claude_probes 三档窗尺寸 1200x720/1200x1000/1262x801 全红：20 vs 20 + dialect 未收起 + fallback 误开）；绿 = /tmp/zprobe-patch.log（0 字节 = 探针通过零输出）、/tmp/claude-patch.log（仅信息行无 FAIL）、build-euipatch/Testing/Temporary/LastTest.log（16:14，ctest 9 探针全 Passed，含 settings_dropdown_z_probe 0.26s 与 claude_probes），该构建 EUI_NEO_DIR 指向补丁副本 eui-neo-zpatch-copy（CMakeCache 实证）——变异口径（回退 patch → 双红；应用 → 双绿）实测成立，非恒真假绿。②断言设计核：assertDrawnAbove 判 LCA 处两侧直接子级 subtreeMaxZIndex 严格 >（与 LCA 稳定排序语义精确对应，父链按指针建避开无名包装栈，祖先关系误用有守卫报错）；前提守卫（弹层首项 ∩ 下方字段 framesIntersect）先响几何漂移，防 z 判据落空；命中判据点交集中心而非项中心，保证命中序真被考验；逐帧重查元素指针避免 recompose 悬垂。③上游单测场景 4/5（zindex_escape.cpp:129-243）：手工搭树手抄 z 值（z20/z900），只验 dsl.h 排序机制、不验 dropdown.h 组件接线——kPopupOpenZIndex 回退为 0 时该单测仍绿（组件级变异探测完全依赖 DevDesk 探针，已实测双向成立）；且 EUI 单测被 EUI_BUILD_TEST_FIXTURES（默认 OFF，CMakeLists.txt:672 门 + :762 glob）门控，全盘无 zindex_escape 二进制（find 0 命中）→ 场景 4/5 本次从未编译运行。④交付顺序：EUI-NEO 72a5187 已于 16:25:57 落本地 main（决策永不 push origin，本地消费），晚于 DevDesk 分支提交 667788a——合并顺序要求「先 EUI-NEO 后 DevDesk」在审计时点已满足；残留风险 = DEVDESK_EUI_NEO_MIN_REV 仍 7164d55（CMakeLists.txt:69，分支未触碰），指旧 EUI-NEO 的环境 configure 无软警告、新探针红得不知所云（响亮非静默，见 F-2）。"
+      "conclusion": "①红→绿证据链核对（时间戳自洽：16:08 patch 落盘 → 16:13-16:14 红绿跑 → 16:25:57 EUI-NEO 提交）：红 = /tmp/zprobe-baseline.log（未打补丁基线：assertDrawnAbove 'skin.ddwrap subtreeMaxZ=20' 未压过 'scale.ddwrap 20' 绘制序红 + 重叠区点击被 scale 字段截获「大小」误开命中序红，与探针声明的双红变异口径逐字一致；base2/base3 为几何夹具修正后复跑，两条主判据红稳定重现）、/tmp/claude-base3.log（claude_probes 三档窗尺寸 1200x720/1200x1000/1262x801 全红：20 vs 20 + dialect 未收起 + fallback 误开）；绿 = /tmp/zprobe-patch.log（0 字节 = 探针通过零输出）、/tmp/claude-patch.log（仅信息行无 FAIL）、build-euipatch/Testing/Temporary/LastTest.log（16:14，ctest 9 探针全 Passed，含 settings_dropdown_z_probe 0.26s 与 claude_probes），该构建 EUI_NEO_DIR 指向补丁副本 eui-neo-zpatch-copy（CMakeCache 实证）——变异口径（回退 patch → 双红；应用 → 双绿）实测成立，非恒真假绿。②断言设计核：assertDrawnAbove 判 LCA 处两侧直接子级 subtreeMaxZIndex 严格 >（与 LCA 稳定排序语义精确对应，父链按指针建避开无名包装栈，祖先关系误用有守卫报错）；前提守卫（弹层首项 ∩ 下方字段 framesIntersect）先响几何漂移，防 z 判据落空；命中判据点交集中心而非项中心，保证命中序真被考验；逐帧重查元素指针避免 recompose 悬垂。③上游单测场景 4/5（zindex_escape.cpp:129-243）：手工搭树手抄 z 值（z20/z900），只验 dsl.h 排序机制、不验 dropdown.h 组件接线——kPopupOpenZIndex 回退为 0 时该单测仍绿（组件级变异探测完全依赖 DevDesk 探针，已实测双向成立）；且 EUI 单测被 EUI_BUILD_TEST_FIXTURES（默认 OFF，CMakeLists.txt:672 门 + :762 glob）门控，全盘无 zindex_escape 二进制（find 0 命中）→ 场景 4/5 本次从未编译运行。④交付顺序：EUI-NEO 72a5187 已于 16:25:57 落本地 main（决策永不 push origin，本地消费），晚于 DevDesk 分支提交 667788a——合并顺序要求「先 EUI-NEO 后 DevDesk」在审计时点已满足；残留风险 = 最低依赖 rev 软校验（已删，ADR 0006） 仍 7164d55（CMakeLists.txt:69，分支未触碰），指旧 EUI-NEO 的环境 configure 无软警告、新探针红得不知所云（响亮非静默，见 F-2）。"
     }
   },
   "findings": [
@@ -46,7 +46,7 @@
       "type": "dependency-guard",
       "file": "DevDesk CMakeLists.txt",
       "line": 69,
-      "issue": "DEVDESK_EUI_NEO_MIN_REV 仍为 7164d55，未随 EUI-NEO 72a5187（本修复）提升；分支 diff 未触碰 CMakeLists",
+      "issue": "最低依赖 rev 软校验（已删，ADR 0006） 仍为 7164d55，未随 EUI-NEO 72a5187（本修复）提升；分支 diff 未触碰 CMakeLists",
       "impact": "指向旧 EUI-NEO 检出的 worktree/环境 configure 时无软警告，新探针在该环境必红且报错信息（subtreeMax 20≡20）不易联想到缺上游提交；merge-base 软检查是本项目对「永不 push」依赖的唯一防线",
       "suggestion": "合并 fix/dropdown-popup-z 进 master 时同步把 MIN_REV 升到 72a5187（CLAUDE.md 约定：消费 EUI 变化后 CMakeLists 与文档两处同步）"
     },
@@ -86,6 +86,6 @@
     "root_cause_claim": "属实——固定字段档 20 下等值 z 稳定排序保持 DOM 序，后绘下方字段盖住上方展开弹层；绘制与命中同病同源（同一 orderedChildren）",
     "fix_claim": "属实——open 态 900 经子树上界逃逸整组件抬升，夹在卡片 40 与 dialog 1000 之间的档位盘点逐项核实；关闭态 .zIndex(0) 与旧行为逐位一致（默认值 0 + setter 无副作用 + 排序输入不变）",
     "probe_gate_claim": "属实——harness 纯增量，既有 probe 零行为影响；双探针在未打补丁基线双红（绘制序 + 命中序）、补丁态全绿，/tmp 日志与 ctest LastTest.log 证据链完整",
-    "delivery_order": "确认满足——EUI-NEO 72a5187 已落本地 main（16:25:57）且先于 DevDesk 合并动作；合并 DevDesk fix/dropdown-popup-z 前唯一要求 = 确认消费环境 EUI-NEO ≥ 72a5187，建议同时升 DEVDESK_EUI_NEO_MIN_REV（F-2）"
+    "delivery_order": "确认满足——EUI-NEO 72a5187 已落本地 main（16:25:57）且先于 DevDesk 合并动作；合并 DevDesk fix/dropdown-popup-z 前唯一要求 = 确认消费环境 EUI-NEO ≥ 72a5187，建议同时升 最低依赖 rev 软校验（已删，ADR 0006）（F-2）"
   }
 }

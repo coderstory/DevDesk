@@ -3071,8 +3071,10 @@ REGISTER_TEST(settings_about_text_helpers,
         // 前缀比对已直接证明注入生效
     const std::string e = module::settings::aboutEuiNeoLine();
     DOCTEST_CHECK(e.find("EUI-NEO rev") != std::string::npos);
-    // 最低依赖 rev 恒打印（顶层 CMake 变量）
-    DOCTEST_CHECK(e.find("最低依赖 rev") != std::string::npos);
+    // 消费政策（ADR 0006）：不锁版本、每次用最新源码——关于文案不得再出现
+    // 「最低依赖 rev」（该机制已于 2026-10-26 随政策清理删除）
+    DOCTEST_CHECK(e.find("最低依赖 rev") == std::string::npos);
+    DOCTEST_CHECK(e.find("min") == std::string::npos);
     return true;
 })
 
