@@ -8,6 +8,7 @@
 
 #include <core/theme.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <optional>
@@ -20,10 +21,21 @@ namespace module::settings {
 // 34 + 6 呼吸空隙），与设置页专用档同值——kSettingsHeaderH 已删除并入共享源，不再双源。
 
 // 字号缩放档位（%）
+// UAT6.2 无级调节后本表不再驱动 UI（字号行改 ui_kit::slider 连续取值）；
+// 数组保留仅供历史档位/文案参考与既有单测锚定。
 inline constexpr int kFontPresets[] = {85, 100, 115, 130};
 inline constexpr int kFontPresetCount = 4;
 inline constexpr const char* kFontPresetLabels[] = {
     "小 85%", "标准 100%", "大 115%", "特大 130%"};
+
+// 滑杆归一化值 → 字号百分比：1% 分辨率取整后钳制进 [kMin, kMax]（slider
+// onChange 的连续值一律经本函数量化，cfg.fontScalePercent 仍是 int 百分比）。
+inline int fontScalePercentFromRatio(float ratio) {
+    const int percent = kMinFontScalePercent +
+                        static_cast<int>(std::lround(ratio * static_cast<float>(
+                                                   kMaxFontScalePercent - kMinFontScalePercent)));
+    return std::clamp(percent, kMinFontScalePercent, kMaxFontScalePercent);
+}
 
 // 日志保留档位（天；0 = 永久）
 inline constexpr int kRetentionPresets[] = {0, 7, 30, 90, 180, 365};

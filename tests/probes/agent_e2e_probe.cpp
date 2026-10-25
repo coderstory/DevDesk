@@ -546,24 +546,47 @@ int main(int argc, char* argv[]) {
     composeFrame();
 
     // ---------- F4 经真 UI 弹窗创建（once_at = now+90s 取整到分） ----------
+    // UAT6 4 步向导：基础信息 → 触发 → 指令 → 执行与安全；非末步 save 只前进不创建
+    //（agent_module.cpp:2768-2794）。每步用「下一步」真实点按推进，并断言下一
+    // 步专属元素已渲染，末步才点「创建」。
     const std::int64_t onceAtSec =
         (core::time::nowUnix() + 90) / 60 * 60;  // floor(now+90s 到分钟)：距 now ≥+30s 且 ≤+90s
     bool dialogOk = false;
     if (clickById("agent.page.newTask") &&
         findEl("agent.dialog.task") != nullptr) {
-        // 目标文本：点击聚焦 → queueText（真实输入事件路径）
-        if (clickById("agent.dialog.task.goal")) {
+        // 点「下一步/创建」并断言目标步专属元素出现（canNext 为假时点击无效）
+        auto nextStep = [&](const char* expectId) -> bool {
+            const bool clicked = clickById("agent.dialog.task.save.bg");
+            composeFrame();
+            const bool arrived = findEl(expectId) != nullptr;
+            if (!clicked || !arrived) {
+                std::cerr << "agent_e2e_probe: 向导未到达 " << expectId
+                          << "（clicked=" << clicked << "）\n";
+            }
+            return clicked && arrived;
+        };
+
+        // Step 0「基础信息」：名称留空 = 按任务目标自动取名 → 下一步
+        bool stepOk = nextStep("agent.dialog.task.trigger");
+        // Step 1「触发」：闹钟（UAT5 segment 选项钮，kTriggerOnceIdx=5 的表单契约）
+        if (stepOk) {
+            if (!clickById("agent.dialog.task.trigger.item.5.bg")) {
+                std::cerr << "agent_e2e_probe: 触发 segment「闹钟」项未出现\n";
+                stepOk = false;
+            }
+            // 闹钟时间：输入框只能追加，用产品测试缝 setEditOnceDraft 覆盖写
+            mod.setEditOnceDraft(formatOnceDraft(onceAtSec));
+            composeFrame();
+        }
+        // Step 2「指令」：点击聚焦 → queueText（真实输入事件路径）
+        if (stepOk) stepOk = nextStep("agent.dialog.task.goal");
+        if (stepOk && clickById("agent.dialog.task.goal")) {
             probe::queueText(window, runtime, kGoalF4);
             composeFrame();
         }
-        // 触发方式 → 「闹钟」（UAT5 segment 选项钮，kTriggerOnceIdx=5 的表单契约）
-        if (!clickById("agent.dialog.task.trigger.item.5.bg")) {
-            std::cerr << "agent_e2e_probe: 触发 segment「闹钟」项未出现\n";
-        }
-        // 闹钟时间：输入框只能追加，用产品测试缝 setEditOnceDraft 覆盖写
-        mod.setEditOnceDraft(formatOnceDraft(onceAtSec));
-        composeFrame();
-        // 构图①：任务创建弹窗（填写完成态）
+        // Step 3「执行与安全」：测试试运行按钮仅末步渲染，作为到位判据
+        if (stepOk) stepOk = nextStep("agent.dialog.task.test");
+        // 构图①：任务创建弹窗（末步填写完成态）
         if (!args.screenshotPath.empty()) {
             if (!probe::captureFramePng(window, runtime, args.screenshotPath)) {
                 std::cerr << "agent_e2e_probe: --screenshot 落图失败: "
@@ -571,9 +594,10 @@ int main(int argc, char* argv[]) {
                 passed = false;
             }
         }
-        clickById("agent.dialog.task.save");
+        // 末步「创建」：此时才真正落库
+        if (stepOk) clickById("agent.dialog.task.save.bg");
         composeFrame();
-        dialogOk = findEl("agent.dialog.task") == nullptr;
+        dialogOk = stepOk && findEl("agent.dialog.task") == nullptr;
         if (!dialogOk) {
             const core::dsl::Element* err = findEl("agent.dialog.task.error");
             std::cerr << "agent_e2e_probe: F4 弹窗未关（保存失败？）error='"
@@ -606,12 +630,17 @@ int main(int argc, char* argv[]) {
         return !latestRunStatus(idF1).empty() || !latestRunStatus(idF2).empty();
     });
     if (!llmLegReady) {
+        // 前置缺失 = 探针失败（不是静默跳过）：W5 门禁只读退出码，未跑仍 PASS
+        // 等于假绿。想跑通需：本机生产库存在激活 Claude Profile + 可用 API key。
         flows.push_back({"F1 逾期todo通知", "未跑", "无生产凭据，LLM 腿不可用"});
         flows.push_back({"F2 每日流水笔记", "未跑", "无生产凭据，LLM 腿不可用"});
         flows.push_back({"F3 热点top10", "未跑", "无生产凭据，LLM 腿不可用"});
         flows.push_back({"F4 闹钟通知", "未跑", "无生产凭据，LLM 腿不可用"});
         flows.push_back({"F5 连通检测", "未跑", "无生产凭据，LLM 腿不可用"});
-        std::cerr << "agent_e2e_probe: LLM 腿不可用，五流程全记未跑\n";
+        std::cerr << "agent_e2e_probe: FAIL 前置缺失——生产凭据密文搬运失败，"
+                     "LLM 腿不可用，五流程未执行（F1-F5 计「未跑」而非通过）。"
+                     "需本机生产库存在激活 Profile 且 API key 可读\n";
+        passed = false;
     } else {
         // F1
         {

@@ -50,8 +50,27 @@ echo "── ISCC: $ISCC_BIN ──"
 # 用 dash 风格 -F：Git Bash 会把 /F 当成路径转换。
 taskkill -F -IM DevDesk.exe 2>/dev/null || true
 
-# 工具链 PATH 不在系统 PATH（Windows 工具链集中装在 /d/software 下），必须在这里补。
-export PATH="/d/software/cmake/cmake-4.3.3-windows-x86_64/bin:/d/software/ninja:/c/msys64/mingw64/bin:$PATH"
+# 工具链 PATH：不写死本机绝对路径（旧机器的 /d/software/cmake、/d/software/ninja、
+# /c/msys64 在本机均不存在 —— 已取证）。优先 MINGW_PREFIX（MSYS2 shell 导出），
+# 否则从 command -v g++ 反推其 bin 目录，再回落 CLAUDE.md 记录的 /d/software/msys64/mingw64。
+# MINGW_PREFIX 可能是 Windows 形态（C:/msys64/mingw64），用 cygpath -u 统一转 POSIX。
+MINGW_BIN=""
+if [ -n "${MINGW_PREFIX:-}" ] && [ -d "${MINGW_PREFIX}/bin" ]; then
+  MINGW_BIN="${MINGW_PREFIX}/bin"
+else
+  _gpp="$(command -v g++ 2>/dev/null || true)"
+  if [ -n "$_gpp" ] && [ -d "$(dirname "$_gpp")" ]; then
+    MINGW_BIN="$(dirname "$_gpp")"
+  elif [ -d "/d/software/msys64/mingw64/bin" ]; then
+    MINGW_BIN="/d/software/msys64/mingw64/bin"
+  fi
+fi
+if [ -n "$MINGW_BIN" ]; then
+  if command -v cygpath >/dev/null 2>&1; then
+    MINGW_BIN="$(cygpath -u "$MINGW_BIN")"
+  fi
+  export PATH="${MINGW_BIN}:$PATH"
+fi
 
 # 并行度封顶：多 worktree 并发构建时避免互拖。
 export CMAKE_BUILD_PARALLEL_LEVEL="${DEVDESK_JOBS:-3}"
@@ -84,12 +103,13 @@ echo "── EUI-NEO: $EUI_DIR ──"
 # Release 构建：独立目录 build-release/，不污染开发用的 Debug 树。
 if [ ! -f build-release/build.ninja ]; then
   echo "── 首次 configure（build-release/ 未初始化）──"
+  # 不传 -DOPENSSL_ROOT_DIR / -DZLIB_LIBRARY：cmake/Dependencies.cmake 从编译器路径
+  # 自动推导（L9-10 取 MINGW 根、L18/L31 仅在 NOT DEFINED 时兜底；CLAUDE.md 明确要求
+  # 不传）。ZLIB 头仍显式指向 EUI-NEO 自带 1.3.1（与 libpng 的 pnglibconf 配对）。
   CONF_OUT=$(cmake -B build-release -G Ninja -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_C_COMPILER_LAUNCHER=ccache \
     -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
     -DEUI_NEO_DIR="$EUI_DIR" \
-    -DOPENSSL_ROOT_DIR=C:/msys64/mingw64 \
-    -DZLIB_LIBRARY=C:/msys64/mingw64/lib/libz.dll.a \
     -DZLIB_INCLUDE_DIR="$EUI_DIR/3rd/zlib-1.3.1" 2>&1) || {
     echo "$CONF_OUT" | tail -30
     echo "❌ configure 失败（上方为错误摘要）"; exit 1; }

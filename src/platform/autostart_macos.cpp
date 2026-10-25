@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <fstream>
+#include <system_error>
 #include <vector>
 
 #include <filesystem>

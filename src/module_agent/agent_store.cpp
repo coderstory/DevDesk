@@ -47,15 +47,16 @@ std::optional<RowError> rowStr(const core::data::SqlRow& row, const char* col,
     return std::nullopt;
 }
 
-// agent_tasks 11 列列序：listTasks / getTask 共用同一份列清单与行映射
+// agent_tasks 10 列列序：listTasks / getTask 共用同一份列清单与行映射。
+// context_note/auto_note 停读（DB 两列带 DEFAULT 保留，删除归 W6）
 constexpr const char* kTaskColumns =
     "id,name,goal,trigger_type,trigger_config,model_slot,"
-    "max_iterations,allow_destructive,enabled,context_note,auto_note,system_prompt";
+    "max_iterations,allow_destructive,enabled,system_prompt";
 
 // 一行 → AgentTaskRow（列缺失/类型不符一律 fail）
 Result<AgentTaskRow> taskRowFrom(const core::data::SqlRow& row) {
     AgentTaskRow t;
-    int64_t maxIter = 0, allowDestr = 0, enabled = 0, autoNoteInt = 0;
+    int64_t maxIter = 0, allowDestr = 0, enabled = 0;
     if (auto e = rowInt(row, "id", t.id)) {
         return Result<AgentTaskRow>::fail(e->first, e->second);
     }
@@ -83,19 +84,12 @@ Result<AgentTaskRow> taskRowFrom(const core::data::SqlRow& row) {
     if (auto e = rowInt(row, "enabled", enabled)) {
         return Result<AgentTaskRow>::fail(e->first, e->second);
     }
-    if (auto e = rowStr(row, "context_note", t.contextNote)) {
-        return Result<AgentTaskRow>::fail(e->first, e->second);
-    }
-    if (auto e = rowInt(row, "auto_note", autoNoteInt)) {
-        return Result<AgentTaskRow>::fail(e->first, e->second);
-    }
     if (auto e = rowStr(row, "system_prompt", t.systemPrompt)) {
         return Result<AgentTaskRow>::fail(e->first, e->second);
     }
     t.maxIterations = static_cast<int>(maxIter);
     t.allowDestructive = (allowDestr != 0);
     t.enabled = (enabled != 0);
-    t.autoNote = static_cast<int>(autoNoteInt);
     return Result<AgentTaskRow>::ok(std::move(t));
 }
 
@@ -108,22 +102,20 @@ Result<int64_t> AgentStore::createTask(const std::string& name, const std::strin
                                        const std::string& modelSlot,
                                        int maxIterations, bool allowDestructive,
                                        const std::string& triggerConfig,
-                                       const std::string& contextNote,
-                                       int autoNote,
                                        const std::string& systemPrompt) {
     std::lock_guard<std::recursive_mutex> lock(db_.mutex());
+    // context_note/auto_note 停写：新行取建表 DEFAULT ''/1（列删除归 W6）
     auto st = db_.prepare(
         "INSERT INTO agent_tasks(name, goal, trigger_type, trigger_config, model_slot,"
-        " max_iterations, allow_destructive, enabled, context_note, auto_note,"
-        " system_prompt, created_at, updated_at)"
-        " VALUES(?,?,?,?,?,?,?,1,?,?,?,?,?)");
+        " max_iterations, allow_destructive, enabled, system_prompt, created_at,"
+        " updated_at)"
+        " VALUES(?,?,?,?,?,?,?,1,?,?,?)");
     if (st.isFail()) return Result<int64_t>::fail(st.errorCode(), st.errorMessage());
     const int64_t now = static_cast<int64_t>(std::time(nullptr));
     auto& s = st.value();
     auto ok = bindAll(s, name, goal, triggerType, triggerConfig, modelSlot,
                       static_cast<int64_t>(maxIterations),
                       static_cast<int64_t>(allowDestructive ? 1 : 0),
-                      contextNote, static_cast<int64_t>(autoNote),
                       systemPrompt, now, now);
     if (ok.isFail()) return Result<int64_t>::fail(ok.errorCode(), ok.errorMessage());
     auto step = s.step();
@@ -215,21 +207,19 @@ Result<void> AgentStore::updateTask(int64_t id, const std::string& name,
                                     const std::string& triggerConfig,
                                     const std::string& modelSlot, int maxIterations,
                                     bool allowDestructive,
-                                    const std::string& contextNote,
-                                    int autoNote,
                                     const std::string& systemPrompt) {
     std::lock_guard<std::recursive_mutex> lock(db_.mutex());
+    // context_note/auto_note 停写：UPDATE 不触及两列，遗留值保留（删除归 W6）
     auto st = db_.prepare(
         "UPDATE agent_tasks SET name=?,goal=?,trigger_type=?,trigger_config=?,"
-        "model_slot=?,max_iterations=?,allow_destructive=?,context_note=?,"
-        "auto_note=?,system_prompt=?,updated_at=? WHERE id=?");
+        "model_slot=?,max_iterations=?,allow_destructive=?,system_prompt=?,"
+        "updated_at=? WHERE id=?");
     if (st.isFail()) return Result<void>::fail(st.errorCode(), st.errorMessage());
     auto& s = st.value();
     const int64_t now = static_cast<int64_t>(std::time(nullptr));
     auto ok = bindAll(s, name, goal, triggerType, triggerConfig, modelSlot,
                       static_cast<int64_t>(maxIterations),
                       static_cast<int64_t>(allowDestructive ? 1 : 0),
-                      contextNote, static_cast<int64_t>(autoNote),
                       systemPrompt, now, id);
     if (ok.isFail()) return Result<void>::fail(ok.errorCode(), ok.errorMessage());
     auto step = s.step();
@@ -622,57 +612,6 @@ Result<void> AgentStore::sweepStaleRuns() {
         return Result<void>::fail(r.errorCode(), r.errorMessage());
     }
     auto step = s.step();
-    if (step.isFail()) return Result<void>::fail(step.errorCode(), step.errorMessage());
-    return Result<void>::ok();
-}
-
-// 追加文本到 context_note：锁内读-拼-裁-写单事务；超 4KB 从头丢最旧至 UTF-8 边界；
-// 空串 no-op；taskId 不存在 → NotFound。
-// 裁剪逻辑：若 newTotal > 4096，从头跳过 excess 字节，退到最近 UTF-8 起始字节再截。
-Result<void> AgentStore::appendContextNote(int64_t taskId, const std::string& text) {
-    if (text.empty()) return Result<void>::ok();
-    std::lock_guard<std::recursive_mutex> lock(db_.mutex());
-    // 读当前值
-    auto sel = db_.prepare("SELECT context_note FROM agent_tasks WHERE id=?");
-    if (sel.isFail()) return Result<void>::fail(sel.errorCode(), sel.errorMessage());
-    auto& ssel = sel.value();
-    if (auto r = ssel.bind(1, taskId); r.isFail()) {
-        return Result<void>::fail(r.errorCode(), r.errorMessage());
-    }
-    auto has = ssel.step();
-    if (has.isFail()) return Result<void>::fail(has.errorCode(), has.errorMessage());
-    if (!has.value()) {
-        return Result<void>::fail(ErrorCode::NotFound,
-                                  "任务不存在：id=" + std::to_string(taskId));
-    }
-    auto row = ssel.currentRow();
-    if (row.isFail()) return Result<void>::fail(row.errorCode(), row.errorMessage());
-    std::string current;
-    if (auto e = rowStr(row.value(), "context_note", current)) {
-        return Result<void>::fail(e->first, e->second);
-    }
-    // 拼接
-    std::string combined = current + text;
-    // 4KB 上限：超长从头丢最旧，裁剪落在 UTF-8 字符边界
-    constexpr size_t kMaxBytes = 4096;
-    if (combined.size() > kMaxBytes) {
-        size_t excess = combined.size() - kMaxBytes;
-        // 退到 UTF-8 字符边界：跳过 continuation bytes (10xxxxxx)
-        while (excess < combined.size() &&
-               (static_cast<unsigned char>(combined[excess]) & 0xC0) == 0x80) {
-            ++excess;
-        }
-        combined = combined.substr(excess);
-    }
-    // 写回
-    auto upd = db_.prepare(
-        "UPDATE agent_tasks SET context_note=?,updated_at=? WHERE id=?");
-    if (upd.isFail()) return Result<void>::fail(upd.errorCode(), upd.errorMessage());
-    auto& supd = upd.value();
-    const int64_t now = static_cast<int64_t>(std::time(nullptr));
-    auto ok = bindAll(supd, combined, now, taskId);
-    if (ok.isFail()) return Result<void>::fail(ok.errorCode(), ok.errorMessage());
-    auto step = supd.step();
     if (step.isFail()) return Result<void>::fail(step.errorCode(), step.errorMessage());
     return Result<void>::ok();
 }

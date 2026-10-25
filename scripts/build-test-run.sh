@@ -641,6 +641,14 @@ if ! bash scripts/check-std-includes.sh; then
   exit 1
 fi
 
+# 3b-3.5. 玻璃体系收尾守卫（纯静态检查，--no-test 也跑）。G4 已删 src/ui_kit/glass_card.h，
+# 本段保证 drawGlassCardLayers 与 glass_card.h include 不会借道旧分支重新混进 src/。
+echo "── 玻璃体系守卫 ──"
+if ! bash scripts/check-no-glass.sh; then
+  echo "❌ 玻璃体系守卫失败（src/ 下仍有 drawGlassCardLayers 调用或 glass_card.h include）"
+  exit 1
+fi
+
 # 3b-4. ToolGuard 双层花括号守卫（纯静态检查，--no-test 也跑）。`ToolGuard g{{"a","b"}}`
 # 外层初始化列表单元素 → 命中 std::string 迭代器对构造 UB，红绿随 .rodata 字面量布局
 # 翻转（2750e51 修的 53 用例批量红）。同类写法再被写出必须在门禁就红，不等链接布局翻脸。
@@ -662,11 +670,12 @@ fi
 # 本段**故意放在所有真守卫之后**：代码真的有问题时先报代码问题，别让自检噪音盖住它。
 echo "── 守卫自检（验证上面各守卫自己没坏，非你的代码问题）──"
 SELF_TEST_FAIL=0
-# 自检计数随开关动态：链内 4 道 +（DEVDESK_EUI_API_CHECK=1 时）check-eui-neo-version
-_GUARD_SELF_COUNT=4
+# 自检计数随开关动态：链内 5 道 +（DEVDESK_EUI_API_CHECK=1 时）check-eui-neo-version
+_GUARD_SELF_COUNT=5
 for _guard in check-module-isolation \
                check-probe-skip-gate \
                check-std-includes \
+               check-no-glass \
                check-toolguard-braces; do
   if ! bash "scripts/${_guard}.sh" --self-test; then
     echo "❌ 守卫自检失败：scripts/${_guard}.sh --self-test —— 这是**守卫自己**坏了（判据退化成恒真或变异没生效），不是代码问题" >&2

@@ -125,18 +125,15 @@ void AgentModule::reapDraftJob() {
     draftPhase_ = DraftPhase::Done;
 }
 
-// 把校验过的草稿填进表单：只填模型给出的可信字段（goalFilled / triggerFilled /
-// 非空 contextNote）；触发不可信时一字不动。结果永不落库——保存仍是用户动作。
+// 把校验过的草稿填进表单：只填模型给出的可信字段（goalFilled / triggerFilled）；
+// 触发不可信时一字不动。结果永不落库——保存仍是用户动作。
 void AgentModule::applyDraftPrefill(const TaskDraftResult& res) {
     std::vector<std::string> filled;
     if (res.goalFilled && !res.draft.goal.empty()) {
         editGoal_ = res.draft.goal;
         filled.emplace_back("任务目标");
     }
-    if (!res.draft.contextNote.empty()) {
-        editContextNote_ = res.draft.contextNote;
-        filled.emplace_back("执行记忆");
-    }
+    // W4 C3：contextNote 预填已移除（执行记忆并入 systemPrompt）
     // 触发只有「类型 + 载荷都过校验」才采信；不可信时一字不动（含用户已选的类型）
     if (res.triggerFilled) {
         const int idx = triggerIndexOf(res.draft.triggerType);

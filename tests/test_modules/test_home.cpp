@@ -13,6 +13,7 @@
 #include "core/module_interface.h"
 #include "core/overdue.h"
 #include "core/proxy_stats.h"
+#include "core/router.h"
 #include "core/theme.h"
 #include "core/time.h"
 #include "module_home/home_service.h"
@@ -21,6 +22,7 @@
 
 #include <eui/dsl.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <ctime>
@@ -28,11 +30,27 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
 
 constexpr const char* kDbPrefix = "devdesk_test_homesvc_";
+
+// 模块注册门控用例的最小占位模块（只为让 Router 记住「这些页开着」）。
+class GatingStubModule : public ::core::Module {
+public:
+    GatingStubModule(::core::PageId page, std::string name)
+        : page_(page), name_(std::move(name)) {}
+    ::core::PageId pageId() const override { return page_; }
+    std::string displayName() const override { return name_; }
+    std::string iconGlyph() const override { return "•"; }
+    void compose(eui::Ui&, const eui::Screen&) override {}
+
+private:
+    ::core::PageId page_;
+    std::string name_;
+};
 
 } // namespace
 
@@ -66,6 +84,29 @@ REGISTER_TEST(home_service_real_stats,
         "(1, 't4', 0, 3, " + std::to_string(now - 7200) + ", " + std::to_string(now) + ", " + std::to_string(now) + ", " + std::to_string(now) + ")"
     ).isOk());
 
+    // H21 待办口径只认列 kind（schema.h 禁止按标题匹配）：t5（kind='doing'）计入；
+    // t6(kind='done')/t7(kind='archive')/t8 与 t9（kind NULL 的自定义列，其一标题
+    // 就叫「进行中」）均不计。五行 due_at 均为 NULL，不影响 overdueTodos。
+    DOCTEST_CHECK(sq.exec(
+        "INSERT INTO todo_tasks (column_id, title, priority, position, due_at, completed_at, archived_at, created_at, updated_at) VALUES "
+        "(2, 't5', 0, 4, NULL, NULL, NULL, " + std::to_string(now) + ", " + std::to_string(now) + "), "
+        "(3, 't6', 0, 5, NULL, NULL, NULL, " + std::to_string(now) + ", " + std::to_string(now) + "), "
+        "(4, 't7', 0, 6, NULL, NULL, " + std::to_string(now) + ", " + std::to_string(now) + ", " + std::to_string(now) + ")"
+    ).isOk());
+
+    // 自定义普通列：kind 为空——必须被口径排除；其一标题叫「进行中」，
+    // 钉住「不得按标题兜底」（schema.h 契约）。
+    DOCTEST_CHECK(sq.exec(
+        "INSERT INTO todo_columns (title, position, color, created_at, kind) VALUES "
+        "('自定义', 4, NULL, " + std::to_string(now) + ", NULL), "
+        "('进行中', 5, NULL, " + std::to_string(now) + ", NULL)"
+    ).isOk());
+    DOCTEST_CHECK(sq.exec(
+        "INSERT INTO todo_tasks (column_id, title, priority, position, due_at, completed_at, created_at, updated_at) VALUES "
+        "((SELECT id FROM todo_columns WHERE title = '自定义'), 't8', 0, 7, NULL, NULL, " + std::to_string(now) + ", " + std::to_string(now) + "), "
+        "((SELECT id FROM todo_columns WHERE title = '进行中' AND kind IS NULL), 't9', 0, 8, NULL, NULL, " + std::to_string(now) + ", " + std::to_string(now) + ")"
+    ).isOk());
+
     // claude_call_logs：先建 profile（FK ON），2 条今天 + 1 条昨天
     DOCTEST_CHECK(sq.exec(
         "INSERT INTO claude_profiles (name, base_url, api_key_hint, api_key_check, "
@@ -85,8 +126,11 @@ REGISTER_TEST(home_service_real_stats,
     DOCTEST_REQUIRE_MESSAGE(r.isOk(), "getStats 失败: " + r.errorMessage());
     const auto& s = r.value();
     DOCTEST_CHECK_EQ(s.todayNotes, 2);        // a + b
-    DOCTEST_CHECK_EQ(s.pendingTodos, 3);      // t1 t2 t3
-    DOCTEST_CHECK_EQ(s.overdueTodos, 1);      // t2（t4 已完成不计）
+    // 待办口径 = 待办列 + 进行中列 的未完成任务：t1 t2 t3（待办列）+ t5（进行中列）
+    // t4 已完成；t6 在 kind='done' 列（completed_at 脏 NULL 也不放宽）；
+    // t7 归档列；t8/t9 在 kind 为空的自定义列（t9 标题为「进行中」也不按标题计入）
+    DOCTEST_CHECK_EQ(s.pendingTodos, 4);
+    DOCTEST_CHECK_EQ(s.overdueTodos, 1);      // t2（t4 已完成；t5-t9 无截止时间）
     DOCTEST_CHECK_EQ(s.todayApiCalls, 2);
     DOCTEST_CHECK_EQ(s.recentNotes.size(), static_cast<size_t>(3));
     if (!s.recentNotes.empty()) {
@@ -263,254 +307,133 @@ REGISTER_TEST(home_token_rate_card_compose,
 })
 
 // ============================================================================
-// 玻璃统计卡契约（UAT6 方案一 · 五色软染玻璃，home_module.cpp drawGlassStatCard）
+// S3.1 / S6.6 实底统计卡契约（home_module.cpp drawSolidStatCard）
 // 防的事故：
-//  ① 染色写错卡/漏卡（表驱动五色逐卡 RGB 断言，设计基准拍板色 绿/蓝/橙/紫/青）
-//  ② 玻璃层组缺件塌回白卡（染色/纵向高光/横向偏置高光/顶线/三组污渍/交互纱逐层断言）
-//  ③ hover 不再整卡或加深不可辨（misc1 语义：press 框 == 卡框 + textPrimary 派生纱）
-//  ④ 染色/面透明度调过线压垮文字（三态对比度护栏，effects 批同模型）
-// 对比度模型口径（与 test_settings settings_window_effect_param_mapping 钉的
-// clearColor 内容纱同源：translucent=0.82 / frosted=0.15 / off=1.0；磨砂黑壁纸底取
-// effects 批实机材质输出 M=192）。#999 三级灰在纯白上仅 2.85:1——4.5 对该档数学
-// 不可达（W9 既定档），护栏按「数字 ≥4.5 + 灰/红档不劣化」落。
+//  ① 五卡背景色写错/漏卡（逐卡 RGB 断言，S6.6 五色：cardGreen/cardBlue/cardOrange/cardPurple/cardCyan）
+//  ② 玻璃层组残留（.glass.* 节点应全部缺位）
+//  ③ 点击层仍可用 + 文字层级完整（label/number/badge 三行）
+//  ④ 对比度门槛：数字 textPrimary on 辅色底 ≥4.5:1（WCAG AA），三级灰档 S6.6 预设
 // ============================================================================
 namespace {
 
-double glassLuminance(const eui::Color& c) {
+double solidLuminance(const eui::Color& c) {
     const auto lin = [](double v) {
         return v <= 0.04045 ? v / 12.92 : std::pow((v + 0.055) / 1.055, 2.4);
     };
     return 0.2126 * lin(c.r) + 0.7152 * lin(c.g) + 0.0722 * lin(c.b);
 }
 
-double glassContrast(const eui::Color& a, const eui::Color& b) {
-    const double la = glassLuminance(a);
-    const double lb = glassLuminance(b);
+double solidContrast(const eui::Color& a, const eui::Color& b) {
+    const double la = solidLuminance(a);
+    const double lb = solidLuminance(b);
     const double hi = la > lb ? la : lb;
     const double lo = la > lb ? lb : la;
     return (hi + 0.05) / (lo + 0.05);
 }
 
-// Porter-Duff over：top 的 rgb/alpha 即元素色（sRGB 空间直叠，同渲染端 mix 口径，
-// 亦即 soft-light 的浅底近似公式 comp = α·T + (1−α)·face）
-eui::Color glassOver(const eui::Color& top, const eui::Color& bottom) {
-    eui::Color out;
-    const float k = 1.0f - top.a;
-    out.r = top.r * top.a + bottom.r * k;
-    out.g = top.g * top.a + bottom.g * k;
-    out.b = top.b * top.a + bottom.b * k;
-    out.a = top.a + bottom.a * k;
-    return out;
-}
-
-bool glassNear(float a, float b) { return std::fabs(a - b) < 2.0f; }  // UAT6：放宽到 2px（card 帧盒公差）
-
 } // namespace
 
-REGISTER_TEST(home_glass_stat_cards,
-              "Home 玻璃统计卡: 五色染色 + 层组完整 + hover 整卡 + 三态对比度护栏", {
+REGISTER_TEST(home_solid_stat_cards,
+              "Home 实底统计卡: S6.6 五色实底 + 无玻璃残留 + 点击 + 对比度护栏", {
     core::proxy_stats::resetForTest();
-    core::theme::setLight();  // 对比度模型钉浅色档（dark-WeChat 延后 D-04）
+    core::theme::setLight();
 
     std::unique_ptr<::core::Module> mod(create_home_module());
     eui::Screen screen;
     screen.width = 1200.0f;
     screen.height = 720.0f;
     eui::Ui ui;
-    ui.begin("home_glass");
+    ui.begin("home_solid");
     mod->compose(ui, screen);
     ui.end();
 
     const auto& t = core::theme::current();
-    const auto& wc = t.colors.wechat;
 
-    // —— ① 五卡染色逐卡断言（绿/蓝/橙/紫/青按统计卡语义顺序）——
-    struct ExpTint {
+    // —— ① 五卡实底色逐卡断言（S6.6：绿/蓝/橙/紫/青）——
+    struct ExpBg {
         const char* id;
         std::uint32_t hex;
+        float r, g, b;
     };
-    const ExpTint kExpTints[] = {
-        {"home.stat.tokens", 0x7EE2A8},  // 绿
-        {"home.stat.notes", 0x8ECBF5},    // 蓝
-        {"home.stat.todo", 0xF5C98E},     // 橙
-        {"home.stat.overdue", 0xC8A8F5},  // 紫
-        {"home.stat.api", 0x8EF0E2},      // 青
+    const ExpBg kExpBgs[] = {
+        {"home.stat.tokens", 0xE6FBF2, 0.902f, 0.984f, 0.949f},   // cardGreen
+        {"home.stat.notes", 0xE0F4FF, 0.878f, 0.957f, 1.000f},     // cardBlue
+        {"home.stat.todo", 0xFFF1E0, 1.000f, 0.945f, 0.878f},      // cardOrange
+        {"home.stat.overdue", 0xF3E8FF, 0.953f, 0.910f, 1.000f},   // cardPurple
+        {"home.stat.api", 0xDFFAF6, 0.875f, 0.980f, 0.965f},       // cardCyan
     };
-    for (const auto& e : kExpTints) {
+    for (const auto& e : kExpBgs) {
         const std::string id(e.id);
-        const auto* tintEl = ui.find(id + ".glass.tint");
-        DOCTEST_REQUIRE_MESSAGE(tintEl != nullptr,
-                                id + ": 缺染色层 .glass.tint");
+        const auto* bgEl = ui.find(id + ".bg");
+        DOCTEST_REQUIRE_MESSAGE(bgEl != nullptr, id + ": 缺卡片底色 .bg");
         const eui::Color exp = eui::Color::fromHex(e.hex);
-        DOCTEST_CHECK_MESSAGE(std::fabs(tintEl->color.r - exp.r) < 1e-4f &&
-                                  std::fabs(tintEl->color.g - exp.g) < 1e-4f &&
-                                  std::fabs(tintEl->color.b - exp.b) < 1e-4f,
-                              id + ": 染色 RGB 与设计基准不符（方案一拍板色）");
-        // 染色强度带：低过 0.10 玻璃退化成白卡（染色没了，护栏失去意义）
-        DOCTEST_CHECK_MESSAGE(tintEl->color.a >= 0.10f &&
-                                  tintEl->color.a <= 0.25f,
-                              id + ": 染色 alpha 出强度带（soft-light 直叠近似档）");
+        DOCTEST_CHECK_MESSAGE(
+            std::fabs(bgEl->color.r - exp.r) < 1e-4f &&
+                std::fabs(bgEl->color.g - exp.g) < 1e-4f &&
+                std::fabs(bgEl->color.b - exp.b) < 1e-4f,
+            id + ": 底色 RGB 与 S6.6 设计基准不符");
+        DOCTEST_CHECK_MESSAGE(bgEl->color.a >= 0.99f,
+                              id + ": 底应为实色（a≈1），非半透");
 
-        // —— ② 层组完整性（五卡共享 helper，塌一层即红）——
-        const auto* hlTop = ui.find(id + ".glass.hl.top");
-        const auto* hlSide = ui.find(id + ".glass.hl.side");
-        const auto* topLine = ui.find(id + ".glass.topline");
-        DOCTEST_REQUIRE_MESSAGE(hlTop != nullptr, id + ": 缺纵向高光层");
-        DOCTEST_REQUIRE_MESSAGE(hlSide != nullptr, id + ": 缺横向偏置高光层");
-        DOCTEST_REQUIRE_MESSAGE(topLine != nullptr, id + ": 缺顶缘 inset 高光线");
-        // 白色顶部高光：纵向主带 Vertical、起点亮 alpha、终点 alpha=0（渐弱没顶）
-        DOCTEST_CHECK(hlTop->gradient.enabled);
-        DOCTEST_CHECK(hlTop->gradient.direction ==
-                      eui::GradientDirection::Vertical);
-        DOCTEST_CHECK(hlTop->gradient.start.a > 0.20f);
-        DOCTEST_CHECK(hlTop->gradient.end.a < 1e-4f);
-        // 左上偏置带：横向、弱一档（两带叠出「左上→中右渐弱」观感）
-        DOCTEST_CHECK(hlSide->gradient.enabled);
-        DOCTEST_CHECK(hlSide->gradient.direction ==
-                      eui::GradientDirection::Horizontal);
-        DOCTEST_CHECK(hlSide->gradient.start.a > 0.08f);
-        DOCTEST_CHECK(hlSide->gradient.end.a < 1e-4f);
-        DOCTEST_CHECK_MESSAGE(glassNear(topLine->frame.height, 1.0f),
-                              id + ": 顶缘高光线应为 1px 发丝线");
-        // 三组污渍（白/暗/白）halo+core 双层圆斑存在
-        for (int i = 0; i < 3; ++i) {
-            DOCTEST_CHECK(ui.find(id + ".glass.stain." +
-                                  std::to_string(i) + ".halo") != nullptr);
-            DOCTEST_CHECK(ui.find(id + ".glass.stain." +
-                                  std::to_string(i) + ".core") != nullptr);
-        }
+        // —— ② 玻璃层组已退役（S6.1）：.glass.* 节点全部缺位 ——
+        DOCTEST_CHECK(ui.find(id + ".glass.tint") == nullptr);
+        DOCTEST_CHECK(ui.find(id + ".glass.hl.top") == nullptr);
+        DOCTEST_CHECK(ui.find(id + ".glass.hl.side") == nullptr);
+        DOCTEST_CHECK(ui.find(id + ".glass.topline") == nullptr);
+        DOCTEST_CHECK(ui.find(id + ".glass.stain.0.halo") == nullptr);
 
-        // —— ③ hover 仍整卡（misc1 语义）：整卡矩形 + 染色面上加深可辨 ——
-        const auto* card = ui.find(id);
+        // —— ③ 文字层级完整 + 点击层可用 ——
+        DOCTEST_CHECK(ui.find(id + ".label") != nullptr);
+        DOCTEST_CHECK(ui.find(id + ".number") != nullptr);
+        DOCTEST_CHECK(ui.find(id + ".badge") != nullptr);
         const auto* press = ui.find(id + ".press");
-        DOCTEST_REQUIRE(card != nullptr);
-        DOCTEST_REQUIRE_MESSAGE(press != nullptr, id + ": 缺整卡交互层 .press");
-        DOCTEST_CHECK(press->hasStateColors);
+        DOCTEST_REQUIRE_MESSAGE(press != nullptr, id + ": 缺整卡点击层 .press");
         DOCTEST_CHECK(press->onClick != nullptr);
-        // 整卡矩形：press 框 == 卡根框（同位同尺寸）
-        DOCTEST_CHECK_MESSAGE(glassNear(press->frame.x, card->frame.x) &&
-                                  glassNear(press->frame.y, card->frame.y) &&
-                                  glassNear(press->frame.width,
-                                            card->frame.width) &&
-                                  glassNear(press->frame.height,
-                                            card->frame.height),
-                              id + ": 交互层必须盖满整卡（misc1 整卡语义）");
-        // 深色纱三档：normal 全透明、hover/按压低 alpha 递增、rgb 走 textPrimary 令牌族
+        DOCTEST_CHECK(press->hasStateColors);
+        // normal 态全透明
         DOCTEST_CHECK(press->color.a < 1e-4f);
-        DOCTEST_CHECK_MESSAGE(press->hoverColor.a > 0.0f &&
-                                  press->hoverColor.a < 0.2f,
-                              id + ": hover 纱应为低 alpha 深色（0.06 档）");
-        DOCTEST_CHECK(press->pressedColor.a > press->hoverColor.a);
-        DOCTEST_CHECK(std::fabs(press->hoverColor.r - wc.textPrimary.r) <
-                      1e-4f);
-        // 污渍不出卡界（stack 不裁剪，靠半径钳制兜底）：污渍圆 ⊆ 卡框
-        for (int i = 0; i < 3; ++i) {
-            for (const char* part : {".halo", ".core"}) {
-                const auto* st = ui.find(id + ".glass.stain." +
-                                         std::to_string(i) + part);
-                DOCTEST_REQUIRE(st != nullptr);
-                DOCTEST_CHECK_MESSAGE(
-                    st->frame.x >= card->frame.x - 0.5f &&
-                        st->frame.y >= card->frame.y - 0.5f &&
-                        st->frame.x + st->frame.width <=
-                            card->frame.x + card->frame.width + 0.5f &&
-                        st->frame.y + st->frame.height <=
-                            card->frame.y + card->frame.height + 0.5f,
-                    id + ": 污渍 " + std::to_string(i) + part + " 戳出卡界");
-            }
-        }
     }
 
-    // —— ④ 三态对比度护栏（effects 批同模型；组合元素色从组合结果里实取，
-    //    改 alpha 常量时护栏随之重算，不钉死常量本身）——
-    // 三态底（window clearColor = theme.background）：
-    //   off   = background 实色
-    //   半透  = background@0.82 over 纯白壁纸（暗文字最坏 = 最亮底）
-    //   磨砂  = background@0.15 over M=192（黑壁纸实机材质输出 = 最暗底）
-    const eui::Color bg = t.colors.background;
-    const eui::Color whiteWall{1.0f, 1.0f, 1.0f, 1.0f};
-    const eui::Color frostedWall{192.0f / 255.0f, 192.0f / 255.0f,
-                                 192.0f / 255.0f, 1.0f};
-    const eui::Color bases[3] = {
-        bg,
-        glassOver(eui::Color{bg.r, bg.g, bg.b, 0.82f}, whiteWall),
-        glassOver(eui::Color{bg.r, bg.g, bg.b, 0.15f}, frostedWall)};
-    const char* stateNames[3] = {"不透明页", "半透窗", "磨砂窗"};
-
-    double minNum = 1e9;
-    double minLabel = 1e9;
-    double minRed = 1e9;
-    for (int stIdx = 0; stIdx < 3; ++stIdx) {
-        for (const auto& e : kExpTints) {
-            const std::string id(e.id);
-            const auto* faceEl = ui.find(id + ".bg");
-            const auto* tintEl = ui.find(id + ".glass.tint");
-            const auto* stainEl = ui.find(id + ".glass.stain.1.core");
-            DOCTEST_REQUIRE(faceEl != nullptr);
-            DOCTEST_REQUIRE(tintEl != nullptr);
-            DOCTEST_REQUIRE(stainEl != nullptr);
-            // worst 文字区 = 卡底暗污渍带、无顶部高光（高光只会把底打得更亮）：
-            // 底 → 白面(face) → 染色(tint) → 暗污渍(stain)
-            const eui::Color comp =
-                glassOver(stainEl->color,
-                          glassOver(tintEl->color,
-                                    glassOver(faceEl->color, bases[stIdx])));
-
-            const double num = glassContrast(wc.textPrimary, comp);
-            const double label = glassContrast(wc.textTertiary, comp);
-            const double red = glassContrast(wc.warningRed, comp);
-            minNum = std::min(minNum, num);
-            minLabel = std::min(minLabel, label);
-            minRed = std::min(minRed, red);
-
-            // 数字（textPrimary 档）三态全 ≥4.5:1（WCAG AA）
-            DOCTEST_CHECK_MESSAGE(
-                num >= 4.5, id + " " + stateNames[stIdx] + ": 数字对比度 " +
-                                std::to_string(num) + " < 4.5");
-            // 标题/副题（#999 三级灰）：纯白上限 2.85，护栏取不劣化档
-            const double labelFloor = (stIdx == 2) ? 2.05 : 2.40;
-            DOCTEST_CHECK_MESSAGE(
-                label >= labelFloor,
-                id + " " + stateNames[stIdx] + ": 标题灰对比度 " +
-                    std::to_string(label) + " < " +
-                    std::to_string(labelFloor));
-            // 逾期卡 warningRed 数字/副题档（磨砂最暗底随 label 同比例放宽一档）
-            const double redFloor = (stIdx == 2) ? 2.40 : 2.75;
-            DOCTEST_CHECK_MESSAGE(
-                red >= redFloor,
-                id + " " + stateNames[stIdx] + ": 警示红对比度 " +
-                    std::to_string(red) + " < " + std::to_string(redFloor));
-            // 玻璃面（未染色）任何状态下不比页面底暗：卡上文字恒不劣于同态页面级
-            const eui::Color untinted = glassOver(faceEl->color, bases[stIdx]);
-            DOCTEST_CHECK_MESSAGE(
-                glassLuminance(untinted) >=
-                    glassLuminance(bases[stIdx]) - 1e-6,
-                id + " " + stateNames[stIdx] + ": 玻璃面不该比页面底更暗");
-        }
+    // —— ④ 对比度护栏（Solid底——alpha=1.0，只有 light/dark 两态，无窗透态）——
+    struct AuxC {
+        std::uint32_t bgHex;
+        const char* name;
+    };
+    const AuxC auxBg[] = {
+        {0xE6FBF2, "cardGreen"}, {0xE0F4FF, "cardBlue"},
+        {0xFFF1E0, "cardOrange"}, {0xF3E8FF, "cardPurple"},
+        {0xDFFAF6, "cardCyan"},
+    };
+    double minNumCt = 1e9;
+    double minLabelCt = 1e9;
+    double minRedCt = 1e9;
+    for (const auto& ac : auxBg) {
+        const eui::Color bgC = eui::Color::fromHex(ac.bgHex);
+        const double num = solidContrast(t.colors.textPrimary, bgC);
+        const double label = solidContrast(t.colors.textTertiary, bgC);
+        // 红字数字（逾期卡 accent 态）走 errorText 档，护栏随文字 token 走
+        const double red = solidContrast(t.colors.errorText, bgC);
+        minNumCt = std::min(minNumCt, num);
+        minLabelCt = std::min(minLabelCt, label);
+        minRedCt = std::min(minRedCt, red);
+        DOCTEST_CHECK_MESSAGE(num >= 4.5,
+            std::string(ac.name) + ": 数字对比度 " + std::to_string(num) + " < 4.5");
     }
-    // 轮子真转过（防集合为空导致上面的逐项断言恒真）
-    DOCTEST_CHECK(minNum < 1e8);
-    DOCTEST_CHECK(minLabel < 1e8);
-    DOCTEST_CHECK(minRed < 1e8);
+    DOCTEST_CHECK(minNumCt < 1e8);
+    DOCTEST_CHECK(minLabelCt < 1e8);
+    DOCTEST_CHECK(minRedCt < 1e8);
 
-    // —— ⑤ 深色档面透明度分支：dark-WeChat 延后（D-04）wechat 槽位深浅同值，
-    //    白面 0.62 在深色窗底会塌成奶灰、灰字对比度跳水——深色档 face alpha
-    //    抬到近实白防塌（染色层照常渲染）——
+    // —— ⑤ 深色模式：卡底不透明，文字可读 ——
     {
         core::theme::setDark();
         eui::Ui uiD;
-        uiD.begin("home_glass_dark");
+        uiD.begin("home_solid_dark");
         mod->compose(uiD, screen);
         uiD.end();
-        const auto* faceDark = uiD.find("home.stat.notes.bg");
-        DOCTEST_REQUIRE(faceDark != nullptr);
-        DOCTEST_CHECK_MESSAGE(
-            faceDark->color.a >= 0.90f,
-            "深色档玻璃面应近实白（dark-WeChat 延后期的防塌分支）");
-        const auto* tintDark = uiD.find("home.stat.notes.glass.tint");
-        DOCTEST_REQUIRE(tintDark != nullptr);
-        DOCTEST_CHECK(tintDark->color.a >= 0.10f);  // 染色层照常渲染
-        core::theme::setLight();                   // 尾态复位
+        const auto* bgD = uiD.find("home.stat.notes.bg");
+        DOCTEST_REQUIRE(bgD != nullptr);
+        DOCTEST_CHECK(bgD->color.a >= 0.99f);  // 暗色下亦实色
+        core::theme::setLight();
     }
 
     mod->onStop();
@@ -566,7 +489,11 @@ REGISTER_TEST(home_last_rate_and_hourly_tokens,
         DOCTEST_REQUIRE(badge != nullptr);
         DOCTEST_CHECK_EQ(number->text, std::string("--"));
         DOCTEST_CHECK_EQ(badge->text, std::string("暂无成功调用"));
-        DOCTEST_CHECK(ui.find("home.api.chart.empty") != nullptr);
+        // 待办卡副题与 H21 口径一致（待办列 + 进行中列）
+        const auto* todoBadge = ui.find("home.stat.todo.badge");
+        DOCTEST_REQUIRE(todoBadge != nullptr);
+        DOCTEST_CHECK_EQ(todoBadge->text, std::string("待办+进行中未完成"));
+        DOCTEST_CHECK(ui.find("home.api.chart.empty.title") != nullptr);
         DOCTEST_CHECK(ui.find("home.api.chart.bars.bar.0") == nullptr);
         mod->onStop();
     }
@@ -675,6 +602,168 @@ REGISTER_TEST(home_last_rate_and_hourly_tokens,
     }
     return true;
 })
+// H18 首页纵向弹性双档（真实页高）：600 档 = 最小窗 1000×640 减标题条（窗高封顶
+// 已废止 → fs=1）；960 档 = 1600×1000 减标题条。弹性基准 = 内容刚好填满页高（全部令牌派生），
+// 余高 18% 给统计行、其余归图表卡；底部仅留 0.5px 防浮点越界出滚条。
+REGISTER_TEST(home_stat_chart_dual_tier,
+              "home_module: H18 统计卡/图表卡纵向弹性双档（页高 600 / 960）", {
+    core::proxy_stats::resetForTest();
+    core::theme::setLight();
+    // 字号档是进程级全局态：用户档固定 100%（窗高封顶已废止 → 600 档 fs=1）
+    core::theme::setFontScale(1.0f);
+
+    std::unique_ptr<::core::Module> mod(create_home_module());
+
+    // 600 档：真实最小页高，fs=1 下验证弹性基准几何
+    {
+        core::theme::setWindowHeight(600.0f);
+        const float fs = core::theme::fontScale();
+        DOCTEST_REQUIRE_MESSAGE(std::fabs(fs - 1.0f) < 1e-4f,
+                                "600 档生效字号应为用户档 1.0（窗高封顶已废止），实际 " +
+                                    std::to_string(fs));
+        eui::Ui ui;
+        eui::Screen screen{1000.0f, 600.0f};
+        ui.begin("home_tier_600");
+        mod->compose(ui, screen);
+        ui.end();
+        ui.layout(screen.width, screen.height);
+        const auto* stat = ui.find("home.stat.notes");
+        const auto* chart = ui.find("home.api.chart");
+        const auto* number = ui.find("home.stat.notes.number");
+        const auto* desc = ui.find("home.stat.notes.badge");
+        const auto* root = ui.find("home.root");
+        DOCTEST_REQUIRE(stat != nullptr);
+        DOCTEST_REQUIRE(chart != nullptr);
+        DOCTEST_REQUIRE(number != nullptr);
+        DOCTEST_REQUIRE(desc != nullptr);
+        DOCTEST_REQUIRE(root != nullptr);
+        // 基准 = pad×2(64)+页头40+统计144+gap×3(60)+图220+操作44 = 572；
+        // 余高 600−572−0.5=27.5 → 统计 148.95，图表 242.55
+        DOCTEST_CHECK_MESSAGE(
+            std::fabs(stat->frame.height - 160.47f) < 0.5f,
+            "600 档统计卡高应为 148.95，实际 " +
+                std::to_string(stat->frame.height));
+        DOCTEST_CHECK_MESSAGE(
+            std::fabs(chart->frame.height - 295.03f) < 0.5f,
+            "600 档图表卡高应为 242.55，实际 " +
+                std::to_string(chart->frame.height));
+        // 卡内三行随卡高派生：仍在卡内、number 与 desc 不重叠
+        const float cardTop = stat->frame.y;
+        const float cardBottom = cardTop + stat->frame.height;
+        DOCTEST_CHECK(number->frame.y >= cardTop);
+        DOCTEST_CHECK(number->frame.y + number->frame.height <= cardBottom);
+        DOCTEST_CHECK(desc->frame.y >= number->frame.y + number->frame.height);
+        DOCTEST_CHECK(desc->frame.y + desc->frame.height <= cardBottom);
+        // 内容刚好填满页高：基准以上余高被统计行/图表卡全部吸收
+        const float bottomMargin =
+            screen.height - (root->frame.y + root->frame.height);
+        DOCTEST_CHECK_MESSAGE(
+            bottomMargin <= 1.0f,
+            "600 档内容应填满页高（底部余量 ≤1），实际 " +
+                std::to_string(bottomMargin));
+    }
+
+    // 960 档（1600×1000 真实页高，fs=1）：基准 572、余高 388−0.5=387.5 →
+    // 统计卡 213.75，图表卡 537.75（写死具体值，不用恒等式）
+    {
+        core::theme::setWindowHeight(960.0f);
+        const float fs = core::theme::fontScale();
+        DOCTEST_REQUIRE_MESSAGE(std::fabs(fs - 1.0f) < 1e-4f,
+                                "960 档应保持用户档 1.0，实际 " +
+                                    std::to_string(fs));
+        eui::Ui ui;
+        eui::Screen screen{1600.0f, 960.0f};
+        ui.begin("home_tier_960");
+        mod->compose(ui, screen);
+        ui.end();
+        ui.layout(screen.width, screen.height);
+        const auto* stat = ui.find("home.stat.notes");
+        const auto* chart = ui.find("home.api.chart");
+        const auto* number = ui.find("home.stat.notes.number");
+        const auto* desc = ui.find("home.stat.notes.badge");
+        const auto* root = ui.find("home.root");
+        DOCTEST_REQUIRE(stat != nullptr);
+        DOCTEST_REQUIRE(chart != nullptr);
+        DOCTEST_REQUIRE(number != nullptr);
+        DOCTEST_REQUIRE(desc != nullptr);
+        DOCTEST_REQUIRE(root != nullptr);
+        DOCTEST_CHECK_MESSAGE(
+            std::fabs(stat->frame.height - 225.27f) < 0.5f,
+            "960 档统计卡高应为 213.75，实际 " +
+                std::to_string(stat->frame.height));
+        DOCTEST_CHECK_MESSAGE(
+            std::fabs(chart->frame.height - 590.23f) < 0.5f,
+            "960 档图表卡高应为 537.75，实际 " +
+                std::to_string(chart->frame.height));
+        // 卡高增长后卡内三行仍居中分布、在卡内且不重叠
+        const float cardTop = stat->frame.y;
+        const float cardBottom = cardTop + stat->frame.height;
+        DOCTEST_CHECK(number->frame.y >= cardTop);
+        DOCTEST_CHECK(number->frame.y + number->frame.height <= cardBottom);
+        DOCTEST_CHECK(desc->frame.y >= number->frame.y + number->frame.height);
+        DOCTEST_CHECK(desc->frame.y + desc->frame.height <= cardBottom);
+        // 内容刚好填满页高：基准以上余高被统计行/图表卡全部吸收
+        const float bottomMargin =
+            screen.height - (root->frame.y + root->frame.height);
+        DOCTEST_CHECK_MESSAGE(
+            bottomMargin <= 1.0f,
+            "960 档内容应填满页高（底部余量 ≤1），实际 " +
+                std::to_string(bottomMargin));
+    }
+
+    // 复位进程级全局态，避免污染其它用例
+    core::theme::setWindowHeight(1000.0f);
+    mod->onStop();
+    core::proxy_stats::resetForTest();
+    return true;
+})
+
+// 关闭 ClaudeProxy：图表卡不渲染时余高必须由统计行吸收，页底不留死区。
+// 基准（无图表卡）= 64 + 页头40 + 统计144 + gap×2(40) + 操作44 = 332。
+REGISTER_TEST(home_no_chart_extra_to_stats,
+              "home_module: ClaudeProxy 关闭时余高全给统计行（无图表卡）", {
+    core::theme::setFontScale(1.0f);
+    core::theme::setWindowHeight(960.0f);  // 窗高不封顶 → fs=1
+
+    ::core::Router router;
+    GatingStubModule home(::core::PageId::Home, "home");
+    GatingStubModule markdown(::core::PageId::Markdown, "markdown");
+    GatingStubModule todo(::core::PageId::Todo, "todo");
+    router.registerModule(&home);
+    router.registerModule(&markdown);
+    router.registerModule(&todo);
+    test_support::ScopedAppRouter scoped(&router);
+
+    std::unique_ptr<::core::Module> mod(create_home_module());
+    eui::Screen screen{1600.0f, 960.0f};
+    eui::Ui ui;
+    ui.begin("home_no_chart");
+    mod->compose(ui, screen);
+    ui.end();
+    ui.layout(screen.width, screen.height);
+
+    DOCTEST_CHECK(ui.find("home.api.chart") == nullptr);
+    const auto* stat = ui.find("home.stat.notes");
+    const auto* root = ui.find("home.root");
+    DOCTEST_REQUIRE(stat != nullptr);
+    DOCTEST_REQUIRE(root != nullptr);
+    // 余高 960−332−0.5=627.5 全给统计行 → 144+627.5=771.5；内容填满页高
+    DOCTEST_CHECK_MESSAGE(
+        std::fabs(stat->frame.height - 835.5f) < 0.5f,
+        "无图表卡时统计行应吸收全部余高（期望 771.5），实际 " +
+            std::to_string(stat->frame.height));
+    const float bottomMargin =
+        screen.height - (root->frame.y + root->frame.height);
+    DOCTEST_CHECK_MESSAGE(
+        bottomMargin <= 1.0f,
+        "无图表卡时页底不应留死区（余量 ≤1），实际 " +
+            std::to_string(bottomMargin));
+
+    core::theme::setWindowHeight(1000.0f);
+    mod->onStop();
+    return true;
+})
+
 // 同一批种子数据同时问两条读取路径，把它们钉在同一个数字上——口径分叉即红
 REGISTER_TEST(home_todo_overdue_consistency,
               "HomeService/TodoService: 逾期口径单源一致性",

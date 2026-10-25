@@ -10,18 +10,26 @@ namespace ui_kit {
 void wtab(eui::Ui& ui, const std::string& id, const std::string& label,
           bool active, float x, float y, float w, float h,
           const core::theme::Tokens& t,
-          const std::function<void()>& onClick) {
-    const auto& wc = t.colors.wechat;
-    // §4.2：未激活=textSecondary（#666）灰字；激活=textPrimary（#1A1A1A）深灰字
-    const eui::Color txtColor = active ? wc.textPrimary : wc.textSecondary;
+          const std::function<void()>& onClick, float fontSize) {
+    // S2.2 块面 Tab：选中=primarySoftBg底+primary字+8px圆角；未选中=透明底+textSecondary字
+    // H10：primarySoftBg（#E6FBF2）在白/淡绿底上对比度不足，加 borderDefault 描边。
+    const eui::Color txtColor = active ? t.colors.primary : t.colors.textSecondary;
 
     ui.stack(id)
         .position(x, y)
         .size(w, h)
         .content([&] {
-            // hit area：透明 rect 挂 onClick；不画 bg（§4.2 "无背景"），防
-            // "实心填充按钮做 Tab" 禁止项（§4.2 / §8 #1）。透明 = Color{0,0,0,0}
-            // 是 spec 允许的唯一裸字面量（透明色无 token 槽位）。
+            // 选中态背景 rect：primarySoftBg（#E6FBF2）+ 8px 圆角 + H10 描边
+            if (active) {
+                ui.rect(id + ".bg")
+                    .size(w, h)
+                    .color(t.colors.primarySoftBg)
+                    .radius(8.0f)
+                    .border(1.0f, t.colors.borderDefault)
+                    .build();
+            }
+
+            // hit area：透明 rect 挂 onClick
             auto hit = ui.rect(id + ".hit")
                 .size(w, h)
                 .color(eui::Color{0.0f, 0.0f, 0.0f, 0.0f});
@@ -30,25 +38,15 @@ void wtab(eui::Ui& ui, const std::string& id, const std::string& label,
             }
             hit.build();
 
-            // 文字：水平居中 + 垂直居中；颜色按 active 切换
+            // 文字：水平居中 + 垂直居中
             ui.text(id + ".text")
                 .size(w, h)
                 .text(label)
-                .fontSize(kWtabFontSize)
+                .fontSize(fontSize)
                 .horizontalAlign(eui::HorizontalAlign::Center)
                 .verticalAlign(eui::VerticalAlign::Center)
                 .color(txtColor)
                 .build();
-
-            // 下划线：仅 active 时画；2px 高，宽=w，贴 stack 底部
-            // 色 = wechat.primary（#07C160，§4.2 "底部 2px 微信绿下划线"）
-            if (active) {
-                ui.rect(id + ".underline")
-                    .position(0.0f, h - kWtabUnderlineHeight)
-                    .size(w, kWtabUnderlineHeight)
-                    .color(wc.primary)
-                    .build();
-            }
         })
         .build();
 }

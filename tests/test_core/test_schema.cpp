@@ -11,6 +11,7 @@
 #include <filesystem>
 #include <set>
 #include <string>
+#include <variant>
 #include <vector>
 
 namespace {
@@ -521,7 +522,7 @@ REGISTER_TEST(schema_seeds_default_todo_columns,
         struct Expect { const char* title; const char* color; const char* kind; };
         Expect expects[4] = {
             {"待办",   "claude-clay", "todo"},
-{"进行中", "warm-amber",  ""},       // 普通列：kind 为 NULL
+            {"进行中", "warm-amber",  "doing"},  // H20 固定语义值
             {"已完成", "muted-sage",  "done"},
             {"已归档", "warm-gray",   "archive"},
         };
@@ -544,6 +545,111 @@ REGISTER_TEST(schema_seeds_default_todo_columns,
     return true;
 })
 
+
+// UAT6.2 H20：Todo 固定四列迁移挂在 Database::open / migrate 的启动路径
+// （applySchema → addMissingAgentColumns → migrateTodoFixedColumns），
+// 与 Todo 模块是否启用无关；老库重开后必须收敛到固定四列，且任务行数守恒。
+REGISTER_TEST(schema_migrate_todo_fixed_columns,
+              "schema: Todo 固定四列迁移（老库补 doing / 重建缺列 / 并多余列 / 任务守恒）", {
+    auto path = test_support::tempDbPath(kDbPrefix, "todo_fixed");
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+
+    // 阶段 1：open 已跑过一次迁移；这里手工退回 H20 之前的老库形态
+    {
+        auto r = core::Database::open(path);
+        DOCTEST_REQUIRE(r.isOk());
+        auto& db = r.value().db();
+
+        // 进行中退回 kind=NULL（老种子形态）
+        DOCTEST_REQUIRE(db.exec(
+            "UPDATE todo_columns SET kind = NULL WHERE kind = 'doing'").isOk());
+        // 删掉已归档列（模拟用户删过默认列）——重开时应按固定形态重建
+        DOCTEST_REQUIRE(db.exec(
+            "DELETE FROM todo_columns WHERE kind = 'archive'").isOk());
+        // 多余自定义列（kind 为空）+ 两个任务：迁移后应并入待办列再删列
+        DOCTEST_REQUIRE(db.exec(
+            "INSERT INTO todo_columns (title, position, color, created_at, kind) "
+            "VALUES ('自定义', 9, NULL, 0, NULL)").isOk());
+        DOCTEST_REQUIRE(db.exec(
+            "INSERT INTO todo_tasks (column_id, title, priority, position, created_at, updated_at) "
+            "VALUES ((SELECT id FROM todo_columns WHERE title = '自定义'), '并入1', 0, 0, 0, 0), "
+            "((SELECT id FROM todo_columns WHERE title = '自定义'), '并入2', 0, 1, 0, 0)").isOk());
+    } // 关闭库，触发下次 open 的完整 migrate 启动路径
+
+    // 阶段 2：重开 → 迁移收敛
+    {
+        auto r = core::Database::open(path);
+        DOCTEST_REQUIRE(r.isOk());
+        auto& db = r.value().db();
+
+        // 四列固定顺序 + kind（进行中补回 doing；已归档列重建）
+        auto prep = db.prepare(
+            "SELECT title, kind, position FROM todo_columns "
+            "ORDER BY position ASC, id ASC");
+        DOCTEST_REQUIRE(prep.isOk());
+        auto rows = prep.value().fetchAll();
+        DOCTEST_REQUIRE(rows.isOk());
+        DOCTEST_REQUIRE_EQ(rows.value().size(), 4u);
+        struct Expect { const char* title; const char* kind; int position; };
+        const Expect expects[4] = {
+            {"待办", "todo", 0},
+            {"进行中", "doing", 1},
+            {"已完成", "done", 2},
+            {"已归档", "archive", 3},
+        };
+        for (int i = 0; i < 4; ++i) {
+            const auto& row = rows.value()[static_cast<size_t>(i)];
+            DOCTEST_CHECK_EQ(row.getString("title").valueOr("?"),
+                             std::string(expects[i].title));
+            DOCTEST_CHECK_EQ(row.getString("kind").valueOr("?"),
+                             std::string(expects[i].kind));
+            DOCTEST_CHECK_EQ(row.getInt64("position").valueOr(-1), expects[i].position);
+        }
+
+        // 多余列已删；两个任务原样保留并全部并入待办列（行数守恒）
+        auto count = [&db](const std::string& sql) -> int64_t {
+            auto p = db.prepare(sql);
+            if (p.isFail()) return -1;
+            auto rs = p.value().fetchAll();
+            if (rs.isFail() || rs.value().empty()) return -1;
+            return rs.value()[0].values.empty()
+                       ? -1
+                       : std::get<int64_t>(rs.value()[0].values[0]);
+        };
+        DOCTEST_CHECK_EQ(count("SELECT COUNT(*) FROM todo_columns WHERE title = '自定义'"), 0);
+        DOCTEST_CHECK_EQ(count("SELECT COUNT(*) FROM todo_tasks"), 2);
+        DOCTEST_CHECK_EQ(
+            count("SELECT COUNT(*) FROM todo_tasks WHERE column_id IN "
+                  "(SELECT id FROM todo_columns WHERE kind = 'todo')"),
+            2);
+
+        // 幂等：再跑两次启动迁移，列/任务数保持不变
+        DOCTEST_REQUIRE(r.value().migrate().isOk());
+        DOCTEST_REQUIRE(r.value().migrate().isOk());
+        DOCTEST_CHECK_EQ(count("SELECT COUNT(*) FROM todo_columns"), 4);
+        DOCTEST_CHECK_EQ(count("SELECT COUNT(*) FROM todo_tasks"), 2);
+    }
+
+    std::filesystem::remove(path, ec);
+    std::filesystem::remove(path.string() + "-wal", ec);
+    std::filesystem::remove(path.string() + "-shm", ec);
+    // 迁移前备份文件（<db名>.backup-<时间戳>）一并清理，避免临时目录残留。
+    // 用带 ec 的 increment（非抛异常重载，本 target -fno-exceptions）。
+    {
+        std::error_code iterEc;
+        std::error_code rmEc;
+        const std::string prefix = path.filename().string() + ".backup-";
+        for (std::filesystem::directory_iterator it(path.parent_path(), iterEc), end;
+             !iterEc && it != end; it.increment(iterEc)) {
+            const std::string name = it->path().filename().string();
+            if (name.rfind(prefix, 0) == 0) {
+                std::filesystem::remove(it->path(), rmEc);
+            }
+        }
+    }
+    return true;
+})
 
 REGISTER_TEST(schema_is_idempotent,
               "schema: 重复 applySchema 幂等（不报错 / schema 不变 / 种子不重复）", {
@@ -736,6 +842,115 @@ REGISTER_TEST(schema_migrate_agent_columns_from_old_schema,
         // 新列取默认值：空串 / 1
         DOCTEST_CHECK_EQ(row.getInt64("auto_note").valueOr(-1), 1);
         DOCTEST_CHECK_EQ(row.getString("context_note").valueOr("?"), std::string(""));
+    }
+
+    std::filesystem::remove(path, ec);
+    return true;
+})
+
+// 回归：agent_tasks 老库（13 列、无 system_prompt）升级。契约——migrate 后列存在
+// （TEXT NOT NULL DEFAULT ''）、旧行原值守恒、agent_store 读写列序的 SELECT prepare 成功
+// （该 SELECT 即 Scheduler 每分钟轮询的查询形态）。迁移清单漏掉 system_prompt 时，
+// CREATE IF NOT EXISTS 对已存在表跳过，本用例在「列缺失」与「prepare fail」两处红。
+REGISTER_TEST(schema_migrate_agent_tasks_pre_system_prompt,
+    "schema: agent_tasks 老库升级补 system_prompt（旧行守恒 + Scheduler 列序查询恢复）", {
+    auto path = test_support::tempDbPath(kDbPrefix, "mig_sysprompt");
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+
+    // 阶段 1：open（先建全当前 schema），再把 agent_tasks 退回无 system_prompt 的老形态
+    {
+        auto r = core::Database::open(path);
+        DOCTEST_REQUIRE(r.isOk());
+        auto& db = r.value().db();
+
+        DOCTEST_REQUIRE(db.exec("DROP TABLE agent_tasks").isOk());
+        DOCTEST_REQUIRE(db.exec(
+            "CREATE TABLE agent_tasks ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            "name TEXT NOT NULL,"
+            "goal TEXT NOT NULL,"
+            "trigger_type TEXT NOT NULL,"
+            "trigger_config TEXT NOT NULL DEFAULT '',"
+            "model_slot TEXT NOT NULL DEFAULT 'default',"
+            "max_iterations INTEGER NOT NULL DEFAULT 10,"
+            "allow_destructive INTEGER NOT NULL DEFAULT 0,"
+            "enabled INTEGER NOT NULL DEFAULT 1,"
+            "context_note TEXT NOT NULL DEFAULT '',"
+            "auto_note INTEGER NOT NULL DEFAULT 1,"
+            "created_at INTEGER NOT NULL,"
+            "updated_at INTEGER NOT NULL)").isOk());
+        for (const auto& c : columnDefs(db, "agent_tasks")) {
+            DOCTEST_CHECK(c.find("system_prompt:") != 0);
+        }
+        DOCTEST_REQUIRE(db.exec(
+            "INSERT INTO agent_tasks (name, goal, trigger_type, trigger_config, "
+            "model_slot, max_iterations, allow_destructive, enabled, context_note, "
+            "auto_note, created_at, updated_at) "
+            "VALUES ('legacy-task', 'legacy-goal', 'schedule', '{\"cron\":\"*\"}', "
+            "'slot-a', 5, 1, 0, 'note', 0, 111, 222)").isOk());
+    } // 关闭库，下次 open / migrate 走完整迁移路径
+
+    // 阶段 2：迁移 → 补列、旧行守恒、Scheduler 列序查询恢复
+    {
+        auto r = core::Database::open(path);
+        DOCTEST_REQUIRE(r.isOk());
+        DOCTEST_REQUIRE(r.value().migrate().isOk());
+        auto& db = r.value().db();
+
+        bool found = false;
+        for (const auto& c : columnDefs(db, "agent_tasks")) {
+            if (c == "system_prompt:TEXT:1:''") found = true;
+        }
+        DOCTEST_CHECK_MESSAGE(found,
+                              "迁移后 agent_tasks 应有 system_prompt:TEXT:1:''");
+
+        // 列序与 agent_store 的 kTaskColumns 一致（id + 9 列）
+        auto q = db.prepare(
+            "SELECT id,name,goal,trigger_type,trigger_config,model_slot,"
+            "max_iterations,allow_destructive,enabled,system_prompt FROM agent_tasks");
+        DOCTEST_REQUIRE_MESSAGE(q.isOk(),
+                                "agent_store 列序 SELECT prepare 应成功");
+        auto rows = q.value().fetchAll();
+        DOCTEST_REQUIRE(rows.isOk());
+        DOCTEST_REQUIRE_EQ(rows.value().size(), 1u);
+        const auto& row = rows.value()[0];
+        DOCTEST_CHECK_EQ(row.getInt64("id").valueOr(-1), 1);
+        DOCTEST_CHECK_EQ(row.getString("name").valueOr("?"), std::string("legacy-task"));
+        DOCTEST_CHECK_EQ(row.getString("goal").valueOr("?"), std::string("legacy-goal"));
+        DOCTEST_CHECK_EQ(row.getString("trigger_type").valueOr("?"),
+                         std::string("schedule"));
+        DOCTEST_CHECK_EQ(row.getString("trigger_config").valueOr("?"),
+                         std::string("{\"cron\":\"*\"}"));
+        DOCTEST_CHECK_EQ(row.getString("model_slot").valueOr("?"), std::string("slot-a"));
+        DOCTEST_CHECK_EQ(row.getInt64("max_iterations").valueOr(-1), 5);
+        DOCTEST_CHECK_EQ(row.getInt64("allow_destructive").valueOr(-1), 1);
+        DOCTEST_CHECK_EQ(row.getInt64("enabled").valueOr(-1), 0);
+        // 新列对旧行取建表 DEFAULT ''
+        DOCTEST_CHECK_EQ(row.getString("system_prompt").valueOr("?"), std::string(""));
+
+        // 行内其余列同样守恒（不在 kTaskColumns 里的部分）
+        auto q2 = db.prepare(
+            "SELECT context_note, auto_note, created_at, updated_at FROM agent_tasks");
+        DOCTEST_REQUIRE(q2.isOk());
+        auto rows2 = q2.value().fetchAll();
+        DOCTEST_REQUIRE(rows2.isOk());
+        DOCTEST_REQUIRE_EQ(rows2.value().size(), 1u);
+        DOCTEST_CHECK_EQ(rows2.value()[0].getString("context_note").valueOr("?"),
+                         std::string("note"));
+        DOCTEST_CHECK_EQ(rows2.value()[0].getInt64("auto_note").valueOr(-1), 0);
+        DOCTEST_CHECK_EQ(rows2.value()[0].getInt64("created_at").valueOr(-1), 111);
+        DOCTEST_CHECK_EQ(rows2.value()[0].getInt64("updated_at").valueOr(-1), 222);
+
+        // 幂等：二次 migrate 列定义零变化、行数不变
+        auto colsBefore = columnDefs(db, "agent_tasks");
+        DOCTEST_REQUIRE(r.value().migrate().isOk());
+        DOCTEST_CHECK_EQ(columnDefs(db, "agent_tasks"), colsBefore);
+        auto cnt = db.prepare("SELECT COUNT(*) AS n FROM agent_tasks");
+        DOCTEST_REQUIRE(cnt.isOk());
+        auto cntRows = cnt.value().fetchAll();
+        DOCTEST_REQUIRE(cntRows.isOk());
+        DOCTEST_CHECK_EQ(std::get<int64_t>(cntRows.value()[0].values[0]), 1);
     }
 
     std::filesystem::remove(path, ec);

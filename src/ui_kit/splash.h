@@ -16,7 +16,7 @@ namespace ui_kit {
 // 墨染动态印染时长（UAT6 G 批：整体放慢 ×1.4，1.2→1.68，各阶段比例保持）：
 // 用户档 1~1.5s 取 1.2s→splash 总长 2.0s→2.8s，扩散占比过半
 // 会喧宾夺主，先快后缓的曲线把主要动态压在前半程。constexpr 放头文件供实现与单测共用。
-constexpr float kInkDurationSec = 1.68f;
+constexpr float kInkDurationSec = 2.184f;  // 2026-10-25 拍板：×1.3（原 1.68）
 
 // 墨染前沿半径占比（progress 0→1 → 0→1，easeOutCubic 先快后缓）：墨滴先急速铺开
 // 再缓收。内联零依赖，无头单测可直接钉曲线（splash.cpp 的"uniform"即此值）。

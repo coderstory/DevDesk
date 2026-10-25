@@ -47,6 +47,9 @@ void setFluidBackgroundEnabled(bool enabled);
 // 相位钟（秒）：只在帧泵 onFrame 里推进——最小化/藏托盘帧不回调即冻结，
 // 恢复可见从冻结相位继续（无跳变）。测试/调试读口。
 float fluidPhaseSeconds();
+// 测试缝：探头直接调用流体背景绘制（不依赖完整 compose/appRouter 装配）。
+// 消费方需自行 eui::Ui::begin/end/layout，然后 ui.find("app.fluid.halo.N") 读帧位。
+void drawFluidBackground(eui::Ui& ui, const eui::Screen& screen);
 // 测试缝：窗可见态覆写（nullopt = 跟平台查询走；显式值 = 钉住不可见/可见，
 // 锁「不可见帧不挂泵不推进」铁律）。用例收尾必须复位 nullopt（进程级状态跨
 // 用例存活）

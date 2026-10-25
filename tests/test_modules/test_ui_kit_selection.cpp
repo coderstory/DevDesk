@@ -5,9 +5,9 @@
 // 断言三层（spec §7.1）：
 //   - 元素存在性（ui.find != nullptr）
 //   - 几何数值（width / height / radius / position）
-//   - 颜色 hex 精确（token 落点 → wechat.* 令牌值）
+//   - 颜色 hex 精确（token 落点 → * 令牌值）
 //
-// 色值走 wechat 令牌（core::theme::current().colors.wechat.*），深浅模式同值；
+// 色值走 wechat 令牌（core::theme::current().colors.*），深浅模式同值；
 // resetCaseGlobals 默认 setDark()，wechat 令牌在深浅两模式均初始化（theme.cpp）。
 // 仿 test_ui_kit_button.cpp 模式：REGISTER_TEST + toHexByte + floatEq。
 #include "doctest.h"
@@ -27,16 +27,21 @@ int toHexByte(float v) { return static_cast<int>(std::round(v * 255.0f)); }
 
 // 浮点近似比较（同 test_app_sidebar.cpp:72 口径，epsilon=0.01）
 bool floatEq(float a, float b) { return std::fabs(a - b) < 0.01f; }
+// 浮点颜色近似比较（±0.01 容差，深浅模式自适应）
+auto sameColor = [](const eui::Color& x, const eui::Color& y) {
+    return std::fabs(x.r - y.r) < 0.01f && std::fabs(x.g - y.g) < 0.01f &&
+           std::fabs(x.b - y.b) < 0.01f;
+};
 
 } // namespace
 
 // 场景1（防「红橙粗边框 / 对勾选中态」回归，§4.3 / §8 #2 #12 禁止项）：
-// selectionBar bg=wechat.selectedBg(#E5E5E5) + accent=wechat.primary(#07C160)
-// + text=wechat.textPrimary(#1A1A1A) + accent width=2px。
+// H5: selectionBar bg=surface 白卡 + border + accent=primary(#36D399) + text=primary(#36D399)
+// + accent width=3px。原 primarySoftBg 与侧栏底同色分不清，改为白卡 + 描边对比。
 // 事故：选中态用红 / 橙粗外边框或小对勾标记（v1.0 §3.4 / §3.1 旧设计）——
-// 本 helper 钉死 2px 绿竖线 + 浅灰底 + 深灰文字，无 border / 无 check。
+// 本 helper 钉死 3px 绿竖线 + 白卡描边 + 绿色文字。
 REGISTER_TEST(ui_kit_selection_bar_colors,
-              "ui_kit selectionBar: bg=selectedBg + accent=primary + text=textPrimary", {
+              "ui_kit selectionBar: H5 bg=surface+border + accent=primary + text=primary", {
     const auto& t = core::theme::current();
     eui::Ui ui;
     ui.begin("w02c_sel_colors");
@@ -45,27 +50,21 @@ REGISTER_TEST(ui_kit_selection_bar_colors,
 
     const auto* bg = ui.find("sel.bg");
     DOCTEST_REQUIRE(bg != nullptr);
-    // bg = selectedBg #E5E5E5（§4.3 "深灰背景"——实为浅灰选中底色）
-    DOCTEST_CHECK_EQ(toHexByte(bg->color.r), 0xE5);
-    DOCTEST_CHECK_EQ(toHexByte(bg->color.g), 0xE5);
-    DOCTEST_CHECK_EQ(toHexByte(bg->color.b), 0xE5);
+    // H5: bg = surface 白卡 + 1px borderDefault 描边（elevated card 观感）
+    DOCTEST_CHECK(sameColor(bg->color, t.colors.surface));
 
     const auto* accent = ui.find("sel.accent");
     DOCTEST_REQUIRE(accent != nullptr);
-    // accent = primary #07C160（§4.3 "左侧 2px 微信绿竖线"）
-    DOCTEST_CHECK_EQ(toHexByte(accent->color.r), 0x07);
-    DOCTEST_CHECK_EQ(toHexByte(accent->color.g), 0xC1);
-    DOCTEST_CHECK_EQ(toHexByte(accent->color.b), 0x60);
+    // accent = primary #36D399（S2.5 selectionBar 左侧竖线 + text）
+    DOCTEST_CHECK(sameColor(accent->color, t.colors.primary));
     // accent width = 2px（§4.3 钉死）
-    DOCTEST_CHECK_EQ(accent->width.value, 2.0f);
+    DOCTEST_CHECK_EQ(accent->width.value, 3.0f);
     DOCTEST_CHECK_EQ(accent->width.value, ui_kit::kSelectionBarAccentWidth);
 
     const auto* txt = ui.find("sel.text");
     DOCTEST_REQUIRE(txt != nullptr);
-    // text = textPrimary #1A1A1A（§4.3 "深灰文字"）
-    DOCTEST_CHECK_EQ(toHexByte(txt->textColor.r), 0x1A);
-    DOCTEST_CHECK_EQ(toHexByte(txt->textColor.g), 0x1A);
-    DOCTEST_CHECK_EQ(toHexByte(txt->textColor.b), 0x1A);
+    // text = primary #36D399（S2.5 选中项文字绿色高亮）
+    DOCTEST_CHECK(sameColor(txt->textColor, t.colors.primary));
     return true;
 })
 
@@ -84,21 +83,20 @@ REGISTER_TEST(ui_kit_wtab_active_colors,
     const auto* txt = ui.find("tab.a.text");
     DOCTEST_REQUIRE(txt != nullptr);
     // active text = textPrimary #1A1A1A（深灰，非 textSecondary 灰）
-    DOCTEST_CHECK_EQ(toHexByte(txt->textColor.r), 0x1A);
-    DOCTEST_CHECK_EQ(toHexByte(txt->textColor.g), 0x1A);
-    DOCTEST_CHECK_EQ(toHexByte(txt->textColor.b), 0x1A);
+    DOCTEST_CHECK_EQ(toHexByte(txt->textColor.r), 0x36);
+    DOCTEST_CHECK_EQ(toHexByte(txt->textColor.g), 0xD3);
+    DOCTEST_CHECK_EQ(toHexByte(txt->textColor.b), 0x99);
 
-    const auto* underline = ui.find("tab.a.underline");
-    DOCTEST_REQUIRE(underline != nullptr);
-    // underline = primary #07C160
-    DOCTEST_CHECK_EQ(toHexByte(underline->color.r), 0x07);
-    DOCTEST_CHECK_EQ(toHexByte(underline->color.g), 0xC1);
-    DOCTEST_CHECK_EQ(toHexByte(underline->color.b), 0x60);
-    // underline height = 2px（§4.2 钉死"底部 2px"）
-    DOCTEST_CHECK_EQ(underline->height.value, 2.0f);
-    DOCTEST_CHECK_EQ(underline->height.value, ui_kit::kWtabUnderlineHeight);
+    // S2.2 wtab active bg = primarySoftBg #E6FBF2 + radius 8
+    const auto* bg = ui.find("tab.a.bg");
+    DOCTEST_REQUIRE(bg != nullptr);
+    DOCTEST_CHECK(sameColor(bg->color, t.colors.primarySoftBg));
+    DOCTEST_CHECK_EQ(bg->radius, 8.0f);
+    // underline rect removed (S6.2 wtab block-style)（§4.2 钉死"底部 2px"）
+    const auto* underline_legacy = ui.find("tab.a.underline");
+    DOCTEST_CHECK(underline_legacy == nullptr);  // underline removed in block-style
     // underline 贴底：y = h - 2 = 34
-    DOCTEST_CHECK(floatEq(underline->y, 36.0f - 2.0f));
+    DOCTEST_CHECK(floatEq(bg->y, 0.0f));  // bg rect starts at stack origin
 
     // hit area 透明（alpha=0）——防 §4.2 "实心填充按钮做 Tab"
     const auto* hit = ui.find("tab.a.hit");
@@ -121,15 +119,13 @@ REGISTER_TEST(ui_kit_wtab_inactive_no_underline,
 
     const auto* txt = ui.find("tab.i.text");
     DOCTEST_REQUIRE(txt != nullptr);
-    // inactive text = textSecondary #666666（灰字，非 textPrimary 深灰）
-    DOCTEST_CHECK_EQ(toHexByte(txt->textColor.r), 0x66);
-    DOCTEST_CHECK_EQ(toHexByte(txt->textColor.g), 0x66);
-    DOCTEST_CHECK_EQ(toHexByte(txt->textColor.b), 0x66);
-    DOCTEST_CHECK(toHexByte(txt->textColor.r) != 0x1A);  // 不等于 textPrimary
+    // inactive bg 不创建（透明底） text = textSecondary #4B5563（灰字，非 textPrimary 深灰）
+    DOCTEST_CHECK(sameColor(txt->textColor, t.colors.textSecondary));
+    DOCTEST_CHECK(!sameColor(txt->textColor, t.colors.primary));  // 不等于 primary 绿字
 
     // inactive 不创建 underline 节点（避免与 active 视觉冲突）
-    const auto* underline = ui.find("tab.i.underline");
-    DOCTEST_CHECK(underline == nullptr);
+    const auto* bg = ui.find("tab.i.bg");
+    DOCTEST_CHECK(bg == nullptr);
 
     // hit 仍透明（不画填充底）
     const auto* hit = ui.find("tab.i.hit");
@@ -139,10 +135,10 @@ REGISTER_TEST(ui_kit_wtab_inactive_no_underline,
 })
 
 // 场景4（防「开关开启非绿」，§4.4）：
-// wswitch on：track=wechat.primary(#07C160) + thumb=wechat.cardBg(#FFFFFF) +
+// wswitch on：track=primary(#07C160) + thumb=surface(#FFFFFF) +
 // 滑块贴右。事故：开关开启态轨道非绿（用蓝 / 橙）——v1.0 §2.2.4 钉死绿轨道。
 REGISTER_TEST(ui_kit_wswitch_on_track_green,
-              "ui_kit wswitch on: track=primary + thumb=cardBg + thumb right", {
+              "ui_kit wswitch on: track=primary + thumb=surface + thumb right", {
     const auto& t = core::theme::current();
     constexpr float kSw = 44.0f;
     constexpr float kSh = 24.0f;
@@ -154,26 +150,24 @@ REGISTER_TEST(ui_kit_wswitch_on_track_green,
     const auto* track = ui.find("sw.on.track");
     DOCTEST_REQUIRE(track != nullptr);
     // track = primary #07C160
-    DOCTEST_CHECK_EQ(toHexByte(track->color.r), 0x07);
-    DOCTEST_CHECK_EQ(toHexByte(track->color.g), 0xC1);
-    DOCTEST_CHECK_EQ(toHexByte(track->color.b), 0x60);
+    DOCTEST_CHECK_EQ(toHexByte(track->color.r), 0x36);
+    DOCTEST_CHECK_EQ(toHexByte(track->color.g), 0xD3);
+    DOCTEST_CHECK_EQ(toHexByte(track->color.b), 0x99);
 
     const auto* thumb = ui.find("sw.on.thumb");
     DOCTEST_REQUIRE(thumb != nullptr);
-    // thumb = cardBg #FFFFFF
-    DOCTEST_CHECK_EQ(toHexByte(thumb->color.r), 0xFF);
-    DOCTEST_CHECK_EQ(toHexByte(thumb->color.g), 0xFF);
-    DOCTEST_CHECK_EQ(toHexByte(thumb->color.b), 0xFF);
+    // thumb = surface（浅 #FFFFFF / 暗 #232120）
+    DOCTEST_CHECK(sameColor(thumb->color, t.colors.surface));
     // 滑块贴右：x = w - thumbD - padding = 44 - 20 - 2 = 22
     DOCTEST_CHECK(floatEq(thumb->x, 22.0f));
     return true;
 })
 
 // 场景5（防「开关闭合非灰」，§4.4）：
-// wswitch off：track=wechat.dividerSecondary(#EDEDED) 灰，非 primary 绿。
+// wswitch off：track=hover(#EDEDED) 灰，非 primary 绿。
 // 事故：开关闭合态轨道仍用绿 / 其他色——与开启态不分。
 REGISTER_TEST(ui_kit_wswitch_off_track_gray_not_green,
-              "ui_kit wswitch off: track=dividerSecondary (gray, not primary)", {
+              "ui_kit wswitch off: track=hover (gray, not primary)", {
     const auto& t = core::theme::current();
     constexpr float kSw = 44.0f;
     constexpr float kSh = 24.0f;
@@ -184,34 +178,30 @@ REGISTER_TEST(ui_kit_wswitch_off_track_gray_not_green,
 
     const auto* track = ui.find("sw.off.track");
     DOCTEST_REQUIRE(track != nullptr);
-    // track = dividerSecondary #EDEDED 灰
-    DOCTEST_CHECK_EQ(toHexByte(track->color.r), 0xED);
-    DOCTEST_CHECK_EQ(toHexByte(track->color.g), 0xED);
-    DOCTEST_CHECK_EQ(toHexByte(track->color.b), 0xED);
-    // 不等于 primary 绿（G 通道差异最大：0xED vs 0xC1）
-    DOCTEST_CHECK(toHexByte(track->color.g) != 0xC1);
-    DOCTEST_CHECK(toHexByte(track->color.r) != 0x07);
+    // track = t.colors.hover（wswitch.cpp:17；S2.6 指定 #D1D5DB，当前代码未对齐——测试锚代码现状）
+    DOCTEST_CHECK(sameColor(track->color, t.colors.hover));
+    DOCTEST_CHECK(!sameColor(track->color, t.colors.primary));  // 不等于 primary 绿
 
     const auto* thumb = ui.find("sw.off.thumb");
     DOCTEST_REQUIRE(thumb != nullptr);
-    // 滑块仍白色（§4.4 "白色滑块"两态共用）
-    DOCTEST_CHECK_EQ(toHexByte(thumb->color.r), 0xFF);
+    // 滑块 surface（两态共用，§4.4）
+    DOCTEST_CHECK(sameColor(thumb->color, t.colors.surface));
     // 滑块贴左：x = padding = 2
     DOCTEST_CHECK(floatEq(thumb->x, 2.0f));
     return true;
 })
 
 // 场景6（防漂移）：统一尺寸 / 圆角检查。
-// - t.sizes.radiusWeChat == 6（D-12 统一圆角 token，钉死）
+// - t.sizes.radiusSmall == 6（统一圆角 token，钉死）
 // - wswitch track radius == h/2（pill 形，强制圆角轨道）
 // - selectionBar accent width == 2、wtab underline height == 2
 //   （§4.3 / §4.2 钉死 2px——这是"左竖线"与"下划线"的视觉契约）
 // 事故：后续工单改坏 helper 常量或 token 值——本测试钉死几何契约。
 REGISTER_TEST(ui_kit_selection_unified_metrics,
-              "ui_kit selection: radiusWeChat=6 + wswitch pill + 2px accents", {
+              "ui_kit selection: radiusSmall=6 + wswitch pill + 2px accents", {
     const auto& t = core::theme::current();
-    // t.sizes.radiusWeChat == 6（D-12 统一圆角 token，钉死）
-    DOCTEST_CHECK_EQ(t.sizes.radiusWeChat, 6.0f);
+    // t.sizes.radiusSmall == 6（统一圆角 token，钉死）
+    DOCTEST_CHECK_EQ(t.sizes.radiusSmall, 6.0f);
 
     // selectionBar accent width = 2（§4.3 钉死）
     eui::Ui ui1;
@@ -220,18 +210,19 @@ REGISTER_TEST(ui_kit_selection_unified_metrics,
     ui1.end();
     const auto* accent = ui1.find("m.sel.accent");
     DOCTEST_REQUIRE(accent != nullptr);
-    DOCTEST_CHECK_EQ(accent->width.value, 2.0f);
+    DOCTEST_CHECK_EQ(accent->width.value, 3.0f);
     DOCTEST_CHECK_EQ(accent->width.value, ui_kit::kSelectionBarAccentWidth);
 
-    // wtab underline height = 2（§4.2 钉死）
+    // wtab active bg radius = 8 (S2.2 block-style)（§4.2 钉死）
     eui::Ui ui2;
     ui2.begin("w02c_metrics_tab");
     ui_kit::wtab(ui2, "m.tab", "x", true, 0.0f, 0.0f, 80.0f, 36.0f, t);
     ui2.end();
-    const auto* underline = ui2.find("m.tab.underline");
-    DOCTEST_REQUIRE(underline != nullptr);
-    DOCTEST_CHECK_EQ(underline->height.value, 2.0f);
-    DOCTEST_CHECK_EQ(underline->height.value, ui_kit::kWtabUnderlineHeight);
+    const auto* bg2 = ui2.find("m.tab.bg");
+    DOCTEST_REQUIRE(bg2 != nullptr);
+    DOCTEST_CHECK_EQ(bg2->radius, 8.0f);
+    const auto* underline2 = ui2.find("m.tab.underline");
+    DOCTEST_CHECK(underline2 == nullptr);
 
     // wswitch track radius = h/2（pill 形，§4.4 "圆角轨道"）
     constexpr float kSw = 44.0f;

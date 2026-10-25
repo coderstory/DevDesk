@@ -381,8 +381,9 @@ REGISTER_TEST(agent_module_ui_id_contract,
     DOCTEST_CHECK(ui.find("agent.tasklist.content") != nullptr);   // scrollView 内容列
     DOCTEST_CHECK(ui.find("agent.task." + tid) != nullptr);
     DOCTEST_CHECK(ui.find("agent.task." + tid + ".title") != nullptr);
-    // button 的文本挂在 <id>.text 子元素上
-    const auto* runText = ui.find("agent.task." + tid + ".run.text");
+    // button 的文本挂在 <id>.text.normal 子元素上（逐态实现：core::Color 默认 alpha=1
+    // 使单节点 .text 分支永不成立）
+    const auto* runText = ui.find("agent.task." + tid + ".run.text.normal");
     DOCTEST_REQUIRE(runText != nullptr);
     DOCTEST_CHECK_EQ(runText->text, std::string("启动"));
     // 最近 run 完成 → 状态列含「成功」；状态元素恒存在（无 run 显示「—」）

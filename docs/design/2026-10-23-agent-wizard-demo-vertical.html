@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>智能任务创建弹窗 · 左侧竖向导航（四步完整契约）</title>
+<style>
+  :root{
+    --primary:#36D399; --primary-hover:#2EC48F; --primary-active:#23B07F;
+    --primary-soft:#E6FBF2; --success:#10B981; --warning:#F59E0B;
+    --error:#EF4444; --error-soft:#FDECEC; --info:#3B82F6;
+    --text1:#1F2937; --text2:#4B5563; --text3:#6B7280; --text4:#9CA3AF;
+    --border:#E5E7EB; --hover:#F3F4F6; --page:#FAFAF9; --surface:#FFFFFF;
+    --r-sm:6px; --r-md:8px; --r-lg:12px; --r-xl:16px;
+    --sh-sm:0 1px 3px rgba(0,0,0,.04),0 1px 2px rgba(0,0,0,.02);
+    --sh-md:0 4px 12px rgba(0,0,0,.06),0 2px 4px rgba(0,0,0,.03);
+    --sh-lg:0 12px 32px rgba(0,0,0,.12),0 4px 8px rgba(0,0,0,.05);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#D1D5DB;font-family:"Microsoft YaHei","Segoe UI",system-ui,sans-serif;display:flex;justify-content:center;align-items:center;min-height:100vh;padding:24px}
+  /* ============ 页面画板 1000×640（背景层） ============ */
+  .artboard{position:relative;width:1000px;height:640px;background:#ECECE9;border-radius:var(--r-lg);box-shadow:var(--sh-md);overflow:hidden;font-size:14px;color:var(--text1)}
+  /* 页顶 demo 切换器（页面级控件，非弹窗契约一部分） */
+  .demo-bar{position:absolute;left:0;top:0;width:1000px;height:32px;background:#1F2937;display:flex;align-items:center;gap:6px;padding:0 12px;z-index:20}
+  .demo-bar .lbl{font-size:11px;color:#9CA3AF;margin-right:8px}
+  .step-btn{height:22px;padding:0 10px;border-radius:4px;background:#374151;color:#E5E7EB;font-size:11px;font-weight:600;cursor:pointer;border:none}
+  .step-btn.active{background:var(--primary);color:#fff}
+  .demo-bar .note{font-size:10px;color:#6B7280;margin-left:auto}
+  /* ============ 弹窗 640×520（居中浮于画板） ============ */
+  .dialog{position:absolute;left:180px;top:76px;width:640px;height:520px;background:var(--surface);border-radius:var(--r-lg);box-shadow:var(--sh-lg);overflow:hidden;border:1px solid var(--border)}
+  /* 标题栏 局0,0 640×44 */
+  .titlebar{position:absolute;left:0;top:0;width:640px;height:44px;border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 16px}
+  .titlebar h1{font-size:16px;font-weight:600;line-height:22px;color:var(--text1)}
+  .close{position:absolute;right:12px;top:10px;width:24px;height:24px;line-height:24px;text-align:center;color:var(--text3);font-size:16px;cursor:pointer;border-radius:4px}
+  .close:hover{background:var(--hover)}
+  /* 左侧竖向导航 局0,44 160×476 */
+  .sidebar{position:absolute;left:0;top:44px;width:160px;height:476px;background:var(--page);border-right:1px solid var(--border);padding:12px 0}
+  .nav-item{position:relative;height:56px;display:flex;align-items:center;gap:8px;padding:0 14px;font-size:13px;font-weight:600;cursor:pointer;transition:background .12s}
+  .nav-item:hover{background:var(--hover)}
+  .nav-item .num{width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:600;flex-shrink:0}
+  .nav-item.done{color:var(--primary)}
+  .nav-item.done .num{background:var(--primary-soft);color:var(--primary)}
+  .nav-item.cur{color:var(--text1)}
+  .nav-item.cur .num{background:var(--primary);color:#fff}
+  .nav-item.cur::before{content:"";position:absolute;left:0;top:0;width:3px;height:100%;background:var(--primary)}
+  .nav-item.cur-err{color:var(--error);background:var(--error-soft)}
+  .nav-item.cur-err .num{background:var(--error);color:#fff}
+  .nav-item.cur-err::before{content:"";position:absolute;left:0;top:0;width:3px;height:100%;background:var(--error)}
+  .nav-item.todo{color:var(--text4)}
+  .nav-item.todo .num{background:var(--hover);color:var(--text4)}
+  .nav-item .sub{font-size:10px;font-weight:400;color:var(--text4);display:block;line-height:14px}
+  /* 右侧内容 局164,44 476×432 */
+  .content{position:absolute;left:164px;top:44px;width:476px;height:432px;padding:16px;overflow:hidden}
+  .step-panel{display:none;height:100%}
+  .step-panel.on{display:block}
+  .sec-title{font-size:13px;font-weight:600;color:var(--text1);margin-bottom:4px}
+  .sec-sub{font-size:11px;color:var(--text3);margin-bottom:14px}
+  .field{margin-bottom:14px}
+  .field-label{display:flex;align-items:center;justify-content:space-between;font-size:12px;color:var(--text2);font-weight:600;margin-bottom:6px}
+  .coord{font-size:9px;color:#2563EB;font-weight:400;background:#EFF6FF;border:1px dashed #93C5FD;border-radius:3px;padding:0 4px;line-height:14px;white-space:nowrap}
+  .coord-warn{color:#B45309;border-color:#FCD34D;background:#FFFBEB}
+  input[type=text],input[type=number],select{width:100%;height:36px;border:1px solid var(--border);border-radius:var(--r-sm);padding:0 10px;font-size:13px;color:var(--text1);background:var(--surface);font-family:inherit}
+  input.err,textarea.err,select.err{border-color:var(--error)}
+  textarea{width:100%;border:1px solid var(--border);border-radius:var(--r-sm);padding:8px 10px;font-size:13px;color:var(--text1);background:var(--surface);resize:none;font-family:inherit;line-height:18px}
+  .err-text{font-size:11px;color:var(--error);margin-top:6px;display:flex;align-items:center;gap:4px}
+  .hint{font-size:11px;color:var(--text3);margin-top:4px;line-height:16px}
+  .merged-note{display:inline-block;margin-left:6px;font-size:10px;color:var(--info);background:#E0F4FF;padding:1px 6px;border-radius:var(--r-sm);font-weight:400}
+  .ai-chip{height:28px;padding:0 10px;border-radius:var(--r-md);border:1px solid var(--primary);background:var(--surface);color:var(--primary);font-size:12px;font-weight:600;display:inline-flex;align-items:center;gap:4px;cursor:pointer}
+  .callout{background:var(--primary-soft);border-left:3px solid var(--primary);border-radius:var(--r-md);padding:8px 12px;font-size:11px;color:var(--text2);line-height:16px;margin-top:8px}
+  /* 触发类型网格 */
+  .trig-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:14px}
+  .trig-card{height:48px;border:1px solid var(--border);border-radius:var(--r-md);display:flex;flex-direction:column;align-items:center;justify-content:center;cursor:pointer;font-size:12px;font-weight:600;color:var(--text2);background:var(--surface);transition:all .12s}
+  .trig-card .ico{font-size:15px;margin-bottom:2px}
+  .trig-card.sel{border-color:var(--primary);background:var(--primary-soft);color:var(--primary)}
+  .trig-card:hover{border-color:var(--primary)}
+  .cron-preview{font-size:11px;color:var(--primary);margin-top:4px;font-family:Consolas,monospace}
+  /* 执行步字段行 */
+  .exec-row{display:flex;gap:10px;margin-bottom:14px}
+  .exec-row .field{flex:1;margin-bottom:0}
+  /* ============ 底栏 局164,476 476×44（常驻四按钮） ============ */
+  .bottombar{position:absolute;left:164px;top:476px;width:476px;height:44px;display:flex;justify-content:flex-end;align-items:center;gap:8px;padding:0 2px}
+  .btn{height:36px;border-radius:var(--r-md);font-size:13px;font-weight:600;display:flex;align-items:center;justify-content:center;cursor:pointer;transition:all .12s}
+  .btn-filled{background:var(--primary);color:#fff}
+  .btn-filled:hover{background:var(--primary-hover)}
+  .btn-filled[disabled]{background:var(--hover);color:var(--text4);border:1px solid var(--border);cursor:not-allowed}
+  .btn-outline{background:var(--surface);border:1px solid var(--border);color:var(--text1)}
+  .btn-outline:hover{border-color:var(--primary);color:var(--primary)}
+  .btn-outline.test{border-color:var(--primary);color:var(--primary)}
+  .btn-ghost{background:transparent;color:var(--text3)}
+  .btn-ghost:hover{color:var(--error);background:var(--error-soft)}
+  /* 注释层（结构框铬，步骤无关常驻） */
+  .anno{position:absolute;font-size:9px;color:#2563EB;background:rgba(255,255,255,.94);border:1px dashed #93C5FD;border-radius:3px;padding:0 4px;line-height:13px;white-space:nowrap;z-index:15;pointer-events:none}
+  .anno-warn{color:#B45309;border-color:#FCD34D;background:rgba(255,251,235,.94)}
+  .anno-pg{color:#047857;border-color:#6EE7B7;background:rgba(236,253,245,.94)}
+</style>
+</head>
+<body>
+<div class="artboard" id="ab">
+
+  <!-- 页顶 demo 切换器 0,0 1000×32（页面级，非弹窗契约） -->
+  <div class="demo-bar">
+    <span class="lbl">▶ demo 步骤切换器（纯 JS · 自包含）</span>
+    <button class="step-btn active" onclick="showStep(0)">Step0 基本信息</button>
+    <button class="step-btn" onclick="showStep(1)">Step1 触发</button>
+    <button class="step-btn" onclick="showStep(2)">Step2 指令</button>
+    <button class="step-btn" onclick="showStep(3)">Step3 执行</button>
+    <span class="note">弹窗实际 640×520 居中浮于 1000×640 画板 · 校正①尺寸 ②底栏</span>
+  </div>
+
+  <!-- ============ 弹窗 640×520 局(180,76) ============ -->
+  <div class="dialog" id="dlg">
+
+    <!-- 标题栏 局0,0 640×44 · 页180,76 -->
+    <div class="titlebar">
+      <h1>新建智能任务</h1>
+      <div class="close">✕</div>
+    </div>
+
+    <!-- 左侧竖向导航 局0,44 160×476 · 页180,120 -->
+    <div class="sidebar" id="nav">
+      <div class="nav-item" data-step="0"><span class="num">1</span><div>基本信息<span class="sub">任务名称</span></div></div>
+      <div class="nav-item" data-step="1"><span class="num">2</span><div>触发<span class="sub">六类 + cron</span></div></div>
+      <div class="nav-item" data-step="2"><span class="num">3</span><div>指令<span class="sub">目标 / 系统提示词</span></div></div>
+      <div class="nav-item" data-step="3"><span class="num">4</span><div>执行与安全<span class="sub">模型 / 限次 / 安全组</span></div></div>
+    </div>
+
+    <!-- 右侧内容 局164,44 476×432 · 页344,120 -->
+
+    <!-- ===== Step0 基本信息（空名称错误态） ===== -->
+    <div class="content">
+      <div class="step-panel on" id="p0">
+        <div class="sec-title">基本信息</div>
+        <div class="sec-sub">给任务起个名字，方便在列表里识别与搜索。</div>
+
+        <div class="field">
+          <div class="field-label">
+            <span>任务名称 <span style="color:var(--error)">*</span></span>
+            <span class="coord coord-warn">局 x180 y92 w444 h36 · 页 x360 y168</span>
+          </div>
+          <input type="text" class="err" placeholder="例如：每晚 22 点清理过期待办" value="">
+          <div class="err-text">! 名称不能为空（纯空格亦视为空）</div>
+        </div>
+
+        <div class="field">
+          <div class="field-label">
+            <span>备注（可选）</span>
+            <span class="coord">局 x180 y168 w444 h60 · 页 x360 y244</span>
+          </div>
+          <textarea style="height:60px" placeholder="一句话描述用途，留空不影响创建"></textarea>
+        </div>
+
+        <div class="callout">
+          <b>逐步校验：</b>「下一步」仅按<b>当前步</b>门控——本步只校验「名称非空且非纯空格」；
+          备注可留空，<b>不会</b>卡死下一步。名称为空时本步节点标红 + 错误摘要就地显示（S3.6#3/#4/#7）。
+        </div>
+      </div>
+
+      <!-- ===== Step1 触发（六类 + cron） ===== -->
+      <div class="step-panel" id="p1">
+        <div class="sec-title">触发方式</div>
+        <div class="sec-sub">选择任务何时开始执行。六类互斥，选定后下方出现对应配置。</div>
+
+        <div class="trig-grid">
+          <div class="trig-card sel"><span class="ico">⏱</span>定时</div>
+          <div class="trig-card"><span class="ico">✋</span>手动</div>
+          <div class="trig-card"><span class="ico">♾</span>常驻</div>
+          <div class="trig-card"><span class="ico">⚡</span>事件</div>
+          <div class="trig-card"><span class="ico">☀</span>每天</div>
+          <div class="trig-card"><span class="ico">⏰</span>闹钟</div>
+        </div>
+
+        <div class="field">
+          <div class="field-label">
+            <span>cron 表达式 <span style="color:var(--error)">*</span></span>
+            <span class="coord">局 x180 y208 w444 h36 · 页 x360 y284</span>
+          </div>
+          <input type="text" value="*/5 * * * *" placeholder="分 时 日 月 周，例：0 22 * * *">
+          <div class="cron-preview">✓ 预览：每 5 分钟触发一次</div>
+          <div class="hint">定时型必填；闹钟型改填「YYYY-MM-DD HH:MM」绝对时刻；事件型勾选监听事件；手动/常驻/每天不消费此列。</div>
+        </div>
+
+        <div class="callout">
+          <b>六类语义：</b>手动=用户点按钮启动；定时=cron 周期；常驻=进程内常驻循环；事件=监听 todoCreated 等事件；
+          每天=固定每日时刻；闹钟=一次性未来绝对时刻（once_at，与 cron/events 互斥）。triggerType 写其一。
+        </div>
+      </div>
+
+      <!-- ===== Step2 指令（空目标错误态 + 合并字段） ===== -->
+      <div class="step-panel" id="p2">
+        <div class="sec-title">指令</div>
+        <div class="sec-sub">告诉 AI 这个任务要做什么，以及它运行时该记住什么。</div>
+
+        <div class="field">
+          <div class="field-label">
+            <span>任务目标 <span style="color:var(--error)">*</span></span>
+            <span style="display:flex;align-items:center;gap:6px">
+              <span class="ai-chip">✎ AI 起草</span>
+              <span class="coord coord-warn">局 x180 y92 w444 h60 · 页 x360 y168</span>
+            </span>
+          </div>
+          <textarea class="err" style="height:60px" placeholder="描述这个任务要做什么，例如：把逾期的待办全部完成"></textarea>
+          <div class="err-text">! 请填写任务目标</div>
+        </div>
+
+        <div class="field">
+          <div class="field-label">
+            <span>系统提示词<span class="merged-note">执行记忆 / 自动记录 已并入此字段</span></span>
+            <span class="coord">局 x180 y208 w444 h54 · 页 x360 y284</span>
+          </div>
+          <textarea style="height:54px" placeholder="发给 AI 的环境上下文，可编辑；留空则用自动生成的默认提示词"></textarea>
+          <div class="hint">保留 systemPrompt 语义；执行记忆五处清链，原「自动记录」固定开启不再单列（S3.6#8/#10）。</div>
+        </div>
+
+        <div class="callout">
+          <b>逐步校验：</b>「下一步」仅按<b>当前步</b>门控——指令步只校验「任务目标非空」；
+          系统提示词可留空，<b>不会</b>因系统提示词等其它字段卡死下一步。出错时该步节点标红 + 错误摘要就地显示。
+        </div>
+      </div>
+
+      <!-- ===== Step3 执行与安全 + 底部保存 ===== -->
+      <div class="step-panel" id="p3">
+        <div class="sec-title">执行与安全</div>
+        <div class="sec-sub">设置模型、迭代与运行次数上限，以及允许调用的工具安全组。</div>
+
+        <div class="exec-row">
+          <div class="field">
+            <div class="field-label"><span>模型槽位</span><span class="coord">局 x180 y92 w214 h36 · 页 x360 y168</span></div>
+            <select><option>default</option><option>sonnet</option><option>opus</option></select>
+            <div class="hint">槽位→真实 model id 由端点解析</div>
+          </div>
+          <div class="field">
+            <div class="field-label"><span>迭代上限</span><span class="coord">局 x404 y92 w220 h36 · 页 x584 y168</span></div>
+            <input type="number" value="10">
+            <div class="hint">硬上限 50（loop 内 clamp）</div>
+          </div>
+        </div>
+
+        <div class="exec-row">
+          <div class="field">
+            <div class="field-label"><span>运行限次</span><span class="coord">局 x180 y176 w214 h36 · 页 x360 y252</span></div>
+            <input type="number" value="0">
+            <div class="hint">0=不限；1=一次性；满 N 次自动停用</div>
+          </div>
+          <div class="field">
+            <div class="field-label"><span>安全组</span><span class="coord">局 x404 y176 w220 h36 · 页 x584 y252</span></div>
+            <select><option>default（全工具）</option><option>readonly（只读）</option><option>safe（无删除）</option></select>
+            <div class="hint">限定可调用工具集</div>
+          </div>
+        </div>
+
+        <div class="callout">
+          <b>末步：</b>本步为最后一步，底栏「下一步」自动改显为「<b>保存</b>」；
+          点保存→弹窗关闭、任务列表刷新（步骤数=3 的实现由后端按 triggerType 编码）。运行限次仅 schedule/event 消费。
+        </div>
+      </div>
+    </div>
+
+    <!-- 底栏 局164,476 476×44 · 页344,552 — 常驻四按钮，主次分明（S3.6#6） -->
+    <div class="bottombar" id="bb">
+      <div class="btn btn-ghost" id="b-cancel">取消</div>
+      <div class="btn btn-outline test" id="b-test">测试试运行</div>
+      <div class="btn btn-outline" id="b-prev">上一步</div>
+      <div class="btn btn-filled" id="b-next">下一步</div>
+    </div>
+
+  </div><!-- /dialog -->
+
+  <!-- ============ 结构注释层（框铬，步骤无关） ============ -->
+  <div class="anno anno-pg" style="left:8;top:38">画板 1000×640 #ECECE9（背景层）</div>
+  <div class="anno" style="left:180;top:84">弹窗 局0,0 640×520 · 页180,76 · #FFF 圆角12 阴影Lg 边1px</div>
+  <div class="anno" style="left:180;top:124">标题栏 局0,0 640×44 · 页180,76 · 标题16/600</div>
+  <div class="anno" style="left:4;top:128">左导航 局0,44 160×476 · 页180,120 · #FAFAF9 右1px边 · 项高56</div>
+  <div class="anno" style="left:166;top:128">序号圆22 · 标签13/600 · 副标10</div>
+  <div class="anno anno-warn" style="left:4;top:300">错误态节点：#EF4444 10%底+红字+!+左3px红条（S3.6#4）</div>
+  <div class="anno" style="left:520;top:124">内容区 局164,44 476×432 · 页344,120 · pad16</div>
+  <div class="anno" style="left:520;top:540">底栏 局164,476 476×44 · 页344,552 · 四按钮右对齐 间距8</div>
+  <div class="anno" style="left:520;top:556">取消Ghost(最左)·测试Outline·上一步Outline·下一步Filled(最右) · 末步→「保存」</div>
+  <div class="anno anno-pg" style="left:8;top:610">校正①：弹窗 640×520（规格 P7:554）· 非旧 1000×640 满画布 ｜ 校正②：四按钮常驻主次分明（S3.6#6:504）</div>
+
+</div>
+
+<script>
+  // 步骤状态表：done/cur/cur-err/todo + 下一步是否禁用 + 按钮文案
+  var META = [
+    {nav:'cur-err', nextDisabled:true,  nextLabel:'下一步'}, // Step0 空名称错误态
+    {nav:'cur',     nextDisabled:false, nextLabel:'下一步'}, // Step1
+    {nav:'cur-err', nextDisabled:true,  nextLabel:'下一步'}, // Step2 空目标错误态
+    {nav:'cur',     nextDisabled:false, nextLabel:'保存'}    // Step3 末步
+  ];
+  function showStep(n){
+    // 面板切换
+    for(var i=0;i<4;i++) document.getElementById('p'+i).className='step-panel'+(i===n?' on':'');
+    // 导航态
+    var items=document.querySelectorAll('.nav-item');
+    items.forEach(function(it){
+      var s=+it.getAttribute('data-step');
+      it.className='nav-item';
+      if(s<n) it.classList.add('done');
+      else if(s===n) it.classList.add(META[n].nav);
+      else it.classList.add('todo');
+    });
+    // 底栏按钮
+    var bn=document.getElementById('b-next');
+    bn.textContent=META[n].nextLabel;
+    bn.disabled=META[n].nextDisabled;
+    document.getElementById('b-prev').style.visibility=(n===0?'hidden':'visible');
+    // 切换器高亮
+    document.querySelectorAll('.step-btn').forEach(function(b,i){b.className='step-btn'+(i===n?' active':'');});
+  }
+  showStep(0);
+</script>
+</body>
+</html>

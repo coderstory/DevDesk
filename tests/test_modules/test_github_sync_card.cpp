@@ -15,6 +15,8 @@
 // - 全部依赖注入：卡片的动作与弹窗的日志源/回调都是本文件构造的 lambda，
 //   零真网、零真线程（本文件不启动任何后台任务）。
 #include "doctest.h"
+
+#include <ui_kit/card.h>  // cardSurface：B5 同步卡白卡底色（H15 alpha 0.92）单一来源
 #include "frame_env.h"
 #include "test_support.h"
 
@@ -32,6 +34,7 @@
 
 #include <eui/dsl.h>
 
+#include <algorithm>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
@@ -141,7 +144,12 @@ REGISTER_TEST(github_sync_card_has_test_button,
         const auto* btn = ui.find(std::string(kCardId) + ".btn.test.bg");
         DOCTEST_REQUIRE(btn != nullptr);
         DOCTEST_CHECK(btn->onClick != nullptr);
-        const auto* label = ui.find(std::string(kCardId) + ".btn.test.text");
+        // B5 同步卡白卡面：cardSurface（H15 alpha 0.92）底 + 1px 描边存在
+        const auto* bg = ui.find(std::string(kCardId) + ".bg");
+        DOCTEST_REQUIRE(bg != nullptr);
+        DOCTEST_CHECK(colorEq(bg->color, ui_kit::cardSurface(core::theme::current())));
+        DOCTEST_CHECK(bg->border.width >= 1.0f);
+        const auto* label = ui.find(std::string(kCardId) + ".btn.test.text.normal");
         DOCTEST_REQUIRE(label != nullptr);
         DOCTEST_CHECK_EQ(label->text, std::string("测试连接"));
         // 点击只落到注入回调（零真线程/零真网）
@@ -217,8 +225,8 @@ REGISTER_TEST(github_sync_card_buttons_flat_and_same_height,
     DOCTEST_CHECK(std::fabs(push->frame.height - test->frame.height) < 0.01f);
     DOCTEST_CHECK(std::fabs(push->frame.height - pull->frame.height) < 0.01f);
     DOCTEST_CHECK(std::fabs(test->frame.height - pull->frame.height) < 0.01f);
-    const auto* pushText = ui.find(std::string(kCardId) + ".btn.push.text");
-    const auto* pullText = ui.find(std::string(kCardId) + ".btn.pull.text");
+    const auto* pushText = ui.find(std::string(kCardId) + ".btn.push.text.normal");
+    const auto* pullText = ui.find(std::string(kCardId) + ".btn.pull.text.normal");
     DOCTEST_REQUIRE(pushText != nullptr);
     DOCTEST_REQUIRE(pullText != nullptr);
     DOCTEST_CHECK(std::fabs(pushText->fontSize - pullText->fontSize) < 0.01f);
@@ -253,12 +261,19 @@ REGISTER_TEST(github_sync_card_progress_bar_and_text,
     DOCTEST_CHECK_EQ(p->text, std::string("同步中 · ① 校验 token…"));
     DOCTEST_CHECK_EQ(bar->frame.height, 4.0f);   // 方案 A .bar 4px 高
     DOCTEST_CHECK(std::fabs(fill->frame.width - bar->frame.width / 6.0f) < 0.5f);
-    // 进度在按钮组右侧：轨道左缘 > 拉取按钮右缘；文案右缘贴卡右内边距
+    // H18：按钮组右锚（右缘 = 卡右 − 28），进度移到按钮组左侧——轨道贴卡左
+    // 内边距、定宽 130（最小档旧轨道宽）；文案列 flex，右缘 = 按钮组左缘 − 16。
+    const auto* push = ui.find(std::string(kCardId) + ".btn.push.bg");
     const auto* pull = ui.find(std::string(kCardId) + ".btn.pull.bg");
+    DOCTEST_REQUIRE(push != nullptr);
     DOCTEST_REQUIRE(pull != nullptr);
-    DOCTEST_CHECK(bar->frame.x > pull->frame.x + pull->frame.width);
-    DOCTEST_CHECK(std::fabs(p->frame.x + p->frame.width - (1520.0f - 28.0f)) <
+    DOCTEST_CHECK(std::fabs(pull->frame.x + pull->frame.width - (1520.0f - 28.0f)) <
                   0.5f);
+    DOCTEST_CHECK(bar->frame.x < pull->frame.x);   // 轨道在按钮组左侧
+    DOCTEST_CHECK(std::fabs(bar->frame.x - 28.0f) < 0.5f);
+    DOCTEST_CHECK(std::fabs(bar->frame.width - 130.0f) < 0.5f);
+    DOCTEST_CHECK(std::fabs(p->frame.x + p->frame.width -
+                            (push->frame.x - ms::roundFs(16.0f))) < 0.5f);
 
     // 对照组：非运行态无进度条/文案（否则上面断言可能只是「恒渲染」恒真）
     CardFixture idle;
@@ -404,16 +419,20 @@ REGISTER_TEST(github_sync_card_plan_a_geometry,
                   0.5f);
     DOCTEST_CHECK(std::fabs(tk->frame.x - (col2X + ctrlDx)) < 0.5f);
     DOCTEST_CHECK(std::fabs(tk->frame.y - y) < 0.5f);
-    DOCTEST_CHECK(std::fabs(tk->frame.x + tk->frame.width - (kW - padX)) < 0.5f);
+    DOCTEST_CHECK(std::fabs(tk->frame.x + tk->frame.width - (kW - padX - 24.0f)) < 0.5f);
     y += rowH;
-    // 第二段分段线 → 操作组：三按钮在左（Primary 最左、同排等高）
+    // 第二段分段线 → 操作组：三按钮组右锚（H18）——拉取右缘 = 卡右 − 28，
+    // 组内自右向左 80/100/120、间距 8（Primary 最左、同排等高）
     DOCTEST_CHECK(std::fabs(divAct->frame.y - (y + secGap)) < 0.5f);
     y += secGap + 1.0f + secGap;
-    DOCTEST_CHECK(std::fabs(push->frame.x - padX) < 0.5f);
+    const float pullX = kW - padX - 80.0f;
     DOCTEST_CHECK(std::fabs(push->frame.y - y) < 0.5f);
-    DOCTEST_CHECK(std::fabs(test->frame.x - (padX + 120.0f + 8.0f)) < 0.5f);
-    DOCTEST_CHECK(std::fabs(pull->frame.x -
-                            (padX + 120.0f + 8.0f + 100.0f + 8.0f)) < 0.5f);
+    DOCTEST_CHECK(std::fabs(pull->frame.x - pullX) < 0.5f);
+    DOCTEST_CHECK(std::fabs(pull->frame.x + pull->frame.width -
+                            (kW - padX)) < 0.5f);
+    DOCTEST_CHECK(std::fabs(test->frame.x - (pullX - 8.0f - 100.0f)) < 0.5f);
+    DOCTEST_CHECK(std::fabs(push->frame.x -
+                            (pullX - 8.0f - 100.0f - 8.0f - 120.0f)) < 0.5f);
     DOCTEST_CHECK(std::fabs(test->frame.y - y) < 0.5f);
     DOCTEST_CHECK(std::fabs(pull->frame.y - y) < 0.5f);
     DOCTEST_CHECK(std::fabs(push->frame.height - rowH) < 0.5f);
@@ -460,11 +479,11 @@ REGISTER_TEST(github_sync_card_fill_full_width,
         DOCTEST_CHECK(std::fabs(url->frame.x + url->frame.width -
                                 (kW - 28.0f)) < 0.5f);
         DOCTEST_CHECK(std::fabs(br->frame.width - ctrlW) < 0.5f);
-        DOCTEST_CHECK(std::fabs(tk->frame.width - ctrlW) < 0.5f);
+        DOCTEST_CHECK(std::fabs(tk->frame.width - (ctrlW - 24.0f)) < 0.5f);
         DOCTEST_CHECK(std::fabs(br->frame.x + br->frame.width -
                                 (28.0f + colW)) < 0.5f);
         DOCTEST_CHECK(std::fabs(tk->frame.x + tk->frame.width -
-                                (kW - 28.0f)) < 0.5f);
+                                (kW - 28.0f - 24.0f)) < 0.5f);
         // 开关右缘钉卡右内边距（N 项: 两开关统一 44×24）
         DOCTEST_CHECK(std::fabs(autoSw->frame.x + autoSw->frame.width -
                                 (kW - 28.0f)) < 0.5f);
@@ -540,7 +559,7 @@ REGISTER_TEST(github_sync_card_disabled_state,
         const auto* dot = ui.find(std::string(kCardId) + ".dot");
         DOCTEST_REQUIRE(dot != nullptr);
         DOCTEST_CHECK(!colorEq(dot->color,
-                               core::theme::current().colors.wechat.primary));
+                               core::theme::current().colors.primary));
         enTrack->onClick();
         return true;
     }));
@@ -570,56 +589,71 @@ REGISTER_TEST(github_sync_card_disabled_state,
         const auto* dot = ui.find(std::string(kCardId) + ".dot");
         DOCTEST_REQUIRE(dot != nullptr);
         DOCTEST_CHECK(colorEq(dot->color,
-                              core::theme::current().colors.wechat.primary));
+                              core::theme::current().colors.primary));
         return true;
     }));
     return true;
 })
 
-// 方案 A：错误不再占独立行 + 「详情」小按钮——错误摘要上收头部摘要行（红字、
-// 可点），点头部标题/错误行 = 打开既有 git_error_dialog；状态点变红。
+// H1 修复：错误不再上收头部可点摘要，改为页内警示条（Warning 色 + 警告图标）+
+//「查看详情」文字链接；标题不再可点。点「查看详情」才开弹窗。
 REGISTER_TEST(github_sync_card_error_row_and_header_click,
-              "github_sync 卡片: 错误摘要上收头部（点标题/错误行开详情）+ 状态点变红（带无错误对照）", {
+              "github_sync 卡片: 错误摘要→警示条（Warning色+图标+查看详情链接，标题不可点）+ 无错误对照", {
     CardFixture fx;
     fx.in.githubSyncError = "网络不可达：api.github.com";
     test_support::HeadlessFrame f("githubsynccarderr");
     DOCTEST_CHECK(f.frame([&](eui::Ui& ui) {
         fx.draw(ui);
+        // 错误文本存在，但不挂 onClick（入口已移到 .error.detail）
         const auto* err = ui.find(std::string(kCardId) + ".error");
         DOCTEST_REQUIRE(err != nullptr);
         DOCTEST_CHECK(err->text.find("网络不可达") != std::string::npos);
-        DOCTEST_REQUIRE(err->onClick != nullptr);
-        err->onClick();   // 点错误行 = 开详情
-        // 点头部标题同款开详情
+        DOCTEST_CHECK_MESSAGE(err->onClick == nullptr,
+                              "错误文本不应挂 onClick（入口在 .error.detail）");
+        // 警告图标存在
+        const auto* errIcon = ui.find(std::string(kCardId) + ".error.icon");
+        DOCTEST_REQUIRE(errIcon != nullptr);
+        DOCTEST_CHECK_EQ(errIcon->text, eui::utf8(0xF071));  // fa-triangle-exclamation
+        DOCTEST_CHECK(colorEq(errIcon->textColor,
+                              core::theme::current().colors.warning));
+        //「查看详情」——唯一弹窗入口
+        const auto* detail = ui.find(std::string(kCardId) + ".error.detail");
+        DOCTEST_REQUIRE(detail != nullptr);
+        DOCTEST_CHECK_EQ(detail->text, std::string("查看详情"));
+        DOCTEST_REQUIRE(detail->onClick != nullptr);
+        detail->onClick();
+        // 标题不可点（H1：入口已移入「查看详情」）
         const auto* title = ui.find(std::string(kCardId) + ".title");
         DOCTEST_REQUIRE(title != nullptr);
-        DOCTEST_REQUIRE(title->onClick != nullptr);
-        title->onClick();
-        // 错误态：状态点变红（warningRed）
+        DOCTEST_CHECK_MESSAGE(title->onClick == nullptr,
+                              "标题不应挂 onClick（H1）");
+        // 错误态：状态点闪红（不变——点仍是紧凑态指示器）
         const auto* dot = ui.find(std::string(kCardId) + ".dot");
         DOCTEST_REQUIRE(dot != nullptr);
         DOCTEST_CHECK(colorEq(dot->color,
-                              core::theme::current().colors.wechat.warningRed));
-        // 旧「详情」小按钮已废（点击头部/错误行替代）
+                              core::theme::current().colors.error));
+        // 旧「详情」小按钮已废
         DOCTEST_CHECK(ui.find(std::string(kCardId) + ".btn.detail.bg") ==
                       nullptr);
         return true;
     }));
-    DOCTEST_CHECK_EQ(fx.detailClicks, 2);
+    DOCTEST_CHECK_EQ(fx.detailClicks, 1);
 
-    // 对照组：无错误 → 错误行不在、标题不可点、状态点回主色、摘要行在
+    // 对照组：无错误 → 错误行/图标/查看详情都不在、标题不可点、状态点回主色、摘要行在
     CardFixture clean;
     test_support::HeadlessFrame fc("githubsynccardclean");
     DOCTEST_CHECK(fc.frame([&](eui::Ui& ui) {
         clean.draw(ui);
         DOCTEST_CHECK(ui.find(std::string(kCardId) + ".error") == nullptr);
+        DOCTEST_CHECK(ui.find(std::string(kCardId) + ".error.icon") == nullptr);
+        DOCTEST_CHECK(ui.find(std::string(kCardId) + ".error.detail") == nullptr);
         const auto* title = ui.find(std::string(kCardId) + ".title");
         DOCTEST_REQUIRE(title != nullptr);
         DOCTEST_CHECK(title->onClick == nullptr);
         const auto* dot = ui.find(std::string(kCardId) + ".dot");
         DOCTEST_REQUIRE(dot != nullptr);
         DOCTEST_CHECK(colorEq(dot->color,
-                              core::theme::current().colors.wechat.primary));
+                              core::theme::current().colors.primary));
         DOCTEST_CHECK(ui.find(std::string(kCardId) + ".summary") != nullptr);
         return true;
     }));
@@ -658,7 +692,8 @@ REGISTER_TEST(github_sync_card_disclosure_text,
         fx.draw(ui);
         const auto* summary = ui.find(std::string(kCardId) + ".summary");
         DOCTEST_REQUIRE(summary != nullptr);
-        DOCTEST_CHECK_EQ(summary->text, text);
+        DOCTEST_CHECK_EQ(summary->text,
+                     std::string("同步笔记与整库数据库快照到 GitHub 私有仓库"));
         return true;
     }));
 
@@ -751,20 +786,20 @@ REGISTER_TEST(github_error_dialog_content,
             DOCTEST_CHECK_MESSAGE(b->onClick != nullptr, id);
         }
 
-        //（UAT6 去米黄）三钮色锁：主=wechat.primary 绿；复制/关闭=微信
-        // Secondary（theme 面=wechat.cardBg），反向锁死暖米 surfaceElevated
+        //（UAT6 去米黄）三钮色锁：主=primary 绿；复制/关闭=微信
+        // Secondary（theme 面=surface），反向锁死暖米 surfaceElevated
         const auto& wc = core::theme::current().colors;
         {
             const auto* retryBg = ui.find(std::string(kDlgId) + ".btn.retry.bg");
             DOCTEST_REQUIRE(retryBg != nullptr);
-            DOCTEST_CHECK(colorEq(retryBg->color, wc.wechat.primary));
+            DOCTEST_CHECK(colorEq(retryBg->color, wc.primary));
             const auto* copyBg = ui.find(std::string(kDlgId) + ".btn.copy.bg");
             DOCTEST_REQUIRE(copyBg != nullptr);
-            DOCTEST_CHECK(colorEq(copyBg->color, wc.wechat.cardBg));
+            DOCTEST_CHECK(colorEq(copyBg->color, wc.surface));
             DOCTEST_CHECK(!colorEq(copyBg->color, wc.surfaceElevated));
             const auto* closeBg = ui.find(std::string(kDlgId) + ".btn.close.bg");
             DOCTEST_REQUIRE(closeBg != nullptr);
-            DOCTEST_CHECK(colorEq(closeBg->color, wc.wechat.cardBg));
+            DOCTEST_CHECK(colorEq(closeBg->color, wc.surface));
             DOCTEST_CHECK(!colorEq(closeBg->color, wc.surfaceElevated));
         }
 
@@ -963,7 +998,7 @@ REGISTER_TEST(github_error_dialog_conflict_variant,
         const auto* title = ui.find(std::string(kDlgId) + ".title");
         DOCTEST_REQUIRE(title != nullptr);
         DOCTEST_CHECK(title->text.find("409") != std::string::npos);
-        const auto* label = ui.find(std::string(kDlgId) + ".btn.retry.text");
+        const auto* label = ui.find(std::string(kDlgId) + ".btn.retry.text.normal");
         DOCTEST_REQUIRE(label != nullptr);
         DOCTEST_CHECK_EQ(label->text, std::string("拉取远端后再推"));
         // 第一下只武装，不触发动作
@@ -976,7 +1011,7 @@ REGISTER_TEST(github_error_dialog_conflict_variant,
     // 第二帧：文案变确认态 + 提示行变成覆盖警告；第二下才真触发
     DOCTEST_CHECK(f.frame([&](eui::Ui& ui) {
         fx.draw(ui, screen);
-        const auto* label = ui.find(std::string(kDlgId) + ".btn.retry.text");
+        const auto* label = ui.find(std::string(kDlgId) + ".btn.retry.text.normal");
         DOCTEST_REQUIRE(label != nullptr);
         DOCTEST_CHECK(label->text.find("确认") != std::string::npos);
         const auto* hint = ui.find(std::string(kDlgId) + ".hint");
@@ -1027,7 +1062,7 @@ REGISTER_TEST(github_error_dialog_auth_variant,
         const auto* title = ui.find(std::string(kDlgId) + ".title");
         DOCTEST_REQUIRE(title != nullptr);
         DOCTEST_CHECK(title->text.find("认证失败") != std::string::npos);
-        const auto* label = ui.find(std::string(kDlgId) + ".btn.retry.text");
+        const auto* label = ui.find(std::string(kDlgId) + ".btn.retry.text.normal");
         DOCTEST_REQUIRE(label != nullptr);
         DOCTEST_CHECK_EQ(label->text, std::string("去更新 Token"));
         ui.find(std::string(kDlgId) + ".btn.retry.bg")->onClick();
@@ -1043,7 +1078,7 @@ REGISTER_TEST(github_error_dialog_auth_variant,
         const auto* title = ui.find(std::string(kDlgId) + ".title");
         DOCTEST_REQUIRE(title != nullptr);
         DOCTEST_CHECK(title->text.find("认证失败") == std::string::npos);
-        const auto* label = ui.find(std::string(kDlgId) + ".btn.retry.text");
+        const auto* label = ui.find(std::string(kDlgId) + ".btn.retry.text.normal");
         DOCTEST_REQUIRE(label != nullptr);
         DOCTEST_CHECK_EQ(label->text, std::string("重试"));
         return true;
@@ -1353,5 +1388,49 @@ REGISTER_TEST(github_sync_store_sha_records,
     auto recs3 = store.syncedNoteRecords();
     DOCTEST_REQUIRE(recs3.isOk());
     DOCTEST_CHECK_EQ(recs3.value().count("a.md"), static_cast<size_t>(0));
+    return true;
+})
+
+// ── H10 对比度门禁：白卡底板（surface）与容器底（background）对比度 ──
+// 规则：填充色与容器底色亮度差 ≥0.05，或存在描边节点（border.width > 0）。
+// WCAG 2.1 相对亮度公式：L = 0.2126·R + 0.7152·G + 0.0722·B
+//（线性化后 sRGB 分量，亮度差 ≥0.05 即可分辨；非 WCAG 对比度比，是与用户一致的
+// 「亮底浅块分不清」的人眼判据。）
+
+namespace {
+float srgbLinear(float c) {
+    c = c <= 0.04045f ? c / 12.92f : std::pow((c + 0.055f) / 1.055f, 2.4f);
+    return c;
+}
+float relativeLuminance(const eui::Color& c) {
+    return 0.2126f * srgbLinear(c.r) + 0.7152f * srgbLinear(c.g) +
+           0.0722f * srgbLinear(c.b);
+}
+} // namespace
+
+REGISTER_TEST(github_sync_card_h10_contrast_gate,
+              "H10 对比度门禁：GitHub 同步卡白底有 borderDefault 描边（白卡浮于 #FAFAF9 底）", {
+    CardFixture fx;
+    eui::Ui ui;
+    const float kW = 1000.0f;
+    ms::CardDrawArgs args{ui, kCardId, kW, ms::roundFs(ms::kGithubSyncCardHeight),
+                          core::theme::current(), 0.0f, 1000.0f, fx.in, fx.a};
+    ms::drawGithubSyncCard(args);
+    ui.layout(kW, 1000.0f);
+
+    const auto* bg = ui.find(std::string(kCardId) + ".bg");
+    DOCTEST_REQUIRE(bg != nullptr);
+
+    // 门禁：白卡背景必须有描边（border.width > 0）
+    DOCTEST_CHECK(bg->border.width > 0.005f);
+    DOCTEST_CHECK(colorEq(bg->border.color, core::theme::current().colors.borderDefault));
+
+    // 备选通道：无描边时填充色与页面底色 #FAFAF9 亮度差 ≥0.05
+    const float cardLum = relativeLuminance(bg->color);
+    const eui::Color pageBg = core::theme::current().colors.background;  // #FAFAF9
+    const float pageLum = relativeLuminance(pageBg);
+    const bool hasBorder = bg->border.width > 0.005f;
+    const bool enoughContrast = std::fabs(cardLum - pageLum) >= 0.05f;
+    DOCTEST_CHECK((hasBorder || enoughContrast));
     return true;
 })

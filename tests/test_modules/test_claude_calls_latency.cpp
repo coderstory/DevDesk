@@ -126,7 +126,7 @@ REGISTER_TEST(claude_calls_dialog_latency_segments,
     {
         eui::Ui ui;
         compose(ui);
-        DOCTEST_REQUIRE(click(ui, "claude.detail.tabs.hit.4"));
+        DOCTEST_REQUIRE(click(ui, "claude.detail.tab.4.hit"));
     }
 
     // 测量前必须排空唤醒标志：两个标志进程全局，上一例 / 上一次派发的残留会让 ③ 的断言恒真

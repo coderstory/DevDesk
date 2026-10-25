@@ -40,7 +40,10 @@ inline float dialogWidthPx(DialogWidth width) {
 }
 
 // 对话框内缩：标题 / 正文 / 按钮一律自 x = 28 起；正文行宽 = 弹窗宽 - 56。
-inline constexpr float kDialogInsetX = 28.0f;
-inline constexpr float kDialogBodyInsetX = 56.0f;
+inline constexpr float kDialogInsetX = 24.0f;
+inline constexpr float kDialogBodyInsetX = 48.0f;
+
+// H15：白卡轻微半透质感档位（用户可要求 0.85-0.96 间微调）
+inline constexpr float kCardGlassAlpha = 0.92f;
 
 } // namespace ui_kit

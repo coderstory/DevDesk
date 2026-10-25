@@ -21,12 +21,10 @@ namespace module::todo::ui {
 // 最上层弹窗单一持有者：items 最后打开的在栈顶，绘制 zIndex、Esc 关栈顶与之天然一致；toast 不入栈
 enum class Popup {
     NewTask,
-    NewColumn,
     Detail,
     Overdue,
     Ctx,
     DatePick,
-    Rename,
     Confirm,
 };
 
@@ -72,10 +70,7 @@ struct DialogHost {
     std::function<std::string(int64_t, const std::string&, const NewTaskAttributes&,
                               const std::vector<std::string>&)>
         createTask;
-    std::function<std::string(const std::string&)> createColumn;
-    std::function<std::string(int64_t, const std::string&)> renameColumn;
     std::function<void(int64_t)> deleteTask;
-    std::function<void(int64_t)> deleteColumn;
     // 表单落库（false = 失败，弹窗保持打开）
     std::function<bool(const Task&)> updateTask;
     std::function<void(int64_t, int64_t, int)> moveTask;
@@ -142,48 +137,16 @@ struct NewTaskDialog {
     void submit(PopupStack& popups, const DialogHost& host);
 };
 
-struct NewColumnDialog {
-    std::string title;
-    std::string error;  // 内嵌红字
-
-    void reset() {
-        title.clear();
-        error.clear();
-    }
-    void submit(PopupStack& popups, const DialogHost& host);
-};
-
-struct RenameDialog {
-    int64_t columnId = 0;
-    std::string title;
-    std::string error;  // 内嵌红字
-
-    void reset(const Column& col) {
-        columnId = col.id;
-        title = col.title;
-        error.clear();
-    }
-    void submit(PopupStack& popups, const DialogHost& host);
-};
-
-// 双模式：taskId > 0 = 删任务；否则 columnId > 0 = 删列（CASCADE 连带删列下任务）
+// 删除任务确认弹窗（「删除」按钮 onClick 即 confirm；取消路径不落库）
 struct ConfirmDeleteDialog {
-    int64_t columnId = 0;
     int64_t taskId = 0;
     std::string taskTitle;
 
-    bool forTask() const { return taskId != 0; }
     void openForTask(int64_t id, std::string title) {
         taskId = id;
         taskTitle = std::move(title);
-        columnId = 0;
     }
-    void openForColumn(int64_t id) {
-        columnId = id;
-        taskId = 0;
-        taskTitle.clear();
-    }
-    // 确认删除。任务路径：确认后才关详情弹窗（取消路径不关，回到弹窗继续编辑）
+    // 确认后才关详情弹窗（取消路径不关，回到弹窗继续编辑）
     void confirm(DialogSet& d, const DialogHost& host);
 };
 
@@ -225,12 +188,14 @@ struct ContextMenuState {
     int64_t columnId = 0;
     int columnIndex = 0;
     int cardIndex = -1;
+    float anchorX = 0.0f;
 
-    void openTask(const Task& task, int colIndex, int cardIndex) {
+    void openTask(const Task& task, int colIndex, int cardIndex, float anchorX) {
         taskId = task.id;
         columnId = 0;
         columnIndex = colIndex;
         this->cardIndex = cardIndex;
+        this->anchorX = anchorX;
     }
     void openColumn(const Column& col, int colIndex) {
         taskId = 0;
@@ -249,8 +214,6 @@ struct OverdueDialog {
 struct DialogSet {
     PopupStack popups;
     NewTaskDialog newTask;
-    NewColumnDialog newColumn;
-    RenameDialog rename;
     ConfirmDeleteDialog confirm;
     DetailDialog detail;
     ContextMenuState ctx;
@@ -269,9 +232,6 @@ struct DialogSet {
 void drawNewTaskDialog(eui::Ui& ui, const eui::Screen& screen,
                        const core::theme::Tokens& t, DialogSet& d,
                        const DialogHost& host);
-void drawNewColumnDialog(eui::Ui& ui, const eui::Screen& screen,
-                         const core::theme::Tokens& t, DialogSet& d,
-                         const DialogHost& host);
 void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
                       const core::theme::Tokens& t, DialogSet& d,
                       const DialogHost& host);
@@ -285,9 +245,6 @@ void drawContextMenu(eui::Ui& ui, const eui::Screen& screen,
 void drawDatePicker(eui::Ui& ui, const eui::Screen& screen,
                     const core::theme::Tokens& t, DialogSet& d,
                     const DialogHost& host);
-void drawRenameDialog(eui::Ui& ui, const eui::Screen& screen,
-                      const core::theme::Tokens& t, DialogSet& d,
-                      const DialogHost& host);
 void drawConfirmDeleteDialog(eui::Ui& ui, const eui::Screen& screen,
                              const core::theme::Tokens& t, DialogSet& d,
                              const DialogHost& host);

@@ -14,6 +14,7 @@
 #include <optional>
 #include <string>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 #include "core/theme.h"
@@ -40,6 +41,74 @@ constexpr float kColumnContentInset = 16.0f;
 // 卡片 / 占位条共用的可用宽（内容宽 - 双侧 inset），窄列钳到 0
 inline float contentCardWidth(float contentWidth) {
     return std::max(0.0f, contentWidth - kColumnContentInset * 2.0f);
+}
+
+// ---- 固定四列 + 归档折叠动画的纯几何 ----
+// W = (contentW − 3×gap) / 4；归档宽 = lerp(W×25%, W, archiveT)；
+// 其余三列 = (contentW − 3×gap − 归档宽) / 3。无归档列时四列均分。
+constexpr float kArchiveCollapsedRatio = 0.25f;  // 折叠宽 = 展开列宽 × 25%
+constexpr size_t kVirtualCardBuffer = 3;         // 虚拟化：可视区上下各 3 张缓冲
+
+struct BoardColumnWidths {
+    float normal = 0.0f;   // 普通列宽（归档展开时 = W）
+    float archive = 0.0f;  // 归档列宽（折叠时 = W×25%）
+};
+
+inline float uiLerp(float from, float to, float t) {
+    return from + (to - from) * std::clamp(t, 0.0f, 1.0f);
+}
+
+// 平滑阶跃（内容淡入/淡出）：x ≤ edge0 → 0，x ≥ edge1 → 1，中间 3u²−2u³
+inline float smoothStep(float edge0, float edge1, float x) {
+    if (edge1 <= edge0) return x >= edge1 ? 1.0f : 0.0f;
+    const float u = std::clamp((x - edge0) / (edge1 - edge0), 0.0f, 1.0f);
+    return u * u * (3.0f - 2.0f * u);
+}
+
+// archiveIndex < 0（无归档列）时 normal == archive == 等分宽，调用方按 normal 布局所有列。
+// columnCount 仅用于零列早退，布局恒按四列（列模型固定，不再有 n 列推广）。
+inline BoardColumnWidths boardColumnWidths(float contentW, float gap,
+                                           size_t columnCount, int archiveIndex,
+                                           float archiveT) {
+    constexpr float kColumns = 4.0f;
+    BoardColumnWidths out{};
+    if (columnCount == 0) return out;
+    const float span = contentW - gap * (kColumns - 1.0f);
+    out.normal = span / kColumns;
+    out.archive = out.normal;
+    if (archiveIndex >= 0) {
+        out.archive = uiLerp(out.normal * kArchiveCollapsedRatio, out.normal, archiveT);
+        out.normal = (span - out.archive) / (kColumns - 1.0f);
+    }
+    return out;
+}
+
+// 虚拟化窗口 [first, last)：按列滚动偏移与可视高算首/末张，上下各 kVirtualCardBuffer 张缓冲。
+// 卡片定高 pitch = kCardHeight + kCardGap，因此索引 = floor(offset / pitch)。
+inline std::pair<size_t, size_t> virtualCardRange(size_t taskCount, float scrollOffset,
+                                                  float viewportH, float pitch) {
+    if (taskCount == 0 || !(pitch > 0.0f)) return {0, 0};
+    const float offset = std::max(0.0f, scrollOffset);
+    const size_t visibleFirst = static_cast<size_t>(offset / pitch);
+    const size_t first = visibleFirst > kVirtualCardBuffer
+                             ? visibleFirst - kVirtualCardBuffer
+                             : 0;
+    // 可视区末张（含）→ +1；再补下缓冲
+    size_t last = static_cast<size_t>((offset + std::max(0.0f, viewportH)) / pitch) +
+                  1 + kVirtualCardBuffer;
+    last = std::min(last, taskCount);
+    return {std::min(first, last), last};
+}
+
+// 列内容总高：n 张卡 + (n−1) 个间距（虚拟化时用等高清单一占位元素撑出同一高度）
+inline float columnContentHeight(size_t taskCount) {
+    if (taskCount == 0) return 0.0f;
+    return static_cast<float>(taskCount) * (kCardHeight + kCardGap) - kCardGap;
+}
+
+// 第 index 张卡的槽位 y（相对列内容原点；等价于旧流式布局的位置）
+inline float cardSlotY(size_t index) {
+    return static_cast<float>(index) * (kCardHeight + kCardGap);
 }
 
 // 键盘移动的目标（columnId + moveTask 的 newPosition 语义）
@@ -108,8 +177,9 @@ struct DragHitInput {
     float pressY = 0.0f;
     float pressWidth = 0.0f;    // 按下时卡片 bounds 宽（dpi 探针的分子）
     float cardWidth = 0.0f;     // compose 空间卡宽（dpi 探针的分母）
-    float colWidth = 0.0f;      // compose 空间列宽
-    float colGap = 0.0f;
+    // 逐列实际几何（compose 空间，列左缘 + 当帧宽）：拖拽命中唯一几何来源
+    std::vector<float> columnX;
+    std::vector<float> columnWidth;
     float boardHeight = 0.0f;   // compose 空间板高
     float scrollOffset = 0.0f;  // 源列滚动偏移（compose 空间，按下时刻快照）
     float pageOriginX = 0.0f;   // 页面区原点 x（compose 空间；无头/未接入 = 0）
@@ -129,19 +199,28 @@ inline bool dragScaleMismatch(float explicitScale, float probeScale) {
            std::fabs(probeScale - explicitScale) > 0.001f;
 }
 
+// 逐列几何可用：两向量等长、覆盖全部列且含源列
+inline bool hasColumnGeometry(const DragHitInput& in) {
+    return !in.columnX.empty() && in.columnX.size() == in.columnWidth.size() &&
+           in.columnX.size() >= static_cast<size_t>(in.colCount) &&
+           static_cast<size_t>(in.fromColIndex) < in.columnX.size();
+}
+
 // 指针 → 目标列索引；列间隙 / 板外 / 输入退化 → -1。bounds.y 含列滚动，先还原成未滚动位置再推板面顶边
 inline int dragDropTarget(const DragHitInput& in, double pointerX, double pointerY) {
     if (in.colCount <= 0 || in.cardWidth <= 0.0f || in.pressWidth <= 0.0f ||
-        in.colWidth <= 0.0f || in.fromColIndex < 0 ||
+        in.fromColIndex < 0 ||
         in.fromColIndex >= in.colCount || in.cardIndex < 0) {
         return -1;
     }
+    // 逐列几何是命中前置条件：缺向量 / 尺寸不齐 / 未覆盖全部列 → -1（同其他退化入参）
+    if (!hasColumnGeometry(in)) return -1;
     const float dpi = in.dpiScale;
-    const float stride = in.colWidth + in.colGap;
-    // 板面原点：按下锚点（卡片左缘 → compose）减 kColumnContentInset 还原列左缘，再左移若干列步长
-    const float originX = ::core::windowToCompose(in.pressX, in.pageOriginX, dpi) -
-                          kColumnContentInset -
-                          static_cast<float>(in.fromColIndex) * stride;
+    // 板面原点：按下锚点（卡片左缘 → compose）减 kColumnContentInset 还原列左缘，
+    // 再按源列实际左缘左移回板面原点
+    const float anchorX = ::core::windowToCompose(in.pressX, in.pageOriginX, dpi) -
+                          kColumnContentInset;
+    const float originX = anchorX - in.columnX[static_cast<size_t>(in.fromColIndex)];
     // 板面顶边：卡片未滚动 y = 列头高 + 序号*(卡高+间距) - 滚动偏移
     const float cardTopInCol =
         kColumnHeaderHeight +
@@ -155,8 +234,10 @@ inline int dragDropTarget(const DragHitInput& in, double pointerX, double pointe
     const float x = ::core::windowToCompose(static_cast<float>(pointerX),
                                             in.pageOriginX, dpi);
     for (int j = 0; j < in.colCount; ++j) {
-        const float left = originX + static_cast<float>(j) * stride;
-        if (x >= left && x <= left + in.colWidth) return j;
+        const float left = originX + in.columnX[static_cast<size_t>(j)];
+        const float right = left + in.columnWidth[static_cast<size_t>(j)];
+        // 半开区间 [left, right)，避免相邻列右缘与下一列左缘重叠命中
+        if (x >= left && x < right) return j;
     }
     return -1;
 }
@@ -165,21 +246,24 @@ inline int dragDropTarget(const DragHitInput& in, double pointerX, double pointe
 inline int dragDropRowIndex(const DragHitInput& in, int targetCol, double pointerX,
                             double pointerY, float targetScroll, int taskCount) {
     if (in.colCount <= 0 || in.cardWidth <= 0.0f || in.pressWidth <= 0.0f ||
-        in.colWidth <= 0.0f || in.fromColIndex < 0 ||
+        in.fromColIndex < 0 ||
         in.fromColIndex >= in.colCount || in.cardIndex < 0 ||
         targetCol < 0 || targetCol >= in.colCount || taskCount < 0) {
         return -1;
     }
+    // 逐列几何是命中前置条件（同 dragDropTarget）
+    if (!hasColumnGeometry(in)) return -1;
     const float dpi = in.dpiScale;
-    const float stride = in.colWidth + in.colGap;
     // 同 dragDropTarget：由按下锚点回推板面原点
-    const float originX = ::core::windowToCompose(in.pressX, in.pageOriginX, dpi) -
-                          kColumnContentInset -
-                          static_cast<float>(in.fromColIndex) * stride;
+    const float anchorX = ::core::windowToCompose(in.pressX, in.pageOriginX, dpi) -
+                          kColumnContentInset;
+    const float originX = anchorX - in.columnX[static_cast<size_t>(in.fromColIndex)];
     const float x = ::core::windowToCompose(static_cast<float>(pointerX),
                                             in.pageOriginX, dpi);
-    const float left = originX + static_cast<float>(targetCol) * stride;
-    if (x < left || x > left + in.colWidth) return -1;  // 不在目标列
+    const float left = originX + in.columnX[static_cast<size_t>(targetCol)];
+    const float right = left + in.columnWidth[static_cast<size_t>(targetCol)];
+    // 不在目标列（半开区间）
+    if (x < left || x >= right) return -1;
     const float cardTopInCol =
         kColumnHeaderHeight +
         static_cast<float>(in.cardIndex) * (kCardHeight + kCardGap) - in.scrollOffset;
@@ -283,15 +367,15 @@ inline eui::Color priorityColor(Priority p, const core::theme::Tokens& t) {
     // UAT2 D批重做（用户：微信不是绿的吗，四个类型没一个绿，颜色淡灰蒙蒙）：
     // None=中性灰 / Low=微信绿 / Medium=链接蓝 / High=警示红，覆盖 2026-10-13 的 info/warning/error 鲜艳轮。
     // None 档仅显色场景用；卡底 tint 路径 None 不经本表（priorityCardBg 走列色淡染/原底早退）
-    static constexpr eui::Color core::theme::ColorTokens::WeChatColors::*kColorFields[] = {
-        &core::theme::ColorTokens::WeChatColors::textTertiary,  // None 中性灰 #999999
-        &core::theme::ColorTokens::WeChatColors::primary,       // Low 微信绿 #07C160
-        &core::theme::ColorTokens::WeChatColors::linkBlue,      // Medium 链接蓝 #576B95
-        &core::theme::ColorTokens::WeChatColors::warningRed,    // High 警示红 #FA5151
+    static constexpr eui::Color core::theme::ColorTokens::*kColorFields[] = {
+        &core::theme::ColorTokens::textTertiary,  // None 中性灰 #999999
+        &core::theme::ColorTokens::primary,       // Low 薄荷绿 #36D399
+        &core::theme::ColorTokens::warning,       // Medium 警示橙 #FFC300
+        &core::theme::ColorTokens::error,         // High 警示红 #FA5151
     };
     static_assert(std::size(kColorFields) == static_cast<size_t>(Priority::High) + 1);
     const size_t idx = static_cast<size_t>(p);
-    return t.colors.wechat.*kColorFields[idx <= static_cast<size_t>(Priority::High) ? idx : 0];
+    return t.colors.*kColorFields[idx <= static_cast<size_t>(Priority::High) ? idx : 0];
 }
 
 // 优先级色底：卡底与详情弹窗优先级按钮底的唯一色源（priorityColor 色表 + 强度表 + priorityTintBg 算式）。
@@ -318,9 +402,10 @@ inline eui::Color priorityTintBg(Priority p, const core::theme::Tokens& t,
     return eui::mixColor(base, priorityColor(p, t), strength);
 }
 
-// ① 看板卡底：None 走列色淡染 0.12——列区分列（待办=clay橙、进行中=amber、已完成=sage、
-// 归档=warm-gray，归档天然灰契合只读气质）；低/中/高按强度表混优先级原生色（优先级语义覆盖列染）。
-// columnColor=nullopt 时退 base 原色（列无色/无头测试等场景）。色相与 hover/active 反馈叠加而非互相覆盖
+// ① 看板卡底的 H16 实际口径 = todo_ui_board.cpp cardFaceColor：surface 白底向优先级色
+// 混 kTodoTintAlpha=0.12（Low=success/Medium=warning/High=error），None 档纯白 cardSurface
+// 不染、与列无关。本 helper 的 None 分支是列色淡染语义，与该口径不一致，当前无调用方；
+// 色相与 hover/active 反馈叠加而非互相覆盖
 inline eui::Color priorityCardBg(Priority p, const core::theme::Tokens& t,
                                  const eui::Color& base,
                                  const std::optional<eui::Color>& columnColor = std::nullopt) {
@@ -486,11 +571,6 @@ inline bool columnTitleTaken(const std::vector<Column>& columns,
     return false;
 }
 
-// 留空默认列名「新列 N」（N = 现有列数 + 1）
-inline std::string defaultColumnTitle(size_t columnCount) {
-    return "新列 " + std::to_string(columnCount + 1);
-}
-
 // 列内滚动位置（按列 id 记忆，列重排/删列不串列）
 inline float columnScrollOffset(const std::vector<Column>& columns,
                                 const std::map<int64_t, float>& scrolls,
@@ -500,29 +580,17 @@ inline float columnScrollOffset(const std::vector<Column>& columns,
     return it == scrolls.end() ? 0.0f : it->second;
 }
 
-// 看板几何：drawBoard 与右键菜单定位共用（菜单走模块布局空间，非指针窗口坐标）
+// 看板几何：右键菜单 y 定位用（菜单走模块布局空间，非指针窗口坐标；x 经 ctx.anchorX）
 struct BoardGeom {
-    float pad = 0.0f;
-    float colW = 0.0f;
-    float colGap = 0.0f;
     float boardTop = 0.0f;  // 看板区（列背景）顶边的模块空间 y
 };
 
-// screenWidth = 页面逻辑宽（调用点传 Screen::width）；本头不碰 Ui，故只收 float
-inline BoardGeom boardGeom(float screenWidth, size_t columnCount,
-                           const core::theme::Tokens& t) {
+// 本头不碰 Ui，只收 Tokens；列模型固定四列，唯一消费者只吃顶边
+inline BoardGeom boardGeom(const core::theme::Tokens& t) {
+    // 页面顶距 0（2026-10-25 拍板：标题顶格），板顶 = 页头 + 间距
     BoardGeom g;
-    g.pad = t.sizes.spacingXXLarge;
-    g.colGap = t.sizes.spacingLarge;
-    const float contentW = screenWidth - g.pad * 2.0f;
-    const auto n = static_cast<float>(columnCount == 0 ? 1 : columnCount);
-    g.colW = (contentW - g.colGap * (n - 1.0f)) / n;
-    g.boardTop = g.pad + ui_kit::kHeaderH + t.sizes.spacingLarge;
+    g.boardTop = ui_kit::kHeaderH + t.sizes.spacingLarge;
     return g;
-}
-
-inline float cardLeft(const BoardGeom& g, int columnIndex) {
-    return g.pad + static_cast<float>(columnIndex) * (g.colW + g.colGap);
 }
 
 inline float cardTop(const BoardGeom& g, int cardIndex) {

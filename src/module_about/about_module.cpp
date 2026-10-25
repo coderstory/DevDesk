@@ -1,18 +1,14 @@
-// 关于页独立模块：微信风格关于页（W10 整改）。
-// 居中纯白卡片 + 信息列表两列 + Git commit/版本绿色文字 + 复制功能 + 版权 footer。
-// 渐变光晕装饰已移除（about_anim.h 保留空壳）。无 onStart/onStop/storage。
+// 关于页独立模块（S3.8 UAT6.2 整改）。
+// 实底白卡 + 标题左对齐 + 描述列表（标签/值层级）+ Ghost 复制图标 + 信息分组。
+// 玻璃体系已退役（S6.1）。
 // 平台/架构由 CMake 配置期注入宏，本文件只消费。
 #include "core/component_theme.h"
 #include "core/logging.h"
 #include "core/module_interface.h"
 #include "core/theme.h"
 #include "core/window/window_backend.h"  // core::window::setClipboardText（复制）
-#include "core/window_effect_state.h"    // 页底 alpha 按窗口效果档位（UAT2 B 批）
 
-#include <components/theme.h>
-#include <ui_kit/glass_card.h>
 #include <ui_kit/light_toast.h>  // showLightToast（复制成功 toast）
-#include <ui_kit/logo.h>          // ui_kit::drawDevDeskLogo（品牌几何 logo）
 
 #include <eui/dsl.h>
 
@@ -21,7 +17,9 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <iterator>
 #include <string>
+#include <vector>
 
 // 编译期信息宏回退（CMake 注入缺失时的手工编译兜底）
 #ifndef DEVDESK_VERSION
@@ -181,11 +179,12 @@ std::string aboutCppLine() {
     return "C++11";
 }
 
-// 信息行：左标签 + 右内容。highlight=true → 绿色文字 + 可复制（wechat.primary）。
+// 信息行：左标签 + 右内容。highlight=true → 可复制（wechat.primary）。linkToast 非空=Ghost链接。
 struct AboutRow {
     const char* label;
     std::string value;
     bool highlight = false;
+    std::string linkToast;  // non-empty → render as ghost link, toast on click
 };
 
 } // namespace
@@ -199,194 +198,172 @@ public:
 
     void compose(eui::Ui& ui, const eui::Screen& screen) override {
         const auto& t = core::theme::current();
-        const auto& wc = t.colors.wechat;
 
-        // —— 页面底色：wechat.pageBg #F7F7F7（§4.14 面板灰底）——
-        // UAT2 B 批：tint 的 alpha 随窗口效果档位（core::window_effect_state 单值，
-        // 写口 = settings applyWindowVisuals）——磨砂 0.15 透 DWM backdrop、半透 0.72
-        //（UAT6 调值，见 window_effect_state.h）、off 实色 1.0；off 档与原 opaque
-        // 铺底视觉等价。
-        ui.rect("about.bg")
-            .position(0.0f, 0.0f)
-            .size(screen.width, screen.height)
-            .color(eui::Color{wc.pageBg.r, wc.pageBg.g, wc.pageBg.b,
-                              ::core::window_effect_state::surfaceAlpha(
-                                  ::core::window_effect_state::current())})
-            .build();
-
-        // —— 卡片几何常量（UAT3 放大：卡 580→760 / pad 32→48 / 上下留白 40→60 /
-        //    图标 56→72 / 标题高 24→30 / 行高 40→48 / 按钮 160·34→200·40）——
-        constexpr float kCardW = 760.0f;  // 名义卡宽；窄窗下按 cardW 公式自适应
-        constexpr float kCardPadX = 48.0f;
-        constexpr float kCardPadTop = 60.0f;
-        constexpr float kCardPadBottom = 60.0f;
-        constexpr float kIconSize = 72.0f;
-        constexpr float kIconGap = 10.0f;
-        constexpr float kTitleH = 30.0f;
-        constexpr float kTitleGap = 28.0f;
-        constexpr float kRowH = 48.0f;
-        constexpr int kRowCount = 7;
+        // S3.8 平铺版（2026-10-25 批J 用户拍板：彻底去卡片化，与其他页统一——
+        // 页标题 + 分组内容直接铺在页面底上，无容器/描边/圆角/居中）
+        constexpr float kGroupHdrH = 24.0f;    // 分组标题行高（16px/600 档 24px）
+        constexpr float kGroupGap = 24.0f;     // 组间间距（1px 分隔线居中）
+        constexpr float kRowH = 32.0f;         // 行高（S3.8#1）
+        constexpr float kLabelW = 100.0f;      // 标签宽（S3.8#1）
+        constexpr float kCopyW = 24.0f;        // 复制按钮宽
         constexpr float kFooterH = 20.0f;
-        constexpr float kFooterGap = 16.0f;  // 卡底→页脚间距
-        constexpr float kLabelW = 120.0f;
+        constexpr float kTitleH = 32.0f;       // 页标题行高（fontSizeTitle 档，同 agent.title）
 
-        // 卡高 = 上留白 + 图标 + 图标间距 + 标题 + 标题间距 + 7 行 + 下留白
-        const float cardH_nominal = kCardPadTop + kIconSize + kIconGap + kTitleH +
-                                    kTitleGap + kRowCount * kRowH + kCardPadBottom;
-
-        // 宽度自适应（UAT3：最小窗宽拟降至 1000，content≈712 < 名义 760）：
-        // 有效卡宽 = min(kCardW, screen.width − 2×24)，下限 560（两侧至少 24px）
-        const float cardW =
-            std::max(560.0f, std::min(kCardW, screen.width - 2.0f * 24.0f));
-
-        // 居中：x = (screen.w - cardW) / 2
-        const float cardX = std::max(0.0f, (screen.width - cardW) / 2.0f);
-
-        // 页脚贴页面底部（spacingXXLarge padding）
-        const float footerY = screen.height - t.sizes.spacingXXLarge - kFooterH;
-
-        // 卡片顶贴：默认 spacingXXLarge；极矮窗下先推 cardY，仍超则 clamp 卡高
-        float cardY = t.sizes.spacingXXLarge;
-        float cardH = cardH_nominal;
-        if (cardY + cardH + kFooterGap > footerY) {
-            cardY = std::max(0.0f, footerY - kFooterGap - cardH);
-            // UAT3：cardY 已触 0 仍超 footer（窗 640→页高≈600 时 cardH=616 >
-            // footerY=540），clamp cardH 使不叠
-            if (cardY + cardH + kFooterGap > footerY) {
-                cardH = std::max(200.0f, footerY - cardY - kFooterGap);
-            }
-        }
-
-// —— UAT6 H 批：居中单层纯白卡片（去双层嵌套——原 about.card stack 包 about.card.bg
-        // rect 为两层，现 bg rect 即卡本身；高度 content-adaptive、正常页留白）——
-        // UAT6 E+F 批：卡片背景换玻璃半透 + 淡雅质感层
-        ui.rect("about.card.bg")
-            .position(cardX, cardY)
-            .size(cardW, cardH)
-            .color(components::theme::withOpacity(wc.cardBg, 0.62f))
-            .radius(t.sizes.radiusWeChat)
-            .border(1.0f, components::theme::withOpacity(wc.cardBg, 0.55f))
-            .build();
-        ui_kit::drawGlassCardLayers(ui, "about.card",
-            cardX, cardY, cardW, cardH,
-            t.sizes.radiusWeChat, t, ui_kit::GlassCardStyle::subtle());
-
-        // —— 卡片顶部：DevDesk 图标 + 应用名称，居中 ——
-        {
-            float y = cardY + kCardPadTop;
-            // C 方案终端窗 >_ 几何 logo 替换 fa-laptop-code 字形（图标批 2026-10-20）
-            ui_kit::drawDevDeskLogo(ui, "about.card.icon",
-                                    cardX + (cardW - kIconSize) / 2.0f, y,
-                                    kIconSize, wc.primary, wc.cardBg);
-            y += kIconSize + kIconGap;
-
-            ui.text("about.card.title")
-                .position(cardX, y)
-                .size(cardW, kTitleH)
-                .text("DevDesk")
-                .fontSize(t.sizes.fontSizeTitle)
-                .lineHeight(kTitleH)
-                .fontWeight(700)
-                .color(wc.textPrimary)
-                .horizontalAlign(eui::HorizontalAlign::Center)
-                .build();
-            y += kTitleH + kTitleGap;
-
-        // —— 信息列表：两列对齐 + 分割线 ——
-        // 左标签定宽 120px wechat.textSecondary；右内容左对齐 wechat.textPrimary
-        const AboutRow rows[] = {
-            {"版本", aboutVersionLine(), true},
-            {"Git commit", DEVDESK_GIT_REV, true},
-            {"EUI-NEO", aboutEuiNeoLine(), true},
-            {"构建时间", aboutBuildLine(), false},
-            {"编译器", DEVDESK_COMPILER, false},
-            {"平台", aboutPlatformLine(), false},
-            {"C++ 标准", aboutCppLine(), false},
+        // 信息行结构：按分组组织
+        struct InfoGroup {
+            const char* header;
+            std::vector<AboutRow> rows;
+        };
+        // S3.8#3: 三组——版本信息 / 构建信息 / 许可
+        InfoGroup groups[] = {
+            {"版本信息", {
+                {"版本", aboutVersionLine(), true},
+                {"Git commit", DEVDESK_GIT_REV, true},
+                {"EUI-NEO", aboutEuiNeoLine(), true},
+            }},
+            {"构建信息", {
+                {"构建时间", aboutBuildLine(), false},
+                {"编译器", DEVDESK_COMPILER, false},
+                {"平台", aboutPlatformLine(), false},
+                {"C++ 标准", aboutCppLine(), false},
+            }},
+            {"许可与致谢", {
+                {"开源协议", "MIT License", false},
+                {"开源组件", "查看完整列表", false, "完整开源组件清单见仓库 LICENSE 说明"},
+            }},
         };
 
-        const float valueX = kCardPadX + kLabelW + t.sizes.spacing;  // 卡内相对坐标
-        // 留 20px 给 highlight 行的复制图标；非 highlight 行右端多 20px 空白（不影响左对齐）
-        const float valueW = cardW - valueX - kCardPadX - 20.0f;
+        // S4.2 弹性：页内边距 32（spacingLarge×2）；内容固定高，最小窗 640 内不触 footer
+        const float pagePad = t.sizes.spacingLarge * 2.0f;  // 32
+        const float contentW = std::max(0.0f, screen.width - pagePad * 2.0f);
+        const float footerY = screen.height - pagePad - kFooterH;
 
-        for (int i = 0; i < kRowCount; ++i) {
-            const float rowY = y + static_cast<float>(i) * kRowH;
+        // 页标题（与 agent.title 同款：fontSizeTitle 24/700、32 行高、左上）
+        ui.text("about.title")
+            .position(pagePad, 0.0f)  // 标题顶格不留空（2026-10-25 拍板）
+            .size(contentW, kTitleH)
+            .text("关于")
+            .fontSize(t.sizes.fontSizeTitle)
+            .lineHeight(kTitleH)
+            .fontWeight(700)
+            .color(t.colors.textPrimary)
+            .build();
 
-            // 分割线（行间，非首行上方；§4.7 二级分割线 #EDEDED）
-            if (i > 0) {
-                ui.rect("about.card.divider." + std::to_string(i))
-                    .position(cardX + kCardPadX, rowY - 0.5f)
-                    .size(cardW - kCardPadX * 2.0f, 1.0f)
-                    .color(wc.dividerSecondary)
+        // 平铺内容：分组标题/行/分隔线直接铺页面底，ID 从 about.card.* 迁 about.info.*
+        const float valueX = kLabelW + 16.0f;
+        float y = kTitleH + kGroupGap;
+        for (size_t gi = 0; gi < std::size(groups); ++gi) {
+            const auto& g = groups[gi];
+            if (gi > 0) {
+                // 组间 1px 分隔线（居中于 24 间距）
+                ui.rect("about.info.divider." + std::to_string(gi))
+                    .position(pagePad, y + kGroupGap * 0.5f - 0.5f)
+                    .size(contentW, 1.0f)
+                    .color(t.colors.borderDefault)
                     .build();
+                y += kGroupGap;
             }
-
-            // 左标签
-            ui.text("about.card.label." + std::to_string(i))
-                .position(cardX + kCardPadX, rowY)
-                .size(kLabelW, kRowH)
-                .text(rows[i].label)
-                .fontSize(t.sizes.fontSizeWeChat)  // UAT3 放大：13→16
-                .lineHeight(kRowH)
-                .color(wc.textSecondary)
+            // 分组标题：16px/600 textPrimary
+            ui.text("about.info.group." + std::string(g.header))
+                .position(pagePad, y)
+                .size(contentW, kGroupHdrH)
+                .text(g.header)
+                .fontSize(t.sizes.fontSizeWeChat)  // 16px
+                .lineHeight(kGroupHdrH)
+                .fontWeight(600)
+                .color(t.colors.textPrimary)
                 .build();
+            y += kGroupHdrH;
 
-            // 右内容（highlight → 绿色 wechat.primary）
-            ui.text("about.card.value." + std::to_string(i))
-                .position(cardX + valueX, rowY)
-                .size(valueW, kRowH)
-                .text(rows[i].value)
-                .fontSize(t.sizes.fontSizeWeChat)  // UAT3 放大：13→16
-                .lineHeight(kRowH)
-                .color(rows[i].highlight ? wc.primaryText : wc.textPrimary)
-                .build();
+            for (size_t i = 0; i < g.rows.size(); ++i) {
+                const float rowY = y + static_cast<float>(i) * kRowH;
 
-            // 复制图标（highlight 行；EUI 无 onEnter/onLeave → 始终可见）
-            if (rows[i].highlight) {
-                constexpr float kCopyIconSize = 16.0f;
-                const float iconX = cardX + valueX + valueW + 4.0f;
-                const float iconY = rowY + (kRowH - kCopyIconSize) / 2.0f;
-                ui.text("about.card.copy." + std::to_string(i))
-                    .position(iconX, iconY)
-                    .size(kCopyIconSize, kCopyIconSize)
-                    .icon(0xF0C5)  // fa-copy
-                    .fontSize(kCopyIconSize)
-                    .color(wc.textTertiary)
+                // 左标签：12px 三级字，右对齐，100px 宽
+                // ID 必须含组维度 gi：框架按 ID 去重、后建覆盖先建，仅用行下标会跨组互覆丢行
+                ui.text("about.info.label." + std::to_string(gi) + "." +
+                        std::to_string(i))
+                    .position(pagePad, rowY)
+                    .size(kLabelW, kRowH)
+                    .text(g.rows[i].label)
+                    .fontSize(t.sizes.fontSizeSmall)  // 12px
+                    .lineHeight(kRowH)
+                    .color(t.colors.textTertiary)
+                    .horizontalAlign(eui::HorizontalAlign::Right)
                     .build();
 
-                // 透明 hit 区：点击复制该行值
-                std::string copyText = rows[i].value;
-                ui.rect("about.card.hit." + std::to_string(i))
-                    .position(cardX + kCardPadX, rowY)
-                    .size(cardW - kCardPadX * 2.0f, kRowH)
-                    .color(eui::Color{0.0f, 0.0f, 0.0f, 0.0f})
-                    .cursor(eui::CursorShape::Hand)
-                    .onClick([this, copyText] {
-                        ::core::window::setClipboardText(copyText);
-                        triggerToast("已复制");
-                        LOG_INFO("About: 已复制 " + copyText);
-                    })
+                // 右内容：14px/600，统一 textPrimary；highlight 仅控制复制图标显隐
+                const float valueW = contentW - valueX - kCopyW;
+                const bool isGhostLink = !g.rows[i].linkToast.empty();                ui.text("about.info.value." + std::to_string(gi) + "." +
+                        std::to_string(i))
+                    .position(pagePad + valueX, rowY)
+                    .size(valueW, kRowH)
+                    .text(g.rows[i].value)
+                    .fontSize(t.sizes.fontSizeBody)  // 14px
+                    .lineHeight(kRowH)
+                    .fontWeight(600)
+                    .color(isGhostLink ? t.colors.accentText
+                                       : t.colors.textPrimary)
                     .build();
+
+                // S3.8#2: Ghost 复制图标按钮（highlight 行）；热区收窄到图标区
+                if (g.rows[i].highlight) {
+                    const float iconX = pagePad + contentW - kCopyW;
+                    const float iconY = rowY + (kRowH - 16.0f) * 0.5f;
+                    ui.text("about.info.copy." + std::to_string(gi) + "." +
+                            std::to_string(i))
+                        .position(iconX, iconY)
+                        .size(16.0f, 16.0f)
+                        .icon(0xF0C5)  // fa-copy
+                        .fontSize(core::theme::scaled(16.0f))
+                        .color(t.colors.primary)
+                        .build();
+
+                    std::string copyText = g.rows[i].value;
+                    ui.rect("about.info.hit." + std::to_string(gi) + "." +
+                            std::to_string(i))
+                        .position(pagePad + contentW - kCopyW, rowY)
+                        .size(kCopyW, kRowH)
+                        .color(eui::Color{0.0f, 0.0f, 0.0f, 0.0f})
+                        .cursor(eui::CursorShape::Hand)
+                        .onClick([this, copyText] {
+                            ::core::window::setClipboardText(copyText);
+                            triggerToast("已复制");
+                            LOG_INFO("About: 已复制 " + copyText);
+                        })
+                        .build();
+                }
+
+                // Ghost 链接按钮（linkToast 非空行）
+                if (!g.rows[i].linkToast.empty()) {
+                    std::string toastMsg = g.rows[i].linkToast;
+                    ui.rect("about.info.link." + std::to_string(gi) + "." +
+                            std::to_string(i))
+                        .position(pagePad + valueX, rowY)
+                        .size(valueW, kRowH)
+                        .color(eui::Color{0.0f, 0.0f, 0.0f, 0.0f})
+                        .cursor(eui::CursorShape::Hand)
+                        .onClick([this, toastMsg] {
+                            triggerToast(toastMsg);
+                            LOG_INFO("About: 开源组件链接点击");
+                        })
+                        .build();
+                }
             }
-        }
-        // TODO: 开源许可证模块（补充项，签认可划；依赖清单待取全，暂不硬做）
+            y += static_cast<float>(g.rows.size()) * kRowH;
         }
 
-        // —— 版权声明：12px 三级灰 wechat.textTertiary #999999，居中页面最底部 ——
+        // 版权声明
         ui.text("about.footer")
             .position(0.0f, footerY)
             .size(screen.width, kFooterH)
             .text("© 2026 DevDesk")
-            .fontSize(12.0f)  // spec §3.7.4：版权 12px（theme 无 12px token，用字面量）
+            .fontSize(core::theme::scaled(12.0f))
             .lineHeight(kFooterH)
-            .color(wc.textTertiary)
+            .color(t.colors.textDisabled)
             .horizontalAlign(eui::HorizontalAlign::Center)
             .build();
 
-        // —— 复制成功 toast：微信式轻提示（§4.10），居中 ——
-        // toast 机制：onClick 设 toastActive_=true + toastMsg_；compose 每帧调 showLightToast。
-        // toastActive_=true 时传 toastMsg_ 触发/续渲；1.5s 后 elapsed >= duration → toastActive_=false
-        // → 下一帧传 "" 重置 state（s.message 变化 → 触发但 message.empty → 不渲染）。
-        // EUI 无 onEnter/onLeave，hover 复制图标改为始终可见（W10 已知限制）。
+        // 复制成功 toast
         const std::string& toastMsg = toastActive_ ? toastMsg_ : std::string{};
         ui_kit::showLightToast(ui, "about.toast", toastMsg,
                                screen.width * 0.5f, screen.height * 0.5f, t);

@@ -12,16 +12,21 @@
 #include <components/button.h>
 #include <components/switch.h>
 #include <components/tabs.h>
+#include <components/tooltip.h>
 #include <core/call_rate.h>
 #include <core/component_theme.h>
 #include <core/logging.h>
-#include <ui_kit/glass_card.h>
+#include <core/window/window_backend.h>
+#include <ui_kit/wtab.h>
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <cmath>
 #include <functional>
 #include <map>
+
+#include <ui_kit/light_toast.h>
 
 namespace module::claude {
 
@@ -29,10 +34,14 @@ namespace {
 
 // 详情面板动作区几何（单一来源）：动作块 = 61（分隔线/按钮行 36/副提示/分隔线）；
 // 其上 20 间距、其下 24 呼吸 → 预留 85。由 drawDetailActions 绘制推出，改绘制须同步。
-constexpr float kActionBlockH = 61.0f;
+constexpr float kActionBlockH = 65.0f;
 constexpr float kActTopGap = 20.0f;     // 内容框底 → actY
-constexpr float kActBottomPad = 24.0f;  // actY+61 → 面板底
-constexpr float kActReserve = kActionBlockH + kActBottomPad;  // 85
+constexpr float kActBottomPad = 24.0f;  // actY+65 → 面板底
+constexpr float kActReserve = kActionBlockH + kActBottomPad;  // 89
+
+// 复制按钮 toast 单实例状态（onClick 设，drawDetailBasic 每帧查并渲染）
+std::string g_copyToastMsg;
+std::chrono::steady_clock::time_point g_copyToastTime{};
 
 // 模型映射域的 env 键：键集从槽位表派生（与写入点同源），此处仅语义别名。
 bool isModelMappingEnvKey(const std::string& key) {
@@ -61,61 +70,145 @@ float drawDetailBasic(eui::Ui& ui, float x0, float y0, float w,
     // 文本必须带 verticalAlign=Center，否则 runtime 从行框顶沿起排不居中；只加对齐，行距/行宽不变。
     ui.text("claude.field.name.label")
         .position(x0, y0).size(w * 0.5f - 8.0f, 14.0f)
-        .text("名称").fontSize(11.0f).lineHeight(14.0f)
+        .text("名称").fontSize(core::theme::scaled(11.0f)).lineHeight(core::theme::scaled(14.0f))
         .verticalAlign(eui::VerticalAlign::Center)
-        .color(t.colors.wechat.textTertiary).build();
+        .color(t.colors.textTertiary).build();
     ui.rect("claude.field.name.bg")
         .position(x0, y0 + 18.0f).size(w * 0.5f - 8.0f, 24.0f)
-        .color(components::theme::withOpacity(t.colors.wechat.cardBg, 0.62f)).radius(t.sizes.radiusSmall)
-        .border(1.0f, components::theme::withOpacity(t.colors.wechat.cardBg, 0.55f)).build();
-    ui_kit::drawGlassCardLayers(ui, "claude.field.name", x0, y0 + 18.0f,
-        w * 0.5f - 8.0f, 24.0f, t.sizes.radiusSmall, t,
-        ui_kit::GlassCardStyle::subtle());
+        .color(t.colors.surface).radius(t.sizes.radiusLarge).build();
+    // S3.4 值盒收窄让位右侧复制按钮
     ui.text("claude.field.name.value")
         .position(x0 + 12.0f, y0 + 18.0f)
-        .size(w * 0.5f - 20.0f, 24.0f)
-        .text(v.nameValue).fontSize(14.0f).lineHeight(24.0f)
+        .size(w * 0.5f - 40.0f, 24.0f)
+        .text(v.nameValue).fontSize(core::theme::scaled(14.0f)).lineHeight(core::theme::scaled(24.0f))
         .verticalAlign(eui::VerticalAlign::Center)
-        .color(t.colors.wechat.textPrimary).build();
+        .color(t.colors.textPrimary).build();
+    {
+        const float copyX = x0 + w - 28.0f;
+        const std::string copyVal = v.nameValue;
+        ui.stack("claude.field.name.copy")
+            .position(copyX, y0 + 18.0f)
+            .size(24.0f, 24.0f)
+            .content([&] {
+                ui.rect("claude.field.name.copy.bg")
+                    .size(24.0f, 24.0f)
+                    .states(eui::Color{0.0f, 0.0f, 0.0f, 0.0f},
+                            t.colors.primarySoftBg,
+                            t.colors.hover)
+                    .radius(4.0f)
+                    .onClick([cv = copyVal] {
+                        core::window::setClipboardText(cv);
+                        g_copyToastMsg = "已复制";
+                        g_copyToastTime = std::chrono::steady_clock::now();
+                    })
+                    .build();
+                ui.text("claude.field.name.copy.icon")
+                    .size(24.0f, 24.0f)
+                    .icon(0xF0C5)
+                    .fontSize(core::theme::scaled(14.0f))
+                    .lineHeight(core::theme::scaled(24.0f))
+                    .horizontalAlign(eui::HorizontalAlign::Center)
+                    .verticalAlign(eui::VerticalAlign::Center)
+                    .color(t.colors.textTertiary)
+                    .build();
+            })
+            .build();
+    }
     const float urlY = y0 + 56.0f;
     ui.text("claude.field.url.label")
         .position(x0, urlY).size(w, 14.0f)
-        .text("Base URL").fontSize(11.0f).lineHeight(14.0f)
+        .text("Base URL").fontSize(core::theme::scaled(11.0f)).lineHeight(core::theme::scaled(14.0f))
         .verticalAlign(eui::VerticalAlign::Center)
-        .color(t.colors.wechat.textTertiary).build();
+        .color(t.colors.textTertiary).build();
     ui.rect("claude.field.url.bg")
         .position(x0, urlY + 18.0f).size(w, 28.0f)
-        .color(components::theme::withOpacity(t.colors.wechat.cardBg, 0.62f)).radius(t.sizes.radiusSmall)
-        .border(1.0f, components::theme::withOpacity(t.colors.wechat.cardBg, 0.55f)).build();
-    ui_kit::drawGlassCardLayers(ui, "claude.field.url", x0, urlY + 18.0f,
-        w, 28.0f, t.sizes.radiusSmall, t,
-        ui_kit::GlassCardStyle::subtle());
+        .color(t.colors.surface).radius(t.sizes.radiusLarge).build();
+    // S3.4 值盒收窄让位右侧复制按钮
     ui.text("claude.field.url.value")
-        .position(x0 + 12.0f, urlY + 18.0f).size(w - 24.0f, 28.0f)
+        .position(x0 + 12.0f, urlY + 18.0f).size(w - 40.0f, 28.0f)
         .text(v.urlValue).fontSize(t.sizes.fontSizeSmall).lineHeight(28.0f)
         .verticalAlign(eui::VerticalAlign::Center)
-        .color(t.colors.wechat.textPrimary).build();
+        .color(t.colors.textPrimary).build();
+    {
+        const float copyX = x0 + w - 28.0f;
+        const std::string copyVal = v.urlValue;
+        ui.stack("claude.field.url.copy")
+            .position(copyX, urlY + 20.0f)
+            .size(24.0f, 24.0f)
+            .content([&] {
+                ui.rect("claude.field.url.copy.bg")
+                    .size(24.0f, 24.0f)
+                    .states(eui::Color{0.0f, 0.0f, 0.0f, 0.0f},
+                            t.colors.primarySoftBg,
+                            t.colors.hover)
+                    .radius(4.0f)
+                    .onClick([cv = copyVal] {
+                        core::window::setClipboardText(cv);
+                        g_copyToastMsg = "已复制";
+                        g_copyToastTime = std::chrono::steady_clock::now();
+                    })
+                    .build();
+                ui.text("claude.field.url.copy.icon")
+                    .size(24.0f, 24.0f)
+                    .icon(0xF0C5)
+                    .fontSize(core::theme::scaled(14.0f))
+                    .lineHeight(core::theme::scaled(24.0f))
+                    .horizontalAlign(eui::HorizontalAlign::Center)
+                    .verticalAlign(eui::VerticalAlign::Center)
+                    .color(t.colors.textTertiary)
+                    .build();
+            })
+            .build();
+    }
     const float keyY = urlY + 56.0f;
     // §5 API Key 显隐：本字段为只读脱敏提示（apiKeyHint，非明文），已防肩窥；
     // 真正 type=password 明文/掩码切换属编辑表单（claude_ui_form.cpp，不在 W7
     // 文件清单），W7 范围内无可切内容，留待表单工单。
     ui.text("claude.field.token.label")
         .position(x0, keyY).size(w, 14.0f)
-        .text("API Key").fontSize(11.0f).lineHeight(14.0f)
+        .text("API Key").fontSize(core::theme::scaled(11.0f)).lineHeight(core::theme::scaled(14.0f))
         .verticalAlign(eui::VerticalAlign::Center)
-        .color(t.colors.wechat.textTertiary).build();
+        .color(t.colors.textTertiary).build();
     ui.rect("claude.field.token.bg")
         .position(x0, keyY + 18.0f).size(w, 32.0f)
-        .color(components::theme::withOpacity(t.colors.wechat.cardBg, 0.62f)).radius(t.sizes.radiusSmall)
-        .border(1.0f, components::theme::withOpacity(t.colors.wechat.cardBg, 0.55f)).build();
-    ui_kit::drawGlassCardLayers(ui, "claude.field.token", x0, keyY + 18.0f,
-        w, 32.0f, t.sizes.radiusSmall, t,
-        ui_kit::GlassCardStyle::subtle());
+        .color(t.colors.surface).radius(t.sizes.radiusLarge).build();
+    // S3.4 值盒收窄让位右侧复制按钮
     ui.text("claude.field.token.value")
-        .position(x0 + 12.0f, keyY + 18.0f).size(w - 24.0f, 32.0f)
+        .position(x0 + 12.0f, keyY + 18.0f).size(w - 40.0f, 32.0f)
         .text(v.tokenValue).fontSize(t.sizes.fontSizeSmall).lineHeight(32.0f)
         .verticalAlign(eui::VerticalAlign::Center)
-        .color(t.colors.wechat.textSecondary).build();
+        .color(t.colors.textSecondary).build();
+    {
+        const float copyX = x0 + w - 28.0f;
+        const std::string copyVal = v.tokenValue;
+        ui.stack("claude.field.token.copy")
+            .position(copyX, keyY + 22.0f)
+            .size(24.0f, 24.0f)
+            .content([&] {
+                ui.rect("claude.field.token.copy.bg")
+                    .size(24.0f, 24.0f)
+                    .states(eui::Color{0.0f, 0.0f, 0.0f, 0.0f},
+                            t.colors.primarySoftBg,
+                            t.colors.hover)
+                    .radius(4.0f)
+                    .onClick([cv = copyVal] {
+                        core::window::setClipboardText(cv);
+                        g_copyToastMsg = "已复制";
+                        g_copyToastTime = std::chrono::steady_clock::now();
+                    })
+                    .build();
+                ui.text("claude.field.token.copy.icon")
+                    .size(24.0f, 24.0f)
+                    .icon(0xF0C5)
+                    .fontSize(core::theme::scaled(14.0f))
+                    .lineHeight(core::theme::scaled(24.0f))
+                    .horizontalAlign(eui::HorizontalAlign::Center)
+                    .verticalAlign(eui::VerticalAlign::Center)
+                    .color(t.colors.textTertiary)
+                    .build();
+            })
+            .build();
+    }
     ClaudeService* svc = v.svc;
     const bool ccManaged = svc && svc->isClaudeCodeManaged();
     // 接管失败与上层覆盖警告都要可见，不以 ccManaged 为展示门；读内存 getter（无 IO）
@@ -128,7 +221,7 @@ float drawDetailBasic(eui::Ui& ui, float x0, float y0, float w,
         .position(x0, toY).size(w, 16.0f)
         .text(ccManaged ? ("● Claude Code 已接管 " + ccPath)
                         : std::string("○ Claude Code 未接管（启动代理后自动接管，停止时还原）"))
-        .fontSize(11.0f).lineHeight(16.0f)
+        .fontSize(core::theme::scaled(11.0f)).lineHeight(core::theme::scaled(16.0f))
         .verticalAlign(eui::VerticalAlign::Center)
         .color(ccManaged ? t.colors.success : t.colors.textTertiary).build();
     // 共享配置绑定行：片段不携带 env 键，改标「高级属性预设」（来源标注在高级配置 pane）
@@ -148,7 +241,7 @@ float drawDetailBasic(eui::Ui& ui, float x0, float y0, float w,
     ui.text("claude.field.shared.value")
         .position(x0, shY).size(w, 16.0f)
         .text(sharedText)
-        .fontSize(11.0f).lineHeight(16.0f)
+        .fontSize(core::theme::scaled(11.0f)).lineHeight(core::theme::scaled(16.0f))
         .verticalAlign(eui::VerticalAlign::Center)
         .color(bound ? t.colors.textSecondary : t.colors.textTertiary)
         .build();
@@ -162,15 +255,30 @@ float drawDetailBasic(eui::Ui& ui, float x0, float y0, float w,
         }
         ui.text("claude.field.takeover.warn.icon")
             .position(x0, shY + 16.0f).size(14.0f, 16.0f).icon(0xF071)
-            .fontSize(11.0f).lineHeight(16.0f)
+            .fontSize(core::theme::scaled(11.0f)).lineHeight(core::theme::scaled(16.0f))
             .verticalAlign(eui::VerticalAlign::Center)
             .color(t.colors.warning).build();
         ui.text("claude.field.takeover.warn")
             .position(x0 + 18.0f, shY + 16.0f).size(w - 18.0f, 16.0f)
             .text(warnText)
-            .fontSize(11.0f).lineHeight(16.0f)
+            .fontSize(core::theme::scaled(11.0f)).lineHeight(core::theme::scaled(16.0f))
             .verticalAlign(eui::VerticalAlign::Center)
             .color(t.colors.warning).build();
+    }
+    // 复制按钮轻量 toast：每帧渲染，timer 1.5s 自动消失
+    {
+        std::string toastMsg;
+        if (!g_copyToastMsg.empty()) {
+            auto now = std::chrono::steady_clock::now();
+            auto elapsed = std::chrono::duration<float>(now - g_copyToastTime).count();
+            if (elapsed < ui_kit::kLightToastDurationSec) {
+                toastMsg = g_copyToastMsg;
+            } else {
+                g_copyToastMsg.clear();
+            }
+        }
+        ui_kit::showLightToast(ui, "claude.detail.copy.toast", toastMsg,
+                               x0 + w * 0.5f, y0 + 120.0f, t);
     }
     return shY + (!ccWarnings.empty() ? 32.0f : 16.0f);
 }
@@ -197,7 +305,7 @@ float drawDetailModels(eui::Ui& ui, float x0, float y0, float w,
     //（UAT5 米黄清理：原 knob surfaceElevated 暖米 → WeChat cardBg）
     oneMDisabledStyle.off = t.colors.textDisabled;
     oneMDisabledStyle.on = t.colors.textDisabled;
-    oneMDisabledStyle.knob = t.colors.wechat.cardBg;
+    oneMDisabledStyle.knob = t.colors.surface;
     oneMDisabledStyle.text = t.colors.textDisabled;
     float sy = y0;
     // §5「1M」tooltip：hover 显示「上下文窗口 1M tokens」。TooltipBuilder 需 bounds/
@@ -205,9 +313,9 @@ float drawDetailModels(eui::Ui& ui, float x0, float y0, float w,
     ui.text("claude.slot.onem.hint")
         .position(x0, sy).size(w, 14.0f)
         .text("1M = 上下文窗口 1M tokens（勾选则该槽位按 1M 上下文窗口请求）")
-        .fontSize(11.0f).lineHeight(14.0f)
+        .fontSize(core::theme::scaled(11.0f)).lineHeight(core::theme::scaled(14.0f))
         .verticalAlign(eui::VerticalAlign::Center)
-        .color(t.colors.wechat.textTertiary).build();
+        .color(t.colors.textTertiary).build();
     sy += 20.0f;
     int slotIdx = 0;
     for (const auto& meta : modelSlotTable()) {
@@ -217,31 +325,29 @@ float drawDetailModels(eui::Ui& ui, float x0, float y0, float w,
         // §5 模型映射行：左对齐名 + 右侧开关；行 hover 浅灰（补充项），无边框
         ui.rect("claude.slot.bg." + idx)
             .position(x0, sy).size(w, 32.0f)
-            .states(components::theme::withOpacity(t.colors.wechat.cardBg, 0.62f),
-                    t.colors.wechat.dividerSecondary,
-                    t.colors.wechat.selectedBg)
-            .radius(t.sizes.radiusSmall).build();
-        ui_kit::drawGlassCardLayers(ui, "claude.slot." + idx, x0, sy, w, 32.0f,
-            t.sizes.radiusSmall, t, ui_kit::GlassCardStyle::subtle());
+            .states(t.colors.surface,
+                    t.colors.hover,
+                    t.colors.primarySoftBg)
+            .radius(t.sizes.radiusLarge).build();
         ui.text("claude.slot.name." + idx)
             .position(x0 + 12.0f, sy).size(80.0f, 32.0f)
-            .text(meta.label).fontSize(12.0f).lineHeight(32.0f)
+            .text(meta.label).fontSize(core::theme::scaled(12.0f)).lineHeight(core::theme::scaled(32.0f))
             // 必须 verticalAlign=Center 才垂直居中；行框几何（32/38 已标定）不动。
             .verticalAlign(eui::VerticalAlign::Center)
-            .color(t.colors.wechat.textTertiary).build();
+            .color(t.colors.textTertiary).build();
         ui.text("claude.slot.val." + idx)
             .position(x0 + 100.0f, sy).size(w - 112.0f - kOneMColW, 32.0f)
             // 显示层剥 [1M]（开关已表达 1M，值再带即重复）；只动显示，存储与发往上游仍带标记。
             .text(filled ? deriveDisplayName(slot.model)
                          : std::string("未配置"))
-            .fontSize(13.0f).lineHeight(32.0f)
+            .fontSize(core::theme::scaled(13.0f)).lineHeight(core::theme::scaled(32.0f))
             .verticalAlign(eui::VerticalAlign::Center)
             // 长模型名单行省略号（显式 maxWidth 是前提），clip 保留作绘制范围兜底。
             .maxWidth(w - 112.0f - kOneMColW)
             .overflow(core::TextOverflow::Ellipsis)
             .clip()
-            .color(filled ? t.colors.wechat.textPrimary
-                          : t.colors.wechat.textTertiary).build();
+            .color(filled ? t.colors.textPrimary
+                          : t.colors.textTertiary).build();
         // 「1M」开关（不支持/空 base → 不传 onChange）
         const bool oneMEnabled = meta.supportsOneM && filled;
         const bool oneMChecked = meta.supportsOneM && hasOneMMarker(slot.model);
@@ -259,7 +365,7 @@ float drawDetailModels(eui::Ui& ui, float x0, float y0, float w,
             .size(kOneMColW, 32.0f)
             .checked(oneMChecked)
             .text("1M")
-            .fontSize(11.0f)
+            .fontSize(core::theme::scaled(11.0f))
             .trackSize(30.0f, 16.0f)
             .style(oneMEnabled ? oneMStyle : oneMDisabledStyle)
             .onChange(onOneM)
@@ -362,13 +468,9 @@ float drawDetailEnv(eui::Ui& ui, float x0, float y0, float w,
         const float valW = std::max(40.0f, w - keyColW - 48.0f);
         ui.rect(std::string("claude.env.row.bg.") + rid)
             .position(x0, ey).size(w, rowH)
-            .color(components::theme::withOpacity(t.colors.wechat.cardBg, 0.62f)).radius(t.sizes.radiusSmall)
-            .border(1.0f, hint ? components::theme::withOpacity(t.colors.wechat.cardBg, 0.55f)
-                               : t.colors.error)
+            .color(t.colors.surface).radius(t.sizes.radiusLarge)
+            .border(hint ? 0.0f : 1.0f, hint ? eui::Color{0.0f,0.0f,0.0f,0.0f} : t.colors.error)
             .build();
-        ui_kit::drawGlassCardLayers(ui, std::string("claude.env.row.") + rid,
-            x0, ey, w, rowH, t.sizes.radiusSmall, t,
-            ui_kit::GlassCardStyle::subtle());
         // 行带 1：键名 | 值（同带 Center 对齐）；长文本走省略号 + clip，不换行不撑高。
         ui.text(std::string("claude.env.key.") + rid)
             .position(x0 + 12.0f, ey + line1Y).size(keyColW, line1H)
@@ -458,40 +560,40 @@ float drawDetailCallsPane(eui::Ui& ui, float x0, float y0, float w,
         .position(colTimeX, y0)
         .size(72.0f, 14.0f)
         .text("时间")
-        .fontSize(10.0f)
-        .lineHeight(14.0f)
+        .fontSize(core::theme::scaled(10.0f))
+        .lineHeight(core::theme::scaled(14.0f))
         .color(t.colors.textTertiary)
         .build();
     ui.text("claude.calls.h.path")
         .position(colPathX, y0)
         .size(w - 390.0f, 14.0f)
         .text("方法 / 路径")
-        .fontSize(10.0f)
-        .lineHeight(14.0f)
+        .fontSize(core::theme::scaled(10.0f))
+        .lineHeight(core::theme::scaled(14.0f))
         .color(t.colors.textTertiary)
         .build();
     ui.text("claude.calls.h.status")
         .position(colStatusX, y0)
         .size(60.0f, 14.0f)
         .text("状态")
-        .fontSize(10.0f)
-        .lineHeight(14.0f)
+        .fontSize(core::theme::scaled(10.0f))
+        .lineHeight(core::theme::scaled(14.0f))
         .color(t.colors.textTertiary)
         .build();
     ui.text("claude.calls.h.dur")
         .position(colDurX, y0)
         .size(60.0f, 14.0f)
         .text("耗时")
-        .fontSize(10.0f)
-        .lineHeight(14.0f)
+        .fontSize(core::theme::scaled(10.0f))
+        .lineHeight(core::theme::scaled(14.0f))
         .color(t.colors.textTertiary)
         .build();
     ui.text("claude.calls.h.rate")
         .position(colRateX, y0)
         .size(110.0f, 14.0f)
         .text("速率 (tok/s)")
-        .fontSize(10.0f)
-        .lineHeight(14.0f)
+        .fontSize(core::theme::scaled(10.0f))
+        .lineHeight(core::theme::scaled(14.0f))
         .color(t.colors.textTertiary)
         .build();
 
@@ -520,9 +622,9 @@ float drawDetailCallsPane(eui::Ui& ui, float x0, float y0, float w,
             .position(colTimeX, cellsY)
             .size(w - 80.0f, kEmptyH)
             .text("调用记录加载失败：" + callsError)
-            .fontSize(11.0f)
+            .fontSize(core::theme::scaled(11.0f))
             .lineHeight(kEmptyH)
-            .color(t.colors.error)
+            .color(t.colors.errorText)
             .build();
         singleLineDrawn = true;
     } else if (recent.empty()) {
@@ -530,7 +632,7 @@ float drawDetailCallsPane(eui::Ui& ui, float x0, float y0, float w,
             .position(colTimeX, cellsY)
             .size(w - 80.0f, kEmptyH)
             .text("(暂无调用记录 —— 经本机代理转发过请求后这里会出现)")
-            .fontSize(11.0f)
+            .fontSize(core::theme::scaled(11.0f))
             .lineHeight(kEmptyH)
             .color(t.colors.textTertiary)
             .build();
@@ -548,7 +650,7 @@ float drawDetailCallsPane(eui::Ui& ui, float x0, float y0, float w,
                 .position(colTimeX, cellsY)
                 .size(w - 80.0f, kEmptyH)
                 .text("(内容区高度不足，未显示调用记录)")
-                .fontSize(11.0f)
+                .fontSize(core::theme::scaled(11.0f))
                 .lineHeight(kEmptyH)
                 .color(t.colors.textTertiary)
                 .build();
@@ -562,8 +664,8 @@ float drawDetailCallsPane(eui::Ui& ui, float x0, float y0, float w,
                 .position(colTimeX, rowY)
                 .size(72.0f, 16.0f)
                 .text(formatCallTime(c.startedAt, now))
-                .fontSize(11.0f)
-                .lineHeight(16.0f)
+                .fontSize(core::theme::scaled(11.0f))
+                .lineHeight(core::theme::scaled(16.0f))
                 .color(t.colors.textPrimary)
                 .build();
 
@@ -572,8 +674,8 @@ float drawDetailCallsPane(eui::Ui& ui, float x0, float y0, float w,
                 .position(colPathX, rowY)
                 .size(w - 390.0f, 16.0f)
                 .text(mp)
-                .fontSize(11.0f)
-                .lineHeight(16.0f)
+                .fontSize(core::theme::scaled(11.0f))
+                .lineHeight(core::theme::scaled(16.0f))
                 .color(t.colors.textPrimary)
                 .build();
 
@@ -582,7 +684,7 @@ float drawDetailCallsPane(eui::Ui& ui, float x0, float y0, float w,
                     ? t.colors.success :
                 c.statusCode == 429
                     ? t.colors.warning
-                    : t.colors.error;
+                    : t.colors.errorText;
             const std::string statusStr = c.statusCode > 0
                 ? std::to_string(c.statusCode)
                 : std::string("-");
@@ -590,8 +692,8 @@ float drawDetailCallsPane(eui::Ui& ui, float x0, float y0, float w,
                 .position(colStatusX, rowY)
                 .size(60.0f, 16.0f)
                 .text(statusStr)
-                .fontSize(11.0f)
-                .lineHeight(16.0f)
+                .fontSize(core::theme::scaled(11.0f))
+                .lineHeight(core::theme::scaled(16.0f))
                 .color(statusColor)
                 .build();
 
@@ -599,8 +701,8 @@ float drawDetailCallsPane(eui::Ui& ui, float x0, float y0, float w,
                 .position(colDurX, rowY)
                 .size(60.0f, 16.0f)
                 .text(formatLatency(c.latencyMs))
-                .fontSize(11.0f)
-                .lineHeight(16.0f)
+                .fontSize(core::theme::scaled(11.0f))
+                .lineHeight(core::theme::scaled(16.0f))
                 .color(t.colors.textSecondary)
                 .build();
 
@@ -614,8 +716,8 @@ float drawDetailCallsPane(eui::Ui& ui, float x0, float y0, float w,
                 .size(110.0f, 16.0f)
                 .text(hasRate ? core::call_rate::formatTps(rateTps)
                               : std::string(core::call_rate::kNoRate))
-                .fontSize(11.0f)
-                .lineHeight(16.0f)
+                .fontSize(core::theme::scaled(11.0f))
+                .lineHeight(core::theme::scaled(16.0f))
                 .color(hasRate ? t.colors.textSecondary
                                : t.colors.textTertiary)
                 .build();
@@ -629,7 +731,7 @@ float drawDetailCallsPane(eui::Ui& ui, float x0, float y0, float w,
                 .size(w - 80.0f, kOverflowH)
                 .text("另有 " + std::to_string(recent.size() - shown) +
                       " 条（点「查看全部」）")
-                .fontSize(11.0f)
+                .fontSize(core::theme::scaled(11.0f))
                 .lineHeight(kOverflowH)
                 .color(t.colors.textTertiary)
                 .build();
@@ -651,11 +753,11 @@ float drawDetailCallsPane(eui::Ui& ui, float x0, float y0, float w,
         ui.rect("claude.calls.viewall.hit")
             .position(x0, viewY)
             .size(w, kViewallH)
-            .states(t.colors.wechat.secondaryButtonBg,
-                    t.colors.wechat.dividerSecondary,
-                    t.colors.wechat.dividerSecondary)
+            .states(t.colors.hover,
+                    t.colors.hover,
+                    t.colors.hover)
             .radius(t.sizes.radiusSmall)
-            .border(1.0f, t.colors.wechat.dividerPrimary)
+            .border(1.0f, t.colors.borderDefault)
             .transition(core::Transition::make(0.1f, core::Ease::OutQuad))
             .onClick([oc = openCalls] { oc(); })
             .build();
@@ -663,11 +765,11 @@ float drawDetailCallsPane(eui::Ui& ui, float x0, float y0, float w,
             .position(x0, viewY)
             .size(w, kViewallH)
             .text("查看全部 →")
-            .fontSize(12.0f)
+            .fontSize(core::theme::scaled(12.0f))
             .lineHeight(kViewallH)
             .horizontalAlign(eui::HorizontalAlign::Center)
             .verticalAlign(eui::VerticalAlign::Center)
-            .color(t.colors.wechat.primaryText)
+            .color(t.colors.primaryText)
             .build();
         return viewY + kViewallH;
     }
@@ -702,11 +804,7 @@ float drawDetailAdvanced(eui::Ui& ui, float x0, float y0, float w,
         .color(t.colors.textTertiary).build();
     ui.rect("claude.field.dialect.bg")
         .position(x0, y0 + labelGap).size(w, fieldH)
-        .color(components::theme::withOpacity(t.colors.wechat.cardBg, 0.62f)).radius(t.sizes.radiusSmall)
-        .border(1.0f, components::theme::withOpacity(t.colors.wechat.cardBg, 0.55f)).build();
-    ui_kit::drawGlassCardLayers(ui, "claude.field.dialect", x0, y0 + labelGap,
-        w, fieldH, t.sizes.radiusSmall, t,
-        ui_kit::GlassCardStyle::subtle());
+        .color(t.colors.surface).radius(t.sizes.radiusLarge).build();
     ui.text("claude.field.dialect.value")
         .position(x0 + 12.0f, y0 + labelGap).size(w - 24.0f, fieldH)
         .text(v.dialectText).fontSize(t.sizes.fontSizeSmall).lineHeight(fieldH)
@@ -721,11 +819,7 @@ float drawDetailAdvanced(eui::Ui& ui, float x0, float y0, float w,
         .color(t.colors.textTertiary).build();
     ui.rect("claude.field.fallback.bg")
         .position(x0, fbY + labelGap).size(w, fieldH)
-        .color(components::theme::withOpacity(t.colors.wechat.cardBg, 0.62f)).radius(t.sizes.radiusSmall)
-        .border(1.0f, components::theme::withOpacity(t.colors.wechat.cardBg, 0.55f)).build();
-    ui_kit::drawGlassCardLayers(ui, "claude.field.fallback", x0, fbY + labelGap,
-        w, fieldH, t.sizes.radiusSmall, t,
-        ui_kit::GlassCardStyle::subtle());
+        .color(t.colors.surface).radius(t.sizes.radiusLarge).build();
     ui.text("claude.field.fallback.value")
         .position(x0 + 12.0f, fbY + labelGap).size(w - 24.0f, fieldH)
         .text(v.fallbackName).fontSize(t.sizes.fontSizeSmall).lineHeight(fieldH)
@@ -769,11 +863,7 @@ float drawDetailAdvanced(eui::Ui& ui, float x0, float y0, float w,
         const std::string idx = std::to_string(i);
         ui.rect("claude.advjson.row.bg." + idx)
             .position(x0, ey).size(w, kKeyRowH)
-            .color(components::theme::withOpacity(t.colors.wechat.cardBg, 0.62f)).radius(t.sizes.radiusSmall)
-            .border(1.0f, components::theme::withOpacity(t.colors.wechat.cardBg, 0.55f)).build();
-        ui_kit::drawGlassCardLayers(ui, "claude.advjson.row." + idx,
-            x0, ey, w, kKeyRowH, t.sizes.radiusSmall, t,
-            ui_kit::GlassCardStyle::subtle());
+            .color(t.colors.surface).radius(t.sizes.radiusLarge).build();
         // 键列单行省略号（显式 maxWidth 是前提）+ clip 兜底；来源列有界枚举，保留 clip。
         ui.text("claude.advjson.row.key." + idx)
             .position(x0 + 12.0f, ey).size(w * 0.4f, kKeyRowH)
@@ -816,7 +906,7 @@ float drawDetailAdvanced(eui::Ui& ui, float x0, float y0, float w,
 }
 
 // 操作按钮组（启用/测试连通/编辑/运行）+ 副提示 + 分隔线。actY 由
-// drawDetailPanel 锚定给出；绘制高 = 61 被 kActionBlockH 引用，改几何须同步。
+// drawDetailPanel 锚定给出；绘制高 = 65 被 kActionBlockH 引用，改几何须同步。
 void drawDetailActions(eui::Ui& ui, float x0, float w, float actY,
                        const core::theme::Tokens& t,
                        const DetailView& v, const DetailActions& a) {
@@ -824,33 +914,31 @@ void drawDetailActions(eui::Ui& ui, float x0, float w, float actY,
     ui.rect("claude.act.divider")
         .position(x0, actY - 10.0f)
         .size(w, 1.0f)
-        .color(t.colors.wechat.dividerPrimary)
+        .color(t.colors.borderDefault)
         .radius(t.sizes.radius)
         .build();
-    const float actGap = 12.0f;
+    const float actGap = 8.0f;
     // 4 键均分：EUI row spacing 只在相邻子项间生效，n 项只有 n−1 个间隙，故扣 3 个 gap。
     const float actW = (w - actGap * 3.0f) / 4.0f;
     ui.row("claude.detail.actions")
         .position(x0, actY)
-        .size(w, 36.0f)
+        .size(w, 40.0f)
         .gap(actGap)
         .content([&] {
             const int64_t shownId = shown ? shown->id : 0;
             const Profile shownCopy = shown
                 ? *shown : Profile{};
 
-            // 启用（设为激活）§5 微信绿主按钮（§4.1 Primary：绿填充+白字，无边框）
+            // 启用（Filled 主按钮：绿底白字，8px 圆角）
             components::button(ui, "claude.act.enable")
-                .size(actW, 36.0f)
+                .size(actW, 40.0f)
                 .text("启用")
-                .fontSize(t.sizes.fontSizeSmall)
-                .colors(t.colors.wechat.primary,
-                        t.colors.wechat.primaryHover,
-                        t.colors.wechat.primaryPressed)
-                .textColor(t.colors.wechat.onPrimary)
-                .radius(t.sizes.radiusWeChat)
-                // 显式 border 0：消组件默认 1px 灰框，同 act.run（UAT3）
-                .border(0.0f, t.colors.wechat.dividerPrimary)
+                .fontSize(core::theme::scaled(14.0f))
+                .colors(t.colors.primary,
+                        t.colors.primaryHover,
+                        t.colors.primaryPressed)
+                .textColor(t.colors.onPrimary)
+                .radius(8.0f)
                 .onClick([f = a.enable, warn = a.warn, shownId] {
                     if (shownId == 0) {
                         warn("启用失败", "请先新建或选择一个 Profile");
@@ -859,18 +947,17 @@ void drawDetailActions(eui::Ui& ui, float x0, float w, float actY,
                     f(shownId);
                 })
                 .build();
-            // 测试连通 §5 Secondary 浅灰次按钮
+            // 测试连通（Outline 次按钮：白底绿边绿字）
             components::button(ui, "claude.act.test")
-                .size(actW, 36.0f)
+                .size(actW, 40.0f)
                 .text("测试连通")
-                .fontSize(t.sizes.fontSizeSmall)
-                .colors(t.colors.wechat.secondaryButtonBg,
-                        t.colors.wechat.dividerSecondary,
-                        t.colors.wechat.dividerSecondary)
-                .textColor(t.colors.wechat.textPrimary)
-                .radius(t.sizes.radiusWeChat)
-                // 显式 border 0：组件默认 1px border 在次按钮上同样画出灰框（UAT3）
-                .border(0.0f, t.colors.wechat.dividerPrimary)
+                .fontSize(core::theme::scaled(14.0f))
+                .colors(t.colors.surface,
+                        t.colors.primarySoftBg,
+                        t.colors.primarySoftBg)
+                .textColor(t.colors.primary)
+                .radius(8.0f)
+                .border(1.0f, t.colors.primary)
                 .onClick([f = a.test, warn = a.warn, shownCopy] {
                     if (shownCopy.id == 0) {
                         warn("测试连通失败", "请先新建或选择一个 Profile");
@@ -879,18 +966,17 @@ void drawDetailActions(eui::Ui& ui, float x0, float w, float actY,
                     f(shownCopy);
                 })
                 .build();
-            // 编辑（预填现有值）§5 Secondary
+            // 编辑（Outline 次按钮：白底绿边绿字）
             components::button(ui, "claude.act.edit")
-                .size(actW, 36.0f)
+                .size(actW, 40.0f)
                 .text("编辑")
-                .fontSize(t.sizes.fontSizeSmall)
-                .colors(t.colors.wechat.secondaryButtonBg,
-                        t.colors.wechat.dividerSecondary,
-                        t.colors.wechat.dividerSecondary)
-                .textColor(t.colors.wechat.textPrimary)
-                .radius(t.sizes.radiusWeChat)
-                // 显式 border 0：同上，消组件默认 1px 灰框（UAT3）
-                .border(0.0f, t.colors.wechat.dividerPrimary)
+                .fontSize(core::theme::scaled(14.0f))
+                .colors(t.colors.surface,
+                        t.colors.primarySoftBg,
+                        t.colors.primarySoftBg)
+                .textColor(t.colors.primary)
+                .radius(8.0f)
+                .border(1.0f, t.colors.primary)
                 .onClick([f = a.edit, warn = a.warn, shownCopy] {
                     if (shownCopy.id == 0) {
                         warn("编辑失败", "请先新建或选择一个 Profile");
@@ -899,20 +985,16 @@ void drawDetailActions(eui::Ui& ui, float x0, float w, float actY,
                     f(shownCopy);
                 })
                 .build();
-            // 运行 §5 微信绿主按钮（UAT3：用户反馈灰底框——旧 Text 级透明底被组件
-            // 默认 1px border 画出灰框；改为该页核心操作 Primary：绿填充+白字，
-            // 显式 border 0 消默认边框，同 todo_ui_board 0 宽先例）
+            // 运行（Filled 主按钮：绿底白字）
             components::button(ui, "claude.act.run")
-                .size(actW, 36.0f)
+                .size(actW, 40.0f)
                 .text("运行")
-                .fontSize(t.sizes.fontSizeSmall)
-                .colors(t.colors.wechat.primary,
-                        t.colors.wechat.primaryHover,
-                        t.colors.wechat.primaryPressed)
-                .textColor(t.colors.wechat.onPrimary)
-                .iconColor(t.colors.wechat.onPrimary)
-                .radius(t.sizes.radiusWeChat)
-                .border(0.0f, t.colors.wechat.dividerPrimary)
+                .fontSize(core::theme::scaled(14.0f))
+                .colors(t.colors.primary,
+                        t.colors.primaryHover,
+                        t.colors.primaryPressed)
+                .textColor(t.colors.onPrimary)
+                .radius(8.0f)
                 .onClick([f = a.run, warn = a.warn, shownId] {
                     if (shownId == 0) {
                         warn("运行失败", "请先选择 Profile");
@@ -924,21 +1006,30 @@ void drawDetailActions(eui::Ui& ui, float x0, float w, float actY,
         })
         .build();
 
-    // §5「运行」副提示（长解释收 tooltip/帮助；EUI tooltip 待绑定，暂留简短提示）
+    // S3.4 「运行」tooltip 区分语义
+    components::tooltip(ui, "claude.act.run.tooltip")
+        .theme(core::theme::componentTokensWeChat(t))
+        .source("claude.act.run")
+        .value("以该 Profile 直接打开 Claude Code 会话（不改全局设置）")
+        .minWidth(280.0f)
+        .maxWidth(320.0f)
+        .build();
+
+    // §5「运行」副提示
     ui.text("claude.act.run.hint")
-        .position(x0, actY + 40.0f)
+        .position(x0, actY + 44.0f)
         .size(w, 16.0f)
         .text("以该 Profile 直接打开 Claude Code（不改当前设置）")
-        .fontSize(11.0f)
-        .lineHeight(16.0f)
-        .color(t.colors.wechat.textTertiary)
+        .fontSize(core::theme::scaled(11.0f))
+        .lineHeight(core::theme::scaled(16.0f))
+        .color(t.colors.textTertiary)
         .build();
 
     // 分隔线
     ui.rect("claude.divider")
-        .position(x0, actY + 60.0f)
+        .position(x0, actY + 64.0f)
         .size(w, 1.0f)
-        .color(t.colors.wechat.dividerSecondary)
+        .color(t.colors.hover)
         .radius(t.sizes.radius)
         .build();
 }
@@ -958,9 +1049,9 @@ void drawDetailPanel(eui::Ui& ui, float rightW, float bodyH, float xOffset,
             ui.rect("claude.detail.bg")
                 .size(rightW, bodyH)
                 // §4.14 面板底浅灰（wechat.pageBg），白卡浮起；边框一级分割线
-                .color(t.colors.wechat.pageBg)
+                .color(t.colors.background)
                 .radius(t.sizes.radiusLarge)
-                .border(1.0f, t.colors.wechat.dividerPrimary)
+                .border(1.0f, t.colors.borderDefault)
                 .build();
         })
         .build();
@@ -982,37 +1073,25 @@ void drawDetailPanel(eui::Ui& ui, float rightW, float bodyH, float xOffset,
                 .fontSize(t.sizes.fontSizeLarge)
                 .lineHeight(24.0f)
                 .fontWeight(600)
-                .color(t.colors.wechat.textPrimary)
+                .color(t.colors.textPrimary)
                 .build();
 
-            // 页签栏用 EUI-NEO tabs（无 .position 故包 stack 对齐内边距）；高级配置 = idx 3
+            // S3.4 块面式 Tab（wtab 替代原下划线式 components::tabs）
             const float tabY = y0 + 40.0f;
-            const float tabH = 36.0f;
-            ui.stack("claude.detail.tabs.wrap")
-                .position(x0, tabY)
-                .size(w0, tabH)
-                .content([&] {
-                    // §4.2 微信式 Tab：深灰激活字 + 2px wechat.primary 下划线。
-                    // 保留 components::tabs（id 体系 hit.N/label.N 不变）以守 27 处
-                    // 索引点击依赖与 label.3/label.4 逐字断言（§5）；仅换 TabsStyle 配色。
-                    components::TabsStyle tabStyle;
-                    tabStyle.text = t.colors.wechat.textSecondary;        // #666 未激活
-                    tabStyle.hover = t.colors.wechat.dividerSecondary;    // #EDEDED
-                    tabStyle.selectedText = t.colors.wechat.textPrimary;  // #1A1A1A 激活
-                    tabStyle.indicator = t.colors.wechat.primary;         // #07C160 绿下划线
-                    tabStyle.border = t.colors.wechat.dividerPrimary;     // #E5E5E5 底线
-                    components::tabs(ui, "claude.detail.tabs")
-                        .size(w0, tabH)
-                        .items(std::vector<std::string>{
-                            "基础信息", "模型映射", "环境变量", "高级配置",
-                            "最近调用"})
-                        .selected(st.detailTab_)
-                        .fontSize(t.sizes.fontSizeSmall)
-                        .theme(themeTokens)   // 设 metrics（spacing/radius）；style 覆盖配色
-                        .style(tabStyle)
-                        .onChange([sp = &st](int idx) { sp->detailTab_ = idx; })
-                        .build();
-                });
+            const float tabH = 40.0f;
+            const char* tabLabels[] = {"基础信息", "模型映射", "环境变量", "高级配置", "最近调用"};
+            float tabX = x0;
+            for (int i = 0; i < 5; ++i) {
+                float tabW = 72.0f;
+                if (i == 2) tabW = 80.0f;
+                else if (i == 3) tabW = 80.0f;
+                else if (i == 4) tabW = 80.0f;
+                ui_kit::wtab(ui, "claude.detail.tab." + std::to_string(i),
+                             tabLabels[i], st.detailTab_ == i,
+                             tabX, tabY, tabW, tabH, t,
+                             [sp = &st, idx = i] { sp->detailTab_ = idx; });
+                tabX += tabW + 4.0f;
+            }
 
             const float paneY = tabY + tabH + 12.0f;
 
@@ -1028,14 +1107,9 @@ void drawDetailPanel(eui::Ui& ui, float rightW, float bodyH, float xOffset,
                 .size(w0 + 24.0f, std::max(0.0f, contentBottom - boxTop))
                 // §4.14 白卡浮起于灰底（wechat.cardBg）；二级分割线边框
                 // UAT6 玻璃：换半透面 + subtle 玻璃层
-                .color(components::theme::withOpacity(t.colors.wechat.cardBg, 0.62f))
+                .color(t.colors.surface)
                 .radius(t.sizes.radiusLarge)
-                .border(1.0f, components::theme::withOpacity(t.colors.wechat.cardBg, 0.55f))
                 .build();
-            ui_kit::drawGlassCardLayers(ui, "claude.detail.contentbox",
-                x0 - 12.0f, boxTop,
-                w0 + 24.0f, std::max(0.0f, contentBottom - boxTop),
-                t.sizes.radiusLarge, t, ui_kit::GlassCardStyle::subtle());
 
             float paneBottom = paneY;  // 各 pane 累加真实底沿，供 max() 兜底防重叠
             PaneRows paneRows;         // 行数统计（诊断日志用）

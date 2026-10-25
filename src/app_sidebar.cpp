@@ -22,6 +22,7 @@
 #include <eui/types.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <functional>
 #include <optional>
@@ -64,10 +65,11 @@ bool g_closeButtonHovered = false;
 std::optional<bool> g_fluidEnabled;
 // 窗可见态测试覆写（nullopt = 跟平台查询走）；生产路径恒 nullopt
 std::optional<bool> g_fluidVisibleMode;
-// 相位钟（秒）：由帧泵 onFrame 累加推进。最小化/藏托盘时 EUI 主循环跳过主窗
-// update/compose（glfw_app_main.cpp 的 hiddenToTray / iconified 两分支 continue），
-// onFrame 不回调 → 相位冻结；恢复可见从冻结处继续（无时间跳变）。
-float g_fluidPhase = 0.0f;
+// 相位源（秒）：71ce7d4c 起走壁钟 elapsed（fluidPhaseSeconds() =
+// steady_clock::now() - g_fluidEpoch），不再由帧泵 onFrame 累加。旧 g_fluidPhase
+// 只写死状态已随 W3.5 审计 B（F4）移除。注意：壁钟模式下最小化/藏托盘期间相位
+// 照走、休眠恢复会跳变——原「隐藏冻结 + dt 钳 0.1s」语义待 elapsed helper 收口。
+static std::chrono::steady_clock::time_point g_fluidEpoch = std::chrono::steady_clock::now();
 
 // 确定性 0~1 hash（splash.cpp 墨染同款 sin 散列取小数）：卫星的角度/距离/大小
 // 全由索引 hash 决定——帧间稳定不闪烁，只随相位缓慢漂移（有机噪声感）
@@ -186,7 +188,10 @@ bool fluidBackgroundEnabled() {
 
 void setFluidBackgroundEnabled(bool enabled) { g_fluidEnabled = enabled; }
 
-float fluidPhaseSeconds() { return g_fluidPhase; }
+float fluidPhaseSeconds() {
+    using namespace std::chrono;
+    return duration<float>(steady_clock::now() - g_fluidEpoch).count();
+}
 
 void setFluidWindowVisibleMode(std::optional<bool> mode) {
     g_fluidVisibleMode = std::move(mode);
@@ -195,7 +200,7 @@ void setFluidWindowVisibleMode(std::optional<bool> mode) {
 void resetFluidBackgroundForTests() {
     g_fluidEnabled.reset();
     g_fluidVisibleMode.reset();
-    g_fluidPhase = 0.0f;
+    g_fluidEpoch = std::chrono::steady_clock::now();
 }
 
 void showAppNotice(const std::string& title, const std::string& message) {
@@ -258,7 +263,6 @@ bool titlebarCaptionHit(const CaptionHitQuery& query) {
 // wechat 风格：灰字灰 hover；关闭钮 hover 红（theme warningRed #FA5151）+ 白叉
 void drawTitlebar(eui::Ui& ui, const eui::Screen& screen) {
     const auto& t = ::core::theme::current();
-    const auto& wc = t.colors.wechat;
     const eui::Color kTransparent{0.0f, 0.0f, 0.0f, 0.0f};
     const float h = titlebarHeight();
 
@@ -271,7 +275,7 @@ void drawTitlebar(eui::Ui& ui, const eui::Screen& screen) {
             ui.rect(id + ".hit")
                 .position(bx, 0.0f)
                 .size(kWindowButtonW, h)
-                .states(kTransparent, wc.warningRed, wc.warningRed)
+                .states(kTransparent, t.colors.error, t.colors.error)
                 .onHover([](bool hovered) { g_closeButtonHovered = hovered; })
                 .onClick(action)
                 .build();
@@ -279,7 +283,7 @@ void drawTitlebar(eui::Ui& ui, const eui::Screen& screen) {
             ui.rect(id + ".hit")
                 .position(bx, 0.0f)
                 .size(kWindowButtonW, h)
-                .states(kTransparent, wc.dividerSecondary, wc.selectedBg)
+                .states(kTransparent, t.colors.hover, t.colors.primarySoftBg)
                 .onClick(action)
                 .build();
         }
@@ -287,12 +291,12 @@ void drawTitlebar(eui::Ui& ui, const eui::Screen& screen) {
             .position(bx, 0.0f)
             .size(kWindowButtonW, h)
             .icon(eui::utf8(glyph))
-            .fontSize(12.0f)
+            .fontSize(core::theme::scaled(12.0f))
             .horizontalAlign(eui::HorizontalAlign::Center)
             .verticalAlign(eui::VerticalAlign::Center)
             .color(redHover && g_closeButtonHovered
                        ? eui::Color{1.0f, 1.0f, 1.0f, 1.0f}
-                       : wc.textSecondary)
+                       : t.colors.textSecondary)
             .build();
     };
 
@@ -309,7 +313,7 @@ void drawTitlebar(eui::Ui& ui, const eui::Screen& screen) {
                 .fontSize(t.sizes.fontSizeBody)
                 .fontWeight(700)
                 .verticalAlign(eui::VerticalAlign::Center)
-                .color(wc.textPrimary)
+                .color(t.colors.textPrimary)
                 .build();
 
             // 右：两钮从右往左 = 关闭 / 最小化（UAT4：最大化钮移除，标题栏
@@ -332,8 +336,6 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
     if (!router) return;
 
     const auto& t = ::core::theme::current();
-    // 微信色令牌快捷引用（W1 新增槽位，§2.1）；新旧并存，W3 侧栏逐页切换到此
-    const auto& wc = t.colors.wechat;
     // W0.5：透明语义常量（非可主题化色，W0.5 误标为待清理字面量）。
     // 用途：inactive hit 底 + toggle 底 + active 遮让 SelectionBar（让 SelectionBar 盖底）。
     // 不抽到 theme.h 的 wechat.transparent 槽位（W3 不动 theme.h），保留为局部语义常量。
@@ -354,8 +356,8 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
     constexpr float kIconW = 28.0f;
     constexpr float kItemInset = 12.0f;  // 内容距高亮条左缘内边距
 
-    // 顶部留白取页面主区 padding 同档 token（spacingXXLarge=40）：品牌块上缘与页面内容齐平
-    const float topPad = t.sizes.spacingXXLarge;
+    // 顶部留白取页面主区 padding 同档（S4.2 弹性 32）：品牌块上缘与页面内容齐平
+    const float topPad = t.sizes.spacingLarge * 2.0f;  // 32
     // 品牌块高 56（字面值，不用 fontSizePage 运行时值：fontScale 会缩放 fontSize* 而该框不随之变）
     // UAT5：logo 36→48 按用户拍板放大，行高 32→56 随之加高（48 瓦在 56 行内居中各留 4px）
     constexpr float kBrandH = 56.0f;
@@ -365,7 +367,7 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
     ui.stack("app.sidebar")
         .size(kWidth, screen.height)
         .content([&] {
-            // 侧栏底色：微绿灰（D-12 E1，§4.8 sidebarBgTinted #E8F0EC），z 序在最底，
+            // 侧栏底色（sidebarBg：light #F0FDF7 / dark #0F1F18），z 序在最底，
             // divider/brand/nav/toggle 都在其上，仅染侧栏、不动页面区/白卡。
             // UAT2 B 批：tint 的 alpha 随窗口效果档位（core::window_effect_state 单值，
             // 写口 = settings applyWindowVisuals）——磨砂 0.15 透 Acrylic backdrop、
@@ -375,15 +377,15 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                 ::core::window_effect_state::current());
             ui.rect("app.sidebar.bg")
                 .size(kWidth, screen.height)
-                .color(eui::Color{wc.sidebarBgTinted.r, wc.sidebarBgTinted.g,
-                                  wc.sidebarBgTinted.b, sidebarBgAlpha})
+                .color(eui::Color{t.colors.sidebarBg.r, t.colors.sidebarBg.g,
+                                  t.colors.sidebarBg.b, sidebarBgAlpha})
                 .build();
-            // 右缘分割线：wechat.dividerPrimary（§4.7 一级 #E5E5E5，原 borderMuted 暖系）
+            // 右缘分割线：borderDefault
             ui.rect("app.sidebar.divider")
                 .position(kWidth - 1.0f, 0.0f)
                 .size(1.0f, screen.height)
-                .color(wc.dividerPrimary)
-                .radius(t.sizes.radiusWeChat)
+                .color(t.colors.borderDefault)
+                .radius(t.sizes.radiusSmall)
                 .build();
 
             // brand 行（UAT3 #9 + 图标批 2026-10-20）：折叠/展开两态统一为居中几何
@@ -393,7 +395,7 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
             // 防跳动断言不动；品牌文本由自绘标题栏承载。
             // UAT5：logo 36→48 按用户拍板放大（「不够大」），行高 32→56 随之加高
             //（48 瓦在 56 行内居中上下各留 4px，不再溢出），首个导航起点
-            // 40+56+28=124 连锁（test_app_sidebar 各导航 y 断言同步）。
+            // 32+56+28=116 连锁（test_app_sidebar 各导航 y 断言同步）。
             ui.stack("app.sidebar.brand")
                 .position(0.0f, topPad)
                 .size(kWidth, kBrandH)
@@ -402,7 +404,7 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                     ui_kit::drawDevDeskLogo(
                         ui, "app.sidebar.brand.mark",
                         (kWidth - kLogoSize) * 0.5f, (kBrandH - kLogoSize) * 0.5f,
-                        kLogoSize, wc.primary, wc.cardBg);
+                        kLogoSize, t.colors.primary, t.colors.surface);
                 })
                 .build();
 
@@ -424,9 +426,9 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                     .position(padX, y)
                     .size(kWidth - padX * 2.0f, itemH)
                     .states(kTransparent,
-                            active ? kTransparent : wc.dividerSecondary,
-                            active ? kTransparent : wc.selectedBg)
-                    .radius(t.sizes.radiusWeChat)
+                            active ? kTransparent : t.colors.hover,
+                            active ? kTransparent : t.colors.primarySoftBg)
+                    .radius(t.sizes.radiusSmall)
                     .onClick([router, page] { router->navigateTo(page); })
                     .build();
 
@@ -439,8 +441,8 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                 }
 
                 // 图标与文字分两个元素：Icon 字体（FontAwesome）不能和正文字体混排在一个 Text 里。
-                // 图标：active=wechat.primary（§4.8 "图标同步变绿"），inactive=wechat.textSecondary。
-                // 标签：active=wechat.textPrimary（§4.3 "深灰文字 #1A1A1A"），inactive=wechat.textSecondary。
+                // 图标：active=primary，inactive=textSecondary。
+                // 标签：active=textPrimary，inactive=textSecondary。
                 if (collapsed) {
                     ui.text(id + ".icon")
                         .position((kWidth - kIconW) * 0.5f, y)
@@ -449,7 +451,7 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                         .fontSize(t.sizes.fontSizeBody)
                         .horizontalAlign(eui::HorizontalAlign::Center)
                         .verticalAlign(eui::VerticalAlign::Center)
-                        .color(active ? wc.primary : wc.textSecondary)
+                        .color(active ? t.colors.primary : t.colors.textSecondary)
                         .build();
                 } else {
                     ui.text(id + ".icon")
@@ -458,7 +460,7 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                         .icon(m->iconGlyph())
                         .fontSize(t.sizes.fontSizeBody)
                         .verticalAlign(eui::VerticalAlign::Center)
-                        .color(active ? wc.primary : wc.textSecondary)
+                        .color(active ? t.colors.primary : t.colors.textSecondary)
                         .build();
                     ui.text(id + ".label")
                         .position(padX + kItemInset + kIconW, y)
@@ -467,7 +469,7 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                         .text(m->displayName())
                         .fontSize(t.sizes.fontSizeBody)
                         .verticalAlign(eui::VerticalAlign::Center)
-                        .color(active ? wc.textPrimary : wc.textSecondary)
+                        .color(active ? t.colors.textPrimary : t.colors.textSecondary)
                         .build();
                 }
 
@@ -494,7 +496,7 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                     ui.rect("app.sidebar.groupdiv")
                         .position(padX, y)
                         .size(kWidth - padX * 2.0f, 1.0f)
-                        .color(wc.dividerPrimary)
+                        .color(t.colors.borderDefault)
                         .build();
                     y += 1.0f + gap;  // divider 高 1px + 标准 gap 到下一项
                     groupDividerDrawn = true;
@@ -506,7 +508,7 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
 
             // 折叠开关（底部固定）：展开态 fa-angles-left、折叠态 fa-bars；展开左对齐、折叠居中。
             // toggle 底色透明（W0.5：kTransparent 语义常量，非可主题化色）；
-            // hover/active 走 wechat.dividerSecondary/wechat.selectedBg；radius→radiusWeChat（D-12 E2 统一 6）
+            // hover/active 走 hover/primarySoftBg 主槽位。
             constexpr float kToggleSize = 36.0f;
             const float toggleY = screen.height - 56.0f;
             const float toggleX =
@@ -514,8 +516,8 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
             ui.rect("app.sidebar.toggle")
                 .position(toggleX, toggleY)
                 .size(kToggleSize, kToggleSize)
-                .states(kTransparent, wc.dividerSecondary, wc.selectedBg)
-                .radius(t.sizes.radiusWeChat)
+                .states(kTransparent, t.colors.hover, t.colors.primarySoftBg)
+                .radius(t.sizes.radiusSmall)
                 .onClick([] {
                     setSidebarCollapsed(!sidebarCollapsed(), true);
                 })
@@ -527,7 +529,7 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                 .fontSize(t.sizes.fontSizeBody)
                 .horizontalAlign(eui::HorizontalAlign::Center)
                 .verticalAlign(eui::VerticalAlign::Center)
-                .color(wc.textSecondary)
+                .color(t.colors.textSecondary)
                 .build();
         })
         .build();
@@ -542,7 +544,6 @@ void drawFluidBackground(eui::Ui& ui, const eui::Screen& screen) {
     if (!fluidWindowVisible()) return;      // 铁律：最小化/藏托盘 → 不挂泵不推进
 
     const auto& t = ::core::theme::current();
-    const auto& wc = t.colors.wechat;
 
     constexpr int kHalos = 7;            // UAT6.1 缩小增多：4→7 个小晕流动（几大团→多小晕流）
     constexpr float kMaxAlpha = 0.14f;   // 单层峰值（7 层 α 平均约 0.123，全叠峰值可控）
@@ -557,7 +558,7 @@ void drawFluidBackground(eui::Ui& ui, const eui::Screen& screen) {
     // 新增 3 层分布补全覆盖：H4 左下(0.216) / H5 右上(0.204) / H6 底中(0.228)
     constexpr float kRadiusFrac[kHalos] = {0.24f, 0.30f, 0.264f, 0.372f, 0.216f, 0.204f, 0.228f};
 
-    const float phase = g_fluidPhase;
+    const float phase = fluidPhaseSeconds();
     const float minDim = std::min(screen.width, screen.height);
     for (int j = 0; j < kHalos; ++j) {
         // 漂移中心 = 锚点 + 异频异相振幅（层间不共振，慢到只有「液面在流」而无轨迹感）
@@ -571,7 +572,7 @@ void drawFluidBackground(eui::Ui& ui, const eui::Screen& screen) {
         const float alpha =
             kMaxAlpha * (1.0f - 0.18f * static_cast<float>(j));  // 内浓外淡
         const eui::Color& color =
-            (j % 2 == 0) ? wc.primary : wc.primaryHover;
+            (j % 2 == 0) ? t.colors.primary : t.colors.primaryHover;
         ui.rect("app.fluid.halo." + std::to_string(j))
             .position(cx - r, cy - r)
             .size(r * 2.0f, r * 2.0f)
@@ -599,14 +600,12 @@ void drawFluidBackground(eui::Ui& ui, const eui::Screen& screen) {
         }
     }
     // 帧泵（md.tree.anim.driver / splash.ink.anim.driver 同款先例）：常驻 1x1 空
-    // onFrame 元素。相位钟在回调内推进，dt 钳 0.1s（模态拖拽循环/系统休眠回来
-    // 不产生时间跳变）；不可见帧本元素不在树上 → 无回调 → 相位冻结，恢复可见
-    // compose 重建本元素，漂移从冻结相位继续。
+    // onFrame 元素——只借它让 runtime 置 animating_/composeRequested_ 保持持续
+    // 出帧（流质背景须逐帧重渲）。相位推进不再在此回调：71ce7d4c 起相位走壁钟
+    // fluidPhaseSeconds()，回调体只写死 g_fluidPhase 已随 W3.5 审计 B（F4）清空。
     ui.stack("app.fluid.anim.driver")
         .size(1.0f, 1.0f)
-        .onFrame([](float dt) {
-            g_fluidPhase += (dt < 0.1f ? dt : 0.1f);
-        })
+        .onFrame([](float) {})
         .build();
 }
 
@@ -624,6 +623,8 @@ void compose(eui::Ui& ui, const eui::Screen& screen) {
     // 记下最大化态（尺寸则由 main.cpp 的播种兜底）。最大化帧不记尺寸（保留还原态）
     ::core::window_geometry::noteFrame(screen.width, screen.height,
                                        app::mainWindowMaximized());
+    // H19 窗高驱动字号封顶：每帧喂窗口逻辑高；封顶档变化时 theme 内部重建 token + 广播
+    ::core::theme::setWindowHeight(screen.height);
     // 启动 splash：2.0s 动画 + 0.3s 淡出后切主界面；期间跳过布局
     if (ui_kit::drawSplashIfNeeded(ui, screen)) {
         return;

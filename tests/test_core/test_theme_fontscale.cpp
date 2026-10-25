@@ -6,17 +6,17 @@
 REGISTER_TEST(theme_fontscale_scales_size_tokens, "theme: setFontScale scales fontSize tokens only", {
     core::theme::setFontScale(1.0f);
     DOCTEST_CHECK_EQ(core::theme::fontScale(), 1.0f);
-    DOCTEST_CHECK_EQ(core::theme::current().sizes.fontSizeBody, 15.0f);
+    DOCTEST_CHECK_EQ(core::theme::current().sizes.fontSizeBody, 14.0f);
 
     core::theme::setFontScale(1.2f);
     DOCTEST_CHECK_EQ(core::theme::fontScale(), 1.2f);
-    DOCTEST_CHECK_EQ(core::theme::current().sizes.fontSizeBody, 15.0f * 1.2f);
-    DOCTEST_CHECK_EQ(core::theme::current().sizes.fontSizeSmall, 13.0f * 1.2f);
-    DOCTEST_CHECK_EQ(core::theme::current().sizes.fontSizePage, 32.0f * 1.2f);
+    DOCTEST_CHECK_EQ(core::theme::current().sizes.fontSizeBody, 14.0f * 1.2f);
+    DOCTEST_CHECK_EQ(core::theme::current().sizes.fontSizeSmall, 12.0f * 1.2f);
+    DOCTEST_CHECK_EQ(core::theme::current().sizes.fontSizePage, 24.0f * 1.2f);
     DOCTEST_CHECK_EQ(core::theme::current().sizes.fontSizeDisplay, 48.0f * 1.2f);
     DOCTEST_CHECK_EQ(core::theme::current().sizes.spacing, 8.0f);
-    DOCTEST_CHECK_EQ(core::theme::current().sizes.radius, 10.0f);
-    DOCTEST_CHECK_EQ(core::theme::current().sizes.radiusLarge, 14.0f);
+    DOCTEST_CHECK_EQ(core::theme::current().sizes.radius, 8.0f);
+    DOCTEST_CHECK_EQ(core::theme::current().sizes.radiusLarge, 12.0f);
 
     core::theme::setFontScale(1.0f);  // fontScale 是全局态，结尾复位，否则污染后面的用例
     return true;
@@ -26,12 +26,12 @@ REGISTER_TEST(theme_fontscale_survives_theme_switch, "theme: font scale survives
     core::theme::setFontScale(1.15f);
     core::theme::setLight();
     DOCTEST_CHECK_EQ(core::theme::fontScale(), 1.15f);
-    DOCTEST_CHECK_EQ(core::theme::current().sizes.fontSizeBody, 15.0f * 1.15f);
+    DOCTEST_CHECK_EQ(core::theme::current().sizes.fontSizeBody, 14.0f * 1.15f);
     // 再切回深色仍是 15 × 1.15：token 重建后统一施加，不叠加也不丢失
     core::theme::setDark();
-    DOCTEST_CHECK_EQ(core::theme::current().sizes.fontSizeBody, 15.0f * 1.15f);
+    DOCTEST_CHECK_EQ(core::theme::current().sizes.fontSizeBody, 14.0f * 1.15f);
     core::theme::setFontScale(1.0f);
-    DOCTEST_CHECK_EQ(core::theme::current().sizes.fontSizeBody, 15.0f);
+    DOCTEST_CHECK_EQ(core::theme::current().sizes.fontSizeBody, 14.0f);
     return true;
 })
 
@@ -79,5 +79,26 @@ REGISTER_TEST(theme_fontscale_notifies_change_handler,
     core::theme::setChangeHandler(nullptr);
     core::theme::setFontScale(1.0f);
     DOCTEST_CHECK_EQ(core::theme::fontScale(), 1.0f);
+    return true;
+})
+
+// 窗高封顶已废止（2026-10-25 用户拍板，可读性优先）：windowScaleCap 恒不封顶，
+// setWindowHeight 不再影响字号档。回退锁：若恢复 ≤660 → 0.85 封顶，本用例必红。
+REGISTER_TEST(theme_fontscale_window_height_cap,
+              "theme: 窗高封顶已废止——setWindowHeight 不影响字号档", {
+    core::theme::setFontScale(1.0f);
+    // 640 最小窗：不再压档 → 用户档原样
+    core::theme::setWindowHeight(640.0f);
+    DOCTEST_CHECK_EQ(core::theme::fontScale(), 1.0f);
+    DOCTEST_CHECK_EQ(core::theme::current().sizes.fontSizeBody, 14.0f);
+    // 用户 115% 档在任意窗高都保持原样
+    core::theme::setFontScale(1.15f);
+    core::theme::setWindowHeight(640.0f);
+    DOCTEST_CHECK_EQ(core::theme::fontScale(), 1.15f);
+    core::theme::setWindowHeight(1000.0f);
+    DOCTEST_CHECK_EQ(core::theme::fontScale(), 1.15f);
+    // 复位（fontScale / windowHeight 都是进程级全局态）
+    core::theme::setFontScale(1.0f);
+    core::theme::setWindowHeight(1000.0f);
     return true;
 })

@@ -84,13 +84,13 @@ REGISTER_TEST(theme_hierarchy_todo,
     const auto checkFrame = [&](Frame& frame,
                                 const core::theme::Tokens& t) -> bool {
         DOCTEST_CHECK(frame.absent("todo.pagebg"));
-        // 列容器走微信 pageBg 浅灰底（§4.14 白卡浮起于浅灰底）
-        DOCTEST_CHECK(frame.colorIs("todo.col.4.bg", t.colors.wechat.pageBg));
-        // 卡片 = 微信白卡 → wechat.cardBg（D批米黄迁移 surface→cardBg；D-04 dark-WeChat 延后深浅同值）
-        DOCTEST_CHECK(frame.colorIs("todo.col.4.card.0.bg", t.colors.wechat.cardBg));
-        // 弹窗骨架 = componentTokensWeChat 的 surface 槽 = wechat.cardBg（popup 根治批迁移）
+        // 列容器走微信 background 浅灰底（§4.14 白卡浮起于浅灰底）
+        DOCTEST_CHECK(frame.colorIs("todo.col.4.bg", t.colors.background));
+        // 卡片 = 微信白卡 → surface（D批米黄迁移 surface→surface；D-04 dark-WeChat 延后深浅同值）
+        DOCTEST_CHECK(frame.colorIs("todo.col.4.card.0.bg", t.colors.surface));
+        // 弹窗骨架 = componentTokensWeChat 的 surface 槽 = surface（popup 根治批迁移）
         DOCTEST_CHECK(frame.colorIs("todo.dialog.newtask.panel.bg",
-                                    t.colors.wechat.cardBg));
+                                    t.colors.surface));
         return true;
     };
 
@@ -105,16 +105,16 @@ REGISTER_TEST(theme_hierarchy_todo,
         addBtn->onClick();
         frame.refresh();
         DOCTEST_CHECK(frame.colorIs("todo.dialog.newtask.panel.bg",
-                                    core::theme::current().colors.wechat.cardBg));
+                                    core::theme::current().colors.surface));
     }
 
     core::theme::setDark();
     {
         Frame frame(mod.get());
         DOCTEST_CHECK(checkFrame(frame, core::theme::current()));
-        // 深色层次：列容器 pageBg ≠ 卡片色（列容器不得等于卡片色）
+        // 深色层次：列容器 background ≠ 卡片色（列容器不得等于卡片色）
         const auto& t = core::theme::current();
-        DOCTEST_CHECK(!sameRgb(t.colors.wechat.pageBg, t.colors.surface));
+        DOCTEST_CHECK(!sameRgb(t.colors.background, t.colors.surface));
     }
 
     mod->onStop();
@@ -153,11 +153,12 @@ REGISTER_TEST(theme_hierarchy_markdown,
                                 const core::theme::Tokens& t) -> bool {
         // W8：markdown 页改 wechat 令牌（D-04 逐页切换）。
         DOCTEST_CHECK(frame.absent("md.pagebg"));
-        DOCTEST_CHECK(frame.colorIs("md.tree.bg", t.colors.wechat.cardBg));
-        // 编辑列壳 .bg 已恢复（W8 §4.14：右区 pageBg 底 + 白卡浮起）
-        DOCTEST_CHECK(frame.colorIs("md.editor.bg", t.colors.wechat.pageBg));
-        DOCTEST_CHECK(frame.colorIs("md.preview.bg", t.colors.wechat.pageBg));
-        DOCTEST_CHECK(frame.colorIs("md.status.bg", t.colors.wechat.cardBg));
+        // 批M：树区浅灰面板（纸卡分层）
+        DOCTEST_CHECK(frame.colorIs("md.tree.bg", t.colors.hover));
+        // 编辑列壳 .bg 已恢复（W8 §4.14：右区 background 底 + 白卡浮起）
+        DOCTEST_CHECK(frame.colorIs("md.editor.bg", t.colors.background));
+        DOCTEST_CHECK(frame.colorIs("md.preview.bg", t.colors.background));
+        DOCTEST_CHECK(frame.colorIs("md.status.bg", t.colors.surface));
         return true;
     };
 
@@ -188,9 +189,9 @@ REGISTER_TEST(theme_hierarchy_claude,
     const auto checkFrame = [&](Frame& frame,
                                 const core::theme::Tokens& t) -> bool {
         DOCTEST_CHECK(frame.absent("claude.pagebg"));
-        // §5/§4.14 面板底换 wechat.pageBg（浅灰，白卡浮起）
-        DOCTEST_CHECK(frame.colorIs("claude.profiles.bg", t.colors.wechat.pageBg));
-        DOCTEST_CHECK(frame.colorIs("claude.detail.bg", t.colors.wechat.pageBg));
+        // §5/§4.14 面板底换 background（浅灰，白卡浮起）
+        DOCTEST_CHECK(frame.colorIs("claude.profiles.bg", t.colors.background));
+        DOCTEST_CHECK(frame.colorIs("claude.detail.bg", t.colors.background));
         return true;
     };
 
@@ -206,7 +207,7 @@ REGISTER_TEST(theme_hierarchy_claude,
 })
 
 REGISTER_TEST(theme_hierarchy_home,
-              "theme_hierarchy: home 统计卡=surface 页面底无自铺底（light+dark）", {
+              "theme_hierarchy: home 统计卡=S6.6 辅助色实底 + 页面无自铺底（light+dark）", {
     core::proxy_stats::resetForTest();
 
     std::unique_ptr<::core::Module> mod(create_home_module());
@@ -214,8 +215,12 @@ REGISTER_TEST(theme_hierarchy_home,
     const auto checkFrame = [&](Frame& frame,
                                 const core::theme::Tokens& t) -> bool {
         DOCTEST_CHECK(frame.absent("home.pagebg"));
-        // W9: 统计卡换微信白底（wechat.cardBg #FFFFFF），不再用暖色 surface
-        DOCTEST_CHECK(frame.colorIs("home.stat.tokens.bg", t.colors.wechat.cardBg));
+        // S6.6: 统计卡改辅助色实底——卡底有色、非半透白面
+        // Token速率卡 bg = cardGreen #E6FBF2（g≈0.98），不再是 surface #FFFFFF
+        DOCTEST_CHECK(!frame.colorIs("home.stat.tokens.bg", t.colors.surface));
+        const auto* bg = frame.ui.find("home.stat.tokens.bg");
+        DOCTEST_REQUIRE(bg != nullptr);
+        DOCTEST_CHECK(bg->color.a > 0.9f);  // 实底非半透
         return true;
     };
 

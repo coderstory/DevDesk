@@ -74,6 +74,8 @@ struct ProfileListState {
     bool sharedBlockCollapsed_ = true;
     // 引导条一次性标记（会话内代理从未启动过才显示；内存态）
     bool proxyEverSeen_ = false;
+    // S3.4 引导条手动关闭（用户点 × 收起）
+    bool guideDismissed_ = false;
     // 切换 Profile 二次确认弹窗（UAT6）：点非选中卡先弹窗，确定后才切 selectedId_
     bool switchConfirmOpen_ = false;
     int64_t switchTargetId_ = 0;

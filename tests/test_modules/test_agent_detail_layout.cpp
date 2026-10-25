@@ -103,7 +103,7 @@ struct DetailFixture {
 // ---------- 三尺寸 test ----------
 
 REGISTER_TEST(agent_ui_detail_layout_elastic_1600x1000,
-              "detail_layout: 弹性档 800×660——max(720,窗口/2)、三卡横排、segment 三档绿底白字（反向锁死暖橙）、单列全宽", {
+              "detail_layout: 弹性档 800×660——max(720,窗口/2)、三卡横排、segment 三档薄荷绿 primary（D-12 令牌统一）、单列全宽", {
     DetailFixture fx("agentdl", "wide");
     DOCTEST_REQUIRE(fx.seedTask("弹性档布局任务"));
 
@@ -114,12 +114,12 @@ REGISTER_TEST(agent_ui_detail_layout_elastic_1600x1000,
     eui::Ui ui2;
     composeTo(ui2, fx.mod, kScreenBig, "layout_elastic_2");
 
-    // 面板 = 弹性宽 max(720, 1600/2)=800 × 660
+    // 面板 = 弹性宽 max(720, 1600/2)=800 × 552（UAT6 弹窗收口，原 660）
     const auto* panel = ui2.find("agent.dialog.detail.panel");
     DOCTEST_REQUIRE_MESSAGE(panel != nullptr, "弹性档缺 panel");
     DOCTEST_CHECK_MESSAGE(nearPx(panel->frame.width, 800.0f) &&
-                              nearPx(panel->frame.height, 660.0f),
-                          "弹性档面板应 800×660，实测 " +
+                              nearPx(panel->frame.height, 552.0f),
+                          "弹性档面板应 800×552，实测 " +
                               std::to_string(panel->frame.width) + "×" +
                               std::to_string(panel->frame.height));
     // 头部 = 真实任务名（方案 A：不再恒「任务详情」）
@@ -148,39 +148,36 @@ REGISTER_TEST(agent_ui_detail_layout_elastic_1600x1000,
         "摘要卡 .bg 不应有边框，实测 border.width=" +
             std::to_string(lastBg->border.width));
 
-    // segment 三档：选中块 wechat 绿（正向）+ 非暖橙（反向锁死，旧 EUI-NEO segmented
-    // 选中色退役）；未选块灰底
+    // segment 三档：选中块 = 薄荷绿 primary（D-12 迁移后 primary 槽位即 #36D399，
+    // 与产品码 t.colors.primary 同源）；未选块灰底
     const auto& tok = core::theme::current();
     const auto* navOn = ui2.find("agent.dialog.detail.nav.item.0.bg");
     const auto* navOff = ui2.find("agent.dialog.detail.nav.item.1.bg");
     DOCTEST_REQUIRE_MESSAGE(navOn != nullptr && navOff != nullptr,
                             "segment 缺 .nav.item.<i>.bg");
     DOCTEST_CHECK_MESSAGE(
-        nearPx(navOn->color.r, tok.colors.wechat.primary.r) &&
-            nearPx(navOn->color.g, tok.colors.wechat.primary.g) &&
-            nearPx(navOn->color.b, tok.colors.wechat.primary.b),
-        "segment 选中块应为 wechat 绿底");
+        nearPx(navOn->color.r, tok.colors.primary.r) &&
+            nearPx(navOn->color.g, tok.colors.primary.g) &&
+            nearPx(navOn->color.b, tok.colors.primary.b),
+        "segment 选中块应为薄荷绿 primary 底");
+    // 旧「反向锁死暖橙」断言已删：与正向断言共用同一 primary 令牌自相矛盾恒红；
+    // 暖橙旧槽在 D-12 迁移中退役（primary = #36D399），无可锁对象。
     DOCTEST_CHECK_MESSAGE(
-        !(nearPx(navOn->color.r, tok.colors.primary.r) &&
-          nearPx(navOn->color.g, tok.colors.primary.g) &&
-          nearPx(navOn->color.b, tok.colors.primary.b)),
-        "segment 选中块回潮成 module 暖橙");
-    DOCTEST_CHECK_MESSAGE(
-        nearPx(navOff->color.r, tok.colors.wechat.pageBg.r) &&
-            nearPx(navOff->color.g, tok.colors.wechat.pageBg.g) &&
-            nearPx(navOff->color.b, tok.colors.wechat.pageBg.b),
-        "segment 未选中块应为 pageBg 灰底");
-    // nav 全宽 = innerW（800-56=744）
+        nearPx(navOff->color.r, tok.colors.background.r) &&
+            nearPx(navOff->color.g, tok.colors.background.g) &&
+            nearPx(navOff->color.b, tok.colors.background.b),
+        "segment 未选中块应为 background 灰底");
+    // nav 全宽 = innerW（裁定 2：内容区双侧 24px，800−48=752）
     const auto* nav = ui2.find("agent.dialog.detail.nav");
     DOCTEST_REQUIRE(nav != nullptr);
-    DOCTEST_CHECK(nearPx(nav->frame.width, 744.0f));
+    DOCTEST_CHECK(nearPx(nav->frame.width, 752.0f));
 
     // tab 0 默认：runlist 单列全宽、互斥（详情/配置退场）
     const auto* runlist = ui2.find("agent.dialog.detail.runlist");
     DOCTEST_REQUIRE(runlist != nullptr);
     DOCTEST_CHECK_MESSAGE(
-        nearPx(runlist->frame.width, 744.0f),
-        "执行记录应单列全宽 744（旧左右分栏已退役），实测 " +
+        nearPx(runlist->frame.width, 752.0f),
+        "执行记录应单列全宽 752（旧左右分栏已退役），实测 " +
             std::to_string(runlist->frame.width));
     DOCTEST_CHECK(ui2.find("agent.dialog.detail.detail") == nullptr);
     DOCTEST_CHECK(ui2.find("agent.dialog.detail.config.scroll") == nullptr);
@@ -242,9 +239,9 @@ REGISTER_TEST(agent_ui_detail_layout_narrow_700x560,
                           "nav 应 +143.5（与弹性档同公式），实测 " +
                               std::to_string(nav->frame.y - panel->frame.y));
     DOCTEST_CHECK_MESSAGE(
-        nearPx(runlist->frame.x - panel->frame.x, 28.0f) &&
-            nearPx(runlist->frame.width, 596.0f),
-        "窄窗主内容应单列全宽（x0=28、宽 596），实测 x=" +
+        nearPx(runlist->frame.x - panel->frame.x, 24.0f) &&
+            nearPx(runlist->frame.width, 604.0f),
+        "窄窗主内容应单列全宽（x0=24、宽 604，kDialogInsetX 28→24），实测 x=" +
             std::to_string(runlist->frame.x - panel->frame.x) + " 宽 " +
             std::to_string(runlist->frame.width));
     DOCTEST_CHECK_MESSAGE(

@@ -5,9 +5,9 @@
 // 断言三层（spec §7.1）：
 //   - 元素存在性（ui.find != nullptr）
 //   - 几何数值（width / height / radius / fontSize）
-//   - 颜色 hex 精确（wechat.* 令牌值；黑半透明 bg 例外用语义常量）
+//   - 颜色 hex 精确（* 令牌值；黑半透明 bg 例外用语义常量）
 //
-// 色值走 wechat 令牌（core::theme::current().colors.wechat.*）；黑半透明 bg 例外
+// 色值走 wechat 令牌（core::theme::current().colors.*）；黑半透明 bg 例外
 // （wechat 无黑半透明槽位——§4.10 spec 钉「黑色半透明」，故用 eui::Color{0,0,0,0.7}
 // 语义常量，alpha=0.7 ≈ 178/255）。
 //
@@ -30,11 +30,16 @@ namespace {
 
 // float [0,1] → 0-255 字节值（hex 精确比对，同 test_theme_accents / test_ui_kit_button 口径）
 int toHexByte(float v) { return static_cast<int>(std::round(v * 255.0f)); }
+// 浮点颜色近似比较（±0.01 容差，深浅模式自适应）
+auto sameColor = [](const eui::Color& x, const eui::Color& y) {
+    return std::fabs(x.r - y.r) < 0.01f && std::fabs(x.g - y.g) < 0.01f &&
+           std::fabs(x.b - y.b) < 0.01f;
+};
 
 } // namespace
 
 // 场景1（§4.10 防「轻提示不黑底/非半透明」）：showLightToast 首次触发后 bg 节点
-// 存在 + color=黑半透明 (0,0,0,0.7) + 圆角=radiusWeChat(6)。
+// 存在 + color=黑半透明 (0,0,0,0.7) + 圆角=radiusSmall(6)。
 // 事故：轻提示用白底/纯黑底致可读性塌陷或违和（§4.10 spec 钉「黑色半透明」；
 // 违反即整条 toast 视觉与微信基线脱节）。
 REGISTER_TEST(ui_kit_light_toast_black_translucent_bg,
@@ -54,18 +59,18 @@ REGISTER_TEST(ui_kit_light_toast_black_translucent_bg,
     DOCTEST_CHECK_EQ(toHexByte(bg->color.b), 0x00);
     // alpha 0.7 → std::round(0.7×255)=std::round(178.5)=179（std::round 半远离零）
     DOCTEST_CHECK_EQ(toHexByte(bg->color.a), 179);
-    // 圆角 = radiusWeChat (6px，§3.2 D-12 统一)
-    DOCTEST_CHECK_EQ(bg->radius, t.sizes.radiusWeChat);
+    // 圆角 = radiusSmall (6px)
+    DOCTEST_CHECK_EQ(bg->radius, t.sizes.radiusSmall);
     DOCTEST_CHECK_EQ(bg->radius, 6.0f);
     return true;
 })
 
-// 场景2（§4.10 防「轻提示非白字」）：text 节点 color=wechat.onPrimary(#FFFFFF)
+// 场景2（§4.10 防「轻提示非白字」）：text 节点 color=onPrimary(#FFFFFF)
 // + 字号 14px（§3.3 主文字）。
 // 事故：黑底非白字致对比度塌陷（§4.10 spec 钉「白色文字」；onPrimary=#FFFFFF
 // 在 wechat 令牌里是主色上的前景色，黑底白字同义复用）。
 REGISTER_TEST(ui_kit_light_toast_white_text_on_primary,
-              "ui_kit lightToast: text color=wechat.onPrimary(#FFFFFF) + fontSize=14", {
+              "ui_kit lightToast: text color=onPrimary(#FFFFFF) + fontSize=14", {
     ui_kit::resetLightToastForTests();  // 防单实例 state 跨测试用例泄漏
     const auto& t = core::theme::current();
     eui::Ui ui;
@@ -75,7 +80,7 @@ REGISTER_TEST(ui_kit_light_toast_white_text_on_primary,
 
     const auto* txt = ui.find("lt.text");
     DOCTEST_REQUIRE(txt != nullptr);
-    // text color = wechat.onPrimary (#FFFFFF)
+    // text color = onPrimary (#FFFFFF)
     DOCTEST_CHECK_EQ(toHexByte(txt->textColor.r), 0xFF);
     DOCTEST_CHECK_EQ(toHexByte(txt->textColor.g), 0xFF);
     DOCTEST_CHECK_EQ(toHexByte(txt->textColor.b), 0xFF);
@@ -137,7 +142,7 @@ REGISTER_TEST(ui_kit_light_toast_new_message_overrides,
 })
 
 // 场景5（§4.12 防「空状态插画式/无入口」）：emptyState 渲染极简文字
-// （wechat.textSecondary #666666）+ 就近按钮（Secondary 级 浅灰底 + 深灰字）。
+// （textSecondary #666666）+ 就近按钮（Secondary 级 浅灰底 + 深灰字）。
 // 事故：空状态用插画/情绪化文案/无按钮致用户卡死（§4.12 禁止项 + §5.6 按钮就近
 // 原则；违反即用户面对空列表无操作入口）。
 REGISTER_TEST(ui_kit_empty_state_minimal_text_with_nearby_action,
@@ -151,24 +156,21 @@ REGISTER_TEST(ui_kit_empty_state_minimal_text_with_nearby_action,
                       0.0f, 0.0f, 300.0f, 200.0f, t);
     ui.end();
 
-    // 文字节点存在 + color=wechat.textSecondary(#666666) + fontSize=14
+    // 文字节点存在 + color=textSecondary #4B5563（S2.8 标题 textSecondary） + fontSize=14
     const auto* msg = ui.find("es.message");
     DOCTEST_REQUIRE(msg != nullptr);
-    DOCTEST_CHECK_EQ(toHexByte(msg->textColor.r), 0x66);
-    DOCTEST_CHECK_EQ(toHexByte(msg->textColor.g), 0x66);
-    DOCTEST_CHECK_EQ(toHexByte(msg->textColor.b), 0x66);
+    DOCTEST_CHECK(sameColor(msg->textColor, t.colors.textSecondary));
     DOCTEST_CHECK_EQ(msg->fontSize, 14.0f);
     DOCTEST_CHECK_EQ(msg->text, std::string{"暂无任务"});
 
     // 按钮节点存在（W2b button helper Secondary 级，id="es.action"）
     const auto* btnBg = ui.find("es.action.bg");
     DOCTEST_REQUIRE(btnBg != nullptr);
-    // Secondary bg = wechat.secondaryButtonBg (#F2F2F2)
-    DOCTEST_CHECK_EQ(toHexByte(btnBg->color.r), 0xF2);
-    DOCTEST_CHECK_EQ(toHexByte(btnBg->color.g), 0xF2);
-    // 按钮高度 = kButtonHeight (34，§4.1 D-12 统一)
+    // Secondary bg = hover #F3F4F6（S1.2 #13）
+    DOCTEST_CHECK(sameColor(btnBg->color, t.colors.hover));
+    // 按钮高度 = kButtonHeight（40，S1.2 #35 / S2.1）
     DOCTEST_CHECK_EQ(btnBg->height.value, ui_kit::kButtonHeight);
-    DOCTEST_CHECK_EQ(btnBg->height.value, 34.0f);
+    DOCTEST_CHECK_EQ(btnBg->height.value, 40.0f);
 
     // 按钮文字节点存在 + 内容正确
     const auto* btnTxt = ui.find("es.action.text");

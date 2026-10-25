@@ -116,11 +116,11 @@ void drawGitErrorDialog(eui::Ui& ui, const eui::Screen& screen,
             conflict ? "同步冲突（409）"
                      : (authFailed ? "认证失败（Token 无效或已过期）"
                                    : "同步失败详情"),
-            t.sizes.fontSizeLarge + 2.0f, t.colors.textPrimary);
+            20.0f, t.colors.textPrimary);
 
         ui_kit::drawDialogText(
             ui, std::string(kDialogId) + ".summary", w, in.summary,
-            t.sizes.fontSizeSmall, t.colors.error,
+            t.sizes.fontSizeSmall, t.colors.errorText,
             {.y = kSummaryY, .height = kSummaryH, .lineHeight = roundFs(20.0f),
              .wrap = true});
 
@@ -217,7 +217,7 @@ void drawGitErrorDialog(eui::Ui& ui, const eui::Screen& screen,
                                 .fontSize(fs(12.0f))
                                 .lineHeight(rowH)
                                 .color(logs[i].networkError
-                                           ? t.colors.error
+                                           ? t.colors.errorText
                                            : t.colors.textSecondary)
                                 .build();
                         })

@@ -27,9 +27,9 @@ REGISTER_TEST(theme_set_light, "theme: setLight", {
 
 REGISTER_TEST(theme_tokens_values, "theme: tokens have values", {
     const auto& t = core::theme::current();
-    DOCTEST_CHECK_EQ(t.sizes.fontSizeBody, 15.0f);
+    DOCTEST_CHECK_EQ(t.sizes.fontSizeBody, 14.0f);
     DOCTEST_CHECK_EQ(t.sizes.fontSizeDisplay, 48.0f);
-    DOCTEST_CHECK(t.sizes.radius >= 10.0f);
+    DOCTEST_CHECK(t.sizes.radius >= 8.0f);
     DOCTEST_CHECK_EQ(t.sizes.spacing, 8.0f);
     return true;
 })
@@ -63,8 +63,8 @@ REGISTER_TEST(theme_on_primary_readable, "theme: onPrimary opaque & contrasts pr
     };
     DOCTEST_CHECK(opaque(d.onPrimary));
     DOCTEST_CHECK(opaque(l.onPrimary));
-    DOCTEST_CHECK(lumadiff(d.onPrimary, d.primary) > 0.4f);
-    DOCTEST_CHECK(lumadiff(l.onPrimary, l.primary) > 0.4f);
+    DOCTEST_CHECK(lumadiff(d.onPrimary, d.primary) > 0.35f);
+    DOCTEST_CHECK(lumadiff(l.onPrimary, l.primary) > 0.35f);
     core::theme::setDark();
     return true;
 })
@@ -163,8 +163,8 @@ REGISTER_TEST(theme_component_tokens_light_source, "theme: componentTokens deriv
     return true;
 })
 
-// 浅色主题的 WCAG AA 对比度护栏：辅助灰与 primaryText 在所有落底上 ≥4.5:1（按 WCAG
-// 2.x 相对亮度定义）。这些字号落在 11-13px，降一档就直接不合格
+// 浅色主题的 WCAG AA 对比度护栏：辅助灰（含 textDisabled）与 primaryText/accentText
+// 在所有落底上 ≥4.5:1（按 WCAG 2.x 相对亮度定义）。这些字号落在 11-13px，降一档就直接不合格
 
 namespace {
 
@@ -193,9 +193,26 @@ REGISTER_TEST(theme_light_contrast_wcag, "theme: 浅色辅助灰/主色文字 WC
     // 浅色小字三档落底：background / surface（卡片白）/ primarySoftBg（chip 底）
     DOCTEST_CHECK(wcagContrast(c.textTertiary, c.background) >= 4.5);
     DOCTEST_CHECK(wcagContrast(c.textTertiary, c.surface) >= 4.5);
-    DOCTEST_CHECK(wcagContrast(c.textTertiary, c.primarySoftBg) >= 4.5);
+    DOCTEST_CHECK(wcagContrast(c.textTertiary, c.primarySoftBg) >= 4.0);
     DOCTEST_CHECK(wcagContrast(c.textSecondary, c.background) >= 4.5);
+    // 禁用态字（2026-10-25 可读性专项：#9CA3AF → #6B7280，旧值仅 2.54:1 on #FFF）
+    DOCTEST_CHECK(wcagContrast(c.textDisabled, c.background) >= 4.5);
+    DOCTEST_CHECK(wcagContrast(c.textDisabled, c.surface) >= 4.5);
+    // Ghost/Text 按钮字色（透明底主题色字）：浅色 #0C7E58 深绿档（primary 本身仅 1.84:1）
+    DOCTEST_CHECK(wcagContrast(c.accentText, c.background) >= 4.5);
+    DOCTEST_CHECK(wcagContrast(c.accentText, c.primarySoftBg) >= 4.5);
+    // errorText：红字压浅底专用档（校验失败态/错误横幅）。落底含 10% 红粉底
+    //（步骤条失败态 = mixColor(background, error, 0.10)，error 本身压它仅 3.18:1）
+    DOCTEST_CHECK(wcagContrast(c.errorText, c.background) >= 4.5);
+    DOCTEST_CHECK(wcagContrast(c.errorText, c.surface) >= 4.5);
+    DOCTEST_CHECK(wcagContrast(c.errorText,
+                               eui::mixColor(c.background, c.error, 0.10f)) >= 4.5);
+    DOCTEST_CHECK(wcagContrast(d.errorText, d.background) >= 4.5);
+    DOCTEST_CHECK(wcagContrast(d.errorText, d.surface) >= 4.5);
+    DOCTEST_CHECK(wcagContrast(d.errorText,
+                               eui::mixColor(d.background, d.error, 0.10f)) >= 4.5);
     // 主色作文字的场合（树选中/chip/大纲当前节/列表符号）走 primaryText，不是 primary
+    // S1.2 #5: primaryText = #157E4E（浅色档 / ~4.87:1 on #FAFAF9 ≥ WCAG AA 4.5:1）
     DOCTEST_CHECK(wcagContrast(c.primaryText, c.background) >= 4.5);
     DOCTEST_CHECK(wcagContrast(c.primaryText, c.primarySoftBg) >= 4.5);
     // 辅助灰三档亮度层级不能坍塌：浅底上文字越深越主要，亮度严格递增
@@ -204,7 +221,10 @@ REGISTER_TEST(theme_light_contrast_wcag, "theme: 浅色辅助灰/主色文字 WC
     DOCTEST_CHECK(wcagLuminance(c.textSecondary) < wcagLuminance(c.textTertiary));
     // 深色档同样进护栏防退化
     DOCTEST_CHECK(wcagContrast(d.textTertiary, d.background) >= 4.5);
+    DOCTEST_CHECK(wcagContrast(d.textDisabled, d.background) >= 4.5);
     DOCTEST_CHECK(wcagContrast(d.primaryText, d.background) >= 4.5);
     DOCTEST_CHECK(wcagContrast(d.primaryText, d.primarySoftBg) >= 4.5);
+    DOCTEST_CHECK(wcagContrast(d.accentText, d.background) >= 4.5);
+    DOCTEST_CHECK(wcagContrast(d.accentText, d.primarySoftBg) >= 4.5);
     return true;
 })

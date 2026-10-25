@@ -226,8 +226,8 @@ private:
     // 主线程收割已完成的生成线程：join → 预填表单 / 写错误行 / 丢弃过期结果。
     // compose 每帧调用（worker 置 done 后 requestUiUpdate 主动要帧，不等用户输入）。
     void reapDraftJob();
-    // 把校验过的草稿填进表单：只填模型给出的可信字段（goalFilled / triggerFilled /
-    // 非空 contextNote）；触发不可信时一字不动。结果永不落库——保存仍是用户动作。
+    // 把校验过的草稿填进表单：只填模型给出的可信字段（goalFilled / triggerFilled）；
+    // 触发不可信时一字不动。结果永不落库——保存仍是用户动作。
     void applyDraftPrefill(const TaskDraftResult& res);
 
     Deps deps_;
@@ -342,8 +342,9 @@ private:
     //（「只跑一次」开关），但草稿是整数：手改库/将来放开 N 次时编辑态能原样回写，
     // 不会被开关压回 1（往返不丢数据）
     int editMaxRuns_ = 0;
-    std::string editContextNote_;
-    bool editAutoNote_ = true;
+    // W4 C3 字段合并：editContextNote_ / editAutoNote_ 已移除（执行记忆并入系统提示词，
+    // 自动记录固定开启），保留 systemPrompt 单字段；store/loop 读写链已清，DB 两列
+    // （context_note/auto_note）删除归 W6
     std::string editSystemPrompt_;
     // 「事件」分支的勾选态（与 agent_module.cpp 的 kEventNames 一一对应；仅主线程）
     std::array<bool, 3> editEvents_{};

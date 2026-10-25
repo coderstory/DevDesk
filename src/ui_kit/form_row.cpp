@@ -10,7 +10,6 @@ void formRow(eui::Ui& ui, const std::string& id, const std::string& label,
              float x, float y, float totalW, float totalH,
              const ControlComposeFn& composeControl,
              const core::theme::Tokens& t) {
-    const auto& wc = t.colors.wechat;
     const float gap = t.sizes.spacing;  // 8px（§3.1 8px 网格），label 与 control 间距
     const float labelW = kFormRowLabelWidth;  // 110px（§4.15 区间中值）
     const float controlX = x + labelW + gap;
@@ -21,13 +20,12 @@ void formRow(eui::Ui& ui, const std::string& id, const std::string& label,
         .position(x, y)
         .size(labelW, totalH)
         .text(label)
-        // §3.3 主文字；token 体系无 14 档，钉 spec 值 × 全局字号档（与 settings
-        // 的 fs() 同式 base×fontScale；ui_kit 不能 include module_settings，直乘
-        // core::theme::fontScale()）。行盒由消费方 roundFs(36) 派生、随档缩放。
-        .fontSize(14.0f * core::theme::fontScale())
+        // §3.3 主文字；token 体系无 14 档，钉 spec 值经 scaled() 随全局字号档缩放。
+        // 行盒由消费方 roundFs(36) 派生、随档缩放。
+        .fontSize(core::theme::scaled(14.0f))
         .horizontalAlign(eui::HorizontalAlign::Left)
         .verticalAlign(eui::VerticalAlign::Center)
-        .color(wc.textPrimary)
+        .color(t.colors.textPrimary)
         .build();
 
     // control 区：填满剩余宽，垂直居中；由消费方在回调里画具体控件

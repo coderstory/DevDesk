@@ -20,7 +20,8 @@ struct Column {
     std::string title;
     int position;
     std::optional<std::string> color;
-    // 语义标记：'done'/'todo'/'archive'/空 = 普通列；完成态流转按它定位目标列，不靠标题字符串
+    // 语义标记：'todo'/'doing'/'done'/'archive'（固定四列）；空 = 老库普通列。
+    // 完成/归档流转按它定位目标列，不靠标题字符串；迁移后必有固定四列。
     std::string kind;
 };
 
@@ -52,7 +53,7 @@ class TodoService {
 public:
     explicit TodoService(core::data::SqliteDb& db);
 
-    // 列出所有列（按 position ASC）
+    // 列出所有列（固定顺序：position ASC, id ASC；迁移后即 待办/进行中/已完成/已归档）
     core::Result<std::vector<Column>> listColumns();
 
     // 新建列（自动追加到末尾 position = max+1）

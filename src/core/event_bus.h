@@ -32,10 +32,6 @@ inline constexpr const char* kTodoMoved = "todo.moved";
 inline constexpr const char* kTodoCompleted = "todo.completed";
 inline constexpr const char* kTodoUncompleted = "todo.uncompleted";
 inline constexpr const char* kTodoDeleted = "todo.deleted";
-// 待办列写路径：新建 / 重命名 / 删除 / 重排 / 改色共用一个事件名——没有订阅方需要区分
-// 这五种列改动，它们对同步是同一件事（列变了）。删除列会级联删掉其下全部任务，
-// 故它同时也是「任务数据变更」的触发源，不得因为它不叫 todo.deleted 就漏订。
-inline constexpr const char* kTodoColumnChanged = "todo.column_changed";
 // 笔记写路径：写盘成功 / 磁盘文件删除成功 / 新建成功 / 重命名成功。
 inline constexpr const char* kMdSaved = "md.saved";
 inline constexpr const char* kMdDeleted = "md.deleted";

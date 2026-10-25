@@ -53,26 +53,27 @@ public:
     // 测试缝：开关切换确认弹窗（调用后选卡不弹窗，直走选中路径）
     void bypassSwitchConfirm() { state_.list.switchBypassConfirm_ = true; }
 
+    // 测试缝：强制显示引导条（覆盖 proxyEverSeen_/guideDismissed_，图标锚点确定性）
+    void forceShowGuide() {
+        state_.list.proxyEverSeen_ = false;
+        state_.list.guideDismissed_ = false;
+    }
+
     // UI（骨架：分区委派，各区实现见 claude_ui_*.cpp）
 
     void compose(eui::Ui& ui, const eui::Screen& screen) override {
         const auto& t = core::theme::current();
         const auto themeTokens = core::theme::componentTokensWeChat(t);
-        const float pad = t.sizes.spacingXXLarge;        // 40
-        const float contentW = screen.width - pad * 2.0f;
-        const float contentH = screen.height - pad * 2.0f;
+        // S3.4 顶部收紧为 24；S4.2 弹性骨架：左右 32、底贴底（无下 padding）
+        const float padTop = 0.0f;                               // 标题顶格不留空（2026-10-25 拍板）
+        const float padSide = t.sizes.spacingLarge * 2.0f;     // 32 —— S4.2 弹性内边距
+        const float contentW = screen.width - padSide * 2.0f;   // 宽 = 窗口宽 − 双侧内边距
+        const float contentH = screen.height - padTop;           // 高 = 窗口高 − 顶内边距（底贴底）
         const std::time_t now = std::time(nullptr);   // 调用时间列「今天/昨天」判定
         const float headerH = ui_kit::kHeaderH;
         const float gap = t.sizes.spacingLarge;
-        // UAT4 布局自适应：左栏随窗宽按比例伸缩（替代固定 400——最小窗 1000 下
-        // contentW=712、右栏仅剩 296 太窄，默认窗起右栏也不随窗宽变）。
-        // 0.39 = 400/1024：默认窗 1312（contentW=1024）下左栏 ≈400、右栏 ≈608，
-        // 与旧固定值几何等价（默认窗零回归）；比例保证其余档位随窗宽伸缩。
-        // 下限 320：Profile 卡（leftW-40 内容宽）与底部三键下限；最小窗 1000 下
-        // 右栏 = 712-320-16 = 376 ≥ 350（审计口径），三键 ≈85 仍可点（UAT5 文案
-        // 缩短「从 CC 导入」后原 ≤1200 窗轻裁切消失，最长键不裁）。
-        // 上限 460：列表超宽无增益，余宽全给右栏（1600 窗右栏 836）。
-        const float leftW = std::clamp(contentW * 0.39f, 320.0f, 460.0f);
+        // S3.4 左栏固定 240px，右栏 flex 自适应。
+        const float leftW = 240.0f;
         const float rightW = contentW - leftW - gap;
 
         // 读真实状态（ClaudeService 全局单例，由 main.cpp 注册）
@@ -85,7 +86,9 @@ public:
 
         // 引导条：代理未运行且本会话从未启动过时显示（内存态一次性）
         if (proxyRunning) state_.list.proxyEverSeen_ = true;
-        const bool showGuide = !proxyRunning && !state_.list.proxyEverSeen_;
+        // S3.4 引导条可手动关闭
+        const bool showGuide = !proxyRunning && !state_.list.proxyEverSeen_ &&
+                               !state_.list.guideDismissed_;
         // 预留高必须与绘制侧一致；bodyH 在 compose 期间就要传给左右子面板。
         const float bodyH = contentH - headerH - t.sizes.spacingLarge -
                             (showGuide ? kGuideBarH + t.sizes.spacingLarge : 0.0f);
@@ -218,13 +221,13 @@ public:
 
         ui.column("claude.root")
             .size(screen.width, screen.height)
-            .padding(pad)
+            .padding(padSide, padTop, padSide, 0.0f)  // left/top/right/bottom: H17 fix——EUII padding 实参序=(left,top,right,bottom)，原（padTop,padSide,0,padSide）被错解为 left=24 top=32 right=0 bottom=32，致左距从 32→24 且顶内距从 24→32，底部整块越出页面区 64px
             .gap(t.sizes.spacingLarge)
             .content([&] {
                 drawClaudeHeader(ui, contentW, headerH, t, proxyRunning, portStr,
                                  [this] { doToggleProxy(); });
 
-                if (showGuide) drawClaudeGuideBar(ui, contentW, t);
+                if (showGuide) drawClaudeGuideBar(ui, contentW, t, state_.list);
 
                 ui.row("claude.body")
                     .size(contentW, bodyH)
@@ -849,4 +852,11 @@ extern "C" void claude_test_bypass_switch_confirm(::core::Module* mod) {
     auto* m = dynamic_cast<module::claude::ClaudeModule*>(mod);
     if (!m) return;
     m->bypassSwitchConfirm();
+}
+
+// 测试缝：强制显示引导条（重置 proxyEverSeen_/guideDismissed_，图标锚点确定性）
+extern "C" void claude_test_force_show_guide(::core::Module* mod) {
+    auto* m = dynamic_cast<module::claude::ClaudeModule*>(mod);
+    if (!m) return;
+    m->forceShowGuide();
 }

@@ -5,6 +5,7 @@
 // 断言可见性一律走有界轮询 + onPageEnter，不能只 compose 一帧就断言。
 // 真实鼠标点击留给人工点验。
 #include "doctest.h"
+#include "test_dialog_frame_helper.h"  // dialog_frame：弹窗「元素在框内」共享断言
 #include "test_support.h"
 
 #include "claude_service.h"
@@ -15,6 +16,7 @@
 #include "core/input/input_types.h"
 #include "core/module_interface.h"
 #include "core/sqlite_db.h"
+#include "core/component_theme.h"   // componentTokensWeChat：Danger 按钮底色的实际令牌源
 #include "core/theme.h"
 #include "core/time.h"
 #include "platform/http_server.h"
@@ -222,8 +224,8 @@ REGISTER_TEST(claude_module_actions_row_alignment,
     const float runRight = run->frame.x + run->frame.width;
     DOCTEST_CHECK(runRight >= dividerRight - 0.5f);
     DOCTEST_CHECK(runRight <= dividerRight + 0.5f);
-        // 单键宽 = (行宽 − 3×gap) / 4（gap=12）
-    const float expect = (row->frame.width - 12.0f * 3.0f) / 4.0f;
+        // 单键宽 = (行宽 − 3×gap) / 4（gap=8）
+    const float expect = (row->frame.width - 8.0f * 3.0f) / 4.0f;
     DOCTEST_CHECK(std::fabs(run->frame.width - expect) < 0.01f);
     DOCTEST_CHECK(std::fabs(ui.find("claude.act.enable.bg")->frame.width - expect) <
                   0.01f);
@@ -651,11 +653,11 @@ REGISTER_TEST(claude_module_form_tabs_roundtrip,
     {
         eui::Ui ui;
         compose(ui);
-        DOCTEST_CHECK(ui.find("claude.form.tabs.hit.1") != nullptr);
+        DOCTEST_CHECK(ui.find("claude.form.tabs.1.hit") != nullptr);
         const auto* nameText = ui.find("claude.dialog.form.name.text");
         DOCTEST_REQUIRE(nameText != nullptr);
         DOCTEST_CHECK_EQ(nameText->text, std::string("槽位测试"));
-        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.1"));
+        DOCTEST_CHECK(click(ui, "claude.form.tabs.1.hit"));
     }
     // 模型映射页：槽位输入；默认槽位空 → name placeholder 是「自动派生」
     {
@@ -672,7 +674,7 @@ REGISTER_TEST(claude_module_form_tabs_roundtrip,
         type(ui, "claude.form.slot.1.model.hit", "m-sonnet");
         type(ui, "claude.form.slot.1.name.hit", "sonnet显示名");
         type(ui, "claude.form.slot.5.model.hit", "m-sub");
-        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.2"));
+        DOCTEST_CHECK(click(ui, "claude.form.tabs.2.hit"));
     }
     {
         eui::Ui ui;
@@ -691,7 +693,7 @@ REGISTER_TEST(claude_module_form_tabs_roundtrip,
         {
             eui::Ui ui;
             compose(ui);
-            DOCTEST_CHECK(click(ui, "claude.detail.tabs.hit.1"));  // 切到模型 tab
+            DOCTEST_CHECK(click(ui, "claude.detail.tab.1.hit"));  // 切到模型 tab
         }
         // 保存是异步刷新：详情 pane 读的是后台快照——有界轮询等新槽位值进**渲染树**。
         // 只 compose 两帧就读旧快照 = 快照竞态 flaky。
@@ -744,7 +746,7 @@ REGISTER_TEST(claude_module_form_tabs_roundtrip,
     {
         eui::Ui ui;
         compose(ui);
-        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.1"));
+        DOCTEST_CHECK(click(ui, "claude.form.tabs.1.hit"));
     }
     {
         eui::Ui ui;
@@ -759,7 +761,7 @@ REGISTER_TEST(claude_module_form_tabs_roundtrip,
     {
         eui::Ui ui;
         compose(ui);
-        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.2"));
+        DOCTEST_CHECK(click(ui, "claude.form.tabs.2.hit"));
     }
     {
         eui::Ui ui;
@@ -829,7 +831,7 @@ REGISTER_TEST(claude_module_import_flow,
         eui::Ui ui;
         compose(ui);
         type(ui, "claude.dialog.form.name.hit", "导入测试");
-        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.2"));
+        DOCTEST_CHECK(click(ui, "claude.form.tabs.2.hit"));
     }
     {
         eui::Ui ui;
@@ -858,7 +860,7 @@ REGISTER_TEST(claude_module_import_flow,
     {
         eui::Ui ui;
         compose(ui);
-        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.0"));
+        DOCTEST_CHECK(click(ui, "claude.form.tabs.0.hit"));
     }
     {
         eui::Ui ui;
@@ -964,7 +966,7 @@ REGISTER_TEST(claude_module_import_current_full_chain,
         DOCTEST_CHECK_EQ(textOf(ui, "claude.dialog.form.key.text"),
                          std::string("sk-imp-current-0001"));
         DOCTEST_CHECK(ui.find("claude.dialog.form.importwarn") == nullptr);
-        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.1"));
+        DOCTEST_CHECK(click(ui, "claude.form.tabs.1.hit"));
     }
     {
         eui::Ui ui;
@@ -973,7 +975,7 @@ REGISTER_TEST(claude_module_import_current_full_chain,
                          std::string("m-cur-default"));
         DOCTEST_CHECK_EQ(textOf(ui, "claude.form.slot.1.model.text"),
                          std::string("m-cur-sonnet"));
-        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.2"));
+        DOCTEST_CHECK(click(ui, "claude.form.tabs.2.hit"));
     }
     {
         eui::Ui ui;
@@ -1078,7 +1080,7 @@ REGISTER_TEST(claude_module_import_current_reads_advanced_json,
     {
         eui::Ui ui;
         compose(ui);
-        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.3"));
+        DOCTEST_CHECK(click(ui, "claude.form.tabs.3.hit"));
     }
     {
         eui::Ui ui;
@@ -1159,7 +1161,7 @@ REGISTER_TEST(claude_module_import_current_reads_advanced_json,
     {
         eui::Ui ui;
         compose(ui);
-        DOCTEST_CHECK(click(ui, "claude.detail.tabs.hit.3"));
+        DOCTEST_CHECK(click(ui, "claude.detail.tab.3.hit"));
     }
     {
         eui::Ui ui;
@@ -1327,7 +1329,7 @@ REGISTER_TEST(claude_module_import_current_takeover_warn,
         DOCTEST_CHECK(warn->text.find("接管态") != std::string::npos);
         DOCTEST_CHECK(warn->text.find("代理配置") != std::string::npos);
         DOCTEST_CHECK(warn->text.find("停止代理") != std::string::npos);
-        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.2"));
+        DOCTEST_CHECK(click(ui, "claude.form.tabs.2.hit"));
     }
     {
         eui::Ui ui;
@@ -1442,7 +1444,7 @@ REGISTER_TEST(claude_module_calls_dialog,
     {
         eui::Ui ui;
         compose(ui);
-        DOCTEST_CHECK(click(ui, "claude.detail.tabs.hit.4"));
+        DOCTEST_CHECK(click(ui, "claude.detail.tab.4.hit"));
     }
     {
         eui::Ui ui;
@@ -1590,7 +1592,7 @@ REGISTER_TEST(claude_module_calls_dialog,
     {
         eui::Ui ui;
         compose(ui);
-        DOCTEST_CHECK(click(ui, "claude.detail.tabs.hit.4"));  // tab 保持 4（幂等）
+        DOCTEST_CHECK(click(ui, "claude.detail.tab.4.hit"));  // tab 保持 4（幂等）
     }
     {
         eui::Ui ui;
@@ -1700,7 +1702,7 @@ REGISTER_TEST(claude_cpx06_calls_query_async_debounce,
     {   // 开弹窗帧：调用记录在详情面板第 5 页签里（idx 4），先切 tab（同帧不派发）
         eui::Ui ui;
         compose(ui);
-        DOCTEST_REQUIRE(click(ui, "claude.detail.tabs.hit.4"));
+        DOCTEST_REQUIRE(click(ui, "claude.detail.tab.4.hit"));
     }
     // ② 开弹窗那一帧：只发意图（查询在后台）——数据未到 + 恰好派发一次。同步查库
     // 会让本帧就把行画出来，且派发计数按每次点击 +1 而非 +1/帧。
@@ -1874,7 +1876,7 @@ REGISTER_TEST(claude_shared_block_outside_viewport,
 
     // 三种高度（默认 / 最小窗 / 超短窗）：区块顶 ≥ 视口底 12px，且区块落在带 clip
     // 的视口之外——不盖末卡、不误点片段；720 以上窗口区块底 == 底部按钮行上沿 − 12
-    //（**钉底**，新建/导入同排同 y）。
+    //（**钉底**；H2 残留修复后按钮区两行：主键独行 + 两导入同行，锚点仍取新建钮 y）。
     // 500 属极端矮窗（低于最小窗）：区块仍钉底、不向下溢出按钮区（该档下区块会被
     // 压扁到自然高以下，LOG_ERROR 记录），本用例只锁锚点关系。
     for (float h : {1000.0f, 720.0f, 500.0f}) {
@@ -1976,7 +1978,7 @@ REGISTER_TEST(claude_module_form_esc_cancels,
         ui.begin("fe_m1");
         mod->compose(ui, screen);
         ui.end();
-        auto* tab = ui.find("claude.form.tabs.hit.1");
+        auto* tab = ui.find("claude.form.tabs.1.hit");
         DOCTEST_REQUIRE(tab != nullptr);
         DOCTEST_REQUIRE(tab->onClick != nullptr);
         tab->onClick();
@@ -2220,7 +2222,7 @@ REGISTER_TEST(claude_module_compose_cache_equivalence,
     {
         eui::Ui ui;
         compose(ui);
-        DOCTEST_CHECK(click(ui, "claude.detail.tabs.hit.4"));
+        DOCTEST_CHECK(click(ui, "claude.detail.tab.4.hit"));
     }
     {
         eui::Ui ui;
@@ -2825,9 +2827,9 @@ REGISTER_TEST(claude_ui_form_basic_single_column_geometry,
         const float px = panel->frame.x;
         const float py = panel->frame.y;
 
-        // 弹窗尺寸：760 宽 × 600 高（UAT5：四 tab 恒高，基础页不再 532）
+        // 弹窗尺寸：760 宽 × 540 高（UAT6：最小窗 1000×640 下 540 档不溢出）
         DOCTEST_CHECK(floatEq(panel->frame.width, 760.0f));
-        DOCTEST_CHECK(floatEq(panel->frame.height, 600.0f));
+        DOCTEST_CHECK(floatEq(panel->frame.height, 540.0f));
 
         // 单列纵排：名称行在认证行上方（y=104 < 314）；两标签同 x=28
         const auto* nameLabel = ui.find("claude.form.basic.name.label");
@@ -2876,7 +2878,7 @@ REGISTER_TEST(claude_ui_form_basic_single_column_geometry,
             eui::Ui ui;
             compose(ui, "claude_geo_tab");
             const std::string hit =
-                std::string("claude.form.tabs.hit.") + std::to_string(tab);
+                std::string("claude.form.tabs.") + std::to_string(tab) + ".hit";
             DOCTEST_CHECK(click(ui, hit));
         }
         {
@@ -2885,14 +2887,14 @@ REGISTER_TEST(claude_ui_form_basic_single_column_geometry,
             ui.layout(screen.width, screen.height);
             const auto* panel = ui.find("claude.dialog.form.panel");
             DOCTEST_REQUIRE(panel != nullptr);
-            DOCTEST_CHECK(floatEq(panel->frame.height, 600.0f));
+            DOCTEST_CHECK(floatEq(panel->frame.height, 540.0f));
         }
     }
     // 切回基础页（tab 0）往返：高度恒定（用户口径「切 tab 不跳变」）
     {
         eui::Ui ui;
         compose(ui, "claude_geo_back");
-        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.0"));
+        DOCTEST_CHECK(click(ui, "claude.form.tabs.0.hit"));
     }
     {
         eui::Ui ui;
@@ -2900,7 +2902,7 @@ REGISTER_TEST(claude_ui_form_basic_single_column_geometry,
         ui.layout(screen.width, screen.height);
         const auto* panel = ui.find("claude.dialog.form.panel");
         DOCTEST_REQUIRE(panel != nullptr);
-        DOCTEST_CHECK(floatEq(panel->frame.height, 600.0f));
+        DOCTEST_CHECK(floatEq(panel->frame.height, 540.0f));
     }
 
     mod->onStop();
@@ -3102,7 +3104,7 @@ REGISTER_TEST(claude_ui_fallback_dropdown_edit_persists,
     {
         eui::Ui ui;
         compose(ui, "fb_tab3");
-        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.3"));
+        DOCTEST_CHECK(click(ui, "claude.form.tabs.3.hit"));
     }
     {
         eui::Ui ui;
@@ -3154,7 +3156,7 @@ REGISTER_TEST(claude_ui_fallback_dropdown_edit_persists,
         {   // 重开的表单回到 tab 0，failover 下拉在 tab 3
             eui::Ui ui;
             compose(ui, "fb_e7b2");
-            DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.3"));
+            DOCTEST_CHECK(click(ui, "claude.form.tabs.3.hit"));
         }
         {
             eui::Ui ui;
@@ -3247,7 +3249,7 @@ REGISTER_TEST(claude_ui_advanced_tab_dialect_persists,
     {
         eui::Ui ui;
         compose(ui, "adv_c2");
-        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.3"));
+        DOCTEST_CHECK(click(ui, "claude.form.tabs.3.hit"));
     }
     {
         eui::Ui ui;
@@ -3285,7 +3287,7 @@ REGISTER_TEST(claude_ui_advanced_tab_dialect_persists,
     {
         eui::Ui ui;
         compose(ui, "adv_c6");
-        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.0"));   // 基础页补必填项
+        DOCTEST_CHECK(click(ui, "claude.form.tabs.0.hit"));   // 基础页补必填项
     }
     {
         eui::Ui ui;
@@ -3335,7 +3337,7 @@ REGISTER_TEST(claude_ui_advanced_tab_dialect_persists,
     {
         eui::Ui ui;
         compose(ui, "adv_e2");
-        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.3"));
+        DOCTEST_CHECK(click(ui, "claude.form.tabs.3.hit"));
     }
     {
         eui::Ui ui;
@@ -3368,7 +3370,7 @@ REGISTER_TEST(claude_ui_advanced_tab_dialect_persists,
     {
         eui::Ui ui;
         compose(ui, "adv_e7");
-        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.3"));
+        DOCTEST_CHECK(click(ui, "claude.form.tabs.3.hit"));
     }
     {
         eui::Ui ui;
@@ -3409,7 +3411,7 @@ REGISTER_TEST(claude_ui_advanced_tab_dialect_persists,
         if (clickCardNamed(ui, "方言编辑")) {
             eui::Ui ui2;
             compose(ui2, "adv_k0b");
-            if (click(ui2, "claude.detail.tabs.hit.3")) {
+            if (click(ui2, "claude.detail.tab.3.hit")) {
                 eui::Ui ui3;
                 compose(ui3, "adv_k0c");
                 const auto* dv = ui3.find("claude.field.dialect.value");
@@ -3482,7 +3484,7 @@ REGISTER_TEST(claude_ui_advanced_json_pretty_persisted,
     {
         eui::Ui ui;
         compose(ui, "json_c2");
-        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.3"));
+        DOCTEST_CHECK(click(ui, "claude.form.tabs.3.hit"));
     }
     {
         eui::Ui ui;
@@ -3494,7 +3496,7 @@ REGISTER_TEST(claude_ui_advanced_json_pretty_persisted,
     {
         eui::Ui ui;
         compose(ui, "json_c4");
-        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.0"));
+        DOCTEST_CHECK(click(ui, "claude.form.tabs.0.hit"));
     }
     {
         eui::Ui ui;
@@ -3567,7 +3569,7 @@ REGISTER_TEST(claude_ui_advanced_json_invalid_and_env_key_rejected,
         {
             eui::Ui ui;
             compose(ui, tag);
-            if (!click(ui, "claude.form.tabs.hit.3")) return false;
+            if (!click(ui, "claude.form.tabs.3.hit")) return false;
         }
         return true;
     };
@@ -3575,7 +3577,7 @@ REGISTER_TEST(claude_ui_advanced_json_invalid_and_env_key_rejected,
         {
             eui::Ui ui;
             compose(ui, tag);
-            if (!click(ui, "claude.form.tabs.hit.0")) return false;
+            if (!click(ui, "claude.form.tabs.0.hit")) return false;
         }
         {
             eui::Ui ui;
@@ -3778,7 +3780,7 @@ REGISTER_TEST(claude_ui_json_fullscreen_enter_cover_and_esc,
     {
         eui::Ui ui;
         compose(ui, "fs_a2");
-        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.3"));
+        DOCTEST_CHECK(click(ui, "claude.form.tabs.3.hit"));
     }
     {
         eui::Ui ui;
@@ -3800,16 +3802,16 @@ REGISTER_TEST(claude_ui_json_fullscreen_enter_cover_and_esc,
         DOCTEST_CHECK(ui.find("claude.jsonfs.format.bg") != nullptr);
         const auto* saveBtn = ui.find("claude.jsonfs.apply.bg");
         DOCTEST_REQUIRE(saveBtn != nullptr);
-        const auto* saveText = ui.find("claude.jsonfs.apply.text");
+        const auto* saveText = ui.find("claude.jsonfs.apply.text.normal");
         DOCTEST_REQUIRE(saveText != nullptr);
         DOCTEST_CHECK_EQ(saveText->text, std::string("保存"));
         const auto* discardBtn = ui.find("claude.jsonfs.discard.bg");
         DOCTEST_REQUIRE(discardBtn != nullptr);
-        const auto* discardText = ui.find("claude.jsonfs.discard.text");
+        const auto* discardText = ui.find("claude.jsonfs.discard.text.normal");
         DOCTEST_REQUIRE(discardText != nullptr);
         DOCTEST_CHECK_EQ(discardText->text, std::string("放弃修改"));
         DOCTEST_CHECK(ui.find("claude.jsonfs.done.bg") == nullptr);
-        DOCTEST_CHECK(ui.find("claude.jsonfs.done.text") == nullptr);
+        DOCTEST_CHECK(ui.find("claude.jsonfs.done.text.normal") == nullptr);
         // 按钮行右缘不溢出覆盖层（三键同行：x=28 / 150 / 272，各 110 宽）
         DOCTEST_CHECK(discardBtn->frame.x + discardBtn->frame.width <=
                       screen.width - 27.0f);
@@ -3947,7 +3949,7 @@ REGISTER_TEST(claude_ui_json_fullscreen_buffer_roundtrip_and_error_gate,
         DOCTEST_CHECK(type(ui, "claude.dialog.form.name.hit", "FS往返A"));
         DOCTEST_CHECK(type(ui, "claude.dialog.form.url.hit", "https://fs-a.example.com"));
         DOCTEST_CHECK(type(ui, "claude.dialog.form.key.hit", "sk-ant-fs-a-0001"));
-        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.3"));
+        DOCTEST_CHECK(click(ui, "claude.form.tabs.3.hit"));
     }
     {
         eui::Ui ui;
@@ -4009,7 +4011,7 @@ REGISTER_TEST(claude_ui_json_fullscreen_buffer_roundtrip_and_error_gate,
         DOCTEST_CHECK(type(ui, "claude.dialog.form.name.hit", "FS往返B"));
         DOCTEST_CHECK(type(ui, "claude.dialog.form.url.hit", "https://fs-b.example.com"));
         DOCTEST_CHECK(type(ui, "claude.dialog.form.key.hit", "sk-ant-fs-b-0001"));
-        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.3"));
+        DOCTEST_CHECK(click(ui, "claude.form.tabs.3.hit"));
     }
     {
         eui::Ui ui;
@@ -4066,7 +4068,7 @@ REGISTER_TEST(claude_ui_json_fullscreen_buffer_roundtrip_and_error_gate,
     {
         eui::Ui ui;
         compose(ui, "fs_d3");
-        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.3"));
+        DOCTEST_CHECK(click(ui, "claude.form.tabs.3.hit"));
     }
     {
         eui::Ui ui;
@@ -4141,7 +4143,7 @@ REGISTER_TEST(claude_ui_json_fullscreen_buffer_roundtrip_and_error_gate,
     {
         eui::Ui ui;
         compose(ui, "fs_e2");
-        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.3"));
+        DOCTEST_CHECK(click(ui, "claude.form.tabs.3.hit"));
     }
     {
         eui::Ui ui;
@@ -4265,7 +4267,7 @@ REGISTER_TEST(claude_ui_json_fullscreen_discard_semantics,
         {
             eui::Ui ui;
             compose(ui, "disc_tab3");
-            DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.3"));
+            DOCTEST_CHECK(click(ui, "claude.form.tabs.3.hit"));
         }
         {
             eui::Ui ui;
@@ -4479,7 +4481,7 @@ REGISTER_TEST(claude_ui_json_fullscreen_discard_semantics,
     {
         eui::Ui ui;
         compose(ui, "disc_prec_tab3");
-        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.3"));
+        DOCTEST_CHECK(click(ui, "claude.form.tabs.3.hit"));
     }
     {
         eui::Ui ui;
@@ -4962,7 +4964,7 @@ REGISTER_TEST(claude_module_shared_bind_and_frozen_preview,
     {
         eui::Ui ui;
         compose(ui);
-        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.3"));
+        DOCTEST_CHECK(click(ui, "claude.form.tabs.3.hit"));
     }
     {
         eui::Ui ui;
@@ -4973,7 +4975,7 @@ REGISTER_TEST(claude_module_shared_bind_and_frozen_preview,
         // env 页不再有绑定下拉（迁走后该节点不存在）
         eui::Ui ui2;
         compose(ui2);
-        DOCTEST_CHECK(click(ui2, "claude.form.tabs.hit.2"));
+        DOCTEST_CHECK(click(ui2, "claude.form.tabs.2.hit"));
         eui::Ui ui3;
         compose(ui3);
         DOCTEST_CHECK(ui3.find("claude.form.env.shared.dd.label") == nullptr);
@@ -4984,7 +4986,7 @@ REGISTER_TEST(claude_module_shared_bind_and_frozen_preview,
                          std::string("MY_KEY"));
         eui::Ui ui4;
         compose(ui4);
-        DOCTEST_CHECK(click(ui4, "claude.form.tabs.hit.3"));
+        DOCTEST_CHECK(click(ui4, "claude.form.tabs.3.hit"));
     }
     // 高级配置页拉开绑定下拉 → 选「片段A」→ 提示行出现（片段赢语义明示）
     {
@@ -5042,7 +5044,7 @@ REGISTER_TEST(claude_module_shared_bind_and_frozen_preview,
     {
         eui::Ui ui;
         compose(ui);
-        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.3"));
+        DOCTEST_CHECK(click(ui, "claude.form.tabs.3.hit"));
     }
     {
         eui::Ui ui;
@@ -5739,7 +5741,7 @@ REGISTER_TEST(claude_detail_actions_anchor_four_tabs,
             eui::Ui ui;
             composeAtSize(mod.get(), ui, "claude_anchor", kW, kH);
             DOCTEST_REQUIRE(clickById(
-                ui, "claude.detail.tabs.hit." + std::to_string(tab)));
+                ui, "claude.detail.tab." + std::to_string(tab) + ".hit"));
         }
         eui::Ui ui;
         composeAtSize(mod.get(), ui, "claude_anchor", kW, kH);
@@ -5815,7 +5817,7 @@ REGISTER_TEST(claude_detail_advanced_pane_readonly,
     {
         eui::Ui ui;
         composeAtSize(mod.get(), ui, "adv_d2", kW, kH);
-        DOCTEST_REQUIRE(clickById(ui, "claude.detail.tabs.hit.3"));
+        DOCTEST_REQUIRE(clickById(ui, "claude.detail.tab.3.hit"));
     }
     {
         eui::Ui ui;
@@ -5842,7 +5844,7 @@ REGISTER_TEST(claude_detail_advanced_pane_readonly,
     {
         eui::Ui ui;
         composeAtSize(mod.get(), ui, "adv_d5", kW, kH);
-        DOCTEST_REQUIRE(clickById(ui, "claude.detail.tabs.hit.3"));
+        DOCTEST_REQUIRE(clickById(ui, "claude.detail.tab.3.hit"));
     }
     {
         eui::Ui ui;
@@ -5870,7 +5872,7 @@ REGISTER_TEST(claude_detail_advanced_pane_readonly,
         if (clickCardNamed(ui, "中家")) {
             eui::Ui ui2;
             composeAtSize(mod.get(), ui2, "adv_d8", kW, kH);
-            if (clickById(ui2, "claude.detail.tabs.hit.3")) {
+            if (clickById(ui2, "claude.detail.tab.3.hit")) {
                 eui::Ui ui3;
                 composeAtSize(mod.get(), ui3, "adv_d9", kW, kH);
                 const auto* fallback = ui3.find("claude.field.fallback.value");
@@ -5890,7 +5892,7 @@ REGISTER_TEST(claude_detail_advanced_pane_readonly,
     {
         eui::Ui ui;
         composeAtSize(mod.get(), ui, "adv_d10", kW, kH);
-        DOCTEST_REQUIRE(clickById(ui, "claude.detail.tabs.hit.4"));
+        DOCTEST_REQUIRE(clickById(ui, "claude.detail.tab.4.hit"));
     }
     {
         eui::Ui ui;
@@ -5899,8 +5901,8 @@ REGISTER_TEST(claude_detail_advanced_pane_readonly,
         DOCTEST_CHECK(ui.find("claude.field.dialect.bg") == nullptr);
         DOCTEST_CHECK(ui.find("claude.field.fallback.bg") == nullptr);
         // 页签文字↔索引映射钉：把「高级配置」改插中间即红；只断 pane 元素不断
-        const auto* lab3 = ui.find("claude.detail.tabs.label.3");
-        const auto* lab4 = ui.find("claude.detail.tabs.label.4");
+        const auto* lab3 = ui.find("claude.detail.tab.3.text");
+        const auto* lab4 = ui.find("claude.detail.tab.4.text");
         DOCTEST_REQUIRE(lab3 != nullptr);
         DOCTEST_REQUIRE(lab4 != nullptr);
         DOCTEST_CHECK_EQ(lab3->text, std::string("高级配置"));
@@ -5936,7 +5938,7 @@ REGISTER_TEST(claude_copyconfig_seven_keys_geometry,
     DOCTEST_REQUIRE(run != nullptr);
     const float w0 = row->frame.width;
     // 动作行 4 键，末键（运行）右缘对齐断言据此定宽
-    const float expect = (w0 - 12.0f * 3.0f) / 4.0f;
+    const float expect = (w0 - 8.0f * 3.0f) / 4.0f;
     DOCTEST_CHECK(std::fabs(run->frame.width - expect) < 0.01f);
     // 行右缘对齐：末键右缘 == row 右缘（浮点 0.5px 容差）
     const float rowRight = row->frame.x + row->frame.width;
@@ -5965,26 +5967,26 @@ REGISTER_TEST(claude_calls_rows_by_available_height,
     constexpr float kH = 801.0f;
     eui::Ui ui;
     composeAtSize(mod.get(), ui, "claude_rows", kW, kH);
-    DOCTEST_REQUIRE(clickById(ui, "claude.detail.tabs.hit.4"));
+    DOCTEST_REQUIRE(clickById(ui, "claude.detail.tab.4.hit"));
     eui::Ui ui2;
     composeAtSize(mod.get(), ui2, "claude_rows", kW, kH);
 
-    // 预算：内容框底 = bodyH − 85 − 20；行区 = 内容框底 − 表头底(24) −
-    // 「查看全部」带(8+24)。UAT5 布局重算：行预算 14（原 13）
+    // 预算：内容框底 = bodyH − kActReserve − kActTopGap；行区 = 内容框底 − 表头底(24) −
+    // 「查看全部」带(8+24)。H3 pad 缩小后行预算 16（原 W3.5 首测 17；后续 layout 绅约收一行）
     int drawn = 0;
     while (ui2.find("claude.calls.t." + std::to_string(drawn)) != nullptr) {
         ++drawn;
     }
-    DOCTEST_CHECK_EQ(drawn, 14);
-    DOCTEST_CHECK(ui2.find("claude.calls.t.14") == nullptr);   // 不画越界行
+    DOCTEST_CHECK_EQ(drawn, 17);   // 顶距 24→0（批L 标题顶格）多容一行
+    DOCTEST_CHECK(ui2.find("claude.calls.t.17") == nullptr);   // 不画越界行
 
     // 截断必须有可见表达（与 env 页签同款口径）
     const auto* overflow = ui2.find("claude.calls.overflow");
     DOCTEST_REQUIRE(overflow != nullptr);
-    DOCTEST_CHECK(overflow->text.find("另有 16 条") != std::string::npos);
+    DOCTEST_CHECK(overflow->text.find("另有 13 条") != std::string::npos);
 
     // 行区不越过内容框底：末行底 ≤ 内容框底（真实裁剪下沿）
-    const auto* last = ui2.find("claude.calls.d.13");
+    const auto* last = ui2.find("claude.calls.d.15");
     DOCTEST_REQUIRE(last != nullptr);
     const auto* viewall = ui2.find("claude.calls.viewall.hit");
     DOCTEST_REQUIRE(viewall != nullptr);
@@ -6010,13 +6012,17 @@ REGISTER_TEST(claude_calls_no_rows_when_too_short,
     auto mod = mkmod();
     mod->onStart();
 
-    // 480 高 → bodyH = 480 − 80 − 64 − 16 − 34(引导条) = 286；
-    // 内容框底 = 286 − 85 − 20 = 181；行区 = 181 − 136 − 32 = 13 < 24 → 0 行
+    // 当前几何（padTop=24/spacingLarge=16/kHeaderH=40/kGuideBarH=18/kActReserve=89）
+    // 引导条显示时：380 高 → contentH=380-24=356
+    // bodyH = 356 - 40(headerH) - 16(spacingLarge) - (18+16)(guide) = 266
+    // contentBottom = bodyH - kActReserve - kActTopGap = 266 - 89 - 20 = 157
+    // cellsY = paneY + 24 = 92 + 24 = 116; rowsAvail = 157 - 116 - 32(kViewallBand) = 9
+    // rowsCap = 9/24 = 0 → 不画行、empty 文本底 = 116 + 16(kEmptyH) = 132 < 157 ✓
     eui::Ui ui;
-    composeAtSize(mod.get(), ui, "claude_short", 1000.0f, 480.0f);
-    DOCTEST_REQUIRE(clickById(ui, "claude.detail.tabs.hit.4"));
+    composeAtSize(mod.get(), ui, "claude_short", 1000.0f, 380.0f);
+    DOCTEST_REQUIRE(clickById(ui, "claude.detail.tab.4.hit"));
     eui::Ui ui2;
-    composeAtSize(mod.get(), ui2, "claude_short", 1000.0f, 480.0f);
+    composeAtSize(mod.get(), ui2, "claude_short", 1000.0f, 380.0f);
 
     DOCTEST_CHECK(ui2.find("claude.calls.t.0") == nullptr);   // 不画越界行
     const auto* empty = ui2.find("claude.calls.empty");
@@ -6040,6 +6046,129 @@ REGISTER_TEST(claude_calls_no_rows_when_too_short,
     DOCTEST_REQUIRE(panel != nullptr);
     DOCTEST_CHECK(act->frame.y + act->frame.height <=
                   panel->frame.y + panel->frame.height + 0.5f);
+
+    mod->onStop();
+    cleanupProfileKey(kTestKeychainService, pid);
+    return true;
+})
+
+// H17：最小窗（1000×640）切换器底部按钮双档可见性断言（H3 只覆盖 settings，此用例补切换器）
+// 左列底部三钮（新建/导入配置/从 CC 导入）+ 右列动作区（启用/测试连通/编辑/运行 +
+// 副提示 + 分隔线）都必须完整落在各自面板底之内；640 档与 1000 档都不越界。
+REGISTER_TEST(claude_switch_bottom_buttons_dual_tier,
+              "claude_module: H17 切换器底部按钮双档可见性（1000x640 / 1600x1000）", {
+    TestEnv env;
+    auto p = env.svc->createProfile("底钮", "https://btn.example.com",
+                                    "sk-ant-btn-0001", "m-btn");
+    DOCTEST_REQUIRE(p.isOk());
+    const int64_t pid = p.value().id;
+    DOCTEST_REQUIRE(env.svc->setActiveProfile(pid).isOk());
+
+    auto mod = mkmod();
+    mod->onStart();
+
+    // 两档逐档断言（不可放入 lambda——DOCTEST 宏内 return false 与 void lambda 冲突）
+    // 640 档（最小窗内容高度档）
+    {
+        eui::Ui ui;
+        composeAtSize(mod.get(), ui, "h17_640", 1000.0f, 640.0f);
+        const auto* profilesPanel = ui.find("claude.profiles");
+        const auto* detailPanel = ui.find("claude.detail");
+        DOCTEST_REQUIRE(profilesPanel != nullptr);
+        DOCTEST_REQUIRE(detailPanel != nullptr);
+        const float leftBottom =
+            profilesPanel->frame.y + profilesPanel->frame.height;
+        const float rightBottom =
+            detailPanel->frame.y + detailPanel->frame.height;
+        // 左列三钮完整可见
+        for (const char* id : {"claude.profiles.new",
+                               "claude.profiles.import",
+                               "claude.profiles.import.ccswitch"}) {
+            const auto* btn = ui.find(id);
+            DOCTEST_REQUIRE(btn != nullptr);
+            DOCTEST_CHECK_MESSAGE(
+                btn->frame.y + btn->frame.height <= leftBottom + 0.5f,
+                std::string("640 ") + id + " 越出左列面板底: btn bottom=" +
+                    std::to_string(btn->frame.y + btn->frame.height) +
+                    " panel bottom=" + std::to_string(leftBottom));
+        }
+        // 右列动作区四钮 + 副提示 + 分隔线完整可见
+        for (const char* id : {"claude.act.enable", "claude.act.test",
+                               "claude.act.edit", "claude.act.run"}) {
+            const auto* btn = ui.find(id);
+            DOCTEST_REQUIRE(btn != nullptr);
+            DOCTEST_CHECK_MESSAGE(
+                btn->frame.y + btn->frame.height <= rightBottom + 0.5f,
+                std::string("640 ") + id + " 越出右列面板底: btn bottom=" +
+                    std::to_string(btn->frame.y + btn->frame.height) +
+                    " panel bottom=" + std::to_string(rightBottom));
+        }
+        const auto* hint = ui.find("claude.act.run.hint");
+        const auto* divider = ui.find("claude.act.divider");
+        DOCTEST_REQUIRE(hint != nullptr);
+        DOCTEST_REQUIRE(divider != nullptr);
+        DOCTEST_CHECK(hint->frame.y + hint->frame.height <=
+                      rightBottom + 0.5f);
+        DOCTEST_CHECK(divider->frame.y + divider->frame.height <=
+                      rightBottom + 0.5f);
+        // H17 面板底不得越出页面区（越出即被 app.page 裁掉；修复前实证红：
+        // ①claude.root padding 实参序错位 ②帮助钮 tooltip 排入列布局占 56px）
+        DOCTEST_CHECK_MESSAGE(leftBottom <= 640.0f + 0.5f,
+                              "640 档左列面板底越出页面区: " +
+                                  std::to_string(leftBottom));
+        DOCTEST_CHECK_MESSAGE(rightBottom <= 640.0f + 0.5f,
+                              "640 档右列面板底越出页面区: " +
+                                  std::to_string(rightBottom));
+    }
+
+    // 1000 档（大窗，等比放大后不得越界）
+    {
+        eui::Ui ui;
+        composeAtSize(mod.get(), ui, "h17_1000", 1600.0f, 1000.0f);
+        const auto* profilesPanel = ui.find("claude.profiles");
+        const auto* detailPanel = ui.find("claude.detail");
+        DOCTEST_REQUIRE(profilesPanel != nullptr);
+        DOCTEST_REQUIRE(detailPanel != nullptr);
+        const float leftBottom =
+            profilesPanel->frame.y + profilesPanel->frame.height;
+        const float rightBottom =
+            detailPanel->frame.y + detailPanel->frame.height;
+        for (const char* id : {"claude.profiles.new",
+                               "claude.profiles.import",
+                               "claude.profiles.import.ccswitch"}) {
+            const auto* btn = ui.find(id);
+            DOCTEST_REQUIRE(btn != nullptr);
+            DOCTEST_CHECK_MESSAGE(
+                btn->frame.y + btn->frame.height <= leftBottom + 0.5f,
+                std::string("1000 ") + id + " 越出左列面板底: btn bottom=" +
+                    std::to_string(btn->frame.y + btn->frame.height) +
+                    " panel bottom=" + std::to_string(leftBottom));
+        }
+        for (const char* id : {"claude.act.enable", "claude.act.test",
+                               "claude.act.edit", "claude.act.run"}) {
+            const auto* btn = ui.find(id);
+            DOCTEST_REQUIRE(btn != nullptr);
+            DOCTEST_CHECK_MESSAGE(
+                btn->frame.y + btn->frame.height <= rightBottom + 0.5f,
+                std::string("1000 ") + id + " 越出右列面板底: btn bottom=" +
+                    std::to_string(btn->frame.y + btn->frame.height) +
+                    " panel bottom=" + std::to_string(rightBottom));
+        }
+        const auto* hint = ui.find("claude.act.run.hint");
+        const auto* divider = ui.find("claude.act.divider");
+        DOCTEST_REQUIRE(hint != nullptr);
+        DOCTEST_REQUIRE(divider != nullptr);
+        DOCTEST_CHECK(hint->frame.y + hint->frame.height <=
+                      rightBottom + 0.5f);
+        DOCTEST_CHECK(divider->frame.y + divider->frame.height <=
+                      rightBottom + 0.5f);
+        DOCTEST_CHECK_MESSAGE(leftBottom <= 1000.0f + 0.5f,
+                              "1000 档左列面板底越出页面区: " +
+                                  std::to_string(leftBottom));
+        DOCTEST_CHECK_MESSAGE(rightBottom <= 1000.0f + 0.5f,
+                              "1000 档右列面板底越出页面区: " +
+                                  std::to_string(rightBottom));
+    }
 
     mod->onStop();
     cleanupProfileKey(kTestKeychainService, pid);
@@ -6089,7 +6218,7 @@ REGISTER_TEST(claude_calls_rate_column,
     constexpr float kH = 801.0f;
     eui::Ui ui;
     composeAtSize(mod.get(), ui, "claude_rate", kW, kH);
-    DOCTEST_REQUIRE(clickById(ui, "claude.detail.tabs.hit.4"));
+    DOCTEST_REQUIRE(clickById(ui, "claude.detail.tab.4.hit"));
     eui::Ui ui2;
     composeAtSize(mod.get(), ui2, "claude_rate", kW, kH);
 
@@ -6207,7 +6336,7 @@ REGISTER_TEST(claude_detail_vertical_center_and_viewall_button,
     {
         eui::Ui ui;
         composeAtSize(mod.get(), ui, "claude_center_models", kW, kH);
-        DOCTEST_REQUIRE(clickById(ui, "claude.detail.tabs.hit.1"));
+        DOCTEST_REQUIRE(clickById(ui, "claude.detail.tab.1.hit"));
         eui::Ui ui2;
         composeAtSize(mod.get(), ui2, "claude_center_models", kW, kH);
         int rows = 0;
@@ -6233,7 +6362,7 @@ REGISTER_TEST(claude_detail_vertical_center_and_viewall_button,
     {
         eui::Ui ui;
         composeAtSize(mod.get(), ui, "claude_center_calls", kW, kH);
-        DOCTEST_REQUIRE(clickById(ui, "claude.detail.tabs.hit.4"));
+        DOCTEST_REQUIRE(clickById(ui, "claude.detail.tab.4.hit"));
         eui::Ui ui2;
         composeAtSize(mod.get(), ui2, "claude_center_calls", kW, kH);
         const auto* hit = ui2.find("claude.calls.viewall.hit");
@@ -6293,7 +6422,7 @@ REGISTER_TEST(claude_dialog_pagination_vertical_align,
     {
         eui::Ui ui;
         composeAtSize(mod.get(), ui, "claude_page_align", kW, kH);
-        DOCTEST_REQUIRE(clickById(ui, "claude.detail.tabs.hit.4"));
+        DOCTEST_REQUIRE(clickById(ui, "claude.detail.tab.4.hit"));
     }
     {
         eui::Ui ui;
@@ -6712,7 +6841,7 @@ REGISTER_TEST(claude_env_tab_lists_effective_env_with_source,
 
     eui::Ui ui;
     composeAtSize(mod.get(), ui, "claude_env", 1262.0f, 801.0f);
-    DOCTEST_REQUIRE(clickById(ui, "claude.detail.tabs.hit.2"));
+    DOCTEST_REQUIRE(clickById(ui, "claude.detail.tab.2.hit"));
     eui::Ui ui2;
     composeAtSize(mod.get(), ui2, "claude_env", 1262.0f, 801.0f);
 
@@ -6827,7 +6956,7 @@ REGISTER_TEST(claude_env_tab_no_overlap_and_model_keys_hidden,
     // 100% 档（进程默认）：先点开「环境变量」页签再断言
     eui::Ui ui1;
     composeAtSize(mod.get(), ui1, "claude_env", 1262.0f, 801.0f);
-    DOCTEST_REQUIRE(clickById(ui1, "claude.detail.tabs.hit.2"));
+    DOCTEST_REQUIRE(clickById(ui1, "claude.detail.tab.2.hit"));
     eui::Ui ui2;
     composeAtSize(mod.get(), ui2, "claude_env", 1262.0f, 801.0f);
     const std::string p100 = paneProblem(ui2);
@@ -7278,7 +7407,7 @@ REGISTER_TEST(claude_detail_advanced_key_sources,
     {
         eui::Ui ui;
         compose(ui);
-        DOCTEST_CHECK(click(ui, "claude.detail.tabs.hit.3"));
+        DOCTEST_CHECK(click(ui, "claude.detail.tab.3.hit"));
     }
     {
         eui::Ui ui;
@@ -7334,7 +7463,7 @@ REGISTER_TEST(claude_detail_advanced_key_sources,
     {
         eui::Ui ui;
         compose(ui);
-        DOCTEST_CHECK(click(ui, "claude.detail.tabs.hit.3"));
+        DOCTEST_CHECK(click(ui, "claude.detail.tab.3.hit"));
     }
     {
         eui::Ui ui;
@@ -7364,7 +7493,7 @@ REGISTER_TEST(claude_detail_advanced_key_sources,
         {
             eui::Ui ui;
             compose(ui);
-            DOCTEST_CHECK(click(ui, "claude.detail.tabs.hit.3"));
+            DOCTEST_CHECK(click(ui, "claude.detail.tab.3.hit"));
         }
         {
             eui::Ui ui;
@@ -7436,7 +7565,7 @@ REGISTER_TEST(claude_detail_advanced_key_overflow_within_box,
     {
         eui::Ui ui;
         compose(ui);
-        DOCTEST_CHECK(click(ui, "claude.detail.tabs.hit.3"));
+        DOCTEST_CHECK(click(ui, "claude.detail.tab.3.hit"));
     }
     bool sawKeys = false;
     for (int i = 0; i < 250 && !sawKeys; ++i) {
@@ -7548,7 +7677,7 @@ REGISTER_TEST(claude_advjson_pane_geometry_follows_font_scale,
         eui::Ui ui;
         compose(ui);
         if (!sawTab) {
-            sawTab = click(ui, "claude.detail.tabs.hit.3");
+            sawTab = click(ui, "claude.detail.tab.3.hit");
         }
         sawPane = ui.find("claude.field.dialect.label") != nullptr;
         if (!sawPane) std::this_thread::sleep_for(std::chrono::milliseconds(5));
@@ -7603,7 +7732,7 @@ REGISTER_TEST(claude_advjson_pane_geometry_follows_font_scale,
                    std::to_string(fL->frame.y - dB->frame.y) + " != " +
                    std::to_string(g.fieldH + g.fieldGap);
         }
-        // 标签字号（小字 11×fs，值走 token 13×fs）
+        // 标签字号（小字 11×fs，值走 t.sizes.fontSizeSmall=12×fs）
         if (!near(dL->fontSize, g.labelFs) || !near(fL->fontSize, g.labelFs) ||
             !near(aL->fontSize, g.labelFs)) {
             return "标签字号 != " + std::to_string(g.labelFs);
@@ -7681,7 +7810,7 @@ REGISTER_TEST(claude_advjson_pane_geometry_follows_font_scale,
         const std::string msg = geomProblem(ui, Geom{
             /*labelH*/14.0f, /*labelGap*/18.0f, /*fieldH*/28.0f, /*fieldGap*/10.0f,
             /*keyRowH*/28.0f, /*keyPitch*/34.0f, /*noteH*/18.0f, /*overflowH*/18.0f,
-            /*labelFs*/11.0f, /*keyFs*/12.0f, /*valueFs*/13.0f}, &drawn100);
+            /*labelFs*/11.0f, /*keyFs*/12.0f, /*valueFs*/12.0f}, &drawn100);
         DOCTEST_CHECK_MESSAGE(msg.empty(), msg);
     }
     // 85% 档（kFontPresets[0]，本次修的真机风险档）：钉值见上注释
@@ -7692,7 +7821,7 @@ REGISTER_TEST(claude_advjson_pane_geometry_follows_font_scale,
         const std::string msg = geomProblem(ui, Geom{
             /*labelH*/12.0f, /*labelGap*/15.0f, /*fieldH*/24.0f, /*fieldGap*/9.0f,
             /*keyRowH*/24.0f, /*keyPitch*/29.0f, /*noteH*/15.0f, /*overflowH*/15.0f,
-            /*labelFs*/9.35f, /*keyFs*/10.2f, /*valueFs*/11.05f}, &drawn85);
+            /*labelFs*/9.35f, /*keyFs*/10.2f, /*valueFs*/10.2f}, &drawn85);
         DOCTEST_CHECK_MESSAGE(msg.empty(), msg);
     }
     // 行数预算随派生行距自然跟随：85% 档行距 29 < 100% 档 34，同一可用高下画得
@@ -8010,7 +8139,7 @@ REGISTER_TEST(claude_ui_model_one_m_switch,
     {
         eui::Ui ui;
         compose(ui);
-        DOCTEST_CHECK(click(ui, "claude.detail.tabs.hit.1"));
+        DOCTEST_CHECK(click(ui, "claude.detail.tab.1.hit"));
     }
     {
         eui::Ui ui;
@@ -8048,12 +8177,12 @@ REGISTER_TEST(claude_ui_model_one_m_switch,
             trackHaiku->color.b == trackDef->color.b &&
             trackHaiku->color.a == trackDef->color.a;
         DOCTEST_CHECK_FALSE(sameColor);
-        //（UAT5 米黄收尾）禁用 knob 换 WeChat 白（cardBg，与启用态白 knob 同源），
+        //（UAT5 米黄收尾）禁用 knob 换 WeChat 白（surface，与启用态白 knob 同源），
         // 不再走暖橙 surfaceElevated；「禁用」语义仍由 textDisabled 深灰轨道承担
         const auto& wc = core::theme::current().colors;
-        DOCTEST_CHECK(knobHaiku->color.r == wc.wechat.cardBg.r &&
-                      knobHaiku->color.g == wc.wechat.cardBg.g &&
-                      knobHaiku->color.b == wc.wechat.cardBg.b);
+        DOCTEST_CHECK(knobHaiku->color.r == wc.surface.r &&
+                      knobHaiku->color.g == wc.surface.g &&
+                      knobHaiku->color.b == wc.surface.b);
         DOCTEST_CHECK(!(knobHaiku->color.r == wc.surfaceElevated.r &&
                         knobHaiku->color.g == wc.surfaceElevated.g &&
                         knobHaiku->color.b == wc.surfaceElevated.b));
@@ -8163,7 +8292,7 @@ REGISTER_TEST(claude_ui_form_one_m_normalize_on_save,
     {
         eui::Ui ui;
         compose(ui);
-        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.1"));   // 模型映射页
+        DOCTEST_CHECK(click(ui, "claude.form.tabs.1.hit"));   // 模型映射页
     }
     // 手输：def 小写标记（支持→规范化）/ haiku 大写标记（不支持→剥离）/
     //       opus 无标记（原样）
@@ -8249,7 +8378,7 @@ REGISTER_TEST(claude_keychain_backfill_one_shot,
 })
 
 // UAT4 布局自适应（用户真机反馈：布局应随窗宽伸缩）
-// 左栏 leftW = clamp(contentW×0.39, 320, 460)，替代固定 400。防两件事故：
+// 左栏固定 240px（S3.4），替代旧 clamp(0.39,320,460)。防两件事故：
 //   ① 最小窗 1000（contentW=712）下右栏只剩 296，详情面板放不下；
 //   ② 右栏宽不随窗宽变（默认窗起宽窗大量空白）。
 // 0.39 = 400/1024：默认窗 1312 下与旧固定 400 几何等价（零回归锚）。
@@ -8258,12 +8387,12 @@ REGISTER_TEST(claude_module_left_pane_adaptive_width,
               "claude_module: 左栏 clamp(0.39,320,460) 自适应 + 四档右栏 ≥350（headless）", {
     module::claude::ClaudeService::setGlobal(nullptr);
     auto mod = mkmod();
-    // 模块可见屏宽 = 窗宽 − 侧栏 208（core::windowToCompose 口径，test_router 同源）
+    // 左栏固定 240px（S3.4），右栏 flex 自适应；模块可见屏宽 = 窗宽 − 侧栏 208
     const struct { float winW; float expLeftW; } kCases[] = {
-        {1000.0f, 320.0f},    // contentW 712 → 277.68 触下限 320；右栏 376
-        {1200.0f, 355.68f},   // contentW 912 → 912×0.39；右栏 540.32
-        {1312.0f, 399.36f},   // contentW 1024 → ≈400（旧固定值）；右栏 608.64
-        {1600.0f, 460.0f},    // contentW 1312 → 511.68 触上限 460；右栏 836
+        {1000.0f, 240.0f},
+        {1200.0f, 240.0f},
+        {1312.0f, 240.0f},
+        {1600.0f, 240.0f},
     };
     for (const auto& c : kCases) {
         eui::Screen screen{c.winW - 208.0f, 1000.0f};
@@ -8282,7 +8411,7 @@ REGISTER_TEST(claude_module_left_pane_adaptive_width,
             "窗 " + std::to_string(c.winW) + " 左栏宽 " +
                 std::to_string(left->frame.width) + " 期望 " +
                 std::to_string(c.expLeftW));
-        const float contentW = screen.width - 80.0f;   // pad 40×2
+        const float contentW = screen.width - 64.0f;   // padSide 32×2
         const float expRightW = contentW - c.expLeftW - 16.0f;   // gap 16
         DOCTEST_CHECK(floatEq(right->frame.width, expRightW));
         DOCTEST_CHECK_MESSAGE(right->frame.width >= 350.0f,
@@ -8296,10 +8425,10 @@ REGISTER_TEST(claude_module_left_pane_adaptive_width,
 
 // ── UAT5 批：Profile 卡选中「绿圈白勾」/ URL 省略号 / 表单与详情米黄清零 / 未激活徽章删除 ──
 
-// UAT5：列表选中态改绿圈白勾——旧 2px 左竖线删（唯一选中指示），未选卡不画圈，
-// 点另一卡勾圈跟随移动；选中底色浅灰 selectedBg 保留。
+// W3-B4：选中态 3px 左 accent 竖线（替代绿圈白勾）；未选卡不画 accent，
+// 点另一卡 accent 跟随移动；选中底色浅灰 primarySoftBg 保留。
 REGISTER_TEST(claude_profile_selection_check_badge,
-              "claude_module: 选中卡绿圈白勾徽标（未选不画/跟随切换/左竖线已删）", {
+              "claude_module: 选中卡 3px accent 左竖线（未选不画/跟随切换/旧绿圈已删）", {
     TestEnv env;
     auto a = env.svc->createProfile("勾圈A", "https://a.example.com",
                                     "sk-ant-chk-0001", "");
@@ -8330,16 +8459,16 @@ REGISTER_TEST(claude_profile_selection_check_badge,
     };
     const auto& t = core::theme::current();
 
-    // 初帧：无显式选中 → 两卡都不画勾圈；旧左竖线已删
+    // 初帧：无显式选中 → 两卡都不画 accent；旧 sel.accent 已删
     {
         eui::Ui ui;
         compose(ui, "chk_init");
-        DOCTEST_CHECK(ui.find("claude.profile.0.check") == nullptr);
-        DOCTEST_CHECK(ui.find("claude.profile.1.check") == nullptr);
+        DOCTEST_CHECK(ui.find("claude.profile.0.accent") == nullptr);
+        DOCTEST_CHECK(ui.find("claude.profile.1.accent") == nullptr);
         DOCTEST_CHECK(ui.find("claude.profile.0.sel.accent") == nullptr);
         DOCTEST_CHECK(ui.find("claude.profile.1.sel.accent") == nullptr);
     }
-    // 点卡 0 → 勾圈落卡 0（绿圈 + 白勾字色 + 浅灰选中底）；卡 1 无圈
+    // 点卡 0 → accent 落卡 0（3px 左竖线 + 浅灰选中底）；卡 1 无 accent
     {
         eui::Ui ui;
         compose(ui, "chk_click0");
@@ -8349,24 +8478,17 @@ REGISTER_TEST(claude_profile_selection_check_badge,
         eui::Ui ui;
         compose(ui, "chk_on0");
         ui.layout(screen.width, screen.height);  // frame 需显式布局
-        const auto* c0 = ui.find("claude.profile.0.check");
-        const auto* i0 = ui.find("claude.profile.0.check.icon");
+        const auto* c0 = ui.find("claude.profile.0.accent");
         const auto* bg0 = ui.find("claude.profile.0.bg");
         DOCTEST_REQUIRE(c0 != nullptr);
-        DOCTEST_REQUIRE(i0 != nullptr);
         DOCTEST_REQUIRE(bg0 != nullptr);
-        DOCTEST_CHECK(sameColor(c0->color, t.colors.wechat.primary));
-        DOCTEST_CHECK(sameColor(i0->color, t.colors.wechat.onPrimary));
-        DOCTEST_CHECK(sameColor(bg0->color, t.colors.wechat.selectedBg));
-        // 圈在卡右缘垂直居中（56 高卡，26px 圈 y+15..y+41）
-        DOCTEST_CHECK(c0->frame.y >= bg0->frame.y + 14.5f);
-        DOCTEST_CHECK(c0->frame.y + c0->frame.height <=
-                      bg0->frame.y + bg0->frame.height - 14.5f + 0.5f);
-        DOCTEST_CHECK(c0->frame.x + c0->frame.width <=
-                      bg0->frame.x + bg0->frame.width + 0.5f);
-        DOCTEST_CHECK(ui.find("claude.profile.1.check") == nullptr);
+        DOCTEST_CHECK(sameColor(c0->color, t.colors.primary));
+        DOCTEST_CHECK(sameColor(bg0->color, t.colors.primarySoftBg));
+        // 竖线左缘 3px 全卡高
+        DOCTEST_CHECK(floatEq(c0->frame.width, 3.0f));
+        DOCTEST_CHECK(ui.find("claude.profile.1.accent") == nullptr);
     }
-    // 点卡 1 → 勾圈跟随移动（卡 0 失圈、卡 1 得圈）
+    // 点卡 1 → accent 跟随移动（卡 0 失 accent、卡 1 得 accent）
     {
         eui::Ui ui;
         compose(ui, "chk_click1");
@@ -8375,10 +8497,10 @@ REGISTER_TEST(claude_profile_selection_check_badge,
     {
         eui::Ui ui;
         compose(ui, "chk_on1");
-        const auto* c1 = ui.find("claude.profile.1.check");
+        const auto* c1 = ui.find("claude.profile.1.accent");
         DOCTEST_REQUIRE(c1 != nullptr);
-        DOCTEST_CHECK(sameColor(c1->color, t.colors.wechat.primary));
-        DOCTEST_CHECK(ui.find("claude.profile.0.check") == nullptr);
+        DOCTEST_CHECK(sameColor(c1->color, t.colors.primary));
+        DOCTEST_CHECK(ui.find("claude.profile.0.accent") == nullptr);
     }
 
     mod->onStop();
@@ -8407,14 +8529,14 @@ REGISTER_TEST(claude_profile_switch_confirm_dialog,
         ui.end();
         ui.layout(screen.width, screen.height);
     };
-    // 初帧：无选中 → 两卡都无勾圈
+    // 初帧：无选中 → 两卡都无 accent
     {
         eui::Ui ui;
         compose(ui, "dlg_init");
-        DOCTEST_CHECK(ui.find("claude.profile.0.check") == nullptr);
-        DOCTEST_CHECK(ui.find("claude.profile.1.check") == nullptr);
+        DOCTEST_CHECK(ui.find("claude.profile.0.accent") == nullptr);
+        DOCTEST_CHECK(ui.find("claude.profile.1.accent") == nullptr);
     }
-    // 点卡 A → 弹窗出现；卡 A 勾圈未出现（确认前不切）
+    // 点卡 A → 弹窗出现；卡 A accent 未出现（确认前不切）
     {
         eui::Ui ui;
         compose(ui, "dlg_clickA");
@@ -8424,9 +8546,9 @@ REGISTER_TEST(claude_profile_switch_confirm_dialog,
         eui::Ui ui;
         compose(ui, "dlg_open");
         DOCTEST_CHECK(ui.find("claude.dialog.switch") != nullptr);   // 对话框节点常驻（组件无条件创建），开/关由 open 态控
-        DOCTEST_CHECK(ui.find("claude.profile.0.check") == nullptr);  // 确认前不渲染勾圈
+        DOCTEST_CHECK(ui.find("claude.profile.0.accent") == nullptr);  // 确认前不渲染 accent
     }
-    // 点取消 → 弹窗关闭；卡 A 勾圈仍未出现（选择未变）
+    // 点取消 → 弹窗关闭；卡 A accent 仍未出现（选择未变）
     {
         eui::Ui ui;
         compose(ui, "dlg_cancel");
@@ -8436,9 +8558,9 @@ REGISTER_TEST(claude_profile_switch_confirm_dialog,
         eui::Ui ui;
         compose(ui, "dlg_closed");
         DOCTEST_CHECK(ui.find("claude.dialog.switch") != nullptr);   // 节点常驻，取消后 open 态为 false
-        DOCTEST_CHECK(ui.find("claude.profile.0.check") == nullptr);
+        DOCTEST_CHECK(ui.find("claude.profile.0.accent") == nullptr);
     }
-    // 再点卡 A + 确认 → 勾圈落到卡 A
+    // 再点卡 A + 确认 → accent 落到卡 A
     {
         eui::Ui ui;
         compose(ui, "dlg_clickA2");
@@ -8453,10 +8575,10 @@ REGISTER_TEST(claude_profile_switch_confirm_dialog,
         eui::Ui ui;
         compose(ui, "dlg_confirmed");
         DOCTEST_CHECK(ui.find("claude.dialog.switch") != nullptr);   // 节点常驻，确认后 open 态回 false
-        DOCTEST_CHECK(ui.find("claude.profile.0.check") != nullptr);
-        DOCTEST_CHECK(ui.find("claude.profile.1.check") == nullptr);
+        DOCTEST_CHECK(ui.find("claude.profile.0.accent") != nullptr);
+        DOCTEST_CHECK(ui.find("claude.profile.1.accent") == nullptr);
     }
-    // 点已选卡 A（selectedId_==idA）→ 无弹窗、勾圈不变
+    // 点已选卡 A（selectedId_==idA）→ 无弹窗、accent 不变
     {
         eui::Ui ui;
         compose(ui, "dlg_sameA");
@@ -8466,9 +8588,9 @@ REGISTER_TEST(claude_profile_switch_confirm_dialog,
         eui::Ui ui;
         compose(ui, "dlg_noop");
         DOCTEST_CHECK(ui.find("claude.dialog.switch") != nullptr);   // 节点常驻，点已选卡不弹窗
-        DOCTEST_CHECK(ui.find("claude.profile.0.check") != nullptr);
+        DOCTEST_CHECK(ui.find("claude.profile.0.accent") != nullptr);
     }
-    // 点卡 B + 确认 → 勾圈移到卡 B
+    // 点卡 B + 确认 → accent 移到卡 B
     {
         eui::Ui ui;
         compose(ui, "dlg_clickB");
@@ -8482,8 +8604,8 @@ REGISTER_TEST(claude_profile_switch_confirm_dialog,
     {
         eui::Ui ui;
         compose(ui, "dlg_onB");
-        DOCTEST_CHECK(ui.find("claude.profile.0.check") == nullptr);
-        DOCTEST_CHECK(ui.find("claude.profile.1.check") != nullptr);
+        DOCTEST_CHECK(ui.find("claude.profile.0.accent") == nullptr);
+        DOCTEST_CHECK(ui.find("claude.profile.1.accent") != nullptr);
     }
 
     mod->onStop();
@@ -8493,8 +8615,8 @@ REGISTER_TEST(claude_profile_switch_confirm_dialog,
 })
 
 // UAT5 米黄清理：表单 env/高级配置 tab 与全屏编辑覆盖层的输入面/按钮全量换
-// WeChat 令牌——输入底 == wechat.cardBg、工具钮 == wechat.secondaryButtonBg、
-// 主动作 == wechat.primary；反向断言锁死暖橙 surfaceElevated/legacy primary。
+// WeChat 令牌——输入底 == surface、工具钮 == hover、
+// 主动作 == primary；反向断言锁死暖橙 surfaceElevated/legacy primary。
 REGISTER_TEST(claude_form_wechat_colors,
               "claude_module: 表单/全屏编辑输入面与按钮 WeChat 令牌锁死（反暖橙）", {
     TestEnv env;
@@ -8525,8 +8647,11 @@ REGISTER_TEST(claude_form_wechat_colors,
                std::fabs(x.b - y.b) < 0.01f;
     };
     const auto& t = core::theme::current();
+    // Danger 变体的底色来自传给 .theme() 的组件令牌（componentTokensWeChat），
+    // 该映射未覆写 error/success/warning/info 槽——暗色下组件 error 仍是
+    // ThemeColorTokens 默认 #EF4444，与 t.colors.error（暗色 #F87171）非同值。
+    const auto wcTokens = core::theme::componentTokensWeChat(t);
     const eui::Color warmSurface = t.colors.surfaceElevated;
-    const eui::Color warmPrimary = t.colors.primary;
 
     // 开新建表单 → env 页加一行变量
     {
@@ -8537,7 +8662,7 @@ REGISTER_TEST(claude_form_wechat_colors,
     {
         eui::Ui ui;
         compose(ui, "wc_tab2");
-        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.2"));
+        DOCTEST_CHECK(click(ui, "claude.form.tabs.2.hit"));
     }
     {
         eui::Ui ui;
@@ -8549,19 +8674,20 @@ REGISTER_TEST(claude_form_wechat_colors,
         compose(ui, "wc_env");
         DOCTEST_REQUIRE(ui.find("claude.form.env.row.0.key.hit") != nullptr);
         DOCTEST_REQUIRE(ui.find("claude.form.import.text.hit") != nullptr);
-        // env 页：键/值输入底 == wechat 白系；删除/添加/解析钮 == WeChat Secondary
+        // env 页（W4 批2）：键/值输入底 == 白；删除钮 = Danger Ghost 浅红底（error 20%）
+        // 添加钮 = Outline 白底绿边；解析钮 == WeChat Secondary
         DOCTEST_CHECK(sameColor(colorOf(ui, "claude.form.env.row.0.key.hit"),
-                                t.colors.wechat.cardBg));
+                                t.colors.surface));
         DOCTEST_CHECK(sameColor(colorOf(ui, "claude.form.env.row.0.value.hit"),
-                                t.colors.wechat.cardBg));
+                                t.colors.surface));
         DOCTEST_CHECK(sameColor(colorOf(ui, "claude.form.env.row.0.del.bg"),
-                                t.colors.wechat.secondaryButtonBg));
+                                wcTokens.error));   // S2.1 Danger 默认底 = 组件 error 20%（RGB 同组件 error）
         DOCTEST_CHECK(sameColor(colorOf(ui, "claude.form.env.add.bg"),
-                                t.colors.wechat.secondaryButtonBg));
+                                t.colors.surface)); // S2.1 Outline 默认底 = surface
         DOCTEST_CHECK(sameColor(colorOf(ui, "claude.form.import.parse.bg"),
-                                t.colors.wechat.secondaryButtonBg));
+                                t.colors.hover));
         DOCTEST_CHECK(sameColor(colorOf(ui, "claude.form.import.text.hit"),
-                                t.colors.wechat.cardBg));
+                                t.colors.surface));
         // 导入区标题同步「从 CC」口径
         const auto* importLabel = ui.find("claude.form.import.label");
         DOCTEST_REQUIRE(importLabel != nullptr);
@@ -8577,19 +8703,19 @@ REGISTER_TEST(claude_form_wechat_colors,
     {
         eui::Ui ui;
         compose(ui, "wc_tab3");
-        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.3"));
+        DOCTEST_CHECK(click(ui, "claude.form.tabs.3.hit"));
     }
     {
         eui::Ui ui;
         compose(ui, "wc_adv");
         DOCTEST_REQUIRE(ui.find("claude.form.advanced.json.hit") != nullptr);
         DOCTEST_CHECK(sameColor(colorOf(ui, "claude.form.advanced.json.hit"),
-                                t.colors.wechat.cardBg));
+                                t.colors.surface));
         DOCTEST_CHECK(sameColor(
             colorOf(ui, "claude.form.advanced.json.format.bg"),
-            t.colors.wechat.secondaryButtonBg));
+            t.colors.hover));
         DOCTEST_CHECK(sameColor(colorOf(ui, "claude.form.advanced.json.fs.bg"),
-                                t.colors.wechat.secondaryButtonBg));
+                                t.colors.hover));
         DOCTEST_CHECK(!sameColor(
             colorOf(ui, "claude.form.advanced.json.format.bg"), warmSurface));
         // 进全屏编辑
@@ -8599,20 +8725,18 @@ REGISTER_TEST(claude_form_wechat_colors,
         eui::Ui ui;
         compose(ui, "wc_jsonfs");
         DOCTEST_REQUIRE(ui.find("claude.jsonfs.editor.hit") != nullptr);
-        // 全屏编辑视图：整页底 pageBg、编辑器底白系、保存绿主钮、格式化/放弃 Secondary
+        // 全屏编辑视图：整页底 background、编辑器底白系、保存绿主钮、格式化/放弃 Secondary
         DOCTEST_CHECK(sameColor(colorOf(ui, "claude.jsonfs.bg"),
-                                t.colors.wechat.pageBg));
+                                t.colors.background));
         DOCTEST_CHECK(sameColor(colorOf(ui, "claude.jsonfs.editor.hit"),
-                                t.colors.wechat.cardBg));
+                                t.colors.surface));
         DOCTEST_CHECK(sameColor(colorOf(ui, "claude.jsonfs.apply.bg"),
-                                t.colors.wechat.primary));
+                                t.colors.primary));
         DOCTEST_CHECK(sameColor(colorOf(ui, "claude.jsonfs.format.bg"),
-                                t.colors.wechat.secondaryButtonBg));
+                                t.colors.hover));
         DOCTEST_CHECK(sameColor(colorOf(ui, "claude.jsonfs.discard.bg"),
-                                t.colors.wechat.secondaryButtonBg));
+                                t.colors.hover));
         DOCTEST_CHECK(!sameColor(colorOf(ui, "claude.jsonfs.bg"), warmSurface));
-        DOCTEST_CHECK(!sameColor(colorOf(ui, "claude.jsonfs.apply.bg"),
-                                 warmPrimary));
     }
 
     mod->onStop();
@@ -8682,25 +8806,25 @@ REGISTER_TEST(claude_detail_wechat_and_no_inactive_badge,
         DOCTEST_CHECK(ui.find("claude.field.name.inactive.bg") == nullptr);
         DOCTEST_CHECK(ui.find("claude.field.name.value") != nullptr);
     }
-    // 环境变量 pane：行底 == wechat.cardBg（原暖橙 surfaceElevated 行）
+    // 环境变量 pane：行底 == surface（原暖橙 surfaceElevated 行）
     {
         eui::Ui ui;
         compose(ui, "dt_tab2");
-        DOCTEST_CHECK(click(ui, "claude.detail.tabs.hit.2"));
+        DOCTEST_CHECK(click(ui, "claude.detail.tab.2.hit"));
     }
     {
         eui::Ui ui;
         compose(ui, "dt_env");
         const auto* rowBg = ui.find("claude.env.row.bg.0");
         DOCTEST_REQUIRE(rowBg != nullptr);
-        DOCTEST_CHECK(sameColor(rowBg->color, t.colors.wechat.cardBg));
+        DOCTEST_CHECK(sameColor(rowBg->color, t.colors.surface));
         DOCTEST_CHECK(!sameColor(rowBg->color, t.colors.surfaceElevated));
     }
-    // 高级配置 pane：生效方言/备用 Profile 字段底 == cardBg
+    // 高级配置 pane：生效方言/备用 Profile 字段底 == surface
     {
         eui::Ui ui;
         compose(ui, "dt_tab3");
-        DOCTEST_CHECK(click(ui, "claude.detail.tabs.hit.3"));
+        DOCTEST_CHECK(click(ui, "claude.detail.tab.3.hit"));
     }
     {
         eui::Ui ui;
@@ -8709,14 +8833,14 @@ REGISTER_TEST(claude_detail_wechat_and_no_inactive_badge,
         const auto* fbBg = ui.find("claude.field.fallback.bg");
         DOCTEST_REQUIRE(dialectBg != nullptr);
         DOCTEST_REQUIRE(fbBg != nullptr);
-        DOCTEST_CHECK(sameColor(dialectBg->color, t.colors.wechat.cardBg));
-        DOCTEST_CHECK(sameColor(fbBg->color, t.colors.wechat.cardBg));
+        DOCTEST_CHECK(sameColor(dialectBg->color, t.colors.surface));
+        DOCTEST_CHECK(sameColor(fbBg->color, t.colors.surface));
     }
     // 最近调用 pane：「查看全部」钮底 == WeChat Secondary
     {
         eui::Ui ui;
         compose(ui, "dt_tab4");
-        DOCTEST_CHECK(click(ui, "claude.detail.tabs.hit.4"));
+        DOCTEST_CHECK(click(ui, "claude.detail.tab.4.hit"));
     }
     {
         eui::Ui ui;
@@ -8724,7 +8848,7 @@ REGISTER_TEST(claude_detail_wechat_and_no_inactive_badge,
         const auto* viewall = ui.find("claude.calls.viewall.hit");
         DOCTEST_REQUIRE(viewall != nullptr);
         DOCTEST_CHECK(sameColor(viewall->color,
-                                t.colors.wechat.secondaryButtonBg));
+                                t.colors.hover));
         DOCTEST_CHECK(!sameColor(viewall->color, t.colors.surfaceElevated));
         // 点「查看全部」开调用记录弹窗（UAT5 米黄收尾：底部三钮也要过色锁）
         DOCTEST_CHECK(click(ui, "claude.calls.viewall.hit"));
@@ -8739,9 +8863,9 @@ REGISTER_TEST(claude_detail_wechat_and_no_inactive_badge,
         DOCTEST_REQUIRE(prevBg != nullptr);
         DOCTEST_REQUIRE(nextBg != nullptr);
         DOCTEST_REQUIRE(closeBg != nullptr);
-        DOCTEST_CHECK(sameColor(prevBg->color, t.colors.wechat.secondaryButtonBg));
-        DOCTEST_CHECK(sameColor(nextBg->color, t.colors.wechat.secondaryButtonBg));
-        DOCTEST_CHECK(sameColor(closeBg->color, t.colors.wechat.secondaryButtonBg));
+        DOCTEST_CHECK(sameColor(prevBg->color, t.colors.hover));
+        DOCTEST_CHECK(sameColor(nextBg->color, t.colors.hover));
+        DOCTEST_CHECK(sameColor(closeBg->color, t.colors.hover));
         DOCTEST_CHECK(!sameColor(closeBg->color, t.colors.surfaceElevated));
     }
 
@@ -8811,13 +8935,13 @@ REGISTER_TEST(claude_shared_dialog_wechat_colors,
         // 格式化/删除/取消 == WeChat Secondary；保存 == WeChat Primary 绿
         DOCTEST_CHECK(sameColor(
             colorOf(ui, "claude.dialog.shared.json.format.bg"),
-            t.colors.wechat.secondaryButtonBg));
+            t.colors.hover));
         DOCTEST_CHECK(sameColor(colorOf(ui, "claude.dialog.shared.delete.bg"),
-                                t.colors.wechat.secondaryButtonBg));
+                                t.colors.hover));
         DOCTEST_CHECK(sameColor(colorOf(ui, "claude.dialog.shared.cancel.bg"),
-                                t.colors.wechat.secondaryButtonBg));
+                                t.colors.hover));
         DOCTEST_CHECK(sameColor(colorOf(ui, "claude.dialog.shared.confirm.bg"),
-                                t.colors.wechat.primary));
+                                t.colors.primary));
         // 反向：不得命中暖橙 surfaceElevated / legacy primary
         DOCTEST_CHECK(!sameColor(
             colorOf(ui, "claude.dialog.shared.json.format.bg"),
@@ -8825,12 +8949,87 @@ REGISTER_TEST(claude_shared_dialog_wechat_colors,
         DOCTEST_CHECK(!sameColor(
             colorOf(ui, "claude.dialog.shared.cancel.bg"),
             t.colors.surfaceElevated));
-        DOCTEST_CHECK(!sameColor(
-            colorOf(ui, "claude.dialog.shared.confirm.bg"),
-            t.colors.primary));
     }
 
     mod->onStop();
     cleanupProfileKey(kTestKeychainService, p.value().id);
+    return true;
+})
+
+// F1 弹窗防回潮：P4 表单 / P8 编辑 env / P5 删除确认 / P6 调用记录 / P9 CC 导入
+// 逐弹窗「全元素在框内」+ 标题锚（y=16 / fontSize=20，规格 S2.4）。回退即红：
+// 任一可见子孙 frame 越出 panel（>0.5px）、标题 y 偏移≠16、标题字号≠20。
+REGISTER_TEST(claude_ui_dialog_frame_containment,
+              "claude_ui: P4/P8/P5/P6/P9 弹窗全元素在框内 + 标题 y=16/字号 20（防回潮）", {
+    TestEnv env;
+    auto mod = mkmod();
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    eui::Ui ui;
+    int n = 0;
+    auto frame = [&]() {
+        ui.begin("claude_df" + std::to_string(n++));
+        mod->compose(ui, screen);
+        ui.end();
+        ui.layout(screen.width, screen.height);
+    };
+    auto click = [&](const char* id) -> bool {
+        auto* b = ui.find(id);
+        DOCTEST_REQUIRE(b != nullptr);
+        DOCTEST_REQUIRE(b->onClick != nullptr);
+        b->onClick();
+        frame();
+        return true;
+    };
+    auto check = [&](const char* panelId, const char* titleId, const char* tag) -> bool {
+        std::string v = dialog_frame::allInside(ui, panelId);
+        DOCTEST_CHECK_MESSAGE(v.empty(), std::string(tag) + " 全元素在框内: " + v);
+        v = dialog_frame::titleAnchor(ui, panelId, titleId);
+        DOCTEST_CHECK_MESSAGE(v.empty(), std::string(tag) + " 标题锚: " + v);
+            return true;
+    };
+
+    // P5 前置：一条可删 Profile
+    auto prof = env.svc->createProfile("框内档案", "https://frame.example.com",
+                                       "sk-ant-frame-00000001", "m");
+    DOCTEST_REQUIRE(prof.isOk());
+
+    // P4 新建 Profile 表单（基础 tab）
+    frame();
+    DOCTEST_CHECK(click("claude.profiles.new.bg"));
+    DOCTEST_CHECK(check("claude.dialog.form.panel", "claude.dialog.form.title", "P4 表单"));
+
+    // P8 高级 env 页（同 panel，切 tab 后内容面不同）
+    DOCTEST_CHECK(click("claude.form.tabs.2.hit"));
+    DOCTEST_CHECK(check("claude.dialog.form.panel", "claude.dialog.form.title", "P8 编辑 env"));
+    click("claude.dialog.form.backdrop");   // 关表单
+
+    // P5 删除确认（P4 族）：选中行 → 右键菜单「删除」
+    DOCTEST_CHECK(click("claude.profile.0.bg"));
+    {
+        auto* wrap = ui.find("claude.profile.0.wrap");
+        DOCTEST_REQUIRE(wrap != nullptr);
+        DOCTEST_REQUIRE(wrap->onContextMenu != nullptr);
+        eui::PointerEvent pe;
+        eui::Rect rect;
+        wrap->onContextMenu(pe, rect);
+        frame();
+    }
+    DOCTEST_CHECK(click("claude.list.ctx.level.0.item.3"));
+    DOCTEST_CHECK(check("claude.dialog.delete.panel", "claude.dialog.delete.title", "P5 删除确认"));
+    click("claude.dialog.delete.backdrop");   // 取消不删
+
+    // P6 调用记录（详情第 5 页签 → 查看全部；零日志也可开）
+    DOCTEST_CHECK(click("claude.detail.tab.4.hit"));
+    DOCTEST_CHECK(click("claude.calls.viewall.hit"));
+    DOCTEST_CHECK(check("claude.dialog.calls.panel", "claude.dialog.calls.title", "P6 调用记录"));
+    DOCTEST_CHECK(click("claude.dialog.calls.backdrop"));
+
+    // P9 CC 导入
+    DOCTEST_CHECK(click("claude.profiles.import.ccswitch.bg"));
+    DOCTEST_CHECK(check("claude.dialog.ccswitch.panel", "claude.dialog.ccswitch.title", "P9 CC 导入"));
+
+    mod->onStop();
     return true;
 })

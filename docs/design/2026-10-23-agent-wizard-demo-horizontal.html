@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>智能任务创建弹窗 · 横向步骤条</title>
+<style>
+  :root{
+    --primary:#36D399; --primary-hover:#2EC48F; --primary-active:#23B07F;
+    --primary-soft:#E6FBF2; --success:#10B981; --warning:#F59E0B;
+    --error:#EF4444; --error-soft:#FDECEC; --info:#3B82F6;
+    --text1:#1F2937; --text2:#4B5563; --text3:#6B7280; --text4:#9CA3AF;
+    --border:#E5E7EB; --hover:#F3F4F6; --page:#FAFAF9; --surface:#FFFFFF;
+    --r-sm:6px; --r-md:8px; --r-lg:12px; --r-xl:16px;
+    --sh-sm:0 1px 3px rgba(0,0,0,.04),0 1px 2px rgba(0,0,0,.02);
+    --sh-md:0 4px 12px rgba(0,0,0,.06),0 2px 4px rgba(0,0,0,.03);
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#E5E7EB;font-family:"Microsoft YaHei","Segoe UI",system-ui,sans-serif;display:flex;justify-content:center;align-items:center;min-height:100vh;padding:24px}
+  .artboard{position:relative;width:1000px;height:640px;background:var(--surface);border-radius:var(--r-lg);box-shadow:var(--sh-md);overflow:hidden;font-size:14px;color:var(--text1)}
+  /* 标题栏 */
+  .titlebar{position:absolute;left:0;top:0;width:1000px;height:56px;border-bottom:1px solid var(--border)}
+  .titlebar h1{position:absolute;left:24px;top:16px;font-size:20px;font-weight:600;line-height:28px;color:var(--text1)}
+  .close{position:absolute;left:972px;top:16px;width:24px;height:24px;line-height:24px;text-align:center;color:var(--text3);font-size:18px;cursor:pointer}
+  /* 步骤条（横向） */
+  .stepline{position:absolute;left:24px;top:72px;width:952px;height:32px;display:flex;align-items:center}
+  .pill{height:32px;border-radius:var(--r-md);display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:600;gap:6px}
+  .pill.done{background:var(--primary-soft);color:var(--primary)}
+  .pill.cur-err{background:var(--error-soft);color:var(--error);border:1px solid var(--error)}
+  .pill.todo{background:var(--hover);color:var(--text4)}
+  .conn{width:4px;height:4px;border-radius:50%;background:var(--border)}
+  /* 内容区 */
+  .content{position:absolute;left:24px;top:120px;width:952px;height:448px}
+  .caption{font-size:12px;color:var(--text2);font-weight:400}
+  .field-row{display:flex;align-items:center;justify-content:space-between}
+  .ai-chip{width:96px;height:32px;border-radius:var(--r-md);border:1px solid var(--primary);background:var(--surface);color:var(--primary);font-size:13px;font-weight:600;display:flex;align-items:center;justify-content:center;gap:4px}
+  textarea{width:100%;border:1px solid var(--border);border-radius:var(--r-sm);padding:10px 12px;font-size:14px;color:var(--text1);background:var(--surface);resize:none;font-family:inherit}
+  textarea.err{border-color:var(--error)}
+  .err-text{font-size:12px;color:var(--error);margin-top:4px}
+  .hint{font-size:11px;color:var(--text3);margin-top:4px}
+  .merged-note{display:inline-block;margin-left:8px;font-size:11px;color:var(--info);background:#E0F4FF;padding:1px 6px;border-radius:var(--r-sm)}
+  .callout{position:absolute;left:24px;top:330px;width:952px;background:var(--primary-soft);border-left:3px solid var(--primary);border-radius:var(--r-md);padding:10px 14px;font-size:12px;color:var(--text2);line-height:18px}
+  /* 底栏 */
+  .bottombar{position:absolute;left:24px;top:584px;width:952px;height:40px;display:flex;justify-content:flex-end;align-items:center;gap:8px}
+  .btn{height:40px;border-radius:var(--r-md);font-size:14px;font-weight:600;display:flex;align-items:center;justify-content:center;cursor:pointer}
+  .btn-filled{width:96px;background:var(--primary);color:#fff}
+  .btn-filled[disabled]{background:var(--hover);color:var(--text4);border:1px solid var(--border);cursor:not-allowed}
+  .btn-outline{width:96px;background:var(--surface);border:1px solid var(--border);color:var(--text1)}
+  .btn-test{width:112px;background:var(--surface);border:1px solid var(--primary);color:var(--primary)}
+  .btn-ghost{width:96px;background:transparent;color:var(--primary)}
+  /* 注释层 */
+  .anno{position:absolute;font-size:10px;color:#2563EB;background:rgba(255,255,255,.92);border:1px dashed #93C5FD;border-radius:3px;padding:0 4px;line-height:14px;white-space:nowrap;z-index:5;pointer-events:none}
+  .anno-warn{color:#B45309;border-color:#FCD34D;background:rgba(255,251,235,.92)}
+  .legend{position:absolute;left:24px;top:382px;width:952px;font-size:11px;color:var(--text3);line-height:18px;border:1px dashed var(--border);border-radius:var(--r-md);padding:8px 12px;background:var(--page)}
+  .legend b{color:var(--text1)}
+  .swatch{display:inline-block;width:10px;height:10px;border-radius:2px;vertical-align:middle;margin:0 2px}
+</style>
+</head>
+<body>
+<div class="artboard" id="ab">
+
+  <!-- 标题栏 0,0 1000x56 -->
+  <div class="titlebar">
+    <h1>新建智能任务</h1>
+    <div class="close">✕</div>
+  </div>
+
+  <!-- 步骤条 24,72 952x32 -->
+  <div class="stepline">
+    <div class="pill done" style="width:235px">✓ 1. 基础信息</div>
+    <div class="conn" style="margin:0 4px"></div>
+    <div class="pill done" style="width:235px">✓ 2. 触发</div>
+    <div class="conn" style="margin:0 4px"></div>
+    <div class="pill cur-err" style="width:235px">! 3. 指令</div>
+    <div class="conn" style="margin:0 4px"></div>
+    <div class="pill todo" style="width:235px">4. 执行与安全</div>
+  </div>
+
+  <!-- 内容区 24,120 952x448 — 当前步=指令(step2) -->
+  <div class="content">
+
+    <div class="field-row" style="height:24px">
+      <span class="caption">指令（发给 AI 的 prompt）</span>
+      <div class="ai-chip">✎ AI 起草</div>
+    </div>
+
+    <!-- 指令 textarea 0,26 952x60 -->
+    <textarea class="err" style="width:952px;height:60px;margin-top:4px" placeholder="描述这个任务要做什么，例如：把逾期的待办全部完成"></textarea>
+    <div class="err-text">! 请填写任务目标</div>
+
+    <div style="margin-top:20px">
+      <span class="caption">系统提示词（发给 AI 的环境上下文，可编辑）</span>
+      <span class="merged-note">执行记忆 / 自动记录 已并入此字段</span>
+    </div>
+    <!-- 系统提示词 textarea 0,? 952x54 -->
+    <textarea style="width:952px;height:54px;margin-top:6px" placeholder="系统提示词，运行时注入；留空则使用自动生成的默认提示词"></textarea>
+    <div class="hint">保留 systemPrompt 语义；执行记忆五处清链，原「自动记录」固定开启不再单列。</div>
+
+    <!-- 逐步校验说明 -->
+    <div class="callout">
+      <b>逐步校验：</b>「下一步」仅按<b>当前步</b>门控启用——指令步只校验「任务目标非空」；
+      系统提示词可留空，<b>不会</b>因系统提示词等其它字段卡死下一步。出错时该步节点标红 + 错误摘要就地显示。
+    </div>
+
+  </div>
+
+  <!-- 底栏 24,584 952x40 -->
+  <div class="bottombar">
+    <div class="btn btn-ghost">取消</div>
+    <div class="btn btn-test">测试试运行</div>
+    <div class="btn btn-outline">上一步</div>
+    <div class="btn btn-filled" disabled>下一步</div>
+  </div>
+
+  <!-- ============ 尺寸注释层 ============ -->
+  <div class="anno" style="left:0;top:0">画布 1000×640 · 面板 #FFFFFF · 圆角12 · 阴影Md</div>
+  <div class="anno" style="left:0;top:42">标题栏 x0 y0 w1000 h56 · 标题20/600 · 底1px #E5E7EB</div>
+  <div class="anno" style="left:24;top:58">步骤条 x24 y72 w952 h32 · 胶囊32高 圆角8 · 连接点4px · 序号.名称</div>
+  <div class="anno" style="left:259;top:106">pill宽=(952−4×3)/4=235</div>
+  <div class="anno anno-warn" style="left:502;top:58">当前步红：#EF4444 10%底+#EF4444字+!图标</div>
+  <div class="anno" style="left:24;top:122">内容区 x24 y120 w952 h448</div>
+  <div class="anno" style="left:880;top:144">AI起草 96×32 Outline 白底+绿边+绿字</div>
+  <div class="anno anno-warn" style="left:24;top:188">指令 textarea x24 y146 w952 h60 · 错误态红边1px</div>
+  <div class="anno anno-warn" style="left:24;top:212">错误摘要下移8px · 12px #EF4444</div>
+  <div class="anno" style="left:24;top:250">系统提示词(合并字段) x24 y258 w952 h54 · 圆角6</div>
+  <div class="anno" style="left:24;top:332">逐步校验说明卡 · #E6FBF2 底+左3px绿条</div>
+  <div class="anno" style="left:24;top:568">底栏 x24 y584 w952 h40 · 按钮右对齐 间距8</div>
+  <div class="anno" style="left:760;top:624">下一步=Filled最右(本态disabled灰) · 上一步=Outline · 测试=Outline绿 · 取消=Ghost</div>
+
+</div>
+</body>
+</html>

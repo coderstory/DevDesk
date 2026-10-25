@@ -8,7 +8,9 @@
 #include "doctest.h"
 #include "test_support.h"
 #include "core/database.h"
+#include "core/db_backup.h"
 #include "core/event_bus.h"
+#include "core/schema.h"
 #include "core/sqlite_db.h"
 #include "module_todo/todo_service.h"
 
@@ -521,6 +523,64 @@ REGISTER_TEST(todo_svc_list_overdue,
     return true;
 })
 
+// UAT6.2 H20 逾期收窄：只有 待办/进行中 列里的过期未完成任务算逾期；
+// 已完成列（completed_at 可能脏 NULL）、归档列、自定义列一律不计。
+REGISTER_TEST(todo_svc_overdue_excludes_non_work_columns,
+              "TodoService: 归档/已完成/自定义列的过期未完成任务不计逾期",
+              {
+    TestEnv env("overdue_cols");
+    DOCTEST_REQUIRE(env.ready);
+
+    auto cols = env.svc->listColumns();
+    DOCTEST_REQUIRE(cols.isOk());
+    int64_t todoId = 0;
+    int64_t doingId = 0;
+    int64_t doneId = 0;
+    int64_t archiveId = 0;
+    for (const auto& c : cols.value()) {
+        if (c.kind == "todo") todoId = c.id;
+        else if (c.kind == "doing") doingId = c.id;
+        else if (c.kind == "done") doneId = c.id;
+        else if (c.kind == "archive") archiveId = c.id;
+    }
+    DOCTEST_REQUIRE(todoId > 0);
+    DOCTEST_REQUIRE(doingId > 0);
+    DOCTEST_REQUIRE(doneId > 0);
+    DOCTEST_REQUIRE(archiveId > 0);
+
+    // 自定义列（kind 为空）：逾期口径同样排除
+    auto custom = env.svc->createColumn("自定义列");
+    DOCTEST_REQUIRE(custom.isOk());
+
+    const int64_t past = 1000000000;  // 2001 年
+    struct Seed {
+        int64_t columnId;
+        const char* title;
+    };
+    const Seed seeds[] = {
+        {todoId, "待办过期"},
+        {doingId, "进行中过期"},
+        {doneId, "已完成列过期"},
+        {archiveId, "归档列过期"},
+        {custom.value().id, "自定义列过期"},
+    };
+    for (const auto& s : seeds) {
+        auto created = env.svc->createTask(s.columnId, s.title);
+        DOCTEST_REQUIRE(created.isOk());
+        auto task = created.value();
+        task.dueAt = past;
+        DOCTEST_REQUIRE(env.svc->updateTask(task).isOk());
+    }
+
+    auto over = env.svc->listOverdue();
+    DOCTEST_REQUIRE(over.isOk());
+    DOCTEST_CHECK_EQ(over.value().size(), 2u);
+    for (const auto& t : over.value()) {
+        DOCTEST_CHECK(t.title == "待办过期" || t.title == "进行中过期");
+    }
+    return true;
+})
+
 REGISTER_TEST(todo_svc_reorder_columns,
               "TodoService: reorderColumns 重排 + 保留所有列",
               {
@@ -682,22 +742,19 @@ REGISTER_TEST(todo_svc_column_kind,
     auto list = env.svc->listColumns();
     DOCTEST_REQUIRE(list.isOk());
     DOCTEST_REQUIRE_EQ(list.value().size(), 4u);
-    // 种子列 kind：待办=todo / 已完成=done / 归档=archive / 普通列=""
+    // 种子列 kind（固定四列）：待办=todo / 进行中=doing / 已完成=done / 归档=archive
     DOCTEST_CHECK_EQ(list.value()[0].kind, std::string("todo"));
-    DOCTEST_CHECK_EQ(list.value()[1].kind, std::string(""));
+    DOCTEST_CHECK_EQ(list.value()[1].kind, std::string("doing"));
     DOCTEST_CHECK_EQ(list.value()[2].kind, std::string("done"));
     DOCTEST_CHECK_EQ(list.value()[3].kind, std::string("archive"));
 
-    // 重命名后 kind 保留（语义不随标题变）
+    // 重命名后 kind 保留（语义不随标题变）——H20 起 UI 不再开放改名入口，
+    // service 层 renameColumn 仍是合法能力，本断言锁 kind 回填而非入口
     DOCTEST_REQUIRE(env.svc->renameColumn(list.value()[2].id, "Finished").isOk());
     auto list2 = env.svc->listColumns();
     DOCTEST_REQUIRE(list2.isOk());
     DOCTEST_CHECK_EQ(list2.value()[2].title, std::string("Finished"));
     DOCTEST_CHECK_EQ(list2.value()[2].kind, std::string("done"));
-
-    auto created = env.svc->createColumn("复核中");
-    DOCTEST_REQUIRE(created.isOk());
-    DOCTEST_CHECK_EQ(created.value().kind, std::string(""));
     return true;
 })
 
@@ -1040,10 +1097,10 @@ REGISTER_TEST(todo_archive_non_archive_move_preserves_null,
     auto cols = env.svc->listColumns();
     DOCTEST_REQUIRE(cols.isOk());
     int64_t todoId = 0;
-    int64_t progressId = 0;  // kind=NULL 的列（「进行中」）
+    int64_t progressId = 0;  // 「进行中」列（H20 固定 kind）
     for (const auto& c : cols.value()) {
         if (c.kind == "todo") todoId = c.id;
-        if (c.kind.empty() && c.title == "进行中") progressId = c.id;
+        if (c.kind == "doing") progressId = c.id;
     }
     DOCTEST_REQUIRE(todoId > 0);
     DOCTEST_REQUIRE(progressId > 0);
@@ -1103,5 +1160,67 @@ REGISTER_TEST(todo_archive_sql_includes_column,
     // 逾期（不过滤到 0 至少不崩）
     auto ov = env.svc->listOverdue();
     DOCTEST_CHECK(ov.isOk());
+    return true;
+})
+
+// 固定四列迁移挂在启动 migrate 路径（Database::open → addMissingAgentColumns →
+// core::schema::migrateTodoFixedColumns），不在 TodoService 构造器里。重跑必须零副作用
+// （列/任务数不变），且多余自定义列的任务按原意并入待办列。
+REGISTER_TEST(todo_svc_fixed_migration_idempotent,
+              "TodoService: 固定四列迁移幂等（重跑列/任务数不变、多余列任务并入待办）",
+              {
+    TestEnv env("fixed_migration_idempotent");
+    DOCTEST_REQUIRE(env.ready);
+
+    auto cols = env.svc->listColumns();
+    DOCTEST_REQUIRE(cols.isOk());
+    DOCTEST_REQUIRE_EQ(cols.value().size(), 4u);
+    int64_t todoId = 0;
+    for (const auto& c : cols.value()) {
+        if (c.kind == "todo") todoId = c.id;
+    }
+    DOCTEST_REQUIRE(todoId > 0);
+
+    // 造一条多余自定义列 + 两个任务；服务层 createColumn 不触发迁移
+    auto extra = env.svc->createColumn("多余列");
+    DOCTEST_REQUIRE(extra.isOk());
+    DOCTEST_REQUIRE(env.svc->createTask(extra.value().id, "并入A").isOk());
+    DOCTEST_REQUIRE(env.svc->createTask(extra.value().id, "并入B").isOk());
+    DOCTEST_REQUIRE(env.svc->createTask(todoId, "原有任务").isOk());
+    auto before = env.svc->listAllTasks();
+    DOCTEST_REQUIRE(before.isOk());
+    const size_t tasksBefore = before.value().size();
+
+    // 第二次：直接重跑启动路径的迁移（不再依赖 service 构造）
+    DOCTEST_REQUIRE(core::schema::migrateTodoFixedColumns(env.db->db()).isOk());
+    auto cols2 = env.svc->listColumns();
+    DOCTEST_REQUIRE(cols2.isOk());
+    DOCTEST_CHECK_EQ(cols2.value().size(), 4u);
+    auto tasks2 = env.svc->listAllTasks();
+    DOCTEST_REQUIRE(tasks2.isOk());
+    DOCTEST_CHECK_EQ(tasks2.value().size(), tasksBefore);
+    int merged = 0;
+    for (const auto& t : tasks2.value()) {
+        if (t.title == "并入A" || t.title == "并入B") {
+            DOCTEST_CHECK_EQ(t.columnId, todoId);
+            ++merged;
+        } else if (t.title == "原有任务") {
+            DOCTEST_CHECK_EQ(t.columnId, todoId);
+        }
+    }
+    DOCTEST_CHECK_EQ(merged, 2);
+
+    // 第三次重跑：列数/任务数仍不变（幂等零副作用）
+    DOCTEST_REQUIRE(core::schema::migrateTodoFixedColumns(env.db->db()).isOk());
+    auto cols3 = env.svc->listColumns();
+    DOCTEST_REQUIRE(cols3.isOk());
+    DOCTEST_CHECK_EQ(cols3.value().size(), 4u);
+    auto tasks3 = env.svc->listAllTasks();
+    DOCTEST_REQUIRE(tasks3.isOk());
+    DOCTEST_CHECK_EQ(tasks3.value().size(), tasksBefore);
+
+    // 迁移前备份会落在临时目录；测试结束清掉（keep=0 = 全部删除）
+    (void)core::dbmaint::pruneFilesWithPrefix(
+        env.path.parent_path(), env.path.filename().string() + ".backup-", 0);
     return true;
 })

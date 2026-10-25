@@ -30,7 +30,11 @@ using core::str::escapeLikePattern;
 
 } // namespace
 
-TodoService::TodoService(core::data::SqliteDb& db) : db_(db) {}
+TodoService::TodoService(core::data::SqliteDb& db) : db_(db) {
+    // UAT6.2 H20 固定四列迁移不在服务构造时触发：它挂在 Database::open / migrate 的
+    // 启动路径（core::schema::migrateTodoFixedColumns），保证 Todo 模块关闭时首页口径
+    // 仍正确、且每次进程启动只跑一次。
+}
 
 int64_t TodoService::nowEpochSeconds() {
     return static_cast<int64_t>(std::time(nullptr));
@@ -203,8 +207,11 @@ core::Result<std::vector<std::string>> TodoService::deserializeTags(const std::s
 }
 
 core::Result<std::vector<Column>> TodoService::listColumns() {
+    // 固定顺序：position ASC。迁移后四列 position = 0..3（待办/进行中/已完成/已归档）；
+    // id ASC 仅作并列位置的兜底，保证顺序确定。
     auto prep = db_.prepare(
-        "SELECT id, title, position, color, kind FROM todo_columns ORDER BY position ASC");
+        "SELECT id, title, position, color, kind FROM todo_columns "
+        "ORDER BY position ASC, id ASC");
     if (prep.isFail()) {
         return core::Result<std::vector<Column>>::fail(prep.errorCode(), prep.errorMessage());
     }
@@ -752,6 +759,7 @@ core::Result<std::vector<Task>> TodoService::search(const std::string& query) {
         "FROM todo_tasks "
         "WHERE title LIKE ? ESCAPE '\\' "
         "   OR (description IS NOT NULL AND description LIKE ? ESCAPE '\\') "
+        "   OR (tags IS NOT NULL AND tags LIKE ? ESCAPE '\\') "
         "ORDER BY column_id ASC, position ASC");
     if (prep.isFail()) {
         return core::Result<std::vector<Task>>::fail(prep.errorCode(), prep.errorMessage());
@@ -762,6 +770,10 @@ core::Result<std::vector<Task>> TodoService::search(const std::string& query) {
         return core::Result<std::vector<Task>>::fail(r.errorCode(), r.errorMessage());
     }
     if (auto r = stmt.bind(2, like); r.isFail()) {
+        return core::Result<std::vector<Task>>::fail(r.errorCode(), r.errorMessage());
+    }
+    // 标签也参与匹配：tags 列为 JSON 数组串，LIKE 子串匹配沿用现有 SQL 口径
+    if (auto r = stmt.bind(3, like); r.isFail()) {
         return core::Result<std::vector<Task>>::fail(r.errorCode(), r.errorMessage());
     }
     auto rows = stmt.fetchAll();

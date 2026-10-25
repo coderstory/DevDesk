@@ -171,8 +171,13 @@ core::Result<DashboardStats> HomeService::getStats(int recentNoteLimit) {
         return core::Result<DashboardStats>::fail(todayNotes.errorCode(),
                                                   todayNotes.errorMessage());
     }
+    // 待办任务口径 = 「待办列 + 进行中列」里未完成的任务数，不是全部未完成任务。
+    // 只认列 kind（'todo'/'doing'）：schema.h 契约禁止按标题匹配（改名即静默失效），
+    // H20 迁移已把历史「进行中」列补成 kind='doing'；done/archive/kind NULL 列不计。
     auto pendingTodos = countBySql(
-        "SELECT COUNT(*) AS n FROM todo_tasks WHERE completed_at IS NULL");
+        "SELECT COUNT(*) AS n FROM todo_tasks t JOIN todo_columns c "
+        "ON c.id = t.column_id WHERE t.completed_at IS NULL "
+        "AND c.kind IN ('todo','doing')");
     if (pendingTodos.isFail()) {
         return core::Result<DashboardStats>::fail(pendingTodos.errorCode(),
                                                   pendingTodos.errorMessage());

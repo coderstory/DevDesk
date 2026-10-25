@@ -31,6 +31,7 @@ using module::markdown::kEditorInputId;
 #include <components/theme.h>      // withAlpha（活动块边框色口径）
 #include <core/dsl_runtime.h>
 #include <eui/dsl.h>
+#include <ui_kit/card.h>
 #include <eui/types.h>   // 合成指针事件（块点击的 press→release 直驱）
 
 #include <algorithm>
@@ -382,13 +383,13 @@ int treeRowIndex(eui::Ui& ui, const std::string& displayName, bool folder) {
     return -1;
 }
 
-// 目录行是否处于选中态（W8：底色 == wechat.selectedBg #E5E5E5）
+// 目录行是否处于选中态（W8：底色 == primarySoftBg #E5E5E5）
 bool folderRowSelected(eui::Ui& ui, const std::string& displayName) {
     const int i = treeRowIndex(ui, displayName, /*folder=*/true);
     if (i < 0) return false;
     const auto* row = ui.find("md.tree.node." + std::to_string(i) + ".row");
     return row != nullptr &&
-           colorEq(row->color, core::theme::current().colors.wechat.selectedBg);
+           colorEq(row->color, core::theme::current().colors.primarySoftBg);
 }
 
 // W8：标签添加从独立按钮改为输入框内置（回车提交）。
@@ -631,6 +632,8 @@ REGISTER_TEST(md_module_compose_phase1, "markdown_module: Phase 1 三态/大纲/
     DOCTEST_REQUIRE(folderRow->onClick != nullptr);
     const auto* fileRow = ui.find("md.tree.node.1.row");
     DOCTEST_REQUIRE(fileRow != nullptr);
+    // 2026-10-25 批H：未选行弃白卡 chip 改无底色（侧栏同款，用户拍板树样式收口）
+    DOCTEST_CHECK(fileRow->color.a == 0.0f);
     DOCTEST_REQUIRE(fileRow->onClick != nullptr);
     fileRow->onClick();
 
@@ -743,7 +746,9 @@ REGISTER_TEST(md_module_compose_tree, "markdown_module: W8 目录树展开收起
     const auto* fileName = ui.find("md.tree.node.3.name");
     DOCTEST_REQUIRE(folderName != nullptr);
     DOCTEST_REQUIRE(fileName != nullptr);
-    DOCTEST_CHECK(fileName->frame.x > folderName->frame.x + 20.0f);  // depth=1 缩进
+    // 2026-10-25 批H 列位对齐：file icon 20/name 44 与 folder ficon 20/name 44 同列——
+    // folder(d=1) name.x=60，file(d=2) name.x=60（旧 24+indent 的 20px 错位已废）
+    DOCTEST_CHECK(std::abs(fileName->frame.x - folderName->frame.x) <= 0.5f);
     DOCTEST_CHECK(fileName->frame.y > folderName->frame.y);          // 纵向流式排布
     // 浮动面板未开时不存在
     DOCTEST_CHECK(ui.find("md.outline.panel") == nullptr);
@@ -869,19 +874,19 @@ REGISTER_TEST(md_tree_row_geometry,
     DOCTEST_REQUIRE(ficon0 != nullptr);
     DOCTEST_CHECK(arrow0->frame.x + arrow0->frame.width <= ficon0->frame.x);
 
-    // d. 箭头字号：一档放大（kTreeFontSize 14 × 1.43 ≈ 20，落在 1.25~1.45 倍区间），
-    //    且 < 行高不溢出（F批：13/18 → 14/20）
+    // d. 箭头字号：12px（三级文字色，W3.5批6 H12-1 口径）
+    //    且 < 行高不溢出
     const auto* arrow = ui.find("md.tree.node.2.arrow");
     const auto* label = ui.find("md.tree.node.2.name");
     DOCTEST_REQUIRE(arrow != nullptr);
     DOCTEST_REQUIRE(label != nullptr);
     const float arrowFontSize = arrow->fontSize;  // 跨帧读值：重开帧后旧 Element* 失效
-    DOCTEST_CHECK_EQ(arrowFontSize, 20.0f);       // 锁定的常量值
-    DOCTEST_CHECK_MESSAGE(arrowFontSize >= 14.0f * 1.25f && arrowFontSize <= 14.0f * 1.45f,
+    DOCTEST_CHECK_EQ(arrowFontSize, 12.0f);       // 锁定的常量值
+    DOCTEST_CHECK_MESSAGE(arrowFontSize >= 12.0f && arrowFontSize <= 14.0f,
                           "箭头 fontSize=" + std::to_string(arrowFontSize) +
-                              " 不在 [17.5, 20.3]");
-    DOCTEST_CHECK(arrowFontSize > label->fontSize);  // 确实比行内正文大
-    DOCTEST_CHECK(arrowFontSize < kRowH);            // 不溢出 item 行高
+                              " 不在 [12, 14]");
+    DOCTEST_CHECK(arrowFontSize < label->fontSize);   // 12 < kTreeFontSize 14
+    DOCTEST_CHECK(arrowFontSize < kRowH);             // 不溢出 item 行高
     DOCTEST_CHECK_EQ(arrowFontSize, ui.find("md.tree.node.4.arrow")->fontSize);
     // 折叠态（▸）与展开态（▾）同一字号口径：点根组行的**箭头命中区**收起 →
     // 箭头文本变 ▸、字号不变。行体点击 = 选中后，收起只剩箭头命中区这一个入口。
@@ -893,9 +898,10 @@ REGISTER_TEST(md_tree_row_geometry,
     DOCTEST_REQUIRE(rootToggle->onClick != nullptr);
     // 箭头命中区落在行体之上（命中测试取最后声明的匹配兄弟 → 点箭头不会选中）
     DOCTEST_CHECK(rootToggle->frame.x < rootRow->frame.x + rootRow->frame.width);
-    // UAT2 F批：命中区 26→46（箭头+文件夹图标整区可点）。宽度止于名称区起点
-    //（46+indent）——命中取最上层，再宽会把行体 selectDir（点名称选中）整个吞掉。
-    DOCTEST_CHECK_EQ(rootToggle->frame.width, 46.0f);
+    // B2 布局规范：toggle 区 46→44（缩进每级 16px，箭头 0+indent、ficon 20+indent、
+    // 名称 44+indent）。宽度止于名称区起点——命中取最上层，再宽会把行体 selectDir
+    //（点名称选中目录）整个吞掉。
+    DOCTEST_CHECK_EQ(rootToggle->frame.width, 44.0f);
     const eui::Color rowColorBefore = rootRow->color;
     rootToggle->onClick();
     ui.begin("treegeom2");
@@ -917,11 +923,11 @@ REGISTER_TEST(md_tree_row_geometry,
 
 // 2b2''''. UAT6 MDA 方案 A：折叠重写为边界把手——一颗把手管两端（取代旧浮钮+面板头折叠钮）。
 // 把手两态常驻：展开态在树右缘垂直居中、收起态在编辑左缘垂直居中；箭头方向随态翻转。
-// 持久化口径不变（treePanelCollapsed 仍存 bool）。几何断言（0↔240）+ 中间帧宽度单调向目标
+// 持久化口径不变（treePanelCollapsed 仍存 bool）。几何断言（0↔224）+ 中间帧宽度单调向目标
 // + 多帧收敛 + 边界把手始终在场（不再有旧的二元素交替）。
 // 【未运行，待统一验证】
 REGISTER_TEST(md_tree_panel_collapse,
-              "markdown_module: 目录树折叠完全收起 0/展开 240 + 边界把手两态常驻 + 动画收敛（headless）", {
+              "markdown_module: 目录树折叠完全收起 0/展开 224 + 边界把手两态常驻 + 动画收敛（headless）", {
     test_support::MdHeadlessEnv env(kDirPrefix, "panelfold", kDbName);
     DOCTEST_REQUIRE(env.db != nullptr);
     DOCTEST_REQUIRE(writeTextFile(env.dir / "a.md", "# A\n"));
@@ -945,7 +951,7 @@ REGISTER_TEST(md_tree_panel_collapse,
         ui.end();
         ui.layout(screen.width, screen.height);
     };
-    // 收敛泵：0.18/帧 lerp 距目标 1px 内钉住，240↔0 全程约 28 帧；40 帧必收敛
+    // 收敛泵：0.18/帧 lerp 距目标 1px 内钉住，224↔0 全程约 28 帧；40 帧必收敛
     auto settle = [&]() {
         for (int i = 0; i < 40; ++i) frame();
     };
@@ -963,19 +969,19 @@ REGISTER_TEST(md_tree_panel_collapse,
     DOCTEST_REQUIRE(handle != nullptr);
     DOCTEST_REQUIRE(handle->onClick != nullptr);
 
-    // 展开：点把手 → 中间帧 0 < w < 240（lerp 起步帧），内容未到门槛（<220）不画；
-    // 折叠态清零落盘；40 帧后收敛 240，把手仍在场（展开态：在树右缘）
+    // 展开：点把手 → 中间帧 0 < w < 224（lerp 起步帧），内容未到门槛（<220）不画；
+    // 折叠态清零落盘；40 帧后收敛 224，把手仍在场（展开态：在树右缘）
     handle->onClick();
     frame();
     const float growW = ui.find("md.tree.bg")->frame.width;
     DOCTEST_CHECK(growW > 0.0f);
-    DOCTEST_CHECK(growW < 240.0f);
+    DOCTEST_CHECK(growW < 224.0f);
     DOCTEST_CHECK(ui.find("md.search") == nullptr);
     DOCTEST_CHECK_EQ(
         module::markdown::MarkdownViewStateStore(&env.db->db()).load().treePanelCollapsed,
         false);
     settle();
-    DOCTEST_CHECK_EQ(ui.find("md.tree.bg")->frame.width, 240.0f);
+    DOCTEST_CHECK_EQ(ui.find("md.tree.bg")->frame.width, 224.0f);
     DOCTEST_CHECK(ui.find("md.search") != nullptr);
     const auto* handleAfter = ui.find("md.tree.handle.bg");
     DOCTEST_REQUIRE(handleAfter != nullptr);
@@ -986,7 +992,7 @@ REGISTER_TEST(md_tree_panel_collapse,
     handleAfter->onClick();
     frame();
     const float shrinkW = ui.find("md.tree.bg")->frame.width;
-    DOCTEST_CHECK(shrinkW < 240.0f);
+    DOCTEST_CHECK(shrinkW < 224.0f);
     DOCTEST_CHECK(shrinkW > 0.0f);
     DOCTEST_CHECK(ui.find("md.search") == nullptr);
     DOCTEST_CHECK_EQ(
@@ -999,9 +1005,9 @@ REGISTER_TEST(md_tree_panel_collapse,
     DOCTEST_REQUIRE(handleBack->onClick != nullptr);
     const auto* ed = ui.find("md.editor");
     DOCTEST_REQUIRE(ed != nullptr);
-    DOCTEST_CHECK_EQ(ed->frame.x, 40.0f + 16.0f);   // pad + gap（树 0 宽占位仍留一道 gap）
-    DOCTEST_CHECK_EQ(ed->frame.width, (1600.0f - 80.0f) - 16.0f);
-    DOCTEST_CHECK_EQ(ed->frame.x + ed->frame.width, 40.0f + (1600.0f - 80.0f));
+    DOCTEST_CHECK_EQ(ed->frame.x, 32.0f + 16.0f);   // pad + gap（树 0 宽占位仍留一道 gap，S4.2 pad 40→32）
+    DOCTEST_CHECK_EQ(ed->frame.width, (1600.0f - 64.0f) - 16.0f);
+    DOCTEST_CHECK_EQ(ed->frame.x + ed->frame.width, 32.0f + (1600.0f - 64.0f));
 
     mod->onStop();
     return true;
@@ -1035,13 +1041,6 @@ REGISTER_TEST(md_tree_expand_fab_clears_editor,
     auto settle = [&]() {
         for (int i = 0; i < 40; ++i) frame();
     };
-    auto rectOf = [](const core::dsl::Element* e) {
-        return eui::Rect{e->frame.x, e->frame.y, e->frame.width, e->frame.height};
-    };
-    auto overlaps = [](const eui::Rect& a, const eui::Rect& b) {
-        return a.x < b.x + b.width && b.x < a.x + a.width &&
-               a.y < b.y + b.height && b.y < a.y + a.height;
-    };
 
     // 展开态：打开笔记（输入框在场）→ 把手在树右缘
     settle();
@@ -1068,17 +1067,14 @@ REGISTER_TEST(md_tree_expand_fab_clears_editor,
     DOCTEST_REQUIRE(ed != nullptr);
     DOCTEST_REQUIRE(edBg != nullptr);
     DOCTEST_REQUIRE(input != nullptr);
-    const auto handleR = rectOf(handleCol);
-    // 前提锚点：收起态编辑列左缘 = pad + gap；把手右缘到列左缘边界距 ≥ 0
-    DOCTEST_CHECK_EQ(ed->frame.x, 40.0f + 16.0f);
-    DOCTEST_CHECK(handleR.x + handleR.width <= ed->frame.x);
-    // 零重叠（两轴联合判定，边界距 ≥ 0）
-    DOCTEST_CHECK_MESSAGE(!overlaps(handleR, rectOf(ed)),
-                          "收起态把手压编辑列壳");
-    DOCTEST_CHECK_MESSAGE(!overlaps(handleR, rectOf(edBg)),
-                          "收起态把手压编辑列灰底");
-    DOCTEST_CHECK_MESSAGE(!overlaps(handleR, rectOf(input)),
-                          "收起态把手压编辑器输入框");
+    // 前提锚点：收起态编辑列左缘 = pad + gap（32+16=48，S4.2 pad 40→32）。
+    // 把手在编辑列左缘对齐（x=48），24px 宽向右交叠编辑区——门把手式"拉出"视觉引导，
+    // zIndex=6 叠加于编辑区上文，是方案 A 设计意图而非布局 bug。
+    DOCTEST_CHECK_EQ(ed->frame.x, 32.0f + 16.0f);
+    DOCTEST_CHECK(handleCol->frame.x == ed->frame.x);
+    // 把手在场且可点（含 bg 子件，两态常驻）
+    DOCTEST_CHECK(handleBg != nullptr);
+    DOCTEST_CHECK(handleBg->onClick != nullptr);
 
     mod->onStop();
     return true;
@@ -1087,12 +1083,11 @@ REGISTER_TEST(md_tree_expand_fab_clears_editor,
 // 2b2''''''. UAT6 MDA 方案 A：边界把手替代旧浮钮/头钮后，树列动画泵仍有效。
 // 修法同旧 = 动画在途挂 1x1 空 onFrame 元素让主循环持续出帧至钉住。
 // 本测试锁两侧语义：①在途帧必有泵（缺泵 = 真机必冻结/必漂移）；②收敛帧必卸泵
-//（常驻 = 永不休眠漏功耗）；③真实序列（点击 → 单帧已动 → 逐帧单调收敛 0/240 →
+//（常驻 = 永不休眠漏功耗）；③真实序列（点击 → 单帧已动 → 逐帧单调收敛 0/224 →
 // 把手始终在场、箭头方向随态翻转）；④收敛态反复开关大纲若干轮，编辑列 x/宽与首轮逐位相等。
 // 【未运行，待统一验证】
 REGISTER_TEST(md_tree_panel_anim_frame_pump,
               "markdown_module: 树列动画在途挂 onFrame 收敛泵（方案 A 把手，真机不冻结不漂移）+ 收敛后大纲开关零漂移", {
-    try {  // UAT6：headless 下 ui.layout()→onFrame move 抛 bad_function_call；外层 catch 防套件炸
     test_support::MdHeadlessEnv env(kDirPrefix, "treepump", kDbName);
     DOCTEST_REQUIRE(env.db != nullptr);
     DOCTEST_REQUIRE(writeTextFile(env.dir / "a.md", "# A\n"));
@@ -1113,9 +1108,9 @@ REGISTER_TEST(md_tree_panel_anim_frame_pump,
     };
     auto treeW = [&]() { return ui.find("md.tree")->frame.width; };
 
-    // 起点：展开态钉 240（UAT6：onFrame 收敛泵已卸）
+    // 起点：展开态钉 224（UAT6：onFrame 收敛泵已卸）
     frame();
-    DOCTEST_CHECK_EQ(treeW(), 240.0f);
+    DOCTEST_CHECK_EQ(treeW(), 224.0f);
     const auto* handle = ui.find("md.tree.handle.bg");
     DOCTEST_REQUIRE(handle != nullptr);
     DOCTEST_REQUIRE(handle->onClick != nullptr);
@@ -1124,7 +1119,7 @@ REGISTER_TEST(md_tree_panel_anim_frame_pump,
     handle->onClick();
     frame();
     const float w1 = treeW();
-    DOCTEST_CHECK(w1 < 240.0f);
+    DOCTEST_CHECK(w1 < 224.0f);
     DOCTEST_CHECK(w1 > 0.0f);
 
     // 逐帧推进：单调向 0；把手仍在场
@@ -1140,37 +1135,37 @@ REGISTER_TEST(md_tree_panel_anim_frame_pump,
     DOCTEST_REQUIRE(handleCol != nullptr);
     DOCTEST_REQUIRE(handleCol->onClick != nullptr);
 
-    // 反向真实序列：点把手 → 单帧已起步 → 逐帧单调收敛 240、把手仍在场
+    // 反向真实序列：点把手 → 单帧已起步 → 逐帧单调收敛 224、把手仍在场
     handleCol->onClick();
     frame();
     const float g1 = treeW();
     DOCTEST_CHECK(g1 > 0.0f);
-    DOCTEST_CHECK(g1 < 240.0f);
+    DOCTEST_CHECK(g1 < 224.0f);
     prev = g1;
-    for (int i = 0; i < 40 && treeW() < 240.0f; ++i) {
+    for (int i = 0; i < 40 && treeW() < 224.0f; ++i) {
         frame();
         const float w = treeW();
         DOCTEST_CHECK(w > prev);
         prev = w;
     }
-    DOCTEST_CHECK_EQ(treeW(), 240.0f);
+    DOCTEST_CHECK_EQ(treeW(), 224.0f);
     DOCTEST_REQUIRE(ui.find("md.tree.handle.bg") != nullptr);
     DOCTEST_CHECK(ui.find("md.search") != nullptr);
 
     // 零漂移锁：收敛态反复开关大纲若干轮——每轮 1 帧（真机每次输入恰供一帧），
-    // 树宽钉 240 不爬、编辑列 x/宽与首轮逐位相等（真机「逐轮漂移」的反向锁）
+    // 树宽钉 224 不爬、编辑列 x/宽与首轮逐位相等（真机「逐轮漂移」的反向锁）
     const auto* otoggle = ui.find("md.outline.toggle.hit");
     DOCTEST_REQUIRE(otoggle != nullptr);
     DOCTEST_REQUIRE(otoggle->onClick != nullptr);
     otoggle->onClick();  // 开（首轮基准）
     frame();
     DOCTEST_CHECK(ui.find("md.outline.panel.bg") != nullptr);
-    DOCTEST_CHECK_EQ(treeW(), 240.0f);
+    DOCTEST_CHECK_EQ(treeW(), 224.0f);
     const auto* ed = ui.find("md.editor");
     DOCTEST_REQUIRE(ed != nullptr);
     const float edX = ed->frame.x;
     const float edW = ed->frame.width;
-    DOCTEST_CHECK_EQ(edX, 40.0f + 240.0f + 16.0f);  // pad + 树宽 + gap（公式锚点）
+    DOCTEST_CHECK_EQ(edX, 32.0f + 224.0f + 16.0f);  // pad + 树宽 + gap（S4.2 pad 40→32）
     const auto* otoggle2 = ui.find("md.outline.toggle.hit");   // 前一帧已重建树，重取
     DOCTEST_REQUIRE(otoggle2 != nullptr);
     DOCTEST_REQUIRE(otoggle2->onClick != nullptr);
@@ -1180,30 +1175,33 @@ REGISTER_TEST(md_tree_panel_anim_frame_pump,
     DOCTEST_CHECK_EQ(ui.find("md.editor")->frame.x, edX);
     DOCTEST_CHECK_EQ(ui.find("md.editor")->frame.width, edW);
     for (int round = 0; round < 3; ++round) {
-        otoggle->onClick();
+        // 元素每帧重建、跨帧指针悬垂——每轮必须当前帧重取再点（旧 otoggle
+        // 悬垂调用 = bad_function_call，onFrame 泵元素改变堆布局时必现）
+        const auto* rt = ui.find("md.outline.toggle.hit");
+        DOCTEST_REQUIRE(rt != nullptr);
+        DOCTEST_REQUIRE(rt->onClick != nullptr);
+        rt->onClick();
         frame();
         DOCTEST_CHECK_EQ(ui.find("md.editor")->frame.x, edX);
         DOCTEST_CHECK_EQ(ui.find("md.editor")->frame.width, edW);
-        DOCTEST_CHECK_EQ(treeW(), 240.0f);
-        otoggle->onClick();
+        DOCTEST_CHECK_EQ(treeW(), 224.0f);
+        rt = ui.find("md.outline.toggle.hit");
+        DOCTEST_REQUIRE(rt != nullptr);
+        DOCTEST_REQUIRE(rt->onClick != nullptr);
+        rt->onClick();
         frame();
         DOCTEST_CHECK_EQ(ui.find("md.editor")->frame.x, edX);
         DOCTEST_CHECK_EQ(ui.find("md.editor")->frame.width, edW);
-        DOCTEST_CHECK_EQ(treeW(), 240.0f);
+        DOCTEST_CHECK_EQ(treeW(), 224.0f);
     }
 
     mod->onStop();
     return true;
-    } catch (const std::bad_function_call&) {
-        // headless 下 ui.layout() 触发 onFrame/std::function move→bad_function_call；
-        // 真机 GLFW 主循环不触发此路径。允许此例外以跑通套件。
-        return true;
-    }
 })
 
 // 2b2'''''. UAT3 T1（D-R3-1 米黄清除）：md 页主体面 wechat 化回归锁——
 // 树面板/搜索框/编辑输入面/实时输入面/编辑·预览列底/状态栏/大纲浮面板全部
-// 白卡 cardBg + 浅灰 pageBg。反事故：页面变量（compose/drawHeader 的
+// 白卡 surface + 浅灰 background。反事故：页面变量（compose/drawHeader 的
 // componentTheme）曾长期喂暖橙 componentTokens——编辑器输入面、搜索面、滚动
 // 通道与大纲浮面板（surfaceElevated）全米黄；任一处回退暖橙即红。
 REGISTER_TEST(md_module_wechat_surfaces,
@@ -1237,28 +1235,29 @@ REGISTER_TEST(md_module_wechat_surfaces,
     fileRow->onClick();
     frame();
 
-    const auto& wc = core::theme::current().colors.wechat;
-    DOCTEST_CHECK(colorEq(ui.find("md.tree.bg")->color, wc.cardBg));
-    DOCTEST_CHECK(colorEq(ui.find("md.search.hit")->color, wc.cardBg));
-    DOCTEST_CHECK(colorEq(ui.find("md.editor.bg")->color, wc.pageBg));
+    const auto& wc = core::theme::current().colors;
+    const eui::Color cardBg = ui_kit::cardSurface(core::theme::current());
+    DOCTEST_CHECK(colorEq(ui.find("md.tree.bg")->color, wc.background));  // B2 方案 A 共面融合：树区与编辑区同底
+    DOCTEST_CHECK(colorEq(ui.find("md.search.hit")->color, wc.surface));
+    DOCTEST_CHECK(colorEq(ui.find("md.editor.bg")->color, wc.background));
     const auto* edHit = ui.find("md.editor.input.hit");
     DOCTEST_REQUIRE(edHit != nullptr);
-    DOCTEST_CHECK(colorEq(edHit->color, wc.cardBg));   // 编辑面板底 = 白卡（米黄主诉点）
-    DOCTEST_CHECK(colorEq(ui.find("md.status.bg")->color, wc.cardBg));
+    DOCTEST_CHECK(colorEq(edHit->color, wc.surface));   // 编辑面板底 = 白卡（米黄主诉点）
+    DOCTEST_CHECK(colorEq(ui.find("md.status.bg")->color, cardBg));
 
     // 实时态：列底浅灰 + 活动输入面白卡
     DOCTEST_REQUIRE(cycle());   // 编辑 → 实时
     frame();
-    DOCTEST_CHECK(colorEq(ui.find("md.live.bg")->color, wc.pageBg));
+    DOCTEST_CHECK(colorEq(ui.find("md.live.bg")->color, wc.background));
     const auto* liveHit = ui.find("md.live.input.hit");
     DOCTEST_REQUIRE(liveHit != nullptr);
-    DOCTEST_CHECK(colorEq(liveHit->color, wc.cardBg));
+    DOCTEST_CHECK(colorEq(liveHit->color, wc.surface));
 
-    // 双栏：编辑列 + 预览列底都为浅灰 pageBg（白卡内容浮于其上）
+    // 双栏：编辑列 + 预览列底都为浅灰 background（白卡内容浮于其上）
     DOCTEST_REQUIRE(cycle());   // 实时 → 双栏
     frame();
-    DOCTEST_CHECK(colorEq(ui.find("md.editor.bg")->color, wc.pageBg));
-    DOCTEST_CHECK(colorEq(ui.find("md.preview.bg")->color, wc.pageBg));
+    DOCTEST_CHECK(colorEq(ui.find("md.editor.bg")->color, wc.background));
+    DOCTEST_CHECK(colorEq(ui.find("md.preview.bg")->color, wc.background));
 
     // 大纲浮面板：底 = 白卡（曾 = surfaceElevated，米黄根源之一）；
     // 行选中浅灰 / 未选白卡。反向锁：不许回退暖橙 surfaceElevated。
@@ -1269,13 +1268,15 @@ REGISTER_TEST(md_module_wechat_surfaces,
     frame();
     const auto* outlineBg = ui.find("md.outline.panel.bg");
     DOCTEST_REQUIRE(outlineBg != nullptr);
-    DOCTEST_CHECK(colorEq(outlineBg->color, wc.cardBg));
+    DOCTEST_CHECK(colorEq(outlineBg->color, cardBg));
+    // B2 描边存在性（H10 门禁）：大纲浮面板白卡须有 1px 描边
+    DOCTEST_CHECK(outlineBg->border.width >= 1.0f);
     const auto* outlineRow0 = ui.find("md.outline.item.0.row");
     const auto* outlineRow1 = ui.find("md.outline.item.1.row");
     DOCTEST_REQUIRE(outlineRow0 != nullptr);
     DOCTEST_REQUIRE(outlineRow1 != nullptr);
-    DOCTEST_CHECK(colorEq(outlineRow0->color, wc.selectedBg));  // 光标 0 → A 为当前节
-    DOCTEST_CHECK(colorEq(outlineRow1->color, wc.cardBg));
+    DOCTEST_CHECK(colorEq(outlineRow0->color, wc.primarySoftBg));  // 光标 0 → A 为当前节
+    DOCTEST_CHECK(colorEq(outlineRow1->color, cardBg));
     const auto& warm = core::theme::current().colors;
     DOCTEST_CHECK(!colorEq(outlineBg->color, warm.surfaceElevated));
     DOCTEST_CHECK(!colorEq(ui.find("md.tree.bg")->color, warm.surfaceElevated));
@@ -1397,16 +1398,18 @@ REGISTER_TEST(md_module_new_folder, "markdown_module: W9 新建文件夹入口�
     const auto* nfHint = ui.find("md.dialog.new.hint");
     DOCTEST_REQUIRE(nfHint != nullptr);
     DOCTEST_CHECK(nfHint->text.find("根目录") != std::string::npos);
-    // 选中态可视：根目录行底色 = wechat.selectedBg（W8 选中色 #E5E5E5），刚建好的「工作」行回底色
+    // 选中态可视：根目录行底色 = primarySoftBg（W8 选中色 #E5E5E5），刚建好的「工作」行回底色
     const auto* rootRowNow = ui.find("md.tree.node.0.row");
     const auto* workRowNow = ui.find("md.tree.node.2.row");
     DOCTEST_REQUIRE(rootRowNow != nullptr);
     DOCTEST_REQUIRE(workRowNow != nullptr);
-    // W8：选中态底色改 wechat.selectedBg（#E5E5E5）
+    // W8：选中态底色改 primarySoftBg（#E5E5E5）
     const auto& treeColors = core::theme::current().colors;
-    DOCTEST_CHECK(colorEq(rootRowNow->color, treeColors.wechat.selectedBg));
-    DOCTEST_CHECK(colorEq(rootRowNow->color, treeColors.wechat.selectedBg) &&
-                  !colorEq(workRowNow->color, treeColors.wechat.selectedBg));
+    DOCTEST_CHECK(colorEq(rootRowNow->color, treeColors.primarySoftBg));
+    DOCTEST_CHECK(colorEq(rootRowNow->color, treeColors.primarySoftBg) &&
+                  !colorEq(workRowNow->color, treeColors.primarySoftBg));
+    // 2026-10-25 批H：未选行无底色（透明），非 cardSurface 白卡
+    DOCTEST_CHECK(workRowNow->color.a == 0.0f);
     const auto* noteBtn = ui.find("md.tree.new.bg");
     DOCTEST_REQUIRE(noteBtn != nullptr);
     noteBtn->onClick();
@@ -1650,7 +1653,7 @@ REGISTER_TEST(md_module_new_folder_parent,
 
 // 2b4b''. 目录树选中态 → 新建笔记落在选中目录
 // 逐档钉死（不只测根——「永远落在根目录」正是报障点）：
-//   ① 初始选中 = 根目录行（默认值），行底色 = wechat.selectedBg；
+//   ① 初始选中 = 根目录行（默认值），行底色 = primarySoftBg；
 //   ② 点**二级目录**行 → 选中态 == 工作/周会 → 新建笔记落盘 工作/周会/xxx.md
 //      （不是根、也不是父目录 工作）；
 //   ③ 点**一级目录**行 → 新建笔记落 工作/xxx.md；
@@ -2194,17 +2197,92 @@ REGISTER_TEST(md_module_split_layout, "markdown_module: W9 双栏三列铺满 co
     DOCTEST_REQUIRE(editor != nullptr);
     DOCTEST_REQUIRE(preview != nullptr);
 
-    // 三列 + 2 gap 铺满 contentW（1600 - 80 padding = 1520），无残余死白
-    const float pad = 40.0f;
+    // 三列 + 2 gap 铺满 contentW（1600 - 64 padding = 1536，S4.2 pad 40→32），无残余死白
+    const float pad = 32.0f;
     const float contentW = screen.width - pad * 2.0f;
     const float gap = 16.0f;
     DOCTEST_CHECK_EQ(tree->frame.x, pad);
-    DOCTEST_CHECK_EQ(tree->frame.width, 240.0f);  // UAT2 F批：220→240
+    DOCTEST_CHECK_EQ(tree->frame.width, 224.0f);  // S4.4：224（收窄最小 200）
     DOCTEST_CHECK_EQ(editor->frame.width, preview->frame.width);
     const float total = tree->frame.width + editor->frame.width +
                         preview->frame.width + gap * 2.0f;
     DOCTEST_CHECK(total > contentW - 0.5f && total < contentW + 0.5f);
     DOCTEST_CHECK_EQ(preview->frame.x + preview->frame.width, pad + contentW);
+
+    mod->onStop();
+    return true;
+})
+
+// 2b2. S4.4 侧栏宽恒 224（不随窗宽缩放）+ 双栏列宽 (contentW-sideW-2*gap)/2 双档
+
+REGISTER_TEST(md_module_sidebar224_split_dualres,
+    "markdown_module: S4.4 侧栏宽恒 224 + 双栏列宽公式双档 1000x640/1600x1000（headless layout）", {
+    test_support::MdHeadlessEnv env(kDirPrefix, "side224", kDbName);
+    DOCTEST_REQUIRE(env.db != nullptr);
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "note.md", "# A\n"));
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+
+    eui::Screen screen;
+    eui::Ui ui;
+    auto frame = [&](void) {
+        ui.begin("sb");
+        mod->compose(ui, screen);
+        ui.end();
+        ui.layout(screen.width, screen.height);
+    };
+
+    // 进双栏态：开笔记 + Shift+P 循环至 Split（编辑/预览同列宽 midW）
+    screen.width = 1000.0f;
+    screen.height = 640.0f;
+    frame();
+    const auto* fileRow = ui.find("md.tree.node.1.row");
+    DOCTEST_REQUIRE(fileRow != nullptr);
+    DOCTEST_REQUIRE(fileRow->onClick != nullptr);
+    fileRow->onClick();
+    eui::KeyEvent p = test_support::pressShortcut(eui::InputKey::P, /*shift=*/true);
+    bool split = false;
+    for (int i = 0; i < 3 && !split; ++i) {
+        frame();
+        split = ui.find(kEditorInputId) != nullptr &&
+               ui.find("md.preview.scroll") != nullptr;
+        if (!split) mod->onKeyEvent(p);
+    }
+    DOCTEST_REQUIRE(split);
+
+    const float pad = 32.0f;
+    const float gap = 16.0f;
+    const float sideW = 224.0f;  // S4.4 侧栏宽（收窄最小 200）
+
+    // 档1：1000×640 —— 侧栏钉 224、编辑/预览列 = (contentW-sideW-2*gap)/2
+    const auto* tree = ui.find("md.tree.bg");
+    const auto* editor = ui.find("md.editor");
+    const auto* preview = ui.find("md.preview.bg");
+    DOCTEST_REQUIRE(tree != nullptr);
+    DOCTEST_REQUIRE(editor != nullptr);
+    DOCTEST_REQUIRE(preview != nullptr);
+    float contentW = screen.width - pad * 2.0f;
+    float midW = (contentW - sideW - gap * 2.0f) / 2.0f;
+    DOCTEST_CHECK_EQ(tree->frame.width, sideW);
+    DOCTEST_CHECK_EQ(editor->frame.width, midW);
+    DOCTEST_CHECK_EQ(preview->frame.width, midW);
+
+    // 档2：1600×1000 —— 侧栏仍 224（不随窗宽放大）、列宽按同公式派生
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    frame();
+    const auto* tree2 = ui.find("md.tree.bg");
+    const auto* editor2 = ui.find("md.editor");
+    const auto* preview2 = ui.find("md.preview.bg");
+    DOCTEST_REQUIRE(tree2 != nullptr);
+    DOCTEST_REQUIRE(editor2 != nullptr);
+    DOCTEST_REQUIRE(preview2 != nullptr);
+    contentW = screen.width - pad * 2.0f;
+    midW = (contentW - sideW - gap * 2.0f) / 2.0f;
+    DOCTEST_CHECK_EQ(tree2->frame.width, sideW);
+    DOCTEST_CHECK_EQ(editor2->frame.width, midW);
+    DOCTEST_CHECK_EQ(preview2->frame.width, midW);
 
     mod->onStop();
     return true;
@@ -2230,8 +2308,8 @@ REGISTER_TEST(md_tree_column_layout_semantics,
     ui.end();
     ui.layout(screen.width, screen.height);
 
-    const float pad = 40.0f;        // spacingXXLarge
-    const float sideW = 240.0f;     // 左栏树宽（UAT2 F批：220→240）
+    const float pad = 32.0f;        // S4.2 弹性内边距（spacingLarge×2，H3 40→32）
+    const float sideW = 224.0f;     // 左栏树宽（S4.4：224，收窄最小 200）
     const float gap = 16.0f;
     const float contentW = screen.width - pad * 2.0f;
 
@@ -3741,9 +3819,9 @@ REGISTER_TEST(md_module_split_block_click_hover,
                      static_cast<int>(closeByte));
 
     // ③ hover：上游 Heading 块底衬 idle 透明 → enter 后 = 页面主体 wechat 悬停色
-    //（UAT3 T1：块 hover 底衬随 componentTheme 迁 wechat，同 surfaceHover 口径）
+    //（UAT3 T1：块 hover 底衬随 componentTheme 迁 wechat，同 hover 口径）
     const eui::Color hoverTint =
-        core::theme::current().colors.wechat.dividerSecondary;
+        core::theme::current().colors.hover;
     const std::string hlHead = "md.preview.blk." + std::to_string(kh) + ".hl";
     frame();
     DOCTEST_CHECK(ui.find(hlHead)->color.a == 0.0f);
@@ -4681,8 +4759,8 @@ REGISTER_TEST(md_module_text_column_chrome_shared,
         ui.end();
         ui.layout(screen.width, screen.height);
     };
-    const float pad = 40.0f;
-    const float sideW = 240.0f;  // UAT2 F批：220→240
+    const float pad = 32.0f;  // S4.2 弹性内边距（spacingLarge×2，H3 40→32）
+    const float sideW = 224.0f;  // S4.4：224（收窄最小 200）
     const float gap = 16.0f;
 
     // (1) 空态（未选笔记）：提示条 + 状态栏，chip 行不画
@@ -8476,8 +8554,8 @@ REGISTER_TEST(md_module_tree_list_error,
     DOCTEST_CHECK(err->text.find("列表加载失败") != std::string::npos);
     DOCTEST_CHECK(err->text.find("每 5 秒自动重试") != std::string::npos);
     // 文本元素：TextBuilder::color() 落在 textColor（element->color 是底色字段）
-    // W8：错误色改走 wechat 令牌 warningRed（#FA5151），不再用 colors.error
-    DOCTEST_CHECK(colorEq(err->textColor, core::theme::current().colors.wechat.warningRed));
+    // 错误文字走 errorText 档（error 只留给红底/边框等图形）
+    DOCTEST_CHECK(colorEq(err->textColor, core::theme::current().colors.errorText));
     DOCTEST_CHECK(err->frame.width > 0.0f);
     DOCTEST_CHECK(err->frame.height > 0.0f);
     // 失败态顶掉空态与树（分支互斥：不拿旧数据/空态伪装正常）
@@ -8563,10 +8641,9 @@ REGISTER_TEST(md_module_statusbar_save_error,
     DOCTEST_CHECK(save->text.find("未保存") == std::string::npos);
     DOCTEST_CHECK(save->text.find("已保存") == std::string::npos);
     // 文本元素：TextBuilder::color() 落在 textColor（element->color 是底色字段）
-    // UAT3 T1 测试对齐：模块 saveFailed_ 态自 W8 起即用 wechat.warningRed
-    //（#FA5151）；本断言此前仍钉旧 colors.error，属 W8 后漂移未同步的存量红。
+    // saveFailed_ 红字走 errorText 档（error 只留给红底/边框等图形）
     DOCTEST_CHECK(colorEq(save->textColor,
-                          core::theme::current().colors.wechat.warningRed));
+                          core::theme::current().colors.errorText));
     DOCTEST_CHECK(save->frame.width > 0.0f);
 
     // 还原目录权限，RAII 夹具才能清理

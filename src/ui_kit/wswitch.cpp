@@ -11,11 +11,16 @@ void wswitch(eui::Ui& ui, const std::string& id, bool on,
              float x, float y, float w, float h,
              const core::theme::Tokens& t,
              const std::function<void(bool)>& onToggle) {
-    const auto& wc = t.colors.wechat;
 
-    // §4.4 轨道色：开=wechat.primary 绿；关=wechat.dividerSecondary 灰（派生灰
-    // 用现有 token，不引入新槽位——开关是唯一用灰轨道的组件，本 helper 内闭合）
-    const eui::Color trackColor = on ? wc.primary : wc.dividerSecondary;
+    // S2.6: 开启态轨道 = primary #36D399；关闭态 = border 灰度深一档 #D1D5DB
+    //（关闭态由 t.colors.borderDefault #E5E7EB 派生 *0.91，不引入新 token 槽位）
+    const eui::Color offTrackColor{
+        t.colors.borderDefault.r * 0.91f,
+        t.colors.borderDefault.g * 0.91f,
+        t.colors.borderDefault.b * 0.91f,
+        1.0f
+    };
+    const eui::Color trackColor = on ? t.colors.primary : offTrackColor;
 
     // 滑块几何：直径 = h - 2*padding（在轨道内留白）；圆心 y = padding + thumbR
     const float thumbD = h - 2.0f * kWswitchThumbPadding;
@@ -47,7 +52,7 @@ void wswitch(eui::Ui& ui, const std::string& id, bool on,
             ui.rect(id + ".thumb")
                 .position(thumbX, thumbY)
                 .size(thumbD, thumbD)
-                .color(wc.cardBg)
+                .color(t.colors.surface)
                 .radius(thumbR)
                 .build();
         })

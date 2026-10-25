@@ -54,7 +54,6 @@ void showLightToast(eui::Ui& ui, const std::string& id, const std::string& messa
 
     if (!s.open || s.message.empty()) return;
 
-    const auto& wc = t.colors.wechat;
 
     // 几何：居中于 (cx, cy)
     const float estW = std::max(kLightToastMinWidth,
@@ -72,7 +71,7 @@ void showLightToast(eui::Ui& ui, const std::string& id, const std::string& messa
             ui.rect(id + ".bg")
                 .size(estW, kLightToastHeight)
                 .color(eui::Color{0.0f, 0.0f, 0.0f, kLightToastBgAlpha})
-                .radius(t.sizes.radiusWeChat)
+                .radius(t.sizes.radiusSmall)
                 .build();
 
             // 白字（§4.10）：wechat.onPrimary=#FFFFFF（主色上的前景色，黑底白字同义）
@@ -82,7 +81,7 @@ void showLightToast(eui::Ui& ui, const std::string& id, const std::string& messa
                 .fontSize(kLightToastFontSize)
                 .horizontalAlign(eui::HorizontalAlign::Center)
                 .verticalAlign(eui::VerticalAlign::Center)
-                .color(wc.onPrimary)
+                .color(t.colors.onPrimary)
                 .build();
         })
         .build();

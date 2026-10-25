@@ -62,7 +62,7 @@ void drawDialogTitle(eui::Ui& ui, const std::string& id, float dialogWidth,
 namespace {
 
 // 按钮对公共几何：取消在左、确定在右，各 (w − 2×内缩 − gap)/2，行底距弹窗底 60。
-constexpr float kDialogButtonGap = 12.0f;
+constexpr float kDialogButtonGap = 8.0f;
 constexpr float kDialogButtonRowOffsetY = 60.0f;
 constexpr float kDialogButtonHeight = 40.0f;
 
@@ -117,15 +117,20 @@ void buildDialogButton(eui::Ui& ui, const std::string& id, float x, float y, flo
             break;
         case DialogButtonStyle::DangerOutline:
             button.colors(t.colors.surfaceElevated, t.colors.hover, t.colors.active)
-                .textColor(t.colors.error)
+                .textColor(t.colors.errorText)
                 .radius(t.sizes.radius)
                 .border(1.0f, t.colors.borderDefault);
             break;
         case DialogButtonStyle::DangerOutlineThemed:
             button.theme(themeTokens, false)
-                .textColor(t.colors.error)
+                .textColor(t.colors.errorText)
                 .radius(t.sizes.radius)
                 .border(1.0f, t.colors.borderDefault);
+            break;
+        case DialogButtonStyle::DangerSoftThemed:
+            // S2.1 Danger 默认态：浅红底（#FEE2E2 = error 20%）+ 红字；hover 红底白字
+            button.theme(themeTokens, components::ButtonVariant::Danger)
+                .radius(t.sizes.radius);
             break;
     }
     button.onClick(spec.onClick).build();

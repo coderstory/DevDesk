@@ -86,6 +86,9 @@ add_executable(devdesk_tests
     #（黑半透明 bg alpha / 白字 onPrimary / 1.5s 自动消失 / 空状态就近按钮 /
     # 0xF059 问号字形绑定 fontFamily=Icon）。
     test_modules/test_ui_kit_feedback.cpp
+    # UAT6.2 字号无级调节批：slider helper 无头断言（四节点/取值绑定/token 落点/
+    # 行程映射与越界钳制）+ 归一化值→百分比映射钉值。
+    test_modules/test_ui_kit_slider.cpp
     # 图标批（2026-10-20 C 方案终端窗 >_）：品牌几何 logo helper 契约
     #（结构 id / 归一化几何与位图资产同源 / 档位缩放线性 / opacity 透传）
     test_modules/test_logo_helper.cpp
@@ -271,7 +274,9 @@ foreach(_probe_source ${_devdesk_probe_sources})
     # module_toggle_sidebar_probe：活门控真窗口 probe 还要真 app::compose +
     # 真 dispatchModuleToggle → 额外编译 app_sidebar.cpp + app_assembly.cpp
     #（其余 probe 维持最小链接面，不拖 app 层）
-    if(_probe_name STREQUAL "module_toggle_sidebar_probe")
+    if(_probe_name STREQUAL "module_toggle_sidebar_probe" OR
+       _probe_name STREQUAL "h13_fluid_background_probe" OR
+       _probe_name STREQUAL "uat62_page_shots_probe")
         add_executable(${_probe_name} "${_probe_source}"
             "${CMAKE_SOURCE_DIR}/src/module_toggle_bridge.cpp"
             "${CMAKE_SOURCE_DIR}/src/app_sidebar.cpp"

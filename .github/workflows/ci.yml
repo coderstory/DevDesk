@@ -26,6 +26,8 @@ env:
   # 注册整体不生成，probe 门禁段与探针跳过登记守卫显式跳过打 ⏭）。
   # 单测全量与静态守卫照跑；probe 真门禁靠本地（默认 ON）+ headless 断言单测。
   DEVDESK_BUILD_PROBES: "0"
+  # CI 固定 EUI-NEO SHA：出包/CI 以此为准，避免上游 main 变动导致的幽灵失败
+  EUI_NEO_PIN: 64cf1ac054b82dfa92f5d0bdc3f3e514e19e90fc
 
 jobs:
   macos:
@@ -36,8 +38,10 @@ jobs:
         with:
           path: DevDesk
 
-      - name: 取 EUI-NEO（须与 DevDesk 同级目录）
-        run: git clone --depth 1 "$EUI_NEO_REPO" EUI-NEO
+      - name: 取 EUI-NEO（须与 DevDesk 同级目录；按固定 SHA 检出，不跟踪浮动 main）
+        run: |
+          git clone "$EUI_NEO_REPO" EUI-NEO
+          git -C EUI-NEO checkout "$EUI_NEO_PIN"
 
       - name: 切到镜像上最新的 Xcode
         run: |
@@ -88,8 +92,10 @@ jobs:
         with:
           path: DevDesk
 
-      - name: 取 EUI-NEO（须与 DevDesk 同级目录）
-        run: git clone --depth 1 "$env:EUI_NEO_REPO" EUI-NEO
+      - name: 取 EUI-NEO（须与 DevDesk 同级目录；按固定 SHA 检出，不跟踪浮动 main）
+        run: |
+          git clone "$env:EUI_NEO_REPO" EUI-NEO
+          git -C EUI-NEO checkout "$env:EUI_NEO_PIN"
 
       - uses: msys2/setup-msys2@v2
         with:

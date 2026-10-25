@@ -21,10 +21,12 @@ namespace module::todo::ui {
 
 // 板面几何快照（drawBoard / drawCard 每帧刷新）：写权在本单元、读权在模块（hitDropColumn）
 struct BoardPlate {
-    float colW = 0.0f;
-    float colGap = 0.0f;
     float height = 0.0f;
     float cardW = 0.0f;
+    // 逐列实际几何（compose 空间，列左缘 + 当帧宽）：drawBoard 每帧填入，含归档折叠动画宽度。
+    // 拖拽命中优先吃这两条向量——归档折叠窄条与展开宽列都按真实宽度命中
+    std::vector<float> columnX;
+    std::vector<float> columnWidth;
 };
 
 // 看板 → 模块的回写通道（模块构造期绑定一次）；回调体写在模块侧，读模块当下状态，不是当帧快照
@@ -32,19 +34,16 @@ struct BoardActions {
     std::function<void(const std::string&)> searchChanged;
     std::function<void()> searchCancelled;
     std::function<void()> overdueClicked;
-    std::function<void()> addColumnClicked;
     std::function<void()> addTaskClicked;
     std::function<void()> retryClicked;
-    std::function<void(const Column&, int)> columnMenu;
-    std::function<void(const Column&)> renameColumn;
-    std::function<void(int64_t)> addTaskToColumn;
     std::function<void(size_t, float)> columnScrollChanged;
     std::function<void(const Task&)> cardClicked;
-    std::function<void(const Task&, int, int)> cardMenu;
+    std::function<void(const Task&, int, int, float)> cardMenu;
     std::function<void(const Task&, int, int, const eui::Rect&)> cardPressed;
     // 四参：指针 x/y（命中换算，物理像素）+ 按下点起累计位移 totalX/totalY（跟手副本锚点用，框架算）
     std::function<void(double, double, double, double)> cardDragged;
     std::function<void(double, double, bool)> cardReleased;
+    std::function<void()> archiveToggle;
 };
 
 // 看板绘制的只读输入（模块每帧组装一次）：容器是模块成员的引用（不拷贝），拖拽中间态与标量取当帧快照
@@ -70,9 +69,13 @@ struct BoardView {
     const std::string& loadError;
     const BoardActions& act;
     // 落位淡入按 dragActive 门控列内容容器 opacity：拖拽中 0.6，松手 0.6→1.0 淡回（0.12s OutQuad）
+    bool archiveExpanded = false;
+    // H20 归档折叠动画进度（0=折叠，1=展开）：宽度插值 / 窄态与展开头交叉淡化 / 卡片内容淡入
+    // 的唯一输入。动画由模块侧驱动（archiveExpanded 是目标态），本单元只按当帧值布局。
+    float archiveT = 0.0f;
 };
 
-// 表头（标题 + 搜索框 + 逾期入口 + 建列/建任务）
+// 表头（标题 + 搜索框 + 逾期入口 + 新建任务；H20 起「+ 列」入口删除）
 void drawHeader(eui::Ui& ui, float contentW, float headerH, float bodyH,
                 const core::theme::Tokens& t, const BoardView& v);
 

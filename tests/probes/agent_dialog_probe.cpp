@@ -207,7 +207,22 @@ int main(int argc, char* argv[]) {
         }
     }
 
+    // 竖向导航向导：内容区按步切显，nav 项 .bg 直点跳步（触发段在 step 1、
+    // AI 草稿在 step 2），与 doctest test_agent_ui 的向导用法同缝。
+    auto gotoStep = [&](int n) {
+        const auto* pill =
+            findElement("agent.dialog.task.step." + std::to_string(n) + ".bg");
+        if (pill == nullptr) {
+            std::cerr << "agent_dialog_probe: 步骤节点 step." << n << ".bg 缺失\n";
+            passed = false;
+            return;
+        }
+        clickElement(*pill);
+        composeFrame();
+    };
+
     // 触发方式切「定时」：UAT5 改 segment 选项钮（无下拉 field，直点 .item.1.bg）
+    gotoStep(1);
     const auto* triggerOp1 = findElement("agent.dialog.task.trigger.item.1.bg");
     if (triggerOp1 == nullptr) {
         std::cerr << "agent_dialog_probe: 'agent.dialog.task.trigger.item.1.bg' "
@@ -259,6 +274,8 @@ int main(int argc, char* argv[]) {
     // 前置：任务弹窗开着（A 段已切定时 + cron 预览）。子弹窗关闭后外层保持
     // 完好，A 段后续的模板下拉交互即外层可交互的活性证明。
     {
+        // aichip 在向导 step 2（目标步）
+        gotoStep(2);
         // §8 item 7：AI 草稿改 ui_kit::button Text 级，clickable = .bg（原 actionChip .chip 不存在）
         const auto* chip = findElement("agent.dialog.task.aichip.bg");
         if (chip == nullptr) {
@@ -385,8 +402,13 @@ int main(int argc, char* argv[]) {
                 composeFrame();
                 const auto* genBusy =
                     findElement("agent.dialog.task.draft.generate.bg");
+                // EUI 逐态文字：带 hover 文字色的按钮文案在 .text.states/.text.normal，
+                // 旧单 text 结构仅无逐态色的按钮才有——两形态都认。
                 const auto* genLabel =
-                    findElement("agent.dialog.task.draft.generate.text");
+                    findElement("agent.dialog.task.draft.generate.text.normal");
+                if (genLabel == nullptr) {
+                    genLabel = findElement("agent.dialog.task.draft.generate.text");
+                }
                 // button 组件的 disabled 落在 .bg、文案落在 .text（根节点两者皆无）
                 if (genBusy == nullptr || !genBusy->disabled || genLabel == nullptr ||
                     genLabel->text != "生成中…") {
@@ -472,7 +494,8 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // 模板下拉展开（保持开态构图）
+    // 模板下拉展开（保持开态构图；模板 field 在向导 step 1，C 段后跳回）
+    gotoStep(1);
     {
         const auto* tplField = findElement("agent.dialog.task.cron.template.field");
         if (tplField == nullptr) {

@@ -23,14 +23,14 @@ namespace {
 
 // 弹窗几何（单一来源，绘制与高度算式都用这里）
 constexpr float kDialogHeight = 520.0f;
-constexpr float kTitleY = 24.0f;
+constexpr float kTitleY = 16.0f;  // 规格 §三.4：标题上缘距弹窗顶 ≤16px（原 24）
 constexpr float kTitleH = 28.0f;
-constexpr float kDescY = 56.0f;
+constexpr float kDescY = 48.0f;   // 标题底 44 + 4 缝（原 56）
 constexpr float kDescH = 34.0f;
-constexpr float kSelectAllY = 100.0f;
-constexpr float kSelectAllH = 28.0f;
-// 全选钮带（底 128）与候选列表之间留 12px 呼吸（UAT6：原 4px 太挤）
-constexpr float kListTopY = 140.0f;
+constexpr float kSelectAllY = 92.0f;  // desc 底 82 + 10 缝（原 100）
+constexpr float kSelectAllH = 40.0f;  // H2：28→40 对齐规格（按钮高度 40px）
+// 全选钮带（底 120→132，H2 钮高 28→40 对齐规格）与候选列表留 8px 间距（UAT6：原 4px 太挤）
+constexpr float kListTopY = 140.0f;  // selectAll 底 132 + 8 缝（原 148）
 // UAT6 P 批：行卡高 +12.5%（48→54）、行间 8→14（下边距增大）、整卡行距 56→68
 constexpr float kRowPitch = 68.0f;        // 每条候选占的行高（行卡 54 + 行间 14）
 constexpr float kRowCardH = kRowPitch - 14.0f;  // 行卡高 54px（原 48 +12.5%）
@@ -44,16 +44,16 @@ void drawCandidateRow(eui::Ui& ui, const core::theme::Tokens& t,
                       const std::string& baseId, float rowW,
                       const CcSwitchImportRow& row,
                       const CcSwitchImportMapping& m, bool selected) {
-    // UAT6 P 批：选中态淡绿底（#E8F7EE + 绿描边），未选中保白；
-// 勾选指示绿圈白勾（加深绿 primaryPressed 防淡绿底淹没）。
+    // S2.5 列表选中态：淡绿选中底 = primarySoftBg（#E6FBF2），未选中保白；
+    // 勾选指示绿圈白勾（加深绿 primaryPressed 防淡绿底淹没）。
     ui.rect(baseId + ".bg")
         .position(0.0f, 0.0f)
         .size(rowW, kRowCardH)
-        .color(selected ? eui::Color{0xE8, 0xF7, 0xEE, 0xFF}  // 淡绿选中底
-                         : t.colors.wechat.cardBg)
+        .color(selected ? t.colors.primarySoftBg   // 淡绿选中底（token，替代硬编码 #E8F7EE）
+                         : t.colors.surface)
         .radius(t.sizes.radiusLarge)
-        .border(1.0f, selected ? t.colors.wechat.primary          // 绿描边
-                                : t.colors.wechat.dividerPrimary)
+        .border(1.0f, selected ? t.colors.primary          // 绿描边
+                                : t.colors.borderDefault)
         .build();
     // 勾选指示器：20px 圆，选中=绿圈白勾（primaryPressed 加深防淡绿底淹没）、
     // 未选中=cardBg 白圈灰边空圈。
@@ -62,22 +62,22 @@ void drawCandidateRow(eui::Ui& ui, const core::theme::Tokens& t,
     ui.rect(baseId + ".cb.box")
         .position(12.0f, boxY)
         .size(kBoxSize, kBoxSize)
-        .color(selected ? t.colors.wechat.primaryPressed : t.colors.wechat.cardBg)
+        .color(selected ? t.colors.primaryPressed : t.colors.surface)
         .radius(kBoxSize * 0.5f)
         .border(1.0f,
-                selected ? t.colors.wechat.primaryPressed
-                         : t.colors.wechat.dividerPrimary)
+                selected ? t.colors.primaryPressed
+                         : t.colors.borderDefault)
         .build();
     if (selected) {
         ui.text(baseId + ".cb.mark")
             .position(12.0f, boxY)
             .size(kBoxSize, kBoxSize)
             .icon(0xF00C)  // fa-check
-            .fontSize(11.0f)
+            .fontSize(core::theme::scaled(11.0f))
             .lineHeight(kBoxSize)
             .horizontalAlign(eui::HorizontalAlign::Center)
             .verticalAlign(eui::VerticalAlign::Center)
-            .color(t.colors.wechat.onPrimary)
+            .color(t.colors.onPrimary)
             .build();
     }
     // 名称（粗）+ base_url（mono 小字）+ model（小字）。**密钥一律不画**。
@@ -91,37 +91,37 @@ void drawCandidateRow(eui::Ui& ui, const core::theme::Tokens& t,
         .position(textX, 5.0f)
         .size(textW, 17.0f)
         .text(row.name.empty() ? std::string("（无名称）") : row.name)
-        .fontSize(13.0f)
-        .lineHeight(17.0f)
+        .fontSize(core::theme::scaled(13.0f))
+        .lineHeight(core::theme::scaled(17.0f))
         .fontWeight(600)
         .maxWidth(textW)
         .wrap(false)
         .overflow(core::TextOverflow::Ellipsis)
-        .color(t.colors.wechat.textPrimary)
+        .color(t.colors.textPrimary)
         .build();
     ui.text(baseId + ".url")
         .position(textX, 22.0f)
         .size(textW, 13.0f)
         .text(row.appType + " · " +
               (m.ok ? m.baseUrl : std::string("—")))
-        .fontSize(11.0f)
-        .lineHeight(13.0f)
+        .fontSize(core::theme::scaled(11.0f))
+        .lineHeight(core::theme::scaled(13.0f))
         .maxWidth(textW)
         .wrap(false)
         .overflow(core::TextOverflow::Ellipsis)
-        .color(t.colors.wechat.textTertiary)
+        .color(t.colors.textTertiary)
         .build();
     if (m.ok && !m.model.empty()) {
         ui.text(baseId + ".model")
             .position(textX, 35.0f)
             .size(textW, 12.0f)
             .text("model: " + m.model)
-            .fontSize(11.0f)
-            .lineHeight(12.0f)
+            .fontSize(core::theme::scaled(11.0f))
+            .lineHeight(core::theme::scaled(12.0f))
             .maxWidth(textW)
             .wrap(false)
             .overflow(core::TextOverflow::Ellipsis)
-            .color(t.colors.wechat.textSecondary)
+            .color(t.colors.textSecondary)
             .build();
     }
     // 映射失败的行：右侧红字 skipReason（不阻断勾选，但导入选中时只会进「跳过」结果）
@@ -130,12 +130,12 @@ void drawCandidateRow(eui::Ui& ui, const core::theme::Tokens& t,
             .position(textX, 35.0f)
             .size(textW, 12.0f)
             .text("跳过：" + m.skipReason)
-            .fontSize(11.0f)
-            .lineHeight(12.0f)
+            .fontSize(core::theme::scaled(11.0f))
+            .lineHeight(core::theme::scaled(12.0f))
             .maxWidth(textW)
             .wrap(false)
             .overflow(core::TextOverflow::Ellipsis)
-            .color(t.colors.wechat.warningRed)
+            .color(t.colors.errorText)
             .build();
     }
 }
@@ -296,7 +296,7 @@ void drawCcSwitchImportDialog(eui::Ui& ui, const eui::Screen& screen,
         if (!st.loadError_.empty()) {
             ui_kit::drawDialogText(
                 ui, "claude.dialog.ccswitch.err", w, st.loadError_, 13.0f,
-                t.colors.error,
+                t.colors.errorText,
                 {.y = kListTopY, .height = 60.0f, .lineHeight = 20.0f, .wrap = true});
         } else if (st.rows_.empty()) {
             ui_kit::drawDialogText(
@@ -309,18 +309,18 @@ void drawCcSwitchImportDialog(eui::Ui& ui, const eui::Screen& screen,
             const int selCount = static_cast<int>(
                 std::count(st.selected_.begin(), st.selected_.end(), true));
             const bool allSelected = (selCount == static_cast<int>(st.rows_.size()));
-            components::button(ui, "claude.dialog.ccswitch.selall")
+            // 按钮组分层（S2.1）：全选 = Ghost 文字钮（透明底绿字，hover 淡绿底）；
+            // 关闭 = Outline 次按钮；导入选中 = Filled 主按钮（最右）。
+            components::button(ui, "claude.dialog.ccswitch.selall",
+                               components::ButtonVariant::Ghost)
                 .position(ui_kit::kDialogInsetX, kSelectAllY)
-                .size(120.0f, kSelectAllH)
+                .size(96.0f, kSelectAllH)
                 .text(allSelected ? "取消全选" : "全选")
-                .fontSize(t.sizes.fontSizeSmall)
-                //（UAT5 米黄清理：surfaceElevated 暖橙 → WeChat Secondary 白底灰边）
-                .colors(t.colors.wechat.secondaryButtonBg,
-                        t.colors.wechat.dividerSecondary,
-                        t.colors.wechat.dividerSecondary)
-                .textColor(t.colors.wechat.textPrimary)
-                .radius(t.sizes.radiusWeChat)
-                .border(1.0f, t.colors.wechat.dividerPrimary)
+                .fontSize(core::theme::scaled(14.0f))  // H2：fontSizeSmall(12)→14 对齐规格（按钮文字 14/600）
+                .theme(themeTokens)
+                // Ghost 变体字色 = tokens.primary（浅底 1.92:1），覆写 accentText；
+                // 须在 theme() 之后（theme() 重建 style_）
+                .textColor(t.colors.accentText)
                 .onClick([sp = &st]() {
                     const bool anySelected =
                         std::any_of(sp->selected_.begin(),
@@ -403,7 +403,7 @@ void drawCcSwitchImportDialog(eui::Ui& ui, const eui::Screen& screen,
                     .position(ui_kit::kDialogInsetX, y)
                     .size(w - ui_kit::kDialogBodyInsetX, kResultH)
                     .text(st.resultLines_[i])
-                    .fontSize(11.0f)
+                    .fontSize(core::theme::scaled(11.0f))
                     .lineHeight(kResultH)
                     .color(t.colors.textSecondary)
                     .build();

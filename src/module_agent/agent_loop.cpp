@@ -135,8 +135,6 @@ AgentTask taskFromRow(const AgentTaskRow& row) {
     t.modelSlot = row.modelSlot;
     t.maxIterations = row.maxIterations;
     t.allowDestructive = row.allowDestructive;
-    t.contextNote = row.contextNote;
-    t.autoNote = (row.autoNote != 0);
     t.systemPrompt = row.systemPrompt;
     return t;
 }
@@ -215,17 +213,14 @@ Result<int64_t> AgentLoop::run(const AgentTask& task,
             error = "达到迭代上限 " + std::to_string(iterations);
             break;
         }
-        // system prompt：用户自定义 > 自动生成（带当前本地时间 + 可选的上下文记忆）。
-        // 用户填写了 systemPrompt → 直接使用，不追加自动内容（由用户自己决定要什么）。
-        // 未填写 → 自动生成：时间行 + 可选上下文记忆（既往行为不变）。
+        // system prompt：用户自定义 > 自动生成（带当前本地时间）。
+        // 用户填写了 systemPrompt → 直接使用；未填写 → 自动生成时间行。
+        // W4 C3：上下文记忆已并入 systemPrompt 单字段，不在运行时注入。
         std::string systemPrompt;
         if (!task.systemPrompt.empty()) {
             systemPrompt = task.systemPrompt;
         } else {
             systemPrompt = currentTimePromptLine(std::time(nullptr));
-            if (task.autoNote && !task.contextNote.empty()) {
-                systemPrompt += "\n\n[任务上下文记忆]\n" + task.contextNote;
-            }
         }
         // 槽位→真实 model id 由端点实现解析
         auto resp = llm_.send(messages, toolsJson, systemPrompt, task.modelSlot);
@@ -366,39 +361,10 @@ Result<int64_t> AgentLoop::run(const AgentTask& task,
         if (onFinishFailure_) {
             onFinishFailure_(runId, finished.errorMessage());
         }
-    } else if (status == "completed" && task.autoNote) {
-        // 自动 append 最终回复到 context note：取内存 messages 最后一条 assistant 的 text 块，
-        // 截断 500 字（1500 字节），加时间戳前缀；append 失败只 WARN 不改变 run 终态
-        const core::LlmMessage* lastAssistant = nullptr;
-        for (const auto& m : messages) {
-            if (m.role == "assistant") lastAssistant = &m;
-        }
-        if (lastAssistant != nullptr) {
-            auto blocks = decodeMessageBlocks(lastAssistant->contentJson);
-            std::string finalText;
-            for (const auto& b : blocks) {
-                if (b.type != MessageBlock::Type::Text) continue;
-                if (!finalText.empty()) finalText += "\n";
-                finalText += b.text;
-            }
-            if (!finalText.empty()) {
-                finalText = utf8Truncate(finalText, 1500);  // 500 汉字 ≈ 1500 UTF-8 字节
-                std::time_t now = std::time(nullptr);
-                std::tm local{};
-                core::time::localTime(now, &local);
-                char ts[20];
-                std::snprintf(ts, sizeof(ts), "%04d-%02d-%02d %02d:%02d",
-                              local.tm_year + 1900, local.tm_mon + 1,
-                              local.tm_mday, local.tm_hour, local.tm_min);
-                std::string note = std::string("[") + ts + "] " + finalText;
-                auto appended = store_.appendContextNote(task.id, note);
-                if (appended.isFail()) {
-                    LOG_WARN("AgentLoop: 自动 append context note 失败（run " +
-                             std::to_string(runId) + "）：" + appended.errorMessage());
-                }
-            }
-        }
     }
+    // W4 C3：`status == "completed" && task.autoNote` 的自动 append 最终回复到
+    // context note 分支已移除——执行记忆/自动记录并入 systemPrompt 单字段，
+    // context note 不再写入也不再展示。
     return Result<int64_t>::ok(runId);
 }
 

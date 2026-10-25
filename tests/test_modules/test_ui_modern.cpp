@@ -238,55 +238,63 @@ REGISTER_TEST(uiModernAnchorPure,
     return true;
 })
 
-// todo 看板右键锚点 = 板几何经统一换算
+// todo 看板右键锚点 = 被右键卡片自身 frame（不依赖 boardGeom 均匀列宽）
 REGISTER_TEST(uiModernTodoMenuAnchor,
-              "uiModern todo: 右键菜单锚点 = 板几何经统一换算（卡片 + 列头）", {
+              "uiModern todo: 卡片右键菜单锚点 = 卡片中芯/卡底（headless）", {
     TodoEnv env;
     DOCTEST_REQUIRE(env.ready);
-    auto c1 = env.svc->createColumn("右键源列");
-    DOCTEST_REQUIRE(c1.isOk());
-    auto t1 = env.svc->createTask(c1.value().id, "任务A");
-    DOCTEST_REQUIRE(t1.isOk());
+    // 固定四列：用默认「待办」列（col.0）造一张任务，不新建第 5 列（与固定四列冲突）
+    auto cols = env.svc->listColumns();
+    DOCTEST_REQUIRE(cols.isOk());
+    DOCTEST_REQUIRE(!cols.value().empty());
+    const int64_t col0Id = cols.value()[0].id;
+    auto t = env.svc->createTask(col0Id, "任务A");
+    DOCTEST_REQUIRE(t.isOk());
 
     std::unique_ptr<::core::Module> mod(create_todo_module());
     mod->onStart();
 
-    // 迁移默认 4 列 + 新建 1 列（「右键源列」= col.4）：板几何按 5 列推算，
-    // 与 drawContextMenu 内 host.columns->size() 一致
-    const auto& tok = ::core::theme::current();
-    const ::module::todo::ui::BoardGeom g =
-        ::module::todo::ui::boardGeom(1600.0f, 5, tok);
-    // 锚点 = 列中芯 / 卡片视觉底；无 Router（headless）→ 页面原点 0，
-    // 滚动 0 → 与统一换算结果逐值一致
-    const float expectColumnX = ::module::todo::ui::cardLeft(g, 4) + g.colW * 0.5f;
-    const float expectCardY = ::module::todo::ui::cardTop(g, 0) +
-                              ::module::todo::ui::kCardHeight + 4.0f;
-
     {
         TodoFrame frame(mod.get());
-        DOCTEST_CHECK(frame.ui.find("todo.col.4.card.0.bg") != nullptr);
-        // 右键任务A → 菜单打开；锚点经统一换算（坐标 = 列中芯 / 卡片底）
+        frame.ui.layout(frame.screen);  // 卡片/列 frame 需 layout 后才有几何
+        const auto* col0 = frame.ui.find("todo.col.0.bg");
+        DOCTEST_REQUIRE(col0 != nullptr);
+        const auto* card = frame.ui.find("todo.col.0.card.0.bg");
+        DOCTEST_REQUIRE(card != nullptr);
+        // 锚点取真实列几何（归档折叠时列宽随动画变化）：x = 列中芯、y = 卡片视觉底。
+        // 菜单在卡底下方留 4px 视觉间隙（drawContextMenu 的 +4.0f）。
+        const float expectX = col0->frame.x + col0->frame.width * 0.5f;
+        const float expectY = card->frame.y + card->frame.height + 4.0f;
+        const float cardX = card->frame.x;
+        const float cardW = card->frame.width;
+        const float col0X = col0->frame.x;
+        const float col0W = col0->frame.width;
         eui::PointerEvent pe;
         eui::Rect rect;
-        frame.ui.find("todo.col.4.card.0.bg")->onContextMenu(pe, rect);
-        frame.refresh();
+        card->onContextMenu(pe, rect);
+        frame.refresh();  // 重 compose：菜单已开，menu->x/y 在 compose 期落位
         const auto* menu = frame.ui.find("todo.ctx.level.0");
         DOCTEST_REQUIRE(menu != nullptr);
-        DOCTEST_CHECK_EQ(menu->x, expectColumnX);
-        DOCTEST_CHECK_EQ(menu->y, expectCardY);
+        DOCTEST_CHECK_MESSAGE(menu->x == expectX,
+            ("menu.x=" + std::to_string(menu->x) +
+             " menu.y=" + std::to_string(menu->y) +
+             " expectX=" + std::to_string(expectX) +
+             " expectY=" + std::to_string(expectY) +
+             " card.x=" + std::to_string(cardX) +
+             " card.w=" + std::to_string(cardW) +
+             " col0.x=" + std::to_string(col0X) +
+             " col0.w=" + std::to_string(col0W)).c_str());
+        DOCTEST_CHECK_MESSAGE(menu->y == expectY,
+            ("menu.x=" + std::to_string(menu->x) +
+             " menu.y=" + std::to_string(menu->y) +
+             " expectX=" + std::to_string(expectX) +
+             " expectY=" + std::to_string(expectY) +
+             " card.x=" + std::to_string(cardX) +
+             " card.w=" + std::to_string(cardW) +
+             " col0.x=" + std::to_string(col0X) +
+             " col0.w=" + std::to_string(col0W)).c_str());
     }
-    {
-        TodoFrame frame(mod.get());
-        // 右键列头 → 菜单锚点 y = 板顶下方（滚动区外，scrollY = 0）
-        eui::PointerEvent pe;
-        eui::Rect rect;
-        frame.ui.find("todo.col.4.head")->onContextMenu(pe, rect);
-        frame.refresh();
-        const auto* menu = frame.ui.find("todo.ctx.level.0");
-        DOCTEST_REQUIRE(menu != nullptr);
-        DOCTEST_CHECK_EQ(menu->x, expectColumnX);
-        DOCTEST_CHECK_EQ(menu->y, g.boardTop + 4.0f);
-    }
+    // 列头 onContextMenu 已随固定四列删除（H20），不再测列头右键。
 
     mod->onStop();
     return true;
@@ -724,7 +732,7 @@ REGISTER_TEST(uiModernVirtualLogRows,
     //（idx 4）——先切 tab（该帧生效），再点「查看全部 →」开弹窗
     {
         compose();
-        const auto* tab = ui.find("claude.detail.tabs.hit.4");
+        const auto* tab = ui.find("claude.detail.tab.4.hit");
         DOCTEST_REQUIRE(tab != nullptr);
         DOCTEST_REQUIRE(tab->onClick != nullptr);
         tab->onClick();
@@ -913,8 +921,13 @@ REGISTER_TEST(uiModernHomeApiBarChart,
                          std::string("300"));
         DOCTEST_CHECK_EQ(textOf(ui, "home.api.chart.bars.val.8"),
                          std::string("600"));
-        // 相对柱高 == 相对 token 数（UAT6 零滚动收口后图表卡 220 → wrap 156 →
-        // plot 44：峰值柱满高 44，100/600 的柱子 ≈ 44/6）
+        // 相对柱高 == 相对 token 数（H18 纵向弹性 1200×720 档，fs=1.0；批L 顶距后垂直内边距 0）：
+        // baseContentH = 页头40 + 统计144 + gap×3(60) + 图220 + 操作44 = 508；
+        // extraH = 720 − 508 − 0.5 = 211.5；statsGrow = 211.5×0.18 = 38.07；
+        // chartH = 220 + 211.5 − 38.07 = 393.43 → wrap = 393.43 − 64 = 329.43
+        // → plot = 329.43 − 112 = 217.43。
+        // 峰值柱（600）= plot，100/600 柱 = plot/6 ≈ 36.24，300/600 柱 = plot/2 = 108.715。
+        constexpr float kElasticPlotH = 217.43f;
         const auto* bar0 = ui.find("home.api.chart.bars.bar.0");
         const auto* bar3 = ui.find("home.api.chart.bars.bar.3");
         const auto* bar8 = ui.find("home.api.chart.bars.bar.8");
@@ -922,20 +935,20 @@ REGISTER_TEST(uiModernHomeApiBarChart,
         DOCTEST_REQUIRE(bar3 != nullptr);
         DOCTEST_REQUIRE(bar8 != nullptr);
         DOCTEST_CHECK_MESSAGE(
-            std::fabs(bar8->frame.height - 44.0f) < 0.5f,
+            std::fabs(bar8->frame.height - kElasticPlotH) < 0.5f,
             "bar8 h=" + std::to_string(bar8->frame.height));
         DOCTEST_CHECK_MESSAGE(
-            std::fabs(bar0->frame.height - 44.0f / 6.0f) < 0.5f,
+            std::fabs(bar0->frame.height - kElasticPlotH / 6.0f) < 0.5f,
             "bar0 h=" + std::to_string(bar0->frame.height));
         DOCTEST_CHECK_MESSAGE(
-            std::fabs(bar3->frame.height - 22.0f) < 0.5f,
+            std::fabs(bar3->frame.height - kElasticPlotH / 2.0f) < 0.5f,
             "bar3 h=" + std::to_string(bar3->frame.height));
         DOCTEST_CHECK_MESSAGE(
-            std::fabs(bar0->frame.height - 44.0f / 6.0f) < 0.5f,
+            std::fabs(bar0->frame.height - kElasticPlotH / 6.0f) < 0.5f,
             "bar0 h=" + std::to_string(bar0->frame.height) + " y=" +
                 std::to_string(bar0->frame.y));
         DOCTEST_CHECK_MESSAGE(
-            std::fabs(bar3->frame.height - 22.0f) < 0.5f,
+            std::fabs(bar3->frame.height - kElasticPlotH / 2.0f) < 0.5f,
             "bar3 h=" + std::to_string(bar3->frame.height) + " y=" +
                 std::to_string(bar3->frame.y));
         // 柱高对齐基线：三根柱底沿相等（y + height 同值）
@@ -1006,7 +1019,7 @@ REGISTER_TEST(uiModernMdPreviewGradient,
         ui.end();
         const auto* bg = ui.find("md.preview.bg");
         DOCTEST_REQUIRE(bg != nullptr);
-        // W8：渐变已移除（§8 #4 禁大面积渐变），改为 flat pageBg。
+        // W8：渐变已移除（§8 #4 禁大面积渐变），改为 flat background。
         DOCTEST_CHECK(!bg->gradient.enabled);
         mod->onStop();
     }
@@ -1035,39 +1048,36 @@ bool nearPx(float a, float b) { return std::abs(a - b) <= 0.5f; }
 }  // namespace
 
 REGISTER_TEST(uiAboutLayout,
-              "about: W10 微信风格—居中白卡 760（窄屏自适应）/ 信息列表两列 / 版权 footer / 极矮窗 clamp", {
+              "about: 批J 平铺版——页标题+分组直铺页面底（无卡片）/ 分组行几何 / footer / 平铺内容不越界", {
     std::unique_ptr<::core::Module> mod(create_about_module());
     DOCTEST_REQUIRE(mod != nullptr);
     mod->onStart();
-    const auto& t = ::core::theme::current();
-    // 与 about_module.cpp 同值镜像（UAT3 放大：580→760 / pad 32→48 / 上下 40→60 /
-    // 图标 56→72 / 行高 40→48）——两边漂移时本用例红
-    constexpr float kCardW = 760.0f;
-    constexpr float kCardPadX = 48.0f;
-    constexpr float kCardPadTop = 60.0f;
-    constexpr float kCardPadBottom = 60.0f;
-    constexpr float kIconSize = 72.0f;
-    constexpr float kIconGap = 10.0f;
-    constexpr float kTitleH = 30.0f;
-    constexpr float kTitleGap = 28.0f;
-    constexpr float kRowH = 48.0f;
-    constexpr int kRowCount = 7;   // UAT6：新增 EUI-NEO 行（行序 2）
+    // 与 about_module.cpp 同值镜像（批J 平铺：页边距 32 / 标题 32 / 组头 24 / 行 32 / 组间 24）
+    constexpr float kPagePad = 32.0f;   // 水平边距
+    constexpr float kPageTop = 0.0f;    // 顶距：标题顶格（批L）
+    constexpr float kTitleH = 32.0f;
+    constexpr float kGroupHdrH = 24.0f;
+    constexpr float kGroupGap = 24.0f;
+    constexpr float kRowH = 32.0f;
+    constexpr int kGroupCount = 3;
+    constexpr int kRowCount = 9;   // 3+4+2=9 行
     constexpr float kFooterH = 20.0f;
-    constexpr float kFooterGap = 16.0f;
-    constexpr float kLabelW = 120.0f;
-    const float cardH = kCardPadTop + kIconSize + kIconGap + kTitleH +
-                        kTitleGap + kRowCount * kRowH + kCardPadBottom;
+    constexpr float kLabelW = 100.0f;
+    const float valueX = kPagePad + kLabelW + 16.0f;
+
+    // 组 gi 的组头 y（平铺流式：首组顶 = 页边距+标题+组间距；组间 = 组头+行+组间距）
+    auto flatY = [&](int gi) {
+        float y = kPageTop + kTitleH + kGroupGap;
+        for (int g = 0; g < gi; ++g)
+            y += kGroupHdrH + (g == 0 ? 3 : 4) * kRowH + kGroupGap;
+        return y;
+    };
+    const float lastRowBottom = kPageTop + kTitleH + kGroupGap +
+                                kGroupCount * kGroupHdrH + kRowCount * kRowH +
+                                (kGroupCount - 1) * kGroupGap;  // 末组后无组间距
+
     eui::Ui ui;
     eui::Screen screen{1600.0f, 1000.0f};
-    // 宽度自适应公式镜像（UAT3：窄窗 clamp，与 about_module.cpp 同式）
-    const auto cardWidthAt = [=](float screenWidth) {
-        return std::max(560.0f, std::min(kCardW, screenWidth - 2.0f * 24.0f));
-    };
-    const float cardW = cardWidthAt(screen.width);
-    const float cardX = (screen.width - cardW) / 2.0f;
-    const float footerY = screen.height - t.sizes.spacingXXLarge - kFooterH;
-    const float cardY = t.sizes.spacingXXLarge;
-    const float valueX = kCardPadX + kLabelW + t.sizes.spacing;
     ui.begin("about_layout");
     mod->compose(ui, screen);
     ui.end();
@@ -1080,91 +1090,79 @@ REGISTER_TEST(uiAboutLayout,
                std::to_string(e->frame.height) + ")";
     };
     {
-        const auto* bg = ui.find("about.bg");
-        DOCTEST_REQUIRE(bg != nullptr);
-        DOCTEST_CHECK_MESSAGE(nearPx(bg->frame.x, 0.0f), px("about.bg", bg));
-        DOCTEST_CHECK_MESSAGE(nearPx(bg->frame.y, 0.0f), px("about.bg", bg));
-        DOCTEST_CHECK_MESSAGE(nearPx(bg->frame.width, screen.width), px("about.bg", bg));
-        DOCTEST_CHECK_MESSAGE(nearPx(bg->frame.height, screen.height), px("about.bg", bg));
-    }
-    // UAT6 H 批：about.card 堆栈已移除，about.card.bg 即单层卡（位 + 大小 = 原 about.card）
-    {
-        const auto* cbg = ui.find("about.card.bg");
-        DOCTEST_REQUIRE(cbg != nullptr);
-        DOCTEST_CHECK_MESSAGE(nearPx(cbg->frame.x, cardX), px("about.card.bg.x", cbg));
-        DOCTEST_CHECK_MESSAGE(nearPx(cbg->frame.y, cardY), px("about.card.bg.y", cbg));
-        DOCTEST_CHECK_MESSAGE(nearPx(cbg->frame.width, cardW), px("about.card.bg.w", cbg));
-        DOCTEST_CHECK_MESSAGE(nearPx(cbg->frame.height, cardH), px("about.card.bg.h", cbg));
-        DOCTEST_CHECK(cbg->frame.y + cbg->frame.height + kFooterGap <= footerY);
-    }
-    // about.card 堆栈已移除，verify 对 about.card 的查找返回 nullptr
-    { DOCTEST_CHECK(ui.find("about.card") == nullptr); }
-    {
-        const auto* icon = ui.find("about.card.icon");
-        DOCTEST_REQUIRE(icon != nullptr);
-        DOCTEST_CHECK_MESSAGE(nearPx(icon->frame.x, cardX + (cardW - kIconSize) / 2.0f),
-                              px("about.card.icon", icon));
-        DOCTEST_CHECK_MESSAGE(nearPx(icon->frame.y, cardY + kCardPadTop),
-                              px("about.card.icon", icon));
-        DOCTEST_CHECK_MESSAGE(nearPx(icon->frame.width, kIconSize),
-                              px("about.card.icon", icon));
-    }
-    {
-        const auto* title = ui.find("about.card.title");
+        // 页标题（同 agent.title 款式）
+        const auto* title = ui.find("about.title");
         DOCTEST_REQUIRE(title != nullptr);
-        DOCTEST_CHECK_MESSAGE(nearPx(title->frame.x, cardX), px("about.card.title", title));
-        DOCTEST_CHECK_MESSAGE(nearPx(title->frame.y, cardY + kCardPadTop + kIconSize + kIconGap),
-                              px("about.card.title", title));
-        DOCTEST_CHECK_MESSAGE(nearPx(title->frame.width, cardW),
-                              px("about.card.title", title));
+        DOCTEST_CHECK_MESSAGE(nearPx(title->frame.x, kPagePad), px("about.title.x", title));
+        DOCTEST_CHECK_MESSAGE(nearPx(title->frame.y, kPageTop), px("about.title.y", title));
+        DOCTEST_CHECK_MESSAGE(nearPx(title->frame.width, screen.width - 2.0f * kPagePad),
+                              px("about.title.w", title));
+        DOCTEST_CHECK(title->text == "关于");
     }
     {
-        const float rowsY = cardY + kCardPadTop + kIconSize + kIconGap + kTitleH + kTitleGap;
-        for (int i = 0; i < kRowCount; ++i) {
-            const float rowY = rowsY + i * kRowH;
-            const auto* label = ui.find("about.card.label." + std::to_string(i));
-            const auto* value = ui.find("about.card.value." + std::to_string(i));
-            DOCTEST_REQUIRE(label != nullptr);
-            DOCTEST_REQUIRE(value != nullptr);
-            DOCTEST_CHECK_MESSAGE(nearPx(label->frame.x, cardX + kCardPadX),
-                                  px(("about.card.label." + std::to_string(i)).c_str(), label));
-            DOCTEST_CHECK_MESSAGE(nearPx(label->frame.y, rowY),
-                                  px(("about.card.label." + std::to_string(i)).c_str(), label));
-            DOCTEST_CHECK_MESSAGE(nearPx(value->frame.x, cardX + valueX),
-                                  px(("about.card.value." + std::to_string(i)).c_str(), value));
-            DOCTEST_CHECK_MESSAGE(nearPx(value->frame.y, rowY),
-                                  px(("about.card.value." + std::to_string(i)).c_str(), value));
-            if (i > 0) {
-                const auto* div = ui.find("about.card.divider." + std::to_string(i));
+        // 卡片载体不得回潮（批J 去卡片化）
+        DOCTEST_CHECK(ui.find("about.card") == nullptr);
+        DOCTEST_CHECK(ui.find("about.card.bg") == nullptr);
+        // Logo 时代残留仍不存在
+        DOCTEST_CHECK(ui.find("about.card.icon") == nullptr);
+        DOCTEST_CHECK(ui.find("about.card.title") == nullptr);
+    }
+    {
+        const float contentW = screen.width - 2.0f * kPagePad;
+        const int gRowCount[kGroupCount] = {3, 4, 2};
+        for (int gi = 0; gi < kGroupCount; ++gi) {
+            for (int i = 0; i < gRowCount[gi]; ++i) {
+                const std::string sid = std::to_string(gi) + "." + std::to_string(i);
+                const auto* label = ui.find("about.info.label." + sid);
+                const auto* value = ui.find("about.info.value." + sid);
+                DOCTEST_REQUIRE(label != nullptr);
+                DOCTEST_REQUIRE(value != nullptr);
+                const float rowY = flatY(gi) + kGroupHdrH + i * kRowH;
+                DOCTEST_CHECK_MESSAGE(nearPx(label->frame.x, kPagePad),
+                                      px(("about.info.label." + sid).c_str(), label));
+                DOCTEST_CHECK_MESSAGE(nearPx(label->frame.y, rowY),
+                                      px(("about.info.label." + sid).c_str(), label));
+                DOCTEST_CHECK_MESSAGE(nearPx(value->frame.x, valueX),
+                                      px(("about.info.value." + sid).c_str(), value));
+                DOCTEST_CHECK_MESSAGE(nearPx(value->frame.y, rowY),
+                                      px(("about.info.value." + sid).c_str(), value));
+            }
+            if (gi > 0) {
+                const auto* div = ui.find("about.info.divider." + std::to_string(gi));
                 DOCTEST_REQUIRE(div != nullptr);
+                DOCTEST_CHECK_MESSAGE(nearPx(div->frame.y, flatY(gi) - kGroupGap * 0.5f - 0.5f),
+                                      px(("about.info.divider." + std::to_string(gi)).c_str(), div));
+                DOCTEST_CHECK_MESSAGE(nearPx(div->frame.width, contentW),
+                                      px(("about.info.divider." + std::to_string(gi)).c_str(), div));
             }
         }
-        const auto* copy0 = ui.find("about.card.copy.0");
-        const auto* copy1 = ui.find("about.card.copy.1");
-        const auto* copy2 = ui.find("about.card.copy.2");
-        const auto* hit0 = ui.find("about.card.hit.0");
-        const auto* hit1 = ui.find("about.card.hit.1");
-        const auto* hit2 = ui.find("about.card.hit.2");
-        DOCTEST_REQUIRE(copy0 != nullptr);
-        DOCTEST_REQUIRE(copy1 != nullptr);
-        DOCTEST_REQUIRE(hit0 != nullptr);
-        DOCTEST_REQUIRE(hit1 != nullptr);
-        DOCTEST_REQUIRE(copy2 != nullptr);  // UAT6：EUI-NEO 行（行序 2）highlight → 有复制图标
-        DOCTEST_REQUIRE(hit2 != nullptr);
-        DOCTEST_CHECK(ui.find("about.card.copy.3") == nullptr);  // 行序 3 = 构建时间（非 highlight）
-        DOCTEST_CHECK(ui.find("about.card.hit.3") == nullptr);
+        // 扁平旧 id 不得回潮（批B 前的跨组覆盖载体）
+        DOCTEST_CHECK(ui.find("about.info.label.0") == nullptr);
+        DOCTEST_CHECK(ui.find("about.info.value.0") == nullptr);
+        // 复制图标/命中区仅组0 highlight 行存在
+        DOCTEST_REQUIRE(ui.find("about.info.copy.0.0") != nullptr);
+        DOCTEST_REQUIRE(ui.find("about.info.copy.0.1") != nullptr);
+        DOCTEST_REQUIRE(ui.find("about.info.copy.0.2") != nullptr);
+        DOCTEST_REQUIRE(ui.find("about.info.hit.0.0") != nullptr);
+        DOCTEST_REQUIRE(ui.find("about.info.hit.0.1") != nullptr);
+        DOCTEST_REQUIRE(ui.find("about.info.hit.0.2") != nullptr);
+        DOCTEST_CHECK(ui.find("about.info.copy.1.0") == nullptr);
+        DOCTEST_CHECK(ui.find("about.info.hit.1.0") == nullptr);
+        // 开源组件行 Ghost 链接热区
+        DOCTEST_REQUIRE(ui.find("about.info.link.2.1") != nullptr);
     }
     {
         const auto* footer = ui.find("about.footer");
         DOCTEST_REQUIRE(footer != nullptr);
-        DOCTEST_CHECK_MESSAGE(nearPx(footer->frame.y, footerY),
+        DOCTEST_CHECK_MESSAGE(nearPx(footer->frame.y, screen.height - kPagePad - kFooterH),
                               px("about.footer", footer));
         DOCTEST_CHECK_MESSAGE(
-            nearPx(footer->frame.y + footer->frame.height,
-                   screen.height - t.sizes.spacingXXLarge),
+            nearPx(footer->frame.y + footer->frame.height, screen.height - kPagePad),
             px("about.footer", footer));
+        DOCTEST_CHECK(lastRowBottom <= footer->frame.y);  // 顶格后内容仍不叠 footer
     }
     {
+        // 最小窗：平铺内容固定高（lastRowBottom=496），640 窗不叠 footer、不出屏
         const core::window_layout::WindowSize minWin = minWindowForMacWorkArea();
         eui::Ui mini;
         eui::Screen minScreen{minWin.width - 208.0f,
@@ -1173,60 +1171,36 @@ REGISTER_TEST(uiAboutLayout,
         mod->compose(mini, minScreen);
         mini.end();
         mini.layout(minScreen.width, minScreen.height);
-        // UAT6 H 批：about.card 已移除，用 about.card.bg 代
-        const auto* c = mini.find("about.card.bg");
-        DOCTEST_REQUIRE(c != nullptr);
-        DOCTEST_CHECK(c->frame.x >= 0.0f);
-        DOCTEST_CHECK(c->frame.x + c->frame.width <= minScreen.width);
-        // 窄窗卡宽 clamp 公式镜像（UAT3 宽度自适应）
-        DOCTEST_CHECK(nearPx(c->frame.width, cardWidthAt(minScreen.width)));
-        DOCTEST_CHECK(nearPx(c->frame.x, (minScreen.width - cardWidthAt(minScreen.width)) / 2.0f));
+        const auto* title = mini.find("about.title");
         const auto* footer = mini.find("about.footer");
+        const auto* lastValue = mini.find("about.info.value.2.1");
+        DOCTEST_REQUIRE(title != nullptr);
         DOCTEST_REQUIRE(footer != nullptr);
+        DOCTEST_REQUIRE(lastValue != nullptr);
+        DOCTEST_CHECK(title->frame.x >= kPagePad - 0.5f);
+        DOCTEST_CHECK_MESSAGE(nearPx(lastValue->frame.y + lastValue->frame.height, lastRowBottom),
+                              px("about.min.lastRow", lastValue));
+        DOCTEST_CHECK(lastRowBottom <= footer->frame.y);  // 内容不叠 footer
         DOCTEST_CHECK(nearPx(footer->frame.y + footer->frame.height,
-                             minScreen.height - t.sizes.spacingXXLarge));
-        DOCTEST_CHECK(c->frame.y + c->frame.height + kFooterGap <= footer->frame.y);
+                             minScreen.height - kPagePad));
     }
     {
-        // 极矮窗 clamp 档：UAT3 cardH=616，窗 640（页高 600）时 cardY 触 0 后
-        // cardH 仍超 footer，code 侧第二步 cardH clamp 到 564 使不叠（旧仅推
-        // cardY 不行——616 卡高本身已超 footerY=580）
-        eui::Ui tiny;
-        eui::Screen tinyScreen{1200.0f, 640.0f};
-        tiny.begin("about_layout_tiny");
-        mod->compose(tiny, tinyScreen);
-        tiny.end();
-        tiny.layout(tinyScreen.width, tinyScreen.height);
-        // UAT6 H 批：about.card 已移除，用 about.card.bg 代
-        const auto* card = tiny.find("about.card.bg");
-        const auto* footer = tiny.find("about.footer");
-        DOCTEST_REQUIRE(card != nullptr);
-        DOCTEST_REQUIRE(footer != nullptr);
-        DOCTEST_CHECK_MESSAGE(nearPx(card->frame.y, 0.0f),
-                              px("about.card.bg.tiny", card));
-        DOCTEST_CHECK(card->frame.y + card->frame.height <= footer->frame.y);
-    }
-    {
-        // UAT3 窄屏宽度自适应：最小窗宽拟降至 1000（content≈712 < 名义 760），
-        // 卡宽 clamp 到 min(760, 712−48)=664（>560 下限），居中 x=24、不出屏；
-        // 回退成定宽 760 即溢出断言红
+        // 窄窗 712：内容宽收缩，行不溢出屏幕
         eui::Ui narrow;
         eui::Screen narrowScreen{712.0f, 800.0f};
         narrow.begin("about_layout_narrow");
         mod->compose(narrow, narrowScreen);
         narrow.end();
         narrow.layout(narrowScreen.width, narrowScreen.height);
-        // UAT6 H 批：about.card 已移除，用 about.card.bg 代
-        const auto* c = narrow.find("about.card.bg");
-        DOCTEST_REQUIRE(c != nullptr);
-        const float expectW = cardWidthAt(narrowScreen.width);
-        DOCTEST_CHECK_MESSAGE(nearPx(c->frame.width, expectW),
-                              px("about.card.bg.narrow", c));
-        DOCTEST_CHECK(c->frame.x >= 0.0f);
-        DOCTEST_CHECK(c->frame.x + c->frame.width <= narrowScreen.width);
-        DOCTEST_CHECK_MESSAGE(
-            nearPx(c->frame.x, (narrowScreen.width - expectW) / 2.0f),
-            px("about.card.bg.narrow.x", c));
+        const auto* v = narrow.find("about.info.value.2.1");
+        const auto* link = narrow.find("about.info.link.2.1");  // 开源组件行 = 链接热区（非复制行）
+        DOCTEST_REQUIRE(v != nullptr);
+        DOCTEST_REQUIRE(link != nullptr);
+        DOCTEST_CHECK_MESSAGE(nearPx(v->frame.width,
+                                     (narrowScreen.width - 2.0f * kPagePad) - 116.0f - 24.0f),
+                              px("about.narrow.value", v));
+        DOCTEST_CHECK(v->frame.x + v->frame.width <= narrowScreen.width);
+        DOCTEST_CHECK(link->frame.x + link->frame.width <= narrowScreen.width);
     }
     mod->onStop();
     return true;
@@ -1259,90 +1233,43 @@ REGISTER_TEST(uiAboutGlow,
     // 反证③：浮环不存在
     DOCTEST_CHECK(ui.find("about.ring.0") == nullptr);
 
-    // 反证④：about.bg 存在但无 onTimer（无动画驱动）+ 无 onMove（无指针追踪）
-    {
-        const auto* bg = ui.find("about.bg");
-        DOCTEST_REQUIRE(bg != nullptr);
-        DOCTEST_CHECK(bg->onTimer == nullptr);
-        DOCTEST_CHECK(bg->onMove == nullptr);
-    }
+    // 反证④（批K）：about.bg 自铺底已拆（统一不自铺底），onTimer/onMove 断言随之作废
+    DOCTEST_CHECK(ui.find("about.bg") == nullptr);
 
     // 反证⑤：about.anim state 不存在（about_anim.h 已清空为空壳）
 
-    // 反证⑥：about.bg 颜色 RGB = wechat.pageBg（RGB 不随效果档位变；档位 alpha
-    // 的行为断言见 uiAboutPageBgEffectAlpha）
-    {
-        const auto& t = ::core::theme::current();
-        const auto* bg = ui.find("about.bg");
-        DOCTEST_REQUIRE(bg != nullptr);
-        DOCTEST_CHECK(std::abs(bg->color.r - t.colors.wechat.pageBg.r) < 1e-3f);
-        DOCTEST_CHECK(std::abs(bg->color.g - t.colors.wechat.pageBg.g) < 1e-3f);
-        DOCTEST_CHECK(std::abs(bg->color.b - t.colors.wechat.pageBg.b) < 1e-3f);
-    }
-
-    // 反证⑦：渐变背景元素不存在（about.bg 无 gradient）
-    {
-        const auto* bg = ui.find("about.bg");
-        DOCTEST_REQUIRE(bg != nullptr);
-        DOCTEST_CHECK(!bg->gradient.enabled);
-    }
+    // 反证⑥⑦（批K）：about 页不再自铺底色（UAT2 磨砂时代遗留已拆）——与其他页
+    // 统一走主窗 clearColor，about.bg 元素不得存在，渐变载体随之消失
 
     mod->onStop();
     return true;
 })
 
-// UAT2 B 批：about 页底 alpha 随窗口效果档位（core::window_effect_state 单值）——
-// 磨砂 0.15 透 backdrop / off 实色 1.0；RGB 恒 pageBg 不随档位变。档位本用例内
-// 显式设定（进程级单值，与执行顺序无关），尾档复位 off 不污染后续用例。
+// 批K（2026-10-25 用户拍板「背景色的动态不协调」）：about 页与其他页统一——
+// 不自铺底色（home/markdown 同规注释：页面底色 = 主窗口 clearColor，半透/磨砂档
+// 由窗口合成透出）。UAT2 的页底 alpha 随档位动态行为随自铺底一并拆除，本用例
+// 反向锁「不得回潮」。
 REGISTER_TEST(uiAboutPageBgEffectAlpha,
-              "about: 页底 alpha 随窗口效果档位（UAT2：磨砂 0.15 / off 1.0；RGB 恒 pageBg）", {
+              "about: 页面不自铺底色（与其他页统一走主窗 clearColor，UAT2 自铺 alpha 已拆）", {
     std::unique_ptr<::core::Module> mod(create_about_module());
     DOCTEST_REQUIRE(mod != nullptr);
     mod->onStart();
-    const auto& t = ::core::theme::current();
-    const auto& wc = t.colors.wechat;
-
-    core::window_effect_state::setCurrent("frosted");
-    {
+    // 两个效果档位下都不许出现自铺底
+    for (const char* tier : {"frosted", "off"}) {
+        core::window_effect_state::setCurrent(tier);
         eui::Ui ui;
         eui::Screen screen{1392.0f, 1000.0f};
-        ui.begin("about_bg_alpha_frosted");
+        ui.begin(std::string("about_no_bg_") + tier);
         mod->compose(ui, screen);
         ui.end();
-        const auto* bg = ui.find("about.bg");
-        DOCTEST_REQUIRE(bg != nullptr);
-        DOCTEST_CHECK(std::abs(bg->color.a - 0.15f) < 1e-3f);
-        DOCTEST_CHECK(std::abs(bg->color.r - wc.pageBg.r) < 1e-3f);
-        DOCTEST_CHECK(std::abs(bg->color.g - wc.pageBg.g) < 1e-3f);
-        DOCTEST_CHECK(std::abs(bg->color.b - wc.pageBg.b) < 1e-3f);
+        DOCTEST_CHECK_MESSAGE(ui.find("about.bg") == nullptr,
+                              std::string("about.bg 自铺底在档位 ") + tier +
+                                  " 下不得存在（统一不自铺底）");
     }
-    core::window_effect_state::setCurrent("translucent");
-    {
-        eui::Ui ui;
-        eui::Screen screen{1392.0f, 1000.0f};
-        ui.begin("about_bg_alpha_translucent");
-        mod->compose(ui, screen);
-        ui.end();
-        const auto* bg = ui.find("about.bg");
-        DOCTEST_REQUIRE(bg != nullptr);
-        DOCTEST_CHECK(std::abs(bg->color.a - 0.72f) < 1e-3f);  // UAT6 调值：0.5→0.72（window_effect_state.h:64）
-    }
-    // 尾档 = off：复位 + 验证实色
-    core::window_effect_state::setCurrent("off");
-    {
-        eui::Ui ui;
-        eui::Screen screen{1392.0f, 1000.0f};
-        ui.begin("about_bg_alpha_off");
-        mod->compose(ui, screen);
-        ui.end();
-        const auto* bg = ui.find("about.bg");
-        DOCTEST_REQUIRE(bg != nullptr);
-        DOCTEST_CHECK(std::abs(bg->color.a - 1.0f) < 1e-3f);
-    }
+    core::window_effect_state::setCurrent("off");  // 尾档复位不污染后续用例
     mod->onStop();
     return true;
 })
-
 
 // ---- UAT6：关于页构建时间行标准格式（`年-月-日 时:分:秒@设备名@系统`）----
 // 纯函数单测（extern 声明，定义在 about_module.cpp，外部链接无头文件）：
@@ -1389,40 +1316,26 @@ REGISTER_TEST(uiAboutBuildStampFormat,
 })
 
 REGISTER_TEST(uiAboutBuildLineUiFormat,
-              "about: UAT6 构建行 UI 上屏格式锁——value.2 三段 @ 分隔 + 19 字符时间戳", {
-    // 防断链事故：纯函数对了但 UI 行没接上（row 值仍写死 "构建 ..." 前缀即红）。
+              "about: S3.8 分组批B修复后 value.1.3 = C++ 标准行 + 构建时间行存活（ID 组维度验证）", {
+    // S3.8 三组：版本信息 3 行 / 构建信息 4 行（构建时间/编译器/平台/C++ 标准）/ 许可与致谢 2 行。
+    // 批B 修复前：构建时间行因跨组 id 重复被许可组覆盖（该 bug 已修，本用例锁定修复行为）。
     std::unique_ptr<::core::Module> mod(create_about_module());
     DOCTEST_REQUIRE(mod != nullptr);
     mod->onStart();
     eui::Ui ui;
     eui::Screen screen{1392.0f, 1000.0f};
-    ui.begin("about_build_line_fmt");
+    ui.begin("about_cpp_line_fmt");
     mod->compose(ui, screen);
     ui.end();
-    const auto* buildValue = ui.find("about.card.value.3");   // 行序 3 = 构建时间（行 0/1/2：版本/Git/EUI-NEO）
-    DOCTEST_REQUIRE(buildValue != nullptr);
-    const std::string& s = buildValue->text;
-    DOCTEST_CHECK_MESSAGE(s.find("构建 ") == std::string::npos,
-                          "构建行不应再带「构建 」前缀（标签列已有），实测: " + s);
-    // 三段：19 字符时间戳 @ 设备名 @ 系统标签
-    const size_t at1 = s.find('@');
-    DOCTEST_REQUIRE_MESSAGE(at1 != std::string::npos, "构建行缺第一个 @: " + s);
-    const size_t at2 = s.find('@', at1 + 1);
-    DOCTEST_REQUIRE_MESSAGE(at2 != std::string::npos, "构建行缺第二个 @: " + s);
-    DOCTEST_CHECK_MESSAGE(s.find('@', at2 + 1) == std::string::npos,
-                          "构建行应恰两段 @ 分隔，实测: " + s);
-    // 第一段 = YYYY-MM-DD hh:mm:ss（19 字符，位 4/7 为 '-'、10 为空格、13/16 为 ':'）
-    DOCTEST_REQUIRE_MESSAGE(at1 == 19, "时间戳段应 19 字符，实测 " +
-                                           std::to_string(at1) + ": " + s);
-    DOCTEST_CHECK_MESSAGE(s[4] == '-' && s[7] == '-' && s[10] == ' ' &&
-                              s[13] == ':' && s[16] == ':',
-                          "时间戳分段符位不对，实测: " + s);
-    DOCTEST_CHECK_MESSAGE(!s.substr(0, 4).empty() && s[0] == '2' &&
-                              s[1] >= '0' && s[1] <= '9',
-                          "年份段应以 2 开头，实测: " + s);
-    // 后两段非空（CMake 注入缺失时为 "unknown" 也算过——不造数据但可见）
-    DOCTEST_CHECK_MESSAGE(at2 > at1 + 1, "设备名段为空，实测: " + s);
-    DOCTEST_CHECK_MESSAGE(s.size() > at2 + 1, "系统段为空，实测: " + s);
+    const auto* buildTime = ui.find("about.info.value.1.0");   // 构建信息组行0 = 构建时间
+    DOCTEST_REQUIRE(buildTime != nullptr);                     // 批B 前此行被覆盖不可查
+    const auto* cppValue = ui.find("about.info.value.1.3");    // S3.8: 构建信息组行3 = C++ 标准
+    DOCTEST_REQUIRE(cppValue != nullptr);
+    const std::string& s = cppValue->text;
+    DOCTEST_CHECK_MESSAGE(s.rfind("C++", 0) == 0,
+                          "C++ 标准行应以 C++ 开头，实测: " + s);
+    DOCTEST_CHECK_MESSAGE(s.size() >= 5 && s.size() <= 6,
+                          "C++ 标准应为 C++NN 格式（5-6 字符），实测: " + s);
     mod->onStop();
     return true;
 })

@@ -19,7 +19,6 @@ void emptyState(eui::Ui& ui, const std::string& id, const std::string& message,
                 const std::optional<std::pair<std::string, std::function<void()>>>& action,
                 float x, float y, float w, float h,
                 const core::theme::Tokens& t) {
-    const auto& wc = t.colors.wechat;
 
     // 极简文字（§4.12 防「插画式/情绪化」——本 helper 只画一行极简文字）
     // 文字色 wechat.textSecondary(#666666)，14px，居中对齐
@@ -31,7 +30,7 @@ void emptyState(eui::Ui& ui, const std::string& id, const std::string& message,
         .fontSize(kEmptyStateFontSize)
         .horizontalAlign(eui::HorizontalAlign::Center)
         .verticalAlign(eui::VerticalAlign::Center)
-        .color(wc.textSecondary)
+        .color(t.colors.textSecondary)
         .build();
 
     // 可选就近按钮（§4.12 + §5.6 就近原则）：按钮在文字下方居中，

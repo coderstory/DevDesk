@@ -41,6 +41,8 @@
 #include <ui_kit/toast.h>
 #include <ui_kit/wtab.h>
 
+#include <core/render/text.h>  // core::TextPrimitive::measureTextWidth
+
 #include <eui/dsl.h>
 
 #include <components/scrollview.h>
@@ -180,8 +182,7 @@ public:
               ::core::event::kMdTagsChanged,
               ::core::event::kTodoCreated, ::core::event::kTodoUpdated,
               ::core::event::kTodoMoved, ::core::event::kTodoCompleted,
-              ::core::event::kTodoUncompleted, ::core::event::kTodoDeleted,
-              ::core::event::kTodoColumnChanged}) {
+              ::core::event::kTodoUncompleted, ::core::event::kTodoDeleted}) {
             githubSyncSubs_.push_back(::core::event::bus().subscribe(
                 ev,
                 [this, ev](const std::string&) { markGithubSyncDirty(ev); }));
@@ -248,6 +249,8 @@ public:
         }
         // 进页面 = 外部状态刷新点；变化频率低，不需要每帧重查。
         refreshExternalState();
+        // H1: 进页面不自动弹错误弹窗——错误留在卡片里、用户点「查看详情」才弹
+        githubSyncErrorDialog_.open = false;
     }
 
     // Ctrl+S：端口草稿非空且 ≠ 已应用端口 → applyProxyPort，否则重写配置 + 回显「已保存」。
@@ -302,9 +305,13 @@ public:
                  ::core::theme::currentThemeName() + "）");
     }
 
-    void applyFontPreset(int index) {
-        if (index < 0 || index >= kFontPresetCount) return;
-        cfg_.fontScalePercent = kFontPresets[index];
+    // 字号无级调节（UAT6.2，80-130%）：钳制后沿用切档链路（setFontScale → 唤醒
+    // compose → 落盘）。同值早退是拖拽链的量化契约：slider onChange 在拖拽中每次
+    // 归一化变动都回调，只有量化到 1% 且与现值不同才走落库链。
+    void applyFontScalePercent(int percent) {
+        percent = std::clamp(percent, kMinFontScalePercent, kMaxFontScalePercent);
+        if (percent == cfg_.fontScalePercent) return;
+        cfg_.fontScalePercent = percent;
         ::core::theme::setFontScale(
             static_cast<float>(cfg_.fontScalePercent) / 100.0f);
         // 切档即生效不依赖点击输入顺带触发的 composeRequested：apply 路径显式
@@ -740,7 +747,8 @@ public:
                  "（下次启动卡片提示）");
     }
 
-    // 前置校验失败等 UI 线程内的即时错误：进错误行 + 直接开详情弹窗。
+    // 前置校验失败等 UI 线程内的即时错误：进错误行，不自动弹弹窗。
+    // H1: 错误留在卡片内（警告色+图标），用户点「查看详情」才弹。
     void setGithubSyncError(const std::string& msg) {
         githubSyncStatus_ = msg;
         githubSyncStatusError_ = true;
@@ -748,7 +756,6 @@ public:
         githubSyncErrorDialog_.variant = GitErrorDialogVariant::Error;
         githubSyncErrorDialog_.conflictConfirmArmed = false;
         githubSyncErrorDialog_.selectedLogIndex = 0;
-        githubSyncErrorDialog_.open = true;
         LOG_WARN("Settings: GitHub Sync " + msg);
     }
 
@@ -962,14 +969,9 @@ public:
         // 401 走定向引导、其余通用。判据 = 请求日志状态码（SyncRunResult 不带错误码）。
         githubSyncErrorDialog_.variant =
             variantForSyncFailure(githubSyncLogs_, conflict);
-        // 手动操作失败 → 弹窗；自动同步失败只留卡片红字 + 详情入口。
-        // 启用流程的校验失败同自动路径（用户刚拨开关，此刻弹窗等于打断）。
-        const bool silentFailure =
-            githubSyncLastAction_ == SyncAction::ValidateFirstSync;
-        if (githubSyncLastAction_ != SyncAction::None && githubSyncLastManual_ &&
-            !silentFailure) {
-            githubSyncErrorDialog_.open = true;
-        }
+        // H1: 手动失败不再自动弹弹窗——错误留在卡片内，用户点「查看详情」才弹。
+        // 自动同步失败只留卡片红字 + 详情入口（无变更：本来就不弹）。
+        // 启用流程的校验失败同自动路径（无变更：本来就不弹）。
         LOG_ERROR("Settings: GitHub Sync 失败: " + githubSyncResultSummary_);
     }
 
@@ -1012,8 +1014,8 @@ public:
         maybeAutoGithubSync();
         // 本地 git 探测收割/重探：非阻塞，结果驱动卡片灰字。
         maybeRefreshLocalGitProbe();
-        const float pad = t.sizes.spacingXXLarge;
-        const float contentW = screen.width - pad * 2.0f;
+        const float pad = t.sizes.spacingLarge * 2.0f;  // 32 —— S4.2 弹性内边距（spacingLarge=16×2=32）
+        const float contentW = screen.width - pad * 2.0f;   // 宽 = 窗口宽 − 双侧内边距
 
         // 页面底色 = 主窗口 clearColor，不自铺不透明底。
 
@@ -1044,21 +1046,27 @@ public:
 
         ui.column("settings.root")
             .size(screen.width, screen.height)
-            .padding(pad)
+            .padding(pad, 0.0f, pad, pad)  // 上=0 标题顶格（2026-10-25 拍板）——EUI padding 序=(left,top,right,bottom)
             .gap(t.sizes.spacingLarge)
             .content([&] {
                 drawHeader(ui, contentW, headerH, t);
 
-                // tab 栏：微信风格 WTab（§4.2），2px 绿下划线激活、间距收紧（D-12）。
-                // 4 Tab 顺序 + 标签不动（kSettingTabLabels）；hit area id = settings.tabs.N.hit（测试按此点击）。
+                // tab 栏：S2.2 页面级大 Tab——内容宽（文字实宽+水平内边距 16×2）、
+                // 枚间 4px、左对齐；等宽铺满会使单枚内边距远超 16 口径。文字实宽
+                // 与 wtab 渲染同参（14px/默认字重 400）。4 Tab 顺序 + 标签不动
+                // （kSettingTabLabels）；hit area id = settings.tabs.N.hit（测试按此点击）。
                 ui.stack("settings.tabs.wrap")
                     .size(contentW, tabH)
                     .content([&] {
-                        const float tabW =
-                            contentW / static_cast<float>(kSettingTabCount);
+                        constexpr float kTabPadH = 16.0f;  // S2.2 水平内边距
+                        constexpr float kTabGap = 4.0f;    // S2.2 Tab 间距
+                        float tabX = 0.0f;
                         for (int i = 0; i < kSettingTabCount; ++i) {
-                            const float tabX =
-                                static_cast<float>(i) * tabW;
+                            const float tabW =
+                                core::TextPrimitive::measureTextWidth(
+                                    kSettingTabLabels[i], {},
+                                    ui_kit::kWtabFontSize, 400) +
+                                2.0f * kTabPadH;
                             ui_kit::wtab(
                                 ui,
                                 std::string("settings.tabs.") +
@@ -1071,6 +1079,7 @@ public:
                                     if (i == kTabModules)
                                         refreshExternalState();
                                 });
+                            tabX += tabW + kTabGap;
                         }
                     })
                     .build();
@@ -1080,8 +1089,9 @@ public:
                     t.sizes.spacingLarge + tabH + t.sizes.spacingLarge;
                 // 底部提示行（§6 item 11）：12px 三级灰居中「所有设置即时生效…」
                 const float bottomHintH = roundFs(20.0f);
+                // cardsH S4.2 弹性：底 padding 已为 0（列 .padding 底=0），cardsH 底缘贴 bottomHint 上方 gap 处
                 const float cardsH =
-                    screen.height - cardsTopY - pad - bottomHintH -
+                    screen.height - cardsTopY - bottomHintH -
                     t.sizes.spacingLarge;
                 // 半宽配对列宽桶（.c348 / .c648 …）：换窗宽后列宽变 → 配对行高随
                 // 对内卡高变，内容高缓存必须失效重测（UAT3 多列分栏）。
@@ -1119,7 +1129,7 @@ public:
                     .fontSize(fs(12.0f))
                     .lineHeight(bottomHintH)
                     .horizontalAlign(eui::HorizontalAlign::Center)
-                    .color(t.colors.wechat.textTertiary)
+                    .color(t.colors.textTertiary)
                     .build();
             })
             .build();
@@ -1147,7 +1157,7 @@ private:
     SettingsCardActions cardActions() {
         SettingsCardActions a;
         a.applyThemeMode = [this](int idx) { applyThemeMode(idx); };
-        a.applyFontPreset = [this](int idx) { applyFontPreset(idx); };
+        a.applyFontScalePercent = [this](int percent) { applyFontScalePercent(percent); };
         a.applyWindowEffect = [this](int idx) { applyWindowEffectPreset(idx); };
         a.applyModuleEnabled = [this](const std::string& moduleId, bool on) {
             applyModuleEnabled(moduleId, on);
@@ -1194,6 +1204,8 @@ private:
         a.githubSyncPull = [this] { githubSyncPull(); };
         a.githubSyncTestConnection = [this] { applyGithubSyncTestConnection(); };
         a.githubSyncShowErrorDetail = [this] { showGithubSyncErrorDetail(); };
+        a.toggleGithubSyncTokenVisibility = [this] { githubSyncTokenVisible_ = !githubSyncTokenVisible_; };
+        a.toggleGithubSyncDetail = [this] { githubSyncDetailExpanded_ = !githubSyncDetailExpanded_; };
 
         return a;
     }
@@ -1265,6 +1277,8 @@ private:
             githubSyncLocalGitProbe_.load(std::memory_order_acquire) == 0;
         in.githubSyncUnsyncedNotice = githubSyncUnsyncedNotice_;
         in.githubSyncDeleteSkipHint = githubSyncDeleteSkipHint_;
+        in.githubSyncTokenVisible = githubSyncTokenVisible_;
+        in.githubSyncDetailExpanded = githubSyncDetailExpanded_;
         const SettingsCardActions a = cardActions();
         const float gapY = t.sizes.spacingLarge;
         float cardY = 0.0f;
@@ -1521,6 +1535,8 @@ private:
     bool githubSyncLocalGitProbeDirty_ = false;        // 首探 + 配置变更置位
     bool githubSyncNoGitWarned_ = false;    // 无 git 警告只弹一次（改配置时触发）
     bool githubSyncUnsyncedNotice_ = false;  // 退出时未推完 → 卡片黄字
+    bool githubSyncTokenVisible_ = false;      // S3.7#6 Token 显隐切换
+    bool githubSyncDetailExpanded_ = false;    // S3.7#4 同步说明折叠展开
     std::string githubSyncDeleteSkipHint_;   // 删远端跳过提示（UI 侧）
     // EventBus 订阅 token 必须持有：token 析构即退订（丢弃 = 订阅立刻失效）。
     std::vector<::core::event::EventBus::Subscription> githubSyncSubs_;

@@ -25,6 +25,7 @@
 #include <components/button.h>
 #include <components/input.h>
 
+#include <ui_kit/card.h>
 #include <ui_kit/form_row.h>
 #include <ui_kit/wswitch.h>
 
@@ -43,7 +44,8 @@ namespace {
 //  （行盒 28 = 主开关高——说明文案行删除后行盒贴开关，label 垂直居中于行盒；
 //   开关钉卡内容右缘，尺寸 52×28 / 44×24 为字面值不随字号缩放）；
 //   配置组 = URL 全宽行 + 分支|Token 双列（组题行已删，分段线已分节）；
-//   操作组 = 三按钮行 + 右侧进度条（仅运行中）；操作组下方为条件信息行。
+//   操作组 = 左侧进度（条+文案，仅运行中）+ 右侧三按钮组（按钮组右锚）；
+//   操作组下方为条件信息行。
 // 卡高最坏行序（85%/130% 档复算）见 settings_ui_logic.h 的 kGithubSyncCardHeight。
 inline constexpr float kCardPaddingX = 28.0f;
 inline constexpr float kCardPaddingY = 8.0f;    // 卡上下留白（字面值，不缩放；零滚动收口 16→8）
@@ -54,6 +56,8 @@ inline constexpr float kRowH = 36.0f;            // 表单行高（formRow 同�
 inline constexpr float kToggleRowH = 24.0f;     // 开关行高（N 项: 28→24, = 主开关 24）
 inline constexpr float kRowGap = 6.0f;          // 行距（列间距同值；零滚动收口 8→6）
 inline constexpr float kSectionGapY = 5.0f;     // 分段线上下留白（零滚动收口 12→5）
+// H18 横向弹性锚（S4.1：1000×640 为锚点）：三按钮定宽不伸，按钮组整体右锚
+// 卡内容右缘（组右缘 = w − 28）；宽窗增量全部让给左侧进度文案列（flex）。
 inline constexpr float kBtnW = 120.0f;
 inline constexpr float kBtnSmallW = 80.0f;
 inline constexpr float kBtnTestW = 100.0f;
@@ -73,11 +77,14 @@ inline constexpr float kMainSwitchW = 44.0f;   // N 项: 52→44, 与自动推�
 inline constexpr float kMainSwitchH = 24.0f;   // N 项: 28→24, 对齐标准 wswitch
 inline constexpr float kSwitchLabelGap = 8.0f;     // 行文本块右缘与开关左缘间距
 inline constexpr float kToggleLabelH = 18.0f;      // 开关行 label 高（模块卡 name 同口径）
-// 操作组右侧进度（方案 A .bar）：4px 高轨道 + 主色填充 + 阶段文案，仅运行中渲染。
+// 操作组左侧进度（方案 A .bar，H18 按钮组右锚后移到左侧剩余区）：4px 高定宽
+// 轨道 + 主色填充 + 阶段文案，仅运行中渲染。轨道定宽 130 = 1000×640 最小档
+//（页宽 792 = 1000 − 208 侧栏 → 卡宽 728）旧布局的轨道宽，文案列 200 与之同宽
+// ——最小档进度分界与改前逐值一致；文案列改 flex 占剩余宽，宽窗增量全进文案。
 inline constexpr float kProgressBarH = 4.0f;
-inline constexpr float kProgressTextW = 200.0f;
+inline constexpr float kProgressBarW = 130.0f;
 inline constexpr float kProgressTextGap = 10.0f;   // 轨道右缘与文案间距
-inline constexpr float kProgressLeadGapX = 16.0f;  // 按钮组右缘与轨道左缘间距
+inline constexpr float kProgressLeadGapX = 16.0f;  // 进度区右缘与按钮组左缘间距
 inline constexpr float kInfoLeadGapY = 6.0f;       // 操作行与条件信息行的间距（零滚动收口 8→6）
 inline constexpr float kInfoRowGap = 2.0f;         // 信息行行间（零滚动收口 4→2；仅行间无行尾距）
 // 禁用态档位（UAT4 去门控沿用）：Input/Switch 组件没有自带 .disabled()，借 DSL
@@ -150,6 +157,15 @@ void drawGithubSyncCard(const CardDrawArgs& args) {
     ui.stack(id)
         .size(w, h)
         .content([&] {
+        // S6.1 玻璃退役→白卡 + Sm 阴影 + H10 描边 + H15 轻微半透（kCardGlassAlpha）
+        ui.rect(id + ".bg")
+            .position(0.0f, 0.0f).size(w, h)
+            .color(ui_kit::cardSurface(t))
+            .radius(t.sizes.radiusLarge)
+            .shadow(components::theme::shadow(compTheme, 3.0f, 1.0f, 0.04f, 0.02f))
+            .border(1.0f, t.colors.borderDefault)
+            .build();
+
         // ── 头部：状态点 + 标题/摘要（左列，宽度全展开）→ 启用/自动推送两整行 ──
         const float y0 = kCardPaddingY;
         const bool hasError = !in.githubSyncError.empty();
@@ -160,14 +176,14 @@ void drawGithubSyncCard(const CardDrawArgs& args) {
             .position(kCardPaddingX, y0 + (titleH - kDotSize) * 0.5f)
             .size(kDotSize, kDotSize)
             .color(hasError
-                       ? t.colors.wechat.warningRed
-                       : (in.githubSyncEnabled ? t.colors.wechat.primary
-                                              : t.colors.wechat.textTertiary))
+                       ? t.colors.error
+                       : (in.githubSyncEnabled ? t.colors.primary
+                                              : t.colors.textTertiary))
             .radius(kDotSize * 0.5f)
             .build();
 
-        // 标题行（~15px 加粗，状态后缀随启用态）。错误时点击头部 = 打开
-        // 既有 git_error_dialog（弹窗本身不动）；无错误时不挂 onClick。
+        // 标题行（~15px 加粗，状态后缀随启用态）。不挂 onClick——
+        // H1: 错误详情入口已移入摘要行的「查看详情」，标题不再双击即弹。
         {
             auto title = ui.text(id + ".title")
                 .position(textL, y0)
@@ -178,44 +194,94 @@ void drawGithubSyncCard(const CardDrawArgs& args) {
                 .lineHeight(titleH)
                 .fontWeight(600)
                 .color(t.colors.textPrimary);
-            if (hasError) {
-                title.onClick([f = a.githubSyncShowErrorDetail] { f(); });
-            }
             title.build();
         }
 
-        // 摘要行（muted）：错误一行红字优先（可点，同标题）；否则上次同步状态
-        //（沿用既有 status 数据源）；都空 → 披露文案兜底（见上方披露注释）。
+        // 摘要行（muted）：错误一行优先——Warning 色+图标警示条 +「查看详情」可点；
+        // 否则上次同步状态（沿用既有 status 数据源）；都空 → 披露文案兜底。
         const float summaryY = y0 + titleH + roundFs(kSummaryGapY);
         const float summaryW = w - textL - kCardPaddingX;
         if (hasError) {
+            // H1: 页内警示条——警告图标 + 黄字错误摘要 +「查看详情」文字链接
+            const float detailW = roundFs(56.0f);     // "查看详情" 宽度
+            const float iconW = roundFs(14.0f);       // 警告图标宽
+            const float iconGap = 3.0f;                // 图标与文本间距
+            const float errTextW = std::max(0.0f, summaryW - iconW - iconGap - detailW - 4.0f);
+            // 警告图标（fa-triangle-exclamation，Warning 色 #F59E0B）
+            ui.text(id + ".error.icon")
+                .position(textL, summaryY + (mutedH - 12.0f) * 0.5f)
+                .size(iconW, 12.0f)
+                .icon(0xF071)
+                .fontSize(fs(12.0f))
+                .color(t.colors.warning)
+                .build();
+            // 错误摘要文本（Warning 色）
             ui.text(id + ".error")
-                .position(textL, summaryY)
-                .size(summaryW, mutedH)
+                .position(textL + iconW + iconGap, summaryY)
+                .size(errTextW, mutedH)
                 .text(in.githubSyncError)
                 .fontSize(fs(12.0f))
                 .lineHeight(mutedH)
-                .color(t.colors.error)
-                .maxWidth(summaryW)
+                .color(t.colors.warning)
+                .maxWidth(errTextW)
                 .overflow(core::TextOverflow::Ellipsis)
                 .clip()
+                .build();
+            //「查看详情」——唯一弹窗入口
+            ui.text(id + ".error.detail")
+                .position(textL + iconW + iconGap + errTextW + roundFs(4.0f), summaryY)
+                .size(detailW, mutedH)
+                .text("查看详情")
+                .fontSize(fs(12.0f))
+                .lineHeight(mutedH)
+                .fontWeight(500)
+                .color(t.colors.primary)
                 .onClick([f = a.githubSyncShowErrorDetail] { f(); })
                 .build();
         } else {
-            std::string summary = in.githubSyncStatus.empty()
-                ? githubSyncDisclosureText()
-                : in.githubSyncStatus;
-            ui.text(id + ".summary")
-                .position(textL, summaryY)
-                .size(summaryW, mutedH)
-                .text(summary)
-                .fontSize(fs(12.0f))
-                .lineHeight(mutedH)
-                .color(t.colors.textTertiary)
-                .maxWidth(summaryW)
-                .overflow(core::TextOverflow::Ellipsis)
-                .clip()
-                .build();
+            // S3.7#4: 同步说明可折叠——默认紧凑摘要，展开后显示完整披露
+            if (in.githubSyncStatus.empty()) {
+                const char* compactSummary = "同步笔记与整库数据库快照到 GitHub 私有仓库";
+                std::string summaryText = in.githubSyncDetailExpanded
+                    ? githubSyncDisclosureText()
+                    : compactSummary;
+                ui.text(id + ".summary")
+                    .position(textL, summaryY)
+                    .size(summaryW, mutedH)
+                    .text(summaryText)
+                    .fontSize(fs(12.0f))
+                    .lineHeight(mutedH)
+                    .color(t.colors.textTertiary)
+                    .maxWidth(summaryW)
+                    .overflow(core::TextOverflow::Ellipsis)
+                    .clip()
+                    .build();
+                // 折叠/展开按钮（Ghost 风格文字链接）
+                const float toggleY = summaryY + mutedH + 1.0f;
+                auto toggle = ui.text(id + ".summary.toggle")
+                    .position(textL, toggleY)
+                    .size(100.0f, mutedH)
+                    .text(in.githubSyncDetailExpanded ? "收起详细说明" : "查看详细说明")
+                    .fontSize(fs(11.0f))
+                    .lineHeight(mutedH)
+                    .color(t.colors.primary);
+                if (a.toggleGithubSyncDetail) {
+                    toggle.onClick([f = a.toggleGithubSyncDetail] { f(); });
+                }
+                toggle.build();
+            } else {
+                ui.text(id + ".summary")
+                    .position(textL, summaryY)
+                    .size(summaryW, mutedH)
+                    .text(in.githubSyncStatus)
+                    .fontSize(fs(12.0f))
+                    .lineHeight(mutedH)
+                    .color(t.colors.textTertiary)
+                    .maxWidth(summaryW)
+                    .overflow(core::TextOverflow::Ellipsis)
+                    .clip()
+                    .build();
+            }
         }
 
         // ── 启用 / 自动推送：各成一整行（UAT6，模块插拔卡开关行先例）──
@@ -295,7 +361,7 @@ void drawGithubSyncCard(const CardDrawArgs& args) {
             ui.rect(id + suffix)
                 .position(kCardPaddingX, y + roundFs(kSectionGapY))
                 .size(formW, 1.0f)
-                .color(t.colors.wechat.dividerPrimary)
+                .color(t.colors.borderDefault)
                 .build();
             y += roundFs(kSectionGapY) + 1.0f + roundFs(kSectionGapY);
         };
@@ -359,92 +425,117 @@ void drawGithubSyncCard(const CardDrawArgs& args) {
                 ui_kit::formRow(ui, id + ".token", "Token", col2X, y,
                                 colW, rowH,
                     [&](eui::Ui& ui, float cx, float cy, float cw, float ch) {
+                        // S3.7#6: 输入右给眼睛图标让位
+                        const float eyeW = 20.0f;
+                        const float inputW = std::max(0.0f, cw - eyeW - 4.0f);
                         components::input(ui, id + ".token.input")
                             .position(cx, cy)
-                            .size(cw, ch)
+                            .size(inputW, ch)
                             .placeholder("ghp_xxxxxxxxxxxxxxxxxxxx")
-                            .value(in.githubSyncTokenDraft)
+                            .value(in.githubSyncTokenVisible
+                                       ? in.githubSyncTokenDraft
+                                       : std::string(in.githubSyncTokenDraft.size(),
+                                                     '*'))
                             .fontSize(t.sizes.fontSizeSmall)
                             .theme(compTheme)
                             .onChange([f = a.setGithubSyncTokenDraft](const std::string& v) { f(v); })
                             .build();
+                        // 眼睛显隐图标
+                        auto eye = ui.text(id + ".token.eye")
+                            .position(cx + inputW + 4.0f, cy + (ch - 16.0f) * 0.5f)
+                            .size(eyeW, 16.0f)
+                            .icon(in.githubSyncTokenVisible ? 0xF070 : 0xF06E)
+                            .fontSize(fs(14.0f))
+                            .color(t.colors.textTertiary);
+                        if (a.toggleGithubSyncTokenVisibility) {
+                            eye.onClick([f = a.toggleGithubSyncTokenVisibility] { f(); });
+                        }
+                        eye.build();
                     }, t);
             })
             .build();
         y += rowH;
 
-        // ── 操作组：三按钮（左）+ 进度（右，仅运行中）──
+        // ── 操作组：左侧进度（仅运行中）+ 右侧三按钮组（右锚）──
+        // H18 横向弹性（S4.1）：按钮定宽不伸，组右缘钉卡内容右缘 w − 28；
+        // 组左缘 = w − 28 − (120 + 8 + 100 + 8 + 80) = w − 344
+        //（1000×640 最小档：页宽 792 − 64 → 卡 728 → 组左缘 384）。
         sectionDivider(".div.actions");
+        const float btnPullX = w - kCardPaddingX - kBtnSmallW;
+        const float btnTestX = btnPullX - kBtnGapX - kBtnTestW;
+        const float btnPushX = btnTestX - kBtnGapX - kBtnW;
         components::button(ui, id + ".btn.push")
-            .position(kCardPaddingX, y)
+            .position(btnPushX, y)
             .size(kBtnW, rowH)
             .text("立即同步")
-            .fontSize(fs(12.0f))
+            .fontSize(t.sizes.fontSizeBody)
             .theme(compTheme, /*primary=*/true)
-            .radius(t.sizes.radiusSmall)
+            .radius(t.sizes.radius)
             .disabled(!in.githubSyncEnabled || in.githubSyncRunning)
             .onClick([f = a.githubSyncPush] { f(); })
             .build();
         components::button(ui, id + ".btn.test")
-            .position(kCardPaddingX + kBtnW + kBtnGapX, y)
+            .position(btnTestX, y)
             .size(kBtnTestW, rowH)
             .text("测试连接")
-            .fontSize(fs(12.0f))
+            .fontSize(t.sizes.fontSizeBody)
             .theme(compTheme, /*primary=*/false)
-            .colors(t.colors.surfaceElevated, t.colors.hover, t.colors.active)
-            .textColor(t.colors.textPrimary)
-            .radius(t.sizes.radiusSmall)
-            .border(1.0f, t.colors.borderDefault)
+            .colors(t.colors.surface, t.colors.primarySoftBg,
+                    components::theme::withOpacity(t.colors.primaryPressed, 0.15f))
+            .textColor(t.colors.primary)
+            .radius(t.sizes.radius)
+            .border(1.0f, t.colors.primary)
             .disabled(!in.githubSyncEnabled || in.githubSyncRunning)
             .onClick([f = a.githubSyncTestConnection] { f(); })
             .build();
         components::button(ui, id + ".btn.pull")
-            .position(kCardPaddingX + kBtnW + kBtnGapX + kBtnTestW + kBtnGapX, y)
+            .position(btnPullX, y)
             .size(kBtnSmallW, rowH)
             .text("拉取")
-            .fontSize(fs(12.0f))
+            .fontSize(t.sizes.fontSizeBody)
             .theme(compTheme, /*primary=*/false)
-            .colors(t.colors.surfaceElevated, t.colors.hover, t.colors.active)
-            .textColor(t.colors.textPrimary)
-            .radius(t.sizes.radiusSmall)
-            .border(1.0f, t.colors.borderDefault)
+            .colors(t.colors.surface, t.colors.primarySoftBg,
+                    components::theme::withOpacity(t.colors.primaryPressed, 0.15f))
+            .textColor(t.colors.primary)
+            .radius(t.sizes.radius)
+            .border(1.0f, t.colors.primary)
             .disabled(!in.githubSyncEnabled || in.githubSyncRunning)
             .onClick([f = a.githubSyncPull] { f(); })
             .build();
 
-        // 进度条（右）：4px 轨道 + 主色填充（填充比 = 阶段序号/6）+「同步中 ·
-        // <阶段>」文案；空闲时右侧留空（整组不渲染）。
+        // 进度（按钮组左侧剩余区）：轨道定宽 130 + 主色填充（填充比 = 阶段序号/6）
+        // +「同步中 · <阶段>」文案列 flex（宽 = 进度区宽 − 轨道 − 10）；空闲整组
+        // 不渲染。进度区右缘 = 按钮组左缘 − 16。
         if (in.githubSyncRunning) {
-            const float btnRight = kCardPaddingX + kBtnW + kBtnTestW +
-                                   kBtnSmallW + kBtnGapX * 2.0f;
-            const float textX = w - kCardPaddingX - kProgressTextW;
-            const float barX = btnRight + roundFs(kProgressLeadGapX);
-            const float barW =
-                std::max(0.0f, textX - kProgressTextGap - barX);
+            const float progressRight = btnPushX - roundFs(kProgressLeadGapX);
+            const float barX = kCardPaddingX;
+            const float barW = kProgressBarW;
+            const float textX = barX + barW + kProgressTextGap;
+            const float textW = std::max(0.0f, progressRight - textX);
             const float barY = y + (rowH - kProgressBarH) * 0.5f;
             ui.rect(id + ".progress.bar")
                 .position(barX, barY)
                 .size(barW, kProgressBarH)
-                .color(t.colors.wechat.dividerSecondary)
+                .color(t.colors.hover)
                 .radius(kProgressBarH * 0.5f)
                 .build();
             ui.rect(id + ".progress.fill")
                 .position(barX, barY)
                 .size(barW * githubSyncProgressFraction(in.githubSyncProgress),
                       kProgressBarH)
-                .color(t.colors.wechat.primary)
+                .color(t.colors.primary)
                 .radius(kProgressBarH * 0.5f)
                 .build();
             ui.text(id + ".progress")
                 .position(textX, y + (rowH - mutedH) * 0.5f)
-                .size(kProgressTextW, mutedH)
+                .size(textW, mutedH)
                 .text(in.githubSyncProgress.empty()
                           ? std::string("同步中…")
                           : "同步中 · " + in.githubSyncProgress)
                 .fontSize(fs(11.0f))
                 .lineHeight(mutedH)
                 .color(t.colors.textSecondary)
-                .maxWidth(kProgressTextW)
+                .maxWidth(textW)
                 .overflow(core::TextOverflow::Ellipsis)
                 .clip()
                 .build();
@@ -459,29 +550,49 @@ void drawGithubSyncCard(const CardDrawArgs& args) {
         const float infoGap = roundFs(kInfoRowGap);
         bool infoFirst = true;
         const auto infoRow = [&](const char* suffix, const std::string& text,
-                                  const eui::Color& color) {
+                                  const eui::Color& color, bool showIcon = false) {
             if (!infoFirst) y += infoGap;
             infoFirst = false;
-            ui.text(id + suffix)
-                .position(kCardPaddingX, y)
-                .size(formW, infoH)
-                .text(text)
-                .fontSize(fs(11.0f))
-                .lineHeight(infoH)
-                .color(color)
-                .build();
+            if (showIcon) {
+                // S3.7#4: warning 信息行前加 fa-triangle-exclamation 图标
+                ui.text(id + std::string(suffix) + ".icon")
+                    .position(kCardPaddingX, y)
+                    .size(14.0f, infoH)
+                    .icon(0xF071)  // fa-triangle-exclamation
+                    .fontSize(fs(11.0f))
+                    .lineHeight(infoH)
+                    .color(color)
+                    .build();
+                ui.text(id + suffix)
+                    .position(kCardPaddingX + 16.0f, y)
+                    .size(formW - 16.0f, infoH)
+                    .text(text)
+                    .fontSize(fs(11.0f))
+                    .lineHeight(infoH)
+                    .color(color)
+                    .build();
+            } else {
+                ui.text(id + suffix)
+                    .position(kCardPaddingX, y)
+                    .size(formW, infoH)
+                    .text(text)
+                    .fontSize(fs(11.0f))
+                    .lineHeight(infoH)
+                    .color(color)
+                    .build();
+            }
             y += infoH;
         };
         // 分支被自动创建提示
         if (!in.githubSyncBranchHint.empty()) {
-            infoRow(".branchhint", in.githubSyncBranchHint, t.colors.warning);
+            infoRow(".branchhint", in.githubSyncBranchHint, t.colors.warning, true);
         }
         // public 仓黄字提醒（提示不硬拦）。口径必须与披露文案同源：同步载荷是
         // **整库快照**而不只是「笔记、待办」（sync-02）。
         if (in.githubSyncRepoPublic) {
             infoRow(".publicwarn",
                     "仓库为公开（public）：笔记、整库快照与其中的密钥将公开可见",
-                    t.colors.warning);
+                    t.colors.warning, true);
         }
         // 本地 git 不可用（灰字，不影响同步）
         if (in.githubSyncLocalGitUnavailable) {
@@ -491,11 +602,11 @@ void drawGithubSyncCard(const CardDrawArgs& args) {
         if (in.githubSyncUnsyncedNotice) {
             infoRow(".unsynced",
                     "有未同步改动（上次退出时未能推送，建议点「立即同步」）",
-                    t.colors.warning);
+                    t.colors.warning, true);
         }
         // 删远端被安全栏跳过（本地仍在但读失败）→ 黄字提示
         if (!in.githubSyncDeleteSkipHint.empty()) {
-            infoRow(".deleteskip", in.githubSyncDeleteSkipHint, t.colors.warning);
+            infoRow(".deleteskip", in.githubSyncDeleteSkipHint, t.colors.warning, true);
         }
         })
         .build();

@@ -62,21 +62,21 @@ REGISTER_TEST(splash_api_signature, "splash.h: API 签名保 drawSplashIfNeeded 
 
 REGISTER_TEST(splash_wechat_tokens, "splash.cpp: 底色 + 进度条 + 文字走 wechat 令牌（D-11 WeChat-minimal + H 批绿色印染）", {
     // 防：splash 脱离 wechat 令牌、改回硬编码色字面量（W0.5 W-W1~W-W3 + #15-#17）。
-    // H 批（UAT2 2026-10-20）：底色 pageBg → sidebarBgTinted（用户"绿色印染"诉求）；
+    // H 批（UAT2 2026-10-20）：底色 background → sidebarBg（用户"绿色印染"诉求）；
     // 图标/进度条填充 primary → primaryPressed（#07C160 在微绿底 #E8F0EC 上仅 2.06:1，
     // 纯白底上限 2.39:1，浅底方案到不了图形 AA 3:1；#059A4C 在该底上 3.16:1 ≥ 3:1）；
-    // 轨道保持 cardBg（白轨对微绿底 1.16:1 > 原灰底 1.07:1；dividerPrimary 仅 1.09:1 更弱）。
+    // 轨道保持 surface（白轨对微绿底 1.16:1 > 原灰底 1.07:1；borderDefault 仅 1.09:1 更弱）。
     const std::string src = readSourceFile("src/ui_kit/splash.cpp");
     DOCTEST_CHECK(!src.empty());
-    DOCTEST_CHECK(contains(src, "wechat.sidebarBgTinted"));  // 全屏底色（H 批绿色印染）
-    DOCTEST_CHECK(contains(src, "wechat.primaryPressed"));   // 进度条填充 + logo 图标（AA 对比档）
-    DOCTEST_CHECK(contains(src, "wechat.textPrimary"));    // logo 文字
-    DOCTEST_CHECK(contains(src, "wechat.textSecondary"));   // 副标题文字
-    DOCTEST_CHECK(contains(src, "wechat.cardBg"));          // 进度条轨道
-    // 负向契约（H 批）：防回退到低对比组合——底色回 pageBg 灰（用户诉求回退）、
+    DOCTEST_CHECK(contains(src, "sidebarBg"));  // 全屏底色（H 批绿色印染）
+    DOCTEST_CHECK(contains(src, "primaryPressed"));   // 进度条填充 + logo 图标（AA 对比档）
+    DOCTEST_CHECK(contains(src, "textPrimary"));    // logo 文字
+    DOCTEST_CHECK(contains(src, "textSecondary"));   // 副标题文字
+    DOCTEST_CHECK(contains(src, "surface"));          // 进度条轨道
+    // 负向契约（H 批）：防回退到低对比组合——底色回 background 灰（用户诉求回退）、
     // 图标/填充回 primary #07C160（微绿底上 2.06:1 破图形 AA）。匹配代码级调用形态，
     // 不匹配注释里的令牌名叙述。
-    DOCTEST_CHECK(!contains(src, "color(wc.pageBg)"));
+    DOCTEST_CHECK(!contains(src, "color(wc.background)"));
     DOCTEST_CHECK(!contains(src, "color(wc.primary)"));
     return true;
 })
@@ -123,7 +123,7 @@ REGISTER_TEST(splash_no_hardcoded_literals, "splash.cpp: 不含硬编码色字�
 // 不拉 splash.cpp.o）。防：时长档漂出用户 1~1.5s、前沿半径非单调/不达满圆、
 // 浓度包络不归零（终态残留墨染 ≠ 静态底色，W 批底色断言会被动态层遮蔽）
 REGISTER_TEST(splash_ink_curve, "splash.h: 墨染曲线（时长 1.2s / 半径 easeOut 单调达满 / 浓度稀释归零）", {
-    DOCTEST_CHECK_EQ(ui_kit::kInkDurationSec, 1.2f);  // 用户档 1~1.5s
+    DOCTEST_CHECK_EQ(ui_kit::kInkDurationSec, 2.184f);  // 2026-10-25 拍板 ×1.3（进度 ×0.6 → 1.68s）
     // 前沿半径：0 → 0、单调升、1 → 1（铺满全屏，最远角也吃到墨）
     DOCTEST_CHECK_EQ(ui_kit::inkFrontFraction(0.0f), 0.0f);
     DOCTEST_CHECK(ui_kit::inkFrontFraction(0.0f) < ui_kit::inkFrontFraction(0.25f));
@@ -146,7 +146,7 @@ REGISTER_TEST(splash_ink_curve, "splash.h: 墨染曲线（时长 1.2s / 半径 e
 
 // 墨染接线源码断言：防「曲线在但没接上」——inkProgress 必须真的驱动半径/浓度，
 // 帧泵（md.tree.anim.driver 同款 onFrame 元素）必须在途挂载、收敛剪除，洗染色
-// 走 wechat.primaryPressed 令牌（有机晕染的噪声卫星也在令牌体系内，禁字面量）
+// 走 primaryPressed 令牌（有机晕染的噪声卫星也在令牌体系内，禁字面量）
 REGISTER_TEST(splash_ink_dynamic_wiring, "splash.cpp: 墨染接线（inkProgress 驱动 + onFrame 帧泵 + 终态收敛 + 令牌色）", {
     const std::string src = readSourceFile("src/ui_kit/splash.cpp");
     DOCTEST_CHECK(!src.empty());

@@ -7,6 +7,7 @@
 #include "settings_ui_cards.h"
 
 #include <core/component_theme.h>
+#include <core/render/text.h>  // core::TextPrimitive::measureTextWidth
 
 #include <eui/app.h>
 #include <eui/dsl.h>
@@ -18,9 +19,10 @@
 #include <components/switch.h>
 
 #include <components/theme.h>
+#include <ui_kit/card.h>
 #include <ui_kit/columns.h>
 #include <ui_kit/form_row.h>
-#include <ui_kit/glass_card.h>
+#include <ui_kit/slider.h>
 #include <ui_kit/wswitch.h>
 
 #include <algorithm>
@@ -45,6 +47,9 @@ int logLevelIndex(const std::string& level) {
     if (level == kLogLevelError) return 3;
     return 1;  // INFO 默认档
 }
+
+// 字号行右侧实时百分比文本盒宽（"130%" fs(13) ≈ 33px，余量防手滑拖出四位数）
+constexpr float kFontScalePctLabelW = 44.0f;
 
 // 卡内标题 / 描述行 helper：左缩进 28、字体与颜色在所有调用点一致；标题字重 600。
 
@@ -109,15 +114,14 @@ void drawAppearanceCard(const CardDrawArgs& args) {
         .size(w, h)
         .zIndex(40)
         .content([&] {
-            // UAT6 E+F 批玻璃卡底 + 无染色淡雅质感
+            // S6.1 玻璃退役→白卡 + Sm 阴影 + H10 描边 + H15 轻微半透（kCardGlassAlpha）
             ui.rect(id + ".bg")
                 .position(0.0f, 0.0f).size(w, h)
-                .color(components::theme::withOpacity(t.colors.wechat.cardBg, 0.62f))
-                .radius(t.sizes.radiusWeChat)
-                .border(1.0f, components::theme::withOpacity(t.colors.wechat.cardBg, 0.55f))
+                .color(ui_kit::cardSurface(t))
+                .radius(t.sizes.radiusLarge)
+                .shadow(components::theme::shadow(compTheme, 3.0f, 1.0f, 0.04f, 0.02f))
+                .border(1.0f, t.colors.borderDefault)
                 .build();
-            ui_kit::drawGlassCardLayers(ui, id, 0.0f, 0.0f, w, h,
-                t.sizes.radiusWeChat, t, ui_kit::GlassCardStyle::subtle());
 
             cardTitle(ui, id, t, 16.0f, w - 56.0f - kFluidToggleW, 22.0f,
                       22.0f, "外观");
@@ -147,24 +151,30 @@ void drawAppearanceCard(const CardDrawArgs& args) {
             ui_kit::formRow(ui, id + ".font", "字号缩放", formX, fontRowY,
                             formW, rowH,
                 [&](eui::Ui& ui, float cx, float cy, float cw, float ch) {
-                    const float ddW = cw;
+                    // UAT6.2 无级调节：四档下拉 → 滑杆（80-130% 连续取值，1% 分辨率
+                    // 量化落 cfg）+ 右侧实时百分比文本。行几何不变 → 卡高公式不受档位影响。
+                    const float wrapW = cw;
+                    const float pctW = kFontScalePctLabelW;
+                    const float sliderW = wrapW - pctW - roundFs(8.0f);
+                    const float ratio =
+                        static_cast<float>(in.cfg.fontScalePercent - kMinFontScalePercent) /
+                        static_cast<float>(kMaxFontScalePercent - kMinFontScalePercent);
                     ui.stack(id + ".font.ddwrap")
                         .position(cx, cy)
-                        .size(ddW, ch)
+                        .size(wrapW, ch)
                         .content([&] {
-                            components::dropdown(ui, id + ".font.dd")
-                                .size(ddW, ch)
-                                .theme(compTheme)
-                                .items(std::vector<std::string>(
-                                    kFontPresetLabels,
-                                    kFontPresetLabels + kFontPresetCount))
-                                .selected(nearestIndex(in.cfg.fontScalePercent,
-                                                       kFontPresets, kFontPresetCount))
-                                .open(isDropdownOpen(in.openDropdown, Dropdown::Font))
-                                .onOpenChange([f = a.setDropdownOpen](bool v) {
-                                    f(Dropdown::Font, v);
-                                })
-                                .onChange([f = a.applyFontPreset](int idx) { f(idx); })
+                            ui_kit::slider(ui, id + ".font.slider", 0.0f, 0.0f,
+                                           sliderW, ch, ratio, t,
+                                [f = a.applyFontScalePercent](float v) {
+                                    f(fontScalePercentFromRatio(v));
+                                });
+                            ui.text(id + ".font.pct")
+                                .position(sliderW + roundFs(8.0f), 0.0f)
+                                .size(pctW, ch)
+                                .text(std::to_string(in.cfg.fontScalePercent) + "%")
+                                .fontSize(fs(13.0f))
+                                .lineHeight(ch)
+                                .color(t.colors.textSecondary)
                                 .build();
                         })
                         .build();
@@ -255,15 +265,14 @@ void drawEditorFontCard(const CardDrawArgs& args) {
         .size(w, h)
         .zIndex(30)
         .content([&] {
-            // UAT6 E+F 批玻璃卡底 + 无染色淡雅质感
+            // S6.1 玻璃退役→白卡 + Sm 阴影 + H10 描边 + H15 轻微半透（kCardGlassAlpha）
             ui.rect(id + ".bg")
                 .position(0.0f, 0.0f).size(w, h)
-                .color(components::theme::withOpacity(t.colors.wechat.cardBg, 0.62f))
-                .radius(t.sizes.radiusWeChat)
-                .border(1.0f, components::theme::withOpacity(t.colors.wechat.cardBg, 0.55f))
+                .color(ui_kit::cardSurface(t))
+                .radius(t.sizes.radiusLarge)
+                .shadow(components::theme::shadow(compTheme, 3.0f, 1.0f, 0.04f, 0.02f))
+                .border(1.0f, t.colors.borderDefault)
                 .build();
-            ui_kit::drawGlassCardLayers(ui, id, 0.0f, 0.0f, w, h,
-                t.sizes.radiusWeChat, t, ui_kit::GlassCardStyle::subtle());
 
             cardTitle(ui, id, t, 16.0f, w - 56.0f, 22.0f, 22.0f, "编辑器字号");
             ui_kit::formRow(ui, id + ".font", "字号", 28.0f, rowY,
@@ -407,15 +416,15 @@ void drawModulesCard(const CardDrawArgs& args) {
     ui.stack(id)
         .size(w, h)
         .content([&] {
-            // UAT6 E+F 批玻璃卡底 + 无染色淡雅质感
+            const auto compThemeTop = core::theme::componentTokensWeChat(t);
+            // S6.1 玻璃退役→白卡 + Sm 阴影 + H10 描边 + H15 轻微半透（kCardGlassAlpha）
             ui.rect(id + ".bg")
                 .position(0.0f, 0.0f).size(w, h)
-                .color(components::theme::withOpacity(t.colors.wechat.cardBg, 0.62f))
-                .radius(t.sizes.radiusWeChat)
-                .border(1.0f, components::theme::withOpacity(t.colors.wechat.cardBg, 0.55f))
+                .color(ui_kit::cardSurface(t))
+                .radius(t.sizes.radiusLarge)
+                .shadow(components::theme::shadow(compThemeTop, 3.0f, 1.0f, 0.04f, 0.02f))
+                .border(1.0f, t.colors.borderDefault)
                 .build();
-            ui_kit::drawGlassCardLayers(ui, id, 0.0f, 0.0f, w, h,
-                t.sizes.radiusWeChat, t, ui_kit::GlassCardStyle::subtle());
 
             cardTitle(ui, id, t, 16.0f, w - 56.0f, 22.0f, 22.0f, "模块");
             cardDesc(ui, id, t, 40.0f, w - 56.0f, roundFs(16.0f),
@@ -502,18 +511,30 @@ void drawProxyCard(const CardDrawArgs& args) {
     const float warnY0 = proxyWarnRowTop();
     const float warnH = proxyWarnRowHeight();
 
+    // H18 横向弹性锚（S4.1：1000×640 为锚点，向上按伸缩公式）：
+    // 固定控件（开关/输入/按钮）各持定宽，控件组右缘钉卡内容右缘（w − 28）；
+    // 说明列（端口提示 / 接管状态值）宽 = 卡内可用宽 − label 宽 − 控件宽 − 间距，
+    // 宽窗增量只进说明列——各列宽与改前逐值一致（仅控件组按右锚重排次序），
+    // 不产生右侧死区。
+    constexpr float kPortInputW = 96.0f;         // 端口输入框（数值定宽）
+    constexpr float kPortApplyW = 64.0f;         // 「应用」按钮
+    constexpr float kPortCtrlGap = 8.0f;         // 输入框 → 按钮
+    constexpr float kPortHintGap = 12.0f;        // 说明列 → 控件组
+    constexpr float kTakeoverLabelW = 150.0f;    // 接管行 label（固定列）
+    constexpr float kTakeoverGap = 12.0f;        // label → 状态值（说明列）
+
     ui.stack(id)
         .size(w, h)
         .content([&] {
-            // UAT6 E+F 批玻璃卡底 + 无染色淡雅质感
+            const auto compTheme = core::theme::componentTokensWeChat(t);
+            // S6.1 玻璃退役→白卡 + Sm 阴影 + H10 描边 + H15 轻微半透（kCardGlassAlpha）
             ui.rect(id + ".bg")
                 .position(0.0f, 0.0f).size(w, h)
-                .color(components::theme::withOpacity(t.colors.wechat.cardBg, 0.62f))
-                .radius(t.sizes.radiusWeChat)
-                .border(1.0f, components::theme::withOpacity(t.colors.wechat.cardBg, 0.55f))
+                .color(ui_kit::cardSurface(t))
+                .radius(t.sizes.radiusLarge)
+                .shadow(components::theme::shadow(compTheme, 3.0f, 1.0f, 0.04f, 0.02f))
+                .border(1.0f, t.colors.borderDefault)
                 .build();
-            ui_kit::drawGlassCardLayers(ui, id, 0.0f, 0.0f, w, h,
-                t.sizes.radiusWeChat, t, ui_kit::GlassCardStyle::subtle());
 
             auto* svc = in.proxy;
             const bool running = svc && svc->isProxyRunning();
@@ -521,11 +542,19 @@ void drawProxyCard(const CardDrawArgs& args) {
 
             cardTitle(ui, id, t, 16.0f, 240.0f, 22.0f, 22.0f, "Claude 代理");
 
-            // 随应用启动代理（默认关）放卡片右上。
-            const auto compTheme = core::theme::componentTokensWeChat(t);
+            // 随应用启动代理（默认关）放卡片右上：SwitchBuilder 盒内左排（轨左字右）
+            // 且不感知盒宽，盒宽须=内容实宽（左内距+轨道+间距+文字实宽），文字右缘
+            // 才恰钉卡内容右缘 28（H18）；盒宽超出即右侧死区、控件组视觉脱离锚线。
+            // 文字实宽随生效字号缩放，须运行期测量（同 SwitchBuilder 度量口径）。
+            const float autoStartTextW = core::TextPrimitive::measureTextWidth(
+                "随应用启动代理", {}, fs(13.0f), 400);
+            const float autoStartBoxW = compTheme.metrics.spacing.control
+                + compTheme.metrics.control.switchWidth
+                + compTheme.metrics.spacing.control
+                + autoStartTextW;
             components::toggleSwitch(ui, id + ".autostart")
-                .position(w - 28.0f - 240.0f, 12.0f)
-                .size(240.0f, 28.0f)
+                .position(w - 28.0f - autoStartBoxW, 12.0f)
+                .size(autoStartBoxW, 28.0f)
                 .text("随应用启动代理")
                 .fontSize(fs(13.0f))
                 .checked(in.cfg.claudeProxyAutoStart)
@@ -543,15 +572,22 @@ void drawProxyCard(const CardDrawArgs& args) {
             const std::string portText = in.proxyPortDraft.empty()
                 ? std::to_string(in.cfg.proxyPort)
                 : in.proxyPortDraft;
-            // E 批统一：端口行 = FormRow（label 110）+ input/应用按钮/hint 行内尾注。
+            // E 批统一：端口行 = FormRow（label 110）+ 说明列 + 右侧固定控件组
+            //（input/应用按钮，H18 右锚）。
             ui_kit::formRow(ui, id + ".port", "代理端口", 28.0f, portRowY,
                             w - 56.0f, rowH,
                 [&](eui::Ui& ui, float cx, float cy, float cw, float ch) {
                     const float inputH = 28.0f;
                     const float ctrlY = cy + (ch - inputH) * 0.5f;
+                    // H18：固定控件组（输入 96 + 间距 8 + 应用 64）右锚控件区
+                    // 右缘（cx+cw = 卡内容右缘 w−28）；说明列 flex 从 label 右缘
+                    // 起，宽 = cw − 96 − 8 − 64 − 12（任一宽度下均与改前盒宽同值，
+                    // 宽窗增量全归说明列）。
+                    const float applyX = cx + cw - kPortApplyW;
+                    const float inputX = applyX - kPortCtrlGap - kPortInputW;
                     components::input(ui, id + ".port.input")
-                        .position(cx, ctrlY)
-                        .size(96.0f, inputH)
+                        .position(inputX, ctrlY)
+                        .size(kPortInputW, inputH)
                         .value(portText)
                         .placeholder("8888")
                         .fontSize(fs(13.0f))
@@ -565,20 +601,22 @@ void drawProxyCard(const CardDrawArgs& args) {
                         .build();
                     // UAT3 W2-M1：core 橘（#D97757 三态）残留 → 与 github 卡主按钮
                     //（btn.push「立即同步」）完全同款：componentTokensWeChat 的
-                    // primary=#07C160 绿，不再覆写 colors/textColor
+                    // primary=#36D399 绿，不再覆写 colors/textColor
                     components::button(ui, id + ".port.apply")
-                        .position(cx + 96.0f + 8.0f, ctrlY)
-                        .size(64.0f, inputH)
+                        .position(applyX, ctrlY)
+                        .size(kPortApplyW, inputH)
                         .text("应用")
                         .fontSize(fs(13.0f))
                         .theme(compTheme, /*primary=*/true)
                         .radius(t.sizes.radiusSmall)
                         .onClick([f = a.applyProxyPort] { f(); })
                         .build();
-                    const float hintX = cx + 96.0f + 8.0f + 64.0f + 12.0f;
+                    const float hintX = cx;
+                    const float hintW =
+                        std::max(0.0f, inputX - kPortHintGap - hintX);
                     ui.text(id + ".port.hint")
                         .position(hintX, cy + (ch - hintH) * 0.5f)
-                        .size(std::max(0.0f, cx + cw - hintX), hintH)
+                        .size(hintW, hintH)
                         .text("改后回车或点「应用」；代理运行中自动重启")
                         .fontSize(fs(12.0f))
                         .lineHeight(hintH)
@@ -588,9 +626,14 @@ void drawProxyCard(const CardDrawArgs& args) {
 
             // Claude Code 接管状态：sidecar 是否存在推导，让还原机制对用户可见。
             const bool managed = in.takeoverManaged;
+            // H18：label 150 为固定列；状态值列（说明列）起点由 28 + label + 12
+            // 派生（旧写死 190，改 label 宽即漂），宽 = w − 起点 − 28（与原式
+            // 等价；宽窗增量同进状态值列）。
+            const float takeoverValueX =
+                28.0f + kTakeoverLabelW + kTakeoverGap;
             ui.text(id + ".takeover.label")
                 .position(28.0f, takeoverY)
-                .size(150.0f, takeoverH)
+                .size(kTakeoverLabelW, takeoverH)
                 .text("Claude Code 接管")
                 .fontSize(fs(12.0f))
                 .lineHeight(takeoverH)
@@ -600,8 +643,8 @@ void drawProxyCard(const CardDrawArgs& args) {
             const std::string ccPath =
                 svc ? svc->settingsFilePath() : std::string();
             ui.text(id + ".takeover.value")
-                .position(190.0f, takeoverY)
-                .size(w - 190.0f - 28.0f, takeoverH)
+                .position(takeoverValueX, takeoverY)
+                .size(w - takeoverValueX - 28.0f, takeoverH)
                 .text(managed
                       ? ("● 已接管 " + ccPath)
                       : std::string("○ 未接管（启动代理后自动接管，停止时还原）"))
@@ -669,6 +712,15 @@ void drawLogCard(const CardDrawArgs& args) {
         .size(w, h)
         .zIndex(30)
         .content([&] {
+            // S6.1 玻璃退役→白卡 + Sm 阴影（日志卡原本无 bg，新增）+ H10 描边 + H15 轻微半透（kCardGlassAlpha）
+            ui.rect(id + ".bg")
+                .position(0.0f, 0.0f).size(w, h)
+                .color(ui_kit::cardSurface(t))
+                .radius(t.sizes.radiusLarge)
+                .shadow(components::theme::shadow(compTheme, 3.0f, 1.0f, 0.04f, 0.02f))
+                .border(1.0f, t.colors.borderDefault)
+                .build();
+
             cardTitle(ui, id, t, 16.0f, w - 56.0f, 22.0f, 22.0f, "日志");
 
             // 档位标签（0 = 永久）；存的是原始天数 int，清理任务按值读取
@@ -786,6 +838,15 @@ void drawLogViewCard(const CardDrawArgs& args) {
     ui.stack(id)
         .size(w, h)
         .content([&] {
+            // S6.1 玻璃退役→白卡 + Sm 阴影（日志查看卡原本无 bg，新增）+ H10 描边 + H15 轻微半透（kCardGlassAlpha）
+            ui.rect(id + ".bg")
+                .position(0.0f, 0.0f).size(w, h)
+                .color(ui_kit::cardSurface(t))
+                .radius(t.sizes.radiusLarge)
+                .shadow(components::theme::shadow(compTheme, 3.0f, 1.0f, 0.04f, 0.02f))
+                .border(1.0f, t.colors.borderDefault)
+                .build();
+
             const float btnW = 96.0f;
             cardTitle(ui, id, t, 16.0f, w - 56.0f - btnW - 12.0f, 22.0f, 22.0f,
                       "运行日志（末尾 500 行）");

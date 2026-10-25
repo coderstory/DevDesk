@@ -196,7 +196,7 @@ void drawCallsDialog(eui::Ui& ui, const eui::Screen& screen,
 
     ui_kit::drawDialogFrame(ui, screen, frame, themeTokens, [&] {
             ui_kit::drawDialogTitle(ui, "claude.dialog.calls.title", w, "调用记录",
-                                    20.0f, t.colors.textPrimary, {.y = 20.0f});
+                                    20.0f, t.colors.textPrimary, {.y = 16.0f});
 
             // 工具行：搜索框 + 状态码过滤 + 匹配总数
             components::input(ui, "claude.dialog.calls.search")
@@ -204,7 +204,7 @@ void drawCallsDialog(eui::Ui& ui, const eui::Screen& screen,
                 .size(260.0f, 32.0f)
                 .value(st.callsSearch_)
                 .placeholder("搜索路径 / 方法…")
-                .fontSize(12.0f)
+                .fontSize(core::theme::scaled(12.0f))
                 .theme(themeTokens)
                 .onChange([sp = &st](const std::string& v) {
                     if (v == sp->callsSearch_) return;   // 无变化不重查（IME 组字等）
@@ -251,8 +251,8 @@ void drawCallsDialog(eui::Ui& ui, const eui::Screen& screen,
                 .text(st.callsPageLoaded_
                           ? (std::to_string(st.callsTotalMatches_) + " 条匹配")
                           : std::string())
-                .fontSize(12.0f)
-                .lineHeight(32.0f)
+                .fontSize(core::theme::scaled(12.0f))
+                .lineHeight(core::theme::scaled(32.0f))
                 .horizontalAlign(eui::HorizontalAlign::Right)
                 .color(t.colors.textTertiary)
                 .build();
@@ -323,13 +323,13 @@ void drawCallsDialog(eui::Ui& ui, const eui::Screen& screen,
                                 const eui::Color rowColor =
                                     (c.statusCode >= 200 && c.statusCode < 300)
                                         ? t.colors.textSecondary
-                                        : t.colors.error;
+                                        : t.colors.errorText;
                                 inner.text(absId)
                                     .position(0.0f, 2.0f)
                                     .size(contentWidth, 18.0f)
                                     .text(line)
-                                    .fontSize(12.0f)
-                                    .lineHeight(18.0f)
+                                    .fontSize(core::theme::scaled(12.0f))
+                                    .lineHeight(core::theme::scaled(18.0f))
                                     .color(rowColor)
                                     .build();
                             })
@@ -348,13 +348,13 @@ void drawCallsDialog(eui::Ui& ui, const eui::Screen& screen,
                 .position(28.0f, h - 60.0f)
                 .size(88.0f, 40.0f)
                 .text("← 上一页")
-                .fontSize(14.0f)
-                .colors(t.colors.wechat.secondaryButtonBg,
-                        t.colors.wechat.dividerSecondary,
-                        t.colors.wechat.dividerSecondary)
-                .textColor(t.colors.wechat.textPrimary)
-                .radius(t.sizes.radiusWeChat)
-                .border(1.0f, t.colors.wechat.dividerPrimary)
+                .fontSize(core::theme::scaled(14.0f))
+                .colors(t.colors.hover,
+                        t.colors.hover,
+                        t.colors.hover)
+                .textColor(t.colors.textPrimary)
+                .radius(t.sizes.radius)
+                .border(1.0f, t.colors.borderDefault)
                 .disabled(st.callsPage_ == 0)
                 .onClick([sp = &st] {
                     if (sp->callsPage_ == 0) return;
@@ -367,13 +367,13 @@ void drawCallsDialog(eui::Ui& ui, const eui::Screen& screen,
                 .position(128.0f, h - 60.0f)
                 .size(88.0f, 40.0f)
                 .text("下一页 →")
-                .fontSize(14.0f)
-                .colors(t.colors.wechat.secondaryButtonBg,
-                        t.colors.wechat.dividerSecondary,
-                        t.colors.wechat.dividerSecondary)
-                .textColor(t.colors.wechat.textPrimary)
-                .radius(t.sizes.radiusWeChat)
-                .border(1.0f, t.colors.wechat.dividerPrimary)
+                .fontSize(core::theme::scaled(14.0f))
+                .colors(t.colors.hover,
+                        t.colors.hover,
+                        t.colors.hover)
+                .textColor(t.colors.textPrimary)
+                .radius(t.sizes.radius)
+                .border(1.0f, t.colors.borderDefault)
                 .disabled(!hasNext)
                 .onClick([sp = &st] {
                     if ((sp->callsPage_ + 1) * kCallsPageSize >= sp->callsTotalMatches_) return;
@@ -387,9 +387,9 @@ void drawCallsDialog(eui::Ui& ui, const eui::Screen& screen,
                 .size(332.0f, 40.0f)
                 .text("第 " + std::to_string(st.callsPage_ + 1) + " / " +
                       std::to_string(pages) + " 页")
-                .fontSize(12.0f)
+                .fontSize(core::theme::scaled(12.0f))
                 // 页码文本必须 verticalAlign=Center，否则 ink 从行框顶沿起排
-                .lineHeight(40.0f)
+                .lineHeight(core::theme::scaled(40.0f))
                 .verticalAlign(eui::VerticalAlign::Center)
                 .color(t.colors.textSecondary)
                 .build();
@@ -397,13 +397,13 @@ void drawCallsDialog(eui::Ui& ui, const eui::Screen& screen,
                 .position(w - 28.0f - 120.0f, h - 60.0f)
                 .size(120.0f, 40.0f)
                 .text("关闭")
-                .fontSize(14.0f)
-                .colors(t.colors.wechat.secondaryButtonBg,
-                        t.colors.wechat.dividerSecondary,
-                        t.colors.wechat.dividerSecondary)
-                .textColor(t.colors.wechat.textPrimary)
-                .radius(t.sizes.radiusWeChat)
-                .border(1.0f, t.colors.wechat.dividerPrimary)
+                .fontSize(core::theme::scaled(14.0f))
+                .colors(t.colors.hover,
+                        t.colors.hover,
+                        t.colors.hover)
+                .textColor(t.colors.textPrimary)
+                .radius(t.sizes.radius)
+                .border(1.0f, t.colors.borderDefault)
                 .onClick([sp = &st] { sp->callsDialogOpen_ = false; })
                 .build();
     });

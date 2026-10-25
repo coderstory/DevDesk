@@ -211,8 +211,9 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // 3) 外观卡字号下拉：开 → L2 扫描 + 右侧邻卡绘制序（配对行 z 语义）→ 关
-    passed = verifyDropdown("settings.card.appearance.font.dd",
+    // 3) 外观卡窗口效果下拉（批I 字号行改滑杆后，本卡唯一存留下拉）：
+    //    开 → L2 扫描 + 右侧邻卡绘制序（配对行 z 语义）→ 关
+    passed = verifyDropdown("settings.card.appearance.effect.dd",
                             "settings.card.appearance",
                             "settings.card.editor") &&
              passed;

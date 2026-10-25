@@ -54,12 +54,12 @@ void drawSegOp(eui::Ui& ui, const std::string& id, float x, float y, float w, fl
         btn.icon(iconCode);
     }
     btn
-        .colors(on ? t.colors.wechat.primary : t.colors.wechat.pageBg,
-                on ? t.colors.wechat.primaryHover : t.colors.wechat.secondaryButtonBg,
-                on ? t.colors.wechat.primaryPressed : t.colors.wechat.selectedBg)
-        .textColor(on ? t.colors.wechat.onPrimary : t.colors.wechat.textPrimary)
+        .colors(on ? t.colors.primary : t.colors.background,
+                on ? t.colors.primaryHover : t.colors.hover,
+                on ? t.colors.primaryPressed : t.colors.primarySoftBg)
+        .textColor(on ? t.colors.onPrimary : t.colors.textPrimary)
         .radius(8.0f)   // demo .op border-radius:8px
-        .border(1.0f, on ? t.colors.wechat.primary : t.colors.wechat.dividerPrimary)
+        .border(1.0f, on ? t.colors.primary : t.colors.borderDefault)
         .onClick(std::move(onClick))
         .build();
 }
@@ -85,10 +85,10 @@ void drawDialogChip(eui::Ui& ui, const std::string& id, float x, float y,
     const float textW = chipWidth(text);
     const float w = textW + 24.0f;
     const float h = 28.0f;
-    const eui::Color bg = eui::mixColor(t.colors.wechat.cardBg,
-                                        t.colors.wechat.primary, 0.12f);
-    const eui::Color border = eui::mixColor(t.colors.wechat.cardBg,
-                                            t.colors.wechat.primary, 0.24f);
+    const eui::Color bg = eui::mixColor(t.colors.surface,
+                                        t.colors.primary, 0.12f);
+    const eui::Color border = eui::mixColor(t.colors.surface,
+                                            t.colors.primary, 0.24f);
     ui.rect(id + ".bg")
         .position(x, y)
         .size(w, h)
@@ -104,16 +104,16 @@ void drawDialogChip(eui::Ui& ui, const std::string& id, float x, float y,
         .lineHeight(h)
         .horizontalAlign(eui::HorizontalAlign::Center)
         .verticalAlign(eui::VerticalAlign::Center)
-        .color(t.colors.wechat.primaryText)
+        .color(t.colors.primaryText)
         .build();
     components::button(ui, id + ".x")
         .position(x + textW + 2.0f, y + 3.0f)
         .size(22.0f, 22.0f)
         .text("×")
         .fontSize(t.sizes.fontSizeSmall)
-        .colors(t.colors.wechat.cardBg, t.colors.wechat.secondaryButtonBg,
-                t.colors.wechat.selectedBg)
-        .textColor(t.colors.wechat.primaryText)
+        .colors(t.colors.surface, t.colors.hover,
+                t.colors.primarySoftBg)
+        .textColor(t.colors.primaryText)
         .radius(11.0f)
         .onClick(std::move(onRemove))
         .build();
@@ -134,11 +134,11 @@ void drawDialogFooterButtons(eui::Ui& ui, const std::string& idBase, float w, fl
         .size(bw, bh)
         .text("取消")
         .fontSize(t.sizes.fontSizeSmall)
-        .colors(t.colors.wechat.pageBg, t.colors.wechat.secondaryButtonBg,
-                t.colors.wechat.selectedBg)
-        .textColor(t.colors.wechat.textPrimary)
+        .colors(t.colors.background, t.colors.hover,
+                t.colors.primarySoftBg)
+        .textColor(t.colors.textPrimary)
         .radius(8.0f)
-        .border(1.0f, t.colors.wechat.dividerPrimary)
+        .border(1.0f, t.colors.borderDefault)
         .onClick(std::move(onCancel))
         .build();
     components::button(ui, idBase + ".confirm")
@@ -146,9 +146,9 @@ void drawDialogFooterButtons(eui::Ui& ui, const std::string& idBase, float w, fl
         .size(bw, bh)
         .text(confirmLabel)
         .fontSize(t.sizes.fontSizeSmall)
-        .colors(t.colors.wechat.primary, t.colors.wechat.primaryHover,
-                t.colors.wechat.primaryPressed)
-        .textColor(t.colors.wechat.onPrimary)
+        .colors(t.colors.primary, t.colors.primaryHover,
+                t.colors.primaryPressed)
+        .textColor(t.colors.onPrimary)
         .radius(8.0f)
         .onClick(std::move(onConfirm))
         .build();
@@ -216,8 +216,8 @@ void drawNewTaskDialog(eui::Ui& ui, const eui::Screen& screen,
         .onOpenChange([&d](bool v) { d.popups.setOpen(Popup::NewTask, v); })
         .content([&] {
             ui_kit::drawDialogTitle(ui, "todo.dialog.newtask.title", w, "新建任务",
-                                    t.sizes.fontSizeBody, t.colors.textPrimary,
-                                    {.y = 22.0f, .height = 28.0f, .lineHeight = 28.0f});
+                                    20.0f, t.colors.textPrimary,
+                                    {.y = 16.0f, .height = 28.0f, .lineHeight = 28.0f});
 
             std::string colName = "?";
             for (const auto& c : *host.columns) {
@@ -358,7 +358,7 @@ void drawNewTaskDialog(eui::Ui& ui, const eui::Screen& screen,
 
             // 内嵌红字错误行（校验/创建失败就地可见，弹窗不关）
             ui_kit::drawDialogText(ui, "todo.dialog.newtask.error", w, d.newTask.error,
-                                   t.sizes.fontSizeSmall, t.colors.error,
+                                   t.sizes.fontSizeSmall, t.colors.errorText,
                                    {.y = 380.0f, .height = 16.0f, .lineHeight = 16.0f,
                                     .skipIfEmpty = true});
 
@@ -375,97 +375,16 @@ void drawNewTaskDialog(eui::Ui& ui, const eui::Screen& screen,
         .build();
 }
 
-// 新建列弹窗：「+ 列」不即时落库，先走命名弹窗。Input 无程序化 focus/selectAll，
-// 改用空值 + placeholder 显示默认名：留空 = 采用「新列 N」，输入 = 按名字建。
-
-// 列名撞名/创建失败 → 弹窗内嵌红字、弹窗不关；留空采用默认名路径不查重。
-void NewColumnDialog::submit(PopupStack& popups, const DialogHost& host) {
-    const bool defaulted = title.empty();
-    const std::string text = defaulted
-        ? defaultColumnTitle(host.columns->size())
-        : title;
-    if (!defaulted && columnTitleTaken(*host.columns, text, 0)) {
-        error = "该列名已存在，请换一个";
-        return;
-    }
-    const std::string err = host.createColumn(text);
-    if (!err.empty()) {
-        error = err;
-        return;
-    }
-    popups.close(Popup::NewColumn);
-}
-
-void drawNewColumnDialog(eui::Ui& ui, const eui::Screen& screen,
-                         const core::theme::Tokens& t, DialogSet& d,
-                         const DialogHost& host) {
-    const auto themeTokens = core::theme::componentTokensWeChat(t);
-    const float w = ui_kit::dialogWidthPx(ui_kit::DialogWidth::Standard);
-    const float h = 230.0f;
-
-    ui_kit::DialogFrame frame;
-    frame.id = "todo.dialog.newcol";
-    frame.width = ui_kit::DialogWidth::Standard;
-    frame.height = h;
-    frame.open = d.popups.isOpen(Popup::NewColumn);
-    frame.zIndex = d.popups.zOf(Popup::NewColumn);
-    frame.onOpenChange = [&d](bool v) { d.popups.setOpen(Popup::NewColumn, v); };
-
-    ui_kit::drawDialogFrame(ui, screen, frame, themeTokens, [&] {
-            ui_kit::drawDialogTitle(ui, "todo.dialog.newcol.title", w, "新建列",
-                                    t.sizes.fontSizeLarge + 2.0f, t.colors.textPrimary);
-
-            ui_kit::drawDialogText(
-                ui, "todo.dialog.newcol.hint", w,
-                "输入列标题，留空回车则用「" +
-                    defaultColumnTitle(host.columns->size()) + "」",
-                t.sizes.fontSizeSmall - 1.0f, t.colors.textTertiary,
-                {.y = 56.0f, .height = 18.0f, .lineHeight = 18.0f});
-
-            components::input(ui, "todo.dialog.newcol.input")
-                .position(28.0f, 84.0f)
-                .size(w - 56.0f, 44.0f)
-                .value(d.newColumn.title)
-                .placeholder(defaultColumnTitle(host.columns->size()))
-                .fontSize(t.sizes.fontSizeBody)
-                .theme(themeTokens)
-                .onChange([&d](const std::string& text) {
-                    d.newColumn.title = text;
-                    d.newColumn.error.clear();  // 错误随下一次输入清除
-                })
-                .onEnter([&d, &host] { d.newColumn.submit(d.popups, host); })
-                // Esc=取消走 onCancel；输入框未聚焦的兜底走 app 级 Module::onKeyEvent
-                .onCancel([&d] { d.popups.close(Popup::NewColumn); })
-                .build();
-
-            ui_kit::drawDialogText(ui, "todo.dialog.newcol.error", w, d.newColumn.error,
-                                   t.sizes.fontSizeSmall, t.colors.error,
-                                   {.y = 134.0f, .height = 18.0f, .lineHeight = 18.0f,
-                                    .skipIfEmpty = true});
-
-            ui_kit::DialogButtonSpec cancel;
-            cancel.label = "取消";
-            cancel.fontSize = t.sizes.fontSizeBody - 1.0f;
-            cancel.style = ui_kit::DialogButtonStyle::SecondaryThemed;
-            cancel.onClick = [&d] { d.popups.close(Popup::NewColumn); };
-            ui_kit::DialogButtonSpec confirm;
-            confirm.label = "创建";
-            confirm.fontSize = t.sizes.fontSizeBody - 1.0f;
-            confirm.style = ui_kit::DialogButtonStyle::PrimaryThemed;
-            confirm.onClick = [&d, &host] { d.newColumn.submit(d.popups, host); };
-            ui_kit::drawDialogButtons(ui, "todo.dialog.newcol", w, h, cancel, confirm,
-                                      t, themeTokens);
-    });
-}
-
 // 右键菜单。菜单项点击分发（onContextSelectPath）留在模块：编排各弹窗打开与写操作，非菜单自身状态
 void drawContextMenu(eui::Ui& ui, const eui::Screen& screen,
                      const core::theme::Tokens& t, DialogSet& d,
                      const DialogHost& host,
                      const std::map<int64_t, float>& columnScrolls) {
     const auto themeTokens = core::theme::componentTokensWeChat(t);
+    // 列右键菜单入口已随固定四列删除，此处只构建任务菜单
+    if (d.ctx.taskId == 0) return;
     std::vector<components::ContextMenuItem> items;
-    if (d.ctx.taskId != 0) {
+    {
         const Task* self = findTask(*host.tasks, d.ctx.taskId);
         if (self == nullptr) return;
         items.push_back({"编辑"});
@@ -477,25 +396,11 @@ void drawContextMenu(eui::Ui& ui, const eui::Screen& screen,
             }
         }
         items.push_back({"删除"});
-    } else if (d.ctx.columnId != 0) {
-        if (findColumn(*host.columns, d.ctx.columnId) == nullptr) return;
-        items.push_back({"重命名列"});
-        items.push_back({"左移列"});
-        items.push_back({"右移列"});
-        // 改色子选（预设与 ui::columnDotColor 映射表对应）
-        std::vector<components::ContextMenuItem> colorItems;
-        for (int i = 0; i < kColorPresetCount; ++i) {
-            colorItems.push_back({kColorPresets[i].label});
-        }
-        items.push_back({"改色", std::move(colorItems)});
-        items.push_back({"删除列"});
-    } else {
-        return;
     }
 
-    const BoardGeom g = boardGeom(screen.width, host.columns->size(), t);
+    const BoardGeom g = boardGeom(t);
     // 锚点统一经 core::menuAnchorForPointer：x 取列中芯、y 取卡片视觉底（未滚几何），滚动偏移经 scrollOffsetY 叠加
-    const float x = cardLeft(g, d.ctx.columnIndex) + g.colW * 0.5f;
+    const float x = d.ctx.anchorX;
     const float scrollY = d.ctx.cardIndex >= 0
         ? columnScrollOffset(*host.columns, columnScrolls,
                              static_cast<size_t>(d.ctx.columnIndex))
@@ -523,87 +428,15 @@ void drawContextMenu(eui::Ui& ui, const eui::Screen& screen,
         .build();
 }
 
-// 重命名提交：空名/撞名 → 弹窗内嵌红字 + 弹窗不关。
-void RenameDialog::submit(PopupStack& popups, const DialogHost& host) {
-    const int64_t id = columnId;
-    const std::string text = title;
-    const std::string err = host.renameColumn(id, text);
-    if (!err.empty()) {
-        error = err;
-        return;
-    }
-    popups.close(Popup::Rename);
-}
-
-void drawRenameDialog(eui::Ui& ui, const eui::Screen& screen,
-                      const core::theme::Tokens& t, DialogSet& d,
-                      const DialogHost& host) {
-    const auto themeTokens = core::theme::componentTokensWeChat(t);
-    const float w = ui_kit::dialogWidthPx(ui_kit::DialogWidth::Standard);
-    const float h = 210.0f;
-
-    ui_kit::DialogFrame frame;
-    frame.id = "todo.dialog.rename";
-    frame.width = ui_kit::DialogWidth::Standard;
-    frame.height = h;
-    frame.open = d.popups.isOpen(Popup::Rename);
-    frame.zIndex = d.popups.zOf(Popup::Rename);
-    frame.onOpenChange = [&d](bool v) { d.popups.setOpen(Popup::Rename, v); };
-
-    ui_kit::drawDialogFrame(ui, screen, frame, themeTokens, [&] {
-            ui_kit::drawDialogTitle(ui, "todo.dialog.rename.title", w, "重命名列",
-                                    t.sizes.fontSizeLarge + 2.0f, t.colors.textPrimary);
-
-            components::input(ui, "todo.dialog.rename.input")
-                .position(28.0f, 68.0f)
-                .size(w - 56.0f, 44.0f)
-                .value(d.rename.title)
-                .placeholder("列标题…")
-                .fontSize(t.sizes.fontSizeBody)
-                .theme(themeTokens)
-                .onChange([&d](const std::string& text) {
-                    d.rename.title = text;
-                    d.rename.error.clear();  // 错误随下一次输入清除
-                })
-                .onEnter([&d, &host] { d.rename.submit(d.popups, host); })
-                .onCancel([&d] { d.popups.close(Popup::Rename); })
-                .build();
-
-            ui_kit::drawDialogText(ui, "todo.dialog.rename.error", w, d.rename.error,
-                                   t.sizes.fontSizeSmall, t.colors.error,
-                                   {.y = 118.0f, .height = 18.0f, .lineHeight = 18.0f,
-                                    .skipIfEmpty = true});
-
-            ui_kit::DialogButtonSpec cancel;
-            cancel.label = "取消";
-            cancel.fontSize = t.sizes.fontSizeBody - 1.0f;
-            cancel.style = ui_kit::DialogButtonStyle::SecondaryThemed;
-            cancel.onClick = [&d] { d.popups.close(Popup::Rename); };
-            ui_kit::DialogButtonSpec confirm;
-            confirm.label = "保存";
-            confirm.fontSize = t.sizes.fontSizeBody - 1.0f;
-            confirm.style = ui_kit::DialogButtonStyle::PrimaryThemed;
-            confirm.onClick = [&d, &host] { d.rename.submit(d.popups, host); };
-            ui_kit::drawDialogButtons(ui, "todo.dialog.rename", w, h, cancel, confirm,
-                                      t, themeTokens);
-    });
-}
-
-// 删除确认弹窗提交：taskId>0 = 删任务；否则 columnId>0 = 删列（外键 CASCADE 连带删列下任务）
+// 删除任务确认弹窗提交：确认后才关详情弹窗（取消路径不关，回到弹窗）
 void ConfirmDeleteDialog::confirm(DialogSet& d, const DialogHost& host) {
-    if (forTask()) {
-        const int64_t id = taskId;
-        d.popups.close(Popup::Confirm);
-        taskId = 0;
-        // 详情弹窗发起的删除：确认后才关详情（取消路径不关，回到弹窗）
-        d.popups.close(Popup::Detail);
-        d.detail.discardArmed = false;
-        host.deleteTask(id);
-        return;
-    }
-    const int64_t id = columnId;
+    const int64_t id = taskId;
     d.popups.close(Popup::Confirm);
-    host.deleteColumn(id);
+    taskId = 0;
+    // 详情弹窗发起的删除：确认后才关详情（取消路径不关，回到弹窗）
+    d.popups.close(Popup::Detail);
+    d.detail.discardArmed = false;
+    host.deleteTask(id);
 }
 
 void drawConfirmDeleteDialog(eui::Ui& ui, const eui::Screen& screen,
@@ -612,20 +445,8 @@ void drawConfirmDeleteDialog(eui::Ui& ui, const eui::Screen& screen,
     const auto themeTokens = core::theme::componentTokensWeChat(t);
     const float w = ui_kit::dialogWidthPx(ui_kit::DialogWidth::Standard);
     const float h = 200.0f;
-    const bool delTask = d.confirm.forTask();
-    std::string colName = "?";
-    int taskCount = 0;
-    if (!delTask) {
-        if (const Column* col = findColumn(*host.columns, d.confirm.columnId)) {
-            colName = col->title;
-            taskCount = static_cast<int>(tasksInColumn(*host.tasks, col->id).size());
-        }
-    }
-    const std::string title = delTask ? "删除任务" : "删除列";
-    const std::string body = delTask
-        ? "将删除任务「" + d.confirm.taskTitle + "」，不可恢复。"
-        : "将删除「" + colName + "」列及其中 " +
-              std::to_string(taskCount) + " 个任务，不可恢复。";
+    const std::string title = "删除任务";
+    const std::string body = "将删除任务「" + d.confirm.taskTitle + "」，不可恢复。";
 
     ui_kit::DialogFrame frame;
     frame.id = "todo.dialog.delcol";
@@ -638,7 +459,7 @@ void drawConfirmDeleteDialog(eui::Ui& ui, const eui::Screen& screen,
 
     ui_kit::drawDialogFrame(ui, screen, frame, themeTokens, [&] {
             ui_kit::drawDialogTitle(ui, "todo.dialog.delcol.title", w, title,
-                                    t.sizes.fontSizeLarge + 2.0f, t.colors.textPrimary);
+                                    20.0f, t.colors.textPrimary);
             ui_kit::drawDialogText(ui, "todo.dialog.delcol.body", w, body,
                                    t.sizes.fontSizeBody - 1.0f, t.colors.textSecondary,
                                    {.y = 60.0f, .height = 40.0f, .lineHeight = 20.0f});
@@ -777,15 +598,15 @@ void drawOverdueDialog(eui::Ui& ui, const eui::Screen& screen,
                 .position(28.0f, 20.0f)
                 .size(18.0f, 28.0f)
                 .icon(0xF071)  // fa-triangle-exclamation
-                .fontSize(t.sizes.fontSizeLarge + 2.0f)
-                .lineHeight(28.0f)
+                .fontSize(core::theme::scaled(20.0f))
+                .lineHeight(core::theme::scaled(28.0f))
                 .color(t.colors.error)
                 .build();
             ui_kit::drawDialogTitle(
                 ui, "todo.dialog.overdue.title", w,
                 "逾期任务（" + std::to_string(d.overdue.tasks.size()) + "）",
-                t.sizes.fontSizeLarge + 2.0f, t.colors.error,
-                {.x = 50.0f, .y = 20.0f, .inset = 78.0f});
+                20.0f, t.colors.errorText,
+                {.x = 50.0f, .y = 16.0f, .inset = 78.0f});
             std::string hint = "任务名 · 所属列 · 截止 · 逾期天数，点击行跳转详情";
             if (d.overdue.tasks.size() > shown) {
                 hint += "（仅显示前 " + std::to_string(shown) + " 条）";
@@ -804,8 +625,8 @@ void drawOverdueDialog(eui::Ui& ui, const eui::Screen& screen,
                 ui.rect(rowId)
                     .position(20.0f, y)
                     .size(w - 40.0f, rowH - 6.0f)
-                    .states(t.colors.wechat.secondaryButtonBg, t.colors.wechat.dividerSecondary,
-                            t.colors.wechat.selectedBg)
+                    .states(t.colors.hover, t.colors.hover,
+                            t.colors.primarySoftBg)
                     .radius(t.sizes.radius)
                     .onClick([&d, &host, taskId = task.id] {
                         d.popups.close(Popup::Overdue);
@@ -851,7 +672,7 @@ void drawOverdueDialog(eui::Ui& ui, const eui::Screen& screen,
                                std::max(1, overdueDays(task.dueAt.value_or(0), now))) + "天")
                     .fontSize(t.sizes.fontSizeSmall)
                     .lineHeight(20.0f)
-                    .color(t.colors.error)
+                    .color(t.colors.errorText)
                     .build();
             }
     });
@@ -953,7 +774,7 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
     constexpr float kFooterBtnH = 34.0f;
     constexpr float kFooterBtnW = 96.0f;
     constexpr float kContentGapAboveFooter = 12.0f;   // 内容滚动区底 → 按钮带顶
-    const float contentTop = 76.0f + offY;
+    const float contentTop = 58.0f + offY;
 
     // —— frame 高 = 内容驱动（UAT6 真机反馈「底部空白太多」）——
     // 高 = 头部(contentTop) + 实际内容高 + 按钮带(缝+钮+lift)，上限仍钳
@@ -1024,13 +845,13 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
         .content([&] {
             ui_kit::drawDialogTitle(ui, "todo.dialog.detail.title", w,
                                     ro ? "任务详情（只读）" : "任务详情",
-                                    t.sizes.fontSizeBody, t.colors.textPrimary,
-                                    {.y = 22.0f, .height = 28.0f, .lineHeight = 28.0f});
+                                    20.0f, t.colors.textPrimary,
+                                    {.y = 16.0f, .height = 28.0f, .lineHeight = 28.0f});
 
             // 头部右缘动作 chips（demo：🗑 删除 灰 / ✔ 标记完成 绿）——从底部按钮区上移，
             // 危险操作不再与取消/保存挤一行；只读态不渲染
             if (!ro) {
-                const float chipY = 22.0f;
+                const float chipY = 18.0f;
                 const float toggleW = 104.0f;
                 const float deleteW = 76.0f;
                 components::button(ui, "todo.dialog.detail.delete")
@@ -1040,12 +861,12 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
                     .icon(0xF2ED)   // fa-trash
                     .text("删除")
                     .fontSize(t.sizes.fontSizeSmall - 1.0f)
-                    .colors(t.colors.wechat.pageBg, t.colors.wechat.secondaryButtonBg,
-                            t.colors.wechat.selectedBg)
-                    .textColor(t.colors.wechat.textSecondary)
-                    .iconColor(t.colors.wechat.textSecondary)
+                    .colors(t.colors.background, t.colors.hover,
+                            t.colors.primarySoftBg)
+                    .textColor(t.colors.textSecondary)
+                    .iconColor(t.colors.textSecondary)
                     .radius(14.0f)   // 胶囊（demo .chip border-radius:99px）
-                    .border(1.0f, t.colors.wechat.dividerPrimary)
+                    .border(1.0f, t.colors.borderDefault)
                     // 与右键菜单删除同路径：先弹确认（Popup::Confirm），不关详情弹窗
                     .onClick([&d] {
                         d.confirm.openForTask(d.detail.taskId, d.detail.title);
@@ -1060,20 +881,20 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
                     .fontSize(t.sizes.fontSizeSmall - 1.0f)
                     // 未完成 = demo .chip.pri（浅绿底绿字）；已完成 = 中性灰（弱化）
                     .colors(d.detail.completed
-                                ? t.colors.wechat.secondaryButtonBg
-                                : eui::mixColor(t.colors.wechat.cardBg,
-                                                t.colors.wechat.primary, 0.12f),
-                            t.colors.wechat.secondaryButtonBg,
-                            t.colors.wechat.selectedBg)
-                    .textColor(d.detail.completed ? t.colors.wechat.textSecondary
-                                                   : t.colors.wechat.primaryText)
-                    .iconColor(d.detail.completed ? t.colors.wechat.textSecondary
-                                                   : t.colors.wechat.primaryText)
+                                ? t.colors.hover
+                                : eui::mixColor(t.colors.surface,
+                                                t.colors.primary, 0.12f),
+                            t.colors.hover,
+                            t.colors.primarySoftBg)
+                    .textColor(d.detail.completed ? t.colors.textSecondary
+                                                   : t.colors.primaryText)
+                    .iconColor(d.detail.completed ? t.colors.textSecondary
+                                                   : t.colors.primaryText)
                     .radius(14.0f)
                     .border(1.0f, d.detail.completed
-                                      ? t.colors.wechat.dividerPrimary
-                                      : eui::mixColor(t.colors.wechat.cardBg,
-                                                      t.colors.wechat.primary, 0.24f))
+                                      ? t.colors.borderDefault
+                                      : eui::mixColor(t.colors.surface,
+                                                      t.colors.primary, 0.24f))
                     .onClick([&d, &host] {
                         const int64_t taskId = d.detail.taskId;
                         const bool wasDone = d.detail.completed;
@@ -1329,9 +1150,9 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
                     .size(kFooterBtnW, kFooterBtnH)
                     .text("关闭")
                     .fontSize(t.sizes.fontSizeSmall)
-                    .colors(t.colors.wechat.primary, t.colors.wechat.primaryHover,
-                            t.colors.wechat.primaryPressed)
-                    .textColor(t.colors.wechat.onPrimary)
+                    .colors(t.colors.primary, t.colors.primaryHover,
+                            t.colors.primaryPressed)
+                    .textColor(t.colors.onPrimary)
                     .radius(8.0f)
                     .onClick([&d] {
                         d.popups.close(Popup::Detail);
@@ -1345,11 +1166,11 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
                     .size(kFooterBtnW, kFooterBtnH)
                     .text("取消")
                     .fontSize(t.sizes.fontSizeSmall)
-                    .colors(t.colors.wechat.pageBg, t.colors.wechat.secondaryButtonBg,
-                            t.colors.wechat.selectedBg)
-                    .textColor(t.colors.wechat.textPrimary)
+                    .colors(t.colors.background, t.colors.hover,
+                            t.colors.primarySoftBg)
+                    .textColor(t.colors.textPrimary)
                     .radius(8.0f)
-                    .border(1.0f, t.colors.wechat.dividerPrimary)
+                    .border(1.0f, t.colors.borderDefault)
                     // 与 backdrop/Esc 共用未存改动守卫（先警告一次，再点放弃）
                     .onClick([&d, &host] { d.detail.requestClose(d.popups, host); })
                     .build();
@@ -1358,9 +1179,9 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
                     .size(kFooterBtnW, kFooterBtnH)
                     .text("保存")
                     .fontSize(t.sizes.fontSizeSmall)
-                    .colors(t.colors.wechat.primary, t.colors.wechat.primaryHover,
-                            t.colors.wechat.primaryPressed)
-                    .textColor(t.colors.wechat.onPrimary)
+                    .colors(t.colors.primary, t.colors.primaryHover,
+                            t.colors.primaryPressed)
+                    .textColor(t.colors.onPrimary)
                     .radius(8.0f)
                     .onClick([&d, &host] {
                         // 表单组装 + 落库统一走 DetailDialog::save；保存失败保持弹窗

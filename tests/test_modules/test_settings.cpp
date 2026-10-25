@@ -7,6 +7,7 @@
 #include "app_tools.h"          // app.read_settings 工厂
 #include "settings_config.h"
 #include "settings_ui_cards.h"   // 卡片直绘夹具（开机自启动行断言，UAT6）
+#include "github_sync_card.h"    // 同步卡直绘（H18 按钮组右锚双档断言）
 #include "settings_ui_logic.h"
 
 #include "claude_service.h"
@@ -33,6 +34,7 @@
 #include <eui/dsl.h>
 #include <eui/dsl_app.h>
 
+#include <ui_kit/card.h>      // cardSurface：B5 白卡底色（H15 alpha 0.92）单一来源
 #include <ui_kit/columns.h>  // 双列几何单一来源（UAT3 多列分栏几何断言）
 #include <ui_kit/metrics.h>  // kHeaderH（UAT5 起设置页页头高 = 共享常量，不再双源）
 
@@ -776,6 +778,200 @@ REGISTER_TEST(settings_appearance_fluid_toggle_wiring,
     return true;
 })
 
+// H3 弹性骨架：双档几何断言（S4.2 公式：内容底缘锚到窗口底，高随窗口伸缩）
+REGISTER_TEST(settings_h3_elastic_heights, "settings: H3 elastic — cardsH at 640 vs 1000", {
+    test_support::TestEnv env(kCfgPrefix, "h3elastic", true);
+    test_support::ScopedConfigPath cfgEnv(test_support::tempConfigFile(kCfgPrefix, "h3elastic_cfg"));
+    std::unique_ptr<::core::Module> mod(create_settings_module());
+    mod->onStart();
+    eui::Ui ui;
+    // 最小档 1000×640：cardsH = 640 − cardsTopY − bottomHintH − gap
+    // cardsTopY = pad(32) + headerH(40) + gap(16) + tabH(40) + gap(16) = 144
+    // cardsH = 640 − 144 − 20 − 16 = 460 > 440（旧码 40 内边距双扣时 cardsH=412）
+    eui::Screen screenMin{1000.0f, 640.0f};
+    ui.begin("h3_min");
+    mod->compose(ui, screenMin);
+    ui.end();
+    ui.layout(screenMin.width, screenMin.height);
+    const auto* scrollMin = ui.find("settings.cards.scroll");
+    DOCTEST_CHECK(scrollMin != nullptr);
+    // 跨帧不持 Element*：下一次 begin() 清空整棵元素树，指针读 = use-after-free
+    //（偶发段错误取决于后续 compose 的堆复用是否覆盖旧块）。帧内取值成标量。
+    const float scrollMinH = scrollMin != nullptr ? scrollMin->frame.height : 0.0f;
+    if (scrollMin != nullptr) {
+        DOCTEST_CHECK_MESSAGE(
+        scrollMinH > 430.0f,
+        "scrollMin height = " + std::to_string(scrollMinH) + " <= 430");
+    }
+    // 大档 1600×1000：cardsH = 1000 − 144 − 20 − 16 = 820（等比放大）
+    eui::Screen screenLarge{1600.0f, 1000.0f};
+    ui.begin("h3_large");
+    mod->compose(ui, screenLarge);
+    ui.end();
+    ui.layout(screenLarge.width, screenLarge.height);
+    const auto* scrollLarge = ui.find("settings.cards.scroll");
+    DOCTEST_CHECK(scrollLarge != nullptr);
+    if (scrollLarge != nullptr) {
+        DOCTEST_CHECK(scrollLarge->frame.height > 780.0f);  // S4.2 弹性：等比放大
+        DOCTEST_CHECK(scrollLarge->frame.height > scrollMinH + 300.0f); // 1000-640=360 增量
+    }
+    mod->onStop();
+    return true;
+})
+
+// H18 批2：通用 tab 代理卡横向弹性（S4.1：1000×640 为锚点 + 伸缩公式）。固定
+// 控件（端口输入 96 / 应用 64）定宽不伸、组右缘钉卡内容右缘 28；说明列（端口
+// 提示 / 接管状态值）宽 = 卡内可用宽 − label − 控件 − 间距，宽窗增量全归说明列。
+// 防的事故：卡拉宽后表单左对齐、右侧死区回潮（H18 弹性普查 §5）。
+REGISTER_TEST(settings_form_flex_dual_tier,
+              "settings_form_flex_dual_tier: 通用 tab 表单横向弹性（说明列 flex + 固定控件右锚，双档）", {
+    test_support::TestEnv env(kCfgPrefix, "formflex", true);
+    test_support::ScopedConfigPath cfgEnv(
+        test_support::tempConfigFile(kCfgPrefix, "formflex_cfg"));
+    std::unique_ptr<::core::Module> mod(create_settings_module());
+    mod->onStart();
+
+    struct Tier {
+        eui::Screen screen;
+        const char* page;
+        float cardW = 0.0f;
+        float hintW = 0.0f;
+        float valueW = 0.0f;
+        float inputW = 0.0f;
+        float applyW = 0.0f;
+        float applyRightGap = 0.0f;   // 按钮右缘 → 卡右缘
+        float hintControlGap = 0.0f;  // 说明列右缘 → 输入框左缘
+        float autoRightGap = 0.0f;    // 自启动开关盒右缘 → 卡右缘（盒宽=内容实宽）
+    };
+    // 双档 = 窗 1000×640 / 1600×1000 的真实页区（减 208 侧栏）：页宽 792/1392
+    //（高再减 40 自绘标题条），卡宽 = 页宽 − 64 内边距 = 728 / 1328。
+    Tier tiers[2] = {{eui::Screen{792.0f, 600.0f}, "formflex640"},
+                     {eui::Screen{1392.0f, 960.0f}, "formflex1000"}};
+    for (Tier& tier : tiers) {
+        eui::Ui ui;
+        ui.begin(tier.page);
+        mod->compose(ui, tier.screen);
+        ui.end();
+        ui.layout(tier.screen.width, tier.screen.height);   // frame 断言必须真 layout
+        const auto* card = ui.find("settings.card.proxy");
+        const auto* hint = ui.find("settings.card.proxy.port.hint");
+        const auto* input = ui.find("settings.card.proxy.port.input");
+        const auto* apply = ui.find("settings.card.proxy.port.apply.bg");
+        const auto* value = ui.find("settings.card.proxy.takeover.value");
+        const auto* autostart = ui.find("settings.card.proxy.autostart");
+        DOCTEST_REQUIRE(card != nullptr);
+        DOCTEST_REQUIRE(hint != nullptr);
+        DOCTEST_REQUIRE(input != nullptr);
+        DOCTEST_REQUIRE(apply != nullptr);
+        DOCTEST_REQUIRE(value != nullptr);
+        DOCTEST_REQUIRE(autostart != nullptr);
+        tier.cardW = card->frame.width;
+        tier.hintW = hint->frame.width;
+        tier.valueW = value->frame.width;
+        tier.inputW = input->frame.width;
+        tier.applyW = apply->frame.width;
+        tier.applyRightGap = (card->frame.x + card->frame.width) -
+                             (apply->frame.x + apply->frame.width);
+        tier.hintControlGap =
+            input->frame.x - (hint->frame.x + hint->frame.width);
+        tier.autoRightGap = (card->frame.x + card->frame.width) -
+                            (autostart->frame.x + autostart->frame.width);
+    }
+    // 固定控件两档同宽（定宽不伸）+ 组右锚卡内容右缘 28 + 说明列与控件间距 12
+    for (const Tier& tier : tiers) {
+        DOCTEST_CHECK(std::fabs(tier.inputW - 96.0f) < 0.5f);
+        DOCTEST_CHECK(std::fabs(tier.applyW - 64.0f) < 0.5f);
+        DOCTEST_CHECK(std::fabs(tier.applyRightGap - 28.0f) < 0.5f);
+        DOCTEST_CHECK(std::fabs(tier.hintControlGap - 12.0f) < 0.5f);
+        // 自启动开关盒宽 = 内容实宽（轨+字），右缘同钉 28——盒宽超出即右侧死区
+        DOCTEST_CHECK(std::fabs(tier.autoRightGap - 28.0f) < 0.5f);
+    }
+    // 说明列 flex：卡宽增量全归说明列（1000 档提示/状态值显著更宽）
+    DOCTEST_CHECK(tiers[1].cardW > tiers[0].cardW + 500.0f);
+    DOCTEST_CHECK(tiers[1].hintW > tiers[0].hintW + 500.0f);
+    DOCTEST_CHECK(tiers[1].valueW > tiers[0].valueW + 500.0f);
+    // 640 档列宽公式复算：hint = (卡宽 − 174) − 96 − 8 − 64 − 12；value = 卡宽 − 218
+    DOCTEST_CHECK(std::fabs(tiers[0].hintW - (tiers[0].cardW - 354.0f)) < 0.5f);
+    DOCTEST_CHECK(std::fabs(tiers[0].valueW - (tiers[0].cardW - 218.0f)) < 0.5f);
+
+    mod->onStop();
+    ::core::theme::setDark();
+    return true;
+})
+
+// H18 批2：GitHub 同步卡操作组——三按钮组右锚（组右缘 = 卡右 − 28），进度移到
+// 按钮组左侧剩余区（轨道定宽 130、文案列 flex 占剩余宽）。双档同锚，宽窗增量
+// 只进文案列；防「按钮固定宽停在左侧、右侧留死区」回潮。
+REGISTER_TEST(sync_buttons_right_anchor,
+              "sync_buttons_right_anchor: 同步卡按钮组右锚（两档右缘 = 卡右−28）+ 进度文案列 flex", {
+    namespace ms = module::settings;
+    struct FontScaleGuard {
+        float prev;
+        explicit FontScaleGuard(float s)
+            : prev(::core::theme::fontScale()) {
+            ::core::theme::setFontScale(s);
+        }
+        ~FontScaleGuard() { ::core::theme::setFontScale(prev); }
+    };
+    FontScaleGuard g{1.0f};
+
+    ms::SettingsConfig cfg;
+    std::string draft;
+    std::vector<std::string> tail;
+    ms::SettingsCardsIn in{cfg, draft, tail};
+    in.githubSyncEnabled = true;
+    in.githubSyncRunning = true;
+    in.githubSyncProgress = "① 校验 token…";
+    ms::SettingsCardActions a;
+
+    struct Tier {
+        float w;
+        const char* page;
+        float textW = 0.0f;
+        float pushX = 0.0f;
+        float pullRight = 0.0f;
+    };
+    // 双档卡宽同表单用例：1000×640 窗 → 卡 728；1600×1000 窗 → 卡 1328。
+    Tier tiers[2] = {{728.0f, "syncanchor640"},
+                     {1328.0f, "syncanchor1000"}};
+    for (Tier& tier : tiers) {
+        eui::Ui ui;
+        ui.begin(tier.page);
+        ms::CardDrawArgs args{ui, "settings.card.github_sync", tier.w,
+                              ms::roundFs(ms::kGithubSyncCardHeight),
+                              ::core::theme::current(), 0.0f, 1000.0f, in, a};
+        ms::drawGithubSyncCard(args);
+        ui.end();
+        ui.layout(tier.w, 1000.0f);   // frame 断言必须真 layout
+        const auto* push = ui.find("settings.card.github_sync.btn.push.bg");
+        const auto* pull = ui.find("settings.card.github_sync.btn.pull.bg");
+        const auto* progress = ui.find("settings.card.github_sync.progress");
+        const auto* bar = ui.find("settings.card.github_sync.progress.bar");
+        DOCTEST_REQUIRE(push != nullptr);
+        DOCTEST_REQUIRE(pull != nullptr);
+        DOCTEST_REQUIRE(progress != nullptr);
+        DOCTEST_REQUIRE(bar != nullptr);
+        tier.pullRight = pull->frame.x + pull->frame.width;
+        tier.pushX = push->frame.x;
+        tier.textW = progress->frame.width;
+        // 按钮组右缘 = 卡右 − 28（两档同锚）
+        DOCTEST_CHECK(std::fabs(tier.pullRight - (tier.w - 28.0f)) < 0.5f);
+        // 组左缘 = 卡右 − 28 − (120+8+100+8+80) = 卡右 − 344
+        DOCTEST_CHECK(std::fabs(tier.pushX - (tier.w - 344.0f)) < 0.5f);
+        // 进度在按钮组左侧：轨道贴卡左内边距、定宽 130（最小档旧轨道宽）
+        DOCTEST_CHECK(std::fabs(bar->frame.x - 28.0f) < 0.5f);
+        DOCTEST_CHECK(std::fabs(bar->frame.width - 130.0f) < 0.5f);
+        // 文案列 flex：右缘 = 按钮组左缘 − 16（lead gap）
+        DOCTEST_CHECK(std::fabs(progress->frame.x + progress->frame.width -
+                                (tier.pushX - ms::roundFs(16.0f))) < 0.5f);
+    }
+    // 宽窗增量全归文案列（两档卡宽差 600）
+    DOCTEST_CHECK(tiers[1].textW > tiers[0].textW + 500.0f);
+
+    ::core::theme::setDark();
+    return true;
+})
+
 // 日志查看卡：刷新按钮 → 重读 tail
 // 读盘在 compose 顶部，不在 scrollView content lambda 内；日志文件缺失时渲染空态不崩
 
@@ -1388,15 +1584,15 @@ REGISTER_TEST(settings_window_effect_contrast_guard, "settings: 半透叠乘后�
                                 over(t.colors.background, windowAlpha, whiteWall)) >= 4.5f);
         // 铺面正文（侧栏底 / about 页底，tint@铺面 alpha 叠窗口纱叠壁纸）
         const eui::Color base = over(t.colors.background, windowAlpha, whiteWall);
-        DOCTEST_CHECK(contrast(t.colors.wechat.textPrimary,
-                               over(t.colors.wechat.sidebarBgTinted, surfaceAlpha, base)) >= 4.5f);
-        DOCTEST_CHECK(contrast(t.colors.wechat.textPrimary,
-                               over(t.colors.wechat.pageBg, surfaceAlpha, base)) >= 4.5f);
+        DOCTEST_CHECK(contrast(t.colors.textPrimary,
+                               over(t.colors.sidebarBg, surfaceAlpha, base)) >= 4.5f);
+        DOCTEST_CHECK(contrast(t.colors.textPrimary,
+                               over(t.colors.background, surfaceAlpha, base)) >= 4.5f);
         // 次要文字（导航 inactive #666666）：暗主题下浅 tint 混深底属 D-04
         // dark-WeChat 延后域（D-12：dark 模式 wechat 槽位沿用 light 调色板），不作
         // 4.5 断言；锁 2.5 = 0.5 时代 1.99 与 0.72 时代 3.01 的中点——回退调值即红
-        DOCTEST_CHECK(contrast(t.colors.wechat.textSecondary,
-                               over(t.colors.wechat.sidebarBgTinted, surfaceAlpha, base)) >= 2.5f);
+        DOCTEST_CHECK(contrast(t.colors.textSecondary,
+                               over(t.colors.sidebarBg, surfaceAlpha, base)) >= 2.5f);
     }
     // —— 亮主题：正文深字，最坏壁纸 = 纯黑压底 ——
     core::theme::setLight();
@@ -1406,13 +1602,13 @@ REGISTER_TEST(settings_window_effect_contrast_guard, "settings: 半透叠乘后�
         DOCTEST_CHECK(contrast(t.colors.textPrimary,
                                over(t.colors.background, windowAlpha, blackWall)) >= 4.5f);
         const eui::Color base = over(t.colors.background, windowAlpha, blackWall);
-        DOCTEST_CHECK(contrast(t.colors.wechat.textPrimary,
-                               over(t.colors.wechat.sidebarBgTinted, surfaceAlpha, base)) >= 4.5f);
-        DOCTEST_CHECK(contrast(t.colors.wechat.textPrimary,
-                               over(t.colors.wechat.pageBg, surfaceAlpha, base)) >= 4.5f);
+        DOCTEST_CHECK(contrast(t.colors.textPrimary,
+                               over(t.colors.sidebarBg, surfaceAlpha, base)) >= 4.5f);
+        DOCTEST_CHECK(contrast(t.colors.textPrimary,
+                               over(t.colors.background, surfaceAlpha, base)) >= 4.5f);
         // 亮主题次要文字达 AA：0.72 时代 4.62（0.5 时代 4.22 差一线，本批修过——锁住）
-        DOCTEST_CHECK(contrast(t.colors.wechat.textSecondary,
-                               over(t.colors.wechat.sidebarBgTinted, surfaceAlpha, base)) >= 4.5f);
+        DOCTEST_CHECK(contrast(t.colors.textSecondary,
+                               over(t.colors.sidebarBg, surfaceAlpha, base)) >= 4.5f);
     }
     // 主题复位（inline static 跨 TU 单实例，勿污染同二进制后续 compose 用例）
     if (initialTheme == "Light") {
@@ -2196,9 +2392,9 @@ REGISTER_TEST(settings_appearance_dropdown_popup_above_following_cards,
     ui.end();
     ui.layout(screen.width, screen.height);
 
-    // 主题选择器删除（D-12/E3）后改用字号下拉弹层验证 z 序
+    // 主题选择器删除（D-12/E3）且字号行改滑杆（批I）后，改用窗口效果下拉弹层验证 z 序
     const auto* popup =
-        ui.find("settings.card.appearance.font.dd.popup");
+        ui.find("settings.card.appearance.effect.dd.popup");
     const auto* appearanceCard = ui.find("settings.card.appearance");
     const auto* editorCard = ui.find("settings.card.editor");
     DOCTEST_REQUIRE(popup != nullptr);
@@ -2269,7 +2465,7 @@ REGISTER_TEST(settings_card_pair_column_geometry,
         ui.end();
         ui.layout(screen.width, screen.height);
 
-        const float contentW = pageW - 80.0f;   // pad = spacingXXLarge 40 × 2
+        const float contentW = pageW - 64.0f;   // pad = spacingLarge×2 = 32×2（S4.2 弹性）
         float colWant = 0.0f;
         ui_kit::columnX(contentW, 16.0f, &colWant, nullptr);
         const auto* pair = ui.find("settings.cards.pair.0");
@@ -2414,12 +2610,10 @@ REGISTER_TEST(settings_card_pair_column_geometry,
                               "github_sync 卡高 " +
                                   std::to_string(syncCard->frame.height) +
                                   " 期望(恒满高) " + std::to_string(wantH));
-        // UAT6 零滚动收口：372 = 最小窗 1000×640（Windows 自绘壳页高 600）下卡区
-        // 可用高的**恰好值**——常量再涨一字，同步 tab 就在最小窗重新出滚动条。
-        // 四档字面钉死防静默回涨（85% 档 roundFs(372)=316 是最坏需高档：内容
-        // 需高 307 富余 9，见 settings_ui_logic.h 复算注释）。
-        const float heightTiers[][2] = {{0.85f, 316.0f}, {1.0f, 372.0f},
-                                        {1.15f, 428.0f}, {1.3f, 484.0f}};
+        // UAT6 零滚动收口：362 = W2.4 字号迁移后（fontSizeBody 15→14）最小窗可用高。
+        // S1.2 #24: fontSizeBody迁移 + W2.4 UI Kit尺寸迁移共同导致kGithubSyncCardHeight 372→362。
+        const float heightTiers[][2] = {{0.85f, 308.0f}, {1.0f, 362.0f},
+                                        {1.15f, 416.0f}, {1.3f, 471.0f}};
         for (const auto& kv : heightTiers) {
             FontScaleGuard g2{kv[0]};
             const float h = module::settings::roundFs(
@@ -2772,11 +2966,11 @@ REGISTER_TEST(settings_editor_font_dropdown_applies_channel,
     return true;
 })
 
-// UAT6「字号设置无效，起码没实时生效」：字号缩放下拉（通用 tab 外观卡，85/100/
-// 115/130%）点档必须即时写 core::theme（token 重建当帧可见），且 apply 路径显式
-// 请求下一帧 compose（不依赖点击输入顺带触发的 composeRequested）+ 落盘。
-REGISTER_TEST(settings_font_scale_dropdown_applies_live,
-              "settings: 字号缩放下拉点档 → fontScale/token 即时生效 + 请求重排 + 落盘", {
+// UAT6「字号设置无效，起码没实时生效」：字号缩放滑杆（批I 改 80-130% 无级，原四档
+// 下拉退役）拖到最大档必须即时写 core::theme（token 重建当帧可见），且 apply 路径
+// 显式请求下一帧 compose（不依赖输入顺带触发的 composeRequested）+ 落盘。
+REGISTER_TEST(settings_font_scale_slider_applies_live,
+              "settings: 字号缩放滑杆拖到 130% → fontScale/token 即时生效 + 请求重排 + 落盘", {
     test_support::TestEnv env(kCfgPrefix, "fontui", true);
     test_support::ScopedConfigPath cfgEnv(test_support::tempConfigFile(kCfgPrefix, "fontui_cfg"));
     std::unique_ptr<::core::Module> mod(create_settings_module());
@@ -2789,17 +2983,16 @@ REGISTER_TEST(settings_font_scale_dropdown_applies_live,
     mod->compose(ui, screen);
     ui.end();
 
-    // 通用 tab（默认）外观卡的字号缩放下拉在场
-    DOCTEST_CHECK(ui.find("settings.card.appearance.font.dd") != nullptr);
-    // 清掉 compose 期可能遗留的唤醒位，点击后的置位才可归因于 apply 路径
+    // 通用 tab（默认）外观卡的字号缩放滑杆在场
+    const auto* sliderEl = ui.find("settings.card.appearance.font.slider");
+    DOCTEST_REQUIRE(sliderEl != nullptr);
+    // 清掉 compose 期可能遗留的唤醒位，回调后的置位才可归因于 apply 路径
     (void)::core::platform::consumeUiUpdate();
-    // 点第 4 档「特大 130%」→ 通道 + token 即时生效 + 显式请求重排 + 持久化
-    const auto* item = ui.find("settings.card.appearance.font.dd.item.3");
-    DOCTEST_REQUIRE(item != nullptr);
-    DOCTEST_REQUIRE(item->onClick != nullptr);
-    item->onClick();
+    // 拖到最大 ratio=1.0 → 量化 130% → 通道 + token 即时生效 + 显式请求重排 + 持久化
+    DOCTEST_REQUIRE(sliderEl->onSliderValueChanged != nullptr);
+    sliderEl->onSliderValueChanged(1.0f);
     DOCTEST_CHECK_EQ(::core::theme::fontScale(), 1.3f);
-    DOCTEST_CHECK_EQ(::core::theme::current().sizes.fontSizeBody, 15.0f * 1.3f);
+    DOCTEST_CHECK_EQ(::core::theme::current().sizes.fontSizeBody, 14.0f * 1.3f);
     DOCTEST_CHECK(::core::platform::consumeUiUpdate());
     module::settings::SettingsStore store(::core::appDatabase());
     DOCTEST_CHECK_EQ(store.load().fontScalePercent, 130);
@@ -3201,7 +3394,6 @@ REGISTER_TEST(settings_dropdown_single_holder,
     };
     // 两个下拉同在「通用」tab 的外观卡（默认 tab，无需切换）
     // 主题选择器删除后改用字号 + 窗口效果两个下拉（D-12/E3）
-    const std::string fontDd = "settings.card.appearance.font.dd";
     const std::string effectDd = "settings.card.appearance.effect.dd";
     // 展开态 = 弹层 opacity（EUI-NEO dropdown 收起时 opacity 0，元素仍在树上）
     auto popupOpacity = [&](const std::string& dd) -> float {
@@ -3221,24 +3413,18 @@ REGISTER_TEST(settings_dropdown_single_holder,
         return e;
     };
 
+    // 批I：字号行改滑杆后设置页仅剩效果一个下拉，「唯一持有者」语义退化为
+    // 开/关 + Esc 消费链（font 下拉断言随组件退役删除）
     frame("dd0");
-    DOCTEST_CHECK_EQ(popupOpacity(fontDd), 0.0f);
     DOCTEST_CHECK_EQ(popupOpacity(effectDd), 0.0f);
     DOCTEST_CHECK(!mod->onKeyEvent(escPress()));
 
-    // 1) 开字号下拉 → 只有它展开
-    DOCTEST_REQUIRE(clickField(fontDd));
-    frame("dd1");
-    DOCTEST_CHECK_EQ(popupOpacity(fontDd), 1.0f);
-    DOCTEST_CHECK_EQ(popupOpacity(effectDd), 0.0f);
-
-    // 2) 再开效果下拉 → 字号自动关（唯一持有者：同时最多一个展开）
+    // 1) 开效果下拉 → 展开
     DOCTEST_REQUIRE(clickField(effectDd));
-    frame("dd2");
+    frame("dd1");
     DOCTEST_CHECK_EQ(popupOpacity(effectDd), 1.0f);
-    DOCTEST_CHECK_EQ(popupOpacity(fontDd), 0.0f);
 
-    // 3) Esc 关当前项；再按一次（已全关）不消费
+    // 2) Esc 关当前项；再按一次（已全关）不消费
     DOCTEST_CHECK(mod->onKeyEvent(escPress()));
     frame("dd3");
     DOCTEST_CHECK_EQ(popupOpacity(effectDd), 0.0f);
@@ -3720,14 +3906,10 @@ REGISTER_TEST(settings_general_tab_zero_scroll_budget,
     return true;
 })
 
-// 反断言：设置页不得出现 cardFrame 的 bg 矩形
-// cardFrame = surface 填充 + 1px 边框 + panelShadow 阴影 + radiusLarge 圆角；白色卡框叠在
-// 主体渐变底上就是用户说的「最外层卡片」。反断言：<stack>.bg 不存在（cardFrame 若加回会
-// 重新出现）、卡 stack 仍在（内容未丢）。
-// 页面渐变底本身也已删，页面级反断言在 test_ui_modern.cpp
-// uiModernSettingsBodyGradientRemoved（settings.body.gradient / .bg 必须都不存在）。
-REGISTER_TEST(settings_cards_no_outer_cardframe,
-              "settings: 6 卡无外层 cardFrame——内容直接铺页面底（两档主题；UAT5 删目录卡后 7→6）", {
+// S6.1 玻璃退役→实底白卡：每卡均有实底白 bg rect（id = <stack>.bg），
+// surface 底色 + radiusLarge 圆角 + Sm 阴影。断言 bg rect 存在且 stack 内容未丢。
+REGISTER_TEST(settings_cards_solid_white_bg,
+              "settings: 6 卡实底白 bg——每卡有 surface 底色 bg rect（S6.1 玻璃退役）", {
     test_support::TestEnv env(kCfgPrefix, "noframe", true);
     test_support::ScopedConfigPath cfgEnv(
         test_support::tempConfigFile(kCfgPrefix, "noframe_cfg"));
@@ -3779,12 +3961,27 @@ REGISTER_TEST(settings_cards_no_outer_cardframe,
             mod->compose(ui, screen);
             ui.end();
             ui.layout(screen.width, screen.height);
-            DOCTEST_CHECK_MESSAGE(ui.find(kBgIds[i]) == nullptr,
+            DOCTEST_CHECK_MESSAGE(ui.find(kBgIds[i]) != nullptr,
                                   tag + " 卡 " + kBgIds[i] +
-                                      " 不应再有外层卡框（cardFrame 已删）");
+                                      " 应有实底白 bg rect（S6.1 玻璃退役→实底白卡）");
             DOCTEST_REQUIRE_MESSAGE(ui.find(kStackIds[i]) != nullptr,
                                     tag + " 卡 stack " + kStackIds[i] +
                                         " 应存在（内容未丢）");
+            // H10 对比度门禁：白卡 bg 必须有 borderDefault 描边（白卡浮于 #FAFAF9 底）
+            const auto* bg = ui.find(kBgIds[i]);
+            if (bg) {
+                // B5 白卡面双锚：底色 = cardSurface（H15 alpha 0.92）+ 描边存在（H10）
+                const auto cs = ui_kit::cardSurface(core::theme::current());
+                DOCTEST_CHECK_MESSAGE(bg->color.r == cs.r && bg->color.g == cs.g &&
+                                          bg->color.b == cs.b && bg->color.a == cs.a,
+                                      tag + " 卡 " + kBgIds[i] +
+                                          " 底色应为 cardSurface（alpha 0.92）");
+                DOCTEST_CHECK_MESSAGE(bg->border.width > 0.005f,
+                                      tag + " 卡 " + kBgIds[i] +
+                                          " 白底应有 borderDefault 描边（H10 对比度门禁），"
+                                          "当前 border.width=" +
+                                          std::to_string(bg->border.width));
+            }
         }
     }
     mod->onStop();
@@ -4083,7 +4280,6 @@ REGISTER_TEST(settings_github_sync_dirty_from_write_events,
     DOCTEST_CHECK(dirtyAfter(::core::event::kTodoCompleted));
     DOCTEST_CHECK(dirtyAfter(::core::event::kTodoUncompleted));
     DOCTEST_CHECK(dirtyAfter(::core::event::kTodoDeleted));
-    DOCTEST_CHECK(dirtyAfter(::core::event::kTodoColumnChanged));
     // 标签写路径（加/删标签）——标签只落 DB、不碰笔记文件，md.saved 兜不住
     DOCTEST_CHECK(dirtyAfter(::core::event::kMdTagsChanged));
     // 对照：本模块没订阅的事件名 → 不置 dirty
@@ -4440,24 +4636,24 @@ REGISTER_TEST(settings_dropdown_fill_available_width,
         mod->compose(ui, screen);
         ui.end();
         ui.layout(screen.width, screen.height);
-        // editor 半宽卡：colW=(1312−16)/2=648 → 行宽 648−56=592 → cw=592−118=474
+        // editor 半宽卡（新 pad=32）：colW=(1328−16)/2=656 → 行宽 656−56=600 → cw=600−118=482
         DOCTEST_CHECK_MESSAGE(
-            nearEq(ddwrapW(ui, "settings.card.editor.ddwrap"), 474.0f),
+            nearEq(ddwrapW(ui, "settings.card.editor.ddwrap"), 482.0f),
             "editor 下拉宽 " +
                 std::to_string(ddwrapW(ui, "settings.card.editor.ddwrap")) +
-                " 期望 474（固定帽退位填满）");
+                " 期望 482（固定帽退位填满，S4.2 pad 40→32）");
 
         DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 2));   // 日志 tab
         ui.begin("ddfill_wide_log");
         mod->compose(ui, screen);
         ui.end();
         ui.layout(screen.width, screen.height);
-        // log 全宽卡：卡内列 colW=(1312−72)/2=620 → cw=620−118=502
+        // log 全宽卡：cw=510（H3 弹性骨架 pad 40→32，列宽漂移 620→628）
         DOCTEST_CHECK_MESSAGE(
-            nearEq(ddwrapW(ui, "settings.card.log.ddwrap"), 502.0f),
+            nearEq(ddwrapW(ui, "settings.card.log.ddwrap"), 510.0f),
             "log 下拉宽 " +
                 std::to_string(ddwrapW(ui, "settings.card.log.ddwrap")) +
-                " 期望 502（固定帽退位填满）");
+                " 期望 510（H3 弹性骨架退位填满）");
         // 两下拉同宽口径不变（同一列公式来源）
         DOCTEST_CHECK(nearEq(ddwrapW(ui, "settings.card.log.level.ddwrap"),
                              ddwrapW(ui, "settings.card.log.ddwrap")));
@@ -4472,24 +4668,24 @@ REGISTER_TEST(settings_dropdown_fill_available_width,
         mod->compose(ui, screen);
         ui.end();
         ui.layout(screen.width, screen.height);
-        // editor 半宽卡：colW=(712−16)/2=348 → 行宽 292 → cw=174
+        // editor 半宽卡：S4.2 pad 40→32 → colW=(728−16)/2=356 → cw=182（H3 漂移同 log 全宽卡 +8）
         DOCTEST_CHECK_MESSAGE(
-            nearEq(ddwrapW(ui, "settings.card.editor.ddwrap"), 174.0f),
+            nearEq(ddwrapW(ui, "settings.card.editor.ddwrap"), 182.0f),
             "editor 窄窗下拉宽 " +
                 std::to_string(ddwrapW(ui, "settings.card.editor.ddwrap")) +
-                " 期望 174（窄窗让位收缩不变）");
+                " 期望 182（窄窗让位收缩随 H3 骨架漂移）");
 
         DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 2));
         ui.begin("ddfill_narrow_log");
         mod->compose(ui, screen);
         ui.end();
         ui.layout(screen.width, screen.height);
-        // log 全宽卡：卡内列 colW=(712−72)/2=320 → cw=202
+        // log 全宽卡：S4.2 pad 40→32 → colW=(728−72)/2=328 → cw=210（H3 漂移 +8）
         DOCTEST_CHECK_MESSAGE(
-            nearEq(ddwrapW(ui, "settings.card.log.ddwrap"), 202.0f),
+            nearEq(ddwrapW(ui, "settings.card.log.ddwrap"), 210.0f),
             "log 窄窗下拉宽 " +
                 std::to_string(ddwrapW(ui, "settings.card.log.ddwrap")) +
-                " 期望 202（窄窗让位收缩不变）");
+                " 期望 210（窄窗让位收缩随 H3 骨架漂移）");
     }
 
     mod->onStop();

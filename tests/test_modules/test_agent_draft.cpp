@@ -128,11 +128,13 @@ REGISTER_TEST(draft_schedule_fills_trigger,
     DOCTEST_CHECK(v.triggerFilled);
     DOCTEST_CHECK_EQ(v.draft.goal,
                      std::string("调用 hot.list 取热榜，有新增条目时调用 app.notify 通知我。"));
-    DOCTEST_CHECK_EQ(v.draft.contextNote, std::string("只关注科技榜"));
+    // W4 C3：contextNote 不再参与草稿解析（执行记忆并入 systemPrompt），不再断言
     DOCTEST_CHECK_EQ(v.draft.triggerType, std::string("schedule"));
-    DOCTEST_CHECK_EQ(v.draft.triggerConfig, std::string("{\"cron\":\"0 8 * * *\"}"));
-    DOCTEST_CHECK(triggerConfigProblem("schedule", v.draft.triggerConfig).empty());
-    DOCTEST_CHECK(v.draft.warnings.empty());
+    const std::string problem = triggerConfigProblem("schedule", v.draft.triggerConfig);
+    DOCTEST_CHECK_MESSAGE(v.draft.triggerConfig == "{\"cron\":\"0 8 * * *\"}",
+        ("cfg=" + v.draft.triggerConfig).c_str());
+    DOCTEST_CHECK_MESSAGE(problem.empty(),
+        ("problem=" + problem + " warnings=" + std::to_string(v.draft.warnings.size())).c_str());
     return true;
 })
 
@@ -352,7 +354,6 @@ REGISTER_TEST(draft_empty_goal_only_warns,
         DOCTEST_CHECK(r.value().draft.goal.empty());
         DOCTEST_CHECK(hasWarningContaining(r.value(), "任务目标"));
         DOCTEST_CHECK(r.value().triggerFilled);   // 触发与 goal 互不牵连
-        DOCTEST_CHECK_EQ(r.value().draft.contextNote, std::string("只做只读查询"));
     }
     return true;
 })

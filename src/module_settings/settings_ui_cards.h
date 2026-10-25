@@ -52,12 +52,14 @@ struct SettingsCardsIn {
     bool githubSyncLocalGitUnavailable = false;  // 本地 git 不可用 → 灰字
     bool githubSyncUnsyncedNotice = false;       // 退出推送未完成 → 黄字
     std::string githubSyncDeleteSkipHint;        // 删远端跳过提示 → 黄字
+    bool githubSyncTokenVisible = false;          // S3.7#6 Token 显隐切换
+    bool githubSyncDetailExpanded = false;        // S3.7#4 同步说明折叠展开
 };
 
 // 卡片回写模块的回调（compose 每帧装配；lambda 只捕获 this → SBO 无堆分配）
 struct SettingsCardActions {
     std::function<void(int)> applyThemeMode;                 // 主题模式三档
-    std::function<void(int)> applyFontPreset;                // 字号缩放档
+    std::function<void(int)> applyFontScalePercent;          // 字号缩放（%，无级 80-130）
     std::function<void(int)> applyWindowEffect;              // 窗口效果三档
     std::function<void(const std::string&, bool)> applyModuleEnabled;  // 模块插拔
     std::function<void(Dropdown, bool)> setDropdownOpen;      // 下拉唯一持有者
@@ -83,6 +85,8 @@ struct SettingsCardActions {
     std::function<void()> githubSyncPull;                       // 拉取
     std::function<void()> githubSyncTestConnection;             // 测试连接
     std::function<void()> githubSyncShowErrorDetail;            // 错误行「详情」
+    std::function<void()> toggleGithubSyncTokenVisibility;   // S3.7#6 Token 显隐切换
+    std::function<void()> toggleGithubSyncDetail;            // S3.7#4 同步说明折叠展开
 };
 
 // 单卡绘制入参（注册表按序调用；签名统一，未用到的字段忽略）

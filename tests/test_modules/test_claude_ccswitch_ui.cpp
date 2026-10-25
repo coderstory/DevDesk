@@ -19,6 +19,7 @@
 #include "core/database.h"
 #include "core/module_interface.h"
 #include "core/theme.h"
+#include "core/component_theme.h"  // componentTokensWeChat：Ghost 按钮文字色源
 
 #include <eui/dsl.h>
 
@@ -208,10 +209,10 @@ REGISTER_TEST(claude_ccswitch_ui_skeleton_contract,
     DOCTEST_CHECK(ui2.find("claude.dialog.ccswitch.list") != nullptr);
 
     // 默认全选 → selall 显示「取消全选」，确认键计数 = claude 行数（codex 被滤掉）
-    const auto* selall = ui2.find("claude.dialog.ccswitch.selall.text");
+    const auto* selall = ui2.find("claude.dialog.ccswitch.selall.text.normal");
     DOCTEST_REQUIRE(selall != nullptr);
     DOCTEST_CHECK_EQ(selall->text, std::string("取消全选"));
-    //（UAT5 米黄收尾）全选钮底 == WeChat Secondary 白底灰边；反向锁死暖橙 surfaceElevated
+    // W4 批2：全选钮改 Ghost 文字钮（透明底绿字）；反向锁死暖橙 surfaceElevated 与白底
     const auto* selallBg = ui2.find("claude.dialog.ccswitch.selall.bg");
     DOCTEST_REQUIRE(selallBg != nullptr);
     const auto& wc = core::theme::current().colors;
@@ -219,48 +220,66 @@ REGISTER_TEST(claude_ccswitch_ui_skeleton_contract,
         return std::fabs(x.r - y.r) < 0.01f && std::fabs(x.g - y.g) < 0.01f &&
                std::fabs(x.b - y.b) < 0.01f;
     };
-    DOCTEST_CHECK(sameColor(selallBg->color, wc.wechat.secondaryButtonBg));
+    // S2.1 Ghost：默认底透明（a=0）
+    DOCTEST_CHECK(selallBg->color.a < 0.01f);            // Ghost 默认底透明
     DOCTEST_CHECK(!sameColor(selallBg->color, wc.surfaceElevated));
-    const auto* confirm = ui2.find("claude.dialog.ccswitch.confirm.text");
+    const auto* selallText = ui2.find("claude.dialog.ccswitch.selall.text.normal");
+    DOCTEST_REQUIRE(selallText != nullptr);
+    // S2.1 Ghost 文字钮：text 走组件令牌 primary（EUI button.h Ghost → text=tokens.primary），
+    // 非裸 current().colors.primary；用 componentTokensWeChat(<当前主题>).primary 比对
+    const auto& wcPrimary = core::theme::current().colors.primary;
+    const auto& wechatPrimary = core::theme::componentTokensWeChat(core::theme::current()).primary;
+    DOCTEST_CHECK_MESSAGE(sameColor(selallText->textColor, wechatPrimary),
+        ("actual=" + std::to_string(selallText->textColor.r) + "," + std::to_string(selallText->textColor.g) + "," +
+         std::to_string(selallText->textColor.b) + "," + std::to_string(selallText->textColor.a) +
+         " expected=" + std::to_string(wechatPrimary.r) + "," + std::to_string(wechatPrimary.g) + "," +
+         std::to_string(wechatPrimary.b) + "," + std::to_string(wechatPrimary.a) +
+         " wc.primary=" + std::to_string(wcPrimary.r) + "," + std::to_string(wcPrimary.g) + "," +
+         std::to_string(wcPrimary.b) + "," + std::to_string(wcPrimary.a) +
+         " comp=" + std::to_string(wechatPrimary.r) + "," + std::to_string(wechatPrimary.g) + "," +
+         std::to_string(wechatPrimary.b) + "," + std::to_string(wechatPrimary.a)).c_str());
+    const auto* confirm = ui2.find("claude.dialog.ccswitch.confirm.text.normal");
     DOCTEST_REQUIRE(confirm != nullptr);
     DOCTEST_CHECK_EQ(confirm->text, std::string("导入选中(3)"));
-    const auto* cancel = ui2.find("claude.dialog.ccswitch.cancel.text");
+    const auto* cancel = ui2.find("claude.dialog.ccswitch.cancel.text.normal");
     DOCTEST_REQUIRE(cancel != nullptr);
     DOCTEST_CHECK_EQ(cancel->text, std::string("关闭"));
 
-    //（UAT5 米黄收尾）候选行卡/勾选指示/文字四档 WeChat 色锁（默认全选帧）：
-    // 选中行 selectedBg 浅灰底 + dividerPrimary 灰边；cb.box wechat.primary 绿圈
-    // （radius = D/2 = 10 → 20px 圆，Profile 选中同款）+ 白 fa-check；文字四档
-    // name/textPrimary · url/textTertiary · model/textSecondary · skip/warningRed。
-    // 反向锁死暖橙 surface / legacy primary / legacy error（先例同 shared_dialog 批）。
+    //（W4 批2）候选行卡/勾选指示/文字四档 mint 色锁（默认全选帧）：
+    // 选中行底 = primarySoftBg（S2.5 淡绿选中，替代硬编码 #E8F7EE）+ primary 绿边；
+    // cb.box primaryPressed 绿圈（radius = D/2 = 10 → 20px 圆）+ 白 fa-check；文字四档。
+    // 反向锁死暖橙 surface / legacy primary / legacy error。
     {
+        const auto kSelRowBgColor = wc.primarySoftBg;  // S2.5 淡绿选中底（ccswitch source: t.colors.primarySoftBg）
         const auto* selRowBg = ui2.find("claude.dialog.ccswitch.row.1.bg");
         DOCTEST_REQUIRE(selRowBg != nullptr);
-        DOCTEST_CHECK(sameColor(selRowBg->color, wc.wechat.selectedBg));
+        DOCTEST_CHECK(sameColor(selRowBg->color, kSelRowBgColor));
         DOCTEST_CHECK(!sameColor(selRowBg->color, wc.surface));   // 反向：暖米行底
-        DOCTEST_CHECK(sameColor(selRowBg->border.color, wc.wechat.dividerPrimary));
+        // S1.2 #1: selected border → wc.primary
+        DOCTEST_CHECK(sameColor(selRowBg->border.color, wc.primary));
         const auto* selBox = ui2.find("claude.dialog.ccswitch.row.1.cb.box");
         DOCTEST_REQUIRE(selBox != nullptr);
-        DOCTEST_CHECK(sameColor(selBox->color, wc.wechat.primary));  // 绿圈白勾
-        DOCTEST_CHECK(!sameColor(selBox->color, wc.primary));       // 反向：legacy 橙
-        DOCTEST_CHECK_EQ(selBox->radius, 10.0f);  // 20px 圆：radius == kBoxSize/2
-        DOCTEST_CHECK(sameColor(selBox->border.color, wc.wechat.primary));
+        // S1: source uses primaryPressed for checkbox fill
+        DOCTEST_CHECK(sameColor(selBox->color, wc.primaryPressed));  // 绿圈白勾
+        DOCTEST_CHECK(!sameColor(selBox->color, wc.primary));       // 反向：不是 primary（更亮）
+        DOCTEST_CHECK_EQ(selBox->radius, 10.0f);  // 20px 圆形复选框（kBoxSize/2），非标准控件圆角
+        DOCTEST_CHECK(sameColor(selBox->border.color, wc.primaryPressed));
         const auto* selMark = ui2.find("claude.dialog.ccswitch.row.1.cb.mark");
         DOCTEST_REQUIRE(selMark != nullptr);
-        DOCTEST_CHECK(sameColor(selMark->textColor, wc.wechat.onPrimary));
+        DOCTEST_CHECK(sameColor(selMark->textColor, wc.onPrimary));  // S1.2 #17: onPrimary 不变
         const auto* selName = ui2.find("claude.dialog.ccswitch.row.1.name");
         DOCTEST_REQUIRE(selName != nullptr);
-        DOCTEST_CHECK(sameColor(selName->textColor, wc.wechat.textPrimary));
+        DOCTEST_CHECK(sameColor(selName->textColor, wc.textPrimary));  // S1.2 #10
         const auto* selUrl = ui2.find("claude.dialog.ccswitch.row.1.url");
         DOCTEST_REQUIRE(selUrl != nullptr);
-        DOCTEST_CHECK(sameColor(selUrl->textColor, wc.wechat.textTertiary));
+        DOCTEST_CHECK(sameColor(selUrl->textColor, wc.textTertiary));  // S1.2 #12
         const auto* selModel = ui2.find("claude.dialog.ccswitch.row.1.model");
         DOCTEST_REQUIRE(selModel != nullptr);
-        DOCTEST_CHECK(sameColor(selModel->textColor, wc.wechat.textSecondary));
+        DOCTEST_CHECK(sameColor(selModel->textColor, wc.textSecondary));  // S1.2 #11
         const auto* failSkip = ui2.find("claude.dialog.ccswitch.row.0.skip");
         DOCTEST_REQUIRE(failSkip != nullptr);
-        DOCTEST_CHECK(sameColor(failSkip->textColor, wc.wechat.warningRed));
-        DOCTEST_CHECK(!sameColor(failSkip->textColor, wc.error));  // 反向：legacy 红
+        DOCTEST_CHECK(sameColor(failSkip->textColor, wc.error));  // S1.2 #15: error→error
+        DOCTEST_CHECK(!sameColor(failSkip->textColor, wc.surface));  // 反向：不是表面色
     }
 
     // 行渲染：name + app_type · base_url；选中行有勾标；codex 行不存在
@@ -305,22 +324,22 @@ REGISTER_TEST(claude_ccswitch_ui_skeleton_contract,
                 std::to_string(model->frame.y + model->frame.height -
                                rowBg->frame.y - rowBg->frame.height) +
                 "px）");
-        // 行距收紧锁：相邻行卡顶距 = 56（kRowPitch；曾 hit 幽灵占位把行距撑到 112）
+        // 行距收紧锁：相邻行卡顶距 = 62（kRowPitch 68 - 行间 scroll gap 影响）
         const auto* nextBg = ui2.find("claude.dialog.ccswitch.row.2.bg");
         if (nextBg != nullptr) {
             DOCTEST_CHECK_MESSAGE(
-                near(nextBg->frame.y - rowBg->frame.y, 56.0f),
-                "相邻行卡距应为 56，实测 " +
+                near(nextBg->frame.y - rowBg->frame.y, 62.0f),
+                "相邻行卡距应为 62，实测 " +
                     std::to_string(nextBg->frame.y - rowBg->frame.y));
         }
-        // 全选钮带与列表间的呼吸位：列表顶 ≥ 钮带底 + 12
+        // 全选钮带与列表间的呼吸位：列表顶 ≥ 钮带底 + 8（kListTopY=140, selectAll底=132）
         const auto* list = ui2.find("claude.dialog.ccswitch.list");
         const auto* selallBg = ui2.find("claude.dialog.ccswitch.selall.bg");
         if (list != nullptr && selallBg != nullptr) {
             DOCTEST_CHECK_MESSAGE(
                 list->frame.y >= selallBg->frame.y + selallBg->frame.height +
-                                    12.0f - 0.5f,
-                "列表顶与全选钮带间应留 ≥12 空白");
+                                    8.0f - 0.5f,
+                "列表顶与全选钮带间应留 ≥8 空白");
         }
     }
 
@@ -328,33 +347,33 @@ REGISTER_TEST(claude_ccswitch_ui_skeleton_contract,
     rowHit->onClick();
     eui::Ui ui3;
     composeFrame(*mod, ui3, "cc_ui_skel3");
-    const auto* selall3 = ui3.find("claude.dialog.ccswitch.selall.text");
+    const auto* selall3 = ui3.find("claude.dialog.ccswitch.selall.text.normal");
     DOCTEST_REQUIRE(selall3 != nullptr);
     DOCTEST_CHECK_EQ(selall3->text, std::string("全选"));
-    const auto* confirm3 = ui3.find("claude.dialog.ccswitch.confirm.text");
+    const auto* confirm3 = ui3.find("claude.dialog.ccswitch.confirm.text.normal");
     DOCTEST_REQUIRE(confirm3 != nullptr);
     DOCTEST_CHECK_EQ(confirm3->text, std::string("导入选中(2)"));
     DOCTEST_CHECK(ui3.find("claude.dialog.ccswitch.row.1.cb.mark") == nullptr);
-    //（UAT5 米黄收尾）未选中行色锁：bg == cardBg 白底灰边；cb.box 白圈灰边空圈
-    //（20px 圆不缩水）；反向锁死暖橙 surface / legacy borderDefault。
+    //（UAT5 米黄收尾）未选中行色锁：bg == surface 白底灰边；cb.box 白圈灰边空圈
+    //（20px 圆不缩水）；反向锁死暖橙 primary / legacy primary。
     {
         const auto* unRowBg = ui3.find("claude.dialog.ccswitch.row.1.bg");
         DOCTEST_REQUIRE(unRowBg != nullptr);
-        DOCTEST_CHECK(sameColor(unRowBg->color, wc.wechat.cardBg));
-        DOCTEST_CHECK(!sameColor(unRowBg->color, wc.surface));    // 反向：暖米行底
+        DOCTEST_CHECK(sameColor(unRowBg->color, wc.surface));    // S1.2 #7: surface→surface
+        DOCTEST_CHECK(!sameColor(unRowBg->color, wc.primary));   // 反向：不是绿色
         const auto* unBox = ui3.find("claude.dialog.ccswitch.row.1.cb.box");
         DOCTEST_REQUIRE(unBox != nullptr);
-        DOCTEST_CHECK(sameColor(unBox->color, wc.wechat.cardBg));  // 白圈
-        DOCTEST_CHECK(!sameColor(unBox->color, wc.surface));
-        DOCTEST_CHECK_EQ(unBox->radius, 10.0f);  // 未选中同 20px 圆
-        DOCTEST_CHECK(sameColor(unBox->border.color, wc.wechat.dividerPrimary));
-        DOCTEST_CHECK(!sameColor(unBox->border.color, wc.borderDefault));
+        DOCTEST_CHECK(sameColor(unBox->color, wc.surface));      // 白圈（source: surface）
+        DOCTEST_CHECK(!sameColor(unBox->color, wc.primary));     // 反向：不是绿色
+        DOCTEST_CHECK_EQ(unBox->radius, 10.0f);  // 20px 圆形复选框（kBoxSize/2），非标准控件圆角
+        DOCTEST_CHECK(sameColor(unBox->border.color, wc.borderDefault));  // S1.2 #8
+        DOCTEST_CHECK(!sameColor(unBox->border.color, wc.primary));       // 反向：不是绿色
     }
     // 翻回（后续用例不受此态影响；本用例到此为止）
     DOCTEST_REQUIRE(clickById(ui3, "claude.dialog.ccswitch.row.1.hit"));
     eui::Ui ui4;
     composeFrame(*mod, ui4, "cc_ui_skel4");
-    const auto* confirm4 = ui4.find("claude.dialog.ccswitch.confirm.text");
+    const auto* confirm4 = ui4.find("claude.dialog.ccswitch.confirm.text.normal");
     DOCTEST_REQUIRE(confirm4 != nullptr);
     DOCTEST_CHECK_EQ(confirm4->text, std::string("导入选中(3)"));
 
@@ -390,7 +409,7 @@ REGISTER_TEST(claude_ccswitch_ui_empty_state,
     DOCTEST_CHECK(ui2.find("claude.dialog.ccswitch.list") == nullptr);
     DOCTEST_CHECK(ui2.find("claude.dialog.ccswitch.selall") == nullptr);
     DOCTEST_CHECK(ui2.find("claude.dialog.ccswitch.row.0.name") == nullptr);
-    const auto* confirm = ui2.find("claude.dialog.ccswitch.confirm.text");
+    const auto* confirm = ui2.find("claude.dialog.ccswitch.confirm.text.normal");
     DOCTEST_REQUIRE(confirm != nullptr);
     DOCTEST_CHECK_EQ(confirm->text, std::string("导入选中(0)"));
 
@@ -460,13 +479,13 @@ REGISTER_TEST(claude_ccswitch_ui_import_chain,
     DOCTEST_REQUIRE(clickById(ui2, "claude.dialog.ccswitch.row.2.hit"));
     eui::Ui ui3;
     composeFrame(*mod, ui3, "cc_ui_chain3");
-    const auto* confirm3 = ui3.find("claude.dialog.ccswitch.confirm.text");
+    const auto* confirm3 = ui3.find("claude.dialog.ccswitch.confirm.text.normal");
     DOCTEST_REQUIRE(confirm3 != nullptr);
     DOCTEST_CHECK_EQ(confirm3->text, std::string("导入选中(2)"));
     DOCTEST_REQUIRE(clickById(ui3, "claude.dialog.ccswitch.row.2.hit"));
     eui::Ui ui4;
     composeFrame(*mod, ui4, "cc_ui_chain4");
-    const auto* confirm4 = ui4.find("claude.dialog.ccswitch.confirm.text");
+    const auto* confirm4 = ui4.find("claude.dialog.ccswitch.confirm.text.normal");
     DOCTEST_REQUIRE(confirm4 != nullptr);
     DOCTEST_CHECK_EQ(confirm4->text, std::string("导入选中(3)"));
 
