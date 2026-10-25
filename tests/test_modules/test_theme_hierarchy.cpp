@@ -153,7 +153,8 @@ REGISTER_TEST(theme_hierarchy_markdown,
                                 const core::theme::Tokens& t) -> bool {
         // W8：markdown 页改 wechat 令牌（D-04 逐页切换）。
         DOCTEST_CHECK(frame.absent("md.pagebg"));
-        DOCTEST_CHECK(frame.colorIs("md.tree.bg", t.colors.background));
+        // 批M：树区浅灰面板（纸卡分层）
+        DOCTEST_CHECK(frame.colorIs("md.tree.bg", t.colors.hover));
         // 编辑列壳 .bg 已恢复（W8 §4.14：右区 background 底 + 白卡浮起）
         DOCTEST_CHECK(frame.colorIs("md.editor.bg", t.colors.background));
         DOCTEST_CHECK(frame.colorIs("md.preview.bg", t.colors.background));

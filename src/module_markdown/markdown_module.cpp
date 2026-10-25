@@ -149,7 +149,7 @@ void drawFileTreeItem(eui::Ui& ui,
                 .size(width, kTreeRowHeight)
                 .color(active ? t.colors.primarySoftBg
                               : eui::Color{0.0f, 0.0f, 0.0f, 0.0f})
-                .hoverColor(t.colors.hover)
+                .hoverColor(ui_kit::cardSurface(t))  // 灰面板上行悬停提亮（面板=hover 令牌）
                 .radius(t.sizes.radiusSmall)
                 .onClick(std::move(onClick))
                 .onContextMenu(std::move(onContextMenu))
@@ -852,11 +852,12 @@ private:
         // 对齐不变），但不画 bg/内容——展开入口移交边界把手 drawTreeHandle。
         ui.stack("md.tree").size(sideW, bodyH).content([&] {
             if (sideW <= kTreePanelSnapEps) return;
-            // 方案 A 共面融合：树区与编辑区同底（wechat.pageBg #F7F7F7），
-            // 不再是独立白卡；右侧 1px 极细分隔（wechat.dividerSecondary 更淡）。
+            // 批M（2026-10-25 用户拍板：树/编辑同底辨识度低）：树区改浅灰面板
+            // （hover 令牌 #F3F4F6，暗色 #353231），编辑/预览为白纸卡——灰底托纸卡分层。
+            // 右侧 1px 分隔线保留。
             ui.rect("md.tree.bg")
                 .size(sideW, bodyH)
-                .color(t.colors.background)
+                .color(t.colors.hover)
                 .build();
             ui.rect("md.tree.divider")
                 .position(sideW - 1.0f, 0.0f)
@@ -1152,7 +1153,7 @@ private:
                                     .size(w, kTreeRowHeight)
                                     .color(selected ? t.colors.primarySoftBg
                                                     : eui::Color{0.0f, 0.0f, 0.0f, 0.0f})
-                                    .hoverColor(t.colors.hover)
+                                    .hoverColor(ui_kit::cardSurface(t))
                                     .radius(t.sizes.radiusSmall)
                                     .onClick([this, dir = r.relPath] { selectDir(dir); })
                                     .build();
@@ -1379,8 +1380,7 @@ private:
                               const components::theme::ThemeColorTokens& componentTheme,
                               Body&& body) {
         ui.stack(columnId).size(midW, bodyH).content([&] {
-            // 右区底色 = wechat.pageBg（§4.14：浅灰底 #F7F7F7，白卡浮于其上）。
-            // 旧「不铺列底」已废：D-12 强制内容区底为浅灰，编辑器/预览白卡浮起。
+            // 列底 = 页面底（浅灰）；有笔记时正文区浮白纸卡（批M：灰底托纸卡分层）
             ui.rect(columnId + ".bg")
                 .size(midW, bodyH)
                 .color(t.colors.background)
@@ -1398,6 +1398,14 @@ private:
                 return;
             }
 
+            // 白纸卡：包 tag 栏 + 正文（状态栏留在卡下灰底）
+            ui.rect(columnId + ".paper")
+                .position(8.0f, 8.0f)
+                .size(midW - 16.0f, std::max(0.0f, bodyH - 8.0f - 30.0f))
+                .color(t.colors.surface)
+                .radius(t.sizes.radiusLarge)
+                .border(1.0f, t.colors.borderDefault)
+                .build();
             float colX = kTextColumnInsetX;
             float colW = midW - kTextColumnInsetX * 2.0f;
             // TODO(面包屑)：展示 currentPath_ 路径（§3.2.4 补充项，签认可划）。
@@ -1746,12 +1754,20 @@ private:
                            float gap) {
         (void)gap;
         ui.stack("md.preview").size(midW, bodyH).content([&] {
-            // W8：移除渐变（§8 #4 禁大面积渐变），改为 flat wechat.pageBg 底色。
-            // 预览白卡浮于 pageBg 之上（§4.14）。
             ui.rect("md.preview.bg")
                 .size(midW, bodyH)
                 .color(t.colors.background)
                 .build();
+            // 白纸卡（批M，与编辑器列同款）；空态不铺卡
+            if (!currentPath_.empty()) {
+                ui.rect("md.preview.paper")
+                    .position(8.0f, 8.0f)
+                    .size(midW - 16.0f, std::max(0.0f, bodyH - 16.0f))
+                    .color(t.colors.surface)
+                    .radius(t.sizes.radiusLarge)
+                    .border(1.0f, t.colors.borderDefault)
+                    .build();
+            }
 
             float pvX = 20.0f;
             float pvW = midW - 40.0f;
