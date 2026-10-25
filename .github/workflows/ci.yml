@@ -9,8 +9,10 @@ on:
   workflow_dispatch:
 
 env:
-  # EUI-NEO 用的是修改版 fork（比上游多 90+ 提交）；上游缺 setScrollOffset /
-  # TextRun / chromeless 等 API，直接编译不过
+  # EUI-NEO 用的是修改版 fork（比上游多百余个提交，计数随开发持续增长、不在此
+  # 写死）；上游缺 setScrollOffset / TextRun / chromeless 等 API，直接编译不过。
+  # 消费政策：不锁版本、每次用最新源码，取框架步骤 --depth 1 拉 fork HEAD 即
+  # 政策本身（见 docs/adr/0006 与 scripts/check-eui-neo-version.sh）
   EUI_NEO_REPO: https://github.com/coderstory/EUI-NEO.git
   # ccache 放在工作区下，方便 actions/cache 直接命中；BASEDIR 让不同 worktree
   # 路径哈希一致 —— 不设 BASEDIR 等于白装缓存

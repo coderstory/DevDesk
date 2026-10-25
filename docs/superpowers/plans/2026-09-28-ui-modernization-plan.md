@@ -5,7 +5,7 @@
 **Goal:** 全仓 UI 改用 EUI 组件，停止手绘（手写 rect+text 的「卡」、列表、图表一律换成 EUI 组件）；统一三套右键菜单坐标口径（三处错位根因）；全仓补过渡 / 阴影 / 渐变，消除「硬切」与「平面感」；上游 EUI-NEO 补三处能力缺口（input onContextMenu 透出 / contextMenu 宽度自适应 / styledMenu 收起态高度回收）。
 
 **Architecture:**
-- **M4 上游贡献（先行）**：`../EUI-NEO/` 三处组件能力补齐，经「隔离产 patch → 非隔离 apply」跨仓库流程落地；DevDesk 侧 bump `DEVDESK_EUI_NEO_MIN_REV` 并删对应 hack。
+- **M4 上游贡献（先行）**：`../EUI-NEO/` 三处组件能力补齐，经「隔离产 patch → 非隔离 apply」跨仓库流程落地；DevDesk 侧 bump `最低依赖 rev 软校验（已删，ADR 0006）` 并删对应 hack。
 - **M1 右键统一**：新增统一锚点换算函数（core 层纯函数，含 Y、含滚动偏移参数），三处调用点（todo 看板 / md 树 / md 编辑器）只传 PointerEvent 原始坐标，位置/宽度/钳制交给 `contextMenu` 组件自身；claude profile 列表补右键（编辑/复制/删除/设为当前，复用既有动作）。
 - **M2 全局过渡**：md 视图三态切换、dialog/toast 开合（常驻构建 + opacity 收起——框架无「已删元素回放动画」机制）、todo 卡 drop 落位；基调：弹窗/视图 0.15s OutCubic、列表/微交互 0.1s OutQuad。
 - **M3 手绘换组件**：Home 统计卡 → `card` + Token 速率 `lineChart` sparkline + API 调用量 `barChart`；profile 列表与调用记录 → `virtualList`；Todo 卡片 → `card`（拖拽业务逻辑保留）；shadow/gradient 补齐。
@@ -55,7 +55,7 @@
 | `src/module_home/home_module.cpp` | 统计卡 / charts / recent 区 | `drawStatCard` 换 card + sparkline/barChart 尾参；recent 背景换 card（M3-1） |
 | `src/core/proxy_stats.h` / `.cpp` | 速率采样环 | 加最近 N 点采样环 + `rateSeries()`（M3-1 数据扩展） |
 | `src/module_home/home_service.h` / `.cpp` | API 当日分布 | 加 `getTodayApiCallSeries`（M3-1 数据扩展） |
-| `CMakeLists.txt` + `CLAUDE.md` | 依赖 rev | `DEVDESK_EUI_NEO_MIN_REV` bump + 「当前依赖 rev」记录（M4-4） |
+| `CMakeLists.txt` + `CLAUDE.md` | 依赖 rev | `最低依赖 rev 软校验（已删，ADR 0006）` bump + 「当前依赖 rev」记录（M4-4） |
 | `tests/test_modules/test_ui_modern.cpp`（**新增**）+ `tests/CMakeLists.txt` | 无头用例 | §9 用例（M1-1/4523e09 回归/M3 接线） |
 | `src/module_settings/*`、`EUI-NEO/` 之外均不动 | — | 范围纪律 |
 
@@ -258,7 +258,7 @@ git -C ../EUI-NEO commit -m "feat(styledmenu): 收起态高度回收（运行时
 
 报告：盘点结论（A/B）、commit sha、编译输出。
 
-## Task M4-4: DevDesk bump `DEVDESK_EUI_NEO_MIN_REV`
+## Task M4-4: DevDesk bump `最低依赖 rev 软校验（已删，ADR 0006）`
 
 **Files:**
 - Modify: `CMakeLists.txt`
@@ -274,13 +274,13 @@ git -C ../EUI-NEO commit -m "feat(styledmenu): 收起态高度回收（运行时
 
 - [ ] **Step 2: 两处同步**
 
-`CMakeLists.txt:53`：`set(DEVDESK_EUI_NEO_MIN_REV "269a8c4")` → 新 sha（`src/module_settings/settings_config.cpp:103` 的 `#ifndef` 兜底**不动**——注入点是 CMake）；`CLAUDE.md` 「**当前依赖 rev**」行同步（`269a8c4（2026-09-27，U1 尺度契约合入点…）` → 新 sha +「（2026-09-28，UI 现代化 M4 U1-U3 合入点）」）。spec §7 指明的两处同步点即此。
+`CMakeLists.txt:53`：`set(最低依赖 rev 软校验（已删，ADR 0006） "269a8c4")` → 新 sha（`src/module_settings/settings_config.cpp:103` 的 `#ifndef` 兜底**不动**——注入点是 CMake）；`CLAUDE.md` 「**当前依赖 rev**」行同步（`269a8c4（2026-09-27，U1 尺度契约合入点…）` → 新 sha +「（2026-09-28，UI 现代化 M4 U1-U3 合入点）」）。spec §7 指明的两处同步点即此。
 
 - [ ] **Step 3: Commit**
 
 ```bash
 git add CMakeLists.txt CLAUDE.md
-git commit -m "chore(eui): DEVDESK_EUI_NEO_MIN_REV bump 至 M4 合入点（UI 现代化 U1-U3）"
+git commit -m "chore(eui): 最低依赖 rev 软校验（已删，ADR 0006） bump 至 M4 合入点（UI 现代化 U1-U3）"
 ```
 
 ---
@@ -1184,7 +1184,7 @@ git commit -m "feat(ui): 关键背景补渐变 + card 阴影复查（UI 现代�
 1. 定向用例全绿（各里程碑）：`--filter uiModern` / `markdown` / `todo` / `claude` / `home` / `proxy_stats` / `settings`，每跑一条记结果；**全量只在收尾由主会话跑一次** `bash scripts/build-test-run.sh`（含 check-module-isolation）。
 2. 逐条核对 spec §10 里程碑清单：M4 三项 + bump；M1 五项（**4523e09 已落地的两项不在实现清单，回归断言在**）；M2 三项；M3 四项。
 3. spec §2.1 计数复查（M3 收尾）：`grep -c "\.transition(\|\.animate(" src/` > 0、`grep -c "lineChart\|barChart\|virtualList" src/` > 0、`grep -c "\.shadow(\|\.gradient(" src/` > 0（三处计数与人工点验一致）。
-4. 跨仓库：EUI-NEO 三个 commit 的 sha 记录在案；`DEVDESK_EUI_NEO_MIN_REV` 与 `CLAUDE.md`「当前依赖 rev」两处一致；非隔离线未碰 DevDesk 文件（`git -C ../EUI-NEO show --stat` 核对）。
+4. 跨仓库：EUI-NEO 三个 commit 的 sha 记录在案；`最低依赖 rev 软校验（已删，ADR 0006）` 与 `CLAUDE.md`「当前依赖 rev」两处一致；非隔离线未碰 DevDesk 文件（`git -C ../EUI-NEO show --stat` 核对）。
 5. 无残留：全仓右键调用点全部走 `menuAnchorForPointer`/`menuAnchorForPointerInPage`（`grep -n "ctxMenuY_\|editorCtxY_"` 无裸 `ev.y` 形态）；写死宽 190/160/170 删除（M4-2 后）。
 6. `git status` 干净、每 commit 显式 pathspec、worktree 用完即清。
 

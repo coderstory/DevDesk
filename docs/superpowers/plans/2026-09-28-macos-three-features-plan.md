@@ -6,7 +6,7 @@
 
 **Goal:** 补齐 DevDesk 在 macOS 的三项平台能力：**M1** 托盘左右键分流 + styled 自绘菜单（与 Windows 一致，原生 NSMenu 仅降级）；**M2** 窗口磨砂三档（off/translucent/frosted）可用、失败保留 Transparent 降级；**M3** 桌宠三项 mac 等价能力（不进 Dock/⌘Tab、原生右键菜单、sleep/wake 电源事件）。全部走 **EUI-NEO 上游线**（修改 `../EUI-NEO/`）；DevDesk 侧除降级文案平台化与收尾版本 bump 外零改动（D-1、D-4）。
 
-**Architecture:** 四层（main → modules → core → platform → EUI-NEO）。本批在 **EUI-NEO** 侧补平台真实现：M0 打通两处 macOS 原生句柄供给（GLFW `glfwGetCocoaWindow`）；M1 在 `tray_bridge.c` 的 `EUI_TRAY_APPKIT` 段（**唯一 mac 后端**，`3rd/tray` 的 `TRAY_APPKIT` 分支 EUI 构建不编译，§13-6 已关案）给状态栏按钮挂 action + `sendActionOn:` 分流，钩子 `eui_tray_menu_requested` 复用既有 DSL→DevDesk 登记链；M2/M3 新建四个 `*_macos.mm`（ObjC++ 平台实现，接口签名与 stubs 完全一致，stub 收窄给非 Apple 平台），顶层 CMake 四族 `if(WIN32)/else()` 拆 `elseif(APPLE)` + `if(APPLE)` 守卫下 `enable_language(OBJCXX)`。DevDesk 侧：`settings_config.cpp` 降级文案平台化（§5.3 案 B 默认，零跨仓依赖）+ 收尾 `DEVDESK_EUI_NEO_MIN_REV` bump 两处同步。
+**Architecture:** 四层（main → modules → core → platform → EUI-NEO）。本批在 **EUI-NEO** 侧补平台真实现：M0 打通两处 macOS 原生句柄供给（GLFW `glfwGetCocoaWindow`）；M1 在 `tray_bridge.c` 的 `EUI_TRAY_APPKIT` 段（**唯一 mac 后端**，`3rd/tray` 的 `TRAY_APPKIT` 分支 EUI 构建不编译，§13-6 已关案）给状态栏按钮挂 action + `sendActionOn:` 分流，钩子 `eui_tray_menu_requested` 复用既有 DSL→DevDesk 登记链；M2/M3 新建四个 `*_macos.mm`（ObjC++ 平台实现，接口签名与 stubs 完全一致，stub 收窄给非 Apple 平台），顶层 CMake 四族 `if(WIN32)/else()` 拆 `elseif(APPLE)` + `if(APPLE)` 守卫下 `enable_language(OBJCXX)`。DevDesk 侧：`settings_config.cpp` 降级文案平台化（§5.3 案 B 默认，零跨仓依赖）+ 收尾 `最低依赖 rev 软校验（已删，ADR 0006）` bump 两处同步。
 
 **Tech Stack:** C++20 / CMake 4.3.3 + Ninja + MSYS2 MinGW64 + ccache（成稿时的本机 = Windows 侧验证环境；2026-09-28 起本机是 macOS/arm64，见文首补记）/ Objective-C++（`.mm` ×4 首进 EUI 编译链，仅 Apple 平台编译）/ AppKit（`NSVisualEffectView`、`NSStatusItem`+`NSStatusBarButton`、`NSMenu popUpMenuPositioningItem:atLocation:inView:`、`NSWorkspace` 通知）/ GLFW 3.4 内置 `glfwGetCocoaWindow`/`glfwGetCocoaView`（`3rd/glfw` 已随 `glfw` target 提供头文件，两个 M0 文件已 include `<GLFW/glfw3native.h>`）。
 
@@ -46,7 +46,7 @@
 | 任务 | 文件 | 动作 |
 |------|------|------|
 | M2 | `src/module_settings/settings_config.cpp` | 改：`windowEffectDegradedHint` frosted 分支文案平台化（L215，§5.3 案 B 默认；案 A 待 §13-1 拍板） |
-| 收尾 | `CMakeLists.txt` + `CLAUDE.md` | 改：`DEVDESK_EUI_NEO_MIN_REV` bump 两处同步（当前 `269a8c4`，CMakeLists.txt:53 + CLAUDE.md「常用命令」段） |
+| 收尾 | `CMakeLists.txt` + `CLAUDE.md` | 改：`最低依赖 rev 软校验（已删，ADR 0006）` bump 两处同步（当前 `269a8c4`，CMakeLists.txt:53 + CLAUDE.md「常用命令」段） |
 
 M1 预期 DevDesk 侧零改动（`main.cpp` L566-575 `.onTrayMenu` 左键 ShowMainWindow / 右键 `showTrayStyledMenu`（L389-408，styled 调用在 L400）已就绪，mac 端接上分流后同一回调路径自动生效）。
 
@@ -808,10 +808,10 @@ git -C D:/project/gui/EUI-NEO commit -m "feat(macos): 桌宠三项平台实现�
 
 ---
 
-## 收尾任务: bump DEVDESK_EUI_NEO_MIN_REV（DevDesk 侧 worktree 线）
+## 收尾任务: bump 最低依赖 rev 软校验（已删，ADR 0006）（DevDesk 侧 worktree 线）
 
 **Files:**
-- Modify: `DevDesk/CMakeLists.txt`（L53 `set(DEVDESK_EUI_NEO_MIN_REV "269a8c4")` → 新 tip sha）
+- Modify: `DevDesk/CMakeLists.txt`（L53 `set(最低依赖 rev 软校验（已删，ADR 0006） "269a8c4")` → 新 tip sha）
 - Modify: `DevDesk/CLAUDE.md`（「常用命令」段「当前依赖 rev」记录两处同步）
 
 **前置：** M0-M3 全部合入 EUI-NEO main 后，取 `git -C D:/project/gui/EUI-NEO rev-parse --short HEAD` 得新 rev。
@@ -855,5 +855,5 @@ git -C D:/project/gui/EUI-NEO commit -m "feat(macos): 桌宠三项平台实现�
 1. 每个 M 的 patch 与其 spec 章节逐条对应：M0 = spec §3 两处句柄供给 + 消费链无遗漏；M1 = §4.1/§4.2（分流 + 预备改法 + 不改 3rd/tray）；M2 = §5.2 `.mm` 整文件 + §5.3 文案（案 B 一行）/ CMake 两处；M3 = §6.1-§6.3 三文件 + CMake 三族。
 2. 定向用例全绿（每任务 `bash scripts/build-test-run.sh --no-run --filter <子串>`）；收尾一次全量回归。
 3. 隔离 worktree 全部清理（`git worktree list` 无残留）；EUI-NEO main 四个原子 commit（M0-M3）+ DevDesk 侧文案/bump commit，全部显式 pathspec。
-4. `DEVDESK_EUI_NEO_MIN_REV` 两处同步为新 rev；M0 临时诊断日志已移除。
+4. `最低依赖 rev 软校验（已删，ADR 0006）` 两处同步为新 rev；M0 临时诊断日志已移除。
 5. **未验证项（诚实声明，spec §12）**：① Tahoe 磨砂实际观感与 NSVisualEffectView 合成顺序（spec §12-1/12-2）；② 坐标翻转方向（托盘屏系 / 菜单视图系）为设计推断，实机后可能微调一行（§12-3）；③ 挂 action 与 setMenu: 共存为 AppKit 已知争议点（§12-4，M1 实机第 0 项）；④ `.mm` 首进编译链的 ObjC++ 编译正确性——本机（Windows）无 mac SDK，只能实机验证（§12-5）；⑤ 桌宠 collectionBehavior 组合是否符合「不进 Dock / ⌘Tab 不可见」预期（§13-4）。这些项在 Mac 实机清单（上节）完成前**不得**在报告/文档中称「已实现生效」。

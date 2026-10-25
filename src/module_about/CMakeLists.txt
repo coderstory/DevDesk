@@ -6,8 +6,9 @@
 #
 # 编译期信息全部挂本 target（D-02 自给）：DEVDESK_VERSION /
 # DEVDESK_BUILD_TYPE 来自顶层 project()，DEVDESK_EUI_NEO_REV /
-# DEVDESK_EUI_NEO_MIN_REV / DEVDESK_GIT_REV 是顶层「构建期信息注入」段的
-# 变量（add_subdirectory 继承普通变量）；平台/架构走 CMake 注入
+# DEVDESK_GIT_REV 是顶层「构建期信息注入」段的变量（add_subdirectory 继承
+# 普通变量；EUI-NEO 消费政策不锁版本，rev 仅信息展示，见 ADR 0006）；
+# 平台/架构走 CMake 注入
 #（DEVDESK_PLATFORM / DEVDESK_ARCH），业务代码零平台宏（核心约束 #5）。
 add_library(devdesk_module_about STATIC
     about_module.cpp
@@ -33,7 +34,6 @@ target_compile_definitions(devdesk_module_about PRIVATE
     DEVDESK_VERSION="${PROJECT_VERSION}"
     DEVDESK_BUILD_TYPE="$<CONFIG>"
     DEVDESK_EUI_NEO_REV="${DEVDESK_EUI_NEO_REV}"
-    DEVDESK_EUI_NEO_MIN_REV="${DEVDESK_EUI_NEO_MIN_REV}"
     DEVDESK_GIT_REV="${DEVDESK_GIT_REV}"
     DEVDESK_COMPILER="${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}"
     DEVDESK_PLATFORM="${CMAKE_SYSTEM_NAME}"

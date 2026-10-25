@@ -197,7 +197,7 @@ ALTER TABLE claude_profiles ADD COLUMN shared_config_id INTEGER NOT NULL DEFAULT
 | 详情/列表 | `drawDetailPanel` 一行「共享配置：片段 A（N 个键）」；列表卡片角标「共享」 | 数据 = `listSharedConfigs` 快照（走既有后台线程取数模式，claude_ui_state.h:153 注释） |
 
 【待拍板】① 片段区块位置/入口形态（推荐：左栏列表下方独立区块 + 区块内「新建」按钮，与「+ 新建 Profile」同款按钮）；② 片段编辑弹窗是否可复用 `FormState` 结构加 `kind` 字段（推荐：**新增独立状态** `SharedConfigDialogState`，复用 `formEnvRows_` 写入模式，不污染 profile 表单状态；「`formOpen_` 单弹窗天然互斥」仅是惯例、非约束——新状态必须接入 `anyDialogOpen` 门控与 `closeTopmostDialog` Esc 序链两处（锚点见上表），其 Esc 关闭语义 = 与表单弹窗同级、入序链最顶层（Esc 最先关它））。
-**已取证（2026-09-28 审计核验，前提证伪）**：EUI-NEO `components/input.h` 的 `InputBuilder` 全链**无 enabled/disabled/readonly 禁改态**（`components/` 下 'disabled' 零命中）——「片段赢预览」K 键置灰只读行**无现成控件**。两条可行路径：(a) EUI-NEO 上游加 disabled 输入态——跨仓库改动 + `DEVDESK_EUI_NEO_MIN_REV` 提升；(b) **推荐**——DevDesk 侧把 K 键行渲染成灰字 text + chip「来自片段 X」（非 input），零跨仓库改动，只读语义由「不可编辑控件」直接表达。落地默认 (b)；若拍板走上游 (a)，按 §7 批 2 文件面附注扩 scope。
+**已取证（2026-09-28 审计核验，前提证伪）**：EUI-NEO `components/input.h` 的 `InputBuilder` 全链**无 enabled/disabled/readonly 禁改态**（`components/` 下 'disabled' 零命中）——「片段赢预览」K 键置灰只读行**无现成控件**。两条可行路径：(a) EUI-NEO 上游加 disabled 输入态——跨仓库改动 + `最低依赖 rev 软校验（已删，ADR 0006）` 提升；(b) **推荐**——DevDesk 侧把 K 键行渲染成灰字 text + chip「来自片段 X」（非 input），零跨仓库改动，只读语义由「不可编辑控件」直接表达。落地默认 (b)；若拍板走上游 (a)，按 §7 批 2 文件面附注扩 scope。
 
 ## 3. B. Failover
 
@@ -361,7 +361,7 @@ ALTER TABLE claude_call_logs ADD COLUMN failover_from INTEGER NOT NULL DEFAULT 0
 
 | 工作块 | 内容 | 文件面 | 与另一块交叠 |
 |---|---|---|---|
-| 批 2（编辑器 UI） | §2.10：片段区块 / 编辑器弹窗 / 绑定下拉 / 片段赢预览 / 详情行 | claude_ui_list / form / detail / state / logic + claude_module.cpp + tests/test_claude_ui.cpp（若走上游路径 (a) 的 disabled 输入，追加 EUI-NEO 仓库改动与 `DEVDESK_EUI_NEO_MIN_REV` 提升） | 零服务层改动（CRUD 已合） |
+| 批 2（编辑器 UI） | §2.10：片段区块 / 编辑器弹窗 / 绑定下拉 / 片段赢预览 / 详情行 | claude_ui_list / form / detail / state / logic + claude_module.cpp + tests/test_claude_ui.cpp（若走上游路径 (a) 的 disabled 输入，追加 EUI-NEO 仓库改动与 `最低依赖 rev 软校验（已删，ADR 0006）` 提升） | 零服务层改动（CRUD 已合） |
 | 批 3-服务层 | §3.7/§3.8：migration v10 + shouldFailoverTo + resolveFallbackProfile + 校验/删除/复制清理 | migrations.h + provider_config.* + claude_service.* + proxy_router.cpp + tests/test_provider_config 等 | 与批 2 **零交叠** ✅ |
 | 批 3-UI | §3.4 已有：备用下拉 / 详情显示 / 状态栏行 / 日志 failover_from | claude_ui_form / claude_ui_detail / claude_ui_logs / claude_ui_state / claude_module.cpp | 与批 2 **同文件** ❌ |
 

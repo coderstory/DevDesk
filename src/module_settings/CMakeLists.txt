@@ -46,13 +46,13 @@ target_link_libraries(devdesk_module_settings PUBLIC
 )
 
 # 关于卡（spec §8.5，spec 缩水 C）：版本/构建信息注入。PROJECT_VERSION 来自
-# 顶层 project(VERSION)；EUI_NEO_GIT_REV / DEVDESK_EUI_NEO_MIN_REV 是顶层
-# 「EUI-NEO 版本诊断」段的变量（add_subdirectory(src) 前已 set，作用域可达）。
-# 消费方 settings_config.cpp（aboutVersionLine/aboutEuiNeoLine），宏缺失有
-# #ifndef 回退，测试二进制经本库对象文件链接同样拿到定义
+# 顶层 project(VERSION)；EUI_NEO_GIT_REV 是顶层「构建期信息注入」段的变量
+#（add_subdirectory(src) 前已 set，作用域可达；消费政策不锁版本，rev 仅信息
+# 展示，见 ADR 0006）。消费方 settings_config.cpp（aboutVersionLine/
+# aboutEuiNeoLine），宏缺失有 #ifndef 回退，测试二进制经本库对象文件链接
+# 同样拿到定义
 target_compile_definitions(devdesk_module_settings PRIVATE
     DEVDESK_VERSION="${PROJECT_VERSION}"
     DEVDESK_BUILD_TYPE="$<CONFIG>"
     DEVDESK_EUI_NEO_REV="${EUI_NEO_GIT_REV}"
-    DEVDESK_EUI_NEO_MIN_REV="${DEVDESK_EUI_NEO_MIN_REV}"
 )

@@ -31,7 +31,7 @@
 | H25 | 台账·H表 | W3.5 | agent_ui/claude 定向测试全绿 | 🔵 | ccswitch 196/196 全绿收口，待用户目检 | agent_ui 71/72（1 平台 skip）、claude_ui 3/3、ccswitch 196/196 |
 | H26 | 台账·H表 | W3.5 | 暗色下 Danger/语义色渲染断言 | ⏸ | 待用户拍板是否补映射（产品侧单开一批） | `componentTokensWeChat` 未映射 error/success/warning/info |
 | A1 | 台账·A表 | W0 机制 | — | ⏸ | 已失效：S6.1 玻璃退役，drawGlassCardLayers 全仓零调用 | `todo_ui_board.cpp:460-489` 原绘制顺序 |
-| A2 | 台账·A表 | W0 机制 | 标题首元素 Y 实测 + 用户目检 | 🔵 | 随 H8 待断言/目检（已由 H8 落地 kDialogInsetX=24） | EUI `dialog.h`；commit `64cf1ac`+`43f0d6d3` |
+| A2 | 台账·A表 | W0 机制 | 标题首元素 Y 实测 + 用户目检 | 🔵 | 随 H8 待断言/目检（已由 H8 落地 kDialogInsetX=24） | EUI `dialog.h`；commit `rev-已蒸发`+`43f0d6d3` |
 | A3 | 台账·A表 | W0 机制 | 用户目检（切页样板先行） | ⬜ | 定统一 header 规格：上边距砍/提示条可收起/状态入标题行/绿晕避头部 | 切换器页人工点评 6 组问题 |
 | A4 | 台账·A表 | W0 机制 | 渲染断言 + 目检 | 🔵 | 待断言/目检（contentTop 76→58 已落码） | `todo_ui_dialogs.cpp:795` contentTop=58 |
 | B1 | 台账·B表 | W3 白卡 | — | ⏸ | 已失效：随玻璃退役，看板卡由 H15/H16 接管 | `todo_ui_board.cpp:460+` |
