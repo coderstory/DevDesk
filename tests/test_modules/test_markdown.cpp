@@ -632,8 +632,8 @@ REGISTER_TEST(md_module_compose_phase1, "markdown_module: Phase 1 三态/大纲/
     DOCTEST_REQUIRE(folderRow->onClick != nullptr);
     const auto* fileRow = ui.find("md.tree.node.1.row");
     DOCTEST_REQUIRE(fileRow != nullptr);
-    // B2 树行白卡底：note.md 行未打开（currentPath_ 空）= cardSurface 半透白卡
-    DOCTEST_CHECK(colorEq(fileRow->color, ui_kit::cardSurface(core::theme::current())));
+    // 2026-10-25 批H：未选行弃白卡 chip 改无底色（侧栏同款，用户拍板树样式收口）
+    DOCTEST_CHECK(fileRow->color.a == 0.0f);
     DOCTEST_REQUIRE(fileRow->onClick != nullptr);
     fileRow->onClick();
 
@@ -746,9 +746,9 @@ REGISTER_TEST(md_module_compose_tree, "markdown_module: W8 目录树展开收起
     const auto* fileName = ui.find("md.tree.node.3.name");
     DOCTEST_REQUIRE(folderName != nullptr);
     DOCTEST_REQUIRE(fileName != nullptr);
-    // H12 文件行前导 32→0：folder(d=1) name.x=44+16=60，file(d=2) name.x=24+16=40
-    // 文件 name 24+indent < 文件夹 44+indent（文件夹多 20px 箭头列）
-    DOCTEST_CHECK(fileName->frame.x < folderName->frame.x);
+    // 2026-10-25 批H 列位对齐：file icon 20/name 44 与 folder ficon 20/name 44 同列——
+    // folder(d=1) name.x=60，file(d=2) name.x=60（旧 24+indent 的 20px 错位已废）
+    DOCTEST_CHECK(std::abs(fileName->frame.x - folderName->frame.x) <= 0.5f);
     DOCTEST_CHECK(fileName->frame.y > folderName->frame.y);          // 纵向流式排布
     // 浮动面板未开时不存在
     DOCTEST_CHECK(ui.find("md.outline.panel") == nullptr);
@@ -1408,9 +1408,8 @@ REGISTER_TEST(md_module_new_folder, "markdown_module: W9 新建文件夹入口�
     DOCTEST_CHECK(colorEq(rootRowNow->color, treeColors.primarySoftBg));
     DOCTEST_CHECK(colorEq(rootRowNow->color, treeColors.primarySoftBg) &&
                   !colorEq(workRowNow->color, treeColors.primarySoftBg));
-    // B2 文件夹行未选中 = 白卡半透底（H15 cardSurface 0.92）
-    DOCTEST_CHECK(colorEq(workRowNow->color,
-                          ui_kit::cardSurface(core::theme::current())));
+    // 2026-10-25 批H：未选行无底色（透明），非 cardSurface 白卡
+    DOCTEST_CHECK(workRowNow->color.a == 0.0f);
     const auto* noteBtn = ui.find("md.tree.new.bg");
     DOCTEST_REQUIRE(noteBtn != nullptr);
     noteBtn->onClick();

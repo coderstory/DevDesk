@@ -142,9 +142,13 @@ void drawFileTreeItem(eui::Ui& ui,
     ui.stack(id)
         .size(width, kTreeRowHeight)
         .content([&] {
+            // 2026-10-25 用户拍板「目录树 item 样式错乱」收口：未选行不再画 cardSurface
+            // 白卡 chip（浮在共面底上呈白点列），改侧栏同款无底色行 + hover；选中仍
+            // S2.5 primarySoftBg + 3px 绿线
             ui.rect(id + ".row")
                 .size(width, kTreeRowHeight)
-                .color(active ? t.colors.primarySoftBg : ui_kit::cardSurface(t))
+                .color(active ? t.colors.primarySoftBg
+                              : eui::Color{0.0f, 0.0f, 0.0f, 0.0f})
                 .hoverColor(t.colors.hover)
                 .radius(t.sizes.radiusSmall)
                 .onClick(std::move(onClick))
@@ -158,24 +162,27 @@ void drawFileTreeItem(eui::Ui& ui,
                     .color(t.colors.primary)
                     .build();
             }
+            // 文件行列位对齐目录行（2026-10-25 错乱收口）：icon x=20 / name x=44
+            //（原 0/24，与目录 ficon 20 / name 44 错开 20px，同层文件名偏左）
             ui.text(id + ".icon")
-                .position(0.0f + indent, 0.0f)
+                .position(20.0f + indent, 0.0f)
                 .size(16.0f, kTreeRowHeight)
                 .icon(icon)
-                .fontSize(kTreeFontSize)
+                .fontSize(core::theme::scaled(kTreeFontSize))
                 .lineHeight(kTreeRowHeight)
                 .verticalAlign(eui::VerticalAlign::Center)
                 .color(active ? t.colors.primary : t.colors.textTertiary)
                 .build();
             // 文件名：搜索命中时高亮关键词段（wechat.primary 着色）
             auto nameBuilder = ui.text(id + ".name")
-                .position(24.0f + indent, 0.0f)
-                .size(std::max(0.0f, width - 32.0f - indent), kTreeRowHeight)
+                .position(44.0f + indent, 0.0f)
+                .size(std::max(0.0f, width - 52.0f - indent), kTreeRowHeight)
                 .text(name)
-                .fontSize(kTreeFontSize)
+                .fontSize(core::theme::scaled(kTreeFontSize))
                 .lineHeight(kTreeRowHeight)
                 .verticalAlign(eui::VerticalAlign::Center)
-                .color(active ? t.colors.textPrimary : t.colors.textPrimary)
+                // 选中/未选中同色（深字）=与侧栏一致；S2.5「primary 文字」冲突待用户裁决
+                .color(t.colors.textPrimary)
                 .fontWeight(active ? 700 : 400);
             if (!highlight.empty()) {
                 std::vector<core::TextRun> runs;
@@ -721,7 +728,7 @@ private:
                 ui.text("md.tree.handle.arrow")
                     .size(kTreeHandleW, kTreeHandleH)
                     .icon(expanded ? 0xF053u : 0xF054u)
-                    .fontSize(kTreeHandleArrowSize)
+                    .fontSize(core::theme::scaled(kTreeHandleArrowSize))
                     .lineHeight(kTreeHandleH)
                     .horizontalAlign(eui::HorizontalAlign::Center)
                     .verticalAlign(eui::VerticalAlign::Center)
@@ -864,7 +871,7 @@ private:
                 .position(16.0f, 8.0f)
                 .size(sideW - 32.0f, 32.0f)
                 .text("目录")
-                .fontSize(kTreeFontSize)
+                .fontSize(core::theme::scaled(kTreeFontSize))
                 .lineHeight(32.0f)
                 .fontWeight(700)
                 .verticalAlign(eui::VerticalAlign::Center)
@@ -877,7 +884,7 @@ private:
                 .size(searchW, 40.0f)
                 .value(searchQuery_)
                 .placeholder("搜索笔记…")
-                .fontSize(kTreeFontSize)
+                .fontSize(core::theme::scaled(kTreeFontSize))
                 .inset(32.0f)
                 .theme(componentTheme)
                 .onChange([this](const std::string& v) {
@@ -889,7 +896,7 @@ private:
                 .position(28.0f, 59.0f)
                 .size(18.0f, 18.0f)
                 .icon(0xF002)  // fa-magnifying-glass
-                .fontSize(kTreeFontSize)
+                .fontSize(core::theme::scaled(kTreeFontSize))
                 .lineHeight(18.0f)
                 .color(t.colors.textTertiary)
                 .build();
@@ -1143,7 +1150,7 @@ private:
                                 inner.rect(id + ".row")
                                     .size(w, kTreeRowHeight)
                                     .color(selected ? t.colors.primarySoftBg
-                                                    : ui_kit::cardSurface(t))
+                                                    : eui::Color{0.0f, 0.0f, 0.0f, 0.0f})
                                     .hoverColor(t.colors.hover)
                                     .radius(t.sizes.radiusSmall)
                                     .onClick([this, dir = r.relPath] { selectDir(dir); })
@@ -1181,7 +1188,7 @@ private:
                                     .position(0.0f + indent, 0.0f)
                                     .size(16.0f, kTreeRowHeight)
                                     .text(expanded ? "▾" : "▸")
-                                    .fontSize(kTreeArrowFontSize)
+                                    .fontSize(core::theme::scaled(kTreeArrowFontSize))
                                     .lineHeight(kTreeRowHeight)
                                     .verticalAlign(eui::VerticalAlign::Center)
                                     .color(t.colors.textTertiary)
@@ -1190,7 +1197,7 @@ private:
                                     .position(20.0f + indent, 0.0f)
                                     .size(16.0f, kTreeRowHeight)
                                     .icon(0xF07B)  // fa-folder
-                                    .fontSize(kTreeFontSize)
+                                    .fontSize(core::theme::scaled(kTreeFontSize))
                                     .lineHeight(kTreeRowHeight)
                                     .verticalAlign(eui::VerticalAlign::Center)
                                     .color(selected ? t.colors.primary
@@ -1201,11 +1208,11 @@ private:
                                     .size(std::max(0.0f, w - 52.0f - indent),
                                           kTreeRowHeight)
                                     .text(r.name)
-                                    .fontSize(kTreeFontSize)
+                                    .fontSize(core::theme::scaled(kTreeFontSize))
                                     .lineHeight(kTreeRowHeight)
                                     .verticalAlign(eui::VerticalAlign::Center)
-                                    .color(selected ? t.colors.textPrimary
-                                                    : t.colors.textPrimary)
+                                    // 同文件行：深字（S2.5 primary 字冲突待裁决）
+                                    .color(t.colors.textPrimary)
                                     .fontWeight(700)
                                     .build();
                             })
@@ -1236,8 +1243,9 @@ private:
         if (!outlineOpen_) return;
         const float pad = t.sizes.spacingLarge * 2.0f;  // 32 —— S4.2 弹性内边距
         const float panelW = 264.0f;
+        // 2026-10-25 批G 同拍板：大纲浮面板不再底贴底，补 32 下距与主体对齐
         const float panelH = screen.height - pad - ui_kit::kHeaderH -
-                             t.sizes.spacingLarge;     // 底贴底、仅扣顶内边距
+                             t.sizes.spacingLarge - pad;
         const float x = screen.width - pad - panelW;
         const float y = pad + ui_kit::kHeaderH + t.sizes.spacingLarge;
 
