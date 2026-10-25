@@ -4635,8 +4635,7 @@ REGISTER_TEST(todo_ui_r5_pure_helpers,
     // 四列、菜单 x 改走 ctx.anchorX 一并退役
     const ui::BoardGeom g3 = ui::boardGeom(t);
     DOCTEST_CHECK_EQ(g3.boardTop,
-                     t.sizes.spacingLarge * 2.0f + ui_kit::kHeaderH +
-                         t.sizes.spacingLarge);
+                     ui_kit::kHeaderH + t.sizes.spacingLarge);  // 顶距 0（批L）
 
     // 卡片顶边：卡步进 = 卡高 + 卡间距
     DOCTEST_CHECK_EQ(ui::cardTop(g3, 0), g3.boardTop + ui::kColumnHeaderHeight);

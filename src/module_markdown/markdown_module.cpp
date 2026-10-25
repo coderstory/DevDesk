@@ -419,7 +419,7 @@ public:
 
         const float pad = t.sizes.spacingLarge * 2.0f;  // 32 —— S4.2 弹性内边距（spacingLarge=16×2=32）
         const float contentW = screen.width - pad * 2.0f;   // 宽 = 窗口宽 − 双侧内边距
-        const float contentH = screen.height - pad * 2.0f;   // 高 = 窗口高 − 上下内边距（2026-10-25 用户拍板：底不再贴边，补 32 下距）
+        const float contentH = screen.height - pad;   // 高 = 窗口高 − 底内边距（顶距 0=标题顶格，底距 32）
         // UAT3 D-R3-3 c：面板宽每帧向目标 lerp（固定系数），距目标 <1px 即钉住；
         // treePanelCollapsed_（bool）仍为唯一持久化口径，本值启动时按折叠态直接落位。
         // sideW 取连续值 → midW/列宽随动画平滑过渡，窄窗下不再二值跳变。
@@ -435,15 +435,16 @@ public:
         constexpr float kNoteTabBarH = 32.0f;
         const int gaps = openNotes_.empty() ? 1 : 2;
         const float tabBarH = openNotes_.empty() ? 0.0f : kNoteTabBarH;
+        constexpr float kHeaderGap = 8.0f;   // 标题下间距（2026-10-25 拍板：16→8 收紧）
         const float bodyH = contentH - ui_kit::kHeaderH - tabBarH -
-                            t.sizes.spacingLarge * static_cast<float>(gaps);
+                            kHeaderGap * static_cast<float>(gaps);
 
         // 页面底色 = 主窗口 clearColor，不自铺不透明底（半透/磨砂档才生效）
 
         ui.column("md.root")
             .size(screen.width, screen.height)
-            .padding(pad, pad, pad, pad)  // 上下右左 32（S4.2 弹性骨架；2026-10-25 拍板补下距）
-            .gap(t.sizes.spacingLarge)
+            .padding(pad, 0.0f, pad, pad)  // 上=0 标题顶格（2026-10-25 拍板）——EUI padding 序=(left,top,right,bottom)，底 32
+            .gap(kHeaderGap)
             .content([&] {
                 drawHeader(ui, contentW, contentH, bodyH, t);
                 drawNoteTabBar(ui, contentW, t, componentTheme);

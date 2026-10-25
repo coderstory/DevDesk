@@ -587,9 +587,9 @@ struct BoardGeom {
 
 // 本头不碰 Ui，只收 Tokens；列模型固定四列，唯一消费者只吃顶边
 inline BoardGeom boardGeom(const core::theme::Tokens& t) {
-    const float pad = t.sizes.spacingLarge * 2.0f;  // 32 —— S4.2 弹性内边距（spacingLarge=16×2=32）
+    // 页面顶距 0（2026-10-25 拍板：标题顶格），板顶 = 页头 + 间距
     BoardGeom g;
-    g.boardTop = pad + ui_kit::kHeaderH + t.sizes.spacingLarge;
+    g.boardTop = ui_kit::kHeaderH + t.sizes.spacingLarge;
     return g;
 }
 

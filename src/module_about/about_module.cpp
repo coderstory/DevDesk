@@ -240,7 +240,7 @@ public:
 
         // 页标题（与 agent.title 同款：fontSizeTitle 24/700、32 行高、左上）
         ui.text("about.title")
-            .position(pagePad, pagePad)
+            .position(pagePad, 0.0f)  // 标题顶格不留空（2026-10-25 拍板）
             .size(contentW, kTitleH)
             .text("关于")
             .fontSize(t.sizes.fontSizeTitle)
@@ -251,7 +251,7 @@ public:
 
         // 平铺内容：分组标题/行/分隔线直接铺页面底，ID 从 about.card.* 迁 about.info.*
         const float valueX = kLabelW + 16.0f;
-        float y = pagePad + kTitleH + kGroupGap;
+        float y = kTitleH + kGroupGap;
         for (size_t gi = 0; gi < std::size(groups); ++gi) {
             const auto& g = groups[gi];
             if (gi > 0) {

@@ -349,9 +349,10 @@ public:
             const float statsBlockH = hasStats ? statBaseH : 32.0f;
             const int childCount = 2 + (hasChart ? 1 : 0) + (hasActions ? 1 : 0);
             const float baseContentH =
-                pad * 2.0f + 40.0f + statsBlockH +
+                40.0f + statsBlockH +   // 上下内边距 0（批L 顶格+贴底），左右 pad 不占高
                 gap * static_cast<float>(childCount - 1) +
                 (hasChart ? kHomeChartH : 0.0f) + (hasActions ? 44.0f : 0.0f);
+            // 顶距 32→0（批L）：高度向内边距为 0，基准里旧 32 顶距已不存在
             // 0.5px 余量：防浮点求和越过视口触发本不该出现的滚动条。
             const float extraH = std::max(0.0f, innerH - baseContentH - 0.5f);
             // 余高去向：统计行分 18%，图表卡吸收其余；图表卡缺席时统计行全吃。
@@ -362,7 +363,7 @@ public:
             // 高度用 wrapContent：固定高度会让 scrollView 的测量 pass 永远量到「正好等于视口」→ 永不判可滚
             .width(innerW)
             .height(core::SizeValue::wrapContent())
-            .padding(pad, pad, 0.0f, pad)  // 上右下左：底贴底、内容随窗高伸缩（S4.2 弹性骨架）
+            .padding(pad, 0.0f, pad, 0.0f)  // EUI 序=(left,top,right,bottom)：顶 0 标题顶格、底 0 弹性贴底（2026-10-25 拍板）
             .gap(gap)
             .content([&] {
                 // UAT5 全局顶部收紧：页头行 72→40（与其他页 kHeaderH=40 同档）——

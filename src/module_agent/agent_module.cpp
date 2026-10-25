@@ -1751,7 +1751,7 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
 
     ui.column("agent.page")
         .size(screen.width, screen.height)
-        .padding(pad, pad, 0.0f, pad)  // 上右下左：底边贴底、内容随窗高伸缩（S4.2 弹性骨架）
+        .padding(pad, 0.0f, pad, pad)  // 上=0 标题顶格（2026-10-25 拍板）——EUI padding 序=(left,top,right,bottom)
         .gap(t.sizes.spacingLarge)
                 .content([&] {
             ui.row("agent.page.header")

@@ -65,7 +65,7 @@ public:
         const auto& t = core::theme::current();
         const auto themeTokens = core::theme::componentTokensWeChat(t);
         // S3.4 顶部收紧为 24；S4.2 弹性骨架：左右 32、底贴底（无下 padding）
-        const float padTop = t.sizes.spacingXLarge;              // 24
+        const float padTop = 0.0f;                               // 标题顶格不留空（2026-10-25 拍板）
         const float padSide = t.sizes.spacingLarge * 2.0f;     // 32 —— S4.2 弹性内边距
         const float contentW = screen.width - padSide * 2.0f;   // 宽 = 窗口宽 − 双侧内边距
         const float contentH = screen.height - padTop;           // 高 = 窗口高 − 顶内边距（底贴底）

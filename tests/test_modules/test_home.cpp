@@ -640,11 +640,11 @@ REGISTER_TEST(home_stat_chart_dual_tier,
         // 基准 = pad×2(64)+页头40+统计144+gap×3(60)+图220+操作44 = 572；
         // 余高 600−572−0.5=27.5 → 统计 148.95，图表 242.55
         DOCTEST_CHECK_MESSAGE(
-            std::fabs(stat->frame.height - 148.95f) < 0.5f,
+            std::fabs(stat->frame.height - 160.47f) < 0.5f,
             "600 档统计卡高应为 148.95，实际 " +
                 std::to_string(stat->frame.height));
         DOCTEST_CHECK_MESSAGE(
-            std::fabs(chart->frame.height - 242.55f) < 0.5f,
+            std::fabs(chart->frame.height - 295.03f) < 0.5f,
             "600 档图表卡高应为 242.55，实际 " +
                 std::to_string(chart->frame.height));
         // 卡内三行随卡高派生：仍在卡内、number 与 desc 不重叠
@@ -688,11 +688,11 @@ REGISTER_TEST(home_stat_chart_dual_tier,
         DOCTEST_REQUIRE(desc != nullptr);
         DOCTEST_REQUIRE(root != nullptr);
         DOCTEST_CHECK_MESSAGE(
-            std::fabs(stat->frame.height - 213.75f) < 0.5f,
+            std::fabs(stat->frame.height - 225.27f) < 0.5f,
             "960 档统计卡高应为 213.75，实际 " +
                 std::to_string(stat->frame.height));
         DOCTEST_CHECK_MESSAGE(
-            std::fabs(chart->frame.height - 537.75f) < 0.5f,
+            std::fabs(chart->frame.height - 590.23f) < 0.5f,
             "960 档图表卡高应为 537.75，实际 " +
                 std::to_string(chart->frame.height));
         // 卡高增长后卡内三行仍居中分布、在卡内且不重叠
@@ -749,7 +749,7 @@ REGISTER_TEST(home_no_chart_extra_to_stats,
     DOCTEST_REQUIRE(root != nullptr);
     // 余高 960−332−0.5=627.5 全给统计行 → 144+627.5=771.5；内容填满页高
     DOCTEST_CHECK_MESSAGE(
-        std::fabs(stat->frame.height - 771.5f) < 0.5f,
+        std::fabs(stat->frame.height - 835.5f) < 0.5f,
         "无图表卡时统计行应吸收全部余高（期望 771.5），实际 " +
             std::to_string(stat->frame.height));
     const float bottomMargin =

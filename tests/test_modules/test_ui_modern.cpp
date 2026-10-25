@@ -921,13 +921,13 @@ REGISTER_TEST(uiModernHomeApiBarChart,
                          std::string("300"));
         DOCTEST_CHECK_EQ(textOf(ui, "home.api.chart.bars.val.8"),
                          std::string("600"));
-        // 相对柱高 == 相对 token 数（H18 纵向弹性 1200×720 档，fs=1.0）：
-        // baseContentH = pad×2(64) + 页头40 + 统计144 + gap×3(60) + 图220 + 操作44 = 572；
-        // extraH = 720 − 572 − 0.5 = 147.5；statsGrow = 147.5×0.18 = 26.55；
-        // chartH = 220 + 147.5 − 26.55 = 340.95 → wrap = 340.95 − 64 = 276.95
-        // → plot = 276.95 − 112 = 164.95。
-        // 峰值柱（600）= plot，100/600 柱 = plot/6 ≈ 27.49，300/600 柱 = plot/2 = 82.475。
-        constexpr float kElasticPlotH = 164.95f;
+        // 相对柱高 == 相对 token 数（H18 纵向弹性 1200×720 档，fs=1.0；批L 顶距后垂直内边距 0）：
+        // baseContentH = 页头40 + 统计144 + gap×3(60) + 图220 + 操作44 = 508；
+        // extraH = 720 − 508 − 0.5 = 211.5；statsGrow = 211.5×0.18 = 38.07；
+        // chartH = 220 + 211.5 − 38.07 = 393.43 → wrap = 393.43 − 64 = 329.43
+        // → plot = 329.43 − 112 = 217.43。
+        // 峰值柱（600）= plot，100/600 柱 = plot/6 ≈ 36.24，300/600 柱 = plot/2 = 108.715。
+        constexpr float kElasticPlotH = 217.43f;
         const auto* bar0 = ui.find("home.api.chart.bars.bar.0");
         const auto* bar3 = ui.find("home.api.chart.bars.bar.3");
         const auto* bar8 = ui.find("home.api.chart.bars.bar.8");
@@ -1053,7 +1053,8 @@ REGISTER_TEST(uiAboutLayout,
     DOCTEST_REQUIRE(mod != nullptr);
     mod->onStart();
     // 与 about_module.cpp 同值镜像（批J 平铺：页边距 32 / 标题 32 / 组头 24 / 行 32 / 组间 24）
-    constexpr float kPagePad = 32.0f;
+    constexpr float kPagePad = 32.0f;   // 水平边距
+    constexpr float kPageTop = 0.0f;    // 顶距：标题顶格（批L）
     constexpr float kTitleH = 32.0f;
     constexpr float kGroupHdrH = 24.0f;
     constexpr float kGroupGap = 24.0f;
@@ -1066,12 +1067,12 @@ REGISTER_TEST(uiAboutLayout,
 
     // 组 gi 的组头 y（平铺流式：首组顶 = 页边距+标题+组间距；组间 = 组头+行+组间距）
     auto flatY = [&](int gi) {
-        float y = kPagePad + kTitleH + kGroupGap;
+        float y = kPageTop + kTitleH + kGroupGap;
         for (int g = 0; g < gi; ++g)
             y += kGroupHdrH + (g == 0 ? 3 : 4) * kRowH + kGroupGap;
         return y;
     };
-    const float lastRowBottom = kPagePad + kTitleH + kGroupGap +
+    const float lastRowBottom = kPageTop + kTitleH + kGroupGap +
                                 kGroupCount * kGroupHdrH + kRowCount * kRowH +
                                 (kGroupCount - 1) * kGroupGap;  // 末组后无组间距
 
@@ -1093,7 +1094,7 @@ REGISTER_TEST(uiAboutLayout,
         const auto* title = ui.find("about.title");
         DOCTEST_REQUIRE(title != nullptr);
         DOCTEST_CHECK_MESSAGE(nearPx(title->frame.x, kPagePad), px("about.title.x", title));
-        DOCTEST_CHECK_MESSAGE(nearPx(title->frame.y, kPagePad), px("about.title.y", title));
+        DOCTEST_CHECK_MESSAGE(nearPx(title->frame.y, kPageTop), px("about.title.y", title));
         DOCTEST_CHECK_MESSAGE(nearPx(title->frame.width, screen.width - 2.0f * kPagePad),
                               px("about.title.w", title));
         DOCTEST_CHECK(title->text == "关于");
@@ -1158,6 +1159,7 @@ REGISTER_TEST(uiAboutLayout,
         DOCTEST_CHECK_MESSAGE(
             nearPx(footer->frame.y + footer->frame.height, screen.height - kPagePad),
             px("about.footer", footer));
+        DOCTEST_CHECK(lastRowBottom <= footer->frame.y);  // 顶格后内容仍不叠 footer
     }
     {
         // 最小窗：平铺内容固定高（lastRowBottom=496），640 窗不叠 footer、不出屏
