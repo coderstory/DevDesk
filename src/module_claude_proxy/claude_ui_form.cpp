@@ -415,24 +415,24 @@ void drawFormBasicTab(eui::Ui& ui, float w,
     // 行节奏沿用 cols2 前布局（label 18 + 输入 40，段距 12/8），弹高四页统一 600。
     ui.text("claude.form.basic.name.label")
         .position(28.0f, 104.0f).size(w - 56.0f, 16.0f)
-        .text("名称").fontSize(11.0f).lineHeight(16.0f)
+        .text("名称").fontSize(core::theme::scaled(11.0f)).lineHeight(core::theme::scaled(16.0f))
         .color(t.colors.textTertiary).build();
     components::input(ui, "claude.dialog.form.name")
         .position(28.0f, 122.0f).size(w - 56.0f, 40.0f)
         .value(f.formName_).placeholder("例如：官方 / 中转 A")
-        .fontSize(14.0f).theme(themeTokens)
+        .fontSize(core::theme::scaled(14.0f)).theme(themeTokens)
         .onChange([fp = &f](const std::string& v) { fp->formName_ = v; })
         .onCancel([fp = &f] { fp->formOpen_ = false; })  // Esc=取消（关表单不提交，各输入框统一）
         .build();
 
     ui.text("claude.form.basic.url.label")
         .position(28.0f, 174.0f).size(w - 56.0f, 16.0f)
-        .text("Base URL").fontSize(11.0f).lineHeight(16.0f)
+        .text("Base URL").fontSize(core::theme::scaled(11.0f)).lineHeight(core::theme::scaled(16.0f))
         .color(t.colors.textTertiary).build();
     components::input(ui, "claude.dialog.form.url")
         .position(28.0f, 192.0f).size(w - 56.0f, 40.0f)
         .value(f.formUrl_).placeholder("https://api.anthropic.com")
-        .fontSize(14.0f).theme(themeTokens)
+        .fontSize(core::theme::scaled(14.0f)).theme(themeTokens)
         .onChange([fp = &f](const std::string& v) { fp->formUrl_ = v; })
         .onCancel([fp = &f] { fp->formOpen_ = false; })  // Esc=取消
         .build();
@@ -440,7 +440,7 @@ void drawFormBasicTab(eui::Ui& ui, float w,
     ui.text("claude.form.basic.key.label")
         .position(28.0f, 244.0f).size(w - 56.0f, 16.0f)
         .text("API Key（" + std::string(platform::credential::protectionDescription()) + "）")
-        .fontSize(11.0f).lineHeight(16.0f)
+        .fontSize(core::theme::scaled(11.0f)).lineHeight(core::theme::scaled(16.0f))
         .color(t.colors.textTertiary).build();
     const std::string keyPlaceholder = isEdit
         ? ("留空 = 保持现有 Key（" + f.formKeyHint_ + "）")
@@ -448,7 +448,7 @@ void drawFormBasicTab(eui::Ui& ui, float w,
     components::input(ui, "claude.dialog.form.key")
         .position(28.0f, 262.0f).size(w - 56.0f, 40.0f)
         .value(f.formKey_).placeholder(keyPlaceholder)
-        .fontSize(14.0f).theme(themeTokens)
+        .fontSize(core::theme::scaled(14.0f)).theme(themeTokens)
         .onChange([fp = &f](const std::string& v) { fp->formKey_ = v; })
         .onCancel([fp = &f] { fp->formOpen_ = false; })  // Esc=取消
         .build();
@@ -456,12 +456,12 @@ void drawFormBasicTab(eui::Ui& ui, float w,
     // 认证字段（鉴权头三态）还原独占一行：标签与灰字说明同行，下拉紧随全宽
     ui.text("claude.form.basic.authfield.label")
         .position(28.0f, 314.0f).size(72.0f, 16.0f)
-        .text("认证字段").fontSize(11.0f).lineHeight(16.0f)
+        .text("认证字段").fontSize(core::theme::scaled(11.0f)).lineHeight(core::theme::scaled(16.0f))
         .color(t.colors.textTertiary).build();
     ui.text("claude.form.basic.authfield.hint")
         .position(104.0f, 314.0f).size(w - 132.0f, 16.0f)
         .text("网关只接受一种鉴权头时切换；默认两种都发")
-        .fontSize(11.0f).lineHeight(16.0f)
+        .fontSize(core::theme::scaled(11.0f)).lineHeight(core::theme::scaled(16.0f))
         .color(t.colors.textTertiary).build();
     ui.stack("claude.form.basic.authfield.ddwrap")
         .position(28.0f, 332.0f)
@@ -486,18 +486,18 @@ void drawFormBasicTab(eui::Ui& ui, float w,
     // 行节奏沿用原布局：hint 380 / 错误 404 / 接管警告 426（弹高 600 下按钮带 472 起，呼吸区充足）
     ui.text("claude.form.basic.hint.icon")
         .position(28.0f, 380.0f).size(14.0f, 18.0f)
-        .icon(0xF05A).fontSize(12.0f).lineHeight(18.0f)
+        .icon(0xF05A).fontSize(core::theme::scaled(12.0f)).lineHeight(core::theme::scaled(18.0f))
         .color(t.colors.textTertiary).build();
     ui.text("claude.form.basic.hint")
         .position(46.0f, 380.0f).size(w - 74.0f, 18.0f)
         .text("模型映射、高级 env 和高级配置在另外几个标签页配置")
-        .fontSize(12.0f).lineHeight(18.0f)
+        .fontSize(core::theme::scaled(12.0f)).lineHeight(core::theme::scaled(18.0f))
         .color(t.colors.textTertiary).build();
 
     if (!f.formError_.empty()) {
         ui.text("claude.dialog.form.error")
             .position(28.0f, 404.0f).size(w - 56.0f, 18.0f)
-            .text(f.formError_).fontSize(12.0f).lineHeight(18.0f)
+            .text(f.formError_).fontSize(core::theme::scaled(12.0f)).lineHeight(core::theme::scaled(18.0f))
             .color(t.colors.errorText).build();
     }
 
@@ -505,11 +505,11 @@ void drawFormBasicTab(eui::Ui& ui, float w,
     if (!f.formImportWarn_.empty()) {
         ui.text("claude.dialog.form.importwarn.icon")
             .position(28.0f, 426.0f).size(14.0f, 18.0f)
-            .icon(0xF071).fontSize(12.0f).lineHeight(18.0f)
+            .icon(0xF071).fontSize(core::theme::scaled(12.0f)).lineHeight(core::theme::scaled(18.0f))
             .color(t.colors.warning).build();
         ui.text("claude.dialog.form.importwarn")
             .position(46.0f, 426.0f).size(w - 74.0f, 36.0f)
-            .text(f.formImportWarn_).fontSize(12.0f).lineHeight(18.0f)
+            .text(f.formImportWarn_).fontSize(core::theme::scaled(12.0f)).lineHeight(core::theme::scaled(18.0f))
             .color(t.colors.warning).build();
     }
 }
@@ -524,12 +524,12 @@ void drawFormAdvancedTab(eui::Ui& ui, float w,
     // 方言覆盖：idx 0=未覆盖 / 1=anthropic_default / 2=opencode_zen；显示名与详情页共用 dialectKindDisplayName
     ui.text("claude.form.advanced.dialect.label")
         .position(28.0f, 104.0f).size(72.0f, 16.0f)
-        .text("上游方言").fontSize(11.0f).lineHeight(16.0f)
+        .text("上游方言").fontSize(core::theme::scaled(11.0f)).lineHeight(core::theme::scaled(16.0f))
         .color(t.colors.textTertiary).build();
     ui.text("claude.form.advanced.dialect.hint")
         .position(104.0f, 104.0f).size(w - 132.0f, 16.0f)
         .text("网关行为差异（鉴权头/会话头/模型名标记）不一致时切换；默认按站点推断")
-        .fontSize(11.0f).lineHeight(16.0f)
+        .fontSize(core::theme::scaled(11.0f)).lineHeight(core::theme::scaled(16.0f))
         .color(t.colors.textTertiary).build();
     {
         std::vector<std::string> items;
@@ -578,12 +578,12 @@ void drawFormAdvancedTab(eui::Ui& ui, float w,
     // 备用 Profile（0=不启用）：主 Profile 返回可重试错误时换发备用（可能按另一家计费）
     ui.text("claude.form.basic.fallback.label")
         .position(28.0f, 174.0f).size(72.0f, 16.0f)
-        .text("备用 Profile").fontSize(11.0f).lineHeight(16.0f)
+        .text("备用 Profile").fontSize(core::theme::scaled(11.0f)).lineHeight(core::theme::scaled(16.0f))
         .color(t.colors.textTertiary).build();
     ui.text("claude.form.basic.fallback.hint")
         .position(104.0f, 174.0f).size(w - 132.0f, 16.0f)
         .text("401/403/429/5xx/网络失败时换发备用（可能按另一家计费）")
-        .fontSize(11.0f).lineHeight(16.0f)
+        .fontSize(core::theme::scaled(11.0f)).lineHeight(core::theme::scaled(16.0f))
         .color(t.colors.textTertiary).build();
     {
         // 候选 = 全部 profile 排除自身（新建 formEditId_==0 = 全部可选）
@@ -635,12 +635,12 @@ void drawFormAdvancedTab(eui::Ui& ui, float w,
     // 共享配置片段绑定（idx 0 = 未绑定）
     ui.text("claude.form.advanced.shared.label")
         .position(28.0f, 244.0f).size(72.0f, 16.0f)
-        .text("绑定片段").fontSize(11.0f).lineHeight(16.0f)
+        .text("绑定片段").fontSize(core::theme::scaled(11.0f)).lineHeight(core::theme::scaled(16.0f))
         .color(t.colors.textTertiary).build();
     ui.text("claude.form.advanced.shared.hint")
         .position(104.0f, 244.0f).size(w - 132.0f, 16.0f)
         .text("片段属性在写入时覆盖本页同名键，解绑回落")
-        .fontSize(11.0f).lineHeight(16.0f)
+        .fontSize(core::theme::scaled(11.0f)).lineHeight(core::theme::scaled(16.0f))
         .color(t.colors.textTertiary).build();
     {
         std::vector<std::string> items;
@@ -684,19 +684,19 @@ void drawFormAdvancedTab(eui::Ui& ui, float w,
 
     ui.text("claude.form.advanced.json.label")
         .position(28.0f, 314.0f).size(110.0f, 16.0f)
-        .text("高级设置 JSON").fontSize(11.0f).lineHeight(16.0f)
+        .text("高级设置 JSON").fontSize(core::theme::scaled(11.0f)).lineHeight(core::theme::scaled(16.0f))
         .color(t.colors.textTertiary).build();
     ui.text("claude.form.advanced.json.hint")
         .position(142.0f, 314.0f).size(w - 170.0f, 16.0f)
         .text("settings.json 除 env 外的属性：model / permissions / statusLine / hooks / …")
-        .fontSize(11.0f).lineHeight(16.0f)
+        .fontSize(core::theme::scaled(11.0f)).lineHeight(core::theme::scaled(16.0f))
         .color(t.colors.textTertiary).build();
     components::input(ui, "claude.form.advanced.json")
         .position(28.0f, 332.0f).size(w - 56.0f, 100.0f)
         .value(f.formExtraSettingsJson_)
         .placeholder(R"({ "model": "...", "permissions": { ... } })")
         .multiline(true).scrollbar(true)
-        .fontSize(12.0f).theme(themeTokens)
+        .fontSize(core::theme::scaled(12.0f)).theme(themeTokens)
         .onChange([fp = &f](const std::string& v) {
             fp->formExtraSettingsJson_ = v;
             fp->formAdvancedJsonError_.clear();
@@ -708,7 +708,7 @@ void drawFormAdvancedTab(eui::Ui& ui, float w,
     //（UAT5 米黄清理：surfaceElevated 暖橙 → WeChat Secondary 白底灰边）
     components::button(ui, "claude.form.advanced.json.format")
         .position(28.0f, 440.0f).size(110.0f, 32.0f)
-        .text("格式化").fontSize(12.0f)
+        .text("格式化").fontSize(core::theme::scaled(12.0f))
         .colors(t.colors.hover,
                 t.colors.hover,
                 t.colors.hover)
@@ -720,7 +720,7 @@ void drawFormAdvancedTab(eui::Ui& ui, float w,
     // 「全屏编辑」入口：只置位 formJsonFullscreen_，覆盖层由 compose 绘制，表单态本帧不动
     components::button(ui, "claude.form.advanced.json.fs")
         .position(150.0f, 440.0f).size(110.0f, 32.0f)
-        .text("全屏编辑").fontSize(12.0f)
+        .text("全屏编辑").fontSize(core::theme::scaled(12.0f))
         .colors(t.colors.hover,
                 t.colors.hover,
                 t.colors.hover)
@@ -737,7 +737,7 @@ void drawFormAdvancedTab(eui::Ui& ui, float w,
             .position(272.0f, 448.0f).size(w - 300.0f, 16.0f)
             .text("已绑定片段「" + truncateUtf8(boundSc->name, 16) +
                   "」：同名键以片段为准（解绑后回落本页值）")
-            .fontSize(11.0f).lineHeight(16.0f)
+            .fontSize(core::theme::scaled(11.0f)).lineHeight(core::theme::scaled(16.0f))
             .color(t.colors.textTertiary).build();
     }
 
@@ -745,7 +745,7 @@ void drawFormAdvancedTab(eui::Ui& ui, float w,
     if (!f.formAdvancedJsonError_.empty() && f.formError_.empty()) {
         ui.text("claude.form.advanced.json.error")
             .position(28.0f, 480.0f).size(w - 56.0f, 16.0f)
-            .text(f.formAdvancedJsonError_).fontSize(11.0f).lineHeight(16.0f)
+            .text(f.formAdvancedJsonError_).fontSize(core::theme::scaled(11.0f)).lineHeight(core::theme::scaled(16.0f))
             .color(t.colors.errorText).build();
     }
 }
@@ -758,15 +758,15 @@ void drawFormModelsTab(eui::Ui& ui, float w,
 
     ui.text("claude.form.slots.h.slot")
         .position(28.0f, 104.0f).size(110.0f, 14.0f)
-        .text("槽位").fontSize(11.0f).lineHeight(14.0f)
+        .text("槽位").fontSize(core::theme::scaled(11.0f)).lineHeight(core::theme::scaled(14.0f))
         .color(t.colors.textTertiary).build();
     ui.text("claude.form.slots.h.model")
         .position(150.0f, 104.0f).size(330.0f, 14.0f)
-        .text("上游模型名（发往上游）").fontSize(11.0f).lineHeight(14.0f)
+        .text("上游模型名（发往上游）").fontSize(core::theme::scaled(11.0f)).lineHeight(core::theme::scaled(14.0f))
         .color(t.colors.textTertiary).build();
     ui.text("claude.form.slots.h.name")
         .position(492.0f, 104.0f).size(240.0f, 14.0f)
-        .text("显示名（CC 界面）").fontSize(11.0f).lineHeight(14.0f)
+        .text("显示名（CC 界面）").fontSize(core::theme::scaled(11.0f)).lineHeight(core::theme::scaled(14.0f))
         .color(t.colors.textTertiary).build();
 
     for (size_t i = 0; i < slotTable.size(); ++i) {
@@ -776,12 +776,12 @@ void drawFormModelsTab(eui::Ui& ui, float w,
         const std::string idx = std::to_string(i);
         ui.text("claude.form.slot.label." + idx)
             .position(28.0f, y + 10.0f).size(110.0f, 16.0f)
-            .text(row.formLabel).fontSize(12.0f).lineHeight(16.0f)
+            .text(row.formLabel).fontSize(core::theme::scaled(12.0f)).lineHeight(core::theme::scaled(16.0f))
             .color(t.colors.textSecondary).build();
         components::input(ui, "claude.form.slot." + idx + ".model")
             .position(150.0f, y).size(330.0f, 36.0f)
             .value(slot.model).placeholder("fangzhou/glm-5.3[1M]")
-            .fontSize(13.0f).theme(themeTokens)
+            .fontSize(core::theme::scaled(13.0f)).theme(themeTokens)
             .onChange([fp = &f, m = row.slot](const std::string& v) {
                 (fp->formModels_.*m).model = v;
             })
@@ -793,7 +793,7 @@ void drawFormModelsTab(eui::Ui& ui, float w,
             .position(492.0f, y).size(240.0f, 36.0f)
             .value(slot.name)
             .placeholder(derived.empty() ? "（自动派生）" : derived)
-            .fontSize(13.0f).theme(themeTokens)
+            .fontSize(core::theme::scaled(13.0f)).theme(themeTokens)
             .onChange([fp = &f, m = row.slot](const std::string& v) {
                 (fp->formModels_.*m).name = v;
             })
@@ -803,17 +803,17 @@ void drawFormModelsTab(eui::Ui& ui, float w,
 
     ui.text("claude.form.slots.hint1.icon")
         .position(28.0f, 446.0f).size(14.0f, 16.0f)
-        .icon(0xF05A).fontSize(11.0f).lineHeight(16.0f)
+        .icon(0xF05A).fontSize(core::theme::scaled(11.0f)).lineHeight(core::theme::scaled(16.0f))
         .color(t.colors.textTertiary).build();
     ui.text("claude.form.slots.hint1")
         .position(46.0f, 446.0f).size(w - 74.0f, 16.0f)
         .text("显示名留空时自动剥除模型名的 [1M]/[200K] 等上下文标记")
-        .fontSize(11.0f).lineHeight(16.0f)
+        .fontSize(core::theme::scaled(11.0f)).lineHeight(core::theme::scaled(16.0f))
         .color(t.colors.textTertiary).build();
     ui.text("claude.form.slots.hint2")
         .position(28.0f, 464.0f).size(w - 56.0f, 16.0f)
         .text("    槽位留空 = 不写入该 env 键，Claude Code 用内置映射")
-        .fontSize(11.0f).lineHeight(16.0f)
+        .fontSize(core::theme::scaled(11.0f)).lineHeight(core::theme::scaled(16.0f))
         .color(t.colors.textTertiary).build();
 }
 
@@ -829,7 +829,7 @@ void drawFormEnvTab(eui::Ui& ui, float w,
     ui.text("claude.form.env.label")
         .position(28.0f, 104.0f).size(348.0f, 16.0f)
         .text("额外环境变量（原样写入 settings.json env 块）")
-        .fontSize(11.0f).lineHeight(16.0f)
+        .fontSize(core::theme::scaled(11.0f)).lineHeight(core::theme::scaled(16.0f))
         .color(t.colors.textTertiary).build();
 
     const size_t visible =
@@ -841,7 +841,7 @@ void drawFormEnvTab(eui::Ui& ui, float w,
         components::input(ui, "claude.form.env.row." + idx + ".key")
             .position(28.0f, y).size(220.0f, 40.0f)
             .value(f.formEnvRows_[i].first).placeholder("ENV_KEY")
-            .fontSize(12.0f).theme(themeTokens)
+            .fontSize(core::theme::scaled(12.0f)).theme(themeTokens)
             .onChange([fp = &f, i](const std::string& v) {
                 fp->formEnvRows_[i].first = v;
             })
@@ -868,7 +868,7 @@ void drawFormEnvTab(eui::Ui& ui, float w,
         components::input(ui, "claude.form.env.row." + idx + ".value")
             .position(258.0f, y).size(414.0f, 40.0f)
             .value(f.formEnvRows_[i].second).placeholder("值（字符串）")
-            .fontSize(12.0f).theme(themeTokens)
+            .fontSize(core::theme::scaled(12.0f)).theme(themeTokens)
             .onChange([fp = &f, i](const std::string& v) {
                 fp->formEnvRows_[i].second = v;
             })
@@ -880,7 +880,7 @@ void drawFormEnvTab(eui::Ui& ui, float w,
                            components::ButtonVariant::Danger)
             .position(700.0f, y).size(32.0f, 40.0f)
             .icon(0xF00D)  // fa-xmark
-            .fontSize(13.0f)
+            .fontSize(core::theme::scaled(13.0f))
             .theme(themeTokens)
             // UAT6 阴影统一：ButtonStyle 默认已无阴影（EUI-NEO 根修），此处不再
             // 逐钮覆盖透明阴影（原 workaround 已被根修吸收）。
@@ -896,7 +896,7 @@ void drawFormEnvTab(eui::Ui& ui, float w,
     // S3.9 #4：「+ 添加变量」改 Outline 次按钮 32px 高（白底绿边绿字，hover 淡绿底）
     components::button(ui, "claude.form.env.add", components::ButtonVariant::Outline)
         .position(28.0f, 314.0f).size(120.0f, 32.0f)
-        .text("+ 添加变量").fontSize(12.0f)
+        .text("+ 添加变量").fontSize(core::theme::scaled(12.0f))
         .theme(themeTokens)
         .onClick([fp = &f] { fp->formEnvRows_.emplace_back(); })
         .build();
@@ -904,7 +904,7 @@ void drawFormEnvTab(eui::Ui& ui, float w,
         // S3.9 #6：前置 ℹ 图标（14px 信息蓝）+ 12px 三级灰字（原 11px 过浅）
         ui.text("claude.form.env.overflow.icon")
             .position(150.0f, 322.0f).size(14.0f, 16.0f)
-            .icon(0xF05A).fontSize(12.0f).lineHeight(16.0f)
+            .icon(0xF05A).fontSize(core::theme::scaled(12.0f)).lineHeight(core::theme::scaled(16.0f))
             .color(t.colors.info).build();
         ui.text("claude.form.env.overflow")
             .position(168.0f, 322.0f).size(w - 168.0f - 28.0f, 32.0f)
@@ -912,21 +912,21 @@ void drawFormEnvTab(eui::Ui& ui, float w,
                                            kMaxVisibleRows) +
                   " 项已保存（保存时全量写入，列表仅显示前 " +
                   std::to_string(kMaxVisibleRows) + " 项）")
-            .fontSize(12.0f).lineHeight(16.0f)
+            .fontSize(core::theme::scaled(12.0f)).lineHeight(core::theme::scaled(16.0f))
             .color(t.colors.textTertiary).build();
     }
 
     ui.text("claude.form.import.label")
         .position(28.0f, 356.0f).size(w - 56.0f, 16.0f)
         .text("── 从 CC / settings.json 粘贴导入 ──")
-        .fontSize(11.0f).lineHeight(16.0f)
+        .fontSize(core::theme::scaled(11.0f)).lineHeight(core::theme::scaled(16.0f))
         .color(t.colors.textTertiary).build();
     components::input(ui, "claude.form.import.text")
         .position(28.0f, 376.0f).size(w - 56.0f, 72.0f)
         .value(imp.importText_)
         .placeholder(R"({ "env": { "ANTHROPIC_BASE_URL": "...", ... } }  粘贴整段 settings.json 或仅 env 对象)")
         .multiline(true).scrollbar(true)
-        .fontSize(12.0f).theme(themeTokens)
+        .fontSize(core::theme::scaled(12.0f)).theme(themeTokens)
         .onChange([ip = &imp](const std::string& v) { ip->importText_ = v; })
         .onCancel([fp = &f] { fp->formOpen_ = false; })  // Esc=取消
         .build();
@@ -934,12 +934,12 @@ void drawFormEnvTab(eui::Ui& ui, float w,
     ui.text("claude.form.import.formathint")
         .position(28.0f, 452.0f).size(w - 56.0f, 14.0f)
         .text("每行一条，格式: KEY=VALUE；或粘贴整段 settings.json / 仅 env 对象")
-        .fontSize(11.0f).lineHeight(14.0f)
+        .fontSize(core::theme::scaled(11.0f)).lineHeight(core::theme::scaled(14.0f))
         .color(t.colors.textTertiary).build();
 
     components::button(ui, "claude.form.import.parse")
         .position(28.0f, 468.0f).size(110.0f, 32.0f)
-        .text("解析导入").fontSize(12.0f)
+        .text("解析导入").fontSize(core::theme::scaled(12.0f))
         .colors(t.colors.hover,
                 t.colors.hover,
                 t.colors.hover)
@@ -952,7 +952,7 @@ void drawFormEnvTab(eui::Ui& ui, float w,
         // 主动作 → WeChat Primary 绿填充白字（原 legacy 橙 primary 一并换）
         components::button(ui, "claude.form.import.apply")
             .position(148.0f, 468.0f).size(110.0f, 32.0f)
-            .text("应用到表单").fontSize(12.0f)
+            .text("应用到表单").fontSize(core::theme::scaled(12.0f))
             .colors(t.colors.primary, t.colors.primaryHover,
                     t.colors.primaryPressed)
             .textColor(t.colors.onPrimary)
@@ -965,11 +965,11 @@ void drawFormEnvTab(eui::Ui& ui, float w,
     if (!imp.importError_.empty()) {
         ui.text("claude.form.import.error.icon")
             .position(270.0f, 468.0f).size(13.0f, 16.0f)
-            .icon(0xF00D).fontSize(11.0f).lineHeight(16.0f)
+            .icon(0xF00D).fontSize(core::theme::scaled(11.0f)).lineHeight(core::theme::scaled(16.0f))
             .color(t.colors.error).build();
         ui.text("claude.form.import.error")
             .position(286.0f, 468.0f).size(w - 286.0f - 28.0f, 48.0f)
-            .text(imp.importError_).fontSize(11.0f).lineHeight(16.0f)
+            .text(imp.importError_).fontSize(core::theme::scaled(11.0f)).lineHeight(core::theme::scaled(16.0f))
             .color(t.colors.errorText).build();
     } else if (imp.importReady_) {
         ui.text("claude.form.import.preview")
@@ -981,7 +981,7 @@ void drawFormEnvTab(eui::Ui& ui, float w,
                   std::to_string(imp.importPreview_.aliasMappedKeys.size()) +
                   " · 未识别 " +
                   std::to_string(imp.importPreview_.unrecognizedKeys.size()))
-            .fontSize(11.0f).lineHeight(16.0f)
+            .fontSize(core::theme::scaled(11.0f)).lineHeight(core::theme::scaled(16.0f))
             .color(t.colors.textSecondary).build();
         // 警告角标最多 3 条（弹窗高度约束；全量信息在保存后的 settings.json 与日志可查）
         std::vector<std::string> notes;
@@ -1005,25 +1005,25 @@ void drawFormEnvTab(eui::Ui& ui, float w,
                 ui.text("claude.form.import.note.icon." + std::to_string(i))
                     .position(270.0f, 486.0f + static_cast<float>(i) * 15.0f)
                     .size(13.0f, 15.0f)
-                    .icon(0xF071).fontSize(10.0f).lineHeight(15.0f)
+                    .icon(0xF071).fontSize(core::theme::scaled(10.0f)).lineHeight(core::theme::scaled(15.0f))
                     .color(t.colors.warning).build();
                 ui.text("claude.form.import.note." + std::to_string(i))
                     .position(286.0f, 486.0f + static_cast<float>(i) * 15.0f)
                     .size(w - 286.0f - 28.0f, 15.0f)
-                    .text(notes[i]).fontSize(10.0f).lineHeight(15.0f)
+                    .text(notes[i]).fontSize(core::theme::scaled(10.0f)).lineHeight(core::theme::scaled(15.0f))
                     .color(t.colors.warning).build();
             }
         }
     } else {
         ui.text("claude.form.import.hint.icon")
             .position(270.0f, 468.0f).size(13.0f, 16.0f)
-            .icon(0xF05A).fontSize(11.0f).lineHeight(16.0f)
+            .icon(0xF05A).fontSize(core::theme::scaled(11.0f)).lineHeight(core::theme::scaled(16.0f))
             .color(t.colors.textTertiary).build();
         ui.text("claude.form.import.hint")
             .position(286.0f, 468.0f).size(w - 286.0f - 28.0f, 32.0f)
             .text("BASE_URL/AUTH_TOKEN 归基础页，模型键归模型映射页，"
                   "其余进入上表")
-            .fontSize(11.0f).lineHeight(16.0f)
+            .fontSize(core::theme::scaled(11.0f)).lineHeight(core::theme::scaled(16.0f))
             .color(t.colors.textTertiary).build();
     }
 }
@@ -1148,7 +1148,7 @@ void drawJsonFullscreenOverlay(eui::Ui& ui, const eui::Screen& screen,
                 .text("与表单弹窗同一份编辑缓冲：格式化 / 保存（= 整表单提交）在此生效；"
                       "「放弃修改」、Esc 或点击遮罩 = 丢弃本次改动并回到上次保存值；"
                       "基础项（名称/URL/Key）缺失需回表单基础页补填")
-                .fontSize(11.0f).lineHeight(16.0f)
+                .fontSize(core::theme::scaled(11.0f)).lineHeight(core::theme::scaled(16.0f))
                 .color(t.colors.textTertiary).build();
 
             // 大号多行编辑框；与表单框同接 formExtraSettingsJson_（同一编辑缓冲），Esc = 放弃修改
@@ -1157,7 +1157,7 @@ void drawJsonFullscreenOverlay(eui::Ui& ui, const eui::Screen& screen,
                 .value(f.formExtraSettingsJson_)
                 .placeholder(R"({ "model": "...", "permissions": { ... } })")
                 .multiline(true).scrollbar(true)
-                .fontSize(13.0f).theme(themeTokens)
+                .fontSize(core::theme::scaled(13.0f)).theme(themeTokens)
                 .onChange([fp = &f](const std::string& v) {
                     fp->formExtraSettingsJson_ = v;
                     fp->formAdvancedJsonError_.clear();
@@ -1172,7 +1172,7 @@ void drawJsonFullscreenOverlay(eui::Ui& ui, const eui::Screen& screen,
             if (!fsError.empty()) {
                 ui.text("claude.jsonfs.error")
                     .position(28.0f, h - 96.0f).size(w - 56.0f, 16.0f)
-                    .text(fsError).fontSize(12.0f).lineHeight(16.0f)
+                    .text(fsError).fontSize(core::theme::scaled(12.0f)).lineHeight(core::theme::scaled(16.0f))
                     .color(t.colors.errorText).build();
             }
 
@@ -1180,7 +1180,7 @@ void drawJsonFullscreenOverlay(eui::Ui& ui, const eui::Screen& screen,
             //（UAT5 米黄清理：surfaceElevated/legacy primary → WeChat Secondary/Primary）
             components::button(ui, "claude.jsonfs.format")
                 .position(28.0f, h - 68.0f).size(110.0f, 40.0f)
-                .text("格式化").fontSize(12.0f)
+                .text("格式化").fontSize(core::theme::scaled(12.0f))
                 .colors(t.colors.hover,
                         t.colors.hover,
                         t.colors.hover)
@@ -1191,7 +1191,7 @@ void drawJsonFullscreenOverlay(eui::Ui& ui, const eui::Screen& screen,
                 .build();
             components::button(ui, "claude.jsonfs.apply")
                 .position(150.0f, h - 68.0f).size(110.0f, 40.0f)
-                .text("保存").fontSize(12.0f)
+                .text("保存").fontSize(core::theme::scaled(12.0f))
                 .colors(t.colors.primary, t.colors.primaryHover,
                         t.colors.primaryPressed)
                 .textColor(t.colors.onPrimary)
@@ -1202,7 +1202,7 @@ void drawJsonFullscreenOverlay(eui::Ui& ui, const eui::Screen& screen,
                 .build();
             components::button(ui, "claude.jsonfs.discard")
                 .position(272.0f, h - 68.0f).size(110.0f, 40.0f)
-                .text("放弃修改").fontSize(12.0f)
+                .text("放弃修改").fontSize(core::theme::scaled(12.0f))
                 .colors(t.colors.hover,
                         t.colors.hover,
                         t.colors.hover)
@@ -1360,12 +1360,12 @@ void drawSharedConfigDialog(eui::Ui& ui, const eui::Screen& screen,
         ui.text("claude.dialog.shared.name.label")
             .position(28.0f, 64.0f).size(w - 56.0f, 16.0f)
             .text("片段名（共享给所有 Profile 的高级属性预设，不含密钥/Base URL）")
-            .fontSize(11.0f).lineHeight(16.0f)
+            .fontSize(core::theme::scaled(11.0f)).lineHeight(core::theme::scaled(16.0f))
             .color(t.colors.textTertiary).build();
         components::input(ui, "claude.dialog.shared.name")
             .position(28.0f, 82.0f).size(w - 56.0f, 36.0f)
             .value(s.name_).placeholder("例如：企业内部网关 env")
-            .fontSize(14.0f).theme(themeTokens)
+            .fontSize(core::theme::scaled(14.0f)).theme(themeTokens)
             .onChange([sp = &s](const std::string& v) { sp->name_ = v; })
             .onCancel([sp = &s] { sp->open_ = false; })   // Esc=取消（同表单各输入框）
             .build();
@@ -1374,14 +1374,14 @@ void drawSharedConfigDialog(eui::Ui& ui, const eui::Screen& screen,
         ui.text("claude.dialog.shared.json.label")
             .position(28.0f, 128.0f).size(w - 56.0f, 16.0f)
             .text("高级设置 JSON（settings.json 除 env 外的属性，绑定它的 Profile 写入时覆盖同名键）")
-            .fontSize(11.0f).lineHeight(16.0f)
+            .fontSize(core::theme::scaled(11.0f)).lineHeight(core::theme::scaled(16.0f))
             .color(t.colors.textTertiary).build();
         components::input(ui, "claude.dialog.shared.json")
             .position(28.0f, 146.0f).size(w - 56.0f, 170.0f)
             .value(s.extraSettingsJson_)
             .placeholder(R"({ "model": "...", "permissions": { ... } })")
             .multiline(true).scrollbar(true)
-            .fontSize(12.0f).theme(themeTokens)
+            .fontSize(core::theme::scaled(12.0f)).theme(themeTokens)
             .onChange([sp = &s](const std::string& v) {
                 sp->extraSettingsJson_ = v;
                 sp->error_.clear();
@@ -1391,7 +1391,7 @@ void drawSharedConfigDialog(eui::Ui& ui, const eui::Screen& screen,
         //（UAT5 米黄清理：surfaceElevated 暖橙 → WeChat Secondary 白底灰边，同表单高级页格式化钮）
         components::button(ui, "claude.dialog.shared.json.format")
             .position(28.0f, 324.0f).size(110.0f, 32.0f)
-            .text("格式化").fontSize(12.0f)
+            .text("格式化").fontSize(core::theme::scaled(12.0f))
             .colors(t.colors.hover,
                     t.colors.hover,
                     t.colors.hover)
@@ -1418,7 +1418,7 @@ void drawSharedConfigDialog(eui::Ui& ui, const eui::Screen& screen,
         if (!s.error_.empty()) {
             ui.text("claude.dialog.shared.error")
                 .position(28.0f, 364.0f).size(w - 56.0f, 18.0f)
-                .text(s.error_).fontSize(12.0f).lineHeight(18.0f)
+                .text(s.error_).fontSize(core::theme::scaled(12.0f)).lineHeight(core::theme::scaled(18.0f))
                 .color(t.colors.errorText).build();
         }
 
@@ -1428,7 +1428,7 @@ void drawSharedConfigDialog(eui::Ui& ui, const eui::Screen& screen,
         if (isEdit) {
             components::button(ui, "claude.dialog.shared.delete")
                 .position(28.0f, py).size(88.0f, 40.0f)
-                .text("删除").fontSize(14.0f)
+                .text("删除").fontSize(core::theme::scaled(14.0f))
                 .colors(t.colors.hover,
                         t.colors.hover,
                         t.colors.hover)
@@ -1448,7 +1448,7 @@ void drawSharedConfigDialog(eui::Ui& ui, const eui::Screen& screen,
                                       : 28.0f + pairW + 12.0f;
         components::button(ui, "claude.dialog.shared.cancel")
             .position(cancelX, py).size(pairW, 40.0f)
-            .text("取消").fontSize(14.0f)
+            .text("取消").fontSize(core::theme::scaled(14.0f))
             .colors(t.colors.hover,
                     t.colors.hover,
                     t.colors.hover)
@@ -1459,7 +1459,7 @@ void drawSharedConfigDialog(eui::Ui& ui, const eui::Screen& screen,
             .build();
         components::button(ui, "claude.dialog.shared.confirm")
             .position(confirmX, py).size(pairW, 40.0f)
-            .text(isEdit ? "保存" : "创建").fontSize(14.0f)
+            .text(isEdit ? "保存" : "创建").fontSize(core::theme::scaled(14.0f))
             .colors(t.colors.primary, t.colors.primaryHover,
                     t.colors.primaryPressed)
             .textColor(t.colors.onPrimary)

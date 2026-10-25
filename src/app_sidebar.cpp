@@ -291,7 +291,7 @@ void drawTitlebar(eui::Ui& ui, const eui::Screen& screen) {
             .position(bx, 0.0f)
             .size(kWindowButtonW, h)
             .icon(eui::utf8(glyph))
-            .fontSize(12.0f)
+            .fontSize(core::theme::scaled(12.0f))
             .horizontalAlign(eui::HorizontalAlign::Center)
             .verticalAlign(eui::VerticalAlign::Center)
             .color(redHover && g_closeButtonHovered

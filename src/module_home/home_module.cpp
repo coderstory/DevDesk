@@ -741,8 +741,8 @@ public:
                                                 .y(by - 14.0f)
                                                 .size(barW + 24.0f, 14.0f)
                                                 .text(formatTokenCount(v))
-                                                .fontSize(10.0f)
-                                                .lineHeight(14.0f)
+                                                .fontSize(core::theme::scaled(10.0f))
+                                                .lineHeight(core::theme::scaled(14.0f))
                                                 .horizontalAlign(
                                                     eui::HorizontalAlign::Center)
                                                 .color(t.colors.textSecondary)
@@ -757,8 +757,8 @@ public:
                                                 .text(std::to_string(
                                                           range.first + i) +
                                                       "时")
-                                                .fontSize(10.0f)
-                                                .lineHeight(16.0f)
+                                                .fontSize(core::theme::scaled(10.0f))
+                                                .lineHeight(core::theme::scaled(16.0f))
                                                 .horizontalAlign(
                                                     eui::HorizontalAlign::Center)
                                                 .color(t.colors.textTertiary)

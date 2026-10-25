@@ -20,10 +20,9 @@ void formRow(eui::Ui& ui, const std::string& id, const std::string& label,
         .position(x, y)
         .size(labelW, totalH)
         .text(label)
-        // §3.3 主文字；token 体系无 14 档，钉 spec 值 × 全局字号档（与 settings
-        // 的 fs() 同式 base×fontScale；ui_kit 不能 include module_settings，直乘
-        // core::theme::fontScale()）。行盒由消费方 roundFs(36) 派生、随档缩放。
-        .fontSize(14.0f * core::theme::fontScale())
+        // §3.3 主文字；token 体系无 14 档，钉 spec 值经 scaled() 随全局字号档缩放。
+        // 行盒由消费方 roundFs(36) 派生、随档缩放。
+        .fontSize(core::theme::scaled(14.0f))
         .horizontalAlign(eui::HorizontalAlign::Left)
         .verticalAlign(eui::VerticalAlign::Center)
         .color(t.colors.textPrimary)

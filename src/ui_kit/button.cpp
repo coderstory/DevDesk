@@ -88,7 +88,7 @@ void button(eui::Ui& ui, const std::string& id, const std::string& label,
             ui.text(id + ".text")
                 .size(w, h)
                 .text(label)
-                .fontSize(kButtonFontSize)
+                .fontSize(core::theme::scaled(kButtonFontSize))
                 .horizontalAlign(eui::HorizontalAlign::Center)
                 .verticalAlign(eui::VerticalAlign::Center)
                 .color(txtColor)

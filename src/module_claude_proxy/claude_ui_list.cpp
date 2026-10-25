@@ -203,7 +203,7 @@ void drawProfileCard(eui::Ui& ui,
         .position(16.0f, avatarY)
         .size(avatarSize, avatarSize)
         .text(initial)
-        .fontSize(16.0f)
+        .fontSize(core::theme::scaled(16.0f))
         .lineHeight(avatarSize)
         .horizontalAlign(eui::HorizontalAlign::Center)
         // 文本盒 == 圆底高，须显式垂直居中，否则 ink 从行框顶沿起排
@@ -226,8 +226,8 @@ void drawProfileCard(eui::Ui& ui,
             .wrap(false)
             .overflow(core::TextOverflow::Ellipsis)
             .text(p.name)
-            .fontSize(14.0f)
-            .lineHeight(20.0f)
+            .fontSize(core::theme::scaled(14.0f))
+            .lineHeight(core::theme::scaled(20.0f))
             .fontWeight(600)
             .color(nameColor)
             .build();
@@ -257,8 +257,8 @@ void drawProfileCard(eui::Ui& ui,
             .position(badgeX, y + 20.0f)
             .size(48.0f, 16.0f)
             .text("共享")
-            .fontSize(9.0f)
-            .lineHeight(16.0f)
+            .fontSize(core::theme::scaled(9.0f))
+            .lineHeight(core::theme::scaled(16.0f))
             .horizontalAlign(eui::HorizontalAlign::Center)
             .verticalAlign(eui::VerticalAlign::Center)
             .color(t.colors.textTertiary)
@@ -372,7 +372,7 @@ void drawClaudeHeader(eui::Ui& ui, float contentW, float headerH,
                             ui.text("claude.title.help.icon")
                                 .size(kHelpBtnD, kHelpBtnD)
                                 .icon(0xF059)  // fa-circle-question
-                                .fontSize(14.0f)
+                                .fontSize(core::theme::scaled(14.0f))
                                 .lineHeight(kHelpBtnD)
                                 .horizontalAlign(eui::HorizontalAlign::Center)
                                 .verticalAlign(eui::VerticalAlign::Center)
@@ -468,8 +468,8 @@ void drawClaudeGuideBar(eui::Ui& ui, float contentW,
                     ui.text("claude.guide.close.icon")
                         .size(18.0f, 18.0f)
                         .icon(0xF00D)  // fa-times
-                        .fontSize(12.0f)
-                        .lineHeight(18.0f)
+                        .fontSize(core::theme::scaled(12.0f))
+                        .lineHeight(core::theme::scaled(18.0f))
                         .horizontalAlign(eui::HorizontalAlign::Center)
                         .verticalAlign(eui::VerticalAlign::Center)
                         .color(t.colors.textTertiary)
@@ -538,8 +538,8 @@ void drawProfileListPanel(eui::Ui& ui, float leftW, float bodyH,
                     .position(20.0f, cardY0 + 20.0f)
                     .size(leftW - 40.0f, 60.0f)
                     .text("Profile 列表加载失败：" + profilesError)
-                    .fontSize(12.0f)
-                    .lineHeight(20.0f)
+                    .fontSize(core::theme::scaled(12.0f))
+                    .lineHeight(core::theme::scaled(20.0f))
                     .color(t.colors.errorText)
                     .build();
                 // 无 scroll 时共享区块同样钉面板底（占位不写死 y）
@@ -557,8 +557,8 @@ void drawProfileListPanel(eui::Ui& ui, float leftW, float bodyH,
                     .position(20.0f, cardY0 + 20.0f)
                     .size(leftW - 40.0f, 60.0f)
                     .text("暂无 Profile，点击下方按钮新建")
-                    .fontSize(12.0f)
-                    .lineHeight(20.0f)
+                    .fontSize(core::theme::scaled(12.0f))
+                    .lineHeight(core::theme::scaled(20.0f))
                     .color(t.colors.textTertiary)
                     .build();
                 ui.stack("claude.shared.block")
@@ -837,7 +837,7 @@ void drawSharedConfigBlock(eui::Ui& ui, float width, float blockH,
         .position(12.0f, 0.0f)
         .size(std::max(40.0f, width - 110.0f), rowH)
         .text(std::string("共享配置片段") + countSuffix)
-        .fontSize(13.0f)
+        .fontSize(core::theme::scaled(13.0f))
         .lineHeight(rowH)
         .fontWeight(600)
         .verticalAlign(eui::VerticalAlign::Center)
@@ -868,7 +868,7 @@ void drawSharedConfigBlock(eui::Ui& ui, float width, float blockH,
                 ui.text("claude.shared.header.chevron.icon")
                     .size(kD, kD)
                     .icon(collapsed ? 0xF078 : 0xF077)
-                    .fontSize(13.0f)
+                    .fontSize(core::theme::scaled(13.0f))
                     .lineHeight(kD)
                     .horizontalAlign(eui::HorizontalAlign::Center)
                     .verticalAlign(eui::VerticalAlign::Center)
@@ -899,7 +899,7 @@ void drawSharedConfigBlock(eui::Ui& ui, float width, float blockH,
                 ui.text("claude.shared.header.add.icon")
                     .size(kD, kD)
                     .icon(0xF067)  // fa-plus
-                    .fontSize(13.0f)
+                    .fontSize(core::theme::scaled(13.0f))
                     .lineHeight(kD)
                     .horizontalAlign(eui::HorizontalAlign::Center)
                     .verticalAlign(eui::VerticalAlign::Center)
@@ -930,7 +930,7 @@ void drawSharedConfigBlock(eui::Ui& ui, float width, float blockH,
         ui.text("claude.shared.error")
             .position(0.0f, contentTop).size(width, kSharedInfoH)
             .text("共享配置片段加载失败：" + sharedConfigsError)
-            .fontSize(11.0f).lineHeight(kSharedInfoH)
+            .fontSize(core::theme::scaled(11.0f)).lineHeight(kSharedInfoH)
             .color(t.colors.errorText)
             .build();
     } else if (sharedConfigs.empty()) {
@@ -938,7 +938,7 @@ void drawSharedConfigBlock(eui::Ui& ui, float width, float blockH,
         ui.text("claude.shared.empty")
             .position(0.0f, contentTop).size(width, kSharedInfoH)
             .text("暂无片段，点击右上 + 新建")
-            .fontSize(11.0f).lineHeight(kSharedInfoH)
+            .fontSize(core::theme::scaled(11.0f)).lineHeight(kSharedInfoH)
             .color(t.colors.textTertiary)
             .build();
     } else {
@@ -977,7 +977,7 @@ void drawSharedConfigBlock(eui::Ui& ui, float width, float blockH,
                                 .position(16.0f, 8.0f)
                                 .size(contentWidth - 32.0f, 20.0f)
                                 .text(sc.name)
-                                .fontSize(13.0f).lineHeight(20.0f)
+                                .fontSize(core::theme::scaled(13.0f)).lineHeight(core::theme::scaled(20.0f))
                                 .fontWeight(600)
                                 .color(t.colors.textPrimary)
                                 .build();
@@ -987,7 +987,7 @@ void drawSharedConfigBlock(eui::Ui& ui, float width, float blockH,
                                 .text(sc.extraSettingsJson.empty()
                                           ? std::string("高级属性 JSON 预设（未配置）")
                                           : std::string("高级属性 JSON 预设 · 绑定它的 Profile 写入时覆盖同名键"))
-                                .fontSize(11.0f).lineHeight(14.0f)
+                                .fontSize(core::theme::scaled(11.0f)).lineHeight(core::theme::scaled(14.0f))
                                 .color(t.colors.textSecondary)
                                 .build();
                         })

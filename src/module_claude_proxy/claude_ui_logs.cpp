@@ -204,7 +204,7 @@ void drawCallsDialog(eui::Ui& ui, const eui::Screen& screen,
                 .size(260.0f, 32.0f)
                 .value(st.callsSearch_)
                 .placeholder("搜索路径 / 方法…")
-                .fontSize(12.0f)
+                .fontSize(core::theme::scaled(12.0f))
                 .theme(themeTokens)
                 .onChange([sp = &st](const std::string& v) {
                     if (v == sp->callsSearch_) return;   // 无变化不重查（IME 组字等）
@@ -251,8 +251,8 @@ void drawCallsDialog(eui::Ui& ui, const eui::Screen& screen,
                 .text(st.callsPageLoaded_
                           ? (std::to_string(st.callsTotalMatches_) + " 条匹配")
                           : std::string())
-                .fontSize(12.0f)
-                .lineHeight(32.0f)
+                .fontSize(core::theme::scaled(12.0f))
+                .lineHeight(core::theme::scaled(32.0f))
                 .horizontalAlign(eui::HorizontalAlign::Right)
                 .color(t.colors.textTertiary)
                 .build();
@@ -328,8 +328,8 @@ void drawCallsDialog(eui::Ui& ui, const eui::Screen& screen,
                                     .position(0.0f, 2.0f)
                                     .size(contentWidth, 18.0f)
                                     .text(line)
-                                    .fontSize(12.0f)
-                                    .lineHeight(18.0f)
+                                    .fontSize(core::theme::scaled(12.0f))
+                                    .lineHeight(core::theme::scaled(18.0f))
                                     .color(rowColor)
                                     .build();
                             })
@@ -348,7 +348,7 @@ void drawCallsDialog(eui::Ui& ui, const eui::Screen& screen,
                 .position(28.0f, h - 60.0f)
                 .size(88.0f, 40.0f)
                 .text("← 上一页")
-                .fontSize(14.0f)
+                .fontSize(core::theme::scaled(14.0f))
                 .colors(t.colors.hover,
                         t.colors.hover,
                         t.colors.hover)
@@ -367,7 +367,7 @@ void drawCallsDialog(eui::Ui& ui, const eui::Screen& screen,
                 .position(128.0f, h - 60.0f)
                 .size(88.0f, 40.0f)
                 .text("下一页 →")
-                .fontSize(14.0f)
+                .fontSize(core::theme::scaled(14.0f))
                 .colors(t.colors.hover,
                         t.colors.hover,
                         t.colors.hover)
@@ -387,9 +387,9 @@ void drawCallsDialog(eui::Ui& ui, const eui::Screen& screen,
                 .size(332.0f, 40.0f)
                 .text("第 " + std::to_string(st.callsPage_ + 1) + " / " +
                       std::to_string(pages) + " 页")
-                .fontSize(12.0f)
+                .fontSize(core::theme::scaled(12.0f))
                 // 页码文本必须 verticalAlign=Center，否则 ink 从行框顶沿起排
-                .lineHeight(40.0f)
+                .lineHeight(core::theme::scaled(40.0f))
                 .verticalAlign(eui::VerticalAlign::Center)
                 .color(t.colors.textSecondary)
                 .build();
@@ -397,7 +397,7 @@ void drawCallsDialog(eui::Ui& ui, const eui::Screen& screen,
                 .position(w - 28.0f - 120.0f, h - 60.0f)
                 .size(120.0f, 40.0f)
                 .text("关闭")
-                .fontSize(14.0f)
+                .fontSize(core::theme::scaled(14.0f))
                 .colors(t.colors.hover,
                         t.colors.hover,
                         t.colors.hover)

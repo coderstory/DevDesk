@@ -344,7 +344,7 @@ public:
                                 .position(iconX, iconY)
                                 .size(16.0f, 16.0f)
                                 .icon(0xF0C5)  // fa-copy
-                                .fontSize(16.0f)
+                                .fontSize(core::theme::scaled(16.0f))
                                 .color(t.colors.primary)
                                 .build();
 
@@ -389,7 +389,7 @@ public:
             .position(0.0f, footerY)
             .size(screen.width, kFooterH)
             .text("© 2026 DevDesk")
-            .fontSize(12.0f)
+            .fontSize(core::theme::scaled(12.0f))
             .lineHeight(kFooterH)
             .color(t.colors.textDisabled)
             .horizontalAlign(eui::HorizontalAlign::Center)

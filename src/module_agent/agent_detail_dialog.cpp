@@ -177,8 +177,8 @@ void AgentModule::composeTaskDetailDialog(
                 .position(x0, 10.0f)
                 .size(std::max(0.0f, headerRightX - x0), 26.0f)
                 .text(taskRow ? taskRow->name : std::string("任务详情"))
-                .fontSize(20.0f)
-                .lineHeight(26.0f)
+                .fontSize(core::theme::scaled(20.0f))
+                .lineHeight(core::theme::scaled(26.0f))
                 .fontWeight(700)
                 .wrap(false)
                 .maxWidth(std::max(0.0f, headerRightX - x0))
@@ -247,8 +247,8 @@ void AgentModule::composeTaskDetailDialog(
                 .position(closeX, 18.0f)
                 .size(28.0f, 28.0f)
                 .text("✕")
-                .fontSize(14.0f)
-                .lineHeight(28.0f)
+                .fontSize(core::theme::scaled(14.0f))
+                .lineHeight(core::theme::scaled(28.0f))
                 .horizontalAlign(eui::HorizontalAlign::Center)
                 .verticalAlign(eui::VerticalAlign::Center)
                 .color(t.colors.textTertiary)
@@ -429,7 +429,7 @@ void AgentModule::composeTaskDetailDialog(
                                       0.0f)
                             .size(segW, kNavH)
                             .text(kDetailTabLabels[i])
-                            .fontSize(12.0f)
+                            .fontSize(core::theme::scaled(12.0f))
                             .colors(on ? t.colors.primary
                                        : t.colors.background,
                                     on ? t.colors.primaryHover

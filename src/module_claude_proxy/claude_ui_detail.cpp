@@ -70,7 +70,7 @@ float drawDetailBasic(eui::Ui& ui, float x0, float y0, float w,
     // 文本必须带 verticalAlign=Center，否则 runtime 从行框顶沿起排不居中；只加对齐，行距/行宽不变。
     ui.text("claude.field.name.label")
         .position(x0, y0).size(w * 0.5f - 8.0f, 14.0f)
-        .text("名称").fontSize(11.0f).lineHeight(14.0f)
+        .text("名称").fontSize(core::theme::scaled(11.0f)).lineHeight(core::theme::scaled(14.0f))
         .verticalAlign(eui::VerticalAlign::Center)
         .color(t.colors.textTertiary).build();
     ui.rect("claude.field.name.bg")
@@ -80,7 +80,7 @@ float drawDetailBasic(eui::Ui& ui, float x0, float y0, float w,
     ui.text("claude.field.name.value")
         .position(x0 + 12.0f, y0 + 18.0f)
         .size(w * 0.5f - 40.0f, 24.0f)
-        .text(v.nameValue).fontSize(14.0f).lineHeight(24.0f)
+        .text(v.nameValue).fontSize(core::theme::scaled(14.0f)).lineHeight(core::theme::scaled(24.0f))
         .verticalAlign(eui::VerticalAlign::Center)
         .color(t.colors.textPrimary).build();
     {
@@ -105,8 +105,8 @@ float drawDetailBasic(eui::Ui& ui, float x0, float y0, float w,
                 ui.text("claude.field.name.copy.icon")
                     .size(24.0f, 24.0f)
                     .icon(0xF0C5)
-                    .fontSize(14.0f)
-                    .lineHeight(24.0f)
+                    .fontSize(core::theme::scaled(14.0f))
+                    .lineHeight(core::theme::scaled(24.0f))
                     .horizontalAlign(eui::HorizontalAlign::Center)
                     .verticalAlign(eui::VerticalAlign::Center)
                     .color(t.colors.textTertiary)
@@ -117,7 +117,7 @@ float drawDetailBasic(eui::Ui& ui, float x0, float y0, float w,
     const float urlY = y0 + 56.0f;
     ui.text("claude.field.url.label")
         .position(x0, urlY).size(w, 14.0f)
-        .text("Base URL").fontSize(11.0f).lineHeight(14.0f)
+        .text("Base URL").fontSize(core::theme::scaled(11.0f)).lineHeight(core::theme::scaled(14.0f))
         .verticalAlign(eui::VerticalAlign::Center)
         .color(t.colors.textTertiary).build();
     ui.rect("claude.field.url.bg")
@@ -151,8 +151,8 @@ float drawDetailBasic(eui::Ui& ui, float x0, float y0, float w,
                 ui.text("claude.field.url.copy.icon")
                     .size(24.0f, 24.0f)
                     .icon(0xF0C5)
-                    .fontSize(14.0f)
-                    .lineHeight(24.0f)
+                    .fontSize(core::theme::scaled(14.0f))
+                    .lineHeight(core::theme::scaled(24.0f))
                     .horizontalAlign(eui::HorizontalAlign::Center)
                     .verticalAlign(eui::VerticalAlign::Center)
                     .color(t.colors.textTertiary)
@@ -166,7 +166,7 @@ float drawDetailBasic(eui::Ui& ui, float x0, float y0, float w,
     // 文件清单），W7 范围内无可切内容，留待表单工单。
     ui.text("claude.field.token.label")
         .position(x0, keyY).size(w, 14.0f)
-        .text("API Key").fontSize(11.0f).lineHeight(14.0f)
+        .text("API Key").fontSize(core::theme::scaled(11.0f)).lineHeight(core::theme::scaled(14.0f))
         .verticalAlign(eui::VerticalAlign::Center)
         .color(t.colors.textTertiary).build();
     ui.rect("claude.field.token.bg")
@@ -200,8 +200,8 @@ float drawDetailBasic(eui::Ui& ui, float x0, float y0, float w,
                 ui.text("claude.field.token.copy.icon")
                     .size(24.0f, 24.0f)
                     .icon(0xF0C5)
-                    .fontSize(14.0f)
-                    .lineHeight(24.0f)
+                    .fontSize(core::theme::scaled(14.0f))
+                    .lineHeight(core::theme::scaled(24.0f))
                     .horizontalAlign(eui::HorizontalAlign::Center)
                     .verticalAlign(eui::VerticalAlign::Center)
                     .color(t.colors.textTertiary)
@@ -221,7 +221,7 @@ float drawDetailBasic(eui::Ui& ui, float x0, float y0, float w,
         .position(x0, toY).size(w, 16.0f)
         .text(ccManaged ? ("● Claude Code 已接管 " + ccPath)
                         : std::string("○ Claude Code 未接管（启动代理后自动接管，停止时还原）"))
-        .fontSize(11.0f).lineHeight(16.0f)
+        .fontSize(core::theme::scaled(11.0f)).lineHeight(core::theme::scaled(16.0f))
         .verticalAlign(eui::VerticalAlign::Center)
         .color(ccManaged ? t.colors.success : t.colors.textTertiary).build();
     // 共享配置绑定行：片段不携带 env 键，改标「高级属性预设」（来源标注在高级配置 pane）
@@ -241,7 +241,7 @@ float drawDetailBasic(eui::Ui& ui, float x0, float y0, float w,
     ui.text("claude.field.shared.value")
         .position(x0, shY).size(w, 16.0f)
         .text(sharedText)
-        .fontSize(11.0f).lineHeight(16.0f)
+        .fontSize(core::theme::scaled(11.0f)).lineHeight(core::theme::scaled(16.0f))
         .verticalAlign(eui::VerticalAlign::Center)
         .color(bound ? t.colors.textSecondary : t.colors.textTertiary)
         .build();
@@ -255,13 +255,13 @@ float drawDetailBasic(eui::Ui& ui, float x0, float y0, float w,
         }
         ui.text("claude.field.takeover.warn.icon")
             .position(x0, shY + 16.0f).size(14.0f, 16.0f).icon(0xF071)
-            .fontSize(11.0f).lineHeight(16.0f)
+            .fontSize(core::theme::scaled(11.0f)).lineHeight(core::theme::scaled(16.0f))
             .verticalAlign(eui::VerticalAlign::Center)
             .color(t.colors.warning).build();
         ui.text("claude.field.takeover.warn")
             .position(x0 + 18.0f, shY + 16.0f).size(w - 18.0f, 16.0f)
             .text(warnText)
-            .fontSize(11.0f).lineHeight(16.0f)
+            .fontSize(core::theme::scaled(11.0f)).lineHeight(core::theme::scaled(16.0f))
             .verticalAlign(eui::VerticalAlign::Center)
             .color(t.colors.warning).build();
     }
@@ -313,7 +313,7 @@ float drawDetailModels(eui::Ui& ui, float x0, float y0, float w,
     ui.text("claude.slot.onem.hint")
         .position(x0, sy).size(w, 14.0f)
         .text("1M = 上下文窗口 1M tokens（勾选则该槽位按 1M 上下文窗口请求）")
-        .fontSize(11.0f).lineHeight(14.0f)
+        .fontSize(core::theme::scaled(11.0f)).lineHeight(core::theme::scaled(14.0f))
         .verticalAlign(eui::VerticalAlign::Center)
         .color(t.colors.textTertiary).build();
     sy += 20.0f;
@@ -331,7 +331,7 @@ float drawDetailModels(eui::Ui& ui, float x0, float y0, float w,
             .radius(t.sizes.radiusLarge).build();
         ui.text("claude.slot.name." + idx)
             .position(x0 + 12.0f, sy).size(80.0f, 32.0f)
-            .text(meta.label).fontSize(12.0f).lineHeight(32.0f)
+            .text(meta.label).fontSize(core::theme::scaled(12.0f)).lineHeight(core::theme::scaled(32.0f))
             // 必须 verticalAlign=Center 才垂直居中；行框几何（32/38 已标定）不动。
             .verticalAlign(eui::VerticalAlign::Center)
             .color(t.colors.textTertiary).build();
@@ -340,7 +340,7 @@ float drawDetailModels(eui::Ui& ui, float x0, float y0, float w,
             // 显示层剥 [1M]（开关已表达 1M，值再带即重复）；只动显示，存储与发往上游仍带标记。
             .text(filled ? deriveDisplayName(slot.model)
                          : std::string("未配置"))
-            .fontSize(13.0f).lineHeight(32.0f)
+            .fontSize(core::theme::scaled(13.0f)).lineHeight(core::theme::scaled(32.0f))
             .verticalAlign(eui::VerticalAlign::Center)
             // 长模型名单行省略号（显式 maxWidth 是前提），clip 保留作绘制范围兜底。
             .maxWidth(w - 112.0f - kOneMColW)
@@ -365,7 +365,7 @@ float drawDetailModels(eui::Ui& ui, float x0, float y0, float w,
             .size(kOneMColW, 32.0f)
             .checked(oneMChecked)
             .text("1M")
-            .fontSize(11.0f)
+            .fontSize(core::theme::scaled(11.0f))
             .trackSize(30.0f, 16.0f)
             .style(oneMEnabled ? oneMStyle : oneMDisabledStyle)
             .onChange(onOneM)
@@ -560,40 +560,40 @@ float drawDetailCallsPane(eui::Ui& ui, float x0, float y0, float w,
         .position(colTimeX, y0)
         .size(72.0f, 14.0f)
         .text("时间")
-        .fontSize(10.0f)
-        .lineHeight(14.0f)
+        .fontSize(core::theme::scaled(10.0f))
+        .lineHeight(core::theme::scaled(14.0f))
         .color(t.colors.textTertiary)
         .build();
     ui.text("claude.calls.h.path")
         .position(colPathX, y0)
         .size(w - 390.0f, 14.0f)
         .text("方法 / 路径")
-        .fontSize(10.0f)
-        .lineHeight(14.0f)
+        .fontSize(core::theme::scaled(10.0f))
+        .lineHeight(core::theme::scaled(14.0f))
         .color(t.colors.textTertiary)
         .build();
     ui.text("claude.calls.h.status")
         .position(colStatusX, y0)
         .size(60.0f, 14.0f)
         .text("状态")
-        .fontSize(10.0f)
-        .lineHeight(14.0f)
+        .fontSize(core::theme::scaled(10.0f))
+        .lineHeight(core::theme::scaled(14.0f))
         .color(t.colors.textTertiary)
         .build();
     ui.text("claude.calls.h.dur")
         .position(colDurX, y0)
         .size(60.0f, 14.0f)
         .text("耗时")
-        .fontSize(10.0f)
-        .lineHeight(14.0f)
+        .fontSize(core::theme::scaled(10.0f))
+        .lineHeight(core::theme::scaled(14.0f))
         .color(t.colors.textTertiary)
         .build();
     ui.text("claude.calls.h.rate")
         .position(colRateX, y0)
         .size(110.0f, 14.0f)
         .text("速率 (tok/s)")
-        .fontSize(10.0f)
-        .lineHeight(14.0f)
+        .fontSize(core::theme::scaled(10.0f))
+        .lineHeight(core::theme::scaled(14.0f))
         .color(t.colors.textTertiary)
         .build();
 
@@ -622,7 +622,7 @@ float drawDetailCallsPane(eui::Ui& ui, float x0, float y0, float w,
             .position(colTimeX, cellsY)
             .size(w - 80.0f, kEmptyH)
             .text("调用记录加载失败：" + callsError)
-            .fontSize(11.0f)
+            .fontSize(core::theme::scaled(11.0f))
             .lineHeight(kEmptyH)
             .color(t.colors.errorText)
             .build();
@@ -632,7 +632,7 @@ float drawDetailCallsPane(eui::Ui& ui, float x0, float y0, float w,
             .position(colTimeX, cellsY)
             .size(w - 80.0f, kEmptyH)
             .text("(暂无调用记录 —— 经本机代理转发过请求后这里会出现)")
-            .fontSize(11.0f)
+            .fontSize(core::theme::scaled(11.0f))
             .lineHeight(kEmptyH)
             .color(t.colors.textTertiary)
             .build();
@@ -650,7 +650,7 @@ float drawDetailCallsPane(eui::Ui& ui, float x0, float y0, float w,
                 .position(colTimeX, cellsY)
                 .size(w - 80.0f, kEmptyH)
                 .text("(内容区高度不足，未显示调用记录)")
-                .fontSize(11.0f)
+                .fontSize(core::theme::scaled(11.0f))
                 .lineHeight(kEmptyH)
                 .color(t.colors.textTertiary)
                 .build();
@@ -664,8 +664,8 @@ float drawDetailCallsPane(eui::Ui& ui, float x0, float y0, float w,
                 .position(colTimeX, rowY)
                 .size(72.0f, 16.0f)
                 .text(formatCallTime(c.startedAt, now))
-                .fontSize(11.0f)
-                .lineHeight(16.0f)
+                .fontSize(core::theme::scaled(11.0f))
+                .lineHeight(core::theme::scaled(16.0f))
                 .color(t.colors.textPrimary)
                 .build();
 
@@ -674,8 +674,8 @@ float drawDetailCallsPane(eui::Ui& ui, float x0, float y0, float w,
                 .position(colPathX, rowY)
                 .size(w - 390.0f, 16.0f)
                 .text(mp)
-                .fontSize(11.0f)
-                .lineHeight(16.0f)
+                .fontSize(core::theme::scaled(11.0f))
+                .lineHeight(core::theme::scaled(16.0f))
                 .color(t.colors.textPrimary)
                 .build();
 
@@ -692,8 +692,8 @@ float drawDetailCallsPane(eui::Ui& ui, float x0, float y0, float w,
                 .position(colStatusX, rowY)
                 .size(60.0f, 16.0f)
                 .text(statusStr)
-                .fontSize(11.0f)
-                .lineHeight(16.0f)
+                .fontSize(core::theme::scaled(11.0f))
+                .lineHeight(core::theme::scaled(16.0f))
                 .color(statusColor)
                 .build();
 
@@ -701,8 +701,8 @@ float drawDetailCallsPane(eui::Ui& ui, float x0, float y0, float w,
                 .position(colDurX, rowY)
                 .size(60.0f, 16.0f)
                 .text(formatLatency(c.latencyMs))
-                .fontSize(11.0f)
-                .lineHeight(16.0f)
+                .fontSize(core::theme::scaled(11.0f))
+                .lineHeight(core::theme::scaled(16.0f))
                 .color(t.colors.textSecondary)
                 .build();
 
@@ -716,8 +716,8 @@ float drawDetailCallsPane(eui::Ui& ui, float x0, float y0, float w,
                 .size(110.0f, 16.0f)
                 .text(hasRate ? core::call_rate::formatTps(rateTps)
                               : std::string(core::call_rate::kNoRate))
-                .fontSize(11.0f)
-                .lineHeight(16.0f)
+                .fontSize(core::theme::scaled(11.0f))
+                .lineHeight(core::theme::scaled(16.0f))
                 .color(hasRate ? t.colors.textSecondary
                                : t.colors.textTertiary)
                 .build();
@@ -731,7 +731,7 @@ float drawDetailCallsPane(eui::Ui& ui, float x0, float y0, float w,
                 .size(w - 80.0f, kOverflowH)
                 .text("另有 " + std::to_string(recent.size() - shown) +
                       " 条（点「查看全部」）")
-                .fontSize(11.0f)
+                .fontSize(core::theme::scaled(11.0f))
                 .lineHeight(kOverflowH)
                 .color(t.colors.textTertiary)
                 .build();
@@ -765,7 +765,7 @@ float drawDetailCallsPane(eui::Ui& ui, float x0, float y0, float w,
             .position(x0, viewY)
             .size(w, kViewallH)
             .text("查看全部 →")
-            .fontSize(12.0f)
+            .fontSize(core::theme::scaled(12.0f))
             .lineHeight(kViewallH)
             .horizontalAlign(eui::HorizontalAlign::Center)
             .verticalAlign(eui::VerticalAlign::Center)
@@ -933,7 +933,7 @@ void drawDetailActions(eui::Ui& ui, float x0, float w, float actY,
             components::button(ui, "claude.act.enable")
                 .size(actW, 40.0f)
                 .text("启用")
-                .fontSize(14.0f)
+                .fontSize(core::theme::scaled(14.0f))
                 .colors(t.colors.primary,
                         t.colors.primaryHover,
                         t.colors.primaryPressed)
@@ -951,7 +951,7 @@ void drawDetailActions(eui::Ui& ui, float x0, float w, float actY,
             components::button(ui, "claude.act.test")
                 .size(actW, 40.0f)
                 .text("测试连通")
-                .fontSize(14.0f)
+                .fontSize(core::theme::scaled(14.0f))
                 .colors(t.colors.surface,
                         t.colors.primarySoftBg,
                         t.colors.primarySoftBg)
@@ -970,7 +970,7 @@ void drawDetailActions(eui::Ui& ui, float x0, float w, float actY,
             components::button(ui, "claude.act.edit")
                 .size(actW, 40.0f)
                 .text("编辑")
-                .fontSize(14.0f)
+                .fontSize(core::theme::scaled(14.0f))
                 .colors(t.colors.surface,
                         t.colors.primarySoftBg,
                         t.colors.primarySoftBg)
@@ -989,7 +989,7 @@ void drawDetailActions(eui::Ui& ui, float x0, float w, float actY,
             components::button(ui, "claude.act.run")
                 .size(actW, 40.0f)
                 .text("运行")
-                .fontSize(14.0f)
+                .fontSize(core::theme::scaled(14.0f))
                 .colors(t.colors.primary,
                         t.colors.primaryHover,
                         t.colors.primaryPressed)
@@ -1020,8 +1020,8 @@ void drawDetailActions(eui::Ui& ui, float x0, float w, float actY,
         .position(x0, actY + 44.0f)
         .size(w, 16.0f)
         .text("以该 Profile 直接打开 Claude Code（不改当前设置）")
-        .fontSize(11.0f)
-        .lineHeight(16.0f)
+        .fontSize(core::theme::scaled(11.0f))
+        .lineHeight(core::theme::scaled(16.0f))
         .color(t.colors.textTertiary)
         .build();
 

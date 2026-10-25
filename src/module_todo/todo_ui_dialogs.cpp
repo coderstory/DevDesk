@@ -598,8 +598,8 @@ void drawOverdueDialog(eui::Ui& ui, const eui::Screen& screen,
                 .position(28.0f, 20.0f)
                 .size(18.0f, 28.0f)
                 .icon(0xF071)  // fa-triangle-exclamation
-                .fontSize(20.0f)
-                .lineHeight(28.0f)
+                .fontSize(core::theme::scaled(20.0f))
+                .lineHeight(core::theme::scaled(28.0f))
                 .color(t.colors.error)
                 .build();
             ui_kit::drawDialogTitle(

@@ -73,7 +73,7 @@ void drawCandidateRow(eui::Ui& ui, const core::theme::Tokens& t,
             .position(12.0f, boxY)
             .size(kBoxSize, kBoxSize)
             .icon(0xF00C)  // fa-check
-            .fontSize(11.0f)
+            .fontSize(core::theme::scaled(11.0f))
             .lineHeight(kBoxSize)
             .horizontalAlign(eui::HorizontalAlign::Center)
             .verticalAlign(eui::VerticalAlign::Center)
@@ -91,8 +91,8 @@ void drawCandidateRow(eui::Ui& ui, const core::theme::Tokens& t,
         .position(textX, 5.0f)
         .size(textW, 17.0f)
         .text(row.name.empty() ? std::string("（无名称）") : row.name)
-        .fontSize(13.0f)
-        .lineHeight(17.0f)
+        .fontSize(core::theme::scaled(13.0f))
+        .lineHeight(core::theme::scaled(17.0f))
         .fontWeight(600)
         .maxWidth(textW)
         .wrap(false)
@@ -104,8 +104,8 @@ void drawCandidateRow(eui::Ui& ui, const core::theme::Tokens& t,
         .size(textW, 13.0f)
         .text(row.appType + " · " +
               (m.ok ? m.baseUrl : std::string("—")))
-        .fontSize(11.0f)
-        .lineHeight(13.0f)
+        .fontSize(core::theme::scaled(11.0f))
+        .lineHeight(core::theme::scaled(13.0f))
         .maxWidth(textW)
         .wrap(false)
         .overflow(core::TextOverflow::Ellipsis)
@@ -116,8 +116,8 @@ void drawCandidateRow(eui::Ui& ui, const core::theme::Tokens& t,
             .position(textX, 35.0f)
             .size(textW, 12.0f)
             .text("model: " + m.model)
-            .fontSize(11.0f)
-            .lineHeight(12.0f)
+            .fontSize(core::theme::scaled(11.0f))
+            .lineHeight(core::theme::scaled(12.0f))
             .maxWidth(textW)
             .wrap(false)
             .overflow(core::TextOverflow::Ellipsis)
@@ -130,8 +130,8 @@ void drawCandidateRow(eui::Ui& ui, const core::theme::Tokens& t,
             .position(textX, 35.0f)
             .size(textW, 12.0f)
             .text("跳过：" + m.skipReason)
-            .fontSize(11.0f)
-            .lineHeight(12.0f)
+            .fontSize(core::theme::scaled(11.0f))
+            .lineHeight(core::theme::scaled(12.0f))
             .maxWidth(textW)
             .wrap(false)
             .overflow(core::TextOverflow::Ellipsis)
@@ -316,7 +316,7 @@ void drawCcSwitchImportDialog(eui::Ui& ui, const eui::Screen& screen,
                 .position(ui_kit::kDialogInsetX, kSelectAllY)
                 .size(96.0f, kSelectAllH)
                 .text(allSelected ? "取消全选" : "全选")
-                .fontSize(14.0f)  // H2：fontSizeSmall(12)→14 对齐规格（按钮文字 14/600）
+                .fontSize(core::theme::scaled(14.0f))  // H2：fontSizeSmall(12)→14 对齐规格（按钮文字 14/600）
                 .theme(themeTokens)
                 // Ghost 变体字色 = tokens.primary（浅底 1.92:1），覆写 accentText；
                 // 须在 theme() 之后（theme() 重建 style_）
@@ -403,7 +403,7 @@ void drawCcSwitchImportDialog(eui::Ui& ui, const eui::Screen& screen,
                     .position(ui_kit::kDialogInsetX, y)
                     .size(w - ui_kit::kDialogBodyInsetX, kResultH)
                     .text(st.resultLines_[i])
-                    .fontSize(11.0f)
+                    .fontSize(core::theme::scaled(11.0f))
                     .lineHeight(kResultH)
                     .color(t.colors.textSecondary)
                     .build();

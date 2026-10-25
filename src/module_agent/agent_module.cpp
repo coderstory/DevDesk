@@ -115,8 +115,8 @@ void fieldCaption(::eui::Ui& ui, const std::string& id, const std::string& text,
         .position(x, y)
         .size(width, height)
         .text(text)
-        .fontSize(12.0f)
-        .lineHeight(20.0f)
+        .fontSize(core::theme::scaled(12.0f))
+        .lineHeight(core::theme::scaled(20.0f))
         .verticalAlign(eui::VerticalAlign::Center)
         .color(color)
         .build();
@@ -1784,7 +1784,7 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                 ui.text("agent.page.error")
                     .size(contentW, kPageErrorH)
                     .text(pageError_)
-                    .fontSize(12.0f)
+                    .fontSize(core::theme::scaled(12.0f))
                     .lineHeight(kPageErrorH)
                     .verticalAlign(eui::VerticalAlign::Center)
                     .color(t.colors.errorText)
@@ -1794,7 +1794,7 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                     ui.text("agent.page.error.hint")
                         .size(contentW, kPageHintH)
                         .text("去 Claude 页 →")
-                        .fontSize(12.0f)
+                        .fontSize(core::theme::scaled(12.0f))
                         .lineHeight(kPageHintH)
                         .verticalAlign(eui::VerticalAlign::Center)
                         .color(t.colors.primary)
@@ -1824,16 +1824,16 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                                 .size(contentW - 72.0f, 20.0f)
                                 .text("可用工具（" +
                                       std::to_string(toolsCache_.size()) + "）")
-                                .fontSize(13.0f)
-                                .lineHeight(20.0f)
+                                .fontSize(core::theme::scaled(13.0f))
+                                .lineHeight(core::theme::scaled(20.0f))
                                 .fontWeight(700)
                                 .color(t.colors.textPrimary)
                                 .build();
                             ui.text("agent.tools.header.hint")
                                 .size(64.0f, 20.0f)
                                 .text(toolsOpen_ ? "收起 ▲" : "展开 ▼")
-                                .fontSize(12.0f)
-                                .lineHeight(20.0f)
+                                .fontSize(core::theme::scaled(12.0f))
+                                .lineHeight(core::theme::scaled(20.0f))
                                 .color(t.colors.textTertiary)
                                 .build();
                         })
@@ -1879,8 +1879,8 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                                                         .position(12.0f, 3.0f)
                                                         .size(cw - 24.0f, 17.0f)
                                                         .text(tool.name)
-                                                        .fontSize(14.0f)
-                                                        .lineHeight(17.0f)
+                                                        .fontSize(core::theme::scaled(14.0f))
+                                                        .lineHeight(core::theme::scaled(17.0f))
                                                         .fontWeight(600)
                                                         .wrap(false)
                                                         .color(t.colors.textPrimary)
@@ -1910,8 +1910,8 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                                                         .position(12.0f, 22.0f)
                                                         .size(cw - 24.0f, 15.0f)
                                                         .text(line2)
-                                                        .fontSize(12.0f)
-                                                        .lineHeight(15.0f)
+                                                        .fontSize(core::theme::scaled(12.0f))
+                                                        .lineHeight(core::theme::scaled(15.0f))
                                                         .wrap(false)
                                                         .color(t.colors.textTertiary)
                                                         .build();
@@ -1933,8 +1933,8 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                                 ui.text("agent.tools.scrollHint")
                                     .size(contentW, 16.0f)
                                     .text("还有 " + std::to_string(total - visible) + " 件")
-                                    .fontSize(11.0f)
-                                    .lineHeight(16.0f)
+                                    .fontSize(core::theme::scaled(11.0f))
+                                    .lineHeight(core::theme::scaled(16.0f))
                                     .horizontalAlign(eui::HorizontalAlign::Center)
                                     .color(t.colors.textTertiary)
                                     .build();
@@ -1984,16 +1984,16 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                         inner.text("agent.empty.icon")
                             .size(cw, 24.0f)
                             .text("+")
-                            .fontSize(20.0f)
-                            .lineHeight(24.0f)
+                            .fontSize(core::theme::scaled(20.0f))
+                            .lineHeight(core::theme::scaled(24.0f))
                             .horizontalAlign(eui::HorizontalAlign::Center)
                             .color(t.colors.textTertiary)
                             .build();
                         inner.text("agent.empty.title")
                             .size(cw, 24.0f)
                             .text("暂无任务")
-                            .fontSize(16.0f)
-                            .lineHeight(24.0f)
+                            .fontSize(core::theme::scaled(16.0f))
+                            .lineHeight(core::theme::scaled(24.0f))
                             .fontWeight(600)
                             .horizontalAlign(eui::HorizontalAlign::Center)
                             .color(t.colors.textPrimary)
@@ -2001,8 +2001,8 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                         inner.text("agent.empty.desc")
                             .size(cw, 20.0f)
                             .text("创建智能任务，让 AI 自动执行工作流")
-                            .fontSize(12.0f)
-                            .lineHeight(20.0f)
+                            .fontSize(core::theme::scaled(12.0f))
+                            .lineHeight(core::theme::scaled(20.0f))
                             .horizontalAlign(eui::HorizontalAlign::Center)
                             .color(t.colors.textTertiary)
                             .build();
@@ -2018,8 +2018,8 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                                 inner.text("agent.empty.btn")
                                     .size(chipW, chipH)
                                     .text("创建第一个任务")
-                                    .fontSize(14.0f)
-                                    .lineHeight(40.0f)
+                                    .fontSize(core::theme::scaled(14.0f))
+                                    .lineHeight(core::theme::scaled(40.0f))
                                     .fontWeight(600)
                                     .horizontalAlign(eui::HorizontalAlign::Center)
                                     .verticalAlign(eui::VerticalAlign::Center)
@@ -2114,8 +2114,8 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                                     inner.text(id + ".warn")
                                         .size(kTaskWarnW, 20.0f)
                                         .text("配置异常")
-                                        .fontSize(12.0f)
-                                        .lineHeight(20.0f)
+                                        .fontSize(core::theme::scaled(12.0f))
+                                        .lineHeight(core::theme::scaled(20.0f))
                                         .color(t.colors.errorText)
                                         .build();
                                 }
@@ -2124,8 +2124,8 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                                     inner.text(id + ".limit")
                                         .size(kTaskWarnW, 20.0f)
                                         .text(runLimitBadge(limitIt->second))
-                                        .fontSize(12.0f)
-                                        .lineHeight(20.0f)
+                                        .fontSize(core::theme::scaled(12.0f))
+                                        .lineHeight(core::theme::scaled(20.0f))
                                         .color(t.colors.textTertiary)
                                         .build();
                                 }
@@ -2134,8 +2134,8 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                                     inner.text(id + ".off")
                                         .size(kTaskWarnW, 20.0f)
                                         .text("已停用")
-                                        .fontSize(12.0f)
-                                        .lineHeight(20.0f)
+                                        .fontSize(core::theme::scaled(12.0f))
+                                        .lineHeight(core::theme::scaled(20.0f))
                                         .color(t.colors.textTertiary)
                                         .build();
                                 }
@@ -2147,8 +2147,8 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                                 inner.text(id + ".status")
                                     .size(60.0f, 20.0f)
                                     .text(status)
-                                    .fontSize(12.0f)
-                                    .lineHeight(20.0f)
+                                    .fontSize(core::theme::scaled(12.0f))
+                                    .lineHeight(core::theme::scaled(20.0f))
                                     .color(t.colors.textSecondary)
                                     .build();
                                 actionChip(inner, id + ".detail", "详情", kTaskActionW,
@@ -2194,7 +2194,7 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                                 components::button(inner, id + ".run")
                                     .size(kTaskActionW, 32.0f)
                                     .text(runStarted ? "运行中…" : "启动")
-                                    .fontSize(12.0f)
+                                    .fontSize(core::theme::scaled(12.0f))
                                     .theme(themeTokens)
                                     .disabled(loop_ == nullptr || runStarted)
                                     .onClick([this, taskId = task.id] {
@@ -2322,8 +2322,8 @@ void AgentModule::composeTaskDialog(
                 .position(w - 56.0f, 8.0f)
                 .size(28.0f, 28.0f)
                 .text("✕")
-                .fontSize(14.0f)
-                .lineHeight(28.0f)
+                .fontSize(core::theme::scaled(14.0f))
+                .lineHeight(core::theme::scaled(28.0f))
                 .horizontalAlign(eui::HorizontalAlign::Center)
                 .verticalAlign(eui::VerticalAlign::Center)
                 .color(t.colors.textTertiary)
@@ -2392,7 +2392,7 @@ void AgentModule::composeTaskDialog(
                         .position(14.0f, numY)
                         .size(kVertNumD, kVertNumD)
                         .text(done ? "✓" : stepInvalid ? "!" : std::to_string(i + 1))
-                        .fontSize(12.0f)
+                        .fontSize(core::theme::scaled(12.0f))
                         .lineHeight(kVertNumD)
                         .horizontalAlign(eui::HorizontalAlign::Center)
                         .verticalAlign(eui::VerticalAlign::Center)
@@ -2405,8 +2405,8 @@ void AgentModule::composeTaskDialog(
                         .position(44.0f, navY + 12.0f)
                         .size(kVertNavW - 44.0f - 14.0f, 18.0f)
                         .text(kStepLabels[i])
-                        .fontSize(14.0f)
-                        .lineHeight(18.0f)
+                        .fontSize(core::theme::scaled(14.0f))
+                        .lineHeight(core::theme::scaled(18.0f))
                         .fontWeight(600)
                         .wrap(false)
                         .color(itemFg)
@@ -2415,8 +2415,8 @@ void AgentModule::composeTaskDialog(
                         .position(44.0f, navY + 30.0f)
                         .size(kVertNavW - 44.0f - 14.0f, 14.0f)
                         .text(kStepSubs[i])
-                        .fontSize(12.0f)
-                        .lineHeight(14.0f)
+                        .fontSize(core::theme::scaled(12.0f))
+                        .lineHeight(core::theme::scaled(14.0f))
                         .wrap(false)
                         // 白字只压 valid 当前步绿底；无效态粉底仍走 textSecondary
                         //（白字压粉底仅 1.18:1；label 走 errorText 为 5.46:1）
@@ -2469,7 +2469,7 @@ void AgentModule::composeTaskDialog(
                                                    0.0f)
                                         .size(opW, 32.0f)
                                         .text(kTriggerLabels[i])
-                                        .fontSize(12.0f)
+                                        .fontSize(core::theme::scaled(12.0f))
                                         .colors(on ? t.colors.primary
                                                    : t.colors.background,
                                                 on ? t.colors.primaryHover
@@ -2566,7 +2566,7 @@ void AgentModule::composeTaskDialog(
                                           cfgY)
                                 .size(evW, 32.0f)
                                 .text(kEventLabels[i])
-                                .fontSize(12.0f)
+                                .fontSize(core::theme::scaled(12.0f))
                                 .colors(on ? eui::mixColor(t.colors.surface,
                                                            t.colors.primary, 0.12f)
                                            : t.colors.background,
@@ -2621,7 +2621,7 @@ void AgentModule::composeTaskDialog(
                             .position(w - kVertContentPad - chipW, s2y)
                             .size(chipW, chipH)
                             .text("✎ AI 起草")
-                            .fontSize(13.0f)
+                            .fontSize(core::theme::scaled(13.0f))
                             .colors(t.colors.background,
                                     t.colors.primarySoftBg,
                                     t.colors.primarySoftBg)
@@ -2730,7 +2730,7 @@ void AgentModule::composeTaskDialog(
                                 .size(kContentW - (limitX - x0), 32.0f)
                                 .text(runLimitText(editMaxRuns_ > 0 ? editMaxRuns_ : 1))
                                 .checked(editMaxRuns_ > 0)
-                                .fontSize(12.0f)
+                                .fontSize(core::theme::scaled(12.0f))
                                 .theme(themeTokens)
                                 .onChange([this](bool v) {
                                     if (!v) editMaxRuns_ = 0;
@@ -2755,7 +2755,7 @@ void AgentModule::composeTaskDialog(
                         .position(x0, safeY)
                         .size(kContentW, kGroupTitleH)
                         .text("安全")
-                        .fontSize(14.0f)
+                        .fontSize(core::theme::scaled(14.0f))
                         .lineHeight(kGroupTitleH)
                         .fontWeight(700)
                         .color(t.colors.textPrimary)
@@ -2767,8 +2767,8 @@ void AgentModule::composeTaskDialog(
                                 .position(x0, destructiveY)
                                 .size(20.0f, 32.0f)
                                 .text("⚠")
-                                .fontSize(14.0f)
-                                .lineHeight(32.0f)
+                                .fontSize(core::theme::scaled(14.0f))
+                                .lineHeight(core::theme::scaled(32.0f))
                                 .verticalAlign(eui::VerticalAlign::Center)
                                 .color(t.colors.errorText)
                                 .build();
@@ -2777,8 +2777,8 @@ void AgentModule::composeTaskDialog(
                             .position(x0 + (editDestructive_ ? 24.0f : 0.0f), destructiveY)
                             .size(160.0f, 32.0f)
                             .text("允许破坏性操作")
-                            .fontSize(12.0f)
-                            .lineHeight(32.0f)
+                            .fontSize(core::theme::scaled(12.0f))
+                            .lineHeight(core::theme::scaled(32.0f))
                             .wrap(false)
                             .verticalAlign(eui::VerticalAlign::Center)
                             .color(editDestructive_ ? t.colors.errorText
@@ -2821,7 +2821,7 @@ void AgentModule::composeTaskDialog(
                 .position(saveX, btnY)
                 .size(bw, btnH)
                 .text(nextLabel)
-                .fontSize(14.0f)
+                .fontSize(core::theme::scaled(14.0f))
                 .colors(canNext ? t.colors.primary
                                 : t.colors.background,
                         canNext ? t.colors.primaryHover
@@ -2850,7 +2850,7 @@ void AgentModule::composeTaskDialog(
                     .position(prevX, btnY)
                     .size(bw, btnH)
                     .text("上一步")
-                    .fontSize(14.0f)
+                    .fontSize(core::theme::scaled(14.0f))
                     .colors(t.colors.background,
                             t.colors.hover,
                             t.colors.primarySoftBg)
@@ -2871,7 +2871,7 @@ void AgentModule::composeTaskDialog(
                     .position(testX, btnY)
                     .size(testW, btnH)
                     .text(testLabel)
-                    .fontSize(14.0f)
+                    .fontSize(core::theme::scaled(14.0f))
                     .colors(testDisabled ? t.colors.background
                                          : t.colors.background,
                             testDisabled ? t.colors.hover
@@ -2895,7 +2895,7 @@ void AgentModule::composeTaskDialog(
                 .position(cancelX, btnY)
                 .size(bw, btnH)
                 .text("取消")
-                .fontSize(14.0f)
+                .fontSize(core::theme::scaled(14.0f))
                 .colors(t.colors.background,
                         t.colors.primarySoftBg,
                         t.colors.primarySoftBg)
@@ -2946,8 +2946,8 @@ void AgentModule::composeDraftDialog(
             .position(w - 56.0f, 22.0f)
             .size(28.0f, 28.0f)
             .text("✕")
-            .fontSize(14.0f)
-            .lineHeight(28.0f)
+            .fontSize(core::theme::scaled(14.0f))
+            .lineHeight(core::theme::scaled(28.0f))
             .horizontalAlign(eui::HorizontalAlign::Center)
             .verticalAlign(eui::VerticalAlign::Center)
             .color(t.colors.textTertiary)

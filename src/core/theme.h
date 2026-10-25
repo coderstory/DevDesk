@@ -93,9 +93,14 @@ const Tokens& current();
 void setDark();
 void setLight();
 
-// 全局字号缩放（1.0 = 原始尺寸）：作用于 SizeTokens 全部 fontSize* 字段；硬编码字面量不在缩放范围
+// 全局字号缩放（1.0 = 原始尺寸）：作用于 SizeTokens 全部 fontSize* 字段；
+// 硬编码字面量不在 token 重建范围内，须经 scaled() 包裹才随档位缩放
 void setFontScale(float scale);
 float fontScale();
+
+// 字面量字号的缩放通道：100% 档恒等（历史视觉零变化），非 100% 档随字号缩放全局生效。
+// 令牌（t.sizes.fontSize*）在 token 重建时已乘 fontScale，勿再包一层（会双乘）
+inline float scaled(float px) { return px * fontScale(); }
 
 // 窗高驱动字号封顶已废止（2026-10-25 用户拍板，可读性优先）：windowScaleCap 恒不封顶，
 // fontScale() = 用户手动档；setWindowHeight 保留信号通道（app::compose 每帧喂入）。
