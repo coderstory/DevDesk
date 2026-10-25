@@ -2631,9 +2631,9 @@ void AgentModule::composeTaskDialog(
                             .onClick([this] { openDraftDialog(); })
                             .build();
                     }
-                    // 指令 textarea
-                    const float goalInY = s2y + 26.0f;
-                    constexpr float kStepGoalH = 60.0f;
+                    // 指令 textarea：标题行 chip 高 32（底=s2y+32），留 8px 呼吸不压输入框
+                    const float goalInY = s2y + 40.0f;
+                    constexpr float kStepGoalH = 96.0f;
                     components::input(ui, "agent.dialog.task.goal")
                         .position(x0, goalInY)
                         .size(kContentW, kStepGoalH)
@@ -2659,10 +2659,13 @@ void AgentModule::composeTaskDialog(
                     fieldCaption(ui, "agent.dialog.task.sysprompt.caption",
                                  "系统提示词（发给 AI 的环境上下文，可编辑）",
                                  x0, sysY, kContentW, 16.0f, t.colors.textSecondary);
-                    constexpr float kStepSysH = 54.0f;
+                    // 弹性填充到内容区底：底栏带顶 = h − kContentY（底栏按钮起始 Y）；
+                    // 内容区下沿留 12px，再避让锚在底栏顶上方 18px 的试运行结果行 → 共让 24px
+                    const float kStepSysMinH =
+                        (h - kContentY - 24.0f) - (sysY + 20.0f);
                     components::input(ui, "agent.dialog.task.sysprompt")
                         .position(x0, sysY + 20.0f)
-                        .size(kContentW, kStepSysH)
+                        .size(kContentW, kStepSysMinH)
                         .value(editSystemPrompt_)
                         .placeholder("系统提示词，运行时注入；留空则使用自动生成的默认提示词")
                         .fontSize(t.sizes.fontSizeBody)
