@@ -323,7 +323,7 @@ void drawCallsDialog(eui::Ui& ui, const eui::Screen& screen,
                                 const eui::Color rowColor =
                                     (c.statusCode >= 200 && c.statusCode < 300)
                                         ? t.colors.textSecondary
-                                        : t.colors.error;
+                                        : t.colors.errorText;
                                 inner.text(absId)
                                     .position(0.0f, 2.0f)
                                     .size(contentWidth, 18.0f)

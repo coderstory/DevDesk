@@ -358,7 +358,7 @@ void drawNewTaskDialog(eui::Ui& ui, const eui::Screen& screen,
 
             // 内嵌红字错误行（校验/创建失败就地可见，弹窗不关）
             ui_kit::drawDialogText(ui, "todo.dialog.newtask.error", w, d.newTask.error,
-                                   t.sizes.fontSizeSmall, t.colors.error,
+                                   t.sizes.fontSizeSmall, t.colors.errorText,
                                    {.y = 380.0f, .height = 16.0f, .lineHeight = 16.0f,
                                     .skipIfEmpty = true});
 
@@ -605,7 +605,7 @@ void drawOverdueDialog(eui::Ui& ui, const eui::Screen& screen,
             ui_kit::drawDialogTitle(
                 ui, "todo.dialog.overdue.title", w,
                 "逾期任务（" + std::to_string(d.overdue.tasks.size()) + "）",
-                20.0f, t.colors.error,
+                20.0f, t.colors.errorText,
                 {.x = 50.0f, .y = 16.0f, .inset = 78.0f});
             std::string hint = "任务名 · 所属列 · 截止 · 逾期天数，点击行跳转详情";
             if (d.overdue.tasks.size() > shown) {
@@ -672,7 +672,7 @@ void drawOverdueDialog(eui::Ui& ui, const eui::Screen& screen,
                                std::max(1, overdueDays(task.dueAt.value_or(0), now))) + "天")
                     .fontSize(t.sizes.fontSizeSmall)
                     .lineHeight(20.0f)
-                    .color(t.colors.error)
+                    .color(t.colors.errorText)
                     .build();
             }
     });

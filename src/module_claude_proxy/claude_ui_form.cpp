@@ -498,7 +498,7 @@ void drawFormBasicTab(eui::Ui& ui, float w,
         ui.text("claude.dialog.form.error")
             .position(28.0f, 404.0f).size(w - 56.0f, 18.0f)
             .text(f.formError_).fontSize(12.0f).lineHeight(18.0f)
-            .color(t.colors.error).build();
+            .color(t.colors.errorText).build();
     }
 
     // 「导入配置」接管态警告（不阻断，仅提示）
@@ -746,7 +746,7 @@ void drawFormAdvancedTab(eui::Ui& ui, float w,
         ui.text("claude.form.advanced.json.error")
             .position(28.0f, 480.0f).size(w - 56.0f, 16.0f)
             .text(f.formAdvancedJsonError_).fontSize(11.0f).lineHeight(16.0f)
-            .color(t.colors.error).build();
+            .color(t.colors.errorText).build();
     }
 }
 
@@ -970,7 +970,7 @@ void drawFormEnvTab(eui::Ui& ui, float w,
         ui.text("claude.form.import.error")
             .position(286.0f, 468.0f).size(w - 286.0f - 28.0f, 48.0f)
             .text(imp.importError_).fontSize(11.0f).lineHeight(16.0f)
-            .color(t.colors.error).build();
+            .color(t.colors.errorText).build();
     } else if (imp.importReady_) {
         ui.text("claude.form.import.preview")
             .position(270.0f, 468.0f).size(w - 270.0f - 28.0f, 16.0f)
@@ -1088,7 +1088,7 @@ const float h = 540.0f;
             // 错误信息（基础页之外也要看得到校验错误）
             if (f.formTab_ != 0) {
                 ui_kit::drawDialogText(ui, "claude.dialog.form.error", w, f.formError_,
-                                       12.0f, t.colors.error,
+                                       12.0f, t.colors.errorText,
                                        {.y = h - 104.0f, .height = 18.0f,
                                         .lineHeight = 18.0f, .skipIfEmpty = true});
             }
@@ -1173,7 +1173,7 @@ void drawJsonFullscreenOverlay(eui::Ui& ui, const eui::Screen& screen,
                 ui.text("claude.jsonfs.error")
                     .position(28.0f, h - 96.0f).size(w - 56.0f, 16.0f)
                     .text(fsError).fontSize(12.0f).lineHeight(16.0f)
-                    .color(t.colors.error).build();
+                    .color(t.colors.errorText).build();
             }
 
             // 底部三键：格式化 / 保存（=submitForm 整条路径）/ 放弃修改（恢复落库值并退全屏）
@@ -1419,7 +1419,7 @@ void drawSharedConfigDialog(eui::Ui& ui, const eui::Screen& screen,
             ui.text("claude.dialog.shared.error")
                 .position(28.0f, 364.0f).size(w - 56.0f, 18.0f)
                 .text(s.error_).fontSize(12.0f).lineHeight(18.0f)
-                .color(t.colors.error).build();
+                .color(t.colors.errorText).build();
         }
 
         // 底部按钮：编辑态删除/取消/保存，新建态取消/创建；删除另开确认弹窗（同事务解绑绑定 Profile）
@@ -1432,7 +1432,7 @@ void drawSharedConfigDialog(eui::Ui& ui, const eui::Screen& screen,
                 .colors(t.colors.hover,
                         t.colors.hover,
                         t.colors.hover)
-                .textColor(t.colors.error)
+                .textColor(t.colors.errorText)
                 .radius(t.sizes.radius)
                 .border(1.0f, t.colors.borderDefault)
                 .onClick([sp = &s] {

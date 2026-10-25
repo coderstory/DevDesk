@@ -135,7 +135,7 @@ void drawCandidateRow(eui::Ui& ui, const core::theme::Tokens& t,
             .maxWidth(textW)
             .wrap(false)
             .overflow(core::TextOverflow::Ellipsis)
-            .color(t.colors.error)
+            .color(t.colors.errorText)
             .build();
     }
 }
@@ -296,7 +296,7 @@ void drawCcSwitchImportDialog(eui::Ui& ui, const eui::Screen& screen,
         if (!st.loadError_.empty()) {
             ui_kit::drawDialogText(
                 ui, "claude.dialog.ccswitch.err", w, st.loadError_, 13.0f,
-                t.colors.error,
+                t.colors.errorText,
                 {.y = kListTopY, .height = 60.0f, .lineHeight = 20.0f, .wrap = true});
         } else if (st.rows_.empty()) {
             ui_kit::drawDialogText(

@@ -411,7 +411,8 @@ REGISTER_TEST(home_solid_stat_cards,
         const eui::Color bgC = eui::Color::fromHex(ac.bgHex);
         const double num = solidContrast(t.colors.textPrimary, bgC);
         const double label = solidContrast(t.colors.textTertiary, bgC);
-        const double red = solidContrast(t.colors.error, bgC);
+        // 红字数字（逾期卡 accent 态）走 errorText 档，护栏随文字 token 走
+        const double red = solidContrast(t.colors.errorText, bgC);
         minNumCt = std::min(minNumCt, num);
         minLabelCt = std::min(minLabelCt, label);
         minRedCt = std::min(minRedCt, red);

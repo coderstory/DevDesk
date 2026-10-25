@@ -3463,7 +3463,7 @@ REGISTER_TEST(agent_ui_cron_template_dropdown_and_preview,
                               std::string::npos,
                           "非法 cron 预览应显校验文案，实测: " + preview5->text);
     DOCTEST_CHECK_MESSAGE(
-        sameColor(preview5->textColor, ::core::theme::current().colors.error),
+        sameColor(preview5->textColor, ::core::theme::current().colors.errorText),
         "非法 cron 预览行应为错误色");
 
     // ⑤ 无匹配（2 月 31 日）→ 预览显「一年内无触发时间」
@@ -3476,7 +3476,7 @@ REGISTER_TEST(agent_ui_cron_template_dropdown_and_preview,
                           "无匹配预览文案错误，实测: " + preview6->text);
     // 「无匹配」与「非法」走同一错误色通道（两条 error 分支各断一次，防只修一半）。
     DOCTEST_CHECK_MESSAGE(
-        sameColor(preview6->textColor, ::core::theme::current().colors.error),
+        sameColor(preview6->textColor, ::core::theme::current().colors.errorText),
         "无匹配 cron 预览行应为错误色");
 
     mod.onStop();
@@ -5361,9 +5361,9 @@ REGISTER_TEST(agent_ui_draft_error_paths,
     const auto* err = uiD.find("agent.dialog.task.draft.error");
     DOCTEST_REQUIRE(err != nullptr);
     DOCTEST_CHECK(err->text.find("一句话") != std::string::npos);
-    // 微信化错误行锁：错误文字 = error（#FA5151）
+    // 错误行字色锁：红字走 errorText 档（error 只留给红底/边框等图形）
     DOCTEST_CHECK(std::fabs(err->textColor.r -
-                            core::theme::current().colors.error.r) <
+                            core::theme::current().colors.errorText.r) <
                   0.01f);
     DOCTEST_CHECK_EQ(calls, 0);
 

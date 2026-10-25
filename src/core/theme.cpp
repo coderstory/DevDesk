@@ -36,6 +36,7 @@ namespace {
         c.success = eui::Color("#34D399");
         c.warning = eui::Color("#FBBF24");
         c.error = eui::Color("#F87171");
+        c.errorText = eui::Color("#F87171");  // 深底 6.40:1，与 error 同值
         c.info = eui::Color("#60A5FA");
         c.sidebarBg = eui::Color("#0F1F18");
         c.purple = eui::Color("#A18FC8");
@@ -90,6 +91,7 @@ namespace {
         c.success = eui::Color("#10B981");
         c.warning = eui::Color("#F59E0B");
         c.error = eui::Color("#EF4444");
+        c.errorText = eui::Color("#B91C1C");  // 深红档：on 白 6.47 / on #FAFAF9 6.19 / on 10% 红粉底 5.46（#EF4444 本身压粉底仅 3.18）
         c.info = eui::Color("#3B82F6");
         c.sidebarBg = eui::Color("#F0FDF7");
         c.purple = eui::Color("#71639B");

@@ -540,7 +540,7 @@ void drawProfileListPanel(eui::Ui& ui, float leftW, float bodyH,
                     .text("Profile 列表加载失败：" + profilesError)
                     .fontSize(12.0f)
                     .lineHeight(20.0f)
-                    .color(t.colors.error)
+                    .color(t.colors.errorText)
                     .build();
                 // 无 scroll 时共享区块同样钉面板底（占位不写死 y）
                 ui.stack("claude.shared.block")
@@ -931,7 +931,7 @@ void drawSharedConfigBlock(eui::Ui& ui, float width, float blockH,
             .position(0.0f, contentTop).size(width, kSharedInfoH)
             .text("共享配置片段加载失败：" + sharedConfigsError)
             .fontSize(11.0f).lineHeight(kSharedInfoH)
-            .color(t.colors.error)
+            .color(t.colors.errorText)
             .build();
     } else if (sharedConfigs.empty()) {
         // §5 空状态引导新建（empty_state.h 语义内联）；「+」钮在头行右上 → 口径同步

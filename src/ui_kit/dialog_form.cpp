@@ -117,13 +117,13 @@ void buildDialogButton(eui::Ui& ui, const std::string& id, float x, float y, flo
             break;
         case DialogButtonStyle::DangerOutline:
             button.colors(t.colors.surfaceElevated, t.colors.hover, t.colors.active)
-                .textColor(t.colors.error)
+                .textColor(t.colors.errorText)
                 .radius(t.sizes.radius)
                 .border(1.0f, t.colors.borderDefault);
             break;
         case DialogButtonStyle::DangerOutlineThemed:
             button.theme(themeTokens, false)
-                .textColor(t.colors.error)
+                .textColor(t.colors.errorText)
                 .radius(t.sizes.radius)
                 .border(1.0f, t.colors.borderDefault);
             break;

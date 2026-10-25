@@ -42,6 +42,10 @@ struct ColorTokens {
     eui::Color success;
     eui::Color warning;
     eui::Color error;
+    // error 作文字色的专用 token：浅色 #EF4444 压 10% 红粉底（校验失败态/错误横幅）
+    // 仅 3.18:1，低于 WCAG AA 4.5:1。浅色档 = 深红；深色档 = error 同值。
+    // 错误文字用本 token；红底/边框/圆点/图标继续用 error
+    eui::Color errorText;
     eui::Color info;
     eui::Color sidebarBg;       // #F0FDF7 侧栏淡绿底
     // 与现有功能色同族的去饱和强调色（区别于 blue 的品牌色档位，浅色档达图形 AA）

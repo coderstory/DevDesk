@@ -111,7 +111,7 @@ void drawSolidStatCard(eui::Ui& ui,
                 .fontWeight(600)
                 .horizontalAlign(eui::HorizontalAlign::Center)
                 .color(numberColor ? *numberColor
-                                   : (accent ? t.colors.error
+                                   : (accent ? t.colors.errorText
                                              : t.colors.textPrimary))
                 .build();
 
@@ -125,7 +125,7 @@ void drawSolidStatCard(eui::Ui& ui,
                 .lineHeight(descH)
                 .horizontalAlign(eui::HorizontalAlign::Center)
                 .color(badgeColor ? *badgeColor
-                                  : (accent ? t.colors.error
+                                  : (accent ? t.colors.errorText
                                             : t.colors.textTertiary))
                 .build();
 

@@ -1018,7 +1018,7 @@ private:
                     .fontSize(t.sizes.fontSizeSmall)
                     .lineHeight(18.0f)
                     .wrap()
-                    .color(t.colors.error)
+                    .color(t.colors.errorText)
                     .build();
             } else if (notes_.empty()) {
                 if (searchQuery_.empty() && tagFilter_.empty()) {
@@ -1643,12 +1643,12 @@ private:
             const std::string name = fs::path(currentPath_).filename().string();
             if (saveFailed_) {
                 left = name + "  ✕ 保存失败，自动重试中";
-                leftColor = t.colors.error;
+                leftColor = t.colors.errorText;
             } else if (editorDirty_) {
                 left = name + "  ● 未保存";
                 // UAT3 T1：未保存圆点改用 wechat 警示红（旧注释称「wechat 无对应槽」
                 // 有误——warningRed #FA5151 即警示档），暖橙黄退出 md 页主体。
-                leftColor = t.colors.error;
+                leftColor = t.colors.errorText;
             } else {
                 left = name + "  ✓ 已保存 " + formatSaveTime(lastSavedAt_);
                 leftColor = t.colors.primary;  // 保存成功 = 绿
@@ -2770,7 +2770,7 @@ private:
 
                 // 内嵌红字错误行（校验/创建失败不走 toast）
                 ui_kit::drawDialogText(ui, "md.dialog.new.error", w, newNoteError_, 12.0f,
-                                       t.colors.error,
+                                       t.colors.errorText,
                                        {.y = 134.0f, .height = 18.0f, .lineHeight = 18.0f,
                                         .skipIfEmpty = true});
 
@@ -2881,7 +2881,7 @@ private:
 
                 // 内嵌红字错误行，同新建笔记弹窗
                 ui_kit::drawDialogText(ui, "md.dialog.newfolder.error", w, newFolderError_,
-                                       12.0f, t.colors.error,
+                                       12.0f, t.colors.errorText,
                                        {.y = 228.0f, .height = 18.0f, .lineHeight = 18.0f,
                                         .skipIfEmpty = true});
 
@@ -3937,7 +3937,7 @@ private:
                     .build();
                 // 校验/落盘失败内嵌红字，弹窗保持打开让用户改输入
                 ui_kit::drawDialogText(ui, "md.dialog.rename.error", w, renameError_,
-                                       12.0f, t.colors.error,
+                                       12.0f, t.colors.errorText,
                                        {.y = 134.0f, .height = 18.0f, .lineHeight = 18.0f,
                                         .skipIfEmpty = true});
                 ui_kit::DialogButtonSpec cancel;

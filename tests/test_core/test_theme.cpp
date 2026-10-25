@@ -201,6 +201,16 @@ REGISTER_TEST(theme_light_contrast_wcag, "theme: 浅色辅助灰/主色文字 WC
     // Ghost/Text 按钮字色（透明底主题色字）：浅色 #0C7E58 深绿档（primary 本身仅 1.84:1）
     DOCTEST_CHECK(wcagContrast(c.accentText, c.background) >= 4.5);
     DOCTEST_CHECK(wcagContrast(c.accentText, c.primarySoftBg) >= 4.5);
+    // errorText：红字压浅底专用档（校验失败态/错误横幅）。落底含 10% 红粉底
+    //（步骤条失败态 = mixColor(background, error, 0.10)，error 本身压它仅 3.18:1）
+    DOCTEST_CHECK(wcagContrast(c.errorText, c.background) >= 4.5);
+    DOCTEST_CHECK(wcagContrast(c.errorText, c.surface) >= 4.5);
+    DOCTEST_CHECK(wcagContrast(c.errorText,
+                               eui::mixColor(c.background, c.error, 0.10f)) >= 4.5);
+    DOCTEST_CHECK(wcagContrast(d.errorText, d.background) >= 4.5);
+    DOCTEST_CHECK(wcagContrast(d.errorText, d.surface) >= 4.5);
+    DOCTEST_CHECK(wcagContrast(d.errorText,
+                               eui::mixColor(d.background, d.error, 0.10f)) >= 4.5);
     // 主色作文字的场合（树选中/chip/大纲当前节/列表符号）走 primaryText，不是 primary
     // S1.2 #5: primaryText = #157E4E（浅色档 / ~4.87:1 on #FAFAF9 ≥ WCAG AA 4.5:1）
     DOCTEST_CHECK(wcagContrast(c.primaryText, c.background) >= 4.5);

@@ -1676,7 +1676,7 @@ void AgentModule::renderMessageRow(
                             .text(b.isError ? "工具输出（错误）" : "工具输出")
                             .fontSize(fsS)
                             .lineHeight(msgLh)
-                            .color(b.isError ? t.colors.error
+                            .color(b.isError ? t.colors.errorText
                                              : t.colors.textTertiary)
                             .build();
                         inner.text(bid + ".out")
@@ -1687,7 +1687,7 @@ void AgentModule::renderMessageRow(
                             .lineHeight(msgLh)
                             .wrap(true)
                             .maxWidth(cw)
-                            .color(b.isError ? t.colors.error
+                            .color(b.isError ? t.colors.errorText
                                              : t.colors.textSecondary)
                             .build();
                         break;
@@ -1787,7 +1787,7 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                     .fontSize(12.0f)
                     .lineHeight(kPageErrorH)
                     .verticalAlign(eui::VerticalAlign::Center)
-                    .color(t.colors.error)
+                    .color(t.colors.errorText)
                     .build();
                 // 「去 Claude 页」引导：仅「LLM 配置不可用」类错误渲染（needsClaudePageHint 前缀钉死）
                 if (hasPageHint) {
@@ -1974,7 +1974,7 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                             .text("数据库未就绪（Agent 模块服务未装配）")
                             .fontSize(t.sizes.fontSizeBody)
                             .lineHeight(20.0f)
-                            .color(t.colors.error)
+                            .color(t.colors.errorText)
                             .build();
                         return;
                     }
@@ -2116,7 +2116,7 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                                         .text("配置异常")
                                         .fontSize(12.0f)
                                         .lineHeight(20.0f)
-                                        .color(t.colors.error)
+                                        .color(t.colors.errorText)
                                         .build();
                                 }
                                 // 限次标记：看得出「这是一次性任务」（跑满会自动停用）
@@ -2332,7 +2332,7 @@ void AgentModule::composeTaskDialog(
 
             // ====== 左侧竖向导航 (0,44) 160×(H-44)：nav-item 高 56，序号圆 r=11 + 标签/副标竖排 ======
             // 四态：done=#E6FBF2 底+#36D399 字+✓ / cur=#36D399 填充+白字+左3px绿条
-            //       cur-err=#EF4444 10% 底+红字+!+左3px红条 / todo=#F3F4F6 底+#9CA3AF 字
+            //       cur-err=#EF4444 10% 底+errorText 红字+!+左3px红条 / todo=hover 底+textSecondary 字
             {
                 // 侧栏底（#FAFAF9）+ 右缘 1px 边线
                 ui.rect("agent.dialog.task.nav")
@@ -2353,15 +2353,15 @@ void AgentModule::composeTaskDialog(
                 for (int i = 0; i < kStepCount; ++i) {
                     std::string nodeId = "agent.dialog.task.step." + std::to_string(i);
                     const float navY = kContentY + static_cast<float>(i) * kVertNavItemH;
-                    // 当前步校验失败 → 节点标红（#EF4444 10% 底 + 红字 + !）
+                    // 当前步校验失败 → 节点标红（#EF4444 10% 底 + errorText 红字 + !）
                     const bool stepInvalid = (i == currentStep_) && !stepValidFor(i);
                     const bool done = i < currentStep_;
                     const bool cur = i == currentStep_;
                     const auto itemBg = done ? t.colors.primarySoftBg
-                        : stepInvalid ? eui::mixColor(t.colors.error, t.colors.background, 0.10f)
+                        : stepInvalid ? eui::mixColor(t.colors.background, t.colors.error, 0.10f)
                         : cur ? t.colors.primary : t.colors.hover;
                     const auto itemFg = done ? t.colors.primary
-                        : stepInvalid ? t.colors.error
+                        : stepInvalid ? t.colors.errorText
                         : cur ? t.colors.onPrimary : t.colors.textSecondary;
                     // 可点面（可点元素 id 本身带 onClick，测试锚 <nodeId>.bg）
                     ui.rect(nodeId + ".bg")
@@ -2419,7 +2419,7 @@ void AgentModule::composeTaskDialog(
                         .lineHeight(14.0f)
                         .wrap(false)
                         // 白字只压 valid 当前步绿底；无效态粉底仍走 textSecondary
-                        //（error 红压粉底仅 3.18:1）
+                        //（白字压粉底仅 1.18:1；label 走 errorText 为 5.46:1）
                         .color((cur && !stepInvalid) ? t.colors.onPrimary
                                                      : t.colors.textSecondary)
                         .build();
@@ -2594,14 +2594,14 @@ void AgentModule::composeTaskDialog(
                     ui_kit::drawDialogText(ui, "agent.dialog.task.cron.preview", w,
                                            cronPreview_,
                                            t.sizes.fontSizeSmall,
-                                           cronPreviewIsError_ ? t.colors.error
+                                           cronPreviewIsError_ ? t.colors.errorText
                                                                : t.colors.textTertiary,
                                            {.x = x0, .y = hintY, .height = 12.0f,
                                             .lineHeight = 12.0f, .skipIfEmpty = true});
                     ui_kit::drawDialogText(ui, "agent.dialog.task.once.preview", w,
                                            oncePreview_,
                                            t.sizes.fontSizeSmall,
-                                           oncePreviewIsError_ ? t.colors.error
+                                           oncePreviewIsError_ ? t.colors.errorText
                                                                : t.colors.textTertiary,
                                            {.x = x0, .y = hintY, .height = 12.0f,
                                             .lineHeight = 12.0f, .skipIfEmpty = true});
@@ -2649,7 +2649,7 @@ void AgentModule::composeTaskDialog(
                     ui_kit::drawDialogText(
                         ui, "agent.dialog.task.goal.valid", w,
                         editGoal_.empty() ? "请填写任务目标" : "",
-                        t.sizes.fontSizeSmall, t.colors.error,
+                        t.sizes.fontSizeSmall, t.colors.errorText,
                         {.x = x0, .y = goalInY + kStepGoalH + 4.0f, .height = 14.0f,
                          .lineHeight = 14.0f, .skipIfEmpty = true});
 
@@ -2767,7 +2767,7 @@ void AgentModule::composeTaskDialog(
                                 .fontSize(14.0f)
                                 .lineHeight(32.0f)
                                 .verticalAlign(eui::VerticalAlign::Center)
-                                .color(t.colors.error)
+                                .color(t.colors.errorText)
                                 .build();
                         }
                         ui.text("agent.dialog.task.destructive.label")
@@ -2778,7 +2778,7 @@ void AgentModule::composeTaskDialog(
                             .lineHeight(32.0f)
                             .wrap(false)
                             .verticalAlign(eui::VerticalAlign::Center)
-                            .color(editDestructive_ ? t.colors.error
+                            .color(editDestructive_ ? t.colors.errorText
                                                      : t.colors.textSecondary)
                             .build();
                         ui_kit::wswitch(ui, "agent.dialog.task.destructive",
@@ -3011,7 +3011,7 @@ void AgentModule::composeDraftDialog(
                                 .lineHeight = 16.0f, .wrap = true,
                                 .skipIfEmpty = true});
         ui_kit::drawDialogText(ui, "agent.dialog.task.draft.error", w, draftError_,
-                               t.sizes.fontSizeSmall, t.colors.error,
+                               t.sizes.fontSizeSmall, t.colors.errorText,
                                {.x = x0, .y = kDraftResultY, .height = 18.0f,
                                 .lineHeight = 18.0f, .skipIfEmpty = true});
     });
@@ -3077,7 +3077,7 @@ void AgentModule::composeDeleteConfirmDialog(
         ui_kit::drawDialogText(
             ui, "agent.dialog.delete.msg", w,
             "将删除任务「" + name + "」及其全部运行记录，不可恢复。",
-            t.sizes.fontSizeSmall, t.colors.error,
+            t.sizes.fontSizeSmall, t.colors.errorText,
             {.y = 58.0f, .height = 60.0f, .lineHeight = 20.0f, .wrap = true});
 
         ui_kit::DialogButtonSpec cancel;

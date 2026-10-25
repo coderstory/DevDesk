@@ -229,7 +229,7 @@ void AgentModule::composeTaskDetailDialog(
                 }
             } else {
                 metaText = "任务信息读取失败";
-                metaColor = t.colors.error;
+                metaColor = t.colors.errorText;
             }
             ui.text("agent.dialog.detail.header.meta")
                 .position(metaX, 34.0f)
@@ -298,7 +298,7 @@ void AgentModule::composeTaskDetailDialog(
             std::string lastValue = summaryFailed ? "读取失败" : "从未执行";
             std::string lastSub;
             eui::Color lastValueColor =
-                summaryFailed ? t.colors.error : t.colors.textPrimary;
+                summaryFailed ? t.colors.errorText : t.colors.textPrimary;
             if (!summaryFailed && latestRun != nullptr) {
                 if (latestRun->status == "running") {
                     int64_t secs = nowSec - latestRun->startedAt;
@@ -338,7 +338,7 @@ void AgentModule::composeTaskDetailDialog(
                 switch (tone) {
                     case TextTone::Muted: return t.colors.textTertiary;
                     case TextTone::Warning: return t.colors.warning;
-                    case TextTone::Error: return t.colors.error;
+                    case TextTone::Error: return t.colors.errorText;
                     case TextTone::Normal: break;
                 }
                 return normal;
@@ -404,7 +404,7 @@ void AgentModule::composeTaskDetailDialog(
             summaryCard("agent.dialog.detail.summary.stats",
                         x0 + 2.0f * (cardW + kCardGap), summaryY, cardW,
                         "近 7 天", statsValue,
-                        summaryFailed ? t.colors.error
+                        summaryFailed ? t.colors.errorText
                                       : t.colors.textPrimary,
                         statsSub, t.colors.textTertiary);
 
@@ -661,7 +661,7 @@ void AgentModule::composeTaskDetailDialog(
                                                     .wrap(false)
                                                     .maxWidth(std::max(
                                                         0.0f, cw - timeX - kRowInnerX))
-                                                    .color(t.colors.error)
+                                                    .color(t.colors.errorText)
                                                     .build();
                                                 // 「去 Claude 页」引导：仅「LLM 配置
                                                 // 不可用」类错误渲染
@@ -1003,7 +1003,7 @@ void AgentModule::composeTaskDetailDialog(
                                                : plan.tone == TextTone::Warning
                                                    ? t.colors.warning
                                                : plan.tone == TextTone::Error
-                                                   ? t.colors.error
+                                                   ? t.colors.errorText
                                                    : t.colors.textTertiary)
                                         .build();
                                 })
@@ -1015,7 +1015,7 @@ void AgentModule::composeTaskDetailDialog(
                                     .fontSize(fsS)
                                     .lineHeight(lhS)
                                     .fontWeight(600)
-                                    .color(t.colors.error)
+                                    .color(t.colors.errorText)
                                     .build();
                                 components::scrollView(
                                     inner, "agent.dialog.detail.detail.error.scroll")
@@ -1038,7 +1038,7 @@ void AgentModule::composeTaskDetailDialog(
                                             .lineHeight(lhS)
                                             .wrap(true)
                                             .maxWidth(ew)
-                                            .color(t.colors.error)
+                                            .color(t.colors.errorText)
                                             .build();
                                     })
                                     .build();
@@ -1082,7 +1082,7 @@ void AgentModule::composeTaskDetailDialog(
                                     .lineHeight(lhS)
                                     .wrap(true)
                                     .maxWidth(dw)
-                                    .color(t.colors.error)
+                                    .color(t.colors.errorText)
                                     .build();
                                 return;
                             }
@@ -1183,7 +1183,7 @@ void AgentModule::composeTaskDetailDialog(
                                         .lineHeight(lhS)
                                         .wrap(true)
                                         .maxWidth(cw)
-                                        .color(t.colors.error)
+                                        .color(t.colors.errorText)
                                         .build();
                                     return;
                                 }
@@ -1427,7 +1427,7 @@ void AgentModule::composeTaskDetailDialog(
                                               : std::string()),
                                 std::max(0.0f, (fw - kMetaGridGapX) * 0.5f),
                                 cfgTask != nullptr && cfgTask->allowDestructive
-                                    ? t.colors.error
+                                    ? t.colors.errorText
                                     : t.colors.success);
                         if (!problemV.empty()) {
                             // 配置异常：error 色全文（wrap），与普通值不同色即显形
@@ -1446,7 +1446,7 @@ void AgentModule::composeTaskDetailDialog(
                                         .fontSize(fsS)
                                         .lineHeight(lhS)
                                         .fontWeight(600)
-                                        .color(t.colors.error)
+                                        .color(t.colors.errorText)
                                         .build();
                                     f.text(cfgBase + ".body.problem.value")
                                         .position(kFieldLabelW + 6.0f, 0.0f)
@@ -1456,7 +1456,7 @@ void AgentModule::composeTaskDetailDialog(
                                         .lineHeight(lhS)
                                         .wrap(true)
                                         .maxWidth(probW)
-                                        .color(t.colors.error)
+                                        .color(t.colors.errorText)
                                         .build();
                                 })
                                 .build();

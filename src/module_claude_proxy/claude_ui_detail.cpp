@@ -624,7 +624,7 @@ float drawDetailCallsPane(eui::Ui& ui, float x0, float y0, float w,
             .text("调用记录加载失败：" + callsError)
             .fontSize(11.0f)
             .lineHeight(kEmptyH)
-            .color(t.colors.error)
+            .color(t.colors.errorText)
             .build();
         singleLineDrawn = true;
     } else if (recent.empty()) {
@@ -684,7 +684,7 @@ float drawDetailCallsPane(eui::Ui& ui, float x0, float y0, float w,
                     ? t.colors.success :
                 c.statusCode == 429
                     ? t.colors.warning
-                    : t.colors.error;
+                    : t.colors.errorText;
             const std::string statusStr = c.statusCode > 0
                 ? std::to_string(c.statusCode)
                 : std::string("-");

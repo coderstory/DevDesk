@@ -8555,8 +8555,8 @@ REGISTER_TEST(md_module_tree_list_error,
     DOCTEST_CHECK(err->text.find("列表加载失败") != std::string::npos);
     DOCTEST_CHECK(err->text.find("每 5 秒自动重试") != std::string::npos);
     // 文本元素：TextBuilder::color() 落在 textColor（element->color 是底色字段）
-    // W8：错误色改走 wechat 令牌 error（#FA5151），不再用 colors.error
-    DOCTEST_CHECK(colorEq(err->textColor, core::theme::current().colors.error));
+    // 错误文字走 errorText 档（error 只留给红底/边框等图形）
+    DOCTEST_CHECK(colorEq(err->textColor, core::theme::current().colors.errorText));
     DOCTEST_CHECK(err->frame.width > 0.0f);
     DOCTEST_CHECK(err->frame.height > 0.0f);
     // 失败态顶掉空态与树（分支互斥：不拿旧数据/空态伪装正常）
@@ -8642,10 +8642,9 @@ REGISTER_TEST(md_module_statusbar_save_error,
     DOCTEST_CHECK(save->text.find("未保存") == std::string::npos);
     DOCTEST_CHECK(save->text.find("已保存") == std::string::npos);
     // 文本元素：TextBuilder::color() 落在 textColor（element->color 是底色字段）
-    // UAT3 T1 测试对齐：模块 saveFailed_ 态自 W8 起即用 error
-    //（#FA5151）；本断言此前仍钉旧 colors.error，属 W8 后漂移未同步的存量红。
+    // saveFailed_ 红字走 errorText 档（error 只留给红底/边框等图形）
     DOCTEST_CHECK(colorEq(save->textColor,
-                          core::theme::current().colors.error));
+                          core::theme::current().colors.errorText));
     DOCTEST_CHECK(save->frame.width > 0.0f);
 
     // 还原目录权限，RAII 夹具才能清理

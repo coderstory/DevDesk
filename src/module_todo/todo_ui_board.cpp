@@ -215,7 +215,7 @@ void drawBoard(eui::Ui& ui, float contentW, float bodyH,
                     .fontSize(t.sizes.fontSizeBody)
                     .lineHeight(24.0f)
                     .horizontalAlign(eui::HorizontalAlign::Center)
-                    .color(t.colors.error)
+                    .color(t.colors.errorText)
                     .build();
                 components::button(ui, "todo.error.retry")
                     .position(contentW / 2.0f - 60.0f, bodyH / 2.0f)
@@ -774,7 +774,7 @@ void drawCard(eui::Ui& ui, const std::string& id, float x, float y, float width,
         const float dueW = std::min(66.0f, dueMaxW);
         if (dueW >= 24.0f) {
             pendingChips.push_back({id + ".due", dueW, dueText,
-                                    overdueTint ? t.colors.error
+                                    overdueTint ? t.colors.errorText
                                                 : t.colors.textTertiary});
             chipX += dueW + 6.0f;  // 自适应宽 + 6 间距
         }
@@ -836,7 +836,7 @@ void drawCard(eui::Ui& ui, const std::string& id, float x, float y, float width,
         .overflow(core::TextOverflow::Ellipsis)
         // S3.3：逾期标题红；归档标题二级灰（textSecondary）；常规标题走主题一级文字
         .color(isArchiveCard ? t.colors.textSecondary
-                             : (overdueTint ? t.colors.error
+                             : (overdueTint ? t.colors.errorText
                                             : t.colors.textPrimary))
         // done 0.78：textPrimary 压白卡 7.2:1（0.6 仅 4.04，低于正文 4.5 档）
         .opacity(done ? 0.78f : finalCardOpacity)
