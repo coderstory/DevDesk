@@ -2392,9 +2392,9 @@ REGISTER_TEST(settings_appearance_dropdown_popup_above_following_cards,
     ui.end();
     ui.layout(screen.width, screen.height);
 
-    // 主题选择器删除（D-12/E3）后改用字号下拉弹层验证 z 序
+    // 主题选择器删除（D-12/E3）且字号行改滑杆（批I）后，改用窗口效果下拉弹层验证 z 序
     const auto* popup =
-        ui.find("settings.card.appearance.font.dd.popup");
+        ui.find("settings.card.appearance.effect.dd.popup");
     const auto* appearanceCard = ui.find("settings.card.appearance");
     const auto* editorCard = ui.find("settings.card.editor");
     DOCTEST_REQUIRE(popup != nullptr);
@@ -2966,11 +2966,11 @@ REGISTER_TEST(settings_editor_font_dropdown_applies_channel,
     return true;
 })
 
-// UAT6「字号设置无效，起码没实时生效」：字号缩放下拉（通用 tab 外观卡，85/100/
-// 115/130%）点档必须即时写 core::theme（token 重建当帧可见），且 apply 路径显式
-// 请求下一帧 compose（不依赖点击输入顺带触发的 composeRequested）+ 落盘。
-REGISTER_TEST(settings_font_scale_dropdown_applies_live,
-              "settings: 字号缩放下拉点档 → fontScale/token 即时生效 + 请求重排 + 落盘", {
+// UAT6「字号设置无效，起码没实时生效」：字号缩放滑杆（批I 改 80-130% 无级，原四档
+// 下拉退役）拖到最大档必须即时写 core::theme（token 重建当帧可见），且 apply 路径
+// 显式请求下一帧 compose（不依赖输入顺带触发的 composeRequested）+ 落盘。
+REGISTER_TEST(settings_font_scale_slider_applies_live,
+              "settings: 字号缩放滑杆拖到 130% → fontScale/token 即时生效 + 请求重排 + 落盘", {
     test_support::TestEnv env(kCfgPrefix, "fontui", true);
     test_support::ScopedConfigPath cfgEnv(test_support::tempConfigFile(kCfgPrefix, "fontui_cfg"));
     std::unique_ptr<::core::Module> mod(create_settings_module());
@@ -2983,15 +2983,14 @@ REGISTER_TEST(settings_font_scale_dropdown_applies_live,
     mod->compose(ui, screen);
     ui.end();
 
-    // 通用 tab（默认）外观卡的字号缩放下拉在场
-    DOCTEST_CHECK(ui.find("settings.card.appearance.font.dd") != nullptr);
-    // 清掉 compose 期可能遗留的唤醒位，点击后的置位才可归因于 apply 路径
+    // 通用 tab（默认）外观卡的字号缩放滑杆在场
+    const auto* sliderEl = ui.find("settings.card.appearance.font.slider");
+    DOCTEST_REQUIRE(sliderEl != nullptr);
+    // 清掉 compose 期可能遗留的唤醒位，回调后的置位才可归因于 apply 路径
     (void)::core::platform::consumeUiUpdate();
-    // 点第 4 档「特大 130%」→ 通道 + token 即时生效 + 显式请求重排 + 持久化
-    const auto* item = ui.find("settings.card.appearance.font.dd.item.3");
-    DOCTEST_REQUIRE(item != nullptr);
-    DOCTEST_REQUIRE(item->onClick != nullptr);
-    item->onClick();
+    // 拖到最大 ratio=1.0 → 量化 130% → 通道 + token 即时生效 + 显式请求重排 + 持久化
+    DOCTEST_REQUIRE(sliderEl->onSliderValueChanged != nullptr);
+    sliderEl->onSliderValueChanged(1.0f);
     DOCTEST_CHECK_EQ(::core::theme::fontScale(), 1.3f);
     DOCTEST_CHECK_EQ(::core::theme::current().sizes.fontSizeBody, 14.0f * 1.3f);
     DOCTEST_CHECK(::core::platform::consumeUiUpdate());
@@ -3395,7 +3394,6 @@ REGISTER_TEST(settings_dropdown_single_holder,
     };
     // 两个下拉同在「通用」tab 的外观卡（默认 tab，无需切换）
     // 主题选择器删除后改用字号 + 窗口效果两个下拉（D-12/E3）
-    const std::string fontDd = "settings.card.appearance.font.dd";
     const std::string effectDd = "settings.card.appearance.effect.dd";
     // 展开态 = 弹层 opacity（EUI-NEO dropdown 收起时 opacity 0，元素仍在树上）
     auto popupOpacity = [&](const std::string& dd) -> float {
@@ -3415,24 +3413,18 @@ REGISTER_TEST(settings_dropdown_single_holder,
         return e;
     };
 
+    // 批I：字号行改滑杆后设置页仅剩效果一个下拉，「唯一持有者」语义退化为
+    // 开/关 + Esc 消费链（font 下拉断言随组件退役删除）
     frame("dd0");
-    DOCTEST_CHECK_EQ(popupOpacity(fontDd), 0.0f);
     DOCTEST_CHECK_EQ(popupOpacity(effectDd), 0.0f);
     DOCTEST_CHECK(!mod->onKeyEvent(escPress()));
 
-    // 1) 开字号下拉 → 只有它展开
-    DOCTEST_REQUIRE(clickField(fontDd));
-    frame("dd1");
-    DOCTEST_CHECK_EQ(popupOpacity(fontDd), 1.0f);
-    DOCTEST_CHECK_EQ(popupOpacity(effectDd), 0.0f);
-
-    // 2) 再开效果下拉 → 字号自动关（唯一持有者：同时最多一个展开）
+    // 1) 开效果下拉 → 展开
     DOCTEST_REQUIRE(clickField(effectDd));
-    frame("dd2");
+    frame("dd1");
     DOCTEST_CHECK_EQ(popupOpacity(effectDd), 1.0f);
-    DOCTEST_CHECK_EQ(popupOpacity(fontDd), 0.0f);
 
-    // 3) Esc 关当前项；再按一次（已全关）不消费
+    // 2) Esc 关当前项；再按一次（已全关）不消费
     DOCTEST_CHECK(mod->onKeyEvent(escPress()));
     frame("dd3");
     DOCTEST_CHECK_EQ(popupOpacity(effectDd), 0.0f);

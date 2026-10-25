@@ -32,6 +32,9 @@ add_library(devdesk_ui_kit STATIC
     # UAT3 多列分栏批：双列几何单一来源（半宽配对列 / 卡内双列共用，
     # 防各消费方公式漂移；同步卡 colGap=8 另一套口径，刻意不迁移）。
     columns.cpp
+    # UAT6.2 字号无级调节批：横向滑杆 helper（EUI 运行时托管取值，点击跳值 /
+    # 拖动连续取值）；首个消费方 = settings 外观卡字号行。
+    slider.cpp
 )
 
 devdesk_apply_warnings(devdesk_ui_kit)

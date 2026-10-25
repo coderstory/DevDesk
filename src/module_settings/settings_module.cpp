@@ -305,9 +305,13 @@ public:
                  ::core::theme::currentThemeName() + "）");
     }
 
-    void applyFontPreset(int index) {
-        if (index < 0 || index >= kFontPresetCount) return;
-        cfg_.fontScalePercent = kFontPresets[index];
+    // 字号无级调节（UAT6.2，80-130%）：钳制后沿用切档链路（setFontScale → 唤醒
+    // compose → 落盘）。同值早退是拖拽链的量化契约：slider onChange 在拖拽中每次
+    // 归一化变动都回调，只有量化到 1% 且与现值不同才走落库链。
+    void applyFontScalePercent(int percent) {
+        percent = std::clamp(percent, kMinFontScalePercent, kMaxFontScalePercent);
+        if (percent == cfg_.fontScalePercent) return;
+        cfg_.fontScalePercent = percent;
         ::core::theme::setFontScale(
             static_cast<float>(cfg_.fontScalePercent) / 100.0f);
         // 切档即生效不依赖点击输入顺带触发的 composeRequested：apply 路径显式
@@ -1153,7 +1157,7 @@ private:
     SettingsCardActions cardActions() {
         SettingsCardActions a;
         a.applyThemeMode = [this](int idx) { applyThemeMode(idx); };
-        a.applyFontPreset = [this](int idx) { applyFontPreset(idx); };
+        a.applyFontScalePercent = [this](int percent) { applyFontScalePercent(percent); };
         a.applyWindowEffect = [this](int idx) { applyWindowEffectPreset(idx); };
         a.applyModuleEnabled = [this](const std::string& moduleId, bool on) {
             applyModuleEnabled(moduleId, on);

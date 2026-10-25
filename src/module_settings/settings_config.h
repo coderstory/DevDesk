@@ -21,7 +21,7 @@ constexpr int kDefaultEditorFontSize = 15;
 constexpr int kMinEditorFontSize = 10;
 constexpr int kMaxEditorFontSize = 32;
 
-constexpr int kMinFontScalePercent = 85;
+constexpr int kMinFontScalePercent = 80;
 constexpr int kMaxFontScalePercent = 130;
 // 日志保留天数上限（0 = 永久）
 constexpr int kMaxLogRetentionDays = 3650;

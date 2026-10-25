@@ -59,7 +59,7 @@ struct SettingsCardsIn {
 // 卡片回写模块的回调（compose 每帧装配；lambda 只捕获 this → SBO 无堆分配）
 struct SettingsCardActions {
     std::function<void(int)> applyThemeMode;                 // 主题模式三档
-    std::function<void(int)> applyFontPreset;                // 字号缩放档
+    std::function<void(int)> applyFontScalePercent;          // 字号缩放（%，无级 80-130）
     std::function<void(int)> applyWindowEffect;              // 窗口效果三档
     std::function<void(const std::string&, bool)> applyModuleEnabled;  // 模块插拔
     std::function<void(Dropdown, bool)> setDropdownOpen;      // 下拉唯一持有者

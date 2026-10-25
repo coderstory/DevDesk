@@ -22,6 +22,7 @@
 #include <ui_kit/card.h>
 #include <ui_kit/columns.h>
 #include <ui_kit/form_row.h>
+#include <ui_kit/slider.h>
 #include <ui_kit/wswitch.h>
 
 #include <algorithm>
@@ -46,6 +47,9 @@ int logLevelIndex(const std::string& level) {
     if (level == kLogLevelError) return 3;
     return 1;  // INFO 默认档
 }
+
+// 字号行右侧实时百分比文本盒宽（"130%" fs(13) ≈ 33px，余量防手滑拖出四位数）
+constexpr float kFontScalePctLabelW = 44.0f;
 
 // 卡内标题 / 描述行 helper：左缩进 28、字体与颜色在所有调用点一致；标题字重 600。
 
@@ -147,24 +151,30 @@ void drawAppearanceCard(const CardDrawArgs& args) {
             ui_kit::formRow(ui, id + ".font", "字号缩放", formX, fontRowY,
                             formW, rowH,
                 [&](eui::Ui& ui, float cx, float cy, float cw, float ch) {
-                    const float ddW = cw;
+                    // UAT6.2 无级调节：四档下拉 → 滑杆（80-130% 连续取值，1% 分辨率
+                    // 量化落 cfg）+ 右侧实时百分比文本。行几何不变 → 卡高公式不受档位影响。
+                    const float wrapW = cw;
+                    const float pctW = kFontScalePctLabelW;
+                    const float sliderW = wrapW - pctW - roundFs(8.0f);
+                    const float ratio =
+                        static_cast<float>(in.cfg.fontScalePercent - kMinFontScalePercent) /
+                        static_cast<float>(kMaxFontScalePercent - kMinFontScalePercent);
                     ui.stack(id + ".font.ddwrap")
                         .position(cx, cy)
-                        .size(ddW, ch)
+                        .size(wrapW, ch)
                         .content([&] {
-                            components::dropdown(ui, id + ".font.dd")
-                                .size(ddW, ch)
-                                .theme(compTheme)
-                                .items(std::vector<std::string>(
-                                    kFontPresetLabels,
-                                    kFontPresetLabels + kFontPresetCount))
-                                .selected(nearestIndex(in.cfg.fontScalePercent,
-                                                       kFontPresets, kFontPresetCount))
-                                .open(isDropdownOpen(in.openDropdown, Dropdown::Font))
-                                .onOpenChange([f = a.setDropdownOpen](bool v) {
-                                    f(Dropdown::Font, v);
-                                })
-                                .onChange([f = a.applyFontPreset](int idx) { f(idx); })
+                            ui_kit::slider(ui, id + ".font.slider", 0.0f, 0.0f,
+                                           sliderW, ch, ratio, t,
+                                [f = a.applyFontScalePercent](float v) {
+                                    f(fontScalePercentFromRatio(v));
+                                });
+                            ui.text(id + ".font.pct")
+                                .position(sliderW + roundFs(8.0f), 0.0f)
+                                .size(pctW, ch)
+                                .text(std::to_string(in.cfg.fontScalePercent) + "%")
+                                .fontSize(fs(13.0f))
+                                .lineHeight(ch)
+                                .color(t.colors.textSecondary)
                                 .build();
                         })
                         .build();
