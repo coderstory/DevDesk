@@ -27,6 +27,7 @@
 
 #define DOCTEST_CHECK(expr) \
     do { if (!(expr)) { \
+        ::test_registry::lastFailNote() = std::string(__FILE__) + ":" + std::to_string(__LINE__) + " " #expr; \
         std::cerr << "FAIL [" << __FILE__ << ":" << __LINE__ << "] " #expr << std::endl; \
         return false; \
     }} while (0)
@@ -40,6 +41,7 @@
          if (!(_a == _b)) { \
             std::ostringstream oss; \
             oss << "FAIL [" << __FILE__ << ":" << __LINE__ << "] " #a " != " #b; \
+            ::test_registry::lastFailNote() = oss.str(); \
             std::cerr << oss.str() << std::endl; \
             return false; \
          }} while (0)
@@ -61,8 +63,11 @@
 // 带自定义消息的断言（失败时输出 message 便于定位）
 #define DOCTEST_CHECK_MESSAGE(expr, message) \
     do { if (!(expr)) { \
-        std::cerr << "FAIL [" << __FILE__ << ":" << __LINE__ << "] " #expr \
-                  << " — " << (message) << std::endl; \
+        std::ostringstream oss; \
+        oss << "FAIL [" << __FILE__ << ":" << __LINE__ << "] " #expr \
+            << " — " << (message); \
+        ::test_registry::lastFailNote() = oss.str(); \
+        std::cerr << oss.str() << std::endl; \
         return false; \
     }} while (0)
 
@@ -79,6 +84,14 @@ inline std::vector<std::pair<std::string, TestFunc>>& registry() {
 
 inline void register_test(const std::string& name, TestFunc f) {
     registry().emplace_back(name, f);
+}
+
+// 最近一次断言失败的现场（file:line + 表达式 [+ 消息]）。cerr 是主通道，这里
+// 是兜底副本：runner 批量输出 [FAIL] 时随行打印，防 cerr/cout 在某些执行环境
+// （CI 管道、重定向）下交错丢失导致「FAIL 但零断言行」的盲案（2026-10-26 CI 实证）
+inline std::string& lastFailNote() {
+    static std::string s;
+    return s;
 }
 
 // [SKIP] 标记：用例体调 DOCTEST_SKIP 时置位，运行器（test_main.cpp）逐用例
