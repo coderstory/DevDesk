@@ -1,7 +1,7 @@
 // src/module_claude_proxy/claude_ui_list.h
 // 左栏单元：header / 引导条 / Profile 列表。每块可视区域 = 一个自由函数（状态显式
 // 入参）；元素 id 按原值写死，无头用例（test_claude_ui）按这些 id 断言。
-// 共享配置片段区块已删除（左栏只剩 Profile 列表与底部按钮）。
+// 左栏只剩 Profile 列表与底部按钮。
 #pragma once
 
 #include "claude_service.h"
