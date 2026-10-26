@@ -1,5 +1,5 @@
 // src/module_settings/settings_ui_cards.h
-// settings 模块 6 张卡的绘制单元（+ GitHub Sync 卡在 github_sync_card.h，共 7 卡），
+// settings 模块 7 张卡的绘制单元（+ GitHub Sync 卡在 github_sync_card.h，共 8 卡），
 // 全部是自由函数：吃只读入参（SettingsCardsIn）与回调（SettingsCardActions），
 // 不捕获 this、不写模块成员。
 // 回调约定：卡片在元素回调里按值捕获用到的 std::function（`[f = a.xxx]`），不捕获
@@ -102,10 +102,11 @@ struct CardDrawArgs {
     const SettingsCardActions& a;
 };
 
-// 6 张卡（签名统一，注册表按 tab 分派；绘制顺序 = 注册表顺序）
+// 7 张卡（签名统一，注册表按 tab 分派；绘制顺序 = 注册表顺序）
 void drawAppearanceCard(const CardDrawArgs& args);   // 通用：外观（主题/字号/窗口效果）
 void drawEditorFontCard(const CardDrawArgs& args);   // 通用：编辑器字号
 void drawModulesCard(const CardDrawArgs& args);      // 模块：插拔开关
+void drawWallpaperCard(const CardDrawArgs& args);    // 模块：壁纸开关（平台能力门控在注册表）
 void drawProxyCard(const CardDrawArgs& args);        // 通用：Claude 代理（开关门控；UAT5 自模块 tab 迁入）
 void drawLogCard(const CardDrawArgs& args);          // 日志：保留天数 + 级别
 void drawLogViewCard(const CardDrawArgs& args);      // 日志：tail 查看

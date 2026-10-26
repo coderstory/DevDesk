@@ -1,13 +1,13 @@
 // uat62_page_shots_probe.cpp — UAT62 设计系统「全页面截图批」探针（真窗口 + app::compose）
 //
-// 交付物：7 个 Router 页面 × 每档窗口尺寸各一张 PNG（供「看图会话」逐页对设计稿审查）。
+// 交付物：8 个 Router 页面 × 每档窗口尺寸各一张 PNG（供「看图会话」逐页对设计稿审查）。
 // 运行两次（每档一次，尺寸由 --size 传入，文件名后缀 = 窗口高）：
-//   uat62_page_shots_probe.exe --size 1000x640 --out <输出目录>   → 01-home-640.png … 07-about-640.png
-//   uat62_page_shots_probe.exe --size 1600x1000 --out <输出目录>  → 01-home-1000.png … 07-about-1000.png
+//   uat62_page_shots_probe.exe --size 1000x640 --out <输出目录>   → 01-home-640.png … 08-about-640.png
+//   uat62_page_shots_probe.exe --size 1600x1000 --out <输出目录>  → 01-home-1000.png … 08-about-1000.png
 // --out 缺省 = 当前工作目录下 UAT62-screenshots/；目录不存在自动建。
 //
 // 构图路径：真 app::compose（自绘标题栏 + 侧边栏 + Router 当前页，与真机同一条装配链）。
-// 页面按 src/app_registry.h 的 kModuleRegistry 表序遍历（7 行 = PageId 枚举序 =
+// 页面按 src/app_registry.h 的 kModuleRegistry 表序遍历（8 行 = PageId 枚举序 =
 // 侧边栏序），实例全部来自表内 extern "C" 工厂（真模块，非桩）。
 //
 // 数据态 = 探针默认空状态（设计审查对象之一，不造假数据）：MdHeadlessEnv 给
@@ -25,7 +25,7 @@
 
 #include <eui/detail/dsl_app_impl.h>  // app::requestShow/requestUpdate 内联实现
 #include "app_assembly.h"             // app_assembly.cpp 符号（app_sidebar 引用）
-#include "app_registry.h"             // kModuleRegistry（7 行登记表 + 工厂）
+#include "app_registry.h"             // kModuleRegistry（8 行登记表 + 工厂）
 #include "app_sidebar.h"              // 真 app::compose
 #include "module_toggle_bridge.h"     // app_assembly 的桥符号
 #include "test_support.h"             // MdHeadlessEnv / ScopedAppRouter
@@ -56,14 +56,15 @@ namespace {
 
 // 输出文件名 slug（与 kModuleRegistry 表序一一对应；static_assert 钉长度）
 constexpr const char* kSlugs[] = {
-    "home", "markdown", "todo", "claude_proxy", "agent", "settings", "about",
+    "home", "markdown", "todo", "claude_proxy", "agent", "wallpaper", "settings",
+    "about",
 };
 static_assert(sizeof(kSlugs) / sizeof(kSlugs[0]) ==
                   sizeof(::app::registry::kModuleRegistry) /
                       sizeof(::app::registry::kModuleRegistry[0]),
               "kSlugs 与 kModuleRegistry 行数不一致（表序漂移）");
 
-// 两数字符串（01..07）
+// 两数字符串（01..08）
 std::string twoDigit(std::size_t n) {
     std::string s = std::to_string(n);
     return s.size() < 2 ? "0" + s : s;
@@ -127,7 +128,8 @@ int main(int argc, char* argv[]) {
     // 关笔记目录 git 自动提交。全模块 onStart 吃这份空底座，不触真实用户数据。
     test_support::MdHeadlessEnv mdEnv("uat62shots_", "shots", "shots.db");
 
-    // 7 个真模块：实例来自 kModuleRegistry 表内工厂，注册序 = 表序 = 侧边栏序
+    // 8 个真模块：实例来自 kModuleRegistry 表内工厂，注册序 = 表序 = 侧边栏序
+    //（不支持壁纸的平台工厂返回 nullptr，registerModule 对 nullptr 幂等跳过）
     ::core::Router router;
     std::vector<std::unique_ptr<::core::Module>> mods;
     for (const auto& e : ::app::registry::kModuleRegistry) {
@@ -172,10 +174,20 @@ int main(int argc, char* argv[]) {
     const float w = static_cast<float>(args.windowW);
     const float h = static_cast<float>(args.windowH);
     bool passed = true;
+    std::size_t captured = 0;              // 实际落图页数（跳过项不计入 PASS 文案）
+    std::vector<std::string> skipped;      // 平台能力不支持而无法建实例的表行 slug
 
     for (std::size_t i = 0; i < std::size(::app::registry::kModuleRegistry);
          ++i) {
         const auto& e = ::app::registry::kModuleRegistry[i];
+        // 空工厂行（平台能力不支持，如非 Windows 的 wallpaper）没有实例可渲染：
+        // 跳过 navigate/落图，否则会回退 Home 拍出重复页并谎报该页已覆盖。
+        if (mods[i] == nullptr) {
+            skipped.push_back(kSlugs[i]);
+            std::cerr << "uat62_page_shots: 跳过 " << kSlugs[i]
+                      << "（平台能力不支持，工厂返回 nullptr）\n";
+            continue;
+        }
         router.navigateTo(e.page);
         // 稳帧：24 帧（400ms @60fps）盖过仓库最长过渡时长——弹层透明度等由
         // animate().transition() 逐帧插值，只 poll 不 compose 树不更新，少跑会
@@ -204,6 +216,7 @@ int main(int argc, char* argv[]) {
             passed = false;
             continue;
         }
+        ++captured;
         std::cout << "uat62_page_shots: " << path << " (" << pw << "x" << ph
                   << ")\n";
     }
@@ -219,6 +232,11 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     std::cout << "uat62_page_shots: PASS（" << args.windowW << "x"
-              << args.windowH << "，7 页全落图）\n";
+              << args.windowH << "，" << captured << " 页落图";
+    if (!skipped.empty()) {
+        std::cout << "；跳过 " << skipped.size() << " 页:";
+        for (const auto& slug : skipped) std::cout << " " << slug;
+    }
+    std::cout << "）\n";
     return 0;
 }

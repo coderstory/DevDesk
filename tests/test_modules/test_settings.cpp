@@ -27,6 +27,7 @@
 #include "platform/json.h"      // 读 app.read_settings 的 JSON 出参
 #include "platform/autostart.h"    // supported()（自启动行按平台入几何池，UAT6）
 #include "platform/system_theme.h"
+#include "platform/wallpaper_capability.h"  // supported()（壁纸卡按平台入几何池）
 #include <core/platform/platform.h>  // requestUiUpdate/consumeUiUpdate（字号档 apply 路径显式唤醒断言）
 
 #include <eui/app.h>
@@ -2048,7 +2049,7 @@ REGISTER_TEST(settings_card_rows_scale_derived,
         editorRows.push_back("settings.card.editor.autostart.desc");
         editorRows.push_back("settings.card.editor.autostart.sw.track");
     }
-    const std::vector<CardRows> kCards = {
+    std::vector<CardRows> kCards = {
         {0, "settings.card.appearance",
          {"settings.card.appearance.title", "settings.card.appearance.desc",
           "settings.card.appearance.fluid",
@@ -2073,6 +2074,13 @@ REGISTER_TEST(settings_card_rows_scale_derived,
           "settings.card.log.level.ddwrap"}},
         {2, "settings.tab.log", {"settings.tab.log.title"}},
     };
+    // 壁纸卡按平台能力入池：supported（Windows）渲染，非 supported 整卡不建。
+    if (platform::wallpaper::supported()) {
+        kCards.push_back(
+            {1, "settings.card.wallpaper",
+             {"settings.card.wallpaper.title", "settings.card.wallpaper.desc",
+              "settings.card.wallpaper.sw.track"}});
+    }
 
     struct FontScaleGuard {
         float prev;
@@ -2272,6 +2280,41 @@ REGISTER_TEST(settings_card_rows_scale_derived,
             if (err.empty())
                 err = pin("modules 卡高", heightOf("settings.card.modules"),
                           at(168.0f, 198.0f, 257.0f));
+            // 壁纸卡（模块 tab 第二张全宽卡）：不改变上方 2×2 格布局（上面
+            // name/rowdesc 钉值继续守着），自身三行随 roundFs 派生、卡高 128 基准。
+            if (err.empty() && platform::wallpaper::supported()) {
+                err = pin("wallpaper.title 高（字面 22）",
+                          heightOf("settings.card.wallpaper.title"),
+                          at(22.0f, 22.0f, 22.0f));
+                if (err.empty())
+                    err = pin("wallpaper.desc 高（roundFs(16)）",
+                              heightOf("settings.card.wallpaper.desc"),
+                              at(14.0f, 16.0f, 21.0f));
+                if (err.empty())
+                    err = pin("wallpaper 开关行顶（roundFs(68)+行盒内居中）",
+                              yOf("settings.card.wallpaper.sw.track") -
+                                  yOf("settings.card.wallpaper"),
+                              at(64.5f, 78.0f, 104.5f));
+                if (err.empty())
+                    err = pin("wallpaper 开关高（字面 24）",
+                              heightOf("settings.card.wallpaper.sw.track"),
+                              at(24.0f, 24.0f, 24.0f));
+                if (err.empty())
+                    err = pin("wallpaper 卡高（roundFs(128)）",
+                              heightOf("settings.card.wallpaper"),
+                              at(109.0f, 128.0f, 166.0f));
+                if (err.empty())
+                    err = pin("wallpaper 卡宽（全宽 = modules 卡宽）",
+                              widthOf("settings.card.wallpaper"),
+                              widthOf("settings.card.modules"));
+                // 全宽卡独占一行：壁纸卡顶 = 模块卡底 + gap(16)
+                if (err.empty())
+                    err = pin("wallpaper 卡 y（modules 底 + 16）",
+                              yOf("settings.card.wallpaper") -
+                                  (yOf("settings.card.modules") +
+                                   heightOf("settings.card.modules")),
+                              at(16.0f, 16.0f, 16.0f));
+            }
         } else {
     // 日志卡入派生池：UAT3 双列后两行同排（行 y=roundFs(68)、行高=logFieldHeight）、
     // hint 并一行（hintRowBelowY）、卡高 roundFs(144) 三档同缩放
@@ -3693,9 +3736,12 @@ REGISTER_TEST(settings_card_registry_order,
         DOCTEST_CHECK_MESSAGE(pairChildren == wantPairChildren,
                               "配对行子卡 实测：" + join(pairChildren));
         DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 1));
-        // UAT5：模块 tab 删目录卡、代理卡迁通用 tab 后只剩插拔卡（无组题/分隔线）
-        const std::vector<std::string> wantModulesAll = {
-            "settings.card.modules"};
+        // UAT5：模块 tab 删目录卡、代理卡迁通用 tab 后只剩插拔卡（无组题/分隔线）；
+        // 壁纸卡仅在平台能力支持时存在（注册表 visible 门控，不占高度）。
+        std::vector<std::string> wantModulesAll = {"settings.card.modules"};
+        if (platform::wallpaper::supported()) {
+            wantModulesAll.push_back("settings.card.wallpaper");
+        }
         const auto t1 = cardIdsOf(*mod, screen);
         DOCTEST_CHECK_MESSAGE(t1 == wantModulesAll, "模块 tab（全开） 实测：" + join(t1));
         DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 2));
@@ -3718,8 +3764,10 @@ REGISTER_TEST(settings_card_registry_order,
         std::unique_ptr<::core::Module> mod(create_settings_module());
         mod->onStart();
         DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 1));
-        const std::vector<std::string> wantModulesGated = {
-            "settings.card.modules"};
+        std::vector<std::string> wantModulesGated = {"settings.card.modules"};
+        if (platform::wallpaper::supported()) {
+            wantModulesGated.push_back("settings.card.wallpaper");
+        }
         const auto g1 = cardIdsOf(*mod, screen);
         DOCTEST_CHECK_MESSAGE(g1 == wantModulesGated, "模块 tab（门控全关） 实测：" + join(g1));
         DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 0));
@@ -3985,6 +4033,23 @@ REGISTER_TEST(settings_cards_solid_white_bg,
                                           std::to_string(bg->border.width));
             }
         }
+    }
+    // 壁纸卡（平台能力支持时）纳入同一白卡契约：surface 底 + 描边。
+    if (platform::wallpaper::supported()) {
+        DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 1));
+        eui::Ui ui;
+        ui.begin("noframe_wallpaper");
+        mod->compose(ui, screen);
+        ui.end();
+        ui.layout(screen.width, screen.height);
+        const auto* bg = ui.find("settings.card.wallpaper.bg");
+        DOCTEST_REQUIRE_MESSAGE(bg != nullptr,
+                                "壁纸卡应有实底白 bg rect（S6.1 玻璃退役）");
+        DOCTEST_REQUIRE(ui.find("settings.card.wallpaper") != nullptr);
+        const auto cs = ui_kit::cardSurface(core::theme::current());
+        DOCTEST_CHECK(bg->color.r == cs.r && bg->color.g == cs.g &&
+                      bg->color.b == cs.b && bg->color.a == cs.a);
+        DOCTEST_CHECK(bg->border.width > 0.005f);
     }
     mod->onStop();
     ::core::theme::setDark();

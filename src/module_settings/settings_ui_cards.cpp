@@ -491,6 +491,58 @@ void drawModulesCard(const CardDrawArgs& args) {
         .build();
 }
 
+// 壁纸卡（模块 tab，全宽）：标题 + 说明 + 右侧 44×24 开关。平台能力门控在注册表
+// 的 visible 函数（unsupported 平台整卡不建、不占高度），本函数无平台分支。
+// 开关行几何与卡高同源（settings_ui_logic.h 的 kWallpaperCardHeight 注释）：
+// 行 y = roundFs(68) 内容起始锚、行盒 roundFs(44)，44×24 字面开关行内垂直居中。
+void drawWallpaperCard(const CardDrawArgs& args) {
+    eui::Ui& ui = args.ui;
+    const std::string& id = args.id;
+    const float w = args.w;
+    const float h = args.h;
+    const core::theme::Tokens& t = args.t;
+    const SettingsCardsIn& in = args.in;
+    const SettingsCardActions& a = args.a;
+
+    constexpr float kSwitchW = 44.0f;   // §4.4 微信开关字面值（不随字号缩放）
+    constexpr float kSwitchH = 24.0f;
+    constexpr float kSidePad = 28.0f;   // 卡内左右边距（与各卡同款）
+
+    ui.stack(id)
+        .size(w, h)
+        .content([&] {
+            const auto compThemeTop = core::theme::componentTokensWeChat(t);
+            // 白卡 + Sm 阴影 + 描边（与模块插拔卡同款，S6.1 玻璃退役口径）
+            ui.rect(id + ".bg")
+                .position(0.0f, 0.0f).size(w, h)
+                .color(ui_kit::cardSurface(t))
+                .radius(t.sizes.radiusLarge)
+                .shadow(components::theme::shadow(compThemeTop, 3.0f, 1.0f,
+                                                  0.04f, 0.02f))
+                .border(1.0f, t.colors.borderDefault)
+                .build();
+
+            cardTitle(ui, id, t, 16.0f, w - 56.0f, 22.0f, 22.0f, "壁纸");
+            cardDesc(ui, id, t, 40.0f, w - 56.0f, roundFs(16.0f),
+                     "动态桌面壁纸（视频 / 图片），开启后随 DevDesk 启动");
+
+            // 开关行：内容起始锚 68（与日志/编辑器卡同口径）→ 行盒 roundFs(44)
+            // → 下边距 roundFs(16)，三者之和即 kWallpaperCardHeight 基准。
+            const float rowY = roundFs(68.0f);
+            const float rowH = roundFs(44.0f);
+            const float swY = rowY + (rowH - kSwitchH) * 0.5f;
+            // wswitch 命中元素 = <id>.track；初始值读 cfg 模块态，拨动走既有
+            // applyModuleEnabled → onModuleToggled 链路（与模块插拔卡同一入口）。
+            ui_kit::wswitch(
+                ui, id + ".sw", moduleEnabled(in.cfg, kModuleIdWallpaper),
+                w - kSidePad - kSwitchW, swY, kSwitchW, kSwitchH, t,
+                [f = a.applyModuleEnabled](bool v) {
+                    f(kModuleIdWallpaper, v);
+                });
+        })
+        .build();
+}
+
 void drawProxyCard(const CardDrawArgs& args) {
     eui::Ui& ui = args.ui;
     const std::string& id = args.id;
