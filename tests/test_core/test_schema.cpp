@@ -8,6 +8,7 @@
 #include "core/schema.h"
 #include "core/sqlite_db.h"
 
+#include <algorithm>
 #include <filesystem>
 #include <set>
 #include <string>
@@ -58,7 +59,7 @@ std::vector<std::string> columnDefs(core::data::SqliteDb& db, const std::string&
 
 
 REGISTER_TEST(schema_creates_all_tables,
-              "schema: applySchema 建出全部 15 张应用表", {
+              "schema: applySchema 建出全部 13 张应用表", {
     auto path = test_support::tempDbPath(kDbPrefix, "create");
     std::error_code ec;
     std::filesystem::remove(path, ec);
@@ -78,7 +79,6 @@ REGISTER_TEST(schema_creates_all_tables,
             "todo_tasks",
             "claude_profiles",
             "claude_call_logs",
-            "claude_shared_configs",
             "agent_tasks",
             "agent_runs",
             "agent_messages",
@@ -262,7 +262,7 @@ REGISTER_TEST(schema_todo_tables_columns,
 })
 
 REGISTER_TEST(schema_claude_tables_columns,
-              "schema: claude 三表列定义符合最终形态（17/15/5 列，片段表无 extra_env）", {
+              "schema: claude 两表列定义符合最终形态（16/15 列）", {
     auto path = test_support::tempDbPath(kDbPrefix, "cols_claude");
     std::error_code ec;
     std::filesystem::remove(path, ec);
@@ -286,7 +286,6 @@ REGISTER_TEST(schema_claude_tables_columns,
             "updated_at:INTEGER:1:<none>",
             "models_config:TEXT:1:''",
             "extra_env:TEXT:1:''",
-            "shared_config_id:INTEGER:1:0",
             "auth_field:TEXT:1:'both'",
             "dialect_override:TEXT:1:''",
             "fallback_profile_id:INTEGER:1:0",
@@ -313,20 +312,6 @@ REGISTER_TEST(schema_claude_tables_columns,
             "first_event_ms:INTEGER:0:<none>",
         };
         DOCTEST_CHECK_EQ(columnDefs(db, "claude_call_logs"), expectLogs);
-
-        // 共享片段表 5 列，无 extra_env
-        std::vector<std::string> expectShared{
-            "id:INTEGER:0:<none>",
-            "name:TEXT:1:<none>",
-            "created_at:INTEGER:1:<none>",
-            "updated_at:INTEGER:1:<none>",
-            "extra_settings_json:TEXT:1:''",
-        };
-        DOCTEST_CHECK_EQ(columnDefs(db, "claude_shared_configs"), expectShared);
-
-        // 旧列不存在（不是改名）
-        DOCTEST_CHECK(
-            db.prepare("SELECT extra_env FROM claude_shared_configs").isFail());
     }
 
     std::filesystem::remove(path, ec);
@@ -660,7 +645,6 @@ REGISTER_TEST(schema_is_idempotent,
     // 第一次：记录落库后的完整 schema 形态
     std::vector<std::string> firstObjects;
     std::vector<std::string> firstProfilesCols;
-    std::vector<std::string> firstSharedCols;
     {
         auto r1 = core::Database::open(path);
         DOCTEST_REQUIRE(r1.isOk());
@@ -678,7 +662,6 @@ REGISTER_TEST(schema_is_idempotent,
                                    row.getString("sql").valueOr("?"));
         }
         firstProfilesCols = columnDefs(db, "claude_profiles");
-        firstSharedCols = columnDefs(db, "claude_shared_configs");
     } // 句柄关闭（Windows 文件锁）
 
     // 关掉再打开：同一连接连跑两次 applySchema，都不报错
@@ -706,7 +689,6 @@ REGISTER_TEST(schema_is_idempotent,
 
         // 列定义不变
         DOCTEST_CHECK_EQ(columnDefs(db, "claude_profiles"), firstProfilesCols);
-        DOCTEST_CHECK_EQ(columnDefs(db, "claude_shared_configs"), firstSharedCols);
 
         // 种子行不被重复插入：这是本脚本唯一的非 DDL 幂等点
         auto prep = db.prepare("SELECT COUNT(*) FROM todo_columns");
@@ -715,6 +697,86 @@ REGISTER_TEST(schema_is_idempotent,
         DOCTEST_REQUIRE(rows2.isOk());
         DOCTEST_CHECK_EQ(std::get<int64_t>(rows2.value()[0].values[0]), 4);
     } // Database 在此析构（关闭 sqlite 句柄）
+
+    std::filesystem::remove(path, ec);
+    return true;
+})
+
+// 老库（含已删除的共享片段表/列）→ migrate 清掉遗留 schema，数据行与其余列保留
+REGISTER_TEST(schema_migrate_drops_deprecated_shared_config,
+              "schema: 老库迁移删除共享片段表/列（幂等，profile 行保留）", {
+    auto path = test_support::tempDbPath(kDbPrefix, "drop_shared");
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+
+    {
+        // 用裸 SqliteDb 造老库（Database::open 会立即 migrate，建不出旧形态）
+        auto r = core::data::SqliteDb::open(path);
+        DOCTEST_REQUIRE(r.isOk());
+        auto& db = r.value();
+        // 旧形态：claude_profiles 带 shared_config_id，另有共享片段表与数据
+        DOCTEST_REQUIRE(db.exec(R"(
+            CREATE TABLE claude_profiles (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT UNIQUE NOT NULL,
+                base_url TEXT NOT NULL,
+                api_key_hint TEXT NOT NULL,
+                api_key_check TEXT NOT NULL,
+                api_key_encrypted TEXT NOT NULL DEFAULT '',
+                model TEXT NOT NULL,
+                is_active INTEGER NOT NULL DEFAULT 0,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
+                models_config TEXT NOT NULL DEFAULT '',
+                extra_env TEXT NOT NULL DEFAULT '',
+                shared_config_id INTEGER NOT NULL DEFAULT 0,
+                auth_field TEXT NOT NULL DEFAULT 'both',
+                dialect_override TEXT NOT NULL DEFAULT '',
+                fallback_profile_id INTEGER NOT NULL DEFAULT 0,
+                extra_settings_json TEXT NOT NULL DEFAULT ''
+            )
+        )").isOk());
+        DOCTEST_REQUIRE(db.exec(
+            "CREATE TABLE claude_shared_configs ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE NOT NULL, "
+            "created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, "
+            "extra_settings_json TEXT NOT NULL DEFAULT '')").isOk());
+        DOCTEST_REQUIRE(db.exec(
+            "INSERT INTO claude_profiles (id, name, base_url, api_key_hint, "
+            "api_key_check, model, created_at, updated_at, shared_config_id) "
+            "VALUES (1, 'old', 'https://old.example.com', 'sk-***', 'x', 'm', 1, 2, 7)")
+                            .isOk());
+        DOCTEST_REQUIRE(db.exec(
+            "INSERT INTO claude_shared_configs (name, created_at, updated_at, "
+            "extra_settings_json) VALUES ('frag', 1, 2, '{}')").isOk());
+
+        DOCTEST_REQUIRE(core::schema::migrate(db).isOk());
+        DOCTEST_CHECK_EQ(listObjects(db, "table").count("claude_shared_configs"),
+                         static_cast<size_t>(0));
+        const auto cols = columnDefs(db, "claude_profiles");
+        bool hasSharedCol = false;
+        for (const auto& c : cols) {
+            if (c.rfind("shared_config_id:", 0) == 0) hasSharedCol = true;
+        }
+        DOCTEST_CHECK_FALSE(hasSharedCol);
+        DOCTEST_CHECK(std::find(cols.begin(), cols.end(),
+                                "extra_settings_json:TEXT:1:''") != cols.end());
+        auto q = db.prepare("SELECT name, base_url, model FROM claude_profiles");
+        DOCTEST_REQUIRE(q.isOk());
+        auto rows = q.value().fetchAll();
+        DOCTEST_REQUIRE(rows.isOk());
+        DOCTEST_REQUIRE_EQ(rows.value().size(), static_cast<size_t>(1));
+        DOCTEST_CHECK_EQ(rows.value()[0].getString("name").value(),
+                         std::string("old"));
+        DOCTEST_CHECK_EQ(rows.value()[0].getString("base_url").value(),
+                         std::string("https://old.example.com"));
+
+        // 二次 migrate：表/列已不存在，no-op 且数据不动
+        DOCTEST_REQUIRE(core::schema::migrate(db).isOk());
+        DOCTEST_CHECK_EQ(listObjects(db, "table").count("claude_shared_configs"),
+                         static_cast<size_t>(0));
+        DOCTEST_CHECK_EQ(columnDefs(db, "claude_profiles"), cols);
+    }
 
     std::filesystem::remove(path, ec);
     return true;

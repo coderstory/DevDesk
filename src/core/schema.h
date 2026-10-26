@@ -93,7 +93,6 @@ inline constexpr const char* kSql = R"(
     -- dialect_override 上游方言覆盖：空串 = 未覆盖 = 按 base_url 的 host 推断
     --   （'anthropic_default' / 'opencode_zen'）；自建网关 / 内网镜像的 host 后缀推断不出
     --   正确方言，只能显式覆盖。
-    -- shared_config_id 绑定的共享片段 id：0 = 未绑定（0..1 绑定，不嵌套）。
     -- fallback_profile_id failover 备用供应商 id：0 = 无备用（0..1 单跳，不换第三家）。
     --
     -- 凭据三列（存储形态见 platform/credential_protection.h）：
@@ -120,7 +119,6 @@ inline constexpr const char* kSql = R"(
         updated_at INTEGER NOT NULL,
         models_config TEXT NOT NULL DEFAULT '',
         extra_env TEXT NOT NULL DEFAULT '',
-        shared_config_id INTEGER NOT NULL DEFAULT 0,
         auth_field TEXT NOT NULL DEFAULT 'both',
         dialect_override TEXT NOT NULL DEFAULT '',
         fallback_profile_id INTEGER NOT NULL DEFAULT 0,
@@ -147,20 +145,6 @@ inline constexpr const char* kSql = R"(
         cache_write_tokens INTEGER,
         first_event_ms INTEGER,
         FOREIGN KEY (profile_id) REFERENCES claude_profiles(id) ON DELETE CASCADE
-    );
-
-    -- 共享配置片段：**独立表**（不是「特殊 profile」）。claude_profiles 的每一行都被
-    -- 当成「可选路上游」（is_active 唯一索引 / listProfiles / 自动激活 / 复制命名 /
-    -- 孤儿密钥清理 / 代理 getActiveProfile），塞一行没有 base_url/密钥的特殊行等于给
-    -- 这 6 条路径各加一个 kind 判断，漏判一次就把片段当供应商转发。
-    -- 片段不含 base_url / 密钥：定位为纯装饰层（不进路由表、不碰凭据列）。
-    -- 定位是「settings.json 非 env 属性的 JSON 预设」（extra_settings_json）。
-    CREATE TABLE IF NOT EXISTS claude_shared_configs (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT UNIQUE NOT NULL,
-        created_at INTEGER NOT NULL,
-        updated_at INTEGER NOT NULL,
-        extra_settings_json TEXT NOT NULL DEFAULT ''
     );
 
     -- 手动触发的 agent run 三表：任务定义 / 运行实例 / 消息审计。

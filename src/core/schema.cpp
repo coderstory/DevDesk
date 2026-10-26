@@ -605,6 +605,26 @@ core::Result<void> addMissingAgentColumns(core::data::SqliteDb& db) {
     return core::Result<void>::ok();
 }
 
+core::Result<void> migrateDropDeprecatedSharedConfig(core::data::SqliteDb& db) {
+    // 共享片段功能已整体删除：老库的表与列必须清掉；全新库两者都不存在，直接 no-op。
+    // 幂等：表/列存在性检查后动 DDL，重复调用不再命中（DROP TABLE IF EXISTS 亦兼容）。
+    auto table = tableExists(db, "claude_shared_configs");
+    if (table.isFail())
+        return core::Result<void>::fail(table.errorCode(), table.errorMessage());
+    if (table.value()) {
+        auto drop = db.exec("DROP TABLE IF EXISTS claude_shared_configs");
+        if (drop.isFail()) return drop;
+    }
+    auto cols = existingColumns(db, "claude_profiles");
+    if (cols.isFail())
+        return core::Result<void>::fail(cols.errorCode(), cols.errorMessage());
+    if (cols.value().count("shared_config_id") != 0) {
+        auto alter = db.exec("ALTER TABLE claude_profiles DROP COLUMN shared_config_id");
+        if (alter.isFail()) return alter;
+    }
+    return core::Result<void>::ok();
+}
+
 core::Result<void> dropRemovedTables(core::data::SqliteDb& db) {
     // 已摘除功能的遗留表（老库启动即清）。必须逐条 DROP 且保持 IF EXISTS：
     // 新库没有这些表，缺 IF EXISTS 会让全新库第一次 migrate 就红。
@@ -622,6 +642,12 @@ core::Result<void> migrate(core::data::SqliteDb& db) {
     if (r.isFail()) {
         LOG_ERROR("Database schema 应用失败: " + r.errorMessage());
         return r;
+    }
+    // 共享片段表/列已废弃：老库在补列前先清掉，避免遗留 schema 继续被带着走。
+    auto dropShared = migrateDropDeprecatedSharedConfig(db);
+    if (dropShared.isFail()) {
+        LOG_ERROR("共享片段遗留 schema 清理失败: " + dropShared.errorMessage());
+        return dropShared;
     }
     auto colMig = addMissingAgentColumns(db);
     if (colMig.isFail()) {
