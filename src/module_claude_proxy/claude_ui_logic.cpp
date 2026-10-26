@@ -48,14 +48,6 @@ std::string suggestImportName(const std::string& baseUrl) {
     return "导入 " + std::string(buf);
 }
 
-const SharedConfig* findSharedById(const std::vector<SharedConfig>& configs,
-                                   int64_t id) {
-    for (const auto& sc : configs) {
-        if (sc.id == id) return &sc;
-    }
-    return nullptr;
-}
-
 std::string buildProfileExportJson(const Profile& p,
                                    const std::string& keyPlaceholder) {
     // env 域：与 runProfile 的临时 settings 同一条 env 管线，仅凭据换成占位值、

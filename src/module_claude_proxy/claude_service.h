@@ -31,7 +31,7 @@ namespace module::claude {
 // 客户端不带、由代理按方言注入；进程内稳定一份，保证上游路由/缓存亲和。
 const std::string& claudeUpstreamSessionId();
 
-// Profile / SharedConfig / 两段写助手的类型定义在 profile_repository.h（本头 include 透出）
+// Profile / 两段写助手的类型定义在 profile_repository.h（本头 include 透出）
 
 class ClaudeService {
 public:
@@ -59,7 +59,6 @@ public:
                                        const std::string& apiKey,
                                        const std::string& model,
                                        bool activateIfNoneActive = false,
-                                       int64_t sharedConfigId = 0,
                                        const std::string& authField = "both");
 
     // 更新 profile（id 必须已存在）；apiKeyPlain 非空则覆盖凭据三列。
@@ -91,16 +90,7 @@ public:
     // 副本不激活；二段补写失败 → best-effort 删副本回滚。
     core::Result<Profile> duplicateProfile(int64_t srcId);
 
-    // 共享配置片段（改动当场生效）
-    // 改/删/解绑后，激活 profile 代理在跑则立即 re-takeover；删除同事务解绑；
-    // 解绑后同名键回落 profile 自身值（片段值从不写进 profile 行）。
-    core::Result<std::vector<SharedConfig>> listSharedConfigs();
-    core::Result<SharedConfig> createSharedConfig(const std::string& name,
-                                                 const std::string& extraSettingsJson);
-    core::Result<void> updateSharedConfig(const SharedConfig& config);
-    core::Result<void> deleteSharedConfig(int64_t id);
-
-    // 用当前激活 profile（含所绑片段）重写 settings.json；通道未注入/开关关 →
+    // 用当前激活 profile 重写 settings.json；通道未注入/开关关 →
     // no-op 成功。本入口不做前置校验，调用方必须先过 validateProxyPreconditions。
     core::Result<void> reapplyTakeOver() { return syncTakeOver(); }
 
@@ -241,7 +231,7 @@ private:
     std::mutex switchMutex_;
 
     core::data::SqliteDb& db_;
-    // claude_profiles 行 + SharedConfig 的唯一持久化入口
+    // claude_profiles 行的唯一持久化入口
     ProfileRepository profileRepository_;
 
     // settings.json 接管/还原协议侧；门面只留编排与转发。

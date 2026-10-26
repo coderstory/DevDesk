@@ -198,7 +198,6 @@ core::Result<Profile> ProfileRepository::rowToProfile(
     auto model = row.getString("model");
     auto modelsCfg = row.getString("models_config");
     auto extraEnv = row.getString("extra_env");
-    auto sharedCfg = row.getInt64("shared_config_id");
     auto authField = row.getString("auth_field");
     auto active = row.getInt64("is_active");
     auto created = row.getInt64("created_at");
@@ -211,7 +210,6 @@ core::Result<Profile> ProfileRepository::rowToProfile(
     if (model.isOk()) p.model = model.value();
     if (modelsCfg.isOk()) p.modelsConfigJson = modelsCfg.value();
     if (extraEnv.isOk()) p.extraEnvJson = extraEnv.value();
-    if (sharedCfg.isOk()) p.sharedConfigId = sharedCfg.value();
     // 读侧规范化：未知/空值一律兜底 both
     if (authField.isOk()) {
         p.authField = authFieldToText(authFieldFromText(authField.value()));
@@ -230,7 +228,7 @@ core::Result<std::vector<Profile>> ProfileRepository::listProfiles() {
     auto prep = db_.prepare(
         "SELECT id, name, base_url, api_key_hint, api_key_check, "
         "model, models_config, extra_env, "
-        "shared_config_id, auth_field, is_active, "
+        "auth_field, is_active, "
         "created_at, updated_at "
         "FROM claude_profiles ORDER BY is_active DESC, name ASC");
     if (prep.isFail()) {
@@ -261,7 +259,7 @@ core::Result<Profile> ProfileRepository::getProfile(int64_t id) {
     auto prep = db_.prepare(
         "SELECT id, name, base_url, api_key_hint, api_key_check, "
         "model, models_config, extra_env, "
-        "shared_config_id, auth_field, is_active, "
+        "auth_field, is_active, "
         "created_at, updated_at "
         "FROM claude_profiles WHERE id = ?");
     if (prep.isFail()) {
@@ -291,7 +289,6 @@ core::Result<Profile> ProfileRepository::createProfile(const std::string& name,
                                                        const std::string& baseUrl,
                                                        const std::string& apiKey,
                                                        const std::string& model,
-                                                       int64_t sharedConfigId,
                                                        const std::string& authField) {
     if (trim(name).empty()) {
         return core::Result<Profile>::fail(core::ErrorCode::ValidationError,
@@ -326,10 +323,10 @@ core::Result<Profile> ProfileRepository::createProfile(const std::string& name,
     auto prep = db_.prepare(
         "INSERT INTO claude_profiles "
         "(name, base_url, api_key_hint, api_key_check, api_key_encrypted, "
-        " model, shared_config_id, auth_field, "
+        " model, auth_field, "
         " is_active, created_at, "
         " updated_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?) RETURNING id");
+        "VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?) RETURNING id");
     if (prep.isFail()) {
         return core::Result<Profile>::fail(prep.errorCode(), prep.errorMessage());
     }
@@ -340,10 +337,9 @@ core::Result<Profile> ProfileRepository::createProfile(const std::string& name,
     stmt.bind(4, check);
     stmt.bind(5, protectedKey.value());  // 凭据本体（分平台形态）
     stmt.bind(6, cleanedModel);
-    stmt.bind(7, sharedConfigId);    // 建时即绑定（0 = 不绑定）
-    stmt.bind(8, cleanedAuthField);  // 认证字段（写侧已规范化）
+    stmt.bind(7, cleanedAuthField);  // 认证字段（写侧已规范化）
+    stmt.bind(8, static_cast<int64_t>(now));
     stmt.bind(9, static_cast<int64_t>(now));
-    stmt.bind(10, static_cast<int64_t>(now));
 
     auto stepR = stmt.step();
     if (stepR.isFail()) {
@@ -388,7 +384,6 @@ core::Result<Profile> ProfileRepository::createProfile(const std::string& name,
     out.apiKeyHint = hint;
     out.apiKeyCheck = check;
     out.model = cleanedModel;
-    out.sharedConfigId = sharedConfigId;
     out.authField = cleanedAuthField;   // 必须带上：二段补写以本返回值为基
     out.isActive = false;
     out.createdAt = now;
@@ -397,8 +392,7 @@ core::Result<Profile> ProfileRepository::createProfile(const std::string& name,
     return core::Result<Profile>::ok(std::move(out));
 }
 
-core::Result<void> ProfileRepository::updateProfile(const Profile& profile,
-                                                    Profile* oldProfile) {
+core::Result<void> ProfileRepository::updateProfile(const Profile& profile) {
     if (profile.id == 0) {
         return core::Result<void>::fail(core::ErrorCode::ValidationError,
             "profile.id 不能为 0");
@@ -407,12 +401,11 @@ core::Result<void> ProfileRepository::updateProfile(const Profile& profile,
         return core::Result<void>::fail(core::ErrorCode::ValidationError,
             "name 不能为空");
     }
-    // 查旧 profile；oldProfile 出参供门面的 re-takeover 策略尾判断
+    // 前置存在性校验（行不存在 → NotFound，避免 UPDATE 静默 0 行）
     auto old = getProfile(profile.id);
     if (old.isFail()) {
         return core::Result<void>::fail(old.errorCode(), old.errorMessage());
     }
-    if (oldProfile) *oldProfile = old.value();
 
     const std::string cleanedUrl = stripTrailingSlash(trim(profile.baseUrl));
     const std::string cleanedName = trim(profile.name);
@@ -459,7 +452,6 @@ core::Result<void> ProfileRepository::updateProfile(const Profile& profile,
                 "UPDATE claude_profiles SET "
                 "name = ?, base_url = ?, "
                 "model = ?, models_config = ?, extra_env = ?, "
-                "shared_config_id = ?, "
                 "auth_field = ?, "
                 "updated_at = ? "
                 "WHERE id = ?");
@@ -473,10 +465,9 @@ core::Result<void> ProfileRepository::updateProfile(const Profile& profile,
             stmt.bind(3, cleanedModel);
             stmt.bind(4, profile.modelsConfigJson);
             stmt.bind(5, profile.extraEnvJson);
-            stmt.bind(6, profile.sharedConfigId);
-            stmt.bind(7, cleanedAuthField);
-            stmt.bind(8, static_cast<int64_t>(now));
-            stmt.bind(9, profile.id);
+            stmt.bind(6, cleanedAuthField);
+            stmt.bind(7, static_cast<int64_t>(now));
+            stmt.bind(8, profile.id);
             auto step = stmt.step();
             if (step.isFail()) {
                 std::string msg = step.errorMessage();
@@ -497,7 +488,7 @@ core::Result<void> ProfileRepository::updateProfile(const Profile& profile,
         auto prep = db_.prepare(
             "UPDATE claude_profiles SET "
             "name = ?, base_url = ?, model = ?, models_config = ?, "
-            "extra_env = ?, shared_config_id = ?, "
+            "extra_env = ?, "
             "auth_field = ?, "
             "updated_at = ? WHERE id = ?");
         if (prep.isFail()) {
@@ -509,10 +500,9 @@ core::Result<void> ProfileRepository::updateProfile(const Profile& profile,
         stmt.bind(3, cleanedModel);
         stmt.bind(4, profile.modelsConfigJson);
         stmt.bind(5, profile.extraEnvJson);
-        stmt.bind(6, profile.sharedConfigId);
-        stmt.bind(7, cleanedAuthField);
-        stmt.bind(8, static_cast<int64_t>(now));
-        stmt.bind(9, profile.id);
+        stmt.bind(6, cleanedAuthField);
+        stmt.bind(7, static_cast<int64_t>(now));
+        stmt.bind(8, profile.id);
         auto stepR = stmt.step();
         if (stepR.isFail()) {
             std::string msg = stepR.errorMessage();
@@ -526,8 +516,6 @@ core::Result<void> ProfileRepository::updateProfile(const Profile& profile,
     }
 
     LOG_INFO("已更新 Claude profile id=" + std::to_string(profile.id));
-
-    // re-takeover 策略尾（片段绑定变化 && 旧行激活 && 代理运行 → 立即重写 live）留门面（经 oldProfile 出参判断）
     return core::Result<void>::ok();
 }
 
@@ -715,7 +703,7 @@ core::Result<Profile> ProfileRepository::getActiveProfile() {
     auto prep = db_.prepare(
         "SELECT id, name, base_url, api_key_hint, api_key_check, "
         "model, models_config, extra_env, "
-        "shared_config_id, auth_field, is_active, "
+        "auth_field, is_active, "
         "created_at, updated_at "
         "FROM claude_profiles WHERE is_active = 1 LIMIT 1");
     if (prep.isFail()) {
@@ -814,11 +802,11 @@ core::Result<Profile> ProfileRepository::duplicateProfile(int64_t srcId) {
             "编辑该 Profile 重新填一次 API Key 即可");
     }
 
-    // 凭据三列随 createProfile 一并写入；副本不激活。片段绑定经尾参带上（留到二段补写才设，门槛不成立时会丢）
+    // 凭据三列随 createProfile 一并写入；副本不激活
     const std::string defModel =
         effectiveModelsConfig(src.modelsConfigJson).def.model;
     auto createdR = createProfile(copyName, src.baseUrl, keyR.value(), defModel,
-                                  src.sharedConfigId, src.authField);
+                                  src.authField);
     if (createdR.isFail()) {
         return core::Result<Profile>::fail(createdR.errorCode(),
                                            createdR.errorMessage());
@@ -853,269 +841,6 @@ core::Result<Profile> ProfileRepository::duplicateProfile(int64_t srcId) {
              " name=" + copyName + "（源 id=" + std::to_string(srcId) +
              "，副本未激活）");
     return core::Result<Profile>::ok(std::move(out));
-}
-
-// 共享配置片段
-core::Result<SharedConfig> ProfileRepository::rowToSharedConfig(
-    const core::data::SqlRow& row) const {
-    SharedConfig c;
-    auto id = row.getInt64("id");
-    if (id.isFail()) {
-        return core::Result<SharedConfig>::fail(id.errorCode(), id.errorMessage());
-    }
-    c.id = id.value();
-    auto name = row.getString("name");
-    auto settings = row.getString("extra_settings_json");
-    auto created = row.getInt64("created_at");
-    auto updated = row.getInt64("updated_at");
-    if (name.isOk()) c.name = name.value();
-    if (settings.isOk()) c.extraSettingsJson = settings.value();
-    if (created.isOk()) c.createdAt = static_cast<std::time_t>(created.value());
-    if (updated.isOk()) c.updatedAt = static_cast<std::time_t>(updated.value());
-    return core::Result<SharedConfig>::ok(std::move(c));
-}
-
-core::Result<std::vector<SharedConfig>> ProfileRepository::listSharedConfigs() {
-    auto prep = db_.prepare(
-        "SELECT id, name, extra_settings_json, created_at, updated_at "
-        "FROM claude_shared_configs ORDER BY name ASC");
-    if (prep.isFail()) {
-        return core::Result<std::vector<SharedConfig>>::fail(
-            prep.errorCode(), prep.errorMessage());
-    }
-    auto rows = prep.value().fetchAll();
-    if (rows.isFail()) {
-        return core::Result<std::vector<SharedConfig>>::fail(
-            rows.errorCode(), rows.errorMessage());
-    }
-    std::vector<SharedConfig> out;
-    out.reserve(rows.value().size());
-    for (const auto& row : rows.value()) {
-        auto c = rowToSharedConfig(row);
-        if (c.isFail()) {
-            return core::Result<std::vector<SharedConfig>>::fail(
-                c.errorCode(), c.errorMessage());
-        }
-        out.push_back(std::move(c).value());
-    }
-    return core::Result<std::vector<SharedConfig>>::ok(std::move(out));
-}
-
-core::Result<SharedConfig> ProfileRepository::createSharedConfig(
-    const std::string& name, const std::string& extraSettingsJson) {
-    const std::string cleanedName = trim(name);
-    if (cleanedName.empty()) {
-        return core::Result<SharedConfig>::fail(core::ErrorCode::ValidationError,
-            "共享配置片段名不能为空");
-    }
-    // 信任边界：不把坏 JSON 落库（读侧另有容错）
-    if (!extraSettingsJson.empty()) {
-        auto v = validateExtraSettingsJson(extraSettingsJson);
-        if (v.isFail()) {
-            return core::Result<SharedConfig>::fail(v.errorCode(),
-                "共享配置片段 JSON 非法: " + v.errorMessage());
-        }
-    }
-
-    const std::time_t now = nowUnix();
-    auto prep = db_.prepare(
-        "INSERT INTO claude_shared_configs (name, extra_settings_json, "
-        "created_at, updated_at) VALUES (?, ?, ?, ?) RETURNING id");
-    if (prep.isFail()) {
-        return core::Result<SharedConfig>::fail(prep.errorCode(),
-                                               prep.errorMessage());
-    }
-    auto& stmt = prep.value();
-    stmt.bind(1, cleanedName);
-    stmt.bind(2, extraSettingsJson);
-    stmt.bind(3, static_cast<int64_t>(now));
-    stmt.bind(4, static_cast<int64_t>(now));
-    auto stepR = stmt.step();
-    if (stepR.isFail()) {
-        std::string msg = stepR.errorMessage();
-        if (msg.find("UNIQUE") != std::string::npos) {
-            return core::Result<SharedConfig>::fail(core::ErrorCode::AlreadyExists,
-                "共享配置片段名已存在: " + cleanedName);
-        }
-        return core::Result<SharedConfig>::fail(stepR.errorCode(), msg);
-    }
-    if (!stepR.value()) {
-        return core::Result<SharedConfig>::fail(core::ErrorCode::Internal,
-            "INSERT ... RETURNING id 未返回行");
-    }
-    auto idRow = stmt.currentRow();
-    if (idRow.isFail()) {
-        return core::Result<SharedConfig>::fail(idRow.errorCode(),
-                                                idRow.errorMessage());
-    }
-    auto idVal = idRow.value().getInt64("id");
-    if (idVal.isFail()) {
-        return core::Result<SharedConfig>::fail(idVal.errorCode(),
-                                                idVal.errorMessage());
-    }
-    const int64_t newId = idVal.value();
-
-    // 步进到 DONE 释放连接 in-progress 状态（同 createProfile：语句停在结果行时开事务会被 SQLite 拒绝）
-    auto drain = stmt.step();
-    if (drain.isFail()) {
-        LOG_WARN("共享片段 INSERT RETURNING 收尾 step 失败（行已写入，继续）: " +
-                 drain.errorMessage());
-    }
-
-    LOG_INFO("已创建共享配置片段 id=" + std::to_string(newId) +
-             " name=" + cleanedName);
-    SharedConfig out;
-    out.id = newId;
-    out.name = cleanedName;
-    out.extraSettingsJson = extraSettingsJson;
-    out.createdAt = now;
-    out.updatedAt = now;
-    return core::Result<SharedConfig>::ok(std::move(out));
-}
-
-core::Result<void> ProfileRepository::requireSharedConfigExists(int64_t id) const {
-    auto prep = db_.prepare("SELECT id FROM claude_shared_configs WHERE id = ?");
-    if (prep.isFail()) {
-        return core::Result<void>::fail(prep.errorCode(), prep.errorMessage());
-    }
-    auto& stmt = prep.value();
-    stmt.bind(1, id);
-    auto stepR = stmt.step();
-    if (stepR.isFail()) {
-        return core::Result<void>::fail(stepR.errorCode(), stepR.errorMessage());
-    }
-    if (!stepR.value()) {
-        return core::Result<void>::fail(core::ErrorCode::NotFound,
-            "共享配置片段不存在: id=" + std::to_string(id));
-    }
-    return core::Result<void>::ok();
-}
-
-core::Result<void> ProfileRepository::updateSharedConfig(
-    const SharedConfig& config) {
-    if (config.id == 0) {
-        return core::Result<void>::fail(core::ErrorCode::ValidationError,
-            "共享配置片段 id 不能为 0");
-    }
-    const std::string cleanedName = trim(config.name);
-    if (cleanedName.empty()) {
-        return core::Result<void>::fail(core::ErrorCode::ValidationError,
-            "共享配置片段名不能为空");
-    }
-    if (!config.extraSettingsJson.empty()) {
-        auto v = validateExtraSettingsJson(config.extraSettingsJson);
-        if (v.isFail()) {
-            return core::Result<void>::fail(v.errorCode(),
-                "共享配置片段 JSON 非法: " + v.errorMessage());
-        }
-    }
-    auto exists = requireSharedConfigExists(config.id);
-    if (exists.isFail()) {
-        return exists;
-    }
-
-    auto prep = db_.prepare(
-        "UPDATE claude_shared_configs SET name = ?, extra_settings_json = ?, "
-        "updated_at = ? WHERE id = ?");
-    if (prep.isFail()) {
-        return core::Result<void>::fail(prep.errorCode(), prep.errorMessage());
-    }
-    auto& stmt = prep.value();
-    stmt.bind(1, cleanedName);
-    stmt.bind(2, config.extraSettingsJson);
-    stmt.bind(3, static_cast<int64_t>(nowUnix()));
-    stmt.bind(4, config.id);
-    auto stepR = stmt.step();
-    if (stepR.isFail()) {
-        std::string msg = stepR.errorMessage();
-        if (msg.find("UNIQUE") != std::string::npos) {
-            return core::Result<void>::fail(core::ErrorCode::AlreadyExists,
-                "共享配置片段名已存在: " + cleanedName);
-        }
-        return core::Result<void>::fail(stepR.errorCode(), msg);
-    }
-    LOG_INFO("已更新共享配置片段 id=" + std::to_string(config.id));
-
-    // re-takeover 策略尾（改了就生效——代理在跑且激活 profile 绑定了它 → 立即重写 settings.json）留门面
-    return core::Result<void>::ok();
-}
-
-core::Result<void> ProfileRepository::deleteSharedConfig(int64_t id,
-                                                         bool* activeBound) {
-    if (id == 0) {
-        return core::Result<void>::fail(core::ErrorCode::ValidationError,
-            "id 不能为 0");
-    }
-    auto exists = requireSharedConfigExists(id);
-    if (exists.isFail()) {
-        return exists;
-    }
-
-    // 删除前先看激活 profile 是否绑定它：只有它的键在 live 里，删完才需要重写 settings.json（activeBound 出参供门面判断）
-    auto active = getActiveProfile();
-    const bool activeBoundVal = active.isOk() && active.value().sharedConfigId == id;
-    if (activeBound) *activeBound = activeBoundVal;
-
-    // 同事务解绑 + 删行：不留悬空 shared_config_id；不级联删 profile（删片段 = 交回控制权，不是丢配置）
-    auto tx = db_.transaction([this, id]() -> core::Result<void> {
-        auto u = db_.prepare(
-            "UPDATE claude_profiles SET shared_config_id = 0, updated_at = ? "
-            "WHERE shared_config_id = ?");
-        if (u.isFail()) {
-            return core::Result<void>::fail(u.errorCode(), u.errorMessage());
-        }
-        auto& ust = u.value();
-        ust.bind(1, static_cast<int64_t>(nowUnix()));
-        ust.bind(2, id);
-        auto us = ust.step();
-        if (us.isFail()) {
-            return core::Result<void>::fail(us.errorCode(), us.errorMessage());
-        }
-
-        auto d = db_.prepare("DELETE FROM claude_shared_configs WHERE id = ?");
-        if (d.isFail()) {
-            return core::Result<void>::fail(d.errorCode(), d.errorMessage());
-        }
-        auto& dst = d.value();
-        dst.bind(1, id);
-        auto ds = dst.step();
-        if (ds.isFail()) {
-            return core::Result<void>::fail(ds.errorCode(), ds.errorMessage());
-        }
-        return core::Result<void>::ok();
-    });
-    if (tx.isFail()) {
-        return tx;
-    }
-
-    LOG_INFO("已删除共享配置片段 id=" + std::to_string(id) +
-             (activeBoundVal ? "（激活 profile 已解绑）" : ""));
-
-    // re-takeover 策略尾（解绑当场生效）留门面
-    return core::Result<void>::ok();
-}
-
-std::string ProfileRepository::sharedExtraSettingsJsonFor(
-    int64_t sharedConfigId) const {
-    if (sharedConfigId == 0) return {};  // 未绑定
-    auto prep = db_.prepare(
-        "SELECT extra_settings_json FROM claude_shared_configs WHERE id = ?");
-    if (prep.isFail()) {
-        LOG_WARN("读共享配置片段失败（按未绑定处理）: " + prep.errorMessage());
-        return {};
-    }
-    auto& stmt = prep.value();
-    stmt.bind(1, sharedConfigId);
-    auto stepR = stmt.step();
-    if (stepR.isFail()) {
-        LOG_WARN("读共享配置片段失败（按未绑定处理）: " + stepR.errorMessage());
-        return {};
-    }
-    if (!stepR.value()) return {};  // 片段已被删 → 悬空 id 视作未绑定
-    auto row = stmt.currentRow();
-    if (row.isFail()) return {};
-    auto txt = row.value().getString("extra_settings_json");
-    return txt.isOk() ? txt.value() : std::string();
 }
 
 } // namespace module::claude

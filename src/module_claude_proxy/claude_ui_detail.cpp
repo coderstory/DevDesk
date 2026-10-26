@@ -50,9 +50,8 @@ bool isModelMappingEnvKey(const std::string& key) {
 }  // namespace
 
 const char* envSourceLabel(EnvSource s) {
-    // 公开单一来源（.h 声明；compose 装配高级属性键来源复用，不手抄文案）
+    // 公开单一来源（.h 声明），不手抄文案
     switch (s) {
-        case EnvSource::Shared:  return "片段";
         case EnvSource::Profile: return "本 Profile";
         case EnvSource::Managed: return "托管键";
     }
@@ -223,27 +222,6 @@ float drawDetailBasic(eui::Ui& ui, float x0, float y0, float w,
         .fontSize(core::theme::scaled(11.0f)).lineHeight(core::theme::scaled(16.0f))
         .verticalAlign(eui::VerticalAlign::Center)
         .color(ccManaged ? t.colors.success : t.colors.textTertiary).build();
-    // 共享配置绑定行：片段不携带 env 键，改标「高级属性预设」（来源标注在高级配置 pane）
-    const bool bound = shown != nullptr && shown->sharedConfigId != 0 &&
-                       v.sharedConfigs != nullptr;
-    std::string sharedText = "共享配置：未绑定";
-    if (bound) {
-        const SharedConfig* sc =
-            findSharedById(*v.sharedConfigs, shown->sharedConfigId);
-        if (sc != nullptr) {
-            sharedText = "共享配置：" + sc->name + "（高级属性预设）";
-        } else {
-            sharedText = "共享配置：片段已删除（悬空绑定）";
-        }
-    }
-    const float shY = toY + 16.0f;
-    ui.text("claude.field.shared.value")
-        .position(x0, shY).size(w, 16.0f)
-        .text(sharedText)
-        .fontSize(core::theme::scaled(11.0f)).lineHeight(core::theme::scaled(16.0f))
-        .verticalAlign(eui::VerticalAlign::Center)
-        .color(bound ? t.colors.textSecondary : t.colors.textTertiary)
-        .build();
     if (!ccWarnings.empty()) {
         // 摘要 = 首条警告 + 总条数；「详见设置页」恒成立（设置页警告行只看警告）
         std::string warnText = ccWarnings.front();
@@ -253,12 +231,12 @@ float drawDetailBasic(eui::Ui& ui, float x0, float y0, float w,
             warnText += "，详见设置页）";
         }
         ui.text("claude.field.takeover.warn.icon")
-            .position(x0, shY + 16.0f).size(14.0f, 16.0f).icon(0xF071)
+            .position(x0, toY + 16.0f).size(14.0f, 16.0f).icon(0xF071)
             .fontSize(core::theme::scaled(11.0f)).lineHeight(core::theme::scaled(16.0f))
             .verticalAlign(eui::VerticalAlign::Center)
             .color(t.colors.warning).build();
         ui.text("claude.field.takeover.warn")
-            .position(x0 + 18.0f, shY + 16.0f).size(w - 18.0f, 16.0f)
+            .position(x0 + 18.0f, toY + 16.0f).size(w - 18.0f, 16.0f)
             .text(warnText)
             .fontSize(core::theme::scaled(11.0f)).lineHeight(core::theme::scaled(16.0f))
             .verticalAlign(eui::VerticalAlign::Center)
@@ -279,7 +257,7 @@ float drawDetailBasic(eui::Ui& ui, float x0, float y0, float w,
         ui_kit::showLightToast(ui, "claude.detail.copy.toast", toastMsg,
                                x0 + w * 0.5f, y0 + 120.0f, t);
     }
-    return shY + (!ccWarnings.empty() ? 32.0f : 16.0f);
+    return toY + (!ccWarnings.empty() ? 32.0f : 16.0f);
 }
 
 float drawDetailModels(eui::Ui& ui, float x0, float y0, float w,

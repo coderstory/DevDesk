@@ -33,12 +33,6 @@ std::string modelsSummary(const Profile& p);
 // 「导入当前配置」名称建议：BASE_URL host；提取不到 →「导入 <日期>」；用户可改
 std::string suggestImportName(const std::string& baseUrl);
 
-// 共享配置片段
-
-// 片段按 id 查找（快照定位；未绑定/不存在 → nullptr）
-const SharedConfig* findSharedById(const std::vector<SharedConfig>& configs,
-                                   int64_t id);
-
 // 「复制配置」序列化（纯函数，无 IO）：settings.json 形态；env 复用
 // buildDirectEnv。不导明文 key；失败 → 空串。
 std::string buildProfileExportJson(const Profile& p,

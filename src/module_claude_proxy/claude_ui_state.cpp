@@ -33,13 +33,6 @@ DataRefresh runDataRefresh(ClaudeService* svc, bool wantProfiles) {
             r.active = std::move(aR).value();
             r.hasActive = true;
         }
-        // 共享配置片段与 profiles 同组取（脏标记同刷，省一次轮询）
-        auto sR = svc->listSharedConfigs();
-        if (sR.isOk()) {
-            r.sharedConfigs = std::move(sR).value();
-        } else {
-            r.sharedConfigsError = sR.errorMessage();
-        }
     }
     // 唤醒不在这里：此刻结果尚未发布，先唤醒就是「先唤醒、后就绪」（UI 抢跑）。
     // 唤醒收在 refreshDataCache 派发处的唯一出口 wakeAfterPublish()。
@@ -60,14 +53,6 @@ void applyDataRefresh(ProfileListState& st, DataRefresh r) {
         }
         st.cachedActive_ = std::move(r.active);
         st.cachedHasActive_ = r.hasActive;
-        // 片段快照随 profiles 一起落（失败保旧快照不清空 + 记日志，错误行下次重试自愈）
-        if (r.sharedConfigsError.empty()) {
-            st.cachedSharedConfigs_ = std::move(r.sharedConfigs);
-            st.cachedSharedConfigsError_.clear();
-        } else {
-            st.cachedSharedConfigsError_ = r.sharedConfigsError;
-            LOG_ERROR("共享配置片段加载失败: " + st.cachedSharedConfigsError_);
-        }
     }
 }
 

@@ -131,7 +131,6 @@ public:
         dv.tokenValue = shown
             ? (shown->apiKeyHint + " [本机库]")
             : std::string("(无激活 profile)");
-        dv.sharedConfigs = &state_.list.cachedSharedConfigs_;
 
         ui.column("claude.root")
             .size(screen.width, screen.height)
@@ -149,8 +148,6 @@ public:
                     .content([&] {
                         drawProfileListPanel(ui, leftW, bodyH, t, themeTokens,
                                              state_.list, profiles, profilesError,
-                                             state_.list.cachedSharedConfigs_,
-                                             state_.list.cachedSharedConfigsError_,
                                              listActions());
                         drawDetailPanel(ui, rightW, bodyH, leftW + gap, t,
                                         themeTokens, state_.detail, dv,
@@ -162,18 +159,9 @@ public:
 
         // 弹窗（画在最上层）
         drawProfileFormDialog(ui, screen, t, themeTokens, state_.form,
-                              state_.import, state_.list.cachedSharedConfigs_,
-                              formHooks());
+                              state_.import, formHooks());
         drawDeleteConfirmDialog(ui, screen, t, themeTokens, state_.form,
                                 [this](int64_t id) { doDelete(id); });
-        // 共享配置片段编辑弹窗 + 删除确认；绘制序 = Esc 序链（见 closeTopmostDialog）
-        drawSharedConfigDialog(ui, screen, t, themeTokens, state_.shared,
-                               sharedHooks());
-        drawSharedConfigDeleteConfirmDialog(
-            ui, screen, t, themeTokens, state_.shared,
-            [this](int64_t id, const std::string& name) {
-                doDeleteShared(id, name);
-            });
         // cc-switch 导入弹窗，绘制序即 Esc 序链最顶层
         drawCcSwitchImportDialog(ui, screen, t, themeTokens,
                                  state_.ccswitchImport, ccswitchImportHooks());
@@ -252,7 +240,6 @@ public:
         }
         const bool anyDialogOpen =
             state_.form.formOpen_ || state_.form.deleteConfirmOpen_ ||
-            state_.shared.open_ || state_.shared.deleteConfirmOpen_ ||
             state_.ccswitchImport.open_;
         if (key.key == eui::InputKey::N) {
             if (anyDialogOpen) return false;
@@ -262,8 +249,7 @@ public:
         }
         if (key.key == eui::InputKey::S) {
             if (!state_.form.formOpen_) return false;
-            submitForm(state_.form, formHooks(),
-                       state_.list.cachedSharedConfigs_);
+            submitForm(state_.form, formHooks());
             return true;
         }
         if (key.key == eui::InputKey::Enter) {
@@ -278,8 +264,6 @@ private:
     // Esc 关最上层弹窗（顺序 = 绘制序倒序）
     bool closeTopmostDialog() {
         if (state_.ccswitchImport.open_) { state_.ccswitchImport.open_ = false; return true; }
-        if (state_.shared.deleteConfirmOpen_) { state_.shared.deleteConfirmOpen_ = false; return true; }
-        if (state_.shared.open_) { state_.shared.open_ = false; return true; }
         if (state_.form.deleteConfirmOpen_) { state_.form.deleteConfirmOpen_ = false; return true; }
         if (state_.form.formOpen_) { state_.form.formOpen_ = false; return true; }
         return false;
@@ -306,10 +290,6 @@ private:
             state_.form.deleteConfirmOpen_ = true;
         };
         a.requestSetActive = [this](int64_t id) { doSetActive(id); };
-        a.onNewShared = [this] { openSharedCreate(state_.shared); };
-        a.requestEditShared = [this](const SharedConfig& c) {
-            openSharedEdit(state_.shared, c);
-        };
         return a;
     }
 
@@ -328,13 +308,6 @@ private:
 
     CcSwitchImportDialogHooks ccswitchImportHooks() {
         CcSwitchImportDialogHooks h;
-        h.toast = toastHook();
-        h.markDataDirty = [this] { state_.list.dataDirty_ = true; };
-        return h;
-    }
-
-    SharedConfigSubmitHooks sharedHooks() {
-        SharedConfigSubmitHooks h;
         h.toast = toastHook();
         h.markDataDirty = [this] { state_.list.dataDirty_ = true; };
         return h;
@@ -595,33 +568,6 @@ private:
     }
 
     // 删除共享配置片段：服务层同事务解绑，这里只做计数 toast + 关弹窗
-    void doDeleteShared(int64_t id, const std::string& name) {
-        ClaudeService* svc = ClaudeService::global();
-        if (!svc) return;
-        state_.list.dataDirty_ = true;
-        size_t bound = 0;
-        auto list = svc->listProfiles();
-        if (list.isOk()) {
-            for (const auto& p : list.value()) {
-                if (p.sharedConfigId == id) ++bound;
-            }
-        }
-        auto r = svc->deleteSharedConfig(id);
-        if (r.isFail()) {
-            showToast("删除失败", r.errorMessage(), true);
-            return;
-        }
-        state_.shared.open_ = false;   // 编辑目标已删除，弹窗一并关闭
-        if (bound > 0) {
-            showToast("已删除",
-                      "片段「" + name + "」已删除，" +
-                          std::to_string(bound) + " 个 Profile 已解绑",
-                      false);
-        } else {
-            showToast("已删除", "片段「" + name + "」已删除", false);
-        }
-    }
-
     void doTestConnection(const Profile& p) {
         ClaudeService* svc = ClaudeService::global();
         if (!svc) return;

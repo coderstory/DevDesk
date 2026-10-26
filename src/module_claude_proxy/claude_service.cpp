@@ -129,12 +129,11 @@ core::Result<Profile> ClaudeService::createProfile(const std::string& name,
                                                    const std::string& apiKey,
                                                    const std::string& model,
                                                    bool activateIfNoneActive,
-                                                   int64_t sharedConfigId,
                                                    const std::string& authField) {
     // 策略尾：无激活 Profile 时自动激活（经 setActiveProfile，代理运行中会同步
     // 接管 settings.json）。失败不回滚创建，只 WARN（UI 走「点击启用」文案）。
     auto created = profileRepository_.createProfile(
-        name, baseUrl, apiKey, model, sharedConfigId, authField);
+        name, baseUrl, apiKey, model, authField);
     if (created.isFail()) {
         return created;
     }
@@ -162,18 +161,7 @@ core::Result<Profile> ClaudeService::createProfile(const std::string& name,
 }
 
 core::Result<void> ClaudeService::updateProfile(const Profile& profile) {
-    // 策略尾：片段绑定变化（绑定/解绑）且旧行激活且代理运行 → 立即重写 live。
-    // 解绑即片段键从 live 撤走、同名 profile 自身值恢复生效（片段值从不写进 profile 行）。
-    Profile old;
-    auto r = profileRepository_.updateProfile(profile, &old);
-    if (r.isFail()) {
-        return r;
-    }
-    if (profile.sharedConfigId != old.sharedConfigId && old.isActive &&
-        isProxyRunning()) {
-        (void)syncTakeOver();
-    }
-    return core::Result<void>::ok();
+    return profileRepository_.updateProfile(profile);
 }
 
 core::Result<void> ClaudeService::deleteProfile(int64_t id, bool* proxyStopped) {
@@ -244,45 +232,6 @@ core::Result<void> ClaudeService::setActiveProfile(int64_t id) {
 core::Result<Profile> ClaudeService::duplicateProfile(int64_t srcId) {
     // 整方法在 ProfileRepository（纯行 + 凭据列操作，副本不激活，无策略尾）
     return profileRepository_.duplicateProfile(srcId);
-}
-
-// 共享配置片段：DB 段在 ProfileRepository，门面留 re-takeover 策略尾。
-core::Result<std::vector<SharedConfig>> ClaudeService::listSharedConfigs() {
-    return profileRepository_.listSharedConfigs();
-}
-
-core::Result<SharedConfig> ClaudeService::createSharedConfig(
-    const std::string& name, const std::string& extraSettingsJson) {
-    return profileRepository_.createSharedConfig(name, extraSettingsJson);
-}
-
-core::Result<void> ClaudeService::updateSharedConfig(const SharedConfig& config) {
-    // 策略尾「改后生效」：代理在跑且激活 profile 绑定了它 → 立即重写 settings.json，
-    // 否则 live 留旧片段值到下次切换。
-    auto r = profileRepository_.updateSharedConfig(config);
-    if (r.isFail()) {
-        return r;
-    }
-    auto active = profileRepository_.getActiveProfile();
-    if (active.isOk() && active.value().sharedConfigId == config.id &&
-        isProxyRunning()) {
-        (void)syncTakeOver();
-    }
-    return core::Result<void>::ok();
-}
-
-core::Result<void> ClaudeService::deleteSharedConfig(int64_t id) {
-    // activeBound 在删除前捕获（删除侧同事务解绑 shared_config_id=0，删后读不到）。
-    // 策略尾「删后生效」：代理在跑且激活 profile 绑定它 → 重写 live。
-    bool activeBound = false;
-    auto r = profileRepository_.deleteSharedConfig(id, &activeBound);
-    if (r.isFail()) {
-        return r;
-    }
-    if (activeBound && isProxyRunning()) {
-        (void)syncTakeOver();
-    }
-    return core::Result<void>::ok();
 }
 
 core::Result<platform::http::Response>

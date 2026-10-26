@@ -26,8 +26,6 @@ struct DetailView {
     std::string modelValue;            // 模型摘要（modelsSummary）
     std::string urlValue;              // Base URL
     std::string tokenValue;            // API Key 脱敏提示
-    // 共享配置片段快照（基础 pane 绑定行 + 生效 env 来源标注）
-    const std::vector<SharedConfig>* sharedConfigs = nullptr;
     // 没有 bodyH 字段：行数预算一律用 contentBottom（真实裁剪下沿）。
 };
 

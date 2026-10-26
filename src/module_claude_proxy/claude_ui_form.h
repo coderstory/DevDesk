@@ -25,13 +25,6 @@ struct FormSubmitHooks {
     std::function<void(int64_t id)> selectProfile;  // 新建成功后的选中态
 };
 
-// 共享配置片段提交的回调（toast / 标脏与模块侧同款）
-struct SharedConfigSubmitHooks {
-    std::function<void(const std::string& title, const std::string& msg,
-                       bool isError)> toast;
-    std::function<void()> markDataDirty;
-};
-
 // 表单状态机
 void openCreateForm(FormState& f, ImportState& imp);
 void openEditForm(FormState& f, ImportState& imp, const Profile& p);
@@ -44,15 +37,7 @@ bool serializeFormData(FormState& f, std::string* modelsJson, std::string* envJs
 // 「导入当前配置」：读 settings.json → 打开新建表单并预填（失败 toast，不弹窗）
 void startImportCurrentConfig(FormState& f, ImportState& imp,
                               const FormSubmitHooks& hooks);
-// sharedConfigs：共享配置片段快照（悬空绑定防御 + 新增同键拦截的片段名文案）
-void submitForm(FormState& f, const FormSubmitHooks& hooks,
-                const std::vector<SharedConfig>& sharedConfigs);
-
-// 共享配置片段弹窗状态机
-void openSharedCreate(SharedConfigDialogState& s);
-void openSharedEdit(SharedConfigDialogState& s, const SharedConfig& c);
-void submitSharedForm(SharedConfigDialogState& s,
-                      const SharedConfigSubmitHooks& hooks);
+void submitForm(FormState& f, const FormSubmitHooks& hooks);
 
 // 绘制
 // 新建/编辑表单弹窗。
@@ -68,21 +53,5 @@ void drawDeleteConfirmDialog(eui::Ui& ui, const eui::Screen& screen,
                              const components::theme::ThemeColorTokens& themeTokens,
                              FormState& f,
                              const std::function<void(int64_t id)>& onConfirmDelete);
-
-// 共享配置片段编辑弹窗：name 行 + 键值编辑器。
-// 编辑态底部多一枚「删除」键（开删除确认，删除 = 同事务解绑）
-void drawSharedConfigDialog(eui::Ui& ui, const eui::Screen& screen,
-                            const core::theme::Tokens& t,
-                            const components::theme::ThemeColorTokens& themeTokens,
-                            SharedConfigDialogState& s,
-                            const SharedConfigSubmitHooks& hooks);
-
-// 片段删除确认弹窗（确认后回调模块执行真删除；文案含「N 个 Profile 已解绑」）
-void drawSharedConfigDeleteConfirmDialog(
-    eui::Ui& ui, const eui::Screen& screen, const core::theme::Tokens& t,
-    const components::theme::ThemeColorTokens& themeTokens,
-    SharedConfigDialogState& s,
-    const std::function<void(int64_t id, const std::string& name)>&
-        onConfirmDelete);
 
 } // namespace module::claude

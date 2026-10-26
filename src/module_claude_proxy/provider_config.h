@@ -151,10 +151,9 @@ inline constexpr size_t kMaxImportTextBytes = 1u * 1024u * 1024u;
 inline constexpr const char* kProxyAuthPlaceholder = "PROXY_MANAGED";
 
 // 生效 env 的来源分层，只为详情面板标注出处，不参与合并决策（合并顺序只在
-// buildProxyEnv 一处）。优先级（高→低）：托管键 > 片段 > profile 自身
+// buildProxyEnv 一处）。优先级（高→低）：托管键 > profile 自身
 enum class EnvSource {
     Profile = 0,  // profile 自身 extra_env（含别名归一）
-    Shared,       // 该 profile 所绑共享配置片段
     Managed,      // DevDesk 托管键（BASE_URL / 占位 token / 模型槽位表派生键）
 };
 

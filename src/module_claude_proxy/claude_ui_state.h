@@ -22,9 +22,6 @@ struct DataRefresh {
     std::string profilesError;
     Profile active;
     bool hasActive = false;
-    // 与 profiles 同组同刷——左栏区块 / 详情行 / 表单绑定下拉共用这份快照
-    std::vector<SharedConfig> sharedConfigs;
-    std::string sharedConfigsError;   // 空 = 成功（失败不置脏，保旧快照 + 记日志）
 };
 
 // 左栏：Profile 列表 + header/引导条 + 数据缓存
@@ -46,13 +43,6 @@ struct ProfileListState {
     int64_t selectedId_ = 0;
     // Profile 列表滚动位置
     float profilesScrollOffset_ = 0.0f;
-    // 共享片段卡片区的滚动位置：片段区块钉面板底，卡片装不下时在区块内滚
-    float sharedScrollOffset_ = 0.0f;
-    // 上一帧的片段集签名：一变就把 sharedScrollOffset_ 归零（初值必不撞 → 首帧归零一次）。
-    size_t sharedScrollKey_ = static_cast<size_t>(-1);
-    // 共享片段区块折叠态（UAT5 用户拍板：默认收起，点头行展开；会话内内存 bool，
-    // claude 模块无 view-state 落盘机制 → 未持久化，跨会话回默认收起）
-    bool sharedBlockCollapsed_ = true;
     // 引导条一次性标记（会话内代理从未启动过才显示；内存态）
     bool proxyEverSeen_ = false;
     // S3.4 引导条手动关闭（用户点 × 收起）
@@ -67,10 +57,6 @@ struct ProfileListState {
     float ctxMenuX_ = 0.0f;
     float ctxMenuY_ = 0.0f;
     bool ctxMenuOpen_ = false;
-
-    // 共享配置片段快照（同组脏标记同刷，见 DataRefresh.sharedConfigs）
-    std::vector<SharedConfig> cachedSharedConfigs_;
-    std::string cachedSharedConfigsError_;   // 空 = 成功（失败保旧快照 + 记日志）
 };
 
 struct DetailState {
@@ -97,28 +83,9 @@ struct FormState {
     bool deleteConfirmOpen_ = false;
     int64_t deleteTargetId_ = 0;
     std::string deleteTargetName_;
-
-    // 共享配置片段绑定下拉（渲染在高级配置页）
-    int64_t formSharedConfigId_ = 0;   // 表单态绑定（0 = 未绑定；保存时写入 profile）
-    bool formSharedDdOpen_ = false;    // 绑定下拉展开态
 };
 
-// 共享配置片段编辑弹窗（独立状态）。必须接入 anyDialogOpen 门控与 closeTopmostDialog Esc 序链（最顶层）
-struct SharedConfigDialogState {
-    bool open_ = false;
-    int64_t editId_ = 0;             // 0 = 新建，非 0 = 编辑该 id
-    std::string name_;               // 片段名（name UNIQUE，服务层校验）
-    // 片段内容 JSON 原文（settings.json 非 env 顶层属性预设；保存与落库规则同表单）
-    std::string extraSettingsJson_;
-    std::string error_;              // 校验/保存错误（红字）
-
-    // 删除确认弹窗（删除 = 同事务解绑绑定它的 profile）
-    bool deleteConfirmOpen_ = false;
-    int64_t deleteConfirmId_ = 0;
-    std::string deleteConfirmName_;
-};
-
-// cc-switch / settings.json 粘贴导入（高级 env 页）
+// cc-switch / settings.json 粘贴导入（环境变量页）
 struct ImportState {
     std::string importText_;       // 多行粘贴框原文
     bool importReady_ = false;     // 解析成功待应用
@@ -147,7 +114,6 @@ struct ClaudeUiState {
     ProfileListState list;
     DetailState detail;
     FormState form;
-    SharedConfigDialogState shared;   // 共享配置片段编辑弹窗（独立状态）
     CcSwitchImportDialogState ccswitchImport;  // 从 cc-switch 导入弹窗
     ImportState import;
 };

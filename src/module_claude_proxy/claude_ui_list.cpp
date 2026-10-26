@@ -26,50 +26,14 @@ namespace module::claude {
 
 namespace {
 
-// 共享配置区块（UAT5 可折叠）：钉面板底；折叠 = 一行头（30），展开 = 头 + 恒 2 行
-// 卡片框架（158），左列列表视口不随增删片段重排
-constexpr float kSharedHeaderBottom = 30.0f;   // 头行高（标题/计数/勾箭/+ 钮），两态同高
-constexpr float kSharedCardH = 56.0f;
-constexpr float kSharedCardGap = 8.0f;
-constexpr float kSharedInfoH = 18.0f;          // 错误 / 空态行高
-constexpr float kSharedBottomGap = 12.0f;      // 区块底 → 底部按钮行顶
-constexpr float kSharedListMinH = 96.0f;       // 列表视口保底高
-constexpr float kListTopY = 56.0f;             // 列表 / 区块所在列的起点 y
-// 底部按钮区（H2 残留修复后两行：主键独行 + 两导入同行）= 40 + 12 + 40 + 16
+constexpr float kListTopY = 56.0f;             // 列表起点 y
+constexpr float kListBottomGap = 12.0f;        // 列表底 → 底部按钮行顶
+constexpr float kListMinH = 96.0f;             // 列表视口保底高
+// 底部按钮区（两行：主键独行 + 两导入同行）= 40 + 12 + 40 + 16
 constexpr float kBottomBtnRowH = 108.0f;
 
 // 底部按钮行上沿（面板内绝对 y）
 float bottomButtonRowY(float bodyH) { return bodyH - kBottomBtnRowH; }
-
-// 区块锚点：贴底时区块底沿的绝对 y
-float sharedBlockBottomY(float bodyH) {
-    return bottomButtonRowY(bodyH) - kSharedBottomGap;
-}
-
-// 可见高上界 = 区块底 − 列表起点 − 列表保底 − 间距（保证列表视口不被挤没）
-float sharedBlockMaxH(float bodyH) {
-    return std::max(0.0f, sharedBlockBottomY(bodyH) - kListTopY -
-                              kSharedListMinH - kSharedBottomGap);
-}
-
-// 条目区恒 2 行高、超出滚动，不随条目数涨
-constexpr size_t kSharedVisibleCards = 2;
-
-// 条目区高按整行取口：取「2 卡 + 1 间距」会因行容器行尾距在恰 2 条时多出 8px 空滚动条
-constexpr float kSharedCardsH = static_cast<float>(kSharedVisibleCards) *
-                                (kSharedCardH + kSharedCardGap);
-
-// 区块自然高：折叠 = 头行一行；展开 = 头行 + 条目框架（空 / 错态也按同一框架画，
-// 不收缩到实际条数，保证左列列表视口不重排）
-float sharedBlockNaturalH(bool collapsed) {
-    return collapsed ? kSharedHeaderBottom
-                     : kSharedHeaderBottom + kSharedCardsH;
-}
-
-// 实际高 = min(自然高, 上界)；取到上界即极矮窗退化，守门见 drawProfileListPanel
-float sharedBlockH(float bodyH, bool collapsed) {
-    return std::min(sharedBlockNaturalH(collapsed), sharedBlockMaxH(bodyH));
-}
 
 // 头像圆圈色按 profile id 稳定派生（FNV-1a 取色板下标）：compose 每帧跑真随机会闪烁。色板 9 个低饱和暖色。
 constexpr size_t kAvatarPaletteSize = 9;
@@ -212,13 +176,9 @@ void drawProfileCard(eui::Ui& ui,
         .fontWeight(600)
         .build();
 
-    // 名称：单行截断让位右缘共享徽标（不再为绿圈白勾让位）
+    // 名称：单行截断让位右缘
     {
-        float nameRight = width - 12.0f;
-        if (p.sharedConfigId != 0) {
-            nameRight = std::min(nameRight, width - 64.0f);  // 共享徽标 x=width-60
-        }
-        const float nameMaxW = std::max(40.0f, nameRight - 64.0f);
+        const float nameMaxW = std::max(40.0f, width - 12.0f - 64.0f);
         ui.text(id + ".name")
             .position(64.0f, y + ((h - 20.0f) * 0.5f))
             .size(nameMaxW, 20.0f)
@@ -241,29 +201,6 @@ void drawProfileCard(eui::Ui& ui,
         .minWidth(200.0f)
         .maxWidth(320.0f)
         .build();
-
-    // 绑定共享片段的卡片角标「共享」：服务层保证无悬空 id（删片段同事务解绑），
-    // sharedConfigId != 0 即可判定。
-    if (p.sharedConfigId != 0) {
-        const float badgeX = width - 60.0f;
-        ui.rect(id + ".shared.badge")
-            .position(badgeX, y + 20.0f)
-            .size(48.0f, 16.0f)
-            .color(t.colors.hover)
-            .radius(t.sizes.radiusPill)
-            .border(1.0f, t.colors.borderDefault)
-            .build();
-        ui.text(id + ".shared.badge.text")
-            .position(badgeX, y + 20.0f)
-            .size(48.0f, 16.0f)
-            .text("共享")
-            .fontSize(core::theme::scaled(9.0f))
-            .lineHeight(core::theme::scaled(16.0f))
-            .horizontalAlign(eui::HorizontalAlign::Center)
-            .verticalAlign(eui::VerticalAlign::Center)
-            .color(t.colors.textTertiary)
-            .build();
-    }
 
     }
 
@@ -355,7 +292,7 @@ void drawClaudeHeader(eui::Ui& ui, float contentW, float headerH,
 
                     // §5 帮助图标钮（UAT6 问号钮重设计，尺寸对齐 md.help.icon 的
                     // 24px 档）：正圆、icon 居中、hover 三态（透明底→浅灰→按压灰），
-                    // 照已过 UAT 的圆钮先例（claude.shared.header 勾箭钮同款结构）。
+                    // 照已过 UAT 的圆钮先例（正圆 + icon 居中 + 三态）。
                     // 从状态组 wrap 行挪出为独立钮——右缘可静态推算（tooltip 锚点
                     // 需要 wrap 行给不了）；长文案 hover 经 EUI tooltip 弹回（下方）。
                     ui.stack("claude.title.help")
@@ -486,8 +423,6 @@ void drawProfileListPanel(eui::Ui& ui, float leftW, float bodyH,
                           ProfileListState& st,
                           const std::vector<Profile>& profiles,
                           const std::string& profilesError,
-                          const std::vector<SharedConfig>& sharedConfigs,
-                          const std::string& sharedConfigsError,
                           const ProfileListActions& actions) {
     ui.column("claude.profiles")
         .size(leftW, bodyH)
@@ -520,18 +455,8 @@ void drawProfileListPanel(eui::Ui& ui, float leftW, float bodyH,
             const float cardY0 = kListTopY;
             const float cardGap = 12.0f;
 
-            // 退化守门只有两种「高度预算不足」：① 展开态区块被压扁（折叠态一行头
-            // 无内容区，不适用）；② 列表保底视口被挤没。记 ERROR 而非 assert（Release 会编掉 assert）
-            const float sharedH =
-                sharedBlockH(bodyH, st.sharedBlockCollapsed_);
-            const float sharedBlockTop = sharedBlockBottomY(bodyH) - sharedH;
-            if (!st.sharedBlockCollapsed_ &&
-                sharedH < kSharedHeaderBottom + kSharedInfoH) {
-                LOG_ERROR("[layout] 共享配置区块被压扁（头行与错误/空态行重叠）: "
-                          "sharedH=" + std::to_string(sharedH) + " < " +
-                          std::to_string(kSharedHeaderBottom + kSharedInfoH) +
-                          " bodyH=" + std::to_string(bodyH));
-            }
+            // 列表底 = 底部按钮行上沿 − 间距
+            const float listBottom = bottomButtonRowY(bodyH) - kListBottomGap;
 
             if (!profilesError.empty()) {
                 ui.text("claude.profiles.error")
@@ -542,16 +467,6 @@ void drawProfileListPanel(eui::Ui& ui, float leftW, float bodyH,
                     .lineHeight(core::theme::scaled(20.0f))
                     .color(t.colors.errorText)
                     .build();
-                // 无 scroll 时共享区块同样钉面板底（占位不写死 y）
-                ui.stack("claude.shared.block")
-                    .position(20.0f, sharedBlockTop)
-                    .size(leftW - 40.0f, sharedH)
-                    .content([&] {
-                        drawSharedConfigBlock(ui, leftW - 40.0f, sharedH,
-                                              t, themeTokens, st, sharedConfigs,
-                                              sharedConfigsError, actions);
-                    })
-                    .build();
             } else if (profiles.empty()) {
                 ui.text("claude.profiles.empty")
                     .position(20.0f, cardY0 + 20.0f)
@@ -561,25 +476,15 @@ void drawProfileListPanel(eui::Ui& ui, float leftW, float bodyH,
                     .lineHeight(core::theme::scaled(20.0f))
                     .color(t.colors.textTertiary)
                     .build();
-                ui.stack("claude.shared.block")
-                    .position(20.0f, sharedBlockTop)
-                    .size(leftW - 40.0f, sharedH)
-                    .content([&] {
-                        drawSharedConfigBlock(ui, leftW - 40.0f, sharedH,
-                                              t, themeTokens, st, sharedConfigs,
-                                              sharedConfigsError, actions);
-                    })
-                    .build();
             } else {
-                // virtualList：仅可见行进 slot 窗口重建，overscan 一个视口高；视口高 = 区块顶 − 间距 − 列表起点，列表恒吃剩余高
+                // virtualList：仅可见行进 slot 窗口重建，overscan 一个视口高；列表恒吃剩余高
                 const float rowPitch = 56.0f + cardGap;
-                const float listH = std::max(
-                    0.0f, sharedBlockTop - kSharedBottomGap - cardY0);
-                // 退化守门：仅 bodyH 极小时区块高上界被夹到 0 而失效
-                if (listH < kSharedListMinH) {
+                const float listH = std::max(0.0f, listBottom - cardY0);
+                // 退化守门：仅 bodyH 极小时列表视口被挤没
+                if (listH < kListMinH) {
                     LOG_ERROR("[layout] Profile 列表保底视口被挤没: listH=" +
                               std::to_string(listH) + " < " +
-                              std::to_string(kSharedListMinH) + " bodyH=" +
+                              std::to_string(kListMinH) + " bodyH=" +
                               std::to_string(bodyH));
                 }
                 // selectedId_ 契约（claude_ui_state.h）= 0 跟随激活 profile；显式 id
@@ -650,16 +555,6 @@ void drawProfileListPanel(eui::Ui& ui, float leftW, float bodyH,
                                     .build();
                             })
                             .build();
-                    })
-                    .build();
-                // 共享区块不并入 virtualList 行窗（无非等高末行支持），垫在列表下方钉面板底，位于视口 clip 之外
-                ui.stack("claude.shared.block")
-                    .position(20.0f, sharedBlockTop)
-                    .size(leftW - 40.0f, sharedH)
-                    .content([&] {
-                        drawSharedConfigBlock(ui, leftW - 40.0f, sharedH,
-                                              t, themeTokens, st, sharedConfigs,
-                                              sharedConfigsError, actions);
                     })
                     .build();
             }
@@ -799,204 +694,6 @@ void drawSwitchConfirmDialog(eui::Ui& ui, const eui::Screen& screen,
     });
 }
 
-// 共享配置区块（UAT5 可折叠）：默认收起只画一行头，点头行/勾箭钮展开；「+」
-// 圆钮两态常驻头行右缘（原区块底整宽「新建片段」钮已删，入口不丢）。
-// 块高由调用方按 sharedBlockH(bodyH, collapsed) 传入，块内元素相对块顶从 0 起算。
-// id: claude.shared.block / .header.toggle / .title / .header.chevron / .header.add
-//     / .error / .empty / .scroll / .card.N.*
-void drawSharedConfigBlock(eui::Ui& ui, float width, float blockH,
-                           const core::theme::Tokens& t,
-                           const components::theme::ThemeColorTokens& themeTokens,
-                           ProfileListState& st,
-                           const std::vector<SharedConfig>& sharedConfigs,
-                           const std::string& sharedConfigsError,
-                           const ProfileListActions& actions) {
-    const bool collapsed = st.sharedBlockCollapsed_;
-    const float rowH = kSharedHeaderBottom;
-
-    // ── 头行（两态恒在）：整行可点切换折叠（wechat 透明底 + hover 高亮，
-    // md 目录行同款）；按钮后画 = 命中层压在行之上，点按钮不触发折叠 ──
-    ui.rect("claude.shared.header.toggle")
-        .position(0.0f, 0.0f)
-        .size(width, rowH)
-        .states(eui::Color{0.0f, 0.0f, 0.0f, 0.0f},
-                t.colors.hover,
-                t.colors.primarySoftBg)
-        .radius(t.sizes.radiusSmall)
-        .onClick([sp = &st] {
-            sp->sharedBlockCollapsed_ = !sp->sharedBlockCollapsed_;
-        })
-        .build();
-
-    // 标题 + 条目计数（错态不计数；空集不挂「· 0」尾巴）
-    const std::string countSuffix =
-        (sharedConfigsError.empty() && !sharedConfigs.empty())
-            ? std::string(" · ") + std::to_string(sharedConfigs.size())
-            : std::string();
-    ui.text("claude.shared.title")
-        .position(12.0f, 0.0f)
-        .size(std::max(40.0f, width - 110.0f), rowH)
-        .text(std::string("共享配置片段") + countSuffix)
-        .fontSize(core::theme::scaled(13.0f))
-        .lineHeight(rowH)
-        .fontWeight(600)
-        .verticalAlign(eui::VerticalAlign::Center)
-        .color(t.colors.textPrimary)
-        .build();
-
-    // 勾箭钮（UAT6 居中修复：components::button 的 iconWidth=iconFont*1.15
-    // 对窄 FA 字形不精确 → 自构建，icon 占满 26px 圆，horizontalAlign::Center 居中）
-    {
-        constexpr float kD = 26.0f;
-        const float x0 = width - 72.0f;
-        const float y0 = 2.0f;
-        auto normalC = t.colors.surface;
-        auto hoverC  = core::mixColor(normalC, t.colors.primary, 0.10f);
-        auto pressC  = core::mixColor(normalC, t.colors.primarySoftBg, 0.22f);
-        ui.stack("claude.shared.header.chevron")
-            .position(x0, y0).size(kD, kD)
-            .visualStateFrom("claude.shared.header.chevron.bg", 0.965f)
-            .content([&] {
-                ui.rect("claude.shared.header.chevron.bg")
-                    .size(kD, kD)
-                    .states(normalC, hoverC, pressC)
-                    .radius(t.sizes.radiusSmall)
-                    .onClick([sp = &st] {
-                        sp->sharedBlockCollapsed_ = !sp->sharedBlockCollapsed_;
-                    })
-                    .build();
-                ui.text("claude.shared.header.chevron.icon")
-                    .size(kD, kD)
-                    .icon(collapsed ? 0xF078 : 0xF077)
-                    .fontSize(core::theme::scaled(13.0f))
-                    .lineHeight(kD)
-                    .horizontalAlign(eui::HorizontalAlign::Center)
-                    .verticalAlign(eui::VerticalAlign::Center)
-                    .color(t.colors.textSecondary)
-                    .build();
-            })
-            .build();
-    }
-
-    // 「+」圆钮（UAT6 居中修复：components::button 的 iconWidth=iconFont*1.15
-    // 对窄 FA 字形不精确 → 自构建，icon 占满 26px 圆，horizontalAlign::Center 居中）
-    {
-        constexpr float kD = 26.0f;
-        const float x0 = width - 42.0f;
-        const float y0 = 2.0f;
-        ui.stack("claude.shared.header.add")
-            .position(x0, y0).size(kD, kD)
-            .visualStateFrom("claude.shared.header.add.bg", 0.965f)
-            .content([&] {
-                ui.rect("claude.shared.header.add.bg")
-                    .size(kD, kD)
-                    .states(t.colors.primary,
-                            t.colors.primaryHover,
-                            t.colors.primaryPressed)
-                    .radius(13.0f)
-                    .onClick([onNew = actions.onNewShared] { onNew(); })
-                    .build();
-                ui.text("claude.shared.header.add.icon")
-                    .size(kD, kD)
-                    .icon(0xF067)  // fa-plus
-                    .fontSize(core::theme::scaled(13.0f))
-                    .lineHeight(kD)
-                    .horizontalAlign(eui::HorizontalAlign::Center)
-                    .verticalAlign(eui::VerticalAlign::Center)
-                    .color(t.colors.onPrimary)
-                    .build();
-            })
-            .build();
-    }
-
-    if (collapsed) {
-        return;   // 折叠态：列表区不渲染（错误/空态文案也收进展开区）
-    }
-
-    const float contentTop = rowH;
-    const float contentH = std::max(0.0f, blockH - rowH);
-    // 片段集 / 空态 / 错误态任一变化 → 块内滚动偏移归零（签名跨数据集残留会跳回旧偏移）；签名计算放在分支之前
-    size_t scrollKey = sharedConfigsError.empty() ? 0u : 1u;
-    for (const auto& sc : sharedConfigs) {
-        scrollKey = scrollKey * 1315423911u +
-                    std::hash<std::string>{}(sc.name) +
-                    static_cast<size_t>(sc.id);
-    }
-    if (st.sharedScrollKey_ != scrollKey) {
-        st.sharedScrollKey_ = scrollKey;
-        st.sharedScrollOffset_ = 0.0f;
-    }
-    if (!sharedConfigsError.empty()) {
-        ui.text("claude.shared.error")
-            .position(0.0f, contentTop).size(width, kSharedInfoH)
-            .text("共享配置片段加载失败：" + sharedConfigsError)
-            .fontSize(core::theme::scaled(11.0f)).lineHeight(kSharedInfoH)
-            .color(t.colors.errorText)
-            .build();
-    } else if (sharedConfigs.empty()) {
-        // §5 空状态引导新建（empty_state.h 语义内联）；「+」钮在头行右上 → 口径同步
-        ui.text("claude.shared.empty")
-            .position(0.0f, contentTop).size(width, kSharedInfoH)
-            .text("暂无片段，点击右上 + 新建")
-            .fontSize(core::theme::scaled(11.0f)).lineHeight(kSharedInfoH)
-            .color(t.colors.textTertiary)
-            .build();
-    } else {
-        // 片段卡片：name + 键数；点击开编辑弹窗，装不下时块内滚
-        components::scrollView(ui, "claude.shared.scroll")
-            .position(0.0f, contentTop)
-            .size(width, contentH)
-            .gap(0.0f)
-            .step(kSharedCardH + kSharedCardGap)
-            .theme(themeTokens)
-            .contentKey("claude.shared.scroll." + std::to_string(scrollKey))
-            .offset(st.sharedScrollOffset_)
-            .onChange([sp = &st](float v) { sp->sharedScrollOffset_ = v; })
-            .content([&](eui::Ui& inner, float contentWidth, float viewportHeight) {
-                (void)viewportHeight;
-                for (size_t i = 0; i < sharedConfigs.size(); ++i) {
-                    const SharedConfig& sc = sharedConfigs[i];
-                    const std::string cid =
-                        "claude.shared.card." + std::to_string(i);
-                    // 行容器 = 定高 stack：滚动内容是流式 column，行距由容器高多出的 kSharedCardGap 提供
-                    inner.stack(cid + ".item")
-                        .size(contentWidth, kSharedCardH + kSharedCardGap)
-                        .content([&] {
-                            inner.rect(cid + ".bg")
-                                .position(0.0f, 0.0f)
-                                .size(contentWidth, kSharedCardH)
-                                .states(t.colors.surface,
-                                        t.colors.hover,
-                                        t.colors.primarySoftBg)
-                                .radius(t.sizes.radiusLarge)
-                                .onClick([onEdit = actions.requestEditShared, sc] {
-                                    onEdit(sc);   // 按值拷贝（sc 引用 compose 局部副本，跨帧悬垂）
-                                })
-                                .build();
-                            inner.text(cid + ".name")
-                                .position(16.0f, 8.0f)
-                                .size(contentWidth - 32.0f, 20.0f)
-                                .text(sc.name)
-                                .fontSize(core::theme::scaled(13.0f)).lineHeight(core::theme::scaled(20.0f))
-                                .fontWeight(600)
-                                .color(t.colors.textPrimary)
-                                .build();
-                            inner.text(cid + ".keys")
-                                .position(16.0f, 32.0f)
-                                .size(contentWidth - 32.0f, 14.0f)
-                                .text(sc.extraSettingsJson.empty()
-                                          ? std::string("高级属性 JSON 预设（未配置）")
-                                          : std::string("高级属性 JSON 预设 · 绑定它的 Profile 写入时覆盖同名键"))
-                                .fontSize(core::theme::scaled(11.0f)).lineHeight(core::theme::scaled(14.0f))
-                                .color(t.colors.textSecondary)
-                                .build();
-                        })
-                        .build();
-                }
-            })
-            .build();
-    }
-}
 
 // Profile 右键菜单：动作经 ProfileListActions 委托到模块既有逻辑，本函数不写业务。
 // 常驻构建（关闭态由组件内 opacity 收起）；无右键目标时强制置关，防「隐形菜单卡开」。

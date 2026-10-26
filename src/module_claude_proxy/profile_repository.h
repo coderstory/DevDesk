@@ -1,5 +1,5 @@
-// ProfileRepository：claude_profiles 行 + SharedConfig 片段的唯一持久化入口。
-// 不变式：api_key_hint 为脱敏形态（前6+***+尾4）、api_key_check 为全量 SHA256 hex（变更判据），随密钥写入同批更新；is_active 全局唯一；悬空 SharedConfig id 读路径容错
+// ProfileRepository：claude_profiles 行的唯一持久化入口。
+// 不变式：api_key_hint 为脱敏形态（前6+***+尾4）、api_key_check 为全量 SHA256 hex（变更判据），随密钥写入同批更新；is_active 全局唯一
 #pragma once
 
 #include <cstdint>
@@ -25,18 +25,8 @@ struct Profile {
     std::string model;          // 默认模型（= models_config 的 default 槽位，双向同步）
     std::string modelsConfigJson; // 6 槽位模型配置 JSON 原文（空串 = 未配置）
     std::string extraEnvJson;   // 额外 env 键值 JSON 原文（空串 = 未配置）
-    int64_t sharedConfigId = 0; // 绑定共享配置片段 id（0 = 未绑定；0..1、不嵌套）
     std::string authField = "both";  // 认证字段三态（'both'/'bearer'/'api_key'；未知/空串按 both 读）
     bool isActive = false;
-    std::time_t createdAt = 0;
-    std::time_t updatedAt = 0;
-};
-
-// 共享配置片段：只有名字 + 高级属性 JSON 预设，不含 base_url / 密钥，不进路由与凭据链；一个 profile 绑 0..1 个，不嵌套
-struct SharedConfig {
-    int64_t id = 0;
-    std::string name;
-    std::string extraSettingsJson;   // 高级属性 JSON 预设原文（空串 = 未配置）
     std::time_t createdAt = 0;
     std::time_t updatedAt = 0;
 };
@@ -93,13 +83,10 @@ public:
                                         const std::string& baseUrl,
                                         const std::string& apiKey,
                                         const std::string& model,
-                                        int64_t sharedConfigId = 0,
                                         const std::string& authField = "both");
 
     // 更新 profile（id 必须已存在；apiKeyPlain 非空则覆盖凭据三列，空则只更新元数据）。
-    // oldProfile（可空出参）成功时回填更新前的旧行——门面 re-takeover 据此判断。
-    core::Result<void> updateProfile(const Profile& profile,
-                                     Profile* oldProfile = nullptr);
+    core::Result<void> updateProfile(const Profile& profile);
 
     // 删除 profile（两段写：段一清凭据三列、段二删 SQLite 行；任一段失败按旧值
     // 回写三列，行保留可重试）。wasActive（可空出参）回填被删行 is_active。
@@ -120,26 +107,9 @@ public:
     // 调用方负责前置校验；反向同步（syncCaptureActiveProfile）必须先于本事务发生。
     core::Result<void> activateProfile(int64_t id);
 
-    // 共享配置片段
-    // 生命周期语义（策略尾都在门面）：改 → 绑定它的激活 profile 代理在跑则立即 re-takeover；删 → 同事务解绑后再判 re-takeover；解绑后同名键回落 profile 自身值
-    core::Result<std::vector<SharedConfig>> listSharedConfigs();
-    core::Result<SharedConfig> createSharedConfig(const std::string& name,
-                                                  const std::string& extraSettingsJson);
-    core::Result<void> updateSharedConfig(const SharedConfig& config);
-    core::Result<void> deleteSharedConfig(int64_t id, bool* activeBound = nullptr);
-
-    // 片段高级属性 JSON 原文（0 / 不存在 / 读失败 → 空串 = 未绑定；悬空 id 退化成「未绑定」）。导出链走列表快照 findSharedById
-    std::string sharedExtraSettingsJsonFor(int64_t sharedConfigId) const;
-
-private:
+    private:
     // 从一行 SqlRow 构造 Profile（不含 apiKeyPlain）
     core::Result<Profile> rowToProfile(const core::data::SqlRow& row) const;
-
-    // 从一行 SqlRow 构造 SharedConfig
-    core::Result<SharedConfig> rowToSharedConfig(const core::data::SqlRow& row) const;
-
-    // 片段存在性校验（update / delete 前置，缺失 → NotFound）
-    core::Result<void> requireSharedConfigExists(int64_t id) const;
 
     core::data::SqliteDb& db_;
     std::string keychainService_;   // 仅用于旧 Keychain 凭据回填（见构造注释）

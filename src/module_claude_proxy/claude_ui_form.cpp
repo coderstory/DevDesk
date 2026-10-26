@@ -58,8 +58,6 @@ void openCreateForm(FormState& f, ImportState& imp) {
     f.formEnvRows_.clear();
     f.formAuthField_ = AuthField::Both;
     f.formAuthFieldOpen_ = false;
-    f.formSharedConfigId_ = 0;
-    f.formSharedDdOpen_ = false;
     resetImportState(imp);
     f.formOpen_ = true;
 }
@@ -78,9 +76,6 @@ void openEditForm(FormState& f, ImportState& imp, const Profile& p) {
     // 认证字段：编辑必须回显现状，否则用户误以为是默认值、一保存即覆盖
     f.formAuthField_ = authFieldFromText(p.authField);
     f.formAuthFieldOpen_ = false;
-    // 绑定回显（悬空由下拉逐帧归一为未绑定）
-    f.formSharedConfigId_ = p.sharedConfigId;
-    f.formSharedDdOpen_ = false;
     // env 行：非法 JSON 读路径容错为空表
     f.formEnvRows_.clear();
     auto ee = parseExtraEnv(p.extraEnvJson);
@@ -226,8 +221,7 @@ bool serializeFormData(FormState& f, std::string* modelsJson, std::string* envJs
     return true;
 }
 
-void submitForm(FormState& f, const FormSubmitHooks& hooks,
-                const std::vector<SharedConfig>& sharedConfigs) {
+void submitForm(FormState& f, const FormSubmitHooks& hooks) {
     ClaudeService* svc = ClaudeService::global();
     if (!svc) {
         setFormError(f, "服务未就绪（ClaudeService 未注册）");
@@ -237,11 +231,6 @@ void submitForm(FormState& f, const FormSubmitHooks& hooks,
     if (f.formName_.empty() || f.formUrl_.empty()) {
         setFormError(f, "名称和 Base URL 不能为空");
         return;
-    }
-    // 悬空绑定防御（片段已删 / 快照未到位）：按未绑定保存，不留幽灵 id
-    if (f.formSharedConfigId_ != 0 &&
-        findSharedById(sharedConfigs, f.formSharedConfigId_) == nullptr) {
-        f.formSharedConfigId_ = 0;
     }
     std::string modelsJson;
     std::string envJson;
@@ -255,7 +244,6 @@ void submitForm(FormState& f, const FormSubmitHooks& hooks,
         // activateIfNoneActive=true：无激活 Profile 时自动激活这条；已有激活不抢占
         auto r = svc->createProfile(f.formName_, f.formUrl_, f.formKey_,
                                     f.formModels_.def.model, /*activateIfNoneActive=*/true,
-                                    /*sharedConfigId=*/f.formSharedConfigId_,
                                     authFieldToText(f.formAuthField_));
         if (r.isFail()) {
             setFormError(f, r.errorMessage());
@@ -302,7 +290,6 @@ void submitForm(FormState& f, const FormSubmitHooks& hooks,
         p.extraEnvJson = envJson;
         p.apiKeyPlain = f.formKey_;   // 空 = 不换 key
         p.authField = authFieldToText(f.formAuthField_);
-        p.sharedConfigId = f.formSharedConfigId_;   // 绑定/解绑随保存落库
         auto r = svc->updateProfile(p);
         if (r.isFail()) {
             setFormError(f, r.errorMessage());
@@ -704,7 +691,6 @@ void drawProfileFormDialog(eui::Ui& ui, const eui::Screen& screen,
                            const core::theme::Tokens& t,
                            const components::theme::ThemeColorTokens& themeTokens,
                            FormState& f, ImportState& imp,
-                           const std::vector<SharedConfig>& sharedConfigs,
                            const FormSubmitHooks& hooks) {
     const float w = ui_kit::dialogWidthPx(ui_kit::DialogWidth::Form);
     // UAT6 O 批：最小窗 1000×640（页高 600）下弹窗 600 恒高填满全页、按钮出框；
@@ -768,9 +754,7 @@ const float h = 540.0f;
             confirm.label = isEdit ? "保存" : "创建";
             confirm.fontSize = 14.0f;
             confirm.style = ui_kit::DialogButtonStyle::PrimaryThemed;
-            confirm.onClick = [fp = &f, hooks, scs = &sharedConfigs] {
-                submitForm(*fp, hooks, *scs);
-            };
+            confirm.onClick = [fp = &f, hooks] { submitForm(*fp, hooks); };
             ui_kit::drawDialogButtons(ui, "claude.dialog.form", w, h, cancel, confirm, t,
                                       themeTokens);
     });
@@ -819,262 +803,6 @@ void drawDeleteConfirmDialog(eui::Ui& ui, const eui::Screen& screen,
             };
             ui_kit::drawDialogButtons(ui, "claude.dialog.delete", w, h, cancel, confirm,
                                       t, themeTokens);
-    });
-}
-
-// 共享配置片段弹窗：独立 SharedConfigDialogState（不复用 FormState，不污染 profile 表单态）
-void openSharedCreate(SharedConfigDialogState& s) {
-    s.editId_ = 0;
-    s.name_.clear();
-    s.extraSettingsJson_.clear();
-    s.error_.clear();
-    s.open_ = true;
-}
-
-void openSharedEdit(SharedConfigDialogState& s, const SharedConfig& c) {
-    s.editId_ = c.id;
-    s.name_ = c.name;
-    s.error_.clear();
-    // 预填片段 JSON 原文（外部改库原文按原样，格式化按钮负责规范化）
-    s.extraSettingsJson_ = c.extraSettingsJson;
-    s.open_ = true;
-}
-
-void submitSharedForm(SharedConfigDialogState& s,
-                      const SharedConfigSubmitHooks& hooks) {
-    ClaudeService* svc = ClaudeService::global();
-    if (!svc) {
-        s.error_ = "服务未就绪（ClaudeService 未注册）";
-        return;
-    }
-    hooks.markDataDirty();   // 写操作前即标脏（失败也不伤，下帧重查）
-    if (s.name_.empty()) {
-        s.error_ = "片段名不能为空";
-        return;
-    }
-    // 保存走 validateExtraSettingsJson 同一套规则（含拒绝 env 键）；通过→统一 pretty 落库
-    std::string settingsPretty;
-    if (!s.extraSettingsJson_.empty()) {
-        auto v = validateExtraSettingsJson(s.extraSettingsJson_);
-        if (v.isFail()) {
-            s.error_ = v.errorMessage();
-            return;
-        }
-        auto parsed = platform::json::parse(s.extraSettingsJson_);
-        if (parsed.isOk()) {
-            auto pretty = platform::json::stringify(parsed.value(),
-                                                    /*pretty=*/true);
-            if (pretty.isOk()) settingsPretty = pretty.value();
-        }
-        if (settingsPretty.empty()) settingsPretty = s.extraSettingsJson_;
-    }
-    if (s.editId_ == 0) {
-        auto r = svc->createSharedConfig(s.name_, settingsPretty);
-        if (r.isFail()) {
-            s.error_ = r.errorMessage();   // 重名等校验错误红字回显
-            return;
-        }
-        s.open_ = false;
-        hooks.toast("已创建", "共享配置片段「" + s.name_ + "」已创建", false);
-        // 新片段无人绑定，无需 re-takeover
-    } else {
-        SharedConfig c;
-        c.id = s.editId_;
-        c.name = s.name_;
-        c.extraSettingsJson = settingsPretty;
-        auto r = svc->updateSharedConfig(c);
-        if (r.isFail()) {
-            s.error_ = r.errorMessage();
-            return;
-        }
-        s.open_ = false;
-        // 服务层已处理绑定 profile 的即时 re-takeover（claude_service.cpp），UI 不重复写
-        hooks.toast("已保存",
-                    "共享配置片段「" + s.name_ + "」已更新，绑定 Profile 下次接管生效",
-                    false);
-    }
-}
-
-// 共享配置片段编辑弹窗：name + 高级设置 JSON 四件；编辑态底部多一枚「删除」
-void drawSharedConfigDialog(eui::Ui& ui, const eui::Screen& screen,
-                            const core::theme::Tokens& t,
-                            const components::theme::ThemeColorTokens& themeTokens,
-                            SharedConfigDialogState& s,
-                            const SharedConfigSubmitHooks& hooks) {
-    const float w = ui_kit::dialogWidthPx(ui_kit::DialogWidth::Form);
-    const float h = 460.0f;
-    const bool isEdit = (s.editId_ != 0);
-
-    ui_kit::DialogFrame frame;
-    frame.id = "claude.dialog.shared";
-    frame.width = ui_kit::DialogWidth::Form;
-    frame.height = h;
-    frame.open = s.open_;
-    frame.onOpenChange = [sp = &s](bool v) { sp->open_ = v; };
-
-    ui_kit::drawDialogFrame(ui, screen, frame, themeTokens, [&] {
-        ui_kit::drawDialogTitle(
-            ui, "claude.dialog.shared.title", w,
-            isEdit ? "编辑共享配置片段" : "新建共享配置片段", 20.0f,
-            t.colors.textPrimary, {.y = 16.0f, .height = 28.0f, .lineHeight = 28.0f});
-
-        ui.text("claude.dialog.shared.name.label")
-            .position(28.0f, 64.0f).size(w - 56.0f, 16.0f)
-            .text("片段名（共享给所有 Profile 的高级属性预设，不含密钥/Base URL）")
-            .fontSize(core::theme::scaled(11.0f)).lineHeight(core::theme::scaled(16.0f))
-            .color(t.colors.textTertiary).build();
-        components::input(ui, "claude.dialog.shared.name")
-            .position(28.0f, 82.0f).size(w - 56.0f, 36.0f)
-            .value(s.name_).placeholder("例如：企业内部网关 env")
-            .fontSize(core::theme::scaled(14.0f)).theme(themeTokens)
-            .onChange([sp = &s](const std::string& v) { sp->name_ = v; })
-            .onCancel([sp = &s] { sp->open_ = false; })   // Esc=取消（同表单各输入框）
-            .build();
-
-        // 片段即 settings.json 属性预设：绑定它的 Profile 写入时逐键叠加、片段赢，解绑回落
-        ui.text("claude.dialog.shared.json.label")
-            .position(28.0f, 128.0f).size(w - 56.0f, 16.0f)
-            .text("高级设置 JSON（settings.json 除 env 外的属性，绑定它的 Profile 写入时覆盖同名键）")
-            .fontSize(core::theme::scaled(11.0f)).lineHeight(core::theme::scaled(16.0f))
-            .color(t.colors.textTertiary).build();
-        components::input(ui, "claude.dialog.shared.json")
-            .position(28.0f, 146.0f).size(w - 56.0f, 170.0f)
-            .value(s.extraSettingsJson_)
-            .placeholder(R"({ "model": "...", "permissions": { ... } })")
-            .multiline(true).scrollbar(true)
-            .fontSize(core::theme::scaled(12.0f)).theme(themeTokens)
-            .onChange([sp = &s](const std::string& v) {
-                sp->extraSettingsJson_ = v;
-                sp->error_.clear();
-            })
-            .onCancel([sp = &s] { sp->open_ = false; })   // Esc=取消（同表单各输入框）
-            .build();
-        //（UAT5 米黄清理：surfaceElevated 暖橙 → WeChat Secondary 白底灰边，同表单高级页格式化钮）
-        components::button(ui, "claude.dialog.shared.json.format")
-            .position(28.0f, 324.0f).size(110.0f, 32.0f)
-            .text("格式化").fontSize(core::theme::scaled(12.0f))
-            .colors(t.colors.hover,
-                    t.colors.hover,
-                    t.colors.hover)
-            .textColor(t.colors.textPrimary)
-            .radius(t.sizes.radius)
-            .border(1.0f, t.colors.borderDefault)
-            .onClick([sp = &s] {
-                sp->error_.clear();
-                if (sp->extraSettingsJson_.empty()) return;
-                auto parsed = platform::json::parse(sp->extraSettingsJson_);
-                if (parsed.isFail()) {
-                    sp->error_ = "解析失败: " + parsed.errorMessage();
-                    return;
-                }
-                auto pretty = platform::json::stringify(parsed.value(),
-                                                        /*pretty=*/true);
-                if (pretty.isFail()) {
-                    sp->error_ = "序列化失败: " + pretty.errorMessage();
-                    return;
-                }
-                sp->extraSettingsJson_ = pretty.value();
-            })
-            .build();
-        if (!s.error_.empty()) {
-            ui.text("claude.dialog.shared.error")
-                .position(28.0f, 364.0f).size(w - 56.0f, 18.0f)
-                .text(s.error_).fontSize(core::theme::scaled(12.0f)).lineHeight(core::theme::scaled(18.0f))
-                .color(t.colors.errorText).build();
-        }
-
-        // 底部按钮：编辑态删除/取消/保存，新建态取消/创建；删除另开确认弹窗（同事务解绑绑定 Profile）
-        //（UAT5 米黄清理：整组换 WeChat——Secondary 白底灰边 / Primary 绿，同表单弹窗先例）
-        const float py = h - 60.0f;
-        if (isEdit) {
-            components::button(ui, "claude.dialog.shared.delete")
-                .position(28.0f, py).size(88.0f, 40.0f)
-                .text("删除").fontSize(core::theme::scaled(14.0f))
-                .colors(t.colors.hover,
-                        t.colors.hover,
-                        t.colors.hover)
-                .textColor(t.colors.errorText)
-                .radius(t.sizes.radius)
-                .border(1.0f, t.colors.borderDefault)
-                .onClick([sp = &s] {
-                    sp->deleteConfirmId_ = sp->editId_;
-                    sp->deleteConfirmName_ = sp->name_;
-                    sp->deleteConfirmOpen_ = true;
-                })
-                .build();
-        }
-        const float pairW = (w - 124.0f - 28.0f - 12.0f) * 0.5f;
-        const float cancelX = isEdit ? 124.0f : 28.0f;
-        const float confirmX = isEdit ? 124.0f + pairW + 12.0f
-                                      : 28.0f + pairW + 12.0f;
-        components::button(ui, "claude.dialog.shared.cancel")
-            .position(cancelX, py).size(pairW, 40.0f)
-            .text("取消").fontSize(core::theme::scaled(14.0f))
-            .colors(t.colors.hover,
-                    t.colors.hover,
-                    t.colors.hover)
-            .textColor(t.colors.textPrimary)
-            .radius(t.sizes.radius)
-            .border(1.0f, t.colors.borderDefault)
-            .onClick([sp = &s] { sp->open_ = false; })
-            .build();
-        components::button(ui, "claude.dialog.shared.confirm")
-            .position(confirmX, py).size(pairW, 40.0f)
-            .text(isEdit ? "保存" : "创建").fontSize(core::theme::scaled(14.0f))
-            .colors(t.colors.primary, t.colors.primaryHover,
-                    t.colors.primaryPressed)
-            .textColor(t.colors.onPrimary)
-            .radius(t.sizes.radius)
-            .onClick([sp = &s, hooks] { submitSharedForm(*sp, hooks); })
-            .build();
-    });
-}
-
-// 片段删除确认弹窗（删除 = 同事务解绑绑定它的 profile；解绑计数由模块侧在回调里给出）
-void drawSharedConfigDeleteConfirmDialog(
-    eui::Ui& ui, const eui::Screen& screen, const core::theme::Tokens& t,
-    const components::theme::ThemeColorTokens& themeTokens,
-    SharedConfigDialogState& s,
-    const std::function<void(int64_t id, const std::string& name)>&
-        onConfirmDelete) {
-    const float w = ui_kit::dialogWidthPx(ui_kit::DialogWidth::Compact);
-    const float h = 190.0f;
-
-    ui_kit::DialogFrame frame;
-    frame.id = "claude.dialog.shared.delete";
-    frame.width = ui_kit::DialogWidth::Compact;
-    frame.height = h;
-    frame.open = s.deleteConfirmOpen_;
-    frame.onOpenChange = [sp = &s](bool v) { sp->deleteConfirmOpen_ = v; };
-
-    ui_kit::drawDialogFrame(ui, screen, frame, themeTokens, [&] {
-        ui_kit::drawDialogTitle(ui, "claude.dialog.shared.delete.title", w,
-                                "确认删除片段？", 20.0f, t.colors.textPrimary);
-        ui_kit::drawDialogText(
-            ui, "claude.dialog.shared.delete.msg", w,
-            "将删除共享配置片段「" + s.deleteConfirmName_ +
-                "」，绑定它的 Profile 会自动解绑（同名键回落 Profile 自身值），"
-                "不可恢复。",
-            t.sizes.fontSizeSmall, t.colors.textSecondary,
-            {.y = 58.0f, .height = 60.0f, .lineHeight = 20.0f, .wrap = true});
-
-        ui_kit::DialogButtonSpec cancel;
-        cancel.label = "取消";
-        cancel.fontSize = 14.0f;
-        cancel.style = ui_kit::DialogButtonStyle::SecondaryThemed;
-        cancel.onClick = [sp = &s] { sp->deleteConfirmOpen_ = false; };
-        ui_kit::DialogButtonSpec confirm;
-        confirm.label = "确认删除";
-        confirm.fontSize = 14.0f;
-        confirm.style = ui_kit::DialogButtonStyle::DangerSoftThemed;
-        confirm.onClick = [sp = &s, onConfirmDelete] {
-            const int64_t id = sp->deleteConfirmId_;
-            const std::string name = sp->deleteConfirmName_;
-            sp->deleteConfirmOpen_ = false;
-            onConfirmDelete(id, name);
-        };
-        ui_kit::drawDialogButtons(ui, "claude.dialog.shared.delete", w, h,
-                                  cancel, confirm, t, themeTokens);
     });
 }
 
