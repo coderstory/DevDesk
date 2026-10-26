@@ -82,6 +82,42 @@ jobs:
           path: /tmp/ci.log
           if-no-files-found: ignore
 
+      # ── ASan/UBSan（07 号票，计划 T5）─────────────────────────────────────
+      # AppleClang 一等支持 sanitizer：独立目录 build-san/ 再来一遍 Debug 构建，
+      # 全量单测在 sanitizer 下跑绿才算过。flags 靠 CXXFLAGS/LDFLAGS 环境变量注入 ——
+      # build-test-run.sh 的 configure 不显式传 -DCMAKE_CXX_FLAGS/-DCMAKE_EXE_LINKER_FLAGS，
+      # CMake 只在**首次 configure** 时从这两个环境变量取初值；build-san 每次都在全新
+      # runner 上首建、必走首建 configure，注入是确定的。链接端 flag 必须经 LDFLAGS 单独
+      # 落 CMAKE_EXE_LINKER_FLAGS —— 只给编译端 flag 链接不进 ASan/UBSan runtime，等于白编。
+      # -fno-omit-frame-pointer：留帧指针让 ASan 栈回溯可读；-fno-sanitize-recover=undefined：
+      # UBSan 违例直接置红 —— 默认 recover 只打印不失败，会造出「违例刷屏但门禁绿」的假绿。
+      # 只跑本目录单测（脚本 RUN_TEST 段即 devdesk_tests 全量）；probe 仍不编：工作区级
+      # DEVDESK_BUILD_PROBES=0 对本 step 同样生效（probe 目标不生成、门禁段显式打 ⏭）——
+      # probe 是真开窗 UI 用例，sanitizer 下无意义且 runner 无 GUI 会话。
+      # **Windows 位后置**：MinGW 的 ASan 运行时不稳（计划 T5 原话），勿照搬到 windows job，
+      # 防后人重复踩坑；决策记录另见 07 号票完成记录。
+      - name: ASan/UBSan 构建 + 全量单测
+        working-directory: DevDesk
+        run: |
+          set +e
+          CXXFLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=undefined" \
+          LDFLAGS="-fsanitize=address,undefined" \
+          DEVDESK_BUILD_DIR=build-san \
+          bash scripts/build-test-run.sh --no-run 2>&1 | tee /tmp/ci-san.log
+          rc=${PIPESTATUS[0]}
+          # ccache 命中率（诊断用；累计数含上一构建步，sanitizer flags 不同 → 缓存键不同 →
+          # 与 Release 构建互不命中，首跑必然全 miss）
+          ccache -s 2>/dev/null | grep -E "Hits|Misses|hit rate|Cache size" || true
+          exit "${rc}"
+
+      - name: ASan/UBSan 日志（失败时留档，便于定位）
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: macos-sanitizer-log
+          path: /tmp/ci-san.log
+          if-no-files-found: ignore
+
   windows:
     name: Windows · 构建 + 测试
     runs-on: windows-2025
