@@ -184,29 +184,26 @@ target_compile_definitions(devdesk_module_about PRIVATE
 )
 # module_pet 已于 2026-10-13 整模块摘除（分支 feat/remove-pet-module）
 
-# ---- 覆盖率插桩（2026-10-03 已知欠账落地）：DEVDESK_COVERAGE=ON → llvm source-based 覆盖率 ----
-# 配套 scripts/coverage.sh（独立 build-coverage/ 目录：configure → 只编 devdesk_tests →
-# 跑测试 → llvm-profdata merge → llvm-cov 分层汇总），build-test-run.sh 保持零改动。
+# ---- 覆盖率插桩（2026-10-03 已知欠账落地）：DEVDESK_COVERAGE=ON 按编译器分路线 ----
+# 配套 scripts/coverage.sh（独立 build-coverage/ 目录：configure → 编 devdesk_tests →
+# 跑测试 → 汇总分层报告），build-test-run.sh 保持零改动。
 # 默认 OFF：正常构建的编译 / 链接命令一字不变，CI 与日常路径不受影响。
 # 插桩口径：只插桩 DevDesk 自己的库层（core / platform / ui_kit / module_*，含 agent）——
 #   * EUI-NEO 子目录不插桩（外部框架，且其 add_subdirectory 在上方已处理完，
 #     本块的目录级 / 目标级操作都够不着它，第三方代码不进分层口径）；
 #   * 可执行文件（devdesk_tests / probes / DevDesk）只加**链接期** flag：它们链接了
-#     插过桩的静态库，链接期不带 profile runtime 会 undefined symbol（__llvm_profile_*）；
+#     插过桩的静态库，链接期不带 profile runtime 会 undefined symbol
+#     （AppleClang 是 __llvm_profile_*，GCC 是 __gcov_* / gcov runtime）；
 #     自身源码不插桩——测试代码与 UI 探针自身的行覆盖不是本工具要回答的问题，
 #     插了只拖慢编译与运行（探针还要开 GL 窗口）。
-# Windows（MinGW GCC）走 gcovr 路线，是 CLAUDE.md 已知欠账的 TODO；非 AppleClang
-# 工具链开此开关直接 FATAL_ERROR，不静默产出带错 flag 的构建。
-option(DEVDESK_COVERAGE "llvm source-based 覆盖率插桩（AppleClang 专用；配套 scripts/coverage.sh，默认 OFF 不影响正常构建）" OFF)
+# 两条路线（2026-10-26 08 号票补上 GCC/MinGW 分支）：
+#   * AppleClang：llvm source-based（-fprofile-instr-generate -fcoverage-mapping）；
+#   * GNU（含 Windows/MinGW GCC）：gcov（--coverage ≈ 编译 -fprofile-arcs -ftest-coverage
+#     + 链接 -lgcov，一个词对编译/链接都成立）；
+#   * 其余（MSVC、非 Apple 的 Clang……）直接 FATAL_ERROR，不静默产出带错 flag 的构建。
+option(DEVDESK_COVERAGE "覆盖率插桩（AppleClang=llvm-cov / GNU=gcov；配套 scripts/coverage.sh，默认 OFF 不影响正常构建）" OFF)
 if(DEVDESK_COVERAGE)
-    if(NOT CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
-        message(FATAL_ERROR "DEVDESK_COVERAGE=ON 目前只支持 AppleClang（-fprofile-instr-generate -fcoverage-mapping）；"
-            "Windows/MinGW GCC 的 gcovr 路线是待办欠账（见 CLAUDE.md 已知欠账表），请勿在 GCC/MSVC 上开启")
-    endif()
-    # 链接期（目录级，置于 add_subdirectory(tests) 与主程序定义**之前**）：
-    # 之后创建的所有可执行文件都拉进 profile runtime
-    add_link_options(-fprofile-instr-generate -fcoverage-mapping)
-    # 编译期（目标级）：只插桩 DevDesk 自己的库层（与上方 add_subdirectory 清单同源维护；
+    # 插桩目标清单（两路线共用；与上方 add_subdirectory 清单同源维护；
     # 注意 module_agent 的库名是 devdesk_agent，无 module_ 前缀）
     set(DEVDESK_COVERAGE_LIBS
         devdesk_core devdesk_platform devdesk_ui_kit
@@ -214,15 +211,36 @@ if(DEVDESK_COVERAGE)
         devdesk_agent
         devdesk_module_claude_proxy devdesk_module_settings
         devdesk_module_about)
-    foreach(_devdesk_cov_lib IN LISTS DEVDESK_COVERAGE_LIBS)
-        if(TARGET ${_devdesk_cov_lib})
-            target_compile_options(${_devdesk_cov_lib} PRIVATE
-                -fprofile-instr-generate -fcoverage-mapping)
-        else()
-            message(WARNING "DEVDESK_COVERAGE: 目标 ${_devdesk_cov_lib} 不存在（模块清单变动？），该层不会被插桩")
-        endif()
-    endforeach()
-    message(STATUS "覆盖率插桩: ON（AppleClang，DevDesk 库层；EUI-NEO / 测试 / 探针源码不插桩）")
+    if(CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+        # 链接期（目录级，置于 add_subdirectory(tests) 与主程序定义**之前**）：
+        # 之后创建的所有可执行文件都拉进 profile runtime
+        add_link_options(-fprofile-instr-generate -fcoverage-mapping)
+        foreach(_devdesk_cov_lib IN LISTS DEVDESK_COVERAGE_LIBS)
+            if(TARGET ${_devdesk_cov_lib})
+                target_compile_options(${_devdesk_cov_lib} PRIVATE
+                    -fprofile-instr-generate -fcoverage-mapping)
+            else()
+                message(WARNING "DEVDESK_COVERAGE: 目标 ${_devdesk_cov_lib} 不存在（模块清单变动？），该层不会被插桩")
+            endif()
+        endforeach()
+        message(STATUS "覆盖率插桩: ON（AppleClang llvm-cov，DevDesk 库层；EUI-NEO / 测试 / 探针源码不插桩）")
+    elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU")
+        # GCC/MinGW 路线（08 号票，计划 T6）：结构同上，flag 换 --coverage。
+        # 链接期目录级 —— devdesk_tests / DevDesk 链接时拉进 gcov runtime（-lgcov），
+        # 跑完在对象文件旁落 .gcda；编译期目标级 —— 只给库层插桩。
+        add_link_options(--coverage)
+        foreach(_devdesk_cov_lib IN LISTS DEVDESK_COVERAGE_LIBS)
+            if(TARGET ${_devdesk_cov_lib})
+                target_compile_options(${_devdesk_cov_lib} PRIVATE --coverage)
+            else()
+                message(WARNING "DEVDESK_COVERAGE: 目标 ${_devdesk_cov_lib} 不存在（模块清单变动？），该层不会被插桩")
+            endif()
+        endforeach()
+        message(STATUS "覆盖率插桩: ON（GNU gcov，DevDesk 库层；EUI-NEO / 测试 / 探针源码不插桩）")
+    else()
+        message(FATAL_ERROR "DEVDESK_COVERAGE=ON 支持 AppleClang（llvm-cov 路线）与 GNU/MinGW GCC（gcov 路线）；"
+            "当前编译器 ${CMAKE_CXX_COMPILER_ID} 不支持，请勿开启")
+    endif()
 endif()
 
 # 测试

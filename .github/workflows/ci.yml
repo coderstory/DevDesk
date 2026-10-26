@@ -171,3 +171,26 @@ jobs:
         run: |
           cd DevDesk
           bash scripts/run-clang-tidy.sh
+
+      # 覆盖率报告（08 号票，计划 T6）：DEVDESK_COVERAGE=ON 的 GCC 路线（--coverage），
+      # 独立目录 build-coverage/ Debug 构建 + 全量单测，scripts/coverage.sh 的 Windows
+      # 路线汇总 core/platform 层行覆盖（纯 gcov + awk，无 Python 依赖，msys2 环境直接跑）。
+      # 报告模式非阻塞：覆盖率数字只进 artifact 供人看，不影响合入信号（同上 clang-tidy）。
+      # EUI-NEO 在 checkout step 已 clone 到同级目录，脚本的三级回退（../EUI-NEO）直接命中；
+      # OpenSSL 用 MINGW_PREFIX（setup-msys2 一定导出），不写死安装路径。
+      - name: 覆盖率报告（报告模式，非阻塞）
+        continue-on-error: true
+        shell: msys2 {0}
+        run: |
+          cd DevDesk
+          bash scripts/coverage.sh
+
+      - name: 上传覆盖率报告
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-coverage-report
+          path: |
+            DevDesk/build-coverage/coverage-summary.txt
+            DevDesk/build-coverage/coverage-report.txt
+          if-no-files-found: ignore
