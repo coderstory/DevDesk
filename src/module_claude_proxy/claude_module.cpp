@@ -9,7 +9,6 @@
 #include "claude_ui_form.h"
 #include "claude_ui_list.h"
 #include "claude_ui_logic.h"
-#include "claude_ui_logs.h"
 #include "claude_ui_state.h"
 #include "core/logging.h"
 #include "core/module_interface.h"
@@ -68,7 +67,6 @@ public:
         const float padSide = t.sizes.spacingLarge * 2.0f;     // 32 —— S4.2 弹性内边距
         const float contentW = screen.width - padSide * 2.0f;   // 宽 = 窗口宽 − 双侧内边距
         const float contentH = screen.height - padTop;           // 高 = 窗口高 − 顶内边距（底贴底）
-        const std::time_t now = std::time(nullptr);   // 调用时间列「今天/昨天」判定
         const float headerH = ui_kit::kHeaderH;
         const float gap = t.sizes.spacingLarge;
         // S3.4 左栏固定 240px，右栏 flex 自适应。
@@ -96,16 +94,13 @@ public:
 
         // 错误态：加载失败不静默吞错显示假空态
         std::string profilesError;
-        std::string callsError;
 
-        // profiles/recent/active 走内存快照（脏标记触发重查，失败保持脏重试）
+        // profiles/active 走内存快照（脏标记触发重查，失败保持脏重试）
         std::vector<Profile> profiles;
-        std::vector<ClaudeService::CallLogEntry> recent;
         Profile activeProfile;
         bool hasActive = false;
         if (!svc) {
             profilesError = "服务未就绪（ClaudeService 未注册）";
-            callsError = "服务未就绪（ClaudeService 未注册）";
             state_.list.dataDirty_ = true;   // 服务未就绪查不了，保持脏等下帧
             // 防御分支：装配已落地，此处理论不可达
             if (!serviceNotReadyWarned_) {
@@ -116,11 +111,9 @@ public:
         } else {
             refreshDataCache(state_.list, svc);
             profiles = state_.list.cachedProfiles_;
-            recent = state_.list.cachedRecent_;
             activeProfile = state_.list.cachedActive_;
             hasActive = state_.list.cachedHasActive_;
             profilesError = state_.list.cachedProfilesError_;
-            callsError = state_.list.cachedCallsError_;
         }
 
         const Profile* shown = nullptr;
@@ -138,9 +131,6 @@ public:
         dv.tokenValue = shown
             ? (shown->apiKeyHint + " [本机库]")
             : std::string("(无激活 profile)");
-        dv.recent = &recent;
-        dv.callsError = callsError;
-        dv.now = now;
         dv.sharedConfigs = &state_.list.cachedSharedConfigs_;
 
         ui.column("claude.root")
@@ -176,7 +166,6 @@ public:
                               formHooks());
         drawDeleteConfirmDialog(ui, screen, t, themeTokens, state_.form,
                                 [this](int64_t id) { doDelete(id); });
-        drawCallsDialog(ui, screen, t, themeTokens, state_.logs, toastHook());
         // 共享配置片段编辑弹窗 + 删除确认；绘制序 = Esc 序链（见 closeTopmostDialog）
         drawSharedConfigDialog(ui, screen, t, themeTokens, state_.shared,
                                sharedHooks());
@@ -263,7 +252,6 @@ public:
         }
         const bool anyDialogOpen =
             state_.form.formOpen_ || state_.form.deleteConfirmOpen_ ||
-            state_.logs.callsDialogOpen_ ||
             state_.shared.open_ || state_.shared.deleteConfirmOpen_ ||
             state_.ccswitchImport.open_;
         if (key.key == eui::InputKey::N) {
@@ -292,7 +280,6 @@ private:
         if (state_.ccswitchImport.open_) { state_.ccswitchImport.open_ = false; return true; }
         if (state_.shared.deleteConfirmOpen_) { state_.shared.deleteConfirmOpen_ = false; return true; }
         if (state_.shared.open_) { state_.shared.open_ = false; return true; }
-        if (state_.logs.callsDialogOpen_) { state_.logs.callsDialogOpen_ = false; return true; }
         if (state_.form.deleteConfirmOpen_) { state_.form.deleteConfirmOpen_ = false; return true; }
         if (state_.form.formOpen_) { state_.form.formOpen_ = false; return true; }
         return false;
@@ -364,7 +351,6 @@ private:
             openEditForm(state_.form, state_.import, p);
         };
         a.run = [this](int64_t id) { doRun(id); };
-        a.openCalls = [this] { openCallsDialog(state_.logs); };
         a.setOneM = [this](int64_t id, std::size_t slotIdx, bool on) {
             doSetOneM(id, slotIdx, on);
         };

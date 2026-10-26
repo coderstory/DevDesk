@@ -1,5 +1,5 @@
 // src/module_claude_proxy/claude_ui_detail.cpp
-// 右栏四 pane（基础信息 / 模型配置 / 环境变量 / 最近调用）+ 操作按钮组；this 成员换成显式入参。
+// 右栏三 pane（基础信息 / 模型配置 / 环境变量）+ 操作按钮组；this 成员换成显式入参。
 // 布局原则：容器可用高单一来源、贴底元素锚容器底、越界判定用真实裁剪下沿
 //（本文件容器底 = bodyH，裁剪下沿 = drawDetailPanel 的 contentBottom）。
 #include "claude_ui_detail.h"
@@ -13,7 +13,6 @@
 #include <components/switch.h>
 #include <components/tabs.h>
 #include <components/tooltip.h>
-#include <core/call_rate.h>
 #include <core/component_theme.h>
 #include <core/logging.h>
 #include <core/window/window_backend.h>
@@ -536,246 +535,6 @@ float drawDetailEnv(eui::Ui& ui, float x0, float y0, float w,
     return ey;
 }
 
-namespace {
-
-// 空调用记录表（DetailView.recent 为 null 时只读兜底）
-const std::vector<ClaudeService::CallLogEntry>& emptyCalls() {
-    static const std::vector<ClaudeService::CallLogEntry> kEmpty;
-    return kEmpty;
-}
-
-// 最近调用 pane：表头 + 行（行数纯按可用高推）+ 错误/空态 + 「查看全部 →」；返回本 pane 内容底沿。
-float drawDetailCallsPane(eui::Ui& ui, float x0, float y0, float w,
-                          const core::theme::Tokens& t,
-                          const DetailView& v,
-                          const std::function<void()>& openCalls,
-                          float contentBottom, PaneRows* rows) {
-    // 「速率」列从「方法/路径」让出 110px
-    const float colTimeX = x0;
-    const float colPathX = x0 + 80.0f;
-    const float colStatusX = x0 + w - 310.0f;
-    const float colDurX = x0 + w - 220.0f;
-    const float colRateX = x0 + w - 130.0f;
-    ui.text("claude.calls.h.time")
-        .position(colTimeX, y0)
-        .size(72.0f, 14.0f)
-        .text("时间")
-        .fontSize(core::theme::scaled(10.0f))
-        .lineHeight(core::theme::scaled(14.0f))
-        .color(t.colors.textTertiary)
-        .build();
-    ui.text("claude.calls.h.path")
-        .position(colPathX, y0)
-        .size(w - 390.0f, 14.0f)
-        .text("方法 / 路径")
-        .fontSize(core::theme::scaled(10.0f))
-        .lineHeight(core::theme::scaled(14.0f))
-        .color(t.colors.textTertiary)
-        .build();
-    ui.text("claude.calls.h.status")
-        .position(colStatusX, y0)
-        .size(60.0f, 14.0f)
-        .text("状态")
-        .fontSize(core::theme::scaled(10.0f))
-        .lineHeight(core::theme::scaled(14.0f))
-        .color(t.colors.textTertiary)
-        .build();
-    ui.text("claude.calls.h.dur")
-        .position(colDurX, y0)
-        .size(60.0f, 14.0f)
-        .text("耗时")
-        .fontSize(core::theme::scaled(10.0f))
-        .lineHeight(core::theme::scaled(14.0f))
-        .color(t.colors.textTertiary)
-        .build();
-    ui.text("claude.calls.h.rate")
-        .position(colRateX, y0)
-        .size(110.0f, 14.0f)
-        .text("速率 (tok/s)")
-        .fontSize(core::theme::scaled(10.0f))
-        .lineHeight(core::theme::scaled(14.0f))
-        .color(t.colors.textTertiary)
-        .build();
-
-    // 行数预算纯按可用高推；画不满 1 行只画空态，超出的行用「另有 N 条」表达。
-    constexpr float kRowPitch = 24.0f;
-    constexpr float kOverflowH = 18.0f;   // 「另有 N 条」提示行
-    constexpr float kEmptyH = 16.0f;      // 空态 / 错误行（与行高同源，单行文本）
-    constexpr float kViewallGap = 8.0f;
-    constexpr float kViewallH = 24.0f;
-    constexpr float kViewallBand = kViewallGap + kViewallH;  // 「查看全部 →」带
-    const float cellsY = y0 + 24.0f;
-    const float rowsAvail =
-        std::max(0.0f, contentBottom - cellsY - kViewallBand);
-    size_t rowsCap = static_cast<size_t>(
-        static_cast<int>(rowsAvail / kRowPitch));
-
-    const std::vector<ClaudeService::CallLogEntry>& recent =
-        v.recent ? *v.recent : emptyCalls();
-    const std::string& callsError = v.callsError;
-    const std::time_t now = v.now;
-    size_t shownRows = 0;
-    bool callsOverflow = false;   // 「另有 N 条」是否在场（「查看全部」要让位）
-    bool singleLineDrawn = false;  // 空态 / 错误行在场（它占一行）
-    if (!callsError.empty()) {
-        ui.text("claude.calls.error")
-            .position(colTimeX, cellsY)
-            .size(w - 80.0f, kEmptyH)
-            .text("调用记录加载失败：" + callsError)
-            .fontSize(core::theme::scaled(11.0f))
-            .lineHeight(kEmptyH)
-            .color(t.colors.errorText)
-            .build();
-        singleLineDrawn = true;
-    } else if (recent.empty()) {
-        ui.text("claude.calls.empty")
-            .position(colTimeX, cellsY)
-            .size(w - 80.0f, kEmptyH)
-            .text("(暂无调用记录 —— 经本机代理转发过请求后这里会出现)")
-            .fontSize(core::theme::scaled(11.0f))
-            .lineHeight(kEmptyH)
-            .color(t.colors.textTertiary)
-            .build();
-        singleLineDrawn = true;
-    } else {
-        // 溢出提示行也要放得下：放不下就让一行，让到 0 为止
-        size_t shown = std::min(recent.size(), rowsCap);
-        while (shown > 0 &&
-               static_cast<float>(shown) * kRowPitch + kOverflowH > rowsAvail) {
-            --shown;
-        }
-        if (shown == 0) {
-            // 内容框连一行都放不下：如实说「空间不足」，不画「另有 N 条」（同坐标叠印）
-            ui.text("claude.calls.empty")
-                .position(colTimeX, cellsY)
-                .size(w - 80.0f, kEmptyH)
-                .text("(内容区高度不足，未显示调用记录)")
-                .fontSize(core::theme::scaled(11.0f))
-                .lineHeight(kEmptyH)
-                .color(t.colors.textTertiary)
-                .build();
-            singleLineDrawn = true;
-        }
-        for (size_t i = 0; i < shown; ++i) {
-            const ClaudeService::CallLogEntry& c = recent[i];
-            const float rowY = cellsY + static_cast<float>(i) * kRowPitch;
-
-            ui.text("claude.calls.t." + std::to_string(i))
-                .position(colTimeX, rowY)
-                .size(72.0f, 16.0f)
-                .text(formatCallTime(c.startedAt, now))
-                .fontSize(core::theme::scaled(11.0f))
-                .lineHeight(core::theme::scaled(16.0f))
-                .color(t.colors.textPrimary)
-                .build();
-
-            const std::string mp = c.method + " " + c.path;
-            ui.text("claude.calls.p." + std::to_string(i))
-                .position(colPathX, rowY)
-                .size(w - 390.0f, 16.0f)
-                .text(mp)
-                .fontSize(core::theme::scaled(11.0f))
-                .lineHeight(core::theme::scaled(16.0f))
-                .color(t.colors.textPrimary)
-                .build();
-
-            const eui::Color statusColor =
-                (c.statusCode >= 200 && c.statusCode < 300)
-                    ? t.colors.success :
-                c.statusCode == 429
-                    ? t.colors.warning
-                    : t.colors.errorText;
-            const std::string statusStr = c.statusCode > 0
-                ? std::to_string(c.statusCode)
-                : std::string("-");
-            ui.text("claude.calls.s." + std::to_string(i))
-                .position(colStatusX, rowY)
-                .size(60.0f, 16.0f)
-                .text(statusStr)
-                .fontSize(core::theme::scaled(11.0f))
-                .lineHeight(core::theme::scaled(16.0f))
-                .color(statusColor)
-                .build();
-
-            ui.text("claude.calls.d." + std::to_string(i))
-                .position(colDurX, rowY)
-                .size(60.0f, 16.0f)
-                .text(formatLatency(c.latencyMs))
-                .fontSize(core::theme::scaled(11.0f))
-                .lineHeight(core::theme::scaled(16.0f))
-                .color(t.colors.textSecondary)
-                .build();
-
-            // 本地速率口径与首页「Token 速率」卡同源（core/call_rate.h）：仅 2xx 且
-            // output_tokens > 0 有速率，其余显示「—」（0 是合法值，不能用 0 冒充「没有」）
-            double rateTps = 0.0;
-            const bool hasRate = core::call_rate::tps(
-                c.statusCode, c.outputTokens, c.latencyMs, rateTps);
-            ui.text("claude.calls.rate." + std::to_string(i))
-                .position(colRateX, rowY)
-                .size(110.0f, 16.0f)
-                .text(hasRate ? core::call_rate::formatTps(rateTps)
-                              : std::string(core::call_rate::kNoRate))
-                .fontSize(core::theme::scaled(11.0f))
-                .lineHeight(core::theme::scaled(16.0f))
-                .color(hasRate ? t.colors.textSecondary
-                               : t.colors.textTertiary)
-                .build();
-        }
-        shownRows = shown;
-        // 截断必须有可见表达；0 行档不画「另有 N 条」（与其上同坐标叠印）
-        if (shown > 0 && recent.size() > shown) {
-            callsOverflow = true;
-            ui.text("claude.calls.overflow")
-                .position(colTimeX, cellsY + static_cast<float>(shown) * kRowPitch)
-                .size(w - 80.0f, kOverflowH)
-                .text("另有 " + std::to_string(recent.size() - shown) +
-                      " 条（点「查看全部」）")
-                .fontSize(core::theme::scaled(11.0f))
-                .lineHeight(kOverflowH)
-                .color(t.colors.textTertiary)
-                .build();
-        }
-    }
-    if (rows != nullptr) {
-        *rows = PaneRows{static_cast<int>(shownRows),
-                         static_cast<int>(recent.size())};
-    }
-
-    // 查看全部 →：位置在所有行之后；内容框放不下时不画（宁缺入口，不推 contentBottom）
-    const float viewY =
-        cellsY + static_cast<float>(shownRows) * kRowPitch +
-        (callsOverflow ? kOverflowH : 0.0f) +
-        (singleLineDrawn ? kEmptyH + kViewallGap : kViewallGap);
-    if (viewY + kViewallH <= contentBottom + 0.5f) {
-        // 「查看全部」是自绘按钮（单测定位 claude.calls.viewall.hit 依赖此 id）。
-        //（UAT5 米黄清理：暖橙 surfaceElevated → WeChat Secondary 白底灰边，文字用 primaryText 绿字档）
-        ui.rect("claude.calls.viewall.hit")
-            .position(x0, viewY)
-            .size(w, kViewallH)
-            .states(t.colors.hover,
-                    t.colors.hover,
-                    t.colors.hover)
-            .radius(t.sizes.radiusSmall)
-            .border(1.0f, t.colors.borderDefault)
-            .transition(core::Transition::make(0.1f, core::Ease::OutQuad))
-            .onClick([oc = openCalls] { oc(); })
-            .build();
-        ui.text("claude.calls.viewall")
-            .position(x0, viewY)
-            .size(w, kViewallH)
-            .text("查看全部 →")
-            .fontSize(core::theme::scaled(12.0f))
-            .lineHeight(kViewallH)
-            .horizontalAlign(eui::HorizontalAlign::Center)
-            .verticalAlign(eui::VerticalAlign::Center)
-            .color(t.colors.primaryText)
-            .build();
-        return viewY + kViewallH;
-    }
-    return viewY;
-}
-
 // 操作按钮组（启用/测试连通/编辑/运行）+ 副提示 + 分隔线。actY 由
 // drawDetailPanel 锚定给出；绘制高 = 65 被 kActionBlockH 引用，改几何须同步。
 void drawDetailActions(eui::Ui& ui, float x0, float w, float actY,
@@ -912,7 +671,7 @@ void drawDetailPanel(eui::Ui& ui, float rightW, float bodyH, float xOffset,
                      const components::theme::ThemeColorTokens& themeTokens,
                      DetailState& st, const DetailView& v,
                      const DetailActions& a) {
-    // 右栏：详情面板（4 页签 + 操作区）
+    // 右栏：详情面板（3 页签 + 操作区）
     ui.column("claude.detail")
         .size(rightW, bodyH)
         .gap(0.0f)
@@ -950,10 +709,10 @@ void drawDetailPanel(eui::Ui& ui, float rightW, float bodyH, float xOffset,
             // S3.4 块面式 Tab（wtab 替代原下划线式 components::tabs）
             const float tabY = y0 + 40.0f;
             const float tabH = 40.0f;
-            const char* tabLabels[] = {"基础信息", "模型配置", "环境变量", "最近调用"};
+            const char* tabLabels[] = {"基础信息", "模型配置", "环境变量"};
             float tabX = x0;
-            for (int i = 0; i < 4; ++i) {
-                float tabW = 80.0f;
+            for (int i = 0; i < 3; ++i) {
+                float tabW = 88.0f;
                 ui_kit::wtab(ui, "claude.detail.tab." + std::to_string(i),
                              tabLabels[i], st.detailTab_ == i,
                              tabX, tabY, tabW, tabH, t,
@@ -987,21 +746,17 @@ void drawDetailPanel(eui::Ui& ui, float rightW, float bodyH, float xOffset,
             } else if (st.detailTab_ == 1) {
                 paneBottom = drawDetailModels(ui, x0, paneY, w0, t, v, a,
                                               contentBottom);
-            } else if (st.detailTab_ == 2) {
+            } else {
                 paneBottom = drawDetailEnv(ui, x0, paneY, w0, t, v,
                                            contentBottom, &paneRows);
-            } else {
-                paneBottom = drawDetailCallsPane(
-                    ui, x0, paneY, w0, t, v, a.openCalls,
-                    contentBottom, &paneRows);
             }
-            // 锚定 + 兜底：正常档四页签都取 actYFloor（分隔线 y 全等）；更矮时基础/模型
-            // 固定行数使动作区下移、四页签不再同高；再矮用 actYHi 夹住：宁可压内容也不越出容器底
+            // 锚定 + 兜底：正常档三页签都取 actYFloor（分隔线 y 全等）；更矮时基础/模型
+            // 固定行数使动作区下移、三页签不再同高；再矮用 actYHi 夹住：宁可压内容也不越出容器底
             const float actYHi = std::max(bodyH - kActionBlockH, actYFloor);
             const float actY = std::min(
                 std::max(actYFloor, paneBottom + kActTopGap), actYHi);
             drawDetailActions(ui, x0, w0, actY, t, v, a);
-            // 诊断日志：一行可 grep——四页签 actY 必须相等。Debug 级，避免每帧刷屏
+            // 诊断日志：一行可 grep——三页签 actY 必须相等。Debug 级，避免每帧刷屏
             LOG_DEBUG("[layout] pane=" + std::to_string(st.detailTab_) +
                       " paneBottom=" + std::to_string(paneBottom) +
                       " actY=" + std::to_string(actY) +

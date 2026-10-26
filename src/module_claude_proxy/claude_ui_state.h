@@ -1,5 +1,5 @@
 // Claude UI 瞬时状态：按「可视区域」收成的纯值 struct（无方法、无虚接口）。
-// ProfileListState = 左栏列表；DetailState = 详情页签；FormState = 表单 + 弹窗；LogsState = 调用记录弹窗
+// ProfileListState = 左栏列表；DetailState = 详情页签；FormState = 表单 + 弹窗
 #pragma once
 
 #include "claude_service.h"
@@ -16,50 +16,31 @@
 namespace module::claude {
 
 // 数据刷新：工作线程产物（不触碰 this，结果经 future 值回渲染线程再落成员）。
-// 脏标记刷三类，纯版本轮询只刷 recent（不重复查没变的 profile 列表）
 struct DataRefresh {
     bool wantProfiles = false;
-    bool wantRecent = false;
     std::vector<Profile> profiles;
     std::string profilesError;
     Profile active;
     bool hasActive = false;
-    std::vector<ClaudeService::CallLogEntry> recent;
-    bool recentOk = false;
-    std::string callsError;
-    uint64_t verBefore = 0;
     // 与 profiles 同组同刷——左栏区块 / 详情行 / 表单绑定下拉共用这份快照
     std::vector<SharedConfig> sharedConfigs;
     std::string sharedConfigsError;   // 空 = 成功（失败不置脏，保旧快照 + 记日志）
 };
 
-// 调用记录弹窗的后台查询结果包（值语义，经 future 回渲染线程）。
-struct CallsPage {
-    std::vector<ClaudeService::CallLogEntry> rows;  // 当页行
-    int total = 0;                                  // 满足过滤的总条数
-    std::string error;                              // 空串 = 成功
-};
-
 // 左栏：Profile 列表 + header/引导条 + 数据缓存
 struct ProfileListState {
-    // compose 数据缓存（刷新语义见 refreshDataCache）：初值脏 = 首帧必查；seenCallLogVersion_ 初值 ~0 保证 recent 首帧必查
+    // compose 数据缓存（刷新语义见 refreshDataCache）：初值脏 = 首帧必查
     std::vector<Profile> cachedProfiles_;
     std::string cachedProfilesError_;
-    std::vector<ClaudeService::CallLogEntry> cachedRecent_;
-    std::string cachedCallsError_;
     Profile cachedActive_;
     bool cachedHasActive_ = false;
     bool dataDirty_ = true;
     bool dataLoaded_ = false;   // 快照是否装载过（冷启动兜底判据，见 refreshDataCache）
-    uint64_t seenCallLogVersion_ = ~0ull;
     // shared_future = 结果共享状态（worker 发布 → 唤醒 → 渲染线程收割）；async future 留作 join 句柄。在途判据 = refreshFuture_.valid()
     std::shared_future<DataRefresh> refreshFuture_;
     std::future<void> refreshWorker_;
     std::chrono::steady_clock::time_point lastRefreshPost_{};  // 节流窗口起点
     static constexpr int64_t kRefreshIntervalMs = 200;
-
-    // 「最近调用」数据侧上限（非显示上限，显示行数按可用高推）；取 30 覆盖常规窗口
-    static constexpr int kRecentCallsSnapshot = 30;
 
     // 选中态（0 = 跟随激活 profile）
     int64_t selectedId_ = 0;
@@ -93,7 +74,7 @@ struct ProfileListState {
 };
 
 struct DetailState {
-    // 0 基础信息 / 1 模型配置 / 2 环境变量 / 3 最近调用
+    // 0 基础信息 / 1 模型配置 / 2 环境变量
     int detailTab_ = 0;
 };
 
@@ -162,25 +143,6 @@ struct CcSwitchImportDialogState {
     int resultFailed_ = 0;
 };
 
-// 完整调用记录弹窗（搜索 / 状态码过滤 / 翻页共用）
-struct LogsState {
-    bool callsDialogOpen_ = false;
-    std::vector<ClaudeService::CallLogEntry> allCalls_;  // 快照：当页行（渲染只读）
-    std::string callsSearch_;        // 搜索框文本（path/method 模糊）
-    int callsStatusIdx_ = 0;         // 状态下拉索引（→ kCallsStatusClasses）
-    bool callsStatusDdOpen_ = false; // 状态下拉展开态
-    int callsPage_ = 0;              // 当前页（0-based）
-    int callsTotalMatches_ = 0;      // 快照：满足过滤的总条数（countCalls）
-    float callsScrollOffset_ = 0.0f; // 列表区滚动位置（翻页时归零）
-    // 调用记录取数的 future 刷新态（语义见 refreshCallsCache）
-    bool callsPageDirty_ = true;     // 置脏 → 下一帧（弹窗打开时）发一次读意图
-    bool callsPageLoaded_ = false;   // 快照是否装载过（未装载显示「加载中…」）
-    std::chrono::steady_clock::time_point callsEarliestQueryAt_{};  // 最早派发时刻
-    // callsFuture_ = 结果共享状态（收割后显式清空）；callsWorker_ = async join 句柄，不留它会同步派发。在途判据 = callsFuture_.valid()；成员析构自动等本轮结束
-    std::shared_future<CallsPage> callsFuture_;
-    std::future<void> callsWorker_;
-};
-
 struct ClaudeUiState {
     ProfileListState list;
     DetailState detail;
@@ -188,13 +150,12 @@ struct ClaudeUiState {
     SharedConfigDialogState shared;   // 共享配置片段编辑弹窗（独立状态）
     CcSwitchImportDialogState ccswitchImport;  // 从 cc-switch 导入弹窗
     ImportState import;
-    LogsState logs;
 };
 
 // 数据缓存的后台刷新：compose 每帧只做「搬已就绪结果进快照 + 发下一次刷新意图」两件无 IO 的事；SQLite 查询全在后台（同步查会与代理 worker 争锁）。失败保持脏、按节流窗口重试。
 
 // 唯一跑在后台线程的 DB 入口（static 语义：不碰模块成员）
-DataRefresh runDataRefresh(ClaudeService* svc, bool wantProfiles, bool wantRecent);
+DataRefresh runDataRefresh(ClaudeService* svc, bool wantProfiles);
 
 // 落快照（只在渲染线程调：onStart 首次装载 + compose 收割/兜底）
 void applyDataRefresh(ProfileListState& st, DataRefresh r);
@@ -202,10 +163,10 @@ void applyDataRefresh(ProfileListState& st, DataRefresh r);
 // 收割：后台结果就绪才搬（wait_for(0) 不阻塞；未就绪快照沿用上次值）
 void harvestDataRefresh(ProfileListState& st);
 
-// 节流：代理高频落库时版本每帧都新，不节流会退化成每帧一个后台查询；失败重试同窗口
+// 节流：失败重试 / 连续写操作标脏时按窗口合并
 bool refreshDue(const ProfileListState& st);
 
-// compose 每帧调：只发意图 + 搬快照，零 IO（脏 = 进页/写操作后重查；recent 另在 callLogVersion 变化时重查）
+// compose 每帧调：只发意图 + 搬快照，零 IO（脏 = 进页/写操作后重查）
 void refreshDataCache(ProfileListState& st, ClaudeService* svc);
 
 } // namespace module::claude

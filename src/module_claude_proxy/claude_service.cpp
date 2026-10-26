@@ -95,7 +95,6 @@ std::string resolveKeychainService() {
 ClaudeService::ClaudeService(core::data::SqliteDb& db,
                              const std::string& keychainService)
     : db_(db),
-      callLogStore_(db),
       profileRepository_(db, keychainService.empty() ? resolveKeychainService()
                                                      : keychainService),
       proxyRuntime_(*this) {}
@@ -378,25 +377,6 @@ core::Result<void> ClaudeService::validateProxyPreconditions(int probeTimeoutMs)
     LOG_INFO("代理启动前置校验通过：profile「" + prof.name + "」(id=" +
              std::to_string(prof.id) + ") 连通 OK（HTTP " + std::to_string(code) + "）");
     return core::Result<void>::ok();
-}
-
-// 调用日志：读写已抽至 CallLogStore，门面转发。
-core::Result<void> ClaudeService::logCall(const CallLogEntry& entry) {
-    return callLogStore_.logCall(entry);
-}
-
-core::Result<std::vector<ClaudeService::CallLogEntry>>
-ClaudeService::recentCalls(int limit) {
-    return callLogStore_.recentCalls(limit);
-}
-
-core::Result<std::vector<ClaudeService::CallLogEntry>>
-ClaudeService::queryCalls(const CallLogQuery& q) {
-    return callLogStore_.queryCalls(q);
-}
-
-core::Result<int> ClaudeService::countCalls(const CallLogQuery& q) {
-    return callLogStore_.countCalls(q);
 }
 
 // 最近代理请求事件：单槽邮箱在 ProxyRuntime（与在途流登记同写者-读者对），门面转发。
@@ -778,31 +758,6 @@ void ClaudeService::syncRestore() {
     if (r.isFail()) {
         LOG_WARN("Claude Code settings 还原失败: " + r.errorMessage());
     }
-}
-
-std::string formatCallTime(std::time_t ts, std::time_t now) {
-    if (ts <= 0) return "--:--";
-    std::tm tmv{};
-    core::time::localTime(ts, &tmv);
-    std::tm nowTm{};
-    core::time::localTime(now, &nowTm);
-    const auto sameDay = [](const std::tm& a, const std::tm& b) {
-        return a.tm_year == b.tm_year && a.tm_yday == b.tm_yday;
-    };
-    char buf[24];
-    if (sameDay(tmv, nowTm)) {
-        std::snprintf(buf, sizeof(buf), "%02d:%02d", tmv.tm_hour, tmv.tm_min);
-        return std::string(buf);
-    }
-    // 昨天判定取 now-86400 的本地日；DST 切换日误差 ≤1 小时，只影响文案边界。
-    std::tm yestTm{};
-    core::time::localTime(now - 86400, &yestTm);
-    if (sameDay(tmv, yestTm)) {
-        std::snprintf(buf, sizeof(buf), "昨天 %02d:%02d", tmv.tm_hour, tmv.tm_min);
-    } else {
-        std::snprintf(buf, sizeof(buf), "%02d-%02d", tmv.tm_mon + 1, tmv.tm_mday);
-    }
-    return std::string(buf);
 }
 
 } // namespace module::claude

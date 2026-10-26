@@ -1,6 +1,6 @@
 // src/module_claude_proxy/proxy_router.h
 // 本地 Claude 代理路由。每次请求：查 active profile（无 → 503）→ 读凭据 →
-// 经 platform::http 转发到 base_url + path → 写回响应 → 记一条 claude_call_logs。
+// 经 platform::http 转发到 base_url + path → 写回响应。
 // body 含 "stream": true 且路径可流式 → SSE 流式转发：sendStreaming 在独立线程
 // 跑 libcurl（生产者），chunked content provider 从队列拉（消费者）；队列 ≥100
 // 暂停上游、<50 恢复（backpressure）；客户端断开 → cancel 上游 libcurl。

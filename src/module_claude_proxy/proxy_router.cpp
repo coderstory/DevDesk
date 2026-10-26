@@ -3,7 +3,6 @@
 //（stream:true + /v1/messages → SSE 流式转发；其余 → 缓冲转发）
 #include "proxy_router.h"
 
-#include "core/database.h"
 #include "core/logging.h"
 #include "platform/http_client.h"
 #include "streaming_proxy.h"
@@ -13,7 +12,6 @@
 #include <chrono>
 #include <cctype>
 #include <cstdio>
-#include <ctime>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -106,44 +104,6 @@ void writeNoProfileError(platform::http::ResponseWriter& out,
     service.recordProxyEvent(503);
 }
 
-// 取本连接最后一次 INSERT 的 rowid（调用方须持 db.mutex()）。失败返回 0 = 非法 rowid，调用方跳过用量回填
-int64_t lastInsertRowId(core::data::SqliteDb& db) {
-    auto prep = db.prepare("SELECT last_insert_rowid() AS id");
-    if (prep.isFail()) return 0;
-    auto rows = prep.value().fetchAll();
-    if (rows.isFail() || rows.value().empty()) return 0;
-    auto id = rows.value()[0].getInt64("id");
-    return id.isOk() ? id.value() : 0;
-}
-
-// 流末回填用量列：-1（没拿到）一律写 NULL，与真实的 0 区分
-void writeCallLogUsage(core::data::SqliteDb& db, int64_t callLogId,
-                       const StreamUsage& u) {
-    auto prep = db.prepare(
-        "UPDATE claude_call_logs SET input_tokens = ?, output_tokens = ?, "
-        "cache_read_tokens = ?, cache_write_tokens = ?, first_event_ms = ? "
-        "WHERE id = ?");
-    if (prep.isFail()) return;
-    auto& stmt = prep.value();
-    const auto bindMaybeNull = [&stmt](int idx, int64_t v) {
-        if (v < 0) {
-            stmt.bind(idx, nullptr);
-        } else {
-            stmt.bind(idx, v);
-        }
-    };
-    bindMaybeNull(1, u.inputTokens);
-    bindMaybeNull(2, u.outputTokens);
-    bindMaybeNull(3, u.cacheReadTokens);
-    bindMaybeNull(4, u.cacheWriteTokens);
-    bindMaybeNull(5, u.firstEventMs);
-    stmt.bind(6, callLogId);
-    auto stepR = stmt.step();
-    if (stepR.isFail()) {
-        LOG_WARN("流式代理：回填用量列失败: " + stepR.errorMessage());
-    }
-}
-
 } // namespace
 
 ProxyRouter::ProxyRouter(ClaudeService& service, platform::http::Server& server)
@@ -176,7 +136,6 @@ void ProxyRouter::handleRequest(
     }
 
     const auto startTime = std::chrono::steady_clock::now();
-    const std::time_t startedAt = std::time(nullptr);
 
     // 1. 取 profile（含明文 API key）：唯一入口 resolveProfile，与流式路径共用失败语义
     auto profileR = resolveProfile();
@@ -215,18 +174,7 @@ void ProxyRouter::handleRequest(
         // 网络失败（DNS / TLS / 连接 / 超时）
         LOG_WARN("代理：上游请求失败: " + respR.errorMessage());
         writeErrorJson(out, 502, "upstream_unreachable", respR.errorMessage());
-
-        ClaudeService::CallLogEntry entry;
-        entry.profileId = profile.id;
-        entry.method = method;
-        entry.path = path;
-        entry.statusCode = 0;
-        entry.latencyMs = latencyMs;
-        entry.requestBytes = static_cast<int64_t>(body.size());
-        entry.error = respR.errorMessage();
-        entry.startedAt = startedAt;
-        service_.logCall(entry);
-        // 0 = 上游不可达（无响应码），与日志 entry 口径一致
+        // 0 = 上游不可达（无响应码）
         service_.recordProxyEvent(0);
         return;
     }
@@ -256,20 +204,6 @@ void ProxyRouter::handleRequest(
     }
     out.end();
 
-    // 5. 写日志
-    ClaudeService::CallLogEntry entry;
-    entry.profileId = profile.id;
-    entry.method = method;
-    entry.path = path;
-    entry.statusCode = resp.statusCode;
-    entry.latencyMs = latencyMs;
-    entry.requestBytes = static_cast<int64_t>(body.size());
-    entry.responseBytes = static_cast<int64_t>(resp.body.size());
-    entry.startedAt = startedAt;
-    auto logR = service_.logCall(entry);
-    if (logR.isFail()) {
-        LOG_WARN("代理：写 claude_call_logs 失败: " + logR.errorMessage());
-    }
     // 正常转发完成（4xx/5xx 原样透传，pet 侧按码分类文案）
     service_.recordProxyEvent(resp.statusCode);
 
@@ -315,9 +249,6 @@ void ProxyRouter::handleStreamingRequest(
     const std::string& body,
     platform::http::ResponseWriter& out) {
 
-    const auto startTime = std::chrono::steady_clock::now();
-    const std::time_t startedAt = std::time(nullptr);
-
     // 1. 取 profile：与缓冲路径共用同一入口 + 同一失败出口
     auto profileR = resolveProfile();
     if (profileR.isFail()) {
@@ -347,16 +278,6 @@ void ProxyRouter::handleStreamingRequest(
         // 启动上游失败（libcurl 起线程前失败；连接层失败走 waitForStatus==0）
         LOG_WARN("流式代理：启动上游失败: " + streamR.errorMessage());
         writeErrorJson(out, 502, "upstream_unreachable", streamR.errorMessage());
-
-        ClaudeService::CallLogEntry entry;
-        entry.profileId = profile.id;
-        entry.method = method;
-        entry.path = path;
-        entry.statusCode = 0;
-        entry.requestBytes = static_cast<int64_t>(body.size());
-        entry.error = streamR.errorMessage();
-        entry.startedAt = startedAt;
-        service_.logCall(entry);
         service_.recordProxyEvent(0);  // 上游不可达（无响应码）
         return;
     }
@@ -378,16 +299,6 @@ void ProxyRouter::handleStreamingRequest(
         out.setHeader("Content-Type", "application/json");
         out.write("{\"error\":\"upstream_unreachable\",\"message\":\"上游无响应\"}");
         out.end();
-
-        ClaudeService::CallLogEntry entry;
-        entry.profileId = profile.id;
-        entry.method = method;
-        entry.path = path;
-        entry.statusCode = 502;
-        entry.requestBytes = static_cast<int64_t>(body.size());
-        entry.error = "no_response_header";
-        entry.startedAt = startedAt;
-        service_.logCall(entry);
         service_.recordProxyEvent(502);
         return;
     }
@@ -402,38 +313,7 @@ void ProxyRouter::handleStreamingRequest(
     out.setHeader("Connection", "keep-alive");
     out.setHeader("X-Accel-Buffering", "no");   // 反向代理场景禁用缓冲
 
-    const int64_t latencyMs = std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::steady_clock::now() - startTime).count();
-
-    ClaudeService::CallLogEntry entry;
-    entry.profileId = profile.id;
-    entry.method = method;
-    entry.path = path;
-    entry.statusCode = upstreamStatus;
-    entry.latencyMs = latencyMs;
-    entry.requestBytes = static_cast<int64_t>(body.size());
-    entry.startedAt = startedAt;
-
-    // 用量回填：先插行再把 rowid 交给流末回调；持 db 锁跨「插行 + 取 rowid」防并发串认（锁可重入）；未注册 app 连接跳过取号 → 用量列 NULL
-    int64_t callLogId = 0;
-    core::data::SqliteDb* appDb = core::appDatabase();
-    {
-        std::unique_lock<std::recursive_mutex> lock;
-        if (appDb) lock = std::unique_lock<std::recursive_mutex>(appDb->mutex());
-        auto logR = service_.logCall(entry);
-        if (logR.isFail()) {
-            LOG_WARN("流式代理：写 claude_call_logs 失败: " + logR.errorMessage());
-        } else if (appDb) {
-            callLogId = lastInsertRowId(*appDb);
-        }
-    }
-
-    // 流末回执（恰好一次）：token 四类 + 首事件毫秒 UPDATE 进刚插的行。
-    forwardStream(out, upstreamStream, contentType,
-                  [appDb, callLogId](const StreamUsage& u) {
-                      if (!appDb || callLogId == 0) return;  // 降级：不写用量
-                      writeCallLogUsage(*appDb, callLogId, u);
-                  });
+    forwardStream(out, upstreamStream, contentType);
 
     // 流式转发完成（4xx/5xx 上游状态码原样记录，pet 侧分类文案）
     service_.recordProxyEvent(upstreamStatus);

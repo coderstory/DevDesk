@@ -1,5 +1,5 @@
 // src/module_claude_proxy/claude_ui_detail.h
-// 右栏单元：详情面板四 pane + 操作按钮组 + 「最近调用」页签。
+// 右栏单元：详情面板三 pane（基础信息 / 模型配置 / 环境变量）+ 操作按钮组。
 // 契约：每个 pane 函数返回本 pane 内容底沿 y（与 y0 同坐标系）。
 // 布局锚定式：贴底元素锚容器底（actY = bodyH − 动作块预留），行数预算用真实裁剪下沿 contentBottom。
 #pragma once
@@ -26,9 +26,6 @@ struct DetailView {
     std::string modelValue;            // 模型摘要（modelsSummary）
     std::string urlValue;              // Base URL
     std::string tokenValue;            // API Key 脱敏提示
-    const std::vector<ClaudeService::CallLogEntry>* recent = nullptr;  // 最近调用快照
-    std::string callsError;            // 最近调用查询错误（空 = 成功）
-    std::time_t now = 0;               // 调用时间列「今天/昨天」判定
     // 共享配置片段快照（基础 pane 绑定行 + 生效 env 来源标注）
     const std::vector<SharedConfig>* sharedConfigs = nullptr;
     // 没有 bodyH 字段：行数预算一律用 contentBottom（真实裁剪下沿）。
@@ -52,16 +49,15 @@ struct DetailActions {
     std::function<void(const Profile& p)> test;                      // 测试连通
     std::function<void(const Profile& p)> edit;                      // 编辑
     std::function<void(int64_t id)> run;                             // 运行
-    std::function<void()> openCalls;                                 // 「查看全部 →」
-    // 模型映射 pane 的「1M」开关落库：入参 = profile id + 槽位表下标（表序）+ 目标状态。
+    // 模型配置 pane 的「1M」开关落库：入参 = profile id + 槽位表下标（表序）+ 目标状态。
     // 只有可用行（支持 1M 且 base 非空）会触发（其余置灰不挂 onChange）。
     std::function<void(int64_t profileId, std::size_t slotIndex, bool on)> setOneM;
 };
 
-// 四个 pane：各自返回内容底沿（见文件头契约）
+// 三个 pane：各自返回内容底沿（见文件头契约）
 // contentBottom = 内容框可用底（drawDetailPanel 由 bodyH 推出）：pane 画出的
 // 内容不得越过它（行数预算按它推）。rows 非空时回填行数统计（诊断日志用）。
-// id: claude.field.* / claude.slot.* / claude.env.* / claude.calls.*
+// id: claude.field.* / claude.slot.* / claude.env.*
 float drawDetailBasic(eui::Ui& ui, float x0, float y0, float w,
                       const core::theme::Tokens& t, const DetailView& v,
                       float contentBottom);
@@ -72,10 +68,7 @@ float drawDetailModels(eui::Ui& ui, float x0, float y0, float w,
 float drawDetailEnv(eui::Ui& ui, float x0, float y0, float w,
                     const core::theme::Tokens& t, const DetailView& v,
                     float contentBottom, PaneRows* rows = nullptr);
-// 「最近调用」pane 在 .cpp 的匿名命名空间内（drawDetailCallsPane）
-//；其行数统计经 PaneRows 回填同上。
-
-// 整个右栏（底板 column + overlay stack）：标题 + tabs 四页 + pane 分派 + 操作按钮组。
+// 整个右栏（底板 column + overlay stack）：标题 + tabs 三页 + pane 分派 + 操作按钮组。
 // xOffset = 右栏在 claude.body row 内的 x 起点（= 左栏宽 + gap）。
 void drawDetailPanel(eui::Ui& ui, float rightW, float bodyH, float xOffset,
                      const core::theme::Tokens& t,

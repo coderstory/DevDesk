@@ -12,21 +12,6 @@
 
 namespace module::claude {
 
-std::string formatLatency(int64_t ms) {
-    if (ms <= 0) return "-";
-    if (ms < 1000) return std::to_string(static_cast<int>(ms)) + "ms";
-    char buf[32];
-    std::snprintf(buf, sizeof(buf), "%.1fs", ms / 1000.0);
-    return std::string(buf);
-}
-
-std::string truncateUtf8(const std::string& s, size_t maxBytes) {
-    if (s.size() <= maxBytes) return s;
-    size_t cut = maxBytes;
-    while (cut > 0 && (static_cast<unsigned char>(s[cut]) & 0xC0) == 0x80) --cut;
-    return s.substr(0, cut) + "…";
-}
-
 std::string modelsSummary(const Profile& p) {
     const ModelsConfig mc = effectiveModelsConfig(p.modelsConfigJson);
     int configured = 0;

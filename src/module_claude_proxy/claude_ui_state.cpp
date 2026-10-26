@@ -14,14 +14,12 @@
 
 namespace module::claude {
 
-// 次序缝（同 claude_ui_logs.cpp）：唤醒发出时结果是否已就绪（true = 先就绪后唤醒）。
+// 次序缝：唤醒发出时结果是否已就绪（true = 先就绪后唤醒）。
 std::atomic<bool> g_dataRefreshWakeSawReady{false};
 
-DataRefresh runDataRefresh(ClaudeService* svc, bool wantProfiles,
-                           bool wantRecent) {
+DataRefresh runDataRefresh(ClaudeService* svc, bool wantProfiles) {
     DataRefresh r;
     r.wantProfiles = wantProfiles;
-    r.wantRecent = wantRecent;
     if (wantProfiles) {
         auto listR = svc->listProfiles();
         if (listR.isOk()) {
@@ -41,18 +39,6 @@ DataRefresh runDataRefresh(ClaudeService* svc, bool wantProfiles,
             r.sharedConfigs = std::move(sR).value();
         } else {
             r.sharedConfigsError = sR.errorMessage();
-        }
-    }
-    if (wantRecent) {
-        // 版本号取查询前快照：查询期间落库会让下一帧版本对不上，宁可多查一次不漏显
-        r.verBefore = svc->callLogVersion();
-        // 取数上限非显示上限，只是「取多少条进快照」（见 kRecentCallsSnapshot）
-        auto rR = svc->recentCalls(ProfileListState::kRecentCallsSnapshot);
-        if (rR.isOk()) {
-            r.recent = std::move(rR).value();
-            r.recentOk = true;
-        } else {
-            r.callsError = rR.errorMessage();
         }
     }
     // 唤醒不在这里：此刻结果尚未发布，先唤醒就是「先唤醒、后就绪」（UI 抢跑）。
@@ -83,17 +69,6 @@ void applyDataRefresh(ProfileListState& st, DataRefresh r) {
             LOG_ERROR("共享配置片段加载失败: " + st.cachedSharedConfigsError_);
         }
     }
-    if (r.wantRecent) {
-        if (r.recentOk) {
-            st.cachedRecent_ = std::move(r.recent);
-            st.cachedCallsError_.clear();
-            st.seenCallLogVersion_ = r.verBefore;
-        } else {
-            st.cachedRecent_.clear();
-            st.cachedCallsError_ = r.callsError;
-            LOG_ERROR("调用记录加载失败: " + st.cachedCallsError_);
-        }
-    }
 }
 
 void harvestDataRefresh(ProfileListState& st) {
@@ -117,17 +92,15 @@ void refreshDataCache(ProfileListState& st, ClaudeService* svc) {
     if (!st.dataLoaded_) {
         // 冷启动兜底：快照从未装载（服务晚就绪 / 调用方未走 onStart）时本帧同步
         // 装载一次（首帧必须有快照不得空帧）；失败保持本路径逐帧重试
-        applyDataRefresh(st, runDataRefresh(svc, true, true));
+        applyDataRefresh(st, runDataRefresh(svc, true));
         return;
     }
     if (st.refreshFuture_.valid()) {
-        return;   // 上一轮在途：不叠加（脏/版本条件下帧仍成立，意图不丢）
+        return;   // 上一轮在途：不叠加（脏条件下帧仍成立，意图不丢）
     }
-    const uint64_t ver = svc->callLogVersion();
     const bool wantProfiles = st.dataDirty_;
-    const bool verChanged = (ver != st.seenCallLogVersion_);
-    if (!wantProfiles && !verChanged) {
-        return;   // 空闲帧零开销（版本没动就不查）
+    if (!wantProfiles) {
+        return;   // 空闲帧零开销
     }
     if (!refreshDue(st)) {
         return;   // 节流窗口内：下帧再判（可见最多晚一个节流 tick + 1 帧）
@@ -140,13 +113,12 @@ void refreshDataCache(ProfileListState& st, ClaudeService* svc) {
     st.refreshFuture_ = published;
     st.refreshWorker_ = std::async(
         std::launch::async,
-        [svc, wantProfiles, wantRecent = wantProfiles || verChanged, promise,
-         published]() {
-            // 次序缝复位（同 claude_ui_logs.cpp）：本轮没探到「已就绪才唤醒」即判红
+        [svc, wantProfiles, promise, published]() {
+            // 次序缝复位：本轮没探到「已就绪才唤醒」即判红
             g_dataRefreshWakeSawReady.store(false, std::memory_order_relaxed);
             try {
                 promise->set_value(
-                    runDataRefresh(svc, wantProfiles, wantRecent));  // ① 就绪
+                    runDataRefresh(svc, wantProfiles));  // ① 就绪
             } catch (...) {
                 promise->set_exception(std::current_exception());
             }

@@ -27,13 +27,7 @@ void wakeAfterPublish(const std::shared_future<T>& published,
     core::platform::requestUiUpdate();
 }
 
-// 格式化毫秒数为 "1234ms" / "1.2s"
-std::string formatLatency(int64_t ms);
-
-// 按字节截断 UTF-8 串（截点回退到字符边界，不把多字节字符切成半个）
-std::string truncateUtf8(const std::string& s, size_t maxBytes);
-
-// 模型映射摘要（详情面板一行式）：分母取自槽位表（不手写清单与硬编码 /6）
+// 模型配置摘要（详情面板一行式）：分母取自槽位表（不手写清单与硬编码 /6）
 std::string modelsSummary(const Profile& p);
 
 // 「导入当前配置」名称建议：BASE_URL host；提取不到 →「导入 <日期>」；用户可改
@@ -54,17 +48,5 @@ std::string buildProfileExportJson(const Profile& p,
 inline constexpr const char* kCopyConfigToastSubtitle =
     "已把该 Profile 的 settings.json env 配置导出到剪贴板"
     "（API Key 为占位符，不含明文）";
-
-// 调用记录弹窗常量
-// 状态码过滤：下拉索引 → ClaudeService::CallLogQuery::statusClass 映射
-inline constexpr int kCallsStatusClasses[] = {0, 2, 3, 4, 5, 9};
-inline constexpr const char* kCallsStatusLabels[] = {
-    "全部状态", "2xx 成功", "3xx 重定向", "4xx 客户端错误",
-    "5xx 服务端错误", "错误（超时等）"};
-inline constexpr int kCallsStatusCount = 6;
-// 日志弹窗每页条数
-inline constexpr int kCallsPageSize = 20;
-// 搜索框防抖窗口：每次按键顺延窗口，停手满一个窗口才派发一次（250ms = 常见档）
-inline constexpr int kCallsSearchDebounceMs = 250;
 
 } // namespace module::claude

@@ -15,7 +15,6 @@
 #include <string>
 #include <vector>
 
-#include "call_log_store.h"
 #include "core/proxy_port.h"
 #include "core/sqlite_db.h"
 #include "core/result.h"
@@ -109,21 +108,6 @@ public:
 
     core::Result<platform::http::Response> testConnection(const Profile& profile);
 
-    // 调用日志
-
-    // 数据模型与读写在 CallLogStore；别名保持公开类型名，方法转发 callLogStore_。
-    using CallLogEntry = CallLogStore::CallLogEntry;
-    using CallLogQuery = CallLogStore::CallLogQuery;
-
-    core::Result<void> logCall(const CallLogEntry& entry);
-    core::Result<std::vector<CallLogEntry>> recentCalls(int limit = 20);
-
-    // 过滤 + 分页查询（日志弹窗搜索框 / 状态码下拉 / 翻页共用）
-    core::Result<std::vector<CallLogEntry>> queryCalls(const CallLogQuery& q);
-
-    // 满足过滤条件的总条数（忽略 limit/offset；UI 算页数、判断有无下一页）
-    core::Result<int> countCalls(const CallLogQuery& q);
-
     // 最近代理请求事件（气泡内容源）
     // ProxyRouter 在每条请求终态记一次 statusCode 进单槽（后写覆盖先写）：
     // 0 = 上游不可达。takeProxyEvent() 读走即清；滞留超 kProxyEventFreshSec 过期丢弃。
@@ -216,11 +200,6 @@ public:
     static void setGlobal(ClaudeService* svc);
     static ClaudeService* global();
 
-    // 调用日志写版本号（logCall 成功 +1）；compose 只在版本变化时重查 recent。
-    uint64_t callLogVersion() const {
-        return callLogStore_.callLogVersion();
-    }
-
 public:
     // 代理端口范围与默认值，唯一来源 = core/proxy_port.h。
     static constexpr int kDefaultProxyPort = ::core::kDefaultProxyPort;
@@ -262,7 +241,6 @@ private:
     std::mutex switchMutex_;
 
     core::data::SqliteDb& db_;
-    CallLogStore callLogStore_;
     // claude_profiles 行 + SharedConfig 的唯一持久化入口
     ProfileRepository profileRepository_;
 
@@ -277,9 +255,6 @@ private:
     std::function<core::Result<void>(const platform::terminal::LaunchSpec&)>
         terminalLauncher_ = &platform::terminal::launch;
 };
-
-// 调用记录时间列（只显 HH:MM 会让跨天记录误判）：今日 "HH:MM"；昨天 "昨天 HH:MM"；更早 "MM-DD"
-std::string formatCallTime(std::time_t ts, std::time_t now);
 
 // 旧 Keychain 命名空间名："DevDesk-" + SHA256(dataRoot) 前 4 字节 hex。Keychain
 // service 是全局命名空间不随 DEVDESK_DATA_ROOT 隔离；空根 → 空串；只用于残留清理。
