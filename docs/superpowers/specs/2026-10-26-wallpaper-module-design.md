@@ -118,18 +118,18 @@ bool supported();   // true = 当前平台有壁纸能力
 
 - P1 的 `compose()` 只渲染空页：页面标题「壁纸」+ 说明「壁纸模块已启用，片库与播放将在后续版本接入」；正式空态与视觉 P5 定稿。
 - P1 没有 WallpaperService、没有线程、没有 mpv、没有 WorkerW 宿主、没有托盘壁纸组。
-- 验收里的「引擎未启」在 P1 等价于：模块未注册、`onStart` 未被调用。真实引擎从 P3 开始出现。
+- 验收里的「引擎未启」在 P1 用结构性判据：模块未注册（`Router::isRegistered(Wallpaper)==false`）= 页面与生命周期不可达。真实引擎从 P3 开始出现。
 
 ## 3. P1 验收（可实测）
 
 | # | 场景 | 操作 | 预期（同时用于回归） | 防的事故 |
 |---|---|---|---|---|
-| 1 | 首次启动 / 升级后 | 不碰开关，启动 DevDesk | 侧边栏无「壁纸」；壁纸页不可导航；`onStart` 未被调用 | 默认被打开、默认清单误加 wallpaper |
+| 1 | 首次启动 / 升级后 | 不碰开关，启动 DevDesk | 侧边栏无「壁纸」；`Router::isRegistered(Wallpaper)==false`，壁纸页不可导航 | 默认被打开、默认清单误加 wallpaper |
 | 2 | 设置页平台差异 | Windows 打开「设置 → 模块」 | 有独立「壁纸」卡，开关默认关；2×2 模块卡布局不变 | 开关初始值错、挤坏现有卡 |
 | 3 | 非 Windows 设置页 | macOS 打开「设置 → 模块」 | 不建壁纸卡（找不到该卡任何元素） | 在不支持平台露出可点开关 |
-| 4 | 打开开关 | 拨开壁纸开关 | 侧边栏出现「壁纸」；进入后渲染空页；`onStart` 调用一次 | 注册/门控链路断、页面空白无标题 |
-| 5 | 重复打开 | 再次拨到同一值 | 不重复注册、不重复 `onStart`、不重复写盘 | 幂等缺口 |
-| 6 | 关闭开关且停在壁纸页 | 拨关 | 页面消失；自动回首页；出现「模块已关闭」提示；`onStop` 调用 | 注销后停在空页、提示缺失 |
+| 4 | 打开开关 | 拨开壁纸开关 | 侧边栏出现「壁纸」；`isRegistered==true`；进入后渲染空页 | 注册/门控链路断、页面空白无标题 |
+| 5 | 重复打开 | 再次拨到同一值 | 注册态不变、不重复写盘、页面不重复出现 | 幂等缺口 |
+| 6 | 关闭开关且停在壁纸页 | 拨关 | 页面消失；自动回首页；出现「模块已关闭」提示；`isRegistered==false` 且导航不可达 | 注销后停在空页、提示缺失 |
 | 7 | 关闭开关且不在壁纸页 | 先切到首页，再拨关 | 页面消失；不强制导航 | 误把用户拽回首页 |
 | 8 | 重启保持意图 | 开关打开后重启 DevDesk | 壁纸页仍在侧栏，开关仍为开 | sanitized 把 wallpaper 当未知项清掉 |
 | 9 | Windows 定向测试 | `bash scripts/build-test-run.sh --filter wallpaper`，再跑 `gating` / `assembly`（及受影响的 `sidebar`） | 定向用例全绿（门控 / 装配 / 模块契约 / 平台能力） | 只改代码不验行为 |
@@ -138,13 +138,14 @@ bool supported();   // true = 当前平台有壁纸能力
 
 补充口径（DevDesk 规则）：
 
+- 模块生命周期回调（`onStart/onStop`）的真实调用次数不作验收判据；验收看 Router 注册态与页面可达性，避免把空实现的日志/计数当契约。
 - 不报 `Total / Passed` 数字当交付证明；按「哪些场景实际跑过 / 结果 / 哪些没跑到」三行报告。
 - P1 涉及可见 UI，实现完成后必须真窗口跑 1、2、4、6 并截图；截图只作观感补刀，几何与行为以断言为准。
 - 「macOS 仅保证编译」不等于 macOS 可用；交接文档要求 UAT 未过前不得宣称 macOS 交付。
 
 ## 4. 文件白名单（P1 实际改动）
 
-路径均相对 DevDesk 仓库根，按基线 `6cc99867` 核对。**白名单外文件一律不动**；实现中发现必须新增，先停下回报，不自行扩范围。Task 1/2/3 与 `.superpowers/sdd/WALLPAPER-MODULE-DEV/task-{1,2,3}-brief.md` 的文件清单一一对应；§4.4 单列任务书漏列但编译硬依赖的必改项。
+路径均相对 DevDesk 仓库根，按基线 `6cc99867` 核对。**白名单外文件一律不动**；实现中发现必须新增，先停下回报，不自行扩范围。Task 1/2/3 与 `.superpowers/sdd/WALLPAPER-MODULE-DEV/task-{1,2,3}-brief.md` 的文件清单一一对应，并按独立审计裁决补齐 F1-F5 项。
 
 ### Task 1 — 平台能力 + 模块骨架 + 注册表接入（页面能被装配）
 
@@ -159,7 +160,7 @@ bool supported();   // true = 当前平台有壁纸能力
 | `src/module_wallpaper/wallpaper_module.cpp` | 新增 | 工厂（不支持平台返回空）、页面名/短名/图标、空页 `compose`、幂等空 `onStart/onStop` |
 | `tests/test_modules/test_wallpaper_module.cpp` | 新增 | 六个场景：枚举序、注册表行、默认关、门控条数、持久化、dispatch 开关；描述含 ASCII `wallpaper`，保证 `--filter wallpaper` 可定向跑到 |
 | `src/core/module_interface.h` | 修改 | `PageId::Wallpaper`（Agent 与 Settings 之间）+ `pageIdToString` |
-| `src/app_registry.h` | 修改 | 工厂声明 + 注册表一行（Agent 行与 Settings 行之间） |
+| `src/app_registry.h` | 修改 | 工厂声明 + 注册表一行（Agent 行与 Settings 行之间）+ 头注释「7 个模块工厂声明」改 8 |
 | `src/main.cpp` | 修改 | 模块实例 + `moduleForPage` 分支（托盘段不动） |
 | `src/module_settings/settings_config.h` | 修改 | `kModuleIdWallpaper` |
 | `src/module_settings/settings_config.cpp` | 修改 | `kKnownModuleIds` 加入 wallpaper；`defaultEnabledModules()` 不加 |
@@ -169,6 +170,9 @@ bool supported();   // true = 当前平台有壁纸能力
 | `tests/test_modules/test_app_assembly.cpp` | 修改 | 表形状 7→8 行、枚举序插入位、门控键索引、all-on 条数、仅 wallpaper 行允许空工厂 |
 | `tests/test_modules/test_module_gating.cpp` | 修改 | 默认清单仍 5 项、wallpaper 默认关、sanitized 保留但不自动补 |
 | `tests/test_modules/test_app_sidebar.cpp` | 修改（按需） | 若侧栏条目数/顺序断言因第 8 行必然变化，只改合法期望 |
+| `tests/test_core/test_router.cpp` | 修改 | `core_pageid_order` 枚举序断言插入 Wallpaper（wallpaper=5、settings=6、about=7）并更新描述串 |
+| `tests/probes/uat62_page_shots_probe.cpp` | 修改 | `kSlugs` 7→8（加 wallpaper）、注释 7 行→8 行；非 Windows 空工厂跳过注册与截图（审计裁决纳入 Task 1 冻结清单） |
+| `CLAUDE.md` | 修改 | 模块口径由「7 个 Router 页面 / 4 个可插拔」改为「8 个 / 5 个」 |
 
 ### Task 2 — 设置 → 模块「壁纸」开关卡（用户能开关）
 
@@ -178,25 +182,19 @@ bool supported();   // true = 当前平台有壁纸能力
 | `src/module_settings/settings_ui_cards.h` | 修改 | 声明 `drawWallpaperCard` |
 | `src/module_settings/settings_ui_cards.cpp` | 修改 | 白卡 + 标题「壁纸」+ 说明 + 右侧 44×24 开关；元素根 `settings.card.wallpaper`；开关走 `applyModuleEnabled` |
 | `src/module_settings/settings_module.cpp` | 修改 | `CardSpec` 增加平台可见性函数指针（现有行补 nullptr）；「模块」Tab 登记壁纸卡；不可见时跳过绘制、不占高度 |
-| `tests/test_modules/test_wallpaper_module.cpp` | 修改 | 追加：卡可见且默认关、拨开关后持久化并可再次关闭 |
-| `tests/test_modules/test_settings.cpp` | 修改（按需） | 仅当新卡使既有卡数量/几何/滚动断言合法变化时更新 |
+| `tests/test_modules/test_wallpaper_module.cpp` | 修改 | 平台双分支：Windows 断言设置→模块卡与开关存在、开关默认 false；非 Windows 断言 `supported()==false`、工厂 nullptr、`ui.find("settings.card.wallpaper")==nullptr`。另加开关拨动后的持久化往返 |
+| `tests/test_modules/test_settings.cpp` | 修改 | 把 `settings.card.wallpaper`（title/desc/sw.track）加入逐卡池，在 85%/100%/130% 三档断言行盒不重叠、行盒 ⊆ 卡 frame、派生钉值；若改写在新测试，必须给等价数值断言 |
 | `tests/probes/module_toggle_sidebar_probe.cpp` | 修改（按需） | 仅当既有断言因新卡必然变化时更新，不改判据强度 |
 
 ### Task 3 — 真窗口 probe + 空页截图
 
 | 文件 | 动作 | 目的 |
 |---|---|---|
-| `tests/probes/wallpaper_probe.cpp` | 新增 | 真窗口四场景：默认关无侧栏项 / 打开后注册且空页渲染 / 截图为证 / 关闭后注销并回 Home；不启动真实引擎 |
+| `tests/probes/wallpaper_probe.cpp` | 新增 | 真窗口场景：默认关无侧栏项 / 打开后注册且空页渲染 / 导航「设置→模块」断言壁纸卡存在并截图 / 关闭后注销并回 Home；不启动真实引擎 |
 | `tests/CMakeLists.txt` | 修改 | probes 段把 `wallpaper_probe` 加入 app 层特例名单、链接 `devdesk_module_wallpaper`、加模块 include 路径 |
 | `tests/probes/module_toggle_sidebar_probe.cpp` | 修改（按需） | 若 Task 2 未改且此处断言因新模块必然变化，只改合法期望 |
 
-### 4.4 任务书未列但 P1 必改（需主会话确认加入白名单）
-
-| 文件 | 动作 | 目的 |
-|---|---|---|
-| `tests/probes/uat62_page_shots_probe.cpp` | 修改（Task 1 内完成） | 它的 `kSlugs` 行数用 `static_assert` 与 `kModuleRegistry` 行数锁死；注册表 +1 行后该探针编译必红（本地默认构建 probe）。改法：slug 列表加 wallpaper，非 Windows 空工厂跳过注册与截图。Task 1/3 任务书均未列，但不改无法通过本地构建。 |
-
-### 4.5 明确不在 P1 的文件与能力
+### 4.1 明确不在 P1 的文件与能力
 
 - **托盘**：`src/core/tray_menu_spec.h` 与 `src/main.cpp` 的托盘构建/分发段 → P5。
 - **mpv 与打包**：`src/module_wallpaper/platform/**`、`scripts/package-windows.sh`、`installer/**`、`THIRD-PARTY-NOTICES` → P3/P6。
@@ -233,11 +231,13 @@ bool supported();   // true = 当前平台有壁纸能力
 差异（均不改产品决策，只补实施细节）：
 
 1. **附录 A 未列 `src/platform/CMakeLists.txt`**：新增 `wallpaper_capability_*.cpp` 必须在该文件按平台登记，否则不参与编译。Task 1 任务书已补入，P1 必改。
-2. **附录 A 与 Task 1/3 任务书均未列 `tests/probes/uat62_page_shots_probe.cpp`**：注册表增加一行会触发它的 `static_assert(kSlugs 行数 == 注册表行数)`；且它无差别注册全表工厂，非 Windows 的空工厂必须跳过。P1 必改（见 §4.4），否则本地构建或探针运行失败。
+2. **`tests/probes/uat62_page_shots_probe.cpp` 未见于附录 A 与 Task 1/3 任务书**：注册表增加一行会触发它的 `static_assert(kSlugs 行数 == 注册表行数)`。审计裁决将其纳入 Task 1 冻结清单（§4）：`kSlugs` 7→8、注释 7 行→8 行、非 Windows 空工厂跳过注册与截图。
 3. **附录 A 把 `src/core/tray_menu_spec.h` 与 main.cpp 托盘段列为修改项**：那属于 P5 的托盘组；P1 明确不做，main.cpp 只加模块实例与 `moduleForPage` 分支。
 4. **交接文档 §3.2 允许「隐藏卡片或显示仅 Windows」二选一**：P1 按任务书取「整卡不建」。
 5. **交接文档 §10 P1 要求「probe 截图空页面」**：P1 按 Task 3 任务书新增 `tests/probes/wallpaper_probe.cpp`（附录 A 允许 `wallpaper_*_probe.cpp`），截图证明空页渲染。
 6. **`tests/test_modules/test_module_icons.cpp`**：它逐项列出模块工厂，补壁纸图标只是增加覆盖；不加不影响 P1 验收，故不列入白名单。
+7. **权威设计 spec `docs/superpowers/specs/2026-09-20-devdesk-design.md` 的 PageId 旧枚举本次不同步**：延后到 P5 文档阶段，负责人 = 主会话台账。
+8. **`CLAUDE.md` 模块口径与 `src/app_registry.h` 头注释同步纳入 P1**：见 Task 1 白名单（7 页/4 可插拔 → 8 页/5 可插拔；7 个工厂 → 8 个）。
 
 待定（不阻塞 P1，P5 定稿）：
 
