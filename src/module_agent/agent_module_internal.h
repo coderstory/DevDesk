@@ -72,10 +72,9 @@
 
 namespace module::agent {
 
-inline bool needsClaudePageHint(const std::string& errorText) {
-    // 前缀必须与 direct_llm_client.cpp 的 kConfigErrorPrefix 原文逐字一致（见头文件注释）
-    return errorText.rfind("LLM 配置不可用", 0) == 0;
-}
+// needsClaudePageHint 的 inline 定义在 agent_module.h（04 拆分回归修正：非 inline
+// 声明 + 这里的 inline 定义在 macOS Release 下 undefined symbol——本头含 agent_module.h，
+// 消费方经它拿到同一个 inline 实体，无需重复提供）。
 
 // 真源 = src/model_slots.h 的 X 宏表，新增槽位只改那里；键集进库（agent_tasks.model_slot），显示名只上屏
 #define DEVDESK_MODEL_SLOT_KEY(name, jsonKey, label, formLabel, envKey, nameKey, oneM) jsonKey,

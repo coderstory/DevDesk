@@ -189,6 +189,7 @@ struct CaseResult {
     std::string status;  // "PASS" / "SKIP" / "FAIL"
     long long ms = 0;
     std::string errMsg;
+    std::string note;  // 断言失败现场兜底副本（doctest.h lastFailNote），防 cerr 丢失
 };
 
 } // namespace
@@ -228,6 +229,7 @@ int main(int argc, char** argv) {
         // 不炸掉整个套件——运行器必须继续跑完剩余用例，否则隔离失败会掩盖后续问题。
         try {
             resetCaseGlobals();
+            test_registry::lastFailNote().clear();
             g_currentTest = t.first.c_str();
             ok = t.second();
         } catch (const std::exception& e) {
@@ -252,7 +254,8 @@ int main(int argc, char** argv) {
             results.push_back({t.first, "PASS", ms, ""});
             ++passed;
         } else {
-            results.push_back({t.first, "FAIL", ms, errMsg});
+            results.push_back({t.first, "FAIL", ms, errMsg,
+                               test_registry::lastFailNote()});
             ++failed;
         }
         // 清理上一条用例的数据根（resetCaseGlobals 在上一轮建、本轮起点被覆写——旧根已在
@@ -278,6 +281,9 @@ int main(int argc, char** argv) {
                   << "ms]\n";
         if (r.status == "FAIL" && !r.errMsg.empty()) {
             std::cout << "       exception: " << r.errMsg << "\n";
+        }
+        if (r.status == "FAIL" && !r.note.empty()) {
+            std::cout << "       assert: " << r.note << "\n";
         }
     }
     std::cout << std::flush;

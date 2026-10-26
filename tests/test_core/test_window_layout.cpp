@@ -33,6 +33,15 @@ InitialWindowRequest request(int logicalWidth, int logicalHeight, int minWidth, 
     return InitialWindowRequest{logicalWidth, logicalHeight, minWidth, minHeight};
 }
 
+// Windows 基准（96 DPI 实测 14.4/37.6）显式注入。下面涉及收缩/钳制**具体数值**的
+// 用例都是 Windows 实测档（125% → +18/+47）：必须走双参纯计算路径——单参重载查
+// frameInsetsBaseline() 平台事实（macOS {0,28}），数值断言随平台翻车（CI macOS
+// 首跑实证：3 例 FAIL 全是这条）。平台注入行为本身由 window_layout_frame_insets_
+// platform 用例单独钉住。
+FrameInsets winInsets(float scale) {
+    return frameInsetsForScale(scale, FrameInsetsBaseline{14.4f, 37.6f});
+}
+
 } // namespace
 
 REGISTER_TEST(window_layout_fits_at_scale1, "window_layout: 工作区足够 → 用请求尺寸（scale 1.0，与旧默认一致）", {
@@ -57,7 +66,7 @@ REGISTER_TEST(window_layout_scales_to_physical, "window_layout: 高 DPI 下请�
 REGISTER_TEST(window_layout_too_small_shrinks,
               "window_layout: 本机 1920×1020 @125% 放不下 → 收缩适配不最大化", {
     const auto decision = decideInitialWindow(request1600x1000(), area(1920, 1020), 1.25f,
-                                              frameInsetsForScale(1.25f));
+                                              winInsets(1.25f));
     // 2000+18 = 2018 > 1920（宽超）；1250+47 = 1297 > 1020（高超）→ 两轴各自钳到
     // 「工作区 − 外框 − 呼吸边距32」：宽 1920−18−32 = 1870、高 1020−47−32 = 941。
     // UAT6 前此档走「超出即最大化」，用户反馈每次启动都全屏，不可接受
@@ -96,7 +105,7 @@ REGISTER_TEST(window_layout_single_axis_overflow_shrinks_that_axis,
 REGISTER_TEST(window_layout_uat6_1080p_at_125_shrinks,
               "window_layout: UAT6 1080p@125%（工作区 1920×1032）→ 钳到 1870×953 不最大化", {
     const auto decision = decideInitialWindow(request1600x1000(), area(1920, 1032), 1.25f,
-                                              frameInsetsForScale(1.25f));
+                                              winInsets(1.25f));
     DOCTEST_CHECK_FALSE(decision.maximize);
     // 宽 1920−18−32 = 1870；高 1032−47−32 = 953
     DOCTEST_CHECK_EQ(decision.width, 1870);
@@ -126,13 +135,13 @@ REGISTER_TEST(window_layout_tiny_screen_min_floor_wins,
     // 900×600 工作区 @100%：fit 宽 = 900−15−32 = 853 < 最小窗 1200 → minFloor =
     // min(1200, 900−15) = 885 胜出；fit 高 = 600−38−32 = 530 < 720 → minFloor = 562
     const auto decision = decideInitialWindow(request1600x1000(), area(900, 600), 1.0f,
-                                              frameInsetsForScale(1.0f));
+                                              winInsets(1.0f));
     DOCTEST_CHECK_FALSE(decision.maximize);
     DOCTEST_CHECK_EQ(decision.width, 885);
     DOCTEST_CHECK_EQ(decision.height, 562);
     // min 无约束 + 工作区装不下外框+呼吸边距：钳完不为 0/负，至少 1（建窗保护）
     const auto degenerate = decideInitialWindow(request(1600, 1000, 0, 0), area(40, 80), 1.0f,
-                                                frameInsetsForScale(1.0f));
+                                                winInsets(1.0f));
     DOCTEST_CHECK_FALSE(degenerate.maximize);
     DOCTEST_CHECK(degenerate.width >= 1);
     DOCTEST_CHECK(degenerate.height >= 1);
@@ -434,11 +443,11 @@ REGISTER_TEST(window_restore_oversized_clamps_via_same_chain,
     // UAT6 用户真机档：1080p@125%（工作区 1920×1032 物理、外框 +18/+47）
     const auto plan = core::window_layout::restoreInitialWindow(
         core::window_layout::SavedWindowGeometry{4000, 3000, false}, mainDefaults(),
-        area(1920, 1032), 1.25f, frameInsetsForScale(1.25f));
+        area(1920, 1032), 1.25f, winInsets(1.25f));
     // 与直接拿同参数请求走 decideInitialWindow 逐字段相等（证明记忆值没有旁路钳制链）
     const auto direct = decideInitialWindow(
         InitialWindowRequest{4000, 3000, 1000, 640}, area(1920, 1032), 1.25f,
-        frameInsetsForScale(1.25f));
+        winInsets(1.25f));
     DOCTEST_CHECK_EQ(plan.initial.width, direct.width);
     DOCTEST_CHECK_EQ(plan.initial.height, direct.height);
     DOCTEST_CHECK_EQ(plan.initial.width, 1870);   // 1920−18−32
