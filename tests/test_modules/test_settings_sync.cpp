@@ -1169,6 +1169,31 @@ REGISTER_TEST(sync_restore_v1_sidecar_no_nonenv,
     return true;
 })
 
+REGISTER_TEST(sync_restore_legacy_nonenv_snapshot,
+              "settings_sync: 旧 sidecar nonEnv 快照恢复原值、快照缺失键删除", {
+    using namespace module::claude;
+    test_support::TempDir d("xset6", kSyncTempDirPrefix);
+    SyncDb sdb("sync_xset6");
+    auto paths = makePaths(d, sdb.handle());
+    d.write(paths.settingsFile,
+            R"({"env": {}, "statusLine": "managed-s", "hooks": {"h": 1}, "permissions": {"p": 1}})");
+    // 旧 sidecar 形态：nonEnvKeys 记托管键，nonEnvSnapshot 只记原本存在的键原值
+    test_support::writeRawConfigRow(
+        &sdb.handle(), module::claude::settings_sync::kSidecarConfigKey,
+        R"({"managedKeys": {"ANTHROPIC_BASE_URL": "", "ANTHROPIC_AUTH_TOKEN": ""}, "envSnapshot": {}, "nonEnvKeys": {"statusLine": "", "hooks": ""}, "nonEnvSnapshot": {"statusLine": "user-s"}})");
+
+    DOCTEST_REQUIRE(settings_sync::restore(paths).ok);
+    DOCTEST_CHECK_EQ(topLevelString(paths.settingsFile, "statusLine"),
+                     std::string("user-s"));
+    auto doc = platform::json::parse(d.read(paths.settingsFile));
+    DOCTEST_REQUIRE(doc.isOk());
+    auto root = doc.value().asObject();
+    DOCTEST_CHECK_FALSE(root.has("hooks"));
+    DOCTEST_CHECK(root.has("permissions"));
+    DOCTEST_CHECK_FALSE(settings_sync::hasPendingSnapshot(paths));
+    return true;
+})
+
 REGISTER_TEST(claude_service_last_sync_warnings_snapshot,
               "claude_service: lastSyncWarnings 返回快照（非活引用）+ 并发读写不崩", {
     static_assert(

@@ -93,7 +93,7 @@ int pickFreePort() {
     return port;
 }
 
-// 「导入当前配置」测试的 settings.json 路径（不碰真实 ~/.claude——
+// 接管/同步测试的 settings.json 路径（不碰真实 ~/.claude——
 // settings_sync 的 Paths 注入模式）
 constexpr const char* kImportTempDirPrefix = "devdesk_test_import_cur_";
 
@@ -192,6 +192,63 @@ REGISTER_TEST(claude_module_actions_row_alignment,
                   0.01f);
 
     mod->onStop();
+    return true;
+})
+
+// 三页签最小布局：每个 tab 切过去内容可达；动作行钉面板底但不越界
+REGISTER_TEST(claude_detail_three_tabs_layout,
+              "claude_module: 详情三页签内容可达 + 动作行不越面板底（headless layout）", {
+    TestEnv env;
+    auto a = env.svc->createProfile("三页", "https://three.example.com",
+                                    "sk-ant-three-0001", "claude-sonnet-4-5",
+                                    /*activateIfNoneActive=*/true);
+    DOCTEST_REQUIRE(a.isOk());
+    auto mod = mkmod();
+    eui::Screen screen{1600.0f, 1000.0f};
+    auto compose = [&](eui::Ui& ui) {
+        ui.begin("claude_detail3");
+        mod->compose(ui, screen);
+        ui.end();
+        ui.layout(screen.width, screen.height);
+    };
+
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_REQUIRE(ui.find("claude.detail.tab.0.hit") != nullptr);
+        DOCTEST_REQUIRE(ui.find("claude.detail.tab.1.hit") != nullptr);
+        DOCTEST_REQUIRE(ui.find("claude.detail.tab.2.hit") != nullptr);
+        DOCTEST_CHECK(ui.find("claude.detail.tab.3.hit") == nullptr);
+        DOCTEST_CHECK(ui.find("claude.field.name.value") != nullptr);
+        const auto* tab1 = ui.find("claude.detail.tab.1.hit");
+        DOCTEST_REQUIRE(tab1 != nullptr);
+        DOCTEST_REQUIRE(tab1->onClick != nullptr);
+        tab1->onClick();
+    }
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK(ui.find("claude.slot.name.0") != nullptr);
+        const auto* tab2 = ui.find("claude.detail.tab.2.hit");
+        DOCTEST_REQUIRE(tab2 != nullptr);
+        DOCTEST_REQUIRE(tab2->onClick != nullptr);
+        tab2->onClick();
+    }
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK(ui.find("claude.env.row.bg.0") != nullptr);
+        const auto* row = ui.find("claude.detail.actions");
+        const auto* panel = ui.find("claude.detail.overlay");
+        DOCTEST_REQUIRE(row != nullptr);
+        DOCTEST_REQUIRE(panel != nullptr);
+        const float panelBottom = panel->frame.y + panel->frame.height;
+        DOCTEST_CHECK(row->frame.y >= panel->frame.y);
+        DOCTEST_CHECK(row->frame.y + row->frame.height <= panelBottom + 0.5f);
+    }
+
+    mod->onStop();
+    cleanupProfileKey(kTestKeychainService, a.value().id);
     return true;
 })
 
@@ -1829,8 +1886,6 @@ REGISTER_TEST(claude_module_run_button_headless,
     return true;
 })
 
-// 共享配置片段 编辑器 UI
-
 REGISTER_TEST(claude_ui_logic_pure_functions,
               "claude_ui_logic: 纯函数等价断言（模型摘要）", {
     using module::claude::modelsSummary;
@@ -1969,10 +2024,8 @@ REGISTER_TEST(claude_copyconfig_ctx_menu_after_row_slim,
 
 
 // 组 B（macOS 布局统一）
-//   P1 动作区钉面板底（五页签分隔线 y 恒定）+ 内容框显式边界
-//   P2 「最近调用」去掉 10 行硬上限 / 3 行硬下限，行数纯按可用高推
-//   P3 「环境变量」列全部生效 env + 每键来源
-//   P4 共享配置区块钉面板底 + 「+ 新建片段」恒可见可点
+//   P1 动作区钉面板底（三页签分隔线 y 恒定）+ 内容框显式边界
+//   P2 「环境变量」列全部生效 env + 每键来源
 // 尺寸取**真实 macOS 页面尺寸** 1262×801（窗口 1470×801 − 侧边栏 208），
 // 这是「真实窗口尺寸下的区域比例」类问题在无头侧唯一能覆盖的方式。
 // 统一原则：容器可用高只有一个来源（bodyH）；贴底元素锚容器底。
@@ -3134,9 +3187,9 @@ REGISTER_TEST(claude_profile_switch_confirm_dialog,
     return true;
 })
 
-// UAT5 米黄清理：表单 env/高级配置 tab 与全屏编辑覆盖层的输入面/按钮全量换
-// WeChat 令牌——输入底 == surface、工具钮 == hover、
-// 主动作 == primary；反向断言锁死暖橙 surfaceElevated/legacy primary。
+// UAT5 米黄清理：表单 env tab 的输入面/按钮全量换 WeChat 令牌——
+// 输入底 == surface、工具钮 == hover、主动作 == primary；
+// 反向断言锁死暖橙 surfaceElevated/legacy primary。
 REGISTER_TEST(claude_form_wechat_colors,
               "claude_module: 表单/全屏编辑输入面与按钮 WeChat 令牌锁死（反暖橙）", {
     TestEnv env;
@@ -3214,9 +3267,9 @@ REGISTER_TEST(claude_form_wechat_colors,
     return true;
 })
 
-// UAT5 米黄清理（详情页三 pane）+「未激活」徽章删除锁：环境变量行底 / 高级配置
-// 字段底 / 最近调用「查看全部」钮全量 WeChat 化；非激活 Profile 的详情不再挂
-// 「未激活」徽章（选中语义已由列表绿圈白勾承担）。
+// UAT5 米黄清理（详情页三 pane）+「未激活」徽章删除锁：环境变量行底全量
+// WeChat 化；非激活 Profile 的详情不再挂「未激活」徽章（选中语义已由列表
+// 绿圈白勾承担）。
 REGISTER_TEST(claude_detail_wechat_and_no_inactive_badge,
               "claude_module: 详情 env/高级/最近调用面 WeChat 化 + 未激活徽章已删", {
     TestEnv env;

@@ -358,22 +358,21 @@ std::string scA2(Ctx& c) {
     return {};
 }
 
-// ── A3 claude 4 工具（对隔离库内的替身 profile 操作）──
+// ── A3 claude 3 工具（对隔离库内的替身 profile 操作）──
 std::string scA3(Ctx& c) {
     auto t = makeTask(*c.store, "live-a3",
                       "依次：1) claude.list_profiles 记下各 profile 的 id；"
-                      "2) claude.recent_logs 最多取 3 条；"
-                      "3) claude.test_connection 测 id 最大的那个 profile（预期会报错，属正常，继续）；"
-                      "4) claude.switch_profile 切到 id 最大的那个；"
-                      "5) claude.switch_profile 再切回 id 最小的那个。全部做完回复 DONE。",
+                      "2) claude.test_connection 测 id 最大的那个 profile（预期会报错，属正常，继续）；"
+                      "3) claude.switch_profile 切到 id 最大的那个；"
+                      "4) claude.switch_profile 再切回 id 最小的那个。全部做完回复 DONE。",
                       12, /*allowDestructive=*/true);
     auto out = c.run(t);
     if (out.status != "completed") {
         return "status=" + out.status + " error=" + out.error.substr(0, 160);
     }
     auto used = c.toolsUsed(out.runId);
-    const char* need[] = {"claude.list_profiles", "claude.recent_logs",
-                          "claude.test_connection", "claude.switch_profile"};
+    const char* need[] = {"claude.list_profiles", "claude.test_connection",
+                          "claude.switch_profile"};
     std::string missing;
     for (const char* n : need) {
         if (used.count(n) == 0) missing += std::string(n) + " ";

@@ -1,6 +1,6 @@
 // tests/test_modules/test_provider_config.cpp
-// 供应商配置数据模型层：models_config / extra_env 序列化、导入解析、反向同步（settings.json → profile）、
-// 高级设置 JSON 纯函数、failover 判据、[1M] 标记三纯函数、槽位表派生面一致性。
+// 供应商配置数据模型层：models_config / extra_env 序列化、反向同步（settings.json → profile）、
+// [1M] 标记三纯函数、槽位表派生面一致性。
 //
 // 跨文件前提：
 //   - 槽位是单一真相源：modelSlotTable() 声明什么，接管写入 / 导入识别 / 反向回填 / models_config 键 /

@@ -1,9 +1,9 @@
 // tests/test_modules/test_proxy_router.cpp
-// ProxyRouter 单测：转发 / 鉴权 / 方言覆盖 / 伪头剥离 / 错误 JSON / failover 换家。
+// ProxyRouter 单测：转发 / 鉴权 / 方言推断 / 伪头剥离 / 错误 JSON。
 // 跨文件前提：
 //   - 上游用 platform::http::Server 或裸 httplib 起本地 mock；数据库走临时文件。
 //   - 凭据存 claude_profiles.api_key_encrypted 列，不在 Keychain；清 Keychain 对它无效。
-//   - 无激活 profile 与「取 key 失败」统一报 503 no_active_profile，两者均不写调用日志。
+//   - 无激活 profile 与「取 key 失败」统一报 503 no_active_profile。
 //   - 方言由 baseUrl host 推断；默认方言不改 body、不加会话头。
 #include "doctest.h"
 
@@ -168,7 +168,7 @@ DirectResult directCall(module::claude::ProxyRouter& router,
 } // namespace
 
 REGISTER_TEST(proxy_router_forward_200,
-              "proxy_router: 200 转发 + 写 claude_call_logs", {
+              "proxy_router: 200 转发 + 上游鉴权透传", {
     // mock 上游：POST /v1/messages → 200 + JSON
     platform::http::Server upstream("127.0.0.1", 0);
     std::string upstreamKey;

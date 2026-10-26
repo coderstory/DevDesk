@@ -285,7 +285,7 @@ REGISTER_TEST(claude_service_first_create_auto_activates,
     DOCTEST_REQUIRE(act.isOk());
     DOCTEST_CHECK_EQ(act.value().id, first.value().id);
 
-    // 3) 已有激活 → 不抢占（返回 isActive=false，UI 据此显示「点击启用」）
+    // 3) 已有激活 → 不抢占（返回 isActive=false，UI 据此提示右键「设为当前」）
     auto second = svc.createProfile("Second", "https://second.example.com",
                                     "sk-ant-second-0003", "m", true);
     DOCTEST_REQUIRE(second.isOk());
@@ -300,7 +300,7 @@ REGISTER_TEST(claude_service_first_create_auto_activates,
     auto none = svc.getActiveProfile();
     DOCTEST_REQUIRE(none.isFail());
     DOCTEST_CHECK(none.errorCode() == core::ErrorCode::NoActiveProfile);
-    DOCTEST_CHECK(none.errorMessage().find("并点击「启用」") != std::string::npos);
+    DOCTEST_CHECK(none.errorMessage().find("并选择『设为当前』") != std::string::npos);
 
     test_support::cleanupProfileKey(kTestKeychainService, second.value().id);
     return true;
