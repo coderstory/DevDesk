@@ -26,14 +26,17 @@ struct Column {
 };
 
 struct Task {
-    int64_t id;
-    int64_t columnId;
+    // 原生字段带默认值：测试/调用方普遍「默认构造再逐字段赋值」，漏赋的字段
+    // （如 priority）在 -O3 拷贝路径上触发 GCC16 -Werror=uninitialized，且未
+    // 初始化的比较本身是 UB。类类型字段（string/optional/vector）自带默认。
+    int64_t id = 0;
+    int64_t columnId = 0;
     std::string title;
     std::optional<std::string> description;
-    Priority priority;
+    Priority priority = Priority::None;
     std::optional<int64_t> dueAt;       // Unix 秒；std::nullopt = 未设置
     std::vector<std::string> tags;       // 来自 JSON 数组
-    int position;
+    int position = 0;
     std::optional<int64_t> completedAt;  // Unix 秒；std::nullopt = 未完成
     std::optional<int64_t> archivedAt;   // Unix 秒；std::nullopt = 未归档（进归档列时置当前时间戳，出归档列置 NULL）
 };
