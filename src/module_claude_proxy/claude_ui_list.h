@@ -37,7 +37,6 @@ void drawClaudeGuideBar(eui::Ui& ui, float contentW,
 // 左栏列表的回调（compose 每帧装配）
 struct ProfileListActions {
     std::function<void()> onNewProfile;      // 「+ 新建 Profile」
-    std::function<void()> onImportCcSwitch;  // 「从 CC 导入」（UAT5 文案缩短）
     // 右键菜单动作：菜单是这些动作的唯一 UI 入口
     std::function<void(const Profile&)> requestEdit;              // 编辑
     std::function<void(int64_t)> requestDuplicate;                // 建副本

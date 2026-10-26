@@ -29,8 +29,8 @@ namespace {
 constexpr float kListTopY = 56.0f;             // 列表起点 y
 constexpr float kListBottomGap = 12.0f;        // 列表底 → 底部按钮行顶
 constexpr float kListMinH = 96.0f;             // 列表视口保底高
-// 底部按钮区（两行：主键独行 + 两导入同行）= 40 + 12 + 40 + 16
-constexpr float kBottomBtnRowH = 108.0f;
+// 底部按钮区（单行「+ 新建 Profile」）= 40 + 20 底距
+constexpr float kBottomBtnRowH = 60.0f;
 
 // 底部按钮行上沿（面板内绝对 y）
 float bottomButtonRowY(float bodyH) { return bodyH - kBottomBtnRowH; }
@@ -559,10 +559,7 @@ void drawProfileListPanel(eui::Ui& ui, float leftW, float bodyH,
                     .build();
             }
 
-            // S3.4 底部按钮主次分级：新建=Filled，导入/CC导入=Outline。
-            // H2 残留修复：等分三键 (leftW-64)/3≈58.7px 容不下「从 CC 导入」
-            // 14px/600 实宽约 66px 文字（EUI 按钮文本无 clip，超出即溢出按钮外）。
-            // 改两行布局 + 每键 fit-content 宽度（规格：内边距水平 16 + 文字实宽
+            // 底部按钮：新建=Filled；fit-content 宽度（内边距水平 16 + 文字实宽
             // 14/600；S4.5 单按钮公式 W=textWidth+32 钳 [96,200]），禁缩字号。
             constexpr float kBtnPadH = 16.0f;   // 规格内边距水平 16
             constexpr float kBtnFont = 14.0f;   // 规格文字 14/600
@@ -572,7 +569,7 @@ void drawProfileListPanel(eui::Ui& ui, float leftW, float bodyH,
                     label, {}, kBtnFont, kBtnWeight);
                 if (textW <= 0.0f) {
                     // 测量不可用（无字体上下文）退文本估算：CJK 全宽 14、ASCII 半宽
-                    // 7（三个按钮文案的保守上界，宁宽勿裁）。按 UTF-8 字符迭代——
+                    // 7（按钮文案的保守上界，宁宽勿裁）。按 UTF-8 字符迭代——
                     // 字节级计数会把 3 字节 CJK 当成 3 个字符。
                     textW = 0.0f;
                     for (std::size_t i = 0; i < label.size(); ) {
@@ -592,14 +589,9 @@ void drawProfileListPanel(eui::Ui& ui, float leftW, float bodyH,
             };
             const float btnNewW =
                 std::clamp(fitBtnW("+ 新建 Profile"), 96.0f, 200.0f);
-            const float btnGap = 12.0f;
-            const float btnCcW = std::min(fitBtnW("从 CC 导入"), 200.0f);
-            // 行 1 顶 = 按钮区顶
-            const float row1Y = bottomButtonRowY(bodyH);
-            const float row2Y = row1Y + 40.0f + btnGap;
-            // 行 1：新建（主操作独行）Filled（绿底白字）
+            // 新建（主操作）Filled（绿底白字）
             components::button(ui, "claude.profiles.new")
-                .position(20.0f, row1Y)
+                .position(20.0f, bottomButtonRowY(bodyH))
                 .size(btnNewW, 40.0f)
                 .text("+ 新建 Profile")
                 .fontSize(kBtnFont)
@@ -609,22 +601,6 @@ void drawProfileListPanel(eui::Ui& ui, float leftW, float bodyH,
                 .textColor(t.colors.onPrimary)
                 .radius(8.0f)
                 .onClick([onNew = actions.onNewProfile] { onNew(); })
-                .build();
-            // 行 2：从 CC 导入（Outline，白底绿边绿字）
-            components::button(ui, "claude.profiles.import.ccswitch")
-                .position(20.0f, row2Y)
-                .size(btnCcW, 40.0f)
-                .text("从 CC 导入")
-                .fontSize(kBtnFont)
-                .colors(t.colors.surface,
-                        t.colors.primarySoftBg,
-                        t.colors.primarySoftBg)
-                .textColor(t.colors.primary)
-                .radius(8.0f)
-                .border(1.0f, t.colors.primary)
-                .onClick([onImportCc = actions.onImportCcSwitch] {
-                    if (onImportCc) onImportCc();
-                })
                 .build();
         })
         .build();

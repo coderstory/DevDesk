@@ -1,8 +1,5 @@
 add_library(devdesk_module_claude_proxy STATIC
-    ccswitch_import.cpp
-    ccswitch_source.cpp
     claude_module.cpp
-    claude_ui_ccswitch.cpp
     claude_ui_list.cpp
     claude_ui_detail.cpp
     claude_ui_form.cpp

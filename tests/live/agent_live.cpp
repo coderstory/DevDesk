@@ -49,7 +49,6 @@
 #include "module_claude_proxy/claude_service.h"
 #include "module_claude_proxy/claude_tools.h"
 #include "module_claude_proxy/profile_repository.h"
-#include "module_claude_proxy/ccswitch_source.h"
 #include "module_markdown/markdown_service.h"
 #include "module_markdown/markdown_tools.h"
 #include "module_markdown/md_note_git.h"
@@ -653,23 +652,6 @@ bool loadRealProfile(const fs::path& stageDir, SnapshotSource& src,
         auto key = repo.loadApiKey(active.value().id);
         std::string keyPlain;
         if (key.isOk()) keyPlain = key.value();
-        if (keyPlain.empty()) {
-            // DB 凭据列空 → 回落 cc-switch 只读源：
-            // matchCcSwitchProviderByBaseUrl 按 host+path 匹配，key 仅在内存过一手
-            const std::string ccId = module::claude::ccswitch::
-                matchCcSwitchProviderByBaseUrl(active.value().baseUrl);
-            if (!ccId.empty()) {
-                auto lst = module::claude::ccswitch::listCcSwitchProviders();
-                if (lst.status == module::claude::ccswitch::CcSwitchSourceStatus::Ok) {
-                    for (const auto& p : lst.providers) {
-                        if (p.id == ccId && !p.apiKey.empty()) {
-                            keyPlain = p.apiKey;
-                            break;
-                        }
-                    }
-                }
-            }
-        }
         if (keyPlain.empty() && std::getenv("DEVDESK_AGENT_LIVE_ALLOW_KEYCHAIN") != nullptr) {
             // 仍空 → 该 profile 的 key 可能在 macOS Keychain（存量形态）。读单条
             // (服务=按真实数据根派生, 账户=claude:<id>) 可能弹授权对话框，须显式

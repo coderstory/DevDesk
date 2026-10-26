@@ -3,7 +3,6 @@
 #pragma once
 
 #include "claude_service.h"
-#include "ccswitch_import.h"
 #include "provider_config.h"
 
 #include <chrono>
@@ -84,28 +83,11 @@ struct FormState {
     std::string deleteTargetName_;
 };
 
-// cc-switch 导入弹窗（独立状态，不塞进 FormState：复用会污染表单状态）。必须接入 anyDialogOpen 门控与 closeTopmostDialog Esc 序链（最顶层）
-struct CcSwitchImportDialogState {
-    bool open_ = false;
-    bool loaded_ = false;             // rows 已装载（false = 首次打开需触发读库）
-    // 候选行 + 每行映射结果 + 是否勾选；三个向量同长度、按下标对齐
-    std::vector<CcSwitchImportRow> rows_;
-    std::vector<CcSwitchImportMapping> mappings_;
-    std::vector<bool> selected_;
-    // 读库失败的中文原因（空 = 成功 / 未尝试）。非空时列表区不画，改画错误态。
-    std::string loadError_;
-    // 导入结果报告（每条「name: 成功 / 跳过(原因) / 失败(原因)」一行；非空 = 已跑过导入）
-    std::vector<std::string> resultLines_;
-    int resultSuccess_ = 0;
-    int resultSkipped_ = 0;
-    int resultFailed_ = 0;
-};
 
 struct ClaudeUiState {
     ProfileListState list;
     DetailState detail;
     FormState form;
-    CcSwitchImportDialogState ccswitchImport;  // 从 cc-switch 导入弹窗
 };
 
 // 数据缓存的后台刷新：compose 每帧只做「搬已就绪结果进快照 + 发下一次刷新意图」两件无 IO 的事；SQLite 查询全在后台（同步查会与代理 worker 争锁）。失败保持脏、按节流窗口重试。

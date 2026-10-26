@@ -5,7 +5,6 @@
 #include "claude_service.h"
 #include "claude_tools.h"
 #include "claude_ui_detail.h"
-#include "claude_ui_ccswitch.h"
 #include "claude_ui_form.h"
 #include "claude_ui_list.h"
 #include "claude_ui_logic.h"
@@ -162,9 +161,6 @@ public:
                               formHooks());
         drawDeleteConfirmDialog(ui, screen, t, themeTokens, state_.form,
                                 [this](int64_t id) { doDelete(id); });
-        // cc-switch 导入弹窗，绘制序即 Esc 序链最顶层
-        drawCcSwitchImportDialog(ui, screen, t, themeTokens,
-                                 state_.ccswitchImport, ccswitchImportHooks());
         drawSwitchConfirmDialog(ui, screen, t, themeTokens,
                                   state_.list);
         harvestTestResult();
@@ -239,8 +235,7 @@ public:
             return false;
         }
         const bool anyDialogOpen =
-            state_.form.formOpen_ || state_.form.deleteConfirmOpen_ ||
-            state_.ccswitchImport.open_;
+            state_.form.formOpen_ || state_.form.deleteConfirmOpen_;
         if (key.key == eui::InputKey::N) {
             if (anyDialogOpen) return false;
             openCreateForm(state_.form);
@@ -263,7 +258,6 @@ public:
 private:
     // Esc 关最上层弹窗（顺序 = 绘制序倒序）
     bool closeTopmostDialog() {
-        if (state_.ccswitchImport.open_) { state_.ccswitchImport.open_ = false; return true; }
         if (state_.form.deleteConfirmOpen_) { state_.form.deleteConfirmOpen_ = false; return true; }
         if (state_.form.formOpen_) { state_.form.formOpen_ = false; return true; }
         return false;
@@ -273,9 +267,6 @@ private:
     ProfileListActions listActions() {
         ProfileListActions a;
         a.onNewProfile = [this] { openCreateForm(state_.form); };
-        a.onImportCcSwitch = [this] {
-            openCcSwitchImportDialog(state_.ccswitchImport);
-        };
         a.requestEdit = [this](const Profile& p) {
             openEditForm(state_.form, p);
         };
@@ -303,13 +294,7 @@ private:
         return h;
     }
 
-    CcSwitchImportDialogHooks ccswitchImportHooks() {
-        CcSwitchImportDialogHooks h;
-        h.toast = toastHook();
-        h.markDataDirty = [this] { state_.list.dataDirty_ = true; };
-        return h;
-    }
-
+    
     DetailActions detailActions() {
         DetailActions a;
         a.warn = [this](const std::string& title, const std::string& msg) {
