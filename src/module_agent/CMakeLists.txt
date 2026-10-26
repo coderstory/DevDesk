@@ -19,6 +19,9 @@ add_library(devdesk_agent STATIC
     agent_builtin_tools.cpp
     agent_detail_dialog.cpp
     agent_module.cpp
+    agent_module_schedule.cpp
+    agent_module_tools.cpp
+    agent_module_dialogs.cpp
 )
 
 devdesk_apply_warnings(devdesk_agent)
