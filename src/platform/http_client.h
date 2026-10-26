@@ -96,8 +96,11 @@ private:
     friend size_t streamHeaderCb(char* buffer, size_t size, size_t nitems, void* userp);
 
     // 三线程 + 队列 + backpressure 的真实实现；全部状态藏在 Impl 内，header 只暴露前向声明。
+    // 票 12：Impl 由 unique_ptr 持有（裸 delete 消失）。析构点必须是完整类型的经典约束
+    // 由「析构函数定义在 http_client.cpp（Impl 定义之后）」满足——头文件只声明析构，
+    // 不要内联，否则每个包含本头的 TU 都会对不完整类型实例化 deleter 而编译失败。
     struct Impl;
-    Impl* impl_ = nullptr;
+    std::unique_ptr<Impl> impl_;
 };
 
 core::Result<std::unique_ptr<StreamingResponse>> sendStreaming(const Request& req);

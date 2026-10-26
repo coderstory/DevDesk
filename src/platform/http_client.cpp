@@ -248,14 +248,18 @@ int streamXferInfoCb(void* clientp, curl_off_t /*dltotal*/, curl_off_t /*dlnow*/
     return cancelled->load(std::memory_order_acquire) ? 1 : 0;
 }
 
-StreamingResponse::StreamingResponse() : impl_(new Impl()) {}
+StreamingResponse::StreamingResponse() : impl_(std::make_unique<Impl>()) {}
+
+// 票 12：Impl 改由 unique_ptr<Impl> 持有，裸 delete impl_ 消失（消除手动析构的
+// 泄漏/双删风险点）。pimpl + unique_ptr 的经典坑：默认 deleter 在**析构函数定义点**
+// 实例化，要求 Impl 在此是完整类型——所以本析构函数必须留在 http_client.cpp
+// （Impl 定义之后），绝不能挪回头文件内联。行为零变化：cancel() → join 的顺序不变，
+// Impl 的析构由 unique_ptr 成员在函数体结束后接管（与原 `delete impl_;` 同一时点）。
 StreamingResponse::~StreamingResponse() {
     cancel();
     if (impl_->thread.joinable()) {
         impl_->thread.join();
     }
-    delete impl_;
-    impl_ = nullptr;
 }
 
 int StreamingResponse::statusCode() const {
@@ -374,9 +378,9 @@ core::Result<std::unique_ptr<StreamingResponse>> sendStreaming(const Request& re
     curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
     curl_easy_setopt(curl, CURLOPT_NOPROXY, "localhost,127.0.0.1,::1");
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, streamWriteCb);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, sr->impl_);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, sr->impl_.get());
     curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, streamHeaderCb);
-    curl_easy_setopt(curl, CURLOPT_HEADERDATA, sr->impl_);
+    curl_easy_setopt(curl, CURLOPT_HEADERDATA, sr->impl_.get());
     curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
     curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, streamXferInfoCb);
     curl_easy_setopt(curl, CURLOPT_XFERINFODATA, &sr->impl_->cancelled);
@@ -400,7 +404,7 @@ core::Result<std::unique_ptr<StreamingResponse>> sendStreaming(const Request& re
     }
     if (headers) curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
 
-    StreamingResponse::Impl* implPtr = sr->impl_;
+    StreamingResponse::Impl* implPtr = sr->impl_.get();
     sr->impl_->thread = std::thread([implPtr, headers,
                                      url = req.url, method = req.method]() {
         CURLcode rc;
