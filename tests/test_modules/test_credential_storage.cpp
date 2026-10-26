@@ -12,6 +12,7 @@
 #include "core/database.h"
 #include "core/sqlite_db.h"
 #include "platform/credential_protection.h"
+#include "platform/json.h"
 #include "platform/keychain.h"
 
 #include <map>
@@ -190,7 +191,7 @@ REGISTER_TEST(credential_export_json_contains_no_secret,
 
     // 生产口径：keyPlaceholder 只传 hint（脱敏形态）
     const std::string json =
-        module::claude::buildProfileExportJson(p, std::string(),
+        module::claude::buildProfileExportJson(p,
                                                /*keyPlaceholder=*/p.apiKeyHint);
     DOCTEST_REQUIRE(!json.empty());
 
@@ -208,7 +209,26 @@ REGISTER_TEST(credential_export_json_contains_no_secret,
     // 反向对照：把明文当占位值传进去，导出里就出现明文。这条钉住上面不是恒真的空断言，
     // 同时标出生产路径绝不能这么传 keyPlaceholder
     const std::string leaky =
-        module::claude::buildProfileExportJson(p, std::string(), key);
+        module::claude::buildProfileExportJson(p, key);
     DOCTEST_CHECK(leaky.find(key) != std::string::npos);
+
+    // 顶层形状只有 {"env": {...}}；坏 extra_env 整体忽略但托管键照写，
+    // 凭据仍是占位（坏输入不能把明文/摘要带进导出）
+    module::claude::Profile bad = p;
+    bad.extraEnvJson = "{not-json";
+    const std::string badJson =
+        module::claude::buildProfileExportJson(bad, p.apiKeyHint);
+    auto parsed = platform::json::parse(badJson);
+    DOCTEST_REQUIRE(parsed.isOk());
+    DOCTEST_REQUIRE(parsed.value().isObject());
+    auto root = parsed.value().asObject();
+    DOCTEST_CHECK_EQ(root.keys().size(), static_cast<size_t>(1));
+    DOCTEST_CHECK(root.has("env"));
+    auto envObj = root.get("env").asObject();
+    DOCTEST_CHECK(envObj.has("ANTHROPIC_BASE_URL"));
+    DOCTEST_CHECK(envObj.has("ANTHROPIC_AUTH_TOKEN"));
+    DOCTEST_CHECK_EQ(envObj.get("ANTHROPIC_AUTH_TOKEN").asString(),
+                     p.apiKeyHint);
+    DOCTEST_CHECK(badJson.find(key) == std::string::npos);
     return true;
 })

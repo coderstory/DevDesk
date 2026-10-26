@@ -683,8 +683,12 @@ REGISTER_TEST(uiModernVirtualProfileRows,
     DOCTEST_CHECK(ui.find("claude.profiles.scroll.slot.0") != nullptr);
     DOCTEST_CHECK(ui.find("claude.profile.0.name") != nullptr);
     // slot 窗口生效：25 行不整段渲染，视口外行不存在（virtualList 裁剪）。
-    // UAT6：Profile 卡高 56px（name-only 设计，原 96px），更多行入视口——行 20 仍在外
-    DOCTEST_CHECK(ui.find("claude.profile.23.name") == nullptr);
+    // 1600×1000 下列表视口 782px、行距 68px、overscan 一屏 → 渲染窗 24 行：
+    // 行 23 在窗内，行 24（最后一帧可见区外）被裁掉。
+    DOCTEST_CHECK(ui.find("claude.profile.23.name") != nullptr);
+    DOCTEST_CHECK(ui.find("claude.profiles.scroll.slot.23") != nullptr);
+    DOCTEST_CHECK(ui.find("claude.profile.24.name") == nullptr);
+    DOCTEST_CHECK(ui.find("claude.profiles.scroll.slot.24") == nullptr);
 
     // 滚动回退语义：onScrollOffsetChanged 写 profilesScrollOffset_ →
     // 重 compose 视口随偏移前移。偏移取 600 让行 19 落入渲染窗（56px×19≈1064）
@@ -698,66 +702,6 @@ REGISTER_TEST(uiModernVirtualProfileRows,
     // 行命中节点 .bg 保留（选中/右键挂点行内）。offset 600 下第 0 行已被 slot
     // 窗口裁掉，故在已渲染的行 19 上验 .bg
     DOCTEST_CHECK(ui.find("claude.profile.19.bg") != nullptr);
-
-    mod->onStop();
-    return true;
-})
-
-REGISTER_TEST(uiModernVirtualLogRows,
-              "uiModern claude: 调用记录 virtualList 行重建（slot 结构保留）", {
-    ClaudeEnv env;
-    // 种子：1 个 profile + 25 条调用（FK profile_id 必须真实存在；每页 20 行）
-    auto prof = env.svc->createProfile("日志源", "https://api.anthropic.com",
-                                       "sk-ant-log-1", "claude-sonnet-4-5");
-    DOCTEST_REQUIRE(prof.isOk());
-    for (int i = 0; i < 25; ++i) {
-        module::claude::ClaudeService::CallLogEntry e;
-        e.profileId = prof.value().id;
-        e.method = "POST";
-        e.path = "/v1/messages";
-        e.statusCode = 200;
-        e.latencyMs = 12;
-        e.startedAt = std::time(nullptr) - i * 60;
-        DOCTEST_REQUIRE(env.svc->logCall(e).isOk());
-    }
-    std::unique_ptr<::core::Module> mod(create_claude_module());
-    eui::Screen screen{1600.0f, 1000.0f};
-    eui::Ui ui;
-    auto compose = [&]() {
-        ui.begin("claude_vlogs_frame");
-        mod->compose(ui, screen);
-        ui.end();
-    };
-    // 打开弹窗（后台取数；有界等待每页 20 行到位）。调用记录在详情页签的第 5 个
-    //（idx 4）——先切 tab（该帧生效），再点「查看全部 →」开弹窗
-    {
-        compose();
-        const auto* tab = ui.find("claude.detail.tab.4.hit");
-        DOCTEST_REQUIRE(tab != nullptr);
-        DOCTEST_REQUIRE(tab->onClick != nullptr);
-        tab->onClick();
-    }
-    {
-        compose();
-        const auto* hit = ui.find("claude.calls.viewall.hit");
-        DOCTEST_REQUIRE(hit != nullptr);
-        DOCTEST_REQUIRE(hit->onClick != nullptr);
-        hit->onClick();
-    }
-    bool rowsReady = false;
-    for (int i = 0; i < 400 && !rowsReady; ++i) {
-        compose();
-        rowsReady = ui.find("claude.dialog.calls.row.19.wrap") != nullptr;
-        if (!rowsReady) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(5));
-        }
-    }
-    DOCTEST_CHECK(rowsReady);
-    // 列表根 = virtualList 节点（slot 重建语义）；id 用绝对行号
-    DOCTEST_CHECK(ui.find("claude.dialog.calls.scroll.slot.0") != nullptr);
-    DOCTEST_CHECK(ui.find("claude.dialog.calls.row.0.wrap") != nullptr);
-    DOCTEST_CHECK(ui.find("claude.dialog.calls.row.19.wrap") != nullptr);
-    DOCTEST_CHECK(ui.find("claude.dialog.calls.row.20.wrap") == nullptr);
 
     mod->onStop();
     return true;

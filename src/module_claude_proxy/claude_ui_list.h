@@ -1,6 +1,7 @@
 // src/module_claude_proxy/claude_ui_list.h
 // 左栏单元：header / 引导条 / Profile 列表。每块可视区域 = 一个自由函数（状态显式
 // 入参）；元素 id 按原值写死，无头用例（test_claude_ui）按这些 id 断言。
+// 共享配置片段区块已删除（左栏只剩 Profile 列表与底部按钮）。
 #pragma once
 
 #include "claude_service.h"
@@ -36,8 +37,6 @@ void drawClaudeGuideBar(eui::Ui& ui, float contentW,
 // 左栏列表的回调（compose 每帧装配）
 struct ProfileListActions {
     std::function<void()> onNewProfile;      // 「+ 新建 Profile」
-    std::function<void()> onImportCurrent;   // 「导入配置」（UAT5 文案缩短）
-    std::function<void()> onImportCcSwitch;  // 「从 CC 导入」（UAT5 文案缩短）
     // 右键菜单动作：菜单是这些动作的唯一 UI 入口
     std::function<void(const Profile&)> requestEdit;              // 编辑
     std::function<void(int64_t)> requestDuplicate;                // 建副本
@@ -45,34 +44,16 @@ struct ProfileListActions {
     std::function<void(const Profile&)> requestCopyConfig;
     std::function<void(int64_t, const std::string&)> requestDelete;  // 删除
     std::function<void(int64_t)> requestSetActive;                // 设为当前
-    // 共享配置片段动作：区块「新建」/ 卡片点击编辑
-    std::function<void()> onNewShared;
-    std::function<void(const SharedConfig&)> requestEditShared;
 };
 
 // st 为引用：卡片点击/滚动回调写回模块状态，须指向存活到下一帧的对象。
-// sharedConfigs/Error：共享配置片段快照。
 void drawProfileListPanel(eui::Ui& ui, float leftW, float bodyH,
                           const core::theme::Tokens& t,
                           const components::theme::ThemeColorTokens& themeTokens,
                           ProfileListState& st,
                           const std::vector<Profile>& profiles,
                           const std::string& profilesError,
-                          const std::vector<SharedConfig>& sharedConfigs,
-                          const std::string& sharedConfigsError,
                           const ProfileListActions& actions);
-
-// 共享配置区块（UAT5 可折叠）：钉面板底；默认收起一行头（st.sharedBlockCollapsed_），
-// 点头行/勾箭钮展开；「+」圆钮两态常驻头右缘（新建片段唯一入口）。
-// blockH 由调用方按 sharedBlockH(bodyH, collapsed) 传入；片段装不下时块内滚。
-// st：折叠态 + 块内滚动偏移读写目标（集签名变化时归零）。id: claude.shared.*
-void drawSharedConfigBlock(eui::Ui& ui, float width, float blockH,
-                           const core::theme::Tokens& t,
-                           const components::theme::ThemeColorTokens& themeTokens,
-                           ProfileListState& st,
-                           const std::vector<SharedConfig>& sharedConfigs,
-                           const std::string& sharedConfigsError,
-                           const ProfileListActions& actions);
 
 // Profile 右键菜单：编辑 / 复制 / 删除 / 设为当前。常驻构建（关闭态由 opacity 收起）；
 // 无右键目标时强制置关。锚点来自卡片 onContextMenu 换算（页面坐标）。

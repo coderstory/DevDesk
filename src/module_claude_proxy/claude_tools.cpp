@@ -245,60 +245,6 @@ private:
     ClaudeService& svc_;
 };
 
-// claude.recent_logs（只读）
-
-class ClaudeRecentLogsTool : public core::ITool {
-public:
-    explicit ClaudeRecentLogsTool(ClaudeService& svc) : svc_(svc) {}
-
-    std::string name() const override { return "claude.recent_logs"; }
-
-    std::string schemaJson() const override {
-        return R"({"name":"claude.recent_logs","description":"最近经过本地代理的 Claude 调用日志（只读，按时间倒序）","input_schema":{"type":"object","properties":{"limit":{"type":"integer","description":"返回条数（可选，默认 20，取值被钳制到 1..100）"}},"required":[]}})";
-    }
-
-    Result<ToolResult> execute(const ToolArgs& args) override {
-        auto argsObj = parseArgs(args);
-        if (argsObj.isFail()) return toolError(argsObj.errorMessage());
-
-        auto limitOpt = optionalIntField(argsObj.value(), "limit");
-        if (limitOpt.isFail()) return toolError(limitOpt.errorMessage());
-
-        // 默认 20；clamp [1,100]（上限防止一次工具调用回灌巨量日志给 LLM）
-        int64_t limit = limitOpt.value().value_or(20);
-        if (limit < 1) limit = 1;
-        if (limit > 100) limit = 100;
-
-        auto logs = svc_.recentCalls(static_cast<int>(limit));
-        if (logs.isFail()) {
-            return toolError("读取调用日志失败: " + logs.errorMessage());
-        }
-
-        std::string joined;
-        for (const auto& e : logs.value()) {
-            pj::JsonObject o;
-            o.set("id", pj::makeInt(e.id));
-            o.set("statusCode", pj::makeInt(e.statusCode));
-            o.set("latencyMs", pj::makeInt(e.latencyMs));
-            o.set("error", pj::makeString(e.error));
-            o.set("startedAt", pj::makeInt(static_cast<int64_t>(e.startedAt)));
-            auto one = stringifyObj(std::move(o));
-            if (one.isFail()) return toolError(one.errorMessage());
-            if (!joined.empty()) joined += ",";
-            joined += one.value();
-        }
-        const std::string content = "{\"logs\":[" + joined + "]}";
-        if (pj::parse(content).isFail()) {
-            return Result<ToolResult>::fail(
-                core::ErrorCode::Internal, "工具结果 JSON 拼接失败（编程错误）");
-        }
-        return toolOk(content);
-    }
-
-private:
-    ClaudeService& svc_;
-};
-
 } // namespace
 
 // ClaudeTools
@@ -307,7 +253,6 @@ ClaudeTools::ClaudeTools(ClaudeService& svc) {
     tools_.push_back(std::make_shared<ClaudeListProfilesTool>(svc));
     tools_.push_back(std::make_shared<ClaudeSwitchProfileTool>(svc));
     tools_.push_back(std::make_shared<ClaudeTestConnectionTool>(svc));
-    tools_.push_back(std::make_shared<ClaudeRecentLogsTool>(svc));
 }
 
 void ClaudeTools::registerAll() {

@@ -434,10 +434,9 @@ REGISTER_TEST(streaming_send_streaming_claude_passthrough,
 })
 
 // 断言的是上游实际收到的头 / body（转发路径的真实效果），不是 forBaseUrl 的返回值。
-// host 是 loopback → host 推断只能给默认方言，必须靠 profile 钉住 opencode_zen。
-// 空串 dialectOverride = 未覆盖 → 无会话头 + body 逐字节不变。
-REGISTER_TEST(streaming_proxy_dialect_override_wired,
-              "streaming: profile.dialectOverride 装方言头（空串等价未覆盖）", {
+// host 是 loopback → host 推断给默认方言：无会话头 + body 逐字节不变。
+REGISTER_TEST(streaming_proxy_dialect_host_inferred,
+              "streaming: host 推断默认方言（无会话头、body 不变）", {
     MockSseServer upstream;
     DOCTEST_REQUIRE(upstream.start());
 
@@ -451,10 +450,7 @@ REGISTER_TEST(streaming_proxy_dialect_override_wired,
     req.body = R"({"model":"claude-sonnet-4-5[1M]","stream":true})";
     req.timeoutMs = 10000;
 
-    // (1) 覆盖 opencode_zen
     Profile p = makeProfile(upstream.baseUrl());
-    p.dialectOverride = "opencode_zen";
-
     auto r = module::claude::sendStreamingClaude(req, p);
     DOCTEST_REQUIRE(r.isOk());
     auto sr = takeStream(r);
@@ -464,27 +460,9 @@ REGISTER_TEST(streaming_proxy_dialect_override_wired,
     DOCTEST_REQUIRE_MESSAGE(drainStream(*sr, all, err),
                             "stream ended with error: " + err);
 
-    DOCTEST_CHECK_EQ(upstream.lastOpenCodeSession(),
-                     module::claude::claudeUpstreamSessionId());
-    // 方言全量生效（不只头）：模型名 [1M] 被剥，其余字节不动
-    DOCTEST_CHECK(upstream.lastRequestBody().find("[1M]") == std::string::npos);
-    DOCTEST_CHECK(upstream.lastRequestBody().find("claude-sonnet-4-5") !=
-                  std::string::npos);
-    DOCTEST_CHECK_EQ(upstream.lastApiKey(), std::string("sk-ant-test-key"));
-
-    Profile p2 = makeProfile(upstream.baseUrl());
-    auto r2 = module::claude::sendStreamingClaude(req, p2);
-    DOCTEST_REQUIRE(r2.isOk());
-    auto sr2 = takeStream(r2);
-    DOCTEST_REQUIRE(sr2 != nullptr);
-    std::string all2;
-    std::string err2;
-    DOCTEST_REQUIRE_MESSAGE(drainStream(*sr2, all2, err2),
-                            "stream ended with error: " + err2);
-
     DOCTEST_CHECK(upstream.lastOpenCodeSession().empty());
     DOCTEST_CHECK_EQ(upstream.lastRequestBody(), req.body);
-    DOCTEST_CHECK_EQ(all2, joinChunks(script.chunks));
+    DOCTEST_CHECK_EQ(all, joinChunks(script.chunks));
 
     upstream.stop();
     return true;
@@ -1241,162 +1219,6 @@ REGISTER_TEST(streaming_sse_usage_parser_tokens,
     DOCTEST_CHECK_EQ(p2.usage().outputTokens, -1);
     DOCTEST_CHECK_EQ(p2.usage().cacheReadTokens, -1);
     DOCTEST_CHECK_EQ(p2.usage().cacheWriteTokens, -1);
-    return true;
-})
-
-REGISTER_TEST(streaming_call_log_usage_columns,
-              "streaming: 流末回填 claude_call_logs 的 token 四列 + 首事件毫秒", {
-    core::proxy_stats::resetForTest();
-    MockSseServer upstream;
-    DOCTEST_REQUIRE(upstream.start());
-
-    // message_start 给四类累计值，message_delta 给最终 output（累计口径）
-    MockScript script;
-    script.chunks = {
-        "data: {\"type\":\"message_start\",\"message\":{\"usage\":"
-        "{\"input_tokens\":10,\"output_tokens\":3,"
-        "\"cache_read_input_tokens\":2,\"cache_creation_input_tokens\":5}}}\n\n",
-        "data: {\"type\":\"message_delta\",\"delta\":{},"
-        "\"usage\":{\"output_tokens\":40}}\n\n",
-        "data: [DONE]\n\n",
-    };
-    upstream.onMessages(script);
-
-    StreamEnv env;
-    test_support::ScopedAppDatabase appDb(env.db.handle());
-    // InMemoryDb 只 open(":memory:")、没建表 → 本用例要真落库，先跑全量迁移。
-    // claude_call_logs.profile_id 有外键（open 即 PRAGMA foreign_keys=ON），
-    // 而 makeProfile 的 id=1 只是内存里的号 → 再补一行 profile 供外键落地
-    DOCTEST_REQUIRE(
-        env.db.handle().applySchema(core::schema::kSql).isOk());
-    DOCTEST_REQUIRE(env.db.handle().exec(
-        "INSERT INTO claude_profiles (id, name, base_url, api_key_hint, "
-        "api_key_check, model, is_active, created_at, updated_at) "
-        "VALUES (1, 'streaming-usage', 'http://127.0.0.1', 'sk-***', 'x', "
-        "'claude-sonnet-4-5', 1, 0, 0)")
-                        .isOk());
-
-    platform::http::Server proxy("127.0.0.1", 0);
-    module::claude::ProxyRouter router(env.svc(), proxy);
-    const std::string upstreamBase = upstream.baseUrl();
-    router.setProfileProvider([upstreamBase]() {
-        return core::Result<Profile>::ok(makeProfile(upstreamBase));
-    });
-    router.registerRoutes();
-    DOCTEST_REQUIRE(proxy.start());
-
-    httplib::Client cli("127.0.0.1", proxy.actualPort());
-    cli.set_read_timeout(15, 0);
-    auto res = clientPostStream(cli, "/v1/messages",
-                                R"({"model":"claude-sonnet-4-5","stream":true})",
-                                false);
-    DOCTEST_CHECK(res.ok);
-    DOCTEST_CHECK_EQ(res.status, 200);
-
-    // 落库是两步：响应头就绪时插行（status/latency），流末 UPDATE 回填用量。
-    // 客户端读完整流时回填可能还差几毫秒 → 轮询等
-    core::data::SqliteDb& db = env.db.handle();
-    auto usageWritten = [&db]() {
-        auto prep = db.prepare("SELECT COUNT(*) AS n FROM claude_call_logs "
-                               "WHERE output_tokens IS NOT NULL");
-        if (prep.isFail()) return false;
-        auto rows = prep.value().fetchAll();
-        if (rows.isFail() || rows.value().empty()) return false;
-        return std::get<int64_t>(rows.value()[0].values[0]) == 1;
-    };
-    DOCTEST_CHECK(waitUntil(usageWritten, 5000));
-
-    auto prep = db.prepare(
-        "SELECT status_code, input_tokens, output_tokens, cache_read_tokens, "
-        "cache_write_tokens, first_event_ms FROM claude_call_logs");
-    DOCTEST_REQUIRE(prep.isOk());
-    auto rows = prep.value().fetchAll();
-    DOCTEST_REQUIRE(rows.isOk());
-    DOCTEST_REQUIRE_EQ(rows.value().size(), 1u);
-    const auto& row = rows.value()[0];
-    DOCTEST_CHECK_EQ(row.getInt64("status_code").value(), 200);
-    DOCTEST_CHECK_EQ(row.getInt64("input_tokens").value(), 10);
-    DOCTEST_CHECK_EQ(row.getInt64("output_tokens").value(), 40);
-    DOCTEST_CHECK_EQ(row.getInt64("cache_read_tokens").value(), 2);
-    DOCTEST_CHECK_EQ(row.getInt64("cache_write_tokens").value(), 5);
-    DOCTEST_CHECK(row.getInt64("first_event_ms").value() >= 0);
-
-    proxy.stop();
-    upstream.stop();
-    core::proxy_stats::resetForTest();
-    return true;
-})
-
-REGISTER_TEST(streaming_call_log_usage_absent,
-              "streaming: 流里没有 usage → token 列写 NULL（与 0 区分）", {
-    core::proxy_stats::resetForTest();
-    MockSseServer upstream;
-    DOCTEST_REQUIRE(upstream.start());
-
-    // 只有正文事件、没有 usage（上游不给 usage / 非 Anthropic 方言）
-    MockScript script;
-    script.chunks = {sseChunk(0), "data: [DONE]\n\n"};
-    upstream.onMessages(script);
-
-    StreamEnv env;
-    test_support::ScopedAppDatabase appDb(env.db.handle());
-    // 同 streaming_call_log_usage_columns：先迁移建表，再补 profile 行满足外键
-    DOCTEST_REQUIRE(
-        env.db.handle().applySchema(core::schema::kSql).isOk());
-    DOCTEST_REQUIRE(env.db.handle().exec(
-        "INSERT INTO claude_profiles (id, name, base_url, api_key_hint, "
-        "api_key_check, model, is_active, created_at, updated_at) "
-        "VALUES (1, 'streaming-no-usage', 'http://127.0.0.1', 'sk-***', 'x', "
-        "'claude-sonnet-4-5', 1, 0, 0)")
-                        .isOk());
-
-    platform::http::Server proxy("127.0.0.1", 0);
-    module::claude::ProxyRouter router(env.svc(), proxy);
-    const std::string upstreamBase = upstream.baseUrl();
-    router.setProfileProvider([upstreamBase]() {
-        return core::Result<Profile>::ok(makeProfile(upstreamBase));
-    });
-    router.registerRoutes();
-    DOCTEST_REQUIRE(proxy.start());
-
-    httplib::Client cli("127.0.0.1", proxy.actualPort());
-    cli.set_read_timeout(15, 0);
-    auto res = clientPostStream(cli, "/v1/messages",
-                                R"({"model":"claude-sonnet-4-5","stream":true})",
-                                false);
-    DOCTEST_CHECK(res.ok);
-    DOCTEST_CHECK_EQ(res.status, 200);
-
-    // 回填本身仍要发生（首事件毫秒有值）——否则下面的 NULL 断言分不清
-    // 「写成了 NULL」与「还没回填」
-    core::data::SqliteDb& db = env.db.handle();
-    auto backfilled = [&db]() {
-        auto prep = db.prepare("SELECT COUNT(*) AS n FROM claude_call_logs "
-                               "WHERE first_event_ms IS NOT NULL");
-        if (prep.isFail()) return false;
-        auto rows = prep.value().fetchAll();
-        if (rows.isFail() || rows.value().empty()) return false;
-        return std::get<int64_t>(rows.value()[0].values[0]) == 1;
-    };
-    DOCTEST_CHECK(waitUntil(backfilled, 5000));
-
-    auto prep = db.prepare(
-        "SELECT input_tokens, output_tokens, cache_read_tokens, "
-        "cache_write_tokens, first_event_ms FROM claude_call_logs");
-    DOCTEST_REQUIRE(prep.isOk());
-    auto rows = prep.value().fetchAll();
-    DOCTEST_REQUIRE(rows.isOk());
-    DOCTEST_REQUIRE_EQ(rows.value().size(), 1u);
-    const auto& row = rows.value()[0];
-    DOCTEST_CHECK(row.isNull("input_tokens"));
-    DOCTEST_CHECK(row.isNull("output_tokens"));
-    DOCTEST_CHECK(row.isNull("cache_read_tokens"));
-    DOCTEST_CHECK(row.isNull("cache_write_tokens"));
-    DOCTEST_CHECK(row.getInt64("first_event_ms").value() >= 0);
-
-    proxy.stop();
-    upstream.stop();
-    core::proxy_stats::resetForTest();
     return true;
 })
 

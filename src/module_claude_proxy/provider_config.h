@@ -117,66 +117,20 @@ struct EnvAliasMapping {
 
 EnvAliasMapping applyEnvAliases(const std::map<std::string, std::string>& env);
 
-// cc-switch/settings.json 粘贴导入：输入原文（整段 settings.json 取其 env 子对象，或裸 env 对象），纯函数无 IO
+// settings.json env 反向同步的数据模型（纯函数无 IO）
 struct ImportedConfig {
     std::string baseUrl;    // ANTHROPIC_BASE_URL（未出现 = 空串，不覆盖表单）
     std::string authToken;  // ANTHROPIC_AUTH_TOKEN / ANTHROPIC_API_KEY（同现取 AUTH_TOKEN 并给 warning）
     ModelsConfig models;    // *_MODEL / *_MODEL_NAME / SUBAGENT → 槽位
     std::map<std::string, std::string> extraEnv;  // 其余键（别名归一后）
     std::vector<std::string> aliasMappedKeys;     // 「已映射为官方变量」提示
-    std::vector<std::string> unrecognizedKeys;    // 警告角标（透传，行为自负）
+    std::vector<std::string> unrecognizedKeys;    // 未识别键（原样透传）
     std::vector<std::string> warnings;            // 其他警告（API_KEY/AUTH_TOKEN 同现等）
-    int recognizedSlots = 0;  // 预览用：model 非空的槽位数
-    // 粘贴里两个键名的证据：'api_key' / 'bearer' / 'both'（同现）/ ""（都没出现 = 无证据，UI 不覆盖表单现值）
-    std::string authFieldFromEnv;
-    // 反向同步专用：命中守卫而跳过的键名——「不写也不清」。mergeReverseSyncEnv
-    // 靠它区分「键缺席（清空）」与「跳过（保持 profile 原值）」；parseImportedEnv 恒为空
+    // 命中守卫而跳过的键名——「不写也不清」。mergeReverseSyncEnv
+    // 靠它区分「键缺席（清空）」与「跳过（保持 profile 原值）」
     std::vector<std::string> skippedKeys;
 };
 
-// 校验：env 值必须字符串（数字/布尔拒绝）；键名 ^[A-Z][A-Z0-9_]*$；值 ≤4KB/键；键数 ≤64；
-// 整体文本 ≤ kMaxImportTextBytes（1MB）。非法输入整体 fail，不部分导入。
-core::Result<ImportedConfig> parseImportedEnv(const std::string& text);
-
-// 粘贴导入整体文本上限（1MB）：挡在 JSON 解析之前，避免超大输入进入深拷贝链
-//（platform::json 按值 = 整树深拷贝）。超限整体 fail（文案含上限）。
-inline constexpr size_t kMaxImportTextBytes = 1u * 1024u * 1024u;
-
-
-// 整体文本上限：同 kMaxImportTextBytes（platform::json 按值深拷贝，超大输入挡在解析前）
-inline constexpr size_t kMaxExtraSettingsBytes = 1u * 1024u * 1024u;
-
-// 生效 JSON：片段逐键叠加在 profile JSON 之上（片段赢）；解绑后同名键回落 profile。
-// 任一侧 "env" 键跳过并记 warnings；一侧非法/超限/非对象按空处理，另一侧照用；两侧空→空串。输出 pretty 字典序。
-std::string effectiveExtraSettingsJson(
-    const std::string& profileJson,
-    const std::string& fragmentJson,
-    std::vector<std::string>* warningsOut = nullptr);
-
-// 生效 JSON 本轮将写入的顶层键（best-effort）：非法/超限/非对象→空集；"env" 不在列（它永不写入）
-std::vector<std::string> extraSettingsTopLevelKeys(
-    const std::string& extraSettingsJson);
-
-// settings.json 原文 → 高级设置 JSON（除 env 外全部顶层属性，pretty）。
-// parseImportedEnv 只取 env，非 env 顶层属性必须在此独立抽取。空串/超限/解析失败/非对象 → 空串。
-std::string nonEnvTopLevelJson(const std::string& settingsDocText);
-
-struct ExtraSettingsApply {
-    std::vector<std::string> writtenKeys;   // 本轮写入的非 env 顶层键（排序去重）
-    bool modelSuppressed = false;           // 顶层 "model" 触发 ANTHROPIC_MODEL 抑制
-    std::vector<std::string> warnings;      // "env" 键跳过 / 解析失败等（调用方记账）
-};
-
-// 并入 settings 文档：对生效 JSON 每个顶层键 K，K=="env" 跳过+WARN，其余 root[K]=值。
-// "model" 为非空串时同时从 root["env"] 移除 ANTHROPIC_MODEL（抑制唯一落点）；
-// 非法/超限/非对象 → warnings 记录且零写入。
-ExtraSettingsApply applyExtraSettingsToSettingsDoc(
-    platform::json::JsonObject& root,
-    const std::string& extraSettingsJson);
-
-// 应用/保存校验（UI 与服务共用）：空串 OK（= 未配置）；文本 ≤ kMaxExtraSettingsBytes；必须解析成功；
-// 顶层必须是对象且不含 "env"。失败带中文错误（表单 formError_ / 片段弹窗红字直出）。
-core::Result<void> validateExtraSettingsJson(const std::string& text);
 
 // 接管 env 生成：输出写入 settings.json 的 env 块（纯函数）：BASE_URL = 127.0.0.1:<port>、
 // token = 占位符、槽位键（空槽位跳过）、extra_env 归一平铺被压过 ----
@@ -186,10 +140,9 @@ core::Result<void> validateExtraSettingsJson(const std::string& text);
 inline constexpr const char* kProxyAuthPlaceholder = "PROXY_MANAGED";
 
 // 生效 env 的来源分层，只为详情面板标注出处，不参与合并决策（合并顺序只在
-// buildProxyEnv 一处）。优先级（高→低）：托管键 > 片段 > profile 自身
+// buildProxyEnv 一处）。优先级（高→低）：托管键 > profile 自身
 enum class EnvSource {
     Profile = 0,  // profile 自身 extra_env（含别名归一）
-    Shared,       // 该 profile 所绑共享配置片段
     Managed,      // DevDesk 托管键（BASE_URL / 占位 token / 模型槽位表派生键）
 };
 
@@ -253,11 +206,5 @@ ReverseSyncMerge mergeReverseSyncEnv(const ImportedConfig& cfg,
 // 100 次仍冲突 → 空串（调用方按命名失败处理）
 std::string makeCopyName(const std::string& baseName,
                          const std::vector<std::string>& existingNames);
-
-// failover 换家判据
-// 纯函数（缓冲 / 流式两路共用；输入 send 失败无响应 = 0；只判单次，次数调用方管）。
-// 换：statusCode==0、401/403、429、5xx、其余 4xx；不换：400/405/406/413/414/
-// 415/422/501（请求自身非法）；errorKind=="no_active_profile" 不换
-bool shouldFailoverTo(int statusCode, const std::string& errorKind);
 
 } // namespace module::claude

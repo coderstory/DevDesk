@@ -97,12 +97,9 @@ add_executable(devdesk_tests
     test_modules/test_claude_service.cpp
     test_modules/test_credential_storage.cpp
     test_modules/test_claude_tools.cpp
-    test_modules/test_ccswitch_import.cpp
     test_modules/test_provider_config.cpp
     test_modules/test_settings_sync.cpp
     test_modules/test_claude_ui.cpp
-    test_modules/test_claude_ccswitch_ui.cpp
-    test_modules/test_claude_calls_latency.cpp
     test_modules/test_proxy_router.cpp
     test_modules/test_streaming_proxy.cpp
     test_modules/test_streaming_stress.cpp
@@ -275,10 +272,11 @@ foreach(_probe_source ${_devdesk_probe_sources})
     get_filename_component(_probe_name "${_probe_source}" NAME_WE)
     # module_toggle_bridge.cpp：settings 模块引用 app::toggle 桥符号，probe
     # 链接集（module_* 库）里没有 app_assembly.cpp，缝必须单独编进来
-    # module_toggle_sidebar_probe：活门控真窗口 probe 还要真 app::compose +
-    # 真 dispatchModuleToggle → 额外编译 app_sidebar.cpp + app_assembly.cpp
-    #（其余 probe 维持最小链接面，不拖 app 层）
+    # module_toggle_sidebar_probe / wallpaper_probe：活门控真窗口 probe 还要真
+    # app::compose + 真 dispatchModuleToggle → 额外编译 app_sidebar.cpp +
+    # app_assembly.cpp（其余 probe 维持最小链接面，不拖 app 层）
     if(_probe_name STREQUAL "module_toggle_sidebar_probe" OR
+       _probe_name STREQUAL "wallpaper_probe" OR
        _probe_name STREQUAL "h13_fluid_background_probe" OR
        _probe_name STREQUAL "uat62_page_shots_probe")
         add_executable(${_probe_name} "${_probe_source}"
@@ -294,6 +292,7 @@ foreach(_probe_source ${_devdesk_probe_sources})
         ${CMAKE_SOURCE_DIR}/tests
         ${CMAKE_SOURCE_DIR}/src/module_claude_proxy
         ${CMAKE_SOURCE_DIR}/src/module_settings
+        ${CMAKE_SOURCE_DIR}/src/module_wallpaper
     )
     target_link_libraries(${_probe_name} PRIVATE
         devdesk_module_home

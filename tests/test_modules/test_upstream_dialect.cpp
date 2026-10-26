@@ -2,7 +2,7 @@
 // 上游方言（UpstreamDialect）单元测试：[1M] 后缀剥离 / baseUrl 分派 / 请求头方言化 /
 // 请求体改写 / 流式路径端到端。
 // 跨文件前提：
-//   - 方言来自 baseUrl 的 host 推断，也可用 profile 的 dialectOverride 显式钉住；
+//   - 方言来自 baseUrl 的 host 推断；
 //     未知或空值一律回落 host 推断，不静默换方言。
 //   - applyHeaders 只做「覆写 + 清除大小写变体」，非方言所有的头原样透传。
 #include "doctest.h"
@@ -102,94 +102,6 @@ REGISTER_TEST(dialect_for_base_url,
     // 只有 opencodeZen 剥模型标记
     DOCTEST_CHECK_FALSE(UpstreamDialect::anthropicDefault().stripModelSuffix());
     DOCTEST_CHECK_TRUE(UpstreamDialect::opencodeZen().stripModelSuffix());
-    return true;
-})
-
-// 自建网关 / 内网镜像的 host 后缀推断不出正确方言（zen 镜像被判成 opencodeZen，
-// 或内网反代被当成默认 → 模型名 [1M] 不剥被上游 400），profile 侧可显式钉住。
-REGISTER_TEST(dialect_for_base_url_override,
-              "upstream_dialect: forBaseUrl 覆盖参数优先于 host 推断", {
-    using module::claude::UpstreamDialect;
-    DOCTEST_CHECK(UpstreamDialect::forBaseUrl("https://api.anthropic.com",
-                                              "opencode_zen").kind ==
-                  UpstreamDialect::Kind::OpencodeZen);
-    DOCTEST_CHECK(UpstreamDialect::forBaseUrl(
-                      "https://codingxrui.geely-test.com/bailian/anthropic",
-                      "opencode_zen").kind ==
-                  UpstreamDialect::Kind::OpencodeZen);
-    // 反向：host 像 opencode.ai（镜像 / 反代）但钉成通用方言
-    DOCTEST_CHECK(UpstreamDialect::forBaseUrl("https://opencode.ai/zen/go",
-                                              "anthropic_default").kind ==
-                  UpstreamDialect::Kind::AnthropicDefault);
-    DOCTEST_CHECK(UpstreamDialect::forBaseUrl("https://zen.opencode.ai/v1",
-                                              "anthropic_default").kind ==
-                  UpstreamDialect::Kind::AnthropicDefault);
-
-    // 覆盖后的**行为**随方言走（方言的价值在这两条上）
-    const UpstreamDialect forcedZen =
-        UpstreamDialect::forBaseUrl("https://api.anthropic.com", "opencode_zen");
-    DOCTEST_CHECK_TRUE(forcedZen.stripModelSuffix());
-    HeaderMap hz;
-    forcedZen.applyHeaders(hz, "sk-x", module::claude::AuthField::Both);
-    DOCTEST_CHECK_EQ(countCI(hz, "x-opencode-session"), 1);
-    std::string bodyZen = R"({"model":"deepseek-v4-flash[1M]"})";
-    DOCTEST_CHECK_TRUE(forcedZen.normalizeBody(bodyZen));
-    DOCTEST_CHECK_EQ(bodyZen, std::string(R"({"model":"deepseek-v4-flash"})"));
-
-    const UpstreamDialect forcedDefault =
-        UpstreamDialect::forBaseUrl("https://opencode.ai/zen/go",
-                                    "anthropic_default");
-    DOCTEST_CHECK_FALSE(forcedDefault.stripModelSuffix());
-    HeaderMap hd;
-    forcedDefault.applyHeaders(hd, "sk-x", module::claude::AuthField::Both);
-    DOCTEST_CHECK_EQ(countCI(hd, "x-opencode-session"), 0);
-    std::string bodyDef = R"({"model":"deepseek-v4-flash[1M]"})";
-    DOCTEST_CHECK_FALSE(forcedDefault.normalizeBody(bodyDef));
-    DOCTEST_CHECK_EQ(bodyDef, std::string(R"({"model":"deepseek-v4-flash[1M]"})"));
-
-    // 空串 = 未覆盖 → 与单参数调用逐项一致
-    DOCTEST_CHECK(UpstreamDialect::forBaseUrl("https://opencode.ai/zen/go", "").kind ==
-                  UpstreamDialect::forBaseUrl("https://opencode.ai/zen/go").kind);
-    DOCTEST_CHECK(UpstreamDialect::forBaseUrl("https://api.anthropic.com", "").kind ==
-                  UpstreamDialect::forBaseUrl("https://api.anthropic.com").kind);
-    DOCTEST_CHECK(UpstreamDialect::forBaseUrl("https://zen.opencode.ai/v1", "").kind ==
-                  UpstreamDialect::Kind::OpencodeZen);
-    // 未知 / 拼写错误 = 未覆盖（回落到 host 推断，不是静默换方言）
-    DOCTEST_CHECK(UpstreamDialect::forBaseUrl("https://zen.opencode.ai/v1",
-                                              "Opencode_Zen").kind ==
-                  UpstreamDialect::Kind::OpencodeZen);
-    DOCTEST_CHECK(UpstreamDialect::forBaseUrl("https://api.anthropic.com",
-                                              "opencode-zen").kind ==
-                  UpstreamDialect::Kind::AnthropicDefault);
-    DOCTEST_CHECK(UpstreamDialect::forBaseUrl("", "opencode_zen").kind ==
-                  UpstreamDialect::Kind::OpencodeZen);   // 覆盖不依赖 baseUrl
-    return true;
-})
-
-// 值域映射（写侧规范化 / 读侧兜底两处都用它，与 forBaseUrl 覆盖互为两面）
-
-REGISTER_TEST(dialect_kind_text_mapping,
-              "upstream_dialect: dialectKindFromText/ToText 值域", {
-    using module::claude::UpstreamDialect;
-    using module::claude::dialectKindFromText;
-    using module::claude::dialectKindToText;
-
-    const auto def = dialectKindFromText("anthropic_default");
-    const auto zen = dialectKindFromText("opencode_zen");
-    DOCTEST_REQUIRE(def.has_value());
-    DOCTEST_REQUIRE(zen.has_value());
-    DOCTEST_CHECK(*def == UpstreamDialect::Kind::AnthropicDefault);
-    DOCTEST_CHECK(*zen == UpstreamDialect::Kind::OpencodeZen);
-    // 未覆盖 / 未知 → nullopt（调用方回落 host 推断）
-    DOCTEST_CHECK_FALSE(dialectKindFromText("").has_value());
-    DOCTEST_CHECK_FALSE(dialectKindFromText("zen").has_value());
-    DOCTEST_CHECK_FALSE(dialectKindFromText("opencodeZen").has_value());
-    DOCTEST_CHECK_FALSE(dialectKindFromText(" anthropic_default").has_value());
-    // 反向：Kind → 规范文本（写侧落库值）
-    DOCTEST_CHECK_EQ(std::string(dialectKindToText(UpstreamDialect::Kind::AnthropicDefault)),
-                     std::string("anthropic_default"));
-    DOCTEST_CHECK_EQ(std::string(dialectKindToText(UpstreamDialect::Kind::OpencodeZen)),
-                     std::string("opencode_zen"));
     return true;
 })
 

@@ -4,7 +4,6 @@
 #include "provider_config.h"
 
 #include <algorithm>
-#include <optional>
 #include <utility>
 
 #include "env_var_hints.h"
@@ -42,13 +41,6 @@ std::string invertedBoolValue(const std::string& v) {
         return "1";
     }
     return "0";
-}
-
-bool isBlankText(const std::string& text) {
-    for (const char c : text) {
-        if (c != ' ' && c != '\t' && c != '\r' && c != '\n') return false;
-    }
-    return true;
 }
 
 } // namespace
@@ -212,213 +204,6 @@ core::Result<std::map<std::string, std::string>> parseExtraEnv(
     return core::Result<std::map<std::string, std::string>>::ok(std::move(out));
 }
 
-// 高级设置 JSON：生效合并 / 键枚举 / 文档并入 / 校验
-
-namespace {
-
-// 生效 JSON 的单侧解析（容错）：空/空白 → 未配置；超限/失败/非对象 →
-// 警告 + 按未配置处理。side = 警告文案里的来源名
-std::optional<platform::json::JsonObject> parseExtraSettingsSide(
-    const std::string& text, const char* side,
-    std::vector<std::string>* warnings) {
-    if (isBlankText(text)) return std::nullopt;
-    if (text.size() > kMaxExtraSettingsBytes) {
-        if (warnings != nullptr) {
-            warnings->push_back(std::string(side) +
-                "高级设置 JSON 超过 1MB 上限，按未配置处理");
-        }
-        return std::nullopt;
-    }
-    auto parsed = platform::json::parse(text);
-    if (parsed.isFail()) {
-        if (warnings != nullptr) {
-            warnings->push_back(std::string(side) +
-                "高级设置 JSON 解析失败，按未配置处理: " + parsed.errorMessage());
-        }
-        return std::nullopt;
-    }
-    if (!parsed.value().isObject()) {
-        if (warnings != nullptr) {
-            warnings->push_back(std::string(side) +
-                "高级设置 JSON 顶层必须是 JSON 对象，按未配置处理");
-        }
-        return std::nullopt;
-    }
-    return parsed.value().asObject();
-}
-
-// "env" 顶层键的读侧兜底警告（防 DB 直写等非 UI 路径绕过校验后静默丢弃）
-void warnEnvKeySkipped(const char* side, std::vector<std::string>* warnings) {
-    if (warnings != nullptr) {
-        warnings->push_back(std::string(side) +
-            "高级设置 JSON 含顶层 \"env\" 键，已跳过（env 请用模型映射 / "
-            "高级 env 页配置）");
-    }
-}
-
-} // namespace
-
-std::string effectiveExtraSettingsJson(const std::string& profileJson,
-                                       const std::string& fragmentJson,
-                                       std::vector<std::string>* warningsOut) {
-    if (warningsOut != nullptr) warningsOut->clear();
-    auto profileObj = parseExtraSettingsSide(profileJson, "Profile 的", warningsOut);
-    auto fragmentObj = parseExtraSettingsSide(fragmentJson, "片段的", warningsOut);
-    if (!profileObj && !fragmentObj) return {};   // 双空 → 空串（含双未配置）
-
-    // 逐键叠加：profile 先入、片段后入（后写者赢）；片段值从不写进 profile 行
-    platform::json::JsonObject merged;
-    auto addSide = [&](const std::optional<platform::json::JsonObject>& obj,
-                       const char* side) {
-        if (!obj) return;
-        for (const auto& k : obj->keys()) {
-            if (k == "env") {
-                warnEnvKeySkipped(side, warningsOut);
-                continue;
-            }
-            merged.set(k, obj->get(k));
-        }
-    };
-    addSide(profileObj, "Profile 的");
-    addSide(fragmentObj, "片段的");
-
-    if (merged.keys().empty()) return {};
-    // pretty 规范形输出（键序 = std::map 字典序）
-    auto text = platform::json::stringify(
-        platform::json::JsonValue(std::move(merged)), /*pretty=*/true);
-    if (text.isFail()) return {};   // 序列化失败理论不可达；按空处理
-    return text.value();
-}
-
-// settings.json 原文 → 非 env 顶层属性 JSON（pretty）：输入上限同 kMaxImportTextBytes。
-std::string nonEnvTopLevelJson(const std::string& settingsDocText) {
-    if (settingsDocText.empty() ||
-        settingsDocText.size() > kMaxImportTextBytes) {
-        return {};
-    }
-    auto parsed = platform::json::parse(settingsDocText);
-    if (parsed.isFail() || !parsed.value().isObject()) return {};
-    auto obj = parsed.value().asObject();
-    platform::json::JsonObject out;
-    for (const auto& k : obj.keys()) {
-        if (k == "env") continue;   // env 属 env 域（基础/槽位/env 页）
-        out.set(k, obj.get(k));
-    }
-    if (out.keys().empty()) return {};
-    auto text = platform::json::stringify(
-        platform::json::JsonValue(std::move(out)), /*pretty=*/true);
-    if (text.isFail()) return {};
-    if (text.value().size() > kMaxExtraSettingsBytes) return {};   // 超限 = 未配置
-    return text.value();
-}
-
-std::vector<std::string> extraSettingsTopLevelKeys(
-    const std::string& extraSettingsJson) {
-    std::vector<std::string> out;
-    // best-effort 枚举：解析失败警告由 applyExtraSettingsToSettingsDoc 统一发，防双报
-    if (isBlankText(extraSettingsJson) ||
-        extraSettingsJson.size() > kMaxExtraSettingsBytes) {
-        return out;
-    }
-    auto parsed = platform::json::parse(extraSettingsJson);
-    if (parsed.isFail() || !parsed.value().isObject()) return out;
-    auto obj = parsed.value().asObject();
-    for (const auto& k : obj.keys()) {
-        if (k == "env") continue;   // 永不写入
-        out.push_back(k);
-    }
-    return out;
-}
-
-ExtraSettingsApply applyExtraSettingsToSettingsDoc(
-    platform::json::JsonObject& root, const std::string& extraSettingsJson) {
-    ExtraSettingsApply out;
-    if (isBlankText(extraSettingsJson)) return out;   // 空 = 无 JSON，零写入
-    if (extraSettingsJson.size() > kMaxExtraSettingsBytes) {
-        out.warnings.push_back(
-            "高级设置 JSON 超过 1MB 上限，本轮忽略（不并入 settings.json）");
-        return out;
-    }
-    auto parsed = platform::json::parse(extraSettingsJson);
-    if (parsed.isFail()) {
-        out.warnings.push_back("高级设置 JSON 解析失败，本轮忽略: " +
-                               parsed.errorMessage());
-        return out;
-    }
-    if (!parsed.value().isObject()) {
-        out.warnings.push_back("高级设置 JSON 顶层必须是 JSON 对象，本轮忽略");
-        return out;
-    }
-    auto obj = parsed.value().asObject();
-
-    // 逐键并入：非 env 键赢过 live settings.json 既有同名键
-    //（被覆盖旧值已在 sidecar 快照中，还原无损）
-    bool writeModel = false;
-    for (const auto& k : obj.keys()) {
-        if (k == "env") {
-            warnEnvKeySkipped("生效", &out.warnings);
-            continue;
-        }
-        root.set(k, obj.get(k));
-        out.writtenKeys.push_back(k);
-        if (k == "model") {
-            const auto mv = obj.get(k);
-            if (mv.isString() && !mv.asString().empty()) writeModel = true;
-        }
-    }
-
-    // 模型键抑制：顶层 "model" 非空字符串 → 从 root.env 移除 ANTHROPIC_MODEL（def 槽位值失效）；本轮无 "model" 时由陈旧删除逻辑撤走
-    if (writeModel) {
-        out.modelSuppressed = true;
-        if (root.has("env") && root.get("env").isObject()) {
-            auto envObj = root.get("env").asObject();
-            const std::string defKey = modelSlotDefEnvKey();
-            if (!defKey.empty() && envObj.has(defKey)) {
-                platform::json::JsonObject rebuilt;
-                for (const auto& k : envObj.keys()) {
-                    if (k == defKey) continue;
-                    rebuilt.set(k, envObj.get(k));
-                }
-                root.set("env", platform::json::JsonValue(std::move(rebuilt)));
-            }
-        }
-        // root.env 缺失 / 非对象（调用方未按前置准备）→ 只标记不抑制（不炸）
-    }
-
-    std::sort(out.writtenKeys.begin(), out.writtenKeys.end());
-    out.writtenKeys.erase(
-        std::unique(out.writtenKeys.begin(), out.writtenKeys.end()),
-        out.writtenKeys.end());
-    return out;
-}
-
-core::Result<void> validateExtraSettingsJson(const std::string& text) {
-    if (isBlankText(text)) return core::Result<void>::ok();   // 空串 = 未配置
-    if (text.size() > kMaxExtraSettingsBytes) {
-        return core::Result<void>::fail(
-            core::ErrorCode::ValidationError,
-            "高级设置 JSON 超过 1MB 上限: " + std::to_string(text.size()) +
-                " 字节");
-    }
-    auto parsed = platform::json::parse(text);
-    if (parsed.isFail()) {
-        return core::Result<void>::fail(parsed.errorCode(),
-            "高级设置 JSON 解析失败: " + parsed.errorMessage());
-    }
-    if (!parsed.value().isObject()) {
-        return core::Result<void>::fail(core::ErrorCode::ValidationError,
-            "高级设置 JSON 顶层必须是 JSON 对象");
-    }
-    auto obj = parsed.value().asObject();
-    for (const auto& k : obj.keys()) {
-        if (k == "env") {
-            return core::Result<void>::fail(core::ErrorCode::ValidationError,
-                "高级设置 JSON 不能包含 env 键（env 请用模型映射 / 高级 env 页配置）");
-        }
-    }
-    return core::Result<void>::ok();
-}
-
 ModelsConfig effectiveModelsConfig(const std::string& modelsConfigJson) {
     ModelsConfig out;
     auto parsed = parseModelsConfig(modelsConfigJson);
@@ -467,135 +252,6 @@ const char* authFieldToText(AuthField field) {
     return "both";
 }
 
-core::Result<ImportedConfig> parseImportedEnv(const std::string& text) {
-    ImportedConfig out;
-    if (isBlankText(text)) {
-        return core::Result<ImportedConfig>::fail(
-            core::ErrorCode::ValidationError, "粘贴内容为空");
-    }
-
-    // 先于 parse 检查：超大输入不进 JSON 解析 / 深拷贝链
-    if (text.size() > kMaxImportTextBytes) {
-        return core::Result<ImportedConfig>::fail(
-            core::ErrorCode::ValidationError,
-            "导入文本超过 1MB 上限: " + std::to_string(text.size()) + " 字节");
-    }
-
-    auto parsed = platform::json::parse(text);
-    if (parsed.isFail()) {
-        return core::Result<ImportedConfig>::fail(parsed.errorCode(),
-                                                  parsed.errorMessage());
-    }
-    if (!parsed.value().isObject()) {
-        return core::Result<ImportedConfig>::fail(
-            core::ErrorCode::ValidationError,
-            "顶层必须是 JSON 对象（整段 settings.json 或裸 env 对象）");
-    }
-    auto obj = parsed.value().asObject();
-
-    // 两种形状：含 "env" 键 = 整段 settings.json（取 env 子对象），否则裸 env 对象
-    bool hasEnvKey = false;
-    for (const auto& k : obj.keys()) {
-        if (k == "env") { hasEnvKey = true; break; }
-    }
-    platform::json::JsonObject envObj;
-    if (hasEnvKey) {
-        auto envVal = obj.get("env");
-        if (!envVal.isObject()) {
-            return core::Result<ImportedConfig>::fail(
-                core::ErrorCode::ValidationError,
-                "settings.json 的 env 字段必须是 JSON 对象");
-        }
-        envObj = envVal.asObject();
-    } else {
-        envObj = obj;
-    }
-
-    if (envObj.keys().size() > 64) {
-        return core::Result<ImportedConfig>::fail(
-            core::ErrorCode::ValidationError,
-            "env 键数超过上限 64: " + std::to_string(envObj.keys().size()));
-    }
-
-    std::map<std::string, std::string> leftover;   // 非基础/槽位键 → extraEnv 候选
-    bool sawApiKey = false;
-    bool sawAuthToken = false;
-
-    for (const auto& key : envObj.keys()) {
-        // 键名格式不设限（表单侧红边框提示，不阻断）；仅保留空键防御
-        if (key.empty()) {
-            return core::Result<ImportedConfig>::fail(
-                core::ErrorCode::ValidationError, "env 键名为空");
-        }
-        auto val = envObj.get(key);
-        if (!val.isString()) {
-            return core::Result<ImportedConfig>::fail(
-                core::ErrorCode::ValidationError,
-                "env 值必须是字符串: " + key);
-        }
-        const std::string v = val.asString();
-        if (v.size() > 4096) {
-            return core::Result<ImportedConfig>::fail(
-                core::ErrorCode::ValidationError,
-                "值超过 4KB 上限: " + key);
-        }
-
-        if (key == "ANTHROPIC_BASE_URL") {
-            out.baseUrl = v;
-            continue;
-        }
-        if (key == "ANTHROPIC_AUTH_TOKEN") {
-            sawAuthToken = true;
-            out.authToken = v;   // 同现时 AUTH_TOKEN 优先（API_KEY 不覆盖）
-            continue;
-        }
-        if (key == "ANTHROPIC_API_KEY") {
-            sawApiKey = true;
-            if (!sawAuthToken) out.authToken = v;
-            continue;
-        }
-
-        bool matchedSlot = false;
-        for (const auto& m : modelSlotTable()) {
-            if (key == m.envKey) {
-                (out.models.*m.slot).model = v;
-                matchedSlot = true;
-                break;
-            }
-            if (m.nameKey != nullptr && key == m.nameKey) {
-                (out.models.*m.slot).name = v;
-                matchedSlot = true;
-                break;
-            }
-        }
-        if (matchedSlot) continue;
-        leftover[key] = v;
-    }
-
-    if (sawApiKey && sawAuthToken) {
-        out.warnings.push_back(
-            "同时含 ANTHROPIC_API_KEY 与 ANTHROPIC_AUTH_TOKEN，已采用 AUTH_TOKEN");
-    }
-
-    // 认证字段证据：键名 = 该配置原本以哪种形态发送且可用
-    if (sawApiKey && sawAuthToken) {
-        out.authFieldFromEnv = "both";
-    } else if (sawApiKey) {
-        out.authFieldFromEnv = "api_key";
-    } else if (sawAuthToken) {
-        out.authFieldFromEnv = "bearer";
-    }
-
-    auto aliased = applyEnvAliases(leftover);
-    out.extraEnv = std::move(aliased.env);
-    out.aliasMappedKeys = std::move(aliased.aliasMappedKeys);
-    out.unrecognizedKeys = std::move(aliased.unrecognizedKeys);
-
-    for (const auto& m : modelSlotTable()) {
-        if (!(out.models.*m.slot).model.empty()) ++out.recognizedSlots;
-    }
-    return core::Result<ImportedConfig>::ok(std::move(out));
-}
 
 std::map<std::string, std::string> buildProxyEnv(
     const std::string& modelsConfigJson,
@@ -900,9 +556,6 @@ ReverseSyncParse parseEnvForReverseSync(
     out.cfg.aliasMappedKeys = std::move(aliased.aliasMappedKeys);
     out.cfg.unrecognizedKeys = std::move(aliased.unrecognizedKeys);
 
-    for (const auto& m : modelSlotTable()) {
-        if (!(out.cfg.models.*m.slot).model.empty()) ++out.cfg.recognizedSlots;
-    }
     std::sort(out.cfg.skippedKeys.begin(), out.cfg.skippedKeys.end());
     out.cfg.skippedKeys.erase(
         std::unique(out.cfg.skippedKeys.begin(), out.cfg.skippedKeys.end()),
@@ -983,29 +636,6 @@ std::string makeCopyName(const std::string& baseName,
         if (!containsKey(existingNames, candidate)) return candidate;
     }
     return {};  // 100 次仍冲突：调用方按命名失败处理
-}
-
-bool shouldFailoverTo(int statusCode, const std::string& errorKind) {
-    // DevDesk 自产 503 no_active_profile → 不换家（本地配置错误非上游故障；
-    // writeNoProfileError 转发前直接回，判定点理论收不到）
-    if (errorKind == "no_active_profile") return false;
-    // 传输失败（无响应头 / DNS / TLS / 连接 / 超时）
-    if (statusCode == 0) return true;
-    // 负列表：请求自身非法，换家同结果白烧一次请求
-    switch (statusCode) {
-        case 400:
-        case 405:
-        case 406:
-        case 413:
-        case 414:
-        case 415:
-        case 422:
-        case 501:
-            return false;
-        default:
-            // 401/403 / 429 / 5xx / 其余 4xx → 换；2xx/3xx 到不了判定点，保守不换
-            return statusCode >= 400 && statusCode < 600;
-    }
 }
 
 } // namespace module::claude

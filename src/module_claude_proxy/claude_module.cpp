@@ -5,11 +5,9 @@
 #include "claude_service.h"
 #include "claude_tools.h"
 #include "claude_ui_detail.h"
-#include "claude_ui_ccswitch.h"
 #include "claude_ui_form.h"
 #include "claude_ui_list.h"
 #include "claude_ui_logic.h"
-#include "claude_ui_logs.h"
 #include "claude_ui_state.h"
 #include "core/logging.h"
 #include "core/module_interface.h"
@@ -20,7 +18,6 @@
 #include "platform/folder_picker.h"
 #include "platform/json.h"
 #include "provider_config.h"
-#include "upstream_dialect.h"
 #include <core/platform/platform.h>   // core::platform::requestUiUpdate（唤醒主循环）
 #include <core/window/window_backend.h>
 #include <ui_kit/metrics.h>
@@ -69,7 +66,6 @@ public:
         const float padSide = t.sizes.spacingLarge * 2.0f;     // 32 —— S4.2 弹性内边距
         const float contentW = screen.width - padSide * 2.0f;   // 宽 = 窗口宽 − 双侧内边距
         const float contentH = screen.height - padTop;           // 高 = 窗口高 − 顶内边距（底贴底）
-        const std::time_t now = std::time(nullptr);   // 调用时间列「今天/昨天」判定
         const float headerH = ui_kit::kHeaderH;
         const float gap = t.sizes.spacingLarge;
         // S3.4 左栏固定 240px，右栏 flex 自适应。
@@ -97,16 +93,13 @@ public:
 
         // 错误态：加载失败不静默吞错显示假空态
         std::string profilesError;
-        std::string callsError;
 
-        // profiles/recent/active 走内存快照（脏标记触发重查，失败保持脏重试）
+        // profiles/active 走内存快照（脏标记触发重查，失败保持脏重试）
         std::vector<Profile> profiles;
-        std::vector<ClaudeService::CallLogEntry> recent;
         Profile activeProfile;
         bool hasActive = false;
         if (!svc) {
             profilesError = "服务未就绪（ClaudeService 未注册）";
-            callsError = "服务未就绪（ClaudeService 未注册）";
             state_.list.dataDirty_ = true;   // 服务未就绪查不了，保持脏等下帧
             // 防御分支：装配已落地，此处理论不可达
             if (!serviceNotReadyWarned_) {
@@ -117,11 +110,9 @@ public:
         } else {
             refreshDataCache(state_.list, svc);
             profiles = state_.list.cachedProfiles_;
-            recent = state_.list.cachedRecent_;
             activeProfile = state_.list.cachedActive_;
             hasActive = state_.list.cachedHasActive_;
             profilesError = state_.list.cachedProfilesError_;
-            callsError = state_.list.cachedCallsError_;
         }
 
         const Profile* shown = nullptr;
@@ -139,85 +130,6 @@ public:
         dv.tokenValue = shown
             ? (shown->apiKeyHint + " [本机库]")
             : std::string("(无激活 profile)");
-        dv.recent = &recent;
-        dv.callsError = callsError;
-        dv.now = now;
-        dv.sharedConfigs = &state_.list.cachedSharedConfigs_;
-        // 高级配置 pane：生效方言 + 备用 Profile 名（从列表快照解析），pane 内零服务调用
-        if (shown != nullptr) {
-            const UpstreamDialect effective = UpstreamDialect::forBaseUrl(
-                shown->baseUrl, shown->dialectOverride);
-            const char* displayName = dialectKindDisplayName(effective.kind);
-            if (dialectKindFromText(shown->dialectOverride)) {
-                dv.dialectText = std::string(displayName) + "（显式）";
-            } else {
-                dv.dialectText =
-                    std::string("自动（按站点推断）→ ") + displayName;
-            }
-            if (shown->fallbackProfileId == 0) {
-                dv.fallbackName = "无";
-            } else {
-                dv.fallbackName = "（已删除）";
-                for (const auto& p : profiles) {
-                    if (p.id == shown->fallbackProfileId) {
-                        dv.fallbackName = p.name;
-                        break;
-                    }
-                }
-            }
-        } else {
-            dv.dialectText = "-";
-            dv.fallbackName = "-";
-        }
-
-        // 生效 JSON = profile ⊕ 片段（片段赢）；解析失败经 note 区分。
-        if (shown != nullptr) {
-            std::string fragmentJson;
-            if (shown->sharedConfigId != 0) {
-                const SharedConfig* sc = findSharedById(
-                    state_.list.cachedSharedConfigs_, shown->sharedConfigId);
-                if (sc != nullptr) fragmentJson = sc->extraSettingsJson;
-            }
-            // keys 空且 warnings 非空 = 配置存在但失效，显示「解析失败」而非「未配置」
-            std::vector<std::string> effWarnings;
-            const std::string effective = effectiveExtraSettingsJson(
-                shown->extraSettingsJson, fragmentJson, &effWarnings);
-            if (effective.empty() && !effWarnings.empty()) {
-                dv.extraSettingsNote = "（JSON 解析失败，接管时将忽略）";
-            }
-            if (!effective.empty()) {
-                auto parsed = platform::json::parse(effective);
-                if (parsed.isOk() && parsed.value().isObject()) {
-                    auto effObj = parsed.value().asObject();
-                    std::vector<std::string> fragmentKeys;
-                    if (!fragmentJson.empty()) {
-                        auto fp = platform::json::parse(fragmentJson);
-                        if (fp.isOk() && fp.value().isObject()) {
-                            fragmentKeys = fp.value().asObject().keys();
-                        }
-                    }
-                    for (const auto& k : effObj.keys()) {
-                        const bool fromFragment =
-                            std::find(fragmentKeys.begin(), fragmentKeys.end(),
-                                      k) != fragmentKeys.end();
-                        dv.extraSettingsKeys.emplace_back(
-                            k, fromFragment
-                                   ? envSourceLabel(EnvSource::Shared)
-                                   : envSourceLabel(EnvSource::Profile));
-                        if (k == "model") {
-                            const auto mv = effObj.get(k);
-                            if (mv.isString() && !mv.asString().empty()) {
-                                dv.extraSettingsNote =
-                                    "「model」覆盖模型槽位（ANTHROPIC_MODEL 不写入）";
-                            }
-                        }
-                    }
-                } else {
-                    dv.extraSettingsNote =
-                        "（JSON 解析失败，接管时将忽略）";
-                }
-            }
-        }
 
         ui.column("claude.root")
             .size(screen.width, screen.height)
@@ -235,8 +147,6 @@ public:
                     .content([&] {
                         drawProfileListPanel(ui, leftW, bodyH, t, themeTokens,
                                              state_.list, profiles, profilesError,
-                                             state_.list.cachedSharedConfigs_,
-                                             state_.list.cachedSharedConfigsError_,
                                              listActions());
                         drawDetailPanel(ui, rightW, bodyH, leftW + gap, t,
                                         themeTokens, state_.detail, dv,
@@ -248,27 +158,9 @@ public:
 
         // 弹窗（画在最上层）
         drawProfileFormDialog(ui, screen, t, themeTokens, state_.form,
-                              state_.import, state_.list.cachedSharedConfigs_,
-                              state_.list.cachedProfiles_,
                               formHooks());
         drawDeleteConfirmDialog(ui, screen, t, themeTokens, state_.form,
                                 [this](int64_t id) { doDelete(id); });
-        drawCallsDialog(ui, screen, t, themeTokens, state_.logs, toastHook());
-        // 共享配置片段编辑弹窗 + 删除确认；绘制序 = Esc 序链（见 closeTopmostDialog）
-        drawSharedConfigDialog(ui, screen, t, themeTokens, state_.shared,
-                               sharedHooks());
-        drawSharedConfigDeleteConfirmDialog(
-            ui, screen, t, themeTokens, state_.shared,
-            [this](int64_t id, const std::string& name) {
-                doDeleteShared(id, name);
-            });
-        // 高级设置 JSON 全屏覆盖层（显式 z=1050，盖表单、让 toast）
-        drawJsonFullscreenOverlay(ui, screen, t, themeTokens, state_.form,
-                                  formHooks(),
-                                  state_.list.cachedSharedConfigs_);
-        // cc-switch 导入弹窗，绘制序即 Esc 序链最顶层
-        drawCcSwitchImportDialog(ui, screen, t, themeTokens,
-                                 state_.ccswitchImport, ccswitchImportHooks());
         drawSwitchConfirmDialog(ui, screen, t, themeTokens,
                                   state_.list);
         harvestTestResult();
@@ -291,7 +183,7 @@ public:
             return;
         }
         // 首次装载必须同步（onStart 非渲染路径）：compose 恒读快照，异步首刷会闪空帧
-        applyDataRefresh(state_.list, runDataRefresh(svc, true, true));
+        applyDataRefresh(state_.list, runDataRefresh(svc, true));
         // 旧凭据回填：老库的 Keychain 凭据迁进 api_key_encrypted（新库无 keychain_account
         // 列 → 零 Keychain 触达，启动路径其余环节不碰钥匙串）
         auto backfill = svc->backfillCredentialsFromKeychain();
@@ -305,7 +197,7 @@ public:
         } else {
             LOG_INFO("onStart: 代理未运行（默认不自动启动，等待用户手动启动）");
         }
-        // 智能体工具注册（claude.* 四工具）；注册失败只记日志
+        // 智能体工具注册（claude.* 三工具）；注册失败只记日志
         claudeTools_ = std::make_unique<ClaudeTools>(*svc);
         claudeTools_->registerAll();
     }
@@ -343,20 +235,16 @@ public:
             return false;
         }
         const bool anyDialogOpen =
-            state_.form.formOpen_ || state_.form.deleteConfirmOpen_ ||
-            state_.logs.callsDialogOpen_ ||
-            state_.shared.open_ || state_.shared.deleteConfirmOpen_ ||
-            state_.ccswitchImport.open_;
+            state_.form.formOpen_ || state_.form.deleteConfirmOpen_;
         if (key.key == eui::InputKey::N) {
             if (anyDialogOpen) return false;
-            openCreateForm(state_.form, state_.import);
+            openCreateForm(state_.form);
             LOG_INFO("快捷键 Ctrl+N：打开新建 Profile 表单");
             return true;
         }
         if (key.key == eui::InputKey::S) {
             if (!state_.form.formOpen_) return false;
-            submitForm(state_.form, formHooks(),
-                       state_.list.cachedSharedConfigs_);
+            submitForm(state_.form, formHooks());
             return true;
         }
         if (key.key == eui::InputKey::Enter) {
@@ -368,17 +256,8 @@ public:
     }
 
 private:
-    // Esc 关最上层弹窗（顺序 = 绘制序倒序）。全屏覆盖层最优先：Esc = 放弃修改
-    //（恢复落库值 + 退全屏），第二次才关表单
+    // Esc 关最上层弹窗（顺序 = 绘制序倒序）
     bool closeTopmostDialog() {
-        if (state_.form.formJsonFullscreen_ && state_.form.formOpen_) {
-            discardJsonFullscreenEdits(state_.form);
-            return true;
-        }
-        if (state_.ccswitchImport.open_) { state_.ccswitchImport.open_ = false; return true; }
-        if (state_.shared.deleteConfirmOpen_) { state_.shared.deleteConfirmOpen_ = false; return true; }
-        if (state_.shared.open_) { state_.shared.open_ = false; return true; }
-        if (state_.logs.callsDialogOpen_) { state_.logs.callsDialogOpen_ = false; return true; }
         if (state_.form.deleteConfirmOpen_) { state_.form.deleteConfirmOpen_ = false; return true; }
         if (state_.form.formOpen_) { state_.form.formOpen_ = false; return true; }
         return false;
@@ -387,16 +266,9 @@ private:
     // 每帧接线装配：回调显式绑到本模块操作/状态
     ProfileListActions listActions() {
         ProfileListActions a;
-        a.onNewProfile = [this] { openCreateForm(state_.form, state_.import); };
-        a.onImportCurrent = [this] {
-            startImportCurrentConfig(state_.form, state_.import, formHooks());
-        };
-        a.onImportCcSwitch = [this] {
-            openCcSwitchImportDialog(state_.ccswitchImport);
-        };
+        a.onNewProfile = [this] { openCreateForm(state_.form); };
         a.requestEdit = [this](const Profile& p) {
-            openEditForm(state_.form, state_.import, p,
-                         state_.list.cachedSharedConfigs_);
+            openEditForm(state_.form, p);
         };
         a.requestDuplicate = [this](int64_t id) { doDuplicate(id); };
         a.requestCopyConfig = [this](const Profile& p) { doCopyConfig(p); };
@@ -406,10 +278,6 @@ private:
             state_.form.deleteConfirmOpen_ = true;
         };
         a.requestSetActive = [this](int64_t id) { doSetActive(id); };
-        a.onNewShared = [this] { openSharedCreate(state_.shared); };
-        a.requestEditShared = [this](const SharedConfig& c) {
-            openSharedEdit(state_.shared, c);
-        };
         return a;
     }
 
@@ -426,33 +294,17 @@ private:
         return h;
     }
 
-    CcSwitchImportDialogHooks ccswitchImportHooks() {
-        CcSwitchImportDialogHooks h;
-        h.toast = toastHook();
-        h.markDataDirty = [this] { state_.list.dataDirty_ = true; };
-        return h;
-    }
-
-    SharedConfigSubmitHooks sharedHooks() {
-        SharedConfigSubmitHooks h;
-        h.toast = toastHook();
-        h.markDataDirty = [this] { state_.list.dataDirty_ = true; };
-        return h;
-    }
-
+    
     DetailActions detailActions() {
         DetailActions a;
         a.warn = [this](const std::string& title, const std::string& msg) {
             showToast(title, msg, true);
         };
-        a.enable = [this](int64_t id) { doSetActive(id); };
         a.test = [this](const Profile& p) { doTestConnection(p); };
         a.edit = [this](const Profile& p) {
-            openEditForm(state_.form, state_.import, p,
-                         state_.list.cachedSharedConfigs_);
+            openEditForm(state_.form, p);
         };
         a.run = [this](int64_t id) { doRun(id); };
-        a.openCalls = [this] { openCallsDialog(state_.logs); };
         a.setOneM = [this](int64_t id, std::size_t slotIdx, bool on) {
             doSetOneM(id, slotIdx, on);
         };
@@ -636,7 +488,7 @@ private:
             showToast("复制配置失败", "请先选择 Profile", true);
             return;
         }
-        // 坏 JSON 防「静默丢键」：各域试解析，失败先 LOG_WARN 再继续导出
+        // 坏 JSON 防「静默丢键」：试解析，失败先 LOG_WARN 再继续导出
         if (!p.extraEnvJson.empty()) {
             auto ee = parseExtraEnv(p.extraEnvJson);
             if (ee.isFail()) {
@@ -645,29 +497,8 @@ private:
                          ee.errorMessage());
             }
         }
-        if (!p.extraSettingsJson.empty() &&
-            validateExtraSettingsJson(p.extraSettingsJson).isFail()) {
-            LOG_WARN("复制配置: 高级设置 JSON 解析失败（profile id=" +
-                     std::to_string(p.id) + "），导出将缺失高级属性 - " +
-                     validateExtraSettingsJson(p.extraSettingsJson).errorMessage());
-        }
-        // 片段 JSON 走列表/详情同源快照解析
-        std::string fragmentJson;
-        if (p.sharedConfigId != 0) {
-            const SharedConfig* sc = findSharedById(
-                state_.list.cachedSharedConfigs_, p.sharedConfigId);
-            if (sc != nullptr) {
-                fragmentJson = sc->extraSettingsJson;
-                if (!fragmentJson.empty() &&
-                    validateExtraSettingsJson(fragmentJson).isFail()) {
-                    LOG_WARN("复制配置: 片段 JSON 解析失败（profile id=" +
-                             std::to_string(p.id) + "），导出将缺失片段叠加 - " +
-                             validateExtraSettingsJson(fragmentJson).errorMessage());
-                }
-            }
-        }
         const std::string json = buildProfileExportJson(
-            p, fragmentJson, /*keyPlaceholder=*/p.apiKeyHint);
+            p, /*keyPlaceholder=*/p.apiKeyHint);
         if (json.empty()) {
             showToast("复制配置失败", "配置序列化失败", true);
             return;
@@ -686,20 +517,15 @@ private:
         core::window::setClipboardText(json);
         // 无回读下的最低留痕：profile id + 导出键数
         size_t exportedKeys = 0;
-        size_t exportedNonEnvKeys = 0;
         if (auto doc = platform::json::parse(json);
             doc.isOk() && doc.value().isObject()) {
             const auto rootObj = doc.value().asObject();
             const auto envVal = rootObj.get("env");
             if (envVal.isObject()) exportedKeys = envVal.asObject().keys().size();
-            for (const auto& k : rootObj.keys()) {
-                if (k != "env") ++exportedNonEnvKeys;
-            }
         }
         LOG_WARN("复制配置: 已调用系统剪贴板写入（void API 无回读校验）" +
                  std::string("profile id=") + std::to_string(p.id) +
-                 " env 键数=" + std::to_string(exportedKeys) +
-                 " 高级属性键数=" + std::to_string(exportedNonEnvKeys));
+                 " env 键数=" + std::to_string(exportedKeys));
         showToast("已复制配置", kCopyConfigToastSubtitle, false);
     }
 
@@ -720,34 +546,6 @@ private:
                       false);
         } else {
             showToast("已删除", "Profile 已删除（含保存的 API Key）", false);
-        }
-    }
-
-    // 删除共享配置片段：服务层同事务解绑，这里只做计数 toast + 关弹窗
-    void doDeleteShared(int64_t id, const std::string& name) {
-        ClaudeService* svc = ClaudeService::global();
-        if (!svc) return;
-        state_.list.dataDirty_ = true;
-        size_t bound = 0;
-        auto list = svc->listProfiles();
-        if (list.isOk()) {
-            for (const auto& p : list.value()) {
-                if (p.sharedConfigId == id) ++bound;
-            }
-        }
-        auto r = svc->deleteSharedConfig(id);
-        if (r.isFail()) {
-            showToast("删除失败", r.errorMessage(), true);
-            return;
-        }
-        state_.shared.open_ = false;   // 编辑目标已删除，弹窗一并关闭
-        if (bound > 0) {
-            showToast("已删除",
-                      "片段「" + name + "」已删除，" +
-                          std::to_string(bound) + " 个 Profile 已解绑",
-                      false);
-        } else {
-            showToast("已删除", "片段「" + name + "」已删除", false);
         }
     }
 
@@ -834,7 +632,7 @@ private:
     bool testResultIsError_ = false;
     bool testResultStartProxy_ = false;
 
-    // 智能体工具集（claude.* 四工具）；onStart 注册 / onStop 先注销
+    // 智能体工具集（claude.* 三工具）；onStart 注册 / onStop 先注销
     std::unique_ptr<ClaudeTools> claudeTools_;
 
     // 重入幂等守卫

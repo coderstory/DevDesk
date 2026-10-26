@@ -49,7 +49,6 @@
 #include "module_claude_proxy/claude_service.h"
 #include "module_claude_proxy/claude_tools.h"
 #include "module_claude_proxy/profile_repository.h"
-#include "module_claude_proxy/ccswitch_source.h"
 #include "module_markdown/markdown_service.h"
 #include "module_markdown/markdown_tools.h"
 #include "module_markdown/md_note_git.h"
@@ -359,22 +358,21 @@ std::string scA2(Ctx& c) {
     return {};
 }
 
-// ── A3 claude 4 工具（对隔离库内的替身 profile 操作）──
+// ── A3 claude 3 工具（对隔离库内的替身 profile 操作）──
 std::string scA3(Ctx& c) {
     auto t = makeTask(*c.store, "live-a3",
                       "依次：1) claude.list_profiles 记下各 profile 的 id；"
-                      "2) claude.recent_logs 最多取 3 条；"
-                      "3) claude.test_connection 测 id 最大的那个 profile（预期会报错，属正常，继续）；"
-                      "4) claude.switch_profile 切到 id 最大的那个；"
-                      "5) claude.switch_profile 再切回 id 最小的那个。全部做完回复 DONE。",
+                      "2) claude.test_connection 测 id 最大的那个 profile（预期会报错，属正常，继续）；"
+                      "3) claude.switch_profile 切到 id 最大的那个；"
+                      "4) claude.switch_profile 再切回 id 最小的那个。全部做完回复 DONE。",
                       12, /*allowDestructive=*/true);
     auto out = c.run(t);
     if (out.status != "completed") {
         return "status=" + out.status + " error=" + out.error.substr(0, 160);
     }
     auto used = c.toolsUsed(out.runId);
-    const char* need[] = {"claude.list_profiles", "claude.recent_logs",
-                          "claude.test_connection", "claude.switch_profile"};
+    const char* need[] = {"claude.list_profiles", "claude.test_connection",
+                          "claude.switch_profile"};
     std::string missing;
     for (const char* n : need) {
         if (used.count(n) == 0) missing += std::string(n) + " ";
@@ -653,23 +651,6 @@ bool loadRealProfile(const fs::path& stageDir, SnapshotSource& src,
         auto key = repo.loadApiKey(active.value().id);
         std::string keyPlain;
         if (key.isOk()) keyPlain = key.value();
-        if (keyPlain.empty()) {
-            // DB 凭据列空 → 回落 cc-switch 只读源：
-            // matchCcSwitchProviderByBaseUrl 按 host+path 匹配，key 仅在内存过一手
-            const std::string ccId = module::claude::ccswitch::
-                matchCcSwitchProviderByBaseUrl(active.value().baseUrl);
-            if (!ccId.empty()) {
-                auto lst = module::claude::ccswitch::listCcSwitchProviders();
-                if (lst.status == module::claude::ccswitch::CcSwitchSourceStatus::Ok) {
-                    for (const auto& p : lst.providers) {
-                        if (p.id == ccId && !p.apiKey.empty()) {
-                            keyPlain = p.apiKey;
-                            break;
-                        }
-                    }
-                }
-            }
-        }
         if (keyPlain.empty() && std::getenv("DEVDESK_AGENT_LIVE_ALLOW_KEYCHAIN") != nullptr) {
             // 仍空 → 该 profile 的 key 可能在 macOS Keychain（存量形态）。读单条
             // (服务=按真实数据根派生, 账户=claude:<id>) 可能弹授权对话框，须显式
@@ -697,7 +678,6 @@ bool loadRealProfile(const fs::path& stageDir, SnapshotSource& src,
         src.profile.authField = active.value().authField;
         src.profile.modelsConfigJson = active.value().modelsConfigJson;
         src.profile.defaultModel = active.value().model;
-        src.profile.dialectOverride = active.value().dialectOverride;
         host = hostOf(active.value().baseUrl);
         model = active.value().model;
     }

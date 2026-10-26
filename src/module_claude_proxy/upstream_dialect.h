@@ -1,7 +1,7 @@
 // src/module_claude_proxy/upstream_dialect.h
 // 上游方言：把不同 Anthropic-compatible 网关的差异——鉴权头形态 / 必需会话头 /
 // UA 策略 / 模型名标记——集中到一处。新增网关只改本文件：Kind 加一项、
-// forBaseUrl 加 host 分派、文本转换加一对值、applyHeaders/normalizeBody 加分支。
+// forBaseUrl 加 host 分派、applyHeaders/normalizeBody 加分支。
 #pragma once
 
 #include <map>
@@ -29,11 +29,8 @@ struct UpstreamDialect {
     static UpstreamDialect anthropicDefault();
     // opencode.ai zen：额外要求 x-opencode-session，且不认 [1M] 模型标记
     static UpstreamDialect opencodeZen();
-    // 按 baseUrl 的 host 选择（opencode.ai 及子域 → opencodeZen）；overrideText
-    // 非空 = 显式覆盖（自建网关 host 推断不出正确方言）；空串/未知 → 回落 host 推断
-    static UpstreamDialect forBaseUrl(
-        const std::string& baseUrl,
-        const std::string& overrideText = std::string());
+    // 按 baseUrl 的 host 选择（opencode.ai 及子域 → opencodeZen；其余 → 通用方言）
+    static UpstreamDialect forBaseUrl(const std::string& baseUrl);
 
     // 是否剥掉模型名尾部 [1M]（本地 1M 标记，上游通常不认识，带着会被判不可用）
     bool stripModelSuffix() const;
@@ -48,17 +45,6 @@ struct UpstreamDialect {
     // 返回 true 表示 body 被改写；不需要改写时 body 一个字节都不动。
     bool normalizeBody(std::string& body) const;
 };
-
-// 方言覆盖文本 ↔ Kind（Profile::dialectOverride 值域）
-// 值域：'anthropic_default' / 'opencode_zen'（空串 = 未覆盖）；空串/未知 → nullopt（回落 host 推断）。
-std::optional<UpstreamDialect::Kind> dialectKindFromText(const std::string& text);
-
-// Kind → 规范文本（写侧规范化：库里只存两个规范值之一或空串）
-const char* dialectKindToText(UpstreamDialect::Kind kind);
-
-// Kind → 展示名：表单下拉与详情 pane 生效方言文案共用的单一来源；
-// 产出 "anthropic" / "opencode zen"（dialectKindToText 产内部值不上 UI）。
-const char* dialectKindDisplayName(UpstreamDialect::Kind kind);
 
 // 模型名剥尾部 [1M]：大小写不敏感、容忍标记前后空白（上游侧配置带空格常见）；
 // 命中 → 剥掉后 trim 尾部；未命中 → 原样返回。

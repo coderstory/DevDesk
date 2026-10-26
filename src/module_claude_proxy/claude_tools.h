@@ -1,6 +1,6 @@
 // src/module_claude_proxy/claude_tools.h
-// Claude 模块的智能体工具集（claude.list_profiles / switch_profile / test_connection /
-// recent_logs），供 module_agent 经 core::ToolRegistry 调用；switch_profile 破坏性（allowDestructive=0 时终止 run）。
+// Claude 模块的智能体工具集（claude.list_profiles / switch_profile /
+// test_connection 三工具），供 module_agent 经 core::ToolRegistry 调用；switch_profile 破坏性（allowDestructive=0 时终止 run）。
 // 线程约定：agent 工作线程执行，与 UI 共用 ClaudeService；写方法 setActiveProfile 自带互斥锁，其余只调纯读方法。
 // 错误语义：参数非法/目标不存在/调用失败 → execute 返回 ok + isError=true + 中文错误；Result::fail 只留给不变量破坏。
 #pragma once

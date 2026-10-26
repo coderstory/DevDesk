@@ -1,13 +1,8 @@
 add_library(devdesk_module_claude_proxy STATIC
-    call_log_store.cpp
-    ccswitch_import.cpp
-    ccswitch_source.cpp
     claude_module.cpp
-    claude_ui_ccswitch.cpp
     claude_ui_list.cpp
     claude_ui_detail.cpp
     claude_ui_form.cpp
-    claude_ui_logs.cpp
     claude_ui_logic.cpp
     claude_ui_state.cpp
     claude_service.cpp

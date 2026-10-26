@@ -146,7 +146,6 @@ public:
         out.authField = p.authField;
         out.modelsConfigJson = p.modelsConfigJson;
         out.defaultModel = p.model;
-        out.dialectOverride = p.dialectOverride;
         return core::Result<core::LlmDirectProfile>::ok(std::move(out));
     }
 
@@ -157,7 +156,7 @@ private:
 // ---------- 生产凭据密文搬运（生产库只读一次；列值原样，绝不打印） ----------
 struct ProdCredential {
     bool ok = false;
-    std::string baseUrl, model, modelsConfig, authField, dialect, extraSettings;
+    std::string baseUrl, model, modelsConfig, authField, dialect;
     std::string keyEnc, keyCheck, keyHint;
 };
 
@@ -176,7 +175,7 @@ ProdCredential readProdCredential() {
     }
     const char* sql =
         "SELECT base_url, model, models_config, auth_field, dialect_override, "
-        "extra_settings_json, api_key_encrypted, api_key_check, api_key_hint "
+        "api_key_encrypted, api_key_check, api_key_hint "
         "FROM claude_profiles WHERE is_active=1 AND api_key_encrypted != '' "
         "LIMIT 1";
     sqlite3_stmt* stmt = nullptr;
@@ -193,10 +192,9 @@ ProdCredential readProdCredential() {
         out.modelsConfig = col(2);
         out.authField = col(3);
         out.dialect = col(4);
-        out.extraSettings = col(5);
-        out.keyEnc = col(6);
-        out.keyCheck = col(7);
-        out.keyHint = col(8);
+        out.keyEnc = col(5);
+        out.keyCheck = col(6);
+        out.keyHint = col(7);
         out.ok = !out.baseUrl.empty() && !out.keyEnc.empty();
         std::cerr << "agent_e2e_probe: 生产凭据列已原样读出（不打印内容；"
                   << "baseUrl/keyEnc 列长度 " << out.baseUrl.size() << "/"
@@ -215,8 +213,8 @@ bool seedScratchProfile(module::claude::ClaudeService& svc,
                         core::data::SqliteDb& db, const ProdCredential& cred) {
     auto created = svc.createProfile(
         "e2e-prod-alias", cred.baseUrl, "e2e-placeholder-never-sent",
-        cred.model, /*activateIfNoneActive=*/true, /*sharedConfigId=*/0,
-        cred.authField.empty() ? "both" : cred.authField, cred.dialect);
+        cred.model, /*activateIfNoneActive=*/true,
+        cred.authField.empty() ? "both" : cred.authField);
     if (created.isFail()) {
         std::cerr << "agent_e2e_probe: scratch profile 创建失败: "
                   << created.errorMessage() << "\n";
@@ -225,7 +223,7 @@ bool seedScratchProfile(module::claude::ClaudeService& svc,
     const int64_t id = created.value().id;
     auto prep = db.prepare(
         "UPDATE claude_profiles SET api_key_encrypted=?, api_key_check=?, "
-        "api_key_hint=?, models_config=?, extra_settings_json=? WHERE id=?");
+        "api_key_hint=?, models_config=? WHERE id=?");
     if (prep.isFail()) {
         std::cerr << "agent_e2e_probe: 凭据覆盖 prepare 失败\n";
         return false;
@@ -235,8 +233,7 @@ bool seedScratchProfile(module::claude::ClaudeService& svc,
     stmt.bind(2, cred.keyCheck);
     stmt.bind(3, cred.keyHint);
     stmt.bind(4, cred.modelsConfig);
-    stmt.bind(5, cred.extraSettings);
-    stmt.bind(6, id);
+    stmt.bind(5, id);
     if (stmt.step().isFail()) {
         std::cerr << "agent_e2e_probe: 凭据覆盖 step 失败\n";
         return false;

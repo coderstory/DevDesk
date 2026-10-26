@@ -15,7 +15,6 @@
 #include <string>
 #include <vector>
 
-#include "call_log_store.h"
 #include "core/proxy_port.h"
 #include "core/sqlite_db.h"
 #include "core/result.h"
@@ -32,7 +31,7 @@ namespace module::claude {
 // 客户端不带、由代理按方言注入；进程内稳定一份，保证上游路由/缓存亲和。
 const std::string& claudeUpstreamSessionId();
 
-// Profile / SharedConfig / 两段写助手的类型定义在 profile_repository.h（本头 include 透出）
+// Profile / 两段写助手的类型定义在 profile_repository.h（本头 include 透出）
 
 class ClaudeService {
 public:
@@ -54,20 +53,13 @@ public:
     core::Result<Profile> getProfile(int64_t id);
 
     // 创建并保存到 SQLite（凭据入 api_key_encrypted）。activateIfNoneActive=true：
-    // 无激活则自动激活（不抢占已有）；authField 非法值写侧归一 'both'；
-    // dialectOverride 空 = 按 host 推断、非法值归空。
+    // 无激活则自动激活（不抢占已有）；authField 非法值写侧归一 'both'。
     core::Result<Profile> createProfile(const std::string& name,
                                        const std::string& baseUrl,
                                        const std::string& apiKey,
                                        const std::string& model,
                                        bool activateIfNoneActive = false,
-                                       int64_t sharedConfigId = 0,
-                                       const std::string& authField = "both",
-                                       const std::string& dialectOverride =
-                                           std::string(),
-                                       int64_t fallbackProfileId = 0,
-                                       const std::string& extraSettingsJson =
-                                           std::string());
+                                       const std::string& authField = "both");
 
     // 更新 profile（id 必须已存在）；apiKeyPlain 非空则覆盖凭据三列。
     core::Result<void> updateProfile(const Profile& profile);
@@ -98,42 +90,13 @@ public:
     // 副本不激活；二段补写失败 → best-effort 删副本回滚。
     core::Result<Profile> duplicateProfile(int64_t srcId);
 
-    // 共享配置片段（改动当场生效）
-    // 改/删/解绑后，激活 profile 代理在跑则立即 re-takeover；删除同事务解绑；
-    // 解绑后同名键回落 profile 自身值（片段值从不写进 profile 行）。
-    core::Result<std::vector<SharedConfig>> listSharedConfigs();
-    core::Result<SharedConfig> createSharedConfig(const std::string& name,
-                                                 const std::string& extraSettingsJson);
-    core::Result<void> updateSharedConfig(const SharedConfig& config);
-    core::Result<void> deleteSharedConfig(int64_t id);
-
-    // 用当前激活 profile（含所绑片段）重写 settings.json；通道未注入/开关关 →
+    // 用当前激活 profile 重写 settings.json；通道未注入/开关关 →
     // no-op 成功。本入口不做前置校验，调用方必须先过 validateProxyPreconditions。
     core::Result<void> reapplyTakeOver() { return syncTakeOver(); }
-
-    // failover 备用解析
-    // 读 fallback_profile_id → getProfile + loadApiKey，成功返回含明文 key 的备用；
-    // 任一失败 / id==0 → nullopt（proxy_router 原样回错）。只换一跳；纯读不改状态。
-    std::optional<Profile> resolveFallbackProfile(const Profile& profile);
 
     // 连通性测试
 
     core::Result<platform::http::Response> testConnection(const Profile& profile);
-
-    // 调用日志
-
-    // 数据模型与读写在 CallLogStore；别名保持公开类型名，方法转发 callLogStore_。
-    using CallLogEntry = CallLogStore::CallLogEntry;
-    using CallLogQuery = CallLogStore::CallLogQuery;
-
-    core::Result<void> logCall(const CallLogEntry& entry);
-    core::Result<std::vector<CallLogEntry>> recentCalls(int limit = 20);
-
-    // 过滤 + 分页查询（日志弹窗搜索框 / 状态码下拉 / 翻页共用）
-    core::Result<std::vector<CallLogEntry>> queryCalls(const CallLogQuery& q);
-
-    // 满足过滤条件的总条数（忽略 limit/offset；UI 算页数、判断有无下一页）
-    core::Result<int> countCalls(const CallLogQuery& q);
 
     // 最近代理请求事件（气泡内容源）
     // ProxyRouter 在每条请求终态记一次 statusCode 进单槽（后写覆盖先写）：
@@ -208,7 +171,7 @@ public:
     void setSettingsTakeOverEnabled(bool on) { settingsTakeover_.setEnabled(on); }
     bool settingsTakeOverEnabled() const { return settingsTakeover_.enabled(); }
 
-    // 注入的接管路径（未注入时 settingsFile 为空）；「导入当前配置」据此定位 settings.json。
+    // 注入的接管路径（未注入时 settingsFile 为空）；接管/还原据此定位 settings.json。
     const settings_sync::Paths& settingsSyncPaths() const {
         return settingsTakeover_.paths();
     }
@@ -227,11 +190,6 @@ public:
     static void setGlobal(ClaudeService* svc);
     static ClaudeService* global();
 
-    // 调用日志写版本号（logCall 成功 +1）；compose 只在版本变化时重查 recent。
-    uint64_t callLogVersion() const {
-        return callLogStore_.callLogVersion();
-    }
-
 public:
     // 代理端口范围与默认值，唯一来源 = core/proxy_port.h。
     static constexpr int kDefaultProxyPort = ::core::kDefaultProxyPort;
@@ -239,10 +197,10 @@ public:
     static constexpr int kMaxProxyPort = ::core::kMaxProxyPort;
 
 private:
-    // 行解析/哈希/片段校验等私有工具与 TwoPhaseKeyWrite 在 profile_repository.h
+    // 行解析/哈希等私有工具与 TwoPhaseKeyWrite 在 profile_repository.h
 
-    // 两条编排入口：syncTakeOver() 取激活 Profile + 端口，生效高级设置 JSON 预先装配
-    // 进 Profile 副本（片段赢）；失败并入 warnings_，不阻断上层。syncRestore() 失败只 LOG_WARN。
+    // 两条编排入口：syncTakeOver() 取激活 Profile + 端口；失败并入 warnings_，不阻断上层。
+    // syncRestore() 失败只 LOG_WARN。
     core::Result<void> syncTakeOver();
     void syncRestore();
 
@@ -273,8 +231,7 @@ private:
     std::mutex switchMutex_;
 
     core::data::SqliteDb& db_;
-    CallLogStore callLogStore_;
-    // claude_profiles 行 + SharedConfig 的唯一持久化入口
+    // claude_profiles 行的唯一持久化入口
     ProfileRepository profileRepository_;
 
     // settings.json 接管/还原协议侧；门面只留编排与转发。
@@ -288,9 +245,6 @@ private:
     std::function<core::Result<void>(const platform::terminal::LaunchSpec&)>
         terminalLauncher_ = &platform::terminal::launch;
 };
-
-// 调用记录时间列（只显 HH:MM 会让跨天记录误判）：今日 "HH:MM"；昨天 "昨天 HH:MM"；更早 "MM-DD"
-std::string formatCallTime(std::time_t ts, std::time_t now);
 
 // 旧 Keychain 命名空间名："DevDesk-" + SHA256(dataRoot) 前 4 字节 hex。Keychain
 // service 是全局命名空间不随 DEVDESK_DATA_ROOT 隔离；空根 → 空串；只用于残留清理。

@@ -95,7 +95,6 @@ std::string resolveKeychainService() {
 ClaudeService::ClaudeService(core::data::SqliteDb& db,
                              const std::string& keychainService)
     : db_(db),
-      callLogStore_(db),
       profileRepository_(db, keychainService.empty() ? resolveKeychainService()
                                                      : keychainService),
       proxyRuntime_(*this) {}
@@ -130,16 +129,11 @@ core::Result<Profile> ClaudeService::createProfile(const std::string& name,
                                                    const std::string& apiKey,
                                                    const std::string& model,
                                                    bool activateIfNoneActive,
-                                                   int64_t sharedConfigId,
-                                                   const std::string& authField,
-                                                   const std::string& dialectOverride,
-                                                   int64_t fallbackProfileId,
-                                                   const std::string& extraSettingsJson) {
+                                                   const std::string& authField) {
     // 策略尾：无激活 Profile 时自动激活（经 setActiveProfile，代理运行中会同步
     // 接管 settings.json）。失败不回滚创建，只 WARN（UI 走「点击启用」文案）。
     auto created = profileRepository_.createProfile(
-        name, baseUrl, apiKey, model, sharedConfigId, authField,
-        dialectOverride, fallbackProfileId, extraSettingsJson);
+        name, baseUrl, apiKey, model, authField);
     if (created.isFail()) {
         return created;
     }
@@ -167,18 +161,7 @@ core::Result<Profile> ClaudeService::createProfile(const std::string& name,
 }
 
 core::Result<void> ClaudeService::updateProfile(const Profile& profile) {
-    // 策略尾：片段绑定变化（绑定/解绑）且旧行激活且代理运行 → 立即重写 live。
-    // 解绑即片段键从 live 撤走、同名 profile 自身值恢复生效（片段值从不写进 profile 行）。
-    Profile old;
-    auto r = profileRepository_.updateProfile(profile, &old);
-    if (r.isFail()) {
-        return r;
-    }
-    if (profile.sharedConfigId != old.sharedConfigId && old.isActive &&
-        isProxyRunning()) {
-        (void)syncTakeOver();
-    }
-    return core::Result<void>::ok();
+    return profileRepository_.updateProfile(profile);
 }
 
 core::Result<void> ClaudeService::deleteProfile(int64_t id, bool* proxyStopped) {
@@ -251,69 +234,6 @@ core::Result<Profile> ClaudeService::duplicateProfile(int64_t srcId) {
     return profileRepository_.duplicateProfile(srcId);
 }
 
-// 共享配置片段：DB 段在 ProfileRepository，门面留 re-takeover 策略尾。
-core::Result<std::vector<SharedConfig>> ClaudeService::listSharedConfigs() {
-    return profileRepository_.listSharedConfigs();
-}
-
-core::Result<SharedConfig> ClaudeService::createSharedConfig(
-    const std::string& name, const std::string& extraSettingsJson) {
-    return profileRepository_.createSharedConfig(name, extraSettingsJson);
-}
-
-core::Result<void> ClaudeService::updateSharedConfig(const SharedConfig& config) {
-    // 策略尾「改后生效」：代理在跑且激活 profile 绑定了它 → 立即重写 settings.json，
-    // 否则 live 留旧片段值到下次切换。
-    auto r = profileRepository_.updateSharedConfig(config);
-    if (r.isFail()) {
-        return r;
-    }
-    auto active = profileRepository_.getActiveProfile();
-    if (active.isOk() && active.value().sharedConfigId == config.id &&
-        isProxyRunning()) {
-        (void)syncTakeOver();
-    }
-    return core::Result<void>::ok();
-}
-
-core::Result<void> ClaudeService::deleteSharedConfig(int64_t id) {
-    // activeBound 在删除前捕获（删除侧同事务解绑 shared_config_id=0，删后读不到）。
-    // 策略尾「删后生效」：代理在跑且激活 profile 绑定它 → 重写 live。
-    bool activeBound = false;
-    auto r = profileRepository_.deleteSharedConfig(id, &activeBound);
-    if (r.isFail()) {
-        return r;
-    }
-    if (activeBound && isProxyRunning()) {
-        (void)syncTakeOver();
-    }
-    return core::Result<void>::ok();
-}
-
-std::optional<Profile> ClaudeService::resolveFallbackProfile(
-    const Profile& profile) {
-    if (profile.fallbackProfileId == 0) {
-        return std::nullopt;   // 未配备用 → 不换家（常见路径，零 I/O）
-    }
-    auto fbR = profileRepository_.getProfile(profile.fallbackProfileId);
-    if (fbR.isFail()) {
-        LOG_WARN("failover: 备用 profile 不存在（fallback_profile_id=" +
-                 std::to_string(profile.fallbackProfileId) +
-                 "），本次不换家: " + fbR.errorMessage());
-        return std::nullopt;
-    }
-    Profile fb = std::move(fbR).value();
-    auto keyR = profileRepository_.loadApiKey(fb.id);
-    if (keyR.isFail() || keyR.value().empty()) {
-        LOG_WARN("failover: 备用 profile 密钥不可用（id=" +
-                 std::to_string(fb.id) + "），本次不换家" +
-                 (keyR.isFail() ? ": " + keyR.errorMessage() : std::string()));
-        return std::nullopt;
-    }
-    fb.apiKeyPlain = std::move(keyR).value();
-    return fb;
-}
-
 core::Result<platform::http::Response>
 ClaudeService::probeProfile(const Profile& profile, int timeoutMs) {
     // 无 key 也允许：UI 可用未授权请求触发 401 作验证
@@ -348,9 +268,7 @@ ClaudeService::probeProfile(const Profile& profile, int timeoutMs) {
                "\",\"max_tokens\":1,\"messages\":[{\"role\":\"user\",\"content\":\"ping\"}]}";
     req.headers["content-type"] = "application/json";   // 转发时由客户端头带来，探测需自备
     // 探测请求经上游方言层装配头部，与真实转发同源（否则转得通而探测误报失败）。
-    // dialectOverride 必传（漏传 = 探测与转发方言错位；空串 → 回落 host 推断）。
-    const UpstreamDialect dialect =
-        UpstreamDialect::forBaseUrl(profile.baseUrl, profile.dialectOverride);
+    const UpstreamDialect dialect = UpstreamDialect::forBaseUrl(profile.baseUrl);
     dialect.applyHeaders(req.headers, key, authFieldFromText(profile.authField));
     if (dialect.normalizeBody(req.body)) {
         LOG_INFO("testConnection: 按上游方言剥掉模型名 [1M] 标记");
@@ -408,25 +326,6 @@ core::Result<void> ClaudeService::validateProxyPreconditions(int probeTimeoutMs)
     LOG_INFO("代理启动前置校验通过：profile「" + prof.name + "」(id=" +
              std::to_string(prof.id) + ") 连通 OK（HTTP " + std::to_string(code) + "）");
     return core::Result<void>::ok();
-}
-
-// 调用日志：读写已抽至 CallLogStore，门面转发。
-core::Result<void> ClaudeService::logCall(const CallLogEntry& entry) {
-    return callLogStore_.logCall(entry);
-}
-
-core::Result<std::vector<ClaudeService::CallLogEntry>>
-ClaudeService::recentCalls(int limit) {
-    return callLogStore_.recentCalls(limit);
-}
-
-core::Result<std::vector<ClaudeService::CallLogEntry>>
-ClaudeService::queryCalls(const CallLogQuery& q) {
-    return callLogStore_.queryCalls(q);
-}
-
-core::Result<int> ClaudeService::countCalls(const CallLogQuery& q) {
-    return callLogStore_.countCalls(q);
 }
 
 // 最近代理请求事件：单槽邮箱在 ProxyRuntime（与在途流登记同写者-读者对），门面转发。
@@ -506,22 +405,6 @@ core::Result<void> ClaudeService::runProfile(int64_t id, std::string* hint,
     }
     platform::json::JsonObject root;
     root.set("env", platform::json::JsonValue(std::move(envObj)));
-    // 生效高级设置 JSON 并入顶层（profile ⊕ 片段，片段赢；三链不分叉，
-    // 临时文件随会话自删 + 24h 清扫兜底）。
-    {
-        std::vector<std::string> effWarnings;
-        const std::string effective = effectiveExtraSettingsJson(
-            p.extraSettingsJson,
-            profileRepository_.sharedExtraSettingsJsonFor(p.sharedConfigId),
-            &effWarnings);
-        for (const auto& w : effWarnings) {
-            LOG_WARN("runProfile: " + w);
-        }
-        auto apply = applyExtraSettingsToSettingsDoc(root, effective);
-        for (const auto& w : apply.warnings) {
-            LOG_WARN("runProfile: 高级设置 JSON: " + w);
-        }
-    }
     auto text = platform::json::stringify(platform::json::JsonValue(std::move(root)));
     if (text.isFail()) {
         return core::Result<void>::fail(text.errorCode(),
@@ -809,22 +692,11 @@ core::Result<void> ClaudeService::syncCaptureActiveProfile() {
 
 core::Result<void> ClaudeService::syncTakeOver() {
     // 编排：取激活 Profile + 端口传入 SettingsTakeOver；无激活仍接管 BASE_URL/占位
-    // key（转发层报 503）。「生效 JSON」（profile ⊕ 片段，片段赢）预先算好放进 Profile 副本。
+    // key（转发层报 503）。
     Profile active;
     auto a = getActiveProfile();
     if (a.isOk()) {
         active = std::move(a).value();
-    }
-    {
-        std::vector<std::string> effWarnings;
-        active.extraSettingsJson = effectiveExtraSettingsJson(
-            active.extraSettingsJson,
-            profileRepository_.sharedExtraSettingsJsonFor(
-                active.sharedConfigId),
-            &effWarnings);
-        for (const auto& w : effWarnings) {
-            LOG_WARN("syncTakeOver: " + w);
-        }
     }
     return settingsTakeover_.syncTakeOver(active, proxyPort());
 }
@@ -835,31 +707,6 @@ void ClaudeService::syncRestore() {
     if (r.isFail()) {
         LOG_WARN("Claude Code settings 还原失败: " + r.errorMessage());
     }
-}
-
-std::string formatCallTime(std::time_t ts, std::time_t now) {
-    if (ts <= 0) return "--:--";
-    std::tm tmv{};
-    core::time::localTime(ts, &tmv);
-    std::tm nowTm{};
-    core::time::localTime(now, &nowTm);
-    const auto sameDay = [](const std::tm& a, const std::tm& b) {
-        return a.tm_year == b.tm_year && a.tm_yday == b.tm_yday;
-    };
-    char buf[24];
-    if (sameDay(tmv, nowTm)) {
-        std::snprintf(buf, sizeof(buf), "%02d:%02d", tmv.tm_hour, tmv.tm_min);
-        return std::string(buf);
-    }
-    // 昨天判定取 now-86400 的本地日；DST 切换日误差 ≤1 小时，只影响文案边界。
-    std::tm yestTm{};
-    core::time::localTime(now - 86400, &yestTm);
-    if (sameDay(tmv, yestTm)) {
-        std::snprintf(buf, sizeof(buf), "昨天 %02d:%02d", tmv.tm_hour, tmv.tm_min);
-    } else {
-        std::snprintf(buf, sizeof(buf), "%02d-%02d", tmv.tm_mon + 1, tmv.tm_mday);
-    }
-    return std::string(buf);
 }
 
 } // namespace module::claude
