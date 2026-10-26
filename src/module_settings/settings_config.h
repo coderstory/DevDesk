@@ -38,6 +38,8 @@ inline constexpr const char* kModuleIdClaudeProxy = "claude_proxy";
 inline constexpr const char* kModuleIdSettings = "settings";
 // agent：默认关闭（跑 LLM 有成本，用户主动启用）；开启 = 整页注册进 Router。
 inline constexpr const char* kModuleIdAgent = "agent";
+// wallpaper：默认关闭，用户主动启用；平台能力不支持时工厂仍返回 nullptr（开关不生效）。
+inline constexpr const char* kModuleIdWallpaper = "wallpaper";
 
 // 默认全启用（字段缺失/解析失败回退）
 std::vector<std::string> defaultEnabledModules();

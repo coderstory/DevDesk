@@ -3,7 +3,8 @@
 // 跨文件前提：
 //   - home 与 settings 恒启用：moduleEnabled 谓词里硬编码，sanitized 也会强制补齐，
 //     两者都不是配置里的普通项，从 enabledModules 里删掉也照样开着。
-//   - agent 默认关（跑 LLM 有成本）。默认清单是 5 项，改动会让本文件的 size()==5 断言红。
+//   - agent 默认关（跑 LLM 有成本）、wallpaper 默认关。默认清单是 5 项，改动会让本文件的
+//     size()==5 断言红。
 //   - 生产装配在 main.cpp getRouter()，本文件的注册段是它的复制品；改了那边这里不会自动跟。
 #include "doctest.h"
 #include "test_support.h"
@@ -72,6 +73,12 @@ REGISTER_TEST(gating_config_defaults, "gating: enabledModules 缺省默认清单
         DOCTEST_CHECK(moduleEnabled(cfg, id));
     }
     DOCTEST_CHECK(!moduleEnabled(cfg, kModuleIdAgent));
+    DOCTEST_CHECK(!moduleEnabled(cfg, kModuleIdWallpaper));
+    // wallpaper 是已知 ID：sanitized 保留显式启用，但绝不自动补进默认清单
+    SettingsConfig withWallpaper = cfg;
+    withWallpaper.enabledModules.push_back(kModuleIdWallpaper);
+    DOCTEST_CHECK(moduleEnabled(SettingsStore::sanitized(withWallpaper),
+                                kModuleIdWallpaper));
     SettingsConfig stripped = cfg;
     stripped.enabledModules.assign(1, kModuleIdMarkdown);
     const SettingsConfig fixed = SettingsStore::sanitized(stripped);
@@ -79,6 +86,7 @@ REGISTER_TEST(gating_config_defaults, "gating: enabledModules 缺省默认清单
     DOCTEST_CHECK(moduleEnabled(fixed, kModuleIdSettings));
     DOCTEST_CHECK(moduleEnabled(fixed, kModuleIdMarkdown));
     DOCTEST_CHECK(!moduleEnabled(fixed, kModuleIdTodo));
+    DOCTEST_CHECK(!moduleEnabled(fixed, kModuleIdWallpaper));
     // 未知 ID 恒 false（防手改 config 的兜底）
     DOCTEST_CHECK(!moduleEnabled(fixed, "bogus_module"));
     return true;
