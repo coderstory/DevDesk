@@ -683,8 +683,12 @@ REGISTER_TEST(uiModernVirtualProfileRows,
     DOCTEST_CHECK(ui.find("claude.profiles.scroll.slot.0") != nullptr);
     DOCTEST_CHECK(ui.find("claude.profile.0.name") != nullptr);
     // slot 窗口生效：25 行不整段渲染，视口外行不存在（virtualList 裁剪）。
-    // UAT6：Profile 卡高 56px（name-only 设计，原 96px），更多行入视口——行 20 仍在外
-    DOCTEST_CHECK(ui.find("claude.profile.23.name") == nullptr);
+    // 1600×1000 下列表视口 782px、行距 68px、overscan 一屏 → 渲染窗 24 行：
+    // 行 23 在窗内，行 24（最后一帧可见区外）被裁掉。
+    DOCTEST_CHECK(ui.find("claude.profile.23.name") != nullptr);
+    DOCTEST_CHECK(ui.find("claude.profiles.scroll.slot.23") != nullptr);
+    DOCTEST_CHECK(ui.find("claude.profile.24.name") == nullptr);
+    DOCTEST_CHECK(ui.find("claude.profiles.scroll.slot.24") == nullptr);
 
     // 滚动回退语义：onScrollOffsetChanged 写 profilesScrollOffset_ →
     // 重 compose 视口随偏移前移。偏移取 600 让行 19 落入渲染窗（56px×19≈1064）
