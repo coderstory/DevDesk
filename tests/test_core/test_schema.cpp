@@ -1033,3 +1033,64 @@ REGISTER_TEST(schema_drop_removed_quota_tables,
     std::filesystem::remove(path, ec);
     return true;
 })
+
+// 票 11：迁移定义白名单。非法表/列枚举值（越界强转）必须在查表处显式报错——
+// 到不了 SQL 拼接；白名单内每个枚举值都解析得出合法标识符与列定义，且标识符
+// 只含 [a-z0-9_]（白名单返回值就是拼接接触到的全部「动态」内容）。
+REGISTER_TEST(schema_migration_whitelist_rejects_invalid,
+              "schema: 迁移白名单拒绝非法表名/列名（越界枚举显式报错，不进 SQL）", {
+    using core::schema::MigrationColumn;
+    using core::schema::MigrationTable;
+
+    // 非法表枚举：查表即 fail，错误信息带非法值
+    auto badTable = core::schema::migrationTableName(static_cast<MigrationTable>(99));
+    DOCTEST_CHECK(badTable.isFail());
+    DOCTEST_CHECK_MESSAGE(badTable.errorMessage().find("99") != std::string::npos,
+                          "错误信息应带非法枚举值: " + badTable.errorMessage());
+
+    // 非法列枚举：列名/列定义两个取词口都得拒
+    const auto badColumn = static_cast<MigrationColumn>(999);
+    DOCTEST_CHECK(core::schema::migrationColumnName(badColumn).isFail());
+    DOCTEST_CHECK(core::schema::migrationColumnDdl(badColumn).isFail());
+
+    // 白名单覆盖完备：0..kCount-1 每个枚举值都能解析（构建期另有 static_assert 双保险）
+    auto isAsciiIdentifier = [](const char* s) {
+        if (s == nullptr || *s == '\0') return false;
+        for (const char* p = s; *p != '\0'; ++p) {
+            const char c = *p;
+            if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_')) {
+                return false;
+            }
+        }
+        return true;
+    };
+    for (int i = 0; i < static_cast<int>(MigrationTable::kCount); ++i) {
+        auto name = core::schema::migrationTableName(static_cast<MigrationTable>(i));
+        DOCTEST_CHECK(name.isOk());
+        DOCTEST_CHECK(isAsciiIdentifier(name.valueOr("")));
+    }
+    for (int i = 0; i < static_cast<int>(MigrationColumn::kCount); ++i) {
+        const auto column = static_cast<MigrationColumn>(i);
+        auto name = core::schema::migrationColumnName(column);
+        auto ddl = core::schema::migrationColumnDdl(column);
+        DOCTEST_CHECK(name.isOk());
+        DOCTEST_CHECK(ddl.isOk());
+        DOCTEST_CHECK(isAsciiIdentifier(name.valueOr("")));
+    }
+
+    // 端到端：白名单路径产出的补列迁移在真库上照常工作（三表列齐全）
+    auto path = test_support::tempDbPath(kDbPrefix, "whitelist");
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+    {
+        auto r = core::Database::open(path);
+        DOCTEST_REQUIRE(r.isOk());
+        DOCTEST_REQUIRE(r.value().migrate().isOk());
+        DOCTEST_CHECK_EQ(columnDefs(r.value().db(), "agent_tasks").size(), 14u);
+        DOCTEST_CHECK_EQ(columnDefs(r.value().db(), "agent_runs").size(), 9u);
+        DOCTEST_CHECK_EQ(columnDefs(r.value().db(), "agent_messages").size(), 7u);
+    } // Database 在此析构（Windows 不允许删除打开中的文件）
+
+    std::filesystem::remove(path, ec);
+    return true;
+})
