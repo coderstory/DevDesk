@@ -161,9 +161,8 @@ void submitForm(FormState& f, const FormSubmitHooks& hooks) {
                         "Profile「" + f.formName_ + "」已设为激活（ACTIVE）",
                         false);
         } else {
-            hooks.toast("已创建",
-                        "Profile「" + f.formName_ +
-                            "」已保存，点击「启用」使其生效",
+            hooks.toast("已保存",
+                        "右键该 Profile 选择『设为当前』使其生效",
                         false);
         }
     } else {

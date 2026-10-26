@@ -1,5 +1,5 @@
 // src/module_claude_proxy/claude_ui_logic.h
-// 纯逻辑单元：「不碰 Ui、不碰 DB」的自由函数 + 调用记录弹窗常量，可无头单测。
+// 纯逻辑单元：「不碰 Ui、不碰 DB」的自由函数，可无头单测。
 #pragma once
 
 #include "claude_service.h"

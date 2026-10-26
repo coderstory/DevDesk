@@ -549,7 +549,6 @@ private:
         }
     }
 
-    // 删除共享配置片段：服务层同事务解绑，这里只做计数 toast + 关弹窗
     void doTestConnection(const Profile& p) {
         ClaudeService* svc = ClaudeService::global();
         if (!svc) return;

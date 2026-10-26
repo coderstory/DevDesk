@@ -716,8 +716,8 @@ core::Result<Profile> ProfileRepository::getActiveProfile() {
     if (!stepR.value()) {
         // 错误 message 带可操作指引——503 的 JSON body 原样透传此文案（proxy_router 唯一出口）
         return core::Result<Profile>::fail(core::ErrorCode::NoActiveProfile,
-            "没有激活的 Claude profile，请在 DevDesk 的 Claude 页选中 Profile "
-            "并点击「启用」");
+            "没有激活的 Claude profile，请在 DevDesk 的 Claude 页右键选中 "
+            "Profile 并选择『设为当前』");
     }
     auto row = prep.value().currentRow();
     if (row.isFail()) {

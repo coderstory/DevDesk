@@ -684,7 +684,7 @@ void drawDetailPanel(eui::Ui& ui, float rightW, float bodyH, float xOffset,
             const float actYFloor = bodyH - kActReserve;   // 贴底动作区的 actY
             const float contentBottom = actYFloor - kActTopGap;  // 内容框可用底
 
-            // 内容框（显式边界）：四页签同一块固定区域，内容少时明确画出「空」而非莫名空白
+            // 内容框（显式边界）：三页签同一块固定区域，内容少时明确画出「空」而非莫名空白
             const float boxTop = paneY - 12.0f;
             ui.rect("claude.detail.contentbox")
                 .position(x0 - 12.0f, boxTop)

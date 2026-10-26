@@ -91,7 +91,7 @@ void refreshDataCache(ProfileListState& st, ClaudeService* svc) {
         return;   // 节流窗口内：下帧再判（可见最多晚一个节流 tick + 1 帧）
     }
     st.lastRefreshPost_ = std::chrono::steady_clock::now();
-    // 后台刷新：**先就绪、后唤醒**（与调用记录查询同一形态）。次序不能反：
+    // 后台刷新：**先就绪、后唤醒**。次序不能反：
     // async 在 callable 返回后才发布值，任务内先唤醒会让 UI 抢跑（结果没人上屏）。
     auto promise = std::make_shared<std::promise<DataRefresh>>();
     std::shared_future<DataRefresh> published = promise->get_future().share();

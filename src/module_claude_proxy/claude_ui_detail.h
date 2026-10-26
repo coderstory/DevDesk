@@ -33,7 +33,7 @@ struct DetailView {
 const char* envSourceLabel(EnvSource s);
 
 // pane 绘制副产物（诊断日志用）：实际画出的行数 / 可画的总行数。
-// 只给「行数预算型」pane（环境变量 / 最近调用）填，把「为什么只画了 N 行」客观化。
+// 只给「行数预算型」pane（环境变量）填，把「为什么只画了 N 行」客观化。
 struct PaneRows {
     int shown = 0;
     int total = 0;

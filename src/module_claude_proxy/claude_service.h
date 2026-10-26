@@ -171,7 +171,7 @@ public:
     void setSettingsTakeOverEnabled(bool on) { settingsTakeover_.setEnabled(on); }
     bool settingsTakeOverEnabled() const { return settingsTakeover_.enabled(); }
 
-    // 注入的接管路径（未注入时 settingsFile 为空）；「导入当前配置」据此定位 settings.json。
+    // 注入的接管路径（未注入时 settingsFile 为空）；接管/还原据此定位 settings.json。
     const settings_sync::Paths& settingsSyncPaths() const {
         return settingsTakeover_.paths();
     }
@@ -197,7 +197,7 @@ public:
     static constexpr int kMaxProxyPort = ::core::kMaxProxyPort;
 
 private:
-    // 行解析/哈希/片段校验等私有工具与 TwoPhaseKeyWrite 在 profile_repository.h
+    // 行解析/哈希等私有工具与 TwoPhaseKeyWrite 在 profile_repository.h
 
     // 两条编排入口：syncTakeOver() 取激活 Profile + 端口；失败并入 warnings_，不阻断上层。
     // syncRestore() 失败只 LOG_WARN。

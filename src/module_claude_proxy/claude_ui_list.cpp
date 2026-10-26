@@ -1,4 +1,4 @@
-// Profile 列表 UI：header / 引导条 / 左栏 Profile 列表与共享配置区块的绘制。
+// Profile 列表 UI：header / 引导条 / 左栏 Profile 列表的绘制。
 #include "claude_ui_list.h"
 
 #include "claude_ui_logic.h"
