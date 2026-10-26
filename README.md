@@ -187,7 +187,7 @@ Windows 构建默认静态链接（sqlite3 / curl / ssl / crypto / C++ 运行时
 <h2 align="center"><a name="项目状态"></a>📌 项目状态</h2>
 
 <p align="center">
-七个模块全功能运行（笔记 / 待办 / Claude / 智能体可经设置页即时插拔）<br>
+八个模块全功能运行（笔记 / 待办 / Claude / 智能体 / 壁纸可经设置页即时插拔；壁纸默认关闭）<br>
 全量测试 <b>Total 1259 / Passed 1253 / Failed 0</b>（macOS，2026-10-03 CI 日志；<b>以运行输出 <code>Total:</code> 为准</b>）<br>
 <sub>Total 与 Passed 的差额是按平台条件 <code>DOCTEST_SKIP</code> 的用例（Windows 专属实现 / soak 门控 / 非活跃平台分支等），不是失败</sub>
 </p>

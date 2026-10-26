@@ -776,6 +776,10 @@ enum class PageId {
     Markdown,
     Todo,
     ClaudeProxy,
+    Agent,
+    Wallpaper,   // 默认关闭（设置 → 模块开关启用）；平台能力不支持时工厂返回 nullptr
+    Settings,
+    About,
 };
 
 // 模块接口（每个模块一个实现）
