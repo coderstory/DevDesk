@@ -556,8 +556,6 @@ ReverseSyncParse parseEnvForReverseSync(
     out.cfg.aliasMappedKeys = std::move(aliased.aliasMappedKeys);
     out.cfg.unrecognizedKeys = std::move(aliased.unrecognizedKeys);
 
-    for (const auto& m : modelSlotTable()) {
-    }
     std::sort(out.cfg.skippedKeys.begin(), out.cfg.skippedKeys.end());
     out.cfg.skippedKeys.erase(
         std::unique(out.cfg.skippedKeys.begin(), out.cfg.skippedKeys.end()),

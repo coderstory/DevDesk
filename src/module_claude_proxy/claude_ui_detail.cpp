@@ -61,8 +61,7 @@ const char* envSourceLabel(EnvSource s) {
 float drawDetailBasic(eui::Ui& ui, float x0, float y0, float w,
                       const core::theme::Tokens& t, const DetailView& v,
                       float contentBottom) {
-    (void)contentBottom;  // 固定 6 行字段，高度与容器无关
-    const Profile* shown = v.shown;
+    (void)contentBottom;  // 固定字段行数，高度与容器无关
     // 基础信息 pane：名称 + Base URL + API Key + 接管
     //（UAT5：原「未激活」徽章删除——选中语义已由列表卡绿圈白勾承担，徽章属噪音）
     // 文本必须带 verticalAlign=Center，否则 runtime 从行框顶沿起排不居中；只加对齐，行距/行宽不变。
@@ -623,8 +622,6 @@ void drawDetailActions(eui::Ui& ui, float x0, float w, float actY,
         .radius(t.sizes.radius)
         .build();
 }
-
-} // namespace
 
 void drawDetailPanel(eui::Ui& ui, float rightW, float bodyH, float xOffset,
                      const core::theme::Tokens& t,

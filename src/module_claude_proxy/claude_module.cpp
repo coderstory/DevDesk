@@ -183,7 +183,7 @@ public:
             return;
         }
         // 首次装载必须同步（onStart 非渲染路径）：compose 恒读快照，异步首刷会闪空帧
-        applyDataRefresh(state_.list, runDataRefresh(svc, true, true));
+        applyDataRefresh(state_.list, runDataRefresh(svc, true));
         // 旧凭据回填：老库的 Keychain 凭据迁进 api_key_encrypted（新库无 keychain_account
         // 列 → 零 Keychain 触达，启动路径其余环节不碰钥匙串）
         auto backfill = svc->backfillCredentialsFromKeychain();
@@ -197,7 +197,7 @@ public:
         } else {
             LOG_INFO("onStart: 代理未运行（默认不自动启动，等待用户手动启动）");
         }
-        // 智能体工具注册（claude.* 四工具）；注册失败只记日志
+        // 智能体工具注册（claude.* 三工具）；注册失败只记日志
         claudeTools_ = std::make_unique<ClaudeTools>(*svc);
         claudeTools_->registerAll();
     }
@@ -633,7 +633,7 @@ private:
     bool testResultIsError_ = false;
     bool testResultStartProxy_ = false;
 
-    // 智能体工具集（claude.* 四工具）；onStart 注册 / onStop 先注销
+    // 智能体工具集（claude.* 三工具）；onStart 注册 / onStop 先注销
     std::unique_ptr<ClaudeTools> claudeTools_;
 
     // 重入幂等守卫

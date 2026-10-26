@@ -351,7 +351,6 @@ public:
         out.authField = p.authField;
         out.modelsConfigJson = p.modelsConfigJson;
         out.defaultModel = p.model;
-        out.dialectOverride = p.dialectOverride;
         return ::core::Result<::core::LlmDirectProfile>::ok(std::move(out));
     }
 };
