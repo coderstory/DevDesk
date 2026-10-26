@@ -156,7 +156,8 @@ public:
     //（校验失败要用户可感知地快）。
     static constexpr int kProxyPreStartProbeTimeoutMs = 2000;
 
-    // 启动本地 HTTP 代理（固定绑定 127.0.0.1，无鉴权）。port=0 = OS 分配；
+    // 启动本地 HTTP 代理（固定绑定 127.0.0.1，无鉴权；Host 白名单已启用——按 bind
+    // 地址推导，伪造 Host 一律 403）。port=0 = OS 分配；
     // server/路由/在途流在 ProxyRuntime，门面保留接管尾（成功 → syncTakeOver）。
     core::Result<int> startProxy(const std::string& bindAddress = "127.0.0.1",
                                  int port = kDefaultProxyPort);

@@ -1228,6 +1228,44 @@ REGISTER_TEST(claude_service_proxy_lifecycle,
     return true;
 })
 
+// 02-proxy-host-validation：代理启动即启用 Host 白名单（白名单由实际 bind 地址
+// 推导，不写死）——伪造 Host 的请求 403 在路由前被拦，合法回环 Host 照常进代理
+// 路由（这里无激活 profile，走业务错而非 403）。
+REGISTER_TEST(claude_service_proxy_host_whitelist,
+              "claude_service: 代理启动即启用 Host 白名单（host-allowlist，bind 推导，伪造 403）", {
+    test_support::TestDb tdb(kDbPrefix, "hostwl");
+    module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
+
+    auto started = svc.startProxy("127.0.0.1", 0);
+    DOCTEST_REQUIRE(started.isOk());
+    const int port = started.value();
+    const std::string url =
+        "http://127.0.0.1:" + std::to_string(port) + "/v1/messages";
+
+    // 伪造 Host → 403（应用层 Host 校验，与连接目标无关）
+    platform::http::Request forged;
+    forged.method = "GET";
+    forged.url = url;
+    forged.headers["Host"] = "evil.com";
+    forged.timeoutMs = 5000;
+    auto fr = platform::http::send(forged);
+    DOCTEST_REQUIRE(fr.isOk());
+    DOCTEST_CHECK_EQ(fr.value().statusCode, 403);
+
+    // 合法 Host（URL 派生的 127.0.0.1:port）→ 不是 403：进代理路由后按无激活
+    // profile 回业务错（4xx/5xx），证明放行且路由正常
+    platform::http::Request legit;
+    legit.method = "GET";
+    legit.url = url;
+    legit.timeoutMs = 5000;
+    auto lr = platform::http::send(legit);
+    DOCTEST_REQUIRE(lr.isOk());
+    DOCTEST_CHECK(lr.value().statusCode != 403);
+
+    svc.stopProxy();
+    return true;
+})
+
 // 反向同步：全部经临时 settings_sync::Paths 注入，绝不碰真实 ~/.claude。
 REGISTER_TEST(claude_reverse_capture_on_switch,
               "claude_service: 反向同步① 切 profile 前捕获 settings.json", {

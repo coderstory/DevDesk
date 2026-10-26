@@ -36,7 +36,8 @@ public:
     ProxyRuntime(const ProxyRuntime&) = delete;
     ProxyRuntime& operator=(const ProxyRuntime&) = delete;
 
-    // 启动本地 HTTP 代理（固定绑定 127.0.0.1，仅本机可访问，无鉴权）。
+    // 启动本地 HTTP 代理（固定绑定 127.0.0.1，仅本机可访问，无鉴权；Host 白名单
+    // 按 bind 地址推导并启用，伪造 Host 一律 403）。
     // port 0 = 由 OS 分配，默认值取 core/proxy_port.h。不含 settings.json
     // 接管（接管尾在门面 startProxy，顺序：启动成功 → 接管）
     core::Result<int> startProxy(const std::string& bindAddress,

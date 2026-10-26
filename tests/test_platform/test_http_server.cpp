@@ -1,6 +1,7 @@
 #include "doctest.h"
 #include "platform/http_server.h"
 
+#include <algorithm>
 #include <chrono>
 #include <string>
 #include <thread>
@@ -407,5 +408,138 @@ REGISTER_TEST(http_server_header_case_insensitive_dedup,
     DOCTEST_CHECK(rawRespHeaders.find("application/json") != std::string::npos);
 
     srv.stop();
+    return true;
+})
+
+// ---- Host 头白名单（02-proxy-host-validation）----
+// 口子背景：本地服务此前不看 Host，本机其它页面（浏览器里的恶意网页）可伪造
+// Host 借道访问。白名单配置后：host 部分（剥可选端口、大小写不敏感）命中才放行，
+// 其余 403 且不进路由 handler。所有用例连接仍打 127.0.0.1——只改 Host 头拼写，
+// 证明的是应用层 Host 校验与连接目标无关。
+
+REGISTER_TEST(http_server_host_whitelist_reject_forged,
+              "http_server: Host 白名单（host-allowlist）——伪造 Host 一律 403 且不进 handler", {
+    platform::http::Server srv("127.0.0.1", 0);
+    srv.setAllowedHosts({"127.0.0.1", "localhost", "[::1]"});
+    int handlerCalls = 0;
+    srv.route("GET", "/v1/chat",
+              [&](const platform::http::RequestCtx&,
+                  platform::http::ResponseWriter& w) {
+                  ++handlerCalls;
+                  w.setStatus(200);
+                  w.write("ok");
+                  w.end();
+              });
+    DOCTEST_CHECK(srv.start());
+    const int port = srv.actualPort();
+    DOCTEST_CHECK(waitForReady(port));
+
+    const std::string url = "http://127.0.0.1:" + std::to_string(port) +
+                            "/v1/chat";
+    // 伪造形态：外域 / 回环前后缀拼接（127.0.0.1.evil.com 是另一个域名，不是
+    // 127.0.0.1 的拼写变体）/ 外域带端口
+    const char* forgedHosts[] = {
+        "Host: evil.com",
+        "Host: 127.0.0.1.evil.com",
+        "Host: attacker.com:8080",
+    };
+    for (const char* forged : forgedHosts) {
+        std::string body;
+        std::string rawRespHeaders;
+        const long status = httpGetFull(url, {forged}, body, rawRespHeaders);
+        DOCTEST_CHECK_EQ(status, 403L);
+    }
+    // 403 必须发生在路由前：handler 一次都没被调（若只靠 handler 内自查拒，
+    // 这里就不再是 0）
+    DOCTEST_CHECK_EQ(handlerCalls, 0);
+
+    srv.stop();
+    return true;
+})
+
+REGISTER_TEST(http_server_host_whitelist_allows_loopback,
+              "http_server: Host 白名单（host-allowlist）——回环三形态放行（不带端口/带端口/大小写混合）", {
+    platform::http::Server srv("127.0.0.1", 0);
+    srv.setAllowedHosts({"127.0.0.1", "localhost", "[::1]"});
+    srv.route("GET", "/ok", [](const platform::http::RequestCtx&,
+                               platform::http::ResponseWriter& w) {
+        w.setStatus(200);
+        w.write("ok");
+        w.end();
+    });
+    DOCTEST_CHECK(srv.start());
+    const int port = srv.actualPort();
+    DOCTEST_CHECK(waitForReady(port));
+
+    const std::string url = "http://127.0.0.1:" + std::to_string(port) + "/ok";
+    const std::string portSuffix = std::to_string(port);
+    // 合法形态：三形态 ×（不带端口 / 带真实端口）×（小写 / 大小写混合）
+    const std::vector<std::string> legalHosts = {
+        "Host: 127.0.0.1",
+        "Host: 127.0.0.1:" + portSuffix,
+        "Host: localhost",
+        "Host: localhost:" + portSuffix,
+        "Host: LOCALhost:" + portSuffix,
+        "Host: [::1]",
+        "Host: [::1]:" + portSuffix,
+    };
+    for (const std::string& host : legalHosts) {
+        std::string body;
+        std::string rawRespHeaders;
+        const long status = httpGetFull(url, {host}, body, rawRespHeaders);
+        DOCTEST_CHECK_EQ(status, 200L);
+        DOCTEST_CHECK_EQ(body, std::string("ok"));
+    }
+
+    srv.stop();
+    return true;
+})
+
+REGISTER_TEST(http_server_host_whitelist_unset_allows_all,
+              "http_server: Host 白名单（host-allowlist）未配置=放行所有 Host（向后兼容）", {
+    // 不调 setAllowedHosts：既有调用方（含本文件历史用例）行为不变，伪造 Host 也放行
+    platform::http::Server srv("127.0.0.1", 0);
+    srv.route("GET", "/ok", [](const platform::http::RequestCtx&,
+                               platform::http::ResponseWriter& w) {
+        w.setStatus(200);
+        w.write("ok");
+        w.end();
+    });
+    DOCTEST_CHECK(srv.start());
+    const int port = srv.actualPort();
+    DOCTEST_CHECK(waitForReady(port));
+
+    const std::string url = "http://127.0.0.1:" + std::to_string(port) + "/ok";
+    std::string body;
+    std::string rawRespHeaders;
+    const long status =
+        httpGetFull(url, {"Host: evil.com"}, body, rawRespHeaders);
+    DOCTEST_CHECK_EQ(status, 200L);
+    DOCTEST_CHECK_EQ(body, std::string("ok"));
+
+    srv.stop();
+    return true;
+})
+
+REGISTER_TEST(http_server_host_whitelist_for_bind,
+              "http_server: host-allowlist hostWhitelistForBind 按绑定地址推导白名单", {
+    namespace ph = platform::http;
+    const auto has = [](const std::vector<std::string>& list,
+                        const std::string& entry) {
+        return std::find(list.begin(), list.end(), entry) != list.end();
+    };
+    // 回环绑定（任一拼写、大小写不敏感）→ 三种回环形态都进白名单：本机客户端
+    // 可能用 127.0.0.1 / localhost / [::1] 任一名字访问同一个监听
+    for (const char* bind : {"127.0.0.1", "localhost", "LOCALHOST", "::1",
+                             "[::1]"}) {
+        const auto wl = ph::hostWhitelistForBind(bind);
+        DOCTEST_CHECK(has(wl, "127.0.0.1"));
+        DOCTEST_CHECK(has(wl, "localhost"));
+        DOCTEST_CHECK(has(wl, "[::1]"));
+    }
+    // 非回环绑定 → 只放行监听地址本身（白名单跟着实际 bind 走，不写死回环集）
+    const auto lan = ph::hostWhitelistForBind("192.168.1.5");
+    DOCTEST_CHECK_EQ(lan.size(), 1u);
+    DOCTEST_CHECK_EQ(lan[0], std::string("192.168.1.5"));
     return true;
 })
