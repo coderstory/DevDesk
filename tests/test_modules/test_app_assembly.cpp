@@ -604,6 +604,8 @@ REGISTER_TEST(assembly_registry_matches_module_getters,
         if (e.page == ::core::PageId::Wallpaper && mod == nullptr) {
             // 唯一允许的空工厂行：平台能力不支持时按契约返回 nullptr（开关键仍是 wallpaper）
             DOCTEST_CHECK_FALSE(::platform::wallpaper::supported());
+            // 先判空再构造 std::string：std::string(nullptr) 是 UB（clang -Wnonnull 直接拦）
+            DOCTEST_REQUIRE(e.gatingKey != nullptr);
             DOCTEST_CHECK_EQ(std::string(e.gatingKey),
                              std::string(module::settings::kModuleIdWallpaper));
             continue;

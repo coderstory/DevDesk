@@ -93,6 +93,8 @@ REGISTER_TEST(wallpaper_registry_row,
 
     const ::app::registry::ModuleEntry* row = wallpaperRow();
     DOCTEST_REQUIRE(row != nullptr);
+    // 先判空再构造 std::string：std::string(nullptr) 是 UB（clang -Wnonnull 直接拦）
+    DOCTEST_REQUIRE(row->gatingKey != nullptr);
     DOCTEST_CHECK_EQ(std::string(row->gatingKey),
                      std::string(module::settings::kModuleIdWallpaper));
     DOCTEST_CHECK_EQ(std::string(row->shortName), std::string("壁纸"));

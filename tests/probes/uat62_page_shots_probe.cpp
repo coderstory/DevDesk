@@ -25,7 +25,7 @@
 
 #include <eui/detail/dsl_app_impl.h>  // app::requestShow/requestUpdate 内联实现
 #include "app_assembly.h"             // app_assembly.cpp 符号（app_sidebar 引用）
-#include "app_registry.h"             // kModuleRegistry（7 行登记表 + 工厂）
+#include "app_registry.h"             // kModuleRegistry（8 行登记表 + 工厂）
 #include "app_sidebar.h"              // 真 app::compose
 #include "module_toggle_bridge.h"     // app_assembly 的桥符号
 #include "test_support.h"             // MdHeadlessEnv / ScopedAppRouter
@@ -174,10 +174,20 @@ int main(int argc, char* argv[]) {
     const float w = static_cast<float>(args.windowW);
     const float h = static_cast<float>(args.windowH);
     bool passed = true;
+    std::size_t captured = 0;              // 实际落图页数（跳过项不计入 PASS 文案）
+    std::vector<std::string> skipped;      // 平台能力不支持而无法建实例的表行 slug
 
     for (std::size_t i = 0; i < std::size(::app::registry::kModuleRegistry);
          ++i) {
         const auto& e = ::app::registry::kModuleRegistry[i];
+        // 空工厂行（平台能力不支持，如非 Windows 的 wallpaper）没有实例可渲染：
+        // 跳过 navigate/落图，否则会回退 Home 拍出重复页并谎报该页已覆盖。
+        if (mods[i] == nullptr) {
+            skipped.push_back(kSlugs[i]);
+            std::cerr << "uat62_page_shots: 跳过 " << kSlugs[i]
+                      << "（平台能力不支持，工厂返回 nullptr）\n";
+            continue;
+        }
         router.navigateTo(e.page);
         // 稳帧：24 帧（400ms @60fps）盖过仓库最长过渡时长——弹层透明度等由
         // animate().transition() 逐帧插值，只 poll 不 compose 树不更新，少跑会
@@ -206,6 +216,7 @@ int main(int argc, char* argv[]) {
             passed = false;
             continue;
         }
+        ++captured;
         std::cout << "uat62_page_shots: " << path << " (" << pw << "x" << ph
                   << ")\n";
     }
@@ -221,6 +232,11 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     std::cout << "uat62_page_shots: PASS（" << args.windowW << "x"
-              << args.windowH << "，8 页全落图）\n";
+              << args.windowH << "，" << captured << " 页落图";
+    if (!skipped.empty()) {
+        std::cout << "；跳过 " << skipped.size() << " 页:";
+        for (const auto& slug : skipped) std::cout << " " << slug;
+    }
+    std::cout << "）\n";
     return 0;
 }
