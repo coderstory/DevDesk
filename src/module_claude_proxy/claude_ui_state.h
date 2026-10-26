@@ -120,10 +120,6 @@ struct FormState {
     // 共享配置片段绑定下拉（渲染在高级配置页）
     int64_t formSharedConfigId_ = 0;   // 表单态绑定（0 = 未绑定；保存时写入 profile）
     bool formSharedDdOpen_ = false;    // 绑定下拉展开态
-
-    // 备用 Profile（failover）绑定下拉（复用绑定下拉模式：索引 0 = 无，编辑态排除自身）
-    int64_t formFallbackProfileId_ = 0;   // 表单态备用（0 = 不启用 failover）
-    bool formFallbackDdOpen_ = false;     // 备用下拉展开态
 };
 
 // 共享配置片段编辑弹窗（独立状态）。必须接入 anyDialogOpen 门控与 closeTopmostDialog Esc 序链（最顶层）

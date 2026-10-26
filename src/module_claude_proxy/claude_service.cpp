@@ -131,13 +131,11 @@ core::Result<Profile> ClaudeService::createProfile(const std::string& name,
                                                    const std::string& model,
                                                    bool activateIfNoneActive,
                                                    int64_t sharedConfigId,
-                                                   const std::string& authField,
-                                                   int64_t fallbackProfileId) {
+                                                   const std::string& authField) {
     // 策略尾：无激活 Profile 时自动激活（经 setActiveProfile，代理运行中会同步
     // 接管 settings.json）。失败不回滚创建，只 WARN（UI 走「点击启用」文案）。
     auto created = profileRepository_.createProfile(
-        name, baseUrl, apiKey, model, sharedConfigId, authField,
-        fallbackProfileId);
+        name, baseUrl, apiKey, model, sharedConfigId, authField);
     if (created.isFail()) {
         return created;
     }
@@ -286,30 +284,6 @@ core::Result<void> ClaudeService::deleteSharedConfig(int64_t id) {
         (void)syncTakeOver();
     }
     return core::Result<void>::ok();
-}
-
-std::optional<Profile> ClaudeService::resolveFallbackProfile(
-    const Profile& profile) {
-    if (profile.fallbackProfileId == 0) {
-        return std::nullopt;   // 未配备用 → 不换家（常见路径，零 I/O）
-    }
-    auto fbR = profileRepository_.getProfile(profile.fallbackProfileId);
-    if (fbR.isFail()) {
-        LOG_WARN("failover: 备用 profile 不存在（fallback_profile_id=" +
-                 std::to_string(profile.fallbackProfileId) +
-                 "），本次不换家: " + fbR.errorMessage());
-        return std::nullopt;
-    }
-    Profile fb = std::move(fbR).value();
-    auto keyR = profileRepository_.loadApiKey(fb.id);
-    if (keyR.isFail() || keyR.value().empty()) {
-        LOG_WARN("failover: 备用 profile 密钥不可用（id=" +
-                 std::to_string(fb.id) + "），本次不换家" +
-                 (keyR.isFail() ? ": " + keyR.errorMessage() : std::string()));
-        return std::nullopt;
-    }
-    fb.apiKeyPlain = std::move(keyR).value();
-    return fb;
 }
 
 core::Result<platform::http::Response>

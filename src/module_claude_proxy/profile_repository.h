@@ -27,8 +27,6 @@ struct Profile {
     std::string extraEnvJson;   // 额外 env 键值 JSON 原文（空串 = 未配置）
     int64_t sharedConfigId = 0; // 绑定共享配置片段 id（0 = 未绑定；0..1、不嵌套）
     std::string authField = "both";  // 认证字段三态（'both'/'bearer'/'api_key'；未知/空串按 both 读）
-    // 备用 Profile id（0 = 无）：主 profile 返回可重试错误（401/403/429/5xx/网络失败）时用备用重试一次（不动 is_active、不重写 settings.json）；写侧拒自引用，删除同事务解绑
-    int64_t fallbackProfileId = 0;
     bool isActive = false;
     std::time_t createdAt = 0;
     std::time_t updatedAt = 0;
@@ -96,8 +94,7 @@ public:
                                         const std::string& apiKey,
                                         const std::string& model,
                                         int64_t sharedConfigId = 0,
-                                        const std::string& authField = "both",
-                                        int64_t fallbackProfileId = 0);
+                                        const std::string& authField = "both");
 
     // 更新 profile（id 必须已存在；apiKeyPlain 非空则覆盖凭据三列，空则只更新元数据）。
     // oldProfile（可空出参）成功时回填更新前的旧行——门面 re-takeover 据此判断。

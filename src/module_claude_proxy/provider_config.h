@@ -219,10 +219,4 @@ ReverseSyncMerge mergeReverseSyncEnv(const ImportedConfig& cfg,
 std::string makeCopyName(const std::string& baseName,
                          const std::vector<std::string>& existingNames);
 
-// failover 换家判据
-// 纯函数（缓冲 / 流式两路共用；输入 send 失败无响应 = 0；只判单次，次数调用方管）。
-// 换：statusCode==0、401/403、429、5xx、其余 4xx；不换：400/405/406/413/414/
-// 415/422/501（请求自身非法）；errorKind=="no_active_profile" 不换
-bool shouldFailoverTo(int statusCode, const std::string& errorKind);
-
 } // namespace module::claude

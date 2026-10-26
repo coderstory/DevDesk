@@ -60,8 +60,6 @@ void openCreateForm(FormState& f, ImportState& imp) {
     f.formAuthFieldOpen_ = false;
     f.formSharedConfigId_ = 0;
     f.formSharedDdOpen_ = false;
-    f.formFallbackProfileId_ = 0;
-    f.formFallbackDdOpen_ = false;
     resetImportState(imp);
     f.formOpen_ = true;
 }
@@ -83,9 +81,6 @@ void openEditForm(FormState& f, ImportState& imp, const Profile& p) {
     // 绑定回显（悬空由下拉逐帧归一为未绑定）
     f.formSharedConfigId_ = p.sharedConfigId;
     f.formSharedDdOpen_ = false;
-    // 备用 Profile 回显（悬空/自引用 → 下拉逐帧归一为「无」）
-    f.formFallbackProfileId_ = p.fallbackProfileId;
-    f.formFallbackDdOpen_ = false;
     // env 行：非法 JSON 读路径容错为空表
     f.formEnvRows_.clear();
     auto ee = parseExtraEnv(p.extraEnvJson);
@@ -261,8 +256,7 @@ void submitForm(FormState& f, const FormSubmitHooks& hooks,
         auto r = svc->createProfile(f.formName_, f.formUrl_, f.formKey_,
                                     f.formModels_.def.model, /*activateIfNoneActive=*/true,
                                     /*sharedConfigId=*/f.formSharedConfigId_,
-                                    authFieldToText(f.formAuthField_),
-                                    /*fallbackProfileId=*/f.formFallbackProfileId_);
+                                    authFieldToText(f.formAuthField_));
         if (r.isFail()) {
             setFormError(f, r.errorMessage());
             return;
@@ -309,7 +303,6 @@ void submitForm(FormState& f, const FormSubmitHooks& hooks,
         p.apiKeyPlain = f.formKey_;   // 空 = 不换 key
         p.authField = authFieldToText(f.formAuthField_);
         p.sharedConfigId = f.formSharedConfigId_;   // 绑定/解绑随保存落库
-        p.fallbackProfileId = f.formFallbackProfileId_;   // 备用随保存落库（自引用由服务层校验兜底）
         auto r = svc->updateProfile(p);
         if (r.isFail()) {
             setFormError(f, r.errorMessage());

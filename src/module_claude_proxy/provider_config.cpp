@@ -778,27 +778,4 @@ std::string makeCopyName(const std::string& baseName,
     return {};  // 100 次仍冲突：调用方按命名失败处理
 }
 
-bool shouldFailoverTo(int statusCode, const std::string& errorKind) {
-    // DevDesk 自产 503 no_active_profile → 不换家（本地配置错误非上游故障；
-    // writeNoProfileError 转发前直接回，判定点理论收不到）
-    if (errorKind == "no_active_profile") return false;
-    // 传输失败（无响应头 / DNS / TLS / 连接 / 超时）
-    if (statusCode == 0) return true;
-    // 负列表：请求自身非法，换家同结果白烧一次请求
-    switch (statusCode) {
-        case 400:
-        case 405:
-        case 406:
-        case 413:
-        case 414:
-        case 415:
-        case 422:
-        case 501:
-            return false;
-        default:
-            // 401/403 / 429 / 5xx / 其余 4xx → 换；2xx/3xx 到不了判定点，保守不换
-            return statusCode >= 400 && statusCode < 600;
-    }
-}
-
 } // namespace module::claude

@@ -61,8 +61,7 @@ public:
                                        const std::string& model,
                                        bool activateIfNoneActive = false,
                                        int64_t sharedConfigId = 0,
-                                       const std::string& authField = "both",
-                                       int64_t fallbackProfileId = 0);
+                                       const std::string& authField = "both");
 
     // 更新 profile（id 必须已存在）；apiKeyPlain 非空则覆盖凭据三列。
     core::Result<void> updateProfile(const Profile& profile);
@@ -105,11 +104,6 @@ public:
     // 用当前激活 profile（含所绑片段）重写 settings.json；通道未注入/开关关 →
     // no-op 成功。本入口不做前置校验，调用方必须先过 validateProxyPreconditions。
     core::Result<void> reapplyTakeOver() { return syncTakeOver(); }
-
-    // failover 备用解析
-    // 读 fallback_profile_id → getProfile + loadApiKey，成功返回含明文 key 的备用；
-    // 任一失败 / id==0 → nullopt（proxy_router 原样回错）。只换一跳；纯读不改状态。
-    std::optional<Profile> resolveFallbackProfile(const Profile& profile);
 
     // 连通性测试
 
