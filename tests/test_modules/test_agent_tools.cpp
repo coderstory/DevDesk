@@ -1033,8 +1033,12 @@ REGISTER_TEST(builtin_git_smoke,
     DOCTEST_REQUIRE(tool.isOk());
     auto r = tool.value()->execute(core::ToolArgs{
         platform::json::stringify(platform::json::JsonValue(args)).value()});
-    DOCTEST_REQUIRE(r.isOk());
-    DOCTEST_CHECK_FALSE(r.value().isError);
+    // 载荷随行诊断：CI runner 上此用例曾「FAIL 但零断言行」（2026-10-26），把
+    // 工具级错误文本带进断言消息，失败时一眼看到 git 报了什么
+    DOCTEST_REQUIRE_MESSAGE(r.isOk(), "git.status 执行通道失败: " +
+                                          (r.isOk() ? "" : r.errorMessage()));
+    DOCTEST_CHECK_MESSAGE(!r.value().isError,
+                          "git.status 报错，载荷: " + r.value().contentJson);
 
     auto commit = core::ToolRegistry::instance().find("git.commit");
     DOCTEST_REQUIRE(commit.isOk());
@@ -1045,7 +1049,8 @@ REGISTER_TEST(builtin_git_smoke,
     badArgs.set("repo", platform::json::makeString(td2.relPath()));
     auto bad = tool.value()->execute(core::ToolArgs{
         platform::json::stringify(platform::json::JsonValue(badArgs)).value()});
-    DOCTEST_REQUIRE(bad.isOk());
+    DOCTEST_REQUIRE_MESSAGE(bad.isOk(), "坏仓库探测执行通道失败: " +
+                                            (bad.isOk() ? "" : bad.errorMessage()));
     DOCTEST_CHECK(bad.value().isError);
     return true;
 })

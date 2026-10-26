@@ -50,7 +50,13 @@ bool hasLiveRun(const std::map<int64_t, AgentRunRow>& latestRuns,
 // 未配 API Key / 槽位未配置，四者都由该客户端产出），按前缀匹配。
 // 其余错误（网络 / 上游 4xx / 落库 / 读库）一律 false。前缀刻意钉死：文案一变，
 // 测试（test_agent_ui.cpp predicate 用例）即红，防文案漂移后引导静默失效。
-bool needsClaudePageHint(const std::string& errorText);
+// 头内 inline 定义（04 号票拆分回归修正）：此前「这里非 inline 声明 + internal.h
+// inline 定义」的组合，Debug/MinGW 下靠消费 TU 的弱符号侥幸链上，macOS Release
+//（-O3 全内联 + dead_strip）下无人发射符号 → undefined symbol。头内唯一 inline
+// 定义对任何优化等级/链接器都是同一实体，不再有这层侥幸。
+inline bool needsClaudePageHint(const std::string& errorText) {
+    return errorText.rfind("LLM 配置不可用", 0) == 0;
+}
 
 // run 完成通知的迁移检测（纯逻辑，refreshData 每次轮询消费）：
 // prev/now = 上次/本次轮询的 runId→status 快照；notified = 已通知过的 runId。
