@@ -345,7 +345,6 @@ private:
         a.warn = [this](const std::string& title, const std::string& msg) {
             showToast(title, msg, true);
         };
-        a.enable = [this](int64_t id) { doSetActive(id); };
         a.test = [this](const Profile& p) { doTestConnection(p); };
         a.edit = [this](const Profile& p) {
             openEditForm(state_.form, state_.import, p);

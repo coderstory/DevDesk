@@ -45,7 +45,6 @@ struct PaneRows {
 struct DetailActions {
     // 未选中 Profile 时的统一红字提示（标题 + 说明；各键标题不同）
     std::function<void(const std::string& title, const std::string& msg)> warn;
-    std::function<void(int64_t id)> enable;                          // 启用
     std::function<void(const Profile& p)> test;                      // 测试连通
     std::function<void(const Profile& p)> edit;                      // 编辑
     std::function<void(int64_t id)> run;                             // 运行

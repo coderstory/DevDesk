@@ -535,7 +535,7 @@ float drawDetailEnv(eui::Ui& ui, float x0, float y0, float w,
     return ey;
 }
 
-// 操作按钮组（启用/测试连通/编辑/运行）+ 副提示 + 分隔线。actY 由
+// 操作按钮组（测试连通/编辑/运行）+ 副提示 + 分隔线。actY 由
 // drawDetailPanel 锚定给出；绘制高 = 65 被 kActionBlockH 引用，改几何须同步。
 void drawDetailActions(eui::Ui& ui, float x0, float w, float actY,
                        const core::theme::Tokens& t,
@@ -548,8 +548,8 @@ void drawDetailActions(eui::Ui& ui, float x0, float w, float actY,
         .radius(t.sizes.radius)
         .build();
     const float actGap = 8.0f;
-    // 4 键均分：EUI row spacing 只在相邻子项间生效，n 项只有 n−1 个间隙，故扣 3 个 gap。
-    const float actW = (w - actGap * 3.0f) / 4.0f;
+    // 3 键均分：EUI row spacing 只在相邻子项间生效，n 项只有 n−1 个间隙，故扣 2 个 gap。
+    const float actW = (w - actGap * 2.0f) / 3.0f;
     ui.row("claude.detail.actions")
         .position(x0, actY)
         .size(w, 40.0f)
@@ -559,24 +559,6 @@ void drawDetailActions(eui::Ui& ui, float x0, float w, float actY,
             const Profile shownCopy = shown
                 ? *shown : Profile{};
 
-            // 启用（Filled 主按钮：绿底白字，8px 圆角）
-            components::button(ui, "claude.act.enable")
-                .size(actW, 40.0f)
-                .text("启用")
-                .fontSize(core::theme::scaled(14.0f))
-                .colors(t.colors.primary,
-                        t.colors.primaryHover,
-                        t.colors.primaryPressed)
-                .textColor(t.colors.onPrimary)
-                .radius(8.0f)
-                .onClick([f = a.enable, warn = a.warn, shownId] {
-                    if (shownId == 0) {
-                        warn("启用失败", "请先新建或选择一个 Profile");
-                        return;
-                    }
-                    f(shownId);
-                })
-                .build();
             // 测试连通（Outline 次按钮：白底绿边绿字）
             components::button(ui, "claude.act.test")
                 .size(actW, 40.0f)
