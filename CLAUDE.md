@@ -12,7 +12,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 另有**首页仪表盘**、**设置页**、**关于页**、**智能体页**（module_agent：任务 / 运行 / 工具）。
 
-> **模块口径以代码为准**：`src/app_registry.h` 的 `kModuleRegistry` 现有 **7 个 Router 页面**（首页 / 笔记 / 待办 / Claude / **智能体** / 设置 / **关于**，枚举序见 `src/core/module_interface.h` 的 `PageId`），**可被模块开关插拔的只有 笔记 / 待办 / Claude / 智能体 四者**（Home / Settings / About 的 `ModuleEntry` 里模块 id 是 `nullptr`，不可禁用）。`src/` 下有 7 个 `module_*` 目录。
+> **模块口径以代码为准**：`src/app_registry.h` 的 `kModuleRegistry` 现有 **8 个 Router 页面**（首页 / 笔记 / 待办 / Claude / **智能体** / **壁纸** / 设置 / **关于**，枚举序见 `src/core/module_interface.h` 的 `PageId`），**可被模块开关插拔的有 笔记 / 待办 / Claude / 智能体 / 壁纸 五者**（壁纸默认关闭；Home / Settings / About 的 `ModuleEntry` 里模块 id 是 `nullptr`，不可禁用）。`src/` 下有 8 个 `module_*` 目录。
 
 目标平台：**macOS**（arm64）和 **Windows 11**——两平台均为原生支持。CI 双平台构建 + 测试守卫。
 
@@ -106,7 +106,7 @@ EUI-NEO 依赖：`../EUI-NEO/`（同级目录，通过 `EUI_NEO_DIR` cache 变�
 ## 🏗️ 架构要点（4 层模块化）
 
 ```
-main → 7 个 Router 页面 (home / markdown / todo / claude_proxy / agent / settings / about)
+main → 8 个 Router 页面 (home / markdown / todo / claude_proxy / agent / wallpaper / settings / about)
             ↓
        core (Result / paths / sqlite_db / logging / theme / router)
             ↓
