@@ -138,8 +138,6 @@ bool isOpencodeHost(const std::string& host) {
 // include，此处按同一规则最小复刻）；新增方言时两处都要改，漏改表现为「该网关下
 // agent 直连失败」。
 bool isOpencodeZen(const core::LlmDirectProfile& profile) {
-    if (profile.dialectOverride == "opencode_zen") return true;
-    if (profile.dialectOverride == "anthropic_default") return false;
     return isOpencodeHost(hostOf(profile.baseUrl));
 }
 

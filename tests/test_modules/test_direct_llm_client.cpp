@@ -233,7 +233,7 @@ REGISTER_TEST(direct_llm_client_upstream_status_and_network_errors,
 })
 
 REGISTER_TEST(direct_llm_client_opencode_dialect,
-              "direct_llm_client: opencode 方言（x-opencode-session）+ [1M] 全网关剥；override 可覆盖 host 推断", {
+              "direct_llm_client: opencode 方言 host 推断（x-opencode-session）+ [1M] 全网关剥", {
     const auto sendOnce = [](test_support::FakeProfileSource& profile,
                              Capture& cap) {
         module::agent::DirectLlmClient client(profile, cap.fn());
@@ -250,26 +250,6 @@ REGISTER_TEST(direct_llm_client_opencode_dialect,
         DOCTEST_CHECK(cap.req.headers["x-opencode-session"].size() == 32);
         DOCTEST_CHECK(cap.req.body.find("\"model\":\"claude-sonnet-4-5\"") !=
                       std::string::npos);
-    }
-    // 显式覆盖：自建网关 host 推断不出 → profile 钉 opencode_zen
-    {
-        test_support::FakeProfileSource profile;
-        profile.profile.baseUrl = "https://gw.internal.example";
-        profile.profile.dialectOverride = "opencode_zen";
-        Capture cap;
-        DOCTEST_REQUIRE(sendOnce(profile, cap).isOk());
-        DOCTEST_CHECK_EQ(cap.req.headers.count("x-opencode-session"), size_t(1));
-    }
-    // 显式覆盖成 anthropic_default：opencode host 也不加会话头；但 [1M] 网关一律剥
-    {
-        test_support::FakeProfileSource profile;
-        profile.profile.baseUrl = "https://zen.opencode.ai";
-        profile.profile.dialectOverride = "anthropic_default";
-        profile.profile.defaultModel = "claude-sonnet-4-5[1M]";
-        Capture cap;
-        DOCTEST_REQUIRE(sendOnce(profile, cap).isOk());
-        DOCTEST_CHECK_EQ(cap.req.headers.count("x-opencode-session"), size_t(0));
-        DOCTEST_CHECK(cap.req.body.find("[1M]") == std::string::npos);
     }
     // 非 opencode 的通用网关：无会话头，但 [1M] 网关一律剥
     {

@@ -18,7 +18,6 @@ struct LlmDirectProfile {
     std::string authField;        // 鉴权头三态：'both' / 'bearer' / 'api_key'（未知/空串按 both）
     std::string modelsConfigJson; // 槽位配置 JSON 原文（空串 = 未配置）
     std::string defaultModel;     // profile.model：default 槽位在 models_config 缺该槽时的回落
-    std::string dialectOverride;  // 上游方言覆盖：'opencode_zen' / 'anthropic_default' / 空串（按 host 推断）
 };
 
 class LlmProfileSource {
