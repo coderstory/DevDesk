@@ -62,6 +62,10 @@ core::Result<int> ProxyRuntime::startProxy(const std::string& bindAddress,
 
     // 构造 Server（绑定 127.0.0.1，仅本机可访问，无鉴权）
     server_ = std::make_unique<platform::http::Server>(bindAddress, port);
+    // 02：应用层 Host 白名单——按实际 bind 地址推导（回环 bind → 三种回环形态），
+    // 不写死；本机其它页面伪造 Host 借道访问一律 403。连接级约束（仅 bind 回环
+    // 可连）不受影响，这是在它之上的应用层校验。
+    server_->setAllowedHosts(platform::http::hostWhitelistForBind(bindAddress));
 
     // 构造并注册路由（ProxyRouter 契约持 ClaudeService&——门面引用经构造
     // 注入，本类自身不调用门面方法）
