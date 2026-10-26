@@ -181,7 +181,6 @@ constexpr float kPageHintH = 16.0f;
 // 任务弹窗几何（UAT5 重设计：弹性宽 = max(720, 窗口/2)，demo 智能体面板的紧凑行高）
 // kDialogGap/kDialogLabelW/kDialogRowH 已收进 agent_ui_shared.h（与详情弹窗共用真源）
 constexpr float kTaskDialogH = 520.0f;        // UAT6 竖向导航案：标题栏/底栏各 44 带 + 内容区 432
-constexpr float kGoalInputH = 64.0f;          // demo 指令 textarea rows≈3
 constexpr float kGroupTitleH = 20.0f;        // 分组标题高（14px 加粗 + 行高 20）
 
 // AI 草稿子弹窗几何（Standard 460 宽；y 均为本弹窗面板内坐标，与任务弹窗互不影响）。

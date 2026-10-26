@@ -1237,7 +1237,9 @@ REGISTER_TEST(md_module_wechat_surfaces,
 
     const auto& wc = core::theme::current().colors;
     const eui::Color cardBg = ui_kit::cardSurface(core::theme::current());
-    DOCTEST_CHECK(colorEq(ui.find("md.tree.bg")->color, wc.background));  // B2 方案 A 共面融合：树区与编辑区同底
+    // 批M（2026-10-25 拍板）：树区改浅灰面板（hover 令牌），编辑/预览白纸卡——
+    // 灰底托纸卡分层，取代旧「树/编辑同底」共面方案
+    DOCTEST_CHECK(colorEq(ui.find("md.tree.bg")->color, wc.hover));
     DOCTEST_CHECK(colorEq(ui.find("md.search.hit")->color, wc.surface));
     DOCTEST_CHECK(colorEq(ui.find("md.editor.bg")->color, wc.background));
     const auto* edHit = ui.find("md.editor.input.hit");

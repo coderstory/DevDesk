@@ -13,7 +13,7 @@
 
 ## 1. 轻量化裁决锚 —— 「不建议回补」清单（刻意决策，不是缺）
 
-commit `9d032c29`（2026-10-04 落 10-03 裁决）"轻量化第一批 —— probes 12→4"，删 8 个与无头单测逐条重复的 probe；docs/lightweight-audit-2026-10-03.md:13-44 为判据文档。对应面**不要**再列缺口、不要回补 probe：
+commit `9d032c29`（2026-10-04 落 10-03 裁决）"轻量化第一批 —— probes 12→4"，删 8 个与无头单测逐条重复的 probe；docs/archive/lightweight-audit-2026-10-03.md:13-44 为判据文档。对应面**不要**再列缺口、不要回补 probe：
 
 | 被删 probe | 对应 UI 面 | 现由谁覆盖（证据） |
 |---|---|---|
@@ -22,7 +22,7 @@ commit `9d032c29`（2026-10-04 落 10-03 裁决）"轻量化第一批 —— pro
 | claude_calls_latency_probe | calls 延迟展示 | test_claude_calls_latency.cpp（纯逻辑层） |
 | claude_probes | profile 表/弹窗几何 | test_claude_ui.cpp:1691/:5693/:5743/:6613/:8239 |
 | markdown_probes | md 树/浮层/双栏 | test_markdown.cpp:726/:1712/:1831（zIndex）/:3712（esc 栈） |
-| pet_probes | 桌宠窗（曾是必红 TODO，docs/lightweight-audit-2026-10-03.md:34-36） | 页面已整模块摘除，问题随面消解，无欠账 |
+| pet_probes | 桌宠窗（曾是必红 TODO，docs/archive/lightweight-audit-2026-10-03.md:34-36） | 页面已整模块摘除，问题随面消解，无欠账 |
 | settings_cards_probes | 设置卡片几何（曾是必红 TODO：effect.hint 无 clip/wrap） | 必红项已由 `8df78dc` Ellipsis 批修复；卡片几何现由 test_settings.cpp:790/:843/:1367/:1571 覆盖 |
 | todo_probes | 看板/拖拽/逾期 | test_todo_ui.cpp:1008/:1479/:1590/:1748/:3170/:4577（拖拽=纯几何函数+帧驱动模拟，OS 级真指针**刻意不测**） |
 

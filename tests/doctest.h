@@ -164,6 +164,34 @@ inline std::filesystem::path tempPath(const std::string& name) {
             std::to_string(n) + ext);
 }
 
+// 仓库根定位（源码契约测试 / 需要仓库自身的用例通用）。
+// 为什么不能只靠 __FILE__ 上溯：generator 可能以**相对路径**传源文件（ninja 下常见
+// `..\tests\test_modules\x.cpp`），weakly_canonical 按**运行时 cwd** 解析——
+// 从 build/ 直跑能对上，ctest 的 cwd 是 build/tests 就错位成不存在的路径。
+// 双锚点各向上找本仓库根独有标记 tests/doctest.h：
+//   ① doctest.h 自身路径（含相对形态；cwd 错位时标记检查不中，自动落到 ②）
+//   ② 运行时 cwd（无论 cwd=build/ 还是 build/tests，build 目录都在根的正下方）
+// CI 与本地、ctest 与直跑因此拿到同一根。找不到返回空 path——调用方必须
+// DOCTEST_REQUIRE(!root.empty()) 兜底报错，不许静默跳过断言。
+inline std::filesystem::path repoRoot() {
+    namespace fs = std::filesystem;
+    static const fs::path root = [] {
+        std::error_code ec;
+        const fs::path fileAnchor =
+            fs::weakly_canonical(fs::path(__FILE__), ec).parent_path();
+        const fs::path anchors[2] = {fileAnchor, fs::current_path(ec)};
+        for (const fs::path& start : anchors) {
+            for (fs::path dir = start;
+                 !dir.empty() && dir != dir.parent_path();
+                 dir = dir.parent_path()) {
+                if (fs::exists(dir / "tests" / "doctest.h", ec)) return dir;
+            }
+        }
+        return fs::path{};
+    }();
+    return root;
+}
+
 } // namespace test_temp
 
 // 直接注册测试：REGISTER_TEST(unique_name, "Description", { body })

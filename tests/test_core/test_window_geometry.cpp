@@ -19,13 +19,11 @@
 namespace {
 
 // 源码契约读源文件（先例：test_splash_contract.cpp）。
-// 路径推导：__FILE__ = <source_root>/tests/test_core/test_window_geometry.cpp
-// （CMake 以绝对路径登记源文件），source_root = parent_path() ×3（test_core → tests → root）。
+// 根定位走 test_temp::repoRoot()（doctest.h）：__FILE__ 相对形态 + ctest 的
+// build/tests cwd 下，裸 __FILE__ 上溯三级会指向不存在的路径 → 空串假红。
 std::string readSourceFile(const std::string& relPath) {
     namespace fs = std::filesystem;
-    const fs::path here = fs::weakly_canonical(fs::path(__FILE__));
-    const fs::path sourceRoot =
-        here.parent_path().parent_path().parent_path();
+    const fs::path sourceRoot = test_temp::repoRoot();
     const fs::path target = sourceRoot / relPath;
     std::ifstream in(target, std::ios::binary);
     if (!in.is_open()) return std::string{};

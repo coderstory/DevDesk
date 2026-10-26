@@ -43,6 +43,6 @@
 
 ## 附：fork EUI-NEO 的判断标准
 
-维持 CLAUDE.md 的上游贡献政策：EUI-NEO 的问题走上游 PR（当前候选见 [EUI-NEO-PR-PLAN.md](EUI-NEO-PR-PLAN.md)：P0 fontWeight 真切换、P1 全局 hotkey；另有 GCC `-Os` C4 mangle、platform.cpp `__APPLE__` 守卫等小项，原见 `docs/KNOWN_LIMITATIONS.md` 上游一节——**该文件已于 `5bc5a0a` 删除**，候选项的现行记录以 `EUI-NEO-PR-PLAN.md` 与 `docs/superpowers/plans/2026-09-27-eui-upstream-candidates.md` 为准）。fork 只在上游停滞且缺陷阻塞 DevDesk 时才值得——fork 的成本是永久性的（永久脱离上游演进、所有框架修复自己背），目前两个已选 PR 候选都是小改动，远未到那一步。
+维持 CLAUDE.md 的上游贡献政策：EUI-NEO 的问题走上游 PR（当前候选见 [EUI-NEO-PR-PLAN.md](../EUI-NEO-PR-PLAN.md)：P0 fontWeight 真切换、P1 全局 hotkey；另有 GCC `-Os` C4 mangle、platform.cpp `__APPLE__` 守卫等小项，原见 `docs/KNOWN_LIMITATIONS.md` 上游一节——**该文件已于 `5bc5a0a` 删除**，候选项的现行记录以 `EUI-NEO-PR-PLAN.md` 与 `docs/superpowers/plans/2026-09-27-eui-upstream-candidates.md` 为准）。fork 只在上游停滞且缺陷阻塞 DevDesk 时才值得——fork 的成本是永久性的（永久脱离上游演进、所有框架修复自己背），目前两个已选 PR 候选都是小改动，远未到那一步。
 
 > ⚠ **2026-10-03 批注（评估结论已与现实脱节）**：本节写于 2026-09 中旬。此后事实变了——EUI-NEO 本地 main 已领先上游 `origin`（sudoevolve/EUI-NEO）**97 个提交**且**已决策永不推送回上游**（2026-09-28 用户决策），同时代码被推到了自建远端 `fork`（coderstory/EUI-NEO），**CI 已把该 fork 当作构建源**（`.github/workflows/ci.yml` 的 `EUI_NEO_REPO`）。也就是说「是否 fork」这条**实质上已经发生**，不再是「未选定」；上表「现在不 fork，继续上游协同」与本节"远未到那一步"的结论**均已过期**。现行口径见 `DevDesk/CLAUDE.md` 的「EUI-NEO 上游贡献政策」与「⚠ 跨仓库耦合」两段。
