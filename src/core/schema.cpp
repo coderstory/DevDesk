@@ -2,7 +2,8 @@
 //   1) agent 三表（agent_tasks / agent_runs / agent_messages）缺列补齐——
 //      CREATE IF NOT EXISTS 对已存在表跳过 → 老库永远缺 DDL 新增列（2026-10-19 真机
 //      context_note 报障根因）；
-//   2) Todo 固定四列迁移（UAT6.2 H20）——与 Todo 模块开关无关，启动时跑一次。
+//   2) Todo 固定四列迁移（UAT6.2 H20）——与 Todo 模块开关无关，启动时跑一次；
+//   3) 已删除功能的遗留 Claude schema（共享片段表 + 高级/方言/备用三列）清理。
 // 均幂等：新库不炸、老库补齐、旧数据行保留不丢。
 // 票 11：补列迁移的表/列标识符一律 enum → schema.h constexpr 白名单查表后拼接，
 // 非法值在查表处（加载期）显式报错——不再有裸字符串直接进 ALTER 语句。
@@ -605,9 +606,9 @@ core::Result<void> addMissingAgentColumns(core::data::SqliteDb& db) {
     return core::Result<void>::ok();
 }
 
-core::Result<void> migrateDropDeprecatedSharedConfig(core::data::SqliteDb& db) {
-    // 共享片段功能已整体删除：老库的表与列必须清掉；全新库两者都不存在，直接 no-op。
-    // 幂等：表/列存在性检查后动 DDL，重复调用不再命中（DROP TABLE IF EXISTS 亦兼容）。
+core::Result<void> migrateDropDeprecatedClaudeConfig(core::data::SqliteDb& db) {
+    // 共享片段表 + 高级设置/方言/备用遗留列已整体删除：老库必须清掉，全新库不存在
+    // → 直接 no-op。幂等：先查存在性再动 DDL，重复调用不再命中。
     auto table = tableExists(db, "claude_shared_configs");
     if (table.isFail())
         return core::Result<void>::fail(table.errorCode(), table.errorMessage());
@@ -618,8 +619,16 @@ core::Result<void> migrateDropDeprecatedSharedConfig(core::data::SqliteDb& db) {
     auto cols = existingColumns(db, "claude_profiles");
     if (cols.isFail())
         return core::Result<void>::fail(cols.errorCode(), cols.errorMessage());
-    if (cols.value().count("shared_config_id") != 0) {
-        auto alter = db.exec("ALTER TABLE claude_profiles DROP COLUMN shared_config_id");
+    const char* deprecatedCols[] = {
+        "shared_config_id",
+        "dialect_override",
+        "fallback_profile_id",
+        "extra_settings_json",
+    };
+    for (const char* col : deprecatedCols) {
+        if (cols.value().count(col) == 0) continue;
+        auto alter = db.exec(std::string("ALTER TABLE claude_profiles DROP COLUMN ") +
+                             col);
         if (alter.isFail()) return alter;
     }
     return core::Result<void>::ok();
@@ -643,11 +652,11 @@ core::Result<void> migrate(core::data::SqliteDb& db) {
         LOG_ERROR("Database schema 应用失败: " + r.errorMessage());
         return r;
     }
-    // 共享片段表/列已废弃：老库在补列前先清掉，避免遗留 schema 继续被带着走。
-    auto dropShared = migrateDropDeprecatedSharedConfig(db);
-    if (dropShared.isFail()) {
-        LOG_ERROR("共享片段遗留 schema 清理失败: " + dropShared.errorMessage());
-        return dropShared;
+    // 共享片段表与高级/方言/备用遗留列已废弃：老库在补列前先清掉。
+    auto dropDeprecated = migrateDropDeprecatedClaudeConfig(db);
+    if (dropDeprecated.isFail()) {
+        LOG_ERROR("Claude 遗留 schema 清理失败: " + dropDeprecated.errorMessage());
+        return dropDeprecated;
     }
     auto colMig = addMissingAgentColumns(db);
     if (colMig.isFail()) {

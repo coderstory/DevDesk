@@ -83,17 +83,11 @@ inline constexpr const char* kSql = R"(
     );
 
     -- Claude 配置切换器
-    -- models_config / extra_env / extra_settings_json 均为 JSON 文本列，空串 = 未配置：
+    -- models_config / extra_env 均为 JSON 文本列，空串 = 未配置：
     --   - models_config      模型列表（多槽位），读侧空串时回落 default 槽位 = model
     --   - extra_env          env 装饰层（键值对，如 ANTHROPIC_SMALL_FAST_MODEL）
-    --   - extra_settings_json settings.json **除 env 外全部顶层属性**的原始 JSON
-    --                        （model / permissions / statusLine / hooks / …，只存原文）
     -- auth_field 三态：'both'（默认，双发 x-api-key + Authorization: Bearer）/ 'bearer' /
     --   'api_key'——代理转发据此决定注入哪个鉴权头；未知值 / 空串读侧兜底 'both'。
-    -- dialect_override 上游方言覆盖：空串 = 未覆盖 = 按 base_url 的 host 推断
-    --   （'anthropic_default' / 'opencode_zen'）；自建网关 / 内网镜像的 host 后缀推断不出
-    --   正确方言，只能显式覆盖。
-    -- fallback_profile_id failover 备用供应商 id：0 = 无备用（0..1 单跳，不换第三家）。
     --
     -- 凭据三列（存储形态见 platform/credential_protection.h）：
     --   api_key_encrypted 凭据本体，存储形态分平台：
@@ -119,10 +113,7 @@ inline constexpr const char* kSql = R"(
         updated_at INTEGER NOT NULL,
         models_config TEXT NOT NULL DEFAULT '',
         extra_env TEXT NOT NULL DEFAULT '',
-        auth_field TEXT NOT NULL DEFAULT 'both',
-        dialect_override TEXT NOT NULL DEFAULT '',
-        fallback_profile_id INTEGER NOT NULL DEFAULT 0,
-        extra_settings_json TEXT NOT NULL DEFAULT ''
+        auth_field TEXT NOT NULL DEFAULT 'both'
     );
 
     -- 调用日志（可审计）：五列 usage 全部可空——NULL = 未采集（老行 / 非流式 / 上游没给

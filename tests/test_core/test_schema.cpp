@@ -262,7 +262,7 @@ REGISTER_TEST(schema_todo_tables_columns,
 })
 
 REGISTER_TEST(schema_claude_tables_columns,
-              "schema: claude 两表列定义符合最终形态（16/15 列）", {
+              "schema: claude 两表列定义符合最终形态（13/15 列）", {
     auto path = test_support::tempDbPath(kDbPrefix, "cols_claude");
     std::error_code ec;
     std::filesystem::remove(path, ec);
@@ -287,9 +287,6 @@ REGISTER_TEST(schema_claude_tables_columns,
             "models_config:TEXT:1:''",
             "extra_env:TEXT:1:''",
             "auth_field:TEXT:1:'both'",
-            "dialect_override:TEXT:1:''",
-            "fallback_profile_id:INTEGER:1:0",
-            "extra_settings_json:TEXT:1:''",
         };
         DOCTEST_CHECK_EQ(columnDefs(db, "claude_profiles"), expectProfiles);
 
@@ -702,9 +699,9 @@ REGISTER_TEST(schema_is_idempotent,
     return true;
 })
 
-// 老库（含已删除的共享片段表/列）→ migrate 清掉遗留 schema，数据行与其余列保留
-REGISTER_TEST(schema_migrate_drops_deprecated_shared_config,
-              "schema: 老库迁移删除共享片段表/列（幂等，profile 行保留）", {
+// 老库（含已删除的共享片段表 + 高级/方言/备用列）→ migrate 清掉遗留 schema
+REGISTER_TEST(schema_migrate_drops_deprecated_claude_config,
+              "schema: 老库迁移删除共享片段表与三条遗留列（幂等，profile 行保留）", {
     auto path = test_support::tempDbPath(kDbPrefix, "drop_shared");
     std::error_code ec;
     std::filesystem::remove(path, ec);
@@ -743,8 +740,10 @@ REGISTER_TEST(schema_migrate_drops_deprecated_shared_config,
             "extra_settings_json TEXT NOT NULL DEFAULT '')").isOk());
         DOCTEST_REQUIRE(db.exec(
             "INSERT INTO claude_profiles (id, name, base_url, api_key_hint, "
-            "api_key_check, model, created_at, updated_at, shared_config_id) "
-            "VALUES (1, 'old', 'https://old.example.com', 'sk-***', 'x', 'm', 1, 2, 7)")
+            "api_key_check, model, created_at, updated_at, shared_config_id, "
+            "dialect_override, fallback_profile_id, extra_settings_json) "
+            "VALUES (1, 'old', 'https://old.example.com', 'sk-***', 'x', 'm', 1, 2, "
+            "7, 'opencode_zen', 3, '{\"model\":\"x\"}')")
                             .isOk());
         DOCTEST_REQUIRE(db.exec(
             "INSERT INTO claude_shared_configs (name, created_at, updated_at, "
@@ -754,13 +753,18 @@ REGISTER_TEST(schema_migrate_drops_deprecated_shared_config,
         DOCTEST_CHECK_EQ(listObjects(db, "table").count("claude_shared_configs"),
                          static_cast<size_t>(0));
         const auto cols = columnDefs(db, "claude_profiles");
-        bool hasSharedCol = false;
-        for (const auto& c : cols) {
-            if (c.rfind("shared_config_id:", 0) == 0) hasSharedCol = true;
+        DOCTEST_CHECK_EQ(cols.size(), static_cast<size_t>(13));
+        for (const char* gone :
+             {"shared_config_id", "dialect_override", "fallback_profile_id",
+              "extra_settings_json"}) {
+            bool found = false;
+            for (const auto& c : cols) {
+                if (c.rfind(std::string(gone) + ":", 0) == 0) found = true;
+            }
+            DOCTEST_CHECK_FALSE(found);
         }
-        DOCTEST_CHECK_FALSE(hasSharedCol);
         DOCTEST_CHECK(std::find(cols.begin(), cols.end(),
-                                "extra_settings_json:TEXT:1:''") != cols.end());
+                                "auth_field:TEXT:1:'both'") != cols.end());
         auto q = db.prepare("SELECT name, base_url, model FROM claude_profiles");
         DOCTEST_REQUIRE(q.isOk());
         auto rows = q.value().fetchAll();

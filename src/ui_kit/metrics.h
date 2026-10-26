@@ -19,7 +19,7 @@ enum class DialogWidth {
     Compact,    // 420 —— claude 删除确认
     Standard,   // 460 —— todo 全部 / markdown 全部
     Wide,       // 640 —— todo 详情 / 逾期
-    ExtraWide,  // 720 —— claude 调用记录
+    ExtraWide,  // 720 —— 超宽档
     Form,       // 760 —— claude Profile 表单
 };
 
