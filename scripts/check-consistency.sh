@@ -29,7 +29,7 @@ set -uo pipefail
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SCREENSHOTS_DIR="$PROJECT_ROOT/docs/screenshots"
 HTML_FILE="$PROJECT_ROOT/docs/mockups/devdesk-prototype.html"
-DOCS_FILE="$PROJECT_ROOT/docs/CONSISTENCY-CHECK.md"
+DOCS_FILE="$PROJECT_ROOT/docs/archive/CONSISTENCY-CHECK.md"
 
 # 平台标识 DEVDESK_OS 决定走哪条截屏分支（Windows CopyFromScreen / macOS screencapture），
 # 二进制名也按平台取（Windows 是 DevDesk.exe）。

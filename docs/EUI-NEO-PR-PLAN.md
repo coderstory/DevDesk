@@ -250,7 +250,7 @@ app::registerGlobalHotkey(app::Hotkey::Cmd | app::Hotkey::Shift | app::Hotkey::P
 - [x] 选定 2 个改进点（fontWeight + global hotkey）
 - [x] 为每个写详细 PR 方案
 - [x] 实际写 fontWeight 的 patch（在 EUI-NEO 仓库，已合入本地 main，commit `bb5c965`）
-- [x] 写 PR 描述（[`docs/PR-DESCRIPTION.md`](PR-DESCRIPTION.md)）
+- [x] 写 PR 描述（[`docs/archive/PR-DESCRIPTION.md`](archive/PR-DESCRIPTION.md)）
 - [x] 一次性 PR 准备脚本 `scripts/prep-eui-neo-pr.sh` 已删除（2026-09-28 平台审计 N5：锁定已完成的旧 PR + 跨仓库 `git add` 风险），推送 / 开 PR 改手动，见 §4.2
 
 ### 4.2 需要用户操作（不自动做）
