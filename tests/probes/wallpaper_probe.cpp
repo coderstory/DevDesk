@@ -35,6 +35,7 @@
 #include <iostream>
 #include <memory>
 #include <string>
+#include <system_error>
 #include <utility>
 
 // app:: 层链接桩（dsl_app_impl.h 引用 dslAppConfig）
@@ -80,6 +81,16 @@ constexpr std::size_t kRegistrySize =
 
 int main(int argc, char* argv[]) {
     auto args = probe::parseProbeArgs(argc, argv);
+    // 平台能力前置：不支持的平台（macOS 等）必须诚实跳过（ctest SKIP_RETURN_CODE
+    // 77），不能因为建窗成功就把「平台不支持壁纸宿主」报成红色失败——那是把
+    // 门禁判据变成平台相关性误报，本地 ctest -L probe 会稳定红。
+    if (!::platform::wallpaper::supported()) {
+        std::cerr << "wallpaper_probe: 当前平台不支持壁纸宿主"
+                     "（platform::wallpaper::supported() == false）"
+                     "——本 probe 需要 Windows 真壁纸能力，跳过（exit "
+                  << probe::kSkipExitCode << "）\n";
+        return probe::kSkipExitCode;
+    }
     if (!probe::initializeWindowBackend()) return 1;
     auto window = probe::makeWindow("wallpaper_probe", args.windowW,
                                     args.windowH);
@@ -110,6 +121,105 @@ int main(int argc, char* argv[]) {
             std::cerr << "wallpaper_probe: FAIL " << what << "\n";
             passed = false;
         }
+    };
+
+    // ── §0 DPI 适配：按实测 framebuffer 反推可用逻辑尺寸 ──
+    // GLFW 窗口尺寸按物理像素生效，而 compose 走逻辑尺寸。125%~135% 缩放下按
+    // 1200×1000 建窗，framebuffer 仍只有 1200×1000 物理（逻辑约 886×738），内容
+    // 放大 1.25~1.35 倍后右侧/底部被裁。先请求 物理 = 逻辑×scale；但系统可能按
+    // 屏幕工作区上限钳小窗口（本机 135% 下高被钳到 1065），所以**不能假定请求
+    // 尺寸成立**：轮询等尺寸落定后，再用实测 framebuffer / 实测 scale 反推
+    // effW/effH，compose 与全部断言都以 eff 为准。
+    auto* glfwWindow = static_cast<GLFWwindow*>(window);
+    float scaleX = 1.0f;
+    float scaleY = 1.0f;
+    glfwGetWindowContentScale(glfwWindow, &scaleX, &scaleY);
+    check(scaleX > 0.0f && scaleY > 0.0f,
+          "§0 DPI：contentScale 应为正数（实测 " + std::to_string(scaleX) +
+              "x" + std::to_string(scaleY) + "）");
+    if (!(scaleX > 0.0f)) scaleX = 1.0f;
+    if (!(scaleY > 0.0f)) scaleY = 1.0f;
+    glfwSetWindowSize(glfwWindow,
+                      static_cast<int>(std::lround(
+                          static_cast<double>(args.windowW) * scaleX)),
+                      static_cast<int>(std::lround(
+                          static_cast<double>(args.windowH) * scaleY)));
+    // 轮询到 framebuffer 尺寸连续 5 帧稳定（窗口管理器钳尺寸需要若干帧）。
+    int fbW = 0;
+    int fbH = 0;
+    int stableFrames = 0;
+    int lastW = -1;
+    int lastH = -1;
+    for (int attempt = 0; attempt < 200; ++attempt) {
+        glfwPollEvents();
+        glfwWaitEventsTimeout(0.01);
+        glfwGetFramebufferSize(glfwWindow, &fbW, &fbH);
+        if (fbW == lastW && fbH == lastH) {
+            if (++stableFrames >= 5) break;
+        } else {
+            lastW = fbW;
+            lastH = fbH;
+            stableFrames = 0;
+        }
+    }
+    // 重新读 scale（窗口尺寸变化/跨屏都可能改变它），再反推有效逻辑尺寸。
+    glfwGetWindowContentScale(glfwWindow, &scaleX, &scaleY);
+    if (!(scaleX > 0.0f)) scaleX = 1.0f;
+    if (!(scaleY > 0.0f)) scaleY = 1.0f;
+    const int effW = static_cast<int>(
+        std::lround(static_cast<double>(fbW) / static_cast<double>(scaleX)));
+    const int effH = static_cast<int>(
+        std::lround(static_cast<double>(fbH) / static_cast<double>(scaleY)));
+    std::cout << "wallpaper_probe: contentScale=" << scaleX << "x" << scaleY
+              << " framebuffer=" << fbW << "x" << fbH
+              << " effLogical=" << effW << "x" << effH << "\n";
+    check(fbW > 0 && fbH > 0 && effW > 0 && effH > 0,
+          "§0 DPI：framebuffer 与有效逻辑尺寸应为正（实测 framebuffer " +
+              std::to_string(fbW) + "x" + std::to_string(fbH) + "，eff " +
+              std::to_string(effW) + "x" + std::to_string(effH) + "）");
+    check(std::abs(fbW - static_cast<int>(std::lround(
+                            static_cast<double>(effW) * scaleX))) <= 2 &&
+              std::abs(fbH - static_cast<int>(std::lround(
+                            static_cast<double>(effH) * scaleY))) <= 2,
+          "§0 DPI：framebuffer " + std::to_string(fbW) + "x" +
+              std::to_string(fbH) + " 应等于实测 eff " + std::to_string(effW) +
+              "x" + std::to_string(effH) + " × scale（±2）");
+
+    // 截图前复核：framebuffer 必须仍等于 eff×当前 scale（窗口漂移/缩放变化即红）
+    auto assertFramebufferMatchesLogical = [&](const std::string& when) {
+        int nowW = 0;
+        int nowH = 0;
+        float nowScaleX = 1.0f;
+        float nowScaleY = 1.0f;
+        glfwGetFramebufferSize(glfwWindow, &nowW, &nowH);
+        glfwGetWindowContentScale(glfwWindow, &nowScaleX, &nowScaleY);
+        const int wantW =
+            nowScaleX > 0.0f
+                ? static_cast<int>(std::lround(static_cast<double>(effW) *
+                                               nowScaleX))
+                : effW;
+        const int wantH =
+            nowScaleY > 0.0f
+                ? static_cast<int>(std::lround(static_cast<double>(effH) *
+                                               nowScaleY))
+                : effH;
+        check(std::abs(nowW - wantW) <= 2 && std::abs(nowH - wantH) <= 2,
+              when + "：framebuffer " + std::to_string(nowW) + "x" +
+                  std::to_string(nowH) + " 应等于 eff " +
+                  std::to_string(effW) + "x" + std::to_string(effH) +
+                  " × scale " + std::to_string(nowScaleX) + "x" +
+                  std::to_string(nowScaleY) + "（±2）");
+    };
+
+    // 截图证据链：文件必须存在且非空（0 字节视为落图失败，不能只查存在）
+    auto assertScreenshotFile = [&](const std::string& path,
+                                    const std::string& what) {
+        std::error_code ec;
+        const bool exists = std::filesystem::exists(path, ec);
+        const auto size =
+            exists && !ec ? std::filesystem::file_size(path, ec) : 0u;
+        check(exists && !ec && size > 0,
+              what + "应落盘且非空: " + path);
     };
 
     auto cleanup = [&]() {
@@ -158,8 +268,10 @@ int main(int argc, char* argv[]) {
     app::requestUpdate();
     app::requestShow();
 
-    const float w = static_cast<float>(args.windowW);
-    const float h = static_cast<float>(args.windowH);
+    // 逻辑视口 = 实测 framebuffer / 实测 scale（不假定等于 --size 请求值：
+    // 135% 本机上高会被屏幕工作区钳到约 786，按 1000 布局底部必被裁）。
+    const float w = static_cast<float>(effW);
+    const float h = static_cast<float>(effH);
     core::dsl::Ui* ui = nullptr;
     auto composeFrame = [&]() {
         probe::composeModuleFrame(runtime, window, "app", w, h,
@@ -222,10 +334,10 @@ int main(int argc, char* argv[]) {
           "§2 空态：说明文案应渲染");
 
     // ── §3 空页面截图 ──
+    assertFramebufferMatchesLogical("§3 截图前");
     probe::captureIfRequested(args, window, runtime, &passed);
     if (!args.screenshotPath.empty()) {
-        check(std::filesystem::exists(args.screenshotPath),
-              "§3 空页面截图应落盘: " + args.screenshotPath);
+        assertScreenshotFile(args.screenshotPath, "§3 空页面截图");
     }
 
     // ── §3b 设置 → 模块 Tab：壁纸卡存在且默认关 ──
@@ -237,8 +349,35 @@ int main(int argc, char* argv[]) {
         clickElement(*tabModules);
         composeFrame();
     }
-    check(ui->find("settings.card.wallpaper") != nullptr,
-          "§3b 设置页：壁纸卡应存在");
+    const auto* wallpaperCard = ui->find("settings.card.wallpaper");
+    check(wallpaperCard != nullptr, "§3b 设置页：壁纸卡应存在");
+    const auto* cardsScroll = ui->find("settings.cards.scroll");
+    check(cardsScroll != nullptr, "§3b 设置页：卡片滚动视口应存在");
+    // 滚动视口内断言：元素 frame 必须整体落在视口可见区内——DOM 存在但被
+    // scrollView 裁掉（越出视口底/顶）在截图上等同于缺失，必须判红。
+    auto assertInsideScrollViewport = [&](const core::dsl::Element& element,
+                                          const std::string& what) {
+        if (cardsScroll == nullptr) {
+            return;
+        }
+        const float relTop = element.frame.y - cardsScroll->frame.y;
+        const float relBottom = relTop + element.frame.height;
+        check(relTop >= -0.5f &&
+                  relBottom <= cardsScroll->frame.height + 0.5f,
+              what + " 应落在滚动视口内（相对 y=" +
+                  std::to_string(relTop) + "，相对底=" +
+                  std::to_string(relBottom) + "，视口高=" +
+                  std::to_string(cardsScroll->frame.height) +
+                  "；要求 y≥0 且 y+height≤视口高）");
+    };
+    if (wallpaperCard != nullptr) {
+        check(wallpaperCard->frame.x + wallpaperCard->frame.width <= w + 0.5f,
+              "§3b 设置页：壁纸卡右缘 " +
+                  std::to_string(wallpaperCard->frame.x +
+                                 wallpaperCard->frame.width) +
+                  " 不应超出逻辑宽 " + std::to_string(w));
+        assertInsideScrollViewport(*wallpaperCard, "§3b 壁纸卡");
+    }
     const auto* wallpaperTrack =
         ui->find("settings.card.wallpaper.sw.track");
     check(wallpaperTrack != nullptr, "§3b 设置页：壁纸开关应存在");
@@ -246,6 +385,7 @@ int main(int argc, char* argv[]) {
         check(std::fabs(wallpaperTrack->frame.width - 44.0f) < 0.01f &&
                   std::fabs(wallpaperTrack->frame.height - 24.0f) < 0.01f,
               "§3b 设置页：壁纸开关几何应为 44×24");
+        assertInsideScrollViewport(*wallpaperTrack, "§3b 壁纸开关");
     }
     const auto* wallpaperThumb =
         ui->find("settings.card.wallpaper.sw.thumb");
@@ -253,10 +393,11 @@ int main(int argc, char* argv[]) {
               std::fabs(wallpaperThumb->x - 2.0f) < 0.01f,
           "§3b 设置页：壁纸开关默认应为关（滑块贴左 2px）");
 
+    // ── §3b 设置页截图前复核 ──
+    assertFramebufferMatchesLogical("§3b 截图前");
     probe::captureSeedIfRequested(args, window, runtime, &passed);
     if (!args.screenshotSeedPath.empty()) {
-        check(std::filesystem::exists(args.screenshotSeedPath),
-              "§3b 设置页截图应落盘: " + args.screenshotSeedPath);
+        assertScreenshotFile(args.screenshotSeedPath, "§3b 设置页截图");
     }
 
     // ── §4 关闭：注销 + 当前页回 Home + 侧栏条目消失 ──
@@ -281,8 +422,9 @@ int main(int argc, char* argv[]) {
     if (!passed) {
         std::cerr << "FAIL\n";
     } else {
-        std::cout << "wallpaper_probe: PASS（" << args.windowW << "x"
-                  << args.windowH << "）\n";
+        std::cout << "wallpaper_probe: PASS（请求 " << args.windowW << "x"
+                  << args.windowH << "，实际逻辑 " << effW << "x" << effH
+                  << "，framebuffer " << fbW << "x" << fbH << "）\n";
     }
     return passed ? 0 : 1;
 }
