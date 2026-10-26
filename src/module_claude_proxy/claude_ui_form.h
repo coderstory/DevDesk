@@ -34,8 +34,7 @@ struct SharedConfigSubmitHooks {
 
 // 表单状态机
 void openCreateForm(FormState& f, ImportState& imp);
-void openEditForm(FormState& f, ImportState& imp, const Profile& p,
-                  const std::vector<SharedConfig>& sharedConfigs);
+void openEditForm(FormState& f, ImportState& imp, const Profile& p);
 void resetImportState(ImportState& imp);
 void doParseImport(ImportState& imp);
 void doApplyImport(FormState& f, ImportState& imp);
@@ -49,11 +48,6 @@ void startImportCurrentConfig(FormState& f, ImportState& imp,
 void submitForm(FormState& f, const FormSubmitHooks& hooks,
                 const std::vector<SharedConfig>& sharedConfigs);
 
-// 全屏 JSON「放弃修改」：编辑缓冲恢复为上次落库值（新建/导入 = 预填值、编辑 =
-// DB 值、保存成功后就地刷新）+ 清红字 + 关全屏（表单仍开）。三条入口同调本函数：
-// 底部按钮 / Esc / 点遮罩；当前文本 == 落库值时等价于关闭。
-void discardJsonFullscreenEdits(FormState& f);
-
 // 共享配置片段弹窗状态机
 void openSharedCreate(SharedConfigDialogState& s);
 void openSharedEdit(SharedConfigDialogState& s, const SharedConfig& c);
@@ -61,23 +55,12 @@ void submitSharedForm(SharedConfigDialogState& s,
                       const SharedConfigSubmitHooks& hooks);
 
 // 绘制
-// 新建/编辑表单弹窗。sharedConfigs：片段快照（绑定下拉 + 片段赢预览数据源）；
-// profiles：profile 快照（备用 Profile 下拉数据源，编辑态排除自身）
+// 新建/编辑表单弹窗。
 void drawProfileFormDialog(eui::Ui& ui, const eui::Screen& screen,
                            const core::theme::Tokens& t,
                            const components::theme::ThemeColorTokens& themeTokens,
                            FormState& f, ImportState& imp,
-                           const std::vector<SharedConfig>& sharedConfigs,
-                           const std::vector<Profile>& profiles,
                            const FormSubmitHooks& hooks);
-
-// 高级设置 JSON 全屏编辑覆盖层：由 compose 在全部弹窗之后调用（z=1050：盖表单、
-// 让 toast）。文本/红字/落库复用表单既有字段与 submitForm 路径（同一编辑缓冲）。
-void drawJsonFullscreenOverlay(eui::Ui& ui, const eui::Screen& screen,
-                               const core::theme::Tokens& t,
-                               const components::theme::ThemeColorTokens& themeTokens,
-                               FormState& f, const FormSubmitHooks& hooks,
-                               const std::vector<SharedConfig>& sharedConfigs);
 
 // 删除确认弹窗（确认后回调模块执行真删除）
 void drawDeleteConfirmDialog(eui::Ui& ui, const eui::Screen& screen,

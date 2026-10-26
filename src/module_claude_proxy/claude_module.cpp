@@ -143,81 +143,6 @@ public:
         dv.callsError = callsError;
         dv.now = now;
         dv.sharedConfigs = &state_.list.cachedSharedConfigs_;
-        // 高级配置 pane：生效方言 + 备用 Profile 名（从列表快照解析），pane 内零服务调用
-        if (shown != nullptr) {
-            const UpstreamDialect effective = UpstreamDialect::forBaseUrl(
-                shown->baseUrl, shown->dialectOverride);
-            const char* displayName = dialectKindDisplayName(effective.kind);
-            if (dialectKindFromText(shown->dialectOverride)) {
-                dv.dialectText = std::string(displayName) + "（显式）";
-            } else {
-                dv.dialectText =
-                    std::string("自动（按站点推断）→ ") + displayName;
-            }
-            if (shown->fallbackProfileId == 0) {
-                dv.fallbackName = "无";
-            } else {
-                dv.fallbackName = "（已删除）";
-                for (const auto& p : profiles) {
-                    if (p.id == shown->fallbackProfileId) {
-                        dv.fallbackName = p.name;
-                        break;
-                    }
-                }
-            }
-        } else {
-            dv.dialectText = "-";
-            dv.fallbackName = "-";
-        }
-
-        // 生效 JSON = profile ⊕ 片段（片段赢）；解析失败经 note 区分。
-        if (shown != nullptr) {
-            std::string fragmentJson;
-            if (shown->sharedConfigId != 0) {
-                const SharedConfig* sc = findSharedById(
-                    state_.list.cachedSharedConfigs_, shown->sharedConfigId);
-                if (sc != nullptr) fragmentJson = sc->extraSettingsJson;
-            }
-            // keys 空且 warnings 非空 = 配置存在但失效，显示「解析失败」而非「未配置」
-            std::vector<std::string> effWarnings;
-            const std::string effective = effectiveExtraSettingsJson(
-                shown->extraSettingsJson, fragmentJson, &effWarnings);
-            if (effective.empty() && !effWarnings.empty()) {
-                dv.extraSettingsNote = "（JSON 解析失败，接管时将忽略）";
-            }
-            if (!effective.empty()) {
-                auto parsed = platform::json::parse(effective);
-                if (parsed.isOk() && parsed.value().isObject()) {
-                    auto effObj = parsed.value().asObject();
-                    std::vector<std::string> fragmentKeys;
-                    if (!fragmentJson.empty()) {
-                        auto fp = platform::json::parse(fragmentJson);
-                        if (fp.isOk() && fp.value().isObject()) {
-                            fragmentKeys = fp.value().asObject().keys();
-                        }
-                    }
-                    for (const auto& k : effObj.keys()) {
-                        const bool fromFragment =
-                            std::find(fragmentKeys.begin(), fragmentKeys.end(),
-                                      k) != fragmentKeys.end();
-                        dv.extraSettingsKeys.emplace_back(
-                            k, fromFragment
-                                   ? envSourceLabel(EnvSource::Shared)
-                                   : envSourceLabel(EnvSource::Profile));
-                        if (k == "model") {
-                            const auto mv = effObj.get(k);
-                            if (mv.isString() && !mv.asString().empty()) {
-                                dv.extraSettingsNote =
-                                    "「model」覆盖模型槽位（ANTHROPIC_MODEL 不写入）";
-                            }
-                        }
-                    }
-                } else {
-                    dv.extraSettingsNote =
-                        "（JSON 解析失败，接管时将忽略）";
-                }
-            }
-        }
 
         ui.column("claude.root")
             .size(screen.width, screen.height)
@@ -249,7 +174,6 @@ public:
         // 弹窗（画在最上层）
         drawProfileFormDialog(ui, screen, t, themeTokens, state_.form,
                               state_.import, state_.list.cachedSharedConfigs_,
-                              state_.list.cachedProfiles_,
                               formHooks());
         drawDeleteConfirmDialog(ui, screen, t, themeTokens, state_.form,
                                 [this](int64_t id) { doDelete(id); });
@@ -262,10 +186,6 @@ public:
             [this](int64_t id, const std::string& name) {
                 doDeleteShared(id, name);
             });
-        // 高级设置 JSON 全屏覆盖层（显式 z=1050，盖表单、让 toast）
-        drawJsonFullscreenOverlay(ui, screen, t, themeTokens, state_.form,
-                                  formHooks(),
-                                  state_.list.cachedSharedConfigs_);
         // cc-switch 导入弹窗，绘制序即 Esc 序链最顶层
         drawCcSwitchImportDialog(ui, screen, t, themeTokens,
                                  state_.ccswitchImport, ccswitchImportHooks());
@@ -368,13 +288,8 @@ public:
     }
 
 private:
-    // Esc 关最上层弹窗（顺序 = 绘制序倒序）。全屏覆盖层最优先：Esc = 放弃修改
-    //（恢复落库值 + 退全屏），第二次才关表单
+    // Esc 关最上层弹窗（顺序 = 绘制序倒序）
     bool closeTopmostDialog() {
-        if (state_.form.formJsonFullscreen_ && state_.form.formOpen_) {
-            discardJsonFullscreenEdits(state_.form);
-            return true;
-        }
         if (state_.ccswitchImport.open_) { state_.ccswitchImport.open_ = false; return true; }
         if (state_.shared.deleteConfirmOpen_) { state_.shared.deleteConfirmOpen_ = false; return true; }
         if (state_.shared.open_) { state_.shared.open_ = false; return true; }
@@ -395,8 +310,7 @@ private:
             openCcSwitchImportDialog(state_.ccswitchImport);
         };
         a.requestEdit = [this](const Profile& p) {
-            openEditForm(state_.form, state_.import, p,
-                         state_.list.cachedSharedConfigs_);
+            openEditForm(state_.form, state_.import, p);
         };
         a.requestDuplicate = [this](int64_t id) { doDuplicate(id); };
         a.requestCopyConfig = [this](const Profile& p) { doCopyConfig(p); };
@@ -448,8 +362,7 @@ private:
         a.enable = [this](int64_t id) { doSetActive(id); };
         a.test = [this](const Profile& p) { doTestConnection(p); };
         a.edit = [this](const Profile& p) {
-            openEditForm(state_.form, state_.import, p,
-                         state_.list.cachedSharedConfigs_);
+            openEditForm(state_.form, state_.import, p);
         };
         a.run = [this](int64_t id) { doRun(id); };
         a.openCalls = [this] { openCallsDialog(state_.logs); };
@@ -636,7 +549,7 @@ private:
             showToast("复制配置失败", "请先选择 Profile", true);
             return;
         }
-        // 坏 JSON 防「静默丢键」：各域试解析，失败先 LOG_WARN 再继续导出
+        // 坏 JSON 防「静默丢键」：试解析，失败先 LOG_WARN 再继续导出
         if (!p.extraEnvJson.empty()) {
             auto ee = parseExtraEnv(p.extraEnvJson);
             if (ee.isFail()) {
@@ -645,29 +558,8 @@ private:
                          ee.errorMessage());
             }
         }
-        if (!p.extraSettingsJson.empty() &&
-            validateExtraSettingsJson(p.extraSettingsJson).isFail()) {
-            LOG_WARN("复制配置: 高级设置 JSON 解析失败（profile id=" +
-                     std::to_string(p.id) + "），导出将缺失高级属性 - " +
-                     validateExtraSettingsJson(p.extraSettingsJson).errorMessage());
-        }
-        // 片段 JSON 走列表/详情同源快照解析
-        std::string fragmentJson;
-        if (p.sharedConfigId != 0) {
-            const SharedConfig* sc = findSharedById(
-                state_.list.cachedSharedConfigs_, p.sharedConfigId);
-            if (sc != nullptr) {
-                fragmentJson = sc->extraSettingsJson;
-                if (!fragmentJson.empty() &&
-                    validateExtraSettingsJson(fragmentJson).isFail()) {
-                    LOG_WARN("复制配置: 片段 JSON 解析失败（profile id=" +
-                             std::to_string(p.id) + "），导出将缺失片段叠加 - " +
-                             validateExtraSettingsJson(fragmentJson).errorMessage());
-                }
-            }
-        }
         const std::string json = buildProfileExportJson(
-            p, fragmentJson, /*keyPlaceholder=*/p.apiKeyHint);
+            p, /*keyPlaceholder=*/p.apiKeyHint);
         if (json.empty()) {
             showToast("复制配置失败", "配置序列化失败", true);
             return;
@@ -686,20 +578,15 @@ private:
         core::window::setClipboardText(json);
         // 无回读下的最低留痕：profile id + 导出键数
         size_t exportedKeys = 0;
-        size_t exportedNonEnvKeys = 0;
         if (auto doc = platform::json::parse(json);
             doc.isOk() && doc.value().isObject()) {
             const auto rootObj = doc.value().asObject();
             const auto envVal = rootObj.get("env");
             if (envVal.isObject()) exportedKeys = envVal.asObject().keys().size();
-            for (const auto& k : rootObj.keys()) {
-                if (k != "env") ++exportedNonEnvKeys;
-            }
         }
         LOG_WARN("复制配置: 已调用系统剪贴板写入（void API 无回读校验）" +
                  std::string("profile id=") + std::to_string(p.id) +
-                 " env 键数=" + std::to_string(exportedKeys) +
-                 " 高级属性键数=" + std::to_string(exportedNonEnvKeys));
+                 " env 键数=" + std::to_string(exportedKeys));
         showToast("已复制配置", kCopyConfigToastSubtitle, false);
     }
 

@@ -205,7 +205,6 @@ core::Result<Profile> ProfileRepository::rowToProfile(
     auto model = row.getString("model");
     auto modelsCfg = row.getString("models_config");
     auto extraEnv = row.getString("extra_env");
-    auto extraSettings = row.getString("extra_settings_json");
     auto sharedCfg = row.getInt64("shared_config_id");
     auto authField = row.getString("auth_field");
     auto dialectOverride = row.getString("dialect_override");
@@ -221,7 +220,6 @@ core::Result<Profile> ProfileRepository::rowToProfile(
     if (model.isOk()) p.model = model.value();
     if (modelsCfg.isOk()) p.modelsConfigJson = modelsCfg.value();
     if (extraEnv.isOk()) p.extraEnvJson = extraEnv.value();
-    if (extraSettings.isOk()) p.extraSettingsJson = extraSettings.value();
     if (sharedCfg.isOk()) p.sharedConfigId = sharedCfg.value();
     // 读侧规范化：未知/空值一律兜底 both
     if (authField.isOk()) {
@@ -245,7 +243,7 @@ core::Result<Profile> ProfileRepository::rowToProfile(
 core::Result<std::vector<Profile>> ProfileRepository::listProfiles() {
     auto prep = db_.prepare(
         "SELECT id, name, base_url, api_key_hint, api_key_check, "
-        "model, models_config, extra_env, extra_settings_json, "
+        "model, models_config, extra_env, "
         "shared_config_id, auth_field, dialect_override, fallback_profile_id, is_active, "
         "created_at, updated_at "
         "FROM claude_profiles ORDER BY is_active DESC, name ASC");
@@ -276,7 +274,7 @@ core::Result<std::vector<Profile>> ProfileRepository::listProfiles() {
 core::Result<Profile> ProfileRepository::getProfile(int64_t id) {
     auto prep = db_.prepare(
         "SELECT id, name, base_url, api_key_hint, api_key_check, "
-        "model, models_config, extra_env, extra_settings_json, "
+        "model, models_config, extra_env, "
         "shared_config_id, auth_field, dialect_override, fallback_profile_id, is_active, "
         "created_at, updated_at "
         "FROM claude_profiles WHERE id = ?");
@@ -310,8 +308,7 @@ core::Result<Profile> ProfileRepository::createProfile(const std::string& name,
                                                        int64_t sharedConfigId,
                                                        const std::string& authField,
                                                        const std::string& dialectOverride,
-                                                       int64_t fallbackProfileId,
-                                                       const std::string& extraSettingsJson) {
+                                                       int64_t fallbackProfileId) {
     if (trim(name).empty()) {
         return core::Result<Profile>::fail(core::ErrorCode::ValidationError,
             "name 不能为空");
@@ -348,9 +345,9 @@ core::Result<Profile> ProfileRepository::createProfile(const std::string& name,
         "INSERT INTO claude_profiles "
         "(name, base_url, api_key_hint, api_key_check, api_key_encrypted, "
         " model, shared_config_id, auth_field, dialect_override, "
-        " fallback_profile_id, extra_settings_json, is_active, created_at, "
+        " fallback_profile_id, is_active, created_at, "
         " updated_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?) RETURNING id");
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?) RETURNING id");
     if (prep.isFail()) {
         return core::Result<Profile>::fail(prep.errorCode(), prep.errorMessage());
     }
@@ -365,9 +362,8 @@ core::Result<Profile> ProfileRepository::createProfile(const std::string& name,
     stmt.bind(8, cleanedAuthField);  // 认证字段（写侧已规范化）
     stmt.bind(9, cleanedDialectOverride);  // 方言覆盖（写侧已规范化，空串 = 未覆盖）
     stmt.bind(10, fallbackProfileId);      // 备用（0 = 无；duplicateProfile 携带）
-    stmt.bind(11, extraSettingsJson);      // 高级设置 JSON 原文（空串 = 未配置）
+    stmt.bind(11, static_cast<int64_t>(now));
     stmt.bind(12, static_cast<int64_t>(now));
-    stmt.bind(13, static_cast<int64_t>(now));
 
     auto stepR = stmt.step();
     if (stepR.isFail()) {
@@ -416,7 +412,6 @@ core::Result<Profile> ProfileRepository::createProfile(const std::string& name,
     out.authField = cleanedAuthField;   // 必须带上：二段补写以本返回值为基
     out.dialectOverride = cleanedDialectOverride;   // 同上
     out.fallbackProfileId = fallbackProfileId;
-    out.extraSettingsJson = extraSettingsJson;      // 同上
     out.isActive = false;
     out.createdAt = now;
     out.updatedAt = now;
@@ -493,7 +488,7 @@ core::Result<void> ProfileRepository::updateProfile(const Profile& profile,
             auto prep = db_.prepare(
                 "UPDATE claude_profiles SET "
                 "name = ?, base_url = ?, "
-                "model = ?, models_config = ?, extra_env = ?, extra_settings_json = ?, "
+                "model = ?, models_config = ?, extra_env = ?, "
                 "shared_config_id = ?, "
                 "auth_field = ?, dialect_override = ?, fallback_profile_id = ?, "
                 "updated_at = ? "
@@ -508,13 +503,12 @@ core::Result<void> ProfileRepository::updateProfile(const Profile& profile,
             stmt.bind(3, cleanedModel);
             stmt.bind(4, profile.modelsConfigJson);
             stmt.bind(5, profile.extraEnvJson);
-            stmt.bind(6, profile.extraSettingsJson);
-            stmt.bind(7, profile.sharedConfigId);
-            stmt.bind(8, cleanedAuthField);
-            stmt.bind(9, cleanedDialectOverride);
-            stmt.bind(10, profile.fallbackProfileId);
-            stmt.bind(11, static_cast<int64_t>(now));
-            stmt.bind(12, profile.id);
+            stmt.bind(6, profile.sharedConfigId);
+            stmt.bind(7, cleanedAuthField);
+            stmt.bind(8, cleanedDialectOverride);
+            stmt.bind(9, profile.fallbackProfileId);
+            stmt.bind(10, static_cast<int64_t>(now));
+            stmt.bind(11, profile.id);
             auto step = stmt.step();
             if (step.isFail()) {
                 std::string msg = step.errorMessage();
@@ -535,7 +529,7 @@ core::Result<void> ProfileRepository::updateProfile(const Profile& profile,
         auto prep = db_.prepare(
             "UPDATE claude_profiles SET "
             "name = ?, base_url = ?, model = ?, models_config = ?, "
-            "extra_env = ?, extra_settings_json = ?, shared_config_id = ?, "
+            "extra_env = ?, shared_config_id = ?, "
             "auth_field = ?, "
             "dialect_override = ?, fallback_profile_id = ?, "
             "updated_at = ? WHERE id = ?");
@@ -548,13 +542,12 @@ core::Result<void> ProfileRepository::updateProfile(const Profile& profile,
         stmt.bind(3, cleanedModel);
         stmt.bind(4, profile.modelsConfigJson);
         stmt.bind(5, profile.extraEnvJson);
-        stmt.bind(6, profile.extraSettingsJson);
-        stmt.bind(7, profile.sharedConfigId);
-        stmt.bind(8, cleanedAuthField);
-        stmt.bind(9, cleanedDialectOverride);
-        stmt.bind(10, profile.fallbackProfileId);
-        stmt.bind(11, static_cast<int64_t>(now));
-        stmt.bind(12, profile.id);
+        stmt.bind(6, profile.sharedConfigId);
+        stmt.bind(7, cleanedAuthField);
+        stmt.bind(8, cleanedDialectOverride);
+        stmt.bind(9, profile.fallbackProfileId);
+        stmt.bind(10, static_cast<int64_t>(now));
+        stmt.bind(11, profile.id);
         auto stepR = stmt.step();
         if (stepR.isFail()) {
             std::string msg = stepR.errorMessage();
@@ -771,7 +764,7 @@ core::Result<std::string> ProfileRepository::loadApiKey(int64_t profileId) {
 core::Result<Profile> ProfileRepository::getActiveProfile() {
     auto prep = db_.prepare(
         "SELECT id, name, base_url, api_key_hint, api_key_check, "
-        "model, models_config, extra_env, extra_settings_json, "
+        "model, models_config, extra_env, "
         "shared_config_id, auth_field, dialect_override, fallback_profile_id, is_active, "
         "created_at, updated_at "
         "FROM claude_profiles WHERE is_active = 1 LIMIT 1");
@@ -871,13 +864,12 @@ core::Result<Profile> ProfileRepository::duplicateProfile(int64_t srcId) {
             "编辑该 Profile 重新填一次 API Key 即可");
     }
 
-    // 凭据三列随 createProfile 一并写入；副本不激活。片段绑定 / fallback / extra_settings 经尾参带上（留到二段补写才设，门槛不成立时会丢）
+    // 凭据三列随 createProfile 一并写入；副本不激活。片段绑定 / fallback 经尾参带上（留到二段补写才设，门槛不成立时会丢）
     const std::string defModel =
         effectiveModelsConfig(src.modelsConfigJson).def.model;
     auto createdR = createProfile(copyName, src.baseUrl, keyR.value(), defModel,
                                   src.sharedConfigId, src.authField,
-                                  src.dialectOverride, src.fallbackProfileId,
-                                  src.extraSettingsJson);
+                                  src.dialectOverride, src.fallbackProfileId);
     if (createdR.isFail()) {
         return core::Result<Profile>::fail(createdR.errorCode(),
                                            createdR.errorMessage());
@@ -885,13 +877,11 @@ core::Result<Profile> ProfileRepository::duplicateProfile(int64_t srcId) {
     const int64_t newId = createdR.value().id;
     Profile out = createdR.value();
 
-    // 二段补写 models_config / extra_env / extra_settings_json（createProfile 只带得走 default 模型名）；不得静默丢字段
-    if (!src.modelsConfigJson.empty() || !src.extraEnvJson.empty() ||
-        !src.extraSettingsJson.empty()) {
+    // 二段补写 models_config / extra_env（createProfile 只带得走 default 模型名）；不得静默丢字段
+    if (!src.modelsConfigJson.empty() || !src.extraEnvJson.empty()) {
         Profile upd = out;
         upd.modelsConfigJson = src.modelsConfigJson;
         upd.extraEnvJson = src.extraEnvJson;
-        upd.extraSettingsJson = src.extraSettingsJson;
         upd.model = defModel;
         auto u = updateProfile(upd);
         if (u.isFail()) {
@@ -917,7 +907,6 @@ core::Result<Profile> ProfileRepository::duplicateProfile(int64_t srcId) {
 }
 
 // 共享配置片段
-
 core::Result<SharedConfig> ProfileRepository::rowToSharedConfig(
     const core::data::SqlRow& row) const {
     SharedConfig c;

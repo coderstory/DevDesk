@@ -93,7 +93,7 @@ struct ProfileListState {
 };
 
 struct DetailState {
-    // 0 基础 / 1 模型映射 / 2 环境变量 / 3 高级配置 / 4 最近调用
+    // 0 基础信息 / 1 模型配置 / 2 环境变量 / 3 最近调用
     int detailTab_ = 0;
 };
 
@@ -101,14 +101,12 @@ struct DetailState {
 struct FormState {
     bool formOpen_ = false;
     int64_t formEditId_ = 0;   // 0 = 新建，非 0 = 编辑该 id
-    int formTab_ = 0;          // 0 基础 / 1 模型映射 / 2 高级 env / 3 高级配置
+    int formTab_ = 0;          // 0 基础信息 / 1 模型配置 / 2 环境变量
     std::string formName_;
     std::string formUrl_;
     std::string formKey_;
     std::string formKeyHint_;  // 编辑时显示现有 key 脱敏提示
     std::string formError_;
-    // formError_ 的来源标记：true = 红字来自高级设置 JSON 校验失败（「放弃修改」据此只清 JSON 源那条）。所有写入必须走 setFormError()/clearFormError()。
-    bool formErrorFromJson_ = false;
     std::string formImportWarn_;  // 导入当前配置的接管态警告（弹窗内展示，不阻断）
     AuthField formAuthField_ = AuthField::Both;  // 认证字段（鉴权头三态）
     bool formAuthFieldOpen_ = false;             // 下拉展开态
@@ -122,15 +120,6 @@ struct FormState {
     // 共享配置片段绑定下拉（渲染在高级配置页）
     int64_t formSharedConfigId_ = 0;   // 表单态绑定（0 = 未绑定；保存时写入 profile）
     bool formSharedDdOpen_ = false;    // 绑定下拉展开态
-
-    // 高级设置 JSON 多行编辑框原文；submitForm 校验通过后统一 pretty 落库
-    std::string formExtraSettingsJson_;
-    // 「上次落库值」基线（「放弃修改」的恢复目标）= 表单会话开始时的持久化值。
-    std::string formExtraSettingsJsonBaseline_;
-    // 高级设置 JSON 的行内红字（格式化/校验失败共用，onChange 清空——与 formError_ 分层）。
-    std::string formAdvancedJsonError_;
-    // 高级设置 JSON 全屏编辑态：文本/红字一律复用表单既有字段，不出现第二份状态
-    bool formJsonFullscreen_ = false;
 
     // 备用 Profile（failover）绑定下拉（复用绑定下拉模式：索引 0 = 无，编辑态排除自身）
     int64_t formFallbackProfileId_ = 0;   // 表单态备用（0 = 不启用 failover）

@@ -25,8 +25,6 @@ struct Profile {
     std::string model;          // 默认模型（= models_config 的 default 槽位，双向同步）
     std::string modelsConfigJson; // 6 槽位模型配置 JSON 原文（空串 = 未配置）
     std::string extraEnvJson;   // 额外 env 键值 JSON 原文（空串 = 未配置）
-    // settings.json 除 env 外全部顶层属性的原始 JSON（空串 = 未配置）；仅存原文不拆字段，读侧容错见 provider_config
-    std::string extraSettingsJson;
     int64_t sharedConfigId = 0; // 绑定共享配置片段 id（0 = 未绑定；0..1、不嵌套）
     std::string authField = "both";  // 认证字段三态（'both'/'bearer'/'api_key'；未知/空串按 both 读）
     // 上游方言覆盖：空串 = 按 baseUrl host 推断（自建网关推不出时钉住）；未知/空串读侧回落、写侧归一空串，取值域见 upstream_dialect.h
@@ -103,9 +101,7 @@ public:
                                         const std::string& authField = "both",
                                         const std::string& dialectOverride =
                                             std::string(),
-                                        int64_t fallbackProfileId = 0,
-                                        const std::string& extraSettingsJson =
-                                            std::string());
+                                        int64_t fallbackProfileId = 0);
 
     // 更新 profile（id 必须已存在；apiKeyPlain 非空则覆盖凭据三列，空则只更新元数据）。
     // oldProfile（可空出参）成功时回填更新前的旧行——门面 re-takeover 据此判断。

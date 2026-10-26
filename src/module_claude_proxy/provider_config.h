@@ -143,41 +143,6 @@ core::Result<ImportedConfig> parseImportedEnv(const std::string& text);
 inline constexpr size_t kMaxImportTextBytes = 1u * 1024u * 1024u;
 
 
-// 整体文本上限：同 kMaxImportTextBytes（platform::json 按值深拷贝，超大输入挡在解析前）
-inline constexpr size_t kMaxExtraSettingsBytes = 1u * 1024u * 1024u;
-
-// 生效 JSON：片段逐键叠加在 profile JSON 之上（片段赢）；解绑后同名键回落 profile。
-// 任一侧 "env" 键跳过并记 warnings；一侧非法/超限/非对象按空处理，另一侧照用；两侧空→空串。输出 pretty 字典序。
-std::string effectiveExtraSettingsJson(
-    const std::string& profileJson,
-    const std::string& fragmentJson,
-    std::vector<std::string>* warningsOut = nullptr);
-
-// 生效 JSON 本轮将写入的顶层键（best-effort）：非法/超限/非对象→空集；"env" 不在列（它永不写入）
-std::vector<std::string> extraSettingsTopLevelKeys(
-    const std::string& extraSettingsJson);
-
-// settings.json 原文 → 高级设置 JSON（除 env 外全部顶层属性，pretty）。
-// parseImportedEnv 只取 env，非 env 顶层属性必须在此独立抽取。空串/超限/解析失败/非对象 → 空串。
-std::string nonEnvTopLevelJson(const std::string& settingsDocText);
-
-struct ExtraSettingsApply {
-    std::vector<std::string> writtenKeys;   // 本轮写入的非 env 顶层键（排序去重）
-    bool modelSuppressed = false;           // 顶层 "model" 触发 ANTHROPIC_MODEL 抑制
-    std::vector<std::string> warnings;      // "env" 键跳过 / 解析失败等（调用方记账）
-};
-
-// 并入 settings 文档：对生效 JSON 每个顶层键 K，K=="env" 跳过+WARN，其余 root[K]=值。
-// "model" 为非空串时同时从 root["env"] 移除 ANTHROPIC_MODEL（抑制唯一落点）；
-// 非法/超限/非对象 → warnings 记录且零写入。
-ExtraSettingsApply applyExtraSettingsToSettingsDoc(
-    platform::json::JsonObject& root,
-    const std::string& extraSettingsJson);
-
-// 应用/保存校验（UI 与服务共用）：空串 OK（= 未配置）；文本 ≤ kMaxExtraSettingsBytes；必须解析成功；
-// 顶层必须是对象且不含 "env"。失败带中文错误（表单 formError_ / 片段弹窗红字直出）。
-core::Result<void> validateExtraSettingsJson(const std::string& text);
-
 // 接管 env 生成：输出写入 settings.json 的 env 块（纯函数）：BASE_URL = 127.0.0.1:<port>、
 // token = 占位符、槽位键（空槽位跳过）、extra_env 归一平铺被压过 ----
 

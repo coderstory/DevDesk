@@ -65,9 +65,7 @@ public:
                                        const std::string& authField = "both",
                                        const std::string& dialectOverride =
                                            std::string(),
-                                       int64_t fallbackProfileId = 0,
-                                       const std::string& extraSettingsJson =
-                                           std::string());
+                                       int64_t fallbackProfileId = 0);
 
     // 更新 profile（id 必须已存在）；apiKeyPlain 非空则覆盖凭据三列。
     core::Result<void> updateProfile(const Profile& profile);
@@ -241,8 +239,8 @@ public:
 private:
     // 行解析/哈希/片段校验等私有工具与 TwoPhaseKeyWrite 在 profile_repository.h
 
-    // 两条编排入口：syncTakeOver() 取激活 Profile + 端口，生效高级设置 JSON 预先装配
-    // 进 Profile 副本（片段赢）；失败并入 warnings_，不阻断上层。syncRestore() 失败只 LOG_WARN。
+    // 两条编排入口：syncTakeOver() 取激活 Profile + 端口；失败并入 warnings_，不阻断上层。
+    // syncRestore() 失败只 LOG_WARN。
     core::Result<void> syncTakeOver();
     void syncRestore();
 

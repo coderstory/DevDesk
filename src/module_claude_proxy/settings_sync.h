@@ -1,7 +1,7 @@
 // src/module_claude_proxy/settings_sync.h
 // Claude Code settings.json 接管通道：DevDesk 对 settings.json 的唯一写入口
-//（读-改-写 + 原子写 + sidecar 快照协议）。接管只动 env 键 + 生效高级设置 JSON
-// 顶层键；还原按键级还原快照后删 sidecar（代理停止 = settings.json 永不指向
+//（读-改-写 + 原子写 + sidecar 快照协议）。接管只动 env 键；还原按键级还原
+// 快照后删 sidecar（代理停止 = settings.json 永不指向
 // 死代理）；sidecar 残留时 recoverPendingSnapshot 自动补还原，必须先于任何 takeOver。
 
 #pragma once
@@ -56,8 +56,7 @@ struct SettingsEnvRead {
 SettingsEnvRead readSettingsEnvForSync(const Paths& paths);
 
 // 接管。profile 可为默认构造（无激活 profile 时只写 BASE_URL + 占位凭据）。
-// 生效高级设置 JSON 经 profile.extraSettingsJson 携带（片段赢），其写入键进
-// sidecar nonEnvKeys / nonEnvSnapshot 记账，env 托管键照旧
+// 旧 sidecar 里的 nonEnv 记账仍参与还原，但接管不再写非 env 顶层键
 SyncResult takeOver(const Profile& profile, int proxyPort,
                     const Paths& paths);
 

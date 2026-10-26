@@ -279,28 +279,6 @@ std::vector<std::string> detectOverlayConflicts(
     return warnings;
 }
 
-// 非 env 顶层键移除冲突检测：返回在 nonEnvKeys 并集里（曾被接管写入）但本轮不写的键；live 值可能是用户手写的，一律告警；已去重排序
-std::vector<std::string> detectNonEnvRemovalConflicts(
-    const JsonObject& root, const std::vector<std::string>& nonEnvKeys,
-    const std::vector<std::string>& pendingNonEnvKeys) {
-    std::vector<std::string> hits;
-    for (const auto& key : root.keys()) {
-        if (key == "env") continue;   // env 块永不由 3.5 步移除
-        const bool pendingThisRound =
-            std::find(pendingNonEnvKeys.begin(), pendingNonEnvKeys.end(),
-                      key) != pendingNonEnvKeys.end();
-        if (pendingThisRound) continue;
-        const bool managedBefore =
-            std::find(nonEnvKeys.begin(), nonEnvKeys.end(), key) !=
-            nonEnvKeys.end();
-        if (!managedBefore) continue;   // 从未托管 = 用户自己的键，不碰
-        hits.push_back(key);
-    }
-    std::sort(hits.begin(), hits.end());
-    hits.erase(std::unique(hits.begin(), hits.end()), hits.end());
-    return hits;
-}
-
 } // namespace
 
 Paths defaultPaths() {
@@ -321,16 +299,15 @@ Paths defaultPaths() {
 SyncResult takeOver(const Profile& profile, int proxyPort, const Paths& paths) {
     SyncResult out;
 
-    // 托管 env（纯函数，规则见 provider_config.h）；片段经 profile.extraSettingsJson 在下方 apply 步并入
+    // 托管 env（纯函数，规则见 provider_config.h）
     const auto managed = buildProxyEnv(profile.modelsConfigJson,
                                        profile.extraEnvJson, proxyPort);
     std::vector<std::string> managedKeys;
     managedKeys.reserve(managed.size());
     for (const auto& [k, v] : managed) managedKeys.push_back(k);
 
-    // 本轮将写入的顶层键（best-effort 枚举，非法 → 空集）；解析失败警告由 applyExtraSettingsToSettingsDoc 统一发，防双报
-    const std::vector<std::string> pendingNonEnvKeys =
-        extraSettingsTopLevelKeys(profile.extraSettingsJson);
+    // 接管不再写非 env 顶层键；仅保留旧 sidecar 的 nonEnv 记账用于还原
+    const std::vector<std::string> pendingNonEnvKeys;
 
     // 1. 读现有 settings.json（解析失败 → 中止不写，宁可不让用户自动接入）
     auto doc = parseJsonObjectFile(paths.settingsFile);
@@ -399,20 +376,6 @@ SyncResult takeOver(const Profile& profile, int proxyPort, const Paths& paths) {
     managedKeys.erase(std::unique(managedKeys.begin(), managedKeys.end()),
                       managedKeys.end());
 
-    // nonEnv 域记账：只拍本轮写入键（已在并集里的键不重拍，其 live 值必是托管值）；新增键 live 有且快照无 → 补拍；"env" 防御性跳过
-    {
-        std::vector<std::string> prior = priorNonEnvKeys;
-        std::sort(prior.begin(), prior.end());
-        for (const auto& k : pendingNonEnvKeys) {
-            if (k == "env") continue;
-            const bool alreadyManaged =
-                std::binary_search(prior.begin(), prior.end(), k);
-            if (alreadyManaged) continue;   // 已托管：不重拍
-            if (root.has(k) && !priorNonEnvSnapshot.has(k)) {
-                priorNonEnvSnapshot.set(k, root.get(k));
-            }
-        }
-    }
     std::vector<std::string> nonEnvKeys = pendingNonEnvKeys;
     nonEnvKeys.insert(nonEnvKeys.end(), priorNonEnvKeys.begin(),
                       priorNonEnvKeys.end());
@@ -456,19 +419,7 @@ SyncResult takeOver(const Profile& profile, int proxyPort, const Paths& paths) {
         env = std::move(kept);
     }
 
-    // 3.5 陈旧非 env 键删除：在 nonEnvKeys 并集里但本轮不写的键从 root 移除（留着会把托管值固化成用户配置）；移除前取冲突清单并入 warnings
-    std::vector<std::string> nonEnvRemovalWarnings;
-    {
-        const std::vector<std::string> removed =
-            detectNonEnvRemovalConflicts(root, nonEnvKeys, pendingNonEnvKeys);
-        if (!removed.empty()) {
-            nonEnvRemovalWarnings.push_back(
-                "settings.json 顶层键 " + joinKeys(removed) +
-                " 曾被 DevDesk 接管写入，本轮接管会移除 live 文件中的同名手写值"
-                "（还原时按接管前快照恢复或删除）；如需保留该配置，请在 DevDesk 的"
-                "高级配置 JSON 里改，不要直接手改 settings.json");
-        }
-    }
+    // 3.5 陈旧非 env 键删除：旧 sidecar 记录过、本轮不再写的键从 root 移除（留着会把托管值固化成用户配置）
     {
         JsonObject kept;
         for (const auto& key : root.keys()) {
@@ -494,15 +445,6 @@ SyncResult takeOver(const Profile& profile, int proxyPort, const Paths& paths) {
     }
     root.set("env", JsonValue(env));
 
-    // 4.5 生效 JSON 并入顶层：非 env 属性赢过 live 既有同名键；"model" 非空触发 ANTHROPIC_MODEL 抑制（在 apply 步）
-    {
-        auto apply = applyExtraSettingsToSettingsDoc(root,
-                                                     profile.extraSettingsJson);
-        for (const auto& warn : apply.warnings) {
-            out.warnings.push_back("高级设置 JSON: " + warn);
-        }
-    }
-
     // 5. 原子写
     auto text = platform::json::stringify(JsonValue(root), /*pretty=*/true);
     if (text.isFail()) {
@@ -517,12 +459,10 @@ SyncResult takeOver(const Profile& profile, int proxyPort, const Paths& paths) {
         return out;
     }
 
-    // 6. 上层覆盖检测 + 快照污染 + 非 env 移除冲突，三源同出口
+    // 6. 上层覆盖检测 + 快照污染，两源同出口
     out.warnings = detectOverlayConflicts(paths, managedKeys);
     out.warnings.insert(out.warnings.end(), snapshotWarnings.begin(),
                         snapshotWarnings.end());
-    out.warnings.insert(out.warnings.end(), nonEnvRemovalWarnings.begin(),
-                        nonEnvRemovalWarnings.end());
     for (const auto& warn : out.warnings) {
         LOG_WARN("settings_sync: " + warn);
     }

@@ -45,15 +45,14 @@ std::string suggestImportName(const std::string& baseUrl);
 const SharedConfig* findSharedById(const std::vector<SharedConfig>& configs,
                                    int64_t id);
 
-// 「复制配置」序列化（纯函数，无 IO）：完整 settings.json 形态；env 复用
-// buildDirectEnv，非 env 域 = 生效 JSON（片段赢）并入顶层。不导明文 key；失败 → 空串。
+// 「复制配置」序列化（纯函数，无 IO）：settings.json 形态；env 复用
+// buildDirectEnv。不导明文 key；失败 → 空串。
 std::string buildProfileExportJson(const Profile& p,
-                                   const std::string& fragmentJson,
                                    const std::string& keyPlaceholder);
 
 // 「复制配置」toast 副文案（常量落 logic 层供无头断言）
 inline constexpr const char* kCopyConfigToastSubtitle =
-    "已把该 Profile 的完整 settings.json 配置（env + 高级属性）导出到剪贴板"
+    "已把该 Profile 的 settings.json env 配置导出到剪贴板"
     "（API Key 为占位符，不含明文）";
 
 // 调用记录弹窗常量

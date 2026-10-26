@@ -72,10 +72,9 @@ const SharedConfig* findSharedById(const std::vector<SharedConfig>& configs,
 }
 
 std::string buildProfileExportJson(const Profile& p,
-                                   const std::string& fragmentJson,
                                    const std::string& keyPlaceholder) {
     // env 域：与 runProfile 的临时 settings 同一条 env 管线，仅凭据换成占位值、
-    // 不落盘只进剪贴板。片段 env 叠加恒传空串；坏片段 JSON 的 WARN 由调用方覆盖两域
+    // 不落盘只进剪贴板。
     const auto env = buildDirectEnv(p.baseUrl, keyPlaceholder, p.authField,
                                     p.modelsConfigJson, p.extraEnvJson);
     platform::json::JsonObject envObj;
@@ -84,9 +83,6 @@ std::string buildProfileExportJson(const Profile& p,
     }
     platform::json::JsonObject root;
     root.set("env", platform::json::JsonValue(std::move(envObj)));
-    // 非 env 域：生效 JSON（片段叠加 + 片段赢）并入顶层；warnings 不透出（坏 JSON 按空处理）。
-    applyExtraSettingsToSettingsDoc(
-        root, effectiveExtraSettingsJson(p.extraSettingsJson, fragmentJson));
     auto text = platform::json::stringify(
         platform::json::JsonValue(std::move(root)), /*pretty=*/true);
     if (text.isFail()) {

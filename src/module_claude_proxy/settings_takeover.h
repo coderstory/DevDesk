@@ -48,7 +48,7 @@ public:
     // main.cpp 在任何 startProxy 之前调用（调用时序见 settings_sync.h）
     void recoverPendingSettingsRestore();
 
-    // 接管：生效高级设置 JSON 由门面预先装配进 Profile 副本的 extraSettingsJson。
+    // 接管：把激活 Profile 的托管 env 写进 settings.json。
     // 返回失败原因（settings.json / sidecar 读写或解析失败），供调用方决定呈现
     // 方式；接管失败不阻断上层操作（启代理/切 profile 照常），失败原因并入
     // warnings_（门面经 lastSyncWarnings() 透传 UI）

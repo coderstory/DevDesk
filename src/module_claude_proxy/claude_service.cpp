@@ -133,13 +133,12 @@ core::Result<Profile> ClaudeService::createProfile(const std::string& name,
                                                    int64_t sharedConfigId,
                                                    const std::string& authField,
                                                    const std::string& dialectOverride,
-                                                   int64_t fallbackProfileId,
-                                                   const std::string& extraSettingsJson) {
+                                                   int64_t fallbackProfileId) {
     // 策略尾：无激活 Profile 时自动激活（经 setActiveProfile，代理运行中会同步
     // 接管 settings.json）。失败不回滚创建，只 WARN（UI 走「点击启用」文案）。
     auto created = profileRepository_.createProfile(
         name, baseUrl, apiKey, model, sharedConfigId, authField,
-        dialectOverride, fallbackProfileId, extraSettingsJson);
+        dialectOverride, fallbackProfileId);
     if (created.isFail()) {
         return created;
     }
@@ -506,22 +505,6 @@ core::Result<void> ClaudeService::runProfile(int64_t id, std::string* hint,
     }
     platform::json::JsonObject root;
     root.set("env", platform::json::JsonValue(std::move(envObj)));
-    // 生效高级设置 JSON 并入顶层（profile ⊕ 片段，片段赢；三链不分叉，
-    // 临时文件随会话自删 + 24h 清扫兜底）。
-    {
-        std::vector<std::string> effWarnings;
-        const std::string effective = effectiveExtraSettingsJson(
-            p.extraSettingsJson,
-            profileRepository_.sharedExtraSettingsJsonFor(p.sharedConfigId),
-            &effWarnings);
-        for (const auto& w : effWarnings) {
-            LOG_WARN("runProfile: " + w);
-        }
-        auto apply = applyExtraSettingsToSettingsDoc(root, effective);
-        for (const auto& w : apply.warnings) {
-            LOG_WARN("runProfile: 高级设置 JSON: " + w);
-        }
-    }
     auto text = platform::json::stringify(platform::json::JsonValue(std::move(root)));
     if (text.isFail()) {
         return core::Result<void>::fail(text.errorCode(),
@@ -809,22 +792,11 @@ core::Result<void> ClaudeService::syncCaptureActiveProfile() {
 
 core::Result<void> ClaudeService::syncTakeOver() {
     // 编排：取激活 Profile + 端口传入 SettingsTakeOver；无激活仍接管 BASE_URL/占位
-    // key（转发层报 503）。「生效 JSON」（profile ⊕ 片段，片段赢）预先算好放进 Profile 副本。
+    // key（转发层报 503）。
     Profile active;
     auto a = getActiveProfile();
     if (a.isOk()) {
         active = std::move(a).value();
-    }
-    {
-        std::vector<std::string> effWarnings;
-        active.extraSettingsJson = effectiveExtraSettingsJson(
-            active.extraSettingsJson,
-            profileRepository_.sharedExtraSettingsJsonFor(
-                active.sharedConfigId),
-            &effWarnings);
-        for (const auto& w : effWarnings) {
-            LOG_WARN("syncTakeOver: " + w);
-        }
     }
     return settingsTakeover_.syncTakeOver(active, proxyPort());
 }

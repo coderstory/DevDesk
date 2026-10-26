@@ -1,5 +1,5 @@
 // src/module_claude_proxy/claude_ui_detail.h
-// 右栏单元：详情面板四 pane + 操作按钮组 + 「最近调用」页签（tab 4）。
+// 右栏单元：详情面板四 pane + 操作按钮组 + 「最近调用」页签。
 // 契约：每个 pane 函数返回本 pane 内容底沿 y（与 y0 同坐标系）。
 // 布局锚定式：贴底元素锚容器底（actY = bodyH − 动作块预留），行数预算用真实裁剪下沿 contentBottom。
 #pragma once
@@ -31,14 +31,6 @@ struct DetailView {
     std::time_t now = 0;               // 调用时间列「今天/昨天」判定
     // 共享配置片段快照（基础 pane 绑定行 + 生效 env 来源标注）
     const std::vector<SharedConfig>* sharedConfigs = nullptr;
-    // 高级配置 pane：dialectText = 生效方言展示串（显式覆盖 →「名（显式）」，空 →
-    //「自动（按站点推断）→ 生效名」）；fallbackName = 备用 Profile 名（悬空/0 →「无」/「（已删除）」）。
-    std::string dialectText;
-    std::string fallbackName;
-    // 高级配置 pane 的键来源清单：生效 JSON（profile ⊕ 片段，片段赢）逐顶层键 → 来源标签；
-    // compose 装配（pane 内零服务调用）；model 键附加说明进 extraSettingsNote。
-    std::vector<std::pair<std::string, std::string>> extraSettingsKeys;
-    std::string extraSettingsNote;
     // 没有 bodyH 字段：行数预算一律用 contentBottom（真实裁剪下沿）。
 };
 
@@ -66,7 +58,7 @@ struct DetailActions {
     std::function<void(int64_t profileId, std::size_t slotIndex, bool on)> setOneM;
 };
 
-// 五个 pane：各自返回内容底沿（见文件头契约）
+// 四个 pane：各自返回内容底沿（见文件头契约）
 // contentBottom = 内容框可用底（drawDetailPanel 由 bodyH 推出）：pane 画出的
 // 内容不得越过它（行数预算按它推）。rows 非空时回填行数统计（诊断日志用）。
 // id: claude.field.* / claude.slot.* / claude.env.* / claude.calls.*
@@ -80,10 +72,10 @@ float drawDetailModels(eui::Ui& ui, float x0, float y0, float w,
 float drawDetailEnv(eui::Ui& ui, float x0, float y0, float w,
                     const core::theme::Tokens& t, const DetailView& v,
                     float contentBottom, PaneRows* rows = nullptr);
-// 「最近调用」pane 与「高级配置」pane 在 .cpp 的匿名命名空间内
-//（drawDetailCallsPane / drawDetailAdvanced）；其行数统计经 PaneRows 回填同上。
+// 「最近调用」pane 在 .cpp 的匿名命名空间内（drawDetailCallsPane）
+//；其行数统计经 PaneRows 回填同上。
 
-// 整个右栏（底板 column + overlay stack）：标题 + tabs 五页 + pane 分派 + 操作按钮组。
+// 整个右栏（底板 column + overlay stack）：标题 + tabs 四页 + pane 分派 + 操作按钮组。
 // xOffset = 右栏在 claude.body row 内的 x 起点（= 左栏宽 + gap）。
 void drawDetailPanel(eui::Ui& ui, float rightW, float bodyH, float xOffset,
                      const core::theme::Tokens& t,

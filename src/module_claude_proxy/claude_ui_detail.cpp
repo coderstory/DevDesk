@@ -1,5 +1,5 @@
 // src/module_claude_proxy/claude_ui_detail.cpp
-// 右栏四 pane + 操作按钮组 + 「最近调用」页签；this 成员换成显式入参。
+// 右栏四 pane（基础信息 / 模型配置 / 环境变量 / 最近调用）+ 操作按钮组；this 成员换成显式入参。
 // 布局原则：容器可用高单一来源、贴底元素锚容器底、越界判定用真实裁剪下沿
 //（本文件容器底 = bodyH，裁剪下沿 = drawDetailPanel 的 contentBottom）。
 #include "claude_ui_detail.h"
@@ -776,135 +776,6 @@ float drawDetailCallsPane(eui::Ui& ui, float x0, float y0, float w,
     return viewY;
 }
 
-// 高级配置 pane：方言 + 备用 Profile 两行只读 + 生效 JSON 逐顶层键来源行。数据由
-// compose 装配进 DetailView，本函数零服务调用；行数纯按可用高推（暂定上限 8）。
-float drawDetailAdvanced(eui::Ui& ui, float x0, float y0, float w,
-                         const core::theme::Tokens& t, const DetailView& v,
-                         float contentBottom) {
-    // 行几何：全部从 fontScale 派生；横向列宽不缩放
-    const float fs = core::theme::fontScale();
-    const auto rfs = [fs](float base) { return std::round(base * fs); };
-    const float labelFs = 11.0f * fs;                // 标签 / 来源 / 说明小字
-    const float keyFs = 12.0f * fs;                  // 键名
-    const float labelH = rfs(14.0f);                 // 标签行盒（100% = 14）
-    const float labelGap = rfs(18.0f);               // 标签底 → 盒顶（100% = 18）
-    const float fieldH = rfs(28.0f);                 // 方言 / 备用值盒高（100% = 28）
-    const float fieldGap = rfs(10.0f);               // 值盒底 → 下一标签顶（100% = 10）
-    // 键来源清单行高/行距与行数预算
-    const float kKeyRowH = rfs(28.0f);               // 键行卡高（100% = 28）
-    const float kKeyPitch = kKeyRowH + rfs(6.0f);    // 行卡 + 6 间距（100% = 34）
-    const float kNoteH = rfs(18.0f);                 // 来源说明行（100% = 18）
-    const float kOverflowH = rfs(18.0f);             // 「另有 N 项」提示行（100% = 18）
-    constexpr int kMaxKeyRows = 8;        // 暂定上限（contentBottom 消费才是护栏）
-    // 方言行（固定）
-    ui.text("claude.field.dialect.label")
-        .position(x0, y0).size(w, labelH)
-        .text("生效方言").fontSize(labelFs).lineHeight(labelH)
-        .verticalAlign(eui::VerticalAlign::Center)
-        .color(t.colors.textTertiary).build();
-    ui.rect("claude.field.dialect.bg")
-        .position(x0, y0 + labelGap).size(w, fieldH)
-        .color(t.colors.surface).radius(t.sizes.radiusLarge).build();
-    ui.text("claude.field.dialect.value")
-        .position(x0 + 12.0f, y0 + labelGap).size(w - 24.0f, fieldH)
-        .text(v.dialectText).fontSize(t.sizes.fontSizeSmall).lineHeight(fieldH)
-        .verticalAlign(eui::VerticalAlign::Center)
-        .color(t.colors.textPrimary).build();
-    const float fbY = y0 + labelGap + fieldH + fieldGap;
-    // 备用行（固定）
-    ui.text("claude.field.fallback.label")
-        .position(x0, fbY).size(w, labelH)
-        .text("备用 Profile").fontSize(labelFs).lineHeight(labelH)
-        .verticalAlign(eui::VerticalAlign::Center)
-        .color(t.colors.textTertiary).build();
-    ui.rect("claude.field.fallback.bg")
-        .position(x0, fbY + labelGap).size(w, fieldH)
-        .color(t.colors.surface).radius(t.sizes.radiusLarge).build();
-    ui.text("claude.field.fallback.value")
-        .position(x0 + 12.0f, fbY + labelGap).size(w - 24.0f, fieldH)
-        .text(v.fallbackName).fontSize(t.sizes.fontSizeSmall).lineHeight(fieldH)
-        .verticalAlign(eui::VerticalAlign::Center)
-        .color(t.colors.textPrimary).build();
-    float ey = fbY + labelGap + fieldH;    // = y0 + 102（100% 档既有固定底沿）
-    if (v.extraSettingsKeys.empty()) {
-        // 空态两种成因：note 空 = 未配置；note 非空 = 解析失败（原样展示）
-        const std::string statusText = v.extraSettingsNote.empty()
-            ? std::string("未配置高级属性 JSON")
-            : v.extraSettingsNote;
-        ui.text("claude.advjson.status")
-            .position(x0, ey).size(w, kNoteH)
-            .text(statusText).fontSize(labelFs).lineHeight(kNoteH)
-            .verticalAlign(eui::VerticalAlign::Center)
-            .color(t.colors.textTertiary).build();
-        return std::min(ey + kNoteH, contentBottom);
-    }
-    ui.text("claude.advjson.label")
-        .position(x0, ey).size(w, labelH)
-        .text("高级属性（生效 JSON 逐键来源）").fontSize(labelFs).lineHeight(labelH)
-        .verticalAlign(eui::VerticalAlign::Center)
-        .color(t.colors.textTertiary).build();
-    ey += labelGap;
-    // 行数预算：说明行/溢出行要放得下，放不下就让行（让到 0 为止）
-    const float availH = std::max(0.0f, contentBottom - ey);
-    const bool hasNote = !v.extraSettingsNote.empty();
-    const float tailH = (hasNote ? kNoteH : 0.0f) + kOverflowH;
-    size_t shownRows = std::min(
-        v.extraSettingsKeys.size(),
-        static_cast<size_t>(std::max(0, static_cast<int>(availH / kKeyPitch))));
-    shownRows = std::min(shownRows, static_cast<size_t>(kMaxKeyRows));
-    while (shownRows > 0 &&
-           static_cast<float>(shownRows) * kKeyPitch + tailH > availH) {
-        --shownRows;
-    }
-    const bool overflow = v.extraSettingsKeys.size() > shownRows;
-    const size_t keyCount = v.extraSettingsKeys.size();
-    for (size_t i = 0; i < shownRows; ++i) {
-        const auto& [k, src] = v.extraSettingsKeys[i];
-        const std::string idx = std::to_string(i);
-        ui.rect("claude.advjson.row.bg." + idx)
-            .position(x0, ey).size(w, kKeyRowH)
-            .color(t.colors.surface).radius(t.sizes.radiusLarge).build();
-        // 键列单行省略号（显式 maxWidth 是前提）+ clip 兜底；来源列有界枚举，保留 clip。
-        ui.text("claude.advjson.row.key." + idx)
-            .position(x0 + 12.0f, ey).size(w * 0.4f, kKeyRowH)
-            .maxWidth(w * 0.4f)
-            .overflow(core::TextOverflow::Ellipsis)
-            .clip()
-            .text(k).fontSize(keyFs).lineHeight(kKeyRowH)
-            .verticalAlign(eui::VerticalAlign::Center)
-            .color(t.colors.primary).build();
-        ui.text("claude.advjson.row.src." + idx)
-            .position(x0 + w * 0.4f + 20.0f, ey).size(w * 0.6f - 32.0f, kKeyRowH)
-            .clip()
-            .text(src).fontSize(labelFs).lineHeight(kKeyRowH)
-            .verticalAlign(eui::VerticalAlign::Center)
-            .color(src == std::string(envSourceLabel(EnvSource::Shared))
-                       ? t.colors.textSecondary
-                       : t.colors.textTertiary).build();
-        ey += kKeyPitch;
-    }
-    if (overflow) {
-        ui.text("claude.advjson.overflow")
-            .position(x0, ey).size(w, kOverflowH)
-            .text("另有 " + std::to_string(keyCount - shownRows) +
-                  " 项（编辑该 Profile 可查看全部）")
-            .fontSize(labelFs).lineHeight(kOverflowH)
-            .verticalAlign(eui::VerticalAlign::Center)
-            .color(t.colors.textTertiary).build();
-        ey += kOverflowH;
-    }
-    if (hasNote) {
-        ui.text("claude.advjson.note")
-            .position(x0, ey).size(w, kNoteH)
-            .text(v.extraSettingsNote).fontSize(labelFs).lineHeight(kNoteH)
-            .verticalAlign(eui::VerticalAlign::Center)
-            .color(t.colors.warning).build();
-        ey += kNoteH;
-    }
-    // 兜底：内容底沿不越过内容框（min() 是护栏，布局来源是上面的行数预算）
-    return std::min(ey, contentBottom);
-}
-
 // 操作按钮组（启用/测试连通/编辑/运行）+ 副提示 + 分隔线。actY 由
 // drawDetailPanel 锚定给出；绘制高 = 65 被 kActionBlockH 引用，改几何须同步。
 void drawDetailActions(eui::Ui& ui, float x0, float w, float actY,
@@ -1041,7 +912,7 @@ void drawDetailPanel(eui::Ui& ui, float rightW, float bodyH, float xOffset,
                      const components::theme::ThemeColorTokens& themeTokens,
                      DetailState& st, const DetailView& v,
                      const DetailActions& a) {
-    // 右栏：详情面板（5 页签 + 操作区）
+    // 右栏：详情面板（4 页签 + 操作区）
     ui.column("claude.detail")
         .size(rightW, bodyH)
         .gap(0.0f)
@@ -1079,13 +950,10 @@ void drawDetailPanel(eui::Ui& ui, float rightW, float bodyH, float xOffset,
             // S3.4 块面式 Tab（wtab 替代原下划线式 components::tabs）
             const float tabY = y0 + 40.0f;
             const float tabH = 40.0f;
-            const char* tabLabels[] = {"基础信息", "模型映射", "环境变量", "高级配置", "最近调用"};
+            const char* tabLabels[] = {"基础信息", "模型配置", "环境变量", "最近调用"};
             float tabX = x0;
-            for (int i = 0; i < 5; ++i) {
-                float tabW = 72.0f;
-                if (i == 2) tabW = 80.0f;
-                else if (i == 3) tabW = 80.0f;
-                else if (i == 4) tabW = 80.0f;
+            for (int i = 0; i < 4; ++i) {
+                float tabW = 80.0f;
                 ui_kit::wtab(ui, "claude.detail.tab." + std::to_string(i),
                              tabLabels[i], st.detailTab_ == i,
                              tabX, tabY, tabW, tabH, t,
@@ -1122,22 +990,18 @@ void drawDetailPanel(eui::Ui& ui, float rightW, float bodyH, float xOffset,
             } else if (st.detailTab_ == 2) {
                 paneBottom = drawDetailEnv(ui, x0, paneY, w0, t, v,
                                            contentBottom, &paneRows);
-            } else if (st.detailTab_ == 3) {
-                // 高级配置：固定两行只读，走基础 pane 同款锚定/兜底链
-                paneBottom = drawDetailAdvanced(ui, x0, paneY, w0, t, v,
-                                                contentBottom);
             } else {
                 paneBottom = drawDetailCallsPane(
                     ui, x0, paneY, w0, t, v, a.openCalls,
                     contentBottom, &paneRows);
             }
-            // 锚定 + 兜底：正常档五页签都取 actYFloor（分隔线 y 全等）；更矮时基础/模型
-            // 固定行数使动作区下移、五页签不再同高；再矮用 actYHi 夹住：宁可压内容也不越出容器底
+            // 锚定 + 兜底：正常档四页签都取 actYFloor（分隔线 y 全等）；更矮时基础/模型
+            // 固定行数使动作区下移、四页签不再同高；再矮用 actYHi 夹住：宁可压内容也不越出容器底
             const float actYHi = std::max(bodyH - kActionBlockH, actYFloor);
             const float actY = std::min(
                 std::max(actYFloor, paneBottom + kActTopGap), actYHi);
             drawDetailActions(ui, x0, w0, actY, t, v, a);
-            // 诊断日志：一行可 grep——五页签 actY 必须相等。Debug 级，避免每帧刷屏
+            // 诊断日志：一行可 grep——四页签 actY 必须相等。Debug 级，避免每帧刷屏
             LOG_DEBUG("[layout] pane=" + std::to_string(st.detailTab_) +
                       " paneBottom=" + std::to_string(paneBottom) +
                       " actY=" + std::to_string(actY) +

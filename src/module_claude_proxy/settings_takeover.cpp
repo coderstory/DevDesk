@@ -50,9 +50,7 @@ core::Result<void> SettingsTakeOver::syncTakeOver(
                  paths_.settingsFile.string());
         return core::Result<void>::ok();
     }
-    // 写进 settings.json 的是**合并后**的 env + 生效高级设置 JSON（托管键在最
-    // 上层；片段叠加已在门面装配进 extraSettingsJson——片段值不留痕迹，
-    // 片段键经 JSON 域进 sidecar nonEnv 记账 → 停代理还原时随快照撤走）
+    // 写进 settings.json 的是合并后的托管 env（托管键在最上层）
     auto r = settings_sync::takeOver(activeProfile, proxyPort, paths_);
     size_t warnCount = 0;
     {
