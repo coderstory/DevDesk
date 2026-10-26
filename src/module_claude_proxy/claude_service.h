@@ -54,8 +54,7 @@ public:
     core::Result<Profile> getProfile(int64_t id);
 
     // 创建并保存到 SQLite（凭据入 api_key_encrypted）。activateIfNoneActive=true：
-    // 无激活则自动激活（不抢占已有）；authField 非法值写侧归一 'both'；
-    // dialectOverride 空 = 按 host 推断、非法值归空。
+    // 无激活则自动激活（不抢占已有）；authField 非法值写侧归一 'both'。
     core::Result<Profile> createProfile(const std::string& name,
                                        const std::string& baseUrl,
                                        const std::string& apiKey,
@@ -63,8 +62,6 @@ public:
                                        bool activateIfNoneActive = false,
                                        int64_t sharedConfigId = 0,
                                        const std::string& authField = "both",
-                                       const std::string& dialectOverride =
-                                           std::string(),
                                        int64_t fallbackProfileId = 0);
 
     // 更新 profile（id 必须已存在）；apiKeyPlain 非空则覆盖凭据三列。

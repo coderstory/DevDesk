@@ -197,8 +197,7 @@ void ProxyRouter::handleRequest(
         up.verifyTls = true;
 
         auto fwd = copyHeaders(headers);
-        const UpstreamDialect dialect =
-            UpstreamDialect::forBaseUrl(p.baseUrl, p.dialectOverride);
+        const UpstreamDialect dialect = UpstreamDialect::forBaseUrl(p.baseUrl);
         dialect.applyHeaders(fwd, p.apiKeyPlain, authFieldFromText(p.authField));
         up.headers = std::move(fwd);
         if (dialect.normalizeBody(up.body)) {

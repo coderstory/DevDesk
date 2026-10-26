@@ -185,10 +185,8 @@ sendStreamingClaude(const platform::http::Request& req,
     }
 
     // 2. 按上游方言归一（鉴权头 / UA / 会话头 / 模型名标记）——各网关差异
-    //    收敛在 UpstreamDialect。方言由 profile.dialectOverride 钉住（空串 =
-    //    host 推断），与缓冲转发 / 连通性探测同源
-    const UpstreamDialect dialect =
-        UpstreamDialect::forBaseUrl(profile.baseUrl, profile.dialectOverride);
+    //    收敛在 UpstreamDialect；方言按 host 推断，与缓冲转发 / 连通性探测同源
+    const UpstreamDialect dialect = UpstreamDialect::forBaseUrl(profile.baseUrl);
     dialect.applyHeaders(upstream.headers, profile.apiKeyPlain,
                          authFieldFromText(profile.authField));
     if (dialect.normalizeBody(upstream.body)) {

@@ -20,7 +20,6 @@
 #include "platform/folder_picker.h"
 #include "platform/json.h"
 #include "provider_config.h"
-#include "upstream_dialect.h"
 #include <core/platform/platform.h>   // core::platform::requestUiUpdate（唤醒主循环）
 #include <core/window/window_backend.h>
 #include <ui_kit/metrics.h>

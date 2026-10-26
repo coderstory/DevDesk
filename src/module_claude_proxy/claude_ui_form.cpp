@@ -8,7 +8,6 @@
 #include "platform/json.h"
 #include "provider_config.h"
 #include "settings_sync.h"
-#include "upstream_dialect.h"
 
 #include <components/button.h>
 #include <components/dropdown.h>
@@ -63,8 +62,6 @@ void openCreateForm(FormState& f, ImportState& imp) {
     f.formSharedDdOpen_ = false;
     f.formFallbackProfileId_ = 0;
     f.formFallbackDdOpen_ = false;
-    f.formDialectOverride_.clear();
-    f.formDialectDdOpen_ = false;
     resetImportState(imp);
     f.formOpen_ = true;
 }
@@ -89,9 +86,6 @@ void openEditForm(FormState& f, ImportState& imp, const Profile& p) {
     // 备用 Profile 回显（悬空/自引用 → 下拉逐帧归一为「无」）
     f.formFallbackProfileId_ = p.fallbackProfileId;
     f.formFallbackDdOpen_ = false;
-    // 高级配置页回显（方言覆盖；空/未知 → 下拉逐帧归一为「自动」）
-    f.formDialectOverride_ = p.dialectOverride;
-    f.formDialectDdOpen_ = false;
     // env 行：非法 JSON 读路径容错为空表
     f.formEnvRows_.clear();
     auto ee = parseExtraEnv(p.extraEnvJson);
@@ -268,7 +262,6 @@ void submitForm(FormState& f, const FormSubmitHooks& hooks,
                                     f.formModels_.def.model, /*activateIfNoneActive=*/true,
                                     /*sharedConfigId=*/f.formSharedConfigId_,
                                     authFieldToText(f.formAuthField_),
-                                    /*dialectOverride=*/f.formDialectOverride_,
                                     /*fallbackProfileId=*/f.formFallbackProfileId_);
         if (r.isFail()) {
             setFormError(f, r.errorMessage());
@@ -317,8 +310,6 @@ void submitForm(FormState& f, const FormSubmitHooks& hooks,
         p.authField = authFieldToText(f.formAuthField_);
         p.sharedConfigId = f.formSharedConfigId_;   // 绑定/解绑随保存落库
         p.fallbackProfileId = f.formFallbackProfileId_;   // 备用随保存落库（自引用由服务层校验兜底）
-        // 新下拉值须真正写入编辑路径（不接线则落不了盘）；p 来自 getProfile 已含既有覆盖
-        p.dialectOverride = f.formDialectOverride_;
         auto r = svc->updateProfile(p);
         if (r.isFail()) {
             setFormError(f, r.errorMessage());

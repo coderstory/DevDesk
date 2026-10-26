@@ -132,13 +132,12 @@ core::Result<Profile> ClaudeService::createProfile(const std::string& name,
                                                    bool activateIfNoneActive,
                                                    int64_t sharedConfigId,
                                                    const std::string& authField,
-                                                   const std::string& dialectOverride,
                                                    int64_t fallbackProfileId) {
     // 策略尾：无激活 Profile 时自动激活（经 setActiveProfile，代理运行中会同步
     // 接管 settings.json）。失败不回滚创建，只 WARN（UI 走「点击启用」文案）。
     auto created = profileRepository_.createProfile(
         name, baseUrl, apiKey, model, sharedConfigId, authField,
-        dialectOverride, fallbackProfileId);
+        fallbackProfileId);
     if (created.isFail()) {
         return created;
     }
@@ -347,9 +346,7 @@ ClaudeService::probeProfile(const Profile& profile, int timeoutMs) {
                "\",\"max_tokens\":1,\"messages\":[{\"role\":\"user\",\"content\":\"ping\"}]}";
     req.headers["content-type"] = "application/json";   // 转发时由客户端头带来，探测需自备
     // 探测请求经上游方言层装配头部，与真实转发同源（否则转得通而探测误报失败）。
-    // dialectOverride 必传（漏传 = 探测与转发方言错位；空串 → 回落 host 推断）。
-    const UpstreamDialect dialect =
-        UpstreamDialect::forBaseUrl(profile.baseUrl, profile.dialectOverride);
+    const UpstreamDialect dialect = UpstreamDialect::forBaseUrl(profile.baseUrl);
     dialect.applyHeaders(req.headers, key, authFieldFromText(profile.authField));
     if (dialect.normalizeBody(req.body)) {
         LOG_INFO("testConnection: 按上游方言剥掉模型名 [1M] 标记");

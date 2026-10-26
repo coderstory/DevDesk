@@ -124,10 +124,6 @@ struct FormState {
     // 备用 Profile（failover）绑定下拉（复用绑定下拉模式：索引 0 = 无，编辑态排除自身）
     int64_t formFallbackProfileId_ = 0;   // 表单态备用（0 = 不启用 failover）
     bool formFallbackDdOpen_ = false;     // 备用下拉展开态
-
-    // 方言覆盖：只存规范文本（空串 = 未覆盖）；选中态逐帧经 dialectKindFromText 反查 idx（空/未知 → 0「自动」）
-    std::string formDialectOverride_;
-    bool formDialectDdOpen_ = false;      // 方言下拉展开态
 };
 
 // 共享配置片段编辑弹窗（独立状态）。必须接入 anyDialogOpen 门控与 closeTopmostDialog Esc 序链（最顶层）
