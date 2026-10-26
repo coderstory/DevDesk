@@ -322,6 +322,111 @@ inline constexpr const char* kSql = R"(
     WHERE NOT EXISTS (SELECT 1 FROM todo_columns);
 )";
 
+// ---- 迁移定义白名单（P2 票 11）----
+// 背景：补列迁移的 DDL 此前是裸字符串直接拼进 SQL（表名/列名/列定义三段拼接），
+// 拼错值只会在 SQLite 运行期炸。现口径：迁移涉及的表与列一律先定义成枚举，
+// 拼 SQL 前必须经下方 constexpr 白名单查表取回标识符——白名单里没有的值
+// （越界枚举 / 强转脏值）在查表处即显式报错（错误信息带非法值），绝不进入拼接。
+// 白名单覆盖完备性由文件底部的 static_assert 在构建期钉死：漏条目 / 枚举与数组
+// 顺序错位直接编译失败。
+
+// 迁移 DDL 允许操作的表（补列迁移的目标三表）
+enum class MigrationTable { AgentTasks, AgentRuns, AgentMessages, kCount };
+
+struct MigrationTableEntry {
+    MigrationTable id;
+    const char* name;  // SQL 标识符（constexpr 白名单内，静态存储期）
+};
+inline constexpr MigrationTableEntry kMigrationTableWhitelist[] = {
+    {MigrationTable::AgentTasks,    "agent_tasks"},
+    {MigrationTable::AgentRuns,     "agent_runs"},
+    {MigrationTable::AgentMessages, "agent_messages"},
+};
+
+// 迁移 DDL 允许新增的列（枚举值 → 列名 + ADD COLUMN 的列定义片段）。
+// 三张表共用一张白名单：同名列（如 created_at）按表前缀区分枚举值。
+// 枚举顺序 = 数组顺序 = 各表 DDL 的最终列序（查表按下标 O(1)，static_assert 钉死一致）。
+enum class MigrationColumn {
+    // agent_tasks
+    TasksName, TasksGoal, TasksTriggerType, TasksTriggerConfig, TasksModelSlot,
+    TasksMaxIterations, TasksAllowDestructive, TasksEnabled, TasksContextNote,
+    TasksAutoNote, TasksSystemPrompt, TasksCreatedAt, TasksUpdatedAt,
+    // agent_runs
+    RunsTaskId, RunsStatus, RunsStartedAt, RunsEndedAt, RunsIterations,
+    RunsInputTokens, RunsOutputTokens, RunsError,
+    // agent_messages
+    MessagesRunId, MessagesSeq, MessagesRole, MessagesContentJson,
+    MessagesToolCallId, MessagesCreatedAt,
+    kCount,
+};
+
+struct MigrationColumnEntry {
+    MigrationColumn id;
+    const char* name;  // 列名（SQL 标识符）
+    const char* ddl;   // ALTER TABLE ADD COLUMN <列名> 之后的列定义片段
+};
+inline constexpr MigrationColumnEntry kMigrationColumnWhitelist[] = {
+    // agent_tasks（与 kSql 中三表 DDL 的最终形态一致：漏列 / 改默认值即迁移漂移）
+    {MigrationColumn::TasksName,             "name",              "TEXT NOT NULL"},
+    {MigrationColumn::TasksGoal,             "goal",              "TEXT NOT NULL"},
+    {MigrationColumn::TasksTriggerType,      "trigger_type",      "TEXT NOT NULL"},
+    {MigrationColumn::TasksTriggerConfig,    "trigger_config",    "TEXT NOT NULL DEFAULT ''"},
+    {MigrationColumn::TasksModelSlot,        "model_slot",        "TEXT NOT NULL DEFAULT 'default'"},
+    {MigrationColumn::TasksMaxIterations,    "max_iterations",    "INTEGER NOT NULL DEFAULT 10"},
+    {MigrationColumn::TasksAllowDestructive, "allow_destructive", "INTEGER NOT NULL DEFAULT 0"},
+    {MigrationColumn::TasksEnabled,          "enabled",           "INTEGER NOT NULL DEFAULT 1"},
+    {MigrationColumn::TasksContextNote,      "context_note",      "TEXT NOT NULL DEFAULT ''"},
+    {MigrationColumn::TasksAutoNote,         "auto_note",         "INTEGER NOT NULL DEFAULT 1"},
+    {MigrationColumn::TasksSystemPrompt,     "system_prompt",     "TEXT NOT NULL DEFAULT ''"},
+    {MigrationColumn::TasksCreatedAt,        "created_at",        "INTEGER NOT NULL"},
+    {MigrationColumn::TasksUpdatedAt,        "updated_at",        "INTEGER NOT NULL"},
+    // agent_runs
+    {MigrationColumn::RunsTaskId,            "task_id",           "INTEGER NOT NULL"},
+    {MigrationColumn::RunsStatus,            "status",            "TEXT NOT NULL"},
+    {MigrationColumn::RunsStartedAt,         "started_at",        "INTEGER NOT NULL"},
+    {MigrationColumn::RunsEndedAt,           "ended_at",          "INTEGER"},
+    {MigrationColumn::RunsIterations,        "iterations",        "INTEGER NOT NULL DEFAULT 0"},
+    {MigrationColumn::RunsInputTokens,       "input_tokens",      "INTEGER"},
+    {MigrationColumn::RunsOutputTokens,      "output_tokens",     "INTEGER"},
+    {MigrationColumn::RunsError,             "error",             "TEXT"},
+    // agent_messages
+    {MigrationColumn::MessagesRunId,         "run_id",            "INTEGER NOT NULL"},
+    {MigrationColumn::MessagesSeq,           "seq",               "INTEGER NOT NULL"},
+    {MigrationColumn::MessagesRole,          "role",              "TEXT NOT NULL"},
+    {MigrationColumn::MessagesContentJson,   "content_json",      "TEXT NOT NULL"},
+    {MigrationColumn::MessagesToolCallId,    "tool_call_id",      "TEXT"},
+    {MigrationColumn::MessagesCreatedAt,     "created_at",        "INTEGER NOT NULL"},
+};
+
+// 构建期校验：白名单必须与枚举一一对应（条目数 = kCount 且下标 i 的条目 id = 第 i 个
+// 枚举值）。查表按下标直取的前提就是这条不变量。
+inline constexpr bool migrationWhitelistsAligned() {
+    constexpr size_t kTableEntries =
+        sizeof(kMigrationTableWhitelist) / sizeof(kMigrationTableWhitelist[0]);
+    static_assert(kTableEntries == static_cast<size_t>(MigrationTable::kCount),
+                  "kMigrationTableWhitelist must cover every MigrationTable");
+    for (size_t i = 0; i < kTableEntries; ++i) {
+        if (static_cast<size_t>(kMigrationTableWhitelist[i].id) != i) return false;
+    }
+    constexpr size_t kColumnEntries =
+        sizeof(kMigrationColumnWhitelist) / sizeof(kMigrationColumnWhitelist[0]);
+    static_assert(kColumnEntries == static_cast<size_t>(MigrationColumn::kCount),
+                  "kMigrationColumnWhitelist must cover every MigrationColumn");
+    for (size_t i = 0; i < kColumnEntries; ++i) {
+        if (static_cast<size_t>(kMigrationColumnWhitelist[i].id) != i) return false;
+    }
+    return true;
+}
+static_assert(migrationWhitelistsAligned(),
+              "migration whitelists must be complete and ordered to match their enums");
+
+// 白名单查询（迁移拼接的唯一取词口）：非法枚举值（越界 / 强转脏值）→ fail，
+// 错误信息带非法值——加载期显式报错，不拼 SQL 不进 SQLite。
+// 返回指针指向 constexpr 白名单条目，静态存储期恒有效。
+core::Result<const char*> migrationTableName(MigrationTable table);
+core::Result<const char*> migrationColumnName(MigrationColumn column);
+core::Result<const char*> migrationColumnDdl(MigrationColumn column);
+
 // 补列迁移：对 agent 三表的已有行逐列与当前 DDL 对齐，缺列补 ALTER TABLE ADD COLUMN。
 // 幂等（列已存在则跳过）；表不存在则无操作（IF NOT EXISTS 已在 applySchema 里建全）。
 // 为什么不能靠 CREATE IF NOT EXISTS：IF NOT EXISTS 对已存在表跳过，加列只影响新库（本 bug 根因）。

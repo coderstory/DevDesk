@@ -4,6 +4,8 @@
 //      context_note 报障根因）；
 //   2) Todo 固定四列迁移（UAT6.2 H20）——与 Todo 模块开关无关，启动时跑一次。
 // 均幂等：新库不炸、老库补齐、旧数据行保留不丢。
+// 票 11：补列迁移的表/列标识符一律 enum → schema.h constexpr 白名单查表后拼接，
+// 非法值在查表处（加载期）显式报错——不再有裸字符串直接进 ALTER 语句。
 #include "schema.h"
 
 #include "db_backup.h"
@@ -25,51 +27,55 @@ namespace core::schema {
 
 namespace {
 
-// 每张 agent 表当前 DDL 定义的完整列名（不含 id —— id 是 INTEGER PRIMARY KEY AUTOINCREMENT，
+// 每张 agent 表当前 DDL 定义的完整列（不含 id —— id 是 INTEGER PRIMARY KEY AUTOINCREMENT，
 // 表存在则一定含 id，且 SQLite 不允许 ALTER 改 id 语义）。顺序无关；只用于“是否存在”判据。
-// column name → column definition（ALTER TABLE ADD COLUMN 中列名之后的部分）
-
-std::vector<std::pair<std::string, std::string>> agentTasksColumns() {
+// 票 11：列不再写字符串对（name/def 直接进拼接），一律枚举值——列名与列定义由
+// schema.h 的 constexpr 白名单按枚举查表给出（见 ensureTableColumns），
+// 非法枚举值在查表处显式报错，绝不拼进 SQL。
+std::vector<MigrationColumn> agentTasksColumns() {
     return {
-        {"name",              "TEXT NOT NULL"},
-        {"goal",              "TEXT NOT NULL"},
-        {"trigger_type",      "TEXT NOT NULL"},
-        {"trigger_config",    "TEXT NOT NULL DEFAULT ''"},
-        {"model_slot",        "TEXT NOT NULL DEFAULT 'default'"},
-        {"max_iterations",    "INTEGER NOT NULL DEFAULT 10"},
-        {"allow_destructive", "INTEGER NOT NULL DEFAULT 0"},
-        {"enabled",           "INTEGER NOT NULL DEFAULT 1"},
-        {"context_note",      "TEXT NOT NULL DEFAULT ''"},
-        {"auto_note",         "INTEGER NOT NULL DEFAULT 1"},
-        {"system_prompt",     "TEXT NOT NULL DEFAULT ''"},
-        {"created_at",        "INTEGER NOT NULL"},
-        {"updated_at",        "INTEGER NOT NULL"},
+        MigrationColumn::TasksName,
+        MigrationColumn::TasksGoal,
+        MigrationColumn::TasksTriggerType,
+        MigrationColumn::TasksTriggerConfig,
+        MigrationColumn::TasksModelSlot,
+        MigrationColumn::TasksMaxIterations,
+        MigrationColumn::TasksAllowDestructive,
+        MigrationColumn::TasksEnabled,
+        MigrationColumn::TasksContextNote,
+        MigrationColumn::TasksAutoNote,
+        MigrationColumn::TasksSystemPrompt,
+        MigrationColumn::TasksCreatedAt,
+        MigrationColumn::TasksUpdatedAt,
     };
 }
 
-std::vector<std::pair<std::string, std::string>> agentRunsColumns() {
+std::vector<MigrationColumn> agentRunsColumns() {
     return {
-        {"task_id",       "INTEGER NOT NULL"},
-        {"status",        "TEXT NOT NULL"},
-        {"started_at",    "INTEGER NOT NULL"},
-        {"ended_at",      "INTEGER"},
-        {"iterations",    "INTEGER NOT NULL DEFAULT 0"},
-        {"input_tokens",  "INTEGER"},
-        {"output_tokens", "INTEGER"},
-        {"error",         "TEXT"},
+        MigrationColumn::RunsTaskId,
+        MigrationColumn::RunsStatus,
+        MigrationColumn::RunsStartedAt,
+        MigrationColumn::RunsEndedAt,
+        MigrationColumn::RunsIterations,
+        MigrationColumn::RunsInputTokens,
+        MigrationColumn::RunsOutputTokens,
+        MigrationColumn::RunsError,
     };
 }
 
-std::vector<std::pair<std::string, std::string>> agentMessagesColumns() {
+std::vector<MigrationColumn> agentMessagesColumns() {
     return {
-        {"run_id",        "INTEGER NOT NULL"},
-        {"seq",           "INTEGER NOT NULL"},
-        {"role",          "TEXT NOT NULL"},
-        {"content_json",  "TEXT NOT NULL"},
-        {"tool_call_id",  "TEXT"},
-        {"created_at",    "INTEGER NOT NULL"},
+        MigrationColumn::MessagesRunId,
+        MigrationColumn::MessagesSeq,
+        MigrationColumn::MessagesRole,
+        MigrationColumn::MessagesContentJson,
+        MigrationColumn::MessagesToolCallId,
+        MigrationColumn::MessagesCreatedAt,
     };
 }
+
+// 白名单查询实现见匿名命名空间之后的 migrationTableName / migrationColumnName /
+// migrationColumnDdl（公开 API，测试直接调用做「非法迁移名被拒」验证）。
 
 // 检查表是否存在（防 ALTER 空表 PRAGMA 返回空集时误发 ALTER）
 core::Result<bool> tableExists(core::data::SqliteDb& db, const std::string& table) {
@@ -105,23 +111,51 @@ core::Result<std::set<std::string>> existingColumns(core::data::SqliteDb& db,
     return core::Result<std::set<std::string>>::ok(std::move(names));
 }
 
-// 对齐一张表的列：缺哪个补哪个（幂等——已存在列跳过）
+// 对齐一张表的列：缺哪个补哪个（幂等——已存在列跳过）。
+// 票 11 口径：表名与全部列先过白名单（任一非法值在拼接前显式报错并整体放弃，
+// 一个字都不会进 SQLite），通过后拼接只接触白名单返回的静态标识符。
 core::Result<void> ensureTableColumns(
     core::data::SqliteDb& db,
-    const std::string& table,
-    const std::vector<std::pair<std::string, std::string>>& expected) {
-    auto exists = tableExists(db, table);
+    const MigrationTable table,
+    const std::vector<MigrationColumn>& expected) {
+    // 1) 表名白名单校验
+    auto tableName = migrationTableName(table);
+    if (tableName.isFail()) {
+        return core::Result<void>::fail(tableName.errorCode(), tableName.errorMessage());
+    }
+
+    // 2) 全部列的列名/列定义白名单校验——先整体解析，后统一执行（all-or-nothing）
+    struct ResolvedColumn {
+        const char* name;
+        const char* ddl;
+    };
+    std::vector<ResolvedColumn> resolved;
+    resolved.reserve(expected.size());
+    for (const auto column : expected) {
+        auto name = migrationColumnName(column);
+        if (name.isFail()) {
+            return core::Result<void>::fail(name.errorCode(), name.errorMessage());
+        }
+        auto ddl = migrationColumnDdl(column);
+        if (ddl.isFail()) {
+            return core::Result<void>::fail(ddl.errorCode(), ddl.errorMessage());
+        }
+        resolved.push_back({name.value(), ddl.value()});
+    }
+
+    auto exists = tableExists(db, tableName.value());
     if (exists.isFail()) return core::Result<void>::fail(exists.errorCode(), exists.errorMessage());
     if (!exists.value()) return core::Result<void>::ok(); // 表不存在，applySchema 会建
 
-    auto existing = existingColumns(db, table);
+    auto existing = existingColumns(db, tableName.value());
     if (existing.isFail())
         return core::Result<void>::fail(existing.errorCode(), existing.errorMessage());
     const auto& cols = existing.value();
 
-    for (const auto& [name, def] : expected) {
+    for (const auto& [name, def] : resolved) {
         if (cols.count(name) > 0) continue; // 已存在，跳过
-        std::string sql = "ALTER TABLE " + table + " ADD COLUMN " + name + " " + def;
+        std::string sql = std::string("ALTER TABLE ") + tableName.value() +
+                          " ADD COLUMN " + name + " " + def;
         auto r = db.exec(sql);
         if (r.isFail()) return r;
     }
@@ -300,6 +334,40 @@ core::Result<void> insertFixedColumn(core::data::SqliteDb& db, const FixedColumn
 }
 
 } // namespace
+
+// ---- 迁移白名单查询（公开 API，schema.h 声明）----
+// 枚举值先过范围校验，再按下标直取（下标直取的合法前提是
+// migrationWhitelistsAligned() 的 static_assert——数组与枚举一一对应且同序）。
+// 范围外的值（越界强转）在此显式报错：非法值到不了 SQL 拼接那一行。
+core::Result<const char*> migrationTableName(const MigrationTable table) {
+    const auto index = static_cast<size_t>(table);
+    if (index >= sizeof(kMigrationTableWhitelist) / sizeof(kMigrationTableWhitelist[0])) {
+        return core::Result<const char*>::fail(
+            core::ErrorCode::DatabaseMigrationFailed,
+            "迁移白名单拒绝非法表枚举值: " + std::to_string(static_cast<int>(table)));
+    }
+    return core::Result<const char*>::ok(kMigrationTableWhitelist[index].name);
+}
+
+core::Result<const char*> migrationColumnName(const MigrationColumn column) {
+    const auto index = static_cast<size_t>(column);
+    if (index >= sizeof(kMigrationColumnWhitelist) / sizeof(kMigrationColumnWhitelist[0])) {
+        return core::Result<const char*>::fail(
+            core::ErrorCode::DatabaseMigrationFailed,
+            "迁移白名单拒绝非法列枚举值: " + std::to_string(static_cast<int>(column)));
+    }
+    return core::Result<const char*>::ok(kMigrationColumnWhitelist[index].name);
+}
+
+core::Result<const char*> migrationColumnDdl(const MigrationColumn column) {
+    const auto index = static_cast<size_t>(column);
+    if (index >= sizeof(kMigrationColumnWhitelist) / sizeof(kMigrationColumnWhitelist[0])) {
+        return core::Result<const char*>::fail(
+            core::ErrorCode::DatabaseMigrationFailed,
+            "迁移白名单拒绝非法列定义枚举值: " + std::to_string(static_cast<int>(column)));
+    }
+    return core::Result<const char*>::ok(kMigrationColumnWhitelist[index].ddl);
+}
 
 core::Result<void> migrateTodoFixedColumns(core::data::SqliteDb& db) {
     // 迁移是破坏性操作（会删多余列）。迁移前备份由本函数按预检触发（复用 core::dbmaint；
@@ -527,11 +595,12 @@ core::Result<void> migrateTodoFixedColumns(core::data::SqliteDb& db) {
 
 core::Result<void> addMissingAgentColumns(core::data::SqliteDb& db) {
     // 逐个表对齐：缺列补列，不缺列零操作。三张表各自独立——任一张补列失败主调方中止。
-    auto r1 = ensureTableColumns(db, "agent_tasks", agentTasksColumns());
+    // 表/列一律枚举入参，标识符只从白名单取（见 ensureTableColumns 的两段校验）。
+    auto r1 = ensureTableColumns(db, MigrationTable::AgentTasks, agentTasksColumns());
     if (r1.isFail()) return r1;
-    auto r2 = ensureTableColumns(db, "agent_runs", agentRunsColumns());
+    auto r2 = ensureTableColumns(db, MigrationTable::AgentRuns, agentRunsColumns());
     if (r2.isFail()) return r2;
-    auto r3 = ensureTableColumns(db, "agent_messages", agentMessagesColumns());
+    auto r3 = ensureTableColumns(db, MigrationTable::AgentMessages, agentMessagesColumns());
     if (r3.isFail()) return r3;
     return core::Result<void>::ok();
 }
