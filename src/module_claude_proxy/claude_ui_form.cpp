@@ -1,13 +1,10 @@
-// 表单弹窗（tabs 四页）+ 删除/片段确认弹窗 + 表单状态机；状态经 FormState/ImportState 引用显式入参。
-#include "core/fs_text.h"
+// 表单弹窗（三页）+ 删除确认弹窗 + 表单状态机；状态经 FormState 引用显式入参。
 #include "claude_ui_form.h"
 
 #include "claude_ui_logic.h"
 #include "env_var_hints.h"
 #include "platform/credential_protection.h"
-#include "platform/json.h"
 #include "provider_config.h"
-#include "settings_sync.h"
 
 #include <components/button.h>
 #include <components/dropdown.h>
@@ -18,10 +15,7 @@
 #include <ui_kit/wtab.h>
 
 #include <algorithm>
-#include <filesystem>
-#include <fstream>
 #include <map>
-#include <sstream>
 #include <string>
 #include <vector>
 
@@ -45,7 +39,7 @@ void clearFormError(FormState& f) {
 
 } // namespace
 
-void openCreateForm(FormState& f, ImportState& imp) {
+void openCreateForm(FormState& f) {
     f.formEditId_ = 0;   // 0 = 新建
     f.formTab_ = 0;
     f.formName_.clear();
@@ -53,16 +47,14 @@ void openCreateForm(FormState& f, ImportState& imp) {
     f.formKey_.clear();
     clearFormError(f);
     f.formKeyHint_.clear();
-    f.formImportWarn_.clear();
     f.formModels_ = ModelsConfig{};
     f.formEnvRows_.clear();
     f.formAuthField_ = AuthField::Both;
     f.formAuthFieldOpen_ = false;
-    resetImportState(imp);
     f.formOpen_ = true;
 }
 
-void openEditForm(FormState& f, ImportState& imp, const Profile& p) {
+void openEditForm(FormState& f, const Profile& p) {
     f.formEditId_ = p.id;
     f.formTab_ = 0;
     f.formName_ = p.name;
@@ -70,7 +62,6 @@ void openEditForm(FormState& f, ImportState& imp, const Profile& p) {
     f.formKey_.clear();   // 留空 = 不换 key（updateProfile 语义）
     clearFormError(f);
     f.formKeyHint_ = p.apiKeyHint;
-    f.formImportWarn_.clear();
     // 槽位：models_config（空 / 非法 JSON → 全空槽位）
     f.formModels_ = effectiveModelsConfig(p.modelsConfigJson);
     // 认证字段：编辑必须回显现状，否则用户误以为是默认值、一保存即覆盖
@@ -84,109 +75,9 @@ void openEditForm(FormState& f, ImportState& imp, const Profile& p) {
             f.formEnvRows_.emplace_back(k, v);
         }
     }
-    resetImportState(imp);
     f.formOpen_ = true;
 }
 
-void resetImportState(ImportState& imp) {
-    imp.importText_.clear();
-    imp.importReady_ = false;
-    imp.importError_.clear();
-    imp.importPreview_ = ImportedConfig{};
-}
-
-// 导入解析：失败只写红字，不动表单
-void doParseImport(ImportState& imp) {
-    imp.importError_.clear();
-    imp.importReady_ = false;
-    auto r = parseImportedEnv(imp.importText_);
-    if (r.isFail()) {
-        imp.importError_ = r.errorMessage();
-        return;
-    }
-    imp.importPreview_ = std::move(r).value();
-    imp.importReady_ = true;
-}
-
-// 确认导入：按解析结果填三页表单（BASE_URL/token → 基础页，槽位非空覆盖，env 同名替换/新键追加）
-void doApplyImport(FormState& f, ImportState& imp) {
-    if (!imp.importReady_) return;
-    if (!imp.importPreview_.baseUrl.empty()) f.formUrl_ = imp.importPreview_.baseUrl;
-    if (!imp.importPreview_.authToken.empty()) {
-        f.formKey_ = imp.importPreview_.authToken;
-    }
-    for (const auto& meta : modelSlotTable()) {
-        const ModelSlot& src = imp.importPreview_.models.*meta.slot;
-        if (!src.model.empty()) f.formModels_.*meta.slot = src;
-    }
-    for (const auto& [k, v] : imp.importPreview_.extraEnv) {
-        bool replaced = false;
-        for (auto& row : f.formEnvRows_) {
-            if (row.first == k) {
-                row.second = v;
-                replaced = true;
-                break;
-            }
-        }
-        if (!replaced) f.formEnvRows_.emplace_back(k, v);
-    }
-    // 认证字段：按键名证据填（空串 = 无证据，不覆盖表单现值）
-    if (!imp.importPreview_.authFieldFromEnv.empty()) {
-        f.formAuthField_ = authFieldFromText(imp.importPreview_.authFieldFromEnv);
-    }
-    imp.importReady_ = false;
-    imp.importText_.clear();
-    clearFormError(f);   // 导入成功清掉旧校验错误
-}
-
-// 全自动「粘贴导入」：读用户级 settings.json → parseImportedEnv → 新建弹窗预填；接管态导入的是代理托管值，仅警告不阻断。
-void startImportCurrentConfig(FormState& f, ImportState& imp,
-                              const FormSubmitHooks& hooks) {
-    // 路径解析：service 注入优先（测试=临时目录），未注入回落 defaultPaths()
-    settings_sync::Paths paths = settings_sync::defaultPaths();
-    ClaudeService* svc = ClaudeService::global();
-    if (svc && !svc->settingsSyncPaths().settingsFile.empty()) {
-        paths = svc->settingsSyncPaths();
-    }
-
-    std::error_code ec;
-    if (!std::filesystem::exists(paths.settingsFile, ec) || ec) {
-        hooks.toast("导入失败",
-                    "未找到 ~/.claude/settings.json（" +
-                        paths.settingsFile.string() + "）",
-                    true);
-        return;
-    }
-    const std::string content = core::readTextFile(paths.settingsFile);
-    // 无 env 键 = 无可导入配置（给明确提示，避免误报「键名非法」）
-    if (auto doc = platform::json::parse(content);
-        doc.isOk() && doc.value().isObject() &&
-        !doc.value().asObject().has("env")) {
-        hooks.toast("导入失败",
-                    "settings.json 没有 env 块，无配置可导入", true);
-        return;
-    }
-    auto parsed = parseImportedEnv(content);
-    if (parsed.isFail()) {
-        hooks.toast("导入失败",
-                    "settings.json 解析失败: " + parsed.errorMessage(), true);
-        return;
-    }
-
-    openCreateForm(f, imp);
-    imp.importPreview_ = std::move(parsed).value();
-    imp.importReady_ = true;
-    doApplyImport(f, imp);       // 预填三页表单（结束时清 importReady_）
-    imp.importReady_ = true;   // 保留环境变量页预览标记（识别数 + 警告角标）
-    f.formName_ = suggestImportName(imp.importPreview_.baseUrl);
-
-    // 接管态警告：sidecar 存在 → 导入的是代理配置而非原始上游
-    if (settings_sync::hasPendingSnapshot(paths)) {
-        f.formImportWarn_ =
-            "当前是接管态，导入的是代理配置而非原始上游"
-            "（BASE_URL=127.0.0.1:8888）；建议先停止代理再导入";
-    }
-}
 
 // 表单 → models_config / extra_env JSON（全空 = 空串，保持「未配置」语义）
 bool serializeFormData(FormState& f, std::string* modelsJson, std::string* envJson) {
@@ -395,18 +286,6 @@ void drawFormBasicTab(eui::Ui& ui, float w,
             .text(f.formError_).fontSize(core::theme::scaled(12.0f)).lineHeight(core::theme::scaled(18.0f))
             .color(t.colors.errorText).build();
     }
-
-    // 「导入配置」接管态警告（不阻断，仅提示）
-    if (!f.formImportWarn_.empty()) {
-        ui.text("claude.dialog.form.importwarn.icon")
-            .position(28.0f, 426.0f).size(14.0f, 18.0f)
-            .icon(0xF071).fontSize(core::theme::scaled(12.0f)).lineHeight(core::theme::scaled(18.0f))
-            .color(t.colors.warning).build();
-        ui.text("claude.dialog.form.importwarn")
-            .position(46.0f, 426.0f).size(w - 74.0f, 36.0f)
-            .text(f.formImportWarn_).fontSize(core::theme::scaled(12.0f)).lineHeight(core::theme::scaled(18.0f))
-            .color(t.colors.warning).build();
-    }
 }
 
 void drawFormModelsTab(eui::Ui& ui, float w,
@@ -476,11 +355,11 @@ void drawFormModelsTab(eui::Ui& ui, float w,
         .color(t.colors.textTertiary).build();
 }
 
-// 高级 env 页（键值编辑器 + 粘贴导入）；可见行数上限 5（弹窗高度约束），超出部分仍在状态里全量保存
+// 环境变量页（键值编辑器）；可见行数上限 5（弹窗高度约束），超出部分仍在状态里全量保存
 void drawFormEnvTab(eui::Ui& ui, float w,
                     const core::theme::Tokens& t,
                     const components::theme::ThemeColorTokens& themeTokens,
-                    FormState& f, ImportState& imp) {
+                    FormState& f) {
     constexpr size_t kMaxVisibleRows = 5;
 
     ui.text("claude.form.env.label")
@@ -572,117 +451,6 @@ void drawFormEnvTab(eui::Ui& ui, float w,
             .fontSize(core::theme::scaled(12.0f)).lineHeight(core::theme::scaled(16.0f))
             .color(t.colors.textTertiary).build();
     }
-
-    ui.text("claude.form.import.label")
-        .position(28.0f, 356.0f).size(w - 56.0f, 16.0f)
-        .text("── 从 CC / settings.json 粘贴导入 ──")
-        .fontSize(core::theme::scaled(11.0f)).lineHeight(core::theme::scaled(16.0f))
-        .color(t.colors.textTertiary).build();
-    components::input(ui, "claude.form.import.text")
-        .position(28.0f, 376.0f).size(w - 56.0f, 72.0f)
-        .value(imp.importText_)
-        .placeholder(R"({ "env": { "ANTHROPIC_BASE_URL": "...", ... } }  粘贴整段 settings.json 或仅 env 对象)")
-        .multiline(true).scrollbar(true)
-        .fontSize(core::theme::scaled(12.0f)).theme(themeTokens)
-        .onChange([ip = &imp](const std::string& v) { ip->importText_ = v; })
-        .onCancel([fp = &f] { fp->formOpen_ = false; })  // Esc=取消
-        .build();
-    // S3.9 #7：粘贴导入格式说明（输入框下方 11px 三级灰字）
-    ui.text("claude.form.import.formathint")
-        .position(28.0f, 452.0f).size(w - 56.0f, 14.0f)
-        .text("每行一条，格式: KEY=VALUE；或粘贴整段 settings.json / 仅 env 对象")
-        .fontSize(core::theme::scaled(11.0f)).lineHeight(core::theme::scaled(14.0f))
-        .color(t.colors.textTertiary).build();
-
-    components::button(ui, "claude.form.import.parse")
-        .position(28.0f, 468.0f).size(110.0f, 32.0f)
-        .text("解析导入").fontSize(core::theme::scaled(12.0f))
-        .colors(t.colors.hover,
-                t.colors.hover,
-                t.colors.hover)
-        .textColor(t.colors.textPrimary)
-        .radius(t.sizes.radius)
-        .border(1.0f, t.colors.borderDefault)
-        .onClick([ip = &imp] { doParseImport(*ip); })
-        .build();
-    if (imp.importReady_) {
-        // 主动作 → WeChat Primary 绿填充白字（原 legacy 橙 primary 一并换）
-        components::button(ui, "claude.form.import.apply")
-            .position(148.0f, 468.0f).size(110.0f, 32.0f)
-            .text("应用到表单").fontSize(core::theme::scaled(12.0f))
-            .colors(t.colors.primary, t.colors.primaryHover,
-                    t.colors.primaryPressed)
-            .textColor(t.colors.onPrimary)
-            .radius(t.sizes.radius)
-            .onClick([fp = &f, ip = &imp] { doApplyImport(*fp, *ip); })
-            .build();
-    }
-
-    // 解析结果：失败红字 / 成功预览（识别数 + 别名/未识别提示）
-    if (!imp.importError_.empty()) {
-        ui.text("claude.form.import.error.icon")
-            .position(270.0f, 468.0f).size(13.0f, 16.0f)
-            .icon(0xF00D).fontSize(core::theme::scaled(11.0f)).lineHeight(core::theme::scaled(16.0f))
-            .color(t.colors.error).build();
-        ui.text("claude.form.import.error")
-            .position(286.0f, 468.0f).size(w - 286.0f - 28.0f, 48.0f)
-            .text(imp.importError_).fontSize(core::theme::scaled(11.0f)).lineHeight(core::theme::scaled(16.0f))
-            .color(t.colors.errorText).build();
-    } else if (imp.importReady_) {
-        ui.text("claude.form.import.preview")
-            .position(270.0f, 468.0f).size(w - 270.0f - 28.0f, 16.0f)
-            .text("识别：槽位 " + std::to_string(imp.importPreview_.recognizedSlots) +
-                  "/" + std::to_string(kModelSlotCount) +
-                  " · env " + std::to_string(imp.importPreview_.extraEnv.size()) +
-                  " 项 · 别名映射 " +
-                  std::to_string(imp.importPreview_.aliasMappedKeys.size()) +
-                  " · 未识别 " +
-                  std::to_string(imp.importPreview_.unrecognizedKeys.size()))
-            .fontSize(core::theme::scaled(11.0f)).lineHeight(core::theme::scaled(16.0f))
-            .color(t.colors.textSecondary).build();
-        // 警告角标最多 3 条（弹窗高度约束；全量信息在保存后的 settings.json 与日志可查）
-        std::vector<std::string> notes;
-        for (size_t i = 0; i < imp.importPreview_.aliasMappedKeys.size() && i < 2; ++i) {
-            notes.push_back("已映射为官方变量: " +
-                            imp.importPreview_.aliasMappedKeys[i]);
-        }
-        for (size_t i = 0;
-             i < imp.importPreview_.unrecognizedKeys.size() && notes.size() < 3;
-             ++i) {
-            notes.push_back("未识别键将透传: " +
-                            imp.importPreview_.unrecognizedKeys[i]);
-        }
-        for (size_t i = 0;
-             i < imp.importPreview_.warnings.size() && notes.size() < 3; ++i) {
-            notes.push_back(imp.importPreview_.warnings[i]);
-        }
-        // 角标与底部校验错误行同屏重叠：有校验错误时让位，只显示更可行动的校验错误
-        if (f.formError_.empty()) {
-            for (size_t i = 0; i < notes.size(); ++i) {
-                ui.text("claude.form.import.note.icon." + std::to_string(i))
-                    .position(270.0f, 486.0f + static_cast<float>(i) * 15.0f)
-                    .size(13.0f, 15.0f)
-                    .icon(0xF071).fontSize(core::theme::scaled(10.0f)).lineHeight(core::theme::scaled(15.0f))
-                    .color(t.colors.warning).build();
-                ui.text("claude.form.import.note." + std::to_string(i))
-                    .position(286.0f, 486.0f + static_cast<float>(i) * 15.0f)
-                    .size(w - 286.0f - 28.0f, 15.0f)
-                    .text(notes[i]).fontSize(core::theme::scaled(10.0f)).lineHeight(core::theme::scaled(15.0f))
-                    .color(t.colors.warning).build();
-            }
-        }
-    } else {
-        ui.text("claude.form.import.hint.icon")
-            .position(270.0f, 468.0f).size(13.0f, 16.0f)
-            .icon(0xF05A).fontSize(core::theme::scaled(11.0f)).lineHeight(core::theme::scaled(16.0f))
-            .color(t.colors.textTertiary).build();
-        ui.text("claude.form.import.hint")
-            .position(286.0f, 468.0f).size(w - 286.0f - 28.0f, 32.0f)
-            .text("BASE_URL/AUTH_TOKEN 归基础页，模型键归模型映射页，"
-                  "其余进入上表")
-            .fontSize(core::theme::scaled(11.0f)).lineHeight(core::theme::scaled(16.0f))
-            .color(t.colors.textTertiary).build();
-    }
 }
 
 } // namespace
@@ -690,11 +458,11 @@ void drawFormEnvTab(eui::Ui& ui, float w,
 void drawProfileFormDialog(eui::Ui& ui, const eui::Screen& screen,
                            const core::theme::Tokens& t,
                            const components::theme::ThemeColorTokens& themeTokens,
-                           FormState& f, ImportState& imp,
+                           FormState& f,
                            const FormSubmitHooks& hooks) {
     const float w = ui_kit::dialogWidthPx(ui_kit::DialogWidth::Form);
     // UAT6 O 批：最小窗 1000×640（页高 600）下弹窗 600 恒高填满全页、按钮出框；
-// 540 档（600−60 余量）使弹窗在最小窗下不溢出、仍有呼吸区。四 tab 高度仍统一。
+// 540 档（600−60 余量）使弹窗在最小窗下不溢出、仍有呼吸区。三 tab 高度仍统一。
 const float h = 540.0f;
     const bool isEdit = (f.formEditId_ != 0);
 

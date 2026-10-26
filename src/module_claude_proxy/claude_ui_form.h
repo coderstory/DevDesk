@@ -1,6 +1,6 @@
 // src/module_claude_proxy/claude_ui_form.h
-// 新建/编辑 Profile 表单弹窗 + 删除确认弹窗 + 表单状态机（打开 / 预填 / 导入解析
-// 与应用 / 序列化 / 提交）；状态机只读改写 FormState / ImportState，无隐藏状态。
+// 新建/编辑 Profile 表单弹窗 + 删除确认弹窗 + 表单状态机（打开 / 预填 /
+// 序列化 / 提交）；状态机只读改写 FormState，无隐藏状态。
 // 提交后的标脏 / 选中 / toast 经 FormSubmitHooks 显式传入，避免表单单元反向依赖列表状态。
 #pragma once
 
@@ -26,17 +26,11 @@ struct FormSubmitHooks {
 };
 
 // 表单状态机
-void openCreateForm(FormState& f, ImportState& imp);
-void openEditForm(FormState& f, ImportState& imp, const Profile& p);
-void resetImportState(ImportState& imp);
-void doParseImport(ImportState& imp);
-void doApplyImport(FormState& f, ImportState& imp);
+void openCreateForm(FormState& f);
+void openEditForm(FormState& f, const Profile& p);
 // 表单 → models_config / extra_env JSON（全空 = 空串，保持「未配置」语义）；
 // 失败写 f.formError_ 并返回 false
 bool serializeFormData(FormState& f, std::string* modelsJson, std::string* envJson);
-// 「导入当前配置」：读 settings.json → 打开新建表单并预填（失败 toast，不弹窗）
-void startImportCurrentConfig(FormState& f, ImportState& imp,
-                              const FormSubmitHooks& hooks);
 void submitForm(FormState& f, const FormSubmitHooks& hooks);
 
 // 绘制
@@ -44,8 +38,7 @@ void submitForm(FormState& f, const FormSubmitHooks& hooks);
 void drawProfileFormDialog(eui::Ui& ui, const eui::Screen& screen,
                            const core::theme::Tokens& t,
                            const components::theme::ThemeColorTokens& themeTokens,
-                           FormState& f, ImportState& imp,
-                           const FormSubmitHooks& hooks);
+                           FormState& f, const FormSubmitHooks& hooks);
 
 // 删除确认弹窗（确认后回调模块执行真删除）
 void drawDeleteConfirmDialog(eui::Ui& ui, const eui::Screen& screen,

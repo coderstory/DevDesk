@@ -30,9 +30,6 @@ void wakeAfterPublish(const std::shared_future<T>& published,
 // 模型配置摘要（详情面板一行式）：分母取自槽位表（不手写清单与硬编码 /6）
 std::string modelsSummary(const Profile& p);
 
-// 「导入当前配置」名称建议：BASE_URL host；提取不到 →「导入 <日期>」；用户可改
-std::string suggestImportName(const std::string& baseUrl);
-
 // 「复制配置」序列化（纯函数，无 IO）：settings.json 形态；env 复用
 // buildDirectEnv。不导明文 key；失败 → 空串。
 std::string buildProfileExportJson(const Profile& p,

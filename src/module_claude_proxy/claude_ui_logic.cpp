@@ -1,13 +1,10 @@
 // src/module_claude_proxy/claude_ui_logic.cpp
-// 4 个纯函数实现（可无头单测）。
+// 纯逻辑实现（可无头单测）。
 #include "claude_ui_logic.h"
 
-#include "core/time.h"
 #include "platform/json.h"
 #include "provider_config.h"
 
-#include <cstdio>
-#include <ctime>
 #include <utility>
 
 namespace module::claude {
@@ -27,25 +24,6 @@ std::string modelsSummary(const Profile& p) {
     // 显示层剥 [1M]（1M 状态由复选框表达）；摘要走 deriveDisplayName，存储值原样
     return "默认 " + deriveDisplayName(mc.def.model) + " · 槽位已配 " +
            std::to_string(configured) + "/" + total;
-}
-
-std::string suggestImportName(const std::string& baseUrl) {
-    size_t start = baseUrl.find("://");
-    start = (start == std::string::npos) ? 0 : start + 3;
-    size_t end = baseUrl.find('/', start);
-    if (end == std::string::npos) end = baseUrl.size();
-    std::string host = baseUrl.substr(start, end - start);
-    const size_t colon = host.rfind(':');
-    if (colon != std::string::npos) host.resize(colon);
-    if (!host.empty()) return "导入 " + host;
-    std::time_t t = std::time(nullptr);
-    std::tm tm{};
-    core::time::localTime(t, &tm);
-    // 缓冲区按最坏情况定尺（3×11 + 2 + 1 = 36），写小了 GCC -Wformat-truncation 判红
-    char buf[36];
-    std::snprintf(buf, sizeof(buf), "%04d-%02d-%02d",
-                  tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday);
-    return "导入 " + std::string(buf);
 }
 
 std::string buildProfileExportJson(const Profile& p,

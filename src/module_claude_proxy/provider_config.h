@@ -117,30 +117,19 @@ struct EnvAliasMapping {
 
 EnvAliasMapping applyEnvAliases(const std::map<std::string, std::string>& env);
 
-// cc-switch/settings.json 粘贴导入：输入原文（整段 settings.json 取其 env 子对象，或裸 env 对象），纯函数无 IO
+// settings.json env 反向同步的数据模型（纯函数无 IO）
 struct ImportedConfig {
     std::string baseUrl;    // ANTHROPIC_BASE_URL（未出现 = 空串，不覆盖表单）
     std::string authToken;  // ANTHROPIC_AUTH_TOKEN / ANTHROPIC_API_KEY（同现取 AUTH_TOKEN 并给 warning）
     ModelsConfig models;    // *_MODEL / *_MODEL_NAME / SUBAGENT → 槽位
     std::map<std::string, std::string> extraEnv;  // 其余键（别名归一后）
     std::vector<std::string> aliasMappedKeys;     // 「已映射为官方变量」提示
-    std::vector<std::string> unrecognizedKeys;    // 警告角标（透传，行为自负）
+    std::vector<std::string> unrecognizedKeys;    // 未识别键（原样透传）
     std::vector<std::string> warnings;            // 其他警告（API_KEY/AUTH_TOKEN 同现等）
-    int recognizedSlots = 0;  // 预览用：model 非空的槽位数
-    // 粘贴里两个键名的证据：'api_key' / 'bearer' / 'both'（同现）/ ""（都没出现 = 无证据，UI 不覆盖表单现值）
-    std::string authFieldFromEnv;
-    // 反向同步专用：命中守卫而跳过的键名——「不写也不清」。mergeReverseSyncEnv
-    // 靠它区分「键缺席（清空）」与「跳过（保持 profile 原值）」；parseImportedEnv 恒为空
+    // 命中守卫而跳过的键名——「不写也不清」。mergeReverseSyncEnv
+    // 靠它区分「键缺席（清空）」与「跳过（保持 profile 原值）」
     std::vector<std::string> skippedKeys;
 };
-
-// 校验：env 值必须字符串（数字/布尔拒绝）；键名 ^[A-Z][A-Z0-9_]*$；值 ≤4KB/键；键数 ≤64；
-// 整体文本 ≤ kMaxImportTextBytes（1MB）。非法输入整体 fail，不部分导入。
-core::Result<ImportedConfig> parseImportedEnv(const std::string& text);
-
-// 粘贴导入整体文本上限（1MB）：挡在 JSON 解析之前，避免超大输入进入深拷贝链
-//（platform::json 按值 = 整树深拷贝）。超限整体 fail（文案含上限）。
-inline constexpr size_t kMaxImportTextBytes = 1u * 1024u * 1024u;
 
 
 // 接管 env 生成：输出写入 settings.json 的 env 块（纯函数）：BASE_URL = 127.0.0.1:<port>、

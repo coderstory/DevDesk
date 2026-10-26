@@ -159,7 +159,7 @@ public:
 
         // 弹窗（画在最上层）
         drawProfileFormDialog(ui, screen, t, themeTokens, state_.form,
-                              state_.import, formHooks());
+                              formHooks());
         drawDeleteConfirmDialog(ui, screen, t, themeTokens, state_.form,
                                 [this](int64_t id) { doDelete(id); });
         // cc-switch 导入弹窗，绘制序即 Esc 序链最顶层
@@ -243,7 +243,7 @@ public:
             state_.ccswitchImport.open_;
         if (key.key == eui::InputKey::N) {
             if (anyDialogOpen) return false;
-            openCreateForm(state_.form, state_.import);
+            openCreateForm(state_.form);
             LOG_INFO("快捷键 Ctrl+N：打开新建 Profile 表单");
             return true;
         }
@@ -272,15 +272,12 @@ private:
     // 每帧接线装配：回调显式绑到本模块操作/状态
     ProfileListActions listActions() {
         ProfileListActions a;
-        a.onNewProfile = [this] { openCreateForm(state_.form, state_.import); };
-        a.onImportCurrent = [this] {
-            startImportCurrentConfig(state_.form, state_.import, formHooks());
-        };
+        a.onNewProfile = [this] { openCreateForm(state_.form); };
         a.onImportCcSwitch = [this] {
             openCcSwitchImportDialog(state_.ccswitchImport);
         };
         a.requestEdit = [this](const Profile& p) {
-            openEditForm(state_.form, state_.import, p);
+            openEditForm(state_.form, p);
         };
         a.requestDuplicate = [this](int64_t id) { doDuplicate(id); };
         a.requestCopyConfig = [this](const Profile& p) { doCopyConfig(p); };
@@ -320,7 +317,7 @@ private:
         };
         a.test = [this](const Profile& p) { doTestConnection(p); };
         a.edit = [this](const Profile& p) {
-            openEditForm(state_.form, state_.import, p);
+            openEditForm(state_.form, p);
         };
         a.run = [this](int64_t id) { doRun(id); };
         a.setOneM = [this](int64_t id, std::size_t slotIdx, bool on) {

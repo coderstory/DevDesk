@@ -74,7 +74,6 @@ struct FormState {
     std::string formKey_;
     std::string formKeyHint_;  // 编辑时显示现有 key 脱敏提示
     std::string formError_;
-    std::string formImportWarn_;  // 导入当前配置的接管态警告（弹窗内展示，不阻断）
     AuthField formAuthField_ = AuthField::Both;  // 认证字段（鉴权头三态）
     bool formAuthFieldOpen_ = false;             // 下拉展开态
     ModelsConfig formModels_;  // 槽位表全行（默认模型 = def 槽位）
@@ -83,14 +82,6 @@ struct FormState {
     bool deleteConfirmOpen_ = false;
     int64_t deleteTargetId_ = 0;
     std::string deleteTargetName_;
-};
-
-// cc-switch / settings.json 粘贴导入（环境变量页）
-struct ImportState {
-    std::string importText_;       // 多行粘贴框原文
-    bool importReady_ = false;     // 解析成功待应用
-    std::string importError_;      // 解析失败信息（红字）
-    ImportedConfig importPreview_; // 解析结果预览
 };
 
 // cc-switch 导入弹窗（独立状态，不塞进 FormState：复用会污染表单状态）。必须接入 anyDialogOpen 门控与 closeTopmostDialog Esc 序链（最顶层）
@@ -115,7 +106,6 @@ struct ClaudeUiState {
     DetailState detail;
     FormState form;
     CcSwitchImportDialogState ccswitchImport;  // 从 cc-switch 导入弹窗
-    ImportState import;
 };
 
 // 数据缓存的后台刷新：compose 每帧只做「搬已就绪结果进快照 + 发下一次刷新意图」两件无 IO 的事；SQLite 查询全在后台（同步查会与代理 worker 争锁）。失败保持脏、按节流窗口重试。

@@ -4,7 +4,6 @@
 #include "provider_config.h"
 
 #include <algorithm>
-#include <optional>
 #include <utility>
 
 #include "env_var_hints.h"
@@ -42,13 +41,6 @@ std::string invertedBoolValue(const std::string& v) {
         return "1";
     }
     return "0";
-}
-
-bool isBlankText(const std::string& text) {
-    for (const char c : text) {
-        if (c != ' ' && c != '\t' && c != '\r' && c != '\n') return false;
-    }
-    return true;
 }
 
 } // namespace
@@ -260,135 +252,6 @@ const char* authFieldToText(AuthField field) {
     return "both";
 }
 
-core::Result<ImportedConfig> parseImportedEnv(const std::string& text) {
-    ImportedConfig out;
-    if (isBlankText(text)) {
-        return core::Result<ImportedConfig>::fail(
-            core::ErrorCode::ValidationError, "粘贴内容为空");
-    }
-
-    // 先于 parse 检查：超大输入不进 JSON 解析 / 深拷贝链
-    if (text.size() > kMaxImportTextBytes) {
-        return core::Result<ImportedConfig>::fail(
-            core::ErrorCode::ValidationError,
-            "导入文本超过 1MB 上限: " + std::to_string(text.size()) + " 字节");
-    }
-
-    auto parsed = platform::json::parse(text);
-    if (parsed.isFail()) {
-        return core::Result<ImportedConfig>::fail(parsed.errorCode(),
-                                                  parsed.errorMessage());
-    }
-    if (!parsed.value().isObject()) {
-        return core::Result<ImportedConfig>::fail(
-            core::ErrorCode::ValidationError,
-            "顶层必须是 JSON 对象（整段 settings.json 或裸 env 对象）");
-    }
-    auto obj = parsed.value().asObject();
-
-    // 两种形状：含 "env" 键 = 整段 settings.json（取 env 子对象），否则裸 env 对象
-    bool hasEnvKey = false;
-    for (const auto& k : obj.keys()) {
-        if (k == "env") { hasEnvKey = true; break; }
-    }
-    platform::json::JsonObject envObj;
-    if (hasEnvKey) {
-        auto envVal = obj.get("env");
-        if (!envVal.isObject()) {
-            return core::Result<ImportedConfig>::fail(
-                core::ErrorCode::ValidationError,
-                "settings.json 的 env 字段必须是 JSON 对象");
-        }
-        envObj = envVal.asObject();
-    } else {
-        envObj = obj;
-    }
-
-    if (envObj.keys().size() > 64) {
-        return core::Result<ImportedConfig>::fail(
-            core::ErrorCode::ValidationError,
-            "env 键数超过上限 64: " + std::to_string(envObj.keys().size()));
-    }
-
-    std::map<std::string, std::string> leftover;   // 非基础/槽位键 → extraEnv 候选
-    bool sawApiKey = false;
-    bool sawAuthToken = false;
-
-    for (const auto& key : envObj.keys()) {
-        // 键名格式不设限（表单侧红边框提示，不阻断）；仅保留空键防御
-        if (key.empty()) {
-            return core::Result<ImportedConfig>::fail(
-                core::ErrorCode::ValidationError, "env 键名为空");
-        }
-        auto val = envObj.get(key);
-        if (!val.isString()) {
-            return core::Result<ImportedConfig>::fail(
-                core::ErrorCode::ValidationError,
-                "env 值必须是字符串: " + key);
-        }
-        const std::string v = val.asString();
-        if (v.size() > 4096) {
-            return core::Result<ImportedConfig>::fail(
-                core::ErrorCode::ValidationError,
-                "值超过 4KB 上限: " + key);
-        }
-
-        if (key == "ANTHROPIC_BASE_URL") {
-            out.baseUrl = v;
-            continue;
-        }
-        if (key == "ANTHROPIC_AUTH_TOKEN") {
-            sawAuthToken = true;
-            out.authToken = v;   // 同现时 AUTH_TOKEN 优先（API_KEY 不覆盖）
-            continue;
-        }
-        if (key == "ANTHROPIC_API_KEY") {
-            sawApiKey = true;
-            if (!sawAuthToken) out.authToken = v;
-            continue;
-        }
-
-        bool matchedSlot = false;
-        for (const auto& m : modelSlotTable()) {
-            if (key == m.envKey) {
-                (out.models.*m.slot).model = v;
-                matchedSlot = true;
-                break;
-            }
-            if (m.nameKey != nullptr && key == m.nameKey) {
-                (out.models.*m.slot).name = v;
-                matchedSlot = true;
-                break;
-            }
-        }
-        if (matchedSlot) continue;
-        leftover[key] = v;
-    }
-
-    if (sawApiKey && sawAuthToken) {
-        out.warnings.push_back(
-            "同时含 ANTHROPIC_API_KEY 与 ANTHROPIC_AUTH_TOKEN，已采用 AUTH_TOKEN");
-    }
-
-    // 认证字段证据：键名 = 该配置原本以哪种形态发送且可用
-    if (sawApiKey && sawAuthToken) {
-        out.authFieldFromEnv = "both";
-    } else if (sawApiKey) {
-        out.authFieldFromEnv = "api_key";
-    } else if (sawAuthToken) {
-        out.authFieldFromEnv = "bearer";
-    }
-
-    auto aliased = applyEnvAliases(leftover);
-    out.extraEnv = std::move(aliased.env);
-    out.aliasMappedKeys = std::move(aliased.aliasMappedKeys);
-    out.unrecognizedKeys = std::move(aliased.unrecognizedKeys);
-
-    for (const auto& m : modelSlotTable()) {
-        if (!(out.models.*m.slot).model.empty()) ++out.recognizedSlots;
-    }
-    return core::Result<ImportedConfig>::ok(std::move(out));
-}
 
 std::map<std::string, std::string> buildProxyEnv(
     const std::string& modelsConfigJson,
@@ -694,7 +557,6 @@ ReverseSyncParse parseEnvForReverseSync(
     out.cfg.unrecognizedKeys = std::move(aliased.unrecognizedKeys);
 
     for (const auto& m : modelSlotTable()) {
-        if (!(out.cfg.models.*m.slot).model.empty()) ++out.cfg.recognizedSlots;
     }
     std::sort(out.cfg.skippedKeys.begin(), out.cfg.skippedKeys.end());
     out.cfg.skippedKeys.erase(

@@ -593,15 +593,8 @@ void drawProfileListPanel(eui::Ui& ui, float leftW, float bodyH,
             const float btnNewW =
                 std::clamp(fitBtnW("+ 新建 Profile"), 96.0f, 200.0f);
             const float btnGap = 12.0f;
-            // 同行两键不越面板右缘（20 + w + gap + w ≤ leftW - 20）：先给 CC 键
-            // fit 宽（文字实测 + 2×16，H2 点名），左键吃剩余（不再套 96 下限——
-            // 等分行给的空间本就只有 58.7，剩余不足时优先保住不溢出；正常测量下
-            // 88+12+98=198 ≤ 200，两侧都是满规格内边距）
-            const float importPairMaxW = leftW - 40.0f - btnGap;
             const float btnCcW = std::min(fitBtnW("从 CC 导入"), 200.0f);
-            const float importW =
-                std::min(fitBtnW("导入配置"), importPairMaxW - btnCcW);
-            // 行 1 顶 = 按钮区顶（区块贴底锚点：区块底 = 新建钮 y − 12，测试锁此式）
+            // 行 1 顶 = 按钮区顶
             const float row1Y = bottomButtonRowY(bodyH);
             const float row2Y = row1Y + 40.0f + btnGap;
             // 行 1：新建（主操作独行）Filled（绿底白字）
@@ -617,22 +610,9 @@ void drawProfileListPanel(eui::Ui& ui, float leftW, float bodyH,
                 .radius(8.0f)
                 .onClick([onNew = actions.onNewProfile] { onNew(); })
                 .build();
-            // 行 2：导入配置 + 从 CC 导入（两 Outline 同行，白底绿边绿字）
-            components::button(ui, "claude.profiles.import")
-                .position(20.0f, row2Y)
-                .size(importW, 40.0f)
-                .text("导入配置")
-                .fontSize(kBtnFont)
-                .colors(t.colors.surface,
-                        t.colors.primarySoftBg,
-                        t.colors.primarySoftBg)
-                .textColor(t.colors.primary)
-                .radius(8.0f)
-                .border(1.0f, t.colors.primary)
-                .onClick([onImport = actions.onImportCurrent] { onImport(); })
-                .build();
+            // 行 2：从 CC 导入（Outline，白底绿边绿字）
             components::button(ui, "claude.profiles.import.ccswitch")
-                .position(20.0f + importW + btnGap, row2Y)
+                .position(20.0f, row2Y)
                 .size(btnCcW, 40.0f)
                 .text("从 CC 导入")
                 .fontSize(kBtnFont)
