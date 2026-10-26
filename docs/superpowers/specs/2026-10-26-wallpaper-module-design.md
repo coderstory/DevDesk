@@ -160,7 +160,7 @@ bool supported();   // true = 当前平台有壁纸能力
 | `src/module_wallpaper/wallpaper_module.cpp` | 新增 | 工厂（不支持平台返回空）、页面名/短名/图标、空页 `compose`、幂等空 `onStart/onStop` |
 | `tests/test_modules/test_wallpaper_module.cpp` | 新增 | 六个场景：枚举序、注册表行、默认关、门控条数、持久化、dispatch 开关；描述含 ASCII `wallpaper`，保证 `--filter wallpaper` 可定向跑到 |
 | `src/core/module_interface.h` | 修改 | `PageId::Wallpaper`（Agent 与 Settings 之间）+ `pageIdToString` |
-| `src/app_registry.h` | 修改 | 工厂声明 + 注册表一行（Agent 行与 Settings 行之间）+ 头注释「7 个模块工厂声明」改 8 |
+| `src/app_registry.h` | 修改 | 工厂声明 + 注册表一行（Agent 行与 Settings 行之间）+ 头注释同步为 8 个模块工厂声明 |
 | `src/main.cpp` | 修改 | 模块实例 + `moduleForPage` 分支（托盘段不动） |
 | `src/module_settings/settings_config.h` | 修改 | `kModuleIdWallpaper` |
 | `src/module_settings/settings_config.cpp` | 修改 | `kKnownModuleIds` 加入 wallpaper；`defaultEnabledModules()` 不加 |
@@ -172,7 +172,7 @@ bool supported();   // true = 当前平台有壁纸能力
 | `tests/test_modules/test_app_sidebar.cpp` | 修改（按需） | 若侧栏条目数/顺序断言因第 8 行必然变化，只改合法期望 |
 | `tests/test_core/test_router.cpp` | 修改 | `core_pageid_order` 枚举序断言插入 Wallpaper（wallpaper=5、settings=6、about=7）并更新描述串 |
 | `tests/probes/uat62_page_shots_probe.cpp` | 修改 | `kSlugs` 7→8（加 wallpaper）、注释 7 行→8 行；非 Windows 空工厂跳过注册与截图（审计裁决纳入 Task 1 冻结清单） |
-| `CLAUDE.md` | 修改 | 模块口径由「7 个 Router 页面 / 4 个可插拔」改为「8 个 / 5 个」 |
+| `CLAUDE.md` | 修改 | 模块口径同步为「8 个 Router 页面 / 5 个可插拔」 |
 
 ### Task 2 — 设置 → 模块「壁纸」开关卡（用户能开关）
 
@@ -236,8 +236,8 @@ bool supported();   // true = 当前平台有壁纸能力
 4. **交接文档 §3.2 允许「隐藏卡片或显示仅 Windows」二选一**：P1 按任务书取「整卡不建」。
 5. **交接文档 §10 P1 要求「probe 截图空页面」**：P1 按 Task 3 任务书新增 `tests/probes/wallpaper_probe.cpp`（附录 A 允许 `wallpaper_*_probe.cpp`），截图证明空页渲染。
 6. **`tests/test_modules/test_module_icons.cpp`**：它逐项列出模块工厂，补壁纸图标只是增加覆盖；不加不影响 P1 验收，故不列入白名单。
-7. **权威设计 spec `docs/superpowers/specs/2026-09-20-devdesk-design.md` 的 PageId 旧枚举本次不同步**：延后到 P5 文档阶段，负责人 = 主会话台账。
-8. **`CLAUDE.md` 模块口径与 `src/app_registry.h` 头注释同步纳入 P1**：见 Task 1 白名单（7 页/4 可插拔 → 8 页/5 可插拔；7 个工厂 → 8 个）。
+7. **权威设计 spec `docs/superpowers/specs/2026-09-20-devdesk-design.md` 的 PageId 旧枚举已于 2026-10-26 同步**（含 `Wallpaper`）。
+8. **`CLAUDE.md` 模块口径与 `src/app_registry.h` 头注释同步纳入 P1**：见 Task 1 白名单（8 页 / 5 可插拔；8 个工厂）。
 
 待定（不阻塞 P1，P5 定稿）：
 
