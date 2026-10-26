@@ -1024,7 +1024,10 @@ REGISTER_TEST(builtin_git_smoke,
                     "git.branch", "git.checkout", "git.pull", "git.commit"};
 
     platform::json::JsonObject args;
-    args.set("repo", platform::json::makeString("D:/project/gui/DevDesk"));
+    // 仓库路径用 repoRoot() 自发现，不写死绝对路径——CI checkout 在
+    // D:/a/DevDesk/...，写死本机路径会让 git.status 对不存在路径返回错误
+    args.set("repo", platform::json::makeString(
+                         test_temp::repoRoot().generic_string()));
 
     auto tool = core::ToolRegistry::instance().find("git.status");
     DOCTEST_REQUIRE(tool.isOk());

@@ -25,16 +25,11 @@
 namespace {
 
 // 读源文件全文为字符串；失败返回空串（调用方用 DOCTEST_CHECK(!src.empty()) 接住）。
-//
-// 路径推导：__FILE__ = <source_root>/tests/test_modules/test_splash_contract.cpp
-// （CMake 以 ${CMAKE_SOURCE_DIR}/... 绝对路径登记源文件，故 __FILE__ 是绝对路径）。
-// source_root = parent_path() ×3（test_modules → tests → root）。
-// weakly_canonical 规整 .. / . / 平台分隔符差异，不要求目标存在。
+// 根定位走 test_temp::repoRoot()（doctest.h）：__FILE__ 相对形态 + ctest 的
+// build/tests cwd 下，裸 __FILE__ 上溯三级会指向不存在的路径 → 全组空串假红。
 std::string readSourceFile(const std::string& relPath) {
     namespace fs = std::filesystem;
-    const fs::path here = fs::weakly_canonical(fs::path(__FILE__));
-    const fs::path sourceRoot =
-        here.parent_path().parent_path().parent_path();
+    const fs::path sourceRoot = test_temp::repoRoot();
     const fs::path target = sourceRoot / relPath;
     std::ifstream in(target, std::ios::binary);
     if (!in.is_open()) return std::string{};
