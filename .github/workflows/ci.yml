@@ -120,3 +120,18 @@ jobs:
           bash scripts/build-test-run.sh --release --no-run
           echo "--- ccache ---"
           ccache -s 2>/dev/null | grep -E "Hits|Misses|hit rate|Cache size" || true
+
+      # clang-tidy 报告模式（05 号票，计划 T5）：runner（windows-2025 镜像）预装 LLVM
+      # 于 C:\Program Files\LLVM\bin，读 compile_commands.json 扫 bugprone-*/cert-*/*
+      # clang-analyzer-*，只报告不阻断 —— **存量清零后转 blocking，见 06 号票**。
+      # 与本地复现命令 scripts/run-clang-tidy.sh 同源（configure 与 tidy 调用都在脚本里，
+      # configure 与上方 build-test-run.sh 同参数，仅多 -DCMAKE_EXPORT_COMPILE_COMMANDS=ON，
+      # 落独立目录 build-tidy/ 不污染正常构建），脚本内探测 clang-tidy 并 echo 版本留痕。
+      # shell 与上方构建 step 保持一致走 msys2（cmake/ninja 来自 setup-msys2）；
+      # continue-on-error: true = 报告模式语义：本步失败不阻断 job、不影响合入信号。
+      - name: clang-tidy（报告模式，非阻塞）
+        continue-on-error: true
+        shell: msys2 {0}
+        run: |
+          cd DevDesk
+          bash scripts/run-clang-tidy.sh
