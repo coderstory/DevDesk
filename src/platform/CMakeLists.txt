@@ -8,6 +8,7 @@ add_library(devdesk_platform STATIC
     utf8.cpp                            # UTF-8 良构校验/清洗（M2 审计 F1：跨模块纯函数）
     autostart.h                         # 开机自启动抽象：注入缝+纯逻辑在头（UAT6），实现按平台拆
     process_runner.h                    # 进程执行器抽象：注入缝+纯逻辑在头（UAT6），实现按平台拆
+    wallpaper_capability.h              # 壁纸宿主能力抽象：实现按平台拆（Windows true / 其余 false）
     file_open_common.cpp
     terminal_launch_common.cpp          # 跨平台纯函数（三支之外，无条件编译）
 )
@@ -31,6 +32,7 @@ if(WIN32)
         notification_win.cpp           # 系统通知：EUI-NEO 托盘通知（Shell_NotifyIconW NIF_INFO）
         autostart_win.cpp              # 开机自启动：HKCU Run 注册表写/删/查（UAT6）
         process_runner_win.cpp          # 进程执行器：CreateProcess + 管道全捕获（UAT6）
+        wallpaper_capability_win.cpp    # 壁纸宿主能力：WorkerW/mpv 路线可用（true）
     )
 elseif(APPLE)
     target_sources(devdesk_platform PRIVATE
@@ -49,6 +51,7 @@ elseif(APPLE)
         notification_macos.mm          # UNUserNotificationCenter（ARC，见下方编译选项）
         autostart_macos.cpp            # 开机自启动：LaunchAgents plist 写/删/查（UAT6）
         process_runner_macos.cpp        # 进程执行器：posix_spawn + 管道全捕获（UAT6）
+        wallpaper_capability_macos.cpp  # 壁纸宿主能力：第二阶段 ObjC++ 平台层前恒 false
     )
 else()
     target_sources(devdesk_platform PRIVATE
@@ -67,6 +70,7 @@ else()
         notification_posix.cpp         # 无原生通知后端：诚实 NotImplemented
         autostart_posix.cpp            # 开机自启动兜底：恒不支持（UAT6）
         process_runner_posix.cpp        # 进程执行器：fork/exec + 管道全捕获（UAT6）
+        wallpaper_capability_posix.cpp  # 壁纸宿主能力：无原生实现，恒 false
     )
 endif()
 

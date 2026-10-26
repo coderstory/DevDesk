@@ -32,6 +32,7 @@
 #include <core/window/window_backend.h>   // core::window::setClipboardText（复制详情）
 #include "platform/autostart.h"      // platform::autostart（开机自启动注册态回读/写入，UAT6）
 #include "platform/system_theme.h"
+#include "platform/wallpaper_capability.h"  // platform::wallpaper::supported（壁纸卡可见性）
 
 // 模块开关即时生效桥：函数指针缝 + 默认 no-op，真 handler 由 main.cpp 装配段注入。
 #include "module_toggle_bridge.h"
@@ -92,25 +93,33 @@ struct CardSpec {
     bool pageGeom;          // 下发卡顶页面绝对 y + 屏高（下拉 openUp 几何）
     bool half;              // 半宽卡：与相邻半宽卡两两成行（双列配对，UAT3 多列分栏）
     void (*draw)(const CardDrawArgs&);
+    bool (*visible)();      // nullptr = 恒显；否则返回 false 时整卡跳过（不占高度）
 };
 
+// 新增/调整字段必须同步**全部行**（聚合初始化按位置匹配，漏补 = 静默错位）。
 const CardSpec kCardSpecs[] = {
     {kTabGeneral, "settings.card.appearance", nullptr, CardHeightKind::Fixed,
-     kAppearanceCardHeight, false, /*half=*/true, &drawAppearanceCard},
+     kAppearanceCardHeight, false, /*half=*/true, &drawAppearanceCard, nullptr},
     {kTabGeneral, "settings.card.editor", nullptr, CardHeightKind::Fixed,
-     kEditorFontCardHeight, true, /*half=*/true, &drawEditorFontCard},
+     kEditorFontCardHeight, true, /*half=*/true, &drawEditorFontCard, nullptr},
     // UAT5：Claude 代理卡自「模块」tab 迁「通用」tab（appearance|editor 配对行
     // 下方、保持全宽）；gate 语义保留（claude 模块关 → 整卡隐藏）。
     {kTabGeneral, "settings.card.proxy", kModuleIdClaudeProxy,
-     CardHeightKind::ProxyWarnings, 0.0f, false, /*half=*/false, &drawProxyCard},
+     CardHeightKind::ProxyWarnings, 0.0f, false, /*half=*/false, &drawProxyCard,
+     nullptr},
     {kTabModules, "settings.card.modules", nullptr, CardHeightKind::Fixed,
-     kModulesCardHeight, false, /*half=*/false, &drawModulesCard},
+     kModulesCardHeight, false, /*half=*/false, &drawModulesCard, nullptr},
+    // 壁纸卡：平台能力不支持时整卡不建（不是禁用态）——visible 在卡区入口判定，
+    // 不占高度、不留空白；开关链路与模块插拔卡同走 applyModuleEnabled。
+    {kTabModules, "settings.card.wallpaper", nullptr, CardHeightKind::Fixed,
+     kWallpaperCardHeight, false, /*half=*/false, &drawWallpaperCard,
+     &::platform::wallpaper::supported},
     {kTabLog, "settings.card.log", nullptr, CardHeightKind::Fixed,
-     kLogSettingsCardHeight, true, /*half=*/false, &drawLogCard},
+     kLogSettingsCardHeight, true, /*half=*/false, &drawLogCard, nullptr},
     {kTabLog, "settings.tab.log", nullptr, CardHeightKind::FillRemainder,
-     0.0f, false, /*half=*/false, &drawLogViewCard},
+     0.0f, false, /*half=*/false, &drawLogViewCard, nullptr},
     {kTabSync, "settings.card.github_sync", nullptr, CardHeightKind::GithubSync,
-     0.0f, false, /*half=*/false, &drawGithubSyncCard},
+     0.0f, false, /*half=*/false, &drawGithubSyncCard, nullptr},
 };
 
 // ── GitHub Sync（纯 API 方案，无 git 依赖）──
@@ -1336,6 +1345,9 @@ private:
 
         for (const CardSpec& spec : kCardSpecs) {
             if (spec.tab != tab) continue;
+            if (spec.visible != nullptr && !spec.visible()) {
+                continue;  // 平台能力不支持 → 整卡不建（不占高度、不留空白）
+            }
             if (spec.gate != nullptr && !moduleEnabled(cfg_, spec.gate)) {
                 continue;  // 模块关 → 整卡隐藏（不显示故障态）
             }
