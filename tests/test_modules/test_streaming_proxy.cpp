@@ -434,10 +434,9 @@ REGISTER_TEST(streaming_send_streaming_claude_passthrough,
 })
 
 // 断言的是上游实际收到的头 / body（转发路径的真实效果），不是 forBaseUrl 的返回值。
-// host 是 loopback → host 推断只能给默认方言，必须靠 profile 钉住 opencode_zen。
-// 空串 dialectOverride = 未覆盖 → 无会话头 + body 逐字节不变。
-REGISTER_TEST(streaming_proxy_dialect_override_wired,
-              "streaming: profile.dialectOverride 装方言头（空串等价未覆盖）", {
+// host 是 loopback → host 推断给默认方言：无会话头 + body 逐字节不变。
+REGISTER_TEST(streaming_proxy_dialect_host_inferred,
+              "streaming: host 推断默认方言（无会话头、body 不变）", {
     MockSseServer upstream;
     DOCTEST_REQUIRE(upstream.start());
 
@@ -451,10 +450,7 @@ REGISTER_TEST(streaming_proxy_dialect_override_wired,
     req.body = R"({"model":"claude-sonnet-4-5[1M]","stream":true})";
     req.timeoutMs = 10000;
 
-    // (1) 覆盖 opencode_zen
     Profile p = makeProfile(upstream.baseUrl());
-    p.dialectOverride = "opencode_zen";
-
     auto r = module::claude::sendStreamingClaude(req, p);
     DOCTEST_REQUIRE(r.isOk());
     auto sr = takeStream(r);
@@ -464,27 +460,9 @@ REGISTER_TEST(streaming_proxy_dialect_override_wired,
     DOCTEST_REQUIRE_MESSAGE(drainStream(*sr, all, err),
                             "stream ended with error: " + err);
 
-    DOCTEST_CHECK_EQ(upstream.lastOpenCodeSession(),
-                     module::claude::claudeUpstreamSessionId());
-    // 方言全量生效（不只头）：模型名 [1M] 被剥，其余字节不动
-    DOCTEST_CHECK(upstream.lastRequestBody().find("[1M]") == std::string::npos);
-    DOCTEST_CHECK(upstream.lastRequestBody().find("claude-sonnet-4-5") !=
-                  std::string::npos);
-    DOCTEST_CHECK_EQ(upstream.lastApiKey(), std::string("sk-ant-test-key"));
-
-    Profile p2 = makeProfile(upstream.baseUrl());
-    auto r2 = module::claude::sendStreamingClaude(req, p2);
-    DOCTEST_REQUIRE(r2.isOk());
-    auto sr2 = takeStream(r2);
-    DOCTEST_REQUIRE(sr2 != nullptr);
-    std::string all2;
-    std::string err2;
-    DOCTEST_REQUIRE_MESSAGE(drainStream(*sr2, all2, err2),
-                            "stream ended with error: " + err2);
-
     DOCTEST_CHECK(upstream.lastOpenCodeSession().empty());
     DOCTEST_CHECK_EQ(upstream.lastRequestBody(), req.body);
-    DOCTEST_CHECK_EQ(all2, joinChunks(script.chunks));
+    DOCTEST_CHECK_EQ(all, joinChunks(script.chunks));
 
     upstream.stop();
     return true;

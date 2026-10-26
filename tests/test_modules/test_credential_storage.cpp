@@ -190,7 +190,7 @@ REGISTER_TEST(credential_export_json_contains_no_secret,
 
     // 生产口径：keyPlaceholder 只传 hint（脱敏形态）
     const std::string json =
-        module::claude::buildProfileExportJson(p, std::string(),
+        module::claude::buildProfileExportJson(p,
                                                /*keyPlaceholder=*/p.apiKeyHint);
     DOCTEST_REQUIRE(!json.empty());
 
@@ -208,7 +208,7 @@ REGISTER_TEST(credential_export_json_contains_no_secret,
     // 反向对照：把明文当占位值传进去，导出里就出现明文。这条钉住上面不是恒真的空断言，
     // 同时标出生产路径绝不能这么传 keyPlaceholder
     const std::string leaky =
-        module::claude::buildProfileExportJson(p, std::string(), key);
+        module::claude::buildProfileExportJson(p, key);
     DOCTEST_CHECK(leaky.find(key) != std::string::npos);
     return true;
 })

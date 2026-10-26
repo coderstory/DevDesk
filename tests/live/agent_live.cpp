@@ -679,7 +679,6 @@ bool loadRealProfile(const fs::path& stageDir, SnapshotSource& src,
         src.profile.authField = active.value().authField;
         src.profile.modelsConfigJson = active.value().modelsConfigJson;
         src.profile.defaultModel = active.value().model;
-        src.profile.dialectOverride = active.value().dialectOverride;
         host = hostOf(active.value().baseUrl);
         model = active.value().model;
     }

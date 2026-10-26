@@ -1,6 +1,6 @@
 // tests/test_modules/test_claude_tools.cpp
 // ClaudeTools 用例：claude.list_profiles / claude.switch_profile（破坏性）/
-// claude.test_connection / claude.recent_logs 四工具的注册、出参形状、参数校验与错误回喂，
+// claude.test_connection 三工具的注册、出参形状、参数校验与错误回喂，
 // 外加 setActiveProfile 的双线程并发烟测。
 // 跨文件前提：
 //   - 错误回喂约定：参数非法 / 目标不存在 → execute 返回 Result ok + ToolResult.isError=true +
@@ -75,7 +75,7 @@ struct ToolEnv {
                                    const std::string& key,
                                    bool activateIfNoneActive = false) {
         auto r = svc->createProfile(name, baseUrl, key, "claude-sonnet-4-5",
-                                    activateIfNoneActive, /*sharedConfigId=*/0);
+                                    activateIfNoneActive);
         if (r.isFail()) {
             throw std::runtime_error("createProfile failed: " + r.errorMessage());
         }
@@ -87,14 +87,14 @@ struct ToolEnv {
 } // namespace
 
 REGISTER_TEST(claude_tools_register_and_list_and_switch,
-              "claude_tools: 注册四工具；list_profiles 活跃标记；switch_profile 破坏性 + 生效", {
+              "claude_tools: 注册三工具；list_profiles 活跃标记；switch_profile 破坏性 + 生效", {
     ToolEnv env("reglist");
     auto p1 = env.create("A", "https://api.anthropic.com", "sk-test-a",
                          /*activateIfNoneActive=*/true);
     DOCTEST_CHECK(p1.isActive);
     env.tools->registerAll();
     for (const char* n : {"claude.list_profiles", "claude.switch_profile",
-                          "claude.test_connection", "claude.recent_logs"}) {
+                          "claude.test_connection"}) {
         auto found = core::ToolRegistry::instance().find(n);
         DOCTEST_REQUIRE(found.isOk());
         // schemaJson 契约：schema 要真能进 Anthropic tools 数组——非空 + 声明的 name 与
@@ -204,81 +204,6 @@ REGISTER_TEST(claude_tools_switch_profile_error_paths,
     auto active = env.svc->getActiveProfile();
     DOCTEST_REQUIRE(active.isOk());
     DOCTEST_CHECK_EQ(active.value().id, only.id);
-    return true;
-})
-
-REGISTER_TEST(claude_tools_recent_logs_limit_clamp_and_shape,
-              "claude_tools: recent_logs 默认 20、clamp [1,100]、字段形状与排序", {
-    ToolEnv env("recentlogs");
-    auto p = env.create("Logs", "https://api.anthropic.com", "sk-test-logs",
-                        /*activateIfNoneActive=*/true);
-    env.tools->registerAll();
-
-    // 105 条：越过 clamp 上界，上界才有得可测（只 3 条时 999 与 100 返回值相同，
-    // 断言恒真）
-    const std::time_t base = 1700000000;
-    for (int i = 0; i < 105; ++i) {
-        module::claude::ClaudeService::CallLogEntry e;
-        e.profileId = p.id;
-        e.method = "POST";
-        e.path = "/v1/messages";
-        e.statusCode = (i == 104) ? 429 : 200;
-        e.latencyMs = i;
-        e.error = (i == 104) ? std::string("rate limited") : std::string();
-        e.startedAt = base + i;
-        DOCTEST_REQUIRE(env.svc->logCall(e).isOk());
-    }
-
-    auto parseLogs = [](const core::ToolResult& r) {
-        auto v = platform::json::parse(r.contentJson);
-        if (v.isFail()) return platform::json::JsonValue();
-        return v.value().asObject().get("logs");
-    };
-
-    // 默认 20 + 排序（started_at DESC → 最新在前）+ 字段形状
-    auto def = runToolName("claude.recent_logs", "{}");
-    DOCTEST_REQUIRE(def.isOk());
-    DOCTEST_CHECK_FALSE(def.value().isError);
-    auto defLogs = parseLogs(def.value());
-    DOCTEST_REQUIRE(defLogs.isArray());
-    DOCTEST_CHECK_EQ(defLogs.size(), 20);
-    auto newest = defLogs[0].asObject();
-    DOCTEST_CHECK(newest.get("id").asInt() > 0);
-    DOCTEST_CHECK_EQ(newest.get("statusCode").asInt(), 429);
-    DOCTEST_CHECK_EQ(newest.get("latencyMs").asInt(), 104);
-    DOCTEST_CHECK_EQ(newest.get("startedAt").asInt(),
-                     static_cast<int64_t>(base + 104));
-    DOCTEST_CHECK_EQ(newest.get("error").asString(), std::string("rate limited"));
-
-    // 下界 clamp：0 / 负数 → 1
-    for (const char* args : {R"({"limit":0})", R"({"limit":-5})"}) {
-        auto r = runToolName("claude.recent_logs", args);
-        DOCTEST_REQUIRE(r.isOk());
-        DOCTEST_CHECK_FALSE(r.value().isError);
-        auto logs = parseLogs(r.value());
-        DOCTEST_REQUIRE(logs.isArray());
-        DOCTEST_CHECK_EQ(logs.size(), 1);
-    }
-
-    // 上界 clamp：999 → 100（105 条在库）
-    auto big = runToolName("claude.recent_logs", R"({"limit":999})");
-    DOCTEST_REQUIRE(big.isOk());
-    DOCTEST_CHECK_FALSE(big.value().isError);
-    auto bigLogs = parseLogs(big.value());
-    DOCTEST_REQUIRE(bigLogs.isArray());
-    DOCTEST_CHECK_EQ(bigLogs.size(), 100);
-
-    // 区间内取值原样生效
-    auto exact = runToolName("claude.recent_logs", R"({"limit":7})");
-    DOCTEST_REQUIRE(exact.isOk());
-    DOCTEST_CHECK_EQ(parseLogs(exact.value()).size(), 7);
-
-    // limit 非整数（字符串 / 浮点）→ 参数非法回喂，不是被 clamp 静默吞成 1 条
-    for (const char* args : {R"({"limit":"10"})", R"({"limit":2.5})"}) {
-        auto r = runToolName("claude.recent_logs", args);
-        DOCTEST_REQUIRE(r.isOk());
-        DOCTEST_CHECK(r.value().isError);
-    }
     return true;
 })
 
