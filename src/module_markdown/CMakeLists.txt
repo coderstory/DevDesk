@@ -1,5 +1,9 @@
 add_library(devdesk_module_markdown STATIC
     markdown_module.cpp
+    md_module_tree.cpp
+    md_module_editor.cpp
+    md_module_preview.cpp
+    md_module_menu_poll.cpp
     markdown_service.cpp
     markdown_tools.cpp
     md_highlight.cpp

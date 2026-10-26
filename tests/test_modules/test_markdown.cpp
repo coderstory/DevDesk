@@ -5030,8 +5030,23 @@ REGISTER_TEST(md_module_blockflow_hook_source_guard,
     DOCTEST_CHECK_MESSAGE(!root.empty(),
                           "守卫定位不到仓库根（cwd 上溯，不用 __FILE__：ccache 会"
                           "把绝对路径相对化）");
-    const std::string src = mdReadWholeFile(
-        root / "src" / "module_markdown" / "markdown_module.cpp");
+    // 拆分第一步（抽编译单元）后，markdown_module 的共享助手与类定义在
+    // markdown_module_internal.h，成员函数按 文件树/编辑器/预览/菜单轮询 四块分驻
+    // md_module_*.cpp。守卫改读**模块文件合集**（存在才并入），下面所有断言原文不动：
+    // 搬移只改「去哪个文件找」，不改「找什么」。
+    static const char* const kParts[] = {
+        "src/module_markdown/markdown_module.cpp",
+        "src/module_markdown/markdown_module_internal.h",
+        "src/module_markdown/md_module_tree.cpp",
+        "src/module_markdown/md_module_editor.cpp",
+        "src/module_markdown/md_module_preview.cpp",
+        "src/module_markdown/md_module_menu_poll.cpp",
+    };
+    std::string src;
+    for (const auto& rel : kParts) {
+        const std::string part = mdReadWholeFile(root / rel);
+        src += part;   // 尚未拆出的文件允许缺（读不到 = 空串并入）
+    }
     DOCTEST_REQUIRE(!src.empty());
 
     // (1) 注入点在位：结构体 + drawBlockFlow 末参收它
@@ -5039,7 +5054,9 @@ REGISTER_TEST(md_module_blockflow_hook_source_guard,
     DOCTEST_CHECK(src.find("const BlockFlowHooks& hooks)") != std::string::npos);
 
     // (2) drawBlockFlow 本体：视图态特判的符号一个都不许在（分支长回来即变红）
-    const std::string body = mdFunctionBody(src, "void drawBlockFlow(");
+    // 拆分第一步后定义带 MarkdownModule:: 限定（头文件里是无限定声明）——两形态都试
+    std::string body = mdFunctionBody(src, "MarkdownModule::drawBlockFlow(");
+    if (body.empty()) body = mdFunctionBody(src, "void drawBlockFlow(");
     DOCTEST_CHECK_MESSAGE(!body.empty(),
                           "取不到 drawBlockFlow 函数体（签名或括号被改？）");
     for (const char* bad :
@@ -5063,7 +5080,8 @@ REGISTER_TEST(md_module_blockflow_hook_source_guard,
     std::vector<std::string> calls;
     for (size_t at = src.find("drawBlockFlow("); at != std::string::npos;
          at = src.find("drawBlockFlow(", at + 1)) {
-        if (at >= 5 && src.compare(at - 5, 5, "void ") == 0) continue;  // 声明非调用
+        if (at >= 5 && src.compare(at - 5, 5, "void ") == 0) continue;  // 无限定声明非调用
+        if (at >= 2 && src.compare(at - 2, 2, "::") == 0) continue;  // MarkdownModule:: 限定的声明/定义非调用
         const std::string call = mdBalanced(src, at + kNameLen, '(', ')');
         DOCTEST_REQUIRE(!call.empty());   // 括号不配对 = 守卫自身失效，不许静默
         calls.push_back(call);
