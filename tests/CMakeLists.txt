@@ -123,6 +123,7 @@ add_executable(devdesk_tests
     test_modules/test_app_sidebar.cpp
     test_modules/test_app_assembly.cpp
     test_modules/test_module_toggle_bridge.cpp
+    test_modules/test_wallpaper_module.cpp
     test_modules/test_splash_contract.cpp
 )
 
@@ -222,6 +223,7 @@ target_link_libraries(devdesk_tests PRIVATE
     devdesk_module_claude_proxy
     devdesk_module_settings
     devdesk_module_about
+    devdesk_module_wallpaper
 )
 
 # 确保 doctest.h 可被 #include "doctest.h" 找到
@@ -299,6 +301,7 @@ foreach(_probe_source ${_devdesk_probe_sources})
         devdesk_module_claude_proxy
         devdesk_module_settings
         devdesk_module_about
+        devdesk_module_wallpaper
     )
     # probe_harness.h 的帧捕获段（--screenshot）要 <png.h> 编码 PNG：libpng 由
     # EUI-NEO vendored（1.6.43，简化 API png_image_write_to_file 自带 deflate），
@@ -399,6 +402,7 @@ if(DEVDESK_BUILD_LIVE_TOOLS AND UNIX)
         devdesk_module_claude_proxy
         devdesk_module_settings
         devdesk_module_about
+        devdesk_module_wallpaper
     )
     devdesk_apply_warnings(github_sync_live)
 

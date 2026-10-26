@@ -24,6 +24,7 @@
 #include "core/service_locator.h"
 #include "platform/http_server.h"  // 前置校验用例的 mock 上游（200 POST /v1/messages）
 #include "platform/notification.h" // M1 接线用例（initialize spy）
+#include "platform/wallpaper_capability.h"  // wallpaper 行空工厂的唯一合法条件
 
 #include <eui/dsl.h>
 
@@ -103,7 +104,7 @@ private:
     StubModule settings_{::core::PageId::Settings, "settings", &log_};
 };
 
-// 全启用配置：显式列全门控键（含默认清单里没有的 agent），「all-on = 7 项」按这个构造口径保住
+// 全启用配置：显式列全门控键（含默认清单里没有的 agent / wallpaper），「all-on = 8 项」按这个构造口径保住
 module::settings::SettingsConfig allOnConfig() {
     module::settings::SettingsConfig cfg;
     cfg.enabledModules = {module::settings::kModuleIdHome,
@@ -111,7 +112,8 @@ module::settings::SettingsConfig allOnConfig() {
                           module::settings::kModuleIdTodo,
                           module::settings::kModuleIdClaudeProxy,
                           module::settings::kModuleIdSettings,
-                          module::settings::kModuleIdAgent};
+                          module::settings::kModuleIdAgent,
+                          module::settings::kModuleIdWallpaper};
     return cfg;
 }
 
@@ -521,17 +523,17 @@ REGISTER_TEST(assembly_service_locator_registration_precedes_onstart,
 // 真实 kModuleRegistry 表：门控键列填错或表序漂移，在此必挂
 
 REGISTER_TEST(assembly_registry_table_shape,
-              "assembly: 真实 kModuleRegistry —— 7 行 / 行序==PageId 枚举序 / home+settings+about gatingKey==nullptr / 另四行==kModuleId*", {
+              "assembly: 真实 kModuleRegistry —— 8 行 / 行序==PageId 枚举序 / home+settings+about gatingKey==nullptr / 另五行==kModuleId*", {
     using ::app::registry::kModuleRegistry;
     constexpr size_t kRegistrySize =
         sizeof(kModuleRegistry) / sizeof(kModuleRegistry[0]);
     const ::core::PageId kEnumOrder[] = {
         ::core::PageId::Home,       ::core::PageId::Markdown,
         ::core::PageId::Todo,       ::core::PageId::ClaudeProxy,
-        ::core::PageId::Agent,      ::core::PageId::Settings,
-        ::core::PageId::About,
+        ::core::PageId::Agent,      ::core::PageId::Wallpaper,
+        ::core::PageId::Settings,   ::core::PageId::About,
     };
-    DOCTEST_CHECK_EQ(kRegistrySize, static_cast<size_t>(7));
+    DOCTEST_CHECK_EQ(kRegistrySize, static_cast<size_t>(8));
     for (size_t i = 0; i < kRegistrySize; ++i) {
         // 表序 == PageId 枚举序（重排 = 侧边栏序静默变化，这是 core_pageid_order 契约的
         // 装配侧镜像；Agent 必须排在 Settings 之前）
@@ -552,13 +554,15 @@ REGISTER_TEST(assembly_registry_table_shape,
                      std::string(module::settings::kModuleIdClaudeProxy));
     DOCTEST_CHECK_EQ(gating(kModuleRegistry[4].gatingKey),
                      std::string(module::settings::kModuleIdAgent));
-    DOCTEST_CHECK(kModuleRegistry[5].gatingKey == nullptr);
+    DOCTEST_CHECK_EQ(gating(kModuleRegistry[5].gatingKey),
+                     std::string(module::settings::kModuleIdWallpaper));
     DOCTEST_CHECK(kModuleRegistry[6].gatingKey == nullptr);
+    DOCTEST_CHECK(kModuleRegistry[7].gatingKey == nullptr);
     return true;
 })
 
 REGISTER_TEST(assembly_build_gated_entries_real_table,
-              "assembly: buildGatedEntries 真实表 —— all-off 恰 3 条（home/settings/about 恒注册）/ all-on 7 条按表序", {
+              "assembly: buildGatedEntries 真实表 —— all-off 恰 3 条（home/settings/about 恒注册）/ all-on 8 条按表序", {
     constexpr size_t kRegistrySize =
         sizeof(::app::registry::kModuleRegistry) /
         sizeof(::app::registry::kModuleRegistry[0]);
@@ -575,15 +579,15 @@ REGISTER_TEST(assembly_build_gated_entries_real_table,
     DOCTEST_CHECK(gated[0].module == nullptr);
     DOCTEST_CHECK(gated[1].module == nullptr);
     DOCTEST_CHECK(gated[2].module == nullptr);
-    // 全开 → 7 条且序 == 表序
+    // 全开 → 8 条且序 == 表序
     const auto allGated = app::assembly::buildGatedEntries(
         allOnConfig(), ::app::registry::kModuleRegistry, kRegistrySize);
-    DOCTEST_REQUIRE_EQ(allGated.size(), static_cast<size_t>(7));
+    DOCTEST_REQUIRE_EQ(allGated.size(), static_cast<size_t>(8));
     const ::core::PageId kEnumOrder[] = {
         ::core::PageId::Home,       ::core::PageId::Markdown,
         ::core::PageId::Todo,       ::core::PageId::ClaudeProxy,
-        ::core::PageId::Agent,      ::core::PageId::Settings,
-        ::core::PageId::About,
+        ::core::PageId::Agent,      ::core::PageId::Wallpaper,
+        ::core::PageId::Settings,   ::core::PageId::About,
     };
     for (size_t i = 0; i < allGated.size(); ++i) {
         DOCTEST_CHECK(allGated[i].page == kEnumOrder[i]);
@@ -594,9 +598,18 @@ REGISTER_TEST(assembly_build_gated_entries_real_table,
 // 表短名 / 图标列 ↔ 模块虚函数的双副本一致性。静态列不可省：托盘关闭态没有任何活实例可查，
 // 只能读表；这条用例是双副本唯一的缝合点（无 DB，只取纯 getter）。
 REGISTER_TEST(assembly_registry_matches_module_getters,
-              "assembly: 表 shortName/iconGlyph/page 与真实模块 getter 一致（防双副本 drift）", {
+              "assembly: 表 shortName/iconGlyph/page 与真实模块 getter 一致（防双副本 drift；wallpaper 平台不支持时工厂可为空）", {
     for (const auto& e : ::app::registry::kModuleRegistry) {
         std::unique_ptr<::core::Module> mod(e.factory());
+        if (e.page == ::core::PageId::Wallpaper && mod == nullptr) {
+            // 唯一允许的空工厂行：平台能力不支持时按契约返回 nullptr（开关键仍是 wallpaper）
+            DOCTEST_CHECK_FALSE(::platform::wallpaper::supported());
+            // 先判空再构造 std::string：std::string(nullptr) 是 UB（clang -Wnonnull 直接拦）
+            DOCTEST_REQUIRE(e.gatingKey != nullptr);
+            DOCTEST_CHECK_EQ(std::string(e.gatingKey),
+                             std::string(module::settings::kModuleIdWallpaper));
+            continue;
+        }
         DOCTEST_REQUIRE(mod != nullptr);
         DOCTEST_CHECK(e.page == mod->pageId());
         DOCTEST_CHECK_EQ(std::string(e.shortName), mod->shortName());

@@ -43,7 +43,8 @@ constexpr int kMaxWindowRestoreSide = 65535;
 // 合法模块 ID 清单（sanitized 过滤未知项；与 kModuleId* 一一对应）
 const char* const kKnownModuleIds[] = {
     kModuleIdHome, kModuleIdMarkdown,     kModuleIdTodo,
-    kModuleIdClaudeProxy, kModuleIdSettings, kModuleIdAgent};
+    kModuleIdClaudeProxy, kModuleIdSettings, kModuleIdAgent,
+    kModuleIdWallpaper};
 
 bool isKnownModuleId(const std::string& id) {
     for (const char* known : kKnownModuleIds) {
@@ -54,7 +55,7 @@ bool isKnownModuleId(const std::string& id) {
 } // namespace
 
 std::vector<std::string> defaultEnabledModules() {
-    // agent 不在默认清单（跑 LLM 有成本，用户主动启用）。
+    // agent 不在默认清单（跑 LLM 有成本，用户主动启用）；wallpaper 同默认关闭。
     return {kModuleIdHome, kModuleIdMarkdown, kModuleIdTodo,
             kModuleIdClaudeProxy, kModuleIdSettings};
 }

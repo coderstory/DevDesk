@@ -245,6 +245,8 @@ std::string activeWindowEffectTier() {
     static std::unique_ptr<::core::Module> claude(create_claude_module());
     static std::unique_ptr<::core::Module> settings(create_settings_module());
     static std::unique_ptr<::core::Module> agent(create_agent_module());
+    // 平台能力不支持时工厂返回 nullptr：门控装配按空实例跳过（页面不注册）
+    static std::unique_ptr<::core::Module> wallpaper(create_wallpaper_module());
     static std::unique_ptr<::core::Module> about(create_about_module());
 
     static bool initialized = false;
@@ -258,6 +260,7 @@ std::string activeWindowEffectTier() {
                     case ::core::PageId::ClaudeProxy: return claude.get();
                     case ::core::PageId::Settings: return settings.get();
                     case ::core::PageId::Agent: return agent.get();
+                    case ::core::PageId::Wallpaper: return wallpaper.get();
                     case ::core::PageId::About: return about.get();
                 }
                 return nullptr;

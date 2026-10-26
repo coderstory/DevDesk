@@ -166,7 +166,7 @@ function(devdesk_add_eui_includes target)
     )
 endfunction()
 
-# 功能模块（home / markdown / todo / claude_proxy / settings / about / agent）
+# 功能模块（home / markdown / todo / claude_proxy / settings / about / agent / wallpaper）
 add_subdirectory(src/module_home)
 add_subdirectory(src/module_markdown)
 add_subdirectory(src/module_todo)
@@ -174,6 +174,7 @@ add_subdirectory(src/module_agent)
 add_subdirectory(src/module_claude_proxy)
 add_subdirectory(src/module_settings)
 add_subdirectory(src/module_about)
+add_subdirectory(src/module_wallpaper)
 
 # UAT6：构建机信息注入关于页构建行。定义挂在根而非 src/module_about/
 # CMakeLists.txt——本批冻结清单只开根 CMakeLists（module_about 侧文件不动），
@@ -210,7 +211,7 @@ if(DEVDESK_COVERAGE)
         devdesk_module_home devdesk_module_markdown devdesk_module_todo
         devdesk_agent
         devdesk_module_claude_proxy devdesk_module_settings
-        devdesk_module_about)
+        devdesk_module_about devdesk_module_wallpaper)
     if(CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
         # 链接期（目录级，置于 add_subdirectory(tests) 与主程序定义**之前**）：
         # 之后创建的所有可执行文件都拉进 profile runtime
@@ -285,6 +286,7 @@ target_link_libraries(DevDesk PRIVATE
     devdesk_module_claude_proxy
     devdesk_module_settings
     devdesk_module_about
+    devdesk_module_wallpaper
     eui_neo
 )
 target_include_directories(DevDesk PRIVATE
@@ -298,6 +300,7 @@ target_include_directories(DevDesk PRIVATE
     src/module_settings
     src/module_about
     src/module_agent
+    src/module_wallpaper
     ${EUI_NEO_INCLUDE_DIR}
     ${EUI_NEO_DIR}
 )
