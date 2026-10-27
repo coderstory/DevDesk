@@ -133,7 +133,7 @@
 **判定**：有条件可行，但证据弱。协议支持注入；离线“强制注入 top-3”初测有效；**hook 全链路一次未跑，真实采纳率未测**。
 
 **证据**：
-- hook 文档：`UserPromptSubmit` 可注入；单条注入字符串上限 10,000 字符（超限不是丢弃：写入 session 文件并给 2,000 字预览）；`UserPromptSubmit` 的 command/http/mcp_tool hook 默认超时从 600 秒降到 30 秒；**同步 hook 超时会取消并丢弃 `additionalContext`**；async hook 不受 timeout 约束，其输出本来就不用于注入（文档核实）。
+- hook 文档：`UserPromptSubmit` 可注入；单条注入字符串上限 10,000 字符（超限不是丢弃：写入 session 文件并给 2,000 字预览）；`UserPromptSubmit` 的 command/http/mcp_tool hook 默认超时从 600 秒降到 30 秒；**同步 hook 超时会取消并丢弃 `additionalContext`**；async hook 不受 timeout 约束；其 `additionalContext` 现会在后台进程退出后的下一轮递给模型（官方现行文档，见 `docs/superpowers/research/2026-10-27-memcpp-hook-contract-facts.md`），但对记忆预载无效——迟一轮即预载不可用，注入必须同步 hook。
 - 官方支持 `type:"http"` hook：可直接 POST 到常驻本地服务，不需要“起进程 + 命名管道”的薄转发方案（文档核实，报告原方案未考虑）。
 - 注入实验（离线，强制注入 top-3，无重复对照）：同一问题有/无记忆对比 5 题，**人工判定 3/5 明确采用项目记忆**，1 题边界、1 题未采用（Q3/Q4 仍是通用建议）。例：问“功能默认关着怎么开”，有记忆答“打开设置-通用，开启 MCP 模块并设端口”（实测；原始输出未留存，脚本与判定口径见 `experiments/archive/inject_probe.py`）。
 - 局限：这 5 个问题是根据记忆反推的，天然对“检索命中”有利；真实使用中用户会问记忆里没有的东西，唤起率会低很多。
@@ -227,7 +227,7 @@
 | 回答变化 | 5 题中 3 题明确采用项目记忆，1 题边界、1 题未采用 | 5 题 | 离线强制注入 top-3、单次、无重复对照；问题由记忆反推 | 实测 |
 | 注入协议 | `UserPromptSubmit` / `SessionStart` / `PostToolUse` / `PreToolUse` 支持 `additionalContext` | — | 只读文档（2026-10-27 抓取），未在本机跑 hook 全链路 | 文档核实 |
 | 单条注入上限 | 10,000 字符；超限写 session 文件并给 2,000 字预览 | — | 不是截断丢弃；也不是建议预算 | 文档核实 |
-| 超时 | `UserPromptSubmit` command/http/mcp_tool hook 默认 600 秒降到 30 秒；**同步** hook 超时取消并丢弃输出；async hook 不受 timeout 约束、其输出不用于注入 | — | 协议行为；原报告把“异步超时”写反了 | 文档核实 |
+| 超时 | `UserPromptSubmit` command/http/mcp_tool hook 默认 600 秒降到 30 秒；**同步** hook 超时取消并丢弃输出；async hook 不受 timeout 约束、其 `additionalContext` 现会在下一轮递给模型（官方现行文档）但对预载迟一轮不可用 | — | 协议行为；原报告把“异步超时”写反了 | 文档核实 |
 
 ### 3.6 可借实现
 
@@ -324,7 +324,7 @@
 - 进程模型（推荐，不是硬约束）：会话级常驻小进程（SessionStart 拉起、SessionEnd 退出），**用官方 HTTP hook 直接 POST 查询**（`type:"http"` + url/timeout/headers）；也可保留“每次起进程”的简单实现，实测 52~123 毫秒。常驻进程只监听回环地址，带一次性令牌；hook 不加载模型。
 
 **证据**：
-- 文档核实：`UserPromptSubmit` 和 `PreToolUse` 都支持 `additionalContext`；单条上限 10,000 字符（超限落文件 + 2,000 字预览）；`UserPromptSubmit` 的 command/http/mcp_tool hook 超时 30 秒；**同步** hook 超时会取消并丢弃输出，所以注入必须同步且快。async hook 不受 timeout 约束，其输出不用于注入。
+- 文档核实：`UserPromptSubmit` 和 `PreToolUse` 都支持 `additionalContext`；单条上限 10,000 字符（超限落文件 + 2,000 字预览）；`UserPromptSubmit` 的 command/http/mcp_tool hook 超时 30 秒；**同步** hook 超时会取消并丢弃输出，所以注入必须同步且快。async hook 不受 timeout 约束；其 `additionalContext` 现会在下一轮递给模型（官方现行文档），但对预载迟一轮不可用，注入仍必须同步且快。
 - 实测：离线强制注入 5 题里 3 题明确采用项目记忆（原写 4/5，审计复跑判定为 3/5，1 题边界、1 题未采用）；样本是反推问题，不能证明“多灌更好”。预算越小，噪声和 token 成本越可控。
 - 实测：编译后 C++ exe 冷启动 52~123 毫秒（审计 52~55ms），另有 3.1 秒 / 9.1 秒各 1 次、未稳定复现；FTS5 查询 0.04~0.57 毫秒（1 万条）。因此“常驻进程”是体验上的推荐方案；官方 HTTP hook 可直接消除进程启动，连薄转发进程也不需要。
 - 500 字的来由：实测观察条目正文约 50~120 字，5 条按每条约 100 字估算（推断，非实测）；协议上限 10,000 字符远大于此，限制来自“不打扰”而不是协议。
