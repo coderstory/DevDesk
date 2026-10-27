@@ -12,6 +12,7 @@
   TELEMEM_SPIKE_LLM_API_KEY
   TELEMEM_SPIKE_LLM_MODEL      提炼模型名
   TELEMEM_SPIKE_EMBED_BASE_URL / TELEMEM_SPIKE_EMBED_API_KEY / TELEMEM_SPIKE_EMBED_MODEL
+  TELEMEM_SPIKE_EMBED_DIMENSIONS 可选，默认 1024（智谱 embedding-3 默认 2048 且无 768 档，建索引前定死，换档需全量重嵌）
   TELEMEM_SPIKE_PORT           可选，默认 8421
 
 用法（在仓库 worktree 内）：
@@ -24,6 +25,7 @@
 契约/不变量：
   - memory-lab 冻结资产只读：本脚本绝不写 tools/memory-lab/ 下任何文件。
   - 凭据只进 .runtime/（gitignored）与子进程环境，stdout/结果 JSON 只输出名称与掩码。
+  - 云端 base_url 的 host 自动加入 NO_PROXY：本机系统代理会截胡云端直连流量（S1 实测），子进程一并继承。
   - 拉起的 telemem-mcp 子进程由本脚本用 Popen 句柄自行终止，不做全机进程扫描。
 """
 
@@ -76,11 +78,58 @@ def require_endpoints() -> dict:
     if missing:
         print(json.dumps({"blocked": "missing_env", "missing": missing}, ensure_ascii=False))
         sys.exit(2)
-    return {name: os.environ[name] for name in needed}
+    endpoints = {name: os.environ[name] for name in needed}
+    apply_no_proxy(endpoints)
+    return endpoints
+
+
+def apply_no_proxy(endpoints: dict) -> None:
+    """云端 host 旁路本机代理；须在 Memory 构造/子进程拉起前调用（openai/httpx 与子进程均读环境）。"""
+    from urllib.parse import urlparse
+    hosts = sorted({
+        urlparse(endpoints[name]).hostname or ""
+        for name in ("TELEMEM_SPIKE_LLM_BASE_URL", "TELEMEM_SPIKE_EMBED_BASE_URL")
+    } - {""})
+    if not hosts:
+        return
+    bypass = ",".join(hosts)
+    for var in ("NO_PROXY", "no_proxy"):  # Windows os.environ 大小写不敏感：两键同槽，合并必须幂等
+        prior = os.environ.get(var) or ""
+        parts = [p for p in prior.split(",") if p]
+        if bypass not in parts:
+            parts.append(bypass)
+        os.environ[var] = ",".join(parts)
+
+
+def with_retry(action, what: str, retries: int = 2):
+    """单次动作最多重试 2 次：仅瞬态错误（连接失败/5xx/限流 429）重试。
+
+    反例契约：计费态 429（余额不足）与 4xx 鉴权/参数错误重试不改变结局，必须快速失败——
+    2026-10-27 智谱实测无余额账户恒返「429 余额不足或无可用资源包」。
+    """
+    last: Exception | None = None
+    for attempt in range(1 + retries):
+        try:
+            return action()
+        except Exception as exc:  # spike 层面不枚举 SDK 异常树，按 status_code 归类
+            last = exc
+            status = getattr(exc, "status_code", None)
+            body = str(exc)
+            if status is not None and status < 500 and (status != 429 or "余额" in body or "资源包" in body):
+                raise
+            print(f"[retry] {what} 第 {attempt + 1} 次失败: {body[:160]}", file=sys.stderr)
+            time.sleep(min(2 ** attempt, 4))
+    assert last is not None
+    raise last
 
 
 def write_runtime_config(endpoints: dict | None) -> Path:
-    """生成 TELEMEM_CONFIG 指向的 yaml；endpoints=None 时用不可达占位端点。"""
+    """生成 TELEMEM_CONFIG 指向的 yaml；endpoints=None 时用不可达占位端点。
+
+    embedding_dims 必须显式：智谱 embedding-3 默认 2048 维，mem0 仅在配置了 embedding_dims 时
+    才向 API 透传 dimensions 参数（mem0/embeddings/openai.py 源码核实），不配即 2048 建索引。
+    """
+    dims = int(os.environ.get("TELEMEM_SPIKE_EMBED_DIMENSIONS", "1024"))
     RUNTIME.mkdir(parents=True, exist_ok=True)
     db_dir = RUNTIME / "faiss_db"
     if endpoints is None:
@@ -110,6 +159,7 @@ embedder:
     model: {embed["model"]}
     openai_base_url: "{embed["base"]}"
     api_key: "{embed["key"]}"
+    embedding_dims: {dims}
 
 vector_store:
   provider: faiss
@@ -334,18 +384,27 @@ def load_frozen() -> tuple[list[dict], list[dict], list[str]]:
 
 
 def ingest_direct(memory, docs: list[dict]) -> float:
-    """infer=False 原文直存 27 条，返回 ingest 总耗时秒。"""
+    """infer=False 原文直存 27 条，返回 ingest 总耗时秒。零 LLM 调用，只耗 embedding。"""
     started = time.perf_counter()
     for item in docs:
-        result = memory.add(
-            [{"role": "user", "content": item["text"]}],
-            user_id=USER_SCOPE,
-            metadata={"obs_id": item["id"], "kind": item["kind"]},
-            infer=False,
+        result = with_retry(
+            lambda: memory.add(
+                [{"role": "user", "content": item["text"]}],
+                user_id=USER_SCOPE,
+                metadata={"obs_id": item["id"], "kind": item["kind"]},
+                infer=False,
+            ),
+            what=f"add obs {item['id']}",
         )
         if not result.get("results"):
             raise RuntimeError(f"obs {item['id']} 未落库: {result}")
     return time.perf_counter() - started
+
+
+def token_estimate(*text_groups: list[str]) -> dict:
+    """token 用量估算：智谱未公开分词器，中文按 1 字 ≈ 0.6~1.0 token 取区间（上界=字符数）。"""
+    chars = sum(len(text) for group in text_groups for text in group)
+    return {"chars": chars, "tokens_lower": round(chars * 0.6), "tokens_upper": chars}
 
 
 def resolve_obs_id(entry: dict, doc_by_text: dict[str, int]) -> int | None:
@@ -376,7 +435,10 @@ def cmd_eval(_args: argparse.Namespace) -> None:
     search_seconds = []
     for query in queries:
         started = time.perf_counter()
-        result = memory.search(query["query"], user_id=USER_SCOPE, limit=5)
+        result = with_retry(
+            lambda: memory.search(query["query"], user_id=USER_SCOPE, limit=5),
+            what=f"search {query['id']}",
+        )
         search_seconds.append(time.perf_counter() - started)
         entries = result.get("results") or []
         top5_ids = [resolve_obs_id(entry, doc_by_text) for entry in entries[:5]]
@@ -413,6 +475,7 @@ def cmd_eval(_args: argparse.Namespace) -> None:
         "trigger_line": {"recall_at_5_min": 0.85, "short_probe_min": {"端口": 5, "配置": 3, "模块": 11}},
         "ingest_seconds": round(ingest_seconds, 2),
         "search_seconds_p50": round(statistics.median(search_seconds) * 1000, 1),
+        "token_usage_estimate": token_estimate(docs, [q["query"] for q in queries], [p["term"] for p in short_probe]),
         "per_query": per_query,
         "short_probe": short_probe,
     }
@@ -460,6 +523,8 @@ def cmd_latency(_args: argparse.Namespace) -> None:
             "p95_ms": pct(timings, 0.95),
             "min_ms": timings[0], "max_ms": timings[-1],
             "threshold_ms": 500,
+            "token_usage_estimate": token_estimate(
+                docs, ["预热"] + [f"worktree 开发 {i}" for i in range(LATENCY_SAMPLES)]),
             "errors": errors,
         }
         print(json.dumps(payload, ensure_ascii=False, indent=1))
