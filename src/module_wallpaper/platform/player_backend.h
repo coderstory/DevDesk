@@ -29,6 +29,12 @@ public:
     virtual void stop() = 0;
     // 当前播放位置（秒）。未装载/未实现时返回 0。
     virtual float positionSec() const = 0;
+    // 取走最近一次后台错误（中文、可直接展示）；true = 有错误。
+    // 默认实现标记「无错误通道」，NullPlayer/测试后端无需实现。
+    virtual bool takeError(std::string* error) {
+        (void)error;
+        return false;
+    }
 };
 
 // Null 后端：全部 no-op，只记录调用，供单测断言「服务确实发出了哪条命令」。
