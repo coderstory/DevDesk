@@ -1,9 +1,11 @@
 #include "html_to_markdown.h"
 
+#include <algorithm>
 #include <cctype>
 #include <cstddef>
 #include <map>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace module::mcp {
