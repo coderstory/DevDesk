@@ -33,8 +33,25 @@ add_library(devdesk_module_wallpaper STATIC
     platform/player_null.cpp
 )
 
-# 平台层（WallpaperHost / MpvController）：Win32 实现与 stub 由子目录按平台选择。
-add_subdirectory(platform)
+# 平台层（WallpaperHost / MpvController）：Win32 实现与 stub 按平台选择。
+# 契约：源文件必须登记在本模块级 CMakeLists——Windows 交叉编译守卫
+# （scripts/check-windows-cross-compile.sh）只解析 src/*/CMakeLists.txt 一层，
+# 嵌套 CMakeLists 里的 *_win.cpp 会被判「存在于磁盘却没进受编集合」。
+if(WIN32)
+    target_sources(devdesk_module_wallpaper PRIVATE
+        platform/mpv_player.cpp
+        platform/mpv_player.h
+        platform/wallpaper_host_win.cpp
+        platform/mpv_controller.cpp
+    )
+else()
+    target_sources(devdesk_module_wallpaper PRIVATE
+        platform/mpv_player.cpp
+        platform/mpv_player.h
+        platform/wallpaper_host_stub.cpp
+        platform/mpv_controller_stub.cpp
+    )
+endif()
 
 devdesk_apply_warnings(devdesk_module_wallpaper)
 

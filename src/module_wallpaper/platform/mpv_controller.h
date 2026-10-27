@@ -20,6 +20,7 @@
 #include <filesystem>
 #include <memory>
 #include <string>
+#include <system_error>
 #include <vector>
 
 namespace module::wallpaper {

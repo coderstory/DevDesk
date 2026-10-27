@@ -119,14 +119,14 @@ bool sameColor(const eui::Color& a, const eui::Color& b) {
            std::fabs(a.b - b.b) < 0.002f;
 }
 
-float rightOf(const eui::Element* element) {
+float rightOf(const core::dsl::Element* element) {
     return element == nullptr ? 0.0f
                               : element->frame.x + element->frame.width;
 }
 
 // 全树遍历：用于「唯一来源分段」「不存在禁用入口」「所有元素不越界」这类整树断言。
-void walkElements(const eui::Element& element,
-                  const std::function<void(const eui::Element&)>& fn) {
+void walkElements(const core::dsl::Element& element,
+                  const std::function<void(const core::dsl::Element&)>& fn) {
     fn(element);
     for (const auto& child : element.children) {
         walkElements(*child, fn);
@@ -134,16 +134,27 @@ void walkElements(const eui::Element& element,
 }
 
 void walkTree(const eui::Ui& ui,
-              const std::function<void(const eui::Element&)>& fn) {
+              const std::function<void(const core::dsl::Element&)>& fn) {
     for (const auto& root : ui.roots()) {
         walkElements(*root, fn);
     }
 }
 
+// composeFrame 以 begin("wallpaper_ui_test") 组帧：element.id 存的是 resolveId
+// 后的页面级全名，而 Ui::normalizeScopeId 为私有——这里等价剥页前缀还原模块内
+// id，供整树计数 / 前缀豁免类断言使用。
+std::string scopedId(const core::dsl::Element& element) {
+    const std::string kPagePrefix = "wallpaper_ui_test.";
+    if (element.id.rfind(kPagePrefix, 0) == 0) {
+        return element.id.substr(kPagePrefix.size());
+    }
+    return element.id;
+}
+
 int countExactId(const eui::Ui& ui, const std::string& id) {
     int count = 0;
-    walkTree(ui, [&](const eui::Element& element) {
-        if (element.id == id) ++count;
+    walkTree(ui, [&](const core::dsl::Element& element) {
+        if (scopedId(element) == id) ++count;
     });
     return count;
 }
@@ -302,12 +313,13 @@ REGISTER_TEST(wallpaper_ui_min_window_no_scroll,
         DOCTEST_REQUIRE(scroll != nullptr);
         const float viewportBottom = scroll->frame.y + scroll->frame.height;
         std::vector<std::string> cardIds;
-        walkTree(ui, [&](const eui::Element& element) {
-            if (element.id.rfind("wallpaper.card.", 0) == 0 &&
-                element.id.find(".bg") == std::string::npos &&
-                element.id.find(".title") == std::string::npos &&
-                element.id.find(".hint") == std::string::npos) {
-                cardIds.push_back(element.id);
+        walkTree(ui, [&](const core::dsl::Element& element) {
+            const std::string id = scopedId(element);
+            if (id.rfind("wallpaper.card.", 0) == 0 &&
+                id.find(".bg") == std::string::npos &&
+                id.find(".title") == std::string::npos &&
+                id.find(".hint") == std::string::npos) {
+                cardIds.push_back(id);
             }
         });
         for (const std::string& id : cardIds) {
@@ -858,40 +870,50 @@ REGISTER_TEST(wallpaper_ui_no_maintenance_entry,
     eui::Ui libraryUi;
     composeFrame(libraryUi, kPage1600x1000, snapshot, {}, state);
     for (eui::Ui* target : {&ui, &libraryUi}) {
-        walkTree(*target, [&](const eui::Element& element) {
+        // 断言宏展开含 return false，只允许出现在返回 bool 的用例体（doctest.h
+        // 头注第 3 条）；void 遍历回调里违规先收集，出循环后由用例体统一断言。
+        std::vector<std::string> violations;
+        walkTree(*target, [&](const core::dsl::Element& element) {
+            const std::string id = scopedId(element);
             const std::string lower = [&] {
-                std::string out = element.id;
+                std::string out = id;
                 std::transform(out.begin(), out.end(), out.begin(),
                                [](unsigned char c) {
                                    return static_cast<char>(std::tolower(c));
                                });
                 return out;
             }();
-            DOCTEST_CHECK_MESSAGE(
-                !contains(lower, "delete") && !contains(lower, "remove") &&
-                    !contains(lower, "maintain") && !contains(lower, "queue") &&
-                    !contains(lower, "transcode"),
-                "出现禁用入口 id: " + element.id);
-            DOCTEST_CHECK_MESSAGE(
-                !contains(element.text, "删除") &&
-                    !contains(element.text, "维护") &&
-                    !contains(element.text, "队列"),
-                "出现禁用入口文案: " + element.text);
+            if (contains(lower, "delete") || contains(lower, "remove") ||
+                contains(lower, "maintain") || contains(lower, "queue") ||
+                contains(lower, "transcode")) {
+                violations.push_back("出现禁用入口 id: " + element.id);
+            }
+            if (contains(element.text, "删除") ||
+                contains(element.text, "维护") ||
+                contains(element.text, "队列")) {
+                violations.push_back("出现禁用入口文案: " + element.text);
+            }
             // 不显示文件名：所有文本里不应出现媒体扩展名（格式卡里的
             // ".mp4 / .mov / .m4v" 是格式说明而非文件名，单独放行 id 前缀）。
-            if (element.id.rfind("wallpaper.formats.", 0) != 0 &&
-                element.id.rfind("wallpaper.card.formats.", 0) != 0 &&
-                element.id != "wallpaper.folder.hint" &&
-                element.id != "wallpaper.card.formats.hint" &&
-                element.id != "wallpaper.empty.support" &&
-                element.id != "wallpaper.empty.body") {
-                DOCTEST_CHECK_MESSAGE(
-                    !contains(element.text, ".mp4") &&
-                        !contains(element.text, ".mov") &&
-                        !contains(element.text, ".m4v"),
-                    "疑似显示文件名: " + element.text);
+            if (id.rfind("wallpaper.formats.", 0) != 0 &&
+                id.rfind("wallpaper.card.formats.", 0) != 0 &&
+                id != "wallpaper.folder.hint" &&
+                id != "wallpaper.card.formats.hint" &&
+                id != "wallpaper.empty.support" &&
+                id != "wallpaper.empty.body") {
+                if (contains(element.text, ".mp4") ||
+                    contains(element.text, ".mov") ||
+                    contains(element.text, ".m4v")) {
+                    violations.push_back("疑似显示文件名: " + element.text);
+                }
             }
         });
+        std::string joined;
+        for (const auto& violation : violations) {
+            if (!joined.empty()) joined += "; ";
+            joined += violation;
+        }
+        DOCTEST_CHECK_MESSAGE(violations.empty(), joined);
     }
     return true;
 })

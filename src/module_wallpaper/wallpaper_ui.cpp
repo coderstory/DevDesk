@@ -591,24 +591,32 @@ void drawIntervalCard(eui::Ui& ui, float x, float w, float h,
             labels.push_back(presentation::rotationIntervalLabel(seconds));
         }
         const float ddW = std::max(0.0f, w - kCardPad * 2.0f);
-        components::dropdown(ui, "wallpaper.interval.dropdown")
+        // 契约：DropdownBuilder 无 .position()（根 stack 走流式布局），wrapper
+        // 只负责把字段盒钉在 (kCardPad, 60)、ddW×40；其 build() 根高 = 字段高
+        // + gap + 弹层高，wrapper 不画背景、content 内不加偏移，弹层几何由组件自管。
+        ui.stack("wallpaper.interval.dropdown.wrap")
             .position(kCardPad, 60.0f)
             .size(ddW, 40.0f)
-            .items(labels)
-            .selected(intervalIndex(snapshot.rotationIntervalSec))
-            .itemHeight(30.0f)
-            .theme(compTheme)
-            .style(style)
-            .open(!disabled && state.intervalOpen)
-            .onChange([onInterval](int index) {
-                if (!onInterval) return;
-                if (index >= 0 &&
-                    index < static_cast<int>(std::size(kRotationChoiceSeconds))) {
-                    onInterval(kRotationChoiceSeconds[index]);
-                }
-            })
-            .onOpenChange([&state, disabled](bool open) {
-                state.intervalOpen = disabled ? false : open;
+            .content([&] {
+                components::dropdown(ui, "wallpaper.interval.dropdown")
+                    .size(ddW, 40.0f)
+                    .items(labels)
+                    .selected(intervalIndex(snapshot.rotationIntervalSec))
+                    .itemHeight(30.0f)
+                    .theme(compTheme)
+                    .style(style)
+                    .open(!disabled && state.intervalOpen)
+                    .onChange([onInterval](int index) {
+                        if (!onInterval) return;
+                        if (index >= 0 &&
+                            index < static_cast<int>(std::size(kRotationChoiceSeconds))) {
+                            onInterval(kRotationChoiceSeconds[index]);
+                        }
+                    })
+                    .onOpenChange([&state, disabled](bool open) {
+                        state.intervalOpen = disabled ? false : open;
+                    })
+                    .build();
             })
             .build();
         if (disabled) {

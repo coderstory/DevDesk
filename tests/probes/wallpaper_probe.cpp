@@ -30,6 +30,7 @@
 #include "core/router.h"
 #include "core/theme.h"
 #include "module_wallpaper/core/presentation.h"
+#include "module_wallpaper/wallpaper_service.h"  // WallpaperSnapshot 完整定义（wallpaper_ui.h 只有前置声明）
 #include "module_wallpaper/wallpaper_ui.h"
 #include "platform/wallpaper_capability.h"
 

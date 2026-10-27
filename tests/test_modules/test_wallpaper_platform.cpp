@@ -190,9 +190,12 @@ REGISTER_TEST(wallpaper_platform_command_line,
     DOCTEST_CHECK_EQ(wp::quoteWindowsCommandLineArg("a b"), std::string("\"a b\""));
     DOCTEST_CHECK_EQ(wp::quoteWindowsCommandLineArg("a b\\"), std::string("\"a b\\\\\""));
     DOCTEST_CHECK_EQ(wp::quoteWindowsCommandLineArg("say\"hi"), std::string("\"say\\\"hi\""));
+    // 契约同 quoteWindowsCommandLineArg 头注（MS 规则：反斜杠只在配对引号前
+    // 翻倍）：路径引号内的非尾部反斜杠保持单份——翻倍会让 mpv 的 argv 收到
+    // 逐字双反斜杠路径。
     DOCTEST_CHECK_EQ(
         wp::buildWindowsCommandLine("C:\\Program Files\\mpv\\mpv.exe", {"--wid=1"}),
-        std::string("\"C:\\\\Program Files\\\\mpv\\\\mpv.exe\" --wid=1"));
+        std::string("\"C:\\Program Files\\mpv\\mpv.exe\" --wid=1"));
     return true;
 })
 
