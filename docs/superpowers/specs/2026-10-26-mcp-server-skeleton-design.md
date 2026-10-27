@@ -376,7 +376,7 @@ using Fetcher = std::function<core::Result<platform::http::Response>(
 行为：
 
 1. 只接受 `http` / `https`；其他 scheme（`file:`、`ftp:` 等）→ `isError=true`，不触网。
-2. **字面地址防护（SSRF）**：URL host 为 `localhost`（大小写不敏感）或字面 IP 命中 `127.0.0.0/8`、`::1`、`10.0.0.0/8`、`172.16.0.0/12`、`192.168.0.0/16`、`169.254.0.0/16` → `isError=true` 并说明原因，不触网；重定向的每一跳目标同样过此检查。DNS 重绑定不在防护内（§14.2 明写接受风险）。
+2. **字面地址防护（SSRF）**：URL host 为 `localhost`（大小写不敏感）或字面 IP 命中 `127.0.0.0/8`、`0.0.0.0/8`、`::1`、`[::ffff:127.0.0.1]`、`10.0.0.0/8`、`172.16.0.0/12`、`192.168.0.0/16`、`169.254.0.0/16`、`fe80::/10`、`fc00::/7` → `isError=true` 并说明原因，不触网；重定向的每一跳目标同样过此检查。DNS 重绑定不在防护内（§14.2 明写接受风险）。
 3. GET，**所有重定向跳合计总时限 10 秒**：每跳 `timeoutMs = min(剩余总时限, 10000)`；总时限耗尽 → `isError=true`。
 4. **手动**跟随 301/302/303/307/308，最多 5 跳（`platform::http::send` 不跟随重定向）：
    - `Location` 缺失 → `isError=true`「重定向缺少 Location」。
@@ -389,7 +389,7 @@ using Fetcher = std::function<core::Result<platform::http::Response>(
    - `text/plain`、`text/markdown`、`application/json`、`text/xml`、`application/xml` → 原文返回；
    - 缺失 Content-Type → 按文本；
    - 其他 → `isError=true`「不支持的内容类型: <值>」。
-8. **编码**：charset 若存在（去引号、大小写不敏感）且不是 `utf-8` / `us-ascii` → `isError=true`「不支持非 UTF-8 编码」，不尝试转码；charset 缺失或为 UTF-8 系 → 先 `platform::utf8::sanitize`（非法字节换 U+FFFD）再转换/返回。所有输出文本（含错误文本、截断附注）返回前必须 sanitize，保证进入 JSON 前是良构 UTF-8。
+8. **编码**：charset 白名单 = `utf-8` / `utf8` / `us-ascii` / `ascii`（去除空白与引号、大小写归一后比较）；白名单外任何显式 charset → `isError=true`「不支持非 UTF-8 编码」，不尝试转码；charset 缺失或白名单内 → 先 `platform::utf8::sanitize`（非法字节换 U+FFFD）再转换/返回。所有输出文本（含错误文本、截断附注）返回前必须 sanitize，保证进入 JSON 前是良构 UTF-8。
 9. 原始响应体超过 2 MiB：先截断到 2 MiB 再转换/返回，并在输出末尾附注「（原始响应超过 2 MiB，已截断）」。
 10. 输出超过 `max_chars`（默认 60000，钳制 1000..200000）：按 UTF-8 边界截断并附注「（已截断到 N 字符）」。
 11. HTML 转换后没有可见文本 → **非错误**，返回「页面未提取到文本（可能是 JS 渲染页面）」。
@@ -463,12 +463,13 @@ bool parseMcpPortInput(const std::string& text, int& out);  // 纯数字且在�
 ### 8.2 设置 → 模块卡「MCP 服务」开关（零高度增量）
 
 - **不新增开关卡、不新增卡高常量**：在现有「模块」卡（`settings.card.modules`）标题行右侧新增 `components::toggleSwitch`，与外观卡「动态背景」同款标题右贴先例；不改 2×2 四格数量/尺寸与 `kModulesCardHeight`。
-- 开关 id `settings.card.modules.mcp`，文案「MCP 服务」；可点击元素 `<id>.track`（probe 按 `.track` 定位）。标题盒按既有做法收窄（`w - 56 - 开关宽`），与开关盒相接不叠印。
+- 开关 id `settings.card.modules.mcp`，文案「MCP 服务」；可点击元素 `<id>.hit`（`EUI-NEO/components/switch.h` 把 onClick 挂在 `.hit`，`.track` 只是视觉轨道；probe 与单测按 `.hit` 定位）。开关盒宽固定 150（130% 字号下「MCP 服务」放得下，与外观卡「动态背景」同款 `kFluidToggleW = 150`）。标题盒按既有做法收窄（`w - 56 - 150`），与开关盒相接不叠印。
 - 开关初值 = `moduleEnabled(cfg_, kModuleIdMcp)`；拨动走既有 `applyModuleEnabled(kModuleIdMcp, on)`，不新增链路。
 
 ### 8.3 设置 → 通用「MCP 服务」配置卡（模块门控）
 
 - 全宽卡，`CardSpec.gate = kModuleIdMcp`，排在代理卡之后：**模块关闭时整卡隐藏**（不建、不占高度）。默认关闭态通用 Tab 零滚动预算逐值保持（现有 0/1/2 条代理警告三档内容高 338/356/372，可用 372）。模块开启后该卡出现、通用 Tab 允许滚动——这是**已裁决的接受项**（§14.3-1），不新增零滚动断言。
+- **滚动内容高缓存键必须签 MCP 门控态**：`settings_module.cpp` 的 `components::scrollView("settings.cards.scroll").contentKey(...)` 现有签名为 `"settings.cards.t" + tab + "." + int(proxyH) + (claudeOn ? "C" : "c") + ".c" + int(pairColW + 0.5f)`；新增 MCP 卡后必须追加 `(mcpOn ? "M" : "m")`（`mcpOn = moduleEnabled(cfg_, kModuleIdMcp)`）。否则「模块 Tab 打开 MCP → 回通用 Tab」会命中旧内容高缓存（默认关闭态 338 高），滚动条不渲染、514 高的开启态内容被裁剪。
 - 元素根 `settings.card.mcp`。卡内行序：
   1. 标题「MCP 服务」（16/22）+ 说明（40/16）。
   2. 端口行：`ui_kit::formRow`，label「MCP 端口」，行 y = `mcpPortRowY()`（= `proxyPortRowY()`，100% = 68）、行高 = `logFieldHeight()`（36）。控件组右锚：输入 96×28（`settings.card.mcp.port.input`，placeholder `8931`）、间距 8、「应用」按钮 64×28（`settings.card.mcp.port.apply`）；剩余宽给说明列。
@@ -488,11 +489,13 @@ inline float mcpCommandRowY() {
 }                                                                // 100% = 128
 inline float mcpCommandRowHeight() { return roundFs(16.0f); }    // 100% = 16
 inline float mcpCardHeightFor() {                                // 100% = 160
-    return mcpCommandRowY() + mcpCommandRowHeight() + roundFs(16.0f);
+    // 下边距下限 16：85% 档 roundFs(16) = 14，不能直接 roundFs(16)
+    return mcpCommandRowY() + mcpCommandRowHeight() + std::max(16.0f, roundFs(16.0f));
 }
 ```
 
 - 85%/100%/130% 三档下保持卡内行盒不重叠、下边距 ≥16；允许在该约束内微调。模块开关卡零高度（§8.2），不参与此卡几何。
+- 卡高注册**不得**用 `CardHeightKind::Fixed + height = 160`：Fixed 分支会再 `roundFs(160)`（85% 档 = 136，下边距只剩 7）。必须在 `CardHeightKind` 新增 `McpCard`，`cardHeight()` 的 switch 直接 `return mcpCardHeightFor();`（照 `ProxyWarnings` 分支写法）。
 - 端口输入是「草稿 + 提交」语义（与代理端口行相同，无独立 PersistOnCommit 抽象）：
   - 输入只改草稿（`mcpPortDraft_`），不落库；
   - 回车或点「应用」→ 解析；空/非法 → 反馈位红字，**不落库**；合法且变化 → 写 `cfg_.mcpPort` → `persist()` → `app::mcp::applyPort(port)`；未变化 → 反馈位三级字「端口未变化」；
@@ -614,7 +617,7 @@ public:
 | 用例组 | 覆盖 | 防的事故 |
 |---|---|---|
 | HTML→MD | h1-h6/p/div/br/hr；嵌套 ul/ol 缩进；blockquote；pre/code；a/img；strong/em；基础 table；命名与数字实体；注释/script/style 剔除；title 兜底；未闭合标签；空白折叠；2 MiB 截断 | 把整页标签噪声喂给模型、转换崩溃、表格/列表结构丢失 |
-| fetch 工具 | mock fetcher：HTML→MD；max_chars 钳制与 UTF-8 边界截断；301 相对 Location 跟随；超过 5 跳报错；非 2xx 文本含状态码；不支持内容类型；缺失 Content-Type 按文本；二进制拒绝；`file:` scheme 不触网；2 MiB 截断附注；空正文提示；charset=gbk → isError；charset 缺失/utf-8 时非法字节被 sanitize；总时限 10 秒（多跳累计）超时 isError；SSRF 字面量（localhost/127.0.0.1/::1/10.x/172.16.x/192.168.x/169.254.x）拒绝且不触网 | 半个 UTF-8 字符导致客户端 400、非 UTF-8 字节混入 JSON、重定向死循环、总时限失控拖慢 stop、本机/内网地址被读、超长正文烧爆上下文 |
+| fetch 工具 | mock fetcher：HTML→MD；max_chars 钳制与 UTF-8 边界截断；301 相对 Location 跟随；超过 5 跳报错；非 2xx 文本含状态码；不支持内容类型；缺失 Content-Type 按文本；二进制拒绝；`file:` scheme 不触网；2 MiB 截断附注；空正文提示；charset=gbk → isError；charset=ascii/utf8 放行；charset 缺失/utf-8 时非法字节被 sanitize；总时限 10 秒（多跳累计）超时 isError；SSRF 字面量（localhost/127.0.0.1/0.0.0.0/::1/[::ffff:127.0.0.1]/10.x/172.16.x/192.168.x/169.254.x/fe80::/fc00::）拒绝且不触网 | 半个 UTF-8 字符导致客户端 400、非 UTF-8 字节混入 JSON、重定向死循环、总时限失控拖慢 stop、本机/内网地址被读、超长正文烧爆上下文 |
 
 一次构建 + 定向测试。
 
@@ -626,7 +629,7 @@ public:
 |---|---|---|
 | 配置 | `parseMcpPortInput` 边界/符号/空格；默认 8931；默认关闭（不在 defaultEnabledModules）；sanitized 越界回落；未知 ID 被过滤；save/load 往返（键数 18） | 旧库缺键读不出、开关被当未知项清掉、端口脏数据 |
 | 桥 | 默认桩 start/applyPort 返回 fail、status 全空、stop 不崩；注入 recording 桩后 start/stop/applyPort/status 路由与计数；注入后复位；`tests/test_main.cpp` 每用例出厂复位清空四槽 | 未装配时设置页崩溃、测试间桩残留串扰 |
-| 设置卡 | 模块卡标题右侧开关存在且默认关（`settings.card.modules.mcp`）；通用 Tab 配置卡在模块关闭时整卡不存在、开启时存在；状态三态文案；端口反馈位四态（空草稿/非法/未变化/成功）；非法端口不落库；命令串端口来源；85%/100%/130% 三档行盒不重叠且下边距 ≥16 | 卡片挤坏现有布局、错误状态不可见、端口脏数据落库、命令端口与实际不一致 |
+| 设置卡 | 模块卡标题右侧开关存在且默认关（点击命中 `settings.card.modules.mcp.hit`，`.track` 仅为视觉轨道）；通用 Tab 配置卡在模块关闭时整卡不存在、开启时存在；状态三态文案；端口反馈位四态（空草稿/非法/未变化/成功）；非法端口不落库；命令串端口来源；85%/100%/130% 三档行盒不重叠且下边距 ≥16 | 卡片挤坏现有布局、错误状态不可见、端口脏数据落库、命令端口与实际不一致 |
 | 服务 | port 0 启动返回实际端口；isRunning/port/status；stop 幂等；restart 换端口；端口占用时 fail + lastError；Host 白名单与 Origin 拒绝；在途工具调用时 stop（fake 工具 sleep 300ms）不崩且等待收敛 | 固定端口冲突、重启后旧监听残留、失败无提示、在途调用被硬杀 |
 
 一次构建 + 定向测试。
@@ -639,7 +642,7 @@ public:
 |---|---|---|
 | 服务级往返（`--check`） | 进程内真 HTTP：initialize（取 session id）→ tools/list → tools/call（`devdesk_server_info`）→ DELETE；未知 session 404；Content-Type 415；GET 405 且 `Allow: POST, DELETE`；OPTIONS 405；通知 202；重启后旧 session 404 | 单测自洽但真实客户端接不上、响应头丢失、方法级拒绝错位 |
 | live 抓取 | 真网页 `web_fetch_markdown`（环境不可用则 skip 并记录） | 假 fetcher 全绿、真外网必炸 |
-| Claude Code 实连（硬门禁） | `--serve` 起服务（stdout 打印 `PORT=<n>` 后阻塞）→ `scripts/run-mcp-live.sh` 用真实 `claude -p --mcp-config <临时json> --allowedTools mcp__devdesk__web_fetch_markdown --output-format text` 发一条明确要求调用抓取工具的提示 → 断言输出含目标网页内容 → 杀 serve；全程临时文件，不碰用户 `~/.claude.json` | 命令文案错、协议方言不兼容、宣称完成但客户端根本连不上 |
+| Claude Code 实连（硬门禁） | `--serve` 起服务（stdout 打印 `PORT=<n>` 后 `fflush(stdout)` 再阻塞）→ `scripts/run-mcp-live.sh` 在**临时空目录**（`mktemp -d`）作为 cwd 运行真实 `claude -p --strict-mcp-config --mcp-config <临时json> --allowedTools mcp__devdesk__web_fetch_markdown --output-format text`（2.1.307+ 已支持 `--strict-mcp-config`，只加载临时配置）发一条明确要求调用抓取工具的提示 → 断言输出含目标网页内容 → 杀 serve；临时 mcp json 的 server key 固定 `devdesk`（与 allowedTools 前缀对齐）；**不设** `CLAUDE_CONFIG_DIR`（认证依赖用户现有环境）；全程临时文件，不碰用户 `~/.claude.json` | 命令文案错、协议方言不兼容、宣称完成但客户端根本连不上 |
 
 一次构建 + 定向测试；最后主会话统一跑全量门禁一次。413 由 `platform::http::Server` 既有用例覆盖，本批不重复。
 
@@ -669,15 +672,16 @@ public:
 | 文件 | 动作 |
 |---|---|
 | `src/core/CMakeLists.txt` | `devdesk_core` 源码加 `mcp_tool.cpp` |
-| `CMakeLists.txt` | `add_subdirectory(src/module_mcp)`；DevDesk 链接 `devdesk_module_mcp`；可执行文件源加 `src/mcp_service_bridge.cpp`；覆盖率清单加 `devdesk_module_mcp` |
-| `tests/CMakeLists.txt` | 登记全部新用例文件（漏登记会触发 TIN-10 的 configure 期 FATAL）；`devdesk_tests` 源加 `src/mcp_service_bridge.cpp`；链接 `devdesk_module_mcp`；probe 公共源集合同步加 `src/mcp_service_bridge.cpp`（否则 settings 模块引用桥符号链接失败）；新增**独立** `if(DEVDESK_BUILD_LIVE_TOOLS)` 块构建 `mcp_live`（Windows/macOS 都编，LABELS live，默认不构建），目标源集含 `live/mcp_live.cpp` + `src/mcp_service_bridge.cpp`（settings/app_assembly 引用其符号）；现有 `if(... AND UNIX)` 的 github_sync/agent 段不动 |
+| `CMakeLists.txt` | `add_subdirectory(src/module_mcp)`；DevDesk 链接 `devdesk_module_mcp`；可执行文件源加 `src/mcp_service_bridge.cpp`；覆盖率清单加 `devdesk_module_mcp`；`DevDesk` 的 `target_include_directories` 补 `src/module_mcp`（与其它 module_* 同款） |
+| `tests/CMakeLists.txt` | 登记全部新用例文件（漏登记会触发 TIN-10 的 configure 期 FATAL）；`devdesk_tests` 源加 `src/mcp_service_bridge.cpp`；链接 `devdesk_module_mcp`；`devdesk_tests` 与 probe 公共源集的 include 目录补 `src/module_mcp`；probe 公共源集合同步加 `src/mcp_service_bridge.cpp`（否则 settings 模块引用桥符号链接失败）；新增**独立** `if(DEVDESK_BUILD_LIVE_TOOLS)` 块构建 `mcp_live`（Windows/macOS 都编，LABELS live，默认不构建），目标源集含 `live/mcp_live.cpp` + `src/mcp_service_bridge.cpp`（settings/app_assembly 引用其符号）；现有 `if(... AND UNIX)` 的 `github_sync_live` 与 `agent_live`（均链接 `devdesk_module_settings`）源集**各补** `src/mcp_service_bridge.cpp`——settings_module.cpp/app_assembly.cpp 新增 `app::mcp::*` 引用后缺桥符号会 undefined |
+| `scripts/check-windows-cross-compile.sh` | `build_incs()` 增加 `-I "${ROOT}/src/module_mcp"`（硬编码 include 清单，不补则 module_mcp 源被记成编不过） |
 | `tests/test_main.cpp` | 每用例出厂复位新增桥复位：`app::mcp::setHandlers(nullptr, nullptr, nullptr, nullptr)`（四槽全清，防用例桩残留串扰） |
 | `src/main.cpp` | 注册内置工具、注入桥、按开关启动、atexit stop |
 | `src/app_assembly.cpp` | `dispatchModuleToggle` 增加 mcp 特例（置于注册表遍历前） |
 | `src/module_settings/settings_config.h/.cpp` | mcp 模块 ID、端口字段与解析、合法 ID 清单、sanitized、save/load 新键（17→18） |
-| `src/module_settings/settings_ui_logic.h` | MCP 配置卡行几何与 `mcpCardHeightFor()`（由 `proxyPortRowY()`/`logFieldHeight()` 求和，不写死）；不新增开关卡常量 |
-| `src/module_settings/settings_ui_cards.h/.cpp` | `drawModulesCard` 标题右侧加 MCP 开关；`drawMcpCard`；`SettingsCardsIn`/`SettingsCardActions` 增加 MCP 字段与回调——新字段一律**追加末尾**（带默认值，兼容既有位置初始化） |
-| `src/module_settings/settings_module.cpp` | 通用 Tab 配置卡登记（`gate = kModuleIdMcp`）；模块卡内开关接线（不新增卡）；`mcpPortDraft_`；`applyMcpPort`；Ctrl+S 同段提交；卡内反馈位状态；桥状态快照刷新 |
+| `src/module_settings/settings_ui_logic.h` | MCP 配置卡行几何与 `mcpCardHeightFor()`（由 `proxyPortRowY()`/`logFieldHeight()` 求和，不写死）；`mcpCardHeightFor()` 的下边距用 `std::max(16.0f, roundFs(16.0f))`（85% 档 `roundFs(16)=14` 不满足 ≥16）；不新增开关卡常量 |
+| `src/module_settings/settings_ui_cards.h/.cpp` | `drawModulesCard` 标题右侧加 MCP 开关（盒宽 150、点击命中 `.hit`）；`drawMcpCard`；`SettingsCardsIn`/`SettingsCardActions` 增加 MCP 字段与回调——新字段一律**追加末尾**（带默认值，兼容既有位置初始化） |
+| `src/module_settings/settings_module.cpp` | 通用 Tab 配置卡登记（`gate = kModuleIdMcp`）；模块卡内开关接线（不新增卡）；`mcpPortDraft_`；`applyMcpPort`；Ctrl+S 同段提交；卡内反馈位状态；桥状态快照刷新；`CardHeightKind` 增加 `McpCard`（枚举在本文件匿名命名空间），`cardHeight()` 的 switch 增加 `case CardHeightKind::McpCard: return mcpCardHeightFor();`（照 `ProxyWarnings`）；`scrollView("settings.cards.scroll").contentKey(...)` 加入 `(mcpOn ? "M" : "m")` 签名 |
 | `README.md` | 能力清单与模块开关口径同步 |
 
 不动：`src/app_registry.h`（无页面行）、`src/core/module_interface.h`（无新 PageId）、`src/platform/*`（无新平台实现）、EUI-NEO。
@@ -701,6 +705,7 @@ public:
 - 0.5.0 安装包与真机 UAT 仍是项目总目标，不在本轮。
 - macOS 仅 CI 编译 + 单测，无真机验证；真实客户端实连在 Windows 开发机完成。
 - 真实 Claude Code 实连是**完成硬门禁**，不是可选项；做不到则本轮不得宣称完成。
+- 硬门禁的固定执行口径：`claude -p --strict-mcp-config` 在临时空目录 cwd 运行，仅加载临时 `--mcp-config`（server key 固定 `devdesk`）；`--serve` 输出 `PORT=<n>` 后 `fflush(stdout)`；不设 `CLAUDE_CONFIG_DIR`，认证沿用用户现有环境。
 
 ## 14. 未验证项与风险 / 待确认
 
