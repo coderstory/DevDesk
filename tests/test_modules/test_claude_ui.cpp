@@ -3271,7 +3271,7 @@ REGISTER_TEST(claude_form_wechat_colors,
 // WeChat 化；非激活 Profile 的详情不再挂「未激活」徽章（选中语义已由列表
 // 绿圈白勾承担）。
 REGISTER_TEST(claude_detail_wechat_and_no_inactive_badge,
-              "claude_module: 详情 env/高级/最近调用面 WeChat 化 + 未激活徽章已删", {
+              "claude_module: 详情 env 面 WeChat 化 + 未激活徽章已删", {
     TestEnv env;
     auto a = env.svc->createProfile("激活站", "https://act.example.com",
                                     "sk-ant-dt-0001", "");
@@ -3381,7 +3381,7 @@ REGISTER_TEST(claude_ui_dialog_frame_containment,
     DOCTEST_CHECK(click("claude.profiles.new.bg"));
     DOCTEST_CHECK(check("claude.dialog.form.panel", "claude.dialog.form.title", "P4 表单"));
 
-    // P8 高级 env 页（同 panel，切 tab 后内容面不同）
+    // P8 环境变量页（同 panel，切 tab 后内容面不同）
     DOCTEST_CHECK(click("claude.form.tabs.2.hit"));
     DOCTEST_CHECK(check("claude.dialog.form.panel", "claude.dialog.form.title", "P8 编辑 env"));
     click("claude.dialog.form.backdrop");   // 关表单

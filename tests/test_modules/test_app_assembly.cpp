@@ -876,7 +876,7 @@ void assemblyHandlerStub(bool autoStart) {
 // 全局态还原守卫：析构 = stopProxy + setGlobal(原值) + handler 复位 nullptr +
 // clearAppNotice + 桩服务销毁（进程全局态全还原，含 fail-fast 早退路径）
 // 声明序契约：guard **必须晚于** TestDb 声明（析构逆序 ⇒ 服务先于库死亡）——
-// ClaudeService 持 SqliteDb& 以及经它构造的 CallLogStore / ProfileRepository，
+// ClaudeService 持 SqliteDb& 以及经它构造的 ProfileRepository，
 // 库先关再停服务 = 悬垂引用。
 struct LazyAssemblyGuard {
     LazyAssemblyGuard() = default;  // 声明 deleted 拷贝会抑制隐式默认构造，显式补回
@@ -933,7 +933,7 @@ REGISTER_TEST(assembly_dispatch_claude_lazy_assemble_autostart,
     resetLazyAssemblyLedger();
     // 声明序：TestDb **必须**在 LazyAssemblyGuard 之前声明——作用域退出按声明逆序析构，
     // 守卫析构里的 stopProxy / 服务 reset 需要 DB 还活着（ClaudeService 持 SqliteDb& 引用，
-    // CallLogStore / ProfileRepository 经它构造）。反过来就是服务在「库已关闭」之后才停机：
+    // ProfileRepository 经它构造）。反过来就是服务在「库已关闭」之后才停机：
     // 潜伏 UAF，只在收尾处炸成高调试成本 flake。
     test_support::TestDb asmDb("assembly_lazy", "autostart_db");
     LazyAssemblyGuard guard;

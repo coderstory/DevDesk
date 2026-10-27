@@ -156,7 +156,7 @@ private:
 // ---------- 生产凭据密文搬运（生产库只读一次；列值原样，绝不打印） ----------
 struct ProdCredential {
     bool ok = false;
-    std::string baseUrl, model, modelsConfig, authField, dialect;
+    std::string baseUrl, model, modelsConfig, authField;
     std::string keyEnc, keyCheck, keyHint;
 };
 
@@ -174,7 +174,7 @@ ProdCredential readProdCredential() {
         return out;
     }
     const char* sql =
-        "SELECT base_url, model, models_config, auth_field, dialect_override, "
+        "SELECT base_url, model, models_config, auth_field, "
         "api_key_encrypted, api_key_check, api_key_hint "
         "FROM claude_profiles WHERE is_active=1 AND api_key_encrypted != '' "
         "LIMIT 1";
@@ -191,10 +191,9 @@ ProdCredential readProdCredential() {
         out.model = col(1);
         out.modelsConfig = col(2);
         out.authField = col(3);
-        out.dialect = col(4);
-        out.keyEnc = col(5);
-        out.keyCheck = col(6);
-        out.keyHint = col(7);
+        out.keyEnc = col(4);
+        out.keyCheck = col(5);
+        out.keyHint = col(6);
         out.ok = !out.baseUrl.empty() && !out.keyEnc.empty();
         std::cerr << "agent_e2e_probe: 生产凭据列已原样读出（不打印内容；"
                   << "baseUrl/keyEnc 列长度 " << out.baseUrl.size() << "/"

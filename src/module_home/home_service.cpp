@@ -267,7 +267,7 @@ core::Result<std::vector<int64_t>> HomeService::getTodayHourlyTokenTotals(
 
 core::Result<LastCallRate> HomeService::getLastCallRate() {
     // 「成功」谓词与 core/call_rate.h 的 isSuccessful 同口径（2xx 且 output_tokens > 0），
-    // 两处必须一起改；排序与 recentCalls 一致。
+    // 两处必须一起改；按 started_at 倒序。
     auto prep = db_.prepare(
         "SELECT status_code, output_tokens, latency_ms, started_at "
         "FROM claude_call_logs "

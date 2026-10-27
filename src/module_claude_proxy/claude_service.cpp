@@ -131,7 +131,7 @@ core::Result<Profile> ClaudeService::createProfile(const std::string& name,
                                                    bool activateIfNoneActive,
                                                    const std::string& authField) {
     // 策略尾：无激活 Profile 时自动激活（经 setActiveProfile，代理运行中会同步
-    // 接管 settings.json）。失败不回滚创建，只 WARN（UI 走「点击启用」文案）。
+    // 接管 settings.json）。失败不回滚创建，只 WARN（UI 走「设为当前」文案）。
     auto created = profileRepository_.createProfile(
         name, baseUrl, apiKey, model, authField);
     if (created.isFail()) {
