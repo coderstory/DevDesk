@@ -17,7 +17,8 @@
 | D dream + 验证 | 并行 agent | ⬜ | `dream.py`、验证脚本与报告；dream_proposals 数据 | 待填：merge/promote/stale 提案数与抽样；Recall@K / MRR（30~50 查询集） |
 | E 集成收口 | 主会话 | ⬜ | 端到端跑通记录、参数定稿、README 更新 | 待填：真实数据全链路一次跑通；二次摄取幂等；所有工具可调用 |
 | F 双独立审计 | 独立审计 agent | ⬜ | 两份独立审计报告 + 问题清单 | 待填：审计结论、修复闭环、与设计文档一致性核对 |
-| G 与 memcpp 参数对齐（待出数字） | 待定 | ⬜ | 四值判定阈值、L1/L2/L3 分层验证结论、三池半衰期（90/7/2 天）实测参数 | 待填：SKIP/ADD 阈值、L2 检索 Recall/MRR、stale 判定倍数 |
+| G 与 memcpp 参数对齐（待出数字） | 待定 | 🔵 | 四值判定阈值、L1/L2/L3 分层验证结论、三池半衰期（90/7/2 天）实测参数 | 见 `docs/superpowers/research/2026-10-27-memcpp-feasibility.md`：L2 检索 Recall@5=1.00、混合 MRR=0.90（27 条记忆、15 题，小样本）；SKIP/ADD 阈值与 stale 倍数未标定，方案已建议写入侧只 ADD + 后台提案 |
+| H 可行性论证文档 | 文档 agent | ✅ | `docs/superpowers/research/2026-10-27-memcpp-feasibility.md` | 总判定「有条件可行」；7 项方案修改 + 7 条证伪门槛 + 14 项未验证 |
 
 ## 依赖与交接
 
