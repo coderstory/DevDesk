@@ -121,6 +121,8 @@ add_executable(devdesk_tests
     test_modules/test_app_assembly.cpp
     test_modules/test_module_toggle_bridge.cpp
     test_modules/test_wallpaper_module.cpp
+    # P2 纯逻辑 + P4 服务骨架：设置/轮换/让路/片库/文案/服务接线
+    test_modules/test_wallpaper_core.cpp
     test_modules/test_splash_contract.cpp
 )
 

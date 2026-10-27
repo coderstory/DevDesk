@@ -4,6 +4,30 @@
 add_library(devdesk_module_wallpaper STATIC
     wallpaper_module.cpp
     wallpaper_module.h
+    # 服务骨架（扫描/轮换/让路/快照）；UI 批次只消费 wallpaper_service.h 的快照与命令。
+    wallpaper_service.cpp
+    wallpaper_service.h
+    # 纯逻辑层：零 Win32 / EUI-NEO 依赖，跨平台单测。
+    core/model.h
+    core/settings.cpp
+    core/settings.h
+    core/rotation.cpp
+    core/rotation.h
+    core/arbiter.cpp
+    core/arbiter.h
+    core/availability.cpp
+    core/availability.h
+    core/video_library.cpp
+    core/video_library.h
+    core/image_library.cpp
+    core/image_library.h
+    core/presentation.cpp
+    core/presentation.h
+    core/folder_policy.cpp
+    core/folder_policy.h
+    # 播放后端接口；本批只有 Null 实现（P3 接 mpv）。
+    platform/player_backend.h
+    platform/player_null.cpp
 )
 
 devdesk_apply_warnings(devdesk_module_wallpaper)

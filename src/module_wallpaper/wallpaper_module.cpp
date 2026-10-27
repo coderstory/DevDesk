@@ -20,13 +20,15 @@ std::string WallpaperModule::shortName() const { return "壁纸"; }
 // fa-image (U+F03E) 的 UTF-8 字节；须与 app_registry 表行 iconGlyph 列同值。
 std::string WallpaperModule::iconGlyph() const { return "\xEF\x80\xBE"; }
 
-// 本阶段无引擎/线程：钩子只留日志，后续版本在此接入播放生命周期。
+// 生命周期结构契约：onStart 起服务（设置加载 + 后台扫描 + 计时），onStop 必须先收服务。
 void WallpaperModule::onStart() {
-    LOG_INFO("壁纸模块已启用：本版本仅页面骨架，无播放引擎");
+    LOG_INFO("壁纸模块已启用：启动服务骨架（扫描/轮换；播放后端为 Null）");
+    service_.start();
 }
 
 void WallpaperModule::onStop() {
-    LOG_INFO("壁纸模块已停止（本版本无播放引擎）");
+    LOG_INFO("壁纸模块已停止：收束服务线程");
+    service_.stop();
 }
 
 void WallpaperModule::compose(eui::Ui& ui, const eui::Screen& screen) {
