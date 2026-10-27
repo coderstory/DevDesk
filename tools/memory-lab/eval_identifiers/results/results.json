@@ -1,5 +1,5 @@
 {
- "generated_at": "2026-10-27T13:47:32",
+ "generated_at": "2026-10-27T14:07:21",
  "sqlite": "3.50.4",
  "dataset": {
   "memories": 24,
@@ -13,6 +13,13 @@
   "error_code",
   "abbrev"
  ],
+ "fallback_semantics": "P0 规格书 §2.4(:195)：FTS 0 行触发，LIKE 各 token OR，按命中 token 数降序",
+ "fallback_triggers": 0,
+ "dataset_overlap": {
+  "n": 64,
+  "literal_substring": 21,
+  "all_tokens_in_gold": 23
+ },
  "overall": {
   "bigram_only": {
    "recall_at_5": 1.0,
@@ -1562,7 +1569,8 @@
    ],
    "mode": "bigram_like",
    "rank": 0,
-   "hit_at_5": true
+   "hit_at_5": true,
+   "fallback_used": false
   },
   {
    "id": "i02",
@@ -1573,7 +1581,8 @@
    ],
    "mode": "bigram_like",
    "rank": 0,
-   "hit_at_5": true
+   "hit_at_5": true,
+   "fallback_used": false
   },
   {
    "id": "i03",
@@ -1584,7 +1593,8 @@
    ],
    "mode": "bigram_like",
    "rank": 0,
-   "hit_at_5": true
+   "hit_at_5": true,
+   "fallback_used": false
   },
   {
    "id": "i04",
@@ -1595,7 +1605,8 @@
    ],
    "mode": "bigram_like",
    "rank": 0,
-   "hit_at_5": true
+   "hit_at_5": true,
+   "fallback_used": false
   },
   {
    "id": "i05",
@@ -1606,7 +1617,8 @@
    ],
    "mode": "bigram_like",
    "rank": 0,
-   "hit_at_5": true
+   "hit_at_5": true,
+   "fallback_used": false
   },
   {
    "id": "i06",
@@ -1617,7 +1629,8 @@
    ],
    "mode": "bigram_like",
    "rank": 0,
-   "hit_at_5": true
+   "hit_at_5": true,
+   "fallback_used": false
   },
   {
    "id": "i07",
@@ -1628,7 +1641,8 @@
    ],
    "mode": "bigram_like",
    "rank": 0,
-   "hit_at_5": true
+   "hit_at_5": true,
+   "fallback_used": false
   },
   {
    "id": "i08",
@@ -1639,7 +1653,8 @@
    ],
    "mode": "bigram_like",
    "rank": 0,
-   "hit_at_5": true
+   "hit_at_5": true,
+   "fallback_used": false
   },
   {
    "id": "i09",
@@ -1650,7 +1665,8 @@
    ],
    "mode": "bigram_like",
    "rank": 0,
-   "hit_at_5": true
+   "hit_at_5": true,
+   "fallback_used": false
   },
   {
    "id": "i10",
@@ -1661,7 +1677,8 @@
    ],
    "mode": "bigram_like",
    "rank": 0,
-   "hit_at_5": true
+   "hit_at_5": true,
+   "fallback_used": false
   },
   {
    "id": "i11",
@@ -1672,7 +1689,8 @@
    ],
    "mode": "bigram_like",
    "rank": 0,
-   "hit_at_5": true
+   "hit_at_5": true,
+   "fallback_used": false
   },
   {
    "id": "i12",
@@ -1683,7 +1701,8 @@
    ],
    "mode": "bigram_like",
    "rank": 0,
-   "hit_at_5": true
+   "hit_at_5": true,
+   "fallback_used": false
   },
   {
    "id": "i13",
@@ -1694,7 +1713,8 @@
    ],
    "mode": "bigram_like",
    "rank": 0,
-   "hit_at_5": true
+   "hit_at_5": true,
+   "fallback_used": false
   },
   {
    "id": "i14",
@@ -1705,7 +1725,8 @@
    ],
    "mode": "bigram_like",
    "rank": 0,
-   "hit_at_5": true
+   "hit_at_5": true,
+   "fallback_used": false
   },
   {
    "id": "i15",
@@ -1716,7 +1737,8 @@
    ],
    "mode": "bigram_like",
    "rank": 0,
-   "hit_at_5": true
+   "hit_at_5": true,
+   "fallback_used": false
   },
   {
    "id": "i16",
@@ -1727,7 +1749,8 @@
    ],
    "mode": "bigram_like",
    "rank": 0,
-   "hit_at_5": true
+   "hit_at_5": true,
+   "fallback_used": false
   },
   {
    "id": "i17",
@@ -1738,7 +1761,8 @@
    ],
    "mode": "bigram_like",
    "rank": 0,
-   "hit_at_5": true
+   "hit_at_5": true,
+   "fallback_used": false
   },
   {
    "id": "i18",
@@ -1749,7 +1773,8 @@
    ],
    "mode": "bigram_like",
    "rank": 0,
-   "hit_at_5": true
+   "hit_at_5": true,
+   "fallback_used": false
   },
   {
    "id": "i19",
@@ -1760,7 +1785,8 @@
    ],
    "mode": "bigram_like",
    "rank": 0,
-   "hit_at_5": true
+   "hit_at_5": true,
+   "fallback_used": false
   },
   {
    "id": "i20",
@@ -1771,7 +1797,8 @@
    ],
    "mode": "bigram_like",
    "rank": 0,
-   "hit_at_5": true
+   "hit_at_5": true,
+   "fallback_used": false
   },
   {
    "id": "i21",
@@ -1782,7 +1809,8 @@
    ],
    "mode": "bigram_like",
    "rank": 0,
-   "hit_at_5": true
+   "hit_at_5": true,
+   "fallback_used": false
   },
   {
    "id": "i22",
@@ -1793,7 +1821,8 @@
    ],
    "mode": "bigram_like",
    "rank": 0,
-   "hit_at_5": true
+   "hit_at_5": true,
+   "fallback_used": false
   },
   {
    "id": "i23",
@@ -1804,7 +1833,8 @@
    ],
    "mode": "bigram_like",
    "rank": 0,
-   "hit_at_5": true
+   "hit_at_5": true,
+   "fallback_used": false
   },
   {
    "id": "i24",
@@ -1815,7 +1845,8 @@
    ],
    "mode": "bigram_like",
    "rank": 0,
-   "hit_at_5": true
+   "hit_at_5": true,
+   "fallback_used": false
   },
   {
    "id": "i25",
@@ -1826,7 +1857,8 @@
    ],
    "mode": "bigram_like",
    "rank": 0,
-   "hit_at_5": true
+   "hit_at_5": true,
+   "fallback_used": false
   },
   {
    "id": "i26",
@@ -1837,7 +1869,8 @@
    ],
    "mode": "bigram_like",
    "rank": 0,
-   "hit_at_5": true
+   "hit_at_5": true,
+   "fallback_used": false
   },
   {
    "id": "i27",
@@ -1848,7 +1881,8 @@
    ],
    "mode": "bigram_like",
    "rank": 0,
-   "hit_at_5": true
+   "hit_at_5": true,
+   "fallback_used": false
   },
   {
    "id": "i28",
@@ -1859,7 +1893,8 @@
    ],
    "mode": "bigram_like",
    "rank": 0,
-   "hit_at_5": true
+   "hit_at_5": true,
+   "fallback_used": false
   },
   {
    "id": "i29",
@@ -1870,7 +1905,8 @@
    ],
    "mode": "bigram_like",
    "rank": 0,
-   "hit_at_5": true
+   "hit_at_5": true,
+   "fallback_used": false
   },
   {
    "id": "i30",
@@ -1881,7 +1917,8 @@
    ],
    "mode": "bigram_like",
    "rank": 0,
-   "hit_at_5": true
+   "hit_at_5": true,
+   "fallback_used": false
   },
   {
    "id": "i31",
@@ -1892,7 +1929,8 @@
    ],
    "mode": "bigram_like",
    "rank": 0,
-   "hit_at_5": true
+   "hit_at_5": true,
+   "fallback_used": false
   },
   {
    "id": "i32",
@@ -1903,7 +1941,8 @@
    ],
    "mode": "bigram_like",
    "rank": 0,
-   "hit_at_5": true
+   "hit_at_5": true,
+   "fallback_used": false
   },
   {
    "id": "i33",
@@ -1914,7 +1953,8 @@
    ],
    "mode": "bigram_like",
    "rank": 0,
-   "hit_at_5": true
+   "hit_at_5": true,
+   "fallback_used": false
   },
   {
    "id": "i34",
@@ -1926,7 +1966,8 @@
    ],
    "mode": "bigram_like",
    "rank": 0,
-   "hit_at_5": true
+   "hit_at_5": true,
+   "fallback_used": false
   },
   {
    "id": "i35",
@@ -1938,7 +1979,8 @@
    ],
    "mode": "bigram_like",
    "rank": 0,
-   "hit_at_5": true
+   "hit_at_5": true,
+   "fallback_used": false
   },
   {
    "id": "i36",
@@ -1950,7 +1992,8 @@
    ],
    "mode": "bigram_like",
    "rank": 0,
-   "hit_at_5": true
+   "hit_at_5": true,
+   "fallback_used": false
   },
   {
    "id": "i37",
@@ -1962,7 +2005,8 @@
    ],
    "mode": "bigram_like",
    "rank": 0,
-   "hit_at_5": true
+   "hit_at_5": true,
+   "fallback_used": false
   },
   {
    "id": "i38",
@@ -1974,7 +2018,8 @@
    ],
    "mode": "bigram_like",
    "rank": 0,
-   "hit_at_5": true
+   "hit_at_5": true,
+   "fallback_used": false
   },
   {
    "id": "i39",
@@ -1985,7 +2030,8 @@
    ],
    "mode": "bigram_like",
    "rank": 0,
-   "hit_at_5": true
+   "hit_at_5": true,
+   "fallback_used": false
   },
   {
    "id": "i40",
@@ -1997,7 +2043,8 @@
    ],
    "mode": "bigram_like",
    "rank": 0,
-   "hit_at_5": true
+   "hit_at_5": true,
+   "fallback_used": false
   },
   {
    "id": "i41",
@@ -2009,7 +2056,8 @@
    ],
    "mode": "bigram_like",
    "rank": 1,
-   "hit_at_5": true
+   "hit_at_5": true,
+   "fallback_used": false
   },
   {
    "id": "i42",
@@ -2021,7 +2069,8 @@
    ],
    "mode": "bigram_like",
    "rank": 0,
-   "hit_at_5": true
+   "hit_at_5": true,
+   "fallback_used": false
   },
   {
    "id": "i43",
@@ -2032,7 +2081,8 @@
    ],
    "mode": "bigram_like",
    "rank": 0,
-   "hit_at_5": true
+   "hit_at_5": true,
+   "fallback_used": false
   },
   {
    "id": "i44",
@@ -2043,7 +2093,8 @@
    ],
    "mode": "bigram_like",
    "rank": 0,
-   "hit_at_5": true
+   "hit_at_5": true,
+   "fallback_used": false
   },
   {
    "id": "i45",
@@ -2055,7 +2106,8 @@
    ],
    "mode": "bigram_like",
    "rank": 0,
-   "hit_at_5": true
+   "hit_at_5": true,
+   "fallback_used": false
   },
   {
    "id": "i46",
@@ -2066,7 +2118,8 @@
    ],
    "mode": "bigram_like",
    "rank": 0,
-   "hit_at_5": true
+   "hit_at_5": true,
+   "fallback_used": false
   },
   {
    "id": "i47",
@@ -2077,7 +2130,8 @@
    ],
    "mode": "bigram_like",
    "rank": 0,
-   "hit_at_5": true
+   "hit_at_5": true,
+   "fallback_used": false
   },
   {
    "id": "i48",
@@ -2089,7 +2143,8 @@
    ],
    "mode": "bigram_like",
    "rank": 0,
-   "hit_at_5": true
+   "hit_at_5": true,
+   "fallback_used": false
   },
   {
    "id": "i49",
@@ -2100,7 +2155,8 @@
    ],
    "mode": "bigram_like",
    "rank": 0,
-   "hit_at_5": true
+   "hit_at_5": true,
+   "fallback_used": false
   },
   {
    "id": "i50",
@@ -2111,7 +2167,8 @@
    ],
    "mode": "bigram_like",
    "rank": 0,
-   "hit_at_5": true
+   "hit_at_5": true,
+   "fallback_used": false
   },
   {
    "id": "i51",
@@ -2122,7 +2179,8 @@
    ],
    "mode": "bigram_like",
    "rank": 0,
-   "hit_at_5": true
+   "hit_at_5": true,
+   "fallback_used": false
   },
   {
    "id": "i52",
@@ -2133,7 +2191,8 @@
    ],
    "mode": "bigram_like",
    "rank": 0,
-   "hit_at_5": true
+   "hit_at_5": true,
+   "fallback_used": false
   },
   {
    "id": "i53",
@@ -2144,7 +2203,8 @@
    ],
    "mode": "bigram_like",
    "rank": 0,
-   "hit_at_5": true
+   "hit_at_5": true,
+   "fallback_used": false
   },
   {
    "id": "i54",
@@ -2155,7 +2215,8 @@
    ],
    "mode": "bigram_like",
    "rank": 0,
-   "hit_at_5": true
+   "hit_at_5": true,
+   "fallback_used": false
   },
   {
    "id": "i55",
@@ -2167,7 +2228,8 @@
    ],
    "mode": "bigram_like",
    "rank": 0,
-   "hit_at_5": true
+   "hit_at_5": true,
+   "fallback_used": false
   },
   {
    "id": "i56",
@@ -2179,7 +2241,8 @@
    ],
    "mode": "bigram_like",
    "rank": 0,
-   "hit_at_5": true
+   "hit_at_5": true,
+   "fallback_used": false
   },
   {
    "id": "i57",
@@ -2191,7 +2254,8 @@
    ],
    "mode": "bigram_like",
    "rank": 0,
-   "hit_at_5": true
+   "hit_at_5": true,
+   "fallback_used": false
   },
   {
    "id": "i58",
@@ -2202,7 +2266,8 @@
    ],
    "mode": "bigram_like",
    "rank": 0,
-   "hit_at_5": true
+   "hit_at_5": true,
+   "fallback_used": false
   },
   {
    "id": "i59",
@@ -2214,7 +2279,8 @@
    ],
    "mode": "bigram_like",
    "rank": 0,
-   "hit_at_5": true
+   "hit_at_5": true,
+   "fallback_used": false
   },
   {
    "id": "i60",
@@ -2226,7 +2292,8 @@
    ],
    "mode": "bigram_like",
    "rank": 0,
-   "hit_at_5": true
+   "hit_at_5": true,
+   "fallback_used": false
   },
   {
    "id": "i61",
@@ -2237,7 +2304,8 @@
    ],
    "mode": "bigram_like",
    "rank": 0,
-   "hit_at_5": true
+   "hit_at_5": true,
+   "fallback_used": false
   },
   {
    "id": "i62",
@@ -2248,7 +2316,8 @@
    ],
    "mode": "bigram_like",
    "rank": 0,
-   "hit_at_5": true
+   "hit_at_5": true,
+   "fallback_used": false
   },
   {
    "id": "i63",
@@ -2259,7 +2328,8 @@
    ],
    "mode": "bigram_like",
    "rank": 0,
-   "hit_at_5": true
+   "hit_at_5": true,
+   "fallback_used": false
   },
   {
    "id": "i64",
@@ -2270,7 +2340,8 @@
    ],
    "mode": "bigram_like",
    "rank": 0,
-   "hit_at_5": true
+   "hit_at_5": true,
+   "fallback_used": false
   }
  ]
 }
