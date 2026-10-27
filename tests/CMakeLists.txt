@@ -22,6 +22,7 @@ add_executable(devdesk_tests
     test_core/test_window_layout.cpp
     test_core/test_window_geometry.cpp
     test_core/test_tool_registry.cpp
+    test_core/test_mcp_tool_registry.cpp
     test_core/test_file_perms.cpp
     test_core/test_atomic_write.cpp
     test_core/test_db_backup.cpp
@@ -114,6 +115,9 @@ add_executable(devdesk_tests
     test_modules/test_font_em_layout.cpp
     test_modules/test_module_gating.cpp
     test_modules/test_menu_beautify.cpp
+    test_modules/test_mcp_session_store.cpp
+    test_modules/test_mcp_protocol.cpp
+    test_modules/test_mcp_tools_builtin.cpp
     test_modules/test_tray_dynamic.cpp
     test_modules/test_theme_hierarchy.cpp
     test_modules/test_editor_font.cpp
@@ -208,6 +212,7 @@ target_include_directories(devdesk_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/tests
     ${CMAKE_SOURCE_DIR}/src/module_claude_proxy
     ${CMAKE_SOURCE_DIR}/src/module_settings
+    ${CMAKE_SOURCE_DIR}/src/module_mcp
 )
 
 # 确保 doctest.h 可被 #include "doctest.h" 找到
@@ -221,6 +226,7 @@ target_link_libraries(devdesk_tests PRIVATE
     devdesk_module_settings
     devdesk_module_about
     devdesk_module_wallpaper
+    devdesk_module_mcp
 )
 
 # 确保 doctest.h 可被 #include "doctest.h" 找到
