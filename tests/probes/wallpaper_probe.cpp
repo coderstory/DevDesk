@@ -192,6 +192,11 @@ int main(int argc, char* argv[]) {
     StubPageModule about(::core::PageId::About, "关于");
     std::unique_ptr<::core::Module> settings(create_settings_module());
     std::unique_ptr<::core::Module> wallpaper;  // dispatch on 时才建实例
+    // UI 截图桩与生产 WallpaperModule 同生命周期（main 末尾才析构）：compose
+    // 闭包按引用捕获其 state，runtime 上一帧元素树在下一帧 recompose 前仍持有
+    // [&state]——桩若先于 runtime 析构，析构窗口内任何排队输入都会打在已析构
+    // state 上（UAF，审计 F4）。
+    std::unique_ptr<WallpaperUiStubModule> uiStub;
 
     ::core::Router router;
     core::dsl::Runtime runtime;
@@ -310,6 +315,7 @@ int main(int argc, char* argv[]) {
         ::core::registerAppRouter(nullptr);
         g_wallpaper = nullptr;
         wallpaper.reset();
+        uiStub.reset();
         runtime.shutdown(false);
         ::core::releaseInputQueue(window);
         ::core::window::destroyWindow(window);
@@ -489,8 +495,8 @@ int main(int argc, char* argv[]) {
         check(!dirEc, "§3c 截图目录应可创建: " + shotsDir);
 
         // 换页面实例为 UI 桩（真元素树、假快照）；服务线程已随上一轮 off 收束。
-        std::unique_ptr<WallpaperUiStubModule> uiStub =
-            std::make_unique<WallpaperUiStubModule>();
+        // 桩本体在 main 作用域（见声明处不变量），此处只赋值。
+        uiStub = std::make_unique<WallpaperUiStubModule>();
         app::assembly::dispatchModuleToggle(module::settings::kModuleIdWallpaper,
                                             false, router, &lookupForProbe);
         g_wallpaper = uiStub.get();

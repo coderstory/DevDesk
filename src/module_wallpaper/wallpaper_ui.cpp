@@ -20,7 +20,8 @@
 //       wallpaper.holds.title / .reason.0..3 / .battery（.battery.track）
 //   片库页：
 //     wallpaper.card.folder           文件夹卡（.path / .select / .rescan）
-//       wallpaper.folder.stat.videos；图片三格 .stat.total/.passing/.filtered（含 .value/.label）
+//       wallpaper.folder.stat.videos；图片一格 .stat.total（参与/低于两格不建：
+//       像素档过滤未接入，imageFiltered 恒 0，画出来即宣称已过滤）
 //       wallpaper.folder.scanning（扫描中）
 //     wallpaper.card.formats          视频格式卡
 //     wallpaper.card.resolution / .fit 图片分辨率 + 适配（一行两卡）
@@ -29,7 +30,8 @@
 //   页面左右 32、底部 32、页头 40、Tab 40、区块间距 16；卡内 20；卡圆角 12；
 //   页标题 24/700、卡标题 15/600、正文 14、说明 12；按钮 40 高（ui_kit 口径）。
 //   折叠态：速度+音频 56；展开 150。让路 56；展开 192。首屏（1000×640 页区
-//   792×600）任何来源/页签都不出现纵向滚动条；纯逻辑由单测钉住。
+//   792×600）任何来源/页签都不出现纵向滚动条——承诺只限默认字号档：130% 档
+//   内容高 ≈521 > 456 必滚动，由单测钉成显式口径（wallpaper_ui_fontscale_130）。
 #include "wallpaper_ui.h"
 
 #include <algorithm>
@@ -306,14 +308,20 @@ int resolutionIndex(int minPixels) {
     return best;
 }
 
+// 过滤未接入（image_library 对 minPixels 显式忽略、filtered 恒 0）：口径必须与
+// presentation::emptyStateCopy 一致——"筛选将在后续版本生效"，不得宣称"低于档位不
+// 参与轮播"（审计 F1；哨兵断言见 test_wallpaper_ui_no_filter_claims）。
 std::string resolutionHint(int index) {
     switch (index) {
         case 0:
-            return "按总像素量判定：宽 × 高 ≥ 2,073,600（1080P）；低于档位不参与轮播。";
+            return "分辨率筛选将在后续版本生效；当前记住 1080P 档（宽 × 高 ≥ "
+                   "2,073,600），全部图片参与轮播。";
         case 2:
-            return "按总像素量判定：宽 × 高 ≥ 8,294,400（4K）；低于档位不参与轮播。";
+            return "分辨率筛选将在后续版本生效；当前记住 4K 档（宽 × 高 ≥ "
+                   "8,294,400），全部图片参与轮播。";
         default:
-            return "按总像素量判定：宽 × 高 ≥ 3,686,400（2K）；低于档位不参与轮播。";
+            return "分辨率筛选将在后续版本生效；当前记住 2K 档（宽 × 高 ≥ "
+                   "3,686,400），全部图片参与轮播。";
     }
 }
 
@@ -621,6 +629,11 @@ void drawIntervalCard(eui::Ui& ui, float x, float w, float h,
             .build();
         if (disabled) {
             // 组件没有 disabled 旗标：盖一层半透明遮罩既断开点击也表达失效。
+            // 不变量：遮罩 zIndex 必须 > dropdown 根 stack 的恒定档 20
+            //（components/dropdown.h 默认）——否则字段子树按 subtreeMaxZIndex
+            // 后绘 + 先命中，遮罩视觉与点击双失效（审计 F2；变异断言见
+            // test_wallpaper_ui_interval_and_modes）。disabled 时 open 恒 false，
+            // 弹层子树（900 档）不存在，25 档不会与弹层冲突。
             ui.rect("wallpaper.interval.dropdown.disabled")
                 .position(kCardPad, 60.0f)
                 .size(ddW, 40.0f)
@@ -628,6 +641,7 @@ void drawIntervalCard(eui::Ui& ui, float x, float w, float h,
                                   t.colors.surface.b, 0.62f})
                 .radius(8.0f)
                 .border(1.0f, t.colors.borderDefault)
+                .zIndex(25)
                 .blockPointer()
                 .build();
         }
@@ -968,25 +982,17 @@ void drawFolderCard(eui::Ui& ui, float w, const WallpaperSnapshot& snapshot,
                     .color(t.colors.textPrimary)
                     .build();
             } else {
-                const float cellW = 160.0f;
-                const float cellGap = 24.0f;
+                // 只画"目录内图片"一格：passing 恒等于 total、filtered 恒 0
+                //（image_library.cpp），参与/低于两格是"已过滤"的虚假宣称（审计 F1）。
                 drawFolderStatCell(ui, "wallpaper.folder.stat.total", kCardPad,
                                    std::to_string(snapshot.imageTotal),
                                    "目录内图片", t, false);
-                drawFolderStatCell(ui, "wallpaper.folder.stat.passing",
-                                   kCardPad + cellW + cellGap,
-                                   std::to_string(snapshot.imagePassing),
-                                   "参与轮播", t, true);
-                drawFolderStatCell(ui, "wallpaper.folder.stat.filtered",
-                                   kCardPad + (cellW + cellGap) * 2.0f,
-                                   std::to_string(snapshot.imageFiltered),
-                                   "低于档位", t, false);
             }
         }
 
         hintText(ui, "wallpaper.folder.hint",
                  kind == WallpaperKind::Image
-                     ? "仅扫描 jpg / jpeg / png / webp / heic；按总像素量档位筛选，低于档位不参与轮播。"
+                     ? "仅扫描 jpg / jpeg / png / webp / heic；分辨率筛选将在后续版本生效。"
                      : "仅扫描 mp4 / mov / m4v；其他格式不会出现在片库，也不会自动转码。",
                  t, kCardPad, 154.0f,
                  std::max(0.0f, w - kCardPad * 2.0f), roundFs(34.0f));
@@ -1073,7 +1079,9 @@ void drawLibraryPage(eui::Ui& ui, float contentW,
     }
     ui.text("wallpaper.library.footer")
         .size(contentW, roundFs(kFooterH))
-        .text("壁纸引擎 mpv 0.41.0 · GPL v2 · 设置即时生效")
+        // 不写 mpv 版本号：mpv.exe 不进 git、正式打包在 P6，写死版本是未经证实的
+        // 对外宣称（用户机器版本可变；审计 F5）。
+        .text("壁纸引擎 mpv · GPL v2 · 设置即时生效")
         .fontSize(fs(12.0f))
         .lineHeight(roundFs(20.0f))
         .horizontalAlign(eui::HorizontalAlign::Center)
