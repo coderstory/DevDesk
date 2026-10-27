@@ -54,6 +54,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 >
 > 紧随其后的 macOS / Windows 手敲命令块只作**工具链参考**（记录编译器、参数形态、平台差异），日常构建与测试不要照着敲。
 
+**发布形态**：**不强制单 exe**，**允许引入第三方开源依赖**。依赖优先静态链接；确实只能动态链接的（DLL/dylib）由安装程序负责携带并保证加载路径。历史上「单 exe、零外部 DLL」的目标已不再作为约束。
+
 **macOS / arm64（当前开发平台，AppleClang + Ninja）**：
 
 ```bash
