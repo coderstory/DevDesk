@@ -5,7 +5,7 @@
 
 ## 1. 现场状态
 
-- worktree：`D:/wt-mcp`；分支 `feat/mcp-server-skeleton`；HEAD 以 `git log -1` 为准（交接提交；其下源码快照 `4bccde3c`）；工作区干净（`build/` 被 gitignore）。
+- worktree：`D:/wt-mcp-skeleton`；分支 `feat/mcp-server-skeleton`；HEAD 以 `git log -1` 为准（交接提交；其下源码快照 `4bccde3c`）；工作区干净（`build/` 被 gitignore）。
 - 提交链：`5c952d7e`（dev 基线，已并入 origin/dev CI 修复）→ `dcd29b53`（spec 初稿）→ `c35a3bcf`（审计修订）→ `29e199a8`（复审收口）→ `f1ef5253`（B1-B5 台账）→ `4bccde3c`（B1 源码 WIP，21 文件 +2260 行）。
 - 设计权威：`docs/superpowers/specs/2026-10-26-mcp-server-skeleton-design.md`；可核销清单：`docs/superpowers/plans/2026-10-26-mcp-server-skeleton-plan.md`。
 
@@ -13,12 +13,12 @@
 
 - spec 三版 + B1-B5 冻结台账（提交见上）。
 - B1 源码已提交：`src/core/mcp_port.h`、`src/core/mcp_tool.h/.cpp`；`src/module_mcp/`（CMake / session_store / protocol / http_handler / service / tools_builtin，内置工具仅 `devdesk_server_info`）；四个测试文件；root / core / tests 的 CMake 接线。
-- **构建/测试未跑，不能视为通过**：worktree 首次 configure 成功（`D:/wt-mcp/build` 已生成 `build.ninja`），冷构建进行中被重启打断；日志 `/tmp/b1-build.log`。台账 B1-01..B1-11 标 🔵，B1-G 仍 ⬜。
+- **构建/测试未跑，不能视为通过**：worktree 首次 configure 成功（`D:/wt-mcp-skeleton/build` 已生成 `build.ninja`），冷构建进行中被重启打断；日志 `/tmp/b1-build.log`。台账 B1-01..B1-11 标 🔵，B1-G 仍 ⬜。
 
 ## 3. 重启后第一批命令（按序）
 
 ```bash
-cd D:/wt-mcp
+cd D:/wt-mcp-skeleton
 git status                       # 应干净；HEAD 以 `git log -1` 为准（交接提交；其下源码快照 4bccde3c）
 tasklist | grep -i devdesk       # 有实例先确认是否本 build 目录实例，勿误杀用户/其它会话
 bash scripts/build-test-run.sh --filter mcp --no-run
