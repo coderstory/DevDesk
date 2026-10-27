@@ -11,11 +11,13 @@
 #include "module_wallpaper/core/availability.h"
 #include "module_wallpaper/core/folder_policy.h"
 #include "module_wallpaper/core/presentation.h"
+#include "module_wallpaper/platform/mpv_player.h"
 
 namespace module::wallpaper {
 
 WallpaperService::WallpaperService()
     : player_(std::make_unique<NullPlayerBackend>()),
+      host_(createWallpaperHost()),
       settingsPath_(wallpaperSettingsPath().string()),
       // 随机模式按当前时间 + random_device 播种：默认种子会让每次启动的「随机」顺序完全相同。
       rotation_(static_cast<std::uint32_t>(
@@ -68,7 +70,27 @@ void WallpaperService::start() {
         rotation_.setMode(settings_.mode);
         rotation_.setIntervalSec(settings_.rotationIntervalSec, nowLocked());
         arbiter_.setPauseOnBattery(settings_.pauseOnBattery);
+        snapshot_.playbackError.clear();
+        hostStarted_ = false;
+        playerRunning_ = false;
+        // 生产装配：真实播放器 + WorkerW 宿主；测试注入播放器时不碰桌面。
+        if (!testPlayerInjected_) {
+            std::lock_guard<std::mutex> playerLock(playerMu_);
+            player_ = createMpvPlayer();
+        }
         applySettingsToPlayerLocked();
+        if (!testPlayerInjected_) {
+            std::string error;
+            if (host_ != nullptr && host_->start(&error)) {
+                hostStarted_ = true;
+            } else {
+                snapshot_.playbackError =
+                    error.empty() ? "壁纸宿主启动失败" : error;
+                LOG_WARN("壁纸: " + snapshot_.playbackError);
+            }
+            // 契约 §9.1：宿主就绪 → mpv 以 videoChild 为 --wid 启动（尚不装载）。
+            if (hostStarted_) ensurePlayerStartedLocked();
+        }
         started_ = true;
     }
 
@@ -101,11 +123,19 @@ void WallpaperService::stop() {
     {
         std::lock_guard<std::mutex> lock(mu_);
         if (!started_ && !scanThread_.joinable() && !tickThread_.joinable()) return;
+        // 固定顺序（契约 §9.6）：保存续播 → player.stop → host.stop → join 服务线程。
+        if (started_) saveResumeLocked();
         started_ = false;
         stopRequested_.store(true);
         scanRequested_.store(false);
+        // 使在飞扫描结果失效：否则它可能在 host.stop 之后才把结果 apply 回来。
+        scanGeneration_.fetch_add(1, std::memory_order_relaxed);
         stopPlaybackLocked();
+        // hostStarted_ 与 started_ 同一纪律：只在 mu_ 内写——在飞 tick/scan 持
+        // mu_ 读此位，锁外写是数据竞争（审计 F-2）。
+        hostStarted_ = false;
     }
+    if (host_ != nullptr) host_->stop();
     scanWaitCv_.notify_all();
     tickWaitCv_.notify_all();
     if (scanThread_.joinable()) scanThread_.join();
@@ -304,6 +334,7 @@ void WallpaperService::setImageScannerForTest(ImageScanner scanner) {
 void WallpaperService::setPlayerForTest(std::unique_ptr<PlayerBackend> player) {
     std::lock_guard<std::mutex> lock(mu_);
     std::lock_guard<std::mutex> playerLock(playerMu_);
+    testPlayerInjected_ = true;
     player_ = std::move(player);
     if (player_ == nullptr) return;
     player_->setRate(settings_.rate);
@@ -433,6 +464,7 @@ void WallpaperService::tickLoop() {
         try {
             std::lock_guard<std::mutex> lock(mu_);
             if (!started_) continue;
+            pollPlayerErrorLocked();
             if (!rotation_.isRunning() || rotation_.isPaused()) continue;
             const RotationClock::time_point now = nowLocked();
             const std::optional<std::string> path = rotation_.tick(now);
@@ -453,6 +485,14 @@ void WallpaperService::applyVideoScanLocked(const VideoScanResult& result) {
     if (snapshot_.availability != Availability::Playing) {
         stopPlaybackLocked();
         return;
+    }
+    // 本批只做视频：视频可播时才显示宿主（启动即 hold 时也要等扫描结果再显示）。
+    if (hostStarted_ && host_ != nullptr) {
+        std::string error;
+        if (!host_->show(&error)) {
+            snapshot_.playbackError = error.empty() ? "显示壁纸宿主失败" : error;
+            LOG_WARN("壁纸: " + snapshot_.playbackError);
+        }
     }
     activateItemsLocked(result.files, nowLocked());
 }
@@ -495,23 +535,71 @@ void WallpaperService::stopPlaybackLocked() {
     // 必须清空清单：只停运行态的话，next()/旧命令仍能把上一来源/已删除的条目装载回来。
     rotation_.setItems({});
     arbiter_.invalidateResumeAnchor();
-    std::lock_guard<std::mutex> playerLock(playerMu_);
-    if (player_) player_->stop();
+    {
+        std::lock_guard<std::mutex> playerLock(playerMu_);
+        if (player_) player_->stop();
+    }
+    playerRunning_ = false;
+    if (hostStarted_ && host_ != nullptr) host_->hide();
 }
 
 void WallpaperService::loadItemLocked(const std::string& path,
                                       RotationClock::time_point now) {
-    // 换片后旧锚点失效；先置暂停态再装载，避免 P3 真播放器装载后闪现播放。
+    // 换片后旧锚点失效；先置暂停态再装载，避免真播放器装载后闪现播放。
     arbiter_.invalidateResumeAnchor();
     const bool held = arbiter_.held();
-    {
-        std::lock_guard<std::mutex> playerLock(playerMu_);
-        if (player_) {
-            player_->pause(held);
-            player_->load(path);
+    if (settings_.kind == WallpaperKind::Video) {
+        ensurePlayerStartedLocked();
+        // 单循环续播：启动后首次装载的条目若与上次退出时相同，seek 回原位置。
+        const bool resume = settings_.mode == PlayMode::LoopSingle &&
+                            !settings_.lastPlayedPath.empty() &&
+                            settings_.lastPlayedPath == path &&
+                            settings_.lastPlayedPosition > 0.0;
+        {
+            std::lock_guard<std::mutex> playerLock(playerMu_);
+            if (player_) {
+                player_->pause(held);
+                player_->load(path);
+                if (resume) {
+                    player_->seek(static_cast<float>(settings_.lastPlayedPosition));
+                    settings_.lastPlayedPath.clear();
+                    settings_.lastPlayedPosition = 0.0;
+                }
+            }
         }
     }
     if (held) rotation_.pause(now);
+}
+
+void WallpaperService::ensurePlayerStartedLocked() {
+    if (playerRunning_ || !hostStarted_ || host_ == nullptr || player_ == nullptr) return;
+    const HostHandle handle = host_->handle();
+    if (handle.videoChild == nullptr) return;
+    {
+        std::lock_guard<std::mutex> playerLock(playerMu_);
+        player_->start(reinterpret_cast<std::uintptr_t>(handle.videoChild));
+    }
+    playerRunning_ = true;
+}
+
+void WallpaperService::pollPlayerErrorLocked() {
+    std::string error;
+    {
+        std::lock_guard<std::mutex> playerLock(playerMu_);
+        if (player_ == nullptr || !player_->takeError(&error)) return;
+    }
+    snapshot_.playbackError = error;
+    LOG_WARN("壁纸播放错误: " + error);
+}
+
+void WallpaperService::saveResumeLocked() {
+    if (settings_.kind != WallpaperKind::Video) return;
+    if (settings_.mode != PlayMode::LoopSingle) return;
+    const std::optional<std::string> current = rotation_.currentPath();
+    if (!current.has_value()) return;
+    settings_.lastPlayedPath = *current;
+    settings_.lastPlayedPosition = static_cast<double>(playerPositionLocked());
+    persistLocked();
 }
 
 void WallpaperService::applyHoldDecisionLocked(RotationClock::time_point now) {

@@ -28,15 +28,22 @@
 
 #include "core/module_interface.h"
 #include "core/router.h"
+#include "core/theme.h"
+#include "module_wallpaper/core/presentation.h"
+#include "module_wallpaper/wallpaper_service.h"  // WallpaperSnapshot 完整定义（wallpaper_ui.h 只有前置声明）
+#include "module_wallpaper/wallpaper_ui.h"
 #include "platform/wallpaper_capability.h"
 
+#include <algorithm>
 #include <cmath>
 #include <filesystem>
+#include <functional>
 #include <iostream>
 #include <memory>
 #include <string>
 #include <system_error>
 #include <utility>
+#include <vector>
 
 // app:: 层链接桩（dsl_app_impl.h 引用 dslAppConfig）
 namespace app {
@@ -67,6 +74,73 @@ private:
     std::string name_;
 };
 
+// §3c 构造快照用的页面模块：真 composeWallpaperUi + 假快照/空动作。截图只验
+// 真实渲染管线下的页面几何与观感，不启动 mpv、不依赖服务线程。
+class WallpaperUiStubModule final : public ::core::Module {
+public:
+    module::wallpaper::WallpaperSnapshot snapshot;
+    module::wallpaper::UiActions actions;
+    module::wallpaper::UiState state;
+
+    ::core::PageId pageId() const override {
+        return ::core::PageId::Wallpaper;
+    }
+    std::string displayName() const override { return "壁纸"; }
+    std::string iconGlyph() const override { return eui::utf8(0xF03E); }
+    void compose(eui::Ui& ui, const eui::Screen& screen) override {
+        module::wallpaper::composeWallpaperUi(ui, screen, snapshot, actions,
+                                              state);
+    }
+};
+
+// 与 WallpaperService::snapshot() 同源拼装文案（presentation 是唯一文案源）。
+module::wallpaper::WallpaperSnapshot makeProbeSnapshot(
+    module::wallpaper::WallpaperKind kind,
+    module::wallpaper::Availability availability,
+    module::wallpaper::PlayMode mode) {
+    namespace wp = module::wallpaper;
+    wp::WallpaperSnapshot snapshot;
+    snapshot.kind = kind;
+    snapshot.availability = availability;
+    snapshot.folderPath =
+        availability == wp::Availability::FolderUnconfigured
+            ? std::string()
+            : (kind == wp::WallpaperKind::Image
+                   ? std::string("D:\\Pictures\\Wallpapers")
+                   : std::string("D:\\Wallpapers\\动态壁纸"));
+    snapshot.videoCount = 12;
+    snapshot.imageTotal = 24;
+    snapshot.imagePassing = 18;
+    snapshot.imageFiltered = 6;
+    snapshot.mode = mode;
+    snapshot.rotationIntervalSec = 600;
+    snapshot.rate = 1.0f;
+    snapshot.volume = 0.82f;
+    snapshot.muted = false;
+    snapshot.pauseOnBattery = false;
+    snapshot.imageMinPixels = 3686400;
+    snapshot.imageFit = wp::ImageFit::Fill;
+    snapshot.secondsUntilRotation = 272;
+    snapshot.rotationProgress = 0.45f;
+
+    wp::presentation::StatusInput input;
+    input.kind = kind;
+    input.availability = availability;
+    input.mode = mode;
+    input.paused = false;
+    input.manualPaused = false;
+    input.systemHolds = 0;
+    input.itemCount = kind == wp::WallpaperKind::Video ? snapshot.videoCount
+                                                       : snapshot.imagePassing;
+    input.rotationIntervalSec = snapshot.rotationIntervalSec;
+    snapshot.modeLabel = wp::presentation::playModeLabel(mode, kind);
+    snapshot.statusTitle = wp::presentation::statusTitle(input);
+    snapshot.statusSubtitle = wp::presentation::statusSubtitle(input);
+    snapshot.countdownLabel = wp::presentation::countdownLabel(
+        kind, mode, false, snapshot.secondsUntilRotation);
+    return snapshot;
+}
+
 // ModuleLookup 是裸函数指针（无捕获约束）→ 经文件级静态中转
 ::core::Module* g_wallpaper = nullptr;
 ::core::Module* lookupForProbe(::core::PageId page) {
@@ -81,6 +155,13 @@ constexpr std::size_t kRegistrySize =
 
 int main(int argc, char* argv[]) {
     auto args = probe::parseProbeArgs(argc, argv);
+    // --shots-dir <目录>：构造快照渲染 5 个页面场景并落图（不影响既有断言）。
+    std::string shotsDir;
+    for (int i = 1; i + 1 < argc; ++i) {
+        if (std::string(argv[i]) == "--shots-dir") {
+            shotsDir = argv[i + 1];
+        }
+    }
     // 平台能力前置：不支持的平台（macOS 等）必须诚实跳过（ctest SKIP_RETURN_CODE
     // 77），不能因为建窗成功就把「平台不支持壁纸宿主」报成红色失败——那是把
     // 门禁判据变成平台相关性误报，本地 ctest -L probe 会稳定红。
@@ -111,6 +192,11 @@ int main(int argc, char* argv[]) {
     StubPageModule about(::core::PageId::About, "关于");
     std::unique_ptr<::core::Module> settings(create_settings_module());
     std::unique_ptr<::core::Module> wallpaper;  // dispatch on 时才建实例
+    // UI 截图桩与生产 WallpaperModule 同生命周期（main 末尾才析构）：compose
+    // 闭包按引用捕获其 state，runtime 上一帧元素树在下一帧 recompose 前仍持有
+    // [&state]——桩若先于 runtime 析构，析构窗口内任何排队输入都会打在已析构
+    // state 上（UAF，审计 F4）。
+    std::unique_ptr<WallpaperUiStubModule> uiStub;
 
     ::core::Router router;
     core::dsl::Runtime runtime;
@@ -229,6 +315,7 @@ int main(int argc, char* argv[]) {
         ::core::registerAppRouter(nullptr);
         g_wallpaper = nullptr;
         wallpaper.reset();
+        uiStub.reset();
         runtime.shutdown(false);
         ::core::releaseInputQueue(window);
         ::core::window::destroyWindow(window);
@@ -327,11 +414,12 @@ int main(int argc, char* argv[]) {
     check(router.currentPage() == ::core::PageId::Wallpaper,
           "§2 开启：导航后当前页应为壁纸");
     const auto* wallpaperTitle = ui->find("wallpaper.title");
-    const auto* wallpaperHint = ui->find("wallpaper.hint");
+    const auto* wallpaperTabs = ui->find("wallpaper.tabs");
     check(wallpaperTitle != nullptr && wallpaperTitle->text == "壁纸",
           "§2 空态：页面标题「壁纸」应渲染");
-    check(wallpaperHint != nullptr && !wallpaperHint->text.empty(),
-          "§2 空态：说明文案应渲染");
+    check(wallpaperTabs != nullptr, "§2 空态：播放/片库 Tab 应渲染");
+    check(ui->find("wallpaper.card.empty") != nullptr,
+          "§2 空态：未配置目录时应渲染空态卡");
 
     // ── §3 空页面截图 ──
     assertFramebufferMatchesLogical("§3 截图前");
@@ -398,6 +486,196 @@ int main(int argc, char* argv[]) {
     probe::captureSeedIfRequested(args, window, runtime, &passed);
     if (!args.screenshotSeedPath.empty()) {
         assertScreenshotFile(args.screenshotSeedPath, "§3b 设置页截图");
+    }
+
+    // ── §3c 五张设计截图（--shots-dir）：构造快照 + 真 composeWallpaperUi ──
+    if (!shotsDir.empty()) {
+        std::error_code dirEc;
+        std::filesystem::create_directories(shotsDir, dirEc);
+        check(!dirEc, "§3c 截图目录应可创建: " + shotsDir);
+
+        // 换页面实例为 UI 桩（真元素树、假快照）；服务线程已随上一轮 off 收束。
+        // 桩本体在 main 作用域（见声明处不变量），此处只赋值。
+        uiStub = std::make_unique<WallpaperUiStubModule>();
+        app::assembly::dispatchModuleToggle(module::settings::kModuleIdWallpaper,
+                                            false, router, &lookupForProbe);
+        g_wallpaper = uiStub.get();
+        app::assembly::dispatchModuleToggle(module::settings::kModuleIdWallpaper,
+                                            true, router, &lookupForProbe);
+        router.navigateTo(::core::PageId::Wallpaper);
+
+        // 逻辑尺寸 → 物理尺寸（DPI 适配），等窗口尺寸稳定后按实测反推 eff。
+        auto resizeToLogical = [&](int logicalW, int logicalH) {
+            float sx = 1.0f;
+            float sy = 1.0f;
+            glfwGetWindowContentScale(glfwWindow, &sx, &sy);
+            if (!(sx > 0.0f)) sx = 1.0f;
+            if (!(sy > 0.0f)) sy = 1.0f;
+            glfwSetWindowSize(
+                glfwWindow,
+                static_cast<int>(std::lround(logicalW * sx)),
+                static_cast<int>(std::lround(logicalH * sy)));
+            int fbW = 0;
+            int fbH = 0;
+            int lastW = -1;
+            int lastH = -1;
+            int stable = 0;
+            for (int attempt = 0; attempt < 240; ++attempt) {
+                glfwPollEvents();
+                glfwWaitEventsTimeout(0.01);
+                glfwGetFramebufferSize(glfwWindow, &fbW, &fbH);
+                if (fbW == lastW && fbH == lastH) {
+                    if (++stable >= 5) break;
+                } else {
+                    lastW = fbW;
+                    lastH = fbH;
+                    stable = 0;
+                }
+            }
+            glfwGetWindowContentScale(glfwWindow, &sx, &sy);
+            if (!(sx > 0.0f)) sx = 1.0f;
+            if (!(sy > 0.0f)) sy = 1.0f;
+            return std::pair<int, int>{
+                static_cast<int>(std::lround(fbW / sx)),
+                static_cast<int>(std::lround(fbH / sy))};
+        };
+
+        struct Shot {
+            const char* file;
+            int logicalW;
+            int logicalH;
+            bool dark;
+            module::wallpaper::WallpaperKind kind;
+            module::wallpaper::Availability availability;
+            module::wallpaper::PlayMode mode;
+            int tab;
+        };
+        namespace wp = module::wallpaper;
+        const Shot shots[] = {
+            {"play-video-1600x1000-light.png", 1600, 1000, false,
+             wp::WallpaperKind::Video, wp::Availability::Playing,
+             wp::PlayMode::LoopList, 0},
+            {"play-video-1000x640-light.png", 1000, 640, false,
+             wp::WallpaperKind::Video, wp::Availability::Playing,
+             wp::PlayMode::LoopList, 0},
+            {"play-image-1600x1000-dark.png", 1600, 1000, true,
+             wp::WallpaperKind::Image, wp::Availability::Playing,
+             wp::PlayMode::LoopList, 0},
+            {"library-video-1600x1000-light.png", 1600, 1000, false,
+             wp::WallpaperKind::Video, wp::Availability::Playing,
+             wp::PlayMode::LoopList, 1},
+            {"library-empty-1000x640-light.png", 1000, 640, false,
+             wp::WallpaperKind::Video, wp::Availability::FolderMissing,
+             wp::PlayMode::LoopSingle, 1},
+        };
+
+        for (const Shot& shot : shots) {
+            if (shot.dark) {
+                ::core::theme::setDark();
+            } else {
+                ::core::theme::setLight();
+            }
+            uiStub->snapshot =
+                makeProbeSnapshot(shot.kind, shot.availability, shot.mode);
+            uiStub->state = wp::UiState{};
+            uiStub->state.tab = shot.tab;
+
+            const auto [effW, effH] =
+                resizeToLogical(shot.logicalW, shot.logicalH);
+            check(effW > 0 && effH > 0,
+                  std::string("§3c ") + shot.file + "：有效逻辑尺寸应为正");
+
+            // 连续两帧：第 1 帧布局/条件元素落定，第 2 帧拍稳定树。
+            for (int frame = 0; frame < 2; ++frame) {
+                ui = nullptr;
+                probe::composeModuleFrame(
+                    runtime, window, "app", static_cast<float>(effW),
+                    static_cast<float>(effH),
+                    [&](eui::Ui& frameUi, const eui::Screen& frameScreen) {
+                        ui = &frameUi;
+                        app::compose(frameUi, frameScreen);
+                    });
+            }
+            check(ui != nullptr, std::string("§3c ") + shot.file +
+                                     "：compose 未执行");
+            if (ui == nullptr) continue;
+
+            const auto* page = ui->find("wallpaper.page");
+            const auto* scroll = ui->find("wallpaper.scroll");
+            check(page != nullptr,
+                  std::string("§3c ") + shot.file + "：缺页面根");
+            check(scroll != nullptr,
+                  std::string("§3c ") + shot.file + "：缺内容滚动视口");
+            check(ui->find("wallpaper.scroll.scroll") == nullptr,
+                  std::string("§3c ") + shot.file +
+                      "：首屏不应出现纵向滚动条");
+            if (page != nullptr) {
+                check(std::fabs(page->frame.width -
+                                static_cast<float>(effW - 208)) <= 0.6f,
+                      std::string("§3c ") + shot.file + "：页面宽应为 eff − 208（实测 " +
+                          std::to_string(page->frame.width) + "）");
+            }
+            // 卡片不越界：x/右缘落在页面内、上下落在滚动视口内。
+            std::function<void(const core::dsl::Element&)> visit =
+                [&](const core::dsl::Element& element) {
+                    const int dots = static_cast<int>(
+                        std::count(element.id.begin(), element.id.end(), '.'));
+                    const bool isCard =
+                        element.id.rfind("wallpaper.card.", 0) == 0 &&
+                        dots == 2;
+                    if (isCard && page != nullptr && scroll != nullptr) {
+                        const float pageRight =
+                            page->frame.x + page->frame.width;
+                        check(element.frame.x >= page->frame.x - 0.5f &&
+                                  element.frame.x + element.frame.width <=
+                                      pageRight + 0.5f,
+                              std::string("§3c ") + shot.file + "：" +
+                                  element.id + " 横向越界");
+                        check(element.frame.y >= scroll->frame.y - 0.5f &&
+                                  element.frame.y + element.frame.height <=
+                                      scroll->frame.y + scroll->frame.height +
+                                          0.5f,
+                              std::string("§3c ") + shot.file + "：" +
+                                  element.id + " 纵向越界");
+                    }
+                    for (const auto& child : element.children) {
+                        visit(*child);
+                    }
+                };
+            for (const auto& root : ui->roots()) {
+                visit(*root);
+            }
+
+            // 截图尺寸必须等于当前 framebuffer（完整帧，沿用 DPI 适配）。
+            int fbW = 0;
+            int fbH = 0;
+            glfwGetFramebufferSize(glfwWindow, &fbW, &fbH);
+            probe::FrameCapture capture(window);
+            check(capture.ok(),
+                  std::string("§3c ") + shot.file + "：帧捕获初始化失败: " +
+                      capture.error());
+            if (!capture.ok()) continue;
+            check(capture.pixelWidth() == fbW && capture.pixelHeight() == fbH,
+                  std::string("§3c ") + shot.file + "：截图尺寸 " +
+                      std::to_string(capture.pixelWidth()) + "x" +
+                      std::to_string(capture.pixelHeight()) +
+                      " 应等于 framebuffer " + std::to_string(fbW) + "x" +
+                      std::to_string(fbH));
+            const std::string path =
+                (std::filesystem::path(shotsDir) / shot.file).string();
+            check(capture.capturePng(runtime, path),
+                  std::string("§3c ") + shot.file + "：落图失败");
+            assertScreenshotFile(path, std::string("§3c ") + shot.file);
+        }
+
+        // 截图桩只活在本段：先切回真模块实例，避免 §4 的 lookup 拿到已析构对象。
+        app::assembly::dispatchModuleToggle(module::settings::kModuleIdWallpaper,
+                                            false, router, &lookupForProbe);
+        g_wallpaper = wallpaper.get();
+        app::assembly::dispatchModuleToggle(module::settings::kModuleIdWallpaper,
+                                            true, router, &lookupForProbe);
+        router.navigateTo(::core::PageId::Wallpaper);
+        ::core::theme::setDark();  // 恢复到测试默认（后续断言与主题无关）
     }
 
     // ── §4 关闭：注销 + 当前页回 Home + 侧栏条目消失 ──
