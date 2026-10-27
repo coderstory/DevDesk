@@ -63,6 +63,8 @@ memcpp（把 Claude Code 会话消化成结构化记忆、并在合适时机注�
 
 **拍板进度（2026-10-27 更新）**：路线已拍板——**组合 1：A telemem 面板起步 + 预埋升级 C 的两条缝**（写入拦截点、检索接口）。七项定案：①提炼走云端大模型（复用 DevDesk 网关配置注入，qwen3:8b 本机档出局）；②脱敏默认开启、面板可关（关闭需二次确认并警示「敏感信息将原样出机」，红队验证资产保留、关闭态风险用户自担）；③外部依赖版本迭代不计风险；④向量化与提炼均走云端（OpenAI 兼容接口、网关注入，DevDesk 侧无任何本机模型组件；S1-5 验证网关 embedding 接口可用性与余额）；⑤卡片=DevDesk 侧记账（自家 proposals 表完整撤销链，代理执行 telemem 改删）；⑥Python 分发=首跑安装（面板检测缺 Python 3.10~3.12 引导，3.13 及以上在检测步即拦截，不捆绑）；⑦触发线：冻结集转测 telemem 检索 Recall@5<85% 或 2 字中文词低于基线 5/3/11 → 升级 C 补全文通道。P0 自研规格书（`docs/superpowers/specs/2026-10-27-memcpp-p0-core-spec.md`）降级为触发线备用图纸；下一步从 S1 spike 开工（施工票见集成规格 §3）。
 
+**端点定案（2026-10-27 追加拍板）**：提炼与向量化统一用**用户现用智谱 key**——智谱 paas/v4 OpenAI 兼容端点（base_url=`https://open.bigmodel.cn/api/paas/v4`，chat=`glm-5.3-flash`、embedding=`embedding-3` 显式 `dimensions=1024`，建索引前定死维度），key 自用户既有 Claude Code 配置运行时读取注入、绝不入库入日志。**消耗控制五条列为一等设计**：①新增内容去重水位、已入库零重复提炼；②提炼批处理节流（每小时上限可配置、默认保守值）；③月度 token 预算软/硬两档（硬档=暂停提炼只留检索）；④面板消耗页（今日/本月 token 与估算金额、最近调用记录）；⑤embedding 每条记忆仅算一次。逐条验收判据见集成规格 §0「端点与消耗控制」块。**S1 状态**：见 `docs/superpowers/plans/2026-10-27-memcpp-s1-spike-results.md`（①②通过，③④⑤ blocked 待端点）；端点定案后 ③④ 按该文档复跑口径补跑中（另一条线执行，勿重复开工）。
+
 ## 环境与纪律速查
 
 - Python：`C:/Tools/Python/3.13/python.exe`；向量 venv：`D:/software/venvs/memory-lab/Scripts/python.exe`（含 fastembed 0.9.1）。
