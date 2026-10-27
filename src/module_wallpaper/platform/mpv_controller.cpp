@@ -98,6 +98,9 @@ struct MpvController::Impl {
 
     std::atomic<std::uint64_t> positionMs{0};
     std::atomic<bool> alive{false};
+    // 主动收尾旗标：shutdown / 写超时强杀都会置位。读线程退出时据此区分
+    // 「正常收尾」与「mpv 意外死亡」，后者才补报意外退出错误。
+    std::atomic<bool> stopRequested{false};
     std::atomic<std::uint32_t> pid{0};
     std::atomic<std::uint64_t> counter{0};
 
@@ -137,7 +140,9 @@ struct MpvController::Impl {
     bool writeBounded(const std::string& line, DWORD timeoutMs, bool recordFailure);
     bool sendLine(const std::string& line);
     void sendRaw(const std::string& line);
-    void readLoop(HANDLE readPipe);
+    // processHandle 是控制线程进程句柄的只读值拷贝（Close 一律发生在 reader.join
+    // 之后），读线程只做 0 超时探测，绝不关闭。
+    void readLoop(HANDLE readPipe, HANDLE processHandle);
     bool running() const { return process != nullptr && pipe != nullptr; }
 };
 
@@ -190,7 +195,9 @@ bool MpvController::Impl::writeBounded(const std::string& line, DWORD timeoutMs,
         if (!ok && recordFailure) recordError("mpv IPC 写入未完成（通道异常）");
     } else {
         // 写超时 = 通道死亡：先强杀再排空 IRP，ov/缓冲出作用域前必须无挂起引用。
+        // 置位收尾旗标：读线程随断管退出时不再补报"意外退出"（本次退出是我方判定）。
         if (process != nullptr) (void)::TerminateProcess(process, 1);
+        stopRequested.store(true, std::memory_order_relaxed);
         (void)::CancelIoEx(pipe, &overlapped);
         DWORD dropped = 0;
         (void)::GetOverlappedResult(pipe, &overlapped, &dropped, TRUE);
@@ -211,12 +218,14 @@ void MpvController::Impl::sendRaw(const std::string& line) {
 // 读线程常驻排空 mpv 的回执与事件（含 time-pos → 原子毫秒）。契约：
 //   - readPipe 归控制线程所有，本线程绝不 CloseHandle；退出只靠管道断开或控制线程
 //     CancelIoEx 打断挂起 IRP（收尾先 Terminate 再 cancel+join），保证 join 有界。
-void MpvController::Impl::readLoop(HANDLE readPipe) {
+void MpvController::Impl::readLoop(HANDLE readPipe, HANDLE processHandle) {
     std::string pending;
     char buffer[4096];
     HANDLE event = ::CreateEventW(nullptr, TRUE, FALSE, nullptr);
     if (event == nullptr) return;
     for (;;) {
+        // 事件跨迭代复用前显式复位：不依赖内核在 IRP 入队时的隐式复位语义（审计 F-3）。
+        ::ResetEvent(event);
         OVERLAPPED overlapped{};
         overlapped.hEvent = event;
         const BOOL queued = ::ReadFile(readPipe, buffer, sizeof(buffer), nullptr, &overlapped);
@@ -236,6 +245,18 @@ void MpvController::Impl::readLoop(HANDLE readPipe) {
             }
         }
     }
+    // 意外退出检测（零轮询，审计 F-1）：mpv 死亡必然断管，读循环随之退出——管道
+    // 断裂本身就是退出信号，此处的 0 超时探测只做一次。若并非主动收尾（stop /
+    // 写超时都会先置 stopRequested）且进程句柄已信号，即 mpv 意外死亡：清 alive
+    // 并落中文错误，服务层 250ms 错误轮询立即感知，不必等下一条 IPC 写失败。
+    if (!stopRequested.load(std::memory_order_relaxed) && processHandle != nullptr &&
+        ::WaitForSingleObject(processHandle, 0) == WAIT_OBJECT_0) {
+        DWORD exitCode = 0;
+        (void)::GetExitCodeProcess(processHandle, &exitCode);
+        alive.store(false, std::memory_order_relaxed);
+        recordError("mpv 意外退出（退出码 " + std::to_string(exitCode) +
+                    "），壁纸播放已停止");
+    }
     ::CloseHandle(event);
 }
 
@@ -243,6 +264,8 @@ void MpvController::Impl::readLoop(HANDLE readPipe) {
 // 500ms → 撤销挂起 IRP → join 读线程 → 清句柄。顺序不变量：先让进程死透/管道断开，
 // 再撤 IRP + join，读线程等待必然有界返回；控制线程在此函数内不出现无界等待。
 void MpvController::Impl::shutdownProcess() {
+    // 先置收尾旗标再动通道：读线程看到管道断裂退出时，据此不补报"意外退出"。
+    stopRequested.store(true, std::memory_order_relaxed);
     if (pipe != nullptr) sendRaw(mpvQuitCommand());
     if (process != nullptr) {
         if (::WaitForSingleObject(process, kQuitGraceMs) != WAIT_OBJECT_0) {
@@ -275,6 +298,8 @@ void MpvController::Impl::shutdownProcess() {
 
 bool MpvController::Impl::spawn(std::uintptr_t windowId) {
     shutdownProcess();
+    // 新一轮 spawn：重新启用意外退出检测（上一轮收尾旗标不跨生命周期）。
+    stopRequested.store(false, std::memory_order_relaxed);
     counter.fetch_add(1, std::memory_order_relaxed);
     const std::uint64_t pipeCounter = counter.load(std::memory_order_relaxed);
     const std::string pipeName = makeMpvPipeName(::GetCurrentProcessId(), pipeCounter);
@@ -323,7 +348,13 @@ bool MpvController::Impl::spawn(std::uintptr_t windowId) {
     const DWORD createError = created != 0 ? 0 : ::GetLastError();
     if (nul != nullptr) ::CloseHandle(nul);
     if (created == 0) {
-        recordError("启动 mpv 失败（Windows 错误码 " + std::to_string(createError) + "）");
+        if (application.empty() || commandLine.empty()) {
+            // utf8 转换失败时 CreateProcessW 未被调用，此时 GetLastError 是陈旧值，
+            // 报"Windows 错误码"会误导排障（审计 F-8）。
+            recordError("启动 mpv 失败：路径含无法转换的字符: " + mpvPath);
+        } else {
+            recordError("启动 mpv 失败（Windows 错误码 " + std::to_string(createError) + "）");
+        }
         return false;
     }
 
@@ -372,7 +403,7 @@ bool MpvController::Impl::spawn(std::uintptr_t windowId) {
     }
     readHandle = readPipe;
     try {
-        reader = std::thread(&MpvController::Impl::readLoop, this, readPipe);
+        reader = std::thread(&MpvController::Impl::readLoop, this, readPipe, process);
     } catch (const std::system_error& failure) {
         readHandle = nullptr;
         ::CloseHandle(readPipe);
@@ -537,5 +568,15 @@ std::string MpvController::takeError() {
     impl_->error.clear();
     return out;
 }
+
+#if defined(_WIN32)
+// 测试注入缝（契约见 mpv_controller.h）：仅允许在控制线程空闲（无在飞命令）时调用；
+// 句柄所有权随即移交，由 shutdownProcess 统一关闭。生产 spawn 路径不经过这里。
+void MpvControllerTestAccess::attachIpcForTest(MpvController& controller, void* pipeClient,
+                                               void* fakeProcess) {
+    controller.impl_->pipe = static_cast<HANDLE>(pipeClient);
+    controller.impl_->process = static_cast<HANDLE>(fakeProcess);
+}
+#endif
 
 } // namespace module::wallpaper

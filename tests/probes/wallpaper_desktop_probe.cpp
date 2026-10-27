@@ -240,6 +240,10 @@ int main(int argc, char* argv[]) {
     check(mpvPid != 0 && exited && !orphan,
           "§5 停止：mpv pid " + std::to_string(mpvPid) + " 已退出且无残留（stop 耗时 " +
               std::to_string(stopElapsed) + "s）");
+    // 防（审计 F-0②）：stop 梯子契约总时延 < 3s——探针显式断言上限，不只是打印。
+    check(stopElapsed < 3.0,
+          "§5 停止：stop 耗时 " + std::to_string(stopElapsed) +
+              "s < 3s（stop 梯子契约）");
 
     const auto videoWindow = reinterpret_cast<HWND>(handle.videoChild);
     host->stop();
