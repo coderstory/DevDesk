@@ -8,8 +8,10 @@
 #include <shellapi.h>
 
 #include <chrono>
+#include <cerrno>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <string>
 #include <vector>
 
@@ -102,13 +104,17 @@ int main() {
     }
     const double first_embed_ms = ms_since(t_dec0);
 
-    // 验证辅助：设 MEMCPP_PROBE_DUMP=<path> 时写全量向量（逗号分隔），供外部算余弦复核
+    // 验证辅助：设 MEMCPP_PROBE_DUMP=<path> 时写全量向量（逗号分隔），供外部算余弦复核；
+    // 不设该环境变量时分支不进入，维持「不传开关零开销」契约。dump 打不开必须非零退出：
+    // 静默失败会让复核者把旧文件或缺文件当成新向量。
     if (const char * dump = getenv("MEMCPP_PROBE_DUMP")) {
         FILE * f = fopen(dump, "w");
-        if (f) {
-            for (int i = 0; i < n_embd; ++i) fprintf(f, i ? ",%.6f" : "%.6f", emb[i]);
-            fclose(f);
+        if (!f) {
+            fprintf(stderr, "dump open failed: %s (errno=%d %s)\n", dump, errno, strerror(errno));
+            return 3;
         }
+        for (int i = 0; i < n_embd; ++i) fprintf(f, i ? ",%.6f" : "%.6f", emb[i]);
+        fclose(f);
     }
 
     PROCESS_MEMORY_COUNTERS pmc{};
