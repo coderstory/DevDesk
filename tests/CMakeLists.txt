@@ -123,6 +123,8 @@ add_executable(devdesk_tests
     test_modules/test_wallpaper_module.cpp
     # P2 纯逻辑 + P4 服务骨架：设置/轮换/让路/片库/文案/服务接线
     test_modules/test_wallpaper_core.cpp
+    # P3a 平台层纯逻辑：mpv 路径/参数/JSON/管道名/stub 行为
+    test_modules/test_wallpaper_platform.cpp
     test_modules/test_splash_contract.cpp
 )
 

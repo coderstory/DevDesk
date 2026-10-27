@@ -25,10 +25,13 @@ add_library(devdesk_module_wallpaper STATIC
     core/presentation.h
     core/folder_policy.cpp
     core/folder_policy.h
-    # 播放后端接口；本批只有 Null 实现（P3 接 mpv）。
+    # 播放后端接口；Null 仅测试注入，生产走 platform/ 的 mpv 实现。
     platform/player_backend.h
     platform/player_null.cpp
 )
+
+# 平台层（WallpaperHost / MpvController）：Win32 实现与 stub 由子目录按平台选择。
+add_subdirectory(platform)
 
 devdesk_apply_warnings(devdesk_module_wallpaper)
 

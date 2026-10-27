@@ -10,8 +10,9 @@
 //     到「一条目录条目」的处理时间。
 //   - 锁顺序固定：mu_ → playerMu_。playerMu_ 内不得回调本类任何加 mu_ 的方法。
 //
-// 本批边界：系统让路事件源（全屏/锁屏/熄屏/睡眠/电池）在 P3 watcher 接入；此处只有
-// 仲裁器与 test-only 注入缝，不得对外宣称自动让路已生效。玩家后端为 Null（P3 换 mpv）。
+// 本批边界：系统让路事件源（全屏/锁屏/熄屏/睡眠/电池）在 P3b watcher 接入；此处只有
+// 仲裁器与 test-only 注入缝，不得对外宣称自动让路已生效。生产装配 = WorkerW 宿主 +
+// mpv 播放器；注入测试播放器时**不建桌面宿主、不 spawn mpv**（单测不碰真桌面）。
 #pragma once
 
 #include <atomic>
@@ -32,6 +33,7 @@
 #include "module_wallpaper/core/settings.h"
 #include "module_wallpaper/core/video_library.h"
 #include "module_wallpaper/platform/player_backend.h"
+#include "module_wallpaper/platform/wallpaper_host.h"
 
 namespace module::wallpaper {
 
@@ -62,6 +64,9 @@ struct WallpaperSnapshot {
     std::string statusSubtitle;
     std::string modeLabel;
     std::string countdownLabel;
+    // 宿主/mpv 后台失败的最近原因（中文，可直接展示；空 = 无错误）。
+    // 纯追加字段：Batch1 既有字段语义不变。
+    std::string playbackError;
 };
 
 class WallpaperService {
@@ -97,6 +102,7 @@ public:
     // ---- 测试缝（仅测试用，生产代码不得调用）----
     // 扫描器/玩家/时钟必须在 start() **之前**注入：扫描线程无锁读取 scanner/clock，
     // start 后再替换属数据竞争（本批不为测试缝加锁）。
+    // setPlayerForTest 同时把服务切到「无桌面装配」：不建 WorkerW 宿主、不 spawn mpv。
     using VideoScanner = std::function<VideoScanResult(const std::string& folder)>;
     using ImageScanner = std::function<ImageScanResult(const std::string& folder, int minPixels)>;
     using Clock = std::function<RotationClock::time_point()>;
@@ -126,11 +132,18 @@ private:
     void applyHoldDecisionLocked(RotationClock::time_point now);
     float playerPositionLocked();
     void applySettingsToPlayerLocked();
+    void ensurePlayerStartedLocked();
+    void pollPlayerErrorLocked();
+    void saveResumeLocked();
     void persistLocked();
 
     mutable std::mutex mu_;
     mutable std::mutex playerMu_;
     std::unique_ptr<PlayerBackend> player_;
+    std::unique_ptr<WallpaperHost> host_;
+    bool hostStarted_ = false;      // 真实宿主线程已建立
+    bool playerRunning_ = false;    // mpv 进程已启动（stopPlayback 后置 false）
+    bool testPlayerInjected_ = false;  // 注入测试播放器 = 无桌面装配
 
     VideoScanner videoScanner_;
     ImageScanner imageScanner_;
