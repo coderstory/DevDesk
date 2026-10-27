@@ -3,46 +3,46 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta name="color-scheme" content="dark">
+<meta name="color-scheme" content="light">
 <title>DevDesk · 记忆（设计稿 · 示例数据）</title>
 <style>
 /* ============================================================
    Design tokens — 逐项照抄自
    docs/superpowers/specs/2026-09-20-devdesk-design.md §6.5.1
-   （方案 B：温暖专业 · Dark Mode 主色板）
+   （方案 B：温暖专业 · Light Mode 主色板，= §6.5.1 Light 表 + palette-comparison.html .style-b-light）
    ============================================================ */
 :root{
-  --bg-base:#1A1816;
-  --bg-surface:#232120;
-  --bg-elevated:#2C2A28;
-  --bg-hover:#353231;
-  --bg-active:#3E3B39;
+  --bg-base:#FAF9F5;
+  --bg-surface:#FFFFFF;
+  --bg-elevated:#FFFFFF;
+  --bg-hover:#F5F2EC;
+  --bg-active:#EBE7DF;
   --accent:#D97757;
   --accent-hover:#E0896B;
   --accent-pressed:#B85F3F;
-  --accent-soft-bg:#3A2620;
-  --text-primary:#FAF9F5;
-  --text-secondary:#C9C5BD;
+  --accent-soft-bg:#F5E6DE;
+  --text-primary:#1F1D1A;
+  --text-secondary:#6B6660;
   --text-tertiary:#9A948A;
-  --text-disabled:#6B6660;
-  --border-default:#3A3735;
-  --border-muted:#2A2826;
-  --success:#788C5D;
-  --warning:#C29243;
-  --error:#CF2D56;
-  --info:#6A9BCC;
-  /* 功能色文字档（暗底可读的同族提亮，对标 theme.h primaryText/errorText 分槽纪律） */
-  --success-text:#A3B585;
-  --warning-text:#D9AC66;
-  --error-text:#E57089;
-  --info-text:#8FB6D8;
+  --text-disabled:#B5B0A8;
+  --border-default:#E8E6DC;
+  --border-muted:#F0EEE6;
+  --success:#5E7048;
+  --warning:#9A6B30;
+  --error:#B82850;
+  --info:#4A7AAB;
+  /* 功能色文字档（亮底可读的同族加深，直接取 Light 主色板原值，对标 theme.h primaryText/errorText 分槽纪律） */
+  --success-text:#5E7048;
+  --warning-text:#9A6B30;
+  --error-text:#B82850;
+  --info-text:#4A7AAB;
   /* 尺寸 token：§6.5.2（spacing 8px 网格 / radius / 字号）+ src/app_sidebar.h kSidebarWidthExpanded=208 */
   --sp-xs:4px; --sp-sm:8px; --sp-md:16px; --sp-lg:24px; --sp-xl:40px;
   --radius-small:6px; --radius:10px; --radius-large:12px; --radius-overlay:14px; --radius-pill:999px;
   --font-xs:12px; --font-sm:13px; --font-body:15px; --font-lg:18px; --font-title:24px; --font-page:32px; --font-display:48px;
   --sidebar-w:208px;
   --shadow-small:0 1px 3px rgba(0,0,0,.04);
-  --shadow-medium:0 4px 12px rgba(0,0,0,.25);
+  --shadow-medium:0 4px 12px rgba(0,0,0,.08);
   --ease-out:150ms ease-out;
   --ease-spring:200ms cubic-bezier(0.32,0.72,0,1);
 }
@@ -146,10 +146,10 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
 }
 .chip .dotc{width:7px;height:7px;border-radius:50%;flex:none}
 .chip.c-accent{background:var(--accent-soft-bg);color:var(--accent);border-color:transparent}
-.chip.c-success{background:rgba(120,140,93,.18);color:var(--success-text);border-color:transparent}
-.chip.c-warning{background:rgba(194,146,67,.16);color:var(--warning-text);border-color:transparent}
-.chip.c-error{background:rgba(207,45,86,.16);color:var(--error-text);border-color:transparent}
-.chip.c-info{background:rgba(106,155,204,.16);color:var(--info-text);border-color:transparent}
+.chip.c-success{background:rgba(94,112,72,.18);color:var(--success-text);border-color:transparent}
+.chip.c-warning{background:rgba(154,107,48,.16);color:var(--warning-text);border-color:transparent}
+.chip.c-error{background:rgba(184,40,80,.16);color:var(--error-text);border-color:transparent}
+.chip.c-info{background:rgba(74,122,171,.16);color:var(--info-text);border-color:transparent}
 .chip.c-neutral{background:rgba(154,148,138,.16);color:var(--text-secondary);border-color:transparent}
 
 .btn{
@@ -167,8 +167,8 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
 .btn.secondary:hover{background:var(--bg-hover)}
 .btn.ghost{color:var(--text-secondary)}
 .btn.ghost:hover{background:var(--bg-hover);color:var(--text-primary)}
-.btn.danger{background:transparent;border:1px solid rgba(207,45,86,.55);color:var(--error-text)}
-.btn.danger:hover{background:rgba(207,45,86,.12)}
+.btn.danger{background:transparent;border:1px solid rgba(184,40,80,.55);color:var(--error-text)}
+.btn.danger:hover{background:rgba(184,40,80,.12)}
 .btn:disabled{opacity:.4;cursor:not-allowed}
 .btn:disabled:hover{background:var(--bg-elevated)}
 .btn.primary:disabled:hover{background:var(--accent)}
@@ -177,7 +177,7 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
 
 .banner{
   display:flex;align-items:center;gap:12px;padding:var(--sp-md) var(--sp-lg);
-  background:rgba(194,146,67,.12);border:1px solid rgba(194,146,67,.45);border-radius:var(--radius-large);
+  background:rgba(154,107,48,.12);border:1px solid rgba(154,107,48,.45);border-radius:var(--radius-large);
   margin-bottom:var(--sp-lg);
 }
 .banner .ic{width:20px;height:20px;color:var(--warning-text);flex:none}
@@ -190,7 +190,7 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
 .engine-title{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .engine-title h2{font-size:var(--font-lg);font-weight:700}
 .dot{width:8px;height:8px;border-radius:50%;flex:none}
-.dot.run{background:var(--success);box-shadow:0 0 0 3px rgba(120,140,93,.22)}
+.dot.run{background:var(--success);box-shadow:0 0 0 3px rgba(94,112,72,.22)}
 .dot.stop{background:var(--text-disabled)}
 .engine-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
 .env-row{display:flex;align-items:center;gap:8px;padding-top:var(--sp-md);margin-top:var(--sp-md);border-top:1px solid var(--border-muted);flex-wrap:wrap}
@@ -265,7 +265,7 @@ body.batch-on .p-actions{display:none!important}
 .diff.single{grid-template-columns:1fr}
 .diff-box{background:var(--bg-elevated);border:1px solid var(--border-default);border-radius:var(--radius);padding:12px 14px;font-size:var(--font-sm)}
 .diff-box .cap{font-size:var(--font-xs);color:var(--text-tertiary);margin-bottom:4px;display:flex;align-items:center;gap:6px}
-.diff-box.result{border-color:rgba(120,140,93,.55);background:rgba(120,140,93,.10)}
+.diff-box.result{border-color:rgba(94,112,72,.55);background:rgba(94,112,72,.10)}
 .diff-box.result .cap{color:var(--success-text)}
 .diff-box.strike .txt-del{text-decoration:line-through;color:var(--text-tertiary)}
 @media (max-width:1180px){.diff{grid-template-columns:1fr}}
@@ -300,7 +300,7 @@ body.batch-on .p-actions{display:none!important}
 .ep-row .k{width:64px;color:var(--text-tertiary);flex:none}
 .warnbar{
   display:flex;align-items:center;gap:10px;margin-top:12px;padding:10px 14px;border-radius:var(--radius);
-  background:rgba(194,146,67,.12);border:1px solid rgba(194,146,67,.4);font-size:var(--font-sm);color:var(--warning-text);
+  background:rgba(154,107,48,.12);border:1px solid rgba(154,107,48,.4);font-size:var(--font-sm);color:var(--warning-text);
 }
 .warnbar .ic{width:16px;height:16px;flex:none}
 .optgrid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px}
@@ -336,7 +336,7 @@ body.batch-on .p-actions{display:none!important}
 .path-box .ic{width:16px;height:16px;color:var(--text-tertiary);flex:none}
 
 /* ---------- 弹窗 / Toast（动画取自 devdesk-prototype.html 同款曲线） ---------- */
-.modal{position:fixed;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;z-index:50;animation:backdropIn 200ms cubic-bezier(0.32,0.72,0,1)}
+.modal{position:fixed;inset:0;background:rgba(30,27,24,.4);display:flex;align-items:center;justify-content:center;z-index:50;animation:backdropIn 200ms cubic-bezier(0.32,0.72,0,1)}
 .modal-box{width:460px;max-width:calc(100vw - 48px);background:var(--bg-elevated);border:1px solid var(--border-default);border-radius:var(--radius-overlay);padding:28px;box-shadow:var(--shadow-medium);animation:modalIn 200ms cubic-bezier(0.32,0.72,0,1)}
 .modal-box h3{font-size:var(--font-lg);margin-bottom:10px}
 .modal-box p{font-size:var(--font-sm);color:var(--text-secondary)}
@@ -477,10 +477,10 @@ body.batch-on .p-actions{display:none!important}
             <div class="health-grid">
               <div class="stat-card">
                 <span class="stat-label"><svg class="ic"><use href="#i-lock"/></svg>脱敏闸<svg class="ic" style="margin-left:auto;color:var(--text-tertiary)"><use href="#i-lock"/></svg></span>
-                <div><span class="chip c-accent">强制开启 · 已锁定</span></div>
+                <div><span class="chip c-accent" id="health-mask-chip">强制开启 · 已锁定</span></div>
                 <p class="plain">记忆出机前自动清除密钥/手机号等敏感信息。</p>
-                <div><span class="chip c-success"><svg class="ic" width="11" height="11"><use href="#i-shield"/></svg>红队测试 泄漏 0/110 样本</span></div>
-                <p class="hint">110 条攻击样本全部被拦下</p>
+                <div><span class="chip c-success" id="redteam-chip"><svg class="ic" width="11" height="11"><use href="#i-shield"/></svg>红队测试 泄漏 0/110 样本</span></div>
+                <p class="hint" id="redteam-hint">110 条攻击样本全部被拦下</p>
                 <span class="eg-tag" style="align-self:flex-start">示例</span>
               </div>
               <div class="stat-card">
@@ -751,45 +751,46 @@ body.batch-on .p-actions{display:none!important}
             </div>
             <div class="warnbar">
               <svg class="ic"><use href="#i-alert"/></svg>
-              对话内容将发送至该端点（已过脱敏）
+              <span id="ep-warn-text">对话内容将发送至该端点（已过脱敏）</span>
             </div>
           </div>
 
-          <!-- 向量端点 -->
+          <!-- 向量化端点 -->
           <div class="card cfg-card">
             <div class="card-head">
-              <h2>向量端点</h2>
+              <h2>向量化端点</h2>
               <span class="eg-tag">示例</span>
             </div>
-            <p class="plain">记忆检索用的「索引」放在哪：本机小模型数据不出机，云端速度更稳。</p>
-            <div class="optgrid" role="radiogroup" aria-label="向量端点">
-              <div class="opt sel" data-v="local" role="radio" aria-checked="true" tabindex="0">
-                <span class="checkmark"><svg class="ic"><use href="#i-check"/></svg></span>
-                <h4>本机小模型 <span class="chip c-accent">推荐</span><span class="chip c-success">数据不出机</span></h4>
-                <p>检索在你电脑本地完成；首次使用需下载数百 MB~1GB 的模型文件。</p>
-              </div>
-              <div class="opt" data-v="cloud" role="radio" aria-checked="false" tabindex="0">
-                <span class="checkmark"><svg class="ic"><use href="#i-check"/></svg></span>
-                <h4>云端服务</h4>
-                <p>检索走云端、速度稳定；内容经脱敏后出机。</p>
-              </div>
+            <p class="plain">记忆检索用的「索引」怎么建——与提炼一样全云端：OpenAI 兼容 embedding 接口，一般不用手动填，从 DevDesk 网关一键带入即可。</p>
+            <div class="cfg-row">
+              <button class="btn primary" id="btn-import-vec"><svg class="ic"><use href="#i-import"/></svg>从 DevDesk 网关一键导入当前 profile</button>
+              <span class="chip c-success" id="vec-imported" hidden>已导入</span>
             </div>
-            <p class="hint" id="vec-note" style="margin-top:10px">当前选择：本机小模型——所有数据都留在你电脑里。</p>
+            <p class="hint" id="vec-empty" style="margin-top:10px">尚未导入 · 点击上方按钮自动带入，无需手动输入</p>
+            <div class="ep-rows" id="vec-rows" hidden>
+              <div class="ep-row"><span class="k">端点</span><span class="mono" id="vec-url">http://127.0.0.1:8392/v1</span></div>
+              <div class="ep-row"><span class="k">模型名</span><span class="mono" id="vec-model">text-embedding-3-small</span></div>
+            </div>
+            <div class="warnbar">
+              <svg class="ic"><use href="#i-alert"/></svg>
+              <span id="vec-warn-text">记忆原文脱敏后将发送至该端点用于向量化</span>
+            </div>
+            <p class="hint" style="margin-top:10px">需要网关提供有余额的 embedding 接口。</p>
           </div>
 
-          <!-- 脱敏设置（锁定态） -->
+          <!-- 脱敏设置 -->
           <div class="card cfg-card">
             <div class="card-head">
               <svg class="ic" style="width:18px;height:18px;color:var(--accent)"><use href="#i-lock"/></svg>
               <h2>脱敏设置</h2>
-              <span class="chip c-accent">强制开启 · 已锁定</span>
+              <span class="chip c-accent" id="mask-state-chip">已开启</span>
               <span class="eg-tag">示例</span>
             </div>
             <div class="cfg-row">
-              <button class="switch" disabled aria-disabled="true" aria-label="脱敏开关（已锁定）"></button>
-              <span class="muted" style="font-size:var(--font-sm)">开关已锁定，无法关闭</span>
+              <button class="switch on" id="mask-switch" aria-label="脱敏开关"></button>
+              <span class="muted" id="mask-note" style="font-size:var(--font-sm)">密钥、手机号等敏感信息会在出机前被自动清除。</span>
             </div>
-            <p class="plain" style="margin-top:8px">使用云端服务时脱敏不可关闭：密钥、手机号等敏感信息会在出机前被自动清除。</p>
+            <p class="plain" style="margin-top:8px">脱敏默认开启；关闭属高危操作需二次确认，关闭后内容将原样发送给云端。</p>
           </div>
 
           <!-- 触发线设置 -->
@@ -849,6 +850,18 @@ body.batch-on .p-actions{display:none!important}
     <div class="modal-foot">
       <button class="btn secondary" id="modal-cancel">取消</button>
       <button class="btn danger" id="clear-go" disabled>确认清除</button>
+    </div>
+  </div>
+</div>
+
+<!-- 关闭脱敏：二次确认弹窗（确认按钮红色） -->
+<div class="modal" id="mask-modal" hidden>
+  <div class="modal-box" role="dialog" aria-modal="true" aria-labelledby="mask-modal-title">
+    <h3 id="mask-modal-title">确认关闭脱敏？</h3>
+    <p>关闭后，密钥/手机号等敏感信息将原样发送给云端大模型。仅建议临时排查时使用，用完请及时重新开启。</p>
+    <div class="modal-foot">
+      <button class="btn secondary" id="mask-cancel">取消</button>
+      <button class="btn danger" id="mask-confirm">仍要关闭</button>
     </div>
   </div>
 </div>
@@ -1137,20 +1150,50 @@ body.batch-on .p-actions{display:none!important}
     toast('已从 DevDesk 网关导入当前 profile（示例）');
   });
 
-  $$('.opt').forEach(function (o) {
-    function pick() {
-      $$('.opt').forEach(function (x) { x.classList.remove('sel'); x.setAttribute('aria-checked', 'false'); });
-      o.classList.add('sel');
-      o.setAttribute('aria-checked', 'true');
-      $('#vec-note').textContent = o.dataset.v === 'cloud'
-        ? '当前选择：云端服务——内容经脱敏后出机，脱敏闸保持强制开启。'
-        : '当前选择：本机小模型——所有数据都留在你电脑里。';
-    }
-    o.addEventListener('click', pick);
-    o.addEventListener('keydown', function (e) {
-      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(); }
-    });
+  $('#btn-import-vec').addEventListener('click', function () {
+    $('#vec-url').textContent = 'http://127.0.0.1:8392/v1';
+    $('#vec-model').textContent = 'text-embedding-3-small';
+    $('#vec-imported').hidden = false;
+    $('#vec-empty').hidden = true;
+    $('#vec-rows').hidden = false;
+    toast('已从 DevDesk 网关导入 embedding 配置（示例）');
   });
+
+  /* ---------- 脱敏开关：默认开；关闭走红色二次确认，主控台/红队/端点警示条全联动 ---------- */
+  var maskOn = true;
+  var maskModal = $('#mask-modal');
+  function applyMask() {
+    $('#mask-switch').classList.toggle('on', maskOn);
+    var chip = $('#mask-state-chip');
+    chip.className = 'chip ' + (maskOn ? 'c-accent' : 'c-error');
+    chip.textContent = maskOn ? '已开启' : '脱敏已关闭';
+    $('#mask-note').textContent = maskOn
+      ? '密钥、手机号等敏感信息会在出机前被自动清除。'
+      : '已关闭：密钥、手机号等敏感信息将原样出机，风险自担。';
+    var hChip = $('#health-mask-chip');
+    hChip.className = 'chip ' + (maskOn ? 'c-accent' : 'c-warning');
+    hChip.textContent = maskOn ? '强制开启 · 已锁定' : '未启用';
+    $('#redteam-chip').className = 'chip ' + (maskOn ? 'c-success' : 'c-neutral');
+    $('#redteam-hint').textContent = maskOn ? '110 条攻击样本全部被拦下' : '验证资产仍在，当前未启用';
+    $('#ep-warn-text').textContent = maskOn
+      ? '对话内容将发送至该端点（已过脱敏）'
+      : '对话内容将发送至该端点（当前未经脱敏）';
+    $('#vec-warn-text').textContent = maskOn
+      ? '记忆原文脱敏后将发送至该端点用于向量化'
+      : '记忆原文将原样发送至该端点用于向量化（当前未经脱敏）';
+  }
+  $('#mask-switch').addEventListener('click', function () {
+    if (maskOn) { maskModal.hidden = false; $('#mask-confirm').focus(); }
+    else { maskOn = true; applyMask(); toast('已重新开启脱敏：出机前自动清除敏感信息（示例）'); }
+  });
+  $('#mask-cancel').addEventListener('click', function () { maskModal.hidden = true; });
+  $('#mask-confirm').addEventListener('click', function () {
+    maskOn = false;
+    applyMask();
+    maskModal.hidden = true;
+    toast('脱敏已关闭：内容将原样出机（示例，请尽快重新开启）', 'warn');
+  });
+  maskModal.addEventListener('click', function (e) { if (e.target === maskModal) maskModal.hidden = true; });
 
   $('#sl-th').addEventListener('input', function () { $('#sl-th-v').textContent = this.value + '%'; });
   $('#sl-w2').addEventListener('input', function () { $('#sl-w2-v').textContent = this.value + ' 次'; });
@@ -1175,7 +1218,12 @@ body.batch-on .p-actions{display:none!important}
     toast('已清除全部记忆（示例，演示用）', 'warn');
   });
   modal.addEventListener('click', function (e) { if (e.target === modal) closeModal(); });
-  document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && !modal.hidden) closeModal(); });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') {
+      if (!modal.hidden) closeModal();
+      if (!maskModal.hidden) maskModal.hidden = true;
+    }
+  });
 })();
 </script>
 </body>
