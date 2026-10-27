@@ -270,6 +270,7 @@
 **证据**：
 - mem0 当前主链路（`mem0/memory/main.py:881`）已经改成 ADD-only：`ADDITIVE_EXTRACTION_PROMPT` 只做 ADD，旧记忆只用于去重与 `linked_memory_ids` 链接；经典四操作提示词（`prompts.py:176`）在本 commit 里只有定义、没有调用点（源码调研）。
 - Graphiti 的安全做法也是“只置失效时间、不物理删除”，且矛盾判定非常保守（源码调研）。
+- 业界行为佐证：mem0 于 2026-04 发布新算法，明确弃用自动 UPDATE/DELETE 转 ADD-only（“Memories accumulate; nothing is overwritten”，以检索期排序代替覆写；见 `docs/superpowers/research/2026-10-27-memcpp-prior-art-evidence-v2.md` §3）。
 - 写入时让模型判 UPDATE 的风险是：模型一次误判就把旧历史覆盖掉，回溯时再也看不到“为什么以前是那样”。单机场景虽然可重建，但重建的是索引，不是被覆盖的事实。
 - 实测 31 条产出有 3 组重复标题，说明重复确实会发生；但重复更适合用“精确标题合并 + 后台候选”处理，不需要在写入时做高风险判定。
 

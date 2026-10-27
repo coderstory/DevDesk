@@ -1,14 +1,14 @@
 # memcpp 夜间工作交接（2026-10-27）
 
 - 交接对象：下一次全新会话（假设完全不知道这几天发生了什么）
-- 工作树：`D:/wt-mem/feat`，分支 `feat/memcpp`（全部工作已提交）
+- 工作树：`D:/wt-memcpp`，分支 `feat/memcpp`（全部工作已提交）
 - 读者只需按本文给的路径读原文档，不要在这里找细节
 
 ## 读完这份文档，你应该先做什么
 
 1. 读可行性报告第 1 节（结论与六个条件）和第 8 节（三件待拍板），把三件事摆给用户；**用户没拍板前不要写 P0 代码**。
 2. 如果用户已拍板或明确让开写：P0.5 风险探针与脱敏层红队验证均已完成（见「当前进度」），直接从 P0 基础链路开工。
-3. 动代码前先 `git -C D:/wt-mem/feat log --oneline -3` 与 `git status` 对齐基线；`tools/memory-lab/experiments/` 已冻结，只能重跑不能改数据。
+3. 动代码前先 `git -C D:/wt-memcpp log --oneline -3` 与 `git status` 对齐基线；`tools/memory-lab/experiments/` 已冻结，只能重跑不能改数据。
 
 ## 一句话现状
 

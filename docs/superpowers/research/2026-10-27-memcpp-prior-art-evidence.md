@@ -11,7 +11,7 @@
 2. **未查到任何 embedding 模型 4-bit（Q4_K_M 属此类）检索质量的公开实证**；相邻证据（1-bit 二值量化不加重排掉 3.5%~25.2%）表明 4-bit 风险不可忽略。
 3. 模型越小量化越伤：约 22M 参数的模型 8-bit 只保 90.79%，3 亿+参数级保 97%——bge-small-zh-v1.5 是 24M 级，落在敏感区间。
 
-（量化 = 把模型权重从 16 位小数压成 8 位/4 位整数换体积速度；召回 Recall@5 = 检索前 5 条含正确答案的比例；MTEB = 公开的向量质量基准，C-MTEB 为其中文版；重排/rescore = 用原始精度向量对候选二次打分。）
+（量化 = 把模型权重从 16 位小数压成 8 位/4 位整数换体积速度；召回 Recall@5 = 检索前 5 条含正确答案的比例；MTEB = 公开的向量质量基准，C-MTEB 为其中文版；重排/rescore = 用原始精度向量对候选二次打分；GGUF = llama.cpp 生态的单文件模型格式，把（通常量化后的）权重打包成一个可直接加载的文件。）
 
 ### 证据表
 | # | 来源（URL） | 关键数字/原文 | 日期 |
@@ -25,7 +25,7 @@
 外推声明：证据 3 无 24M 级中文模型，all-MiniLM-L6-v2（约 22M、英文）是最近邻规模，其 90.79% 视为同规模外推；4-bit 结论由 1-bit/8-bit 区间夹逼，非直接实证。
 
 ### 对拍板②的建议
-- **不改：维持 Q8_0（26MB）**。Q8_0 位宽有 90.8%~100% 保留实证；B2 探针 35.19 MiB 全绿链路就是 Q8_0，换 Q4_K_M 省 11 MB（→约 24.2 MiB）但质量零实证、且同级小模型 8-bit 都只保 90.79%，风险收益不成比例。
+- **不改：维持 Q8_0（26MB）**。Q8_0 位宽有 90.8%~100% 保留实证；B2 探针 35.19 MiB 全绿链路就是 Q8_0，换 Q4_K_M 省 11 MB（10,423,028 + 15,448,256 = 25,871,284 B = 24.67 MiB）但质量零实证、同级唯一可查样本（约 22.7M 的 all-MiniLM-L6-v2）8-bit 实测 90.79%，样本量 1，外推需谨慎，风险收益不成比例。
 - 若未来必须省 11 MB：先在我方冻结检索集上实测 Q4_K_M 的 Recall@5 与 f16/q8_0 差值（复用 feasibility §5 门槛 2 测法），有数字再切。
 
 ## 2. SQLite FTS5 中文检索选型（P0：双字分词 + unicode61 + LIKE 兜底）
@@ -33,7 +33,7 @@
 ### 结论（先读这 3 行）
 1. 我方 trigram 实测（2 字中文 0 命中）被官方文档原文证实：少于 3 个 Unicode 字符的子串在全文本查询下 "do not match any rows"。
 2. **双字（bigram）是业界内置默认**：MySQL 为 CJK 内置 ngram 全文解析器且 "default ngram token size of 2"；同方向还有 858 星 simple 扩展（中文逐字 + 拼音）。
-3. jieba（中文分词词典）路线无质量基准数字（simple 自己只有 TODO"给出性能数据"），且有词典首载 ~4 秒实测开销；代码标识符驼峰在所有先例里**都不切分**，靠子串匹配兜底。
+3. jieba（中文分词词典）路线无质量基准数字（simple 自己只有 TODO"给出性能数据"），且有词典首载 ~4 秒实测开销；代码标识符驼峰：SQLite/代码搜索先例（simple、Zoekt）不切分、靠子串匹配兜底——Solr 官方 WordDelimiterGraphFilter 默认按大小写边界切分（"CamelCase"→"Camel, Case"）是反例，但 FTS5 无现成切分过滤器（需自写 C 扩展）、我方已有原文列 LIKE 兜底，工程裁决仍不切分（复核见 `2026-10-27-memcpp-prior-art-evidence-v2.md` §2）。
 
 （FTS5 = SQLite 内置全文检索引擎；tokenizer/切词器 = 把文本切成检索单元的组件；unicode61 = SQLite 内置的按 Unicode 类别切词的切词器；trigram/bigram = 按 3 字/2 字滑动窗口切块；LIKE = SQL 模糊匹配；jieba = 流行中文分词词典。）
 
@@ -42,11 +42,11 @@
 |---|---|---|---|
 | 1 | SQLite 官方 FTS5 文档 https://www.sqlite.org/fts5.html | trigram："Substrings consisting of fewer than 3 unicode characters do not match any rows when used with a full-text query."；trigram 表的 LIKE/GLOB 走索引，但 "If a LIKE or GLOB pattern does not contain at least one sequence of non-wildcard unicode characters, FTS5 falls back to a linear scan of the entire table."；unicode61：Unicode 类别 L/N/Co 为 token 字符，"Each contiguous run of one or more token characters is considered to be a token"（中文连续串成一整 token，证实必须外部预分词）；自定义切词器须实现 xCreate/xDelete/xTokenize 三函数注册 | 访问 2026-10-27 |
 | 2 | MySQL 8.0 官方手册 https://dev.mysql.com/doc/refman/8.0/en/fulltext-search-ngram.html | "MySQL provides an ngram full-text parser that supports Chinese, Japanese, and Korean (CJK)"；"The ngram parser has a default ngram token size of 2 (bigram)." | 现行手册，访问 2026-10-27 |
-| 3 | simple 扩展 https://github.com/wangfenjin/simple | 中文+拼音 FTS5 tokenizer（858 stars，MIT）；实现"微信移动端全文检索多音字方案四"；加载实测：扩展 <2ms、拼音首用 ~500ms、jieba 词典首载 ~4s；**无与 unicode61/trigram 的质量对比**（README 自列 TODO"给出性能数据"） | 访问 2026-10-27 |
+| 3 | simple 扩展 https://github.com/wangfenjin/simple | 中文+拼音 FTS5 tokenizer（858 stars，MIT OR GPL-3.0-or-later 双许可）；实现"微信移动端全文检索多音字方案四"；加载实测：扩展 <2ms、拼音首用 ~500ms、jieba 词典首载 ~4s；**无与 unicode61/trigram 的质量对比**（README 自列 TODO"给出性能数据"） | 访问 2026-10-27 |
 | 4 | simple 切词器源码 https://github.com/wangfenjin/simple/blob/master/src/simple_tokenizer.cc | ASCII 按字符类别（字母/数字/空白/其他）切换切词，无大小写边界逻辑——"camelCase like 'fooBar' stays as one token (then gets lowercased)"，**驼峰不切分**；CJK 逐字成单字 token；USE_JIEBA 编译时换 cppjieba | 访问 2026-10-27 |
 | 5 | Zoekt 代码搜索引擎 https://github.com/sourcegraph/zoekt | "Fast trigram based code search"；"supports fast substring and regexp matching on source code"；ctags 符号信息只用于排序——**代码标识符检索业界走 trigram/子串路径，不做分词** | 访问 2026-10-27 |
 
-方案对比：双字预分词+unicode61（我方 P0）＝质量有小样本实证（冻结集 Recall@5 1.00/MRR 0.9667）+MySQL 内置同款、复杂度低（纯入库预处理）、索引中；trigram＝零复杂度但官方明文 <3 字符失效、索引大；jieba 自定义切词器＝质量无公开数字、C 扩展+词典资产、加载 ~4s；LIKE 兜底＝零成本、官方确认走线性扫描（几千到几万条可接受）。
+方案对比：双字预分词+unicode61（我方 P0）＝质量有小样本实证（冻结集 Recall@5 1.00/MRR 0.9667，MRR = 平均倒数排名，第一条正确结果排名倒数的均值，越接近 1 表示正确答案排得越靠前）+MySQL 内置同款、复杂度低（纯入库预处理）、索引中；trigram＝零复杂度但官方明文 <3 字符失效、索引大；jieba 自定义切词器＝质量无公开数字、C 扩展+词典资产、加载 ~4s；LIKE 兜底＝零成本、官方确认走线性扫描（几千到几万条可接受）。
 
 ### 对 P0 的建议
 - **不改：双字预分词 + unicode61 + LIKE 兜底**。仅升级表述：trigram 缺陷由"我方实测"升级为"官方文档明文+实测双重证实"。
@@ -58,7 +58,7 @@
 ### 结论（先读这 3 行）
 1. 四个活跃方案（mem0 / Zep / Letta / Cognee）的记忆合并/失效/遗忘**全部全自动，无人工审核环节**。
 2. 最接近的人审机制是 Letta 的**逐工具审批**（API 级 approve/deny），可选配置、示例闸的是写库类敏感操作，记忆工具默认不受闸；另有 ChatGPT 的**事后管理 UI**（设置页查看/删除 + 回答下方来源标注）。
-3. "事前审批队列 + 差异对比 + 批量 + 撤销"的卡片形态在检索范围内**无同构先例，属差异化设计**；自动/人工分流阈值无业界经验数字。
+3. 卡片形态有结构同构先例：Letta 现行 Dreaming 功能就是"自动生成提案 + 二段 AI 复核后应用"，但复核者是 agent 而非人类——**人工审核**的提案卡片先例仍为零，差异化点在人审；另 mem0 自 2026-04 起弃用自动 UPDATE/DELETE 转 ADD-only（业界在远离自动破坏性更新，与我方"删改走人审"同向）；自动/人工分流阈值无业界经验数字（复核见 `2026-10-27-memcpp-prior-art-evidence-v2.md` §3）。
 
 （HITL = human-in-the-loop，人工审核环节；diff = 差异对比视图。）
 
