@@ -60,7 +60,8 @@ REGISTER_TEST(mcp_tools_builtin_server_info_registered,
               "mcp tools builtin: registerBuiltinMcpTools 注册 devdesk_server_info 且 schema 合法", {
     core::mcp::McpToolRegistry registry;
     module::mcp::registerBuiltinMcpTools(registry);
-    DOCTEST_CHECK_EQ(registry.size(), std::size_t{1});
+    // B2 起 registerBuiltinMcpTools 注册两个内置工具(spec §6);计数断言经主会话裁决对齐
+    DOCTEST_CHECK_EQ(registry.size(), std::size_t{2});
 
     auto found = registry.find("devdesk_server_info");
     DOCTEST_REQUIRE(found.isOk());
@@ -100,7 +101,8 @@ REGISTER_TEST(mcp_tools_builtin_server_info_text_fields,
                   std::string::npos);
     DOCTEST_CHECK(text.find(module::mcp::kMcpProtocolVersionLegacy) !=
                   std::string::npos);
-    DOCTEST_CHECK(text.find("已注册工具：1 个") != std::string::npos);
+    DOCTEST_CHECK(text.find("已注册工具：2 个") != std::string::npos);
+    DOCTEST_CHECK(text.find("web_fetch_markdown") != std::string::npos);
     DOCTEST_CHECK(text.find("devdesk_server_info") != std::string::npos);
     return true;
 })
@@ -114,15 +116,15 @@ REGISTER_TEST(mcp_tools_builtin_server_info_uses_injected_registry,
 
     const std::string textA = serverInfoText(localA, "{}");
     DOCTEST_REQUIRE(!textA.empty());
-    DOCTEST_CHECK(textA.find("已注册工具：2 个") != std::string::npos);
-    DOCTEST_CHECK(textA.find("devdesk_server_info, zeta_tool") !=
+    DOCTEST_CHECK(textA.find("已注册工具：3 个") != std::string::npos);
+    DOCTEST_CHECK(textA.find("devdesk_server_info, web_fetch_markdown, zeta_tool") !=
                   std::string::npos);
 
     core::mcp::McpToolRegistry localB;
     module::mcp::registerBuiltinMcpTools(localB);
     const std::string textB = serverInfoText(localB, "{}");
     DOCTEST_REQUIRE(!textB.empty());
-    DOCTEST_CHECK(textB.find("已注册工具：1 个") != std::string::npos);
+    DOCTEST_CHECK(textB.find("已注册工具：2 个") != std::string::npos);
     DOCTEST_CHECK(textB.find("zeta_tool") == std::string::npos);
 
     // 局部注册表的工具不能出现在全局表（串味防线）
@@ -160,7 +162,7 @@ REGISTER_TEST(mcp_tools_builtin_fetcher_injection_signature,
             platform::http::Response{});
     };
     module::mcp::registerBuiltinMcpTools(registry, fetcher);
-    DOCTEST_CHECK_EQ(registry.size(), std::size_t{1});
+    DOCTEST_CHECK_EQ(registry.size(), std::size_t{2});
     DOCTEST_CHECK(registry.find("devdesk_server_info").isOk());
     // B1 只有 server_info：注册与调用都不触发 fetcher
     const std::string text = serverInfoText(registry, "{}");
