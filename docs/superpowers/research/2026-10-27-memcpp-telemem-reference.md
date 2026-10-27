@@ -2,7 +2,7 @@
 
 - 调研日期：2026-10-27（检索当日，全部证据为当日抓取）；同日二稿修订：按用户已定集成模式"DevDesk pip 安装并托管其配置与进程"更新 §4 进程模型契合度（1→2）与 §5 结论
 - 对象：<https://github.com/TeleAI-UAGI/telemem>（任务书原写 `teleiai-uagi` 多一个 i 导致 404，正确组织名 **TeleAI-UAGI**，已用 GitHub API 确认存在、非空壳、非改名残留）
-- 与 mem0-mcp 参照文档的关系：`2026-10-27-memcpp-mem0-mcp-reference.md` 尚不存在，本文按任务书五节自建口径；后续 mem0 参照文档落盘时应保持同表可比。
+- 与 mem0-mcp 参照文档的关系：`docs/superpowers/research/2026-10-27-memcpp-mem0-mcp-reference.md` 已落盘（commit `23524087`，先于本文），本文 §5 以其为对照基线，ADD-only 等表述已核对一致。
 - 结论一句话：**能**——按已定集成模式（DevDesk 用 pip 安装它、托管其配置与进程）落地可行，纯本地档可全离线；它仍是 Python 进程、不进 C++ 进程内，脱敏前置、hook 注入壳、逐条预算格式化三件事仍要 memcpp 自建。
 
 硬需求对照物（只读引用，本文不改其结论）：
@@ -79,7 +79,7 @@
 | 写入 | 默认 LLM 自动抽取：按"全局事件 + 各角色视角"用**中文提示词**抽事实（提示词面向角色扮演/对话场景：人物关系、情节、角色特征、物品地点）；`infer=False` 原文直存不调 LLM；`prompt` 参数可整体替换抽取提示词 | `telemem/utils.py:95-127`（`get_person_prompt`）；`mem0.py:344-361`（`_add_raw_memories`） |
 | 更新/删除语义 | **自动管线只增不改不删**：`_flush_buffer` 与 `_sync_memory_to_vector_store` 里所有落库都是 `_create_memory`（ADD），全文件无一处调用 mem0 的 update/delete；LLM 融合提示词名义叫"增删操作"，实际只是决定"新记忆哪些值得写入"，**旧的相似记忆既不覆写也不删除**，会留在库里 | `telemem/mem0.py:119-217,553-589`；融合提示词 `utils.py:129-152`。这与 mem0 主线 2026-04 起的 ADD-only 转向一致（本仓 `2026-10-27-memcpp-feasibility.md` §4.1 已考证 mem0 commit `2c81af3`），也与我们已拍板的"写入只 ADD"**同构** |
 | 检索 | **纯向量**（FAISS），无全文检索；查询侧也走 embedding；支持作用域过滤、相似度阈值、可选重排；共享事件库（伪用户 `events`）永远随查 | `mem0.py:591-690`（search） |
-| 去重 | 两层：向量余弦相似 ≥0.95 聚簇 + LLM 融合决定去留；**融合失败时兜底原样写入**（不丢数据但可能重复） | `mem0.py:87-117`（`_cluster_memories_by_embedding`）、`:182-190`（fallback） |
+| 去重 | 两层：向量余弦相似 ≥0.95 聚簇 + LLM 融合决定去留；**融合失败时兜底原样写入**（不丢数据但可能重复） | `mem0.py:87-117`（`_cluster_memories_by_embedding`）、`:186-204`（fallback） |
 | 冲突处理 | 无显式冲突消解；靠融合提示词"重复/无价值的去除"软处理，且旧条目不删，冲突事实可能并存 | 同上 |
 | 人审/提案环节 | **没有**。全自动写入，人工只有事后 `update_memory`/`delete_memory`/`memory_history` 三个 MCP 工具可追溯可修，无"提案待审"状态机 | `server.py` 全部工具面 |
 
@@ -88,7 +88,7 @@
 | 维度 | 分 | 理由（含量化） |
 |---|---|---|
 | 本地离线可用 | **2** | Ollama 官方配置全本地（本地 LLM 抽取 + 本地 embedding + 本地 FAISS/SQLite），无遥测默认关。唯一保留意见：本地抽取质量未由我们验证（对上 feasibility §5 门槛 7） |
-| 依赖重量 | **1** | 8 个直接运行时依赖；mem0 传递依赖拉进 qdrant-client、sqlalchemy、posthog、protobuf、pytz（PyPI 元数据核实）；实测轮子体积：faiss-cpu win_amd64 **15.5 MB**、numpy 12 MB、sqlalchemy 2.3 MB，纯 Python 包若干——Python 依赖安装后估计 120~150 MB，**另需 Python 3.10+ 解释器**（约 25~100 MB，估）。对照"单 exe 红线"已超，但方向已改为"不强自研单 exe"，故给 1 不给 0。运行时内存未实测（FAISS 平面索引几千条为 MB 级，属推断） |
+| 依赖重量 | **1** | 8 个直接运行时依赖；mem0 传递依赖拉进 qdrant-client、sqlalchemy、posthog、protobuf、pytz（PyPI 元数据核实）；轮子体积：faiss-cpu PyPI cp312 各轮 13.7~18.9 MB（量级十余 MB）、numpy 12 MB、sqlalchemy 2.3 MB，纯 Python 包若干——Python 依赖安装后估计 120~150 MB，**另需 Python 3.10+ 解释器**（约 25~100 MB，估）。对照"单 exe 红线"已超，但方向已改为"不强自研单 exe"，故给 1 不给 0。运行时内存未实测（FAISS 平面索引几千条为 MB 级，属推断） |
 | 脱敏兼容（外发什么数据） | **0** | 无任何脱敏/正则过滤层；`infer=True` 把**原始对话全文**拼进提示词发给所配 LLM 端点（`mem0.py:479-497`），查询原文发给 embedding 端点。走本地 Ollama 档数据不出机器（可满足"纯本地"档）；走云端档则触碰 feasibility §8.1 红线——脱敏必须由 memcpp 在调 `add()` **之前**自建 |
 | 注入通道兼容（hook 同步预载） | **1** | 无 Claude Code hook 集成，但常驻本地 MCP HTTP（127.0.0.1:8421）可被 memcpp 的 C++ hook 壳以 JSON-RPC 调用，进程模型成立；`search_memories` 返回融合段落、无逐条日期/来源 ID，不满足"≤5 条、每条一行带日期与来源"预算格式，需改调 Python API 原始结果或换 `get_memories`。**端到端延迟未实测**：检索含一次 embedding 调用（本地 Ollama 十几毫秒量级，推断），对 feasibility §5 门槛 5（p95<500ms）大概率可过但无证据 |
 | 许可证 | **2** | Apache-2.0（仓库 LICENSE 与 `pyproject.toml` 双证），可商用可分发，无传染性；依赖链 mem0ai 同为 Apache-2.0 |
@@ -100,8 +100,9 @@
 ## 5. 结论
 
 - **直接内置可行性**：**能**——按已定集成模式（DevDesk pip 安装并托管其配置与进程）落地可行，纯本地档全离线（Ollama 配置）；它不进 C++ 进程内，但该边界已由集成模式消化。
-- **vs mem0-mcp**：mem0 参照文档尚未落盘，以 mem0 OSS 为基线——TeleMem 是 mem0 的即插即用替换（API 同形），官方自测中文长对话基准 ZH-4O 上 86.33% 对 Mem0 70.20%（相对高 19%，**官方口径、无第三方复现**，其 issue #10 计划在 LongMemEval 复现尚未完成）；且官方仓库自带 8 工具 MCP 服务器（mem0 OSS 本体没有内建 MCP 服务器，OpenMemory MCP 是独立项目）。代价：钉死 mem0ai 旧小版本 + 面向角色扮演的中文抽取提示词（写代码场景需用 `prompt` 参数整体替换）。
+- **vs mem0-mcp**：对照基线为本仓已落盘的 mem0-mcp 参照（`docs/superpowers/research/2026-10-27-memcpp-mem0-mcp-reference.md`）——其三种后端（mem0 云 / Supabase pgvector / mem0 开源版内存库）全部要求联网与 API key，"本地模式"默认内存态、重启即丢，对"本地离线"轴出局；TeleMem 纯本地 FAISS+Ollama 全离线、能内置，恰好补上该文指出的"零网络+重启不丢在 MCP 记忆生态是空位"。TeleMem 是 mem0 的即插即用替换（API 同形），官方自测中文长对话基准 ZH-4O 上 86.33% 对 Mem0 70.20%（相对高 19%，**官方口径、无第三方复现**，其 issue #10 计划在 LongMemEval 复现尚未完成）；且官方仓库自带 8 工具 MCP 服务器（mem0 OSS 本体没有内建 MCP 服务器，OpenMemory MCP 是独立项目）。代价：钉死 mem0ai 旧小版本 + 面向角色扮演的中文抽取提示词（写代码场景需用 `prompt` 参数整体替换）。
 - **比选最关键的单一事实**：TeleMem 的自动写入管线与我们已拍板的"只 ADD"完全同构（源码全文无一处自动 update/delete），加上 Ollama 档全离线——说明**需求本身可由第三方满足、自研 P0 的存储方案不是唯一解**；但它只能以"外挂 Python 进程 + 自研 C++ 壳"的方式进来，memcpp 的脱敏层、hook 注入壳、逐条预算格式化三件事无论选谁都得自研——集成模式已定（pip 安装 + DevDesk 托管进程/配置）之后，"内置第三方 vs 自研 P0"的差别就只剩**存储/检索/抽取引擎用谁的**这一层。
+- **保留意见（裁决前必读）**：TeleMem 检索纯向量、无全文通道，对 2 字中文/标识符/错误码类查询未验证（见文末附录资产表"评测资产"行）；若走 telemem 路线，此类查询需补全文通道或维持 DevDesk 侧 LIKE 兜底——检索适配过冻结集之前，"能内置"仅指工程可行，不含"能检准"。
 
 ## 附：若内置它，memcpp 既有资产哪些作废哪些保留
 
@@ -111,6 +112,7 @@
 | 保留 | hook 协议契约事实（2026-10-27-memcpp-hook-contract-facts.md）与失败开放模式 | hook 壳不变，壳内检索调用换成 MCP/HTTP 调 telemem |
 | 保留 | 注入预算设计（≤5 条/≤500 字/带日期与来源 ID/静默跳过） | TeleMem 的融合段落返回不满足此格式，格式化自做 |
 | 保留 | 评测资产（27 条冻结集、Recall@5 与注入采用率口径，feasibility §9.2） | 口径不动，被测对象换成 telemem search 重跑；尤其中文 2 字短查询在纯向量方案上的表现（正对我们"端口/配置/模块"场景），未验证 |
+| 保留 | 评测资产 eval_identifiers（tools/memory-lab/：identifiers.json + 脚本 + tests） | 向量检索档下该评测线部分保留——2 字中文与路径类查询仍是全文通道的验收资产，转测 telemem search 未过即触发 §5 保留意见的补通道/兜底选项 |
 | 保留 | proposals 提案卡存储设计（P0 规格 §5） | TeleMem 无人审环节；保留"人审/提案"需求的话这套仍自建 |
 | 部分保留 | CLI 三子命令骨架（hook/mcp/daemon） | 语义保留；memcpp mcp 的自研 recall 实现改为转发 telemem |
 | 部分保留 | P0 规格 §2.2 存储层 DDL | 主记忆表作废；proposals 表 + 幂等键语义不受影响 |
