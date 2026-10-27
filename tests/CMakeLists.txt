@@ -126,6 +126,12 @@ add_executable(devdesk_tests
     test_modules/test_module_toggle_bridge.cpp
     test_modules/test_wallpaper_module.cpp
     test_modules/test_splash_contract.cpp
+    # B3：MCP 设置面（配置/桥/卡片）+ 服务生命周期用例
+    test_modules/test_mcp_settings.cpp
+    test_modules/test_mcp_service.cpp
+    # app::mcp 桥实现缝：app_assembly.cpp 与 settings_module.cpp 引用其符号
+    #（module_toggle_bridge.cpp 同款理由）
+    ${CMAKE_SOURCE_DIR}/src/mcp_service_bridge.cpp
 )
 
 # ==================== 用例登记自检（TIN-10） =============# 上面是**手工源表**：漏登记一个用例 .cpp = 该文件永不编译、用例永不注册，
@@ -285,11 +291,15 @@ foreach(_probe_source ${_devdesk_probe_sources})
        _probe_name STREQUAL "uat62_page_shots_probe")
         add_executable(${_probe_name} "${_probe_source}"
             "${CMAKE_SOURCE_DIR}/src/module_toggle_bridge.cpp"
+            "${CMAKE_SOURCE_DIR}/src/mcp_service_bridge.cpp"
             "${CMAKE_SOURCE_DIR}/src/app_sidebar.cpp"
             "${CMAKE_SOURCE_DIR}/src/app_assembly.cpp")
     else()
+        # mcp_service_bridge.cpp：probe 全体链 devdesk_module_settings，settings 引用
+        # app::mcp::* 桥符号后缝必须单独编进来（与 module_toggle_bridge.cpp 同款理由）
         add_executable(${_probe_name} "${_probe_source}"
-            "${CMAKE_SOURCE_DIR}/src/module_toggle_bridge.cpp")
+            "${CMAKE_SOURCE_DIR}/src/module_toggle_bridge.cpp"
+            "${CMAKE_SOURCE_DIR}/src/mcp_service_bridge.cpp")
     endif()
     target_include_directories(${_probe_name} PRIVATE
         ${CMAKE_SOURCE_DIR}/src
@@ -391,6 +401,7 @@ if(DEVDESK_BUILD_LIVE_TOOLS AND UNIX)
     add_executable(github_sync_live
         live/github_sync_live.cpp
         ${CMAKE_SOURCE_DIR}/src/module_toggle_bridge.cpp
+        ${CMAKE_SOURCE_DIR}/src/mcp_service_bridge.cpp
         ${CMAKE_SOURCE_DIR}/src/app_sidebar.cpp
         ${CMAKE_SOURCE_DIR}/src/app_assembly.cpp)
     target_include_directories(github_sync_live PRIVATE
@@ -436,7 +447,8 @@ if(DEVDESK_BUILD_LIVE_TOOLS AND UNIX)
     #（与 devdesk_tests 同款理由，见该目标注释）
     add_executable(agent_live
         live/agent_live.cpp
-        ${CMAKE_SOURCE_DIR}/src/module_toggle_bridge.cpp)
+        ${CMAKE_SOURCE_DIR}/src/module_toggle_bridge.cpp
+        ${CMAKE_SOURCE_DIR}/src/mcp_service_bridge.cpp)
     # module_claude_proxy / module_settings：claude_tools.h / app_tools.h 的同级头
     target_include_directories(agent_live PRIVATE
         ${CMAKE_SOURCE_DIR}/src
