@@ -470,3 +470,25 @@ if(DEVDESK_BUILD_LIVE_TOOLS AND UNIX)
     # LABELS 只有 live、没有 probe：默认门禁跑 `ctest -L probe`，看不到它。
     set_tests_properties(agent_live PROPERTIES LABELS "live")
 endif()
+
+# ==================== B4：MCP live 驱动（实连，默认不构建）====================
+# 台账 B4-02 的**独立块，无 AND UNIX**：mcp_live.cpp 零平台宏、include 全
+# "module_mcp/…" 前缀形态，Windows 受编集合必须纳入它（交叉编译守卫同验）。
+# 显式入口：cmake -B build -DDEVDESK_BUILD_LIVE_TOOLS=ON && cmake --build build
+#           --target mcp_live；build/tests/mcp_live --check | --serve
+if(DEVDESK_BUILD_LIVE_TOOLS)
+    # 只链 devdesk_module_mcp（core / platform 经其 PUBLIC 传递）；mcp_live.cpp
+    # 不引用 app 层符号,bridge.cpp 只依赖 core——不拉 settings 等兄弟模块
+    add_executable(mcp_live
+        live/mcp_live.cpp
+        ${CMAKE_SOURCE_DIR}/src/mcp_service_bridge.cpp)
+    target_include_directories(mcp_live PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/tests)
+    target_link_libraries(mcp_live PRIVATE devdesk_module_mcp)
+    devdesk_apply_warnings(mcp_live)
+
+    add_test(NAME mcp_live_check COMMAND mcp_live --check)
+    # LABELS 只有 live、没有 probe：默认门禁跑 `ctest -L probe`，看不到它。
+    set_tests_properties(mcp_live_check PROPERTIES LABELS "live")
+endif()
