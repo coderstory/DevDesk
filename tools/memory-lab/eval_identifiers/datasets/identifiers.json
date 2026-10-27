@@ -1,0 +1,1161 @@
+{
+ "memories": [
+  {
+   "id": 0,
+   "kind": "fact",
+   "title": "用户服务查询入口 getUserById",
+   "narrative": "src/core/user_service.py 提供 getUserById 按 id 查用户，内部走 LRU 缓存（容量 128），未命中才落库查询。",
+   "facts": [
+    "getUserById(user_id) -> User",
+    "LRU 缓存容量 128，未命中回源 SQLite"
+   ],
+   "concepts": [
+    "getUserById",
+    "LRU",
+    "用户查询"
+   ],
+   "importance": 2
+  },
+  {
+   "id": 1,
+   "kind": "fact",
+   "title": "状态差异渲染 renderStateDiff",
+   "narrative": "src/ui/state_diff.ts 的 renderStateDiff 接收前后两个状态树，输出最小差异补丁；卡顿时先查 diff 计算是否 O(n^2)。",
+   "facts": [
+    "renderStateDiff(prev, next) -> Patch[]"
+   ],
+   "concepts": [
+    "renderStateDiff",
+    "状态差异"
+   ],
+   "importance": 2
+  },
+  {
+   "id": 2,
+   "kind": "fact",
+   "title": "CLI 参数解析 parseCliArgs",
+   "narrative": "tools/cli/args.py 的 parseCliArgs 解析命令行参数，CLI 入口在 run.py；--verbose 打开调试日志。",
+   "facts": [
+    "parseCliArgs(argv) -> Options",
+    "--verbose / --limit / --filter"
+   ],
+   "concepts": [
+    "parseCliArgs",
+    "CLI",
+    "参数解析"
+   ],
+   "importance": 2
+  },
+  {
+   "id": 3,
+   "kind": "fact",
+   "title": "令牌失效 invalidateToken",
+   "narrative": "auth/token_cache.py 的 invalidateToken 使访问令牌立即失效并清空缓存，之后强制重新登录；E_AUTH_401 触发时会自动调用。",
+   "facts": [
+    "invalidateToken(token)",
+    "E_AUTH_401 → invalidateToken → 重新登录"
+   ],
+   "concepts": [
+    "invalidateToken",
+    "令牌",
+    "鉴权"
+   ],
+   "importance": 2
+  },
+  {
+   "id": 4,
+   "kind": "fact",
+   "title": "SQLite 建表与连接 sqlite_db.cpp",
+   "narrative": "src/core/sqlite_db.cpp 负责建表 DDL 与连接管理，启用 WAL 模式，E_DB_BUSY 时忙等重试。",
+   "facts": [
+    "建表 DDL 集中在 schema.sql",
+    "journal_mode=WAL",
+    "E_DB_BUSY → busy_timeout 5000"
+   ],
+   "concepts": [
+    "sqlite_db",
+    "建表",
+    "WAL"
+   ],
+   "importance": 2
+  },
+  {
+   "id": 5,
+   "kind": "fact",
+   "title": "记忆存储 memory_store.py",
+   "narrative": "src/memory/memory_store.py 封装记忆条目的增删改查与 bigram 索引写入，是存储层的唯一入口。",
+   "facts": [
+    "memory_store.add / search / purge"
+   ],
+   "concepts": [
+    "memory_store",
+    "存储层"
+   ],
+   "importance": 2
+  },
+  {
+   "id": 6,
+   "kind": "fact",
+   "title": "嵌入客户端 embed_client.rs",
+   "narrative": "src/index/embed_client.rs 批量调用嵌入服务，批量大小 64，输出 512 维向量，维度与 BAAI/bge-small-zh-v1.5 一致。",
+   "facts": [
+    "batch=64",
+    "dim=512"
+   ],
+   "concepts": [
+    "embed_client",
+    "嵌入",
+    "维度"
+   ],
+   "importance": 2
+  },
+  {
+   "id": 7,
+   "kind": "fact",
+   "title": "重试调度 retry_scheduler.py",
+   "narrative": "src/scheduler/retry_scheduler.py 指数退避重试：间隔 1s 起，倍增，最多 5 次后进死信队列。",
+   "facts": [
+    "backoff=1s*2^n",
+    "max_retry=5"
+   ],
+   "concepts": [
+    "retry_scheduler",
+    "重试",
+    "退避"
+   ],
+   "importance": 2
+  },
+  {
+   "id": 8,
+   "kind": "fact",
+   "title": "文件锁 lock_manager",
+   "narrative": "src/core/lock_manager.cpp 管理跨进程文件锁，等待锁默认 E_LOCK_TIMEOUT 阈值 5000ms，超时抛错。",
+   "facts": [
+    "E_LOCK_TIMEOUT=5000ms"
+   ],
+   "concepts": [
+    "lock_manager",
+    "文件锁",
+    "锁超时"
+   ],
+   "importance": 2
+  },
+  {
+   "id": 9,
+   "kind": "fact",
+   "title": "代理池 proxy_pool.go",
+   "narrative": "src/net/proxy_pool.go 维护出口代理池并轮换；代理返回 401 时报 E_PROXY_401，按重试策略切换出口；连接超时 30s。",
+   "facts": [
+    "E_PROXY_401 → 换出口重试",
+    "timeout=30s"
+   ],
+   "concepts": [
+    "proxy_pool",
+    "代理",
+    "超时"
+   ],
+   "importance": 2
+  },
+  {
+   "id": 10,
+   "kind": "fact",
+   "title": "日志轮转 log_rotate.py",
+   "narrative": "src/ops/log_rotate.py 每日切割日志，保留 14 天后 gzip 归档删除。",
+   "facts": [
+    "rotate=daily",
+    "retention=14d"
+   ],
+   "concepts": [
+    "log_rotate",
+    "日志",
+    "轮转"
+   ],
+   "importance": 2
+  },
+  {
+   "id": 11,
+   "kind": "fact",
+   "title": "FTS5 全文索引方案",
+   "narrative": "全文检索用 SQLite FTS5：中文入库前双字分词（重叠 bigram）+ unicode61 分词器；trigram 仅作对照，2 字中文查询在 trigram 下 0 命中。",
+   "facts": [
+    "tokenizer=unicode61",
+    "中文 bigram"
+   ],
+   "concepts": [
+    "FTS",
+    "FTS5",
+    "bigram",
+    "全文索引"
+   ],
+   "importance": 2
+  },
+  {
+   "id": 12,
+   "kind": "fact",
+   "title": "混合检索 RRF 融合",
+   "narrative": "向量与 FTS5 两路排名用 RRF 融合，k=60；RRF 分数相加后重排。",
+   "facts": [
+    "RRF k=60"
+   ],
+   "concepts": [
+    "RRF",
+    "混合检索"
+   ],
+   "importance": 2
+  },
+  {
+   "id": 13,
+   "kind": "fact",
+   "title": "IPC 协议与 RPC 序列化",
+   "narrative": "src/ipc/protocol.cpp 定义 JSON-RPC over stdio 的 IPC 帧：4 字节大端长度头 + JSON 载荷；RPC 一律 JSON 序列化。",
+   "facts": [
+    "frame = len(u32 BE) + json"
+   ],
+   "concepts": [
+    "IPC",
+    "RPC",
+    "JSON-RPC"
+   ],
+   "importance": 2
+  },
+  {
+   "id": 14,
+   "kind": "fact",
+   "title": "DDL 迁移脚本",
+   "narrative": "migrations/0002_add_status.sql 为建表后补 status 列的 DDL 迁移，迁移在启动时按版本号顺序执行。",
+   "facts": [
+    "0002_add_status.sql",
+    "ALTER TABLE observations ADD COLUMN status"
+   ],
+   "concepts": [
+    "DDL",
+    "迁移",
+    "建表"
+   ],
+   "importance": 2
+  },
+  {
+   "id": 15,
+   "kind": "fact",
+   "title": "配置加载 loader.py",
+   "narrative": "src/config/loader.py 先读 YAML 配置，再用环境变量覆盖；配置优先级 env > YAML > 默认值。",
+   "facts": [
+    "priority: env > yaml > default"
+   ],
+   "concepts": [
+    "loader",
+    "配置",
+    "优先级"
+   ],
+   "importance": 2
+  },
+  {
+   "id": 16,
+   "kind": "fact",
+   "title": "网关心跳 ws_server.ts",
+   "narrative": "src/gateway/ws_server.ts 每 15s 发心跳，连续 3 次丢心跳判定断线并自动重连。",
+   "facts": [
+    "heartbeat=15s",
+    "reconnect after 3 misses"
+   ],
+   "concepts": [
+    "ws_server",
+    "心跳",
+    "重连"
+   ],
+   "importance": 2
+  },
+  {
+   "id": 17,
+   "kind": "fact",
+   "title": "LRU 缓存 lru_cache.py",
+   "narrative": "src/cache/lru_cache.py 实现容量 1024 的 LRU 缓存，带命中统计。",
+   "facts": [
+    "capacity=1024"
+   ],
+   "concepts": [
+    "lru_cache",
+    "缓存",
+    "容量"
+   ],
+   "importance": 2
+  },
+  {
+   "id": 18,
+   "kind": "fact",
+   "title": "错误码定义表",
+   "narrative": "docs/errors.md 维护全局错误码：E_PROXY_401 出口代理鉴权失败、E_AUTH_401 访问令牌无效或过期、E_LOCK_TIMEOUT 文件锁等待超时（5000ms）、E_DB_BUSY 数据库忙。",
+   "facts": [
+    "E_PROXY_401",
+    "E_AUTH_401",
+    "E_LOCK_TIMEOUT",
+    "E_DB_BUSY"
+   ],
+   "concepts": [
+    "错误码",
+    "E_PROXY_401",
+    "E_AUTH_401"
+   ],
+   "importance": 2
+  },
+  {
+   "id": 19,
+   "kind": "fact",
+   "title": "构建脚本 build-test-run.sh",
+   "narrative": "scripts/build-test-run.sh 驱动 cmake+ninja 增量构建并跑测试，支持 --filter 只跑定向用例。",
+   "facts": [
+    "--filter <substr>"
+   ],
+   "concepts": [
+    "构建",
+    "增量",
+    "ninja"
+   ],
+   "importance": 2
+  },
+  {
+   "id": 20,
+   "kind": "fact",
+   "title": "嵌入维度校验",
+   "narrative": "写入 embeddings 表前校验向量维度必须等于模型输出 512 维，不一致直接报错拒绝写入。",
+   "facts": [
+    "dim_mismatch → raise"
+   ],
+   "concepts": [
+    "嵌入",
+    "维度",
+    "校验"
+   ],
+   "importance": 2
+  },
+  {
+   "id": 21,
+   "kind": "fact",
+   "title": "会话摄取 ingest.py",
+   "narrative": "ingest.py 把原始会话拆成事件流并按会话去重后落库，作为记忆管线第一步。",
+   "facts": [
+    "dedupe by (session, seq)"
+   ],
+   "concepts": [
+    "ingest",
+    "摄取"
+   ],
+   "importance": 2
+  },
+  {
+   "id": 22,
+   "kind": "fact",
+   "title": "API 限流 ratelimit.go",
+   "narrative": "src/gateway/ratelimit.go 用令牌桶做 API 限流，默认 100 rps，超出返回 429。",
+   "facts": [
+    "100 rps",
+    "429"
+   ],
+   "concepts": [
+    "ratelimit",
+    "限流",
+    "API"
+   ],
+   "importance": 2
+  },
+  {
+   "id": 23,
+   "kind": "fact",
+   "title": "测试矩阵与发现",
+   "narrative": "tests/ 目录用 unittest discover 跑全量，支持按名字过滤单测；评测类脚本自带门槛断言。",
+   "facts": [
+    "python -m unittest discover -s tests"
+   ],
+   "concepts": [
+    "unittest",
+    "测试"
+   ],
+   "importance": 2
+  }
+ ],
+ "queries": [
+  {
+   "id": "i01",
+   "query": "getUserById",
+   "target_id": 0,
+   "source": "manual_identifier_set",
+   "category": "camel",
+   "gold_group": "camel",
+   "gold_ids": [
+    0
+   ],
+   "primary_id": 0
+  },
+  {
+   "id": "i02",
+   "query": "getUserById 怎么实现的",
+   "target_id": 0,
+   "source": "manual_identifier_set",
+   "category": "camel",
+   "gold_group": "camel",
+   "gold_ids": [
+    0
+   ],
+   "primary_id": 0
+  },
+  {
+   "id": "i03",
+   "query": "renderStateDiff 在哪个文件",
+   "target_id": 1,
+   "source": "manual_identifier_set",
+   "category": "camel",
+   "gold_group": "camel",
+   "gold_ids": [
+    1
+   ],
+   "primary_id": 1
+  },
+  {
+   "id": "i04",
+   "query": "renderStateDiff 的输入输出",
+   "target_id": 1,
+   "source": "manual_identifier_set",
+   "category": "camel",
+   "gold_group": "camel",
+   "gold_ids": [
+    1
+   ],
+   "primary_id": 1
+  },
+  {
+   "id": "i05",
+   "query": "parseCliArgs 支持哪些参数",
+   "target_id": 2,
+   "source": "manual_identifier_set",
+   "category": "camel",
+   "gold_group": "camel",
+   "gold_ids": [
+    2
+   ],
+   "primary_id": 2
+  },
+  {
+   "id": "i06",
+   "query": "parseCliArgs 的 verbose 开关",
+   "target_id": 2,
+   "source": "manual_identifier_set",
+   "category": "camel",
+   "gold_group": "camel",
+   "gold_ids": [
+    2
+   ],
+   "primary_id": 2
+  },
+  {
+   "id": "i07",
+   "query": "invalidateToken 什么时候调用",
+   "target_id": 3,
+   "source": "manual_identifier_set",
+   "category": "camel",
+   "gold_group": "camel",
+   "gold_ids": [
+    3
+   ],
+   "primary_id": 3
+  },
+  {
+   "id": "i08",
+   "query": "调用 invalidateToken 之后缓存会怎样",
+   "target_id": 3,
+   "source": "manual_identifier_set",
+   "category": "camel",
+   "gold_group": "camel",
+   "gold_ids": [
+    3
+   ],
+   "primary_id": 3
+  },
+  {
+   "id": "i09",
+   "query": "怎么复用 getUserById 查用户",
+   "target_id": 0,
+   "source": "manual_identifier_set",
+   "category": "camel",
+   "gold_group": "camel",
+   "gold_ids": [
+    0
+   ],
+   "primary_id": 0
+  },
+  {
+   "id": "i10",
+   "query": "renderStateDiff 卡顿怎么排查",
+   "target_id": 1,
+   "source": "manual_identifier_set",
+   "category": "camel",
+   "gold_group": "camel",
+   "gold_ids": [
+    1
+   ],
+   "primary_id": 1
+  },
+  {
+   "id": "i11",
+   "query": "invalidateToken 的返回值",
+   "target_id": 3,
+   "source": "manual_identifier_set",
+   "category": "camel",
+   "gold_group": "camel",
+   "gold_ids": [
+    3
+   ],
+   "primary_id": 3
+  },
+  {
+   "id": "i12",
+   "query": "sqlite_db.cpp 的建表逻辑",
+   "target_id": 4,
+   "source": "manual_identifier_set",
+   "category": "snake",
+   "gold_group": "snake",
+   "gold_ids": [
+    4
+   ],
+   "primary_id": 4
+  },
+  {
+   "id": "i13",
+   "query": "memory_store.py 负责什么",
+   "target_id": 5,
+   "source": "manual_identifier_set",
+   "category": "snake",
+   "gold_group": "snake",
+   "gold_ids": [
+    5
+   ],
+   "primary_id": 5
+  },
+  {
+   "id": "i14",
+   "query": "embed_client.rs 的批量大小",
+   "target_id": 6,
+   "source": "manual_identifier_set",
+   "category": "snake",
+   "gold_group": "snake",
+   "gold_ids": [
+    6
+   ],
+   "primary_id": 6
+  },
+  {
+   "id": "i15",
+   "query": "retry_scheduler.py 的退避策略",
+   "target_id": 7,
+   "source": "manual_identifier_set",
+   "category": "snake",
+   "gold_group": "snake",
+   "gold_ids": [
+    7
+   ],
+   "primary_id": 7
+  },
+  {
+   "id": "i16",
+   "query": "lock_manager 的锁超时设置",
+   "target_id": 8,
+   "source": "manual_identifier_set",
+   "category": "snake",
+   "gold_group": "snake",
+   "gold_ids": [
+    8
+   ],
+   "primary_id": 8
+  },
+  {
+   "id": "i17",
+   "query": "proxy_pool.go 的轮换策略",
+   "target_id": 9,
+   "source": "manual_identifier_set",
+   "category": "snake",
+   "gold_group": "snake",
+   "gold_ids": [
+    9
+   ],
+   "primary_id": 9
+  },
+  {
+   "id": "i18",
+   "query": "log_rotate.py 日志保留多久",
+   "target_id": 10,
+   "source": "manual_identifier_set",
+   "category": "snake",
+   "gold_group": "snake",
+   "gold_ids": [
+    10
+   ],
+   "primary_id": 10
+  },
+  {
+   "id": "i19",
+   "query": "lru_cache.py 的容量多大",
+   "target_id": 17,
+   "source": "manual_identifier_set",
+   "category": "snake",
+   "gold_group": "snake",
+   "gold_ids": [
+    17
+   ],
+   "primary_id": 17
+  },
+  {
+   "id": "i20",
+   "query": "ws_server.ts 的心跳间隔",
+   "target_id": 16,
+   "source": "manual_identifier_set",
+   "category": "snake",
+   "gold_group": "snake",
+   "gold_ids": [
+    16
+   ],
+   "primary_id": 16
+  },
+  {
+   "id": "i21",
+   "query": "ratelimit.go 的限流阈值",
+   "target_id": 22,
+   "source": "manual_identifier_set",
+   "category": "snake",
+   "gold_group": "snake",
+   "gold_ids": [
+    22
+   ],
+   "primary_id": 22
+  },
+  {
+   "id": "i22",
+   "query": "loader.py 的配置加载顺序",
+   "target_id": 15,
+   "source": "manual_identifier_set",
+   "category": "snake",
+   "gold_group": "snake",
+   "gold_ids": [
+    15
+   ],
+   "primary_id": 15
+  },
+  {
+   "id": "i23",
+   "query": "src/core/sqlite_db.cpp",
+   "target_id": 4,
+   "source": "manual_identifier_set",
+   "category": "path",
+   "gold_group": "path",
+   "gold_ids": [
+    4
+   ],
+   "primary_id": 4
+  },
+  {
+   "id": "i24",
+   "query": "src/core/lock_manager.cpp",
+   "target_id": 8,
+   "source": "manual_identifier_set",
+   "category": "path",
+   "gold_group": "path",
+   "gold_ids": [
+    8
+   ],
+   "primary_id": 8
+  },
+  {
+   "id": "i25",
+   "query": "src/ui/state_diff.ts",
+   "target_id": 1,
+   "source": "manual_identifier_set",
+   "category": "path",
+   "gold_group": "path",
+   "gold_ids": [
+    1
+   ],
+   "primary_id": 1
+  },
+  {
+   "id": "i26",
+   "query": "src/net/proxy_pool.go",
+   "target_id": 9,
+   "source": "manual_identifier_set",
+   "category": "path",
+   "gold_group": "path",
+   "gold_ids": [
+    9
+   ],
+   "primary_id": 9
+  },
+  {
+   "id": "i27",
+   "query": "src/scheduler/retry_scheduler.py",
+   "target_id": 7,
+   "source": "manual_identifier_set",
+   "category": "path",
+   "gold_group": "path",
+   "gold_ids": [
+    7
+   ],
+   "primary_id": 7
+  },
+  {
+   "id": "i28",
+   "query": "src/memory/memory_store.py",
+   "target_id": 5,
+   "source": "manual_identifier_set",
+   "category": "path",
+   "gold_group": "path",
+   "gold_ids": [
+    5
+   ],
+   "primary_id": 5
+  },
+  {
+   "id": "i29",
+   "query": "src/index/embed_client.rs",
+   "target_id": 6,
+   "source": "manual_identifier_set",
+   "category": "path",
+   "gold_group": "path",
+   "gold_ids": [
+    6
+   ],
+   "primary_id": 6
+  },
+  {
+   "id": "i30",
+   "query": "src/gateway/ws_server.ts",
+   "target_id": 16,
+   "source": "manual_identifier_set",
+   "category": "path",
+   "gold_group": "path",
+   "gold_ids": [
+    16
+   ],
+   "primary_id": 16
+  },
+  {
+   "id": "i31",
+   "query": "migrations/0002_add_status.sql",
+   "target_id": 14,
+   "source": "manual_identifier_set",
+   "category": "path",
+   "gold_group": "path",
+   "gold_ids": [
+    14
+   ],
+   "primary_id": 14
+  },
+  {
+   "id": "i32",
+   "query": "scripts/build-test-run.sh",
+   "target_id": 19,
+   "source": "manual_identifier_set",
+   "category": "path",
+   "gold_group": "path",
+   "gold_ids": [
+    19
+   ],
+   "primary_id": 19
+  },
+  {
+   "id": "i33",
+   "query": "src/ops/log_rotate.py",
+   "target_id": 10,
+   "source": "manual_identifier_set",
+   "category": "path",
+   "gold_group": "path",
+   "gold_ids": [
+    10
+   ],
+   "primary_id": 10
+  },
+  {
+   "id": "i34",
+   "query": "E_PROXY_401 是什么错误",
+   "target_id": 18,
+   "source": "manual_identifier_set",
+   "category": "error_code",
+   "gold_group": "error_code",
+   "gold_ids": [
+    18,
+    9
+   ],
+   "primary_id": 18
+  },
+  {
+   "id": "i35",
+   "query": "E_PROXY_401 的重试策略",
+   "target_id": 9,
+   "source": "manual_identifier_set",
+   "category": "error_code",
+   "gold_group": "error_code",
+   "gold_ids": [
+    9,
+    18
+   ],
+   "primary_id": 9
+  },
+  {
+   "id": "i36",
+   "query": "E_AUTH_401 怎么触发",
+   "target_id": 3,
+   "source": "manual_identifier_set",
+   "category": "error_code",
+   "gold_group": "error_code",
+   "gold_ids": [
+    3,
+    18
+   ],
+   "primary_id": 3
+  },
+  {
+   "id": "i37",
+   "query": "E_LOCK_TIMEOUT 默认多少毫秒",
+   "target_id": 8,
+   "source": "manual_identifier_set",
+   "category": "error_code",
+   "gold_group": "error_code",
+   "gold_ids": [
+    8,
+    18
+   ],
+   "primary_id": 8
+  },
+  {
+   "id": "i38",
+   "query": "E_DB_BUSY 在哪里定义",
+   "target_id": 4,
+   "source": "manual_identifier_set",
+   "category": "error_code",
+   "gold_group": "error_code",
+   "gold_ids": [
+    4,
+    18
+   ],
+   "primary_id": 4
+  },
+  {
+   "id": "i39",
+   "query": "错误码表在哪个文档维护",
+   "target_id": 18,
+   "source": "manual_identifier_set",
+   "category": "error_code",
+   "gold_group": "error_code",
+   "gold_ids": [
+    18
+   ],
+   "primary_id": 18
+  },
+  {
+   "id": "i40",
+   "query": "E_LOCK_TIMEOUT 的抛出条件",
+   "target_id": 8,
+   "source": "manual_identifier_set",
+   "category": "error_code",
+   "gold_group": "error_code",
+   "gold_ids": [
+    8,
+    18
+   ],
+   "primary_id": 8
+  },
+  {
+   "id": "i41",
+   "query": "接口返回 401 该查哪里",
+   "target_id": 3,
+   "source": "manual_identifier_set",
+   "category": "error_code",
+   "gold_group": "error_code",
+   "gold_ids": [
+    3,
+    18
+   ],
+   "primary_id": 3
+  },
+  {
+   "id": "i42",
+   "query": "遇到 E_AUTH_401 要改什么配置",
+   "target_id": 3,
+   "source": "manual_identifier_set",
+   "category": "error_code",
+   "gold_group": "error_code",
+   "gold_ids": [
+    3,
+    18
+   ],
+   "primary_id": 3
+  },
+  {
+   "id": "i43",
+   "query": "错误码前缀 E_ 代表什么",
+   "target_id": 18,
+   "source": "manual_identifier_set",
+   "category": "error_code",
+   "gold_group": "error_code",
+   "gold_ids": [
+    18
+   ],
+   "primary_id": 18
+  },
+  {
+   "id": "i44",
+   "query": "FTS 全文索引用的什么引擎",
+   "target_id": 11,
+   "source": "manual_identifier_set",
+   "category": "abbrev",
+   "gold_group": "abbrev",
+   "gold_ids": [
+    11
+   ],
+   "primary_id": 11
+  },
+  {
+   "id": "i45",
+   "query": "DDL 迁移脚本在哪执行",
+   "target_id": 14,
+   "source": "manual_identifier_set",
+   "category": "abbrev",
+   "gold_group": "abbrev",
+   "gold_ids": [
+    14,
+    4
+   ],
+   "primary_id": 14
+  },
+  {
+   "id": "i46",
+   "query": "RRF 的 k 取多少",
+   "target_id": 12,
+   "source": "manual_identifier_set",
+   "category": "abbrev",
+   "gold_group": "abbrev",
+   "gold_ids": [
+    12
+   ],
+   "primary_id": 12
+  },
+  {
+   "id": "i47",
+   "query": "IPC 帧格式是什么",
+   "target_id": 13,
+   "source": "manual_identifier_set",
+   "category": "abbrev",
+   "gold_group": "abbrev",
+   "gold_ids": [
+    13
+   ],
+   "primary_id": 13
+  },
+  {
+   "id": "i48",
+   "query": "LRU 缓存容量",
+   "target_id": 17,
+   "source": "manual_identifier_set",
+   "category": "abbrev",
+   "gold_group": "abbrev",
+   "gold_ids": [
+    17,
+    0
+   ],
+   "primary_id": 17
+  },
+  {
+   "id": "i49",
+   "query": "WAL 模式开了没有",
+   "target_id": 4,
+   "source": "manual_identifier_set",
+   "category": "abbrev",
+   "gold_group": "abbrev",
+   "gold_ids": [
+    4
+   ],
+   "primary_id": 4
+  },
+  {
+   "id": "i50",
+   "query": "RPC 用什么序列化",
+   "target_id": 13,
+   "source": "manual_identifier_set",
+   "category": "abbrev",
+   "gold_group": "abbrev",
+   "gold_ids": [
+    13
+   ],
+   "primary_id": 13
+  },
+  {
+   "id": "i51",
+   "query": "YAML 配置和环境变量谁优先",
+   "target_id": 15,
+   "source": "manual_identifier_set",
+   "category": "abbrev",
+   "gold_group": "abbrev",
+   "gold_ids": [
+    15
+   ],
+   "primary_id": 15
+  },
+  {
+   "id": "i52",
+   "query": "CLI 参数解析入口在哪",
+   "target_id": 2,
+   "source": "manual_identifier_set",
+   "category": "abbrev",
+   "gold_group": "abbrev",
+   "gold_ids": [
+    2
+   ],
+   "primary_id": 2
+  },
+  {
+   "id": "i53",
+   "query": "API 限流怎么配置",
+   "target_id": 22,
+   "source": "manual_identifier_set",
+   "category": "abbrev",
+   "gold_group": "abbrev",
+   "gold_ids": [
+    22
+   ],
+   "primary_id": 22
+  },
+  {
+   "id": "i54",
+   "query": "代理 超时",
+   "target_id": 9,
+   "source": "manual_identifier_set",
+   "category": "zh_short",
+   "gold_group": "zh_short",
+   "gold_ids": [
+    9
+   ],
+   "primary_id": 9
+  },
+  {
+   "id": "i55",
+   "query": "建表",
+   "target_id": 4,
+   "source": "manual_identifier_set",
+   "category": "zh_short",
+   "gold_group": "zh_short",
+   "gold_ids": [
+    4,
+    14
+   ],
+   "primary_id": 4
+  },
+  {
+   "id": "i56",
+   "query": "重试",
+   "target_id": 7,
+   "source": "manual_identifier_set",
+   "category": "zh_short",
+   "gold_group": "zh_short",
+   "gold_ids": [
+    7,
+    9
+   ],
+   "primary_id": 7
+  },
+  {
+   "id": "i57",
+   "query": "锁 超时",
+   "target_id": 8,
+   "source": "manual_identifier_set",
+   "category": "zh_short",
+   "gold_group": "zh_short",
+   "gold_ids": [
+    8,
+    18
+   ],
+   "primary_id": 8
+  },
+  {
+   "id": "i58",
+   "query": "日志 轮转",
+   "target_id": 10,
+   "source": "manual_identifier_set",
+   "category": "zh_short",
+   "gold_group": "zh_short",
+   "gold_ids": [
+    10
+   ],
+   "primary_id": 10
+  },
+  {
+   "id": "i59",
+   "query": "嵌入 维度",
+   "target_id": 6,
+   "source": "manual_identifier_set",
+   "category": "zh_short",
+   "gold_group": "zh_short",
+   "gold_ids": [
+    6,
+    20
+   ],
+   "primary_id": 6
+  },
+  {
+   "id": "i60",
+   "query": "缓存 容量",
+   "target_id": 17,
+   "source": "manual_identifier_set",
+   "category": "zh_short",
+   "gold_group": "zh_short",
+   "gold_ids": [
+    17,
+    0
+   ],
+   "primary_id": 17
+  },
+  {
+   "id": "i61",
+   "query": "心跳 重连",
+   "target_id": 16,
+   "source": "manual_identifier_set",
+   "category": "zh_short",
+   "gold_group": "zh_short",
+   "gold_ids": [
+    16
+   ],
+   "primary_id": 16
+  },
+  {
+   "id": "i62",
+   "query": "配置 优先级",
+   "target_id": 15,
+   "source": "manual_identifier_set",
+   "category": "zh_short",
+   "gold_group": "zh_short",
+   "gold_ids": [
+    15
+   ],
+   "primary_id": 15
+  },
+  {
+   "id": "i63",
+   "query": "构建 增量",
+   "target_id": 19,
+   "source": "manual_identifier_set",
+   "category": "zh_short",
+   "gold_group": "zh_short",
+   "gold_ids": [
+    19
+   ],
+   "primary_id": 19
+  },
+  {
+   "id": "i64",
+   "query": "令牌 失效",
+   "target_id": 3,
+   "source": "manual_identifier_set",
+   "category": "zh_short",
+   "gold_group": "zh_short",
+   "gold_ids": [
+    3
+   ],
+   "primary_id": 3
+  }
+ ]
+}

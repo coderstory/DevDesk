@@ -1,0 +1,2276 @@
+{
+ "generated_at": "2026-10-27T13:47:32",
+ "sqlite": "3.50.4",
+ "dataset": {
+  "memories": 24,
+  "queries": 64
+ },
+ "p0_threshold": 0.8,
+ "identifier_categories": [
+  "camel",
+  "snake",
+  "path",
+  "error_code",
+  "abbrev"
+ ],
+ "overall": {
+  "bigram_only": {
+   "recall_at_5": 1.0,
+   "mrr": 0.9922
+  },
+  "like_only": {
+   "recall_at_5": 0.375,
+   "mrr": 0.3672
+  },
+  "bigram_like": {
+   "recall_at_5": 1.0,
+   "mrr": 0.9922
+  }
+ },
+ "by_category": {
+  "camel": {
+   "bigram_only": {
+    "n": 11,
+    "recall_at_5": 1.0
+   },
+   "like_only": {
+    "n": 11,
+    "recall_at_5": 0.0909
+   },
+   "bigram_like": {
+    "n": 11,
+    "recall_at_5": 1.0
+   }
+  },
+  "snake": {
+   "bigram_only": {
+    "n": 11,
+    "recall_at_5": 1.0
+   },
+   "like_only": {
+    "n": 11,
+    "recall_at_5": 0.0
+   },
+   "bigram_like": {
+    "n": 11,
+    "recall_at_5": 1.0
+   }
+  },
+  "path": {
+   "bigram_only": {
+    "n": 11,
+    "recall_at_5": 1.0
+   },
+   "like_only": {
+    "n": 11,
+    "recall_at_5": 1.0
+   },
+   "bigram_like": {
+    "n": 11,
+    "recall_at_5": 1.0
+   }
+  },
+  "error_code": {
+   "bigram_only": {
+    "n": 10,
+    "recall_at_5": 1.0
+   },
+   "like_only": {
+    "n": 10,
+    "recall_at_5": 0.0
+   },
+   "bigram_like": {
+    "n": 10,
+    "recall_at_5": 1.0
+   }
+  },
+  "abbrev": {
+   "bigram_only": {
+    "n": 10,
+    "recall_at_5": 1.0
+   },
+   "like_only": {
+    "n": 10,
+    "recall_at_5": 0.1
+   },
+   "bigram_like": {
+    "n": 10,
+    "recall_at_5": 1.0
+   }
+  },
+  "zh_short": {
+   "bigram_only": {
+    "n": 11,
+    "recall_at_5": 1.0
+   },
+   "like_only": {
+    "n": 11,
+    "recall_at_5": 1.0
+   },
+   "bigram_like": {
+    "n": 11,
+    "recall_at_5": 1.0
+   }
+  }
+ },
+ "failures_bigram_like": [],
+ "per_query": [
+  {
+   "id": "i01",
+   "query": "getUserById",
+   "category": "camel",
+   "gold_ids": [
+    0
+   ],
+   "mode": "bigram_only",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i02",
+   "query": "getUserById 怎么实现的",
+   "category": "camel",
+   "gold_ids": [
+    0
+   ],
+   "mode": "bigram_only",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i03",
+   "query": "renderStateDiff 在哪个文件",
+   "category": "camel",
+   "gold_ids": [
+    1
+   ],
+   "mode": "bigram_only",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i04",
+   "query": "renderStateDiff 的输入输出",
+   "category": "camel",
+   "gold_ids": [
+    1
+   ],
+   "mode": "bigram_only",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i05",
+   "query": "parseCliArgs 支持哪些参数",
+   "category": "camel",
+   "gold_ids": [
+    2
+   ],
+   "mode": "bigram_only",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i06",
+   "query": "parseCliArgs 的 verbose 开关",
+   "category": "camel",
+   "gold_ids": [
+    2
+   ],
+   "mode": "bigram_only",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i07",
+   "query": "invalidateToken 什么时候调用",
+   "category": "camel",
+   "gold_ids": [
+    3
+   ],
+   "mode": "bigram_only",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i08",
+   "query": "调用 invalidateToken 之后缓存会怎样",
+   "category": "camel",
+   "gold_ids": [
+    3
+   ],
+   "mode": "bigram_only",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i09",
+   "query": "怎么复用 getUserById 查用户",
+   "category": "camel",
+   "gold_ids": [
+    0
+   ],
+   "mode": "bigram_only",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i10",
+   "query": "renderStateDiff 卡顿怎么排查",
+   "category": "camel",
+   "gold_ids": [
+    1
+   ],
+   "mode": "bigram_only",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i11",
+   "query": "invalidateToken 的返回值",
+   "category": "camel",
+   "gold_ids": [
+    3
+   ],
+   "mode": "bigram_only",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i12",
+   "query": "sqlite_db.cpp 的建表逻辑",
+   "category": "snake",
+   "gold_ids": [
+    4
+   ],
+   "mode": "bigram_only",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i13",
+   "query": "memory_store.py 负责什么",
+   "category": "snake",
+   "gold_ids": [
+    5
+   ],
+   "mode": "bigram_only",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i14",
+   "query": "embed_client.rs 的批量大小",
+   "category": "snake",
+   "gold_ids": [
+    6
+   ],
+   "mode": "bigram_only",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i15",
+   "query": "retry_scheduler.py 的退避策略",
+   "category": "snake",
+   "gold_ids": [
+    7
+   ],
+   "mode": "bigram_only",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i16",
+   "query": "lock_manager 的锁超时设置",
+   "category": "snake",
+   "gold_ids": [
+    8
+   ],
+   "mode": "bigram_only",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i17",
+   "query": "proxy_pool.go 的轮换策略",
+   "category": "snake",
+   "gold_ids": [
+    9
+   ],
+   "mode": "bigram_only",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i18",
+   "query": "log_rotate.py 日志保留多久",
+   "category": "snake",
+   "gold_ids": [
+    10
+   ],
+   "mode": "bigram_only",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i19",
+   "query": "lru_cache.py 的容量多大",
+   "category": "snake",
+   "gold_ids": [
+    17
+   ],
+   "mode": "bigram_only",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i20",
+   "query": "ws_server.ts 的心跳间隔",
+   "category": "snake",
+   "gold_ids": [
+    16
+   ],
+   "mode": "bigram_only",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i21",
+   "query": "ratelimit.go 的限流阈值",
+   "category": "snake",
+   "gold_ids": [
+    22
+   ],
+   "mode": "bigram_only",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i22",
+   "query": "loader.py 的配置加载顺序",
+   "category": "snake",
+   "gold_ids": [
+    15
+   ],
+   "mode": "bigram_only",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i23",
+   "query": "src/core/sqlite_db.cpp",
+   "category": "path",
+   "gold_ids": [
+    4
+   ],
+   "mode": "bigram_only",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i24",
+   "query": "src/core/lock_manager.cpp",
+   "category": "path",
+   "gold_ids": [
+    8
+   ],
+   "mode": "bigram_only",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i25",
+   "query": "src/ui/state_diff.ts",
+   "category": "path",
+   "gold_ids": [
+    1
+   ],
+   "mode": "bigram_only",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i26",
+   "query": "src/net/proxy_pool.go",
+   "category": "path",
+   "gold_ids": [
+    9
+   ],
+   "mode": "bigram_only",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i27",
+   "query": "src/scheduler/retry_scheduler.py",
+   "category": "path",
+   "gold_ids": [
+    7
+   ],
+   "mode": "bigram_only",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i28",
+   "query": "src/memory/memory_store.py",
+   "category": "path",
+   "gold_ids": [
+    5
+   ],
+   "mode": "bigram_only",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i29",
+   "query": "src/index/embed_client.rs",
+   "category": "path",
+   "gold_ids": [
+    6
+   ],
+   "mode": "bigram_only",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i30",
+   "query": "src/gateway/ws_server.ts",
+   "category": "path",
+   "gold_ids": [
+    16
+   ],
+   "mode": "bigram_only",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i31",
+   "query": "migrations/0002_add_status.sql",
+   "category": "path",
+   "gold_ids": [
+    14
+   ],
+   "mode": "bigram_only",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i32",
+   "query": "scripts/build-test-run.sh",
+   "category": "path",
+   "gold_ids": [
+    19
+   ],
+   "mode": "bigram_only",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i33",
+   "query": "src/ops/log_rotate.py",
+   "category": "path",
+   "gold_ids": [
+    10
+   ],
+   "mode": "bigram_only",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i34",
+   "query": "E_PROXY_401 是什么错误",
+   "category": "error_code",
+   "gold_ids": [
+    18,
+    9
+   ],
+   "mode": "bigram_only",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i35",
+   "query": "E_PROXY_401 的重试策略",
+   "category": "error_code",
+   "gold_ids": [
+    9,
+    18
+   ],
+   "mode": "bigram_only",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i36",
+   "query": "E_AUTH_401 怎么触发",
+   "category": "error_code",
+   "gold_ids": [
+    3,
+    18
+   ],
+   "mode": "bigram_only",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i37",
+   "query": "E_LOCK_TIMEOUT 默认多少毫秒",
+   "category": "error_code",
+   "gold_ids": [
+    8,
+    18
+   ],
+   "mode": "bigram_only",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i38",
+   "query": "E_DB_BUSY 在哪里定义",
+   "category": "error_code",
+   "gold_ids": [
+    4,
+    18
+   ],
+   "mode": "bigram_only",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i39",
+   "query": "错误码表在哪个文档维护",
+   "category": "error_code",
+   "gold_ids": [
+    18
+   ],
+   "mode": "bigram_only",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i40",
+   "query": "E_LOCK_TIMEOUT 的抛出条件",
+   "category": "error_code",
+   "gold_ids": [
+    8,
+    18
+   ],
+   "mode": "bigram_only",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i41",
+   "query": "接口返回 401 该查哪里",
+   "category": "error_code",
+   "gold_ids": [
+    3,
+    18
+   ],
+   "mode": "bigram_only",
+   "rank": 1,
+   "hit_at_5": true
+  },
+  {
+   "id": "i42",
+   "query": "遇到 E_AUTH_401 要改什么配置",
+   "category": "error_code",
+   "gold_ids": [
+    3,
+    18
+   ],
+   "mode": "bigram_only",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i43",
+   "query": "错误码前缀 E_ 代表什么",
+   "category": "error_code",
+   "gold_ids": [
+    18
+   ],
+   "mode": "bigram_only",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i44",
+   "query": "FTS 全文索引用的什么引擎",
+   "category": "abbrev",
+   "gold_ids": [
+    11
+   ],
+   "mode": "bigram_only",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i45",
+   "query": "DDL 迁移脚本在哪执行",
+   "category": "abbrev",
+   "gold_ids": [
+    14,
+    4
+   ],
+   "mode": "bigram_only",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i46",
+   "query": "RRF 的 k 取多少",
+   "category": "abbrev",
+   "gold_ids": [
+    12
+   ],
+   "mode": "bigram_only",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i47",
+   "query": "IPC 帧格式是什么",
+   "category": "abbrev",
+   "gold_ids": [
+    13
+   ],
+   "mode": "bigram_only",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i48",
+   "query": "LRU 缓存容量",
+   "category": "abbrev",
+   "gold_ids": [
+    17,
+    0
+   ],
+   "mode": "bigram_only",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i49",
+   "query": "WAL 模式开了没有",
+   "category": "abbrev",
+   "gold_ids": [
+    4
+   ],
+   "mode": "bigram_only",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i50",
+   "query": "RPC 用什么序列化",
+   "category": "abbrev",
+   "gold_ids": [
+    13
+   ],
+   "mode": "bigram_only",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i51",
+   "query": "YAML 配置和环境变量谁优先",
+   "category": "abbrev",
+   "gold_ids": [
+    15
+   ],
+   "mode": "bigram_only",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i52",
+   "query": "CLI 参数解析入口在哪",
+   "category": "abbrev",
+   "gold_ids": [
+    2
+   ],
+   "mode": "bigram_only",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i53",
+   "query": "API 限流怎么配置",
+   "category": "abbrev",
+   "gold_ids": [
+    22
+   ],
+   "mode": "bigram_only",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i54",
+   "query": "代理 超时",
+   "category": "zh_short",
+   "gold_ids": [
+    9
+   ],
+   "mode": "bigram_only",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i55",
+   "query": "建表",
+   "category": "zh_short",
+   "gold_ids": [
+    4,
+    14
+   ],
+   "mode": "bigram_only",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i56",
+   "query": "重试",
+   "category": "zh_short",
+   "gold_ids": [
+    7,
+    9
+   ],
+   "mode": "bigram_only",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i57",
+   "query": "锁 超时",
+   "category": "zh_short",
+   "gold_ids": [
+    8,
+    18
+   ],
+   "mode": "bigram_only",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i58",
+   "query": "日志 轮转",
+   "category": "zh_short",
+   "gold_ids": [
+    10
+   ],
+   "mode": "bigram_only",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i59",
+   "query": "嵌入 维度",
+   "category": "zh_short",
+   "gold_ids": [
+    6,
+    20
+   ],
+   "mode": "bigram_only",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i60",
+   "query": "缓存 容量",
+   "category": "zh_short",
+   "gold_ids": [
+    17,
+    0
+   ],
+   "mode": "bigram_only",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i61",
+   "query": "心跳 重连",
+   "category": "zh_short",
+   "gold_ids": [
+    16
+   ],
+   "mode": "bigram_only",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i62",
+   "query": "配置 优先级",
+   "category": "zh_short",
+   "gold_ids": [
+    15
+   ],
+   "mode": "bigram_only",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i63",
+   "query": "构建 增量",
+   "category": "zh_short",
+   "gold_ids": [
+    19
+   ],
+   "mode": "bigram_only",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i64",
+   "query": "令牌 失效",
+   "category": "zh_short",
+   "gold_ids": [
+    3
+   ],
+   "mode": "bigram_only",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i01",
+   "query": "getUserById",
+   "category": "camel",
+   "gold_ids": [
+    0
+   ],
+   "mode": "like_only",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i02",
+   "query": "getUserById 怎么实现的",
+   "category": "camel",
+   "gold_ids": [
+    0
+   ],
+   "mode": "like_only",
+   "rank": null,
+   "hit_at_5": false
+  },
+  {
+   "id": "i03",
+   "query": "renderStateDiff 在哪个文件",
+   "category": "camel",
+   "gold_ids": [
+    1
+   ],
+   "mode": "like_only",
+   "rank": null,
+   "hit_at_5": false
+  },
+  {
+   "id": "i04",
+   "query": "renderStateDiff 的输入输出",
+   "category": "camel",
+   "gold_ids": [
+    1
+   ],
+   "mode": "like_only",
+   "rank": null,
+   "hit_at_5": false
+  },
+  {
+   "id": "i05",
+   "query": "parseCliArgs 支持哪些参数",
+   "category": "camel",
+   "gold_ids": [
+    2
+   ],
+   "mode": "like_only",
+   "rank": null,
+   "hit_at_5": false
+  },
+  {
+   "id": "i06",
+   "query": "parseCliArgs 的 verbose 开关",
+   "category": "camel",
+   "gold_ids": [
+    2
+   ],
+   "mode": "like_only",
+   "rank": null,
+   "hit_at_5": false
+  },
+  {
+   "id": "i07",
+   "query": "invalidateToken 什么时候调用",
+   "category": "camel",
+   "gold_ids": [
+    3
+   ],
+   "mode": "like_only",
+   "rank": null,
+   "hit_at_5": false
+  },
+  {
+   "id": "i08",
+   "query": "调用 invalidateToken 之后缓存会怎样",
+   "category": "camel",
+   "gold_ids": [
+    3
+   ],
+   "mode": "like_only",
+   "rank": null,
+   "hit_at_5": false
+  },
+  {
+   "id": "i09",
+   "query": "怎么复用 getUserById 查用户",
+   "category": "camel",
+   "gold_ids": [
+    0
+   ],
+   "mode": "like_only",
+   "rank": null,
+   "hit_at_5": false
+  },
+  {
+   "id": "i10",
+   "query": "renderStateDiff 卡顿怎么排查",
+   "category": "camel",
+   "gold_ids": [
+    1
+   ],
+   "mode": "like_only",
+   "rank": null,
+   "hit_at_5": false
+  },
+  {
+   "id": "i11",
+   "query": "invalidateToken 的返回值",
+   "category": "camel",
+   "gold_ids": [
+    3
+   ],
+   "mode": "like_only",
+   "rank": null,
+   "hit_at_5": false
+  },
+  {
+   "id": "i12",
+   "query": "sqlite_db.cpp 的建表逻辑",
+   "category": "snake",
+   "gold_ids": [
+    4
+   ],
+   "mode": "like_only",
+   "rank": null,
+   "hit_at_5": false
+  },
+  {
+   "id": "i13",
+   "query": "memory_store.py 负责什么",
+   "category": "snake",
+   "gold_ids": [
+    5
+   ],
+   "mode": "like_only",
+   "rank": null,
+   "hit_at_5": false
+  },
+  {
+   "id": "i14",
+   "query": "embed_client.rs 的批量大小",
+   "category": "snake",
+   "gold_ids": [
+    6
+   ],
+   "mode": "like_only",
+   "rank": null,
+   "hit_at_5": false
+  },
+  {
+   "id": "i15",
+   "query": "retry_scheduler.py 的退避策略",
+   "category": "snake",
+   "gold_ids": [
+    7
+   ],
+   "mode": "like_only",
+   "rank": null,
+   "hit_at_5": false
+  },
+  {
+   "id": "i16",
+   "query": "lock_manager 的锁超时设置",
+   "category": "snake",
+   "gold_ids": [
+    8
+   ],
+   "mode": "like_only",
+   "rank": null,
+   "hit_at_5": false
+  },
+  {
+   "id": "i17",
+   "query": "proxy_pool.go 的轮换策略",
+   "category": "snake",
+   "gold_ids": [
+    9
+   ],
+   "mode": "like_only",
+   "rank": null,
+   "hit_at_5": false
+  },
+  {
+   "id": "i18",
+   "query": "log_rotate.py 日志保留多久",
+   "category": "snake",
+   "gold_ids": [
+    10
+   ],
+   "mode": "like_only",
+   "rank": null,
+   "hit_at_5": false
+  },
+  {
+   "id": "i19",
+   "query": "lru_cache.py 的容量多大",
+   "category": "snake",
+   "gold_ids": [
+    17
+   ],
+   "mode": "like_only",
+   "rank": null,
+   "hit_at_5": false
+  },
+  {
+   "id": "i20",
+   "query": "ws_server.ts 的心跳间隔",
+   "category": "snake",
+   "gold_ids": [
+    16
+   ],
+   "mode": "like_only",
+   "rank": null,
+   "hit_at_5": false
+  },
+  {
+   "id": "i21",
+   "query": "ratelimit.go 的限流阈值",
+   "category": "snake",
+   "gold_ids": [
+    22
+   ],
+   "mode": "like_only",
+   "rank": null,
+   "hit_at_5": false
+  },
+  {
+   "id": "i22",
+   "query": "loader.py 的配置加载顺序",
+   "category": "snake",
+   "gold_ids": [
+    15
+   ],
+   "mode": "like_only",
+   "rank": null,
+   "hit_at_5": false
+  },
+  {
+   "id": "i23",
+   "query": "src/core/sqlite_db.cpp",
+   "category": "path",
+   "gold_ids": [
+    4
+   ],
+   "mode": "like_only",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i24",
+   "query": "src/core/lock_manager.cpp",
+   "category": "path",
+   "gold_ids": [
+    8
+   ],
+   "mode": "like_only",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i25",
+   "query": "src/ui/state_diff.ts",
+   "category": "path",
+   "gold_ids": [
+    1
+   ],
+   "mode": "like_only",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i26",
+   "query": "src/net/proxy_pool.go",
+   "category": "path",
+   "gold_ids": [
+    9
+   ],
+   "mode": "like_only",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i27",
+   "query": "src/scheduler/retry_scheduler.py",
+   "category": "path",
+   "gold_ids": [
+    7
+   ],
+   "mode": "like_only",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i28",
+   "query": "src/memory/memory_store.py",
+   "category": "path",
+   "gold_ids": [
+    5
+   ],
+   "mode": "like_only",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i29",
+   "query": "src/index/embed_client.rs",
+   "category": "path",
+   "gold_ids": [
+    6
+   ],
+   "mode": "like_only",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i30",
+   "query": "src/gateway/ws_server.ts",
+   "category": "path",
+   "gold_ids": [
+    16
+   ],
+   "mode": "like_only",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i31",
+   "query": "migrations/0002_add_status.sql",
+   "category": "path",
+   "gold_ids": [
+    14
+   ],
+   "mode": "like_only",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i32",
+   "query": "scripts/build-test-run.sh",
+   "category": "path",
+   "gold_ids": [
+    19
+   ],
+   "mode": "like_only",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i33",
+   "query": "src/ops/log_rotate.py",
+   "category": "path",
+   "gold_ids": [
+    10
+   ],
+   "mode": "like_only",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i34",
+   "query": "E_PROXY_401 是什么错误",
+   "category": "error_code",
+   "gold_ids": [
+    18,
+    9
+   ],
+   "mode": "like_only",
+   "rank": null,
+   "hit_at_5": false
+  },
+  {
+   "id": "i35",
+   "query": "E_PROXY_401 的重试策略",
+   "category": "error_code",
+   "gold_ids": [
+    9,
+    18
+   ],
+   "mode": "like_only",
+   "rank": null,
+   "hit_at_5": false
+  },
+  {
+   "id": "i36",
+   "query": "E_AUTH_401 怎么触发",
+   "category": "error_code",
+   "gold_ids": [
+    3,
+    18
+   ],
+   "mode": "like_only",
+   "rank": null,
+   "hit_at_5": false
+  },
+  {
+   "id": "i37",
+   "query": "E_LOCK_TIMEOUT 默认多少毫秒",
+   "category": "error_code",
+   "gold_ids": [
+    8,
+    18
+   ],
+   "mode": "like_only",
+   "rank": null,
+   "hit_at_5": false
+  },
+  {
+   "id": "i38",
+   "query": "E_DB_BUSY 在哪里定义",
+   "category": "error_code",
+   "gold_ids": [
+    4,
+    18
+   ],
+   "mode": "like_only",
+   "rank": null,
+   "hit_at_5": false
+  },
+  {
+   "id": "i39",
+   "query": "错误码表在哪个文档维护",
+   "category": "error_code",
+   "gold_ids": [
+    18
+   ],
+   "mode": "like_only",
+   "rank": null,
+   "hit_at_5": false
+  },
+  {
+   "id": "i40",
+   "query": "E_LOCK_TIMEOUT 的抛出条件",
+   "category": "error_code",
+   "gold_ids": [
+    8,
+    18
+   ],
+   "mode": "like_only",
+   "rank": null,
+   "hit_at_5": false
+  },
+  {
+   "id": "i41",
+   "query": "接口返回 401 该查哪里",
+   "category": "error_code",
+   "gold_ids": [
+    3,
+    18
+   ],
+   "mode": "like_only",
+   "rank": null,
+   "hit_at_5": false
+  },
+  {
+   "id": "i42",
+   "query": "遇到 E_AUTH_401 要改什么配置",
+   "category": "error_code",
+   "gold_ids": [
+    3,
+    18
+   ],
+   "mode": "like_only",
+   "rank": null,
+   "hit_at_5": false
+  },
+  {
+   "id": "i43",
+   "query": "错误码前缀 E_ 代表什么",
+   "category": "error_code",
+   "gold_ids": [
+    18
+   ],
+   "mode": "like_only",
+   "rank": null,
+   "hit_at_5": false
+  },
+  {
+   "id": "i44",
+   "query": "FTS 全文索引用的什么引擎",
+   "category": "abbrev",
+   "gold_ids": [
+    11
+   ],
+   "mode": "like_only",
+   "rank": null,
+   "hit_at_5": false
+  },
+  {
+   "id": "i45",
+   "query": "DDL 迁移脚本在哪执行",
+   "category": "abbrev",
+   "gold_ids": [
+    14,
+    4
+   ],
+   "mode": "like_only",
+   "rank": null,
+   "hit_at_5": false
+  },
+  {
+   "id": "i46",
+   "query": "RRF 的 k 取多少",
+   "category": "abbrev",
+   "gold_ids": [
+    12
+   ],
+   "mode": "like_only",
+   "rank": null,
+   "hit_at_5": false
+  },
+  {
+   "id": "i47",
+   "query": "IPC 帧格式是什么",
+   "category": "abbrev",
+   "gold_ids": [
+    13
+   ],
+   "mode": "like_only",
+   "rank": null,
+   "hit_at_5": false
+  },
+  {
+   "id": "i48",
+   "query": "LRU 缓存容量",
+   "category": "abbrev",
+   "gold_ids": [
+    17,
+    0
+   ],
+   "mode": "like_only",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i49",
+   "query": "WAL 模式开了没有",
+   "category": "abbrev",
+   "gold_ids": [
+    4
+   ],
+   "mode": "like_only",
+   "rank": null,
+   "hit_at_5": false
+  },
+  {
+   "id": "i50",
+   "query": "RPC 用什么序列化",
+   "category": "abbrev",
+   "gold_ids": [
+    13
+   ],
+   "mode": "like_only",
+   "rank": null,
+   "hit_at_5": false
+  },
+  {
+   "id": "i51",
+   "query": "YAML 配置和环境变量谁优先",
+   "category": "abbrev",
+   "gold_ids": [
+    15
+   ],
+   "mode": "like_only",
+   "rank": null,
+   "hit_at_5": false
+  },
+  {
+   "id": "i52",
+   "query": "CLI 参数解析入口在哪",
+   "category": "abbrev",
+   "gold_ids": [
+    2
+   ],
+   "mode": "like_only",
+   "rank": null,
+   "hit_at_5": false
+  },
+  {
+   "id": "i53",
+   "query": "API 限流怎么配置",
+   "category": "abbrev",
+   "gold_ids": [
+    22
+   ],
+   "mode": "like_only",
+   "rank": null,
+   "hit_at_5": false
+  },
+  {
+   "id": "i54",
+   "query": "代理 超时",
+   "category": "zh_short",
+   "gold_ids": [
+    9
+   ],
+   "mode": "like_only",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i55",
+   "query": "建表",
+   "category": "zh_short",
+   "gold_ids": [
+    4,
+    14
+   ],
+   "mode": "like_only",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i56",
+   "query": "重试",
+   "category": "zh_short",
+   "gold_ids": [
+    7,
+    9
+   ],
+   "mode": "like_only",
+   "rank": 1,
+   "hit_at_5": true
+  },
+  {
+   "id": "i57",
+   "query": "锁 超时",
+   "category": "zh_short",
+   "gold_ids": [
+    8,
+    18
+   ],
+   "mode": "like_only",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i58",
+   "query": "日志 轮转",
+   "category": "zh_short",
+   "gold_ids": [
+    10
+   ],
+   "mode": "like_only",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i59",
+   "query": "嵌入 维度",
+   "category": "zh_short",
+   "gold_ids": [
+    6,
+    20
+   ],
+   "mode": "like_only",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i60",
+   "query": "缓存 容量",
+   "category": "zh_short",
+   "gold_ids": [
+    17,
+    0
+   ],
+   "mode": "like_only",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i61",
+   "query": "心跳 重连",
+   "category": "zh_short",
+   "gold_ids": [
+    16
+   ],
+   "mode": "like_only",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i62",
+   "query": "配置 优先级",
+   "category": "zh_short",
+   "gold_ids": [
+    15
+   ],
+   "mode": "like_only",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i63",
+   "query": "构建 增量",
+   "category": "zh_short",
+   "gold_ids": [
+    19
+   ],
+   "mode": "like_only",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i64",
+   "query": "令牌 失效",
+   "category": "zh_short",
+   "gold_ids": [
+    3
+   ],
+   "mode": "like_only",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i01",
+   "query": "getUserById",
+   "category": "camel",
+   "gold_ids": [
+    0
+   ],
+   "mode": "bigram_like",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i02",
+   "query": "getUserById 怎么实现的",
+   "category": "camel",
+   "gold_ids": [
+    0
+   ],
+   "mode": "bigram_like",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i03",
+   "query": "renderStateDiff 在哪个文件",
+   "category": "camel",
+   "gold_ids": [
+    1
+   ],
+   "mode": "bigram_like",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i04",
+   "query": "renderStateDiff 的输入输出",
+   "category": "camel",
+   "gold_ids": [
+    1
+   ],
+   "mode": "bigram_like",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i05",
+   "query": "parseCliArgs 支持哪些参数",
+   "category": "camel",
+   "gold_ids": [
+    2
+   ],
+   "mode": "bigram_like",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i06",
+   "query": "parseCliArgs 的 verbose 开关",
+   "category": "camel",
+   "gold_ids": [
+    2
+   ],
+   "mode": "bigram_like",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i07",
+   "query": "invalidateToken 什么时候调用",
+   "category": "camel",
+   "gold_ids": [
+    3
+   ],
+   "mode": "bigram_like",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i08",
+   "query": "调用 invalidateToken 之后缓存会怎样",
+   "category": "camel",
+   "gold_ids": [
+    3
+   ],
+   "mode": "bigram_like",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i09",
+   "query": "怎么复用 getUserById 查用户",
+   "category": "camel",
+   "gold_ids": [
+    0
+   ],
+   "mode": "bigram_like",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i10",
+   "query": "renderStateDiff 卡顿怎么排查",
+   "category": "camel",
+   "gold_ids": [
+    1
+   ],
+   "mode": "bigram_like",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i11",
+   "query": "invalidateToken 的返回值",
+   "category": "camel",
+   "gold_ids": [
+    3
+   ],
+   "mode": "bigram_like",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i12",
+   "query": "sqlite_db.cpp 的建表逻辑",
+   "category": "snake",
+   "gold_ids": [
+    4
+   ],
+   "mode": "bigram_like",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i13",
+   "query": "memory_store.py 负责什么",
+   "category": "snake",
+   "gold_ids": [
+    5
+   ],
+   "mode": "bigram_like",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i14",
+   "query": "embed_client.rs 的批量大小",
+   "category": "snake",
+   "gold_ids": [
+    6
+   ],
+   "mode": "bigram_like",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i15",
+   "query": "retry_scheduler.py 的退避策略",
+   "category": "snake",
+   "gold_ids": [
+    7
+   ],
+   "mode": "bigram_like",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i16",
+   "query": "lock_manager 的锁超时设置",
+   "category": "snake",
+   "gold_ids": [
+    8
+   ],
+   "mode": "bigram_like",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i17",
+   "query": "proxy_pool.go 的轮换策略",
+   "category": "snake",
+   "gold_ids": [
+    9
+   ],
+   "mode": "bigram_like",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i18",
+   "query": "log_rotate.py 日志保留多久",
+   "category": "snake",
+   "gold_ids": [
+    10
+   ],
+   "mode": "bigram_like",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i19",
+   "query": "lru_cache.py 的容量多大",
+   "category": "snake",
+   "gold_ids": [
+    17
+   ],
+   "mode": "bigram_like",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i20",
+   "query": "ws_server.ts 的心跳间隔",
+   "category": "snake",
+   "gold_ids": [
+    16
+   ],
+   "mode": "bigram_like",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i21",
+   "query": "ratelimit.go 的限流阈值",
+   "category": "snake",
+   "gold_ids": [
+    22
+   ],
+   "mode": "bigram_like",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i22",
+   "query": "loader.py 的配置加载顺序",
+   "category": "snake",
+   "gold_ids": [
+    15
+   ],
+   "mode": "bigram_like",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i23",
+   "query": "src/core/sqlite_db.cpp",
+   "category": "path",
+   "gold_ids": [
+    4
+   ],
+   "mode": "bigram_like",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i24",
+   "query": "src/core/lock_manager.cpp",
+   "category": "path",
+   "gold_ids": [
+    8
+   ],
+   "mode": "bigram_like",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i25",
+   "query": "src/ui/state_diff.ts",
+   "category": "path",
+   "gold_ids": [
+    1
+   ],
+   "mode": "bigram_like",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i26",
+   "query": "src/net/proxy_pool.go",
+   "category": "path",
+   "gold_ids": [
+    9
+   ],
+   "mode": "bigram_like",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i27",
+   "query": "src/scheduler/retry_scheduler.py",
+   "category": "path",
+   "gold_ids": [
+    7
+   ],
+   "mode": "bigram_like",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i28",
+   "query": "src/memory/memory_store.py",
+   "category": "path",
+   "gold_ids": [
+    5
+   ],
+   "mode": "bigram_like",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i29",
+   "query": "src/index/embed_client.rs",
+   "category": "path",
+   "gold_ids": [
+    6
+   ],
+   "mode": "bigram_like",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i30",
+   "query": "src/gateway/ws_server.ts",
+   "category": "path",
+   "gold_ids": [
+    16
+   ],
+   "mode": "bigram_like",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i31",
+   "query": "migrations/0002_add_status.sql",
+   "category": "path",
+   "gold_ids": [
+    14
+   ],
+   "mode": "bigram_like",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i32",
+   "query": "scripts/build-test-run.sh",
+   "category": "path",
+   "gold_ids": [
+    19
+   ],
+   "mode": "bigram_like",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i33",
+   "query": "src/ops/log_rotate.py",
+   "category": "path",
+   "gold_ids": [
+    10
+   ],
+   "mode": "bigram_like",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i34",
+   "query": "E_PROXY_401 是什么错误",
+   "category": "error_code",
+   "gold_ids": [
+    18,
+    9
+   ],
+   "mode": "bigram_like",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i35",
+   "query": "E_PROXY_401 的重试策略",
+   "category": "error_code",
+   "gold_ids": [
+    9,
+    18
+   ],
+   "mode": "bigram_like",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i36",
+   "query": "E_AUTH_401 怎么触发",
+   "category": "error_code",
+   "gold_ids": [
+    3,
+    18
+   ],
+   "mode": "bigram_like",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i37",
+   "query": "E_LOCK_TIMEOUT 默认多少毫秒",
+   "category": "error_code",
+   "gold_ids": [
+    8,
+    18
+   ],
+   "mode": "bigram_like",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i38",
+   "query": "E_DB_BUSY 在哪里定义",
+   "category": "error_code",
+   "gold_ids": [
+    4,
+    18
+   ],
+   "mode": "bigram_like",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i39",
+   "query": "错误码表在哪个文档维护",
+   "category": "error_code",
+   "gold_ids": [
+    18
+   ],
+   "mode": "bigram_like",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i40",
+   "query": "E_LOCK_TIMEOUT 的抛出条件",
+   "category": "error_code",
+   "gold_ids": [
+    8,
+    18
+   ],
+   "mode": "bigram_like",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i41",
+   "query": "接口返回 401 该查哪里",
+   "category": "error_code",
+   "gold_ids": [
+    3,
+    18
+   ],
+   "mode": "bigram_like",
+   "rank": 1,
+   "hit_at_5": true
+  },
+  {
+   "id": "i42",
+   "query": "遇到 E_AUTH_401 要改什么配置",
+   "category": "error_code",
+   "gold_ids": [
+    3,
+    18
+   ],
+   "mode": "bigram_like",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i43",
+   "query": "错误码前缀 E_ 代表什么",
+   "category": "error_code",
+   "gold_ids": [
+    18
+   ],
+   "mode": "bigram_like",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i44",
+   "query": "FTS 全文索引用的什么引擎",
+   "category": "abbrev",
+   "gold_ids": [
+    11
+   ],
+   "mode": "bigram_like",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i45",
+   "query": "DDL 迁移脚本在哪执行",
+   "category": "abbrev",
+   "gold_ids": [
+    14,
+    4
+   ],
+   "mode": "bigram_like",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i46",
+   "query": "RRF 的 k 取多少",
+   "category": "abbrev",
+   "gold_ids": [
+    12
+   ],
+   "mode": "bigram_like",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i47",
+   "query": "IPC 帧格式是什么",
+   "category": "abbrev",
+   "gold_ids": [
+    13
+   ],
+   "mode": "bigram_like",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i48",
+   "query": "LRU 缓存容量",
+   "category": "abbrev",
+   "gold_ids": [
+    17,
+    0
+   ],
+   "mode": "bigram_like",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i49",
+   "query": "WAL 模式开了没有",
+   "category": "abbrev",
+   "gold_ids": [
+    4
+   ],
+   "mode": "bigram_like",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i50",
+   "query": "RPC 用什么序列化",
+   "category": "abbrev",
+   "gold_ids": [
+    13
+   ],
+   "mode": "bigram_like",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i51",
+   "query": "YAML 配置和环境变量谁优先",
+   "category": "abbrev",
+   "gold_ids": [
+    15
+   ],
+   "mode": "bigram_like",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i52",
+   "query": "CLI 参数解析入口在哪",
+   "category": "abbrev",
+   "gold_ids": [
+    2
+   ],
+   "mode": "bigram_like",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i53",
+   "query": "API 限流怎么配置",
+   "category": "abbrev",
+   "gold_ids": [
+    22
+   ],
+   "mode": "bigram_like",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i54",
+   "query": "代理 超时",
+   "category": "zh_short",
+   "gold_ids": [
+    9
+   ],
+   "mode": "bigram_like",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i55",
+   "query": "建表",
+   "category": "zh_short",
+   "gold_ids": [
+    4,
+    14
+   ],
+   "mode": "bigram_like",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i56",
+   "query": "重试",
+   "category": "zh_short",
+   "gold_ids": [
+    7,
+    9
+   ],
+   "mode": "bigram_like",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i57",
+   "query": "锁 超时",
+   "category": "zh_short",
+   "gold_ids": [
+    8,
+    18
+   ],
+   "mode": "bigram_like",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i58",
+   "query": "日志 轮转",
+   "category": "zh_short",
+   "gold_ids": [
+    10
+   ],
+   "mode": "bigram_like",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i59",
+   "query": "嵌入 维度",
+   "category": "zh_short",
+   "gold_ids": [
+    6,
+    20
+   ],
+   "mode": "bigram_like",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i60",
+   "query": "缓存 容量",
+   "category": "zh_short",
+   "gold_ids": [
+    17,
+    0
+   ],
+   "mode": "bigram_like",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i61",
+   "query": "心跳 重连",
+   "category": "zh_short",
+   "gold_ids": [
+    16
+   ],
+   "mode": "bigram_like",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i62",
+   "query": "配置 优先级",
+   "category": "zh_short",
+   "gold_ids": [
+    15
+   ],
+   "mode": "bigram_like",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i63",
+   "query": "构建 增量",
+   "category": "zh_short",
+   "gold_ids": [
+    19
+   ],
+   "mode": "bigram_like",
+   "rank": 0,
+   "hit_at_5": true
+  },
+  {
+   "id": "i64",
+   "query": "令牌 失效",
+   "category": "zh_short",
+   "gold_ids": [
+    3
+   ],
+   "mode": "bigram_like",
+   "rank": 0,
+   "hit_at_5": true
+  }
+ ]
+}
