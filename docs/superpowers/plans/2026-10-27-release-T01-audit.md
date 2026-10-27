@@ -3,6 +3,7 @@
 > **审计对象**：`D:/wt-rel-core` 分支 `wt-release-core`，commit `6f3997d1`
 > **对照**：票据 `.scratch/release-module/issues/01-secondary-sidebar-module-skeleton.md`（主工作树 `D:/project/gui/DevDesk`）、`docs/superpowers/specs/2026-10-27-release-module-design.md`
 > **审计方式**：只读静态审计——逐文件读 diff，与父提交 `6f3997d1^` 逐行对比渲染公式，全仓 grep 消费方。**未编译、未运行测试**；凡"测试会红"的结论均由常量/断言直接比对得出（非实测）。
+> **基线说明**：审计期间该 worktree 出现了并发未提交改动（`src/core/schema.h`、`src/module_release/release_types.h`、`src/module_release/release_logic.h`，属后续任务，不在本次审计范围）。本文件所有 `file:line` 与结论均以 commit `6f3997d1` 的提交内容为准。
 > **严重度口径**：按「多难维护 / 多难演进」定，不按会不会崩。`blocker` = 阻断合并/验收。
 
 ## 结论摘要
