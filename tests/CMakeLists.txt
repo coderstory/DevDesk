@@ -125,6 +125,8 @@ add_executable(devdesk_tests
     test_modules/test_wallpaper_core.cpp
     # P3a 平台层纯逻辑：mpv 路径/参数/JSON/管道名/stub 行为
     test_modules/test_wallpaper_platform.cpp
+    # P5 播放/片库页面 UI：来源/Tab/状态卡/折叠/空态/片库卡/1000×640 无滚动条
+    test_modules/test_wallpaper_ui.cpp
     test_modules/test_splash_contract.cpp
 )
 
