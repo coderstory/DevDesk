@@ -42,6 +42,18 @@ std::string serverInfoText(core::mcp::McpToolRegistry& registry,
     return result.value().text;
 }
 
+// 本机编译的预期平台名（空 = 不做平台断言）。#if 必须留在 REGISTER_TEST
+// 实参之外：宏参数里嵌预处理指令在 -Wpedantic 下不可移植（B1 门禁实测）。
+std::string expectedPlatformName() {
+#if defined(_WIN32)
+    return "Windows";
+#elif defined(__APPLE__)
+    return "Darwin";
+#else
+    return std::string();
+#endif
+}
+
 } // namespace
 
 REGISTER_TEST(mcp_tools_builtin_server_info_registered,
@@ -80,11 +92,10 @@ REGISTER_TEST(mcp_tools_builtin_server_info_text_fields,
     // 构建类型由 $<CONFIG> 注入，本构建下不该落到 unknown 回退
     DOCTEST_CHECK(text.find("构建类型：unknown") == std::string::npos);
     DOCTEST_CHECK(text.find("平台：") != std::string::npos);
-#if defined(_WIN32)
-    DOCTEST_CHECK(text.find("平台：Windows") != std::string::npos);
-#elif defined(__APPLE__)
-    DOCTEST_CHECK(text.find("平台：Darwin") != std::string::npos);
-#endif
+    const std::string platformName = expectedPlatformName();
+    if (!platformName.empty()) {
+        DOCTEST_CHECK(text.find("平台：" + platformName) != std::string::npos);
+    }
     DOCTEST_CHECK(text.find(module::mcp::kMcpProtocolVersion) !=
                   std::string::npos);
     DOCTEST_CHECK(text.find(module::mcp::kMcpProtocolVersionLegacy) !=
