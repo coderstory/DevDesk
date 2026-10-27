@@ -44,7 +44,7 @@ constexpr int kMaxWindowRestoreSide = 65535;
 const char* const kKnownModuleIds[] = {
     kModuleIdHome, kModuleIdMarkdown,     kModuleIdTodo,
     kModuleIdClaudeProxy, kModuleIdSettings, kModuleIdAgent,
-    kModuleIdWallpaper};
+    kModuleIdWallpaper, kModuleIdRelease};
 
 bool isKnownModuleId(const std::string& id) {
     for (const char* known : kKnownModuleIds) {
@@ -56,8 +56,9 @@ bool isKnownModuleId(const std::string& id) {
 
 std::vector<std::string> defaultEnabledModules() {
     // agent 不在默认清单（跑 LLM 有成本，用户主动启用）；wallpaper 同默认关闭。
+    // release 默认启用（任务/基础配置两页共用该键）。
     return {kModuleIdHome, kModuleIdMarkdown, kModuleIdTodo,
-            kModuleIdClaudeProxy, kModuleIdSettings};
+            kModuleIdClaudeProxy, kModuleIdSettings, kModuleIdRelease};
 }
 
 bool moduleEnabled(const SettingsConfig& cfg, const std::string& moduleId) {

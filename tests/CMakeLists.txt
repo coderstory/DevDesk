@@ -124,6 +124,7 @@ add_executable(devdesk_tests
     # P2 纯逻辑 + P4 服务骨架：设置/轮换/让路/片库/文案/服务接线
     test_modules/test_wallpaper_core.cpp
     test_modules/test_splash_contract.cpp
+    test_modules/test_release_basic.cpp
 )
 
 # ==================== 用例登记自检（TIN-10） =============# 上面是**手工源表**：漏登记一个用例 .cpp = 该文件永不编译、用例永不注册，
@@ -223,6 +224,7 @@ target_link_libraries(devdesk_tests PRIVATE
     devdesk_module_settings
     devdesk_module_about
     devdesk_module_wallpaper
+    devdesk_module_release
 )
 
 # 确保 doctest.h 可被 #include "doctest.h" 找到
@@ -303,6 +305,7 @@ foreach(_probe_source ${_devdesk_probe_sources})
         devdesk_module_settings
         devdesk_module_about
         devdesk_module_wallpaper
+        devdesk_module_release
     )
     # probe_harness.h 的帧捕获段（--screenshot）要 <png.h> 编码 PNG：libpng 由
     # EUI-NEO vendored（1.6.43，简化 API png_image_write_to_file 自带 deflate），

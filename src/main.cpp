@@ -248,6 +248,13 @@ std::string activeWindowEffectTier() {
     // 平台能力不支持时工厂返回 nullptr：门控装配按空实例跳过（页面不注册）
     static std::unique_ptr<::core::Module> wallpaper(create_wallpaper_module());
     static std::unique_ptr<::core::Module> about(create_about_module());
+    // 上线：分组父项工厂按契约返回 nullptr（不注册），两个子页各自实例
+    static std::unique_ptr<::core::Module> releaseGroup(
+        create_release_group_module());
+    static std::unique_ptr<::core::Module> releaseTasks(
+        create_release_tasks_module());
+    static std::unique_ptr<::core::Module> releaseConfig(
+        create_release_config_module());
 
     static bool initialized = false;
     if (!initialized) {
@@ -262,6 +269,9 @@ std::string activeWindowEffectTier() {
                     case ::core::PageId::Agent: return agent.get();
                     case ::core::PageId::Wallpaper: return wallpaper.get();
                     case ::core::PageId::About: return about.get();
+                    case ::core::PageId::ReleaseGroup: return releaseGroup.get();
+                    case ::core::PageId::ReleaseTasks: return releaseTasks.get();
+                    case ::core::PageId::ReleaseConfig: return releaseConfig.get();
                 }
                 return nullptr;
             };

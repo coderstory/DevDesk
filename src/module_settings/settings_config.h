@@ -40,6 +40,8 @@ inline constexpr const char* kModuleIdSettings = "settings";
 inline constexpr const char* kModuleIdAgent = "agent";
 // wallpaper：默认关闭，用户主动启用；平台能力不支持时工厂仍返回 nullptr（开关不生效）。
 inline constexpr const char* kModuleIdWallpaper = "wallpaper";
+// release：上线模块（任务/基础配置两页共用一个开关），默认启用。
+inline constexpr const char* kModuleIdRelease = "release";
 
 // 默认全启用（字段缺失/解析失败回退）
 std::vector<std::string> defaultEnabledModules();

@@ -100,7 +100,7 @@ inline constexpr float kAppearanceCardHeight = 184.0f;  // 外观卡（通用 | 
 // 85% 档卡高 156（自启动行底 139，下边距 17）/130% 档 239（行底 211，下边距 28），
 // 下边距全档 ≥16（卡内边距契约）。历史：UAT5 时 144（hint 行底 126+16）。
 inline constexpr float kEditorFontCardHeight = 184.0f;
-inline constexpr float kModulesCardHeight = 198.0f;     // 模块插拔卡（模块 | 全宽卡内 2×2 开关格，UAT4 按用户拍板撑满；次行块底 68+roundFs(56)+roundFs(36)=160，+16 → 198 给字号档富余；85% 档 168 / 130% 档 257）
+inline constexpr float kModulesCardHeight = 254.0f;     // 模块插拔卡（模块 | 全宽卡内两列开关格，UAT4 按用户拍板撑满；release 加入后为 3 行：68+roundFs(56)×2+roundFs(36)=216，+38 → 254 给字号档富余；85% 档 216 / 130% 档 330）
 // 壁纸卡（模块 | 全宽单卡：标题 16/22 + 说明 40/roundFs(16) + 开关行 y=roundFs(68)、
 // 行盒 roundFs(44)、44×24 开关行内垂直居中）。卡高 = roundFs(68) + roundFs(44) +
 // roundFs(16) 下边距 = 128 基准：三档逐值和 = roundFs(128)（85% 109 / 100% 128 /

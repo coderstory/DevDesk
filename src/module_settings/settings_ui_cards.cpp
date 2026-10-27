@@ -386,7 +386,7 @@ void drawEditorFontCard(const CardDrawArgs& args) {
         .build();
 }
 
-// 各模块一格开关（UAT3 多列分栏：半宽卡 + 卡内 2×2 格）；关闭 = 下次启动不注册进
+// 各模块一格开关（UAT3 多列分栏：半宽卡 + 卡内两列网格，行数随开关数派生）；关闭 = 下次启动不注册进
 // Router。home/settings 恒启用，不提供开关。格内 name/desc 在窄列（最小窗 colW=348）
 // 必然超宽 → 省略号兜底（标准降级，用户拍板接受）。
 void drawModulesCard(const CardDrawArgs& args) {
@@ -411,6 +411,9 @@ void drawModulesCard(const CardDrawArgs& args) {
          "Profile 管理 + 本地代理（关闭后 8888 不再监听）"},
         {kModuleIdAgent, "智能体",
          "任务列表 + 手动触发运行（依赖 Claude 代理提供模型通道）"},
+        // 上线：一个开关控制「任务」+「基础配置」两个子页（多页模块共用门控键）
+        {kModuleIdRelease, "上线",
+         "任务执行与基础配置（两个子页同开同关）"},
     };
     constexpr int kToggleCount = static_cast<int>(sizeof(kToggleable) / sizeof(kToggleable[0]));
     ui.stack(id)
@@ -431,7 +434,7 @@ void drawModulesCard(const CardDrawArgs& args) {
                      "开关即时生效：关闭后该模块代码不再执行，侧边栏入口与"
                      "页面当帧更新");
 
-            // 开关 2×2 格：行主序（0/1 同行异列，2/3 次行）；开关控件几何沿用
+            // 开关两列网格：行主序（0/1 同行异列，2/3 次行，4/5 …）；开关控件几何沿用
             // 44×24（UAT3 由 80×32 收敛口径），在 name+desc 36 高块内垂直居中
             //（相对偏移 +6）。格宽/右格 x 走 ui_kit::columnX 单一来源（gap 16）。
             const float nameH = roundFs(18.0f);
@@ -447,7 +450,7 @@ void drawModulesCard(const CardDrawArgs& args) {
             for (int i = 0; i < kToggleCount; ++i) {
                 const ModuleMeta& meta = kToggleable[i];
                 const int col = i % 2;   // 行主序：0/1 同行，2/3 次行
-                const int row = i / 2;
+                const int row = i / 2;   // 行数由 kToggleCount 派生（release 为第 5 格）
                 const float cellX = 28.0f + (col == 0 ? 0.0f : cell2X);
                 const float rowY = 68.0f + static_cast<float>(row) * rowPitch;
                 const float textW = cellW - switchW - switchGap;

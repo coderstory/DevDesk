@@ -253,6 +253,10 @@ int main(int argc, char* argv[]) {
                 break;
             case ::core::PageId::Agent:
                 break;  // 默认关闭，门控清单本就不含
+            case ::core::PageId::ReleaseGroup:
+            case ::core::PageId::ReleaseTasks:
+            case ::core::PageId::ReleaseConfig:
+                break;  // 上线模块与本 probe 无关；父项行无实例
         }
     }
     check(!defaultGatingHasWallpaper,

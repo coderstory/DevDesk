@@ -252,15 +252,22 @@ void navigateFromTray(::core::Router* router, ::core::PageId page) {
 
 void dispatchModuleToggle(const std::string& moduleId, bool on,
                           ::core::Router& router, ModuleLookup lookup) {
+    // 一个门控键可对应多行（多页模块，如 release 的任务/基础配置）：逐行拨，
+    // 不能命中首行就返回。分组父项行无实例，跳过（其展开态由侧边栏独立维护）。
+    bool matched = false;
     for (const auto& e : ::app::registry::kModuleRegistry) {
         if (e.gatingKey == nullptr || moduleId != e.gatingKey) {
             continue;  // 恒开行不参与拨开关；其余行键不匹配继续找
         }
+        if (::app::registry::isGroupPage(e.page)) {
+            continue;  // 分组父项不可导航、无实例
+        }
         ::core::Module* mod = lookup(e.page);
         if (mod == nullptr) {
             LOG_WARN("模块开关: " + moduleId + " 无实例，跳过即时生效");
-            return;
+            continue;
         }
+        matched = true;
         if (on) {
             if (moduleId == module::settings::kModuleIdClaudeProxy) {
                 // 惰性装配：启动期关、会话内开启时补装配，必须先于 registerModule/onStart
@@ -285,9 +292,10 @@ void dispatchModuleToggle(const std::string& moduleId, bool on,
                                        " 已关闭，已返回首页");
             }
         }
-        return;
     }
-    LOG_WARN("模块开关: 未知或恒开模块 " + moduleId + "，忽略");
+    if (!matched) {
+        LOG_WARN("模块开关: 未知或恒开模块 " + moduleId + "，忽略");
+    }
 }
 
 } // namespace app::assembly

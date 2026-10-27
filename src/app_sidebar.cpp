@@ -1,6 +1,7 @@
 // 常驻侧边栏 + 折叠/展开实现（接口见 app_sidebar.h）。折叠态：宽 208→72，只显居中图标，
 // label 不渲染；动画为瞬时切换（EUI-NEO AnimProperty 无 Width 档）。
 #include "app_assembly.h"
+#include "app_registry.h"  // 分组父项元数据（登记表 parent 列）
 #include "app_sidebar.h"
 
 #include "core/component_theme.h"
@@ -26,6 +27,7 @@
 #include <cmath>
 #include <functional>
 #include <optional>
+#include <set>
 #include <utility>
 
 // 可见态门控的原生查询（IsIconic/IsWindowVisible/EnumWindows）：只在 Windows 编译。
@@ -48,6 +50,10 @@ namespace {
 
 // 进程内折叠状态单值；默认展开，启动恢复由 main.cpp 调 setSidebarCollapsed（不回写）
 bool g_sidebarCollapsed = false;
+
+// 分组父项折叠集合（空 = 全展开）；进程内单值，不落库。存 PageId 而非下标：
+// 登记表增行不移动既有分组身份。
+std::set<::core::PageId> g_collapsedGroups;
 
 // 应用级 toast 通知：托盘失效入口点击的解释反馈。调用方写状态，compose 顶层每帧读状态绘制
 ui_kit::ToastState g_appNotice;
@@ -166,7 +172,20 @@ float sidebarWidth() {
 }
 
 // 测试缝：折叠状态回厂（展开），纯内存不触发持久化副作用
-void resetSidebarGlobals() { g_sidebarCollapsed = false; }
+void resetSidebarGlobals() {
+    g_sidebarCollapsed = false;
+    g_collapsedGroups.clear();
+}
+
+bool sidebarGroupExpanded(::core::PageId parent) {
+    return g_collapsedGroups.find(parent) == g_collapsedGroups.end();
+}
+
+void toggleSidebarGroup(::core::PageId parent) {
+    if (!g_collapsedGroups.insert(parent).second) {
+        g_collapsedGroups.erase(parent);
+    }
+}
 
 // ---- 动态背景（UAT6 主窗活体流质）----
 
@@ -413,7 +432,75 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
             // 导航项渲染：提取为 lambda（work/system 两组共用，避免重复代码）。
             // active 态视觉走 SelectionBar（§4.3：2px 左绿竖线 + selectedBg + textPrimary），
             // hit 区透明+onClick 承担点击；inactive 透出侧栏底，hover 浅灰反馈。
-            auto renderNavItem = [&](::core::Module* m) {
+            // 登记表行查找：分组树只认登记表 parent 列（唯一元数据源，不另建清单）
+            auto registryEntry = [](::core::PageId page)
+                -> const ::app::registry::ModuleEntry* {
+                for (const auto& e : ::app::registry::kModuleRegistry) {
+                    if (e.page == page) return &e;
+                }
+                return nullptr;
+            };
+
+            // 分组父项行：与导航项同几何；不可导航，点击只切换展开/收起。
+            // 折叠侧栏下父项同样只画居中图标，子项按展开态继续列出。
+            auto renderGroupHeader = [&](const ::app::registry::ModuleEntry& group,
+                                         bool expanded) {
+                const std::string id =
+                    std::string("app.sidebar.item.") +
+                    ::core::pageIdToString(group.page);
+                ui.rect(id + ".hit")
+                    .position(padX, y)
+                    .size(kWidth - padX * 2.0f, itemH)
+                    .states(kTransparent, t.colors.hover, t.colors.primarySoftBg)
+                    .radius(t.sizes.radiusSmall)
+                    .onClick([g = group.page] { toggleSidebarGroup(g); })
+                    .build();
+                if (collapsed) {
+                    ui.text(id + ".icon")
+                        .position((kWidth - kIconW) * 0.5f, y)
+                        .size(kIconW, itemH)
+                        .icon(group.iconGlyph)
+                        .fontSize(t.sizes.fontSizeBody)
+                        .horizontalAlign(eui::HorizontalAlign::Center)
+                        .verticalAlign(eui::VerticalAlign::Center)
+                        .color(t.colors.textSecondary)
+                        .build();
+                } else {
+                    constexpr float kChevronW = 20.0f;
+                    ui.text(id + ".icon")
+                        .position(padX + kItemInset, y)
+                        .size(kIconW, itemH)
+                        .icon(group.iconGlyph)
+                        .fontSize(t.sizes.fontSizeBody)
+                        .verticalAlign(eui::VerticalAlign::Center)
+                        .color(t.colors.textSecondary)
+                        .build();
+                    ui.text(id + ".label")
+                        .position(padX + kItemInset + kIconW, y)
+                        .size(kWidth - padX * 2.0f - kItemInset - kIconW -
+                                  kChevronW - 8.0f,
+                              itemH)
+                        .text(group.shortName)
+                        .fontSize(t.sizes.fontSizeBody)
+                        .verticalAlign(eui::VerticalAlign::Center)
+                        .color(t.colors.textSecondary)
+                        .build();
+                    ui.text(id + ".chevron")
+                        .position(kWidth - padX - kChevronW, y)
+                        .size(kChevronW, itemH)
+                        .icon(eui::utf8(expanded ? 0xF077 : 0xF078))  // chevron-up/down
+                        .fontSize(t.sizes.fontSizeBody - 3.0f)
+                        .horizontalAlign(eui::HorizontalAlign::Center)
+                        .verticalAlign(eui::VerticalAlign::Center)
+                        .color(t.colors.textTertiary)
+                        .build();
+                }
+                y += itemH + gap;
+            };
+
+            // 二级菜单缩进（仅展开态生效；折叠态图标居中，缩进无意义）
+            constexpr float kChildIndent = 16.0f;
+            auto renderNavItem = [&](::core::Module* m, float indent) {
                 const ::core::PageId page = m->pageId();
                 const bool active = (page == router->currentPage());
                 const std::string id =
@@ -423,8 +510,8 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                 // 命中区：normal 透明（active 时 SelectionBar 盖底；inactive 透出侧栏底）；
                 // hover/pressed：active 透明（不遮 SelectionBar），inactive 浅灰/深灰
                 ui.rect(id + ".hit")
-                    .position(padX, y)
-                    .size(kWidth - padX * 2.0f, itemH)
+                    .position(padX + indent, y)
+                    .size(kWidth - padX * 2.0f - indent, itemH)
                     .states(kTransparent,
                             active ? kTransparent : t.colors.hover,
                             active ? kTransparent : t.colors.primarySoftBg)
@@ -437,7 +524,8 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                 // 文字由下方 .label 画（icon 同理）。selectionBar 只负责 bg + 左 2px 绿竖线。
                 if (active) {
                     ui_kit::selectionBar(ui, id + ".sel", std::string{},
-                                         padX, y, kWidth - padX * 2.0f, itemH, t);
+                                         padX + indent, y,
+                                         kWidth - padX * 2.0f - indent, itemH, t);
                 }
 
                 // 图标与文字分两个元素：Icon 字体（FontAwesome）不能和正文字体混排在一个 Text 里。
@@ -455,7 +543,7 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                         .build();
                 } else {
                     ui.text(id + ".icon")
-                        .position(padX + kItemInset, y)
+                        .position(padX + kItemInset + indent, y)
                         .size(kIconW, itemH)
                         .icon(m->iconGlyph())
                         .fontSize(t.sizes.fontSizeBody)
@@ -463,8 +551,8 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                         .color(active ? t.colors.primary : t.colors.textSecondary)
                         .build();
                     ui.text(id + ".label")
-                        .position(padX + kItemInset + kIconW, y)
-                        .size(kWidth - padX * 2.0f - kItemInset - kIconW,
+                        .position(padX + kItemInset + kIconW + indent, y)
+                        .size(kWidth - padX * 2.0f - kItemInset - kIconW - indent,
                               itemH)
                         .text(m->displayName())
                         .fontSize(t.sizes.fontSizeBody)
@@ -486,6 +574,8 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
 
             bool groupDividerDrawn = false;
             bool sawWork = false;
+            std::set<::core::PageId> drawnGroups;
+            const auto* currentEntry = registryEntry(router->currentPage());
             for (auto* m : router->modules()) {
                 if (!m) continue;
                 const ::core::PageId page = m->pageId();
@@ -503,7 +593,27 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                 }
                 if (!isSystem) sawWork = true;
 
-                renderNavItem(m);
+                // 有父级声明的模块 → 先画父项（同组只画一次）再画子项；无父级 → 原平铺路径
+                const auto* row = registryEntry(page);
+                if (row != nullptr && row->parent.has_value()) {
+                    const auto* parent = registryEntry(*row->parent);
+                    if (parent != nullptr) {
+                        bool expanded = sidebarGroupExpanded(parent->page);
+                        // 当前页属于该分组 → 本帧强制展开（不改用户折叠意愿）
+                        if (currentEntry != nullptr &&
+                            currentEntry->parent.has_value() &&
+                            *currentEntry->parent == parent->page) {
+                            expanded = true;
+                        }
+                        if (drawnGroups.insert(parent->page).second) {
+                            renderGroupHeader(*parent, expanded);
+                        }
+                        if (!expanded) continue;
+                        renderNavItem(m, kChildIndent);
+                        continue;
+                    }
+                }
+                renderNavItem(m, 0.0f);
             }
 
             // 折叠开关（底部固定）：展开态 fa-angles-left、折叠态 fa-bars；展开左对齐、折叠居中。

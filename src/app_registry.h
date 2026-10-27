@@ -8,7 +8,9 @@
 #include "core/module_interface.h"
 #include "settings_config.h"
 
-// 8 个模块工厂声明（extern "C"）
+#include <optional>
+
+// 页面模块工厂声明（extern "C"）；分组父项工厂按契约返回 nullptr
 extern "C" ::core::Module* create_home_module();
 extern "C" ::core::Module* create_markdown_module();
 extern "C" ::core::Module* create_todo_module();
@@ -18,6 +20,11 @@ extern "C" ::core::Module* create_about_module();
 extern "C" ::core::Module* create_agent_module();
 // 平台能力不支持时返回 nullptr（装配层按空实例跳过，页面不注册）
 extern "C" ::core::Module* create_wallpaper_module();
+// 上线模块：分组父项工厂恒返回 nullptr（不可导航，不注册进 Router，只用于侧边栏树）；
+// 两个子页各自独立实例，共用门控键 kModuleIdRelease。
+extern "C" ::core::Module* create_release_group_module();
+extern "C" ::core::Module* create_release_tasks_module();
+extern "C" ::core::Module* create_release_config_module();
 
 namespace app::registry {
 
@@ -29,6 +36,9 @@ struct ModuleEntry {
     const char* shortName;   // 显示短名（托盘/关闭提示）；Module::shortName() 同值
     const char* iconGlyph;   // FA7 Free-Solid 码点 UTF-8；Module::iconGlyph() 同值
     ::core::Module* (*factory)();  // extern "C" create_*_module
+    // 侧边栏二级菜单父级：空 = 顶级项（走既有平铺路径，渲染结果不变）；
+    // 非空 = 该项挂在对应分组父项下（父项自身是本表一行，工厂返回 nullptr 不注册）。
+    std::optional<::core::PageId> parent = std::nullopt;
 };
 
 inline constexpr ModuleEntry kModuleRegistry[] = {
@@ -40,6 +50,19 @@ inline constexpr ModuleEntry kModuleRegistry[] = {
     {::core::PageId::Wallpaper,   module::settings::kModuleIdWallpaper,    "壁纸",   "\xEF\x80\xBE", &create_wallpaper_module},  // U+F03E fa-image
     {::core::PageId::Settings,    nullptr,                          "设置",   "\xEF\x80\x93", &create_settings_module},    // U+F013 fa-gear
     {::core::PageId::About,       nullptr,                          "关于",   "\xEF\x81\x9A", &create_about_module},       // U+F05A fa-circle-info
+    // 上线：分组父项 + 两个可导航子页（父子三行同属 release 门控；父项工厂恒 nullptr）
+    {::core::PageId::ReleaseGroup,  module::settings::kModuleIdRelease, "上线",     "\xEF\x84\xB5", &create_release_group_module},                                   // U+F135 fa-rocket
+    {::core::PageId::ReleaseTasks,  module::settings::kModuleIdRelease, "任务",     "\xEF\x82\xAE", &create_release_tasks_module, ::core::PageId::ReleaseGroup},  // U+F0AE fa-tasks
+    {::core::PageId::ReleaseConfig, module::settings::kModuleIdRelease, "基础配置", "\xEF\x80\x93", &create_release_config_module, ::core::PageId::ReleaseGroup}, // U+F013 fa-gear
 };
+
+
+// 分组父项判定（供装配层跳过无实例的父项行、侧边栏组织树）
+inline bool isGroupPage(::core::PageId page) {
+    for (const auto& e : kModuleRegistry) {
+        if (e.parent.has_value() && *e.parent == page) return true;
+    }
+    return false;
+}
 
 } // namespace app::registry

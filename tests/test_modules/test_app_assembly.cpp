@@ -104,7 +104,8 @@ private:
     StubModule settings_{::core::PageId::Settings, "settings", &log_};
 };
 
-// 全启用配置：显式列全门控键（含默认清单里没有的 agent / wallpaper），「all-on = 8 项」按这个构造口径保住
+// 全启用配置：显式列全门控键（含默认清单里没有的 agent / wallpaper），
+// 「all-on = 11 项」（8 个既有页 + 上线父项 + 两个子页）按这个构造口径保住
 module::settings::SettingsConfig allOnConfig() {
     module::settings::SettingsConfig cfg;
     cfg.enabledModules = {module::settings::kModuleIdHome,
@@ -113,7 +114,8 @@ module::settings::SettingsConfig allOnConfig() {
                           module::settings::kModuleIdClaudeProxy,
                           module::settings::kModuleIdSettings,
                           module::settings::kModuleIdAgent,
-                          module::settings::kModuleIdWallpaper};
+                          module::settings::kModuleIdWallpaper,
+                          module::settings::kModuleIdRelease};
     return cfg;
 }
 
@@ -532,8 +534,10 @@ REGISTER_TEST(assembly_registry_table_shape,
         ::core::PageId::Todo,       ::core::PageId::ClaudeProxy,
         ::core::PageId::Agent,      ::core::PageId::Wallpaper,
         ::core::PageId::Settings,   ::core::PageId::About,
+        ::core::PageId::ReleaseGroup, ::core::PageId::ReleaseTasks,
+        ::core::PageId::ReleaseConfig,
     };
-    DOCTEST_CHECK_EQ(kRegistrySize, static_cast<size_t>(8));
+    DOCTEST_CHECK_EQ(kRegistrySize, static_cast<size_t>(11));
     for (size_t i = 0; i < kRegistrySize; ++i) {
         // 表序 == PageId 枚举序（重排 = 侧边栏序静默变化，这是 core_pageid_order 契约的
         // 装配侧镜像；Agent 必须排在 Settings 之前）
@@ -558,6 +562,13 @@ REGISTER_TEST(assembly_registry_table_shape,
                      std::string(module::settings::kModuleIdWallpaper));
     DOCTEST_CHECK(kModuleRegistry[6].gatingKey == nullptr);
     DOCTEST_CHECK(kModuleRegistry[7].gatingKey == nullptr);
+    // 上线三行同属 release 门控（父项 + 两个子页；S 型多页模块）
+    DOCTEST_CHECK_EQ(gating(kModuleRegistry[8].gatingKey),
+                     std::string(module::settings::kModuleIdRelease));
+    DOCTEST_CHECK_EQ(gating(kModuleRegistry[9].gatingKey),
+                     std::string(module::settings::kModuleIdRelease));
+    DOCTEST_CHECK_EQ(gating(kModuleRegistry[10].gatingKey),
+                     std::string(module::settings::kModuleIdRelease));
     return true;
 })
 
@@ -579,15 +590,17 @@ REGISTER_TEST(assembly_build_gated_entries_real_table,
     DOCTEST_CHECK(gated[0].module == nullptr);
     DOCTEST_CHECK(gated[1].module == nullptr);
     DOCTEST_CHECK(gated[2].module == nullptr);
-    // 全开 → 8 条且序 == 表序
+    // 全开 → 11 条且序 == 表序（上线父项行也在内：无实例，装配期跳过）
     const auto allGated = app::assembly::buildGatedEntries(
         allOnConfig(), ::app::registry::kModuleRegistry, kRegistrySize);
-    DOCTEST_REQUIRE_EQ(allGated.size(), static_cast<size_t>(8));
+    DOCTEST_REQUIRE_EQ(allGated.size(), static_cast<size_t>(11));
     const ::core::PageId kEnumOrder[] = {
         ::core::PageId::Home,       ::core::PageId::Markdown,
         ::core::PageId::Todo,       ::core::PageId::ClaudeProxy,
         ::core::PageId::Agent,      ::core::PageId::Wallpaper,
         ::core::PageId::Settings,   ::core::PageId::About,
+        ::core::PageId::ReleaseGroup, ::core::PageId::ReleaseTasks,
+        ::core::PageId::ReleaseConfig,
     };
     for (size_t i = 0; i < allGated.size(); ++i) {
         DOCTEST_CHECK(allGated[i].page == kEnumOrder[i]);
@@ -601,6 +614,11 @@ REGISTER_TEST(assembly_registry_matches_module_getters,
               "assembly: 表 shortName/iconGlyph/page 与真实模块 getter 一致（防双副本 drift；wallpaper 平台不支持时工厂可为空）", {
     for (const auto& e : ::app::registry::kModuleRegistry) {
         std::unique_ptr<::core::Module> mod(e.factory());
+        // 分组父项按契约恒返回 nullptr：不可导航、无 getter 可对齐
+        if (::app::registry::isGroupPage(e.page)) {
+            DOCTEST_CHECK(mod == nullptr);
+            continue;
+        }
         if (e.page == ::core::PageId::Wallpaper && mod == nullptr) {
             // 唯一允许的空工厂行：平台能力不支持时按契约返回 nullptr（开关键仍是 wallpaper）
             DOCTEST_CHECK_FALSE(::platform::wallpaper::supported());

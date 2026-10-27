@@ -64,12 +64,13 @@ bool writeRawConfig(const std::string& json) {
 REGISTER_TEST(gating_config_defaults, "gating: enabledModules 缺省默认清单（agent 默认关）+ 恒启用项", {
     using namespace module::settings;
     const SettingsConfig cfg;  // 默认构造 = 字段缺失的回退语义
-    DOCTEST_CHECK_EQ(cfg.enabledModules.size(), static_cast<size_t>(5));
+    DOCTEST_CHECK_EQ(cfg.enabledModules.size(), static_cast<size_t>(6));
     for (const char* id : {module::settings::kModuleIdHome,
                            module::settings::kModuleIdMarkdown,
                            module::settings::kModuleIdTodo,
                            module::settings::kModuleIdClaudeProxy,
-                           module::settings::kModuleIdSettings}) {
+                           module::settings::kModuleIdSettings,
+                           module::settings::kModuleIdRelease}) {
         DOCTEST_CHECK(moduleEnabled(cfg, id));
     }
     DOCTEST_CHECK(!moduleEnabled(cfg, kModuleIdAgent));
@@ -175,7 +176,7 @@ REGISTER_TEST(gating_config_corrupt_falls_back, "gating: 字段损坏回退默�
     DOCTEST_REQUIRE(test_support::writeRawConfigRow(
         ::core::appDatabase(), kEnabledModulesRow.c_str(), "{not json at all"));
     loaded = SettingsStore(::core::appDatabase()).load();
-    DOCTEST_CHECK_EQ(loaded.enabledModules.size(), static_cast<size_t>(5));
+    DOCTEST_CHECK_EQ(loaded.enabledModules.size(), static_cast<size_t>(6));
     DOCTEST_CHECK(moduleEnabled(loaded, kModuleIdMarkdown));
     std::error_code ec;
     std::filesystem::remove(file, ec);
