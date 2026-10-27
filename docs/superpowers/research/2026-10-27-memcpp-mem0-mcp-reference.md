@@ -19,6 +19,7 @@ Claude Code 等 MCP 客户端
         ▼
 mem0-mcp（TypeScript，薄封装层）
   src/index.ts      工具注册 / 参数解析 / 后端按环境变量三选一
+  src/types.ts      类型定义
   src/backends/     base.ts 抽象基类 + cloud.ts / supabase.ts / local.ts 三个适配器
         │                    │                    │
         ▼                    ▼                    ▼
@@ -77,7 +78,7 @@ mem0-mcp（TypeScript，薄封装层）
 
 **抄什么（机制，不抄代码）**：
 1. **`get_memory_capabilities` 能力上报模式**：后端返回特性布尔矩阵，不支持的工具返回清晰的 "feature-unavailable" 消息而不是隐藏工具（src/index.ts + base.ts，S 级）。memcpp P1/P3 分层落地时（无向量 → 有向量 → 可选云抽取），MCP 工具面可以保持稳定、按能力自适应——比"每档换一套工具名"抗漂移。
-2. **stdio 卫生纪律**：启动即把 console.* 全部替换为空函数、关闭遥测（`MEM0_TELEMETRY=false`）、日志只走 stderr、SIGINT/SIGTERM 先 `server.close()` 再退出；引文 "Suppress library console logging to avoid breaking the MCP stdio protocol"（src/index.ts，S 级）。P0 §4.2 已定"进程不崩"，应补"库日志静默 + 优雅关闭"两条进实现清单——这是它踩坑两轮（CHANGELOG 0.1.5/0.1.7/0.2.5 三连修 stdout 污染）换来的。
+2. **stdio 卫生纪律**：启动即把 console.* 全部替换为空函数、关闭遥测（`MEM0_TELEMETRY=false`）、日志只走 stderr、SIGINT/SIGTERM 先 `server.close()` 再退出；引文 "Suppress library console logging to avoid breaking the MCP stdio protocol"（src/index.ts，S 级）。P0 §4.2 已定"进程不崩"，应补"库日志静默 + 优雅关闭"两条进实现清单——这是它踩坑两轮（CHANGELOG 0.1.7/0.2.5 两连修 stdout 污染）换来的。
 3. **异步写入确认契约**：`waitForCompletion`/`timeoutMs`/`eventId` 三态（已落库 / 处理中 / 失败）。P0 用不上；P3 若上云抽取，提案状态机与 MCP 出参可直接抄这个语义，避免"写完不知道成没成"。
 
 **避开什么**：
@@ -94,7 +95,7 @@ mem0-mcp（TypeScript，薄封装层）
 ## 对既有文档的修订建议
 
 1. **P0 规格书 §4.2 错误处理条**：补半句"生态对照：mem0-mcp v0.8.0 走 McpError 抛 JSON-RPC 错、初始化失败即退进程；本方案 isError:true + 进程存活是刻意分歧——本地库是唯一真相，MCP 进程死 = 记忆入口断"，防后续审读者当遗漏。
-2. **P0 规格书 §4.2 实现清单**：补两条 stdio 卫生——console.* 静默只留 stderr、SIGINT/SIGTERM 优雅关闭（mem0-mcp 在 CHANGELOG 0.1.5/0.1.7/0.2.5 三连修 stdout 污染踩坑后验证的模式）。
+2. **P0 规格书 §4.2 实现清单**：补两条 stdio 卫生——console.* 静默只留 stderr、SIGINT/SIGTERM 优雅关闭（mem0-mcp 在 CHANGELOG 0.1.7/0.2.5 两连修 stdout 污染踩坑后验证的模式）。
 3. **prior-art-evidence-v2 §3**：补一行工具面层证据——"mem0-mcp v0.8.0 仍把 update/delete 直接暴露给 agent（无审核），仅 batch_delete 有 confirm:true 门槛；'自动管线 ADD-only、纠错交 agent 裸奔'是上游生态现状"，为提案卡片人审定位再加一钉。
 4. **B4 提案卡片**：如需生态佐证，`batch_delete_memories` 的 confirm:true 可引为"破坏性操作最低配安全门"实例（比提案卡片弱两级：不审内容、不留撤销链、不防单条 delete_memory）。
 5. **不建议对齐其工具命名**：`search_memories`/`topK`/`threshold` 是向量检索生态惯用形；memcpp P0 是 FTS 关键词检索，`recall(query, limit)` 保留即可。若 P1 上向量检索，再给 recall 增补可选 `topK`/`threshold` 参数（向生态形参靠拢），而不是改主动词名。

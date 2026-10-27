@@ -69,7 +69,10 @@ python -m unittest discover -s tests -v
 
 ## 已实测
 
-- 单元测试：全 suite 113 条全过（`unittest discover`；既有 63 条 + 脱敏层 50 条）。
+- 单元测试：全 suite 132 条全过（`unittest discover`；既有 63 条 + 脱敏层 50 条 + 标识符评测 19 条）。
 - 红队评测：110 样本（92 正例 + 18 形似负例）泄漏 0、误杀 0（`python sanitize/eval_redteam.py`）。
+- 标识符评测：camel/snake/路径/错误码/缩写/2 字中文六类查询，在真实 SQLite FTS5 上做
+  bigram / LIKE / bigram+LIKE 兜底三臂召回对照，验证双字分词方案对标识符类查询可用；
+  跑法 `python -I eval_identifiers/eval_identifiers.py`，结果落 `eval_identifiers/results/`。
 - 真实数据：`--project D--project-gui --limit 2` 首次摄取 1412 条事件、坏行 0；
   第二次同样的命令新增 0 条（幂等验证通过）。
