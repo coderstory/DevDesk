@@ -22,6 +22,7 @@ memcpp（把 Claude Code 会话消化成结构化记忆、并在合适时机注�
 4. **模型许可证清单已核对**：风险低，义务=随分发物附三份 MIT 声明（commit `a3e47e57`，见 `docs/superpowers/research/2026-10-27-memcpp-model-license-checklist.md`）。
 5. **业界实证调研已落盘**（commit `7a0dc7fc`，见 `docs/superpowers/research/2026-10-27-memcpp-prior-art-evidence.md`）：建议维持 Q8_0、中文双字分词不改、卡片人工审核属差异化设计。
 6. **三件待拍板现状**：①分发形态未拍板；②模型资产只剩技术取舍（建议 Q8_0 + 包体上限 + 打包方式）；③注入通道已有双档意向、待定交互形态——详见下方「用户待拍板的三件事」拍板进度。
+7. **路线已拍板、集成规格已出**：telemem 参照拆解与路线比选落盘（commit `4db88c6f`），`feat/memcpp` 已推送 origin 并并入 `dev`（merge `0ad2bc45`）；施工依据 = `docs/superpowers/specs/2026-10-27-memcpp-integration-spec.md`（S1 spike 五项实测先行，见下方拍板进度）。
 
 ## 本次交付物清单
 
@@ -59,7 +60,7 @@ memcpp（把 Claude Code 会话消化成结构化记忆、并在合适时机注�
 2. **模型资产**：embedding 推荐 `BAAI/bge-small-zh-v1.5` 量化版；抽取首版用云端 `qianfan/deepseek-v4.1-flash`（关闭思考），本地抽取模型等风险探针后再选。需要用户给两个约束：包体上限（如 <200MB / <500MB）、是否接受“首次使用下载模型”。模型许可证已核对（见 docs/superpowers/research/2026-10-27-memcpp-model-license-checklist.md）：许可证风险低，义务=随分发物附三份 MIT 声明。
 3. **注入通道**：MCP 返回 / hook 拼上下文 / 两者结合 / 半自动档（卡片审核）。**推荐 hook 为主、MCP 为辅**（`UserPromptSubmit` 预载 + `PreToolUse` 按文件注入，预算 ≤5 条 / ≤500 字，失败静默跳过）；若更在意“不打扰”可缩到 2 条。P1 若 30 次真实抽样采纳率不到 30%，退回 MCP 优先。
 
-**拍板进度（2026-10-27）**：②模型资产——事实与调研已齐（许可证风险低；业界实证建议维持 Q8_0），只剩技术取舍待用户给约束：包体上限与打包方式（打进安装包 vs 首次使用下载）。③注入通道——已有双档并存意向（自动静默预载 + 半自动卡片审核，已录入报告 §8.3“半自动档”选项），提案卡片设计已就绪（推荐新记忆页 + 逐条审核默认、批量为辅助），仍待拍板具体交互形态（卡片放哪个页面、批量还是逐条）。①分发形态未拍板；三件未齐前不写 P0 代码。
+**拍板进度（2026-10-27 更新）**：路线已拍板——**组合 1：A telemem 面板起步 + 预埋升级 C 的两条缝**（写入拦截点、检索接口）。七项定案：①提炼走云端大模型（复用 DevDesk 网关配置注入，qwen3:8b 本机档出局）；②脱敏闸默认开死不可关（数据出机=强制）；③外部依赖版本迭代不计风险；④向量化尽量留本机（数百 MB~1GB 级小模型，非 8B；telemem 若不支持本地 embedding 端点则全云端，S1 spike 定案）；⑤卡片=DevDesk 侧记账（自家 proposals 表完整撤销链，代理执行 telemem 改删）；⑥Python 分发=首跑安装（面板检测缺 Python 3.10+ 引导，不捆绑）；⑦触发线：冻结集转测 telemem 检索 Recall@5<85% 或 2 字中文词低于基线 5/3/11 → 升级 C 补全文通道。P0 自研规格书（`docs/superpowers/specs/2026-10-27-memcpp-p0-core-spec.md`）降级为触发线备用图纸；下一步从 S1 spike 开工（施工票见集成规格 §3）。
 
 ## 环境与纪律速查
 
