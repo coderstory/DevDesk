@@ -71,3 +71,12 @@
 | F8 | 不修（沿用既有裁定）：不建 docs/RESEARCH-INDEX.md，handoff「当前进度」段承担调研/审计资产索引职责（与 research-audit.md F4 裁定一致） |
 | F9 | 已修：proposals.id 注释改为"格式示例 = B4 §1.1（prop_YYYYMMDD_ + 唯一尾），生成口径以全库唯一 + 幂等语义为准，勿把后缀位数当规范抄"，不再写死纯数字尾 |
 | F10 | 已修：§4.2 补传输纪律一行——协议帧只走 stdout、任何日志/调试输出一律 stderr，标注为反重构警告 |
+
+## 复查处置（2026-10-27 复审 R1/R2）
+
+修订提交：`ade280e5`（唯一改动文件 `docs/superpowers/specs/2026-10-27-memcpp-p0-core-spec.md`）。
+
+| # | 处置 |
+|---|---|
+| R1（阻塞） | 已修：`idx_memories_session_event` 改部分唯一索引，WHERE 追加 `AND status='active'`；DDL 注释同步为"同一 (session_id,event_seq) 至多一条 active 行；superseded 行不受限，保留供溯源"；T14 措辞同步（崩溃重放撞 active 行仍被部分唯一索引拒绝，防重职责不变）——重写路径"旧行翻 superseded + 新行 ADD"与索引不再互斥 |
+| R2（低） | 已修：§3.2 重写路径第 3 步改为同一事务内按序三步——旧行翻 `'superseded'`（`superseded_by` 暂空，释放 active 唯一槽位）→ ADD 新行 → 旧行 `superseded_by` 回填已存在的新行 id；`foreign_keys=ON` 下 FK 与唯一索引均无违例，三步一次提交 |
