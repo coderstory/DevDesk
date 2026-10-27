@@ -85,14 +85,24 @@
 
 | ID | 状态 | 条目 | 验收判据（可核销） | 涉及文件 |
 |---|---|---|---|---|
-| B2-01 | ⬜ | HTML→Markdown | spec §7 全部规则：剔除 script/style/head（留 title）/注释；标题、段落、br/hr；嵌套 ul/ol 2 空格；blockquote；pre 围栏 / 行内 code；a/img；strong/em；基础表格与 `|` 转义；命名与数字实体；空白折叠；`title` 兜底；未闭合标签不抛异常；输入 2 MiB 截断 | `src/module_mcp/html_to_markdown.h/.cpp` |
-| B2-02 | ⬜ | `web_fetch_markdown` | spec §6.1 逐条：仅 http/https；SSRF 字面量全表**每跳**校验；手动跟随最多 5 跳且总时限 10s；非 2xx 含状态码 + 前 200 字符；响应头大小写不敏感；Content-Type 分类；charset 白名单外报错、白名单内 sanitize；2 MiB 截断附注；`max_chars` 钳制 1000..200000 且 UTF-8 边界截断；空正文非错误；网络失败中文 + 底层信息；所有输出进 JSON 前良构 UTF-8 | `src/module_mcp/mcp_tools_builtin.h/.cpp`（追加）、`src/module_mcp/CMakeLists.txt` |
-| B2-03 | ⬜ | 测试登记 | `tests/CMakeLists.txt` 登记两个新文件；不改 B1 既有登记与链接行 | `tests/CMakeLists.txt` |
-| B2-04 | ⬜ | HTML→MD 用例 | 覆盖 spec §10 批次 2 的 HTML 组，每条注明防的事故；描述含 `mcp` | `tests/test_modules/test_mcp_html_to_markdown.cpp` |
-| B2-05 | ⬜ | fetch 工具用例 | mock fetcher 覆盖 spec §10 批次 2 的 fetch 组（重定向/时限/编码/SSRF/截断/内容类型/二进制/空正文），描述含 `mcp` | `tests/test_modules/test_mcp_fetch_tool.cpp` |
-| B2-G | ⬜ | 批次门禁 | 一次构建 + `--filter mcp` 退出 0；B1 用例同批回归不红；commit 仅本批 pathspec；台账勾 ✅ | — |
+| B2-01 | ✅ | HTML→Markdown | spec §7 全部规则：剔除 script/style/head（留 title）/注释；标题、段落、br/hr；嵌套 ul/ol 2 空格；blockquote；pre 围栏 / 行内 code；a/img；strong/em；基础表格与 `|` 转义；命名与数字实体；空白折叠；`title` 兜底；未闭合标签不抛异常；输入 2 MiB 截断 | `src/module_mcp/html_to_markdown.h/.cpp` |
+| B2-02 | ✅ | `web_fetch_markdown` | spec §6.1 逐条：仅 http/https；SSRF 字面量全表**每跳**校验；手动跟随最多 5 跳且总时限 10s；非 2xx 含状态码 + 前 200 字符；响应头大小写不敏感；Content-Type 分类；charset 白名单外报错、白名单内 sanitize；2 MiB 截断附注；`max_chars` 钳制 1000..200000 且 UTF-8 边界截断；空正文非错误；网络失败中文 + 底层信息；所有输出进 JSON 前良构 UTF-8 | `src/module_mcp/mcp_tools_builtin.h/.cpp`（追加）、`src/module_mcp/CMakeLists.txt` |
+| B2-03 | ✅ | 测试登记 | `tests/CMakeLists.txt` 登记两个新文件；不改 B1 既有登记与链接行 | `tests/CMakeLists.txt` |
+| B2-04 | ✅ | HTML→MD 用例 | 覆盖 spec §10 批次 2 的 HTML 组，每条注明防的事故；描述含 `mcp` | `tests/test_modules/test_mcp_html_to_markdown.cpp` |
+| B2-05 | ✅ | fetch 工具用例 | mock fetcher 覆盖 spec §10 批次 2 的 fetch 组（重定向/时限/编码/SSRF/截断/内容类型/二进制/空正文），描述含 `mcp` | `tests/test_modules/test_mcp_fetch_tool.cpp` |
+| B2-G | ✅ | 批次门禁 | 一次构建 + `--filter mcp` 退出 0；B1 用例同批回归不红；commit 仅本批 pathspec；台账勾 ✅ | — |
 
-**批次证据（✅ 时回填）**：`<命令原文>` → `<构建结果行 + 筛中用例名 + 退出码 + commit sha>`。
+**批次证据（✅ 已回填）**：
+- 命令原文（worktree `D:/wt-mcp-skeleton`，工具链 PATH 前置同 B1）：`bash scripts/build-test-run.sh --filter mcp --no-run`。
+- 首次门禁红（`1bf64e4f`）：`--filter mcp` → `Total: 77 / Passed: 73 / Failed: 4`，4 条全为 B1 遗留计数断言（`test_mcp_tools_builtin.cpp` 63/103/117/163 行，内置工具注册数 1→2 必然触发；该文件不在本批 §3 允许清单，按纪律未动并随回单上报）；本批新增 36 例（HTML 15 + fetch 21）全绿。
+- 修法（主会话裁决选 A）：`e4a61901` 仅动计数/清单派生断言（size 1→2、工具数文案与字典序清单含 `web_fetch_markdown`），行为断言一律未动；**B2 门禁绿以 `e4a61901` 为准**：`--filter mcp` 77/77 退出 0。
+- 审计安全收口批核销（6 commit；主会话授权依据：researcher 两轮调研 + auditor 审计（F1/F3 等），文档 `docs/superpowers/research/2026-10-27-mcp-implementation-review.md`、`2026-10-27-mcp-round2-review.md`、`docs/superpowers/plans/2026-10-27-mcp-b1b2b3-audit.md`）：
+  - `e1b22986` `html_to_markdown.cpp` 补显式 `<utility>`/`<algorithm>` 过 std include 守卫（首红：`std::move`/`std::max` 靠传递包含可见；修后 491 文件全绿）。
+  - `43b983ac` 拦截 IP 数字编码绕过 SSRF 校验（数字形态按 inet_aton 语义还原查表、::/96 还原、userinfo 一律拒、解析失败 fail-closed；修复前 4 红，修后 106/106 绿）。
+  - `e5c7aff3` markdown 转义表（对照 turndown@7.2.0 官方 escapes）与嵌套有序列表 2→4 空格缩进（门禁 `--filter mcp` 109/109、`--filter settings` 113/113 退出 0）。
+  - `02e38d72` 非 2xx 错误前缀按 UTF-8 码点截 200 字符（修复前 36 筛中 1 红，修后 36/36 绿）。
+  - `bb556cad` 拒绝尾点 host（fail-closed）并补组播 deny 段（IPv4 224.0.0.0/4、IPv6 ff00::/8；修复前 38 筛中 2 红，修后 38/38 绿）。
+- 终态正式门禁（tester 取证，HEAD `bb556cad`）：`✅ 构建成功` + `✅ 发布形态（单 exe / 零外部 DLL；DEVDESK_STATIC=ON）`；`--filter mcp` `Total: 112 Passed: 112 Failed: 0`，脚本退出 0；守卫段全绿（probe 跳过登记 / 模块隔离 / Windows 交叉编译 266 文件 / std include 491 文件 / 玻璃体系 / ToolGuard / 守卫自检 5 道好树绿坏树红）。
 
 ## 4. B3 设置与生命周期
 
@@ -101,23 +111,28 @@
 
 | ID | 状态 | 条目 | 验收判据（可核销） | 涉及文件 |
 |---|---|---|---|---|
-| B3-01 | ⬜ | 配置头 | `kModuleIdMcp = "mcp"`；include `core/mcp_port.h` 并别名三常量；`mcpPort` 默认 8931；`parseMcpPortInput` 声明 | `src/module_settings/settings_config.h` |
-| B3-02 | ⬜ | 配置实现 | `kKnownModuleIds` 加 mcp；`defaultEnabledModules()` **不加** mcp；`sanitized` 越界/0/负回落默认（不钳边界）；save/load 新增顶层 `mcpPort`，行数 17→18 并同步注释；解析只接受范围内纯数字 | `src/module_settings/settings_config.cpp` |
-| B3-03 | ⬜ | 卡几何同源 | `mcpPortRowY()/mcpStatusRowHeight()/mcpCommandRowY()/mcpCommandRowHeight()/mcpCardHeightFor()` 按 spec §8.3 公式；下边距 `std::max(16.0f, roundFs(16.0f))`；**不写死 160** | `src/module_settings/settings_ui_logic.h` |
-| B3-04 | ⬜ | 设置卡 UI | 模块卡标题右侧开关 id `settings.card.modules.mcp`、命中的 `<id>.hit`、盒宽 150、标题盒 `w-56-150`；`drawMcpCard` 根 id `settings.card.mcp`；端口输入 96×28（placeholder `8931`）+ 应用 64×28；反馈四态；状态三态；命令行；`SettingsCardsIn/Actions` 新字段一律追加末尾带默认值 | `src/module_settings/settings_ui_cards.h/.cpp` |
-| B3-05 | ⬜ | 设置页逻辑 | 门控卡 `gate = kModuleIdMcp` 排在代理卡后；开关走既有 `applyModuleEnabled`；`mcpPortDraft_` / 应用 / Esc / Ctrl+S；输入变化清错；桥状态快照；`CardHeightKind::McpCard` + switch；`contentKey` 追加 `(mcpOn ? "M" : "m")` | `src/module_settings/settings_module.cpp` |
-| B3-06 | ⬜ | app 层桥 | spec §8.4 API；默认桩 `start/applyPort` fail「MCP 服务未装配」、`stop` no-op、`status` 全空；`static_assert` 签名哨兵；桥 cpp 只依赖 core + 标准库，不链接 module_mcp | `src/mcp_service_bridge.h`、`src/mcp_service_bridge.cpp` |
-| B3-07 | ⬜ | main 装配 | 一次注册内置工具；`setHandlers` 装四个无捕获转发函数；启动时按 `moduleEnabled(..., kModuleIdMcp)` 启动 `cfg.mcpPort`，失败只 LOG_ERROR；`atexit` stop | `src/main.cpp` |
-| B3-08 | ⬜ | 模块开关分发 | `dispatchModuleToggle` 的 mcp 特例**位于注册表遍历之前**；开 → 读端口并 start，失败 `showAppNotice`；关 → stop；随后 return | `src/app_assembly.cpp` |
-| B3-09 | ⬜ | root CMake 桥源 | `DevDesk` 源追加 `src/mcp_service_bridge.cpp`；不改 B1 行 | `CMakeLists.txt` |
-| B3-10 | ⬜ | 测试构建接线 | 登记两个新测试；`devdesk_tests` 源加桥、链接 module_mcp、include 补 `src/module_mcp`；probe 公共源集与 `github_sync_live` / `agent_live` 源集各补桥 | `tests/CMakeLists.txt` |
-| B3-11 | ⬜ | 跨编译脚本 | `build_incs()` 增加 `-I "${ROOT}/src/module_mcp"` | `scripts/check-windows-cross-compile.sh` |
-| B3-12 | ⬜ | 用例出厂复位 | `resetCaseGlobals` 增加 `app::mcp::setHandlers(nullptr, nullptr, nullptr, nullptr)` | `tests/test_main.cpp` |
-| B3-13 | ⬜ | 设置用例 | 配置（解析边界/符号/空格、默认 8931、默认关闭、sanitized 回落、未知 ID 过滤、save/load 18 键往返）；桥（默认桩/注入路由/复位）；卡片（开关默认关且命中 `.hit`、门控卡开关两态、状态三态、反馈四态、非法端口不落库、命令端口来源、85/100/130% 行盒不重叠且下边距 ≥16）；描述含 `mcp` | `tests/test_modules/test_mcp_settings.cpp` |
-| B3-14 | ⬜ | 服务用例 | port 0 实际端口；isRunning/port/status；stop 幂等；restart 换端口；端口占用 fail + lastError；Host/Origin 拒绝；在途工具 300ms 时 stop 不崩且收敛；GET 405 + Allow、OPTIONS 405、通知 202；重启后旧 session 404 | `tests/test_modules/test_mcp_service.cpp` |
-| B3-G | ⬜ | 批次门禁 | 一次构建 + `--filter mcp` 退出 0 + 直接跑 `--filter settings` 退出 0；commit 仅本批 pathspec；台账勾 ✅ | — |
+| B3-01 | ✅ | 配置头 | `kModuleIdMcp = "mcp"`；include `core/mcp_port.h` 并别名三常量；`mcpPort` 默认 8931；`parseMcpPortInput` 声明 | `src/module_settings/settings_config.h` |
+| B3-02 | ✅ | 配置实现 | `kKnownModuleIds` 加 mcp；`defaultEnabledModules()` **不加** mcp；`sanitized` 越界/0/负回落默认（不钳边界）；save/load 新增顶层 `mcpPort`，行数 17→18 并同步注释；解析只接受范围内纯数字 | `src/module_settings/settings_config.cpp` |
+| B3-03 | ✅ | 卡几何同源 | `mcpPortRowY()/mcpStatusRowHeight()/mcpCommandRowY()/mcpCommandRowHeight()/mcpCardHeightFor()` 按 spec §8.3 公式；下边距 `std::max(16.0f, roundFs(16.0f))`；**不写死 160** | `src/module_settings/settings_ui_logic.h` |
+| B3-04 | ✅ | 设置卡 UI | 模块卡标题右侧开关 id `settings.card.modules.mcp`、命中的 `<id>.hit`、盒宽 150、标题盒 `w-56-150`；`drawMcpCard` 根 id `settings.card.mcp`；端口输入 96×28（placeholder `8931`）+ 应用 64×28；反馈四态；状态三态；命令行；`SettingsCardsIn/Actions` 新字段一律追加末尾带默认值 | `src/module_settings/settings_ui_cards.h/.cpp` |
+| B3-05 | ✅ | 设置页逻辑 | 门控卡 `gate = kModuleIdMcp` 排在代理卡后；开关走既有 `applyModuleEnabled`；`mcpPortDraft_` / 应用 / Esc / Ctrl+S；输入变化清错；桥状态快照；`CardHeightKind::McpCard` + switch；`contentKey` 追加 `(mcpOn ? "M" : "m")` | `src/module_settings/settings_module.cpp` |
+| B3-06 | ✅ | app 层桥 | spec §8.4 API；默认桩 `start/applyPort` fail「MCP 服务未装配」、`stop` no-op、`status` 全空；`static_assert` 签名哨兵；桥 cpp 只依赖 core + 标准库，不链接 module_mcp | `src/mcp_service_bridge.h`、`src/mcp_service_bridge.cpp` |
+| B3-07 | ✅ | main 装配 | 一次注册内置工具；`setHandlers` 装四个无捕获转发函数；启动时按 `moduleEnabled(..., kModuleIdMcp)` 启动 `cfg.mcpPort`，失败只 LOG_ERROR；`atexit` stop | `src/main.cpp` |
+| B3-08 | ✅ | 模块开关分发 | `dispatchModuleToggle` 的 mcp 特例**位于注册表遍历之前**；开 → 读端口并 start，失败 `showAppNotice`；关 → stop；随后 return | `src/app_assembly.cpp` |
+| B3-09 | ✅ | root CMake 桥源 | `DevDesk` 源追加 `src/mcp_service_bridge.cpp`；不改 B1 行 | `CMakeLists.txt` |
+| B3-10 | ✅ | 测试构建接线 | 登记两个新测试；`devdesk_tests` 源加桥、链接 module_mcp、include 补 `src/module_mcp`；probe 公共源集与 `github_sync_live` / `agent_live` 源集各补桥 | `tests/CMakeLists.txt` |
+| B3-11 | ✅ | 跨编译脚本 | `build_incs()` 增加 `-I "${ROOT}/src/module_mcp"` | `scripts/check-windows-cross-compile.sh` |
+| B3-12 | ✅ | 用例出厂复位 | `resetCaseGlobals` 增加 `app::mcp::setHandlers(nullptr, nullptr, nullptr, nullptr)` | `tests/test_main.cpp` |
+| B3-13 | ✅ | 设置用例 | 配置（解析边界/符号/空格、默认 8931、默认关闭、sanitized 回落、未知 ID 过滤、save/load 18 键往返）；桥（默认桩/注入路由/复位）；卡片（开关默认关且命中 `.hit`、门控卡开关两态、状态三态、反馈四态、非法端口不落库、命令端口来源、85/100/130% 行盒不重叠且下边距 ≥16）；描述含 `mcp` | `tests/test_modules/test_mcp_settings.cpp` |
+| B3-14 | ✅ | 服务用例 | port 0 实际端口；isRunning/port/status；stop 幂等；restart 换端口；端口占用 fail + lastError；Host/Origin 拒绝；在途工具 300ms 时 stop 不崩且收敛；GET 405 + Allow、OPTIONS 405、通知 202；重启后旧 session 404 | `tests/test_modules/test_mcp_service.cpp` |
+| B3-G | ✅ | 批次门禁 | 一次构建 + `--filter mcp` 退出 0 + 直接跑 `--filter settings` 退出 0；commit 仅本批 pathspec；台账勾 ✅ | — |
 
-**批次证据（✅ 时回填）**：`<构建命令 + 结果行>` / `<--filter mcp 筛中用例与退出码>` / `<--filter settings 结果与退出码 + commit sha>`。
+**批次证据（✅ 已回填）**：
+- 命令原文：`bash scripts/build-test-run.sh --filter mcp --no-run` → 直跑 `build/tests/devdesk_tests.exe --filter settings`（同一构建产物，不二次构建）。
+- 首次门禁红（`740d20c6` 接手收口，前序中断会话 `3fb183df` 链接从未通过）：①`test_mcp_settings.cpp` 重复定义 `app::dslAppConfig()` 且包含 `dsl_app_impl.h`（DSL 运行时注入点全二进制唯一）→ 本 TU 去掉定义与 impl 头，仅经 `dsl_app.h` 复用声明；②`test_mcp_service.cpp` 端口占用用例 Windows 恒红（httplib 服务端默认 SO_REUSEADDR 双绑定假成功）→ holder 改排他裸 socket。修后 `--filter mcp` 64/64、`--filter settings` 113/113 均退出 0；合并 `a572947e` 入 `feat/mcp-server-skeleton`。
+- fix 批核销（`a028fb1e`，主会话授权，范围白名单 `src/platform/http_server.cpp` + `tests/test_modules/test_mcp_service.cpp`）：根治 `740d20c6` 留裁决项——服务端 socket 排他绑定（Windows SO_EXCLUSIVEADDRUSE / POSIX 不设 reuse 位），端口被占如实 fail + lastError；先红后绿（修复前 1 筛中 1 红：conflict.isFail 断言失败）；门禁 `--filter mcp` 101/101、`--filter settings` 113/113、`--filter proxy` 25/25 均退出 0。
+- 审计安全收口批涉及 B3 面注记：`3759beb3` 非初始化请求缺会话头返回 400（主会话授权解冻 `mcp_protocol.cpp`，本修复未动 `mcp_http_handler.cpp`；修复前 107 筛中 1 红，修后 107/107 绿）。
+- 终态正式门禁（tester 取证，HEAD `bb556cad`）：`--filter mcp` `Total: 112 Passed: 112 Failed: 0`；`--filter settings` 直跑 `Total: 113 / Passed: 113 / Failed: 0 / Skipped: 0`；两者均退出 0。实现者报告的「模块卡标题右 MCP 开关」「门控卡显隐」两例负载敏感偶发在本次全 mcp 过滤下未复现（直接绿），维持负载 flaky 定性、非回归。
 
 ## 5. B4 集成与真实链路
 
