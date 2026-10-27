@@ -107,25 +107,38 @@ using HolderSocket = int;
 constexpr HolderSocket kInvalidHolderSocket = -1;
 #endif
 
-// bind(0) 占一个临时端口并把实际端口写入 actualPort（维持全文件零固定端口）；
+// bind(0) 占一个临时端口并把实际端口写入 actualPort（维持全文件零固定端口）。
+// 占口姿势二选一（对应两份占用用例的探针语义）：
+// - Exclusive：SO_EXCLUSIVEADDRUSE，挡一切后来者——「真占用 → fail」的正路；
+// - ReuseAddr：与 httplib 服务端默认同款（httplib.h default_socket_options），
+//   Windows 语义下两个都带 REUSEADDR 的 bind 可共存同一端口——这是修复前
+//   「占用检测假成功」缺陷的复现姿势（等价第二个 DevDesk/httplib 实例）。
 // 失败返回 kInvalidHolderSocket。Windows 进程内 WSAStartup 由含 httplib 的其它
 // 编译单元的静态初始化完成（引用计数进程级生效），此处不重复初始化。
-HolderSocket holdPortExclusively(int& actualPort) {
+enum class HolderKind { Exclusive, ReuseAddr };
+HolderSocket holdPort(int& actualPort, HolderKind kind) {
     actualPort = 0;
 #if defined(_WIN32)
     SOCKET s = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (s == INVALID_SOCKET) return kInvalidHolderSocket;
-    BOOL exclusive = TRUE;
-    if (::setsockopt(s, SOL_SOCKET, SO_EXCLUSIVEADDRUSE,
-                     reinterpret_cast<const char*>(&exclusive),
-                     sizeof(exclusive)) != 0) {
-        ::closesocket(s);
-        return kInvalidHolderSocket;
+    if (kind == HolderKind::Exclusive) {
+        BOOL exclusiveOpt = TRUE;
+        if (::setsockopt(s, SOL_SOCKET, SO_EXCLUSIVEADDRUSE,
+                         reinterpret_cast<const char*>(&exclusiveOpt),
+                         sizeof(exclusiveOpt)) != 0) {
+            ::closesocket(s);
+            return kInvalidHolderSocket;
+        }
     }
 #else
     int s = ::socket(AF_INET, SOCK_STREAM, 0);
     if (s < 0) return kInvalidHolderSocket;
 #endif
+    if (kind == HolderKind::ReuseAddr) {
+        const int one = 1;
+        (void)::setsockopt(s, SOL_SOCKET, SO_REUSEADDR,
+                           reinterpret_cast<const char*>(&one), sizeof(one));
+    }
     sockaddr_in addr{};
     addr.sin_family = AF_INET;
     addr.sin_port = 0;  // port 0 = OS 分临时端口
@@ -219,7 +232,7 @@ REGISTER_TEST(mcp_service_port_conflict_fails_with_last_error,
               "mcp: 端口被占用 → fail + lastError（不静默假成功）", {
     // holder 用排他裸 socket 占口（为何不能用第二个 McpService 见 helper 注释）
     int occupied = 0;
-    HolderSocket holder = holdPortExclusively(occupied);
+    HolderSocket holder = holdPort(occupied, HolderKind::Exclusive);
     DOCTEST_REQUIRE(holder != kInvalidHolderSocket);
     DOCTEST_REQUIRE(occupied > 0);
 
@@ -229,6 +242,24 @@ REGISTER_TEST(mcp_service_port_conflict_fails_with_last_error,
     const auto st = victim.status();
     DOCTEST_CHECK(st.state == ServiceState::Failed);
     DOCTEST_CHECK(!st.lastError.empty());
+    DOCTEST_CHECK(!victim.isRunning());
+    closeHolderSocket(holder);
+    return true;
+})
+
+REGISTER_TEST(mcp_service_start_fails_on_reuseaddr_occupied_port,
+              "mcp: 端口被 REUSEADDR 型服务占用 → start 如实 fail（防双绑定假成功）", {
+    // holder 与修复前的 httplib 服务端同款（默认 SO_REUSEADDR）：Windows 语义下
+    // 两个都带 REUSEADDR 的 bind 共存同一端口、start 假成功——即第二个 DevDesk
+    // 实例或任意 REUSEADDR 服务先占口时，本进程必须仍如实报「端口被占」。
+    int occupied = 0;
+    HolderSocket holder = holdPort(occupied, HolderKind::ReuseAddr);
+    DOCTEST_REQUIRE(holder != kInvalidHolderSocket);
+    DOCTEST_REQUIRE(occupied > 0);
+
+    McpService victim;
+    auto conflict = victim.start(occupied);
+    DOCTEST_REQUIRE(conflict.isFail());
     DOCTEST_CHECK(!victim.isRunning());
     closeHolderSocket(holder);
     return true;
