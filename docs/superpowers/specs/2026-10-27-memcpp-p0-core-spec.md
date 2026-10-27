@@ -76,7 +76,7 @@ memcpp/
 
 ### 2.1 总则
 
-- SQLite，WAL 日志模式（写前日志，允许读写并发），`foreign_keys=ON`，`busy_timeout=5000`——与实验台 `tools/memory-lab/memory_lab/db.py:100-108` 同一口径。
+- SQLite，WAL 日志模式（写前日志，允许读写并发），`foreign_keys=ON`，`busy_timeout=5000`（本文自设值：P0 单写者 + 只读连接，5 秒退避足够；实验台 db.py:104 为 `timeout=10` 即 10 秒，**并非同一口径**，5000 无上游背书，待标定）。
 - **零物理删除（报告 §4.1/§4.8）**：memories/proposals 任何"删"都是 UPDATE 状态标记；schema 不提供 DELETE 路径，FTS 同步触发器仍保留 delete 分支（服务状态翻转时的索引重建，不是删行）。
 - schema 版本：`PRAGMA user_version`，迁移只加列加表、不改旧列。
 
@@ -93,7 +93,8 @@ CREATE TABLE IF NOT EXISTS sessions (
 );
 
 -- 记忆条目。P0 无抽取器，写入单元 = 过滤后的段级原文（kind='segment'）；
--- 抽取上线（P0.5/P3）后增 kind='fact'，段级候选由提案流程 superseded，绝不原地改写
+-- 抽取上线（P0.5/P3）后增 kind='fact'，段级候选由提案流程 superseded
+-- （superseded = 被新条目取代的标记：原文保留、只改 status/superseded_by，绝不物理删除），绝不原地改写
 CREATE TABLE IF NOT EXISTS memories (
   id             INTEGER PRIMARY KEY AUTOINCREMENT,
   schema_version INTEGER NOT NULL DEFAULT 1,
@@ -118,6 +119,10 @@ CREATE TABLE IF NOT EXISTS memories (
 );
 CREATE INDEX IF NOT EXISTS idx_memories_project_status ON memories(project, status);
 CREATE INDEX IF NOT EXISTS idx_memories_session ON memories(session_id);
+-- 幂等键（§3.2 双职责：截断重写去重 + 崩溃恢复第二道防线）：同一会话同一事件序号至多一条 segment 行。
+-- 部分唯一索引只约束 kind='segment'（fact 行与来源事件无一一对位概念，豁免）
+CREATE UNIQUE INDEX IF NOT EXISTS idx_memories_session_event
+  ON memories(session_id, event_seq) WHERE kind='segment' AND session_id IS NOT NULL;
 
 -- FTS5 虚表：external content（索引数据回头读 memories.tokens），触发器同步
 CREATE VIRTUAL TABLE IF NOT EXISTS fts_memories USING fts5(
@@ -127,8 +132,8 @@ CREATE VIRTUAL TABLE IF NOT EXISTS fts_memories USING fts5(
 -- 三个触发器（AFTER INSERT / AFTER UPDATE / AFTER DELETE）照 db.py:55-74 形态：
 -- delete 分支用 fts_memories(fts_memories, rowid, tokens) 特例语句移除旧索引行
 
--- 采集水位（断点续读），语义照 tools/memory-lab/memory_lab/ingest.py 头注释：
--- 只追加（size 变大）→ 从 offset 续读；变小或重写 → 从 0 重读并清该会话派生行；
+-- 采集水位（断点续读），语义照 tools/memory-lab/memory_lab/ingest.py 头注释，带一处零物理删除修正：
+-- 只追加（size 变大）→ 从 offset 续读；变小或重写 → offset 回退 0 重读，派生行只翻标记不清（§3.2）；
 -- 只消费以换行结尾的完整行
 CREATE TABLE IF NOT EXISTS ingest_state (
   file_path TEXT PRIMARY KEY,
@@ -139,7 +144,8 @@ CREATE TABLE IF NOT EXISTS ingest_state (
 
 -- 提案（B4 §1 契约的落库映射）。P0 只落表结构与幂等键，无任何写路径；状态机在 P2（B4 §5 C4）
 CREATE TABLE IF NOT EXISTS proposals (
-  id             TEXT PRIMARY KEY,     -- 'prop_YYYYMMDD_NNNNNN'；幂等键（§5）
+  id             TEXT PRIMARY KEY,     -- 幂等键（§5）；格式示例 = B4 §1.1（prop_YYYYMMDD_ + 唯一尾），
+                                       -- 生成口径以"全库唯一 + 幂等语义"为准，勿把后缀位数当规范抄
   schema_version INTEGER NOT NULL,
   kind           TEXT NOT NULL CHECK (kind IN ('merge','invalidate','forget','add')),
   status         TEXT NOT NULL DEFAULT 'pending' CHECK (status IN
@@ -189,7 +195,7 @@ C++ 分词器（`tokenize/`，入库与查询**必须共用同一实现**——�
    SELECT m.* FROM fts_memories f JOIN memories m ON m.id = f.rowid
    WHERE fts_memories MATCH :or_query          -- 't1 OR t2 OR ...'
      AND m.status = 'active' AND m.project MATCH 过滤见下
-   ORDER BY bm25(fts_memories) LIMIT :n;
+   ORDER BY bm25(fts_memories) LIMIT :n;   -- bm25 = 全文检索通用相关度打分公式（FTS5 内置，值越小越相关）
    ```
    （project 过滤用 `AND m.project = :project` 拼进 WHERE；`MATCH` 只用于 fts 列。）
 3. **FTS 返回 0 行 → LIKE 兜底**：各 token 对 `search_text` 做 `%token%`，OR 连接，命中即入，按命中 token 数降序排（次序信号弱，仅兜底）：
@@ -214,26 +220,33 @@ C++ 分词器（`tokenize/`，入库与查询**必须共用同一实现**——�
 
 ### 3.2 断点续读水位
 
-`ingest_state` 表（§2.2），语义逐条照 ingest.py 头注释，这是已验证行为不是新设计：
+`ingest_state` 表（§2.2），语义逐条照 ingest.py 头注释（重写行带零物理删除修正，见下），其余为已验证行为不是新设计：
 
 | 文件状态 | 判定 | 动作 |
 |---|---|---|
 | 只追加 | size 变大 | 从上次 `offset` 续读 |
-| 被截断/重写 | size 变小，或 mtime 变而 size 不变 | 从 0 重读，并删该会话已派生的 memories 行（含 FTS 触发器同步） |
+| 被截断/重写 | size 变小，或 mtime 变而 size 不变 | offset 回退 0 从头重读；**不删任何行**，去重与标记走下方重写处理路径 |
 | 写入中 | 末行无换行符 | 半行留到下一轮，只消费完整行 |
 | 无变化 | size/mtime 均不变 | 跳过 |
 
 - 文件删除：水位行保留（文件可能回归），不派生动作。
 - 幂等：同一文件稳定时二次执行新增 0 条（实验台实测口径，收进单测）。
+- **重写处理路径（零物理删除修正）**：实验台"清派生行"清的是可重建的原始 events，本表存 memories，P0/P0.5+ 均禁止物理删（§2.2 不变量）。检测到重写（上表第 2 行）后：
+  1. `offset` 回退 0，从头重读，全程不删任何 memories 行；
+  2. 重遇 `(session_id, event_seq)` 同键且 `search_text` 相同（规范化原文，§2.2 列义）的段 → 跳过（幂等，等价稳定文件回放）；
+  3. 同键不同内容（该事件被重写）→ 旧行 `status` 翻 `'superseded'` + `superseded_by` 指向新行，再 ADD 新行——写路径仍是只 ADD，旧行只做状态翻转（§2.2 零物理删除框架，T2 断言口径）；
+  4. 重读完成后 → `event_seq` 大于本轮重读最大事件序号的旧行（会话尾部被重写截掉）批量翻 `'superseded'`，`superseded_by` 留空；
+  5. superseded 行检索自然隐身：主/兜底两条 SQL 均固定 `status='active'` 过滤（§2.4），无需新增分支。
+- **事务边界（崩溃恢复，对应报告 §5 门槛 6）**：每个文件每轮的"INSERT memories 行 + 推进 `ingest_state.offset`"包进一个 SQLite 事务一次提交——两写之间任何时刻崩溃即整体回滚，重启从旧水位重放该轮，无半途态；部分唯一索引 `idx_memories_session_event`（§2.2）为第二道防线，即使出现绕过事务的写路径也产不出重复行。
 
 ### 3.3 落库前最小过滤（报告 §4.2 四道，P0 全部落地）
 
-1. **角色过滤**：只取用户/助手正文事件；`thinking`、`tool_result`、`tool_use` 事件不落 memories（实验台 `_SKIP_KINDS = {thinking, tool_result}` 同口径）。
+1. **角色过滤（P0 收窄，显式决策而非实验台同口径）**：`thinking`、`tool_use`、`tool_result` 事件一律不落 memories。实验台 `_SKIP_KINDS = {thinking, tool_result}`（compress.py）在段内保留工具名/入参，报告 §4.2 也要求保留"工具名/入参摘要"——P0 无抽取器，工具文本产不出记忆收益，收窄以减入库噪声；抽取器上线后可放宽回"保留工具名/入参摘要"，只动本道过滤、不涉 schema。
 2. **剔除注入块**：`system-reminder` 块、hook 输出、被引用的整篇文档/README/规范，不落库（报告实测：不过滤会把插件/技能文档当项目记忆抽出）。
 3. **单事件截断**：单事件正文超 4000 字截断（实验台 `TEXT_LIMIT=4000`；真实数据单事件可达 86.5KB~290KB，不截断必炸）。
-4. **段级落库单位**：过滤后正文按约 4KB 聚段（实验台 `build_segments` 口径）；一段内无任何用户/助手文本则整段跳过。
+4. **段级落库单位**：过滤后正文按约 4KB 聚段（实验台 `build_segments` 默认 6000 字，本文刻意收紧对齐单事件 4000 字截断口径——设计值待标定）；一段内无任何用户/助手文本则整段跳过。
 
-落库形态：每段一条 `memories` 行，`kind='segment'`、`source_trust` 按段内来源最高档（用户原文= `user_explicit`，否则 `assistant_derived`）、`confidence=0.5`、`content` = 段原文、`search_text`/`tokens` 由分词器派生。P0 写入只做 ADD + 证据链字段，无任何改旧行动作（报告 §4.1）。
+落库形态：每段一条 `memories` 行，`kind='segment'`、`source_trust` 按段内来源最高档（用户原文= `user_explicit`，否则 `assistant_derived`）、`confidence=0.5`、`content` = 段原文、`search_text`/`tokens` 由分词器派生。`event_seq` 取该段首个事件的行序号（锚事件；锚定规则：一个事件至多参与一个段）——该列与 `session_id` 合成重写幂等键（§2.2 部分唯一索引强制，§3.2）。P0 写路径：正文内容只 ADD、绝不原地改写；唯一允许的 UPDATE 是状态标记翻转（§2.2 零物理删除框架，本文唯一出现点 = §3.2 重写路径的 superseded 标记），无任何物理删除（报告 §4.1）。
 
 ---
 
@@ -253,6 +266,7 @@ C++ 分词器（`tokenize/`，入库与查询**必须共用同一实现**——�
 ### 4.2 MCP `recall` 接口
 
 - 传输：stdio 上的 JSON-RPC 2.0（MCP 协议事实：`initialize` 握手 → `tools/list` → `tools/call`；协议版本协商以实现时官方 spec 为准——注意 `D:/wt-mcp` 是另一会话的 MCP 骨架，只可参考、不可触碰，handoff 纪律）。
+- **传输纪律（反重构警告）**：协议帧只走 stdout，任何日志/调试输出一律 stderr——一条杂散 printf 即静默破坏整条 MCP 通道，是实现期最难查的断连根因。
 - 工具：`recall`。
 
 | 项 | 契约 |
@@ -262,9 +276,9 @@ C++ 分词器（`tokenize/`，入库与查询**必须共用同一实现**——�
 | 错误码 | JSON-RPC 标准层：`-32700` 解析失败 / `-32600` 非法请求 / `-32601` 方法不存在 / `-32602` 参数非法（query 缺失或超 512、limit 越界）。工具层故障（库打不开等）：`tools/call` 正常响应但 `isError: true` + 一句话原因，**进程不崩、stdio 循环不退** |
 | 性能 | 每次调用现开只读连接，毫秒级返回（§2.4）；不加载任何模型 |
 
-### 4.3 hook 预载通道对接桩位（协议事实待另一任务线钉版，本文只留接口位）
+### 4.3 hook 预载通道对接桩位（协议事实已钉版：`43a4d75f` hook-contract-facts）
 
-- 输入：stdin 收 Claude Code hook 事件 JSON（`UserPromptSubmit` 场景含 `session_id`、`hook_event_name`、`prompt` 字段——形态来自报告 §3.5 文档核实口径，**字段名与版本以钉版结果为准**，报告 §7.18 已列版本漂移风险）。
+- 输入：stdin 收 Claude Code hook 事件 JSON（`UserPromptSubmit` 场景含 `session_id`、`hook_event_name`、`prompt` 字段——**权威出处 = `docs/superpowers/research/2026-10-27-memcpp-hook-contract-facts.md`**（commit `43a4d75f`，核验时点 Claude Code 2.1.311，已关闭报告 §7.18"未钉版"项）；后续升级漂移靠该文 §3 的 P1 契约测试捕捉）。
 - 输出：stdout 回 `{"hookSpecificOutput":{"hookEventName":"UserPromptSubmit","additionalContent 占位":"…"}}` 形态的注入 JSON；P0 骨架内检索可返回空串（骨架不承载真注入，注入预算/触发判定在 P1）。
 - **失败开放（出口条件 4）**：任何异常——stdin 非法、库打不开、查询报错——一律输出为空 + 退出码 0（claude-mem 已验证的失败开放模式，报告 §2.1）；退出码非 0 会阻塞用户，此为反重构警告。
 - 时限意识：同步 hook 超时会丢弃注入内容（30 秒默认，报告 §3.5），hook 路径内不做任何慢操作（无模型、无全量扫描）。
@@ -294,11 +308,12 @@ C++ 分词器（`tokenize/`，入库与查询**必须共用同一实现**——�
 | T6 | 4 字查询走 FTS | "端口配置" → FTS MATCH 命中且 bm25 排序生效 | OR 拼接/排序错 |
 | T7 | LIKE 兜底自动触发 | 构造 FTS 0 行查询 → 结果来自兜底路径；单 token（2 字词）直接走兜底 | 兜底分支被删 |
 | T8 | 驼峰标识符检索 | 存"getUserById 相关记忆"，query"getUserById"命中（小写化后 LIKE） | 规范化漏小写/错切驼峰 |
-| T9 | 尾读断点 | 追加 → 只读增量；半行挂起；size 变小 → 重读且旧行被清；二次执行新增 0 | 水位语义偏离 ingest.py 口径 |
+| T9 | 尾读断点 | 追加 → 只读增量；半行挂起；size 变小 → 重读后同键同行幂等跳过、被重写/尾部截掉的旧行翻 superseded 且**全库行数不变**；二次执行新增 0 | 水位语义偏离 §3.2 口径（含零物理删除修正），或重写路径出现物理删行 |
 | T10 | 过滤四道 | system-reminder 块不落库；>4000 字截断；纯 thinking/tool_result 段跳过；来源信任档正确 | 过滤规则缺失（对应报告 §4.8 污染入口） |
 | T11 | proposals 幂等 | 同 id 同内容重复投递只落一条；同 id 异内容拒绝且审计留痕；同一 undoOf 第二张未决被唯一索引拒绝 | 幂等键/部分唯一索引缺失 |
-| T12 | MCP 契约 | initialize/tools/list/tools/call 往返；非法参数 → `-32602`；坏 JSON → `-32700`；空结果 → 正常响应"（无匹配记忆）"；库打不开 → `isError:true` 且进程存活 | 错误码/失败开放语义缺失 |
+| T12 | MCP 契约 | initialize/tools/list/tools/call 往返；非法参数 → `-32602`；坏 JSON → `-32700`；不存在的方法 → `-32601`；非 JSON-RPC 非法请求 → `-32600`；空结果 → 正常响应"（无匹配记忆）"；库打不开 → `isError:true` 且进程存活 | 错误码/失败开放语义缺失（四个错误码任缺一即红） |
 | T13 | hook 失败开放（出口 4） | stdin 喂垃圾/库路径指向不可写盘 → 退出码 0、stdout 空；合法输入 → 输出含 hookSpecificOutput 键 | 有人把异常变成非 0 退出 |
+| T14 | 崩溃恢复事务（§3.2） | 构造"行已插、水位未推"（模拟两写之间中断）→ 重跑同轮：行数不变（幂等键拦重）、水位正常推进；事务内中途回滚 → 重启重放落库正确且无重复 | 行插入与水位推进入了不同事务/自动提交，中断后重启重复入库 |
 
 ### 6.2 probe / 集成层
 
@@ -310,7 +325,7 @@ C++ 分词器（`tokenize/`，入库与查询**必须共用同一实现**——�
 | 出口（报告 §6.1） | 验证物 |
 |---|---|
 | 真机接进 Claude Code | §6.2 人工步：hook 不阻塞会话 + MCP 工具可见可调用 |
-| 手动 recall 能查到写入的事实 | `memcpp recall` 调试动词 + T9/T13 链路 |
+| 手动 recall 能查到写入的事实 | `memcpp recall` 调试动词 + §6.2 CLI 集成冒烟（daemon --once 落库 → 真实 stdio recall 命中同一事实） |
 | 2 字中文查询可用 | T5（端口/配置/模块三词固定 fixture） |
 | hook 失败不影响使用 | T13 失败开放断言 + 真机拔除验证 |
 
@@ -324,7 +339,7 @@ C++ 分词器（`tokenize/`，入库与查询**必须共用同一实现**——�
 | 2 | **打包方式**（bundled vs 首次使用下载，报告 §8.2） | §1.3 CMake + 未来 installer 接线 | 按 **bundled** 起草（probe 三数字即按随包口径测：exe 9.94 + 模型 25.25 = 35.19 MiB）；首次下载路线需加下载器组件，属 P1 新立项，P0 无代码受影响 |
 | 3 | **分发形态①**（纯本地 / 本地+中转网关 / 私有化，报告 §8.1） | §3 采集落库后的抽取挂点、§4 接口（云端抽取客户端 + 脱敏层接线——脱敏层已实现并过 110 条红队样本，commit `a98e3f91`/`2f545b41`） | P0 无抽取器，**代码不受影响**；按"本地+网关"预留抽取器接口缝（只定义接口位，不实现）。若拍板纯本地，P0.5 本地抽取 spike 转正为默认路径 |
 
-补充（非拍板项的外部依赖）：hook 协议事实由另一任务线钉版（§4.3 桩位等它）；`~/.claude/settings.json` 的自动接线归 DevDesk 设置页（§1.1），P0 一律手动配置。
+补充（非拍板项的外部依赖）：hook 协议事实已由 `43a4d75f` 钉版（§4.3 引用已回改）；`~/.claude/settings.json` 的自动接线归 DevDesk 设置页（§1.1），P0 一律手动配置。
 
 ---
 
@@ -333,7 +348,7 @@ C++ 分词器（`tokenize/`，入库与查询**必须共用同一实现**——�
 1. `store/`：DDL + 打开/迁移 + 零物理删除 DAO（T1~T3 先红）。
 2. `tokenize/`：分词器（T4），store 写入接上派生列。
 3. `retrieval/`：FTS 主路径 + LIKE 兜底（T5~T8）。
-4. `collect/`：扫描 → 尾读 → 过滤 → 落库（T9~T10），接 `daemon --once`。
+4. `collect/`：扫描 → 尾读 → 过滤 → 落库（T9~T10、T14），接 `daemon --once`。
 5. `mcp/` + `hook/` + `recall` 调试动词（T12~T13）。
 6. CLI 集成冒烟（§6.2）→ 真机人工出口（§6.3）。
 
