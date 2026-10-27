@@ -193,6 +193,9 @@ button{font:inherit;color:inherit;background:none;border:none;cursor:pointer}
 .dot.run{background:var(--success);box-shadow:0 0 0 3px rgba(94,112,72,.22)}
 .dot.stop{background:var(--text-disabled)}
 .engine-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.eng-head{flex-wrap:wrap;row-gap:6px}   /* 头部空间不足时芯片/按钮整组换行，标题行不被挤压 */
+.eng-head h2{white-space:nowrap}           /* 契约：引擎卡标题永不折行 */
+.eng-btn{min-width:158px}                  /* 契约：两按钮同尺寸档，宽度不随文案浮动 */
 .env-row{display:flex;align-items:center;gap:8px;padding-top:var(--sp-md);margin-top:var(--sp-md);border-top:1px solid var(--border-muted);flex-wrap:wrap}
 .env-row .ic{width:16px;height:16px;color:var(--success-text)}
 
@@ -450,7 +453,7 @@ body.batch-on .p-actions{display:none!important}
 
           <!-- 引擎状态卡 -->
           <div class="card big section">
-            <div class="card-head">
+            <div class="card-head eng-head">
               <span class="dot run" id="eng-dot"></span>
               <h2>telemem 记忆引擎</h2>
               <span class="chip mono">v1.10.1</span>
@@ -459,8 +462,8 @@ body.batch-on .p-actions{display:none!important}
               <span class="eg-tag">示例</span>
               <span class="spacer"></span>
               <span class="engine-actions">
-                <button class="btn secondary" id="btn-wizard"><svg class="ic"><use href="#i-spark"/></svg>首次安装向导</button>
-                <button class="btn danger" id="eng-toggle"><svg class="ic"><use href="#i-stop"/></svg>停止引擎</button>
+                <button class="btn secondary eng-btn" id="btn-wizard"><svg class="ic"><use href="#i-spark"/></svg>首次安装向导</button>
+                <button class="btn danger eng-btn" id="eng-toggle"><svg class="ic"><use href="#i-stop"/></svg>停止引擎</button>
               </span>
             </div>
             <p class="plain">它替 Claude 记住你的偏好和项目背景，聊天时自动带上，不用每次重复交代。</p>
@@ -926,7 +929,7 @@ body.batch-on .p-actions{display:none!important}
     engToggle.innerHTML = engineRunning
       ? '<svg class="ic"><use href="#i-stop"/></svg>停止引擎'
       : '<svg class="ic"><use href="#i-play"/></svg>启动引擎';
-    engToggle.className = 'btn ' + (engineRunning ? 'danger' : 'primary');
+    engToggle.className = 'btn eng-btn ' + (engineRunning ? 'danger' : 'primary');
     banner.hidden = engineRunning;
   }
   engToggle.addEventListener('click', function () {
