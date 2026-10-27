@@ -1,7 +1,7 @@
 # memcpp 模型资产许可证清单（拍板②直接输入）
 
 - 日期：2026-10-27；分支 feat/memcpp @ 0f851612
-- 对象：BAAI/bge-small-zh-v1.5（本地 embedding）+ llama.cpp（推理引擎）+ 其 GGUF 量化版
+- 对象：BAAI/bge-small-zh-v1.5（本地 embedding）+ llama.cpp（推理引擎）+ 其 GGUF 量化版（GGUF=一种把模型压缩打包的通用文件格式）。
 - 方法：仅一手来源（HF 模型卡 raw README、FlagEmbedding 仓库 LICENSE、llama.cpp 仓库 LICENSE），每条附 URL 与原文短引。
 - 约定：MIT 许可证 = 一种近乎"随便用"的开源许可，唯一硬性要求是把作者的版权声明和许可文本原样带走；"再分发" = 把文件副本交给别人（无论免费还是收费）。
 
@@ -18,8 +18,9 @@
 ## 2. GGUF 量化版
 
 - 主要发布者：CompendiumLabs（第三方，非 BAAI 官方；HF 搜索 "bge-small-zh-v1.5 gguf" 仅此一仓库）。
-  来源：https://huggingface.co/CompendiumLabs/bge-small-zh-v1.5-gguf
-- 量化产物许可证：仓库自标 MIT（YAML `license: mit`）；提供 F32(91MB)/F16(46MB)/Q8_0(26MB)/Q4_K_M(15MB) 四档。
+  来源：https://huggingface.co/CompendiumLabs/bge-small-zh-v1.5-gguf ；排他性断言核对落点=HF 搜索结果页 + 仓库 Files 文件列表（四档文件在列）。
+- 量化产物许可证：仓库自标 MIT（YAML `license: mit`）；提供 F32(91MB)/F16(46MB)/Q8_0(26MB)/Q4_K_M(15MB) 四档（F32/F16=未压缩的全精度/半精度档；Q8_0/Q4_K_M=不同的压缩档位，数字越小文件越小、精度损失略增）。
+  来源：https://huggingface.co/CompendiumLabs/bge-small-zh-v1.5-gguf/raw/main/README.md （YAML `license: mit`）
 - 卡片声明上游："Source model: https://huggingface.co/BAAI/bge-small-zh-v1.5"
 - 再分发：允许（按 MIT 标签），义务同第 1 节（保留声明）。专门再分发条款文字：未查到（已查：该模型卡页面全文 + raw README 全文，无超出 MIT 标签的许可文字）。
 - 附声明要求：卡片未单独要求；保守做法 = 随分发物附 BAAI 原模型 MIT 声明 + CompendiumLabs GGUF 转换出处。
@@ -29,7 +30,7 @@
 
 - 许可证：MIT。版权人 "The ggml authors"（2023-2026）。
   来源：https://github.com/ggerganov/llama.cpp/blob/master/LICENSE
-- 静态链接进闭源/内部 exe：允许。MIT 授权含 "use, copy, modify, merge, publish, distribute, sublicense, and/or sell"（含转授权与出售），无开源自家代码的义务。
+- 静态链接进闭源/内部 exe：允许（静态链接=把运行所需的库直接打进 exe，用户机器不用装任何依赖）。MIT 授权含 "use, copy, modify, merge, publish, distribute, sublicense, and/or sell"（含转授权与出售），无开源自家代码的义务。
 - 义务：在分发物中保留版权声明 + MIT 许可文本（"include in all copies or substantial portions of the Software"）。放在"关于/第三方声明"弹窗或随附 LICENSE 文件即可满足。
 
 ## 4. 分发形态冲突分析
