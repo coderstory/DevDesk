@@ -48,7 +48,7 @@ struct WallpaperSnapshot {
     PlayMode mode = PlayMode::LoopSingle;
     int rotationIntervalSec = 300;
     bool paused = false;        // true = 手动暂停或系统让路（不区分来源）
-    bool manualPaused = false;  // 仅手动暂停；系统让路时为 false
+    bool manualPaused = false;  // 手动暂停位为真即 true，可与 systemHolds 并存
     HoldReasonSet systemHolds = 0;  // 只含系统原因，永不含 ManualPause 位
     float rate = 1.0f;
     float volume = 1.0f;
@@ -95,6 +95,8 @@ public:
     void next();
 
     // ---- 测试缝（仅测试用，生产代码不得调用）----
+    // 扫描器/玩家/时钟必须在 start() **之前**注入：扫描线程无锁读取 scanner/clock，
+    // start 后再替换属数据竞争（本批不为测试缝加锁）。
     using VideoScanner = std::function<VideoScanResult(const std::string& folder)>;
     using ImageScanner = std::function<ImageScanResult(const std::string& folder, int minPixels)>;
     using Clock = std::function<RotationClock::time_point()>;

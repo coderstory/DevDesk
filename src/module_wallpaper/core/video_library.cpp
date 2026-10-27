@@ -4,6 +4,8 @@
 #include <cctype>
 #include <system_error>
 
+#include "core/logging.h"
+
 namespace module::wallpaper {
 
 namespace {
@@ -119,6 +121,10 @@ VideoScanResult scanVideoLibrary(const std::filesystem::path& folder, std::size_
         result.files.push_back(path.string());
     }
 
+    if (iterateEc) {
+        // 目录中途读不了时不能假装扫描完整：清单可能只是部分结果。
+        LOG_WARN("壁纸视频扫描中断（" + folder.string() + "）: " + iterateEc.message());
+    }
     std::sort(result.files.begin(), result.files.end());
     return result;
 }

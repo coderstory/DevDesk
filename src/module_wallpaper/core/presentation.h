@@ -39,8 +39,10 @@ struct StatusInput {
     Availability availability = Availability::FolderUnconfigured;
     PlayMode mode = PlayMode::LoopSingle;
     bool paused = false;        // 手动暂停或系统让路
-    bool manualPaused = false;  // 仅手动暂停
+    bool manualPaused = false;  // 手动暂停位为真即 true，可与 systemHolds 并存
     HoldReasonSet systemHolds = 0;
+    int itemCount = 0;              // 播放态副题：「N 个视频 / N 张图片」
+    int rotationIntervalSec = 300;  // 播放态副题：「每 N 分钟换一个」
 };
 
 // 状态卡标题。播放中：视频「正在播放 · 模式」、图片单张「正在显示 · 单张不变」、
@@ -48,16 +50,20 @@ struct StatusInput {
 std::string statusTitle(const StatusInput& input);
 
 // 状态卡副题：手动暂停「点『继续』恢复播放。」；系统让路「条件解除后自动续播，不会从头开始。」；
-// 非播放态返回对应空态原因，播放态返回空串（由 UI 的概览文案承担）。
+// 播放态「N 个视频 · 每 10 分钟换一个」（单循环/单条为「单循环播放 / 单张不变 / 不轮换」）；
+// 非播放态返回对应空态原因。
 std::string statusSubtitle(const StatusInput& input);
 
+// 空态卡文案（标题/正文/主按钮/次按钮）。UI 不另拼文案。
 struct EmptyStateCopy {
     std::string title;
     std::string reason;
     std::string primaryAction;
+    std::string secondaryAction;
 };
 
 // 空态三变体（未配置 / 目录不在 / 0 可播）；Playing 返回 nullopt。
+// 文案逐字对齐需求 §7.3；视频不得出现「转码」类不可用入口，图片不得宣称已按像素档过滤。
 std::optional<EmptyStateCopy> emptyStateCopy(Availability availability, WallpaperKind kind);
 
 // 统计单位：视频「N 个视频」、图片「N 张可用图片」。

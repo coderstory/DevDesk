@@ -111,7 +111,24 @@ std::string statusSubtitle(const StatusInput& input) {
     }
     if (input.systemHolds != 0) return "条件解除后自动续播，不会从头开始。";
     if (input.manualPaused || input.paused) return "点『继续』恢复播放。";
-    return {};
+
+    // 播放态概览副题（§7.2）：12 个视频 · 每 10 分钟换一个。
+    const int count = input.itemCount > 0 ? input.itemCount : 0;
+    if (input.mode == PlayMode::LoopSingle) {
+        return input.kind == WallpaperKind::Image
+                   ? std::to_string(count) + " 张图片 · 单张不变"
+                   : std::to_string(count) + " 个视频 · 单循环播放";
+    }
+    if (count <= 1) {
+        return input.kind == WallpaperKind::Image
+                   ? std::to_string(count) + " 张图片 · 不轮换"
+                   : std::to_string(count) + " 个视频 · 不轮换";
+    }
+    const std::string every = rotationIntervalLabel(input.rotationIntervalSec);
+    if (input.kind == WallpaperKind::Image) {
+        return std::to_string(count) + " 张图片 · 每 " + every + "换一张";
+    }
+    return std::to_string(count) + " 个视频 · 每 " + every + "换一个";
 }
 
 std::optional<EmptyStateCopy> emptyStateCopy(Availability availability, WallpaperKind kind) {
@@ -119,33 +136,29 @@ std::optional<EmptyStateCopy> emptyStateCopy(Availability availability, Wallpape
         case Availability::FolderUnconfigured:
             if (kind == WallpaperKind::Image) {
                 return EmptyStateCopy{
-                    "还没选图片文件夹",
-                    "DevDesk 还不知道该去哪里找图片。选一个文件夹，里面所有 JPG / PNG / HEIC / WEBP "
-                    "都会进轮播池。",
-                    "选择文件夹…"};
+                    "还没有设置图片文件夹", "选一个文件夹，里面支持的图片会进入轮播池。",
+                    "选择文件夹…", "重新扫描"};
             }
             return EmptyStateCopy{
-                "还没选壁纸文件夹",
-                "DevDesk 还不知道该去哪里找视频。选一个文件夹，里面所有能播的视频都会进轮换池。",
-                "选择文件夹…"};
+                "还没有设置壁纸文件夹", "选一个文件夹，里面支持的视频会进入轮换池。",
+                "选择文件夹…", "重新扫描"};
         case Availability::FolderMissing:
             return EmptyStateCopy{
-                "壁纸文件夹不见了",
+                "壁纸文件夹找不到了",
                 "上次选的位置现在不存在或读不了。可能被改名、被移动，或在没挂载的磁盘上。",
-                "重新选择文件夹…"};
+                "重新选择…", "重新扫描"};
         case Availability::NoPlayableVideos:
             if (kind == WallpaperKind::Image) {
+                // 本批不解码、不按像素档过滤：只按扩展名判定，不得宣称档位筛选已生效。
                 return EmptyStateCopy{
-                    "没有够档位的图片",
-                    "文件夹能正常读取，但没有一张图片达到当前分辨率档位。把档位降到 1080P，"
-                    "或换一个图片更大的文件夹。",
-                    "去片库调整档位"};
+                    "没有符合条件的图片",
+                    "支持的格式是 jpg / jpeg / png / webp / heic；分辨率筛选待后续版本接入。",
+                    "更换文件夹", "重新扫描"};
             }
             return EmptyStateCopy{
-                "没有能直接播的文件",
-                "文件夹能正常读取，但里面 0 个能直接播的文件。MKV / AVI / WEBM 需要先转成 MP4 "
-                "才能当壁纸。",
-                "去片库转码"};
+                "这个文件夹里没有能播的视频",
+                "支持的格式是 mp4 / mov / m4v；其他格式不会被扫描。",
+                "更换文件夹", "重新扫描"};
         case Availability::Playing:
             return std::nullopt;
     }

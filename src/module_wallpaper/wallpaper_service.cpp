@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <exception>
+#include <random>
 #include <system_error>
 #include <utility>
 
@@ -14,7 +16,12 @@ namespace module::wallpaper {
 
 WallpaperService::WallpaperService()
     : player_(std::make_unique<NullPlayerBackend>()),
-      settingsPath_(wallpaperSettingsPath().string()) {}
+      settingsPath_(wallpaperSettingsPath().string()),
+      // 随机模式按当前时间 + random_device 播种：默认种子会让每次启动的「随机」顺序完全相同。
+      rotation_(static_cast<std::uint32_t>(
+          std::random_device{}() ^
+          static_cast<unsigned>(
+              std::chrono::steady_clock::now().time_since_epoch().count()))) {}
 
 WallpaperService::~WallpaperService() {
     stop();
@@ -78,6 +85,9 @@ void WallpaperService::start() {
         }
     } catch (const std::system_error& error) {
         LOG_ERROR(std::string("壁纸服务: 扫描线程创建失败: ") + error.what());
+        // 线程没起来时不能让快照永远停在「扫描中」；requestScanLocked 也会按 joinable 兜底。
+        std::lock_guard<std::mutex> lock(mu_);
+        snapshot_.scanning = false;
     }
 
     {
@@ -132,6 +142,8 @@ WallpaperSnapshot WallpaperService::snapshot() const {
     status.paused = out.paused;
     status.manualPaused = out.manualPaused;
     status.systemHolds = out.systemHolds;
+    status.itemCount = static_cast<int>(rotation_.itemCount());
+    status.rotationIntervalSec = out.rotationIntervalSec;
     out.modeLabel = presentation::playModeLabel(out.mode, out.kind);
     out.statusTitle = presentation::statusTitle(status);
     out.statusSubtitle = presentation::statusSubtitle(status);
@@ -269,7 +281,9 @@ void WallpaperService::toggleManualPause() {
 
 void WallpaperService::next() {
     std::lock_guard<std::mutex> lock(mu_);
-    if (!started_) return;
+    // 只有真实可播时才推进：扫描中/空态下 rotation 仍可能残留上一轮清单，
+    // 不挡住会装载不属于当前来源的旧条目。
+    if (!started_ || snapshot_.availability != Availability::Playing) return;
     const RotationClock::time_point now = nowLocked();
     const std::optional<std::string> path = rotation_.advanceNow(now);
     if (path.has_value()) loadItemLocked(*path, now);
@@ -320,6 +334,13 @@ void WallpaperService::setSystemHoldForTest(HoldReason reason, bool active) {
 
 void WallpaperService::requestScanLocked() {
     if (!started_) return;
+    if (!scanThread_.joinable()) {
+        // 扫描线程创建失败（极少数系统错误）：不能把快照永远停在「扫描中」。
+        scanGeneration_.fetch_add(1, std::memory_order_relaxed);
+        scanRequested_.store(false);
+        snapshot_.scanning = false;
+        return;
+    }
     scanGeneration_.fetch_add(1, std::memory_order_relaxed);
     const std::string folder = currentFolderLocked();
     if (folder.empty()) {
@@ -343,51 +364,62 @@ void WallpaperService::scanLoop() {
         if (stopRequested_.load()) break;
         if (!scanRequested_.load()) continue;
 
-        std::string folder;
-        WallpaperKind kind = WallpaperKind::Video;
-        int minPixels = 3686400;
-        std::uint64_t generation = 0;
-        {
-            std::lock_guard<std::mutex> lock(mu_);
-            if (!scanRequested_.exchange(false)) continue;
-            generation = scanGeneration_.load();
-            kind = settings_.kind;
-            folder = currentFolderLocked();
-            minPixels = settings_.imageMinPixels;
-            if (folder.empty()) {
-                snapshot_.scanning = false;
-                snapshot_.availability = Availability::FolderUnconfigured;
-                stopPlaybackLocked();
-                continue;
+        try {
+            std::string folder;
+            WallpaperKind kind = WallpaperKind::Video;
+            int minPixels = 3686400;
+            std::uint64_t generation = 0;
+            {
+                std::lock_guard<std::mutex> lock(mu_);
+                if (!scanRequested_.exchange(false)) continue;
+                generation = scanGeneration_.load();
+                kind = settings_.kind;
+                folder = currentFolderLocked();
+                minPixels = settings_.imageMinPixels;
+                if (folder.empty()) {
+                    snapshot_.scanning = false;
+                    snapshot_.availability = Availability::FolderUnconfigured;
+                    stopPlaybackLocked();
+                    continue;
+                }
             }
-        }
 
-        const auto shouldCancel = [this, generation] {
-            return stopRequested_.load() || scanGeneration_.load() != generation;
-        };
+            const auto shouldCancel = [this, generation] {
+                return stopRequested_.load() || scanGeneration_.load() != generation;
+            };
 
-        if (kind == WallpaperKind::Video) {
-            VideoScanResult result;
-            if (videoScanner_) {
-                result = videoScanner_(folder);
+            if (kind == WallpaperKind::Video) {
+                VideoScanResult result;
+                if (videoScanner_) {
+                    result = videoScanner_(folder);
+                } else {
+                    result = scanVideoLibrary(folder, kLibraryEntryCap, shouldCancel);
+                }
+                if (stopRequested_.load() || scanGeneration_.load() != generation) continue;
+                std::lock_guard<std::mutex> lock(mu_);
+                if (scanGeneration_.load() != generation) continue;
+                applyVideoScanLocked(result);
             } else {
-                result = scanVideoLibrary(folder, kLibraryEntryCap, shouldCancel);
+                ImageScanResult result;
+                if (imageScanner_) {
+                    result = imageScanner_(folder, minPixels);
+                } else {
+                    result = scanImageLibrary(folder, minPixels, kLibraryEntryCap, shouldCancel);
+                }
+                if (stopRequested_.load() || scanGeneration_.load() != generation) continue;
+                std::lock_guard<std::mutex> lock(mu_);
+                if (scanGeneration_.load() != generation) continue;
+                applyImageScanLocked(result);
             }
-            if (stopRequested_.load() || scanGeneration_.load() != generation) continue;
+        } catch (const std::exception& error) {
+            // 单次扫描异常不能让工作线程 terminate（注入扫描器/内存分配都可能抛）。
+            LOG_ERROR(std::string("壁纸服务: 扫描线程异常: ") + error.what());
             std::lock_guard<std::mutex> lock(mu_);
-            if (scanGeneration_.load() != generation) continue;
-            applyVideoScanLocked(result);
-        } else {
-            ImageScanResult result;
-            if (imageScanner_) {
-                result = imageScanner_(folder, minPixels);
-            } else {
-                result = scanImageLibrary(folder, minPixels, kLibraryEntryCap, shouldCancel);
-            }
-            if (stopRequested_.load() || scanGeneration_.load() != generation) continue;
+            if (!scanRequested_.load()) snapshot_.scanning = false;
+        } catch (...) {
+            LOG_ERROR("壁纸服务: 扫描线程未知异常");
             std::lock_guard<std::mutex> lock(mu_);
-            if (scanGeneration_.load() != generation) continue;
-            applyImageScanLocked(result);
+            if (!scanRequested_.load()) snapshot_.scanning = false;
         }
     }
 }
@@ -398,12 +430,18 @@ void WallpaperService::tickLoop() {
         tickWaitCv_.wait_for(waitLock, std::chrono::milliseconds(250));
         if (stopRequested_.load()) break;
 
-        std::lock_guard<std::mutex> lock(mu_);
-        if (!started_) continue;
-        if (!rotation_.isRunning() || rotation_.isPaused()) continue;
-        const RotationClock::time_point now = nowLocked();
-        const std::optional<std::string> path = rotation_.tick(now);
-        if (path.has_value()) loadItemLocked(*path, now);
+        try {
+            std::lock_guard<std::mutex> lock(mu_);
+            if (!started_) continue;
+            if (!rotation_.isRunning() || rotation_.isPaused()) continue;
+            const RotationClock::time_point now = nowLocked();
+            const std::optional<std::string> path = rotation_.tick(now);
+            if (path.has_value()) loadItemLocked(*path, now);
+        } catch (const std::exception& error) {
+            LOG_ERROR(std::string("壁纸服务: 计时线程异常: ") + error.what());
+        } catch (...) {
+            LOG_ERROR("壁纸服务: 计时线程未知异常");
+        }
     }
 }
 
@@ -454,7 +492,8 @@ void WallpaperService::activateItemsLocked(std::vector<std::string> items,
 }
 
 void WallpaperService::stopPlaybackLocked() {
-    rotation_.stop();
+    // 必须清空清单：只停运行态的话，next()/旧命令仍能把上一来源/已删除的条目装载回来。
+    rotation_.setItems({});
     arbiter_.invalidateResumeAnchor();
     std::lock_guard<std::mutex> playerLock(playerMu_);
     if (player_) player_->stop();

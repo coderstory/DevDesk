@@ -1,5 +1,6 @@
 #include "module_wallpaper/core/settings.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <system_error>
@@ -90,6 +91,15 @@ double numberField(const platform::json::JsonObject& object, const char* key, do
     return numberValue(value);
 }
 
+// 浮点 → 整数前必须先夹到安全范围内：直接把 1e300 转 int 是实现定义/UB（-Werror 的反向也挡不住）。
+int numberFieldAsInt(const platform::json::JsonObject& object, const char* key, int fallback) {
+    const double value = numberField(object, key, static_cast<double>(fallback));
+    if (!std::isfinite(value)) return fallback;
+    constexpr double kMin = 0.0;
+    constexpr double kMax = 1'000'000'000.0;  // 远小于 INT_MAX，夹完再转
+    return static_cast<int>(std::clamp(value, kMin, kMax));
+}
+
 float clampFloat(float value, float low, float high, float fallback) {
     if (!std::isfinite(value)) return fallback;
     if (value < low) return low;
@@ -151,7 +161,12 @@ WallpaperSettings loadWallpaperSettings(const std::filesystem::path& path) {
     if (path.empty()) return settings;
 
     std::error_code ec;
-    if (!std::filesystem::exists(path, ec)) return settings;
+    if (!std::filesystem::exists(path, ec)) {
+        if (ec) {
+            LOG_WARN(std::string(kLogTag) + "检查设置文件失败，使用默认值: " + ec.message());
+        }
+        return settings;
+    }
 
     bool readFailed = false;
     const std::string text = core::readTextFile(path, &readFailed);
@@ -181,11 +196,9 @@ WallpaperSettings loadWallpaperSettings(const std::filesystem::path& path) {
     settings.muted = boolValue(object, "muted", false);
     settings.mode = modeFromJson(stringValue(object, "playMode", "loopSingle"),
                                  PlayMode::LoopSingle);
-    settings.rotationIntervalSec =
-        static_cast<int>(numberField(object, "rotationInterval", 300.0));
+    settings.rotationIntervalSec = numberFieldAsInt(object, "rotationInterval", 300);
     settings.pauseOnBattery = boolValue(object, "pauseOnBattery", false);
-    settings.imageMinPixels =
-        static_cast<int>(numberField(object, "imageMinPixels", 3686400.0));
+    settings.imageMinPixels = numberFieldAsInt(object, "imageMinPixels", 3686400);
     settings.imageFit = fitFromJson(stringValue(object, "imageFit", "fill"), ImageFit::Fill);
     settings.lastPlayedPath = stringValue(object, "lastPlayedPath", "");
     settings.lastPlayedPosition = numberField(object, "lastPlayedPosition", 0.0);

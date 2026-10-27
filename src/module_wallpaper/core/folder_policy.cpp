@@ -1,6 +1,7 @@
 #include "module_wallpaper/core/folder_policy.h"
 
 #include <cctype>
+#include <cstddef>
 #include <filesystem>
 #include <system_error>
 

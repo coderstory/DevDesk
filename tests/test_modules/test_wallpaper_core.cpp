@@ -21,6 +21,7 @@
 #include "module_wallpaper/platform/player_backend.h"
 #include "module_wallpaper/wallpaper_service.h"
 
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <filesystem>
@@ -69,6 +70,30 @@ wp::WallpaperSnapshot waitForSnapshot(
 bool hasPlayerCall(const wp::NullPlayerBackend& player, const std::string& op) {
     for (const wp::NullPlayerBackend::Call& call : player.calls()) {
         if (call.op == op) return true;
+    }
+    return false;
+}
+
+int playerCallCount(const wp::NullPlayerBackend& player, const std::string& op) {
+    int count = 0;
+    for (const wp::NullPlayerBackend::Call& call : player.calls()) {
+        if (call.op == op) ++count;
+    }
+    return count;
+}
+
+bool hasPauseCall(const wp::NullPlayerBackend& player, bool paused) {
+    for (const wp::NullPlayerBackend::Call& call : player.calls()) {
+        if (call.op == "pause" && call.flag == paused) return true;
+    }
+    return false;
+}
+
+bool hasSeekCall(const wp::NullPlayerBackend& player, float seconds) {
+    for (const wp::NullPlayerBackend::Call& call : player.calls()) {
+        if (call.op == "seek" && std::fabs(call.number - static_cast<double>(seconds)) < 0.01) {
+            return true;
+        }
     }
     return false;
 }
@@ -453,19 +478,32 @@ REGISTER_TEST(wallpaper_core_presentation, "wallpaper core: presentation 标签/
     const auto unconfigured = emptyStateCopy(wp::Availability::FolderUnconfigured,
                                              wp::WallpaperKind::Video);
     DOCTEST_REQUIRE(unconfigured.has_value());
-    DOCTEST_CHECK_EQ(unconfigured->title, std::string("还没选壁纸文件夹"));
+    DOCTEST_CHECK_EQ(unconfigured->title, std::string("还没有设置壁纸文件夹"));
     DOCTEST_CHECK_EQ(unconfigured->primaryAction, std::string("选择文件夹…"));
+    DOCTEST_CHECK_EQ(unconfigured->secondaryAction, std::string("重新扫描"));
     const auto missing = emptyStateCopy(wp::Availability::FolderMissing, wp::WallpaperKind::Image);
     DOCTEST_REQUIRE(missing.has_value());
-    DOCTEST_CHECK_EQ(missing->title, std::string("壁纸文件夹不见了"));
+    DOCTEST_CHECK_EQ(missing->title, std::string("壁纸文件夹找不到了"));
+    DOCTEST_CHECK_EQ(missing->primaryAction, std::string("重新选择…"));
+    DOCTEST_CHECK_EQ(missing->secondaryAction, std::string("重新扫描"));
     const auto emptyVideo = emptyStateCopy(wp::Availability::NoPlayableVideos,
                                            wp::WallpaperKind::Video);
     DOCTEST_REQUIRE(emptyVideo.has_value());
-    DOCTEST_CHECK_EQ(emptyVideo->title, std::string("没有能直接播的文件"));
+    DOCTEST_CHECK_EQ(emptyVideo->title, std::string("这个文件夹里没有能播的视频"));
+    DOCTEST_CHECK_EQ(emptyVideo->primaryAction, std::string("更换文件夹"));
+    DOCTEST_CHECK_EQ(emptyVideo->secondaryAction, std::string("重新扫描"));
+    DOCTEST_CHECK(emptyVideo->reason.find("转码") == std::string::npos);
     const auto emptyImage = emptyStateCopy(wp::Availability::NoPlayableVideos,
                                            wp::WallpaperKind::Image);
     DOCTEST_REQUIRE(emptyImage.has_value());
-    DOCTEST_CHECK_EQ(emptyImage->title, std::string("没有够档位的图片"));
+    DOCTEST_CHECK_EQ(emptyImage->title, std::string("没有符合条件的图片"));
+    DOCTEST_CHECK_EQ(emptyImage->primaryAction, std::string("更换文件夹"));
+    DOCTEST_CHECK(emptyImage->reason.find("档位") == std::string::npos);
+    // 未配置的图片变体标题必须按来源分派（不能复用视频文案）。
+    const auto unconfiguredImage = emptyStateCopy(wp::Availability::FolderUnconfigured,
+                                                  wp::WallpaperKind::Image);
+    DOCTEST_REQUIRE(unconfiguredImage.has_value());
+    DOCTEST_CHECK_EQ(unconfiguredImage->title, std::string("还没有设置图片文件夹"));
     DOCTEST_CHECK_FALSE(emptyStateCopy(wp::Availability::Playing, wp::WallpaperKind::Video)
                             .has_value());
 
@@ -474,10 +512,15 @@ REGISTER_TEST(wallpaper_core_presentation, "wallpaper core: presentation 标签/
     playing.kind = wp::WallpaperKind::Video;
     playing.availability = wp::Availability::Playing;
     playing.mode = wp::PlayMode::LoopList;
+    playing.itemCount = 12;
+    playing.rotationIntervalSec = 600;
     DOCTEST_CHECK_EQ(statusTitle(playing), std::string("正在播放 · 列表循环"));
+    DOCTEST_CHECK_EQ(statusSubtitle(playing), std::string("12 个视频 · 每 10 分钟换一个"));
     playing.kind = wp::WallpaperKind::Image;
     playing.mode = wp::PlayMode::LoopSingle;
+    playing.itemCount = 3;
     DOCTEST_CHECK_EQ(statusTitle(playing), std::string("正在显示 · 单张不变"));
+    DOCTEST_CHECK_EQ(statusSubtitle(playing), std::string("3 张图片 · 单张不变"));
 
     wp::presentation::StatusInput manualPaused = playing;
     manualPaused.paused = true;
@@ -562,6 +605,7 @@ REGISTER_TEST(wallpaper_core_service, "wallpaper core: service start/扫描/选�
                      wp::folder_policy::normalizeFolderPath(videoRoot.string()));
     DOCTEST_CHECK_EQ(snapshot.modeLabel, std::string("单循环"));
     DOCTEST_CHECK_EQ(snapshot.statusTitle, std::string("正在播放 · 单循环"));
+    DOCTEST_CHECK_EQ(snapshot.statusSubtitle, std::string("2 个视频 · 单循环播放"));
     DOCTEST_CHECK_FALSE(snapshot.paused);
     DOCTEST_CHECK(hasPlayerCall(*playerRaw, "load"));
     DOCTEST_CHECK_EQ(fs::path(loadedPath(*playerRaw)).filename().string(), std::string("a.mp4"));
@@ -583,6 +627,8 @@ REGISTER_TEST(wallpaper_core_service, "wallpaper core: service start/扫描/选�
     });
     DOCTEST_CHECK_EQ(snapshot.videoCount, 2);
     DOCTEST_CHECK_EQ(snapshot.modeLabel, std::string("列表循环"));
+    DOCTEST_CHECK_EQ(snapshot.statusSubtitle,
+                     std::string("2 个视频 · 每 5 分钟换一个"));
     stored = wp::loadWallpaperSettings(settingsPath);
     DOCTEST_CHECK(stored.mode == wp::PlayMode::LoopList);
     DOCTEST_CHECK_EQ(stored.rate, 1.25f);
@@ -624,6 +670,7 @@ REGISTER_TEST(wallpaper_core_service, "wallpaper core: service start/扫描/选�
     DOCTEST_CHECK_EQ(snapshot.imageFiltered, 0);
     DOCTEST_CHECK_EQ(snapshot.modeLabel, std::string("单张不变"));
     DOCTEST_CHECK_EQ(snapshot.statusTitle, std::string("正在显示 · 单张不变"));
+    DOCTEST_CHECK_EQ(snapshot.statusSubtitle, std::string("3 张图片 · 单张不变"));
     stored = wp::loadWallpaperSettings(settingsPath);
     DOCTEST_CHECK(stored.kind == wp::WallpaperKind::Image);
     DOCTEST_CHECK_EQ(wp::folder_policy::normalizeFolderPath(stored.imageFolderPath),
@@ -634,6 +681,127 @@ REGISTER_TEST(wallpaper_core_service, "wallpaper core: service start/扫描/选�
     service.stop();
     const auto stopElapsed = std::chrono::steady_clock::now() - stopStarted;
     DOCTEST_CHECK(stopElapsed < std::chrono::seconds(3));
+    service.stop();
+    return true;
+})
+
+// 防（审计 F-2/F-7）：空态/目录缺失后旧轮换清单仍被 next() 装载——P3 接 mpv 后会播放已删除
+// 或上一来源的文件；播放态下 next 必须仍能正常换片。
+REGISTER_TEST(wallpaper_core_service_next_guard,
+              "wallpaper core: service next 守卫（播放推进 / 空扫描与缺目录不产生 load）", {
+    test_support::TempDir dir("wallpaper_service_next");
+    const fs::path settingsPath = dir.path / "wallpaper" / "settings.json";
+    const fs::path videoRoot = dir.path / "videos";
+    fs::create_directories(videoRoot);
+
+    // 0 = 两个文件；1 = 空目录；2 = 目录缺失。扫描器只读原子量（不在 start 后替换 scanner）。
+    std::atomic<int> scanMode{0};
+
+    auto player = std::make_unique<wp::NullPlayerBackend>();
+    wp::NullPlayerBackend* playerRaw = player.get();
+
+    wp::WallpaperService service;
+    service.setSettingsPathForTest(settingsPath.string());
+    service.setVideoScannerForTest([&scanMode](const std::string& folder) {
+        wp::VideoScanResult result;
+        const int mode = scanMode.load();
+        if (mode == 2) {
+            result.status = wp::LibraryScanStatus::Missing;
+            return result;
+        }
+        result.status = wp::LibraryScanStatus::Ok;
+        if (mode == 0) {
+            result.files = {(fs::path(folder) / "a.mp4").string(),
+                            (fs::path(folder) / "b.mp4").string()};
+        }
+        return result;
+    });
+    service.setPlayerForTest(std::move(player));
+
+    service.start();
+    std::string error;
+    DOCTEST_REQUIRE_MESSAGE(service.selectFolder(videoRoot.string(), &error),
+                            "selectFolder 失败: " + error);
+    wp::WallpaperSnapshot snapshot = waitForSnapshot(
+        service, [](const wp::WallpaperSnapshot& s) {
+            return !s.scanning && s.availability == wp::Availability::Playing;
+        });
+    DOCTEST_CHECK_EQ(snapshot.availability, wp::Availability::Playing);
+
+    // 播放态：next 正常推进并产生一次 load。
+    playerRaw->clearCalls();
+    service.next();
+    DOCTEST_CHECK_EQ(playerCallCount(*playerRaw, "load"), 1);
+    DOCTEST_CHECK_EQ(fs::path(loadedPath(*playerRaw)).filename().string(), std::string("b.mp4"));
+
+    // 空扫描：清单必须清空，next 不能再产生 load。
+    scanMode.store(1);
+    service.rescan();
+    snapshot = waitForSnapshot(service, [](const wp::WallpaperSnapshot& s) {
+        return !s.scanning && s.availability == wp::Availability::NoPlayableVideos;
+    });
+    DOCTEST_CHECK(snapshot.availability == wp::Availability::NoPlayableVideos);
+    DOCTEST_CHECK_EQ(snapshot.videoCount, 0);
+    playerRaw->clearCalls();
+    service.next();
+    DOCTEST_CHECK_EQ(playerCallCount(*playerRaw, "load"), 0);
+
+    // 目录缺失：同样不得装载旧条目。
+    scanMode.store(2);
+    service.rescan();
+    snapshot = waitForSnapshot(service, [](const wp::WallpaperSnapshot& s) {
+        return !s.scanning && s.availability == wp::Availability::FolderMissing;
+    });
+    DOCTEST_CHECK(snapshot.availability == wp::Availability::FolderMissing);
+    playerRaw->clearCalls();
+    service.next();
+    DOCTEST_CHECK_EQ(playerCallCount(*playerRaw, "load"), 0);
+
+    service.stop();
+    return true;
+})
+
+// 防（审计 F-7/§9.3）：让路解除时没有 seek 回锚点（P3 会表现为解禁后从头播）。
+REGISTER_TEST(wallpaper_core_service_hold_seek,
+              "wallpaper core: service 让路释放 seek 回锚点并恢复播放", {
+    test_support::TempDir dir("wallpaper_service_hold");
+    const fs::path settingsPath = dir.path / "wallpaper" / "settings.json";
+    const fs::path videoRoot = dir.path / "videos";
+    fs::create_directories(videoRoot);
+
+    auto player = std::make_unique<wp::NullPlayerBackend>();
+    wp::NullPlayerBackend* playerRaw = player.get();
+
+    wp::WallpaperService service;
+    service.setSettingsPathForTest(settingsPath.string());
+    service.setVideoScannerForTest([&videoRoot](const std::string&) {
+        wp::VideoScanResult result;
+        result.status = wp::LibraryScanStatus::Ok;
+        result.files = {(videoRoot / "a.mp4").string(), (videoRoot / "b.mp4").string()};
+        return result;
+    });
+    service.setPlayerForTest(std::move(player));
+
+    service.start();
+    std::string error;
+    DOCTEST_REQUIRE_MESSAGE(service.selectFolder(videoRoot.string(), &error),
+                            "selectFolder 失败: " + error);
+    waitForSnapshot(service, [](const wp::WallpaperSnapshot& s) {
+        return !s.scanning && s.availability == wp::Availability::Playing;
+    });
+
+    playerRaw->clearCalls();
+    playerRaw->setPositionForTest(37.5f);
+    service.setSystemHoldForTest(wp::HoldReason::Fullscreen, true);
+    DOCTEST_CHECK(service.snapshot().paused);
+    DOCTEST_CHECK(hasPauseCall(*playerRaw, true));
+
+    service.setSystemHoldForTest(wp::HoldReason::Fullscreen, false);
+    DOCTEST_CHECK_FALSE(service.snapshot().paused);
+    DOCTEST_CHECK(hasSeekCall(*playerRaw, 37.5f));
+    DOCTEST_CHECK(hasPauseCall(*playerRaw, false));
+    DOCTEST_CHECK_EQ(playerCallCount(*playerRaw, "load"), 0);  // 释放不重新装载
+
     service.stop();
     return true;
 })

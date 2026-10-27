@@ -4,6 +4,8 @@
 #include <cctype>
 #include <system_error>
 
+#include "core/logging.h"
+
 namespace module::wallpaper {
 
 namespace {
@@ -122,6 +124,10 @@ ImageScanResult scanImageLibrary(const std::filesystem::path& folder, int minPix
         result.files.push_back(path.string());
     }
 
+    if (iterateEc) {
+        // 目录中途读不了时不能假装扫描完整：统计只是部分结果。
+        LOG_WARN("壁纸图片扫描中断（" + folder.string() + "）: " + iterateEc.message());
+    }
     std::sort(result.files.begin(), result.files.end());
     result.total = static_cast<int>(result.files.size());
     result.passing = result.total;  // P3 解码尺寸后才会出现 < total 的情况
