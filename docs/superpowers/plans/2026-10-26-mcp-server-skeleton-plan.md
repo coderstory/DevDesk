@@ -1,0 +1,165 @@
+# MCP 服务骨架实施台账（B1-B5 冻结清单）
+
+> 日期：2026-10-26 · 分支 `feat/mcp-server-skeleton` · worktree `D:/wt-mcp`
+> 设计权威：`docs/superpowers/specs/2026-10-26-mcp-server-skeleton-design.md`（HEAD `29e199a8`）
+> 台账定位：可核销冻结清单。只记「做什么、什么算过、只许碰哪些文件」；接口签名、错误码、几何公式、文案一律以 spec 为准，本文件不重复设计。
+
+## 0. 目标、基线与状态机
+
+**目标**：新增默认关闭的 `module_mcp`，本机 `127.0.0.1` 提供 Streamable HTTP MCP 服务，首个工具 `web_fetch_markdown`；设置页有模块开关与门控配置卡；不自动写 Claude Code 配置。
+
+**完成硬门禁（不满足即本轮未完成）**：真实 Claude Code 连接真实 DevDesk 进程，握手 → `tools/list` → **真实调用 `web_fetch_markdown` 抓取真网页**，且 `claude -p` 输出包含目标网页正文标记。mock fetcher、进程内假客户端、只握手不调工具，都不算完成。
+
+**基线**：
+- 分支 base = 本地 dev `5c952d7e`（该提交已把 origin/dev 的 4 个 CI 修复并入本地 dev；本地 dev 领先 origin/dev，**本轮不 push**）。
+- spec HEAD = `29e199a8`；本台账提交在其后，只新增本文件。
+- 构建在 worktree `D:/wt-mcp`；`scripts/build-test-run.sh` 自动从 git 主工作树定位 EUI-NEO，必要时显式 `EUI_NEO_DIR=D:/project/gui/EUI-NEO`。
+
+**状态机**：
+
+| 标记 | 含义 | 勾选条件 |
+|---|---|---|
+| ⬜ 未开始 | 尚未派发或尚未动工 | 默认态 |
+| 🔵 进行中 | 已派发、未交回 | 派单时由主会话改 |
+| ✅ 实测通过 | 判据全部命中且证据已回填 | **必须**附「命令原文 + 关键结果 + 退出码 / commit sha」 |
+
+**证据规则**：
+- 只写「已完成 / 全绿 / 应该没问题」不勾 ✅；无证据视为未完成。
+- 定向测试证据写筛中的用例名与退出码，不拿 Total/Passed 总数当交付证明。
+- 真实 E2E 证据必须有：目标网页正文输出片段、进程清理记录、用户 Claude 配置未变。
+- 主会话按批回单逐行核销：只认证据，不接受口头 DONE。
+
+## 1. 执行规则（全批生效）
+
+1. **每批最多一次构建**（一次 `cmake --build`）。configure / 重配开关不计构建；测试运行不计构建。
+2. **定向测试只跑 `--filter mcp`**；B3 追加 `--filter settings`，复用同一构建产物直接跑 `build/tests/devdesk_tests.exe --filter settings`，**不触发第二次构建**。
+3. 子任务 **≤30 分钟**；到时停手交回「已完成项 + 部分证据 + 剩余项」，不重做已完成，不整段重来。
+4. **主会话只派发 / 对账 / 核销**，不直接写码；实现子任务负责改码、跑本批门禁、勾台账、提交。
+5. **同文件单写者**：同一时刻只有一个子任务改同一文件；跨批追加严格按 §1.1 顺序。
+6. **禁启动 app**；构建脚本一律 `--no-run`。B4/B5 真实 E2E 是唯一例外：必须 `--minimized` + 临时 `DEVDESK_DATA_ROOT`，按 PID 杀进程，结束删临时根。
+7. **不 push 远端、不出安装包、不改 EUI-NEO、不自动写任何 Claude Code 配置**。
+8. 每批收尾 **显式 pathspec commit**，只含本批文件 + 台账；信息格式 `feat(mcp): Bx <主题>`（纯文档批 `docs(mcp): ...`）。
+
+### 1.1 跨批同文件写者顺序（防前批注入被后批覆盖）
+
+| 文件 | 批次顺序与边界 |
+|---|---|
+| `src/module_mcp/mcp_tools_builtin.h/.cpp` | B1 只写 `server_info` 与注册骨架 → B2 追加 `web_fetch_markdown`；B2 不得重构 B1 行为 |
+| `src/module_mcp/CMakeLists.txt` | B1 建库与注入宏 → B2 只追加 `html_to_markdown.cpp` |
+| `CMakeLists.txt`（root） | B1 `add_subdirectory` / 链接 / 覆盖率 / include → B3 只追加 `src/mcp_service_bridge.cpp` 到 DevDesk 源 |
+| `tests/CMakeLists.txt` | B1 登记四文件 + 链接 + include → B2 登记两文件 → B3 桥符号源集 + 两个测试登记 → B4 独立 `mcp_live` 块 |
+| `tests/test_main.cpp` | 仅 B3 追加桥四槽复位 |
+| 本台账 | 每批末由当批实现者只改「本批行 + 证据槽」，主会话逐行核销 |
+
+## 2. B1 core 接缝 + 协议骨架
+
+**批次门禁**：一次构建 + `bash scripts/build-test-run.sh --filter mcp --no-run`；commit。
+**禁止触碰**（本批条目文件之外全部禁改，重点点名）：`src/module_settings/**`、`src/mcp_service_bridge.*`、`src/main.cpp`、`src/app_assembly.cpp`（B3）；`src/module_mcp/html_to_markdown.*` 与 `web_fetch_markdown` 实现（B2，B1 只写 `server_info`）；`tests/live/**`、`scripts/run-mcp-live.sh`、`README.md`（B4）；`tests/test_main.cpp`、`scripts/check-windows-cross-compile.sh`（B3）；`src/app_registry.h`、`src/core/module_interface.h`、`src/platform/**`、其它 `src/module_*`、`../EUI-NEO/**`（全轮不动）。
+
+| ID | 状态 | 条目 | 验收判据（可核销） | 涉及文件 |
+|---|---|---|---|---|
+| B1-01 | ⬜ | 端口常量头 | `kDefaultMcpPort=8931` / `kMinMcpPort=1` / `kMaxMcpPort=65535`；纯常量头无 cpp；命名镜像 `core/proxy_port.h` | `src/core/mcp_port.h` |
+| B1-02 | ⬜ | core 能力接缝 | spec §3 接口逐字落地；空指针 / 非法名 / 重名 → `fail(ValidationError)`；`find` 未找到 → `NotFound`；`list` 按 name 字典序；单锁串行；`globalMcpTools()` 永不析构 | `src/core/mcp_tool.h`、`src/core/mcp_tool.cpp` |
+| B1-03 | ⬜ | core 构建登记 | 只把 `mcp_tool.cpp` 加入 `devdesk_core` 源，不改既有源 | `src/core/CMakeLists.txt` |
+| B1-04 | ⬜ | module_mcp 静态库 | `devdesk_module_mcp` 只链 `devdesk_core` + `devdesk_platform`；不链 `ui_kit` / 兄弟模块；注入 `DEVDESK_VERSION` / `DEVDESK_BUILD_TYPE` / `DEVDESK_PLATFORM`，不设 `DEVDESK_OS_NAME` | `src/module_mcp/CMakeLists.txt` |
+| B1-05 | ⬜ | 会话表 | 32 位十六进制；最多 64 个，超出淘汰最旧；`create/has/remove`；可注入 id 生成器；id 只含可见 ASCII | `src/module_mcp/mcp_session_store.h/.cpp` |
+| B1-06 | ⬜ | 协议分发 | spec §5.4 判序 / §5.5 版本协商与会话 / §5.6 字典序与非法 schema 跳过 / §5.7 `isError` 与 `-32603`；通知 202；数组 400 `-32600`；非法 JSON 400 `-32700`；id 解析后回显；所有字符串经 JSON 工厂转义 | `src/module_mcp/mcp_protocol.h/.cpp` |
+| B1-07 | ⬜ | HTTP 适配器 | `RequestCtx`/`ResponseWriter` 适配；POST/GET/DELETE/OPTIONS `/mcp`；415/403/404/400 传输层判序；GET/OPTIONS 405 且 `Allow: POST, DELETE`；202 无 Content-Type；JSON 响应设 Content-Type；入站头按小写键 | `src/module_mcp/mcp_http_handler.h/.cpp` |
+| B1-08 | ⬜ | 服务生命周期 | spec §4.1：`start(0)` 返回实际端口；运行中幂等；`stop` 幂等并清会话；`restart`；状态加锁快照；每次 start 新建 `Server`；Host 白名单；失败文案 + `lastError`；单例永不析构 | `src/module_mcp/mcp_service.h/.cpp` |
+| B1-09 | ⬜ | 内置工具（仅 server_info） | `registerBuiltinMcpTools(registry, fetcher)` 使用注入注册表，不读全局；`devdesk_server_info` schema `{"type":"object","properties":{}}`；输出固定顺序 5 项（版本/构建类型/平台/两协议版本/工具数与名字典序）；宏缺失回退 `dev`/`unknown`/`unknown` | `src/module_mcp/mcp_tools_builtin.h/.cpp` |
+| B1-10 | ⬜ | root CMake 接线 | `add_subdirectory(src/module_mcp)`；`DevDesk` 链接 `devdesk_module_mcp`；覆盖率清单加入模块；`DevDesk` include 补 `src/module_mcp` | `CMakeLists.txt` |
+| B1-11 | ⬜ | 测试与登记 | 四个用例文件覆盖 spec §10 批次 1 的四组；用例描述含 ASCII `mcp`；`tests/CMakeLists.txt` 登记（漏登记触发 TIN-10 configure FATAL）、`devdesk_tests` 链接 `devdesk_module_mcp`、include `src/module_mcp` | `tests/test_core/test_mcp_tool_registry.cpp`、`tests/test_modules/test_mcp_session_store.cpp`、`test_mcp_protocol.cpp`、`test_mcp_tools_builtin.cpp`、`tests/CMakeLists.txt` |
+| B1-G | ⬜ | 批次门禁 | `bash scripts/build-test-run.sh --filter mcp --no-run` 退出 0；四个新文件用例出现在输出；构建成功行；commit 仅本批 pathspec；台账本批行勾 ✅ | — |
+
+**批次证据（✅ 时回填）**：`<命令原文>` → `<构建结果行 + 筛中用例名 + 退出码 + commit sha>`。
+
+## 3. B2 抓取能力
+
+**批次门禁**：一次构建 + `bash scripts/build-test-run.sh --filter mcp --no-run`；commit。
+**禁止触碰**：`src/core/**`（B1 冻结）；`src/module_mcp/mcp_protocol.*`、`mcp_http_handler.*`、`mcp_service.*`、`mcp_session_store.*`（B1 冻结）；`src/module_settings/**`、`src/mcp_service_bridge.*`、`src/main.cpp`、`src/app_assembly.cpp`、`tests/test_main.cpp`（B3）；`tests/live/**`、`scripts/**`、`README.md`（B4）；`src/platform/**`、其它 `src/module_*`、`../EUI-NEO/**`、`src/app_registry.h`、`src/core/module_interface.h`；禁止新增第三方依赖。
+
+| ID | 状态 | 条目 | 验收判据（可核销） | 涉及文件 |
+|---|---|---|---|---|
+| B2-01 | ⬜ | HTML→Markdown | spec §7 全部规则：剔除 script/style/head（留 title）/注释；标题、段落、br/hr；嵌套 ul/ol 2 空格；blockquote；pre 围栏 / 行内 code；a/img；strong/em；基础表格与 `|` 转义；命名与数字实体；空白折叠；`title` 兜底；未闭合标签不抛异常；输入 2 MiB 截断 | `src/module_mcp/html_to_markdown.h/.cpp` |
+| B2-02 | ⬜ | `web_fetch_markdown` | spec §6.1 逐条：仅 http/https；SSRF 字面量全表**每跳**校验；手动跟随最多 5 跳且总时限 10s；非 2xx 含状态码 + 前 200 字符；响应头大小写不敏感；Content-Type 分类；charset 白名单外报错、白名单内 sanitize；2 MiB 截断附注；`max_chars` 钳制 1000..200000 且 UTF-8 边界截断；空正文非错误；网络失败中文 + 底层信息；所有输出进 JSON 前良构 UTF-8 | `src/module_mcp/mcp_tools_builtin.h/.cpp`（追加）、`src/module_mcp/CMakeLists.txt` |
+| B2-03 | ⬜ | 测试登记 | `tests/CMakeLists.txt` 登记两个新文件；不改 B1 既有登记与链接行 | `tests/CMakeLists.txt` |
+| B2-04 | ⬜ | HTML→MD 用例 | 覆盖 spec §10 批次 2 的 HTML 组，每条注明防的事故；描述含 `mcp` | `tests/test_modules/test_mcp_html_to_markdown.cpp` |
+| B2-05 | ⬜ | fetch 工具用例 | mock fetcher 覆盖 spec §10 批次 2 的 fetch 组（重定向/时限/编码/SSRF/截断/内容类型/二进制/空正文），描述含 `mcp` | `tests/test_modules/test_mcp_fetch_tool.cpp` |
+| B2-G | ⬜ | 批次门禁 | 一次构建 + `--filter mcp` 退出 0；B1 用例同批回归不红；commit 仅本批 pathspec；台账勾 ✅ | — |
+
+**批次证据（✅ 时回填）**：`<命令原文>` → `<构建结果行 + 筛中用例名 + 退出码 + commit sha>`。
+
+## 4. B3 设置与生命周期
+
+**批次门禁**：一次构建 → `bash scripts/build-test-run.sh --filter mcp --no-run` → 直接跑 `build/tests/devdesk_tests.exe --filter settings`（不二次构建）；commit。
+**禁止触碰**：`src/core/**`、`src/module_mcp/**`（B1/B2 冻结；发现阻塞缺陷停手报主会话，不就地改）；`tests/live/**`、`scripts/run-mcp-live.sh`、`README.md`（B4）；`src/platform/**`、其它 `src/module_*`（只动 `module_settings`）、`../EUI-NEO/**`、`src/app_registry.h`、`src/core/module_interface.h`；安装包脚本与 CI。root CMake 只许追加桥源一行，不得改 B1 既有行。
+
+| ID | 状态 | 条目 | 验收判据（可核销） | 涉及文件 |
+|---|---|---|---|---|
+| B3-01 | ⬜ | 配置头 | `kModuleIdMcp = "mcp"`；include `core/mcp_port.h` 并别名三常量；`mcpPort` 默认 8931；`parseMcpPortInput` 声明 | `src/module_settings/settings_config.h` |
+| B3-02 | ⬜ | 配置实现 | `kKnownModuleIds` 加 mcp；`defaultEnabledModules()` **不加** mcp；`sanitized` 越界/0/负回落默认（不钳边界）；save/load 新增顶层 `mcpPort`，行数 17→18 并同步注释；解析只接受范围内纯数字 | `src/module_settings/settings_config.cpp` |
+| B3-03 | ⬜ | 卡几何同源 | `mcpPortRowY()/mcpStatusRowHeight()/mcpCommandRowY()/mcpCommandRowHeight()/mcpCardHeightFor()` 按 spec §8.3 公式；下边距 `std::max(16.0f, roundFs(16.0f))`；**不写死 160** | `src/module_settings/settings_ui_logic.h` |
+| B3-04 | ⬜ | 设置卡 UI | 模块卡标题右侧开关 id `settings.card.modules.mcp`、命中的 `<id>.hit`、盒宽 150、标题盒 `w-56-150`；`drawMcpCard` 根 id `settings.card.mcp`；端口输入 96×28（placeholder `8931`）+ 应用 64×28；反馈四态；状态三态；命令行；`SettingsCardsIn/Actions` 新字段一律追加末尾带默认值 | `src/module_settings/settings_ui_cards.h/.cpp` |
+| B3-05 | ⬜ | 设置页逻辑 | 门控卡 `gate = kModuleIdMcp` 排在代理卡后；开关走既有 `applyModuleEnabled`；`mcpPortDraft_` / 应用 / Esc / Ctrl+S；输入变化清错；桥状态快照；`CardHeightKind::McpCard` + switch；`contentKey` 追加 `(mcpOn ? "M" : "m")` | `src/module_settings/settings_module.cpp` |
+| B3-06 | ⬜ | app 层桥 | spec §8.4 API；默认桩 `start/applyPort` fail「MCP 服务未装配」、`stop` no-op、`status` 全空；`static_assert` 签名哨兵；桥 cpp 只依赖 core + 标准库，不链接 module_mcp | `src/mcp_service_bridge.h`、`src/mcp_service_bridge.cpp` |
+| B3-07 | ⬜ | main 装配 | 一次注册内置工具；`setHandlers` 装四个无捕获转发函数；启动时按 `moduleEnabled(..., kModuleIdMcp)` 启动 `cfg.mcpPort`，失败只 LOG_ERROR；`atexit` stop | `src/main.cpp` |
+| B3-08 | ⬜ | 模块开关分发 | `dispatchModuleToggle` 的 mcp 特例**位于注册表遍历之前**；开 → 读端口并 start，失败 `showAppNotice`；关 → stop；随后 return | `src/app_assembly.cpp` |
+| B3-09 | ⬜ | root CMake 桥源 | `DevDesk` 源追加 `src/mcp_service_bridge.cpp`；不改 B1 行 | `CMakeLists.txt` |
+| B3-10 | ⬜ | 测试构建接线 | 登记两个新测试；`devdesk_tests` 源加桥、链接 module_mcp、include 补 `src/module_mcp`；probe 公共源集与 `github_sync_live` / `agent_live` 源集各补桥 | `tests/CMakeLists.txt` |
+| B3-11 | ⬜ | 跨编译脚本 | `build_incs()` 增加 `-I "${ROOT}/src/module_mcp"` | `scripts/check-windows-cross-compile.sh` |
+| B3-12 | ⬜ | 用例出厂复位 | `resetCaseGlobals` 增加 `app::mcp::setHandlers(nullptr, nullptr, nullptr, nullptr)` | `tests/test_main.cpp` |
+| B3-13 | ⬜ | 设置用例 | 配置（解析边界/符号/空格、默认 8931、默认关闭、sanitized 回落、未知 ID 过滤、save/load 18 键往返）；桥（默认桩/注入路由/复位）；卡片（开关默认关且命中 `.hit`、门控卡开关两态、状态三态、反馈四态、非法端口不落库、命令端口来源、85/100/130% 行盒不重叠且下边距 ≥16）；描述含 `mcp` | `tests/test_modules/test_mcp_settings.cpp` |
+| B3-14 | ⬜ | 服务用例 | port 0 实际端口；isRunning/port/status；stop 幂等；restart 换端口；端口占用 fail + lastError；Host/Origin 拒绝；在途工具 300ms 时 stop 不崩且收敛；GET 405 + Allow、OPTIONS 405、通知 202；重启后旧 session 404 | `tests/test_modules/test_mcp_service.cpp` |
+| B3-G | ⬜ | 批次门禁 | 一次构建 + `--filter mcp` 退出 0 + 直接跑 `--filter settings` 退出 0；commit 仅本批 pathspec；台账勾 ✅ | — |
+
+**批次证据（✅ 时回填）**：`<构建命令 + 结果行>` / `<--filter mcp 筛中用例与退出码>` / `<--filter settings 结果与退出码 + commit sha>`。
+
+## 5. B4 集成与真实链路
+
+**批次门禁**：一次构建（含 live 开关）→ `mcp_live --check` → **真实 Claude Code E2E 硬门禁**；commit。
+**禁止触碰**：`src/**` 全部源码（发现缺陷停手报主会话，回对应批次修）；既有 `tests/live/github_sync_live.cpp`、`tests/live/agent_live.cpp`、`scripts/run-ghsync-live.sh`、`scripts/run-agent-live.sh`；`src/platform/**`、`../EUI-NEO/**`、安装包脚本、CI；用户 `~/.claude.json` 与 `~/.claude/**`；除 `README.md` 与本 spec 外的文档。本批只许改 `tests/live/mcp_live.cpp`、`tests/CMakeLists.txt`（仅新增独立块）、`scripts/run-mcp-live.sh`、`README.md`、本 spec 的口径段、台账。
+
+| ID | 状态 | 条目 | 验收判据（可核销） | 涉及文件 |
+|---|---|---|---|---|
+| B4-01 | ⬜ | live 驱动 | `--check`：进程内真 HTTP initialize（取 session）→ tools/list → tools/call `devdesk_server_info` → DELETE；未知 session 404；Content-Type 415；GET 405 且 `Allow: POST, DELETE`；OPTIONS 405；通知 202；重启后旧 session 404；真网页抓取不可用时 skip 并记录；`--serve` 打印 `PORT=<n>` 后 `fflush(stdout)` 再阻塞；Windows/macOS 均可编译 | `tests/live/mcp_live.cpp` |
+| B4-02 | ⬜ | live 目标登记 | **独立** `if(DEVDESK_BUILD_LIVE_TOOLS)` 块（无 `AND UNIX`）；源含 `live/mcp_live.cpp` + `src/mcp_service_bridge.cpp`；链接 `devdesk_module_mcp`；LABELS `live`；默认 OFF | `tests/CMakeLists.txt` |
+| B4-03 | ⬜ | 实连脚本 | `mktemp -d` 空 cwd；解析 `--serve` 的 `PORT=`；临时 mcp json 的 server key 固定 `devdesk`；`claude -p --strict-mcp-config --mcp-config <临时> --allowedTools mcp__devdesk__web_fetch_markdown --output-format text`；不设 `CLAUDE_CONFIG_DIR`；不碰用户配置；trap 清理临时文件 | `scripts/run-mcp-live.sh` |
+| B4-04 | ⬜ | 文档口径 | `README.md` 能力清单 / 模块开关 / 接入命令同步；spec 仅在实现与已拍板口径有偏差时同步该段，不改设计 | `README.md`、spec |
+| B4-G1 | ⬜ | 构建 + `--check` | 配置 `-DDEVDESK_BUILD_LIVE_TOOLS=ON`（worktree 无同级 EUI-NEO，显式 `-DEUI_NEO_DIR=D:/project/gui/EUI-NEO`）后**一次构建**；`build/tests/mcp_live.exe --check` 退出 0；不启动 DevDesk | — |
+| B4-05 | ⬜ | E2E 准备 | `export DEVDESK_DATA_ROOT=$(mktemp -d)`；首次启动 `build/DevDesk.exe --minimized` 至 `devdesk.db` 生成，按 PID 杀；不得触碰用户真实数据根 | — |
+| B4-06 | ⬜ | E2E 播种 | `sqlite3` 写 `app_config` 两键：`config.json:enabledModules` = 含 `mcp` 的 JSON 数组（含 home/settings）、`config.json:mcpPort` = 本机空闲端口；回读校验值 | — |
+| B4-07 | ⬜ | E2E 启动与探活 | `--minimized` 启动 DevDesk，记录 PID；轮询 `/mcp` 至 GET 返回 405（服务已监听）；失败则保留日志并判本批红 | — |
+| B4-08 | ⬜ | E2E 连接 | 临时 json：`{"mcpServers":{"devdesk":{"type":"http","url":"http://127.0.0.1:<port>/mcp"}}}`；URL 与播种端口一致 | — |
+| B4-09 | ⬜ | E2E 调用断言 | 临时空 cwd 运行 `claude -p --strict-mcp-config --mcp-config <临时> --allowedTools mcp__devdesk__web_fetch_markdown --output-format text`；提示明确要求抓取目标真网页；stdout 含目标网页正文标记；记录 claude 版本（须支持 `--strict-mcp-config`） | — |
+| B4-10 | ⬜ | E2E 清理 | 按 PID 杀 DevDesk 并确认进程消失；删临时数据根 / json；用户 `~/.claude.json` 前后校验和不变 | — |
+| B4-G2 | ⬜ | E2E 硬门禁汇总 | B4-05..10 全 ✅ + 输出片段 + 清理记录；任一环失败本批红，本轮不得宣称完成 | — |
+| B4-G3 | ⬜ | 批次 commit | 仅本批 pathspec；台账勾 ✅ | — |
+
+**批次证据（✅ 时回填）**：`<构建/--check 命令与退出码>` / `<claude 版本 + PORT + 目标 URL>` / `<stdout 正文片段>` / `<杀进程与清理记录>` / `<commit sha>`。
+
+## 6. B5 审计与合并
+
+**禁止触碰**：审计未确认的改动、需求外重构与顺手清理；`uat` 分支与任何远端 push；安装包；`../EUI-NEO/**`；macOS 真机；用户 Claude 配置；非本任务 worktree（只删 `D:/wt-mcp`）。
+
+| ID | 状态 | 条目 | 验收判据（可核销） | 涉及文件 |
+|---|---|---|---|---|
+| B5-01 | ⬜ | 独立实现审计 | 六维逐条：①spec 一致性（接口/错误码/几何/文案）②依赖分层与模块隔离（module_mcp 只链 core/platform；settings 不 include module_mcp；core 不依赖 platform）③协议与传输（JSON-RPC 映射/session/头/状态码/转义）④安全（SSRF 每跳/Host/Origin/charset/UTF-8）⑤生命周期与线程（port 0/stop 在途/atexit/单例）⑥测试与文档口径；每条 CONFIRMED/REFUTED 带 file:line | 全仓只读 |
+| B5-02 | ⬜ | 修复 + 复审 | 只修 CONFIRMED 且属需求交付物的缺陷；非需求/历史遗留只记录；复审逐条闭合 | 按审计清单 |
+| B5-03 | ⬜ | 合入本地 dev | 从 `D:/project/gui/DevDesk` 串行 merge `feat/mcp-server-skeleton` 到本地 dev；无冲突残留；不 push；不碰 uat | — |
+| B5-04 | ⬜ | dev 全量门禁 | dev 上 `bash scripts/build-test-run.sh --no-run` **一次**（全量套件 + probe，不启动 app）；构建成功且门禁退出 0 | — |
+| B5-05 | ⬜ | dev 复跑 E2E | 用 dev 构建产物复跑 B4-05..10；输出仍含目标正文；清理完成 | — |
+| B5-06 | ⬜ | 删除 worktree | 从主工作树 `git worktree remove D:/wt-mcp`；`git worktree list` 不再含该目录；分支保留 | — |
+| B5-07 | ⬜ | 按场景汇报 | 报「哪些业务场景真跑起来了（真窗口/真网/真机）、结果、哪些没跑到」；不报 Total/Passed 数字；明写 macOS 仅 CI、未出安装包、未 push | — |
+| B5-08 | ⬜ | 台账收口 | 全部条目 ✅ 且有证据；merge/commit sha 回填 | 本台账 |
+
+**批次证据（✅ 时回填）**：`<审计结论计数与清单路径>` / `<merge sha + 全量门禁退出码 + 构建结果>` / `<dev E2E 片段>` / `<worktree list 结果>`。
+
+## 7. 已知假设
+
+1. 本地 dev 已并入 origin/dev 的 4 个 CI 修复（merge `5c952d7e`）；本轮**不 push 远端、不出安装包**。
+2. macOS 仅 CI 编译 + 单测；真实 Claude Code 实连在 Windows 开发机完成，macOS 无真机验证。
+3. **不自动修改 Claude Code 配置**；设置卡只展示接入命令；E2E 只用临时配置且 `--strict-mcp-config`。
+4. 端口默认 **8931**；E2E 若默认端口被占用，播种其他空闲端口并让临时 json 同步。
+5. worktree 无同级 `../EUI-NEO`：构建脚本自动从 git 主工作树定位，必要时显式 `EUI_NEO_DIR=D:/project/gui/EUI-NEO`。
+6. 真实 E2E 的目标网页须本机网络可达；若公司网络不可达，由主会话先选定可达真网页并把 URL 与断言串写入证据，**硬门禁不降级为 mock**。
+7. `claude --version` 须支持 `--strict-mcp-config`（spec 要求 2.1.307+）；不满足则视为环境阻塞，如实上报，不绕过。
