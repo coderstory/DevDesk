@@ -172,8 +172,8 @@ REGISTER_TEST(mcp_protocol_initialize_notification_no_session,
     return true;
 })
 
-REGISTER_TEST(mcp_protocol_session_unknown_404_and_missing_allowed,
-              "mcp protocol: 未知 session 404；不带 session 放行；已知 session 放行", {
+REGISTER_TEST(mcp_protocol_session_unknown_404_and_missing_session_400,
+              "mcp protocol: 未知 session 404；缺 session 头 400（收口批）；已知 session 放行", {
     Fixture fixture;
     std::string newId;
 
@@ -186,10 +186,11 @@ REGISTER_TEST(mcp_protocol_session_unknown_404_and_missing_allowed,
     DOCTEST_CHECK_FALSE(unknown.notificationOnly);
     DOCTEST_CHECK_EQ(newId, std::string());
 
-    // 不带 session：无状态放行
+    // 不带 session 的非 initialize：400（收口批,原「无状态放行」口径废止）
     auto anonymous = fixture.protocol.handlePost(
         R"({"jsonrpc":"2.0","id":2,"method":"ping"})", "", "", newId);
-    DOCTEST_CHECK_EQ(anonymous.status, 200);
+    DOCTEST_CHECK_EQ(anonymous.status, 400);
+    DOCTEST_CHECK_EQ(anonymous.body, std::string());
     DOCTEST_CHECK_EQ(newId, std::string());
 
     // 已知 session 放行
@@ -202,13 +203,44 @@ REGISTER_TEST(mcp_protocol_session_unknown_404_and_missing_allowed,
     return true;
 })
 
+REGISTER_TEST(mcp_protocol_missing_session_400,
+              "mcp protocol: 无 Mcp-Session-Id 的非 initialize 请求 → 400 空 body（通知同）；initialize 豁免", {
+    // 收口批(spec SHOULD + 官方 SDK 400 "Missing session ID")：发了会话的服务,
+    // 不带会话头的非 initialize 请求一律 400,防会话记账被绕过。
+    Fixture fixture;
+    std::string newId = "stale";
+    auto ping = fixture.protocol.handlePost(
+        R"({"jsonrpc":"2.0","id":1,"method":"ping"})", "", "", newId);
+    DOCTEST_CHECK_EQ(ping.status, 400);
+    DOCTEST_CHECK_EQ(ping.body, std::string());
+    DOCTEST_CHECK_FALSE(ping.notificationOnly);
+    DOCTEST_CHECK_EQ(newId, std::string());
+
+    // 通知（无 id）同样须带会话：门禁不因无 id 放行
+    auto note = fixture.protocol.handlePost(
+        R"({"jsonrpc":"2.0","method":"notifications/initialized"})", "", "",
+        newId);
+    DOCTEST_CHECK_EQ(note.status, 400);
+    DOCTEST_CHECK_EQ(fixture.sessions.size(), std::size_t{0});
+
+    // initialize 豁免：无头照常协商并建会话
+    auto init = fixture.protocol.handlePost(
+        R"({"jsonrpc":"2.0","id":2,"method":"initialize","params":{}})", "",
+        "", newId);
+    DOCTEST_CHECK_EQ(init.status, 200);
+    DOCTEST_CHECK_FALSE(newId.empty());
+    DOCTEST_CHECK(fixture.sessions.has(newId));
+    return true;
+})
+
 REGISTER_TEST(mcp_protocol_new_session_only_on_initialize,
               "mcp protocol: 只有 initialize 成功才产出新 session id（其它方法保持空）", {
     Fixture fixture;
-    std::string newId = "prefilled";
-    auto ping = fixture.protocol.handlePost(
+    std::string newId;
+    // 缺会话头的 ping 在会话门禁 400（收口批）,同样不产出新会话
+    auto anonymous = fixture.protocol.handlePost(
         R"({"jsonrpc":"2.0","id":1,"method":"ping"})", "", "", newId);
-    DOCTEST_CHECK_EQ(ping.status, 200);
+    DOCTEST_CHECK_EQ(anonymous.status, 400);
     DOCTEST_CHECK_EQ(newId, std::string());
     DOCTEST_CHECK_EQ(fixture.sessions.size(), std::size_t{0});
 
@@ -217,6 +249,15 @@ REGISTER_TEST(mcp_protocol_new_session_only_on_initialize,
         "", newId);
     DOCTEST_CHECK_EQ(init.status, 200);
     DOCTEST_CHECK_FALSE(newId.empty());
+    DOCTEST_CHECK(fixture.sessions.has(newId));
+
+    // 带会话的非 initialize：200 且不另产新 session id（out 是草稿槽,入口即清,
+    // 用独立 scratch 接,别吃掉待查的 newId）
+    std::string scratch = "scratch";
+    auto ping = fixture.protocol.handlePost(
+        R"({"jsonrpc":"2.0","id":3,"method":"ping"})", newId, "", scratch);
+    DOCTEST_CHECK_EQ(ping.status, 200);
+    DOCTEST_CHECK_EQ(scratch, std::string());
     DOCTEST_CHECK(fixture.sessions.has(newId));
     return true;
 })
@@ -227,21 +268,24 @@ REGISTER_TEST(mcp_protocol_version_header_gate,
     std::string newId;
     const std::string pingBody =
         R"({"jsonrpc":"2.0","id":1,"method":"ping"})";
+    // 收口批起非 initialize 须带会话头（本用例测版本门禁,统一带合法会话）
+    const std::string session = fixture.openSession();
+    DOCTEST_REQUIRE(!session.empty());
 
     auto rejected =
-        fixture.protocol.handlePost(pingBody, "", "2024-11-05", newId);
+        fixture.protocol.handlePost(pingBody, session, "2024-11-05", newId);
     DOCTEST_CHECK_EQ(rejected.status, 400);
     DOCTEST_CHECK_EQ(rejected.body, std::string());
 
     auto legacy =
-        fixture.protocol.handlePost(pingBody, "", "2025-03-26", newId);
+        fixture.protocol.handlePost(pingBody, session, "2025-03-26", newId);
     DOCTEST_CHECK_EQ(legacy.status, 200);
 
     auto primary =
-        fixture.protocol.handlePost(pingBody, "", "2025-06-18", newId);
+        fixture.protocol.handlePost(pingBody, session, "2025-06-18", newId);
     DOCTEST_CHECK_EQ(primary.status, 200);
 
-    auto missing = fixture.protocol.handlePost(pingBody, "", "", newId);
+    auto missing = fixture.protocol.handlePost(pingBody, session, "", newId);
     DOCTEST_CHECK_EQ(missing.status, 200);
 
     // initialize 的版本由 params.protocolVersion 协商，不受请求头限制
@@ -254,21 +298,23 @@ REGISTER_TEST(mcp_protocol_version_header_gate,
 })
 
 REGISTER_TEST(mcp_protocol_notifications_are_202,
-              "mcp protocol: 通知与未知通知一律 202、空 body、无会话副作用", {
+              "mcp protocol: 通知与未知通知（带合法会话）一律 202、空 body、无会话副作用", {
     Fixture fixture;
     std::string newId = "stale";
+    const std::string session = fixture.openSession();
+    DOCTEST_REQUIRE(!session.empty());
     const char* notifications[] = {
         R"({"jsonrpc":"2.0","method":"notifications/initialized"})",
         R"({"jsonrpc":"2.0","method":"notifications/unknown"})",
     };
     for (const char* body : notifications) {
-        auto outcome = fixture.protocol.handlePost(body, "", "", newId);
+        auto outcome = fixture.protocol.handlePost(body, session, "", newId);
         DOCTEST_CHECK_EQ(outcome.status, 202);
         DOCTEST_CHECK(outcome.notificationOnly);
         DOCTEST_CHECK_EQ(outcome.body, std::string());
         DOCTEST_CHECK_EQ(newId, std::string());
     }
-    DOCTEST_CHECK_EQ(fixture.sessions.size(), std::size_t{0});
+    DOCTEST_CHECK_EQ(fixture.sessions.size(), std::size_t{1});
     return true;
 })
 
@@ -326,7 +372,7 @@ REGISTER_TEST(mcp_protocol_unknown_method_32601_id_echo,
     Fixture fixture;
     std::string newId;
     auto outcome = fixture.protocol.handlePost(
-        R"({"jsonrpc":"2.0","id":7,"method":"tools/unknown"})", "", "",
+        R"({"jsonrpc":"2.0","id":7,"method":"tools/unknown"})", fixture.openSession(), "",
         newId);
     DOCTEST_CHECK_EQ(outcome.status, 200);
     DOCTEST_CHECK_EQ(errorCodeOf(outcome.body), std::int64_t{-32601});
@@ -343,7 +389,7 @@ REGISTER_TEST(mcp_protocol_ping_result_empty_object,
     Fixture fixture;
     std::string newId;
     auto outcome = fixture.protocol.handlePost(
-        R"({"jsonrpc":"2.0","id":"ping-1","method":"ping"})", "", "", newId);
+        R"({"jsonrpc":"2.0","id":"ping-1","method":"ping"})", fixture.openSession(), "", newId);
     DOCTEST_CHECK_EQ(outcome.status, 200);
     const auto root = parseBody(outcome.body);
     DOCTEST_REQUIRE(root.isObject());
@@ -367,7 +413,7 @@ REGISTER_TEST(mcp_protocol_tools_list_sorted,
 
     std::string newId;
     auto outcome = fixture.protocol.handlePost(
-        R"({"jsonrpc":"2.0","id":1,"method":"tools/list"})", "", "", newId);
+        R"({"jsonrpc":"2.0","id":1,"method":"tools/list"})", fixture.openSession(), "", newId);
     DOCTEST_CHECK_EQ(outcome.status, 200);
     const auto root = parseBody(outcome.body);
     DOCTEST_REQUIRE(root.isObject());
@@ -402,7 +448,7 @@ REGISTER_TEST(mcp_protocol_tools_list_skips_invalid_schema,
 
     std::string newId;
     auto outcome = fixture.protocol.handlePost(
-        R"({"jsonrpc":"2.0","id":1,"method":"tools/list"})", "", "", newId);
+        R"({"jsonrpc":"2.0","id":1,"method":"tools/list"})", fixture.openSession(), "", newId);
     DOCTEST_CHECK_EQ(outcome.status, 200);
     const auto root = parseBody(outcome.body);
     DOCTEST_REQUIRE(root.isObject());
@@ -421,7 +467,7 @@ REGISTER_TEST(mcp_protocol_tools_list_empty,
     Fixture fixture;
     std::string newId;
     auto outcome = fixture.protocol.handlePost(
-        R"({"jsonrpc":"2.0","id":1,"method":"tools/list"})", "", "", newId);
+        R"({"jsonrpc":"2.0","id":1,"method":"tools/list"})", fixture.openSession(), "", newId);
     DOCTEST_CHECK_EQ(outcome.status, 200);
     const auto root = parseBody(outcome.body);
     DOCTEST_REQUIRE(root.isObject());
@@ -443,7 +489,7 @@ REGISTER_TEST(mcp_protocol_tools_list_escapes_strings,
 
     std::string newId;
     auto outcome = fixture.protocol.handlePost(
-        R"({"jsonrpc":"2.0","id":1,"method":"tools/list"})", "", "", newId);
+        R"({"jsonrpc":"2.0","id":1,"method":"tools/list"})", fixture.openSession(), "", newId);
     DOCTEST_CHECK_EQ(outcome.status, 200);
     const auto root = parseBody(outcome.body);
     DOCTEST_REQUIRE(root.isObject());
@@ -466,7 +512,7 @@ REGISTER_TEST(mcp_protocol_tools_call_success_and_escaping,
     std::string newId;
     auto outcome = fixture.protocol.handlePost(
         R"({"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"echo_tool","arguments":{"a":1}}})",
-        "", "", newId);
+        fixture.openSession(), "", newId);
     DOCTEST_CHECK_EQ(outcome.status, 200);
     const auto root = parseBody(outcome.body);
     DOCTEST_REQUIRE(root.isObject());
@@ -495,7 +541,7 @@ REGISTER_TEST(mcp_protocol_tools_call_is_error,
     std::string newId;
     auto outcome = fixture.protocol.handlePost(
         R"({"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"failing_business_tool"}})",
-        "", "", newId);
+        fixture.openSession(), "", newId);
     DOCTEST_CHECK_EQ(outcome.status, 200);
     const auto root = parseBody(outcome.body);
     DOCTEST_REQUIRE(root.isObject());
@@ -519,13 +565,13 @@ REGISTER_TEST(mcp_protocol_tools_call_arguments_default_empty_object,
     std::string newId;
     auto missing = fixture.protocol.handlePost(
         R"({"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"args_tool"}})",
-        "", "", newId);
+        fixture.openSession(), "", newId);
     DOCTEST_CHECK_EQ(missing.status, 200);
     DOCTEST_CHECK_EQ(tool->lastArgs, std::string("{}"));
 
     auto nullArgs = fixture.protocol.handlePost(
         R"({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"args_tool","arguments":null}})",
-        "", "", newId);
+        fixture.openSession(), "", newId);
     DOCTEST_CHECK_EQ(nullArgs.status, 200);
     DOCTEST_CHECK_EQ(tool->lastArgs, std::string("{}"));
     return true;
@@ -546,7 +592,7 @@ REGISTER_TEST(mcp_protocol_tools_call_param_errors_32602,
         R"({"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"args_tool","arguments":"x"}})",  // arguments 非对象
     };
     for (const char* body : badBodies) {
-        auto outcome = fixture.protocol.handlePost(body, "", "", newId);
+        auto outcome = fixture.protocol.handlePost(body, fixture.openSession(), "", newId);
         DOCTEST_CHECK_EQ(outcome.status, 200);
         DOCTEST_CHECK_EQ(errorCodeOf(outcome.body), std::int64_t{-32602});
     }
@@ -554,7 +600,7 @@ REGISTER_TEST(mcp_protocol_tools_call_param_errors_32602,
 
     auto unknown = fixture.protocol.handlePost(
         R"({"jsonrpc":"2.0","id":6,"method":"tools/call","params":{"name":"ghost_tool"}})",
-        "", "", newId);
+        fixture.openSession(), "", newId);
     DOCTEST_CHECK_EQ(unknown.status, 200);
     DOCTEST_CHECK_EQ(errorCodeOf(unknown.body), std::int64_t{-32602});
     const auto root = parseBody(unknown.body);
@@ -574,7 +620,7 @@ REGISTER_TEST(mcp_protocol_tools_call_internal_error_32603,
     std::string newId;
     auto outcome = fixture.protocol.handlePost(
         R"({"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"fail_tool"}})",
-        "", "", newId);
+        fixture.openSession(), "", newId);
     DOCTEST_CHECK_EQ(outcome.status, 200);
     DOCTEST_CHECK_EQ(errorCodeOf(outcome.body), std::int64_t{-32603});
     const auto root = parseBody(outcome.body);
@@ -593,7 +639,7 @@ REGISTER_TEST(mcp_protocol_id_echo_raw,
     // 大整数 id（超出 32 位范围）逐位回显
     std::string newId;
     auto numeric = fixture.protocol.handlePost(
-        R"({"jsonrpc":"2.0","id":9007199254740993,"method":"ping"})", "", "",
+        R"({"jsonrpc":"2.0","id":9007199254740993,"method":"ping"})", fixture.openSession(), "",
         newId);
     DOCTEST_CHECK_EQ(numeric.status, 200);
     {
@@ -613,7 +659,7 @@ REGISTER_TEST(mcp_protocol_id_echo_raw,
     auto body = platform::json::stringify(request);
     DOCTEST_REQUIRE(body.isOk());
     auto stringIdOutcome =
-        fixture.protocol.handlePost(body.value(), "", "", newId);
+        fixture.protocol.handlePost(body.value(), fixture.openSession(), "", newId);
     DOCTEST_CHECK_EQ(stringIdOutcome.status, 200);
     const auto root = parseBody(stringIdOutcome.body);
     DOCTEST_REQUIRE(root.isObject());

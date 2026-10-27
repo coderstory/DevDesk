@@ -219,10 +219,14 @@ REGISTER_TEST(mcp_service_restart_rebinds_new_port,
     DOCTEST_REQUIRE(second.isOk());
     DOCTEST_CHECK(svc.isRunning());
     DOCTEST_CHECK(second.value() > 0);
-    // 新监听必须真能应答（防「状态说 Running 但旧 Server 已死」）
+    // 新监听必须真能应答（防「状态说 Running 但旧 Server 已死」）；restart 清空
+    // 会话表,先在新端口 initialize 再发请求
+    const std::string session = initializeSession(second.value());
+    DOCTEST_REQUIRE(!session.empty());
     const Response resp = postJson(
         second.value(),
-        R"({"jsonrpc":"2.0","id":1,"method":"ping"})");
+        R"({"jsonrpc":"2.0","id":1,"method":"ping"})",
+        {{"Mcp-Session-Id", session}});
     DOCTEST_CHECK(resp.statusCode == 200);
     svc.stop();
     return true;
@@ -271,15 +275,19 @@ REGISTER_TEST(mcp_service_host_whitelist_rejects_foreign_host,
     auto started = svc.start(0);
     DOCTEST_REQUIRE(started.isOk());
     const int port = started.value();
+    const std::string session = initializeSession(port);
+    DOCTEST_REQUIRE(!session.empty());
     Response resp = httpCall("POST", port,
                              {{"Host", "evil.example.com"},
-                              {"Content-Type", "application/json"}},
+                              {"Content-Type", "application/json"},
+                              {"Mcp-Session-Id", session}},
                              R"({"jsonrpc":"2.0","id":1,"method":"ping"})");
     DOCTEST_CHECK(resp.statusCode == 403);
     // 回环拼写放行（同值请求换白名单内 Host → 进协议层）
     Response ok = httpCall("POST", port,
                            {{"Host", "localhost"},
-                            {"Content-Type", "application/json"}},
+                            {"Content-Type", "application/json"},
+                            {"Mcp-Session-Id", session}},
                            R"({"jsonrpc":"2.0","id":1,"method":"ping"})");
     DOCTEST_CHECK(ok.statusCode == 200);
     svc.stop();
@@ -292,12 +300,15 @@ REGISTER_TEST(mcp_service_foreign_origin_rejected,
     auto started = svc.start(0);
     DOCTEST_REQUIRE(started.isOk());
     const int port = started.value();
+    const std::string session = initializeSession(port);
+    DOCTEST_REQUIRE(!session.empty());
     Response evil = postJson(
         port, R"({"jsonrpc":"2.0","id":1,"method":"ping"})",
-        {{"Origin", "http://evil.example.com"}});
+        {{"Origin", "http://evil.example.com"}, {"Mcp-Session-Id", session}});
     DOCTEST_CHECK(evil.statusCode == 403);
     Response clean = postJson(
-        port, R"({"jsonrpc":"2.0","id":1,"method":"ping"})");
+        port, R"({"jsonrpc":"2.0","id":1,"method":"ping"})",
+        {{"Mcp-Session-Id", session}});
     DOCTEST_CHECK(clean.statusCode == 200);
     svc.stop();
     return true;
@@ -322,13 +333,17 @@ REGISTER_TEST(mcp_service_get_and_options_rejected_405,
 })
 
 REGISTER_TEST(mcp_service_notification_202_no_body,
-              "mcp: 通知（无 id）→ 202 空 body（不应答、不建会话）", {
+              "mcp: 通知（无 id,带合法会话）→ 202 空 body（不应答）", {
     McpService svc;
     auto started = svc.start(0);
     DOCTEST_REQUIRE(started.isOk());
+    const int port = started.value();
+    const std::string session = initializeSession(port);
+    DOCTEST_REQUIRE(!session.empty());
     const Response resp = postJson(
         started.value(),
-        R"({"jsonrpc":"2.0","method":"notifications/initialized"})");
+        R"({"jsonrpc":"2.0","method":"notifications/initialized"})",
+        {{"Mcp-Session-Id", session}});
     DOCTEST_CHECK_EQ(resp.statusCode, 202);
     DOCTEST_CHECK(resp.body.empty());
     svc.stop();
@@ -376,11 +391,14 @@ REGISTER_TEST(mcp_service_stop_waits_inflight_tool_then_converges,
     const int port = started.value();
     const std::string callBody = R"({"jsonrpc":"2.0","id":9,"method":"tools/call",)"
                                  R"("params":{"name":"devdesk_slow_probe","arguments":{}}})";
+    // 收口批起非 initialize 须带会话头：先握手再发起在途调用
+    const std::string session = initializeSession(port);
+    DOCTEST_REQUIRE(!session.empty());
 
     // 在途调用与 stop 并发：stop 必须等工具跑完（≈300ms）再返回，而非中断它
     bool callOk = false;
     std::thread caller([&] {
-        Response resp = postJson(port, callBody);
+        Response resp = postJson(port, callBody, {{"Mcp-Session-Id", session}});
         callOk = resp.statusCode == 200 &&
                  resp.body.find("slow-done") != std::string::npos;
     });

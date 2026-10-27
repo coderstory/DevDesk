@@ -136,6 +136,14 @@ HttpOutcome McpProtocol::handlePost(const std::string& body,
                            false};
     }
 
+    // 会话门禁（收口批；规范 SHOULD + 官方 SDK 400 "Missing session ID"）：发了
+    // 会话的服务,无 Mcp-Session-Id 的非 initialize 请求一律 400 空 body,通知
+    // 不豁免——防会话记账被绕过。判序在结构校验（-32700/-32600/批处理）之后、
+    // 通知 202 之前;initialize 豁免——会话由它创建。
+    if (sessionId.empty() && methodValue.asString() != "initialize") {
+        return HttpOutcome{400, "", false};
+    }
+
     // 无 id 成员 = 通知：一律 202 无 body；initialize 通知不建会话
     if (!request.has("id")) {
         return HttpOutcome{202, "", true};
