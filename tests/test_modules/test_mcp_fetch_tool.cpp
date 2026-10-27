@@ -310,6 +310,42 @@ REGISTER_TEST(mcp_fetch_ssrf_userinfo_rejected,
     return true;
 })
 
+REGISTER_TEST(mcp_fetch_ssrf_trailing_dot_host_rejected,
+              "mcp fetch: host 尾点(127.0.0.1./10.0.0.1./example.com.)一律 fail-closed 拒绝", {
+    // 防的事故：WHATWG/curl 剥尾点后按 IPv4 实连,三道字面解析却都判
+    // 「非字面 IP」落域名放行;公网域名尾点同拒(保守口径,不给绕过留口)
+    const char* blocked[] = {"127.0.0.1.", "10.0.0.1.", "example.com."};
+    for (const char* host : blocked) {
+        ScriptedFetcher script({});
+        core::mcp::McpToolRegistry registry;
+        module::mcp::registerBuiltinMcpTools(registry, std::ref(script));
+        const auto result =
+            runFetch(registry, "{\"url\":\"http://" + std::string(host) + "/x\"}");
+        DOCTEST_REQUIRE(result.isOk());
+        DOCTEST_CHECK(result.value().isError);
+        DOCTEST_CHECK(result.value().text.find("SSRF") != std::string::npos);
+        DOCTEST_CHECK_EQ(script.requestCount(), std::size_t{0});
+    }
+    return true;
+})
+
+REGISTER_TEST(mcp_fetch_ssrf_multicast_denied,
+              "mcp fetch: 组播段 224.0.0.0/4 与 ff00::/8 入 deny 表(OWASP 点名段补齐)", {
+    const char* blocked[] = {"224.0.0.1", "[ff02::1]"};
+    for (const char* host : blocked) {
+        ScriptedFetcher script({});
+        core::mcp::McpToolRegistry registry;
+        module::mcp::registerBuiltinMcpTools(registry, std::ref(script));
+        const auto result =
+            runFetch(registry, "{\"url\":\"http://" + std::string(host) + "/x\"}");
+        DOCTEST_REQUIRE(result.isOk());
+        DOCTEST_CHECK(result.value().isError);
+        DOCTEST_CHECK(result.value().text.find("SSRF") != std::string::npos);
+        DOCTEST_CHECK_EQ(script.requestCount(), std::size_t{0});
+    }
+    return true;
+})
+
 REGISTER_TEST(mcp_fetch_ssrf_unparseable_host_fail_closed,
               "mcp fetch: v6 解析失败(zone-id/畸形)/数字形态解析失败(越界/超段)一律 fail-closed，合法公网 v6 放行", {
     // 防的事故：解析失败走「放行当域名」分支（fe80::1%25eth0 等 zone-id 形态

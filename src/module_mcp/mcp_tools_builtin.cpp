@@ -314,6 +314,7 @@ bool isBlockedIpv4(const unsigned char b[4]) {
     if (b[0] == 172 && b[1] >= 16 && b[1] <= 31) return true;  // 172.16/12
     if (b[0] == 192 && b[1] == 168) return true;               // 192.168/16
     if (b[0] == 169 && b[1] == 254) return true;               // 169.254/16 链路本地
+    if (b[0] >= 224 && b[0] <= 239) return true;               // 224.0.0.0/4 组播(OWASP 点名)
     return false;
 }
 
@@ -440,6 +441,11 @@ bool parseIpv4NumericForms(const std::string& host, unsigned char out[4]) {
 
 std::string ssrfRejectReason(const std::string& host) {
     if (host == "localhost") return "拒绝访问本机地址（SSRF 防护）: " + host;
+    // 尾点 host fail-closed：WHATWG/curl 剥尾点后按字面 IP 实连,而字面解析判
+    // 「非字面」落域名放行；公网域名尾点同拒（保守口径,不给绕过留口）
+    if (!host.empty() && host.back() == '.') {
+        return "非法目标地址（SSRF 防护）: " + host;
+    }
     if (host.find(':') != std::string::npos) {
         unsigned short g[8];
         // 解析失败一律 fail-closed：zone-id（[fe80::1%25eth0]）、畸形 v6 等
@@ -470,6 +476,7 @@ std::string ssrfRejectReason(const std::string& host) {
         }
         if ((g[0] & 0xFFC0) == 0xFE80) return "拒绝访问链路本地地址（SSRF 防护）: " + host;
         if ((g[0] & 0xFE00) == 0xFC00) return "拒绝访问私有地址（SSRF 防护）: " + host;
+        if ((g[0] & 0xFF00) == 0xFF00) return "拒绝访问组播地址（SSRF 防护）: " + host;  // ff00::/8
         return "";
     }
     unsigned char b[4];
