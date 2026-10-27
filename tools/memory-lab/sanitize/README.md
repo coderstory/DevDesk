@@ -10,7 +10,7 @@ from sanitize import sanitize
 
 result = sanitize("任意待外发文本")
 result.text    # 脱敏后文本，敏感区间替换为 [REDACTED:<category>]
-result.hits    # 命中清单：category / start / end / detail / preview（掩码，不含原文）
+result.hits    # 命中清单：category / start / end / detail / preview（全遮蔽，绝不含原文）
 ```
 
 一个函数跑通。`scan(text)` 只返回命中清单不改文本。幂等：对输出再跑一遍不变。

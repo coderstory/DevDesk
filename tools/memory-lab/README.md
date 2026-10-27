@@ -69,6 +69,7 @@ python -m unittest discover -s tests -v
 
 ## 已实测
 
-- 单元测试：21 条全过（`unittest`）。
+- 单元测试：全 suite 113 条全过（`unittest discover`；既有 63 条 + 脱敏层 50 条）。
+- 红队评测：110 样本（92 正例 + 18 形似负例）泄漏 0、误杀 0（`python sanitize/eval_redteam.py`）。
 - 真实数据：`--project D--project-gui --limit 2` 首次摄取 1412 条事件、坏行 0；
   第二次同样的命令新增 0 条（幂等验证通过）。

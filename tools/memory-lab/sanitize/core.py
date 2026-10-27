@@ -148,9 +148,9 @@ def _shadow(text: str) -> str:
 
 
 def _masked_preview(value: str) -> str:
-    if len(value) <= 6:
-        return "*" * len(value)
-    return value[:2] + "****" + value[-2:]
+    # 不变量：preview 绝不携带原文片段（含首尾字符）。等长遮蔽不额外泄信息——
+    # 长度本就由 Hit.start/end 承载；禁止改回"保留首尾 N 字符"的部分掩码。
+    return "*" * len(value)
 
 
 def _id18_detail(raw: str) -> str:
@@ -239,7 +239,11 @@ def scan(text: str) -> list[Hit]:
 
 
 def sanitize(text: str) -> SanitizeResult:
-    """外发前唯一入口：返回脱敏文本与命中清单。幂等：对输出再跑一遍不再变化。"""
+    """外发前唯一入口：返回脱敏文本与命中清单。幂等：对输出再跑一遍不再变化。
+
+    fail-closed 是传播式：任一检测器异常/畸形结果必须沿本函数上抛、中断外发；
+    禁止在调用点包兜底 except 吞异常（否则静默变 fail-open，护栏测试钉住此契约）。
+    """
     hits = scan(text)
     out = text
     for hit in sorted(hits, key=lambda h: -h.start):

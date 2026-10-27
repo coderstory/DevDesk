@@ -5,6 +5,7 @@ from __future__ import annotations
 import sys
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import support  # noqa: E402
@@ -12,6 +13,7 @@ import support  # noqa: E402
 support.ensure_import_path()
 
 from sanitize import Hit, SanitizeResult, sanitize, scan  # noqa: E402
+from sanitize import core as sanitize_core  # noqa: E402
 
 
 class PhoneTest(unittest.TestCase):
@@ -183,6 +185,14 @@ class ContractTest(unittest.TestCase):
             self.assertNotIn("13812345678", hit.preview)
             self.assertEqual(text[hit.start : hit.end], "13812345678")  # 区间可回溯原文
 
+    def test_preview_fully_masked(self):
+        # 契约：preview 全遮蔽、零原文片段（历史实现保留首尾各 2 字符，7 字符密钥泄 4 字符）
+        for text in ("手机 13812345678", "password: abcd1234", "token=abc123def456"):
+            hits = scan(text)
+            self.assertTrue(hits, text)  # 前置：样本必须真命中，防空转假绿
+            for hit in hits:
+                self.assertEqual(hit.preview, "*" * (hit.end - hit.start), text)
+
     def test_no_leak_in_output(self):
         secrets = ["13812345678", "AKIAIOSFODNN7EXAMPLE", "a@b.cn", "110101199003078910"]
         text = " ".join(secrets)
@@ -204,6 +214,33 @@ class ContractTest(unittest.TestCase):
     def test_idempotent(self):
         once = sanitize("token=abc123def456 & 138-1234-5678").text
         self.assertEqual(sanitize(once).text, once)
+
+
+class FailClosedGuardTest(unittest.TestCase):
+    """fail-closed 护栏：检测器异常/畸形结果必须沿 sanitize() 上抛（传播式 fail-closed）。
+
+    反重构警告：禁止在 sanitize 调用点包兜底 except 吞异常——那会把 fail-closed
+    静默变成 fail-open，本组测试钉住"异常必须炸出来"这一契约。
+    """
+
+    def test_detector_exception_propagates(self):
+        with mock.patch.object(
+            sanitize_core, "_iter_candidates", side_effect=RuntimeError("detector boom")
+        ):
+            with self.assertRaises(RuntimeError):
+                sanitize("手机号 13812345678")
+
+    def test_malformed_detector_output_propagates(self):
+        # 畸形候选必须抛错而不是静默放行原文：元组过短在 sort key 索引处炸（IndexError），
+        # 元组过长在 scan 解包处炸（ValueError）——两个崩溃点都钉住。
+        with mock.patch.object(sanitize_core, "_iter_candidates", return_value=[(3, "phone")]):
+            with self.assertRaises(IndexError):
+                sanitize("手机号 13812345678")
+        with mock.patch.object(
+            sanitize_core, "_iter_candidates", return_value=[(3, 0, 5, "phone", "x", "extra")]
+        ):
+            with self.assertRaises(ValueError):
+                sanitize("手机号 13812345678")
 
 
 if __name__ == "__main__":
