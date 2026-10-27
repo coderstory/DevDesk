@@ -2,7 +2,11 @@
 
 > **创建日期**：2026-10-27
 > **模块**：`module_release`（新）
-> **状态**：设计定稿，待拆任务
+> **状态**：设计定稿；实施计划见 `docs/superpowers/plans/2026-10-27-release-module-implementation-plan.md`
+>
+> **2026-10-27 修订（D-27-01~06）**：增补侧边栏二级菜单、任务列表瀑布流、单据号门槛、原型一致性四闸、最小侵入实现约束与文档漂移备注。与旧文冲突处已改写为新口径，并保留一行旧口径说明供追溯。
+>
+> **实现基准**：本 spec + `docs/superpowers/specs/2026-10-27-release-module-tokens.json`（待 T0.1 产出）+ 代码 token。设计规范存档与旧 demo 不得作为实现基准，见 §13.6。
 
 ---
 
@@ -68,10 +72,35 @@
 
 ## 4. 任务
 
+### 4.0 任务列表（2026-10-27 新增）
+
+任务列表采用**多列自适应卡片瀑布流**（多列不等高卡片、逐列向下排布；「瀑布流」= 卡片按列堆叠，不是等高网格）。
+
+| 契约 | 值 |
+|------|----|
+| 最小卡片宽 | 320（逻辑像素） |
+| 列间距 / 垂直间距 | 16 / 16 |
+| 卡片高度 | 随内容不等高；同一列内向下排 |
+| 首屏数量 | 10 |
+| 加载更多 | 滚动到列表底部自动再加 10，直到没有更多 |
+| 排序 | 计划日期降序；同日按 id 降序（同日可能有多个作废任务，作废不占名额） |
+| 加载占位 | 加载中时在列表底部居中显示「加载中…」，不占卡片位置 |
+| 列数公式 | `max(1, floor((内容宽 + 16) / (320 + 16)))`；内容宽 = 页面区宽 − 64（左右各 32） |
+| 实现 | EUI-NEO `components::virtualmasonry` 的 `columns / gap / itemHeight / onEndReached`；不另写瀑布流布局 |
+
+- 空状态：无任务时显示统一空状态（说明 + 「新建任务」按钮），不留大片空白。
+- 点击卡片进入该任务的执行页；已作废任务卡片置灰但仍可查看。
+- 分页只在内存窗口内：SQL 用 `LIMIT 10 OFFSET n` 取数；加载中禁止再次触发 `onEndReached`（防重复条目）。
+- 加载动作延后一帧执行：`onEndReached` 先置 `loading=true` 并请求下一帧，再查库追加；保证「加载中…」至少可见一帧，但不做最小展示时长。
+- 若 10 条不足以填满一屏（内容高度 < 视口 → 无法滚动），`virtualMasonry` 会继续触发 `onEndReached` 直到可滚或数据耗尽；这是首屏 10 条的必要补充，不是分页 bug。
+- 卡片高度由**固定行高**组合得到（标题 24 + 进度条 6 + 环境 chips 22 + 摘要最多 3 行 × 22 + 间距），不依赖浏览器或 FreeType 的自动换行度量；摘要超过 3 行截断。
+- 环境 chips 只排一行；放不下时末尾显示「+N」，不换行（否则 chip 换行会把卡高变成字体度量的函数，破坏闸 3 的确定性）。
+- 1600×1000 默认窗口（侧栏 208、页面 1392）下内容宽 1328，恰好 4 列 × 320；最小窗口 1000×640 下内容宽 728，2 列 × 356。
+
 ### 4.1 创建
 
 - **计划上线日期**必填，默认只允许**周二、周四**；选其他日子弹二次确认「非常规发布日，确定要建吗？」。
-- 「一天一个」按**计划日期**算：同一天已有任务时，点「新建」直接打开已有那个，不新建。
+- 「一天一个」按**计划日期**算：同一天已有**非作废**任务时，点「新建」直接打开已有那个，不新建；只剩作废任务时可以新建（§7）。
 - 任务提前建，挂未来的发布日；跨到凌晨完成不算超期。
 
 ### 4.2 内容
@@ -84,13 +113,14 @@
 | 分支 | 每个「服务 × 环境」各填一个，默认带服务定义的默认分支；纯手填，不校验真伪 |
 | 配置内容 | 仅后端；5 项都是文本，粘贴填写 |
 | 配置项跳过 | 某项本次没有 → 勾跳过；该步显示「已跳过」并划掉，校验时不报缺 |
-| 工单卡 | 任务级；任务里有任何服务填了 nacos 内容 → 出一张 nacos 工单卡；有数据库内容 → 出一张数据库工单卡 |
+| 工单卡 | 任务级；任一「未移除且未跳过」的服务填了非空 nacos 内容 → 出一张 nacos 工单卡；数据库内容同理（与 §4.5 同口径） |
 | 公告 | 任务级唯一；内容用户填；时间自动取当天**最早环境的开始时间** |
 
 ### 4.3 校验
 
 - 触发：点「校验」按钮随时跑；点「提交」时自动跑一次，不过不放行。
 - 规则：
+  - 至少有一个未移除的环境，且该环境至少有一个未移除的服务（否则完成判定会「真空真」直接完成，2026-10-27 补齐）
   - 本次未移除的服务，分支不能为空
   - 未勾跳过的配置项，内容不能为空
   - 内容为空又没勾跳过 → 报错
@@ -100,7 +130,25 @@
 ### 4.4 修改
 
 - 提交后仍可改配置；改完自动重新校验。
-- **改配置内容或改分支 → 自动撤回该步的已确认状态**，并记一条日志（内容变了，旧确认不作数）。
+- **改配置内容或改分支 → 自动撤回该步的已确认状态**，并记一条日志（内容变了，旧确认不作数）。「改」指值实际变化；打开即保存、值未变不撤回。
+
+### 4.5 单据号门槛（2026-10-27 新增）
+
+适用于四个任务级前置项：
+
+| 前置项 | 完成勾选 | 单据号字段 |
+|--------|----------|------------|
+| 提测单 | 「已通过」 | 提测单号 |
+| CAB 单 | 「已通过」 | CAB 单号 |
+| nacos 工单 | 「已审批」 | 工单号 |
+| 数据库工单 | 「已审批」 | 工单号 |
+
+- 规则：单据号去除首尾空白后非空，才允许勾选完成；**只校验非空，不校验格式**（不校验数字、长度、前缀）。
+- 单据号为空时，完成复选框禁用，并在其旁提示「请先填写单据号」。
+- 禁用只是视觉层；勾选入口必须有程序守卫（守卫拒绝 + 记日志），防绕过 UI 直接写库。
+- 公告无单据号，不受本门槛约束。
+- 工单卡是否存在由内容决定：任务里任一「未移除且未跳过」的服务 nacos 内容非空 → 显示 nacos 工单卡；数据库内容同理。卡不存在时不要求对应单据号。
+- 本门槛只卡「勾选完成」这一动作；勾选后再清空单据号不自动撤回（见 §8 边界约定 #7）。
 
 ---
 
@@ -119,6 +167,8 @@
 | 上线公告 | 填内容 + 勾「已发」 | 时间基准（最早环境开始时间） |
 
 > **时间基准** = 任务里所有环境开始时间的最小值。
+>
+> 任务级前置项的「已通过 / 已审批」勾选受 §4.5 单据号门槛约束；服务级步骤没有单据号。
 
 **服务级清单**（每个 服务 × 环境 各一套）
 
@@ -143,6 +193,7 @@
 - 任务未进入「已完成」前，**任何一步都能撤回**，弹二次确认；撤回后该服务退回未完成。
 - 撤回记日志（哪一步、何时撤的）。
 - 任务已完成 → 整单只读，不能撤回；要改只能作废重建。
+- 已作废任务只读；要改先恢复（恢复受 §7 同日冲突约束）。
 
 ### 5.4 完成判定
 
@@ -182,6 +233,14 @@
 - 应用完全退出时无法提醒（不装后台服务、不开机自启）——已知边界。
 - 任务处于「配置中」且未到时间基准 → 不弹任何提醒。
 
+**实现形态（2026-10-27 补）**
+
+- 独立子窗：EUI-NEO `app::openWindow`（工作区尺寸、置顶、可关闭），关闭走 `core::window::requestWindowClose`；窗口句柄在 `windowCreatedHandler` 捕获，模块停止时先关窗再释放状态（防 compose 捕获悬垂）。
+- 引擎节拍：主窗每帧在 app 层拉一次（与 `agent::pollRunEnd` 同模式）；但**禁止每帧查库**——到期扫描按 1s 节流，任务/进度内存快照按 5s 或模块变更事件刷新。主窗隐藏到托盘或最小化不 compose 期间不提醒，恢复可见时按「已到期但未完成」补弹——与「应用关着期间到期，重开补弹」同一规则（已知边界，写入 §8）。
+- 单窗约束：同一时刻最多一个提醒窗；窗已开时只刷新不重开。关闭后 `suppressUntil = now + 5min`，期间不弹；到期仍未完成再弹。
+- 提醒窗只读：点条目 → `requestWindowClose` 关窗 → 唤起主窗并导航到对应任务/步骤位置；勾选仍在主窗执行。
+- 窗口取全屏工作区尺寸时注意 EUI-NEO `windowSize` 是**物理像素**、`Screen` 是逻辑单位（DevDesk 已知单位坑），换算在窗口创建处只做一次。
+
 ---
 
 ## 7. 状态
@@ -194,7 +253,8 @@
 
 - **状态只跟时间走**：提前勾前置不算「执行中」，只体现在进度上。
 - **超时**是标记不是状态。
-- **已作废**：停止提醒、进度冻结但保留；**可恢复**（按当前进度与时间自动回到对应状态）；**不占当天名额**，所以作废后当天可再建一个。
+- **已作废**：停止提醒、进度冻结但保留；**可恢复**（按当前进度与时间自动回到对应状态）；**不占当天名额**，所以作废后当天可再建一个。若恢复时当天已有另一个非作废任务 → 拒绝恢复并提示（唯一约束不允许静默覆盖）。
+- 状态值是英文枚举（`configuring/pending/running/done/void`），界面显示中文；「超时」是计算出的标记，不入库。
 
 ---
 
@@ -208,53 +268,132 @@
 | 4 | 提醒只在应用运行时生效；关闭期间到期的重开补弹 |
 | 5 | 一个窗里多档颜色时窗取最高优先级，条目各自标色 |
 | 6 | 配置项顺序只在配置/待执行阶段可拖，执行后锁定 |
+| 7 | 单据号门槛只卡「勾选完成」动作；勾选后再清空单据号不自动撤回（本期明确不做） |
+| 8 | 任务列表加载更多是本地 SQL 分页，不是网络请求；加载占位只在本帧/查询期间显示，不做最小展示时长 |
+| 9 | 二级菜单是通用能力，但本期只有上线模块声明子项；其他模块的渲染结果必须与原版逐项一致 |
+| 10 | 主窗隐藏到托盘 / 最小化（EUI 主循环不 compose）期间不弹提醒，恢复可见时补弹；完全退出不提醒 |
 
 ---
 
-## 9. 数据表（草案）
+## 9. 数据表（2026-10-27 定稿）
 
-沿用 `core/schema.h` 单库单表集，无版本化迁移链——建表语句一次写对，后续改动走 `migrate` 补列。
+> 旧草案只列关键列；本节补齐类型、约束与索引。全部为**新增表**，不改任何既有表与既有迁移路径：新表以 `CREATE TABLE IF NOT EXISTS` 追加进 `core/schema.h` 的 `kSql`，`applySchema` 启动时对老库同样幂等建表（不需要新增 `addMissing*` 补列函数）。
 
-| 表 | 关键列 |
-|----|--------|
-| `release_service` | id, name, kind(backend/pc_web/mobile_web), default_branch, sort |
-| `release_env` | id, name, start_minute, end_minute, sort |
-| `release_env_service` | env_id, service_id |
-| `release_task` | id, plan_date, status, announce_text, announce_sent_at, pretest_no, pretest_ok, cab_no, cab_ok, ticket_nacos_no, ticket_nacos_ok, ticket_db_no, ticket_db_ok |
-| `release_task_env` | id, task_id, env_name, start_minute, end_minute, removed |
-| `release_task_service` | id, task_env_id, service_name, service_kind, default_branch, branch, removed |
-| `release_task_config` | id, task_service_id, kind(nacos/db/cron/menu/gateway), content, skipped, conf_order, done_at |
-| `release_task_step` | id, task_service_id, kind(branch/deploy/verify), done_at |
-| `release_task_log` | id, task_id, scope, step, action(confirm/revoke), at, note |
+时间口径：`plan_date` = 本地日期字符串 `YYYY-MM-DD`；`*_at` = Unix epoch 秒；`start_minute/end_minute` = 当天分钟数 0~1439；`end_minute <= start_minute` 视为次日结束。
 
-`start_minute/end_minute` 存当天的分钟数（0~1439），跨零点由比较规则处理。
+| 表 | 列与约束 |
+|----|----------|
+| `release_service` | `id INTEGER PK AUTOINCREMENT`、`name TEXT NOT NULL UNIQUE`、`kind TEXT NOT NULL`（backend/pc_web/mobile_web）、`default_branch TEXT NOT NULL DEFAULT ''`、`sort INTEGER NOT NULL DEFAULT 0`、`created_at INTEGER NOT NULL` |
+| `release_env` | `id`、`name TEXT NOT NULL UNIQUE`、`start_minute INTEGER NOT NULL`、`end_minute INTEGER NOT NULL`、`sort INTEGER NOT NULL DEFAULT 0`、`created_at INTEGER NOT NULL` |
+| `release_env_service` | `env_id INTEGER NOT NULL`、`service_id INTEGER NOT NULL`、`PRIMARY KEY(env_id, service_id)`、双 FK `ON DELETE CASCADE` |
+| `release_task` | `id`、`plan_date TEXT NOT NULL`、`status TEXT NOT NULL`（configuring/pending/running/done/void）、`announce_text TEXT NOT NULL DEFAULT ''`、`announce_sent_at INTEGER`、`pretest_no TEXT NOT NULL DEFAULT ''`、`pretest_ok INTEGER NOT NULL DEFAULT 0`、`cab_no`/`cab_ok`、`ticket_nacos_no`/`ticket_nacos_ok`、`ticket_db_no`/`ticket_db_ok`、`created_at/updated_at INTEGER NOT NULL` |
+| `release_task_env` | `id`、`task_id INTEGER NOT NULL`、`env_name TEXT NOT NULL`、`start_minute`、`end_minute`、`removed INTEGER NOT NULL DEFAULT 0`、`sort INTEGER NOT NULL DEFAULT 0`、`UNIQUE(task_id, env_name)` |
+| `release_task_service` | `id`、`task_env_id INTEGER NOT NULL`、`service_name TEXT NOT NULL`、`service_kind TEXT NOT NULL`、`default_branch TEXT NOT NULL DEFAULT ''`、`branch TEXT NOT NULL DEFAULT ''`、`removed INTEGER NOT NULL DEFAULT 0`、`sort INTEGER NOT NULL DEFAULT 0`、`UNIQUE(task_env_id, service_name)` |
+| `release_task_config` | `id`、`task_service_id INTEGER NOT NULL`、`kind TEXT NOT NULL`（nacos/db/cron/menu/gateway）、`content TEXT NOT NULL DEFAULT ''`、`skipped INTEGER NOT NULL DEFAULT 0`、`conf_order INTEGER NOT NULL DEFAULT 0`、`done_at INTEGER`、`UNIQUE(task_service_id, kind)` |
+| `release_task_step` | `id`、`task_service_id INTEGER NOT NULL`、`kind TEXT NOT NULL`（branch/deploy/verify）、`done_at INTEGER`、`UNIQUE(task_service_id, kind)` |
+| `release_task_log` | `id`、`task_id INTEGER NOT NULL`、`scope TEXT NOT NULL`、`step TEXT NOT NULL`、`action TEXT NOT NULL`（create/submit/confirm/revoke/void/restore）、`at INTEGER NOT NULL`、`note TEXT NOT NULL DEFAULT ''` |
 
----
+索引 / 唯一约束：
 
-## 10. 模块接入点
-
-新增 `module_release` 需要改的 8 处：
-
-1. `core/module_interface.h` — PageId 枚举 + `pageIdToString`
-2. `app_registry.h` — `extern "C" create_release_module()` + 注册表行
-3. `main.cpp` — 静态实例 + `moduleForPage` switch
-4. `module_settings/settings_config.h` — `kModuleIdRelease`
-5. `module_settings/settings_config.cpp` — 合法 ID 清单 + 默认启用集
-6. `module_settings/settings_ui_cards.cpp` — 模块开关卡
-7. `src/CMakeLists.txt` — `add_subdirectory` + 链接
-8. `tests/CMakeLists.txt` — 测试源登记 + 模块库链接
-
-侧边栏自动接管，无需改动。
+- `CREATE UNIQUE INDEX release_task_plan_date_active ON release_task(plan_date) WHERE status <> 'void'` —— 同一天只能有一个**非作废**任务；作废后当天可再建（§7）。
+- 普通索引：`release_task_env(task_id)`、`release_task_service(task_env_id)`、`release_task_config(task_service_id)`、`release_task_step(task_service_id)`、`release_task_log(task_id, at)`。
+- 删除基础配置的服务/环境：`release_env_service` 级联删除；历史任务不受影响（任务侧全部是快照列，不引用基础配置主键）。
 
 ---
 
-## 11. UI 要点与 EUI-NEO 缺口
+## 10. 模块接入点（2026-10-27 修订）
 
-**可用**：多行文本（`InputBuilder.multiline()` + `.scrollbar()`）、模态 Dialog（`.screen()` 可接近全屏）、原生文件对话框、复选框、日期/时间选择、Tabs、虚拟列表、拖拽排序。
+> 旧口径：「侧边栏自动接管，无需改动」。新决策把二级菜单做成通用能力，侧边栏需要改动；以下为完整清单。
 
-**缺口**：**折叠面板（Accordion）缺失**。任务详情页的环境分组若用折叠，需要上游补组件，或改用 Tab / 自绘面板。
+新增 `module_release` 需要改的既有文件（共 10 处，全部为最小改动）：
 
-**全屏编辑配置内容**：用 DialogBuilder 的 `.screen()` 撑到整屏，或 `eui::app::openWindow` 开独立大窗——二选一，实现阶段定。
+| # | 文件 | 改动 |
+|---|------|------|
+| 1 | `src/core/module_interface.h` | `PageId` 加 `Release`（置于 `Todo` 之后、`ClaudeProxy` 之前，与原型侧栏序一致）；`pageIdToString` 加一项；`Module` 加可选子项虚函数（默认空实现，见 §10.1） |
+| 2 | `src/app_registry.h` | `extern "C" create_release_module()` + 注册表加一行（gatingKey=`kModuleIdRelease`，短名「上线」，图标 fa-upload U+F093） |
+| 3 | `src/main.cpp` | 静态实例 + `moduleForPage` switch 加一个 case |
+| 4 | `src/module_settings/settings_config.h` | `kModuleIdRelease = "release"` + 存量配置一次性纳入版本字段 |
+| 5 | `src/module_settings/settings_config.cpp` | 合法 ID 清单 + 默认启用集 + 存量配置一次性纳入（防老用户看不到新模块） |
+| 6 | `src/module_settings/settings_ui_cards.cpp` | 模块开关卡加第 5 项（上线） |
+| 7 | `src/module_settings/settings_ui_logic.h` | `kModulesCardHeight` 198 → 232（5 项 = 3 行，按现有公式 68 + 2×56 + 36 + 16） |
+| 8 | `src/app_sidebar.cpp` | 子项渲染分支（仅声明了子项的模块走）+ 提醒引擎每帧拉取一行 |
+| 9 | 根 `CMakeLists.txt` | `add_subdirectory(src/module_release)` + app 链接 + 覆盖率插桩清单 |
+| 10 | `tests/CMakeLists.txt` | 测试源登记 + `devdesk_module_release` 链接 |
+
+> 旧口径写的 `src/CMakeLists.txt` 在本仓库不存在；模块注册实际在根 `CMakeLists.txt`（`add_subdirectory` 段与 app `target_link_libraries` 段），已按实际路径修正。
+>
+> **最小侵入的两处必要例外**：① `settings_ui_logic.h` 的卡高常量（第 5 项使 2×2 变 3 行，不改会裁切）；② `settings_config` 的 `modulesVersion`（不做一次性纳入，存量用户升级后看不到新模块）。除此之外不新增共享抽象、不改既有模块行为。
+
+**存量配置一次性纳入**：`SettingsConfig` 新增 `modulesVersion`（新配置内存默认 2；`load()` 必须把**键缺失**按 1 处理——不能用结构体默认值判断，否则老库永远读成 2、迁移不触发）。`load()` 读到 <2 时，把 `release` 补进 `enabledModules`（若不在）并把内存版本置 2；设置页任何一次保存会把版本 2 落库。这样老用户升级后直接看到上线模块，而用户随后手动关闭它不会被下次启动重新加回。
+
+### 10.1 Module 子项接口（通用能力，默认空 = 旧行为）
+
+```cpp
+struct ChildNavItem { std::string id; std::string label; };
+virtual std::vector<ChildNavItem> childNavItems() const { return {}; }
+virtual bool childNavExpandedByDefault() const { return true; }
+virtual std::string activeChildNavId() const { return {}; }
+virtual void onChildNavSelected(const std::string& id) { (void)id; }
+```
+
+契约：
+
+- 本期只支持**一级子项**（一级项下挂子项），不支持多级嵌套；多级需求另立设计。
+- `childNavItems()` 返回空 → 侧边栏渲染逻辑与改动前**完全一致**（节点 id、几何、分组规则都不变；由现有 `test_app_sidebar` 回归断言锁）。
+- 有子项时：父项右侧画 16×16 展开箭头；子项行 `x = padX + 24`（缩进 24）、宽 = `kWidth − 2×padX − 24`、高 = `kNavItemH`、间距 4。
+- 父项点击 = 展开/折叠；折叠态（72 宽图标栏）不渲染子项，父项点击 = 导航到该页并保持模块上次激活的子页。
+- 子项点击 = `router.navigateTo(page)` 后调 `onChildNavSelected(id)`；激活子项画 `ui_kit::selectionBar`。
+- 展开状态是进程内状态，按模块默认值 `childNavExpandedByDefault()` 初始化；不持久化（本期最小实现）。
+- 上线模块：`childNavItems()` = `{tasks, "任务"}`、`{config, "基础配置"}`，默认展开，默认激活 `tasks`。
+- 节点 id：`app.sidebar.item.Release.arrow`、`app.sidebar.child.Release.tasks.hit`、`app.sidebar.child.Release.config.hit`。
+
+### 10.2 module_release 文件布局（便于拆任务 / 并行，避免同文件多写者）
+
+| 文件 | 职责 |
+|------|------|
+| `release_module.h/.cpp` | `Module` 接口、子页路由、生命周期、提醒 tick 入口 |
+| `release_tokens.generated.h` | 由 token 清单生成，禁止手改 |
+| `release_model.h` | 枚举 / 数据结构 / 快照 |
+| `release_store.h/.cpp` | SQLite 读写（唯一 DB 入口） |
+| `release_service.h/.cpp` | 创建 / 提交 / 状态 / 完成度 / 撤回 / 日志 |
+| `release_validate.h/.cpp` | 纯校验（分支 / 配置 / 单据号 / 完成判定） |
+| `release_time.h/.cpp` | 纯时间计算（跨零点 / 到期 / 超时） |
+| `release_reminder.h/.cpp` | 提醒收集 / 分级 / 抑制（纯逻辑） |
+| `release_reminder_window.h/.cpp` | 提醒全屏窗 compose |
+| `release_ui_common.h/.cpp` | 页头 / 空状态 / 格式化 / chips |
+| `release_ui_tasks.h/.cpp` | 任务列表（瀑布流 + 卡片 + 分页占位） |
+| `release_ui_create.h/.cpp` | 新建任务页 |
+| `release_ui_exec.h/.cpp` | 执行页编排 |
+| `release_ui_exec_prereq.cpp` | 前置项区 + 单据号门槛 UI |
+| `release_ui_exec_env.cpp` | 环境 / 服务 / 步骤区 |
+| `release_ui_config.h/.cpp` | 基础配置页 |
+| `release_ui_dialogs.h/.cpp` | 确认框 / 全屏配置编辑器 / 表单弹窗 |
+| `release_ui_dnd.h/.cpp` | 拖拽排序（服务 / 配置项） |
+
+---
+
+## 11. UI 要点与 EUI-NEO 缺口（2026-10-27 核对源码后修订）
+
+**已核实可用**：
+
+- 瀑布流：`components/virtualmasonry.h` 提供 `columns / gap / itemHeight(index,width) / onEndReached / bind(signal)`，直接满足 §4.0。
+- 独立子窗：`eui::app::openWindow(DslWindowConfig, compose)`；关闭用 `core::window::requestWindowClose(handle)`；句柄由 `windowCreatedHandler` 取。
+- 多行文本：`components::input` 的 `.multiline(true)` + `.scrollbar(true)`。
+- 全屏编辑：`DialogBuilder.screen(screen.width, screen.height)`（本项目尚无使用先例，需在 UI 任务里首次落地并加断言）。
+- 复选框 `components::checkbox`、开关 `ui_kit::wswitch`、下拉 `components::dropdown`、日期 `components::datepicker`、时间 `components::timepicker`、进度 `components::progress`。
+- `components::checkbox` **没有 disabled 属性**（已核对源码）：单据号门槛的锁定态用模块内自绘「灰色方框 + 提示行」，启用态仍用 `components::checkbox`；禁止用「`onChange` 里拒绝但仍显示可点」的伪禁用。
+- 块面式 Tab：用 `ui_kit::wtab`；`components::tabs` 是**下划线式**，本项目已明确淘汰，禁用。
+- 拖拽：EUI-NEO 提供 `onDrag` 原语，无现成「拖拽排序」组件；排序计算自绘（组合实现，不新增通用组件）。
+- 文本测量：`core::TextPrimitive::measureTextSize / measureTextWidth`（任务卡高度仍按固定行高而非测量值）。
+
+**缺口与决定**：
+
+- **折叠面板（Accordion）仍缺失**：环境分组**不做折叠**，实现与 demo 都改为常展开分组（标题行 + 内容），用 `rect/text/stack` 组合。若将来需要折叠，先在上游补组件再改，禁止实现期临时降级。（旧口径：环境分组若用折叠，需上游补 Accordion 或改 Tab/自绘面板；2026-10-27 决策改为常展开。）
+- **skeleton / 转圈组件缺失**：加载占位只用文字「加载中…」（§4.0），不画 spinner，不新增自绘动画组件。
+- **tree 组件缺失**：侧边栏二级菜单沿用现有自绘侧栏（`app_sidebar.cpp`），不引入新组件。
+- **等宽字体**：EUI-NEO 的字体 fallback 与 HTML `font-family` 栈不等价；本期 branch / 单号字段用正文字体，demo 同步去掉 mono 字体（防闸 3 字体差异）。
+- **全屏编辑决定**：用 `DialogBuilder.screen(...)` 模态层，不新开窗口（少一条窗口生命周期与焦点链）。（旧口径：screen 或 openWindow 二选一；新决策定为 screen。）
+- **提醒窗**：唯一新增的独立窗口，按 §6.3 实现形态。
 
 ---
 
@@ -264,3 +403,103 @@
 - 从 CI 读流水线状态，自动勾「部署」
 - 上线记录导出（Markdown / CSV）
 - 多机同步
+
+---
+
+## 13. 原型与实现一致性四闸（2026-10-27 新增，硬门禁）
+
+> 四闸的目的一句话：**demo 好看不算数，实现要与 demo 和代码 token 同时对齐**。任一闸红 → 不得进入验收。
+
+### 13.1 闸 1：数值单一源
+
+- **唯一源文件**：`docs/superpowers/specs/2026-10-27-release-module-tokens.json`（T0.1 产出）。内容包括：
+  - `colors.light` / `colors.dark`：本模块用到的全部主题槽位值与 release 专属黄档；
+  - `sizes`：`theme.cpp` 的 `SizeTokens` 全量；
+  - `metrics`：`ui_kit/metrics.h`、`button.h`、`selection_bar.cpp`、`card.cpp` 的共享常量；
+  - `release`：本模块专属几何（卡宽 / 间距 / 页 padding / 分页条数 / 提醒窗尺寸）；
+  - `lineHeights`：页标题 32、区块标题 26、卡片标题 24、正文 22、辅助 18。
+- **生成物**：
+  - `src/module_release/release_tokens.generated.h`（由脚本生成，文件头写「禁止手改」）；
+  - `docs/superpowers/demo/release-module-demo.html` 的 `/* BEGIN GENERATED TOKENS */ … /* END GENERATED TOKENS */` 标记块。
+- **校验脚本**：`scripts/gen-release-tokens.py --write` 生成；`--check` 只读校验，不一致退出码非 0（禁止只打印警告）。脚本用 UTF-8 读写，Windows 控制台须 `reconfigure`，防 GBK 崩溃。
+- **三方校验**：单测 `release_tokens_match_theme` 断言 `core::theme::current().sizes.*`（fontScale=1.0）与生成头常量逐项相等；`--check` 断言 demo 块与生成头一致；grep 断言 `src/module_release/` 无裸 hex（颜色引用 `t.colors.*`）。
+- **release 专属黄档**：`theme.cpp` 没有黄档；提醒黄档固定 `#EAB308`，写入 token 清单的 `colors.release.reminderYellow`，不新增全局 theme token（避免影响其他模块）。
+- 主题色仍从 `core::theme::current().colors.*` 取；生成头里的主题 hex 只用于校验与 demo。release 专属黄档由生成头提供命名常量（如 `tokens::kReminderYellow`），业务代码引用常量，不写裸 hex。
+
+### 13.2 闸 2：控件映射表（demo 每个元素 → EUI-NEO / 项目现有组件）
+
+| demo 元素 | 实现落点 | 缺口 / 决定 |
+|-----------|----------|-------------|
+| 侧栏一级 / 二级项、展开箭头 | `app_sidebar.cpp` 自绘 `rect + text` + `ui_kit::selectionBar` | EUI-NEO 无 tree 组件；沿用现有自绘侧栏 |
+| 侧栏折叠开关 | 现有自绘 | 不改 |
+| 页头标题 / 副标题 / 右侧主操作 | `text` + `row` + `ui_kit::kHeaderH` | 无缺口 |
+| 主 / 次 / 文字 / 危险按钮 | `ui_kit::button`（四级） | 禁止自造按钮样式 |
+| 块面式 Tab | `ui_kit::wtab` | `components::tabs` 是下划线式，**禁用** |
+| 输入框 / 多行文本域 | `components::input` + `.multiline(true)` + `.scrollbar(true)` | 无缺口 |
+| 复选框 | `components::checkbox`（启用态） | 无 disabled 属性：锁定态用模块内自绘灰框 + 提示行，不做伪禁用 |
+| 开关 | `ui_kit::wswitch` | 与全局微信绿样式一致 |
+| 下拉 | `components::dropdown` | 无缺口 |
+| 日期 / 时间选择 | `components::datepicker` + `components::timepicker` | 不自绘月历 |
+| 模态弹窗 / 全屏配置编辑 | `components::dialog` / `DialogBuilder.screen(...)` | 不新开编辑窗 |
+| 卡片底板 | `ui_kit::cardFrame` | 圆角 / 描边 / 阴影同源 |
+| 任务瀑布流 | `components::virtualmasonry` | 已验证 API |
+| 普通滚动区 | `components::scrollView` | 无缺口 |
+| 进度条 | `components::progress` | 无缺口 |
+| 提醒全屏窗 | `app::openWindow` + `core::window::requestWindowClose` | 唯一新增独立窗 |
+| 空状态 | `ui_kit::emptyState` | 无缺口 |
+| Toast | `ui_kit::toast` | 无缺口 |
+| 环境分组折叠 | **改为常展开分组**（`stack/rect/text`） | Accordion 缺失；**禁止实现期临时降级** |
+| 拖拽排序 | EUI-NEO `onDrag` + 自写排序落点计算 | 无现成 reorder 组件；组合实现，不抽公共组件 |
+| 加载占位 / 转圈 | 只用文字「加载中…」 | skeleton / spinner 缺失；不画 spinner |
+| 图标 | FontAwesome glyph + `ui::text().icon()` | 码点须在 EUI-NEO 内置字体中（`fa-upload` U+F093） |
+| 等宽字体（branch / 单号） | **不用等宽字体**，统一正文字体 | HTML font-family 与 FreeType fallback 不等价，防闸 3 字体差异 |
+
+### 13.3 闸 3：视觉契约表 + 真窗口 probe 数值断言
+
+屏幕坐标约定：页面区原点 = 侧栏右缘；本文「页面坐标」均相对页面区。页面 padding 左/右/下 32、上 0；页头高 40；正文起点 y = 56。
+
+| 元素 | 契约值（逻辑像素） | probe 断言节点 |
+|------|--------------------|----------------|
+| 侧栏宽 | 展开 208 / 折叠 72 | `app.sidebar` |
+| 侧栏导航项 | x=16、h=40、项间距 4、首项 y=116 | `app.sidebar.item.<Page>.hit` |
+| 侧栏二级项 | 缩进 24（x=40）、宽=208−40−16=152、h=40、间距 4 | `app.sidebar.child.Release.<id>.hit` |
+| 品牌块 | y=32、h=56、logo 48、品牌块→导航间距 28 | `app.sidebar.brand` |
+| 页标题 | 24px / 700 / 行高 32、`textPrimary` | `release.page.title` |
+| 区块标题 | 18px / 600 / 行高 26 | `release.page.section.*` |
+| 按钮 | 高 40、水平 padding 16、字号 14/600、圆角 8 | `release.*.btn.*` |
+| 任务卡 | 最小宽 320、列间距 16、垂直间距 16、padding 16、圆角 12、边框 1px `borderDefault` | `release.tasks.card.<id>.bg` |
+| 卡标题 / 正文 / 辅助 | 18/600/24、14/400/22（最多 3 行）、12/400/18 | `.title` / `.body` / `.meta` |
+| 进度条 | 高 6、圆角 999、底色 `hover`、前景 `primary` | `.progress` |
+| 环境 chip | 高 22、圆角 999、字号 11/600 | `.chip.<env>` |
+| 加载占位 | 高 40、字号 12/18、`textTertiary`、上间距 16、居中 | `release.tasks.loading` |
+| 环境分组 | 圆角 12、边框 1px、头 padding 16/24、体 padding 24、常展开 | `release.exec.env.<id>` |
+| 步骤格 | 最小高 86、圆角 10、padding 12、间距 8；后端 4 列 / 前端 3 列 | `release.exec.step.<kind>` |
+| 模态弹窗 | 圆角 16、padding 24、标题 18/600、遮罩 `rgba(31,41,55,.45)` | `release.dialog.*` |
+| 提醒窗 | 宽 `min(880, 工作区宽−64)`、圆角 16、头部上边 4px 级色、高 ≤ 工作区高−64 | `release.reminder.root` |
+
+- probe 必须跑 **真窗口**（GLFW + OpenGL），至少两个尺寸：1600×1000 与 1000×640；侧栏展开 / 折叠各一遍。
+- 每条断言失败打印节点 id、期望值、实际值，非零退出（禁止只打印汇总）。
+- 几何断言之外，颜色断言在 light 与 dark 各跑一次（取 `theme::setLight/setDark` 后重 compose）；accent 四档只测 clay 默认档，其余档不纳入本模块门禁。
+- 文字换行相关：卡片摘要固定最多 3 行、行高 22，不按测量值自动增高（防 FreeType 与浏览器度量差异）。
+
+### 13.4 闸 4：并排目检
+
+1. probe 用 `--screenshot` 落 PNG（进程内 `glReadPixels`，不依赖系统录屏授权）。为与 demo 同坐标系，probe 以 `setCustomTitlebarMode(false)` 运行，窗口尺寸 = demo 画布尺寸。
+2. demo 在浏览器中设成同一尺寸（1600×1000 与 1000×640），截图。
+3. 两张图并排比对，逐条记录差异到 `docs/superpowers/plans/2026-10-27-release-module-visual-acceptance.md`。每条差异必须有处置：改实现 / 改 demo / 接受（写明理由）。
+4. 只有「接受」项允许留白；其余差异清零才算闸 4 通过。
+5. 对比排除非模块差异：系统标题栏 / 窗口阴影 / 字体抗锯齿 / 浏览器滚动条样式。排除项也要在验收单中写明，防「看起来差不多」蒙混。
+
+### 13.5 字体差异处理（HTML vs FreeType）
+
+- demo 与实现使用同一字体栈字符串（`core::theme::fontStack()`），但浏览器与 FreeType 的 fallback、字重、行高度量仍可能不同。
+- 因此**所有契约文本必须显式写行高**（px，不用 CSS 无单位行高）；任务卡摘要固定最多 3 行，高度公式只用固定行高 × 行数。
+- 对比只要求「框架尺寸 / 字号 / 行高 / 颜色 / 圆角」一致；字形栅格差异、抗锯齿、字间距差异不判红，但必须在验收单登记。
+- 若后续发现同一文本在两环境换行位置不同，以**契约行高 + 截断**为准，不改实现去迁就浏览器自动换行。
+
+### 13.6 已知文档漂移（不得作为实现基准）
+
+- `docs/superpowers/specs/2026-10-21-devdesk-design-system-v1.md` 的数值已被代码覆盖：**页面标题实为 24、正文实为 14、卡标题 settings 18 / todo 14**。该文档只作参考。
+- `docs/superpowers/demo/wechat-ui-demo.html` 是旧微信绿 `#07C160` 口径，与本项目当前主题（`#36D399`）不一致，**不得作为实现基准**。
+- `src/core/theme.h` 的结构体注释里有历史值（如 `fontSizeBody 15`、`radius 10`），实际值以 `src/core/theme.cpp` 为准；本模块不因注释与值不一致去改全局 token（防波及其他模块）。
+- 实现基准固定为：本 spec + `release-module-tokens.json` + 代码 token（`theme.cpp` / `ui_kit` 常量）。
