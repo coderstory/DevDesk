@@ -58,20 +58,22 @@
 
 | ID | 状态 | 条目 | 验收判据（可核销） | 涉及文件 |
 |---|---|---|---|---|
-| B1-01 | ⬜ | 端口常量头 | `kDefaultMcpPort=8931` / `kMinMcpPort=1` / `kMaxMcpPort=65535`；纯常量头无 cpp；命名镜像 `core/proxy_port.h` | `src/core/mcp_port.h` |
-| B1-02 | ⬜ | core 能力接缝 | spec §3 接口逐字落地；空指针 / 非法名 / 重名 → `fail(ValidationError)`；`find` 未找到 → `NotFound`；`list` 按 name 字典序；单锁串行；`globalMcpTools()` 永不析构 | `src/core/mcp_tool.h`、`src/core/mcp_tool.cpp` |
-| B1-03 | ⬜ | core 构建登记 | 只把 `mcp_tool.cpp` 加入 `devdesk_core` 源，不改既有源 | `src/core/CMakeLists.txt` |
-| B1-04 | ⬜ | module_mcp 静态库 | `devdesk_module_mcp` 只链 `devdesk_core` + `devdesk_platform`；不链 `ui_kit` / 兄弟模块；注入 `DEVDESK_VERSION` / `DEVDESK_BUILD_TYPE` / `DEVDESK_PLATFORM`，不设 `DEVDESK_OS_NAME` | `src/module_mcp/CMakeLists.txt` |
-| B1-05 | ⬜ | 会话表 | 32 位十六进制；最多 64 个，超出淘汰最旧；`create/has/remove`；可注入 id 生成器；id 只含可见 ASCII | `src/module_mcp/mcp_session_store.h/.cpp` |
-| B1-06 | ⬜ | 协议分发 | spec §5.4 判序 / §5.5 版本协商与会话 / §5.6 字典序与非法 schema 跳过 / §5.7 `isError` 与 `-32603`；通知 202；数组 400 `-32600`；非法 JSON 400 `-32700`；id 解析后回显；所有字符串经 JSON 工厂转义 | `src/module_mcp/mcp_protocol.h/.cpp` |
-| B1-07 | ⬜ | HTTP 适配器 | `RequestCtx`/`ResponseWriter` 适配；POST/GET/DELETE/OPTIONS `/mcp`；415/403/404/400 传输层判序；GET/OPTIONS 405 且 `Allow: POST, DELETE`；202 无 Content-Type；JSON 响应设 Content-Type；入站头按小写键 | `src/module_mcp/mcp_http_handler.h/.cpp` |
-| B1-08 | ⬜ | 服务生命周期 | spec §4.1：`start(0)` 返回实际端口；运行中幂等；`stop` 幂等并清会话；`restart`；状态加锁快照；每次 start 新建 `Server`；Host 白名单；失败文案 + `lastError`；单例永不析构 | `src/module_mcp/mcp_service.h/.cpp` |
-| B1-09 | ⬜ | 内置工具（仅 server_info） | `registerBuiltinMcpTools(registry, fetcher)` 使用注入注册表，不读全局；`devdesk_server_info` schema `{"type":"object","properties":{}}`；输出固定顺序 5 项（版本/构建类型/平台/两协议版本/工具数与名字典序）；宏缺失回退 `dev`/`unknown`/`unknown` | `src/module_mcp/mcp_tools_builtin.h/.cpp` |
-| B1-10 | ⬜ | root CMake 接线 | `add_subdirectory(src/module_mcp)`；`DevDesk` 链接 `devdesk_module_mcp`；覆盖率清单加入模块；`DevDesk` include 补 `src/module_mcp` | `CMakeLists.txt` |
-| B1-11 | ⬜ | 测试与登记 | 四个用例文件覆盖 spec §10 批次 1 的四组；用例描述含 ASCII `mcp`；`tests/CMakeLists.txt` 登记（漏登记触发 TIN-10 configure FATAL）、`devdesk_tests` 链接 `devdesk_module_mcp`、include `src/module_mcp` | `tests/test_core/test_mcp_tool_registry.cpp`、`tests/test_modules/test_mcp_session_store.cpp`、`test_mcp_protocol.cpp`、`test_mcp_tools_builtin.cpp`、`tests/CMakeLists.txt` |
-| B1-G | ⬜ | 批次门禁 | `bash scripts/build-test-run.sh --filter mcp --no-run` 退出 0；四个新文件用例出现在输出；构建成功行；commit 仅本批 pathspec；台账本批行勾 ✅ | — |
+| B1-01 | 🔵 | 端口常量头 | `kDefaultMcpPort=8931` / `kMinMcpPort=1` / `kMaxMcpPort=65535`；纯常量头无 cpp；命名镜像 `core/proxy_port.h` | `src/core/mcp_port.h` |
+| B1-02 | 🔵 | core 能力接缝 | spec §3 接口逐字落地；空指针 / 非法名 / 重名 → `fail(ValidationError)`；`find` 未找到 → `NotFound`；`list` 按 name 字典序；单锁串行；`globalMcpTools()` 永不析构 | `src/core/mcp_tool.h`、`src/core/mcp_tool.cpp` |
+| B1-03 | 🔵 | core 构建登记 | 只把 `mcp_tool.cpp` 加入 `devdesk_core` 源，不改既有源 | `src/core/CMakeLists.txt` |
+| B1-04 | 🔵 | module_mcp 静态库 | `devdesk_module_mcp` 只链 `devdesk_core` + `devdesk_platform`；不链 `ui_kit` / 兄弟模块；注入 `DEVDESK_VERSION` / `DEVDESK_BUILD_TYPE` / `DEVDESK_PLATFORM`，不设 `DEVDESK_OS_NAME` | `src/module_mcp/CMakeLists.txt` |
+| B1-05 | 🔵 | 会话表 | 32 位十六进制；最多 64 个，超出淘汰最旧；`create/has/remove`；可注入 id 生成器；id 只含可见 ASCII | `src/module_mcp/mcp_session_store.h/.cpp` |
+| B1-06 | 🔵 | 协议分发 | spec §5.4 判序 / §5.5 版本协商与会话 / §5.6 字典序与非法 schema 跳过 / §5.7 `isError` 与 `-32603`；通知 202；数组 400 `-32600`；非法 JSON 400 `-32700`；id 解析后回显；所有字符串经 JSON 工厂转义 | `src/module_mcp/mcp_protocol.h/.cpp` |
+| B1-07 | 🔵 | HTTP 适配器 | `RequestCtx`/`ResponseWriter` 适配；POST/GET/DELETE/OPTIONS `/mcp`；415/403/404/400 传输层判序；GET/OPTIONS 405 且 `Allow: POST, DELETE`；202 无 Content-Type；JSON 响应设 Content-Type；入站头按小写键 | `src/module_mcp/mcp_http_handler.h/.cpp` |
+| B1-08 | 🔵 | 服务生命周期 | spec §4.1：`start(0)` 返回实际端口；运行中幂等；`stop` 幂等并清会话；`restart`；状态加锁快照；每次 start 新建 `Server`；Host 白名单；失败文案 + `lastError`；单例永不析构 | `src/module_mcp/mcp_service.h/.cpp` |
+| B1-09 | 🔵 | 内置工具（仅 server_info） | `registerBuiltinMcpTools(registry, fetcher)` 使用注入注册表，不读全局；`devdesk_server_info` schema `{"type":"object","properties":{}}`；输出固定顺序 5 项（版本/构建类型/平台/两协议版本/工具数与名字典序）；宏缺失回退 `dev`/`unknown`/`unknown` | `src/module_mcp/mcp_tools_builtin.h/.cpp` |
+| B1-10 | 🔵 | root CMake 接线 | `add_subdirectory(src/module_mcp)`；`DevDesk` 链接 `devdesk_module_mcp`；覆盖率清单加入模块；`DevDesk` include 补 `src/module_mcp` | `CMakeLists.txt` |
+| B1-11 | 🔵 | 测试与登记 | 四个用例文件覆盖 spec §10 批次 1 的四组；用例描述含 ASCII `mcp`；`tests/CMakeLists.txt` 登记（漏登记触发 TIN-10 configure FATAL）、`devdesk_tests` 链接 `devdesk_module_mcp`、include `src/module_mcp` | `tests/test_core/test_mcp_tool_registry.cpp`、`tests/test_modules/test_mcp_session_store.cpp`、`test_mcp_protocol.cpp`、`test_mcp_tools_builtin.cpp`、`tests/CMakeLists.txt` |
+| B1-G | ⬜ | 批次门禁（恢复后重跑 `--filter mcp`） | `bash scripts/build-test-run.sh --filter mcp --no-run` 退出 0；四个新文件用例出现在输出；构建成功行；commit 仅本批 pathspec；台账本批行勾 ✅ | — |
 
 **批次证据（✅ 时回填）**：`<命令原文>` → `<构建结果行 + 筛中用例名 + 退出码 + commit sha>`。
+
+**当前证据（🔵 = 源码已提交、构建/测试未验证）**：源码 `4bccde3c`；冷构建被重启中断，日志 `/tmp/b1-build.log`。
 
 ## 3. B2 抓取能力
 
