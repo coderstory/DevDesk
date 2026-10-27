@@ -402,6 +402,7 @@ using Fetcher = std::function<core::Result<platform::http::Response>(
 10. 输出超过 `max_chars`（默认 60000，钳制 1000..200000）：按 UTF-8 边界截断并附注「（已截断到 N 字符）」。
 11. HTML 转换后没有可见文本 → **非错误**，返回「页面未提取到文本（可能是 JS 渲染页面）」。
 12. 网络失败 → `isError=true`，文本为可读中文 + 底层错误信息。
+13. **TLS 信任根覆盖口（CA 批，平台层口径）**：Windows 默认用系统 ROOT 存储（`CURLSSLOPT_NATIVE_CA`）。覆盖口 = 环境变量 `DEVDESK_CA_BUNDLE`（DevDesk 自有约定，指向 CA bundle 文件）：设置且文件存在 → 改用该文件完整校验（`CURLOPT_CAINFO`，不叠加 NATIVE——换信任根，不弱化校验）；设置但路径不存在 → 请求失败并报「DEVDESK_CA_BUNDLE 指向的文件不存在: <路径>」；未设 → 默认策略不变。注意 libcurl **库**不读 curl CLI 的 `CURL_CA_BUNDLE` 约定（实测 8.x 无效果），覆盖口由代码读 env 显式下发。适用于 `send` 与 `sendStreaming` 全部出站请求（含重定向各跳）。
 
 ### 6.2 `devdesk_server_info`
 

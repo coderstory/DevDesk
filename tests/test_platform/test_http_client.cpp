@@ -1,9 +1,13 @@
 #include "doctest.h"
 #include "test_support.h"
 #include "platform/http_client.h"
+#include "platform/http_client_ca.h"
 #include "platform/http_server.h"
 
 #include <chrono>
+#include <cstdio>
+#include <filesystem>
+#include <fstream>
 #include <cstdlib>
 #include <string>
 #include <thread>
@@ -199,5 +203,49 @@ REGISTER_TEST(http_stream_error_terminal,
     DOCTEST_CHECK(r == platform::http::ChunkResult::Error);
     DOCTEST_CHECK_EQ(err, std::string("test"));
     srv.stop();
+    return true;
+})
+// ── CA 策略(CA 批:DEVDESK_CA_BUNDLE 覆盖口,DevDesk 自有约定)────────
+
+REGISTER_TEST(http_ca_policy_env_unset_defaults_to_native,
+              "http ca: DEVDESK_CA_BUNDLE 未设 → 平台信任根策略(Windows NATIVE_CA 现状不变)", {
+    const auto policy = platform::http::resolveCaPolicy("");
+    DOCTEST_REQUIRE(policy.isOk());
+    DOCTEST_CHECK(policy.value().useNative);
+    DOCTEST_CHECK_EQ(policy.value().caInfo, std::string());
+    return true;
+})
+
+REGISTER_TEST(http_ca_policy_bundle_file_activates_cainfo,
+              "http ca: DEVDESK_CA_BUNDLE 指向存在文件 → Bundle 校验(CAINFO),不叠加 NATIVE", {
+    // 防的事故:NATIVE_CA 依赖本机 ROOT 库,缺根证书(如 example.com 链)即 CURLE 60;
+    // 显式 bundle 是完整校验的替代信任根,不是关校验。
+    const auto bundlePath = test_support::tempConfigFile("http_ca", "bundle");
+    {
+        std::ofstream o(bundlePath, std::ios::binary | std::ios::trunc);
+        o << "-----BEGIN CERTIFICATE-----\nMIIBtest\n-----END CERTIFICATE-----\n";
+    }
+    const auto policy = platform::http::resolveCaPolicy(bundlePath.string());
+    DOCTEST_REQUIRE(policy.isOk());
+    DOCTEST_CHECK_FALSE(policy.value().useNative);
+    DOCTEST_CHECK_EQ(policy.value().caInfo, bundlePath.string());
+    std::filesystem::remove(bundlePath);
+    return true;
+})
+
+REGISTER_TEST(http_ca_policy_missing_file_fails_readable,
+              "http ca: DEVDESK_CA_BUNDLE 指向不存在路径 → 可读失败(含变量名与路径)", {
+    const std::string missing =
+        (std::filesystem::temp_directory_path() /
+         "devdesk_ca_no_such_bundle.pem")
+            .string();
+    std::filesystem::remove(missing);  // 确保不存在
+    const auto policy = platform::http::resolveCaPolicy(missing);
+    DOCTEST_REQUIRE(policy.isFail());
+    DOCTEST_CHECK(policy.errorMessage().find(
+                      std::string(platform::http::kCaBundleEnv)) !=
+                  std::string::npos);
+    DOCTEST_CHECK(policy.errorMessage().find("devdesk_ca_no_such_bundle.pem") !=
+                  std::string::npos);
     return true;
 })

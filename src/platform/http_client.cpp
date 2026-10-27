@@ -6,8 +6,10 @@
 #include <chrono>
 #include <cctype>
 #include <condition_variable>
+#include <cstdlib>
 #include <cstring>
 #include <deque>
+#include <filesystem>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -48,8 +50,32 @@ void globalInit() {
 
 } // anonymous namespace
 
+core::Result<CaPolicy> resolveCaPolicy(const std::string& envValue) {
+    if (envValue.empty()) return core::Result<CaPolicy>::ok(CaPolicy{});
+    if (!std::filesystem::exists(envValue)) {
+        return core::Result<CaPolicy>::fail(
+            core::ErrorCode::Internal,
+            std::string(kCaBundleEnv) + " 指向的文件不存在: " + envValue);
+    }
+    CaPolicy policy;
+    policy.useNative = false;  // bundle 即完整校验：换信任根，不叠加 NATIVE、不弱化
+    policy.caInfo = envValue;
+    return core::Result<CaPolicy>::ok(policy);
+}
+
 core::Result<Response> send(const Request& req) {
     globalInit();
+
+    // CA 策略（CA 批）：DEVDESK_CA_BUNDLE 覆盖口先于句柄创建解析，失败可读报错。
+    const char* caEnv = std::getenv(kCaBundleEnv);
+    const auto caPolicy = resolveCaPolicy(caEnv != nullptr ? caEnv : "");
+    if (caPolicy.isFail()) {
+        LOG_ERROR(std::string(kCaBundleEnv) + " 解析失败: " +
+                  caPolicy.errorMessage());
+        return core::Result<Response>::fail(core::ErrorCode::Internal,
+                                            caPolicy.errorMessage());
+    }
+
     Response resp;
 
     CURL* curl = curl_easy_init();
@@ -78,7 +104,12 @@ core::Result<Response> send(const Request& req) {
     curl_easy_setopt(curl, CURLOPT_HEADERDATA, &resp);
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, req.verifyTls ? 1L : 0L);
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, req.verifyTls ? 2L : 0L);
-    applyCaOptions(curl);
+    if (caPolicy.value().useNative) {
+        applyCaOptions(curl);
+    } else {
+        // DEVDESK_CA_BUNDLE 覆盖口：bundle 即完整校验（不叠加 NATIVE）
+        curl_easy_setopt(curl, CURLOPT_CAINFO, caPolicy.value().caInfo.c_str());
+    }
 
     // DELETE 也要带 body：GitHub Contents API 的删除要求 JSON 体（message + sha）。
     // 设 POSTFIELDS 会把内部方法改成 POST，但 CURLOPT_CUSTOMREQUEST 已把方法串钉成 req.method，
@@ -373,6 +404,16 @@ bool StreamingResponse::isPaused() const {
 core::Result<std::unique_ptr<StreamingResponse>> sendStreaming(const Request& req) {
     globalInit();
 
+    // CA 策略（CA 批）：先于句柄创建解析，失败可读报错（与 send 同口径）。
+    const char* caEnv = std::getenv(kCaBundleEnv);
+    const auto caPolicy = resolveCaPolicy(caEnv != nullptr ? caEnv : "");
+    if (caPolicy.isFail()) {
+        LOG_ERROR(std::string(kCaBundleEnv) + " 解析失败: " +
+                  caPolicy.errorMessage());
+        return core::Result<std::unique_ptr<StreamingResponse>>::fail(
+            core::ErrorCode::Internal, caPolicy.errorMessage());
+    }
+
     auto sr = std::unique_ptr<StreamingResponse>(new StreamingResponse());
 
     if (req.timeoutMs > 0) {
@@ -410,7 +451,12 @@ core::Result<std::unique_ptr<StreamingResponse>> sendStreaming(const Request& re
     curl_easy_setopt(curl, CURLOPT_XFERINFODATA, &sr->impl_->cancelled);
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, req.verifyTls ? 1L : 0L);
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, req.verifyTls ? 2L : 0L);
-    applyCaOptions(curl);
+    if (caPolicy.value().useNative) {
+        applyCaOptions(curl);
+    } else {
+        // DEVDESK_CA_BUNDLE 覆盖口：bundle 即完整校验（不叠加 NATIVE）
+        curl_easy_setopt(curl, CURLOPT_CAINFO, caPolicy.value().caInfo.c_str());
+    }
 
     if (req.method == "POST" || req.method == "PUT" || req.method == "PATCH") {
         sr->impl_->requestBody = req.body;  // 保活：见 Impl::requestBody 注释

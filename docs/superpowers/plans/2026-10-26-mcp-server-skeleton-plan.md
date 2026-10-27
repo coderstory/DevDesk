@@ -200,3 +200,18 @@
 | PX-G | ✅ | 批次门禁 | 一次增量构建 + `--filter mcp` 退出 0 + `--filter settings` 不回归（计数见批次证据） | — |
 
 **批次证据（✅ 回填 2026-10-27，builder）**：红 = 接口脚手架（ProxyOptions/Request.proxy/schema）落地后行为全缺，fetch 过滤 46 筛中 6 红（命中/落空/显式过/显式败/冲突/形态矩阵全红，schema 与 useProxy=false 两例按定义绿）；实现后 fetch 46/46、tools builtin 6/6、`--filter mcp` 112+8=120/120 退出 0、`--filter settings` 113/113、std include 守卫 492 文件绿。期间 EUI-NEO 被并行会话改入中途态致 2 次构建红（`jellyDeepenedShadow` 未声明，与本批零交集），等待重试后收敛。commit 见本批 hash。
+
+## 9. CA 批（代理参数批同期，tester E2E 证据触发的缺陷修复）
+
+**缺陷**：Windows CA 策略（CURLSSLOPT_NATIVE_CA）在本机 ROOT 库缺部分根证书时校验失败（CURLE 60，example.com 实测被拦）；且 `http_client_ca_win.cpp` 旧注释「CURL_CA_BUNDLE libcurl 自己会读」不成立——该 env 是 curl 命令行工具约定，libcurl 库不读（实测 8.x 无效果）。
+
+**修法（主会话拍板）**：默认 NATIVE_CA 不变；新增显式环境变量 `DEVDESK_CA_BUNDLE`（DevDesk 自有约定）：代码读 env → 文件存在 → `CURLOPT_CAINFO` 显式设置且不再叠加 NATIVE（换信任根，不弱化校验）；路径不存在 → 可读报错（含变量名与路径）。注释口径同步修正。
+
+| ID | 状态 | 条目 | 验收判据（可核销） | 涉及文件 |
+|---|---|---|---|---|
+| CA-01 | ✅ | 策略解析 | `resolveCaPolicy`（平台无关纯函数，单测直测）：未设 → Native；存在文件 → Bundle 不叠 NATIVE；不存在 → fail 含变量名与路径 | `http_client_ca.h`、`http_client.cpp` |
+| CA-02 | ✅ | 两调用点接入 | `send` 与 `sendStreaming` 均先解析后套用：Native → `applyCaOptions`（现状不变）；Bundle → `CURLOPT_CAINFO`；解析失败 → 可读 fail（流式先于句柄创建） | `http_client.cpp` |
+| CA-03 | ✅ | 注释口径修正 | `http_client_ca_win.cpp`/`http_client_ca.h` 旧「CURL_CA_BUNDLE libcurl 自己会读」更正为 DevDesk 自有约定 + 实测结论 | `http_client_ca_win.cpp`、`http_client_ca.h` |
+| CA-G | ✅ | 批次门禁 | `--filter "http ca"` 3 例全绿 + `--filter http` 23/23 不回归；批级计数随攒批终门禁（见批次证据） | — |
+
+**批次证据（✅ 回填 2026-10-27，builder）**：红 = 用例先落（`resolveCaPolicy` 符号未声明，编译期红）；实现后 `--filter "http ca"` 3/3（未设→Native、存在文件→Bundle 不叠 NATIVE、不存在→fail 含变量名与路径）、`--filter http` 23/23；攒批终门禁 `--filter mcp` 120/120、`--filter settings` 113/113 均退出 0，std include 守卫 492 文件绿。example.com 抓取恢复验证留给后续 E2E（用含本批二进制 + `DEVDESK_CA_BUNDLE=<msys2 ca-bundle>`）。
