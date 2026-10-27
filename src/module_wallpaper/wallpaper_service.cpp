@@ -131,9 +131,11 @@ void WallpaperService::stop() {
         // 使在飞扫描结果失效：否则它可能在 host.stop 之后才把结果 apply 回来。
         scanGeneration_.fetch_add(1, std::memory_order_relaxed);
         stopPlaybackLocked();
+        // hostStarted_ 与 started_ 同一纪律：只在 mu_ 内写——在飞 tick/scan 持
+        // mu_ 读此位，锁外写是数据竞争（审计 F-2）。
+        hostStarted_ = false;
     }
     if (host_ != nullptr) host_->stop();
-    hostStarted_ = false;
     scanWaitCv_.notify_all();
     tickWaitCv_.notify_all();
     if (scanThread_.joinable()) scanThread_.join();

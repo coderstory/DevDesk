@@ -5,7 +5,8 @@
 // 每条用例注明防的事故；REGISTER_TEST 描述串必须含 ASCII "wallpaper"（--filter 只认 ASCII）。
 // 跨文件前提（节点 id 以 wallpaper_ui.cpp 文件头为准）：
 //   - 页面根 wallpaper.page（左右 padding 32 / 底部 32 / 区块间距 16）。
-//   - 卡片实色 cardFrame：1px borderDefault + 圆角 12（t.sizes.radiusLarge）。
+//   - 卡片表面 cardFrame：1px borderDefault + 圆角 12（t.sizes.radiusLarge）的
+//     0.92 半透表面（非玻璃混合层；sameColor 只比 RGB，透明度由组件自身契约管）。
 //   - 文案只来自快照/presentation：本文件用「快照哨兵字符串」证明 UI 不回拼状态文案。
 #include "doctest.h"
 #include "test_support.h"
@@ -114,19 +115,20 @@ bool contains(const std::string& haystack, const std::string& needle) {
     return haystack.find(needle) != std::string::npos;
 }
 
+// 只比 RGB：卡片表面透明度（cardFrame 0.92）由组件自身契约管，不在此重复钉。
 bool sameColor(const eui::Color& a, const eui::Color& b) {
     return std::fabs(a.r - b.r) < 0.002f && std::fabs(a.g - b.g) < 0.002f &&
            std::fabs(a.b - b.b) < 0.002f;
 }
 
-float rightOf(const eui::Element* element) {
+float rightOf(const core::dsl::Element* element) {
     return element == nullptr ? 0.0f
                               : element->frame.x + element->frame.width;
 }
 
 // 全树遍历：用于「唯一来源分段」「不存在禁用入口」「所有元素不越界」这类整树断言。
-void walkElements(const eui::Element& element,
-                  const std::function<void(const eui::Element&)>& fn) {
+void walkElements(const core::dsl::Element& element,
+                  const std::function<void(const core::dsl::Element&)>& fn) {
     fn(element);
     for (const auto& child : element.children) {
         walkElements(*child, fn);
@@ -134,16 +136,27 @@ void walkElements(const eui::Element& element,
 }
 
 void walkTree(const eui::Ui& ui,
-              const std::function<void(const eui::Element&)>& fn) {
+              const std::function<void(const core::dsl::Element&)>& fn) {
     for (const auto& root : ui.roots()) {
         walkElements(*root, fn);
     }
 }
 
+// composeFrame 以 begin("wallpaper_ui_test") 组帧：element.id 存的是 resolveId
+// 后的页面级全名，而 Ui::normalizeScopeId 为私有——这里等价剥页前缀还原模块内
+// id，供整树计数 / 前缀豁免类断言使用。
+std::string scopedId(const core::dsl::Element& element) {
+    const std::string kPagePrefix = "wallpaper_ui_test.";
+    if (element.id.rfind(kPagePrefix, 0) == 0) {
+        return element.id.substr(kPagePrefix.size());
+    }
+    return element.id;
+}
+
 int countExactId(const eui::Ui& ui, const std::string& id) {
     int count = 0;
-    walkTree(ui, [&](const eui::Element& element) {
-        if (element.id == id) ++count;
+    walkTree(ui, [&](const core::dsl::Element& element) {
+        if (scopedId(element) == id) ++count;
     });
     return count;
 }
@@ -260,7 +273,8 @@ REGISTER_TEST(wallpaper_ui_geometry_1600,
     return true;
 })
 
-// 防：最小窗（页区 792×600）首屏出现纵向滚动条（需求 §7.5），或卡片越出视口。
+// 防：最小窗（页区 792×600）首屏出现纵向滚动条（需求 §7.5，默认字号档口径；
+// 130% 档显式允许滚动见 wallpaper_ui_fontscale_130_scroll），或卡片越出视口。
 REGISTER_TEST(wallpaper_ui_min_window_no_scroll,
               "wallpaper_ui: 1000×640 页区 792×600 首屏零纵向滚动条（视频/图片、播放/片库/空态）", {
     struct Scenario {
@@ -302,12 +316,13 @@ REGISTER_TEST(wallpaper_ui_min_window_no_scroll,
         DOCTEST_REQUIRE(scroll != nullptr);
         const float viewportBottom = scroll->frame.y + scroll->frame.height;
         std::vector<std::string> cardIds;
-        walkTree(ui, [&](const eui::Element& element) {
-            if (element.id.rfind("wallpaper.card.", 0) == 0 &&
-                element.id.find(".bg") == std::string::npos &&
-                element.id.find(".title") == std::string::npos &&
-                element.id.find(".hint") == std::string::npos) {
-                cardIds.push_back(element.id);
+        walkTree(ui, [&](const core::dsl::Element& element) {
+            const std::string id = scopedId(element);
+            if (id.rfind("wallpaper.card.", 0) == 0 &&
+                id.find(".bg") == std::string::npos &&
+                id.find(".title") == std::string::npos &&
+                id.find(".hint") == std::string::npos) {
+                cardIds.push_back(id);
             }
         });
         for (const std::string& id : cardIds) {
@@ -624,9 +639,11 @@ REGISTER_TEST(wallpaper_ui_fold_groups,
     return true;
 })
 
-// 防：单循环 / 单张不变仍能改间隔（禁用失效）、间隔档位与秒数映射错、模式标签串来源。
+// 防：单循环 / 单张不变仍能改间隔（禁用失效）、遮罩被 dropdown 子树 z 序压制
+// （审计 F2：存在性断言是假绿，必须钉 z 覆盖 + 遮罩帧覆盖字段 + 点击门闩）、
+// 间隔档位与秒数映射错、模式标签串来源。
 REGISTER_TEST(wallpaper_ui_interval_and_modes,
-              "wallpaper_ui: 单循环/单张不变禁用间隔；档位 5/10/15/30/60/120；模式标签随来源", {
+              "wallpaper_ui: 单循环/单张不变禁用间隔（遮罩 z 覆盖+阻断）；档位 5/10/15/30/60/120；模式标签随来源", {
     {
         wp::UiState state;
         eui::Ui ui;
@@ -635,7 +652,27 @@ REGISTER_TEST(wallpaper_ui_interval_and_modes,
             wp::PlayMode::LoopSingle);
         composeFrame(ui, kPage1600x1000, snapshot, {}, state);
         DOCTEST_CHECK(ui.find("wallpaper.interval.dropdown") != nullptr);
-        DOCTEST_CHECK(ui.find("wallpaper.interval.dropdown.disabled") != nullptr);
+        const auto* mask = ui.find("wallpaper.interval.dropdown.disabled");
+        const auto* dropdownRoot = ui.find("wallpaper.interval.dropdown");
+        const auto* field = ui.find("wallpaper.interval.dropdown.field");
+        DOCTEST_REQUIRE(mask != nullptr);
+        DOCTEST_REQUIRE(dropdownRoot != nullptr);
+        DOCTEST_REQUIRE(field != nullptr);
+        // 变异敏感（审计 F3）：遮罩 zIndex 必须 > dropdown 根 stack 恒定档——
+        // 否则字段子树按 subtreeMaxZIndex 后绘 + 先命中，遮罩不可见且点击穿透。
+        // 回退 wallpaper_ui.cpp 的 zIndex(25) 本断言即红。
+        DOCTEST_CHECK(mask->zIndex > dropdownRoot->zIndex);
+        DOCTEST_CHECK(mask->interactive);  // blockPointer：命中先落遮罩
+        // 遮罩帧必须完整盖住字段帧（视觉遮蔽 + 命中区域覆盖）。
+        DOCTEST_CHECK(mask->frame.x <= field->frame.x + 0.5f);
+        DOCTEST_CHECK(mask->frame.y <= field->frame.y + 0.5f);
+        DOCTEST_CHECK(mask->frame.x + mask->frame.width >=
+                      field->frame.x + field->frame.width - 0.5f);
+        DOCTEST_CHECK(mask->frame.y + mask->frame.height >=
+                      field->frame.y + field->frame.height - 0.5f);
+        // 失效门闩：字段点击经 onOpenChange 也打不开弹层（state 停 false）。
+        DOCTEST_CHECK(fireClick(ui, "wallpaper.interval.dropdown.field"));
+        DOCTEST_CHECK_FALSE(state.intervalOpen);
         DOCTEST_CHECK(contains(
             elementText(ui, "wallpaper.card.interval.hint"), "间隔不可用"));
         DOCTEST_CHECK_EQ(elementText(ui, "wallpaper.mode.0.text"),
@@ -666,8 +703,23 @@ REGISTER_TEST(wallpaper_ui_interval_and_modes,
         DOCTEST_CHECK_EQ(
             elementText(ui, "wallpaper.interval.dropdown.item.label.5"),
             std::string("2 小时"));
-        DOCTEST_CHECK(fireClick(ui, "wallpaper.interval.dropdown.item.3"));
+        // 真实开合流（审计 F3 缺口②）：field 点击 → onOpenChange → 下一帧 open
+        //（弹层升 900 档）→ item 点击 → onChange + 关弹层。直点 item 绕过 open
+        // 门的旧形态只是接线证明，不证明状态机。
+        const auto* popupClosed =
+            ui.find("wallpaper.interval.dropdown.popup");
+        DOCTEST_REQUIRE(popupClosed != nullptr);
+        DOCTEST_CHECK_EQ(popupClosed->zIndex, 0);  // 收起态弹层归 0
+        DOCTEST_CHECK(fireClick(ui, "wallpaper.interval.dropdown.field"));
+        DOCTEST_CHECK(state.intervalOpen);
+        eui::Ui openUi;
+        composeFrame(openUi, kPage1600x1000, snapshot, actions, state);
+        const auto* popupOpen = openUi.find("wallpaper.interval.dropdown.popup");
+        DOCTEST_REQUIRE(popupOpen != nullptr);
+        DOCTEST_CHECK_EQ(popupOpen->zIndex, 900);  // 展开态弹层升 900
+        DOCTEST_CHECK(fireClick(openUi, "wallpaper.interval.dropdown.item.3"));
         DOCTEST_CHECK_EQ(requestedSeconds, 1800);
+        DOCTEST_CHECK_FALSE(state.intervalOpen);  // item 点击即收弹层
     }
     {
         wp::UiState state;
@@ -725,16 +777,14 @@ REGISTER_TEST(wallpaper_ui_image_and_library_cards,
     DOCTEST_CHECK(libraryUi.find("wallpaper.card.formats") == nullptr);
     DOCTEST_CHECK(libraryUi.find("wallpaper.card.resolution") != nullptr);
     DOCTEST_CHECK(libraryUi.find("wallpaper.card.fit") != nullptr);
+    // 统计只保留"目录内图片"一格：passing 恒 total、filtered 恒 0，参与/低于
+    // 两格是虚假宣称（审计 F1；哨兵见 wallpaper_ui_no_filter_claims）。
     DOCTEST_CHECK(libraryUi.find("wallpaper.folder.stat.total") != nullptr);
-    DOCTEST_CHECK(libraryUi.find("wallpaper.folder.stat.passing") != nullptr);
-    DOCTEST_CHECK(libraryUi.find("wallpaper.folder.stat.filtered") != nullptr);
+    DOCTEST_CHECK(libraryUi.find("wallpaper.folder.stat.passing") == nullptr);
+    DOCTEST_CHECK(libraryUi.find("wallpaper.folder.stat.filtered") == nullptr);
     DOCTEST_CHECK(libraryUi.find("wallpaper.folder.stat.videos") == nullptr);
     DOCTEST_CHECK_EQ(elementText(libraryUi, "wallpaper.folder.stat.total"),
                      std::string("24"));
-    DOCTEST_CHECK_EQ(elementText(libraryUi, "wallpaper.folder.stat.passing"),
-                     std::string("18"));
-    DOCTEST_CHECK_EQ(elementText(libraryUi, "wallpaper.folder.stat.filtered"),
-                     std::string("6"));
     DOCTEST_CHECK(fireClick(libraryUi, "wallpaper.resolution.2"));
     DOCTEST_CHECK_EQ(requestedPixels, 8294400);
     DOCTEST_CHECK(fireClick(libraryUi, "wallpaper.fit.1"));
@@ -858,40 +908,123 @@ REGISTER_TEST(wallpaper_ui_no_maintenance_entry,
     eui::Ui libraryUi;
     composeFrame(libraryUi, kPage1600x1000, snapshot, {}, state);
     for (eui::Ui* target : {&ui, &libraryUi}) {
-        walkTree(*target, [&](const eui::Element& element) {
+        // 断言宏展开含 return false，只允许出现在返回 bool 的用例体（doctest.h
+        // 头注第 3 条）；void 遍历回调里违规先收集，出循环后由用例体统一断言。
+        std::vector<std::string> violations;
+        walkTree(*target, [&](const core::dsl::Element& element) {
+            const std::string id = scopedId(element);
             const std::string lower = [&] {
-                std::string out = element.id;
+                std::string out = id;
                 std::transform(out.begin(), out.end(), out.begin(),
                                [](unsigned char c) {
                                    return static_cast<char>(std::tolower(c));
                                });
                 return out;
             }();
-            DOCTEST_CHECK_MESSAGE(
-                !contains(lower, "delete") && !contains(lower, "remove") &&
-                    !contains(lower, "maintain") && !contains(lower, "queue") &&
-                    !contains(lower, "transcode"),
-                "出现禁用入口 id: " + element.id);
-            DOCTEST_CHECK_MESSAGE(
-                !contains(element.text, "删除") &&
-                    !contains(element.text, "维护") &&
-                    !contains(element.text, "队列"),
-                "出现禁用入口文案: " + element.text);
+            if (contains(lower, "delete") || contains(lower, "remove") ||
+                contains(lower, "maintain") || contains(lower, "queue") ||
+                contains(lower, "transcode")) {
+                violations.push_back("出现禁用入口 id: " + element.id);
+            }
+            if (contains(element.text, "删除") ||
+                contains(element.text, "维护") ||
+                contains(element.text, "队列")) {
+                violations.push_back("出现禁用入口文案: " + element.text);
+            }
             // 不显示文件名：所有文本里不应出现媒体扩展名（格式卡里的
             // ".mp4 / .mov / .m4v" 是格式说明而非文件名，单独放行 id 前缀）。
-            if (element.id.rfind("wallpaper.formats.", 0) != 0 &&
-                element.id.rfind("wallpaper.card.formats.", 0) != 0 &&
-                element.id != "wallpaper.folder.hint" &&
-                element.id != "wallpaper.card.formats.hint" &&
-                element.id != "wallpaper.empty.support" &&
-                element.id != "wallpaper.empty.body") {
-                DOCTEST_CHECK_MESSAGE(
-                    !contains(element.text, ".mp4") &&
-                        !contains(element.text, ".mov") &&
-                        !contains(element.text, ".m4v"),
-                    "疑似显示文件名: " + element.text);
+            if (id.rfind("wallpaper.formats.", 0) != 0 &&
+                id.rfind("wallpaper.card.formats.", 0) != 0 &&
+                id != "wallpaper.folder.hint" &&
+                id != "wallpaper.card.formats.hint" &&
+                id != "wallpaper.empty.support" &&
+                id != "wallpaper.empty.body") {
+                if (contains(element.text, ".mp4") ||
+                    contains(element.text, ".mov") ||
+                    contains(element.text, ".m4v")) {
+                    violations.push_back("疑似显示文件名: " + element.text);
+                }
             }
         });
+        std::string joined;
+        for (const auto& violation : violations) {
+            if (!joined.empty()) joined += "; ";
+            joined += violation;
+        }
+        DOCTEST_CHECK_MESSAGE(violations.empty(), joined);
     }
+    return true;
+})
+
+// 防（审计 F1/F3 缺口①）：图片像素档过滤未接入（image_library 对 minPixels 显式
+// 忽略、passing==total、filtered 恒 0），UI 固定文案/统计格不得宣称"已按档位过滤"。
+// 任何宣称点回潮（hint 加回"低于档位不参与轮播"、复活参与/低于统计格）本用例即红。
+REGISTER_TEST(wallpaper_ui_no_filter_claims,
+              "wallpaper_ui: 片库图片不得宣称像素档过滤已生效（只留目录内图片一格 + 后续版本口径）", {
+    wp::UiState state;
+    state.tab = 1;
+    const wp::WallpaperSnapshot snapshot = makeSnapshot(
+        wp::WallpaperKind::Image, wp::Availability::Playing,
+        wp::PlayMode::LoopList);
+    eui::Ui ui;
+    composeFrame(ui, kPage1600x1000, snapshot, {}, state);
+
+    // 统计格缺席断言：参与/低于两格画出来即是宣称。
+    DOCTEST_CHECK(ui.find("wallpaper.folder.stat.total") != nullptr);
+    DOCTEST_CHECK(ui.find("wallpaper.folder.stat.passing") == nullptr);
+    DOCTEST_CHECK(ui.find("wallpaper.folder.stat.filtered") == nullptr);
+
+    // 全树文案哨兵："不参与轮播 / 低于档位"= 过滤已生效的宣称，禁止出现。
+    std::vector<std::string> violations;
+    walkTree(ui, [&](const core::dsl::Element& element) {
+        if (element.text.empty()) return;
+        if (contains(element.text, "不参与轮播") ||
+            contains(element.text, "低于档位")) {
+            violations.push_back(element.text);
+        }
+    });
+    std::string joined;
+    for (const auto& violation : violations) {
+        if (!joined.empty()) joined += "; ";
+        joined += violation;
+    }
+    DOCTEST_CHECK_MESSAGE(violations.empty(),
+                          "宣称过滤已生效的文案回潮: " + joined);
+
+    // 口径必须与 presentation::emptyStateCopy 一致：筛选待后续版本 + 全部参与。
+    const std::string resolutionHintText =
+        elementText(ui, "wallpaper.card.resolution.hint");
+    DOCTEST_CHECK(contains(resolutionHintText, "后续版本"));
+    DOCTEST_CHECK(contains(resolutionHintText, "全部图片参与轮播"));
+    DOCTEST_CHECK(contains(elementText(ui, "wallpaper.folder.hint"),
+                           "后续版本"));
+    return true;
+})
+
+// 防（审计 F6）："首屏无滚动条"只承诺默认字号档。130% 档卡片高随 roundFs 放大
+//（内容 ≈521 > 456）必出滚动条——把真实行为钉成显式口径：改成"全档无滚动"的
+// 优化或卡片高度公式改动都会在此红（数值断言钉 roundFs 换算）。
+REGISTER_TEST(wallpaper_ui_fontscale_130_scroll,
+              "wallpaper_ui: 130% 字号档 1000×640 首屏显式允许滚动（卡片高 135/192/73 同步缩放）", {
+    ::core::theme::setFontScale(1.3f);
+    wp::UiState state;
+    const wp::WallpaperSnapshot snapshot = makeSnapshot(
+        wp::WallpaperKind::Video, wp::Availability::Playing,
+        wp::PlayMode::LoopList);
+    eui::Ui ui;
+    composeFrame(ui, kPage1000x640, snapshot, {}, state);
+    DOCTEST_REQUIRE(ui.find("wallpaper.scroll") != nullptr);
+    DOCTEST_CHECK_MESSAGE(ui.find("wallpaper.scroll.scroll") != nullptr,
+                          "130% 档首屏应出现滚动条（显式口径：仅默认档承诺无滚动）");
+    const auto* status = ui.find("wallpaper.card.status");
+    DOCTEST_REQUIRE(status != nullptr);
+    DOCTEST_CHECK_EQ(status->frame.height, 135.0f);  // round(104 × 1.3)
+    const auto* modeCard = ui.find("wallpaper.card.mode");
+    DOCTEST_REQUIRE(modeCard != nullptr);
+    DOCTEST_CHECK_EQ(modeCard->frame.height, 192.0f);  // round(148 × 1.3)
+    const auto* effects = ui.find("wallpaper.card.speed");
+    DOCTEST_REQUIRE(effects != nullptr);
+    DOCTEST_CHECK_EQ(effects->frame.height, 73.0f);  // round(56 × 1.3)
+    ::core::theme::setFontScale(1.0f);  // 恢复默认档：不污染同进程后续用例
     return true;
 })

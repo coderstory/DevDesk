@@ -681,6 +681,9 @@ REGISTER_TEST(wallpaper_core_service, "wallpaper core: service start/扫描/选�
     service.stop();
     const auto stopElapsed = std::chrono::steady_clock::now() - stopStarted;
     DOCTEST_CHECK(stopElapsed < std::chrono::seconds(3));
+    // 防（审计 F-7）：停止链必须真的到达播放器——删掉 stopPlaybackLocked 里的
+    // player_->stop() 时本断言红。
+    DOCTEST_CHECK(hasPlayerCall(*playerRaw, "stop"));
     service.stop();
     return true;
 })

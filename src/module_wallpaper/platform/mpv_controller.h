@@ -20,6 +20,7 @@
 #include <filesystem>
 #include <memory>
 #include <string>
+#include <system_error>
 #include <vector>
 
 namespace module::wallpaper {
@@ -237,8 +238,23 @@ public:
     std::string takeError();
 
 private:
+#if defined(_WIN32)
+    friend struct MpvControllerTestAccess;  // 见文件尾注入缝契约
+#endif
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };
+
+#if defined(_WIN32)
+// 仅测试注入缝（tests/test_wallpaper_platform.cpp 的 IPC 死锁回归网用，生产代码
+// 不得调用）：把测试自建的管道客户端句柄与伪进程句柄（未复位的事件即可——
+// TerminateProcess 对其失败被忽略、wait 永不信号，使 stop 梯子走满有界路径而
+// 不引入真子进程）注入控制器，模拟「spawn 成功 + 对端连上后拒绝读」。
+// 注入即所有权移交：句柄由控制器 shutdown 路径统一关闭。
+struct MpvControllerTestAccess {
+    static void attachIpcForTest(MpvController& controller, void* pipeClient,
+                                 void* fakeProcess);
+};
+#endif
 
 } // namespace module::wallpaper
