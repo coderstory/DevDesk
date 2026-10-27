@@ -388,6 +388,7 @@ main → 8 个 Router 页面 (home / markdown / todo / claude_proxy / agent / wa
 
 ### 审计与决策口径
 
+- **调研 / 分析成果归档与索引（2026-10-27 定）**：researcher / investigator / auditor 落盘的每份文档必须同步登记进 [`docs/RESEARCH-INDEX.md`](docs/RESEARCH-INDEX.md)（单一登记源：日期 | 类型 | 主题 | 一句话结论 | 路径）；一切调研 / 分析类派单前先查该索引（查重先行），已覆盖不重复调研、不重复联网。战略基线级调研报告（`docs/strategy/`）仍由 `00-总览索引.md` 管，两册分工不重复登记。
 - **全量代码审计必须分片 + 专业角色**（2026-09-27 定）：按片（core+platform / claude_proxy / markdown / todo+home+settings / pet+app 层+构建 / tests+基建）各派一个**只读**子任务，产结构化 JSON（`docs/superpowers/plans/2026-09-27-full-audit-<area>.json`），最后合并 + 主会话抽验。**不是**一条线扫全仓——单线全仓既漏片、又没人对"设计质量"发表意见。
 - **审计四轴**：主线是**架构 / 设计模式 / 面向对象 / 可维护性**；语言级缺陷（UB / 并发 / 泄漏）降为次要维度。两条角色线各自完整过一遍：**C++20 系统开发专家 + 软件架构师**，findings 加 `lens` 字段。
 - **findings 口径**：`impact` 写**维护成本 / 演进代价**（如"加一个新 provider 字段要改几处""改一处的波及面"），severity 按"多难维护 / 多难演进"定，**不按"会不会崩"**。去重时对照 `docs/superpowers/plans/2026-09-27-expert-audit.md` 标 `already_registered`；只修确认项，且走"只修需求交付物缺陷"的范围纪律。
