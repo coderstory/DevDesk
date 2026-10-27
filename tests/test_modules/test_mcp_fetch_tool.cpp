@@ -1,0 +1,454 @@
+// web_fetch_markdown 工具(B2,spec §6.1 与 §10 批次 2):mock fetcher 全分支。
+// 硬约束逐条落测试:SSRF 字面量每跳、总时限跨跳、charset 白名单、2 MiB 截断、
+// max_chars 钳制与 UTF-8 边界、file: 不触网。描述含 ASCII "mcp" 供定向。
+#include "doctest.h"
+
+#include <chrono>
+#include <cstddef>
+#include <functional>
+#include <map>
+#include <string>
+#include <thread>
+#include <utility>
+#include <vector>
+
+#include "core/mcp_tool.h"
+#include "module_mcp/mcp_tools_builtin.h"
+#include "platform/http_client.h"
+#include "platform/json.h"
+
+namespace {
+
+using Response = platform::http::Response;
+
+Response makeResponse(int status, std::string body,
+                      std::map<std::string, std::string> headers = {}) {
+    Response r;
+    r.statusCode = status;
+    r.body = std::move(body);
+    r.headers = std::move(headers);
+    return r;
+}
+
+Response htmlOk(std::string body) {
+    return makeResponse(200, std::move(body),
+                        {{"Content-Type", "text/html; charset=utf-8"}});
+}
+
+// 脚本化 mock:按序回放响应,记录每个请求(URL / 每跳 timeout),可选每跳延迟
+class ScriptedFetcher {
+public:
+    explicit ScriptedFetcher(std::vector<Response> responses)
+        : responses_(std::move(responses)) {}
+
+    core::Result<Response> operator()(const platform::http::Request& request) {
+        requests_.push_back(request);
+        if (sleepMs_ > 0) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(sleepMs_));
+        }
+        if (cursor_ >= responses_.size()) {
+            Response exhausted;
+            exhausted.networkError = true;
+            exhausted.errorMessage = "mock script exhausted";
+            return core::Result<Response>::ok(exhausted);
+        }
+        return core::Result<Response>::ok(responses_.at(cursor_++));
+    }
+
+    void setSleepMs(int ms) { sleepMs_ = ms; }
+    const std::vector<platform::http::Request>& requests() const { return requests_; }
+    std::size_t requestCount() const { return requests_.size(); }
+
+private:
+    std::vector<Response> responses_;
+    std::vector<platform::http::Request> requests_;
+    std::size_t cursor_ = 0;
+    int sleepMs_ = 0;
+};
+
+// 注册到局部注册表后执行工具(与生产同一注册入口)
+core::Result<core::mcp::ToolResult> runFetch(core::mcp::McpToolRegistry& registry,
+                                             const std::string& argsJson) {
+    const auto found = registry.find("web_fetch_markdown");
+    if (found.isFail()) {
+        return core::Result<core::mcp::ToolResult>::fail(core::ErrorCode::NotFound,
+                                                         "web_fetch_markdown 未注册");
+    }
+    return found.value()->execute(argsJson);
+}
+
+std::string fetchText(core::mcp::McpToolRegistry& registry, const std::string& url,
+                      const std::string& extraArgs = "") {
+    const auto result =
+        runFetch(registry, "{\"url\":\"" + url + "\"" + extraArgs + "}");
+    if (result.isFail()) return "<infra-fail>";
+    return result.value().text;
+}
+
+} // namespace
+
+REGISTER_TEST(mcp_fetch_registered_with_server_info,
+              "mcp fetch: web_fetch_markdown 与 server_info 一同注册、schema 合法", {
+    core::mcp::McpToolRegistry registry;
+    module::mcp::registerBuiltinMcpTools(
+        registry, [](const platform::http::Request&) {
+            return core::Result<Response>::ok(Response{});
+        });
+    DOCTEST_CHECK_EQ(registry.size(), std::size_t{2});
+    const auto found = registry.find("web_fetch_markdown");
+    DOCTEST_REQUIRE(found.isOk());
+    const auto schema = platform::json::parse(found.value()->inputSchemaJson());
+    DOCTEST_REQUIRE(schema.isOk());
+    DOCTEST_REQUIRE(schema.value().isObject());
+    const auto properties = schema.value().asObject().get("properties").asObject();
+    DOCTEST_CHECK(properties.has("url"));
+    DOCTEST_CHECK(properties.has("max_chars"));
+    const auto required = schema.value().asObject().get("required");
+    DOCTEST_REQUIRE(required.isArray());
+    DOCTEST_CHECK(required.size() == 1);
+    return true;
+})
+
+REGISTER_TEST(mcp_fetch_html_converted_to_markdown,
+              "mcp fetch: text/html 转 Markdown;文本含引号原样返回(转义归协议层)", {
+    ScriptedFetcher script({htmlOk("<h1>标题</h1><p>说 \"引号\" & <b>粗</b></p>")});
+    core::mcp::McpToolRegistry registry;
+    module::mcp::registerBuiltinMcpTools(registry, std::ref(script));
+    const std::string text = fetchText(registry, "https://e.test/page");
+    DOCTEST_CHECK(text.find("# 标题") != std::string::npos);
+    DOCTEST_CHECK(text.find("说 \"引号\" & **粗**") != std::string::npos);
+    return true;
+})
+
+REGISTER_TEST(mcp_fetch_text_plain_passthrough_exact,
+              "mcp fetch: text/plain 原文返回,工具层不做二次加工", {
+    ScriptedFetcher script(
+        {makeResponse(200, "line1\nline2", {{"Content-Type", "text/plain"}})});
+    core::mcp::McpToolRegistry registry;
+    module::mcp::registerBuiltinMcpTools(registry, std::ref(script));
+    DOCTEST_CHECK_EQ(fetchText(registry, "http://a.test/t.txt"), std::string("line1\nline2"));
+    return true;
+})
+
+REGISTER_TEST(mcp_fetch_missing_content_type_treated_as_text,
+              "mcp fetch: 缺失 Content-Type 按文本(spec §6.1-7)", {
+    ScriptedFetcher script({makeResponse(200, "raw body")});
+    core::mcp::McpToolRegistry registry;
+    module::mcp::registerBuiltinMcpTools(registry, std::ref(script));
+    DOCTEST_CHECK_EQ(fetchText(registry, "http://a.test/n"), std::string("raw body"));
+    return true;
+})
+
+REGISTER_TEST(mcp_fetch_unsupported_content_type_rejected,
+              "mcp fetch: 二进制/未知 Content-Type 拒绝(spec §6.1-7)", {
+    for (const char* type : {"application/octet-stream", "image/png"}) {
+        ScriptedFetcher script({makeResponse(200, "binary", {{"Content-Type", type}})});
+        core::mcp::McpToolRegistry registry;
+        module::mcp::registerBuiltinMcpTools(registry, std::ref(script));
+        const auto result = runFetch(registry, "{\"url\":\"http://a.test/b\"}");
+        DOCTEST_REQUIRE(result.isOk());
+        DOCTEST_CHECK(result.value().isError);
+        DOCTEST_CHECK(result.value().text.find("不支持的内容类型") != std::string::npos);
+    }
+    return true;
+})
+
+REGISTER_TEST(mcp_fetch_charset_gbk_rejected_without_retry,
+              "mcp fetch: charset=gbk 白名单外拒绝且不重试(防非 UTF-8 字节进 JSON)", {
+    ScriptedFetcher script(
+        {makeResponse(200, "<p>x</p>", {{"Content-Type", "text/html; charset=gbk"}})});
+    core::mcp::McpToolRegistry registry;
+    module::mcp::registerBuiltinMcpTools(registry, std::ref(script));
+    const auto result = runFetch(registry, "{\"url\":\"http://a.test/g\"}");
+    DOCTEST_REQUIRE(result.isOk());
+    DOCTEST_CHECK(result.value().isError);
+    DOCTEST_CHECK(result.value().text.find("不支持非 UTF-8 编码") != std::string::npos);
+    DOCTEST_CHECK_EQ(script.requestCount(), std::size_t{1});
+    return true;
+})
+
+REGISTER_TEST(mcp_fetch_charset_whitelist_passes,
+              "mcp fetch: charset=us-ascii / 带引号 UTF8(去引号归一)放行(spec §6.1-8)", {
+    ScriptedFetcher script(
+        {makeResponse(200, "asc", {{"Content-Type", "text/plain; charset=us-ascii"}}),
+         makeResponse(200, "u8", {{"Content-Type", "text/html; charset=\"UTF8\""}})});
+    core::mcp::McpToolRegistry registry;
+    module::mcp::registerBuiltinMcpTools(registry, std::ref(script));
+    DOCTEST_CHECK_EQ(fetchText(registry, "http://a.test/1"), std::string("asc"));
+    DOCTEST_CHECK(fetchText(registry, "http://a.test/2").find("u8") != std::string::npos);
+    return true;
+})
+
+REGISTER_TEST(mcp_fetch_invalid_utf8_sanitized,
+              "mcp fetch: charset 缺失时非法字节 sanitize 成 U+FFFD(防坏字节进 JSON)", {
+    std::string body = "ok";
+    body += "\xFF\xFE";
+    body += "end";
+    ScriptedFetcher script({makeResponse(200, body)});
+    core::mcp::McpToolRegistry registry;
+    module::mcp::registerBuiltinMcpTools(registry, std::ref(script));
+    const std::string text = fetchText(registry, "http://a.test/bad");
+    DOCTEST_CHECK(text.find("ok") != std::string::npos);
+    DOCTEST_CHECK(text.find("\xEF\xBF\xBD") != std::string::npos);  // U+FFFD
+    DOCTEST_CHECK(text.find("\xFF") == std::string::npos);
+    return true;
+})
+
+REGISTER_TEST(mcp_fetch_non_http_scheme_never_touches_network,
+              "mcp fetch: file:/ftp:/javascript: 非 http(s) 拒绝且不触网(spec §6.1-1)", {
+    for (const char* url : {"file:///etc/passwd", "ftp://h/x", "javascript:alert(1)"}) {
+        ScriptedFetcher script({});
+        core::mcp::McpToolRegistry registry;
+        module::mcp::registerBuiltinMcpTools(registry, std::ref(script));
+        const auto result =
+            runFetch(registry, "{\"url\":\"" + std::string(url) + "\"}");
+        DOCTEST_REQUIRE(result.isOk());
+        DOCTEST_CHECK(result.value().isError);
+        DOCTEST_CHECK(result.value().text.find("仅支持 http/https") != std::string::npos);
+        DOCTEST_CHECK_EQ(script.requestCount(), std::size_t{0});
+    }
+    return true;
+})
+
+REGISTER_TEST(mcp_fetch_ssrf_literals_blocked_without_network,
+              "mcp fetch: SSRF 字面地址全表拒绝且不触网(spec §6.1-2)", {
+    const char* blocked[] = {"localhost",    "LOCALHOST",    "127.0.0.1",
+                             "127.255.0.9",  "0.0.0.0",      "10.1.2.3",
+                             "172.16.0.9",   "172.31.255.1", "192.168.1.1",
+                             "169.254.9.9",  "[::1]",        "[::ffff:127.0.0.1]",
+                             "[fe80::1]",    "[fc00::1234]"};
+    for (const char* host : blocked) {
+        ScriptedFetcher script({});
+        core::mcp::McpToolRegistry registry;
+        module::mcp::registerBuiltinMcpTools(registry, std::ref(script));
+        const auto result =
+            runFetch(registry, "{\"url\":\"http://" + std::string(host) + "/x\"}");
+        DOCTEST_REQUIRE(result.isOk());
+        DOCTEST_CHECK(result.value().isError);
+        DOCTEST_CHECK(result.value().text.find("SSRF") != std::string::npos);
+        DOCTEST_CHECK_EQ(script.requestCount(), std::size_t{0});
+    }
+    return true;
+})
+
+REGISTER_TEST(mcp_fetch_public_literals_and_domains_pass,
+              "mcp fetch: 公网边界(172.32/ fec0:: / 域名)放行(防 SSRF 误杀)", {
+    ScriptedFetcher script(
+        {makeResponse(200, "ok1", {{"Content-Type", "text/plain"}}),
+         makeResponse(200, "ok2", {{"Content-Type", "text/plain"}}),
+         makeResponse(200, "ok3", {{"Content-Type", "text/plain"}})});
+    core::mcp::McpToolRegistry registry;
+    module::mcp::registerBuiltinMcpTools(registry, std::ref(script));
+    DOCTEST_CHECK_EQ(fetchText(registry, "http://172.32.0.1/"), std::string("ok1"));
+    DOCTEST_CHECK_EQ(fetchText(registry, "http://[fec0::1]/"), std::string("ok2"));
+    DOCTEST_CHECK_EQ(fetchText(registry, "http://example.com/"), std::string("ok3"));
+    return true;
+})
+
+REGISTER_TEST(mcp_fetch_ssrf_checked_on_every_hop,
+              "mcp fetch: 重定向每一跳都过 SSRF 校验(防重定向绕过)", {
+    ScriptedFetcher script(
+        {makeResponse(302, "", {{"Location", "http://127.0.0.1/x"}})});
+    core::mcp::McpToolRegistry registry;
+    module::mcp::registerBuiltinMcpTools(registry, std::ref(script));
+    const auto result = runFetch(registry, "{\"url\":\"https://e.test/redirect\"}");
+    DOCTEST_REQUIRE(result.isOk());
+    DOCTEST_CHECK(result.value().isError);
+    DOCTEST_CHECK(result.value().text.find("SSRF") != std::string::npos);
+    DOCTEST_CHECK_EQ(script.requestCount(), std::size_t{1});  // 第一跳后止步
+    return true;
+})
+
+REGISTER_TEST(mcp_fetch_redirect_location_resolution,
+              "mcp fetch: 相对/绝对路径/协议相对 Location 解析(spec §6.1-4)", {
+    {  // 相对路径:相对当前目录
+        ScriptedFetcher script({makeResponse(301, "", {{"Location", "b/c.html"}}),
+                                htmlOk("<p>ok</p>")});
+        core::mcp::McpToolRegistry registry;
+        module::mcp::registerBuiltinMcpTools(registry, std::ref(script));
+        DOCTEST_CHECK(fetchText(registry, "http://a.test/dir/page").find("ok") !=
+                      std::string::npos);
+        DOCTEST_REQUIRE(script.requestCount() == 2);
+        DOCTEST_CHECK_EQ(script.requests()[1].url,
+                         std::string("http://a.test/dir/b/c.html"));
+    }
+    {  // 绝对路径:补 scheme+host
+        ScriptedFetcher script({makeResponse(302, "", {{"Location", "/root"}}),
+                                htmlOk("<p>ok</p>")});
+        core::mcp::McpToolRegistry registry;
+        module::mcp::registerBuiltinMcpTools(registry, std::ref(script));
+        DOCTEST_CHECK(fetchText(registry, "https://a.test/deep/x").find("ok") !=
+                      std::string::npos);
+        DOCTEST_CHECK_EQ(script.requests()[1].url, std::string("https://a.test/root"));
+    }
+    {  // 协议相对:补当前 scheme
+        ScriptedFetcher script({makeResponse(302, "", {{"Location", "//other.test/z"}}),
+                                htmlOk("<p>ok</p>")});
+        core::mcp::McpToolRegistry registry;
+        module::mcp::registerBuiltinMcpTools(registry, std::ref(script));
+        DOCTEST_CHECK(fetchText(registry, "https://a.test/y").find("ok") !=
+                      std::string::npos);
+        DOCTEST_CHECK_EQ(script.requests()[1].url, std::string("https://other.test/z"));
+    }
+    return true;
+})
+
+REGISTER_TEST(mcp_fetch_redirect_hop_cap,
+              "mcp fetch: 超过 5 跳报『重定向次数过多』(防重定向死循环)", {
+    std::vector<Response> responses;
+    for (int i = 0; i < 7; ++i) {
+        responses.push_back(makeResponse(302, "", {{"Location", "/next"}}));
+    }
+    ScriptedFetcher script(std::move(responses));
+    core::mcp::McpToolRegistry registry;
+    module::mcp::registerBuiltinMcpTools(registry, std::ref(script));
+    const auto result = runFetch(registry, "{\"url\":\"http://a.test/loop\"}");
+    DOCTEST_REQUIRE(result.isOk());
+    DOCTEST_CHECK(result.value().isError);
+    DOCTEST_CHECK(result.value().text.find("重定向次数过多") != std::string::npos);
+    DOCTEST_CHECK_EQ(script.requestCount(), std::size_t{6});  // 首跳 + 5 跳
+    return true;
+})
+
+REGISTER_TEST(mcp_fetch_redirect_missing_location_and_bad_target,
+              "mcp fetch: 缺 Location / 非法目标均报错(spec §6.1-4)", {
+    ScriptedFetcher script({makeResponse(302, "")});
+    core::mcp::McpToolRegistry registry;
+    module::mcp::registerBuiltinMcpTools(registry, std::ref(script));
+    const auto missing = runFetch(registry, "{\"url\":\"http://a.test/m\"}");
+    DOCTEST_CHECK(missing.value().text.find("重定向缺少 Location") != std::string::npos);
+
+    ScriptedFetcher badTarget({makeResponse(302, "", {{"Location", "ftp://h/x"}})});
+    core::mcp::McpToolRegistry registry2;
+    module::mcp::registerBuiltinMcpTools(registry2, std::ref(badTarget));
+    const auto bad = runFetch(registry2, "{\"url\":\"http://a.test/n\"}");
+    DOCTEST_CHECK(bad.value().text.find("无法解析为 http/https") != std::string::npos);
+    return true;
+})
+
+REGISTER_TEST(mcp_fetch_non_2xx_reports_status_and_body_prefix,
+              "mcp fetch: 非 2xx 报状态码 + 响应体前 200 字符(UTF-8 边界安全)", {
+    const std::string body = std::string(195, 'a') + "MMMM" + std::string(300, 'z');
+    ScriptedFetcher script({makeResponse(404, body)});
+    core::mcp::McpToolRegistry registry;
+    module::mcp::registerBuiltinMcpTools(registry, std::ref(script));
+    const auto result = runFetch(registry, "{\"url\":\"http://a.test/gone\"}");
+    DOCTEST_REQUIRE(result.isOk());
+    DOCTEST_CHECK(result.value().isError);
+    DOCTEST_CHECK(result.value().text.find("HTTP 404") != std::string::npos);
+    DOCTEST_CHECK(result.value().text.find("MMMM") != std::string::npos);
+    DOCTEST_CHECK(result.value().text.find("zzzzzzzzzz") == std::string::npos);
+    return true;
+})
+
+REGISTER_TEST(mcp_fetch_body_over_2mib_truncation_note,
+              "mcp fetch: 原始响应超 2 MiB 截断并附注(spec §6.1-9)", {
+    std::string body = "<p>hello</p><!--";
+    body += std::string(2 * 1024 * 1024 + 50, 'a');
+    body += "-->";
+    ScriptedFetcher script(
+        {makeResponse(200, body, {{"Content-Type", "text/html"}})});
+    core::mcp::McpToolRegistry registry;
+    module::mcp::registerBuiltinMcpTools(registry, std::ref(script));
+    const std::string text = fetchText(registry, "http://a.test/big");
+    DOCTEST_CHECK(text.find("hello") != std::string::npos);
+    DOCTEST_CHECK(text.find("（原始响应超过 2 MiB，已截断）") != std::string::npos);
+    return true;
+})
+
+REGISTER_TEST(mcp_fetch_max_chars_clamped_and_utf8_boundary_cut,
+              "mcp fetch: max_chars 钳制 1000..200000、按码点 UTF-8 边界截断(spec §6.1-10)", {
+    {  // 下溢钳到 1000
+        ScriptedFetcher script({makeResponse(200, std::string(1500, 'a'),
+                                             {{"Content-Type", "text/plain"}})});
+        core::mcp::McpToolRegistry registry;
+        module::mcp::registerBuiltinMcpTools(registry, std::ref(script));
+        const std::string text =
+            fetchText(registry, "http://a.test/lo", ",\"max_chars\":1");
+        DOCTEST_CHECK(text.substr(0, 1000) == std::string(1000, 'a'));
+        DOCTEST_CHECK(text.find("（已截断到 1000 字符）") != std::string::npos);
+    }
+    {  // CJK 按码点截断,不产生半个字符(max_chars 合法下界 1000)
+        std::string body;
+        for (int i = 0; i < 1500; ++i) body += "好";
+        ScriptedFetcher script(
+            {makeResponse(200, body, {{"Content-Type", "text/plain"}})});
+        core::mcp::McpToolRegistry registry;
+        module::mcp::registerBuiltinMcpTools(registry, std::ref(script));
+        const std::string text =
+            fetchText(registry, "http://a.test/cjk", ",\"max_chars\":1000");
+        DOCTEST_CHECK(text.find("（已截断到 1000 字符）") != std::string::npos);
+        // 截断点 = 第 1000 个字符(3000 字节)处,附注紧跟其后,无半个字符
+        DOCTEST_CHECK(text.compare(0, 12, "\xE5\xA5\xBD\xE5\xA5\xBD\xE5\xA5\xBD\xE5\xA5\xBD") == 0);
+        DOCTEST_CHECK(text.size() == std::string("（已截断到 1000 字符）").size() + 3000);
+    }
+    {  // 上溢钳到 200000
+        ScriptedFetcher script({makeResponse(200, std::string(200001, 'c'),
+                                             {{"Content-Type", "text/plain"}})});
+        core::mcp::McpToolRegistry registry;
+        module::mcp::registerBuiltinMcpTools(registry, std::ref(script));
+        const std::string text =
+            fetchText(registry, "http://a.test/hi", ",\"max_chars\":999999");
+        DOCTEST_CHECK(text.find("（已截断到 200000 字符）") != std::string::npos);
+    }
+    {  // 非数字 max_chars 忽略 → 默认 60000
+        ScriptedFetcher script({makeResponse(200, std::string(60001, 'b'),
+                                             {{"Content-Type", "text/plain"}})});
+        core::mcp::McpToolRegistry registry;
+        module::mcp::registerBuiltinMcpTools(registry, std::ref(script));
+        const std::string text =
+            fetchText(registry, "http://a.test/def", ",\"max_chars\":\"x\"");
+        DOCTEST_CHECK(text.find("（已截断到 60000 字符）") != std::string::npos);
+    }
+    return true;
+})
+
+REGISTER_TEST(mcp_fetch_empty_visible_text_hint,
+              "mcp fetch: HTML 无可见文本非错误,返回提示(spec §6.1-11)", {
+    ScriptedFetcher script({htmlOk("<html><body>   </body></html>")});
+    core::mcp::McpToolRegistry registry;
+    module::mcp::registerBuiltinMcpTools(registry, std::ref(script));
+    const auto result = runFetch(registry, "{\"url\":\"https://e.test/js\"}");
+    DOCTEST_REQUIRE(result.isOk());
+    DOCTEST_CHECK_FALSE(result.value().isError);
+    DOCTEST_CHECK_EQ(result.value().text,
+                     std::string("页面未提取到文本（可能是 JS 渲染页面）"));
+    return true;
+})
+
+REGISTER_TEST(mcp_fetch_total_timeout_across_hops,
+              "mcp fetch: 所有跳合计总时限耗尽 → 超时错误(测试注入小预算,生产默认 10s)", {
+    std::vector<Response> responses;
+    for (int i = 0; i < 10; ++i) {
+        responses.push_back(makeResponse(302, "", {{"Location", "/next"}}));
+    }
+    ScriptedFetcher script(std::move(responses));
+    script.setSleepMs(80);
+    module::mcp::FetchLimits limits;
+    limits.totalBudget = std::chrono::milliseconds(200);
+    core::mcp::McpToolRegistry registry;
+    module::mcp::registerBuiltinMcpTools(registry, std::ref(script), limits);
+    const auto result = runFetch(registry, "{\"url\":\"http://a.test/slow\"}");
+    DOCTEST_REQUIRE(result.isOk());
+    DOCTEST_CHECK(result.value().isError);
+    DOCTEST_CHECK(result.value().text.find("超时") != std::string::npos);
+    DOCTEST_CHECK(result.value().text.find("次数过多") == std::string::npos);
+    DOCTEST_CHECK(script.requestCount() < std::size_t{10});
+    return true;
+})
+
+REGISTER_TEST(mcp_fetch_network_error_readable_message,
+              "mcp fetch: 网络失败返回可读中文 + 底层信息(spec §6.1-12)", {
+    Response failure;
+    failure.networkError = true;
+    failure.errorMessage = "connection reset";
+    ScriptedFetcher script({failure});
+    core::mcp::McpToolRegistry registry;
+    module::mcp::registerBuiltinMcpTools(registry, std::ref(script));
+    const auto result = runFetch(registry, "{\"url\":\"http://a.test/dead\"}");
+    DOCTEST_REQUIRE(result.isOk());
+    DOCTEST_CHECK(result.value().isError);
+    DOCTEST_CHECK(result.value().text.find("网络请求失败") != std::string::npos);
+    DOCTEST_CHECK(result.value().text.find("connection reset") != std::string::npos);
+    return true;
+})

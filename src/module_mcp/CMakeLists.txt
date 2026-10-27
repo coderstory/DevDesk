@@ -11,6 +11,7 @@ add_library(devdesk_module_mcp STATIC
     mcp_protocol.cpp
     mcp_http_handler.cpp
     mcp_tools_builtin.cpp
+    html_to_markdown.cpp
 )
 
 devdesk_apply_warnings(devdesk_module_mcp)
