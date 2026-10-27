@@ -223,6 +223,22 @@ inline float proxyCardHeightFor(std::size_t warnLines) {
     return bottom + roundFs(16.0f);
 }
 
+// MCP 配置卡行几何（drawMcpCard 与 mcpCardHeightFor 单一来源）：端口行 = FormRow
+//（行 y = proxyPortRowY、行高 = logFieldHeight），状态行 / 命令行依次从行盒底派生，
+// 卡高不写死——85% 档 roundFs(16)=14 不满足下边距 ≥16，须 std::max 抬底。
+inline float mcpPortRowY() { return proxyPortRowY(); }            // 100% = 68
+inline float mcpStatusRowHeight() { return roundFs(18.0f); }      // 100% = 18
+inline float mcpCommandRowY() {
+    return mcpPortRowY() + logFieldHeight() + mcpStatusRowHeight() +
+           roundFs(6.0f);
+}                                                                 // 100% = 128
+inline float mcpCommandRowHeight() { return roundFs(16.0f); }     // 100% = 16
+inline float mcpCardHeightFor() {                                 // 100% = 160
+    // 下边距下限 16：85% 档 roundFs(16) = 14，不能直接 roundFs(16)
+    return mcpCommandRowY() + mcpCommandRowHeight() +
+           std::max(16.0f, roundFs(16.0f));
+}
+
 // 下拉弹层向下展开是否越出窗体底边（越界 → 调用方置 openUp 向上）；cardTopY = 卡顶页面绝对 y，fieldOffsetY/fieldHeight = 字段卡内 y 与高。
 bool dropdownPopupOverflows(float cardTopY, float fieldOffsetY,
                             float fieldHeight, int itemCount, float screenH);

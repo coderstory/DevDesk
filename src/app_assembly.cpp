@@ -4,6 +4,7 @@
 #include "app_sidebar.h"
 #include "core/logging.h"
 #include "core/database.h"
+#include "mcp_service_bridge.h"
 #include "module_markdown/md_file_open.h"
 #include "module_toggle_bridge.h"
 #include "platform/autostart.h"
@@ -252,6 +253,22 @@ void navigateFromTray(::core::Router* router, ::core::PageId page) {
 
 void dispatchModuleToggle(const std::string& moduleId, bool on,
                           ::core::Router& router, ModuleLookup lookup) {
+    // mcp 特例必须位于注册表遍历之前：mcp 不是 Router 页面模块（注册表无其行），
+    // 遍历永远命中不了它，落到尾部只会得到「未知模块」WARN。
+    if (moduleId == module::settings::kModuleIdMcp) {
+        if (on) {
+            const module::settings::SettingsStore store(::core::appDatabase());
+            auto r = app::mcp::start(store.load().mcpPort);
+            if (r.isFail()) {
+                // 用户动作失败要可见：toast 通知（启动期自启不经过这里）
+                app::showAppNotice("MCP 服务未启动", r.errorMessage());
+                LOG_ERROR("模块开关: MCP 服务启动失败: " + r.errorMessage());
+            }
+        } else {
+            app::mcp::stop();
+        }
+        return;  // 不进入页面模块分支
+    }
     for (const auto& e : ::app::registry::kModuleRegistry) {
         if (e.gatingKey == nullptr || moduleId != e.gatingKey) {
             continue;  // 恒开行不参与拨开关；其余行键不匹配继续找
