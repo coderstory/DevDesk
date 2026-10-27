@@ -367,11 +367,19 @@ using Fetcher = std::function<core::Result<platform::http::Response>(
   "type": "object",
   "properties": {
     "url": { "type": "string", "description": "http/https 网页地址" },
-    "max_chars": { "type": "integer", "description": "输出字符上限，默认 60000，范围 1000..200000" }
+    "max_chars": { "type": "integer", "description": "输出字符上限，默认 60000，范围 1000..200000" },
+    "useProxy": { "type": "boolean", "description": "是否自动探测本地代理（127.0.0.1:7897→10808→51295，取首个可连通者；全部不可连通则直连并附注）。默认 true" },
+    "proxy": { "type": "string", "description": "显式代理 host:port（仅 IP:port 或 localhost:port），提供时强制使用；预检失败报错，且不可与 useProxy=false 同给" }
   },
   "required": ["url"]
 }
 ```
+
+**本地代理参数（代理参数批追加，主会话拍板口径）**：
+
+- `useProxy`（boolean，默认 true）：true → 按优先级序探测 `127.0.0.1:7897` → `127.0.0.1:10808` → `127.0.0.1:51295`（TCP 连通探测，单候选阻塞 ≤300ms，探测结果同一次调用内缓存），首个可连通者作为 HTTP 代理；全部不可连通 → 直连，输出末尾追加一行「未检测到本地代理,已直连」。false → 不用代理、不探测、无附注。
+- `proxy`（string，可选）：格式仅 `IP:port` 或 `localhost:port`（控 SSRF 面——代理主机是 curl 实连对象）。提供时强制走该代理：先 TCP 预检，失败 → `isError=true`「显式指定的代理 <host:port> 不可用」（不回落直连）；与 `useProxy=false` 同给 → 参数冲突错误（-32602 口径）。
+- SSRF 口径不变：代理地址本身（回环）是传输通道，不进抓取目标 deny 表；抓取目标的字面 SSRF 校验与重定向每跳复检完全不变（走代理时亦然）；DNS 层风险仍按 §14.2 接受。
 
 行为：
 

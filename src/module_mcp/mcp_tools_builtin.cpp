@@ -439,6 +439,38 @@ bool parseIpv4NumericForms(const std::string& host, unsigned char out[4]) {
     return true;
 }
 
+// 显式代理形态校验:仅 IPv4 点分形态:port 或 localhost:port(控 SSRF 面——
+// 代理主机是 curl 实连对象,放行任意域名形态等于开放任意目标连接)。
+bool isValidProxySpecifier(const std::string& hostPort) {
+    const std::size_t colon = hostPort.rfind(':');
+    if (colon == std::string::npos || colon == 0 || colon + 1 >= hostPort.size()) {
+        return false;
+    }
+    const std::string host = hostPort.substr(0, colon);
+    const std::string port = hostPort.substr(colon + 1);
+    if (port.size() > 5) return false;
+    int value = 0;
+    for (const char c : port) {
+        if (c < '0' || c > '9') return false;
+        value = value * 10 + (c - '0');
+    }
+    if (value < 1 || value > 65535) return false;
+    if (host == "localhost") return true;
+    if (host.find(':') != std::string::npos ||  // IPv6/方括号形态不放行
+        host.find('@') != std::string::npos || host.find('[') != std::string::npos) {
+        return false;
+    }
+    bool hasDot = false;
+    for (const char c : host) {
+        if (c == '.') {
+            hasDot = true;
+            continue;
+        }
+        if (c < '0' || c > '9') return false;  // 字母域名/用户信息不放行
+    }
+    return hasDot;  // 纯数字无点(如 "2130706433")不算点分 IP 形态
+}
+
 std::string ssrfRejectReason(const std::string& host) {
     if (host == "localhost") return "拒绝访问本机地址（SSRF 防护）: " + host;
     // 尾点 host fail-closed：WHATWG/curl 剥尾点后按字面 IP 实连,而字面解析判
@@ -570,8 +602,11 @@ std::string truncateByChars(const std::string& s, const long long maxChars,
 // max_chars(钳制 1000..200000)做 UTF-8 边界截断。
 class WebFetchMarkdownTool final : public core::mcp::IMcpTool {
 public:
-    WebFetchMarkdownTool(Fetcher fetcher, FetchLimits limits)
-        : fetcher_(std::move(fetcher)), limits_(limits) {}
+    WebFetchMarkdownTool(Fetcher fetcher, FetchLimits limits,
+                         ProxyOptions proxyOptions)
+        : fetcher_(std::move(fetcher)),
+          limits_(std::move(limits)),
+          proxyOptions_(std::move(proxyOptions)) {}
 
     std::string name() const override { return "web_fetch_markdown"; }
 
@@ -580,7 +615,7 @@ public:
     }
 
     std::string inputSchemaJson() const override {
-        return R"({"type":"object","properties":{"url":{"type":"string","description":"http/https 网页地址"},"max_chars":{"type":"integer","description":"输出字符上限，默认 60000，范围 1000..200000"}},"required":["url"]})";
+        return R"({"type":"object","properties":{"url":{"type":"string","description":"http/https 网页地址"},"max_chars":{"type":"integer","description":"输出字符上限，默认 60000，范围 1000..200000"},"useProxy":{"type":"boolean","description":"是否自动探测本地代理（127.0.0.1:7897→10808→51295，取首个可连通者；全部不可连通则直连并附注）。默认 true"},"proxy":{"type":"string","description":"显式代理 host:port（仅 IP:port 或 localhost:port），提供时强制使用；预检失败报错，且不可与 useProxy=false 同给"}},"required":["url"]})";
     }
 
     core::Result<core::mcp::ToolResult> execute(
@@ -601,6 +636,59 @@ public:
         if (maxCharsValue.isNumber()) maxChars = maxCharsValue.asInt();
         if (maxChars < kMinMaxChars) maxChars = kMinMaxChars;
         if (maxChars > kMaxMaxChars) maxChars = kMaxMaxChars;
+
+        // ── 代理参数(代理参数批;口径见 spec §6.1 本地代理段)──────────
+        bool useProxy = true;
+        const JsonValue useProxyValue = args.get("useProxy");
+        if (useProxyValue.isBool()) useProxy = useProxyValue.asBool();
+        std::string explicitProxy;
+        const JsonValue proxyValue = args.get("proxy");
+        if (proxyValue.isString()) {
+            explicitProxy = core::str::trimAscii(proxyValue.asString());
+        }
+        if (!explicitProxy.empty() && !useProxy) {
+            return core::Result<core::mcp::ToolResult>::ok(
+                errToolResult("参数冲突：proxy 与 useProxy=false 不可同时给出"));
+        }
+        if (!explicitProxy.empty() && !isValidProxySpecifier(explicitProxy)) {
+            return core::Result<core::mcp::ToolResult>::ok(errToolResult(
+                "proxy 仅支持 IP:port 或 localhost:port 形态: " + explicitProxy));
+        }
+        std::string proxy;      // 实际生效代理(host:port);空 = 直连
+        std::string proxyNote;  // 附注:仅自动探测全落空时追加一行
+        if (!explicitProxy.empty()) {
+            // 显式指定 = 强制走:先 TCP 预检,失败如实报错(不回落直连)
+            const bool reachable = proxyOptions_.probe
+                                       ? proxyOptions_.probe(explicitProxy)
+                                       : platform::http::tcpReachable(
+                                             explicitProxy,
+                                             proxyOptions_.perProbeTimeout);
+            if (!reachable) {
+                return core::Result<core::mcp::ToolResult>::ok(errToolResult(
+                    "显式指定的代理 " + explicitProxy + " 不可用"));
+            }
+            proxy = explicitProxy;
+        } else if (useProxy) {
+            // 自动探测:候选按优先级序逐个探,首个可连通者生效(短路);
+            // 探测结果同一次调用内缓存,重定向不重复探
+            std::map<std::string, bool> cache;
+            for (const auto& candidate : proxyOptions_.autoCandidates) {
+                const auto cached = cache.find(candidate);
+                const bool reachable =
+                    cached != cache.end()
+                        ? cached->second
+                        : (proxyOptions_.probe
+                               ? proxyOptions_.probe(candidate)
+                               : platform::http::tcpReachable(
+                                     candidate, proxyOptions_.perProbeTimeout));
+                cache.emplace(candidate, reachable);
+                if (reachable) {
+                    proxy = candidate;
+                    break;
+                }
+            }
+            if (proxy.empty()) proxyNote = "未检测到本地代理,已直连";
+        }
 
         // 抓取循环:每跳先做不触网校验(scheme + SSRF 字面量),再受总时限约束
         const auto deadline = std::chrono::steady_clock::now() + limits_.totalBudget;
@@ -632,6 +720,8 @@ public:
             platform::http::Request request;
             request.method = "GET";
             request.url = current;
+            // 代理是传输通道:目标字面 SSRF 校验与逐跳复检完全不变(上方已做)
+            request.proxy = proxy;
             const long long remainMs =
                 std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now)
                     .count();
@@ -716,24 +806,29 @@ public:
         if (truncated) {
             text += "（已截断到 " + std::to_string(maxChars) + " 字符）";
         }
+        if (!proxyNote.empty()) {
+            text += "\n" + proxyNote;  // 自动探测全落空的直连附注(代理参数批)
+        }
         return core::Result<core::mcp::ToolResult>::ok(okToolResult(std::move(text)));
     }
 
 private:
     Fetcher fetcher_;
     FetchLimits limits_;
+    ProxyOptions proxyOptions_;
 };
 
 } // namespace
 
 void registerBuiltinMcpTools(core::mcp::McpToolRegistry& registry,
-                             Fetcher fetcher, const FetchLimits& limits) {
+                             Fetcher fetcher, const FetchLimits& limits,
+                             const ProxyOptions& proxyOptions) {
     auto info = registry.registerTool(std::make_shared<ServerInfoTool>(registry));
     if (info.isFail()) {
         LOG_ERROR("MCP 内置工具注册失败: " + info.errorMessage());
     }
-    auto fetch =
-        registry.registerTool(std::make_shared<WebFetchMarkdownTool>(fetcher, limits));
+    auto fetch = registry.registerTool(
+        std::make_shared<WebFetchMarkdownTool>(fetcher, limits, proxyOptions));
     if (fetch.isFail()) {
         LOG_ERROR("MCP 内置工具注册失败: " + fetch.errorMessage());
     }

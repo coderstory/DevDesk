@@ -3,6 +3,7 @@
 #pragma once
 
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <deque>
 #include <map>
@@ -22,6 +23,9 @@ struct Request {
     std::string body;
     long timeoutMs = 30000;
     bool verifyTls = true;
+    // 非空 = 经此 HTTP 代理（"host:port"，CURLOPT_PROXY 口径）；空 = 直连。
+    // 代理是传输通道：目标侧 SSRF 校验与本字段无关（由调用方先行完成）。
+    std::string proxy;
     // 流式专用空闲超时（仅 sendStreaming）：速率低于 lowSpeedBytesPerSec 持续 lowSpeedTimeSec 秒
     // → curl 中止（CURLE_OPERATION_TIMEDOUT），替代总墙钟超时；任一 <= 0 表示不启用。
     long lowSpeedBytesPerSec = 0;
@@ -39,6 +43,10 @@ struct Response {
 
 // 同步发送
 core::Result<Response> send(const Request& req);
+
+// TCP 可连通性探测(本地代理预检):hostPort = "host:port"。阻塞至多 timeout,
+// 连得上(TCP 握手完成)即 true,不发任何应用层字节。
+bool tcpReachable(const std::string& hostPort, std::chrono::milliseconds timeout);
 
 // 流式 chunk 状态
 enum class ChunkResult {

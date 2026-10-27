@@ -170,3 +170,29 @@ REGISTER_TEST(mcp_tools_builtin_fetcher_injection_signature,
     DOCTEST_CHECK_FALSE(fetcherCalled);
     return true;
 })
+
+REGISTER_TEST(mcp_tools_builtin_fetch_schema_has_proxy_params,
+              "mcp tools builtin: web_fetch_markdown schema 含 useProxy/proxy 代理参数(代理参数批)", {
+    core::mcp::McpToolRegistry registry;
+    module::mcp::registerBuiltinMcpTools(registry);
+    auto found = registry.find("web_fetch_markdown");
+    DOCTEST_REQUIRE(found.isOk());
+    const auto schema = platform::json::parse(found.value()->inputSchemaJson());
+    DOCTEST_REQUIRE(schema.isOk());
+    DOCTEST_REQUIRE(schema.value().isObject());
+    const auto props = schema.value().asObject().get("properties");
+    DOCTEST_REQUIRE(props.isObject());
+    DOCTEST_CHECK(props.asObject().has("useProxy"));
+    DOCTEST_CHECK(props.asObject().has("proxy"));
+    const auto useProxy = props.asObject().get("useProxy");
+    DOCTEST_REQUIRE(useProxy.isObject());
+    DOCTEST_CHECK_EQ(useProxy.asObject().get("type").asString(), std::string("boolean"));
+    const auto proxy = props.asObject().get("proxy");
+    DOCTEST_REQUIRE(proxy.isObject());
+    DOCTEST_CHECK_EQ(proxy.asObject().get("type").asString(), std::string("string"));
+    // required 仍只有 url:两参数均可选
+    const auto required = schema.value().asObject().get("required");
+    DOCTEST_REQUIRE(required.isArray());
+    DOCTEST_REQUIRE_EQ(required.size(), std::size_t{1});
+    return true;
+})

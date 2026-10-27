@@ -63,8 +63,15 @@ core::Result<Response> send(const Request& req) {
     curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, req.method.c_str());
     curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, req.timeoutMs);
     curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
-    // 回环地址永不走代理：libcurl 默认读环境变量代理，公司代理在场时会劫持 127.0.0.1 请求。
-    curl_easy_setopt(curl, CURLOPT_NOPROXY, "localhost,127.0.0.1,::1");
+    if (!req.proxy.empty()) {
+        // 显式代理:全部目标(含回环,SSRF 层已另行拦截)都经代理走
+        const std::string proxyUrl = "http://" + req.proxy;
+        curl_easy_setopt(curl, CURLOPT_PROXY, proxyUrl.c_str());
+        curl_easy_setopt(curl, CURLOPT_NOPROXY, "");
+    } else {
+        // 回环地址永不走代理：libcurl 默认读环境变量代理，公司代理在场时会劫持 127.0.0.1 请求。
+        curl_easy_setopt(curl, CURLOPT_NOPROXY, "localhost,127.0.0.1,::1");
+    }
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writeCallback);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &resp);
     curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, headerCallback);
@@ -111,6 +118,23 @@ core::Result<Response> send(const Request& req) {
     if (headers) curl_slist_free_all(headers);
     curl_easy_cleanup(curl);
     return core::Result<Response>::ok(std::move(resp));
+}
+
+bool tcpReachable(const std::string& hostPort, std::chrono::milliseconds timeout) {
+    // CONNECT_ONLY + http:// scheme = 纯 TCP 握手探测,不发送任何应用层字节;
+    // FRESH_CONNECT 防连接复用把「上一秒还活着」误判为可达。
+    CURL* curl = curl_easy_init();
+    if (!curl) return false;
+    const std::string url = "http://" + hostPort + "/";
+    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+    curl_easy_setopt(curl, CURLOPT_CONNECT_ONLY, 1L);
+    curl_easy_setopt(curl, CURLOPT_FRESH_CONNECT, 1L);
+    curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS,
+                     static_cast<long>(timeout.count()));
+    const CURLcode rc = curl_easy_perform(curl);
+    curl_easy_cleanup(curl);
+    return rc == CURLE_OK;
 }
 
 // 流式响应（三线程 + 队列 + backpressure）：readChunk 消费，curl_easy_perform 生产，write callback 推 chunk 入队。

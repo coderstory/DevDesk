@@ -185,3 +185,18 @@
 5. worktree 无同级 `../EUI-NEO`：构建脚本自动从 git 主工作树定位，必要时显式 `EUI_NEO_DIR=D:/project/gui/EUI-NEO`。
 6. 真实 E2E 的目标网页须本机网络可达；若公司网络不可达，由主会话先选定可达真网页并把 URL 与断言串写入证据，**硬门禁不降级为 mock**。
 7. `claude --version` 须支持 `--strict-mcp-config`（spec 要求 2.1.307+）；不满足则视为环境阻塞，如实上报，不绕过。
+## 8. 代理参数批（B4 后追加，主会话拍板设计）
+
+**范围**：`src/platform/http_client.{h,cpp}`（Request.proxy + CURLOPT_PROXY + tcpReachable 探测）、`src/module_mcp/mcp_tools_builtin.{h,cpp}`（useProxy/proxy 参数、探测缝 ProxyOptions、冲突与形态校验、直连附注）、两测试文件；spec §6.1 同步参数口径。口径：`useProxy` 默认 true → 探测 7897→10808→51295（单候选 ≤300ms，调用内缓存），全落空直连并附注「未检测到本地代理,已直连」；`proxy` 仅 IP:port / localhost:port，强制走 + TCP 预检失败报「显式指定的代理 … 不可用」；与 useProxy=false 同给 → 参数冲突；代理是传输通道不进目标 deny 表，目标 SSRF 每跳校验不变。
+
+| ID | 状态 | 条目 | 验收判据（可核销） | 涉及文件 |
+|---|---|---|---|---|
+| PX-01 | ✅ | 探测缝 | ProxyOptions{autoCandidates/probe/perProbeTimeout} 注入缝（FetchLimits 先例）；probe 空 = 生产 `platform::http::tcpReachable` | `mcp_tools_builtin.{h,cpp}` |
+| PX-02 | ✅ | useProxy 自动探测 | 命中首选短路走代理（Request.proxy 断言）；全落空直连 + 附注一行 | 同上 + `test_mcp_fetch_tool.cpp` |
+| PX-03 | ✅ | 显式 proxy | 预检过 → 强制走；预检败 → isError「显式指定的代理 … 不可用」不触网；形态仅 IP:port/localhost:port，其余报「仅支持」 | 同上 |
+| PX-04 | ✅ | 冲突 | proxy + useProxy=false → isError「参数冲突」，不探测不触网 | 同上 |
+| PX-05 | ✅ | 传输层 | Request.proxy → CURLOPT_PROXY（"http://host:port"）+ NOPROXY 清空；`tcpReachable` = curl CONNECT_ONLY 纯 TCP 握手 | `http_client.{h,cpp}` |
+| PX-06 | ✅ | schema 与测试 | schema 含 useProxy(boolean)/proxy(string)，required 仍仅 url；代理用例 8 例（命中/落空/显式过/显式败/冲突/关/形态矩阵/schema） | `test_mcp_fetch_tool.cpp`、`test_mcp_tools_builtin.cpp` |
+| PX-G | ✅ | 批次门禁 | 一次增量构建 + `--filter mcp` 退出 0 + `--filter settings` 不回归（计数见批次证据） | — |
+
+**批次证据（✅ 回填 2026-10-27，builder）**：红 = 接口脚手架（ProxyOptions/Request.proxy/schema）落地后行为全缺，fetch 过滤 46 筛中 6 红（命中/落空/显式过/显式败/冲突/形态矩阵全红，schema 与 useProxy=false 两例按定义绿）；实现后 fetch 46/46、tools builtin 6/6、`--filter mcp` 112+8=120/120 退出 0、`--filter settings` 113/113、std include 守卫 492 文件绿。期间 EUI-NEO 被并行会话改入中途态致 2 次构建红（`jellyDeepenedShadow` 未声明，与本批零交集），等待重试后收敛。commit 见本批 hash。

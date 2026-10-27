@@ -85,6 +85,34 @@ std::string fetchText(core::mcp::McpToolRegistry& registry, const std::string& u
     return result.value().text;
 }
 
+// ── 代理参数批(useProxy / proxy)的测试缝 ────────────────────────────
+
+// 探针假实现:按候选精确应答,记录被探的 host:port(优先级序断言用)。
+struct FakeProbe {
+    std::map<std::string, bool> answers;
+    std::vector<std::string> probed;
+    bool operator()(const std::string& hostPort) {
+        probed.push_back(hostPort);
+        const auto it = answers.find(hostPort);
+        return it != answers.end() && it->second;
+    }
+};
+
+module::mcp::ProxyOptions proxyOptsOf(FakeProbe& probe) {
+    module::mcp::ProxyOptions opts;
+    opts.probe = std::ref(probe);
+    return opts;
+}
+
+// 既有用例与代理参数正交:注入「首选命中」探针——零真端口探测、走代理路径
+// 不追加直连附注,输出与代理批之前逐字节一致;专测代理语义的用例自带
+// FakeProbe 独立组,不经此helper。
+module::mcp::ProxyOptions legacyProxyOpts() {
+    module::mcp::ProxyOptions opts;
+    opts.probe = [](const std::string&) { return true; };
+    return opts;
+}
+
 } // namespace
 
 REGISTER_TEST(mcp_fetch_registered_with_server_info,
@@ -113,7 +141,7 @@ REGISTER_TEST(mcp_fetch_html_converted_to_markdown,
               "mcp fetch: text/html 转 Markdown;文本含引号原样返回(转义归协议层)", {
     ScriptedFetcher script({htmlOk("<h1>标题</h1><p>说 \"引号\" & <b>粗</b></p>")});
     core::mcp::McpToolRegistry registry;
-    module::mcp::registerBuiltinMcpTools(registry, std::ref(script));
+    module::mcp::registerBuiltinMcpTools(registry, std::ref(script), module::mcp::FetchLimits{}, legacyProxyOpts());
     const std::string text = fetchText(registry, "https://e.test/page");
     DOCTEST_CHECK(text.find("# 标题") != std::string::npos);
     DOCTEST_CHECK(text.find("说 \"引号\" & **粗**") != std::string::npos);
@@ -125,7 +153,7 @@ REGISTER_TEST(mcp_fetch_text_plain_passthrough_exact,
     ScriptedFetcher script(
         {makeResponse(200, "line1\nline2", {{"Content-Type", "text/plain"}})});
     core::mcp::McpToolRegistry registry;
-    module::mcp::registerBuiltinMcpTools(registry, std::ref(script));
+    module::mcp::registerBuiltinMcpTools(registry, std::ref(script), module::mcp::FetchLimits{}, legacyProxyOpts());
     DOCTEST_CHECK_EQ(fetchText(registry, "http://a.test/t.txt"), std::string("line1\nline2"));
     return true;
 })
@@ -134,7 +162,7 @@ REGISTER_TEST(mcp_fetch_missing_content_type_treated_as_text,
               "mcp fetch: 缺失 Content-Type 按文本(spec §6.1-7)", {
     ScriptedFetcher script({makeResponse(200, "raw body")});
     core::mcp::McpToolRegistry registry;
-    module::mcp::registerBuiltinMcpTools(registry, std::ref(script));
+    module::mcp::registerBuiltinMcpTools(registry, std::ref(script), module::mcp::FetchLimits{}, legacyProxyOpts());
     DOCTEST_CHECK_EQ(fetchText(registry, "http://a.test/n"), std::string("raw body"));
     return true;
 })
@@ -144,7 +172,7 @@ REGISTER_TEST(mcp_fetch_unsupported_content_type_rejected,
     for (const char* type : {"application/octet-stream", "image/png"}) {
         ScriptedFetcher script({makeResponse(200, "binary", {{"Content-Type", type}})});
         core::mcp::McpToolRegistry registry;
-        module::mcp::registerBuiltinMcpTools(registry, std::ref(script));
+        module::mcp::registerBuiltinMcpTools(registry, std::ref(script), module::mcp::FetchLimits{}, legacyProxyOpts());
         const auto result = runFetch(registry, "{\"url\":\"http://a.test/b\"}");
         DOCTEST_REQUIRE(result.isOk());
         DOCTEST_CHECK(result.value().isError);
@@ -158,7 +186,7 @@ REGISTER_TEST(mcp_fetch_charset_gbk_rejected_without_retry,
     ScriptedFetcher script(
         {makeResponse(200, "<p>x</p>", {{"Content-Type", "text/html; charset=gbk"}})});
     core::mcp::McpToolRegistry registry;
-    module::mcp::registerBuiltinMcpTools(registry, std::ref(script));
+    module::mcp::registerBuiltinMcpTools(registry, std::ref(script), module::mcp::FetchLimits{}, legacyProxyOpts());
     const auto result = runFetch(registry, "{\"url\":\"http://a.test/g\"}");
     DOCTEST_REQUIRE(result.isOk());
     DOCTEST_CHECK(result.value().isError);
@@ -173,7 +201,7 @@ REGISTER_TEST(mcp_fetch_charset_whitelist_passes,
         {makeResponse(200, "asc", {{"Content-Type", "text/plain; charset=us-ascii"}}),
          makeResponse(200, "u8", {{"Content-Type", "text/html; charset=\"UTF8\""}})});
     core::mcp::McpToolRegistry registry;
-    module::mcp::registerBuiltinMcpTools(registry, std::ref(script));
+    module::mcp::registerBuiltinMcpTools(registry, std::ref(script), module::mcp::FetchLimits{}, legacyProxyOpts());
     DOCTEST_CHECK_EQ(fetchText(registry, "http://a.test/1"), std::string("asc"));
     DOCTEST_CHECK(fetchText(registry, "http://a.test/2").find("u8") != std::string::npos);
     return true;
@@ -186,7 +214,7 @@ REGISTER_TEST(mcp_fetch_invalid_utf8_sanitized,
     body += "end";
     ScriptedFetcher script({makeResponse(200, body)});
     core::mcp::McpToolRegistry registry;
-    module::mcp::registerBuiltinMcpTools(registry, std::ref(script));
+    module::mcp::registerBuiltinMcpTools(registry, std::ref(script), module::mcp::FetchLimits{}, legacyProxyOpts());
     const std::string text = fetchText(registry, "http://a.test/bad");
     DOCTEST_CHECK(text.find("ok") != std::string::npos);
     DOCTEST_CHECK(text.find("\xEF\xBF\xBD") != std::string::npos);  // U+FFFD
@@ -199,7 +227,7 @@ REGISTER_TEST(mcp_fetch_non_http_scheme_never_touches_network,
     for (const char* url : {"file:///etc/passwd", "ftp://h/x", "javascript:alert(1)"}) {
         ScriptedFetcher script({});
         core::mcp::McpToolRegistry registry;
-        module::mcp::registerBuiltinMcpTools(registry, std::ref(script));
+        module::mcp::registerBuiltinMcpTools(registry, std::ref(script), module::mcp::FetchLimits{}, legacyProxyOpts());
         const auto result =
             runFetch(registry, "{\"url\":\"" + std::string(url) + "\"}");
         DOCTEST_REQUIRE(result.isOk());
@@ -220,7 +248,7 @@ REGISTER_TEST(mcp_fetch_ssrf_literals_blocked_without_network,
     for (const char* host : blocked) {
         ScriptedFetcher script({});
         core::mcp::McpToolRegistry registry;
-        module::mcp::registerBuiltinMcpTools(registry, std::ref(script));
+        module::mcp::registerBuiltinMcpTools(registry, std::ref(script), module::mcp::FetchLimits{}, legacyProxyOpts());
         const auto result =
             runFetch(registry, "{\"url\":\"http://" + std::string(host) + "/x\"}");
         DOCTEST_REQUIRE(result.isOk());
@@ -241,7 +269,7 @@ REGISTER_TEST(mcp_fetch_ssrf_numeric_ip_encodings_blocked,
     for (const char* host : blockedHosts) {
         ScriptedFetcher script({});
         core::mcp::McpToolRegistry registry;
-        module::mcp::registerBuiltinMcpTools(registry, std::ref(script));
+        module::mcp::registerBuiltinMcpTools(registry, std::ref(script), module::mcp::FetchLimits{}, legacyProxyOpts());
         const auto result =
             runFetch(registry, "{\"url\":\"http://" + std::string(host) + "/x\"}");
         DOCTEST_REQUIRE(result.isOk());
@@ -259,7 +287,7 @@ REGISTER_TEST(mcp_fetch_ssrf_numeric_public_forms_pass,
          makeResponse(200, "ok2", {{"Content-Type", "text/plain"}}),
          makeResponse(200, "ok3", {{"Content-Type", "text/plain"}})});
     core::mcp::McpToolRegistry registry;
-    module::mcp::registerBuiltinMcpTools(registry, std::ref(script));
+    module::mcp::registerBuiltinMcpTools(registry, std::ref(script), module::mcp::FetchLimits{}, legacyProxyOpts());
     DOCTEST_CHECK_EQ(fetchText(registry, "http://134744072/"),   // = 8.8.8.8
                      std::string("ok1"));
     DOCTEST_CHECK_EQ(fetchText(registry, "http://0x08080808/"), std::string("ok2"));
@@ -275,7 +303,7 @@ REGISTER_TEST(mcp_fetch_ssrf_ipv4_compatible_v6_blocked,
     for (const char* host : blocked) {
         ScriptedFetcher script({});
         core::mcp::McpToolRegistry registry;
-        module::mcp::registerBuiltinMcpTools(registry, std::ref(script));
+        module::mcp::registerBuiltinMcpTools(registry, std::ref(script), module::mcp::FetchLimits{}, legacyProxyOpts());
         const auto result =
             runFetch(registry, "{\"url\":\"http://" + std::string(host) + "/x\"}");
         DOCTEST_REQUIRE(result.isOk());
@@ -294,7 +322,7 @@ REGISTER_TEST(mcp_fetch_ssrf_userinfo_rejected,
     for (const char* host : blocked) {
         ScriptedFetcher script({});
         core::mcp::McpToolRegistry registry;
-        module::mcp::registerBuiltinMcpTools(registry, std::ref(script));
+        module::mcp::registerBuiltinMcpTools(registry, std::ref(script), module::mcp::FetchLimits{}, legacyProxyOpts());
         const auto result =
             runFetch(registry, "{\"url\":\"http://" + std::string(host) + "/x\"}");
         DOCTEST_REQUIRE(result.isOk());
@@ -305,7 +333,7 @@ REGISTER_TEST(mcp_fetch_ssrf_userinfo_rejected,
     // 无 userinfo 的普通目标不受影响
     ScriptedFetcher script({makeResponse(200, "ok", {{"Content-Type", "text/plain"}})});
     core::mcp::McpToolRegistry registry;
-    module::mcp::registerBuiltinMcpTools(registry, std::ref(script));
+    module::mcp::registerBuiltinMcpTools(registry, std::ref(script), module::mcp::FetchLimits{}, legacyProxyOpts());
     DOCTEST_CHECK_EQ(fetchText(registry, "http://example.com/"), std::string("ok"));
     return true;
 })
@@ -318,7 +346,7 @@ REGISTER_TEST(mcp_fetch_ssrf_trailing_dot_host_rejected,
     for (const char* host : blocked) {
         ScriptedFetcher script({});
         core::mcp::McpToolRegistry registry;
-        module::mcp::registerBuiltinMcpTools(registry, std::ref(script));
+        module::mcp::registerBuiltinMcpTools(registry, std::ref(script), module::mcp::FetchLimits{}, legacyProxyOpts());
         const auto result =
             runFetch(registry, "{\"url\":\"http://" + std::string(host) + "/x\"}");
         DOCTEST_REQUIRE(result.isOk());
@@ -335,7 +363,7 @@ REGISTER_TEST(mcp_fetch_ssrf_multicast_denied,
     for (const char* host : blocked) {
         ScriptedFetcher script({});
         core::mcp::McpToolRegistry registry;
-        module::mcp::registerBuiltinMcpTools(registry, std::ref(script));
+        module::mcp::registerBuiltinMcpTools(registry, std::ref(script), module::mcp::FetchLimits{}, legacyProxyOpts());
         const auto result =
             runFetch(registry, "{\"url\":\"http://" + std::string(host) + "/x\"}");
         DOCTEST_REQUIRE(result.isOk());
@@ -359,7 +387,7 @@ REGISTER_TEST(mcp_fetch_ssrf_unparseable_host_fail_closed,
     for (const char* host : rejected) {
         ScriptedFetcher script({});
         core::mcp::McpToolRegistry registry;
-        module::mcp::registerBuiltinMcpTools(registry, std::ref(script));
+        module::mcp::registerBuiltinMcpTools(registry, std::ref(script), module::mcp::FetchLimits{}, legacyProxyOpts());
         const auto result =
             runFetch(registry, "{\"url\":\"http://" + std::string(host) + "/x\"}");
         DOCTEST_REQUIRE(result.isOk());
@@ -370,9 +398,132 @@ REGISTER_TEST(mcp_fetch_ssrf_unparseable_host_fail_closed,
     // 合法公网 v6 不误杀
     ScriptedFetcher script({makeResponse(200, "ok6", {{"Content-Type", "text/plain"}})});
     core::mcp::McpToolRegistry registry;
-    module::mcp::registerBuiltinMcpTools(registry, std::ref(script));
+    module::mcp::registerBuiltinMcpTools(registry, std::ref(script), module::mcp::FetchLimits{}, legacyProxyOpts());
     DOCTEST_CHECK_EQ(fetchText(registry, "http://[2606:4700::6810:85e5]/"),
                      std::string("ok6"));
+    return true;
+})
+
+REGISTER_TEST(mcp_fetch_proxy_auto_probe_hits_first_candidate,
+              "mcp fetch: useProxy 默认开——自动探测命中首选 7897 即短路并走代理(优先级序)", {
+    FakeProbe probe;
+    probe.answers["127.0.0.1:7897"] = true;
+    ScriptedFetcher script({makeResponse(200, "ok", {{"Content-Type", "text/plain"}})});
+    core::mcp::McpToolRegistry registry;
+    module::mcp::registerBuiltinMcpTools(registry, std::ref(script),
+                                         module::mcp::FetchLimits{}, proxyOptsOf(probe));
+    const std::string out = fetchText(registry, "http://a.test/x");
+    DOCTEST_REQUIRE(script.requestCount() == 1);
+    // 命中首选:代理生效且不再探后续候选(优先级短路)
+    DOCTEST_CHECK_EQ(script.requests()[0].proxy, std::string("127.0.0.1:7897"));
+    DOCTEST_CHECK_EQ(probe.probed.size(), std::size_t{1});
+    // 命中路径无直连附注
+    DOCTEST_CHECK_EQ(out, std::string("ok"));
+    return true;
+})
+
+REGISTER_TEST(mcp_fetch_proxy_auto_all_miss_direct_with_note,
+              "mcp fetch: 自动探测全不命中 → 直连且响应附注「未检测到本地代理,已直连」", {
+    FakeProbe probe;  // 全 false
+    ScriptedFetcher script({makeResponse(200, "ok", {{"Content-Type", "text/plain"}})});
+    core::mcp::McpToolRegistry registry;
+    module::mcp::registerBuiltinMcpTools(registry, std::ref(script),
+                                         module::mcp::FetchLimits{}, proxyOptsOf(probe));
+    const std::string out = fetchText(registry, "http://a.test/x");
+    DOCTEST_REQUIRE(script.requestCount() == 1);
+    DOCTEST_CHECK_EQ(script.requests()[0].proxy, std::string());
+    DOCTEST_CHECK_EQ(probe.probed.size(), std::size_t{3});  // 三候选逐个探尽
+    DOCTEST_CHECK_EQ(out, std::string("ok\n未检测到本地代理,已直连"));
+    return true;
+})
+
+REGISTER_TEST(mcp_fetch_proxy_explicit_ok,
+              "mcp fetch: 显式 proxy 预检通过 → 强制走该代理(不经自动探测)", {
+    FakeProbe probe;
+    probe.answers["127.0.0.1:7897"] = true;
+    ScriptedFetcher script({makeResponse(200, "ok", {{"Content-Type", "text/plain"}})});
+    core::mcp::McpToolRegistry registry;
+    module::mcp::registerBuiltinMcpTools(registry, std::ref(script),
+                                         module::mcp::FetchLimits{}, proxyOptsOf(probe));
+    const std::string out =
+        fetchText(registry, "http://a.test/x", ",\"proxy\":\"127.0.0.1:7897\"");
+    DOCTEST_REQUIRE(script.requestCount() == 1);
+    DOCTEST_CHECK_EQ(script.requests()[0].proxy, std::string("127.0.0.1:7897"));
+    DOCTEST_CHECK_EQ(out, std::string("ok"));
+    return true;
+})
+
+REGISTER_TEST(mcp_fetch_proxy_explicit_unreachable_is_error,
+              "mcp fetch: 显式 proxy 预检失败 → isError「显式指定的代理 … 不可用」且不触网", {
+    FakeProbe probe;  // 无服务
+    ScriptedFetcher script({});
+    core::mcp::McpToolRegistry registry;
+    module::mcp::registerBuiltinMcpTools(registry, std::ref(script),
+                                         module::mcp::FetchLimits{}, proxyOptsOf(probe));
+    const auto result =
+        runFetch(registry, "{\"url\":\"http://a.test/x\",\"proxy\":\"127.0.0.1:7897\"}");
+    DOCTEST_REQUIRE(result.isOk());
+    DOCTEST_CHECK(result.value().isError);
+    DOCTEST_CHECK(result.value().text.find("显式指定的代理 127.0.0.1:7897 不可用") !=
+                  std::string::npos);
+    DOCTEST_CHECK_EQ(script.requestCount(), std::size_t{0});
+    return true;
+})
+
+REGISTER_TEST(mcp_fetch_proxy_conflict_with_use_proxy_false,
+              "mcp fetch: proxy 与 useProxy=false 同给 → 参数冲突错误(-32602 口径),不探测不触网", {
+    FakeProbe probe;
+    ScriptedFetcher script({});
+    core::mcp::McpToolRegistry registry;
+    module::mcp::registerBuiltinMcpTools(registry, std::ref(script),
+                                         module::mcp::FetchLimits{}, proxyOptsOf(probe));
+    const auto result = runFetch(
+        registry,
+        "{\"url\":\"http://a.test/x\",\"proxy\":\"127.0.0.1:7897\",\"useProxy\":false}");
+    DOCTEST_REQUIRE(result.isOk());
+    DOCTEST_CHECK(result.value().isError);
+    DOCTEST_CHECK(result.value().text.find("参数冲突") != std::string::npos);
+    DOCTEST_CHECK_EQ(script.requestCount(), std::size_t{0});
+    DOCTEST_CHECK(probe.probed.empty());
+    return true;
+})
+
+REGISTER_TEST(mcp_fetch_proxy_use_proxy_false_direct_no_note,
+              "mcp fetch: useProxy=false → 直连、不探测、无附注", {
+    FakeProbe probe;
+    ScriptedFetcher script({makeResponse(200, "ok", {{"Content-Type", "text/plain"}})});
+    core::mcp::McpToolRegistry registry;
+    module::mcp::registerBuiltinMcpTools(registry, std::ref(script),
+                                         module::mcp::FetchLimits{}, proxyOptsOf(probe));
+    const std::string out =
+        fetchText(registry, "http://a.test/x", ",\"useProxy\":false");
+    DOCTEST_REQUIRE(script.requestCount() == 1);
+    DOCTEST_CHECK_EQ(script.requests()[0].proxy, std::string());
+    DOCTEST_CHECK(probe.probed.empty());
+    DOCTEST_CHECK_EQ(out, std::string("ok"));
+    return true;
+})
+
+REGISTER_TEST(mcp_fetch_proxy_explicit_format_restricted,
+              "mcp fetch: proxy 仅接受 IP:port 或 localhost:port(控 SSRF 面),其余形态报错", {
+    FakeProbe probe;
+    const char* bad[] = {"myproxy.example:8080", "127.0.0.1", "127.0.0.1:0",
+                         "127.0.0.1:99999", "[::1]:7897", "user@127.0.0.1:7897"};
+    for (const char* p : bad) {
+        FakeProbe fresh;
+        ScriptedFetcher script({});
+        core::mcp::McpToolRegistry registry;
+        module::mcp::registerBuiltinMcpTools(registry, std::ref(script),
+                                             module::mcp::FetchLimits{},
+                                             proxyOptsOf(fresh));
+        const auto result = runFetch(
+            registry,
+            "{\"url\":\"http://a.test/x\",\"proxy\":\"" + std::string(p) + "\"}");
+        DOCTEST_REQUIRE(result.isOk());
+        DOCTEST_CHECK(result.value().isError);
+        DOCTEST_CHECK(result.value().text.find("仅支持") != std::string::npos);
+        DOCTEST_CHECK_EQ(script.requestCount(), std::size_t{0});
+    }
     return true;
 })
 
@@ -383,7 +534,7 @@ REGISTER_TEST(mcp_fetch_public_literals_and_domains_pass,
          makeResponse(200, "ok2", {{"Content-Type", "text/plain"}}),
          makeResponse(200, "ok3", {{"Content-Type", "text/plain"}})});
     core::mcp::McpToolRegistry registry;
-    module::mcp::registerBuiltinMcpTools(registry, std::ref(script));
+    module::mcp::registerBuiltinMcpTools(registry, std::ref(script), module::mcp::FetchLimits{}, legacyProxyOpts());
     DOCTEST_CHECK_EQ(fetchText(registry, "http://172.32.0.1/"), std::string("ok1"));
     DOCTEST_CHECK_EQ(fetchText(registry, "http://[fec0::1]/"), std::string("ok2"));
     DOCTEST_CHECK_EQ(fetchText(registry, "http://example.com/"), std::string("ok3"));
@@ -395,7 +546,7 @@ REGISTER_TEST(mcp_fetch_ssrf_checked_on_every_hop,
     ScriptedFetcher script(
         {makeResponse(302, "", {{"Location", "http://127.0.0.1/x"}})});
     core::mcp::McpToolRegistry registry;
-    module::mcp::registerBuiltinMcpTools(registry, std::ref(script));
+    module::mcp::registerBuiltinMcpTools(registry, std::ref(script), module::mcp::FetchLimits{}, legacyProxyOpts());
     const auto result = runFetch(registry, "{\"url\":\"https://e.test/redirect\"}");
     DOCTEST_REQUIRE(result.isOk());
     DOCTEST_CHECK(result.value().isError);
@@ -410,7 +561,7 @@ REGISTER_TEST(mcp_fetch_redirect_location_resolution,
         ScriptedFetcher script({makeResponse(301, "", {{"Location", "b/c.html"}}),
                                 htmlOk("<p>ok</p>")});
         core::mcp::McpToolRegistry registry;
-        module::mcp::registerBuiltinMcpTools(registry, std::ref(script));
+        module::mcp::registerBuiltinMcpTools(registry, std::ref(script), module::mcp::FetchLimits{}, legacyProxyOpts());
         DOCTEST_CHECK(fetchText(registry, "http://a.test/dir/page").find("ok") !=
                       std::string::npos);
         DOCTEST_REQUIRE(script.requestCount() == 2);
@@ -421,7 +572,7 @@ REGISTER_TEST(mcp_fetch_redirect_location_resolution,
         ScriptedFetcher script({makeResponse(302, "", {{"Location", "/root"}}),
                                 htmlOk("<p>ok</p>")});
         core::mcp::McpToolRegistry registry;
-        module::mcp::registerBuiltinMcpTools(registry, std::ref(script));
+        module::mcp::registerBuiltinMcpTools(registry, std::ref(script), module::mcp::FetchLimits{}, legacyProxyOpts());
         DOCTEST_CHECK(fetchText(registry, "https://a.test/deep/x").find("ok") !=
                       std::string::npos);
         DOCTEST_CHECK_EQ(script.requests()[1].url, std::string("https://a.test/root"));
@@ -430,7 +581,7 @@ REGISTER_TEST(mcp_fetch_redirect_location_resolution,
         ScriptedFetcher script({makeResponse(302, "", {{"Location", "//other.test/z"}}),
                                 htmlOk("<p>ok</p>")});
         core::mcp::McpToolRegistry registry;
-        module::mcp::registerBuiltinMcpTools(registry, std::ref(script));
+        module::mcp::registerBuiltinMcpTools(registry, std::ref(script), module::mcp::FetchLimits{}, legacyProxyOpts());
         DOCTEST_CHECK(fetchText(registry, "https://a.test/y").find("ok") !=
                       std::string::npos);
         DOCTEST_CHECK_EQ(script.requests()[1].url, std::string("https://other.test/z"));
@@ -446,7 +597,7 @@ REGISTER_TEST(mcp_fetch_redirect_hop_cap,
     }
     ScriptedFetcher script(std::move(responses));
     core::mcp::McpToolRegistry registry;
-    module::mcp::registerBuiltinMcpTools(registry, std::ref(script));
+    module::mcp::registerBuiltinMcpTools(registry, std::ref(script), module::mcp::FetchLimits{}, legacyProxyOpts());
     const auto result = runFetch(registry, "{\"url\":\"http://a.test/loop\"}");
     DOCTEST_REQUIRE(result.isOk());
     DOCTEST_CHECK(result.value().isError);
@@ -459,7 +610,7 @@ REGISTER_TEST(mcp_fetch_redirect_missing_location_and_bad_target,
               "mcp fetch: 缺 Location / 非法目标均报错(spec §6.1-4)", {
     ScriptedFetcher script({makeResponse(302, "")});
     core::mcp::McpToolRegistry registry;
-    module::mcp::registerBuiltinMcpTools(registry, std::ref(script));
+    module::mcp::registerBuiltinMcpTools(registry, std::ref(script), module::mcp::FetchLimits{}, legacyProxyOpts());
     const auto missing = runFetch(registry, "{\"url\":\"http://a.test/m\"}");
     DOCTEST_CHECK(missing.value().text.find("重定向缺少 Location") != std::string::npos);
 
@@ -476,7 +627,7 @@ REGISTER_TEST(mcp_fetch_non_2xx_reports_status_and_body_prefix,
     const std::string body = std::string(195, 'a') + "MMMM" + std::string(300, 'z');
     ScriptedFetcher script({makeResponse(404, body)});
     core::mcp::McpToolRegistry registry;
-    module::mcp::registerBuiltinMcpTools(registry, std::ref(script));
+    module::mcp::registerBuiltinMcpTools(registry, std::ref(script), module::mcp::FetchLimits{}, legacyProxyOpts());
     const auto result = runFetch(registry, "{\"url\":\"http://a.test/gone\"}");
     DOCTEST_REQUIRE(result.isOk());
     DOCTEST_CHECK(result.value().isError);
@@ -494,7 +645,7 @@ REGISTER_TEST(mcp_fetch_non_2xx_cjk_prefix_counts_chars_not_bytes,
     for (int i = 0; i < 300; ++i) body += cjk;
     ScriptedFetcher script({makeResponse(500, body)});
     core::mcp::McpToolRegistry registry;
-    module::mcp::registerBuiltinMcpTools(registry, std::ref(script));
+    module::mcp::registerBuiltinMcpTools(registry, std::ref(script), module::mcp::FetchLimits{}, legacyProxyOpts());
     const auto result = runFetch(registry, "{\"url\":\"http://a.test/err\"}");
     DOCTEST_REQUIRE(result.isOk());
     DOCTEST_CHECK(result.value().isError);
@@ -513,7 +664,7 @@ REGISTER_TEST(mcp_fetch_body_over_2mib_truncation_note,
     ScriptedFetcher script(
         {makeResponse(200, body, {{"Content-Type", "text/html"}})});
     core::mcp::McpToolRegistry registry;
-    module::mcp::registerBuiltinMcpTools(registry, std::ref(script));
+    module::mcp::registerBuiltinMcpTools(registry, std::ref(script), module::mcp::FetchLimits{}, legacyProxyOpts());
     const std::string text = fetchText(registry, "http://a.test/big");
     DOCTEST_CHECK(text.find("hello") != std::string::npos);
     DOCTEST_CHECK(text.find("（原始响应超过 2 MiB，已截断）") != std::string::npos);
@@ -526,7 +677,7 @@ REGISTER_TEST(mcp_fetch_max_chars_clamped_and_utf8_boundary_cut,
         ScriptedFetcher script({makeResponse(200, std::string(1500, 'a'),
                                              {{"Content-Type", "text/plain"}})});
         core::mcp::McpToolRegistry registry;
-        module::mcp::registerBuiltinMcpTools(registry, std::ref(script));
+        module::mcp::registerBuiltinMcpTools(registry, std::ref(script), module::mcp::FetchLimits{}, legacyProxyOpts());
         const std::string text =
             fetchText(registry, "http://a.test/lo", ",\"max_chars\":1");
         DOCTEST_CHECK(text.substr(0, 1000) == std::string(1000, 'a'));
@@ -538,7 +689,7 @@ REGISTER_TEST(mcp_fetch_max_chars_clamped_and_utf8_boundary_cut,
         ScriptedFetcher script(
             {makeResponse(200, body, {{"Content-Type", "text/plain"}})});
         core::mcp::McpToolRegistry registry;
-        module::mcp::registerBuiltinMcpTools(registry, std::ref(script));
+        module::mcp::registerBuiltinMcpTools(registry, std::ref(script), module::mcp::FetchLimits{}, legacyProxyOpts());
         const std::string text =
             fetchText(registry, "http://a.test/cjk", ",\"max_chars\":1000");
         DOCTEST_CHECK(text.find("（已截断到 1000 字符）") != std::string::npos);
@@ -550,7 +701,7 @@ REGISTER_TEST(mcp_fetch_max_chars_clamped_and_utf8_boundary_cut,
         ScriptedFetcher script({makeResponse(200, std::string(200001, 'c'),
                                              {{"Content-Type", "text/plain"}})});
         core::mcp::McpToolRegistry registry;
-        module::mcp::registerBuiltinMcpTools(registry, std::ref(script));
+        module::mcp::registerBuiltinMcpTools(registry, std::ref(script), module::mcp::FetchLimits{}, legacyProxyOpts());
         const std::string text =
             fetchText(registry, "http://a.test/hi", ",\"max_chars\":999999");
         DOCTEST_CHECK(text.find("（已截断到 200000 字符）") != std::string::npos);
@@ -559,7 +710,7 @@ REGISTER_TEST(mcp_fetch_max_chars_clamped_and_utf8_boundary_cut,
         ScriptedFetcher script({makeResponse(200, std::string(60001, 'b'),
                                              {{"Content-Type", "text/plain"}})});
         core::mcp::McpToolRegistry registry;
-        module::mcp::registerBuiltinMcpTools(registry, std::ref(script));
+        module::mcp::registerBuiltinMcpTools(registry, std::ref(script), module::mcp::FetchLimits{}, legacyProxyOpts());
         const std::string text =
             fetchText(registry, "http://a.test/def", ",\"max_chars\":\"x\"");
         DOCTEST_CHECK(text.find("（已截断到 60000 字符）") != std::string::npos);
@@ -571,7 +722,7 @@ REGISTER_TEST(mcp_fetch_empty_visible_text_hint,
               "mcp fetch: HTML 无可见文本非错误,返回提示(spec §6.1-11)", {
     ScriptedFetcher script({htmlOk("<html><body>   </body></html>")});
     core::mcp::McpToolRegistry registry;
-    module::mcp::registerBuiltinMcpTools(registry, std::ref(script));
+    module::mcp::registerBuiltinMcpTools(registry, std::ref(script), module::mcp::FetchLimits{}, legacyProxyOpts());
     const auto result = runFetch(registry, "{\"url\":\"https://e.test/js\"}");
     DOCTEST_REQUIRE(result.isOk());
     DOCTEST_CHECK_FALSE(result.value().isError);
@@ -608,7 +759,7 @@ REGISTER_TEST(mcp_fetch_network_error_readable_message,
     failure.errorMessage = "connection reset";
     ScriptedFetcher script({failure});
     core::mcp::McpToolRegistry registry;
-    module::mcp::registerBuiltinMcpTools(registry, std::ref(script));
+    module::mcp::registerBuiltinMcpTools(registry, std::ref(script), module::mcp::FetchLimits{}, legacyProxyOpts());
     const auto result = runFetch(registry, "{\"url\":\"http://a.test/dead\"}");
     DOCTEST_REQUIRE(result.isOk());
     DOCTEST_CHECK(result.value().isError);
