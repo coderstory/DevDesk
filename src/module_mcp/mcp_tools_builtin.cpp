@@ -132,6 +132,7 @@ core::mcp::ToolResult errToolResult(std::string text) {
 
 struct ParsedUrl {
     bool valid = false;
+    bool userinfo = false;  // authority 含 '@'：本工具无合法用途，一律拒（防 a@127.0.0.1 绕过）
     std::string scheme;    // 小写
     std::string host;      // 小写;IPv6 无方括号
     bool isV6 = false;
@@ -150,6 +151,12 @@ ParsedUrl parseUrl(const std::string& url) {
     const std::string authority = url.substr(
         authorityStart,
         (authorityEnd == std::string::npos ? url.size() : authorityEnd) - authorityStart);
+    // userinfo 一律拒：libcurl 按 RFC 3986 把 @ 后段当真主机实连,而自研解析把
+    // 「a@127.0.0.1」整体当 host → 非字面 IP → 放行,SSRF 绕过。本工具无合法用途。
+    if (authority.find('@') != std::string::npos) {
+        out.userinfo = true;
+        return out;
+    }
     out.path = authorityEnd == std::string::npos ? "/" : url.substr(authorityEnd);
     if (out.path.empty() || out.path[0] != '/') out.path = "/" + out.path;
     std::string hostPart;
@@ -338,20 +345,121 @@ bool parseIpv6(const std::string& host, unsigned short out[8]) {
 }
 
 // 空串 = 放行;非空 = 拒绝原因。仅字面地址,DNS 域名放行(重绑定风险 spec §14.2 已接受)。
+// host 是否为「数字编码形态」：每段都是纯十进制，或 0x/0X 前缀十六进制（前导 0
+// 的八进制段本就是纯数字，一并覆盖）。字母域名（含十六进制词如 deadbeef.ca）不算。
+bool isNumericEncodedHost(const std::string& host) {
+    if (host.empty() || host.front() == '.' || host.back() == '.') return false;
+    std::size_t start = 0;
+    while (start <= host.size()) {
+        const std::size_t dot = host.find('.', start);
+        const std::string seg = host.substr(
+            start, (dot == std::string::npos ? host.size() : dot) - start);
+        if (seg.empty()) return false;
+        const bool hex = seg.size() >= 2 && seg[0] == '0' &&
+                         (seg[1] == 'x' || seg[1] == 'X');
+        for (std::size_t pos = hex ? 2 : 0; pos < seg.size(); ++pos) {
+            const char c = seg[pos];
+            const bool ok = (c >= '0' && c <= '9') ||
+                            (hex && ((c >= 'a' && c <= 'f') ||
+                                     (c >= 'A' && c <= 'F')));
+            if (!ok) return false;
+        }
+        if (dot == std::string::npos) break;
+        start = dot + 1;
+    }
+    return true;
+}
+
+// inet_aton 语义的 IPv4 数字形态解析：1-4 段；段可十进制 / 0x 十六进制 / 前导 0
+// 八进制；不足 4 段时末段按剩余字节数计权（"127.1"=127.0.0.1，"2130706433" 与
+// "0x7f000001"=127.0.0.1）。溢出 / 段值越界 / 裸 0x / 超 4 段 / 尾点 → false
+//（调用方对数字形态解析失败一律 fail-closed，防填充零等变体绕过）。
+bool parseIpv4NumericForms(const std::string& host, unsigned char out[4]) {
+    unsigned long long parts[4] = {0, 0, 0, 0};
+    int partCount = 0;
+    std::size_t i = 0;
+    const std::size_t n = host.size();
+    if (n == 0) return false;
+    for (;;) {
+        if (partCount >= 4) return false;
+        unsigned long long v = 0;
+        int base = 10;
+        if (i + 1 < n && host[i] == '0' && (host[i + 1] == 'x' || host[i + 1] == 'X')) {
+            base = 16;
+            i += 2;
+            if (i >= n || host[i] == '.') return false;  // 裸 0x
+        } else if (i < n && host[i] == '0' && i + 1 < n && host[i + 1] != '.') {
+            base = 8;
+            ++i;
+        }
+        bool anyDigit = false;
+        while (i < n && host[i] != '.') {
+            const char c = host[i];
+            int d = -1;
+            if (c >= '0' && c <= '9') {
+                d = c - '0';
+            } else if (base == 16) {
+                if (c >= 'a' && c <= 'f') d = c - 'a' + 10;
+                else if (c >= 'A' && c <= 'F') d = c - 'A' + 10;
+            }
+            if (d < 0) return false;
+            if (v > 0xFFFFFFFFULL / static_cast<unsigned long long>(base)) return false;
+            v = v * static_cast<unsigned long long>(base) +
+                static_cast<unsigned long long>(d);
+            if (v > 0xFFFFFFFFULL) return false;
+            anyDigit = true;
+            ++i;
+        }
+        if (!anyDigit) return false;
+        parts[partCount++] = v;
+        if (i == n) break;
+        ++i;  // 跳过 '.'
+        if (i == n) return false;  // 尾点
+    }
+    unsigned long long addr = 0;
+    if (partCount == 4) {
+        if (parts[0] > 255 || parts[1] > 255 || parts[2] > 255 || parts[3] > 255) {
+            return false;
+        }
+        addr = (parts[0] << 24) | (parts[1] << 16) | (parts[2] << 8) | parts[3];
+    } else if (partCount == 3) {
+        if (parts[0] > 255 || parts[1] > 255 || parts[2] > 0xFFFFFFULL) return false;
+        addr = (parts[0] << 24) | (parts[1] << 16) | parts[2];
+    } else if (partCount == 2) {
+        if (parts[0] > 255 || parts[1] > 0xFFFFFFULL) return false;
+        addr = (parts[0] << 24) | parts[1];
+    } else {
+        addr = parts[0];
+    }
+    out[0] = static_cast<unsigned char>((addr >> 24) & 0xff);
+    out[1] = static_cast<unsigned char>((addr >> 16) & 0xff);
+    out[2] = static_cast<unsigned char>((addr >> 8) & 0xff);
+    out[3] = static_cast<unsigned char>(addr & 0xff);
+    return true;
+}
+
 std::string ssrfRejectReason(const std::string& host) {
     if (host == "localhost") return "拒绝访问本机地址（SSRF 防护）: " + host;
     if (host.find(':') != std::string::npos) {
         unsigned short g[8];
-        if (!parseIpv6(host, g)) return "";
-        bool headZero = true;
-        for (int i = 0; i < 7; ++i) {
-            if (g[i] != 0) {
-                headZero = false;
-                break;
-            }
+        // 解析失败一律 fail-closed：zone-id（[fe80::1%25eth0]）、畸形 v6 等
+        // 系统解析器可能仍接受的形态，不得走「放行当域名」分支
+        if (!parseIpv6(host, g)) return "无法解析的目标地址（SSRF 防护）: " + host;
+        const bool headZero6 = g[0] == 0 && g[1] == 0 && g[2] == 0 &&
+                               g[3] == 0 && g[4] == 0 && g[5] == 0;  // ::/96 前缀
+        const bool headZero7 = headZero6 && g[6] == 0;
+        if (headZero7 && g[7] == 0) return "拒绝访问未指定地址（SSRF 防护）: " + host;
+        if (headZero7 && g[7] == 1) return "拒绝访问本机地址（SSRF 防护）: " + host;
+        if (headZero6) {
+            // ::/96 IPv4-compatible（::127.0.0.1 类，RFC 4291 已废弃但系统解析器
+            // 普遍仍接受）：还原 v4 再查表
+            const unsigned char b[4] = {static_cast<unsigned char>(g[6] >> 8),
+                                        static_cast<unsigned char>(g[6] & 0xff),
+                                        static_cast<unsigned char>(g[7] >> 8),
+                                        static_cast<unsigned char>(g[7] & 0xff)};
+            if (isBlockedIpv4(b)) return "拒绝访问内网/本机地址（SSRF 防护）: " + host;
+            return "";  // 全零前缀下 fe80/fc00 检查必不中，直接收敛
         }
-        if (headZero && g[7] == 0) return "拒绝访问未指定地址（SSRF 防护）: " + host;
-        if (headZero && g[7] == 1) return "拒绝访问本机地址（SSRF 防护）: " + host;
         if (g[0] == 0 && g[1] == 0 && g[2] == 0 && g[3] == 0 && g[4] == 0 &&
             g[5] == 0xffff) {  // IPv4 映射地址:还原 v4 再查表([::ffff:127.0.0.1] 类)
             const unsigned char b[4] = {static_cast<unsigned char>(g[6] >> 8),
@@ -365,10 +473,16 @@ std::string ssrfRejectReason(const std::string& host) {
         return "";
     }
     unsigned char b[4];
-    if (parseIpv4(host, b) && isBlockedIpv4(b)) {
-        return "拒绝访问内网/本机地址（SSRF 防护）: " + host;
+    if (parseIpv4(host, b) || parseIpv4NumericForms(host, b)) {
+        // 数字编码形态（inet_aton 语义）还原成 v4 查表，不得按域名放行
+        if (isBlockedIpv4(b)) return "拒绝访问内网/本机地址（SSRF 防护）: " + host;
+        return "";
     }
-    return "";
+    if (isNumericEncodedHost(host)) {
+        // 长得像数字 IP 但解析失败（越界/超段/裸 0x）：fail-closed
+        return "无法解析的目标地址（SSRF 防护）: " + host;
+    }
+    return "";  // DNS 域名放行(重绑定风险 spec §14.2 已接受)
 }
 
 // ---- 响应头/编码/截断 ----
@@ -495,6 +609,12 @@ public:
         std::string current = urlValue.asString();
         for (;;) {
             const ParsedUrl target = parseUrl(current);
+            // userinfo 先于 valid 判：parseUrl 对 @ 目标提前返回(valid=false),
+            // 若让「仅支持 http/https」抢先,攻击形态被掩盖成普通格式错
+            if (target.userinfo) {
+                return core::Result<core::mcp::ToolResult>::ok(
+                    errToolResult("拒绝包含 userinfo 的目标地址（SSRF 防护）: " + current));
+            }
             if (!target.valid ||
                 (target.scheme != "http" && target.scheme != "https")) {
                 return core::Result<core::mcp::ToolResult>::ok(

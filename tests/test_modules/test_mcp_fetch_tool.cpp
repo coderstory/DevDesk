@@ -231,6 +231,115 @@ REGISTER_TEST(mcp_fetch_ssrf_literals_blocked_without_network,
     return true;
 })
 
+REGISTER_TEST(mcp_fetch_ssrf_numeric_ip_encodings_blocked,
+              "mcp fetch: IPv4 数字编码形态(十进制大整数/八进制/十六进制/缩写/填充零)一律还原查表拦截，不得按域名放行", {
+    // 防的事故：inet_aton 语义的数字变体被系统解析器还原成回环/私网,
+    // 而字面校验只认点分十进制 → 编码形态绕过(spec §14.2 的 DNS 前提被架空)
+    const char* blockedHosts[] = {"2130706433", "0177.0.0.1", "0x7f.0.0.1",
+                                  "127.1", "127.000000000000000.1", "0177.1",
+                                  "0x7f.1", "0x7f000001"};
+    for (const char* host : blockedHosts) {
+        ScriptedFetcher script({});
+        core::mcp::McpToolRegistry registry;
+        module::mcp::registerBuiltinMcpTools(registry, std::ref(script));
+        const auto result =
+            runFetch(registry, "{\"url\":\"http://" + std::string(host) + "/x\"}");
+        DOCTEST_REQUIRE(result.isOk());
+        DOCTEST_CHECK(result.value().isError);
+        DOCTEST_CHECK(result.value().text.find("SSRF") != std::string::npos);
+        DOCTEST_CHECK_EQ(script.requestCount(), std::size_t{0});
+    }
+    return true;
+})
+
+REGISTER_TEST(mcp_fetch_ssrf_numeric_public_forms_pass,
+              "mcp fetch: 公网数字形态(134744072/0x08080808)与纯十六进制词域名不误杀", {
+    ScriptedFetcher script(
+        {makeResponse(200, "ok1", {{"Content-Type", "text/plain"}}),
+         makeResponse(200, "ok2", {{"Content-Type", "text/plain"}}),
+         makeResponse(200, "ok3", {{"Content-Type", "text/plain"}})});
+    core::mcp::McpToolRegistry registry;
+    module::mcp::registerBuiltinMcpTools(registry, std::ref(script));
+    DOCTEST_CHECK_EQ(fetchText(registry, "http://134744072/"),   // = 8.8.8.8
+                     std::string("ok1"));
+    DOCTEST_CHECK_EQ(fetchText(registry, "http://0x08080808/"), std::string("ok2"));
+    // 字母域名（含十六进制词）不落数字形态判定,仍按域名放行
+    DOCTEST_CHECK_EQ(fetchText(registry, "http://deadbeef.ca/"), std::string("ok3"));
+    return true;
+})
+
+REGISTER_TEST(mcp_fetch_ssrf_ipv4_compatible_v6_blocked,
+              "mcp fetch: ::/96 IPv4-compatible IPv6(如 ::127.0.0.1)还原 v4 查表拦截", {
+    // ::127.0.0.1 前七组全零、末段非 0/1、非 ffff 映射——修复前四条判定全不中而放行
+    const char* blocked[] = {"[::127.0.0.1]", "[::10.1.2.3]", "[::0.0.0.2]"};
+    for (const char* host : blocked) {
+        ScriptedFetcher script({});
+        core::mcp::McpToolRegistry registry;
+        module::mcp::registerBuiltinMcpTools(registry, std::ref(script));
+        const auto result =
+            runFetch(registry, "{\"url\":\"http://" + std::string(host) + "/x\"}");
+        DOCTEST_REQUIRE(result.isOk());
+        DOCTEST_CHECK(result.value().isError);
+        DOCTEST_CHECK(result.value().text.find("SSRF") != std::string::npos);
+        DOCTEST_CHECK_EQ(script.requestCount(), std::size_t{0});
+    }
+    return true;
+})
+
+REGISTER_TEST(mcp_fetch_ssrf_userinfo_rejected,
+              "mcp fetch: 带 userinfo 的目标(a@127.0.0.1)一律拒，无 userinfo 正常通过", {
+    // 防的事故：libcurl 按 RFC 3986 把 @ 后段当真主机实连回环,而自研解析
+    // 取到的 host 段含 @ → 判「非字面 IP」放行
+    const char* blocked[] = {"a@127.0.0.1", "b@10.1.2.3", "a@localhost"};
+    for (const char* host : blocked) {
+        ScriptedFetcher script({});
+        core::mcp::McpToolRegistry registry;
+        module::mcp::registerBuiltinMcpTools(registry, std::ref(script));
+        const auto result =
+            runFetch(registry, "{\"url\":\"http://" + std::string(host) + "/x\"}");
+        DOCTEST_REQUIRE(result.isOk());
+        DOCTEST_CHECK(result.value().isError);
+        DOCTEST_CHECK(result.value().text.find("SSRF") != std::string::npos);
+        DOCTEST_CHECK_EQ(script.requestCount(), std::size_t{0});
+    }
+    // 无 userinfo 的普通目标不受影响
+    ScriptedFetcher script({makeResponse(200, "ok", {{"Content-Type", "text/plain"}})});
+    core::mcp::McpToolRegistry registry;
+    module::mcp::registerBuiltinMcpTools(registry, std::ref(script));
+    DOCTEST_CHECK_EQ(fetchText(registry, "http://example.com/"), std::string("ok"));
+    return true;
+})
+
+REGISTER_TEST(mcp_fetch_ssrf_unparseable_host_fail_closed,
+              "mcp fetch: v6 解析失败(zone-id/畸形)/数字形态解析失败(越界/超段)一律 fail-closed，合法公网 v6 放行", {
+    // 防的事故：解析失败走「放行当域名」分支（fe80::1%25eth0 等 zone-id 形态
+    // 系统解析器认得,字面校验不认 → 绕过）
+    const char* rejected[] = {"[fe80::1%25eth0]",   // zone-id
+                              "[fe80::1%eth0]",     // 未转义 zone-id
+                              "[1:2:3:4:5:6:7:8:9]",  // 段数超限
+                              "1.2.3.4.5.6",          // 数字形态段数超限
+                              "999.1.1.1",            // 段值越界
+                              "0x"};                  // 裸十六进制前缀
+    for (const char* host : rejected) {
+        ScriptedFetcher script({});
+        core::mcp::McpToolRegistry registry;
+        module::mcp::registerBuiltinMcpTools(registry, std::ref(script));
+        const auto result =
+            runFetch(registry, "{\"url\":\"http://" + std::string(host) + "/x\"}");
+        DOCTEST_REQUIRE(result.isOk());
+        DOCTEST_CHECK(result.value().isError);
+        DOCTEST_CHECK(result.value().text.find("SSRF") != std::string::npos);
+        DOCTEST_CHECK_EQ(script.requestCount(), std::size_t{0});
+    }
+    // 合法公网 v6 不误杀
+    ScriptedFetcher script({makeResponse(200, "ok6", {{"Content-Type", "text/plain"}})});
+    core::mcp::McpToolRegistry registry;
+    module::mcp::registerBuiltinMcpTools(registry, std::ref(script));
+    DOCTEST_CHECK_EQ(fetchText(registry, "http://[2606:4700::6810:85e5]/"),
+                     std::string("ok6"));
+    return true;
+})
+
 REGISTER_TEST(mcp_fetch_public_literals_and_domains_pass,
               "mcp fetch: 公网边界(172.32/ fec0:: / 域名)放行(防 SSRF 误杀)", {
     ScriptedFetcher script(
