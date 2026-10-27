@@ -4,6 +4,9 @@
 add_library(devdesk_module_wallpaper STATIC
     wallpaper_module.cpp
     wallpaper_module.h
+    # 页面组装（播放/片库）：吃快照、吐元素树，交互经 UiActions 回到服务。
+    wallpaper_ui.cpp
+    wallpaper_ui.h
     # 服务骨架（扫描/轮换/让路/快照）；UI 批次只消费 wallpaper_service.h 的快照与命令。
     wallpaper_service.cpp
     wallpaper_service.h
