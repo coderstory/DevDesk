@@ -119,10 +119,10 @@ CREATE TABLE IF NOT EXISTS memories (
 );
 CREATE INDEX IF NOT EXISTS idx_memories_project_status ON memories(project, status);
 CREATE INDEX IF NOT EXISTS idx_memories_session ON memories(session_id);
--- 幂等键（§3.2 双职责：截断重写去重 + 崩溃恢复第二道防线）：同一会话同一事件序号至多一条 segment 行。
--- 部分唯一索引只约束 kind='segment'（fact 行与来源事件无一一对位概念，豁免）
+-- 幂等键（§3.2 双职责：截断重写去重 + 崩溃恢复第二道防线）：同一 (session_id,event_seq) 至多一条 active 行。
+-- superseded 行不受限，保留供溯源；部分唯一索引只约束 kind='segment'（fact 行与来源事件无一一对位概念，豁免）
 CREATE UNIQUE INDEX IF NOT EXISTS idx_memories_session_event
-  ON memories(session_id, event_seq) WHERE kind='segment' AND session_id IS NOT NULL;
+  ON memories(session_id, event_seq) WHERE kind='segment' AND session_id IS NOT NULL AND status='active';
 
 -- FTS5 虚表：external content（索引数据回头读 memories.tokens），触发器同步
 CREATE VIRTUAL TABLE IF NOT EXISTS fts_memories USING fts5(
@@ -234,7 +234,7 @@ C++ 分词器（`tokenize/`，入库与查询**必须共用同一实现**——�
 - **重写处理路径（零物理删除修正）**：实验台"清派生行"清的是可重建的原始 events，本表存 memories，P0/P0.5+ 均禁止物理删（§2.2 不变量）。检测到重写（上表第 2 行）后：
   1. `offset` 回退 0，从头重读，全程不删任何 memories 行；
   2. 重遇 `(session_id, event_seq)` 同键且 `search_text` 相同（规范化原文，§2.2 列义）的段 → 跳过（幂等，等价稳定文件回放）；
-  3. 同键不同内容（该事件被重写）→ 旧行 `status` 翻 `'superseded'` + `superseded_by` 指向新行，再 ADD 新行——写路径仍是只 ADD，旧行只做状态翻转（§2.2 零物理删除框架，T2 断言口径）；
+  3. 同键不同内容（该事件被重写）→ 同一事务内按序三步：旧行 `status` 翻 `'superseded'`（`superseded_by` 暂空，释放 active 唯一槽位）→ ADD 新行（active）→ 旧行 `superseded_by` 回填新行 id（新 id 已存在，`foreign_keys=ON` 下 FK 校验通过）——写路径仍是只 ADD，旧行只做状态翻转（§2.2 零物理删除框架，T2 断言口径；三步一次提交，任一步中断整体回滚）；
   4. 重读完成后 → `event_seq` 大于本轮重读最大事件序号的旧行（会话尾部被重写截掉）批量翻 `'superseded'`，`superseded_by` 留空；
   5. superseded 行检索自然隐身：主/兜底两条 SQL 均固定 `status='active'` 过滤（§2.4），无需新增分支。
 - **事务边界（崩溃恢复，对应报告 §5 门槛 6）**：每个文件每轮的"INSERT memories 行 + 推进 `ingest_state.offset`"包进一个 SQLite 事务一次提交——两写之间任何时刻崩溃即整体回滚，重启从旧水位重放该轮，无半途态；部分唯一索引 `idx_memories_session_event`（§2.2）为第二道防线，即使出现绕过事务的写路径也产不出重复行。
@@ -313,7 +313,7 @@ C++ 分词器（`tokenize/`，入库与查询**必须共用同一实现**——�
 | T11 | proposals 幂等 | 同 id 同内容重复投递只落一条；同 id 异内容拒绝且审计留痕；同一 undoOf 第二张未决被唯一索引拒绝 | 幂等键/部分唯一索引缺失 |
 | T12 | MCP 契约 | initialize/tools/list/tools/call 往返；非法参数 → `-32602`；坏 JSON → `-32700`；不存在的方法 → `-32601`；非 JSON-RPC 非法请求 → `-32600`；空结果 → 正常响应"（无匹配记忆）"；库打不开 → `isError:true` 且进程存活 | 错误码/失败开放语义缺失（四个错误码任缺一即红） |
 | T13 | hook 失败开放（出口 4） | stdin 喂垃圾/库路径指向不可写盘 → 退出码 0、stdout 空；合法输入 → 输出含 hookSpecificOutput 键 | 有人把异常变成非 0 退出 |
-| T14 | 崩溃恢复事务（§3.2） | 构造"行已插、水位未推"（模拟两写之间中断）→ 重跑同轮：行数不变（幂等键拦重）、水位正常推进；事务内中途回滚 → 重启重放落库正确且无重复 | 行插入与水位推进入了不同事务/自动提交，中断后重启重复入库 |
+| T14 | 崩溃恢复事务（§3.2） | 构造"行已插、水位未推"（模拟两写之间中断）→ 重跑同轮：行数不变（崩溃重放撞 active 行仍被部分唯一索引拒绝，防重职责不变）、水位正常推进；事务内中途回滚 → 重启重放落库正确且无重复 | 行插入与水位推进入了不同事务/自动提交，中断后重启重复入库 |
 
 ### 6.2 probe / 集成层
 
