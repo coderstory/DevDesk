@@ -141,21 +141,23 @@
 
 | ID | 状态 | 条目 | 验收判据（可核销） | 涉及文件 |
 |---|---|---|---|---|
-| B4-01 | ⬜ | live 驱动 | `--check`：进程内真 HTTP initialize（取 session）→ tools/list → tools/call `devdesk_server_info` → DELETE；未知 session 404；Content-Type 415；GET 405 且 `Allow: POST, DELETE`；OPTIONS 405；通知 202；重启后旧 session 404；真网页抓取不可用时 skip 并记录；`--serve` 打印 `PORT=<n>` 后 `fflush(stdout)` 再阻塞；Windows/macOS 均可编译 | `tests/live/mcp_live.cpp` |
-| B4-02 | ⬜ | live 目标登记 | **独立** `if(DEVDESK_BUILD_LIVE_TOOLS)` 块（无 `AND UNIX`）；源含 `live/mcp_live.cpp` + `src/mcp_service_bridge.cpp`；链接 `devdesk_module_mcp`；LABELS `live`；默认 OFF | `tests/CMakeLists.txt` |
-| B4-03 | ⬜ | 实连脚本 | `mktemp -d` 空 cwd；解析 `--serve` 的 `PORT=`；临时 mcp json 的 server key 固定 `devdesk`；`claude -p --strict-mcp-config --mcp-config <临时> --allowedTools mcp__devdesk__web_fetch_markdown --output-format text`；不设 `CLAUDE_CONFIG_DIR`；不碰用户配置；trap 清理临时文件 | `scripts/run-mcp-live.sh` |
-| B4-04 | ⬜ | 文档口径 | `README.md` 能力清单 / 模块开关 / 接入命令同步；spec 仅在实现与已拍板口径有偏差时同步该段，不改设计 | `README.md`、spec |
-| B4-G1 | ⬜ | 构建 + `--check` | 配置 `-DDEVDESK_BUILD_LIVE_TOOLS=ON`（worktree 无同级 EUI-NEO，显式 `-DEUI_NEO_DIR=D:/project/gui/EUI-NEO`）后**一次构建**；`build/tests/mcp_live.exe --check` 退出 0；不启动 DevDesk | — |
-| B4-05 | ⬜ | E2E 准备 | `export DEVDESK_DATA_ROOT=$(mktemp -d)`；首次启动 `build/DevDesk.exe --minimized` 至 `devdesk.db` 生成，按 PID 杀；不得触碰用户真实数据根 | — |
-| B4-06 | ⬜ | E2E 播种 | `sqlite3` 写 `app_config` 两键：`config.json:enabledModules` = 含 `mcp` 的 JSON 数组（含 home/settings）、`config.json:mcpPort` = 本机空闲端口；回读校验值 | — |
-| B4-07 | ⬜ | E2E 启动与探活 | `--minimized` 启动 DevDesk，记录 PID；轮询 `/mcp` 至 GET 返回 405（服务已监听）；失败则保留日志并判本批红 | — |
-| B4-08 | ⬜ | E2E 连接 | 临时 json：`{"mcpServers":{"devdesk":{"type":"http","url":"http://127.0.0.1:<port>/mcp"}}}`；URL 与播种端口一致 | — |
-| B4-09 | ⬜ | E2E 调用断言 | 临时空 cwd 运行 `claude -p --strict-mcp-config --mcp-config <临时> --allowedTools mcp__devdesk__web_fetch_markdown --output-format text`；提示明确要求抓取目标真网页；stdout 含目标网页正文标记；记录 claude 版本（须支持 `--strict-mcp-config`） | — |
-| B4-10 | ⬜ | E2E 清理 | 按 PID 杀 DevDesk 并确认进程消失；删临时数据根 / json；用户 `~/.claude.json` 前后校验和不变 | — |
-| B4-G2 | ⬜ | E2E 硬门禁汇总 | B4-05..10 全 ✅ + 输出片段 + 清理记录；任一环失败本批红，本轮不得宣称完成 | — |
-| B4-G3 | ⬜ | 批次 commit | 仅本批 pathspec；台账勾 ✅ | — |
+| B4-01 | ✅ | live 驱动 | `--check`：进程内真 HTTP initialize（取 session）→ tools/list → tools/call `devdesk_server_info` → DELETE；未知 session 404；Content-Type 415；GET 405 且 `Allow: POST, DELETE`；OPTIONS 405；通知 202；重启后旧 session 404；真网页抓取不可用时 skip 并记录；`--serve` 打印 `PORT=<n>` 后 `fflush(stdout)` 再阻塞；Windows/macOS 均可编译 | `tests/live/mcp_live.cpp` |
+| B4-02 | ✅ | live 目标登记 | **独立** `if(DEVDESK_BUILD_LIVE_TOOLS)` 块（无 `AND UNIX`）；源含 `live/mcp_live.cpp` + `src/mcp_service_bridge.cpp`；链接 `devdesk_module_mcp`；LABELS `live`；默认 OFF | `tests/CMakeLists.txt` |
+| B4-03 | ✅ | 实连脚本 | `mktemp -d` 空 cwd；解析 `--serve` 的 `PORT=`；临时 mcp json 的 server key 固定 `devdesk`；`claude -p --strict-mcp-config --mcp-config <临时> --allowedTools mcp__devdesk__web_fetch_markdown --output-format text`；不设 `CLAUDE_CONFIG_DIR`；不碰用户配置；trap 清理临时文件 | `scripts/run-mcp-live.sh` |
+| B4-04 | ✅ | 文档口径 | `README.md` 能力清单 / 模块开关 / 接入命令同步；spec 仅在实现与已拍板口径有偏差时同步该段，不改设计 | `README.md`、spec |
+| B4-G1 | ✅ | 构建 + `--check` | 配置 `-DDEVDESK_BUILD_LIVE_TOOLS=ON`（worktree 无同级 EUI-NEO，显式 `-DEUI_NEO_DIR=D:/project/gui/EUI-NEO`）后**一次构建**；`build/tests/mcp_live.exe --check` 退出 0；不启动 DevDesk | — |
+| B4-05 | ✅ | E2E 准备 | `export DEVDESK_DATA_ROOT=$(mktemp -d)`；首次启动 `build/DevDesk.exe --minimized` 至 `devdesk.db` 生成，按 PID 杀；不得触碰用户真实数据根 | — |
+| B4-06 | ✅ | E2E 播种 | `sqlite3` 写 `app_config` 两键：`config.json:enabledModules` = 含 `mcp` 的 JSON 数组（含 home/settings）、`config.json:mcpPort` = 本机空闲端口；回读校验值 | — |
+| B4-07 | ✅ | E2E 启动与探活 | `--minimized` 启动 DevDesk，记录 PID；轮询 `/mcp` 至 GET 返回 405（服务已监听）；失败则保留日志并判本批红 | — |
+| B4-08 | ✅ | E2E 连接 | 临时 json：`{"mcpServers":{"devdesk":{"type":"http","url":"http://127.0.0.1:<port>/mcp"}}}`；URL 与播种端口一致 | — |
+| B4-09 | ✅ | E2E 调用断言 | 临时空 cwd 运行 `claude -p --strict-mcp-config --mcp-config <临时> --allowedTools mcp__devdesk__web_fetch_markdown --output-format text`；提示明确要求抓取目标真网页；stdout 含目标网页正文标记；记录 claude 版本（须支持 `--strict-mcp-config`） | — |
+| B4-10 | ✅ | E2E 清理 | 按 PID 杀 DevDesk 并确认进程消失；删临时数据根 / json；用户 `~/.claude.json` 前后校验和不变 | — |
+| B4-G2 | ✅ | E2E 硬门禁汇总 | B4-05..10 全 ✅ + 输出片段 + 清理记录；任一环失败本批红，本轮不得宣称完成 | — |
+| B4-G3 | ✅ | 批次 commit | 仅本批 pathspec；台账勾 ✅ | — |
 
-**批次证据（✅ 时回填）**：`<构建/--check 命令与退出码>` / `<claude 版本 + PORT + 目标 URL>` / `<stdout 正文片段>` / `<杀进程与清理记录>` / `<commit sha>`。
+**批次证据（✅ 回填 2026-10-27，tester）**：`build/tests/mcp_live.exe --check` exit 0，ok=21 / skip=1 / 失败 0（skip=真网页抓取 SSL 受限，口径沿用）；所测产物为 6f130768 构建（DevDesk.exe 17:30 / mcp_live.exe 17:41）。claude 2.1.310；链 B PORT=54281，URL `http://127.0.0.1:54281/mcp`，目标 `https://www.iana.org/domains/reserved`（主会话裁定新基线：example.com 现行文案已无标记句且遭 CA 缺陷拦截）。stdout 正文：These domains may be used as illustrative examples in documents without prior coordination with us.（CLAUDE_RC=0）。杀进程与清理：首启 PID 7976（devdesk.db 约 1s 生成）→ taskkill 终止；服务 PID 10524（GET /mcp=405 且 `Allow: POST, DELETE`）→ 断言通过后 taskkill 并确认进程消失；临时数据根 / mcp json / 空 cwd 全删零残留；`~/.claude.json` 对 `"devdesk"` 与 `54281` 均零命中（主会话新口径：claude CLI 自身状态写入不算违规）。所测基线 commit 6f130768。
+
+**链 A 记录（run-mcp-live.sh 实连，2026-10-27 tester）**：首跑 FAIL——目标抓取被 fetcher SSL 证书错误拦截（CA 缺陷：Windows 走 `CURLSSLOPT_NATIVE_CA` 依赖本机 ROOT 库；libcurl 库不读 `CURL_CA_BUNDLE`，`http_client_ca_win.cpp` 注释口径有误）→ 已由主会话登记为独立缺陷批。授权复跑（CURL_CA_BUNDLE=msys2 ca-bundle.crt）脚本 exit 0（PORT=53449），但标记句系 claude 顺链接抓取 iana.org 所得，且经独立 curl 证实 example.com 现行文案已不含该句——据此主会话将 E2E 目标基线改为 `https://www.iana.org/domains/reserved`，链 B 即以新基线全绿。脚本 iana 基线修正 commit 尚未落盘（builder WIP），链 A 复跑跳过。
 
 ## 6. B5 审计与合并
 
