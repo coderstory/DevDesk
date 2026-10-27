@@ -151,6 +151,88 @@ std::string decodeEntities(const std::string& in) {
     return out;
 }
 
+// turndown 行内转义表移植(npm turndown@7.2.0 官方 escapes 逐条对照)：
+//   任意位置：\ ` * [ ] _
+//   片段起点(^ = 文本节点起点，与 turndown 逐节点 escape 同口径)：
+//     - → \-   "+ " → "\+ "   "=+" → "\=+"   "#{1,6} " → "\#… "
+//     "~~~" → "\~~~"   ">" → "\>"   "N. " → "N\. "
+// 只碰 ASCII 标记符，中文字符零触碰。正文零转义会让网页原文的「# 标题」「3. 步骤」
+// 「[链接](x)」被下游渲染器重新解释——对 LLM 消费场景即 markdown 注入面。
+std::string escapeMarkdownText(const std::string& s, const bool chunkStart) {
+    if (s.empty()) return s;
+    auto asciiDigit = [](const char c) { return c >= '0' && c <= '9'; };
+    std::string out;
+    out.reserve(s.size() + 8);
+    std::size_t i = 0;
+    if (chunkStart) {
+        std::size_t mark = 0;      // 起点标记符消费长度
+        bool backslash = false;    // true = 整个前缀前补一个 '\'
+        switch (s[0]) {
+            case '~':
+                if (s.compare(0, 3, "~~~") == 0) {
+                    mark = 3;
+                    backslash = true;
+                }
+                break;
+            case '=':
+                while (mark < s.size() && s[mark] == '=') ++mark;
+                backslash = true;
+                break;
+            case '#': {
+                while (mark < s.size() && mark < 6 && s[mark] == '#') ++mark;
+                if (mark < s.size() && s[mark] == ' ') {
+                    backslash = true;
+                } else {
+                    mark = 0;  // 井号后无空格不构成 ATX 标记
+                }
+                break;
+            }
+            case '>':
+                mark = 1;
+                backslash = true;
+                break;
+            case '+':
+                if (s.size() > 1 && s[1] == ' ') {
+                    mark = 1;
+                    backslash = true;
+                }
+                break;
+            case '-':
+                mark = 1;
+                backslash = true;
+                break;
+            case '0': case '1': case '2': case '3': case '4':
+            case '5': case '6': case '7': case '8': case '9': {
+                std::size_t d = 0;
+                while (d < s.size() && asciiDigit(s[d])) ++d;
+                // 有序表标记 "N. " → "N\. "：数字原样,反斜杠落在点前,空格保持
+                if (d < s.size() && s[d] == '.' && d + 1 < s.size() &&
+                    s[d + 1] == ' ') {
+                    out.append(s, 0, d);
+                    out += '\\';
+                    mark = d;
+                }
+                break;
+            }
+            default:
+                break;
+        }
+        if (backslash) {
+            out += '\\';
+            out.append(s, 0, mark);
+        }
+        i = mark;
+    }
+    for (; i < s.size(); ++i) {
+        const char c = s[i];
+        if (c == '\\' || c == '`' || c == '*' || c == '[' || c == ']' || c == '_') {
+            out += '\\';
+        }
+        out += c;
+    }
+    return out;
+}
+
 // 单趟容错扫描器:行模型 = lines_("" = 块间空行),行内片段攒进 inline_,块边界
 // (p/div/标题/列表/表格/pre)触发冲刷。引用/列表前缀在冲刷时套用,嵌套结构天然逐行生效。
 class Converter {
@@ -164,7 +246,8 @@ private:
     struct ListFrame {
         bool ordered = false;
         int next = 1;            // 有序表下一个序号
-        std::string prefix;      // 本层缩进 = 2 空格 × (深度-1)
+        std::string prefix;      // 本层缩进 = 4 空格 × 深度（turndown listItem 口径;
+                                 // CommonMark 里 2 空格子列表会被严格渲染器展平）
         std::string liPrefix;    // 当前 li 行前缀 = prefix + 标记
         bool liOpen = false;
     };
@@ -184,14 +267,20 @@ private:
     std::vector<std::string> row_;
     std::vector<std::vector<std::string>> rows_;
     std::vector<ListFrame> lists_;
+    bool inCodeSpan_ = false;  // code/kbd/span 内容不走转义表(CommonMark 码 span 内反斜杠不生效)
 
     std::vector<std::string> lines_;
     std::string inline_;
     bool pendingSpace_ = false;
 
     void appendText(const std::string& raw) {
+        // 每个文本节点 = 一个转义片段：^ 规则以节点起点为锚（同 turndown 逐节点
+        // escape 口径）；转义只插入反斜杠（非空白），不影响随后的空白折叠。
+        // 码 span 内容不转义——CommonMark 里反斜杠转义在 code span 内不生效。
         const std::string decoded = decodeEntities(raw);
-        for (const char c : decoded) {
+        const std::string escaped =
+            inCodeSpan_ ? decoded : escapeMarkdownText(decoded, /*chunkStart=*/true);
+        for (const char c : escaped) {
             const bool space = c == ' ' || c == '\t' || c == '\r' || c == '\n' ||
                                c == '\f' || c == '\v';
             if (space) {
@@ -283,7 +372,9 @@ private:
         ListFrame f;
         f.ordered = ordered;
         f.next = 1;
-        f.prefix = std::string(2 * lists_.size(), ' ');
+        // 4 空格/层（turndown listItem 续行同款）：有序项 "N. " 标记宽 3 起,
+        // 2 空格子列表在严格 CommonMark 渲染器下会与父项平级（被展平）
+        f.prefix = std::string(4 * lists_.size(), ' ');
         lists_.push_back(f);
     }
 
@@ -475,6 +566,7 @@ private:
         if (name == "code" || name == "kbd" || name == "samp") {
             applyPending();
             inline_ += '`';
+            inCodeSpan_ = true;
             return;
         }
         if (name == "blockquote") {
@@ -569,6 +661,7 @@ private:
         if (name == "code" || name == "kbd" || name == "samp") {
             applyPending();
             inline_ += '`';
+            inCodeSpan_ = false;
             return;
         }
         if (name == "li") {

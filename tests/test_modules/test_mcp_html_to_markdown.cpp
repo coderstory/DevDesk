@@ -3,6 +3,7 @@
 #include "doctest.h"
 
 #include <cstddef>
+#include <cstdio>
 #include <string>
 
 #include "module_mcp/html_to_markdown.h"
@@ -40,12 +41,12 @@ REGISTER_TEST(mcp_html_paragraph_div_br_hr,
 })
 
 REGISTER_TEST(mcp_html_lists_nested_indent_and_ol_numbering,
-              "mcp html: 嵌套列表 2 空格缩进、ol 序号(防嵌套层级与序号丢失)", {
+              "mcp html: 嵌套列表 4 空格缩进、ol 序号(防嵌套层级与序号丢失)", {
     const std::string out = htmlToMarkdown(
         "<ul><li>a<ul><li>a1</li><li>a2</li></ul></li><li>b</li></ul>"
         "<ol><li>x</li><li>y</li></ol>");
     DOCTEST_CHECK_EQ(out,
-                     std::string("- a\n  - a1\n  - a2\n- b\n\n1. x\n2. y"));
+                     std::string("- a\n    - a1\n    - a2\n- b\n\n1. x\n2. y"));
     return true;
 })
 
@@ -162,5 +163,60 @@ REGISTER_TEST(mcp_html_empty_input_yields_empty,
               "mcp html: 空输入/纯空白输出空串(由工具层转『未提取到文本』提示)", {
     DOCTEST_CHECK(htmlToMarkdown("").empty());
     DOCTEST_CHECK(htmlToMarkdown("<p>   </p>").empty());
+    return true;
+})
+
+REGISTER_TEST(mcp_html_inline_markdown_escape_table,
+              "mcp html: 行内转义表(turndown 口径)——起点行首标记与任意位置标记符,防正文被下游渲染器重解释", {
+    struct Case {
+        const char* html;
+        const char* markdown;
+    };
+    const Case cases[] = {
+        // 片段起点行首标记
+        {"<p>- item</p>", "\\- item"},
+        {"<p>+ plus</p>", "\\+ plus"},
+        {"<p>3. install</p>", "3\\. install"},
+        {"<p># heading</p>", "\\# heading"},
+        {"<p>> quote</p>", "\\> quote"},
+        {"<p>=== divider</p>", "\\=== divider"},
+        {"<p>~~~fence</p>", "\\~~~fence"},
+        // 任意位置标记符
+        {"<p>*em*</p>", "\\*em\\*"},
+        {"<p>a_b_c</p>", "a\\_b\\_c"},
+        {"<p>[link](x)</p>", "\\[link\\](x)"},
+        // 起点规则不误伤
+        {"<p>3.14 与 -1</p>", "3.14 与 -1"},          // 无后随空格/非起点
+        {"<p>#tag</p>", "#tag"},                        // 井号后无空格
+        // 码 span 内容不转义(CommonMark 码 span 内反斜杠不生效)
+        {"<p>use <code>a*b_c</code> now</p>", "use `a*b_c` now"},
+        // 中文正文零触碰：转义表只含 ASCII 标记符；# 不在节点起点则不在
+        // ^(#{1,6})␣ 规则覆盖内，原样保留（同 turndown）
+        {"<p>中文标题</p>", "中文标题"},
+        {"<p>中文 # 标记 - 列表</p>", "中文 # 标记 - 列表"},
+    };
+    for (const Case& c : cases) {
+        const std::string out = htmlToMarkdown(c.html);
+        if (out != std::string(c.markdown)) {
+            std::fprintf(stderr, "html=[%s] got=[%s] want=[%s]\n", c.html,
+                         out.c_str(), c.markdown);
+            DOCTEST_REQUIRE(false);
+        }
+    }
+    return true;
+})
+
+REGISTER_TEST(mcp_html_nested_ordered_list_4space_indent,
+              "mcp html: 嵌套有序列表 4 空格缩进(2 空格在严格 CommonMark 渲染器下被展平)", {
+    const std::string out = htmlToMarkdown(
+        "<ol><li>one<ol><li>one-one<ol><li>deep</li></ol></li>"
+        "<li>one-two</li></ol></li><li>two</li></ol>");
+    DOCTEST_CHECK_EQ(out,
+                     std::string("1. one\n    1. one-one\n        1. deep\n"
+                                 "    2. one-two\n2. two"));
+    // ul 嵌套同口径,混排时层级可预期
+    const std::string mixed = htmlToMarkdown(
+        "<ol><li>keep<ul><li>sub</li></ul></li></ol>");
+    DOCTEST_CHECK_EQ(mixed, std::string("1. keep\n    - sub"));
     return true;
 })
