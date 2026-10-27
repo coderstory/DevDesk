@@ -533,15 +533,8 @@ ContentTypeParts parseContentType(const std::map<std::string, std::string>& head
     return ct;
 }
 
-// UTF-8 边界安全截断到 maxBytes 字节内(非 2xx 文本前 200 字符,spec §6.1-5)
-std::string utf8SafePrefix(const std::string& s, const std::size_t maxBytes) {
-    if (s.size() <= maxBytes) return s;
-    std::size_t cut = maxBytes;
-    while (cut > 0 && (static_cast<unsigned char>(s[cut]) & 0xC0) == 0x80) --cut;
-    return s.substr(0, cut);
-}
-
-// 按码点数截断;truncatedOut = 是否发生截断(spec §6.1-10)
+// 按码点数截断;truncatedOut = 是否发生截断(spec §6.1-10)。非 2xx 错误前缀的
+// 「前 200 字符」同用本函数——按字节截会把 CJK 页面砍到 ~66 字(F3 收口)。
 std::string truncateByChars(const std::string& s, const long long maxChars,
                             bool* truncatedOut) {
     long long chars = 0;
@@ -655,9 +648,11 @@ public:
                                         resp.statusCode == 303 || resp.statusCode == 307 ||
                                         resp.statusCode == 308;
             if (!redirectStatus) {
+                bool prefixTruncated = false;
                 return core::Result<core::mcp::ToolResult>::ok(
                     errToolResult("HTTP " + std::to_string(resp.statusCode) + "：" +
-                                  utf8SafePrefix(resp.body, 200)));
+                                  truncateByChars(resp.body, 200,
+                                                  &prefixTruncated)));
             }
             if (redirectHops >= limits_.maxRedirectHops) {
                 return core::Result<core::mcp::ToolResult>::ok(

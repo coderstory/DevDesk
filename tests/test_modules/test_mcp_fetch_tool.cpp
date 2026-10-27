@@ -450,6 +450,25 @@ REGISTER_TEST(mcp_fetch_non_2xx_reports_status_and_body_prefix,
     return true;
 })
 
+REGISTER_TEST(mcp_fetch_non_2xx_cjk_prefix_counts_chars_not_bytes,
+              "mcp fetch: 非 2xx 错误页前缀按 UTF-8 码点截 200 字符(防 CJK 页面按字节只显 66 字)", {
+    // 300 个三字节汉字 = 900 字节：按字节截 200 只剩 66 字(修复前),按码点应满 200 字
+    const std::string cjk = "\xE9\x94\x99";  // 「错」U+9519
+    std::string body;
+    for (int i = 0; i < 300; ++i) body += cjk;
+    ScriptedFetcher script({makeResponse(500, body)});
+    core::mcp::McpToolRegistry registry;
+    module::mcp::registerBuiltinMcpTools(registry, std::ref(script));
+    const auto result = runFetch(registry, "{\"url\":\"http://a.test/err\"}");
+    DOCTEST_REQUIRE(result.isOk());
+    DOCTEST_CHECK(result.value().isError);
+    std::string want;
+    for (int i = 0; i < 200; ++i) want += cjk;
+    DOCTEST_CHECK(result.value().text.find(want) != std::string::npos);  // 满 200 字连续出现
+    DOCTEST_CHECK(result.value().text.find(want + cjk) == std::string::npos);  // 不超 200 字
+    return true;
+})
+
 REGISTER_TEST(mcp_fetch_body_over_2mib_truncation_note,
               "mcp fetch: 原始响应超 2 MiB 截断并附注(spec §6.1-9)", {
     std::string body = "<p>hello</p><!--";
