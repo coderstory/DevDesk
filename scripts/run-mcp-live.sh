@@ -5,12 +5,12 @@
 # 前置：cmake -B build -DDEVDESK_BUILD_LIVE_TOOLS=ON 后 build/tests/mcp_live(.exe)
 # 已构建（mcp_live --serve 提供进程内 MCP 服务）。
 # 用法：bash scripts/run-mcp-live.sh [目标URL]
-#   目标 URL 默认 https://example.com/，断言标记固定 illustrative examples。
+#   目标 URL 默认 https://www.iana.org/domains/reserved（tester 实测：标记句在此页真实存在且现有 CA 策略可抓通；example.com 现行文案已不含该句），断言标记固定 illustrative examples。
 # 口径：不设 CLAUDE_CONFIG_DIR、不碰用户 ~/.claude/**；临时配置与空 cwd 全部
 # 走 mktemp -d 并由 trap 清理；服务进程只按本脚本拉起的 PID 收尾。
 set -u
 
-TARGET_URL="${1:-https://example.com/}"
+TARGET_URL="${1:-https://www.iana.org/domains/reserved}"
 EXPECTED_MARKER="illustrative examples"
 SERVE_WALL_CLOCK_SECS=240   # 外层墙钟兜底（claude 卡死时不无限等）
 
