@@ -1,0 +1,203 @@
+[
+ {
+  "id": "q01",
+  "query": "帮我接管这个任务，然后用拆分子任务的方式推进开发",
+  "target_id": 0,
+  "source": "llm_generated_from_target",
+  "gold_ids": [
+   0
+  ],
+  "gold_group": "ask_matt",
+  "primary_id": 0
+ },
+ {
+  "id": "q02",
+  "query": "P1 阶段能不能交给子任务来接着推进？",
+  "target_id": 1,
+  "source": "llm_generated_from_target",
+  "gold_ids": [
+   1
+  ],
+  "gold_group": "subagent_driven",
+  "primary_id": 1
+ },
+ {
+  "id": "q03",
+  "query": "主会话不直接写代码，只负责编排调度可以吗？",
+  "target_id": 2,
+  "source": "llm_generated_from_target",
+  "gold_ids": [
+   2
+  ],
+  "gold_group": "main_session_orchestrates",
+  "primary_id": 2
+ },
+ {
+  "id": "q04",
+  "query": "在单独的 worktree 里开发一个 MCP 模块，把应用的能力暴露出去",
+  "target_id": 3,
+  "source": "llm_generated_from_target",
+  "gold_ids": [
+   3,
+   9,
+   16,
+   26
+  ],
+  "gold_group": "worktree",
+  "primary_id": 3
+ },
+ {
+  "id": "q05",
+  "query": "MCP 能不能默认不启用，需要时再去设置里打开？",
+  "target_id": 4,
+  "source": "llm_generated_from_target",
+  "gold_ids": [
+   4,
+   10,
+   18,
+   22,
+   23
+  ],
+  "gold_group": "mcp_enable_port",
+  "primary_id": 4
+ },
+ {
+  "id": "q06",
+  "query": "先把 MCP 服务的骨架搭起来，Windows 和 macOS 都要能用",
+  "target_id": 5,
+  "source": "llm_generated_from_target",
+  "gold_ids": [
+   5,
+   13,
+   19,
+   25
+  ],
+  "gold_group": "cross_platform",
+  "primary_id": 5
+ },
+ {
+  "id": "q07",
+  "query": "MCP 的各项能力要不要先定义成接口，再按模块插进来？",
+  "target_id": 6,
+  "source": "llm_generated_from_target",
+  "gold_ids": [
+   6,
+   11,
+   24
+  ],
+  "gold_group": "mcp_abstract_interface",
+  "primary_id": 6
+ },
+ {
+  "id": "q08",
+  "query": "开发时能不能先把方案规划清楚再动手写代码？",
+  "target_id": 7,
+  "source": "llm_generated_from_target",
+  "gold_ids": [
+   7,
+   12,
+   21,
+   26
+  ],
+  "gold_group": "plan_before_code",
+  "primary_id": 7
+ },
+ {
+  "id": "q09",
+  "query": "先做几个简单的 MCP 能力练手，比如抓网页转成 Markdown",
+  "target_id": 8,
+  "source": "llm_generated_from_target",
+  "gold_ids": [
+   8,
+   14,
+   20,
+   24
+  ],
+  "gold_group": "hello_world_mcp",
+  "primary_id": 8
+ },
+ {
+  "id": "q10",
+  "query": "用独立的 worktree 开发一个 MCP 模块，把应用功能开放出来",
+  "target_id": 9,
+  "source": "llm_generated_from_target",
+  "gold_ids": [
+   3,
+   9,
+   16,
+   26
+  ],
+  "gold_group": "worktree",
+  "primary_id": 9
+ },
+ {
+  "id": "q11",
+  "query": "MCP 服务的端口应该在哪里配置？",
+  "target_id": 10,
+  "source": "llm_generated_from_target",
+  "gold_ids": [
+   4,
+   10,
+   18,
+   22,
+   23
+  ],
+  "gold_group": "mcp_enable_port",
+  "primary_id": 10
+ },
+ {
+  "id": "q12",
+  "query": "MCP 的能力是不是应该抽象成接口，方便以后插入新模块？",
+  "target_id": 11,
+  "source": "llm_generated_from_target",
+  "gold_ids": [
+   6,
+   11,
+   24
+  ],
+  "gold_group": "mcp_abstract_interface",
+  "primary_id": 11
+ },
+ {
+  "id": "q13",
+  "query": "能不能坚持先做规划再开发，把代码设计放在第一位？",
+  "target_id": 12,
+  "source": "llm_generated_from_target",
+  "gold_ids": [
+   7,
+   12,
+   21,
+   26
+  ],
+  "gold_group": "plan_before_code",
+  "primary_id": 12
+ },
+ {
+  "id": "q14",
+  "query": "这个 MCP 服务需要同时兼容 Windows 和 macOS 吗？",
+  "target_id": 13,
+  "source": "llm_generated_from_target",
+  "gold_ids": [
+   5,
+   13,
+   15,
+   19
+  ],
+  "gold_group": "mcp_skeleton",
+  "primary_id": 13
+ },
+ {
+  "id": "q15",
+  "query": "先写个 hello world 级别的 MCP 能力，访问网页并返回 Markdown 版",
+  "target_id": 14,
+  "source": "llm_generated_from_target",
+  "gold_ids": [
+   8,
+   14,
+   20,
+   24
+  ],
+  "gold_group": "hello_world_mcp",
+  "primary_id": 14
+ }
+]

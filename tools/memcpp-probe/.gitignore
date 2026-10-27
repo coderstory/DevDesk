@@ -1,0 +1,5 @@
+# 探针内大件不入库：llama.cpp 源码（clone 后锁定 commit）、GGUF 模型、构建产物
+llama.cpp/
+models/
+build/
+*.log
