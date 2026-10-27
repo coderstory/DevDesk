@@ -72,3 +72,8 @@ installer/**/out/
 
 # ctest 在源码根跑时生成的临时目录（CTestCostData.txt 等），不是源码
 Testing/
+
+# memcpp S1 spike 的 telemem 隔离 venv（spike 脚本与结果入库，venv/模型/缓存不入库）
+tools/memcpp-integration/spike/.venv/
+tools/memcpp-integration/spike/.runtime/
+tools/memcpp-integration/spike/results/
