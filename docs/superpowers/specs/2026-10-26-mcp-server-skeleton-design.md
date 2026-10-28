@@ -757,3 +757,16 @@ public:
 2. **§11「不动」清单松绑**：`src/app_registry.h`（新增 `PageId::Mcp` 行）与 `src/core/module_interface.h`（`PageId::Mcp` 插 Wallpaper 后、Settings 前）自本批起改为「动，最小面」。`../EUI-NEO/**`、`module_settings/**`、B1/B2 冻结文件（service/protocol/http_handler/session_store/tools_builtin）、`mcp_service_bridge.*`（只读调用）冻结不变。
 3. **接线不变量**：`dispatchModuleToggle` 的 mcp 分支自本批起**不提前返回**——先启停服务，再落入注册表遍历做页面注册/注销（mcp 既有「页面」与「服务」双重身份，缺任一半即破设置页「关闭 = 侧栏入口消失」的门控承诺）；`main.cpp` `moduleForPage` 补 `PageId::Mcp` 分支与静态实例（缺则页面在生产装配永远拿不到实例、被 `registerOne` 静默跳过）。
 4. **页面口径**：页头 + 服务状态行（`app::mcp::status()` 只读，运行中显示 `127.0.0.1:port` / 已停止）；工具卡片网格（`ui.flow`，卡定宽 340——上游坑：flow 子元素必须显式 `size()`）+ 详情弹窗（`components::dialog`，关闭 = 按钮 + Esc + backdrop 三通道，`dialog.h` 的 backdrop `onClick(requestClose)` 已逐行核实）+「试一下」（`IMcpTool::execute` 一律后台线程 + compose 轮询收割，禁 UI 线程直调；结果区弹窗内展示，成功/失败前缀区分）。数据源 = `McpToolRegistry::list()` 快照（模块可注入注册表，生产工厂用全局单例）。空列表 = 页内空态提示；**MCP 关闭态 = 模块门控整页注销**（侧栏入口消失），页内不置灰、不放开关。视觉基准 = 桌面 `mcp-menu-demo.html`：设计 token 对齐、图标改 FA7 码点；demo 的页内开关与关闭置灰**不照抄**；pulse 动画与键盘焦点圈明确不做（后者为 EUI 上游缺口，已拍板砍）。
+
+## 16. 需求全景（2026-10-28 补记）
+
+按时间序登记本线全部用户需求及各自落点，一条一段；细节以各批提交与对应口径段为准，此处不展开。
+
+1. **骨架**：MCP 服务骨架（Streamable HTTP + 可插拔能力接口，server_info / web_fetch 双工具）——批次 B1（core 接缝+协议骨架，`4bccde3c`/`3cc1cd61`）与 B4（live 驱动 + 真实 Claude Code 实连硬门禁，`6f130768`）；口径 §2/§3/§5/§6/§13、§10 批次 1/4。
+2. **抓取**：网页抓取能力（HTML→Markdown 转换器 + web_fetch_markdown：重定向跟随/上限截断/charset 处理/SSRF 字面量拒绝）——批次 B2（`1bf64e4f`）；口径 §7、§10 批次 2。
+3. **装配**：设置接入与生命周期装配（`app::mcp` 桥、main/app_assembly 按开关装配、设置卡与 18 键配置）——批次 B3（`740d20c6`）；口径 §8、§10 批次 3。
+4. **安全（调研驱动）**：SSRF 防线与协议/markdown 口径收口（IP 数字编码绕过拦截、缺会话头 400、转义表与嵌套有序列表缩进、非 2xx 按码点截断、尾点 host fail-closed + 组播 deny 段）——收口批（`43b983ac`/`3759beb3`/`e5c7aff3`/`02e38d72`/`bb556cad`）；口径源 = docs/superpowers/research/2026-10-27-mcp-implementation-review.md 与 docs/superpowers/research/2026-10-27-mcp-round2-review.md，落点 §5/§7。
+5. **代理参数**：web_fetch_markdown 本地代理参数（自动探测/显式指定/冲突报错）——代理批（`eab2c496`，审计修复 `2e959c16`）；口径 = docs/superpowers/plans/2026-10-27-mcp-proxy-ca-audit.md（无独立 spec 段）。
+6. **CA 覆盖**：Windows CA 覆盖口 `DEVDESK_CA_BUNDLE`——CA 批（`cf990da3`，live 抓取基线换 iana.org `eb561b35`）；口径同上审计文档。
+7. **正文提取**：网页正文主干提取（boilerplate removal：语义标签剔除/类名关键词/链接密度/主容器锚定保护）——正文提取批（`fd0b2e99`）；口径 = docs/superpowers/research/2026-10-27-mcp-content-extraction-review.md（R1/R1b/R2 必做、R3 建议、R4 可选），落点 §7。
+8. **UI 菜单页（EUI）**：MCP 菜单页成为 Router 页面模块（卡片网格 + 详情弹窗 + 后台试运行，模块门控整页注销），视觉基准 = 桌面 `mcp-menu-demo.html`——UI 批（`ff37aae9`，口径登记 `b4e43163`，波及面收口 `2ad1b4dc`/`fa359678`）；口径 §15（含对 §12 非目标与 §11 不动清单的废止/松绑）。
