@@ -13,6 +13,7 @@
 #include "module_wallpaper/core/availability.h"
 #include "module_wallpaper/core/folder_policy.h"
 #include "module_wallpaper/core/presentation.h"
+#include "module_wallpaper/platform/image_probe.h"
 #include "module_wallpaper/platform/mpv_player.h"
 
 namespace module::wallpaper {
@@ -514,6 +515,10 @@ void WallpaperService::scanLoop() {
             const auto shouldCancel = [this, generation] {
                 return stopRequested_.load() || scanGeneration_.load() != generation;
             };
+            // 生产尺寸探针（Windows = WIC 头解码；其它平台 stub 恒 unknown 不过滤）。
+            const ImageSizeProbe sizeProbe = [](const std::string& image) {
+                return probeImageSize(image);
+            };
 
             if (kind == WallpaperKind::Video) {
                 VideoScanResult result;
@@ -529,7 +534,7 @@ void WallpaperService::scanLoop() {
                     imageResult = imageScanner_(folder, minPixels);
                 } else {
                     imageResult = scanImageLibrary(folder, minPixels, kLibraryEntryCap,
-                                                   shouldCancel);
+                                                   shouldCancel, sizeProbe);
                 }
                 if (stopRequested_.load() || scanGeneration_.load() != generation) continue;
                 std::lock_guard<std::mutex> lock(mu_);
@@ -541,7 +546,7 @@ void WallpaperService::scanLoop() {
                     result = imageScanner_(folder, minPixels);
                 } else {
                     result = scanImageLibrary(folder, minPixels, kLibraryEntryCap,
-                                              shouldCancel);
+                                              shouldCancel, sizeProbe);
                 }
                 if (stopRequested_.load() || scanGeneration_.load() != generation) continue;
                 std::lock_guard<std::mutex> lock(mu_);

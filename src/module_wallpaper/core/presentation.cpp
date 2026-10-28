@@ -164,10 +164,10 @@ std::optional<EmptyStateCopy> emptyStateCopy(Availability availability, Wallpape
                 "重新选择…", "重新扫描"};
         case Availability::NoPlayableVideos:
             if (kind == WallpaperKind::Image) {
-                // 本批不解码、不按像素档过滤：只按扩展名判定，不得宣称档位筛选已生效。
+                // 档位过滤已落地（P3b）：空态如实说明档位口径，与 resolutionHint 同口径。
                 return EmptyStateCopy{
                     "没有符合条件的图片",
-                    "支持的格式是 jpg / jpeg / png / webp / heic；分辨率筛选待后续版本接入。",
+                    "支持的格式是 jpg / jpeg / png / webp / heic；低于分辨率档位的图片不会进入轮播。",
                     "更换文件夹", "重新扫描"};
             }
             return EmptyStateCopy{

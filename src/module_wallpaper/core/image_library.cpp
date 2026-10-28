@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <system_error>
+#include <utility>
 
 #include "core/logging.h"
 
@@ -55,10 +56,8 @@ std::filesystem::path canonicalOrEmpty(const std::filesystem::path& path,
 
 ImageScanResult scanImageLibrary(const std::filesystem::path& folder, int minPixels,
                                  std::size_t entryCap,
-                                 const std::function<bool()>& shouldCancel) {
-    // 像素档过滤待 P3 解码接入：本批不解码尺寸，参数保留但显式忽略。
-    (void)minPixels;
-
+                                 const std::function<bool()>& shouldCancel,
+                                 const ImageSizeProbe& sizeProbe) {
     ImageScanResult result;
     if (folder.empty()) return result;
 
@@ -130,8 +129,27 @@ ImageScanResult scanImageLibrary(const std::filesystem::path& folder, int minPix
     }
     std::sort(result.files.begin(), result.files.end());
     result.total = static_cast<int>(result.files.size());
-    result.passing = result.total;  // P3 解码尺寸后才会出现 < total 的情况
-    result.filtered = 0;            // 同上，不得伪称已过滤
+    // 档位过滤（契约见 image_library.h）：unknown 不过滤；宽×高 < minPixels 记 filtered。
+    // 溢出防线：宽高按 long long 相乘（8K 图约 3.3e7，int 乘法在极端头数据下无此保障）。
+    if (minPixels > 0 && sizeProbe) {
+        std::vector<std::string> passing;
+        passing.reserve(result.files.size());
+        for (const std::string& path : result.files) {
+            const ProbedImageSize size = sizeProbe(path);
+            const bool knownSmall = size.known &&
+                                    static_cast<long long>(size.width) *
+                                            static_cast<long long>(size.height) <
+                                        static_cast<long long>(minPixels);
+            if (!knownSmall) {
+                passing.push_back(path);
+            } else {
+                ++result.filtered;
+            }
+        }
+        result.files = std::move(passing);
+    }
+    result.passing = static_cast<int>(result.files.size());
+    result.filtered = result.total - result.passing;
     return result;
 }
 

@@ -46,9 +46,9 @@ struct WallpaperSnapshot {
     std::string folderPath;  // 当前来源目录（空 = 未配置）
     bool scanning = false;
     int videoCount = 0;
-    int imageTotal = 0;
-    int imagePassing = 0;  // 本批恒等于 imageTotal（像素档过滤待 P3 解码接入）
-    int imageFiltered = 0; // 本批恒 0
+    int imageTotal = 0;    // 扩展名命中总数（档位过滤前）
+    int imagePassing = 0;  // 过滤后入池数（≥ 档位线 + 尺寸未知者）；来源扫描才有意义
+    int imageFiltered = 0; // 被档位线滤掉的数（imageTotal - imagePassing）
     PlayMode mode = PlayMode::LoopSingle;
     int rotationIntervalSec = 300;
     bool paused = false;        // true = 手动暂停或系统让路（不区分来源）

@@ -20,8 +20,8 @@
 //       wallpaper.holds.title / .reason.0..3（激活条件亮显）/ .battery（.battery.track）
 //   片库页：
 //     wallpaper.card.folder           文件夹卡（.path / .select / .rescan）
-//       wallpaper.folder.stat.videos；图片一格 .stat.total（参与/低于两格不建：
-//       像素档过滤未接入，imageFiltered 恒 0，画出来即宣称已过滤）
+//       wallpaper.folder.stat.videos；图片两格 .stat.passing（参与轮播，accent）/
+//       .stat.filtered（低于档位）——像素档过滤已落地，两格为真实计数。
 //       wallpaper.folder.scanning（扫描中）
 //     wallpaper.card.formats          视频格式卡
 //     wallpaper.card.resolution / .fit 图片分辨率 + 适配（一行两卡）
@@ -313,20 +313,17 @@ int resolutionIndex(int minPixels) {
     return best;
 }
 
-// 过滤未接入（image_library 对 minPixels 显式忽略、filtered 恒 0）：口径必须与
-// presentation::emptyStateCopy 一致——"筛选将在后续版本生效"，不得宣称"低于档位不
-// 参与轮播"（审计 F1；哨兵断言见 test_wallpaper_ui_no_filter_claims）。
+// 像素档过滤已落地（image_library 注入头解码探针，passing/filtered 真数据）：
+// 文案如实宣称档位生效（F1 反转——此前「后续版本生效」口径随能力落地废止，
+// 哨兵断言见 test_wallpaper_ui_filter_live）。
 std::string resolutionHint(int index) {
     switch (index) {
         case 0:
-            return "分辨率筛选将在后续版本生效；当前记住 1080P 档（宽 × 高 ≥ "
-                   "2,073,600），全部图片参与轮播。";
+            return "低于 1080P 档（宽 × 高 ≥ 2,073,600）的图片不参与轮播。";
         case 2:
-            return "分辨率筛选将在后续版本生效；当前记住 4K 档（宽 × 高 ≥ "
-                   "8,294,400），全部图片参与轮播。";
+            return "低于 4K 档（宽 × 高 ≥ 8,294,400）的图片不参与轮播。";
         default:
-            return "分辨率筛选将在后续版本生效；当前记住 2K 档（宽 × 高 ≥ "
-                   "3,686,400），全部图片参与轮播。";
+            return "低于 2K 档（宽 × 高 ≥ 3,686,400）的图片不参与轮播。";
     }
 }
 
@@ -1008,17 +1005,21 @@ void drawFolderCard(eui::Ui& ui, float w, const WallpaperSnapshot& snapshot,
                     .color(t.colors.textPrimary)
                     .build();
             } else {
-                // 只画"目录内图片"一格：passing 恒等于 total、filtered 恒 0
-                //（image_library.cpp），参与/低于两格是"已过滤"的虚假宣称（审计 F1）。
-                drawFolderStatCell(ui, "wallpaper.folder.stat.total", kCardPad,
-                                   std::to_string(snapshot.imageTotal),
-                                   "目录内图片", t, false);
+                // 档位过滤已落地：参与 / 低于两格真数据（imagePassing / imageFiltered，
+                // 图片来源经真实尺寸探针扫描后落快照）。虚数即宣称，画什么就是什么。
+                drawFolderStatCell(ui, "wallpaper.folder.stat.passing", kCardPad,
+                                   std::to_string(snapshot.imagePassing), "参与轮播",
+                                   t, true);
+                drawFolderStatCell(ui, "wallpaper.folder.stat.filtered",
+                                   kCardPad + 170.0f,
+                                   std::to_string(snapshot.imageFiltered), "低于档位",
+                                   t, false);
             }
         }
 
         hintText(ui, "wallpaper.folder.hint",
                  kind == WallpaperKind::Image
-                     ? "仅扫描 jpg / jpeg / png / webp / heic；分辨率筛选将在后续版本生效。"
+                     ? "仅扫描 jpg / jpeg / png / webp / heic；低于分辨率档位的图片不参与轮播。"
                      : "仅扫描 mp4 / mov / m4v；其他格式不会出现在片库，也不会自动转码。",
                  t, kCardPad, 154.0f,
                  std::max(0.0f, w - kCardPad * 2.0f), roundFs(34.0f));
