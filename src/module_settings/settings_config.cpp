@@ -29,6 +29,7 @@ constexpr const char* kKeyAutostart = "autostartEnabled";
 // 动态背景（UAT6 主窗活体流质）：bool 直存；键缺失（存量库/旧版本升级）→ 默认开
 constexpr const char* kKeyFluidBackground = "fluidBackgroundEnabled";
 constexpr const char* kKeyProxyPort = "claudeProxyPort";
+constexpr const char* kKeyMcpPort = "mcpPort";
 constexpr const char* kKeyWindowEffect = "windowEffect";
 constexpr const char* kKeyEnabledModules = "enabledModules";
 // 默认模块清单迁移标记：键缺失 = 旧版本配置（见 kModuleDefaultsVersion）
@@ -46,7 +47,7 @@ constexpr int kMaxWindowRestoreSide = 65535;
 const char* const kKnownModuleIds[] = {
     kModuleIdHome, kModuleIdMarkdown,     kModuleIdTodo,
     kModuleIdClaudeProxy, kModuleIdSettings, kModuleIdAgent,
-    kModuleIdWallpaper, kModuleIdRelease};
+    kModuleIdWallpaper, kModuleIdMcp, kModuleIdRelease};
 
 bool isKnownModuleId(const std::string& id) {
     for (const char* known : kKnownModuleIds) {
@@ -77,7 +78,8 @@ void mergeDefaultModulesSince(std::vector<std::string>& ids, int storedVersion) 
 } // namespace
 
 std::vector<std::string> defaultEnabledModules() {
-    // agent 不在默认清单（跑 LLM 有成本，用户主动启用）；wallpaper 同默认关闭。
+    // agent 不在默认清单（跑 LLM 有成本，用户主动启用）；wallpaper 同默认关闭；
+    // mcp 后台监听端口，同样默认关闭（开关在设置 → 模块卡）。
     // release 默认启用（任务/基础配置两页共用该键）。
     return {kModuleIdHome, kModuleIdMarkdown, kModuleIdTodo,
             kModuleIdClaudeProxy, kModuleIdSettings, kModuleIdRelease};
@@ -99,6 +101,19 @@ bool parseProxyPortInput(const std::string& text, int& out) {
         value = value * 10 + (c - '0');
     }
     if (value < kMinProxyPort || value > kMaxProxyPort) return false;
+    out = value;
+    return true;
+}
+
+bool parseMcpPortInput(const std::string& text, int& out) {
+    // 与 parseProxyPortInput 同口径：只接受范围内纯数字
+    if (text.empty() || text.size() > 5) return false;
+    int value = 0;
+    for (const char c : text) {
+        if (c < '0' || c > '9') return false;
+        value = value * 10 + (c - '0');
+    }
+    if (value < kMinMcpPort || value > kMaxMcpPort) return false;
     out = value;
     return true;
 }
@@ -172,6 +187,10 @@ SettingsConfig SettingsStore::sanitized(const SettingsConfig& cfg) {
     // 越界/0/负数不钳边界、回落默认 8888（0 钳到 1 会得到必然 bind 失败/被特权的端口）。
     if (out.proxyPort < kMinProxyPort || out.proxyPort > kMaxProxyPort) {
         out.proxyPort = kDefaultProxyPort;
+    }
+    // mcpPort 同口径：越界/0/负回落 8931（不钳边界）。
+    if (out.mcpPort < kMinMcpPort || out.mcpPort > kMaxMcpPort) {
+        out.mcpPort = kDefaultMcpPort;
     }
     // 只认三档，未知值收敛 auto；不在此解析 auto→darkTheme（保持纯函数）。
     if (out.themeMode != kThemeModeLight && out.themeMode != kThemeModeDark) {
@@ -441,6 +460,13 @@ core::Result<SettingsConfig> SettingsStore::loadChecked() const {
             v.errorCode(), v.errorMessage());
         if (v.value().isNumber()) cfg.proxyPort = static_cast<int>(v.value().asInt());
     }
+    // MCP 端口：键缺失（存量库/旧版本升级）→ 默认 8931；越界由 sanitized 回落。
+    if (auto raw = readRow(kKeyMcpPort); raw.isOk()) {
+        auto v = parseRow(configKey(kKeyMcpPort), raw.value());
+        if (v.isFail()) return core::Result<SettingsConfig>::fail(
+            v.errorCode(), v.errorMessage());
+        if (v.value().isNumber()) cfg.mcpPort = static_cast<int>(v.value().asInt());
+    }
     if (auto raw = readRow(kKeyWindowEffect); raw.isOk()) {
         auto v = parseRow(configKey(kKeyWindowEffect), raw.value());
         if (v.isFail()) return core::Result<SettingsConfig>::fail(
@@ -562,6 +588,7 @@ core::Result<void> SettingsStore::save(const SettingsConfig& cfgRaw) const {
         {kKeyAutostart, platform::json::makeBool(cfg.autostartEnabled)},
         {kKeyFluidBackground, platform::json::makeBool(cfg.fluidBackgroundEnabled)},
         {kKeyProxyPort, platform::json::makeInt(cfg.proxyPort)},
+        {kKeyMcpPort, platform::json::makeInt(cfg.mcpPort)},
         {kKeyWindowEffect, platform::json::makeString(cfg.windowEffect)},
         {kKeySidebarCollapsed, platform::json::makeBool(cfg.sidebarCollapsed)},
         {kKeyAccentTheme, platform::json::makeString(cfg.accentTheme)},

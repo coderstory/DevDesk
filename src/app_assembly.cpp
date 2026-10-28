@@ -4,6 +4,7 @@
 #include "app_sidebar.h"
 #include "core/logging.h"
 #include "core/database.h"
+#include "mcp_service_bridge.h"
 #include "module_markdown/md_file_open.h"
 #include "module_toggle_bridge.h"
 #include "platform/autostart.h"
@@ -243,6 +244,7 @@ std::optional<::core::PageId> pageForTrayAction(::core::tray::TrayMenuAction act
         case Action::NavigateMarkdown: return ::core::PageId::Markdown;
         case Action::NavigateTodo: return ::core::PageId::Todo;
         case Action::NavigateClaude: return ::core::PageId::ClaudeProxy;
+        case Action::NavigateWallpaper: return ::core::PageId::Wallpaper;
         default: return std::nullopt;
     }
 }
@@ -288,6 +290,23 @@ void navigateFromTray(::core::Router* router, ::core::PageId page) {
 
 void dispatchModuleToggle(const std::string& moduleId, bool on,
                           ::core::Router& router, ModuleLookup lookup) {
+    // mcp 双面性（UI 批起）：既是 Router 页面模块（注册表有其行）又挂服务生命周期
+    // ——先启停服务，再**不提前返回**落入下方遍历做页面注册/注销。缺任一半都会破
+    // 「关闭 = 侧边栏入口消失」的门控承诺（settings_ui_cards 模块卡文案的当帧更新）。
+    if (moduleId == module::settings::kModuleIdMcp) {
+        if (on) {
+            const module::settings::SettingsStore store(::core::appDatabase());
+            auto r = app::mcp::start(store.load().mcpPort);
+            if (r.isFail()) {
+                // 用户动作失败要可见：toast 通知（启动期自启不经过这里）；服务失败
+                // 不阻断页面注册——页面状态行如实显示「已停止 + 错误」
+                app::showAppNotice("MCP 服务未启动", r.errorMessage());
+                LOG_ERROR("模块开关: MCP 服务启动失败: " + r.errorMessage());
+            }
+        } else {
+            app::mcp::stop();
+        }
+    }
     // 一个门控键可对应多行（多页模块，如 release 的任务/基础配置）：逐行拨，
     // 不能命中首行就返回。分组父项行无实例，跳过（其展开态由侧边栏独立维护）。
     // matched = 键命中登记表（与实例存在与否无关）：否则「键已知但实例缺失」会被

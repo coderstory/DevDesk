@@ -58,7 +58,7 @@ namespace {
 // 输出文件名 slug（下标与 kModuleRegistry 表序一一对应；static_assert 钉长度）
 // 2026-10 重排：上线三行在 settings 之前
 constexpr const char* kSlugs[] = {
-    "home", "markdown", "todo", "claude_proxy", "agent", "wallpaper",
+    "home", "markdown", "todo", "claude_proxy", "agent", "wallpaper", "mcp",
     "release_group", "release_tasks", "release_config", "settings", "about",
 };
 static_assert(sizeof(kSlugs) / sizeof(kSlugs[0]) ==

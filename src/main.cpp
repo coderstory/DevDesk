@@ -23,11 +23,16 @@
 #include "core/window_effect_state.h"  // M-3：frosted 降级门控的 active 档回查缝注册
 #include "module_home/home_service.h"
 #include "module_toggle_bridge.h"
+#include "module_wallpaper/wallpaper_module.h"
+#include "mcp_service_bridge.h"
+#include "module_mcp/mcp_service.h"
+#include "module_mcp/mcp_tools_builtin.h"
 #include "platform/message_box.h"
 #include "platform/tray_icon.h"
 #include "github_sync_exit_hook.h"
 #include "platform/single_instance.h"
 #include "settings_config.h"
+#include "wallpaper_tray_bridge.h"
 
 #include <components/styledmenu.h>
 
@@ -238,6 +243,35 @@ std::string activeWindowEffectTier() {
     }
 }
 
+// ── MCP 装配段桥转发（无捕获函数指针，可安全转 handler 槽；转发 globalMcpService）──
+core::Result<void> mcpStartImpl(int port) {
+    auto r = module::mcp::globalMcpService().start(port);
+    if (r.isFail()) {
+        return core::Result<void>::fail(r.errorCode(), r.errorMessage());
+    }
+    return core::Result<void>::ok();
+}
+
+void mcpStopImpl() { module::mcp::globalMcpService().stop(); }
+
+// 运行中改端口 = 桥内 restart（未运行时设置页只落库，不走这里）
+core::Result<void> mcpApplyPortImpl(int port) {
+    auto r = module::mcp::globalMcpService().restart(port);
+    if (r.isFail()) {
+        return core::Result<void>::fail(r.errorCode(), r.errorMessage());
+    }
+    return core::Result<void>::ok();
+}
+
+app::mcp::LiveStatus mcpStatusImpl() {
+    const auto s = module::mcp::globalMcpService().status();
+    app::mcp::LiveStatus out;
+    out.running = (s.state == module::mcp::ServiceState::Running);
+    out.port = s.port;
+    out.lastError = s.lastError;
+    return out;
+}
+
 ::core::Router* getRouter() {
     static ::core::Router router;
     // 模块 static 须先于 armExitHook 构造：atexit LIFO 保证 handler 先于 modules/router 析构
@@ -249,6 +283,7 @@ std::string activeWindowEffectTier() {
     static std::unique_ptr<::core::Module> agent(create_agent_module());
     // 平台能力不支持时工厂返回 nullptr：门控装配按空实例跳过（页面不注册）
     static std::unique_ptr<::core::Module> wallpaper(create_wallpaper_module());
+    static std::unique_ptr<::core::Module> mcpPage(create_mcp_page_module());
     static std::unique_ptr<::core::Module> about(create_about_module());
     // 上线：分组父项工厂按契约返回 nullptr（不注册），两个子页各自实例
     static std::unique_ptr<::core::Module> releaseGroup(
@@ -270,6 +305,7 @@ std::string activeWindowEffectTier() {
                     case ::core::PageId::Settings: return settings.get();
                     case ::core::PageId::Agent: return agent.get();
                     case ::core::PageId::Wallpaper: return wallpaper.get();
+                    case ::core::PageId::Mcp: return mcpPage.get();
                     case ::core::PageId::About: return about.get();
                     case ::core::PageId::ReleaseGroup: return releaseGroup.get();
                     case ::core::PageId::ReleaseTasks: return releaseTasks.get();
@@ -312,6 +348,61 @@ std::string activeWindowEffectTier() {
         app::toggle::setClaudeAssemblyHandler(&ensureClaudeServiceAssembledImpl);
         // M-3：frosted 降级门控的 active 档回查缝（surfaceAlpha 读，桥见上）
         core::window_effect_state::setActiveTierProvider(&activeWindowEffectTier);
+        // 托盘壁纸桥：handler 捕获-less 直引本函数静态 wallpaper（moduleForPage 同款
+        // 惯用法）；实例为 nullptr（平台能力不支持）时查询报 absent、命令丢弃。
+        // 命令落到已 stop 的服务由服务自身幂等守卫吞掉（service 契约）。
+        app::tray::setWallpaperTrayBridge(
+            +[]() -> app::tray::WallpaperTrayState {
+                // service() 是非 const 成员（服务命令语义），这里只读快照也不可用
+                // const 指针访问（否则 this 限定符丢弃报错）
+                auto* wallpaperModule =
+                    static_cast<::module::wallpaper::WallpaperModule*>(
+                        wallpaper.get());
+                if (wallpaperModule == nullptr) {
+                    return {false, false};
+                }
+                const auto snapshot = wallpaperModule->service().snapshot();
+                return {true, snapshot.manualPaused};
+            },
+            +[](app::tray::WallpaperTrayCommand command) {
+                auto* wallpaperModule =
+                    static_cast<::module::wallpaper::WallpaperModule*>(
+                        wallpaper.get());
+                if (wallpaperModule == nullptr) {
+                    return;
+                }
+                ::module::wallpaper::WallpaperService& service =
+                    wallpaperModule->service();
+                switch (command) {
+                    case app::tray::WallpaperTrayCommand::TogglePause:
+                        service.toggleManualPause();
+                        break;
+                    case app::tray::WallpaperTrayCommand::Next:
+                        service.next();
+                        break;
+                    case app::tray::WallpaperTrayCommand::Stop:
+                        service.stop();
+                        break;
+                }
+            });
+
+        // MCP 装配段：注册内置工具（一次，常驻注册表）+ 注入桥 + 按开关启动。
+        // 启动失败只 LOG_ERROR 不弹窗（启动期与代理自启同口径）。
+        module::mcp::registerBuiltinMcpTools(core::mcp::globalMcpTools());
+        app::mcp::setHandlers(&mcpStartImpl, &mcpStopImpl, &mcpApplyPortImpl,
+                              &mcpStatusImpl);
+        if (module::settings::moduleEnabled(gatingConfigSnapshot(),
+                                            module::settings::kModuleIdMcp)) {
+            auto started = module::mcp::globalMcpService().start(
+                gatingConfigSnapshot().mcpPort);
+            if (started.isFail()) {
+                LOG_ERROR("MCP 服务启动失败（不阻断启动）: " +
+                          started.errorMessage());
+            }
+        }
+        // 单例永不析构（module_mcp 侧堆持有），退出钩子访问安全；与 Router
+        // stopAll 互不依赖（atexit LIFO：本钩子后注册 → 先于 stopAll 跑）。
+        std::atexit([] { module::mcp::globalMcpService().stop(); });
         initialized = true;
     }
     return &router;
@@ -469,6 +560,21 @@ void ensureClaudeServiceAssembledImpl(bool autoStart) {
     }
 }
 
+// 托盘壁纸组开关 + 文案口径：组出现 = 设置门控开 且 桥报告模块实例已装配
+//（工厂能力失败 → nullptr → absent）；暂停字样由桥的 manualPaused 驱动
+//（契约见 trayMenuSpec）。原生降级菜单在 dslAppConfig 静态初始化期一次性构建
+//（早于装配，桥未在位）→ 降级路径恒无壁纸组；styled 主路径每次右键现查。
+std::vector<::core::tray::TrayMenuSpecItem> currentTraySpec() {
+    const app::tray::WallpaperTrayState wallpaperTray =
+        app::tray::wallpaperTrayState();
+    const bool wallpaperGroupOn =
+        wallpaperTray.present &&
+        module::settings::moduleEnabled(
+            gatingConfigSnapshot(), module::settings::kModuleIdWallpaper);
+    return ::core::tray::trayMenuSpec(wallpaperGroupOn,
+                                      wallpaperTray.manualPaused);
+}
+
 // 托盘菜单唯一数据源 trayMenuSpec；动作→页面映射在 app_assembly（pageForTrayAction）
 void executeTrayAction(::core::tray::TrayMenuAction action) {
     using Action = ::core::tray::TrayMenuAction;
@@ -478,6 +584,18 @@ void executeTrayAction(::core::tray::TrayMenuAction action) {
     switch (action) {
         case Action::ShowMainWindow:
             app::requestShow();
+            break;
+        case Action::WallpaperTogglePause:
+            app::tray::dispatchWallpaperTrayCommand(
+                app::tray::WallpaperTrayCommand::TogglePause);
+            break;
+        case Action::WallpaperNext:
+            app::tray::dispatchWallpaperTrayCommand(
+                app::tray::WallpaperTrayCommand::Next);
+            break;
+        case Action::WallpaperStop:
+            app::tray::dispatchWallpaperTrayCommand(
+                app::tray::WallpaperTrayCommand::Stop);
             break;
         case Action::Exit:
             app::requestExit();
@@ -491,7 +609,7 @@ void executeTrayAction(::core::tray::TrayMenuAction action) {
 // 原生降级菜单（styled 失败时用；数据全来自 spec，无内置项）
 std::vector<core::platform::TrayMenuItem> nativeTrayMenuItems() {
     std::vector<core::platform::TrayMenuItem> items;
-    for (const auto& spec : ::core::tray::trayMenuSpec()) {
+    for (const auto& spec : currentTraySpec()) {
         core::platform::TrayMenuItem item;
         item.text = spec.text;
         if (!item.isSeparator()) {
@@ -505,7 +623,7 @@ std::vector<core::platform::TrayMenuItem> nativeTrayMenuItems() {
 
 // styled 托盘菜单；返回 false = 构建失败 → 原生降级；spec 按值捕获作回调映射
 bool showTrayStyledMenu(int x, int y) {
-    const auto spec = ::core::tray::trayMenuSpec();
+    const auto spec = currentTraySpec();
     std::vector<components::StyledMenuItem> items;
     for (const auto& s : spec) {
         components::StyledMenuItem item;

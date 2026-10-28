@@ -32,10 +32,14 @@
 #include <core/window/window_backend.h>   // core::window::setClipboardText（复制详情）
 #include "platform/autostart.h"      // platform::autostart（开机自启动注册态回读/写入，UAT6）
 #include "platform/system_theme.h"
-#include "platform/wallpaper_capability.h"  // platform::wallpaper::supported（壁纸卡可见性）
+#include "platform/wallpaper_capability.h"  // platform::wallpaper::supported（壁纸格可见性 + 插拔卡卡高二值）
 
 // 模块开关即时生效桥：函数指针缝 + 默认 no-op，真 handler 由 main.cpp 装配段注入。
 #include "module_toggle_bridge.h"
+
+// MCP 服务桥（app 层缝，模式同 module_toggle_bridge）：设置卡只经此读状态/发指令，
+// 不 include module_mcp（module_settings 与 module_mcp 互不依赖）。
+#include "mcp_service_bridge.h"
 
 #include <ui_kit/columns.h>
 #include <ui_kit/metrics.h>  // kHeaderH（页头行高；kSettingsHeaderH 已并入共享源）
@@ -80,6 +84,7 @@ namespace {
 enum class CardHeightKind {
     Fixed,
     ProxyWarnings,
+    McpCard,      // MCP 配置卡：行几何求和（mcpCardHeightFor），不写死高度
     FillRemainder,
     GithubSync,   // 恒满高（UAT4 起不按启用态折叠；UAT5 方案 A 三段式，见 kGithubSyncCardHeight）
 };
@@ -107,13 +112,17 @@ const CardSpec kCardSpecs[] = {
     {kTabGeneral, "settings.card.proxy", kModuleIdClaudeProxy,
      CardHeightKind::ProxyWarnings, 0.0f, false, /*half=*/false, &drawProxyCard,
      nullptr},
+    // 2026-10-27 用户真机拍板：壁纸开关收进插拔卡第 5 格，独立全宽壁纸卡删除。
+    // 卡高按平台能力二选一（supported → 第 5 格行 +56；不支持 → 格不建回落 198），
+    // 注册表静态行内运行期取值：visible 门控从「整卡」降级为「格内」判据，
+    // 判据仍是 platform::wallpaper::supported()，开关链路同走 applyModuleEnabled。
+    // MCP 配置卡：排在代理卡后；模块关 → 整卡隐藏（不占高度）。
+    {kTabGeneral, "settings.card.mcp", kModuleIdMcp, CardHeightKind::McpCard,
+     0.0f, false, /*half=*/false, &drawMcpCard, nullptr},
     {kTabModules, "settings.card.modules", nullptr, CardHeightKind::Fixed,
-     kModulesCardHeight, false, /*half=*/false, &drawModulesCard, nullptr},
-    // 壁纸卡：平台能力不支持时整卡不建（不是禁用态）——visible 在卡区入口判定，
-    // 不占高度、不留空白；开关链路与模块插拔卡同走 applyModuleEnabled。
-    {kTabModules, "settings.card.wallpaper", nullptr, CardHeightKind::Fixed,
-     kWallpaperCardHeight, false, /*half=*/false, &drawWallpaperCard,
-     &::platform::wallpaper::supported},
+     ::platform::wallpaper::supported() ? kModulesCardHeightWallpaper
+                                        : kModulesCardHeight,
+     false, /*half=*/false, &drawModulesCard, nullptr},
     {kTabLog, "settings.card.log", nullptr, CardHeightKind::Fixed,
      kLogSettingsCardHeight, true, /*half=*/false, &drawLogCard, nullptr},
     {kTabLog, "settings.tab.log", nullptr, CardHeightKind::FillRemainder,
@@ -282,6 +291,12 @@ public:
         if (!proxyPortDraft_.empty() &&
             proxyPortDraft_ != std::to_string(cfg_.proxyPort)) {
             applyProxyPort();
+            return true;
+        }
+        // MCP 端口草稿同段提交：非空且 ≠ 已应用端口 → 走「应用」路径
+        if (!mcpPortDraft_.empty() &&
+            mcpPortDraft_ != std::to_string(cfg_.mcpPort)) {
+            applyMcpPort();
             return true;
         }
         persist();
@@ -509,6 +524,53 @@ public:
         if (statusIsError_) {
             statusMessage_.clear();
             statusIsError_ = false;
+        }
+    }
+
+    // ── MCP 端口行（草稿 + 提交语义与代理端口同款；反馈位在卡内说明列）──
+
+    void setMcpPortDraft(const std::string& v) {
+        mcpPortDraft_ = v;
+        // 输入变化即清错：反馈位回静态提示（红字不跨输入存活）
+        mcpPortFeedback_.clear();
+        mcpPortFeedbackError_ = false;
+    }
+
+    void applyMcpPort() {
+        int port = 0;
+        if (!parseMcpPortInput(mcpPortDraft_, port)) {
+            mcpPortFeedback_ = mcpPortDraft_.empty()
+                ? "请输入端口（1-65535）"
+                : "端口无效：请输入 " + std::to_string(kMinMcpPort) +
+                      " - " + std::to_string(kMaxMcpPort) + " 的纯数字";
+            mcpPortFeedbackError_ = true;
+            return;  // 非法草稿不落库
+        }
+        if (port == cfg_.mcpPort) {
+            mcpPortFeedback_ = "端口未变化";
+            mcpPortFeedbackError_ = false;
+            return;
+        }
+        cfg_.mcpPort = port;
+        persist();
+        mcpPortDraft_ = std::to_string(port);   // 规范化显示（"08931" → "8931"）
+        // 成功 → 反馈位回静态提示；生效语义：运行中桥内 restart，未运行下次启动生效
+        mcpPortFeedback_.clear();
+        mcpPortFeedbackError_ = false;
+        if (mcpRunning_) {
+            auto r = app::mcp::applyPort(port);
+            if (r.isFail()) {
+                mcpPortFeedback_ = "端口已保存，运行中重启失败：" + r.errorMessage();
+                mcpPortFeedbackError_ = true;
+                LOG_ERROR("Settings: MCP 端口改 " + std::to_string(port) +
+                          " 重启失败: " + r.errorMessage());
+                return;
+            }
+            LOG_INFO("Settings: MCP 端口 → " + std::to_string(port) +
+                     "，服务已自动重启");
+        } else {
+            LOG_INFO("Settings: MCP 端口 → " + std::to_string(port) +
+                     "（服务未运行：下次启动生效）");
         }
     }
 
@@ -1048,9 +1110,15 @@ public:
         }
         const float proxyH = proxyCardHeightFor(warnLines);
         // 模块插拔门控：读 cfg_（启动注册状态的来源），拨开关即时预览下次启动的布局。
-        // UAT5 删目录卡后 markdown 开关不再影响设置页卡集，contentKey 只签 claude。
+        // UAT5 删目录卡后 markdown 开关不再影响设置页卡集，contentKey 签 claude + mcp。
         const bool claudeOn =
             moduleEnabled(cfg_, kModuleIdClaudeProxy);
+        const bool mcpOn = moduleEnabled(cfg_, kModuleIdMcp);
+        // MCP 桥状态快照（加锁快照 O(1)，spec 允许每帧）：状态行/命令行只读快照。
+        const app::mcp::LiveStatus mcpLive = app::mcp::status();
+        mcpRunning_ = mcpLive.running;
+        mcpLivePort_ = mcpLive.port;
+        mcpLastError_ = mcpLive.lastError;
         const auto compTheme = core::theme::componentTokensWeChat(t);
 
         ui.column("settings.root")
@@ -1118,6 +1186,9 @@ public:
                                 std::to_string(settingsTab_) + "." +
                                 std::to_string(static_cast<int>(proxyH)) +
                                 (claudeOn ? "C" : "c") +
+                                // MCP 门控态必须进签名：模块 Tab 打开 mcp → 回通用
+                                // Tab 时命中旧内容高缓存会裁掉 514 高的开启态内容
+                                (mcpOn ? "M" : "m") +
                                 ".c" +
                                 std::to_string(static_cast<int>(pairColW +
                                                                0.5f)))
@@ -1179,6 +1250,13 @@ private:
         };
         // Esc=丢弃端口草稿（不触发 applyProxyPort；不清红字状态）。
         a.discardProxyPortDraft = [this] { proxyPortDraft_.clear(); };
+        a.setMcpPortDraft = [this](const std::string& v) { setMcpPortDraft(v); };
+        a.applyMcpPort = [this] { applyMcpPort(); };
+        a.discardMcpPortDraft = [this] {
+            mcpPortDraft_.clear();
+            mcpPortFeedback_.clear();
+            mcpPortFeedbackError_ = false;
+        };
         a.applyRetentionPreset = [this](int idx) { applyRetentionPreset(idx); };
         a.applyLogLevelPreset = [this](int idx) { applyLogLevelPreset(idx); };
         a.applyEditorFontPreset = [this](int idx) { applyEditorFontPreset(idx); };
@@ -1227,6 +1305,8 @@ private:
             return roundFs(spec.height);
         case CardHeightKind::ProxyWarnings:
             return proxyH;
+        case CardHeightKind::McpCard:
+            return mcpCardHeightFor();
         case CardHeightKind::FillRemainder:
             // UAT6 零滚动收口：日志 tab 在最小窗（1000×640 → 卡区可用高 372）下
             // remain = 372 − roundFs(144) − gap 16 = 212——旧下限 260 > 212 把日志
@@ -1288,6 +1368,13 @@ private:
         in.githubSyncDeleteSkipHint = githubSyncDeleteSkipHint_;
         in.githubSyncTokenVisible = githubSyncTokenVisible_;
         in.githubSyncDetailExpanded = githubSyncDetailExpanded_;
+        // MCP 卡快照（草稿 + 反馈 + 桥状态——compose 每帧刷新的成员拷贝）
+        in.mcpPortDraft = mcpPortDraft_;
+        in.mcpPortFeedback = mcpPortFeedback_;
+        in.mcpPortFeedbackError = mcpPortFeedbackError_;
+        in.mcpRunning = mcpRunning_;
+        in.mcpLivePort = mcpLivePort_;
+        in.mcpLastError = mcpLastError_;
         const SettingsCardActions a = cardActions();
         const float gapY = t.sizes.spacingLarge;
         float cardY = 0.0f;
@@ -1558,6 +1645,13 @@ private:
     int openDropdown_ = -1;
     // 代理端口输入草稿：空 = 未编辑（compose 显示 cfg_.proxyPort），应用成功后刷新。
     std::string proxyPortDraft_;
+    // MCP 端口行（草稿 + 卡内反馈位）与桥状态快照（compose 每帧刷新）。
+    std::string mcpPortDraft_;
+    std::string mcpPortFeedback_;             // 非空 = 反馈位文案（替代静态提示）
+    bool mcpPortFeedbackError_ = false;       // true = 红字
+    bool mcpRunning_ = false;                 // 桥快照
+    int mcpLivePort_ = 0;                     // 桥快照：实际监听端口
+    std::string mcpLastError_;                // 桥快照：Failed 时非空
     float cardsScrollOffset_ = 0.0f;      // 卡片区 scrollView 滚动位置
     int settingsTab_ = 0;                 // 当前 tab（通用/模块/日志/同步）
     std::vector<std::string> logTail_;    // 日志文件末尾行内存快照（compose 只渲染）

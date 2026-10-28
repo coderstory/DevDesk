@@ -10,6 +10,7 @@
 
 #include "core/platform/window_effect.h"
 #include "core/logging.h"
+#include "core/mcp_port.h"
 #include "core/proxy_port.h"
 #include "core/result.h"
 #include "core/sqlite_db.h"
@@ -29,6 +30,10 @@ constexpr int kMaxLogRetentionDays = 3650;
 constexpr int kDefaultProxyPort = ::core::kDefaultProxyPort;
 constexpr int kMinProxyPort = ::core::kMinProxyPort;
 constexpr int kMaxProxyPort = ::core::kMaxProxyPort;
+// MCP 服务端口：取值唯一来源 = core/mcp_port.h（module_* 互不 include，共用 core 常量头）。
+constexpr int kDefaultMcpPort = ::core::kDefaultMcpPort;
+constexpr int kMinMcpPort = ::core::kMinMcpPort;
+constexpr int kMaxMcpPort = ::core::kMaxMcpPort;
 
 // 模块开关 ID：与 pageIdToString 的小写对齐；pet 不是 Router 页面模块，同经门控。
 inline constexpr const char* kModuleIdHome = "home";
@@ -42,6 +47,9 @@ inline constexpr const char* kModuleIdAgent = "agent";
 inline constexpr const char* kModuleIdWallpaper = "wallpaper";
 // release：上线模块（任务/基础配置两页共用一个开关），默认启用。
 inline constexpr const char* kModuleIdRelease = "release";
+// mcp：默认关闭的后台服务型模块——不是 Router 页面（不进注册表遍历），
+// 开关即时生效走 app_assembly 的 mcp 特例分发。
+inline constexpr const char* kModuleIdMcp = "mcp";
 
 // 默认全启用（字段缺失/解析失败回退）
 std::vector<std::string> defaultEnabledModules();
@@ -91,6 +99,9 @@ struct SettingsConfig {
     bool fluidBackgroundEnabled = true;
     // Claude 代理监听端口：非法值回落默认 8888；运行中改端口自动 stop→start 重启。
     int proxyPort = kDefaultProxyPort;
+    // MCP 服务监听端口：非法值回落默认 8931（与 proxyPort 同口径，不钳边界）；
+    // 运行中改端口经桥 restart，未运行则下次启动生效。
+    int mcpPort = kDefaultMcpPort;
     // 窗口效果："off"|"translucent"|"frosted"，未知值收敛 off。
     std::string windowEffect = kWindowEffectOff;
     // 强调色："clay"|"purple"|"pink"|"blue"
@@ -115,6 +126,9 @@ bool moduleEnabled(const SettingsConfig& cfg, const std::string& moduleId);
 
 // 代理端口输入解析（纯函数）：只接受范围内纯数字，越界/带符号一律 false。
 bool parseProxyPortInput(const std::string& text, int& out);
+
+// MCP 端口输入解析（纯函数）：与 parseProxyPortInput 同实现口径。
+bool parseMcpPortInput(const std::string& text, int& out);
 
 // 主题模式解析（纯函数）：core 不可依赖 platform，系统深浅由 module 层探测后传入；未知 mode 按 auto。
 bool resolveThemeDark(const std::string& themeMode, bool systemPrefersDark);
@@ -165,10 +179,10 @@ public:
     // 与 load() 同源，但把「库未就绪 / 表不存在 / 单键读失败」如实报出（ErrorCode + 原因）。
     core::Result<SettingsConfig> loadChecked() const;
 
-    // 写入配置：18 个顶层键在一个事务里 UPSERT，并清掉本轮不再写出的旧键
+    // 写入配置：19 个顶层键在一个事务里 UPSERT，并清掉本轮不再写出的旧键
     //（UAT6 窗体记忆加 windowRestoreWidth/Height/windowMaximized 三键；动态背景
     // 批加 fluidBackgroundEnabled，键口径 17 个；默认模块迁移加
-    // moduleDefaultsVersion，自此 18 个）。
+    // moduleDefaultsVersion，MCP 批加 mcpPort，键口径自此 19 个）。
 
     core::Result<void> save(const SettingsConfig& cfg) const;
 

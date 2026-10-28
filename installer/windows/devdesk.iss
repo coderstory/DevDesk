@@ -58,6 +58,10 @@ Name: "english";     MessagesFile: "compiler:Default.isl"
 
 [Files]
 Source: "{#ExeDir}\DevDesk.exe";  DestDir: "{app}"; Flags: ignoreversion
+; THIRD-PARTY-NOTICES.md 随包分发（mpv GPLv2+ 合规：GPL 分发须随附许可告示）。
+; 源路径走 {#SourcePath}（= 本 .iss 所在目录，含尾部反斜杠，与上面 Languages 条目同款），
+; ..\.. 回到仓库根——文件随仓库走，任何机器的 ISCC 都能就地取材，不新增 /D 注入。
+Source: "{#SourcePath}..\..\THIRD-PARTY-NOTICES.md"; DestDir: "{app}"; Flags: ignoreversion
 ; Excludes：排除 17MB 死重量 NotoSansSC-VF.ttf —— 该字体是变量字体，FreeType 加载不稳、
 ; 当前未启用（见 DevDesk/src/main.cpp:487 注释），运行时字体走 EUI-NEO
 ; core/render/text.cpp:607-625 的 fallback 链（系统 CJK 字体微软雅黑 msyh 优先，

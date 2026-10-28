@@ -41,12 +41,17 @@ struct StatusInput {
     bool paused = false;        // 手动暂停或系统让路
     bool manualPaused = false;  // 手动暂停位为真即 true，可与 systemHolds 并存
     HoldReasonSet systemHolds = 0;
-    int itemCount = 0;              // 播放态副题：「N 个视频 / N 张图片」
+    int itemCount = 0;              // 播放态副题：轮换池总数（视频+图片）
     int rotationIntervalSec = 300;  // 播放态副题：「每 N 分钟换一个」
+    // 纯追加（图片进轮换池批次）：池内图片数与「当前装载项是图片」。
+    // currentItemImage 只在 Video 来源（混合池）置位；Image 来源沿用既有单张/轮播标题。
+    int imageItemCount = 0;
+    bool currentItemImage = false;
 };
 
 // 状态卡标题。播放中：视频「正在播放 · 模式」、图片单张「正在显示 · 单张不变」、
-// 图片轮播「正在轮播 · 模式」；暂停：手动「已暂停」、系统「已暂停 · 原因1、原因2」。
+// 图片轮播「正在轮播 · 模式」；视频来源当前项为图片时「正在显示 · 静态图片」；
+// 暂停：手动「已暂停」、系统「已暂停 · 原因1、原因2」。
 std::string statusTitle(const StatusInput& input);
 
 // 状态卡副题：手动暂停「点『继续』恢复播放。」；系统让路「条件解除后自动续播，不会从头开始。」；

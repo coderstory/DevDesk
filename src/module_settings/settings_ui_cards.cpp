@@ -6,6 +6,8 @@
 // UAT5：目录卡（数据目录/忽略规则展示）整卡删除，相关 includes 一并清退。
 #include "settings_ui_cards.h"
 
+#include <platform/wallpaper_capability.h>  // wallpaper::supported()（第 5 格可见性）
+
 #include <core/component_theme.h>
 #include <core/render/text.h>  // core::TextPrimitive::measureTextWidth
 
@@ -403,6 +405,8 @@ void drawModulesCard(const CardDrawArgs& args) {
         const char* name;
         const char* desc;
     };
+    // 标题右 MCP 开关盒宽：字面值 150，不随字号缩放（同外观卡动态背景开关口径）
+    constexpr float kMcpToggleBoxW = 150.0f;
     static const ModuleMeta kToggleable[] = {
         {kModuleIdMarkdown, "Markdown 笔记本",
          "本地文件存储 + SQLite FTS5 全文搜索"},
@@ -416,6 +420,15 @@ void drawModulesCard(const CardDrawArgs& args) {
          "任务执行与基础配置（两个子页同开同关）"},
     };
     constexpr int kToggleCount = static_cast<int>(sizeof(kToggleable) / sizeof(kToggleable[0]));
+    // 壁纸第 6 格（2026-10-27 用户真机拍板：独立全宽卡废除，收进常规网格）：
+    // 可见性判据与整卡时代同源 platform::wallpaper::supported()——不支持时整格
+    // 不建（网格自然回落 2×2，卡高注册表同判据回落 198），末行落单格按格机制自然流。
+    // 元素根 id 保留 settings.card.wallpaper.*（探针/测试锚不换）。
+    static const ModuleMeta kWallpaperToggle = {
+        kModuleIdWallpaper, "壁纸",
+        "动态桌面壁纸（视频 / 图片），开启后随 DevDesk 启动"};
+    const bool wallpaperCell = ::platform::wallpaper::supported();
+    const int cellCount = kToggleCount + (wallpaperCell ? 1 : 0);
     ui.stack(id)
         .size(w, h)
         .content([&] {
@@ -429,12 +442,30 @@ void drawModulesCard(const CardDrawArgs& args) {
                 .border(1.0f, t.colors.borderDefault)
                 .build();
 
-            cardTitle(ui, id, t, 16.0f, w - 56.0f, 22.0f, 22.0f, "模块");
+            cardTitle(ui, id, t, 16.0f, w - 56.0f - kMcpToggleBoxW, 22.0f, 22.0f,
+                      "模块");
             cardDesc(ui, id, t, 40.0f, w - 56.0f, roundFs(16.0f),
                      "开关即时生效：关闭后该模块代码不再执行，侧边栏入口与"
                      "页面当帧更新");
 
-            // 开关两列网格：行主序（0/1 同行异列，2/3 次行，4/5 …）；开关控件几何沿用
+            // MCP 服务开关（模块 tab 标题右贴，零高度增量——不新增开关卡、不动
+            // 2×2 四格与卡高；盒宽固定 150（130% 档「MCP 服务」放得下，同外观卡
+            // kFluidToggleW 口径）。可点击元素 = <id>.hit（.track 只是视觉轨道）；
+            // 拨动走既有 applyModuleEnabled 链路，不新增生效通道。
+            components::toggleSwitch(ui, id + ".mcp")
+                .position(w - 28.0f - kMcpToggleBoxW, 12.0f)
+                .size(kMcpToggleBoxW, 28.0f)
+                .text("MCP 服务")
+                .fontSize(fs(13.0f))
+                .checked(moduleEnabled(in.cfg, kModuleIdMcp))
+                .theme(compThemeTop)
+                .onChange([f = a.applyModuleEnabled](bool v) {
+                    f(kModuleIdMcp, v);
+                })
+                .build();
+
+            // 开关格（2 列，第 5 格壁纸末行落单）：行主序（0/1 同行异列，2/3 次行）；
+            // 开关控件几何沿用
             // 44×24（UAT3 由 80×32 收敛口径），在 name+desc 36 高块内垂直居中
             //（相对偏移 +6）。格宽/右格 x 走 ui_kit::columnX 单一来源（gap 16）。
             const float nameH = roundFs(18.0f);
@@ -447,15 +478,22 @@ void drawModulesCard(const CardDrawArgs& args) {
             float cellW = 0.0f;
             float cell2X = 0.0f;
             ui_kit::columnX(w - 56.0f, 16.0f, &cellW, &cell2X);
-            for (int i = 0; i < kToggleCount; ++i) {
-                const ModuleMeta& meta = kToggleable[i];
-                const int col = i % 2;   // 行主序：0/1 同行，2/3 次行
-                const int row = i / 2;   // 行数由 kToggleCount 派生（release 为第 5 格）
+            for (int i = 0; i < cellCount; ++i) {
+                const bool isWallpaper = wallpaperCell && i >= kToggleCount;
+                const ModuleMeta& meta =
+                    isWallpaper ? kWallpaperToggle : kToggleable[i];
+                const int col = i % 2;   // 行主序：0/1 同行，2/3 次行，4=末行落单
+                const int row = i / 2;
                 const float cellX = 28.0f + (col == 0 ? 0.0f : cell2X);
                 const float rowY = 68.0f + static_cast<float>(row) * rowPitch;
                 const float textW = cellW - switchW - switchGap;
-                const std::string suffix = std::to_string(i);
-                ui.text(id + ".name." + suffix)
+                // 壁纸格格元素根 id 独立于宿主卡 id（探针/测试锚不变），格内
+                // 子元素命名跟随常规格惯例（name/rowdesc/sw）。
+                const std::string cellId =
+                    isWallpaper ? std::string("settings.card.wallpaper") : id;
+                const std::string suffix =
+                    isWallpaper ? "" : "." + std::to_string(i);
+                ui.text(cellId + (isWallpaper ? ".name" : ".name" + suffix))
                     .position(cellX, rowY)
                     .size(textW, nameH)
                     .text(meta.name)
@@ -467,7 +505,8 @@ void drawModulesCard(const CardDrawArgs& args) {
                     .overflow(core::TextOverflow::Ellipsis)
                     .clip()
                     .build();
-                ui.text(id + ".rowdesc." + suffix)
+                ui.text(cellId + (isWallpaper ? ".rowdesc"
+                                              : ".rowdesc" + suffix))
                     .position(cellX, rowY + rowDescDy)
                     .size(textW, rowDescH)
                     .text(meta.desc)
@@ -482,7 +521,8 @@ void drawModulesCard(const CardDrawArgs& args) {
                 // wswitch 的 clickable 元素 id = <id>.track（probe 按 .track 定位）。
                 // UAT3：80×32 显示过大 → 44×24（agent_module 详情弹窗同款）；
                 // 格视觉块 = name 18 + 2 + desc 16 = 36 高，24 开关居中偏移 +6。
-                ui_kit::wswitch(ui, id + ".sw." + suffix,
+                ui_kit::wswitch(ui, cellId + (isWallpaper ? ".sw"
+                                                           : ".sw" + suffix),
                     moduleEnabled(in.cfg, meta.moduleId),
                     cellX + cellW - switchW, rowY + 6.0f, switchW, switchH, t,
                     [f = a.applyModuleEnabled,
@@ -490,58 +530,6 @@ void drawModulesCard(const CardDrawArgs& args) {
                         f(mid, v);
                     });
             }
-        })
-        .build();
-}
-
-// 壁纸卡（模块 tab，全宽）：标题 + 说明 + 右侧 44×24 开关。平台能力门控在注册表
-// 的 visible 函数（unsupported 平台整卡不建、不占高度），本函数无平台分支。
-// 开关行几何与卡高同源（settings_ui_logic.h 的 kWallpaperCardHeight 注释）：
-// 行 y = roundFs(68) 内容起始锚、行盒 roundFs(44)，44×24 字面开关行内垂直居中。
-void drawWallpaperCard(const CardDrawArgs& args) {
-    eui::Ui& ui = args.ui;
-    const std::string& id = args.id;
-    const float w = args.w;
-    const float h = args.h;
-    const core::theme::Tokens& t = args.t;
-    const SettingsCardsIn& in = args.in;
-    const SettingsCardActions& a = args.a;
-
-    constexpr float kSwitchW = 44.0f;   // §4.4 微信开关字面值（不随字号缩放）
-    constexpr float kSwitchH = 24.0f;
-    constexpr float kSidePad = 28.0f;   // 卡内左右边距（与各卡同款）
-
-    ui.stack(id)
-        .size(w, h)
-        .content([&] {
-            const auto compThemeTop = core::theme::componentTokensWeChat(t);
-            // 白卡 + Sm 阴影 + 描边（与模块插拔卡同款，S6.1 玻璃退役口径）
-            ui.rect(id + ".bg")
-                .position(0.0f, 0.0f).size(w, h)
-                .color(ui_kit::cardSurface(t))
-                .radius(t.sizes.radiusLarge)
-                .shadow(components::theme::shadow(compThemeTop, 3.0f, 1.0f,
-                                                  0.04f, 0.02f))
-                .border(1.0f, t.colors.borderDefault)
-                .build();
-
-            cardTitle(ui, id, t, 16.0f, w - 56.0f, 22.0f, 22.0f, "壁纸");
-            cardDesc(ui, id, t, 40.0f, w - 56.0f, roundFs(16.0f),
-                     "动态桌面壁纸（视频 / 图片），开启后随 DevDesk 启动");
-
-            // 开关行：内容起始锚 68（与日志/编辑器卡同口径）→ 行盒 roundFs(44)
-            // → 下边距 roundFs(16)，三者之和即 kWallpaperCardHeight 基准。
-            const float rowY = roundFs(68.0f);
-            const float rowH = roundFs(44.0f);
-            const float swY = rowY + (rowH - kSwitchH) * 0.5f;
-            // wswitch 命中元素 = <id>.track；初始值读 cfg 模块态，拨动走既有
-            // applyModuleEnabled → onModuleToggled 链路（与模块插拔卡同一入口）。
-            ui_kit::wswitch(
-                ui, id + ".sw", moduleEnabled(in.cfg, kModuleIdWallpaper),
-                w - kSidePad - kSwitchW, swY, kSwitchW, kSwitchH, t,
-                [f = a.applyModuleEnabled](bool v) {
-                    f(kModuleIdWallpaper, v);
-                });
         })
         .build();
 }
@@ -735,6 +723,161 @@ void drawProxyCard(const CardDrawArgs& args) {
                         .build();
                 }
             }
+        })
+        .build();
+}
+
+// MCP 服务配置卡（通用 tab，kModuleIdMcp 门控在注册表——模块关整卡不建）。
+// 行序/几何单一来源 settings_ui_logic.h（mcpPortRowY/mcpStatusRowHeight/
+// mcpCommandRowY/mcpCommandRowHeight/mcpCardHeightFor）；端口行 = 草稿 + 提交
+//（回车 /「应用」/ Esc 丢弃），反馈位在端口行说明列，不经 setStatus。
+void drawMcpCard(const CardDrawArgs& args) {
+    eui::Ui& ui = args.ui;
+    const std::string& id = args.id;
+    const float w = args.w;
+    const float h = args.h;
+    const core::theme::Tokens& t = args.t;
+    const SettingsCardsIn& in = args.in;
+    const SettingsCardActions& a = args.a;
+
+    const auto compTheme = core::theme::componentTokensWeChat(t);
+    const float descH = roundFs(16.0f);
+    const float rowH = logFieldHeight();
+    const float portRowY = mcpPortRowY();
+    const float statusY = portRowY + rowH;
+    const float statusH = mcpStatusRowHeight();
+    const float cmdY = mcpCommandRowY();
+    const float cmdH = mcpCommandRowHeight();
+    const float hintH = roundFs(16.0f);
+
+    // 固定控件组右锚（与代理端口行同款口径）：输入 96 + 间距 8 + 应用 64
+    constexpr float kPortInputW = 96.0f;
+    constexpr float kPortApplyW = 64.0f;
+    constexpr float kPortCtrlGap = 8.0f;
+    constexpr float kPortHintGap = 12.0f;
+    constexpr float kStatusLabelW = 110.0f;  // formRow label 同宽列
+    constexpr float kStatusLabelGap = 12.0f;
+
+    ui.stack(id)
+        .size(w, h)
+        .content([&] {
+            ui.rect(id + ".bg")
+                .position(0.0f, 0.0f).size(w, h)
+                .color(ui_kit::cardSurface(t))
+                .radius(t.sizes.radiusLarge)
+                .shadow(components::theme::shadow(compTheme, 3.0f, 1.0f, 0.04f, 0.02f))
+                .border(1.0f, t.colors.borderDefault)
+                .build();
+
+            cardTitle(ui, id, t, 16.0f, w - 56.0f, 22.0f, 22.0f, "MCP 服务");
+            cardDesc(ui, id, t, 40.0f, w - 56.0f, descH,
+                     "本机 127.0.0.1 提供 MCP 工具服务；无鉴权，仅本机可访问");
+
+            // 状态三态：running / 停止（无错误）/ 启动失败（lastError 透出）
+            const bool running = in.mcpRunning;
+            const std::string statusText =
+                running
+                    ? "运行中 127.0.0.1:" + std::to_string(in.mcpLivePort)
+                    : (in.mcpLastError.empty()
+                           ? std::string("已停止")
+                           : "启动失败：" + in.mcpLastError);
+
+            // 端口行：FormRow label「MCP 端口」+ 说明列（兼反馈位）+ 右锚控件组
+            const std::string portText = in.mcpPortDraft.empty()
+                ? std::to_string(in.cfg.mcpPort)
+                : in.mcpPortDraft;
+            ui_kit::formRow(ui, id + ".port", "MCP 端口", 28.0f, portRowY,
+                            w - 56.0f, rowH,
+                [&](eui::Ui& ui, float cx, float cy, float cw, float ch) {
+                    const float inputH = 28.0f;
+                    const float ctrlY = cy + (ch - inputH) * 0.5f;
+                    const float applyX = cx + cw - kPortApplyW;
+                    const float inputX = applyX - kPortCtrlGap - kPortInputW;
+                    components::input(ui, id + ".port.input")
+                        .position(inputX, ctrlY)
+                        .size(kPortInputW, inputH)
+                        .value(portText)
+                        .placeholder("8931")
+                        .fontSize(fs(13.0f))
+                        .theme(compTheme)
+                        .onChange([f = a.setMcpPortDraft](const std::string& v) {
+                            f(v);
+                        })
+                        .onEnter([f = a.applyMcpPort] { f(); })
+                        // Esc = 丢弃草稿（回落已应用端口，不触发提交）
+                        .onCancel([f = a.discardMcpPortDraft] { f(); })
+                        .build();
+                    components::button(ui, id + ".port.apply")
+                        .position(applyX, ctrlY)
+                        .size(kPortApplyW, inputH)
+                        .text("应用")
+                        .fontSize(fs(13.0f))
+                        .theme(compTheme, /*primary=*/true)
+                        .radius(t.sizes.radiusSmall)
+                        .onClick([f = a.applyMcpPort] { f(); })
+                        .build();
+                    // 说明列兼反馈位：静态提示 / 红字错误 / 三级「端口未变化」，
+                    // 直接由卡片状态渲染（setStatus 无页头渲染面，不作反馈通道）
+                    const float hintX = cx;
+                    const float hintW =
+                        std::max(0.0f, inputX - kPortHintGap - hintX);
+                    const bool hasFeedback = !in.mcpPortFeedback.empty();
+                    ui.text(id + ".port.feedback")
+                        .position(hintX, cy + (ch - hintH) * 0.5f)
+                        .size(hintW, hintH)
+                        .text(hasFeedback
+                                  ? in.mcpPortFeedback
+                                  : std::string("改后回车或点「应用」；运行中自动重启"))
+                        .fontSize(fs(12.0f))
+                        .lineHeight(hintH)
+                        .color(hasFeedback && in.mcpPortFeedbackError
+                                   ? t.colors.errorText
+                                   : t.colors.textTertiary)
+                        .maxWidth(hintW)
+                        .overflow(core::TextOverflow::Ellipsis)
+                        .clip()
+                        .build();
+                }, t);
+
+            // 状态行：label 定宽 110 + 值
+            const float statusValueX = 28.0f + kStatusLabelW + kStatusLabelGap;
+            ui.text(id + ".status.label")
+                .position(28.0f, statusY)
+                .size(kStatusLabelW, statusH)
+                .text("运行状态")
+                .fontSize(fs(12.0f))
+                .lineHeight(statusH)
+                .color(t.colors.textSecondary)
+                .build();
+            ui.text(id + ".status")
+                .position(statusValueX, statusY)
+                .size(w - statusValueX - 28.0f, statusH)
+                .text(statusText)
+                .fontSize(fs(12.0f))
+                .lineHeight(statusH)
+                .color(running ? t.colors.success
+                               : (in.mcpLastError.empty() ? t.colors.textTertiary
+                                                          : t.colors.warning))
+                .maxWidth(w - statusValueX - 28.0f)
+                .overflow(core::TextOverflow::Ellipsis)
+                .clip()
+                .build();
+
+            // 接入命令行：端口取运行中实际端口，未运行取已配置端口
+            const int commandPort = running ? in.mcpLivePort : in.cfg.mcpPort;
+            const std::string command = "claude mcp add --transport http devdesk http://127.0.0.1:" +
+                                        std::to_string(commandPort) + "/mcp";
+            ui.text(id + ".command")
+                .position(28.0f, cmdY)
+                .size(w - 56.0f, cmdH)
+                .text(fitControlLabel(command, w - 56.0f, fs(12.0f)))
+                .fontSize(fs(12.0f))
+                .lineHeight(cmdH)
+                .color(t.colors.textTertiary)
+                .maxWidth(w - 56.0f)
+                .overflow(core::TextOverflow::Ellipsis)
+                .clip()
+                .build();
         })
         .build();
 }

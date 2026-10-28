@@ -122,6 +122,22 @@ public:
 // 新建文件夹（相对路径；安全规则同 isSafeNewNotePath，已存在不算错）
     core::Result<void> createFolder(const std::string& name);
 
+// 目录树 H27：文件夹操作（独立方法，不动既有笔记链路；错误一律 Result）
+
+// 目录内 .md 笔记数（递归任意层级，任意深度命中都计数）。目录不存在 / 越界 → fail。
+    core::Result<int64_t> folderNoteCount(
+        const std::filesystem::path& relPath) const;
+
+// 同级重命名文件夹：新名不得含 '/'（isSafeNewNotePath 同规则兜底），
+// 目标已存在 → AlreadyExists。返回最终 POSIX 相对路径。根目录（空路径）不能重命名。
+    core::Result<std::string> renameFolder(
+        const std::filesystem::path& oldRelPath,
+        const std::filesystem::path& newRelPath);
+
+// 删除文件夹：仅子树内无 .md（folderNoteCount == 0）时整棵删除（含空子目录）；
+// 非空 → fail 不删。根目录（空路径）不能删除。
+    core::Result<void> deleteFolder(const std::filesystem::path& relPath);
+
     // 笔记目录（绝对路径）
     const std::filesystem::path& notesDir() const { return notesDir_; }
 

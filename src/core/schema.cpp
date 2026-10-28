@@ -12,6 +12,7 @@
 #include "db_backup.h"
 #include "logging.h"
 #include "sqlite_db.h"
+#include "time.h"
 
 #include <algorithm>
 #include <ctime>
@@ -645,6 +646,90 @@ core::Result<void> dropRemovedTables(core::data::SqliteDb& db) {
     return core::Result<void>::ok();
 }
 
+core::Result<void> migrateTodoDocLinkColumn(core::data::SqliteDb& db) {
+    // 老库 todo_tasks 补 doc_path（UAT6.2 H31 关联文档）。幂等：表不存在零操作
+    //（applySchema 会建全，含本列）；列已存在零操作。已存在行默认空串（未关联），
+    // 不做任何行级回填——文档关联只能由用户显式建立。
+    auto exists = tableExists(db, "todo_tasks");
+    if (exists.isFail())
+        return core::Result<void>::fail(exists.errorCode(), exists.errorMessage());
+    if (!exists.value()) return core::Result<void>::ok();
+    auto cols = existingColumns(db, "todo_tasks");
+    if (cols.isFail())
+        return core::Result<void>::fail(cols.errorCode(), cols.errorMessage());
+    if (cols.value().count("doc_path") > 0) return core::Result<void>::ok();
+    auto alter = db.exec(
+        "ALTER TABLE todo_tasks ADD COLUMN doc_path TEXT NOT NULL DEFAULT ''");
+    if (alter.isFail()) return alter;
+    return core::Result<void>::ok();
+}
+
+core::Result<void> archiveDoneTasksBeforeToday(core::data::SqliteDb& db) {
+    const std::time_t nowT = core::time::nowUnix();
+    const int64_t now = static_cast<int64_t>(nowT);
+    const int64_t midnight = static_cast<int64_t>(core::time::localMidnightUnix(nowT));
+
+    auto doneHit = findKindColumn(db, "done");
+    if (doneHit.isFail())
+        return core::Result<void>::fail(doneHit.errorCode(), doneHit.errorMessage());
+    auto archHit = findKindColumn(db, "archive");
+    if (archHit.isFail())
+        return core::Result<void>::fail(archHit.errorCode(), archHit.errorMessage());
+    if (doneHit.value().id == 0 || archHit.value().id == 0) {
+        return core::Result<void>::ok();  // 缺列 = 无归档目标，零操作（不失败）
+    }
+    const int64_t doneId = doneHit.value().id;
+    const int64_t archiveId = archHit.value().id;
+
+    return db.transaction([&db, doneId, archiveId, now, midnight]() -> core::Result<void> {
+        // 归档列当前末尾位置；候选按 done 列 position 升序追加，相对顺序不变。
+        auto maxPos = queryScalarInt1(
+            db,
+            "SELECT COALESCE(MAX(position), -1) AS v FROM todo_tasks WHERE column_id = ?",
+            archiveId);
+        if (maxPos.isFail())
+            return core::Result<void>::fail(maxPos.errorCode(), maxPos.errorMessage());
+        int64_t nextPos = maxPos.value() + 1;
+
+        auto prep = db.prepare(
+            "SELECT id FROM todo_tasks WHERE column_id = ? "
+            "AND (completed_at IS NULL OR completed_at < ?) "
+            "ORDER BY position ASC, id ASC");
+        if (prep.isFail())
+            return core::Result<void>::fail(prep.errorCode(), prep.errorMessage());
+        auto& stmt = prep.value();
+        if (auto r = stmt.bind(1, doneId); r.isFail()) return r;
+        if (auto r = stmt.bind(2, midnight); r.isFail()) return r;
+        auto rows = stmt.fetchAll();
+        if (rows.isFail())
+            return core::Result<void>::fail(rows.errorCode(), rows.errorMessage());
+
+        for (const auto& row : rows.value()) {
+            auto id = row.getInt64("id");
+            if (id.isFail())
+                return core::Result<void>::fail(id.errorCode(), id.errorMessage());
+            // 逐行 prepare（Statement 换绑须先 reset，逐行 prepare 免去 reset 步）
+            auto moveStmt = db.prepare(
+                "UPDATE todo_tasks SET column_id = ?, position = ?, archived_at = ?, "
+                "updated_at = ? WHERE id = ?");
+            if (moveStmt.isFail())
+                return core::Result<void>::fail(moveStmt.errorCode(),
+                                                moveStmt.errorMessage());
+            auto& mv = moveStmt.value();
+            if (auto r = mv.bind(1, archiveId); r.isFail()) return r;
+            if (auto r = mv.bind(2, nextPos); r.isFail()) return r;
+            if (auto r = mv.bind(3, now); r.isFail()) return r;
+            if (auto r = mv.bind(4, now); r.isFail()) return r;
+            if (auto r = mv.bind(5, id.value()); r.isFail()) return r;
+            auto step = mv.step();
+            if (step.isFail())
+                return core::Result<void>::fail(step.errorCode(), step.errorMessage());
+            ++nextPos;
+        }
+        return core::Result<void>::ok();
+    });
+}
+
 core::Result<void> migrate(core::data::SqliteDb& db) {
     // 先建当前 schema（老库缺的表/索引补建），再补列与 Todo 固定四列，最后清遗留表。
     auto r = db.applySchema(kSql);
@@ -669,6 +754,20 @@ core::Result<void> migrate(core::data::SqliteDb& db) {
     if (todoMig.isFail()) {
         LOG_ERROR("Todo 固定四列迁移失败: " + todoMig.errorMessage());
         return todoMig;
+    }
+    // 文档列补列：晚于 applySchema（表已存在），早于归档清扫无依赖——归档只动
+    // column_id/position/archived_at，不触碰 doc_path。
+    auto docLinkMig = migrateTodoDocLinkColumn(db);
+    if (docLinkMig.isFail()) {
+        LOG_ERROR("Todo 关联文档列迁移失败: " + docLinkMig.errorMessage());
+        return docLinkMig;
+    }
+    // 冷启动归档清扫必须晚于固定四列迁移（done/archive 列已存在），同样与 Todo
+    // 模块是否启用无关；每进程随启动迁移跑一次。
+    auto archiveMig = archiveDoneTasksBeforeToday(db);
+    if (archiveMig.isFail()) {
+        LOG_ERROR("Todo 冷启动归档清扫失败: " + archiveMig.errorMessage());
+        return archiveMig;
     }
     auto drop = dropRemovedTables(db);
     if (drop.isFail()) {

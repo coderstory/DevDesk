@@ -19,6 +19,7 @@ enum class PageId {
     ClaudeProxy,
     Agent,       // 位于 Settings 之前 = 侧边栏顺序
     Wallpaper,
+    Mcp,         // 位于 Wallpaper 之后、Settings 之前 = 侧边栏顺序（work/system 分组界）
     // 上线模块（多页共用门控键 release）：ReleaseGroup 是不可导航的分组父项
     //（工厂返回 nullptr，装配期跳过注册），只承载侧边栏二级菜单的父级身份。
     // 整组排在 Settings 之前（设置/关于固定收尾在侧边栏最后）。
@@ -37,6 +38,7 @@ inline const char* pageIdToString(PageId id) {
         case PageId::ClaudeProxy: return "ClaudeProxy";
         case PageId::Agent: return "Agent";
         case PageId::Wallpaper: return "Wallpaper";
+        case PageId::Mcp: return "Mcp";
         case PageId::ReleaseGroup: return "ReleaseGroup";
         case PageId::ReleaseTasks: return "ReleaseTasks";
         case PageId::ReleaseConfig: return "ReleaseConfig";

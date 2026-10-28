@@ -10,8 +10,10 @@
 //     到「一条目录条目」的处理时间。
 //   - 锁顺序固定：mu_ → playerMu_。playerMu_ 内不得回调本类任何加 mu_ 的方法。
 //
-// 本批边界：系统让路事件源（全屏/锁屏/熄屏/睡眠/电池）在 P3 watcher 接入；此处只有
-// 仲裁器与 test-only 注入缝，不得对外宣称自动让路已生效。玩家后端为 Null（P3 换 mpv）。
+// 本批边界：让路 watcher 全接线（P3b）——锁屏/电池/全屏/换屏四路事件经
+// YieldWatchers（platform 层，测试可注入假实现）实时喂入仲裁器；换屏广播触发
+// WorkerW 宿主重建。生产装配 = WorkerW 宿主 + mpv 播放器 + 真 watcher；
+// 注入测试播放器时**不建桌面宿主、不 spawn mpv、不启动 watcher**（单测不碰真桌面）。
 #pragma once
 
 #include <atomic>
@@ -32,6 +34,8 @@
 #include "module_wallpaper/core/settings.h"
 #include "module_wallpaper/core/video_library.h"
 #include "module_wallpaper/platform/player_backend.h"
+#include "module_wallpaper/platform/wallpaper_host.h"
+#include "module_wallpaper/platform/yield_watchers.h"
 
 namespace module::wallpaper {
 
@@ -42,9 +46,9 @@ struct WallpaperSnapshot {
     std::string folderPath;  // 当前来源目录（空 = 未配置）
     bool scanning = false;
     int videoCount = 0;
-    int imageTotal = 0;
-    int imagePassing = 0;  // 本批恒等于 imageTotal（像素档过滤待 P3 解码接入）
-    int imageFiltered = 0; // 本批恒 0
+    int imageTotal = 0;    // 扩展名命中总数（档位过滤前）
+    int imagePassing = 0;  // 过滤后入池数（≥ 档位线 + 尺寸未知者）；来源扫描才有意义
+    int imageFiltered = 0; // 被档位线滤掉的数（imageTotal - imagePassing）
     PlayMode mode = PlayMode::LoopSingle;
     int rotationIntervalSec = 300;
     bool paused = false;        // true = 手动暂停或系统让路（不区分来源）
@@ -62,6 +66,16 @@ struct WallpaperSnapshot {
     std::string statusSubtitle;
     std::string modeLabel;
     std::string countdownLabel;
+    // 宿主/mpv 后台失败的最近原因（中文，可直接展示；空 = 无错误）。
+    // 纯追加字段：Batch1 既有字段语义不变。
+    std::string playbackError;
+    // 纯追加字段（图片进轮换池批次）：rotation_.itemCount() 的快照（视频+图片混合池）。
+    int poolCount = 0;
+    // 混合池中图片条数；Image 来源恒等于 imageTotal。UI 副题按池构成分派文案。
+    int poolImageCount = 0;
+    // 当前装载的轮换项是图片（仅 Video 来源的混合池置位；Image 来源沿用单张/轮播语义）。
+    // 为真时 mpv 对该 item 无 pause/seek 语义，UI 停用暂停控件、倒计时照常。
+    bool currentItemImage = false;
 };
 
 class WallpaperService {
@@ -97,6 +111,7 @@ public:
     // ---- 测试缝（仅测试用，生产代码不得调用）----
     // 扫描器/玩家/时钟必须在 start() **之前**注入：扫描线程无锁读取 scanner/clock，
     // start 后再替换属数据竞争（本批不为测试缝加锁）。
+    // setPlayerForTest 同时把服务切到「无桌面装配」：不建 WorkerW 宿主、不 spawn mpv。
     using VideoScanner = std::function<VideoScanResult(const std::string& folder)>;
     using ImageScanner = std::function<ImageScanResult(const std::string& folder, int minPixels)>;
     using Clock = std::function<RotationClock::time_point()>;
@@ -106,7 +121,10 @@ public:
     void setPlayerForTest(std::unique_ptr<PlayerBackend> player);
     void setClockForTest(Clock clock);
     void setSettingsPathForTest(std::string path);
-    // 注入一个系统让路原因（P3 watcher 之前用它验证快照合并与暂停/恢复路径）。
+    // 注入假让路 watcher（替代 createYieldWatchers 的平台实现）。必须在 start() 之前
+    // 调用：start 时才装回调并启动 watcher（注入播放器 = 测试装配，真 watcher 不启动）。
+    void setYieldWatchersForTest(std::unique_ptr<YieldWatchers> watchers);
+    // 注入一个系统让路原因（等价于 watcher 事件回调；用于不注入 watcher 的老用例）。
     void setSystemHoldForTest(HoldReason reason, bool active);
 
 private:
@@ -116,7 +134,16 @@ private:
     void scanLoop();
     void tickLoop();
 
-    void applyVideoScanLocked(const VideoScanResult& result);
+    // watcher 事件入口（事件回调与轮询共用）：喂 arbiter，状态真变才落暂停/恢复决策。
+    // 任意线程可入（watcher 线程 / tick 线程）；未 start 时 no-op。
+    void applySystemReason(HoldReason reason, bool active);
+    // 换屏广播：重建 WorkerW 宿主并用新句柄重装当前项。无宿主（测试装配/宿主失败）no-op。
+    void handleDisplayChanged();
+    // tickLoop 周期轮询：全屏每拍（250ms）、电池每 4 拍（≈1s）。mu_ 内调用。
+    void pollYieldWatchersLocked();
+
+    // 视频来源扫描落库：池 = 视频 + 同目录图片（混合池），videoCount 只计视频。
+    void applyVideoScanLocked(const VideoScanResult& video, const ImageScanResult& images);
     void applyImageScanLocked(const ImageScanResult& result);
     void activateItemsLocked(std::vector<std::string> items,
                              RotationClock::time_point now);
@@ -126,21 +153,33 @@ private:
     void applyHoldDecisionLocked(RotationClock::time_point now);
     float playerPositionLocked();
     void applySettingsToPlayerLocked();
+    void ensurePlayerStartedLocked();
+    void pollPlayerErrorLocked();
+    void saveResumeLocked();
     void persistLocked();
 
     mutable std::mutex mu_;
     mutable std::mutex playerMu_;
     std::unique_ptr<PlayerBackend> player_;
+    std::unique_ptr<WallpaperHost> host_;
+    bool hostStarted_ = false;      // 真实宿主线程已建立
+    bool playerRunning_ = false;    // mpv 进程已启动（stopPlayback 后置 false）
+    bool testPlayerInjected_ = false;  // 注入测试播放器 = 无桌面装配
 
     VideoScanner videoScanner_;
     ImageScanner imageScanner_;
     Clock clock_;
     std::string settingsPath_;
+    std::unique_ptr<YieldWatchers> yieldWatchers_;
+    bool testWatcherInjected_ = false;  // 显式注入假 watcher：测试装配下也要接线启动
+    int yieldPollCounter_ = 0;  // 电池轮询分频（mu_ 内读写；全屏每拍都查）
 
     WallpaperSettings settings_;
     WallpaperSnapshot snapshot_;
     RotationController rotation_;
     HoldArbiter arbiter_;
+
+    bool currentItemImage_ = false;  // 仅 mu_ 内读写；当前轮换项为图片（见 snapshot 注释）
 
     bool started_ = false;
     std::atomic<bool> stopRequested_{false};

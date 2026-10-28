@@ -266,7 +266,7 @@ app_assembly          用 ServiceLocator 注册模块 provider 与内部任务�
 
 ## 17. 参考来源
 
-本地（均为 `D:/wt-rel-core` 下路径）：
+本地（均为仓库内路径）：
 - `src/core/ticker.h:6-54`、`src/core/ticker.cpp:64-103`、`src/main.cpp:641`（帧泵契约）
 - `src/module_agent/task_draft_job.h:41-59`（六触发标签与语义）
 - `src/module_agent/scheduler.cpp:22,305-315,339-345,358-455`（daily/once/schedule/event 与错过）

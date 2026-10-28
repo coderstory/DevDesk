@@ -273,7 +273,7 @@ int main(int argc, char* argv[]) {
 
     // 2) on → 下一帧条目出现，y = 前一条目下一格 + 组间 divider（W3 §4.8）。
     // 注册序 = home, settings, agent；registerModule 按 PageId 序插入，故 Agent(4)
-    // 在 Settings(9) 之前，侧边栏序 Home, Agent, [groupdiv], Settings。
+    // 在 Settings(10) 之前，侧边栏序 Home, Agent, [groupdiv], Settings。
     // Agent(work) → Settings(system) 间画 groupdiv（1px + gap 4 = 5px），故
     // Settings.y = Agent.y + itemH40 + gap4 + divider1 + gap4 = Agent.y + 49。
     app::assembly::dispatchModuleToggle(module::settings::kModuleIdAgent, true,

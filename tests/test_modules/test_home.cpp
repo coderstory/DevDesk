@@ -637,15 +637,16 @@ REGISTER_TEST(home_stat_chart_dual_tier,
         DOCTEST_REQUIRE(number != nullptr);
         DOCTEST_REQUIRE(desc != nullptr);
         DOCTEST_REQUIRE(root != nullptr);
-        // 基准 = pad×2(64)+页头40+统计144+gap×3(60)+图220+操作44 = 572；
-        // 余高 600−572−0.5=27.5 → 统计 148.95，图表 242.55
+        // 基准 = 页头40+统计144+gap×3(60)+图220+操作44+底边距16 = 524（操作行
+        // 底边距 kHomeActionsBottomMargin 计入基准，home_module.cpp 契约两处同改）；
+        // 余高 600−524−0.5=75.5 → 统计 144+75.5×0.18，图表 220+75.5×0.82
         DOCTEST_CHECK_MESSAGE(
-            std::fabs(stat->frame.height - 160.47f) < 0.5f,
-            "600 档统计卡高应为 148.95，实际 " +
+            std::fabs(stat->frame.height - (144.0f + 75.5f * 0.18f)) < 0.5f,
+            "600 档统计卡高应为 157.59，实际 " +
                 std::to_string(stat->frame.height));
         DOCTEST_CHECK_MESSAGE(
-            std::fabs(chart->frame.height - 295.03f) < 0.5f,
-            "600 档图表卡高应为 242.55，实际 " +
+            std::fabs(chart->frame.height - (220.0f + 75.5f * 0.82f)) < 0.5f,
+            "600 档图表卡高应为 281.91，实际 " +
                 std::to_string(chart->frame.height));
         // 卡内三行随卡高派生：仍在卡内、number 与 desc 不重叠
         const float cardTop = stat->frame.y;
@@ -663,8 +664,8 @@ REGISTER_TEST(home_stat_chart_dual_tier,
                 std::to_string(bottomMargin));
     }
 
-    // 960 档（1600×1000 真实页高，fs=1）：基准 572、余高 388−0.5=387.5 →
-    // 统计卡 213.75，图表卡 537.75（写死具体值，不用恒等式）
+    // 960 档（1600×1000 真实页高，fs=1）：基准 524、余高 960−524−0.5=435.5 →
+    // 统计卡 144+435.5×0.18，图表卡 220+435.5×0.82（写死具体值，不用恒等式）
     {
         core::theme::setWindowHeight(960.0f);
         const float fs = core::theme::fontScale();
@@ -688,12 +689,12 @@ REGISTER_TEST(home_stat_chart_dual_tier,
         DOCTEST_REQUIRE(desc != nullptr);
         DOCTEST_REQUIRE(root != nullptr);
         DOCTEST_CHECK_MESSAGE(
-            std::fabs(stat->frame.height - 225.27f) < 0.5f,
-            "960 档统计卡高应为 213.75，实际 " +
+            std::fabs(stat->frame.height - (144.0f + 435.5f * 0.18f)) < 0.5f,
+            "960 档统计卡高应为 222.39，实际 " +
                 std::to_string(stat->frame.height));
         DOCTEST_CHECK_MESSAGE(
-            std::fabs(chart->frame.height - 590.23f) < 0.5f,
-            "960 档图表卡高应为 537.75，实际 " +
+            std::fabs(chart->frame.height - (220.0f + 435.5f * 0.82f)) < 0.5f,
+            "960 档图表卡高应为 577.11，实际 " +
                 std::to_string(chart->frame.height));
         // 卡高增长后卡内三行仍居中分布、在卡内且不重叠
         const float cardTop = stat->frame.y;
@@ -719,7 +720,7 @@ REGISTER_TEST(home_stat_chart_dual_tier,
 })
 
 // 关闭 ClaudeProxy：图表卡不渲染时余高必须由统计行吸收，页底不留死区。
-// 基准（无图表卡）= 64 + 页头40 + 统计144 + gap×2(40) + 操作44 = 332。
+// 基准（无图表卡）= 页头40+统计144+gap×2(40)+操作44+底边距16 = 284。
 REGISTER_TEST(home_no_chart_extra_to_stats,
               "home_module: ClaudeProxy 关闭时余高全给统计行（无图表卡）", {
     core::theme::setFontScale(1.0f);
@@ -747,10 +748,10 @@ REGISTER_TEST(home_no_chart_extra_to_stats,
     const auto* root = ui.find("home.root");
     DOCTEST_REQUIRE(stat != nullptr);
     DOCTEST_REQUIRE(root != nullptr);
-    // 余高 960−332−0.5=627.5 全给统计行 → 144+627.5=771.5；内容填满页高
+    // 余高 960−284−0.5=675.5 全给统计行 → 144+675.5=819.5；内容填满页高
     DOCTEST_CHECK_MESSAGE(
-        std::fabs(stat->frame.height - 835.5f) < 0.5f,
-        "无图表卡时统计行应吸收全部余高（期望 771.5），实际 " +
+        std::fabs(stat->frame.height - (144.0f + 675.5f)) < 0.5f,
+        "无图表卡时统计行应吸收全部余高（期望 819.5），实际 " +
             std::to_string(stat->frame.height));
     const float bottomMargin =
         screen.height - (root->frame.y + root->frame.height);

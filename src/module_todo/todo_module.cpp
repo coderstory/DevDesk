@@ -3,8 +3,10 @@
 // 两条通道（BoardActions / DialogHost）构造期绑定一次，回调体读模块当下状态，UI 单元不持有本类
 #include "core/database.h"
 #include "core/logging.h"
+#include "core/markdown_notes_source.h"
 #include "core/module_interface.h"
 #include "core/router.h"
+#include "core/service_locator.h"
 #include "core/theme.h"
 #include <core/platform/platform.h>   // core::platform::requestUiUpdate（唤醒主循环续帧）
 #include "core/component_theme.h"
@@ -745,6 +747,33 @@ public:
         dialogs_.popups.open(ui::Popup::Detail);
     }
 
+    // H31 关联文档选择器：打开时从 Markdown 提供方拉清单（不缓存跨打开，改名/删除
+    // 后重开即新鲜）。提供方缺失 = Markdown 模块未启用 → 状态提示，不弹空窗。
+    void openDocPickerForDetail() {
+        auto src = ::core::ServiceLocator::requireService<
+            ::core::IMarkdownNotesSource>();
+        if (src.isFail()) {
+            setStatus("关联文档需要 Markdown 模块启用", true);
+            return;
+        }
+        auto notes = src.value()->listNotes();
+        if (notes.isFail()) {
+            setStatus("读取笔记列表失败：" + notes.errorMessage(), true);
+            return;
+        }
+        dialogs_.docPickNotes = std::move(notes.value());
+        dialogs_.popups.open(ui::Popup::DocPick);
+    }
+
+    // H31 跳转打开关联文档：经 Router 挂 open:<相对路径> 负载到 Markdown 页
+    //（与 Home「新建笔记」同一条 action 负载通道的 open: 形态）。
+    void openLinkedDoc(const std::string& relPath) {
+        if (relPath.empty()) return;
+        auto* router = ::core::appRouter();
+        if (router == nullptr) return;
+        router->navigateTo(::core::PageId::Markdown, "open:" + relPath);
+    }
+
     // 菜单定位走模块布局空间（ui::boardGeom），不用窗口坐标
     void openTaskContextMenu(const Task& task, int columnIndex, int cardIndex, float anchorX) {
         selectedTaskId_ = task.id;
@@ -891,6 +920,7 @@ public:
         ui::drawContextMenu(page, screen, t, dialogs_, dialogHost_, columnScrolls_);
         ui::drawDatePicker(page, screen, t, dialogs_, dialogHost_);
         ui::drawConfirmDeleteDialog(page, screen, t, dialogs_, dialogHost_);
+        ui::drawDocPickerDialog(page, screen, t, dialogs_, dialogHost_);
         drawToast(page, screen, core::theme::componentTokensWeChat(t));
     }
 
@@ -1050,6 +1080,15 @@ private:
         },
         .completeTask = [this](int64_t taskId) { doCompleteTask(taskId); },
         .uncompleteTask = [this](int64_t taskId) { doUncompleteTask(taskId); },
+        .openDocPicker = [this] { openDocPickerForDetail(); },
+        .openLinkedDoc = [this](const std::string& relPath) {
+            openLinkedDoc(relPath);
+        },
+        .docExists = [this](const std::string& relPath) {
+            auto src = ::core::ServiceLocator::requireService<
+                ::core::IMarkdownNotesSource>();
+            return src.isOk() && src.value()->noteExists(relPath);
+        },
         .openDetail = [this](const Task& task) { openDetailDialog(task); },
         .contextSelectPath = [this](const std::vector<int>& path) {
             onContextSelectPath(path);

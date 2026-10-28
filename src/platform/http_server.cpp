@@ -192,6 +192,23 @@ struct Server::Impl {
 
 // Server 实现
 
+// 服务端 socket 排他绑定（「端口占用 → fail」如实上报的传输层前提）：httplib
+// 默认 socket_options_ = default_socket_options 带 SO_REUSEADDR——Windows 语义下
+// 两个都带 REUSEADDR 的 bind 可共存同一端口（双绑定不报错，占用检测假阴性）；
+// Linux 的 SO_REUSEPORT 更是显式多监听负载均衡语义。故 Windows 改设
+// SO_EXCLUSIVEADDRUSE（对一切后来者 fail）；POSIX 不设任何 reuse 位（无
+// REUSEADDR 的活动 LISTEN 本就排他，第二个 bind EADDRINUSE）。代价：同端口快速
+// 重启需等旧连接 TIME_WAIT 清空，换来占用检测如实报错。
+void applyExclusiveServerSocketOptions(socket_t sock) {
+#if defined(_WIN32)
+    BOOL exclusive = TRUE;
+    ::setsockopt(sock, SOL_SOCKET, SO_EXCLUSIVEADDRUSE,
+                 reinterpret_cast<const char*>(&exclusive), sizeof(exclusive));
+#else
+    (void)sock;
+#endif
+}
+
 // Host 白名单：归一化后存 Impl（空 = 未配置 = 放行），pre-routing 钩子按表匹配
 void Server::setAllowedHosts(std::vector<std::string> hosts) {
     std::vector<std::string> normalized;
@@ -208,6 +225,10 @@ Server::Server(std::string bindAddress, int port)
     : bindAddress_(std::move(bindAddress)),
       port_(port),
       impl_(new Impl()) {
+    // 覆盖 httplib 默认 REUSEADDR：服务端 socket 一律排他绑定（见
+    // applyExclusiveServerSocketOptions 注）
+    impl_->svr.set_socket_options(&applyExclusiveServerSocketOptions);
+
     // 请求体上限：所有路由单点收口，超出由 cpp-httplib 回 413
     impl_->svr.set_payload_max_length(kMaxBodyBytes);
 

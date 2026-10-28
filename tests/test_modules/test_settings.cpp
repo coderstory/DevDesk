@@ -2074,12 +2074,16 @@ REGISTER_TEST(settings_card_rows_scale_derived,
           "settings.card.log.level.ddwrap"}},
         {2, "settings.tab.log", {"settings.tab.log.title"}},
     };
-    // 壁纸卡按平台能力入池：supported（Windows）渲染，非 supported 整卡不建。
+    // 2026-10-27 用户真机拍板：独立全宽壁纸卡废除 → 壁纸 = 模块插拔卡第 5 格，
+    // 格内三行按平台能力并入模块卡行池（supported 才建，归属卡 = modules 卡）。
     if (platform::wallpaper::supported()) {
-        kCards.push_back(
-            {1, "settings.card.wallpaper",
-             {"settings.card.wallpaper.title", "settings.card.wallpaper.desc",
-              "settings.card.wallpaper.sw.track"}});
+        for (auto& cr : kCards) {
+            if (std::string(cr.card) == "settings.card.modules") {
+                cr.rows.push_back("settings.card.wallpaper.name");
+                cr.rows.push_back("settings.card.wallpaper.rowdesc");
+                cr.rows.push_back("settings.card.wallpaper.sw.track");
+            }
+        }
     }
 
     struct FontScaleGuard {
@@ -2278,44 +2282,30 @@ REGISTER_TEST(settings_card_rows_scale_derived,
                               yOf("settings.card.modules.name.0"),
                           at(17.0f, 20.0f, 26.0f));
             if (err.empty())
-                // release 加入后开关 5 格 → 3 行：68+roundFs(56)×2+roundFs(36)=216
-                // 基准，+38 富余 → 254（85% 216 / 100% 254 / 130% 330）
+                // release 恒 5 格 → 3 行；壁纸再加 1 格仍 3 行
+                //（68+roundFs(56)×2+roundFs(36)=216 基准，+38 → 254；85% 216 / 100% 254 / 130% 330）
                 err = pin("modules 卡高", heightOf("settings.card.modules"),
                           at(216.0f, 254.0f, 330.0f));
-            // 壁纸卡（模块 tab 第二张全宽卡）：不改变上方 2×2 格布局（上面
-            // name/rowdesc 钉值继续守着），自身三行随 roundFs 派生、卡高 128 基准。
+            // 壁纸第 6 格（模块卡内末行落单，2026-10-27 拍板）：格几何随常规格
+            // 机制派生——行 y = roundFs(68)+2×roundFs(56)、开关行内偏移 +6（字面）。
             if (err.empty() && platform::wallpaper::supported()) {
-                err = pin("wallpaper.title 高（字面 22）",
-                          heightOf("settings.card.wallpaper.title"),
-                          at(22.0f, 22.0f, 22.0f));
+                err = pin("wallpaper.name 高（同常规格 name）",
+                          heightOf("settings.card.wallpaper.name"),
+                          at(15.0f, 18.0f, 23.0f));
                 if (err.empty())
-                    err = pin("wallpaper.desc 高（roundFs(16)）",
-                              heightOf("settings.card.wallpaper.desc"),
-                              at(14.0f, 16.0f, 21.0f));
+                    err = pin("wallpaper 格行距（2×rowPitch）",
+                              yOf("settings.card.wallpaper.name") -
+                                  yOf("settings.card.modules.name.0"),
+                              at(96.0f, 112.0f, 146.0f));
                 if (err.empty())
-                    err = pin("wallpaper 开关行顶（roundFs(68)+行盒内居中）",
+                    err = pin("wallpaper 开关行顶（格 y+6，字面偏移）",
                               yOf("settings.card.wallpaper.sw.track") -
-                                  yOf("settings.card.wallpaper"),
-                              at(64.5f, 78.0f, 104.5f));
+                                  yOf("settings.card.modules"),
+                              at(170.0f, 186.0f, 220.0f));
                 if (err.empty())
                     err = pin("wallpaper 开关高（字面 24）",
                               heightOf("settings.card.wallpaper.sw.track"),
                               at(24.0f, 24.0f, 24.0f));
-                if (err.empty())
-                    err = pin("wallpaper 卡高（roundFs(128)）",
-                              heightOf("settings.card.wallpaper"),
-                              at(109.0f, 128.0f, 166.0f));
-                if (err.empty())
-                    err = pin("wallpaper 卡宽（全宽 = modules 卡宽）",
-                              widthOf("settings.card.wallpaper"),
-                              widthOf("settings.card.modules"));
-                // 全宽卡独占一行：壁纸卡顶 = 模块卡底 + gap(16)
-                if (err.empty())
-                    err = pin("wallpaper 卡 y（modules 底 + 16）",
-                              yOf("settings.card.wallpaper") -
-                                  (yOf("settings.card.modules") +
-                                   heightOf("settings.card.modules")),
-                              at(16.0f, 16.0f, 16.0f));
             }
         } else {
     // 日志卡入派生池：UAT3 双列后两行同排（行 y=roundFs(68)、行高=logFieldHeight）、
@@ -2556,7 +2546,9 @@ REGISTER_TEST(settings_card_pair_column_geometry,
     for (const float scale : {0.85f, 1.3f}) {
         FontScaleGuard g{scale};
         const float modulesH = module::settings::roundFs(
-            module::settings::kModulesCardHeight);
+            ::platform::wallpaper::supported()
+                ? module::settings::kModulesCardHeightWallpaper
+                : module::settings::kModulesCardHeight);
         const float editorH = module::settings::roundFs(
             module::settings::kEditorFontCardHeight);
         const float logH = module::settings::roundFs(
@@ -2588,7 +2580,7 @@ REGISTER_TEST(settings_card_pair_column_geometry,
         DOCTEST_CHECK(nearEq(pair->frame.height,
                              std::max(appearanceH, editorH)));
 
-        // 模块 tab：2×2 格次行 desc 底不出卡
+        // 模块 tab：格子次行 desc 底不出卡（壁纸为第 5 格，id 无数字后缀）
         DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 1));
         eui::Ui uiM;
         uiM.begin(scale < 0.9f ? "pairgeoM85" : "pairgeoM130");
@@ -2596,7 +2588,7 @@ REGISTER_TEST(settings_card_pair_column_geometry,
         uiM.end();
         uiM.layout(screen.width, screen.height);
         const auto* modulesCard = uiM.find("settings.card.modules");
-        const auto* rowdesc3 = uiM.find("settings.card.modules.rowdesc.3");
+        const auto* rowdesc3 = uiM.find("settings.card.wallpaper.rowdesc");
         DOCTEST_REQUIRE(modulesCard != nullptr);
         DOCTEST_REQUIRE(rowdesc3 != nullptr);
         DOCTEST_CHECK(nearEq(modulesCard->frame.height, modulesH));
@@ -3740,11 +3732,8 @@ REGISTER_TEST(settings_card_registry_order,
                               "配对行子卡 实测：" + join(pairChildren));
         DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 1));
         // UAT5：模块 tab 删目录卡、代理卡迁通用 tab 后只剩插拔卡（无组题/分隔线）；
-        // 壁纸卡仅在平台能力支持时存在（注册表 visible 门控，不占高度）。
-        std::vector<std::string> wantModulesAll = {"settings.card.modules"};
-        if (platform::wallpaper::supported()) {
-            wantModulesAll.push_back("settings.card.wallpaper");
-        }
+        // 2026-10-27：壁纸开关收进插拔卡第 5 格，模块 tab 恒单卡（格不另立卡根）。
+        const std::vector<std::string> wantModulesAll = {"settings.card.modules"};
         const auto t1 = cardIdsOf(*mod, screen);
         DOCTEST_CHECK_MESSAGE(t1 == wantModulesAll, "模块 tab（全开） 实测：" + join(t1));
         DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 2));
@@ -3767,10 +3756,8 @@ REGISTER_TEST(settings_card_registry_order,
         std::unique_ptr<::core::Module> mod(create_settings_module());
         mod->onStart();
         DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 1));
-        std::vector<std::string> wantModulesGated = {"settings.card.modules"};
-        if (platform::wallpaper::supported()) {
-            wantModulesGated.push_back("settings.card.wallpaper");
-        }
+        const std::vector<std::string> wantModulesGated = {
+            "settings.card.modules"};
         const auto g1 = cardIdsOf(*mod, screen);
         DOCTEST_CHECK_MESSAGE(g1 == wantModulesGated, "模块 tab（门控全关） 实测：" + join(g1));
         DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 0));
@@ -4037,23 +4024,8 @@ REGISTER_TEST(settings_cards_solid_white_bg,
             }
         }
     }
-    // 壁纸卡（平台能力支持时）纳入同一白卡契约：surface 底 + 描边。
-    if (platform::wallpaper::supported()) {
-        DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 1));
-        eui::Ui ui;
-        ui.begin("noframe_wallpaper");
-        mod->compose(ui, screen);
-        ui.end();
-        ui.layout(screen.width, screen.height);
-        const auto* bg = ui.find("settings.card.wallpaper.bg");
-        DOCTEST_REQUIRE_MESSAGE(bg != nullptr,
-                                "壁纸卡应有实底白 bg rect（S6.1 玻璃退役）");
-        DOCTEST_REQUIRE(ui.find("settings.card.wallpaper") != nullptr);
-        const auto cs = ui_kit::cardSurface(core::theme::current());
-        DOCTEST_CHECK(bg->color.r == cs.r && bg->color.g == cs.g &&
-                      bg->color.b == cs.b && bg->color.a == cs.a);
-        DOCTEST_CHECK(bg->border.width > 0.005f);
-    }
+    // 2026-10-27：壁纸收进模块插拔卡第 5 格，无独立卡 bg——白卡契约由上方
+    // kBgIds 通用循环对 modules 卡统一覆盖，此处不再有壁纸专属断言面。
     mod->onStop();
     ::core::theme::setDark();
     return true;

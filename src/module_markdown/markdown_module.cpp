@@ -6,6 +6,42 @@
 #include "markdown_module_internal.h"
 
 namespace module::markdown {
+namespace {
+
+// ServiceLocator 提供方适配器（UAT6.2 H31）：MarkdownService → IMarkdownNotesSource。
+// 生命周期由 MarkdownModule 成员 notesSource_ 持有；service_ 早于其创建、晚于其析构
+//（成员声明序保证），适配器只存引用。
+class NotesSourceAdapter final : public ::core::IMarkdownNotesSource {
+public:
+    explicit NotesSourceAdapter(MarkdownService& service) : service_(service) {}
+
+    ::core::Result<std::vector<::core::NoteRef>> listNotes() override {
+        auto all = service_.listAll();
+        if (all.isFail()) {
+            return ::core::Result<std::vector<::core::NoteRef>>::fail(
+                all.errorCode(), all.errorMessage());
+        }
+        std::vector<::core::NoteRef> out;
+        out.reserve(all.value().size());
+        for (const auto& m : all.value()) {
+            out.push_back(
+                {MarkdownService::toPosix(m.relativePath), m.title});
+        }
+        return ::core::Result<std::vector<::core::NoteRef>>::ok(std::move(out));
+    }
+
+    bool noteExists(const std::string& relPath) override {
+        // 磁盘层判定（fileMtime 失败 = 不存在），不信任调用方内存缓存
+        auto mtime = service_.fileMtime(relPath);
+        return mtime.isOk();
+    }
+
+private:
+    MarkdownService& service_;
+};
+
+} // namespace
+
 // 测试缝实现（声明与理由见 markdown_module_test_seam.h）。唯一消费方是
 // tests/test_modules/test_markdown.cpp，入口是 create_markdown_module()，故
 // static_cast 安全 —— 该缝不对外承诺接受任意 core::Module*。
@@ -56,6 +92,13 @@ void MarkdownModule::onStart()  {
     refreshList();
     loadViewState();  // 恢复上次的选中笔记 / 视图模式 / 收起目录
 
+    // 跨模块提供方注册（UAT6.2 H31）：Todo 详情「关联文档」选择器经 ServiceLocator
+    // 取笔记清单。onStart 幂等（started_ 门控），重复注册覆盖旧指针无害。
+    if (!notesSource_) {
+        notesSource_ = std::make_unique<NotesSourceAdapter>(*service_);
+    }
+    ::core::ServiceLocator::set<::core::IMarkdownNotesSource>(notesSource_.get());
+
     // 笔记目录 git 自动提交：后台启动（异步 init，不阻塞 onStart）
     if (!noteGit_) {
         noteGit_ = std::make_unique<NoteGitAutoCommit>(
@@ -95,6 +138,9 @@ void MarkdownModule::onStop()  {
     // 笔记 git 自动提交：析构 join 后台线程（已在 onFileSaved 推进时间戳，
     // 本 onStop 也会经循环 saveEditor → onFileSaved 触发最后一次 commit）
     noteGit_.reset();
+    // 先注销再析构适配器：ServiceLocator 只存指针，先析构 = 消费方悬垂
+    ::core::ServiceLocator::set<::core::IMarkdownNotesSource>(nullptr);
+    notesSource_.reset();
     started_ = false;
     LOG_INFO("Markdown 模块停止");
 }
@@ -206,16 +252,22 @@ void MarkdownModule::compose(eui::Ui& ui, const eui::Screen& screen)  {
     drawNewFolderDialog(ui, screen, t, componentTheme);
     // 右键菜单 zIndex 1050 盖过 dialog 默认 1000；菜单项点击先 dismiss 再开弹窗
     drawNoteContextMenu(ui, screen, t, componentTheme);
+    drawFolderContextMenu(ui, screen, t, componentTheme);
     drawEditorContextMenu(ui, screen, t, componentTheme);
     drawDeleteDialog(ui, screen, t, componentTheme);
     drawRenameDialog(ui, screen, t, componentTheme);
+    drawFolderDeleteDialog(ui, screen, t, componentTheme);
+    drawFolderRenameDialog(ui, screen, t, componentTheme);
     drawToast(ui, screen, componentTheme);
 }
 
 bool MarkdownModule::closeTopmostPopup() {
+    if (dirRenameOpen_) { dirRenameOpen_ = false; return true; }
+    if (dirDeleteConfirmOpen_) { dirDeleteConfirmOpen_ = false; return true; }
     if (renameOpen_) { renameOpen_ = false; return true; }
     if (deleteConfirmOpen_) { deleteConfirmOpen_ = false; return true; }
     if (editorCtxOpen_) { editorCtxOpen_ = false; return true; }
+    if (dirCtxOpen_) { dirCtxOpen_ = false; return true; }
     if (ctxMenuOpen_) { ctxMenuOpen_ = false; return true; }
     if (newFolderOpen_) {
         newFolderOpen_ = false;

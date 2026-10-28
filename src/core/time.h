@@ -38,4 +38,13 @@ inline int64_t localDayNumber(std::time_t t) {
                          static_cast<unsigned>(local.tm_mday));
 }
 
+// 本地「当日零点」的 Unix 时刻 = t − 当日已流逝秒数（纯算术，不碰 mktime）。
+// 不变量：任意时刻 t 的返回值 ≤ t，且与 t 同属一个本地日历日（DST 切换日亦然——
+// 流逝秒数按墙钟 tm_hour/tm_min/tm_sec 计算，与当日实际 23h/25h 无关）。
+inline std::time_t localMidnightUnix(std::time_t t) {
+    std::tm local{};
+    localTime(t, &local);
+    return t - (local.tm_hour * 3600 + local.tm_min * 60 + local.tm_sec);
+}
+
 } // namespace core::time
