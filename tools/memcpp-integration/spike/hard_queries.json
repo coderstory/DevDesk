@@ -1,0 +1,128 @@
+{
+ "meta": {
+  "date": "2026-10-27",
+  "purpose": "难查询集：与冻结 15 查询同口径（gold=冻结集等价组，Recall@5 命中任一 gold），但刻意拉开查询与记忆的表层措辞距离，防止全员满分测不出差距。",
+  "construction_principles": [
+   "P1 同义改写避开原词：worktree→隔离的工作副本；macOS→苹果电脑；设置端口→监听的端口号改在哪",
+   "P2 中英混杂：查询一侧整体或局部用英文表达，记忆全为中文为主",
+   "P3 口语化/间接表达：委婉请求、含糊指代，无记忆中的关键词形",
+   "P4 概念域偏移：暴露给外部客户端↔能力开放；分派出去↔子任务接管；推荐技能的路由↔ask-matt"
+  ],
+  "gold_note": "gold_ids 沿用 tools/memory-lab/experiments/queries.json 的冻结等价组；跨组合并仅两处（hq02/hq08 并入主会话编排组 2），与 q14 混组先例一致。"
+ },
+ "queries": [
+  {
+   "id": "hq01",
+   "query": "代码还没动笔，想先把整体方案和接口设计捋清楚再实现",
+   "gold_ids": [
+    7,
+    12,
+    21,
+    26
+   ],
+   "principle": "P1/P3",
+   "group": "plan_before_code"
+  },
+  {
+   "id": "hq02",
+   "query": "Keep the main chat clean, delegate the actual coding to subagents",
+   "gold_ids": [
+    1,
+    2
+   ],
+   "principle": "P2",
+   "group": "subagent_driven+orchestrate"
+  },
+  {
+   "id": "hq03",
+   "query": "别把功能写死在里面，以后要能像插件一样随时加新工具",
+   "gold_ids": [
+    6,
+    11,
+    24
+   ],
+   "principle": "P1/P3",
+   "group": "mcp_abstract_interface"
+  },
+  {
+   "id": "hq04",
+   "query": "换台苹果电脑也得能正常跑起来才行",
+   "gold_ids": [
+    5,
+    13,
+    19,
+    25
+   ],
+   "principle": "P1",
+   "group": "cross_platform"
+  },
+  {
+   "id": "hq05",
+   "query": "服务监听的端口号想换一个，去哪里改？",
+   "gold_ids": [
+    4,
+    10,
+    18,
+    22,
+    23
+   ],
+   "principle": "P1",
+   "group": "mcp_enable_port"
+  },
+  {
+   "id": "hq06",
+   "query": "让外部客户端也能调用我们桌面应用里已有的功能",
+   "gold_ids": [
+    3,
+    9,
+    17,
+    22
+   ],
+   "principle": "P4",
+   "group": "capability_expose"
+  },
+  {
+   "id": "hq07",
+   "query": "先搞个最小示例：输入 URL，输出 markdown",
+   "gold_ids": [
+    8,
+    14,
+    20,
+    24
+   ],
+   "principle": "P1/P2",
+   "group": "hello_world_mcp"
+  },
+  {
+   "id": "hq08",
+   "query": "这事别都堆在我身上，拆开分派出去并行推进",
+   "gold_ids": [
+    1,
+    2
+   ],
+   "principle": "P4/P3",
+   "group": "subagent_driven+orchestrate"
+  },
+  {
+   "id": "hq09",
+   "query": "不确定该走哪条流程时，先问问那个负责推荐技能的路由",
+   "gold_ids": [
+    0
+   ],
+   "principle": "P4",
+   "group": "ask_matt"
+  },
+  {
+   "id": "hq10",
+   "query": "新功能放在隔离的工作副本里开发，主仓库保持干净",
+   "gold_ids": [
+    3,
+    9,
+    16,
+    26
+   ],
+   "principle": "P1",
+   "group": "worktree"
+  }
+ ]
+}

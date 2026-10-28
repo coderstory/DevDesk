@@ -97,10 +97,14 @@ const ::app::registry::ModuleEntry* wallpaperRow() {
 
 // 防：枚举插错位置导致侧栏/分发顺序漂移。
 REGISTER_TEST(wallpaper_pageid_order,
-              "wallpaper: PageId 序 Agent < Wallpaper < Settings 且 pageIdToString 为 Wallpaper", {
+              "wallpaper: PageId 序 Agent < Memory < Wallpaper < Mcp < Settings 且 pageIdToString 为 Wallpaper", {
     DOCTEST_CHECK(static_cast<int>(::core::PageId::Agent) <
+                  static_cast<int>(::core::PageId::Memory));
+    DOCTEST_CHECK(static_cast<int>(::core::PageId::Memory) <
                   static_cast<int>(::core::PageId::Wallpaper));
     DOCTEST_CHECK(static_cast<int>(::core::PageId::Wallpaper) <
+                  static_cast<int>(::core::PageId::Mcp));
+    DOCTEST_CHECK(static_cast<int>(::core::PageId::Mcp) <
                   static_cast<int>(::core::PageId::Settings));
     DOCTEST_CHECK_EQ(
         std::string(::core::pageIdToString(::core::PageId::Wallpaper)),
@@ -117,11 +121,12 @@ REGISTER_TEST(wallpaper_registry_row,
     const ::core::PageId kEnumOrder[] = {
         ::core::PageId::Home,      ::core::PageId::Markdown,
         ::core::PageId::Todo,      ::core::PageId::ClaudeProxy,
-        ::core::PageId::Agent,     ::core::PageId::Wallpaper,
-        ::core::PageId::Mcp,       ::core::PageId::Settings,
+        ::core::PageId::Agent,     ::core::PageId::Memory,
+        ::core::PageId::Wallpaper, ::core::PageId::Mcp,
+        ::core::PageId::Settings,
         ::core::PageId::About,
     };
-    DOCTEST_REQUIRE_EQ(kRegistrySize, static_cast<std::size_t>(9));
+    DOCTEST_REQUIRE_EQ(kRegistrySize, static_cast<std::size_t>(10));
     for (std::size_t i = 0; i < kRegistrySize; ++i) {
         DOCTEST_CHECK(::app::registry::kModuleRegistry[i].page == kEnumOrder[i]);
     }
@@ -150,10 +155,10 @@ REGISTER_TEST(wallpaper_registry_row,
 
 // 防：默认被打开，首次启动冒出壁纸页。
 REGISTER_TEST(wallpaper_default_off,
-              "wallpaper: 默认清单 5 项不含 wallpaper、moduleEnabled false、sanitized 不自动补", {
+              "wallpaper: 默认清单 6 项不含 wallpaper、moduleEnabled false、sanitized 不自动补", {
     using namespace module::settings;
     const SettingsConfig cfg;
-    DOCTEST_CHECK_EQ(cfg.enabledModules.size(), static_cast<std::size_t>(5));
+    DOCTEST_CHECK_EQ(cfg.enabledModules.size(), static_cast<std::size_t>(6));
     DOCTEST_CHECK(std::find(cfg.enabledModules.begin(), cfg.enabledModules.end(),
                             kModuleIdWallpaper) == cfg.enabledModules.end());
     DOCTEST_CHECK(!moduleEnabled(cfg, kModuleIdWallpaper));
@@ -168,7 +173,7 @@ REGISTER_TEST(wallpaper_default_off,
 
 // 防：门控键写错/表序错——启用后页面仍不出现，或出现在错误位置。
 REGISTER_TEST(wallpaper_enabled_gating,
-              "wallpaper: 启用后 moduleEnabled true；all-off 3 条、all-on 9 条且 wallpaper 在 Agent 之后、Mcp 之前", {
+              "wallpaper: 启用后 moduleEnabled true；all-off 3 条、all-on 10 条且 wallpaper 在 Memory 与 Mcp 之间", {
     using namespace module::settings;
     constexpr std::size_t kRegistrySize =
         sizeof(::app::registry::kModuleRegistry) /
@@ -177,16 +182,18 @@ REGISTER_TEST(wallpaper_enabled_gating,
     SettingsConfig allOn;
     allOn.enabledModules = {kModuleIdHome,    kModuleIdMarkdown, kModuleIdTodo,
                             kModuleIdClaudeProxy, kModuleIdAgent,
-                            kModuleIdWallpaper, kModuleIdMcp,
+                            kModuleIdMemory, kModuleIdWallpaper,
+                            kModuleIdMcp,
                             kModuleIdSettings};
     DOCTEST_CHECK(moduleEnabled(allOn, kModuleIdWallpaper));
     const auto gated = app::assembly::buildGatedEntries(
         allOn, ::app::registry::kModuleRegistry, kRegistrySize);
-    DOCTEST_REQUIRE_EQ(gated.size(), static_cast<std::size_t>(9));
+    DOCTEST_REQUIRE_EQ(gated.size(), static_cast<std::size_t>(10));
     DOCTEST_CHECK(gated[4].page == ::core::PageId::Agent);
-    DOCTEST_CHECK(gated[5].page == ::core::PageId::Wallpaper);
-    DOCTEST_CHECK(gated[6].page == ::core::PageId::Mcp);
-    DOCTEST_CHECK(gated[7].page == ::core::PageId::Settings);
+    DOCTEST_CHECK(gated[5].page == ::core::PageId::Memory);
+    DOCTEST_CHECK(gated[6].page == ::core::PageId::Wallpaper);
+    DOCTEST_CHECK(gated[7].page == ::core::PageId::Mcp);
+    DOCTEST_CHECK(gated[8].page == ::core::PageId::Settings);
 
     SettingsConfig allOff;
     allOff.enabledModules.clear();
@@ -358,13 +365,13 @@ REGISTER_TEST(wallpaper_settings_card_toggle_persists,
     return true;
 })
 
-// 三档几何（直绘插拔卡，壁纸第 5 格；平台门控在格内——不支持平台整格不建，
+// 三档几何（直绘插拔卡，壁纸第 6 格；平台门控在格内——不支持平台整格不建，
 // 见 wallpaper_settings_card_visible）：格随常规格机制（name 18/rowdesc 16/开关
-// 44×24 行内 +6），末行落单须整体包在卡高内、行底留边 ≥16、130% 档不裁切；
+// 44×24 行内 +6），末行（右列，记忆格同行）须整体包在卡高内、行底留边 ≥16、130% 档不裁切；
 // 点 track 回调带对模块 id。2026-10-27 用户真机拍板：独立全宽卡废除。
 // 防：卡高没跟 roundFs 派生 → 130% 档开关被裁 / 开关尺寸漂移 / 格错行错列。
 REGISTER_TEST(wallpaper_card_geometry,
-              "wallpaper: 壁纸第 5 格（插拔卡内）85/100/130% 几何——末行首列落单、44×24 开关右贴格、行底留边≥16、回调带 id", {
+              "wallpaper: 壁纸第 6 格（插拔卡内）85/100/130% 几何——末行右列、44×24 开关右贴格、行底留边≥16、回调带 id", {
     namespace ms = module::settings;
     if (!::platform::wallpaper::supported()) {
         return true;   // 不支持平台无第 5 格（可见性用例已断言整格不建）
@@ -414,12 +421,16 @@ REGISTER_TEST(wallpaper_card_geometry,
         DOCTEST_REQUIRE(desc != nullptr);
         DOCTEST_REQUIRE(track != nullptr);
 
-        // 末行落单（第 3 行首列）：格 y = 68（字面锚）+ 2×roundFs(56)，x = 28
+        // 末行右列（第 3 行 col 1；格序不变量：kToggleable 表序 + 壁纸恒末格）：
+        // 格 y = 68（字面锚）+ 2×roundFs(56)，x = 28 + cell2X
         //（与常规格同源：rowY = 68.0f + row×rowPitch，锚不随字号缩放）
         DOCTEST_CHECK(std::fabs(
             name->frame.y -
             (68.0f + 2.0f * ms::roundFs(56.0f))) < 0.5f);
-        DOCTEST_CHECK(std::fabs(name->frame.x - 28.0f) < 0.5f);
+        float cellW = 0.0f;
+        float cell2X = 0.0f;
+        ui_kit::columnX(w - 56.0f, 16.0f, &cellW, &cell2X);
+        DOCTEST_CHECK(std::fabs(name->frame.x - (28.0f + cell2X)) < 0.5f);
 
         // 格三行都包在卡高内（0.5 容差）
         DOCTEST_CHECK(name->frame.y + name->frame.height <=
@@ -432,13 +443,11 @@ REGISTER_TEST(wallpaper_card_geometry,
         DOCTEST_CHECK(track->frame.y + track->frame.height <=
                       card->frame.y + card->frame.height -
                           ms::roundFs(16.0f) + 0.5f);
-        // 44×24 字面值 + 右贴格右缘（cellW = columnX(w−56, 16) 单一来源）
-        float cellW = 0.0f;
-        ui_kit::columnX(w - 56.0f, 16.0f, &cellW, nullptr);
+        // 44×24 字面值 + 右贴格右缘（cellW/cell2X = columnX(w−56, 16) 单一来源）
         DOCTEST_CHECK_EQ(track->frame.width, 44.0f);
         DOCTEST_CHECK_EQ(track->frame.height, 24.0f);
         DOCTEST_CHECK(std::fabs(track->frame.x -
-                                (28.0f + cellW - 44.0f)) < 0.5f);
+                                (28.0f + cell2X + cellW - 44.0f)) < 0.5f);
         // 开关行内偏移 +6：track y = 格 y + 6
         DOCTEST_CHECK(std::fabs(track->frame.y - name->frame.y - 6.0f) <
                       0.5f);

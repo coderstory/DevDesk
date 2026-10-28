@@ -88,6 +88,17 @@ add_executable(devdesk_tests
     test_modules/test_app_now_tool.cpp
     test_modules/test_net_fetch_tool.cpp
     test_modules/test_message_blocks.cpp
+    test_modules/test_memory_engine.cpp
+    # 脱敏闸（S3-A）：红队夹具直读仓库数据集，DEVDESK_SOURCE_DIR 供定位
+    test_modules/test_memory_sanitize.cpp
+    # 采集器（S3-B）：临时目录夹具，四道过滤 + 水位幂等
+    test_modules/test_memory_collector.cpp
+    # hook 同步注入（S3-C）：输出契约/预算/失败开放/hooks 配置
+    test_modules/test_memory_hook.cpp
+    # 卡片数据层/整理器/计量（S4）：内存库夹具，状态机与撤销链
+    test_modules/test_memory_proposals.cpp
+    # F1 产品接线（采集管线单轮/decay 扫描）：临时会话目录夹具，零引擎依赖
+    test_modules/test_memory_collect_wiring.cpp
     test_modules/test_agent_ui.cpp
     test_modules/test_agent_detail_layout.cpp
     test_modules/test_agent_system_prompt.cpp
@@ -256,6 +267,7 @@ devdesk_apply_warnings(devdesk_tests)
 # 只挂 devdesk_tests（probes 无版本断言）；不做 PUBLIC 传播，宏不外泄到生产目标。
 target_compile_definitions(devdesk_tests PRIVATE
     DEVDESK_VERSION="${PROJECT_VERSION}"
+    DEVDESK_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
 )
 
 target_include_directories(devdesk_tests PRIVATE
@@ -273,6 +285,7 @@ target_link_libraries(devdesk_tests PRIVATE
     devdesk_module_markdown
     devdesk_module_todo
     devdesk_agent
+    devdesk_module_memory
     devdesk_module_claude_proxy
     devdesk_module_settings
     devdesk_module_about
@@ -364,6 +377,7 @@ foreach(_probe_source ${_devdesk_probe_sources})
         devdesk_module_markdown
         devdesk_module_todo
         devdesk_agent
+        devdesk_module_memory
         devdesk_module_claude_proxy
         devdesk_module_settings
         devdesk_module_about
@@ -469,6 +483,7 @@ if(DEVDESK_BUILD_LIVE_TOOLS AND UNIX)
         devdesk_module_markdown
         devdesk_module_todo
         devdesk_agent
+        devdesk_module_memory
         devdesk_module_claude_proxy
         devdesk_module_settings
         devdesk_module_about

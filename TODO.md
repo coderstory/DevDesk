@@ -1,8 +1,42 @@
 # DevDesk 未完成任务清单
 
+## 🔴 活跃待办（2026-10-28 memcpp 线收线）
+
+> memcpp 已交付部分见 `docs/superpowers/specs/2026-10-28-memcpp-overview.md`（需求→实现→验证映射）；本段只记**未完成项**，按优先级排。历史快照（含仍开着的 §13 profile 高级 tab）完整保留在下方分隔线之后。
+
+### P0 — 用户已明确要求，下一步先做
+
+- [ ] **MCP 集成（用户 2026-10-28 需求，纯增量接入）**：记忆功能作为一个 MCP 模块注册进 DevDesk 统一 MCP server（`src/module_mcp`，另一线已落 B1-B3）——Claude Code 经统一入口查记忆（recall/search 工具走既有 `module_memory/gateway/telemem_client`），MCP 页面展示记忆模块行+可开关（关=工具不注册/下线）。**红线：既有功能（hook 注入/面板/采集/卡片）一行不动**。前置：读 module_mcp 的模块注册模式与开关持久化；其线 B4 真连 E2E 是他们自己的欠账，不阻塞注册接线。
+- [ ] **打包+真机 UAT（S5 收官）**：`bash scripts/package-windows.sh` 出安装包 → 用户安装 → 首跑向导（Python 3.10~3.12 检测/venv/pip 约 97s/引擎拉起）→ 真机点验：自动采集（30s 轮询）、脱敏拦截（动态流可见）、提案卡审核+撤销、Claude Code 提问时 hook 注入（≤5 条 ≤500 字）、消耗页、触发线仪表（冻结 15 查询评测）。
+
+### P1 — 已知缺口（不影响 Windows 日常使用）
+
+- [ ] **infer=true 云端提炼真调**：当前全部直存（infer=False，零 LLM 调用）。智能提炼需真调智谱 anthropic 端点 glm-5.3-flash（key 运行时读 `~/.claude/settings.json`，TELEMEM_CONFIG 已配 anthropic provider）。注意：套餐 key 用于后台常驻提炼偏离智谱使用条款，用户 2026-10-27 已知悉自担；控耗五条（节流/月度预算软硬档）已实现，实测验证待做。
+- [ ] **月度预算硬档实测**：预算耗尽 → 暂停提炼只留检索的面板行为真机验证。
+- [ ] **decay 遗忘清单真实现**：待 telemem 引擎暴露记忆列举缝（MemoryListFn）；当前 fail-closed 零假卡（扫描触发在，清单为空）。
+- [ ] **baseVersion live 空转**：telemem 无版本查询缝，接受时以快照放行（契约位已留）；引擎升级后接真值。
+- [ ] **memory_e2e_probe 门禁注入通道**：探针需外部注入 DEVDESK_DATA_ROOT+外部编排 llama-server/telemem，当前在门禁属环境性失败；给 build-test-run.sh 加注入开关。
+
+### P2 — 平台与打磨
+
+- [ ] **macOS 平台面**：`process_host_posix`（含 F2 修复：per-child 环境不污染父进程）仅编译验证，待 mac 实机；引擎托管 posix 侧同。
+- [ ] **批量模式标签窄窗重叠**：1200 逻辑宽下批量开关标签与来源 chips 重叠（宽窗正常）。
+- [ ] **向量模型升级档**：记忆量增大（数百条+）后可升 Qwen3-Embedding-0.6B（610MB/约 1.4GB RSS，难集满分）——**必须显式 `-c 8192`**（默认槽位会吃 4GB）；改 `kEmbedModel` 常量+重启引擎即可，见 `docs/superpowers/plans/2026-10-27-memcpp-embed-bakeoff.md`。
+- [ ] **触发线升级 C**：冻结集转测 Recall@5<85% 或 2 字词命中低于 5/3/11 → 按备用图纸（`docs/superpowers/specs/2026-10-27-memcpp-p0-core-spec.md`）补自研全文通道；当前实测 100%（15/15），余量充足。
+
+### 环境事实（接线时会用到）
+
+- 模型文件收线时已删（曾下载于 spike/.bakeoff/）：bge-small-zh Q8_0 25MB（HF: CompendiumLabs/bge-small-zh-v1.5-gguf）+ Qwen3/bge-m3 各 640MB；`tools/memcpp-integration/spike/run_bakeoff.py` 内有下载 URL，重跑即取。
+- spike 全套脚本在 `tools/memcpp-integration/spike/`（run_spike.py 五项实测可复跑）。
+- 端口约定：llama-server 回环 11435、telemem 回环 8421；本机 http_proxy 会截胡云端调用（脚本已做 NO_PROXY 幂等旁路）。
+- hook 注入通道：`devdesk.exe memory hook` 子命令（先于单实例锁分派）；hooks 配置键级装拆走 DevDesk settings 管理通道。
+
+---
+
+
 > ⚠ **本文整篇为历史快照，不再维护**——里面的"状态"与"分支"描述多数已过期。
 > **当前状态以 `CLAUDE.md` 的「🚦 当前状态」段为准**（那段带日期与出处）。权威待办见 `docs/superpowers/plans/2026-10-21-UAT62-整改清单.md` 与 `2026-10-23-UAT62-收敛执行计划.md`。
-> 仍在生效的内容：**§13 profile「高级配置」tab（需求 + 已定决策，待写 spec，未开始）**——这条是唯一还开着的需求条目。
+> 仍在生效的内容：**§13 profile「高级配置」tab（需求 + 已定决策，待写 spec，未开始）**——这条是唯一还开着的需求条目；**以及文末「2026-10-28 会话收尾新增待办」段**（壁纸线收尾遗留，全部现行有效）。
 > 2026-10-03 订正：§4 probes / §9 EUI-NEO / §「macOS 构建环境」/ §「分支-合并状态」四处已按当时事实改写（原描述均已失效）。
 
 > 原始日期：2026-09-28 会话截止
@@ -136,3 +170,24 @@
 - 工作区干净（`git status` 只剩 `?? Testing/` 之类非仓库产物）。
 - ~~未提交改动：`tests/probes/` 下 3 个 probe 源文件未跟踪~~ → ✅ **已解决**（13 个探针文件全在版本控制里，见 §4）。
 - EUI-NEO：**永不 push 到 `origin`（2026-09-28 用户决策）**，origin/main 停在 `v0.6.0-4-g782c569`；本地 main 领先 origin **97** 个提交（2026-10-03 实测）为长期状态，**`fork` 已齐平（`cbd0b48`）**，不再有「待 push」事项（见 §9）。
+---
+
+## 2026-10-28 会话收尾新增待办（全部现行有效）
+
+> 壁纸模块已全线交付（dev `4ad41e52`，verifier 8/8，用户确认；详见 `docs/superpowers/specs/2026-10-28-wallpaper-requirements.md` / `-technical-design.md`）。以下是收尾时未干完的事。
+
+### A. 退出 terminate 尾巴修复——代码已写完，未提交未验证 ⚠️ 工作树里有活
+- **问题**：退出时 stdout 尾巴 `terminate called without an active exception`、退出码疑似非 0（进程退净无残留，非阻断）。根因已定位：**单实例锁唤起监听线程**（`src/platform/single_instance_win.cpp` 的全局 `g_listenerThread`，原注释"退出时 OS 回收"——joinable 线程活到静态析构即 std::terminate）。与壁纸无关，属既有债。
+- **修复代码已完成**：`wt-dev-gate` 工作树（dev @ c508a662 之上）的 `src/platform/single_instance_win.cpp`——`shutdownListener()`（置停旗标+join）经 `std::atexit` 在线程启动点注册；增量构建已绿（BUILD=0）。**改动未提交**——清理 wt-dev-gate 前必须先处理本条。
+- **剩余**：验证（启动→**托盘退出**路径，X 关闭是隐藏到托盘不是退出；判据 = 退出码 0 + stdout 无 terminate 行，建议双次确保确定性）→ 绿后原子提交 `fix(exit): 单实例监听线程 atexit join 收尾——消 terminate 尾巴` → 推 dev。
+
+### B. agent_e2e_probe 环境红（非代码问题）
+- 探针门禁 18/19 的唯一红：本机生产库无激活 Claude Profile（探针设计"前置缺失=FAIL 防假绿"）。**修法**：用户在 DevDesk 里激活任一 Claude Profile 后重跑 `ctest -L probe` 即 19/19。不碰代码。
+
+### C. 首页顶部 5 张统计卡片偏大（用户 UAT 反馈，未定案）
+- 用户 2026-10-27 反馈"首页顶部5个卡片太大了"，但同屏自述"窗体都没渲染完毕"——**待用户在新版上确认仍要改后再动**，勿抢跑。改动入口：`src/module_home/home_module.cpp` 统计卡区 + `tests/test_modules/test_home.cpp` H18 弹性双档断言。
+
+### D. 壁纸 deferred（非本轮欠账，按需求书 §deferred）
+- **四铺法**：图片壁纸当前走 mpv 拉伸显示；WIC 平铺为后续增强（需求书已列）。
+- 永久不做：多显示器/转码降帧/维护删除当前壁纸/玻璃半透/独立应用（handoff §1.3）。
+- macOS 平台层：规格 P8，代码未写，勿宣称可用。
