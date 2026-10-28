@@ -16,8 +16,11 @@ std::vector<std::string> buildVenvArgs(const std::string& pythonExe,
 }
 
 std::vector<std::string> buildPipInstallArgs(const fs::path& venvDir) {
+    // telemem 元数据不含 anthropic（extras 只有 all/mcp/video，且都不带）——
+    // llm.provider=anthropic 在 mem0 侧 import anthropic，缺包则 add 首跑即
+    // ImportError（live 实测）。与 telemem 一并显式安装。
     return {venvPythonExe(venvDir).string(), "-m", "pip", "install",
-            "--disable-pip-version-check", "telemem"};
+            "--disable-pip-version-check", "telemem", "anthropic"};
 }
 
 std::vector<std::string> buildTelememServerArgs(const fs::path& venvDir,

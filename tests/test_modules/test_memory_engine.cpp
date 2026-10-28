@@ -198,6 +198,8 @@ REGISTER_TEST(memory_process_args_construction,
     DOCTEST_CHECK(contains(pipArgs, "-m"));
     DOCTEST_CHECK(contains(pipArgs, "pip"));
     DOCTEST_CHECK(contains(pipArgs, "telemem"));
+    // telemem 元数据不带 anthropic（live 实测 ImportError），必须显式同装
+    DOCTEST_CHECK(contains(pipArgs, "anthropic"));
     // 服务拉起：只绑回环
     const auto serverArgs = buildTelememServerArgs(venv, kTelememPort);
     DOCTEST_CHECK(contains(serverArgs, "--host"));
