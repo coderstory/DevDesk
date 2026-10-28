@@ -92,6 +92,9 @@ public:
     //（校验形同旁路；升级 C 接自家库后换真版本查询——契约位置不动）。
     core::Result<void> acceptProposal(const std::string& id);
     core::Result<void> rejectProposal(const std::string& id);
+    // 编辑后接受 = 改 pending 正文（审计留痕）→ 走接受全链路
+    core::Result<void> editThenAccept(const std::string& id,
+                                      const std::string& newText);
     // 撤销链：为已接受提案建撤销卡（pending，出现在待审列表再审一次）
     core::Result<std::string> createUndoCard(const std::string& originalId);
     core::Result<int> batchAccept(const std::vector<std::string>& ids);

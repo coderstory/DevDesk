@@ -353,6 +353,19 @@ core::Result<void> PanelState::rejectProposal(const std::string& id) {
     return core::Result<void>::ok();
 }
 
+core::Result<void> PanelState::editThenAccept(const std::string& id,
+                                              const std::string& newText) {
+    if (proposalStore_ == nullptr) {
+        return core::Result<void>::fail(core::ErrorCode::Internal, "提案库未打开");
+    }
+    auto upd = proposalStore_->updateResultText(
+        id, newText, static_cast<std::int64_t>(std::time(nullptr)));
+    if (upd.isFail()) {
+        return core::Result<void>::fail(upd.errorCode(), upd.errorMessage());
+    }
+    return acceptProposal(id);
+}
+
 core::Result<std::string> PanelState::createUndoCard(
     const std::string& originalId) {
     if (!proposalStore_.has_value()) {

@@ -89,6 +89,11 @@ public:
     // 拒绝（留档）
     core::Result<Proposal> reject(const std::string& id, std::int64_t nowSec);
 
+    // 编辑后接受的前半步：改 pending 提案正文（审计留痕；终态 = fail，不留痕）
+    core::Result<void> updateResultText(const std::string& id,
+                                        const std::string& text,
+                                        std::int64_t nowSec);
+
     // 撤销链：为已接受提案建撤销卡（kind 取逆操作、undoOf 指回）；同一 undoOf 已有
     // 未决卡 → 复用并刷新（返回既有卡）。原提案 status 写定不改。
     core::Result<Proposal> createUndo(const std::string& originalId,

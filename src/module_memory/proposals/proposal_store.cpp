@@ -358,6 +358,35 @@ core::Result<std::vector<Proposal>> ProposalStore::listRecentDecided(
     return core::Result<std::vector<Proposal>>::ok(std::move(out));
 }
 
+core::Result<void> ProposalStore::updateResultText(const std::string& id,
+                                                   const std::string& text,
+                                                   std::int64_t nowSec) {
+    auto current = get(id);
+    if (current.isFail()) {
+        return core::Result<void>::fail(current.errorCode(),
+                                        current.errorMessage());
+    }
+    if (current.value().status != "pending") {
+        return core::Result<void>::fail(core::ErrorCode::ValidationError,
+                                        "终态提案不可编辑");
+    }
+    auto stmt = db_->prepare(
+        "UPDATE memory_proposals SET result_text=? WHERE id=?");
+    if (stmt.isFail()) {
+        return core::Result<void>::fail(stmt.errorCode(), stmt.errorMessage());
+    }
+    if (!stmt.value().bind(1, text).isOk() ||
+        !stmt.value().bind(2, id).isOk()) {
+        return core::Result<void>::fail(core::ErrorCode::Internal,
+                                        "编辑绑定失败");
+    }
+    auto step = stmt.value().step();
+    if (step.isFail()) {
+        return core::Result<void>::fail(step.errorCode(), step.errorMessage());
+    }
+    return audit(id, nowSec, "edited", "result_text_updated");
+}
+
 core::Result<Proposal> ProposalStore::accept(const std::string& id,
                                              std::int64_t nowSec,
                                              const TargetVersionFn& targetVersion,
