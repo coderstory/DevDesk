@@ -1291,6 +1291,62 @@ REGISTER_TEST(todo_done_reorder_preserves_completed_at,
     return true;
 })
 
+// H30 口径：completed_at 是事实记录，归档一律不清——手动归档与冷启动自动归档
+//（archiveDoneTasksBeforeToday 保留该列）口径必须一致。防事故：手动归档清掉完成
+// 时刻 → 归档卡历史信息丢失，且手动/自动两种归档行为分裂。
+REGISTER_TEST(todo_done_move_to_archive_preserves_completed_at,
+              "TodoService: moveTask done 列 → 归档列保留 completed_at",
+              {
+    TestEnv env("done_to_archive");
+    DOCTEST_REQUIRE(env.ready);
+
+    auto cols = env.svc->listColumns();
+    DOCTEST_REQUIRE(cols.isOk());
+    int64_t todoId = 0;
+    int64_t doneId = 0;
+    int64_t archiveId = 0;
+    for (const auto& c : cols.value()) {
+        if (c.kind == "todo") todoId = c.id;
+        if (c.kind == "done") doneId = c.id;
+        if (c.kind == "archive") archiveId = c.id;
+    }
+    DOCTEST_REQUIRE(todoId > 0);
+    DOCTEST_REQUIRE(doneId > 0);
+    DOCTEST_REQUIRE(archiveId > 0);
+
+    auto t = env.svc->createTask(todoId, "归档保留完成时刻");
+    DOCTEST_REQUIRE(t.isOk());
+    const int64_t taskId = t.value().id;
+
+    // 先进 done 记下完成时刻，再拖入归档
+    DOCTEST_CHECK(env.svc->moveTask(taskId, doneId, 0).isOk());
+    auto inDone = env.svc->listTasks(doneId);
+    DOCTEST_REQUIRE(inDone.isOk());
+    int64_t stampedAt = 0;
+    for (const auto& task : inDone.value()) {
+        if (task.id == taskId) {
+            DOCTEST_REQUIRE(task.completedAt.has_value());
+            stampedAt = task.completedAt.value();
+        }
+    }
+    DOCTEST_REQUIRE(stampedAt > 0);
+
+    DOCTEST_CHECK(env.svc->moveTask(taskId, archiveId, 0).isOk());
+
+    auto inArchive = env.svc->listTasks(archiveId);
+    DOCTEST_REQUIRE(inArchive.isOk());
+    bool found = false;
+    for (const auto& task : inArchive.value()) {
+        if (task.id == taskId) {
+            DOCTEST_CHECK(task.completedAt.has_value());
+            DOCTEST_CHECK_EQ(task.completedAt.value(), stampedAt);
+            found = true;
+        }
+    }
+    DOCTEST_CHECK(found);
+    return true;
+})
+
 // H30 不变量：completeTask 在任意列可置值（H20 既有行为——标记完成后卡留在原列）。
 // 防事故：非 done 列间移动静默清掉该值 → 「标记完成」按钮状态在移动后丢失。
 REGISTER_TEST(todo_non_done_move_preserves_completed_at,
