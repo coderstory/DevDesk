@@ -359,7 +359,7 @@ int main(int argc, char* argv[]) {
     // 的 screen 是**页区高**口径——Windows 自绘壳 1000×640 窗 = 页高 600（标题条
     // 40，app_sidebar.cpp bodyTop），macOS 系统标题栏 = 页高 640；真实最紧档是
     // 600。首页内容 = 页头 40 + 统计行 144×档 + gap 20×3 + 图表卡 220
-    // （kHomeChartH 260→220）+ 快捷按钮行 44 = 100% 档 508：600/640
+    // （kHomeChartH 260→220）+ 快捷按钮行 44+16 底边距 = 100% 档 524：600/640
     // 档**零滚动**（滚动条元素不渲染）；内容超出只发生在 115%/130% 字号档或低于
     // 真实最小页高的退化矮窗——那才是滚动吸收机制要守的行为，故新加 480 守护档
     // 让机制仍被真实验证。五档（screen 高 = 页区高口径）：
@@ -367,11 +367,12 @@ int main(int argc, char* argv[]) {
     //   · 778 旧 Windows@125% 有效下限（现高于 640 设计下限，普通深矮窗保留覆盖）；
     //   · 640 设计最小窗 = macOS 真实页高（无自绘壳；Windows 真实页高 600）；
     //   · 600 Windows 自绘壳真实最小页高（640−40 标题条）= 最紧真实档，零滚动契约档；
-    //   · 480 守护性深档（< 真实最小页高 600）：内容高 508 > 视口，滚动吸收不丢内容。
+    //   · 480 守护性深档（< 真实最小页高 600）：内容高 524 > 视口，滚动吸收不丢内容。
     // 判据（每档一致）：
     //   K(a) 整页滚动容器在场（矮窗可见性依赖它吸收溢出）
     //   K(b) 既有内容一条不少（stats / chart / actions / root）
     //   K(c) 快捷按钮行仍在滚动内容盒内（滚到底够得着 = 没丢内容）
+    //   K(e) 快捷按钮行距内容盒底 ≥ 16（防贴边底边距）
     //   K(d) 滚动条渲染契约：≥600 档不得出现（home.scroll.scroll 查无 = 零滚动），
     //        480 守护档必须在场（滚动吸收机制没被零滚动收口顺手拆掉）
     {
@@ -384,7 +385,7 @@ int main(int argc, char* argv[]) {
             {778.0f, "1000×778 旧 Windows@125% 有效下限档（现高于 640 设计下限，普通深矮窗）"},
             {640.0f, "1000×640 设计最小窗 = macOS 真实页高（Windows 实页高 600）；零滚动档"},
             {600.0f, "1000×600 Windows 自绘壳真实最小页高（640−40 标题条）；零滚动契约档"},
-            {480.0f, "1000×480 守护性深档（< 真实最小页高 600；内容高 508 > 视口，滚动吸收不丢内容）"},
+            {480.0f, "1000×480 守护性深档（< 真实最小页高 600；内容高 524 > 视口，滚动吸收不丢内容）"},
         };
         for (const Tier& tier : tiers) {
             eui::Screen tierScreen;
@@ -430,6 +431,17 @@ int main(int argc, char* argv[]) {
                           << (root->frame.y + root->frame.height) << "\n";
                 passed = false;
             }
+            // K(e) 快捷按钮行底部留白 = 16（2026-10-27 真机反馈贴边；home.root
+            // 底 padding 0，行距内容盒底的距离全部来自行自身 margin.bottom）。
+            if (const float bottomGap =
+                    (root->frame.y + root->frame.height) -
+                    (acts->frame.y + acts->frame.height);
+                bottomGap < 16.0f - 0.5f) {
+                std::cerr << "home_probes: 组 K(e) FAIL（" << tier.label
+                          << "）——快捷按钮行距内容盒底 " << bottomGap
+                          << " < 16（防贴边底边距被拆？）\n";
+                passed = false;
+            }
             // K(d) 滚动条渲染契约：scrollView 只在「内容高 > 视口」时 build
             // <id>.scroll 滚动条（scrollview.h scrollable 分支）——≥600 档查无
             //（零滚动契约），480 守护档必须在场（滚动吸收机制被真实验证）。
@@ -437,12 +449,12 @@ int main(int argc, char* argv[]) {
                 if (scrollbar != nullptr) {
                     std::cerr << "home_probes: 组 K(d) FAIL（" << tier.label
                               << "）——页高 ≥ 真实最小页高 600 仍出滚动条"
-                                 "（内容高 508 ≤ 视口应零滚动；图表卡高度回涨？）\n";
+                                 "（内容高 524 ≤ 视口应零滚动；图表卡高度回涨？）\n";
                     passed = false;
                 }
             } else if (scrollbar == nullptr) {
                 std::cerr << "home_probes: 组 K(d) FAIL（" << tier.label
-                          << "）——低于真实最小页高却无滚动条（内容高 508 > 视口，"
+                          << "）——低于真实最小页高却无滚动条（内容高 524 > 视口，"
                              "home.scroll 吸收机制被拆掉？）\n";
                 passed = false;
             }

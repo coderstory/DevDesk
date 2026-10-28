@@ -41,6 +41,10 @@ constexpr float kHomeChartH = 220.0f;
 // 图表卡吸收——避免统计卡被拉成巨块、图表仍停在 220。
 constexpr float kHomeStatGrowRatio = 0.18f;
 
+// 快捷按钮行距窗口底边框的最小留白（2026-10-27 真机反馈贴边）：计进 baseContentH，
+// 否则恰好装满的窗口会因这 16px 被滚动条吞掉——两处必须同改。
+constexpr float kHomeActionsBottomMargin = 16.0f;
+
 // 图表内部几何自适应：wrap = 卡高−64（基准档 156）、plot 高 = wrap−112（44，
 // home_probes 组 D 的 plot ≥36 判据仍过）、柱顶数值/x 轴标签锚点随 wrap 派生。
 
@@ -351,7 +355,8 @@ public:
             const float baseContentH =
                 40.0f + statsBlockH +   // 上下内边距 0（批L 顶格+贴底），左右 pad 不占高
                 gap * static_cast<float>(childCount - 1) +
-                (hasChart ? kHomeChartH : 0.0f) + (hasActions ? 44.0f : 0.0f);
+                (hasChart ? kHomeChartH : 0.0f) +
+                (hasActions ? 44.0f + kHomeActionsBottomMargin : 0.0f);
             // 顶距 32→0（批L）：高度向内边距为 0，基准里旧 32 顶距已不存在
             // 0.5px 余量：防浮点求和越过视口触发本不该出现的滚动条。
             const float extraH = std::max(0.0f, innerH - baseContentH - 0.5f);
@@ -779,6 +784,8 @@ public:
                 const float actGap = t.sizes.spacingLarge; // 16
                 ui.row("home.actions")
                     .size(contentW, 44.0f)
+                    // 底部留白防贴边（8px 网格）；EUI flow 布局下末子块 margin 计入列内容高。
+                    .margin(0.0f, 0.0f, 0.0f, kHomeActionsBottomMargin)
                     .gap(actGap)
                     .content([&] {
                         for (const auto& btn : kActionButtons) {
