@@ -67,6 +67,13 @@ struct WallpaperSnapshot {
     // 宿主/mpv 后台失败的最近原因（中文，可直接展示；空 = 无错误）。
     // 纯追加字段：Batch1 既有字段语义不变。
     std::string playbackError;
+    // 纯追加字段（图片进轮换池批次）：rotation_.itemCount() 的快照（视频+图片混合池）。
+    int poolCount = 0;
+    // 混合池中图片条数；Image 来源恒等于 imageTotal。UI 副题按池构成分派文案。
+    int poolImageCount = 0;
+    // 当前装载的轮换项是图片（仅 Video 来源的混合池置位；Image 来源沿用单张/轮播语义）。
+    // 为真时 mpv 对该 item 无 pause/seek 语义，UI 停用暂停控件、倒计时照常。
+    bool currentItemImage = false;
 };
 
 class WallpaperService {
@@ -122,7 +129,8 @@ private:
     void scanLoop();
     void tickLoop();
 
-    void applyVideoScanLocked(const VideoScanResult& result);
+    // 视频来源扫描落库：池 = 视频 + 同目录图片（混合池），videoCount 只计视频。
+    void applyVideoScanLocked(const VideoScanResult& video, const ImageScanResult& images);
     void applyImageScanLocked(const ImageScanResult& result);
     void activateItemsLocked(std::vector<std::string> items,
                              RotationClock::time_point now);
@@ -154,6 +162,8 @@ private:
     WallpaperSnapshot snapshot_;
     RotationController rotation_;
     HoldArbiter arbiter_;
+
+    bool currentItemImage_ = false;  // 仅 mu_ 内读写；当前轮换项为图片（见 snapshot 注释）
 
     bool started_ = false;
     std::atomic<bool> stopRequested_{false};

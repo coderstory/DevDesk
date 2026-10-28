@@ -98,6 +98,10 @@ std::string statusTitle(const StatusInput& input) {
         return "已暂停 · " + holdReasonsLabel(input.systemHolds);
     }
     if (input.manualPaused || input.paused) return "已暂停";
+    // 混合池当前项为静态图片：pause/seek 语义不适用，标题显式点名（§7.7 仍不出现文件名）。
+    if (input.kind == WallpaperKind::Video && input.currentItemImage) {
+        return "正在显示 · 静态图片";
+    }
     const std::string mode = playModeLabel(input.mode, input.kind);
     if (input.kind == WallpaperKind::Video) return "正在播放 · " + mode;
     if (input.mode == PlayMode::LoopSingle) return "正在显示 · " + mode;
@@ -113,22 +117,33 @@ std::string statusSubtitle(const StatusInput& input) {
     if (input.manualPaused || input.paused) return "点『继续』恢复播放。";
 
     // 播放态概览副题（§7.2）：12 个视频 · 每 10 分钟换一个。
+    // 计数段按池构成分派：全视频「N 个视频」/ 全图片「N 张图片」/ 混合「V 个视频 · M 张图片」。
     const int count = input.itemCount > 0 ? input.itemCount : 0;
+    // Image 来源全为图片；Video 来源按 imageItemCount（缺省 0 = 纯视频，保持旧文案）。
+    const int images = input.imageItemCount > 0
+                           ? input.imageItemCount
+                           : (input.kind == WallpaperKind::Image ? count : 0);
+    const bool hasVideo = count > images;  // imageItemCount 越界时按全图片收敛
+    std::string countPart;
+    if (images <= 0) {
+        countPart = std::to_string(count) + " 个视频";
+    } else if (!hasVideo) {
+        countPart = std::to_string(count) + " 张图片";
+    } else {
+        countPart = std::to_string(count - images) + " 个视频 · " +
+                    std::to_string(images) + " 张图片";
+    }
     if (input.mode == PlayMode::LoopSingle) {
-        return input.kind == WallpaperKind::Image
-                   ? std::to_string(count) + " 张图片 · 单张不变"
-                   : std::to_string(count) + " 个视频 · 单循环播放";
+        return countPart + (hasVideo ? " · 单循环播放" : " · 单张不变");
     }
     if (count <= 1) {
-        return input.kind == WallpaperKind::Image
-                   ? std::to_string(count) + " 张图片 · 不轮换"
-                   : std::to_string(count) + " 个视频 · 不轮换";
+        return countPart + " · 不轮换";
     }
     const std::string every = rotationIntervalLabel(input.rotationIntervalSec);
-    if (input.kind == WallpaperKind::Image) {
-        return std::to_string(count) + " 张图片 · 每 " + every + "换一张";
+    if (!hasVideo) {
+        return countPart + " · 每 " + every + "换一张";
     }
-    return std::to_string(count) + " 个视频 · 每 " + every + "换一个";
+    return countPart + " · 每 " + every + "换一个";
 }
 
 std::optional<EmptyStateCopy> emptyStateCopy(Availability availability, WallpaperKind kind) {

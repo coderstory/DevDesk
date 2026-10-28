@@ -77,6 +77,8 @@ inline std::vector<std::string> buildMpvArguments(std::uintptr_t windowId,
         "--wid=" + std::to_string(windowId),
         "--input-ipc-server=" + pipeName,
         "--loop-file=inf",
+        // 静态图片常驻：mpv 默认 image-display-duration=1s 会自行切走；壁纸换片只由轮换驱动。
+        "--image-display-duration=inf",
         "--hwdec=auto-safe",
         "--no-osc",
         "--no-input-default-bindings",

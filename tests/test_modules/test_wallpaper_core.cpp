@@ -268,6 +268,58 @@ REGISTER_TEST(wallpaper_core_rotation, "wallpaper core: rotation 三模式/洗�
     return true;
 })
 
+// 防：图片进混合池后破坏既有选择模型——列表循环跨类型按字典序轮转 / LoopSingle 到点
+// 必须停在图片项（tick 不产生装载）、手动 next 才跨过图片 / 洗牌一轮不重复 /
+// 空视频纯图片清单与普通清单同语义。
+REGISTER_TEST(wallpaper_core_rotation_mixed_pool,
+              "wallpaper core: rotation 混合池（视频+图片）三模式与 LoopSingle 图片行为", {
+    using Clock = wp::RotationClock;
+    const Clock::time_point base = Clock::time_point(std::chrono::seconds(20000));
+
+    // 列表循环跨类型平等参与：a.mp4 → b.png → c.mp4 → a.mp4。
+    wp::RotationController list(7);
+    list.setItems({"a.mp4", "b.png", "c.mp4"});
+    list.setMode(wp::PlayMode::LoopList);
+    DOCTEST_CHECK_EQ(list.start(base).value(), std::string("a.mp4"));
+    DOCTEST_CHECK_EQ(list.advanceNow(base).value(), std::string("b.png"));
+    DOCTEST_CHECK_EQ(list.advanceNow(base).value(), std::string("c.mp4"));
+    DOCTEST_CHECK_EQ(list.advanceNow(base).value(), std::string("a.mp4"));
+
+    // LoopSingle 图片行为：首项是图片 → 到点不推进不装载；手动「下一个」才跨回视频。
+    wp::RotationController single(1);
+    single.setItems({"a.png", "b.mp4"});
+    single.setMode(wp::PlayMode::LoopSingle);
+    DOCTEST_CHECK_EQ(single.start(base).value(), std::string("a.png"));
+    DOCTEST_CHECK_FALSE(single.tick(base + std::chrono::seconds(300)).has_value());
+    DOCTEST_CHECK_EQ(single.currentPath().value(), std::string("a.png"));
+    DOCTEST_CHECK_EQ(single.secondsUntilNextRotation(base + std::chrono::seconds(300)), -1);
+    DOCTEST_CHECK_EQ(single.advanceNow(base + std::chrono::seconds(300)).value(),
+                     std::string("b.mp4"));
+
+    // 洗牌：混合池一轮内不重复。
+    wp::RotationController shuffle(42);
+    shuffle.setItems({"a.mp4", "b.png", "c.jpg", "d.mp4"});
+    shuffle.setMode(wp::PlayMode::Shuffle);
+    std::set<std::string> drawn;
+    drawn.insert(shuffle.start(base).value());
+    for (int index = 0; index < 3; ++index) {
+        const auto next = shuffle.advanceNow(base);
+        DOCTEST_REQUIRE(next.has_value());
+        drawn.insert(*next);
+    }
+    DOCTEST_CHECK_EQ(drawn.size(), static_cast<std::size_t>(4));
+
+    // 空视频纯图片清单：列表循环到点换图，与普通清单同语义。
+    wp::RotationController imagesOnly(3);
+    imagesOnly.setItems({"i1.jpg", "i2.png"});
+    imagesOnly.setMode(wp::PlayMode::LoopList);
+    DOCTEST_CHECK_EQ(imagesOnly.start(base).value(), std::string("i1.jpg"));
+    DOCTEST_CHECK_EQ(imagesOnly.tick(base + std::chrono::seconds(300)).value(),
+                     std::string("i2.png"));
+    DOCTEST_CHECK_EQ(imagesOnly.secondsUntilNextRotation(base + std::chrono::seconds(300)), 300);
+    return true;
+})
+
 // 防：多原因互相覆盖 / 锚点在暂停期间被重写 / 幂等 set 重复 seek /
 // 手动暂停被算进系统原因（UI 会错误显示原因 chip）/ 电池开关关闭仍让路。
 REGISTER_TEST(wallpaper_core_arbiter, "wallpaper core: arbiter 并集/锚点/幂等/手动暂停独立/电池门控", {
@@ -576,9 +628,15 @@ REGISTER_TEST(wallpaper_core_service, "wallpaper core: service start/扫描/选�
                         (fs::path(folder) / "b.mp4").make_preferred().string()};
         return result;
     });
-    service.setImageScannerForTest([](const std::string& folder, int minPixels) {
+    // 图片段只喂图片来源：Video 来源现在是混合池（视频+图片），本用例的视频段
+    // 断言针对纯视频目录，混合池语义由 wallpaper_core_service_mixed_pool 覆盖。
+    service.setImageScannerForTest([&imageRoot](const std::string& folder, int minPixels) {
         (void)minPixels;
         wp::ImageScanResult result;
+        if (wp::folder_policy::normalizeFolderPath(folder) !=
+            wp::folder_policy::normalizeFolderPath(imageRoot.string())) {
+            return result;  // 视频目录无图片：混合池只含视频
+        }
         result.status = wp::LibraryScanStatus::Ok;
         result.files = {(fs::path(folder) / "a.jpg").make_preferred().string(),
                         (fs::path(folder) / "b.jpg").make_preferred().string(),
@@ -761,6 +819,121 @@ REGISTER_TEST(wallpaper_core_service_next_guard,
     DOCTEST_CHECK_EQ(playerCallCount(*playerRaw, "load"), 0);
 
     service.stop();
+    return true;
+})
+
+// 防：图片不进 Video 轮换池 / 混合池首条与副题按池构成错乱 / 空视频纯图片目录被判
+// 0 可播 / 图片项仍走视频 position/seek 语义（锚点会对静图 seek）。定时到点自动换片
+// 的端到端实证在 wallpaper_image_rotation_probe（本用例只锁纯逻辑与服务接线）。
+REGISTER_TEST(wallpaper_core_service_mixed_pool,
+              "wallpaper core: service 混合池/纯图片目录可轮换/图片态 position=0 与 seek no-op", {
+    test_support::TempDir dir("wallpaper_service_mixed");
+    const fs::path settingsPath = dir.path / "wallpaper" / "settings.json";
+    const fs::path videoRoot = dir.path / "videos";
+    fs::create_directories(videoRoot);
+
+    // 0 = 视频+图片混合（2 视频 + 1 图）；1 = 纯图片（视频扫描空 + 2 图）。
+    std::atomic<int> mixMode{0};
+
+    auto player = std::make_unique<wp::NullPlayerBackend>();
+    wp::NullPlayerBackend* playerRaw = player.get();
+
+    wp::WallpaperService service;
+    service.setSettingsPathForTest(settingsPath.string());
+    service.setVideoScannerForTest([&mixMode](const std::string& folder) {
+        wp::VideoScanResult result;
+        result.status = wp::LibraryScanStatus::Ok;
+        if (mixMode.load() == 0) {
+            result.files = {(fs::path(folder) / "a.mp4").string(),
+                            (fs::path(folder) / "b.mp4").string()};
+        }
+        return result;
+    });
+    service.setImageScannerForTest([&mixMode](const std::string& folder, int minPixels) {
+        (void)minPixels;
+        wp::ImageScanResult result;
+        result.status = wp::LibraryScanStatus::Ok;
+        result.filtered = 0;
+        if (mixMode.load() == 0) {
+            result.files = {(fs::path(folder) / "c.png").string()};
+            result.total = 1;
+            result.passing = 1;
+        } else {
+            result.files = {(fs::path(folder) / "i1.jpg").string(),
+                            (fs::path(folder) / "i2.png").string()};
+            result.total = 2;
+            result.passing = 2;
+        }
+        return result;
+    });
+    service.setPlayerForTest(std::move(player));
+
+    service.start();
+    std::string error;
+    DOCTEST_REQUIRE_MESSAGE(service.selectFolder(videoRoot.string(), &error),
+                            "selectFolder 失败: " + error);
+
+    // ── 混合池：视频与图片平等入池，副题按池构成分派 ──
+    wp::WallpaperSnapshot snapshot = waitForSnapshot(service, [](const wp::WallpaperSnapshot& s) {
+        return !s.scanning && s.availability == wp::Availability::Playing;
+    });
+    DOCTEST_CHECK_EQ(snapshot.videoCount, 2);
+    DOCTEST_CHECK_EQ(snapshot.poolCount, 3);
+    DOCTEST_CHECK_EQ(snapshot.poolImageCount, 1);
+    DOCTEST_CHECK_EQ(snapshot.statusTitle, std::string("正在播放 · 单循环"));
+    DOCTEST_CHECK_EQ(snapshot.statusSubtitle,
+                     std::string("2 个视频 · 1 张图片 · 单循环播放"));
+    DOCTEST_CHECK_FALSE(snapshot.currentItemImage);
+    DOCTEST_CHECK_EQ(fs::path(loadedPath(*playerRaw)).filename().string(), std::string("a.mp4"));
+
+    // 列表循环手动推进跨类型：b.mp4 → c.png；图片项置位 + 标题点名静图。
+    service.setMode(wp::PlayMode::LoopList);
+    playerRaw->clearCalls();
+    service.next();
+    DOCTEST_CHECK_EQ(fs::path(loadedPath(*playerRaw)).filename().string(), std::string("b.mp4"));
+    service.next();
+    snapshot = service.snapshot();
+    std::string lastLoad;
+    for (const wp::NullPlayerBackend::Call& call : playerRaw->calls()) {
+        if (call.op == "load") lastLoad = call.path;  // loadedPath 取首条，这里要最新一条
+    }
+    DOCTEST_CHECK_EQ(fs::path(lastLoad).filename().string(), std::string("c.png"));
+    DOCTEST_CHECK(snapshot.currentItemImage);
+    DOCTEST_CHECK_EQ(snapshot.statusTitle, std::string("正在显示 · 静态图片"));
+    DOCTEST_CHECK_EQ(snapshot.statusSubtitle,
+                     std::string("2 个视频 · 1 张图片 · 每 5 分钟换一个"));
+
+    // 图片态 position 恒 0：手动暂停写不下视频锚点，解禁不产生 seek（静图安全 no-op）。
+    playerRaw->setPositionForTest(37.5f);
+    service.toggleManualPause();
+    DOCTEST_CHECK(service.snapshot().paused);
+    service.toggleManualPause();
+    DOCTEST_CHECK_FALSE(service.snapshot().paused);
+    DOCTEST_CHECK_EQ(playerCallCount(*playerRaw, "seek"), 0);
+    DOCTEST_CHECK(hasPauseCall(*playerRaw, true));
+    DOCTEST_CHECK(hasPauseCall(*playerRaw, false));
+
+    // ── 空视频纯图片目录：仍 Playing 且可轮换 ──
+    mixMode.store(1);
+    service.rescan();
+    snapshot = waitForSnapshot(service, [](const wp::WallpaperSnapshot& s) {
+        return !s.scanning && s.availability == wp::Availability::Playing;
+    });
+    DOCTEST_CHECK_EQ(snapshot.availability, wp::Availability::Playing);
+    DOCTEST_CHECK_EQ(snapshot.videoCount, 0);
+    DOCTEST_CHECK_EQ(snapshot.poolCount, 2);
+    DOCTEST_CHECK_EQ(snapshot.poolImageCount, 2);
+    std::string pureImageLoad;
+    for (const wp::NullPlayerBackend::Call& call : playerRaw->calls()) {
+        if (call.op == "load") pureImageLoad = call.path;  // 重扫后最新一次装载
+    }
+    DOCTEST_CHECK_EQ(fs::path(pureImageLoad).filename().string(), std::string("i1.jpg"));
+    DOCTEST_CHECK(snapshot.currentItemImage);
+    DOCTEST_CHECK_EQ(snapshot.statusSubtitle,
+                     std::string("2 张图片 · 每 5 分钟换一张"));
+
+    service.stop();
+    DOCTEST_CHECK(hasPlayerCall(*playerRaw, "stop"));
     return true;
 })
 
