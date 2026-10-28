@@ -20,7 +20,10 @@
 #include "core/window_geometry.h"  // 窗体记忆几何账本（UAT6：每帧记账、退出落盘）
 #include "core/window_effect_state.h"  // M-3：frosted 降级门控的 active 档回查缝注册
 #include "module_home/home_service.h"
+#include "module_memory/gateway/telemem_client.h"
+#include "module_memory/hook/hook_command.h"
 #include "module_toggle_bridge.h"
+#include "platform/autostart.h"
 #include "platform/message_box.h"
 #include "platform/tray_icon.h"
 #include "github_sync_exit_hook.h"
@@ -41,6 +44,7 @@
 #include <algorithm>
 #include <memory>
 #include <optional>
+#include <cstdio>
 #include <cstdlib>
 #include <string>
 #include <vector>
@@ -625,7 +629,36 @@ void saveWindowGeometryOnExit() {
 namespace app {
 
 // 常驻侧边栏 + 根布局在 app_sidebar
+namespace {
+
+// `devdesk.exe memory hook` 子命令分派（memcpp hook 同步注入，S3-C）。
+// 必须先于单实例锁：hook 由 Claude Code 在 GUI 运行期间拉起，锁会让它秒退。
+// 契约：任何内部错误 = 空 stdout + exit 0（绝不 exit 2——那是 hook 唯一能打断用户
+// 提问的路径，钉版契约禁用）。
+int runMemoryHookSubcommand() {
+    const auto args = platform::autostart::processArgsUtf8();
+    if (args.size() < 3 || args[1] != "memory" || args[2] != "hook") {
+        return -1;  // 非本子命令：继续正常启动
+    }
+    module::memory::gateway::TelememHttpRetriever retriever;
+    const auto outcome =
+        module::memory::hook::runMemoryHookFromStdin(&retriever);
+    if (!outcome.stdoutText.empty()) {
+        std::fputs(outcome.stdoutText.c_str(), stdout);
+        std::fflush(stdout);
+    }
+    return outcome.exitCode;  // 恒 0
+}
+
+}  // namespace
+
 const DslAppConfig& dslAppConfig() {
+    // hook 子命令（先于一切 GUI/DB/单实例副作用；命中即同步注入后退出）
+    const int hookExit = runMemoryHookSubcommand();
+    if (hookExit >= 0) {
+        std::_Exit(hookExit);  // _Exit：跳过 atexit（此刻 GUI 对象尚未构造）
+    }
+
     // 单实例互斥：二次运行 → 唤起首个实例窗口 → 快速退出（DB/日志/窗口等任何副作用之前）
     if (!platform::single_instance::acquireInstanceLock()) {
         platform::single_instance::notifyExistingInstance();

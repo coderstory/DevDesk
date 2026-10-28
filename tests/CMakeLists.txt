@@ -76,6 +76,8 @@ add_executable(devdesk_tests
     test_modules/test_memory_sanitize.cpp
     # 采集器（S3-B）：临时目录夹具，四道过滤 + 水位幂等
     test_modules/test_memory_collector.cpp
+    # hook 同步注入（S3-C）：输出契约/预算/失败开放/hooks 配置
+    test_modules/test_memory_hook.cpp
     test_modules/test_agent_ui.cpp
     test_modules/test_agent_detail_layout.cpp
     test_modules/test_agent_system_prompt.cpp

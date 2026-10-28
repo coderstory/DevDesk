@@ -261,7 +261,19 @@ JsonValue makeInt(int64_t i) { return JsonValue(i); }
 JsonValue makeDouble(double d) { return JsonValue(d); }
 JsonValue makeString(const std::string& s) { return JsonValue(s); }
 JsonValue makeObject() { return JsonValue(JsonObject()); }
-JsonValue makeArray() { JsonValue v; return v; }
+JsonValue makeArray() {
+    JsonValue v;
+    auto* impl = getImpl(v.internal());
+    impl->kind = JsonImpl::Kind::Array;  // 默认构造是 Null；显式落 Array
+    return v;
+}
+
+void JsonValue::append(const JsonValue& value) {
+    JsonImpl* impl = getImpl(data_);
+    if (impl->kind != JsonImpl::Kind::Array) return;
+    const JsonImpl* src = getImpl(value.internal());
+    impl->arrVal.push_back(*src);  // JsonImpl 深值语义：整子树拷贝
+}
 
 JsonValue makeStringArray(const std::vector<std::string>& items) {
     JsonValue v;

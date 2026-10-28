@@ -10,6 +10,14 @@ add_library(devdesk_module_memory STATIC
     collector/session_reader.h
     collector/collector.cpp
     collector/collector.h
+    gateway/telemem_client.cpp
+    gateway/telemem_client.h
+    hook/inject.cpp
+    hook/inject.h
+    hook/hook_command.cpp
+    hook/hook_command.h
+    hook/hooks_settings.cpp
+    hook/hooks_settings.h
     engine/telemem_config.cpp
     engine/telemem_config.h
     engine/python_locator.cpp
