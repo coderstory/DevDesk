@@ -7,6 +7,7 @@
 #include "core/sqlite_db.h"
 #include "module_markdown/markdown_service.h"
 
+#include <cstdlib>
 #include <filesystem>
 #include <set>
 #include <string>
