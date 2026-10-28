@@ -38,12 +38,26 @@ std::filesystem::path configFilePath() {
     return memoryDataDir() / "telemem-config.yaml";
 }
 
+// telemem MCP 健康探测请求体：JSON-RPC initialize（MCP 流式 HTTP 只在 /mcp 挂路由，
+// GET 会吃 405/404；initialize 不要求会话头，200 + body.result 即引擎活着）
+constexpr const char* kTelememProbeBody =
+    "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{"
+    "\"protocolVersion\":\"2025-06-18\",\"capabilities\":{},"
+    "\"clientInfo\":{\"name\":\"devdesk-health\",\"version\":\"1.0\"}}}";
+
 // 回环健康探测（判据 = judgeTelememHealth 的纯函数契约：错误嵌 result 体，
-// 不能只看传输层 is_error）
-bool probeHealthy(int port, const char* path, std::string* reasonOut) {
+// 不能只看传输层 is_error）。jsonBody 非空 = POST JSON-RPC（telemem /mcp），
+// 空 = 普通 GET（llama-server /health）。
+bool probeHealthy(int port, const char* path, const char* jsonBody,
+                  std::string* reasonOut) {
     platform::http::Request req;
-    req.method = "GET";
+    req.method = jsonBody != nullptr ? "POST" : "GET";
     req.url = "http://127.0.0.1:" + std::to_string(port) + path;
+    if (jsonBody != nullptr) {
+        req.body = jsonBody;
+        req.headers["Content-Type"] = "application/json";
+        req.headers["Accept"] = "application/json";
+    }
     req.timeoutMs = kHealthTimeoutMs;
     const auto r = platform::http::send(req);
     if (!r.isOk()) {
@@ -57,13 +71,13 @@ bool probeHealthy(int port, const char* path, std::string* reasonOut) {
     return v.healthy;
 }
 
-bool waitUntilHealthy(int port, const char* path,
+bool waitUntilHealthy(int port, const char* path, const char* jsonBody,
                       const std::atomic<bool>& stop, std::string* errOut) {
     const auto deadline = std::chrono::steady_clock::now() +
                           std::chrono::milliseconds(kStartupWindowMs);
     while (std::chrono::steady_clock::now() < deadline) {
         if (stop.load()) return false;
-        if (probeHealthy(port, path, errOut)) return true;
+        if (probeHealthy(port, path, jsonBody, errOut)) return true;
         std::this_thread::sleep_for(std::chrono::milliseconds(kStartupPollMs));
     }
     return false;
@@ -215,7 +229,7 @@ void TelememEngine::runPipeline() {
             if (spawn.isOk()) {
                 llamaPid_.store(spawn.value());
                 std::string healthErr;
-                if (!waitUntilHealthy(kEmbedServerPort, "/health",
+                if (!waitUntilHealthy(kEmbedServerPort, "/health", nullptr,
                                       stopRequested_, &healthErr) &&
                     !stopRequested_.load()) {
                     terminateTree(llamaPid_.exchange(0));
@@ -257,7 +271,8 @@ void TelememEngine::runPipeline() {
     telememPid_.store(spawn.value());
 
     std::string healthErr;
-    if (!waitUntilHealthy(kTelememPort, "/", stopRequested_, &healthErr)) {
+    if (!waitUntilHealthy(kTelememPort, "/mcp", kTelememProbeBody,
+                          stopRequested_, &healthErr)) {
         terminateTree(telememPid_.exchange(0));
         terminateTree(llamaPid_.exchange(0));
         if (stopRequested_.load()) {

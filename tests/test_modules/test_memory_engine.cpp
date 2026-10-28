@@ -116,10 +116,19 @@ REGISTER_TEST(memory_config_generation_contract,
     DOCTEST_CHECK(yaml.find(kLlmBaseUrl) != std::string::npos);
     DOCTEST_CHECK(yaml.find(std::string("model: ") + kLlmModel) !=
                   std::string::npos);
-    DOCTEST_CHECK(yaml.find(std::string("api_key_env: ") + kLlmKeyEnvName) !=
+    // live 对账定案：字段名必须是 mem0/telemem 真实类接受的——
+    // AnthropicConfig 收 anthropic_base_url、BaseEmbedderConfig 收 openai_base_url，
+    // 写 base_url/api_key_env 都是 TypeError（引擎启动即崩）
+    DOCTEST_CHECK(yaml.find(std::string("anthropic_base_url: ") + kLlmBaseUrl) !=
                   std::string::npos);
-    // embedding 只绑回环 + 模型名常量
+    DOCTEST_CHECK(yaml.find("api_key_env") == std::string::npos);
+    DOCTEST_CHECK(yaml.find("\n    base_url: ") ==
+                  std::string::npos);  // 行首裸 base_url 禁现（anthropic/openai_base_url 合法）
+    // embedding 只绑回环 + 模型名常量；维度必须显式 512（embedder 与 faiss 各一份，
+    // mem0 无联动，缺省 1536 与向量维度不符——首次 add 即炸）
     DOCTEST_CHECK(yaml.find("http://127.0.0.1:11435/v1") != std::string::npos);
+    DOCTEST_CHECK(yaml.find("embedding_dims: 512") != std::string::npos);
+    DOCTEST_CHECK(yaml.find("embedding_model_dims: 512") != std::string::npos);
     DOCTEST_CHECK(yaml.find(std::string("model: ") + kEmbedModel) !=
                   std::string::npos);
     // 数据收敛进 dataDir
@@ -196,7 +205,10 @@ REGISTER_TEST(memory_process_args_construction,
     DOCTEST_CHECK(contains(serverArgs, "--port"));
     DOCTEST_CHECK(contains(serverArgs, "8421"));
     DOCTEST_CHECK(contains(serverArgs, "-m"));
-    DOCTEST_CHECK(contains(serverArgs, "telemem"));
+    // 真实入口：`python -m telemem` 无 __main__，只有 -m telemem.mcp --transport
+    DOCTEST_CHECK(contains(serverArgs, "telemem.mcp"));
+    DOCTEST_CHECK(contains(serverArgs, "--transport"));
+    DOCTEST_CHECK(contains(serverArgs, "streamable-http"));
     // 解释器来自 venv 目录（平台布局差异只允许二选一）
     const std::string exe = venvPythonExe(venv).string();
     DOCTEST_CHECK(exe.find("venv") != std::string::npos);

@@ -21,8 +21,11 @@ std::filesystem::path venvPythonExe(const std::filesystem::path& venvDir);
 std::vector<std::string> buildPipInstallArgs(
     const std::filesystem::path& venvDir);
 
-// telemem 常驻进程 argv：venvPython -m telemem serve --http --host 127.0.0.1 --port <port>
-//（只绑回环：外部机器连不上，端口校验单测钉死）
+// telemem 常驻进程 argv：venvPython -m telemem.mcp --transport streamable-http
+//   --host 127.0.0.1 --port <port>
+//（telemem 1.10.1 无 `python -m telemem` 入口与 serve 子命令——真实入口是
+//  telemem.mcp:main，--transport 只认 stdio/streamable-http/sse。只绑回环：外部
+//  机器连不上，端口校验单测钉死）
 std::vector<std::string> buildTelememServerArgs(
     const std::filesystem::path& venvDir, int port);
 

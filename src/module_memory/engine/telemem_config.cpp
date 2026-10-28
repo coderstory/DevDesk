@@ -29,27 +29,30 @@ std::string generateTelememConfigYaml(const std::filesystem::path& dataDir) {
     const std::string base = forwardSlashes(dataDir);
     std::string yaml;
     yaml += "# DevDesk 生成（勿手改：每次引擎启动重写）。\n";
-    yaml += "# 密钥红线：api_key 恒为空，真实 key 由拉起方经环境变量 ";
+    yaml += "# 密钥红线：api_key 恒为空（空串走 mem0 的环境回退），真实 key 由拉起方\n";
+    yaml += "# 经环境变量 ";
     yaml += kLlmKeyEnvName;
     yaml += " 注入，不落盘不进日志。\n";
     yaml += "llm:\n";
     yaml += std::string("  provider: ") + kLlmProvider + "\n";
     yaml += "  config:\n";
-    yaml += std::string("    base_url: ") + kLlmBaseUrl + "\n";
+    yaml += std::string("    anthropic_base_url: ") + kLlmBaseUrl + "\n";
     yaml += std::string("    model: ") + kLlmModel + "\n";
     yaml += "    api_key: \"\"\n";
-    yaml += std::string("    api_key_env: ") + kLlmKeyEnvName + "\n";
     yaml += "embedder:\n";
     yaml += "  provider: openai\n";
     yaml += "  config:\n";
-    yaml += "    base_url: http://127.0.0.1:" + std::to_string(kEmbedServerPort) +
+    yaml += "    openai_base_url: http://127.0.0.1:" + std::to_string(kEmbedServerPort) +
             "/v1\n";
     yaml += std::string("    model: ") + kEmbedModel + "\n";
     yaml += "    api_key: \"local\"\n";
+    yaml += std::string("    embedding_dims: ") + std::to_string(kEmbedDims) + "\n";
     yaml += "vector_store:\n";
     yaml += "  provider: faiss\n";
     yaml += "  config:\n";
     yaml += "    path: " + base + "/faiss_db\n";
+    yaml += std::string("    embedding_model_dims: ") + std::to_string(kEmbedDims) +
+            "\n";
     yaml += "history_db_path: " + base + "/history.db\n";
     return yaml;
 }

@@ -17,19 +17,29 @@ inline constexpr const char* kLlmBaseUrl = "https://open.bigmodel.cn/api/anthrop
 inline constexpr const char* kLlmModel = "glm-5.3-flash";
 // embedding 模型名常量（维度在建索引前定死，换档即全量重嵌——不要轻动）
 inline constexpr const char* kEmbedModel = "bge-small-zh-v1.5";
-// LLM key 的注入通道名：拉起 telemem 时经该环境变量喂给子进程；配置文件里恒为空串
-inline constexpr const char* kLlmKeyEnvName = "TELEMEM_LLM_KEY";
+// bge-small-zh-v1.5 原生维度。必须显式落进 embedder.config.embedding_dims 与
+// vector_store.config.embedding_model_dims：mem0 无联动——embedder 不设则默认 1536、
+// FAISSConfig.embedding_model_dims 默认 1536，512 维向量塞 1536 维索引在首次 add 即炸
+inline constexpr int kEmbedDims = 512;
+// LLM key 的注入通道名：拉起 telemem 时经该环境变量喂给子进程；配置文件里恒为空串。
+// 名字必须是 ANTHROPIC_API_KEY——mem0 AnthropicLLM 的真实回退链是
+// `config.api_key or os.getenv("ANTHROPIC_API_KEY")`（api_key_env 不是任何层的真实字段）
+inline constexpr const char* kLlmKeyEnvName = "ANTHROPIC_API_KEY";
 
 // 记忆数据根：<appDataDir>/memory（venv、faiss_db、history.db、模型文件都落这里，
 // 随 DEVDESK_DATA_ROOT 隔离，测试用独立根）
 std::filesystem::path memoryDataDir();
 
 // 生成 telemem YAML 配置（纯函数、确定性输出；路径统一 forward-slash）。
-// 契约：
-// - llm.provider=anthropic + kLlmBaseUrl + kLlmModel；api_key 恒空串，
-//   api_key_env 指向 kLlmKeyEnvName（telemem 侧的运行时注入口）。
-// - embedder 指向本机 llama-server OpenAI 兼容端点（回环 + kEmbedServerPort + kEmbedModel）。
-// - 向量库与历史库路径全部收敛进 dataDir，不写家目录、不改 telemem 默认配置。
+// 契约（字段名以 mem0/telemem 1.10.1 真实类为准，live 对账定案）：
+// - llm.provider=anthropic + kLlmBaseUrl + kLlmModel；api_key 恒空串（空串走
+//   mem0 AnthropicLLM 的环境回退 ANTHROPIC_API_KEY，即 kLlmKeyEnvName）。
+//   端点字段名是 anthropic_base_url（AnthropicConfig 无 base_url，写了即 TypeError）。
+// - embedder 指向本机 llama-server OpenAI 兼容端点（回环 + kEmbedServerPort +
+//   kEmbedModel）。端点字段名是 openai_base_url（BaseEmbedderConfig 无 base_url）；
+//   embedding_dims 必须 = kEmbedDims。
+// - vector_store faiss：embedding_model_dims 必须 = kEmbedDims（默认 1536 与向量维度
+//   不匹配）；路径收敛进 dataDir；历史库同理，不写家目录。
 std::string generateTelememConfigYaml(const std::filesystem::path& dataDir);
 
 // 从 settings.json 文本提取智谱 LLM key（纯函数）。查找序：
